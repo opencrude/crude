@@ -15,7 +15,7 @@ func TestGlobalHeaderRemainsAboveActivitySidebar(t *testing.T) {
 	app.paintShellFrame()
 
 	header := shellBufferRow(app, app.frameTopRow())
-	for _, want := range []string{"crude", "main-model", "↑1.2K", "↓345", "$0.4200"} {
+	for _, want := range []string{"crude", "main-model", "↑1.2K total", "cache 200 total", "↓345 total", "$0.4200"} {
 		if !strings.Contains(header, want) {
 			t.Fatalf("global header row missing %q: %q", want, header)
 		}

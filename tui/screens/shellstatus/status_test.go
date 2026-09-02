@@ -263,8 +263,8 @@ func TestScreen_BTWCount(t *testing.T) {
 	sb.SetBtwCount(3)
 
 	v := sb.View()
-	if !strings.Contains(v, "📝3") {
-		t.Fatalf("expected '📝3' in view, got: %q", v)
+	if !strings.Contains(v, "✎3") {
+		t.Fatalf("expected '✎3' in view, got: %q", v)
 	}
 }
 
@@ -298,14 +298,17 @@ func TestScreen_TokenUsage(t *testing.T) {
 	sb.UpdateUsage(100, 50, 10, 0.005, 4096, 2048, false, false)
 
 	v := sb.View()
-	if !strings.Contains(v, "↑100") {
+	if !strings.Contains(v, "↑100 total") {
 		t.Fatalf("expected prompt token count in view, got: %q", v)
 	}
-	if !strings.Contains(v, "↓50") {
+	if !strings.Contains(v, "↓50 total") {
 		t.Fatalf("expected completion token count in view, got: %q", v)
 	}
 	if !strings.Contains(v, "50%") {
 		t.Fatalf("expected context usage percentage in view, got: %q", v)
+	}
+	if !strings.Contains(v, "cache 10 total") {
+		t.Fatalf("expected cumulative cached-token count in view, got: %q", v)
 	}
 }
 
@@ -315,6 +318,20 @@ func TestScreen_OllamaCacheBlindCostIsShownAsUpperBound(t *testing.T) {
 	sb.UpdateUsage(338000, 2100, 0, 2.02, 1000000, 338000, false, true)
 	if usage := sb.UsageView(); !strings.Contains(usage, "≤$2.02") || !strings.Contains(usage, "cache ?") {
 		t.Fatalf("cache-blind cost did not render as an upper bound: %q", usage)
+	}
+}
+
+func TestSafetyAttentionPersistsAheadOfTransientStatus(t *testing.T) {
+	sb := newTestScreen()
+	setWidth(sb)
+	sb.SetError("temporary error")
+	sb.SetSafetyAttention("Blocked disk write", 2)
+	if view := sb.ActivityView(); !strings.Contains(view, "2 safety alerts") || !strings.Contains(view, "Blocked disk write") {
+		t.Fatalf("persistent safety attention = %q", view)
+	}
+	sb.SetSafetyAttention("", 0)
+	if view := sb.ActivityView(); !strings.Contains(view, "temporary error") {
+		t.Fatalf("clearing safety attention lost transient state: %q", view)
 	}
 }
 
@@ -331,10 +348,10 @@ func TestScreenSplitsActivityFromHeaderUsage(t *testing.T) {
 
 	sb.UpdateUsage(1200, 300, 0, 0.02, 4000, 1500, false, false)
 	usage := sb.UsageView()
-	if !strings.Contains(usage, "↑1.2K") || !strings.Contains(usage, "$0.0200") {
+	if !strings.Contains(usage, "↑1.2K total") || !strings.Contains(usage, "↓300 total") || !strings.Contains(usage, "$0.0200") {
 		t.Fatalf("header usage should carry token and cost state: %q", usage)
 	}
-	if got := sb.ActivityView(); strings.Contains(got, "↑1.2K") || strings.Contains(got, "$0.0200") {
+	if got := sb.ActivityView(); strings.Contains(got, "↑1.2K total") || strings.Contains(got, "$0.0200") {
 		t.Fatalf("bottom activity view should not duplicate usage: %q", got)
 	}
 }
@@ -455,8 +472,8 @@ func TestScreen_IdleWithBTW(t *testing.T) {
 	if !strings.Contains(v, "2 agents idle") || strings.Contains(v, "💤") {
 		t.Fatalf("expected aggregate idle state, got: %q", v)
 	}
-	if !strings.Contains(v, "📝2") {
-		t.Fatalf("expected '📝2' in view, got: %q", v)
+	if !strings.Contains(v, "✎2") {
+		t.Fatalf("expected '✎2' in view, got: %q", v)
 	}
 }
 

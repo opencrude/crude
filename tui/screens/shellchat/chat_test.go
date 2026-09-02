@@ -352,10 +352,10 @@ func TestShellChatMainScrollbarSinglePaintPath(t *testing.T) {
 	thumbCols := 0
 	for y := 0; y < h; y++ {
 		c := buf.Get(sbX, y)
-		if c.Char == '░' {
+		if c.Char == '│' {
 			trackCols++
 		}
-		if c.Char == '█' {
+		if c.Char == '┃' || c.Char == '█' {
 			thumbCols++
 		}
 	}
@@ -370,7 +370,7 @@ func TestShellChatMainScrollbarSinglePaintPath(t *testing.T) {
 	for y := 0; y < h; y++ {
 		for x := 0; x < sbX; x++ {
 			ch := buf.Get(x, y).Char
-			if ch == '░' || ch == '█' {
+			if ch == '│' || ch == '┃' || ch == '█' {
 				t.Fatalf("legacy main gutter glyph %q at (%d,%d) inside row text", ch, x, y)
 			}
 		}
@@ -408,7 +408,7 @@ func TestShellChatMainScrollbarThemedNoScrollFill(t *testing.T) {
 		t.Fatalf("expected themed gutter fill on all rows when not scrollable, got %d/3", filled)
 	}
 	for y := 0; y < 3; y++ {
-		if ch := buf.Get(sbX, y).Char; ch == '░' || ch == '█' {
+		if ch := buf.Get(sbX, y).Char; ch == '│' || ch == '┃' || ch == '█' {
 			t.Fatalf("no-scroll gutter should not paint track/thumb at row %d", y)
 		}
 	}
@@ -439,7 +439,7 @@ func TestShellChatMainScrollbarThumbAlignsAcrossRows(t *testing.T) {
 	sbX := w - padLR - 1
 	thumbRows := 0
 	for y := 0; y < viewportH; y++ {
-		if buf.Get(sbX, y).Char == '█' {
+		if ch := buf.Get(sbX, y).Char; ch == '┃' || ch == '█' {
 			thumbRows++
 		}
 	}

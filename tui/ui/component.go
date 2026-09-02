@@ -214,6 +214,16 @@ type EventContext struct {
 	ScreenY int
 }
 
+// ChildEventContext converts a parent's local pointer coordinates to one of
+// its children. Screen coordinates and non-geometry context are preserved.
+// Composite controls that deliberately route pointer input themselves must use
+// this instead of forwarding parent-local coordinates unchanged.
+func ChildEventContext(parent EventContext, childBounds Rect) EventContext {
+	parent.LocalX -= childBounds.X
+	parent.LocalY -= childBounds.Y
+	return parent
+}
+
 // Component is the atomic unit of the retained UI tree.
 type Component interface {
 	ID() ComponentID
@@ -248,6 +258,13 @@ const (
 // routing (e.g. paint-only VirtualList children owned by a composite screen).
 type PointerPolicyProvider interface {
 	PointerPolicy() PointerPolicy
+}
+
+// PointerHitBoundsProvider lets a narrow control enlarge only its pointer hit
+// target. Paint and layout continue to use Component.Bounds; Host clips the
+// returned screen-space rectangle to the component's parent.
+type PointerHitBoundsProvider interface {
+	PointerHitBounds(screenBounds Rect) Rect
 }
 
 // PointerCaptureCanceller is implemented by components that hold drag or

@@ -766,21 +766,21 @@ func TestCanonicalConversationSnapshotRoundTripsEveryField(t *testing.T) {
 	}
 }
 
-func TestWireStateRoundTripsActiveEpochIndependentlyFromDisplayHistory(t *testing.T) {
+func TestContextStateRoundTripsIndependentlyFromDisplayHistory(t *testing.T) {
 	db := OpenAndMigrateAt(t.TempDir())
 	t.Cleanup(func() { _ = db.Close() })
 	if err := CreateSessionRow(db, "session"); err != nil {
 		t.Fatal(err)
 	}
-	want := WireState{Epoch: 4, Reason: "active_context_compaction", Messages: []provider.ChatMessage{
-		provider.NewWireHiddenMessage("checkpoint"),
+	want := ContextState{Generation: 4, Reason: "automatic_compaction", Messages: []provider.ChatMessage{
+		provider.NewTextMessage("system", "<context_checkpoint>checkpoint</context_checkpoint>"),
 		provider.NewTextMessage("user", "latest request"),
 	}}
-	if err := SaveWireState(db, "session", want); err != nil {
+	if err := SaveContextState(db, "session", want); err != nil {
 		t.Fatal(err)
 	}
-	got, ok, err := LoadWireState(db, "session")
+	got, ok, err := LoadContextState(db, "session")
 	if err != nil || !ok || !reflect.DeepEqual(got, want) {
-		t.Fatalf("wire state round-trip got=%#v ok=%v err=%v want=%#v", got, ok, err, want)
+		t.Fatalf("context state round-trip got=%#v ok=%v err=%v want=%#v", got, ok, err, want)
 	}
 }

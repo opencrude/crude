@@ -2,6 +2,8 @@ package chatprojection
 
 import (
 	"sort"
+
+	"crude/tui/perf"
 )
 
 type renderItem struct {
@@ -85,6 +87,8 @@ type itemList struct {
 	overscan      int
 	indexDirty    bool
 	bottomPadding int
+	lastRenderFn  func(idx int, item *renderItem, width int) []string
+	lastRenderW   int
 }
 
 func newItemList() *itemList {
@@ -129,6 +133,7 @@ func (vl *itemList) UpdateItemAt(idx int, item renderItem) {
 }
 
 func (vl *itemList) InvalidateItem(id string) {
+	perf.MarkItemInvalidation()
 	for i := range vl.items {
 		if vl.items[i].ID == id {
 			vl.items[i].Dirty = true
@@ -162,6 +167,7 @@ func (vl *itemList) ItemHeight(id string) (int, bool) {
 }
 
 func (vl *itemList) InvalidateAll() {
+	perf.MarkCacheInvalidation()
 	for i := range vl.items {
 		vl.items[i].Dirty = true
 	}
@@ -322,6 +328,8 @@ func (vl *itemList) SetBottomPadding(n int) {
 // RenderVisible renders dirty items within the visible range and returns
 // the visible lines. Heights are recalculated during rendering.
 func (vl *itemList) RenderVisible(renderFn func(idx int, item *renderItem, width int) []string, width int) []string {
+	vl.lastRenderFn = renderFn
+	vl.lastRenderW = width
 	vl.BuildIndex()
 
 	if len(vl.items) == 0 || vl.viewportH <= 0 {
@@ -401,7 +409,28 @@ func (vl *itemList) ExtractVisibleNative() []PaintLine {
 	}
 
 	firstItem, lastItem, skipLines := vl.VisibleRange()
+	vl.repairNativeRows(firstItem, lastItem)
 	return vl.assembleNativeOutput(firstItem, lastItem, skipLines)
+}
+
+func (vl *itemList) repairNativeRows(firstItem, lastItem int) {
+	if vl.lastRenderFn == nil {
+		return
+	}
+	for i := firstItem; i <= lastItem && i < len(vl.items); i++ {
+		if i < 0 {
+			continue
+		}
+		item := &vl.items[i]
+		if len(item.Native) == len(item.Rendered) {
+			continue
+		}
+		rendered := vl.lastRenderFn(i, item, vl.lastRenderW)
+		item.Rendered = rendered
+		item.Height = len(rendered)
+		item.Dirty = false
+		vl.indexDirty = true
+	}
 }
 
 func (vl *itemList) assembleOutput(firstItem, lastItem, skipLines int) []string {
@@ -470,10 +499,11 @@ func (vl *itemList) assembleNativeOutput(firstItem, lastItem, skipLines int) []P
 			if j < len(item.Native) {
 				output = append(output, item.Native[j])
 			} else {
-				// Native rows should always be parallel to lines now; this
-				// fallback emits a native plain body line so no row ever takes
-				// the ANSI paint path.
-				output = append(output, buildPlainBodyLine(lines[j]))
+				// The owning Renderer repairs this invariant on the next render.
+				// Preserve ANSI styling for this frame rather than silently
+				// converting a rich row to plain ColorFg.
+				item.Dirty = true
+				output = append(output, PaintLine{ANSIFallback: true})
 			}
 			accumulated++
 			if accumulated >= vl.viewportH {

@@ -134,6 +134,7 @@ func New(th *theme.Theme) *Screen {
 	list.SetActivateAction("sessionpicker.resume")
 	s.list = &pickerList{Base: ui.NewBase(ListID), list: list, owner: s, lastClick: -1}
 	s.scrollbar = ui.NewScrollbarControl(ScrollbarID, list.Scroll(), tokens)
+	s.scrollbar.SetSurfaceBackground(ui.ColorPopupBg)
 
 	s.empty = ui.NewLabel(EmptyID, "No sessions yet — chat first, then Ctrl+Alt+S to resume.", th)
 	s.empty.SetColorRole(ui.ColorMuted)
@@ -325,8 +326,12 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	if showEmpty {
 		s.empty.Layout(ctx, ui.Rect{Y: listY, W: r.W, H: listH})
 	} else {
-		s.list.Layout(ctx, ui.Rect{X: 0, Y: listY, W: max(1, r.W-1), H: listH})
-		s.scrollbar.Layout(ctx, ui.Rect{X: max(0, r.W-1), Y: listY, W: 1, H: listH})
+		barW := 0
+		if s.scrollbar.NeededForViewport(listH) {
+			barW = min(ui.ScrollbarWidth, r.W)
+		}
+		s.list.Layout(ctx, ui.Rect{X: 0, Y: listY, W: max(1, r.W-barW), H: listH})
+		s.scrollbar.Layout(ctx, ui.Rect{X: max(0, r.W-barW), Y: listY, W: barW, H: listH})
 	}
 	s.hints.Layout(ctx, ui.Rect{Y: max(0, r.H-1), W: r.W, H: 1})
 }

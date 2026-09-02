@@ -39,6 +39,10 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 	if bodyH < 1 {
 		bodyH = 1
 	}
+	if e.syncHorizontalScrollChrome(textW, bodyH) && bodyH > 1 {
+		bodyH--
+		e.syncHorizontalScrollChrome(textW, bodyH)
+	}
 	e.syncScrollChrome(bodyH)
 
 	errColor := e.cellColor(e.th.Colors.Error)
@@ -133,8 +137,6 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 			} else {
 				cx := x
 				vCol := e.scrollX + (cx - sw)
-				focused := ctx.Focused
-				isCursorLine := lineIdx == e.cursor.Line
 
 				for ri < len(clusters) && vCol >= visCol+widths[ri] {
 					visCol += widths[ri]
@@ -160,12 +162,9 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 				// current match is rendered with a stronger
 				// background; other matches get a softer tint.
 				searchMatchIdx, searchIsCurrent := e.searchHighlightAt(lineIdx, vCol)
-
 				if ri < len(clusters) && vCol < visCol+widths[ri] && vCol < lineVisW {
 					if vCol == visCol {
 						switch {
-						case focused && isCursorLine && vCol == e.cursor.Col:
-							e.paintGrapheme(buf, cx, bufY, sbX, clusters[ri], widths[ri], e.cellColor(e.th.Colors.Bg), e.cellColor(e.th.Colors.Accent), cell.AttrBold, blankCell)
 						case e.isSelected(lineIdx, vCol):
 							e.paintGrapheme(buf, cx, bufY, sbX, clusters[ri], widths[ri], e.cellColor(e.th.Colors.Fg), selBgColor, 0, blankCell)
 						case searchMatchIdx >= 0:
@@ -194,8 +193,6 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 						}
 					} else if visCol < e.scrollX {
 						switch {
-						case focused && isCursorLine && vCol == e.cursor.Col:
-							buf.Set(cx, bufY, cell.NewCell(' ', e.cellColor(e.th.Colors.Bg), e.cellColor(e.th.Colors.Accent), cell.AttrBold))
 						case e.isSelected(lineIdx, vCol):
 							buf.Set(cx, bufY, cell.NewCell(' ', e.cellColor(e.th.Colors.Fg), selBgColor, 0))
 						case searchMatchIdx >= 0:
@@ -219,8 +216,6 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 					}
 				} else {
 					switch {
-					case focused && isCursorLine && vCol == e.cursor.Col:
-						buf.Set(cx, bufY, cell.NewCell(' ', e.cellColor(e.th.Colors.Bg), e.cellColor(e.th.Colors.Accent), cell.AttrBold))
 					case e.isSelected(lineIdx, vCol):
 						buf.Set(cx, bufY, cell.NewCell(' ', e.cellColor(e.th.Colors.Fg), selBgColor, 0))
 					case searchMatchIdx >= 0:
@@ -233,8 +228,16 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 			}
 		}
 	}
+	if ctx.Focused && e.cursorVisible {
+		cursorX := sw + e.cursor.Col - e.scrollX
+		cursorY := e.cursor.Line - e.scrollY
+		if cursorX >= sw && cursorX < sbX && cursorY >= 0 && cursorY < bodyH {
+			ui.PaintBlockCursor(buf, cursorX, cursorY, e.cellColor(e.th.Colors.Fg), bgColor)
+		}
+	}
 
 	e.paintScrollbar(buf, sbX, bodyH)
+	e.paintHorizontalScrollbar(buf, sw, bodyH, textW)
 
 	if e.statusChrome {
 		statusY := h - 1
@@ -336,12 +339,15 @@ func (e *Editor) lineGeomInfo(lineIdx int) (runes []rune, totalW int, widths []i
 	if err != nil {
 		return nil, 0, nil
 	}
-	raw := string(b)
 	if e.lineGeomCache != nil {
-		if cached := e.lineGeomCache[lineIdx]; cached != nil && cached.raw == raw {
+		// string(b) here is an allocation-free compile-time comparison, so the
+		// cache hit (the per-frame steady path) allocates nothing at all; the
+		// string is only materialized on a miss.
+		if cached := e.lineGeomCache[lineIdx]; cached != nil && cached.raw == string(b) {
 			return cached.runes, cached.totalW, cached.widths
 		}
 	}
+	raw := string(b)
 	clusters, runes, widths, totalW := lineDisplayGeometryWithClusters(raw, tabWidth)
 	if e.lineGeomCache == nil {
 		e.lineGeomCache = make(map[int]*lineGeomCache, 128)
@@ -368,13 +374,15 @@ func (e *Editor) lineRenderInfo(lineIdx int, scrollX int) ([]string, int, []int,
 	}
 	_ = scrollX // geometry is scroll-independent; kept for call-site compat
 	colorMap := e.lineColorMap(lineIdx)
-	clusters := make([]string, len(runes))
+	// The grapheme clusters are already stored per line in lineGeomCache (the
+	// caller treats the returned slice as read-only), so the per-frame steady
+	// path returns the retained slice instead of rebuilding a copy per call.
 	if cached := e.lineGeomCache[lineIdx]; cached != nil && len(cached.clusters) == len(runes) {
-		copy(clusters, cached.clusters)
-	} else {
-		for index, r := range runes {
-			clusters[index] = string(r)
-		}
+		return cached.clusters, totalW, widths, colorMap
+	}
+	clusters := make([]string, len(runes))
+	for index, r := range runes {
+		clusters[index] = string(r)
 	}
 	return clusters, totalW, widths, colorMap
 }

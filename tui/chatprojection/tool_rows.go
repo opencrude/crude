@@ -164,19 +164,18 @@ func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth
 		}
 		titlePL = appendToolDisclosureGlyph(titlePL, glyph)
 	}
+	expanded := expandable && disclosure == DisclosureExpanded
 	out.lines = append(out.lines, titlePL.PlainText())
 	out.native = append(out.native, titlePL)
-	if msg.ToolCommand != "" && (msg.ToolName == "execute_command" || msg.ToolName == "async_execute_command") {
+	if expanded && msg.ToolCommand != "" && (msg.ToolName == "execute_command" || msg.ToolName == "async_execute_command") {
 		out.appendCommandContext(msg.ToolCommand, innerW)
 	}
-	if msg.ToolInput != "" {
+	if expanded && msg.ToolInput != "" {
 		out.appendToolInputContext(msg, innerW)
 	}
 
 	// Completed tools render a budgeted preview by default; full output only
 	// when the user expanded the block.
-	expanded := expandable && disclosure == DisclosureExpanded
-
 	if msg.ToolStatus == "success" && msg.Content != "" {
 		resultContent := msg.Content
 		fullLabel := rendering.PascalCaseTool(msg.ToolName) + " " + msg.ToolArgs
@@ -191,6 +190,8 @@ func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth
 				out.appendRichToolBody(msg, resultContent, th, contentWidth, innerW, height, expanded)
 			case tools.IsSummaryOnlyTool(msg.ToolName) && !expanded:
 				// title only
+			case isCompactEvidenceTool(msg.ToolName) && !expanded:
+				// Compact evidence tools keep operands/count/duration in the title.
 			case tools.IsSummaryOnlyTool(msg.ToolName):
 				out.appendPlainToolBody(msg.ToolName, resultContent, innerW, height, false, true)
 			default:
@@ -266,10 +267,21 @@ func appendToolDisclosureGlyph(pl PaintLine, glyph string) PaintLine {
 func toolSupportsDisclosure(toolName string) bool {
 	switch toolName {
 	case "execute_command", "async_execute_command", "read_async_output", "check_async_command", "run_javascript",
-		"edit_file", "write_file", "update_plan", "get_plan":
+		"edit_file", "write_file", "update_plan", "get_plan", "read_file", "grep_files", "glob_files",
+		"list_directory", "web_search", "web_fetch", "arxiv_search":
 		return true
 	}
 	return false
+}
+
+func isCompactEvidenceTool(name string) bool {
+	switch name {
+	case "execute_command", "async_execute_command", "read_async_output", "check_async_command",
+		"read_file", "grep_files", "glob_files", "list_directory", "web_search", "web_fetch", "arxiv_search":
+		return true
+	default:
+		return false
+	}
 }
 
 // stripRedundantResultHeader removes a leading self-describing count line from

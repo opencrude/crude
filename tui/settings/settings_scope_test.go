@@ -178,6 +178,11 @@ func TestSettingsScrollbarsAppearOnlyOnOverflow(t *testing.T) {
 	if !surfaceRoot.formScroll.Needed() {
 		t.Fatal("LSP form should overflow a 12-row panel and show a scrollbar")
 	}
+	bar := surfaceRoot.formScroll.Bounds()
+	form := surfaceRoot.form.Bounds()
+	if bar.W != ui.ScrollbarWidth+1 || form.X+form.W > bar.X {
+		t.Fatalf("settings scrollbar has no leading empty column: form=%+v bar=%+v", form, bar)
+	}
 
 	model.SelectCategory(catFont)
 	surfaceRoot.refreshForm()
@@ -229,4 +234,41 @@ func TestSettingsFormScrollDoesNotPaintFooter(t *testing.T) {
 	form.Scroll().ScrollTo(1)
 	form.Layout(ui.LayoutContext{}, form.Bounds())
 	assertFooterClear(t, paint())
+}
+
+// TestSettingsScrollbarGutterMatchesPopupBg pins the fix for the black
+// strips on the settings page: the reserved scrollbar gutter is filled with
+// ColorPopupBg (the surface fill) instead of the shell ColorBg, so the
+// gutter no longer reads as a darker strip inside the floating window.
+func TestSettingsScrollbarGutterMatchesPopupBg(t *testing.T) {
+	th := theme.DefaultDark()
+	popupBG := ui.NewTokenSet(th).Color(ui.ColorPopupBg)
+	shellBG := ui.NewTokenSet(th).Color(ui.ColorBg)
+	if popupBG.Equal(shellBG) {
+		t.Fatal("harness: dark theme popup bg must differ from shell bg")
+	}
+	model := New(th, types.AppSettings{}, nil)
+	model.SelectCategory(catLSP)
+	surfaceRoot := NewSurface(th, model)
+	surfaceRoot.refreshForm()
+	host := ui.NewHost(th, surfaceRoot)
+	const w, h = 90, 24
+	host.Resize(w, h)
+	host.Layout()
+	if !surfaceRoot.formScroll.Needed() {
+		t.Fatal("LSP form should overflow to mount the form scrollbar")
+	}
+	buf := surface.NewCellBuffer(w, h)
+	host.Paint(buf)
+	bar := surfaceRoot.formScroll.Bounds()
+	if bar.W < ui.ScrollbarWidth || bar.Empty() {
+		t.Fatalf("form scrollbar not laid out: %+v", bar)
+	}
+	for y := bar.Y; y < bar.Y+bar.H; y++ {
+		for x := bar.X; x < bar.X+bar.W; x++ {
+			if bg := buf.Get(x, y).BG; !bg.Equal(popupBG) {
+				t.Fatalf("gutter cell (%d,%d) bg=%v want popup bg %v — scrollbar strips regressed", x, y, bg, popupBG)
+			}
+		}
+	}
 }

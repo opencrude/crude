@@ -22,6 +22,8 @@ type FileConfig struct {
 	UI              *ttypes.UISettings                `json:"ui,omitempty"`
 	Font            *ttypes.FontSettings              `json:"font,omitempty"`
 	Memory          *ttypes.MemorySettings            `json:"memory,omitempty"`
+	Safety          *ttypes.SafetySettings            `json:"safety,omitempty"`
+	LocalHistory    *ttypes.LocalHistorySettings      `json:"local_history,omitempty"`
 }
 
 func (c *FileConfig) IsTurnLogsEnabled() bool {
@@ -120,6 +122,14 @@ func FileConfigToAppSettings(fc FileConfig) ttypes.AppSettings {
 	if fc.Memory != nil {
 		s.Memory = *fc.Memory
 	}
+	if fc.Safety != nil {
+		s.Safety = *fc.Safety
+		s.Safety.CommandRules = append([]ttypes.CommandSeverityRule(nil), fc.Safety.CommandRules...)
+	}
+	if fc.LocalHistory != nil {
+		s.LocalHistory = *fc.LocalHistory
+		s.LocalHistory.ExtraIgnorePatterns = append([]string(nil), fc.LocalHistory.ExtraIgnorePatterns...)
+	}
 	ttypes.ApplyAppDefaults(&s)
 	return s
 }
@@ -128,13 +138,16 @@ func ApplyAppSettingsToFileConfig(fc *FileConfig, s ttypes.AppSettings) {
 	if fc == nil {
 		return
 	}
-	theme, editor, lsp, ui, font, memorySettings := s.Theme, s.Editor, s.LSP, s.UI, s.Font, s.Memory
+	theme, editor, lsp, ui, font, memorySettings, safetySettings, historySettings := s.Theme, s.Editor, s.LSP, s.UI, s.Font, s.Memory, s.Safety, s.LocalHistory
+	safetySettings.CommandRules = append([]ttypes.CommandSeverityRule(nil), s.Safety.CommandRules...)
 	fc.Theme = &theme
 	fc.Editor = &editor
 	fc.LSP = &lsp
 	fc.UI = &ui
 	fc.Font = &font
 	fc.Memory = &memorySettings
+	fc.Safety = &safetySettings
+	fc.LocalHistory = &historySettings
 	fc.ActiveProvider = s.ActiveProvider
 	if len(s.Agents.Categories) > 0 || s.Agents.ActiveProfile != "" ||
 		s.Agents.MaxConcurrent > 0 || len(s.Agents.Profiles) > 0 {
@@ -272,6 +285,10 @@ func FileConfigToSession(fc FileConfig) *session.Config {
 	if fc.Memory != nil {
 		cfg.Memory = *fc.Memory
 	}
+	if fc.Safety != nil {
+		cfg.Safety = *fc.Safety
+		cfg.Safety.CommandRules = append([]ttypes.CommandSeverityRule(nil), fc.Safety.CommandRules...)
+	}
 	return cfg
 }
 
@@ -283,6 +300,9 @@ func SessionToFileConfig(sc *session.Config) FileConfig {
 	fc.Providers = sc.Providers
 	fc.TurnLogsEnabled = &tl
 	fc.Agents = &sc.Agents
+	safety := sc.Safety
+	safety.CommandRules = append([]ttypes.CommandSeverityRule(nil), sc.Safety.CommandRules...)
+	fc.Safety = &safety
 	session.StripStoredAgentAPIKeys(fc.Agents)
 	return fc
 }

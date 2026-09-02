@@ -119,8 +119,8 @@ func TestDestructiveCommands(t *testing.T) {
 		{"sudo su", RiskDestructive},
 		{"docker run nginx", RiskDestructive},
 		{"eval $(cat config.sh)", RiskDestructive},
-		{"source script.sh", RiskDestructive},
-		{". script.sh", RiskDestructive},
+		{"source script.sh", RiskUnknown},
+		{". script.sh", RiskUnknown},
 		{"chmod -R 755 vendor", RiskDestructive},
 		{"crontab -e", RiskDestructive},
 		{"systemctl enable nginx", RiskDestructive},
@@ -222,6 +222,52 @@ func TestUnknownCommand(t *testing.T) {
 	r := CheckCommandSafety("some_unknown_tool --flag", nil)
 	if r.Risk != RiskUnknown {
 		t.Errorf("Expected RiskUnknown for unknown command, got %s: %s", r.Risk.String(), r.Reason)
+	}
+	if !r.NeedsConfirmation() {
+		t.Fatal("unknown commands must require confirmation by default")
+	}
+}
+
+func TestLocalScriptExecutionUsesConfigurablePolicy(t *testing.T) {
+	for _, command := range []string{"./scripts/check.sh", "bash scripts/check.sh", "source scripts/check.sh"} {
+		result := CheckCommandSafety(command, nil)
+		if result.Risk != RiskUnknown || !result.NeedsConfirmation() || result.Risk.IsAlwaysBlocked() {
+			t.Fatalf("default script policy for %q = %#v", command, result)
+		}
+	}
+	policy := DefaultCommandPolicy()
+	policy.ScriptExecutionRisk = RiskSafe
+	result := CheckCommandSafetyWithPolicy("./scripts/check.sh", nil, policy)
+	if result.Risk != RiskSafe || result.NeedsConfirmation() {
+		t.Fatalf("trusted script policy = %#v", result)
+	}
+	policy = DefaultCommandPolicy()
+	policy.Rules = []CommandRule{{Pattern: "scripts/*.sh", Risk: RiskSafe}}
+	result = CheckCommandSafetyWithPolicy("./scripts/check.sh", nil, policy)
+	if result.Risk != RiskSafe || result.MatchedRule != "scripts/*.sh" {
+		t.Fatalf("script glob rule = %#v", result)
+	}
+}
+
+func TestCommandRuleAndConfirmationThreshold(t *testing.T) {
+	policy := DefaultCommandPolicy()
+	policy.ConfirmAt = RiskNetwork
+	policy.Rules = []CommandRule{{Pattern: "custom-tool", Risk: RiskProjectWrite}}
+	result := CheckCommandSafetyWithPolicy("custom-tool", nil, policy)
+	if result.Risk != RiskProjectWrite || result.NeedsConfirmation() || result.MatchedRule != "custom-tool" {
+		t.Fatalf("configured command rule = %#v", result)
+	}
+	if network := CheckCommandSafetyWithPolicy("curl https://example.com", nil, policy); !network.NeedsConfirmation() {
+		t.Fatalf("network threshold failed: %#v", network)
+	}
+}
+
+func TestHardBlockedCommandCannotBeDowngradedByRule(t *testing.T) {
+	policy := DefaultCommandPolicy()
+	policy.Rules = []CommandRule{{Pattern: "rm *", Risk: RiskSafe}}
+	result := CheckCommandSafetyWithPolicy("rm -rf /", nil, policy)
+	if result.Risk != RiskBlocked {
+		t.Fatalf("hard block was downgraded: %#v", result)
 	}
 }
 

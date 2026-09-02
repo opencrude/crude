@@ -57,9 +57,14 @@ type Editor struct {
 	viewH int
 	// scrollModel + sbCtrl are the shared scrollbar chrome (paint + mouse drag).
 	// Kept in sync with scrollY via syncScrollChrome.
-	scrollModel *ui.ScrollModel
-	sbCtrl      *ui.ScrollbarControl
-	tokens      *ui.TokenSet
+	scrollModel       *ui.ScrollModel
+	sbCtrl            *ui.ScrollbarControl
+	hScrollModel      *ui.ScrollModel
+	hSbCtrl           *ui.ScrollbarControl
+	hScrollbarVisible bool
+	vScrollbarHovered bool
+	hScrollbarHovered bool
+	tokens            *ui.TokenSet
 	// statusChrome, when true, reserves the bottom row for a document footline.
 	// The main shell keeps this false — status lives in shellstatus.
 	statusChrome bool
@@ -189,6 +194,10 @@ func New(th *theme.Theme) *Editor {
 		search:        NewSearchState(),
 	}
 	e.sbCtrl = ui.NewScrollbarControl("editor/scrollbar", e.scrollModel, e.tokens)
+	e.hScrollModel = ui.NewScrollModel()
+	e.hSbCtrl = ui.NewScrollbarControl("editor/h-scrollbar", e.hScrollModel, e.tokens)
+	e.hSbCtrl.SetDirection(ui.Horizontal)
+	e.hSbCtrl.SetPointerTargetSize(1)
 	e.ClearSelection()
 	return e
 }
@@ -233,6 +242,11 @@ func (e *Editor) Open(path string) error {
 	e.changeIndex = 0
 	e.scrollModel = ui.NewScrollModel()
 	e.sbCtrl = ui.NewScrollbarControl("editor/scrollbar", e.scrollModel, e.tokens)
+	e.hScrollModel = ui.NewScrollModel()
+	e.hSbCtrl = ui.NewScrollbarControl("editor/h-scrollbar", e.hScrollModel, e.tokens)
+	e.hSbCtrl.SetDirection(ui.Horizontal)
+	e.hSbCtrl.SetPointerTargetSize(1)
+	e.hScrollbarVisible = false
 	e.open = true
 	e.cursorVisible = true
 	e.blinkActive = false
@@ -263,6 +277,11 @@ func (e *Editor) OpenBuffer(buf *Buffer) {
 	e.changeIndex = 0
 	e.scrollModel = ui.NewScrollModel()
 	e.sbCtrl = ui.NewScrollbarControl("editor/scrollbar", e.scrollModel, e.tokens)
+	e.hScrollModel = ui.NewScrollModel()
+	e.hSbCtrl = ui.NewScrollbarControl("editor/h-scrollbar", e.hScrollModel, e.tokens)
+	e.hSbCtrl.SetDirection(ui.Horizontal)
+	e.hSbCtrl.SetPointerTargetSize(1)
+	e.hScrollbarVisible = false
 	e.open = true
 	e.cursorVisible = true
 	e.blinkActive = false

@@ -77,6 +77,18 @@ func (s *Screen) SetMessages(rows []chatprojection.MessageRow, paint PaintParams
 	}
 }
 
+func (s *Screen) MessageAtLocalY(localY int) (chatprojection.MessageRow, bool) {
+	if s == nil || s.list == nil {
+		return chatprojection.MessageRow{}, false
+	}
+	item, ok := s.list.ItemAtViewportRow(localY)
+	if !ok {
+		return chatprojection.MessageRow{}, false
+	}
+	row, ok := item.Payload.(chatprojection.MessageRow)
+	return row, ok
+}
+
 func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item ui.VirtItem, localRow int, _ ui.ControlState, _ ui.PaintContext, tokens *ui.TokenSet) {
 	if buf == nil || item.Height < 1 {
 		return

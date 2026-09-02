@@ -29,10 +29,11 @@ type Form struct {
 	ruleFullBleed bool
 	ruleBleedX    int
 	ruleBleedW    int
+	pointerField  int
 }
 
 func NewForm(id ComponentID, model *FormModel, title, detail string, tokens *TokenSet) *Form {
-	f := &Form{Base: NewBase(id), model: model, title: title, detail: detail, tokens: tokens, focused: -1, scroll: NewScrollModel()}
+	f := &Form{Base: NewBase(id), model: model, title: title, detail: detail, tokens: tokens, focused: -1, pointerField: -1, scroll: NewScrollModel()}
 	f.rebuild()
 	return f
 }
@@ -145,6 +146,10 @@ func (f *Form) Field(id string) *FormField {
 }
 
 func (f *Form) rebuild() {
+	if f.pointerField >= 0 && f.pointerField < len(f.fields) {
+		f.fields[f.pointerField].CancelPointerCapture()
+	}
+	f.pointerField = -1
 	focusedID := ""
 	if f.focused >= 0 && f.focused < len(f.fields) {
 		focusedID = f.fields[f.focused].FieldState().ID
@@ -327,6 +332,15 @@ func (f *Form) Handle(ctx EventContext, evt Event) EventResult {
 	if len(f.fields) == 0 {
 		return EventResult{}
 	}
+	if f.pointerField >= 0 && f.pointerField < len(f.fields) &&
+		(evt.Kind == EventMouseMotion || evt.Kind == EventMouseRelease) {
+		index := f.pointerField
+		result := f.handleField(index, f.fieldContext(ctx, f.fields[index]), evt)
+		if evt.Kind == EventMouseRelease {
+			f.pointerField = -1
+		}
+		return result
+	}
 	if evt.Kind == EventMouseWheel {
 		for index, field := range f.fields {
 			if field.SelectOpen() {
@@ -390,7 +404,11 @@ func (f *Form) Handle(ctx EventContext, evt Event) EventResult {
 					return EventResult{Handled: true}
 				}
 				f.focused = index
-				return f.handleField(index, f.fieldContext(ctx, field), evt)
+				result := f.handleField(index, f.fieldContext(ctx, field), evt)
+				if result.Handled && fieldPointerSelecting(field) {
+					f.pointerField = index
+				}
+				return result
 			}
 		}
 		return EventResult{Handled: true}
@@ -413,7 +431,7 @@ func (f *Form) Handle(ctx EventContext, evt Event) EventResult {
 			}
 			return f.moveFocus(1, f.arrowExits)
 		}
-		if (key.Code == tea.KeyPgUp || key.Code == tea.KeyPgDown) && !field.SelectOpen() && f.scroll != nil {
+		if (key.Code == tea.KeyPgUp || key.Code == tea.KeyPgDown) && !field.SelectOpen() && !field.MultiLine() && f.scroll != nil {
 			delta := f.scroll.Viewport() - 1
 			if delta < 1 {
 				delta = 1
@@ -430,16 +448,51 @@ func (f *Form) Handle(ctx EventContext, evt Event) EventResult {
 	return f.handleField(f.focused, f.fieldContext(ctx, f.fields[f.focused]), evt)
 }
 
+func fieldPointerSelecting(field *FormField) bool {
+	if field == nil {
+		return false
+	}
+	if control := field.Control(); control != nil && control.IsSelecting() {
+		return true
+	}
+	return field.Area() != nil && field.Area().IsSelecting()
+}
+
+func (f *Form) CancelPointerCapture() {
+	if f.pointerField >= 0 && f.pointerField < len(f.fields) {
+		f.fields[f.pointerField].CancelPointerCapture()
+	}
+	f.pointerField = -1
+}
+
 func (f *Form) handleField(index int, ctx EventContext, evt Event) EventResult {
 	result := f.fields[index].Handle(ctx, evt)
 	f.syncFields()
 	if result.Action != nil {
 		switch result.Action.ID {
+		case ActionTextPaste:
+			result.Action.Payload = ClipboardPasteTarget(&formPasteTarget{form: f, index: index})
 		case "form.next":
 			return f.moveFocus(1, f.arrowExits)
 		}
 	}
 	return result
+}
+
+type formPasteTarget struct {
+	form  *Form
+	index int
+}
+
+func (t *formPasteTarget) PasteActive() bool {
+	return t != nil && t.form != nil && t.index >= 0 && t.index < len(t.form.fields) && t.form.focused == t.index
+}
+
+func (t *formPasteTarget) PasteText(text string) {
+	if !t.PasteActive() {
+		return
+	}
+	t.form.handleField(t.index, EventContext{Focused: true}, CustomEvent(tea.PasteMsg{Content: text}))
 }
 
 func (f *Form) syncFields() {

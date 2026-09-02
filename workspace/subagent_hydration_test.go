@@ -33,6 +33,9 @@ func TestHydrateCompletedSubAgentsRestoresReadOnlyReviewTree(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
+	if err := sessiondb.InsertCostSnapshot(parentDB, 10, 4, 2, 0.01, nil); err != nil {
+		t.Fatal(err)
+	}
 	if err := parentDB.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -80,7 +83,10 @@ func TestHydrateCompletedSubAgentsRestoresReadOnlyReviewTree(t *testing.T) {
 	}
 	t.Cleanup(backend.Close)
 	frontend := NewSession("parent", backend.SessionDir(), backend.DB(), nopLogger{})
-	frontend.backend = backend
+	frontend.attachBackend(backend)
+	if frontend.TokenPrompt != 110 || frontend.TokenCompletion != 29 || frontend.TokenCached != 2 {
+		t.Fatalf("hydrated cumulative usage = %d/%d/%d", frontend.TokenPrompt, frontend.TokenCompletion, frontend.TokenCached)
+	}
 	manager := NewAgentManager()
 	panes := NewPaneManager()
 	ws := &Workspace{

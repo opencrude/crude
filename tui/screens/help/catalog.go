@@ -104,7 +104,7 @@ func UsageTopics() []Topic {
 		{
 			ID:    "safety",
 			Title: "Safety",
-			Body:  "The agent asks before destructive or network tools. Deny (n) explicitly rejects a permission; Esc stops the turn without recording a denial. /yolo disables checks for the live session, including the current turn, after confirmation. /undo reverts the last agent file edit; /undo all reverts every edit in this session. Undo and context compaction require the active turn to be stopped first.",
+			Body:  "The agent asks before destructive or network tools. Deny (n) explicitly rejects a permission; Esc stops the turn without recording a denial. /yolo disables checks for the live session, including the current turn, after confirmation. /undo opens a preview of workspace changes from the latest message; select safe files or explicitly choose exact replacement for conflicts. Every restore creates a safety snapshot and can itself be undone. Undo and context compaction require the active turn to be stopped first.",
 		},
 	}
 }

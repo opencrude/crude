@@ -13,6 +13,7 @@ import (
 // Memory.MemoryCategory — without losing the legacy settings.
 func TestMemoryFormKeepsRecallAndAddsAgentBehavior(t *testing.T) {
 	th := theme.DefaultDark()
+	disabled := 0
 	current := types.AppSettings{
 		ActiveProvider: "openrouter",
 		Providers: map[string]types.ProviderConfig{
@@ -27,7 +28,7 @@ func TestMemoryFormKeepsRecallAndAddsAgentBehavior(t *testing.T) {
 			RecallLimit:        20,
 			ExtractEveryTurns:  7,
 			MemoryCategory: types.CategorySettings{
-				Provider: "openai", Model: "model-b", ThinkingEffort: "high",
+				Provider: "openai", Model: "model-b", ThinkingEffort: "high", ContextCompactionPercent: &disabled,
 			},
 		},
 		Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
@@ -42,7 +43,8 @@ func TestMemoryFormKeepsRecallAndAddsAgentBehavior(t *testing.T) {
 		t.Fatalf("recall settings lost: %#v", got.Memory)
 	}
 	if got.Memory.MemoryCategory.Provider != "openai" || got.Memory.MemoryCategory.Model != "model-b" ||
-		got.Memory.MemoryCategory.ThinkingEffort != "high" {
+		got.Memory.MemoryCategory.ThinkingEffort != "high" || got.Memory.MemoryCategory.ContextCompactionPercent == nil ||
+		*got.Memory.MemoryCategory.ContextCompactionPercent != 0 {
 		t.Fatalf("memory agent behavior lost: %#v", got.Memory.MemoryCategory)
 	}
 }

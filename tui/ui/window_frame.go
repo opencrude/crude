@@ -273,69 +273,65 @@ func (f *WindowFrame) Paint(buf *surface.CellBuffer, originX, originY int, ctx P
 			setRune(0, y, vBorder)
 			setRune(r.W-1, y, vBorder)
 		}
-		// Edge hover highlight: paint the hovered edge (and its adjacent
-		// corners) with the accent color so the resizable border reads
-		// clearly, matching split-divider hover. Painted after the base
-		// borders so the highlight wins. The title row still paints the
-		// title/close chrome over the top edge afterwards.
+		// Edge hover highlight: paint every hovered border (and the corners it
+		// touches) with the accent color so the resizable border reads clearly,
+		// matching split-divider hover. Painted after the base borders so the
+		// highlight wins. A corner cell joins a horizontal and a vertical run,
+		// so its glyph is resolved from BOTH adjacent borders and always stays
+		// a rounded-corner char: hovering a corner focuses two borders at once,
+		// and painting either run straight across/down the corner used to
+		// flatten the far corners of those runs to ─ or │. The title row still
+		// paints the title/close chrome over the top edge afterwards.
+		var hoverLeft, hoverRight, hoverTop, hoverBottom bool
 		switch f.hoverEdge {
 		case wm.EdgeTop:
-			setHover(0, 0, FirstRune(g.CornerTL, '╭'))
-			setHover(r.W-1, 0, FirstRune(g.CornerTR, '╮'))
-			for x := 1; x < r.W-1; x++ {
-				setHover(x, 0, hBorder)
-			}
+			hoverTop = true
 		case wm.EdgeBottom:
-			setHover(0, r.H-1, FirstRune(g.CornerBL, '╰'))
-			setHover(r.W-1, r.H-1, FirstRune(g.CornerBR, '╯'))
-			for x := 1; x < r.W-1; x++ {
-				setHover(x, r.H-1, hBorder)
-			}
+			hoverBottom = true
 		case wm.EdgeLeft:
-			setHover(0, 0, FirstRune(g.CornerTL, '╭'))
-			setHover(0, r.H-1, FirstRune(g.CornerBL, '╰'))
-			for y := 1; y < r.H-1; y++ {
-				setHover(0, y, vBorder)
-			}
+			hoverLeft = true
 		case wm.EdgeRight:
-			setHover(r.W-1, 0, FirstRune(g.CornerTR, '╮'))
-			setHover(r.W-1, r.H-1, FirstRune(g.CornerBR, '╯'))
-			for y := 1; y < r.H-1; y++ {
-				setHover(r.W-1, y, vBorder)
-			}
+			hoverRight = true
 		case wm.EdgeTopLeft:
-			for x := 0; x < r.W; x++ {
-				setHover(x, 0, hBorder)
-			}
-			for y := 1; y < r.H; y++ {
-				setHover(0, y, vBorder)
-			}
-			setHover(0, 0, FirstRune(g.CornerTL, '╭'))
+			hoverLeft, hoverTop = true, true
 		case wm.EdgeTopRight:
-			for x := 0; x < r.W; x++ {
-				setHover(x, 0, hBorder)
-			}
-			for y := 1; y < r.H; y++ {
-				setHover(r.W-1, y, vBorder)
-			}
-			setHover(r.W-1, 0, FirstRune(g.CornerTR, '╮'))
+			hoverRight, hoverTop = true, true
 		case wm.EdgeBottomLeft:
-			for x := 0; x < r.W; x++ {
-				setHover(x, r.H-1, hBorder)
-			}
-			for y := 0; y < r.H-1; y++ {
-				setHover(0, y, vBorder)
-			}
-			setHover(0, r.H-1, FirstRune(g.CornerBL, '╰'))
+			hoverLeft, hoverBottom = true, true
 		case wm.EdgeBottomRight:
-			for x := 0; x < r.W; x++ {
-				setHover(x, r.H-1, hBorder)
-			}
-			for y := 0; y < r.H-1; y++ {
-				setHover(r.W-1, y, vBorder)
-			}
-			setHover(r.W-1, r.H-1, FirstRune(g.CornerBR, '╯'))
+			hoverRight, hoverBottom = true, true
 		}
+		if hoverTop || hoverBottom {
+			for _, y := range []int{0, r.H - 1} {
+				if y == 0 && !hoverTop || y == r.H-1 && !hoverBottom {
+					continue
+				}
+				for x := 1; x < r.W-1; x++ {
+					setHover(x, y, hBorder)
+				}
+			}
+		}
+		if hoverLeft || hoverRight {
+			for _, x := range []int{0, r.W - 1} {
+				if x == 0 && !hoverLeft || x == r.W-1 && !hoverRight {
+					continue
+				}
+				for y := 1; y < r.H-1; y++ {
+					setHover(x, y, vBorder)
+				}
+			}
+		}
+		// Corners: recolor (never reshape). The base glyph was already painted;
+		// participation of either adjacent border lifts the corner to accent.
+		setCornerHover := func(x, y int, base rune, horiz, vert bool) {
+			if horiz || vert {
+				setHover(x, y, base)
+			}
+		}
+		setCornerHover(0, 0, FirstRune(g.CornerTL, '╭'), hoverTop, hoverLeft)
+		setCornerHover(r.W-1, 0, FirstRune(g.CornerTR, '╮'), hoverTop, hoverRight)
+		setCornerHover(0, r.H-1, FirstRune(g.CornerBL, '╰'), hoverBottom, hoverLeft)
+		setCornerHover(r.W-1, r.H-1, FirstRune(g.CornerBR, '╯'), hoverBottom, hoverRight)
 	}
 	// Title in top border
 	title := f.title

@@ -1,8 +1,11 @@
 # Message-Scoped Undo and Workspace Local History Plan
 
-> Status: IN PROGRESS - architecture and delivery plan; implementation has not
-> started. The immutable conversation/wire message ID is the prerequisite now
-> present in the codebase.
+> Status: LANDED - end-to-end Local History system completed on 2026-09-01:
+> content-defined storage, SQLite timeline/index recovery, recursive watcher and
+> reconciliation, message/child attribution, collision handling, bounded text
+> merge, immutable preview plans, partial/exact restore, safety rollback,
+> retention/GC, settings, timeline/file/message UX, `/undo`, context actions,
+> refresh events, and append-only provider context notification.
 
 ## 1. Product Intent
 
@@ -19,7 +22,7 @@ The user-facing contract is:
 5. Agent edits, shell-command side effects, editor saves, file-tree operations,
    and external filesystem writes are captured by the same workspace history.
 6. Generated and reproducible content is not tracked by default.
-7. The full conversation and provider wire ledger remain immutable. Undo adds a
+7. The full conversation and provider context history remain immutable. Undo adds a
    new event; it never deletes or rewrites chat history and therefore does the
    least possible damage to cache-prefix continuity.
 
@@ -33,6 +36,28 @@ whole-file compressed preimages. `fileio.Editor.WithMessage` already associates
 direct Crude file operations with a message ID, and `UndoMessage` exists.
 
 That is useful migration data, but it is not the target architecture.
+
+The `localhistory/` package provides the target storage/restore foundation:
+
+- `github.com/restic/chunker` v0.5.0 content-defined chunks with SHA-256
+  identities (BSD-2-Clause; small, pure Go, maintained by the restic project)
+- compressed, header-versioned chunk objects and path-independent file objects
+- immutable hash-addressed snapshot manifests and restore plans
+- default derived-directory, `.gitignore`, and `.crudehistoryignore` filtering
+- byte/mode/link snapshots, corruption verification, and partial previews
+- current-state precondition checks between preview and apply
+- staged object validation, a safety snapshot before mutation, automatic
+  rollback on failure, and an `after_restore` snapshot
+- workspace-owned manual capture/preview/apply methods under the external
+  per-workspace `local-history/` directory
+
+The workspace service adds asynchronous baseline capture, recursive fsnotify,
+debounced external snapshots, bounded reconciliation, message scopes, child
+quiescence, conservative concurrent attribution, settings-driven retention,
+and restore suppression. `/undo`, the command palette, user-message context
+actions, and Explorer file history all open the same native preview system.
+Legacy numeric/all undo commands are rejected; session-owned journals are
+read-only compatibility data and no longer receive new entries.
 
 Current limitations:
 
@@ -73,12 +98,12 @@ Current limitations:
 ### 3.3 Cache-safe conversation semantics
 
 - Undo never removes or edits a user message, assistant message, tool result,
-  hidden wire-context entry, or prior cache epoch.
+  provider-control context entry, or prior compacted context generation.
 - The restore result is appended as a new canonical event.
-- If the model needs to know about the restore, a short hidden wire message is
-  appended to the current active epoch.
-- Undo does not force cache-epoch rotation unless the model/tool/settings
-  envelope independently changed.
+- If the model needs to know about the restore, a short context-only event is
+  appended after the accepted provider history.
+- Undo does not force context compaction; the configured per-agent threshold
+  remains the only automatic compaction trigger.
 - Filesystem blobs and manifests never enter model context automatically.
 
 ### 3.4 Restore safety
@@ -225,7 +250,7 @@ Important relationships:
 - One user `message_id` has a before snapshot and zero or more after snapshots.
 - One snapshot can be shared by several labels without duplicating objects.
 - A restore event references both the source snapshot and its safety snapshot.
-- Message attribution is independent from the provider wire epoch.
+- Message attribution is independent from the active context generation.
 
 ## 6. Capture Model
 
@@ -450,7 +475,7 @@ The following are forbidden:
 - removing tool calls/results caused by that message
 - editing canonical snapshots
 - rebuilding earlier provider messages
-- resetting the active cache epoch only because files were restored
+- compacting the active context only because files were restored
 
 After a successful restore, append a small hidden message such as:
 
@@ -467,7 +492,7 @@ only when requested.
 
 ## 11. Migration and Removal Plan
 
-### Phase 0: dependency and format spike
+### Phase 0: dependency and format spike — DONE
 
 - Benchmark and review selected Go dependencies.
 - Freeze versioned object and manifest formats.
@@ -476,7 +501,7 @@ only when requested.
 Exit gate: deterministic snapshot/restore across Linux, macOS, and Windows;
 license and security review recorded.
 
-### Phase 1: content-addressed store
+### Phase 1: content-addressed store — DONE
 
 - Implement chunk/object storage and immutable manifests.
 - Implement Git-compatible ignore resolver.
@@ -486,7 +511,7 @@ license and security review recorded.
 Exit gate: property tests prove snapshot -> mutate -> restore is byte/mode/link
 identical; corrupt objects are detected.
 
-### Phase 2: workspace history service
+### Phase 2: workspace history service — DONE
 
 - Mount service in `workspace/`.
 - Add baseline, watcher, reconciliation, and settings.
@@ -496,7 +521,7 @@ identical; corrupt objects are detected.
 Exit gate: shell-created/deleted/renamed files appear in history; generated
 directories do not.
 
-### Phase 3: message and agent attribution
+### Phase 3: message and agent attribution — DONE
 
 - Use canonical user `message_id` as the root scope.
 - Propagate root message ID to every child.
@@ -506,7 +531,7 @@ directories do not.
 Exit gate: one root message with parallel children produces one reviewable
 change set, with ambiguous paths marked.
 
-### Phase 4: preview and atomic restore
+### Phase 4: preview and atomic restore — DONE
 
 - Add immutable restore plans.
 - Add safety snapshots and rollback-on-failure.
@@ -516,7 +541,7 @@ change set, with ambiguous paths marked.
 Exit gate: injected failure at every apply step leaves the original tree
 recoverable and the store valid.
 
-### Phase 5: product UX
+### Phase 5: product UX — DONE
 
 - Add canonical chat-message hit testing.
 - Add per-user-message context actions.
@@ -527,7 +552,7 @@ recoverable and the store valid.
 Exit gate: keyboard and mouse flows produce the same preview and restore plan;
 completed/resumed sessions retain message associations.
 
-### Phase 6: legacy retirement
+### Phase 6: legacy retirement — LANDED
 
 - Stop writing new JSONL journal entries after the new service is proven.
 - Offer a one-time import of legacy journal preimages as labeled snapshots where
@@ -561,8 +586,8 @@ completed/resumed sessions retain message associations.
 
 ### Cache safety
 
-- provider wire ledger before undo is an exact prefix after undo
-- no cache epoch rotation from restore alone
+- provider context before undo is an exact prefix after undo
+- no context compaction from restore alone
 - original user/tool messages remain byte-identical
 - only one hidden workspace-history event is appended
 

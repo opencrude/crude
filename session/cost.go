@@ -1,6 +1,7 @@
 package session
 
 import (
+	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -128,6 +129,43 @@ func (c *CostAccumulator) Snapshot() CostSnapshot {
 		}
 	}
 	return snap
+}
+
+func (c *CostAccumulator) Restore(snapshot CostSnapshot) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.TotalPromptTokens = snapshot.TotalPromptTokens
+	c.TotalCompletionTokens = snapshot.TotalCompletionTokens
+	c.TotalCachedTokens = snapshot.TotalCachedTokens
+	c.TotalCost = snapshot.TotalCost
+	c.ByModel = make(map[string]*ModelCost, len(snapshot.ByModel))
+	for model, value := range snapshot.ByModel {
+		copy := value
+		c.ByModel[model] = &copy
+	}
+}
+
+func restoreCostAccumulator(db *sql.DB, accumulator *CostAccumulator) error {
+	if db == nil || accumulator == nil {
+		return nil
+	}
+	totals, ok, err := sessiondb.GetLatestCostTotals(db)
+	if err != nil || !ok {
+		return err
+	}
+	snapshot := CostSnapshot{
+		TotalPromptTokens: totals.PromptTokens, TotalCompletionTokens: totals.CompletionTokens,
+		TotalCachedTokens: totals.CachedTokens, TotalCost: totals.TotalCost,
+		ByModel: make(map[string]ModelCost, len(totals.ByModel)),
+	}
+	for model, raw := range totals.ByModel {
+		var value ModelCost
+		if json.Unmarshal(raw, &value) == nil {
+			snapshot.ByModel[model] = value
+		}
+	}
+	accumulator.Restore(snapshot)
+	return nil
 }
 
 // CostSnapshot is a serializable copy of the CostAccumulator state.

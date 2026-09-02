@@ -1,12 +1,13 @@
 package ui
 
 import (
+	"time"
+
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
-	"crude/tui/theme"
 )
 
 // TextField is a single-line text input built on TextEdit.
@@ -30,10 +31,15 @@ type TextField struct {
 	// user interacts. Without it, SetValue (cursor placed at end-of-value)
 	// scrolls a long URL to its tail, hiding the changed part — e.g. a
 	// provider switch looked like "the base URL just has a 1 in it".
-	viewReset bool
-	bg        cell.Color
-	bgSet     bool
-	tokens    *TokenSet
+	viewReset     bool
+	bg            cell.Color
+	bgSet         bool
+	tokens        *TokenSet
+	selecting     bool
+	lastInputTime time.Time
+	lastClickTime time.Time
+	lastClickX    int
+	clickCount    int
 }
 
 // NewTextField creates a single-line field.
@@ -104,6 +110,7 @@ func (t *TextField) SetValue(s string) {
 	t.edit.SetValue(s)
 	t.viewStart = 0
 	t.viewReset = true
+	t.lastInputTime = time.Now()
 }
 
 // Value returns the field value.
@@ -119,7 +126,13 @@ func (t *TextField) SyncEditFrom(ed *TextEdit) {
 }
 
 // Edit exposes the underlying model for advanced callers/tests.
-func (t *TextField) Edit() *TextEdit { return t.edit }
+func (t *TextField) Edit() *TextEdit       { return t.edit }
+func (t *TextField) HasSelection() bool    { return t.edit.HasSelection() }
+func (t *TextField) SelectedText() string  { return t.edit.SelectedText() }
+func (t *TextField) IsSelecting() bool     { return t.selecting }
+func (t *TextField) CancelPointerCapture() { t.selecting = false }
+func (t *TextField) PasteText(text string) { t.edit.InsertRunes(text); t.ensureCursorVisible() }
+func (t *TextField) PasteActive() bool     { return !t.disabled && !t.readOnly }
 
 // ViewStart returns the horizontal viewport offset (visible runes).
 func (t *TextField) ViewStart() int { return t.viewStart }
@@ -132,7 +145,12 @@ func (t *TextField) CursorVisible() bool {
 		return true
 	}
 	cur := t.edit.Cursor()
-	return cur >= t.viewStart && cur < t.viewStart+cw
+	if cur < t.viewStart {
+		return false
+	}
+	runes := t.displayRunes()
+	cur = min(cur, len(runes))
+	return rendering.VisibleWidth(string(runes[t.viewStart:cur])) < cw
 }
 
 // Measure: one row, full available width.
@@ -192,21 +210,16 @@ func (t *TextField) ensureCursorVisible() {
 	if cur < t.viewStart {
 		t.viewStart = cur
 	}
-	if cur >= t.viewStart+cw {
-		// Scroll so the cursor lands on the last visible column. A cursor at
-		// exactly viewStart+cw paints off-screen (Paint only emits columns
-		// [0, cw)), which is why a pasted over-width value showed its head
-		// with no cursor until an arrow key re-laid-out the field.
-		t.viewStart = cur - cw + 1
+	runes := t.displayRunes()
+	cur = min(cur, len(runes))
+	for t.viewStart < cur && rendering.VisibleWidth(string(runes[t.viewStart:cur])) >= cw {
+		t.viewStart++
 	}
 	if t.viewStart < 0 {
 		t.viewStart = 0
 	}
-	// The cursor must stay on-screen: with a value exactly filling (or
-	// overflowing) the field, the viewport may start one column after
-	// len-cw so the end-of-value cursor paints on the last visible column.
-	if maxStart := max(0, t.edit.Len()-cw+1); t.viewStart > maxStart {
-		t.viewStart = maxStart
+	if t.viewStart > len(runes) {
+		t.viewStart = len(runes)
 	}
 }
 
@@ -270,89 +283,53 @@ func (t *TextField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pai
 		if t.tokens != nil {
 			phFG = t.tokens.Color(ColorMuted)
 		}
-		buf.WriteString(x, y, ph, phFG, bg, cell.AttrItalic)
-		// No cursor block over placeholder text: a block here obscures the
-		// first placeholder glyph (e.g. the "F" in "Filter…") and reads as a
-		// highlight. The cursor appears as soon as the user types.
+		buf.WriteString(x, y, rendering.TruncateVisual(ph, cw, ""), phFG, bg, cell.AttrItalic)
+		if ctx.Focused && !t.disabled && t.cursorPaintVisible() {
+			PaintBlockCursor(buf, x, y, fg, bg)
+		}
 		return
 	}
 
 	runes := t.displayRunes()
-	if maxStart := max(0, len(runes)-cw+1); t.viewStart > maxStart {
-		t.viewStart = maxStart
+	if rendering.VisibleWidth(string(runes)) < cw {
+		t.viewStart = 0
+	}
+	if t.viewStart > len(runes) {
+		t.viewStart = len(runes)
 	}
 	selA, selB := t.edit.SelectionRange()
 	selBG := bg
 	if t.tokens != nil {
 		selBG = t.tokens.Color(ColorSelection)
 	}
-	// Visible slice
-	end := t.viewStart + cw
-	if end > len(runes) {
-		end = len(runes)
-	}
-	vis := runes[t.viewStart:end]
 	col := 0
-	for i, rr := range vis {
-		abs := t.viewStart + i
+	pos := t.viewStart
+	for pos < len(runes) && col < cw {
+		cluster, width := rendering.FirstGrapheme(string(runes[pos:]))
+		if cluster == "" || width < 0 || col+width > cw {
+			break
+		}
+		clusterLen := len([]rune(cluster))
 		cellFG, cellBG := fg, bg
-		inSel := abs >= selA && abs < selB && selA != selB
+		inSel := pos < selB && pos+clusterLen > selA && selA != selB
 		if inSel {
 			cellBG = selBG
 		}
-		// Inverse cursor on grapheme under cursor when focused
-		if ctx.Focused && !t.disabled && abs == t.edit.Cursor() && t.edit.Cursor() < t.edit.Len() {
-			// Reverse video: text bg becomes fg, text fg becomes bg.
-			cellFG = bg
-			cellBG = fg
-			if cellFG.IsDefault() {
-				if t.tokens != nil {
-					cellFG = t.tokens.Color(ColorBg)
-				} else {
-					cellFG = NewTokenSet(theme.DefaultDark()).Color(ColorBg)
-				}
-			}
-			if cellBG.IsDefault() {
-				if t.tokens != nil {
-					cellBG = t.tokens.Color(ColorAccent)
-				} else {
-					cellBG = NewTokenSet(theme.DefaultDark()).Color(ColorAccent)
-				}
-			}
-		}
-		buf.Set(x+col, y, cell.NewCell(rr, cellFG, cellBG, 0))
-		col++
-		if col >= cw {
-			break
-		}
+		buf.WriteString(x+col, y, cluster, cellFG, cellBG, 0)
+		col += width
+		pos += clusterLen
 	}
-	// End-of-line cursor
-	if ctx.Focused && !t.disabled && t.edit.Cursor() >= t.edit.Len() {
-		cx := t.edit.Cursor() - t.viewStart
+	if ctx.Focused && !t.disabled && t.cursorPaintVisible() {
+		cur := min(t.edit.Cursor(), len(runes))
+		cx := rendering.VisibleWidth(string(runes[t.viewStart:cur]))
 		if cx >= 0 && cx < cw {
-			t.paintCursor(buf, x+cx, y, bg)
+			PaintBlockCursor(buf, x+cx, y, fg, bg)
 		}
 	}
 }
 
-func (t *TextField) paintCursor(buf *surface.CellBuffer, x, y int, bg cell.Color) {
-	tokens := t.tokens
-	if tokens == nil {
-		tokens = NewTokenSet(theme.DefaultDark())
-	}
-	fg := tokens.Color(ColorAccent)
-	// Block cursor
-	cur := buf.Get(x, y)
-	ch := cur.Char
-	if ch == 0 || ch == ' ' {
-		ch = ' '
-	}
-	// Inverse: accent bg, contrasting fg
-	invFG := bg
-	if invFG.IsDefault() {
-		invFG = tokens.Color(ColorBg)
-	}
-	buf.Set(x, y, cell.NewCell(ch, invFG, fg, 0))
+func (t *TextField) cursorPaintVisible() bool {
+	return time.Since(t.lastInputTime) < 800*time.Millisecond || BlinkOnTime(time.Now())
 }
 
 // Handle implements keyboard and paste editing.
@@ -364,13 +341,18 @@ func (t *TextField) Handle(ctx EventContext, evt Event) EventResult {
 	t.viewReset = false
 	switch evt.Kind {
 	case EventKey:
-		return t.handleKey(evt.Key)
+		result := t.handleKey(evt.Key)
+		if result.Handled {
+			t.lastInputTime = time.Now()
+		}
+		return result
 	case EventCustom:
 		if paste, ok := evt.Custom.(tea.PasteMsg); ok {
 			if t.readOnly {
 				return EventResult{Handled: true}
 			}
 			t.edit.InsertRunes(paste.Content)
+			t.lastInputTime = time.Now()
 			t.ensureCursorVisible()
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		}
@@ -378,7 +360,6 @@ func (t *TextField) Handle(ctx EventContext, evt Event) EventResult {
 		if evt.MouseClick.Button != tea.MouseLeft {
 			return EventResult{}
 		}
-		// Position cursor from local X
 		lx := ctx.LocalX - t.contentX()
 		if t.promptAtEnd && t.promptWidth() > 0 && ctx.LocalX >= t.Bounds().W-t.promptWidth() {
 			lx = t.contentWidth()
@@ -386,20 +367,108 @@ func (t *TextField) Handle(ctx EventContext, evt Event) EventResult {
 		if lx < 0 {
 			lx = 0
 		}
-		idx := t.viewStart + lx
-		if idx > t.edit.Len() {
-			idx = t.edit.Len()
+		idx := t.indexAtContentX(lx)
+		now := time.Now()
+		if now.Sub(t.lastClickTime) <= 500*time.Millisecond && intAbs(ctx.LocalX-t.lastClickX) <= 1 {
+			t.clickCount++
+		} else {
+			t.clickCount = 1
 		}
-		t.edit.SetCursor(idx, false)
+		t.lastClickTime, t.lastClickX = now, ctx.LocalX
+		switch {
+		case t.clickCount >= 3:
+			t.edit.SelectAll()
+			t.clickCount = 0
+		case t.clickCount == 2:
+			t.edit.SelectWordAt(idx)
+		case evt.MouseClick.Mod.Contains(tea.ModShift):
+			t.edit.SetCursor(idx, true)
+		default:
+			t.edit.SetCursor(idx, false)
+			t.edit.SetCursor(idx, true)
+		}
+		t.selecting = true
+		t.lastInputTime = time.Now()
 		t.ensureCursorVisible()
-		return EventResult{Handled: true, Invalidate: InvalidatePaint | InvalidateFocus}
+		return EventResult{Handled: true, Action: &Action{ID: "ui.capture"}, Invalidate: InvalidatePaint | InvalidateFocus}
+	case EventMouseMotion:
+		if !t.selecting {
+			return EventResult{}
+		}
+		lx := ctx.LocalX - t.contentX()
+		if lx < 0 && t.viewStart > 0 {
+			t.viewStart--
+			lx = 0
+		} else if lx >= t.contentWidth() && t.viewStart < t.edit.Len() {
+			t.viewStart++
+			lx = max(0, t.contentWidth()-1)
+		}
+		t.edit.SetCursor(t.indexAtContentX(lx), true)
+		t.ensureCursorVisible()
+		return EventResult{Handled: true, Invalidate: InvalidatePaint}
+	case EventMouseRelease:
+		if !t.selecting {
+			return EventResult{}
+		}
+		t.selecting = false
+		return EventResult{Handled: true, Invalidate: InvalidatePaint}
 	}
 	return EventResult{}
 }
 
+func (t *TextField) indexAtContentX(x int) int {
+	x = max(0, x)
+	runes := t.displayRunes()
+	if t.viewStart >= len(runes) {
+		return t.edit.Len()
+	}
+	return min(t.edit.Len(), t.viewStart+rendering.ColToRuneIdx(runes[t.viewStart:], x))
+}
+
 func (t *TextField) handleKey(m tea.KeyPressMsg) EventResult {
 	extend := m.Mod.Contains(tea.ModShift)
-	ctrl := m.Mod.Contains(tea.ModCtrl)
+	primary := m.Mod.Contains(tea.ModCtrl) || m.Mod.Contains(tea.ModSuper)
+	word := primary || m.Mod.Contains(tea.ModAlt)
+
+	if primary {
+		switch m.Code {
+		case 'c':
+			if selected := t.edit.SelectedText(); selected != "" {
+				return EventResult{Handled: true, Cmd: rendering.CopyToClipboardCmd(selected)}
+			}
+			return EventResult{}
+		case 'x':
+			if t.readOnly || !t.edit.HasSelection() {
+				return EventResult{Handled: true}
+			}
+			selected := t.edit.SelectedText()
+			t.edit.DeleteSelection()
+			t.ensureCursorVisible()
+			return EventResult{Handled: true, Cmd: rendering.CopyToClipboardCmd(selected), Invalidate: InvalidatePaint}
+		case 'v':
+			if t.readOnly {
+				return EventResult{Handled: true}
+			}
+			return EventResult{Handled: true, Action: &Action{ID: ActionTextPaste, Payload: ClipboardPasteTarget(t)}}
+		case 'z':
+			if t.readOnly {
+				return EventResult{Handled: true}
+			}
+			if extend {
+				t.edit.Redo()
+			} else {
+				t.edit.Undo()
+			}
+			t.ensureCursorVisible()
+			return EventResult{Handled: true, Invalidate: InvalidatePaint}
+		case 'y':
+			if !t.readOnly {
+				t.edit.Redo()
+				t.ensureCursorVisible()
+			}
+			return EventResult{Handled: true, Invalidate: InvalidatePaint}
+		}
+	}
 
 	switch m.Code {
 	case tea.KeyEnter:
@@ -418,13 +487,13 @@ func (t *TextField) handleKey(m tea.KeyPressMsg) EventResult {
 		}
 		return EventResult{}
 	case tea.KeyLeft:
-		if ctrl {
+		if word {
 			t.edit.MoveWordLeft(extend)
 		} else {
 			t.edit.MoveLeft(extend)
 		}
 	case tea.KeyRight:
-		if ctrl {
+		if word {
 			t.edit.MoveWordRight(extend)
 		} else {
 			t.edit.MoveRight(extend)
@@ -437,7 +506,7 @@ func (t *TextField) handleKey(m tea.KeyPressMsg) EventResult {
 		if t.readOnly {
 			return EventResult{Handled: true}
 		}
-		if ctrl {
+		if word {
 			t.edit.DeleteWordBack()
 		} else {
 			t.edit.Backspace()
@@ -446,9 +515,13 @@ func (t *TextField) handleKey(m tea.KeyPressMsg) EventResult {
 		if t.readOnly {
 			return EventResult{Handled: true}
 		}
-		t.edit.Delete()
+		if word {
+			t.edit.DeleteWordForward()
+		} else {
+			t.edit.Delete()
+		}
 	default:
-		if ctrl {
+		if primary {
 			switch m.Code {
 			case 'a':
 				t.edit.SelectAll()

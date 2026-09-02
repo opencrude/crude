@@ -13,11 +13,12 @@ import (
 )
 
 type Editor struct {
-	sessionID string
-	msgID     string
-	journal   *Journal
-	policy    *pathPolicy
-	logger    *logger.Logger
+	sessionID     string
+	msgID         string
+	journal       *Journal
+	policy        *pathPolicy
+	logger        *logger.Logger
+	journalWrites bool
 }
 
 func NewEditorWithLogger(sessionID string, lg *logger.Logger) (*Editor, error) {
@@ -26,10 +27,11 @@ func NewEditorWithLogger(sessionID string, lg *logger.Logger) (*Editor, error) {
 		return nil, fmt.Errorf("editor: open journal: %w", err)
 	}
 	return &Editor{
-		sessionID: sessionID,
-		journal:   j,
-		policy:    defaultPathPolicy(),
-		logger:    lg,
+		sessionID:     sessionID,
+		journal:       j,
+		policy:        defaultPathPolicy(),
+		logger:        lg,
+		journalWrites: true,
 	}, nil
 }
 
@@ -39,10 +41,11 @@ func NewEditorWithSessionDir(sessionID, sessionsRoot string, lg *logger.Logger) 
 		return nil, fmt.Errorf("editor: open journal: %w", err)
 	}
 	return &Editor{
-		sessionID: sessionID,
-		journal:   j,
-		policy:    defaultPathPolicy(),
-		logger:    lg,
+		sessionID:     sessionID,
+		journal:       j,
+		policy:        defaultPathPolicy(),
+		logger:        lg,
+		journalWrites: true,
 	}, nil
 }
 
@@ -64,12 +67,21 @@ func GenerateSessionID() string {
 func (e *Editor) WithMessage(msgID string) *Editor {
 	e.logger.Debug("EDITOR", "with_message", "msg_id", msgID)
 	return &Editor{
-		sessionID: e.sessionID,
-		msgID:     msgID,
-		journal:   e.journal,
-		policy:    e.policy,
-		logger:    e.logger,
+		sessionID:     e.sessionID,
+		msgID:         msgID,
+		journal:       e.journal,
+		policy:        e.policy,
+		logger:        e.logger,
+		journalWrites: e.journalWrites,
 	}
+}
+
+func (e *Editor) SetLegacyJournalWrites(enabled bool) { e.journalWrites = enabled }
+func (e *Editor) recordJournal(entry JournalEntry) error {
+	if !e.journalWrites {
+		return nil
+	}
+	return e.journal.record(entry)
 }
 
 func (e *Editor) Close() error {
@@ -141,7 +153,7 @@ func (e *Editor) Write(path string, content string) error {
 			return fmt.Errorf("write %s: %w", path, err)
 		}
 		entry := buildCreateEntry(e.sessionID, e.msgID, opID, abs, newBytes)
-		if err := e.journal.record(entry); err != nil {
+		if err := e.recordJournal(entry); err != nil {
 			return fmt.Errorf("write %s: journal: %w", path, err)
 		}
 		start := time.Now()
@@ -165,7 +177,7 @@ func (e *Editor) Write(path string, content string) error {
 	if err != nil {
 		return fmt.Errorf("write %s: build journal entry: %w", path, err)
 	}
-	if err := e.journal.record(entry); err != nil {
+	if err := e.recordJournal(entry); err != nil {
 		return fmt.Errorf("write %s: journal: %w", path, err)
 	}
 	start := time.Now()
@@ -210,7 +222,7 @@ func (e *Editor) Patch(path string, ops []SearchReplace) error {
 		e.logger.Error("FILEIO", "patch_journal_failed", "path", abs, "error", err.Error())
 		return fmt.Errorf("patch %s: build journal entry: %w", path, err)
 	}
-	if err := e.journal.record(entry); err != nil {
+	if err := e.recordJournal(entry); err != nil {
 		e.logger.Error("FILEIO", "patch_journal_record_failed", "path", abs, "error", err.Error())
 		return fmt.Errorf("patch %s: journal: %w", path, err)
 	}
@@ -244,7 +256,7 @@ func (e *Editor) Delete(path string) error {
 	if err != nil {
 		return fmt.Errorf("delete %s: build journal entry: %w", path, err)
 	}
-	if err := e.journal.record(entry); err != nil {
+	if err := e.recordJournal(entry); err != nil {
 		return fmt.Errorf("delete %s: journal: %w", path, err)
 	}
 	start := time.Now()
@@ -288,7 +300,7 @@ func (e *Editor) Move(src, dst string) error {
 	if err != nil {
 		return fmt.Errorf("move %s → %s: build journal entry: %w", src, dst, err)
 	}
-	if err := e.journal.record(entry); err != nil {
+	if err := e.recordJournal(entry); err != nil {
 		return fmt.Errorf("move %s → %s: journal: %w", src, dst, err)
 	}
 	start := time.Now()
@@ -329,7 +341,7 @@ func (e *Editor) Copy(src, dst string) error {
 
 	opID := newOpID()
 	entry := buildCopyEntry(e.sessionID, e.msgID, opID, dstAbs, data)
-	if err := e.journal.record(entry); err != nil {
+	if err := e.recordJournal(entry); err != nil {
 		return fmt.Errorf("copy %s → %s: journal: %w", src, dst, err)
 	}
 	return writeAtomic(dstAbs, data, 0644, e.logger)

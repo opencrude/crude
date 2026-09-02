@@ -177,6 +177,17 @@ func TestMergeCategoryConfig(t *testing.T) {
 	}
 }
 
+func TestMergeCategoryConfigAllowsDisablingAutomaticCompaction(t *testing.T) {
+	baseValue, disabled := 85, 0
+	merged := mergeCategoryConfig(
+		CategoryConfig{ContextCompactionPercent: &baseValue},
+		CategoryConfig{ContextCompactionPercent: &disabled},
+	)
+	if merged.ContextCompactionPercent == nil || *merged.ContextCompactionPercent != 0 {
+		t.Fatalf("compaction override = %#v", merged.ContextCompactionPercent)
+	}
+}
+
 func TestSetCategoryOverride(t *testing.T) {
 	base := DefaultConfig()
 	rp := NewRuntimeProfile(base)

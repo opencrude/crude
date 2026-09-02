@@ -36,11 +36,25 @@ func TestTextAreaFieldHeightSpansRows(t *testing.T) {
 }
 
 func TestTextAreaFieldPaintsBelowLabel(t *testing.T) {
-	form, _ := newTextAreaForm(t)
+	form, field := newTextAreaForm(t)
+	field.Area().SetValue("x")
 	buf := surface.NewCellBuffer(60, 20)
 	form.Paint(buf, 0, 0, PaintContext{Focused: true})
-	// The label paints on the field's first row and the editor occupies the
-	// rows below it; nothing else needs to hold for the height contract.
+	fr := field.Bounds()
+	editorX := fr.X + field.labelIndent() + 1
+	editorY := fr.Y + 1
+	if got := buf.Get(editorX, editorY).Char; got != 'x' {
+		t.Fatalf("textarea content row=%q want x at (%d,%d)", string(got), editorX, editorY)
+	}
+	descriptionY := fr.Y + 1 + field.areaRows()
+	insideDescription := buf.Get(editorX, descriptionY)
+	farDescription := buf.Get(fr.X+fr.W-1, descriptionY)
+	if !insideDescription.BG.Equal(farDescription.BG) {
+		t.Fatalf("textarea fill leaked into description row: inside=%v far=%v", insideDescription.BG, farDescription.BG)
+	}
+	if got := rowText(buf, descriptionY); !strings.Contains(got, "Raw JSON object") {
+		t.Fatalf("description row was overwritten: %q", got)
+	}
 }
 
 func TestTextAreaEnterInsertsNewlineInsteadOfAdvancing(t *testing.T) {
@@ -96,5 +110,47 @@ func TestTextAreaSyncReflectsProgrammaticValue(t *testing.T) {
 	}
 	if !strings.Contains(field.FieldState().Value.String(), `"k"`) {
 		t.Fatalf("field value = %q", field.FieldState().Value.String())
+	}
+}
+
+func TestFormTextAreaDragUsesHostCaptureAndPersistsSelection(t *testing.T) {
+	form, field := newTextAreaForm(t)
+	form.model.SetValue("body", StringValue("alpha beta"))
+	form.SetForm(form.model, "Form", "Edit")
+	host := NewHost(theme.DefaultDark(), form)
+	host.Resize(60, 20)
+	host.Layout()
+	fr := field.Bounds()
+	ar := field.Area().Bounds()
+	x, y := fr.X+ar.X, fr.Y+ar.Y
+	host.Handle(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
+	host.Handle(tea.MouseMotionMsg{X: x + 5, Y: y, Button: tea.MouseLeft})
+	if !host.HasPointerCapture() || !field.Area().HasActiveSelection() {
+		owner, _, _ := host.CapturedPointer()
+		t.Fatalf("drag owner=%q capture=%v selecting=%v range=%v selection=%q", owner, host.HasPointerCapture(), field.Area().IsSelecting(), func() [2]int { a, b := field.Area().SelectionRange(); return [2]int{a, b} }(), field.Area().SelectedText())
+	}
+	host.Handle(tea.MouseReleaseMsg{X: x + 5, Y: y, Button: tea.MouseLeft})
+	if host.HasPointerCapture() || field.Area().SelectedText() == "" {
+		t.Fatalf("release capture=%v selection=%q", host.HasPointerCapture(), field.Area().SelectedText())
+	}
+	buf := surface.NewCellBuffer(60, 20)
+	host.Paint(buf)
+	selectedBG := NewTokenSet(theme.DefaultDark()).Color(ColorSelection)
+	if got := buf.Get(x, y).BG; !got.Equal(selectedBG) {
+		t.Fatalf("persisted selection bg=%v want %v", got, selectedBG)
+	}
+}
+
+func TestFormTextAreaOwnsPageNavigation(t *testing.T) {
+	form, field := newTextAreaForm(t)
+	form.model.SetValue("body", StringValue("one\ntwo\nthree\nfour\nfive\nsix"))
+	form.SetForm(form.model, "Form", "Edit")
+	field.Area().SetCursorFlat(0)
+	form.Handle(EventContext{}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyPgDown}))
+	if field.Area().CurLine() == 0 {
+		t.Fatal("PageDown scrolled the form instead of moving the textarea caret")
+	}
+	if form.fields[form.focused] != field {
+		t.Fatal("PageDown moved focus out of textarea")
 	}
 }

@@ -340,21 +340,48 @@ func (h *Host) HitTest(x, y int) ComponentID {
 		return RootID
 	}
 	var best ComponentID
+	bestPriority := -1
 	bestDepth := -1
 	bestArea := int(^uint(0) >> 1)
 	for id, r := range h.screen {
-		if !r.Contains(x, y) {
+		hitRect := r
+		priority := 0
+		if c := h.registry[id]; c != nil {
+			if provider, ok := c.(PointerHitBoundsProvider); ok {
+				priority = 1
+				hitRect = provider.PointerHitBounds(r)
+				if parentID, ok := h.parent[id]; ok {
+					hitRect = intersectRect(hitRect, h.screen[parentID])
+				} else {
+					hitRect = intersectRect(hitRect, Rect{W: h.width, H: h.height})
+				}
+			}
+		}
+		if !hitRect.Contains(x, y) {
 			continue
 		}
 		d := h.depth[id]
-		area := r.W * r.H
-		if d > bestDepth || (d == bestDepth && area < bestArea) {
+		area := hitRect.W * hitRect.H
+		if priority > bestPriority ||
+			(priority == bestPriority && (d > bestDepth || (d == bestDepth && area < bestArea))) {
+			bestPriority = priority
 			bestDepth = d
 			bestArea = area
 			best = id
 		}
 	}
 	return best
+}
+
+func intersectRect(a, b Rect) Rect {
+	x0 := max(a.X, b.X)
+	y0 := max(a.Y, b.Y)
+	x1 := min(a.X+a.W, b.X+b.W)
+	y1 := min(a.Y+a.H, b.Y+b.H)
+	if x1 <= x0 || y1 <= y0 {
+		return Rect{}
+	}
+	return Rect{X: x0, Y: y0, W: x1 - x0, H: y1 - y0}
 }
 
 // ScreenRect returns the screen-absolute bounds of a registered component

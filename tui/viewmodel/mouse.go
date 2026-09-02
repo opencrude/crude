@@ -9,14 +9,13 @@ import (
 
 	"crude/tui/filetree"
 	"crude/tui/rendering"
-	"crude/tui/screens/shelleditor"
 	"crude/tui/screens/shellinput"
 	"crude/tui/ui"
 	"crude/tui/wm"
 )
 
 // shellRegion classifies a screen point for VIEWMODEL POLICY only (focus
-// stack updates, editor legacy routing, status row, context menus). Actual
+// stack updates, editor focus policy, status row, context menus). Actual
 // pointer targeting happens in the root Host hit tree; these regions never
 // translate coordinates. Sidebar divider drag is Host pointer capture on
 // ui.SplitDivider, not a viewmodel-owned resize mode.
@@ -128,21 +127,6 @@ func (m *App) blockingDeckShieldsPointer(x, y int, preserveDeckCapture bool) boo
 		}
 	}
 	return !m.sessionDeckRect.Contains(x, y)
-}
-
-func (m *App) routeEditorMouse(msg tea.Msg) tea.Cmd {
-	if m.rootHost == nil {
-		return nil
-	}
-	r, ok := m.rootHost.ScreenRect(shelleditor.ScreenID)
-	if !ok || r.Empty() {
-		return nil
-	}
-	// The editor pane origin comes from the Host's hit tree (one geometry
-	// source); the editor's own PadL is the model-internal content offset
-	// painted by the shelleditor screen.
-	translated := translateMouseDelta(msg, -r.X-m.EditorState.Editor.PadL, -r.Y)
-	return m.EditorState.Editor.HandleEvent(translated)
 }
 
 // handleShellPointer routes one pointer message through the root Host.
@@ -285,7 +269,7 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 
 	case regionEditor:
 		m.unfocus()
-		cmd := m.routeEditorMouse(msg)
+		cmd := m.handleShellPointer(msg)
 		m.updateDiagHoverPopup(mouse.X, mouse.Y)
 		return m, cmd
 
@@ -385,8 +369,7 @@ func (m *App) dispatchMouseWheel(msg tea.MouseWheelMsg) (tea.Model, tea.Cmd) {
 		return m, m.handleShellPointer(msg)
 
 	case regionEditor:
-		m.EditorState.Editor.HandleEvent(msg)
-		return m, nil
+		return m, m.handleShellPointer(msg)
 
 	case regionSessionDeck:
 		return m, m.handleShellPointer(msg)
@@ -456,6 +439,9 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 				continue
 			}
 			if fw.ContainsPoint(mouse.X, mouse.Y) {
+				if m.chatScreen != nil {
+					m.chatScreen.ClearPaneGutterHover()
+				}
 				m.handlePopupContentHover(fw, mouse.X, mouse.Y, mouse.Button)
 				return m, tea.Batch(cmds...)
 			}
@@ -466,6 +452,9 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	}
 
 	region := m.classifyShellRegion(mouse.X, mouse.Y, true)
+	if region != regionChat && m.chatScreen != nil {
+		m.chatScreen.ClearPaneGutterHover()
+	}
 
 	// Launcher: when the launcher screen is active (no agents, no
 	// editor), route motion only inside the launcher or the file tree.
@@ -503,15 +492,7 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 
 	case regionEditor:
 		if m.isEditorActive() {
-			// Also route the motion through the root host so its hover
-			// state follows the pointer into the editor: without this,
-			// sidebar rows / rail icons kept their hover tint after the
-			// pointer left them (shelleditor itself is input-no-op, so
-			// this is hover-only bookkeeping).
-			if m.rootHost != nil {
-				m.rootHost.Handle(msg)
-			}
-			cmd := m.routeEditorMouse(msg)
+			cmd := m.handleShellPointer(msg)
 			m.updateDiagHoverPopup(mouse.X, mouse.Y)
 			return m, cmd
 		}
@@ -583,7 +564,7 @@ func (m *App) dispatchMouseRelease(msg tea.MouseReleaseMsg) (tea.Model, tea.Cmd)
 		return m, m.handleShellPointer(msg)
 
 	case regionEditor:
-		cmd := m.routeEditorMouse(msg)
+		cmd := m.handleShellPointer(msg)
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}

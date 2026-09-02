@@ -2,6 +2,7 @@ package compositor
 
 import (
 	"crude/tui/cell"
+	"crude/tui/perf"
 	"crude/tui/surface"
 )
 
@@ -136,6 +137,7 @@ func (c *Compositor) Present() string {
 	var output string
 	if c.damage.HasDamage() && c.width > 0 && c.height > 0 {
 		output = GenerateANSI(c.back)
+		perf.MarkANSIFrame(c.width * c.height)
 	}
 
 	// Swap buffers: front becomes the just-presented frame, back gets recycled.

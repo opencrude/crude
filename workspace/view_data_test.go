@@ -61,3 +61,15 @@ func TestStatusViewExcludesTerminalSubAgentsFromIdlePopulation(t *testing.T) {
 		t.Fatalf("terminal child leaked into status population: %#v", view)
 	}
 }
+
+func TestStatusViewKeepsCompletedAgentSafetyAttentionVisible(t *testing.T) {
+	manager := NewAgentManager()
+	state := NewAgentState("child", nil, nil)
+	state.Completed = true
+	state.SafetyAlert = "Blocked disk write"
+	manager.AddOrchestrator("child", state)
+	view := (&Workspace{AgentMgr: manager}).StatusView()
+	if view.SafetyAttentionCount != 1 || view.SafetyAttention != "Blocked disk write" {
+		t.Fatalf("safety attention = %#v", view)
+	}
+}

@@ -386,7 +386,7 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	}
 	bodyH := max(1, r.H-chrome)
 	railW := s.railWidth(r.W)
-	scroll := s.railScroll != nil && s.railScroll.Needed()
+	scroll := s.railScroll != nil && s.railScroll.NeededForViewport(bodyH)
 	railContentW := railW
 	if scroll {
 		railContentW = max(1, railW-1)

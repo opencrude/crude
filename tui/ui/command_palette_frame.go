@@ -48,6 +48,9 @@ func BuildCommandPaletteFrame(th *theme.Theme, spec CommandPaletteSpec) *Compone
 	search.SetPromptPlacement(PromptEnd)
 	search.SetPlaceholder("search commands")
 	search.SetSubmitAction(CPSubmitSearch)
+	// Opening the palette is input activity: keep the focused cursor visible
+	// immediately instead of inheriting an arbitrary wall-clock blink phase.
+	search.SetValue("")
 
 	list := NewList(CPList, tokens)
 	list.SetActivateAction(CPActivate)

@@ -10,6 +10,7 @@ func (m *App) syncWorkspaceStatusView() {
 	}
 	view := m.StatusView()
 	m.StatusBar.SetCurrentAgent(view.CurrentAgentID)
+	m.StatusBar.SetSafetyAttention(view.SafetyAttention, view.SafetyAttentionCount)
 	m.StatusBar.UpdateUsage(
 		view.Usage.Prompt,
 		view.Usage.Completion,

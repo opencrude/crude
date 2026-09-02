@@ -410,7 +410,7 @@ func TestWorkspacePaneReservesOnlyFinalColumnForScrollbar(t *testing.T) {
 	}
 	buf.Clear()
 	h.Paint(buf)
-	if ch := buf.Get(pane.Scrollbar.X, s.list.Bounds().Y).Char; ch != '░' && ch != '█' {
+	if ch := buf.Get(pane.Scrollbar.X, s.list.Bounds().Y).Char; ch != '│' && ch != '┃' && ch != '█' {
 		t.Fatalf("scrollbar did not paint in final pane column: %q", ch)
 	}
 }

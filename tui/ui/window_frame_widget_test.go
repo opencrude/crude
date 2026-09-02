@@ -128,6 +128,94 @@ func TestWindowFrameWidgetHoverEdgeHighlightsBorder(t *testing.T) {
 	}
 }
 
+// Regression: hovering a corner cell focuses TWO adjacent borders at once
+// (FloatingWindow.HitTestEdge reports Edge*Corner). The corner-hover paint
+// used to repaint the whole top/bottom row and left/right column with
+// straight ─/│ glyphs, flattening the far corners of those runs into │ or ─.
+// Corner cells must be recolored only — glyphs stay rounded, and only the
+// corners adjacent to a hovered border lift to the accent.
+func TestWindowFrameCornerHoverKeepsCurveGlyphs(t *testing.T) {
+	th := theme.DefaultDark()
+	body := &testFrameBody{Base: NewBase("body")}
+	framed := NewWindowFrameWidget(
+		th,
+		"frame",
+		FrameDialog,
+		"", // no title/close chrome between the pointer and row-0 inspection
+		body,
+		nil,
+		false,
+		20,
+		8,
+	)
+	tokens := NewTokenSet(th)
+	accent := tokens.Color(ColorAccent)
+
+	type corner struct {
+		x, y int
+		ch   rune
+	}
+	corners := []corner{{0, 0, '╭'}, {19, 0, '╮'}, {0, 7, '╰'}, {19, 7, '╯'}}
+	edgeMids := []corner{{10, 0, '─'}, {19, 4, '│'}, {10, 7, '─'}, {0, 4, '│'}} // T R B L order
+
+	cases := []struct {
+		edge         wm.Edge
+		glyphCorners []int // corner cells expected accent (adjacent to hovered borders)
+		runMids      []int // edge-mid cells expected accent (the hovered runs)
+	}{
+		{wm.EdgeTopLeft, []int{0, 1, 2}, []int{0, 3}},
+		{wm.EdgeTopRight, []int{0, 1, 3}, []int{0, 1}},
+		{wm.EdgeBottomLeft, []int{0, 2, 3}, []int{2, 3}},
+		{wm.EdgeBottomRight, []int{1, 2, 3}, []int{1, 2}},
+	}
+
+	for _, tc := range cases {
+		framed.SetHoverEdge(tc.edge)
+		surf := surface.NewSurface("window", 20, 8, cell.TransparentBlank())
+		framed.Render(surf, &wm.RenderContext{Theme: th, Focused: true})
+		buf := surf.Buffer()
+
+		// Every corner keeps its rounded glyph (never reshaped to ─ or │).
+		for _, c := range corners {
+			if got := buf.Get(c.x, c.y).Char; got != c.ch {
+				t.Fatalf("%v corner (%d,%d) glyph=%q, want %q", tc.edge, c.x, c.y, got, c.ch)
+			}
+		}
+
+		lifted := map[int]bool{}
+		for _, i := range tc.glyphCorners {
+			lifted[i] = true
+			if got := buf.Get(corners[i].x, corners[i].y).FG; got != accent {
+				t.Fatalf("%v adjacent corner (%d,%d) FG=%v, want accent", tc.edge, corners[i].x, corners[i].y, got)
+			}
+		}
+		for i, c := range corners {
+			if lifted[i] {
+				continue
+			}
+			if got := buf.Get(c.x, c.y).FG; got == accent {
+				t.Fatalf("%v opposite corner (%d,%d) FG=%v, must stay non-accent", tc.edge, c.x, c.y, got)
+			}
+		}
+
+		hoverRuns := map[int]bool{}
+		for _, i := range tc.runMids {
+			hoverRuns[i] = true
+			if got := buf.Get(edgeMids[i].x, edgeMids[i].y).FG; got != accent {
+				t.Fatalf("%v run cell (%d,%d) FG=%v, want accent", tc.edge, edgeMids[i].x, edgeMids[i].y, got)
+			}
+		}
+		for i, c := range edgeMids {
+			if hoverRuns[i] {
+				continue
+			}
+			if got := buf.Get(c.x, c.y).FG; got == accent {
+				t.Fatalf("%v non-hovered run cell (%d,%d) FG=%v, must stay non-accent", tc.edge, c.x, c.y, got)
+			}
+		}
+	}
+}
+
 func TestWindowFrameWidgetTranslatesLegacyPointerToContent(t *testing.T) {
 	th := theme.DefaultDark()
 	body := &testFrameBody{Base: NewBase("body")}

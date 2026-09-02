@@ -5,6 +5,20 @@ import (
 	"unicode/utf8"
 )
 
+const ActionTextPaste = "input.paste"
+
+type ClipboardPasteTarget interface {
+	PasteText(string)
+	PasteActive() bool
+}
+
+func intAbs(v int) int {
+	if v < 0 {
+		return -v
+	}
+	return v
+}
+
 // TextEdit is the shared grapheme/rune-safe editing model for all non-document
 // text inputs (TextField, SearchField, FilterField, PromptField, form fields).
 //
@@ -13,6 +27,15 @@ type TextEdit struct {
 	runes     []rune
 	cursor    int // rune index [0, len]
 	selAnchor int // -1 = no selection; otherwise selection is [min,max) with cursor
+	selActive bool
+	undo      []textEditSnapshot
+	redo      []textEditSnapshot
+}
+
+type textEditSnapshot struct {
+	runes     []rune
+	cursor    int
+	selAnchor int
 	selActive bool
 }
 
@@ -26,6 +49,8 @@ func (e *TextEdit) SetValue(s string) {
 	e.runes = []rune(s)
 	e.cursor = len(e.runes)
 	e.ClearSelection()
+	e.undo = nil
+	e.redo = nil
 }
 
 // Value returns the current text.
@@ -94,16 +119,26 @@ func (e *TextEdit) SelectedText() string {
 	return string(e.runes[a:b])
 }
 
+func (e *TextEdit) DeleteSelection() bool {
+	if !e.HasSelection() {
+		return false
+	}
+	e.recordEdit()
+	e.deleteSelection()
+	return true
+}
+
 // Insert inserts s at the cursor, replacing any selection.
 func (e *TextEdit) Insert(s string) {
-	if e.HasSelection() {
-		e.deleteSelection()
-	}
 	r := []rune(s)
 	// filter non-printable except newline/tab if present — single-line callers
 	// should strip newlines before insert.
 	if len(r) == 0 {
 		return
+	}
+	e.recordEdit()
+	if e.HasSelection() {
+		e.deleteSelection()
 	}
 	out := make([]rune, 0, len(e.runes)+len(r))
 	out = append(out, e.runes[:e.cursor]...)
@@ -146,12 +181,14 @@ func (e *TextEdit) InsertRunes(s string) {
 // Backspace deletes before cursor or the selection.
 func (e *TextEdit) Backspace() {
 	if e.HasSelection() {
+		e.recordEdit()
 		e.deleteSelection()
 		return
 	}
 	if e.cursor == 0 {
 		return
 	}
+	e.recordEdit()
 	e.runes = append(e.runes[:e.cursor-1], e.runes[e.cursor:]...)
 	e.cursor--
 }
@@ -159,12 +196,14 @@ func (e *TextEdit) Backspace() {
 // Delete deletes after cursor or the selection.
 func (e *TextEdit) Delete() {
 	if e.HasSelection() {
+		e.recordEdit()
 		e.deleteSelection()
 		return
 	}
 	if e.cursor >= len(e.runes) {
 		return
 	}
+	e.recordEdit()
 	e.runes = append(e.runes[:e.cursor], e.runes[e.cursor+1:]...)
 }
 
@@ -237,9 +276,14 @@ func (e *TextEdit) SelectAll() {
 // DeleteToLineStart deletes from line start to cursor (Ctrl+U).
 func (e *TextEdit) DeleteToLineStart() {
 	if e.HasSelection() {
+		e.recordEdit()
 		e.deleteSelection()
 		return
 	}
+	if e.cursor == 0 {
+		return
+	}
+	e.recordEdit()
 	e.runes = e.runes[e.cursor:]
 	e.cursor = 0
 }
@@ -247,26 +291,125 @@ func (e *TextEdit) DeleteToLineStart() {
 // DeleteToLineEnd deletes from cursor to end (Ctrl+K).
 func (e *TextEdit) DeleteToLineEnd() {
 	if e.HasSelection() {
+		e.recordEdit()
 		e.deleteSelection()
 		return
 	}
+	if e.cursor >= len(e.runes) {
+		return
+	}
+	e.recordEdit()
 	e.runes = e.runes[:e.cursor]
 }
 
 // DeleteWordBack deletes previous word (Ctrl+W).
 func (e *TextEdit) DeleteWordBack() {
 	if e.HasSelection() {
+		e.recordEdit()
 		e.deleteSelection()
 		return
 	}
 	if e.cursor == 0 {
 		return
 	}
+	e.recordEdit()
 	end := e.cursor
 	e.MoveWordLeft(false)
 	start := e.cursor
 	e.runes = append(e.runes[:start], e.runes[end:]...)
 	e.cursor = start
+}
+
+// DeleteWordForward deletes through the next word boundary.
+func (e *TextEdit) DeleteWordForward() {
+	if e.HasSelection() {
+		e.recordEdit()
+		e.deleteSelection()
+		return
+	}
+	if e.cursor >= len(e.runes) {
+		return
+	}
+	e.recordEdit()
+	start := e.cursor
+	i := start
+	for i < len(e.runes) && unicode.IsSpace(e.runes[i]) {
+		i++
+	}
+	if i < len(e.runes) {
+		class := runeClass(e.runes[i])
+		for i < len(e.runes) && runeClass(e.runes[i]) == class {
+			i++
+		}
+	}
+	e.runes = append(e.runes[:start], e.runes[i:]...)
+}
+
+// SelectWordAt selects the word or punctuation run containing i.
+func (e *TextEdit) SelectWordAt(i int) {
+	if len(e.runes) == 0 {
+		e.SetCursor(0, false)
+		return
+	}
+	i = min(max(0, i), len(e.runes)-1)
+	class := runeClass(e.runes[i])
+	start, end := i, i+1
+	for start > 0 && runeClass(e.runes[start-1]) == class {
+		start--
+	}
+	for end < len(e.runes) && runeClass(e.runes[end]) == class {
+		end++
+	}
+	e.selAnchor, e.cursor, e.selActive = start, end, true
+}
+
+func runeClass(r rune) int {
+	if unicode.IsSpace(r) {
+		return 0
+	}
+	if unicode.IsLetter(r) || unicode.IsDigit(r) || r == '_' {
+		return 1
+	}
+	return 2
+}
+
+func (e *TextEdit) snapshot() textEditSnapshot {
+	return textEditSnapshot{runes: append([]rune(nil), e.runes...), cursor: e.cursor, selAnchor: e.selAnchor, selActive: e.selActive}
+}
+
+func (e *TextEdit) restore(s textEditSnapshot) {
+	e.runes = append([]rune(nil), s.runes...)
+	e.cursor, e.selAnchor, e.selActive = s.cursor, s.selAnchor, s.selActive
+}
+
+func (e *TextEdit) recordEdit() {
+	e.undo = append(e.undo, e.snapshot())
+	if len(e.undo) > 200 {
+		e.undo = e.undo[len(e.undo)-200:]
+	}
+	e.redo = nil
+}
+
+func (e *TextEdit) Undo() bool {
+	if len(e.undo) == 0 {
+		return false
+	}
+	e.redo = append(e.redo, e.snapshot())
+	last := len(e.undo) - 1
+	e.restore(e.undo[last])
+	e.undo = e.undo[:last]
+	return true
+}
+
+func (e *TextEdit) Redo() bool {
+	if len(e.redo) == 0 {
+		return false
+	}
+	e.undo = append(e.undo, e.snapshot())
+	last := len(e.redo) - 1
+	e.restore(e.redo[last])
+	e.redo = e.redo[:last]
+	return true
 }
 
 // RuneAt returns the rune at index or 0.

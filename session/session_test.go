@@ -181,7 +181,22 @@ func TestCanonicalUserSnapshotPreservesDurableMessageIDForHistory(t *testing.T) 
 	}
 }
 
-func TestFinalizeTurnPersistsActiveWireEpochSeparatelyFromFullArchive(t *testing.T) {
+func TestAugmentedProviderUserPersistsWhileDisplaySnapshotStaysOriginal(t *testing.T) {
+	message := provider.ChatMessage{
+		InternalID: "msg-1", Role: "user",
+		Content:        provider.TextContent("actual request\n\n<turn_context>recalled fact</turn_context>"),
+		DisplayContent: "actual request",
+	}
+	meta := canonicalizeDisplayMeta(message, sessiondb.DisplayMeta{
+		DisplayRole: "user", DisplayContent: "actual request",
+	}, "", 0, time.Now())
+	if len(meta.Snapshots) != 1 || meta.Snapshots[0].Content != "actual request" ||
+		!strings.Contains(message.Content.String(), "recalled fact") {
+		t.Fatalf("provider=%q display=%#v", message.Content.String(), meta.Snapshots)
+	}
+}
+
+func TestFinalizeTurnPersistsActiveContextSeparatelyFromFullArchive(t *testing.T) {
 	db, err := sessiondb.OpenAndMigrate(filepath.Join(t.TempDir(), "session.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -199,26 +214,26 @@ func TestFinalizeTurnPersistsActiveWireEpochSeparatelyFromFullArchive(t *testing
 		db: db, sessionID: "session", logger: lg, turnNumber: 1,
 		msgs:     []provider.ChatMessage{provider.NewTextMessage("user", "archived old request")},
 		msgTurns: []int{1}, displayMetas: []sessiondb.DisplayMeta{{DisplayRole: "user"}},
-		wireGuard: agent.NewWireGuardAt(3, "active_context_compaction"),
+		contextGeneration: 3, contextReason: "automatic_compaction",
 	}
 	active := []provider.ChatMessage{
-		provider.NewWireHiddenMessage("checkpoint"),
+		provider.NewTextMessage("system", "<context_checkpoint>checkpoint</context_checkpoint>"),
 		provider.NewTextMessage("user", "current request"),
 		provider.NewTextMessage("assistant", "answer"),
 	}
 	agentMessages := append([]provider.ChatMessage{provider.NewTextMessage("system", "base")}, active...)
 	s.finalizeTurn(agentMessages, 2, &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}, "answer", "msg", active)
 	s.flushWg.Wait()
-	state, ok, err := sessiondb.LoadWireState(db, "session")
-	if err != nil || !ok || state.Epoch != 3 || len(state.Messages) != 3 || state.Messages[0].Content.String() != "checkpoint" {
-		t.Fatalf("wire state=%#v ok=%v err=%v", state, ok, err)
+	state, ok, err := sessiondb.LoadContextState(db, "session")
+	if err != nil || !ok || state.Generation < 3 || len(state.Messages) != 3 || !strings.Contains(state.Messages[0].Content.String(), "checkpoint") {
+		t.Fatalf("context state=%#v ok=%v err=%v", state, ok, err)
 	}
 	if len(s.msgs) != 2 || s.msgs[0].Content.String() != "archived old request" || s.msgs[1].Content.String() != "answer" {
 		t.Fatalf("full archive was replaced by active epoch: %#v", s.msgs)
 	}
 }
 
-func TestManualCompactRotatesWireEpochWithoutDeletingArchive(t *testing.T) {
+func TestManualCompactRebuildsActiveContextWithoutDeletingArchive(t *testing.T) {
 	var history []provider.ChatMessage
 	for i := 0; i < 80; i++ {
 		history = append(history,
@@ -233,11 +248,11 @@ func TestManualCompactRotatesWireEpochWithoutDeletingArchive(t *testing.T) {
 	t.Cleanup(func() { _ = lg.Close() })
 	s := &Session{
 		logger: lg, msgs: append([]provider.ChatMessage(nil), history...),
-		wireMessages: append([]provider.ChatMessage(nil), history...), wireGuard: agent.NewWireGuard(),
+		activeContext: append([]provider.ChatMessage(nil), history...), contextGeneration: 1,
 	}
 	result := s.HandleCompact()
-	if result.Error != "" || len(s.msgs) != len(history) || len(s.wireMessages) >= len(history) || s.rootWireGuard().Epoch() <= 1 {
-		t.Fatalf("compact result=%+v archive=%d wire=%d epoch=%d", result, len(s.msgs), len(s.wireMessages), s.rootWireGuard().Epoch())
+	if result.Error != "" || len(s.msgs) != len(history) || len(s.activeContext) >= len(history) || s.contextGeneration <= 1 {
+		t.Fatalf("compact result=%+v archive=%d active=%d generation=%d", result, len(s.msgs), len(s.activeContext), s.contextGeneration)
 	}
 }
 
@@ -258,7 +273,7 @@ func TestTruncateMessages_NoTruncation(t *testing.T) {
 		{Role: "user", Content: provider.TextContent("hi")},
 		{Role: "assistant", Content: provider.TextContent("hello")},
 	}
-	result := truncateMessages(msgs, 100000, "test")
+	result := agent.CompactContext(msgs, 100000, 75, "test")
 	if len(result) != 2 {
 		t.Errorf("expected 2, got %d", len(result))
 	}
@@ -269,7 +284,7 @@ func TestTruncateMessages_ZeroWindow(t *testing.T) {
 		{Role: "user", Content: provider.TextContent("hi")},
 		{Role: "assistant", Content: provider.TextContent("hello")},
 	}
-	result := truncateMessages(msgs, 0, "test")
+	result := agent.CompactContext(msgs, 0, 75, "test")
 	if len(result) != 2 {
 		t.Errorf("expected 2 (zero window = no truncation), got %d", len(result))
 	}
@@ -289,11 +304,11 @@ func TestTruncateMessagesKeepsToolExchangeAtomic(t *testing.T) {
 		{Role: "tool", ToolCallID: "tc1", Content: provider.TextContent(strings.Repeat("result ", 100))},
 		{Role: "tool", ToolCallID: "tc2", Content: provider.TextContent(strings.Repeat("result ", 100))},
 	}
-	result := truncateMessages(msgs, 80, "test")
+	result := agent.CompactContext(msgs, 80, 75, "test")
 	if len(result) != 4 {
 		t.Fatalf("result length = %d, want summary plus complete tool exchange: %+v", len(result), result)
 	}
-	if result[0].Role != "user" || result[1].Role != "assistant" ||
+	if result[0].Role != "system" || result[1].Role != "assistant" ||
 		len(result[1].ToolCalls) != 2 || result[2].ToolCallID != "tc1" ||
 		result[3].ToolCallID != "tc2" {
 		t.Fatalf("tool exchange was split: %+v", result)
@@ -314,7 +329,7 @@ func TestTruncateMessagesBuildsUsefulCheckpoint(t *testing.T) {
 		{Role: "tool", ToolCallID: "call-1", Content: provider.TextContent("reader implementation")},
 		provider.NewTextMessage("user", strings.Repeat("continue ", 80)),
 	}
-	result := truncateMessages(msgs, 120, "test")
+	result := agent.CompactContext(msgs, 120, 75, "test")
 	if len(result) >= len(msgs) {
 		t.Fatalf("messages were not compacted: %d", len(result))
 	}

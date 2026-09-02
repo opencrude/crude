@@ -64,12 +64,13 @@ func TestShellChatScrollHostContractTable(t *testing.T) {
 	}
 
 	sbX := s.scrollbar.Bounds().X
-	host.Handle(tea.MouseClickMsg{X: sbX, Y: 0, Button: tea.MouseLeft})
+	thumbTop, _ := scroll.ThumbBounds(s.scrollbar.Bounds().H)
+	host.Handle(tea.MouseClickMsg{X: sbX, Y: thumbTop, Button: tea.MouseLeft})
 	if !s.IsScrollbarDragging() {
 		t.Fatal("scrollbar click should start drag on shared ScrollModel path")
 	}
 	before := scroll.Offset()
-	host.Handle(tea.MouseMotionMsg{X: sbX, Y: 3, Button: tea.MouseLeft})
+	host.Handle(tea.MouseMotionMsg{X: sbX, Y: 0, Button: tea.MouseLeft})
 	if scroll.Offset() == before && scroll.MaxOffset() > 1 {
 		t.Fatal("scrollbar drag should move shared ScrollModel offset")
 	}

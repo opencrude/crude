@@ -224,3 +224,26 @@ func TestUsageEventTokensAccumulatesProviderNumericForms(t *testing.T) {
 		t.Fatalf("integer usage tokens=%d want 10", got)
 	}
 }
+
+func TestDangerousBackgroundAgentAlertEscapesEditorAndMinimizedState(t *testing.T) {
+	app := newFullTestApp(t)
+	app.AddOrchestrator("root")
+	pane := app.PaneMgr.GetOrCreate("child", workspace.PaneAgent, "child")
+	childState := workspace.NewAgentState("child", pane.Messages, app.Logger)
+	app.AgentMgr.AddSubAgent("child", "root", "child", "model", "crafter", childState)
+	app.MinimizeAgent("child")
+	app.EditorState.ActiveView = "/tmp/file.go"
+
+	app.handleAgentEvent(ttypes.AgentEventMsg{
+		Type: "safety_alert", AgentID: "child",
+		Data: map[string]any{"risk": "blocked", "reason": "Blocked disk write"},
+	})
+	app.paintShellFrame()
+	child := app.AgentMgr.Get("child")
+	if child.Hidden || app.AgentMgr.ActiveID() != "child" || app.EditorState.ActiveView != "" {
+		t.Fatalf("danger alert stayed hidden: hidden=%v active=%q editor=%q", child.Hidden, app.AgentMgr.ActiveID(), app.EditorState.ActiveView)
+	}
+	if status := app.StatusBar.ActivityView(); !strings.Contains(status, "Blocked disk write") {
+		t.Fatalf("danger alert not visible in global status: %q", status)
+	}
+}

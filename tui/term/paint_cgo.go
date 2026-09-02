@@ -144,30 +144,15 @@ func (e *Emulator) cursorPhaseVisible() bool {
 	return e.curBlinkOn
 }
 
-// applyCursorStyle renders the cursor within the cell model: block styles
-// invert the cell, bar/underline styles underline it (the closest cell-level
-// approximation of a thin caret). Unfocused panes dim the cursor cell — the
-// cell-grid stand-in for a hollow outline.
-func applyCursorStyle(c cell.Cell, style C.GhosttyRenderStateCursorVisualStyle, focused bool) cell.Cell {
-	switch style {
-	case C.GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_BAR,
-		C.GHOSTTY_RENDER_STATE_CURSOR_VISUAL_STYLE_UNDERLINE:
-		c.Attr |= cell.AttrUnderline
-		if !focused {
-			c.Attr |= cell.AttrDim
-		}
-		return c
-	default:
-		// Toggle reverse relative to the cell's existing application or
-		// selection style. Do not also swap FG/BG: AttrReverse emits SGR 7
-		// later, and pre-swapping would make the output pipeline reverse the
-		// colors twice, leaving a blank cursor visually invisible.
-		c.Attr ^= cell.AttrReverse
-		if !focused {
-			c.Attr |= cell.AttrDim
-		}
-		return c
+// applyCursorStyle enforces Crude's one cursor shape: a reverse-video block.
+// Terminal applications may still control blink/steady timing through
+// DECSCUSR, but bar and underline requests never change product geometry.
+func applyCursorStyle(c cell.Cell, _ C.GhosttyRenderStateCursorVisualStyle, focused bool) cell.Cell {
+	c.Attr ^= cell.AttrReverse
+	if !focused {
+		c.Attr |= cell.AttrDim
 	}
+	return c
 }
 
 func paintCell(cells C.GhosttyRenderStateRowCells, utf8 []byte, defFG, defBG cell.Color) cell.Cell {

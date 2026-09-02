@@ -27,6 +27,26 @@ func TestMessageSyncPreservesUnchangedCaches(t *testing.T) {
 	}
 }
 
+func TestMessageAtLocalYResolvesBottomGravityAndScroll(t *testing.T) {
+	th := theme.DefaultDark()
+	s := shellchat.New(th)
+	rows := []chatprojection.MessageRow{{ID: "user-1", Lines: []string{"one", "two"}}, {ID: "assistant", Lines: []string{"three"}}}
+	s.SetMessages(rows, shellchat.PaintParams{Compose: shellchat.ComposeParams{InnerW: 30, PadLR: th.Spacing.PadLR, Theme: th}})
+	s.SyncScrollMetrics(6, 3)
+	s.Layout(ui.LayoutContext{}, ui.Rect{W: 34, H: 6})
+	if _, ok := s.MessageAtLocalY(1); ok {
+		t.Fatal("blank gravity row resolved to a message")
+	}
+	row, ok := s.MessageAtLocalY(3)
+	if !ok || row.ID != "user-1" {
+		t.Fatalf("row=%+v ok=%v", row, ok)
+	}
+	row, ok = s.MessageAtLocalY(5)
+	if !ok || row.ID != "assistant" {
+		t.Fatalf("row=%+v ok=%v", row, ok)
+	}
+}
+
 func TestShellChatScrollModelStickToBottom(t *testing.T) {
 	th := theme.DefaultDark()
 	s := shellchat.New(th)

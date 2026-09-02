@@ -7,6 +7,8 @@ package shelleditor
 import (
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
+
 	"crude/tui/cell"
 	"crude/tui/editor"
 	"crude/tui/surface"
@@ -97,7 +99,7 @@ func (s *Screen) Layout(_ ui.LayoutContext, r ui.Rect) {
 	s.height = r.H
 }
 
-func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
+func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
 	b := s.Bounds()
 	if b.Empty() || buf == nil || s.ed == nil || !s.ed.IsOpen() {
 		return
@@ -124,15 +126,43 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	s.ed.SetTokens(s.tokens)
 	s.ed.SetStatusChrome(false)
 	s.ed.SetPadding(s.padL)
-	wctx := ui.PaintContext{Theme: s.th, Focused: s.focused}
+	s.ed.SetPointerHovered(ctx.Hovered)
+	wctx := ui.PaintContext{Theme: s.th, Focused: s.focused, Hovered: ctx.Hovered, Frame: ctx.Frame}
 	s.ed.Render(s.paintSurf, wctx)
 	surface.BlitOpaque(buf, ox+b.X+s.padL, oy+b.Y, s.paintSurf.Buffer())
 }
 
-func (s *Screen) Handle(_ ui.EventContext, _ ui.Event) ui.EventResult {
-	// Editor input remains routed through viewmodel → Editor.HandleEvent
-	// until Host owns keyboard/mouse for DocumentEditor.
-	return ui.EventResult{}
+func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+	if s.ed == nil || !s.ed.IsOpen() {
+		return ui.EventResult{}
+	}
+	var msg tea.Msg
+	switch evt.Kind {
+	case ui.EventMouseClick:
+		m := evt.MouseClick
+		m.X, m.Y = ctx.LocalX-s.padL, ctx.LocalY
+		msg = m
+	case ui.EventMouseMotion:
+		m := evt.MouseMotion
+		m.X, m.Y = ctx.LocalX-s.padL, ctx.LocalY
+		msg = m
+	case ui.EventMouseRelease:
+		m := evt.MouseRelease
+		m.X, m.Y = ctx.LocalX-s.padL, ctx.LocalY
+		msg = m
+	case ui.EventMouseWheel:
+		m := evt.MouseWheel
+		m.X, m.Y = ctx.LocalX-s.padL, ctx.LocalY
+		msg = m
+	default:
+		// Keyboard remains routed by viewmodel policy into DocumentEditor.
+		return ui.EventResult{}
+	}
+	return ui.EventResult{
+		Handled:    true,
+		Cmd:        s.ed.HandleEvent(msg),
+		Invalidate: ui.InvalidatePaint,
+	}
 }
 
 // CancelPointerCapture ends an in-progress mouse selection drag (and
@@ -181,7 +211,7 @@ func ScrollbarColumn(buf *surface.CellBuffer, y int) int {
 	}
 	for x := buf.Width() - 1; x >= 0; x-- {
 		c := buf.Get(x, y)
-		if c.Char == '░' || c.Char == '█' {
+		if c.Char == '│' || c.Char == '┃' || c.Char == '█' {
 			return x
 		}
 	}

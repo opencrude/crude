@@ -109,11 +109,12 @@ not assume an older phase description matches the current implementation.
 | Area | Current state |
 |---|---|
 | `app/` | Thin CLI entry: creates workspace, bootstraps session, starts TUI. No callbacks. `app/app.go` ~270 lines. |
-| `workspace/` | Per-project state machine (repo root, NOT `tui/workspace/`). Owns sessions, orchestrators, LSP manager, file ops, project search, workspace DB. Zero `tui/` imports (production + tests). |
+| `workspace/` | Per-project state machine (repo root, NOT `tui/workspace/`). Owns sessions, orchestrators, LSP manager, file ops, project search, local-history lifecycle, workspace DB. Zero `tui/` imports (production + tests). |
 | `tui/` | Dumb renderer + input router. Holds `*workspace.Workspace`, calls methods, subscribes to the event bus. `tui/tui.go` has no callbacks. |
 | `tui/viewmodel/App` | Presentation state holder. Uses one root `ui.Host` (`rootHost`) + one shell surface (`mainSurf`), with retained per-session `deckHost`s mounted through the shell. |
 | `crude/types` | Neutral contracts package; `tui/types` is a compatibility alias. Config split done: `AppSettings` + `SessionSettings` (three inheritance levels). Workspace overrides are FIELD-level, sessions snapshot — see `docs/reference/settings.md`. |
 | `session/` | Session domain library (sessions are workspace-scoped under `~/.crude/workspaces/<hash>/sessions/`); consumed by `workspace/`. |
+| `localhistory/` | Immutable content-defined workspace snapshots, SQLite timeline/message labels, restore plans, verification, retention, and rollback. No TUI imports. |
 
 See `docs/plans/workspace-refactor-plan.md` (architecture + workspace progress) and
 `docs/plans/tui-component-system-plan.md` (component-system phases + §26 execution
@@ -632,6 +633,69 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   collapsed so the rail shows its toggle state. The rail keeps one blank
   column before its panel rule so file-tree / Agents / Terminals / Git
   left borders are not flush against the icons.
+
+### Scrollbar direct manipulation
+- `ui.ScrollbarControl` is the only click/drag/wheel interaction math. Nested
+  chat panes and terminal scrollback adapt their models to it; never duplicate
+  thumb mapping or track-click formulas.
+- Keep the painted stroke one cell. `PointerHitBounds` expands inward to a
+  configurable 2-3 cell target, and explicit hit bounds outrank deeper content
+  descendants in `Host.HitTest`. Adjacent scrollbars must cap expansion so
+  their targets never overlap.
+- A changed offset invalidates layout AND paint: retained forms encode scroll
+  in child bounds while lists consume it during paint. Offset-only tests are
+  insufficient; assert that painted content moves.
+- Exact Host hits do not bubble pointer events through the parent. Consumers
+  with an authoritative mirror (notably file tree and terminal scrollback) use
+  `ScrollbarControl.OnScroll`; never rely on a parent fallback handler to copy
+  the offset.
+- Mounted scrollbars route through Host capture. Manual composite routing uses
+  `ui.ChildEventContext`, never unchanged parent-local coordinates. Editor
+  pointer input enters through `shelleditor.Screen` so drags release outside.
+- Decide visibility with `NeededForViewport(candidateViewport)`, not stale
+  previous-frame viewport state.
+
+### Text cursor
+- Every product text cursor is a blinking reverse-video block overlay. Never
+  paint `|`, `│`, a bar, or an underline cursor.
+- The cursor preserves the grapheme under it and toggles `cell.AttrReverse`;
+  at end-of-input it reverses the existing blank cell. It never inserts a
+  glyph, shifts placeholder text, or consumes layout width.
+- Native TextField/TextArea and editor paths share `ui.PaintBlockCursor`
+  semantics. Embedded terminal applications may control blink/steady timing,
+  but DECSCUSR shape requests are normalized to the same block geometry.
+
+### Local History
+- `localhistory.Store` owns immutable objects/manifests/plans and SQLite index
+  metadata. `workspace.LocalHistoryService` owns watcher lifecycle, settings,
+  message scopes, reconciliation, and restore suppression. TUI only calls
+  workspace methods and renders neutral plans.
+- Never write history inside the project, follow a symlink parent, or apply a
+  plan whose current hash/mode/type differs from preview. Safety snapshots are
+  mandatory; every failure after mutation rolls back before returning.
+- `/undo` always opens preview. Conflicts require an explicit exact choice;
+  non-conflicting later text edits may use the all-hunks-applied reverse merge.
+  Esc, close, or an empty selection never changes files.
+- Snapshot, SQLite, verification, pruning, and restore work always runs in a
+  command/background service, never Bubble Tea `Update`. Project switch and
+  shutdown wait for active restore ownership.
+- Restores append one hidden `<workspace_history_event>` to provider context and
+  one visible canonical status without rewriting accepted conversation prefix.
+
+### Shared text input
+- `ui.TextEdit`, `ui.TextField`, and `ui.TextArea` own the non-document editing
+  contract: selection replacement, undo/redo, word/document/page movement,
+  Ctrl/Super shortcuts, copy/cut, bracketed paste, owner-keyed async Ctrl+V,
+  multi-click selection, and captured outside drag with autoscroll. Add behavior
+  there, never to one popup.
+- `Form` is a composite pointer owner because its retained fields are not Host
+  children. Once an inner input starts a drag, `Form.pointerField` must route
+  every captured motion/release to that same field before hover-focusing.
+- Child bounds stay parent-local during paint as well as layout. A FormField
+  passes its own origin unchanged to TextArea; pre-adding the textarea's Y=1
+  shifts its background into the description row.
+- Source-code projections expand tabs at tab stops before width, wrapping,
+  syntax coloring, and paint. Raw tab cells have no stable terminal geometry.
 
 ### Activity-dot animation
 - `ui.ActivityDot(spinFrame)` is the only product activity-dot animation:

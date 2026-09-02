@@ -193,6 +193,7 @@ func TestCollectAgentsReadsCapabilityAndSamplingFields(t *testing.T) {
 	m.SetValueForTest(catMain, fieldModalityPrefix+provider.ModalityPDF, "yes")
 	m.SetValueForTest(catMain, fieldTemperature, "0.4")
 	m.SetValueForTest(catMain, fieldTopP, "0.9")
+	m.SetValueForTest(catMain, fieldContextCompaction, "0")
 
 	var got types.AgentsSettings
 	m.collectAgents(&got)
@@ -209,6 +210,9 @@ func TestCollectAgentsReadsCapabilityAndSamplingFields(t *testing.T) {
 	}
 	if cat.ModelTopP == nil || *cat.ModelTopP != 0.9 {
 		t.Errorf("top-p = %v, want 0.9", cat.ModelTopP)
+	}
+	if cat.ContextCompactionPercent == nil || *cat.ContextCompactionPercent != 0 {
+		t.Fatalf("context compaction = %#v, want explicit 0", cat.ContextCompactionPercent)
 	}
 }
 

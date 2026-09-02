@@ -6,6 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/chatprojection"
+	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
 )
@@ -47,6 +48,41 @@ func TestPaneGutterWheelIndependentFromMainChat(t *testing.T) {
 	}
 	if mainScroll.Offset() != beforeMain {
 		t.Fatal("pane wheel must not move main chat scroll")
+	}
+}
+
+func TestPaneGutterHoverEmphasizesThumbAndClears(t *testing.T) {
+	th := theme.DefaultDark()
+	paneScroll := ui.NewScrollModel()
+	paneScroll.SetContent(8)
+	paneScroll.SetViewport(2)
+	paneScroll.StickToBottom()
+	lines := []string{"header", "pane-0", "pane-1"}
+	paneMap := []chatprojection.PaneLineInfo{
+		{PaneID: "p1", LineIdx: -1},
+		{PaneID: "p1", LineIdx: 0},
+		{PaneID: "p1", LineIdx: 1},
+	}
+	compose := ComposeParams{
+		InnerW: 30, PadLR: th.Spacing.PadLR, Theme: th, NestingLevel: 1,
+		PaneLineMap: paneMap,
+		PaneGutters: map[string]PaneGutterState{"p1": {Scroll: paneScroll, TrackH: 2, Visible: true}},
+	}
+	s, host := newShellChatHost(t, []chatprojection.MessageRow{{ID: "m1", Lines: lines}}, compose, 3)
+	gx := NestedGutterX(s.paintState.compose, s.list.Bounds().W)
+	host.Handle(tea.MouseMotionMsg{X: gx, Y: 2})
+	if s.paneHover != "p1" {
+		t.Fatalf("pane hover=%q want p1", s.paneHover)
+	}
+	w := ContentSurfaceWidth(compose.InnerW, compose.PadLR, compose.MainSBVisible)
+	buf := surface.NewCellBuffer(w, 3)
+	host.Paint(buf)
+	if got := buf.Get(gx, 2).Char; got != '█' {
+		t.Fatalf("hovered pane thumb=%q want block", got)
+	}
+	host.Handle(tea.MouseMotionMsg{X: 0, Y: 0})
+	if s.paneHover != "" {
+		t.Fatalf("pane hover stuck at %q", s.paneHover)
 	}
 }
 
@@ -147,17 +183,23 @@ func TestPaneGutterDragHostCaptureCrossRegion(t *testing.T) {
 	}
 	lines := []string{"│ a", "│ b"}
 	s, host := newShellChatHost(t, []chatprojection.MessageRow{{ID: "m1", Lines: lines}}, ComposeParams{
-		InnerW:       innerW,
-		PadLR:        padLR,
-		Theme:        th,
-		NestingLevel: 1,
-		PaneLineMap:  paneMap,
-		PaneGutters:  gutters,
+		InnerW:        innerW,
+		PadLR:         padLR,
+		Theme:         th,
+		MainSBVisible: true,
+		NestingLevel:  1,
+		PaneLineMap:   paneMap,
+		PaneGutters:   gutters,
 	}, 2)
 	gx := NestedGutterX(s.paintState.compose, s.list.Bounds().W)
-	host.Handle(tea.MouseClickMsg{X: gx, Y: 0, Button: tea.MouseLeft})
+	// The two content-side cells next to the nested stroke belong to the pane;
+	// the outer scrollbar may claim only its own separator on the other side.
+	host.Handle(tea.MouseClickMsg{X: gx - 2, Y: 0, Button: tea.MouseLeft})
 	if !host.HasPointerCapture() || !s.IsPaneGutterDragging() {
 		t.Fatal("pane gutter click should capture host and start drag")
+	}
+	if owner, _, ok := host.CapturedPointer(); !ok || owner != ScreenID {
+		t.Fatalf("nested gutter capture owner=%q ok=%v want screen", owner, ok)
 	}
 	before := paneScroll.Offset()
 	host.Handle(tea.MouseMotionMsg{X: padLR + 2, Y: 1, Button: tea.MouseLeft})

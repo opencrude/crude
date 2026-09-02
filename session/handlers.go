@@ -7,11 +7,54 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
+	"crude/agent"
 	"crude/provider"
 	"crude/sessiondb"
 	ttypes "crude/types"
 )
+
+func (s *Session) AppendWorkspaceHistoryEvent(content, display string) error {
+	if !s.turnGate.TryLock() {
+		return errors.New("stop the active turn before recording workspace restore")
+	}
+	defer s.turnGate.Unlock()
+	message := provider.NewTextMessage("user", content)
+	createdAt := time.Now()
+	message.InternalID = fmt.Sprintf("history-%d", createdAt.UnixNano())
+	meta := sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, DisplayRole: "hidden_wire_context", ContextOnly: true,
+		Snapshots: []ttypes.ConversationMessage{{InternalID: message.InternalID + "-status", Role: "status", Content: display, Time: time.Now()}}}
+	s.msgsMu.Lock()
+	msgs := append(append([]provider.ChatMessage(nil), s.msgs...), message)
+	turns := append(append([]int(nil), s.msgTurns...), s.turnNumber)
+	metas := append(append([]sessiondb.DisplayMeta(nil), s.displayMetas...), meta)
+	createdAts := append(append([]int64(nil), s.createdAts...), createdAt.UnixNano())
+	active := append(append([]provider.ChatMessage(nil), s.activeContext...), message)
+	generation := s.contextGeneration + 1
+	if generation == 1 {
+		generation = 2
+	}
+	s.msgsMu.Unlock()
+	if s.db != nil {
+		if err := sessiondb.AppendMessageWithMeta(s.db, s.sessionID, message, s.turnNumber, meta); err != nil {
+			return err
+		}
+		if err := sessiondb.SaveContextState(s.db, s.sessionID, sessiondb.ContextState{Generation: generation, Reason: "workspace_restore", Messages: active}); err != nil {
+			return err
+		}
+	}
+	s.msgsMu.Lock()
+	s.msgs = msgs
+	s.msgTurns = turns
+	s.displayMetas = metas
+	s.createdAts = createdAts
+	s.activeContext = active
+	s.contextGeneration = generation
+	s.contextReason = "workspace_restore"
+	s.msgsMu.Unlock()
+	return nil
+}
 
 func (s *Session) SetYolo(enabled bool) {
 	s.yolo.Store(enabled)
@@ -27,8 +70,8 @@ func (s *Session) YoloEnabled() bool {
 	return s != nil && s.yolo.Load()
 }
 
-// HandleCompact rotates only the active provider-wire epoch. The immutable
-// conversation/display archive is never rewritten or deleted.
+// HandleCompact explicitly rebuilds the active context from the immutable full
+// archive. It never compacts an earlier checkpoint and never rewrites history.
 func (s *Session) HandleCompact() ttypes.CompactResultMsg {
 	if !s.turnGate.TryLock() {
 		return ttypes.CompactResultMsg{Error: "Stop the active turn before compacting context"}
@@ -40,11 +83,8 @@ func (s *Session) HandleCompact() ttypes.CompactResultMsg {
 	s.flushWg.Wait()
 
 	s.msgsMu.Lock()
-	active := s.wireMessages
-	if active == nil {
-		active = append([]provider.ChatMessage(nil), s.msgs...)
-	}
-	if len(active) == 0 {
+	archive := append([]provider.ChatMessage(nil), s.msgs...)
+	if len(archive) == 0 {
 		s.msgsMu.Unlock()
 		return ttypes.CompactResultMsg{Desc: "Nothing to compact yet."}
 	}
@@ -58,28 +98,30 @@ func (s *Session) HandleCompact() ttypes.CompactResultMsg {
 		ctxWindow = 256000
 	}
 
-	before := len(active)
-	compacted := truncateMessages(active, ctxWindow/2, model)
+	before := len(archive)
+	compacted := agent.CompactContext(archive, ctxWindow, 50, model)
 	after := len(compacted)
-	if provider.EstimateMessagesTotal(compacted, model) >= provider.EstimateMessagesTotal(active, model) {
+	if provider.EstimateMessagesTotal(compacted, model) >= provider.EstimateMessagesTotal(archive, model) {
 		s.msgsMu.Unlock()
 		l.Info("COMPACT", "already_compact", "history", before)
 		return ttypes.CompactResultMsg{Desc: "Context is already compact.", Before: before, After: after}
 	}
-	s.wireMessages = append([]provider.ChatMessage(nil), compacted...)
+	s.activeContext = append([]provider.ChatMessage(nil), compacted...)
+	if s.contextGeneration == 0 {
+		s.contextGeneration = 1
+	}
+	s.contextGeneration++
+	s.contextReason = "manual_compaction"
+	state := sessiondb.ContextState{Generation: s.contextGeneration, Reason: s.contextReason, Messages: compacted}
 	s.msgsMu.Unlock()
-	s.rotateWireEpoch("manual_compaction")
-	guard := s.rootWireGuard()
 	if s.db != nil {
-		if err := sessiondb.SaveWireState(s.db, s.sessionID, sessiondb.WireState{
-			Epoch: guard.Epoch(), Reason: guard.Reason(), Messages: compacted,
-		}); err != nil {
-			return ttypes.CompactResultMsg{Error: "Failed to persist compacted wire epoch: " + err.Error()}
+		if err := sessiondb.SaveContextState(s.db, s.sessionID, state); err != nil {
+			return ttypes.CompactResultMsg{Error: "Failed to persist compacted context: " + err.Error()}
 		}
 	}
 	l.Info("COMPACT", "manual_compact", "history", before, "projected", after, "window", ctxWindow)
 	return ttypes.CompactResultMsg{
-		Desc:   fmt.Sprintf("Started a compact wire epoch with %d message(s); full session history remains archived.", after),
+		Desc:   fmt.Sprintf("Compacted active context to %d message(s); full session history remains archived.", after),
 		Before: before,
 		After:  after,
 	}
@@ -92,51 +134,14 @@ func (s *Session) HandleUndo(cmd string) ttypes.UndoResultMsg {
 	defer s.turnGate.Unlock()
 	l := s.logger
 	l.Info("INPUT", "undo", "cmd", cmd)
+	if strings.HasPrefix(cmd, "/undo") {
+		return ttypes.UndoResultMsg{Error: "Legacy journal undo is retired. Use /undo in the IDE to open the Local History preview."}
+	}
 	if s.editor == nil {
 		l.Warn("EDITOR", "undo_no_editor", "cmd", cmd)
 		return ttypes.UndoResultMsg{Error: "file editor not available"}
 	}
-	switch {
-	case cmd == "/undo":
-		l.Info("JOURNAL", "undo_last", "journal_len", len(s.editor.Log()))
-		if err := s.editor.UndoLast(); err != nil {
-			l.Error("JOURNAL", "undo_failed", "error", err.Error())
-			return ttypes.UndoResultMsg{Error: err.Error()}
-		}
-		journalLog := s.editor.Log()
-		remaining := len(journalLog)
-		l.Info("JOURNAL", "undo_ok", "remaining", remaining)
-		desc := "Undo complete. No more operations to undo."
-		if remaining > 0 {
-			desc = fmt.Sprintf("Undo complete. %d operation(s) remaining in journal.", remaining)
-		}
-		return ttypes.UndoResultMsg{Desc: desc}
-	case strings.HasPrefix(cmd, "/undo-n"):
-		n := 1
-		parts := strings.Fields(cmd)
-		if len(parts) > 1 {
-			_, _ = fmt.Sscanf(parts[1], "%d", &n)
-		}
-		if n <= 0 {
-			n = 1
-		}
-		l.Info("JOURNAL", "undo_n", "count", n, "journal_len", len(s.editor.Log()))
-		if err := s.editor.UndoN(n); err != nil {
-			l.Error("JOURNAL", "undo_n_failed", "count", n, "error", err.Error())
-			return ttypes.UndoResultMsg{Error: err.Error()}
-		}
-		l.Info("JOURNAL", "undo_n_ok", "count", n)
-		return ttypes.UndoResultMsg{Desc: fmt.Sprintf("Undid last %d file operation(s).", n)}
-	case cmd == "/undo-all":
-		totalOps := len(s.editor.Log())
-		l.Info("JOURNAL", "undo_session", "ops_to_revert", totalOps)
-		if err := s.editor.UndoSession(); err != nil {
-			l.Error("JOURNAL", "undo_session_failed", "error", err.Error())
-			return ttypes.UndoResultMsg{Error: err.Error()}
-		}
-		l.Info("JOURNAL", "undo_session_ok", "ops_reverted", totalOps)
-		return ttypes.UndoResultMsg{Desc: "All file operations this session have been reverted."}
-	case cmd == "/changes":
+	if cmd == "/changes" {
 		files := s.editor.ChangedFiles()
 		l.Info("EDITOR", "changed_files", "count", len(files))
 		if len(files) == 0 {
@@ -151,7 +156,7 @@ func (s *Session) HandleUndo(cmd string) ttypes.UndoResultMsg {
 			}
 			sb.WriteString("  " + rel + "\n")
 		}
-		sb.WriteString("Use /undo to revert the last operation, /undo-all to revert everything.")
+		sb.WriteString("Use /undo in the IDE to review message-scoped Local History safely.")
 		return ttypes.UndoResultMsg{Desc: sb.String()}
 	}
 	l.Warn("INPUT", "undo_unknown", "cmd", cmd)

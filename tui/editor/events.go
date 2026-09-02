@@ -7,6 +7,7 @@ import (
 
 	"crude/clipboard"
 	"crude/tui/rendering"
+	"crude/tui/ui"
 )
 
 type CursorBlinkMsg time.Time
@@ -54,11 +55,17 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 		e.cursorVisible = true
 		e.blinkActive = false
 		e.lastActivity = time.Now()
+		e.refreshScrollbarHover(msg.Mouse().X, msg.Mouse().Y)
 		e.handleMouseClick(msg)
 		e.refreshMouseHover(msg.Mouse().X, msg.Mouse().Y)
 	case tea.MouseMotionMsg:
+		e.refreshScrollbarHover(msg.Mouse().X, msg.Mouse().Y)
 		if e.IsScrollbarDragging() {
-			e.handleScrollbarEvent(msg, msg.Mouse().Y)
+			if e.IsHorizontalScrollbarDragging() {
+				e.handleHorizontalScrollbarEvent(msg, msg.Mouse().X-e.gutterWidth())
+			} else {
+				e.handleScrollbarEvent(msg, msg.Mouse().Y)
+			}
 			e.refreshMouseHover(msg.Mouse().X, msg.Mouse().Y)
 			return nil
 		}
@@ -73,6 +80,9 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 		}
 		e.refreshMouseHover(msg.Mouse().X, msg.Mouse().Y)
 	case tea.MouseReleaseMsg:
+		if e.IsHorizontalScrollbarDragging() && e.handleHorizontalScrollbarEvent(msg, msg.Mouse().X-e.gutterWidth()) {
+			return nil
+		}
 		if e.handleScrollbarEvent(msg, msg.Mouse().Y) {
 			return nil
 		}
@@ -119,7 +129,10 @@ func (e *Editor) mouseToPosition(mouseX, mouseY int) (Position, bool) {
 		textW = 1
 	}
 	sbX := sw + textW
-	if mouseX >= sbX {
+	if e.horizontalScrollbarHit(mouseX, mouseY) {
+		return Position{}, false
+	}
+	if e.verticalScrollbarHit(mouseX, mouseY, sbX) {
 		return Position{}, false
 	}
 	lineIdx := e.scrollY + mouseY
@@ -154,7 +167,11 @@ func (e *Editor) handleMouseClick(msg tea.MouseClickMsg) {
 	}
 
 	sbX := sw + textW
-	if mouse.X >= sbX {
+	if e.horizontalScrollbarHit(mouse.X, mouse.Y) {
+		e.handleHorizontalScrollbarEvent(msg, mouse.X-sw)
+		return
+	}
+	if e.verticalScrollbarHit(mouse.X, mouse.Y, sbX) {
 		e.handleScrollbarEvent(msg, mouse.Y)
 		return
 	}
@@ -169,6 +186,21 @@ func (e *Editor) handleMouseClick(msg tea.MouseClickMsg) {
 	e.selecting = true
 	e.mouseDragging = true
 	e.ensureCursorVisible()
+}
+
+func (e *Editor) verticalScrollbarHit(mouseX, mouseY, sbX int) bool {
+	if e.sbCtrl == nil || e.scrollModel == nil || e.scrollModel.MaxOffset() <= 0 {
+		return false
+	}
+	e.sbCtrl.Layout(ui.LayoutContext{}, ui.Rect{X: sbX, W: e.scrollbarColWidth(), H: e.bodyHeight()})
+	return e.sbCtrl.PointerHitBounds(e.sbCtrl.Bounds()).Contains(mouseX, mouseY)
+}
+
+func (e *Editor) horizontalScrollbarHit(mouseX, mouseY int) bool {
+	if !e.hScrollbarVisible || e.hSbCtrl == nil || e.hScrollModel == nil || e.hScrollModel.MaxOffset() <= 0 {
+		return false
+	}
+	return e.hSbCtrl.PointerHitBounds(e.hSbCtrl.Bounds()).Contains(mouseX, mouseY)
 }
 
 func (e *Editor) handleKey(key tea.KeyPressMsg) tea.Cmd {

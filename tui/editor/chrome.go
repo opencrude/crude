@@ -26,7 +26,44 @@ func (e *Editor) syncScrollChrome(bodyH int) {
 		e.sbCtrl.SetScroll(e.scrollModel)
 		e.sbCtrl.SetTokens(e.tokens)
 	}
-	e.sbCtrl.Layout(ui.LayoutContext{}, ui.Rect{X: 0, Y: 0, W: 1, H: bodyH})
+	e.sbCtrl.Layout(ui.LayoutContext{}, ui.Rect{X: 0, Y: 0, W: e.scrollbarColWidth(), H: bodyH})
+}
+
+func (e *Editor) syncHorizontalScrollChrome(textW, bodyH int) bool {
+	if textW < 1 || bodyH < 1 {
+		e.hScrollbarVisible = false
+		return false
+	}
+	maxWidth := 0
+	last := min(e.buf.LineCount(), e.scrollY+bodyH)
+	for line := max(0, e.scrollY); line < last; line++ {
+		maxWidth = max(maxWidth, e.lineVisualWidth(line))
+	}
+	if e.cursor.Line >= 0 && e.cursor.Line < e.buf.LineCount() {
+		maxWidth = max(maxWidth, e.lineVisualWidth(e.cursor.Line))
+	}
+	if e.hScrollModel == nil {
+		e.hScrollModel = ui.NewScrollModel()
+	}
+	ui.SyncScrollModel(e.hScrollModel, maxWidth, textW, e.scrollX)
+	if e.hSbCtrl == nil {
+		e.hSbCtrl = ui.NewScrollbarControl("editor/h-scrollbar", e.hScrollModel, e.tokens)
+		e.hSbCtrl.SetDirection(ui.Horizontal)
+		e.hSbCtrl.SetPointerTargetSize(1)
+	} else {
+		e.hSbCtrl.SetScroll(e.hScrollModel)
+		e.hSbCtrl.SetTokens(e.tokens)
+	}
+	e.hScrollbarVisible = e.hScrollModel.MaxOffset() > 0
+	return e.hScrollbarVisible
+}
+
+func (e *Editor) paintHorizontalScrollbar(buf *surface.CellBuffer, x, y, width int) {
+	if !e.hScrollbarVisible || e.hSbCtrl == nil || width < 1 {
+		return
+	}
+	e.hSbCtrl.Layout(ui.LayoutContext{}, ui.Rect{X: x, Y: y, W: width, H: 1})
+	e.hSbCtrl.Paint(buf, 0, 0, ui.PaintContext{Hovered: e.hScrollbarHovered})
 }
 
 // scrollbarColWidth is the reserved right-column width for shared chrome.
@@ -36,7 +73,7 @@ func (e *Editor) scrollbarColWidth() int {
 			return w
 		}
 	}
-	return 1
+	return ui.ScrollbarWidth
 }
 
 // paintScrollbar paints the shared ScrollbarControl into buf at column sbX
@@ -49,12 +86,28 @@ func (e *Editor) paintScrollbar(buf *surface.CellBuffer, sbX, bodyH int) {
 	if e.scrollModel == nil || e.scrollModel.MaxOffset() <= 0 {
 		bg := e.cellColor(e.th.Colors.Bg)
 		for y := 0; y < bodyH; y++ {
-			buf.Set(sbX, y, cell.NewCell(' ', bg, bg, 0))
+			for x := 0; x < e.scrollbarColWidth(); x++ {
+				buf.Set(sbX+x, y, cell.NewCell(' ', bg, bg, 0))
+			}
 		}
 		return
 	}
-	e.sbCtrl.Layout(ui.LayoutContext{}, ui.Rect{X: sbX, Y: 0, W: 1, H: bodyH})
-	e.sbCtrl.Paint(buf, 0, 0, ui.PaintContext{})
+	e.sbCtrl.Layout(ui.LayoutContext{}, ui.Rect{X: sbX, Y: 0, W: e.scrollbarColWidth(), H: bodyH})
+	e.sbCtrl.Paint(buf, 0, 0, ui.PaintContext{Hovered: e.vScrollbarHovered})
+}
+
+func (e *Editor) refreshScrollbarHover(mouseX, mouseY int) {
+	e.hScrollbarHovered = e.horizontalScrollbarHit(mouseX, mouseY)
+	sw := e.gutterWidth()
+	sbX := sw + max(1, e.viewW-sw-e.scrollbarColWidth())
+	e.vScrollbarHovered = !e.hScrollbarHovered && e.verticalScrollbarHit(mouseX, mouseY, sbX)
+}
+
+func (e *Editor) SetPointerHovered(hovered bool) {
+	if !hovered {
+		e.vScrollbarHovered = false
+		e.hScrollbarHovered = false
+	}
 }
 
 // applyScrollbarOffset copies ScrollModel offset back into editor scrollY.
@@ -80,11 +133,25 @@ func (e *Editor) handleScrollbarEvent(msg tea.Msg, localY int) bool {
 	return res.Handled
 }
 
+func (e *Editor) handleHorizontalScrollbarEvent(msg tea.Msg, localX int) bool {
+	if e.hSbCtrl == nil || e.hScrollModel == nil {
+		return false
+	}
+	res := e.hSbCtrl.Handle(ui.EventContext{LocalX: localX}, ui.NormalizeEvent(msg))
+	if res.Handled {
+		e.scrollX = e.hScrollModel.Offset()
+	}
+	return res.Handled
+}
+
 // SetTokens attaches design-system tokens for chrome paint (scrollbar colors).
 func (e *Editor) SetTokens(ts *ui.TokenSet) {
 	e.tokens = ts
 	if e.sbCtrl != nil {
 		e.sbCtrl.SetTokens(ts)
+	}
+	if e.hSbCtrl != nil {
+		e.hSbCtrl.SetTokens(ts)
 	}
 }
 
@@ -133,12 +200,19 @@ func (e *Editor) ScrollModel() *ui.ScrollModel {
 
 // IsScrollbarDragging reports whether the thumb is being dragged.
 func (e *Editor) IsScrollbarDragging() bool {
-	return e.sbCtrl != nil && e.sbCtrl.IsDragging()
+	return (e.sbCtrl != nil && e.sbCtrl.IsDragging()) || (e.hSbCtrl != nil && e.hSbCtrl.IsDragging())
+}
+
+func (e *Editor) IsHorizontalScrollbarDragging() bool {
+	return e.hSbCtrl != nil && e.hSbCtrl.IsDragging()
 }
 
 func (e *Editor) bodyHeight() int {
 	h := e.viewH
 	if e.statusChrome {
+		h--
+	}
+	if e.hScrollbarVisible {
 		h--
 	}
 	if h < 1 {

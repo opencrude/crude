@@ -15,6 +15,7 @@ import (
 	"crude/sessiondb"
 	"crude/tui/editor"
 	"crude/tui/filetree"
+	"crude/tui/perf"
 	"crude/tui/rendering"
 	"crude/tui/screens/composer"
 	"crude/tui/screens/confirmation"
@@ -22,6 +23,7 @@ import (
 	findinfiles "crude/tui/screens/findinfiles"
 	helpscreen "crude/tui/screens/help"
 	"crude/tui/screens/launcher"
+	historyscreen "crude/tui/screens/localhistory"
 	memorybrowser "crude/tui/screens/memorybrowser"
 	"crude/tui/screens/question"
 	sessionpicker "crude/tui/screens/sessionpicker"
@@ -39,6 +41,14 @@ import (
 
 func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+
+	// Any live input makes the following window expected work in the perf
+	// sentinel: repaints during interaction are the product working, not a
+	// degenerate loop.
+	switch msg.(type) {
+	case tea.KeyPressMsg, tea.PasteMsg, tea.MouseClickMsg, tea.MouseWheelMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg:
+		perf.NoteActivity()
+	}
 
 	// Dirty is set selectively per message type, NOT unconditionally.
 	// The full render pipeline (editor cell paint, chat rows, compositor,
@@ -224,8 +234,10 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	// Status bar animations and popup reveals need their own content
 	// re-rendered even when main content hasn't changed.
 	if m.wantsFastTick() {
+		perf.SentinelTick()
 		return m, tea.Batch(diskSyncCmd, gitCmd, treeGitCmd, streamingTickCmd())
 	}
+	perf.SentinelTick()
 	return m, tea.Batch(diskSyncCmd, gitCmd, treeGitCmd, tickCmd())
 }
 
@@ -590,6 +602,49 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 				cmds = append(cmds, cmd)
 			}
 		}
+	case historyscreen.TimelineMsg, historyscreen.PlanMsg:
+		if fw := m.windowManager.Window(string(ui.OverlayLocalHistory)); fw != nil {
+			if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+	case historyscreen.AppliedMsg:
+		if fw := m.windowManager.Window(string(ui.OverlayLocalHistory)); fw != nil {
+			if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+		}
+		if msg.Error == "" {
+			if cmd := m.applyHistoryRefresh(msg.Result); cmd != nil {
+				cmds = append(cmds, cmd)
+			}
+			if msg.Warning != "" {
+				m.StatusBar.SetError(msg.Warning)
+			}
+		}
+	case historyLatestMsg:
+		if msg.Error != "" {
+			m.StatusBar.SetError(msg.Error)
+		} else if cmd := m.openLocalHistoryForMessage(msg.SessionID, msg.MessageID); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case historyCandidatesMsg:
+		if msg.Error != "" {
+			m.StatusBar.SetError(msg.Error)
+		} else if cmd := m.openHistoryCandidates(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case historyOperationMsg:
+		if msg.Error != "" {
+			m.StatusBar.SetError(msg.Error)
+		} else {
+			m.StatusBar.SetInfo(msg.Label)
+		}
+	case workspace.HistoryServiceStatus:
+		if msg.Error != "" {
+			m.Logger.Error("HISTORY", "service_error", "error", msg.Error)
+			m.StatusBar.SetError("Local history: " + msg.Error)
+		}
 	case settingsui.ChatGPTSignInResultMsg:
 		if msg.Err == nil && msg.Creds != nil {
 			if err := m.saveChatGPTOAuth(msg.Creds); err != nil {
@@ -860,6 +915,10 @@ func (m *App) forwardEventToWindowContent(fw *wm.FloatingWindow, msg tea.Msg) te
 				m.dockTerminal(id)
 				return result.Cmd
 			}
+		}
+		if result.Action != nil && result.Action.ID == ui.ActionTextPaste {
+			target, _ := result.Action.Payload.(ui.ClipboardPasteTarget)
+			return tea.Batch(result.Cmd, m.beginNativeClipboardPaste(target, fw.ID))
 		}
 		cmd := m.handleHostAction(result.Action)
 		return tea.Batch(result.Cmd, cmd)

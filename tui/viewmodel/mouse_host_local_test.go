@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -156,6 +157,45 @@ func TestEditorMouseWheelUsesHostLocalCoords(t *testing.T) {
 	_, _ = app.dispatchMouseWheel(tea.MouseWheelMsg{X: r.X + 20, Y: r.Y + 5, Button: tea.MouseWheelUp})
 	if got := app.EditorState.Editor.ScrollY(); got != before+3 {
 		t.Fatalf("wheel up scroll = %d, want %d", got, before+3)
+	}
+}
+
+func TestEditorScrollbarDragUsesRootCaptureOutsideEditor(t *testing.T) {
+	var content strings.Builder
+	for i := 0; i < 80; i++ {
+		content.WriteString("line\n")
+	}
+	app := setupEditorMouseApp(t, 80, 24, false)
+	openMultiLineEditor(t, app, content.String())
+	app.paintShellFrame()
+	r, ok := app.rootHost.ScreenRect(shelleditor.ScreenID)
+	if !ok || r.Empty() {
+		t.Fatalf("editor screen not mounted: ok=%v rect=%+v", ok, r)
+	}
+	ed := app.EditorState.Editor
+	scroll := ed.ScrollModel()
+	if scroll.MaxOffset() <= 0 {
+		t.Fatal("harness: editor must overflow")
+	}
+	thumbTop, _ := scroll.ThumbBounds(scroll.Viewport())
+	trackX := r.X + r.W - ed.PadL - 1
+	thumbY := r.Y + thumbTop
+
+	_, _ = app.dispatchMouseClick(tea.MouseClickMsg{X: trackX, Y: thumbY, Button: tea.MouseLeft})
+	owner, _, captured := app.rootHost.CapturedPointer()
+	if !captured || owner != shelleditor.ScreenID || !ed.IsScrollbarDragging() {
+		t.Fatalf("editor scrollbar capture owner=%q captured=%v dragging=%v", owner, captured, ed.IsScrollbarDragging())
+	}
+
+	outsideX := r.X + r.W + 8
+	dragY := r.Y + scroll.Viewport() - 1
+	_, _ = app.dispatchMouseMotion(tea.MouseMotionMsg{X: outsideX, Y: dragY, Button: tea.MouseLeft})
+	if ed.ScrollY() == 0 {
+		t.Fatal("captured scrollbar motion outside editor did not scroll content")
+	}
+	_, _ = app.dispatchMouseRelease(tea.MouseReleaseMsg{X: outsideX, Y: dragY, Button: tea.MouseLeft})
+	if app.rootHost.HasPointerCapture() || ed.IsScrollbarDragging() {
+		t.Fatal("outside release did not clear editor scrollbar capture")
 	}
 }
 

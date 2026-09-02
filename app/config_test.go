@@ -178,6 +178,20 @@ func TestApplyAppSettingsPersistsMultiAgentOff(t *testing.T) {
 	}
 }
 
+func TestSafetySettingsRoundTripThroughFileConfig(t *testing.T) {
+	settings := ttypes.AppSettings{Safety: ttypes.SafetySettings{
+		ConfirmAt: "network", UnknownCommandRisk: "project-write", ScriptExecutionRisk: "safe",
+		NotifyDangerous: "off", CommandRules: []ttypes.CommandSeverityRule{{Pattern: "scripts/*.sh", Risk: "safe"}},
+	}}
+	fc := DefaultFileConfig()
+	ApplyAppSettingsToFileConfig(&fc, settings)
+	got := FileConfigToAppSettings(fc).Safety
+	if got.ConfirmAt != "network" || got.UnknownCommandRisk != "project-write" || got.ScriptExecutionRisk != "safe" ||
+		got.NotifyDangerous != "off" || len(got.CommandRules) != 1 || got.CommandRules[0].Pattern != "scripts/*.sh" {
+		t.Fatalf("safety round-trip = %#v", got)
+	}
+}
+
 func TestFileConfigLoadsMissingFileGracefully(t *testing.T) {
 	tmpDir := t.TempDir()
 	restore := setTestHome(t, tmpDir)
@@ -325,5 +339,15 @@ func TestHistoryPath(t *testing.T) {
 	path := history.DefaultPath()
 	if path == "" {
 		t.Fatal("DefaultPath returned empty")
+	}
+}
+
+func TestLocalHistorySettingsFileConfigRoundTrip(t *testing.T) {
+	want := ttypes.LocalHistorySettings{Enabled: "off", UseGitIgnore: "on", ExtraIgnorePatterns: []string{"vendor/"}, MaxFileSizeMB: 50, StorageBudgetMB: 512}
+	var fc FileConfig
+	ApplyAppSettingsToFileConfig(&fc, ttypes.AppSettings{LocalHistory: want})
+	got := FileConfigToAppSettings(fc).LocalHistory
+	if got.Enabled != want.Enabled || got.MaxFileSizeMB != want.MaxFileSizeMB || len(got.ExtraIgnorePatterns) != 1 || got.StorageBudgetMB != want.StorageBudgetMB {
+		t.Fatalf("local history round trip=%+v", got)
 	}
 }

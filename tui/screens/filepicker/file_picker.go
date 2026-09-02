@@ -136,6 +136,7 @@ func New(th *theme.Theme) *Screen {
 	list.SetActivateAction("filepicker.entry.activate")
 	s.list = &pickerList{Base: ui.NewBase(ListID), list: list, owner: s, lastClick: -1}
 	s.scrollbar = ui.NewScrollbarControl(ScrollbarID, list.Scroll(), tokens)
+	s.scrollbar.SetSurfaceBackground(ui.ColorPopupBg)
 	s.rebuildActions()
 	s.sync()
 	return s
@@ -251,8 +252,12 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.filter.Layout(ctx, ui.Rect{X: inset, Y: filterY, W: max(1, r.W-inset*2), H: 1})
 	s.breadcrumb.Layout(ctx, ui.Rect{X: inset, Y: breadcrumbY, W: max(1, r.W-inset*2), H: 1})
 	listH := max(1, r.H-listY-2)
-	s.list.Layout(ctx, ui.Rect{X: inset, Y: listY, W: max(1, r.W-inset-1), H: listH})
-	s.scrollbar.Layout(ctx, ui.Rect{X: max(0, r.W-1), Y: listY, W: 1, H: listH})
+	barW := 0
+	if s.scrollbar.NeededForViewport(listH) {
+		barW = min(ui.ScrollbarWidth, max(0, r.W-inset))
+	}
+	s.list.Layout(ctx, ui.Rect{X: inset, Y: listY, W: max(1, r.W-inset-barW), H: listH})
+	s.scrollbar.Layout(ctx, ui.Rect{X: max(0, r.W-barW), Y: listY, W: barW, H: listH})
 	s.actions.Layout(ctx, ui.Rect{Y: max(0, r.H-1), W: r.W, H: 1})
 }
 

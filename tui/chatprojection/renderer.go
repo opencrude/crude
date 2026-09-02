@@ -7,6 +7,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/glamour/v2"
 
+	"crude/tui/perf"
 	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/tools"
@@ -714,6 +715,7 @@ func (r *Renderer) ActiveThinkingLineCount(contentWidth int) int {
 }
 
 func (r *Renderer) InvalidateCache() {
+	perf.MarkCacheInvalidation()
 	for _, msg := range r.sync.Messages {
 		if msg.Role == types.RoleTool && (msg.ToolStatus == "streaming" || msg.ToolStatus == "calling") {
 			msg.CachedLines = nil
@@ -754,6 +756,10 @@ func (r *Renderer) InvalidateWidthProfile() {
 func (r *Renderer) SetStreaming(s bool) {
 	if r.streaming == s {
 		return
+	}
+	if s {
+		// Live streaming is expected work in the perf sentinel's eyes.
+		perf.NoteActivity()
 	}
 	for i := len(r.sync.Messages) - 1; i >= 0; i-- {
 		message := r.sync.Messages[i]
@@ -1160,6 +1166,7 @@ func (r *Renderer) renderItem(idx int, item *renderItem, width int) []string {
 	}
 
 	if msg.SubPaneID != "" && r.subPaneContentFn != nil {
+		perf.MarkPaneRendered()
 		maxH := r.chatAreaHeight / 3
 		if maxH < 5 {
 			maxH = 5
@@ -1194,7 +1201,6 @@ func (r *Renderer) renderItem(idx int, item *renderItem, width int) []string {
 
 	isStreamingCursor := r.isStreamingCursor(msg)
 	msgIdx := r.messageIndexOf(msg)
-	suppressHeader := r.shouldSuppressHeader(msgIdx)
 	needsSpacer := r.needsLeadingSpacer(msgIdx)
 
 	if msg.CachedLines != nil && !isStreamingCursor && !msg.PendingBtw {
@@ -1209,24 +1215,14 @@ func (r *Renderer) renderItem(idx int, item *renderItem, width int) []string {
 		if len(cachedNative) == len(msg.CachedLines) {
 			native = append(native, cachedNative...)
 		} else {
-			// Native cache is stale or missing — re-render fresh so native
-			// rows are always real (never ANSI fallback). The fresh render
-			// bridges once and repopulates the cache.
-			ctx := r.buildRenderContext(msg, suppressHeader)
-			if r.streaming && r.isLastMessage(msg) && msg.Role == types.RoleAssistant {
-				ctx.streamNative = r.streamNativeRows(msg, r.Tokens())
-			}
-			fresh := renderMessageContent(*msg, ctx, suppressHeader)
-			if len(fresh.native) == len(msg.CachedLines) {
-				r.nativeCache[msg.InternalID] = fresh.native
-				native = append(native, fresh.native...)
-			} else {
-				// Length mismatch (e.g. spacer difference) — rebuild plain
-				// body lines from cached text so every row stays native.
-				for _, tl := range msg.CachedLines {
-					native = append(native, buildPlainBodyLine(tl))
-				}
-			}
+			// Cached text without its exact parallel native rows is not a valid
+			// cache entry. Drop both halves and rebuild through the normal styled
+			// renderer; never synthesize colorless rows from cached text.
+			msg.CachedLines = nil
+			delete(r.nativeCache, msg.InternalID)
+			lines, freshNative := r.renderSingleMessage(msg)
+			item.Native = freshNative
+			return lines
 		}
 		item.Native = native
 		return result
@@ -1381,6 +1377,15 @@ func (r *Renderer) renderSingleMessage(msg *types.ChatMessage) ([]string, []Pain
 	lines = append(lines, ml.lines...)
 	native = append(native, ml.native...)
 
+	// Work accounting lives here (not at the renderItem caller) so the role
+	// is known: status rows re-render every tick by design and are counted
+	// separately from the glamour-class re-renders the budgets hunt.
+	if origMsg.Role == types.RoleStatus {
+		perf.MarkStatusRerender()
+	} else {
+		perf.MarkItemRendered(len(lines))
+	}
+
 	// Persist the render cache on the retained message (r.sync.Messages), not
 	// the sanitized copy: the copy is discarded on return, and writing to it
 	// left every message permanently cache-less, so itemList.EnsureHeights
@@ -1489,17 +1494,29 @@ func (r *Renderer) messageToItem(idx int) renderItem {
 	msg := r.sync.Messages[idx]
 	height := -1
 	var rendered []string
+	var native []PaintLine
 	if msg.CachedLines != nil {
-		needsSpacer := r.needsLeadingSpacer(idx)
-		if needsSpacer {
-			height = len(msg.CachedLines) + 1
-			rendered = make([]string, 0, height)
-			rendered = append(rendered, "")
-			rendered = append(rendered, msg.CachedLines...)
+		cachedNative := r.nativeCache[msg.InternalID]
+		if len(cachedNative) != len(msg.CachedLines) {
+			// A text-only cache is invalid. Force a styled render when this item
+			// next enters the virtualized range.
+			msg.CachedLines = nil
+			delete(r.nativeCache, msg.InternalID)
 		} else {
-			height = len(msg.CachedLines)
-			rendered = make([]string, 0, height)
-			rendered = append(rendered, msg.CachedLines...)
+			needsSpacer := r.needsLeadingSpacer(idx)
+			if needsSpacer {
+				height = len(msg.CachedLines) + 1
+				rendered = make([]string, 0, height)
+				rendered = append(rendered, "")
+				rendered = append(rendered, msg.CachedLines...)
+				native = make([]PaintLine, 0, height)
+				native = append(native, buildPlainBodyLine(""))
+				native = append(native, cachedNative...)
+			} else {
+				height = len(msg.CachedLines)
+				rendered = append([]string(nil), msg.CachedLines...)
+				native = append([]PaintLine(nil), cachedNative...)
+			}
 		}
 	} else if h, ok := r.vl.ItemHeight(msg.InternalID); ok {
 		height = h
@@ -1508,6 +1525,7 @@ func (r *Renderer) messageToItem(idx int) renderItem {
 		ID:       msg.InternalID,
 		Height:   height,
 		Rendered: rendered,
+		Native:   native,
 		Dirty:    msg.CachedLines == nil,
 		Data:     msg,
 	}
@@ -1551,6 +1569,7 @@ func (r *Renderer) RebuildItems() {
 }
 
 func (r *Renderer) InvalidateAllMessages() {
+	perf.MarkCacheInvalidation()
 	for i := range r.sync.Messages {
 		r.invalidateMessageCache(r.sync.Messages[i])
 	}

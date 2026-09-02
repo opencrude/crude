@@ -10,8 +10,8 @@ import (
 )
 
 type paneGutterDrag struct {
-	paneID      string
-	dragOffsetY int
+	paneID  string
+	control *ui.ScrollbarControl
 }
 
 func (s *Screen) paneGutterState(paneID string) (PaneGutterState, bool) {
@@ -88,7 +88,7 @@ func (s *Screen) viewportPaneInfo(localY int) (chatprojection.PaneLineInfo, bool
 
 func (s *Screen) isNestedGutterHit(localX int) bool {
 	gx := s.nestedGutterX()
-	return gx >= 0 && localX == gx
+	return gx >= 0 && localX >= gx-(3-ui.ScrollbarWidth) && localX <= gx
 }
 
 func (s *Screen) paintNestedGutter(buf *surface.CellBuffer, x, y int, paneInfo chatprojection.PaneLineInfo) {
@@ -110,7 +110,29 @@ func (s *Screen) paintNestedGutter(buf *surface.CellBuffer, x, y int, paneInfo c
 	if st.TrackH <= 0 {
 		st.TrackH = st.Scroll.Viewport()
 	}
-	ui.PaintScrollbarCell(buf, x, y, st.Scroll, st.TrackH, trackRow, s.tokens, bg)
+	emphasized := s.paneHover == paneInfo.PaneID || (s.paneDrag != nil && s.paneDrag.paneID == paneInfo.PaneID)
+	buf.Set(x, y, ui.ScrollbarCellState(st.Scroll, st.TrackH, trackRow, s.tokens, bg, emphasized))
+}
+
+func (s *Screen) updatePaneGutterHover(ctx ui.EventContext) bool {
+	before := s.paneHover
+	s.paneHover = ""
+	if s.isNestedGutterHit(ctx.LocalX) {
+		if info, ok := s.viewportPaneInfo(ctx.LocalY); ok {
+			if _, visible := s.paneGutterState(info.PaneID); visible {
+				s.paneHover = info.PaneID
+			}
+		}
+	}
+	return before != s.paneHover
+}
+
+func (s *Screen) ClearPaneGutterHover() bool {
+	if s == nil || s.paneHover == "" {
+		return false
+	}
+	s.paneHover = ""
+	return true
 }
 
 func (s *Screen) handlePaneGutterClick(ctx ui.EventContext, msg tea.MouseClickMsg) ui.EventResult {
@@ -130,26 +152,21 @@ func (s *Screen) handlePaneGutterClick(ctx ui.EventContext, msg tea.MouseClickMs
 	if !ok {
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 	}
-	top, th := st.Scroll.ThumbBounds(trackH)
-	if trackLocalY >= top && trackLocalY < top+th {
-		s.paneDrag = &paneGutterDrag{paneID: info.PaneID, dragOffsetY: trackLocalY - top}
-	} else {
-		s.scrollPaneGutterToLocalY(info.PaneID, trackLocalY, trackH)
-		top, _ = st.Scroll.ThumbBounds(trackH)
-		s.paneDrag = &paneGutterDrag{paneID: info.PaneID, dragOffsetY: trackLocalY - top}
-		if s.paneDrag.dragOffsetY < 0 {
-			s.paneDrag.dragOffsetY = 0
-		}
+	control := ui.NewScrollbarControl(ui.ComponentID("shellchat/pane-scrollbar/"+info.PaneID), st.Scroll, s.tokens)
+	control.Layout(ui.LayoutContext{}, ui.Rect{W: ui.ScrollbarWidth, H: trackH})
+	res := control.Handle(ui.EventContext{LocalY: trackLocalY}, ui.MouseClickEvent(msg))
+	if control.IsDragging() {
+		s.paneDrag = &paneGutterDrag{paneID: info.PaneID, control: control}
 	}
 	s.syncPaneScrollAfterUser(info.PaneID)
-	return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+	return res
 }
 
 func (s *Screen) handlePaneGutterMotion(ctx ui.EventContext, msg tea.MouseMotionMsg) ui.EventResult {
 	if s.paneDrag == nil {
 		return ui.EventResult{}
 	}
-	_, ok := s.paneGutterState(s.paneDrag.paneID)
+	st, ok := s.paneGutterState(s.paneDrag.paneID)
 	if !ok {
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 	}
@@ -157,68 +174,20 @@ func (s *Screen) handlePaneGutterMotion(ctx ui.EventContext, msg tea.MouseMotion
 	if !ok {
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 	}
-	s.dragPaneGutterToLocalY(s.paneDrag.paneID, trackLocalY, trackH, s.paneDrag.dragOffsetY)
+	s.paneDrag.control.SetScroll(st.Scroll)
+	s.paneDrag.control.Layout(ui.LayoutContext{}, ui.Rect{W: ui.ScrollbarWidth, H: trackH})
+	res := s.paneDrag.control.Handle(ui.EventContext{LocalY: trackLocalY}, ui.MouseMotionEvent(msg))
 	s.syncPaneScrollAfterUser(s.paneDrag.paneID)
-	return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+	return res
 }
 
-func (s *Screen) handlePaneGutterRelease(_ ui.EventContext, _ tea.MouseReleaseMsg) ui.EventResult {
+func (s *Screen) handlePaneGutterRelease(ctx ui.EventContext, msg tea.MouseReleaseMsg) ui.EventResult {
 	if s.paneDrag == nil {
 		return ui.EventResult{}
 	}
+	res := s.paneDrag.control.Handle(ui.EventContext{LocalY: ctx.LocalY}, ui.MouseReleaseEvent(msg))
 	s.paneDrag = nil
-	return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
-}
-
-func (s *Screen) scrollPaneGutterToLocalY(paneID string, localY, trackH int) {
-	st, ok := s.paneGutterState(paneID)
-	if !ok {
-		return
-	}
-	scroll := st.Scroll
-	if trackH <= 1 {
-		scroll.ScrollTo(0)
-		return
-	}
-	maxOff := scroll.MaxOffset()
-	if maxOff <= 0 {
-		return
-	}
-	if localY < 0 {
-		localY = 0
-	}
-	if localY >= trackH {
-		localY = trackH - 1
-	}
-	off := localY * maxOff / (trackH - 1)
-	scroll.ScrollTo(off)
-}
-
-func (s *Screen) dragPaneGutterToLocalY(paneID string, localY, trackH, dragOffsetY int) {
-	st, ok := s.paneGutterState(paneID)
-	if !ok {
-		return
-	}
-	scroll := st.Scroll
-	maxOff := scroll.MaxOffset()
-	if maxOff <= 0 || trackH <= 0 {
-		return
-	}
-	_, th := scroll.ThumbBounds(trackH)
-	adjustedY := localY - dragOffsetY
-	if adjustedY < 0 {
-		adjustedY = 0
-	}
-	available := trackH - th
-	if available <= 0 {
-		scroll.ScrollTo(0)
-		return
-	}
-	if adjustedY > available {
-		adjustedY = available
-	}
-	off := adjustedY * maxOff / available
-	scroll.ScrollTo(off)
+	return res
 }
 
 func (s *Screen) handlePaneWheel(ctx ui.EventContext, msg tea.MouseWheelMsg) ui.EventResult {
@@ -285,5 +254,8 @@ func (s *Screen) IsPaneGutterDragging() bool {
 }
 
 func (s *Screen) CancelPaneGutterCapture() {
+	if s.paneDrag != nil && s.paneDrag.control != nil {
+		s.paneDrag.control.CancelPointerCapture()
+	}
 	s.paneDrag = nil
 }

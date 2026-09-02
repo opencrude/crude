@@ -176,3 +176,25 @@ func TestDeriveSubAgentNameWhenModelOmitsName(t *testing.T) {
 		t.Fatalf("fallback name = %q", got)
 	}
 }
+
+func TestNamedSubAgentProfileCanDisableAutomaticCompaction(t *testing.T) {
+	cfg := testConfig()
+	base, disabled := 85, 0
+	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
+	researcher := profile.Categories[CategoryResearcher]
+	researcher.ContextCompactionPercent = &base
+	profile.Categories[CategoryResearcher] = researcher
+	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile
+	if cfg.Agents.AgentProfiles == nil {
+		cfg.Agents.AgentProfiles = make(map[string]AgentProfileConfig)
+	}
+	cfg.Agents.AgentProfiles["no-compact"] = AgentProfileConfig{ContextCompactionPercent: &disabled}
+	runner := NewSubAgentRunner(&Session{cfg: cfg}, 1)
+	t.Cleanup(runner.SessionCancel)
+	spec := agent.SubAgentSpec{Name: "no-compact", Category: agent.CatResearcher}
+	runner.resolveProfile(spec.Name, spec.Category, &spec)
+	runner.applyCategoryDefaults(&spec)
+	if spec.ContextCompactionPercent == nil || *spec.ContextCompactionPercent != 0 {
+		t.Fatalf("named profile disable was overwritten: %#v", spec.ContextCompactionPercent)
+	}
+}

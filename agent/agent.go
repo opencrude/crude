@@ -12,6 +12,7 @@ import (
 	"crude/provider"
 	"crude/safety"
 	"crude/tools"
+	ttypes "crude/types"
 )
 
 type AgentEvent struct {
@@ -35,22 +36,25 @@ type StepRecord struct {
 }
 
 type Agent struct {
-	Provider         *provider.Provider
-	WireGuard        *WireGuard
-	lastWireMessages []provider.ChatMessage
-	Model            string
-	AgentID          AgentID
-	Policy           safety.Policy
-	Depth            int
-	ParentID         AgentID
-	MaxRetries       int
-	FilteredTools    []tools.ToolDef
-	ToolFn           func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error)
-	logger           *logger.Logger
-	turn             *logger.TurnLogger
-	Emit             func(AgentEvent)
-	Ctx              context.Context
-	Yolo             bool
+	Provider                 *provider.Provider
+	Model                    string
+	AgentID                  AgentID
+	Policy                   safety.Policy
+	CommandPolicy            safety.CommandPolicy
+	Depth                    int
+	ParentID                 AgentID
+	MaxRetries               int
+	ContextCompactionPercent int
+	ContextArchive           []provider.ChatMessage
+	FrozenPrefix             []provider.ChatMessage
+	lastActiveContext        []provider.ChatMessage
+	FilteredTools            []tools.ToolDef
+	ToolFn                   func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error)
+	logger                   *logger.Logger
+	turn                     *logger.TurnLogger
+	Emit                     func(AgentEvent)
+	Ctx                      context.Context
+	Yolo                     bool
 	// YoloMode supplies the owning session's live policy. Yolo remains the
 	// fallback for standalone agents and always-YOLO sub-agents.
 	YoloMode    func() bool
@@ -67,11 +71,11 @@ type Agent struct {
 	autoHandleCounter int
 }
 
-func (a *Agent) ActiveWireMessages() []provider.ChatMessage {
+func (a *Agent) ActiveContext() []provider.ChatMessage {
 	if a == nil {
 		return nil
 	}
-	return append([]provider.ChatMessage(nil), a.lastWireMessages...)
+	return append([]provider.ChatMessage(nil), a.lastActiveContext...)
 }
 
 func (a *Agent) yoloEnabled() bool {
@@ -123,8 +127,10 @@ func NewAgent(p *provider.Provider, model string, lg *logger.Logger) *Agent {
 		turn = lg.Turn()
 	}
 	return &Agent{
-		Provider: p,
-		Model:    model,
+		Provider:                 p,
+		Model:                    model,
+		ContextCompactionPercent: ttypes.DefaultContextCompactionPercent,
+		CommandPolicy:            safety.DefaultCommandPolicy(),
 		ToolFn: func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
 			return tools.ToolResult{}, nil
 		},

@@ -256,7 +256,6 @@ type ChatMessage struct {
 	ReasoningDuration time.Duration     `json:"-"`
 	ProviderItems     []ProviderItem    `json:"-"`
 	ToolError         bool              `json:"-"`
-	WireHidden        bool              `json:"-"`
 }
 
 func (m ChatMessage) ContentString() string {
@@ -265,10 +264,6 @@ func (m ChatMessage) ContentString() string {
 
 func NewTextMessage(role, text string) ChatMessage {
 	return ChatMessage{Role: role, Content: TextContent(text)}
-}
-
-func NewWireHiddenMessage(content string) ChatMessage {
-	return ChatMessage{Role: "user", Content: TextContent(content), WireHidden: true}
 }
 
 func NewMultiPartMessage(role string, parts []ContentPart) ChatMessage {

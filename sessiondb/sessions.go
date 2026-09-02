@@ -125,6 +125,31 @@ func GetCumulativeCost(db *sql.DB) (float64, error) {
 	return totalCost, nil
 }
 
+type CostTotals struct {
+	PromptTokens     int
+	CompletionTokens int
+	CachedTokens     int
+	TotalCost        float64
+	ByModel          map[string]json.RawMessage
+}
+
+func GetLatestCostTotals(db *sql.DB) (CostTotals, bool, error) {
+	var totals CostTotals
+	var byModel string
+	err := db.QueryRow(`
+		SELECT total_prompt_tokens, total_completion_tokens, total_cached_tokens, total_cost, COALESCE(by_model, '{}')
+		FROM cost_snapshots ORDER BY snapshot_at DESC LIMIT 1
+	`).Scan(&totals.PromptTokens, &totals.CompletionTokens, &totals.CachedTokens, &totals.TotalCost, &byModel)
+	if err == sql.ErrNoRows {
+		return CostTotals{}, false, nil
+	}
+	if err != nil {
+		return CostTotals{}, false, fmt.Errorf("sessiondb: get latest cost totals: %w", err)
+	}
+	_ = json.Unmarshal([]byte(byModel), &totals.ByModel)
+	return totals, true, nil
+}
+
 func InsertCostSnapshot(db *sql.DB, promptT, compT, cachedT int, totalCost float64, byModel map[string]json.RawMessage) error {
 	byModelJSON, _ := json.Marshal(byModel)
 	_, err := db.Exec(`

@@ -323,7 +323,7 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 	if agent == nil {
 		return nil
 	}
-	if evt.Type == "blocking" && m.AgentMgr.ActiveID() != agentID {
+	if (evt.Type == "blocking" || evt.Type == "safety_alert") && m.AgentMgr.ActiveID() != agentID {
 		m.switchToAgentView(agentID)
 	}
 

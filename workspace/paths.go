@@ -97,6 +97,21 @@ func WorkspaceDBPath(projectDir string) (string, error) {
 	return filepath.Join(dir, "workspace.db"), nil
 }
 
+// LocalHistoryDir returns the external per-workspace history store. It is
+// deliberately outside the project tree so snapshots never create repository
+// artifacts or trigger project watchers.
+func LocalHistoryDir(projectDir string) (string, error) {
+	dir, err := WorkspaceDir(projectDir)
+	if err != nil {
+		return "", err
+	}
+	historyDir := filepath.Join(dir, "local-history")
+	if err := os.MkdirAll(historyDir, 0o700); err != nil {
+		return "", fmt.Errorf("create local history dir: %w", err)
+	}
+	return historyDir, nil
+}
+
 // SessionDir returns the dedicated directory for a single session inside
 // a workspace. Layout: ~/.crude/workspaces/<hash>/sessions/<sessionID>/
 func SessionDir(projectDir, sessionID string) (string, error) {

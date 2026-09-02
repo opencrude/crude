@@ -256,7 +256,7 @@ func TestRunAutomaticallyContinuesInterruptedTextStream(t *testing.T) {
 		if message.Role == "assistant" && message.ContentString() == "part one" {
 			sawPartial = true
 		}
-		if message.Role == "user" && strings.Contains(message.ContentString(), "Continue the previous response") {
+		if message.Role == "user" && strings.HasPrefix(message.ContentString(), "[SYSTEM CONTINUATION]") {
 			sawContinuation = true
 		}
 	}
@@ -543,7 +543,7 @@ func TestRunRecoversToolPanicsAndContinues(t *testing.T) {
 	}
 }
 
-func TestRunPersistsRuntimeStatusInAppendOnlyWirePrefix(t *testing.T) {
+func TestRunAppendsToolRoundWithoutSyntheticRuntimeMessages(t *testing.T) {
 	var requestCount atomic.Int32
 	requests := make(chan []provider.ChatMessage, 2)
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -583,8 +583,12 @@ func TestRunPersistsRuntimeStatusInAppendOnlyWirePrefix(t *testing.T) {
 	if len(captured) != 2 {
 		t.Fatalf("request count = %d, want 2", len(captured))
 	}
-	if first := captured[0]; len(first) == 0 || !strings.HasPrefix(first[len(first)-1].ContentString(), "## Runtime Status") {
-		t.Fatalf("first request runtime status was not committed: %#v", first)
+	for _, request := range captured {
+		for _, message := range request {
+			if strings.Contains(message.ContentString(), "## Runtime Status") {
+				t.Fatalf("agent injected per-step runtime context: %#v", request)
+			}
+		}
 	}
 	second := captured[1]
 	if len(second) <= len(captured[0]) {
@@ -599,6 +603,45 @@ func TestRunPersistsRuntimeStatusInAppendOnlyWirePrefix(t *testing.T) {
 	}
 	if second[len(captured[0])].Role != "assistant" {
 		t.Fatalf("tool exchange did not extend the accepted prefix: %#v", second)
+	}
+}
+
+func TestUncompactedUserTurnsKeepPriorRequestAsExactPrefix(t *testing.T) {
+	requests := make(chan []provider.ChatMessage, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request provider.ChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+			return
+		}
+		requests <- request.Messages
+		writeChatSSE(w, "answer", "stop")
+	}))
+	defer server.Close()
+	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p.Model = "prefix-model"
+	a := newTestAgent(t, p, p.Model)
+	a.ContextCompactionPercent = 0
+	first := a.Run(context.Background(), []provider.ChatMessage{
+		provider.NewTextMessage("user", "first request\n\n<turn_context>remembered once</turn_context>"),
+	}, "stable system", func(AgentEvent) {}, nil, nil, "", nil)
+	secondInput := append(append([]provider.ChatMessage(nil), first[1:]...),
+		provider.NewTextMessage("user", "second request\n\n<turn_context>new recall</turn_context>"))
+	_ = a.Run(context.Background(), secondInput, "stable system", func(AgentEvent) {}, nil, nil, "", nil)
+	close(requests)
+	var captured [][]provider.ChatMessage
+	for request := range requests {
+		captured = append(captured, request)
+	}
+	if len(captured) != 2 || len(captured[1]) <= len(captured[0]) {
+		t.Fatalf("captured requests = %#v", captured)
+	}
+	for i := range captured[0] {
+		firstJSON, _ := json.Marshal(captured[0][i])
+		secondJSON, _ := json.Marshal(captured[1][i])
+		if string(firstJSON) != string(secondJSON) {
+			t.Fatalf("prior turn changed at message %d\nfirst=%s\nsecond=%s", i, firstJSON, secondJSON)
+		}
 	}
 }
 

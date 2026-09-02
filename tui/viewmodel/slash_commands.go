@@ -105,7 +105,7 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 			m.openSessionYoloPanel()
 			m.Logger.Info("SAFETY", "yolo_prompt", "source", "slash")
 		}
-	case "/undo", "/undo-n", "/undo-all":
+	case "/undo":
 		m.Logger.Info("INPUT", "slash", "command", cmd)
 		if agentID == "" {
 			m.StatusBar.SetError("No active session")
@@ -115,10 +115,9 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 			m.StatusBar.SetError("Stop the active turn before undoing file operations")
 			break
 		}
-		return func() tea.Msg {
-			result := m.HandleUndoForAgent(agentID, cmd)
-			return slashBackendResultMsg{agentID: agentID, command: cmdName, undo: &result}
-		}
+		return m.openLatestHistoryCmd()
+	case "/undo-n", "/undo-all":
+		m.StatusBar.SetError("Legacy destructive undo commands were removed. Use /undo to review message changes safely.")
 	default:
 		m.Logger.Warn("INPUT", "slash_unknown", "cmd", cmdName)
 		m.StatusBar.SetError(fmt.Sprintf("Unknown command: %s (try /help)", cmdName))

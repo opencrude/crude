@@ -16,9 +16,7 @@ const (
 func (w *Workspace) SetAppDefaults(s ttypes.AppSettings) {
 	ttypes.ApplyAppDefaults(&s)
 	w.appDefaults = s
-	if w.LSPMgr != nil {
-		w.LSPMgr.SetSettings(w.EffectiveAppSettings().LSP)
-	}
+	w.applyEffectiveSettings()
 }
 
 // AppDefaults returns the application-layer settings (no workspace overlay).
@@ -106,6 +104,9 @@ func (w *Workspace) applyEffectiveSettings() {
 	}
 	if w.sessionCfg != nil {
 		w.sessionCfg.Memory = effective.Memory
+	}
+	if w.HistoryService != nil {
+		w.HistoryService.UpdateSettings(effective.LocalHistory)
 	}
 	for _, frontendSession := range w.Sessions {
 		if frontendSession == nil || frontendSession.backend == nil {

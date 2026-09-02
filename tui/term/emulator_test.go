@@ -430,25 +430,21 @@ func TestEmulatorPwdOSC7(t *testing.T) {
 	}
 }
 
-func TestEmulatorCursorStyleUnderline(t *testing.T) {
+func TestEmulatorCursorStylesAlwaysPaintBlock(t *testing.T) {
 	e := requireEmulator(t)
 	e.Feed([]byte("x\x1b[1;1H"))
-	// DECSCUSR 4 = steady underline; the cursor cell must underline instead
-	// of inverting.
+	// Product cursor geometry is always a block, even when an application asks
+	// DECSCUSR for underline or bar. Timing still follows the requested mode.
 	e.Feed([]byte("\x1b[4 q"))
 	buf := paintGrid(t, e)
 	c := buf.Get(0, 0)
-	if c.Attr&cell.AttrUnderline == 0 {
-		t.Fatalf("underline-cursor cell attrs=%v want AttrUnderline", c.Attr)
+	if c.Attr&cell.AttrReverse == 0 || c.Attr&cell.AttrUnderline != 0 {
+		t.Fatalf("underline request attrs=%v want reverse block only", c.Attr)
 	}
-	if c.Attr&cell.AttrReverse != 0 {
-		t.Fatal("underline cursor also inverted the cell")
-	}
-	// Back to the default block: inversion returns.
-	e.Feed([]byte("\x1b[0 q"))
+	e.Feed([]byte("\x1b[6 q"))
 	buf = paintGrid(t, e)
-	if c := buf.Get(0, 0); c.Attr&cell.AttrReverse == 0 {
-		t.Fatalf("block-cursor cell attrs=%v want AttrReverse", c.Attr)
+	if c := buf.Get(0, 0); c.Attr&cell.AttrReverse == 0 || c.Attr&cell.AttrUnderline != 0 {
+		t.Fatalf("bar request attrs=%v want reverse block only", c.Attr)
 	}
 }
 

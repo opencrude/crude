@@ -81,6 +81,17 @@ workspace). Application defaults alone are `AppDefaults()`.
 | `/settings` or `/model` dock | session agent provider/model/protocol/thinking **and multi-agent** | app/workspace IDE prefs, API keys |
 | Theme cycle (`app.toggleTheme`) | application layer | workspace overlay |
 
+Local History is an application/workspace IDE category with field-level live
+inheritance. Defaults are enabled, `.gitignore` on, external capture on, 100 MB
+per file, 750 ms debounce, 60 second reconciliation, 24 hourly snapshots, 30
+daily snapshots, 500 total unprotected snapshots, and a 1 GiB budget. Safety
+snapshots are mandatory and displayed read-only. Additional ignore patterns are
+one Git-style pattern per line.
+
+The Local History window exposes logical/physical diagnostics and the command
+palette provides `Create History Snapshot`, `Verify Local History`, `Prune Local
+History`, and `Open Local History Folder`.
+
 Legacy `workspace.db` key `app_settings` (full `AppSettings` blobs) is still
 read: `LoadWorkspaceOverrides` diffs it against current app defaults so existing
 projects keep their per-workspace theme/editor/LSP values.

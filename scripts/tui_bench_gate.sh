@@ -2,36 +2,22 @@
 # Phase 15 bench regression gate.
 #
 # Runs the canonical performance benchmarks with -benchmem and fails when a
-# benchmark EXCEEDS its documented allocation ceiling from
-# docs/reference/performance-baselines.md. Allocations are hardware-independent, so
-# ceilings are enforceable in CI; timing is intentionally NOT gated (CPU
-# frequency variation across runners makes wall-clock thresholds noise).
+# benchmark EXCEEDS its allocation ceiling from scripts/perf_ceilings.txt
+# (the machine-readable twin of docs/reference/performance-baselines.md).
+# Allocations are hardware-independent, so ceilings are enforceable in CI;
+# timing is intentionally NOT gated (CPU frequency variation across runners
+# makes wall-clock thresholds noise).
 #
 # Usage: scripts/tui_bench_gate.sh
 set -euo pipefail
 
 cd "$(dirname "$0")/.."
 
-# name -> "bytes allocs" ceilings (from docs/reference/performance-baselines.md)
-# Lines: "BenchmarkName  B/op  allocs/op"
+CEILINGS_FILE="scripts/perf_ceilings.txt"
+
+# name -> "bytes allocs" ceilings
 ceiling() {
-  case "$1" in
-    BenchmarkDemoGalleryPaint_80x24)            echo "1300 60" ;;
-    BenchmarkDemoGalleryPaint_120x40)           echo "2000 60" ;;
-    BenchmarkDemoGalleryHandleKeyEditCycle)     echo "48 3" ;;
-    BenchmarkBlit_80x24)                        echo "0 0" ;;
-    BenchmarkWriteString_Line)                  echo "0 0" ;;
-    BenchmarkFlattenZOrder_Nested)              echo "2300 8" ;;
-    BenchmarkFullRender_80x24)                  echo "12000 6" ;;
-    BenchmarkGenerateANSI_80x24)                echo "9000 2" ;;
-    BenchmarkEditorPaint_80x24)                 echo "9000 1200" ;;
-    BenchmarkEditorPaint_120x40)                echo "20000 2200" ;;
-    BenchmarkEditorPaint_LargeFile_120x40)      echo "20000 2200" ;;
-    BenchmarkEditorScrollRepaint_120x40)        echo "20000 2200" ;;
-    BenchmarkChatStreamPaint_80x24)             echo "9000 300" ;;
-    BenchmarkChatStreamPaint_120x40)            echo "20000 400" ;;
-    *) echo "" ;;
-  esac
+  awk -v name="$1" '$1 == name {print $2, $3; found=1; exit} END {if (!found) print ""}' "$CEILINGS_FILE"
 }
 
 fail=0
@@ -52,7 +38,7 @@ run_bench() {
     base="${name%-*}"
     ceils="$(ceiling "$base")"
     if [[ -z "$ceils" ]]; then
-      echo "WARN: no ceiling recorded for $base — update docs/reference/performance-baselines.md or the gate"
+      echo "WARN: no ceiling recorded for $base — add one to $CEILINGS_FILE"
       continue
     fi
     read -r maxB maxAlloc <<< "$ceils"
@@ -69,6 +55,8 @@ echo "== TUI bench regression gate =="
 run_bench 'Benchmark(DemoGallery|Blit|WriteString|Flatten|FullRender|GenerateANSI)' ./tui/ui ./tui/surface ./tui/compositor
 run_bench 'Benchmark(EditorPaint|EditorScrollRepaint)' ./tui/screens/shelleditor
 run_bench 'BenchmarkChatStreamPaint' ./tui/screens/shellchat
+# Scenario benches: steady-state work budgets (see scripts/perf_ceilings.txt).
+run_bench 'Benchmark(IdleTick|TabRederive)' ./tui/viewmodel
 
 if [[ $fail -ne 0 ]]; then
   echo "== BENCH GATE FAILED =="

@@ -647,7 +647,12 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	filteredTools := agent.FilterTools(allToolDefs, spec.AllowedTools, spec.DeniedTools, spec.Category, true)
 
 	a := agent.NewAgent(p, p.Model, r.session.logger)
-	a.WireGuard = agent.NewWireGuard()
+	if r.session.cfg != nil {
+		a.CommandPolicy = safety.CommandPolicyFromSettings(r.session.cfg.Safety)
+	}
+	if spec.ContextCompactionPercent != nil {
+		a.ContextCompactionPercent = *spec.ContextCompactionPercent
+	}
 	a.AgentID = spec.ID
 	a.Depth = spec.Depth
 	a.ParentID = spec.ParentID
@@ -903,10 +908,18 @@ func persistSubAgentTranscript(
 			assignmentSeen = true
 		}
 		meta := sessiondb.DisplayMeta{DisplayRole: displayRole}
-		if message.WireHidden || message.Role == "system" {
+		if isProviderControlMessage(message) {
 			meta = sessiondb.DisplayMeta{
 				SnapshotVersion: sessiondb.ConversationSnapshotVersion,
 				DisplayRole:     "hidden_wire_context",
+				ContextOnly:     true,
+			}
+		}
+		if message.Role == "system" {
+			meta = sessiondb.DisplayMeta{
+				SnapshotVersion: sessiondb.ConversationSnapshotVersion,
+				DisplayRole:     "hidden_wire_context",
+				ContextOnly:     true,
 			}
 		}
 		if message.Role == "tool" {
@@ -918,7 +931,7 @@ func persistSubAgentTranscript(
 				meta.ToolStatus = "success"
 			}
 		}
-		if !message.WireHidden && message.Role != "system" {
+		if message.Role != "system" && !isProviderControlMessage(message) {
 			meta = canonicalizeDisplayMeta(message, meta, rawToolArgs[message.ToolCallID], len(persisted)-1, time.Now())
 		}
 		metas = append(metas, meta)
@@ -1315,6 +1328,9 @@ func (r *SubAgentRunner) resolveProfile(name string, category string, spec *agen
 		if spec.ModelContextWindow == 0 && catCfg.ModelContextWindow > 0 {
 			spec.ModelContextWindow = catCfg.ModelContextWindow
 		}
+		if spec.ContextCompactionPercent == nil && catCfg.ContextCompactionPercent != nil {
+			spec.ContextCompactionPercent = cloneIntPtr(catCfg.ContextCompactionPercent)
+		}
 		if spec.ModelInputPrice == 0 && catCfg.ModelInputPrice > 0 {
 			spec.ModelInputPrice = catCfg.ModelInputPrice
 		}
@@ -1352,6 +1368,9 @@ func (r *SubAgentRunner) resolveProfile(name string, category string, spec *agen
 			}
 			if len(spec.FileOwnership) == 0 && len(ap.FileOwnership) > 0 {
 				spec.FileOwnership = ap.FileOwnership
+			}
+			if ap.ContextCompactionPercent != nil {
+				spec.ContextCompactionPercent = cloneIntPtr(ap.ContextCompactionPercent)
 			}
 			if ap.Instructions != "" {
 				instructionsParts = append(instructionsParts, ap.Instructions)
@@ -1418,6 +1437,9 @@ func (r *SubAgentRunner) applyCategoryDefaults(spec *agent.SubAgentSpec) {
 		}
 		if spec.ModelTopP == nil {
 			spec.ModelTopP = categoryCfg.ModelTopP
+		}
+		if spec.ContextCompactionPercent == nil && categoryCfg.ContextCompactionPercent != nil {
+			spec.ContextCompactionPercent = cloneIntPtr(categoryCfg.ContextCompactionPercent)
 		}
 	}
 	if spec.PolicyName == "" {
@@ -1549,13 +1571,13 @@ func (r *SubAgentRunner) executeSubAgentCommandAutoPromote(ctx context.Context, 
 
 	isReadOnlyExec := a.Policy.AllowedCapabilities[safety.CanExecuteReadOnly] && !a.Policy.AllowedCapabilities[safety.CanExecute]
 	if !a.Yolo {
-		sr := safety.CheckCommandSafety(cmd, r.session.logger)
+		sr := safety.CheckCommandSafetyWithPolicy(cmd, r.session.logger, a.CommandPolicy)
 		if sr.Risk.IsAlwaysBlocked() {
 			errMsg := fmt.Sprintf("Error: [SAFETY] %s\nSuggestion: %s", sr.Reason, sr.Suggestion)
 			r.session.logger.Warn("SAFETY", "blocked", "command", cmd, "reason", sr.Reason)
 			return tools.ToolResult{Content: errMsg}, fmt.Errorf("%s", errMsg)
 		}
-		if sr.Risk.NeedsConfirmation() {
+		if sr.NeedsConfirmation() {
 			r.session.logger.Info("SAFETY", "risky", "command", cmd, "risk", sr.Risk.String())
 		}
 		if isReadOnlyExec && sr.Risk != safety.RiskSafe {
