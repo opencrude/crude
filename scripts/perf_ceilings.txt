@@ -1,0 +1,30 @@
+# TUI bench gate ceilings — the machine-readable source of truth for
+# scripts/tui_bench_gate.sh. One benchmark per line: "<Name> <bytes/op> <allocs/op>".
+# Allocations are hardware-independent, so Ceilings are enforceable in CI;
+# wall-clock is intentionally NOT gated (docs/reference/performance-baselines.md).
+#
+# Rules of thumb when updating:
+#   - Tighten when a fix lands (set to measured + ~20% headroom).
+#   - Loosen only with a PR note explaining the new cost, and verify on a quiet
+#     machine with -count=3; flaky ceilings rot the gate's credibility.
+#   - Leaf benches catch a function getting fatter. Scenario benches
+#     (IdleTick/TabRederive, gated on tui/perf work counters in tests) catch
+#     call-frequency regressions — a dropped per-tick cache shows up in the
+#     work-budget tests and as a multi-x alloc jump here, not as a leaf change.
+BenchmarkDemoGalleryPaint_80x24 1300 60
+BenchmarkDemoGalleryPaint_120x40 2000 60
+BenchmarkDemoGalleryHandleKeyEditCycle 48 3
+BenchmarkBlit_80x24 0 0
+BenchmarkWriteString_Line 0 0
+BenchmarkFlattenZOrder_Nested 2300 8
+BenchmarkFullRender_80x24 12000 6
+BenchmarkGenerateANSI_80x24 9000 2
+BenchmarkEditorPaint_80x24 5200 760
+BenchmarkEditorPaint_120x40 9600 1380
+BenchmarkEditorPaint_LargeFile_120x40 9600 1380
+BenchmarkEditorScrollRepaint_120x40 9600 1380
+BenchmarkChatStreamPaint_80x24 9000 300
+BenchmarkChatStreamPaint_120x40 20000 400
+# Scenario benches (tui/viewmodel) — steady-state work budgets.
+BenchmarkIdleTick_200Msgs 120000 620
+BenchmarkTabRederive_80Msgs 56000 400

@@ -15,6 +15,7 @@ const ConversationSnapshotVersion = 1
 type DisplayMeta struct {
 	SnapshotVersion int                          `json:"snapshot_version,omitempty"`
 	Snapshots       []ttypes.ConversationMessage `json:"snapshots,omitempty"`
+	ContextOnly     bool                         `json:"context_only,omitempty"`
 
 	// Legacy fields remain readable for sessions written before canonical
 	// conversation snapshots landed. New writes always populate Snapshots.
@@ -201,6 +202,61 @@ func ReplaceMessagesWithMeta(db *sql.DB, sessionID string, msgs []provider.ChatM
 	}
 
 	return msgCount, nil
+}
+
+func AppendMessageWithMeta(db *sql.DB, sessionID string, m provider.ChatMessage, turn int, meta DisplayMeta) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var seq int
+	if err := tx.QueryRow(`SELECT COALESCE(MAX(sequence_num),-1)+1 FROM messages`).Scan(&seq); err != nil {
+		return err
+	}
+	var toolCallsJSON, cacheJSON, providerJSON []byte
+	if len(m.ToolCalls) > 0 {
+		toolCallsJSON, err = json.Marshal(m.ToolCalls)
+		if err != nil {
+			return err
+		}
+	}
+	if m.CacheControl != nil {
+		cacheJSON, err = json.Marshal(m.CacheControl)
+		if err != nil {
+			return err
+		}
+	}
+	if len(m.ProviderItems) > 0 {
+		providerJSON, err = json.Marshal(m.ProviderItems)
+		if err != nil {
+			return err
+		}
+	}
+	content := m.Content.String()
+	toolResult := ""
+	if m.Role == "tool" {
+		toolResult = content
+		content = ""
+	}
+	contentType := "text"
+	if !m.Content.IsText() {
+		content = m.Content.MultipartJSON()
+		contentType = "multipart"
+	}
+	var metaJSON sql.NullString
+	if raw, marshalErr := json.Marshal(meta); marshalErr == nil && len(raw) > 2 {
+		metaJSON = sql.NullString{String: string(raw), Valid: true}
+	}
+	_, err = tx.Exec(`INSERT INTO messages(role,content,content_type,reasoning_content,reasoning,tool_calls,tool_name,tool_result,tool_call_id,tool_error,provider_items,cache_control,token_count,sequence_num,turn_number,agent_id,created_at,display_meta) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, m.Role, nullString(content), nullString(contentType), nullString(m.ReasoningContent), nullString(m.Reasoning), nullBytes(toolCallsJSON), nullString(""), nullString(toolResult), nullString(m.ToolCallID), m.ToolError, nullBytes(providerJSON), nullBytes(cacheJSON), provider.EstimateMessageTokens(m, ""), seq, turn, nil, time.Now().UnixNano(), metaJSON)
+	if err != nil {
+		return err
+	}
+	_, err = tx.Exec(`UPDATE sessions SET message_count=(SELECT COUNT(*) FROM messages),turn_count=MAX(turn_count,?) WHERE id=?`, turn, sessionID)
+	if err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func LoadMessages(db *sql.DB) ([]provider.ChatMessage, []int, error) {

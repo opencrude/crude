@@ -87,6 +87,7 @@ func New(th *theme.Theme) *Screen {
 	list.SetActivateAction("memorybrowser.activate")
 	s.list = &browserList{Base: ui.NewBase(ListID), list: list, owner: s}
 	s.scrollbar = ui.NewScrollbarControl(ScrollbarID, list.Scroll(), tokens)
+	s.scrollbar.SetSurfaceBackground(ui.ColorPopupBg)
 
 	s.empty = ui.NewLabel(EmptyID, "No memories yet — the agent saves them as you work.", th)
 	s.empty.SetColorRole(ui.ColorMuted)
@@ -230,8 +231,12 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	if len(s.records) == 0 {
 		s.empty.Layout(ctx, ui.Rect{Y: listY, W: r.W, H: listH})
 	} else {
-		s.list.Layout(ctx, ui.Rect{X: 0, Y: listY, W: max(1, r.W-1), H: listH})
-		s.scrollbar.Layout(ctx, ui.Rect{X: max(0, r.W-1), Y: listY, W: 1, H: listH})
+		barW := 0
+		if s.scrollbar.NeededForViewport(listH) {
+			barW = min(ui.ScrollbarWidth, r.W)
+		}
+		s.list.Layout(ctx, ui.Rect{X: 0, Y: listY, W: max(1, r.W-barW), H: listH})
+		s.scrollbar.Layout(ctx, ui.Rect{X: max(0, r.W-barW), Y: listY, W: barW, H: listH})
 	}
 	s.detailRect = ui.Rect{X: 0, Y: listY + listH, W: r.W, H: detailH}
 	s.hints.Layout(ctx, ui.Rect{Y: max(0, r.H-1), W: r.W, H: 1})

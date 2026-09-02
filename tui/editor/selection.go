@@ -33,6 +33,9 @@ func (e *Editor) CancelPointerCapture() {
 	if e.sbCtrl != nil {
 		e.sbCtrl.CancelPointerCapture()
 	}
+	if e.hSbCtrl != nil {
+		e.hSbCtrl.CancelPointerCapture()
+	}
 }
 
 func (e *Editor) SelectionRange() (startLine, startCol, endLine, endCol int) {

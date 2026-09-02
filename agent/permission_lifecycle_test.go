@@ -2,12 +2,14 @@ package agent
 
 import (
 	"context"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
 
 	"crude/logger"
 	"crude/provider"
+	"crude/safety"
 	"crude/tools"
 	ttypes "crude/types"
 )
@@ -29,6 +31,13 @@ func editPermissionCall() provider.ToolCall {
 			Name:      "edit_file",
 			Arguments: `{"path":"main.go","old_string":"old","new_string":"new"}`,
 		},
+	}
+}
+
+func commandPermissionCall(command string) provider.ToolCall {
+	return provider.ToolCall{
+		ID: "tool-command", InternalID: "internal-command",
+		Function: provider.FunctionCall{Name: "execute_command", Arguments: `{"command":` + strconv.Quote(command) + `}`},
 	}
 }
 
@@ -166,5 +175,44 @@ func TestQuestionValidationFailureIsNotUserCancellation(t *testing.T) {
 	})
 	if !isError || !strings.Contains(result, "validation failed") || strings.Contains(result, "user cancelled") {
 		t.Fatalf("validation result = %q, error=%v", result, isError)
+	}
+}
+
+func TestLocalScriptUsesConfigurableConfirmationInsteadOfBlindBlock(t *testing.T) {
+	agent := newPermissionLifecycleAgent(t)
+	agent.CommandPolicy = safety.DefaultCommandPolicy()
+	responses := make(chan ttypes.BlockResponse, 1)
+	blocked := false
+	agent.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
+		t.Fatal("denied script executed")
+		return tools.ToolResult{}, nil
+	}
+	result := agent.executeOneToolCall(context.Background(), commandPermissionCall("bash scripts/check.sh"), func(event AgentEvent) {
+		if event.Type != "blocking" {
+			return
+		}
+		blocked = true
+		data, _ := event.Data.(map[string]string)
+		if data["risk"] != "unknown" {
+			t.Fatalf("script risk=%q", data["risk"])
+		}
+		responses <- ttypes.BlockResponse{RequestID: "internal-command", Outcome: ttypes.BlockAnswered, Value: "deny"}
+	}, responses, new(string))
+	if !blocked || !strings.Contains(result.result.Content, "user denied") {
+		t.Fatalf("script confirmation blocked=%v result=%q", blocked, result.result.Content)
+	}
+}
+
+func TestHardBlockedCommandEmitsPersistentSafetyAlert(t *testing.T) {
+	agent := newPermissionLifecycleAgent(t)
+	agent.CommandPolicy = safety.DefaultCommandPolicy()
+	alerted := false
+	result := agent.executeOneToolCall(context.Background(), commandPermissionCall("rm -rf /"), func(event AgentEvent) {
+		if event.Type == "safety_alert" {
+			alerted = true
+		}
+	}, nil, new(string))
+	if !alerted || !result.toolError || !strings.Contains(result.result.Content, "SAFETY") {
+		t.Fatalf("blocked alert=%v result=%#v", alerted, result)
 	}
 }

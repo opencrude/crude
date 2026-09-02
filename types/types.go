@@ -131,6 +131,10 @@ type CategorySettings struct {
 	// Sampling overrides; nil leaves the backend default in effect.
 	ModelTemperature *float64
 	ModelTopP        *float64
+	// ContextCompactionPercent starts an automatic context compaction when the
+	// agent reaches this percentage of its effective model window. nil uses the
+	// product default; 0 disables automatic compaction.
+	ContextCompactionPercent *int `json:"context_compaction_percent,omitempty"`
 }
 
 type ProfileSettings struct {
@@ -159,6 +163,8 @@ type Settings struct {
 	TurnLogsEnabled  string
 	Agents           AgentsSettings
 	Memory           MemorySettings              `json:"memory,omitempty"`
+	Safety           SafetySettings              `json:"safety,omitempty"`
+	LocalHistory     LocalHistorySettings        `json:"local_history,omitempty"`
 	SessionOverrides map[string]CategorySettings `json:"-"`
 	// SessionMultiAgent is the explicit session override for sub-agent
 	// spawning. nil means inherit the workspace/profile default.
@@ -180,14 +186,52 @@ type AppSettings struct {
 	Providers      map[string]ProviderConfig `json:"providers,omitempty"`
 	Agents         AgentsSettings            `json:"agents,omitempty"`
 	Memory         MemorySettings            `json:"memory,omitempty"`
+	Safety         SafetySettings            `json:"safety,omitempty"`
+	LocalHistory   LocalHistorySettings      `json:"local_history,omitempty"`
+}
+
+type CommandSeverityRule struct {
+	Pattern string `json:"pattern"`
+	Risk    string `json:"risk"`
+}
+
+type SafetySettings struct {
+	ConfirmAt           string                `json:"confirm_at,omitempty"`
+	UnknownCommandRisk  string                `json:"unknown_command_risk,omitempty"`
+	ScriptExecutionRisk string                `json:"script_execution_risk,omitempty"`
+	CommandRules        []CommandSeverityRule `json:"command_rules,omitempty"`
+	NotifyDangerous     string                `json:"notify_dangerous,omitempty"`
+}
+
+type LocalHistorySettings struct {
+	Enabled                     string   `json:"enabled,omitempty"`
+	UseGitIgnore                string   `json:"use_gitignore,omitempty"`
+	ExtraIgnorePatterns         []string `json:"extra_ignore_patterns,omitempty"`
+	MaxFileSizeMB               int      `json:"max_file_size_mb,omitempty"`
+	DebounceMS                  int      `json:"debounce_ms,omitempty"`
+	ReconcileIntervalSeconds    int      `json:"reconcile_interval_seconds,omitempty"`
+	RetentionKeepHours          int      `json:"retention_keep_hours,omitempty"`
+	RetentionKeepDaily          int      `json:"retention_keep_daily,omitempty"`
+	RetentionMaxSnapshots       int      `json:"retention_max_snapshots,omitempty"`
+	StorageBudgetMB             int      `json:"storage_budget_mb,omitempty"`
+	CaptureExternalChanges      string   `json:"capture_external_changes,omitempty"`
+	SafetySnapshotBeforeRestore string   `json:"safety_snapshot_before_restore,omitempty"`
+}
+
+func (s LocalHistorySettings) EnabledValue() bool         { return s.Enabled != "off" }
+func (s LocalHistorySettings) UseGitIgnoreValue() bool    { return s.UseGitIgnore != "off" }
+func (s LocalHistorySettings) CaptureExternalValue() bool { return s.CaptureExternalChanges != "off" }
+func (s LocalHistorySettings) SafetySnapshotValue() bool {
+	return s.SafetySnapshotBeforeRestore != "off"
 }
 
 // Memory system defaults (applied by ApplyAppDefaults and used as fallbacks
 // wherever a MemorySettings value is unset).
 const (
-	DefaultMemoryRecallBudget   = 1500
-	DefaultMemoryRecallLimit    = 10
-	DefaultMemoryExtractCadence = 3
+	DefaultMemoryRecallBudget       = 1500
+	DefaultMemoryRecallLimit        = 10
+	DefaultMemoryExtractCadence     = 3
+	DefaultContextCompactionPercent = 85
 )
 
 // MemorySettings configures the workspace memory system. Tri-state strings
@@ -269,11 +313,12 @@ type SessionSettings struct {
 
 func (s Settings) AppPart() AppSettings {
 	return AppSettings{
-		Theme:  s.Theme,
-		Editor: s.Editor,
-		LSP:    s.LSP,
-		UI:     s.UI,
-		Font:   s.Font,
+		Theme:        s.Theme,
+		Editor:       s.Editor,
+		LSP:          s.LSP,
+		UI:           s.UI,
+		Font:         s.Font,
+		LocalHistory: s.LocalHistory,
 	}
 }
 

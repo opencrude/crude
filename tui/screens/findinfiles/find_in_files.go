@@ -162,6 +162,7 @@ func New(th *theme.Theme) *Screen {
 	list.SetRowPainter(s.paintResultRow)
 	s.list = &findList{Base: ui.NewBase(ListID), list: list, owner: s, lastClick: -1}
 	s.scrollbar = ui.NewScrollbarControl(ScrollbarID, list.Scroll(), tokens)
+	s.scrollbar.SetSurfaceBackground(ui.ColorPopupBg)
 
 	s.preview = &previewPane{Base: ui.NewBase(PreviewID), owner: s}
 	s.split = ui.NewSplitModel(ui.Vertical)
@@ -649,8 +650,12 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		s.resultH = min(4, max(1, available))
 	}
 	previewStart := s.listY0 + s.resultH + divH
-	s.list.Layout(ctx, ui.Rect{X: 0, Y: s.listY0, W: max(1, r.W-1), H: s.resultH})
-	s.scrollbar.Layout(ctx, ui.Rect{X: max(0, r.W-1), Y: s.listY0, W: 1, H: s.resultH})
+	barW := 0
+	if s.scrollbar.NeededForViewport(s.resultH) {
+		barW = min(ui.ScrollbarWidth, r.W)
+	}
+	s.list.Layout(ctx, ui.Rect{X: 0, Y: s.listY0, W: max(1, r.W-barW), H: s.resultH})
+	s.scrollbar.Layout(ctx, ui.Rect{X: max(0, r.W-barW), Y: s.listY0, W: barW, H: s.resultH})
 	if s.divider != nil {
 		s.divider.SetCurrentFirst(s.resultH)
 		s.divider.Layout(ctx, ui.Rect{X: 0, Y: s.listY0 + s.resultH, W: r.W, H: max(0, divH)})

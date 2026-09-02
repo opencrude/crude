@@ -57,6 +57,7 @@ type Client struct {
 	onUploadProgress  func(uploaded, total int64)
 	onRequestEncoded  func(body []byte)
 	onRequestAccepted func()
+	stall             progressTimeouts
 }
 
 // ClientOption configures a Client at construction.
@@ -104,6 +105,14 @@ func OnUploadProgress(fn func(uploaded, total int64)) ClientOption {
 	return func(c *Client) { c.onUploadProgress = fn }
 }
 
+// WithProgressTimeouts overrides zero-progress detection. It is primarily a
+// fault-injection/test seam; production uses conservative adaptive defaults.
+func WithProgressTimeouts(startup, floor, ceiling time.Duration) ClientOption {
+	return func(c *Client) {
+		c.stall = progressTimeouts{Startup: startup, Floor: floor, Ceiling: ceiling, Margin: floor / 4}
+	}
+}
+
 // NewClient builds a Client for a protocol at a base URL. headers may be nil
 // to use only the protocol's static headers plus a bearer token from apiKey.
 func NewClient(proto Protocol, baseURL, apiKey string, dial DialConfig, opts ...ClientOption) (*Client, error) {
@@ -127,6 +136,7 @@ func NewClient(proto Protocol, baseURL, apiKey string, dial DialConfig, opts ...
 		hc:        newHTTPClient(dial),
 		dial:      dial,
 		sessionID: newSessionUUID(),
+		stall:     defaultProgressTimeouts,
 	}
 	if apiKey != "" {
 		c.headerSource = staticHeaderSource(proto, apiKey)
@@ -265,10 +275,19 @@ func (c *Client) Complete(ctx context.Context, req *ChatRequest) (*ChatResponse,
 			}
 			continue
 		}
-		defer resp.Body.Close()
+		// Body reads have a zero-progress monitor and may fail retryably even
+		// after headers were accepted.
 		payload, err := readBounded(resp.Body, c.dial.MaxResponseBytes)
+		_ = resp.Body.Close()
 		if err != nil {
-			return nil, fmt.Errorf("read response: %w", err)
+			lastErr = fmt.Errorf("read response: %w", err)
+			if attempt < c.dial.MaxAttempts && c.retryableStreamError(err) {
+				if waitErr := c.backoff(ctx, attempt, nil, err); waitErr != nil {
+					return nil, waitErr
+				}
+				continue
+			}
+			return nil, lastErr
 		}
 		decoded, err := c.proto.DecodeResponse(payload)
 		if err != nil {
@@ -299,16 +318,19 @@ func (c *Client) Stream(ctx context.Context, req *ChatRequest) (*ChatStream, err
 
 // ChatStream is a decoded, ordered view of one streaming response.
 type ChatStream struct {
-	client  *Client
-	ctx     context.Context
-	body    []byte
-	resp    *http.Response
-	reader  streamEventReader
-	decoder StreamDecoder
-	attempt int
-	yielded bool
-	sawDone bool
-	closed  bool
+	client    *Client
+	ctx       context.Context
+	body      []byte
+	resp      *http.Response
+	reader    streamEventReader
+	decoder   StreamDecoder
+	attempt   int
+	yielded   bool
+	sawDone   bool
+	closed    bool
+	emitted   streamTranscript
+	replay    streamTranscript
+	replaying bool
 }
 
 // Next returns the next decoded stream update. It returns io.EOF after the
@@ -339,7 +361,8 @@ func (s *ChatStream) Next() (StreamUpdate, error) {
 					return StreamUpdate{}, io.EOF
 				}
 			}
-			if !s.yielded && s.client.retryableStreamError(err) && s.attempt < s.client.dial.MaxAttempts {
+			if s.canRetryStream(err) {
+				s.beginReplay()
 				if waitErr := s.client.backoff(s.ctx, s.attempt, nil, err); waitErr != nil {
 					return StreamUpdate{}, waitErr
 				}
@@ -350,13 +373,28 @@ func (s *ChatStream) Next() (StreamUpdate, error) {
 		update, err := s.decoder.Decode(event)
 		if err != nil {
 			s.closeResp()
-			if !s.yielded && s.client.retryableStreamError(err) && s.attempt < s.client.dial.MaxAttempts {
+			if s.canRetryStream(err) {
+				s.beginReplay()
 				if waitErr := s.client.backoff(s.ctx, s.attempt, nil, err); waitErr != nil {
 					return StreamUpdate{}, waitErr
 				}
 				continue
 			}
 			return StreamUpdate{}, err
+		}
+		if s.replaying {
+			adjusted, emit, replayErr := reconcileReplay(s.emitted, &s.replay, update)
+			if replayErr != nil {
+				s.closeResp()
+				return StreamUpdate{}, replayErr
+			}
+			if replayMatches(s.emitted, s.replay) || adjusted.ContentDelta != "" || adjusted.ReasoningDelta != "" || len(adjusted.ToolCalls) > 0 {
+				s.replaying = false
+			}
+			if !emit {
+				continue
+			}
+			update = adjusted
 		}
 		if update.Done {
 			s.sawDone = true
@@ -369,11 +407,28 @@ func (s *ChatStream) Next() (StreamUpdate, error) {
 			return StreamUpdate{}, io.EOF
 		}
 		s.yielded = true
+		s.emitted.apply(update)
 		if update.Done {
 			s.done()
 		}
 		return update, nil
 	}
+}
+
+func (s *ChatStream) canRetryStream(err error) bool {
+	if s.attempt >= s.client.dial.MaxAttempts || !s.client.retryableStreamError(err) {
+		return false
+	}
+	return !s.yielded || !s.emitted.ProviderItems
+}
+
+func (s *ChatStream) beginReplay() {
+	if !s.yielded {
+		return
+	}
+	s.replaying = true
+	s.replay = streamTranscript{}
+	s.sawDone = false
 }
 
 // done marks the stream finished and releases the response body.
@@ -592,27 +647,35 @@ func withStreamFlag(req *ChatRequest, stream bool) *ChatRequest {
 // do issues one HTTP attempt with composed headers, upload progress, and
 // bounded error reporting. It does not inspect the response body.
 func (c *Client) do(ctx context.Context, method string, endpoint *url.URL, body []byte) (*http.Response, error) {
+	watch, attemptCtx := newProgressWatch(ctx, c.stall)
 	var reader io.Reader
 	var getBody func() (io.ReadCloser, error)
 	if body != nil {
-		reader = bytes.NewReader(body)
+		progress := newUploadProgressReader(bytes.NewReader(body), int64(len(body)), c.onUploadProgress)
+		reader = &watchedUploadReader{inner: progress, watch: watch, total: int64(len(body))}
 		getBody = func() (io.ReadCloser, error) {
-			return io.NopCloser(newUploadProgressReader(bytes.NewReader(body), int64(len(body)), c.onUploadProgress)), nil
+			progress := newUploadProgressReader(bytes.NewReader(body), int64(len(body)), c.onUploadProgress)
+			return io.NopCloser(&watchedUploadReader{inner: progress, watch: watch, total: int64(len(body))}), nil
 		}
+	} else {
+		watch.setPhase("response headers")
 	}
-	req, err := http.NewRequestWithContext(ctx, method, endpoint.String(), reader)
+	req, err := http.NewRequestWithContext(attemptCtx, method, endpoint.String(), reader)
 	if err != nil {
+		watch.stop()
 		return nil, fmt.Errorf("create request: %w", err)
 	}
 	if body != nil {
-		progress := newUploadProgressReader(bytes.NewReader(body), int64(len(body)), c.onUploadProgress)
-		req.Body = io.NopCloser(progress)
+		req.Body = io.NopCloser(reader)
 		req.GetBody = getBody
-		progress.report(0)
+		if c.onUploadProgress != nil {
+			c.onUploadProgress(0, int64(len(body)))
+		}
 		req.ContentLength = int64(len(body))
 	}
-	headers, err := c.headerSource(ctx)
+	headers, err := c.headerSource(attemptCtx)
 	if err != nil {
+		watch.stop()
 		return nil, fmt.Errorf("resolve request headers: %w", err)
 	}
 	for key, values := range headers {
@@ -626,12 +689,20 @@ func (c *Client) do(ctx context.Context, method string, endpoint *url.URL, body 
 	}
 	resp, err := c.hc.Do(req)
 	if err != nil {
+		cause := context.Cause(attemptCtx)
+		watch.stop()
+		var stalled *ProgressStallError
+		if errors.As(cause, &stalled) {
+			return nil, stalled
+		}
 		return nil, err
 	}
 	if body != nil {
 		// The request was handed to the transport; report completion.
 		reportUploadComplete(int64(len(body)), c.onUploadProgress)
 	}
+	watch.setPhase("download")
+	resp.Body = &watchedReadCloser{inner: resp.Body, watch: watch, ctx: attemptCtx}
 	return resp, nil
 }
 
@@ -651,6 +722,10 @@ func (c *Client) backoff(ctx context.Context, attempt int, resp *http.Response, 
 // retryableStreamError reports whether a mid-stream error warrants
 // re-establishing the stream (only valid before any output was yielded).
 func (c *Client) retryableStreamError(err error) bool {
+	var stalled *ProgressStallError
+	if errors.As(err, &stalled) {
+		return true
+	}
 	if errors.Is(err, io.ErrUnexpectedEOF) {
 		return true
 	}

@@ -73,7 +73,9 @@ func NewSurface(th *theme.Theme, model *Model) *WorkspaceSettingsSurface {
 	s.form.SetFieldGap(1)
 	s.form.SetArrowExitsForm(true)
 	s.listScroll = ui.NewScrollbarControl(WorkspaceSettingsListScrollID, s.categories.list.Scroll(), tokens)
+	s.listScroll.SetSurfaceBackground(ui.ColorPopupBg)
 	s.formScroll = ui.NewScrollbarControl(WorkspaceSettingsFormScrollID, s.form.Scroll(), tokens)
+	s.formScroll.SetSurfaceBackground(ui.ColorPopupBg)
 	s.split = ui.NewSplitModel(ui.Horizontal)
 	s.split.SetDividerSize(workspaceSettingsGap)
 	s.split.SetMinSizes(12, 20)
@@ -219,14 +221,16 @@ func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.categories.Layout(ctx, ui.Rect{X: railX, Y: catY, W: leftW, H: catH})
 	s.form.Layout(ctx, ui.Rect{X: formX, Y: topPad, W: formW, H: formH})
 	if s.listScroll != nil && s.listScroll.Needed() {
-		s.categories.Layout(ctx, ui.Rect{X: railX, Y: catY, W: max(1, leftW-1), H: catH})
-		s.listScroll.Layout(ctx, ui.Rect{X: railX + leftW - 1, Y: catY, W: 1, H: catH})
+		barW := min(ui.ScrollbarWidth+1, leftW)
+		s.categories.Layout(ctx, ui.Rect{X: railX, Y: catY, W: max(1, leftW-barW), H: catH})
+		s.listScroll.Layout(ctx, ui.Rect{X: railX + leftW - barW, Y: catY, W: barW, H: catH})
 	} else if s.listScroll != nil {
 		s.listScroll.Layout(ctx, ui.Rect{})
 	}
 	if s.formScroll != nil && s.formScroll.Needed() {
-		s.form.Layout(ctx, ui.Rect{X: formX, Y: topPad, W: max(1, formW-1), H: formH})
-		s.formScroll.Layout(ctx, ui.Rect{X: formX + formW - 1, Y: topPad, W: 1, H: formH})
+		barW := min(ui.ScrollbarWidth+1, formW)
+		s.form.Layout(ctx, ui.Rect{X: formX, Y: topPad, W: max(1, formW-barW), H: formH})
+		s.formScroll.Layout(ctx, ui.Rect{X: formX + formW - barW, Y: topPad, W: barW, H: formH})
 	} else if s.formScroll != nil {
 		s.formScroll.Layout(ctx, ui.Rect{})
 	}

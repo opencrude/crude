@@ -33,7 +33,11 @@ func TestCompleteStreamOllamaNDJSON(t *testing.T) {
 	defer server.Close()
 
 	p := provider.FromPreset("ollama-cloud", "ollama-key", server.URL)
-	p.Model = "llama3"
+	p.Model = "compaction-test-model"
+	provider.SetModelContext(p.Model, 65536)
+	if got := p.ContextWindow(p.Model); got != 65536 {
+		t.Fatalf("context window=%d want 65536", got)
+	}
 	agent := newTestAgent(t, p, p.Model)
 
 	result, err := completeForTest(t, agent)
@@ -51,7 +55,7 @@ func TestCompleteStreamOllamaNDJSON(t *testing.T) {
 	}
 }
 
-func TestOllamaUncachedContextRotatesToBoundedWireEpoch(t *testing.T) {
+func TestConfiguredAgentCompactsFromFullArchiveAtThreshold(t *testing.T) {
 	var requestCount atomic.Int32
 	var bodies [][]byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -70,22 +74,34 @@ func TestOllamaUncachedContextRotatesToBoundedWireEpoch(t *testing.T) {
 	}))
 	defer server.Close()
 	p := provider.FromPreset("ollama-cloud", "ollama-key", server.URL)
-	p.Model = "llama3"
+	p.Model = "compaction-test-model"
+	provider.SetModelContext(p.Model, 65536)
 	a := newTestAgent(t, p, p.Model)
+	a.ContextCompactionPercent = 85
+	var largeHistory []provider.ChatMessage
+	for i := 0; i < 24; i++ {
+		largeHistory = append(largeHistory,
+			provider.NewTextMessage("user", fmt.Sprintf("request %d %s", i, strings.Repeat("context ", 1000))),
+			provider.NewTextMessage("assistant", fmt.Sprintf("answer %d %s", i, strings.Repeat("analysis ", 1000))),
+		)
+	}
+	largeHistory = append(largeHistory, provider.NewTextMessage("user", "current instruction must survive"))
 	a.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
 		return tools.ToolResult{Content: "module crude"}, nil
 	}
-	archive := a.Run(context.Background(), []provider.ChatMessage{
-		provider.NewTextMessage("user", strings.Repeat("large immutable context ", 12000)),
-	}, "system", func(AgentEvent) {}, nil, nil, "", nil)
-	if len(bodies) != 2 || len(bodies[1]) >= len(bodies[0]) || !strings.Contains(string(bodies[1]), "wire_checkpoint") {
-		t.Fatalf("wire epoch was not bounded: requests=%d sizes=%v", len(bodies), []int{len(bodies[0]), len(bodies[1])})
+	archive := a.Run(context.Background(), largeHistory, "system", func(AgentEvent) {}, nil, nil, "", nil)
+	if len(bodies) != 2 || len(bodies[0]) >= 400000 || !strings.Contains(string(bodies[0]), "context_checkpoint") {
+		t.Fatalf("active context was not compacted: requests=%d sizes=%v", len(bodies), []int{len(bodies[0]), len(bodies[1])})
 	}
-	if len(archive) < 4 || !strings.Contains(archive[1].Content.String(), "large immutable context") {
+	if len(archive) <= len(largeHistory) || !strings.Contains(archive[1].Content.String(), "request 0") {
 		t.Fatal("full archive was lost during active epoch rotation")
 	}
-	active := a.ActiveWireMessages()
-	if len(active) == 0 || !active[0].WireHidden || !strings.Contains(active[0].Content.String(), "wire_checkpoint") {
-		t.Fatalf("active wire epoch = %#v", active)
+	active := a.ActiveContext()
+	currentSurvived := false
+	for _, message := range active {
+		currentSurvived = currentSurvived || strings.Contains(message.Content.String(), "current instruction must survive")
+	}
+	if len(active) == 0 || active[0].Role != "system" || !strings.Contains(active[0].Content.String(), "context_checkpoint") || !currentSurvived {
+		t.Fatalf("active context = %#v", active)
 	}
 }

@@ -12,6 +12,7 @@ import (
 	"crude/tui/filetree"
 	"crude/tui/screens/activitybar"
 	"crude/tui/screens/activitylist"
+	historyscreen "crude/tui/screens/localhistory"
 	"crude/tui/screens/panelchrome"
 	"crude/tui/screens/shelltree"
 	"crude/tui/screens/sourcecontrol"
@@ -336,6 +337,17 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		return cmd
 	}
 	switch action.ID {
+	case historyscreen.ActionPreview:
+		request, _ := action.Payload.(historyscreen.PreviewRequest)
+		return m.historyPreviewCmd(request)
+	case historyscreen.ActionApply:
+		request, _ := action.Payload.(historyscreen.ApplyRequest)
+		return m.historyApplyCmd(request)
+	case historyscreen.ActionBack:
+		return m.openLocalHistory()
+	case ui.ActionTextPaste:
+		target, _ := action.Payload.(ui.ClipboardPasteTarget)
+		return m.beginNativeClipboardPaste(target, "")
 	case termdock.ActionNew:
 		return m.openNewTerminal()
 	case activitybar.ActionSelect:

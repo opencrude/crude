@@ -31,14 +31,14 @@ func dumpChatRows(app *App, t *testing.T) {
 	}
 }
 
-// trackColumns returns columns in a row range that contain '░' or '█'.
+// trackColumns returns columns in a row range that contain scrollbar chrome.
 func trackColumns(app *App, y0, y1 int) map[int]rune {
 	buf := app.mainSurf.Buffer()
 	cols := map[int]rune{}
 	for y := y0; y < y1 && y < buf.Height(); y++ {
 		for x := 0; x < app.width; x++ {
 			c := buf.Get(x, y)
-			if c.Char == '░' || c.Char == '█' {
+			if c.Char == '│' || c.Char == '┃' {
 				if _, ok := cols[x]; !ok {
 					cols[x] = c.Char
 				}
@@ -91,7 +91,7 @@ func TestZZThinkingScrollbarGeometry(t *testing.T) {
 	dumpChatRows(app, t)
 
 	tracks := trackColumns(app, app.chatRect.Y, app.chatRect.Y+app.chatRect.H)
-	t.Logf("track columns (░/█): %v", tracks)
+	t.Logf("track columns (│/┃): %v", tracks)
 	// Sort columns
 	colList := make([]int, 0, len(tracks))
 	for c := range tracks {

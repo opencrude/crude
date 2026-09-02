@@ -4,6 +4,7 @@ import (
 	"sync"
 
 	"crude/provider"
+	ttypes "crude/types"
 )
 
 // RuntimeProfile provides ephemeral per-orchestrator config overrides
@@ -98,7 +99,7 @@ func (rp *RuntimeProfile) SetCategoryOverride(orchID, category string, cat Categ
 	oo := rp.GetOrCreateOverride(orchID)
 	rp.mu.Lock()
 	if cat.Provider == "" && cat.Model == "" && cat.APIKey == "" &&
-		cat.ProviderURL == "" && cat.ThinkingEffort == "" {
+		cat.ProviderURL == "" && cat.ThinkingEffort == "" && cat.ContextCompactionPercent == nil {
 		delete(oo.CategoryOverrides, category)
 	} else {
 		if oo.CategoryOverrides == nil {
@@ -268,6 +269,10 @@ func mergeCategoryConfig(base, override CategoryConfig) CategoryConfig {
 		topP := *override.ModelTopP
 		merged.ModelTopP = &topP
 	}
+	if override.ContextCompactionPercent != nil {
+		value := *override.ContextCompactionPercent
+		merged.ContextCompactionPercent = &value
+	}
 	merged.APIKey = ""
 	return merged
 }
@@ -278,10 +283,14 @@ func copyConfig(src *Config) *Config {
 		ActiveProvider:  src.ActiveProvider,
 		TurnLogsEnabled: src.TurnLogsEnabled,
 		Memory:          src.Memory,
+		Safety:          src.Safety,
 	}
+	dst.Safety.CommandRules = append([]ttypes.CommandSeverityRule(nil), src.Safety.CommandRules...)
+	dst.Memory.MemoryCategory.ContextCompactionPercent = cloneIntPtr(src.Memory.MemoryCategory.ContextCompactionPercent)
 
 	if src.workspaceMain != nil {
 		m := *src.workspaceMain
+		m.ContextCompactionPercent = cloneIntPtr(src.workspaceMain.ContextCompactionPercent)
 		dst.workspaceMain = &m
 	}
 
@@ -306,6 +315,7 @@ func copyConfig(src *Config) *Config {
 			if prof.Categories != nil {
 				profCopy.Categories = make(map[string]CategoryConfig, len(prof.Categories))
 				for k, v := range prof.Categories {
+					v.ContextCompactionPercent = cloneIntPtr(v.ContextCompactionPercent)
 					profCopy.Categories[k] = v
 				}
 			}
@@ -315,6 +325,7 @@ func copyConfig(src *Config) *Config {
 	if src.Agents.AgentProfiles != nil {
 		agents.AgentProfiles = make(map[string]AgentProfileConfig, len(src.Agents.AgentProfiles))
 		for k, v := range src.Agents.AgentProfiles {
+			v.ContextCompactionPercent = cloneIntPtr(v.ContextCompactionPercent)
 			agents.AgentProfiles[k] = v
 		}
 	}

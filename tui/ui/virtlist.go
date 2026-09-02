@@ -190,6 +190,29 @@ func (v *VirtualList) ItemIndexAtRow(absRow int) int {
 	return v.itemAtRow(absRow)
 }
 
+func (v *VirtualList) ItemAtViewportRow(row int) (VirtItem, bool) {
+	if row < 0 || row >= v.scroll.Viewport() {
+		return VirtItem{}, false
+	}
+	off := v.scroll.Offset()
+	gravityTop := 0
+	if v.bottomGravity && off == 0 && v.scroll.Content() < v.scroll.Viewport() {
+		gravityTop = v.scroll.Viewport() - v.scroll.Content()
+	}
+	if row < gravityTop {
+		return VirtItem{}, false
+	}
+	absRow := off + row
+	if gravityTop > 0 {
+		absRow = row - gravityTop
+	}
+	idx := v.itemAtRow(absRow)
+	if idx < 0 || idx >= len(v.items) {
+		return VirtItem{}, false
+	}
+	return v.items[idx], true
+}
+
 func (v *VirtualList) itemAtRow(row int) int {
 	// binary search prefix; rows past last item (bottom padding) return -1
 	lo, hi := 0, len(v.items)-1

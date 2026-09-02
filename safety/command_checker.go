@@ -53,20 +53,26 @@ func (r CommandRisk) IsAlwaysBlocked() bool {
 }
 
 type CommandSafetyResult struct {
-	Risk             CommandRisk
-	BaseCommand      string
-	FullCommand      string
-	Reason           string
-	Suggestion       string
-	TargetsSystem    bool
-	UsesSudo         bool
-	PipedToShell     bool
-	ModifiesConfig   bool
-	ReadsCredentials bool
-	Obfuscated       bool
-	AffectedPaths    []string
-	RedirectTargets  []string
-	Calls            []string
+	Risk                 CommandRisk
+	BaseCommand          string
+	FullCommand          string
+	Reason               string
+	Suggestion           string
+	TargetsSystem        bool
+	UsesSudo             bool
+	PipedToShell         bool
+	ModifiesConfig       bool
+	ReadsCredentials     bool
+	Obfuscated           bool
+	AffectedPaths        []string
+	RedirectTargets      []string
+	Calls                []string
+	MatchedRule          string
+	ConfirmationRequired bool
+}
+
+func (r *CommandSafetyResult) NeedsConfirmation() bool {
+	return r != nil && r.ConfirmationRequired && !r.Risk.IsAlwaysBlocked()
 }
 
 var systemPrefixes []string
@@ -333,7 +339,7 @@ func extractCmds(prog *syntax.File) (calls []string, pipedToShell bool, redirect
 	return
 }
 
-func CheckCommandSafety(cmd string, lg *logger.Logger) *CommandSafetyResult {
+func checkCommandSafetyBase(cmd string, lg *logger.Logger) *CommandSafetyResult {
 	res := &CommandSafetyResult{
 		FullCommand: cmd,
 	}

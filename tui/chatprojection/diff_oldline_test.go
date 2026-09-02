@@ -97,16 +97,40 @@ func TestBuildBandedDiffRows_MultiFileShowsPaths(t *testing.T) {
 	}
 }
 
-func TestBuildBandedDiffRows_DedentsCommonMarginOnly(t *testing.T) {
-	raw := "```diff\n--- a/main.go\n+++ b/main.go\n@@ -1,3 +1,3 @@\n        if ready {\n-            oldCall()\n+            newCall()\n        }\n```"
-	plain := ""
+func TestBuildBandedDiffRowsPreservesSourceIndentation(t *testing.T) {
+	// Unified context rows carry one marker space before the eight source
+	// spaces. Changed rows carry +/- directly before their twelve source spaces.
+	raw := "```diff\n--- a/main.go\n+++ b/main.go\n@@ -1,3 +1,3 @@\n         if ready {\n-            oldCall()\n+            newCall()\n         }\n```"
+	var contentRows []string
 	for _, row := range chatprojection.BuildBandedDiffRows(raw, 60, 80, true) {
-		plain += row.PlainText() + "\n"
+		plain := row.PlainText()
+		for _, marker := range []string{"+ ", "- "} {
+			if i := strings.Index(plain, marker); i >= 0 {
+				contentRows = append(contentRows, plain[i+len(marker):])
+			}
+		}
 	}
-	if strings.Contains(plain, "        if ready") {
-		t.Fatalf("common indentation was not removed:\n%s", plain)
+	if len(contentRows) != 2 {
+		t.Fatalf("changed content rows = %#v", contentRows)
 	}
-	if !strings.Contains(plain, "    oldCall") || !strings.Contains(plain, "    newCall") {
-		t.Fatalf("relative nested indentation was flattened:\n%s", plain)
+	for _, content := range contentRows {
+		if !strings.HasPrefix(content, strings.Repeat(" ", 12)) {
+			t.Fatalf("source indentation was flattened in %q", content)
+		}
+	}
+}
+
+func TestBuildBandedDiffRowsExpandsSourceTabsAfterGutter(t *testing.T) {
+	raw := "```diff\n--- a/main.go\n+++ b/main.go\n@@ -1 +1 @@\n-\toldCall()\n+\tnewCall()\n```"
+	for _, row := range chatprojection.BuildBandedDiffRows(raw, 60, 80, true) {
+		plain := row.PlainText()
+		for _, marker := range []string{"+ ", "- "} {
+			if i := strings.Index(plain, marker); i >= 0 {
+				content := plain[i+len(marker):]
+				if !strings.HasPrefix(content, "    ") || strings.ContainsRune(content, '\t') {
+					t.Fatalf("tab-indented content after gutter = %q", content)
+				}
+			}
+		}
 	}
 }

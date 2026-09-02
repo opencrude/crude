@@ -10,6 +10,10 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/tools"
 	"crude/tui/ui"
+
+	"github.com/alecthomas/chroma/v2"
+	"github.com/alecthomas/chroma/v2/lexers"
+	"github.com/alecthomas/chroma/v2/styles"
 )
 
 // BuildDiffRows turns a raw unified-diff string into native PaintLines using
@@ -113,8 +117,6 @@ func BuildBandedDiffRows(raw string, textWidth, totalWidth int, expanded bool) [
 		if len(rows) > 0 && tools.CompactContextLines > 0 {
 			rows = tools.TrimDiffContext(rows, tools.CompactContextLines)
 		}
-		rows = dedentDiffRows(rows)
-
 		maxNumWidth := 1
 		for _, r := range rows {
 			if r.Kind == tools.DiffLineDeletion {
@@ -142,7 +144,7 @@ func BuildBandedDiffRows(raw string, textWidth, totalWidth int, expanded bool) [
 				all = append(all, buildDiffEllipsisRow(maxNumWidth))
 				continue
 			}
-			all = append(all, buildBandedDiffContentRows(r, maxNumWidth, contentWidth, totalWidth)...)
+			all = append(all, buildBandedDiffContentRows(r, file.Path, maxNumWidth, contentWidth, totalWidth)...)
 		}
 	}
 	if !expanded && len(all) > previewDiffRows {
@@ -157,52 +159,10 @@ func BuildBandedDiffRows(raw string, textWidth, totalWidth int, expanded bool) [
 	return all
 }
 
-// dedentDiffRows removes only indentation common to every visible source row.
-// A deeply nested snippet can start at column zero while relative indentation
-// inside nested blocks remains faithful.
-func dedentDiffRows(rows []tools.DiffRow) []tools.DiffRow {
-	common := ""
-	initialized := false
-	for _, row := range rows {
-		if row.Ellipsis || strings.TrimSpace(row.Content) == "" {
-			continue
-		}
-		indent := leadingWhitespace(row.Content)
-		if !initialized {
-			common = indent
-			initialized = true
-			continue
-		}
-		for !strings.HasPrefix(indent, common) {
-			if common == "" {
-				break
-			}
-			common = common[:len(common)-1]
-		}
-	}
-	if common == "" {
-		return rows
-	}
-	out := append([]tools.DiffRow(nil), rows...)
-	for i := range out {
-		out[i].Content = strings.TrimPrefix(out[i].Content, common)
-	}
-	return out
-}
-
-func leadingWhitespace(text string) string {
-	for i, r := range text {
-		if r != ' ' && r != '\t' {
-			return text[:i]
-		}
-	}
-	return text
-}
-
 // buildBandedDiffContentRows renders one diff row with the tight gutter and
 // full-width band. Long content hard-wraps with continuation rows that keep
 // the band and blank the number/sign columns.
-func buildBandedDiffContentRows(r tools.DiffRow, maxNumWidth, contentWidth, totalWidth int) []PaintLine {
+func buildBandedDiffContentRows(r tools.DiffRow, path string, maxNumWidth, contentWidth, totalWidth int) []PaintLine {
 	numStr := ""
 	// Deletions reference the old-file line; additions/context reference the
 	// new-file line. This gives each changed row a meaningful gutter.
@@ -239,7 +199,10 @@ func buildBandedDiffContentRows(r tools.DiffRow, maxNumWidth, contentWidth, tota
 		indicatorRole = ui.ColorMuted
 	}
 
-	content := r.Content
+	// Unified diffs preserve source tabs, but terminal cell painting does not
+	// assign them stable columns. Expand before width, wrapping, and syntax
+	// tokenization so code keeps its natural tab-stop indentation.
+	content := rendering.ExpandTabs(r.Content, 4)
 	segments := []string{content}
 	if rendering.VisibleWidth(content) > contentWidth {
 		segments = rendering.HardWrap(content, contentWidth)
@@ -252,19 +215,49 @@ func buildBandedDiffContentRows(r tools.DiffRow, maxNumWidth, contentWidth, tota
 			sign = " "
 			blankNum = strings.Repeat(" ", len(paddedNum))
 		}
-		pl := PaintLine{Spans: []RowSpan{
+		spans := []RowSpan{
 			{Text: "│ ", Role: ui.ColorMuted},
 			{Text: blankNum, Role: ui.ColorMuted},
 			{Text: " ", Role: ui.ColorMuted},
 			{Text: sign + " ", Role: indicatorRole},
-			{Text: seg, Role: contentRole},
-		}}
+		}
+		spans = append(spans, syntaxDiffSpans(path, seg, contentRole)...)
+		pl := PaintLine{Spans: spans}
 		if bandSet {
 			pl = bandPaintLine(pl, band, totalWidth)
 		}
 		out = append(out, pl)
 	}
 	return out
+}
+
+func syntaxDiffSpans(path, text string, fallback ui.SemanticColor) []RowSpan {
+	lexer := lexers.Match(path)
+	if lexer == nil {
+		return []RowSpan{{Text: text, Role: fallback}}
+	}
+	iterator, err := chroma.Coalesce(lexer).Tokenise(nil, text)
+	if err != nil {
+		return []RowSpan{{Text: text, Role: fallback}}
+	}
+	style := styles.Get("github-dark")
+	if style == nil {
+		style = styles.Fallback
+	}
+	var spans []RowSpan
+	for token := iterator(); token != chroma.EOF; token = iterator() {
+		span := RowSpan{Text: token.Value, Role: fallback}
+		entry := style.Get(token.Type)
+		if entry.Colour.IsSet() {
+			span.FGColor = rendering.LipglossColorToCell(entry.Colour.String())
+			span.FGSet = !span.FGColor.IsDefault()
+		}
+		spans = append(spans, span)
+	}
+	if len(spans) == 0 {
+		return []RowSpan{{Text: text, Role: fallback}}
+	}
+	return spans
 }
 
 // bandPaintLine pads a PaintLine with the band background so the tint spans

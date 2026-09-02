@@ -304,11 +304,3 @@ func selectionTickCmd() tea.Cmd {
 		return types.SelectionTickMsg(t)
 	})
 }
-
-func (s *Screen) inScrollbarZone(localX int) bool {
-	if !s.mainScrollbarVisible() {
-		return false
-	}
-	sb := s.scrollbar.Bounds()
-	return localX >= sb.X && localX < sb.X+sb.W
-}

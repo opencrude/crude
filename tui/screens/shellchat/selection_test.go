@@ -109,27 +109,29 @@ func TestShellChatScrollbarDragScrolls(t *testing.T) {
 	})
 	s.SyncScrollMetrics(3, 8)
 	w := 20 + th.Spacing.PadLR*2 + 1
-	s.Layout(ui.LayoutContext{}, ui.Rect{W: w, H: 3})
+	host := ui.NewHost(th, s)
+	host.Resize(w, 3)
+	host.Layout()
 	scroll := s.ScrollModel()
 	if scroll.MaxOffset() <= 0 {
 		t.Fatal("expected scrollable content")
 	}
 
 	sbX := w - th.Spacing.PadLR - 1
-	ctx := ui.EventContext{LocalX: sbX, LocalY: 1}
-	res := s.Handle(ctx, ui.MouseClickEvent(tea.MouseClickMsg{X: sbX, Y: 1, Button: tea.MouseLeft}))
+	thumbTop, _ := scroll.ThumbBounds(s.scrollbar.Bounds().H)
+	res := host.Handle(tea.MouseClickMsg{X: sbX, Y: thumbTop, Button: tea.MouseLeft})
 	if !res.Handled {
 		t.Fatal("scrollbar click should be handled")
 	}
 	before := scroll.Offset()
-	res = s.Handle(ctx, ui.MouseMotionEvent(tea.MouseMotionMsg{X: sbX, Y: 2, Button: tea.MouseLeft}))
+	res = host.Handle(tea.MouseMotionMsg{X: sbX, Y: 0, Button: tea.MouseLeft})
 	if !res.Handled || !s.IsScrollbarDragging() {
 		t.Fatal("scrollbar drag motion should be handled")
 	}
 	if scroll.Offset() == before && scroll.MaxOffset() > 1 {
 		t.Fatalf("drag should change offset from %d", before)
 	}
-	_ = s.Handle(ctx, ui.MouseReleaseEvent(tea.MouseReleaseMsg{X: sbX, Y: 2, Button: tea.MouseLeft}))
+	_ = host.Handle(tea.MouseReleaseMsg{X: sbX, Y: 2, Button: tea.MouseLeft})
 	if s.IsScrollbarDragging() {
 		t.Fatal("drag should end on release")
 	}

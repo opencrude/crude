@@ -43,7 +43,9 @@ Read that first; this index only organizes the reference material.
 - [In-app terminals](reference/in-app-terminals.md) — the embedded terminal
   multiplexer: libghostty-vt PTY engine, pinned Ghostty environment.
 - [Performance baselines](reference/performance-baselines.md) — recorded paint
-  and allocation numbers; ceilings are CI-enforced via `make bench-gate`.
+  and allocation numbers; leaf allocation ceilings (`scripts/perf_ceilings.txt`)
+  and per-frame work-budget tests are both CI-enforced via `make bench-gate`,
+  and live runs can be watched with `CRUDE_PERF_LOG`.
 - [Design token bypasses](reference/design-token-bypasses.md) — the frozen
   allowlist of theme-system bypasses, mirrored from
   [bypass-manifest.json](reference/bypass-manifest.json).
@@ -80,6 +82,9 @@ Read that first; this index only organizes the reference material.
 - [Message-scoped undo and local history plan](plans/undo-local-history-plan.md)
   — **IN PROGRESS** architecture and delivery plan for JetBrains-quality,
   cache-safe workspace history and per-user-message restore.
+- [End-to-end reliability and interaction hardening](plans/end-to-end-hardening-plan.md)
+  — **ACTIVE** umbrella execution plan for transport liveness, safety,
+  projections, shared interaction controls, editor latency, and undo delivery.
 
 ## Documentation rules
 

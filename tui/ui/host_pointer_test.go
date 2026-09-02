@@ -277,7 +277,7 @@ func TestHostLayoutRemovalInvokesCancelHook(t *testing.T) {
 	host.Resize(10, 10)
 	host.Layout()
 
-	host.Handle(tea.MouseClickMsg{X: 0, Y: 2, Button: tea.MouseLeft})
+	host.Handle(tea.MouseClickMsg{X: 0, Y: 0, Button: tea.MouseLeft})
 	if !host.HasPointerCapture() || !sb.IsDragging() {
 		t.Fatal("scrollbar drag should capture")
 	}
@@ -300,7 +300,7 @@ func TestScrollbarControlCancelPointerCapture(t *testing.T) {
 	scroll.SetContent(20)
 	sb := NewScrollbarControl("sb", scroll, nil)
 	sb.Layout(LayoutContext{}, Rect{W: 1, H: 5})
-	sb.Handle(EventContext{LocalY: 2}, MouseClickEvent(tea.MouseClickMsg{Button: tea.MouseLeft}))
+	sb.Handle(EventContext{LocalY: 0}, MouseClickEvent(tea.MouseClickMsg{Button: tea.MouseLeft}))
 	if !sb.IsDragging() {
 		t.Fatal("expected dragging")
 	}
@@ -308,6 +308,56 @@ func TestScrollbarControlCancelPointerCapture(t *testing.T) {
 	if sb.IsDragging() {
 		t.Fatal("CancelPointerCapture should end drag")
 	}
+}
+
+func TestHostScrollbarUsesExpandedPointerTargetWithoutWiderLayout(t *testing.T) {
+	scroll := NewScrollModel()
+	scroll.SetViewport(3)
+	scroll.SetContent(30)
+	sb := NewScrollbarControl("sb", scroll, nil)
+	deep := &deepHitContainer{Base: NewBase("content"), child: &Base{id: "content/leaf"}}
+	root := &scrollbarHitRoot{Base: NewBase("root"), content: deep, scrollbar: sb}
+	host := NewHost(nil, root)
+	host.Resize(10, 8)
+	host.Layout()
+
+	if got := sb.Bounds().W; got != 1 {
+		t.Fatalf("paint/layout width=%d want one cell", got)
+	}
+	if hit := host.HitTest(7, 0); hit != sb.ID() {
+		t.Fatalf("two cells left of track hit=%q want scrollbar %q", hit, sb.ID())
+	}
+	host.Handle(tea.MouseClickMsg{X: 7, Y: 0, Button: tea.MouseLeft})
+	owner, _, ok := host.CapturedPointer()
+	if !ok || owner != sb.ID() || !sb.IsDragging() {
+		t.Fatalf("expanded hit did not start captured thumb drag: owner=%q ok=%v dragging=%v", owner, ok, sb.IsDragging())
+	}
+}
+
+type scrollbarHitRoot struct {
+	Base
+	content   Component
+	scrollbar *ScrollbarControl
+}
+
+func (r *scrollbarHitRoot) Children() []Component { return []Component{r.content, r.scrollbar} }
+
+func (r *scrollbarHitRoot) Layout(ctx LayoutContext, bounds Rect) {
+	r.SetBounds(bounds)
+	r.content.Layout(ctx, Rect{W: bounds.W - 1, H: bounds.H})
+	r.scrollbar.Layout(ctx, Rect{X: bounds.W - 1, W: 1, H: bounds.H})
+}
+
+type deepHitContainer struct {
+	Base
+	child *Base
+}
+
+func (c *deepHitContainer) Children() []Component { return []Component{c.child} }
+
+func (c *deepHitContainer) Layout(ctx LayoutContext, bounds Rect) {
+	c.SetBounds(bounds)
+	c.child.Layout(ctx, Rect{W: bounds.W, H: bounds.H})
 }
 
 type cancellableCounter struct {

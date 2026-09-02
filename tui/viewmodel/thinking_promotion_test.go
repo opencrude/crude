@@ -45,14 +45,14 @@ func TestThinkingPaneShowsScrollbarOnFirstFrame(t *testing.T) {
 
 	app.paintShellFrame()
 
-	// The nested gutter paints '░' track cells. The thinking block cursor is
-	// also '█', but '░' is unambiguous — its presence proves the pane reserved
+	// The nested gutter paints '│' track cells. The thinking block cursor is
+	// also '█', but '│' is unambiguous — its presence proves the pane reserved
 	// and painted a scrollbar column on this first frame.
 	buf := app.mainSurf.Buffer()
 	track := 0
 	for y := 0; y < buf.Height(); y++ {
 		for x := 0; x < buf.Width(); x++ {
-			if buf.Get(x, y).Char == '░' {
+			if buf.Get(x, y).Char == '│' {
 				track++
 			}
 		}
@@ -105,7 +105,7 @@ func TestRepeatedThinkingBlocksEachKeepTheirScrollbar(t *testing.T) {
 			}
 			paneRows++
 			ch := app.mainSurf.Buffer().Get(paneScrollbarX, app.chatRect.Y+y).Char
-			if ch == '░' || ch == '█' {
+			if ch == '│' || ch == '┃' {
 				painted = true
 			}
 		}
@@ -159,7 +159,7 @@ func TestThinkingScrollbarPaintsOnFirstFrameAfterReturningToActivePane(t *testin
 		}
 		paneRows++
 		ch := app.mainSurf.Buffer().Get(paneScrollbarX, app.chatRect.Y+y).Char
-		if ch == '░' || ch == '█' {
+		if ch == '│' || ch == '┃' {
 			painted = true
 		}
 	}

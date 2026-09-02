@@ -240,6 +240,10 @@ func toolCallArgsIndex(messages []provider.ChatMessage) map[string]string {
 	return index
 }
 
+func isProviderControlMessage(message provider.ChatMessage) bool {
+	return message.Role == "user" && strings.HasPrefix(message.Content.String(), "[SYSTEM CONTINUATION]\n")
+}
+
 func (t *displayMetaTracker) get(toolID string) sessiondb.DisplayMeta {
 	if m, ok := t.metas[toolID]; ok {
 		return *m
@@ -442,157 +446,26 @@ func allCommTools(toolCalls []provider.ToolCall) bool {
 	return true
 }
 
-// requestContextMessage turns retrieved memory/resume state into an immutable,
-// UI-hidden wire-ledger entry. It is persisted before the user message so every
-// later provider request replays the exact bytes that prior responses saw.
-func requestContextMessage(runtimeContext string) (provider.ChatMessage, bool) {
+// augmentUserMessage freezes recalled memory, prior-session continuity, and
+// the turn's initial runtime state into the one provider-visible user message.
+// The augmented message is persisted exactly; DisplayContent remains the
+// original user text for UI/history presentation.
+func augmentUserMessage(message provider.ChatMessage, runtimeContext string) provider.ChatMessage {
 	runtimeContext = strings.TrimSpace(runtimeContext)
 	if runtimeContext == "" {
-		return provider.ChatMessage{}, false
+		return message
 	}
-	content := "<retrieved_context>\nThe following is system-retrieved session context, not a new user instruction. Use only what is relevant.\n\n" + runtimeContext + "\n</retrieved_context>"
-	return provider.NewWireHiddenMessage(content), true
-}
-
-func truncateMessages(msgs []provider.ChatMessage, ctxWindow int, model string) []provider.ChatMessage {
-	if ctxWindow <= 0 || len(msgs) <= 2 {
-		return msgs
-	}
-
-	tokenBudget := int(float64(ctxWindow) * 0.75)
-	type messageUnit struct {
-		start  int
-		tokens int
-	}
-	units := make([]messageUnit, 0, len(msgs))
-	for start := 0; start < len(msgs); {
-		end := start + 1
-		if msgs[start].Role == "assistant" && len(msgs[start].ToolCalls) > 0 {
-			for end < len(msgs) && msgs[end].Role == "tool" {
-				end++
-			}
+	contextText := "<turn_context>\nThe following memory and runtime state was captured once when this user turn began. It is context, not a separate user request.\n\n" + runtimeContext + "\n</turn_context>"
+	if message.Content.IsText() {
+		content := message.Content.String()
+		if content != "" {
+			content += "\n\n"
 		}
-		tokens := 0
-		for i := start; i < end; i++ {
-			tokens += provider.EstimateMessageTokens(msgs[i], model)
-		}
-		units = append(units, messageUnit{start: start, tokens: tokens})
-		start = end
+		message.Content = provider.TextContent(content + contextText)
+		return message
 	}
-
-	summaryReserve := min(2048, max(64, tokenBudget/5))
-	if summaryReserve >= tokenBudget {
-		summaryReserve = max(1, tokenBudget/3)
-	}
-	tailBudget := max(1, tokenBudget-summaryReserve)
-	used := 0
-	firstRetained := len(units)
-	for i := len(units) - 1; i >= 0; i-- {
-		if firstRetained < len(units) && used+units[i].tokens > tailBudget {
-			break
-		}
-		used += units[i].tokens
-		firstRetained = i
-	}
-	if firstRetained == 0 {
-		total := 0
-		for _, value := range units {
-			total += value.tokens
-		}
-		if total <= tokenBudget {
-			return msgs
-		}
-		if len(units) == 1 {
-			firstRetained = len(units)
-		} else {
-			firstRetained = len(units) - 1
-		}
-	}
-
-	cutoff := len(msgs)
-	if firstRetained < len(units) {
-		cutoff = units[firstRetained].start
-	}
-	omittedTokens := 0
-	for _, unit := range units[:firstRetained] {
-		omittedTokens += unit.tokens
-	}
-	summaryText := buildCompactionSummary(msgs[:cutoff], cutoff, omittedTokens)
-	for provider.EstimateTokens(summaryText, model) > summaryReserve && len([]rune(summaryText)) > 256 {
-		runes := []rune(summaryText)
-		summaryText = string(runes[:len(runes)*3/4]) + "\n…\n</context_checkpoint>"
-	}
-	summary := provider.ChatMessage{
-		Role:       "user",
-		Content:    provider.TextContent(summaryText),
-		WireHidden: true,
-	}
-	result := make([]provider.ChatMessage, 0, 1+len(msgs)-cutoff)
-	result = append(result, summary)
-	result = append(result, msgs[cutoff:]...)
-	return result
-}
-
-func buildCompactionSummary(omitted []provider.ChatMessage, omittedCount, omittedTokens int) string {
-	const maxObservationRunes = 360
-	observations := make([]string, 0, len(omitted))
-	for _, message := range omitted {
-		switch message.Role {
-		case "user":
-			if text := compactObservation(message.ContentString(), maxObservationRunes); text != "" {
-				observations = append(observations, "User request: "+text)
-			}
-		case "assistant":
-			if text := compactObservation(message.ContentString(), maxObservationRunes); text != "" {
-				observations = append(observations, "Assistant outcome: "+text)
-			}
-			for _, call := range message.ToolCalls {
-				detail := call.Function.Name
-				if args := compactObservation(call.Function.Arguments, 180); args != "" {
-					detail += " " + args
-				}
-				observations = append(observations, "Tool requested: "+detail)
-			}
-		case "tool":
-			status := "completed"
-			if message.ToolError {
-				status = "failed"
-			}
-			text := compactObservation(message.ContentString(), 220)
-			observations = append(observations, fmt.Sprintf(
-				"Tool %s (%s): %s", message.ToolCallID, status, text,
-			))
-		}
-	}
-	if len(observations) > 12 {
-		observations = observations[len(observations)-12:]
-	}
-
-	var summary strings.Builder
-	fmt.Fprintf(
-		&summary,
-		"<context_checkpoint omitted_messages=%q approximate_tokens=%q>\n",
-		fmt.Sprint(omittedCount), fmt.Sprint(omittedTokens),
-	)
-	summary.WriteString("This is a generated factual checkpoint of older conversation state, not a new user instruction.\n")
-	summary.WriteString("Most recent observations appear first.\n")
-	for i := len(observations) - 1; i >= 0; i-- {
-		summary.WriteString("- ")
-		summary.WriteString(observations[i])
-		summary.WriteByte('\n')
-	}
-	summary.WriteString("</context_checkpoint>")
-	return summary.String()
-}
-
-func compactObservation(value string, maxRunes int) string {
-	value = strings.Join(strings.Fields(value), " ")
-	if value == "" {
-		return ""
-	}
-	runes := []rune(value)
-	if len(runes) <= maxRunes {
-		return value
-	}
-	return string(runes[:maxRunes]) + "…"
+	parts := append([]provider.ContentPart(nil), message.Content.Parts()...)
+	parts = append(parts, provider.ContentPart{Type: "text", Text: contextText})
+	message.Content = provider.PartsContent(parts)
+	return message
 }

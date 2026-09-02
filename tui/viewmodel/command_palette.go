@@ -536,6 +536,16 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 
 	case "system.undo":
 		return m.executeSlashCommand("/undo")
+	case "history.open":
+		return m.openLocalHistory()
+	case "history.verify":
+		return m.verifyHistoryCmd()
+	case "history.prune":
+		return m.pruneHistoryCmd()
+	case "history.snapshot":
+		return m.captureHistoryCmd()
+	case "history.location":
+		return m.openHistoryLocationCmd()
 
 	case "safety.yolo.toggle":
 		if m.OverlayState.IsYolo() {

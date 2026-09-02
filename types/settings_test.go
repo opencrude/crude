@@ -131,6 +131,19 @@ func TestWorkspaceCanOverrideBoolToFalse(t *testing.T) {
 	}
 }
 
+func TestWorkspaceLocalHistoryOverridesRemainFieldLevel(t *testing.T) {
+	app := AppSettings{LocalHistory: LocalHistorySettings{Enabled: "on", UseGitIgnore: "on", StorageBudgetMB: 1024, RetentionKeepDaily: 30}}
+	ApplyAppDefaults(&app)
+	working := cloneAppSettings(app)
+	working.LocalHistory.StorageBudgetMB = 256
+	overrides := OverridesFromDiff(app, working)
+	app.LocalHistory.RetentionKeepDaily = 60
+	got := MergeAppWorkspace(app, overrides)
+	if got.LocalHistory.StorageBudgetMB != 256 || got.LocalHistory.RetentionKeepDaily != 60 || !got.LocalHistory.EnabledValue() {
+		t.Fatalf("merged local history=%+v", got.LocalHistory)
+	}
+}
+
 // Loading re-diffs stored overlays, which is how legacy whole-category rows
 // heal into sparse ones. That round trip has to be stable.
 func TestOverridesRoundTripIsStable(t *testing.T) {

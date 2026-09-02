@@ -165,6 +165,15 @@ func (ff *FormField) Sync() {
 // so the enclosing FormBody owns one form focus scope and action route.
 func (ff *FormField) Children() []Component { return nil }
 
+func (ff *FormField) CancelPointerCapture() {
+	if ff.control != nil {
+		ff.control.CancelPointerCapture()
+	}
+	if ff.area != nil {
+		ff.area.CancelPointerCapture()
+	}
+}
+
 func (ff *FormField) Measure(_ LayoutContext, cs Constraints) Size {
 	return cs.ClampSize(Size{W: cs.MaxW, H: ff.height()})
 }
@@ -418,7 +427,10 @@ func (ff *FormField) paintTextAreaBody(buf *surface.CellBuffer, x, y int, r Rect
 	}
 	FillRect(buf, 0, 0, Rect{X: editorX - 1, Y: y + 1, W: editorW + 2, H: ff.areaRows()}, cell.BlankCell(editorBG))
 	ff.area.SetBackgroundColor(editorBG)
-	ff.area.Paint(buf, x, y+1, ctx)
+	// TextArea bounds are FormField-local and already carry Y=1. Pass the
+	// field's paint origin unchanged; pre-adding one row double-translates the
+	// editor fill and overwrites the description row below it.
+	ff.area.Paint(buf, x, y, ctx)
 
 	line := 1 + ff.areaRows()
 	if ff.field.Description != "" && line < r.H {

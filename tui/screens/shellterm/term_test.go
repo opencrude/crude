@@ -108,6 +108,59 @@ func TestScreenPrimaryScreenWheelScrollsViewport(t *testing.T) {
 	}
 }
 
+func TestScreenScrollbackScrollbarTrackAndThumbInteraction(t *testing.T) {
+	s, _ := newTestScreen(t)
+	for i := 0; i < 60; i++ {
+		s.Feed([]byte("line\r\n"))
+	}
+	s.vt.ScrollDelta(-10)
+	host := ui.NewHost(theme.DefaultDark(), s)
+	host.Resize(40, 11)
+	host.Layout()
+	if !s.syncScrollbackScrollbar() {
+		t.Fatal("scrollback scrollbar not visible")
+	}
+	bar := s.scrollbar.Bounds()
+	top, thumbH := s.scroll.ThumbBounds(bar.H)
+	trackY := 0
+	if top == 0 {
+		trackY = top + thumbH
+	}
+	if trackY >= bar.H {
+		t.Fatal("harness: no track cell outside thumb")
+	}
+	before, _, _ := s.vt.Scrollbar()
+	// The internal terminal scrollbar also accepts the two cells inward from
+	// the painted right-edge stroke.
+	host.Handle(tea.MouseClickMsg{X: bar.X - 2, Y: trackY, Button: tea.MouseLeft})
+	host.Handle(tea.MouseReleaseMsg{X: bar.X - 2, Y: trackY, Button: tea.MouseLeft})
+	afterTrack, _, _ := s.vt.Scrollbar()
+	if afterTrack == before || s.selecting {
+		t.Fatalf("track click offset=%d->%d selecting=%v", before, afterTrack, s.selecting)
+	}
+
+	s.syncScrollbackScrollbar()
+	top, _ = s.scroll.ThumbBounds(bar.H)
+	host.Handle(tea.MouseClickMsg{X: bar.X, Y: top, Button: tea.MouseLeft})
+	owner, _, captured := host.CapturedPointer()
+	if !captured || owner != s.ID() || !s.scrollbar.IsDragging() {
+		t.Fatalf("thumb capture owner=%q captured=%v dragging=%v", owner, captured, s.scrollbar.IsDragging())
+	}
+	dragY := bar.H - 1
+	if top > bar.H/2 {
+		dragY = 0
+	}
+	host.Handle(tea.MouseMotionMsg{X: 2, Y: dragY, Button: tea.MouseLeft})
+	afterDrag, _, _ := s.vt.Scrollbar()
+	if afterDrag == afterTrack {
+		t.Fatalf("thumb drag offset stayed at %d", afterDrag)
+	}
+	host.Handle(tea.MouseReleaseMsg{X: 2, Y: dragY, Button: tea.MouseLeft})
+	if host.HasPointerCapture() || s.scrollbar.IsDragging() {
+		t.Fatal("scrollback scrollbar release did not clear capture")
+	}
+}
+
 func TestScreenSelectionCopiesOnRelease(t *testing.T) {
 	s, _ := newTestScreen(t)
 	var copied []string

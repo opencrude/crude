@@ -219,10 +219,10 @@ func TestNestedPaneComposeAlignment(t *testing.T) {
 		t.Fatalf("nested gutter X=%d want %d (pane scrollbar, blank, main scrollbar)", gx, sb.X-2)
 	}
 	c := buf.Get(gx, 1)
-	if c.Char != '█' && c.Char != '░' {
+	if c.Char != '┃' && c.Char != '│' {
 		t.Fatalf("nested pane row should have native gutter at x=%d: char=%q", gx, string(c.Char))
 	}
-	if gap := buf.Get(gx+ui.ScrollbarWidth, 1); gap.Char == '█' || gap.Char == '░' {
+	if gap := buf.Get(gx+ui.ScrollbarWidth, 1); gap.Char == '┃' || gap.Char == '│' {
 		t.Fatalf("column between nested and main scrollbars must stay blank: char=%q", string(gap.Char))
 	}
 	mainCol := PlainRow(buf, sb.X, sb.X+sb.W)

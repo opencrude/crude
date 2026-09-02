@@ -165,9 +165,8 @@ func TestSettingsSurfaceNativeFormPersistsTextAndCategoryChanges(t *testing.T) {
 	surf := surface.NewSurface("settings-native-form", 90, 28, cell.TransparentBlank())
 	cw.Render(surf, &wm.RenderContext{Theme: th})
 
-	// Rail: scope, search, underline, then AI header / agents+memory / gap /
-	// IDE / Appearance / Editor. Editor is one row below Appearance (Y=12).
-	cw.Host().Handle(tea.MouseClickMsg{X: 2, Y: 13, Button: tea.MouseLeft})
+	// Rail: scope/search, AI roles, Security/Safety, then IDE/Appearance/Editor.
+	cw.Host().Handle(tea.MouseClickMsg{X: 2, Y: 16, Button: tea.MouseLeft})
 	if m.SelectedCategory() != catEditor {
 		t.Fatalf("selected category=%d, want editor", m.SelectedCategory())
 	}

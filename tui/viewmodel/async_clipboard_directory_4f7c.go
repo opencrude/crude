@@ -28,6 +28,7 @@ const (
 	clipboardAsyncPasteInputText
 	clipboardAsyncPasteInputImageFirst
 	clipboardAsyncPasteFindReplace
+	clipboardAsyncPasteNative
 )
 
 type clipboardAsyncRequestMsg struct {
@@ -39,6 +40,8 @@ type clipboardAsyncRequestMsg struct {
 	session     *workspace.Session
 	findReplace *popup.FindReplaceState
 	textEdit    *ui.TextEdit
+	nativePaste ui.ClipboardPasteTarget
+	overlayID   string
 }
 
 type clipboardAsyncResultMsg struct {
@@ -148,6 +151,8 @@ func (r clipboardAsyncRequestMsg) key() clipboardAsyncKey {
 		}
 	case clipboardAsyncPasteInputText, clipboardAsyncPasteInputImageFirst:
 		return clipboardAsyncKey{lane: clipboardAsyncPasteInputText, session: r.session}
+	case clipboardAsyncPasteNative:
+		return clipboardAsyncKey{lane: clipboardAsyncPasteNative}
 	default:
 		return clipboardAsyncKey{lane: clipboardAsyncWriteText}
 	}
@@ -222,7 +227,7 @@ func executeClipboardAsyncRequest(
 	switch request.operation {
 	case clipboardAsyncWriteText:
 		result.operationErr = backend.writeText(request.text)
-	case clipboardAsyncPasteEditor, clipboardAsyncPasteInputText, clipboardAsyncPasteFindReplace:
+	case clipboardAsyncPasteEditor, clipboardAsyncPasteInputText, clipboardAsyncPasteFindReplace, clipboardAsyncPasteNative:
 		data := backend.read(clipboard.FmtText)
 		if len(data) == 0 {
 			result.operationErr = errors.New("clipboard is empty or unavailable")
@@ -292,6 +297,21 @@ func (m *App) applyClipboardAsyncResult(result clipboardAsyncResultMsg) tea.Cmd 
 		if request.findReplace.OnChange != nil {
 			request.findReplace.OnChange()
 		}
+	case clipboardAsyncPasteNative:
+		if request.nativePaste == nil || !request.nativePaste.PasteActive() {
+			return nil
+		}
+		if request.overlayID != "" {
+			fw := m.windowManager.Focused()
+			if fw == nil || fw.ID != request.overlayID {
+				return nil
+			}
+		}
+		if result.operationErr != nil {
+			m.setClipboardAsyncError(result.operationErr.Error())
+			return nil
+		}
+		request.nativePaste.PasteText(result.content)
 	case clipboardAsyncPasteInputText, clipboardAsyncPasteInputImageFirst:
 		// The chat input is a shared projection of ActiveSession. If the
 		// session changed while the OS clipboard call was in flight, there is
@@ -343,6 +363,18 @@ func (m *App) beginEditorClipboardPaste(target *editor.Editor) tea.Cmd {
 	request := m.prepareClipboardAsyncRequest(clipboardAsyncRequestMsg{
 		operation: clipboardAsyncPasteEditor,
 		editor:    target,
+	})
+	return m.clipboardAsyncCommand(request)
+}
+
+func (m *App) beginNativeClipboardPaste(target ui.ClipboardPasteTarget, overlayID string) tea.Cmd {
+	if target == nil || !target.PasteActive() {
+		return nil
+	}
+	request := m.prepareClipboardAsyncRequest(clipboardAsyncRequestMsg{
+		operation:   clipboardAsyncPasteNative,
+		nativePaste: target,
+		overlayID:   overlayID,
 	})
 	return m.clipboardAsyncCommand(request)
 }

@@ -59,7 +59,7 @@ func newPaneLayout(bounds ui.Rect, hasScrollbar bool) paneLayout {
 	inset := minInt(paneContentInset, bounds.W)
 	barW := 0
 	if hasScrollbar && bounds.W-inset > 0 {
-		barW = 1
+		barW = minInt(ui.ScrollbarWidth, bounds.W-inset)
 	}
 	p.Content = ui.Rect{
 		X: bounds.X + inset,
@@ -68,7 +68,7 @@ func newPaneLayout(bounds ui.Rect, hasScrollbar bool) paneLayout {
 		H: bounds.H,
 	}
 	if barW > 0 {
-		p.Scrollbar = ui.Rect{X: bounds.X + bounds.W - 1, Y: bounds.Y, W: 1, H: bounds.H}
+		p.Scrollbar = ui.Rect{X: bounds.X + bounds.W - barW, Y: bounds.Y, W: barW, H: bounds.H}
 	}
 	return p
 }

@@ -35,8 +35,8 @@ func TestScreenUsesNativeNestedRoleForm(t *testing.T) {
 	if result.Action != nil || screen.page != rolePage || screen.role != "default" {
 		t.Fatalf("role open result=%#v page=%d role=%q", result, screen.page, screen.role)
 	}
-	if screen.formModel.FieldCount() != 3 {
-		t.Fatalf("role form fields=%d, want provider/model/thinking", screen.formModel.FieldCount())
+	if screen.formModel.FieldCount() != 4 {
+		t.Fatalf("role form fields=%d, want provider/model/thinking/compaction", screen.formModel.FieldCount())
 	}
 
 	buf := surface.NewCellBuffer(80, 13)
@@ -46,6 +46,21 @@ func TestScreenUsesNativeNestedRoleForm(t *testing.T) {
 	}
 	if bufferContains(buf, "Protocol") {
 		t.Fatal("role form should not expose a communication-protocol field")
+	}
+}
+
+func TestRoleFormPersistsExplicitCompactionDisable(t *testing.T) {
+	base := types.Settings{ProviderID: "openrouter", Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+		"default": {Provider: "openrouter", Model: "model"},
+	}}}
+	screen := New(theme.DefaultDark(), cloneSettings(base), base, map[string]types.CategorySettings{})
+	screen.openRole("default")
+	screen.formModel.SetValue(fieldContextCompaction, ui.StringValue("0"))
+	screen.applyRoleForm()
+	settings := screen.ToSettings()
+	category := settings.SessionOverrides["default"]
+	if category.ContextCompactionPercent == nil || *category.ContextCompactionPercent != 0 {
+		t.Fatalf("session compaction override = %#v", category.ContextCompactionPercent)
 	}
 }
 

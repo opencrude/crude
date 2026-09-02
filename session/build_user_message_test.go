@@ -93,19 +93,17 @@ func TestBuildUserMessageDeliversFileAttachments(t *testing.T) {
 	}
 }
 
-func TestRequestContextIsSeparateImmutableWireEntry(t *testing.T) {
-	contextMessage, ok := requestContextMessage("remembered fact")
-	if !ok || contextMessage.Role != "user" || !contextMessage.WireHidden || !strings.Contains(contextMessage.Content.String(), "remembered fact") {
-		t.Fatalf("wire context message = %#v", contextMessage)
-	}
+func TestTurnContextIsFrozenIntoPersistedUserMessage(t *testing.T) {
 	user := provider.ChatMessage{Role: "user", Content: provider.TextContent("current request"), DisplayContent: "current request"}
-	ledger := []provider.ChatMessage{contextMessage, user}
-	if ledger[1].Content.String() != "current request" || strings.Contains(ledger[1].Content.String(), "remembered fact") {
-		t.Fatalf("wire context mutated visible user message: %#v", ledger)
+	augmented := augmentUserMessage(user, "remembered fact")
+	if augmented.Role != "user" || augmented.DisplayContent != "current request" ||
+		!strings.HasPrefix(augmented.Content.String(), "current request") ||
+		!strings.Contains(augmented.Content.String(), "remembered fact") {
+		t.Fatalf("augmented user message = %#v", augmented)
 	}
 }
 
-func TestRequestContextDoesNotMutateMultipartUserContent(t *testing.T) {
+func TestTurnContextPreservesMultipartUserContent(t *testing.T) {
 	user := provider.ChatMessage{
 		Role: "user",
 		Content: provider.PartsContent([]provider.ContentPart{
@@ -113,10 +111,9 @@ func TestRequestContextDoesNotMutateMultipartUserContent(t *testing.T) {
 			{Type: "image_url", ImageURL: &provider.ImageURL{URL: "data:image/png;base64,YWJj"}},
 		}),
 	}
-	contextMessage, _ := requestContextMessage("visual context")
-	ledger := []provider.ChatMessage{contextMessage, user}
-	if !ledger[1].Content.HasImage() || strings.Contains(ledger[1].Content.ContentDescription(), "visual context") {
-		t.Fatalf("multipart wire user was mutated: %q", ledger[1].Content.ContentDescription())
+	augmented := augmentUserMessage(user, "visual context")
+	if !augmented.Content.HasImage() || !strings.Contains(augmented.Content.ContentDescription(), "visual context") {
+		t.Fatalf("multipart turn context = %q", augmented.Content.ContentDescription())
 	}
 }
 

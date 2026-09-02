@@ -64,6 +64,7 @@ func New(th *theme.Theme) *Screen {
 	list.SetRowPainter(paintHelpRow)
 	s.list = &helpList{Base: ui.NewBase(ListID), list: list, owner: s}
 	s.scrollbar = ui.NewScrollbarControl(ScrollbarID, list.Scroll(), tokens)
+	s.scrollbar.SetSurfaceBackground(ui.ColorPopupBg)
 
 	s.empty = ui.NewLabel(EmptyID, "No matching help topics.", th)
 	s.empty.SetColorRole(ui.ColorMuted)
@@ -140,7 +141,11 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.search.Layout(ctx, ui.Rect{W: r.W, H: 1})
 	listY := 1
 	listH := max(1, r.H-listY-1)
-	listW := max(1, r.W-1)
+	barW := 0
+	if s.scrollbar.NeededForViewport(listH) {
+		barW = min(ui.ScrollbarWidth, max(0, r.W))
+	}
+	listW := max(1, r.W-barW)
 	if listW != s.bodyW {
 		s.bodyW = listW
 		s.rebuild()
@@ -148,8 +153,8 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	if s.emptyVisible() {
 		s.empty.Layout(ctx, ui.Rect{Y: listY, W: r.W, H: listH})
 	} else {
-		s.list.Layout(ctx, ui.Rect{X: 0, Y: listY, W: listW, H: listH})
-		s.scrollbar.Layout(ctx, ui.Rect{X: listW, Y: listY, W: 1, H: listH})
+		s.list.Layout(ctx, ui.Rect{X: 0, Y: listY, W: max(1, r.W-barW), H: listH})
+		s.scrollbar.Layout(ctx, ui.Rect{X: max(0, r.W-barW), Y: listY, W: barW, H: listH})
 	}
 	s.hints.Layout(ctx, ui.Rect{Y: max(0, r.H-1), W: r.W, H: 1})
 }

@@ -71,13 +71,11 @@ type Session struct {
 	msgCounter   int
 	msgCounterMu sync.Mutex
 
-	systemPromptMu sync.Mutex
-	systemPrompts  map[bool]string
-	wireGuardMu    sync.Mutex
-	wireGuard      *agent.WireGuard
-	wireMessages   []provider.ChatMessage
-	wireEpoch      uint64
-	wireReason     string
+	systemPromptMu    sync.Mutex
+	systemPrompts     map[bool]string
+	activeContext     []provider.ChatMessage
+	contextGeneration uint64
+	contextReason     string
 
 	recoveredSubAgentMessages map[string][]sessiondb.MessageWithMeta
 
@@ -131,6 +129,22 @@ type Session struct {
 	sessionOverrides map[string]sessiondb.AgentSettingOverride
 	// multiAgentOverride is the explicit session flag. nil inherits workspace.
 	multiAgentOverride *bool
+	historyMu          sync.RWMutex
+	historyStart       func(context.Context, string, string) error
+	historyEnd         func(context.Context, string, string) error
+}
+
+func (s *Session) SetHistoryHooks(start, end func(context.Context, string, string) error) {
+	s.historyMu.Lock()
+	s.historyStart, s.historyEnd = start, end
+	s.historyMu.Unlock()
+}
+func (s *Session) HasActiveTurns() bool { return s != nil && s.activeTurns.Load() > 0 }
+
+func (s *Session) historyHooks() (func(context.Context, string, string) error, func(context.Context, string, string) error) {
+	s.historyMu.RLock()
+	defer s.historyMu.RUnlock()
+	return s.historyStart, s.historyEnd
 }
 
 // New creates a backend session in the global sessions directory.
@@ -219,6 +233,9 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 		} else {
 			editor = ed
 		}
+	}
+	if editor != nil {
+		editor.SetLegacyJournalWrites(false)
 	}
 
 	sm := statemachine.NewConversationStateMachine(lg)
@@ -386,30 +403,6 @@ func (s *Session) systemPrompt(multiAgent bool) string {
 	prompt := agent.BuildSystemPrompt(multiAgent)
 	s.systemPrompts[multiAgent] = prompt
 	return prompt
-}
-
-func (s *Session) rootWireGuard() *agent.WireGuard {
-	if s == nil {
-		return agent.NewWireGuard()
-	}
-	s.wireGuardMu.Lock()
-	defer s.wireGuardMu.Unlock()
-	if s.wireGuard == nil {
-		s.wireGuard = agent.NewWireGuardAt(s.wireEpoch, s.wireReason)
-	}
-	return s.wireGuard
-}
-
-func (s *Session) rotateWireEpoch(reason string) {
-	guard := s.rootWireGuard()
-	guard.Rotate(reason)
-	s.wireGuardMu.Lock()
-	s.wireEpoch = guard.Epoch()
-	s.wireReason = reason
-	s.wireGuardMu.Unlock()
-	if s.logger != nil {
-		s.logger.Warn("CACHE", "epoch_rotated", "reason", reason, "epoch", guard.Epoch())
-	}
 }
 
 func (s *Session) SessionID() string {

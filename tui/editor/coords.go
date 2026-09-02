@@ -2,7 +2,6 @@ package editor
 
 import (
 	"crude/tui/rendering"
-	"strings"
 	"unicode/utf16"
 )
 
@@ -31,30 +30,7 @@ func ExpandTabs(line string, tabW int) string {
 	if tabW < 1 {
 		tabW = DefaultTabWidth
 	}
-	if !strings.ContainsRune(line, '\t') {
-		return line
-	}
-	var b strings.Builder
-	b.Grow(len(line) + tabW)
-	col := 0
-	rest := line
-	for len(rest) > 0 {
-		if rest[0] == '\t' {
-			adv := TabStopAdvance(col, tabW)
-			b.WriteString(strings.Repeat(" ", adv))
-			col += adv
-			rest = rest[1:]
-			continue
-		}
-		cluster, w := rendering.FirstGrapheme(rest)
-		if len(cluster) == 0 {
-			break
-		}
-		b.WriteString(cluster)
-		col += w
-		rest = rest[len(cluster):]
-	}
-	return b.String()
+	return rendering.ExpandTabs(line, tabW)
 }
 
 // LineVisualWidth returns the visual column width of a raw (unexpanded) line.

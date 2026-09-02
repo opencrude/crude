@@ -37,6 +37,7 @@ type Screen struct {
 	wheel      ui.WheelAccelState
 	paneWheel  ui.WheelAccelState
 	paneDrag   *paneGutterDrag
+	paneHover  string
 	rows       []chatprojection.MessageRow
 	layout     chatLayout
 	paintState messagePaintState
@@ -63,6 +64,10 @@ func New(th *theme.Theme) *Screen {
 		list:   list,
 	}
 	s.scrollbar = ui.NewScrollbarControl(ScrollbarID, list.Scroll(), tokens)
+	// The nested pane gutter sits two columns left of the main track. Claim the
+	// separator, but never expand across it and steal nested-pane interaction.
+	s.scrollbar.SetPointerTargetSize(2)
+	s.scrollbar.OnScroll(func(_, _ int) { s.syncScrollAfterUserScroll() })
 	return s
 }
 
@@ -272,23 +277,7 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		}
 	}
 
-	if s.scrollbar != nil && s.scrollbar.IsDragging() {
-		res := s.scrollbar.Handle(ctx, evt)
-		if res.Handled {
-			s.syncScrollAfterUserScroll()
-		}
-		return res
-	}
-
 	if evt.Kind == ui.EventMouseClick {
-		if s.inScrollbarZone(ctx.LocalX) && s.scrollbar != nil {
-			s.selection.Clear()
-			res := s.scrollbar.Handle(ctx, evt)
-			if res.Handled {
-				s.syncScrollAfterUserScroll()
-			}
-			return res
-		}
 		if res := s.handlePaneGutterClick(ctx, evt.MouseClick); res.Handled {
 			return res
 		}
@@ -300,6 +289,9 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	case ui.EventMouseMotion:
 		if s.selection.selecting {
 			return s.handleSelectionMotion(ctx, evt.MouseMotion)
+		}
+		if changed := s.updatePaneGutterHover(ctx); changed || s.paneHover != "" {
+			return ui.EventResult{Handled: s.paneHover != "", Invalidate: ui.InvalidatePaint}
 		}
 	case ui.EventMouseRelease:
 		if s.selection.selecting {

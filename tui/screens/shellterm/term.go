@@ -35,20 +35,22 @@ const (
 // Screen paints one PTY session and routes keys into it.
 type Screen struct {
 	ui.Base
-	th       *theme.Theme
-	tokens   *ui.TokenSet
-	termID   string
-	title    string
-	vt       *term.Emulator
-	initErr  error
-	floating bool
-	exited   bool
-	write    func([]byte)
-	resize   func(cols, rows int) error
-	copy     func(string) tea.Cmd
-	now      func() uint64
-	cols     int
-	rows     int
+	th        *theme.Theme
+	tokens    *ui.TokenSet
+	termID    string
+	title     string
+	vt        *term.Emulator
+	initErr   error
+	floating  bool
+	exited    bool
+	write     func([]byte)
+	resize    func(cols, rows int) error
+	copy      func(string) tea.Cmd
+	now       func() uint64
+	cols      int
+	rows      int
+	scroll    *ui.ScrollModel
+	scrollbar *ui.ScrollbarControl
 
 	focusKnown         bool
 	focused            bool
@@ -88,6 +90,13 @@ func New(th *theme.Theme, id, title string) *Screen {
 		title:              title,
 		lastCursorActivity: time.Now(),
 	}
+	s.scroll = ui.NewScrollModel()
+	s.scrollbar = ui.NewScrollbarControl(ui.ComponentID("shellterm/scrollbar/"+id), s.scroll, tokens)
+	s.scrollbar.OnScroll(func(oldOffset, newOffset int) {
+		if s.vt != nil && oldOffset != newOffset {
+			s.vt.ScrollDelta(newOffset - oldOffset)
+		}
+	})
 	s.now = func() uint64 { return uint64(time.Now().UnixNano()) }
 	s.vt, s.initErr = term.NewEmulator()
 	if s.vt != nil {
@@ -270,6 +279,9 @@ func (s *Screen) Close() {
 
 func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	s.tokens = tokens
+	if s.scrollbar != nil {
+		s.scrollbar.SetTokens(tokens)
+	}
 	s.applyDefaultColors()
 }
 
@@ -338,7 +350,7 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 	if s.vt != nil {
 		s.TickCursor(time.Now())
 		s.vt.Paint(buf, ox+r.X, oy+r.Y, fg, bg)
-		s.paintScrollbackIndicator(buf, ox+r.X, oy+r.Y)
+		s.paintScrollbackScrollbar(buf, ox+r.X, oy+r.Y)
 	}
 	if s.exited && s.tokens != nil {
 		msg := " [process exited] "
@@ -348,36 +360,25 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 	_ = ctx
 }
 
-// paintScrollbackIndicator overlays a right-edge scrollbar while the user is
-// scrolled into history, so the position in scrollback is always visible.
-func (s *Screen) paintScrollbackIndicator(buf *surface.CellBuffer, ox, oy int) {
-	if s.vt == nil || s.vt.ViewportPinned() || s.rows < 2 || s.cols < 2 {
-		return
+// syncScrollbackScrollbar binds terminal scrollback to the shared scrollbar
+// interaction and geometry path. The control remains mounted while dragging
+// to avoid losing capture when the thumb reaches the bottom.
+func (s *Screen) syncScrollbackScrollbar() bool {
+	if s.vt == nil || s.scrollbar == nil || s.rows < 2 || s.cols < 2 {
+		return false
 	}
 	offset, total, visible := s.vt.Scrollbar()
-	if total <= visible || total <= 0 {
+	ui.SyncScrollModel(s.scroll, total, visible, offset)
+	s.scrollbar.SetScroll(s.scroll)
+	s.scrollbar.Layout(ui.LayoutContext{}, ui.Rect{X: s.cols - ui.ScrollbarWidth, W: ui.ScrollbarWidth, H: s.rows})
+	return total > visible && (!s.vt.ViewportPinned() || s.scrollbar.IsDragging())
+}
+
+func (s *Screen) paintScrollbackScrollbar(buf *surface.CellBuffer, ox, oy int) {
+	if !s.syncScrollbackScrollbar() {
 		return
 	}
-	trackFG, thumbFG := cell.NoColor, cell.NoColor
-	if s.tokens != nil {
-		trackFG = s.tokens.Color(ui.ColorBorder)
-		thumbFG = s.tokens.Color(ui.ColorFg)
-	}
-	x := ox + s.cols - 1
-	trackH := s.rows
-	thumbH := max(1, trackH*visible/total)
-	maxTop := trackH - thumbH
-	thumbTop := 0
-	if total > visible {
-		thumbTop = min(maxTop, offset*maxTop/(total-visible))
-	}
-	for i := 0; i < trackH; i++ {
-		ch, fg := '░', trackFG
-		if i >= thumbTop && i < thumbTop+thumbH {
-			ch, fg = '█', thumbFG
-		}
-		buf.Set(x, oy+i, cell.Cell{Char: ch, Width: 1, FG: fg})
-	}
+	s.scrollbar.Paint(buf, ox, oy, ui.PaintContext{})
 }
 
 func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
@@ -456,6 +457,9 @@ func (s *Screen) handleMouse(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus}
 	}
 	cellX, cellY := ctx.LocalX, ctx.LocalY
+	if res := s.handleScrollbackScrollbar(ctx, evt); res.Handled {
+		return res
+	}
 	if cellY >= s.rows && !s.selecting {
 		if evt.Kind == ui.EventMouseMotion {
 			return ui.EventResult{Handled: true}
@@ -539,9 +543,35 @@ func (s *Screen) handleMouse(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus}
 }
 
+func (s *Screen) handleScrollbackScrollbar(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+	if s.scrollbar == nil {
+		return ui.EventResult{}
+	}
+	visible := s.syncScrollbackScrollbar()
+	if !visible && !s.scrollbar.IsDragging() {
+		return ui.EventResult{}
+	}
+	if !s.scrollbar.IsDragging() {
+		switch evt.Kind {
+		case ui.EventMouseClick, ui.EventMouseWheel:
+			if !s.scrollbar.PointerHitBounds(s.scrollbar.Bounds()).Contains(ctx.LocalX, ctx.LocalY) {
+				return ui.EventResult{}
+			}
+		default:
+			return ui.EventResult{}
+		}
+	}
+	return s.scrollbar.Handle(ui.ChildEventContext(ctx, s.scrollbar.Bounds()), evt)
+}
+
 // CancelPointerCapture resets drag state when the Host revokes capture
 // (slot hidden, another window claimed the pointer, ...).
-func (s *Screen) CancelPointerCapture() { s.selecting = false }
+func (s *Screen) CancelPointerCapture() {
+	s.selecting = false
+	if s.scrollbar != nil {
+		s.scrollbar.CancelPointerCapture()
+	}
+}
 
 // copySelection builds the command that sends the active selection to the
 // system clipboard (copy-on-select, matching mainstream terminal behavior).

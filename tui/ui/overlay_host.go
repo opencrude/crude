@@ -21,6 +21,7 @@ const (
 	OverlayTreeDelete        OverlayID = "tree-delete-confirm"
 	OverlayFilePicker        OverlayID = "filepicker"
 	OverlayWorkspaceSettings OverlayID = "workspace-settings"
+	OverlayLocalHistory      OverlayID = "local-history"
 	OverlayComposer          OverlayID = "composer"
 	OverlayTextOverlay       OverlayID = "textoverlay"
 	OverlayCommandPalette    OverlayID = "command-palette"

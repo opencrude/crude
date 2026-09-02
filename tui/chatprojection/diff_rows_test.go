@@ -225,3 +225,20 @@ func TestDiffStructureParserExported(t *testing.T) {
 		t.Fatalf("kinds=%v %v", rows[0].Kind, rows[1].Kind)
 	}
 }
+
+func TestBandedGoDiffPreservesIndentationAndSyntaxColor(t *testing.T) {
+	raw := "```diff\n--- a/main.go\n+++ b/main.go\n@@ -1 +1 @@\n-        if old { return }\n+        if ready { return }\n```"
+	rows := chatprojection.BuildBandedDiffRows(raw, 60, 80, true)
+	foundIndented, foundSyntax := false, false
+	for _, row := range rows {
+		if strings.Contains(row.PlainText(), "        if ready") {
+			foundIndented = true
+			for _, span := range row.Spans {
+				foundSyntax = foundSyntax || span.FGSet
+			}
+		}
+	}
+	if !foundIndented || !foundSyntax {
+		t.Fatalf("indented syntax projection missing: indented=%v syntax=%v rows=%#v", foundIndented, foundSyntax, rows)
+	}
+}

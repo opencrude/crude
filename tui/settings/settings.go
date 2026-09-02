@@ -116,13 +116,31 @@ type Model struct {
 }
 
 const (
-	fieldProvider       = "provider"
-	fieldModel          = "model"
-	fieldAPIKey         = "api-key"
-	fieldBaseURL        = "base-url"
-	fieldAPIStandard    = "api-standard"
-	fieldThinkingEffort = "thinking-effort"
-	fieldMultiAgent     = "multi-agent"
+	fieldProvider          = "provider"
+	fieldModel             = "model"
+	fieldAPIKey            = "api-key"
+	fieldBaseURL           = "base-url"
+	fieldAPIStandard       = "api-standard"
+	fieldThinkingEffort    = "thinking-effort"
+	fieldMultiAgent        = "multi-agent"
+	fieldContextCompaction = "context-compaction-percent"
+	fieldSafetyConfirmAt   = "safety-confirm-at"
+	fieldSafetyUnknown     = "safety-unknown-risk"
+	fieldSafetyScript      = "safety-script-risk"
+	fieldSafetyRules       = "safety-command-rules"
+	fieldSafetyNotify      = "safety-notify-dangerous"
+	fieldHistoryEnabled    = "history-enabled"
+	fieldHistoryGitIgnore  = "history-gitignore"
+	fieldHistoryExternal   = "history-external"
+	fieldHistorySafety     = "history-safety"
+	fieldHistoryMaxFile    = "history-max-file"
+	fieldHistoryDebounce   = "history-debounce"
+	fieldHistoryReconcile  = "history-reconcile"
+	fieldHistoryKeepHours  = "history-keep-hours"
+	fieldHistoryKeepDaily  = "history-keep-daily"
+	fieldHistoryMaxSnaps   = "history-max-snapshots"
+	fieldHistoryBudget     = "history-budget"
+	fieldHistoryIgnores    = "history-ignores"
 )
 
 // New creates a settings model from current AppSettings (application scope).
@@ -187,6 +205,7 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		{Name: "Crafter", Group: "AI", Description: "Workspace defaults for implementation work.", Form: m.buildAgentForm(current.Agents.Categories["crafter"], false)},
 		{Name: "Aeron", Group: "AI", Description: "Workspace defaults for mechanical tasks.", Form: m.buildAgentForm(current.Agents.Categories["aeron"], false)},
 		{Name: "Memory", Group: "AI", Description: "Durable workspace memory: recall, extraction, consolidation.", Form: m.buildMemoryForm(current.Memory)},
+		{Name: "Safety", Group: "Security", Description: "Command severity, confirmation thresholds, and dangerous-action attention.", Form: m.buildSafetyForm(current.Safety)},
 		{Name: "Appearance", Group: "IDE", Description: "Theme palette and surface colors.", Form: formModel(appearanceFields...)},
 		{Name: "Editor", Group: "IDE", Description: "Editing, wrapping, syntax, and save behavior.", Form: formModel(
 			ui.SeparatorFieldState("editing", "Editing"),
@@ -214,12 +233,35 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 			ui.TextFieldState("size", "Size", fmt.Sprintf("%d", font.Size), "Preferred terminal font size in points."),
 			ui.BoolFieldState("ligatures", "Ligatures", font.Ligatures, "Allow programming ligatures when supported by the terminal."),
 		)},
+		{Name: "Local History", Group: "IDE", Description: "Automatic project snapshots, retention, and safe restore policy.", Form: m.buildHistoryForm(current.LocalHistory)},
 	}
 	for index := range m.categories {
 		category := index
 		m.categories[index].Form.OnChanged(func(fieldID string) { m.handleFieldChanged(category, fieldID) })
 	}
 	return m
+}
+
+func (m *Model) buildHistoryForm(settings types.LocalHistorySettings) *ui.FormModel {
+	extra := ui.TextAreaFieldState(fieldHistoryIgnores, "Additional ignores", strings.Join(settings.ExtraIgnorePatterns, "\n"), "One Git-style pattern per line. Stored history never enters the project tree.")
+	extra.Rows = 4
+	return formModel(
+		ui.SeparatorFieldState("history-capture", "Capture"),
+		ui.BoolFieldState(fieldHistoryEnabled, "Enabled", settings.EnabledValue(), "Capture workspace history and message boundaries."),
+		ui.BoolFieldState(fieldHistoryGitIgnore, "Honor .gitignore", settings.UseGitIgnoreValue(), "Apply nested Git ignore rules and product derived-content defaults."),
+		ui.BoolFieldState(fieldHistoryExternal, "External changes", settings.CaptureExternalValue(), "Capture shell commands, generators, and other editors through the workspace watcher."),
+		ui.TextFieldState(fieldHistoryMaxFile, "Maximum file size (MB)", strconv.Itoa(settings.MaxFileSizeMB), "Files above this limit are excluded before reading or hashing."),
+		ui.TextFieldState(fieldHistoryDebounce, "Debounce (ms)", strconv.Itoa(settings.DebounceMS), "Quiet period before watcher changes become an automatic snapshot."),
+		ui.TextFieldState(fieldHistoryReconcile, "Reconcile interval (seconds)", strconv.Itoa(settings.ReconcileIntervalSeconds), "Bounded scan interval used to recover missed watcher events."),
+		extra,
+		ui.SeparatorFieldState("history-retention", "Retention"),
+		ui.TextFieldState(fieldHistoryKeepHours, "Keep hourly window", strconv.Itoa(settings.RetentionKeepHours), "Keep every snapshot this many recent hours."),
+		ui.TextFieldState(fieldHistoryKeepDaily, "Keep daily snapshots", strconv.Itoa(settings.RetentionKeepDaily), "Keep one older snapshot per day."),
+		ui.TextFieldState(fieldHistoryMaxSnaps, "Maximum snapshots", strconv.Itoa(settings.RetentionMaxSnapshots), "Upper bound after protected message and restore snapshots."),
+		ui.TextFieldState(fieldHistoryBudget, "Storage budget (MB)", strconv.Itoa(settings.StorageBudgetMB), "Prune unprotected history when physical storage exceeds this budget."),
+		ui.SeparatorFieldState("history-restore", "Restore safety"),
+		&ui.FieldState{ID: fieldHistorySafety, Label: "Safety snapshot", Type: ui.FieldText, Value: ui.StringValue("Always on"), ReadOnly: true, Description: "Every restore captures current state first; this safety invariant cannot be disabled."},
+	)
 }
 
 func formModel(fields ...*ui.FieldState) *ui.FormModel {
@@ -649,6 +691,17 @@ func (m *Model) buildAgentForm(cfg types.CategorySettings, isMain bool) *ui.Form
 		ui.ThinkingFieldState(fieldThinkingEffort, thinking, "Override the workspace reasoning budget."),
 	}
 	fields = append(fields, m.capabilityFields(cfg)...)
+	compaction := types.DefaultContextCompactionPercent
+	if cfg.ContextCompactionPercent != nil {
+		compaction = *cfg.ContextCompactionPercent
+	}
+	compactionField := ui.TextFieldState(fieldContextCompaction, "Compact context at", fmt.Sprintf("%d", compaction),
+		"Percentage of this agent's model context that triggers automatic compaction. 0 disables it.")
+	compactionField.Validator = intRangeValidator(0, 100)
+	fields = append(fields,
+		ui.SeparatorFieldState("context-management", "Context management"),
+		compactionField,
+	)
 	fields = append(fields, m.samplingFields(cfg)...)
 	if isMain {
 		fields = append(fields,
@@ -717,6 +770,16 @@ func floatRangeValidator(min, max float64) func(ui.FieldValue) []string {
 		if err != nil || parsed < min || parsed > max {
 			return []string{fmt.Sprintf("Must be a number between %s and %s.",
 				strconv.FormatFloat(min, 'f', -1, 64), strconv.FormatFloat(max, 'f', -1, 64))}
+		}
+		return nil
+	}
+}
+
+func intRangeValidator(min, max int) func(ui.FieldValue) []string {
+	return func(value ui.FieldValue) []string {
+		parsed, err := strconv.Atoi(strings.TrimSpace(value.String()))
+		if err != nil || parsed < min || parsed > max {
+			return []string{fmt.Sprintf("Must be an integer between %d and %d.", min, max)}
 		}
 		return nil
 	}
@@ -803,6 +866,13 @@ func (m *Model) buildMemoryForm(mem types.MemorySettings) *ui.FormModel {
 	if thinking == "" {
 		thinking = providerCfg.ThinkingEffort
 	}
+	compaction := types.DefaultContextCompactionPercent
+	if cat.ContextCompactionPercent != nil {
+		compaction = *cat.ContextCompactionPercent
+	}
+	compactionField := ui.TextFieldState(fieldContextCompaction, "Compact context at", strconv.Itoa(compaction),
+		"Percentage of the memory agent context window; 0 disables automatic compaction.")
+	compactionField.Validator = intRangeValidator(0, 100)
 	return formModel(
 		ui.SeparatorFieldState("memory-recall", "Recall"),
 		ui.BoolFieldState("auto-recall", "Auto recall", mem.AutoRecallEnabled(), "Inject relevant workspace memories into context each turn."),
@@ -816,7 +886,65 @@ func (m *Model) buildMemoryForm(mem types.MemorySettings) *ui.FormModel {
 		ui.SelectFieldState(fieldProvider, "Provider", providerID, ui.ProviderOptions(m.presets), "Override the workspace provider for the memory agent."),
 		ui.ModelFieldState(fieldModel, "Model", model, ui.ModelOptions(m.models[providerID]), "Model for background memory jobs. Blank inherits the main agent."),
 		ui.ThinkingFieldState(fieldThinkingEffort, thinking, "Override the memory agent's reasoning budget."),
+		compactionField,
 	)
+}
+
+func (m *Model) buildSafetyForm(settings types.SafetySettings) *ui.FormModel {
+	riskOptions := []string{"unknown", "safe", "project-write", "network", "destructive", "blocked"}
+	confirmOptions := []string{"unknown", "project-write", "network", "destructive"}
+	rules := ui.TextFieldState(fieldSafetyRules, "Command rules", formatCommandRules(settings.CommandRules),
+		"Semicolon-separated glob=severity rules, for example scripts/*.sh=safe; deploy*=destructive.")
+	rules.Validator = commandRulesValidator
+	return formModel(
+		ui.SeparatorFieldState("command-policy", "Command policy"),
+		ui.CycleFieldState(fieldSafetyConfirmAt, "Confirm commands at", confirmOptions, settings.ConfirmAt,
+			"Ask before commands at or above this effective severity."),
+		ui.CycleFieldState(fieldSafetyUnknown, "Unknown commands", riskOptions, settings.UnknownCommandRisk,
+			"Severity for commands the structural parser cannot classify."),
+		ui.CycleFieldState(fieldSafetyScript, "Local scripts", riskOptions, settings.ScriptExecutionRisk,
+			"Severity for direct .sh execution and shell/source wrappers."),
+		rules,
+		ui.SeparatorFieldState("safety-attention", "Attention"),
+		ui.BoolFieldState(fieldSafetyNotify, "Danger notifications", settings.NotifyDangerous != "off",
+			"Keep dangerous and blocked agent actions visible across tabs and editor views."),
+	)
+}
+
+func formatCommandRules(rules []types.CommandSeverityRule) string {
+	parts := make([]string, 0, len(rules))
+	for _, rule := range rules {
+		if strings.TrimSpace(rule.Pattern) != "" && strings.TrimSpace(rule.Risk) != "" {
+			parts = append(parts, strings.TrimSpace(rule.Pattern)+"="+strings.TrimSpace(rule.Risk))
+		}
+	}
+	return strings.Join(parts, "; ")
+}
+
+func parseCommandRules(value string) []types.CommandSeverityRule {
+	var rules []types.CommandSeverityRule
+	for _, raw := range strings.Split(value, ";") {
+		parts := strings.SplitN(strings.TrimSpace(raw), "=", 2)
+		if len(parts) == 2 && strings.TrimSpace(parts[0]) != "" && strings.TrimSpace(parts[1]) != "" {
+			rules = append(rules, types.CommandSeverityRule{Pattern: strings.TrimSpace(parts[0]), Risk: strings.TrimSpace(parts[1])})
+		}
+	}
+	return rules
+}
+
+func commandRulesValidator(value ui.FieldValue) []string {
+	validRisk := map[string]bool{"unknown": true, "safe": true, "project-write": true, "network": true, "destructive": true, "blocked": true}
+	for _, raw := range strings.Split(value.String(), ";") {
+		raw = strings.TrimSpace(raw)
+		if raw == "" {
+			continue
+		}
+		parts := strings.SplitN(raw, "=", 2)
+		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || !validRisk[strings.TrimSpace(parts[1])] {
+			return []string{"Use glob=severity entries separated by semicolons."}
+		}
+	}
+	return nil
 }
 
 type standardDefault struct {
@@ -1240,11 +1368,13 @@ const (
 	catCrafter
 	catAeron
 	catMemory
+	catSafety
 	catAppearance
 	catEditor
 	catLSP
 	catUI
 	catFont
+	catHistory
 )
 
 func (m *Model) currentOverrideKey() string {
@@ -1263,6 +1393,10 @@ func (m *Model) currentOverrideKey() string {
 		return "providers"
 	case catMemory:
 		return "memory"
+	case catSafety:
+		return "safety"
+	case catHistory:
+		return "local_history"
 	default:
 		return "agents"
 	}
@@ -1274,12 +1408,35 @@ func (m *Model) AppSettings() types.AppSettings {
 	m.collectProviders(&settings)
 	m.collectAgents(&settings.Agents)
 	m.collectMemory(&settings.Memory)
+	m.collectSafety(&settings.Safety)
+	m.collectHistory(&settings.LocalHistory)
 	m.collectAppearance(&settings.Theme)
 	m.collectEditor(&settings.Editor)
 	m.collectLSP(&settings.LSP)
 	m.collectUI(&settings.UI)
 	m.collectFont(&settings.Font)
 	return settings
+}
+
+func (m *Model) collectHistory(settings *types.LocalHistorySettings) {
+	patterns := strings.FieldsFunc(m.value(catHistory, fieldHistoryIgnores), func(r rune) bool { return r == '\n' || r == '\r' })
+	for index := range patterns {
+		patterns[index] = strings.TrimSpace(patterns[index])
+	}
+	*settings = types.LocalHistorySettings{
+		Enabled:                     onOff(m.value(catHistory, fieldHistoryEnabled) == "on"),
+		UseGitIgnore:                onOff(m.value(catHistory, fieldHistoryGitIgnore) == "on"),
+		CaptureExternalChanges:      onOff(m.value(catHistory, fieldHistoryExternal) == "on"),
+		SafetySnapshotBeforeRestore: "on",
+		MaxFileSizeMB:               parseOpt(m.value(catHistory, fieldHistoryMaxFile), 100),
+		DebounceMS:                  parseOpt(m.value(catHistory, fieldHistoryDebounce), 750),
+		ReconcileIntervalSeconds:    parseOpt(m.value(catHistory, fieldHistoryReconcile), 60),
+		RetentionKeepHours:          parseOpt(m.value(catHistory, fieldHistoryKeepHours), 24),
+		RetentionKeepDaily:          parseOpt(m.value(catHistory, fieldHistoryKeepDaily), 30),
+		RetentionMaxSnapshots:       parseOpt(m.value(catHistory, fieldHistoryMaxSnaps), 500),
+		StorageBudgetMB:             parseOpt(m.value(catHistory, fieldHistoryBudget), 1024),
+		ExtraIgnorePatterns:         patterns,
+	}
 }
 
 func (m *Model) collectMemory(cfg *types.MemorySettings) {
@@ -1291,10 +1448,21 @@ func (m *Model) collectMemory(cfg *types.MemorySettings) {
 		RecallLimit:        parseOpt(m.value(catMemory, "recall-limit"), types.DefaultMemoryRecallLimit),
 		ExtractEveryTurns:  parseOpt(m.value(catMemory, "extract-every"), types.DefaultMemoryExtractCadence),
 		MemoryCategory: types.CategorySettings{
-			Provider:       m.value(catMemory, fieldProvider),
-			Model:          m.value(catMemory, fieldModel),
-			ThinkingEffort: m.value(catMemory, fieldThinkingEffort),
+			Provider:                 m.value(catMemory, fieldProvider),
+			Model:                    m.value(catMemory, fieldModel),
+			ThinkingEffort:           m.value(catMemory, fieldThinkingEffort),
+			ContextCompactionPercent: parsePercentPtr(m.value(catMemory, fieldContextCompaction)),
 		},
+	}
+}
+
+func (m *Model) collectSafety(settings *types.SafetySettings) {
+	*settings = types.SafetySettings{
+		ConfirmAt:           m.value(catSafety, fieldSafetyConfirmAt),
+		UnknownCommandRisk:  m.value(catSafety, fieldSafetyUnknown),
+		ScriptExecutionRisk: m.value(catSafety, fieldSafetyScript),
+		CommandRules:        parseCommandRules(m.value(catSafety, fieldSafetyRules)),
+		NotifyDangerous:     onOff(m.value(catSafety, fieldSafetyNotify) == "on"),
 	}
 }
 
@@ -1425,6 +1593,7 @@ func (m *Model) collectAgents(agents *types.AgentsSettings) {
 		}
 		category.ModelTemperature = parseFloatPtr(m.value(entry.index, fieldTemperature))
 		category.ModelTopP = parseFloatPtr(m.value(entry.index, fieldTopP))
+		category.ContextCompactionPercent = parsePercentPtr(m.value(entry.index, fieldContextCompaction))
 		agents.Categories[entry.key] = category
 	}
 	// The main agent form owns the Multi-Agent toggle; mirror it into the
@@ -1453,6 +1622,15 @@ func parseFloatPtr(value string) *float64 {
 	if err != nil {
 		return nil
 	}
+	return &parsed
+}
+
+func parsePercentPtr(value string) *int {
+	parsed, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil {
+		return nil
+	}
+	parsed = min(100, max(0, parsed))
 	return &parsed
 }
 

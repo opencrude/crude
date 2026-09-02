@@ -72,8 +72,8 @@ type Session struct {
 	// CreatedAt is when this session was created (for display).
 	CreatedAt time.Time
 
-	// TokenPrompt, TokenCompletion, TokenCached track the last LLM call's
-	// token counts for this session. Displayed in the status bar.
+	// TokenPrompt, TokenCompletion, TokenCached are cumulative totals across all
+	// root and child-agent API calls owned by this session.
 	TokenPrompt     int
 	TokenCompletion int
 	TokenCached     int
@@ -91,6 +91,10 @@ type Session struct {
 	// CostUpperBound is true when the provider reports total prompt tokens but
 	// not cache-read tokens, so the accumulated cost assumes no cache discount.
 	CostUpperBound bool
+
+	// usageByAgent keeps current-context facts separate from session totals, so
+	// background child usage cannot replace the visible agent's context percent.
+	usageByAgent map[string]agentUsageState
 
 	// ── Backend session (owned by this frontend session)
 	//
@@ -110,6 +114,12 @@ type Session struct {
 	hydratedRefs []sessiondb.Reference
 }
 
+type agentUsageState struct {
+	ContextWindow int
+	ContextUsed   int
+	Estimated     bool
+}
+
 // NewSession creates a frontend session with the given persistence handles.
 // Presentation widgets are created by the TUI projection layer. The reference
 // store is created from the session's DB.
@@ -119,14 +129,35 @@ type Session struct {
 // - lg: the logger (shared, not owned).
 func NewSession(sessionID, sessionDir string, db *sql.DB, lg Logger) *Session {
 	s := &Session{
-		SessionID:  sessionID,
-		SessionDir: sessionDir,
-		DB:         db,
-		RefStore:   NewReferenceStore(sessionID, sessionDir, db),
-		CreatedAt:  time.Now(),
+		SessionID:    sessionID,
+		SessionDir:   sessionDir,
+		DB:           db,
+		RefStore:     NewReferenceStore(sessionID, sessionDir, db),
+		CreatedAt:    time.Now(),
+		usageByAgent: make(map[string]agentUsageState),
 	}
 	_ = lg // logger is used by AgentState, not Session itself
 	return s
+}
+
+func (s *Session) attachBackend(backend *session.Session) {
+	if s == nil {
+		return
+	}
+	s.backend = backend
+	if backend == nil {
+		return
+	}
+	snapshot := backend.CostSnapshot()
+	s.TokenPrompt = snapshot.TotalPromptTokens
+	s.TokenCompletion = snapshot.TotalCompletionTokens
+	s.TokenCached = snapshot.TotalCachedTokens
+	s.SessionCost = snapshot.TotalCost
+	for _, child := range backend.CompletedSubAgentSnapshots() {
+		s.TokenPrompt += child.Result.PromptTokens
+		s.TokenCompletion += child.Result.CompTokens
+		s.SessionCost += child.Result.CostUSD
+	}
 }
 
 // SessionSettingsState is presentation-neutral settings state for one

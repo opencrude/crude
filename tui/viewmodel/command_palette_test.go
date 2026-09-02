@@ -413,7 +413,7 @@ func TestPaletteIncludesNewCommands(t *testing.T) {
 		"agent.orchestrator.reset",
 		"agent.toggle.multiagent", "agent.cancel", "agent.newSession",
 		"composer.toggle", "settings.open", "settings.workspace", "lsp.outline", "safety.yolo.toggle",
-		"app.sessions", "system.undo", "app.toggleTheme", "app.copyLastAssistant",
+		"app.sessions", "system.undo", "history.open", "app.toggleTheme", "app.copyLastAssistant",
 		"app.quit", "help.show",
 	}
 	byID := make(map[string]cmdEntry, len(entries))
@@ -681,8 +681,8 @@ func TestPaletteUndoRedoLabelsDisambiguated(t *testing.T) {
 	if !ok {
 		t.Fatal("palette missing system.undo")
 	}
-	if su.Label != "Undo Agent File Change" {
-		t.Errorf("system.undo label = %q, want %q", su.Label, "Undo Agent File Change")
+	if su.Label != "Review Message Changes" {
+		t.Errorf("system.undo label = %q, want %q", su.Label, "Review Message Changes")
 	}
 	// Sanity: the two labels must not be equal.
 	if eu.Label == su.Label {

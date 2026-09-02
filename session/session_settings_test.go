@@ -416,7 +416,7 @@ func TestResumeRecoversLegacyChildWhenParentResultWasNeverPersisted(t *testing.T
 	}
 }
 
-func TestResumeRestoresActiveWireEpochIndependentlyFromFullArchive(t *testing.T) {
+func TestResumeRestoresActiveContextIndependentlyFromFullArchive(t *testing.T) {
 	root := t.TempDir()
 	dbPath := filepath.Join(root, "wire-parent.db")
 	db, err := sessiondb.OpenAndMigrate(dbPath)
@@ -438,13 +438,16 @@ func TestResumeRestoresActiveWireEpochIndependentlyFromFullArchive(t *testing.T)
 		t.Fatal(err)
 	}
 	active := []provider.ChatMessage{
-		provider.NewWireHiddenMessage("<wire_checkpoint>old archive</wire_checkpoint>"),
+		provider.NewTextMessage("system", "<context_checkpoint>old archive</context_checkpoint>"),
 		provider.NewTextMessage("user", "current request"),
 		provider.NewTextMessage("assistant", "current answer"),
 	}
-	if err := sessiondb.SaveWireState(db, "wire-parent", sessiondb.WireState{
-		Epoch: 7, Reason: "manual_compaction", Messages: active,
+	if err := sessiondb.SaveContextState(db, "wire-parent", sessiondb.ContextState{
+		Generation: 7, Reason: "manual_compaction", Messages: active,
 	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := sessiondb.InsertCostSnapshot(db, 120, 30, 20, 0.42, nil); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
@@ -455,8 +458,31 @@ func TestResumeRestoresActiveWireEpochIndependentlyFromFullArchive(t *testing.T)
 		t.Fatal(err)
 	}
 	t.Cleanup(resumed.Close)
-	if len(resumed.msgs) != 4 || len(resumed.wireMessages) != 3 || !resumed.wireMessages[0].WireHidden ||
-		resumed.rootWireGuard().Epoch() != 7 {
-		t.Fatalf("archive=%d wire=%#v epoch=%d", len(resumed.msgs), resumed.wireMessages, resumed.rootWireGuard().Epoch())
+	if len(resumed.msgs) != 4 || len(resumed.activeContext) != 3 || resumed.activeContext[0].Role != "system" ||
+		resumed.contextGeneration != 7 {
+		t.Fatalf("archive=%d active=%#v generation=%d", len(resumed.msgs), resumed.activeContext, resumed.contextGeneration)
+	}
+	cost := resumed.CostSnapshot()
+	if cost.TotalPromptTokens != 120 || cost.TotalCompletionTokens != 30 || cost.TotalCachedTokens != 20 || cost.TotalCost != 0.42 {
+		t.Fatalf("restored cumulative cost snapshot = %#v", cost)
+	}
+}
+
+func TestContextCompactionDefaultsAndLiveInheritance(t *testing.T) {
+	cfg := testConfig()
+	main := cfg.GetActiveDefaultCategory()
+	if main.ContextCompactionPercent == nil || *main.ContextCompactionPercent != 85 {
+		t.Fatalf("default compaction = %#v", main.ContextCompactionPercent)
+	}
+	disabled := 0
+	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
+	profile.Categories[CategoryDefault] = CategoryConfig{
+		Provider: cfg.ActiveProvider, Model: main.Model, ContextCompactionPercent: &disabled,
+	}
+	profile.Categories[CategoryResearcher] = CategoryConfig{Inherit: InheritMain}
+	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile
+	researcher := cfg.GetCategoryConfig(CategoryResearcher)
+	if researcher.ContextCompactionPercent == nil || *researcher.ContextCompactionPercent != 0 {
+		t.Fatalf("inherited disabled compaction = %#v", researcher.ContextCompactionPercent)
 	}
 }

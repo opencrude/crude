@@ -48,8 +48,7 @@ func TestPlainToolBodyWordWrapsAtWordBoundaries(t *testing.T) {
 	}
 }
 
-// Collapsed previews clip wrapped rows behind "+N more lines"; a mid-word
-// break used to leave the fragment as the last visible cell in the band.
+// Compact evidence tools are title-only until explicitly expanded.
 func TestCollapsedToolPreviewWrapsInsideBand(t *testing.T) {
 	content := strings.Join([]string{
 		strings.Repeat("m", 50) + " tailone",
@@ -61,22 +60,8 @@ func TestCollapsedToolPreviewWrapsInsideBand(t *testing.T) {
 		ToolPreviewPhase: "done", Content: content,
 	}
 	ml := renderToolMessageLines(msg, theme.DefaultDark(), 56, 56, 56, 0, 20, "done", DisclosureCollapsed)
-	band := 56 - toolBodyGutterWidth
 	plain := strings.Join(ml.lines, "\n")
-	if !strings.Contains(plain, "more lines") {
-		t.Fatalf("collapsed preview missing truncation marker:\n%s", plain)
-	}
-	if !strings.Contains(plain, "tailone") {
-		t.Fatalf("first wrapped tail missing:\n%s", plain)
-	}
-	for i, pl := range ml.native[1:] {
-		for si, span := range pl.Spans {
-			if si == 0 {
-				continue
-			}
-			if w := rendering.VisibleWidth(span.Text); w > band {
-				t.Fatalf("collapsed row %d span overflows band: %d > %d: %q", i, w, band, span.Text)
-			}
-		}
+	if len(ml.lines) != 1 || strings.Contains(plain, "tailone") || strings.Contains(plain, "final line") {
+		t.Fatalf("collapsed compact evidence leaked body:\n%s", plain)
 	}
 }

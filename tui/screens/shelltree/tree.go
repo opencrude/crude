@@ -211,6 +211,12 @@ func (s *Screen) rebuildTree() {
 	tree.SetRowPainter(filetree.NewTreeRowPainter(s.model, s.icons, s.cfg))
 	s.tree = newFileTreeView(s, tree)
 	s.scrollbar = ui.NewScrollbarControl(ScrollbarID, tree.Scroll(), s.tokens)
+	s.scrollbar.OnScroll(func(_, _ int) {
+		if s.model == nil || s.tree == nil || s.tree.tree == nil {
+			return
+		}
+		filetree.ApplyScrollToModel(s.model, s.tree.tree.Scroll())
+	})
 }
 
 // SetModel rebinds the file tree model.
@@ -366,6 +372,10 @@ func (s *Screen) layoutChildren(r ui.Rect) {
 			treeH -= panelchrome.HeaderRows
 		}
 	}
+	barW := 0
+	if s.scrollbar != nil && s.scrollbar.NeededForViewport(treeH) {
+		barW = min(ui.ScrollbarWidth, treePanelW)
+	}
 	treeX := panelchrome.PadLeft
 	if treeX >= treeW {
 		treeX = 0
@@ -378,9 +388,9 @@ func (s *Screen) layoutChildren(r ui.Rect) {
 	}
 	if s.scrollbar != nil && treePanelW >= 1 {
 		s.scrollbar.Layout(ui.LayoutContext{}, ui.Rect{
-			X: treePanelW - 1,
+			X: treePanelW - barW,
 			Y: panelchrome.HeaderRows,
-			W: 1,
+			W: barW,
 			H: maxInt(1, r.H-panelchrome.HeaderRows),
 		})
 	}
@@ -463,19 +473,8 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 }
 
 func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
-	treePanelW := s.width
-	if ctx.LocalX >= filetree.SidebarContentWidth(treePanelW) {
-		if s.scrollbar != nil && s.tree != nil && s.tree.tree != nil {
-			res := s.scrollbar.Handle(ctx, evt)
-			if res.Handled {
-				filetree.ApplyScrollToModel(s.model, s.tree.tree.Scroll())
-				s.syncFromModel()
-			}
-			return res
-		}
-	}
 	if s.tree != nil {
-		return s.tree.Handle(ctx, evt)
+		return s.tree.Handle(ui.ChildEventContext(ctx, s.tree.Bounds()), evt)
 	}
 	return ui.EventResult{}
 }

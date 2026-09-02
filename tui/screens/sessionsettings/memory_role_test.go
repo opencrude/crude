@@ -51,8 +51,8 @@ func TestMemoryAgentRoleOpensRoleForm(t *testing.T) {
 	if screen.formModel.Field(fieldModel) == nil || screen.formModel.Field(fieldProvider) == nil || screen.formModel.Field(fieldThinking) == nil {
 		t.Fatal("memory role form missing provider/model/thinking")
 	}
-	if screen.formModel.FieldCount() != 3 {
-		t.Fatalf("memory role form has %d fields, want provider/model/thinking (3)", screen.formModel.FieldCount())
+	if screen.formModel.FieldCount() != 4 {
+		t.Fatalf("memory role form has %d fields, want provider/model/thinking/compaction (4)", screen.formModel.FieldCount())
 	}
 	_ = tea.KeyEnter
 }

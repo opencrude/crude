@@ -87,13 +87,15 @@ func (w *Workspace) AgentTabViews() []TabView {
 // StatusView is the workspace-owned status snapshot consumed by the status
 // control. It contains no rendering strings, styles, or widget state.
 type StatusView struct {
-	CurrentAgentID string
-	ModelName      string
-	Username       string
-	Usage          UsageSnapshot
-	AgentCount     int
-	ActiveAgents   int
-	Blocking       bool
+	CurrentAgentID       string
+	ModelName            string
+	Username             string
+	Usage                UsageSnapshot
+	AgentCount           int
+	ActiveAgents         int
+	Blocking             bool
+	SafetyAttention      string
+	SafetyAttentionCount int
 }
 
 func (w *Workspace) StatusView() StatusView {
@@ -110,7 +112,16 @@ func (w *Workspace) StatusView() StatusView {
 	view.ModelName = w.ModelName
 	view.Username = w.Username
 	for _, node := range w.AgentMgr.AllNodes() {
-		if node == nil || node.State == nil || node.State.Completed {
+		if node == nil || node.State == nil {
+			continue
+		}
+		if node.State.SafetyAlert != "" {
+			view.SafetyAttentionCount++
+			if view.SafetyAttention == "" {
+				view.SafetyAttention = node.State.SafetyAlert
+			}
+		}
+		if node.State.Completed {
 			continue
 		}
 		view.AgentCount++

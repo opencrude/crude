@@ -220,12 +220,16 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	}
 	s.commit.Layout(ctx, s.headerTitle().FieldRect(panelchrome.BodyWidth(contentW)))
 	listH := max(1, r.H-listTop)
+	barW := 0
+	if s.scrollbar.NeededForViewport(listH) {
+		barW = min(ui.ScrollbarWidth, contentW)
+	}
 	bodyW := panelchrome.BodyWidth(contentW)
 	s.list.Layout(ctx, ui.Rect{
 		X: panelchrome.PadLeft, Y: listTop,
 		W: max(1, bodyW-panelchrome.PadLeft), H: listH,
 	})
-	s.scrollbar.Layout(ctx, ui.Rect{X: max(0, contentW-1), Y: listTop, W: 1, H: listH})
+	s.scrollbar.Layout(ctx, ui.Rect{X: max(0, contentW-barW), Y: listTop, W: barW, H: listH})
 	if s.split != nil && !s.split.Dragging() {
 		s.split.SetFirstSize(max(0, r.W-1))
 	}

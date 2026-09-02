@@ -1,6 +1,7 @@
 package ui
 
-// ScrollbarWidth is the fixed column width for native ui scrollbars.
+// ScrollbarWidth is the interactive scrollbar stroke. Product surfaces may
+// reserve a separate blank gutter before it without changing hit geometry.
 const ScrollbarWidth = 1
 
 // ScrollModel tracks viewport offset for a 1-line-per-item collection.

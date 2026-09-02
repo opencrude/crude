@@ -8,6 +8,12 @@ import (
 
 // ScrollbarCell returns the track or thumb cell for one row of a vertical track.
 func ScrollbarCell(scroll *ScrollModel, trackH, trackRow int, tokens *TokenSet, bg cell.Color) cell.Cell {
+	return ScrollbarCellState(scroll, trackH, trackRow, tokens, bg, false)
+}
+
+// ScrollbarCellState paints a vertical scrollbar cell with explicit hover or
+// drag emphasis for manually composed scrollbar adapters.
+func ScrollbarCellState(scroll *ScrollModel, trackH, trackRow int, tokens *TokenSet, bg cell.Color, emphasized bool) cell.Cell {
 	if scroll == nil || trackH <= 0 || trackRow < 0 || trackRow >= trackH {
 		return cell.BlankCell(bg)
 	}
@@ -20,14 +26,19 @@ func ScrollbarCell(scroll *ScrollModel, trackH, trackRow int, tokens *TokenSet, 
 	trackFG := tokens.Color(ColorBorder)
 	thumbFG := tokens.Color(ColorMuted)
 	if scroll.MaxOffset() <= 0 {
-		return cell.NewCell('░', trackFG, bg, 0)
+		return cell.NewCell('│', trackFG, bg, 0)
 	}
 	top, th := scroll.ThumbBounds(trackH)
-	ch := rune('░')
+	ch := rune('│')
 	fg := trackFG
 	if trackRow >= top && trackRow < top+th {
-		ch = '█'
+		ch = '┃'
 		fg = thumbFG
+		if emphasized {
+			ch = '█'
+			fg = tokens.Color(ColorFg)
+			bg = tokens.Color(ColorHover)
+		}
 	}
 	return cell.NewCell(ch, fg, bg, 0)
 }

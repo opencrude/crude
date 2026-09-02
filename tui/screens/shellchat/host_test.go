@@ -150,13 +150,15 @@ func TestShellChatHostScrollbarDragUpdatesScrollModel(t *testing.T) {
 	}
 	sb := s.scrollbar.Bounds()
 	sbScreenX := sb.X
+	thumbTop, _ := scroll.ThumbBounds(sb.H)
+	thumbY := sb.Y + thumbTop
 
-	host.Handle(tea.MouseClickMsg{X: sbScreenX, Y: 0, Button: tea.MouseLeft})
+	host.Handle(tea.MouseClickMsg{X: sbScreenX, Y: thumbY, Button: tea.MouseLeft})
 	if !s.IsScrollbarDragging() {
 		t.Fatal("host click on gutter should start scrollbar drag")
 	}
 	before := scroll.Offset()
-	host.Handle(tea.MouseMotionMsg{X: sbScreenX, Y: 2, Button: tea.MouseLeft})
+	host.Handle(tea.MouseMotionMsg{X: sbScreenX, Y: 0, Button: tea.MouseLeft})
 	if !s.IsScrollbarDragging() {
 		t.Fatal("scrollbar drag should continue on motion")
 	}
@@ -239,7 +241,8 @@ func TestShellChatHostScrollbarDragCrossesList(t *testing.T) {
 
 	scroll := s.ScrollModel()
 	sbX := s.scrollbar.Bounds().X
-	host.Handle(tea.MouseClickMsg{X: sbX, Y: 0, Button: tea.MouseLeft})
+	thumbTop, _ := scroll.ThumbBounds(s.scrollbar.Bounds().H)
+	host.Handle(tea.MouseClickMsg{X: sbX, Y: s.scrollbar.Bounds().Y + thumbTop, Button: tea.MouseLeft})
 	if !host.HasPointerCapture() {
 		t.Fatal("scrollbar click should capture pointer on host")
 	}
@@ -249,7 +252,7 @@ func TestShellChatHostScrollbarDragCrossesList(t *testing.T) {
 	before := scroll.Offset()
 
 	listX := padLR + 1
-	host.Handle(tea.MouseMotionMsg{X: listX, Y: 2, Button: tea.MouseLeft})
+	host.Handle(tea.MouseMotionMsg{X: listX, Y: 0, Button: tea.MouseLeft})
 	if !s.IsScrollbarDragging() {
 		t.Fatal("scrollbar drag must continue when pointer leaves gutter")
 	}
@@ -280,7 +283,8 @@ func TestShellChatHostScrollbarDragUsesExplicitCapture(t *testing.T) {
 
 	scroll := s.ScrollModel()
 	sbX := s.scrollbar.Bounds().X
-	res := host.Handle(tea.MouseClickMsg{X: sbX, Y: 0, Button: tea.MouseLeft})
+	thumbTop, _ := scroll.ThumbBounds(s.scrollbar.Bounds().H)
+	res := host.Handle(tea.MouseClickMsg{X: sbX, Y: s.scrollbar.Bounds().Y + thumbTop, Button: tea.MouseLeft})
 	if !res.Handled {
 		t.Fatal("scrollbar click should be handled")
 	}
@@ -295,7 +299,7 @@ func TestShellChatHostScrollbarDragUsesExplicitCapture(t *testing.T) {
 	// Drag continues outside the scrollbar column (over the message list).
 	listX := th.Spacing.PadLR + 1
 	before := scroll.Offset()
-	host.Handle(tea.MouseMotionMsg{X: listX, Y: 2, Button: tea.MouseLeft})
+	host.Handle(tea.MouseMotionMsg{X: listX, Y: 0, Button: tea.MouseLeft})
 	if !s.IsScrollbarDragging() {
 		t.Fatal("scrollbar drag must continue when pointer leaves the gutter")
 	}

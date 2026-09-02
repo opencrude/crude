@@ -138,12 +138,12 @@ CREATE TABLE IF NOT EXISTS session_flags (
     FOREIGN KEY (session_id) REFERENCES sessions(id)
 );
 
-CREATE TABLE IF NOT EXISTS session_wire_state (
-    session_id    TEXT PRIMARY KEY,
-    epoch         INTEGER NOT NULL DEFAULT 1,
-    reason        TEXT NOT NULL DEFAULT 'session_start',
-    messages_json BLOB NOT NULL,
-    updated_at    INTEGER NOT NULL,
+CREATE TABLE IF NOT EXISTS session_context_state (
+    session_id     TEXT PRIMARY KEY,
+    generation     INTEGER NOT NULL DEFAULT 1,
+    reason         TEXT NOT NULL DEFAULT 'session_start',
+    messages_json  BLOB NOT NULL,
+    updated_at     INTEGER NOT NULL,
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
 

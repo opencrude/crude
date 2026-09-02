@@ -6,6 +6,7 @@ import (
 	"os"
 
 	"crude/session"
+	"crude/tui/perf"
 )
 
 // CLIFlags holds parsed command-line flags.
@@ -139,6 +140,12 @@ func ResolveResume(flags CLIFlags) (string, error) {
 // Main is the app-layer entry point: parse flags, resolve config, run IDE.
 func Main() int {
 	flags := ParseFlags()
+
+	// Live perf sentinel (tui/perf). main.go discards slog to protect the
+	// TUI surface, so the sentinel writes directly to this file when set.
+	if err := perf.ConfigureSentinel(os.Getenv("CRUDE_PERF_LOG")); err != nil {
+		fmt.Fprintf(os.Stderr, "crude-perf: %v\n", err)
+	}
 
 	if HandleCLICommands(flags) {
 		return 0

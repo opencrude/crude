@@ -317,7 +317,8 @@ func (s *Screen) Layout(_ ui.LayoutContext, r ui.Rect) {
 		s.list.Layout(ui.LayoutContext{}, ui.Rect{X: 0, Y: listY, W: s.listWidth(r), H: listH})
 	}
 	if s.scrollbar != nil && contentW >= 1 {
-		s.scrollbar.Layout(ui.LayoutContext{}, ui.Rect{X: contentW - 1, Y: listY, W: 1, H: listH})
+		barW := min(ui.ScrollbarWidth+1, contentW)
+		s.scrollbar.Layout(ui.LayoutContext{}, ui.Rect{X: contentW - barW, Y: listY, W: barW, H: listH})
 	}
 	if footerH > 0 {
 		s.footer.Layout(ui.LayoutContext{}, ui.Rect{X: 0, Y: max(0, r.H-1), W: contentW, H: 1})
@@ -389,10 +390,8 @@ func (s *Screen) SelectedItem() (ui.ListItem, bool) {
 	return s.list.inner.Selected()
 }
 
-// Handle catches pointer events that miss every child: wheel anywhere in the
-// pane scrolls the list, and the gap column between rows and scrollbar acts
-// as scrollbar track (shelltree convention). Scrollbar drags that started in
-// the gap keep routing to the scrollbar until release.
+// Handle catches pointer events that miss every child. Wheel anywhere in the
+// pane scrolls the list; scrollbar hit slop and capture stay Host-owned.
 func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	r := s.Bounds()
 	listY := s.listTopRow(r)
@@ -404,14 +403,8 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		child := ctx
 		child.LocalY = ctx.LocalY - listY
 		return s.list.Handle(child, evt)
-	case ui.EventMouseClick, ui.EventMouseMotion, ui.EventMouseRelease:
-		if s.scrollbar != nil && (s.scrollbar.IsDragging() || ctx.LocalX >= s.listWidth(r)) {
-			child := ctx
-			child.LocalX = ctx.LocalX - (s.contentWidth(r) - 1)
-			child.LocalY = ctx.LocalY - listY
-			return s.scrollbar.Handle(child, evt)
-		}
-		if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft {
+	case ui.EventMouseClick:
+		if evt.MouseClick.Button == tea.MouseLeft {
 			return ui.EventResult{Handled: true}
 		}
 	}

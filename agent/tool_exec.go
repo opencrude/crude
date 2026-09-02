@@ -286,7 +286,12 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 
 	if tc.Function.Name == "execute_command" {
 		cmd := getStr(params, "command")
-		sr := safety.CheckCommandSafety(cmd, a.logger)
+		sr := safety.CheckCommandSafetyWithPolicy(cmd, a.logger, a.CommandPolicy)
+		if a.CommandPolicy.NotifyDangerous && sr.Risk >= safety.RiskDestructive {
+			emit(AgentEvent{Type: "safety_alert", Data: map[string]any{
+				"risk": sr.Risk.String(), "reason": sr.Reason, "command": cmd,
+			}})
+		}
 		if sr.Risk.IsAlwaysBlocked() {
 			errMsg := fmt.Sprintf("[SAFETY BLOCK] This command was automatically blocked and will never execute. DO NOT retry this command or any variant of it.\nBlock reason: %s\nSuggestion: %s\nRaw command: %s\n\nThis is NOT a command error — the system prevented a dangerous operation. Move on to a different approach. Explain to the user why this was blocked and what you'll do instead.", sr.Reason, sr.Suggestion, cmd)
 			a.logger.Warn("SAFETY", "blocked", "command", cmd, "reason", sr.Reason)
@@ -305,7 +310,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			}})
 			return execResult{id: tc.ID, name: "execute_command", result: tools.ToolResult{Content: errMsg}, toolError: true}
 		}
-		if !a.yoloEnabled() && sr.Risk.NeedsConfirmation() {
+		if !a.yoloEnabled() && sr.NeedsConfirmation() {
 			drainStaleBlockResponses(blockResolveCh)
 			emit(AgentEvent{Type: "blocking", Data: map[string]string{
 				"block_id":   blockID,
@@ -316,6 +321,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 				"risk":       sr.Risk.String(),
 				"reason":     sr.Reason,
 				"suggestion": sr.Suggestion,
+				"rule":       sr.MatchedRule,
 			}})
 			response, ok := waitForBlockResponse(ctx, blockResolveCh, blockID)
 			if !ok {

@@ -278,20 +278,18 @@ func TestTextArea_PaintRendersSolidCursorStates(t *testing.T) {
 	ta.lastInputTime = time.Now()
 	ta.Paint(buf, 0, 0, PaintContext{Theme: theme.DefaultDark(), Focused: true})
 
-	// Solid cursor on the character under the cursor: inverse video —
-	// the grapheme's FG is the field bg and its BG is the field fg.
+	// The cursor preserves the grapheme and overlays reverse video.
 	under := buf.Get(1, 0) // 'b' at col 1
-	if !under.BG.Equal(NewTokenSet(theme.DefaultDark()).Color(ColorFg)) {
+	if under.Char != 'b' || !under.Attr.Has(cell.AttrReverse) {
 		t.Fatalf("cursor under character is not inverse video: %+v", under)
 	}
 
 	ta.SetCursorFlat(3)
 	buf = surface.NewCellBuffer(8, 1)
 	ta.Paint(buf, 0, 0, PaintContext{Theme: theme.DefaultDark(), Focused: true})
-	accent := NewTokenSet(theme.DefaultDark()).Color(ColorAccent)
 	end := buf.Get(3, 0) // block cursor at end-of-line col 3
-	if !end.BG.Equal(accent) {
-		t.Fatalf("end cursor missing accent block: %+v", end)
+	if end.Char != ' ' || !end.Attr.Has(cell.AttrReverse) {
+		t.Fatalf("end cursor missing reverse block: %+v", end)
 	}
 }
 
@@ -659,5 +657,61 @@ func TestTextArea_DeleteDeletesSelection(t *testing.T) {
 	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyDelete}))
 	if ta.Value() != "world" {
 		t.Fatalf("delete selection: value=%q want 'world'", ta.Value())
+	}
+}
+
+func TestTextAreaMatureEditingContract(t *testing.T) {
+	ta := NewTextArea("area", NewTokenSet(theme.DefaultDark()), true)
+	ta.Layout(LayoutContext{}, Rect{W: 20, H: 3})
+	ta.SetValue("alpha beta\nsecond line")
+	ta.SetCursorFlat(6)
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyDelete, Mod: tea.ModCtrl}))
+	if got := ta.Value(); got != "alpha \nsecond line" {
+		t.Fatalf("ctrl+delete=%q", got)
+	}
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl}))
+	if got := ta.Value(); got != "alpha beta\nsecond line" {
+		t.Fatalf("undo=%q", got)
+	}
+	ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: 'y', Mod: tea.ModCtrl}))
+	if got := ta.Value(); got != "alpha \nsecond line" {
+		t.Fatalf("redo=%q", got)
+	}
+
+	ta.SetValue("alpha beta\nsecond line")
+	click := MouseClickEvent(tea.MouseClickMsg{X: 2, Y: 0, Button: tea.MouseLeft})
+	ta.Handle(EventContext{LocalX: 2, LocalY: 0}, click)
+	ta.Handle(EventContext{LocalX: 2, LocalY: 0}, click)
+	if got := ta.SelectedText(); got != "alpha" {
+		t.Fatalf("double-click selection=%q", got)
+	}
+	if res := ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})); !res.Handled || res.Cmd == nil {
+		t.Fatalf("ctrl+c result=%+v", res)
+	}
+	ta.Handle(EventContext{LocalX: 2, LocalY: 0}, click)
+	if got := ta.SelectedText(); got != "alpha beta\n" {
+		t.Fatalf("triple-click selection=%q", got)
+	}
+	ta.Handle(EventContext{Focused: true}, CustomEvent(tea.PasteMsg{Content: "replacement"}))
+	if got := ta.Value(); got != "replacementsecond line" {
+		t.Fatalf("paste did not replace selection: %q", got)
+	}
+}
+
+func TestTextAreaWheelAndOutsideDragScroll(t *testing.T) {
+	ta := NewTextArea("area", nil, true)
+	ta.SetValue("one\ntwo\nthree\nfour\nfive\nsix")
+	ta.Layout(LayoutContext{}, Rect{W: 12, H: 2})
+	initial := ta.ScrollOffset()
+	if res := ta.Handle(EventContext{}, MouseWheelEvent(tea.MouseWheelMsg{Button: tea.MouseWheelUp})); !res.Handled || ta.ScrollOffset() >= initial {
+		t.Fatalf("wheel result=%+v scroll=%d initial=%d", res, ta.ScrollOffset(), initial)
+	}
+	ta.Handle(EventContext{LocalX: 0, LocalY: 0}, MouseClickEvent(tea.MouseClickMsg{Button: tea.MouseLeft}))
+	before := ta.ScrollOffset()
+	for range 3 {
+		ta.Handle(EventContext{LocalX: 4, LocalY: 5}, MouseMotionEvent(tea.MouseMotionMsg{Button: tea.MouseLeft}))
+	}
+	if ta.ScrollOffset() <= before || !ta.HasActiveSelection() {
+		t.Fatalf("outside drag scroll=%d before=%d selection=%q", ta.ScrollOffset(), before, ta.SelectedText())
 	}
 }

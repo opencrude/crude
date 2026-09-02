@@ -138,6 +138,38 @@ func HardWrap(s string, maxWidth int) []string {
 	return result
 }
 
+// ExpandTabs expands horizontal tabs to spaces at fixed tab stops while
+// measuring intervening text through the canonical grapheme-width path.
+func ExpandTabs(s string, tabWidth int) string {
+	if tabWidth < 1 {
+		tabWidth = 4
+	}
+	if !strings.ContainsRune(s, '\t') {
+		return s
+	}
+	var out strings.Builder
+	out.Grow(len(s) + tabWidth)
+	col := 0
+	rest := s
+	for len(rest) > 0 {
+		if rest[0] == '\t' {
+			advance := tabWidth - col%tabWidth
+			out.WriteString(strings.Repeat(" ", advance))
+			col += advance
+			rest = rest[1:]
+			continue
+		}
+		cluster, width := FirstGrapheme(rest)
+		if cluster == "" {
+			break
+		}
+		out.WriteString(cluster)
+		col += width
+		rest = rest[len(cluster):]
+	}
+	return out.String()
+}
+
 func WordWrap(s string, maxWidth int) []string {
 	if maxWidth <= 0 {
 		return []string{s}

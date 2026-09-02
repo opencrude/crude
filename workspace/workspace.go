@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"crude/localhistory"
 	"crude/session"
 	ttypes "crude/types"
 )
@@ -65,6 +66,11 @@ type Workspace struct {
 	// WorkspaceDir is the dedicated folder for this workspace.
 	// Layout: ~/.crude/workspaces/<hash>/
 	WorkspaceDir string
+
+	// LocalHistory owns immutable project snapshots and restore plans. Capture
+	// scheduling remains opt-in until the watcher/settings phase is enabled.
+	LocalHistory   *localhistory.Store
+	HistoryService *LocalHistoryService
 
 	// ── Managers (workspace-scoped) ──
 	//
@@ -187,6 +193,9 @@ func (w *Workspace) SetEventBus(bus *EventBus) {
 	if w.TermMgr != nil {
 		w.TermMgr.SetEventBus(bus)
 	}
+	if w.HistoryService != nil {
+		w.HistoryService.SetEventBus(bus)
+	}
 }
 
 // NewWorkspace creates an empty workspace rooted at the given directory.
@@ -223,11 +232,16 @@ func NewWorkspace(
 	if dbErr != nil {
 		lg.Warn("WORKSPACE", "db_open_failed", "error", dbErr.Error())
 	}
+	historyStore, historyErr := openLocalHistory(rootPath, wsDir)
+	if historyErr != nil {
+		lg.Warn("WORKSPACE", "local_history_open_failed", "error", historyErr.Error())
+	}
 
 	ws := &Workspace{
 		RootPath:        rootPath,
 		WorkspaceDir:    wsDir,
 		WorkspaceDB:     wsDB,
+		LocalHistory:    historyStore,
 		AgentMgr:        NewAgentManager(),
 		PaneMgr:         NewPaneManager(),
 		LSPMgr:          lspMgr,
@@ -244,6 +258,9 @@ func NewWorkspace(
 		InitialSettings: initial,
 		Username:        username,
 		StartTime:       time.Now(),
+	}
+	if historyStore != nil {
+		ws.HistoryService = NewLocalHistoryService(rootPath, historyStore, lg)
 	}
 
 	// Self-heal the session registry from on-disk session DBs. Runs on
@@ -312,6 +329,14 @@ func (w *Workspace) Close() {
 	if w.WorkspaceDB != nil {
 		_ = w.WorkspaceDB.Close()
 		w.WorkspaceDB = nil
+	}
+	if w.HistoryService != nil {
+		w.HistoryService.Stop()
+		w.HistoryService = nil
+	}
+	if w.LocalHistory != nil {
+		_ = w.LocalHistory.Close()
+		w.LocalHistory = nil
 	}
 }
 
@@ -465,6 +490,9 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 	if abs == w.RootPath {
 		return nil
 	}
+	if w.HistoryService != nil && w.HistoryService.Busy() {
+		return fmt.Errorf("switch project: local history capture or restore is active")
+	}
 
 	// Prepare all target persistence before touching current project state.
 	// WorkspaceDir and OpenWorkspaceDB perform creation/migration, so success
@@ -479,6 +507,11 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 			_ = wsDB.Close()
 		}
 		return fmt.Errorf("switch project: prepare workspace database for %q: %w", abs, err)
+	}
+	historyStore, err := openLocalHistory(abs, wsDir)
+	if err != nil {
+		_ = wsDB.Close()
+		return fmt.Errorf("switch project: prepare local history for %q: %w", abs, err)
 	}
 	dbTransferred := false
 	defer func() {
@@ -507,11 +540,21 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 		_ = w.WorkspaceDB.Close()
 		w.WorkspaceDB = nil
 	}
+	if w.HistoryService != nil {
+		w.HistoryService.Stop()
+		w.HistoryService = nil
+	}
+	if w.LocalHistory != nil {
+		_ = w.LocalHistory.Close()
+		w.LocalHistory = nil
+	}
 
 	// Rebuild around the new project.
 	w.RootPath = abs
 	w.WorkspaceDir = wsDir
 	w.WorkspaceDB = wsDB
+	w.LocalHistory = historyStore
+	w.HistoryService = NewLocalHistoryService(abs, historyStore, w.Logger)
 	dbTransferred = true
 
 	w.LSPMgr = NewLSPManager(w.Logger)

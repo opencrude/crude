@@ -53,7 +53,7 @@ func TestRenderWideGlyphsKeepScrollbarColumn(t *testing.T) {
 		scrollbarAt := -1
 		for x := width - 1; x >= 0; x-- {
 			ch := buf.Get(x, y).Char
-			if ch == '░' || ch == '█' {
+			if ch == '│' || ch == '┃' || ch == '█' {
 				scrollbarAt = x
 				break
 			}
@@ -85,7 +85,7 @@ func TestRenderWideGlyphsKeepScrollbarColumn(t *testing.T) {
 	uv.NewStyledString(emitted).Draw(uvBuffer, uv.Rect(0, 0, width, 4))
 	for y := 0; y < 4; y++ {
 		cellAt := uvBuffer.CellAt(width-1, y)
-		if cellAt == nil || (cellAt.Content != "░" && cellAt.Content != "█") {
+		if cellAt == nil || (cellAt.Content != "│" && cellAt.Content != "┃" && cellAt.Content != "█") {
 			t.Fatalf("UV scrollbar row %d displaced from right edge: %#v", y, cellAt)
 		}
 	}

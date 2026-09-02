@@ -51,12 +51,14 @@ type Screen struct {
 	contextUsed                               int
 	tokenEstimated                            bool
 
-	lastError   string
-	errorTime   time.Time
-	infoMsg     string
-	infoMsgTime time.Time
-	retryMsg    string
-	retryTime   time.Time
+	lastError            string
+	errorTime            time.Time
+	safetyAttention      string
+	safetyAttentionCount int
+	infoMsg              string
+	infoMsgTime          time.Time
+	retryMsg             string
+	retryTime            time.Time
 
 	// Whole-project LSP insights. The bottom-left is reserved for these:
 	// diagnostic counts, files affected, symbol count, server health.
@@ -247,6 +249,11 @@ func (s *Screen) SetCurrentAgent(agentID string) {
 	s.currentAgent = agentID
 }
 
+func (s *Screen) SetSafetyAttention(message string, count int) {
+	s.safetyAttention = message
+	s.safetyAttentionCount = max(0, count)
+}
+
 func (s *Screen) View() string {
 	left, right := s.viewParts()
 	pad := strings.Repeat(" ", s.theme.Spacing.PadLR)
@@ -287,7 +294,13 @@ func (s *Screen) activitySegments() []seg {
 	sys := s.computeSystemState()
 	var left []seg
 
-	if s.lastError != "" && time.Since(s.errorTime) < 12*time.Second {
+	if s.safetyAttention != "" {
+		label := "⚠ " + s.safetyAttention
+		if s.safetyAttentionCount > 1 {
+			label = fmt.Sprintf("⚠ %d safety alerts · %s", s.safetyAttentionCount, s.safetyAttention)
+		}
+		left = append(left, seg{text: rendering.TruncateLine(label, s.width/2), role: ui.ColorWarning})
+	} else if s.lastError != "" && time.Since(s.errorTime) < 12*time.Second {
 		left = append(left, seg{text: rendering.TruncateLine("✕ "+s.lastError, s.width/3), role: ui.ColorError})
 	} else if s.retryMsg != "" && time.Since(s.retryTime) < 30*time.Second {
 		left = append(left, seg{text: rendering.TruncateLine(s.retryMsg, s.width/3), role: ui.ColorWarning})
@@ -313,7 +326,7 @@ func (s *Screen) activitySegments() []seg {
 		}
 		left = append(left, seg{text: strings.Join(parts, " · "), role: ui.ColorMuted})
 		if s.btwCount > 0 {
-			left = append(left, seg{text: fmt.Sprintf(" 📝%d", s.btwCount), role: ui.ColorMuted})
+			left = append(left, seg{text: fmt.Sprintf(" ✎%d", s.btwCount), role: ui.ColorMuted})
 		}
 	}
 
@@ -331,7 +344,7 @@ func (s *Screen) usageSegments() []seg {
 	sys := s.computeSystemState()
 	var rightParts []string
 	if s.btwCount > 0 {
-		rightParts = append(rightParts, fmt.Sprintf("📝%d", s.btwCount))
+		rightParts = append(rightParts, fmt.Sprintf("✎%d", s.btwCount))
 	}
 	if s.tokenPrompt > 0 || s.tokenCompletion > 0 {
 		prefix := ""
@@ -339,13 +352,13 @@ func (s *Screen) usageSegments() []seg {
 			prefix = "~"
 		}
 		var parts []string
-		parts = append(parts, fmt.Sprintf("%s↑%s", prefix, rendering.FormatTokens(s.tokenPrompt)))
+		parts = append(parts, fmt.Sprintf("%s↑%s total", prefix, rendering.FormatTokens(s.tokenPrompt)))
 		if s.tokenCached > 0 {
-			parts = append(parts, rendering.FormatTokens(s.tokenCached))
+			parts = append(parts, "cache "+rendering.FormatTokens(s.tokenCached)+" total")
 		} else if s.costUpperBound {
 			parts = append(parts, "cache ?")
 		}
-		parts = append(parts, fmt.Sprintf("↓%s", rendering.FormatTokens(s.tokenCompletion)))
+		parts = append(parts, fmt.Sprintf("↓%s total", rendering.FormatTokens(s.tokenCompletion)))
 		if s.contextWindow > 0 {
 			percent := int(float64(s.contextUsed) / float64(s.contextWindow) * 100)
 			parts = append(parts, fmt.Sprintf("%d%%", percent))

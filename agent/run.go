@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -77,75 +78,32 @@ func (a *Agent) Run(
 	l.Debug("AGENT", "run_enter", "msgs", len(sessionMessages), "tools", len(allTools), "session_id", sessionID)
 
 	lastReply := ""
-	guard := a.WireGuard
-	if guard == nil {
-		guard = NewWireGuard()
-		a.WireGuard = guard
-	}
-	sampling := a.Provider.Sampling()
-	envelopeOptions := struct {
-		Protocol        string   `json:"protocol"`
-		Temperature     *float64 `json:"temperature,omitempty"`
-		TopP            *float64 `json:"top_p,omitempty"`
-		Think           bool     `json:"think"`
-		MaxOutputTokens int      `json:"max_output_tokens"`
-	}{
-		Protocol: a.Provider.ProtocolID(), Temperature: sampling.Temperature, TopP: sampling.TopP,
-		Think: true, MaxOutputTokens: maxOutputTokensForContext(a.Provider.ContextWindow(a.Model)),
-	}
-	if rotated, err := guard.EnsureEnvelope(a.Model, systemPrompt, allTools, envelopeOptions); err != nil {
-		a.emitError(emit, fmt.Errorf("prepare wire envelope: %w", err))
-		return append([]provider.ChatMessage(nil), sessionMessages...)
-	} else if rotated {
-		l.Warn("CACHE", "epoch_rotated", "reason", "envelope_changed", "epoch", guard.Epoch())
-	}
 	msgs := []provider.ChatMessage{
 		{Role: "system", Content: provider.TextContent(systemPrompt), CacheControl: &provider.CacheControl{Type: "ephemeral"}},
 	}
 	systemHash := sha256.Sum256([]byte(systemPrompt))
 	l.Debug("CACHE", "prefix", "position", 0, "len", len(systemPrompt), "sha256", fmt.Sprintf("%x", systemHash[:8]), "protocol", a.Provider.ProtocolID())
 	msgs = append(msgs, sessionMessages...)
-	ledger := append([]provider.ChatMessage(nil), msgs...)
+	frozen := []provider.ChatMessage{msgs[0]}
+	frozen = append(frozen, a.FrozenPrefix...)
+	prefix, prefixErr := newPrefixVerifier(frozen)
+	if prefixErr != nil {
+		a.emitError(emit, fmt.Errorf("initialize context prefix verifier: %w", prefixErr))
+		return append([]provider.ChatMessage(nil), msgs...)
+	}
+	archiveMsgs := []provider.ChatMessage{msgs[0]}
+	if a.ContextArchive != nil {
+		archiveMsgs = append(archiveMsgs, a.ContextArchive...)
+	} else {
+		archiveMsgs = append(archiveMsgs, sessionMessages...)
+	}
 	appendWire := func(messages ...provider.ChatMessage) {
 		msgs = append(msgs, messages...)
-		ledger = append(ledger, messages...)
+		archiveMsgs = append(archiveMsgs, messages...)
 	}
 	returnMessages := func() []provider.ChatMessage {
-		a.lastWireMessages = append([]provider.ChatMessage(nil), msgs[1:]...)
-		return append([]provider.ChatMessage(nil), ledger...)
-	}
-	lastRuntimeStatus := ""
-	for i := len(sessionMessages) - 1; i >= 0; i-- {
-		if sessionMessages[i].WireHidden && strings.HasPrefix(sessionMessages[i].Content.String(), "## Runtime Status") {
-			lastRuntimeStatus = sessionMessages[i].Content.String()
-			break
-		}
-	}
-
-	buildSMStatusMsg := func() *provider.ChatMessage {
-		if sm == nil || sessionID == "" {
-			return nil
-		}
-		parts := make([]string, 0, 3)
-		if status := BuildStateMachineStatus(sm, sessionID); status != "" {
-			parts = append(parts, "## Current State\n"+status)
-		}
-		if a.AsyncMgr != nil {
-			if asyncStatus := BuildAsyncCommandStatus(a.AsyncMgr); asyncStatus != "" {
-				parts = append(parts, asyncStatus)
-			}
-		}
-		if a.SubAgentMgr != nil {
-			if subStatus := BuildSubAgentStatus(a.SubAgentMgr); subStatus != "" {
-				parts = append(parts, subStatus)
-			}
-		}
-		if len(parts) == 0 {
-			return nil
-		}
-		content := "## Runtime Status\n\n" + strings.Join(parts, "\n\n")
-		message := provider.NewWireHiddenMessage(content)
-		return &message
+		a.lastActiveContext = append([]provider.ChatMessage(nil), msgs[1:]...)
+		return append([]provider.ChatMessage(nil), archiveMsgs...)
 	}
 
 	var steps []StepRecord
@@ -153,9 +111,7 @@ func (a *Agent) Run(
 	var lastPromptTokens int
 
 	ctxWindow := a.Provider.ContextWindow(a.Model)
-	activeWindow := activeWireContextWindow(a.Provider.ProtocolID(), ctxWindow)
-	ctxLimit := int(float64(activeWindow) * activeWireSafetyPct)
-	l.Debug("CTX", "window", "model", a.Model, "ctx_window", ctxWindow, "active_window", activeWindow, "safety_limit", ctxLimit, "safety_pct", activeWireSafetyPct)
+	l.Debug("CTX", "window", "model", a.Model, "ctx_window", ctxWindow, "compaction_percent", a.ContextCompactionPercent)
 
 	stopConditions := []stopCondition{
 		func(steps []StepRecord) bool {
@@ -173,7 +129,7 @@ func (a *Agent) Run(
 			return
 		}
 		msgs = removeMessagesByInternalID(msgs, admittedBtwIDs)
-		ledger = removeMessagesByInternalID(ledger, admittedBtwIDs)
+		archiveMsgs = removeMessagesByInternalID(archiveMsgs, admittedBtwIDs)
 		emit(AgentEvent{Type: "btw_cleared", Data: map[string]any{
 			"internal_ids": append([]string(nil), admittedBtwIDs...),
 		}})
@@ -214,20 +170,46 @@ func (a *Agent) Run(
 			}
 		}
 		_ = drainBtw()
-
-		if smStatus := buildSMStatusMsg(); smStatus != nil {
-			if content := smStatus.Content.String(); content != lastRuntimeStatus {
-				appendWire(*smStatus)
-				lastRuntimeStatus = content
+		if a.ContextCompactionPercent > 0 && ctxWindow > 0 {
+			estimatedMessageTokens := provider.EstimateMessagesTotal(msgs, a.Model)
+			overheadTokens := 0
+			if len(allTools) > 0 {
+				if encodedTools, err := json.Marshal(allTools); err == nil {
+					overheadTokens += provider.EstimateTokens(string(encodedTools), a.Model)
+				}
+			}
+			estimatedTokens := estimatedMessageTokens + overheadTokens
+			activeTokens := estimatedTokens
+			scaledWindow := ctxWindow
+			if lastPromptTokens > activeTokens {
+				activeTokens = lastPromptTokens
+				if estimatedTokens > 0 {
+					scaledWindow = max(1, ctxWindow*estimatedTokens/lastPromptTokens)
+				}
+			}
+			threshold := ctxWindow * min(100, a.ContextCompactionPercent) / 100
+			if activeTokens >= threshold {
+				targetPercent := max(50, a.ContextCompactionPercent-15)
+				messageBudget := max(1, scaledWindow*targetPercent/100-overheadTokens)
+				compacted := CompactContext(archiveMsgs[1:], messageBudget, 100, a.Model)
+				if provider.EstimateMessagesTotal(compacted, a.Model) < provider.EstimateMessagesTotal(msgs[1:], a.Model) {
+					msgs = append([]provider.ChatMessage{msgs[0]}, compacted...)
+					prefix.reset()
+					l.Info("COMPACT", "automatic", "threshold_percent", a.ContextCompactionPercent,
+						"target_percent", targetPercent, "active_before", activeTokens, "active_messages", len(msgs)-1)
+					emit(AgentEvent{Type: "context_compacted", Data: map[string]any{
+						"threshold_percent": a.ContextCompactionPercent,
+						"target_percent":    targetPercent,
+					}})
+				}
 			}
 		}
+
 		requestMsgs := msgs
-		wireCandidate, wireErr := guard.Check(requestMsgs)
-		if wireErr != nil {
-			a.emitError(emit, fmt.Errorf("refusing non-append-only provider request: %w", wireErr))
+		if err := prefix.check(requestMsgs); err != nil {
+			a.emitError(emit, fmt.Errorf("refusing mutated context before provider request: %w", err))
 			return returnMessages()
 		}
-		l.Debug("CACHE", "wire_request", "epoch", wireCandidate.Epoch(), "digest", wireCandidate.Digest(), "messages", len(requestMsgs))
 
 		prevPreviewKeys := make(map[string]string)
 
@@ -257,8 +239,8 @@ func (a *Agent) Run(
 				}})
 			},
 			func() {
-				if acceptErr := guard.Accept(wireCandidate); acceptErr != nil {
-					l.Error("CACHE", "wire_accept_failed", "error", acceptErr.Error())
+				if err := prefix.accept(requestMsgs); err != nil {
+					l.Error("CACHE", "prefix_accept_failed", "error", err.Error())
 				}
 				for _, internalID := range admittedBtwIDs {
 					emit(AgentEvent{Type: "btw_consumed", Data: map[string]any{"internal_id": internalID}})
@@ -330,7 +312,7 @@ func (a *Agent) Run(
 					"attempt": continuations + 1,
 					"backoff": float64(0),
 				}})
-				appendWire(provider.NewWireHiddenMessage(continuePreviousResponse))
+				appendWire(provider.ChatMessage{Role: "user", Content: provider.TextContent("[SYSTEM CONTINUATION]\n" + continuePreviousResponse)})
 				continue
 			}
 			a.emitError(emit, err)
@@ -421,7 +403,7 @@ func (a *Agent) Run(
 			if isAutoContinuableFinishReason(finishReason) && continuations < maxAutoContinuations {
 				continuations++
 				l.Warn("AGENT", "auto_continue", "finish_reason", finishReason, "continuation", continuations)
-				appendWire(provider.NewWireHiddenMessage(continuePreviousResponse))
+				appendWire(provider.ChatMessage{Role: "user", Content: provider.TextContent("[SYSTEM CONTINUATION]\n" + continuePreviousResponse)})
 				continue
 			}
 			// A BTW message can arrive while the terminal completion is in
@@ -522,21 +504,6 @@ func (a *Agent) Run(
 			emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
 			return returnMessages()
 		}
-		if ctxLimit > 0 && lastPromptTokens > ctxLimit {
-			compacted := compactWireEpoch(msgs[1:], activeWindow, a.Model)
-			beforeTokens := provider.EstimateMessagesTotal(msgs[1:], a.Model)
-			afterTokens := provider.EstimateMessagesTotal(compacted, a.Model)
-			if afterTokens < beforeTokens {
-				ledger = append(ledger, compacted[0])
-				msgs = append([]provider.ChatMessage{msgs[0]}, compacted...)
-				guard.Rotate("active_context_compaction")
-				_, _ = guard.EnsureEnvelope(a.Model, systemPrompt, allTools, envelopeOptions)
-				lastRuntimeStatus = ""
-				l.Warn("CACHE", "epoch_rotated", "reason", "active_context_compaction", "epoch", guard.Epoch(), "messages", len(msgs), "prompt_tokens", lastPromptTokens)
-				continue
-			}
-		}
-
 		if isStopConditionMet(stopConditions, steps) {
 			reason := "stop_condition_met"
 			loopSigs := 0

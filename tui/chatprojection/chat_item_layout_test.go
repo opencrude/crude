@@ -48,6 +48,7 @@ func exportForLayout(t *testing.T, msgs []types.ChatMessage) []MessageRow {
 	r := NewRenderer(theme.DefaultDark())
 	r.SetSize(120, 40)
 	r.SetChatAreaBounds(0, 30)
+	r.SetChatAreaBounds(0, 30)
 	r.SetModelName("m")
 	r.SetUsername("u")
 	for _, m := range msgs {
@@ -220,9 +221,13 @@ func TestCommandResultPathPrefixStripped(t *testing.T) {
 // mangled by the prefix stripper.
 func TestCommandResultPathPrefixOnlyWhenShared(t *testing.T) {
 	content := "/home/a/file.go:1:x\n/usr/local/other.go:2:y\nplain text"
-	rows := exportForLayout(t, []types.ChatMessage{
-		{InternalID: "t1", Role: types.RoleTool, ToolName: "execute_command", ToolStatus: "success", Content: content},
-	})
+	r := NewRenderer(theme.DefaultDark())
+	r.SetSize(120, 40)
+	r.SetChatAreaBounds(0, 30)
+	r.AppendMessage(types.ChatMessage{InternalID: "t1", Role: types.RoleTool, ToolName: "execute_command", ToolStatus: "success", Content: content})
+	_, _, _ = r.ExportMessageRows(120)
+	r.ToggleDisclosure("t1")
+	rows, _, _ := r.ExportMessageRows(120)
 	joined := strings.Join(rows[0].Lines, "\n")
 	if !strings.Contains(joined, "/home/a/file.go:1:x") {
 		t.Fatalf("scattered prefixes were stripped:\n%s", joined)

@@ -36,6 +36,9 @@ const (
 
 type (
 	CategorySettings      = model.CategorySettings
+	SafetySettings        = model.SafetySettings
+	LocalHistorySettings  = model.LocalHistorySettings
+	CommandSeverityRule   = model.CommandSeverityRule
 	ProfileSettings       = model.ProfileSettings
 	AgentsSettings        = model.AgentsSettings
 	MemorySettings        = model.MemorySettings
@@ -82,9 +85,10 @@ const (
 )
 
 const (
-	DefaultMemoryRecallBudget   = model.DefaultMemoryRecallBudget
-	DefaultMemoryRecallLimit    = model.DefaultMemoryRecallLimit
-	DefaultMemoryExtractCadence = model.DefaultMemoryExtractCadence
+	DefaultMemoryRecallBudget       = model.DefaultMemoryRecallBudget
+	DefaultMemoryRecallLimit        = model.DefaultMemoryRecallLimit
+	DefaultMemoryExtractCadence     = model.DefaultMemoryExtractCadence
+	DefaultContextCompactionPercent = model.DefaultContextCompactionPercent
 )
 
 var (

@@ -77,9 +77,10 @@ func (w *Workspace) CreateSession(cfg *session.Config, homeDir string) (*Session
 		bs.SetMemoryStore(w.WorkspaceDB.Memory)
 		bs.StartMemoryMaintenance()
 	}
+	w.bindSessionHistory(bs)
 
 	fs := NewSession(bs.SessionID(), bs.SessionDir(), bs.DB(), w.Logger)
-	fs.backend = bs
+	fs.attachBackend(bs)
 	fs.SessionDir = bs.SessionDir()
 	fs.Settings = NewSessionSettingsState(
 		bs.SettingsSnapshot(),
@@ -134,9 +135,10 @@ func (w *Workspace) ResumeSession(sessionID string, cfg *session.Config, homeDir
 		bs.SetMemoryStore(w.WorkspaceDB.Memory)
 		bs.StartMemoryMaintenance()
 	}
+	w.bindSessionHistory(bs)
 
 	fs := NewSession(bs.SessionID(), bs.SessionDir(), bs.DB(), w.Logger)
-	fs.backend = bs
+	fs.attachBackend(bs)
 	fs.SessionDir = bs.SessionDir()
 	fs.Settings = NewSessionSettingsState(
 		bs.SettingsSnapshot(),
@@ -778,7 +780,8 @@ func (w *Workspace) sessionForAgent(agentID string) *Session {
 	return nil
 }
 
-// UsageSnapshot is the workspace-owned token/cost state for one session.
+// UsageSnapshot combines cumulative session token/cost totals with the selected
+// agent's latest current-context occupancy.
 type UsageSnapshot struct {
 	Prompt         int
 	Completion     int
@@ -804,47 +807,50 @@ func (w *Workspace) RecordAgentUsage(agentID string, data any) (UsageSnapshot, b
 	if sess == nil {
 		return UsageSnapshot{}, false
 	}
+	var prompt, completion, cached, contextWindow, contextUsed int
+	var cost float64
+	var estimated, upperBound bool
 	switch usage := data.(type) {
 	case map[string]any:
-		sess.TokenPrompt = toInt(usage["prompt"])
-		sess.TokenCompletion = toInt(usage["completion"])
-		sess.TokenCached = toInt(usage["prompt_cached"])
-		cost, _ := usage["cost"].(float64)
-		sess.SessionCost += cost
-		sess.TokenEstimated, _ = usage["estimated"].(bool)
-		if upperBound, ok := usage["cost_upper_bound"].(bool); ok {
-			sess.CostUpperBound = sess.CostUpperBound || upperBound
-		}
-		if contextWindow := toInt(usage["context_window"]); contextWindow > 0 {
-			sess.ContextWindow = contextWindow
-			contextUsed := toInt(usage["context_prompt"])
-			if contextUsed == 0 {
-				contextUsed = toInt(usage["context_used"])
-			}
-			if contextUsed > 0 {
-				sess.ContextUsed = contextUsed
-			} else {
-				sess.ContextUsed = sess.TokenPrompt
-			}
+		prompt, completion, cached = toInt(usage["prompt"]), toInt(usage["completion"]), toInt(usage["prompt_cached"])
+		cost, _ = usage["cost"].(float64)
+		estimated, _ = usage["estimated"].(bool)
+		upperBound, _ = usage["cost_upper_bound"].(bool)
+		contextWindow = toInt(usage["context_window"])
+		contextUsed = toInt(usage["context_prompt"])
+		if contextUsed == 0 {
+			contextUsed = toInt(usage["context_used"])
 		}
 	case map[string]int:
-		sess.TokenPrompt = usage["prompt"]
-		sess.TokenCompletion = usage["completion"]
-		sess.TokenCached = usage["prompt_cached"]
-		sess.TokenEstimated = false
-		if contextWindow := usage["context_window"]; contextWindow > 0 {
-			sess.ContextWindow = contextWindow
-			sess.ContextUsed = usage["context_prompt"]
-			if sess.ContextUsed == 0 {
-				sess.ContextUsed = usage["context_used"]
-			}
-			if sess.ContextUsed == 0 {
-				sess.ContextUsed = usage["prompt"]
-			}
+		prompt, completion, cached = usage["prompt"], usage["completion"], usage["prompt_cached"]
+		contextWindow = usage["context_window"]
+		contextUsed = usage["context_prompt"]
+		if contextUsed == 0 {
+			contextUsed = usage["context_used"]
 		}
 	default:
 		return UsageSnapshot{}, false
 	}
+	if contextWindow > 0 && contextUsed == 0 {
+		contextUsed = prompt
+	}
+	sess.TokenPrompt += prompt
+	sess.TokenCompletion += completion
+	sess.TokenCached += cached
+	sess.SessionCost += cost
+	sess.TokenEstimated = sess.TokenEstimated || estimated
+	sess.CostUpperBound = sess.CostUpperBound || upperBound
+	if sess.usageByAgent == nil {
+		sess.usageByAgent = make(map[string]agentUsageState)
+	}
+	state := sess.usageByAgent[agentID]
+	if contextWindow > 0 {
+		state.ContextWindow, state.ContextUsed = contextWindow, contextUsed
+	}
+	state.Estimated = estimated
+	sess.usageByAgent[agentID] = state
+	// Preserve a latest-event fallback for callers without an agent identity.
+	sess.ContextWindow, sess.ContextUsed = state.ContextWindow, state.ContextUsed
 	// Push cumulative cost to the workspace registry (live update).
 	if w.WorkspaceDB != nil && sess.SessionID != "" {
 		if err := w.WorkspaceDB.UpdateSessionCost(sess.SessionID, sess.SessionCost); err != nil {
@@ -852,20 +858,21 @@ func (w *Workspace) RecordAgentUsage(agentID string, data any) (UsageSnapshot, b
 				"id", sess.SessionID, "error", err.Error())
 		}
 	}
-	return usageSnapshot(sess), true
+	return usageSnapshot(sess, agentID), true
 }
 
-// AgentUsage returns the latest usage state for the session owning agentID.
+// AgentUsage returns cumulative session totals plus the requested agent's
+// latest current-context state.
 func (w *Workspace) AgentUsage(agentID string) (UsageSnapshot, bool) {
 	sess := w.sessionForAgent(agentID)
 	if sess == nil {
 		return UsageSnapshot{}, false
 	}
-	return usageSnapshot(sess), true
+	return usageSnapshot(sess, agentID), true
 }
 
-func usageSnapshot(sess *Session) UsageSnapshot {
-	return UsageSnapshot{
+func usageSnapshot(sess *Session, agentID string) UsageSnapshot {
+	snapshot := UsageSnapshot{
 		Prompt:         sess.TokenPrompt,
 		Completion:     sess.TokenCompletion,
 		Cached:         sess.TokenCached,
@@ -875,6 +882,11 @@ func usageSnapshot(sess *Session) UsageSnapshot {
 		Estimated:      sess.TokenEstimated,
 		CostUpperBound: sess.CostUpperBound,
 	}
+	if state, ok := sess.usageByAgent[agentID]; ok {
+		snapshot.ContextWindow = state.ContextWindow
+		snapshot.ContextUsed = state.ContextUsed
+	}
+	return snapshot
 }
 
 // ResetOrchestratorOverrides clears runtime overrides for an orchestrator.

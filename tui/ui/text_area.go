@@ -3,6 +3,7 @@ package ui
 import (
 	"strings"
 	"time"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -76,7 +77,11 @@ type TextArea struct {
 	// hoverFlat is the flat rune index under the pointer (-1 = none). It
 	// drives chip hover highlighting; updated on every mouse motion over
 	// the text body, independent of selection drags.
-	hoverFlat int
+	hoverFlat     int
+	lastClickTime time.Time
+	lastClickX    int
+	lastClickY    int
+	clickCount    int
 }
 
 // NewTextArea creates a multi-line text area. multiLine controls Enter
@@ -165,6 +170,11 @@ func (t *TextArea) SetMultiLine(v bool) { t.multiLine = v }
 // SetReadOnly freezes the editor: keyboard, paste, and mouse edits are
 // ignored while read-only.
 func (t *TextArea) SetReadOnly(v bool) { t.readOnly = v }
+func (t *TextArea) PasteText(text string) {
+	t.edit.InsertString(text)
+	t.EnsureCursorVisible()
+}
+func (t *TextArea) PasteActive() bool { return !t.readOnly }
 
 // Value returns the full text content.
 func (t *TextArea) Value() string { return t.edit.Value() }
@@ -206,6 +216,8 @@ func (t *TextArea) CursorVisualLine() int { return t.edit.CursorVisualLine() }
 
 // TotalVisualLines returns the total number of visual rows (wrap-aware).
 func (t *TextArea) TotalVisualLines() int { return t.edit.TotalVisualLines() }
+
+func (t *TextArea) ScrollOffset() int { return t.scroll }
 
 // VisualLineCount returns the visual row count for a given wrap width.
 func (t *TextArea) VisualLineCount(textW int) int { return t.edit.VisualLineCount(textW) }
@@ -339,14 +351,13 @@ func (t *TextArea) clampScroll() {
 	if t.scroll < 0 {
 		t.scroll = 0
 	}
-	maxScroll := t.TotalVisualLines() - t.viewH
-	if maxScroll < 0 {
-		maxScroll = 0
-	}
+	maxScroll := t.maxScroll()
 	if t.scroll > maxScroll {
 		t.scroll = maxScroll
 	}
 }
+
+func (t *TextArea) maxScroll() int { return max(0, t.TotalVisualLines()-t.viewH) }
 
 // EnsureCursorVisible scrolls the viewport so the cursor's visual row is visible.
 func (t *TextArea) EnsureCursorVisible() {
@@ -366,13 +377,10 @@ func (t *TextArea) EnsureCursorVisible() {
 //   - First visual row: prompt glyph (accent) + space, then text.
 //   - Continuation/wrapped rows: 2-space indent, then text.
 //   - Text is painted with InputText (Fg) foreground.
-//   - Atomic ranges (@reference chips) are painted bold Accent2; when
-//     the cursor sits inside one, the chip gets a Selection background
-//     while the cursor is in its solid or blink-on phase.
-//   - The cursor is a 3-state block: solid reverse for 800ms after the
-//     last input, then a blinking accent-background block (on/off by
-//     BlinkOnTime), painted on the grapheme under the cursor or as a
-//     trailing █ at end-of-line.
+//   - Atomic ranges (@reference chips) are painted bold Accent2.
+//   - The cursor is an overlay-only reverse-video block: solid for 800ms
+//     after input, then blinking by BlinkOnTime. It preserves the grapheme
+//     under the cursor and never shifts text or consumes layout width.
 //   - Selection is painted with a Selection background.
 func (t *TextArea) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintContext) {
 	r := t.Bounds()
@@ -404,7 +412,8 @@ func (t *TextArea) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pain
 	}
 	prefW := t.promptPrefixWidth()
 	textX := ox + prefW
-	cursorSolid := ctx.Focused && time.Since(t.lastInputTime) < 800*time.Millisecond
+	cursorVisible := ctx.Focused &&
+		(time.Since(t.lastInputTime) < 800*time.Millisecond || BlinkOnTime(time.Now()))
 
 	// Placeholder when empty
 	if t.edit.Len() == 0 && t.placeholder != "" {
@@ -423,14 +432,14 @@ func (t *TextArea) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pain
 			ph = string(runes)
 		}
 		buf.WriteString(textX, oy, ph, phFG, bg, cell.AttrItalic)
-		if ctx.Focused {
-			t.paintBlockCursor(buf, textX, oy, ' ', cursorSolid, bg, true)
+		if cursorVisible {
+			PaintBlockCursor(buf, textX, oy, fg, bg)
 		}
 		return
 	}
 
 	selStart, selEnd := int(-1), int(-1)
-	if t.edit.IsSelecting() {
+	if t.edit.HasActiveSelection() {
 		selStart, selEnd = t.edit.SelectionRange()
 	}
 	selBG := bg
@@ -465,7 +474,7 @@ func (t *TextArea) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pain
 
 			t.paintSegment(buf, textX, screenY, textW, logLine, flatOffset,
 				lineTokenStart, lineTokenEnd, isCursorSeg,
-				selStart, selEnd, cursorSolid, ctx.Focused,
+				selStart, selEnd, cursorVisible, ctx.Focused,
 				fg, bg, selBG)
 
 			visRow++
@@ -477,7 +486,9 @@ func (t *TextArea) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pain
 	if visRow == 0 && ctx.Focused {
 		if oy < oy+r.H {
 			t.paintPromptPrefix(buf, ox, oy, fg, bg, true)
-			t.paintBlockCursor(buf, textX, oy, ' ', cursorSolid, bg, false)
+			if cursorVisible {
+				PaintBlockCursor(buf, textX, oy, fg, bg)
+			}
 		}
 	}
 }
@@ -507,7 +518,7 @@ func (t *TextArea) paintPromptPrefix(buf *surface.CellBuffer, x, y int, fg, bg c
 
 func (t *TextArea) paintSegment(buf *surface.CellBuffer, x, y, width int, line []rune,
 	flatOffset, start, end int, isCursorSeg bool, selStart, selEnd int,
-	cursorSolid, focused bool, fg, bg, selBG cell.Color) {
+	cursorVisible, focused bool, fg, bg, selBG cell.Color) {
 
 	cursorPos := t.edit.CursorFlat()
 	col := 0
@@ -521,7 +532,7 @@ func (t *TextArea) paintSegment(buf *surface.CellBuffer, x, y, width int, line [
 			label := string(labelRunes)
 			cursorInChip := focused && isCursorSeg && cursorPos >= ar.Start && cursorPos < ar.End
 			col += t.paintAtomicChip(buf, x+col, y, label, ar, cursorInChip,
-				focused, cursorSolid, selStart, selEnd, fg, bg, selBG)
+				cursorVisible, selStart, selEnd, fg, bg, selBG)
 			pos += ar.End - ar.Start
 			continue
 		}
@@ -540,34 +551,20 @@ func (t *TextArea) paintSegment(buf *surface.CellBuffer, x, y, width int, line [
 		if inSel {
 			cellBG = selBG
 		}
-		// 3-state cursor on the grapheme under the cursor
-		if focused && isCursorSeg && cursorPos >= flatPos && cursorPos < flatPos+clusterLen {
-			switch {
-			case cursorSolid:
-				// solid phase: reverse video
-				cellFG, cellBG = bg, fg
-			case BlinkOnTime(time.Now()):
-				// blink-on phase: accent background, contrasting fg
-				accent := cell.NoColor
-				if t.tokens != nil {
-					accent = t.tokens.Color(ColorAccent)
-				}
-				cellFG = bg
-				cellBG = accent
-			default:
-				// blink-off phase: plain text (no cursor visible)
-			}
+		attr := cell.Attrs(0)
+		if cursorVisible && focused && isCursorSeg && cursorPos >= flatPos && cursorPos < flatPos+clusterLen {
+			attr |= cell.AttrReverse
 		}
-		buf.WriteString(x+col, y, cluster, cellFG, cellBG, 0)
+		buf.WriteString(x+col, y, cluster, cellFG, cellBG, attr)
 		if clusterW > 0 {
 			col += clusterW
 		}
 		pos += clusterLen
 	}
 	// End-of-line block cursor (after the last char on the cursor segment)
-	if focused && isCursorSeg && cursorPos == flatOffset+end {
+	if cursorVisible && focused && isCursorSeg && cursorPos == flatOffset+end {
 		if col < width {
-			t.paintBlockCursor(buf, x+col, y, ' ', cursorSolid, bg, false)
+			PaintBlockCursor(buf, x+col, y, fg, bg)
 		}
 	}
 }
@@ -576,10 +573,9 @@ func (t *TextArea) paintSegment(buf *surface.CellBuffer, x, y, width int, line [
 // background across the whole token with bold Accent2 text, so attachments
 // read as blocks rather than plain prose. Error-tone chips (backing file or
 // reference gone) switch to ColorError text. Hovering highlights the pill
-// background; when the text cursor is inside the chip and in solid/blink-on
-// phase, the pill inverts (Selection bg + Fg) to show which chip is active.
+// background. A visible text cursor reverses only the grapheme under it.
 func (t *TextArea) paintAtomicChip(buf *surface.CellBuffer, x, y int, label string,
-	ar AtomicRange, cursorInChip, componentFocused, cursorSolid bool,
+	ar AtomicRange, cursorInChip, cursorVisible bool,
 	selStart, selEnd int, fg, bg, selBG cell.Color) int {
 	chipFG := fg
 	chipBG := bg
@@ -593,7 +589,7 @@ func (t *TextArea) paintAtomicChip(buf *surface.CellBuffer, x, y int, label stri
 	if t.hoverFlat >= ar.Start && t.hoverFlat < ar.End && t.tokens != nil {
 		chipBG = t.tokens.Color(ColorHover)
 	}
-	chipFocused := componentFocused && cursorInChip && (cursorSolid || BlinkOnTime(time.Now()))
+	cursorPos := t.edit.CursorFlat()
 	col := 0
 	pos := 0
 	for len(label) > 0 {
@@ -607,13 +603,12 @@ func (t *TextArea) paintAtomicChip(buf *surface.CellBuffer, x, y int, label stri
 			ar.Start+pos < selEnd && ar.Start+pos+clusterLen > selStart {
 			cellBG = selBG
 		}
-		if chipFocused {
-			cellBG = selBG
-			if t.tokens != nil {
-				cellFG = t.tokens.Color(ColorFg)
-			}
+		attr := cell.AttrBold
+		if cursorVisible && cursorInChip &&
+			cursorPos >= ar.Start+pos && cursorPos < ar.Start+pos+clusterLen {
+			attr |= cell.AttrReverse
 		}
-		buf.WriteString(x+col, y, cluster, cellFG, cellBG, cell.AttrBold)
+		buf.WriteString(x+col, y, cluster, cellFG, cellBG, attr)
 		if clusterW > 0 {
 			col += clusterW
 		}
@@ -621,28 +616,6 @@ func (t *TextArea) paintAtomicChip(buf *surface.CellBuffer, x, y int, label stri
 		label = label[len(cluster):]
 	}
 	return col
-}
-
-// paintBlockCursor paints a trailing/empty-position block cursor. During
-// the solid phase (800ms after input) or when blink is on, it renders a
-// full block with accent background and contrasting foreground. When
-// blink is off, it renders nothing (the cursor disappears).
-func (t *TextArea) paintBlockCursor(buf *surface.CellBuffer, x, y int, ch rune,
-	cursorSolid bool, bg cell.Color, preserveWhenOff bool) {
-	accent := cell.NoColor
-	if t.tokens != nil {
-		accent = t.tokens.Color(ColorAccent)
-	}
-	if !cursorSolid && !BlinkOnTime(time.Now()) {
-		if preserveWhenOff {
-			return
-		}
-		// Clear a previously painted cursor without introducing a color.
-		buf.Set(x, y, cell.NewCell(' ', cell.NoColor, bg, 0))
-		return
-	}
-	invFG := bg
-	buf.Set(x, y, cell.NewCell(ch, invFG, accent, 0))
 }
 
 // Handle processes keyboard, paste, and mouse events.
@@ -666,12 +639,44 @@ func (t *TextArea) Handle(ctx EventContext, evt Event) EventResult {
 		}
 		pos := t.MouseToFlatPos(ctx.LocalX, ctx.LocalY)
 		if pos >= 0 {
-			t.edit.SetSelection(pos, pos)
-			t.edit.SetCursorFlat(pos)
+			now := time.Now()
+			if now.Sub(t.lastClickTime) <= 500*time.Millisecond &&
+				intAbs(ctx.LocalX-t.lastClickX) <= 1 && intAbs(ctx.LocalY-t.lastClickY) <= 1 {
+				t.clickCount++
+			} else {
+				t.clickCount = 1
+			}
+			t.lastClickTime, t.lastClickX, t.lastClickY = now, ctx.LocalX, ctx.LocalY
+			switch {
+			case t.clickCount >= 3:
+				t.edit.selectLineAt(pos)
+				t.clickCount = 0
+			case t.clickCount == 2:
+				t.edit.selectWordAt(pos)
+			case evt.MouseClick.Mod.Contains(tea.ModShift):
+				if !t.edit.IsSelecting() {
+					t.edit.SetSelection(t.edit.CursorFlat(), pos)
+				} else {
+					t.edit.UpdateSelectionEnd(pos)
+				}
+				t.edit.SetCursorFlat(pos)
+			default:
+				t.edit.SetSelection(pos, pos)
+				t.edit.SetCursorFlat(pos)
+			}
 			t.edit.SetSelecting(true)
 		}
 		return EventResult{Handled: true, Invalidate: InvalidatePaint | InvalidateFocus}
 	case EventMouseMotion:
+		if t.edit.IsSelecting() {
+			if ctx.LocalY < 0 && t.scroll > 0 {
+				t.scroll--
+				ctx.LocalY = 0
+			} else if ctx.LocalY >= t.viewH && t.scroll < t.maxScroll() {
+				t.scroll++
+				ctx.LocalY = max(0, t.viewH-1)
+			}
+		}
 		pos := t.MouseToFlatPos(ctx.LocalX, ctx.LocalY)
 		if pos != t.hoverFlat {
 			t.hoverFlat = pos
@@ -682,14 +687,56 @@ func (t *TextArea) Handle(ctx EventContext, evt Event) EventResult {
 		return EventResult{Handled: true, Invalidate: InvalidatePaint}
 	case EventMouseRelease:
 		if t.edit.IsSelecting() {
-			t.edit.SetSelecting(false)
+			t.edit.StopSelecting()
 		}
 		return EventResult{Handled: true, Invalidate: InvalidatePaint}
+	case EventMouseWheel:
+		before := t.scroll
+		switch evt.MouseWheel.Button {
+		case tea.MouseWheelUp:
+			t.scroll = max(0, t.scroll-3)
+		case tea.MouseWheelDown:
+			t.scroll = min(t.maxScroll(), t.scroll+3)
+		default:
+			return EventResult{}
+		}
+		return EventResult{Handled: before != t.scroll, Invalidate: InvalidatePaint}
 	}
 	return EventResult{}
 }
 
+func (t *TextArea) CancelPointerCapture() { t.edit.StopSelecting() }
+
 func (t *TextArea) handleKey(m tea.KeyPressMsg) EventResult {
+	primary := m.Mod.Contains(tea.ModCtrl) || m.Mod.Contains(tea.ModSuper)
+	if primary {
+		switch m.Code {
+		case 'c':
+			if selected := t.edit.SelectedText(); selected != "" {
+				return EventResult{Handled: true, Cmd: rendering.CopyToClipboardCmd(selected)}
+			}
+			return EventResult{}
+		case 'x':
+			if !t.edit.HasActiveSelection() {
+				return EventResult{Handled: true}
+			}
+			selected := t.edit.SelectedText()
+			t.edit.deleteActiveSelectionWithHistory()
+			t.EnsureCursorVisible()
+			return EventResult{Handled: true, Cmd: rendering.CopyToClipboardCmd(selected), Invalidate: InvalidatePaint}
+		case 'v':
+			return EventResult{Handled: true, Action: &Action{ID: ActionTextPaste, Payload: ClipboardPasteTarget(t)}}
+		}
+	}
+	if m.Code == tea.KeyPgUp || m.Code == tea.KeyPgDown {
+		delta := max(1, t.viewH-1)
+		if m.Code == tea.KeyPgUp {
+			delta = -delta
+		}
+		t.edit.moveVisualRows(delta, m.Mod.Contains(tea.ModShift))
+		t.EnsureCursorVisible()
+		return EventResult{Handled: true, Invalidate: InvalidatePaint}
+	}
 	// Ctrl+Enter always submits (even in multi-line mode)
 	if m.Mod.Contains(tea.ModCtrl) && m.Code == tea.KeyEnter {
 		if t.submitID != "" {
@@ -798,6 +845,14 @@ type textAreaEngine struct {
 	frame         int
 	textWidth     int
 	atomicRanges  []AtomicRange
+	undo          []textAreaSnapshot
+	redo          []textAreaSnapshot
+}
+
+type textAreaSnapshot struct {
+	value               string
+	cursor, anchor, end int
+	selecting           bool
 }
 
 func newTextAreaEngine() *textAreaEngine { return &textAreaEngine{buf: [][]rune{{}}} }
@@ -830,7 +885,28 @@ func (e *textAreaEngine) finishMovementIfNoShift(mod tea.KeyMod) {
 
 func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 	shift := msg.Mod.Contains(tea.ModShift)
-	ctrl := msg.Mod.Contains(tea.ModCtrl)
+	primary := msg.Mod.Contains(tea.ModCtrl) || msg.Mod.Contains(tea.ModSuper)
+	word := primary || msg.Mod.Contains(tea.ModAlt)
+	if primary && msg.Code == 'z' {
+		if shift {
+			e.Redo()
+		} else {
+			e.Undo()
+		}
+		return
+	}
+	if primary && msg.Code == 'y' {
+		e.Redo()
+		return
+	}
+	before := e.snapshot()
+	beforeValue := before.value
+	if e.HasActiveSelection() && (msg.Code == tea.KeyEnter || (!primary && msg.Text != "")) {
+		start, end := e.SelectionRange()
+		e.deleteRange(start, end)
+		e.setCursorFlat(start)
+		e.ClearSelection()
+	}
 
 	switch msg.Code {
 	case tea.KeyEnter:
@@ -848,6 +924,13 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 		e.curLine++
 		e.curCol = 0
 	case tea.KeyBackspace:
+		if word && !e.HasActiveSelection() {
+			pos := e.cursorPrevWord()
+			cf := e.CursorFlat()
+			e.deleteRange(pos, cf)
+			e.setCursorFlat(pos)
+			break
+		}
 		if e.selecting && !shift {
 			s, end := e.SelectionRange()
 			e.deleteRange(s, end)
@@ -871,6 +954,12 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 		e.selAnchor = 0
 		e.selEnd = 0
 	case tea.KeyDelete:
+		if word && !e.HasActiveSelection() {
+			pos := e.CursorFlat()
+			e.deleteRange(pos, e.cursorNextDeleteWord())
+			e.setCursorFlat(pos)
+			break
+		}
 		if e.selecting && !shift {
 			s, end := e.SelectionRange()
 			e.deleteRange(s, end)
@@ -912,7 +1001,7 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 		e.finishMovementIfNoShift(msg.Mod)
 	case tea.KeyLeft:
 		e.beginSelectionIfShift(msg.Mod)
-		if ctrl {
+		if word {
 			e.setCursorFlat(e.cursorPrevWord())
 		} else if e.curCol > 0 {
 			e.curCol--
@@ -928,7 +1017,7 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 		e.finishMovementIfNoShift(msg.Mod)
 	case tea.KeyRight:
 		e.beginSelectionIfShift(msg.Mod)
-		if ctrl {
+		if word {
 			e.setCursorFlat(e.cursorNextWord())
 		} else if e.curCol < len(e.buf[e.curLine]) {
 			e.curCol++
@@ -944,7 +1033,7 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 		e.finishMovementIfNoShift(msg.Mod)
 	case tea.KeyHome:
 		e.beginSelectionIfShift(msg.Mod)
-		if ctrl {
+		if primary {
 			e.curLine = 0
 		}
 		e.curCol = 0
@@ -955,7 +1044,7 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 		e.finishMovementIfNoShift(msg.Mod)
 	case tea.KeyEnd:
 		e.beginSelectionIfShift(msg.Mod)
-		if ctrl {
+		if primary {
 			e.curLine = len(e.buf) - 1
 			if e.curLine < 0 {
 				e.curLine = 0
@@ -968,7 +1057,7 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 		}
 		e.finishMovementIfNoShift(msg.Mod)
 	default:
-		if ctrl && len(msg.Text) == 0 {
+		if primary && len(msg.Text) == 0 {
 			switch msg.Code {
 			case 'a':
 				// Ctrl+A: select all (unless Shift also held — in that
@@ -1031,6 +1120,13 @@ func (e *textAreaEngine) handleKey(msg tea.KeyPressMsg) {
 	}
 	e.lastInputTime = time.Now()
 	e.frame++
+	if e.Value() != beforeValue {
+		e.undo = append(e.undo, before)
+		if len(e.undo) > 200 {
+			e.undo = e.undo[len(e.undo)-200:]
+		}
+		e.redo = nil
+	}
 }
 
 func (e *textAreaEngine) Value() string {
@@ -1055,9 +1151,20 @@ func (e *textAreaEngine) SetValue(s string) {
 		e.curLine = 0
 	}
 	e.curCol = len(e.buf[e.curLine])
+	e.selecting = false
+	e.selAnchor, e.selEnd = 0, 0
+	e.undo = nil
+	e.redo = nil
 }
 
 func (e *textAreaEngine) InsertString(s string) {
+	before := e.snapshot()
+	if e.HasActiveSelection() {
+		start, end := e.SelectionRange()
+		e.deleteRange(start, end)
+		e.setCursorFlat(start)
+		e.ClearSelection()
+	}
 	for _, r := range s {
 		if r == '\r' {
 			continue
@@ -1074,6 +1181,10 @@ func (e *textAreaEngine) InsertString(s string) {
 	}
 	e.lastInputTime = time.Now()
 	e.frame++
+	if e.Value() != before.value {
+		e.undo = append(e.undo, before)
+		e.redo = nil
+	}
 }
 
 func (e *textAreaEngine) Clear() {
@@ -1083,6 +1194,8 @@ func (e *textAreaEngine) Clear() {
 	e.selecting = false
 	e.selAnchor = 0
 	e.selEnd = 0
+	e.undo = nil
+	e.redo = nil
 }
 
 func (e *textAreaEngine) Len() int {
@@ -1123,6 +1236,24 @@ func (e *textAreaEngine) cursorNextWord() int {
 		pos++
 	}
 	for pos < total && buf[pos] != ' ' {
+		pos++
+	}
+	return pos
+}
+
+func (e *textAreaEngine) cursorNextDeleteWord() int {
+	pos := e.CursorFlat()
+	buf := []rune(e.Value())
+	if pos >= len(buf) {
+		return len(buf)
+	}
+	if unicode.IsSpace(buf[pos]) {
+		for pos < len(buf) && unicode.IsSpace(buf[pos]) {
+			pos++
+		}
+		return pos
+	}
+	for pos < len(buf) && !unicode.IsSpace(buf[pos]) {
 		pos++
 	}
 	return pos
@@ -1239,6 +1370,116 @@ func (e *textAreaEngine) SelectedText() string {
 }
 
 func (e *textAreaEngine) SetSelecting(v bool) { e.selecting = v }
+
+func (e *textAreaEngine) snapshot() textAreaSnapshot {
+	return textAreaSnapshot{
+		value: e.Value(), cursor: e.CursorFlat(), anchor: e.selAnchor,
+		end: e.selEnd, selecting: e.selecting,
+	}
+}
+
+func (e *textAreaEngine) restore(snapshot textAreaSnapshot) {
+	lines := strings.Split(snapshot.value, "\n")
+	e.buf = make([][]rune, len(lines))
+	for i, line := range lines {
+		e.buf[i] = []rune(line)
+	}
+	if len(e.buf) == 0 {
+		e.buf = [][]rune{{}}
+	}
+	e.setCursorFlat(snapshot.cursor)
+	e.selAnchor, e.selEnd, e.selecting = snapshot.anchor, snapshot.end, snapshot.selecting
+}
+
+func (e *textAreaEngine) Undo() bool {
+	if len(e.undo) == 0 {
+		return false
+	}
+	e.redo = append(e.redo, e.snapshot())
+	last := len(e.undo) - 1
+	e.restore(e.undo[last])
+	e.undo = e.undo[:last]
+	return true
+}
+
+func (e *textAreaEngine) Redo() bool {
+	if len(e.redo) == 0 {
+		return false
+	}
+	e.undo = append(e.undo, e.snapshot())
+	last := len(e.redo) - 1
+	e.restore(e.redo[last])
+	e.redo = e.redo[:last]
+	return true
+}
+
+func (e *textAreaEngine) deleteActiveSelectionWithHistory() bool {
+	if !e.HasActiveSelection() {
+		return false
+	}
+	e.undo = append(e.undo, e.snapshot())
+	e.redo = nil
+	start, end := e.SelectionRange()
+	e.deleteRange(start, end)
+	e.setCursorFlat(start)
+	e.ClearSelection()
+	return true
+}
+
+func (e *textAreaEngine) selectWordAt(pos int) {
+	runes := []rune(e.Value())
+	if len(runes) == 0 {
+		e.SetSelection(0, 0)
+		return
+	}
+	pos = min(max(0, pos), len(runes)-1)
+	class := runeClass(runes[pos])
+	start, end := pos, pos+1
+	for start > 0 && runeClass(runes[start-1]) == class {
+		start--
+	}
+	for end < len(runes) && runeClass(runes[end]) == class {
+		end++
+	}
+	e.SetSelection(start, end)
+	e.setCursorFlat(end)
+}
+
+func (e *textAreaEngine) selectLineAt(pos int) {
+	line, _ := e.flatToLineCol(pos)
+	start := e.lineColToFlat(line, 0)
+	end := e.lineColToFlat(line, len(e.buf[line]))
+	if line < len(e.buf)-1 {
+		end++
+	}
+	e.SetSelection(start, end)
+	e.setCursorFlat(end)
+}
+
+func (e *textAreaEngine) moveVisualRows(delta int, extend bool) {
+	if delta == 0 {
+		return
+	}
+	if extend && !e.selecting {
+		pos := e.CursorFlat()
+		e.SetSelection(pos, pos)
+	}
+	_, col := e.cursorVisualInfo()
+	e.lastVisCol = col
+	for range intAbs(delta) {
+		if delta < 0 {
+			e.cursorUpVisual()
+		} else {
+			e.cursorDownVisual()
+		}
+	}
+	if e.selecting {
+		e.selEnd = e.CursorFlat()
+	}
+	if !extend {
+		e.ClearSelection()
+	}
+}
 
 // StopSelecting keeps the selection range but clears the mouse-drag
 // flag, so the selection survives a mouse release and Ctrl+C can copy it.

@@ -13,6 +13,7 @@ import (
 	"crude/tui/screens/activitybar"
 	"crude/tui/screens/activitylist"
 	"crude/tui/screens/launcher"
+	"crude/tui/screens/shellchat"
 	"crude/tui/screens/shelltree"
 	"crude/tui/screens/sourcecontrol"
 	"crude/tui/ui"
@@ -632,6 +633,16 @@ func (m *App) buildSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 			},
 		})
 	}
+	if path != "" && m.HistoryService != nil {
+		target := path
+		st.Sections = append(st.Sections, ui.ContextMenuSection{
+			SectionLabel: "Local History",
+			Items: []ui.ContextMenuItem{
+				{Label: "Show history for this path", Action: func() { m.runDetachedAsyncCmd(m.openLocalHistoryForPath(target)) }},
+				{Label: "Open workspace history", Action: func() { m.runDetachedAsyncCmd(m.openLocalHistory()) }},
+			},
+		})
+	}
 
 	st.Sections = append(st.Sections, ui.ContextMenuSection{
 		SectionLabel: "Explorer",
@@ -934,6 +945,31 @@ func (m *App) buildChatContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 			}},
 		},
 	})
+	if m.chatScreen != nil && m.rootHost != nil && m.ActiveSession != nil && m.HistoryService != nil {
+		if rect, ok := m.rootHost.ScreenRect(shellchat.AreaID); ok {
+			if row, ok := m.chatScreen.MessageAtLocalY(mouse.Y - rect.Y); ok {
+				role := ""
+				if node := m.AgentMgr.ActiveNode(); node != nil && node.State != nil && node.State.Messages != nil {
+					for _, msg := range node.State.Messages.Messages() {
+						if msg.InternalID == row.ID {
+							role = msg.Role
+							break
+						}
+					}
+				}
+				if role == workspace.MessageRoleUser {
+					sessionID, messageID := m.ActiveSession.SessionID, row.ID
+					active := m.AgentMgr.ActiveID() != "" && m.AgentTurnActive(m.AgentMgr.ActiveID())
+					open := func() { cmd := m.openLocalHistoryForMessage(sessionID, messageID); m.runDetachedAsyncCmd(cmd) }
+					st.Sections = append(st.Sections, ui.ContextMenuSection{SectionLabel: "Local History", Items: []ui.ContextMenuItem{
+						{Label: "Preview changes from this message", Disabled: active, Detail: map[bool]string{true: "turn active", false: ""}[active], Action: open},
+						{Label: "Undo changes from this message", Disabled: active, Detail: "opens preview", Action: open},
+						{Label: "Open workspace history", Action: func() { m.runDetachedAsyncCmd(m.openLocalHistory()) }},
+					}})
+				}
+			}
+		}
+	}
 	return st
 }
 

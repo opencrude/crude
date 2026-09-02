@@ -63,8 +63,9 @@ type CategoryConfig struct {
 	ModelSupportsTools bool     `json:"model_supports_tools,omitempty"`
 	ModelMaxOutput     int      `json:"model_max_output,omitempty"`
 	// Sampling overrides; nil leaves the backend default in effect.
-	ModelTemperature *float64 `json:"model_temperature,omitempty"`
-	ModelTopP        *float64 `json:"model_top_p,omitempty"`
+	ModelTemperature         *float64 `json:"model_temperature,omitempty"`
+	ModelTopP                *float64 `json:"model_top_p,omitempty"`
+	ContextCompactionPercent *int     `json:"context_compaction_percent,omitempty"`
 }
 
 type ProfileConfig struct {
@@ -82,14 +83,15 @@ type AgentsConfig struct {
 }
 
 type AgentProfileConfig struct {
-	Category      string   `json:"category,omitempty"`
-	Description   string   `json:"description,omitempty"`
-	Model         string   `json:"model,omitempty"`
-	Provider      string   `json:"provider,omitempty"`
-	Instructions  string   `json:"instructions,omitempty"`
-	AllowedTools  []string `json:"allowed_tools,omitempty"`
-	DeniedTools   []string `json:"denied_tools,omitempty"`
-	FileOwnership []string `json:"file_ownership,omitempty"`
+	Category                 string   `json:"category,omitempty"`
+	Description              string   `json:"description,omitempty"`
+	Model                    string   `json:"model,omitempty"`
+	Provider                 string   `json:"provider,omitempty"`
+	Instructions             string   `json:"instructions,omitempty"`
+	AllowedTools             []string `json:"allowed_tools,omitempty"`
+	DeniedTools              []string `json:"denied_tools,omitempty"`
+	FileOwnership            []string `json:"file_ownership,omitempty"`
+	ContextCompactionPercent *int     `json:"context_compaction_percent,omitempty"`
 }
 
 // DefaultAgentsConfig returns the built-in agent scaffolding. No category
@@ -161,6 +163,7 @@ type Config struct {
 	TurnLogsEnabled bool
 	Agents          AgentsConfig
 	Memory          ttypes.MemorySettings
+	Safety          ttypes.SafetySettings
 
 	// workspaceMain is a copy of the workspace baseline's main-agent
 	// category. Categories carrying Inherit="workspace" resolve through it
@@ -455,6 +458,13 @@ func (c *Config) GetMemoryCategory() CategoryConfig {
 }
 
 func (c *Config) resolveCategoryDefaults(cat *CategoryConfig) {
+	if cat.ContextCompactionPercent == nil {
+		value := ttypes.DefaultContextCompactionPercent
+		cat.ContextCompactionPercent = &value
+	} else {
+		value := min(100, max(0, *cat.ContextCompactionPercent))
+		cat.ContextCompactionPercent = &value
+	}
 	if cat.Provider == "" {
 		cat.Provider = c.EffectiveProviderID()
 	}
@@ -523,46 +533,56 @@ func activeProfileCfg(cfg *Config) (ProfileConfig, string) {
 
 func catConfigToSettings(v CategoryConfig) ttypes.CategorySettings {
 	return ttypes.CategorySettings{
-		Provider:           v.Provider,
-		ProviderURL:        v.ProviderURL,
-		APIStandard:        v.APIStandard,
-		Model:              v.Model,
-		ThinkingEffort:     v.ThinkingEffort,
-		Inherit:            v.Inherit,
-		Policy:             v.Policy,
-		Description:        v.Description,
-		ModelContextWindow: v.ModelContextWindow,
-		ModelInputPrice:    v.ModelInputPrice,
-		ModelOutputPrice:   v.ModelOutputPrice,
-		ModelCachePrice:    v.ModelCachePrice,
-		ModelModalities:    v.ModelModalities,
-		ModelSupportsTools: v.ModelSupportsTools,
-		ModelMaxOutput:     v.ModelMaxOutput,
-		ModelTemperature:   v.ModelTemperature,
-		ModelTopP:          v.ModelTopP,
+		Provider:                 v.Provider,
+		ProviderURL:              v.ProviderURL,
+		APIStandard:              v.APIStandard,
+		Model:                    v.Model,
+		ThinkingEffort:           v.ThinkingEffort,
+		Inherit:                  v.Inherit,
+		Policy:                   v.Policy,
+		Description:              v.Description,
+		ModelContextWindow:       v.ModelContextWindow,
+		ModelInputPrice:          v.ModelInputPrice,
+		ModelOutputPrice:         v.ModelOutputPrice,
+		ModelCachePrice:          v.ModelCachePrice,
+		ModelModalities:          v.ModelModalities,
+		ModelSupportsTools:       v.ModelSupportsTools,
+		ModelMaxOutput:           v.ModelMaxOutput,
+		ModelTemperature:         v.ModelTemperature,
+		ModelTopP:                v.ModelTopP,
+		ContextCompactionPercent: cloneIntPtr(v.ContextCompactionPercent),
 	}
 }
 
 func catSettingsToConfig(v ttypes.CategorySettings) CategoryConfig {
 	return CategoryConfig{
-		Provider:           v.Provider,
-		ProviderURL:        v.ProviderURL,
-		APIStandard:        v.APIStandard,
-		Model:              NormalizeModel(v.Model),
-		ThinkingEffort:     v.ThinkingEffort,
-		Inherit:            v.Inherit,
-		Policy:             v.Policy,
-		Description:        v.Description,
-		ModelContextWindow: v.ModelContextWindow,
-		ModelInputPrice:    v.ModelInputPrice,
-		ModelOutputPrice:   v.ModelOutputPrice,
-		ModelCachePrice:    v.ModelCachePrice,
-		ModelModalities:    v.ModelModalities,
-		ModelSupportsTools: v.ModelSupportsTools,
-		ModelMaxOutput:     v.ModelMaxOutput,
-		ModelTemperature:   v.ModelTemperature,
-		ModelTopP:          v.ModelTopP,
+		Provider:                 v.Provider,
+		ProviderURL:              v.ProviderURL,
+		APIStandard:              v.APIStandard,
+		Model:                    NormalizeModel(v.Model),
+		ThinkingEffort:           v.ThinkingEffort,
+		Inherit:                  v.Inherit,
+		Policy:                   v.Policy,
+		Description:              v.Description,
+		ModelContextWindow:       v.ModelContextWindow,
+		ModelInputPrice:          v.ModelInputPrice,
+		ModelOutputPrice:         v.ModelOutputPrice,
+		ModelCachePrice:          v.ModelCachePrice,
+		ModelModalities:          v.ModelModalities,
+		ModelSupportsTools:       v.ModelSupportsTools,
+		ModelMaxOutput:           v.ModelMaxOutput,
+		ModelTemperature:         v.ModelTemperature,
+		ModelTopP:                v.ModelTopP,
+		ContextCompactionPercent: cloneIntPtr(v.ContextCompactionPercent),
 	}
+}
+
+func cloneIntPtr(src *int) *int {
+	if src == nil {
+		return nil
+	}
+	value := *src
+	return &value
 }
 
 func ConfigToSettings(cfg *Config) ttypes.Settings {
@@ -632,6 +652,8 @@ func ConfigToSettings(cfg *Config) ttypes.Settings {
 		}
 		agentsSettings.Profiles = append(agentsSettings.Profiles, ps)
 	}
+	safetySettings := cfg.Safety
+	safetySettings.CommandRules = append([]ttypes.CommandSeverityRule(nil), cfg.Safety.CommandRules...)
 
 	return ttypes.Settings{
 		APIKey:          mainCat.APIKey,
@@ -644,6 +666,7 @@ func ConfigToSettings(cfg *Config) ttypes.Settings {
 		TurnLogsEnabled: turnLogs,
 		Agents:          agentsSettings,
 		Memory:          cfg.Memory,
+		Safety:          safetySettings,
 	}
 }
 

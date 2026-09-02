@@ -22,6 +22,7 @@ import (
 	findinfiles "crude/tui/screens/findinfiles"
 	helpscreen "crude/tui/screens/help"
 	"crude/tui/screens/launcher"
+	historyscreen "crude/tui/screens/localhistory"
 	memorybrowser "crude/tui/screens/memorybrowser"
 	sessionpicker "crude/tui/screens/sessionpicker"
 	"crude/tui/screens/shellchat"
@@ -164,6 +165,7 @@ type App struct {
 	chatScrollNeedsRestore bool
 	editorScreen           *shelleditor.Screen
 	launcherScreen         *launcher.Screen
+	historyScreen          *historyscreen.Screen
 	sessionPicker          *sessionpicker.Screen
 	helpScreen             *helpscreen.Screen
 	commandPaletteModel    *commandPaletteModel

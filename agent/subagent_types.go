@@ -60,8 +60,9 @@ type SubAgentSpec struct {
 	ModelOutputPrice   float64 `json:"model_output_price,omitempty"`
 	ModelCachePrice    float64 `json:"model_cache_price,omitempty"`
 	// Sampling overrides; nil leaves the backend default in effect.
-	ModelTemperature *float64 `json:"model_temperature,omitempty"`
-	ModelTopP        *float64 `json:"model_top_p,omitempty"`
+	ModelTemperature         *float64 `json:"model_temperature,omitempty"`
+	ModelTopP                *float64 `json:"model_top_p,omitempty"`
+	ContextCompactionPercent *int     `json:"context_compaction_percent,omitempty"`
 }
 
 type SubAgentResult struct {

@@ -32,6 +32,19 @@ func TestFormRoutesPasteAndMouseToRetainedFields(t *testing.T) {
 	if got := model.Field("text").Value.String(); got != "after" {
 		t.Fatalf("pasted text=%q, want after", got)
 	}
+	host.Handle(tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
+	request := host.Handle(tea.KeyPressMsg{Code: 'v', Mod: tea.ModCtrl})
+	if request.Action == nil || request.Action.ID != ActionTextPaste {
+		t.Fatalf("Ctrl+V action=%+v", request.Action)
+	}
+	target, ok := request.Action.Payload.(ClipboardPasteTarget)
+	if !ok || !target.PasteActive() {
+		t.Fatalf("Ctrl+V target=%T active=%v", request.Action.Payload, ok && target.PasteActive())
+	}
+	target.PasteText("native")
+	if got := model.Field("text").Value.String(); got != "native" {
+		t.Fatalf("targeted Ctrl+V paste=%q", got)
+	}
 
 	// The second field starts after the title, detail, divider, and first row.
 	host.Handle(tea.MouseClickMsg{X: 20, Y: 4, Button: tea.MouseLeft})

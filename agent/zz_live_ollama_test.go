@@ -105,21 +105,35 @@ func TestZZLiveOllamaStructuredQuestionLifecycle(t *testing.T) {
 	}
 }
 
-func TestZZLiveOllamaWireGuardAcrossTurns(t *testing.T) {
-	a := liveOllamaAgent(t, "reply")
-	a.WireGuard = NewWireGuard()
+func TestZZLiveOllamaConfiguredContextCompaction(t *testing.T) {
+	a := liveOllamaAgent(t)
+	previousWindow := provider.LookupContextWindow(liveOllamaFlashModel)
+	provider.SetModelContext(liveOllamaFlashModel, 16384)
+	t.Cleanup(func() { provider.SetModelContext(liveOllamaFlashModel, previousWindow) })
+	a.ContextCompactionPercent = 85
+	var history []provider.ChatMessage
+	for i := 0; i < 18; i++ {
+		history = append(history,
+			provider.NewTextMessage("user", fmt.Sprintf("Older request %d: %s", i, strings.Repeat("context ", 120))),
+			provider.NewTextMessage("assistant", fmt.Sprintf("Older answer %d: %s", i, strings.Repeat("result ", 120))),
+		)
+	}
+	history = append(history, provider.NewTextMessage("user", "Current instruction: reply COMPACT-OK without tools."))
 	var errors []AgentEvent
-	emit := func(event AgentEvent) {
+	archive := a.Run(t.Context(), history, "Follow the current instruction exactly.", func(event AgentEvent) {
 		if event.Type == "error" {
 			errors = append(errors, event)
 		}
+	}, nil, nil, "", nil)
+	active := a.ActiveContext()
+	currentSurvived := false
+	for _, message := range active {
+		currentSurvived = currentSurvived || strings.Contains(message.Content.String(), "Current instruction")
 	}
-	first := a.Run(t.Context(), []provider.ChatMessage{provider.NewTextMessage("user", "Reply exactly FIRST.")},
-		"Follow the user exactly. Do not call tools.", emit, nil, nil, "", nil)
-	secondInput := append(append([]provider.ChatMessage(nil), first[1:]...), provider.NewTextMessage("user", "Reply exactly SECOND."))
-	second := a.Run(t.Context(), secondInput, "Follow the user exactly. Do not call tools.", emit, nil, nil, "", nil)
-	if len(errors) != 0 || len(second) <= len(first) {
-		t.Fatalf("live cross-turn wire continuity errors=%+v first=%d second=%d", errors, len(first), len(second))
+	if len(errors) != 0 || len(active) == 0 || active[0].Role != "system" ||
+		!strings.Contains(active[0].Content.String(), "<context_checkpoint") || !currentSurvived ||
+		len(archive) <= len(history) || !strings.Contains(archive[1].Content.String(), "Older request 0") {
+		t.Fatalf("live compact errors=%+v active=%d archive=%d", errors, len(active), len(archive))
 	}
 }
 

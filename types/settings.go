@@ -34,13 +34,15 @@ type WorkspaceOverrides struct {
 	Providers      json.RawMessage `json:"providers,omitempty"`
 	Agents         json.RawMessage `json:"agents,omitempty"`
 	Memory         json.RawMessage `json:"memory,omitempty"`
+	Safety         json.RawMessage `json:"safety,omitempty"`
+	LocalHistory   json.RawMessage `json:"local_history,omitempty"`
 }
 
 // IsEmpty reports that the workspace inherits everything.
 func (o WorkspaceOverrides) IsEmpty() bool {
 	return len(o.Theme) == 0 && len(o.Editor) == 0 && len(o.LSP) == 0 &&
 		len(o.UI) == 0 && len(o.Font) == 0 && o.ActiveProvider == nil &&
-		len(o.Providers) == 0 && len(o.Agents) == 0 && len(o.Memory) == 0
+		len(o.Providers) == 0 && len(o.Agents) == 0 && len(o.Memory) == 0 && len(o.Safety) == 0 && len(o.LocalHistory) == 0
 }
 
 // LSPLanguage describes a built-in language server the settings UI can
@@ -150,6 +152,51 @@ func ApplyAppDefaults(s *AppSettings) {
 	if s.Memory.ExtractEveryTurns == 0 {
 		s.Memory.ExtractEveryTurns = DefaultMemoryExtractCadence
 	}
+	if s.Safety.ConfirmAt == "" {
+		s.Safety.ConfirmAt = "unknown"
+	}
+	if s.Safety.UnknownCommandRisk == "" {
+		s.Safety.UnknownCommandRisk = "unknown"
+	}
+	if s.Safety.ScriptExecutionRisk == "" {
+		s.Safety.ScriptExecutionRisk = "unknown"
+	}
+	if s.Safety.NotifyDangerous == "" {
+		s.Safety.NotifyDangerous = "on"
+	}
+	if s.LocalHistory.Enabled == "" {
+		s.LocalHistory.Enabled = "on"
+	}
+	if s.LocalHistory.UseGitIgnore == "" {
+		s.LocalHistory.UseGitIgnore = "on"
+	}
+	if s.LocalHistory.CaptureExternalChanges == "" {
+		s.LocalHistory.CaptureExternalChanges = "on"
+	}
+	if s.LocalHistory.SafetySnapshotBeforeRestore == "" {
+		s.LocalHistory.SafetySnapshotBeforeRestore = "on"
+	}
+	if s.LocalHistory.MaxFileSizeMB == 0 {
+		s.LocalHistory.MaxFileSizeMB = 100
+	}
+	if s.LocalHistory.DebounceMS == 0 {
+		s.LocalHistory.DebounceMS = 750
+	}
+	if s.LocalHistory.ReconcileIntervalSeconds == 0 {
+		s.LocalHistory.ReconcileIntervalSeconds = 60
+	}
+	if s.LocalHistory.RetentionKeepHours == 0 {
+		s.LocalHistory.RetentionKeepHours = 24
+	}
+	if s.LocalHistory.RetentionKeepDaily == 0 {
+		s.LocalHistory.RetentionKeepDaily = 30
+	}
+	if s.LocalHistory.RetentionMaxSnapshots == 0 {
+		s.LocalHistory.RetentionMaxSnapshots = 500
+	}
+	if s.LocalHistory.StorageBudgetMB == 0 {
+		s.LocalHistory.StorageBudgetMB = 1024
+	}
 }
 
 func lspUnset(s LSPSettings) bool {
@@ -216,6 +263,8 @@ func MergeAppWorkspace(app AppSettings, ws WorkspaceOverrides) AppSettings {
 	applySparse(&out.Providers, ws.Providers)
 	applySparse(&out.Agents, ws.Agents)
 	applySparse(&out.Memory, ws.Memory)
+	applySparse(&out.Safety, ws.Safety)
+	applySparse(&out.LocalHistory, ws.LocalHistory)
 	if ws.ActiveProvider != nil && *ws.ActiveProvider != "" {
 		out.ActiveProvider = *ws.ActiveProvider
 	}
@@ -238,6 +287,8 @@ func OverridesFromDiff(app, working AppSettings) WorkspaceOverrides {
 	out.Providers = sparseDiff(app.Providers, working.Providers)
 	out.Agents = sparseDiff(app.Agents, working.Agents)
 	out.Memory = sparseDiff(app.Memory, working.Memory)
+	out.Safety = sparseDiff(app.Safety, working.Safety)
+	out.LocalHistory = sparseDiff(app.LocalHistory, working.LocalHistory)
 	if app.ActiveProvider != working.ActiveProvider {
 		p := working.ActiveProvider
 		out.ActiveProvider = &p
@@ -435,6 +486,8 @@ func (o WorkspaceOverrides) CategoryOverridden(name string) bool {
 		return len(o.Agents) > 0
 	case "memory":
 		return len(o.Memory) > 0
+	case "safety":
+		return len(o.Safety) > 0
 	}
 	return false
 }
@@ -462,6 +515,10 @@ func (o *WorkspaceOverrides) ClearCategory(name string) {
 		o.Agents = nil
 	case "memory":
 		o.Memory = nil
+	case "safety":
+		o.Safety = nil
+	case "local_history", "local history", "history":
+		o.LocalHistory = nil
 	}
 }
 
@@ -469,6 +526,9 @@ func cloneAppSettings(s AppSettings) AppSettings {
 	out := s
 	out.Providers = cloneProviders(s.Providers)
 	out.Agents = cloneAgents(s.Agents)
+	out.Memory.MemoryCategory.ContextCompactionPercent = cloneIntSetting(s.Memory.MemoryCategory.ContextCompactionPercent)
+	out.Safety.CommandRules = append([]CommandSeverityRule(nil), s.Safety.CommandRules...)
+	out.LocalHistory.ExtraIgnorePatterns = append([]string(nil), s.LocalHistory.ExtraIgnorePatterns...)
 	out.LSP.Languages = cloneLanguages(s.LSP.Languages)
 	out.LSP.Servers = cloneStringMap(s.LSP.Servers)
 	out.LSP.ServerArgs = cloneStringSliceMap(s.LSP.ServerArgs)
@@ -492,13 +552,32 @@ func cloneAgents(src AgentsSettings) AgentsSettings {
 	if src.Categories != nil {
 		out.Categories = make(map[string]CategorySettings, len(src.Categories))
 		for k, v := range src.Categories {
+			v.ContextCompactionPercent = cloneIntSetting(v.ContextCompactionPercent)
 			out.Categories[k] = v
 		}
 	}
 	if src.Profiles != nil {
-		out.Profiles = append([]ProfileSettings(nil), src.Profiles...)
+		out.Profiles = make([]ProfileSettings, len(src.Profiles))
+		for i, profile := range src.Profiles {
+			out.Profiles[i] = profile
+			if profile.Categories != nil {
+				out.Profiles[i].Categories = make(map[string]CategorySettings, len(profile.Categories))
+				for key, value := range profile.Categories {
+					value.ContextCompactionPercent = cloneIntSetting(value.ContextCompactionPercent)
+					out.Profiles[i].Categories[key] = value
+				}
+			}
+		}
 	}
 	return out
+}
+
+func cloneIntSetting(src *int) *int {
+	if src == nil {
+		return nil
+	}
+	value := *src
+	return &value
 }
 
 func cloneLanguages(src map[string]LSPLanguageSettings) map[string]LSPLanguageSettings {

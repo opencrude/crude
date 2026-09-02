@@ -16,6 +16,9 @@ const asyncPromotionThreshold = 15 * time.Second
 
 func (s *Session) newAgent(p *provider.Provider, multiAgent bool) *agent.Agent {
 	a := agent.NewAgent(p, p.Model, s.logger)
+	if s.cfg != nil {
+		a.CommandPolicy = safety.CommandPolicyFromSettings(s.cfg.Safety)
+	}
 
 	a.Yolo = s.YoloEnabled()
 	a.YoloMode = s.YoloEnabled
@@ -179,13 +182,17 @@ func (s *Session) executeCommandAutoPromote(ctx context.Context, params map[stri
 	}
 
 	if !s.YoloEnabled() {
-		sr := safety.CheckCommandSafety(cmd, s.logger)
+		policy := safety.DefaultCommandPolicy()
+		if s.cfg != nil {
+			policy = safety.CommandPolicyFromSettings(s.cfg.Safety)
+		}
+		sr := safety.CheckCommandSafetyWithPolicy(cmd, s.logger, policy)
 		if sr.Risk.IsAlwaysBlocked() {
 			errMsg := fmt.Sprintf("Error: [SAFETY] %s\nSuggestion: %s", sr.Reason, sr.Suggestion)
 			s.logger.Warn("SAFETY", "blocked", "command", cmd, "reason", sr.Reason)
 			return tools.ToolResult{Content: errMsg}, fmt.Errorf("%s", errMsg)
 		}
-		if sr.Risk.NeedsConfirmation() {
+		if sr.NeedsConfirmation() {
 			s.logger.Info("SAFETY", "risky", "command", cmd, "risk", sr.Risk.String())
 		}
 	}

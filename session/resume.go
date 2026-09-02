@@ -107,6 +107,9 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 			editor = ed
 		}
 	}
+	if editor != nil {
+		editor.SetLegacyJournalWrites(false)
+	}
 
 	sm := statemachine.NewConversationStateMachine(lg)
 	if err := restoreConversationState(context.Background(), db, sm, meta.ID); err != nil {
@@ -141,15 +144,22 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	var displayMetas []sessiondb.DisplayMeta
 	var createdAts []int64
 	if len(msgsWithMeta) > 0 {
-		displayMetas = make([]sessiondb.DisplayMeta, len(msgsWithMeta))
-		createdAts = make([]int64, len(msgsWithMeta))
+		cleanMsgs := make([]provider.ChatMessage, 0, len(msgsWithMeta))
+		cleanTurns := make([]int, 0, len(msgsWithMeta))
 		for i, mm := range msgsWithMeta {
-			displayMetas[i] = mm.Meta
-			createdAts[i] = mm.CreatedAt
-			if mm.Meta.DisplayRole == "hidden_wire_context" {
-				msgs[i].WireHidden = true
+			if mm.Meta.DisplayRole == "hidden_wire_context" && !mm.Meta.ContextOnly {
+				continue
 			}
+			cleanMsgs = append(cleanMsgs, mm.Msg)
+			if i < len(msgTurns) {
+				cleanTurns = append(cleanTurns, msgTurns[i])
+			} else {
+				cleanTurns = append(cleanTurns, 0)
+			}
+			displayMetas = append(displayMetas, mm.Meta)
+			createdAts = append(createdAts, mm.CreatedAt)
 		}
+		msgs, msgTurns = cleanMsgs, cleanTurns
 	}
 
 	interrupted, action := detectInterruption(msgs)
@@ -174,18 +184,17 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	if meta.TurnCount > maxTurn {
 		resumeTurnNumber = meta.TurnCount
 	}
-	wireMessages := append([]provider.ChatMessage(nil), msgs...)
-	wireEpoch := uint64(1)
-	wireReason := "resume_without_wire_state"
-	if state, ok, wireErr := sessiondb.LoadWireState(db, meta.ID); wireErr == nil && ok && !interrupted {
-		wireMessages = state.Messages
-		wireEpoch = state.Epoch
-		wireReason = state.Reason
+	activeContext := append([]provider.ChatMessage(nil), msgs...)
+	contextGeneration := uint64(1)
+	contextReason := "resume_full_history"
+	if state, ok, contextErr := sessiondb.LoadContextState(db, meta.ID); contextErr == nil && ok && !interrupted {
+		activeContext = state.Messages
+		contextGeneration = state.Generation
+		contextReason = state.Reason
 	} else if ok {
-		wireEpoch = state.Epoch + 1
-		wireReason = "resume_recovery"
+		contextGeneration = state.Generation + 1
+		contextReason = "resume_recovery"
 	}
-
 	sess := &Session{
 		ID:                 meta.ID,
 		cfg:                cfg,
@@ -217,9 +226,12 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		workspaceCfg:       workspaceCfg,
 		sessionOverrides:   overrides,
 		multiAgentOverride: cloneBoolPtr(flags.MultiAgent),
-		wireMessages:       wireMessages,
-		wireEpoch:          wireEpoch,
-		wireReason:         wireReason,
+		activeContext:      activeContext,
+		contextGeneration:  contextGeneration,
+		contextReason:      contextReason,
+	}
+	if err := restoreCostAccumulator(db, sess.cost); err != nil {
+		lg.Warn("COST", "restore_failed", "error", err.Error())
 	}
 	rows, loadErr := sessiondb.ListSubAgentResults(db, meta.ID)
 	if loadErr != nil {

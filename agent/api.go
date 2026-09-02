@@ -111,10 +111,7 @@ func (a *Agent) completeStream(
 		}
 		maxOut := maxOutputTokensForContext(ctxWindow)
 		if maxOut > available {
-			return completionResult{}, fmt.Errorf(
-				"active wire epoch leaves insufficient output headroom (%d input + %d output > %d context); rotate/compact the epoch",
-				estimatedInput, maxOut, ctxWindow,
-			)
+			maxOut = available
 		}
 		req.MaxOutputTokens = maxOut
 	}

@@ -115,6 +115,24 @@ func TestRecordAgentUsageUpdatesOwningSession(t *testing.T) {
 		got.Cost != 0.25 || got.ContextUsed != 37 || !got.Estimated {
 		t.Fatalf("unexpected usage snapshot: %#v", got)
 	}
+	got, ok = ws.RecordAgentUsage("first", map[string]any{
+		"prompt": float64(20), "completion": float64(6), "prompt_cached": float64(3),
+		"cost": float64(0.30), "context_window": float64(100), "context_prompt": float64(50),
+	})
+	if !ok || got.Prompt != 30 || got.Completion != 10 || got.Cached != 5 || got.Cost != 0.55 || got.ContextUsed != 50 {
+		t.Fatalf("usage did not accumulate across calls: %#v ok=%v", got, ok)
+	}
+	mgr.AddSubAgent("child", "first", "child", "model", "researcher", &AgentState{})
+	if _, ok := ws.RecordAgentUsage("child", map[string]any{
+		"prompt": float64(7), "completion": float64(2), "context_window": float64(80), "context_prompt": float64(60),
+	}); !ok {
+		t.Fatal("child usage was not routed to its root session")
+	}
+	rootUsage, _ := ws.AgentUsage("first")
+	childUsage, _ := ws.AgentUsage("child")
+	if rootUsage.Prompt != 37 || rootUsage.Completion != 12 || rootUsage.ContextUsed != 50 || childUsage.ContextUsed != 60 {
+		t.Fatalf("session totals/per-agent contexts diverged: root=%#v child=%#v", rootUsage, childUsage)
+	}
 	if second.TokenPrompt != 99 {
 		t.Fatalf("background usage mutated active unrelated session: %d", second.TokenPrompt)
 	}

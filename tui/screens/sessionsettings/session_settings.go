@@ -1,6 +1,7 @@
 package sessionsettings
 
 import (
+	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -23,10 +24,11 @@ const (
 )
 
 const (
-	fieldProvider   = "provider"
-	fieldModel      = "model"
-	fieldThinking   = "thinking-effort"
-	fieldMultiAgent = "multi-agent"
+	fieldProvider          = "provider"
+	fieldModel             = "model"
+	fieldThinking          = "thinking-effort"
+	fieldMultiAgent        = "multi-agent"
+	fieldContextCompaction = "context-compaction-percent"
 )
 
 // Live-inheritance markers, mirroring session.InheritMain/InheritWorkspace.
@@ -489,6 +491,20 @@ func (s *Screen) openRole(role string) {
 		Target: "session-settings.model.open",
 	})
 	model.AddField(ui.ThinkingFieldState(fieldThinking, thinking, ""))
+	compaction := types.DefaultContextCompactionPercent
+	if cfg.ContextCompactionPercent != nil {
+		compaction = *cfg.ContextCompactionPercent
+	}
+	compactionField := ui.TextFieldState(fieldContextCompaction, "Compact context at", strconv.Itoa(compaction),
+		"Percent of this agent's context window; 0 disables automatic compaction.")
+	compactionField.Validator = func(value ui.FieldValue) []string {
+		parsed, err := strconv.Atoi(strings.TrimSpace(value.String()))
+		if err != nil || parsed < 0 || parsed > 100 {
+			return []string{"Must be an integer between 0 and 100."}
+		}
+		return nil
+	}
+	model.AddField(compactionField)
 	s.formModel = model
 	s.form.SetForm(model, s.title(name), "")
 	buttons := []ui.ActionBarButton{
@@ -815,6 +831,14 @@ func (s *Screen) applyRootForm() {
 
 func boolPtr(v bool) *bool { return &v }
 
+func cloneIntPtr(src *int) *int {
+	if src == nil {
+		return nil
+	}
+	value := *src
+	return &value
+}
+
 func (s *Screen) applyRoleForm() {
 	if s.page != rolePage {
 		return
@@ -823,12 +847,18 @@ func (s *Screen) applyRoleForm() {
 	cfg.Provider = s.formModel.Field(fieldProvider).Value.String()
 	cfg.Model = s.formModel.Field(fieldModel).Value.String()
 	cfg.ThinkingEffort = s.formModel.Field(fieldThinking).Value.String()
+	compaction, err := strconv.Atoi(strings.TrimSpace(s.formModel.Field(fieldContextCompaction).Value.String()))
+	if err == nil {
+		compaction = min(100, max(0, compaction))
+		cfg.ContextCompactionPercent = &compaction
+	}
 	// A manual override never carries a live-inherit marker.
 	cfg.Inherit = ""
 	setCategory(&s.effective, s.role, cfg)
 	s.overrides[s.role] = types.CategorySettings{
 		Provider: cfg.Provider, Model: cfg.Model,
-		ThinkingEffort: cfg.ThinkingEffort,
+		ThinkingEffort:           cfg.ThinkingEffort,
+		ContextCompactionPercent: cloneIntPtr(cfg.ContextCompactionPercent),
 	}
 }
 
@@ -964,6 +994,7 @@ func setCategory(settings *types.Settings, role string, cfg types.CategorySettin
 func copyCategoryMap(src map[string]types.CategorySettings) map[string]types.CategorySettings {
 	dst := make(map[string]types.CategorySettings, len(src))
 	for key, value := range src {
+		value.ContextCompactionPercent = cloneIntPtr(value.ContextCompactionPercent)
 		dst[key] = value
 	}
 	return dst
