@@ -247,6 +247,9 @@ func (s *Screen) syncPaneScrollAfterUser(paneID string) {
 	} else {
 		st.Scroll.SetAutoScroll(false)
 	}
+	if s.onPaneScroll != nil {
+		s.onPaneScroll(paneID)
+	}
 }
 
 func (s *Screen) IsPaneGutterDragging() bool {

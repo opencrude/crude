@@ -124,19 +124,111 @@ func TestEditorCursorIsBlinkingReverseOverlay(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cursor.go")
 	ed := NewPreview(theme.DefaultDark(), path, "abc", 1)
 	ed.cursor = Position{Line: 0, Col: 1}
-	ed.cursorVisible = true
+	ed.cursorBlink.ResetAt(0)
 	surf := surface.NewSurface("cursor", 20, 5, cell.TransparentBlank())
-	ed.Render(surf, ui.PaintContext{Theme: ed.th, Focused: true})
+	ed.Render(surf, ui.PaintContext{Theme: ed.th, Focused: true, Frame: 0})
 	x := ed.gutterWidth() + 1
 	if c := surf.Buffer().Get(x, 0); c.Char != 'b' || !c.Attr.Has(cell.AttrReverse) {
 		t.Fatalf("visible cursor cell=%+v want preserved b with reverse", c)
 	}
 
-	ed.cursorVisible = false
 	surf = surface.NewSurface("cursor-off", 20, 5, cell.TransparentBlank())
-	ed.Render(surf, ui.PaintContext{Theme: ed.th, Focused: true})
+	ed.Render(surf, ui.PaintContext{Theme: ed.th, Focused: true, Frame: 1200})
 	if c := surf.Buffer().Get(x, 0); c.Char != 'b' || c.Attr.Has(cell.AttrReverse) {
 		t.Fatalf("blink-off cursor cell=%+v want plain b", c)
+	}
+}
+
+func TestHorizontalExtentTracksWholeDocumentNotViewport(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "wide.txt")
+	lines := make([]string, 80)
+	for i := range lines {
+		lines[i] = "short"
+	}
+	lines[70] = strings.Repeat("w", 120)
+	ed := NewPreview(theme.DefaultDark(), path, strings.Join(lines, "\n"), 1)
+	surf := surface.NewSurface("wide", 40, 10, cell.TransparentBlank())
+	ed.Render(surf, ui.PaintContext{Theme: ed.th, Focused: true, Frame: 1})
+	if !ed.hScrollbarVisible || ed.hScrollModel.Content() < 120 {
+		t.Fatalf("initial horizontal content=%d visible=%v", ed.hScrollModel.Content(), ed.hScrollbarVisible)
+	}
+	extent := ed.hScrollModel.Content()
+	ed.scrollX = ed.hScrollModel.MaxOffset()
+	ed.scrollY = 60
+	ed.Render(surf, ui.PaintContext{Theme: ed.th, Focused: true, Frame: 2})
+	if ed.hScrollModel.Content() != extent {
+		t.Fatalf("vertical viewport changed extent %d -> %d", extent, ed.hScrollModel.Content())
+	}
+	for i := range lines {
+		lines[i] = "short"
+	}
+	ed.ReplaceDocument(strings.Join(lines, "\n"))
+	ed.Render(surf, ui.PaintContext{Theme: ed.th, Focused: true, Frame: 3})
+	if ed.hScrollbarVisible || ed.hScrollModel.MaxOffset() != 0 || ed.scrollX != 0 {
+		t.Fatalf("shortened widest line left horizontal scroll visible: %+v", ed.hScrollModel)
+	}
+	ed.InvalidateWidthProfile()
+	ed.Render(surf, ui.PaintContext{Theme: ed.th, Focused: true, Frame: 4})
+	if ed.hScrollModel.Content() != 5 {
+		t.Fatalf("profile rebuild extent=%d want 5", ed.hScrollModel.Content())
+	}
+}
+
+func TestHorizontalWheelAndShiftWheelScrollOnlyX(t *testing.T) {
+	ed := NewPreview(theme.DefaultDark(), "wide.txt", strings.Repeat("x", 120)+"\nsecond", 1)
+	surf := surface.NewSurface("wheel", 40, 8, cell.TransparentBlank())
+	ed.Render(surf, ui.PaintContext{Theme: ed.th, Focused: true, Frame: 1})
+	startY := ed.scrollY
+	ed.HandleEvent(tea.MouseWheelMsg{Button: tea.MouseWheelRight})
+	if ed.scrollX == 0 || ed.scrollY != startY {
+		t.Fatalf("right wheel scroll=(%d,%d)", ed.scrollX, ed.scrollY)
+	}
+	right := ed.scrollX
+	ed.HandleEvent(tea.MouseWheelMsg{Button: tea.MouseWheelLeft})
+	if ed.scrollX >= right || ed.scrollY != startY {
+		t.Fatalf("left wheel scroll=(%d,%d)", ed.scrollX, ed.scrollY)
+	}
+	ed.HandleEvent(tea.MouseWheelMsg{Button: tea.MouseWheelDown, Mod: tea.ModShift})
+	if ed.scrollX == 0 || ed.scrollY != startY {
+		t.Fatalf("shift wheel scroll=(%d,%d)", ed.scrollX, ed.scrollY)
+	}
+}
+
+func TestDocumentWidthIndexIsIncrementalForOrdinaryEdit(t *testing.T) {
+	content := strings.Repeat("short\n", 10000)
+	ed := NewPreview(theme.DefaultDark(), "large.txt", content, 1)
+	_ = ed.documentVisualWidth()
+	if ed.hWidthMeasures < 10000 {
+		t.Fatalf("initial measures=%d", ed.hWidthMeasures)
+	}
+	ed.hWidthMeasures = 0
+	ed.cursor = Position{Line: 5000, Col: 2}
+	ed.typeRune('x')
+	_ = ed.documentVisualWidth()
+	if ed.hWidthMeasures > 1 {
+		t.Fatalf("single-line edit measured %d document lines", ed.hWidthMeasures)
+	}
+	ed.hWidthMeasures = 0
+	ed.scrollY = 9000
+	_ = ed.documentVisualWidth()
+	if ed.hWidthMeasures != 0 {
+		t.Fatalf("vertical scroll remeasured %d lines", ed.hWidthMeasures)
+	}
+}
+
+func TestDocumentWidthIndexReducesFormerMaximum(t *testing.T) {
+	ed := NewPreview(theme.DefaultDark(), "width.txt", "12345678901234567890\n1234567890", 1)
+	if got := ed.documentVisualWidth(); got != 20 {
+		t.Fatalf("initial width=%d", got)
+	}
+	ed.SetSelection(0, 5, 0, 20)
+	ed.DeleteSelection()
+	ed.hWidthMeasures = 0
+	if got := ed.documentVisualWidth(); got != 10 {
+		t.Fatalf("reduced width=%d", got)
+	}
+	if ed.hWidthMeasures != 1 {
+		t.Fatalf("maximum reduction measured %d lines", ed.hWidthMeasures)
 	}
 }
 

@@ -10,7 +10,9 @@
 #   click:<col>,<row>[,<btn>] cell coords, btn 1=left 2=mid 3=right 4=whlup 5=whldn
 #   move:<col>,<row>          move pointer only (hover test)
 #   drag:<c1>,<r1>,<c2>,<r2>  press, move, shot mid-drag, release, shot
+#   dragburst:<c1>,<r1>,<c2>,<r2>,<steps> flood motion without sleeps
 #   wheel:<col>,<row>,<n>     n wheel-down clicks (negative = up) at cell
+#   hwheel:<col>,<row>,<n>    n wheel-right clicks (negative = left) at cell
 #   sleep:<seconds>
 #   shot[:label]              extra screenshot
 #
@@ -154,6 +156,12 @@ for step in "$@"; do
       xdotool mousemove --sync "$(px "$c")" "$(py "$r")"
       for _ in $(seq 1 "${n:-1}"); do xdotool click "$btn"; sleep 0.05; done
       sleep "$STEP_WAIT"; shot "wheel-${c}_${r}_${btn}" ;;
+    hwheel:*)
+      IFS=',' read -r c r n <<<"${step#hwheel:}"
+      btn=7; [ "${n:-1}" -lt 0 ] && { btn=6; n=$(( -n )); }
+      xdotool mousemove --sync "$(px "$c")" "$(py "$r")"
+      for _ in $(seq 1 "${n:-1}"); do xdotool click "$btn"; sleep 0.03; done
+      sleep "$STEP_WAIT"; shot "hwheel-${c}_${r}_${btn}" ;;
     drag:*)
       IFS=',' read -r c1 r1 c2 r2 <<<"${step#drag:}"
       xdotool mousemove --sync "$(px "$c1")" "$(py "$r1")" mousedown 1
@@ -162,6 +170,16 @@ for step in "$@"; do
       sleep 0.25; shot "dragheld-${c1}_${r1}-${c2}_${r2}"
       xdotool mouseup 1
       sleep "$STEP_WAIT"; shot "drag-${c1}_${r1}-${c2}_${r2}" ;;
+    dragburst:*)
+      IFS=',' read -r c1 r1 c2 r2 steps <<<"${step#dragburst:}"
+      steps="${steps:-100}"
+      xdotool mousemove --sync "$(px "$c1")" "$(py "$r1")" mousedown 1
+      for i in $(seq 1 "$steps"); do
+        c=$(( c1 + (c2-c1)*i/steps )); r=$(( r1 + (r2-r1)*i/steps ))
+        xdotool mousemove "$(px "$c")" "$(py "$r")"
+      done
+      xdotool mouseup 1
+      sleep "$STEP_WAIT"; shot "dragburst-${c1}_${r1}-${c2}_${r2}" ;;
     sleep:*) sleep "${step#sleep:}" ;;
     shot) shot extra ;;
     shot:*) shot "$(slug "${step#shot:}")" ;;

@@ -119,7 +119,11 @@ func TestFloatingTerminalBlinkInvalidatesRetainedWindow(t *testing.T) {
 		t.Fatal("window remained dirty after rendering the current cursor phase")
 	}
 
-	app.tickTerminalCursors(base.Add(600 * time.Millisecond))
+	off := base.Add(ui.CursorActivityHoldMS * time.Millisecond)
+	for (off.UnixMilli()/ui.CursorBlinkHalfPeriodMS)%2 == 0 {
+		off = off.Add(ui.CursorBlinkHalfPeriodMS * time.Millisecond)
+	}
+	app.tickTerminalCursors(off)
 	if !fw.IsContentDirty() {
 		t.Fatal("blink phase change did not invalidate floating terminal content")
 	}

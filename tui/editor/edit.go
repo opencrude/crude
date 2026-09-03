@@ -282,6 +282,7 @@ func (e *Editor) undo() {
 		e.buffer.MarkDirty()
 	}
 	e.ensureCursorVisible()
+	e.markDocumentWidthAll()
 	e.notifyContentChanged()
 }
 
@@ -318,6 +319,7 @@ func (e *Editor) redo() {
 		e.buffer.MarkDirty()
 	}
 	e.ensureCursorVisible()
+	e.markDocumentWidthAll()
 	e.notifyContentChanged()
 }
 
@@ -424,5 +426,6 @@ func (e *Editor) format() error {
 	e.buf.ReplaceAll(string(data))
 	e.modified = false
 	e.invalidateEditorCaches()
+	e.markDocumentWidthAll()
 	return nil
 }

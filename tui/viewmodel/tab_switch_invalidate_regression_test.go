@@ -67,10 +67,8 @@ func TestTabSwitchSteadyStateKeepsRenderCache(t *testing.T) {
 	}
 }
 
-// TestTabSwitchAwayAndBackDropsRenderCache: switching editor<->agent must
-// still refresh the agent projection on return (the pre-guard semantics for
-// real transitions), and closing the last tab resets the transition tracker.
-func TestTabSwitchAwayAndBackDropsRenderCache(t *testing.T) {
+// TestTabSwitchAwayAndBackKeepsRenderCache: focus is not source damage.
+func TestTabSwitchAwayAndBackKeepsRenderCache(t *testing.T) {
 	app := newFullTestApp(t)
 	app.EditorState = NewEditorState()
 	app.EditorState.Editor = editor.New(app.Theme)
@@ -101,7 +99,7 @@ func TestTabSwitchAwayAndBackDropsRenderCache(t *testing.T) {
 		t.Fatal("editor tab must not invalidate the inactive agent projection")
 	}
 
-	// Close the editor tab: falls back to the agent tab, which must refresh.
+	// Close the editor tab: falls back to the still-warm agent projection.
 	if tab := app.Win.ActiveTab(); tab != nil {
 		app.Win.CloseTab(app.Win.ActiveIndex())
 	}
@@ -109,8 +107,8 @@ func TestTabSwitchAwayAndBackDropsRenderCache(t *testing.T) {
 	if got := app.AgentMgr.ActiveID(); got != "root" {
 		t.Fatalf("agent not re-activated after editor close: %q", got)
 	}
-	if cached, _ := tabSwitchCacheProbe(app, "root", body); cached {
-		t.Fatal("returning to the agent tab must drop the render cache for a refresh")
+	if cached, _ := tabSwitchCacheProbe(app, "root", body); !cached {
+		t.Fatal("returning to the agent tab dropped a source-valid render cache")
 	}
 	app.paintShellFrame()
 	if cached, _ := tabSwitchCacheProbe(app, "root", body); !cached {

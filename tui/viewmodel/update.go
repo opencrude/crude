@@ -41,6 +41,14 @@ import (
 
 func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+	coalescePresentation := false
+	switch msg.(type) {
+	case tea.MouseMotionMsg, interactiveFrameMsg:
+	case ttypes.AgentMsg, workspace.TerminalOutputMsg:
+		coalescePresentation = true
+	default:
+		m.forceFrame()
+	}
 
 	// Any live input makes the following window expected work in the perf
 	// sentinel: repaints during interaction are the product working, not a
@@ -50,15 +58,14 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		perf.NoteActivity()
 	}
 
-	// Dirty is set selectively per message type, NOT unconditionally.
-	// The full render pipeline (editor cell paint, chat rows, compositor,
-	// ANSI generation) runs after every Update. The editor's chroma work
-	// is internally cached by line, so unconditional repaint stays cheap
-	// (BenchmarkEditorPaint_*). Mouse motion at 120-200/sec is the hot
-	// path — the editor repaint (~180-250µs at 120x40) plus compositor
-	// (~100µs) stays well inside the 16ms frame budget.
+	// Mutations are processed for every message. High-rate pointer/stream/PTY
+	// presentation is coalesced by frameGate; a presented frame still repaints
+	// the complete shell, with expensive leaf work retained by source version.
 
 	switch msg := msg.(type) {
+	case interactiveFrameMsg:
+		m.handleInteractiveFrame(msg)
+		return m, nil
 	case tea.WindowSizeMsg:
 		m.Logger.Debug("UI", "resize", "width", msg.Width, "height", msg.Height)
 		m.width = msg.Width
@@ -94,12 +101,16 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.dispatchMouseWheel(msg)
 
 	case tea.MouseMotionMsg:
-		return m.dispatchMouseMotion(msg)
+		model, cmd := m.dispatchMouseMotion(msg)
+		return model, tea.Batch(cmd, m.requestCoalescedFrame(time.Now()))
 
 	case tea.MouseReleaseMsg:
 		// Same as MouseMotionMsg: let the release handler set
 		// dirty when it actually does something visible.
-		m.Logger.Debug("UI", "mouse", "release", "x", msg.Mouse().X, "y", msg.Mouse().Y)
+		if m.Logger != nil {
+			m.Logger.Debug("UI", "mouse", "release", "x", msg.Mouse().X, "y", msg.Mouse().Y)
+		}
+		m.forceFrame()
 		return m.dispatchMouseRelease(msg)
 
 	case ttypes.SelectionTickMsg:
@@ -111,16 +122,12 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 
-	default:
-		if m.isEditorMsg(msg) {
-			// Blink ticks are repaint-free when cursor visibility does not
-			// change: the editor's chroma cache is untouched and the
-			// compositor diffs identical cells into no ANSI output.
-			cmds = append(cmds, m.dispatchEditorTick(msg)...)
-		}
 	}
 
 	cmds = append(cmds, m.handleAppMessages(msg)...)
+	if coalescePresentation {
+		cmds = append(cmds, m.requestCoalescedFrame(time.Now()))
+	}
 
 	return m, tea.Batch(cmds...)
 }
@@ -135,6 +142,11 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	m.StatusBar.ClearExpired()
 	m.refreshSessionBackgroundJobs(now)
 	m.tickTerminalCursors(now)
+	if fw := m.windowManager.Focused(); fw != nil {
+		if animated, ok := fw.Content.(interface{ NeedsFrame() bool }); ok && animated.NeedsFrame() {
+			fw.MarkContentDirty()
+		}
+	}
 	var gitCmd tea.Cmd
 	if m.editorGitStale.Load() && now.Sub(m.editorGitAt) >= 400*time.Millisecond {
 		m.editorGitStale.Store(false)
@@ -996,7 +1008,6 @@ func (m *App) handleTabSwitch() {
 	activeTab := m.Win.ActiveTab()
 	if activeTab == nil {
 		// Closing the last tab returns to launcher.
-		m.lastTabSwitchAgent = ""
 		return
 	}
 
@@ -1005,18 +1016,11 @@ func (m *App) handleTabSwitch() {
 		m.AgentMgr.SetActive(agentID)
 		m.ActivateSessionByAgent(agentID)
 		m.OverlayState.SetYolo(m.YoloForAgent(agentID))
-		// Only invalidate the projection when this agent was not already the
-		// active one — handleTabSwitch runs on every tick via
-		// syncAgentWindowTabs, and re-invalidating the same agent dropped its
-		// entire retained render cache each frame. SyncFromWorkspace and the
-		// per-tick InvalidateSubPane keep the active projection fresh.
-		if m.subPaneProjections.Has(agentID) && m.lastTabSwitchAgent != agentID {
-			m.subPaneProjections.InvalidateAllMessages(agentID)
-		}
-		m.lastTabSwitchAgent = agentID
+		// Projection caches are source-version owned. Focus changes never make
+		// retained message pixels stale; SyncFromWorkspace invalidates only rows
+		// whose canonical conversation version changed.
 		return
 	}
-	m.lastTabSwitchAgent = ""
 
 	if m.isEditorTabTitle(activeTab.Title) {
 		path := m.editorPathFromTabTitle(activeTab.Title)

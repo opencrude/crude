@@ -73,6 +73,7 @@ func (e *Editor) finishEdit() {
 		e.buffer.MarkDirty()
 	}
 	e.invalidateEditorCaches()
+	e.markDocumentWidthAll()
 	e.ensureCursorVisible()
 	e.notifyContentChanged()
 }

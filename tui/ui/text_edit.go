@@ -163,6 +163,10 @@ func isEditableRune(r rune) bool {
 // InsertRunes inserts printable runes (and space), preserving grapheme-joining
 // format characters.
 func (e *TextEdit) InsertRunes(s string) {
+	if len(s) == 1 && s[0] >= 32 && s[0] < 127 {
+		e.insertRune(rune(s[0]))
+		return
+	}
 	var clean []rune
 	for _, r := range s {
 		if r == '\n' || r == '\t' {
@@ -178,6 +182,22 @@ func (e *TextEdit) InsertRunes(s string) {
 	e.Insert(string(clean))
 }
 
+func (e *TextEdit) insertRune(r rune) {
+	if !isEditableRune(r) || r == '\n' || r == '\t' {
+		return
+	}
+	e.recordEdit()
+	if e.HasSelection() {
+		e.deleteSelection()
+	}
+	oldLen := len(e.runes)
+	e.runes = append(e.runes, 0)
+	copy(e.runes[e.cursor+1:], e.runes[e.cursor:oldLen])
+	e.runes[e.cursor] = r
+	e.cursor++
+	e.ClearSelection()
+}
+
 // Backspace deletes before cursor or the selection.
 func (e *TextEdit) Backspace() {
 	if e.HasSelection() {
@@ -188,9 +208,37 @@ func (e *TextEdit) Backspace() {
 	if e.cursor == 0 {
 		return
 	}
-	e.recordEdit()
+	collapse := e.backspaceRestoresLatestUndo()
+	if !collapse {
+		e.recordEdit()
+	}
 	e.runes = append(e.runes[:e.cursor-1], e.runes[e.cursor:]...)
 	e.cursor--
+	if collapse {
+		e.undo = e.undo[:len(e.undo)-1]
+		e.redo = nil
+	}
+}
+
+func (e *TextEdit) backspaceRestoresLatestUndo() bool {
+	if len(e.undo) == 0 || e.cursor <= 0 {
+		return false
+	}
+	snapshot := e.undo[len(e.undo)-1]
+	if snapshot.selActive || snapshot.cursor != e.cursor-1 || len(snapshot.runes) != len(e.runes)-1 {
+		return false
+	}
+	removed := e.cursor - 1
+	for index, r := range snapshot.runes {
+		current := index
+		if index >= removed {
+			current++
+		}
+		if current >= len(e.runes) || e.runes[current] != r {
+			return false
+		}
+	}
+	return true
 }
 
 // Delete deletes after cursor or the selection.

@@ -80,11 +80,14 @@ Read that first; this index only organizes the reference material.
 - [Shell frame padding review](plans/shell-frame-padding-review.md) — open
   hardening findings for the configurable shell frame padding feature.
 - [Message-scoped undo and local history plan](plans/undo-local-history-plan.md)
-  — **IN PROGRESS** architecture and delivery plan for JetBrains-quality,
-  cache-safe workspace history and per-user-message restore.
+  — **LANDED** JetBrains-quality, cache-safe workspace history and
+  per-user-message restore.
 - [End-to-end reliability and interaction hardening](plans/end-to-end-hardening-plan.md)
   — **ACTIVE** umbrella execution plan for transport liveness, safety,
   projections, shared interaction controls, editor latency, and undo delivery.
+- [Render authority and editor scrolling hardening](plans/render-authority-hardening-plan.md)
+  — **LANDED** single-authority plan for frame coalescing, warm tab
+  transitions, cursor cadence, and document-wide horizontal scrolling.
 
 ## Documentation rules
 

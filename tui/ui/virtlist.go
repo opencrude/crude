@@ -40,7 +40,8 @@ type VirtualList struct {
 	selectionAnchorsScroll bool // when true, selection changes reveal rows (launcher/FIF)
 	opaqueRowFill          bool // ListRowColors pre-fill; chat turns this off
 	// prefix[i] = starting row of item i; prefix[len] = total rows
-	prefix []int
+	prefix            []int
+	structureRevision uint64
 }
 
 // NewVirtualList creates a variable-height list.
@@ -70,6 +71,19 @@ func (v *VirtualList) SetItems(items []VirtItem) {
 		v.sel.SetIndex(0)
 	}
 	v.applyScrollAfterContentChange()
+}
+
+func (v *VirtualList) UpdateItem(index int, item VirtItem) bool {
+	if index < 0 || index >= len(v.items) {
+		return false
+	}
+	oldHeight := max(1, v.items[index].Height)
+	v.items[index] = item
+	if max(1, item.Height) != oldHeight {
+		v.rebuildPrefix()
+		v.applyScrollAfterContentChange()
+	}
+	return true
 }
 
 // Items returns items.
@@ -171,6 +185,7 @@ func (v *VirtualList) Selection() *SelectionModel { return v.sel }
 func (v *VirtualList) Scroll() *ScrollModel { return v.scroll }
 
 func (v *VirtualList) rebuildPrefix() {
+	v.structureRevision++
 	v.prefix = make([]int, len(v.items)+1)
 	total := 0
 	for i, it := range v.items {
@@ -184,6 +199,8 @@ func (v *VirtualList) rebuildPrefix() {
 	v.prefix[len(v.items)] = total
 	v.scroll.SetContent(total + v.bottomPadding)
 }
+
+func (v *VirtualList) StructureRevision() uint64 { return v.structureRevision }
 
 // ItemIndexAtRow returns the item index containing absRow, or -1 for padding/empty.
 func (v *VirtualList) ItemIndexAtRow(absRow int) int {

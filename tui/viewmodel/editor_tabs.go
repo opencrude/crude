@@ -120,7 +120,7 @@ func (m *App) openEditorTab(path string) (tea.Cmd, error) {
 		m.handleTabSwitch()
 	}
 
-	return tea.Batch(ed.BlinkCmd(), lspOpenCmd, m.refreshEditorGitCmd()), nil
+	return tea.Batch(lspOpenCmd, m.refreshEditorGitCmd()), nil
 }
 
 // jumpToDiagnostic opens the file containing the given diagnostic

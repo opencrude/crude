@@ -1,16 +1,12 @@
 package editor
 
 import (
-	"time"
-
 	tea "charm.land/bubbletea/v2"
 
 	"crude/clipboard"
 	"crude/tui/rendering"
 	"crude/tui/ui"
 )
-
-type CursorBlinkMsg time.Time
 
 type EditorCloseMsg struct {
 	FilePath string
@@ -22,39 +18,17 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 	}
 
 	switch msg := msg.(type) {
-	case CursorBlinkMsg:
-		idle := time.Since(e.lastActivity)
-		if idle < cursorBlinkInterval {
-			e.blinkActive = false
-			e.cursorVisible = true
-		} else if !e.blinkActive {
-			e.blinkActive = true
-			e.cursorVisible = false
-			e.lastToggle = time.Now()
-		} else if time.Since(e.lastToggle) >= cursorBlinkInterval {
-			e.cursorVisible = !e.cursorVisible
-			e.lastToggle = time.Now()
-		}
-		return e.blinkCmd()
 	case tea.KeyPressMsg:
-		e.cursorVisible = true
-		e.blinkActive = false
-		e.lastActivity = time.Now()
+		e.cursorBlink.MarkActivity()
 		return e.handleKey(msg)
 	case tea.PasteMsg:
-		e.cursorVisible = true
-		e.blinkActive = false
-		e.lastActivity = time.Now()
+		e.cursorBlink.MarkActivity()
 		e.insertText(msg.Content)
 	case tea.MouseWheelMsg:
-		e.cursorVisible = true
-		e.blinkActive = false
-		e.lastActivity = time.Now()
+		e.cursorBlink.MarkActivity()
 		e.handleMouseWheel(msg)
 	case tea.MouseClickMsg:
-		e.cursorVisible = true
-		e.blinkActive = false
-		e.lastActivity = time.Now()
+		e.cursorBlink.MarkActivity()
 		e.refreshScrollbarHover(msg.Mouse().X, msg.Mouse().Y)
 		e.handleMouseClick(msg)
 		e.refreshMouseHover(msg.Mouse().X, msg.Mouse().Y)
@@ -102,6 +76,24 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 func (e *Editor) handleMouseWheel(msg tea.MouseWheelMsg) {
 	scrollLines := 3
 	bodyH := e.bodyHeight()
+	horizontal := msg.Button == tea.MouseWheelLeft || msg.Button == tea.MouseWheelRight || msg.Mod.Contains(tea.ModShift)
+	if horizontal {
+		e.syncHorizontalScrollChrome(max(1, e.viewW-e.gutterWidth()-e.scrollbarColWidth()), bodyH)
+		switch msg.Button {
+		case tea.MouseWheelLeft, tea.MouseWheelUp:
+			e.scrollX -= scrollLines
+		case tea.MouseWheelRight, tea.MouseWheelDown:
+			e.scrollX += scrollLines
+		}
+		if e.scrollX < 0 {
+			e.scrollX = 0
+		}
+		if e.hScrollModel != nil && e.scrollX > e.hScrollModel.MaxOffset() {
+			e.scrollX = e.hScrollModel.MaxOffset()
+		}
+		e.hScrollModel.ScrollTo(e.scrollX)
+		return
+	}
 	switch msg.Button {
 	case tea.MouseWheelUp:
 		e.scrollY -= scrollLines
@@ -397,14 +389,4 @@ func (e *Editor) closeCmd() tea.Cmd {
 	return func() tea.Msg {
 		return EditorCloseMsg{FilePath: e.filePath}
 	}
-}
-
-func (e *Editor) blinkCmd() tea.Cmd {
-	return tea.Tick(tickInterval, func(t time.Time) tea.Msg {
-		return CursorBlinkMsg(t)
-	})
-}
-
-func (e *Editor) BlinkCmd() tea.Cmd {
-	return e.blinkCmd()
 }

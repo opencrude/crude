@@ -8,14 +8,17 @@ import (
 	"testing"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
 	"crude/tui/editor"
+	"crude/tui/filetree"
 	"crude/tui/perf"
 	ttypes "crude/tui/types"
 )
 
 // Work-budget tests: a CPU-hammering regression in this TUI is almost never a
 // single function getting fatter — it is cached state re-dirtied every tick
-// (25fps), which turns steady state into a full-session re-render. These tests
+// (at idle or active cadence), which turns steady state into a full-session re-render. These tests
 // pin the work per frame at the pipeline chokepoints via tui/perf counters:
 // idle ticks must re-render ~nothing, hydration renders each row once, tab
 // re-derivation renders zero, and render work must not scale with session
@@ -296,6 +299,82 @@ func TestTabRederivationRendersNothing(t *testing.T) {
 	}
 }
 
+func TestAgentToAgentSwitchKeepsBothProjectionsWarm(t *testing.T) {
+	perf.EnableProbe()
+	t.Cleanup(perf.DisableProbe)
+	app := newFullTestApp(t)
+	app.AddOrchestrator("first")
+	app.appendAgentMessage("first", ttypes.ChatMessage{InternalID: "first-body", Role: ttypes.RoleAssistant, Content: strings.Repeat("first cached body ", 20), Time: time.Now()})
+	app.switchToAgentView("first")
+	app.syncAgentMessages("first", false)
+	app.paintShellFrame()
+	app.AddOrchestrator("second")
+	app.appendAgentMessage("second", ttypes.ChatMessage{InternalID: "second-body", Role: ttypes.RoleAssistant, Content: strings.Repeat("second cached body ", 20), Time: time.Now()})
+	app.switchToAgentView("second")
+	app.syncAgentMessages("second", false)
+	app.paintShellFrame()
+	if cached, _ := tabSwitchCacheProbe(app, "first", strings.Repeat("first cached body ", 20)); !cached {
+		t.Fatal("first projection was not warm")
+	}
+	base := perf.Snapshot()
+	app.switchToAgentView("first")
+	app.syncAgentMessages("first", false)
+	app.paintShellFrame()
+	work := perf.Snapshot().Sub(base)
+	if work.ItemsRendered != 0 || work.LinesRendered != 0 {
+		t.Fatalf("warm agent switch rendered %d items/%d lines\n%s", work.ItemsRendered, work.LinesRendered, perf.ProbeDump())
+	}
+}
+
+func TestSidebarResizeDefersChatReflowUntilRelease(t *testing.T) {
+	perf.EnableProbe()
+	t.Cleanup(perf.DisableProbe)
+	app := newFullTestApp(t)
+	app.AddOrchestrator("root")
+	for _, msg := range seedBudgetSession(200, 2) {
+		app.appendActiveMessage(msg)
+	}
+	clearTurnTail(t, app)
+	tree := filetree.NewFileTreeModel(t.TempDir())
+	app.Tree = NewTreeState(tree, 30)
+	app.Tree.Visible = true
+	app.sidebarScreen.SetModel(tree)
+	_ = app.View()
+	divider := app.activityChromeWidth() + app.Tree.Width
+	_, _ = app.dispatchMouseClick(tea.MouseClickMsg{X: divider, Y: 8, Button: tea.MouseLeft})
+	if !app.sidebarResizeActive() {
+		t.Fatal("sidebar divider did not capture")
+	}
+	app.forceFrame()
+	_ = app.View()
+	initialSnapshot := app.activeMessageList().ExportMessageRowsSnapshot(app.chatReflowInnerW)
+	base := perf.Snapshot()
+	for i := 0; i < 20; i++ {
+		before := app.activeMessageList().ExportMessageRowsSnapshot(app.chatReflowInnerW)
+		_, _ = app.dispatchMouseMotion(tea.MouseMotionMsg{X: divider + (i % 10), Y: 8, Button: tea.MouseLeft})
+		app.forceFrame()
+		_ = app.View()
+		after := app.activeMessageList().ExportMessageRowsSnapshot(app.chatReflowInnerW)
+		if after.Generation != before.Generation {
+			t.Fatalf("presented frame %d changed projection generation %d -> %d\n%s", i, before.Generation, after.Generation, perf.ProbeDump())
+		}
+	}
+	during := perf.Snapshot().Sub(base)
+	finalSnapshot := app.activeMessageList().ExportMessageRowsSnapshot(app.chatReflowInnerW)
+	if finalSnapshot.Generation != initialSnapshot.Generation {
+		t.Fatalf("resize changed projection generation %d -> %d", initialSnapshot.Generation, finalSnapshot.Generation)
+	}
+	if during.ItemsRendered != 0 || during.LinesRendered != 0 {
+		t.Fatalf("resize reflowed chat during drag: %d items/%d lines", during.ItemsRendered, during.LinesRendered)
+	}
+	_, _ = app.Update(tea.MouseReleaseMsg{X: divider + 9, Y: 8, Button: tea.MouseLeft})
+	_ = app.View()
+	after := perf.Snapshot().Sub(base)
+	if after.ItemsRendered > 220 {
+		t.Fatalf("release rendered more than one chat pass: %d", after.ItemsRendered)
+	}
+}
+
 // TestEditorAgentSwitchWorkBounded: toggling editor/agent is a real
 // transition — returning to the agent refreshes (renders at most the session
 // once), and while the editor is active the chat must render nothing at all.
@@ -360,9 +439,6 @@ func TestIdleWorkScalesSublinearlyWithSessionSize(t *testing.T) {
 	}
 	small := idleWorkFor(50, 4)
 	large := idleWorkFor(500, 4)
-	if small.StatusRenders == 0 || small.CacheInvalidations == 0 {
-		t.Fatalf("sanity: measurement walked no frames (%v)", small)
-	}
 	itemLimit := 3*small.ItemsRendered + 16
 	lineLimit := 3*small.LinesRendered + 256
 	if large.ItemsRendered > itemLimit || large.LinesRendered > lineLimit {

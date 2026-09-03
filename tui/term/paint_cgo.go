@@ -107,7 +107,7 @@ func (e *Emulator) rebuildPaintCache(fg, bg cell.Color) {
 				c.Attr ^= cell.AttrReverse
 			}
 			if showCursor(bool(curVis), bool(curInView), x, y, int(curX), int(curY)) && e.cursorPhaseVisible() {
-				c = applyCursorStyle(c, curStyle, e.curFocused)
+				c = applyCursorStyle(c, curStyle, e.curFocused, e.curColor)
 			}
 			e.paintCache.Set(x, y, c)
 			if c.Width == 2 {
@@ -147,7 +147,10 @@ func (e *Emulator) cursorPhaseVisible() bool {
 // applyCursorStyle enforces Crude's one cursor shape: a reverse-video block.
 // Terminal applications may still control blink/steady timing through
 // DECSCUSR, but bar and underline requests never change product geometry.
-func applyCursorStyle(c cell.Cell, _ C.GhosttyRenderStateCursorVisualStyle, focused bool) cell.Cell {
+func applyCursorStyle(c cell.Cell, _ C.GhosttyRenderStateCursorVisualStyle, focused bool, cursorColor cell.Color) cell.Cell {
+	if !cursorColor.IsDefault() {
+		c.FG = cursorColor
+	}
 	c.Attr ^= cell.AttrReverse
 	if !focused {
 		c.Attr |= cell.AttrDim

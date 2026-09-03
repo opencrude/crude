@@ -3,7 +3,6 @@ package ui
 import (
 	"strings"
 	"testing"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"crude/tui/cell"
@@ -237,7 +236,7 @@ func TestTextArea_PaintHandlesNewlines(t *testing.T) {
 func TestTextArea_PaintPreservesLegacyPromptAndWrapGeometry(t *testing.T) {
 	ta := NewTextArea("test/area", NewTokenSet(theme.DefaultDark()), true)
 	ta.SetValue("abcdefgh")
-	ta.lastInputTime = time.Now()
+	ta.cursor.MarkActivity()
 
 	ta.Layout(LayoutContext{}, Rect{W: 8, H: 2})
 	buf := surface.NewCellBuffer(8, 2)
@@ -275,7 +274,7 @@ func TestTextArea_PaintRendersSolidCursorStates(t *testing.T) {
 	ta.SetCursorFlat(1)
 	ta.Layout(LayoutContext{}, Rect{W: 8, H: 1})
 	buf := surface.NewCellBuffer(8, 1)
-	ta.lastInputTime = time.Now()
+	ta.cursor.MarkActivity()
 	ta.Paint(buf, 0, 0, PaintContext{Theme: theme.DefaultDark(), Focused: true})
 
 	// The cursor preserves the grapheme and overlays reverse video.
@@ -314,7 +313,7 @@ func TestTextArea_PaintSelectionAndAtomicChipStyles(t *testing.T) {
 	ta.SetCursorFlat(6)
 	ta.Layout(LayoutContext{}, Rect{W: 20, H: 2})
 	buf := surface.NewCellBuffer(20, 2)
-	ta.lastInputTime = time.Now()
+	ta.cursor.MarkActivity()
 	ta.Paint(buf, 0, 0, PaintContext{Theme: theme.DefaultDark(), Focused: true})
 
 	chipStart := 0
@@ -345,7 +344,7 @@ func TestTextArea_AtomicChipPaintsAsFilledPill(t *testing.T) {
 	ta.SetCursorFlat(9)
 	ta.Layout(LayoutContext{}, Rect{W: 20, H: 2})
 	buf := surface.NewCellBuffer(20, 2)
-	ta.lastInputTime = time.Now()
+	ta.cursor.MarkActivity()
 	ta.Paint(buf, 0, 0, PaintContext{Theme: theme.DefaultDark(), Focused: false})
 
 	pillBG := tokens.Color(ColorSelection)

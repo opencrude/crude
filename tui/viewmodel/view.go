@@ -28,19 +28,13 @@ func (m *App) View() tea.View {
 	if m.width == 0 || m.height == 0 {
 		return tea.NewView("")
 	}
-	m.maybeHydrateComposerDraft()
-
-	isDragging := m.windowManager.IsDragging()
-	wmNeedsRender := m.windowManager.NeedsRender()
-
-	// Throttle: during drag, if no position change since last render,
-	// return cached output without re-compositing.
-	if isDragging && !wmNeedsRender {
+	if m.shouldDeferFrame() {
 		v := tea.NewView(m.cachedOutput)
 		v.AltScreen = true
 		v.MouseMode = tea.MouseModeAllMotion
 		return v
 	}
+	m.maybeHydrateComposerDraft()
 
 	m.compositor.BeginFrame()
 	// Fill the root with the active theme background so uncovered cells
@@ -65,14 +59,13 @@ func (m *App) View() tea.View {
 	m.renderShellToSurface()
 
 	m.windowManager.Render(m.compositor.Root(), m.renderCtx)
-	if isDragging {
-		m.windowManager.ClearNeedsRender()
-	}
+	m.windowManager.ClearNeedsRender()
 
 	m.compositor.Composite()
 
 	output := m.compositor.Present()
 	m.cachedOutput = output
+	m.noteFramePresented(time.Now())
 
 	v := tea.NewView(output)
 	v.AltScreen = true
@@ -239,11 +232,6 @@ func (m *App) computeContentLayout() contentLayout {
 		}
 		m.chatRect = lay.ChatRect
 		m.editorRect = ui.Rect{}
-		// Prepare MessageList geometry for subpane render/export.
-		if activeML := m.activeMessageList(); activeML != nil {
-			activeML.SetChatAreaBounds(chatAreaTop, lay.ChatH)
-			activeML.SetSize(lay.ContentW, m.height)
-		}
 	}
 
 	if lay.ShowMainInput {
@@ -603,6 +591,16 @@ func (m *App) configureChatScreenWithLayout(layout contentLayout) {
 	}
 
 	innerW := layout.InnerW
+	renderContentW, renderInnerW := layout.ContentW, innerW
+	if m.sidebarResizeActive() {
+		if m.chatReflowContentW == 0 {
+			m.chatReflowContentW, m.chatReflowInnerW = renderContentW, renderInnerW
+		} else {
+			renderContentW, renderInnerW = m.chatReflowContentW, m.chatReflowInnerW
+		}
+	} else {
+		m.chatReflowContentW, m.chatReflowInnerW = renderContentW, renderInnerW
+	}
 	chatH := m.chatRect.H
 
 	activeAgent := m.agentForView()
@@ -618,7 +616,7 @@ func (m *App) configureChatScreenWithLayout(layout contentLayout) {
 		activeML.SetPhase(m.StatusBar.Phase())
 	}
 	activeML.SetChatAreaBounds(m.chatRect.Y, chatH)
-	activeML.SetSize(layout.ContentW, m.height)
+	activeML.SetSize(renderContentW, m.height)
 	activeML.BindScroll(m.chatScreen.ScrollModel())
 
 	activeAgentID := m.AgentMgr.ActiveID()
@@ -629,10 +627,12 @@ func (m *App) configureChatScreenWithLayout(layout contentLayout) {
 	// metrics, so it must be computed after this pass — otherwise a thinking
 	// pane that just appeared on this frame computes nesting=0 and shows no
 	// scrollbar until the next frame.
-	msgRows, paneLineMap, contentH := activeML.ExportMessageRows(innerW)
+	snapshot := activeML.ExportMessageRowsSnapshot(renderInnerW)
+	msgRows, paneLineMap, contentH := snapshot.Rows, snapshot.PaneLineMap, snapshot.ContentHeight
 	m.finishAgentChatScrollMetrics(activeAgentID, chatH, contentH)
 	if switched {
-		msgRows, paneLineMap, contentH = activeML.ExportMessageRows(innerW)
+		snapshot = activeML.ExportMessageRowsSnapshot(renderInnerW)
+		msgRows, paneLineMap, contentH = snapshot.Rows, snapshot.PaneLineMap, snapshot.ContentHeight
 		m.finishAgentChatScrollMetrics(activeAgentID, chatH, contentH)
 	}
 
@@ -648,7 +648,8 @@ func (m *App) configureChatScreenWithLayout(layout contentLayout) {
 		// The discovery pass above establishes each pane's vertical scroll
 		// metrics. Re-export once when the horizontal gutter footprint changes
 		// so the pane width and painted columns agree on this same frame.
-		msgRows, paneLineMap, contentH = activeML.ExportMessageRows(innerW)
+		snapshot = activeML.ExportMessageRowsSnapshot(renderInnerW)
+		msgRows, paneLineMap, contentH = snapshot.Rows, snapshot.PaneLineMap, snapshot.ContentHeight
 		m.finishAgentChatScrollMetrics(activeAgentID, chatH, contentH)
 		paneGutters = m.subPaneProjections.BuildPaneGutters(paneLineMap, m.PaneMgr)
 	}
@@ -656,7 +657,7 @@ func (m *App) configureChatScreenWithLayout(layout contentLayout) {
 	mainSBVisible := contentH > chatH
 
 	composeParams := shellchat.ComposeParams{
-		InnerW:        innerW,
+		InnerW:        renderInnerW,
 		PadLR:         layout.PadLR,
 		Theme:         m.Theme,
 		NestingLevel:  nestingLevel,
@@ -669,7 +670,7 @@ func (m *App) configureChatScreenWithLayout(layout contentLayout) {
 		},
 	}
 
-	paint := shellchat.PaintParams{Compose: composeParams, PaneLineMap: paneLineMap}
+	paint := shellchat.PaintParams{Generation: snapshot.Generation, ChangedIndices: snapshot.ChangedIndices, StructureChanged: snapshot.StructureChanged, Compose: composeParams, PaneLineMap: paneLineMap, OnPaneScroll: func(paneID string) { m.subPaneProjections.InvalidateSubPane(activeAgentID, paneID) }}
 	if m.chatScreen.HasActiveSelection() {
 		paint.HasSelection = true
 		paint.SelStartLine, paint.SelStartCol, paint.SelEndLine, paint.SelEndCol = m.chatScreen.SelectionRange()
@@ -677,8 +678,8 @@ func (m *App) configureChatScreenWithLayout(layout contentLayout) {
 	m.chatScreen.SetMessages(msgRows, paint)
 }
 
-// configureEditorScreen binds the DocumentEditor for the next paint. Editor
-// input remains viewmodel-routed (shelleditor.Screen.Handle is a no-op).
+// configureEditorScreen binds the DocumentEditor for the next paint. Pointer
+// input enters through shelleditor.Screen so root Host capture remains global.
 func (m *App) configureEditorScreen() {
 	if !m.isEditorActive() || m.editorScreen == nil {
 		return

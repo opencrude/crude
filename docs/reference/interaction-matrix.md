@@ -39,6 +39,8 @@ preserve or intentionally improve.
 | Auto-close pairs | ( [ { " ' | Type-over closers; openers wrap an active selection; Backspace deletes an empty pair |
 | Close tab / contextual back | Ctrl+W / Esc | Both use the dirty-safe close path; Ctrl+W is the explicit Close Tab command |
 | Git line edits / blame | (gutter + status) | `+` added / `~` modified in the gutter; cursor blame in the status bar; Copy blame commit on the editor context menu |
+| Horizontal scroll | Two-finger horizontal / wheel-left/right; Shift+vertical wheel fallback | Scrollbar extent is the widest line in the whole document and does not change with vertical viewport |
+| Text cursor | Shared 400 ms phase after 800 ms activity hold | Muted reverse-video block; idle shell remains at 2.5 FPS so blink never freezes |
 
 ## File tree context
 
@@ -109,8 +111,8 @@ tab attention until the panel is activated or closed.
 
 ## Known defects to fix during migration
 
-1. TextPrompt cursor is byte-offset naive.
-2. Form TextItem shift-selection incomplete.
+1. TextPrompt cursor byte offsets. **FIXED**: prompts use shared grapheme-aware TextField/TextEdit geometry.
+2. Form TextItem shift-selection. **FIXED**: shared TextField/TextArea own selection, drag capture, and shortcuts.
 3. FindInFiles reimplements input paint. **FIXED**: native `tui/screens/findinfiles` uses `ui.SearchField` surface paint and debounce identity.
 4. Multiple filter strings without selection/word motion/paste.
 5. Scrollbar colors hard-coded outside theme.

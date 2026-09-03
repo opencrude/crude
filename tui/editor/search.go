@@ -333,6 +333,7 @@ func (e *Editor) ReplaceCurrent() int {
 		e.buffer.MarkDirty()
 	}
 	e.notifyContentChanged()
+	e.markDocumentWidthAll()
 	e.invalidateEditorCaches()
 
 	// Recompute matches and try to keep the cursor near the same
@@ -375,6 +376,7 @@ func (e *Editor) ReplaceAll() int {
 		e.buffer.MarkDirty()
 	}
 	e.notifyContentChanged()
+	e.markDocumentWidthAll()
 	e.invalidateEditorCaches()
 	e.recomputeMatches()
 	return count

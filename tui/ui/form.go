@@ -465,6 +465,23 @@ func (f *Form) CancelPointerCapture() {
 	f.pointerField = -1
 }
 
+func (f *Form) NeedsFrame() bool {
+	if f.focused < 0 || f.focused >= len(f.fields) {
+		return false
+	}
+	field := f.fields[f.focused]
+	if field == nil {
+		return false
+	}
+	if area := field.Area(); area != nil {
+		return area.NeedsFrame()
+	}
+	if control := field.Control(); control != nil {
+		return control.NeedsFrame()
+	}
+	return false
+}
+
 func (f *Form) handleField(index int, ctx EventContext, evt Event) EventResult {
 	result := f.fields[index].Handle(ctx, evt)
 	f.syncFields()

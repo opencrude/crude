@@ -71,9 +71,8 @@ type TextArea struct {
 	// scroll tracks the first visible visual row when content overflows.
 	scroll int
 	// viewH is the allocated body height, used for scroll clamping.
-	viewH int
-	// lastInputTime tracks the last edit for cursor solid-phase rendering.
-	lastInputTime time.Time
+	viewH  int
+	cursor CursorBlinkState
 	// hoverFlat is the flat rune index under the pointer (-1 = none). It
 	// drives chip hover highlighting; updated on every mouse motion over
 	// the text body, independent of selection drags.
@@ -175,6 +174,7 @@ func (t *TextArea) PasteText(text string) {
 	t.EnsureCursorVisible()
 }
 func (t *TextArea) PasteActive() bool { return !t.readOnly }
+func (t *TextArea) NeedsFrame() bool  { return true }
 
 // Value returns the full text content.
 func (t *TextArea) Value() string { return t.edit.Value() }
@@ -182,7 +182,7 @@ func (t *TextArea) Value() string { return t.edit.Value() }
 // SetValue replaces the content and places the cursor at the end.
 func (t *TextArea) SetValue(s string) {
 	t.edit.SetValue(s)
-	t.lastInputTime = time.Now()
+	t.cursor.MarkActivity()
 	t.EnsureCursorVisible()
 }
 
@@ -190,7 +190,7 @@ func (t *TextArea) SetValue(s string) {
 func (t *TextArea) Clear() {
 	t.edit.Clear()
 	t.scroll = 0
-	t.lastInputTime = time.Now()
+	t.cursor.MarkActivity()
 }
 
 // Len returns the total rune count including newlines.
@@ -236,7 +236,7 @@ func (t *TextArea) Lines() [][]rune { return t.edit.Lines() }
 // InsertString inserts a string at the cursor, handling newlines.
 func (t *TextArea) InsertString(s string) {
 	t.edit.InsertString(s)
-	t.lastInputTime = time.Now()
+	t.cursor.MarkActivity()
 	t.EnsureCursorVisible()
 }
 
@@ -378,8 +378,8 @@ func (t *TextArea) EnsureCursorVisible() {
 //   - Continuation/wrapped rows: 2-space indent, then text.
 //   - Text is painted with InputText (Fg) foreground.
 //   - Atomic ranges (@reference chips) are painted bold Accent2.
-//   - The cursor is an overlay-only reverse-video block: solid for 800ms
-//     after input, then blinking by BlinkOnTime. It preserves the grapheme
+//   - The cursor is an overlay-only reverse-video block: solid after input,
+//     then blinking from PaintContext.Frame through CursorBlinkState. It preserves the grapheme
 //     under the cursor and never shifts text or consumes layout width.
 //   - Selection is painted with a Selection background.
 func (t *TextArea) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintContext) {
@@ -394,6 +394,10 @@ func (t *TextArea) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pain
 	if t.tokens != nil {
 		st := ResolveControlState(false, ctx.Focused, false, false, ctx.Hovered)
 		fg, bg, _ = t.tokens.InputColors(st)
+	}
+	cursorFG := fg
+	if t.tokens != nil {
+		cursorFG = t.tokens.Color(ColorCursor)
 	}
 	if t.bgSet {
 		bg = t.bg
@@ -412,8 +416,7 @@ func (t *TextArea) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pain
 	}
 	prefW := t.promptPrefixWidth()
 	textX := ox + prefW
-	cursorVisible := ctx.Focused &&
-		(time.Since(t.lastInputTime) < 800*time.Millisecond || BlinkOnTime(time.Now()))
+	cursorVisible := ctx.Focused && t.cursor.Visible(ctx.Frame)
 
 	// Placeholder when empty
 	if t.edit.Len() == 0 && t.placeholder != "" {
@@ -433,7 +436,7 @@ func (t *TextArea) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pain
 		}
 		buf.WriteString(textX, oy, ph, phFG, bg, cell.AttrItalic)
 		if cursorVisible {
-			PaintBlockCursor(buf, textX, oy, fg, bg)
+			PaintBlockCursor(buf, textX, oy, cursorFG, bg)
 		}
 		return
 	}
@@ -475,7 +478,7 @@ func (t *TextArea) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pain
 			t.paintSegment(buf, textX, screenY, textW, logLine, flatOffset,
 				lineTokenStart, lineTokenEnd, isCursorSeg,
 				selStart, selEnd, cursorVisible, ctx.Focused,
-				fg, bg, selBG)
+				fg, cursorFG, bg, selBG)
 
 			visRow++
 		}
@@ -487,7 +490,7 @@ func (t *TextArea) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pain
 		if oy < oy+r.H {
 			t.paintPromptPrefix(buf, ox, oy, fg, bg, true)
 			if cursorVisible {
-				PaintBlockCursor(buf, textX, oy, fg, bg)
+				PaintBlockCursor(buf, textX, oy, cursorFG, bg)
 			}
 		}
 	}
@@ -518,7 +521,7 @@ func (t *TextArea) paintPromptPrefix(buf *surface.CellBuffer, x, y int, fg, bg c
 
 func (t *TextArea) paintSegment(buf *surface.CellBuffer, x, y, width int, line []rune,
 	flatOffset, start, end int, isCursorSeg bool, selStart, selEnd int,
-	cursorVisible, focused bool, fg, bg, selBG cell.Color) {
+	cursorVisible, focused bool, fg, cursorFG, bg, selBG cell.Color) {
 
 	cursorPos := t.edit.CursorFlat()
 	col := 0
@@ -532,7 +535,7 @@ func (t *TextArea) paintSegment(buf *surface.CellBuffer, x, y, width int, line [
 			label := string(labelRunes)
 			cursorInChip := focused && isCursorSeg && cursorPos >= ar.Start && cursorPos < ar.End
 			col += t.paintAtomicChip(buf, x+col, y, label, ar, cursorInChip,
-				cursorVisible, selStart, selEnd, fg, bg, selBG)
+				cursorVisible, selStart, selEnd, fg, cursorFG, bg, selBG)
 			pos += ar.End - ar.Start
 			continue
 		}
@@ -553,6 +556,7 @@ func (t *TextArea) paintSegment(buf *surface.CellBuffer, x, y, width int, line [
 		}
 		attr := cell.Attrs(0)
 		if cursorVisible && focused && isCursorSeg && cursorPos >= flatPos && cursorPos < flatPos+clusterLen {
+			cellFG = cursorFG
 			attr |= cell.AttrReverse
 		}
 		buf.WriteString(x+col, y, cluster, cellFG, cellBG, attr)
@@ -564,7 +568,7 @@ func (t *TextArea) paintSegment(buf *surface.CellBuffer, x, y, width int, line [
 	// End-of-line block cursor (after the last char on the cursor segment)
 	if cursorVisible && focused && isCursorSeg && cursorPos == flatOffset+end {
 		if col < width {
-			PaintBlockCursor(buf, x+col, y, fg, bg)
+			PaintBlockCursor(buf, x+col, y, cursorFG, bg)
 		}
 	}
 }
@@ -576,7 +580,7 @@ func (t *TextArea) paintSegment(buf *surface.CellBuffer, x, y, width int, line [
 // background. A visible text cursor reverses only the grapheme under it.
 func (t *TextArea) paintAtomicChip(buf *surface.CellBuffer, x, y int, label string,
 	ar AtomicRange, cursorInChip, cursorVisible bool,
-	selStart, selEnd int, fg, bg, selBG cell.Color) int {
+	selStart, selEnd int, fg, cursorFG, bg, selBG cell.Color) int {
 	chipFG := fg
 	chipBG := bg
 	if t.tokens != nil {
@@ -606,6 +610,7 @@ func (t *TextArea) paintAtomicChip(buf *surface.CellBuffer, x, y int, label stri
 		attr := cell.AttrBold
 		if cursorVisible && cursorInChip &&
 			cursorPos >= ar.Start+pos && cursorPos < ar.Start+pos+clusterLen {
+			cellFG = cursorFG
 			attr |= cell.AttrReverse
 		}
 		buf.WriteString(x+col, y, cluster, cellFG, cellBG, attr)
@@ -629,7 +634,7 @@ func (t *TextArea) Handle(ctx EventContext, evt Event) EventResult {
 	case EventCustom:
 		if paste, ok := evt.Custom.(tea.PasteMsg); ok {
 			t.edit.InsertString(paste.Content)
-			t.lastInputTime = time.Now()
+			t.cursor.MarkActivity()
 			t.EnsureCursorVisible()
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		}
@@ -768,7 +773,7 @@ func (t *TextArea) handleKey(m tea.KeyPressMsg) EventResult {
 	}
 	// All other keys (including Enter in multi-line mode) go to the engine
 	t.edit.handleKey(m)
-	t.lastInputTime = time.Now()
+	t.cursor.MarkActivity()
 	t.EnsureCursorVisible()
 	return EventResult{Handled: true, Invalidate: InvalidatePaint}
 }
@@ -794,13 +799,13 @@ func (t *TextArea) Update(msg tea.Msg, disabled bool) tea.Cmd {
 			return func() tea.Msg { return TextAreaSubmitEvent{Text: t.Value()} }
 		}
 		t.edit.handleKey(key)
-		t.lastInputTime = time.Now()
+		t.cursor.MarkActivity()
 		t.EnsureCursorVisible()
 		return nil
 	}
 	if paste, ok := msg.(tea.PasteMsg); ok {
 		t.edit.InsertString(paste.Content)
-		t.lastInputTime = time.Now()
+		t.cursor.MarkActivity()
 		t.EnsureCursorVisible()
 		return nil
 	}

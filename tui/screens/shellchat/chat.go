@@ -29,20 +29,22 @@ type chatLayout struct {
 // text selection live here; chatprojection.Renderer exports message rows.
 type Screen struct {
 	ui.Base
-	th         *theme.Theme
-	tokens     *ui.TokenSet
-	list       *ui.VirtualList
-	scrollbar  *ui.ScrollbarControl
-	selection  textSelection
-	wheel      ui.WheelAccelState
-	paneWheel  ui.WheelAccelState
-	paneDrag   *paneGutterDrag
-	paneHover  string
-	rows       []chatprojection.MessageRow
-	layout     chatLayout
-	paintState messagePaintState
-	width      int
-	height     int
+	th             *theme.Theme
+	tokens         *ui.TokenSet
+	list           *ui.VirtualList
+	scrollbar      *ui.ScrollbarControl
+	selection      textSelection
+	wheel          ui.WheelAccelState
+	paneWheel      ui.WheelAccelState
+	paneDrag       *paneGutterDrag
+	paneHover      string
+	rowsGeneration uint64
+	onPaneScroll   func(string)
+	rows           []chatprojection.MessageRow
+	layout         chatLayout
+	paintState     messagePaintState
+	width          int
+	height         int
 }
 
 // New creates an agent-chat shell screen.

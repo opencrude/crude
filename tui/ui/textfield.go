@@ -36,7 +36,7 @@ type TextField struct {
 	bgSet         bool
 	tokens        *TokenSet
 	selecting     bool
-	lastInputTime time.Time
+	cursor        CursorBlinkState
 	lastClickTime time.Time
 	lastClickX    int
 	clickCount    int
@@ -110,7 +110,7 @@ func (t *TextField) SetValue(s string) {
 	t.edit.SetValue(s)
 	t.viewStart = 0
 	t.viewReset = true
-	t.lastInputTime = time.Now()
+	t.cursor.MarkActivity()
 }
 
 // Value returns the field value.
@@ -133,6 +133,7 @@ func (t *TextField) IsSelecting() bool     { return t.selecting }
 func (t *TextField) CancelPointerCapture() { t.selecting = false }
 func (t *TextField) PasteText(text string) { t.edit.InsertRunes(text); t.ensureCursorVisible() }
 func (t *TextField) PasteActive() bool     { return !t.disabled && !t.readOnly }
+func (t *TextField) NeedsFrame() bool      { return !t.disabled }
 
 // ViewStart returns the horizontal viewport offset (visible runes).
 func (t *TextField) ViewStart() int { return t.viewStart }
@@ -234,6 +235,10 @@ func (t *TextField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pai
 	if t.tokens != nil {
 		fg, bg, _ = t.tokens.InputColors(st)
 	}
+	cursorFG := fg
+	if t.tokens != nil {
+		cursorFG = t.tokens.Color(ColorCursor)
+	}
 	if t.bgSet {
 		bg = t.bg
 	}
@@ -284,8 +289,8 @@ func (t *TextField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pai
 			phFG = t.tokens.Color(ColorMuted)
 		}
 		buf.WriteString(x, y, rendering.TruncateVisual(ph, cw, ""), phFG, bg, cell.AttrItalic)
-		if ctx.Focused && !t.disabled && t.cursorPaintVisible() {
-			PaintBlockCursor(buf, x, y, fg, bg)
+		if ctx.Focused && !t.disabled && t.cursor.Visible(ctx.Frame) {
+			PaintBlockCursor(buf, x, y, cursorFG, bg)
 		}
 		return
 	}
@@ -319,17 +324,13 @@ func (t *TextField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pai
 		col += width
 		pos += clusterLen
 	}
-	if ctx.Focused && !t.disabled && t.cursorPaintVisible() {
+	if ctx.Focused && !t.disabled && t.cursor.Visible(ctx.Frame) {
 		cur := min(t.edit.Cursor(), len(runes))
 		cx := rendering.VisibleWidth(string(runes[t.viewStart:cur]))
 		if cx >= 0 && cx < cw {
-			PaintBlockCursor(buf, x+cx, y, fg, bg)
+			PaintBlockCursor(buf, x+cx, y, cursorFG, bg)
 		}
 	}
-}
-
-func (t *TextField) cursorPaintVisible() bool {
-	return time.Since(t.lastInputTime) < 800*time.Millisecond || BlinkOnTime(time.Now())
 }
 
 // Handle implements keyboard and paste editing.
@@ -343,7 +344,7 @@ func (t *TextField) Handle(ctx EventContext, evt Event) EventResult {
 	case EventKey:
 		result := t.handleKey(evt.Key)
 		if result.Handled {
-			t.lastInputTime = time.Now()
+			t.cursor.MarkActivity()
 		}
 		return result
 	case EventCustom:
@@ -352,7 +353,7 @@ func (t *TextField) Handle(ctx EventContext, evt Event) EventResult {
 				return EventResult{Handled: true}
 			}
 			t.edit.InsertRunes(paste.Content)
-			t.lastInputTime = time.Now()
+			t.cursor.MarkActivity()
 			t.ensureCursorVisible()
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		}
@@ -388,7 +389,7 @@ func (t *TextField) Handle(ctx EventContext, evt Event) EventResult {
 			t.edit.SetCursor(idx, true)
 		}
 		t.selecting = true
-		t.lastInputTime = time.Now()
+		t.cursor.MarkActivity()
 		t.ensureCursorVisible()
 		return EventResult{Handled: true, Action: &Action{ID: "ui.capture"}, Invalidate: InvalidatePaint | InvalidateFocus}
 	case EventMouseMotion:

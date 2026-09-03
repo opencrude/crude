@@ -64,6 +64,12 @@ type Editor struct {
 	hScrollbarVisible bool
 	vScrollbarHovered bool
 	hScrollbarHovered bool
+	hLineWidths       []int
+	hDocumentWidth    int
+	hWidthRevision    uint64
+	hWidthDirty       map[int]bool
+	hWidthAllDirty    bool
+	hWidthMeasures    uint64
 	tokens            *ui.TokenSet
 	// statusChrome, when true, reserves the bottom row for a document footline.
 	// The main shell keeps this false — status lives in shellstatus.
@@ -84,10 +90,7 @@ type Editor struct {
 
 	open bool
 
-	cursorVisible bool
-	lastActivity  time.Time
-	lastToggle    time.Time
-	blinkActive   bool
+	cursorBlink ui.CursorBlinkState
 
 	selecting     bool // keyboard or mouse selection anchor is active
 	mouseDragging bool // true only while a mouse button drag is in progress
@@ -175,23 +178,20 @@ type HoverState struct {
 }
 
 const (
-	cursorBlinkInterval = 530 * time.Millisecond
-	tickInterval        = 100 * time.Millisecond
-	scrollMargin        = 3
-	tabWidth            = DefaultTabWidth
+	scrollMargin = 3
+	tabWidth     = DefaultTabWidth
 )
 
 func New(th *theme.Theme) *Editor {
 	e := &Editor{
-		th:            th,
-		buf:           NewPieceTable(),
-		scrollModel:   ui.NewScrollModel(),
-		tokens:        ui.NewTokenSet(th),
-		maxHistory:    500,
-		cursorVisible: true,
-		diagnostics:   make([]LSPDiagnostic, 0),
-		diagByLine:    make(map[int][]diagSpan),
-		search:        NewSearchState(),
+		th:          th,
+		buf:         NewPieceTable(),
+		scrollModel: ui.NewScrollModel(),
+		tokens:      ui.NewTokenSet(th),
+		maxHistory:  500,
+		diagnostics: make([]LSPDiagnostic, 0),
+		diagByLine:  make(map[int][]diagSpan),
+		search:      NewSearchState(),
 	}
 	e.sbCtrl = ui.NewScrollbarControl("editor/scrollbar", e.scrollModel, e.tokens)
 	e.hScrollModel = ui.NewScrollModel()
@@ -210,7 +210,7 @@ func NewPreview(th *theme.Theme, path, text string, firstLine int) *Editor {
 	e.title = filepath.Base(path)
 	e.buf.ReplaceAll(text)
 	e.open = true
-	e.cursorVisible = false
+	e.cursorBlink.MarkActivity()
 	if firstLine > 1 {
 		e.lineNumberOffset = firstLine - 1
 	}
@@ -248,12 +248,11 @@ func (e *Editor) Open(path string) error {
 	e.hSbCtrl.SetPointerTargetSize(1)
 	e.hScrollbarVisible = false
 	e.open = true
-	e.cursorVisible = true
-	e.blinkActive = false
-	e.lastActivity = time.Now()
+	e.cursorBlink.MarkActivity()
 	e.ClearSelection()
 	e.ClearHover()
 	e.invalidateEditorCaches()
+	e.markDocumentWidthAll()
 	e.initChroma()
 	e.startWatching()
 
@@ -283,12 +282,11 @@ func (e *Editor) OpenBuffer(buf *Buffer) {
 	e.hSbCtrl.SetPointerTargetSize(1)
 	e.hScrollbarVisible = false
 	e.open = true
-	e.cursorVisible = true
-	e.blinkActive = false
-	e.lastActivity = time.Now()
+	e.cursorBlink.MarkActivity()
 	e.ClearSelection()
 	e.ClearHover()
 	e.invalidateEditorCaches()
+	e.markDocumentWidthAll()
 	e.initChroma()
 	if e.filePath != "" {
 		e.startWatching()
@@ -305,6 +303,7 @@ func (e *Editor) ReplaceDocument(text string) {
 		e.modified = true
 	}
 	e.invalidateEditorCaches()
+	e.markDocumentWidthAll()
 	if e.cursor.Line >= e.LineCount() {
 		e.cursor.Line = max(0, e.LineCount()-1)
 	}
@@ -338,6 +337,7 @@ func (e *Editor) Reload() error {
 	e.chromaLineCache = nil
 	e.chromaDirtyFrom = 0
 	e.invalidateEditorCaches()
+	e.markDocumentWidthAll()
 	e.ClearHover()
 	e.notifyContentChanged()
 	return nil
@@ -361,6 +361,7 @@ func (e *Editor) InvalidateWidthProfile() {
 	e.lineRunesCache = nil
 	e.lineRunesCacheWidth = 0
 	e.lineGeomCache = nil
+	e.markDocumentWidthAll()
 }
 
 func (e *Editor) IsOpen() bool     { return e.open }
@@ -368,11 +369,6 @@ func (e *Editor) FilePath() string { return e.filePath }
 
 // ScrollY returns the first visible document line index.
 func (e *Editor) ScrollY() int { return e.scrollY }
-
-// CursorVisible returns true when the cursor should be drawn as visible
-// (solid or blinking-visible phase). Used by the viewmodel to avoid
-// re-rendering on blink ticks that don't change the cursor state.
-func (e *Editor) CursorVisible() bool { return e.cursorVisible }
 
 func (e *Editor) Title() string {
 	if e.Modified() {
@@ -416,6 +412,7 @@ func (e *Editor) LineText(line int) string {
 	return strings.TrimRight(string(b), "\n")
 }
 func (e *Editor) notifyContentChanged() {
+	e.markDocumentWidthChanged()
 	if e.onContentChanged != nil {
 		e.onContentChanged(e.filePath, string(e.buf.Bytes()))
 	}

@@ -65,6 +65,7 @@ type Emulator struct {
 	defBG           cell.Color
 	curFocused      bool
 	curBlinkOn      bool
+	curColor        cell.Color
 }
 
 // NewEmulator creates an 80x24 libghostty-vt terminal.
@@ -563,6 +564,13 @@ func (e *Emulator) SetDefaultColors(fg, bg cell.Color) {
 	br, bgG, bb := colorRGB(bg)
 	C.crude_set_default_fg(e.term, C.uint8_t(fr), C.uint8_t(fgG), C.uint8_t(fb))
 	C.crude_set_default_bg(e.term, C.uint8_t(br), C.uint8_t(bgG), C.uint8_t(bb))
+	e.invalidatePaint()
+}
+func (e *Emulator) SetCursorColor(color cell.Color) {
+	if e == nil || e.curColor.Equal(color) {
+		return
+	}
+	e.curColor = color
 	e.invalidatePaint()
 }
 

@@ -273,15 +273,15 @@ func TestScreenCursorTickReportsBlinkPhaseChanges(t *testing.T) {
 	if s.TickCursor(time.UnixMilli(0)) {
 		t.Fatal("unchanged cursor phase reported a visual change")
 	}
-	if !s.TickCursor(time.UnixMilli(cursorBlinkIdleDelay.Milliseconds())) {
+	if !s.TickCursor(time.UnixMilli(3 * ui.CursorBlinkHalfPeriodMS)) {
 		t.Fatal("cursor off phase did not report a visual change")
 	}
-	if !s.TickCursor(time.UnixMilli((cursorBlinkIdleDelay + cursorBlinkPeriod).Milliseconds())) {
+	if !s.TickCursor(time.UnixMilli(4 * ui.CursorBlinkHalfPeriodMS)) {
 		t.Fatal("cursor on phase did not report a visual change")
 	}
 	// Repeating the same phase must be a no-op so floating terminals do not
 	// repaint on unrelated fast ticks.
-	if s.TickCursor(time.UnixMilli((cursorBlinkIdleDelay + cursorBlinkPeriod).Milliseconds() + 100)) {
+	if s.TickCursor(time.UnixMilli(4*ui.CursorBlinkHalfPeriodMS + 100)) {
 		t.Fatal("unchanged on phase reported a visual change")
 	}
 }
@@ -293,17 +293,17 @@ func TestScreenCursorActivityStopsBlinkUntilIdle(t *testing.T) {
 	start := time.UnixMilli(0)
 	s.resetCursorBlink(start)
 
-	if !s.TickCursor(start.Add(cursorBlinkIdleDelay)) {
+	if !s.TickCursor(start.Add(3 * ui.CursorBlinkHalfPeriodMS * time.Millisecond)) {
 		t.Fatal("precondition: cursor did not enter its off phase")
 	}
-	activity := start.Add(cursorBlinkIdleDelay + 100*time.Millisecond)
+	activity := start.Add(1300 * time.Millisecond)
 	if !s.resetCursorBlink(activity) {
 		t.Fatal("activity did not make the hidden cursor immediately visible")
 	}
-	if s.TickCursor(activity.Add(cursorBlinkIdleDelay - time.Millisecond)) {
+	if s.TickCursor(activity.Add(ui.CursorActivityHoldMS*time.Millisecond - time.Millisecond)) {
 		t.Fatal("cursor blinked before the post-activity idle delay elapsed")
 	}
-	if !s.TickCursor(activity.Add(cursorBlinkIdleDelay)) {
+	if !s.TickCursor(activity.Add(ui.CursorActivityHoldMS * time.Millisecond)) {
 		t.Fatal("cursor did not resume blinking after becoming idle")
 	}
 }

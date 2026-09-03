@@ -267,6 +267,8 @@ type PointerHitBoundsProvider interface {
 	PointerHitBounds(screenBounds Rect) Rect
 }
 
+type FrameSensitive interface{ NeedsFrame() bool }
+
 // PointerCaptureCanceller is implemented by components that hold drag or
 // selection state across an active left-button capture. Host invokes
 // CancelPointerCapture when capture is cleared without a matching release.

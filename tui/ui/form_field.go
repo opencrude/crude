@@ -206,7 +206,14 @@ func (ff *FormField) Layout(ctx LayoutContext, r Rect) {
 	ff.SetBounds(r)
 	controlX, controlW := ff.controlX(r.W), ff.controlWidth(r.W)
 	if ff.control != nil {
-		ff.control.Layout(ctx, Rect{X: controlX + 1, Y: 0, W: max(1, controlW-2), H: 1})
+		if editorX := ff.compactEditorX(r.W); editorX >= 0 {
+			// Compact editor rows sit flush at the shared value column:
+			// TextField paints its value at its own bounds with no inset,
+			// so the first glyph lands on the table's second column.
+			ff.control.Layout(ctx, Rect{X: editorX, Y: 0, W: max(1, r.W-editorX), H: 1})
+		} else {
+			ff.control.Layout(ctx, Rect{X: controlX + 1, Y: 0, W: max(1, controlW-2), H: 1})
+		}
 	}
 	if ff.area != nil {
 		// Multi-line editor sits below the label row and spans the form width.
@@ -264,6 +271,20 @@ func (ff *FormField) controlX(width int) int {
 		return min(lw, width)
 	}
 	return lw + 1
+}
+
+// editorControlX resolves where the row's editor control starts. Compact
+// single-line rows join the shared compact table: their editor starts at the
+// plan's first value cell so the value lines up with the nav/cycle value
+// column around it (TableMinGap after the longest label) instead of hugging
+// its own label. Spacious forms and every other field type keep controlX.
+// compactEditorX returns -1 when the row cannot hold the table (narrow
+// dock), falling back to the label-hugging geometry.
+func (ff *FormField) editorControlX(width int) int {
+	if x := ff.compactEditorX(width); x >= 0 {
+		return x
+	}
+	return ff.controlX(width)
 }
 
 func (ff *FormField) controlWidth(width int) int {
@@ -365,9 +386,18 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 		return
 	}
 
-	controlX := x + ff.controlX(r.W)
+	// Compact editor rows align at the shared table column; every other row
+	// keeps the label-hugging control with a one-cell inset.
+	editorX := ff.compactEditorX(r.W)
+	controlX := x + ff.editorControlX(r.W)
 	controlW := ff.controlWidth(r.W)
+	if editorX >= 0 {
+		controlW = max(1, r.W-editorX)
+	}
 	contentX := controlX + 1
+	if editorX >= 0 {
+		contentX = controlX
+	}
 	contentW := max(1, controlW-2)
 	// Spacious settings raise the unfocused control so it reads as a field.
 	// Compact docks keep the chat surface and only highlight the focused row.
@@ -871,15 +901,8 @@ func (ff *FormField) paintCompactRow(buf *surface.CellBuffer, x, y, width int, c
 	if len(raw) == 0 {
 		return
 	}
+	cells, colMins := ff.compactCellMins(raw)
 	inherited := ff.field.Inherited
-	cells := padInheritedColumns(raw, inherited, max(len(ff.colWidths), len(raw)))
-	colMins := append([]int(nil), ff.colWidths...)
-	for len(colMins) < len(cells) {
-		colMins = append(colMins, 0)
-	}
-	for i, text := range cells {
-		colMins[i] = max(colMins[i], rendering.VisibleWidth(text))
-	}
 	// Reserve the nav chevron plus a small gutter on every compact row so
 	// Multi Agent's inherited column lands on the same cells as the agent
 	// rows and the trailing meta text ("inherited from workspace") never
@@ -960,9 +983,56 @@ func (ff *FormField) compactColumnsRaw() []string {
 			}
 		}
 		return cols
+	case FieldText, FieldPassword:
+		// Single-line editor rows join the shared compact table with one
+		// value cell so their editors start at the same label→value boundary
+		// as the nav/cycle rows around them (e.g. "Compact context at  85").
+		// Inheritance meta stays off editor rows; the editor paints the value
+		// alone. The cell feeds Form.tableColumnWidths so a long value widens
+		// the shared column for every row instead of clipping.
+		return []string{ff.field.Value.String()}
 	default:
 		return nil
 	}
+}
+
+// compactCellMins pads one row's cells to the form's shared column count and
+// merges their widths into the form-wide minimums, mirroring what
+// Form.tableColumnWidths measured for the whole form. Every compact row plans
+// against the same merged widths so a column never drifts between rows.
+func (ff *FormField) compactCellMins(raw []string) ([]string, []int) {
+	inherited := ff.field != nil && ff.field.Inherited
+	cells := padInheritedColumns(raw, inherited, max(len(ff.colWidths), len(raw)))
+	colMins := append([]int(nil), ff.colWidths...)
+	for len(colMins) < len(cells) {
+		colMins = append(colMins, 0)
+	}
+	for i, text := range cells {
+		colMins[i] = max(colMins[i], rendering.VisibleWidth(text))
+	}
+	return cells, colMins
+}
+
+// compactEditorX returns the field-relative x where a compact single-line
+// editor row (text/password) must place its control so the value lands in the
+// form's shared second column: exactly the first cell of the compact-table
+// plan every nav/cycle row paints. It returns -1 for rows that do not
+// participate (other form densities or field types, or rows too narrow to
+// hold the table) so callers fall back to the label-hugging control geometry.
+func (ff *FormField) compactEditorX(width int) int {
+	if !ff.compact || ff.field == nil {
+		return -1
+	}
+	if ff.field.Type != FieldText && ff.field.Type != FieldPassword {
+		return -1
+	}
+	_, colMins := ff.compactCellMins(ff.compactColumnsRaw())
+	chevronW := rendering.VisibleWidth(string(FirstRune(DefaultGlyphsFromTokens(ff.tokens).TreeCollapsed, '▸')))
+	plan := planCompactTable(width, ff.labelWidth(), chevronW+TableMinGap, colMins)
+	if x0 := plan.labelW + plan.gapL; x0 < width-1 {
+		return x0
+	}
+	return -1
 }
 
 func (ff *FormField) cycleDisplay() string {

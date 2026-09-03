@@ -8,8 +8,10 @@ import (
 	tea "charm.land/bubbletea/v2"
 )
 
+const IdleTickInterval = 400 * time.Millisecond
+
 func TickCmd() tea.Cmd {
-	return tea.Tick(400*time.Millisecond, func(t time.Time) tea.Msg {
+	return tea.Tick(IdleTickInterval, func(t time.Time) tea.Msg {
 		return TickMsg(t)
 	})
 }
