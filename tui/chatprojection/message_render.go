@@ -19,8 +19,9 @@ import (
 // PaintLines (never PreferANSI); lines is kept as a plain-text mirror for
 // selection/copy.
 type messageLines struct {
-	lines  []string
-	native []PaintLine
+	lines          []string
+	native         []PaintLine
+	frameSensitive bool
 }
 
 func (ml messageLines) withCursor(cursorIdx, spinFrame int, activeTyping bool) messageLines {
@@ -28,6 +29,7 @@ func (ml messageLines) withCursor(cursorIdx, spinFrame int, activeTyping bool) m
 		return ml
 	}
 	out := ml
+	out.frameSensitive = out.frameSensitive || !activeTyping
 	out.native = append([]PaintLine(nil), ml.native...)
 	out.native[cursorIdx] = appendBlockCursor(ml.native[cursorIdx], spinFrame, activeTyping)
 	out.lines = append([]string(nil), ml.lines...)
@@ -95,6 +97,7 @@ func renderUserMessage(msg types.ChatMessage, ctx renderContext, suppressHeader 
 		}
 	}
 	if msg.PendingBtw {
+		ml.frameSensitive = true
 		line := PaintLine{Spans: []RowSpan{
 			{Text: "│ ", Role: ui.ColorMuted},
 			{Text: ui.ActivityDot(ctx.spinFrame) + " ", Role: ui.ColorAccent},
@@ -201,6 +204,7 @@ func renderAssistantMessage(msg types.ChatMessage, ctx renderContext, suppressHe
 
 func renderThinkingMessage(msg types.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {
 	var ml messageLines
+	ml.frameSensitive = msg.ThinkingActive
 	if ctx.thinkingBodyOnly {
 		wrapped := rendering.WrapText(msg.Content, ctx.contentWidth)
 		bodyStart := len(ml.native)
@@ -350,7 +354,7 @@ func renderLifecycleMessage(msg types.ChatMessage, spinFrame int) messageLines {
 		{Text: ui.ActivityDot(spinFrame) + " ", Role: role},
 		{Text: label, Role: ui.ColorMuted},
 	}}
-	return messageLines{lines: []string{line.PlainText()}, native: []PaintLine{line}}
+	return messageLines{lines: []string{line.PlainText()}, native: []PaintLine{line}, frameSensitive: true}
 }
 
 func renderMessageContent(msg types.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {

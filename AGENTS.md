@@ -515,6 +515,11 @@ so an editor repaint is a cell fill plus a cached-color walk:
   viewport plus overscan and retains offscreen estimated heights until scroll
   exposes those rows. Never restore frame-time `EnsureHeights` for width-only
   changes; it caused multi-second release stalls on dense resumed sessions.
+- Dynamic rows declare frame sensitivity in their rendered projection metadata;
+  the renderer tracks those item IDs and invalidates only that set when the
+  shared phase changes. Never restore role/tool-specific tick classifiers or
+  broad tick invalidation. In-place metrics update through Conversation version
+  changes and invalidate their exact row independently of animation.
 - `m.cachedOutput` is presentation-only: `frameGate` reuses it while draining
   high-rate pointer/stream/PTY events, at most until one 16 ms deadline. Model
   mutations are never queued or dropped. Every presented frame still performs

@@ -12,9 +12,12 @@ import (
 	"crude/tui/ui"
 )
 
+func toolRowFrameSensitive(msg types.ChatMessage) bool {
+	return (msg.ToolStatus == "streaming" || msg.ToolStatus == "calling") && msg.ToolPreviewPhase != types.ToolPreviewDone && msg.ToolPreviewPhase != types.ToolPreviewError
+}
+
 func toolSpinnerRole(msg types.ChatMessage, titlePhase string) ui.SemanticColor {
-	isActive := (msg.ToolStatus == "streaming" || msg.ToolStatus == "calling") &&
-		msg.ToolPreviewPhase != types.ToolPreviewDone && msg.ToolPreviewPhase != types.ToolPreviewError
+	isActive := toolRowFrameSensitive(msg)
 	if isActive {
 		switch titlePhase {
 		case types.ToolPreviewPreparing:
@@ -52,8 +55,7 @@ func buildToolTitleLine(msg types.ChatMessage, titlePhase string, spinFrame int,
 			title = summary
 		}
 	}
-	isActive := (msg.ToolStatus == "streaming" || msg.ToolStatus == "calling") &&
-		msg.ToolPreviewPhase != types.ToolPreviewDone && msg.ToolPreviewPhase != types.ToolPreviewError
+	isActive := toolRowFrameSensitive(msg)
 
 	dot := "● "
 	if isActive {
@@ -151,6 +153,7 @@ func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth
 		titleWidth -= rendering.VisibleWidth(" ▸")
 	}
 	var out messageLines
+	out.frameSensitive = toolRowFrameSensitive(msg)
 	var titlePL PaintLine
 	if titleWidth > 0 {
 		titlePL = buildToolTitleLine(msg, titlePhase, spinFrame, max(1, titleWidth))

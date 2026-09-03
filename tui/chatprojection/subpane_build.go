@@ -52,7 +52,9 @@ func BuildSubPaneHeaderLine(header workspace.SubPaneHeaderView, width, spinFrame
 	}
 
 	pl := padPaintLine(PaintLine{Spans: spans}, width)
-	return NativeLine(pl)
+	line := NativeLine(pl)
+	line.FrameSensitive = !header.Done
+	return line
 }
 
 // BuildSubPaneSummaryLine builds the collapsed summary ("│ ● agent for 5.0s").

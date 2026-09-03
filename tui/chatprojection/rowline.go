@@ -74,9 +74,10 @@ func (pl PaintLine) PreferANSI() bool {
 // NativeLine) used by selection/copy. The legacy ANSI-only path (ANSILine)
 // has been removed — every row carries a Native PaintLine.
 type SubPaneLine struct {
-	Native    *PaintLine
-	Text      string
-	Separator bool
+	Native         *PaintLine
+	Text           string
+	Separator      bool
+	FrameSensitive bool
 }
 
 // PlainText returns selection/plain text for this row.
