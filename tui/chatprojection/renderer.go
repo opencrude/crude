@@ -67,6 +67,7 @@ type Renderer struct {
 	exportScrollY    int
 	exportViewportH  int
 	lazyWidthReflow  bool
+	frameSensitive   map[string]struct{}
 }
 
 type MessageRowsSnapshot struct {
@@ -97,6 +98,7 @@ func NewRenderer(t *theme.Theme) *Renderer {
 		streamNative:    make(map[string][]PaintLine),
 		streamNativeLen: make(map[string]int),
 		expanded:        make(map[string]bool),
+		frameSensitive:  make(map[string]struct{}),
 	}
 	r.tokens = ui.NewTokenSet(t)
 	return r
@@ -803,23 +805,51 @@ func (r *Renderer) EndStreamingCursor() {
 }
 
 func (r *Renderer) SetSpinFrame(f int) {
-	if ui.ActivityDot(r.spinFrame) != ui.ActivityDot(f) {
-		for _, message := range r.sync.Messages {
-			if message.PendingBtw {
-				message.CachedLines = nil
-				r.vl.InvalidateItem(message.InternalID)
-			}
-		}
+	if ui.ActivityDot(r.spinFrame) == ui.ActivityDot(f) {
+		r.spinFrame = f
+		return
 	}
 	r.spinFrame = f
+	for id := range r.frameSensitive {
+		if message := r.sync.MsgByID[id]; message != nil {
+			message.CachedLines = nil
+			r.vl.InvalidateItem(id)
+		}
+	}
+}
+
+func (r *Renderer) setFrameSensitive(id string, sensitive bool) {
+	if sensitive {
+		r.frameSensitive[id] = struct{}{}
+	} else {
+		delete(r.frameSensitive, id)
+	}
 }
 
 func (r *Renderer) SetActiveTyping(v bool) {
+	if r.activeTyping == v {
+		return
+	}
 	r.activeTyping = v
+	if id := r.streamingCursorOwnerID(); id != "" {
+		if message := r.sync.MsgByID[id]; message != nil {
+			message.CachedLines = nil
+		}
+		r.vl.InvalidateItem(id)
+	}
 }
 
 func (r *Renderer) SetPhase(p string) {
+	if r.phase == p {
+		return
+	}
 	r.phase = p
+	for _, message := range r.sync.Messages {
+		if message != nil && message.Role == types.RoleTool && toolRowFrameSensitive(*message) {
+			message.CachedLines = nil
+			r.vl.InvalidateItem(message.InternalID)
+		}
+	}
 }
 
 func (r *Renderer) ScrollToBottom() {
@@ -1268,12 +1298,14 @@ func (r *Renderer) renderItem(idx int, item *renderItem, width int) []string {
 		paneWidth := max(0, width-r.scrollbarFootprint())
 		expanded := r.disclosureState(msg) == DisclosureExpanded
 		paneLines := r.subPaneContentFn(msg.SubPaneID, paneWidth, maxH, r.spinFrame, expanded)
+		frameSensitive := false
 		result := make([]string, 0, len(paneLines)+1)
 		native := make([]PaintLine, 0, len(paneLines)+1)
 		item.PaneRows = 0
 		result = append(result, "")
 		native = append(native, buildPlainBodyLine(""))
 		for _, sl := range paneLines {
+			frameSensitive = frameSensitive || sl.FrameSensitive
 			if !sl.Separator {
 				item.PaneRows++
 			}
@@ -1289,6 +1321,7 @@ func (r *Renderer) renderItem(idx int, item *renderItem, width int) []string {
 			}
 		}
 		item.Native = native
+		r.setFrameSensitive(msg.InternalID, frameSensitive)
 		return result
 	}
 	item.PaneRows = 0
@@ -1461,6 +1494,7 @@ func (r *Renderer) renderSingleMessage(msg *types.ChatMessage) ([]string, []Pain
 	if isStreamingCursor {
 		ml = ml.withCursor(cursorIdx, r.spinFrame, r.activeTyping)
 	}
+	r.setFrameSensitive(origMsg.InternalID, ml.frameSensitive)
 
 	var lines []string
 	var native []PaintLine
@@ -1656,6 +1690,11 @@ func (r *Renderer) makeMdRenderer() *glamour.TermRenderer {
 
 func (r *Renderer) RebuildItems() {
 	r.lazyWidthReflow = false
+	for id := range r.frameSensitive {
+		if r.sync.MsgByID[id] == nil {
+			delete(r.frameSensitive, id)
+		}
+	}
 	items := make([]renderItem, len(r.sync.Messages))
 	for i := range r.sync.Messages {
 		items[i] = r.messageToItem(i)

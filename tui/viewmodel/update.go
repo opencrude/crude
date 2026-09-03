@@ -191,13 +191,6 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	}
 	m.subPaneProjections.TickAll(spinFrame)
 	m.syncAgentWindowTabs()
-	for _, sp := range m.PaneMgr.Panes() {
-		if !sp.Done && m.subPaneProjections.Has(sp.ID) {
-			if ml := m.activeMsgList(); ml != nil {
-				ml.InvalidateSubPane(sp.ID)
-			}
-		}
-	}
 	if m.EditorState.Editor.IsOpen() && m.EditorState.Editor.DiskChanged() {
 		filePath := m.EditorState.Editor.FilePath()
 		var reloadedText string

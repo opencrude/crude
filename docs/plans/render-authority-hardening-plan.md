@@ -68,6 +68,12 @@ renderer owns a generation-keyed `MessageRowsSnapshot`; shellchat replaces its
 VirtualList only for structural/height/committed-width changes and applies
 stable-height row updates by index.
 
+Frame dependency is output metadata, not a role/type switch. A render that uses
+the shared frame marks its item frame-sensitive; the renderer retains those IDs
+and invalidates only them when the 400 ms phase changes. In-place lifecycle,
+context-upload, tool-progress, and provider-wait metrics flow through canonical
+Conversation source versions and update the exact projected row.
+
 ### 3. One frame clock
 
 `App.SpinFrame` is Unix milliseconds from the scheduler tick and is passed
@@ -129,6 +135,12 @@ for terminals that encode two-finger horizontal gestures that way.
 - `TestDocumentWidthIndexIsIncrementalForOrdinaryEdit`: 10,000-line initial
   index, at most one line measurement after an ordinary edit, zero after a
   vertical scroll.
+- `TestRenderDeclaredFrameDependenciesAnimateWithoutStaticInvalidation` and
+  `TestAgentWindowDynamicRowsFollowFrameAndSourceDependencies`: rendered output
+  declares animation dependency, all active circles advance in agent windows,
+  and static rows remain retained.
+- `TestLifecycleMetricSourceVersionUpdatesExactRow`: in-place context upload
+  and progress metrics advance the exact row through Conversation versioning.
 - `BenchmarkPointerMotionCoalesced`: about 12 µs, 9,835 B, 42 allocations.
 - `BenchmarkAgentSwitchWarm_80Msgs`: about 234 µs, 70,612 B, 362 allocations.
 - Dense 500-message resize frame: reduced from about 7.7 ms / 2.22 MB /

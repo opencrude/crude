@@ -63,3 +63,74 @@ func TestWidthOnlyReflowLazilyUpdatesRowsAsTheyEnterViewport(t *testing.T) {
 		t.Fatalf("tail row remained at stale width: old=%d new=%d", oldTailHeight, got)
 	}
 }
+
+func TestRenderDeclaredFrameDependenciesAnimateWithoutStaticInvalidation(t *testing.T) {
+	r := NewRenderer(theme.DefaultDark())
+	r.SetChatAreaBounds(0, 30)
+	r.SetSize(80, 30)
+	messages := []types.ChatMessage{{InternalID: "static", Role: types.RoleAssistant, Content: "static"}, {InternalID: "status", Role: types.RoleStatus, LifecyclePhase: "preparing"}, {InternalID: "thinking", Role: types.RoleThinking, Content: "thinking", ThinkingActive: true}, {InternalID: "tool", Role: types.RoleTool, ToolName: "read_file", ToolStatus: "streaming", ToolPreviewPhase: types.ToolPreviewStreaming}, {InternalID: "btw", Role: types.RoleUser, Content: "later", PendingBtw: true}}
+	r.SetSpinFrame(0)
+	r.SyncMessages(messages, 1)
+	first := r.ExportMessageRowsSnapshot(76)
+	r.SetSpinFrame(ui.ActivityBlinkPhaseMillis)
+	second := r.ExportMessageRowsSnapshot(76)
+	if second.Generation == first.Generation || second.StructureChanged {
+		t.Fatalf("animation snapshot=%+v", second)
+	}
+	changed := map[int]bool{}
+	for _, index := range second.ChangedIndices {
+		changed[index] = true
+	}
+	if changed[0] || !changed[1] || !changed[2] || !changed[3] || !changed[4] {
+		t.Fatalf("animated indices=%v", second.ChangedIndices)
+	}
+	for _, index := range []int{1, 2, 3, 4} {
+		if !strings.Contains(strings.Join(second.Rows[index].Lines, "\n"), "○") {
+			t.Fatalf("row %d did not advance hollow phase: %v", index, second.Rows[index].Lines)
+		}
+	}
+}
+
+func TestLifecycleMetricSourceVersionUpdatesExactRow(t *testing.T) {
+	r := NewRenderer(theme.DefaultDark())
+	r.SetChatAreaBounds(0, 10)
+	r.SetSize(80, 20)
+	base := types.ChatMessage{InternalID: "status", Role: types.RoleStatus, LifecyclePhase: "preparing", LifecycleProgress: 10, LifecycleUploadedBytes: 10, LifecycleTotalBytes: 100}
+	r.SyncMessages([]types.ChatMessage{base}, 1)
+	first := r.ExportMessageRowsSnapshot(76)
+	base.LifecycleProgress = 75
+	base.LifecycleUploadedBytes = 75
+	r.SyncMessages([]types.ChatMessage{base}, 2)
+	second := r.ExportMessageRowsSnapshot(76)
+	if second.Generation == first.Generation || len(second.ChangedIndices) != 1 || second.ChangedIndices[0] != 0 {
+		t.Fatalf("metric delta=%+v", second)
+	}
+	plain := strings.Join(second.Rows[0].Lines, " ")
+	if !strings.Contains(plain, "75%") || !strings.Contains(plain, "75 B / 100 B") {
+		t.Fatalf("metric row=%q", plain)
+	}
+}
+
+func TestStreamingCursorDependencyChangesWithTypingState(t *testing.T) {
+	r := NewRenderer(theme.DefaultDark())
+	r.SetChatAreaBounds(0, 8)
+	r.SetSize(60, 20)
+	r.SetStreaming(true)
+	r.SetActiveTyping(true)
+	r.SyncMessages([]types.ChatMessage{{InternalID: "assistant", Role: types.RoleAssistant, Content: "working"}}, 1)
+	r.SetSpinFrame(ui.ActivityBlinkPhaseMillis)
+	solid := r.ExportMessageRowsSnapshot(56)
+	if !strings.Contains(strings.Join(solid.Rows[0].Lines, ""), "█") {
+		t.Fatal("active typing cursor is not solid")
+	}
+	r.SetActiveTyping(false)
+	hollow := r.ExportMessageRowsSnapshot(56)
+	if strings.Contains(strings.Join(hollow.Rows[0].Lines, ""), "█") {
+		t.Fatal("idle cursor ignored hollow frame")
+	}
+	r.SetSpinFrame(0)
+	filled := r.ExportMessageRowsSnapshot(56)
+	if !strings.Contains(strings.Join(filled.Rows[0].Lines, ""), "█") || filled.Generation == hollow.Generation {
+		t.Fatal("frame dependency did not restore filled cursor")
+	}
+}
