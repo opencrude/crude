@@ -116,11 +116,13 @@ row — that inherited `·` shares the agent table's last column. Enter on
 a role opens its overrides; Enter on Provider or Model opens a
 filterable picker page. Filter inputs use `FilterSurface`
 (`ColorPopupSubtleBg`), never the dock fill. Docked forms are compact:
-title + rule, one line per field, a shared value column. Leftover
-width is distributed as space after the label and before inherited
-text (not filler periods). `·` is a column separator only. Labels and
-values use `ColorFg`; inherited/meta use `ColorMuted`. Up/Down
-cycle fields and the left-aligned Save/Cancel/Reset
+title + rule, one line per field, a shared value column — every
+second-column value (nav columns, cycle controls, and single-line
+editors such as `Compact context at 85`) paints in that one column.
+Leftover width is distributed as space after the label and before
+inherited text (not filler periods). `·` is a column separator only.
+Labels and values use `ColorFg`; inherited/meta use `ColorMuted`.
+Up/Down cycle fields and the left-aligned Save/Cancel/Reset
 row; Esc closes or goes back. Agent rows keep a trailing `▸`
 (`TreeCollapsed`). Never paint `❯`.
 

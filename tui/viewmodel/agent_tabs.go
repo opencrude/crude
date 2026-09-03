@@ -320,15 +320,7 @@ func (m *App) switchToAgentView(agentID string) {
 
 	curr := m.AgentMgr.ActiveID()
 	if prev != curr {
-		if prev != "" {
-			if m.subPaneProjections.Has(prev) {
-				m.subPaneProjections.InvalidateAllMessages(prev)
-			}
-		}
 		if curr != "" {
-			if m.subPaneProjections.Has(curr) {
-				m.subPaneProjections.InvalidateAllMessages(curr)
-			}
 			if usage, ok := m.AgentUsage(curr); ok && m.StatusBar != nil {
 				m.StatusBar.UpdateUsage(usage.Prompt, usage.Completion, usage.Cached, usage.Cost, usage.ContextWindow, usage.ContextUsed, usage.Estimated, usage.CostUpperBound)
 			}

@@ -228,11 +228,11 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 			}
 		}
 	}
-	if ctx.Focused && e.cursorVisible {
+	if ctx.Focused && e.cursorBlink.Visible(ctx.Frame) {
 		cursorX := sw + e.cursor.Col - e.scrollX
 		cursorY := e.cursor.Line - e.scrollY
 		if cursorX >= sw && cursorX < sbX && cursorY >= 0 && cursorY < bodyH {
-			ui.PaintBlockCursor(buf, cursorX, cursorY, e.cellColor(e.th.Colors.Fg), bgColor)
+			ui.PaintBlockCursor(buf, cursorX, cursorY, e.tokens.Color(ui.ColorCursor), bgColor)
 		}
 	}
 

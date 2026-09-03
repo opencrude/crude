@@ -22,6 +22,8 @@ type ComponentWidget struct {
 	// the widget becomes window content so in-place visual changes (focus,
 	// hover) reach the compositor's cached-surface check.
 	markContentDirty func()
+	lastFrame        int
+	frameKnown       bool
 }
 
 // NewComponentWidget wraps root for use as FloatingWindow content.
@@ -71,6 +73,15 @@ func (c *ComponentWidget) MarkContentDirty() {
 	if c != nil && c.markContentDirty != nil {
 		c.markContentDirty()
 	}
+}
+
+func (c *ComponentWidget) NeedsFrame() bool {
+	if c == nil || c.host == nil {
+		return false
+	}
+	component := c.host.registry[c.host.Focused()]
+	sensitive, ok := component.(FrameSensitive)
+	return ok && sensitive.NeedsFrame()
 }
 
 // SetMarkContentDirty installs the compositor dirty bridge (WM-side wiring).
@@ -124,6 +135,14 @@ func (c *ComponentWidget) Render(surf *surface.Surface, ctx *wm.RenderContext) {
 	if ctx != nil && ctx.Theme != nil && c.host.Theme() != ctx.Theme {
 		c.host.SetTheme(ctx.Theme)
 		applyTokenSet(c.host.Root(), c.host.Tokens())
+	}
+	if ctx != nil {
+		if !c.frameKnown || c.lastFrame != ctx.SpinFrame {
+			c.host.SetFrame(ctx.SpinFrame)
+			c.host.MarkPaint()
+			c.lastFrame = ctx.SpinFrame
+			c.frameKnown = true
+		}
 	}
 	c.host.Resize(w, h)
 	c.host.Layout()

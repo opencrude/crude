@@ -9,13 +9,17 @@ import (
 
 // PaintParams carries per-frame compose/selection state for message RowPainter.
 type PaintParams struct {
-	Compose      ComposeParams
-	PaneLineMap  []chatprojection.PaneLineInfo
-	HasSelection bool
-	SelStartLine int
-	SelStartCol  int
-	SelEndLine   int
-	SelEndCol    int
+	Generation       uint64
+	ChangedIndices   []int
+	StructureChanged bool
+	Compose          ComposeParams
+	PaneLineMap      []chatprojection.PaneLineInfo
+	HasSelection     bool
+	SelStartLine     int
+	SelStartCol      int
+	SelEndLine       int
+	SelEndCol        int
+	OnPaneScroll     func(string)
 }
 
 type messagePaintState struct {
@@ -36,11 +40,41 @@ func (s *Screen) SetMessages(rows []chatprojection.MessageRow, paint PaintParams
 	if s == nil {
 		return
 	}
+	oldLen := len(s.rows)
 	s.rows = rows
+	s.onPaneScroll = paint.OnPaneScroll
 	s.layout.padLR = paint.Compose.PadLR
 	s.layout.mainSBVisible = paint.Compose.MainSBVisible
+	sameRows := paint.Generation != 0 && s.rowsGeneration == paint.Generation
+	starts := s.paintState.globalStart
+	if sameRows {
+		hasSel := paint.HasSelection || s.selection.HasActive()
+		selSL, selSC, selEL, selEC := paint.SelStartLine, paint.SelStartCol, paint.SelEndLine, paint.SelEndCol
+		if hasSel && !paint.HasSelection && s.selection.HasActive() {
+			selSL, selSC, selEL, selEC = s.selection.Range()
+		}
+		s.paintState = messagePaintState{compose: paint.Compose, paneLineMap: paint.PaneLineMap, globalStart: starts, hasSel: hasSel, selSL: selSL, selSC: selSC, selEL: selEL, selEC: selEC}
+		return
+	}
+	if paint.Generation != 0 && s.rowsGeneration != 0 && !paint.StructureChanged && oldLen == len(rows) {
+		hasSel := paint.HasSelection || s.selection.HasActive()
+		selSL, selSC, selEL, selEC := paint.SelStartLine, paint.SelStartCol, paint.SelEndLine, paint.SelEndCol
+		if hasSel && !paint.HasSelection && s.selection.HasActive() {
+			selSL, selSC, selEL, selEC = s.selection.Range()
+		}
+		s.paintState = messagePaintState{compose: paint.Compose, paneLineMap: paint.PaneLineMap, globalStart: starts, hasSel: hasSel, selSL: selSL, selSC: selSC, selEL: selEL, selEC: selEC}
+		for _, i := range paint.ChangedIndices {
+			if i < 0 || i >= len(rows) {
+				continue
+			}
+			row := rows[i]
+			s.list.UpdateItem(i, ui.VirtItem{ID: row.ID, Height: max(1, len(row.Lines)), Payload: row})
+		}
+		s.rowsGeneration = paint.Generation
+		return
+	}
 	items := make([]ui.VirtItem, len(rows))
-	starts := make([]int, len(rows))
+	starts = make([]int, len(rows))
 	global := 0
 	for i, row := range rows {
 		starts[i] = global
@@ -72,6 +106,7 @@ func (s *Screen) SetMessages(rows []chatprojection.MessageRow, paint PaintParams
 	}
 	s.list.SetRowPainter(s.paintMessageRow)
 	s.list.SetItems(items)
+	s.rowsGeneration = paint.Generation
 	if s.list.Scroll().AutoScroll() {
 		s.list.StickToBottom()
 	}

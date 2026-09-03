@@ -103,11 +103,7 @@ func (m *App) openLocalHistoryForMessage(sessionID, messageID string) tea.Cmd {
 	m.overlayHost.Close(ui.OverlayLocalHistory)
 	screen := historyscreen.New(m.Theme)
 	m.historyScreen = screen
-	w, h := min(82, max(1, m.width-4)), min(28, max(1, m.height-4))
-	minW, minH := min(58, w), min(16, h)
-	frame := ui.NewWindowFrameWidget(m.Theme, ui.NewID(ui.RootID, "local-history-frame"), ui.FrameWindow, "Local History", screen, nil, true, w, h)
-	win := wm.NewFloatingWindow(string(ui.OverlayLocalHistory), "Local History", frame, w, h,
-		wm.WithDecoration(false), wm.WithFocusable(true), wm.WithResizable(true), wm.WithMinSize(minW, minH), wm.WithClickOutside(wm.ClickOutsideIgnore))
+	win := m.newLocalHistoryWindow(screen)
 	wm.CenterOnScreen(win, m.width, m.height)
 	m.overlayHost.Open(ui.OverlayLocalHistory, win, ui.ModalDialogPolicy(), func() { m.historyScreen = nil })
 	if messageID != "" {
@@ -130,6 +126,15 @@ func (m *App) openLocalHistoryForMessage(sessionID, messageID string) tea.Cmd {
 		}
 		return historyscreen.TimelineMsg{Records: records, Stats: stats}
 	}
+}
+
+func (m *App) newLocalHistoryWindow(screen *historyscreen.Screen) *wm.FloatingWindow {
+	w, h := fitFloatingSize(m.width, m.height, 82, 28, 58, 16)
+	minW, minH := min(58, w), min(16, h)
+	frame := ui.NewWindowFrameWidget(m.Theme, ui.NewID(ui.RootID, "local-history-frame"), ui.FrameWindow, "Local History", screen, nil, true, w, h)
+	win := wm.NewFloatingWindow(string(ui.OverlayLocalHistory), "Local History", frame, w, h,
+		wm.WithDecoration(true), wm.WithMovable(true), wm.WithClosable(true), wm.WithFocusable(true), wm.WithResizable(true), wm.WithModal(true), wm.WithMinSize(minW, minH), wm.WithMaxSize(max(w, m.width-2), max(h, m.height-2)), wm.WithClickOutside(wm.ClickOutsideIgnore))
+	return win
 }
 
 func (m *App) openHistoryCandidates(msg historyCandidatesMsg) tea.Cmd {

@@ -1,6 +1,7 @@
 package sessionsettings
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -408,6 +409,38 @@ func TestRolePageUsesBreadcrumbAndAlignedValues(t *testing.T) {
 	}
 	if colOf(provider, "OpenCode Go") != colOf(model, "deepseek-v4-flash") {
 		t.Fatalf("role values misaligned:\n%s\n%s", provider, model)
+	}
+}
+
+func TestRolePageTextEditorJoinsValueColumn(t *testing.T) {
+	settings := types.Settings{Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+		"default": {Provider: "opencode-go", Model: "deepseek-v4-flash"},
+	}}}
+	screen := New(theme.DefaultDark(), settings, settings, nil)
+	screen.ConfigureProviders([]types.ProviderPreset{{ID: "opencode-go", Name: "OpenCode Go"}}, map[string]types.ProviderConfig{
+		"opencode-go": {Model: "deepseek-v4-flash"},
+	})
+	screen.openRole("default")
+	screen.Layout(ui.LayoutContext{}, ui.Rect{W: 72, H: 12})
+	buf := surface.NewCellBuffer(72, 12)
+	screen.form.Paint(buf, 0, 0, ui.PaintContext{})
+	plain := bufferString(buf)
+	// The default compaction percent renders as the value of the compact
+	// single-line editor row.
+	compaction := rowContaining(buf, "Compact context at")
+	provider := rowContaining(buf, "Provider")
+	if compaction == "" || provider == "" {
+		t.Fatalf("missing role rows:\n%s", plain)
+	}
+	value := strconv.Itoa(types.DefaultContextCompactionPercent)
+	if !strings.Contains(compaction, value) {
+		t.Fatalf("compaction row missing %q:\n%s", value, compaction)
+	}
+	// The "85" must share the nav rows' value column (Ollama-style nav value
+	// cell), never dangle at the label edge.
+	if colOf(compaction, value) != colOf(provider, "OpenCode Go") {
+		t.Fatalf("compaction editor at col %d, want shared value column %d\n%s\n%s",
+			colOf(compaction, value), colOf(provider, "OpenCode Go"), provider, compaction)
 	}
 }
 

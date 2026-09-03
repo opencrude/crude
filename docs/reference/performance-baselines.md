@@ -11,7 +11,7 @@ Canonical plan: [`docs/plans/tui-component-system-plan.md`](../plans/tui-compone
 
 ## Purpose
 
-A CPU-hammering regression in a 25fps tick-driven TUI is almost never one
+A CPU-hammering regression in a tick-driven TUI is almost never one
 function getting fatter — it is a **call-frequency regression**: cached state
 re-dirtied every tick until steady state becomes a full-session re-render.
 Per-call benchmarks are nearly blind to it (every individual call still looks
@@ -77,6 +77,9 @@ review gate instead (see "Timing review guidance").
 | `TestTabRederivationRendersNothing` | Re-deriving the SAME agent tab per tick renders exactly zero. |
 | `TestEditorAgentSwitchWorkBounded` | editor↔agent round trips render at most one session pass; steady re-derivation after the switch is zero. |
 | `TestIdleWorkScalesSublinearlyWithSessionSize` | Idle work at 500 msgs ≤ 3× work at 50 msgs + constants (virtualization guard). |
+| `TestPointerBurstCoalescesPresentationWithoutBufferingGeometry` | 1,000 pointer mutations apply the latest geometry while full presentation stays frame-bounded. |
+| `TestAgentToAgentSwitchKeepsBothProjectionsWarm` | Focus-only agent switches render zero message rows. |
+| `TestIdleCadenceNeverDropsBelowTwoFPS` | Idle cadence remains 250–500 ms (2–4 FPS), preserving cursor animation without high CPU. |
 
 Two by-design carve-outs keep the budgets honest:
 
@@ -179,7 +182,7 @@ compare across power modes without noting it.
 |-----------|--------------------------|----------|-----------|
 | `DemoGalleryPaint_80x24` | 22,006-23,064 | 280 | 31 |
 | `DemoGalleryPaint_120x40` | 34,915-37,772 | 280 | 31 |
-| `DemoGalleryHandleKeyEditCycle` | 262-265 | 32 | 1 |
+| `DemoGalleryHandleKeyEditCycle` | 899-970 | 64 | 3 |
 | `Blit_80x24` | 5,219-5,354 | 0 | 0 |
 | `WriteString_Line` | 1,590-1,640 | 0 | 0 |
 | `FlattenZOrder_Nested` | 766-789 | 2,168 | 8 |
@@ -191,8 +194,14 @@ compare across power modes without noting it.
 | `EditorScrollRepaint_120x40` | 249,929-253,725 | 7,952 | 1,144 |
 | `ChatStreamPaint_80x24` | 106,946-109,622 | 6,747 | 122 |
 | `ChatStreamPaint_120x40` | 231,827-235,747 | 16,412 | 226 |
-| `BenchmarkIdleTick_200Msgs` | 248,317-279,222 | 101,345 | 506 |
-| `BenchmarkTabRederive_80Msgs` | 187,740-193,630 | 47,535 | 331-332 |
+| `BenchmarkIdleTick_200Msgs` | 191,188-197,788 | 12,233 | 269 |
+| `BenchmarkTabRederive_80Msgs` | 174,624-179,835 | 11,256-11,257 | 248 |
+| `BenchmarkPointerMotionCoalesced` | 12,207 | 9,835 | 42 |
+| `BenchmarkAgentSwitchWarm_80Msgs` | 199,537-209,565 | 12,281 | 262 |
+| `BenchmarkSidebarResizePresentedFrame_500Msgs` | 325,690-343,457 | 20,963 | 262 |
+| `BenchmarkSidebarResizeMutation_500Msgs` | 10,774-11,689 | 8,463 | 48 |
+| `BenchmarkDenseChatSingleRowChange_500Msgs` | 483,005-507,837 | 53,711-53,901 | 2,277 |
+| `BenchmarkDenseChatWidthCommit_500HeavyMsgs` | 950,978-1,318,798 | 377,352-377,462 | 1,810-1,811 |
 
 `DemoGalleryHandleKeyEditCycle` measures one insertion plus Backspace per op
 (keeps input length constant). The scenario benches measure a full
@@ -207,6 +216,29 @@ benches used to exceed their old byte ceilings (13,520B at 80x24, 25,152B at
 slice on every call. `lineGeomInfo` and `lineRenderInfo` now serve cache hits
 without allocating (~-68% bytes/op); the ceilings were tightened to the new
 measured values +20% headroom.
+
+**Text-edit undo note:** shared TextField undo retains one inverse-edit record.
+Insert+immediate-Backspace coalesces that record and measures 64B/3 allocs; its
+ceiling is 80B/3 allocs (20% byte headroom), rather than dropping undo semantics
+to preserve the obsolete 48B limit.
+
+**Interaction scheduling note:** model mutation remains immediate, but
+high-frequency pointer, stream, and terminal-output presentations are
+coalesced to one 16 ms deadline. Idle uses the existing 400 ms tick (2.5 FPS).
+`BenchmarkPointerMotionCoalesced` measures the cached-ANSI drain path;
+`BenchmarkAgentSwitchWarm_80Msgs` measures a complete warm focus transition.
+`BenchmarkDenseChatWidthCommit_500HeavyMsgs` measures the release/committed
+reflow frame with 500 rich twelve-line Markdown messages; only viewport plus
+overscan is synchronously reflowed.
+
+**Dense chat diagnosis:** before the single-authority fix, a 500-message
+presented resize frame cost 7.5-7.9 ms, 2.22 MB, and about 20,500 allocations.
+`computeContentLayout` wrote the intermediate width into the renderer and
+`configureChatScreenWithLayout` immediately wrote the committed width, causing
+two full cache invalidations per frame. Layout is now pure; projection
+configuration is the only writer. The generation-owned `MessageRowsSnapshot`
+and indexed row deltas keep one animated-row frame effectively constant from
+50 to 500 messages (~0.49 vs ~0.51 ms, equal allocation count).
 
 ## Timing review guidance
 
@@ -231,6 +263,11 @@ when measured time moves materially:
 | `ChatStreamPaint_120x40` | 500,000 ns/op |
 | `BenchmarkIdleTick_200Msgs` | 500,000 ns/op |
 | `BenchmarkTabRederive_80Msgs` | 400,000 ns/op |
+| `BenchmarkAgentSwitchWarm_80Msgs` | 350,000 ns/op |
+| `BenchmarkSidebarResizeMutation_500Msgs` | 50,000 ns/op |
+| `BenchmarkSidebarResizePresentedFrame_500Msgs` | 1,000,000 ns/op |
+| `BenchmarkDenseChatSingleRowChange_500Msgs` | 1,000,000 ns/op |
+| `BenchmarkDenseChatWidthCommit_500HeavyMsgs` | 2,000,000 ns/op |
 
 ## Interpretation Rules
 

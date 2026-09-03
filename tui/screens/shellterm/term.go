@@ -25,13 +25,6 @@ const (
 	ActionWrite   = "terminal.write"
 )
 
-const (
-	// Cursor activity holds the cursor visibly on for one phase. Once idle,
-	// alternating off/on phases begin at the same cadence.
-	cursorBlinkIdleDelay = 600 * time.Millisecond
-	cursorBlinkPeriod    = 600 * time.Millisecond
-)
-
 // Screen paints one PTY session and routes keys into it.
 type Screen struct {
 	ui.Base
@@ -211,12 +204,8 @@ func (s *Screen) TickCursor(now time.Time) bool {
 		return false
 	}
 	blinkOn := true
-	if s.focused && s.vt.CursorBlink() {
-		idleFor := now.Sub(s.lastCursorActivity)
-		if idleFor >= cursorBlinkIdleDelay {
-			phase := (idleFor - cursorBlinkIdleDelay) / cursorBlinkPeriod
-			blinkOn = phase%2 == 1
-		}
+	if s.focused {
+		blinkOn = ui.CursorPhaseVisible(int(now.UnixMilli()), int(s.lastCursorActivity.UnixMilli()), s.vt.CursorBlink())
 	}
 	return s.vt.SetCursorState(s.focused, blinkOn)
 }
@@ -298,6 +287,7 @@ func (s *Screen) applyDefaultColors() {
 		return
 	}
 	s.vt.SetDefaultColors(s.tokens.Color(ui.ColorFg), s.tokens.Color(ui.ColorBg))
+	s.vt.SetCursorColor(s.tokens.Color(ui.ColorCursor))
 }
 
 func (s *Screen) PreferredHeight(maxHeight int) int {
@@ -348,7 +338,11 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 		return
 	}
 	if s.vt != nil {
-		s.TickCursor(time.Now())
+		if ctx.Frame > 0 {
+			s.TickCursor(time.UnixMilli(int64(ctx.Frame)))
+		} else {
+			s.TickCursor(time.Now())
+		}
 		s.vt.Paint(buf, ox+r.X, oy+r.Y, fg, bg)
 		s.paintScrollbackScrollbar(buf, ox+r.X, oy+r.Y)
 	}

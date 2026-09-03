@@ -58,7 +58,24 @@ type Renderer struct {
 	// expanded records user-expanded messages; the absence of an ID means the
 	// deterministic default applies (see disclosure.go). Disclosure is TUI
 	// presentation state only — never persisted.
-	expanded map[string]bool
+	expanded         map[string]bool
+	exportSnapshot   MessageRowsSnapshot
+	exportRevision   uint64
+	exportWidth      int
+	exportScrollbarW int
+	exportGeneration uint64
+	exportScrollY    int
+	exportViewportH  int
+	lazyWidthReflow  bool
+}
+
+type MessageRowsSnapshot struct {
+	Rows             []MessageRow
+	PaneLineMap      []PaneLineInfo
+	ContentHeight    int
+	Generation       uint64
+	ChangedIndices   []int
+	StructureChanged bool
 }
 
 // SetThinkingBodyOnly switches retained thinking-pane projections between
@@ -202,6 +219,9 @@ func (r *Renderer) PaneLineMap() []PaneLineInfo {
 func (r *Renderer) SetPaneScrollbarWidth(w int) bool {
 	w = max(0, w)
 	if w != r.paneScrollbarW {
+		if r.exportSnapshot.Generation != 0 {
+			r.lazyWidthReflow = true
+		}
 		r.paneScrollbarW = w
 		for _, msg := range r.sync.Messages {
 			r.invalidateMessageCache(msg)
@@ -265,6 +285,9 @@ func (r *Renderer) SetSize(w, h int) {
 	w = max(0, w)
 	h = max(0, h)
 	if r.width != w {
+		if r.exportSnapshot.Generation != 0 {
+			r.lazyWidthReflow = true
+		}
 		for i := range r.sync.Messages {
 			r.sync.Messages[i].CachedLines = nil
 			r.sync.Messages[i].StreamCompletedLines = nil
@@ -920,26 +943,55 @@ func (r *Renderer) RenderVisible(width int) ([]string, []PaintLine) {
 	return visible, native
 }
 
-// ExportMessageRows renders all messages and returns message-level rows for
-// shellchat ui.VirtualList (Height = len(Lines)). PaneLineMap is indexed by
-// global content line.
+// ExportMessageRows returns the retained message projection for shellchat.
+// Source invalidation materializes all required rows; width-only changes reflow
+// viewport plus overscan and retain estimated offscreen heights.
 func (r *Renderer) ExportMessageRows(width int) ([]MessageRow, []PaneLineInfo, int) {
+	snapshot := r.ExportMessageRowsSnapshot(width)
+	return snapshot.Rows, snapshot.PaneLineMap, snapshot.ContentHeight
+}
+
+func (r *Renderer) ExportMessageRowsSnapshot(width int) MessageRowsSnapshot {
 	if r.chatAreaHeight <= 0 {
-		return nil, nil, 0
+		return MessageRowsSnapshot{}
 	}
-	// Nested pane scroll is presentation state outside this renderer's item
-	// cache. Re-render pane-owned items every frame so wheel/drag offsets are
-	// reflected immediately even after streaming has completed.
-	for _, msg := range r.sync.Messages {
-		if msg != nil && msg.SubPaneID != "" {
-			r.vl.InvalidateItem(msg.InternalID)
+	scrollbarW := r.ScrollbarWidth()
+	scrollY, viewportH := r.effectiveScrollY(), r.vl.ViewportHeight()
+	if r.exportSnapshot.Generation != 0 && r.exportRevision == r.vl.Revision() && r.exportWidth == width && r.exportScrollbarW == scrollbarW && r.exportScrollY == scrollY && r.exportViewportH == viewportH {
+		return r.exportSnapshot
+	}
+	structureChanged := r.exportSnapshot.Generation == 0 || r.exportWidth != width || r.exportScrollbarW != scrollbarW || len(r.exportSnapshot.Rows) != r.vl.ItemCount()
+	dirty := make([]int, 0)
+	oldHeights := make(map[int]int)
+	for i := 0; i < r.vl.ItemCount(); i++ {
+		item := r.vl.Item(i)
+		if item != nil && (item.Dirty || item.Rendered == nil) {
+			dirty = append(dirty, i)
+			oldHeights[i] = item.Height
 		}
 	}
 	r.prepareRender(width)
-	// shellchat owns the visible viewport and may scroll to any exported row.
-	// Materialize every dirty item before handing it to the second VirtualList;
-	// otherwise offscreen items become blank bands and lack pane gutter metadata.
-	r.vl.EnsureHeights(r.renderItem, width)
+	if !r.lazyWidthReflow {
+		r.vl.EnsureHeights(r.renderItem, width)
+	}
+	// Width-only virtualization materializes the visible range plus overscan;
+	// offscreen dirty items retain previous/estimated heights until exposed.
+	heightChanged := false
+	paneChanged := false
+	renderedDirty := dirty[:0]
+	for _, i := range dirty {
+		item := r.vl.Item(i)
+		if item == nil || item.Dirty {
+			continue
+		}
+		renderedDirty = append(renderedDirty, i)
+		if oldHeights[i] != item.Height {
+			heightChanged = true
+		}
+		if msg, ok := item.Data.(*types.ChatMessage); ok && msg != nil && msg.SubPaneID != "" {
+			paneChanged = true
+		}
+	}
 	r.vl.BuildIndex()
 	if r.autoScroll() {
 		r.vl.ScrollToBottom()
@@ -950,54 +1002,90 @@ func (r *Renderer) ExportMessageRows(width int) ([]MessageRow, []PaneLineInfo, i
 	} else {
 		r.vl.ClampScroll()
 	}
-	rows := make([]MessageRow, 0, r.vl.ItemCount())
-	for i := 0; i < r.vl.ItemCount(); i++ {
+	structureChanged = structureChanged || heightChanged || paneChanged
+	rows := r.exportSnapshot.Rows
+	changedIndices := renderedDirty
+	if structureChanged {
+		rows = make([]MessageRow, r.vl.ItemCount())
+		changedIndices = make([]int, r.vl.ItemCount())
+		for i := range changedIndices {
+			changedIndices[i] = i
+		}
+	}
+	for _, i := range changedIndices {
 		item := r.vl.Item(i)
 		if item == nil {
 			continue
 		}
-		subPaneID := ""
-		toggleLine := -1
-		toggleAny := false
-		if msg, ok := item.Data.(*types.ChatMessage); ok && msg != nil {
-			subPaneID = msg.SubPaneID
-			if r.hasDisclosure(msg) {
-				toggleLine = 0
-				toggleAny = r.disclosureState(msg) == DisclosureExpanded
-			}
-		}
-		lines := item.Rendered
-		if len(lines) == 0 {
-			lines = []string{""}
-		}
-		native := item.Native
-		if len(native) != len(lines) {
-			native = nil
-		}
-		if toggleLine >= 0 {
-			// The leading spacer occupies row 0 when present; the disclosure
-			// affordance lives on the message's first content row.
-			if toggleLine < len(lines) && strings.TrimSpace(lines[0]) == "" {
-				toggleLine = 1
-			}
-		}
-		rows = append(rows, MessageRow{
-			ID:         item.ID,
-			Lines:      lines,
-			Native:     native,
-			SubPaneID:  subPaneID,
-			Toggle:     toggleLine >= 0,
-			ToggleAny:  toggleAny,
-			ToggleLine: toggleLine,
-		})
+		rows[i] = r.messageRow(item)
 	}
-	paneMap := r.buildGlobalPaneLineMap()
-	return rows, paneMap, r.vl.TotalHeight()
+	paneMap := r.exportSnapshot.PaneLineMap
+	if structureChanged {
+		paneMap = r.buildGlobalPaneLineMap()
+	}
+	r.exportGeneration++
+	r.exportRevision = r.vl.Revision()
+	r.exportWidth = width
+	r.exportScrollbarW = r.ScrollbarWidth()
+	r.exportScrollY = r.effectiveScrollY()
+	r.exportViewportH = r.vl.ViewportHeight()
+	r.exportSnapshot = MessageRowsSnapshot{Rows: rows, PaneLineMap: paneMap, ContentHeight: r.vl.TotalHeight(), Generation: r.exportGeneration, ChangedIndices: changedIndices, StructureChanged: structureChanged}
+	if r.lazyWidthReflow {
+		remaining := false
+		for i := 0; i < r.vl.ItemCount(); i++ {
+			if item := r.vl.Item(i); item != nil && item.Dirty {
+				remaining = true
+				break
+			}
+		}
+		r.lazyWidthReflow = remaining
+	}
+	return r.exportSnapshot
+}
+
+func (r *Renderer) messageRow(item *renderItem) MessageRow {
+	subPaneID := ""
+	toggleLine := -1
+	toggleAny := false
+	if msg, ok := item.Data.(*types.ChatMessage); ok && msg != nil {
+		subPaneID = msg.SubPaneID
+		if r.hasDisclosure(msg) {
+			toggleLine = 0
+			toggleAny = r.disclosureState(msg) == DisclosureExpanded
+		}
+	}
+	lines := item.Rendered
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+	native := item.Native
+	if len(native) != len(lines) {
+		native = nil
+	}
+	if toggleLine >= 0 {
+		// The leading spacer occupies row 0 when present; the disclosure
+		// affordance lives on the message's first content row.
+		if toggleLine < len(lines) && strings.TrimSpace(lines[0]) == "" {
+			toggleLine = 1
+		}
+	}
+	return MessageRow{
+		ID:         item.ID,
+		Lines:      lines,
+		Native:     native,
+		SubPaneID:  subPaneID,
+		Toggle:     toggleLine >= 0,
+		ToggleAny:  toggleAny,
+		ToggleLine: toggleLine,
+	}
 }
 
 func (r *Renderer) prepareRender(width int) {
 	sbW := r.ScrollbarWidth()
 	if sbW != r.lastScrollbarW {
+		if r.exportSnapshot.Generation != 0 {
+			r.lazyWidthReflow = true
+		}
 		r.lastScrollbarW = sbW
 		for _, msg := range r.sync.Messages {
 			msg.CachedLines = nil
@@ -1058,27 +1146,33 @@ func (r *Renderer) invalidateStreamingCursorOwner() {
 }
 
 func (r *Renderer) buildGlobalPaneLineMap() []PaneLineInfo {
+	hasPane := false
+	for _, msg := range r.sync.Messages {
+		if msg != nil && msg.SubPaneID != "" {
+			hasPane = true
+			break
+		}
+	}
+	if !hasPane {
+		return nil
+	}
 	r.vl.BuildIndex()
 	total := r.vl.TotalHeight()
 	paneMap := make([]PaneLineInfo, total)
 	if len(r.sync.Messages) == 0 || total == 0 {
 		return paneMap
 	}
-	for globalLine := 0; globalLine < total; globalLine++ {
-		itemIdx, localLine := r.vl.ItemAtLine(globalLine)
-		if itemIdx < 0 || itemIdx >= len(r.sync.Messages) {
-			continue
-		}
-		msg := r.sync.Messages[itemIdx]
-		if msg.SubPaneID == "" {
+	for itemIdx, msg := range r.sync.Messages {
+		if msg == nil || msg.SubPaneID == "" {
 			continue
 		}
 		item := r.vl.Item(itemIdx)
-		if item != nil && localLine >= 1 && localLine <= item.PaneRows {
-			paneMap[globalLine] = PaneLineInfo{
-				PaneID:  msg.SubPaneID,
-				LineIdx: localLine - 2,
-			}
+		if item == nil {
+			continue
+		}
+		start := r.vl.LineOfItem(itemIdx)
+		for localLine := 1; localLine <= item.PaneRows && start+localLine < len(paneMap); localLine++ {
+			paneMap[start+localLine] = PaneLineInfo{PaneID: msg.SubPaneID, LineIdx: localLine - 2}
 		}
 	}
 	return paneMap
@@ -1561,6 +1655,7 @@ func (r *Renderer) makeMdRenderer() *glamour.TermRenderer {
 }
 
 func (r *Renderer) RebuildItems() {
+	r.lazyWidthReflow = false
 	items := make([]renderItem, len(r.sync.Messages))
 	for i := range r.sync.Messages {
 		items[i] = r.messageToItem(i)
@@ -1569,6 +1664,7 @@ func (r *Renderer) RebuildItems() {
 }
 
 func (r *Renderer) InvalidateAllMessages() {
+	r.lazyWidthReflow = false
 	perf.MarkCacheInvalidation()
 	for i := range r.sync.Messages {
 		r.invalidateMessageCache(r.sync.Messages[i])

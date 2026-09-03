@@ -4,6 +4,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/cell"
+	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -34,18 +35,12 @@ func (e *Editor) syncHorizontalScrollChrome(textW, bodyH int) bool {
 		e.hScrollbarVisible = false
 		return false
 	}
-	maxWidth := 0
-	last := min(e.buf.LineCount(), e.scrollY+bodyH)
-	for line := max(0, e.scrollY); line < last; line++ {
-		maxWidth = max(maxWidth, e.lineVisualWidth(line))
-	}
-	if e.cursor.Line >= 0 && e.cursor.Line < e.buf.LineCount() {
-		maxWidth = max(maxWidth, e.lineVisualWidth(e.cursor.Line))
-	}
+	maxWidth := e.documentVisualWidth()
 	if e.hScrollModel == nil {
 		e.hScrollModel = ui.NewScrollModel()
 	}
 	ui.SyncScrollModel(e.hScrollModel, maxWidth, textW, e.scrollX)
+	e.scrollX = e.hScrollModel.Offset()
 	if e.hSbCtrl == nil {
 		e.hSbCtrl = ui.NewScrollbarControl("editor/h-scrollbar", e.hScrollModel, e.tokens)
 		e.hSbCtrl.SetDirection(ui.Horizontal)
@@ -56,6 +51,80 @@ func (e *Editor) syncHorizontalScrollChrome(textW, bodyH int) bool {
 	}
 	e.hScrollbarVisible = e.hScrollModel.MaxOffset() > 0
 	return e.hScrollbarVisible
+}
+
+func (e *Editor) documentVisualWidth() int {
+	if e.buf == nil {
+		return 0
+	}
+	revision := e.buf.Revision()
+	count := e.buf.LineCount()
+	if e.hWidthRevision != revision {
+		e.hWidthAllDirty = true
+		e.hWidthRevision = revision
+	}
+	if e.hWidthAllDirty || len(e.hLineWidths) != count {
+		e.hLineWidths = make([]int, count)
+		e.hDocumentWidth = 0
+		for line := 0; line < count; line++ {
+			width := e.measureDocumentLineWidth(line)
+			e.hLineWidths[line] = width
+			e.hDocumentWidth = max(e.hDocumentWidth, width)
+		}
+		e.hWidthAllDirty = false
+		e.hWidthDirty = nil
+		return e.hDocumentWidth
+	}
+	for line := range e.hWidthDirty {
+		if line < 0 || line >= count {
+			continue
+		}
+		old := e.hLineWidths[line]
+		width := e.measureDocumentLineWidth(line)
+		e.hLineWidths[line] = width
+		if width > e.hDocumentWidth {
+			e.hDocumentWidth = width
+		} else if old == e.hDocumentWidth && width < old {
+			e.hDocumentWidth = 0
+			for _, candidate := range e.hLineWidths {
+				e.hDocumentWidth = max(e.hDocumentWidth, candidate)
+			}
+		}
+	}
+	e.hWidthDirty = nil
+	return e.hDocumentWidth
+}
+
+func (e *Editor) measureDocumentLineWidth(line int) int {
+	e.hWidthMeasures++
+	raw, err := e.buf.lineView(line)
+	if err != nil {
+		return 0
+	}
+	return rendering.VisibleWidth(ExpandTabs(string(raw), tabWidth))
+}
+
+func (e *Editor) markDocumentWidthChanged() {
+	if e.buf == nil {
+		return
+	}
+	revision := e.buf.Revision()
+	if len(e.hLineWidths) != e.buf.LineCount() {
+		e.hWidthAllDirty = true
+	} else {
+		if e.hWidthDirty == nil {
+			e.hWidthDirty = make(map[int]bool)
+		}
+		e.hWidthDirty[e.cursor.Line] = true
+	}
+	e.hWidthRevision = revision
+}
+func (e *Editor) markDocumentWidthAll() {
+	e.hWidthAllDirty = true
+	if e.buf != nil {
+		e.hWidthRevision = e.buf.Revision()
+	}
+	e.hWidthDirty = nil
 }
 
 func (e *Editor) paintHorizontalScrollbar(buf *surface.CellBuffer, x, y, width int) {

@@ -56,7 +56,7 @@ run_bench 'Benchmark(DemoGallery|Blit|WriteString|Flatten|FullRender|GenerateANS
 run_bench 'Benchmark(EditorPaint|EditorScrollRepaint)' ./tui/screens/shelleditor
 run_bench 'BenchmarkChatStreamPaint' ./tui/screens/shellchat
 # Scenario benches: steady-state work budgets (see scripts/perf_ceilings.txt).
-run_bench 'Benchmark(IdleTick|TabRederive)' ./tui/viewmodel
+run_bench 'Benchmark(IdleTick|TabRederive|PointerMotionCoalesced|AgentSwitchWarm|SidebarResizePresentedFrame_500Msgs|SidebarResizeMutation_500Msgs|DenseChatSingleRowChange_500Msgs|DenseChatWidthCommit_500HeavyMsgs)' ./tui/viewmodel
 
 if [[ $fail -ne 0 ]]; then
   echo "== BENCH GATE FAILED =="

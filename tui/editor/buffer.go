@@ -31,6 +31,7 @@ type PieceTable struct {
 	cachedBytes []byte
 	lineOffsets []int
 	cacheValid  bool
+	revision    uint64
 }
 
 func NewPieceTable() *PieceTable {
@@ -50,6 +51,7 @@ func (pt *PieceTable) Load(filePath string) error {
 			pt.add = []byte{}
 			pt.pieces = []piece{{buffer: originalBuffer, start: 0, length: 0}}
 			pt.modified = false
+			pt.revision++
 			pt.invalidateCache()
 			return nil
 		}
@@ -61,6 +63,7 @@ func (pt *PieceTable) Load(filePath string) error {
 	pt.pieces = []piece{{buffer: originalBuffer, start: 0, length: len(content)}}
 	pt.filePath = filePath
 	pt.modified = false
+	pt.revision++
 	pt.invalidateCache()
 	return nil
 }
@@ -78,6 +81,7 @@ func (pt *PieceTable) ReplaceAll(text string) {
 	pt.add = []byte{}
 	pt.pieces = []piece{{buffer: originalBuffer, start: 0, length: len(text)}}
 	pt.modified = false
+	pt.revision++
 	pt.invalidateCache()
 }
 
@@ -130,6 +134,16 @@ func (pt *PieceTable) Lines() [][]byte {
 }
 
 func (pt *PieceTable) Line(index int) ([]byte, error) {
+	line, err := pt.lineView(index)
+	if err != nil {
+		return nil, err
+	}
+	out := make([]byte, len(line))
+	copy(out, line)
+	return out, nil
+}
+
+func (pt *PieceTable) lineView(index int) ([]byte, error) {
 	pt.ensureCache()
 	if index < 0 || index >= len(pt.lineOffsets) {
 		return nil, fmt.Errorf("line index out of bounds")
@@ -144,9 +158,7 @@ func (pt *PieceTable) Line(index int) ([]byte, error) {
 	if end < start {
 		end = start
 	}
-	out := make([]byte, end-start)
-	copy(out, pt.cachedBytes[start:end])
-	return out, nil
+	return pt.cachedBytes[start:end], nil
 }
 
 func (pt *PieceTable) LineCount() int {
@@ -232,6 +244,7 @@ func (pt *PieceTable) Insert(pos Position, text []byte) (EditInfo, error) {
 		pt.add = append(pt.add, text...)
 		pt.pieces[0] = piece{buffer: addBuffer, start: 0, length: len(text)}
 		pt.modified = true
+		pt.revision++
 		pt.invalidateCache()
 		return EditInfo{}, nil
 	}
@@ -272,6 +285,7 @@ func (pt *PieceTable) Insert(pos Position, text []byte) (EditInfo, error) {
 
 	pt.pieces = newPieces
 	pt.modified = true
+	pt.revision++
 	pt.invalidateCache()
 
 	return EditInfo{}, nil
@@ -316,6 +330,7 @@ func (pt *PieceTable) Delete(start, end Position) (EditInfo, error) {
 
 	pt.pieces = newPieces
 	pt.modified = true
+	pt.revision++
 	pt.invalidateCache()
 
 	return EditInfo{}, nil
@@ -347,3 +362,5 @@ func (pt *PieceTable) FilePath() string {
 func (pt *PieceTable) IsModified() bool {
 	return pt.modified
 }
+
+func (pt *PieceTable) Revision() uint64 { return pt.revision }

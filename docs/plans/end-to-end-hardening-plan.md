@@ -37,10 +37,10 @@ Canonical supporting documents remain authoritative for their areas:
 | Plan projection | LANDED | Short-description prompt/schema, completed strikethrough, active-step previous/current/next window |
 | Edit/write projection | LANDED, hardened | Exact spaces and tab-stop indentation, syntax-colored changed rows, hunk context/ellipsis, multi-file transitions |
 | Grep/read/search/command compact rows | LANDED | Compact title/count/duration rows; full operands and evidence only on disclosure |
-| Editor latency/backpressure | INVESTIGATED, implementation pending | Scenario counters and benchmark gate exist; profile input/update queue under burst |
+| Editor latency/backpressure | LANDED | Single presentation authority coalesces pointer/stream/PTY bursts at 16 ms without delaying mutations; sidebar drag defers chat reflow to release; warm tab switches retain caches; interaction benchmarks/gates pass |
 | Sidebar width and tab/prompt routing | LANDED, monitor | Shared configured width and window-authoritative active tab/prompt target |
-| Horizontal editor scrollbar | LANDED | Shared horizontal control, on-demand geometry, expanded pointer target, root-Host capture, and painted-content drag regression |
-| Message-scoped local-history undo | PLANNED | Detailed implementation in `undo-local-history-plan.md` |
+| Horizontal editor scrollbar | LANDED, hardened | Whole-document retained width index, O(1) ordinary line updates, stable viewport-independent extent, native SGR horizontal wheel plus Shift-wheel fallback |
+| Message-scoped local-history undo | LANDED | Full system in `undo-local-history-plan.md` |
 
 ## 3. Program Invariants
 

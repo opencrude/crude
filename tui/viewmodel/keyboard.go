@@ -795,22 +795,6 @@ func (m *App) pasteToWindowContent(fw *wm.FloatingWindow, msg tea.PasteMsg) tea.
 	return nil
 }
 
-func (m *App) dispatchEditorTick(msg any) []tea.Cmd {
-	var cmds []tea.Cmd
-	if m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen() {
-		cmd := m.EditorState.Editor.HandleEvent(msg)
-		if cmd != nil {
-			cmds = append(cmds, cmd)
-		}
-	}
-	return cmds
-}
-
-func (m *App) isEditorMsg(msg any) bool {
-	_, ok := msg.(editor.CursorBlinkMsg)
-	return ok
-}
-
 //  ─ LSP request commands             ──
 //
 // The functions below return a tea.Cmd that fires the LSP request in a

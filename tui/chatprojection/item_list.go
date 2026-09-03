@@ -89,6 +89,8 @@ type itemList struct {
 	bottomPadding int
 	lastRenderFn  func(idx int, item *renderItem, width int) []string
 	lastRenderW   int
+	revision      uint64
+	byID          map[string]int
 }
 
 func newItemList() *itemList {
@@ -96,12 +98,18 @@ func newItemList() *itemList {
 		overscan:      4,
 		scrollY:       0,
 		bottomPadding: 0,
+		byID:          make(map[string]int),
 	}
 }
 
 func (vl *itemList) SetItems(items []renderItem) {
 	vl.items = items
+	vl.byID = make(map[string]int, len(items))
+	for index := range items {
+		vl.byID[items[index].ID] = index
+	}
 	vl.indexDirty = true
+	vl.revision++
 }
 
 func (vl *itemList) Items() []renderItem {
@@ -121,36 +129,44 @@ func (vl *itemList) ItemCount() int {
 
 func (vl *itemList) AppendItem(item renderItem) {
 	vl.items = append(vl.items, item)
+	vl.byID[item.ID] = len(vl.items) - 1
 	vl.indexDirty = true
+	vl.revision++
 }
 
 func (vl *itemList) UpdateItemAt(idx int, item renderItem) {
 	if idx < 0 || idx >= len(vl.items) {
 		return
 	}
+	oldID := vl.items[idx].ID
 	vl.items[idx] = item
+	if oldID != item.ID {
+		delete(vl.byID, oldID)
+		vl.byID[item.ID] = idx
+	}
 	vl.indexDirty = true
+	vl.revision++
 }
 
 func (vl *itemList) InvalidateItem(id string) {
 	perf.MarkItemInvalidation()
-	for i := range vl.items {
-		if vl.items[i].ID == id {
-			vl.items[i].Dirty = true
-			vl.indexDirty = true
-			return
-		}
+	if i, ok := vl.byID[id]; ok {
+		vl.items[i].Dirty = true
+		vl.indexDirty = true
+		vl.revision++
+		return
 	}
 }
 
 func (vl *itemList) RenameItemID(oldID, newID string) {
-	for i := range vl.items {
-		if vl.items[i].ID == oldID {
-			vl.items[i].ID = newID
-			vl.items[i].Dirty = true
-			vl.indexDirty = true
-			return
-		}
+	if i, ok := vl.byID[oldID]; ok {
+		vl.items[i].ID = newID
+		delete(vl.byID, oldID)
+		vl.byID[newID] = i
+		vl.items[i].Dirty = true
+		vl.indexDirty = true
+		vl.revision++
+		return
 	}
 }
 
@@ -172,6 +188,7 @@ func (vl *itemList) InvalidateAll() {
 		vl.items[i].Dirty = true
 	}
 	vl.indexDirty = true
+	vl.revision++
 }
 
 func (vl *itemList) InvalidateHeights() {
@@ -179,6 +196,7 @@ func (vl *itemList) InvalidateHeights() {
 		vl.items[i].Dirty = true
 	}
 	vl.indexDirty = true
+	vl.revision++
 }
 
 // EnsureHeights renders all items that need it and updates their heights so
@@ -188,6 +206,7 @@ func (vl *itemList) InvalidateHeights() {
 // Items are rendered if Dirty OR if Rendered is nil (e.g. items created from
 // cache that had CachedLines but no Rendered data).
 func (vl *itemList) EnsureHeights(renderFn func(idx int, item *renderItem, width int) []string, width int) {
+	changed := false
 	for i := range vl.items {
 		item := &vl.items[i]
 		if item.Dirty || item.Rendered == nil {
@@ -195,10 +214,16 @@ func (vl *itemList) EnsureHeights(renderFn func(idx int, item *renderItem, width
 			item.Rendered = rendered
 			item.Height = len(rendered)
 			item.Dirty = false
+			changed = true
 		}
 	}
-	vl.indexDirty = true
+	if changed {
+		vl.indexDirty = true
+		vl.revision++
+	}
 }
+
+func (vl *itemList) Revision() uint64 { return vl.revision }
 
 func (vl *itemList) BuildIndex() {
 	if vl.indexDirty {

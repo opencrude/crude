@@ -174,7 +174,9 @@ Register per-overlay handlers with `OverlayHost.RegisterContentHandler`.
 
 ### Rules
 
-- FloatingWindow is always `WithDecoration(false)` — no WM borders.
+- Product FloatingWindows use `WithDecoration(true)` to enable WM frame hit
+  geometry. The flag paints no borders; `ui.WindowFrame` remains the sole
+  visual chrome owner.
 - Use `ui.WindowFrame` for every floating chrome; never hand-draw `╭─╮`.
 - Close button hit region: `WindowFrame.IsOnClose(lx, ly)` / action `window.close`.
 

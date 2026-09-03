@@ -15,6 +15,109 @@ generic README, tool probing, or assumptions from another project.
 3. Use `Glob` and `Grep` for repository discovery. Do not probe for generic
    screenshot tools when a repository workflow exists.
 
+## Engineering Standard
+
+Crude is held to production IDE standards. A change is complete only when the
+system is coherent, dependable in real workloads, understandable to future
+maintainers, and pleasant for users. Passing a narrow unit test is necessary,
+never sufficient.
+
+### Diagnose before changing
+
+- Reproduce the user-visible failure through the real product path before
+  choosing a fix. Preserve the exact workload shape that exposes it: resumed
+  dense sessions, paced pointer input, nested panes, narrow terminals, dirty
+  buffers, concurrent agents, or cross-platform filesystem behavior.
+- Measure the stage that the user says is slow or broken. Separate mutation
+  latency, derivation/reflow latency, presentation latency, persistence, and
+  asynchronous completion. Do not substitute a proxy counter for the outcome:
+  "zero message renders" did not prove dense resize was fast while an O(N)
+  export path still consumed each frame.
+- Use profiles and call-path evidence when cost scales with data size. Compare
+  empty/small and dense/hydrated workloads; a fast empty state does not validate
+  a production session.
+- Treat the user's observation as acceptance evidence. If the reported defect
+  remains visible, the issue is still open even when tests written for the first
+  hypothesis pass.
+- When an attempted fix does not improve the measured result, stop layering
+  patches. State that it failed, remove or correct the false assumption, and
+  continue to the actual owner.
+
+### Choose the right-sized fix
+
+- Perform a cost/benefit check before broad work. Use the smallest correction
+  when one owner is clearly wrong and the invariant can be permanently guarded.
+  Research established designs first when several caches, clocks, models, or
+  layers compete for authority.
+- Prefer one authoritative owner over synchronization among duplicate owners.
+  Layout computes geometry; configurators publish it; projections derive rows;
+  screens retain and paint them. No second layer may "helpfully" write the same
+  state during a frame.
+- Eliminate bug classes, not screenshots. Shared primitives must cover every
+  consumer, including manually composed and nested variants. Do not leave a
+  second legacy interaction, cursor, scrollbar, persistence, or rendering path
+  that can drift again.
+- Do not add compatibility code without a concrete persisted or external
+  consumer. When compatibility is required, define its retirement boundary and
+  keep it out of the new product path.
+
+### End-to-end means end-to-end
+
+- Follow the complete lifecycle: create, update, render, persist, resume,
+  switch workspace/session/tab, resize, cancel, fail, retry, restore, prune, and
+  shut down. Verify generation boundaries and stale asynchronous results.
+- Correctness includes interaction ownership, focus/capture, loading/empty/error
+  states, confirmations, recovery, discoverability, and clear status. A backend
+  API without usable product UX is not a finished user feature.
+- Safety-sensitive operations require immutable preview, precondition checks,
+  transactional or rollback behavior, durable audit context, and an undo path.
+  Fail closed on ambiguity; never silently guess ownership or overwrite later
+  work.
+- Respect all layer boundaries and UI-thread I/O rules. Moving blocking work to
+  a different callback without ownership, cancellation, or generation checks is
+  not an asynchronous architecture.
+
+### Performance engineering
+
+- Optimize measured work, not frame suppression. Model mutations are never
+  dropped, delayed, or replayed slowly to make CPU graphs look better. Coalesce
+  presentation independently and always commit the latest state by a bounded
+  deadline.
+- Never use zero-FPS locking. Idle cadence remains at least 2 FPS for cursor,
+  terminal, hover, and activity correctness; active interaction targets one
+  frame per 16 ms without forcing every subsystem to recompute.
+- Cache derived data by explicit source/geometry/theme generations. Focus, tab
+  selection, ticks, and merely presenting a frame are not source invalidation.
+  Stable-height row changes are deltas; structural and height changes alone
+  rebuild indexes.
+- Add the benchmark that would have caught the regression before optimizing.
+  Gate mutation latency and presented-frame latency separately, and include
+  realistic dense content. Tighten ceilings when a structural fix lands.
+- Do not loosen a gate to land a regression. If a required feature has an
+  irreducible measured cost, document the reason and set a new ceiling from
+  repeated measurements with limited headroom.
+- CPU, allocation, memory, I/O, and startup costs all matter. Avoid per-item
+  maximum-size buffers, per-frame O(N) exports, eager offscreen reflow, and
+  repeated verification of immutable objects in hot paths.
+
+### Validation and accountability
+
+- Every regression test must fail for the original reason. Assert the user
+  outcome as well as internal state: painted content moved, final geometry
+  arrived, immediate and settled frames match, cached tabs stay warm, and files
+  roll back byte-for-byte.
+- Validate focused behavior, complete affected packages, race paths, full build,
+  lint, docs, benchmark gates, and the repository test suite when feasible.
+  Cross-platform code receives cross-compilation or platform-specific coverage.
+- Use the repository visual workflow for real UI acceptance. Test both readable
+  desktop and constrained terminal sizes, and close every capture process.
+- Never call a task complete while a known reproduction still fails. Report
+  blocked or aborted gates explicitly and distinguish them from passing gates.
+- Keep architecture, plans, performance baselines, interaction references, and
+  this file synchronized with the implementation. A stale invariant is a future
+  defect, as demonstrated when obsolete window-decoration guidance disabled
+  close, hover, drag, and resize together.
+
 ### Layer boundaries
 
 - `app/` owns application configuration, workspace lifecycle, and CLI startup.
@@ -353,7 +456,14 @@ floating windows use `ui.WindowFrame`; `wm/decoration.go` no longer exists.
   `FieldState.Columns` are also accepted by `FieldCycle` as spacer slots so a
   cycle control can align with a specific shared value column (Multi Agent sits
   under · provider). Zero-width leading columns must never abort row painting —
-  `paintTableCells` skips blank cells before the width guard.
+  `paintTableCells` skips blank cells before the width guard. Single-line
+  editor rows (`FieldText`/`FieldPassword`) participate in the same table:
+  `compactColumnsRaw` exposes their value as one cell, and `compactEditorX`
+  starts the retained `TextField` at the plan's first value cell (both in
+  `Layout` and `Paint`), so every second-column value on a docked form — nav
+  columns, cycle controls, and editable text — shares one column. Never
+  reintroduce label-hugging control geometry for compact editor rows; narrow
+  docks fall back to `controlX` only when the row cannot hold the table.
 - **Form hover-focusing:** `Form.Handle` moves the field highlight to the row
   under the pointer on `EventMouseMotion` (decorative rows never take it), like
   menus and lists; an open dropdown owns hover first.
@@ -392,9 +502,24 @@ so an editor repaint is a cell fill plus a cached-color walk:
   future perf problem appears, add a benchmark first (compare against
   `docs/reference/performance-baselines.md`) and cache at the editor level.
 - `computeContentLayout()` may be called every frame; it only computes
-  shell geometry (slot rects, chat/editor/input/deck rects) — no ANSI.
-- The only remaining output cache is `m.cachedOutput`, used exclusively for
-  drag throttling (FloatingWindow drag with no position change).
+  shell geometry (slot rects, chat/editor/input/deck rects) — no ANSI and NO
+  renderer/model setters. `configureChatScreenWithLayout` is the sole writer of
+  chat renderer geometry; duplicate width writers caused dense-chat resize to
+  invalidate every message twice per frame.
+- `chatprojection.Renderer` owns the generation-keyed `MessageRowsSnapshot`.
+  `shellchat.Screen` rebuilds its VirtualList only for structure/height/width
+  changes and applies stable-height row deltas by index. Never export and
+  republish the full conversation merely because a frame was presented.
+- Committed chat width changes use dynamic-height virtualization: source and
+  hydration invalidation remain eager, but width-only invalidation reflows
+  viewport plus overscan and retains offscreen estimated heights until scroll
+  exposes those rows. Never restore frame-time `EnsureHeights` for width-only
+  changes; it caused multi-second release stalls on dense resumed sessions.
+- `m.cachedOutput` is presentation-only: `frameGate` reuses it while draining
+  high-rate pointer/stream/PTY events, at most until one 16 ms deadline. Model
+  mutations are never queued or dropped. Every presented frame still performs
+  the unconditional root-shell repaint described above; idle ticks remain
+  400 ms (2.5 FPS), never zero-FPS locking.
 - `wm.FloatingWindow.contentDirty` is a separate, unrelated mechanism
   (window-surface invalidation) — do not confuse it with the removed flag.
 
@@ -411,7 +536,10 @@ frame builders under `tui/widgets/*_frame.go` and native screen packages):
 ╰─╯
 ```
 - `PopupContentWidth(innerW)` helpers live on frame builders where needed
-- FloatingWindow is always `WithDecoration(false)` — WM owns placement only
+- Product `FloatingWindow`s use `WithDecoration(true)` to enable WM frame
+  interaction geometry (close, title drag, border hover, resize). This flag
+  paints nothing: WM still owns placement/interaction only and `WindowFrame`
+  owns every visual chrome cell.
 - Chrome is self-drawn by WindowFrame / ComponentWidget bodies
 
 Legacy `tui/widgets/popupchrome.go` is **deleted**.
@@ -664,6 +792,19 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
 - Native TextField/TextArea and editor paths share `ui.PaintBlockCursor`
   semantics. Embedded terminal applications may control blink/steady timing,
   but DECSCUSR shape requests are normalized to the same block geometry.
+- Cursor visibility derives from the App-owned Unix-millisecond frame clock;
+  floating Hosts receive the same frame through `ComponentWidget`. Focused
+  frame-sensitive windows alone invalidate on idle ticks. `ColorCursor` maps to
+  the softer muted palette before reverse-video, never full foreground white.
+
+### Editor horizontal geometry
+- Horizontal scrollbar extent is the whole document, never visible rows. The
+  PieceTable revision and retained per-line width index rebuild once on open or
+  width-profile change, update one line for ordinary edits, and reduce the max
+  when the former widest line shrinks.
+- Handle native `MouseWheelLeft`/`MouseWheelRight`; Shift+vertical-wheel is the
+  compatibility fallback for terminals that encode horizontal trackpad motion
+  that way. Horizontal gestures must not change vertical offset.
 
 ### Local History
 - `localhistory.Store` owns immutable objects/manifests/plans and SQLite index

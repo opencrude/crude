@@ -35,6 +35,7 @@ const (
 	ColorPopupButtonBg
 	ColorPopupButtonFg
 	ColorIncompleteBg
+	ColorCursor
 	// Diff colour roles mapped from theme.Colors.Diff so chat tool-body rows
 	// resolve through TokenSet and follow theme preset switches.
 	ColorDiffFile
@@ -141,6 +142,7 @@ func (ts *TokenSet) Rebuild(th *theme.Theme) {
 		ColorPopupButtonBg:      rendering.ThemeColorToCell(c.PopupButtonBg),
 		ColorPopupButtonFg:      rendering.ThemeColorToCell(c.PopupButtonFg),
 		ColorIncompleteBg:       rendering.ThemeColorToCell(c.IncompleteBg),
+		ColorCursor:             rendering.ThemeColorToCell(c.Muted),
 		ColorDiffFile:           rendering.ThemeColorToCell(c.Diff.File),
 		ColorDiffHunk:           rendering.ThemeColorToCell(c.Diff.Hunk),
 		ColorDiffContext:        rendering.ThemeColorToCell(c.Diff.Context),

@@ -530,6 +530,63 @@ func TestFormHoverMovesFieldHighlight(t *testing.T) {
 	}
 }
 
+func TestCompactTextEditorAlignsWithSharedValueColumn(t *testing.T) {
+	tokens := NewTokenSet(theme.DefaultDark())
+	model := NewFormModel()
+	model.AddField(&FieldState{
+		ID: "default", Label: "Main Agent", Type: FieldNav,
+		Columns: []string{"glm-5.3-flash", "Ollama Cloud"},
+	})
+	model.AddField(ThinkingFieldState("thinking", "max", ""))
+	model.AddField(TextFieldState("compact-at", "Compact context at", "85", "Percent of this agent's context window."))
+	form := NewDockedForm("form", model, "Session Settings · Main Agent", "", tokens)
+	form.Layout(LayoutContext{}, Rect{W: 80, H: 8})
+	buf := surface.NewCellBuffer(80, 8)
+	form.Paint(buf, 0, 0, PaintContext{})
+
+	navY, thinkY, textY := -1, -1, -1
+	for y := 0; y < 8; y++ {
+		row := formRowText(buf, y)
+		if strings.Contains(row, "Main Agent") {
+			navY = y
+		}
+		if strings.Contains(row, "Thinking level") {
+			thinkY = y
+		}
+		if strings.Contains(row, "Compact context at") {
+			textY = y
+		}
+	}
+	if navY < 0 || thinkY < 0 || textY < 0 {
+		t.Fatalf("missing rows:\n%s", formBufferPlain(buf))
+	}
+	// Every second-column value on the docked form shares one column: the
+	// nav row's model, the cycle control, and the text editor's value.
+	value := formColOf(buf, navY, "glm-5.3-flash")
+	cycle := formColOf(buf, thinkY, "← max →")
+	text := formColOf(buf, textY, "85")
+	if value < 0 || cycle < 0 || text < 0 {
+		t.Fatalf("missing value cells: nav=%d cycle=%d text=%d\n%s", value, cycle, text, formBufferPlain(buf))
+	}
+	if text != value || cycle != value {
+		t.Fatalf("second column misaligned: nav=%d cycle=%d text=%d\n%s", value, cycle, text, formBufferPlain(buf))
+	}
+	labelEnd := formColOf(buf, textY, "Compact context at") + rendering.VisibleWidth("Compact context at")
+	if text-labelEnd < TableMinGap {
+		t.Fatalf("label/value gap=%d, want at least %d", text-labelEnd, TableMinGap)
+	}
+	// The editor control must span from the shared column to the row edge so
+	// typing and pointer hits map correctly inside it.
+	field := form.Field("compact-at")
+	if field.Control() == nil || field.Control().Bounds().X != value {
+		bx := -1
+		if field.Control() != nil {
+			bx = field.Control().Bounds().X
+		}
+		t.Fatalf("editor control bounds.X=%d, want %d", bx, value)
+	}
+}
+
 func TestCycleControlAlignsWithSharedValueColumn(t *testing.T) {
 	tokens := NewTokenSet(theme.DefaultDark())
 	model := NewFormModel()

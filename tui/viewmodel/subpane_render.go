@@ -147,11 +147,10 @@ func (reg *subPaneProjectionRegistry) InvalidateWidthProfile() {
 	}
 }
 
-// TickAll invalidates caches and refreshes the spin frame on every
-// projection's MessageList — the prior PaneManager.TickAll behavior.
+// TickAll publishes the shared frame clock. Animated rows are deliberately
+// uncached; static message caches remain source-version owned across ticks.
 func (reg *subPaneProjectionRegistry) TickAll(spinFrame int) {
 	for _, p := range reg.projections {
-		p.renderer.InvalidateCache()
 		p.renderer.SetSpinFrame(spinFrame)
 	}
 }

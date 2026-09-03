@@ -2,7 +2,6 @@ package ui
 
 import (
 	"testing"
-	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -54,7 +53,7 @@ func TestFocusedEmptyTextFieldOverlaysBlockCursorWithoutShiftingPlaceholder(t *t
 	tokens := NewTokenSet(theme.DefaultDark())
 	f := NewTextField("q", tokens)
 	f.SetPlaceholder("Filter")
-	f.lastInputTime = time.Now()
+	f.cursor.MarkActivity()
 	f.Layout(LayoutContext{}, Rect{W: 10, H: 1})
 	buf := surface.NewCellBuffer(10, 1)
 	f.Paint(buf, 0, 0, PaintContext{Focused: true})
@@ -70,7 +69,7 @@ func TestTextFieldBlockCursorPreservesOccupiedGlyphAndEndGeometry(t *testing.T) 
 	f := NewTextField("q", NewTokenSet(theme.DefaultDark()))
 	f.SetValue("abc")
 	f.Edit().SetCursor(1, false)
-	f.lastInputTime = time.Now()
+	f.cursor.MarkActivity()
 	f.Layout(LayoutContext{}, Rect{W: 8, H: 1})
 	buf := surface.NewCellBuffer(8, 1)
 	f.Paint(buf, 0, 0, PaintContext{Focused: true})
@@ -237,7 +236,7 @@ func TestTextFieldWideGraphemeCursorAndShiftClick(t *testing.T) {
 	f.SetValue("界alpha")
 	f.Edit().SetCursor(0, false)
 	f.Layout(LayoutContext{}, Rect{W: 10, H: 1})
-	f.lastInputTime = time.Now()
+	f.cursor.MarkActivity()
 	buf := surface.NewCellBuffer(10, 1)
 	f.Paint(buf, 0, 0, PaintContext{Focused: true})
 	if c := buf.Get(0, 0); c.Content != "界" || c.Width != 2 || !c.Attr.Has(cell.AttrReverse) {

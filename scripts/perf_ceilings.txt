@@ -13,7 +13,7 @@
 #     work-budget tests and as a multi-x alloc jump here, not as a leaf change.
 BenchmarkDemoGalleryPaint_80x24 1300 60
 BenchmarkDemoGalleryPaint_120x40 2000 60
-BenchmarkDemoGalleryHandleKeyEditCycle 48 3
+BenchmarkDemoGalleryHandleKeyEditCycle 80 3
 BenchmarkBlit_80x24 0 0
 BenchmarkWriteString_Line 0 0
 BenchmarkFlattenZOrder_Nested 2300 8
@@ -26,5 +26,11 @@ BenchmarkEditorScrollRepaint_120x40 9600 1380
 BenchmarkChatStreamPaint_80x24 9000 300
 BenchmarkChatStreamPaint_120x40 20000 400
 # Scenario benches (tui/viewmodel) — steady-state work budgets.
-BenchmarkIdleTick_200Msgs 120000 620
-BenchmarkTabRederive_80Msgs 56000 400
+BenchmarkIdleTick_200Msgs 15000 325
+BenchmarkTabRederive_80Msgs 14000 300
+BenchmarkPointerMotionCoalesced 12000 52
+BenchmarkAgentSwitchWarm_80Msgs 15000 315
+BenchmarkSidebarResizePresentedFrame_500Msgs 26000 315
+BenchmarkSidebarResizeMutation_500Msgs 10200 58
+BenchmarkDenseChatSingleRowChange_500Msgs 65000 2740
+BenchmarkDenseChatWidthCommit_500HeavyMsgs 455000 2180
