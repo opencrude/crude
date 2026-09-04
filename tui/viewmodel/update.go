@@ -454,11 +454,11 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		m.Logger.Debug("UI", "model_update", "model", string(msg))
 		for _, node := range m.AgentMgr.AllNodes() {
 			if m.subPaneProjections.Has(node.ID) {
-				m.subPaneProjections.Get(node.ID, workspace.PaneAgent).renderer.SetModelName(string(msg))
+				m.subPaneProjections.Get(node.ID, workspace.PaneAgent).renderer.SetLegacyModelFallback(string(msg))
 			}
 		}
 		if ml := m.activeMsgList(); ml != nil {
-			ml.SetModelName(string(msg))
+			ml.SetLegacyModelFallback(string(msg))
 		}
 	case ttypes.OpenSettingsMsg:
 		m.Logger.Info("UI", "open_session_settings")
@@ -725,7 +725,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			m.StatusBar.SetInfo("Agent settings saved as workspace defaults")
 		}
 	case sessionSettingsSaveResultMsg:
-		_, projection := m.sessionProjections.projectionForSettings(msg.target)
+		session, projection := m.sessionProjections.projectionForSettings(msg.target)
 		if msg.err != nil {
 			m.Logger.Error("CONFIG", "save_error", "error", msg.err.Error())
 			m.StatusBar.SetError(msg.err.Error())
@@ -733,6 +733,15 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			if msg.target == m.sessionSettings() {
 				m.ModelName = msg.settings.Model
 				m.LastSettings = msg.settings
+			}
+			for _, node := range m.AgentMgr.AllNodes() {
+				if node == nil || !node.IsOrchestrator() {
+					continue
+				}
+				owner, _ := m.sessionProjectionForAgent(node.ID)
+				if owner == session {
+					m.subPaneProjections.Get(node.ID, workspace.PaneAgent).renderer.SetLegacyModelFallback(msg.settings.Model)
+				}
 			}
 			m.closeProjectionPanel(projection, sessionSettingsPanelID)
 			m.StatusBar.SetInfo("settings saved")

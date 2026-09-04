@@ -21,7 +21,7 @@ func (m *App) AddOrchestrator(orchID string) {
 	}
 
 	ml := chatprojection.NewRenderer(m.Theme)
-	ml.SetModelName(m.ModelName)
+	ml.SetLegacyModelFallback(m.ModelName)
 	ml.SetUsername(m.Username)
 	ml.SetSubPaneContentFn(m.renderSubPaneContentForApp)
 
@@ -32,7 +32,7 @@ func (m *App) AddOrchestrator(orchID string) {
 	// preserves the existing AddOrchestrator contract while keeping the
 	// MessageList ownership on the TUI projection side.
 	proj.renderer = ml
-	proj.renderer.SetModelName(m.ModelName)
+	proj.renderer.SetLegacyModelFallback(m.ModelName)
 	proj.renderer.SetUsername(m.Username)
 
 	agent := workspace.NewAgentState(orchID, sp.Messages, m.Logger)
@@ -53,7 +53,7 @@ func (m *App) AddOrchestrator(orchID string) {
 			continue
 		}
 		projection := m.subPaneProjections.Get(childID, workspace.PaneAgent)
-		projection.renderer.SetModelName(child.Model)
+		projection.renderer.SetLegacyModelFallback(child.Model)
 		projection.renderer.SetUsername(m.Username)
 		projection.renderer.SetSubPaneContentFn(m.renderSubPaneContentForApp)
 		projection.renderer.ScrollToTop()

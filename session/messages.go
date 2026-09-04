@@ -137,6 +137,7 @@ func canonicalizeDisplayMeta(message provider.ChatMessage, meta sessiondb.Displa
 	switch message.Role {
 	case "tool":
 		snapshot := ensureToolSnapshot(&meta)
+		applyTurnIdentity(snapshot, meta)
 		snapshot.InternalID = internalID
 		snapshot.Role = "tool"
 		snapshot.Content = message.Content.String()
@@ -169,15 +170,19 @@ func canonicalizeDisplayMeta(message provider.ChatMessage, meta sessiondb.Displa
 			if content == "" {
 				content = message.Reasoning
 			}
-			meta.Snapshots = append(meta.Snapshots, ttypes.ConversationMessage{
+			thinking := ttypes.ConversationMessage{
 				InternalID: internalID + "-thinking", Role: "thinking", Content: content,
 				Time: now, ThinkingDuration: message.ReasoningDuration,
-			})
+			}
+			applyTurnIdentity(&thinking, meta)
+			meta.Snapshots = append(meta.Snapshots, thinking)
 		}
 		if message.Content.String() != "" {
-			meta.Snapshots = append(meta.Snapshots, ttypes.ConversationMessage{
+			assistant := ttypes.ConversationMessage{
 				InternalID: internalID + "-assistant", Role: "assistant", Content: message.Content.String(), Time: now,
-			})
+			}
+			applyTurnIdentity(&assistant, meta)
+			meta.Snapshots = append(meta.Snapshots, assistant)
 		}
 	case "user":
 		content := meta.DisplayContent
@@ -201,6 +206,15 @@ func canonicalizeDisplayMeta(message provider.ChatMessage, meta sessiondb.Displa
 		}}
 	}
 	return meta
+}
+
+func applyTurnIdentity(snapshot *ttypes.ConversationMessage, meta sessiondb.DisplayMeta) {
+	if snapshot == nil {
+		return
+	}
+	snapshot.TurnGeneration = meta.TurnGeneration
+	snapshot.ProviderID = meta.ProviderID
+	snapshot.ModelID = meta.ModelID
 }
 
 func applyCanonicalToolOperands(snapshot *ttypes.ConversationMessage, rawArgs string) {

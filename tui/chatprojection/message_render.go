@@ -38,21 +38,21 @@ func (ml messageLines) withCursor(cursorIdx, spinFrame int, activeTyping bool) m
 }
 
 type renderContext struct {
-	th           *theme.Theme
-	tokens       *ui.TokenSet
-	contentWidth int
-	innerW       int
-	width        int
-	height       int
-	chatHeight   int
-	spinFrame    int
-	activeTyping bool
-	modelName    string
-	username     string
-	streaming    bool
-	isLastMsg    bool
-	phase        string
-	mdRenderer   *glamour.TermRenderer
+	th                  *theme.Theme
+	tokens              *ui.TokenSet
+	contentWidth        int
+	innerW              int
+	width               int
+	height              int
+	chatHeight          int
+	spinFrame           int
+	activeTyping        bool
+	legacyModelFallback string
+	username            string
+	streaming           bool
+	isLastMsg           bool
+	phase               string
+	mdRenderer          *glamour.TermRenderer
 	// disclosure is the resolved expand/collapse mode for this message
 	// (see disclosure.go). Deterministic defaults keep live and hydrated
 	// sessions rendering the same shape.
@@ -135,7 +135,13 @@ func renderAssignmentMessage(msg types.ChatMessage, ctx renderContext, suppressH
 func renderAssistantMessage(msg types.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {
 	var ml messageLines
 	timeLabel := rendering.FormatTimeLabel(msg.Time)
-	header := buildAssistantHeader(ctx.modelName, msg.Incomplete, timeLabel, ctx.innerW, suppressHeader)
+	modelName := msg.ModelID
+	if modelName == "" {
+		// Sessions written before per-turn attribution use the renderer's
+		// explicitly configured legacy fallback. Attributed rows never do.
+		modelName = ctx.legacyModelFallback
+	}
+	header := buildAssistantHeader(modelName, msg.Incomplete, timeLabel, ctx.innerW, suppressHeader)
 	if !header.IsZero() {
 		ml.lines = append(ml.lines, header.PlainText())
 		ml.native = append(ml.native, header)

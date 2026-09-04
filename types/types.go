@@ -16,6 +16,9 @@ type ConversationMessage struct {
 	Content         string    `json:"content,omitempty"`
 	ReferenceLabels []string  `json:"reference_labels,omitempty"`
 	Time            time.Time `json:"time,omitempty"`
+	TurnGeneration  uint64    `json:"turn_generation,omitempty"`
+	ProviderID      string    `json:"provider_id,omitempty"`
+	ModelID         string    `json:"model_id,omitempty"`
 
 	ToolName            string        `json:"tool_name,omitempty"`
 	ToolArgs            string        `json:"tool_args,omitempty"`
@@ -48,6 +51,15 @@ type ConversationMessage struct {
 	SubPaneID              string        `json:"sub_pane_id,omitempty"`
 	PermTag                string        `json:"perm_tag,omitempty"`
 	PendingBtw             bool          `json:"-"`
+}
+
+// TurnIdentity is the immutable backend identity resolved when one turn
+// starts. Settings affect later turns; they never rewrite this identity on
+// messages already produced by an admitted turn.
+type TurnIdentity struct {
+	Generation uint64
+	ProviderID string
+	ModelID    string
 }
 
 const (
@@ -547,6 +559,9 @@ type ChatMessage struct {
 	Content         string
 	ReferenceLabels []string
 	Time            time.Time
+	TurnGeneration  uint64
+	ProviderID      string
+	ModelID         string
 
 	ToolName    string
 	ToolArgs    string

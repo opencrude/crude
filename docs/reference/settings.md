@@ -46,6 +46,13 @@ reaches live sessions. `AdoptWorkspaceDefaults` is the deliberate re-inherit
 and runs only from user-invoked resets. New sessions always start from the
 current effective defaults.
 
+Each admitted turn also snapshots the resolved provider ID and model ID from
+the exact backend request. That identity is stored on every assistant,
+thinking, and tool display snapshot and restored unchanged on resume. Session
+settings choose only later turns; changing a model never relabels prior chat
+rows. Rows from legacy sessions that predate attribution use the session's
+current model as an explicit display fallback only.
+
 Stored overlays are re-diffed against the current application layer on load,
 which narrows legacy whole-category rows to their differing leaves. A
 snapshot cannot say which of its values the user meant, so migration keeps
@@ -178,3 +185,6 @@ Layer coverage lives next to the code:
 - `tui/settings/settings_scope_test.go` — workspace save payload and overflow scrollbars
 - `tui/settings/provider_switch_test.go` — provider/model protocol isolation
 - `tui/screens/sessionsettings/session_settings_test.go` — session protocol overrides and multi-agent toggle
+- `session/model_attribution_test.go`, `workspace/message_view_test.go`, and
+  `tui/chatprojection/model_attribution_test.go` — request-time model switching,
+  durable resume attribution, and immutable per-row chat headers

@@ -27,16 +27,16 @@ type Renderer struct {
 	chatAreaTop    int
 	chatAreaHeight int
 
-	mdRenderer   *glamour.TermRenderer
-	cachedWidth  int
-	width        int
-	height       int
-	modelName    string
-	username     string
-	streaming    bool
-	spinFrame    int
-	activeTyping bool
-	phase        string
+	mdRenderer          *glamour.TermRenderer
+	cachedWidth         int
+	width               int
+	height              int
+	legacyModelFallback string
+	username            string
+	streaming           bool
+	spinFrame           int
+	activeTyping        bool
+	phase               string
 
 	lastScrollbarW   int
 	subPaneContentFn SubPaneContentFn
@@ -269,9 +269,11 @@ func (r *Renderer) Theme() *theme.Theme {
 	return r.theme
 }
 
-func (r *Renderer) SetModelName(name string) {
-	if r.modelName != name {
-		r.modelName = name
+// SetLegacyModelFallback configures the label used only for messages written
+// before durable per-turn attribution existed.
+func (r *Renderer) SetLegacyModelFallback(name string) {
+	if r.legacyModelFallback != name {
+		r.legacyModelFallback = name
 		r.InvalidateAllMessages()
 	}
 }
@@ -1415,24 +1417,24 @@ func (r *Renderer) buildRenderContext(msg *types.ChatMessage, suppressHeader boo
 		chatH = r.height
 	}
 	return renderContext{
-		th:               r.theme,
-		tokens:           r.Tokens(),
-		contentWidth:     contentWidth,
-		innerW:           innerW,
-		width:            r.width,
-		height:           r.height,
-		chatHeight:       chatH,
-		spinFrame:        r.spinFrame,
-		activeTyping:     r.activeTyping,
-		modelName:        r.modelName,
-		username:         r.username,
-		streaming:        r.streaming,
-		isLastMsg:        r.isLastMessage(msg),
-		phase:            r.phase,
-		mdRenderer:       r.MdRenderer(),
-		disclosure:       r.disclosureState(msg),
-		thinkingBodyOnly: r.thinkingBodyOnly,
-		planSuperseded:   r.planMessageSuperseded(msg),
+		th:                  r.theme,
+		tokens:              r.Tokens(),
+		contentWidth:        contentWidth,
+		innerW:              innerW,
+		width:               r.width,
+		height:              r.height,
+		chatHeight:          chatH,
+		spinFrame:           r.spinFrame,
+		activeTyping:        r.activeTyping,
+		legacyModelFallback: r.legacyModelFallback,
+		username:            r.username,
+		streaming:           r.streaming,
+		isLastMsg:           r.isLastMessage(msg),
+		phase:               r.phase,
+		mdRenderer:          r.MdRenderer(),
+		disclosure:          r.disclosureState(msg),
+		thinkingBodyOnly:    r.thinkingBodyOnly,
+		planSuperseded:      r.planMessageSuperseded(msg),
 	}
 }
 
@@ -1465,6 +1467,8 @@ func (r *Renderer) renderSingleMessage(msg *types.ChatMessage) ([]string, []Pain
 	origMsg := msg
 	sanitized := *msg
 	sanitized.Content = rendering.SanitizeForTerminal(msg.Content)
+	sanitized.ProviderID = rendering.SanitizeForTerminal(msg.ProviderID)
+	sanitized.ModelID = rendering.SanitizeForTerminal(msg.ModelID)
 	sanitized.ToolArgs = rendering.SanitizeForTerminal(msg.ToolArgs)
 	sanitized.ToolProgressLabel = rendering.SanitizeForTerminal(msg.ToolProgressLabel)
 	sanitized.LifecycleProvider = rendering.SanitizeForTerminal(msg.LifecycleProvider)
@@ -1593,12 +1597,24 @@ func (r *Renderer) shouldSuppressHeader(msgIdx int) bool {
 	if msgIdx <= 0 {
 		return false
 	}
-	currentParty := messageParty(r.sync.Messages[msgIdx].Role)
+	current := r.sync.Messages[msgIdx]
+	currentParty := messageParty(current.Role)
 	if currentParty == "" {
 		return false
 	}
 	for i := msgIdx - 1; i >= 0; i-- {
-		prevParty := messageParty(r.sync.Messages[i].Role)
+		previous := r.sync.Messages[i]
+		if current.Role == types.RoleAssistant {
+			switch previous.Role {
+			case types.RoleThinking, types.RoleStatus:
+				return false
+			case types.RoleAssistant:
+				if current.TurnGeneration > 0 && previous.TurnGeneration > 0 {
+					return current.TurnGeneration == previous.TurnGeneration
+				}
+			}
+		}
+		prevParty := messageParty(previous.Role)
 		if prevParty == currentParty {
 			return true
 		}

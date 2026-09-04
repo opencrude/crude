@@ -1201,9 +1201,9 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 
 		case "assistant":
 			result = append(result, ChatMessageView{
-				Role:    "assistant",
-				Content: mm.Msg.Content.String(),
-				Time:    msgTime,
+				Role: "assistant", Content: mm.Msg.Content.String(), Time: msgTime,
+				TurnGeneration: mm.Meta.TurnGeneration,
+				ProviderID:     mm.Meta.ProviderID, ModelID: mm.Meta.ModelID,
 			})
 
 		case "thinking":
@@ -1216,12 +1216,15 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 				Content:          mm.Msg.ReasoningContent,
 				Time:             msgTime,
 				ThinkingDuration: thinkingDuration,
+				TurnGeneration:   mm.Meta.TurnGeneration,
+				ProviderID:       mm.Meta.ProviderID,
+				ModelID:          mm.Meta.ModelID,
 			})
 			if mm.Msg.Content.String() != "" {
 				result = append(result, ChatMessageView{
-					Role:    "assistant",
-					Content: mm.Msg.Content.String(),
-					Time:    msgTime,
+					Role: "assistant", Content: mm.Msg.Content.String(), Time: msgTime,
+					TurnGeneration: mm.Meta.TurnGeneration,
+					ProviderID:     mm.Meta.ProviderID, ModelID: mm.Meta.ModelID,
 				})
 			}
 
@@ -1261,6 +1264,9 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 				ToolProgressLabel: mm.Meta.ProgressLabel,
 				PermTag:           mm.Meta.PermTag,
 				ToolPreviewPhase:  "done",
+				TurnGeneration:    mm.Meta.TurnGeneration,
+				ProviderID:        mm.Meta.ProviderID,
+				ModelID:           mm.Meta.ModelID,
 			}
 
 			if mm.Meta.DurationMs > 0 {

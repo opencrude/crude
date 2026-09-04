@@ -6,6 +6,8 @@ import (
 	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
+
+	ttypes "crude/types"
 )
 
 const IdleTickInterval = 400 * time.Millisecond
@@ -94,6 +96,7 @@ type AgentState struct {
 	PendingBlockID  string
 	SafetyAlert     string
 	SafetyRisk      string
+	TurnIdentity    ttypes.TurnIdentity
 }
 
 func NewAgentState(id string, messages *Conversation, lg Logger) *AgentState {
@@ -132,6 +135,26 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 	thinkTarget := thinkingTarget
 	if thinkTarget == nil {
 		thinkTarget = target
+	}
+	if evt.Type == "turn_started" {
+		identity, ok := parseTurnIdentity(evt.Data)
+		if !ok || identity.Generation < a.TurnIdentity.Generation {
+			return nil
+		}
+		if !target.BeginTurn(identity) {
+			return nil
+		}
+		a.TurnIdentity = identity
+		if thinkTarget != target {
+			thinkTarget.BeginTurn(identity)
+		}
+		return nil
+	}
+	if a.TurnIdentity.Generation > 0 {
+		target.BeginTurn(a.TurnIdentity)
+		if thinkTarget != target {
+			thinkTarget.BeginTurn(a.TurnIdentity)
+		}
 	}
 	// Events already queued before a cancel request must not reactivate the
 	// turn while its terminal done/error event catches up through the UI pump.
@@ -288,6 +311,21 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 	}
 
 	return nil
+}
+
+func parseTurnIdentity(data any) (ttypes.TurnIdentity, bool) {
+	identity, ok := data.(ttypes.TurnIdentity)
+	if ok {
+		return identity, identity.Generation > 0 && identity.ModelID != ""
+	}
+	values, ok := data.(map[string]any)
+	if !ok {
+		return ttypes.TurnIdentity{}, false
+	}
+	identity.ProviderID, _ = values["provider_id"].(string)
+	identity.ModelID, _ = values["model_id"].(string)
+	identity.Generation = uint64(phaseInt64(values["generation"]))
+	return identity, identity.Generation > 0 && identity.ModelID != ""
 }
 
 func (a *AgentState) SubmitInput(text string) {

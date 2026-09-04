@@ -16,6 +16,9 @@ type DisplayMeta struct {
 	SnapshotVersion int                          `json:"snapshot_version,omitempty"`
 	Snapshots       []ttypes.ConversationMessage `json:"snapshots,omitempty"`
 	ContextOnly     bool                         `json:"context_only,omitempty"`
+	TurnGeneration  uint64                       `json:"turn_generation,omitempty"`
+	ProviderID      string                       `json:"provider_id,omitempty"`
+	ModelID         string                       `json:"model_id,omitempty"`
 
 	// Legacy fields remain readable for sessions written before canonical
 	// conversation snapshots landed. New writes always populate Snapshots.

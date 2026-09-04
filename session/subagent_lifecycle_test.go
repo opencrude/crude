@@ -57,7 +57,10 @@ func TestSubAgentTranscriptIsReplayable(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Create: %v", err)
 	}
-	handle := &agent.SubAgentHandle{DB: db, SessionID: "child"}
+	handle := &agent.SubAgentHandle{
+		DB: db, SessionID: "child",
+		Spec: agent.SubAgentSpec{Provider: "ollama-cloud", Model: "glm-5.3-flash:cloud"},
+	}
 	assistantTool := provider.ChatMessage{Role: "assistant", ToolCalls: []provider.ToolCall{{
 		ID: "call-1", Function: provider.FunctionCall{Name: "execute_command", Arguments: `{"command":"go test ./..."}`},
 	}}}
@@ -86,7 +89,10 @@ func TestSubAgentTranscriptIsReplayable(t *testing.T) {
 	}
 	if withMeta[0].Meta.Snapshots[0].Role != "assignment" || len(withMeta[2].Meta.Snapshots) != 1 ||
 		withMeta[2].Meta.Snapshots[0].ToolName != "execute_command" ||
-		withMeta[2].Meta.Snapshots[0].ToolCommand != "go test ./..." {
+		withMeta[2].Meta.Snapshots[0].ToolCommand != "go test ./..." ||
+		withMeta[2].Meta.Snapshots[0].ProviderID != "ollama-cloud" ||
+		withMeta[2].Meta.Snapshots[0].ModelID != "glm-5.3-flash:cloud" ||
+		withMeta[3].Meta.Snapshots[0].ModelID != "glm-5.3-flash:cloud" {
 		t.Fatalf("canonical child transcript metadata = %+v", withMeta)
 	}
 }

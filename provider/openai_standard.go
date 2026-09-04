@@ -446,12 +446,15 @@ func (s *OpenAIStandard) ModelsURL(base *url.URL, cursor string) *url.URL {
 }
 
 // DecodeModelsPage implements ModelLister for the OpenAI {"data":[...]}
-// envelope.
+// envelope. Gateways like Command Code and OpenRouter add a non-standard
+// context_length per entry (the enforced context window); it is captured
+// when present so wire data beats the models.dev fallback.
 func (s *OpenAIStandard) DecodeModelsPage(body []byte) (ModelPage, error) {
 	var result struct {
 		Data []struct {
-			ID   string `json:"id"`
-			Name string `json:"name"`
+			ID            string `json:"id"`
+			Name          string `json:"name"`
+			ContextLength int    `json:"context_length"`
 		} `json:"data"`
 	}
 	if err := json.Unmarshal(body, &result); err != nil {
@@ -461,8 +464,9 @@ func (s *OpenAIStandard) DecodeModelsPage(body []byte) (ModelPage, error) {
 	models := make([]ModelInfo, 0, len(result.Data))
 	for _, m := range result.Data {
 		models = append(models, ModelInfo{
-			ID:   m.ID,
-			Name: m.Name,
+			ID:            m.ID,
+			Name:          m.Name,
+			ContextWindow: m.ContextLength,
 		})
 	}
 	return ModelPage{Models: models}, nil

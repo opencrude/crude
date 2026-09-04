@@ -49,7 +49,7 @@ func exportForLayout(t *testing.T, msgs []types.ChatMessage) []MessageRow {
 	r.SetSize(120, 40)
 	r.SetChatAreaBounds(0, 30)
 	r.SetChatAreaBounds(0, 30)
-	r.SetModelName("m")
+	r.SetLegacyModelFallback("m")
 	r.SetUsername("u")
 	for _, m := range msgs {
 		r.AppendMessage(m)
@@ -159,7 +159,7 @@ func TestCancelledToolCallStruckThrough(t *testing.T) {
 	r := NewRenderer(theme.DefaultDark())
 	r.SetSize(120, 40)
 	r.SetChatAreaBounds(0, 30)
-	r.SetModelName("m")
+	r.SetLegacyModelFallback("m")
 	r.UpdateToolStreaming("tid-1", "", "write_file", map[string]any{"target": "main.go"})
 	r.UpdateToolCall("tid-1", "", "write_file", "main.go")
 	r.MarkStreamingToolsCancelled()

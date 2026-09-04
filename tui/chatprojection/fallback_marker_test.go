@@ -23,13 +23,13 @@ func TestBlankNativeSpacerNotANSIFallback(t *testing.T) {
 
 	th := theme.DefaultDark()
 	ctx := renderContext{
-		th:           th,
-		contentWidth: 40,
-		innerW:       60,
-		width:        80,
-		height:       40,
-		modelName:    "test",
-		username:     "user",
+		th:                  th,
+		contentWidth:        40,
+		innerW:              60,
+		width:               80,
+		height:              40,
+		legacyModelFallback: "test",
+		username:            "user",
 	}
 
 	// Plain assistant body with an embedded blank line stays native (mdRenderer nil).

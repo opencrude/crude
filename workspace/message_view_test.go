@@ -106,6 +106,21 @@ func TestConvertMessagesForDisplayHydratesThinkingDuration(t *testing.T) {
 	}
 }
 
+func TestConvertMessagesForDisplayPreservesLegacyMetaAttribution(t *testing.T) {
+	message := provider.NewTextMessage("assistant", "answer")
+	views := ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{
+		Msg: message,
+		Meta: sessiondb.DisplayMeta{
+			DisplayRole: "assistant", TurnGeneration: 7,
+			ProviderID: "ollama-cloud", ModelID: "kimi-k3",
+		},
+	}})
+	if len(views) != 1 || views[0].TurnGeneration != 7 ||
+		views[0].ProviderID != "ollama-cloud" || views[0].ModelID != "kimi-k3" {
+		t.Fatalf("hydrated attribution = %#v", views)
+	}
+}
+
 func TestConvertMessagesForDisplayUsesOriginalReferenceCaption(t *testing.T) {
 	message := provider.NewMultiPartMessage("user", []provider.ContentPart{
 		{Type: "text", Text: "what is this?"},

@@ -57,6 +57,44 @@ func TestConfigWithSessionOverridesUsesWorkspaceThenSession(t *testing.T) {
 	}
 }
 
+func TestCategoryModelKeepsVendorPrefix(t *testing.T) {
+	// Gateway catalogs (Command Code, OpenRouter) require the full vendored
+	// model id on the wire — "z-ai/glm-5.3-flash". Neither the settings
+	// round-trip nor category resolution may reduce it to the bare name.
+	const vendored = "z-ai/glm-5.3-flash"
+
+	stored := catSettingsToConfig(ttypes.CategorySettings{
+		Provider: "commandcode",
+		Model:    vendored,
+	})
+	if stored.Model != vendored {
+		t.Fatalf("catSettingsToConfig stripped the vendor prefix: %q", stored.Model)
+	}
+
+	round := catConfigToSettings(stored)
+	if round.Model != vendored {
+		t.Fatalf("catConfigToSettings altered the model id: %q", round.Model)
+	}
+
+	base := &Config{
+		ActiveProvider: "commandcode",
+		Providers: map[string]ProviderConfig{
+			"commandcode": {APIKey: "key", ProviderURL: "https://api.commandcode.ai/provider/v1"},
+		},
+		Agents: AgentsConfig{
+			ActiveProfile: "default",
+			Profiles: map[string]ProfileConfig{
+				"default": {Categories: map[string]CategoryConfig{
+					CategoryDefault: {Provider: "commandcode", Model: vendored},
+				}},
+			},
+		},
+	}
+	if got := base.GetActiveDefaultCategory().Model; got != vendored {
+		t.Fatalf("GetActiveDefaultCategory model = %q, want %q", got, vendored)
+	}
+}
+
 func TestCategoryAPIKeyAlwaysComesFromProvider(t *testing.T) {
 	cfg := &Config{
 		ActiveProvider: "opencode-go",
