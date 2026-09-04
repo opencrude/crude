@@ -27,15 +27,19 @@ const (
 // Screen paints the workspace file tree, gutter, scrollbar, and divider.
 type Screen struct {
 	ui.Base
-	th         *theme.Theme
-	tokens     *ui.TokenSet
-	model      *filetree.FileTreeModel
-	icons      *filetree.IconResolver
-	cfg        filetree.PaintConfig
-	width      int
-	height     int
-	visible    bool
-	breadcrumb string
+	th                *theme.Theme
+	tokens            *ui.TokenSet
+	model             *filetree.FileTreeModel
+	searchModel       *filetree.FileTreeModel
+	searchActive      bool
+	searchQuery       string
+	pathSearchHandler func(string) tea.Cmd
+	icons             *filetree.IconResolver
+	cfg               filetree.PaintConfig
+	width             int
+	height            int
+	visible           bool
+	breadcrumb        string
 
 	filter    *treeFilterField
 	tree      *fileTreeView
@@ -60,6 +64,16 @@ func newFileTreeView(owner *Screen, tree *ui.Tree) *fileTreeView {
 	return &fileTreeView{Base: ui.NewBase(TreeID), owner: owner, tree: tree}
 }
 
+func (s *Screen) displayModel() *filetree.FileTreeModel {
+	if s != nil && s.searchActive && s.searchModel != nil {
+		return s.searchModel
+	}
+	if s == nil {
+		return nil
+	}
+	return s.model
+}
+
 func (v *fileTreeView) Children() []ui.Component { return nil }
 
 func (v *fileTreeView) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
@@ -79,11 +93,11 @@ func (v *fileTreeView) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintCo
 // paintFilterEmptyState shows a hint row when an active filter matches
 // nothing, so the sidebar does not silently go blank.
 func (v *fileTreeView) paintFilterEmptyState(buf *surface.CellBuffer, ox, oy int) {
-	if v.owner == nil || v.owner.model == nil || buf == nil {
+	if v.owner == nil || v.owner.displayModel() == nil || buf == nil {
 		return
 	}
-	model := v.owner.model
-	if model.Filter() == "" || len(model.VisibleNodes()) > 0 {
+	model := v.owner.displayModel()
+	if (!v.owner.searchActive && model.Filter() == "") || len(model.VisibleNodes()) > 0 {
 		return
 	}
 	r := v.Bounds()
@@ -96,9 +110,10 @@ func (v *fileTreeView) paintFilterEmptyState(buf *surface.CellBuffer, ox, oy int
 }
 
 func (v *fileTreeView) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
-	if v.owner == nil || v.owner.model == nil {
+	if v.owner == nil || v.owner.displayModel() == nil {
 		return ui.EventResult{}
 	}
+	model := v.owner.displayModel()
 	localY := ctx.LocalY
 	// ctx.LocalY comes from the Host hit tree relative to the tree view's own
 	// screen rect. The shell places that rect BELOW the filter row (treeY=1),
@@ -117,18 +132,18 @@ func (v *fileTreeView) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult 
 	}
 	switch evt.Kind {
 	case ui.EventKey:
-		filterWas := v.owner.model.FilterActive()
-		cmd := v.owner.model.Update(filetree.TreeKeyPressMsg{Key: evt.Key})
+		filterWas := model.FilterActive()
+		cmd := model.Update(filetree.TreeKeyPressMsg{Key: evt.Key})
 		v.owner.syncFromModel()
 		inv := ui.InvalidatePaint
 		var action *ui.Action
-		if !filterWas && v.owner.model.FilterActive() {
+		if !filterWas && model.FilterActive() {
 			action = &ui.Action{ID: "ui.focus", Payload: FilterID}
 			inv |= ui.InvalidateFocus
 		}
 		return ui.EventResult{Handled: true, Cmd: cmd, Action: action, Invalidate: inv}
 	default:
-		cmd := v.owner.model.Update(filetree.TreeMouseMsg{Mouse: translateMouseY(evt, localY)})
+		cmd := model.Update(filetree.TreeMouseMsg{Mouse: translateMouseY(evt, localY)})
 		v.owner.syncFromModel()
 		return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidatePaint}
 	}
@@ -180,6 +195,12 @@ func New(th *theme.Theme, model *filetree.FileTreeModel) *Screen {
 		if s.model == nil {
 			return
 		}
+		if s.pathSearchHandler != nil {
+			s.searchActive = strings.TrimSpace(value) != ""
+			s.searchQuery = value
+			s.syncFromModel()
+			return
+		}
 		if !s.model.FilterActive() {
 			_ = s.model.EnterFilterMode()
 		}
@@ -195,6 +216,59 @@ func New(th *theme.Theme, model *filetree.FileTreeModel) *Screen {
 	return s
 }
 
+// SetPathSearchHandler installs the app-owned asynchronous path search route.
+// A nil handler preserves the legacy in-memory filter behavior for isolated
+// screen users.
+func (s *Screen) SetPathSearchHandler(fn func(string) tea.Cmd) {
+	if s != nil {
+		s.pathSearchHandler = fn
+	}
+}
+
+// BeginPathSearch marks the sidebar as presenting the asynchronous path
+// projection while retaining the authoritative workspace model.
+func (s *Screen) BeginPathSearch(query string) bool {
+	if s == nil || s.model == nil {
+		return false
+	}
+	s.searchActive = strings.TrimSpace(query) != ""
+	s.searchQuery = query
+	s.syncFromModel()
+	return true
+}
+
+// ApplyPathSearch installs a tree-shaped search projection. The authoritative
+// workspace model remains available for file operations and status updates.
+func (s *Screen) ApplyPathSearch(query string, matches []filetree.PathMatch) bool {
+	if s == nil || s.model == nil || strings.TrimSpace(query) == "" {
+		return false
+	}
+	s.searchActive = true
+	s.searchQuery = query
+	s.searchModel = filetree.NewSearchModelFromBase(s.model, matches)
+	s.rebuildTree()
+	s.syncFromModel()
+	return true
+}
+
+// ClearPathSearch restores the persistent workspace tree and its state.
+func (s *Screen) ClearPathSearch() {
+	if s == nil {
+		return
+	}
+	s.searchActive = false
+	s.searchQuery = ""
+	s.searchModel = nil
+	if s.filter != nil && s.filter.field != nil {
+		s.filter.field.SetValue("")
+	}
+	if s.model != nil {
+		s.model.ClearFilter()
+	}
+	s.rebuildTree()
+	s.syncFromModel()
+}
+
 func (s *Screen) applyConfig() {
 	s.cfg = filetree.PaintConfigFromTheme(s.th)
 	if s.model != nil {
@@ -208,20 +282,24 @@ func (s *Screen) applyConfig() {
 
 func (s *Screen) rebuildTree() {
 	tree := ui.NewTree(TreeID+"/list", s.tokens)
-	tree.SetRowPainter(filetree.NewTreeRowPainter(s.model, s.icons, s.cfg))
+	tree.SetRowPainter(filetree.NewTreeRowPainter(s.displayModel(), s.icons, s.cfg))
 	s.tree = newFileTreeView(s, tree)
 	s.scrollbar = ui.NewScrollbarControl(ScrollbarID, tree.Scroll(), s.tokens)
 	s.scrollbar.OnScroll(func(_, _ int) {
-		if s.model == nil || s.tree == nil || s.tree.tree == nil {
+		model := s.displayModel()
+		if model == nil || s.tree == nil || s.tree.tree == nil {
 			return
 		}
-		filetree.ApplyScrollToModel(s.model, s.tree.tree.Scroll())
+		filetree.ApplyScrollToModel(model, s.tree.tree.Scroll())
 	})
 }
 
 // SetModel rebinds the file tree model.
 func (s *Screen) SetModel(model *filetree.FileTreeModel) {
 	s.model = model
+	s.searchModel = nil
+	s.searchActive = false
+	s.searchQuery = ""
 	s.applyConfig()
 	s.rebuildTree()
 	s.syncSearchPlaceholder()
@@ -233,7 +311,7 @@ func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	s.tokens = tokens
 	if s.tree != nil && s.tree.tree != nil {
 		s.tree.tree.SetTokens(tokens)
-		s.tree.tree.SetRowPainter(filetree.NewTreeRowPainter(s.model, s.icons, s.cfg))
+		s.tree.tree.SetRowPainter(filetree.NewTreeRowPainter(s.displayModel(), s.icons, s.cfg))
 	}
 	if s.scrollbar != nil {
 		s.scrollbar.SetTokens(tokens)
@@ -323,8 +401,8 @@ func (s *Screen) Layout(_ ui.LayoutContext, r ui.Rect) {
 	if r.H > 0 {
 		s.height = r.H
 	}
-	if s.model != nil {
-		s.model.Update(filetree.TreeHeightMsg{Height: s.viewportHeight()})
+	if model := s.displayModel(); model != nil {
+		model.Update(filetree.TreeHeightMsg{Height: s.viewportHeight()})
 	}
 	s.layoutChildren(r)
 	s.syncFromModel()
@@ -404,25 +482,30 @@ func (s *Screen) layoutChildren(r ui.Rect) {
 }
 
 func (s *Screen) syncFromModel() {
-	if s.model == nil || s.tree == nil || s.tree.tree == nil {
+	model := s.displayModel()
+	if model == nil || s.tree == nil || s.tree.tree == nil {
 		return
 	}
-	s.tree.tree.SetItems(filetree.TreeItems(s.model))
-	cursor := s.model.CursorIndex()
+	s.tree.tree.SetItems(filetree.TreeItems(model))
+	cursor := model.CursorIndex()
 	if cursor >= 0 {
 		s.tree.tree.SelectIndex(cursor)
 	}
 	// Hover lives on the filetree model; ui.Tree.Handle never sees mouse
 	// (fileTreeView routes to the model). Sync paint hover from the model.
-	s.tree.tree.SyncHover(s.model.Hover.Index)
-	if s.filter != nil && s.model != nil {
-		s.filter.field.SetValue(s.model.Filter())
+	s.tree.tree.SyncHover(model.Hover.Index)
+	if s.filter != nil {
+		filter := model.Filter()
+		if s.searchActive {
+			filter = s.searchQuery
+		}
+		s.filter.field.SetValue(filter)
 	}
 	s.syncSearchPlaceholder()
 	contentW := filetree.SidebarContentWidth(s.width)
-	s.breadcrumb = filetree.BreadcrumbLineWithIcons(s.model, contentW, s.icons)
+	s.breadcrumb = filetree.BreadcrumbLineWithIcons(model, contentW, s.icons)
 	s.tree.tree.SetBreadcrumb(s.breadcrumb)
-	filetree.SyncScrollModel(s.model, s.tree.tree.Scroll(), s.viewportHeight())
+	filetree.SyncScrollModel(model, s.tree.tree.Scroll(), s.viewportHeight())
 	if s.scrollbar != nil {
 		s.scrollbar.SetScroll(s.tree.tree.Scroll())
 	}
@@ -444,10 +527,11 @@ func (s *Screen) syncSearchPlaceholder() {
 }
 
 func (s *Screen) clearHover() {
-	if s.model == nil {
+	model := s.displayModel()
+	if model == nil {
 		return
 	}
-	s.model.Hover.Clear()
+	model.Hover.Clear()
 	if s.tree != nil && s.tree.tree != nil {
 		s.tree.tree.SyncHover(-1)
 	}
@@ -494,7 +578,8 @@ func (s *Screen) ContentWidth() int {
 // The icon+search header and sticky breadcrumb rows are chrome and never
 // resolve to a file. This is the canonical hit path for adaptive context menus.
 func (s *Screen) PathAtLocalY(localY int) string {
-	if s.model == nil {
+	model := s.displayModel()
+	if model == nil {
 		return ""
 	}
 	row := localY - panelchrome.HeaderRows
@@ -507,8 +592,8 @@ func (s *Screen) PathAtLocalY(localY int) string {
 		}
 		row--
 	}
-	idx := s.model.ScrollOffset() + row
-	nodes := s.model.VisibleNodes()
+	idx := model.ScrollOffset() + row
+	nodes := model.VisibleNodes()
 	if idx < 0 || idx >= len(nodes) || nodes[idx] == nil {
 		return ""
 	}
@@ -522,12 +607,18 @@ func (s *Screen) BodyTop() int { return panelchrome.HeaderRows }
 func (s *Screen) headerTitle() panelchrome.Title {
 	title := panelchrome.Title{Icon: s.explorerIcon()}
 	if s.model != nil {
-		for _, m := range filetree.HeaderMarks(s.model.Root, s.cfg, s.tokens) {
-			title.BadgeParts = append(title.BadgeParts, panelchrome.BadgePart{Text: m.Text, FG: m.FG})
+		if !s.searchActive {
+			for _, m := range filetree.HeaderMarks(s.model.Root, s.cfg, s.tokens) {
+				title.BadgeParts = append(title.BadgeParts, panelchrome.BadgePart{Text: m.Text, FG: m.FG})
+			}
 		}
-		if s.model.Filter() != "" {
+		filter := s.model.Filter()
+		if s.searchActive {
+			filter = s.searchQuery
+		}
+		if filter != "" {
 			title.BadgeParts = append(title.BadgeParts, panelchrome.BadgePart{
-				Text: strconv.Itoa(len(s.model.VisibleNodes())),
+				Text: strconv.Itoa(len(s.displayModel().VisibleNodes())),
 			})
 		}
 	}
@@ -535,8 +626,9 @@ func (s *Screen) headerTitle() panelchrome.Title {
 }
 
 func (s *Screen) explorerIcon() string {
-	if s.icons != nil && s.model != nil && s.model.Root != nil {
-		icon := s.icons.ResolveIcon(s.model.Root.Name, true, false, true).Icon
+	model := s.model
+	if s.icons != nil && model != nil && model.Root != nil {
+		icon := s.icons.ResolveIcon(model.Root.Name, true, false, true).Icon
 		if icon != "" {
 			return icon
 		}
@@ -599,13 +691,16 @@ func (f *treeFilterField) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.Pain
 }
 
 func (f *treeFilterField) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
-	if f.owner == nil || f.owner.model == nil {
+	if f.owner == nil || f.owner.displayModel() == nil {
 		return ui.EventResult{}
 	}
+	model := f.owner.displayModel()
 	if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft {
-		_ = f.owner.model.EnterFilterMode()
+		_ = model.EnterFilterMode()
 		ctx.Focused = true
+		before := f.field.Value()
 		res := f.field.Handle(ctx, evt)
+		res = f.finishSearch(before, res)
 		res.Handled = true
 		res.Invalidate |= ui.InvalidateFocus | ui.InvalidatePaint
 		return res
@@ -613,17 +708,23 @@ func (f *treeFilterField) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResu
 	if evt.IsKey() {
 		switch evt.Key.Code {
 		case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd, tea.KeyEnter:
-			cmd := f.owner.model.Update(filetree.TreeKeyPressMsg{Key: evt.Key})
+			cmd := model.Update(filetree.TreeKeyPressMsg{Key: evt.Key})
 			f.owner.syncFromModel()
 			return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidatePaint}
 		case tea.KeyEsc:
 			if f.field.Value() != "" {
-				f.owner.model.ClearFilter()
+				before := f.field.Value()
 				f.field.SetValue("")
+				if f.owner.pathSearchHandler != nil {
+					f.owner.ClearPathSearch()
+					res := ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+					return f.finishSearch(before, res)
+				}
+				f.owner.model.ClearFilter()
 				f.owner.syncFromModel()
 				return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 			}
-			f.owner.model.ClearFilter()
+			model.ClearFilter()
 			f.owner.syncFromModel()
 			return ui.EventResult{
 				Handled:    true,
@@ -632,15 +733,26 @@ func (f *treeFilterField) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResu
 			}
 		case 'r', '.':
 			if evt.Key.Mod.Contains(tea.ModCtrl) {
-				cmd := f.owner.model.Update(filetree.TreeKeyPressMsg{Key: evt.Key})
+				cmd := model.Update(filetree.TreeKeyPressMsg{Key: evt.Key})
 				return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidatePaint}
 			}
 		}
 	}
 	ctx.Focused = true
+	before := f.field.Value()
 	res := f.field.Handle(ctx, evt)
+	return f.finishSearch(before, res)
+}
+
+func (f *treeFilterField) finishSearch(before string, result ui.EventResult) ui.EventResult {
+	if f.owner == nil {
+		return result
+	}
+	if before != f.field.Value() && f.owner.pathSearchHandler != nil {
+		result.Cmd = f.owner.pathSearchHandler(f.field.Value())
+	}
 	f.owner.syncFromModel()
-	return res
+	return result
 }
 
 func (f *treeFilterField) Semantics() ui.Semantics {

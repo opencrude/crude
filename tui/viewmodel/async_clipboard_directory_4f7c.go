@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"net/http"
@@ -85,6 +86,7 @@ type directoryAsyncResultMsg struct {
 	generation uint64
 	intent     filepickerscreen.IntentToken
 	listing    workspace.DirectoryListing
+	expand     bool
 	err        error
 }
 
@@ -107,6 +109,17 @@ type appAsyncIOState struct {
 	latestDirectory     map[*filepickerscreen.Screen]uint64
 	directoryCancel     map[*filepickerscreen.Screen]chan struct{}
 	directoryBrowser    directoryAsyncBrowser
+	nextPathSearch      uint64
+	latestPathSearch    map[*filepickerscreen.Screen]uint64
+	pathSearchCancel    map[*filepickerscreen.Screen]context.CancelFunc
+	pathSearchRoot      map[*filepickerscreen.Screen]string
+	pathSearchDirsOnly  map[*filepickerscreen.Screen]bool
+	pathSearchHidden    map[*filepickerscreen.Screen]bool
+	pathSearchCatalog   map[*filepickerscreen.Screen]workspace.BrowserCatalog
+	pathSearchRunning   map[*filepickerscreen.Screen]bool
+	pathSearchQuery     map[*filepickerscreen.Screen]string
+	pathSearchIntent    map[*filepickerscreen.Screen]filepickerscreen.IntentToken
+	treePathSearch      *treePathSearchState
 	detachedMessageSink func(tea.Msg)
 }
 
@@ -123,6 +136,16 @@ func asyncIOStateFor(m *App) *appAsyncIOState {
 		latestDirectory:     make(map[*filepickerscreen.Screen]uint64),
 		directoryCancel:     make(map[*filepickerscreen.Screen]chan struct{}),
 		directoryBrowser:    workspace.BrowseDirectoryPath,
+		latestPathSearch:    make(map[*filepickerscreen.Screen]uint64),
+		pathSearchCancel:    make(map[*filepickerscreen.Screen]context.CancelFunc),
+		pathSearchRoot:      make(map[*filepickerscreen.Screen]string),
+		pathSearchDirsOnly:  make(map[*filepickerscreen.Screen]bool),
+		pathSearchHidden:    make(map[*filepickerscreen.Screen]bool),
+		pathSearchCatalog:   make(map[*filepickerscreen.Screen]workspace.BrowserCatalog),
+		pathSearchRunning:   make(map[*filepickerscreen.Screen]bool),
+		pathSearchQuery:     make(map[*filepickerscreen.Screen]string),
+		pathSearchIntent:    make(map[*filepickerscreen.Screen]filepickerscreen.IntentToken),
+		treePathSearch:      newTreePathSearchState(),
 		clipboardWorkerDone: make(chan struct{}),
 	}
 	state.clipboardCond = sync.NewCond(&state.mu)
@@ -507,16 +530,39 @@ func (m *App) beginDirectoryAsyncLoadFor(
 	path string,
 	intent filepickerscreen.IntentToken,
 ) tea.Cmd {
+	return m.beginDirectoryAsyncLoadInternal(target, path, intent, false)
+}
+
+func (m *App) beginDirectoryAsyncExpandFor(
+	target *filepickerscreen.Screen,
+	path string,
+	intent filepickerscreen.IntentToken,
+) tea.Cmd {
+	return m.beginDirectoryAsyncLoadInternal(target, path, intent, true)
+}
+
+func (m *App) beginDirectoryAsyncLoadInternal(
+	target *filepickerscreen.Screen,
+	path string,
+	intent filepickerscreen.IntentToken,
+	expand bool,
+) tea.Cmd {
 	if target == nil {
 		return nil
 	}
-	if intent.Epoch == 0 {
-		intent = target.BeginAsyncDirectoryLoad(path)
-		if intent.Epoch == 0 {
+	if expand {
+		if intent.Epoch == 0 || !target.BeginAsyncDirectoryExpandFor(path, intent) {
 			return nil
 		}
-	} else if !target.BeginAsyncDirectoryLoadFor(path, intent) {
-		return nil
+	} else {
+		if intent.Epoch == 0 {
+			intent = target.BeginAsyncDirectoryLoad(path)
+			if intent.Epoch == 0 {
+				return nil
+			}
+		} else if !target.BeginAsyncDirectoryLoadFor(path, intent) {
+			return nil
+		}
 	}
 	state := asyncIOStateFor(m)
 	state.mu.Lock()
@@ -537,7 +583,7 @@ func (m *App) beginDirectoryAsyncLoadFor(
 		state.mu.Unlock()
 		if generation != latest {
 			return directoryAsyncResultMsg{
-				target: target, generation: generation, intent: intent,
+				target: target, generation: generation, intent: intent, expand: expand,
 			}
 		}
 		type browseResult struct {
@@ -555,15 +601,16 @@ func (m *App) beginDirectoryAsyncLoadFor(
 		case result := <-done:
 			return directoryAsyncResultMsg{
 				target: target, generation: generation, intent: intent,
-				listing: result.listing, err: result.err,
+				expand: expand, listing: result.listing, err: result.err,
 			}
 		case <-cancel:
-			return directoryAsyncResultMsg{target: target, generation: generation, intent: intent}
+			return directoryAsyncResultMsg{target: target, generation: generation, intent: intent, expand: expand}
 		case <-timer.C:
 			return directoryAsyncResultMsg{
 				target:     target,
 				generation: generation,
 				intent:     intent,
+				expand:     expand,
 				err:        errors.New("directory read timed out"),
 			}
 		}
@@ -611,6 +658,12 @@ func (m *App) markFilePickerDirty() {
 	}
 	if fw := m.windowManager.Window(string(ui.OverlayFilePicker)); fw != nil {
 		fw.MarkContentDirty()
+		if frame, ok := fw.Content.(*ui.WindowFrameWidget); ok && frame != nil && frame.Host() != nil {
+			// Directory/search result counts can change whether the scrollbar
+			// occupies a column. Content invalidation alone does not rebuild the
+			// Host hit/layout tree.
+			frame.Host().MarkLayout()
+		}
 	}
 }
 
@@ -674,6 +727,26 @@ func (m *App) StopAsyncIO() {
 	for target, cancel := range state.directoryCancel {
 		close(cancel)
 		delete(state.directoryCancel, target)
+	}
+	for target, cancel := range state.pathSearchCancel {
+		cancel()
+		delete(state.pathSearchCancel, target)
+	}
+	for target := range state.pathSearchRunning {
+		delete(state.pathSearchRunning, target)
+		delete(state.pathSearchCatalog, target)
+		delete(state.pathSearchRoot, target)
+		delete(state.pathSearchDirsOnly, target)
+		delete(state.pathSearchHidden, target)
+		delete(state.pathSearchQuery, target)
+		delete(state.pathSearchIntent, target)
+	}
+	if state.treePathSearch != nil {
+		for target, cancel := range state.treePathSearch.cancel {
+			cancel()
+			delete(state.treePathSearch.cancel, target)
+		}
+		state.treePathSearch.clear()
 	}
 	if state.clipboardCond != nil {
 		state.clipboardCond.Broadcast()

@@ -297,6 +297,9 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 		agentChatScroll:    make(map[string]agentMainChatScrollSnapshot),
 	}
 	deck.app = app
+	if app.sidebarScreen != nil {
+		app.sidebarScreen.SetPathSearchHandler(app.beginTreePathSearch)
+	}
 
 	app.registerOverlayHandlers()
 
@@ -452,20 +455,15 @@ func (m *App) openFilePickerWindow() {
 	m.overlayHost.Close(ui.OverlayFilePicker)
 
 	folderMode := m.FilePicker.Mode() == filepickerscreen.ModeFolder
-	w, h := fitFloatingSize(m.width, m.height, 68, 20, 42, 12)
-	title := "Attach File"
-	frameKind := ui.FrameDialog
-	minW, minH := 42, 12
+	w, h := fitFloatingSize(m.width, m.height, 96, 28, 60, 18)
+	title := "Attach Files"
 	if folderMode {
-		w, h = fitFloatingSize(m.width, m.height, 96, 28, 60, 18)
 		title = "New Workspace"
-		frameKind = ui.FrameWindow
-		minW, minH = 60, 18
 	}
 	frame := ui.NewWindowFrameWidget(
 		m.Theme,
 		ui.NewID(ui.RootID, "filepicker-frame"),
-		frameKind,
+		ui.FrameWindow,
 		title,
 		m.FilePicker,
 		nil,
@@ -480,15 +478,16 @@ func (m *App) openFilePickerWindow() {
 		wm.WithDecoration(true),
 		wm.WithMovable(true),
 		wm.WithClosable(true),
-		wm.WithResizable(folderMode),
+		wm.WithResizable(true),
 		wm.WithModal(true),
 		wm.WithFocusable(true),
-		wm.WithMinSize(minInt(minW, w), minInt(minH, h)),
+		wm.WithMinSize(minInt(60, w), minInt(18, h)),
 		wm.WithMaxSize(maxInt(w, m.width-2), maxInt(h, m.height-2)),
 		wm.WithClickOutside(wm.ClickOutsideIgnore),
 	)
 	wm.CenterOnScreen(win, m.width, m.height)
 	m.overlayHost.Open(ui.OverlayFilePicker, win, ui.ModalDialogPolicy(), func() {
+		m.invalidatePathSearch(m.FilePicker)
 		m.invalidateDirectoryAsyncLoad(m.FilePicker)
 		m.FilePicker.Close()
 		m.setMode(ModeChat)

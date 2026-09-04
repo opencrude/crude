@@ -506,17 +506,45 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 				node.State.Messages.MarkAllThinkingInterrupted()
 			}
 		}
+	case pickerPathSearchResultMsg:
+		if cmd := m.applyPickerPathSearchResult(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case treePathSearchResultMsg:
+		if cmd := m.applyTreePathSearchResult(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
 	case filepickerscreen.NavigateMsg:
 		if !msg.ValidFor(m.FilePicker) {
 			break
 		}
+		m.invalidatePathSearch(msg.Target)
 		if cmd := m.beginDirectoryAsyncLoadFor(msg.Target, msg.Path, msg.Intent()); cmd != nil {
 			cmds = append(cmds, cmd)
+		}
+	case filepickerscreen.LoadMsg:
+		if !msg.ValidFor(m.FilePicker) {
+			break
+		}
+		if cmd := m.beginDirectoryAsyncExpandFor(msg.Target, msg.Path, msg.Intent()); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case filepickerscreen.SearchMsg:
+		if cmd := m.beginPickerPathSearch(msg); cmd != nil {
+			cmds = append(cmds, cmd)
+		}
+	case filepickerscreen.ToggleMsg:
+		if !msg.ValidFor(m.FilePicker) {
+			break
+		}
+		if m.FilePicker.TogglePath(msg.Path) {
+			m.markFilePickerDirty()
 		}
 	case filepickerscreen.SelectMsg:
 		if !msg.ValidFor(m.FilePicker) {
 			break
 		}
+		m.invalidatePathSearch(msg.Target)
 		m.invalidateDirectoryAsyncLoad(msg.Target)
 		m.overlayHost.Close(ui.OverlayFilePicker)
 		if msg.Folder {
@@ -530,10 +558,17 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 				m.StatusBar.SetInfo("Opened " + msg.Path)
 			}
 		} else {
-			m.addFileReference(msg.Path)
+			paths := msg.Paths
+			if len(paths) == 0 && msg.Path != "" {
+				paths = []string{msg.Path}
+			}
+			for _, path := range paths {
+				m.addFileReference(path)
+			}
 		}
 	case filepickerscreen.CancelMsg:
 		if msg.ValidFor(m.FilePicker) {
+			m.invalidatePathSearch(msg.Target)
 			m.invalidateDirectoryAsyncLoad(msg.Target)
 			m.overlayHost.Close(ui.OverlayFilePicker)
 		}
@@ -1104,7 +1139,10 @@ func (m *App) saveReferenceFromOverlay() {
 }
 
 func (m *App) openFilePicker() {
-	root, _ := m.workingDir()
+	root := m.RootPath
+	if root == "" {
+		root, _ = m.workingDir()
+	}
 	m.openPicker(root, filepickerscreen.ModeFile)
 }
 
@@ -1112,6 +1150,7 @@ func (m *App) openPicker(root string, mode filepickerscreen.Mode) {
 	if m.FilePicker == nil {
 		m.FilePicker = filepickerscreen.New(m.Theme)
 	}
+	m.invalidatePathSearch(m.FilePicker)
 	m.invalidateDirectoryAsyncLoad(m.FilePicker)
 	m.overlayHost.Close(ui.OverlayFilePicker)
 	m.FilePicker.Open(root, mode, nil)

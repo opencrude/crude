@@ -13,6 +13,8 @@ import (
 	"sync"
 	"time"
 
+	tea "charm.land/bubbletea/v2"
+
 	"crude/tui/ui"
 )
 
@@ -84,6 +86,10 @@ type TreeNode struct {
 	// Filtered is true when this node does not match the active filter.
 	Filtered bool
 
+	// Selected is a secondary selection mark used by multi-select picker
+	// projections. The persistent sidebar leaves it false and uses the cursor.
+	Selected bool
+
 	// Hidden is true for dot-files when ShowHidden is false.
 	Hidden bool
 
@@ -101,6 +107,24 @@ type TreeNode struct {
 	DiagWarnings int
 	// DiagHints is the count of info/hint-level diagnostics.
 	DiagHints int
+}
+
+// DirectoryEntry is filesystem metadata supplied by an asynchronous browser
+// request. It intentionally contains no presentation or workspace services.
+type DirectoryEntry struct {
+	Name      string
+	Path      string
+	IsDir     bool
+	IsSymlink bool
+}
+
+// ModelOptions controls optional services and projections for a tree model.
+// The persistent sidebar uses the default service-rich configuration; picker
+// models use the no-I/O, no-Git, no-diagnostics configuration.
+type ModelOptions struct {
+	DirectoriesOnly bool
+	EnableGit       bool
+	InitialLoad     bool
 }
 
 // recomputeAggregateStatuses recomputes AggregateStatus for every loaded
@@ -327,6 +351,10 @@ type FileTreeModel struct {
 	// showHidden controls whether dot-files (names starting with ".") appear.
 	showHidden bool
 
+	// directoriesOnly omits files from directory projections, used by the
+	// workspace-folder picker.
+	directoriesOnly bool
+
 	// iconResolver resolves file/directory names to NerdFont/Unicode icons.
 	iconResolver *IconResolver
 
@@ -369,6 +397,15 @@ type FileTreeModel struct {
 	// The metadata watcher never performs repository I/O or mutates tree rows.
 	onGitChanged func()
 
+	// directoryLoader is installed only by asynchronous picker projections.
+	// It returns a command that owns the filesystem request; the tree never
+	// performs picker I/O itself.
+	directoryLoader func(path string) tea.Cmd
+
+	// onFileSelected adapts file activation for picker selection. The persistent
+	// tree leaves this nil and emits FileSelectedMsg as before.
+	onFileSelected func(path string) tea.Cmd
+
 	// mu protects all mutable state for thread-safe access.
 	mu sync.RWMutex
 }
@@ -378,6 +415,13 @@ type FileTreeModel struct {
 // It initialises the icon resolver, attempts to create a git status resolver,
 // loads the root directory, and builds the initial visible-nodes list.
 func NewFileTreeModel(rootPath string) *FileTreeModel {
+	return NewFileTreeModelWithOptions(rootPath, ModelOptions{EnableGit: true, InitialLoad: true})
+}
+
+// NewFileTreeModelWithOptions creates a tree with explicit service and loading
+// behavior. InitialLoad=false performs no filesystem reads, which is required
+// before a picker is mounted on the UI thread.
+func NewFileTreeModelWithOptions(rootPath string, options ModelOptions) *FileTreeModel {
 	// Resolve to an absolute path.
 	absPath, err := filepath.Abs(rootPath)
 	if err != nil {
@@ -389,11 +433,14 @@ func NewFileTreeModel(rootPath string) *FileTreeModel {
 		nodes:              make(map[string]*TreeNode),
 		sortBy:             SortByType,
 		showHidden:         false,
+		directoriesOnly:    options.DirectoriesOnly,
 		iconResolver:       NewIconResolver(),
-		gitResolver:        NewGitStatusResolver(absPath),
 		diagnosticResolver: make(map[string]DiagCounts),
 		Hover:              ui.NewHover(),
 		filterEd:           ui.NewTextEdit(),
+	}
+	if options.EnableGit {
+		m.gitResolver = NewGitStatusResolver(absPath)
 	}
 
 	// Create the root node.
@@ -415,14 +462,30 @@ func NewFileTreeModel(rootPath string) *FileTreeModel {
 	m.Root = root
 	m.nodes[absPath] = root
 
-	// Initially expand the root so the tree isn't empty.
+	// Initially expand the root so the tree isn't empty once its children are
+	// applied. Picker models leave it loading until their async root request
+	// completes.
 	root.IsExpanded = true
-	_ = m.loadDirectory(root)
+	if options.InitialLoad {
+		_ = m.loadDirectory(root)
+	} else {
+		root.Loading = true
+	}
 
 	// Rebuild visible nodes.
 	m.rebuildVisibleNodes()
 
 	return m
+}
+
+// NewPickerFileTreeModel creates a tree projection with no filesystem I/O and
+// no Git, diagnostics, or watcher services. Directory results are applied by
+// SetDirectoryEntries after workspace-owned asynchronous reads complete.
+func NewPickerFileTreeModel(rootPath string, directoriesOnly bool) *FileTreeModel {
+	return NewFileTreeModelWithOptions(rootPath, ModelOptions{
+		DirectoriesOnly: directoriesOnly,
+		InitialLoad:     false,
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -479,6 +542,9 @@ func (m *FileTreeModel) loadDirectory(node *TreeNode) error {
 					isDir = targetInfo.IsDir()
 				}
 			}
+		}
+		if m.directoriesOnly && !isDir {
+			continue
 		}
 
 		// Re-use existing node if available (updates git status).
@@ -541,6 +607,140 @@ func (m *FileTreeModel) loadDirectory(node *TreeNode) error {
 	return nil
 }
 
+// SetDirectoryLoader installs the asynchronous child-directory request hook
+// used by picker projections. The callback is never invoked while the model
+// lock is held.
+func (m *FileTreeModel) SetDirectoryLoader(fn func(string) tea.Cmd) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.directoryLoader = fn
+	m.mu.Unlock()
+}
+
+// SetFileSelectedHandler adapts file activation for a parent projection such
+// as Attach Files. A nil handler preserves the persistent sidebar behavior.
+func (m *FileTreeModel) SetFileSelectedHandler(fn func(string) tea.Cmd) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.onFileSelected = fn
+	m.mu.Unlock()
+}
+
+// MarkDirectoryLoading marks one loaded directory as awaiting an asynchronous
+// child listing. It does not perform I/O.
+func (m *FileTreeModel) MarkDirectoryLoading(path string) bool {
+	if m == nil {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	node, ok := m.nodes[filepath.Clean(path)]
+	if !ok || !node.IsDir {
+		return false
+	}
+	if node.Loading {
+		return true
+	}
+	node.Loading = true
+	node.IsExpanded = true
+	m.rebuildVisibleNodes()
+	return true
+}
+
+// SetDirectoryEntries applies an asynchronous listing to an existing node.
+// Existing child nodes are reused so expansion and selection survive refreshes.
+func (m *FileTreeModel) SetDirectoryEntries(path string, entries []DirectoryEntry) bool {
+	if m == nil {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	path = filepath.Clean(path)
+	node, ok := m.nodes[path]
+	if !ok || !node.IsDir {
+		return false
+	}
+	existing := make(map[string]*TreeNode, len(node.Children))
+	for _, child := range node.Children {
+		if child != nil {
+			existing[child.Name] = child
+		}
+	}
+	children := make([]*TreeNode, 0, len(entries))
+	for _, entry := range entries {
+		if m.directoriesOnly && !entry.IsDir {
+			continue
+		}
+		childPath := filepath.Clean(entry.Path)
+		if childPath == "." || childPath == path {
+			continue
+		}
+		child := existing[entry.Name]
+		if child == nil {
+			child = &TreeNode{
+				Name: entry.Name, Path: childPath, IsDir: entry.IsDir,
+				IsSymlink: entry.IsSymlink, Depth: node.Depth + 1, Parent: node,
+				Hidden: strings.HasPrefix(entry.Name, "."),
+			}
+		} else {
+			child.Path = childPath
+			child.IsDir = entry.IsDir
+			child.IsSymlink = entry.IsSymlink
+			child.Hidden = strings.HasPrefix(entry.Name, ".")
+			child.Parent = node
+			if !entry.IsDir {
+				child.Children = nil
+				child.IsExpanded = false
+			}
+		}
+		children = append(children, child)
+		m.nodes[childPath] = child
+		delete(existing, entry.Name)
+	}
+	for _, orphan := range existing {
+		m.removeNodeIndex(orphan)
+	}
+	m.sortChildren(children)
+	node.Children = children
+	node.Loading = false
+	m.rebuildVisibleNodes()
+	return true
+}
+
+// SetDirectoryLoadError clears the loading state after a failed asynchronous
+// listing while preserving the previous children for an already-loaded node.
+func (m *FileTreeModel) SetDirectoryLoadError(path string) bool {
+	if m == nil {
+		return false
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	node, ok := m.nodes[filepath.Clean(path)]
+	if !ok || !node.IsDir {
+		return false
+	}
+	node.Loading = false
+	m.rebuildVisibleNodes()
+	return true
+}
+
+// SetSelectionMarks updates picker multi-selection indicators without changing
+// the tree cursor selection.
+func (m *FileTreeModel) SetSelectionMarks(paths map[string]bool) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for path, node := range m.nodes {
+		node.Selected = paths[filepath.Clean(path)]
+	}
+}
+
 // removeNodeIndex removes node and all loaded descendants from the path index.
 // The caller must hold m.mu.
 func (m *FileTreeModel) removeNodeIndex(node *TreeNode) {
@@ -587,45 +787,74 @@ func (m *FileTreeModel) sortChildren(children []*TreeNode) {
 
 // ToggleExpand expands a collapsed directory (loading children if needed) or
 // collapses an expanded directory. Non-directory nodes are ignored.
-func (m *FileTreeModel) ToggleExpand(path string) {
+func (m *FileTreeModel) ToggleExpand(path string) tea.Cmd {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	node, ok := m.nodes[path]
 	if !ok || !node.IsDir {
-		return
+		m.mu.Unlock()
+		return nil
 	}
 
 	if node.IsExpanded {
 		node.IsExpanded = false
+		m.rebuildVisibleNodes()
+		m.mu.Unlock()
+		return nil
 	} else {
 		// Load children if not already loaded.
 		if node.Children == nil {
+			if m.directoryLoader != nil {
+				if node.Loading {
+					m.mu.Unlock()
+					return nil
+				}
+				node.Loading = true
+				node.IsExpanded = true
+				m.rebuildVisibleNodes()
+				loader := m.directoryLoader
+				m.mu.Unlock()
+				return loader(path)
+			}
 			_ = m.loadDirectory(node)
 		}
 		node.IsExpanded = true
 	}
 
 	m.rebuildVisibleNodes()
+	m.mu.Unlock()
+	return nil
 }
 
 // Expand expands a specific directory node. Non-directory nodes are ignored.
 // If children have not been loaded yet, they are loaded first.
-func (m *FileTreeModel) Expand(path string) {
+func (m *FileTreeModel) Expand(path string) tea.Cmd {
 	m.mu.Lock()
-	defer m.mu.Unlock()
-
 	node, ok := m.nodes[path]
 	if !ok || !node.IsDir || node.IsExpanded {
-		return
+		m.mu.Unlock()
+		return nil
 	}
 
 	// Load children if not already loaded.
 	if node.Children == nil {
+		if m.directoryLoader != nil {
+			if node.Loading {
+				m.mu.Unlock()
+				return nil
+			}
+			node.Loading = true
+			node.IsExpanded = true
+			m.rebuildVisibleNodes()
+			loader := m.directoryLoader
+			m.mu.Unlock()
+			return loader(path)
+		}
 		_ = m.loadDirectory(node)
 	}
 	node.IsExpanded = true
 	m.rebuildVisibleNodes()
+	m.mu.Unlock()
+	return nil
 }
 
 // Collapse collapses a specific directory node.
@@ -985,7 +1214,7 @@ func (m *FileTreeModel) computeFilterMatches(node *TreeNode, pattern string, bud
 		}
 	}
 	if node.IsDir {
-		if node.Children == nil && *budget > 0 {
+		if node.Children == nil && m.directoryLoader == nil && *budget > 0 {
 			*budget--
 			_ = m.loadDirectory(node)
 		}

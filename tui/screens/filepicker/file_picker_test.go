@@ -2,6 +2,7 @@ package filepicker
 
 import (
 	"path/filepath"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -19,18 +20,21 @@ func TestFilePickerKeyboardFilterPasteAndTypedResults(t *testing.T) {
 		t.Fatalf("filter result=%#v visible=%d", result, screen.VisibleCount())
 	}
 	result = host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
-	message := commandMessage[SelectMsg](t, result)
-	if message.Target != screen || message.Path != "/root/b.txt" || message.Folder {
-		t.Fatalf("select message=%#v", message)
+	if result.Cmd != nil || len(screen.SelectedPaths()) != 1 || screen.SelectedPaths()[0] != "/root/b.txt" {
+		t.Fatalf("file activation result=%#v selected=%v", result, screen.SelectedPaths())
 	}
 
 	screen, host = pickerHost(t, ModeFile)
 	if !host.Focus(ListID) {
-		t.Fatal("could not focus list")
+		t.Fatal("could not focus tree")
 	}
 	result = host.Handle(tea.PasteMsg{Content: "a.txt"})
-	if !result.Handled || host.Focused() != FilterID || screen.VisibleCount() != 1 {
+	if !result.Handled || host.Focused() != FilterID || screen.VisibleCount() != 1 || result.Cmd == nil {
 		t.Fatalf("paste result=%#v focus=%q visible=%d", result, host.Focused(), screen.VisibleCount())
+	}
+	result = host.Handle(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if result.Cmd == nil {
+		t.Fatal("first escape did not clear the active search")
 	}
 	result = host.Handle(tea.KeyPressMsg{Code: tea.KeyEsc})
 	cancel := commandMessage[CancelMsg](t, result)
@@ -39,21 +43,44 @@ func TestFilePickerKeyboardFilterPasteAndTypedResults(t *testing.T) {
 	}
 }
 
+func TestFilePickerFilterNeverUsesStaleTextSelectionAfterMouseEdit(t *testing.T) {
+	screen, host := pickerHost(t, ModeFile)
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			t.Fatalf("picker filter panicked after mouse selection edit: %v", recovered)
+		}
+	}()
+	host.Handle(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	host.Handle(tea.MouseClickMsg{X: 2, Y: 3, Button: tea.MouseLeft})
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	host.Handle(tea.KeyPressMsg{Code: 'p', Text: "p"})
+	if screen == nil {
+		t.Fatal("picker screen unexpectedly nil")
+	}
+}
+
 func TestFilePickerDirectoryNavigationAndDoubleClick(t *testing.T) {
 	screen, host := pickerHost(t, ModeFile)
+	if !host.Focus(ListID) {
+		t.Fatal("could not focus tree")
+	}
 	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
-	navigate := commandMessage[NavigateMsg](t, result)
-	if navigate.Target != screen || navigate.Path != "/root/src" {
-		t.Fatalf("keyboard navigate=%#v", navigate)
+	load := commandMessage[LoadMsg](t, result)
+	if load.Target != screen || load.Path != "/root/src" {
+		t.Fatalf("keyboard load=%#v", load)
 	}
 
 	screen, host = pickerHost(t, ModeFile)
-	first := host.Handle(tea.MouseClickMsg{X: 2, Y: 3, Button: tea.MouseLeft})
-	if first.Cmd != nil || first.Action != nil {
-		t.Fatalf("first click activated entry: %#v", first)
+	if !host.Focus(ListID) {
+		t.Fatal("could not focus tree")
 	}
-	second := host.Handle(tea.MouseClickMsg{X: 2, Y: 3, Button: tea.MouseLeft})
-	navigate = commandMessage[NavigateMsg](t, second)
+	first := host.Handle(tea.MouseClickMsg{X: 2, Y: 7, Button: tea.MouseLeft})
+	load = commandMessage[LoadMsg](t, first)
+	if load.Path != "/root/src" {
+		t.Fatalf("first click load=%#v", load)
+	}
+	second := host.Handle(tea.MouseClickMsg{X: 2, Y: 7, Button: tea.MouseLeft})
+	navigate := commandMessage[NavigateMsg](t, second)
 	if navigate.Path != "/root/src" {
 		t.Fatalf("double-click navigate=%#v", navigate)
 	}
@@ -61,8 +88,8 @@ func TestFilePickerDirectoryNavigationAndDoubleClick(t *testing.T) {
 
 func TestFolderPickerFiltersFilesAndSelectsCurrentDirectory(t *testing.T) {
 	screen, host := pickerHost(t, ModeFolder)
-	if screen.VisibleCount() != 2 {
-		t.Fatalf("folder rows=%d, want parent plus src", screen.VisibleCount())
+	if screen.VisibleCount() != 1 {
+		t.Fatalf("folder rows=%d, want src without parent pseudo-row", screen.VisibleCount())
 	}
 	if !host.Focus(ActionsID) {
 		t.Fatal("could not focus actions")
@@ -105,18 +132,30 @@ func TestFilePickerPrimaryActionTracksSelectedFile(t *testing.T) {
 		t.Fatal("could not focus filter")
 	}
 	host.Handle(tea.KeyPressMsg{Code: 'a', Text: "a"})
+	if !host.Focus(ListID) {
+		t.Fatal("could not refocus tree")
+	}
+	if result := host.Handle(tea.KeyPressMsg{Code: ' ', Text: " "}); result.Cmd == nil {
+		t.Fatal("space did not emit file selection toggle")
+	} else {
+		toggle := commandMessage[ToggleMsg](t, result)
+		if !toggle.ValidFor(screen) {
+			t.Fatal("toggle intent was not current")
+		}
+		screen.TogglePath(toggle.Path)
+	}
 	if !host.Focus(ActionsID) {
 		t.Fatal("could not refocus actions")
 	}
 	message := commandMessage[SelectMsg](t, host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}))
-	if message.Target != screen || message.Path != "/root/a.txt" {
+	if message.Target != screen || message.Path != "/root/a.txt" || len(message.Paths) != 1 {
 		t.Fatalf("attach result=%#v", message)
 	}
 }
 
 func TestFilePickerPaintsNativeControlsAcrossThemesAndSizes(t *testing.T) {
 	for _, th := range []*theme.Theme{theme.DefaultDark(), theme.DefaultLight()} {
-		for _, size := range []ui.Size{{W: 42, H: 9}, {W: 100, H: 20}} {
+		for _, size := range []ui.Size{{W: 60, H: 18}, {W: 100, H: 28}} {
 			screen := New(th)
 			screen.Open("/root", ModeFile, pickerEntries())
 			component := ui.NewComponentWidget(th, screen, size.W, size.H)
@@ -128,12 +167,89 @@ func TestFilePickerPaintsNativeControlsAcrossThemesAndSizes(t *testing.T) {
 			buf := surface.NewCellBuffer(size.W, size.H)
 			host.Paint(buf)
 			painted := pickerBufferText(buf)
-			for _, want := range []string{"Search files", filepath.FromSlash("/root") + " | 3 items", "src", "a.txt", "Attach", "Cancel"} {
+			for _, want := range []string{"Search files and folders", "root", "src", "a.txt", "Attach Files", "Cancel"} {
 				if !strings.Contains(painted, want) {
 					t.Fatalf("size=%#v missing %q:\n%s", size, want, painted)
 				}
 			}
 		}
+	}
+}
+
+func TestFilePickerBreadcrumbSegmentEmitsNavigation(t *testing.T) {
+	screen := New(theme.DefaultDark())
+	screen.Open(filepath.FromSlash("/root/src/nested"), ModeFolder, []Entry{})
+	component := ui.NewComponentWidget(theme.DefaultDark(), screen, 100, 28)
+	screen.SetFocusHandler(component.Focus)
+	host := component.Host()
+	host.Resize(100, 28)
+	host.Layout()
+	if len(screen.breadcrumb.parts) < 3 {
+		t.Fatalf("breadcrumb parts=%v", screen.breadcrumb.parts)
+	}
+	buf := surface.NewCellBuffer(100, 28)
+	host.Paint(buf)
+	sep := string(ui.FirstRune(screen.tokens.Glyphs().BreadcrumbSep, '›'))
+	if painted := pickerBufferText(buf); !strings.Contains(painted, sep) {
+		t.Fatalf("breadcrumb separators were not painted:\n%s", painted)
+	}
+	part := screen.breadcrumb.parts[1]
+	result := host.Handle(tea.MouseClickMsg{
+		X:      screen.breadcrumb.Bounds().X + part.x + 1,
+		Y:      screen.breadcrumb.Bounds().Y,
+		Button: tea.MouseLeft,
+	})
+	navigate := commandMessage[NavigateMsg](t, result)
+	if navigate.Path != part.path {
+		t.Fatalf("breadcrumb navigation=%#v want path=%q", navigate, part.path)
+	}
+}
+
+func TestFilePickerChildExpansionUsesLoadMessage(t *testing.T) {
+	root := filepath.FromSlash("/root")
+	screen, host := pickerHost(t, ModeFile)
+	screen.Open(root, ModeFile, []Entry{{Name: "src", Path: filepath.Join(root, "src"), IsDir: true}})
+	host.Resize(80, 14)
+	host.Layout()
+	if !host.Focus(ListID) {
+		t.Fatal("could not focus tree")
+	}
+	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	load := commandMessage[LoadMsg](t, result)
+	if !screen.BeginAsyncDirectoryExpandFor(load.Path, load.Intent()) {
+		t.Fatal("child expansion did not enter loading state")
+	}
+	if !screen.CompleteAsyncDirectoryLoadFor(load.Intent(), load.Path, []Entry{{Name: "main.go", Path: filepath.Join(load.Path, "main.go")}}) {
+		t.Fatal("child expansion result was not applied")
+	}
+	paths := screen.VisiblePaths()
+	if len(paths) != 2 || paths[0] != filepath.Join(root, "src") || paths[1] != filepath.Join(root, "src", "main.go") {
+		t.Fatalf("expanded paths=%v", paths)
+	}
+}
+
+func TestFilePickerTreeUsesPopupSurfaceAndInitialScrollbarGeometry(t *testing.T) {
+	root := filepath.FromSlash("/root")
+	entries := make([]Entry, 0, 32)
+	for i := 0; i < 32; i++ {
+		name := "folder-" + strconv.Itoa(i)
+		entries = append(entries, Entry{Name: name, Path: filepath.Join(root, name), IsDir: true})
+	}
+	screen := New(theme.DefaultDark())
+	screen.Open(root, ModeFolder, entries)
+	component := ui.NewComponentWidget(theme.DefaultDark(), screen, 96, 28)
+	screen.SetFocusHandler(component.Focus)
+	host := component.Host()
+	host.Resize(96, 28)
+	host.Layout()
+	if got := screen.scrollbar.Bounds().W; got == 0 {
+		t.Fatal("picker scrollbar was not allocated during initial layout")
+	}
+	buf := surface.NewCellBuffer(96, 28)
+	host.Paint(buf)
+	wantBG := ui.NewTokenSet(theme.DefaultDark()).Color(ui.ColorPopupBg)
+	if got := buf.Get(4, 20).BG; got != wantBG {
+		t.Fatalf("tree background=%v, want popup background=%v screen=%#v tree=%#v", got, wantBG, screen.Bounds(), screen.tree.Bounds())
 	}
 }
 

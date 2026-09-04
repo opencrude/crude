@@ -66,6 +66,7 @@ func (e *TextEdit) Cursor() int { return e.cursor }
 
 // SetCursor sets the cursor, clearing selection unless extend is true.
 func (e *TextEdit) SetCursor(i int, extend bool) {
+	e.normalizeState()
 	if i < 0 {
 		i = 0
 	}
@@ -100,10 +101,23 @@ func (e *TextEdit) HasSelection() bool {
 
 // SelectionRange returns [start, end) rune indices.
 func (e *TextEdit) SelectionRange() (int, int) {
-	if !e.selActive {
-		return e.cursor, e.cursor
+	cursor := e.cursor
+	if cursor < 0 {
+		cursor = 0
 	}
-	a, b := e.selAnchor, e.cursor
+	if cursor > len(e.runes) {
+		cursor = len(e.runes)
+	}
+	if !e.selActive {
+		return cursor, cursor
+	}
+	a, b := e.selAnchor, cursor
+	if a < 0 {
+		a = 0
+	}
+	if a > len(e.runes) {
+		a = len(e.runes)
+	}
 	if a > b {
 		a, b = b, a
 	}
@@ -136,6 +150,7 @@ func (e *TextEdit) Insert(s string) {
 	if len(r) == 0 {
 		return
 	}
+	e.prepareMutation()
 	e.recordEdit()
 	if e.HasSelection() {
 		e.deleteSelection()
@@ -186,6 +201,7 @@ func (e *TextEdit) insertRune(r rune) {
 	if !isEditableRune(r) || r == '\n' || r == '\t' {
 		return
 	}
+	e.prepareMutation()
 	e.recordEdit()
 	if e.HasSelection() {
 		e.deleteSelection()
@@ -200,6 +216,7 @@ func (e *TextEdit) insertRune(r rune) {
 
 // Backspace deletes before cursor or the selection.
 func (e *TextEdit) Backspace() {
+	e.prepareMutation()
 	if e.HasSelection() {
 		e.recordEdit()
 		e.deleteSelection()
@@ -243,6 +260,7 @@ func (e *TextEdit) backspaceRestoresLatestUndo() bool {
 
 // Delete deletes after cursor or the selection.
 func (e *TextEdit) Delete() {
+	e.prepareMutation()
 	if e.HasSelection() {
 		e.recordEdit()
 		e.deleteSelection()
@@ -257,6 +275,10 @@ func (e *TextEdit) Delete() {
 
 func (e *TextEdit) deleteSelection() {
 	a, b := e.SelectionRange()
+	if a == b {
+		e.ClearSelection()
+		return
+	}
 	e.runes = append(e.runes[:a], e.runes[b:]...)
 	e.cursor = a
 	e.ClearSelection()
@@ -323,6 +345,7 @@ func (e *TextEdit) SelectAll() {
 
 // DeleteToLineStart deletes from line start to cursor (Ctrl+U).
 func (e *TextEdit) DeleteToLineStart() {
+	e.prepareMutation()
 	if e.HasSelection() {
 		e.recordEdit()
 		e.deleteSelection()
@@ -338,6 +361,7 @@ func (e *TextEdit) DeleteToLineStart() {
 
 // DeleteToLineEnd deletes from cursor to end (Ctrl+K).
 func (e *TextEdit) DeleteToLineEnd() {
+	e.prepareMutation()
 	if e.HasSelection() {
 		e.recordEdit()
 		e.deleteSelection()
@@ -352,6 +376,7 @@ func (e *TextEdit) DeleteToLineEnd() {
 
 // DeleteWordBack deletes previous word (Ctrl+W).
 func (e *TextEdit) DeleteWordBack() {
+	e.prepareMutation()
 	if e.HasSelection() {
 		e.recordEdit()
 		e.deleteSelection()
@@ -370,6 +395,7 @@ func (e *TextEdit) DeleteWordBack() {
 
 // DeleteWordForward deletes through the next word boundary.
 func (e *TextEdit) DeleteWordForward() {
+	e.prepareMutation()
 	if e.HasSelection() {
 		e.recordEdit()
 		e.deleteSelection()
@@ -445,6 +471,7 @@ func (e *TextEdit) Undo() bool {
 	e.redo = append(e.redo, e.snapshot())
 	last := len(e.undo) - 1
 	e.restore(e.undo[last])
+	e.normalizeState()
 	e.undo = e.undo[:last]
 	return true
 }
@@ -456,6 +483,7 @@ func (e *TextEdit) Redo() bool {
 	e.undo = append(e.undo, e.snapshot())
 	last := len(e.redo) - 1
 	e.restore(e.redo[last])
+	e.normalizeState()
 	e.redo = e.redo[:last]
 	return true
 }
@@ -477,6 +505,40 @@ func (e *TextEdit) CopyStateTo(dst *TextEdit) {
 	dst.cursor = e.cursor
 	dst.selAnchor = e.selAnchor
 	dst.selActive = e.selActive
+	dst.normalizeState()
+}
+
+// normalizeState repairs cursor and selection endpoints before they can be
+// used for slicing. A zero-width active selection is only useful while
+// extending with Shift; destructive edits must clear it before changing the
+// rune slice or its anchor would point into the old value.
+func (e *TextEdit) normalizeState() {
+	if e.cursor < 0 {
+		e.cursor = 0
+	}
+	if e.cursor > len(e.runes) {
+		e.cursor = len(e.runes)
+	}
+	if !e.selActive {
+		e.selAnchor = -1
+		return
+	}
+	if e.selAnchor < 0 {
+		e.selAnchor = 0
+	}
+	if e.selAnchor > len(e.runes) {
+		e.selAnchor = len(e.runes)
+	}
+}
+
+func (e *TextEdit) prepareMutation() {
+	e.normalizeState()
+	if e.selActive {
+		a, b := e.SelectionRange()
+		if a == b {
+			e.ClearSelection()
+		}
+	}
 }
 
 // EnsureUTF8 validates that SetValue paths stay valid (helper for tests).

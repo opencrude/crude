@@ -17,6 +17,8 @@ type PaintConfig struct {
 	ShowGitStatus   bool
 	ShowDiagnostics bool
 	UseNerdFont     bool
+	Background      cell.Color
+	BackgroundSet   bool
 }
 
 // PaintConfigFromTheme extracts paint config from a theme.
@@ -70,6 +72,9 @@ func NewTreeRowPainter(model *FileTreeModel, icons *IconResolver, cfg PaintConfi
 		y := oy + rowY
 		x := ox
 		bg := cell.NoColor
+		if cfg.BackgroundSet {
+			bg = cfg.Background
+		}
 		hovered := st.Hovered
 		if !hovered && model != nil && model.Hover.Index >= 0 {
 			if nodes := model.VisibleNodes(); model.Hover.Index < len(nodes) && nodes[model.Hover.Index] == node {
@@ -171,6 +176,17 @@ func NewTreeRowPainter(model *FileTreeModel, icons *IconResolver, cfg PaintConfi
 		}
 		var indicators [3]indicatorSegment
 		indicatorCount := 0
+		if node.Selected {
+			indicators[indicatorCount] = indicatorSegment{text: "✓", fg: tokens.Color(ui.ColorAccent)}
+			indicatorCount++
+		}
+		if node.Loading {
+			if indicatorCount >= len(indicators) {
+				indicatorCount = len(indicators) - 1
+			}
+			indicators[indicatorCount] = indicatorSegment{text: "…", fg: tokens.Color(ui.ColorMuted)}
+			indicatorCount++
+		}
 		if cfg.ShowGitStatus && displayGit != GitNone {
 			if gitStr := StatusString(displayGit); gitStr != "" {
 				indicators[indicatorCount] = indicatorSegment{text: gitStr, fg: gitColor(tokens, displayGit)}

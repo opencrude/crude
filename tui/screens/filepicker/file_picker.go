@@ -22,9 +22,11 @@ const (
 	ScreenID     ui.ComponentID = "filepicker"
 	FilterID     ui.ComponentID = "filepicker/filter"
 	BreadcrumbID ui.ComponentID = "filepicker/breadcrumb"
-	ListID       ui.ComponentID = "filepicker/list"
-	ScrollbarID  ui.ComponentID = "filepicker/scrollbar"
-	ActionsID    ui.ComponentID = "filepicker/actions"
+	// ListID is retained as the public focus target name for callers and tests;
+	// its implementation is now the native file tree.
+	ListID      ui.ComponentID = "filepicker/list"
+	ScrollbarID ui.ComponentID = "filepicker/scrollbar"
+	ActionsID   ui.ComponentID = "filepicker/actions"
 )
 
 type Mode uint8
@@ -34,10 +36,13 @@ const (
 	ModeFolder
 )
 
+// Entry is the small neutral adapter accepted by the existing workspace
+// browser lifecycle. The picker immediately projects it into filetree nodes.
 type Entry struct {
-	Name  string
-	Path  string
-	IsDir bool
+	Name      string
+	Path      string
+	IsDir     bool
+	IsSymlink bool
 }
 
 // IntentToken identifies one user intent within one open picker lifecycle.
@@ -55,9 +60,38 @@ type NavigateMsg struct {
 	Sequence uint64
 }
 
+// LoadMsg requests an asynchronous child directory listing without replacing
+// the current browser root. NavigateMsg is reserved for breadcrumb/path-root
+// navigation.
+type LoadMsg struct {
+	Target   *Screen
+	Path     string
+	Epoch    uint64
+	Sequence uint64
+}
+
+// SearchMsg starts bounded recursive path discovery for the current picker
+// root. It carries no file contents.
+type SearchMsg struct {
+	Target   *Screen
+	Query    string
+	Epoch    uint64
+	Sequence uint64
+}
+
+// ToggleMsg is emitted when a file is activated in Attach Files mode. It does
+// not close the picker; confirmation is a separate SelectMsg.
+type ToggleMsg struct {
+	Target   *Screen
+	Path     string
+	Epoch    uint64
+	Sequence uint64
+}
+
 type SelectMsg struct {
 	Target   *Screen
 	Path     string
+	Paths    []string
 	Folder   bool
 	Epoch    uint64
 	Sequence uint64
@@ -74,6 +108,30 @@ func (m NavigateMsg) Intent() IntentToken {
 }
 
 func (m NavigateMsg) ValidFor(target *Screen) bool {
+	return m.Target == target && target != nil && target.IsCurrentIntent(m.Epoch, m.Sequence)
+}
+
+func (m LoadMsg) Intent() IntentToken {
+	return IntentToken{Epoch: m.Epoch, Sequence: m.Sequence}
+}
+
+func (m LoadMsg) ValidFor(target *Screen) bool {
+	return m.Target == target && target != nil && target.IsCurrentIntent(m.Epoch, m.Sequence)
+}
+
+func (m SearchMsg) Intent() IntentToken {
+	return IntentToken{Epoch: m.Epoch, Sequence: m.Sequence}
+}
+
+func (m SearchMsg) ValidFor(target *Screen) bool {
+	return m.Target == target && target != nil && target.IsCurrentIntent(m.Epoch, m.Sequence)
+}
+
+func (m ToggleMsg) Intent() IntentToken {
+	return IntentToken{Epoch: m.Epoch, Sequence: m.Sequence}
+}
+
+func (m ToggleMsg) ValidFor(target *Screen) bool {
 	return m.Target == target && target != nil && target.IsCurrentIntent(m.Epoch, m.Sequence)
 }
 
@@ -95,26 +153,64 @@ func (m CancelMsg) ValidFor(target *Screen) bool {
 
 type Screen struct {
 	ui.Base
-	th         *theme.Theme
-	tokens     *ui.TokenSet
-	mode       Mode
-	root       string
-	current    string
-	rawEntries []Entry
-	entries    []Entry
-	visible    []Entry
-	active     bool
-	errText    string
-	openEpoch  uint64
-	intentSeq  uint64
-	asyncLoad  *asyncDirectoryLoad
-	filter     *pickerFilter
-	breadcrumb *ui.Label
-	list       *pickerList
-	scrollbar  *ui.ScrollbarControl
-	actions    *ui.ActionBar
-	focus      func(ui.ComponentID)
-	icons      *filetree.IconResolver
+	th      *theme.Theme
+	tokens  *ui.TokenSet
+	mode    Mode
+	root    string
+	current string
+	// entries is a compatibility snapshot for callers that seed a root listing;
+	// rows are rendered exclusively from model and tree.
+	entries   []Entry
+	active    bool
+	errText   string
+	openEpoch uint64
+	intentSeq uint64
+	asyncLoad *asyncDirectoryLoad
+
+	model        *filetree.FileTreeModel
+	browseModel  *filetree.FileTreeModel
+	searchActive bool
+	searchQuery  string
+	showHidden   bool
+	filter       *pickerFilter
+	breadcrumb   *pickerBreadcrumb
+	tree         *pickerTree
+	scrollbar    *ui.ScrollbarControl
+	actions      *ui.ActionBar
+	focus        func(ui.ComponentID)
+	selected     map[string]bool
+}
+
+type pickerFilter struct {
+	ui.Base
+	field *ui.FilterField
+	owner *Screen
+}
+
+type pickerTree struct {
+	ui.Base
+	owner         *Screen
+	tree          *ui.Tree
+	lastClickPath string
+	lastClickAt   time.Time
+}
+
+type breadcrumbPart struct {
+	path  string
+	label string
+	x     int
+	w     int
+}
+
+type pickerBreadcrumb struct {
+	ui.Base
+	owner  *Screen
+	tokens *ui.TokenSet
+	icons  *filetree.IconResolver
+	path   string
+	status string
+	parts  []breadcrumbPart
+	hover  int
 }
 
 func New(th *theme.Theme) *Screen {
@@ -122,62 +218,119 @@ func New(th *theme.Theme) *Screen {
 		th = theme.DefaultDark()
 	}
 	tokens := ui.NewTokenSet(th)
-	s := &Screen{Base: ui.NewBase(ScreenID), th: th, tokens: tokens, icons: filetree.NewIconResolver()}
-	s.icons.ApplyTheme(&th.Colors.Tree)
-	field := ui.NewFilterField(FilterID, tokens)
-	field.SetPrompt(ui.SearchGlyphEnd(tokens))
-	field.SetPromptPlacement(ui.PromptEnd)
-	field.SetSubmitAction("")
-	field.OnChanged(func(string) { s.sync() })
-	s.filter = &pickerFilter{Base: ui.NewBase(FilterID), field: field, owner: s}
-	s.breadcrumb = ui.NewLabel(BreadcrumbID, "", th)
-	s.breadcrumb.SetColorRole(ui.ColorMuted)
-	list := ui.NewList(ListID, tokens)
-	list.SetActivateAction("filepicker.entry.activate")
-	s.list = &pickerList{Base: ui.NewBase(ListID), list: list, owner: s, lastClick: -1}
-	s.scrollbar = ui.NewScrollbarControl(ScrollbarID, list.Scroll(), tokens)
-	s.scrollbar.SetSurfaceBackground(ui.ColorPopupBg)
+	s := &Screen{
+		Base:     ui.NewBase(ScreenID),
+		th:       th,
+		tokens:   tokens,
+		selected: make(map[string]bool),
+	}
+	s.filter = &pickerFilter{
+		Base:  ui.NewBase(FilterID),
+		field: ui.NewFilterField(FilterID, tokens),
+		owner: s,
+	}
+	s.filter.field.SetPrompt(ui.SearchGlyphEnd(tokens))
+	s.filter.field.SetPromptPlacement(ui.PromptEnd)
+	s.filter.field.SetSubmitAction("")
+	s.filter.field.OnChanged(func(value string) {
+		if s.model != nil && !s.searchActive {
+			s.model.SetFilter(value)
+		}
+		s.sync()
+	})
+	s.breadcrumb = &pickerBreadcrumb{
+		Base:   ui.NewBase(BreadcrumbID),
+		owner:  s,
+		tokens: tokens,
+		icons:  filetree.NewIconResolver(),
+		hover:  -1,
+	}
+	s.breadcrumb.icons.ApplyTheme(&th.Tree.Colors)
+	s.actions = ui.NewActionBar(ActionsID, tokens)
+	s.rebuildTree()
 	s.rebuildActions()
 	s.sync()
 	return s
 }
 
 func (s *Screen) Open(root string, mode Mode, entries []Entry) {
+	if s == nil {
+		return
+	}
 	s.discardAsyncDirectoryLoad()
 	s.openEpoch++
 	s.mode = mode
-	s.root = filepath.Clean(root)
+	s.root = cleanAbs(root)
 	s.current = s.root
 	s.active = true
 	s.errText = ""
+	s.selected = make(map[string]bool)
+	s.searchActive = false
+	s.searchQuery = ""
+	s.showHidden = false
+	s.entries = append(s.entries[:0], entries...)
 	if mode == ModeFolder {
 		s.filter.field.SetPlaceholder("Search folders")
 	} else {
-		s.filter.field.SetPlaceholder("Search files")
+		s.filter.field.SetPlaceholder("Search files and folders")
 	}
 	s.filter.field.SetValue("")
+	s.installModel(filetree.NewPickerFileTreeModel(s.current, mode == ModeFolder))
+	if entries != nil {
+		s.model.SetDirectoryEntries(s.current, toTreeEntries(entries))
+	}
 	s.rebuildActions()
-	s.setEntries(entries)
 	s.sync()
 }
 
+// SetDirectory applies the successful result of a root navigation request.
 func (s *Screen) SetDirectory(path string, entries []Entry) {
+	if s == nil {
+		return
+	}
 	s.discardAsyncDirectoryLoad()
-	s.current = filepath.Clean(path)
+	s.current = cleanAbs(path)
+	s.entries = append(s.entries[:0], entries...)
 	s.errText = ""
 	s.filter.field.SetValue("")
-	s.list.lastClick = -1
-	s.setEntries(entries)
+	s.searchActive = false
+	s.searchQuery = ""
+	s.installModel(filetree.NewPickerFileTreeModel(s.current, s.mode == ModeFolder))
+	s.model.SetDirectoryEntries(s.current, toTreeEntries(entries))
+	s.rebuildActions()
 	s.sync()
+}
+
+// SetDirectoryChildren applies an asynchronous expansion result while keeping
+// the current root and all other loaded branches intact.
+func (s *Screen) SetDirectoryChildren(path string, entries []Entry) bool {
+	if s == nil || s.model == nil {
+		return false
+	}
+	s.entries = append(s.entries[:0], entries...)
+	ok := s.model.SetDirectoryEntries(cleanAbs(path), toTreeEntries(entries))
+	if ok {
+		s.errText = ""
+		s.rebuildActions()
+		s.sync()
+	}
+	return ok
 }
 
 func (s *Screen) SetError(err error) {
+	if s == nil {
+		return
+	}
 	if err == nil {
 		s.errText = ""
 	} else {
 		s.errText = err.Error()
 	}
-	s.syncBreadcrumb()
+	if s.model != nil && s.asyncLoad != nil && s.asyncLoad.expand {
+		s.model.SetDirectoryLoadError(s.asyncLoad.path)
+	}
+	s.rebuildActions()
+	s.sync()
 }
 
 func (s *Screen) Close() {
@@ -188,81 +341,253 @@ func (s *Screen) Close() {
 	s.active = false
 	s.errText = ""
 	s.openEpoch++
-	s.visible = s.visible[:0]
-	if s.list != nil && s.list.list != nil {
-		s.list.list.SetItems(nil)
-	}
-	s.syncPrimary()
+	s.selected = make(map[string]bool)
+	s.entries = nil
+	s.searchActive = false
+	s.searchQuery = ""
+	s.model = nil
+	s.browseModel = nil
+	s.rebuildTree()
+	s.rebuildActions()
+	s.sync()
 }
-func (s *Screen) IsOpen() bool            { return s.active }
-func (s *Screen) Mode() Mode              { return s.mode }
-func (s *Screen) Current() string         { return s.current }
-func (s *Screen) VisibleCount() int       { return len(s.visible) }
-func (s *Screen) Selected() (Entry, bool) { return s.selectedEntry() }
-func (s *Screen) OpenEpoch() uint64       { return s.openEpoch }
-func (s *Screen) IntentSequence() uint64  { return s.intentSeq }
 
-// IsCurrentIntent reports whether an emitted message still belongs to the
-// current open picker and is the newest user intent from that lifecycle.
-func (s *Screen) IsCurrentIntent(epoch, sequence uint64) bool {
-	return s != nil &&
-		s.active &&
-		sequence != 0 &&
-		epoch == s.openEpoch &&
-		sequence == s.intentSeq
+func (s *Screen) IsOpen() bool { return s != nil && s.active }
+func (s *Screen) Mode() Mode {
+	if s == nil {
+		return ModeFile
+	}
+	return s.mode
+}
+func (s *Screen) Current() string {
+	if s == nil {
+		return ""
+	}
+	return s.current
+}
+func (s *Screen) VisibleCount() int {
+	if s == nil || s.model == nil {
+		return 0
+	}
+	return len(s.model.VisibleNodes())
+}
+
+// VisiblePaths returns the current tree projection in paint order. It is used
+// by parent policies and regression tests; callers must not mutate the result.
+func (s *Screen) VisiblePaths() []string {
+	if s == nil || s.model == nil {
+		return nil
+	}
+	return s.model.VisibleRows()
+}
+func (s *Screen) OpenEpoch() uint64 {
+	if s == nil {
+		return 0
+	}
+	return s.openEpoch
+}
+func (s *Screen) IntentSequence() uint64 {
+	if s == nil {
+		return 0
+	}
+	return s.intentSeq
+}
+
+func (s *Screen) Selected() (Entry, bool) {
+	if s == nil || s.model == nil {
+		return Entry{}, false
+	}
+	node := s.model.SelectedNode()
+	if node == nil {
+		return Entry{}, false
+	}
+	return Entry{Name: node.Name, Path: node.Path, IsDir: node.IsDir, IsSymlink: node.IsSymlink}, true
+}
+
+// SelectedPaths returns attach selections in deterministic insertion order.
+func (s *Screen) SelectedPaths() []string {
+	if s == nil || len(s.selected) == 0 {
+		return nil
+	}
+	paths := make([]string, 0, len(s.selected))
+	for path, selected := range s.selected {
+		if selected {
+			paths = append(paths, path)
+		}
+	}
+	sort.Strings(paths)
+	return paths
+}
+
+// TogglePath changes one attach selection. Folder-mode rows and unknown paths
+// are intentionally ignored.
+func (s *Screen) TogglePath(path string) bool {
+	if s == nil || s.mode != ModeFile || s.model == nil {
+		return false
+	}
+	node := s.model.NodeByPath(cleanAbs(path))
+	if node == nil || node.IsDir {
+		return false
+	}
+	path = cleanAbs(path)
+	s.selected[path] = !s.selected[path]
+	if !s.selected[path] {
+		delete(s.selected, path)
+	}
+	s.rebuildActions()
+	s.sync()
+	return true
+}
+
+func (s *Screen) ShowHidden() bool {
+	return s != nil && s.showHidden
+}
+
+// ToggleHidden changes the in-memory picker projection. A caller with an
+// active recursive search should issue a new SearchMsg using the new policy.
+func (s *Screen) ToggleHidden() bool {
+	if s == nil {
+		return false
+	}
+	s.showHidden = !s.showHidden
+	query := ""
+	if s.filter != nil && s.filter.field != nil {
+		query = s.filter.field.Value()
+	}
+	if s.searchActive {
+		s.ClearPathSearch()
+		if query != "" {
+			s.filter.field.SetValue(query)
+		}
+	}
+	if s.model != nil {
+		s.model.SetShowHidden(s.showHidden)
+	}
+	s.sync()
+	return s.showHidden
+}
+
+// BeginPathSearch marks the picker as showing a recursive path result stream.
+// The current browse model remains retained so clearing the query restores its
+// expansion and cursor state.
+func (s *Screen) BeginPathSearch(query string) bool {
+	if s == nil || !s.active {
+		return false
+	}
+	s.searchActive = strings.TrimSpace(query) != ""
+	s.searchQuery = query
+	if !s.searchActive {
+		return s.ClearPathSearch()
+	}
+	s.errText = "Searching…"
+	s.sync()
+	return true
+}
+
+// ApplyPathSearch replaces the displayed projection with a tree-shaped path
+// result model. The browse model remains untouched for restoration.
+func (s *Screen) ApplyPathSearch(query string, matches []filetree.PathMatch) bool {
+	if s == nil || !s.active || strings.TrimSpace(query) == "" {
+		return false
+	}
+	s.searchActive = true
+	s.searchQuery = query
+	s.errText = ""
+	s.model = filetree.NewPickerSearchModel(s.current, s.mode == ModeFolder, matches)
+	s.model.SetShowHidden(s.showHidden)
+	s.configureModel()
+	s.rebuildTree()
+	s.rebuildActions()
+	s.sync()
+	return true
+}
+
+// ClearPathSearch restores the retained browse model and its local expansion
+// state without touching the filesystem.
+func (s *Screen) ClearPathSearch() bool {
+	if s == nil {
+		return false
+	}
+	s.searchActive = false
+	s.searchQuery = ""
+	s.errText = ""
+	if s.browseModel != nil {
+		s.browseModel.ClearFilter()
+		s.model = s.browseModel
+		s.configureModel()
+	}
+	if s.filter != nil && s.filter.field != nil {
+		s.filter.field.SetValue("")
+	}
+	s.rebuildTree()
+	s.rebuildActions()
+	s.sync()
+	return true
 }
 
 func (s *Screen) SetFocusHandler(fn func(ui.ComponentID)) { s.focus = fn }
 func (s *Screen) FocusFilter()                            { s.focusID(FilterID) }
+func (s *Screen) FocusTree()                              { s.focusID(ListID) }
+
 func (s *Screen) focusID(id ui.ComponentID) {
-	if s.focus != nil {
+	if s != nil && s.focus != nil {
 		s.focus(id)
 	}
 }
 
-func (s *Screen) Children() []ui.Component {
-	return []ui.Component{s.filter, s.breadcrumb, s.list, s.scrollbar, s.actions}
+func (s *Screen) IsCurrentIntent(epoch, sequence uint64) bool {
+	return s != nil && s.active && sequence != 0 && epoch == s.openEpoch && sequence == s.intentSeq
 }
+
+func (s *Screen) Children() []ui.Component {
+	return []ui.Component{s.filter, s.breadcrumb, s.tree, s.scrollbar, s.actions}
+}
+
 func (s *Screen) SetTokens(tokens *ui.TokenSet) {
+	if s == nil || tokens == nil {
+		return
+	}
 	s.tokens = tokens
 	s.filter.SetTokens(tokens)
 	s.breadcrumb.SetTokens(tokens)
-	s.list.SetTokens(tokens)
+	s.tree.SetTokens(tokens)
 	s.scrollbar.SetTokens(tokens)
 	s.actions.SetTokens(tokens)
-	if s.filter != nil && s.filter.field != nil {
-		s.filter.field.SetPrompt(ui.SearchGlyphEnd(tokens))
-		s.filter.field.SetPromptPlacement(ui.PromptEnd)
-	}
+	s.filter.field.SetPrompt(ui.SearchGlyphEnd(tokens))
+	s.filter.field.SetPromptPlacement(ui.PromptEnd)
+	s.rebuildActions()
+	s.sync()
 }
+
 func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 	return cs.ClampSize(ui.Size{W: cs.MaxW, H: cs.MaxH})
 }
+
 func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
-	filterY := 0
-	breadcrumbY := 2
-	listY := 3
-	if s.mode == ModeFolder {
-		filterY = 3
-		breadcrumbY = 5
-		listY = 7
+	const headerRows = 3
+	filterY, breadcrumbY, treeY := headerRows, headerRows+2, headerRows+4
+	s.filter.Layout(ctx, ui.Rect{X: 1, Y: filterY, W: maxInt(1, r.W-2), H: 1})
+	s.breadcrumb.Layout(ctx, ui.Rect{X: 1, Y: breadcrumbY, W: maxInt(1, r.W-2), H: 1})
+	treeH := maxInt(1, r.H-treeY-2)
+	if s.model != nil {
+		s.model.Update(filetree.TreeHeightMsg{Height: treeH})
 	}
-	inset := 1
-	s.filter.Layout(ctx, ui.Rect{X: inset, Y: filterY, W: max(1, r.W-inset*2), H: 1})
-	s.breadcrumb.Layout(ctx, ui.Rect{X: inset, Y: breadcrumbY, W: max(1, r.W-inset*2), H: 1})
-	listH := max(1, r.H-listY-2)
+	if s.tree != nil {
+		s.tree.sync()
+	}
 	barW := 0
-	if s.scrollbar.NeededForViewport(listH) {
-		barW = min(ui.ScrollbarWidth, max(0, r.W-inset))
+	if s.scrollbar.NeededForViewport(treeH) {
+		barW = minInt(ui.ScrollbarWidth, maxInt(0, r.W-1))
 	}
-	s.list.Layout(ctx, ui.Rect{X: inset, Y: listY, W: max(1, r.W-inset-barW), H: listH})
-	s.scrollbar.Layout(ctx, ui.Rect{X: max(0, r.W-barW), Y: listY, W: barW, H: listH})
-	s.actions.Layout(ctx, ui.Rect{Y: max(0, r.H-1), W: r.W, H: 1})
+	s.tree.Layout(ctx, ui.Rect{X: 1, Y: treeY, W: maxInt(1, r.W-1-barW), H: treeH})
+	s.scrollbar.Layout(ctx, ui.Rect{X: maxInt(0, r.W-barW), Y: treeY, W: barW, H: treeH})
+	s.actions.Layout(ctx, ui.Rect{Y: maxInt(0, r.H-1), W: r.W, H: 1})
+	s.sync()
 }
 
 func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
-	if buf == nil || s.tokens == nil || s.mode != ModeFolder {
+	if s == nil || buf == nil || s.tokens == nil {
 		return
 	}
 	r := s.Bounds()
@@ -270,349 +595,304 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	fg := s.tokens.Color(ui.ColorFg)
 	accent := s.tokens.Color(ui.ColorAccent)
 	muted := s.tokens.Color(ui.ColorMuted)
-	ui.FillRect(buf, ox, oy, ui.Rect{X: r.X, Y: r.Y, W: r.W, H: min(3, r.H)}, cell.BlankCell(bg))
+	ui.FillRect(buf, ox, oy, r, cell.BlankCell(bg))
 	x := ox + r.X + 1
 	y := oy + r.Y
 	x = buf.WriteString(x, y, "◆ crude", accent, bg, cell.AttrBold)
+	label := "ATTACH FILES"
+	subtitle := "Choose files to add to this conversation · fuzzy-search as you type"
+	if s.mode == ModeFolder {
+		label = "OPEN WORKSPACE"
+		subtitle = "Choose a project folder · fuzzy-search as you type"
+	}
 	if x < ox+r.X+r.W-1 {
-		buf.WriteString(x, y, "  OPEN WORKSPACE", fg, bg, cell.AttrBold)
+		buf.WriteString(x, y, "  "+label, fg, bg, cell.AttrBold)
 	}
 	if r.H > 1 {
-		buf.WriteString(ox+r.X+1, y+1,
-			rendering.TruncateLine("Choose a project folder · fuzzy-search as you type", max(1, r.W-2)),
-			muted, bg, 0)
+		buf.WriteString(ox+r.X+1, y+1, rendering.TruncateLine(subtitle, maxInt(1, r.W-2)), muted, bg, 0)
 	}
 	if r.H > 2 {
-		line := strings.Repeat(string(ui.FirstRune(s.tokens.Glyphs().BorderH, '─')), max(0, r.W))
+		line := strings.Repeat(string(ui.FirstRune(s.tokens.Glyphs().BorderH, '─')), maxInt(0, r.W))
 		buf.WriteString(ox+r.X, y+2, line, s.tokens.Color(ui.ColorPopupDivider), bg, 0)
 	}
 }
+
 func (s *Screen) Handle(_ ui.EventContext, _ ui.Event) ui.EventResult { return ui.EventResult{} }
+
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
 	switch action.ID {
 	case "filepicker.entry.activate":
-		entry, ok := action.Payload.(ui.ListItem)
+		if s.AsyncDirectoryLoading() {
+			return ui.EventResult{Handled: true}
+		}
+		item, ok := action.Payload.(ui.ListItem)
 		if !ok {
 			return ui.EventResult{Handled: true}
 		}
-		selected, ok := entry.Payload.(Entry)
+		entry, ok := item.Payload.(Entry)
 		if !ok {
 			return ui.EventResult{Handled: true}
 		}
-		return s.activateEntry(selected)
+		if entry.IsDir {
+			return s.navigate(entry.Path)
+		}
+		return ui.EventResult{Handled: true, Cmd: s.requestFileToggle(entry.Path), Invalidate: ui.InvalidatePaint}
+	case "filepicker.breadcrumb.navigate":
+		path, ok := action.Payload.(string)
+		if !ok || path == "" {
+			return ui.EventResult{Handled: true}
+		}
+		return s.navigate(path)
 	case "filepicker.select":
-		if s.mode == ModeFolder {
-			return s.selectPath(s.current, true)
-		}
-		if selected, ok := s.selectedEntry(); ok && !selected.IsDir {
-			return s.selectPath(selected.Path, false)
-		}
-		return ui.EventResult{Handled: true}
+		return s.confirm()
 	case "filepicker.cancel":
 		return s.cancel()
 	case "actionbar.exit.backward":
-		if len(s.visible) > 0 {
-			s.focusID(ListID)
+		if s.VisibleCount() > 0 {
+			s.FocusTree()
 		} else {
-			s.focusID(FilterID)
+			s.FocusFilter()
 		}
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	case "actionbar.exit.forward":
-		s.focusID(FilterID)
+		s.FocusFilter()
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	}
 	return ui.EventResult{Action: &action}
 }
+
 func (s *Screen) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleDialog, Label: "File picker", Value: s.current}
 }
 
 func (s *Screen) rebuildActions() {
-	primary := "Attach"
+	if s.actions == nil {
+		return
+	}
+	primary := "Attach Files"
 	if s.mode == ModeFolder {
 		primary = "Open Workspace"
 	}
-	s.actions = ui.NewActionBar(ActionsID, s.tokens,
-		ui.ActionBarButton{ID: ui.NewID(ActionsID, "select"), Label: primary, Action: "filepicker.select", Variant: ui.VariantPrimary, Enabled: s.mode == ModeFolder},
-		ui.ActionBarButton{ID: ui.NewID(ActionsID, "cancel"), Label: "Cancel", Action: "filepicker.cancel", Variant: ui.VariantSecondary, Enabled: true},
-	)
-	s.actions.SetCancelAction("filepicker.cancel")
-}
-
-func (s *Screen) setEntries(entries []Entry) {
-	s.rawEntries = append(s.rawEntries[:0], entries...)
-	s.entries = s.entries[:0]
-	parent := filepath.Dir(s.current)
-	if parent != s.current && (s.mode == ModeFolder || s.current != s.root) {
-		s.entries = append(s.entries, Entry{Name: "..", Path: parent, IsDir: true})
+	if !s.actions.SetLabel("filepicker.select", primary) {
+		s.actions = ui.NewActionBar(ActionsID, s.tokens,
+			ui.ActionBarButton{ID: ui.NewID(ActionsID, "select"), Label: primary, Action: "filepicker.select", Variant: ui.VariantPrimary, Enabled: false},
+			ui.ActionBarButton{ID: ui.NewID(ActionsID, "cancel"), Label: "Cancel", Action: "filepicker.cancel", Variant: ui.VariantSecondary, Enabled: true},
+		)
+		s.actions.SetCancelAction("filepicker.cancel")
 	}
-	for _, entry := range entries {
-		if entry.Name == ".." || strings.HasPrefix(entry.Name, ".") || (s.mode == ModeFolder && !entry.IsDir) {
-			continue
-		}
-		s.entries = append(s.entries, entry)
+	if s.active && !s.AsyncDirectoryLoading() {
+		enabled := s.mode == ModeFolder || len(s.SelectedPaths()) > 0
+		s.actions.SetEnabled("filepicker.select", enabled)
 	}
-	start := 0
-	if len(s.entries) > 0 && s.entries[0].Name == ".." {
-		start = 1
-	}
-	sort.Slice(s.entries[start:], func(i, j int) bool {
-		left, right := s.entries[start+i], s.entries[start+j]
-		if left.IsDir != right.IsDir {
-			return left.IsDir
-		}
-		return strings.ToLower(left.Name) < strings.ToLower(right.Name)
-	})
 }
 
 func (s *Screen) sync() {
-	if s.AsyncDirectoryLoading() {
-		s.visible = s.visible[:0]
-		if s.list != nil && s.list.list != nil {
-			s.list.list.SetItems(nil)
-		}
-		s.syncPrimary()
-		s.syncBreadcrumb()
+	if s == nil {
 		return
 	}
-	query := strings.ToLower(s.filter.field.Value())
-	s.visible = s.visible[:0]
-	type rankedEntry struct {
-		entry Entry
-		score int
-		order int
+	if s.tree != nil {
+		s.tree.sync()
 	}
-	ranked := make([]rankedEntry, 0, len(s.entries))
-	for order, entry := range s.entries {
-		score := 0
-		if query != "" {
-			if entry.Name == ".." {
-				continue
-			}
-			var ok bool
-			score, ok = fuzzyScore(entry.Name, query)
-			if !ok {
-				continue
-			}
-		}
-		ranked = append(ranked, rankedEntry{entry: entry, score: score, order: order})
+	if s.breadcrumb != nil {
+		s.breadcrumb.SetPath(s.current)
+		status := s.statusText()
+		s.breadcrumb.SetStatus(status)
 	}
-	if query != "" {
-		sort.SliceStable(ranked, func(i, j int) bool {
-			if ranked[i].entry.IsDir != ranked[j].entry.IsDir {
-				return ranked[i].entry.IsDir
-			}
-			if ranked[i].score != ranked[j].score {
-				return ranked[i].score > ranked[j].score
-			}
-			return ranked[i].order < ranked[j].order
-		})
+	if s.actions != nil {
+		s.rebuildActions()
 	}
-	items := make([]ui.ListItem, 0, len(ranked))
-	for _, result := range ranked {
-		entry := result.entry
-		s.visible = append(s.visible, entry)
-		label, icon := entry.Name, ""
-		if entry.Name == ".." {
-			label, icon = "Parent folder", "↰"
-		} else if s.icons != nil {
-			icon = s.icons.ResolveIcon(entry.Name, entry.IsDir, false, false).Icon
-		}
-		if s.mode == ModeFolder && entry.Name != ".." {
-			label = string(ui.FirstRune(s.tokens.Glyphs().TreeCollapsed, '▸')) + " " + label
-		}
-		items = append(items, ui.ListItem{
-			ID: entry.Path, Label: label, Icon: icon, Detail: pickerEntryDetail(entry), Payload: entry,
-		})
-	}
-	s.list.list.SetItems(items)
-	s.syncPrimary()
-	s.syncBreadcrumb()
 }
 
-func (s *Screen) syncPrimary() {
-	enabled := false
-	if s.active && !s.AsyncDirectoryLoading() {
-		enabled = s.mode == ModeFolder
-		if selected, ok := s.selectedEntry(); ok && !selected.IsDir {
-			enabled = true
-		}
-	}
-	s.actions.SetEnabled("filepicker.select", enabled)
-}
-
-func (s *Screen) syncBreadcrumb() {
-	detail := s.current
-	if s.mode == ModeFolder {
-		detail = s.folderBreadcrumb()
-	}
+func (s *Screen) statusText() string {
 	if s.errText != "" {
-		detail += "  ·  " + s.errText
+		return s.errText
+	}
+	if s.AsyncDirectoryLoading() {
+		if s.asyncLoad != nil && s.asyncLoad.expand {
+			return "Loading folder…"
+		}
+		return "Loading…"
+	}
+	count := s.VisibleCount()
+	if s.mode == ModeFolder {
+		return plural(count, "folder", "folders")
+	}
+	selected := len(s.SelectedPaths())
+	if selected > 0 {
+		return plural(count, "item", "items") + " · " + plural(selected, "selected", "selected")
+	}
+	return plural(count, "item", "items")
+}
+
+func (s *Screen) installModel(model *filetree.FileTreeModel) {
+	s.model = model
+	s.browseModel = model
+	if s.tree != nil {
+		s.tree.lastClickPath = ""
+		s.tree.lastClickAt = time.Time{}
+	}
+	if model == nil {
+		s.rebuildTree()
+		return
+	}
+	s.configureModel()
+	s.rebuildTree()
+}
+
+func (s *Screen) configureModel() {
+	if s == nil || s.model == nil {
+		return
+	}
+	model := s.model
+	model.SetDirectoryLoader(func(path string) tea.Cmd { return s.requestChildLoad(path) })
+	model.SetFileSelectedHandler(func(path string) tea.Cmd { return s.requestFileToggle(path) })
+}
+
+func (s *Screen) rebuildTree() {
+	if s.tree == nil {
+		t := ui.NewTree(ListID, s.tokens)
+		s.tree = &pickerTree{Base: ui.NewBase(ListID), owner: s, tree: t}
 	} else {
-		count := len(s.visible)
-		if s.mode == ModeFolder {
-			detail += "  ·  " + plural(count, "folder", "folders")
-		} else {
-			detail += " | " + plural(count, "item", "items")
-		}
+		s.tree.owner = s
 	}
-	s.breadcrumb.SetText(detail)
+	cfg := filetree.PaintConfigFromTheme(nil)
+	cfg.ShowGitStatus = false
+	cfg.ShowDiagnostics = false
+	cfg.Background = s.tokens.Color(ui.ColorPopupBg)
+	cfg.BackgroundSet = true
+	var icons *filetree.IconResolver
+	if s.model != nil {
+		icons = s.model.IconResolver()
+	}
+	if icons == nil {
+		icons = filetree.NewIconResolver()
+	}
+	if s.th != nil {
+		icons.ApplyTheme(&s.th.Tree.Colors)
+	}
+	s.tree.tree.SetTokens(s.tokens)
+	s.tree.tree.SetSurfaceBackground(ui.ColorPopupBg)
+	s.tree.tree.SetRowPainter(filetree.NewTreeRowPainter(s.model, icons, cfg))
+	if s.scrollbar == nil {
+		s.scrollbar = ui.NewScrollbarControl(ScrollbarID, s.tree.tree.Scroll(), s.tokens)
+		s.scrollbar.SetSurfaceBackground(ui.ColorPopupBg)
+		s.scrollbar.OnScroll(func(_, _ int) {
+			if s.model != nil {
+				filetree.ApplyScrollToModel(s.model, s.tree.tree.Scroll())
+			}
+		})
+	} else {
+		s.scrollbar.SetScroll(s.tree.tree.Scroll())
+	}
 }
 
-func (s *Screen) folderBreadcrumb() string {
-	clean := filepath.Clean(s.current)
-	volume := filepath.VolumeName(clean)
-	rest := strings.TrimPrefix(clean, volume)
-	segments := strings.FieldsFunc(rest, func(r rune) bool { return r == '/' || r == '\\' })
-	parts := make([]string, 0, len(segments)+1)
-	root := volume + string(filepath.Separator)
-	if volume == "" {
-		root = string(filepath.Separator)
-	}
-	parts = append(parts, "⌂ "+root)
-	for _, segment := range segments {
-		icon := ""
-		if s.icons != nil {
-			icon = s.icons.ResolveIcon(segment, true, false, true).Icon
-		}
-		if icon != "" {
-			parts = append(parts, icon+" "+segment)
-		} else {
-			parts = append(parts, segment)
-		}
-	}
-	sep := " " + s.tokens.Glyphs().BreadcrumbSep + " "
-	if strings.TrimSpace(sep) == "" {
-		sep = " › "
-	}
-	return strings.Join(parts, sep)
-}
-
-func pickerEntryDetail(entry Entry) string {
-	if entry.Name == ".." {
-		return "Backspace"
-	}
-	if entry.IsDir {
-		return ""
-	}
-	return "file"
-}
-
-// fuzzyScore performs a case-insensitive subsequence match. Contiguous runs,
-// word starts, and early matches score higher, producing stable command-palette
-// style results without recursively crawling the user's filesystem.
-func fuzzyScore(value, query string) (int, bool) {
-	valueRunes := []rune(strings.ToLower(value))
-	queryRunes := []rune(strings.ToLower(strings.TrimSpace(query)))
-	if len(queryRunes) == 0 {
-		return 0, true
-	}
-	qi, score, last := 0, 0, -2
-	for i, r := range valueRunes {
-		if qi >= len(queryRunes) || r != queryRunes[qi] {
-			continue
-		}
-		score += 10
-		if i == last+1 {
-			score += 8
-		}
-		if i == 0 || valueRunes[i-1] == '-' || valueRunes[i-1] == '_' || valueRunes[i-1] == ' ' {
-			score += 6
-		}
-		score -= i
-		last = i
-		qi++
-	}
-	if qi != len(queryRunes) {
-		return 0, false
-	}
-	return score, true
-}
-
-func (s *Screen) selectedEntry() (Entry, bool) {
-	if s == nil || s.AsyncDirectoryLoading() {
-		return Entry{}, false
-	}
-	item, ok := s.list.list.Selected()
+func (s *Screen) requestChildLoad(path string) tea.Cmd {
+	intent, ok := s.nextIntent()
 	if !ok {
-		return Entry{}, false
+		return nil
 	}
-	entry, ok := item.Payload.(Entry)
-	return entry, ok
+	return func() tea.Msg {
+		return LoadMsg{Target: s, Path: cleanAbs(path), Epoch: intent.Epoch, Sequence: intent.Sequence}
+	}
 }
 
-func (s *Screen) activateEntry(entry Entry) ui.EventResult {
-	if !s.activationEnabled() {
-		return ui.EventResult{Handled: true}
+func (s *Screen) requestFileToggle(path string) tea.Cmd {
+	intent, ok := s.nextIntent()
+	if !ok {
+		return nil
 	}
-	if entry.IsDir {
-		return s.navigate(entry.Path)
+	return func() tea.Msg {
+		return ToggleMsg{Target: s, Path: cleanAbs(path), Epoch: intent.Epoch, Sequence: intent.Sequence}
 	}
-	if s.mode == ModeFile {
-		return s.selectPath(entry.Path, false)
+}
+
+func (s *Screen) requestSearch(query string) tea.Cmd {
+	intent, ok := s.nextIntent()
+	if !ok {
+		return nil
 	}
-	return ui.EventResult{Handled: true}
+	return func() tea.Msg {
+		return SearchMsg{Target: s, Query: query, Epoch: intent.Epoch, Sequence: intent.Sequence}
+	}
 }
 
 func (s *Screen) navigate(path string) ui.EventResult {
-	if !s.activationEnabled() {
+	if s == nil || !s.active {
 		return ui.EventResult{Handled: true}
+	}
+	if s.searchActive {
+		s.ClearPathSearch()
 	}
 	intent, ok := s.nextIntent()
 	if !ok {
 		return ui.EventResult{Handled: true}
 	}
-	message := NavigateMsg{
-		Target: s, Path: path, Epoch: intent.Epoch, Sequence: intent.Sequence,
-	}
-	return ui.EventResult{
-		Handled:    true,
-		Cmd:        func() tea.Msg { return message },
-		Invalidate: ui.InvalidatePaint,
-	}
+	message := NavigateMsg{Target: s, Path: cleanAbs(path), Epoch: intent.Epoch, Sequence: intent.Sequence}
+	return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return message }, Invalidate: ui.InvalidatePaint}
 }
-func (s *Screen) selectPath(path string, folder bool) ui.EventResult {
-	if !s.activationEnabled() {
+
+func (s *Screen) confirm() ui.EventResult {
+	if s == nil || !s.active || s.AsyncDirectoryLoading() {
 		return ui.EventResult{Handled: true}
+	}
+	if s.mode == ModeFolder {
+		return s.selectPath(s.current, nil, true)
+	}
+	paths := s.SelectedPaths()
+	if len(paths) == 0 {
+		return ui.EventResult{Handled: true}
+	}
+	return s.selectPath(paths[0], paths, false)
+}
+
+func (s *Screen) selectPath(path string, args ...any) ui.EventResult {
+	var paths []string
+	var folder bool
+	for _, arg := range args {
+		switch value := arg.(type) {
+		case []string:
+			paths = value
+		case bool:
+			folder = value
+		}
 	}
 	intent, ok := s.nextIntent()
 	if !ok {
 		return ui.EventResult{Handled: true}
 	}
-	message := SelectMsg{
-		Target: s, Path: path, Folder: folder, Epoch: intent.Epoch, Sequence: intent.Sequence,
-	}
-	return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return message }}
+	message := SelectMsg{Target: s, Path: path, Paths: append([]string(nil), paths...), Folder: folder, Epoch: intent.Epoch, Sequence: intent.Sequence}
+	return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return message }, Invalidate: ui.InvalidatePaint}
 }
+
 func (s *Screen) cancel() ui.EventResult {
 	if s == nil || !s.active {
 		return ui.EventResult{Handled: true}
 	}
-	s.CancelAsyncDirectoryLoad()
+	if s.filter != nil && s.filter.field != nil && s.filter.field.Value() != "" {
+		s.filter.field.SetValue("")
+		if s.searchActive {
+			s.ClearPathSearch()
+		}
+		s.sync()
+		return ui.EventResult{Handled: true, Cmd: s.requestSearch(""), Invalidate: ui.InvalidatePaint}
+	}
 	intent, ok := s.nextIntent()
 	if !ok {
 		return ui.EventResult{Handled: true}
 	}
 	message := CancelMsg{Target: s, Epoch: intent.Epoch, Sequence: intent.Sequence}
-	return ui.EventResult{
-		Handled:    true,
-		Cmd:        func() tea.Msg { return message },
-		Invalidate: ui.InvalidatePaint,
-	}
+	return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return message }, Invalidate: ui.InvalidatePaint}
 }
+
 func (s *Screen) navigateParent() ui.EventResult {
-	if !s.activationEnabled() {
+	if s == nil || !s.active || s.AsyncDirectoryLoading() {
 		return ui.EventResult{Handled: true}
 	}
 	parent := filepath.Dir(s.current)
-	if parent == s.current || (s.mode == ModeFile && s.current == s.root) {
+	if parent == s.current {
 		return ui.EventResult{Handled: true}
 	}
 	return s.navigate(parent)
-}
-
-func (s *Screen) activationEnabled() bool {
-	return s != nil && s.active && !s.AsyncDirectoryLoading()
 }
 
 func (s *Screen) nextIntent() (IntentToken, bool) {
@@ -623,22 +903,31 @@ func (s *Screen) nextIntent() (IntentToken, bool) {
 	return IntentToken{Epoch: s.openEpoch, Sequence: s.intentSeq}, true
 }
 
-type pickerFilter struct {
-	ui.Base
-	field *ui.FilterField
-	owner *Screen
+func (s *Screen) FocusedPath() string {
+	if s == nil || s.model == nil {
+		return ""
+	}
+	if node := s.model.SelectedNode(); node != nil {
+		return node.Path
+	}
+	return s.current
 }
 
+// pickerFilter is a retained TextField wrapper. Search remains the first
+// focus target; tree keys are routed here when the tree is focused.
 func (p *pickerFilter) Measure(ctx ui.LayoutContext, cs ui.Constraints) ui.Size {
 	return p.field.Measure(ctx, cs)
 }
+
 func (p *pickerFilter) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	p.SetBounds(r)
 	p.field.Layout(ctx, ui.Rect{W: r.W, H: r.H})
 }
+
 func (p *pickerFilter) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
 	p.field.Paint(buf, ox+p.Bounds().X, oy+p.Bounds().Y, ctx)
 }
+
 func (p *pickerFilter) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if p.owner == nil {
 		return p.field.Handle(ctx, evt)
@@ -648,105 +937,418 @@ func (p *pickerFilter) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult 
 		switch {
 		case key.Code == tea.KeyEsc:
 			return p.owner.cancel()
-		case key.String() == "ctrl+o" && p.owner.mode == ModeFolder:
-			return p.owner.selectPath(p.owner.current, true)
+		case key.String() == "ctrl+." && !p.owner.AsyncDirectoryLoading():
+			query := p.field.Value()
+			p.owner.ToggleHidden()
+			if query != "" {
+				return ui.EventResult{Handled: true, Cmd: p.owner.requestSearch(query), Invalidate: ui.InvalidatePaint}
+			}
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+		case key.String() == "ctrl+r" && !p.owner.AsyncDirectoryLoading():
+			return p.owner.navigate(p.owner.current)
+		case p.owner.AsyncDirectoryLoading():
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 		case key.Code == tea.KeyEnter:
-			if selected, ok := p.owner.selectedEntry(); ok {
-				return p.owner.activateEntry(selected)
-			}
-			if p.owner.mode == ModeFolder {
-				return p.owner.selectPath(p.owner.current, true)
-			}
-			return ui.EventResult{Handled: true}
+			return p.owner.confirmFiltered()
 		case key.Code == tea.KeyBackspace && p.field.Edit().Len() == 0:
 			return p.owner.navigateParent()
-		case key.Code == tea.KeyUp || key.Code == tea.KeyDown || key.Code == tea.KeyPgUp || key.Code == tea.KeyPgDown || key.Code == tea.KeyHome || key.Code == tea.KeyEnd:
-			p.owner.focusID(ListID)
-			result := p.owner.list.list.Handle(ui.EventContext{Focused: true}, evt)
-			p.owner.syncPrimary()
-			return result
+		case key.Code == tea.KeyUp || key.Code == tea.KeyDown || key.Code == tea.KeyPgUp || key.Code == tea.KeyPgDown || key.Code == tea.KeyHome || key.Code == tea.KeyEnd || key.Code == tea.KeyRight || key.Code == tea.KeyLeft:
+			p.owner.FocusTree()
+			return p.owner.tree.Handle(ui.EventContext{Focused: true}, evt)
 		case key.Code == tea.KeyTab:
-			if len(p.owner.visible) > 0 && !key.Mod.Contains(tea.ModShift) {
-				p.owner.focusID(ListID)
+			if !key.Mod.Contains(tea.ModShift) {
+				p.owner.FocusTree()
 			} else {
 				p.owner.focusID(ActionsID)
 			}
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 		}
 	}
-	// OnChanged (see New) re-applies the filter after the shared engine edits.
-	return p.field.Handle(ctx, evt)
-}
-func (p *pickerFilter) Semantics() ui.Semantics       { return p.field.Semantics() }
-func (p *pickerFilter) SetTokens(tokens *ui.TokenSet) { p.field.SetTokens(tokens) }
-
-type pickerList struct {
-	ui.Base
-	list          *ui.List
-	owner         *Screen
-	lastClick     int
-	lastClickTime time.Time
-}
-
-func (p *pickerList) Measure(ctx ui.LayoutContext, cs ui.Constraints) ui.Size {
-	return p.list.Measure(ctx, cs)
-}
-func (p *pickerList) Layout(ctx ui.LayoutContext, r ui.Rect) {
-	p.SetBounds(r)
-	p.list.Layout(ctx, ui.Rect{W: r.W, H: r.H})
-}
-func (p *pickerList) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
-	p.list.Paint(buf, ox+p.Bounds().X, oy+p.Bounds().Y, ctx)
-}
-func (p *pickerList) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
-	if p.owner == nil {
-		return p.list.Handle(ctx, evt)
-	}
-	if evt.IsKey() {
-		key := evt.Key
-		switch {
-		case key.Code == tea.KeyEsc:
-			return p.owner.cancel()
-		case key.String() == "ctrl+o" && p.owner.mode == ModeFolder:
-			return p.owner.selectPath(p.owner.current, true)
-		case key.Code == tea.KeyBackspace:
-			if p.owner.filter.field.Edit().Len() == 0 {
-				return p.owner.navigateParent()
-			}
-			p.owner.focusID(FilterID)
-			return p.owner.filter.Handle(ui.EventContext{Focused: true}, evt)
-		case key.Code == tea.KeyTab:
-			if key.Mod.Contains(tea.ModShift) {
-				p.owner.focusID(FilterID)
-			} else {
-				p.owner.focusID(ActionsID)
-			}
-			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
-		case key.Text != "" && !key.Mod.Contains(tea.ModCtrl) && !key.Mod.Contains(tea.ModAlt):
-			p.owner.focusID(FilterID)
-			return p.owner.filter.Handle(ui.EventContext{Focused: true}, evt)
-		}
-	}
-	if evt.Kind == ui.EventCustom {
-		if _, ok := evt.Custom.(tea.PasteMsg); ok {
-			p.owner.focusID(FilterID)
-			return p.owner.filter.Handle(ui.EventContext{Focused: true}, evt)
-		}
-	}
-	result := p.list.Handle(ctx, evt)
-	p.owner.syncPrimary()
-	if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft && result.Action != nil {
-		index := p.list.SelectedIndex()
-		now := time.Now()
-		if p.lastClick != index || now.Sub(p.lastClickTime) > 500*time.Millisecond {
-			p.lastClick, p.lastClickTime = index, now
-			result.Action = nil
-		}
+	before := p.field.Value()
+	result := p.field.Handle(ctx, evt)
+	if p.owner != nil && before != p.field.Value() {
+		result.Cmd = p.owner.requestSearch(p.field.Value())
 	}
 	return result
 }
-func (p *pickerList) Semantics() ui.Semantics       { return p.list.Semantics() }
-func (p *pickerList) SetTokens(tokens *ui.TokenSet) { p.list.SetTokens(tokens) }
+
+func (p *pickerFilter) Semantics() ui.Semantics       { return p.field.Semantics() }
+func (p *pickerFilter) SetTokens(tokens *ui.TokenSet) { p.field.SetTokens(tokens) }
+
+func (s *Screen) confirmFiltered() ui.EventResult {
+	if s == nil || s.model == nil || s.AsyncDirectoryLoading() {
+		return ui.EventResult{Handled: true}
+	}
+	if node := s.model.SelectedNode(); node != nil {
+		if node.IsDir && s.mode == ModeFolder {
+			return s.selectPath(node.Path, nil, true)
+		}
+		if !node.IsDir && s.mode == ModeFile {
+			s.TogglePath(node.Path)
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+		}
+	}
+	return s.confirm()
+}
+
+func (p *pickerTree) SetTokens(tokens *ui.TokenSet) {
+	if p == nil || p.tree == nil {
+		return
+	}
+	p.tree.SetTokens(tokens)
+}
+
+func (p *pickerTree) sync() {
+	if p == nil || p.owner == nil || p.tree == nil {
+		return
+	}
+	model := p.owner.model
+	if model == nil {
+		p.tree.SetItems(nil)
+		return
+	}
+	model.SetSelectionMarks(p.owner.selected)
+	p.tree.SetItems(filetree.TreeItems(model))
+	p.tree.SelectIndex(model.CursorIndex())
+	p.tree.SyncHover(model.Hover.Index)
+	filetree.SyncScrollModel(model, p.tree.Scroll(), p.Bounds().H)
+	if p.owner.scrollbar != nil {
+		p.owner.scrollbar.SetScroll(p.tree.Scroll())
+	}
+}
+
+func (p *pickerTree) Measure(ctx ui.LayoutContext, cs ui.Constraints) ui.Size {
+	return p.tree.Measure(ctx, cs)
+}
+
+func (p *pickerTree) Layout(ctx ui.LayoutContext, r ui.Rect) {
+	p.SetBounds(r)
+	p.tree.Layout(ctx, ui.Rect{W: r.W, H: r.H})
+}
+
+func (p *pickerTree) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
+	p.tree.Paint(buf, ox+p.Bounds().X, oy+p.Bounds().Y, ctx)
+}
+
+func (p *pickerTree) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+	if p.owner == nil || p.owner.model == nil {
+		return ui.EventResult{}
+	}
+	if evt.IsKey() {
+		key := evt.Key
+		if key.Code == tea.KeyEsc {
+			return p.owner.cancel()
+		}
+		if key.Code == tea.KeyTab {
+			if key.Mod.Contains(tea.ModShift) {
+				p.owner.FocusFilter()
+			} else {
+				p.owner.focusID(ActionsID)
+			}
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+		}
+		if key.String() == "ctrl+." {
+			query := p.owner.filter.field.Value()
+			p.owner.ToggleHidden()
+			if query != "" {
+				return ui.EventResult{Handled: true, Cmd: p.owner.requestSearch(query), Invalidate: ui.InvalidatePaint}
+			}
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+		}
+		if key.String() == "ctrl+r" {
+			return p.owner.navigate(p.owner.current)
+		}
+		if key.Code == ' ' && key.Mod == 0 {
+			if node := p.owner.model.SelectedNode(); node != nil {
+				if p.owner.mode == ModeFolder && node.IsDir {
+					return p.owner.selectPath(node.Path, nil, true)
+				}
+				if p.owner.mode == ModeFile && !node.IsDir {
+					return ui.EventResult{Handled: true, Cmd: p.owner.requestFileToggle(node.Path), Invalidate: ui.InvalidatePaint}
+				}
+			}
+			return ui.EventResult{Handled: true}
+		}
+		if key.Code == tea.KeyEnter && key.Mod.Contains(tea.ModCtrl) {
+			return p.owner.confirm()
+		}
+		if key.Text != "" && !key.Mod.Contains(tea.ModCtrl) && !key.Mod.Contains(tea.ModAlt) && !key.Mod.Contains(tea.ModSuper) {
+			p.owner.FocusFilter()
+			return p.owner.filter.Handle(ui.EventContext{Focused: true}, evt)
+		}
+		cmd := p.owner.model.Update(filetree.TreeKeyPressMsg{Key: key})
+		p.owner.sync()
+		return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidatePaint}
+	}
+	if evt.Kind == ui.EventCustom {
+		if _, ok := evt.Custom.(tea.PasteMsg); ok {
+			p.owner.FocusFilter()
+			return p.owner.filter.Handle(ui.EventContext{Focused: true}, evt)
+		}
+	}
+	if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft {
+		node := p.nodeAt(ctx.LocalY)
+		now := time.Now()
+		doubleClick := node != nil && node.IsDir && node.Path == p.lastClickPath && now.Sub(p.lastClickAt) <= 500*time.Millisecond
+		if node != nil && node.IsDir {
+			p.lastClickPath = node.Path
+			p.lastClickAt = now
+		} else {
+			p.lastClickPath = ""
+			p.lastClickAt = time.Time{}
+		}
+		if doubleClick {
+			p.lastClickPath = ""
+			p.lastClickAt = time.Time{}
+			return p.owner.navigate(node.Path)
+		}
+	}
+	localY := ctx.LocalY
+	cmd := p.owner.model.Update(filetree.TreeMouseMsg{Mouse: pickerMouseMessage(evt, localY)})
+	p.owner.sync()
+	return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidatePaint}
+}
+
+func (p *pickerTree) nodeAt(localY int) *filetree.TreeNode {
+	if p == nil || p.owner == nil || p.owner.model == nil {
+		return nil
+	}
+	idx := p.owner.model.ScrollOffset() + localY
+	nodes := p.owner.model.VisibleNodes()
+	if localY < 0 || localY >= p.Bounds().H || idx < 0 || idx >= len(nodes) {
+		return nil
+	}
+	return nodes[idx]
+}
+
+func (p *pickerTree) Semantics() ui.Semantics {
+	if p == nil || p.tree == nil {
+		return ui.Semantics{Role: ui.RoleTree, Label: "File tree"}
+	}
+	return p.tree.Semantics()
+}
+
+func pickerMouseMessage(evt ui.Event, y int) tea.Msg {
+	switch evt.Kind {
+	case ui.EventMouseClick:
+		m := evt.MouseClick
+		m.Y = y
+		return m
+	case ui.EventMouseMotion:
+		m := evt.MouseMotion
+		m.Y = y
+		return m
+	case ui.EventMouseRelease:
+		m := evt.MouseRelease
+		m.Y = y
+		return m
+	case ui.EventMouseWheel:
+		m := evt.MouseWheel
+		m.Y = y
+		return m
+	default:
+		return evt.Custom
+	}
+}
+
+func (b *pickerBreadcrumb) SetTokens(tokens *ui.TokenSet) {
+	b.tokens = tokens
+	if b.icons != nil && tokens != nil {
+		b.icons.ApplyTheme(&theme.DefaultDark().Tree.Colors)
+	}
+}
+
+func (b *pickerBreadcrumb) SetPath(path string) {
+	if b != nil {
+		b.path = cleanAbs(path)
+	}
+}
+
+func (b *pickerBreadcrumb) SetStatus(status string) {
+	if b != nil {
+		b.status = status
+	}
+}
+
+func (b *pickerBreadcrumb) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
+	return cs.ClampSize(ui.Size{W: cs.MaxW, H: 1})
+}
+
+func (b *pickerBreadcrumb) Layout(_ ui.LayoutContext, r ui.Rect) {
+	b.SetBounds(r)
+	b.parts = b.visibleParts(r.W)
+}
+
+func (b *pickerBreadcrumb) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
+	if b == nil || buf == nil || b.tokens == nil {
+		return
+	}
+	r := b.Bounds()
+	bg := b.tokens.Color(ui.ColorPopupBg)
+	ui.FillRect(buf, ox, oy, r, cell.BlankCell(bg))
+	sep := " " + string(ui.FirstRune(b.tokens.Glyphs().BreadcrumbSep, '›')) + " "
+	for i, part := range b.parts {
+		if i > 0 {
+			sepX := part.x - rendering.VisibleWidth(sep)
+			buf.WriteString(ox+r.X+sepX, oy+r.Y, sep, b.tokens.Color(ui.ColorMuted), bg, 0)
+		}
+		fg := b.tokens.Color(ui.ColorMuted)
+		attr := cell.Attrs(0)
+		if i == len(b.parts)-1 {
+			fg = b.tokens.Color(ui.ColorFg)
+			attr = cell.AttrBold
+		}
+		if i == b.hover {
+			fg = b.tokens.Color(ui.ColorAccent)
+		}
+		buf.WriteString(ox+r.X+part.x, oy+r.Y, part.label, fg, bg, attr)
+	}
+	if b.status != "" {
+		statusW := rendering.VisibleWidth(b.status)
+		x := ox + r.X + maxInt(0, r.W-statusW)
+		buf.WriteString(x, oy+r.Y, rendering.TruncateLine(b.status, maxInt(1, statusW)), b.tokens.Color(ui.ColorMuted), bg, 0)
+	}
+}
+
+func (b *pickerBreadcrumb) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+	if b == nil || b.owner == nil {
+		return ui.EventResult{}
+	}
+	if evt.Kind == ui.EventMouseMotion {
+		idx := b.partAt(ctx.LocalX)
+		if idx != b.hover {
+			b.hover = idx
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+		}
+		return ui.EventResult{Handled: true}
+	}
+	if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft {
+		idx := b.partAt(ctx.LocalX)
+		if idx >= 0 && idx < len(b.parts) {
+			return ui.EventResult{Handled: true, Action: &ui.Action{ID: "filepicker.breadcrumb.navigate", Payload: b.parts[idx].path}, Invalidate: ui.InvalidatePaint}
+		}
+		return ui.EventResult{Handled: true}
+	}
+	return ui.EventResult{}
+}
+
+func (b *pickerBreadcrumb) Semantics() ui.Semantics {
+	return ui.Semantics{Role: ui.RoleGroup, Label: "Path", Value: b.path}
+}
+
+func (b *pickerBreadcrumb) visibleParts(width int) []breadcrumbPart {
+	if b == nil || b.path == "" || width <= 0 {
+		return nil
+	}
+	paths, labels := breadcrumbPathParts(b.path, b.icons)
+	if len(paths) == 0 {
+		return nil
+	}
+	sep := " " + string(ui.FirstRune(b.tokens.Glyphs().BreadcrumbSep, '›')) + " "
+	statusW := rendering.VisibleWidth(b.status)
+	available := width - statusW - 2
+	if available < 1 {
+		available = width
+	}
+	parts := make([]breadcrumbPart, 0, len(paths))
+	for i := range paths {
+		parts = append(parts, breadcrumbPart{path: paths[i], label: labels[i]})
+	}
+	measure := func(items []breadcrumbPart) int {
+		n := 0
+		for i, part := range items {
+			if i > 0 {
+				n += rendering.VisibleWidth(sep)
+			}
+			n += rendering.VisibleWidth(part.label)
+		}
+		return n
+	}
+	if measure(parts) > available && len(parts) > 2 {
+		collapsed := make([]breadcrumbPart, 0, len(parts))
+		collapsed = append(collapsed, parts[0])
+		lastStart := len(parts) - 3
+		if lastStart < 1 {
+			lastStart = 1
+		}
+		collapsed = append(collapsed, breadcrumbPart{path: parts[lastStart].path, label: "…"})
+		collapsed = append(collapsed, parts[lastStart+1:]...)
+		parts = collapsed
+		for measure(parts) > available && len(parts) > 3 {
+			parts = append(parts[:2], parts[len(parts)-1:]...)
+		}
+	}
+	x := 0
+	for i := range parts {
+		parts[i].x = x
+		parts[i].w = rendering.VisibleWidth(parts[i].label)
+		x += parts[i].w
+		if i < len(parts)-1 {
+			x += rendering.VisibleWidth(sep)
+		}
+	}
+	return parts
+}
+
+func (b *pickerBreadcrumb) partAt(x int) int {
+	for i, part := range b.parts {
+		if x >= part.x && x < part.x+part.w {
+			return i
+		}
+	}
+	return -1
+}
+
+func breadcrumbPathParts(path string, icons *filetree.IconResolver) ([]string, []string) {
+	clean := filepath.Clean(path)
+	volume := filepath.VolumeName(clean)
+	rest := strings.TrimPrefix(clean, volume)
+	segments := strings.FieldsFunc(rest, func(r rune) bool { return r == '/' || r == '\\' })
+	rootPath := volume + string(filepath.Separator)
+	rootLabel := "⌂ " + rootPath
+	if volume == "" {
+		rootPath = string(filepath.Separator)
+	}
+	paths := []string{rootPath}
+	labels := []string{rootLabel}
+	current := rootPath
+	for _, segment := range segments {
+		current = filepath.Join(current, segment)
+		label := segment
+		if icons != nil {
+			if icon := icons.ResolveIcon(segment, true, false, true).Icon; icon != "" {
+				label = icon + " " + segment
+			}
+		}
+		paths = append(paths, current)
+		labels = append(labels, label)
+	}
+	return paths, labels
+}
+
+func toTreeEntries(entries []Entry) []filetree.DirectoryEntry {
+	result := make([]filetree.DirectoryEntry, 0, len(entries))
+	for _, entry := range entries {
+		if entry.Name == ".." || entry.Name == "" {
+			continue
+		}
+		result = append(result, filetree.DirectoryEntry{
+			Name: entry.Name, Path: entry.Path, IsDir: entry.IsDir, IsSymlink: entry.IsSymlink,
+		})
+	}
+	return result
+}
+
+func cleanAbs(path string) string {
+	if path == "" {
+		path = "."
+	}
+	abs, err := filepath.Abs(path)
+	if err == nil {
+		return filepath.Clean(abs)
+	}
+	return filepath.Clean(path)
+}
 
 func plural(count int, singular, multiple string) string {
 	word := multiple
@@ -756,6 +1358,22 @@ func plural(count int, singular, multiple string) string {
 	return strings.Join([]string{strconv.Itoa(count), word}, " ")
 }
 
+func minInt(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func maxInt(a, b int) int {
+	if a > b {
+		return a
+	}
+	return b
+}
+
 var _ ui.Component = (*Screen)(nil)
 var _ ui.Parent = (*Screen)(nil)
 var _ ui.ActionHandler = (*Screen)(nil)
+var _ ui.Component = (*pickerTree)(nil)
+var _ ui.Component = (*pickerBreadcrumb)(nil)
