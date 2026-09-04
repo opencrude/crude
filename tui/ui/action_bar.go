@@ -198,6 +198,20 @@ func (ab *ActionBar) SetEnabled(action string, enabled bool) bool {
 	return false
 }
 
+// SetLabel updates a button's visible label without replacing the retained
+// button component or its focus state.
+func (ab *ActionBar) SetLabel(action, label string) bool {
+	for i := range ab.buttons {
+		if ab.buttons[i].action != action {
+			continue
+		}
+		ab.buttons[i].label = label
+		ab.buttons[i].button.SetLabel(label)
+		return true
+	}
+	return false
+}
+
 func (ab *ActionBar) SetTokens(ts *TokenSet) {
 	ab.tokens = ts
 	for i := range ab.buttons {

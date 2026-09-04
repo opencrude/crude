@@ -367,8 +367,10 @@ func (m *FileTreeModel) handleMouseClick(msg tea.MouseClickMsg) tea.Cmd {
 
 	// If clicking on a directory, toggle its expanded state.
 	if node.IsDir {
-		m.ToggleExpand(node.Path)
-		return nil
+		return m.ToggleExpand(node.Path)
+	}
+	if m.onFileSelected != nil {
+		return m.onFileSelected(node.Path)
 	}
 
 	// File clicked — emit FileSelectedMsg so the parent opens it.
@@ -500,8 +502,10 @@ func (m *FileTreeModel) ToggleExpandOrSelect() tea.Cmd {
 	}
 
 	if node.IsDir {
-		m.ToggleExpand(node.Path)
-		return nil
+		return m.ToggleExpand(node.Path)
+	}
+	if m.onFileSelected != nil {
+		return m.onFileSelected(node.Path)
 	}
 
 	// File selected — return a command that emits a message the parent app
@@ -552,8 +556,7 @@ func (m *FileTreeModel) expandOrMoveIn() tea.Cmd {
 	}
 
 	if !node.IsExpanded {
-		m.Expand(node.Path)
-		return nil
+		return m.Expand(node.Path)
 	}
 
 	// Already expanded — move cursor to first visible child.

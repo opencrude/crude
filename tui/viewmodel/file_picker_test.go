@@ -30,8 +30,8 @@ func TestFilePickerNavigationLoadsDirectoryThroughWorkspace(t *testing.T) {
 		t.Fatal("navigation did not schedule a directory read")
 	}
 	app.handleAppMessages(cmds[0]())
-	if app.FilePicker.Current() != subdir || app.FilePicker.VisibleCount() != 2 {
-		t.Fatalf("picker directory=%q rows=%d", app.FilePicker.Current(), app.FilePicker.VisibleCount())
+	if app.FilePicker.Current() != subdir || app.FilePicker.VisibleCount() != 1 {
+		t.Fatalf("picker directory=%q rows=%d, want one file row without parent pseudo-row", app.FilePicker.Current(), app.FilePicker.VisibleCount())
 	}
 }
 

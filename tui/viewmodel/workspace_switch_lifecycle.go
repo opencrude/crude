@@ -46,6 +46,7 @@ func sameWorkspaceRoot(current, candidate string) bool {
 // domain starts tearing down. The old tree watcher is stopped synchronously,
 // while git and launcher work already in flight becomes stale immediately.
 func (m *App) beginWorkspaceSwitch() workspaceSwitchState {
+	m.invalidateTreePathSearch()
 	state := workspaceSwitchState{
 		workspaceGen: m.workspaceSwitchGen.Load(),
 		gitGen:       m.gitRefreshGen.Load(),

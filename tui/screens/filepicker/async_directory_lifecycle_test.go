@@ -60,7 +60,7 @@ func TestAsyncDirectoryLoadSuppressesFilterAndActivation(t *testing.T) {
 	}
 }
 
-func TestFailedFolderNavigationRestoresExactlyOneParentRow(t *testing.T) {
+func TestFailedFolderNavigationRestoresTreeWithoutParentPseudoRow(t *testing.T) {
 	root := filepath.Join(t.TempDir(), "project")
 	child := filepath.Join(root, "child")
 	screen := New(nil)
@@ -71,17 +71,13 @@ func TestFailedFolderNavigationRestoresExactlyOneParentRow(t *testing.T) {
 		t.Fatal("failed load was not restored")
 	}
 
-	parentRows := 0
 	for _, entry := range screen.entries {
 		if entry.Name == ".." {
-			parentRows++
+			t.Fatalf("restored obsolete parent row: entries=%#v", screen.entries)
 		}
 	}
-	if parentRows != 1 {
-		t.Fatalf("restored parent rows=%d, want exactly 1; entries=%#v", parentRows, screen.entries)
-	}
-	if got := screen.VisibleCount(); got != 2 {
-		t.Fatalf("restored visible rows=%d, want parent plus child", got)
+	if got := screen.VisibleCount(); got != 1 {
+		t.Fatalf("restored visible rows=%d, want child only", got)
 	}
 	if got := screen.Current(); got != root {
 		t.Fatalf("restored directory=%q, want %q", got, root)

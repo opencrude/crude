@@ -49,33 +49,40 @@ type TreeRowPainter func(buf *surface.CellBuffer, ox, oy, rowY, width int, item 
 // Tree is a scrollable hierarchical list with optional custom row painting.
 type Tree struct {
 	Base
-	items      []TreeItem
-	rows       []TreeRow
-	sel        *SelectionModel
-	scroll     *ScrollModel
-	tokens     *TokenSet
-	hoverIdx   int
-	painter    TreeRowPainter
-	breadcrumb string
-	activate   string
-	toggle     string
-	useRows    bool
+	items       []TreeItem
+	rows        []TreeRow
+	sel         *SelectionModel
+	scroll      *ScrollModel
+	tokens      *TokenSet
+	hoverIdx    int
+	painter     TreeRowPainter
+	breadcrumb  string
+	activate    string
+	toggle      string
+	useRows     bool
+	surfaceRole SemanticColor
 }
 
 // NewTree creates a tree control.
 func NewTree(id ComponentID, tokens *TokenSet) *Tree {
 	return &Tree{
-		Base:     NewBase(id),
-		sel:      NewSelectionModel(false),
-		scroll:   NewScrollModel(),
-		tokens:   tokens,
-		hoverIdx: -1,
-		activate: "tree.activate",
-		toggle:   "tree.toggle",
+		Base:        NewBase(id),
+		sel:         NewSelectionModel(false),
+		scroll:      NewScrollModel(),
+		tokens:      tokens,
+		hoverIdx:    -1,
+		activate:    "tree.activate",
+		toggle:      "tree.toggle",
+		surfaceRole: ColorBg,
 	}
 }
 
 func (t *Tree) SetTokens(ts *TokenSet) { t.tokens = ts }
+
+// SetSurfaceBackground selects the background painted behind rows. Shell trees
+// keep ColorBg; popup trees use ColorPopupBg so empty rows and reserved gutter
+// cells match the WindowFrame body.
+func (t *Tree) SetSurfaceBackground(role SemanticColor) { t.surfaceRole = role }
 
 // SetRowPainter installs a custom row painter (file-tree icons/git/diags).
 func (t *Tree) SetRowPainter(p TreeRowPainter) { t.painter = p }
@@ -186,7 +193,7 @@ func (t *Tree) Paint(buf *surface.CellBuffer, ox, oy int, ctx PaintContext) {
 	if r.Empty() || buf == nil {
 		return
 	}
-	bg := t.color(ColorBg)
+	bg := t.color(t.surfaceRole)
 	FillRect(buf, ox, oy, r, cell.BlankCell(bg))
 
 	y0 := oy + r.Y
@@ -224,7 +231,7 @@ func (t *Tree) Paint(buf *surface.CellBuffer, ox, oy int, ctx PaintContext) {
 }
 
 func (t *Tree) paintTreeRow(buf *surface.CellBuffer, x, y, width int, row TreeRow, cursor, hovered bool) {
-	bg := t.color(ColorBg)
+	bg := t.color(t.surfaceRole)
 	fg := t.color(ColorFg)
 	muted := t.color(ColorMuted)
 	attr := cell.Attrs(0)
@@ -350,7 +357,7 @@ func itoaSimple(n int) string {
 }
 
 func (t *Tree) paintDefaultRow(buf *surface.CellBuffer, x, y, width int, item TreeItem, st TreeRowState) {
-	bg := t.color(ColorBg)
+	bg := t.color(t.surfaceRole)
 	fg := t.color(ColorFg)
 	muted := t.color(ColorMuted)
 	attr := cell.Attrs(0)
