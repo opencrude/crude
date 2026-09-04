@@ -204,6 +204,9 @@ func (a *Agent) newClient(
 	if a.testHTTPClient != nil {
 		opts = append(opts, provider.WithHTTPClient(a.testHTTPClient))
 	}
+	if a.MaxRetries > 0 {
+		opts = append(opts, provider.WithMaxAttempts(a.MaxRetries))
+	}
 	return a.Provider.Client(opts...)
 }
 

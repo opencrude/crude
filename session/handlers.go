@@ -232,6 +232,7 @@ func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 		l.Debug("CONFIG", "price_set", "model", mainCat.Model, "input", mainCat.ModelInputPrice, "output", mainCat.ModelOutputPrice)
 	}
 	provider.MergeModelCap(mainCat.Model, slices.Contains(mainCat.ModelModalities, provider.ModalityImage), mainCat.ModelSupportsTools)
+	provider.MergeModelModalities(mainCat.Model, mainCat.ModelModalities)
 	s.logger.SetTurnEnabled(tuiSettings.TurnLogsEnabled != "off")
 	s.cfg.TurnLogsEnabled = tuiSettings.TurnLogsEnabled != "off"
 

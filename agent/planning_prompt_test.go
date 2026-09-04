@@ -22,6 +22,14 @@ func TestSystemPromptUsesCanonicalPlanningContract(t *testing.T) {
 	}
 }
 
+func TestSubAgentPromptUsesOwningWorkspaceDirectory(t *testing.T) {
+	dir := t.TempDir()
+	system, _ := BuildSubAgentPromptInDir(SubAgentSpec{Category: CatResearcher}, "", dir)
+	if !strings.Contains(system, "Working Directory: "+dir) {
+		t.Fatalf("subagent prompt does not advertise workspace root %q", dir)
+	}
+}
+
 func TestSubAgentPlanningPromptMatchesToolAvailability(t *testing.T) {
 	researcher, _ := BuildSubAgentPrompt(SubAgentSpec{Category: CatResearcher}, "")
 	if !strings.Contains(researcher, "# Planning Contract") {

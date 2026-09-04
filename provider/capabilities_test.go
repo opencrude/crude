@@ -176,6 +176,26 @@ func TestSetModelCapRecordsKnownNonVision(t *testing.T) {
 	}
 }
 
+func TestSetModelModalitiesIsAuthoritativeAndCanDisable(t *testing.T) {
+	resetDynamicCaps()
+	const model = "capability-toggle-model"
+	SetModelModalities(model, []string{ModalityImage, ModalityPDF, ModalityAudio, ModalityVideo})
+	for _, modality := range KnownModalities() {
+		if supported, known := ModalityCapability(model, modality); !supported || !known {
+			t.Fatalf("enabled %s = supported:%v known:%v", modality, supported, known)
+		}
+	}
+	SetModelModalities(model, []string{ModalityPDF})
+	for _, modality := range []string{ModalityImage, ModalityAudio, ModalityVideo} {
+		if supported, known := ModalityCapability(model, modality); supported || !known {
+			t.Fatalf("disabled %s = supported:%v known:%v", modality, supported, known)
+		}
+	}
+	if supported, known := ModalityCapability(model, ModalityPDF); !supported || !known {
+		t.Fatalf("retained PDF = supported:%v known:%v", supported, known)
+	}
+}
+
 func TestLoadModelCaps_Overwrite(t *testing.T) {
 	resetDynamicCaps()
 

@@ -98,6 +98,17 @@ func OnRetry(fn func(attempt int, delay time.Duration, err error)) ClientOption 
 	return func(c *Client) { c.onRetry = fn }
 }
 
+// WithMaxAttempts overrides the resolved retry-attempt count for one client.
+// It is used by agent-level policy and tests without mutating the shared
+// Provider configuration.
+func WithMaxAttempts(attempts int) ClientOption {
+	return func(c *Client) {
+		if attempts > 0 {
+			c.dial.MaxAttempts = attempts
+		}
+	}
+}
+
 // OnUploadProgress registers a callback for upload progress during request
 // streaming. It is called with percentage-deduplicated (uploaded, total)
 // byte counts.

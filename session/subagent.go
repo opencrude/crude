@@ -693,7 +693,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 
 	a.ToolFn = r.buildProxiedToolFn(spec, blockCh, handle)
 
-	systemPrompt, userPrompt := agent.BuildSubAgentPrompt(spec, profileInstructions)
+	systemPrompt, userPrompt := agent.BuildSubAgentPromptInDir(spec, profileInstructions, r.session.WorkDir())
 
 	if err := r.mgr.Register(handle); err != nil {
 		r.fileOwnership.Release(spec.ID)
@@ -1259,9 +1259,18 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 				p = make(map[string]any)
 			}
 			p["_subagent"] = true
+			if handle != nil && handle.Agent != nil && handle.Agent.Provider != nil {
+				p["_media_model"] = handle.Agent.Model
+				p["_media_standard"] = handle.Agent.Provider.StandardID()
+				p["_media_modalities"] = append([]string(nil), spec.ModelModalities...)
+			}
 			return parentFn(ctx, tool, p)
 		}
-		result := tools.ExecuteWithJSON(tool, params, r.session.exec, r.session.editor, r.session.YoloEnabled(), r.session.logger, ctx)
+		var opts *tools.ToolOptions
+		if handle != nil && handle.Agent != nil && handle.Agent.Provider != nil {
+			opts = toolOptionsForProvider(handle.Agent.Provider, spec.ModelModalities, params)
+		}
+		result := tools.ExecuteWithJSONOptions(tool, params, r.session.exec, r.session.editor, r.session.YoloEnabled(), r.session.logger, ctx, opts)
 		if agent.IsToolError(result.Content) {
 			return result, fmt.Errorf("%s", result.Content)
 		}
@@ -1360,6 +1369,9 @@ func (r *SubAgentRunner) resolveProfile(name string, category string, spec *agen
 		if spec.ModelCachePrice == 0 && catCfg.ModelCachePrice > 0 {
 			spec.ModelCachePrice = catCfg.ModelCachePrice
 		}
+		if len(spec.ModelModalities) == 0 && len(catCfg.ModelModalities) > 0 {
+			spec.ModelModalities = append([]string(nil), catCfg.ModelModalities...)
+		}
 		if catCfg.Description != "" {
 			instructionsParts = append(instructionsParts, catCfg.Description)
 		}
@@ -1452,6 +1464,9 @@ func (r *SubAgentRunner) applyCategoryDefaults(spec *agent.SubAgentSpec) {
 		if spec.ModelCachePrice == 0 {
 			spec.ModelCachePrice = categoryCfg.ModelCachePrice
 		}
+		if len(spec.ModelModalities) == 0 {
+			spec.ModelModalities = append([]string(nil), categoryCfg.ModelModalities...)
+		}
 		if spec.ModelTemperature == nil {
 			spec.ModelTemperature = categoryCfg.ModelTemperature
 		}
@@ -1524,6 +1539,9 @@ func (r *SubAgentRunner) executeSubAgentAsyncCommand(handle *agent.SubAgentHandl
 			return tools.ToolResult{}, fmt.Errorf("async_execute_command: missing 'handle'")
 		}
 		cwd := getStrParam(params, "cwd")
+		if cwd == "" {
+			cwd = r.session.WorkDir()
+		}
 		timeout := tools.GetIntArgAny(params, "timeout_seconds", 0)
 		info, err := mgr.Start(handleName, command, cwd, timeout)
 		if err != nil {
@@ -1606,6 +1624,9 @@ func (r *SubAgentRunner) executeSubAgentCommandAutoPromote(ctx context.Context, 
 	}
 
 	cwd := getStrParam(params, "cwd")
+	if cwd == "" {
+		cwd = r.session.WorkDir()
+	}
 	timeout := tools.GetIntArgAny(params, "timeout_seconds", -1)
 	if timeout < 0 {
 		timeout = 60

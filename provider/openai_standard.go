@@ -2,9 +2,11 @@ package provider
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/url"
+	"path/filepath"
 	"strings"
 )
 
@@ -104,10 +106,24 @@ type openAIChatToolParam struct {
 
 func encodeOpenAIChatMessages(messages []ChatMessage) ([]any, error) {
 	result := make([]any, 0, len(messages))
-	for _, message := range messages {
+	var deferredToolMedia []ContentPart
+	for index, message := range messages {
+		contentSource := message.Content
+		if message.Role == "tool" && !message.Content.IsText() {
+			for _, part := range message.Content.Parts() {
+				if part.Type != "text" {
+					deferredToolMedia = append(deferredToolMedia, part)
+				}
+			}
+			contentSource = TextContent(message.Content.String())
+		}
+		content, err := encodeOpenAIChatContent(contentSource)
+		if err != nil {
+			return nil, err
+		}
 		wire := map[string]any{
 			"role":    message.Role,
-			"content": message.Content,
+			"content": content,
 		}
 		if message.Refusal != "" {
 			wire["refusal"] = message.Refusal
@@ -155,8 +171,84 @@ func encodeOpenAIChatMessages(messages []ChatMessage) ([]any, error) {
 			wire["reasoning"] = message.Reasoning
 		}
 		result = append(result, wire)
+		toolStreakEnded := message.Role == "tool" && (index == len(messages)-1 || messages[index+1].Role != "tool")
+		if toolStreakEnded && len(deferredToolMedia) > 0 {
+			parts := []ContentPart{{
+				Type: "text",
+				Text: "Media returned by the preceding read_file tool result(s). Analyze it before continuing.",
+			}}
+			parts = append(parts, deferredToolMedia...)
+			mediaContent, mediaErr := encodeOpenAIChatContent(PartsContent(parts))
+			if mediaErr != nil {
+				return nil, mediaErr
+			}
+			result = append(result, map[string]any{"role": "user", "content": mediaContent})
+			deferredToolMedia = nil
+		}
 	}
 	return result, nil
+}
+
+func encodeOpenAIChatContent(content MessageContent) (any, error) {
+	if content.IsText() {
+		return content.String(), nil
+	}
+	parts := content.Parts()
+	wire := make([]any, 0, len(parts))
+	for _, part := range parts {
+		switch part.Type {
+		case "text":
+			wire = append(wire, map[string]any{"type": "text", "text": part.Text})
+		case "image_url":
+			if part.ImageURL == nil || part.ImageURL.URL == "" {
+				return nil, fmt.Errorf("OpenAI-compatible image content is missing a URL")
+			}
+			wire = append(wire, map[string]any{"type": "image_url", "image_url": part.ImageURL})
+		case "document":
+			wire = append(wire, map[string]any{
+				"type": "file",
+				"file": map[string]any{
+					"filename":  part.Filename,
+					"file_data": mediaDataURL(part),
+				},
+			})
+		case "audio":
+			format := strings.TrimPrefix(strings.ToLower(filepath.Ext(part.Filename)), ".")
+			if format == "" {
+				format = audioFormatFromMIME(part.MimeType)
+			}
+			wire = append(wire, map[string]any{
+				"type": "input_audio",
+				"input_audio": map[string]any{
+					"data":   base64.StdEncoding.EncodeToString(part.Data),
+					"format": format,
+				},
+			})
+		case "video":
+			wire = append(wire, map[string]any{
+				"type":      "video_url",
+				"video_url": map[string]any{"url": mediaDataURL(part)},
+			})
+		default:
+			return nil, fmt.Errorf("OpenAI-compatible content part %q is unsupported", part.Type)
+		}
+	}
+	return wire, nil
+}
+
+func mediaDataURL(part ContentPart) string {
+	return "data:" + part.MimeType + ";base64," + base64.StdEncoding.EncodeToString(part.Data)
+}
+
+func audioFormatFromMIME(mime string) string {
+	switch strings.ToLower(mime) {
+	case "audio/mpeg":
+		return "mp3"
+	case "audio/wav", "audio/x-wav":
+		return "wav"
+	default:
+		return strings.TrimPrefix(strings.ToLower(mime), "audio/")
+	}
 }
 
 func (s *OpenAIStandard) DecodeResponse(body []byte) (*ChatResponse, error) {

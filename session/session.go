@@ -50,6 +50,11 @@ type Session struct {
 	asyncMgr    *fileio.AsyncCommandManager
 	memoryStore *memory.Store
 
+	// workDir is the workspace root this session executes tools against.
+	// Relative tool paths and commands without an explicit cwd resolve
+	// against it. Empty means the process working directory (tests).
+	workDir string
+
 	// touchedFiles accumulates files touched by tools this session; they
 	// boost recall of memories scoped to the same paths.
 	touchedFiles map[string]struct{}
@@ -178,6 +183,9 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 			InputCachedPricePerToken: mainCat.ModelCachePrice,
 		})
 	}
+	// Register the configured modality set so tool-boundary capability
+	// checks see the settings truth immediately, before any turn runs.
+	provider.MergeModelModalities(mainCat.Model, mainCat.ModelModalities)
 
 	if sessionDir != "" {
 		_ = os.MkdirAll(sessionDir, 0700)
@@ -375,6 +383,41 @@ func (s *Session) SessionDir() string {
 	return s.logger.SessionDir()
 }
 
+// WorkDir returns the workspace root this session resolves relative paths
+// and commands against.
+func (s *Session) WorkDir() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	dir := s.workDir
+	s.mu.Unlock()
+	if dir != "" {
+		return dir
+	}
+	cwd, _ := os.Getwd()
+	return cwd
+}
+
+// SetWorkDir re-roots this session's tool execution. Called by workspace
+// create/switch so a resumed or newly created session follows its project.
+func (s *Session) SetWorkDir(dir string) {
+	if s == nil {
+		return
+	}
+	s.mu.Lock()
+	s.workDir = dir
+	s.mu.Unlock()
+	s.systemPromptMu.Lock()
+	s.systemPrompts = nil
+	s.systemPromptMu.Unlock()
+	if s.db != nil && dir != "" {
+		if err := sessiondb.UpdateProject(s.db, s.sessionID, dir, filepath.Base(dir)); err != nil && s.logger != nil {
+			s.logger.Warn("SESSION", "project_root_update_failed", "path", dir, "error", err.Error())
+		}
+	}
+}
+
 func (s *Session) DB() *sql.DB { return s.db }
 
 func (s *Session) Editor() *fileio.Editor { return s.editor }
@@ -400,7 +443,10 @@ func (s *Session) systemPrompt(multiAgent bool) string {
 	if prompt, ok := s.systemPrompts[multiAgent]; ok {
 		return prompt
 	}
-	prompt := agent.BuildSystemPrompt(multiAgent)
+	// The prompt must advertise the same working directory tools resolve
+	// against; a stale cwd here misdirects the model after a workspace
+	// switch even when execution itself is correctly re-rooted.
+	prompt := agent.BuildSystemPromptInDir(multiAgent, s.WorkDir())
 	s.systemPrompts[multiAgent] = prompt
 	return prompt
 }

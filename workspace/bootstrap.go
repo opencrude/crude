@@ -73,6 +73,9 @@ func (w *Workspace) CreateSession(cfg *session.Config, homeDir string) (*Session
 	if err != nil {
 		return nil, fmt.Errorf("new backend session: %w", err)
 	}
+	// Tools execute inside this workspace's project root. Every later
+	// relative path and command cwd resolves against w.RootPath.
+	bs.SetWorkDir(w.RootPath)
 	if w.WorkspaceDB != nil {
 		bs.SetMemoryStore(w.WorkspaceDB.Memory)
 		bs.StartMemoryMaintenance()
@@ -131,6 +134,10 @@ func (w *Workspace) ResumeSession(sessionID string, cfg *session.Config, homeDir
 	if err != nil {
 		return nil, fmt.Errorf("resume backend session: %w", err)
 	}
+	// Re-root tool execution at this workspace. A resumed session may have
+	// been created under a different project (legacy layout) — the current
+	// workspace root is authoritative for its lifetime here.
+	bs.SetWorkDir(w.RootPath)
 	if w.WorkspaceDB != nil {
 		bs.SetMemoryStore(w.WorkspaceDB.Memory)
 		bs.StartMemoryMaintenance()

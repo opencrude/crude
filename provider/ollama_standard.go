@@ -2,6 +2,7 @@ package provider
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/url"
@@ -96,6 +97,9 @@ func encodeOllamaMessages(messages []ChatMessage) ([]map[string]any, error) {
 				case "image_url":
 					if part.ImageURL != nil {
 						images = append(images, dataURLToBase64(part.ImageURL.URL))
+					} else if len(part.Data) > 0 {
+						// Inline media attachment from the tool boundary.
+						images = append(images, base64.StdEncoding.EncodeToString(part.Data))
 					}
 				}
 			}

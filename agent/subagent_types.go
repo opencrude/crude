@@ -55,10 +55,11 @@ type SubAgentSpec struct {
 	ParentID       AgentID       `json:"parent_id"`
 	ParentTurn     uint64        `json:"parent_turn"`
 
-	ModelContextWindow int     `json:"model_context_window,omitempty"`
-	ModelInputPrice    float64 `json:"model_input_price,omitempty"`
-	ModelOutputPrice   float64 `json:"model_output_price,omitempty"`
-	ModelCachePrice    float64 `json:"model_cache_price,omitempty"`
+	ModelContextWindow int      `json:"model_context_window,omitempty"`
+	ModelInputPrice    float64  `json:"model_input_price,omitempty"`
+	ModelOutputPrice   float64  `json:"model_output_price,omitempty"`
+	ModelCachePrice    float64  `json:"model_cache_price,omitempty"`
+	ModelModalities    []string `json:"model_modalities,omitempty"`
 	// Sampling overrides; nil leaves the backend default in effect.
 	ModelTemperature         *float64 `json:"model_temperature,omitempty"`
 	ModelTopP                *float64 `json:"model_top_p,omitempty"`

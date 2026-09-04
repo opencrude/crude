@@ -107,7 +107,7 @@ func encodeResponsesInput(messages []ChatMessage) ([]any, error) {
 		switch msg.Role {
 		case "tool":
 			output := any(msg.ContentString())
-			if msg.Content.HasImage() {
+			if !msg.Content.IsText() {
 				content, err := encodeResponsesContent(msg)
 				if err != nil {
 					return nil, err
@@ -172,6 +172,15 @@ func encodeResponsesContent(msg ChatMessage) ([]any, error) {
 			if msg.Role == "assistant" {
 				continue
 			}
+			if len(part.Data) > 0 {
+				// Inline media attachment from the tool boundary.
+				dataURL := "data:" + part.MimeType + ";base64," + base64.StdEncoding.EncodeToString(part.Data)
+				content = append(content, map[string]any{
+					"type":      "input_image",
+					"image_url": dataURL,
+				})
+				continue
+			}
 			if part.ImageURL == nil || part.ImageURL.URL == "" {
 				return nil, fmt.Errorf("OpenAI image content is missing a URL")
 			}
@@ -186,6 +195,15 @@ func encodeResponsesContent(msg ChatMessage) ([]any, error) {
 				image["detail"] = part.ImageURL.Detail
 			}
 			content = append(content, image)
+		case "document":
+			if len(part.Data) == 0 {
+				return nil, fmt.Errorf("OpenAI file content is empty")
+			}
+			content = append(content, map[string]any{
+				"type":      "input_file",
+				"filename":  part.Filename,
+				"file_data": mediaDataURL(part),
+			})
 		}
 	}
 	return content, nil

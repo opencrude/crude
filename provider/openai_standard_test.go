@@ -2,6 +2,7 @@ package provider
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
 
@@ -27,6 +28,49 @@ func TestOpenAIStandardEncodesCompatibleTokenLimit(t *testing.T) {
 	}
 	if _, exists := request["max_tokens"]; exists {
 		t.Fatal("request contains both max_tokens and max_completion_tokens")
+	}
+}
+
+func TestOpenAIChatDefersToolMediaUntilCompleteToolResultSet(t *testing.T) {
+	imageURL := "data:image/png;base64,iVBORw0KGgo="
+	messages := []ChatMessage{
+		{
+			Role: "assistant",
+			ToolCalls: []ToolCall{
+				{ID: "call_media", Type: "function", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"image.png"}`}},
+				{ID: "call_text", Type: "function", Function: FunctionCall{Name: "read_file", Arguments: `{"path":"main.go"}`}},
+			},
+		},
+		{
+			Role: "tool", ToolCallID: "call_media",
+			Content: PartsContent([]ContentPart{
+				{Type: "text", Text: "image attached"},
+				{Type: "image_url", ImageURL: &ImageURL{URL: imageURL}},
+			}),
+		},
+		{Role: "tool", ToolCallID: "call_text", Content: TextContent("source contents")},
+	}
+	wire, err := encodeOpenAIChatMessages(messages)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(wire) != 4 {
+		t.Fatalf("wire messages = %#v", wire)
+	}
+	roles := make([]string, len(wire))
+	for index, raw := range wire {
+		roles[index], _ = raw.(map[string]any)["role"].(string)
+	}
+	if got := strings.Join(roles, ","); got != "assistant,tool,tool,user" {
+		t.Fatalf("wire roles = %s", got)
+	}
+	media := wire[3].(map[string]any)["content"].([]any)
+	if len(media) != 2 {
+		t.Fatalf("synthetic media content = %#v", media)
+	}
+	image := media[1].(map[string]any)["image_url"].(*ImageURL)
+	if image.URL != imageURL {
+		t.Fatalf("image URL = %q", image.URL)
 	}
 }
 

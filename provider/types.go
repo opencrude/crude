@@ -30,6 +30,11 @@ type ContentPart struct {
 	Type     string    `json:"type"`
 	Text     string    `json:"text,omitempty"`
 	ImageURL *ImageURL `json:"image_url,omitempty"`
+	// Media attachment fields (document/video/audio parts and inline image
+	// bytes). Data is raw file bytes; encoders base64-encode per protocol.
+	MimeType string `json:"mime_type,omitempty"`
+	Filename string `json:"filename,omitempty"`
+	Data     []byte `json:"data,omitempty"`
 }
 
 type ImageURL struct {
@@ -129,6 +134,17 @@ func (c MessageContent) HasImage() bool {
 	return false
 }
 
+// HasMedia returns true if any part carries inline media bytes (inline
+// image, document, video, or audio attachment).
+func (c MessageContent) HasMedia() bool {
+	for _, p := range c.Parts() {
+		if len(p.Data) > 0 {
+			return true
+		}
+	}
+	return false
+}
+
 // ContentDescription returns a human-readable description of all content,
 // including image markers for non-text parts. For text-only content, this
 // is equivalent to String(). For multipart content, image parts are shown
@@ -163,6 +179,15 @@ func (c MessageContent) ContentDescription() string {
 				mime = extractMimeFromDataURL(p.ImageURL.URL)
 			}
 			fmt.Fprintf(&b, "[Image: %s]", mime)
+		case "document", "video", "audio":
+			if b.Len() > 0 {
+				b.WriteString("\n")
+			}
+			name := p.Filename
+			if name == "" {
+				name = "attachment"
+			}
+			fmt.Fprintf(&b, "[%s: %s (%s, %d bytes)]", strings.ToUpper(p.Type[:1])+p.Type[1:], name, p.MimeType, len(p.Data))
 		}
 	}
 	return b.String()
