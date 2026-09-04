@@ -27,20 +27,20 @@ type envContext struct {
 	DirListing       string
 }
 
-func gatherEnvContext() envContext {
-	e := gatherStableEnvContext()
+func gatherEnvContextInDir(dir string) envContext {
+	e := gatherStableEnvContextInDir(dir)
 	e.Now = time.Now().UTC().Format("2006-01-02 15:04:05 UTC")
 
-	if branch, err := exec.Command("git", "rev-parse", "--abbrev-ref", "HEAD").Output(); err == nil {
+	if branch, err := gitOutput(e.CWD, "rev-parse", "--abbrev-ref", "HEAD"); err == nil {
 		e.GitBranch = strings.TrimSpace(string(branch))
 	}
-	if root, err := exec.Command("git", "rev-parse", "--show-toplevel").Output(); err == nil {
+	if root, err := gitOutput(e.CWD, "rev-parse", "--show-toplevel"); err == nil {
 		e.GitRoot = strings.TrimSpace(string(root))
 	}
-	if remote, err := exec.Command("git", "remote", "get-url", "origin").Output(); err == nil {
+	if remote, err := gitOutput(e.CWD, "remote", "get-url", "origin"); err == nil {
 		e.GitRemote = strings.TrimSpace(string(remote))
 	}
-	if status, err := exec.Command("git", "status", "--porcelain").Output(); err == nil {
+	if status, err := gitOutput(e.CWD, "status", "--porcelain"); err == nil {
 		trimmed := strings.TrimSpace(string(status))
 		if trimmed == "" {
 			e.GitDirty = "clean"
@@ -55,11 +55,24 @@ func gatherEnvContext() envContext {
 	return e
 }
 
-func gatherStableEnvContext() envContext {
+func gitOutput(dir string, args ...string) ([]byte, error) {
+	cmd := exec.Command("git", args...)
+	if dir != "" {
+		cmd.Dir = dir
+	}
+	return cmd.Output()
+}
+
+// gatherStableEnvContextInDir builds the stable environment snapshot using
+// dir as the advertised working directory. Empty dir means process cwd.
+func gatherStableEnvContextInDir(dir string) envContext {
+	if dir == "" {
+		dir = getCWD()
+	}
 	e := envContext{
 		Shell:   detectShell(),
 		OSInfo:  fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
-		CWD:     getCWD(),
+		CWD:     dir,
 		HomeDir: detectHomeDir(),
 	}
 

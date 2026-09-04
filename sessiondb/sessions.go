@@ -50,6 +50,13 @@ func Create(db *sql.DB, meta SessionMeta) error {
 	return nil
 }
 
+// UpdateProject rebinds a session's project metadata when a workspace-owned
+// backend is created or resumed under an explicit root.
+func UpdateProject(db *sql.DB, id, projectPath, projectName string) error {
+	_, err := db.Exec(`UPDATE sessions SET project_path = ?, project_name = ? WHERE id = ?`, projectPath, projectName, id)
+	return err
+}
+
 func CloseSession(db *sql.DB, sessionID string) error {
 	_, err := db.Exec(`
 		UPDATE sessions SET closed_at = ? WHERE id = ?

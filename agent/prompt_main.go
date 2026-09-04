@@ -147,6 +147,13 @@ const planningPrompt = `# Planning Contract
 - Update the plan when the implementation reality changes, not after every individual tool call.`
 
 func BuildSystemPrompt(multiAgent bool) string {
+	return BuildSystemPromptInDir(multiAgent, "")
+}
+
+// BuildSystemPromptInDir builds the system prompt advertising dir as the
+// working directory. An empty dir falls back to the process cwd. Sessions
+// pass their workspace root so prompts match tool execution truth.
+func BuildSystemPromptInDir(multiAgent bool, dir string) string {
 	var b strings.Builder
 	b.WriteString(OrchestratorPrompt)
 	b.WriteString("\n\n")
@@ -160,6 +167,6 @@ func BuildSystemPrompt(multiAgent bool) string {
 	b.WriteString("\n\n")
 	b.WriteString(memoryPrompt)
 	b.WriteString("\n\n")
-	b.WriteString(gatherStableEnvContext().buildStableSection())
+	b.WriteString(gatherStableEnvContextInDir(dir).buildStableSection())
 	return b.String()
 }

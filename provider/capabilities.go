@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"slices"
 	"strings"
 	"sync"
 )
@@ -12,8 +13,14 @@ const (
 	CapVision modelCap = 1 << iota
 	CapTools
 	CapStreaming
+	CapPDF
+	CapVideo
+	CapAudio
 	capVisionKnown
 	capToolsKnown
+	capPDFKnown
+	capVideoKnown
+	capAudioKnown
 )
 
 // dynamicCaps holds model capabilities populated from models.dev data.
@@ -22,6 +29,52 @@ var (
 	dynamicCaps   = make(map[string]modelCap)
 	dynamicCapsMu sync.RWMutex
 )
+
+// modalityCapBits maps a canonical modality to its capability + known bits.
+var modalityCapBits = map[string]struct {
+	cap   modelCap
+	known modelCap
+}{
+	ModalityImage: {CapVision, capVisionKnown},
+	ModalityPDF:   {CapPDF, capPDFKnown},
+	ModalityVideo: {CapVideo, capVideoKnown},
+	ModalityAudio: {CapAudio, capAudioKnown},
+}
+
+// SetModelModalities stores an authoritative per-modality capability snapshot
+// for a model ID (case-insensitive). Listed modalities are supported; unlisted
+// modalities are explicitly unsupported. Settings forms publish all four
+// toggles together, so disabling a capability must remove an earlier value.
+func SetModelModalities(modelID string, modalities []string) {
+	lower := strings.ToLower(modelID)
+	dynamicCapsMu.Lock()
+	caps := dynamicCaps[lower]
+	for modality, bits := range modalityCapBits {
+		caps &^= bits.cap | bits.known
+		caps |= bits.known
+		if slices.Contains(modalities, modality) {
+			caps |= bits.cap
+		}
+	}
+	dynamicCaps[lower] = caps
+	dynamicCapsMu.Unlock()
+}
+
+// MergeModelModalities records affirmative settings overrides without
+// turning omitted fields into known-false values. Category inheritance uses
+// omission for "no override", so catalog capabilities must survive.
+func MergeModelModalities(modelID string, modalities []string) {
+	lower := strings.ToLower(modelID)
+	dynamicCapsMu.Lock()
+	caps := dynamicCaps[lower]
+	for modality, bits := range modalityCapBits {
+		if slices.Contains(modalities, modality) {
+			caps |= bits.cap | bits.known
+		}
+	}
+	dynamicCaps[lower] = caps
+	dynamicCapsMu.Unlock()
+}
 
 // SetModelCap stores capability flags for a model ID (case-insensitive).
 func SetModelCap(modelID string, vision, tools bool) {
@@ -62,10 +115,10 @@ func MergeModelCap(modelID string, vision, tools bool) {
 func LoadModelCaps(metas map[string]ModelMeta) {
 	dynamicCapsMu.Lock()
 	for id, meta := range metas {
-		caps := capVisionKnown | capToolsKnown
+		caps := capVisionKnown | capToolsKnown | capPDFKnown | capVideoKnown | capAudioKnown
 		for _, modality := range meta.Modalities {
-			if modality == ModalityImage {
-				caps |= CapVision
+			if bits, ok := modalityCapBits[modality]; ok {
+				caps |= bits.cap
 			}
 		}
 		if meta.SupportsTools {
@@ -128,4 +181,27 @@ func SupportsTools(modelID string) bool {
 	}
 	// Most modern models support tools; default to true
 	return true
+}
+
+// ModalityCapability reports whether a model affirmatively supports one
+// input modality (provider.ModalityImage/PDF/Video/Audio) and whether that
+// answer came from authoritative metadata. Unknown models return
+// (false, false) so callers can decide whether to attempt anyway.
+func ModalityCapability(modelID, modality string) (supported, known bool) {
+	bits, ok := modalityCapBits[modality]
+	if !ok {
+		return false, true
+	}
+	caps, found := lookupCaps(modelID)
+	if !found {
+		return false, false
+	}
+	return caps&bits.cap != 0, caps&bits.known != 0
+}
+
+// SupportsModality returns true only for models affirmatively known to
+// accept the given modality.
+func SupportsModality(modelID, modality string) bool {
+	supported, _ := ModalityCapability(modelID, modality)
+	return supported
 }

@@ -53,6 +53,24 @@ settings choose only later turns; changing a model never relabels prior chat
 rows. Rows from legacy sessions that predate attribution use the session's
 current model as an explicit display fallback only.
 
+**Model modalities are request contracts.** Image, PDF, audio, and video
+toggles publish the complete per-role capability snapshot used by `read_file`.
+When a supported binary is read, its bytes are attached to that tool result in
+the same agent turn; success never means "queued for a later prompt." The wire
+encoder maps the neutral attachment to the resolved protocol: OpenAI-compatible
+`image_url`, `file`, `input_audio`, or `video_url`; Responses/Codex
+`input_image` or `input_file`; Anthropic `image` or `document`; and Ollama
+`images`. Unsupported model, protocol, MIME, symlink, and size combinations fail
+before a provider request with an explicit reason. Binary edit/write operations
+remain forbidden regardless of read capability.
+
+**Workspace root is execution truth.** Every workspace-created or resumed
+backend session is bound to that workspace's `RootPath`. Relative file, glob,
+grep, directory, synchronous command, async command, main-agent prompt, and
+subagent prompt paths resolve against the bound root. Switching projects closes
+the old sessions and newly created sessions cannot inherit the process startup
+directory.
+
 Stored overlays are re-diffed against the current application layer on load,
 which narrows legacy whole-category rows to their differing leaves. A
 snapshot cannot say which of its values the user meant, so migration keeps
@@ -188,3 +206,8 @@ Layer coverage lives next to the code:
 - `session/model_attribution_test.go`, `workspace/message_view_test.go`, and
   `tui/chatprojection/model_attribution_test.go` — request-time model switching,
   durable resume attribution, and immutable per-row chat headers
+- `session/workspace_media_e2e_test.go`,
+  `session/protocol_media_matrix_test.go`, and
+  `workspace/tool_root_e2e_test.go` — same-turn multimodal tool delivery,
+  protocol schemas, persistence/resume, capability and safety gates, and
+  workspace-switch execution roots

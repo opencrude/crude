@@ -125,7 +125,7 @@ func encodeAnthropicMessages(messages []ChatMessage) (system []any, result []ant
 		switch msg.Role {
 		case "tool":
 			content := any(msg.ContentString())
-			if msg.Content.HasImage() {
+			if !msg.Content.IsText() {
 				contentBlocks, blockErr := anthropicTextAndImageBlocks(msg, true)
 				if blockErr != nil {
 					return nil, nil, blockErr
@@ -242,6 +242,18 @@ func anthropicTextAndImageBlocks(msg ChatMessage, allowImages bool) ([]any, erro
 			if !allowImages {
 				continue
 			}
+			if len(part.Data) > 0 {
+				// Inline media attachment: encode directly.
+				blocks = append(blocks, map[string]any{
+					"type": "image",
+					"source": map[string]any{
+						"type":       "base64",
+						"media_type": part.MimeType,
+						"data":       base64.StdEncoding.EncodeToString(part.Data),
+					},
+				})
+				continue
+			}
 			if part.ImageURL == nil || part.ImageURL.URL == "" {
 				return nil, fmt.Errorf("anthropic image content is missing a URL")
 			}
@@ -250,6 +262,18 @@ func anthropicTextAndImageBlocks(msg ChatMessage, allowImages bool) ([]any, erro
 				return nil, err
 			}
 			blocks = append(blocks, map[string]any{"type": "image", "source": source})
+		case "document":
+			if len(part.Data) == 0 {
+				continue
+			}
+			blocks = append(blocks, map[string]any{
+				"type": "document",
+				"source": map[string]any{
+					"type":       "base64",
+					"media_type": part.MimeType,
+					"data":       base64.StdEncoding.EncodeToString(part.Data),
+				},
+			})
 		}
 	}
 	return blocks, nil

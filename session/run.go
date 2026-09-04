@@ -172,6 +172,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	effectiveCfg := s.runtimeProfile.GetEffectiveConfig(o.ID)
 	activeCfg := effectiveCfg.GetActiveDefaultCategory()
 	provider.MergeModelCap(activeCfg.Model, slices.Contains(activeCfg.ModelModalities, provider.ModalityImage), activeCfg.ModelSupportsTools)
+	provider.MergeModelModalities(activeCfg.Model, activeCfg.ModelModalities)
 	// The ChatGPT subscription provider authenticates via OAuth, not an API
 	// key, so an empty key is fine when OAuth credentials are present.
 	if activeCfg.APIKey == "" && activeCfg.OAuth == nil {
@@ -289,7 +290,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		ModelID:    turnProvider.Model,
 	}
 	sender.SendAgentEventWithID("turn_started", turnIdentity, o.ID)
-	ag := s.newAgent(turnProvider, effectiveCfg.IsMultiAgentEnabled())
+	ag := s.newAgent(turnProvider, effectiveCfg.IsMultiAgentEnabled(), activeCfg.ModelModalities)
 	if activeCfg.ContextCompactionPercent != nil {
 		ag.ContextCompactionPercent = *activeCfg.ContextCompactionPercent
 	}

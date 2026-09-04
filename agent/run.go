@@ -472,10 +472,16 @@ func (a *Agent) Run(
 		var lastToolResultIdx int
 		for _, r := range results {
 			toolError := r.toolError || IsToolError(r.result.Content)
+			content := provider.TextContent(r.result.Content)
+			if len(r.result.Attachments) > 0 {
+				parts := []provider.ContentPart{{Type: "text", Text: r.result.Content}}
+				parts = append(parts, r.result.Attachments...)
+				content = provider.PartsContent(parts)
+			}
 			toolMessage := provider.ChatMessage{
 				Role:       "tool",
 				ToolCallID: r.id,
-				Content:    provider.TextContent(r.result.Content),
+				Content:    content,
 				ToolError:  toolError,
 			}
 			if r.index == len(results)-1 {
@@ -494,7 +500,6 @@ func (a *Agent) Run(
 				emit(AgentEvent{Type: "stream_token", Data: r.result.Content})
 			}
 		}
-
 		if lastToolResultIdx > 0 && lastToolResultIdx < len(msgs) {
 			l.Debug("CACHE", "breakpoint", "msg_idx", lastToolResultIdx, "role", msgs[lastToolResultIdx].Role)
 		}

@@ -53,6 +53,12 @@ Your write_report must be detailed so the main agent can decide next steps witho
 // and the user prompt (task assignment, instructions).
 // Returns (systemPrompt, userPrompt).
 func BuildSubAgentPrompt(spec SubAgentSpec, profileInstructions string) (string, string) {
+	return BuildSubAgentPromptInDir(spec, profileInstructions, "")
+}
+
+// BuildSubAgentPromptInDir builds a child prompt whose environment and Git
+// context are rooted at the owning workspace.
+func BuildSubAgentPromptInDir(spec SubAgentSpec, profileInstructions, dir string) (string, string) {
 	var sysB strings.Builder
 	sysB.WriteString(SubAgentPrompt)
 
@@ -83,7 +89,7 @@ func BuildSubAgentPrompt(spec SubAgentSpec, profileInstructions string) (string,
 	}
 
 	sysB.WriteString("\n\n")
-	sysB.WriteString(gatherEnvContext().buildSection())
+	sysB.WriteString(gatherEnvContextInDir(dir).buildSection())
 
 	var userB strings.Builder
 	userB.WriteString(buildSubAgentAssignment(spec))

@@ -18,6 +18,7 @@ import (
 	"crude/fileio"
 	"crude/js"
 	"crude/logger"
+	"crude/provider"
 	"crude/search"
 )
 
@@ -99,16 +100,29 @@ func GetFloatArgAny(args map[string]any, key string, defaultVal float64) float64
 }
 
 type ToolResult struct {
-	Content string
-	Added   int
-	Removed int
+	Content     string
+	Added       int
+	Removed     int
+	Attachments []provider.ContentPart
 }
 
 func (r ToolResult) String() string {
 	return r.Content
 }
 
+// ToolOptions carries optional per-session capability context for the
+// dispatcher. The zero value preserves legacy behavior exactly.
+type ToolOptions struct {
+	// Media describes the active model's media attachment policy for
+	// read_file. nil keeps binary reads refused.
+	Media *MediaReadPolicy
+}
+
 func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, ed *fileio.Editor, yolo bool, lg *logger.Logger, ctx context.Context) ToolResult {
+	return ExecuteWithJSONOptions(tool, params, exec, ed, yolo, lg, ctx, nil)
+}
+
+func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Executer, ed *fileio.Editor, yolo bool, lg *logger.Logger, ctx context.Context, opts *ToolOptions) ToolResult {
 	start := time.Now()
 	lg.Debug("DISPATCH", "route", "tool", tool, "has_editor", ed != nil)
 
@@ -122,6 +136,17 @@ func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, e
 		offset := GetIntArgAny(params, "offset", 0)
 		limit := GetIntArgAny(params, "limit", 0)
 		lg.Info("TOOL", "call", "tool", tool, "path", path, "encoded", encoded, "offset", offset, "limit", limit)
+
+		// Capability gate: recognised media attachments go through the
+		// model's modality policy before generic binary refusal. This is the
+		// only place read_file can turn a binary into a context attachment.
+		if fi, statErr := os.Lstat(path); statErr == nil && fi.Mode().IsRegular() {
+			if handled, mediaResult, attachments := mediaPolicyFor(opts).tryMediaAttachment(path, lg); handled {
+				result = ToolResult{Content: mediaResult, Attachments: attachments}
+				lg.Info("TOOL", "result", "tool", tool, "path", path, "media", true, "latency_ms", time.Since(start).Milliseconds())
+				break
+			}
+		}
 		if fi, err := os.Stat(path); err == nil && fi.IsDir() {
 			entries, err := exec.ListDir(path)
 			if err != nil {
