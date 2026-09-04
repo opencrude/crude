@@ -10,6 +10,7 @@ import (
 	"crude/logger"
 	"crude/provider"
 	"crude/sessiondb"
+	ttypes "crude/types"
 )
 
 func TestDetectInterruption_Empty(t *testing.T) {
@@ -159,7 +160,11 @@ func TestCanonicalToolSnapshotCarriesLiveLifecycleAndSubPaneLink(t *testing.T) {
 	tracker.updateToolResult("call-1", "run_sub_agent", result, "success", 1500, 42, 3, 1)
 	message := provider.NewTextMessage("tool", result)
 	message.ToolCallID = "call-1"
-	meta := canonicalizeDisplayMeta(message, tracker.get("call-1"), `{"description":"inspect","wait":true}`, 3, time.Now())
+	tracked := tracker.get("call-1")
+	tracked.TurnGeneration = 4
+	tracked.ProviderID = "ollama-cloud"
+	tracked.ModelID = "kimi-k3"
+	meta := canonicalizeDisplayMeta(message, tracked, `{"description":"inspect","wait":true}`, 3, time.Now())
 	if meta.SnapshotVersion != sessiondb.ConversationSnapshotVersion || len(meta.Snapshots) != 1 {
 		t.Fatalf("canonical metadata = %#v", meta)
 	}
@@ -167,8 +172,26 @@ func TestCanonicalToolSnapshotCarriesLiveLifecycleAndSubPaneLink(t *testing.T) {
 	if snapshot.ToolName != "run_sub_agent" || snapshot.ToolStatus != "success" ||
 		snapshot.ToolPreviewPhase != "done" || snapshot.SubPaneID != "child-1" ||
 		snapshot.ToolDuration != 1500*time.Millisecond || snapshot.ToolEstTokens != 42 ||
-		snapshot.ToolLinesAdded != 3 || snapshot.ToolLinesRemoved != 1 {
+		snapshot.ToolLinesAdded != 3 || snapshot.ToolLinesRemoved != 1 ||
+		snapshot.TurnGeneration != 4 || snapshot.ProviderID != "ollama-cloud" || snapshot.ModelID != "kimi-k3" {
 		t.Fatalf("canonical tool snapshot = %#v", snapshot)
+	}
+}
+
+func TestCanonicalAssistantAndThinkingSnapshotsShareTurnIdentity(t *testing.T) {
+	message := provider.NewTextMessage("assistant", "answer")
+	message.ReasoningContent = "reasoning"
+	meta := canonicalizeDisplayMeta(message, sessiondb.DisplayMeta{
+		DisplayRole: "assistant", TurnGeneration: 9,
+		ProviderID: "commandcode", ModelID: "z-ai/glm-5.3-flash",
+	}, "", 0, time.Now())
+	if len(meta.Snapshots) != 2 {
+		t.Fatalf("assistant snapshots = %#v", meta.Snapshots)
+	}
+	for _, snapshot := range meta.Snapshots {
+		if snapshot.TurnGeneration != 9 || snapshot.ProviderID != "commandcode" || snapshot.ModelID != "z-ai/glm-5.3-flash" {
+			t.Fatalf("snapshot attribution = %#v", snapshot)
+		}
 	}
 }
 
@@ -222,7 +245,7 @@ func TestFinalizeTurnPersistsActiveContextSeparatelyFromFullArchive(t *testing.T
 		provider.NewTextMessage("assistant", "answer"),
 	}
 	agentMessages := append([]provider.ChatMessage{provider.NewTextMessage("system", "base")}, active...)
-	s.finalizeTurn(agentMessages, 2, &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}, "answer", "msg", active)
+	s.finalizeTurn(agentMessages, 2, &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}, "answer", "msg", ttypes.TurnIdentity{}, active)
 	s.flushWg.Wait()
 	state, ok, err := sessiondb.LoadContextState(db, "session")
 	if err != nil || !ok || state.Generation < 3 || len(state.Messages) != 3 || !strings.Contains(state.Messages[0].Content.String(), "checkpoint") {
@@ -366,7 +389,7 @@ func TestFinalizeTurnKeepsDurableHistoryOutsideCompactedContext(t *testing.T) {
 	s.finalizeTurn(
 		agentMessages, len(context),
 		&displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)},
-		"new answer", "msg-2",
+		"new answer", "msg-2", ttypes.TurnIdentity{},
 	)
 	if len(s.msgs) != 4 {
 		t.Fatalf("durable history length = %d: %+v", len(s.msgs), s.msgs)
@@ -412,7 +435,7 @@ func TestFinalizeTurnPersistsBtwDisplayProjection(t *testing.T) {
 		Role:            "user",
 		Content:         provider.TextContent(btwUrgentPrefix + "please include tests"),
 	}
-	s.finalizeTurn([]provider.ChatMessage{btw}, 0, &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}, "", "msg")
+	s.finalizeTurn([]provider.ChatMessage{btw}, 0, &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}, "", "msg", ttypes.TurnIdentity{})
 	messages := s.MessagesWithMeta()
 	if len(messages) != 1 || messages[0].Meta.DisplayContent != "please include tests" ||
 		len(messages[0].Meta.ReferenceLabels) != 1 || messages[0].Meta.ReferenceLabels[0] != "@notes" {

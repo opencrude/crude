@@ -89,3 +89,41 @@ func TestListModelsMapsUnsupportedAndUnauthorized(t *testing.T) {
 		t.Fatalf("401 error = %v, want ErrUnauthorized", err)
 	}
 }
+
+// TestOpenAIStandardDecodesGatewayContextLength pins the gateway contract:
+// Command Code and OpenRouter annotate their {"data":[...]} listings with a
+// non-standard context_length (the enforced context window). The decoder must
+// surface it so wire data beats the models.dev fallback, and leave the field
+// zero when a plain OpenAI listing omits it.
+func TestOpenAIStandardDecodesGatewayContextLength(t *testing.T) {
+	std := &OpenAIStandard{}
+	page, err := std.DecodeModelsPage([]byte(`{
+		"object": "list",
+		"data": [
+			{
+				"id": "deepseek/deepseek-v4-flash",
+				"object": "model",
+				"created": 1788430262,
+				"owned_by": "command-code",
+				"name": "DeepSeek V4 Flash (latest)",
+				"context_length": 1000000
+			},
+			{"id": "gpt-4o", "object": "model"}
+		]
+	}`))
+	if err != nil {
+		t.Fatalf("DecodeModelsPage: %v", err)
+	}
+	if len(page.Models) != 2 {
+		t.Fatalf("models = %+v", page.Models)
+	}
+	if page.Models[0].ID != "deepseek/deepseek-v4-flash" || page.Models[0].Name != "DeepSeek V4 Flash (latest)" {
+		t.Fatalf("entry 0 = %+v", page.Models[0])
+	}
+	if got := page.Models[0].ContextWindow; got != 1000000 {
+		t.Fatalf("context window = %d, want 1000000", got)
+	}
+	if got := page.Models[1].ContextWindow; got != 0 {
+		t.Fatalf("missing context_length must stay 0, got %d", got)
+	}
+}

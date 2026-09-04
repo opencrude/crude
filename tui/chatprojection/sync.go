@@ -135,6 +135,9 @@ func sameMessageData(current, incoming *types.ChatMessage) bool {
 		current.Content == incoming.Content &&
 		slices.Equal(current.ReferenceLabels, incoming.ReferenceLabels) &&
 		current.Time.Equal(incoming.Time) &&
+		current.TurnGeneration == incoming.TurnGeneration &&
+		current.ProviderID == incoming.ProviderID &&
+		current.ModelID == incoming.ModelID &&
 		current.ToolName == incoming.ToolName &&
 		current.ToolArgs == incoming.ToolArgs &&
 		current.ToolCommand == incoming.ToolCommand &&

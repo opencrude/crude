@@ -533,35 +533,6 @@ func (r *SubAgentRunner) WriteReport(agentID agent.AgentID, params map[string]an
 
 func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgentSpec, profileInstructions string) (*agent.SubAgentHandle, error) {
 	subSessionID := string(spec.ID)
-	var subDB *sql.DB
-	if dbPath, pathErr := r.subAgentDBPath(subSessionID); pathErr != nil {
-		r.session.logger.Warn("SUBAGENT", "db_path_error", "error", pathErr.Error())
-	} else if dbPath != "" {
-		var err error
-		subDB, err = sessiondb.OpenAndMigrate(dbPath)
-		if err != nil {
-			r.session.logger.Warn("SUBAGENT", "db_open_error", "error", err.Error())
-		} else {
-			wd, _ := filepath.Abs(".")
-			projectName := "unknown"
-			if wd != "" {
-				projectName = filepath.Base(wd)
-			}
-			_ = sessiondb.Create(subDB, sessiondb.SessionMeta{
-				ID:              subSessionID,
-				ProjectPath:     wd,
-				ProjectName:     projectName,
-				Model:           spec.Model,
-				Provider:        spec.Provider,
-				CreatedAt:       time.Now().UnixNano(),
-				ParentSessionID: toNullString(r.session.sessionID),
-				AgentCategory:   toNullString(spec.Category),
-				AgentName:       toNullString(spec.Name),
-				Depth:           spec.Depth,
-			})
-		}
-	}
-
 	resolvedProvider := spec.Provider
 	resolvedURL := spec.ProviderURL
 	resolvedAPIStandard := spec.APIStandard
@@ -606,6 +577,40 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 			resolvedAPIStandard = configured.StandardForModel(resolvedModelName, resolvedProvider)
 		} else {
 			resolvedAPIStandard = provider.DefaultStandardID(resolvedProvider)
+		}
+	}
+	spec.Provider = resolvedProvider
+	spec.ProviderURL = resolvedURL
+	spec.APIStandard = resolvedAPIStandard
+	spec.Model = resolvedModelName
+	spec.ThinkingEffort = resolvedThinkingEffort
+
+	var subDB *sql.DB
+	if dbPath, pathErr := r.subAgentDBPath(subSessionID); pathErr != nil {
+		r.session.logger.Warn("SUBAGENT", "db_path_error", "error", pathErr.Error())
+	} else if dbPath != "" {
+		var err error
+		subDB, err = sessiondb.OpenAndMigrate(dbPath)
+		if err != nil {
+			r.session.logger.Warn("SUBAGENT", "db_open_error", "error", err.Error())
+		} else {
+			wd, _ := filepath.Abs(".")
+			projectName := "unknown"
+			if wd != "" {
+				projectName = filepath.Base(wd)
+			}
+			_ = sessiondb.Create(subDB, sessiondb.SessionMeta{
+				ID:              subSessionID,
+				ProjectPath:     wd,
+				ProjectName:     projectName,
+				Model:           spec.Model,
+				Provider:        spec.Provider,
+				CreatedAt:       time.Now().UnixNano(),
+				ParentSessionID: toNullString(r.session.sessionID),
+				AgentCategory:   toNullString(spec.Category),
+				AgentName:       toNullString(spec.Name),
+				Depth:           spec.Depth,
+			})
 		}
 	}
 
@@ -738,6 +743,11 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 			"task":       handle.Spec.Description,
 			"prompt":     userPrompt,
 			"parent_id":  r.orchestratorID,
+		}, string(handle.Spec.ID))
+		r.sender.SendAgentEventWithID("turn_started", ttypes.TurnIdentity{
+			Generation: 1,
+			ProviderID: handle.Spec.Provider,
+			ModelID:    handle.Spec.Model,
 		}, string(handle.Spec.ID))
 	}
 
@@ -895,6 +905,11 @@ func persistSubAgentTranscript(
 	}
 	assignmentSeen := false
 	baseSystemSkipped := false
+	turnIdentity := ttypes.TurnIdentity{
+		Generation: 1,
+		ProviderID: handle.Spec.Provider,
+		ModelID:    handle.Spec.Model,
+	}
 	for _, message := range messages {
 		if message.Role == "system" && !baseSystemSkipped {
 			baseSystemSkipped = true
@@ -930,6 +945,11 @@ func persistSubAgentTranscript(
 			} else {
 				meta.ToolStatus = "success"
 			}
+		}
+		if message.Role == "assistant" || message.Role == "tool" {
+			meta.TurnGeneration = turnIdentity.Generation
+			meta.ProviderID = turnIdentity.ProviderID
+			meta.ModelID = turnIdentity.ModelID
 		}
 		if message.Role != "system" && !isProviderControlMessage(message) {
 			meta = canonicalizeDisplayMeta(message, meta, rawToolArgs[message.ToolCallID], len(persisted)-1, time.Now())

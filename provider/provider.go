@@ -495,6 +495,13 @@ var presets = []Preset{
 		StandardID: "openai",
 	},
 	{
+		ID:         "commandcode",
+		Name:       "Command Code",
+		BaseURL:    "https://api.commandcode.ai/provider/v1",
+		HelpText:   "API keys: Studio → API keys at commandcode.ai",
+		StandardID: "openai",
+	},
+	{
 		ID:         "chatgpt",
 		Name:       "OpenAI (ChatGPT subscription)",
 		BaseURL:    "https://chatgpt.com/backend-api/codex",

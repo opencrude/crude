@@ -73,7 +73,7 @@ func (reg *subPaneProjectionRegistry) SetTheme(th *theme.Theme) {
 // Get returns the projection for paneID, creating it (with a fresh
 // MessageList) if missing. paneType is recorded on first creation so the
 // registry can later decide which scrollbar path is active. Callers must
-// initialize SetModelName/SetUsername/SetSubPaneContentFn after first
+// initialize SetLegacyModelFallback/SetUsername/SetSubPaneContentFn after first
 // creation. On an existing projection, paneType is updated to the passed
 // value (cheap) so the registry stays correct if a pane is re-created
 // with a different type.
@@ -111,13 +111,6 @@ func (reg *subPaneProjectionRegistry) Has(paneID string) bool {
 // Remove deletes the projection for paneID. Safe to call when missing.
 func (reg *subPaneProjectionRegistry) Remove(paneID string) {
 	delete(reg.projections, paneID)
-}
-
-// SetModelName propagates the model name to every projection's MessageList.
-func (reg *subPaneProjectionRegistry) SetModelName(name string) {
-	for _, p := range reg.projections {
-		p.renderer.SetModelName(name)
-	}
 }
 
 // SetUsername propagates the username to every projection's MessageList.

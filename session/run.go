@@ -283,6 +283,12 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		sender.SendAgentEventWithID("error", "Invalid provider communication standard: "+err.Error(), o.ID)
 		return
 	}
+	turnIdentity := ttypes.TurnIdentity{
+		Generation: turnGeneration,
+		ProviderID: turnProvider.ID,
+		ModelID:    turnProvider.Model,
+	}
+	sender.SendAgentEventWithID("turn_started", turnIdentity, o.ID)
 	ag := s.newAgent(turnProvider, effectiveCfg.IsMultiAgentEnabled())
 	if activeCfg.ContextCompactionPercent != nil {
 		ag.ContextCompactionPercent = *activeCfg.ContextCompactionPercent
@@ -379,7 +385,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	s.toolCallSeq = ag.ToolCallSeq()
 
 	l.Info("AGENT", "loop_end", "len", len(finalContent))
-	s.finalizeTurn(agentMsgs, len(archiveCopy), displayTracker, finalContent, currentMsgID, ag.ActiveContext())
+	s.finalizeTurn(agentMsgs, len(archiveCopy), displayTracker, finalContent, currentMsgID, turnIdentity, ag.ActiveContext())
 }
 
 func (o *Orchestrator) handleBlockingEvent(data map[string]string, evt agent.AgentEvent, sender EventSender) bool {
@@ -589,6 +595,7 @@ func (s *Session) finalizeTurn(
 	tracker *displayMetaTracker,
 	finalContent string,
 	msgID string,
+	turnIdentity ttypes.TurnIdentity,
 	activeContext ...[]provider.ChatMessage,
 ) {
 	s.msgsMu.Lock()
@@ -642,6 +649,11 @@ func (s *Session) finalizeTurn(
 				ContextOnly:     true,
 			}
 		}
+		if m.Role == "assistant" || m.Role == "tool" {
+			dm.TurnGeneration = turnIdentity.Generation
+			dm.ProviderID = turnIdentity.ProviderID
+			dm.ModelID = turnIdentity.ModelID
+		}
 		if m.Role != "system" {
 			dm = canonicalizeDisplayMeta(m, dm, rawToolArgs[m.ToolCallID], len(s.msgs)+i, time.Now())
 		}
@@ -658,7 +670,10 @@ func (s *Session) finalizeTurn(
 		returned = append(returned, message)
 		s.msgTurns = append(s.msgTurns, s.turnNumber)
 		s.displayMetas = append(s.displayMetas, canonicalizeDisplayMeta(message,
-			sessiondb.DisplayMeta{DisplayRole: "assistant"}, "", len(s.msgs)-1, time.Now()))
+			sessiondb.DisplayMeta{
+				DisplayRole: "assistant", TurnGeneration: turnIdentity.Generation,
+				ProviderID: turnIdentity.ProviderID, ModelID: turnIdentity.ModelID,
+			}, "", len(s.msgs)-1, time.Now()))
 	}
 	nextContext := returned
 	if len(activeContext) > 0 && activeContext[0] != nil {

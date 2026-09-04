@@ -4,7 +4,45 @@ import (
 	"reflect"
 	"testing"
 	"time"
+
+	ttypes "crude/types"
 )
+
+func TestConversationKeepsImmutableIdentityPerTurnDerivedMessage(t *testing.T) {
+	conversation := NewConversation()
+	first := ttypes.TurnIdentity{Generation: 1, ProviderID: "provider-a", ModelID: "model-a"}
+	if !conversation.BeginTurn(first) {
+		t.Fatal("first turn identity was rejected")
+	}
+	conversation.AppendThinking("reasoning")
+	conversation.UpdateToolCall("tool-a", "internal-a", "read_file", "a.go")
+	conversation.EnsureAssistant()
+	conversation.AppendToken("first answer")
+
+	second := ttypes.TurnIdentity{Generation: 2, ProviderID: "provider-b", ModelID: "model-b"}
+	if !conversation.BeginTurn(second) {
+		t.Fatal("second turn identity was rejected")
+	}
+	conversation.AppendMessage(Message{Role: MessageRoleUser, Content: "continue"})
+	conversation.EnsureAssistant()
+	conversation.AppendToken("second answer")
+
+	if conversation.BeginTurn(first) {
+		t.Fatal("stale turn identity moved attribution backward")
+	}
+	messages := conversation.Messages()
+	for _, message := range messages[:3] {
+		if message.Role == MessageRoleThinking || message.Role == MessageRoleTool || message.Role == MessageRoleAssistant {
+			if message.ModelID != "model-a" || message.ProviderID != "provider-a" || message.TurnGeneration != 1 {
+				t.Fatalf("first turn message was relabeled: %#v", message)
+			}
+		}
+	}
+	last := messages[len(messages)-1]
+	if last.Role != MessageRoleAssistant || last.ModelID != "model-b" || last.ProviderID != "provider-b" || last.TurnGeneration != 2 {
+		t.Fatalf("second turn assistant attribution = %#v", last)
+	}
+}
 
 func TestMessageContainsNoPresentationCacheFields(t *testing.T) {
 	typeOfMessage := reflect.TypeOf(Message{})
@@ -18,7 +56,9 @@ func TestMessageContainsNoPresentationCacheFields(t *testing.T) {
 func TestConversationStreamingLifecycle(t *testing.T) {
 	conversation := NewConversation()
 	agent := NewAgentState("agent", conversation, &testLogger{})
+	identity := ttypes.TurnIdentity{Generation: 3, ProviderID: "ollama-cloud", ModelID: "kimi-k3"}
 
+	agent.HandleEvent(AgentEvent{Type: "turn_started", AgentID: "agent", Data: identity}, nil, ignoreStatus, ignoreThinking, func() {}, ignoreConfirm, func(string) {}, func() {})
 	agent.HandleEvent(AgentEvent{Type: "thinking", AgentID: "agent", Data: "considering"}, nil, ignoreStatus, ignoreThinking, func() {}, ignoreConfirm, func(string) {}, func() {})
 	agent.HandleEvent(AgentEvent{Type: "stream_token", AgentID: "agent", Data: "hello"}, nil, ignoreStatus, ignoreThinking, func() {}, ignoreConfirm, func(string) {}, func() {})
 	agent.Tick(1)
@@ -32,6 +72,11 @@ func TestConversationStreamingLifecycle(t *testing.T) {
 	}
 	if messages[1].Role != MessageRoleAssistant || messages[1].Content != "hello" {
 		t.Fatalf("assistant message = %#v", messages[1])
+	}
+	for _, message := range messages {
+		if message.TurnGeneration != identity.Generation || message.ProviderID != identity.ProviderID || message.ModelID != identity.ModelID {
+			t.Fatalf("live event attribution = %#v", message)
+		}
 	}
 }
 

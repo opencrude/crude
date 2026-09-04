@@ -234,7 +234,7 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 				sp := m.PaneMgr.GetOrCreate(agentID, workspace.PaneAgent, agentID)
 				_ = sp
 				proj := m.subPaneProjections.Get(agentID, workspace.PaneAgent)
-				proj.renderer.SetModelName(m.ModelName)
+				proj.renderer.SetLegacyModelFallback(m.ModelName)
 				proj.renderer.SetUsername(m.Username)
 				proj.renderer.SetSubPaneContentFn(m.renderSubPaneContentForApp)
 				agent = workspace.NewAgentState(agentID, sp.Messages, m.Logger)
@@ -274,7 +274,7 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 				subModel = model
 			}
 			proj := m.subPaneProjections.Get(agentID, workspace.PaneAgent)
-			proj.renderer.SetModelName(subModel)
+			proj.renderer.SetLegacyModelFallback(subModel)
 			proj.renderer.SetUsername(m.Username)
 			// Nested subpanes (e.g. a promoted thinking block inside this
 			// sub-agent's own chat) render through the same registry.
@@ -529,7 +529,7 @@ func (m *App) promoteThinkingToPane(agent *workspace.AgentState) {
 
 	sp := m.PaneMgr.GetOrCreate(paneID, workspace.PaneThinking, "Thinking")
 	proj := m.subPaneProjections.Get(paneID, workspace.PaneThinking)
-	proj.renderer.SetModelName(m.ModelName)
+	proj.renderer.SetLegacyModelFallback(m.ModelName)
 	proj.renderer.SetUsername(m.Username)
 
 	if content != "" {
@@ -718,7 +718,7 @@ func (m *App) handleSubAgentStarted(evt workspace.AgentEvent) {
 			n.Model = model
 		}
 		if p := m.subPaneProjections.GetExisting(agentID); p != nil {
-			p.renderer.SetModelName(model)
+			p.renderer.SetLegacyModelFallback(model)
 		}
 	}
 	if category := data["category"]; category != "" {

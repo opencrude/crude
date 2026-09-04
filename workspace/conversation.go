@@ -36,6 +36,7 @@ type Conversation struct {
 	toolTimelines map[*Message]*toolTimeline
 	nextID        uint64
 	version       uint64
+	turnIdentity  ttypes.TurnIdentity
 }
 
 const toolPhaseMinDwell = 120 * time.Millisecond
@@ -62,6 +63,31 @@ func (c *Conversation) Version() uint64 {
 		return 0
 	}
 	return c.version
+}
+
+// BeginTurn installs the immutable identity for messages created by one
+// admitted backend turn. Older events cannot move attribution backward.
+func (c *Conversation) BeginTurn(identity ttypes.TurnIdentity) bool {
+	if c == nil || identity.Generation == 0 || identity.ModelID == "" {
+		return false
+	}
+	if identity.Generation < c.turnIdentity.Generation {
+		return false
+	}
+	if identity.Generation == c.turnIdentity.Generation && c.turnIdentity.ModelID != "" {
+		return c.turnIdentity == identity
+	}
+	c.turnIdentity = identity
+	return true
+}
+
+func (c *Conversation) attributeTurn(message *Message) {
+	if c == nil || message == nil || message.ModelID != "" {
+		return
+	}
+	message.TurnGeneration = c.turnIdentity.Generation
+	message.ProviderID = c.turnIdentity.ProviderID
+	message.ModelID = c.turnIdentity.ModelID
 }
 
 func (c *Conversation) Messages() []Message {
@@ -221,6 +247,9 @@ func (c *Conversation) AppendThinking(content string) {
 		Content:        content,
 		Time:           time.Now(),
 		ThinkingActive: true,
+		TurnGeneration: c.turnIdentity.Generation,
+		ProviderID:     c.turnIdentity.ProviderID,
+		ModelID:        c.turnIdentity.ModelID,
 	})
 }
 
@@ -232,7 +261,11 @@ func (c *Conversation) EnsureAssistant() {
 	if last := c.lastNonPending(); last != nil && last.Role == MessageRoleAssistant {
 		return
 	}
-	c.AppendMessage(Message{Role: MessageRoleAssistant, Time: time.Now()})
+	c.AppendMessage(Message{
+		Role: MessageRoleAssistant, Time: time.Now(),
+		TurnGeneration: c.turnIdentity.Generation,
+		ProviderID:     c.turnIdentity.ProviderID, ModelID: c.turnIdentity.ModelID,
+	})
 }
 
 // UpdateTurnStatus maintains one transient lifecycle row at the tail of the
@@ -432,6 +465,7 @@ func (c *Conversation) UpdateToolStreaming(toolID, internalID, name string, data
 		message = c.promoteTurnStatusToTool(toolID, internalID, name)
 	}
 	if message != nil && message.ToolStatus != "success" && message.ToolStatus != "error" && message.ToolStatus != "cancelled" {
+		c.attributeTurn(message)
 		c.startToolTimeline(message)
 		message.Role = MessageRoleTool
 		message.ToolName = name
@@ -492,6 +526,7 @@ func (c *Conversation) UpdateToolStreaming(toolID, internalID, name string, data
 		ToolLinesRemoved:  oldLines,
 		ToolStartTime:     time.Now(),
 	}
+	c.attributeTurn(message)
 	applyToolInput(message, name, data)
 	if newLines > 0 {
 		message.ToolLinesAdded = newLines
@@ -514,6 +549,7 @@ func (c *Conversation) UpdateToolCall(toolID, internalID, name, argsCompact stri
 		message = c.promoteTurnStatusToTool(toolID, internalID, name)
 	}
 	if message != nil && message.ToolStatus != "success" && message.ToolStatus != "error" && message.ToolStatus != "cancelled" {
+		c.attributeTurn(message)
 		c.startToolTimeline(message)
 		message.Role = MessageRoleTool
 		message.ToolName = name
@@ -546,6 +582,7 @@ func (c *Conversation) UpdateToolCall(toolID, internalID, name, argsCompact stri
 		ToolProgressLabel: argsCompact,
 		ToolStartTime:     time.Now(),
 	}
+	c.attributeTurn(message)
 	c.insertMessage(message)
 	c.index(message)
 	c.startToolTimeline(message)
@@ -814,7 +851,11 @@ func (c *Conversation) MarkError(reason string) {
 			return
 		}
 	}
-	c.AppendMessage(Message{Role: MessageRoleError, Content: reason, Time: time.Now()})
+	c.AppendMessage(Message{
+		Role: MessageRoleError, Content: reason, Time: time.Now(),
+		TurnGeneration: c.turnIdentity.Generation,
+		ProviderID:     c.turnIdentity.ProviderID, ModelID: c.turnIdentity.ModelID,
+	})
 }
 
 func (c *Conversation) Finish(content, reason string, wasStreaming bool) {
@@ -834,7 +875,11 @@ func (c *Conversation) Finish(content, reason string, wasStreaming bool) {
 				return
 			}
 		}
-		c.AppendMessage(Message{Role: MessageRoleAssistant, Content: content, Time: time.Now()})
+		c.AppendMessage(Message{
+			Role: MessageRoleAssistant, Content: content, Time: time.Now(),
+			TurnGeneration: c.turnIdentity.Generation,
+			ProviderID:     c.turnIdentity.ProviderID, ModelID: c.turnIdentity.ModelID,
+		})
 		return
 	}
 	if !incomplete {
@@ -853,7 +898,11 @@ func (c *Conversation) Finish(content, reason string, wasStreaming bool) {
 			return
 		}
 	}
-	c.AppendMessage(Message{Role: MessageRoleAssistant, Incomplete: true, IncompleteReason: label, Time: time.Now()})
+	c.AppendMessage(Message{
+		Role: MessageRoleAssistant, Incomplete: true, IncompleteReason: label, Time: time.Now(),
+		TurnGeneration: c.turnIdentity.Generation,
+		ProviderID:     c.turnIdentity.ProviderID, ModelID: c.turnIdentity.ModelID,
+	})
 }
 
 func (c *Conversation) nextMessageID() string {
@@ -934,6 +983,7 @@ func (c *Conversation) promoteTurnStatusToTool(toolID, internalID, name string) 
 	message.LifecycleProvider = ""
 	message.LifecycleUploadedBytes = 0
 	message.LifecycleTotalBytes = 0
+	c.attributeTurn(message)
 	c.bindInternalID(message, internalID)
 	c.bindToolID(message, toolID)
 	return message

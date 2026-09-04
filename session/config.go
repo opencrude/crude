@@ -13,14 +13,6 @@ const (
 	CategoryMemory     = "memory"
 )
 
-// NormalizeModel returns the bare model id for a category. The provider is
-// stored separately, so any legacy "provider/model" string is reduced to the
-// model part — "google/gemini-2.0-flash-exp:free" → "gemini-2.0-flash-exp:free".
-// The provider is never shown in front of crude's name; only the model is.
-func NormalizeModel(model string) string {
-	return provider.StripProviderPrefix(model)
-}
-
 // Live-inheritance markers used on a session category to point it at a
 // configuration source rather than storing a copied value.
 const (
@@ -492,10 +484,9 @@ func (c *Config) resolveCategoryDefaults(cat *CategoryConfig) {
 			cat.ProviderURL = p.BaseURL
 		}
 	}
-	// The model is a bare model id; the provider is its own field. Normalize
-	// any legacy "provider/model" string so display and callers never see the
-	// provider doubled up in front of crude's name.
-	cat.Model = NormalizeModel(cat.Model)
+	// The model is stored verbatim. Gateway catalogs (Command Code,
+	// OpenRouter) require the full vendored id — "z-ai/glm-5.3-flash" — on
+	// the wire, so it is never reduced to the bare name.
 	if cat.APIStandard == "" {
 		if configured, ok := c.Providers[cat.Provider]; ok {
 			cat.APIStandard = configured.StandardForModel(cat.Model, cat.Provider)
@@ -559,7 +550,7 @@ func catSettingsToConfig(v ttypes.CategorySettings) CategoryConfig {
 		Provider:                 v.Provider,
 		ProviderURL:              v.ProviderURL,
 		APIStandard:              v.APIStandard,
-		Model:                    NormalizeModel(v.Model),
+		Model:                    v.Model,
 		ThinkingEffort:           v.ThinkingEffort,
 		Inherit:                  v.Inherit,
 		Policy:                   v.Policy,

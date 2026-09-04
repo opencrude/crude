@@ -241,7 +241,16 @@ func LookupPrice(model string) ModelPrice {
 
 	// Fuzzy fallback: if no exact match, check whether any key in
 	// dynamicPrices contains the model ID as a substring (case-insensitive).
+	// Free variants are checked first: a fuzzy match like "longcat-2.0" for
+	// "meituan/LongCat-2.0:free" would otherwise price a free model.
 	dynamicPricesMu.RLock()
+	for _, prefix := range knownFreePrefixes {
+		if strings.Contains(lower, prefix) {
+			dynamicPricesMu.RUnlock()
+			logIf(func(lg *logger.Logger) { lg.Debug("PRICING", "lookup", "model", model, "match", "free_suffix") })
+			return ModelPrice{0, 0, 0}
+		}
+	}
 	for key, price := range dynamicPrices {
 		if strings.Contains(key, lower) || strings.Contains(lower, key) {
 			dynamicPricesMu.RUnlock()
@@ -252,14 +261,6 @@ func LookupPrice(model string) ModelPrice {
 		}
 	}
 	dynamicPricesMu.RUnlock()
-
-	// Free variant suffixes.
-	for _, prefix := range knownFreePrefixes {
-		if strings.Contains(lower, prefix) {
-			logIf(func(lg *logger.Logger) { lg.Debug("PRICING", "lookup", "model", model, "match", "free_suffix") })
-			return ModelPrice{0, 0, 0}
-		}
-	}
 
 	logIf(func(lg *logger.Logger) { lg.Debug("PRICING", "lookup", "model", model, "match", "zero") })
 	return ModelPrice{0, 0, 0}

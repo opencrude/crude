@@ -97,7 +97,7 @@ func TestBuildBandedDiffRows_MultiFileShowsPaths(t *testing.T) {
 	}
 }
 
-func TestBuildBandedDiffRowsPreservesSourceIndentation(t *testing.T) {
+func TestBuildBandedDiffRowsPreservesRelativeSourceIndentation(t *testing.T) {
 	// Unified context rows carry one marker space before the eight source
 	// spaces. Changed rows carry +/- directly before their twelve source spaces.
 	raw := "```diff\n--- a/main.go\n+++ b/main.go\n@@ -1,3 +1,3 @@\n         if ready {\n-            oldCall()\n+            newCall()\n         }\n```"
@@ -114,21 +114,27 @@ func TestBuildBandedDiffRowsPreservesSourceIndentation(t *testing.T) {
 		t.Fatalf("changed content rows = %#v", contentRows)
 	}
 	for _, content := range contentRows {
-		if !strings.HasPrefix(content, strings.Repeat(" ", 12)) {
-			t.Fatalf("source indentation was flattened in %q", content)
+		if !strings.HasPrefix(content, "  ") || strings.HasPrefix(content, "   ") {
+			t.Fatalf("relative indentation was not compacted to two columns in %q", content)
 		}
 	}
 }
 
-func TestBuildBandedDiffRowsExpandsSourceTabsAfterGutter(t *testing.T) {
-	raw := "```diff\n--- a/main.go\n+++ b/main.go\n@@ -1 +1 @@\n-\toldCall()\n+\tnewCall()\n```"
+func TestBuildBandedDiffRowsNormalizesSourceTabsAfterGutter(t *testing.T) {
+	raw := "```diff\n--- a/main.go\n+++ b/main.go\n@@ -1 +1 @@\n-\toldCall()\n+\t\tnewCall()\n```"
 	for _, row := range chatprojection.BuildBandedDiffRows(raw, 60, 80, true) {
 		plain := row.PlainText()
 		for _, marker := range []string{"+ ", "- "} {
 			if i := strings.Index(plain, marker); i >= 0 {
 				content := plain[i+len(marker):]
-				if !strings.HasPrefix(content, "    ") || strings.ContainsRune(content, '\t') {
+				if strings.ContainsRune(content, '\t') {
 					t.Fatalf("tab-indented content after gutter = %q", content)
+				}
+				if marker == "- " && strings.HasPrefix(content, " ") {
+					t.Fatalf("common tab indent was not removed: %q", content)
+				}
+				if marker == "+ " && !strings.HasPrefix(content, "  ") {
+					t.Fatalf("nested tab indent was not normalized to two columns: %q", content)
 				}
 			}
 		}

@@ -45,6 +45,7 @@ func BuildDiffRows(raw string, maxLines, maxWidth int) []PaintLine {
 		} else {
 			rows = allRows
 		}
+		rows = normalizeDiffPresentationRows(rows)
 
 		availLines := maxLines
 		truncated := false
@@ -117,6 +118,7 @@ func BuildBandedDiffRows(raw string, textWidth, totalWidth int, expanded bool) [
 		if len(rows) > 0 && tools.CompactContextLines > 0 {
 			rows = tools.TrimDiffContext(rows, tools.CompactContextLines)
 		}
+		rows = normalizeDiffPresentationRows(rows)
 		maxNumWidth := 1
 		for _, r := range rows {
 			if r.Kind == tools.DiffLineDeletion {
@@ -159,6 +161,54 @@ func BuildBandedDiffRows(raw string, textWidth, totalWidth int, expanded bool) [
 	return all
 }
 
+// normalizeDiffPresentationRows removes block-local common indentation and
+// maps four source indentation columns to two display columns. Ellipsis rows
+// split independently-normalized blocks; source content is never mutated.
+func normalizeDiffPresentationRows(rows []tools.DiffRow) []tools.DiffRow {
+	out := append([]tools.DiffRow(nil), rows...)
+	start := 0
+	for start < len(out) {
+		for start < len(out) && out[start].Ellipsis {
+			start++
+		}
+		end := start
+		for end < len(out) && !out[end].Ellipsis {
+			end++
+		}
+		normalizeDiffPresentationBlock(out[start:end])
+		start = end
+	}
+	return out
+}
+
+func normalizeDiffPresentationBlock(rows []tools.DiffRow) {
+	common := -1
+	expanded := make([]string, len(rows))
+	for i, row := range rows {
+		expanded[i] = rendering.ExpandTabs(row.Content, 4)
+		if strings.TrimSpace(expanded[i]) == "" {
+			continue
+		}
+		indent := len(expanded[i]) - len(strings.TrimLeft(expanded[i], " "))
+		if common < 0 || indent < common {
+			common = indent
+		}
+	}
+	if common < 0 {
+		common = 0
+	}
+	for i := range rows {
+		if strings.TrimSpace(expanded[i]) == "" {
+			rows[i].Content = ""
+			continue
+		}
+		indent := len(expanded[i]) - len(strings.TrimLeft(expanded[i], " "))
+		relative := max(0, indent-common)
+		displayIndent := (relative/4)*2 + relative%4
+		rows[i].Content = strings.Repeat(" ", displayIndent) + expanded[i][indent:]
+	}
+}
+
 // buildBandedDiffContentRows renders one diff row with the tight gutter and
 // full-width band. Long content hard-wraps with continuation rows that keep
 // the band and blank the number/sign columns.
@@ -199,10 +249,7 @@ func buildBandedDiffContentRows(r tools.DiffRow, path string, maxNumWidth, conte
 		indicatorRole = ui.ColorMuted
 	}
 
-	// Unified diffs preserve source tabs, but terminal cell painting does not
-	// assign them stable columns. Expand before width, wrapping, and syntax
-	// tokenization so code keeps its natural tab-stop indentation.
-	content := rendering.ExpandTabs(r.Content, 4)
+	content := r.Content
 	segments := []string{content}
 	if rendering.VisibleWidth(content) > contentWidth {
 		segments = rendering.HardWrap(content, contentWidth)
