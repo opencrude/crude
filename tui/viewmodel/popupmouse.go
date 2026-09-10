@@ -208,32 +208,21 @@ func (m *App) hoverContextMenu(localX, localY int) {
 // Row N: ╰     ╯
 // =============================================================================
 
-// positionFindReplaceCursor translates a popup-local X coordinate
-// into a rune position within the given find/replace field, and
-// sets the input's cursor (and clears any selection). This gives
-// the user click-to-position-cursor on the find/replace input,
-// matching the chat input's behavior.
-//
-// The label parameter tells us the label prefix width (e.g. "Find: "
-// is 6 cells; "Replace: " is 9 cells). The chrome adds "│ " on the
-// left (2 cells of padding around the left border). We account for
-// both when translating local X to visible column within the value.
-func (m *App) positionFindReplaceCursor(fr *popup.FindReplaceState, edit *ui.TextEdit, localX int, label string) {
+// positionFindReplaceCursor places the popup's TextEdit cursor after a
+// click on its TextField. fieldRect is the field's popup-local rect (the
+// Host screen geometry), so the click lands exactly where the field paints
+// regardless of frame padding. edit is the popup state's TextEdit that
+// mirrors the field.
+func (m *App) positionFindReplaceCursor(fr *popup.FindReplaceState, edit *ui.TextEdit, fieldRect ui.Rect, localX int) {
 	if fr == nil || edit == nil {
 		return
 	}
-	// Chrome contributes: "│" border (1) + " " pad (1) + " " pad (1)
-	// = 3 cells on the left. Then "Label: " is rendered.
-	chromeW := 3
-	labelW := len(label) + 2 // "Label" + ": "
-	valueStartX := chromeW + labelW
-	if localX < valueStartX {
+	// Bare fields start their value at the field's own origin.
+	relX := localX - fieldRect.X
+	if relX < 0 {
 		edit.SetCursor(0, false)
 	} else {
-		// Translate visible X to rune index in the value.
-		relX := localX - valueStartX
-		value := edit.Value()
-		runes := []rune(value)
+		runes := []rune(edit.Value())
 		pos := 0
 		acc := 0
 		for i, r := range runes {
@@ -251,75 +240,148 @@ func (m *App) positionFindReplaceCursor(fr *popup.FindReplaceState, edit *ui.Tex
 	edit.ClearSelection()
 }
 
+// clickFindReplace routes a popup-local click. Toggles and action-row
+// buttons hit-test against the Host's screen-rect registry (the painted
+// geometry); input clicks resolve the target TextField through the Host so
+// focus and cursor positioning track the real layout (including the gap
+// rows between fields), never assumed row indexes.
 func (m *App) clickFindReplace(localX, localY int) tea.Cmd {
 	if m.FindReplace == nil {
 		return nil
 	}
 	fr := m.FindReplace
 
-	contentRow := localY - 1
-	if contentRow < 0 {
+	// Toggle clicks are hit-tested against the real ToggleButton bounds so
+	// the interaction tracks the component geometry (no manual band math).
+	if idx := m.findReplaceToggleAt(localX, localY); idx >= 0 {
+		switch idx {
+		case 0:
+			fr.CaseSensitive = !fr.CaseSensitive
+		case 1:
+			fr.WholeWord = !fr.WholeWord
+		case 2:
+			fr.Regex = !fr.Regex
+		}
+		if fr.OnChange != nil {
+			fr.OnChange()
+		}
 		return nil
 	}
 
-	// Row 0: Find input field
-	if contentRow == 0 {
-		fr.FocusedField = 0
-		m.positionFindReplaceCursor(fr, fr.FindEdit(), localX, "Find")
-		m.refreshFindReplacePopup()
-		return nil
+	// Action-row buttons hit-test through the Host tree (same path as
+	// confirm dialogs): no row/column arithmetic, clicks track the painted
+	// geometry of the ui.Button components.
+	if act := m.findReplaceButtonAt(localX, localY); act != "" {
+		return m.activateFindReplaceButton(act)
 	}
 
-	// Row 1: Replace input field (if ReplaceMode)
-	nextRow := 1
-	if fr.ReplaceMode {
-		if contentRow == 1 {
+	// Input fields: resolve the clicked TextField through the Host so the
+	// focus/cursor track the painted layout (the replace field sits two
+	// content rows down in replace mode — one field + one gap row).
+	fw := m.windowManager.Window("find-replace")
+	if fw == nil {
+		return nil
+	}
+	cw, ok := fw.Content.(*ui.ComponentWidget)
+	if !ok || cw == nil || cw.Host() == nil {
+		return nil
+	}
+	ww, hh := fw.Size()
+	cw.Host().Resize(ww, hh)
+	cw.Host().Layout()
+	switch id := cw.Host().HitTest(localX, localY); id {
+	case ui.FRFindField, ui.FRReplaceField:
+		fieldRect, _ := cw.Host().ScreenRect(id)
+		if id == ui.FRFindField {
+			fr.FocusedField = 0
+			m.positionFindReplaceCursor(fr, fr.FindEdit(), fieldRect, localX)
+		} else {
 			fr.FocusedField = 1
-			m.positionFindReplaceCursor(fr, fr.ReplaceEdit(), localX, "Replace")
-			m.refreshFindReplacePopup()
-			return nil
+			m.positionFindReplaceCursor(fr, fr.ReplaceEdit(), fieldRect, localX)
 		}
-		nextRow = 2
+		m.refreshFindReplacePopup()
 	}
+	return nil
+}
 
-	// Row nextRow+1: Status + Toggle row
-	// "matches <N>/<M>" or "type to search" or "no results"
-	// Then "   " separator, then " Aa  \b  .* "
-	if contentRow == nextRow+1 {
-		// Compute the toggle X positions from the actual popup width.
-		// The toggle group is right-aligned within the inner content
-		// (innerW = fw.w - 6). Toggle group width: " Aa  \b  .* " = 14.
-		chromePad := 3 // │ + 2 spaces
-		fw := m.windowManager.Window("find-replace")
-		if fw == nil {
-			return nil
-		}
-		w, _ := fw.Size()
-		innerW := w - 6
-		toggleGroupW := 14
-		toggleStartX := chromePad + innerW - toggleGroupW
-		toggleBandW := toggleGroupW / 3 // ~5 cells per band (4 toggle + 1 separator)
+// findReplaceButtonAt maps popup-local mouse coords to a find/replace
+// action ID ("find.prev", "find.next", "find.replace.one",
+// "find.replace.all") using the Host hit tree. Empty when the point is
+// not on an action-row button or the button is disabled (no matches).
+func (m *App) findReplaceButtonAt(localX, localY int) string {
+	fw := m.windowManager.Window("find-replace")
+	if fw == nil {
+		return ""
+	}
+	cw, ok := fw.Content.(*ui.ComponentWidget)
+	if !ok || cw == nil || cw.Host() == nil {
+		return ""
+	}
+	// Ensure layout matches painted size (undecorated WindowFrame paints
+	// into the full floating-window size).
+	ww, hh := fw.Size()
+	cw.Host().Resize(ww, hh)
+	cw.Host().Layout()
+	act := ui.FindReplaceActionAt(cw, localX, localY)
+	if act == "" {
+		return ""
+	}
+	// Disabled buttons paint dimmed and must not fire (e.g. Up/Down with
+	// zero matches). The bar owns the enabled state.
+	if ui.FindReplaceButtonEnabled(cw, act) {
+		return act
+	}
+	return ""
+}
 
-		toggleSpecs := []*bool{
-			&fr.CaseSensitive,
-			&fr.WholeWord,
-			&fr.Regex,
-		}
-		for i, ptr := range toggleSpecs {
-			bandStart := toggleStartX + i*toggleBandW
-			bandEnd := bandStart + toggleBandW
-			if localX >= bandStart && localX < bandEnd {
-				*ptr = !*ptr
-				if fr.OnChange != nil {
-					fr.OnChange()
-				}
-				return nil
-			}
-		}
+// activateFindReplaceButton fires a find/replace action-row button: match
+// navigation or single/all replacement. Mirrors the keyboard paths
+// (handleFindReplaceKey) so mouse and keys stay one behavior.
+func (m *App) activateFindReplaceButton(action string) tea.Cmd {
+	fr := m.FindReplace
+	if fr == nil {
 		return nil
 	}
-
+	switch action {
+	case "find.prev":
+		if fr.OnPrev != nil {
+			fr.OnPrev()
+		}
+	case "find.next":
+		if fr.OnNext != nil {
+			fr.OnNext()
+		}
+	case "find.replace.one":
+		if fr.OnReplace != nil {
+			fr.OnReplace()
+		}
+	case "find.replace.all":
+		if fr.OnReplaceAll != nil {
+			fr.OnReplaceAll()
+		}
+	}
 	return nil
+}
+
+// findReplaceToggleAt returns the filter-toggle index (0=case, 1=whole-word,
+// 2=regex) under the popup-local point, or -1 when none. Bounds come from
+// FindReplaceFrameToggleBounds — the Host's screen-rect registry, i.e. the
+// exact geometry the pills are painted at.
+func (m *App) findReplaceToggleAt(localX, localY int) int {
+	fw := m.windowManager.Window("find-replace")
+	if fw == nil {
+		return -1
+	}
+	cw, ok := fw.Content.(*ui.ComponentWidget)
+	if !ok || cw == nil {
+		return -1
+	}
+	for i := 0; i < 3; i++ {
+		if r, ok := ui.FindReplaceFrameToggleBounds(cw, i); ok && r.Contains(localX, localY) {
+			return i
+		}
+	}
+	return -1
 }
 
 func (m *App) hoverFindReplace(localX, localY int) {
@@ -328,45 +390,40 @@ func (m *App) hoverFindReplace(localX, localY int) {
 	}
 	fr := m.FindReplace
 
-	contentRow := localY - 1
-	if contentRow < 0 {
+	fw := m.windowManager.Window("find-replace")
+	if fw == nil {
 		return
 	}
+	cw, ok := fw.Content.(*ui.ComponentWidget)
+	if !ok || cw == nil || cw.Host() == nil {
+		return
+	}
+	ww, hh := fw.Size()
+	cw.Host().Resize(ww, hh)
+	cw.Host().Layout()
 
-	nextRow := 1
-	if fr.ReplaceMode {
-		nextRow = 2
+	// Toggle hover: mirror the hovered pill index (legacy field) and drive
+	// the Host hover so ToggleButton.Paint's ctx.Hovered lights the pill.
+	idx := m.findReplaceToggleAt(localX, localY)
+	if fr.HoveredToggle != idx {
+		fr.HoveredToggle = idx
+	}
+	toggleIDs := []ui.ComponentID{ui.FRToggleCase, ui.FRToggleWord, ui.FRToggleRegex}
+	hoverID := ui.RootID
+	if idx >= 0 {
+		hoverID = toggleIDs[idx]
+	}
+	// Only touch Host hover when the point is not over the action row: the
+	// buttons own their hover there (SetHoveredButton), and a pill would
+	// never overlap the bar.
+	if cw.Host().Hovered() != hoverID && ui.FindReplaceActionAt(cw, localX, localY) == "" {
+		cw.Host().SetHovered(hoverID)
+		cw.MarkContentDirty()
 	}
 
-	if contentRow == nextRow+1 {
-		// Same band logic as click.
-		fw := m.windowManager.Window("find-replace")
-		if fw == nil {
-			return
-		}
-		w, _ := fw.Size()
-		innerW := w - 6
-		chromePad := 3
-		toggleGroupW := 14
-		toggleStartX := chromePad + innerW - toggleGroupW
-		toggleBandW := toggleGroupW / 3
-
-		for i := range []int{0, 1, 2} {
-			bandStart := toggleStartX + i*toggleBandW
-			bandEnd := bandStart + toggleBandW
-			if localX >= bandStart && localX < bandEnd {
-				if fr.HoveredToggle != i {
-					fr.HoveredToggle = i
-				}
-				return
-			}
-		}
-	}
-
-	// Not over a toggle — clear hover.
-	if fr.HoveredToggle != -1 {
-		fr.HoveredToggle = -1
-	}
+	// Action-row hover paints through Host hover (subtle fill) without
+	// stealing keyboard focus: hovered button ≠ focused control.
+	ui.SetHoveredButton(cw, localX, localY)
 }
 
 // =============================================================================

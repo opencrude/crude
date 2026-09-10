@@ -27,6 +27,16 @@ func (s *Store) recoverManifestIndex() error {
 			continue
 		}
 		id := strings.TrimSuffix(entry.Name(), ".json")
+		// Snapshot identity and every entry commit in one transaction. Only
+		// orphan manifests need recovery; replaying committed trees makes open
+		// scale with all historical files instead of the snapshot count.
+		var indexed bool
+		if err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM history_snapshots WHERE snapshot_id=?)`, id).Scan(&indexed); err != nil {
+			return err
+		}
+		if indexed {
+			continue
+		}
 		manifest, err := s.LoadManifest(id)
 		if err != nil {
 			return fmt.Errorf("localhistory: recover manifest %s: %w", id, err)
@@ -47,7 +57,15 @@ func (s *Store) recoverPlanIndex() error {
 		if entry.IsDir() || filepath.Ext(entry.Name()) != ".json" {
 			continue
 		}
-		plan, err := s.LoadPlan(strings.TrimSuffix(entry.Name(), ".json"))
+		id := strings.TrimSuffix(entry.Name(), ".json")
+		var indexed bool
+		if err := s.db.QueryRow(`SELECT EXISTS(SELECT 1 FROM history_restore_plans WHERE plan_id=?)`, id).Scan(&indexed); err != nil {
+			return err
+		}
+		if indexed {
+			continue
+		}
+		plan, err := s.LoadPlan(id)
 		if err != nil {
 			return err
 		}

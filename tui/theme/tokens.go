@@ -6,6 +6,7 @@ package theme
 type Glyphs struct {
 	Prompt         string // unused; must stay empty. Never paint ❯.
 	Search         string
+	Replace        string
 	Close          string
 	CornerTL       string
 	CornerTR       string
@@ -48,6 +49,7 @@ func DefaultGlyphs() Glyphs {
 	return Glyphs{
 		Prompt:         "",
 		Search:         "⌕",
+		Replace:        "⇄",
 		Close:          "✕",
 		CornerTL:       "╭",
 		CornerTR:       "╮",

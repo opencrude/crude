@@ -38,8 +38,9 @@ type FindReplaceState struct {
 	CurrentIdx int // -1 if no matches
 
 	// HoveredToggle is the index of the toggle pill currently under the
-	// mouse cursor (-1 for none, 0=Aa, 1=\b, 2=.*). Drives the hover
-	// visual in the rendered output. Updated by mouse motion.
+	// mouse cursor (-1 for none, 0=Aa, 1=ab, 2=.*). Host hover highlighting
+	// paints through the toggle's own bounds; this legacy viewmodel field is
+	// kept only so the test harness compiles.
 	HoveredToggle int
 
 	// OnChange fires when the user types in the find field, toggles
@@ -150,23 +151,29 @@ func (st *FindReplaceState) ActiveEdit() *ui.TextEdit {
 	return st.ensureFindEdit()
 }
 
-// FindReplacePopupWidth returns the suggested total width for the
-// floating window. The window manager uses this so the input fields
-// don't truncate.
+// FindReplacePopupWidth returns the total width for the floating window.
+// BOTH forms share this width: the replace mode's widest content — its
+// Replace/Replace All/↑/↓ action bar plus chrome — sets a floor via
+// ui.FindReplaceSharedWidthFloor so the Ctrl+F ↔ Ctrl+H transform never
+// changes the window width and never moves its edges on screen. The
+// counter never widens the box: it lives on its own row in replace mode
+// (and shares the compact find-mode row), so long counters truncate from
+// the label's slice only. Width grows only for query/replace text wider
+// than the floor.
 func FindReplacePopupWidth(st *FindReplaceState) int {
-	// Inner width = max(query+label, toggles) + padding.
-	// Toggles row: "Aa \b .* " ≈ 11 chars. Add a few for spacing.
-	togglesW := 11 + 6 // "Aa \b .* " + status prefix
+	w := ui.FindReplaceSharedWidthFloor()
 	qw := rendering.VisibleWidth(st.Query())
-	w := qw + 12 // "Find: " + value + padding
-	if w < togglesW {
-		w = togglesW
+	if st.ReplaceMode {
+		if rw := rendering.VisibleWidth(st.Replace()); rw > qw {
+			qw = rw
+		}
+	}
+	if qw > w {
+		w = qw
 	}
 	if w < 38 {
 		w = 38
 	}
-	// Add 6 for chrome (2 border + 4 padding).
-	w += 6
 	if w > 90 {
 		w = 90
 	}
@@ -174,12 +181,16 @@ func FindReplacePopupWidth(st *FindReplaceState) int {
 }
 
 // FindReplacePopupHeight returns the suggested height for the popup.
-// Counts: 2 borders + N content lines.
+// Counts: 2 borders + N content lines (the find row, an optional replace
+// row, the counter — its own row in replace mode, shared with the buttons
+// row in find mode — and the action bar, each separated by one gap row).
 func FindReplacePopupHeight(st *FindReplaceState) int {
-	// Content rows: 1 (find) + 1 (replace, if any) + 1 (spacer) + 1 (toggles) + 1 (hint).
-	contentH := 5
+	// Find mode: find(1) + gap(1) + counter+buttons(1) = 3.
+	// Replace mode: find(1) + gap + replace(1) + gap + counter(1) + gap +
+	// buttons(1) = 7 — the counter gets its own row above the bar.
+	contentH := 3
 	if st.ReplaceMode {
-		contentH = 6
+		contentH = 7
 	}
 	return contentH + 2 // +2 for chrome
 }

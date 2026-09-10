@@ -362,6 +362,71 @@ func (ab *ActionBar) buttonAt(x, y int) int {
 	return -1
 }
 
+// ButtonBounds reports the bar-local bounds of the button carrying the
+// given action ID. ok is false when no mounted button carries it.
+func (ab *ActionBar) ButtonBounds(action string) (Rect, bool) {
+	if ab == nil {
+		return Rect{}, false
+	}
+	for i := range ab.buttons {
+		if ab.buttons[i].action == action {
+			return ab.buttons[i].button.Bounds(), true
+		}
+	}
+	return Rect{}, false
+}
+
+// indexOfAction returns the layout index of the button carrying the action
+// ID, or -1 when no mounted button carries it.
+func (ab *ActionBar) indexOfAction(action string) int {
+	for i := range ab.buttons {
+		if ab.buttons[i].action == action {
+			return i
+		}
+	}
+	return -1
+}
+
+// ActionEnabled reports whether the button carrying the action ID is
+// enabled. False when no mounted button carries the action.
+func (ab *ActionBar) ActionEnabled(action string) bool {
+	if ab == nil {
+		return false
+	}
+	for i := range ab.buttons {
+		if ab.buttons[i].action == action {
+			return ab.buttons[i].enabled
+		}
+	}
+	return false
+}
+
+// ButtonLabels returns the visible button labels in layout order.
+func (ab *ActionBar) ButtonLabels() []string {
+	if ab == nil {
+		return nil
+	}
+	out := make([]string, len(ab.buttons))
+	for i := range ab.buttons {
+		out[i] = ab.buttons[i].label
+	}
+	return out
+}
+
+// FocusButton focuses the button at index (mouse path: click focuses
+// without activation; activation stays an explicit Enter/second click).
+// Returns false when the index is out of range.
+func (ab *ActionBar) FocusButton(index int) bool {
+	if ab == nil || index < 0 || index >= len(ab.buttons) {
+		return false
+	}
+	if ab.focused == index {
+		return true
+	}
+	ab.focused = index
+	return true
+}
+
 func (ab *ActionBar) handleButton(index int, ctx EventContext, evt Event) EventResult {
 	b := ab.buttons[index].button
 	br := b.Bounds()

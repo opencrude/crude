@@ -868,6 +868,13 @@ func (s *Screen) resetRole(role string) {
 	// (inherit workspace by default). A sub-agent's reset means inherit the
 	// session main agent, which is the default for roles without an override.
 	delete(s.overrides, role)
+	if role == memoryRole {
+		// The memory agent's workspace-level source is Memory.MemoryCategory,
+		// not the workspace main agent. Dropping the session override lets the
+		// backend fall through to that setting again.
+		clearCategory(&s.effective, role)
+		return
+	}
 	if role == "default" {
 		setCategory(&s.effective, role, inheritCategory("workspace"))
 		return
@@ -886,9 +893,14 @@ func (s *Screen) inheritMain(role string) {
 	s.overrides[role] = types.CategorySettings{Inherit: "main"}
 }
 
-// inheritWorkspace points any agent at the live workspace main agent.
+// inheritWorkspace points any agent at the live workspace main agent. The
+// memory agent instead re-inherits its own workspace-level memory setting.
 func (s *Screen) inheritWorkspace(role string) {
 	delete(s.overrides, role)
+	if role == memoryRole {
+		clearCategory(&s.effective, role)
+		return
+	}
 	setCategory(&s.effective, role, inheritCategory("workspace"))
 	s.overrides[role] = types.CategorySettings{Inherit: "workspace"}
 }
@@ -908,8 +920,10 @@ func (s *Screen) ToSettings() types.Settings {
 	// The Memory Agent role is stored alongside the other roles in
 	// Agents.Categories["memory"] but resolved as the session's memory
 	// category. Fold it into Memory.MemoryCategory so the backend picks up a
-	// per-session override (an explicit setting or an inherit marker).
-	if cfg, ok := settings.Agents.Categories["memory"]; ok {
+	// per-session override (an explicit setting or an inherit marker). When the
+	// role has no session category, Memory.MemoryCategory is already the
+	// authoritative workspace value and must be left alone.
+	if cfg, ok := settings.Agents.Categories[memoryRole]; ok {
 		settings.Memory.MemoryCategory = cfg
 	}
 	main := categoryFor(settings, s.base, "default")
@@ -948,6 +962,11 @@ func (s *Screen) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleGroup, Label: "Session settings"}
 }
 
+// memoryRole is the memory agent's role key. Unlike the sub-agent roles it has
+// no workspace entry in Agents.Categories: its configuration is owned by
+// Memory.MemoryCategory, so it resolves through that field.
+const memoryRole = "memory"
+
 // categoryFor returns a role's effective category for display. It resolves
 // live-inheritance markers so a role pointed at the main/workspace agent shows
 // the inherited provider/model rather than an empty row.
@@ -980,6 +999,20 @@ func categoryFor(settings, base types.Settings, role string) types.CategorySetti
 		}
 		return cfg
 	}
+	// The memory agent's authoritative setting is Memory.MemoryCategory, not
+	// Agents.Categories. A session override publishes the latter, but without
+	// one the role must still show its own configured provider/model rather
+	// than silently displaying the main agent's — that display is what the
+	// role form prefills, so getting it wrong makes Apply overwrite the real
+	// override with the main agent's model.
+	if role == memoryRole {
+		if cat := settings.Memory.MemoryCategory; cat.Provider != "" || cat.Model != "" || cat.ThinkingEffort != "" {
+			// Copy the compaction pointer so the role category and
+			// Memory.MemoryCategory never alias one int.
+			cat.ContextCompactionPercent = cloneIntPtr(cat.ContextCompactionPercent)
+			return cat
+		}
+	}
 	// A role with no explicit category inherits the session main agent.
 	return categoryFor(settings, base, "default")
 }
@@ -989,6 +1022,15 @@ func setCategory(settings *types.Settings, role string, cfg types.CategorySettin
 		settings.Agents.Categories = make(map[string]types.CategorySettings)
 	}
 	settings.Agents.Categories[role] = cfg
+}
+
+// clearCategory removes a role's session-level category so the role resolves
+// through its own workspace-level source again. Used by the memory agent, whose
+// workspace setting is Memory.MemoryCategory rather than the main agent.
+func clearCategory(settings *types.Settings, role string) {
+	if settings.Agents.Categories != nil {
+		delete(settings.Agents.Categories, role)
+	}
 }
 
 func copyCategoryMap(src map[string]types.CategorySettings) map[string]types.CategorySettings {
@@ -1005,6 +1047,9 @@ func cloneSettings(src types.Settings) types.Settings {
 	dst.Agents.Categories = copyCategoryMap(src.Agents.Categories)
 	dst.SessionOverrides = copyCategoryMap(src.SessionOverrides)
 	dst.SessionMultiAgent = cloneBoolPtr(src.SessionMultiAgent)
+	// Memory.MemoryCategory is the memory role's workspace-level source; clone
+	// its pointer so the base and effective layers never share one int.
+	dst.Memory.MemoryCategory.ContextCompactionPercent = cloneIntPtr(src.Memory.MemoryCategory.ContextCompactionPercent)
 	return dst
 }
 

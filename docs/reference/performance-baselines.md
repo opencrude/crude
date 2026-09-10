@@ -26,6 +26,43 @@ cheap), so the performance system is deliberately layered:
 No benchmark threshold is allowed to justify violating rendering correctness,
 terminal-width invariants, component ownership, or accessibility semantics.
 
+## Resume And Lifecycle Freezes (2026-09-10)
+
+Measured on Linux/i7-10750H. The archive reproduction reads a session DB in
+read-only mode without starting a backend or transmitting its contents.
+
+| Stage / workload | Before | After |
+|---|---:|---:|
+| Archive first paint, 694 display rows / 15,108 parsed diff rows | 23.9 s | 625 ms |
+| Archive hydration, same transcript | 145 ms | 1.4 ms |
+| `BenchmarkLargeDiffPreview`, 3,000 source rows | 8.36 s / 39.7 MB | 8.0 ms / 2.67 MB |
+| `BenchmarkOpenIndexedHistory`, 500 snapshots x 1,400 entries | 5.19 s / 939 MB | 12.1 ms / 368 KB |
+| Shutdown during memory maintenance delay | 3.05 s | Immediate cancellation and join |
+
+Diff lexer selection is per file, not per wrapped line. Collapsed previews count
+the full visual extent for their footer but tokenize/paint only the preview
+budget. Local-history startup recovers unindexed manifests/plans only; indexed
+snapshots and their entries were committed atomically. Loading a manifest for
+restore or verification still checks its hash. Hydration normalizes stopped
+streams and publishes one transcript instead of every growing prefix.
+
+Memory shutdown no longer starts a new provider request or waits a fixed five
+seconds. It cancels optional extraction/maintenance, joins workers before the
+workspace DB closes, and preserves durable turn mirrors and extraction watermarks
+for recovery, including when reopening the same session.
+
+`TestProviderWaitWithLargeDiffRemainsResponsive` guards the large-diff wait-frame
+regression. For local diagnosis, set `CRUDE_TEST_ARCHIVE` to a session DB and run
+`go test ./tui/viewmodel -run '^TestResumeLatencyArchive$' -v`.
+`TestLiveOllamaWaitLatency` is separately opt-in with `CRUDE_TEST_LIVE_OLLAMA=1`:
+it privately reads configured Ollama Cloud credentials, uses `glm-5.3`, synthetic
+context, and a temporary session/project. It never sends the archived transcript.
+Three measured 425 KB live requests completed in 5.20-6.65 s with 332-443 UI
+frames each, a 4.2 ms maximum update, and a 365 ms maximum paint for the large
+synthetic input. The intermittent multi-second live-provider pause was not
+reproduced in those runs. Isolated archive copies were also checked through
+`scripts/tuishot.sh` at 160x40 and 80x24, including scroll and application exit.
+
 ## Local History incremental capture
 
 Recorded 2026-09-01 on i7-10750H, Linux, 1,000 small source files with one file

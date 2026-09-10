@@ -525,14 +525,12 @@ func TestFocusRestoration_MouseClick_RoutesToClickedRegion(t *testing.T) {
 
 func TestHoverFindReplace_ToggleHover(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
-	app.FindReplace = &popup.FindReplaceState{HoveredToggle: -1}
+	app.FindReplace = &popup.FindReplaceState{}
+	app.FindReplace.SetQuery("x")
 
-	// Register a find-replace popup window so hover/click can
-	// compute toggle positions from its size.
-	pop := ui.NewPopupContent([]string{"line"})
-	w := 44
-	h := 7
-	fw := wm.NewFloatingWindow("find-replace", "", pop, w, h,
+	// Real find/replace frame; Aa/ab/.* toggles resolve via component bounds.
+	frame := ui.BuildFindReplaceFrame(app.Theme, ui.FindReplaceFrameSpec{Width: 44, Height: 7})
+	fw := wm.NewFloatingWindow("find-replace", "", frame, 44, 7,
 		wm.WithDecoration(false),
 		wm.WithFocusable(true),
 	)
@@ -540,52 +538,48 @@ func TestHoverFindReplace_ToggleHover(t *testing.T) {
 	app.overlayHost.Open(ui.OverlayFindReplace, fw, ui.DefaultOverlayPolicy(), nil)
 	defer app.overlayHost.Close(ui.OverlayFindReplace)
 
-	// Toggle layout: chromePad=3, innerW=44-6=38, toggleGroupW=14,
-	// toggleStartX = 3 + 38 - 14 = 27, toggleBandW = 14/3 = 4.
-	// band 0 (Aa):   X 27..31
-	// band 1 (\b):   X 31..35
-	// band 2 (.*):   X 35..39
-	band := func(i int) (int, int) {
-		start := 27 + i*4
-		return start, start + 4
-	}
-	_, e0 := band(0)
-	_, e1 := band(1)
-	s2, e2 := band(2)
+	cw := fw.Content.(*ui.ComponentWidget)
+	cw.Host().Resize(44, 7)
+	cw.Host().Layout()
 
-	// Hover band 0 (Aa) at X=e0-1.
-	app.hoverFindReplace(e0-1, 3)
-	if app.FindReplace.HoveredToggle != 0 {
-		t.Fatalf("expected HoveredToggle=0 after hovering Aa, got %d", app.FindReplace.HoveredToggle)
+	// Hover the center of each toggle pill at its painted position
+	// (Host screen geometry).
+	hover := func(i, want int) {
+		r, ok := ui.FindReplaceFrameToggleBounds(cw, i)
+		if !ok {
+			t.Fatalf("toggle %d has no bounds", i)
+		}
+		app.hoverFindReplace(r.X+r.W/2, r.Y)
+		if app.FindReplace.HoveredToggle != want {
+			t.Fatalf("expected HoveredToggle=%d, got %d", want, app.FindReplace.HoveredToggle)
+		}
 	}
+	hover(0, 0)
+	hover(1, 1)
+	hover(2, 2)
 
-	// Hover band 2 (.*) at X=s2+1.
-	app.hoverFindReplace(s2+1, 3)
-	if app.FindReplace.HoveredToggle != 2 {
-		t.Fatalf("expected HoveredToggle=2 after hovering .*, got %d", app.FindReplace.HoveredToggle)
-	}
-
-	// Hover off the toggles (X=10, not in any band).
-	app.hoverFindReplace(10, 3)
+	// Hover off the toggles (title row, not a toggle).
+	app.hoverFindReplace(0, 0)
 	if app.FindReplace.HoveredToggle != -1 {
 		t.Fatalf("expected HoveredToggle=-1 after hovering away, got %d", app.FindReplace.HoveredToggle)
 	}
-
-	// Sanity: the bands don't overlap, the test isn't degenerate.
-	_ = e1
-	_ = e2
 }
 
 func TestClickFindReplace_FocusesFindField(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
 	app.FindReplace = &popup.FindReplaceState{
 		FocusedField: 1, // currently focused on replace
+		ReplaceMode:  true,
 	}
 	app.FindReplace.SetQuery("hello")
+	app.FindReplace.SetReplace("hey")
 
-	// Register a popup window so the click can run.
-	pop := ui.NewPopupContent([]string{"line"})
-	fw := wm.NewFloatingWindow("find-replace", "", pop, 44, 7,
+	// Real find/replace frame so the click resolves through the Host tree
+	// against the painted field geometry.
+	frame := ui.BuildFindReplaceFrame(app.Theme, ui.FindReplaceFrameSpec{
+		Width: 44, Height: 9, ReplaceMode: true, FocusedField: 1,
+	})
+	fw := wm.NewFloatingWindow("find-replace", "", frame, 44, 9,
 		wm.WithDecoration(false),
 		wm.WithFocusable(true),
 	)
@@ -593,11 +587,34 @@ func TestClickFindReplace_FocusesFindField(t *testing.T) {
 	app.overlayHost.Open(ui.OverlayFindReplace, fw, ui.DefaultOverlayPolicy(), nil)
 	defer app.overlayHost.Close(ui.OverlayFindReplace)
 
-	// Click on the find field (content row 0 = first content row).
-	// In chrome: localY=1.
-	app.clickFindReplace(5, 1)
+	cw := fw.Content.(*ui.ComponentWidget)
+	cw.Host().Resize(44, 9)
+	cw.Host().Layout()
+
+	// Click the find field at its painted position (first content row).
+	r, ok := cw.Host().ScreenRect(ui.FRFindField)
+	if !ok {
+		t.Fatal("find field not registered in Host")
+	}
+	app.clickFindReplace(r.X+3, r.Y)
 	if app.FindReplace.FocusedField != 0 {
 		t.Fatalf("expected FocusedField=0 after clicking find field, got %d", app.FindReplace.FocusedField)
+	}
+
+	// Click the replace field at its painted position (two content rows
+	// down: replace row + gap row). With the old fixed row math this hit
+	// the gap row and did nothing.
+	app.FindReplace.FocusedField = 0
+	rr, ok := cw.Host().ScreenRect(ui.FRReplaceField)
+	if !ok {
+		t.Fatal("replace field not registered in Host")
+	}
+	if rr.Y == r.Y {
+		t.Fatalf("replace field painted on same row as find field: %+v vs %+v", rr, r)
+	}
+	app.clickFindReplace(rr.X+3, rr.Y)
+	if app.FindReplace.FocusedField != 1 {
+		t.Fatalf("expected FocusedField=1 after clicking replace field, got %d", app.FindReplace.FocusedField)
 	}
 }
 
@@ -605,13 +622,12 @@ func TestClickFindReplace_TogglesCaseSensitive(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
 	app.FindReplace = &popup.FindReplaceState{
 		CaseSensitive: false,
-		HoveredToggle: -1,
 	}
+	app.FindReplace.SetQuery("x")
 
-	// Register a popup window with width 44 so the toggle bands
-	// are at: Aa 27-31, \b 31-35, .* 35-39.
-	pop := ui.NewPopupContent([]string{"line"})
-	fw := wm.NewFloatingWindow("find-replace", "", pop, 44, 7,
+	// Real find/replace frame; the Aa toggle resolves via component bounds.
+	frame := ui.BuildFindReplaceFrame(app.Theme, ui.FindReplaceFrameSpec{Width: 44, Height: 7})
+	fw := wm.NewFloatingWindow("find-replace", "", frame, 44, 7,
 		wm.WithDecoration(false),
 		wm.WithFocusable(true),
 	)
@@ -619,14 +635,24 @@ func TestClickFindReplace_TogglesCaseSensitive(t *testing.T) {
 	app.overlayHost.Open(ui.OverlayFindReplace, fw, ui.DefaultOverlayPolicy(), nil)
 	defer app.overlayHost.Close(ui.OverlayFindReplace)
 
-	// Click on Aa toggle.
-	app.clickFindReplace(28, 3)
+	cw := fw.Content.(*ui.ComponentWidget)
+	cw.Host().Resize(44, 7)
+	cw.Host().Layout()
+
+	r, ok := ui.FindReplaceFrameToggleBounds(cw, 0)
+	if !ok {
+		t.Fatal("Aa toggle has no bounds")
+	}
+	lx, ly := r.X+r.W/2, r.Y+r.H/2
+
+	// Click the Aa toggle.
+	app.clickFindReplace(lx, ly)
 	if !app.FindReplace.CaseSensitive {
 		t.Fatal("CaseSensitive should be true after clicking Aa")
 	}
 
 	// Click again to toggle off.
-	app.clickFindReplace(28, 3)
+	app.clickFindReplace(lx, ly)
 	if app.FindReplace.CaseSensitive {
 		t.Fatal("CaseSensitive should be false after second click on Aa")
 	}

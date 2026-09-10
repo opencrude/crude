@@ -720,6 +720,24 @@ func (m *App) contextualHelpSegments() (prefix string, segs []ui.HintSegment) {
 	if m.windowManager != nil {
 		if fw := m.windowManager.Focused(); fw != nil {
 			switch fw.ID {
+			case string(ui.OverlayFindReplace):
+				// The in-buffer popup stays chrome-clean (no hint row):
+				// hints live here in the dedicated bottom-right hint box.
+				if m.FindReplace != nil && m.FindReplace.ReplaceMode {
+					return "", []ui.HintSegment{
+						ui.ActionSeg("replace.hint.replace"),
+						ui.ActionSeg("replace.hint.replace-all"),
+						ui.ActionSeg("find.hint.previous"),
+						ui.ActionSeg("find.hint.filters"),
+						ui.ActionSeg("overlay.close"),
+					}
+				}
+				return "", []ui.HintSegment{
+					ui.ActionSeg("find.hint.navigate"),
+					ui.ActionSeg("find.hint.previous"),
+					ui.ActionSeg("find.hint.filters"),
+					ui.ActionSeg("overlay.close"),
+				}
 			case findInFilesWindowID, replaceInFilesWindowID:
 				return "", []ui.HintSegment{
 					ui.TextSeg("type to search"),
