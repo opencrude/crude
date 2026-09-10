@@ -185,6 +185,12 @@ func SearchGlyphEnd(ts *TokenSet) string {
 	return " " + strings.TrimSpace(DefaultGlyphsFromTokens(ts).Search)
 }
 
+// ReplaceGlyphEnd returns a leading-space replace glyph for trailing
+// placement (" ⇄"). The glyph is ordinary Unicode (U+21C4), never emoji.
+func ReplaceGlyphEnd(ts *TokenSet) string {
+	return " " + strings.TrimSpace(DefaultGlyphsFromTokens(ts).Replace)
+}
+
 // Spacing helpers from the active theme.
 func (ts *TokenSet) PadLR() int {
 	if ts == nil || ts.theme == nil {

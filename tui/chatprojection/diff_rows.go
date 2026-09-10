@@ -107,12 +107,19 @@ func BuildBandedDiffRows(raw string, textWidth, totalWidth int, expanded bool) [
 
 	const previewDiffRows = 24
 	var all []PaintLine
+	totalRows := 0
 	for fi, file := range files {
 		if fi > 0 {
-			all = append(all, buildDiffGutterBlank())
+			totalRows++
+			if expanded || len(all) < previewDiffRows {
+				all = append(all, buildDiffGutterBlank())
+			}
 		}
 		if len(files) > 1 && file.Path != "" {
-			all = append(all, buildDiffFileTransitionRow(file.Path))
+			totalRows++
+			if expanded || len(all) < previewDiffRows {
+				all = append(all, buildDiffFileTransitionRow(file.Path))
+			}
 		}
 		rows := tools.BuildDiffRows(file)
 		if len(rows) > 0 && tools.CompactContextLines > 0 {
@@ -140,18 +147,37 @@ func BuildBandedDiffRows(raw string, textWidth, totalWidth int, expanded bool) [
 		maxNumWidth = min(maxNumWidth, max(1, textWidth-4))
 
 		contentWidth := max(1, textWidth-maxNumWidth-3)
+		var lexer chroma.Lexer
+		if expanded || len(all) < previewDiffRows {
+			lexer = lexers.Match(file.Path)
+		}
 
 		for _, r := range rows {
 			if r.Ellipsis {
-				all = append(all, buildDiffEllipsisRow(maxNumWidth))
+				totalRows++
+				if expanded || len(all) < previewDiffRows {
+					all = append(all, buildDiffEllipsisRow(maxNumWidth))
+				}
 				continue
 			}
-			all = append(all, buildBandedDiffContentRows(r, file.Path, maxNumWidth, contentWidth, totalWidth)...)
+			segments := []string{r.Content}
+			if rendering.VisibleWidth(r.Content) > contentWidth {
+				segments = rendering.HardWrap(r.Content, contentWidth)
+			}
+			totalRows += len(segments)
+			// Count all visual rows for the exact footer, but never tokenize or
+			// allocate painted cells for content beyond the preview budget.
+			if !expanded {
+				segments = segments[:min(len(segments), previewDiffRows-len(all))]
+			}
+			if len(segments) > 0 {
+				all = append(all, buildBandedDiffContentRows(r, lexer, segments, maxNumWidth, totalWidth)...)
+			}
 		}
 	}
-	if !expanded && len(all) > previewDiffRows {
+	if !expanded && totalRows > previewDiffRows {
 		shown := previewDiffRows - 1
-		hidden := len(all) - shown
+		hidden := totalRows - shown
 		out := append([]PaintLine(nil), all[:shown]...)
 		return append(out, buildDiffTruncationRow(0, hidden))
 	}
@@ -212,7 +238,7 @@ func normalizeDiffPresentationBlock(rows []tools.DiffRow) {
 // buildBandedDiffContentRows renders one diff row with the tight gutter and
 // full-width band. Long content hard-wraps with continuation rows that keep
 // the band and blank the number/sign columns.
-func buildBandedDiffContentRows(r tools.DiffRow, path string, maxNumWidth, contentWidth, totalWidth int) []PaintLine {
+func buildBandedDiffContentRows(r tools.DiffRow, lexer chroma.Lexer, segments []string, maxNumWidth, totalWidth int) []PaintLine {
 	numStr := ""
 	// Deletions reference the old-file line; additions/context reference the
 	// new-file line. This gives each changed row a meaningful gutter.
@@ -249,11 +275,6 @@ func buildBandedDiffContentRows(r tools.DiffRow, path string, maxNumWidth, conte
 		indicatorRole = ui.ColorMuted
 	}
 
-	content := r.Content
-	segments := []string{content}
-	if rendering.VisibleWidth(content) > contentWidth {
-		segments = rendering.HardWrap(content, contentWidth)
-	}
 	out := make([]PaintLine, 0, len(segments))
 	for si, seg := range segments {
 		sign := indicator
@@ -268,7 +289,7 @@ func buildBandedDiffContentRows(r tools.DiffRow, path string, maxNumWidth, conte
 			{Text: " ", Role: ui.ColorMuted},
 			{Text: sign + " ", Role: indicatorRole},
 		}
-		spans = append(spans, syntaxDiffSpans(path, seg, contentRole)...)
+		spans = append(spans, syntaxDiffSpans(lexer, seg, contentRole)...)
 		pl := PaintLine{Spans: spans}
 		if bandSet {
 			pl = bandPaintLine(pl, band, totalWidth)
@@ -278,8 +299,7 @@ func buildBandedDiffContentRows(r tools.DiffRow, path string, maxNumWidth, conte
 	return out
 }
 
-func syntaxDiffSpans(path, text string, fallback ui.SemanticColor) []RowSpan {
-	lexer := lexers.Match(path)
+func syntaxDiffSpans(lexer chroma.Lexer, text string, fallback ui.SemanticColor) []RowSpan {
 	if lexer == nil {
 		return []RowSpan{{Text: text, Role: fallback}}
 	}

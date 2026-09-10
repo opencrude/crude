@@ -328,9 +328,8 @@ func (s *Session) Close() {
 	s.flushWg.Wait()
 	s.flushWriteBufSync()
 
-	// Final memory extraction + bounded wait for background memory jobs.
-	// The workspace memory DB outlives this session, so leftover work is
-	// never lost — the next maintenance sweep finishes it.
+	// Join memory workers before their workspace DB is closed. Optional
+	// provider work resumes from durable watermarks on the next open.
 	s.finishMemoryJobs()
 
 	if s.editor != nil {

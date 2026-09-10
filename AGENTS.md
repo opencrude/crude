@@ -812,6 +812,9 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   that way. Horizontal gestures must not change vertical offset.
 
 ### Local History
+- Startup recovery reads only manifests/plans missing from the SQLite index.
+  Snapshot identity and entries commit atomically; never replay all historical
+  entries on open. LoadManifest/LoadPlan still verify immutable data on use.
 - `localhistory.Store` owns immutable objects/manifests/plans and SQLite index
   metadata. `workspace.LocalHistoryService` owns watcher lifecycle, settings,
   message scopes, reconciliation, and restore suppression. TUI only calls
@@ -851,6 +854,15 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   pulses, braille frames, or `AttrBlink`; see `docs/guides/component-authoring.md`.
 - The bottom status bar is static, low-profile aggregate text. Only required
   user action (`⚠`) and failures (`✕`) receive attention signs.
+
+### Dense resume and memory shutdown
+- Hydration publishes one normalized stopped transcript, never each growing
+  prefix. Diff previews select their lexer once per file and tokenize only their
+  visible preview budget; counting omitted visual rows must not highlight them.
+- Memory extraction and maintenance are session-owned cancellable jobs. Closing
+  cancels and joins them before the workspace DB closes, without launching new
+  provider work. Durable turn mirrors finish, and pending extraction watermarks
+  recover on next startup, including a resume of the same session.
 
 ### Sidebar list rows: resource vs command
 `ui.ListItem.Command` marks a button-like row (e.g. "New Terminal").

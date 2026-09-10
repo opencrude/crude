@@ -179,3 +179,19 @@ func (m *App) appendAgentMessage(agentID string, message ttypes.ChatMessage) {
 func (m *App) appendActiveMessage(message ttypes.ChatMessage) {
 	m.appendAgentMessage(m.AgentMgr.ActiveID(), message)
 }
+
+func (m *App) hydrateActiveMessages(messages []ttypes.ChatMessage) {
+	agentID := m.AgentMgr.ActiveID()
+	node := m.AgentMgr.Get(agentID)
+	if node == nil || node.State == nil || node.State.Messages == nil {
+		return
+	}
+	for _, message := range messages {
+		node.State.Messages.AppendMessage(workspaceMessageFromChat(message))
+	}
+	// Hydrated streams are stopped. Normalize before publishing, and export
+	// the transcript once rather than copying every growing prefix.
+	node.State.Messages.MarkStreamingToolsCancelled()
+	node.State.Messages.MarkAllThinkingInterrupted()
+	m.syncAgentMessages(agentID, true)
+}

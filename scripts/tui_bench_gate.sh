@@ -55,6 +55,8 @@ echo "== TUI bench regression gate =="
 run_bench 'Benchmark(DemoGallery|Blit|WriteString|Flatten|FullRender|GenerateANSI)' ./tui/ui ./tui/surface ./tui/compositor
 run_bench 'Benchmark(EditorPaint|EditorScrollRepaint)' ./tui/screens/shelleditor
 run_bench 'BenchmarkChatStreamPaint' ./tui/screens/shellchat
+run_bench '^BenchmarkLargeDiffPreview$' ./tui/chatprojection
+run_bench '^BenchmarkOpenIndexedHistory$' ./localhistory
 # Scenario benches: steady-state work budgets (see scripts/perf_ceilings.txt).
 run_bench 'Benchmark(IdleTick|TabRederive|PointerMotionCoalesced|AgentSwitchWarm|SidebarResizePresentedFrame_500Msgs|SidebarResizeMutation_500Msgs|DenseChatSingleRowChange_500Msgs|DenseChatWidthCommit_500HeavyMsgs)' ./tui/viewmodel
 

@@ -28,7 +28,6 @@ const (
 	consolidateMinInterval   = 6 * time.Hour
 	memoryActiveCap          = 200
 	memoryDecayUnused        = 45 * 24 * time.Hour
-	closeExtractGrace        = 5 * time.Second
 	maintenanceSweepSessions = 3
 )
 
@@ -37,6 +36,23 @@ type memoryJobState struct {
 	extracting  atomic.Bool
 	maintaining atomic.Bool
 	wg          sync.WaitGroup
+	mu          sync.Mutex
+	ctx         context.Context
+	cancel      context.CancelFunc
+	closed      bool
+}
+
+func (j *memoryJobState) begin() (context.Context, bool) {
+	j.mu.Lock()
+	defer j.mu.Unlock()
+	if j.closed {
+		return nil, false
+	}
+	if j.ctx == nil {
+		j.ctx, j.cancel = context.WithCancel(context.Background())
+	}
+	j.wg.Add(1)
+	return j.ctx, true
 }
 
 // afterTurnMemory runs post-turn memory work: mirror the finished turn into
@@ -48,7 +64,9 @@ func (s *Session) afterTurnMemory(turn int, turnMsgs []provider.ChatMessage, fin
 		return
 	}
 	record := turnRecordFromMessages(s.sessionID, turn, turnMsgs, finalContent)
-	s.memoryJobs.wg.Add(1)
+	if _, ok := s.memoryJobs.begin(); !ok {
+		return
+	}
 	go func() {
 		defer s.memoryJobs.wg.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -166,7 +184,12 @@ func (s *Session) maybeExtractMemories(turn int) {
 	if store == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	parent, ok := s.memoryJobs.begin()
+	if !ok {
+		return
+	}
+	defer s.memoryJobs.wg.Done()
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	watermark := s.extractWatermark(ctx, store, s.sessionID)
 	cancel()
 	if turn-watermark < settings.ExtractCadenceOrDefault(defaultExtractEveryTurns) {
@@ -175,11 +198,15 @@ func (s *Session) maybeExtractMemories(turn int) {
 	if !s.memoryJobs.extracting.CompareAndSwap(false, true) {
 		return
 	}
-	s.memoryJobs.wg.Add(1)
+	parent, ok = s.memoryJobs.begin()
+	if !ok {
+		s.memoryJobs.extracting.Store(false)
+		return
+	}
 	go func() {
 		defer s.memoryJobs.wg.Done()
 		defer s.memoryJobs.extracting.Store(false)
-		s.runExtraction(s.sessionID, true)
+		s.runExtraction(parent, s.sessionID, true)
 	}()
 }
 
@@ -187,12 +214,12 @@ func (s *Session) maybeExtractMemories(turn int) {
 // the unprocessed turn window of sessionID (read from the history mirror,
 // which persists — a run that never happens is picked up by a later
 // maintenance sweep; nothing is ever lost).
-func (s *Session) runExtraction(sessionID string, notify bool) {
+func (s *Session) runExtraction(parent context.Context, sessionID string, notify bool) {
 	store := s.MemoryStore()
 	if store == nil {
 		return
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), extractTimeout)
+	ctx, cancel := context.WithTimeout(parent, extractTimeout)
 	defer cancel()
 
 	watermark := s.extractWatermark(ctx, store, sessionID)
@@ -355,30 +382,46 @@ func (s *Session) StartMemoryMaintenance() {
 	if !s.memoryJobs.maintaining.CompareAndSwap(false, true) {
 		return
 	}
-	s.memoryJobs.wg.Add(1)
+	ctx, ok := s.memoryJobs.begin()
+	if !ok {
+		s.memoryJobs.maintaining.Store(false)
+		return
+	}
 	go func() {
 		defer s.memoryJobs.wg.Done()
 		defer s.memoryJobs.maintaining.Store(false)
-		time.Sleep(maintenanceStartDelay)
+		timer := time.NewTimer(maintenanceStartDelay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return
+		case <-timer.C:
+		}
 		if atomic.LoadInt32(&s.closing) == 1 {
 			return
 		}
-		s.runMemoryMaintenance()
+		s.runMemoryMaintenance(ctx)
 	}()
 }
 
-func (s *Session) runMemoryMaintenance() {
+func (s *Session) runMemoryMaintenance(parent context.Context) {
 	store := s.MemoryStore()
 	if store == nil {
 		return
 	}
 	settings := s.memorySettings()
-	ctx, cancel := context.WithTimeout(context.Background(), maintenanceTimeout)
+	ctx, cancel := context.WithTimeout(parent, maintenanceTimeout)
 	defer cancel()
 
 	// Sweep: finish extraction for sessions that closed with unprocessed
 	// turns (their mirrors persist; watermarks say where they stopped).
 	if settings.AutoExtractEnabled() {
+		// Resume may reopen this same session rather than create another one.
+		// Give its pending short turns the same recovery path as older sessions.
+		if s.memoryJobs.extracting.CompareAndSwap(false, true) {
+			s.runExtraction(ctx, s.sessionID, false)
+			s.memoryJobs.extracting.Store(false)
+		}
 		heads, err := store.SessionTurnHeads(ctx)
 		if err != nil {
 			s.logger.Warn("MEMORY", "sweep_heads_failed", "error", err.Error())
@@ -392,7 +435,7 @@ func (s *Session) runMemoryMaintenance() {
 					continue
 				}
 				if head > s.extractWatermark(ctx, store, sessionID) {
-					s.runExtraction(sessionID, false)
+					s.runExtraction(ctx, sessionID, false)
 					swept++
 				}
 			}
@@ -477,31 +520,15 @@ func (s *Session) shouldRunLLMConsolidation(ctx context.Context, store *memory.S
 	return true
 }
 
-// finishMemoryJobs runs the final extraction (short sessions may never hit
-// the cadence) and waits briefly for outstanding background jobs. Bounded:
-// a slow provider cannot hold session close hostage — whatever does not
-// finish is picked up by the next maintenance sweep.
+// finishMemoryJobs stops optional provider work and joins workers before the
+// workspace DB closes. Turn mirrors finish durably; unprocessed extraction
+// watermarks are picked up by the next maintenance sweep, including short turns.
 func (s *Session) finishMemoryJobs() {
-	store := s.MemoryStore()
-	if store == nil {
-		return
+	s.memoryJobs.mu.Lock()
+	s.memoryJobs.closed = true
+	if s.memoryJobs.cancel != nil {
+		s.memoryJobs.cancel()
 	}
-	if s.memorySettings().AutoExtractEnabled() && s.memoryJobs.extracting.CompareAndSwap(false, true) {
-		s.memoryJobs.wg.Add(1)
-		go func() {
-			defer s.memoryJobs.wg.Done()
-			defer s.memoryJobs.extracting.Store(false)
-			s.runExtraction(s.sessionID, false)
-		}()
-	}
-	done := make(chan struct{})
-	go func() {
-		s.memoryJobs.wg.Wait()
-		close(done)
-	}()
-	select {
-	case <-done:
-	case <-time.After(closeExtractGrace):
-		s.logger.Info("MEMORY", "close_jobs_pending", "note", "next maintenance sweep will finish extraction")
-	}
+	s.memoryJobs.mu.Unlock()
+	s.memoryJobs.wg.Wait()
 }

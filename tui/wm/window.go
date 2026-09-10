@@ -446,22 +446,30 @@ func (fw *FloatingWindow) ResizeStartSize() (int, int) {
 // IsOnTitleBar reports whether a screen coordinate is on WindowFrame's title
 // border. Corner cells remain resize targets; the close region is checked first.
 // Undecorated windows on the WindowFrame path paint their own chrome (the
-// frame's row 0 IS the title bar), so they remain title-draggable.
+// frame's row 0 IS the title bar), so they remain title-draggable. The last
+// three columns of row 0 are the frame's own close chrome when the window is
+// closable, so they are excluded from the drag region.
 func (fw *FloatingWindow) IsOnTitleBar(screenX, screenY int) bool {
 	lx := screenX - fw.x
 	ly := screenY - fw.y
 	if ly != 0 {
 		return false
 	}
-	return lx > 0 && lx < fw.w-1
+	end := fw.w - 1
+	if fw.closable {
+		end -= 3 // frame close chrome: [w-3, w)
+	}
+	return lx > 0 && lx < end
 }
 
 // IsOnCloseButton reports whether a screen coordinate hits the close button
 // area in the title bar.
 //
 // WindowFrame reserves the final three cells of the top border for close.
+// The frame paints this chrome itself whether or not the window is WM-
+// decorated, so the hit target tracks fw.closable alone.
 func (fw *FloatingWindow) IsOnCloseButton(screenX, screenY int) bool {
-	if !fw.closable || !fw.decorated {
+	if !fw.closable {
 		return false
 	}
 	lx := screenX - fw.x

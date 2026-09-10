@@ -196,11 +196,7 @@ func (m *App) launcherResumeSession(sessionID string, sessionMeta *sessiondb.Ses
 	}
 	if m.ActiveSession != nil {
 		if msgs := m.ActiveSession.TakeHydratedMessages(); len(msgs) > 0 {
-			if m.AgentMgr.ActiveID() != "" {
-				for _, hm := range ChatMessagesFromViews(msgs) {
-					m.appendActiveMessage(hm)
-				}
-			}
+			m.hydrateActiveMessages(ChatMessagesFromViews(msgs))
 		}
 		if refs := m.ActiveSession.TakeHydratedRefs(); len(refs) > 0 {
 			m.SetReferences(refs)

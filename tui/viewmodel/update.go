@@ -492,20 +492,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			})
 		}
 	case ttypes.HistoryMessagesMsg:
-		if m.AgentMgr.ActiveID() != "" {
-			for _, hm := range msg {
-				m.appendActiveMessage(hm)
-			}
-			// A hydrated session is a dead stream. Rows persisted mid-flight
-			// (tool calls in streaming/calling state, active thinking) would
-			// otherwise keep that state forever, and the per-tick
-			// InvalidateCache would re-render them on every frame. Apply the
-			// same transition a live interrupt uses.
-			if node := m.AgentMgr.Get(m.AgentMgr.ActiveID()); node != nil && node.State != nil && node.State.Messages != nil {
-				node.State.Messages.MarkStreamingToolsCancelled()
-				node.State.Messages.MarkAllThinkingInterrupted()
-			}
-		}
+		m.hydrateActiveMessages(msg)
 	case pickerPathSearchResultMsg:
 		if cmd := m.applyPickerPathSearchResult(msg); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -1039,12 +1026,15 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 func (m *App) handleTabSwitch() {
 	// Always reset before re-deriving. This is the single source of
 	// truth for which view is active.
+	prevEditorPath := m.EditorState.ActiveView
 	m.EditorState.ActiveView = ""
 	m.AgentMgr.ClearActive()
 
 	activeTab := m.Win.ActiveTab()
 	if activeTab == nil {
-		// Closing the last tab returns to launcher.
+		// Closing the last tab returns to launcher. No editor owns the
+		// view anymore, so a bound popover cannot stay mounted either.
+		m.closeFindReplaceForTab(prevEditorPath, "")
 		return
 	}
 
@@ -1056,6 +1046,7 @@ func (m *App) handleTabSwitch() {
 		// Projection caches are source-version owned. Focus changes never make
 		// retained message pixels stale; SyncFromWorkspace invalidates only rows
 		// whose canonical conversation version changed.
+		m.closeFindReplaceForTab(prevEditorPath, "")
 		return
 	}
 
@@ -1081,9 +1072,15 @@ func (m *App) handleTabSwitch() {
 		}
 		m.EditorState.ActiveView = path
 		m.EditorState.Editor = tab.Editor
+		m.closeFindReplaceForTab(prevEditorPath, path)
 		m.editorGitStale.Store(true)
 		m.editorGitAt = time.Time{}
+		return
 	}
+
+	// No tab recognized (e.g. launcher): the find/replace popover has no
+	// owning editor view anymore, so it cannot stay open.
+	m.closeFindReplaceForTab(prevEditorPath, "")
 }
 
 func (m *App) openReferenceOverlay(refID string) {

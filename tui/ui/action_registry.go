@@ -748,6 +748,51 @@ var defaultActions = []*ActionDef{
 	},
 
 	// ─── Contextual status-bar hints (display-first) ───
+	// DisplayOnly entries under this header feed HintLabelFor in the status
+	// bar. They are banished from the palette (paletteEntriesFromRegistry).
+	// Find/replace hint fragments live here too: the in-buffer popup stays
+	// chrome-clean (no hint row) and contextualHelpSegments routes focused
+	// find-replace windows to these DisplayOnly descriptors.
+	{
+		ID:          "find.hint.filters",
+		Label:       "Toggle filters",
+		Description: "toggle case, word, or regex match filters",
+		Category:    "Find",
+		HintKey:     "Alt+C/W/R",
+		DisplayOnly: true,
+	},
+	{
+		ID:          "find.hint.navigate",
+		Label:       "Next match",
+		Description: "move to the next match",
+		Category:    "Find",
+		HintKey:     "Enter",
+		DisplayOnly: true,
+	},
+	{
+		ID:          "find.hint.previous",
+		Label:       "Prev match",
+		Description: "move to the previous match",
+		Category:    "Find",
+		HintKey:     "Shift+Enter",
+		DisplayOnly: true,
+	},
+	{
+		ID:          "replace.hint.replace",
+		Label:       "Replace",
+		Description: "replace the current match",
+		Category:    "Find",
+		HintKey:     "Enter",
+		DisplayOnly: true,
+	},
+	{
+		ID:          "replace.hint.replace-all",
+		Label:       "Replace all",
+		Description: "replace every match in the file",
+		Category:    "Find",
+		HintKey:     "Ctrl+Alt+Enter",
+		DisplayOnly: true,
+	},
 	{
 		ID:          "editor.close",
 		Label:       "Close tab",

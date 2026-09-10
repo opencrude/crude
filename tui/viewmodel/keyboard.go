@@ -41,6 +41,16 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					match.ID == "file.attach" {
 					match = nil
 				}
+				// The focused find/replace popup owns its filter chords:
+				// Alt+C toggles case sensitivity in the popup, not the
+				// global composer toggle. Swallowing the chord here would
+				// open the composer and steal focus from the popup, killing
+				// every subsequent key.
+				if fw := m.windowManager.Focused(); fw != nil &&
+					fw.ID == string(ui.OverlayFindReplace) &&
+					msg.String() == "alt+c" {
+					match = nil
+				}
 			}
 			if m.terminalOwnsKeys() {
 				switch match.ID {
