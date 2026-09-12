@@ -531,6 +531,13 @@ var defaultActions = []*ActionDef{
 		},
 		HintKey: "Ctrl+`",
 	},
+	{
+		ID:          "status.overview",
+		Label:       "Status Overview",
+		Description: "inspect tabs, workspace health, activity, and notifications",
+		Icon:        "◉",
+		Category:    "View",
+	},
 
 	// ─── Tabs ────────────────────────────────────────────────────────
 	{
@@ -615,6 +622,10 @@ var defaultActions = []*ActionDef{
 		Bindings:    []KeyBinding{{Key: "alt+o"}},
 		HintKey:     "Alt+O",
 	},
+	{ID: "lsp.start", Label: "Start Language Servers", Description: "start detected workspace language servers", Icon: "▷", Category: "Tools"},
+	{ID: "lsp.stop", Label: "Stop Language Servers", Description: "stop all workspace language servers", Icon: "■", Category: "Tools"},
+	{ID: "lsp.restart", Label: "Restart Language Servers", Description: "restart all detected workspace language servers", Icon: "↻", Category: "Tools"},
+	{ID: "lsp.problems", Label: "Project Problems", Description: "inspect reported workspace diagnostics", Icon: "!", Category: "Tools"},
 	{
 		ID:          "safety.yolo.toggle",
 		Label:       "YOLO Mode",

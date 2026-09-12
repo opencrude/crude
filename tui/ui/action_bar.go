@@ -98,6 +98,51 @@ func NewActionBar(id ComponentID, tokens *TokenSet, btns ...ActionBarButton) *Ac
 	return ab
 }
 
+// SetButtons reconciles by stable component ID so live projections do not
+// replace focused, hovered, or pressed controls on every update.
+func (ab *ActionBar) SetButtons(btns ...ActionBarButton) {
+	existing := make(map[ComponentID]actionBarBtn, len(ab.buttons))
+	focusedID := ComponentID("")
+	if ab.focused >= 0 && ab.focused < len(ab.buttons) {
+		focusedID = ab.buttons[ab.focused].button.ID()
+	}
+	for _, button := range ab.buttons {
+		existing[button.button.ID()] = button
+	}
+	next := make([]actionBarBtn, 0, len(btns))
+	for _, spec := range btns {
+		id := spec.ID
+		if id == RootID {
+			id = NewID(ab.ID(), spec.Label)
+		}
+		label := spec.Label
+		if spec.Shortcut != "" {
+			label += " (" + spec.Shortcut + ")"
+		}
+		button, ok := existing[id]
+		if !ok {
+			button.button = NewButton(id, label, spec.Action)
+		}
+		button.label, button.action, button.shortcut = label, spec.Action, spec.Shortcut
+		button.variant, button.enabled = spec.Variant, spec.Enabled
+		button.button.SetLabel(label)
+		button.button.SetActionID(spec.Action)
+		button.button.SetTokens(ab.tokens)
+		button.button.SetDisabled(!spec.Enabled)
+		button.button.SetVariant(spec.Variant)
+		next = append(next, button)
+	}
+	ab.buttons = next
+	ab.focused = min(ab.focused, max(0, len(ab.buttons)-1))
+	for index := range ab.buttons {
+		if focusedID != "" && ab.buttons[index].button.ID() == focusedID {
+			ab.focused = index
+			break
+		}
+	}
+	ab.syncButtonSurface()
+}
+
 // NewDockedActionBar packs buttons from the left on the chat surface, with a
 // rule above the row so dock actions read as the last form line.
 func NewDockedActionBar(id ComponentID, tokens *TokenSet, btns ...ActionBarButton) *ActionBar {

@@ -92,6 +92,19 @@ func TestFooterPinnedBelowListAndScrollbar(t *testing.T) {
 	}
 }
 
+func TestFocusedFilterArrowKeysNavigateFilteredRows(t *testing.T) {
+	s, host := newTestScreen(t, gitItems(4))
+	host.Focus(FilterID)
+	for _, key := range []rune{'f', 'i', 'l', 'e'} {
+		host.Handle(tea.KeyPressMsg{Code: key, Text: string(key)})
+	}
+	before := s.list.inner.SelectedIndex()
+	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
+	if !result.Handled || s.list.inner.SelectedIndex() != before+1 {
+		t.Fatalf("Down in filter did not navigate results: before=%d after=%d result=%#v", before, s.list.inner.SelectedIndex(), result)
+	}
+}
+
 func TestFooterHiddenFreesScrollableRow(t *testing.T) {
 	s, host := newTestScreen(t, gitItems(3))
 	host.MarkLayout()

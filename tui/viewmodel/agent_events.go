@@ -44,8 +44,8 @@ func (m *App) submitInput(sessionID, text string, refIDs []string) tea.Cmd {
 	input := provider.InputWithRefs(text, refIDs)
 	input.ActivePaths = m.memoryContextPaths()
 	if m.Workspace == nil || !m.SubmitAgentInput(sessionID, input) {
-		if m.StatusBar != nil {
-			m.StatusBar.SetError("Message was not sent: this agent already has an active turn")
+		if m.Feedback != nil {
+			m.Feedback.NotifyError("Message was not sent: this agent already has an active turn")
 		}
 		return nil
 	}
@@ -68,9 +68,6 @@ func (m *App) submitInput(sessionID, text string, refIDs []string) tea.Cmd {
 	}
 	agent.SubmitInput(text)
 	m.syncAgentMessages(sessionID, true)
-	if m.StatusBar != nil {
-		m.StatusBar.SetThinkingForAgent(sessionID, true, false, false)
-	}
 	return nil
 }
 
@@ -91,8 +88,8 @@ func (m *App) submitBtw(sessionID, text string, refIDs []string) tea.Cmd {
 	input.InternalID = messageID
 	if m.Workspace == nil || !m.SubmitAgentBtw(sessionID, input) {
 		agent.Messages.RemovePendingBtwIDs([]string{messageID})
-		if m.StatusBar != nil {
-			m.StatusBar.SetError("BTW was not queued: this turn is no longer accepting notes")
+		if m.Feedback != nil {
+			m.Feedback.NotifyError("BTW was not queued: this turn is no longer accepting notes")
 		}
 		return nil
 	}
@@ -132,11 +129,13 @@ func (m *App) referenceLabels(refIDs []string) []string {
 }
 
 func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
-	return m.handleAgentDomainEvent(workspace.AgentEvent{
+	cmd := m.handleAgentDomainEvent(workspace.AgentEvent{
 		Type:    evt.Type,
 		Data:    evt.Data,
 		AgentID: evt.AgentID,
 	})
+	m.syncAgentStatusEvent(evt)
+	return cmd
 }
 
 func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
@@ -162,7 +161,7 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 	if evt.Type == "memory_saved" {
 		// Background extraction saved durable memories. Surface it visibly
 		// but without blocking (status line, not a modal or chat message).
-		if data, ok := evt.Data.(map[string]any); ok && m.StatusBar != nil {
+		if data, ok := evt.Data.(map[string]any); ok && m.Feedback != nil {
 			count, _ := data["count"].(int)
 			if count > 0 {
 				notice := fmt.Sprintf("Memory: saved %d from this session", count)
@@ -172,7 +171,7 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 						notice += fmt.Sprintf(" +%d more", count-1)
 					}
 				}
-				m.StatusBar.SetInfo(notice)
+				m.Feedback.NotifyInfo(notice)
 			}
 		}
 		if m.memoryBrowser != nil {
@@ -189,21 +188,6 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 			}
 			m.syncAgentWindowTabs()
 			return nil
-		case "retry":
-			switch d := evt.Data.(type) {
-			case map[string]any:
-				attempt := 0
-				switch a := d["attempt"].(type) {
-				case float64:
-					attempt = int(a)
-				case int:
-					attempt = a
-				}
-				backoff, _ := d["backoff"].(float64)
-				m.StatusBar.SetRetry(fmt.Sprintf("⚠ retrying in %.0fs... (attempt %d)", backoff, attempt))
-			case string:
-				m.StatusBar.SetRetry(d)
-			}
 		}
 		m.syncAgentWindowTabs()
 		return nil
@@ -347,12 +331,10 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 	cmd := agent.HandleEvent(evt, thinkingTarget,
 		func(string) {},
 		func(thinking, streaming, blocking bool) {
-			m.StatusBar.SetThinkingForAgent(agentID, thinking, streaming, blocking)
 		},
 		func() {
 			m.OverlayState.SetBlocking(true)
-			m.StatusBar.SetStatusLine("")
-			m.StatusBar.SetThinkingForAgent(agentID, false, false, true)
+			m.Feedback.NotifyInfo("")
 		},
 		func(question, operation, tool, target, risk, reason, suggestion string) {
 			_, projection := m.sessionProjectionForAgent(agentID)
@@ -371,7 +353,7 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 			}
 			n, err := projection.question.ResetWithError(questionsJSON)
 			if err != nil || n == 0 {
-				m.StatusBar.SetError("Agent sent an invalid question request")
+				m.Feedback.NotifyError("Agent sent an invalid question request")
 				detail := "question payload could not be rendered"
 				if err != nil {
 					detail = err.Error()
@@ -396,11 +378,8 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 			}
 			m.Input.ResetPrompt()
 			m.Input.ClearInput()
-			m.StatusBar.SetConfirming(false)
-			m.StatusBar.SetThinkingForAgent(agentID, true, false, false)
 		},
 	)
-	m.StatusBar.SetActiveForAgent(agentID, agent.IsActive())
 	m.syncAgentMessages(agentID, evt.Type == "done" || evt.Type == "error")
 	m.syncConversationMessages(thinkingTarget, evt.Type == "done" || evt.Type == "error")
 
@@ -420,7 +399,9 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 
 	if evt.Type == "done" || evt.Type == "error" {
 		m.handleSubPaneCompletion(agentID)
-		m.StatusBar.ClearAgentState(agentID)
+		if m.Status != nil {
+			m.Status.RemoveAgent(agentID)
+		}
 	}
 
 	switch evt.Type {
@@ -455,7 +436,7 @@ func agentEventStringSlice(data any, key string) []string {
 }
 
 func (m *App) syncPendingBtwCount() {
-	if m.StatusBar == nil || m.AgentMgr == nil {
+	if m.Feedback == nil || m.AgentMgr == nil {
 		return
 	}
 	count := 0
@@ -464,7 +445,6 @@ func (m *App) syncPendingBtwCount() {
 			count += node.State.Messages.PendingBtwCount()
 		}
 	}
-	m.StatusBar.SetBtwCount(count)
 }
 
 func (m *App) getThinkingTarget(agentID string, agent *workspace.AgentState) *workspace.Conversation {
@@ -614,18 +594,16 @@ func (m *App) processAgentResults(cmd tea.Cmd) tea.Cmd {
 		switch result := msg.(type) {
 		case workspace.AgentDoneResultMsg:
 			if result.Reason == "completed" {
-				m.StatusBar.SetInfo("✓ done")
+				m.Feedback.NotifyInfo("✓ done")
 			} else if result.Reason == "cancelled" {
-				m.StatusBar.SetInfo("Turn stopped")
+				m.Feedback.NotifyInfo("Turn stopped")
 			} else if result.Reason != "" {
-				m.StatusBar.SetError("⚠ " + result.Reason)
+				m.Feedback.NotifyError("⚠ " + result.Reason)
 			}
 		case workspace.AgentErrorResultMsg:
-			m.StatusBar.SetError(result.Err)
-			m.StatusBar.ClearRetry()
-			m.StatusBar.SetStatusLine("")
+			m.Feedback.NotifyError(result.Err)
+			m.Feedback.NotifyInfo("")
 		case workspace.AgentRetryResultMsg:
-			m.StatusBar.SetRetry(result.Msg)
 		}
 		return nil
 	}
@@ -635,11 +613,7 @@ func (m *App) handleUsageData(data any, agentID string) {
 	if pane := m.PaneMgr.Get(agentID); pane != nil {
 		pane.TokenCount += usageEventTokens(data)
 	}
-	usage, ok := m.RecordAgentUsage(agentID, data)
-	if !ok || m.AgentMgr.ActiveID() != agentID {
-		return
-	}
-	m.StatusBar.UpdateUsage(usage.Prompt, usage.Completion, usage.Cached, usage.Cost, usage.ContextWindow, usage.ContextUsed, usage.Estimated, usage.CostUpperBound)
+	m.RecordAgentUsage(agentID, data)
 }
 
 func usageEventTokens(data any) int {

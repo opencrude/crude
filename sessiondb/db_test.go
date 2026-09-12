@@ -674,18 +674,28 @@ func TestReplaceMessagesMultipartWithMeta(t *testing.T) {
 	}
 }
 
-func TestInsertCostSnapshot(t *testing.T) {
+func TestUsageRequestRoundTripIsIdempotent(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
 	db, _ := OpenAndMigrate(dbPath)
 	defer db.Close()
 
-	byModel := map[string]json.RawMessage{
-		"claude": json.RawMessage(`{"cost":1.5}`),
+	record := UsageRecord{RequestID: "req-1", SessionID: "session", AgentID: "agent", PromptTokens: 100, CompletionTokens: 50, CostUSD: 0.05, CostKnown: true, CreatedAt: 1, UpdatedAt: 1}
+	if err := UpsertUsageRecord(db, record); err != nil {
+		t.Fatal(err)
 	}
-	err := InsertCostSnapshot(db, 100, 50, 10, 0.05, byModel)
-	if err != nil {
-		t.Fatalf("InsertCostSnapshot: %v", err)
+	record.PromptTokens, record.CostUSD, record.UpdatedAt = 120, 0.06, 2
+	if err := UpsertUsageRecord(db, record); err != nil {
+		t.Fatal(err)
+	}
+	stale := record
+	stale.PromptTokens, stale.CostUSD, stale.UpdatedAt = 999, 99, 1
+	if err := UpsertUsageRecord(db, stale); err != nil {
+		t.Fatal(err)
+	}
+	records, err := ListUsageRecords(db)
+	if err != nil || len(records) != 1 || records[0].PromptTokens != 120 || records[0].CostUSD != 0.06 {
+		t.Fatalf("request revision did not replace exactly once: records=%+v err=%v", records, err)
 	}
 }
 
@@ -704,28 +714,26 @@ func TestGetCumulativeCostEmpty(t *testing.T) {
 	}
 }
 
-func TestGetCumulativeCostReturnsLatestSnapshot(t *testing.T) {
+func TestGetCumulativeCostSumsKnownRequests(t *testing.T) {
 	dir := t.TempDir()
 	dbPath := filepath.Join(dir, "test.db")
 	db, _ := OpenAndMigrate(dbPath)
 	defer db.Close()
 
-	// Simulate three API calls with cumulative cost growing.
-	if err := InsertCostSnapshot(db, 10, 5, 0, 0.01, nil); err != nil {
-		t.Fatalf("InsertCostSnapshot #1: %v", err)
-	}
-	if err := InsertCostSnapshot(db, 20, 10, 0, 0.025, nil); err != nil {
-		t.Fatalf("InsertCostSnapshot #2: %v", err)
-	}
-	if err := InsertCostSnapshot(db, 30, 15, 0, 0.042, nil); err != nil {
-		t.Fatalf("InsertCostSnapshot #3: %v", err)
+	for _, record := range []UsageRecord{
+		{RequestID: "one", SessionID: "session", AgentID: "agent", CostUSD: 0.01, CostKnown: true, CreatedAt: 1, UpdatedAt: 1},
+		{RequestID: "two", SessionID: "session", AgentID: "agent", CostUSD: 0.032, CostKnown: true, CreatedAt: 2, UpdatedAt: 2},
+		{RequestID: "unknown", SessionID: "session", AgentID: "agent", CostUSD: 99, CostKnown: false, CreatedAt: 3, UpdatedAt: 3},
+	} {
+		if err := UpsertUsageRecord(db, record); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	got, err := GetCumulativeCost(db)
 	if err != nil {
 		t.Fatalf("GetCumulativeCost: %v", err)
 	}
-	// The latest snapshot's total_cost is the cumulative cost.
 	const want = 0.042
 	if got != want {
 		t.Errorf("GetCumulativeCost: expected %v, got %v", want, got)
@@ -772,14 +780,18 @@ func TestContextStateRoundTripsIndependentlyFromDisplayHistory(t *testing.T) {
 	if err := CreateSessionRow(db, "session"); err != nil {
 		t.Fatal(err)
 	}
-	want := ContextState{Generation: 4, Reason: "automatic_compaction", Messages: []provider.ChatMessage{
-		provider.NewTextMessage("system", "<context_checkpoint>checkpoint</context_checkpoint>"),
+	want := ContextState{AgentID: "root", Generation: 4, Reason: "automatic_compaction", Messages: []provider.ChatMessage{
+		{
+			Role: "user", Origin: provider.OriginCheckpoint, Visibility: provider.VisibilityContextOnly,
+			Content:       provider.TextContent(`<context_checkpoint role="root" version="2">checkpoint</context_checkpoint>`),
+			ProviderItems: []provider.ProviderItem{{Standard: "openai", Type: "reasoning", Data: json.RawMessage(`{"id":"reasoning-1"}`)}},
+		},
 		provider.NewTextMessage("user", "latest request"),
 	}}
-	if err := SaveContextState(db, "session", want); err != nil {
+	if err := SaveContextState(db, "session", "root", want); err != nil {
 		t.Fatal(err)
 	}
-	got, ok, err := LoadContextState(db, "session")
+	got, ok, err := LoadContextState(db, "session", "root")
 	if err != nil || !ok || !reflect.DeepEqual(got, want) {
 		t.Fatalf("context state round-trip got=%#v ok=%v err=%v want=%#v", got, ok, err, want)
 	}

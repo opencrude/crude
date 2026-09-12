@@ -76,7 +76,7 @@ Read that first; this index only organizes the reference material.
 - [Provider config plan](plans/provider-config-plan.md) — superseded by the
   capability-based provider protocol rework.
 - [Chat projection handoff](plans/chat-projection-handoff.md) — **ACTIVE
-  HANDOFF** for in-flight work; the only plan describing current work.
+  HANDOFF** for in-flight chat-projection work.
 - [Shell frame padding review](plans/shell-frame-padding-review.md) — open
   hardening findings for the configurable shell frame padding feature.
 - [Message-scoped undo and local history plan](plans/undo-local-history-plan.md)
@@ -91,6 +91,15 @@ Read that first; this index only organizes the reference material.
 - [Tree picker and internal Fastwalk plan](plans/tree-picker-fastwalk-plan.md)
   — **IN PROGRESS, APPROVED** design for preserving the current New
   Workspace UI while replacing picker lists with bounded tree/path search.
+- [Status system overhaul](plans/status-system-overhaul-plan.md)
+  — **LANDED**: active-item
+  header, preserved quiet footer, status inspection, scoped accounting, health,
+  operations, notifications, and selective hints.
+- [Context compaction and runtime continuity](plans/context-compaction-runtime-plan.md)
+  — **LANDED**: provider-grounded context accounting, four-stage Aeron
+  extraction with code-authored root and child checkpoints, durable boundary
+  lifecycle, typed runtime messages, memory boundaries, and passive
+  resume for new sessions.
 
 ## Documentation rules
 

@@ -10,10 +10,10 @@ import (
 	"crude/tui/editor"
 )
 
-// TestStatusBarActionRegistryChordsDispatch verifies actionable status hints
+// TestFeedbackActionRegistryChordsDispatch verifies actionable status hints
 // (file.save, edit.undo, edit.redo) fire through viewmodel keyboard routing,
-// not through shellstatus.Screen.Handle (display-only).
-func TestStatusBarActionRegistryChordsDispatch(t *testing.T) {
+// not through a display-only chrome component.
+func TestFeedbackActionRegistryChordsDispatch(t *testing.T) {
 	app := newFullTestApp(t)
 	app.launcherScreen = nil
 	app.width = 100

@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -76,6 +75,30 @@ func (a *Agent) completeStream(
 	onRequestAccepted func(),
 	onRequestProgress func(uploaded, total int64),
 ) (completionResult, error) {
+	return a.completeStreamWithOptions(ctx, msgs, tools, emit, emitThinking,
+		onToolCallStart, onToolCallDelta, onRetry, onRequestAccepted,
+		onRequestProgress, completionRequestOptions{})
+}
+
+type completionRequestOptions struct {
+	toolChoice      any
+	maxOutputTokens int
+	maxAttempts     int
+}
+
+func (a *Agent) completeStreamWithOptions(
+	ctx context.Context,
+	msgs []provider.ChatMessage,
+	tools []provider.ToolDef,
+	emit func(token string),
+	emitThinking func(text string),
+	onToolCallStart func(internalID, id, name string),
+	onToolCallDelta func(internalID, id, name, accumulatedArgs string),
+	onRetry func(attempt int, backoffSeconds float64),
+	onRequestAccepted func(),
+	onRequestProgress func(uploaded, total int64),
+	requestOptions completionRequestOptions,
+) (completionResult, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -89,6 +112,9 @@ func (a *Agent) completeStream(
 		Stream:        true,
 		StreamOptions: &provider.StreamOptions{IncludeUsage: true},
 	}
+	if requestOptions.toolChoice != nil {
+		req.ToolChoice = requestOptions.toolChoice
+	}
 	if a.Provider != nil {
 		sampling := a.Provider.Sampling()
 		req.Temperature = sampling.Temperature
@@ -96,12 +122,7 @@ func (a *Agent) completeStream(
 	}
 
 	if ctxWindow := a.Provider.ContextWindow(a.Model); ctxWindow > 0 {
-		estimatedInput := provider.EstimateMessagesTotal(msgs, a.Model)
-		if len(tools) > 0 {
-			if encodedTools, marshalErr := json.Marshal(tools); marshalErr == nil {
-				estimatedInput += provider.EstimateTokens(string(encodedTools), a.Model)
-			}
-		}
+		estimatedInput := estimateCanonicalRequest(msgs, tools, a.Model)
 		available := ctxWindow - estimatedInput
 		if available <= 0 {
 			return completionResult{}, fmt.Errorf(
@@ -110,6 +131,9 @@ func (a *Agent) completeStream(
 			)
 		}
 		maxOut := maxOutputTokensForContext(ctxWindow)
+		if requestOptions.maxOutputTokens > 0 && requestOptions.maxOutputTokens < maxOut {
+			maxOut = requestOptions.maxOutputTokens
+		}
 		if maxOut > available {
 			maxOut = available
 		}
@@ -121,7 +145,11 @@ func (a *Agent) completeStream(
 	}
 
 	var requestBody []byte
-	client, err := a.newClient(onRetry, onRequestAccepted, onRequestProgress, func(body []byte) { requestBody = body })
+	maxAttempts := a.MaxRetries
+	if requestOptions.maxAttempts > 0 {
+		maxAttempts = requestOptions.maxAttempts
+	}
+	client, err := a.newClient(onRetry, onRequestAccepted, onRequestProgress, func(body []byte) { requestBody = body }, maxAttempts)
 	if err != nil {
 		return completionResult{}, err
 	}
@@ -181,6 +209,7 @@ func (a *Agent) newClient(
 	onRequestAccepted func(),
 	onRequestProgress func(uploaded, total int64),
 	onRequestEncoded func(body []byte),
+	maxAttempts int,
 ) (*provider.Client, error) {
 	opts := []provider.ClientOption{
 		provider.OnRetry(func(attempt int, delay time.Duration, err error) {
@@ -204,8 +233,8 @@ func (a *Agent) newClient(
 	if a.testHTTPClient != nil {
 		opts = append(opts, provider.WithHTTPClient(a.testHTTPClient))
 	}
-	if a.MaxRetries > 0 {
-		opts = append(opts, provider.WithMaxAttempts(a.MaxRetries))
+	if maxAttempts > 0 {
+		opts = append(opts, provider.WithMaxAttempts(maxAttempts))
 	}
 	return a.Provider.Client(opts...)
 }
@@ -244,6 +273,7 @@ func (a *Agent) consumeStream(
 	finish := func() {
 		result.Content = content.String()
 		result.ReasoningContent = reasoning.String()
+		result.ProviderItems = provider.CanonicalizeProviderItems(result.ProviderItems)
 		result.ToolCalls = finalizeToolCalls(toolCalls)
 		if !reasoningStarted.IsZero() {
 			if reasoningEnded.IsZero() {

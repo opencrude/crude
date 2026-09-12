@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	statusoverview "crude/tui/screens/statusoverview"
 	"crude/tui/theme"
 	ttypes "crude/tui/types"
 	"crude/tui/ui"
@@ -500,11 +501,11 @@ func (m *App) cycleNextThemePreset() {
 	// Persist the choice so the next launch uses the same preset.
 	s := m.LoadAppSettings()
 	s.Theme.Preset = next
-	if err := m.SaveAppSettings(s); err != nil && m.StatusBar != nil {
-		m.StatusBar.SetError("theme save failed: " + err.Error())
+	if err := m.SaveAppSettings(s); err != nil && m.Feedback != nil {
+		m.Feedback.NotifyError("theme save failed: " + err.Error())
 	}
-	if m.StatusBar != nil {
-		m.StatusBar.SetInfo("Theme: " + next)
+	if m.Feedback != nil {
+		m.Feedback.NotifyInfo("Theme: " + next)
 	}
 }
 
@@ -521,6 +522,17 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 
 	case "settings.workspace":
 		m.openWorkspaceSettings()
+	case "status.overview":
+		m.openStatusOverview(statusoverview.ViewTabs, "")
+	case "lsp.start":
+		m.startLSPForWorkspace()
+	case "lsp.stop":
+		m.StopLSP()
+	case "lsp.restart":
+		m.StopLSP()
+		m.startLSPForWorkspace()
+	case "lsp.problems":
+		m.openStatusOverview(statusoverview.ViewWorkspace, "workspace-problems")
 
 	case "agent.orchestrator.reset":
 		m.resetOrchestratorOverrides()
@@ -551,7 +563,7 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		if m.OverlayState.IsYolo() {
 			agentID := m.AgentMgr.ActiveID()
 			m.OverlayState.SetYolo(false)
-			m.StatusBar.SetInfo("YOLO mode disabled")
+			m.Feedback.NotifyInfo("YOLO mode disabled")
 			m.SetYoloForAgent(agentID, false)
 		} else {
 			m.openSessionYoloPanel()
@@ -568,8 +580,8 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		// Clearing the stack and pushing FocusEditor makes the intent
 		// explicit; focusTarget() returns FocusEditor.
 		if m.EditorState == nil || m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
-			if m.StatusBar != nil {
-				m.StatusBar.SetInfo("No editor open")
+			if m.Feedback != nil {
+				m.Feedback.NotifyInfo("No editor open")
 			}
 			return nil
 		}
@@ -612,17 +624,17 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 			// the status bar rather than silently dropping it. Mirrors
 			// the dirty-prompt save path (dirty_prompt.go:63).
 			if err := m.EditorState.Editor.Save(); err != nil {
-				if m.StatusBar != nil {
-					m.StatusBar.SetError(fmt.Sprintf("Save failed: %v", err))
+				if m.Feedback != nil {
+					m.Feedback.NotifyError(fmt.Sprintf("Save failed: %v", err))
 				}
 			} else {
-				if m.StatusBar != nil {
-					m.StatusBar.SetInfo("Saved")
+				if m.Feedback != nil {
+					m.Feedback.NotifyInfo("Saved")
 				}
 				cmds = append(cmds, m.refreshEditorGitCmd())
 			}
-		} else if m.StatusBar != nil {
-			m.StatusBar.SetInfo("No file open to save")
+		} else if m.Feedback != nil {
+			m.Feedback.NotifyInfo("No file open to save")
 		}
 
 	case "file.close":
@@ -640,8 +652,8 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 
 	case "edit.find":
 		if m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
-			if m.StatusBar != nil {
-				m.StatusBar.SetInfo("No file open to search")
+			if m.Feedback != nil {
+				m.Feedback.NotifyInfo("No file open to search")
 			}
 		} else {
 			m.openFindReplace(false)
@@ -649,8 +661,8 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 
 	case "edit.replace":
 		if m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
-			if m.StatusBar != nil {
-				m.StatusBar.SetInfo("No file open for replace")
+			if m.Feedback != nil {
+				m.Feedback.NotifyInfo("No file open for replace")
 			}
 		} else {
 			m.openFindReplace(true)
@@ -660,8 +672,8 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		// Editor undo — legitimate palette command when an editor is
 		// open. Mirrors the Ctrl+Z keyboard path (keyboard.go:146).
 		if m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
-			if m.StatusBar != nil {
-				m.StatusBar.SetInfo("No file open to undo")
+			if m.Feedback != nil {
+				m.Feedback.NotifyInfo("No file open to undo")
 			}
 		} else {
 			m.EditorState.Editor.Undo()
@@ -670,8 +682,8 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 	case "edit.redo":
 		// Editor redo — mirrors the Ctrl+Y keyboard path (keyboard.go:150).
 		if m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
-			if m.StatusBar != nil {
-				m.StatusBar.SetInfo("No file open to redo")
+			if m.Feedback != nil {
+				m.Feedback.NotifyInfo("No file open to redo")
 			}
 		} else {
 			m.EditorState.Editor.Redo()
@@ -681,8 +693,8 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		// Line operations forward the same chord the keyboard path uses,
 		// so palette invocation and keyboard invocation cannot drift.
 		if m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
-			if m.StatusBar != nil {
-				m.StatusBar.SetInfo("No file open")
+			if m.Feedback != nil {
+				m.Feedback.NotifyInfo("No file open")
 			}
 			return nil
 		}
@@ -735,7 +747,7 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		s.Agents.Enabled = !s.Agents.Enabled
 		enabled := s.Agents.Enabled
 		s.SessionMultiAgent = &enabled
-		m.StatusBar.SetInfo("Toggling multi-agent mode...")
+		m.Feedback.NotifyInfo("Toggling multi-agent mode...")
 		cmds = append(cmds, func() tea.Msg {
 			err := m.HandleSettingsSave(s)
 			return ttypes.SettingsSaveResultMsg{Settings: s, Err: err}
@@ -747,21 +759,21 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 	case "app.copyLastAssistant":
 		ml := m.activeMsgList()
 		if ml == nil {
-			if m.StatusBar != nil {
-				m.StatusBar.SetInfo("No active chat to copy from")
+			if m.Feedback != nil {
+				m.Feedback.NotifyInfo("No active chat to copy from")
 			}
 			break
 		}
 		text := ml.LastAssistantText()
 		if text == "" {
-			if m.StatusBar != nil {
-				m.StatusBar.SetInfo("No assistant message yet")
+			if m.Feedback != nil {
+				m.Feedback.NotifyInfo("No assistant message yet")
 			}
 			break
 		}
 		m.copyToClipboard(text)
-		if m.StatusBar != nil {
-			m.StatusBar.SetInfo(fmt.Sprintf("Copied %d chars", len(text)))
+		if m.Feedback != nil {
+			m.Feedback.NotifyInfo(fmt.Sprintf("Copied %d chars", len(text)))
 		}
 
 	case "app.quit":

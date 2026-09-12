@@ -134,11 +134,9 @@ func (v *VirtualList) SetBottomPadding(n int) {
 	v.rebuildPrefix()
 }
 
-// SetBottomGravity anchors items to the BOTTOM of the viewport when the
-// content is shorter than the viewport (chat gravity): the empty rows pad
-// the TOP, mirroring the renderer's assembleOutput gravity and shellchat's
-// ViewportPaneLineMap emptyTop math. Off by default — launcher/FIF lists
-// keep top-anchored item lists.
+// SetBottomGravity anchors items to the BOTTOM of the viewport when content is
+// shorter than the viewport. It is off by default; consumers that opt in must
+// keep any parallel pointer geometry synchronized.
 func (v *VirtualList) SetBottomGravity(gravity bool) { v.bottomGravity = gravity }
 
 // SetOpaqueRowFill controls whether each row is pre-filled with ListRowColors.

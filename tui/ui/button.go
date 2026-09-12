@@ -50,6 +50,8 @@ func (b *Button) SetSurfaceBackground(c cell.Color) {
 // SetLabel updates the visible label.
 func (b *Button) SetLabel(s string) { b.label = s }
 
+func (b *Button) SetActionID(actionID string) { b.actionID = actionID }
+
 func (b *Button) tokenSet() *TokenSet {
 	if b.tokens != nil {
 		return b.tokens

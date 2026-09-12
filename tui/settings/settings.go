@@ -220,6 +220,7 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		{Name: "Language Servers", Group: "IDE", Description: "Language intelligence and diagnostics.", Form: m.buildLSPForm(lsp)},
 		{Name: "Interface", Group: "IDE", Description: "File tree, sidebar, icons, and diagnostics.", Form: formModel(
 			ui.SeparatorFieldState("workspace-chrome", "Workspace chrome"),
+			ui.CycleFieldState("context-help", "Context help", []string{"compact", "expanded", "off"}, defaultString(uiSettings.ContextHelp, "compact"), "Show focused-surface shortcuts in the top status area; full Help remains available."),
 			ui.TextFieldState("sidebar-width", "Sidebar width", fmt.Sprintf("%d", uiSettings.SidebarWidth), "Width of the file and workspace navigation rail."),
 			ui.BoolFieldState("show-hidden", "Show hidden files", uiSettings.ShowHiddenFiles, "Include dotfiles in the workspace tree."),
 			ui.BoolFieldState("show-icons", "Show file icons", uiSettings.ShowIcons, "Display file-type icons in navigation."),
@@ -1796,7 +1797,14 @@ func (m *Model) buildLSPForm(lsp types.LSPSettings) *ui.FormModel {
 }
 
 func (m *Model) collectUI(cfg *types.UISettings) {
-	*cfg = types.UISettings{SidebarWidth: parseOpt(m.value(catUI, "sidebar-width"), 30), ShowHiddenFiles: m.value(catUI, "show-hidden") == "on", ShowIcons: m.value(catUI, "show-icons") == "on", UseNerdFont: m.value(catUI, "nerd-font") == "on", ShowGitStatus: m.value(catUI, "git-status") == "on", ShowDiagnostics: m.value(catUI, "diagnostics") == "on"}
+	*cfg = types.UISettings{SidebarWidth: parseOpt(m.value(catUI, "sidebar-width"), 30), ShowHiddenFiles: m.value(catUI, "show-hidden") == "on", ShowIcons: m.value(catUI, "show-icons") == "on", UseNerdFont: m.value(catUI, "nerd-font") == "on", ShowGitStatus: m.value(catUI, "git-status") == "on", ShowDiagnostics: m.value(catUI, "diagnostics") == "on", ContextHelp: defaultString(m.value(catUI, "context-help"), "compact")}
+}
+
+func defaultString(value, fallback string) string {
+	if value == "" {
+		return fallback
+	}
+	return value
 }
 
 func (m *Model) collectFont(cfg *types.FontSettings) {

@@ -11,6 +11,7 @@ import (
 	"crude/tui/screens/sourcecontrol"
 	"crude/tui/ui"
 	"crude/tui/wm"
+	types "crude/types"
 	"crude/workspace"
 )
 
@@ -41,6 +42,7 @@ func (m *App) refreshSourceControl() tea.Cmd {
 	}
 	m.sourceControl.SetLoading(true)
 	gen := m.gitRefreshGen.Add(1)
+	m.recordGitOperation(gen, "Refresh source control")
 	service := m.Git
 	return func() tea.Msg {
 		ctx, cancel := m.sourceControlContext()
@@ -62,6 +64,7 @@ func (m *App) sourceControlMutation(
 		m.sourceControl.SetLoading(true)
 	}
 	gen := m.gitRefreshGen.Add(1)
+	m.recordGitOperation(gen, firstNonempty(notice, "Update source control"))
 	service := m.Git
 	return func() tea.Msg {
 		ctx, cancel := m.sourceControlContext()
@@ -103,7 +106,7 @@ func (m *App) handleSourceControlAction(action ui.Action) (tea.Cmd, bool) {
 		}
 		cmd, err := m.openEditorTab(change.AbsolutePath)
 		if err != nil {
-			m.StatusBar.SetError("Open change: " + err.Error())
+			m.Feedback.NotifyError("Open change: " + err.Error())
 			return nil, true
 		}
 		return cmd, true
@@ -121,7 +124,7 @@ func (m *App) handleSourceControlAction(action ui.Action) (tea.Cmd, bool) {
 	case sourcecontrol.ActionCommit:
 		message, _ := action.Payload.(string)
 		if message == "" {
-			m.StatusBar.SetError("Enter a commit message")
+			m.Feedback.NotifyError("Enter a commit message")
 			return nil, true
 		}
 		return m.sourceControlMutation(
@@ -139,12 +142,16 @@ func (m *App) applySourceControlResult(msg sourceControlResultMsg) tea.Cmd {
 		return nil
 	}
 	if msg.err != nil {
+		m.finishGitOperation(msg.gen, types.OperationFailed, msg.err.Error())
+		m.Status.SetIssue(types.IssueSnapshot{ID: "git", Owner: types.ResourceRef{Kind: types.ResourceGit, ID: m.RootPath}, Severity: types.SeverityError, Summary: "Source control failed", Detail: msg.err.Error()})
 		m.sourceControl.SetError(msg.err)
-		if m.StatusBar != nil {
-			m.StatusBar.SetError("Source control: " + msg.err.Error())
+		if m.Feedback != nil {
+			m.Feedback.NotifyError("Source control: " + msg.err.Error())
 		}
 		return nil
 	}
+	m.finishGitOperation(msg.gen, types.OperationSucceeded, "")
+	m.Status.ResolveIssue("git")
 	m.sourceControl.SetSnapshot(msg.snapshot)
 	if msg.clearCommit {
 		m.sourceControl.ClearCommitMessage()
@@ -152,13 +159,30 @@ func (m *App) applySourceControlResult(msg sourceControlResultMsg) tea.Cmd {
 	if m.activityBar != nil {
 		m.activityBar.SetBadge(activityGit, len(msg.snapshot.Changes))
 	}
-	if msg.notice != "" && m.StatusBar != nil {
-		m.StatusBar.SetInfo(msg.notice)
+	if msg.notice != "" && m.Feedback != nil {
+		m.Feedback.NotifyInfo(msg.notice)
 	}
 	if m.Tree != nil && m.Tree.Model != nil {
 		return m.Tree.Model.RefreshGitStatus()
 	}
 	return nil
+}
+
+func (m *App) recordGitOperation(generation uint64, label string) {
+	if m.Status == nil {
+		return
+	}
+	m.Status.SetOperation(types.OperationSnapshot{
+		ID: fmt.Sprintf("git:%d", generation), Owner: types.ResourceRef{Kind: types.ResourceGit, ID: m.RootPath},
+		Kind: "git", Label: label, State: types.OperationRunning, StartedAt: time.Now(), Cancellable: true,
+	})
+}
+
+func (m *App) finishGitOperation(generation uint64, state types.OperationState, errorText string) {
+	if m.Status == nil {
+		return
+	}
+	m.Status.FinishOperation(fmt.Sprintf("git:%d", generation), state, errorText)
 }
 
 func (m *App) stageGitChange(change workspace.GitChange) tea.Cmd {
@@ -193,7 +217,7 @@ func (m *App) discardGitChange(change workspace.GitChange) tea.Cmd {
 
 func (m *App) startDiscardGitChange(change workspace.GitChange) {
 	if change.Area == workspace.GitAreaUntracked {
-		m.StatusBar.SetError("Discard never deletes untracked files")
+		m.Feedback.NotifyError("Discard never deletes untracked files")
 		return
 	}
 	copy := change

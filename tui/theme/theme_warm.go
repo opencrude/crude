@@ -20,6 +20,8 @@ func DefaultWarm() *Theme {
 		Hover:              lipgloss.Color("#292524"),
 		SubPaneBg:          lipgloss.Color("#231f1c"),
 		IncompleteBg:       lipgloss.Color("#3f1d1d"),
+		ContextBg:          lipgloss.Color("#28231f"),
+		ContextBorder:      lipgloss.Color("#4f4438"),
 		PopupBg:            lipgloss.Color("#292524"),
 		PopupBorder:        lipgloss.Color("#57534e"),
 		PopupBorderFocused: lipgloss.Color("#fbbf24"),

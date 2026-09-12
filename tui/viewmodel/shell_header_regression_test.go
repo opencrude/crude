@@ -10,14 +10,17 @@ func TestGlobalHeaderRemainsAboveActivitySidebar(t *testing.T) {
 	app := newFullTestApp(t)
 	app.ModelName = "main-model"
 	app.StartTime = time.Now().Add(-2 * time.Minute)
-	app.StatusBar.UpdateUsage(1200, 345, 200, 0.42, 8192, 4096, false, false)
-
 	app.paintShellFrame()
 
 	header := shellBufferRow(app, app.frameTopRow())
-	for _, want := range []string{"crude", "main-model", "↑1.2K total", "cache 200 total", "↓345 total", "$0.4200"} {
+	for _, want := range []string{"Crude"} {
 		if !strings.Contains(header, want) {
 			t.Fatalf("global header row missing %q: %q", want, header)
+		}
+	}
+	for _, unwanted := range []string{"main-model", "Ready", "Help"} {
+		if strings.Contains(header, unwanted) {
+			t.Fatalf("launcher header repeats irrelevant %q: %q", unwanted, header)
 		}
 	}
 	if got := app.shell.slots[shellActivitySlot].rect.Y; got != app.shellTopRow() {

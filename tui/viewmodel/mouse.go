@@ -30,21 +30,12 @@ const (
 	regionEditor
 	regionInput
 	regionChat
-	regionStatusBar
 	regionLauncher
 )
 
 func (m *App) classifyShellRegion(x, y int, isWheel bool) shellRegion {
 	if m.sessionDeckBlocking() && !isWheel {
 		return regionSessionDeck
-	}
-
-	// Status bar is always the last visible row. Treat it as its
-	// own region so right-click can offer LSP/session controls.
-	// Placed after the floating-window check so a popup covering
-	// the status bar (e.g. command palette) wins.
-	if m.height > 0 && y >= m.height-m.frameBottomRow()-2 && y < m.height {
-		return regionStatusBar
 	}
 
 	if m.termDockRect.Contains(x, y) {
@@ -261,12 +252,6 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	region := m.classifyShellRegion(mouse.X, mouse.Y, false)
 
 	switch region {
-	case regionStatusBar:
-		// Passive display row; right-click is handled separately.
-		m.setSessionDeckFocused(false)
-		m.setTermDockFocused(false)
-		return m, nil
-
 	case regionEditor:
 		m.unfocus()
 		cmd := m.handleShellPointer(msg)
@@ -801,8 +786,6 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 		st = m.buildInputContextMenu(mouse)
 	case regionChat:
 		st = m.buildChatContextMenu(mouse)
-	case regionStatusBar:
-		st = m.buildStatusBarContextMenu(mouse)
 	case regionLauncher:
 		st = m.buildLauncherContextMenu(mouse)
 	default:

@@ -54,7 +54,7 @@ func TestMemoryToolsAndAutomaticRecall(t *testing.T) {
 	}
 
 	contextText := s.recallMemoryContext(context.Background(), "testing convention", nil)
-	if contextText == "" || !containsAll(contextText, "Workspace Memory", "Use race tests before handoff.") {
+	if contextText == "" || !containsAll(contextText, "<workspace_memory>", "Use race tests before handoff.") {
 		t.Fatalf("memory context = %q", contextText)
 	}
 
@@ -208,4 +208,17 @@ func containsAll(value string, wants ...string) bool {
 		}
 	}
 	return true
+}
+
+func TestMemoryExtractionRequiresGenuineHumanInput(t *testing.T) {
+	runtime := provider.NewTextMessage("user", "child completed")
+	runtime.Origin = provider.OriginSubAgentWake
+	runtime.Visibility = provider.VisibilityContextOnly
+	if containsHumanInput([]provider.ChatMessage{runtime}) {
+		t.Fatal("runtime wake was attributed as human input")
+	}
+	human := provider.NewTextMessage("user", "continue")
+	if !containsHumanInput([]provider.ChatMessage{runtime, human}) {
+		t.Fatal("genuine human input was not detected")
+	}
 }

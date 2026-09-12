@@ -15,10 +15,12 @@ type ChatTogglePayload struct {
 // When Native is parallel to Lines and Native[i] is not PreferANSI(), shellchat
 // paints structured cells directly instead of the ANSI/string path.
 type MessageRow struct {
-	ID        string
-	Lines     []string
-	Native    []PaintLine
-	SubPaneID string
+	ID                   string
+	Lines                []string
+	Native               []PaintLine
+	SubPaneID            string
+	ContextBoundary      bool
+	ContextBoundaryStart int
 	// Toggle distinguishes real disclosure rows from ToggleLine's zero value.
 	// Manually-built and legacy rows therefore remain non-interactive.
 	Toggle bool

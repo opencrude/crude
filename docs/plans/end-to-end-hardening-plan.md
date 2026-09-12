@@ -22,12 +22,13 @@ Canonical supporting documents remain authoritative for their areas:
 - [Performance baselines](../reference/performance-baselines.md)
 - [Terminal width](../reference/terminal-width.md)
 - [Settings inheritance](../reference/settings.md)
+- [Context compaction and runtime continuity](context-compaction-runtime-plan.md)
 
 ## 2. Progress
 
 | Workstream | Status | Current evidence / next boundary |
 |---|---|---|
-| Context preservation and configurable compaction | LANDED, final gates pending | One immutable augmented user message per turn; per-agent `context_compaction_percent`, default 85, explicit 0 disables; compaction rebuilt from full archive |
+| Context preservation and configurable compaction | LANDED | Provider-measured occupancy plus semantic deltas; canonical replay metadata; four-stage Aeron extraction into code-authored root/child checkpoints; durable boundary lifecycle; typed runtime messages; separate memory context; passive new-session resume; explicit 0 disables |
 | Cumulative token header and BTW marker | LANDED | Session totals plus per-agent context; resume restores root and child totals; plain `total` labels; `✎` note marker |
 | Chat color persistence | LANDED | RebuildItems now preserves parallel native rows; cache mismatch re-renders styled content; real 126-round session replay and work budgets pass |
 | Progress-aware HTTP stall recovery | LANDED | Adaptive byte-progress monitor; upload/header/download blackhole retries; partial replay suppression/divergence safety; provider race suite passes |

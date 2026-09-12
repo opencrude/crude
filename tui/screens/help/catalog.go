@@ -54,7 +54,7 @@ func UsageTopics() []Topic {
 		{
 			ID:    "start",
 			Title: "Getting started",
-			Body:  "Crude is a terminal IDE with an agent. The file tree is on the left, the editor or chat in the middle, and the agent input at the bottom. The Command Palette searches every action so you do not have to memorize chords. This Help window is rebuilt from live slash commands and keybindings whenever you open it.",
+			Body:  "Crude is a terminal IDE with an agent. The file tree is on the left, the editor or chat is in the middle, and contextual status and help are in the top header. The Command Palette searches every action so you do not have to memorize chords. This Help window begins with the focus context that opened it and is rebuilt from live slash commands and keybindings.",
 		},
 		{
 			ID:    "chat",
@@ -94,7 +94,7 @@ func UsageTopics() []Topic {
 		{
 			ID:    "docks",
 			Title: "Session docks",
-			Body:  "Session AI settings, agent questions, tool confirmation, YOLO, and background jobs sit in the session dock between the chat and the input. Arrow keys move inside a list; Tab reaches Save/Cancel; Esc closes forms. Terminals live in a separate workspace dock above the status bar.",
+			Body:  "Session AI settings, agent questions, tool confirmation, YOLO, and background jobs sit in the session dock between the chat and the input. Arrow keys move inside a list; Tab reaches Save/Cancel; Esc closes forms. Terminals live in a separate workspace dock at the bottom of the content column.",
 		},
 		{
 			ID:    "terminals",

@@ -20,6 +20,8 @@ func DefaultLight() *Theme {
 		Hover:              lipgloss.Color("#eaeef2"),
 		SubPaneBg:          lipgloss.Color("#eef1f4"),
 		IncompleteBg:       lipgloss.Color("#ffebe9"),
+		ContextBg:          lipgloss.Color("#f1f3f5"),
+		ContextBorder:      lipgloss.Color("#c7ccd1"),
 		PopupBg:            lipgloss.Color("#ffffff"),
 		PopupBorder:        lipgloss.Color("#afb8c1"),
 		PopupBorderFocused: lipgloss.Color("#0969da"),

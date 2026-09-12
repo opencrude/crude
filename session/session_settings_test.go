@@ -4,7 +4,6 @@ import (
 	"database/sql"
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -336,6 +335,13 @@ func TestResumeHydratesCompletedSubAgents(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("InsertSubAgentResult: %v", err)
 	}
+	if err := sessiondb.InsertSubAgentResult(db, sessiondb.SubAgentResultRow{
+		ParentSessionID: "parent", ChildSessionID: "running-child",
+		AgentID: "running-1", AgentName: "Interrupted", AgentCategory: "crafter",
+		Status: "running", CreatedAt: time.Now().UnixNano(),
+	}); err != nil {
+		t.Fatalf("Insert running SubAgentResult: %v", err)
+	}
 	if err := db.Close(); err != nil {
 		t.Fatalf("close seed DB: %v", err)
 	}
@@ -379,78 +385,14 @@ func TestResumeHydratesCompletedSubAgents(t *testing.T) {
 		result.SessionID != "child" {
 		t.Fatalf("hydrated result = %+v, ok=%v", result, ok)
 	}
+	interrupted, ok := resumed.SubAgentRunner().Manager().GetCompleted("running-1")
+	if !ok || interrupted.Status != agent.SubAgentCancelled || len(interrupted.Errors) != 1 {
+		t.Fatalf("interrupted child = %+v, ok=%v", interrupted, ok)
+	}
 	snapshots := resumed.CompletedSubAgentSnapshots()
-	if len(snapshots) != 1 || snapshots[0].Model != "child-model" || len(snapshots[0].Messages) != 2 ||
+	if len(snapshots) != 2 || snapshots[0].Model != "child-model" || len(snapshots[0].Messages) != 2 ||
 		snapshots[0].Messages[0].Meta.DisplayRole != "assignment" {
 		t.Fatalf("completed child snapshot = %+v", snapshots)
-	}
-}
-
-func TestResumeRecoversLegacyChildWhenParentResultWasNeverPersisted(t *testing.T) {
-	home := t.TempDir()
-	t.Setenv("HOME", home)
-	t.Setenv("USERPROFILE", home)
-	root := t.TempDir()
-	parentPath := filepath.Join(root, "parent.db")
-	parentDB, err := sessiondb.OpenAndMigrate(parentPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := sessiondb.Create(parentDB, sessiondb.SessionMeta{
-		ID: "legacy-parent", ProjectPath: root, ProjectName: "project", CreatedAt: time.Now().UnixNano(),
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := parentDB.Close(); err != nil {
-		t.Fatal(err)
-	}
-	legacyRoot, err := SessionsRoot()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.MkdirAll(legacyRoot, 0o700); err != nil {
-		t.Fatal(err)
-	}
-	childPath := filepath.Join(legacyRoot, "legacy-child.db")
-	childDB, err := sessiondb.OpenAndMigrate(childPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := sessiondb.Create(childDB, sessiondb.SessionMeta{
-		ID: "legacy-child", ProjectPath: root, ProjectName: "project", Model: "child-model",
-		CreatedAt:       time.Now().Add(-time.Second).UnixNano(),
-		ParentSessionID: sql.NullString{String: "legacy-parent", Valid: true},
-		AgentCategory:   sql.NullString{String: "aeron", Valid: true},
-		AgentName:       sql.NullString{String: "legacy full child name", Valid: true},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := sessiondb.ReplaceMessages(childDB, "legacy-child", []provider.ChatMessage{
-		provider.NewTextMessage("user", "# Assignment\nlegacy"),
-		provider.NewTextMessage("assistant", "Legacy child completed successfully."),
-	}, []int{1, 1}); err != nil {
-		t.Fatal(err)
-	}
-	if err := sessiondb.CloseSession(childDB, "legacy-child"); err != nil {
-		t.Fatal(err)
-	}
-	if err := childDB.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	resumed, err := ResumeSessionWithDir(parentPath, testConfig(), root, filepath.Join(root, "sessions"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(resumed.Close)
-	result, ok := resumed.SubAgentRunner().Manager().GetCompleted("legacy-child")
-	if !ok || result.Name != "legacy full child name" || result.Status != agent.SubAgentCompleted ||
-		!strings.Contains(result.SummaryGist, "completed successfully") {
-		t.Fatalf("recovered legacy result = %+v ok=%v", result, ok)
-	}
-	rows, err := sessiondb.ListSubAgentResults(resumed.DB(), "legacy-parent")
-	if err != nil || len(rows) != 1 || rows[0].ChildSessionID != "legacy-child" {
-		t.Fatalf("recovered parent result rows = %+v err=%v", rows, err)
 	}
 }
 
@@ -476,16 +418,24 @@ func TestResumeRestoresActiveContextIndependentlyFromFullArchive(t *testing.T) {
 		t.Fatal(err)
 	}
 	active := []provider.ChatMessage{
-		provider.NewTextMessage("system", "<context_checkpoint>old archive</context_checkpoint>"),
+		{
+			Role: "user", Origin: provider.OriginCheckpoint, Visibility: provider.VisibilityContextOnly,
+			Content: provider.TextContent(`<context_checkpoint role="root" version="2">old archive</context_checkpoint>`),
+		},
 		provider.NewTextMessage("user", "current request"),
 		provider.NewTextMessage("assistant", "current answer"),
 	}
-	if err := sessiondb.SaveContextState(db, "wire-parent", sessiondb.ContextState{
+	if err := sessiondb.SaveContextState(db, "wire-parent", "wire-parent", sessiondb.ContextState{
 		Generation: 7, Reason: "manual_compaction", Messages: active,
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := sessiondb.InsertCostSnapshot(db, 120, 30, 20, 0.42, nil); err != nil {
+	if err := sessiondb.UpsertUsageRecord(db, sessiondb.UsageRecord{
+		RequestID: "wire-parent/7/1", SessionID: "wire-parent", AgentID: "root",
+		TurnGeneration: 7, PromptTokens: 120, CompletionTokens: 30,
+		CachedTokens: 20, CacheReadKnown: true, CostUSD: 0.42, CostKnown: true,
+		ModelID: "test-model", CreatedAt: 1, UpdatedAt: 1,
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
@@ -496,7 +446,7 @@ func TestResumeRestoresActiveContextIndependentlyFromFullArchive(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(resumed.Close)
-	if len(resumed.msgs) != 4 || len(resumed.activeContext) != 3 || resumed.activeContext[0].Role != "system" ||
+	if len(resumed.msgs) != 4 || len(resumed.activeContext) != 3 || resumed.activeContext[0].EffectiveOrigin() != provider.OriginCheckpoint ||
 		resumed.contextGeneration != 7 {
 		t.Fatalf("archive=%d active=%#v generation=%d", len(resumed.msgs), resumed.activeContext, resumed.contextGeneration)
 	}

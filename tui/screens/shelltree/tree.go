@@ -499,7 +499,9 @@ func (s *Screen) syncFromModel() {
 		if s.searchActive {
 			filter = s.searchQuery
 		}
-		s.filter.field.SetValue(filter)
+		if s.filter.field.Value() != filter {
+			s.filter.field.SetValue(filter)
+		}
 	}
 	s.syncSearchPlaceholder()
 	contentW := filetree.SidebarContentWidth(s.width)

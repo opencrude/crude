@@ -86,8 +86,6 @@ func TestModelSwitchAppliesToNextRequestWithoutRelabelingActiveTurn(t *testing.T
 		t.Fatalf("second turn identity = %#v", secondIdentity)
 	}
 	waitAssistantCount(t, sess, 2)
-	sess.flushWg.Wait()
-
 	assertPersistedAssistantModels(t, sess.MessagesWithMeta(), []string{"model-a", "model-b"})
 	dbPath := filepath.Join(sessionDir, sess.SessionID()+".db")
 	sess.Close()

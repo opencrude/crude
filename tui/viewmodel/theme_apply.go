@@ -30,7 +30,6 @@ const (
 	themeConsumerChatScreen         themeConsumerID = "chatScreen"
 	themeConsumerEditorScreen       themeConsumerID = "editorScreen"
 	themeConsumerEditorTokens       themeConsumerID = "EditorState.Editor"
-	themeConsumerStatusBar          themeConsumerID = "StatusBar"
 	themeConsumerFindInFiles        themeConsumerID = "findInFiles"
 	themeConsumerFilePicker         themeConsumerID = "FilePicker"
 	themeConsumerSessionPicker      themeConsumerID = "sessionPicker"
@@ -334,20 +333,6 @@ func (m *App) themeConsumers() []themeConsumer {
 					return m.EditorState.Editor.Theme()
 				}
 				return m.Theme
-			},
-		},
-		{
-			id: themeConsumerStatusBar,
-			apply: func(th *theme.Theme) {
-				if m.StatusBar != nil {
-					m.StatusBar.SetTheme(th)
-				}
-			},
-			read: func() *theme.Theme {
-				if m.rootHost == nil {
-					return nil
-				}
-				return m.rootHost.Theme()
 			},
 		},
 		{

@@ -95,8 +95,8 @@ func overlappingLatestScopes(scopes []localhistory.MessageScope) []localhistory.
 
 func (m *App) openLocalHistoryForMessage(sessionID, messageID string) tea.Cmd {
 	if m.Workspace == nil || m.HistoryService == nil {
-		if m.StatusBar != nil {
-			m.StatusBar.SetError("Local history is unavailable")
+		if m.Feedback != nil {
+			m.Feedback.NotifyError("Local history is unavailable")
 		}
 		return nil
 	}
@@ -321,8 +321,8 @@ func (m *App) applyHistoryRefresh(result localhistory.RestoreResult) tea.Cmd {
 			cmds = append(cmds, cmd)
 		}
 	}
-	if m.StatusBar != nil {
-		m.StatusBar.SetInfo(fmt.Sprintf("Restored %d path(s) · safety %s", len(result.Paths), shortHistoryID(result.SafetySnapshotID)))
+	if m.Feedback != nil {
+		m.Feedback.NotifyInfo(fmt.Sprintf("Restored %d path(s) · safety %s", len(result.Paths), shortHistoryID(result.SafetySnapshotID)))
 	}
 	return tea.Batch(cmds...)
 }

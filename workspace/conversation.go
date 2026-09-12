@@ -26,6 +26,20 @@ type TurnStatus struct {
 	Provider      string
 	UploadedBytes int64
 	TotalBytes    int64
+	BeforeTokens  int
+	AfterTokens   int
+	OperationID   string
+	Trigger       string
+	StageName     string
+	StageIndex    int
+	Completed     int
+	StageCount    int
+	RetryAttempt  int
+	RetryLimit    int
+	ContextWindow int
+	Detail        string
+	ProviderID    string
+	ModelID       string
 }
 
 // Conversation is the canonical live message state for one agent or thinking
@@ -127,7 +141,8 @@ func (c *Conversation) insertMessage(message *Message) {
 	for insertAt > 0 && c.messages[insertAt-1].PendingBtw {
 		insertAt--
 	}
-	if message.Role != MessageRoleStatus && insertAt > 0 && c.messages[insertAt-1].Role == MessageRoleStatus {
+	if message.Role != MessageRoleStatus && insertAt > 0 &&
+		c.messages[insertAt-1].Role == MessageRoleStatus && c.messages[insertAt-1].LifecycleOperationID == "" {
 		insertAt--
 	}
 	c.messages = append(c.messages, nil)
@@ -268,9 +283,9 @@ func (c *Conversation) EnsureAssistant() {
 	})
 }
 
-// UpdateTurnStatus maintains one transient lifecycle row at the tail of the
-// conversation. It is live-only workspace state: session persistence never
-// sees these events, and the row is consumed or removed before turn finality.
+// UpdateTurnStatus maintains transient turn status or one ID-keyed durable
+// operation row. Compaction rows remain after terminal completion and are
+// restored from the backend operation ledger on resume.
 func (c *Conversation) UpdateTurnStatus(status TurnStatus) {
 	if c == nil || status.Phase == "" {
 		return
@@ -278,7 +293,7 @@ func (c *Conversation) UpdateTurnStatus(status TurnStatus) {
 	status.Progress = max(0, min(100, status.Progress))
 	status.TotalBytes = max(int64(0), status.TotalBytes)
 	status.UploadedBytes = max(int64(0), min(status.TotalBytes, status.UploadedBytes))
-	message := c.activeTurnStatus()
+	message := c.activeTurnStatus(status.OperationID)
 	if message == nil {
 		message = &Message{
 			InternalID:             c.nextMessageID(),
@@ -289,20 +304,48 @@ func (c *Conversation) UpdateTurnStatus(status TurnStatus) {
 			LifecycleProvider:      status.Provider,
 			LifecycleUploadedBytes: status.UploadedBytes,
 			LifecycleTotalBytes:    status.TotalBytes,
+			LifecycleBeforeTokens:  status.BeforeTokens,
+			LifecycleAfterTokens:   status.AfterTokens,
+			LifecycleOperationID:   status.OperationID,
+			LifecycleTrigger:       status.Trigger,
+			LifecycleStageName:     status.StageName,
+			LifecycleStageIndex:    status.StageIndex,
+			LifecycleCompleted:     status.Completed,
+			LifecycleStageCount:    status.StageCount,
+			LifecycleRetryAttempt:  status.RetryAttempt,
+			LifecycleRetryLimit:    status.RetryLimit,
+			LifecycleContextWindow: status.ContextWindow,
+			Content:                status.Detail,
+			ProviderID:             status.ProviderID,
+			ModelID:                status.ModelID,
 		}
 		c.insertMessage(message)
 		c.index(message)
 		c.version++
 		return
 	}
-	if message.LifecyclePhase != status.Phase {
+	if message.LifecyclePhase != status.Phase && status.OperationID == "" {
 		message.Time = time.Now()
 	}
 	if message.LifecyclePhase == status.Phase &&
 		message.LifecycleProgress == status.Progress &&
 		message.LifecycleProvider == status.Provider &&
 		message.LifecycleUploadedBytes == status.UploadedBytes &&
-		message.LifecycleTotalBytes == status.TotalBytes {
+		message.LifecycleTotalBytes == status.TotalBytes &&
+		message.LifecycleBeforeTokens == status.BeforeTokens &&
+		message.LifecycleAfterTokens == status.AfterTokens &&
+		message.LifecycleOperationID == status.OperationID &&
+		message.LifecycleTrigger == status.Trigger &&
+		message.LifecycleStageName == status.StageName &&
+		message.LifecycleStageIndex == status.StageIndex &&
+		message.LifecycleCompleted == status.Completed &&
+		message.LifecycleStageCount == status.StageCount &&
+		message.LifecycleRetryAttempt == status.RetryAttempt &&
+		message.LifecycleRetryLimit == status.RetryLimit &&
+		message.LifecycleContextWindow == status.ContextWindow &&
+		message.Content == status.Detail &&
+		message.ProviderID == status.ProviderID &&
+		message.ModelID == status.ModelID {
 		return
 	}
 	message.LifecyclePhase = status.Phase
@@ -310,6 +353,24 @@ func (c *Conversation) UpdateTurnStatus(status TurnStatus) {
 	message.LifecycleProvider = status.Provider
 	message.LifecycleUploadedBytes = status.UploadedBytes
 	message.LifecycleTotalBytes = status.TotalBytes
+	message.LifecycleBeforeTokens = status.BeforeTokens
+	message.LifecycleAfterTokens = status.AfterTokens
+	message.LifecycleOperationID = status.OperationID
+	message.LifecycleTrigger = status.Trigger
+	message.LifecycleStageName = status.StageName
+	message.LifecycleStageIndex = status.StageIndex
+	message.LifecycleCompleted = status.Completed
+	message.LifecycleStageCount = status.StageCount
+	message.LifecycleRetryAttempt = status.RetryAttempt
+	message.LifecycleRetryLimit = status.RetryLimit
+	message.LifecycleContextWindow = status.ContextWindow
+	message.Content = status.Detail
+	if status.ProviderID != "" {
+		message.ProviderID = status.ProviderID
+	}
+	if status.ModelID != "" {
+		message.ModelID = status.ModelID
+	}
 	c.moveBeforePending(message)
 	c.version++
 }
@@ -323,7 +384,7 @@ func (c *Conversation) ClearTurnStatus() {
 	changed := false
 	kept := c.messages[:0]
 	for _, message := range c.messages {
-		if message.Role == MessageRoleStatus {
+		if message.Role == MessageRoleStatus && message.LifecycleOperationID == "" {
 			delete(c.byID, message.InternalID)
 			changed = true
 			continue
@@ -336,9 +397,9 @@ func (c *Conversation) ClearTurnStatus() {
 	}
 }
 
-func (c *Conversation) activeTurnStatus() *Message {
+func (c *Conversation) activeTurnStatus(operationID string) *Message {
 	for index := len(c.messages) - 1; index >= 0; index-- {
-		if c.messages[index].Role == MessageRoleStatus {
+		if c.messages[index].Role == MessageRoleStatus && c.messages[index].LifecycleOperationID == operationID {
 			return c.messages[index]
 		}
 	}
@@ -965,7 +1026,7 @@ func (c *Conversation) bindInternalID(message *Message, internalID string) {
 }
 
 func (c *Conversation) promoteTurnStatusToTool(toolID, internalID, name string) *Message {
-	message := c.activeTurnStatus()
+	message := c.activeTurnStatus("")
 	if message == nil {
 		return nil
 	}
@@ -983,6 +1044,8 @@ func (c *Conversation) promoteTurnStatusToTool(toolID, internalID, name string) 
 	message.LifecycleProvider = ""
 	message.LifecycleUploadedBytes = 0
 	message.LifecycleTotalBytes = 0
+	message.LifecycleBeforeTokens = 0
+	message.LifecycleAfterTokens = 0
 	c.attributeTurn(message)
 	c.bindInternalID(message, internalID)
 	c.bindToolID(message, toolID)

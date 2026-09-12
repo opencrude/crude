@@ -293,8 +293,8 @@ func (m *App) applyClipboardAsyncResult(result clipboardAsyncResultMsg) tea.Cmd 
 			m.setClipboardAsyncError("clipboard error: " + result.operationErr.Error())
 			return nil
 		}
-		if m.StatusBar != nil {
-			m.StatusBar.SetInfo("Copied " + strconv.Itoa(len(request.text)) + " chars")
+		if m.Feedback != nil {
+			m.Feedback.NotifyInfo("Copied " + strconv.Itoa(len(request.text)) + " chars")
 		}
 	case clipboardAsyncPasteEditor:
 		if !m.ownsClipboardTargetEditor(request.editor) {
@@ -305,8 +305,8 @@ func (m *App) applyClipboardAsyncResult(result clipboardAsyncResultMsg) tea.Cmd 
 			return nil
 		}
 		request.editor.HandleEvent(tea.PasteMsg{Content: result.content})
-		if m.StatusBar != nil {
-			m.StatusBar.SetInfo("Pasted " + strconv.Itoa(len(result.content)) + " chars")
+		if m.Feedback != nil {
+			m.Feedback.NotifyInfo("Pasted " + strconv.Itoa(len(result.content)) + " chars")
 		}
 	case clipboardAsyncPasteFindReplace:
 		if !m.ownsClipboardFindReplaceTarget(request.findReplace, request.textEdit) {
@@ -361,8 +361,8 @@ func (m *App) applyClipboardAsyncResult(result clipboardAsyncResultMsg) tea.Cmd 
 			blocking,
 		)
 		m.Input = updated
-		if m.StatusBar != nil {
-			m.StatusBar.SetInfo("Pasted " + strconv.Itoa(len(result.content)) + " chars into input")
+		if m.Feedback != nil {
+			m.Feedback.NotifyInfo("Pasted " + strconv.Itoa(len(result.content)) + " chars into input")
 		}
 	}
 	return nil
@@ -466,9 +466,9 @@ func (m *App) applyClipboardAsyncImageStored(result clipboardAsyncImageStoredMsg
 	}
 	m.Input.SetReferenceStore(result.store)
 	m.Input.InsertReference(result.ref)
-	if m.StatusBar != nil {
+	if m.Feedback != nil {
 		kilobytes := (result.imageBytes + 1023) / 1024
-		m.StatusBar.SetInfo("Attached clipboard image (" + strconv.Itoa(kilobytes) + " KB)")
+		m.Feedback.NotifyInfo("Attached clipboard image (" + strconv.Itoa(kilobytes) + " KB)")
 	}
 }
 
@@ -516,8 +516,8 @@ func (m *App) invalidateClipboardFindReplace(findReplace *popup.FindReplaceState
 }
 
 func (m *App) setClipboardAsyncError(message string) {
-	if m.StatusBar != nil {
-		m.StatusBar.SetError(message)
+	if m.Feedback != nil {
+		m.Feedback.NotifyError(message)
 	}
 }
 
@@ -639,8 +639,8 @@ func (m *App) applyDirectoryAsyncResult(result directoryAsyncResultMsg) {
 	if result.err != nil {
 		result.target.FailAsyncDirectoryLoadFor(result.intent, result.err)
 		m.markFilePickerDirty()
-		if m.StatusBar != nil {
-			m.StatusBar.SetError(result.err.Error())
+		if m.Feedback != nil {
+			m.Feedback.NotifyError(result.err.Error())
 		}
 		return
 	}

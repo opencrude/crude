@@ -38,6 +38,34 @@ func (m *App) updateSessionBackgroundJobs(agentID string, commands []fileio.Asyn
 	}
 	jobs := make([]backgroundjobs.Job, 0, len(commands))
 	for _, command := range commands {
+		state := types.OperationRunning
+		switch command.Status {
+		case fileio.AsyncCompleted:
+			state = types.OperationSucceeded
+		case fileio.AsyncFailed:
+			state = types.OperationFailed
+		case fileio.AsyncKilled:
+			state = types.OperationCancelled
+		}
+		owner := types.ResourceRef{Kind: types.ResourceAgent, ID: agentID}
+		if session := m.SessionsByAgent[agentID]; session != nil {
+			owner.SessionID = session.SessionID
+		}
+		if m.Status != nil {
+			m.Status.SetOperation(types.OperationSnapshot{
+				ID: "command:" + command.Handle, Owner: owner, Kind: "background-command",
+				Label: command.Command, State: state, StartedAt: command.StartedAt,
+				EndedAt: command.EndedAt, Error: command.Error, OutputRef: command.Handle,
+				Cancellable: state == types.OperationRunning,
+			})
+			if state == types.OperationFailed {
+				m.Status.Notify(types.NotificationRecord{
+					DedupKey: "command-failed:" + command.Handle, Owner: owner,
+					Severity: types.SeverityError, Source: "background-command",
+					Summary: "Background command failed", Detail: command.Command + ": " + command.Error,
+				})
+			}
+		}
 		jobs = append(jobs, backgroundjobs.Job{
 			Handle: command.Handle, Command: command.Command, PID: command.PID, Status: string(command.Status),
 			StartedAt: command.StartedAt, EndedAt: command.EndedAt, Duration: command.Duration,
@@ -278,21 +306,19 @@ func (m *App) focusSessionDeckAfterLayout() {
 func (m *App) resolveSessionQuestion(target *question.Screen, result question.Result, cancelled bool) {
 	_, projection := m.sessionProjections.projectionForQuestion(target)
 	if projection == nil {
-		m.StatusBar.SetError("Question owner is no longer available")
+		m.Feedback.NotifyError("Question owner is no longer available")
 		return
 	}
 	agentID := projection.questionAgentID
 	blockID := projection.questionBlockID
-	m.StatusBar.SetConfirming(false)
 	m.OverlayState.SetBlocking(false)
 	resolved := m.ResolveQuestion(agentID, blockID, result.Answers, result.Questions, cancelled)
 	if resolved {
 		if node := m.AgentMgr.Get(agentID); node != nil && node.State != nil {
 			node.State.Thinking = true
 		}
-		m.StatusBar.SetThinkingForAgent(agentID, true, false, false)
 	} else {
-		m.StatusBar.SetError("Question response was not sent: the request is no longer active")
+		m.Feedback.NotifyError("Question response was not sent: the request is no longer active")
 	}
 	projection.questionBlockID = ""
 	target.Dismiss()
@@ -306,19 +332,17 @@ func (m *App) resolveSessionConfirmation(target *confirmation.Screen, choice str
 	agentID := projection.confirmationAgentID
 	blockID := projection.confirmationBlockID
 	details := target.Details()
-	m.StatusBar.SetConfirming(false)
 	m.OverlayState.SetBlocking(false)
 	if m.ResolveConfirmation(agentID, blockID, choice) {
 		if node := m.AgentMgr.Get(agentID); node != nil && node.State != nil {
 			node.State.Running = true
 			node.State.Thinking = true
 		}
-		m.StatusBar.SetThinkingForAgent(agentID, true, false, false)
 		if m.Logger != nil {
 			m.Logger.Info("BLOCK", "resolved", "response", choice, "operation", details.Operation, "tool", details.Tool)
 		}
 	} else {
-		m.StatusBar.SetError("Permission response was not sent: the request is no longer active")
+		m.Feedback.NotifyError("Permission response was not sent: the request is no longer active")
 	}
 	projection.confirmationBlockID = ""
 	target.Dismiss()
@@ -333,7 +357,6 @@ func (m *App) cancelSessionConfirmation(target *confirmation.Screen) {
 	agentID := projection.confirmationAgentID
 	details := target.Details()
 	projection.confirmationBlockID = ""
-	m.StatusBar.SetConfirming(false)
 	m.OverlayState.SetBlocking(false)
 	target.Dismiss()
 	m.closeProjectionPanel(projection, sessionConfirmationPanelID)

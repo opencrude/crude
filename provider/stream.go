@@ -12,9 +12,6 @@ func UsageFromResponse(resp *ChatResponse) (int, int, int) {
 	if resp == nil || resp.Usage == nil {
 		return 0, 0, 0
 	}
-	cached := 0
-	if resp.Usage.PromptTokensDetails != nil {
-		cached = resp.Usage.PromptTokensDetails.CachedTokens
-	}
-	return resp.Usage.PromptTokens, resp.Usage.CompletionTokens, cached
+	u := resp.Usage.normalized()
+	return u.PromptTokens, u.CompletionTokens, u.PromptTokensCached
 }

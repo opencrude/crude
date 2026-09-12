@@ -73,9 +73,8 @@ func TestTextContent_UnmarshalJSONNull(t *testing.T) {
 	}
 }
 
-func TestEstimateMessageTokensIncludesProtocolMetadata(t *testing.T) {
-	base := EstimateMessageTokens(NewTextMessage("assistant", "answer"), "test")
-	enriched := EstimateMessageTokens(ChatMessage{
+func TestEstimateMessageTokensDoesNotDoubleCountProtocolMetadata(t *testing.T) {
+	message := ChatMessage{
 		Role:             "assistant",
 		Content:          PartsContent([]ContentPart{{Type: "image_url", ImageURL: &ImageURL{URL: "data:image/png;base64,abc"}}}),
 		ReasoningContent: "private reasoning",
@@ -83,9 +82,20 @@ func TestEstimateMessageTokensIncludesProtocolMetadata(t *testing.T) {
 			Standard: "anthropic", Type: "thinking",
 			Data: json.RawMessage(`{"type":"thinking","thinking":"private reasoning","signature":"sig"}`),
 		}},
-	}, "test")
-	if enriched <= base+1024 {
-		t.Fatalf("metadata estimate = %d, base = %d", enriched, base)
+	}
+	withoutReplay := message
+	withoutReplay.ProviderItems = nil
+	if got, want := EstimateMessageTokens(message, "test"), EstimateMessageTokens(withoutReplay, "test"); got != want {
+		t.Fatalf("duplicate replay metadata changed estimate: got %d, want %d", got, want)
+	}
+}
+
+func TestEstimateTokensUsesSemanticRunesOverFour(t *testing.T) {
+	if got := EstimateTokens("123456789", "deepseek"); got != 3 {
+		t.Fatalf("estimate = %d, want 3", got)
+	}
+	if got := EstimateTokens("世界世界", "deepseek"); got != 1 {
+		t.Fatalf("unicode estimate = %d, want 1", got)
 	}
 }
 

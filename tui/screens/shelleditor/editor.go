@@ -22,7 +22,7 @@ const (
 )
 
 // Screen paints an editor.Editor into a Host surface via the cell-buffer
-// Render path (not ANSI View). Status/actions live in shellstatus.
+// Render path (not ANSI View). Status/actions live in the top shell header.
 type Screen struct {
 	ui.Base
 	th      *theme.Theme

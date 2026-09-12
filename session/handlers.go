@@ -9,7 +9,6 @@ import (
 	"strings"
 	"time"
 
-	"crude/agent"
 	"crude/provider"
 	"crude/sessiondb"
 	ttypes "crude/types"
@@ -40,7 +39,7 @@ func (s *Session) AppendWorkspaceHistoryEvent(content, display string) error {
 		if err := sessiondb.AppendMessageWithMeta(s.db, s.sessionID, message, s.turnNumber, meta); err != nil {
 			return err
 		}
-		if err := sessiondb.SaveContextState(s.db, s.sessionID, sessiondb.ContextState{Generation: generation, Reason: "workspace_restore", Messages: active}); err != nil {
+		if err := sessiondb.SaveContextState(s.db, s.sessionID, s.sessionID, sessiondb.ContextState{Generation: generation, Reason: "workspace_restore", Messages: active}); err != nil {
 			return err
 		}
 	}
@@ -68,63 +67,6 @@ func (s *Session) SetYolo(enabled bool) {
 // for the next turn to construct a new Agent.
 func (s *Session) YoloEnabled() bool {
 	return s != nil && s.yolo.Load()
-}
-
-// HandleCompact explicitly rebuilds the active context from the immutable full
-// archive. It never compacts an earlier checkpoint and never rewrites history.
-func (s *Session) HandleCompact() ttypes.CompactResultMsg {
-	if !s.turnGate.TryLock() {
-		return ttypes.CompactResultMsg{Error: "Stop the active turn before compacting context"}
-	}
-	defer s.turnGate.Unlock()
-	l := s.logger
-	l.Info("COMPACT", "manual_request")
-
-	s.flushWg.Wait()
-
-	s.msgsMu.Lock()
-	archive := append([]provider.ChatMessage(nil), s.msgs...)
-	if len(archive) == 0 {
-		s.msgsMu.Unlock()
-		return ttypes.CompactResultMsg{Desc: "Nothing to compact yet."}
-	}
-
-	model := ""
-	if s.cfg != nil {
-		model = s.cfg.GetActiveDefaultCategory().Model
-	}
-	ctxWindow := provider.LookupContextWindow(model)
-	if ctxWindow <= 0 {
-		ctxWindow = 256000
-	}
-
-	before := len(archive)
-	compacted := agent.CompactContext(archive, ctxWindow, 50, model)
-	after := len(compacted)
-	if provider.EstimateMessagesTotal(compacted, model) >= provider.EstimateMessagesTotal(archive, model) {
-		s.msgsMu.Unlock()
-		l.Info("COMPACT", "already_compact", "history", before)
-		return ttypes.CompactResultMsg{Desc: "Context is already compact.", Before: before, After: after}
-	}
-	s.activeContext = append([]provider.ChatMessage(nil), compacted...)
-	if s.contextGeneration == 0 {
-		s.contextGeneration = 1
-	}
-	s.contextGeneration++
-	s.contextReason = "manual_compaction"
-	state := sessiondb.ContextState{Generation: s.contextGeneration, Reason: s.contextReason, Messages: compacted}
-	s.msgsMu.Unlock()
-	if s.db != nil {
-		if err := sessiondb.SaveContextState(s.db, s.sessionID, state); err != nil {
-			return ttypes.CompactResultMsg{Error: "Failed to persist compacted context: " + err.Error()}
-		}
-	}
-	l.Info("COMPACT", "manual_compact", "history", before, "projected", after, "window", ctxWindow)
-	return ttypes.CompactResultMsg{
-		Desc:   fmt.Sprintf("Compacted active context to %d message(s); full session history remains archived.", after),
-		Before: before,
-		After:  after,
-	}
 }
 
 func (s *Session) HandleUndo(cmd string) ttypes.UndoResultMsg {

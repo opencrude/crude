@@ -226,7 +226,6 @@ func TestE2EReadImageAttachesWhenCapabilityEnabled(t *testing.T) {
 	assertOpenAIToolMediaOrder(t, second)
 	waitTurnDone(t, sender, orchestrator.ID)
 	waitAssistantCount(t, sess, 1)
-	sess.flushWg.Wait()
 	if !toolMessageContainsImage(t, sess.MessagesWithMeta()) {
 		t.Fatal("completed turn did not persist its media content")
 	}

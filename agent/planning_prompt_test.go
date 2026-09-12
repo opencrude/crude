@@ -22,21 +22,33 @@ func TestSystemPromptUsesCanonicalPlanningContract(t *testing.T) {
 	}
 }
 
+func TestSystemPromptSeparatesSoloAndOrchestratorModes(t *testing.T) {
+	solo := BuildSystemPromptInDir(false, `/tmp/<workspace>&one`)
+	if !strings.Contains(solo, `<operating_mode type="solo">`) || strings.Contains(solo, `<operating_mode type="orchestrator">`) ||
+		!strings.Contains(solo, `/tmp/&lt;workspace&gt;&amp;one`) {
+		t.Fatalf("solo XML contract = %q", solo)
+	}
+	orchestrator := BuildSystemPromptInDir(true, "/tmp/workspace")
+	if !strings.Contains(orchestrator, `<operating_mode type="orchestrator">`) || strings.Contains(orchestrator, `<operating_mode type="solo">`) {
+		t.Fatalf("orchestrator XML contract = %q", orchestrator)
+	}
+}
+
 func TestSubAgentPromptUsesOwningWorkspaceDirectory(t *testing.T) {
 	dir := t.TempDir()
 	system, _ := BuildSubAgentPromptInDir(SubAgentSpec{Category: CatResearcher}, "", dir)
-	if !strings.Contains(system, "Working Directory: "+dir) {
+	if !strings.Contains(system, "<working_directory>"+dir+"</working_directory>") {
 		t.Fatalf("subagent prompt does not advertise workspace root %q", dir)
 	}
 }
 
 func TestSubAgentPlanningPromptMatchesToolAvailability(t *testing.T) {
 	researcher, _ := BuildSubAgentPrompt(SubAgentSpec{Category: CatResearcher}, "")
-	if !strings.Contains(researcher, "# Planning Contract") {
+	if !strings.Contains(researcher, "<planning_contract>") {
 		t.Fatal("researcher prompt missing planning contract")
 	}
 	aeron, _ := BuildSubAgentPrompt(SubAgentSpec{Category: CatAeron}, "")
-	if strings.Contains(aeron, "# Planning Contract") {
+	if strings.Contains(aeron, "<planning_contract>") {
 		t.Fatal("aeron prompt advertises unavailable planning tools")
 	}
 }
@@ -53,12 +65,12 @@ func TestSystemPromptCachePrefixExcludesVolatileEnvironment(t *testing.T) {
 		t.Fatal("stable environment changes were not reflected in the system prompt")
 	}
 	for _, prompt := range []string{first, second} {
-		for _, volatile := range []string{"- Date:", "- Git:", "- Directory:"} {
+		for _, volatile := range []string{"<date>", "<git>", "<directory>"} {
 			if strings.Contains(prompt, volatile) {
 				t.Fatalf("cacheable system prompt contains volatile field %q", volatile)
 			}
 		}
-		if !strings.Contains(prompt, "Working Directory:") {
+		if !strings.Contains(prompt, "<working_directory>") {
 			t.Fatal("system prompt lost stable workspace identity")
 		}
 	}

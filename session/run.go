@@ -92,7 +92,7 @@ func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
 
 	for {
 		if len(pendingWakes) > 0 && !o.TurnActive() {
-			wakeInput := provider.PlainInput(formatSubAgentWakeBatch(pendingWakes))
+			wakeInput := provider.RuntimeInput(provider.OriginSubAgentWake, formatSubAgentWakeBatch(pendingWakes))
 			if o.SubmitInput(wakeInput) {
 				pendingWakes = pendingWakes[:0]
 				request := <-o.inputCh
@@ -157,16 +157,32 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	ctx := request.ctx
 	turnGeneration := request.generation
 	turnFinished := false
+	turnFinalState := sessiondb.TurnCompleted
 	finishTurn := func() {
 		if turnFinished {
 			return
 		}
 		turnFinished = true
+		if ctx.Err() != nil {
+			turnFinalState = sessiondb.TurnInterrupted
+		}
+		if s.db != nil {
+			if err := sessiondb.FinishAgentTurn(s.db, s.sessionID, o.ID, turnGeneration, turnFinalState); err != nil {
+				l.Warn("SESSION", "turn_state_finish_failed", "error", err.Error())
+			}
+		}
 		if cleared := o.endTurn(turnGeneration); len(cleared) > 0 {
 			sender.SendAgentEventWithID("btw_cleared", map[string]any{"internal_ids": cleared}, o.ID)
 		}
 	}
 	defer finishTurn()
+	if s.db != nil {
+		if err := sessiondb.BeginAgentTurn(s.db, s.sessionID, o.ID, turnGeneration, string(userInput.EffectiveOrigin())); err != nil {
+			l.Error("SESSION", "turn_state_begin_failed", "error", err.Error())
+			sender.SendAgentEventWithID("error", "Failed to persist turn state: "+err.Error(), o.ID)
+			return
+		}
+	}
 
 	// Use per-orchestrator effective config from runtime profile.
 	effectiveCfg := s.runtimeProfile.GetEffectiveConfig(o.ID)
@@ -219,15 +235,20 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 	l.Info("INPUT", "received", "len", len(userInput.Text), "refs", len(userInput.ReferenceIDs), "msg_id", currentMsgID, "turn", s.turnNumber)
 
+	inputOrigin := userInput.EffectiveOrigin()
+	humanTurn := inputOrigin == provider.OriginHuman
 	userMsg, referenceLabels := s.buildUserMessageWithDisplay(userInput, activeCfg.Model)
 	userMsg.InternalID = currentMsgID
+	userMsg.DisplayContent = userInput.Text
 	var requestContextParts []string
-	if memoryContext := s.recallMemoryContext(ctx, userInput.Text, userInput.ActivePaths); memoryContext != "" {
-		requestContextParts = append(requestContextParts, memoryContext)
-	}
-	if s.prevContextInjected.CompareAndSwap(false, true) {
-		if prevContext := s.previousSessionContext(ctx); prevContext != "" {
-			requestContextParts = append(requestContextParts, prevContext)
+	if humanTurn {
+		if memoryContext := s.recallMemoryContext(ctx, userInput.Text, userInput.ActivePaths); memoryContext != "" {
+			requestContextParts = append(requestContextParts, memoryContext)
+		}
+		if s.prevContextInjected.CompareAndSwap(false, true) {
+			if prevContext := s.previousSessionContext(ctx); prevContext != "" {
+				requestContextParts = append(requestContextParts, prevContext)
+			}
 		}
 	}
 	var runtimeParts []string
@@ -245,9 +266,16 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	if len(runtimeParts) > 0 {
 		requestContextParts = append(requestContextParts, "## Runtime Status\n\n"+strings.Join(runtimeParts, "\n\n"))
 	}
-	userMsg = augmentUserMessage(userMsg, strings.Join(requestContextParts, "\n\n"))
+	var runtimeContext *provider.ChatMessage
+	if content := strings.TrimSpace(strings.Join(requestContextParts, "\n\n")); content != "" {
+		message := provider.NewTextMessage("user", "<turn_context>\n"+content+"\n</turn_context>")
+		message.InternalID = currentMsgID + "-context"
+		message.Origin = provider.OriginRuntimeContext
+		message.Visibility = provider.VisibilityContextOnly
+		runtimeContext = &message
+	}
 
-	if s.db != nil {
+	if s.db != nil && humanTurn {
 		_ = sessiondb.UpdateFirstPrompt(s.db, s.sessionID, userInput.Text)
 		_ = sessiondb.UpdateLastPrompt(s.db, s.sessionID, userInput.Text)
 	}
@@ -257,6 +285,14 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		s.activeContext = append([]provider.ChatMessage(nil), s.msgs...)
 	}
 	frozenPrefix := append([]provider.ChatMessage(nil), s.activeContext...)
+	if runtimeContext != nil {
+		s.msgs = append(s.msgs, *runtimeContext)
+		s.activeContext = append(s.activeContext, *runtimeContext)
+		s.msgTurns = append(s.msgTurns, s.turnNumber)
+		s.displayMetas = append(s.displayMetas, sessiondb.DisplayMeta{
+			DisplayRole: "hidden_runtime_context", ContextOnly: true,
+		})
+	}
 	s.msgs = append(s.msgs, userMsg)
 	s.activeContext = append(s.activeContext, userMsg)
 	s.msgTurns = append(s.msgTurns, s.turnNumber)
@@ -264,6 +300,10 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		DisplayRole:     "user",
 		DisplayContent:  userInput.Text,
 		ReferenceLabels: referenceLabels,
+	}
+	if userMsg.EffectiveVisibility() != provider.VisibilityConversation {
+		userMeta.DisplayRole = "hidden_runtime_context"
+		userMeta.ContextOnly = true
 	}
 	userMeta = canonicalizeDisplayMeta(userMsg, userMeta, "", len(s.msgs)-1, time.Now())
 	s.displayMetas = append(s.displayMetas, userMeta)
@@ -284,6 +324,13 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		sender.SendAgentEventWithID("error", "Invalid provider communication standard: "+err.Error(), o.ID)
 		return
 	}
+	compactionCfg := effectiveCfg.GetCategoryConfig(CategoryAeron)
+	compactionProvider, err := effectiveCfg.providerForCategory(compactionCfg)
+	if err != nil {
+		l.Error("AGENT", "compaction_provider_config_error", "error", err.Error())
+		sender.SendAgentEventWithID("error", "Invalid Aeron compaction provider: "+err.Error(), o.ID)
+		return
+	}
 	turnIdentity := ttypes.TurnIdentity{
 		Generation: turnGeneration,
 		ProviderID: turnProvider.ID,
@@ -291,6 +338,15 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 	sender.SendAgentEventWithID("turn_started", turnIdentity, o.ID)
 	ag := s.newAgent(turnProvider, effectiveCfg.IsMultiAgentEnabled(), activeCfg.ModelModalities)
+	ag.CompactionProvider = compactionProvider
+	ag.AgentID = agent.AgentID(o.ID)
+	ag.TurnGeneration = turnGeneration
+	ag.PrepareCompaction = func(source agent.CompactionSource) error {
+		return s.beginRootCompaction(o.ID, source)
+	}
+	ag.CommitCompaction = func(commit agent.CompactionCommit) error {
+		return s.commitRootCompaction(o.ID, commit)
+	}
 	if activeCfg.ContextCompactionPercent != nil {
 		ag.ContextCompactionPercent = *activeCfg.ContextCompactionPercent
 	}
@@ -344,6 +400,9 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	emitActive.Store(true)
 
 	emit := func(evt agent.AgentEvent) {
+		if evt.Type == "error" && ctx.Err() == nil {
+			turnFinalState = sessiondb.TurnFailed
+		}
 		if !emitActive.Load() {
 			return
 		}
@@ -363,10 +422,13 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		if agentID == "" {
 			agentID = o.ID
 		}
+		if err := s.persistCompactionEvent(s.db, s.sessionID, agentID, evt); err != nil {
+			s.logger.Warn("COMPACT", "lifecycle_persist_failed", "agent_id", agentID, "error", err.Error())
+		}
 		sender.SendAgentEventWithID(evt.Type, evt.Data, agentID)
 		s.updateDisplayFromEvent(evt, displayTracker)
 		if evt.Type == "usage" {
-			s.processUsageEvent(evt.Data, activeCfg.Model)
+			s.processUsageEvent(evt.Data, activeCfg.Model, agentID, "")
 		}
 		if evt.Type == "done" {
 			if content, ok := evt.Data.(string); ok {
@@ -460,48 +522,31 @@ func (s *Session) handleConfirmationAlways(data map[string]string) {
 	}
 }
 
-func (s *Session) processUsageEvent(evtData any, model string) {
-	var promptT, compT, cachedT int
-	isEstimated := false
-	switch d := evtData.(type) {
-	case map[string]int:
-		promptT = d["prompt"]
-		compT = d["completion"]
-		cachedT = d["prompt_cached"]
-	case map[string]any:
-		if v, ok := d["prompt"].(float64); ok {
-			promptT = int(v)
-		} else if v, ok := d["prompt"].(int); ok {
-			promptT = v
-		}
-		if v, ok := d["completion"].(float64); ok {
-			compT = int(v)
-		} else if v, ok := d["completion"].(int); ok {
-			compT = v
-		}
-		if v, ok := d["prompt_cached"].(float64); ok {
-			cachedT = int(v)
-		} else if v, ok := d["prompt_cached"].(int); ok {
-			cachedT = v
-		}
-		if v, ok := d["estimated"].(bool); ok {
-			isEstimated = v
-		}
+func (s *Session) processUsageEvent(evtData any, model, agentID, parentAgentID string) {
+	record, ok := sessiondb.UsageRecordFromEvent(evtData, s.sessionID, agentID, parentAgentID, model)
+	if !ok {
+		return
 	}
-	if promptT > 0 || compT > 0 {
-		s.cost.RecordUsage(model, promptT, compT, cachedT)
-		if !isEstimated {
-			s.tokens.Record(promptT, compT)
-		}
-		var perTurnCost float64
-		if c, ok := evtData.(map[string]any); ok {
-			if v, ok := c["cost"].(float64); ok {
-				perTurnCost = v
-			}
-		}
-		sessionTotal := s.cost.Snapshot().TotalCost
-		s.logger.Info("COST", "turn_usage", "model", model, "prompt", promptT, "completion", compT, "cached", cachedT, "turn_cost", perTurnCost, "session_total", sessionTotal, "estimated", isEstimated)
+	s.usageMu.Lock()
+	previous, exists := s.usageRecords[record.RequestID]
+	if exists && previous.UpdatedAt >= record.UpdatedAt {
+		s.usageMu.Unlock()
+		return
 	}
+	if s.usageRecords == nil {
+		s.usageRecords = make(map[string]sessiondb.UsageRecord)
+	}
+	s.usageRecords[record.RequestID] = record
+	s.usageMu.Unlock()
+	if err := sessiondb.UpsertUsageRecord(s.db, record); err != nil {
+		s.logger.Warn("COST", "request_usage_persist_failed", "request_id", record.RequestID, "error", err.Error())
+	}
+	if !record.Estimated && !exists && s.tokens != nil {
+		s.tokens.Record(record.PromptTokens, record.CompletionTokens)
+	}
+	s.logger.Info("COST", "turn_usage", "request_id", record.RequestID, "model", record.ModelID,
+		"prompt", record.PromptTokens, "completion", record.CompletionTokens, "cached", record.CachedTokens,
+		"turn_cost", record.CostUSD, "session_total", s.CostSnapshot().TotalCost, "estimated", record.Estimated)
 }
 
 func (s *Session) updateDisplayFromEvent(evt agent.AgentEvent, tracker *displayMetaTracker) {
@@ -689,8 +734,9 @@ func (s *Session) finalizeTurn(
 	if s.contextReason == "" {
 		s.contextReason = "session_start"
 	}
-	if len(nextContext) > 0 && nextContext[0].Role == "system" && strings.Contains(nextContext[0].Content.String(), "<context_checkpoint") {
-		if len(s.activeContext) == 0 || s.activeContext[0].Content.String() != nextContext[0].Content.String() {
+	nextCheckpoint := contextCheckpointContent(nextContext)
+	if nextCheckpoint != "" {
+		if contextCheckpointContent(s.activeContext) != nextCheckpoint {
 			s.contextGeneration++
 			s.contextReason = "automatic_compaction"
 		}
@@ -711,11 +757,10 @@ func (s *Session) finalizeTurn(
 	s.msgsMu.Unlock()
 
 	if s.db != nil {
-		if err := sessiondb.SaveContextState(s.db, s.sessionID, contextState); err != nil {
+		if err := sessiondb.SaveContextState(s.db, s.sessionID, s.sessionID, contextState); err != nil {
 			s.logger.Error("COMPACT", "context_state_persist_failed", "error", err.Error())
 		}
-		s.flushWg.Add(1)
-		go s.flushWriteBuf()
+		s.flushWriteBufSync()
 	}
 
 	s.afterTurnMemory(turnNumber, turnMsgs, finalContent)
@@ -723,6 +768,15 @@ func (s *Session) finalizeTurn(
 	if finalContent != "" {
 		s.logger.Info("CONV", "assistant_msg", "msg_id", msgID, "len", len(finalContent))
 	}
+}
+
+func contextCheckpointContent(messages []provider.ChatMessage) string {
+	for _, message := range messages {
+		if message.EffectiveOrigin() == provider.OriginCheckpoint {
+			return message.ContentString()
+		}
+	}
+	return ""
 }
 
 func persistedToolStatus(message provider.ChatMessage, current string) string {
@@ -756,7 +810,7 @@ func (s *Session) buildUserMessage(input provider.UserInput, model string) provi
 
 func (s *Session) buildUserMessageWithDisplay(input provider.UserInput, model string) (provider.ChatMessage, []string) {
 	if len(input.ReferenceIDs) == 0 || s.db == nil {
-		return provider.NewTextMessage("user", input.Text), nil
+		return inputMessage(provider.NewTextMessage("user", input.Text), input), nil
 	}
 
 	// Unknown custom/alias models should get the attachment and let the provider
@@ -768,7 +822,7 @@ func (s *Session) buildUserMessageWithDisplay(input provider.UserInput, model st
 	refs, err := sessiondb.LoadPromptReferencesByIDs(s.db, input.ReferenceIDs)
 	if err != nil {
 		s.logger.Warn("REF", "load_refs_error", "error", err.Error())
-		return provider.NewTextMessage("user", input.Text), nil
+		return inputMessage(provider.NewTextMessage("user", input.Text), input), nil
 	}
 
 	// Build an order-preserving map keyed by reference ID
@@ -903,9 +957,19 @@ func (s *Session) buildUserMessageWithDisplay(input provider.UserInput, model st
 	}
 
 	if len(parts) == 0 {
-		return provider.NewTextMessage("user", promptText), referenceLabels
+		return inputMessage(provider.NewTextMessage("user", promptText), input), referenceLabels
 	}
-	return provider.NewMultiPartMessage("user", parts), referenceLabels
+	return inputMessage(provider.NewMultiPartMessage("user", parts), input), referenceLabels
+}
+
+func inputMessage(message provider.ChatMessage, input provider.UserInput) provider.ChatMessage {
+	message.Origin = input.EffectiveOrigin()
+	if message.Origin == provider.OriginHuman || message.Origin == provider.OriginBTW {
+		message.Visibility = provider.VisibilityConversation
+	} else {
+		message.Visibility = provider.VisibilityContextOnly
+	}
+	return message
 }
 
 const btwUrgentPrefix = "[USER INTERRUPTION — READ THIS NOW]\nThe user interrupted your work with an important message while you were running. Stop what you're doing, read this carefully, and adjust your approach accordingly. This takes priority over whatever you are doing.\n\n"
@@ -921,6 +985,8 @@ func (s *Session) buildBtwMessage(input provider.UserInput, model string) provid
 			DisplayContent:  input.Text,
 			ReferenceLabels: referenceLabels,
 			Role:            "user",
+			Origin:          provider.OriginBTW,
+			Visibility:      provider.VisibilityConversation,
 			Content:         provider.TextContent(btwUrgentPrefix + msg.Content.String()),
 		}
 	}
@@ -932,5 +998,7 @@ func (s *Session) buildBtwMessage(input provider.UserInput, model string) provid
 	result.InternalID = input.InternalID
 	result.DisplayContent = input.Text
 	result.ReferenceLabels = referenceLabels
+	result.Origin = provider.OriginBTW
+	result.Visibility = provider.VisibilityConversation
 	return result
 }

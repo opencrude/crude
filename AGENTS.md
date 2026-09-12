@@ -45,6 +45,13 @@ never sufficient.
 
 ### Choose the right-sized fix
 
+- **Crude is pre-production: do not preserve legacy product paths or persisted
+  development formats.** Prefer the clean, fast, correct, maintainable design
+  even when old local databases, snapshots, configuration shapes, tests, or UI
+  adapters must be deleted or recreated. Add compatibility only when the user
+  explicitly identifies a real external/production consumer; otherwise one
+  authoritative path is mandatory.
+
 - Perform a cost/benefit check before broad work. Use the smallest correction
   when one owner is clearly wrong and the invariant can be permanently guarded.
   Research established designs first when several caches, clocks, models, or
@@ -132,6 +139,11 @@ never sufficient.
 Use the repository workflow only: `scripts/tuishot.sh`. For discussion-sized
 captures use a readable full-width terminal, for example:
 
+**Never run two `scripts/tuishot.sh` captures concurrently.** Alacritty window
+matching, geometry, focus, and input injection are process-global; concurrent
+captures can target the wrong window and invalidate both results. Finish and
+close one capture before starting the next.
+
 ```bash
 COLS=160 ROWS=40 FONT_SIZE=11 scripts/tuishot.sh /tmp/crude-screenshots \
   key:ctrl+alt+p type:settings key:Down key:Return
@@ -145,6 +157,11 @@ After every capture, close the Alacritty/Crude window before finishing. Do not
 leave a `CrudeShot` window or capture process running. Keep `KEEP_OPEN=0` for
 normal captures; if `KEEP_OPEN=1` is used for an explicit interactive review,
 close it and verify `xdotool search --class CrudeShot` returns no window.
+
+### Compact chrome language
+- Prefer established, theme-aware symbols over spelled-out words in constrained
+  chrome when the symbol is meaningful and consistent elsewhere in Crude. Keep
+  text when a symbol would be ambiguous; never introduce one-off icon dialects.
 
 ### Validation baseline
 
@@ -310,7 +327,7 @@ map to the shell screens:
 rootHost
 └── shellRoot ("shell")
     ├── header     shellheader.Screen   — always; rect (0, 1, W, 2)
-    ├── status     shellstatus.Screen   — always; rect (0, H-2, W, 2)
+    ├── footer     shellfooter.Screen   — always; rect (0, H-2, W, 2)
     ├── tabs       shelltabs.Screen     — active when tabBarVisible()
     ├── sidebar    shelltree.Screen     — active when Tree.Visible
     ├── chat       shellchat.Screen     — active when chat visible
@@ -348,15 +365,15 @@ Rules:
   shell screen that passes its absolute slot rect to a child's `Layout`
   double-counts the origin (the shellchat double-origin bug: chat content
   shifted right/down, and long conversations painted over the input prompt
-  and status bar). Children must be laid out with `{X:0, Y:0, ...}` rects.
+  and footer). Children must be laid out with `{X:0, Y:0, ...}` rects.
   Guarded by `TestAgentView_ChatPaintsInsideSlot` /
   `TestAgentView_LongChatDoesNotOverflowInputOrStatus`.
-- **Chat gravity:** short chat content anchors to the BOTTOM of the viewport
-  (`ui.VirtualList.SetBottomGravity(true)`, set by `shellchat.New`) —
-  mirrors the renderer's `assembleOutput` gravity. Without it, short chats
-  painted at the top of the chat area with a huge gap above the input
-  prompt. Guarded by `TestAgentView_ShortChatAnchorsToBottom`.
-- **Input shell is clamped to the status bar:** `computeContentLayout`
+- **Chat gravity:** chat content starts at the TOP of the viewport, including
+  after resume. Bottom gravity created a variable blank region above short
+  resumed conversations and made the transcript appear detached from its tab.
+  Auto-scroll still follows the newest row once content exceeds the viewport.
+  Guarded by `TestAgentView_ShortChatStartsAtTopWithoutResumeGap`.
+- **Input shell is clamped to the footer:** `computeContentLayout`
   clamps `InputLineCount` to `height - 2 - 3 - deck - tabs - 1` (status +
   top + deck + tab bar, one chat row minimum). The old layer surfaces masked
   oversized inputs with the status surface's higher z-order; the root host
@@ -373,7 +390,7 @@ Rules:
   the white `PopupBg` fill landed at row `56 + 2*1 = 58` (the status
   separator) and col `SidebarW + 2*pad + 2`, erasing the right portion of
   the divider and leaving a white band over the status content ("input
-  pushes the right half of the bottom status and its separator out of
+  pushes the right half of the footer and its separator out of
   screen"). `TextField.Paint` already passed `originX, originY` correctly;
   `TextArea` was the lone offender. Guarded by
   `TestAgentView_TextAreaBgDoesNotOverwriteStatus`.
@@ -566,9 +583,9 @@ ownership are all retained. A stray click must never destroy work in flight.
   launcher / chat / editor must use `VisibleCount()`, otherwise a workspace
   whose agents are all minimized shows an empty chat instead of the
   launcher. `Count()` stays the true total for the aggregate status report and
-  the Agents rail badge. The bottom status remains system-level (active/idle
-  counts plus IDE health); provider waits and tool-specific lifecycle detail
-  live in the chat timeline.
+  the Agents rail badge. The footer remains a quiet system-level utility rail;
+  provider waits and tool-specific lifecycle detail live in the active header
+  and chat timeline.
 - Restoring: the Agents panel lists minimized agents with a `minimized`
   detail; activating a row calls `restoreAgent`. `switchToAgentView` unhides
   on its own so every path back works.
@@ -852,8 +869,29 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
 - Active chat lifecycle/thinking/tool/sub-agent/session rows use it with one
   stable semantic color. Never add local speed formulas, brightness/color
   pulses, braille frames, or `AttrBlink`; see `docs/guides/component-authoring.md`.
-- The bottom status bar is static, low-profile aggregate text. Only required
+- The footer is static, low-profile aggregate text. Only required
   user action (`⚠`) and failures (`✕`) receive attention signs.
+- Compact editor status retains current-line blame in the active header; full
+  blame identity and Copy blame commit stay available in Status Overview and
+  the editor context menu. Footer-left carries meaningful workspace-scoped LSP
+  health, project Problems, Git changes/tracking, and background work; it omits
+  zero counts but must not collapse to a placeholder when those facts exist.
+- Editor position uses compact `line:column` header geometry in the same muted
+  treatment as blame/uptime. With useful footer capacity, compact help may show
+  a small ranked navigation set (find, next tab, focus tree); it must remain
+  focus-aware and must not regress into the old Save/Undo/Redo inventory.
+- Agent header is muted telemetry only: model, `↑` latest reported input tokens
+  over that request's runtime context capacity/occupancy, `↓` cumulative agent
+  output, reported cache-hit rate, known estimated cost, and uptime. It never
+  changes `↑` into upload bytes or adds lifecycle/status text. Request age,
+  serialized payload and lifecycle belong in agent/tab details and Activity;
+  existing permission/question/safety surfaces remain authoritative.
+- Accounting request IDs use `math/rand/v2` for non-security uniqueness, never
+  runtime turn/step counters that restart after resume. UI and persistence share
+  `sessiondb.UsageRecordFromEvent`; preserve uint64 generations and per-field
+  reported availability. Provider omissions are not measured zeros. A revision
+  replaces the same request once and older revisions cannot overwrite it. Context
+  stays agent-local even when inspecting subtree/session totals.
 
 ### Dense resume and memory shutdown
 - Hydration publishes one normalized stopped transcript, never each growing
@@ -863,6 +901,50 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   cancels and joins them before the workspace DB closes, without launching new
   provider work. Durable turn mirrors finish, and pending extraction watermarks
   recover on next startup, including a resume of the same session.
+- Turn finalization writes its one batched transcript mirror synchronously on the
+  off-UI orchestrator goroutine before releasing the turn. Never register a
+  flush WaitGroup after observers may already be waiting; that races shutdown,
+  manual compaction, and persistence acceptance tests.
+
+### Context compaction and runtime continuity
+- Provider-reported request input is the context authority. Project the next
+  request from that baseline plus reported completion and semantic local deltas;
+  fallback estimation is `ceil(runes/4)` over canonical content, never stream
+  envelopes or repeated provider-item wrappers.
+- Completed provider replay metadata is canonicalized before estimation,
+  persistence, replay, and logging. OpenAI reasoning fragments merge once;
+  signed or encrypted protocol blocks remain byte-exact.
+- Established partial download stalls never replay a stochastic request. Commit
+  canonical partial assistant output and append one hidden continuation request;
+  if tool-call construction was interrupted, execute none of those calls, drop
+  malformed protocol fragments, and ask the model to issue complete calls from
+  scratch. Upload/header stalls may retry the original request because no model
+  output was accepted.
+- Automatic and manual compaction use the resolved Aeron category model for
+  four no-tools extraction stages over one immutable cached source (intent,
+  work, state, continuation). The retained boundary records that actual model.
+  Models emit terse plain text; Crude escapes and wraps the four bodies in one
+  deterministic XML checkpoint. Retry only the current stage, at most three
+  recoveries; cancellation never retries. Previous-generation archival,
+  checkpoint installation, and terminal operation state commit atomically.
+  The exact source context is durable before extraction starts, including
+  in-flight turn state. Failure, cancellation, or pre-commit crash leaves that
+  source authoritative.
+- Compaction presentation is one retained, operation-ID-keyed context-boundary
+  table with a dedicated theme surface and full-bleed top/bottom rules. It shows
+  real stage units, never fabricated completion percentages. Active, retrying,
+  completed, cancelled, failed, and resumed-interrupted forms share geometry;
+  generic turn cleanup must never consume these durable operation rows.
+- Message origin and visibility, not provider role or string prefixes,
+  distinguish human/BTW input, runtime context, continuation controls, child
+  wakes, assignments, and checkpoints. Runtime or memory data is never
+  attributed as human intent.
+- New-format resume is passive: restore exact per-agent active context and turn
+  state, mark interrupted work, issue zero provider calls, and restart zero
+  children. Existing development sessions have no compatibility path.
+- Root checkpoints preserve human intent and child-result ownership; child
+  checkpoints preserve assignment, policy, file ownership, evidence, and the
+  `write_report` obligation. Compaction requests never enter memory extraction.
 
 ### Sidebar list rows: resource vs command
 `ui.ListItem.Command` marks a button-like row (e.g. "New Terminal").

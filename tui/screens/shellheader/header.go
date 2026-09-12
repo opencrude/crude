@@ -2,8 +2,11 @@
 package shellheader
 
 import (
+	"sort"
 	"strings"
 	"time"
+
+	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/cell"
 	"crude/tui/rendering"
@@ -16,12 +19,32 @@ const ScreenID ui.ComponentID = "shellheader"
 
 // Projection is the presentation data for one header paint.
 type Projection struct {
-	ModelName string
-	YOLO      bool
-	StartTime time.Time
-	Usage     string // plain-text usage/readiness (from status UsageView)
-	ViewLabel string
-	Width     int
+	ModelName     string
+	YOLO          bool
+	StartTime     time.Time
+	Usage         string // plain-text usage/readiness (from status UsageView)
+	ViewLabel     string
+	Width         int
+	LeftSegments  []Segment
+	RightSegments []Segment
+}
+
+type Segment struct {
+	Text     string
+	Role     ui.SemanticColor
+	Action   string
+	TargetID string
+	Priority int
+}
+
+type ActionMsg struct {
+	Action   string
+	TargetID string
+}
+
+type segmentHit struct {
+	start, end     int
+	action, target string
 }
 
 type paintRun struct {
@@ -36,6 +59,7 @@ type Screen struct {
 	th     *theme.Theme
 	tokens *ui.TokenSet
 	proj   Projection
+	hits   []segmentHit
 }
 
 // nowFunc is a test seam for deterministic paint goldens (the header renders
@@ -86,35 +110,49 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	if b.Empty() || buf == nil {
 		return
 	}
-	pad := 0
-	if s.th != nil {
-		pad = s.th.Spacing.PadLR
-	}
 	width := b.W
 	if s.proj.Width > 0 {
 		width = s.proj.Width
 	}
-	innerW := width - pad*2
+	leftRail, rightRail := ui.ShellContentRail(s.tokens, width)
+	innerW := rightRail - leftRail
 	if innerW < 1 {
 		innerW = 1
 	}
 
-	left, right := s.buildRuns(innerW)
-	y := oy + b.Y
-	x := ox + b.X + pad
-	writeRuns(buf, x, y, left)
-	rightW := runsWidth(right)
-	writeRuns(buf, ox+b.X+pad+innerW-rightW, y, right)
+	if len(s.proj.LeftSegments) > 0 || len(s.proj.RightSegments) > 0 {
+		s.paintSegments(buf, ox+b.X+leftRail, oy+b.Y, innerW)
+	} else {
+		left, right := s.buildRuns(innerW)
+		y := oy + b.Y
+		x := ox + b.X + leftRail
+		writeRuns(buf, x, y, left)
+		rightW := runsWidth(right)
+		writeRuns(buf, ox+b.X+leftRail+innerW-rightW, y, right)
+	}
 
 	// Separator row
 	border := s.color(ui.ColorBorder)
-	sepY := y + 1
+	sepY := oy + b.Y + 1
 	if b.H >= 2 {
 		buf.WriteString(ox+b.X, sepY, strings.Repeat(string(ui.FirstRune(s.tokens.Glyphs().BorderH, '─')), max(0, b.W)), border, cell.NoColor, 0)
 	}
 }
 
-func (s *Screen) Handle(_ ui.EventContext, _ ui.Event) ui.EventResult { return ui.EventResult{} }
+func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+	if evt.Kind != ui.EventMouseClick || evt.MouseClick.Button != tea.MouseLeft || ctx.LocalY != 0 {
+		return ui.EventResult{}
+	}
+	left, _ := ui.ShellContentRail(s.tokens, s.Bounds().W)
+	x := ctx.LocalX - left
+	for _, hit := range s.hits {
+		if x >= hit.start && x < hit.end {
+			msg := ActionMsg{Action: hit.action, TargetID: hit.target}
+			return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return msg }}
+		}
+	}
+	return ui.EventResult{}
+}
 
 func (s *Screen) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleLabel, Label: "Header"}
@@ -125,6 +163,83 @@ func (s *Screen) color(role ui.SemanticColor) cell.Color {
 		return s.tokens.Color(role)
 	}
 	return cell.NoColor
+}
+
+func (s *Screen) paintSegments(buf *surface.CellBuffer, x, y, innerW int) {
+	s.hits = s.hits[:0]
+	leftBudget := max(10, innerW/3)
+	left := fitSegments(s.proj.LeftSegments, leftBudget, "  ")
+	leftW := segmentWidth(left, "  ")
+	right := fitSegments(s.proj.RightSegments, max(0, innerW-leftW-2), " · ")
+	rightW := segmentWidth(right, " · ")
+	s.paintSegmentGroup(buf, x, y, left, "  ", 0)
+	rightX := max(leftW+2, innerW-rightW)
+	s.paintSegmentGroup(buf, x+rightX, y, right, " · ", rightX)
+}
+
+func (s *Screen) paintSegmentGroup(buf *surface.CellBuffer, x, y int, segments []Segment, separator string, localX int) {
+	for index, segment := range segments {
+		if index > 0 {
+			buf.WriteString(x, y, separator, s.color(ui.ColorMuted), cell.NoColor, 0)
+			width := rendering.VisibleWidth(separator)
+			x, localX = x+width, localX+width
+		}
+		start := localX
+		attrs := cell.Attrs(0)
+		if segment.Role == ui.ColorAccent {
+			attrs = cell.AttrBold
+		}
+		buf.WriteString(x, y, segment.Text, s.color(segment.Role), cell.NoColor, attrs)
+		width := rendering.VisibleWidth(segment.Text)
+		x, localX = x+width, localX+width
+		if segment.Action != "" {
+			s.hits = append(s.hits, segmentHit{start: start, end: localX, action: segment.Action, target: segment.TargetID})
+		}
+	}
+}
+
+func fitSegments(segments []Segment, width int, separator string) []Segment {
+	if width <= 0 {
+		return nil
+	}
+	indices := make([]int, 0, len(segments))
+	for index, segment := range segments {
+		if segment.Text != "" {
+			indices = append(indices, index)
+		}
+	}
+	sort.SliceStable(indices, func(i, j int) bool {
+		return segments[indices[i]].Priority < segments[indices[j]].Priority
+	})
+	kept := make([]bool, len(segments))
+	used, count := 0, 0
+	for _, index := range indices {
+		needed := rendering.VisibleWidth(segments[index].Text)
+		if count > 0 {
+			needed += rendering.VisibleWidth(separator)
+		}
+		if used+needed <= width {
+			kept[index], used, count = true, used+needed, count+1
+		}
+	}
+	out := make([]Segment, 0, count)
+	for index, segment := range segments {
+		if kept[index] {
+			out = append(out, segment)
+		}
+	}
+	return out
+}
+
+func segmentWidth(segments []Segment, separator string) int {
+	width := 0
+	for index, segment := range segments {
+		if index > 0 {
+			width += rendering.VisibleWidth(separator)
+		}
+		width += rendering.VisibleWidth(segment.Text)
+	}
+	return width
 }
 
 func (s *Screen) buildRuns(innerW int) (left, right []paintRun) {

@@ -104,6 +104,10 @@ type Workspace struct {
 
 	// TermMgr owns in-app PTY sessions (the terminal multiplexer).
 	TermMgr *TerminalManager
+	// Status retains typed workspace-scoped lifecycle, activity, issue, and
+	// notification projections. Resource managers remain authoritative.
+	Status             *StatusCenter
+	registryCostWriter *registryCostWriter
 
 	// FocusStack manages keyboard focus as a stack. Pushing a floating
 	// window or clicking the tree pushes focus; closing pops back.
@@ -238,26 +242,28 @@ func NewWorkspace(
 	}
 
 	ws := &Workspace{
-		RootPath:        rootPath,
-		WorkspaceDir:    wsDir,
-		WorkspaceDB:     wsDB,
-		LocalHistory:    historyStore,
-		AgentMgr:        NewAgentManager(),
-		PaneMgr:         NewPaneManager(),
-		LSPMgr:          lspMgr,
-		ProjectSearch:   NewProjectSearchService(),
-		FileOps:         NewFileOpsService(rootPath, nil, lg),
-		Git:             NewGitService(rootPath),
-		TermMgr:         NewTerminalManager(rootPath),
-		FocusStack:      NewFocusStack(),
-		Sessions:        make([]*Session, 0),
-		SessionsByID:    make(map[string]*Session),
-		SessionsByAgent: make(map[string]*Session),
-		Logger:          lg,
-		ModelName:       modelName,
-		InitialSettings: initial,
-		Username:        username,
-		StartTime:       time.Now(),
+		RootPath:           rootPath,
+		WorkspaceDir:       wsDir,
+		WorkspaceDB:        wsDB,
+		LocalHistory:       historyStore,
+		AgentMgr:           NewAgentManager(),
+		PaneMgr:            NewPaneManager(),
+		LSPMgr:             lspMgr,
+		ProjectSearch:      NewProjectSearchService(),
+		FileOps:            NewFileOpsService(rootPath, nil, lg),
+		Git:                NewGitService(rootPath),
+		TermMgr:            NewTerminalManager(rootPath),
+		Status:             NewStatusCenter(workspaceSQLDB(wsDB), lg),
+		registryCostWriter: newRegistryCostWriter(wsDB, lg),
+		FocusStack:         NewFocusStack(),
+		Sessions:           make([]*Session, 0),
+		SessionsByID:       make(map[string]*Session),
+		SessionsByAgent:    make(map[string]*Session),
+		Logger:             lg,
+		ModelName:          modelName,
+		InitialSettings:    initial,
+		Username:           username,
+		StartTime:          time.Now(),
 	}
 	if historyStore != nil {
 		ws.HistoryService = NewLocalHistoryService(rootPath, historyStore, lg)
@@ -325,6 +331,14 @@ func (w *Workspace) Close() {
 	}
 	if w.LSPMgr != nil {
 		w.LSPMgr.Stop()
+	}
+	if w.Status != nil {
+		w.Status.Close()
+		w.Status = nil
+	}
+	if w.registryCostWriter != nil {
+		w.registryCostWriter.Close()
+		w.registryCostWriter = nil
 	}
 	if w.WorkspaceDB != nil {
 		_ = w.WorkspaceDB.Close()
@@ -536,6 +550,14 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 		w.LSPMgr.SetOnDiagnostics(nil)
 		w.LSPMgr.Stop()
 	}
+	if w.Status != nil {
+		w.Status.Close()
+		w.Status = nil
+	}
+	if w.registryCostWriter != nil {
+		w.registryCostWriter.Close()
+		w.registryCostWriter = nil
+	}
 	if w.WorkspaceDB != nil {
 		_ = w.WorkspaceDB.Close()
 		w.WorkspaceDB = nil
@@ -566,6 +588,21 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 	w.FileOps = NewFileOpsService(abs, w.eventBus, w.Logger)
 	w.Git = NewGitService(abs)
 	w.TermMgr = NewTerminalManager(abs)
+	w.Status = NewStatusCenter(workspaceSQLDB(wsDB), w.Logger)
+	w.registryCostWriter = newRegistryCostWriter(wsDB, w.Logger)
+	status := w.Status
+	bus := w.eventBus
+	go func() {
+		if err := status.Hydrate(); err != nil {
+			if w.Logger != nil {
+				w.Logger.Warn("STATUS", "notification_hydrate_failed", "error", err.Error())
+			}
+			return
+		}
+		if bus != nil {
+			bus.Send(StatusCenterHydratedMsg{})
+		}
+	}()
 	w.FocusStack = NewFocusStack()
 	w.registryErr = nil
 	if w.eventBus != nil {
@@ -577,6 +614,13 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 	_ = w.BackfillSessionRegistry()
 
 	return nil
+}
+
+func workspaceSQLDB(db *WorkspaceDB) *sql.DB {
+	if db == nil {
+		return nil
+	}
+	return db.DB
 }
 
 func validateProjectDirectory(path string) error {

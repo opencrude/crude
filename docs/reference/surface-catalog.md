@@ -21,10 +21,10 @@ only against this catalog.
 | Main tab bar | `tui/screens/shelltabs/`, `tui/ui/tabs.go`, `tui/viewmodel/tab_bar.go`, `tui/window/window.go` | Native Host paint into `mainTabBarSurf`; `Window` retains tab state only (no ANSI render); legacy `RenderTabBar` / `RenderVerticalSidebar` / `widgets/agenttabs.go` deleted. Agent tabs are created even while an editor is the painted view; background sync must not steal that editor. See [`docs/reference/interaction-matrix.md`](./interaction-matrix.md) New Agent. |
 | Chat input | `tui/screens/shellinput/`, `tui/input/`, `tui/ui/text_area.go` | Native Host paint into `mainInputSurf`; `ui.TextArea` + reference chips + `ui.List` slash popup; composer **and slash list** fill is shell `ColorBg` (not popup); no leading `❯`; no `components.TextInput` on chat path |
 | Session Panel Deck tabs | `tui/ui/tabs.go`, `tui/ui/panel_deck.go`, `tui/viewmodel/session_deck.go` | Per-session native component panel region below messages (settings, questions, confirmation, YOLO, jobs) — not terminals. Deck chrome, tabs (`TabsShell`), and docked forms share chat `ColorBg` and the compact single-line form density (`NewDockedForm`); floating windows keep `ColorPopupBg` and the spacious settings form. |
-| Terminal dock | `tui/screens/termdock/`, `tui/viewmodel/terminals.go` | Workspace-level tabbed PTY dock above the status bar; independent of session PanelDeck |
+| Terminal dock | `tui/screens/termdock/`, `tui/viewmodel/terminals.go` | Workspace-level tabbed PTY dock above the footer; independent of session PanelDeck |
 | In-app terminal (docked) | `tui/screens/shellterm/`, `tui/term/`, `workspace/terminal.go` | libghostty-vt PTY + VT paint in the workspace dock. See [`docs/reference/in-app-terminals.md`](./in-app-terminals.md) |
 | Legacy inline panel tabs | deleted | Replaced by native per-session PanelDeck tabs; not the floating OverlayHost |
-| Status bar | `tui/screens/shellstatus/`, `tui/viewmodel/view.go` | Native Host paint; static compact aggregate agent counts + IDE health + `ui.Hint` segments via ActionRegistry. Attention signs are limited to user action/errors; per-agent preparation/provider/tool lifecycle and animation stay in chat; legacy `widgets/statusbar.go` deleted |
+| Header + footer status | `tui/screens/shellheader/`, `tui/screens/shellfooter/`, `tui/viewmodel/status_overview.go` | Native Host paint on one shared token-derived text rail. Header owns active agent/editor/terminal facts plus branch, current-line blame, and uptime; footer owns LSP health, project Problems, Git changes/tracking, background attention, selective hints, Notices, and Help. Typed status/notifications live in `workspace.StatusCenter`; no rendering-owned agent state. |
 | Contextual help | `tui/ui/hint.go`, `tui/ui/key_chord.go`, `tui/viewmodel/view.go` | Registry-derived Hint/KeyChord segments (Phase 13 item 2) |
 | Main content surface | `tui/viewmodel/view.go` | Editor/chat/launcher compositor layer |
 
@@ -33,7 +33,7 @@ only against this catalog.
 | Surface | Primary files | Notes |
 |---------|---------------|-------|
 | Welcome launcher | `tui/screens/launcher/launcher.go`, `tui/viewmodel/launcher.go` | Native hero + two-column component tree with **resizable** `ui.SplitDivider`; **Phase 15:** `launcher_contract_test.go`, `viewmodel/launcher_keyboard_contract_test.go`; `focusTarget()` gated on `launcherHostVisible()` |
-| Editor | `tui/screens/shelleditor/`, `tui/editor/` | Native Host paint into `mainEditorSurf` via cell-buffer `Editor.Render` + `ScrollbarControl`; diagnostics gutter/undercurl + Git line-edit gutter (`+` added, `~` modified) + blame in shellstatus/context menu; search highlights; shellstatus owns title/cursor/blame/diag counts/actions; Find-in-Files preview uses cell-buffer `Editor.Render` adapter |
+| Editor | `tui/screens/shelleditor/`, `tui/editor/` | Native Host paint into `mainEditorSurf` via cell-buffer `Editor.Render` + `ScrollbarControl`; diagnostics gutter/undercurl + Git line-edit gutter (`+` added, `~` modified); active file/cursor/diagnostics and compact cursor blame project into the header, full blame and Copy blame commit remain in editor detail/context actions; Find-in-Files preview uses cell-buffer `Editor.Render` adapter |
 | Agent chat message list | `tui/screens/shellchat/`, `tui/chatprojection/` | **Phase 13.7/14:** Host + `VirtualList` + native gutters/`ScrollbarControl`; markdown/thinking bodies bridge glamour ANSI to native `PaintLine` spans at render time (`BridgeAnsiLine`) — no paint-time ANSI fallback; `tui/scrollbar` **DELETED**; contracts: `scroll_contract_test.go`, `pane_gutter_test.go`, `host_test.go`, `viewmodel/chat_keyboard_contract_test.go` |
 | Chat input | `tui/screens/shellinput/`, `tui/input/` | Same as persistent shell chat input |
 | Agent/thinking subpanes | `workspace/subpane.go`, `tui/viewmodel/subpane_render.go`, `tui/chatprojection/subpane_build.go`, `tui/screens/shellchat/` | Compact agent headers/tool lines/summaries are structured `PaintLine` rows (semantic tokens, no lipgloss/SGR in `subpane_render.go`); `shellchat` RowPainter paints them into `CellBuffer` + native nested gutter; thinking bodies use the same render-time `BridgeAnsiLine` bridge; per-pane `*ui.ScrollModel`; `Compose`/`LayoutRow` reserve gutter column + gap only |
@@ -91,7 +91,7 @@ Click-outside policies (verified in `tui/viewmodel/overlay_click_outside_contrac
 | `tui/form/` | `ui.Form` / `FormField` / `TextField` |
 | `tui/widgets/agenttabs.go` | `tui/screens/shelltabs` + `ui.Tabs` |
 | `tui/widgets/header.go` | `tui/screens/shellheader` |
-| `tui/widgets/statusbar.go` | `tui/screens/shellstatus` |
+| `tui/widgets/statusbar.go` | `tui/screens/shellheader` + `tui/screens/shellfooter` + Status Overview |
 | `tui/widgets/sessionpicker.go` | `tui/screens/sessionpicker` |
 | `tui/widgets/composer.go` | `tui/screens/composer` |
 | `tui/widgets/textoverlay.go` | `tui/screens/textoverlay` |

@@ -385,6 +385,32 @@ func TestOpenAIStandardMergesFragmentedReasoningDetailsOnReplay(t *testing.T) {
 	}
 }
 
+func TestCanonicalizeProviderItemsCollapsesReasoningFragments(t *testing.T) {
+	const fragments = 37884
+	items := make([]ProviderItem, 0, fragments)
+	for index := 0; index < fragments; index++ {
+		items = append(items, ProviderItem{
+			Standard: "openai",
+			Type:     "openai.reasoning_detail",
+			Data:     json.RawMessage(`{"type":"reasoning.text","text":"word","index":0}`),
+		})
+	}
+	canonical := CanonicalizeProviderItems(items)
+	if len(canonical) != 1 {
+		t.Fatalf("canonical items = %d, want 1", len(canonical))
+	}
+	var detail map[string]any
+	if err := json.Unmarshal(canonical[0].Data, &detail); err != nil {
+		t.Fatal(err)
+	}
+	if text, _ := detail["text"].(string); len(text) != 4*fragments {
+		t.Fatalf("merged text bytes = %d, want %d", len(text), 4*fragments)
+	}
+	if again := CanonicalizeProviderItems(canonical); len(again) != 1 || string(again[0].Data) != string(canonical[0].Data) {
+		t.Fatal("canonicalization is not idempotent")
+	}
+}
+
 func TestMergeOpenAIReasoningDetailsPreservesDistinctAndUnindexedEntries(t *testing.T) {
 	details := []json.RawMessage{
 		json.RawMessage(`{"type":"reasoning.text","text":"A","index":0}`),

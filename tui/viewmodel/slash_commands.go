@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	ttypes "crude/tui/types"
+	"crude/workspace"
 )
 
 type slashBackendResultMsg struct {
@@ -55,15 +56,29 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 	case "/compact":
 		m.Logger.Info("INPUT", "slash", "command", "compact")
 		if agentID == "" {
-			m.StatusBar.SetError("No active session")
+			m.Feedback.NotifyError("No active session")
 			break
 		}
 		if m.AgentTurnActive(agentID) {
-			m.StatusBar.SetError("Stop the active turn before compacting context")
+			m.Feedback.NotifyError("Stop the active turn before compacting context")
 			break
 		}
+		prepared, result := m.PrepareCompactForAgent(agentID)
+		if prepared.Run == nil {
+			if result.Error != "" {
+				m.Feedback.NotifyError(result.Error)
+			} else if result.Desc != "" {
+				m.Feedback.NotifyInfo(result.Desc)
+			}
+			break
+		}
+		_ = m.handleAgentDomainEvent(workspace.AgentEvent{Type: "context_compaction_started", AgentID: agentID, Data: map[string]any{
+			"request_id": prepared.OperationID, "trigger": "manual", "role": "root",
+			"provider_id": prepared.ProviderID, "model_id": prepared.ModelID,
+			"stage": 0, "completed_stages": 0, "stage_count": 4, "retry_limit": 3,
+		}})
 		return func() tea.Msg {
-			result := m.HandleCompactForAgent(agentID)
+			result := prepared.Run()
 			return slashBackendResultMsg{agentID: agentID, command: cmdName, compact: &result}
 		}
 	case "/debug-lsp":
@@ -88,7 +103,7 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 
 	case "/yolo":
 		if agentID == "" {
-			m.StatusBar.SetError("No active session")
+			m.Feedback.NotifyError("No active session")
 			break
 		}
 		if m.YoloForAgent(agentID) || m.OverlayState.IsYolo() {
@@ -98,7 +113,7 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 				scroll.SetAutoScroll(true)
 				scroll.StickToBottom()
 			}
-			m.StatusBar.SetInfo("YOLO mode disabled. Safety checks restored.")
+			m.Feedback.NotifyInfo("YOLO mode disabled. Safety checks restored.")
 			m.Logger.Info("SAFETY", "yolo_disabled", "source", "slash")
 			m.SetYoloForAgent(agentID, false)
 		} else {
@@ -108,19 +123,19 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 	case "/undo":
 		m.Logger.Info("INPUT", "slash", "command", cmd)
 		if agentID == "" {
-			m.StatusBar.SetError("No active session")
+			m.Feedback.NotifyError("No active session")
 			break
 		}
 		if m.AgentTurnActive(agentID) {
-			m.StatusBar.SetError("Stop the active turn before undoing file operations")
+			m.Feedback.NotifyError("Stop the active turn before undoing file operations")
 			break
 		}
 		return m.openLatestHistoryCmd()
 	case "/undo-n", "/undo-all":
-		m.StatusBar.SetError("Legacy destructive undo commands were removed. Use /undo to review message changes safely.")
+		m.Feedback.NotifyError("Legacy destructive undo commands were removed. Use /undo to review message changes safely.")
 	default:
 		m.Logger.Warn("INPUT", "slash_unknown", "cmd", cmdName)
-		m.StatusBar.SetError(fmt.Sprintf("Unknown command: %s (try /help)", cmdName))
+		m.Feedback.NotifyError(fmt.Sprintf("Unknown command: %s (try /help)", cmdName))
 	}
 
 	if len(cmds) > 0 {
@@ -133,25 +148,25 @@ func (m *App) handleSlashBackendResult(msg slashBackendResultMsg) {
 	if msg.undo != nil {
 		if msg.undo.Error != "" {
 			m.Logger.Error("JOURNAL", "slash_failed", "command", msg.command, "error", msg.undo.Error)
-			m.StatusBar.SetError(msg.undo.Error)
+			m.Feedback.NotifyError(msg.undo.Error)
 			return
 		}
 		if msg.undo.Desc != "" {
-			m.StatusBar.SetInfo(msg.undo.Desc)
+			m.Feedback.NotifyInfo(msg.undo.Desc)
 			m.appendAgentMessage(msg.agentID, ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: msg.undo.Desc, Time: time.Now()})
 		}
 		return
 	}
 	if msg.compact != nil {
+		if msg.compact.Cancelled {
+			m.Logger.Info("COMPACT", "slash_cancelled", "operation_id", msg.compact.OperationID)
+			return
+		}
 		if msg.compact.Error != "" {
 			m.Logger.Error("COMPACT", "slash_failed", "error", msg.compact.Error)
-			m.StatusBar.SetError(msg.compact.Error)
+			m.Feedback.NotifyError(msg.compact.Error)
 			return
 		}
 		m.Logger.Info("COMPACT", "slash_ok", "before", msg.compact.Before, "after", msg.compact.After)
-		m.StatusBar.SetInfo(msg.compact.Desc)
-		if msg.compact.Desc != "" {
-			m.appendAgentMessage(msg.agentID, ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: msg.compact.Desc, Time: time.Now()})
-		}
 	}
 }

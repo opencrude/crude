@@ -67,13 +67,71 @@ func TestLifecycleStatusProjectionTransformsInPlaceToTool(t *testing.T) {
 	}
 }
 
+func TestCompactionLifecycleUsesRetainedBoundaryTable(t *testing.T) {
+	renderer := NewRenderer(theme.DefaultDark())
+	renderer.SetSize(100, 20)
+	renderer.SetChatAreaBounds(0, 12)
+	msg := types.ChatMessage{
+		InternalID: "compact", Role: types.RoleStatus, LifecyclePhase: "compaction_extracting",
+		LifecycleOperationID: "compact-1", LifecycleStageName: "Capturing state",
+		LifecycleStageIndex: 3, LifecycleCompleted: 2, LifecycleStageCount: 4,
+		LifecycleBeforeTokens: 420000, Time: time.Now().Add(-2 * time.Second),
+	}
+	renderer.SyncMessages([]types.ChatMessage{msg}, 1)
+	rows, _, _ := renderer.ExportMessageRows(100)
+	joined := strings.Join(rows[0].Lines, "\n")
+	if len(rows[0].Lines) != 7 || !rows[0].ContextBoundary || rows[0].ContextBoundaryStart != 1 ||
+		!strings.Contains(joined, "Crude Aeron") || !strings.Contains(joined, "Compaction") ||
+		!strings.Contains(joined, "Capturing state") ||
+		!strings.Contains(joined, "■ ■ ● □") || !strings.Contains(joined, "420K") || !strings.Contains(joined, "esc cancel") {
+		t.Fatalf("compaction lifecycle = %q", joined)
+	}
+	if strings.Contains(joined, "●  Compaction") || strings.Contains(joined, "Context       ") || strings.Contains(joined, "Stage         ") {
+		t.Fatalf("compaction retained obsolete labels or two-column marker gap: %q", joined)
+	}
+	direct := renderCompactionMessage(msg, renderContext{innerW: 92, contentWidth: 76, legacyModelFallback: "aeron/model", spinFrame: 1})
+	for index := 1; index < len(direct.native)-1; index++ {
+		if got := direct.native[index].VisibleWidth(); got != 92 {
+			t.Fatalf("row %d width=%d want right column aligned with 92-column header", index, got)
+		}
+	}
+}
+
+func TestCompactionTerminalFormsKeepTableGeometry(t *testing.T) {
+	for _, phase := range []string{"compaction_completed", "compaction_cancelled", "compaction_failed", "compaction_interrupted"} {
+		msg := types.ChatMessage{
+			InternalID: "compact", Role: types.RoleStatus, LifecyclePhase: phase,
+			LifecycleOperationID: "compact-1", LifecycleStageName: "Capturing state",
+			LifecycleStageIndex: 3, LifecycleCompleted: 2, LifecycleStageCount: 4,
+			LifecycleBeforeTokens: 155955, LifecycleAfterTokens: 10476,
+			LifecycleTrigger: "manual", Content: "network connection stalled",
+		}
+		if phase == "compaction_completed" {
+			msg.LifecycleCompleted = 4
+			msg.LifecycleStageIndex = 4
+		}
+		msg.ModelID = "aeron/model"
+		rendered := renderCompactionMessage(msg, renderContext{contentWidth: 76, innerW: 92})
+		if len(rendered.native) != 6 || strings.TrimSpace(rendered.native[0].PlainText()) != "" || strings.TrimSpace(rendered.native[5].PlainText()) != "" {
+			t.Fatalf("%s geometry=%d lines=%q", phase, len(rendered.native), rendered.lines)
+		}
+		joined := strings.Join(rendered.lines, "\n")
+		stageVisible := strings.Contains(joined, "Capturing state") || phase == "compaction_completed" && strings.Contains(joined, "All extraction stages")
+		if !strings.Contains(joined, "Crude aeron/model") || !stageVisible ||
+			(!strings.Contains(joined, "original context retained") && phase != "compaction_completed") {
+			t.Fatalf("%s table=%q", phase, joined)
+		}
+	}
+}
+
 func TestActivityDotSemanticColorsStayStableAcrossBlinkPhases(t *testing.T) {
 	for _, frame := range []int{0, ui.ActivityBlinkPhaseMillis} {
-		preparing := renderLifecycleMessage(types.ChatMessage{LifecyclePhase: "preparing"}, frame).native[0]
+		ctx := renderContext{contentWidth: 80, spinFrame: frame}
+		preparing := renderLifecycleMessage(types.ChatMessage{LifecyclePhase: "preparing"}, ctx).native[0]
 		if preparing.Spans[1].Role != ui.ColorWarning {
 			t.Fatalf("preparing dot role at frame %d = %v", frame, preparing.Spans[1].Role)
 		}
-		waiting := renderLifecycleMessage(types.ChatMessage{LifecyclePhase: "waiting_provider"}, frame).native[0]
+		waiting := renderLifecycleMessage(types.ChatMessage{LifecyclePhase: "waiting_provider"}, ctx).native[0]
 		if waiting.Spans[1].Role != ui.ColorAccent {
 			t.Fatalf("waiting dot role at frame %d = %v", frame, waiting.Spans[1].Role)
 		}

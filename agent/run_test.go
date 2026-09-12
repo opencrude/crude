@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -25,6 +26,29 @@ func writeChatSSE(w http.ResponseWriter, content, finishReason string) {
 		content, finishReason,
 	)
 }
+
+type agentRoundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f agentRoundTripFunc) RoundTrip(request *http.Request) (*http.Response, error) {
+	return f(request)
+}
+
+type eventThenErrorBody struct {
+	payload []byte
+	offset  int
+	err     error
+}
+
+func (b *eventThenErrorBody) Read(dst []byte) (int, error) {
+	if b.offset < len(b.payload) {
+		n := copy(dst, b.payload[b.offset:])
+		b.offset += n
+		return n, nil
+	}
+	return 0, b.err
+}
+
+func (b *eventThenErrorBody) Close() error { return nil }
 
 func TestRunDoesNotSpinOnClosedBTWChannel(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -256,7 +280,8 @@ func TestRunAutomaticallyContinuesInterruptedTextStream(t *testing.T) {
 		if message.Role == "assistant" && message.ContentString() == "part one" {
 			sawPartial = true
 		}
-		if message.Role == "user" && strings.HasPrefix(message.ContentString(), "[SYSTEM CONTINUATION]") {
+		if message.Role == "user" && strings.HasPrefix(message.ContentString(), "<runtime_continuation ") &&
+			strings.Contains(message.ContentString(), "Continue the previous response") {
 			sawContinuation = true
 		}
 	}
@@ -275,10 +300,14 @@ func TestRunAutomaticallyContinuesInterruptedTextStream(t *testing.T) {
 	}
 }
 
-func TestRunDoesNotContinueInterruptedToolCall(t *testing.T) {
+func TestRunRecoversInterruptedToolCallWithoutExecuting(t *testing.T) {
 	var requests atomic.Int32
+	var toolExecutions atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		requests.Add(1)
+		if requests.Add(1) > 1 {
+			writeChatSSE(w, "Recovered safely.", "stop")
+			return
+		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		_, _ = fmt.Fprint(w,
 			`data: {"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"execute_command","arguments":"{\"command\":\"touch /tmp/never-run\""}}]}}]}`+"\n\n")
@@ -288,16 +317,20 @@ func TestRunDoesNotContinueInterruptedToolCall(t *testing.T) {
 	p := provider.FromPreset("openai-chat", "key", server.URL)
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
+	agent.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
+		toolExecutions.Add(1)
+		return tools.ToolResult{}, nil
+	}
 
 	var events []AgentEvent
 	agent.Run(context.Background(), nil, "system", func(event AgentEvent) {
 		events = append(events, event)
 	}, nil, nil, "", nil)
-	if requests.Load() != 1 {
-		t.Fatalf("requests = %d, want no continuation for a partial tool call", requests.Load())
+	if requests.Load() != 2 || toolExecutions.Load() != 0 {
+		t.Fatalf("requests = %d, tool executions = %d", requests.Load(), toolExecutions.Load())
 	}
-	if !hasEvent(events, "error") {
-		t.Fatalf("partial tool call must fail closed: %+v", events)
+	if hasEvent(events, "error") || !hasEvent(events, "retry") || !hasEvent(events, "done") {
+		t.Fatalf("partial tool call did not recover autonomously: %+v", events)
 	}
 	if !hasEvent(events, "tool_call_streaming") {
 		t.Fatalf("test stream did not decode a partial tool call: %+v", events)
@@ -406,6 +439,119 @@ func TestRunPersistsPartialResponseWhenCancelled(t *testing.T) {
 	}
 	if !found {
 		t.Fatalf("partial assistant response was not persisted: %+v", messages)
+	}
+}
+
+func TestRunContinuesAcceptedPartialDownloadStall(t *testing.T) {
+	var calls atomic.Int32
+	var requestBodies [][]byte
+	transport := agentRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		requestBodies = append(requestBodies, body)
+		response := &http.Response{
+			StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Request: request,
+		}
+		if calls.Add(1) == 1 {
+			response.Body = &eventThenErrorBody{
+				payload: []byte("data: {\"choices\":[{\"delta\":{\"content\":\"partial output\"}}]}\n\n"),
+				err:     &provider.ProgressStallError{Phase: "download", Bytes: 494141, Silence: 45 * time.Second},
+			}
+			return response, nil
+		}
+		response.Body = io.NopCloser(strings.NewReader("data: {\"choices\":[{\"delta\":{\"content\":\" continued\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"))
+		return response, nil
+	})
+	p := provider.FromPreset("openai-chat", "key", "https://stall.invalid")
+	p.SetDialSettings(provider.DialSettings{MaxAttempts: 1})
+	p.Model = "stall-continuation-model"
+	provider.SetModelContext(p.Model, 200_000)
+	a := newTestAgent(t, p, p.Model)
+	a.testHTTPClient = &http.Client{Transport: transport}
+	var events []AgentEvent
+	archive := a.Run(context.Background(), []provider.ChatMessage{provider.NewTextMessage("user", "do the work")}, "system", func(event AgentEvent) {
+		events = append(events, event)
+	}, nil, nil, "", nil)
+	if calls.Load() != 2 || len(requestBodies) != 2 {
+		t.Fatalf("requests = %d bodies=%d, want initial plus continuation", calls.Load(), len(requestBodies))
+	}
+	if !strings.Contains(string(requestBodies[1]), "partial output") || !strings.Contains(string(requestBodies[1]), "runtime_continuation") {
+		t.Fatalf("continuation request did not preserve partial prefix: %s", requestBodies[1])
+	}
+	var partial, continuation, completed bool
+	for _, message := range archive {
+		partial = partial || message.Role == "assistant" && message.ContentString() == "partial output"
+		continuation = continuation || message.EffectiveOrigin() == provider.OriginContinuation
+		completed = completed || message.Role == "assistant" && message.ContentString() == " continued"
+	}
+	if !partial || !continuation || !completed {
+		t.Fatalf("archive missing autonomous recovery: %#v", archive)
+	}
+	for _, event := range events {
+		if event.Type == "error" {
+			t.Fatalf("recoverable download stall emitted terminal error: %#v", event)
+		}
+	}
+}
+
+func TestRunRecoversPartialToolCallWithoutExecutingIt(t *testing.T) {
+	var calls atomic.Int32
+	var toolExecutions atomic.Int32
+	var requestBodies [][]byte
+	transport := agentRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		requestBodies = append(requestBodies, body)
+		response := &http.Response{
+			StatusCode: 200, Header: http.Header{"Content-Type": []string{"text/event-stream"}}, Request: request,
+		}
+		if calls.Add(1) == 1 {
+			response.Body = &eventThenErrorBody{
+				payload: []byte("data: {\"choices\":[{\"delta\":{\"content\":\"I will inspect.\",\"tool_calls\":[{\"index\":0,\"id\":\"call_partial\",\"type\":\"function\",\"function\":{\"name\":\"read_file\",\"arguments\":\"{\\\"path\\\":\"}}]}}]}\n\n"),
+				err:     &provider.ProgressStallError{Phase: "download", Bytes: 9000, Silence: 45 * time.Second},
+			}
+			return response, nil
+		}
+		response.Body = io.NopCloser(strings.NewReader("data: {\"choices\":[{\"delta\":{\"content\":\"Recovered safely.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"))
+		return response, nil
+	})
+	p := provider.FromPreset("openai-chat", "key", "https://stall.invalid")
+	p.SetDialSettings(provider.DialSettings{MaxAttempts: 1})
+	p.Model = "partial-tool-recovery-model"
+	provider.SetModelContext(p.Model, 200_000)
+	a := newTestAgent(t, p, p.Model)
+	a.testHTTPClient = &http.Client{Transport: transport}
+	a.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
+		toolExecutions.Add(1)
+		return tools.ToolResult{}, nil
+	}
+	var emittedError bool
+	var discardedTool bool
+	archive := a.Run(context.Background(), []provider.ChatMessage{provider.NewTextMessage("user", "inspect")}, "system", func(event AgentEvent) {
+		emittedError = emittedError || event.Type == "error"
+		if event.Type == "tool_result" {
+			data, _ := event.Data.(map[string]any)
+			discardedTool = data["tool_id"] == "call_partial" && data["error"] == "true"
+		}
+	}, nil, nil, "", nil)
+	if calls.Load() != 2 || toolExecutions.Load() != 0 || emittedError || !discardedTool {
+		t.Fatalf("requests=%d tool executions=%d emitted error=%v discarded=%v", calls.Load(), toolExecutions.Load(), emittedError, discardedTool)
+	}
+	second := string(requestBodies[1])
+	if !strings.Contains(second, "I will inspect.") || !strings.Contains(second, "partial_tool_call") ||
+		strings.Contains(second, "call_partial") {
+		t.Fatalf("unsafe partial tool state in continuation request: %s", second)
+	}
+	var recovered bool
+	for _, message := range archive {
+		recovered = recovered || message.Role == "assistant" && message.ContentString() == "Recovered safely."
+	}
+	if !recovered {
+		t.Fatalf("recovery response missing from archive: %#v", archive)
 	}
 }
 

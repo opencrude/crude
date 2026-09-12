@@ -274,13 +274,13 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			switch match.ID {
 			case "file.save":
 				if err := m.EditorState.Editor.Save(); err != nil {
-					if m.StatusBar != nil {
-						m.StatusBar.SetError(fmt.Sprintf("Save failed: %v", err))
+					if m.Feedback != nil {
+						m.Feedback.NotifyError(fmt.Sprintf("Save failed: %v", err))
 					}
 					return m, nil
 				}
-				if m.StatusBar != nil {
-					m.StatusBar.SetInfo("Saved")
+				if m.Feedback != nil {
+					m.Feedback.NotifyInfo("Saved")
 				}
 				return m, m.refreshEditorGitCmd()
 			case "edit.undo":
@@ -301,7 +301,7 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if msg.Code == tea.KeyEsc {
 		if m.LSPPopup.RenameArmed {
 			m.LSPPopup.RenameArmed = false
-			m.StatusBar.SetInfo("Rename cancelled")
+			m.Feedback.NotifyInfo("Rename cancelled")
 			return m, nil
 		}
 		if m.LSPPopup.ReferencesID != "" {
@@ -670,15 +670,15 @@ func (m *App) handleInputEvent(evt any) []tea.Cmd {
 		cmds = append(cmds, m.recordPrompt(e.Text))
 		if agentID := m.activeAgentTabID(); agentID != "" {
 			cmds = append(cmds, m.submitInput(agentID, e.Text, e.ReferenceIDs))
-		} else if m.StatusBar != nil {
-			m.StatusBar.SetError("Message was not sent: no active agent tab")
+		} else if m.Feedback != nil {
+			m.Feedback.NotifyError("Message was not sent: no active agent tab")
 		}
 	case input.BtwSubmitEvent:
 		cmds = append(cmds, m.recordPrompt(e.Text))
 		if agentID := m.activeAgentTabID(); agentID != "" {
 			cmds = append(cmds, m.submitBtw(agentID, e.Text, e.ReferenceIDs))
-		} else if m.StatusBar != nil {
-			m.StatusBar.SetError("Note was not sent: no active agent tab")
+		} else if m.Feedback != nil {
+			m.Feedback.NotifyError("Note was not sent: no active agent tab")
 		}
 	case input.SlashCommandEvent:
 		cmds = append(cmds, m.executeSlashCommand(e.Command))
@@ -865,7 +865,7 @@ func (m *App) requestDefinitionCmd() tea.Cmd {
 	line, col := m.EditorState.Editor.CursorLine(), m.EditorState.Editor.CursorCol()
 	conn, status, _ := m.LSPMgr.Status()
 	if !conn || status != editor.LSPConnected {
-		m.StatusBar.SetInfo("LSP not ready")
+		m.Feedback.NotifyInfo("LSP not ready")
 		return nil
 	}
 	lspMgr := m.LSPMgr
@@ -885,7 +885,7 @@ func (m *App) requestReferencesCmd() tea.Cmd {
 	line, col := m.EditorState.Editor.CursorLine(), m.EditorState.Editor.CursorCol()
 	conn, status, _ := m.LSPMgr.Status()
 	if !conn || status != editor.LSPConnected {
-		m.StatusBar.SetInfo("LSP not ready")
+		m.Feedback.NotifyInfo("LSP not ready")
 		return nil
 	}
 	lspMgr := m.LSPMgr
@@ -905,7 +905,7 @@ func (m *App) requestDocumentSymbolsCmd() tea.Cmd {
 	filePath := m.EditorState.Editor.FilePath()
 	conn, status, _ := m.LSPMgr.Status()
 	if !conn || status != editor.LSPConnected {
-		m.StatusBar.SetInfo("LSP not ready")
+		m.Feedback.NotifyInfo("LSP not ready")
 		return nil
 	}
 	lspMgr := m.LSPMgr
@@ -925,14 +925,14 @@ func (m *App) startRenameCmd() tea.Cmd {
 	}
 	conn, status, _ := m.LSPMgr.Status()
 	if !conn || status != editor.LSPConnected {
-		m.StatusBar.SetInfo("LSP not ready")
+		m.Feedback.NotifyInfo("LSP not ready")
 		return nil
 	}
 	// Arm rename mode: the next text submitted through the input is
 	// treated as the new symbol name. Esc cancels. The status bar
 	// explains what's happening.
 	m.LSPPopup.RenameArmed = true
-	m.StatusBar.SetInfo("Rename: type new name and press Enter (Esc to cancel)")
+	m.Feedback.NotifyInfo("Rename: type new name and press Enter (Esc to cancel)")
 	return nil
 }
 
@@ -962,7 +962,7 @@ func (m *App) requestCompletionCmd() tea.Cmd {
 	line, col := m.EditorState.Editor.CursorLine(), m.EditorState.Editor.CursorCol()
 	conn, status, _ := m.LSPMgr.Status()
 	if !conn || status != editor.LSPConnected {
-		m.StatusBar.SetInfo("LSP not ready")
+		m.Feedback.NotifyInfo("LSP not ready")
 		return nil
 	}
 	lspMgr := m.LSPMgr
@@ -981,17 +981,17 @@ func (m *App) requestCompletionCmd() tea.Cmd {
 // total count.
 func (m *App) handleDefinitionResult(msg lspDefinitionResultMsg) {
 	if len(msg.locations) == 0 {
-		m.StatusBar.SetInfo("No definition found")
+		m.Feedback.NotifyInfo("No definition found")
 		return
 	}
 	loc := msg.locations[0]
 	if loc.Path == "" {
-		m.StatusBar.SetInfo("Definition in unindexed location")
+		m.Feedback.NotifyInfo("Definition in unindexed location")
 		return
 	}
 	if loc.Path != m.EditorState.Editor.FilePath() {
 		if err := m.openFileInEditor(loc.Path); err != nil {
-			m.StatusBar.SetError("Cannot open " + loc.Path)
+			m.Feedback.NotifyError("Cannot open " + loc.Path)
 			return
 		}
 	}
@@ -1000,7 +1000,7 @@ func (m *App) handleDefinitionResult(msg lspDefinitionResultMsg) {
 	layout := m.computeLayout()
 	m.EditorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
 	if len(msg.locations) > 1 {
-		m.StatusBar.SetInfo(fmt.Sprintf("Definition: %d locations", len(msg.locations)))
+		m.Feedback.NotifyInfo(fmt.Sprintf("Definition: %d locations", len(msg.locations)))
 	}
 }
 
@@ -1008,7 +1008,7 @@ func (m *App) handleDefinitionResult(msg lspDefinitionResultMsg) {
 // user presses Enter on a row, the editor jumps to that location.
 func (m *App) handleReferencesResult(msg lspReferencesResultMsg) {
 	if len(msg.locations) == 0 {
-		m.StatusBar.SetInfo("No references found")
+		m.Feedback.NotifyInfo("No references found")
 		return
 	}
 	rows := make([]refRow, 0, len(msg.locations))
@@ -1026,13 +1026,13 @@ func (m *App) handleReferencesResult(msg lspReferencesResultMsg) {
 // opens it. Empty result closes the outline.
 func (m *App) handleDocumentSymbolsResult(msg lspDocumentSymbolsResultMsg) {
 	if len(msg.symbols) == 0 {
-		m.StatusBar.SetInfo("No symbols in file")
+		m.Feedback.NotifyInfo("No symbols in file")
 		m.LSPPopup.OutlineOpen = false
 		m.closeOutlinePopup()
 		return
 	}
 	m.LSPPopup.OutlineOpen = true
-	m.StatusBar.SetInfo(fmt.Sprintf("Outline: %d symbols", countSymbols(msg.symbols)))
+	m.Feedback.NotifyInfo(fmt.Sprintf("Outline: %d symbols", countSymbols(msg.symbols)))
 	m.showOutlinePopup(msg.symbols)
 }
 
@@ -1041,7 +1041,7 @@ func (m *App) handleDocumentSymbolsResult(msg lspDocumentSymbolsResultMsg) {
 // selected item's text at the cursor.
 func (m *App) handleCompletionResult(msg lspCompletionResultMsg) {
 	if len(msg.items) == 0 {
-		m.StatusBar.SetInfo("No completions")
+		m.Feedback.NotifyInfo("No completions")
 		return
 	}
 	// Limit to a reasonable number of items for the popup.
@@ -1059,12 +1059,12 @@ func (m *App) handleCompletionResult(msg lspCompletionResultMsg) {
 // form is left as a TODO; the rename UX is still useful without it.
 func (m *App) handleRenameResult(msg lspRenameResultMsg) {
 	if msg.err != nil {
-		m.StatusBar.SetError("Rename failed: " + msg.err.Error())
+		m.Feedback.NotifyError("Rename failed: " + msg.err.Error())
 		return
 	}
 	edit, ok := msg.edit.(*protocol.WorkspaceEdit)
 	if !ok || edit == nil {
-		m.StatusBar.SetInfo("Rename: no changes")
+		m.Feedback.NotifyInfo("Rename: no changes")
 		return
 	}
 
@@ -1092,14 +1092,14 @@ func (m *App) handleRenameResult(msg lspRenameResultMsg) {
 	}
 
 	if len(fileEdits) == 0 {
-		m.StatusBar.SetInfo("Rename: no changes applied")
+		m.Feedback.NotifyInfo("Rename: no changes applied")
 		return
 	}
 
 	// Apply all edits through the workspace service.
 	result := m.ApplyWorkspaceEdit(fileEdits)
 	if !result.Succeeded() {
-		m.StatusBar.SetError("Rename: " + result.Error())
+		m.Feedback.NotifyError("Rename: " + result.Error())
 		return
 	}
 
@@ -1112,7 +1112,7 @@ func (m *App) handleRenameResult(msg lspRenameResultMsg) {
 		}
 	}
 
-	m.StatusBar.SetInfo(fmt.Sprintf("Renamed in %d file%s", len(fileEdits), pluralFile(len(fileEdits))))
+	m.Feedback.NotifyInfo(fmt.Sprintf("Renamed in %d file%s", len(fileEdits), pluralFile(len(fileEdits))))
 }
 
 // countSymbols returns the total number of symbols in a tree, including
@@ -1390,7 +1390,7 @@ func (m *App) jumpToReference(r refRow) {
 	}
 	if r.File != m.EditorState.Editor.FilePath() {
 		if err := m.openFileInEditor(r.File); err != nil {
-			m.StatusBar.SetError("Cannot open " + r.File)
+			m.Feedback.NotifyError("Cannot open " + r.File)
 			return
 		}
 	}

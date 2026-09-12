@@ -322,9 +322,14 @@ func renderErrorMessage(msg types.ChatMessage, ctx renderContext) messageLines {
 	return ml
 }
 
-func renderLifecycleMessage(msg types.ChatMessage, spinFrame int) messageLines {
+func renderLifecycleMessage(msg types.ChatMessage, ctx renderContext) messageLines {
+	if msg.LifecycleOperationID != "" || strings.HasPrefix(msg.LifecyclePhase, "compaction_") {
+		return renderCompactionMessage(msg, ctx)
+	}
 	label := msg.Content
 	role := ui.ColorAccent2
+	marker := ui.ActivityDot(ctx.spinFrame)
+	active := true
 	switch msg.LifecyclePhase {
 	case "preparing":
 		label = "Getting next turn ready · ↑ "
@@ -351,16 +356,195 @@ func renderLifecycleMessage(msg types.ChatMessage, spinFrame int) messageLines {
 			}
 		}
 		role = ui.ColorAccent
+	case "compacting":
+		label = "Compacting conversation"
+		if msg.LifecycleBeforeTokens > 0 {
+			label += " · " + rendering.FormatTokens(msg.LifecycleBeforeTokens)
+		}
+		if !msg.Time.IsZero() {
+			if elapsed := time.Since(msg.Time); elapsed >= time.Second {
+				label += fmt.Sprintf(" · %ds", int(elapsed.Seconds()))
+			}
+		}
+		label += " · esc to cancel"
+		role = ui.ColorAccent
+	case "compacted":
+		label = "Context compacted"
+		if msg.LifecycleBeforeTokens > 0 && msg.LifecycleAfterTokens > 0 {
+			label += " · " + rendering.FormatTokens(msg.LifecycleBeforeTokens) + " → ~" + rendering.FormatTokens(msg.LifecycleAfterTokens)
+		}
+		role = ui.ColorSuccess
+		marker = "✓"
+		active = false
+	case "compaction_failed":
+		label = "Compaction failed · original context retained"
+		role = ui.ColorError
+		marker = "✕"
+		active = false
 	case "cancelling":
 		label = "Stopping turn"
 		role = ui.ColorWarning
 	}
 	line := PaintLine{Spans: []RowSpan{
 		{Text: "│ ", Role: ui.ColorMuted},
-		{Text: ui.ActivityDot(spinFrame) + " ", Role: role},
+		{Text: marker + " ", Role: role},
 		{Text: label, Role: ui.ColorMuted},
 	}}
-	return messageLines{lines: []string{line.PlainText()}, native: []PaintLine{line}, frameSensitive: true}
+	return messageLines{lines: []string{line.PlainText()}, native: []PaintLine{line}, frameSensitive: active}
+}
+
+func renderCompactionMessage(msg types.ChatMessage, ctx renderContext) messageLines {
+	active := true
+	state, marker, stateRole := "Compaction", ui.ActivityDot(ctx.spinFrame), ui.ColorAccent2
+	stateMeta := "active"
+	stage := strings.TrimSpace(msg.LifecycleStageName)
+	if stage == "" {
+		stage = "Preparing"
+	}
+	switch msg.LifecyclePhase {
+	case "compaction_retrying":
+		stateMeta = "recovering"
+	case "compaction_committing":
+		stage = "Saving checkpoint"
+		stateMeta = "committing"
+	case "compaction_cancelling":
+		stage = "Stopping safely"
+		stateMeta = "cancelling"
+		stateRole = ui.ColorWarning
+	case "compaction_completed":
+		active = false
+		state, marker, stateRole, stateMeta = "Compacted", "✓", ui.ColorSuccess, "complete"
+	case "compaction_cancelled":
+		active = false
+		state, marker, stateRole, stateMeta = "Cancelled", "■", ui.ColorMuted, "stopped"
+	case "compaction_failed":
+		active = false
+		state, marker, stateRole, stateMeta = "Failed", "✕", ui.ColorError, "stopped"
+	case "compaction_interrupted":
+		active = false
+		state, marker, stateRole, stateMeta = "Interrupted", "⚠", ui.ColorWarning, "restart"
+	}
+	if msg.LifecycleTrigger != "" {
+		stateMeta += " · " + msg.LifecycleTrigger
+	}
+
+	stageCount := msg.LifecycleStageCount
+	if stageCount <= 0 {
+		stageCount = 4
+	}
+	completed := max(0, min(stageCount, msg.LifecycleCompleted))
+	bar := compactionProgressBar(completed, stageCount, active && msg.LifecycleStageIndex > 0 && msg.LifecyclePhase != "compaction_committing")
+	progress := fmt.Sprintf("%s  %d / %d", bar, completed, stageCount)
+
+	elapsed := ""
+	if active && !msg.Time.IsZero() {
+		if duration := time.Since(msg.Time); duration >= time.Second {
+			elapsed = fmt.Sprintf("%ds", int(duration.Seconds()))
+		}
+	}
+	modelName := msg.ModelID
+	if modelName == "" {
+		modelName = ctx.legacyModelFallback
+	}
+	if modelName == "" {
+		modelName = "Aeron"
+	}
+	header := buildAssistantHeader(modelName, false, rendering.FormatTimeLabel(msg.Time), ctx.innerW, false)
+	rows := []PaintLine{{}, header}
+	rows = append(rows, lifecycleBoundaryLine(ctx.innerW, marker+" "+state, stateMeta, stateRole))
+	if active {
+		stagePosition := msg.LifecycleStageIndex
+		if stagePosition == 0 {
+			stagePosition = completed
+		}
+		rows = append(rows, lifecycleBoundaryLine(ctx.innerW, stage, fmt.Sprintf("%s  %d / %d", bar, stagePosition, stageCount), ui.ColorFg))
+		trailer := "esc cancel"
+		if elapsed != "" {
+			trailer = elapsed + " · " + trailer
+		}
+		if msg.LifecyclePhase == "compaction_retrying" {
+			retryLimit := msg.LifecycleRetryLimit
+			if retryLimit <= 0 {
+				retryLimit = 3
+			}
+			trailer = fmt.Sprintf("retry %d / %d · %s", msg.LifecycleRetryAttempt, retryLimit, trailer)
+		}
+		source := "Calculating"
+		if msg.LifecycleBeforeTokens > 0 {
+			source = rendering.FormatTokens(msg.LifecycleBeforeTokens) + " source · full history retained"
+		}
+		rows = append(rows, lifecycleBoundaryLine(ctx.innerW, source, trailer, ui.ColorMuted))
+	} else if msg.LifecyclePhase == "compaction_completed" {
+		tokens := rendering.FormatTokens(msg.LifecycleBeforeTokens)
+		if msg.LifecycleAfterTokens > 0 {
+			tokens += " → ~" + rendering.FormatTokens(msg.LifecycleAfterTokens)
+		}
+		rows = append(rows, lifecycleBoundaryLine(ctx.innerW, "All extraction stages", progress, ui.ColorFg))
+		rows = append(rows, lifecycleBoundaryLine(ctx.innerW, tokens+" · full transcript retained", "checkpoint active", ui.ColorMuted))
+	} else {
+		rows = append(rows, lifecycleBoundaryLine(ctx.innerW, stage, progress, ui.ColorFg))
+		detail := "Stopped before context commit"
+		switch msg.LifecyclePhase {
+		case "compaction_failed":
+			if strings.TrimSpace(msg.Content) != "" {
+				detail = msg.Content
+			} else {
+				detail = "Recovery attempts exhausted"
+			}
+		case "compaction_interrupted":
+			detail = "App stopped before atomic commit"
+		}
+		rows = append(rows, lifecycleBoundaryLine(ctx.innerW, detail, "original context retained", ui.ColorMuted))
+	}
+	rows = append(rows, PaintLine{})
+	lines := make([]string, len(rows))
+	for i := range rows {
+		lines[i] = rows[i].PlainText()
+	}
+	return messageLines{lines: lines, native: rows, frameSensitive: active}
+}
+
+func lifecycleBoundaryLine(width int, value, trailer string, valueRole ui.SemanticColor) PaintLine {
+	if width < 1 {
+		return PaintLine{}
+	}
+	trailerW := rendering.VisibleWidth(trailer)
+	if trailer != "" && trailerW+ui.TableMinGap+4 > width {
+		return PaintLine{Spans: []RowSpan{{Text: rendering.TruncateVisual(value, width, "…"), Role: valueRole}}}
+	}
+	valueW := width
+	if trailer != "" {
+		valueW -= trailerW + ui.TableMinGap
+	}
+	value = rendering.TruncateVisual(value, max(1, valueW), "…")
+	used := rendering.VisibleWidth(value)
+	gap := 0
+	if trailer != "" {
+		gap = max(ui.TableMinGap, width-used-trailerW)
+	}
+	spans := []RowSpan{{Text: value, Role: valueRole}}
+	if trailer != "" && used+gap+trailerW <= width {
+		spans = append(spans, RowSpan{Text: strings.Repeat(" ", gap) + trailer, Role: ui.ColorMuted})
+	}
+	return PaintLine{Spans: spans}
+}
+
+func compactionProgressBar(completed, total int, current bool) string {
+	if total <= 0 {
+		return ""
+	}
+	parts := make([]string, total)
+	for index := range parts {
+		switch {
+		case index < completed:
+			parts[index] = "■"
+		case current && index == completed:
+			parts[index] = "●"
+		default:
+			parts[index] = "□"
+		}
+	}
+	return strings.Join(parts, " ")
 }
 
 func renderMessageContent(msg types.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {
@@ -379,7 +563,7 @@ func renderMessageContent(msg types.ChatMessage, ctx renderContext, suppressHead
 	case types.RoleError:
 		return renderErrorMessage(msg, ctx)
 	case types.RoleStatus:
-		return renderLifecycleMessage(msg, ctx.spinFrame)
+		return renderLifecycleMessage(msg, ctx)
 	case types.RoleAssignment:
 		return renderAssignmentMessage(msg, ctx, suppressHeader)
 	default:

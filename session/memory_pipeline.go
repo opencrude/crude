@@ -60,7 +60,7 @@ func (j *memoryJobState) begin() (context.Context, bool) {
 // memories. Called from finalizeTurn; returns immediately.
 func (s *Session) afterTurnMemory(turn int, turnMsgs []provider.ChatMessage, finalContent string) {
 	store := s.MemoryStore()
-	if store == nil || turn <= 0 {
+	if store == nil || turn <= 0 || !containsHumanInput(turnMsgs) {
 		return
 	}
 	record := turnRecordFromMessages(s.sessionID, turn, turnMsgs, finalContent)
@@ -79,6 +79,15 @@ func (s *Session) afterTurnMemory(turn int, turnMsgs []provider.ChatMessage, fin
 		// mirror write landed.
 		s.maybeExtractMemories(turn)
 	}()
+}
+
+func containsHumanInput(messages []provider.ChatMessage) bool {
+	for _, message := range messages {
+		if message.IsGenuineUserInput() {
+			return true
+		}
+	}
+	return false
 }
 
 // turnRecordFromMessages condenses one turn into a history mirror row.

@@ -130,6 +130,36 @@ func migrateWorkspaceSchema(db *sql.DB) error {
 		return err
 	}
 
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS workspace_notifications (
+			id TEXT PRIMARY KEY,
+			dedup_key TEXT NOT NULL DEFAULT '',
+			owner_kind TEXT NOT NULL DEFAULT '',
+			owner_id TEXT NOT NULL DEFAULT '',
+			session_id TEXT NOT NULL DEFAULT '',
+			parent_id TEXT NOT NULL DEFAULT '',
+			severity INTEGER NOT NULL DEFAULT 0,
+			source TEXT NOT NULL DEFAULT '',
+			summary TEXT NOT NULL,
+			detail TEXT NOT NULL DEFAULT '',
+			created_at INTEGER NOT NULL,
+			updated_at INTEGER NOT NULL,
+			resolved_at INTEGER NOT NULL DEFAULT 0,
+			occurrences INTEGER NOT NULL DEFAULT 1,
+			is_read INTEGER NOT NULL DEFAULT 0,
+			dismissed INTEGER NOT NULL DEFAULT 0,
+			transient INTEGER NOT NULL DEFAULT 0,
+			actions_json TEXT NOT NULL DEFAULT '[]'
+		);
+		CREATE INDEX IF NOT EXISTS idx_workspace_notifications_recent
+			ON workspace_notifications(updated_at DESC);
+		CREATE INDEX IF NOT EXISTS idx_workspace_notifications_dedup
+			ON workspace_notifications(dedup_key, resolved_at, dismissed);
+	`)
+	if err != nil {
+		return err
+	}
+
 	return ensureWorkspaceSessionColumns(db)
 }
 

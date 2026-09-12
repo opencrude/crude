@@ -62,7 +62,7 @@ func (m *App) dirtyPromptSave() {
 	// Save (synchronous). The editor's Save() returns an error; on
 	// failure, surface it in the status bar and keep the popup open.
 	if err := tab.Editor.Save(); err != nil {
-		m.StatusBar.SetError(fmt.Sprintf("Save failed: %v", err))
+		m.Feedback.NotifyError(fmt.Sprintf("Save failed: %v", err))
 		return
 	}
 	// Saved successfully — close the tab.

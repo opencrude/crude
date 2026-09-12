@@ -163,6 +163,18 @@ func sameMessageData(current, incoming *types.ChatMessage) bool {
 		current.LifecycleProvider == incoming.LifecycleProvider &&
 		current.LifecycleUploadedBytes == incoming.LifecycleUploadedBytes &&
 		current.LifecycleTotalBytes == incoming.LifecycleTotalBytes &&
+		current.LifecycleBeforeTokens == incoming.LifecycleBeforeTokens &&
+		current.LifecycleAfterTokens == incoming.LifecycleAfterTokens &&
+		current.LifecycleOperationID == incoming.LifecycleOperationID &&
+		current.LifecycleTrigger == incoming.LifecycleTrigger &&
+		current.LifecycleStageName == incoming.LifecycleStageName &&
+		current.LifecycleStageIndex == incoming.LifecycleStageIndex &&
+		current.LifecycleCompleted == incoming.LifecycleCompleted &&
+		current.LifecycleStageCount == incoming.LifecycleStageCount &&
+		current.LifecycleRetryAttempt == incoming.LifecycleRetryAttempt &&
+		current.LifecycleRetryLimit == incoming.LifecycleRetryLimit &&
+		current.LifecycleContextWindow == incoming.LifecycleContextWindow &&
+		current.PendingBtw == incoming.PendingBtw &&
 		current.Incomplete == incoming.Incomplete &&
 		current.IncompleteReason == incoming.IncompleteReason &&
 		current.SubPaneID == incoming.SubPaneID &&

@@ -281,6 +281,100 @@ func TestMarkAllThinkingInterruptedRecordsDuration(t *testing.T) {
 	}
 }
 
+func TestCompactionOperationRowsSurviveTurnCleanupAndRemainIDScoped(t *testing.T) {
+	conversation := NewConversation()
+	conversation.UpdateTurnStatus(TurnStatus{
+		Phase: "compaction_extracting", OperationID: "compact-a", StageName: "Capturing state",
+		StageIndex: 3, Completed: 2, StageCount: 4,
+	})
+	conversation.UpdateTurnStatus(TurnStatus{Phase: "preparing"})
+	conversation.ClearTurnStatus()
+	messages := conversation.Messages()
+	if len(messages) != 1 || messages[0].LifecycleOperationID != "compact-a" || messages[0].LifecycleStageName != "Capturing state" {
+		t.Fatalf("durable operation row was consumed with turn status: %+v", messages)
+	}
+	conversation.UpdateTurnStatus(TurnStatus{
+		Phase: "compaction_completed", OperationID: "compact-a", Completed: 4, StageCount: 4,
+		BeforeTokens: 155955, AfterTokens: 10476,
+	})
+	conversation.UpdateTurnStatus(TurnStatus{
+		Phase: "compaction_preparing", OperationID: "compact-b", StageCount: 4,
+	})
+	messages = conversation.Messages()
+	if len(messages) != 2 || messages[0].LifecyclePhase != "compaction_completed" || messages[1].LifecycleOperationID != "compact-b" {
+		t.Fatalf("operation IDs did not retain independent rows: %+v", messages)
+	}
+}
+
+func TestAgentStateCompactionRetryAndCancellationRemainOneQuietBoundary(t *testing.T) {
+	state := NewAgentState("agent", nil, nil)
+	handle := func(event AgentEvent) {
+		state.HandleEvent(event, nil, ignoreStatus, ignoreThinking, func() {}, ignoreConfirm, func(string) {}, func() {})
+	}
+	base := map[string]any{
+		"request_id": "compact-1", "trigger": "manual", "role": "root",
+		"stage": 2, "completed_stages": 1, "stage_count": 4,
+		"stage_label": "Distilling work", "before_tokens": 155955,
+	}
+	handle(AgentEvent{Type: "context_compaction_started", Data: base})
+	retry := make(map[string]any, len(base)+2)
+	for key, value := range base {
+		retry[key] = value
+	}
+	retry["retry"] = 2
+	retry["retry_limit"] = 3
+	retry["error"] = "download stalled"
+	handle(AgentEvent{Type: "context_compaction_retrying", Data: retry})
+	if messages := state.Messages.Messages(); len(messages) != 1 || messages[0].LifecycleRetryAttempt != 2 || messages[0].LifecycleOperationID != "compact-1" {
+		t.Fatalf("retry lifecycle=%+v", messages)
+	}
+	state.BeginCancellation()
+	if got := state.Messages.Messages()[0].LifecyclePhase; got != "compaction_cancelling" {
+		t.Fatalf("cancelling phase=%q", got)
+	}
+	handle(AgentEvent{Type: "context_compaction_cancelled", Data: retry})
+	messages := state.Messages.Messages()
+	if len(messages) != 1 || messages[0].LifecyclePhase != "compaction_cancelled" || state.Running || state.Cancelling {
+		t.Fatalf("cancelled lifecycle=%+v running=%v cancelling=%v", messages, state.Running, state.Cancelling)
+	}
+}
+
+func TestCompletedCompactionStaysInNaturalFlowAndThinkingChunksCoalesceAfterIt(t *testing.T) {
+	conversation := NewConversation()
+	conversation.AppendMessage(Message{Role: MessageRoleUser, Content: "compact this"})
+	conversation.UpdateTurnStatus(TurnStatus{
+		Phase: "compaction_completed", OperationID: "compact-1", Completed: 4, StageCount: 4,
+	})
+	conversation.AppendMessage(Message{Role: MessageRoleUser, Content: "continue after compact"})
+	conversation.AppendThinking("first ")
+	conversation.AppendThinking("second")
+	messages := conversation.Messages()
+	if len(messages) != 4 {
+		t.Fatalf("messages=%+v", messages)
+	}
+	if messages[1].LifecycleOperationID != "compact-1" || messages[2].Content != "continue after compact" {
+		t.Fatalf("compaction boundary escaped chronological position: %+v", messages)
+	}
+	if messages[3].Role != MessageRoleThinking || messages[3].Content != "first second" {
+		t.Fatalf("post-compaction thinking fragmented: %+v", messages)
+	}
+}
+
+func TestAutomaticCompactionFailureDoesNotAppendDuplicateErrorRow(t *testing.T) {
+	state := NewAgentState("agent", nil, nil)
+	data := map[string]any{
+		"request_id": "compact-failed", "trigger": "automatic", "role": "root",
+		"stage": 3, "completed_stages": 2, "stage_count": 4,
+		"stage_label": "Capturing state", "error": "download recovery exhausted",
+	}
+	state.HandleEvent(AgentEvent{Type: "context_compaction_failed", Data: data}, nil, ignoreStatus, ignoreThinking, func() {}, ignoreConfirm, func(string) {}, func() {})
+	state.HandleEvent(AgentEvent{Type: "error", Data: "context compaction failed"}, nil, ignoreStatus, ignoreThinking, func() {}, ignoreConfirm, func(string) {}, func() {})
+	messages := state.Messages.Messages()
+	if len(messages) != 1 || messages[0].LifecyclePhase != "compaction_failed" || messages[0].Role != MessageRoleStatus {
+		t.Fatalf("automatic failure produced duplicate transcript noise: %+v", messages)
+	}
+}
+
 func ignoreStatus(string) {}
 
 func ignoreThinking(bool, bool, bool) {}

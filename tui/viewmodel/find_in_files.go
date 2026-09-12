@@ -143,7 +143,7 @@ func (m *App) openFindInFilesResult(match fileio.ProjectSearchMatch) tea.Cmd {
 	path := filepath.Clean(match.Path)
 	cmd, err := m.openEditorTab(path)
 	if err != nil {
-		m.StatusBar.SetError("Cannot open " + match.RelativePath)
+		m.Feedback.NotifyError("Cannot open " + match.RelativePath)
 		return nil
 	}
 	if m.EditorState.Editor == nil {
@@ -170,8 +170,8 @@ func (m *App) applyProjectReplace(msg findinfiles.ReplaceMsg) tea.Cmd {
 	edits, skipped, err := fileio.PlanProjectReplace(matches, msg.Query, msg.Replacement, msg.Options)
 	if err != nil {
 		m.findInFiles.SetNotice("Replace failed")
-		if m.StatusBar != nil {
-			m.StatusBar.SetError(err.Error())
+		if m.Feedback != nil {
+			m.Feedback.NotifyError(err.Error())
 		}
 		m.markProjectSearchDirty()
 		return nil
@@ -194,8 +194,8 @@ func (m *App) applyProjectReplace(msg findinfiles.ReplaceMsg) tea.Cmd {
 	}
 	if len(disk) > 0 {
 		result := m.ApplyWorkspaceEdit(disk)
-		if !result.Succeeded() && m.StatusBar != nil {
-			m.StatusBar.SetError(result.Error())
+		if !result.Succeeded() && m.Feedback != nil {
+			m.Feedback.NotifyError(result.Error())
 		}
 	}
 	notice := fmt.Sprintf("Replaced %d in %d files", replaced, files)
@@ -206,8 +206,8 @@ func (m *App) applyProjectReplace(msg findinfiles.ReplaceMsg) tea.Cmd {
 		notice = "Nothing to replace"
 	}
 	m.findInFiles.SetNotice(notice)
-	if m.StatusBar != nil {
-		m.StatusBar.SetInfo(notice)
+	if m.Feedback != nil {
+		m.Feedback.NotifyInfo(notice)
 	}
 	m.markProjectSearchDirty()
 	return m.findInFiles.ScheduleSearch()

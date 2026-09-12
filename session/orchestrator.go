@@ -34,8 +34,19 @@ type turnRequest struct {
 }
 
 func NewOrchestrator(id string, s *Session) *Orchestrator {
+	var generation uint64
+	if s != nil {
+		s.usageMu.RLock()
+		for _, record := range s.usageRecords {
+			if record.AgentID == id {
+				generation = max(generation, record.TurnGeneration)
+			}
+		}
+		s.usageMu.RUnlock()
+	}
 	return &Orchestrator{
 		ID:             id,
+		turnGeneration: generation,
 		session:        s,
 		BlockResolveCh: make(chan ttypes.BlockResponse, 8),
 		stopCh:         make(chan struct{}),

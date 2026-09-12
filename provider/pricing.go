@@ -215,6 +215,12 @@ func LookupModelMeta(modelID string, metas map[string]ModelMeta) *ModelMeta {
 // to a fuzzy substring match against all known keys.  Models whose IDs
 // contain a known free suffix always return zero pricing.
 func LookupPrice(model string) ModelPrice {
+	price, _, _ := LookupPriceKnown(model)
+	return price
+}
+
+// LookupPriceKnown distinguishes an explicitly free model from absent pricing.
+func LookupPriceKnown(model string) (ModelPrice, bool, string) {
 	lower := strings.ToLower(model)
 
 	// Exact match.
@@ -222,7 +228,7 @@ func LookupPrice(model string) ModelPrice {
 	if p, ok := dynamicPrices[lower]; ok {
 		dynamicPricesMu.RUnlock()
 		logIf(func(lg *logger.Logger) { lg.Debug("PRICING", "lookup", "model", model, "match", "exact") })
-		return p
+		return p, true, "catalog"
 	}
 	dynamicPricesMu.RUnlock()
 
@@ -234,7 +240,7 @@ func LookupPrice(model string) ModelPrice {
 			logIf(func(lg *logger.Logger) {
 				lg.Debug("PRICING", "lookup", "model", model, "match", "stripped", "matched", stripped)
 			})
-			return p
+			return p, true, "catalog"
 		}
 		dynamicPricesMu.RUnlock()
 	}
@@ -248,7 +254,7 @@ func LookupPrice(model string) ModelPrice {
 		if strings.Contains(lower, prefix) {
 			dynamicPricesMu.RUnlock()
 			logIf(func(lg *logger.Logger) { lg.Debug("PRICING", "lookup", "model", model, "match", "free_suffix") })
-			return ModelPrice{0, 0, 0}
+			return ModelPrice{0, 0, 0}, true, "free-model"
 		}
 	}
 	for key, price := range dynamicPrices {
@@ -257,13 +263,13 @@ func LookupPrice(model string) ModelPrice {
 			logIf(func(lg *logger.Logger) {
 				lg.Debug("PRICING", "lookup", "model", model, "match", "fuzzy", "matched", key)
 			})
-			return price
+			return price, true, "catalog-fuzzy"
 		}
 	}
 	dynamicPricesMu.RUnlock()
 
 	logIf(func(lg *logger.Logger) { lg.Debug("PRICING", "lookup", "model", model, "match", "zero") })
-	return ModelPrice{0, 0, 0}
+	return ModelPrice{0, 0, 0}, false, ""
 }
 
 // ParseModelPricing parses pricing from the OpenRouter Models API format

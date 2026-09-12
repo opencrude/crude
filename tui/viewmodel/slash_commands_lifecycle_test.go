@@ -10,7 +10,6 @@ import (
 func TestSlashMutationsRejectActiveTurnWithoutStartingAsyncWork(t *testing.T) {
 	app := newFullTestApp(t)
 	app.Logger = stubLogger{}
-	app.StatusBar.SetWidth(120)
 	app.AddOrchestrator(
 		"agent")
 
@@ -22,7 +21,7 @@ func TestSlashMutationsRejectActiveTurnWithoutStartingAsyncWork(t *testing.T) {
 		if cmd := app.executeSlashCommand(command); cmd != nil {
 			t.Fatalf("%s scheduled backend work during an active turn", command)
 		}
-		status := rendering.StripAnsi(app.StatusBar.View())
+		status := rendering.StripAnsi(testStatusText(app))
 		if !strings.Contains(status, "Stop the active turn") {
 			t.Fatalf("%s status = %q", command, status)
 		}

@@ -324,8 +324,8 @@ func (m *App) removeLauncherWorkspace(ws launcher.WorkspaceEntry) {
 	if m.launcherScreen != nil {
 		m.launcherScreen.RemoveWorkspace(ws.ID, ws.Path)
 	}
-	if m.StatusBar != nil {
-		m.StatusBar.SetInfo("Removed " + ws.Name + " from recent workspaces")
+	if m.Feedback != nil {
+		m.Feedback.NotifyInfo("Removed " + ws.Name + " from recent workspaces")
 	}
 }
 
@@ -816,7 +816,7 @@ func (m *App) buildAttachmentContextMenu(rr input.RefRange) *ui.ContextMenuState
 		path := ref.FilePath
 		items = append(items, ui.ContextMenuItem{Label: "Open in editor", Action: func() {
 			if _, err := m.openEditorTab(path); err != nil {
-				m.StatusBar.SetError("open attachment: " + err.Error())
+				m.Feedback.NotifyError("open attachment: " + err.Error())
 			}
 		}})
 	}
@@ -843,8 +843,8 @@ func (m *App) removeAttachment(rr input.RefRange) {
 	if m.ActiveSession != nil && m.ActiveSession.RefStore != nil {
 		_ = m.ActiveSession.RefStore.DeleteReference(rr.ID)
 	}
-	if m.StatusBar != nil {
-		m.StatusBar.SetInfo("Attachment removed")
+	if m.Feedback != nil {
+		m.Feedback.NotifyInfo("Attachment removed")
 	}
 }
 
@@ -863,8 +863,8 @@ func (m *App) startAttachmentRename(refID, current string) {
 				return fmt.Errorf("cannot rename this attachment")
 			}
 			m.replaceRefSpans(spans, final)
-			if m.StatusBar != nil {
-				m.StatusBar.SetInfo("Renamed to " + strings.TrimSuffix(strings.TrimPrefix(final, "["), "]"))
+			if m.Feedback != nil {
+				m.Feedback.NotifyInfo("Renamed to " + strings.TrimSuffix(strings.TrimPrefix(final, "["), "]"))
 			}
 			return nil
 		})
@@ -938,7 +938,7 @@ func (m *App) buildChatContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 				raw := ml.LastAssistantText()
 				_, code, ok := rendering.ExtractLastCodeBlock(raw)
 				if !ok {
-					m.StatusBar.SetInfo("No code block in last assistant message")
+					m.Feedback.NotifyInfo("No code block in last assistant message")
 					return
 				}
 				m.copyToClipboard(code)
@@ -973,104 +973,6 @@ func (m *App) buildChatContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	return st
 }
 
-// buildStatusBarContextMenu creates the menu for right-click on the
-// bottom status bar. Items surface LSP controls, status-line copy,
-// and a quick "go to first diagnostic" action.
-func (m *App) buildStatusBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
-	st := &ui.ContextMenuState{Title: "Status Bar"}
-
-	// LSP section. Always shown when an workspace.LSPManager exists; items
-	// disable themselves when not applicable.
-	if m.LSPMgr != nil {
-		var lspItems []ui.ContextMenuItem
-
-		isConfigured := m.LSPMgr.IsConfigured()
-		serverReady := m.LSPMgr.ServerReady()
-		ins := m.LSPMgr.ProjectInsights()
-		hasErrors := ins.Errors > 0
-
-		lspItems = append(lspItems, ui.ContextMenuItem{
-			Label:    "Restart LSP",
-			Detail:   "kill+relaunch",
-			Disabled: !isConfigured,
-			Action: func() {
-				m.StopLSP()
-				m.startLSPForWorkspace()
-				m.StatusBar.SetInfo("LSP restarting…")
-			},
-		})
-
-		if serverReady {
-			lspItems = append(lspItems, ui.ContextMenuItem{
-				Label:  "Stop LSP",
-				Detail: "free port",
-				Action: func() {
-					m.StopLSP()
-					m.StatusBar.SetInfo("LSP stopped")
-				},
-			})
-		} else if isConfigured {
-			// Server was configured but not connected (e.g. failed
-			// or still starting). Offer to start it.
-			lspItems = append(lspItems, ui.ContextMenuItem{
-				Label: "Start LSP",
-				Action: func() {
-					m.startLSPForWorkspace()
-					m.StatusBar.SetInfo("LSP starting…")
-				},
-			})
-		}
-
-		if hasErrors {
-			lspItems = append(lspItems, ui.ContextMenuItem{
-				Label:  "Goto first error",
-				Detail: "F8",
-				Action: func() {
-					m.gotoFirstDiagnostic()
-				},
-			})
-		}
-
-		if ins.FilesTracked > 0 {
-			summary := fmt.Sprintf("%s · ✕%d ⚠%d ℹ%d · %d files · %d symbols",
-				ins.ServerName, ins.Errors, ins.Warnings,
-				ins.Info+ins.Hints, ins.FilesAffected, ins.SymbolsCount)
-			lspItems = append(lspItems, ui.ContextMenuItem{
-				Label: "Copy diagnostics summary",
-				Action: func() {
-					m.copyToClipboard(summary)
-				},
-			})
-		}
-
-		if len(lspItems) > 0 {
-			st.Sections = append(st.Sections, ui.ContextMenuSection{
-				SectionLabel: "LSP",
-				Items:        lspItems,
-			})
-		}
-	}
-
-	// Status section. Always available.
-	statusItems := []ui.ContextMenuItem{
-		{
-			Label: "Copy status line",
-			Action: func() {
-				if m.StatusBar != nil {
-					m.copyToClipboard(m.StatusBar.View())
-				}
-			},
-		},
-	}
-	st.Sections = append(st.Sections, ui.ContextMenuSection{
-		SectionLabel: "Status",
-		Items:        statusItems,
-	})
-
-	return st
-}
-
-// closeContextMenu removes the open context menu, if any.
 func (m *App) closeContextMenu() {
 	m.overlayHost.Close(ui.OverlayContextMenu)
 }

@@ -1077,10 +1077,12 @@ func (r *Renderer) ExportMessageRowsSnapshot(width int) MessageRowsSnapshot {
 
 func (r *Renderer) messageRow(item *renderItem) MessageRow {
 	subPaneID := ""
+	contextBoundary := false
 	toggleLine := -1
 	toggleAny := false
 	if msg, ok := item.Data.(*types.ChatMessage); ok && msg != nil {
 		subPaneID = msg.SubPaneID
+		contextBoundary = msg.LifecycleOperationID != "" || strings.HasPrefix(msg.LifecyclePhase, "compaction_")
 		if r.hasDisclosure(msg) {
 			toggleLine = 0
 			toggleAny = r.disclosureState(msg) == DisclosureExpanded
@@ -1094,6 +1096,10 @@ func (r *Renderer) messageRow(item *renderItem) MessageRow {
 	if len(native) != len(lines) {
 		native = nil
 	}
+	contextBoundaryStart := 0
+	if contextBoundary && len(lines) > 1 && strings.TrimSpace(lines[0]) == "" && strings.TrimSpace(lines[1]) == "" {
+		contextBoundaryStart = 1
+	}
 	if toggleLine >= 0 {
 		// The leading spacer occupies row 0 when present; the disclosure
 		// affordance lives on the message's first content row.
@@ -1102,13 +1108,15 @@ func (r *Renderer) messageRow(item *renderItem) MessageRow {
 		}
 	}
 	return MessageRow{
-		ID:         item.ID,
-		Lines:      lines,
-		Native:     native,
-		SubPaneID:  subPaneID,
-		Toggle:     toggleLine >= 0,
-		ToggleAny:  toggleAny,
-		ToggleLine: toggleLine,
+		ID:                   item.ID,
+		Lines:                lines,
+		Native:               native,
+		SubPaneID:            subPaneID,
+		ContextBoundary:      contextBoundary,
+		ContextBoundaryStart: contextBoundaryStart,
+		Toggle:               toggleLine >= 0,
+		ToggleAny:            toggleAny,
+		ToggleLine:           toggleLine,
 	}
 }
 

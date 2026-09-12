@@ -13,18 +13,53 @@ type UserInput struct {
 	InternalID   string
 	Text         string
 	ReferenceIDs []string
+	Origin       MessageOrigin
 	// ActivePaths carries IDE context (active editor file, open tabs) so
 	// the memory system can boost recall of memories scoped to those paths.
 	ActivePaths []string
 }
 
 func PlainInput(text string) UserInput {
-	return UserInput{Text: text}
+	return UserInput{Text: text, Origin: OriginHuman}
 }
 
 func InputWithRefs(text string, refIDs []string) UserInput {
-	return UserInput{Text: text, ReferenceIDs: refIDs}
+	return UserInput{Text: text, ReferenceIDs: refIDs, Origin: OriginHuman}
 }
+
+func RuntimeInput(origin MessageOrigin, text string) UserInput {
+	return UserInput{Text: text, Origin: origin}
+}
+
+func (i UserInput) EffectiveOrigin() MessageOrigin {
+	if i.Origin == "" {
+		return OriginHuman
+	}
+	return i.Origin
+}
+
+type MessageOrigin string
+
+const (
+	OriginHuman             MessageOrigin = "human"
+	OriginBTW               MessageOrigin = "btw"
+	OriginAssistant         MessageOrigin = "assistant"
+	OriginTool              MessageOrigin = "tool"
+	OriginRuntimeContext    MessageOrigin = "runtime_context"
+	OriginContinuation      MessageOrigin = "continuation"
+	OriginSubAgentWake      MessageOrigin = "subagent_wake"
+	OriginAssignment        MessageOrigin = "assignment"
+	OriginCheckpoint        MessageOrigin = "checkpoint"
+	OriginCompactionRequest MessageOrigin = "compaction_request"
+)
+
+type MessageVisibility string
+
+const (
+	VisibilityConversation MessageVisibility = "conversation"
+	VisibilityLifecycle    MessageVisibility = "lifecycle"
+	VisibilityContextOnly  MessageVisibility = "context_only"
+)
 
 type ContentPart struct {
 	Type     string    `json:"type"`
@@ -266,10 +301,12 @@ func (c *MessageContent) UnmarshalJSON(data []byte) error {
 }
 
 type ChatMessage struct {
-	InternalID        string            `json:"-"`
-	DisplayContent    string            `json:"-"`
-	ReferenceLabels   []string          `json:"-"`
+	InternalID        string            `json:"internal_id,omitempty"`
+	DisplayContent    string            `json:"display_content,omitempty"`
+	ReferenceLabels   []string          `json:"reference_labels,omitempty"`
 	Role              string            `json:"role"`
+	Origin            MessageOrigin     `json:"origin,omitempty"`
+	Visibility        MessageVisibility `json:"visibility,omitempty"`
 	Content           MessageContent    `json:"content"`
 	ReasoningContent  string            `json:"reasoning_content,omitempty"`
 	Reasoning         string            `json:"reasoning,omitempty"`
@@ -278,9 +315,9 @@ type ChatMessage struct {
 	ToolCallID        string            `json:"tool_call_id,omitempty"`
 	CacheControl      *CacheControl     `json:"cache_control,omitempty"`
 	ReasoningDetails  []json.RawMessage `json:"reasoning_details,omitempty"`
-	ReasoningDuration time.Duration     `json:"-"`
-	ProviderItems     []ProviderItem    `json:"-"`
-	ToolError         bool              `json:"-"`
+	ReasoningDuration time.Duration     `json:"reasoning_duration,omitempty"`
+	ProviderItems     []ProviderItem    `json:"provider_items,omitempty"`
+	ToolError         bool              `json:"tool_error,omitempty"`
 }
 
 func (m ChatMessage) ContentString() string {
@@ -288,11 +325,48 @@ func (m ChatMessage) ContentString() string {
 }
 
 func NewTextMessage(role, text string) ChatMessage {
-	return ChatMessage{Role: role, Content: TextContent(text)}
+	return ChatMessage{
+		Role: role, Content: TextContent(text),
+		Origin: defaultMessageOrigin(role), Visibility: VisibilityConversation,
+	}
 }
 
 func NewMultiPartMessage(role string, parts []ContentPart) ChatMessage {
-	return ChatMessage{Role: role, Content: PartsContent(parts)}
+	return ChatMessage{
+		Role: role, Content: PartsContent(parts),
+		Origin: defaultMessageOrigin(role), Visibility: VisibilityConversation,
+	}
+}
+
+func (m ChatMessage) EffectiveOrigin() MessageOrigin {
+	if m.Origin != "" {
+		return m.Origin
+	}
+	return defaultMessageOrigin(m.Role)
+}
+
+func (m ChatMessage) EffectiveVisibility() MessageVisibility {
+	if m.Visibility != "" {
+		return m.Visibility
+	}
+	return VisibilityConversation
+}
+
+func (m ChatMessage) IsGenuineUserInput() bool {
+	return m.EffectiveOrigin() == OriginHuman || m.EffectiveOrigin() == OriginBTW
+}
+
+func defaultMessageOrigin(role string) MessageOrigin {
+	switch role {
+	case "assistant":
+		return OriginAssistant
+	case "tool":
+		return OriginTool
+	case "user":
+		return OriginHuman
+	default:
+		return MessageOrigin(role)
+	}
 }
 
 type CacheControl struct {
@@ -304,7 +378,7 @@ type ToolCall struct {
 	ID         string       `json:"id"`
 	Type       string       `json:"type"`
 	Function   FunctionCall `json:"function"`
-	InternalID string       `json:"-"`
+	InternalID string       `json:"internal_id,omitempty"`
 }
 
 type FunctionCall struct {
@@ -323,10 +397,15 @@ type ProviderItem struct {
 
 // TokenUsage is the protocol-neutral token accounting returned by a provider.
 type TokenUsage struct {
-	PromptTokens        int `json:"prompt_tokens"`
-	CompletionTokens    int `json:"completion_tokens"`
-	PromptTokensCached  int `json:"prompt_tokens_cached,omitempty"`
-	PromptTokensWritten int `json:"prompt_tokens_written,omitempty"`
+	PromptTokens        int  `json:"prompt_tokens"`
+	CompletionTokens    int  `json:"completion_tokens"`
+	PromptTokensCached  int  `json:"prompt_tokens_cached,omitempty"`
+	PromptTokensWritten int  `json:"prompt_tokens_written,omitempty"`
+	CacheReadKnown      bool `json:"cache_read_known,omitempty"`
+	CacheWriteKnown     bool `json:"cache_write_known,omitempty"`
+	ReasoningTokens     int  `json:"reasoning_tokens,omitempty"`
+	ReasoningKnown      bool `json:"reasoning_known,omitempty"`
+	ReasoningInOutput   bool `json:"reasoning_in_output,omitempty"`
 	// Native runtimes such as Ollama report timing but not cache-read token
 	// counts. These diagnostics let live probes distinguish fast prefix reuse
 	// from a full prompt evaluation without pretending they are billing data.
@@ -443,15 +522,24 @@ type ChatDelta struct {
 }
 
 type ChatUsage struct {
-	PromptTokens        int                 `json:"prompt_tokens"`
-	CompletionTokens    int                 `json:"completion_tokens"`
-	TotalTokens         int                 `json:"total_tokens"`
-	PromptTokensDetails *PromptTokenDetails `json:"prompt_tokens_details,omitempty"`
+	PromptTokens            int                     `json:"prompt_tokens"`
+	CompletionTokens        int                     `json:"completion_tokens"`
+	TotalTokens             int                     `json:"total_tokens"`
+	PromptTokensDetails     *PromptTokenDetails     `json:"prompt_tokens_details,omitempty"`
+	CompletionTokensDetails *CompletionTokenDetails `json:"completion_tokens_details,omitempty"`
+	PromptCacheHitTokens    *int                    `json:"prompt_cache_hit_tokens,omitempty"`
 }
 
 type PromptTokenDetails struct {
-	CachedTokens     int `json:"cached_tokens"`
-	CacheWriteTokens int `json:"cache_write_tokens,omitempty"`
+	CachedTokens     int  `json:"cached_tokens"`
+	CacheWriteTokens int  `json:"cache_write_tokens,omitempty"`
+	CacheReadKnown   bool `json:"-"`
+	CacheWriteKnown  bool `json:"-"`
+}
+
+type CompletionTokenDetails struct {
+	ReasoningTokens int  `json:"reasoning_tokens"`
+	ReasoningKnown  bool `json:"-"`
 }
 
 type ChatAPIError struct {

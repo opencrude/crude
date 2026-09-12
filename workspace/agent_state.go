@@ -69,15 +69,16 @@ type AgentState struct {
 	// Running remains true across provider waits, permission prompts, and tool
 	// execution. Streaming/Thinking describe output shape; Running owns the
 	// turn lifecycle and prevents tool gaps from being reported as idle.
-	Running       bool
-	Cancelling    bool
-	TokenBuf      string
-	LastTokenTime time.Time
-	SpinFrame     int
-	ActiveTyping  bool
-	Completed     bool
-	Status        string
-	Logger        Logger
+	Running          bool
+	Cancelling       bool
+	ActiveCompaction TurnStatus
+	TokenBuf         string
+	LastTokenTime    time.Time
+	SpinFrame        int
+	ActiveTyping     bool
+	Completed        bool
+	Status           string
+	Logger           Logger
 
 	ThinkingPaneID string
 
@@ -158,11 +159,92 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 	}
 	// Events already queued before a cancel request must not reactivate the
 	// turn while its terminal done/error event catches up through the UI pump.
-	if a.Cancelling && evt.Type != "done" && evt.Type != "error" && evt.Type != "usage" {
+	if a.Cancelling && evt.Type != "done" && evt.Type != "error" && evt.Type != "usage" &&
+		evt.Type != "context_compaction_cancelled" && evt.Type != "context_compaction_failed" && evt.Type != "context_compacted" {
 		return nil
 	}
 
 	switch evt.Type {
+	case "context_compaction_started":
+		status := parseCompactionStatus("compaction_preparing", evt.Data)
+		a.ActiveCompaction = status
+		a.Running = true
+		a.Thinking = true
+		a.Streaming = false
+		a.Cancelling = false
+		target.UpdateTurnStatus(status)
+		onStatusLine("Preparing context compaction")
+		onThinking(true, false, false)
+
+	case "context_compaction_stage":
+		status := parseCompactionStatus("compaction_extracting", evt.Data)
+		a.ActiveCompaction = status
+		a.Running = true
+		a.Thinking = true
+		a.Streaming = false
+		target.UpdateTurnStatus(status)
+		onStatusLine(status.StageName)
+		onThinking(true, false, false)
+
+	case "context_compaction_retrying":
+		status := parseCompactionStatus("compaction_retrying", evt.Data)
+		a.ActiveCompaction = status
+		a.Running = true
+		a.Thinking = true
+		a.Streaming = false
+		target.UpdateTurnStatus(status)
+		onStatusLine("Recovering context compaction")
+		onThinking(true, false, false)
+
+	case "context_compaction_committing":
+		status := parseCompactionStatus("compaction_committing", evt.Data)
+		a.ActiveCompaction = status
+		a.Running = true
+		a.Thinking = true
+		a.Streaming = false
+		target.UpdateTurnStatus(status)
+		onStatusLine("Saving compacted context")
+		onThinking(true, false, false)
+
+	case "context_compacted":
+		status := parseCompactionStatus("compaction_completed", evt.Data)
+		target.UpdateTurnStatus(status)
+		if status.Trigger == "manual" {
+			a.Running = false
+			a.Thinking = false
+			a.Streaming = false
+			onThinking(false, false, false)
+		}
+		a.Cancelling = false
+		a.ActiveCompaction = TurnStatus{}
+		onStatusLine("Context compacted")
+
+	case "context_compaction_cancelled":
+		status := parseCompactionStatus("compaction_cancelled", evt.Data)
+		target.UpdateTurnStatus(status)
+		a.Running = false
+		a.Thinking = false
+		a.Streaming = false
+		a.Cancelling = false
+		a.ActiveCompaction = TurnStatus{}
+		onStatusLine("Context compaction cancelled")
+		onThinking(false, false, false)
+
+	case "context_compaction_failed":
+		status := parseCompactionStatus("compaction_failed", evt.Data)
+		target.UpdateTurnStatus(status)
+		if status.Trigger == "manual" {
+			a.Running = false
+			a.Thinking = false
+			a.Streaming = false
+			onThinking(false, false, false)
+			a.ActiveCompaction = TurnStatus{}
+		} else {
+			a.ActiveCompaction = status
+		}
+		a.Cancelling = false
+		onStatusLine("Compaction failed")
+
 	case "phase":
 		status, ok := ParseAgentPhase(evt.Data)
 		if ok {
@@ -286,6 +368,7 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 		return a.handleDone(evt, target, thinkTarget, onThinking, onStatusLine)
 
 	case "error":
+		compactionFailure := a.ActiveCompaction.OperationID != "" && a.ActiveCompaction.Phase == "compaction_failed"
 		if a.TokenBuf != "" {
 			target.AppendToken(a.TokenBuf)
 			a.TokenBuf = ""
@@ -297,7 +380,9 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 			thinkTarget.MarkStreamingToolsCancelled()
 		}
 		errMsg := FormatErr(evt.Data)
-		target.MarkError(errMsg)
+		if !compactionFailure {
+			target.MarkError(errMsg)
+		}
 		a.Thinking = false
 		a.Streaming = false
 		a.Running = false
@@ -306,11 +391,41 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 		a.PendingPermTool = ""
 		a.PendingBlockID = ""
 		a.BlockingMsgIdx = -1
+		a.ActiveCompaction = TurnStatus{}
 		onThinking(false, false, false)
 		return ErrorResultCmd(a.ID, errMsg)
 	}
 
 	return nil
+}
+
+func parseCompactionStatus(phase string, data any) TurnStatus {
+	status := TurnStatus{Phase: phase}
+	values, ok := data.(map[string]any)
+	if !ok {
+		return status
+	}
+	status.BeforeTokens = int(phaseInt64(values["before_tokens"]))
+	status.AfterTokens = int(phaseInt64(values["after_tokens"]))
+	status.OperationID, _ = values["request_id"].(string)
+	status.Trigger, _ = values["trigger"].(string)
+	status.StageName, _ = values["stage_label"].(string)
+	status.StageIndex = int(phaseInt64(values["stage"]))
+	status.Completed = int(phaseInt64(values["completed_stages"]))
+	status.StageCount = int(phaseInt64(values["stage_count"]))
+	status.RetryAttempt = int(phaseInt64(values["retry"]))
+	status.RetryLimit = int(phaseInt64(values["retry_limit"]))
+	status.ContextWindow = int(phaseInt64(values["context_window"]))
+	status.Detail, _ = values["error"].(string)
+	status.ProviderID, _ = values["provider_id"].(string)
+	status.ModelID, _ = values["model_id"].(string)
+	if status.StageCount == 0 {
+		status.StageCount = 4
+	}
+	if status.RetryLimit == 0 {
+		status.RetryLimit = 3
+	}
+	return status
 }
 
 func parseTurnIdentity(data any) (ttypes.TurnIdentity, bool) {
@@ -356,7 +471,14 @@ func (a *AgentState) BeginCancellation() {
 	if a.Messages != nil {
 		a.Messages.MarkAllThinkingInterrupted()
 		a.Messages.MarkStreamingToolsCancelled()
-		a.Messages.UpdateTurnStatus(TurnStatus{Phase: "cancelling"})
+		if a.ActiveCompaction.OperationID != "" {
+			status := a.ActiveCompaction
+			status.Phase = "compaction_cancelling"
+			status.Detail = ""
+			a.Messages.UpdateTurnStatus(status)
+		} else {
+			a.Messages.UpdateTurnStatus(TurnStatus{Phase: "cancelling"})
+		}
 	}
 	a.Running = false
 	a.Thinking = false

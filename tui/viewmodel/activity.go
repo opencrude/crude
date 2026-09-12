@@ -317,8 +317,8 @@ func (m *App) handleSidebarActivate(item ui.ListItem) tea.Cmd {
 	case strings.HasPrefix(item.ID, "git:"):
 		path := strings.TrimPrefix(item.ID, "git:")
 		cmd, err := m.openEditorTab(path)
-		if err != nil && m.StatusBar != nil {
-			m.StatusBar.SetError(fmt.Sprintf("Cannot open %s", filepath.Base(path)))
+		if err != nil && m.Feedback != nil {
+			m.Feedback.NotifyError(fmt.Sprintf("Cannot open %s", filepath.Base(path)))
 			return nil
 		}
 		return cmd

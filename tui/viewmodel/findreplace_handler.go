@@ -58,7 +58,7 @@ func (m *App) openFindReplace(replaceMode bool) {
 	}
 	fr.OnReplaceAll = func() {
 		count := m.EditorState.Editor.ReplaceAll()
-		m.StatusBar.SetInfo(fmt.Sprintf("Replaced %d occurrences", count))
+		m.Feedback.NotifyInfo(fmt.Sprintf("Replaced %d occurrences", count))
 		fr.MatchCount = len(m.EditorState.Editor.Search().Matches)
 		fr.CurrentIdx = m.EditorState.Editor.Search().CurrentIdx
 		m.refreshFindReplacePopup()

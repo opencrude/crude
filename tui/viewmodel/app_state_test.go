@@ -494,11 +494,11 @@ func TestBtwConsumedClearsPendingStatus(t *testing.T) {
 	app.AgentMgr.AddOrchestrator("agent", workspace.NewAgentState("agent", conversation, nil))
 	app.syncPendingBtwCount()
 	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "btw_consumed", AgentID: "agent", Data: map[string]any{"internal_id": first}})
-	if got := app.StatusBar.BtwCount(); got != 1 {
+	if got := testBtwCount(app); got != 1 {
 		t.Fatalf("pending BTW count=%d want 1", got)
 	}
 	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "btw_cleared", AgentID: "agent", Data: map[string]any{"internal_ids": []string{second}}})
-	if got := app.StatusBar.BtwCount(); got != 0 {
+	if got := testBtwCount(app); got != 0 {
 		t.Fatalf("pending BTW count=%d want 0", got)
 	}
 }

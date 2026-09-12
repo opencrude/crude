@@ -130,10 +130,10 @@ func assertLauncherBack(t *testing.T, app *App, retainedAgents int) {
 	}
 	// A minimized idle agent remains in the aggregate agent report, which is
 	// how the status bar advertises backgrounded work from the launcher.
-	if got := app.StatusBar.IdleAgentCount(); got != retainedAgents {
+	if got := testIdleAgentCount(app); got != retainedAgents {
 		t.Fatalf("idle agents=%d want %d after closing last tab", got, retainedAgents)
 	}
-	if got := app.StatusBar.ActiveAgentCount(); got != 0 {
+	if got := testActiveAgentCount(app); got != 0 {
 		t.Fatalf("active agents=%d want 0 after closing last tab", got)
 	}
 	items := app.agentSidebarItems()

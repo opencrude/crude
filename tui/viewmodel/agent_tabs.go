@@ -42,9 +42,6 @@ func (m *App) AddOrchestrator(orchID string) {
 	if node != nil {
 		node.Category = "default"
 		node.Model = m.ModelName
-		if m.StatusBar != nil {
-			m.StatusBar.SetActiveForAgent(orchID, false)
-		}
 	}
 	for _, childID := range m.HydrateCompletedSubAgents(orchID) {
 		child := m.AgentMgr.Get(childID)
@@ -62,6 +59,7 @@ func (m *App) AddOrchestrator(orchID string) {
 		}
 		m.agentChatScroll[childID] = agentMainChatScrollSnapshot{Offset: 0, AutoScroll: false}
 	}
+	m.syncAgentStatusInventory()
 	m.syncAgentWindowTabs()
 	m.activateAgentWindowTab(orchID)
 }
@@ -149,8 +147,10 @@ func (m *App) cleanupAgent(agentID string) {
 		if m.PaneMgr != nil {
 			m.PaneMgr.Remove(id)
 		}
-		if m.StatusBar != nil {
-			m.StatusBar.ClearAgentState(id)
+		if m.Feedback != nil {
+			if m.Status != nil {
+				m.Status.RemoveAgent(id)
+			}
 		}
 		if m.Win != nil {
 			if tab := m.Win.TabByTitle(m.agentTabTitle(id)); tab != nil {
@@ -236,7 +236,9 @@ func (m *App) completeSubAgent(agentID string) {
 		n.State.Status = "completed"
 	}
 
-	m.StatusBar.ClearAgentState(agentID)
+	if m.Status != nil {
+		m.Status.RemoveAgent(agentID)
+	}
 
 	if !m.Win.IsOpen() {
 		m.setMode(ModeChat)
@@ -304,7 +306,6 @@ func (m *App) agentForView() *workspace.AgentState {
 }
 
 func (m *App) switchToAgentView(agentID string) {
-	prev := m.AgentMgr.ActiveID()
 	if agentID == "" {
 		m.AgentMgr.ClearActive()
 	} else if n := m.AgentMgr.Get(agentID); n != nil && n.State != nil {
@@ -319,14 +320,6 @@ func (m *App) switchToAgentView(agentID string) {
 	}
 
 	curr := m.AgentMgr.ActiveID()
-	if prev != curr {
-		if curr != "" {
-			if usage, ok := m.AgentUsage(curr); ok && m.StatusBar != nil {
-				m.StatusBar.UpdateUsage(usage.Prompt, usage.Completion, usage.Cached, usage.Cost, usage.ContextWindow, usage.ContextUsed, usage.Estimated, usage.CostUpperBound)
-			}
-		}
-	}
-
 	m.syncAgentWindowTabs()
 	if curr != "" {
 		m.activateAgentWindowTab(curr)

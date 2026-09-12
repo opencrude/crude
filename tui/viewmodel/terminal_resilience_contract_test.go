@@ -148,7 +148,7 @@ func TestFloatingTerminalBellUsesFrameAttentionIcon(t *testing.T) {
 	}
 }
 
-func TestTerminalManagerErrorsReachStatusBar(t *testing.T) {
+func TestTerminalManagerErrorsReachFeedback(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		run  func(*App)
@@ -167,9 +167,8 @@ func TestTerminalManagerErrorsReachStatusBar(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			app := newTestApp(t)
-			app.StatusBar.SetWidth(120)
 			tc.run(app)
-			got := rendering.StripAnsi(app.StatusBar.View())
+			got := rendering.StripAnsi(testStatusText(app))
 			if !strings.Contains(got, tc.want) {
 				t.Fatalf("status=%q want substring %q", got, tc.want)
 			}

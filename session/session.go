@@ -88,8 +88,9 @@ type Session struct {
 	sessionStart time.Time
 	yolo         atomic.Bool
 
-	cost   *CostAccumulator
-	tokens *TokenTracker
+	usageMu      sync.RWMutex
+	usageRecords map[string]sessiondb.UsageRecord
+	tokens       *TokenTracker
 
 	autoHandleCounter int
 	autoHandleMu      sync.Mutex
@@ -97,25 +98,30 @@ type Session struct {
 	toolCallCount   int
 	toolCallCountMu sync.Mutex
 
-	db            *sql.DB
-	dbPath        string
-	turnNumber    int
-	toolCallSeq   int
-	seqNum        int
-	writeBuf      []taggedMessage
-	writeMu       sync.Mutex
-	flushWg       sync.WaitGroup
-	closing       int32
-	hardCancelled int32
-	activeTurns   atomic.Int32
-	turnGate      sync.RWMutex
-	wakeCh        chan WakeEvent
-	sender        EventSender
-	subAgentSup   *SubAgentRunner
-	orchestrators map[string]*Orchestrator
-	orchMu        sync.Mutex
-	orchWg        sync.WaitGroup
-	orchNextID    atomic.Int64
+	db                *sql.DB
+	dbPath            string
+	turnNumber        int
+	toolCallSeq       int
+	seqNum            int
+	writeBuf          []taggedMessage
+	writeMu           sync.Mutex
+	closing           int32
+	hardCancelled     int32
+	activeTurns       atomic.Int32
+	turnGate          sync.RWMutex
+	compactionMu      sync.Mutex
+	compactionCancel  context.CancelFunc
+	compactionID      string
+	compactionAgent   string
+	compactionStarted bool
+	compactionWg      sync.WaitGroup
+	wakeCh            chan WakeEvent
+	sender            EventSender
+	subAgentSup       *SubAgentRunner
+	orchestrators     map[string]*Orchestrator
+	orchMu            sync.Mutex
+	orchWg            sync.WaitGroup
+	orchNextID        atomic.Int64
 
 	// consumedReports tracks sub-agent IDs whose results the main agent has already
 	// consumed during an active turn (typically via poll_sub_agent). When a WakeSubAgentDone
@@ -289,7 +295,7 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 		sessionID:        sessionID,
 		sessionStart:     time.Now(),
 		wakeCh:           make(chan WakeEvent, WakeChBufSize),
-		cost:             NewCostAccumulator(lg),
+		usageRecords:     make(map[string]sessiondb.UsageRecord),
 		tokens:           NewTokenTracker(lg),
 		db:               db,
 		dbPath:           dbPath,
@@ -314,6 +320,8 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 func (s *Session) Close() {
 	atomic.StoreInt32(&s.closing, 1)
 	s.logger.Info("SESSION", "close", "has_messages", s.HasMessages())
+	s.stopCompactionForClose()
+	s.compactionWg.Wait()
 	s.orchMu.Lock()
 	orchIDs := make([]string, 0, len(s.orchestrators))
 	for id := range s.orchestrators {
@@ -325,7 +333,6 @@ func (s *Session) Close() {
 	}
 	s.orchWg.Wait()
 
-	s.flushWg.Wait()
 	s.flushWriteBufSync()
 
 	// Join memory workers before their workspace DB is closed. Optional
@@ -336,10 +343,6 @@ func (s *Session) Close() {
 		s.editor.Close()
 	}
 	hasMsgs := s.HasMessages()
-
-	if hasMsgs && s.cost != nil {
-		s.persistCostSnapshot()
-	}
 
 	if s.subAgentSup != nil {
 		s.subAgentSup.SessionCancel()
@@ -359,7 +362,6 @@ func (s *Session) Close() {
 		if err := sessiondb.CloseSession(s.db, s.sessionID); err != nil {
 			s.logger.Error("SESSION", "close_session_error", "error", err.Error())
 		}
-		s.persistCostToDB()
 		if err := s.db.Close(); err != nil {
 			s.logger.Error("SESSION", "db_close_error", "error", err.Error())
 		}
@@ -459,10 +461,33 @@ func (s *Session) SessionStart() time.Time {
 }
 
 func (s *Session) CostSnapshot() CostSnapshot {
-	if s.cost != nil {
-		return s.cost.Snapshot()
+	s.usageMu.RLock()
+	defer s.usageMu.RUnlock()
+	snapshot := CostSnapshot{ByModel: make(map[string]ModelCost)}
+	var latest int64
+	for _, record := range s.usageRecords {
+		snapshot.TotalPromptTokens += record.PromptTokens
+		snapshot.TotalCompletionTokens += record.CompletionTokens
+		snapshot.TotalCachedTokens += record.CachedTokens
+		if record.CostKnown {
+			snapshot.TotalCost += record.CostUSD
+		}
+		model := snapshot.ByModel[record.ModelID]
+		model.PromptTokens += record.PromptTokens
+		model.CompletionTokens += record.CompletionTokens
+		model.CachedTokens += record.CachedTokens
+		if record.CostKnown {
+			model.Cost += record.CostUSD
+		}
+		snapshot.ByModel[record.ModelID] = model
+		if record.UpdatedAt >= latest {
+			latest = record.UpdatedAt
+			snapshot.LastPromptTokens = record.PromptTokens
+			snapshot.LastCompletionTokens = record.CompletionTokens
+			snapshot.LastCachedTokens = record.CachedTokens
+		}
 	}
-	return CostSnapshot{}
+	return snapshot
 }
 
 func (s *Session) Logger() *logger.Logger { return s.logger }
@@ -491,9 +516,10 @@ func (s *Session) SubAgentRunner() *SubAgentRunner {
 // child remains part of its parent session; it is never a root resumable
 // session even though it owns a separate transcript database.
 type SubAgentSnapshot struct {
-	Result   agent.SubAgentResult
-	Model    string
-	Messages []sessiondb.MessageWithMeta
+	Result      agent.SubAgentResult
+	Model       string
+	Messages    []sessiondb.MessageWithMeta
+	Compactions []sessiondb.CompactionRecord
 }
 
 func (s *Session) CompletedSubAgentSnapshots() []SubAgentSnapshot {
@@ -505,7 +531,7 @@ func (s *Session) CompletedSubAgentSnapshots() []SubAgentSnapshot {
 	for _, result := range results {
 		snapshot := SubAgentSnapshot{Result: result}
 		if dbPath := s.completedSubAgentDBPath(result.SessionID); dbPath != "" {
-			if meta, messages, err := loadSubAgentSnapshotDB(dbPath); err == nil {
+			if meta, messages, compactions, err := loadSubAgentSnapshotDB(dbPath, string(result.AgentID)); err == nil {
 				snapshot.Model = meta.Model
 				for i := range messages {
 					if messages[i].Msg.Role == "user" {
@@ -514,6 +540,7 @@ func (s *Session) CompletedSubAgentSnapshots() []SubAgentSnapshot {
 					}
 				}
 				snapshot.Messages = messages
+				snapshot.Compactions = compactions
 			}
 		}
 		if len(snapshot.Messages) == 0 && s.recoveredSubAgentMessages != nil {
@@ -544,20 +571,26 @@ func (s *Session) completedSubAgentDBPath(childSessionID string) string {
 	return ""
 }
 
-func loadSubAgentSnapshotDB(dbPath string) (sessiondb.SessionMeta, []sessiondb.MessageWithMeta, error) {
-	dsn := "file:" + filepath.ToSlash(dbPath) + "?mode=ro&_busy_timeout=1000"
-	db, err := sql.Open("sqlite", dsn)
+func loadSubAgentSnapshotDB(dbPath, agentID string) (sessiondb.SessionMeta, []sessiondb.MessageWithMeta, []sessiondb.CompactionRecord, error) {
+	db, err := sessiondb.OpenAndMigrate(dbPath)
 	if err != nil {
-		return sessiondb.SessionMeta{}, nil, err
+		return sessiondb.SessionMeta{}, nil, nil, err
 	}
 	db.SetMaxOpenConns(1)
 	defer func() { _ = db.Close() }()
 	meta, err := sessiondb.GetMeta(db)
 	if err != nil {
-		return sessiondb.SessionMeta{}, nil, err
+		return sessiondb.SessionMeta{}, nil, nil, err
+	}
+	if err := sessiondb.InterruptRunningCompactions(db, meta.ID); err != nil {
+		return sessiondb.SessionMeta{}, nil, nil, err
 	}
 	messages, err := sessiondb.LoadMessagesWithMeta(db)
-	return meta, messages, err
+	if err != nil {
+		return sessiondb.SessionMeta{}, nil, nil, err
+	}
+	compactions, err := sessiondb.ListCompactionRecords(db, meta.ID, agentID)
+	return meta, messages, compactions, err
 }
 
 // MarkReportConsumed records that the main agent has already consumed a sub-agent's
@@ -593,6 +626,7 @@ func (s *Session) IsAndClearReportConsumed(agentID string) bool {
 
 func (s *Session) HardCancel() {
 	atomic.StoreInt32(&s.hardCancelled, 1)
+	s.CancelCompaction("")
 	s.orchMu.Lock()
 	orchestrators := make([]*Orchestrator, 0, len(s.orchestrators))
 	for _, orchestrator := range s.orchestrators {
@@ -644,6 +678,9 @@ func (s *Session) SubmitInput(id string, input provider.UserInput) bool {
 	if s == nil || id == "" {
 		return false
 	}
+	if s.compactionActive(id) {
+		return false
+	}
 	s.orchMu.Lock()
 	orchestrator := s.orchestrators[id]
 	s.orchMu.Unlock()
@@ -676,6 +713,9 @@ func (s *Session) IsTurnActive() bool {
 		return false
 	}
 	if s.activeTurns.Load() > 0 {
+		return true
+	}
+	if s.compactionActive("") {
 		return true
 	}
 	s.orchMu.Lock()

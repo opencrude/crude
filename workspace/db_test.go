@@ -4,9 +4,11 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"crude/provider"
 	"crude/sessiondb"
+	"crude/types"
 )
 
 // openTestWorkspaceDB creates a workspace DB in a temp dir and returns it.
@@ -128,8 +130,7 @@ func TestSyncSessionMetaFromDBPullsAllFields(t *testing.T) {
 		t.Fatalf("RegisterSession: %v", err)
 	}
 
-	// Build a session DB with realistic data: prompts, turn/message counts,
-	// and two cost snapshots (the second is the latest cumulative).
+	// Build a session DB with realistic messages and request-level accounting.
 	sdb := openTestSessionDB(t, sid)
 	if err := sessiondb.UpdateFirstPrompt(sdb, sid, "first prompt text"); err != nil {
 		t.Fatalf("UpdateFirstPrompt: %v", err)
@@ -144,11 +145,13 @@ func TestSyncSessionMetaFromDBPullsAllFields(t *testing.T) {
 	}, []int{1, 2}); err != nil {
 		t.Fatalf("ReplaceMessages: %v", err)
 	}
-	if err := sessiondb.InsertCostSnapshot(sdb, 100, 50, 10, 0.05, nil); err != nil {
-		t.Fatalf("InsertCostSnapshot #1: %v", err)
-	}
-	if err := sessiondb.InsertCostSnapshot(sdb, 200, 100, 20, 0.123, nil); err != nil {
-		t.Fatalf("InsertCostSnapshot #2: %v", err)
+	for _, record := range []sessiondb.UsageRecord{
+		{RequestID: "req-1", SessionID: sid, AgentID: "root", CostUSD: 0.05, CostKnown: true, CreatedAt: 1, UpdatedAt: 1},
+		{RequestID: "req-2", SessionID: sid, AgentID: "root", CostUSD: 0.073, CostKnown: true, CreatedAt: 2, UpdatedAt: 2},
+	} {
+		if err := sessiondb.UpsertUsageRecord(sdb, record); err != nil {
+			t.Fatal(err)
+		}
 	}
 
 	if err := wdb.syncSessionMetaFromDB(sdb, sid); err != nil {
@@ -211,32 +214,48 @@ func TestRecordAgentUsagePushesCostToRegistry(t *testing.T) {
 		SessionsByAgent: map[string]*Session{"orch": sess},
 		Logger:          nopLogger{},
 	}
+	ws.registryCostWriter = newRegistryCostWriter(wdb, ws.Logger)
+	defer ws.registryCostWriter.Close()
 
 	// First usage event: cost 0.25.
 	if _, ok := ws.RecordAgentUsage("orch", map[string]any{
+		"request_id": "request-one", "cost_known": true,
 		"prompt":     float64(10),
 		"completion": float64(4),
 		"cost":       0.25,
 	}); !ok {
 		t.Fatal("RecordAgentUsage #1 rejected valid event")
 	}
-	if got := registryCost(t, wdb, sid); got != 0.25 {
+	if got := waitRegistryCost(t, wdb, sid, 0.25); got != 0.25 {
 		t.Fatalf("after first usage: registry cost expected 0.25, got %v", got)
 	}
 
 	// Second usage event: cost 0.30 → cumulative 0.55.
 	if _, ok := ws.RecordAgentUsage("orch", map[string]any{
+		"request_id": "request-two", "cost_known": true,
 		"prompt":     float64(20),
 		"completion": float64(8),
 		"cost":       0.30,
 	}); !ok {
 		t.Fatal("RecordAgentUsage #2 rejected valid event")
 	}
-	if got := registryCost(t, wdb, sid); got != 0.55 {
+	if got := waitRegistryCost(t, wdb, sid, 0.55); got != 0.55 {
 		t.Fatalf("after second usage: registry cost expected 0.55 (cumulative), got %v", got)
 	}
-	if sess.SessionCost != 0.55 {
-		t.Fatalf("in-memory session cost: expected 0.55, got %v", sess.SessionCost)
+	if summary, ok := ws.UsageSummary("orch", types.UsageSession); !ok || summary.Cost.USD != 0.55 {
+		t.Fatalf("request-ledger session cost: %#v ok=%v", summary, ok)
+	}
+}
+
+func waitRegistryCost(t *testing.T, db *WorkspaceDB, sessionID string, want float64) float64 {
+	t.Helper()
+	deadline := time.Now().Add(time.Second)
+	for {
+		got := registryCost(t, db, sessionID)
+		if got == want || time.Now().After(deadline) {
+			return got
+		}
+		time.Sleep(time.Millisecond)
 	}
 }
 
@@ -254,6 +273,7 @@ func TestRecordAgentUsageWithoutWorkspaceDBDoesNotPanic(t *testing.T) {
 		Logger:          nopLogger{},
 	}
 	got, ok := ws.RecordAgentUsage("orch", map[string]any{
+		"request_id": "request", "cost_known": true,
 		"prompt":     float64(1),
 		"completion": float64(1),
 		"cost":       0.01,
@@ -261,8 +281,8 @@ func TestRecordAgentUsageWithoutWorkspaceDBDoesNotPanic(t *testing.T) {
 	if !ok {
 		t.Fatal("RecordAgentUsage rejected valid event without DB")
 	}
-	if got.Cost != 0.01 {
-		t.Fatalf("usage snapshot cost: expected 0.01, got %v", got.Cost)
+	if got.Cost.USD != 0.01 {
+		t.Fatalf("usage summary cost: expected 0.01, got %v", got.Cost.USD)
 	}
 }
 

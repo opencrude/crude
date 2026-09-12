@@ -36,3 +36,5 @@ BenchmarkDenseChatSingleRowChange_500Msgs 65000 2740
 BenchmarkDenseChatWidthCommit_500HeavyMsgs 455000 2180
 BenchmarkLargeDiffPreview 3200000 9000
 BenchmarkOpenIndexedHistory 460000 11000
+BenchmarkProjectInsightsCached10kDiagnostics 0 0
+BenchmarkUsageSummaryCached1000Requests 0 0
