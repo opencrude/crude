@@ -12,14 +12,8 @@ import (
 	ttypes "crude/tui/types"
 )
 
-// TestAgentView_LongInputDoesNotOverlapStatus: a long/multiline input whose
-// shell would exceed the vertical budget must be clamped to the space above
-// the status bar — the status separator and status content rows must never
-// be overwritten. Regression: InputLineCount was unclamped; the old
-// layer-surface world masked the overflow with the status surface's higher
-// z-order, but the root host paints status FIRST, so the input's extra rows
-// painted over the status separator and the status content ("input pushes
-// the right half of the bottom status and its separator out of screen").
+// A long input must clamp to the terminal/frame and scroll internally. The
+// former status rows are intentionally content now.
 func TestAgentView_LongInputDoesNotOverlapStatus(t *testing.T) {
 	app := newTransitionApp(t)
 	t.Cleanup(func() {
@@ -32,23 +26,8 @@ func TestAgentView_LongInputDoesNotOverlapStatus(t *testing.T) {
 	if app.inputRect.Empty() {
 		t.Fatal("precondition: input visible")
 	}
-	if app.inputRect.Y+app.inputRect.H > app.height-2 {
-		t.Fatalf("input shell overlaps the status bar: rect=%+v height=%d", app.inputRect, app.height)
-	}
-
-	// The input's last visible row must end inside its slot, and the status
-	// separator row must be a clean full-width divider.
-	sep := rowText(app, app.height-2)
-	for x := 0; x < len([]rune(sep)); x++ {
-		c := []rune(sep)[x]
-		if c != ' ' && c != '─' && c != '│' {
-			t.Fatalf("status separator row polluted by input overflow at col %d: %q", x, sep)
-		}
-	}
-	// The status content row must not contain input text.
-	content := rowText(app, app.height-1)
-	if strings.Contains(content, "wrapping this is a very long line") {
-		t.Fatalf("status content row polluted by input overflow: %q", content)
+	if app.inputRect.Y+app.inputRect.H > app.height-app.chromeBottomRows() {
+		t.Fatalf("input shell overlaps footer: rect=%+v height=%d", app.inputRect, app.height)
 	}
 }
 
@@ -69,36 +48,24 @@ func TestAgentView_TextAreaBgDoesNotOverwriteStatus(t *testing.T) {
 	_, _ = app.Update(tea.WindowSizeMsg{Width: 240, Height: 60})
 	app.paintShellFrame()
 
-	sepY := app.height - 2
 	buf := app.mainSurf.Buffer()
 	borderBG := rendering.ThemeColorToCell(app.Theme.Colors.Bg)
 	popupBG := rendering.ThemeColorToCell(app.Theme.Colors.PopupBg)
 
-	dashCount := 0
 	whiteLeaked := 0
-	for x := 0; x < buf.Width(); x++ {
-		c := buf.Get(x, sepY)
-		if c.Char == '─' {
-			dashCount++
+	for y := 0; y < buf.Height(); y++ {
+		for x := 0; x < buf.Width(); x++ {
+			if app.inputRect.Contains(x, y) {
+				continue
+			}
+			c := buf.Get(x, y)
+			if c.BG.Equal(popupBG) && !c.BG.Equal(borderBG) {
+				whiteLeaked++
+			}
 		}
-		if c.BG.Equal(popupBG) && !c.BG.Equal(borderBG) {
-			whiteLeaked++
-		}
-	}
-	if dashCount != buf.Width() {
-		t.Fatalf("status separator has only %d dashes (want %d): TextArea bg overwrote the divider", dashCount, buf.Width())
 	}
 	if whiteLeaked > 0 {
-		t.Fatalf("status separator row has %d cells with leaked PopupBg (textarea double-origin fill)", whiteLeaked)
-	}
-
-	// The status content row must also be free of textarea bg leaks.
-	contentY := app.height - 1
-	for x := 0; x < buf.Width(); x++ {
-		c := buf.Get(x, contentY)
-		if c.BG.Equal(popupBG) && !c.BG.Equal(borderBG) {
-			t.Fatalf("status content row leaked PopupBg at col %d: textarea double-origin fill", x)
-		}
+		t.Fatalf("textarea background leaked into %d cells outside its slot", whiteLeaked)
 	}
 }
 
@@ -142,36 +109,32 @@ func TestAgentView_ChatPaintsInsideSlot(t *testing.T) {
 		t.Fatal("precondition: chat slot active")
 	}
 
-	// Short chat: gravity anchors the content at the bottom of the slot, so
-	// the message header sits at (chatRect bottom - contentH) + 1 — never at
-	// the double-origin position (row ChatAreaTop+1, col SidebarW*2+PadLR).
+	// Short chat starts at the slot top. Its leading inter-object spacer owns
+	// row zero and the header follows immediately, never at a double origin.
 	contentH := app.chatScreen.ScrollModel().Content()
 	if contentH < 1 {
 		t.Fatal("precondition: message content exists")
 	}
-	headerY := app.chatRect.Y + app.chatRect.H - contentH + 1
+	headerY := app.chatRect.Y + 1
 	headerRow := rowText(app, headerY)
 	headerCol := lay.SidebarW + lay.PadLR
 	got := strings.TrimSpace(rowTextFrom(app, headerY, headerCol))
 	if strings.HasPrefix(got, "❯") || got == "" {
-		t.Fatalf("chat header not at col %d row %d (bottom-anchored); row=%q", headerCol, headerY, headerRow)
+		t.Fatalf("chat header not at col %d row %d (top-anchored); row=%q", headerCol, headerY, headerRow)
 	}
 
-	// Rows above the chat content (the gravity pad) must be clean (no stale
-	// glyphs) across the chat slot's content columns (skip the sidebar
-	// divider + pad).
-	emptyRow := rowText(app, app.chatRect.Y+3)
-	if strings.TrimSpace(rowTextFrom(app, app.chatRect.Y+3, app.chatRect.X+lay.PadLR)) != "" {
-		t.Fatalf("chat area rows above content not clean: %q", emptyRow)
+	// Unused rows follow short content; resume must never synthesize a variable
+	// blank region before the first message.
+	emptyY := app.chatRect.Y + contentH + 1
+	emptyRow := rowText(app, emptyY)
+	if strings.TrimSpace(rowTextFrom(app, emptyY, app.chatRect.X+lay.PadLR)) != "" {
+		t.Fatalf("chat area rows below short content not clean: %q", emptyRow)
 	}
 }
 
-// TestAgentView_ShortChatAnchorsToBottom: with fewer message lines than the
-// viewport, the last message line must sit on the chat slot's BOTTOM row
-// (gravity), and the rows above it must be blank. Regression: the root-host
-// VirtualList painted items from row 0, so short chats appeared at the TOP
-// of the chat area with a huge empty gap above the input prompt.
-func TestAgentView_ShortChatAnchorsToBottom(t *testing.T) {
+// TestAgentView_ShortChatStartsAtTopWithoutResumeGap guards resumed short
+// conversations against variable blank padding above their first message.
+func TestAgentView_ShortChatStartsAtTopWithoutResumeGap(t *testing.T) {
 	app := newTransitionApp(t)
 	t.Cleanup(func() {
 		app.Workspace.Close()
@@ -187,14 +150,19 @@ func TestAgentView_ShortChatAnchorsToBottom(t *testing.T) {
 		t.Skipf("viewport too small for the gravity assertion (chatH=%d)", app.ChatAreaHeight)
 	}
 
-	lastRow := app.chatRect.Y + app.chatRect.H - 1
-	last := rowText(app, lastRow)
-	if !strings.Contains(last, "hello from the agent view") {
-		t.Fatalf("last message not anchored to the slot bottom row; row=%q", last)
+	foundAt := -1
+	for y := app.chatRect.Y; y < min(app.chatRect.Y+6, app.chatRect.Y+app.chatRect.H); y++ {
+		if strings.Contains(rowText(app, y), "hello from the agent view") {
+			foundAt = y
+			break
+		}
 	}
-	topRow := rowText(app, app.chatRect.Y+2)
-	if strings.TrimSpace(rowTextFrom(app, app.chatRect.Y+2, app.chatRect.X+lay.PadLR)) != "" {
-		t.Fatalf("gravity pad rows above the message not blank: %q", topRow)
+	if foundAt < 0 {
+		t.Fatalf("short resumed chat did not start near slot top; chat=%q", rowText(app, app.chatRect.Y))
+	}
+	lastRow := app.chatRect.Y + app.chatRect.H - 1
+	if strings.TrimSpace(rowTextFrom(app, lastRow, app.chatRect.X+lay.PadLR)) != "" {
+		t.Fatalf("short chat still bottom-gravity padded content into last row: %q", rowText(app, lastRow))
 	}
 }
 
@@ -230,7 +198,6 @@ func TestAgentView_LongChatDoesNotOverflowInputOrStatus(t *testing.T) {
 	}
 
 	inputY := app.inputRect.Y
-	statusY := app.height - 2
 
 	// The chat slot's bottom row must be painted (list reaches the bottom),
 	// while the input separator row shows only separator glyphs, the prompt
@@ -261,16 +228,8 @@ func TestAgentView_LongChatDoesNotOverflowInputOrStatus(t *testing.T) {
 		t.Fatalf("input prompt row polluted by chat overflow: %q", prompt)
 	}
 
-	status := rowText(app, statusY+1)
-	// The status hint must be present and the status row must NEVER contain
-	// chat body text (with the double-origin bug, the shifted chat rows
-	// overwrote the right half of the status bar). The body line wraps and
-	// gets truncated at the screen edge, so match on a fragment that
-	// survives truncation ("long" may be cut mid-word).
-	if strings.Contains(status, "message body that wraps") {
-		t.Fatalf("status bar polluted by chat overflow: %q", status)
-	}
-	if !strings.Contains(status, "Enter send") && !strings.Contains(status, "Esc exit") {
-		t.Fatalf("status hint row missing after long chat: %q", status)
+	footer := rowText(app, app.height-app.frameBottomRow()-1)
+	if !strings.Contains(footer, "Help") {
+		t.Fatalf("footer Help entry missing after long chat: %q", footer)
 	}
 }

@@ -22,12 +22,11 @@ func TestClosingOrchestratorTabCleansEntireAgentSubtree(t *testing.T) {
 	if child == nil {
 		t.Fatal("failed to create child agent")
 	}
+	app.syncAgentStatusInventory()
 
 	// Both idle runtime agents have status entries, so the precondition
 	// mirrors the aggregate idle-agent count shown after work settles.
-	app.StatusBar.SetThinkingForAgent("root", false, false, false)
-	app.StatusBar.SetThinkingForAgent("child", false, false, false)
-	if got := app.StatusBar.IdleAgentCount(); got != 2 {
+	if got := testIdleAgentCount(app); got != 2 {
 		t.Fatalf("idle count before close=%d, want 2", got)
 	}
 
@@ -58,7 +57,7 @@ func TestClosingOrchestratorTabCleansEntireAgentSubtree(t *testing.T) {
 			t.Errorf("tab %q survived subtree close", id)
 		}
 	}
-	if got := app.StatusBar.IdleAgentCount(); got != 0 {
+	if got := testIdleAgentCount(app); got != 0 {
 		t.Fatalf("idle count after close=%d, want 0", got)
 	}
 
@@ -94,7 +93,7 @@ func TestLateSubAgentStartAfterParentCloseIsDropped(t *testing.T) {
 	if app.subPaneProjections.Has("late-child") {
 		t.Fatal("late child left an orphan projection")
 	}
-	if got := app.StatusBar.IdleAgentCount(); got != 0 {
+	if got := testIdleAgentCount(app); got != 0 {
 		t.Fatalf("late child created a ghost idle count: %d", got)
 	}
 }
@@ -102,7 +101,8 @@ func TestLateSubAgentStartAfterParentCloseIsDropped(t *testing.T) {
 func TestSubAgentTerminalEventCannotRecreateGhostIdleStatus(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("root")
-	baselineIdle := app.StatusBar.IdleAgentCount()
+	baselineActive := testActiveAgentCount(app)
+	baselineIdle := testIdleAgentCount(app)
 	app.handleAgentEvent(ttypes.AgentEventMsg{
 		Type:    "sub_agent_started",
 		AgentID: "child",
@@ -110,9 +110,8 @@ func TestSubAgentTerminalEventCannotRecreateGhostIdleStatus(t *testing.T) {
 			"agent_id": "child", "agent_name": "Child", "parent_id": "root",
 		},
 	})
-	app.StatusBar.SetThinkingForAgent("child", false, false, false)
-	if got := app.StatusBar.IdleAgentCount(); got != baselineIdle+1 {
-		t.Fatalf("idle count before completion=%d, want %d", got, baselineIdle+1)
+	if got := testActiveAgentCount(app); got != baselineActive+1 {
+		t.Fatalf("active count before completion=%d, want %d", got, baselineActive+1)
 	}
 
 	app.handleAgentEvent(ttypes.AgentEventMsg{
@@ -127,7 +126,7 @@ func TestSubAgentTerminalEventCannotRecreateGhostIdleStatus(t *testing.T) {
 	if child == nil || child.State == nil || !child.State.Completed || child.State.Status != "cancelled" {
 		t.Fatalf("terminal child state = %#v", child)
 	}
-	if got := app.StatusBar.IdleAgentCount(); got != baselineIdle {
+	if got := testIdleAgentCount(app); got != baselineIdle {
 		t.Fatalf("terminal child recreated ghost idle status: got %d want %d", got, baselineIdle)
 	}
 }
@@ -243,7 +242,7 @@ func TestDangerousBackgroundAgentAlertEscapesEditorAndMinimizedState(t *testing.
 	if child.Hidden || app.AgentMgr.ActiveID() != "child" || app.EditorState.ActiveView != "" {
 		t.Fatalf("danger alert stayed hidden: hidden=%v active=%q editor=%q", child.Hidden, app.AgentMgr.ActiveID(), app.EditorState.ActiveView)
 	}
-	if status := app.StatusBar.ActivityView(); !strings.Contains(status, "Blocked disk write") {
+	if status := testStatusText(app); !strings.Contains(status, "Blocked disk write") {
 		t.Fatalf("danger alert not visible in global status: %q", status)
 	}
 }

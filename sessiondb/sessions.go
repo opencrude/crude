@@ -2,7 +2,6 @@ package sessiondb
 
 import (
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -111,17 +110,13 @@ func GetMeta(db *sql.DB) (SessionMeta, error) {
 	return m, nil
 }
 
-// GetCumulativeCost returns the cumulative USD cost recorded for the session
-// stored in this DB. Cost snapshots are written by session/cost.go on each
-// usage event; the latest snapshot's total_cost is the running cumulative.
-// Returns 0.0 (and no error) when no snapshots exist yet (e.g., a freshly
-// created session before any API call).
+// GetCumulativeCost derives the known cumulative USD amount from the
+// authoritative request ledger. Requests with unavailable pricing are not
+// silently treated as known free calls.
 func GetCumulativeCost(db *sql.DB) (float64, error) {
 	var totalCost float64
 	err := db.QueryRow(`
-		SELECT total_cost FROM cost_snapshots
-		ORDER BY snapshot_at DESC, id DESC
-		LIMIT 1
+		SELECT COALESCE(SUM(cost_usd), 0) FROM usage_requests WHERE cost_known=1
 	`).Scan(&totalCost)
 	if err != nil {
 		if err == sql.ErrNoRows {
@@ -130,43 +125,6 @@ func GetCumulativeCost(db *sql.DB) (float64, error) {
 		return 0.0, fmt.Errorf("sessiondb: get cumulative cost: %w", err)
 	}
 	return totalCost, nil
-}
-
-type CostTotals struct {
-	PromptTokens     int
-	CompletionTokens int
-	CachedTokens     int
-	TotalCost        float64
-	ByModel          map[string]json.RawMessage
-}
-
-func GetLatestCostTotals(db *sql.DB) (CostTotals, bool, error) {
-	var totals CostTotals
-	var byModel string
-	err := db.QueryRow(`
-		SELECT total_prompt_tokens, total_completion_tokens, total_cached_tokens, total_cost, COALESCE(by_model, '{}')
-		FROM cost_snapshots ORDER BY snapshot_at DESC LIMIT 1
-	`).Scan(&totals.PromptTokens, &totals.CompletionTokens, &totals.CachedTokens, &totals.TotalCost, &byModel)
-	if err == sql.ErrNoRows {
-		return CostTotals{}, false, nil
-	}
-	if err != nil {
-		return CostTotals{}, false, fmt.Errorf("sessiondb: get latest cost totals: %w", err)
-	}
-	_ = json.Unmarshal([]byte(byModel), &totals.ByModel)
-	return totals, true, nil
-}
-
-func InsertCostSnapshot(db *sql.DB, promptT, compT, cachedT int, totalCost float64, byModel map[string]json.RawMessage) error {
-	byModelJSON, _ := json.Marshal(byModel)
-	_, err := db.Exec(`
-		INSERT INTO cost_snapshots (total_prompt_tokens, total_completion_tokens, total_cached_tokens, total_cost, by_model, snapshot_at)
-		VALUES (?, ?, ?, ?, ?, ?)
-	`, promptT, compT, cachedT, totalCost, string(byModelJSON), time.Now().UnixNano())
-	if err != nil {
-		return fmt.Errorf("sessiondb: insert cost snapshot: %w", err)
-	}
-	return nil
 }
 
 type ListSessionsOpts struct {

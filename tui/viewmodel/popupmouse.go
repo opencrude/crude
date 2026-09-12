@@ -78,7 +78,7 @@ func (m *App) handlePopupContentHover(fw *wm.FloatingWindow, screenX, screenY in
 	}
 
 	switch fw.ID {
-	case "filepicker", "workspace-settings", "find-in-files", "replace-in-files":
+	case "filepicker", "workspace-settings", "status-overview", "find-in-files", "replace-in-files":
 		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: screenX, Y: screenY, Button: button})
 	}
 }

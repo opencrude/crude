@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"database/sql"
+	"sync"
 	"time"
 
 	"crude/session"
@@ -63,38 +64,15 @@ type Session struct {
 	// from this data; workspace never owns the settings form or dialog widgets.
 	Settings *SessionSettingsState
 
-	// ── Per-session cost/token tracking ─
-	//
-	// These are updated by agent events (usage, done) and displayed in
-	// the status bar. They are per-session because each agent conversation
-	// has its own token usage.
-
 	// CreatedAt is when this session was created (for display).
 	CreatedAt time.Time
 
-	// TokenPrompt, TokenCompletion, TokenCached are cumulative totals across all
-	// root and child-agent API calls owned by this session.
-	TokenPrompt     int
-	TokenCompletion int
-	TokenCached     int
-
-	// SessionCost is the cumulative cost (USD) for this session.
-	SessionCost float64
-
-	// ContextWindow, ContextUsed track the context window usage for the
-	// last LLM call in this session.
-	ContextWindow int
-	ContextUsed   int
-
-	// TokenEstimated is true when the token count is an estimate.
-	TokenEstimated bool
-	// CostUpperBound is true when the provider reports total prompt tokens but
-	// not cache-read tokens, so the accumulated cost assumes no cache discount.
-	CostUpperBound bool
-
-	// usageByAgent keeps current-context facts separate from session totals, so
-	// background child usage cannot replace the visible agent's context percent.
-	usageByAgent map[string]agentUsageState
+	// usageRecords is the frontend's request-keyed immutable projection. The
+	// backend session owns durable writes to the same ledger.
+	usageRecords map[string]sessiondb.UsageRecord
+	usageMu      sync.RWMutex
+	usageVersion uint64
+	usageCache   map[usageCacheKey]types.UsageSummary
 
 	// ── Backend session (owned by this frontend session)
 	//
@@ -114,12 +92,6 @@ type Session struct {
 	hydratedRefs []sessiondb.Reference
 }
 
-type agentUsageState struct {
-	ContextWindow int
-	ContextUsed   int
-	Estimated     bool
-}
-
 // NewSession creates a frontend session with the given persistence handles.
 // Presentation widgets are created by the TUI projection layer. The reference
 // store is created from the session's DB.
@@ -134,7 +106,8 @@ func NewSession(sessionID, sessionDir string, db *sql.DB, lg Logger) *Session {
 		DB:           db,
 		RefStore:     NewReferenceStore(sessionID, sessionDir, db),
 		CreatedAt:    time.Now(),
-		usageByAgent: make(map[string]agentUsageState),
+		usageRecords: make(map[string]sessiondb.UsageRecord),
+		usageCache:   make(map[usageCacheKey]types.UsageSummary),
 	}
 	_ = lg // logger is used by AgentState, not Session itself
 	return s
@@ -147,16 +120,6 @@ func (s *Session) attachBackend(backend *session.Session) {
 	s.backend = backend
 	if backend == nil {
 		return
-	}
-	snapshot := backend.CostSnapshot()
-	s.TokenPrompt = snapshot.TotalPromptTokens
-	s.TokenCompletion = snapshot.TotalCompletionTokens
-	s.TokenCached = snapshot.TotalCachedTokens
-	s.SessionCost = snapshot.TotalCost
-	for _, child := range backend.CompletedSubAgentSnapshots() {
-		s.TokenPrompt += child.Result.PromptTokens
-		s.TokenCompletion += child.Result.CompTokens
-		s.SessionCost += child.Result.CostUSD
 	}
 }
 

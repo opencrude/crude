@@ -1,6 +1,10 @@
 package workspace
 
-import "testing"
+import (
+	"testing"
+
+	"crude/types"
+)
 
 func TestResolveAgentBlockRejectsMissingBackendOwner(t *testing.T) {
 	mgr := NewAgentManager()
@@ -89,7 +93,7 @@ func TestRecordAgentUsageUpdatesOwningSession(t *testing.T) {
 	mgr.AddOrchestrator("first", &AgentState{})
 	mgr.AddOrchestrator("second", &AgentState{})
 	first := &Session{AgentID: "first"}
-	second := &Session{AgentID: "second", TokenPrompt: 99}
+	second := &Session{AgentID: "second"}
 	ws := &Workspace{
 		AgentMgr: mgr,
 		SessionsByAgent: map[string]*Session{
@@ -100,40 +104,46 @@ func TestRecordAgentUsageUpdatesOwningSession(t *testing.T) {
 	}
 
 	got, ok := ws.RecordAgentUsage("first", map[string]any{
-		"prompt":         float64(10),
-		"completion":     float64(4),
-		"prompt_cached":  float64(2),
-		"cost":           0.25,
-		"context_window": float64(100),
-		"context_prompt": float64(37),
-		"estimated":      true,
+		"request_id":       "first-request",
+		"prompt":           float64(10),
+		"completion":       float64(4),
+		"prompt_cached":    float64(2),
+		"cache_read_known": true,
+		"cost":             0.25,
+		"cost_known":       true,
+		"context_window":   float64(100),
+		"context_prompt":   float64(37),
+		"estimated":        true,
 	})
 	if !ok {
 		t.Fatal("RecordAgentUsage() rejected valid usage")
 	}
-	if got.Prompt != 10 || got.Completion != 4 || got.Cached != 2 ||
-		got.Cost != 0.25 || got.ContextUsed != 37 || !got.Estimated {
+	if got.InputTotal.Value != 10 || got.Output.Value != 4 || got.CacheRead.Value != 2 ||
+		got.Cost.USD != 0.25 || got.ContextUsed.Value != 37 || got.InputTotal.Confidence != types.ConfidenceEstimated {
 		t.Fatalf("unexpected usage snapshot: %#v", got)
 	}
 	got, ok = ws.RecordAgentUsage("first", map[string]any{
-		"prompt": float64(20), "completion": float64(6), "prompt_cached": float64(3),
-		"cost": float64(0.30), "context_window": float64(100), "context_prompt": float64(50),
+		"request_id": "second-request",
+		"prompt":     float64(20), "completion": float64(6), "prompt_cached": float64(3), "cache_read_known": true,
+		"cost": float64(0.30), "cost_known": true, "context_window": float64(100), "context_prompt": float64(50),
 	})
-	if !ok || got.Prompt != 30 || got.Completion != 10 || got.Cached != 5 || got.Cost != 0.55 || got.ContextUsed != 50 {
+	if !ok || got.InputTotal.Value != 30 || got.Output.Value != 10 || got.CacheRead.Value != 5 || got.Cost.USD != 0.55 || got.ContextUsed.Value != 50 {
 		t.Fatalf("usage did not accumulate across calls: %#v ok=%v", got, ok)
 	}
 	mgr.AddSubAgent("child", "first", "child", "model", "researcher", &AgentState{})
 	if _, ok := ws.RecordAgentUsage("child", map[string]any{
-		"prompt": float64(7), "completion": float64(2), "context_window": float64(80), "context_prompt": float64(60),
+		"request_id": "child-request",
+		"prompt":     float64(7), "completion": float64(2), "context_window": float64(80), "context_prompt": float64(60),
 	}); !ok {
 		t.Fatal("child usage was not routed to its root session")
 	}
 	rootUsage, _ := ws.AgentUsage("first")
 	childUsage, _ := ws.AgentUsage("child")
-	if rootUsage.Prompt != 37 || rootUsage.Completion != 12 || rootUsage.ContextUsed != 50 || childUsage.ContextUsed != 60 {
-		t.Fatalf("session totals/per-agent contexts diverged: root=%#v child=%#v", rootUsage, childUsage)
+	subtreeUsage, _ := ws.UsageSummary("first", types.UsageSubtree)
+	if rootUsage.InputTotal.Value != 30 || childUsage.InputTotal.Value != 7 || subtreeUsage.InputTotal.Value != 37 || rootUsage.ContextUsed.Value != 50 || childUsage.ContextUsed.Value != 60 {
+		t.Fatalf("scoped totals/per-agent contexts diverged: root=%#v child=%#v subtree=%#v", rootUsage, childUsage, subtreeUsage)
 	}
-	if second.TokenPrompt != 99 {
-		t.Fatalf("background usage mutated active unrelated session: %d", second.TokenPrompt)
+	if _, ok := ws.AgentUsage("second"); ok {
+		t.Fatal("background usage mutated unrelated session")
 	}
 }

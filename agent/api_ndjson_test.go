@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -11,7 +12,6 @@ import (
 	"testing"
 
 	"crude/provider"
-	"crude/tools"
 )
 
 func TestCompleteStreamOllamaNDJSON(t *testing.T) {
@@ -55,7 +55,7 @@ func TestCompleteStreamOllamaNDJSON(t *testing.T) {
 	}
 }
 
-func TestConfiguredAgentCompactsFromFullArchiveAtThreshold(t *testing.T) {
+func TestConfiguredAgentCompactsWithCurrentModelAtThreshold(t *testing.T) {
 	var requestCount atomic.Int32
 	var bodies [][]byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -66,8 +66,9 @@ func TestConfiguredAgentCompactsFromFullArchiveAtThreshold(t *testing.T) {
 		}
 		bodies = append(bodies, body)
 		w.Header().Set("Content-Type", "application/x-ndjson")
-		if requestCount.Add(1) == 1 {
-			_, _ = fmt.Fprint(w, `{"model":"llama3","message":{"role":"assistant","content":"","tool_calls":[{"function":{"name":"read_file","arguments":{"path":"go.mod"}}}]},"done":true,"done_reason":"tool_calls","prompt_eval_count":100000,"eval_count":10}`+"\n")
+		if requestCount.Add(1) <= int32(len(compactionStages)) {
+			encoded, _ := json.Marshal("- compact stage: preserved facts")
+			_, _ = fmt.Fprintf(w, `{"model":"llama3","message":{"role":"assistant","content":%s},"done":true,"done_reason":"stop","prompt_eval_count":100000,"eval_count":100}`+"\n", encoded)
 			return
 		}
 		_, _ = fmt.Fprint(w, `{"model":"llama3","message":{"role":"assistant","content":"done"},"done":true,"done_reason":"stop","prompt_eval_count":12000,"eval_count":1}`+"\n")
@@ -75,9 +76,9 @@ func TestConfiguredAgentCompactsFromFullArchiveAtThreshold(t *testing.T) {
 	defer server.Close()
 	p := provider.FromPreset("ollama-cloud", "ollama-key", server.URL)
 	p.Model = "compaction-test-model"
-	provider.SetModelContext(p.Model, 65536)
+	provider.SetModelContext(p.Model, 200000)
 	a := newTestAgent(t, p, p.Model)
-	a.ContextCompactionPercent = 85
+	a.ContextCompactionPercent = 40
 	var largeHistory []provider.ChatMessage
 	for i := 0; i < 24; i++ {
 		largeHistory = append(largeHistory,
@@ -86,12 +87,14 @@ func TestConfiguredAgentCompactsFromFullArchiveAtThreshold(t *testing.T) {
 		)
 	}
 	largeHistory = append(largeHistory, provider.NewTextMessage("user", "current instruction must survive"))
-	a.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
-		return tools.ToolResult{Content: "module crude"}, nil
-	}
 	archive := a.Run(context.Background(), largeHistory, "system", func(AgentEvent) {}, nil, nil, "", nil)
-	if len(bodies) != 2 || len(bodies[0]) >= 400000 || !strings.Contains(string(bodies[0]), "context_checkpoint") {
-		t.Fatalf("active context was not compacted: requests=%d sizes=%v", len(bodies), []int{len(bodies[0]), len(bodies[1])})
+	if len(bodies) != len(compactionStages)+1 || len(bodies[0]) < 400000 || !strings.Contains(string(bodies[0]), "compaction") ||
+		!strings.Contains(string(bodies[0]), "request 0") {
+		t.Fatalf("summary request did not retain cached context: requests=%d sizes=%v", len(bodies), []int{len(bodies[0]), len(bodies[1])})
+	}
+	postCompact := bodies[len(bodies)-1]
+	if len(postCompact) >= len(bodies[0])/2 || !strings.Contains(string(postCompact), "context_checkpoint") || strings.Contains(string(postCompact), "request 0") {
+		t.Fatalf("post-compaction request was not rotated: first=%d final=%d", len(bodies[0]), len(postCompact))
 	}
 	if len(archive) <= len(largeHistory) || !strings.Contains(archive[1].Content.String(), "request 0") {
 		t.Fatal("full archive was lost during active epoch rotation")
@@ -101,7 +104,11 @@ func TestConfiguredAgentCompactsFromFullArchiveAtThreshold(t *testing.T) {
 	for _, message := range active {
 		currentSurvived = currentSurvived || strings.Contains(message.Content.String(), "current instruction must survive")
 	}
-	if len(active) == 0 || active[0].Role != "system" || !strings.Contains(active[0].Content.String(), "context_checkpoint") || !currentSurvived {
+	checkpointSurvived := false
+	for _, message := range active {
+		checkpointSurvived = checkpointSurvived || message.EffectiveOrigin() == provider.OriginCheckpoint
+	}
+	if len(active) == 0 || !checkpointSurvived || !currentSurvived {
 		t.Fatalf("active context = %#v", active)
 	}
 }

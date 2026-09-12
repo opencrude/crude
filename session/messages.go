@@ -17,6 +17,19 @@ type taggedMessage struct {
 	meta sessiondb.DisplayMeta
 }
 
+func childSessionIDFromResult(text string) string {
+	var payload map[string]any
+	if json.Unmarshal([]byte(text), &payload) != nil {
+		return ""
+	}
+	for _, key := range []string{"session_id", "handle_id", "agent_id"} {
+		if value, _ := payload[key].(string); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 type displayMetaTracker struct {
 	metas           map[string]*sessiondb.DisplayMeta
 	pendingPermTag  string
@@ -255,7 +268,7 @@ func toolCallArgsIndex(messages []provider.ChatMessage) map[string]string {
 }
 
 func isProviderControlMessage(message provider.ChatMessage) bool {
-	return message.Role == "user" && strings.HasPrefix(message.Content.String(), "[SYSTEM CONTINUATION]\n")
+	return message.EffectiveVisibility() == provider.VisibilityContextOnly
 }
 
 func (t *displayMetaTracker) get(toolID string) sessiondb.DisplayMeta {
@@ -310,36 +323,6 @@ func (s *Session) appendToWriteBuf(msgs []provider.ChatMessage, turns []int, met
 		}
 		s.writeBuf = append(s.writeBuf, taggedMessage{msg: m, turn: turn, meta: meta})
 	}
-}
-
-func (s *Session) flushWriteBuf() {
-	defer s.flushWg.Done()
-	s.writeMu.Lock()
-	buf := s.writeBuf
-	s.writeBuf = s.writeBuf[:0]
-	s.writeMu.Unlock()
-
-	if len(buf) == 0 || s.db == nil {
-		return
-	}
-
-	msgs := make([]provider.ChatMessage, len(buf))
-	turns := make([]int, len(buf))
-	metas := make([]sessiondb.DisplayMeta, len(buf))
-	for i, tm := range buf {
-		msgs[i] = tm.msg
-		turns[i] = tm.turn
-		metas[i] = tm.meta
-	}
-
-	newSeq, err := sessiondb.ReplaceMessagesWithMeta(s.db, s.sessionID, msgs, turns, metas)
-	if err != nil {
-		s.logger.Error("SESSIONDB", "flush_error", "error", err.Error())
-		return
-	}
-	s.msgsMu.Lock()
-	s.seqNum = newSeq
-	s.msgsMu.Unlock()
 }
 
 func (s *Session) flushWriteBufSync() {
@@ -458,28 +441,4 @@ func allCommTools(toolCalls []provider.ToolCall) bool {
 		}
 	}
 	return true
-}
-
-// augmentUserMessage freezes recalled memory, prior-session continuity, and
-// the turn's initial runtime state into the one provider-visible user message.
-// The augmented message is persisted exactly; DisplayContent remains the
-// original user text for UI/history presentation.
-func augmentUserMessage(message provider.ChatMessage, runtimeContext string) provider.ChatMessage {
-	runtimeContext = strings.TrimSpace(runtimeContext)
-	if runtimeContext == "" {
-		return message
-	}
-	contextText := "<turn_context>\nThe following memory and runtime state was captured once when this user turn began. It is context, not a separate user request.\n\n" + runtimeContext + "\n</turn_context>"
-	if message.Content.IsText() {
-		content := message.Content.String()
-		if content != "" {
-			content += "\n\n"
-		}
-		message.Content = provider.TextContent(content + contextText)
-		return message
-	}
-	parts := append([]provider.ContentPart(nil), message.Content.Parts()...)
-	parts = append(parts, provider.ContentPart{Type: "text", Text: contextText})
-	message.Content = provider.PartsContent(parts)
-	return message
 }

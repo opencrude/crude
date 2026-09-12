@@ -93,17 +93,7 @@ func TestBuildUserMessageDeliversFileAttachments(t *testing.T) {
 	}
 }
 
-func TestTurnContextIsFrozenIntoPersistedUserMessage(t *testing.T) {
-	user := provider.ChatMessage{Role: "user", Content: provider.TextContent("current request"), DisplayContent: "current request"}
-	augmented := augmentUserMessage(user, "remembered fact")
-	if augmented.Role != "user" || augmented.DisplayContent != "current request" ||
-		!strings.HasPrefix(augmented.Content.String(), "current request") ||
-		!strings.Contains(augmented.Content.String(), "remembered fact") {
-		t.Fatalf("augmented user message = %#v", augmented)
-	}
-}
-
-func TestTurnContextPreservesMultipartUserContent(t *testing.T) {
+func TestRuntimeContextRemainsSeparateFromMultipartHumanInput(t *testing.T) {
 	user := provider.ChatMessage{
 		Role: "user",
 		Content: provider.PartsContent([]provider.ContentPart{
@@ -111,9 +101,12 @@ func TestTurnContextPreservesMultipartUserContent(t *testing.T) {
 			{Type: "image_url", ImageURL: &provider.ImageURL{URL: "data:image/png;base64,YWJj"}},
 		}),
 	}
-	augmented := augmentUserMessage(user, "visual context")
-	if !augmented.Content.HasImage() || !strings.Contains(augmented.Content.ContentDescription(), "visual context") {
-		t.Fatalf("multipart turn context = %q", augmented.Content.ContentDescription())
+	runtimeContext := provider.NewTextMessage("user", "<turn_context>visual context</turn_context>")
+	runtimeContext.Origin = provider.OriginRuntimeContext
+	runtimeContext.Visibility = provider.VisibilityContextOnly
+	if !user.Content.HasImage() || strings.Contains(user.Content.ContentDescription(), "visual context") ||
+		runtimeContext.IsGenuineUserInput() || runtimeContext.EffectiveVisibility() != provider.VisibilityContextOnly {
+		t.Fatalf("human=%#v runtime=%#v", user, runtimeContext)
 	}
 }
 

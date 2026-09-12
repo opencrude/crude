@@ -174,6 +174,31 @@ func fuzzySequenceScore(value, query string) (int, []int, bool) {
 	for i, r := range queryRunes {
 		queryLower[i] = unicode.ToLower(r)
 	}
+	// Keep a contiguous fallback for repeated-letter names where greedy fuzzy
+	// scoring can choose a locally better occurrence and strand a later rune.
+	contiguousScore := 0
+	var contiguousPositions []int
+	for start := 0; start+len(queryLower) <= len(lower); start++ {
+		matched := true
+		for i := range queryLower {
+			if lower[start+i] != queryLower[i] {
+				matched = false
+				break
+			}
+		}
+		if matched {
+			positions := make([]int, len(queryLower))
+			for i := range positions {
+				positions[i] = start + i
+			}
+			score := 80 + len(queryLower)*32 - start - len(valueRunes)/8
+			if start == 0 || isPathBoundary(valueRunes[start-1]) {
+				score += 48
+			}
+			contiguousScore, contiguousPositions = score, positions
+			break
+		}
+	}
 
 	positions := make([]int, 0, len(queryRunes))
 	vi := 0
@@ -203,6 +228,9 @@ func fuzzySequenceScore(value, query string) (int, []int, bool) {
 			}
 		}
 		if best < 0 {
+			if contiguousPositions != nil {
+				return contiguousScore, contiguousPositions, true
+			}
 			return 0, nil, false
 		}
 		positions = append(positions, best)

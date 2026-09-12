@@ -303,14 +303,7 @@ func (d *openAIChatStreamDecoder) Decode(event StreamEvent) (StreamUpdate, error
 
 	var update StreamUpdate
 	if chunk.Usage != nil {
-		usage := TokenUsage{
-			PromptTokens:     chunk.Usage.PromptTokens,
-			CompletionTokens: chunk.Usage.CompletionTokens,
-		}
-		if chunk.Usage.PromptTokensDetails != nil {
-			usage.PromptTokensCached = chunk.Usage.PromptTokensDetails.CachedTokens
-			usage.PromptTokensWritten = chunk.Usage.PromptTokensDetails.CacheWriteTokens
-		}
+		usage := chunk.Usage.normalized()
 		update.Usage = &usage
 	}
 	if len(chunk.Choices) == 0 {
@@ -426,6 +419,41 @@ func mergeOpenAIReasoningDetails(details []json.RawMessage) []json.RawMessage {
 		index = end
 	}
 	return merged
+}
+
+// CanonicalizeProviderItems collapses replay fragments whose protocol defines
+// concatenation semantics. It is idempotent so storage, estimation, and replay
+// all observe the same representation.
+func CanonicalizeProviderItems(items []ProviderItem) []ProviderItem {
+	if len(items) < 2 {
+		return items
+	}
+	canonical := make([]ProviderItem, 0, len(items))
+	for index := 0; index < len(items); {
+		item := items[index]
+		if item.Standard != "openai" || item.Type != "openai.reasoning_detail" {
+			canonical = append(canonical, item)
+			index++
+			continue
+		}
+		end := index + 1
+		for end < len(items) && items[end].Standard == item.Standard && items[end].Type == item.Type {
+			end++
+		}
+		details := make([]json.RawMessage, 0, end-index)
+		for _, fragment := range items[index:end] {
+			details = append(details, fragment.Data)
+		}
+		for _, detail := range mergeOpenAIReasoningDetails(details) {
+			canonical = append(canonical, ProviderItem{
+				Standard: item.Standard,
+				Type:     item.Type,
+				Data:     detail,
+			})
+		}
+		index = end
+	}
+	return canonical
 }
 
 func openAIReasoningDetailMergeKey(raw json.RawMessage) (string, bool) {

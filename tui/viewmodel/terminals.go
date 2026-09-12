@@ -153,14 +153,14 @@ func (m *App) resizeTerminal(id string, cols, rows int) error {
 }
 
 func (m *App) reportTerminalIOError(operation, id string, err error) {
-	if err == nil || m.StatusBar == nil {
+	if err == nil || m.Feedback == nil {
 		return
 	}
 	if id == "" {
-		m.StatusBar.SetError(fmt.Sprintf("Terminal %s failed: %v", operation, err))
+		m.Feedback.NotifyError(fmt.Sprintf("Terminal %s failed: %v", operation, err))
 		return
 	}
-	m.StatusBar.SetError(fmt.Sprintf("Terminal %s failed (%s): %v", operation, id, err))
+	m.Feedback.NotifyError(fmt.Sprintf("Terminal %s failed (%s): %v", operation, id, err))
 }
 
 func (m *App) dropTermScreen(id string) {
@@ -179,8 +179,8 @@ func (m *App) dropTermScreen(id string) {
 func (m *App) openNewTerminal() tea.Cmd {
 	mgr := m.termMgr()
 	if mgr == nil {
-		if m.StatusBar != nil {
-			m.StatusBar.SetError("Terminals are unavailable")
+		if m.Feedback != nil {
+			m.Feedback.NotifyError("Terminals are unavailable")
 		}
 		return nil
 	}
@@ -190,8 +190,8 @@ func (m *App) openNewTerminal() tea.Cmd {
 		Rows: defaultTermRows,
 	})
 	if err != nil {
-		if m.StatusBar != nil {
-			m.StatusBar.SetError(err.Error())
+		if m.Feedback != nil {
+			m.Feedback.NotifyError(err.Error())
 		}
 		return nil
 	}

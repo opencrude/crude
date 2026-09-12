@@ -47,11 +47,11 @@ func (m *App) startNewFileInTree(dir string) {
 			m.Tree.Model.ApplyLocalMutation(filetree.FileChangeEvent{
 				Type: filetree.FileCreated, Path: full,
 			})
-			m.StatusBar.SetInfo("Created " + value)
+			m.Feedback.NotifyInfo("Created " + value)
 			// Open the new file in the editor so the user can
 			// start typing immediately.
 			if _, err := m.openEditorTab(full); err != nil {
-				m.StatusBar.SetError("open " + value + ": " + err.Error())
+				m.Feedback.NotifyError("open " + value + ": " + err.Error())
 			}
 			return nil
 		})
@@ -76,7 +76,7 @@ func (m *App) startNewFolderInTree(dir string) {
 			})
 			// Expand the parent so the new folder is visible.
 			m.Tree.Model.ExpandToPath(full)
-			m.StatusBar.SetInfo("Created folder " + value)
+			m.Feedback.NotifyInfo("Created folder " + value)
 			return nil
 		})
 }
@@ -120,7 +120,7 @@ func (m *App) startRenameInTree(path string) {
 			if m.EditorState.ActiveView == path {
 				m.EditorState.ActiveView = newPath
 			}
-			m.StatusBar.SetInfo(fmt.Sprintf("Renamed to %s", value))
+			m.Feedback.NotifyInfo(fmt.Sprintf("Renamed to %s", value))
 			return nil
 		})
 }
@@ -222,7 +222,7 @@ func (m *App) handleTreePromptKey(msg tea.KeyPressMsg) tea.Cmd {
 		st.SyncFromEdit()
 		if st.OnSubmit != nil {
 			if err := st.OnSubmit(st.ValueText()); err != nil {
-				m.StatusBar.SetError(err.Error())
+				m.Feedback.NotifyError(err.Error())
 				return nil
 			}
 		}
@@ -335,7 +335,7 @@ func (m *App) confirmTreeDelete() {
 	}
 	msg := m.DeletePath(path)
 	if !msg.Succeeded() {
-		m.StatusBar.SetError("delete " + filepath.Base(path) + ": " + msg.Err.Error())
+		m.Feedback.NotifyError("delete " + filepath.Base(path) + ": " + msg.Err.Error())
 		return
 	}
 	m.Tree.Model.ApplyLocalMutation(filetree.FileChangeEvent{
@@ -345,7 +345,7 @@ func (m *App) confirmTreeDelete() {
 	if tab, ok := m.EditorState.Tabs[path]; ok {
 		m.closeEditorTabForce(tab.Path)
 	}
-	m.StatusBar.SetInfo("Deleted " + filepath.Base(path))
+	m.Feedback.NotifyInfo("Deleted " + filepath.Base(path))
 }
 
 func (m *App) cancelTreeDelete() {

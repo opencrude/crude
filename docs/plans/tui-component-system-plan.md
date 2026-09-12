@@ -1786,20 +1786,13 @@ rootHost
   `launcher_async_test.go` (`TestLauncherOpen_PaintsWithoutWorkspaceScan`,
   `TestLauncherAsyncLoad_AppliesLatestGen`,
   `TestLauncherAsyncLoad_DroppedWhenLauncherClosed`).
-- **Chat gravity restored** (2026-08-01): the renderer's `assembleOutput`
-  anchors short content at the BOTTOM of the viewport ("Gravity: content
-  shorter than viewport… content sits at the bottom"), and shellchat's
-  `ViewportPaneLineMap` already assumed it — but the root-host VirtualList
-  painted items from row 0, so short chats appeared at the TOP of the chat
-  area with a huge empty gap above the input prompt. Added
-  `ui.VirtualList.SetBottomGravity` (off by default; enabled by the chat
-  list in `shellchat.New`): when content fits the viewport and the scroll is
-  at offset 0, the items are painted at the bottom rows. Guarded by
-  `TestAgentView_ShortChatAnchorsToBottom` and the (updated)
-  `TestAgentView_ChatPaintsInsideSlot` (both fail with gravity reverted).
-  The pre-existing `SetBottomPadding` mechanism is NOT gravity (it extends
-  content downward) — only used by virtlist tests; the chat uses
-  `SetBottomGravity`.
+- **Chat gravity corrected** (2026-09-12): bottom anchoring made short resumed
+  transcripts appear after a variable blank region and required duplicate
+  gravity offsets in pane hit-testing. `shellchat` now uses top gravity for
+  short content and ordinary sticky auto-scroll after overflow. Pane line maps
+  share that geometry. Guarded by
+  `TestAgentView_ShortChatStartsAtTopWithoutResumeGap`,
+  `TestAgentView_ChatPaintsInsideSlot`, and nested-pane wheel tests.
 - **Input shell clamped to the status bar** (2026-08-01): `InputLineCount`
   was unclamped — a long/multiline input could exceed the vertical budget
   and its rows painted OVER the status separator and the status content

@@ -13,7 +13,6 @@ import (
 	"crude/fileio"
 	"crude/provider"
 	"crude/sessiondb"
-	"crude/tui/editor"
 	"crude/tui/filetree"
 	"crude/tui/perf"
 	"crude/tui/rendering"
@@ -29,6 +28,9 @@ import (
 	sessionpicker "crude/tui/screens/sessionpicker"
 	"crude/tui/screens/sessionsettings"
 	"crude/tui/screens/shellchat"
+	"crude/tui/screens/shellfooter"
+	"crude/tui/screens/shellheader"
+	statusoverview "crude/tui/screens/statusoverview"
 	textoverlay "crude/tui/screens/textoverlay"
 	"crude/tui/screens/yolo"
 	settingsui "crude/tui/settings"
@@ -63,6 +65,74 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// the complete shell, with expensive leaf work retained by source version.
 
 	switch msg := msg.(type) {
+	case statusHydrateErrMsg:
+		m.notifyStatus(types.SeverityWarning, "status", "Notification history unavailable", msg.Err.Error(), types.ResourceRef{Kind: types.ResourceWorkspace, ID: m.RootPath})
+		return m, nil
+	case workspace.StatusCenterHydratedMsg:
+		m.syncStatusOverview()
+		return m, nil
+	case statusoverview.NavigateMsg:
+		return m, m.handleStatusOverviewNavigate(msg)
+	case statusoverview.CopySummaryMsg:
+		m.copyToClipboard(statusSummaryText(msg.Item))
+		return m, nil
+	case statusoverview.MoreMsg:
+		m.openStatusOverviewMore(msg.Item)
+		return m, nil
+	case statusoverview.ViewChangedMsg:
+		if m.statusOverview != nil {
+			m.statusOverviewSourceVersion = m.LSPMgr.Version()
+			m.statusOverviewCenterVersion = 0
+			m.statusOverviewSecond = 0
+			m.statusOverview.SetProjection(m.statusOverviewProjection(msg.View))
+			m.syncStatusOverview()
+		}
+		return m, nil
+	case statusoverview.MarkReadMsg:
+		if m.Workspace != nil && m.Status != nil {
+			m.Status.MarkRead(msg.ID, true)
+			m.syncStatusOverview()
+		}
+		return m, nil
+	case statusoverview.DismissMsg:
+		if m.Workspace != nil && m.Status != nil {
+			m.Status.Dismiss(msg.ID)
+			m.syncStatusOverview()
+		}
+		return m, nil
+	case statusoverview.CloseMsg:
+		m.overlayHost.Close(ui.OverlayStatusOverview)
+		return m, nil
+	case shellheader.ActionMsg:
+		switch msg.Action {
+		case "workspace":
+			m.openStatusOverview(statusoverview.ViewWorkspace, msg.TargetID)
+		case "activity":
+			m.openStatusOverview(statusoverview.ViewActivity, msg.TargetID)
+		case "notifications":
+			m.openStatusOverview(statusoverview.ViewNotifications, msg.TargetID)
+		case "help":
+			m.openHelp()
+		case "git":
+			return m, m.toggleActivity(activityGit)
+		default:
+			m.openStatusOverview(statusoverview.ViewTabs, msg.TargetID)
+		}
+		return m, nil
+	case shellfooter.ActionMsg:
+		switch msg.Action {
+		case "activity":
+			m.openStatusOverview(statusoverview.ViewActivity, msg.TargetID)
+		case "notifications":
+			m.openStatusOverview(statusoverview.ViewNotifications, msg.TargetID)
+		case "help":
+			m.openHelp()
+		case "workspace":
+			m.openStatusOverview(statusoverview.ViewWorkspace, msg.TargetID)
+		default:
+			m.openStatusOverview(statusoverview.ViewTabs, msg.TargetID)
+		}
+		return m, nil
 	case interactiveFrameMsg:
 		m.handleInteractiveFrame(msg)
 		return m, nil
@@ -72,7 +142,6 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.height = msg.Height
 		m.subPaneProjections.SetSize(msg.Width, msg.Height)
 		m.Input.SetWidth(msg.Width)
-		m.StatusBar.SetWidth(msg.Width)
 		if m.compositor != nil {
 			m.compositor.Resize(msg.Width, msg.Height)
 		}
@@ -137,10 +206,9 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	now := time.Now()
 	spinFrame := int(now.UnixMilli())
 	m.SpinFrame = spinFrame
-	m.StatusBar.SetCurrentAgent(m.AgentMgr.ActiveID())
 	m.Input.SetSpinFrame(spinFrame)
-	m.StatusBar.ClearExpired()
 	m.refreshSessionBackgroundJobs(now)
+	m.syncStatusOverview()
 	m.tickTerminalCursors(now)
 	if fw := m.windowManager.Focused(); fw != nil {
 		if animated, ok := fw.Content.(interface{ NeedsFrame() bool }); ok && animated.NeedsFrame() {
@@ -223,18 +291,8 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	connected, status, errMsg := m.LSPMgr.Status()
-	statusbarLSP := connected || status == editor.LSPConnected || status == editor.LSPStarting || errMsg != ""
-
-	// Status bar is EXCLUSIVELY for whole-project insights plus contextual
-	// help. Per-file diagnostics paint in the editor gutter/hover; counts and
-	// shortcuts for the active file appear in shellstatus editor context.
-	if statusbarLSP {
-		ins := m.LSPMgr.ProjectInsights()
-		m.StatusBar.SetProjectInsights(ins)
-	} else {
-		m.StatusBar.SetProjectInsights(editor.ProjectInsights{})
-	}
+	m.syncLSPStatusIssues()
+	m.syncAgentStatusInventory()
 
 	// Status bar animations and popup reveals need their own content
 	// re-rendered even when main content hasn't changed.
@@ -446,7 +504,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		}
 	case ttypes.ErrorMsg:
 		m.Logger.Debug("UI", "error", "msg", string(msg))
-		m.StatusBar.SetError(string(msg))
+		m.Feedback.NotifyError(string(msg))
 	case slashBackendResultMsg:
 		m.handleSlashBackendResult(msg)
 	case ttypes.UpdateModelMsg:
@@ -466,23 +524,23 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case ttypes.SettingsSaveResultMsg:
 		if msg.Err != nil {
 			m.Logger.Error("CONFIG", "save_error", "error", msg.Err.Error())
-			m.StatusBar.SetError(msg.Err.Error())
+			m.Feedback.NotifyError(msg.Err.Error())
 		} else {
 			m.Logger.Info("CONFIG", "saved")
 			m.ModelName = msg.Settings.Model
 			m.LastSettings = msg.Settings
-			m.StatusBar.SetInfo("settings saved")
+			m.Feedback.NotifyInfo("settings saved")
 		}
 	case rendering.ClipboardCopiedMsg:
 		m.Logger.Debug("CLIPBOARD", "copied")
-		m.StatusBar.SetInfo("copied to clipboard")
+		m.Feedback.NotifyInfo("copied to clipboard")
 	case rendering.ClipboardErrorMsg:
 		m.Logger.Error("CLIPBOARD", "error", "error", string(msg))
-		m.StatusBar.SetError(string(msg))
+		m.Feedback.NotifyError(string(msg))
 	case ttypes.UndoResultMsg:
 		if msg.Error != "" {
 			m.Logger.Error("JOURNAL", "undo_error", "error", msg.Error)
-			m.StatusBar.SetError(msg.Error)
+			m.Feedback.NotifyError(msg.Error)
 		}
 		if msg.Desc != "" && m.AgentMgr.ActiveID() != "" {
 			m.appendActiveMessage(ttypes.ChatMessage{
@@ -538,11 +596,11 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			if m.launcherScreen != nil {
 				_ = m.launcherOpenFolder(msg.Path)
 			} else if err := m.SwitchProject(msg.Path); err != nil {
-				if m.StatusBar != nil {
-					m.StatusBar.SetError("Failed to open workspace: " + err.Error())
+				if m.Feedback != nil {
+					m.Feedback.NotifyError("Failed to open workspace: " + err.Error())
 				}
-			} else if m.StatusBar != nil {
-				m.StatusBar.SetInfo("Opened " + msg.Path)
+			} else if m.Feedback != nil {
+				m.Feedback.NotifyInfo("Opened " + msg.Path)
 			}
 		} else {
 			paths := msg.Paths
@@ -565,24 +623,24 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		appSets := msg.AppSettings
 		if msg.Scope == ttypes.SettingsScopeWorkspace {
 			if err := m.SaveWorkspaceSettings(msg.Overrides); err != nil {
-				m.StatusBar.SetError("Failed to save workspace settings: " + err.Error())
+				m.Feedback.NotifyError("Failed to save workspace settings: " + err.Error())
 			} else {
 				m.applyThemePreset(themePresetFromSettings(m.LoadAppSettings()))
 				m.refreshAllSessionSettingsProjections()
-				m.StatusBar.SetInfo("Workspace settings saved")
+				m.Feedback.NotifyInfo("Workspace settings saved")
 			}
 		} else {
 			if m.Logger != nil {
 				m.Logger.Info("WORKSPACE", "save_app_settings", "theme_preset", appSets.Theme.Preset, "provider", appSets.ActiveProvider)
 			}
 			if err := m.SaveAppSettings(appSets); err != nil {
-				m.StatusBar.SetError("Failed to save application settings: " + err.Error())
+				m.Feedback.NotifyError("Failed to save application settings: " + err.Error())
 			} else if err := m.SaveProviderSettings(appSets.ActiveProvider, appSets.Providers); err != nil {
-				m.StatusBar.SetError("Failed to save providers: " + err.Error())
+				m.Feedback.NotifyError("Failed to save providers: " + err.Error())
 			} else {
 				m.applyThemePreset(themePresetFromSettings(appSets))
 				m.refreshAllSessionSettingsProjections()
-				m.StatusBar.SetInfo("Application settings saved")
+				m.Feedback.NotifyInfo("Application settings saved")
 			}
 		}
 		m.overlayHost.Close(ui.OverlayWorkspaceSettings)
@@ -592,7 +650,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		overrides := m.LoadWorkspaceOverrides()
 		overrides.ClearCategory(msg.Key)
 		if err := m.SaveWorkspaceSettings(overrides); err != nil {
-			m.StatusBar.SetError("Failed to reset section: " + err.Error())
+			m.Feedback.NotifyError("Failed to reset section: " + err.Error())
 		} else {
 			m.applyThemePreset(themePresetFromSettings(m.LoadAppSettings()))
 			m.refreshAllSessionSettingsProjections()
@@ -646,43 +704,43 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 				cmds = append(cmds, cmd)
 			}
 			if msg.Warning != "" {
-				m.StatusBar.SetError(msg.Warning)
+				m.Feedback.NotifyError(msg.Warning)
 			}
 		}
 	case historyLatestMsg:
 		if msg.Error != "" {
-			m.StatusBar.SetError(msg.Error)
+			m.Feedback.NotifyError(msg.Error)
 		} else if cmd := m.openLocalHistoryForMessage(msg.SessionID, msg.MessageID); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 	case historyCandidatesMsg:
 		if msg.Error != "" {
-			m.StatusBar.SetError(msg.Error)
+			m.Feedback.NotifyError(msg.Error)
 		} else if cmd := m.openHistoryCandidates(msg); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 	case historyOperationMsg:
 		if msg.Error != "" {
-			m.StatusBar.SetError(msg.Error)
+			m.Feedback.NotifyError(msg.Error)
 		} else {
-			m.StatusBar.SetInfo(msg.Label)
+			m.Feedback.NotifyInfo(msg.Label)
 		}
 	case workspace.HistoryServiceStatus:
 		if msg.Error != "" {
 			m.Logger.Error("HISTORY", "service_error", "error", msg.Error)
-			m.StatusBar.SetError("Local history: " + msg.Error)
+			m.Feedback.NotifyError("Local history: " + msg.Error)
 		}
 	case settingsui.ChatGPTSignInResultMsg:
 		if msg.Err == nil && msg.Creds != nil {
 			if err := m.saveChatGPTOAuth(msg.Creds); err != nil {
-				m.StatusBar.SetError("Failed to save ChatGPT sign-in: " + err.Error())
+				m.Feedback.NotifyError("Failed to save ChatGPT sign-in: " + err.Error())
 			} else {
 				m.refreshAllSessionSettingsProjections()
 				label := msg.Creds.Email
 				if label == "" {
 					label = "ChatGPT"
 				}
-				m.StatusBar.SetInfo("Signed in as " + label)
+				m.Feedback.NotifyInfo("Signed in as " + label)
 			}
 		} else {
 			reason := "Sign in with ChatGPT failed"
@@ -697,7 +755,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 					m.refreshAllSessionSettingsProjections()
 				}
 			}
-			m.StatusBar.SetError(reason)
+			m.Feedback.NotifyError(reason)
 		}
 		// Refresh the open form so the status row + sign-in/sign-out button swap.
 		if fw := m.windowManager.Window("workspace-settings"); fw != nil {
@@ -707,10 +765,10 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		}
 	case settingsui.ChatGPTSignOutMsg:
 		if err := m.saveChatGPTOAuth(nil); err != nil {
-			m.StatusBar.SetError("Failed to clear ChatGPT sign-in: " + err.Error())
+			m.Feedback.NotifyError("Failed to clear ChatGPT sign-in: " + err.Error())
 		} else {
 			m.refreshAllSessionSettingsProjections()
-			m.StatusBar.SetInfo("Signed out of ChatGPT")
+			m.Feedback.NotifyInfo("Signed out of ChatGPT")
 		}
 		if fw := m.windowManager.Window("workspace-settings"); fw != nil {
 			if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
@@ -719,11 +777,11 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		}
 	case sessionsettings.SaveMsg:
 		m.Logger.Info("CONFIG", "session_settings_save")
-		m.StatusBar.SetInfo("saving...")
+		m.Feedback.NotifyInfo("saving...")
 		s := msg.Settings
 		session, _ := m.sessionProjections.projectionForSettings(msg.Target)
 		if session == nil {
-			m.StatusBar.SetError("Session settings owner is no longer available")
+			m.Feedback.NotifyError("Session settings owner is no longer available")
 			break
 		}
 		sessionID := session.SessionID
@@ -741,16 +799,16 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		working.Agents = msg.Settings.Agents
 		overrides := types.WorkspaceOverridesFromDiff(appDefaults, working)
 		if err := m.SaveWorkspaceSettings(overrides); err != nil {
-			m.StatusBar.SetError("Failed to save as workspace settings: " + err.Error())
+			m.Feedback.NotifyError("Failed to save as workspace settings: " + err.Error())
 		} else {
 			m.refreshAllSessionSettingsProjections()
-			m.StatusBar.SetInfo("Agent settings saved as workspace defaults")
+			m.Feedback.NotifyInfo("Agent settings saved as workspace defaults")
 		}
 	case sessionSettingsSaveResultMsg:
 		session, projection := m.sessionProjections.projectionForSettings(msg.target)
 		if msg.err != nil {
 			m.Logger.Error("CONFIG", "save_error", "error", msg.err.Error())
-			m.StatusBar.SetError(msg.err.Error())
+			m.Feedback.NotifyError(msg.err.Error())
 		} else if projection != nil {
 			if msg.target == m.sessionSettings() {
 				m.ModelName = msg.settings.Model
@@ -766,7 +824,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 				}
 			}
 			m.closeProjectionPanel(projection, sessionSettingsPanelID)
-			m.StatusBar.SetInfo("settings saved")
+			m.Feedback.NotifyInfo("settings saved")
 		}
 	case sessionsettings.CancelMsg:
 		m.Logger.Info("CONFIG", "session_settings_cancel")
@@ -778,12 +836,12 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case sessionsettings.ResetMsg:
 		session, projection := m.sessionProjections.projectionForSettings(msg.Target)
 		if session == nil {
-			m.StatusBar.SetError("Session settings owner is no longer available")
+			m.Feedback.NotifyError("Session settings owner is no longer available")
 		} else if err := m.ResetSessionSettingsForSession(session.SessionID); err != nil {
-			m.StatusBar.SetError("Failed to reset session settings: " + err.Error())
+			m.Feedback.NotifyError("Failed to reset session settings: " + err.Error())
 		} else {
 			m.refreshSessionSettingsProjection(session)
-			m.StatusBar.SetInfo("Session settings now inherit workspace defaults")
+			m.Feedback.NotifyInfo("Session settings now inherit workspace defaults")
 		}
 		m.closeProjectionPanel(projection, sessionSettingsPanelID)
 	case sessionsettings.FetchModelsMsg:
@@ -833,7 +891,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case filetree.TreeRefreshDoneMsg:
 		if msg.Err != nil {
 			m.Logger.Error("TREE", "refresh_error", "error", msg.Err.Error())
-			m.StatusBar.SetError("tree refresh error: " + msg.Err.Error())
+			m.Feedback.NotifyError("tree refresh error: " + msg.Err.Error())
 		}
 		if msg.Err == nil && m.Tree != nil && m.Tree.Model == msg.Model {
 			if cmd := msg.Model.RefreshGitStatus(); cmd != nil {
@@ -1106,8 +1164,8 @@ func (m *App) openReferenceOverlay(refID string) {
 		// open read-only — the file on disk stays the source of truth.
 		prev, err := fileio.InspectFile(ref.FilePath, fileio.DefaultPreviewBytes, fileio.DefaultHexHeadBytes)
 		if err != nil {
-			if m.StatusBar != nil {
-				m.StatusBar.SetError("preview failed: " + err.Error())
+			if m.Feedback != nil {
+				m.Feedback.NotifyError("preview failed: " + err.Error())
 			}
 			return
 		}
@@ -1183,7 +1241,7 @@ func (m *App) addFileReference(path string) {
 		Inline:   false,
 	})
 	if err != nil {
-		m.StatusBar.SetError("Failed to add file reference")
+		m.Feedback.NotifyError("Failed to add file reference")
 		return
 	}
 	m.Input.InsertReference(ref)

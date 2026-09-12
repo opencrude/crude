@@ -338,12 +338,10 @@ type openAIResponse struct {
 }
 
 type openAIResponsesUsage struct {
-	InputTokens        int `json:"input_tokens"`
-	OutputTokens       int `json:"output_tokens"`
-	InputTokensDetails *struct {
-		CachedTokens     int `json:"cached_tokens"`
-		CacheWriteTokens int `json:"cache_write_tokens"`
-	} `json:"input_tokens_details"`
+	InputTokens         int                     `json:"input_tokens"`
+	OutputTokens        int                     `json:"output_tokens"`
+	InputTokensDetails  *PromptTokenDetails     `json:"input_tokens_details"`
+	OutputTokensDetails *CompletionTokenDetails `json:"output_tokens_details"`
 }
 
 type openAIResponsesError struct {
@@ -472,11 +470,9 @@ func (r *openAIResponse) toChatResponse() (*ChatResponse, error) {
 			TotalTokens:      r.Usage.InputTokens + r.Usage.OutputTokens,
 		}
 		if r.Usage.InputTokensDetails != nil {
-			resp.Usage.PromptTokensDetails = &PromptTokenDetails{
-				CachedTokens:     r.Usage.InputTokensDetails.CachedTokens,
-				CacheWriteTokens: r.Usage.InputTokensDetails.CacheWriteTokens,
-			}
+			resp.Usage.PromptTokensDetails = r.Usage.InputTokensDetails
 		}
+		resp.Usage.CompletionTokensDetails = r.Usage.OutputTokensDetails
 	}
 	return resp, nil
 }
@@ -658,14 +654,13 @@ func (d *openAIResponsesStreamDecoder) decodeTerminalResponse(response *openAIRe
 		}
 	}
 	if response.Usage != nil {
-		usage := TokenUsage{
-			PromptTokens:     response.Usage.InputTokens,
-			CompletionTokens: response.Usage.OutputTokens,
+		wire := ChatUsage{
+			PromptTokens:            response.Usage.InputTokens,
+			CompletionTokens:        response.Usage.OutputTokens,
+			PromptTokensDetails:     response.Usage.InputTokensDetails,
+			CompletionTokensDetails: response.Usage.OutputTokensDetails,
 		}
-		if response.Usage.InputTokensDetails != nil {
-			usage.PromptTokensCached = response.Usage.InputTokensDetails.CachedTokens
-			usage.PromptTokensWritten = response.Usage.InputTokensDetails.CacheWriteTokens
-		}
+		usage := wire.normalized()
 		update.Usage = &usage
 	}
 

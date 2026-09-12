@@ -105,6 +105,22 @@ func TestLauncherSplitDividerDragResizesColumns(t *testing.T) {
 	}
 }
 
+func TestLauncherNarrowShortcutsDoNotPaintIntoWorkspacePane(t *testing.T) {
+	_, _, baseline := testScreen(t, 50, 20, nil)
+	s, h, painted := testScreen(t, 50, 20, nil)
+	s.SetShortcuts([][2]string{{"Ctrl+Alt+Shift+P", "UNIQUE_OVERFLOW_LABEL_THAT_MUST_BE_CLIPPED"}})
+	painted.Clear()
+	h.Paint(painted)
+	rightX := s.workspacePane.Bounds.X
+	for y := 0; y < painted.Height(); y++ {
+		for x := rightX; x < painted.Width(); x++ {
+			if got, want := painted.Get(x, y), baseline.Get(x, y); got != want {
+				t.Fatalf("shortcut escaped at (%d,%d): got=%#v want=%#v", x, y, got, want)
+			}
+		}
+	}
+}
+
 func countNonEmptyCells(buf *surface.CellBuffer) int {
 	n := 0
 	for y := 0; y < buf.Height(); y++ {

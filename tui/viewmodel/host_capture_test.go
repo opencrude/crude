@@ -249,7 +249,7 @@ func TestSetMode_ClearsCapturedSelection(t *testing.T) {
 func TestSetMode_ClearsCapturedScrollbarDrag(t *testing.T) {
 	app := newFullTestApp(t)
 	screen, host := setupCapturedChatScrollbar(t, app, 3, []chatprojection.MessageRow{
-		{ID: "m1", Lines: []string{"a", "b", "c", "d", "e", "f", "g", "h"}},
+		{ID: "m1", Lines: []string{"a", "b", "c", "d", "e", "f", "g", "h", "i", "j", "k", "l", "m", "n", "o", "p", "q", "r", "s", "t", "u", "v", "w", "x", "y", "z"}},
 	})
 
 	app.setMode(ModeChat)

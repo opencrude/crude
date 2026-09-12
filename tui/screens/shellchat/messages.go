@@ -153,6 +153,20 @@ func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item 
 	}
 	layout := LayoutRow(s.paintState.compose, pl.VisibleWidth(), paneInfo)
 	lineX := x + layout.PadLeft
+	if row.ContextBoundary && localRow >= row.ContextBoundaryStart {
+		bg := tokens.Color(ui.ColorContextBg)
+		ui.FillRect(buf, 0, 0, ui.Rect{X: x, Y: y, W: width, H: 1}, cell.BlankCell(bg))
+		if localRow == row.ContextBoundaryStart || localRow == len(row.Lines)-1 {
+			fg := tokens.Color(ui.ColorContextBorder)
+			rule := ui.FirstRune(ui.DefaultGlyphsFromTokens(tokens).BorderH, '─')
+			for col := 0; col < width; col++ {
+				buf.Set(x+col, y, cell.NewCell(rule, fg, bg, 0))
+			}
+			return
+		}
+		chatprojection.PaintLineAtBackground(buf, lineX, y, layout.ContentMax, pl, tokens, 0, 0, bg)
+		return
+	}
 	chatprojection.PaintLineAt(buf, lineX, y, layout.ContentMax, pl, tokens, selStart, selEnd, layout.HasPaneBg)
 	drawn := pl.VisibleWidth()
 	if drawn > layout.ContentMax {

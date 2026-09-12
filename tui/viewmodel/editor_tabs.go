@@ -134,7 +134,7 @@ func (m *App) jumpToDiagnostic(filePath string, d editor.LSPDiagnostic) {
 	// Open or activate the file. openEditorTab is a no-op if the
 	// tab is already the active one.
 	if _, err := m.openEditorTab(filePath); err != nil {
-		m.StatusBar.SetError("Cannot open " + filePath)
+		m.Feedback.NotifyError("Cannot open " + filePath)
 		return
 	}
 	if m.EditorState.Editor == nil {
@@ -153,12 +153,12 @@ func (m *App) jumpToDiagnostic(filePath string, d editor.LSPDiagnostic) {
 // wins. If the project has no errors, shows a status bar message.
 func (m *App) gotoFirstDiagnostic() {
 	if m.LSPMgr == nil {
-		m.StatusBar.SetInfo("LSP not configured")
+		m.Feedback.NotifyInfo("LSP not configured")
 		return
 	}
 	all := m.LSPMgr.AllDiagnostics()
 	if len(all) == 0 {
-		m.StatusBar.SetInfo("No errors in project")
+		m.Feedback.NotifyInfo("No errors in project")
 		return
 	}
 
@@ -169,7 +169,7 @@ func (m *App) gotoFirstDiagnostic() {
 		if diags, ok := all[active]; ok {
 			if e := firstErrorOf(diags); e != nil {
 				m.jumpToDiagnostic(active, *e)
-				m.StatusBar.SetInfo(fmt.Sprintf("Jumped to %s:%d",
+				m.Feedback.NotifyInfo(fmt.Sprintf("Jumped to %s:%d",
 					filepath.Base(active), e.Line+1))
 				return
 			}
@@ -192,12 +192,12 @@ func (m *App) gotoFirstDiagnostic() {
 			continue
 		}
 		m.jumpToDiagnostic(p, *e)
-		m.StatusBar.SetInfo(fmt.Sprintf("Jumped to %s:%d",
+		m.Feedback.NotifyInfo(fmt.Sprintf("Jumped to %s:%d",
 			filepath.Base(p), e.Line+1))
 		return
 	}
 
-	m.StatusBar.SetInfo("No errors in project")
+	m.Feedback.NotifyInfo("No errors in project")
 }
 
 // firstErrorOf returns the first error-severity diagnostic in the
@@ -219,7 +219,7 @@ func firstErrorOf(diags []editor.LSPDiagnostic) *editor.LSPDiagnostic {
 // a status bar message and returns false. Returns true on success.
 func (m *App) jumpToNextError() bool {
 	if m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
-		m.StatusBar.SetInfo("No file open")
+		m.Feedback.NotifyInfo("No file open")
 		return false
 	}
 	d := m.EditorState.Editor.NextError(m.EditorState.Editor.CursorLine(), m.EditorState.Editor.CursorCol())
@@ -228,7 +228,7 @@ func (m *App) jumpToNextError() bool {
 		// every error like VSCode's command.
 		d = m.EditorState.Editor.FirstError()
 		if d == nil {
-			m.StatusBar.SetInfo("No errors in file")
+			m.Feedback.NotifyInfo("No errors in file")
 			return false
 		}
 	}
@@ -237,7 +237,7 @@ func (m *App) jumpToNextError() bool {
 	m.EditorState.Editor.ScrollToCursor()
 	layout := m.computeLayout()
 	m.EditorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
-	m.StatusBar.SetInfo(fmt.Sprintf("Error at line %d: %s", d.Line+1, d.Message))
+	m.Feedback.NotifyInfo(fmt.Sprintf("Error at line %d: %s", d.Line+1, d.Message))
 	return true
 }
 
@@ -246,7 +246,7 @@ func (m *App) jumpToNextError() bool {
 // Mirrors jumpToNextError and wraps around to the last error.
 func (m *App) jumpToPrevError() bool {
 	if m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
-		m.StatusBar.SetInfo("No file open")
+		m.Feedback.NotifyInfo("No file open")
 		return false
 	}
 	d := m.EditorState.Editor.PrevError(m.EditorState.Editor.CursorLine(), m.EditorState.Editor.CursorCol())
@@ -260,7 +260,7 @@ func (m *App) jumpToPrevError() bool {
 			}
 		}
 		if d == nil {
-			m.StatusBar.SetInfo("No errors in file")
+			m.Feedback.NotifyInfo("No errors in file")
 			return false
 		}
 	}
@@ -269,7 +269,7 @@ func (m *App) jumpToPrevError() bool {
 	m.EditorState.Editor.ScrollToCursor()
 	layout := m.computeLayout()
 	m.EditorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
-	m.StatusBar.SetInfo(fmt.Sprintf("Error at line %d: %s", d.Line+1, d.Message))
+	m.Feedback.NotifyInfo(fmt.Sprintf("Error at line %d: %s", d.Line+1, d.Message))
 	return true
 }
 

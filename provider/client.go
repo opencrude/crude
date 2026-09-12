@@ -961,15 +961,8 @@ func chatResponseToUpdate(resp *ChatResponse) StreamUpdate {
 		update.ProviderItems = message.ProviderItems
 	}
 	if resp.Usage != nil {
-		usage := &TokenUsage{
-			PromptTokens:     resp.Usage.PromptTokens,
-			CompletionTokens: resp.Usage.CompletionTokens,
-		}
-		if resp.Usage.PromptTokensDetails != nil {
-			usage.PromptTokensCached = resp.Usage.PromptTokensDetails.CachedTokens
-			usage.PromptTokensWritten = resp.Usage.PromptTokensDetails.CacheWriteTokens
-		}
-		update.Usage = usage
+		usage := resp.Usage.normalized()
+		update.Usage = &usage
 	}
 	return update
 }

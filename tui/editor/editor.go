@@ -72,7 +72,7 @@ type Editor struct {
 	hWidthMeasures    uint64
 	tokens            *ui.TokenSet
 	// statusChrome, when true, reserves the bottom row for a document footline.
-	// The main shell keeps this false — status lives in shellstatus.
+	// The main shell keeps this false: status lives in the top header.
 	statusChrome bool
 
 	modified bool

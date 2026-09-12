@@ -44,9 +44,12 @@ func TestFrameInsetsShiftShellGeometry(t *testing.T) {
 	if header.X != 4 || header.Y != 2 || header.W != 100-4-3 {
 		t.Fatalf("header slot=%+v, want inset by frame left/top/right", header)
 	}
-	status := app.shell.slots[shellStatusSlot].rect
-	if status.Y != 30-1-2 {
-		t.Fatalf("status slot Y=%d, want height-frameBottom-2", status.Y)
+	if got := app.chromeBottomRows(); got != 3 {
+		t.Fatalf("bottom chrome=%d, want footer plus frame", got)
+	}
+	footer := app.shell.slots[shellFooterSlot].rect
+	if footer.Y != 30-1-2 {
+		t.Fatalf("footer slot Y=%d, want height-frameBottom-2", footer.Y)
 	}
 	activity := app.shell.slots[shellActivitySlot].rect
 	if activity.X != 4 || activity.Y != 4 {

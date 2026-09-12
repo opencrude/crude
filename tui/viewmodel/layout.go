@@ -120,9 +120,7 @@ func (m *App) chromeTopRow() int {
 	return top
 }
 
-// chromeBottomRows is the terminal space consumed below the chat area by
-// fixed bottom chrome: the status separator row, the status row, and the
-// bottom frame. Legacy value: 2.
+// chromeBottomRows includes the footer separator/content rows and frame.
 func (m *App) chromeBottomRows() int { return 2 + m.frameBottomRow() }
 
 func (m *App) computeLayout() LayoutInfo {

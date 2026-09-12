@@ -46,6 +46,17 @@ type ConversationMessage struct {
 	LifecycleProvider      string        `json:"lifecycle_provider,omitempty"`
 	LifecycleUploadedBytes int64         `json:"lifecycle_uploaded_bytes,omitempty"`
 	LifecycleTotalBytes    int64         `json:"lifecycle_total_bytes,omitempty"`
+	LifecycleBeforeTokens  int           `json:"lifecycle_before_tokens,omitempty"`
+	LifecycleAfterTokens   int           `json:"lifecycle_after_tokens,omitempty"`
+	LifecycleOperationID   string        `json:"lifecycle_operation_id,omitempty"`
+	LifecycleTrigger       string        `json:"lifecycle_trigger,omitempty"`
+	LifecycleStageName     string        `json:"lifecycle_stage_name,omitempty"`
+	LifecycleStageIndex    int           `json:"lifecycle_stage_index,omitempty"`
+	LifecycleCompleted     int           `json:"lifecycle_completed,omitempty"`
+	LifecycleStageCount    int           `json:"lifecycle_stage_count,omitempty"`
+	LifecycleRetryAttempt  int           `json:"lifecycle_retry_attempt,omitempty"`
+	LifecycleRetryLimit    int           `json:"lifecycle_retry_limit,omitempty"`
+	LifecycleContextWindow int           `json:"lifecycle_context_window,omitempty"`
 	Incomplete             bool          `json:"incomplete,omitempty"`
 	IncompleteReason       string        `json:"incomplete_reason,omitempty"`
 	SubPaneID              string        `json:"sub_pane_id,omitempty"`
@@ -452,6 +463,8 @@ type UISettings struct {
 	CompactMode       bool `json:"compact_mode,omitempty"`
 	MessageDelay      int  `json:"message_delay,omitempty"`
 	AnimationsEnabled bool `json:"animations_enabled,omitempty"`
+	// ContextHelp is compact, expanded, or off. Full Help remains available.
+	ContextHelp string `json:"context_help,omitempty"`
 }
 
 type FontSettings struct {
@@ -547,10 +560,12 @@ type UndoResultMsg struct {
 
 // CompactResultMsg reports the outcome of a forced context compaction.
 type CompactResultMsg struct {
-	Desc   string
-	Error  string
-	Before int
-	After  int
+	Desc        string
+	Error       string
+	Before      int
+	After       int
+	OperationID string
+	Cancelled   bool
 }
 
 type ChatMessage struct {
@@ -590,6 +605,17 @@ type ChatMessage struct {
 	LifecycleProvider      string
 	LifecycleUploadedBytes int64
 	LifecycleTotalBytes    int64
+	LifecycleBeforeTokens  int
+	LifecycleAfterTokens   int
+	LifecycleOperationID   string
+	LifecycleTrigger       string
+	LifecycleStageName     string
+	LifecycleStageIndex    int
+	LifecycleCompleted     int
+	LifecycleStageCount    int
+	LifecycleRetryAttempt  int
+	LifecycleRetryLimit    int
+	LifecycleContextWindow int
 
 	Incomplete       bool
 	IncompleteReason string

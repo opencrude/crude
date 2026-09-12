@@ -1,12 +1,15 @@
 package shelltree
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/third_party/pathwalk"
 	"crude/tui/cell"
+	"crude/tui/filetree"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -18,6 +21,28 @@ func paintHost(t *testing.T, host *ui.Host, w, h int) *surface.CellBuffer {
 	buf := surface.NewCellBuffer(w, h)
 	host.Paint(buf)
 	return buf
+}
+
+func TestAsyncSearchFilterArrowKeysNavigateProjection(t *testing.T) {
+	model, paths := treeFixture(t)
+	screen := New(theme.DefaultDark(), model)
+	matches := []filetree.PathMatch{
+		{Entry: pathwalk.Entry{Path: paths.main, Relative: filepath.ToSlash("main.go"), Name: "main.go"}},
+		{Entry: pathwalk.Entry{Path: paths.util, Relative: filepath.ToSlash("pkg/util.go"), Name: "util.go"}},
+	}
+	screen.filter.field.SetValue("go")
+	if !screen.ApplyPathSearch("go", matches) || screen.searchModel == nil {
+		t.Fatal("async search projection was not installed")
+	}
+	host := ui.NewHost(theme.DefaultDark(), screen)
+	host.Resize(40, 10)
+	host.Layout()
+	host.Focus(FilterID)
+	before := screen.searchModel.CursorIndex()
+	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
+	if !result.Handled || screen.searchModel.CursorIndex() != before+1 {
+		t.Fatalf("Down in async search did not navigate: before=%d after=%d result=%#v", before, screen.searchModel.CursorIndex(), result)
+	}
 }
 
 func findRowContaining(t *testing.T, buf *surface.CellBuffer, needle string) int {
@@ -71,6 +96,27 @@ func TestClickPersistentSearchOwnsTyping(t *testing.T) {
 	pressKey(host, tea.KeyPressMsg{Code: 'u', Text: "u"})
 	if model.Filter() != "u" || !model.FilterActive() {
 		t.Fatalf("filter=%q active=%v", model.Filter(), model.FilterActive())
+	}
+}
+
+func TestFilterLeftRightPreservesCaretMovement(t *testing.T) {
+	model, _ := treeFixture(t)
+	host := setupTreeHost(t, model)
+	pressKey(host, tea.KeyPressMsg{Code: 'm', Text: "m"})
+	pressKey(host, tea.KeyPressMsg{Code: 'a', Text: "a"})
+	pressKey(host, tea.KeyPressMsg{Code: 'i', Text: "i"})
+	pressKey(host, tea.KeyPressMsg{Code: 'n', Text: "n"})
+	screen := host.Root().(*Screen)
+	if got := screen.filter.field.Edit().Cursor(); got != 4 {
+		t.Fatalf("initial cursor=%d want 4", got)
+	}
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyLeft})
+	if got := screen.filter.field.Edit().Cursor(); got != 3 {
+		t.Fatalf("Left cursor=%d want 3", got)
+	}
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyRight})
+	if got := screen.filter.field.Edit().Cursor(); got != 4 {
+		t.Fatalf("Right cursor=%d want 4", got)
 	}
 }
 

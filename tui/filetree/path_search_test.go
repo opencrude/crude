@@ -28,6 +28,14 @@ func TestRankPathEntriesPrefersBasenameAndBoundaries(t *testing.T) {
 	}
 }
 
+func TestRankPathEntriesExactNameWithRepeatedLetters(t *testing.T) {
+	entry := pathwalk.Entry{Path: "/repo/README.md", Relative: "README.md", Name: "README.md"}
+	matches := RankPathEntries([]pathwalk.Entry{entry}, "README.md")
+	if len(matches) != 1 || matches[0].Entry.Path != entry.Path {
+		t.Fatalf("exact filename did not match: %+v", matches)
+	}
+}
+
 func TestNewPickerSearchModelMaterializesAncestorsWithoutIO(t *testing.T) {
 	root := t.TempDir()
 	file := filepath.Join(root, "src", "nested", "main.go")

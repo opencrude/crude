@@ -125,6 +125,9 @@ func ApplyAppDefaults(s *AppSettings) {
 	if s.UI.SidebarWidth == 0 {
 		s.UI.SidebarWidth = 30
 	}
+	if s.UI.ContextHelp == "" {
+		s.UI.ContextHelp = "compact"
+	}
 	if s.Font.Size == 0 {
 		s.Font.Size = 12
 	}

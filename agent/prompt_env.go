@@ -1,91 +1,39 @@
 package agent
 
 import (
+	"bytes"
+	"encoding/xml"
 	"fmt"
 	"os"
-	"os/exec"
 	"os/user"
 	"runtime"
 	"strings"
-	"time"
 )
 
 type envContext struct {
-	Shell            string
-	OSInfo           string
-	CWD              string
-	Now              string
-	Username         string
-	Hostname         string
-	HomeDir          string
-	GitBranch        string
-	GitRoot          string
-	GitRemote        string
-	GitDirty         string
-	ToolsStr         string
-	PlatformGuidance string
-	DirListing       string
+	Shell    string
+	OSInfo   string
+	CWD      string
+	Username string
+	Hostname string
+	HomeDir  string
 }
 
-func gatherEnvContextInDir(dir string) envContext {
-	e := gatherStableEnvContextInDir(dir)
-	e.Now = time.Now().UTC().Format("2006-01-02 15:04:05 UTC")
-
-	if branch, err := gitOutput(e.CWD, "rev-parse", "--abbrev-ref", "HEAD"); err == nil {
-		e.GitBranch = strings.TrimSpace(string(branch))
-	}
-	if root, err := gitOutput(e.CWD, "rev-parse", "--show-toplevel"); err == nil {
-		e.GitRoot = strings.TrimSpace(string(root))
-	}
-	if remote, err := gitOutput(e.CWD, "remote", "get-url", "origin"); err == nil {
-		e.GitRemote = strings.TrimSpace(string(remote))
-	}
-	if status, err := gitOutput(e.CWD, "status", "--porcelain"); err == nil {
-		trimmed := strings.TrimSpace(string(status))
-		if trimmed == "" {
-			e.GitDirty = "clean"
-		} else {
-			e.GitDirty = fmt.Sprintf("%d changes", len(strings.Split(trimmed, "\n")))
-		}
-	}
-
-	e.ToolsStr = detectTools()
-	e.PlatformGuidance = platformGuidance()
-	e.DirListing = buildDirListing(e.CWD)
-	return e
-}
-
-func gitOutput(dir string, args ...string) ([]byte, error) {
-	cmd := exec.Command("git", args...)
-	if dir != "" {
-		cmd.Dir = dir
-	}
-	return cmd.Output()
-}
-
-// gatherStableEnvContextInDir builds the stable environment snapshot using
-// dir as the advertised working directory. Empty dir means process cwd.
 func gatherStableEnvContextInDir(dir string) envContext {
 	if dir == "" {
 		dir = getCWD()
 	}
-	e := envContext{
-		Shell:   detectShell(),
-		OSInfo:  fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
-		CWD:     dir,
-		HomeDir: detectHomeDir(),
+	context := envContext{
+		Shell: detectShell(), OSInfo: fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
+		CWD: dir, HomeDir: detectHomeDir(), Username: "unknown", Hostname: "unknown",
 	}
-
-	e.Username = "unknown"
-	if u, err := user.Current(); err == nil {
-		e.Username = u.Username
+	if current, err := user.Current(); err == nil {
+		context.Username = current.Username
 	}
-	e.Hostname = "unknown"
-	if h, err := os.Hostname(); err == nil {
-		e.Hostname = h
+	if hostname, err := os.Hostname(); err == nil {
+		context.Hostname = hostname
 	}
-
-	return e
+	return context
 }
 
 func detectShell() string {
@@ -109,81 +57,32 @@ func detectHomeDir() string {
 	return "/unknown"
 }
 
-func detectTools() string {
-	toolChecks := []string{"go", "python3", "python", "node", "npm", "pnpm", "bun", "make", "docker", "cargo", "rustc", "java", "javac", "dotnet", "gcc", "g++", "clang", "rg", "fd", "jq", "gh"}
-	foundTools := make([]string, 0, len(toolChecks))
-	for _, tool := range toolChecks {
-		if _, err := exec.LookPath(tool); err == nil {
-			foundTools = append(foundTools, tool)
-		}
-	}
-	if len(foundTools) == 0 {
-		return "none detected"
-	}
-	return strings.Join(foundTools, ", ")
-}
-
 func platformGuidance() string {
 	if runtime.GOOS != "windows" {
 		return ""
 	}
-	return `
-
-# Windows Command Execution
-- Commands run through cmd.exe batch files.
-- cmd.exe syntax works directly. Use powershell -Command "..." only when PowerShell behavior is needed.
-- Use && echo SUCCESS or || echo FAILED when a visible completion marker helps.
-- Paths are case-insensitive. Forward slashes and backslashes are both usually accepted.
-- Avoid Unix-only command names unless you have confirmed they exist in this environment.`
+	return "Commands run through cmd.exe batch files. Use PowerShell only when its behavior is required. Paths are case-insensitive; do not assume Unix-only commands exist."
 }
 
-func (e envContext) buildSection() string {
-	envLines := []string{
-		"# Environment",
-		fmt.Sprintf("- Date: %s", e.Now),
-		fmt.Sprintf("- OS: %s", e.OSInfo),
-		fmt.Sprintf("- Shell: %s", e.Shell),
-		fmt.Sprintf("- User: %s@%s", e.Username, e.Hostname),
-		fmt.Sprintf("- Home: %s", e.HomeDir),
-		fmt.Sprintf("- Working Directory: %s", e.CWD),
-	}
-	if e.GitBranch != "" {
-		gitLine := fmt.Sprintf("- Git: branch=%s, status=%s", e.GitBranch, e.GitDirty)
-		if e.GitRemote != "" {
-			gitLine += fmt.Sprintf(", remote=%s", e.GitRemote)
-		}
-		if e.GitRoot != "" && e.GitRoot != e.CWD {
-			gitLine += fmt.Sprintf(", root=%s", e.GitRoot)
-		}
-		envLines = append(envLines, gitLine)
-	}
-	envLines = append(envLines, fmt.Sprintf("- Tools on PATH: %s", e.ToolsStr))
-
-	if e.DirListing != "" {
-		envLines = append(envLines, "")
-		envLines = append(envLines, e.DirListing)
-	}
-
-	return strings.Join(envLines, "\n") + e.PlatformGuidance
-}
-
-// buildStableSection contains only values expected to remain constant for a
-// workspace. Volatile timestamps, Git dirtiness, and directory listings do not
-// belong in the cacheable system prefix; agents can inspect current state with
-// tools when it matters.
 func (e envContext) buildStableSection() string {
-	envLines := []string{
-		"# Environment",
-		fmt.Sprintf("- OS: %s", e.OSInfo),
-		fmt.Sprintf("- Shell: %s", e.Shell),
-		fmt.Sprintf("- User: %s@%s", e.Username, e.Hostname),
-		fmt.Sprintf("- Home: %s", e.HomeDir),
-		fmt.Sprintf("- Working Directory: %s", e.CWD),
+	return fmt.Sprintf(`<environment>
+<operating_system>%s</operating_system>
+<shell>%s</shell>
+<user>%s</user>
+<host>%s</host>
+<home>%s</home>
+<working_directory>%s</working_directory>
+<platform_guidance>%s</platform_guidance>
+</environment>`, xmlText(e.OSInfo), xmlText(e.Shell), xmlText(e.Username),
+		xmlText(e.Hostname), xmlText(e.HomeDir), xmlText(e.CWD), xmlText(platformGuidance()))
+}
+
+func xmlText(value string) string {
+	var escaped bytes.Buffer
+	if err := xml.EscapeText(&escaped, []byte(value)); err != nil {
+		return ""
 	}
-	if guidance := platformGuidance(); guidance != "" {
-		envLines = append(envLines, "", guidance)
-	}
-	return strings.Join(envLines, "\n")
+	return escaped.String()
 }
 
 func getCWD() string {
@@ -192,53 +91,4 @@ func getCWD() string {
 		return "."
 	}
 	return cwd
-}
-
-func buildDirListing(cwd string) string {
-	entries, err := os.ReadDir(cwd)
-	if err != nil {
-		return ""
-	}
-
-	const maxEntries = 100
-	lines := []string{"# Directory Listing"}
-
-	if len(entries) <= maxEntries {
-		for _, entry := range entries {
-			lines = append(lines, formatDirEntryName(entry))
-		}
-		return strings.Join(lines, "\n")
-	}
-
-	count := 0
-	for _, entry := range entries {
-		if entry.IsDir() {
-			lines = append(lines, formatDirEntryName(entry))
-			count++
-			if count >= maxEntries {
-				break
-			}
-		}
-	}
-	if count < maxEntries {
-		for _, entry := range entries {
-			if !entry.IsDir() {
-				lines = append(lines, formatDirEntryName(entry))
-				count++
-				if count >= maxEntries {
-					break
-				}
-			}
-		}
-	}
-	lines = append(lines, fmt.Sprintf("... (%d items total; use list_directory for the full listing)", len(entries)))
-	return strings.Join(lines, "\n")
-}
-
-func formatDirEntryName(entry os.DirEntry) string {
-	name := entry.Name()
-	if entry.IsDir() {
-		return name + "/"
-	}
-	return name
 }

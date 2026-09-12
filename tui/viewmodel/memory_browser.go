@@ -19,8 +19,8 @@ func (m *App) toggleMemoryBrowser() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if !m.MemoryAvailable() {
-		if m.StatusBar != nil {
-			m.StatusBar.SetError("Workspace memory is unavailable")
+		if m.Feedback != nil {
+			m.Feedback.NotifyError("Workspace memory is unavailable")
 		}
 		return m, nil
 	}
@@ -82,8 +82,8 @@ func (m *App) handleMemoryBrowserPin(msg memorybrowser.PinMsg) {
 		return
 	}
 	if err := m.PinMemory(msg.ID, msg.Pinned); err != nil {
-		if m.StatusBar != nil {
-			m.StatusBar.SetError(err.Error())
+		if m.Feedback != nil {
+			m.Feedback.NotifyError(err.Error())
 		}
 		return
 	}
@@ -96,13 +96,13 @@ func (m *App) handleMemoryBrowserForget(msg memorybrowser.ForgetMsg) {
 		return
 	}
 	if err := m.ForgetMemoryRecord(msg.ID); err != nil {
-		if m.StatusBar != nil {
-			m.StatusBar.SetError(err.Error())
+		if m.Feedback != nil {
+			m.Feedback.NotifyError(err.Error())
 		}
 		return
 	}
-	if m.StatusBar != nil {
-		m.StatusBar.SetInfo("Memory forgotten (kept superseded for audit)")
+	if m.Feedback != nil {
+		m.Feedback.NotifyInfo("Memory forgotten (kept superseded for audit)")
 	}
 	m.memoryBrowser.Refresh()
 	m.markMemoryBrowserDirty()

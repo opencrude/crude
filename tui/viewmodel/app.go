@@ -27,13 +27,14 @@ import (
 	sessionpicker "crude/tui/screens/sessionpicker"
 	"crude/tui/screens/shellchat"
 	"crude/tui/screens/shelleditor"
+	"crude/tui/screens/shellfooter"
 	"crude/tui/screens/shellheader"
 	"crude/tui/screens/shellinput"
-	"crude/tui/screens/shellstatus"
 	"crude/tui/screens/shelltabs"
 	"crude/tui/screens/shellterm"
 	"crude/tui/screens/shelltree"
 	"crude/tui/screens/sourcecontrol"
+	statusoverview "crude/tui/screens/statusoverview"
 	"crude/tui/screens/termdock"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -61,21 +62,26 @@ type App struct {
 
 	// TUI-owned presentation state. Workspace retains only domain data and
 	// services; these controls and render projections are owned by the host.
-	Theme               *theme.Theme
-	Input               input.Model
-	StatusBar           *shellstatus.Screen
-	Win                 *window.Window
-	BufferMgr           *editor.BufferManager
-	Tree                *TreeState
-	FindReplace         *popup.FindReplaceState
-	LastContextMenu     *ui.ContextMenuState
-	ContextMenuOpenedAt time.Time
-	TreePrompt          *ui.TextPromptState
-	TreeDeletePending   string
-	TreeDeleteChoice    int
-	GitDiscardPending   *workspace.GitChange
-	FilePicker          *filepickerscreen.Screen
-	DiagPopupID         string
+	Theme                       *theme.Theme
+	Input                       input.Model
+	Feedback                    *feedbackSink
+	statusOverview              *statusoverview.Surface
+	statusOverviewSplit         int
+	statusOverviewSourceVersion uint64
+	statusOverviewCenterVersion uint64
+	statusOverviewSecond        int64
+	Win                         *window.Window
+	BufferMgr                   *editor.BufferManager
+	Tree                        *TreeState
+	FindReplace                 *popup.FindReplaceState
+	LastContextMenu             *ui.ContextMenuState
+	ContextMenuOpenedAt         time.Time
+	TreePrompt                  *ui.TextPromptState
+	TreeDeletePending           string
+	TreeDeleteChoice            int
+	GitDiscardPending           *workspace.GitChange
+	FilePicker                  *filepickerscreen.Screen
+	DiagPopupID                 string
 
 	// Composer draft persistence (hydration). The active-session pointer is
 	// compared every frame; on change the composer clears immediately and the
@@ -143,6 +149,7 @@ type App struct {
 
 	// App-scoped fields (not on workspace.Workspace)
 	headerScreen           *shellheader.Screen
+	footerScreen           *shellfooter.Screen
 	tabScreen              *shelltabs.Screen
 	sidebarScreen          *shelltree.Screen
 	activityBar            *activitybar.Screen
@@ -195,8 +202,8 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	th := theme.FromPreset(themePresetFromSettings(ws.LoadAppSettings()))
 	applyWorkspaceFrame(&th, ws)
 	im := input.NewModel(th)
-	sb := shellstatus.New(th)
 	headerScreen := shellheader.New(th)
+	footerScreen := shellfooter.New(th, ui.DefaultRegistry())
 	tabScreen := shelltabs.New(th)
 	inputScreen := shellinput.New(th)
 	chatScreen := shellchat.New(th)
@@ -231,7 +238,7 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	// full-screen surface. The compositor renders this single surface under
 	// the floating windows (see View()).
 	deck := newDeckMount(nil)
-	shell := newShellRoot(headerScreen, sb, tabScreen, activityBar, sidebarScreen, chatScreen, inputScreen, editorScreen, launcherScreen, deck, termDock)
+	shell := newShellRoot(headerScreen, footerScreen, tabScreen, activityBar, sidebarScreen, chatScreen, inputScreen, editorScreen, launcherScreen, deck, termDock)
 	rootHost := ui.NewHost(th, shell)
 	launcherScreen.SetFocusHandler(rootHost.Focus)
 	sourceControl.SetFocusHandler(rootHost.Focus)
@@ -259,7 +266,6 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 		Workspace:          ws,
 		Theme:              th,
 		Input:              im,
-		StatusBar:          sb,
 		Win:                window.New(th),
 		BufferMgr:          bufferMgr,
 		Tree:               tree,
@@ -269,6 +275,7 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 		OverlayState:       NewOverlayState(),
 		LSPPopup:           NewLSPPopupState(),
 		headerScreen:       headerScreen,
+		footerScreen:       footerScreen,
 		tabScreen:          tabScreen,
 		sidebarScreen:      sidebarScreen,
 		activityBar:        activityBar,
@@ -297,6 +304,7 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 		agentChatScroll:    make(map[string]agentMainChatScrollSnapshot),
 	}
 	deck.app = app
+	app.Feedback = newFeedbackSink(app)
 	if app.sidebarScreen != nil {
 		app.sidebarScreen.SetPathSearchHandler(app.beginTreePathSearch)
 	}
@@ -407,7 +415,17 @@ func (m *App) Init() tea.Cmd {
 		m.refreshLauncherAsync(m.RootPath)
 	}
 
-	return tea.Batch(tickCmd())
+	var statusCmd tea.Cmd
+	if m.Workspace != nil && m.Status != nil {
+		center := m.Status
+		statusCmd = func() tea.Msg {
+			if err := center.Hydrate(); err != nil {
+				return statusHydrateErrMsg{Err: err}
+			}
+			return workspace.StatusCenterHydratedMsg{}
+		}
+	}
+	return tea.Batch(tickCmd(), statusCmd, m.refreshSourceControl())
 }
 
 // openTextOverlayWindow opens the text overlay as a floating window.
@@ -717,13 +735,13 @@ func (m *App) resetOrchestratorOverrides() {
 	if id == "" {
 		id = m.EditorState.ActiveView
 		if id == "" {
-			m.StatusBar.SetInfo("No active orchestrator to reset")
+			m.Feedback.NotifyInfo("No active orchestrator to reset")
 			return
 		}
 	}
 	m.ResetOrchestratorOverrides(id)
 	m.refreshSessionSettingsProjection(m.ActiveSession)
-	m.StatusBar.SetInfo("Session overrides reset to workspace defaults")
+	m.Feedback.NotifyInfo("Session overrides reset to workspace defaults")
 }
 
 // registerOverlayHandlers registers per-overlay content-click and hover

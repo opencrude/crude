@@ -3,13 +3,14 @@ package agent
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	rand2 "math/rand/v2"
 	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"crude/provider"
 	"crude/statemachine"
@@ -18,6 +19,8 @@ import (
 )
 
 const continuePreviousResponse = "Continue the previous response exactly where it stopped. Do not repeat completed content. Continue using tools if the task still requires them."
+
+const recoverPartialToolCall = "The previous provider stream stopped while constructing one or more tool calls. No tool from that response was executed. Re-evaluate the pending step and issue any required tool calls again with complete arguments. Do not assume the partial call or any side effect occurred."
 
 type BtwMessage struct {
 	Message provider.ChatMessage
@@ -109,6 +112,7 @@ func (a *Agent) Run(
 	var steps []StepRecord
 	var totalPromptTokens, totalCompletionTokens int
 	var lastPromptTokens int
+	var contextUsage contextMeter
 
 	ctxWindow := a.Provider.ContextWindow(a.Model)
 	l.Debug("CTX", "window", "model", a.Model, "ctx_window", ctxWindow, "compaction_percent", a.ContextCompactionPercent)
@@ -121,6 +125,7 @@ func (a *Agent) Run(
 
 	btwInput := btwCh
 	continuations := 0
+	autoCompactions := 0
 	providerName := a.providerDisplayName()
 	cacheUsageUnknown := a.Provider.ProtocolID() == "ollama"
 	var admittedBtwIDs []string
@@ -143,8 +148,12 @@ func (a *Agent) Run(
 			return returnMessages()
 		}
 
+		// A local turn counter is not a durable request identity: it can restart
+		// after resume or agent recreation. Revisions reuse this ID; new calls do not.
+		requestID := fmt.Sprintf("%016x%016x", rand2.Uint64(), rand2.Uint64())
 		emit(AgentEvent{Type: "phase", Data: map[string]any{
 			"name": "preparing", "progress": 0, "provider": providerName,
+			"request_id": requestID, "turn_generation": a.TurnGeneration,
 		}})
 
 		drainBtw := func() int {
@@ -171,37 +180,68 @@ func (a *Agent) Run(
 		}
 		_ = drainBtw()
 		if a.ContextCompactionPercent > 0 && ctxWindow > 0 {
-			estimatedMessageTokens := provider.EstimateMessagesTotal(msgs, a.Model)
-			overheadTokens := 0
-			if len(allTools) > 0 {
-				if encodedTools, err := json.Marshal(allTools); err == nil {
-					overheadTokens += provider.EstimateTokens(string(encodedTools), a.Model)
+			activeTokens := contextUsage.projected(msgs, allTools, a.Model)
+			threshold := compactionThreshold(ctxWindow, a.ContextCompactionPercent)
+			if threshold > 0 && activeTokens >= threshold {
+				if autoCompactions >= 2 {
+					a.emitError(emit, fmt.Errorf("context remains above the configured threshold after %d compactions; full transcript remains archived", autoCompactions))
+					return returnMessages()
 				}
-			}
-			estimatedTokens := estimatedMessageTokens + overheadTokens
-			activeTokens := estimatedTokens
-			scaledWindow := ctxWindow
-			if lastPromptTokens > activeTokens {
-				activeTokens = lastPromptTokens
-				if estimatedTokens > 0 {
-					scaledWindow = max(1, ctxWindow*estimatedTokens/lastPromptTokens)
+				autoCompactions++
+				compactor := a.contextCompactor(ctxWindow)
+				outcome, compactErr := compactor.compactWithModel(ctx, msgs, allTools, requestID, activeTokens, "automatic", emit,
+					func(compactionRequest []provider.ChatMessage) {
+						if err := prefix.accept(compactionRequest); err != nil {
+							l.Error("CACHE", "compaction_prefix_accept_failed", "error", err.Error())
+						}
+						for _, internalID := range admittedBtwIDs {
+							emit(AgentEvent{Type: "btw_consumed", Data: map[string]any{"internal_id": internalID}})
+						}
+						admittedBtwIDs = nil
+					})
+				if compactErr != nil {
+					clearUnsentBtw()
+					data := compactionEventData(requestID, "automatic", checkpointRole(a.Depth), outcome.StageIndex, outcome.Completed, activeTokens, 0, ctxWindow)
+					data["provider_id"] = outcome.ProviderID
+					data["model_id"] = outcome.ModelID
+					data["stage_label"] = outcome.StageName
+					data["retry"] = outcome.RetryAttempt
+					data["error"] = compactErrorText(compactErr)
+					if ctx.Err() != nil {
+						emit(AgentEvent{Type: "context_compaction_cancelled", Data: data})
+						emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
+					} else {
+						emit(AgentEvent{Type: "context_compaction_failed", Data: data})
+						a.emitError(emit, fmt.Errorf("context compaction failed; original context retained: %w", compactErr))
+					}
+					return returnMessages()
 				}
-			}
-			threshold := ctxWindow * min(100, a.ContextCompactionPercent) / 100
-			if activeTokens >= threshold {
-				targetPercent := max(50, a.ContextCompactionPercent-15)
-				messageBudget := max(1, scaledWindow*targetPercent/100-overheadTokens)
-				compacted := CompactContext(archiveMsgs[1:], messageBudget, 100, a.Model)
-				if provider.EstimateMessagesTotal(compacted, a.Model) < provider.EstimateMessagesTotal(msgs[1:], a.Model) {
-					msgs = append([]provider.ChatMessage{msgs[0]}, compacted...)
-					prefix.reset()
-					l.Info("COMPACT", "automatic", "threshold_percent", a.ContextCompactionPercent,
-						"target_percent", targetPercent, "active_before", activeTokens, "active_messages", len(msgs)-1)
-					emit(AgentEvent{Type: "context_compacted", Data: map[string]any{
-						"threshold_percent": a.ContextCompactionPercent,
-						"target_percent":    targetPercent,
-					}})
+				nextMessages := append([]provider.ChatMessage{msgs[0]}, outcome.Messages...)
+				commitData := compactionEventData(requestID, "automatic", outcome.Role, len(compactionStages), len(compactionStages), activeTokens, outcome.AfterTokens, outcome.ContextWindow)
+				commitData["provider_id"] = outcome.ProviderID
+				commitData["model_id"] = outcome.ModelID
+				emit(AgentEvent{Type: "context_compaction_committing", Data: commitData})
+				if a.CommitCompaction != nil {
+					if err := a.CommitCompaction(CompactionCommit{
+						Messages: outcome.Messages, BeforeTokens: activeTokens, AfterTokens: outcome.AfterTokens,
+						ContextWindow: outcome.ContextWindow, RequestID: requestID, Trigger: "automatic", Role: outcome.Role,
+						ProviderID: outcome.ProviderID, ModelID: outcome.ModelID,
+					}); err != nil {
+						commitData["error"] = compactErrorText(err)
+						emit(AgentEvent{Type: "context_compaction_failed", Data: commitData})
+						a.emitError(emit, fmt.Errorf("context compaction commit failed; original context retained: %w", err))
+						return returnMessages()
+					}
 				}
+				msgs = nextMessages
+				emit(AgentEvent{Type: "context_compacted", Data: commitData})
+				contextUsage.reset()
+				totalPromptTokens += outcome.Usage.PromptTokens
+				totalCompletionTokens += outcome.Usage.CompletionTokens
+				prefix.reset()
+				l.Info("COMPACT", "automatic", "threshold_percent", a.ContextCompactionPercent,
+					"active_before", activeTokens, "active_after", outcome.AfterTokens, "active_messages", len(msgs)-1)
+				continue
 			}
 		}
 
@@ -234,8 +274,8 @@ func (a *Agent) Run(
 					return
 				}
 				emit(AgentEvent{Type: "retry", Data: map[string]any{
-					"attempt": attempt,
-					"backoff": backoffSeconds,
+					"attempt": attempt, "backoff": backoffSeconds,
+					"request_id": requestID, "turn_generation": a.TurnGeneration,
 				}})
 			},
 			func() {
@@ -255,12 +295,15 @@ func (a *Agent) Run(
 				if percent >= 100 {
 					emit(AgentEvent{Type: "phase", Data: map[string]any{
 						"name": "waiting_provider", "provider": providerName,
+						"uploaded_bytes": uploaded, "total_bytes": total,
+						"request_id": requestID, "turn_generation": a.TurnGeneration,
 					}})
 					return
 				}
 				emit(AgentEvent{Type: "phase", Data: map[string]any{
 					"name": "preparing", "progress": percent, "provider": providerName,
 					"uploaded_bytes": uploaded, "total_bytes": total,
+					"request_id": requestID, "turn_generation": a.TurnGeneration,
 				}})
 			},
 		)
@@ -268,51 +311,90 @@ func (a *Agent) Run(
 			clearUnsentBtw()
 			if completion.Usage.PromptTokens > 0 || completion.Usage.CompletionTokens > 0 ||
 				completion.Usage.PromptTokensCached > 0 || completion.Usage.PromptTokensWritten > 0 {
-				price := provider.LookupPrice(a.Model)
+				price, costKnown, costSource := provider.LookupPriceKnown(a.Model)
 				turnCost := price.CalculateCost(
 					completion.Usage.PromptTokens,
 					completion.Usage.CompletionTokens,
 					completion.Usage.PromptTokensCached,
 				)
 				emit(AgentEvent{Type: "usage", Data: map[string]any{
-					"prompt":           completion.Usage.PromptTokens,
-					"completion":       completion.Usage.CompletionTokens,
-					"prompt_cached":    completion.Usage.PromptTokensCached,
-					"prompt_written":   completion.Usage.PromptTokensWritten,
-					"context_window":   ctxWindow,
-					"cost":             turnCost,
-					"model":            a.Model,
-					"estimated":        false,
-					"cost_upper_bound": cacheUsageUnknown,
-					"partial_or_retry": true,
+					"prompt":              completion.Usage.PromptTokens,
+					"completion":          completion.Usage.CompletionTokens,
+					"prompt_cached":       completion.Usage.PromptTokensCached,
+					"prompt_written":      completion.Usage.PromptTokensWritten,
+					"cache_read_known":    completion.Usage.CacheReadKnown,
+					"cache_write_known":   completion.Usage.CacheWriteKnown,
+					"reasoning":           completion.Usage.ReasoningTokens,
+					"reasoning_known":     completion.Usage.ReasoningKnown,
+					"reasoning_in_output": completion.Usage.ReasoningInOutput,
+					"context_window":      ctxWindow,
+					"cost":                turnCost,
+					"cost_known":          costKnown,
+					"cost_source":         costSource,
+					"model":               a.Model,
+					"provider":            providerName,
+					"request_id":          requestID,
+					"request_kind":        "normal",
+					"turn_generation":     a.TurnGeneration,
+					"reported_at":         time.Now().UnixNano(),
+					"estimated":           false,
+					"cost_upper_bound":    cacheUsageUnknown,
+					"partial_or_retry":    true,
 				}})
 			}
-			if completion.Content != "" || completion.ReasoningContent != "" {
-				appendWire(provider.ChatMessage{
+			if completion.hasOutput() {
+				partialMessage := provider.ChatMessage{
 					Role:              "assistant",
 					Content:           provider.TextContent(completion.Content),
 					ReasoningContent:  completion.ReasoningContent,
 					Reasoning:         completion.ReasoningContent,
 					ReasoningDuration: completion.ReasoningDuration,
 					ProviderItems:     completion.ProviderItems,
-				})
+				}
+				if len(completion.ToolCalls) > 0 {
+					// A stalled tool-call frame has no valid replay contract. No tool
+					// has executed yet, so preserve only ordinary visible content and
+					// let the next request re-evaluate the operation from scratch.
+					partialMessage.ReasoningContent = ""
+					partialMessage.Reasoning = ""
+					partialMessage.ProviderItems = nil
+				}
+				if partialMessage.ContentString() != "" || partialMessage.ReasoningContent != "" || len(partialMessage.ProviderItems) > 0 {
+					appendWire(partialMessage)
+				}
 			}
 			var apiErr *apiCallError
 			if errors.As(err, &apiErr) && apiErr.IsCancellation() {
 				emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
 				return returnMessages()
 			}
-			if apiErr != nil && apiErr.Partial && errors.Is(err, io.ErrUnexpectedEOF) &&
-				len(completion.ToolCalls) == 0 &&
-				(completion.Content != "" || completion.ReasoningContent != "") &&
+			if apiErr != nil && apiErr.Partial && isContinuableStreamInterruption(err) &&
+				completion.hasOutput() &&
 				continuations < maxAutoContinuations {
 				continuations++
-				l.Warn("AGENT", "auto_continue_interrupted_stream", "continuation", continuations, "error", err.Error())
+				recovery := continuePreviousResponse
+				reason := "partial_response"
+				if len(completion.ToolCalls) > 0 {
+					recovery = recoverPartialToolCall
+					reason = "partial_tool_call"
+					for _, call := range completion.ToolCalls {
+						emit(AgentEvent{Type: "tool_result", Data: map[string]any{
+							"tool_id": call.ID, "internal_id": call.InternalID,
+							"name": call.Function.Name, "error": "true",
+							"result": "Provider stream interrupted before execution; this partial call was discarded and will be re-evaluated.",
+						}})
+					}
+				}
+				l.Warn("AGENT", "auto_continue_interrupted_stream", "continuation", continuations, "reason", reason, "error", err.Error())
 				emit(AgentEvent{Type: "retry", Data: map[string]any{
 					"attempt": continuations + 1,
 					"backoff": float64(0),
+					"reason":  reason,
 				}})
-				appendWire(provider.ChatMessage{Role: "user", Content: provider.TextContent("[SYSTEM CONTINUATION]\n" + continuePreviousResponse)})
+				continuation := provider.NewTextMessage("user", "<runtime_continuation reason=\""+reason+"\">"+recovery+"</runtime_continuation>")
+				continuation.Origin = provider.OriginContinuation
+				continuation.Visibility = provider.VisibilityContextOnly
+				appendWire(continuation)
 				continue
 			}
 			a.emitError(emit, err)
@@ -347,20 +429,33 @@ func (a *Agent) Run(
 		totalPromptTokens += promptTokens
 		totalCompletionTokens += completionTokens
 		lastPromptTokens = contextPromptTokens
+		contextUsage.observe(contextPromptTokens, completionTokens, len(requestMsgs))
 
-		price := provider.LookupPrice(a.Model)
+		price, costKnown, costSource := provider.LookupPriceKnown(a.Model)
 		turnCost := price.CalculateCost(promptTokens, completionTokens, promptTokensCached)
 		emit(AgentEvent{Type: "usage", Data: map[string]any{
-			"prompt":           promptTokens,
-			"completion":       completionTokens,
-			"prompt_cached":    promptTokensCached,
-			"prompt_written":   promptTokensWritten,
-			"context_prompt":   contextPromptTokens,
-			"context_window":   ctxWindow,
-			"cost":             turnCost,
-			"model":            a.Model,
-			"estimated":        estimated,
-			"cost_upper_bound": cacheUsageUnknown,
+			"prompt":              promptTokens,
+			"completion":          completionTokens,
+			"prompt_cached":       promptTokensCached,
+			"prompt_written":      promptTokensWritten,
+			"cache_read_known":    completion.Usage.CacheReadKnown,
+			"cache_write_known":   completion.Usage.CacheWriteKnown,
+			"reasoning":           completion.Usage.ReasoningTokens,
+			"reasoning_known":     completion.Usage.ReasoningKnown,
+			"reasoning_in_output": completion.Usage.ReasoningInOutput,
+			"context_prompt":      contextPromptTokens,
+			"context_window":      ctxWindow,
+			"cost":                turnCost,
+			"cost_known":          costKnown,
+			"cost_source":         costSource,
+			"model":               a.Model,
+			"provider":            providerName,
+			"request_id":          requestID,
+			"request_kind":        "normal",
+			"turn_generation":     a.TurnGeneration,
+			"reported_at":         time.Now().UnixNano(),
+			"estimated":           estimated,
+			"cost_upper_bound":    cacheUsageUnknown,
 		}})
 
 		accumulatedText := completion.Content
@@ -403,7 +498,10 @@ func (a *Agent) Run(
 			if isAutoContinuableFinishReason(finishReason) && continuations < maxAutoContinuations {
 				continuations++
 				l.Warn("AGENT", "auto_continue", "finish_reason", finishReason, "continuation", continuations)
-				appendWire(provider.ChatMessage{Role: "user", Content: provider.TextContent("[SYSTEM CONTINUATION]\n" + continuePreviousResponse)})
+				continuation := provider.NewTextMessage("user", "<runtime_continuation>"+continuePreviousResponse+"</runtime_continuation>")
+				continuation.Origin = provider.OriginContinuation
+				continuation.Visibility = provider.VisibilityContextOnly
+				appendWire(continuation)
 				continue
 			}
 			// A BTW message can arrive while the terminal completion is in
@@ -415,10 +513,10 @@ func (a *Agent) Run(
 			}
 			if a.Depth > 0 && !a.writeReportCalled {
 				a.logger.Warn("SUBAGENT", "write_report_reminder", "agent_id", a.AgentID, "depth", a.Depth, "step", step)
-				appendWire(provider.ChatMessage{
-					Role:    "user",
-					Content: provider.TextContent("[SYSTEM] You are about to end your loop without calling write_report. Your work will be LOST — the main agent cannot see your chat messages. You MUST call write_report with a detailed report before ending. Do it now."),
-				})
+				reminder := provider.NewTextMessage("user", "<runtime_report_reminder>You must call write_report with a detailed report before ending. The parent cannot consume unreported child chat.</runtime_report_reminder>")
+				reminder.Origin = provider.OriginContinuation
+				reminder.Visibility = provider.VisibilityContextOnly
+				appendWire(reminder)
 				_ = drainBtw()
 				continue
 			}
@@ -666,6 +764,14 @@ func (a *Agent) makeStreamingDeltaCallback(emit func(AgentEvent), prevPreviewKey
 		}
 		emit(AgentEvent{Type: "tool_call_streaming", Data: data})
 	}
+}
+
+func isContinuableStreamInterruption(err error) bool {
+	if errors.Is(err, io.ErrUnexpectedEOF) {
+		return true
+	}
+	var stalled *provider.ProgressStallError
+	return errors.As(err, &stalled) && stalled.Phase == "download"
 }
 
 func isTruncatedFinishReason(reason string) bool {

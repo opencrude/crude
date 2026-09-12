@@ -284,15 +284,14 @@ func (m *App) configureShell() {
 	lay := m.computeContentLayout()
 	frame := m.frameInsets()
 
-	// Persistent chrome: header and status are always mounted. Both inset
-	// by the shell frame; the frame rows/columns stay background-painted.
+	// Persistent top chrome is inset by the shell frame; frame rows/columns
+	// stay background-painted. Bottom rows belong to content now.
 	m.shell.setSlot(shellHeaderSlot, true, ui.Rect{
 		X: frame.Left, Y: frame.Top, W: m.width - frame.Left - frame.Right, H: 2,
 	})
-	m.shell.setSlot(shellStatusSlot, true, ui.Rect{
+	m.shell.setSlot(shellFooterSlot, true, ui.Rect{
 		X: frame.Left, Y: m.height - frame.Bottom - 2, W: m.width - frame.Left - frame.Right, H: 2,
 	})
-
 	// Tab bar: full content column below the header separator so its bottom
 	// rule runs edge to edge; the shelltabs screen applies the theme's
 	// horizontal padding to the tabs control itself.
@@ -344,6 +343,7 @@ func (m *App) configureShell() {
 
 	// Screen projections/binds (paint happens once via rootHost.Paint).
 	m.configureHeaderScreen()
+	m.configureFooterScreen()
 	m.configureTabBarScreen()
 	m.configureSidebarScreen()
 	m.refreshActivityList()
@@ -351,7 +351,6 @@ func (m *App) configureShell() {
 	m.configureChatScreenWithLayout(lay)
 	m.configureEditorScreen()
 	m.configureLauncherScreen()
-	m.configureStatusScreen()
 }
 
 func (m *App) isEditorActive() bool {
@@ -511,19 +510,16 @@ func (m *App) configureHeaderScreen() {
 	if m.headerScreen == nil {
 		return
 	}
-	usage := ""
-	if m.StatusBar != nil {
-		usage = m.StatusBar.UsageView()
-	}
 	frame := m.frameInsets()
 	m.headerScreen.SetProjection(shellheader.Projection{
 		ModelName: m.ModelName,
 		YOLO:      m.OverlayState.IsYolo(),
 		StartTime: m.StartTime,
-		Usage:     usage,
 		// No ViewLabel: the active agent already has its own window tab, so
 		// the header stays on app + model only.
-		Width: m.width - frame.Left - frame.Right,
+		Width:         m.width - frame.Left - frame.Right,
+		LeftSegments:  m.statusHeaderLeftSegments(),
+		RightSegments: m.statusHeaderRightSegments(),
 	})
 }
 
@@ -612,8 +608,10 @@ func (m *App) configureChatScreenWithLayout(layout contentLayout) {
 	activeML.SetStreaming(activeAgent != nil && activeAgent.Streaming)
 	activeML.SetSpinFrame(m.SpinFrame)
 	activeML.SetActiveTyping(activeTyping)
-	if m.StatusBar != nil {
-		activeML.SetPhase(m.StatusBar.Phase())
+	if center := m.Status; center != nil {
+		if status, ok := center.Agent(m.AgentMgr.ActiveID()); ok {
+			activeML.SetPhase(string(status.Phase))
+		}
 	}
 	activeML.SetChatAreaBounds(m.chatRect.Y, chatH)
 	activeML.SetSize(renderContentW, m.height)
@@ -703,17 +701,6 @@ func (m *App) configureLauncherScreen() {
 	}
 	m.launcherScreen.SetShortcuts(m.launcherShortcuts())
 	m.launcherScreen.SetAnimation(m.SpinFrame, time.Since(m.LastInteractionTime).Seconds())
-}
-
-func (m *App) configureStatusScreen() {
-	if m.StatusBar == nil {
-		return
-	}
-	m.syncFormHint()
-	prefix, segs := m.contextualHelpSegments()
-	m.StatusBar.SetContextHelp(m.actionRegistry, prefix, segs)
-	m.StatusBar.SetWidth(m.width)
-	m.syncWorkspaceStatusView()
 }
 
 func (m *App) contextualHelpSegments() (prefix string, segs []ui.HintSegment) {

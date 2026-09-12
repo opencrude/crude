@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"crude/fileio"
 	"crude/logger"
@@ -38,7 +39,11 @@ type StepRecord struct {
 type Agent struct {
 	Provider                 *provider.Provider
 	Model                    string
+	CompactionProvider       *provider.Provider
+	CompactionTargetModel    string
+	CompactionTargetWindow   int
 	AgentID                  AgentID
+	TurnGeneration           uint64
 	Policy                   safety.Policy
 	CommandPolicy            safety.CommandPolicy
 	Depth                    int
@@ -53,6 +58,8 @@ type Agent struct {
 	logger                   *logger.Logger
 	turn                     *logger.TurnLogger
 	Emit                     func(AgentEvent)
+	PrepareCompaction        func(CompactionSource) error
+	CommitCompaction         func(CompactionCommit) error
 	Ctx                      context.Context
 	Yolo                     bool
 	// YoloMode supplies the owning session's live policy. Yolo remains the
@@ -62,8 +69,9 @@ type Agent struct {
 	SubAgentMgr *SubAgentManager
 	// testHTTPClient, when set, is injected into the provider transport for
 	// tests. Production agents use the provider's own tuned transport.
-	testHTTPClient *http.Client
-	toolCallSeq    int
+	testHTTPClient       *http.Client
+	toolCallSeq          int
+	compactionRetryDelay func(int) time.Duration
 
 	fileMu            sync.Map
 	writeReportCalled bool

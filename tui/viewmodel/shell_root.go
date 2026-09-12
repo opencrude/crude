@@ -19,7 +19,7 @@ type shellSlotID uint8
 
 const (
 	shellHeaderSlot shellSlotID = iota
-	shellStatusSlot
+	shellFooterSlot
 	shellTabsSlot
 	shellActivitySlot
 	shellSidebarSlot
@@ -36,8 +36,8 @@ func (id shellSlotID) String() string {
 	switch id {
 	case shellHeaderSlot:
 		return "shell/header"
-	case shellStatusSlot:
-		return "shell/status"
+	case shellFooterSlot:
+		return "shell/footer"
 	case shellTabsSlot:
 		return "shell/tabs"
 	case shellActivitySlot:
@@ -77,7 +77,7 @@ type shellSlot struct {
 type shellRoot struct {
 	ui.Base
 	header   ui.Component
-	status   ui.Component
+	footer   ui.Component
 	tabs     ui.Component
 	activity ui.Component
 	sidebar  ui.Component
@@ -93,14 +93,14 @@ type shellRoot struct {
 }
 
 func newShellRoot(
-	header, status, tabs, activity, sidebar, chat, input, editor, launcher ui.Component,
+	header, footer, tabs, activity, sidebar, chat, input, editor, launcher ui.Component,
 	deck *deckMount,
 	termDock ui.Component,
 ) *shellRoot {
 	return &shellRoot{
 		Base:     ui.NewBase("shell"),
 		header:   header,
-		status:   status,
+		footer:   footer,
 		tabs:     tabs,
 		activity: activity,
 		sidebar:  sidebar,
@@ -139,8 +139,8 @@ func (s *shellRoot) SetScreen(id shellSlotID, c ui.Component) {
 	switch id {
 	case shellHeaderSlot:
 		s.header = c
-	case shellStatusSlot:
-		s.status = c
+	case shellFooterSlot:
+		s.footer = c
 	case shellTabsSlot:
 		s.tabs = c
 	case shellActivitySlot:
@@ -174,7 +174,7 @@ func (s *shellRoot) Children() []ui.Component {
 		}
 	}
 	appendSlot(shellHeaderSlot, s.header)
-	appendSlot(shellStatusSlot, s.status)
+	appendSlot(shellFooterSlot, s.footer)
 	appendSlot(shellTabsSlot, s.tabs)
 	appendSlot(shellActivitySlot, s.activity)
 	appendSlot(shellSidebarSlot, s.sidebar)
@@ -203,7 +203,7 @@ func (s *shellRoot) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		}
 	}
 	layoutSlot(shellHeaderSlot, s.header)
-	layoutSlot(shellStatusSlot, s.status)
+	layoutSlot(shellFooterSlot, s.footer)
 	layoutSlot(shellTabsSlot, s.tabs)
 	layoutSlot(shellActivitySlot, s.activity)
 	layoutSlot(shellSidebarSlot, s.sidebar)

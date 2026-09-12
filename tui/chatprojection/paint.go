@@ -49,6 +49,16 @@ func TruncatePaintLine(pl PaintLine, maxW int) PaintLine {
 // PaintLineAt writes a PaintLine into buf at (x,y), optionally applying text
 // selection in plain-text column coordinates and subpane background fill.
 func PaintLineAt(buf *surface.CellBuffer, x, y, maxW int, pl PaintLine, tokens *ui.TokenSet, selStart, selEnd int, subPaneBg bool) {
+	rowBg := cell.NoColor
+	if subPaneBg && tokens != nil {
+		rowBg = tokens.Color(ui.ColorSubPaneBg)
+	}
+	PaintLineAtBackground(buf, x, y, maxW, pl, tokens, selStart, selEnd, rowBg)
+}
+
+// PaintLineAtBackground paints with an explicit full-row background. Chat
+// context boundaries use it so text and internal spacing share one surface.
+func PaintLineAtBackground(buf *surface.CellBuffer, x, y, maxW int, pl PaintLine, tokens *ui.TokenSet, selStart, selEnd int, rowBg cell.Color) {
 	if buf == nil || y < 0 || y >= buf.Height() {
 		return
 	}
@@ -56,11 +66,6 @@ func PaintLineAt(buf *surface.CellBuffer, x, y, maxW int, pl PaintLine, tokens *
 		maxW = 0
 	}
 	pl = TruncatePaintLine(pl, maxW)
-
-	rowBg := cell.NoColor
-	if subPaneBg && tokens != nil {
-		rowBg = tokens.Color(ui.ColorSubPaneBg)
-	}
 
 	col := 0
 	curX := x
@@ -110,12 +115,8 @@ func PaintLineAt(buf *surface.CellBuffer, x, y, maxW int, pl PaintLine, tokens *
 	}
 
 	for col < maxW && curX < buf.Width() {
-		cellFG := rowBg
+		cellFG := cell.NoColor
 		cellBG := rowBg
-		if subPaneBg && tokens != nil {
-			cellFG = tokens.Color(ui.ColorFg)
-			cellBG = tokens.Color(ui.ColorSubPaneBg)
-		}
 		if selStart < selEnd && col >= selStart && col < selEnd && tokens != nil {
 			cellFG = tokens.Color(ui.ColorFg)
 			cellBG = tokens.Color(ui.ColorSelection)

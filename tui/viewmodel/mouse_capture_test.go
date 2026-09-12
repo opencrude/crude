@@ -20,7 +20,7 @@ import (
 
 // chatViewportApp sizes the app so the chat viewport (chatRect.H) equals
 // viewportH through the production layout path:
-// ChatH = height - 2 (status) - 3 (padding+header) - inputLineCount(1).
+// ChatH = height - 2 (footer) - 3 (padding+header) - inputLineCount(1).
 func chatViewportApp(t *testing.T, app *App, viewportH int) *App {
 	t.Helper()
 	if app == nil {

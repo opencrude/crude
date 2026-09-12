@@ -18,6 +18,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -108,9 +109,7 @@ func (w *Workspace) CreateSession(cfg *session.Config, homeDir string) (*Session
 	return fs, nil
 }
 
-// ResumeSession loads an existing session by ID from this workspace.
-// Falls back to the legacy ~/.crude/sessions/ layout when the session
-// DB is not found under the workspace folder.
+// ResumeSession loads an existing workspace-scoped session by ID.
 func (w *Workspace) ResumeSession(sessionID string, cfg *session.Config, homeDir string) (*Session, error) {
 	dbPath, err := SessionDBPath(w.RootPath, sessionID)
 	if err != nil {
@@ -119,24 +118,14 @@ func (w *Workspace) ResumeSession(sessionID string, cfg *session.Config, homeDir
 
 	sessionsRoot := filepath.Join(w.WorkspaceDir, "sessions")
 	if _, statErr := os.Stat(dbPath); statErr != nil {
-		// Legacy fallback: ~/.crude/sessions/<id>.db
-		if legacyRoot, legErr := session.SessionsRoot(); legErr == nil {
-			legacyPath := filepath.Join(legacyRoot, sessionID+".db")
-			if _, legStat := os.Stat(legacyPath); legStat == nil {
-				w.Logger.Info("WORKSPACE", "resume_legacy_fallback", "id", sessionID)
-				dbPath = legacyPath
-				sessionsRoot = legacyRoot
-			}
-		}
+		return nil, fmt.Errorf("session database unavailable: %w", statErr)
 	}
 
 	bs, err := session.ResumeSessionWithDir(dbPath, cfg, homeDir, sessionsRoot)
 	if err != nil {
 		return nil, fmt.Errorf("resume backend session: %w", err)
 	}
-	// Re-root tool execution at this workspace. A resumed session may have
-	// been created under a different project (legacy layout) — the current
-	// workspace root is authoritative for its lifetime here.
+	// The current workspace root is authoritative for the resumed lifetime.
 	bs.SetWorkDir(w.RootPath)
 	if w.WorkspaceDB != nil {
 		bs.SetMemoryStore(w.WorkspaceDB.Memory)
@@ -155,7 +144,7 @@ func (w *Workspace) ResumeSession(sessionID string, cfg *session.Config, homeDir
 
 	w.addSession(fs)
 
-	// Ensure the session is registered in the workspace registry (import legacy).
+	// Ensure the workspace-scoped session is registered in the local registry.
 	if w.WorkspaceDB != nil {
 		model := bs.ModelName()
 		providerID := cfg.EffectiveProviderID()
@@ -191,11 +180,30 @@ func (w *Workspace) Hydrate() {
 		return
 	}
 	msgs := w.ActiveSession.backend.MessagesWithMeta()
-	if len(msgs) > 0 {
-		w.ActiveSession.hydratedMessages = ConvertMessagesForDisplay(msgs)
+	views := ConvertMessagesForDisplay(msgs)
+	for _, record := range w.ActiveSession.backend.CompactionRecords("") {
+		views = append(views, compactionRecordView(record))
+	}
+	if len(views) > 0 {
+		slices.SortStableFunc(views, func(left, right ChatMessageView) int {
+			return left.Time.Compare(right.Time)
+		})
+		w.ActiveSession.hydratedMessages = views
 	}
 
 	if db := w.ActiveSession.DB; db != nil {
+		if records, err := sessiondb.ListUsageRecords(db); err == nil {
+			w.ActiveSession.usageMu.Lock()
+			w.ActiveSession.usageRecords = make(map[string]sessiondb.UsageRecord, len(records))
+			w.ActiveSession.usageCache = make(map[usageCacheKey]ttypes.UsageSummary)
+			w.ActiveSession.usageVersion++
+			for _, record := range records {
+				w.ActiveSession.usageRecords[record.RequestID] = record
+			}
+			w.ActiveSession.usageMu.Unlock()
+		} else {
+			w.Logger.Warn("WORKSPACE", "usage_hydrate_failed", "error", err.Error())
+		}
 		if refs, err := sessiondb.LoadPromptReferences(db); err == nil && len(refs) > 0 {
 			w.ActiveSession.hydratedRefs = refs
 		}
@@ -228,7 +236,14 @@ func (w *Workspace) HydrateCompletedSubAgents(parentID string) []string {
 			label = id
 		}
 		pane := w.PaneMgr.GetOrCreate(id, PaneAgent, label)
-		for _, view := range ConvertMessagesForDisplay(snapshot.Messages) {
+		paneViews := ConvertMessagesForDisplay(snapshot.Messages)
+		for _, record := range snapshot.Compactions {
+			paneViews = append(paneViews, compactionRecordView(record))
+		}
+		slices.SortStableFunc(paneViews, func(left, right ChatMessageView) int {
+			return left.Time.Compare(right.Time)
+		})
+		for _, view := range paneViews {
 			pane.Messages.AppendMessage(messageFromView(view))
 		}
 		if len(pane.Messages.Messages()) == 0 && (result.SummaryGist != "" || result.ResultPath != "") {
@@ -529,10 +544,30 @@ func (w *Workspace) HandleCompact() interface{} {
 // HandleCompactForAgent compacts only the session captured when the slash
 // command was submitted.
 func (w *Workspace) HandleCompactForAgent(agentID string) ttypes.CompactResultMsg {
-	if sess := w.sessionForAgent(agentID); sess != nil && sess.backend != nil {
-		return sess.backend.HandleCompact()
+	prepared, result := w.PrepareCompactForAgent(agentID)
+	if prepared.Run == nil {
+		return result
 	}
-	return ttypes.CompactResultMsg{Error: "no active session"}
+	return prepared.Run()
+}
+
+// PrepareCompactForAgent registers lifecycle ownership synchronously so the
+// TUI can paint and cancel the operation before its tea.Cmd begins I/O.
+func (w *Workspace) PrepareCompactForAgent(agentID string) (session.PreparedCompaction, ttypes.CompactResultMsg) {
+	if w == nil || w.AgentMgr == nil {
+		return session.PreparedCompaction{}, ttypes.CompactResultMsg{Error: "no active session"}
+	}
+	node := w.AgentMgr.Get(agentID)
+	if node == nil {
+		return session.PreparedCompaction{}, ttypes.CompactResultMsg{Error: "no active session"}
+	}
+	if node.Parent != nil {
+		return session.PreparedCompaction{}, ttypes.CompactResultMsg{Error: "Child contexts compact automatically while their delegated work is active"}
+	}
+	if sess := w.sessionForAgent(agentID); sess != nil && sess.backend != nil {
+		return sess.backend.PrepareCompaction(agentID)
+	}
+	return session.PreparedCompaction{}, ttypes.CompactResultMsg{Error: "no active session"}
 }
 
 // SetYolo toggles auto-approve mode.
@@ -605,6 +640,9 @@ func (w *Workspace) CancelAgent(agentID string) []string {
 		return nil
 	}
 	if sess := w.sessionForAgent(agentID); sess != nil && sess.backend != nil {
+		if sess.backend.CancelCompaction(agentID) {
+			return nil
+		}
 		_, cleared := sess.backend.CancelOrchestrator(agentID)
 		return cleared
 	}
@@ -787,113 +825,13 @@ func (w *Workspace) sessionForAgent(agentID string) *Session {
 	return nil
 }
 
-// UsageSnapshot combines cumulative session token/cost totals with the selected
-// agent's latest current-context occupancy.
-type UsageSnapshot struct {
-	Prompt         int
-	Completion     int
-	Cached         int
-	Cost           float64
-	ContextWindow  int
-	ContextUsed    int
-	Estimated      bool
-	CostUpperBound bool
+// RecordAgentUsage applies a request-keyed provider usage event to its owner.
+func (w *Workspace) RecordAgentUsage(agentID string, data any) (ttypes.UsageSummary, bool) {
+	return w.recordAgentUsage(agentID, data)
 }
 
-// RecordAgentUsage applies a provider usage event to its owning session rather
-// than whichever session happens to be visible.
-//
-// After updating the in-memory session cost, the cumulative cost is pushed
-// live to the workspace_sessions registry (the push path of Phase 2's
-// "UpdateSessionMeta for live updates"). The heavier full-row sync
-// (turn_count, message_count, prompts) happens at session close via
-// SyncSessionMeta — those fields are owned by the session DB and would
-// require re-opening it to read here.
-func (w *Workspace) RecordAgentUsage(agentID string, data any) (UsageSnapshot, bool) {
-	sess := w.sessionForAgent(agentID)
-	if sess == nil {
-		return UsageSnapshot{}, false
-	}
-	var prompt, completion, cached, contextWindow, contextUsed int
-	var cost float64
-	var estimated, upperBound bool
-	switch usage := data.(type) {
-	case map[string]any:
-		prompt, completion, cached = toInt(usage["prompt"]), toInt(usage["completion"]), toInt(usage["prompt_cached"])
-		cost, _ = usage["cost"].(float64)
-		estimated, _ = usage["estimated"].(bool)
-		upperBound, _ = usage["cost_upper_bound"].(bool)
-		contextWindow = toInt(usage["context_window"])
-		contextUsed = toInt(usage["context_prompt"])
-		if contextUsed == 0 {
-			contextUsed = toInt(usage["context_used"])
-		}
-	case map[string]int:
-		prompt, completion, cached = usage["prompt"], usage["completion"], usage["prompt_cached"]
-		contextWindow = usage["context_window"]
-		contextUsed = usage["context_prompt"]
-		if contextUsed == 0 {
-			contextUsed = usage["context_used"]
-		}
-	default:
-		return UsageSnapshot{}, false
-	}
-	if contextWindow > 0 && contextUsed == 0 {
-		contextUsed = prompt
-	}
-	sess.TokenPrompt += prompt
-	sess.TokenCompletion += completion
-	sess.TokenCached += cached
-	sess.SessionCost += cost
-	sess.TokenEstimated = sess.TokenEstimated || estimated
-	sess.CostUpperBound = sess.CostUpperBound || upperBound
-	if sess.usageByAgent == nil {
-		sess.usageByAgent = make(map[string]agentUsageState)
-	}
-	state := sess.usageByAgent[agentID]
-	if contextWindow > 0 {
-		state.ContextWindow, state.ContextUsed = contextWindow, contextUsed
-	}
-	state.Estimated = estimated
-	sess.usageByAgent[agentID] = state
-	// Preserve a latest-event fallback for callers without an agent identity.
-	sess.ContextWindow, sess.ContextUsed = state.ContextWindow, state.ContextUsed
-	// Push cumulative cost to the workspace registry (live update).
-	if w.WorkspaceDB != nil && sess.SessionID != "" {
-		if err := w.WorkspaceDB.UpdateSessionCost(sess.SessionID, sess.SessionCost); err != nil {
-			w.Logger.Warn("WORKSPACE", "session_cost_sync_failed",
-				"id", sess.SessionID, "error", err.Error())
-		}
-	}
-	return usageSnapshot(sess, agentID), true
-}
-
-// AgentUsage returns cumulative session totals plus the requested agent's
-// latest current-context state.
-func (w *Workspace) AgentUsage(agentID string) (UsageSnapshot, bool) {
-	sess := w.sessionForAgent(agentID)
-	if sess == nil {
-		return UsageSnapshot{}, false
-	}
-	return usageSnapshot(sess, agentID), true
-}
-
-func usageSnapshot(sess *Session, agentID string) UsageSnapshot {
-	snapshot := UsageSnapshot{
-		Prompt:         sess.TokenPrompt,
-		Completion:     sess.TokenCompletion,
-		Cached:         sess.TokenCached,
-		Cost:           sess.SessionCost,
-		ContextWindow:  sess.ContextWindow,
-		ContextUsed:    sess.ContextUsed,
-		Estimated:      sess.TokenEstimated,
-		CostUpperBound: sess.CostUpperBound,
-	}
-	if state, ok := sess.usageByAgent[agentID]; ok {
-		snapshot.ContextWindow = state.ContextWindow
-		snapshot.ContextUsed = state.ContextUsed
-	}
-	return snapshot
+func (w *Workspace) AgentUsage(agentID string) (ttypes.UsageSummary, bool) {
+	return w.UsageSummary(agentID, ttypes.UsageThisAgent)
 }
 
 // ResetOrchestratorOverrides clears runtime overrides for an orchestrator.
@@ -1069,9 +1007,7 @@ func (w *Workspace) ListSessions() []sessiondb.SessionMeta {
 	return metas
 }
 
-// enrichSessionMeta fills in fields that live in the session database.
-// Falls back to the legacy ~/.crude/sessions/ layout when the workspace-
-// local DB is missing.
+// enrichSessionMeta fills in fields that live in the workspace session database.
 //
 // When neither path has a session DB, the registry row is marked db_missing
 // (not DELETE'd) so a path-construction bug or transient absence cannot
@@ -1082,23 +1018,9 @@ func (w *Workspace) enrichSessionMeta(r sessiondb.SessionMeta) sessiondb.Session
 		return r
 	}
 	if _, err := os.Stat(dbPath); err != nil {
-		// Legacy fallback before marking the registry entry unavailable.
-		if legacyRoot, legErr := session.SessionsRoot(); legErr == nil {
-			legacyPath := filepath.Join(legacyRoot, r.ID+".db")
-			if _, legStat := os.Stat(legacyPath); legStat == nil {
-				dbPath = legacyPath
-			} else {
-				_ = w.WorkspaceDB.MarkSessionDBMissing(r.ID, true)
-				w.Logger.Warn("WORKSPACE", "session_db_missing",
-					"id", r.ID, "path", dbPath)
-				return sessiondb.SessionMeta{}
-			}
-		} else {
-			_ = w.WorkspaceDB.MarkSessionDBMissing(r.ID, true)
-			w.Logger.Warn("WORKSPACE", "session_db_missing",
-				"id", r.ID, "path", dbPath)
-			return sessiondb.SessionMeta{}
-		}
+		_ = w.WorkspaceDB.MarkSessionDBMissing(r.ID, true)
+		w.Logger.Warn("WORKSPACE", "session_db_missing", "id", r.ID, "path", dbPath)
+		return sessiondb.SessionMeta{}
 	}
 
 	db, err := sessiondb.OpenAndMigrate(dbPath)
@@ -1167,6 +1089,45 @@ func (w *Workspace) StartOrchestrator(sender session.EventSender) (*session.Orch
 }
 
 // ── Message Conversion
+
+func compactionRecordView(record sessiondb.CompactionRecord) ChatMessageView {
+	phase := "compaction_" + record.State
+	stageName := record.StageName
+	switch stageName {
+	case "intent":
+		stageName = "Extracting intent"
+	case "work":
+		stageName = "Distilling work"
+	case "state":
+		stageName = "Capturing state"
+	case "continuation":
+		stageName = "Preparing continuation"
+	}
+	timestamp := record.UpdatedAt
+	if !record.EndedAt.IsZero() {
+		timestamp = record.EndedAt
+	}
+	return ChatMessageView{
+		InternalID:             record.OperationID,
+		Role:                   MessageRoleStatus,
+		Content:                record.Error,
+		Time:                   timestamp,
+		ProviderID:             record.ProviderID,
+		ModelID:                record.ModelID,
+		LifecyclePhase:         phase,
+		LifecycleOperationID:   record.OperationID,
+		LifecycleTrigger:       record.Trigger,
+		LifecycleStageName:     stageName,
+		LifecycleStageIndex:    record.StageIndex,
+		LifecycleCompleted:     record.CompletedStages,
+		LifecycleStageCount:    record.StageCount,
+		LifecycleRetryAttempt:  record.RetryAttempt,
+		LifecycleRetryLimit:    record.RetryLimit,
+		LifecycleBeforeTokens:  record.BeforeTokens,
+		LifecycleAfterTokens:   record.AfterTokens,
+		LifecycleContextWindow: record.ContextWindow,
+	}
+}
 
 // ConvertMessagesForDisplay converts persisted backend messages into the
 // workspace-owned view data consumed by frontends.

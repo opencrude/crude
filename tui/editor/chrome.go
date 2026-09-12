@@ -253,7 +253,7 @@ func (e *Editor) Theme() *theme.Theme {
 
 // SetStatusChrome toggles the optional document footline inside the editor
 // surface. The main IDE shell keeps this off — title, cursor, diagnostics
-// counts, and actions live in shellstatus contextual help.
+// counts, and actions live in top contextual help.
 func (e *Editor) SetStatusChrome(on bool) {
 	e.statusChrome = on
 }

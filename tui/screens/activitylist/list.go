@@ -40,7 +40,7 @@ type Screen struct {
 	ui.Base
 	th         *theme.Theme
 	tokens     *ui.TokenSet
-	filter     *ui.FilterField
+	filter     *activityFilterField
 	list       *sidebarList
 	scrollbar  *ui.ScrollbarControl
 	split      *ui.SplitModel
@@ -64,7 +64,7 @@ func New(th *theme.Theme) *Screen {
 		heading: "Agents",
 		icon:    "◈",
 	}
-	s.filter = ui.NewFilterField(FilterID, tokens)
+	s.filter = &activityFilterField{Base: ui.NewBase(FilterID), owner: s, field: ui.NewFilterField(FilterID, tokens)}
 	s.filter.SetPrompt(ui.SearchGlyphEnd(tokens))
 	s.filter.SetPromptPlacement(ui.PromptEnd)
 	s.filter.SetPlaceholder("Search agents")
@@ -80,6 +80,43 @@ func New(th *theme.Theme) *Screen {
 	s.divider.SetTokens(tokens)
 	return s
 }
+
+type activityFilterField struct {
+	ui.Base
+	owner *Screen
+	field *ui.FilterField
+}
+
+func (f *activityFilterField) SetPrompt(value string) { f.field.SetPrompt(value) }
+func (f *activityFilterField) SetPromptPlacement(value ui.PromptPlacement) {
+	f.field.SetPromptPlacement(value)
+}
+func (f *activityFilterField) SetPlaceholder(value string)         { f.field.SetPlaceholder(value) }
+func (f *activityFilterField) SetBackgroundColor(value cell.Color) { f.field.SetBackgroundColor(value) }
+func (f *activityFilterField) SetPromptColor(value cell.Color)     { f.field.SetPromptColor(value) }
+func (f *activityFilterField) OnChanged(fn func(string))           { f.field.OnChanged(fn) }
+func (f *activityFilterField) Value() string                       { return f.field.Value() }
+func (f *activityFilterField) SetTokens(tokens *ui.TokenSet)       { f.field.SetTokens(tokens) }
+func (f *activityFilterField) Measure(ctx ui.LayoutContext, cs ui.Constraints) ui.Size {
+	return f.field.Measure(ctx, cs)
+}
+func (f *activityFilterField) Layout(ctx ui.LayoutContext, r ui.Rect) {
+	f.SetBounds(r)
+	f.field.Layout(ctx, ui.Rect{W: r.W, H: r.H})
+}
+func (f *activityFilterField) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
+	f.field.Paint(buf, ox+f.Bounds().X, oy+f.Bounds().Y, ctx)
+}
+func (f *activityFilterField) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+	if evt.IsKey() && f.owner != nil && f.owner.list != nil {
+		switch evt.Key.Code {
+		case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd, tea.KeyEnter:
+			return f.owner.list.Handle(ctx, evt)
+		}
+	}
+	return f.field.Handle(ctx, evt)
+}
+func (f *activityFilterField) Semantics() ui.Semantics { return f.field.Semantics() }
 
 func (s *Screen) SetHeading(h string) {
 	s.heading = h

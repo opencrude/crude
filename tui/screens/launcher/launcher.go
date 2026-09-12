@@ -1081,19 +1081,25 @@ func (sl *shortcutList) Paint(buf *surface.CellBuffer, originX, originY int, ctx
 		}
 		key := sc[0]
 		label := sc[1]
-		gap := 14 - rendering.VisibleWidth(key)
+		keyX := ox + rowInset
+		buf.WriteString(ox, y, strings.Repeat(" ", rowInset), fg, cell.NoColor, 0)
+		available := maxInt(0, r.W-rowInset)
+		key = rendering.TruncateLine(key, available)
+		keyW := rendering.VisibleWidth(key)
+		gap := 14 - keyW
 		if gap < 2 {
 			gap = 2
 		}
-		keyX := ox + rowInset
-		buf.WriteString(ox, y, strings.Repeat(" ", rowInset), fg, cell.NoColor, 0)
+		gap = minInt(gap, maxInt(0, available-keyW))
+		labelW := maxInt(0, available-keyW-gap)
+		label = rendering.TruncateLine(label, labelW)
 		buf.WriteString(keyX, y, key, fg, cell.NoColor, 0)
-		buf.WriteString(keyX+rendering.VisibleWidth(key), y, strings.Repeat(" ", gap), fg, cell.NoColor, 0)
-		buf.WriteString(keyX+rendering.VisibleWidth(key)+gap, y, label, muted, cell.NoColor, 0)
+		buf.WriteString(keyX+keyW, y, strings.Repeat(" ", gap), fg, cell.NoColor, 0)
+		buf.WriteString(keyX+keyW+gap, y, label, muted, cell.NoColor, 0)
 		// fill any trailing whitespace
-		fill := ox + r.W - (keyX + rendering.VisibleWidth(key) + gap + rendering.VisibleWidth(label))
+		fill := ox + r.W - (keyX + keyW + gap + rendering.VisibleWidth(label))
 		if fill > 0 {
-			buf.WriteString(keyX+rendering.VisibleWidth(key)+gap+rendering.VisibleWidth(label), y, strings.Repeat(" ", fill), fg, cell.NoColor, 0)
+			buf.WriteString(keyX+keyW+gap+rendering.VisibleWidth(label), y, strings.Repeat(" ", fill), fg, cell.NoColor, 0)
 		}
 	}
 	// Fill remaining rows

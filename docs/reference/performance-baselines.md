@@ -63,6 +63,20 @@ synthetic input. The intermittent multi-second live-provider pause was not
 reproduced in those runs. Isolated archive copies were also checked through
 `scripts/tuishot.sh` at 160x40 and 80x24, including scroll and application exit.
 
+### Status overhaul hot paths (2026-09-10)
+
+The active header reads generation-cached request usage, and project status reads
+diagnostic counters maintained at diagnostic mutation boundaries. On the same
+i7-10750H reference machine:
+
+| Benchmark | Workload | Result |
+|---|---|---:|
+| `BenchmarkProjectInsightsCached10kDiagnostics` | Project snapshot after 10,000 reported diagnostics | 67 ns/op, 0 B/op, 0 allocs/op |
+| `BenchmarkUsageSummaryCached1000Requests` | Per-agent summary after 1,000 request records | 108 ns/op, 0 B/op, 0 allocs/op |
+
+Painting, ticks, focus changes, and merely opening another tab must not scan the
+diagnostic cache or request ledger. Mutations invalidate the exact aggregate.
+
 ## Local History incremental capture
 
 Recorded 2026-09-01 on i7-10750H, Linux, 1,000 small source files with one file

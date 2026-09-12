@@ -18,6 +18,13 @@ const (
 	TabsShell
 )
 
+type TabsAppearance uint8
+
+const (
+	TabsAppearanceDefault TabsAppearance = iota
+	TabsAppearanceStrip
+)
+
 // Tab sizing policy (shell + popup):
 //   - Content-sized: width = leading pad + optional marker + label + close + trailing pad.
 //   - Long labels ellipsis-truncate at tabMaxLabelW (28).
@@ -54,16 +61,24 @@ type Tabs struct {
 	chrome     TabsChrome
 	barFocused bool
 	scroll     int // first visible tab index when strip overflows past min widths
+	appearance TabsAppearance
+	leadPad    int
+	gap        int
+	minWidth   int
 }
 
 func NewTabs(id ComponentID, tokens *TokenSet) *Tabs {
-	return &Tabs{Base: NewBase(id), active: -1, hover: -1, tokens: tokens}
+	return &Tabs{Base: NewBase(id), active: -1, hover: -1, tokens: tokens, leadPad: tabLeadPad, gap: tabGap, minWidth: tabMinW}
 }
 
 func (t *Tabs) SetTokens(tokens *TokenSet) { t.tokens = tokens }
 
 // SetChrome selects popup or shell color roles.
-func (t *Tabs) SetChrome(chrome TabsChrome) { t.chrome = chrome }
+func (t *Tabs) SetChrome(chrome TabsChrome)             { t.chrome = chrome }
+func (t *Tabs) SetAppearance(appearance TabsAppearance) { t.appearance = appearance }
+func (t *Tabs) SetLeadPadding(pad int)                  { t.leadPad = max(0, pad) }
+func (t *Tabs) SetGap(gap int)                          { t.gap = max(0, gap) }
+func (t *Tabs) SetMinWidth(width int)                   { t.minWidth = max(0, width) }
 
 // SetBarFocused marks keyboard focus on the tab strip (shell separator accent).
 func (t *Tabs) SetBarFocused(focused bool) { t.barFocused = focused }
@@ -126,7 +141,11 @@ func (t *Tabs) ActiveID() string {
 }
 
 func (t *Tabs) Measure(_ LayoutContext, cs Constraints) Size {
-	return cs.ClampSize(Size{W: cs.MaxW, H: 1})
+	height := 1
+	if t.appearance == TabsAppearanceStrip {
+		height = 2
+	}
+	return cs.ClampSize(Size{W: cs.MaxW, H: height})
 }
 
 func (t *Tabs) Layout(_ LayoutContext, r Rect) {
@@ -136,7 +155,7 @@ func (t *Tabs) Layout(_ LayoutContext, r Rect) {
 
 func (t *Tabs) idealTabWidth(i int, label string) int {
 	item := t.items[i]
-	w := tabLeadPad + rendering.VisibleWidth(label)
+	w := t.leadPad + rendering.VisibleWidth(label)
 	if t.chrome != TabsShell && item.Icon != "" {
 		w += rendering.VisibleWidth(item.Icon) + 1
 	}
@@ -149,7 +168,7 @@ func (t *Tabs) idealTabWidth(i int, label string) int {
 	if t.chrome == TabsShell && i == t.active {
 		w += rendering.VisibleWidth(t.activeMarker())
 	}
-	return max(tabMinW, w)
+	return max(t.minWidth, w)
 }
 
 // activeMarker is empty: the active tab uses bold + accent, never a prompt glyph.
@@ -184,12 +203,12 @@ func (t *Tabs) computeRanges(width int) []tabRange {
 		total += ideal[i]
 	}
 	gaps := n - 1
-	total += gaps * tabGap
+	total += gaps * t.gap
 
 	widths := append([]int(nil), ideal...)
 	if total > width {
 		// Shrink proportionally down to tabMinW.
-		available := max(1, width-gaps*tabGap)
+		available := max(1, width-gaps*t.gap)
 		sumIdeal := 0
 		for _, w := range ideal {
 			sumIdeal += w
@@ -200,11 +219,11 @@ func (t *Tabs) computeRanges(width int) []tabRange {
 		assigned := 0
 		for i := range widths {
 			if i == n-1 {
-				widths[i] = max(tabMinW, available-assigned)
+				widths[i] = max(t.minWidth, available-assigned)
 			} else {
 				w := available * ideal[i] / sumIdeal
-				if w < tabMinW {
-					w = tabMinW
+				if w < t.minWidth {
+					w = t.minWidth
 				}
 				widths[i] = w
 				assigned += w
@@ -215,9 +234,9 @@ func (t *Tabs) computeRanges(width int) []tabRange {
 		for _, w := range widths {
 			sum += w
 		}
-		if sum+gaps*tabGap > width {
+		if sum+gaps*t.gap > width {
 			for i := range widths {
-				widths[i] = tabMinW
+				widths[i] = t.minWidth
 			}
 		}
 	}
@@ -226,7 +245,7 @@ func (t *Tabs) computeRanges(width int) []tabRange {
 	for _, w := range widths {
 		sum += w
 	}
-	needScroll := sum+gaps*tabGap > width
+	needScroll := sum+gaps*t.gap > width
 	if !needScroll {
 		t.scroll = 0
 	} else {
@@ -251,7 +270,7 @@ func (t *Tabs) computeRanges(width int) []tabRange {
 			closeStart = max(x, end-closeW)
 		}
 		ranges[i] = tabRange{start: x, end: end, closeStart: closeStart}
-		x = end + tabGap
+		x = end + t.gap
 	}
 	return ranges
 }
@@ -272,7 +291,7 @@ func (t *Tabs) ensureActiveVisible(widths []int, width int) {
 		activeEnd := -1
 		for i := t.scroll; i < n; i++ {
 			if i > t.scroll {
-				x += tabGap
+				x += t.gap
 			}
 			end := x + widths[i]
 			if i == t.active {
@@ -316,6 +335,11 @@ func (t *Tabs) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 		hover = t.color(ColorHover)
 	}
 	FillRect(buf, originX, originY, r, cell.BlankCell(bg))
+	if t.appearance == TabsAppearanceStrip && r.H > 1 {
+		for x := 0; x < r.W; x++ {
+			buf.Set(originX+r.X+x, originY+r.Y+1, cell.NewCell(FirstRune(t.tokens.Glyphs().BorderH, '-'), t.color(ColorBorder), bg, 0))
+		}
+	}
 	for i, item := range t.items {
 		if i >= len(t.ranges) {
 			break
@@ -329,6 +353,8 @@ func (t *Tabs) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 		if i == t.active {
 			if t.chrome == TabsShell {
 				itemFG, attr = fg, cell.AttrBold
+			} else if t.appearance == TabsAppearanceStrip {
+				itemFG, attr = accent, cell.AttrBold
 			} else {
 				itemFG, itemBG, attr = fg, t.color(ColorPopupSubtleBg), cell.AttrBold
 			}
@@ -347,15 +373,17 @@ func (t *Tabs) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 		}
 		closeW := rendering.VisibleWidth(close)
 		markerW := rendering.VisibleWidth(marker)
-		availForLabel := max(1, w-tabLeadPad-markerW-closeW)
+		availForLabel := max(1, w-t.leadPad-markerW-closeW)
 		label = rendering.TruncateVisual(label, availForLabel, "…")
 		labelW := rendering.VisibleWidth(label)
 
 		FillRect(buf, 0, 0, Rect{X: originX + r.X + hit.start, Y: originY + r.Y, W: w, H: 1}, cell.BlankCell(itemBG))
 		x := originX + r.X + hit.start
 		y := originY + r.Y
-		buf.WriteString(x, y, " ", itemFG, itemBG, attr)
-		x++
+		if t.leadPad > 0 {
+			buf.WriteString(x, y, strings.Repeat(" ", t.leadPad), itemFG, itemBG, attr)
+			x += t.leadPad
+		}
 		if marker != "" {
 			buf.WriteString(x, y, marker, accent, itemBG, attr)
 			x += markerW
@@ -369,6 +397,11 @@ func (t *Tabs) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 		}
 		if close != "" {
 			buf.WriteString(x, y, close, itemFG, itemBG, attr)
+		}
+		if i == t.active && t.appearance == TabsAppearanceStrip && r.H > 1 {
+			for underlineX := hit.start; underlineX < hit.end; underlineX++ {
+				buf.Set(originX+r.X+underlineX, originY+r.Y+1, cell.NewCell(FirstRune(t.tokens.Glyphs().BorderH, '-'), accent, bg, cell.AttrBold))
+			}
 		}
 	}
 }

@@ -27,23 +27,53 @@ func TestMessageSyncPreservesUnchangedCaches(t *testing.T) {
 	}
 }
 
-func TestMessageAtLocalYResolvesBottomGravityAndScroll(t *testing.T) {
+func TestMessageAtLocalYResolvesTopGravityAndScroll(t *testing.T) {
 	th := theme.DefaultDark()
 	s := shellchat.New(th)
 	rows := []chatprojection.MessageRow{{ID: "user-1", Lines: []string{"one", "two"}}, {ID: "assistant", Lines: []string{"three"}}}
 	s.SetMessages(rows, shellchat.PaintParams{Compose: shellchat.ComposeParams{InnerW: 30, PadLR: th.Spacing.PadLR, Theme: th}})
 	s.SyncScrollMetrics(6, 3)
 	s.Layout(ui.LayoutContext{}, ui.Rect{W: 34, H: 6})
-	if _, ok := s.MessageAtLocalY(1); ok {
-		t.Fatal("blank gravity row resolved to a message")
-	}
-	row, ok := s.MessageAtLocalY(3)
+	row, ok := s.MessageAtLocalY(0)
 	if !ok || row.ID != "user-1" {
 		t.Fatalf("row=%+v ok=%v", row, ok)
 	}
-	row, ok = s.MessageAtLocalY(5)
+	row, ok = s.MessageAtLocalY(2)
 	if !ok || row.ID != "assistant" {
 		t.Fatalf("row=%+v ok=%v", row, ok)
+	}
+	if _, ok := s.MessageAtLocalY(5); ok {
+		t.Fatal("blank rows below short content resolved to a message")
+	}
+}
+
+func TestContextBoundaryPaintsFullBleedBandAndRules(t *testing.T) {
+	th := theme.DefaultDark()
+	s := shellchat.New(th)
+	lines := []string{"", "Context  Compaction", "Stage  Capturing state", "Source  420K", ""}
+	native := make([]chatprojection.PaintLine, len(lines))
+	for i, line := range lines {
+		native[i] = chatprojection.PaintLine{Spans: []chatprojection.RowSpan{{Text: line, Role: ui.ColorFg}}}
+	}
+	row := chatprojection.MessageRow{ID: "compact", Lines: lines, Native: native, ContextBoundary: true}
+	s.SetMessages([]chatprojection.MessageRow{row}, shellchat.PaintParams{Compose: shellchat.ComposeParams{InnerW: 36, PadLR: 2, Theme: th}})
+	s.SyncScrollMetrics(5, 5)
+	buf := s.PaintTestBuffer(40, 5)
+	tokens := ui.NewTokenSet(th)
+	wantBG := tokens.Color(ui.ColorContextBg)
+	for y := 0; y < 5; y++ {
+		for x := 0; x < 40; x++ {
+			if got := buf.Get(x, y).BG; got != wantBG {
+				t.Fatalf("cell (%d,%d) background=%v want context band", x, y, got)
+			}
+		}
+	}
+	for _, y := range []int{0, 4} {
+		for x := 0; x < 40; x++ {
+			if got := buf.Get(x, y).Char; got != '─' {
+				t.Fatalf("rule cell (%d,%d)=%q want full-bleed separator", x, y, got)
+			}
+		}
 	}
 }
 

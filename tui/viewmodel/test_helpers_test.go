@@ -15,9 +15,9 @@ import (
 	"crude/tui/screens/launcher"
 	"crude/tui/screens/shellchat"
 	"crude/tui/screens/shelleditor"
+	"crude/tui/screens/shellfooter"
 	"crude/tui/screens/shellheader"
 	"crude/tui/screens/shellinput"
-	"crude/tui/screens/shellstatus"
 	"crude/tui/screens/shelltabs"
 	"crude/tui/screens/shellterm"
 	"crude/tui/screens/shelltree"
@@ -45,9 +45,9 @@ func newTestApp(t testing.TB) *App {
 	th := theme.DefaultDark()
 	wmgr := wm.NewWindowManager()
 	im := input.NewModel(th)
-	sb := shellstatus.New(th)
 
 	headerScreen := shellheader.New(th)
+	footerScreen := shellfooter.New(th, ui.DefaultRegistry())
 	tabScreen := shelltabs.New(th)
 	inputScreen := shellinput.New(th)
 	chatScreen := shellchat.New(th)
@@ -61,7 +61,7 @@ func newTestApp(t testing.TB) *App {
 	termDock := termdock.New(th)
 
 	deck := newDeckMount(nil)
-	shell := newShellRoot(headerScreen, sb, tabScreen, activityBar, sidebarScreen, chatScreen, inputScreen, editorScreen, launcherScreen, deck, termDock)
+	shell := newShellRoot(headerScreen, footerScreen, tabScreen, activityBar, sidebarScreen, chatScreen, inputScreen, editorScreen, launcherScreen, deck, termDock)
 	rootHost := ui.NewHost(th, shell)
 
 	app := &App{
@@ -74,10 +74,10 @@ func newTestApp(t testing.TB) *App {
 			StartTime:     time.Now(),
 			ActiveSession: &workspace.Session{},
 			LSPMgr:        workspace.NewLSPManager(nil),
+			Status:        workspace.NewStatusCenter(nil, nil),
 		},
 		Theme:              th,
 		Input:              im,
-		StatusBar:          sb,
 		Tree:               NewTreeState(nil, 30),
 		SpinFrame:          0,
 		OverlayState:       NewOverlayState(),
@@ -89,6 +89,7 @@ func newTestApp(t testing.TB) *App {
 		subPaneProjections: newSubPaneProjectionRegistry(th),
 		sessionProjections: newSessionProjectionRegistry(th),
 		headerScreen:       headerScreen,
+		footerScreen:       footerScreen,
 		tabScreen:          tabScreen,
 		sidebarScreen:      sidebarScreen,
 		activityBar:        activityBar,
@@ -107,6 +108,7 @@ func newTestApp(t testing.TB) *App {
 		width:              80,
 		height:             24,
 	}
+	app.Feedback = newFeedbackSink(app)
 	deck.app = app
 	app.Win = window.New(th)
 	launcherScreen.SetFocusHandler(rootHost.Focus)

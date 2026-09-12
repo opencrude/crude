@@ -17,7 +17,6 @@ import (
 // successful switch or restore the old file watcher after validation fails.
 type workspaceSwitchState struct {
 	tree         *filetree.FileTreeModel
-	agentIDs     []string
 	workspaceGen uint64
 	gitGen       uint64
 	editorGitGen uint64
@@ -56,14 +55,6 @@ func (m *App) beginWorkspaceSwitch() workspaceSwitchState {
 	if m.Tree != nil {
 		state.tree = m.Tree.Model
 	}
-	if m.AgentMgr != nil {
-		for _, node := range m.AgentMgr.AllNodes() {
-			if node != nil && node.ID != "" {
-				state.agentIDs = append(state.agentIDs, node.ID)
-			}
-		}
-	}
-
 	m.workspaceSwitchGen.Add(1)
 	m.resetLSPRequestContext()
 	m.gitRefreshGen.Add(1)
@@ -110,16 +101,6 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	if m.Win != nil {
 		m.Win.CloseAll()
 	}
-	if m.StatusBar != nil {
-		for _, id := range state.agentIDs {
-			m.StatusBar.ClearAgentState(id)
-		}
-		m.StatusBar.SetCurrentAgent("")
-		m.StatusBar.SetProjectInsights(editor.ProjectInsights{})
-		m.StatusBar.ClearRetry()
-		m.StatusBar.SetPhase("")
-	}
-
 	if m.sessionProjections != nil {
 		m.sessionProjections.items = nil
 	}

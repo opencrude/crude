@@ -487,10 +487,30 @@ type anthropicResponse struct {
 }
 
 type anthropicUsage struct {
-	InputTokens              int `json:"input_tokens"`
-	OutputTokens             int `json:"output_tokens"`
-	CacheCreationInputTokens int `json:"cache_creation_input_tokens"`
-	CacheReadInputTokens     int `json:"cache_read_input_tokens"`
+	InputTokens              int  `json:"input_tokens"`
+	OutputTokens             int  `json:"output_tokens"`
+	CacheCreationInputTokens int  `json:"cache_creation_input_tokens"`
+	CacheReadInputTokens     int  `json:"cache_read_input_tokens"`
+	CacheReadKnown           bool `json:"-"`
+	CacheWriteKnown          bool `json:"-"`
+}
+
+func (u *anthropicUsage) UnmarshalJSON(data []byte) error {
+	type plain anthropicUsage
+	var value plain
+	if err := json.Unmarshal(data, &value); err != nil {
+		return err
+	}
+	var presence struct {
+		Read    *int `json:"cache_read_input_tokens"`
+		Written *int `json:"cache_creation_input_tokens"`
+	}
+	if err := json.Unmarshal(data, &presence); err != nil {
+		return err
+	}
+	*u = anthropicUsage(value)
+	u.CacheReadKnown, u.CacheWriteKnown = presence.Read != nil, presence.Written != nil
+	return nil
 }
 
 type anthropicContentBlock struct {
@@ -564,11 +584,10 @@ func (r *anthropicResponse) toChatResponse() (*ChatResponse, error) {
 			TotalTokens:      promptTokens + r.Usage.OutputTokens,
 		},
 	}
-	if r.Usage.CacheReadInputTokens > 0 || r.Usage.CacheCreationInputTokens > 0 {
-		resp.Usage.PromptTokensDetails = &PromptTokenDetails{
-			CachedTokens:     r.Usage.CacheReadInputTokens,
-			CacheWriteTokens: r.Usage.CacheCreationInputTokens,
-		}
+	resp.Usage.PromptTokensDetails = &PromptTokenDetails{
+		CachedTokens:     r.Usage.CacheReadInputTokens,
+		CacheWriteTokens: r.Usage.CacheCreationInputTokens,
+		CacheReadKnown:   r.Usage.CacheReadKnown, CacheWriteKnown: r.Usage.CacheWriteKnown,
 	}
 	return resp, nil
 }
@@ -671,6 +690,8 @@ func (d *anthropicStreamDecoder) setInputUsage(usage anthropicUsage) {
 	d.usage.PromptTokens = usage.InputTokens + usage.CacheCreationInputTokens + usage.CacheReadInputTokens
 	d.usage.PromptTokensCached = usage.CacheReadInputTokens
 	d.usage.PromptTokensWritten = usage.CacheCreationInputTokens
+	d.usage.CacheReadKnown = usage.CacheReadKnown
+	d.usage.CacheWriteKnown = usage.CacheWriteKnown
 }
 
 func (d *anthropicStreamDecoder) startBlock(index int, raw json.RawMessage) (StreamUpdate, error) {

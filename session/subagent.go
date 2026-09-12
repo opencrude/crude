@@ -652,6 +652,13 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	filteredTools := agent.FilterTools(allToolDefs, spec.AllowedTools, spec.DeniedTools, spec.Category, true)
 
 	a := agent.NewAgent(p, p.Model, r.session.logger)
+	if compactionCfg := cfg.GetCategoryConfig(CategoryAeron); compactionCfg.Model != "" {
+		if compactionProvider, compactionErr := cfg.providerForCategory(compactionCfg); compactionErr == nil {
+			a.CompactionProvider = compactionProvider
+		} else {
+			r.session.logger.Warn("COMPACT", "aeron_provider_unavailable", "agent_id", spec.ID, "error", compactionErr.Error())
+		}
+	}
 	if r.session.cfg != nil {
 		a.CommandPolicy = safety.CommandPolicyFromSettings(r.session.cfg.Safety)
 	}
@@ -659,6 +666,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 		a.ContextCompactionPercent = *spec.ContextCompactionPercent
 	}
 	a.AgentID = spec.ID
+	a.TurnGeneration = 1
 	a.Depth = spec.Depth
 	a.ParentID = spec.ParentID
 	a.Policy = spec.Policy
@@ -703,6 +711,10 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 		}
 		return nil, fmt.Errorf("register: %w", err)
 	}
+	r.persistResult(handle, agent.SubAgentResult{
+		AgentID: spec.ID, SessionID: subSessionID, Name: spec.Name,
+		Category: spec.Category, Status: agent.SubAgentRunning,
+	})
 
 	r.wg.Add(1)
 	go func() {
@@ -785,13 +797,53 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 		}
 	}()
 
-	userMsgs := []provider.ChatMessage{{Role: "user", Content: provider.TextContent(userPrompt)}}
+	assignment := provider.NewTextMessage("user", userPrompt)
+	assignment.Origin = provider.OriginAssignment
+	userMsgs := []provider.ChatMessage{assignment}
+	contextGeneration := uint64(1)
+	handle.Agent.PrepareCompaction = func(source agent.CompactionSource) error {
+		data := compactionLifecycleData(source.RequestID, source.Trigger, source.Role, 0, 0, source.BeforeTokens, 0)
+		data["context_window"] = source.ContextWindow
+		data["provider_id"] = source.ProviderID
+		data["model_id"] = source.ModelID
+		record := compactionRecordFromData(handle.SessionID, string(handle.Spec.ID), sessiondb.CompactionPreparing, data)
+		return sessiondb.BeginContextCompaction(handle.DB, handle.SessionID, string(handle.Spec.ID), sessiondb.ContextState{
+			AgentID: string(handle.Spec.ID), Generation: contextGeneration, Reason: "compaction_source",
+			Messages: append([]provider.ChatMessage(nil), source.Messages...),
+		}, record)
+	}
+	handle.Agent.CommitCompaction = func(commit agent.CompactionCommit) error {
+		contextGeneration++
+		data := compactionLifecycleData(commit.RequestID, commit.Trigger, commit.Role, compactionStageCount, compactionStageCount, commit.BeforeTokens, commit.AfterTokens)
+		data["context_window"] = commit.ContextWindow
+		data["provider_id"] = commit.ProviderID
+		data["model_id"] = commit.ModelID
+		record := compactionRecordFromData(handle.SessionID, string(handle.Spec.ID), sessiondb.CompactionCompleted, data)
+		return sessiondb.CommitContextCompaction(handle.DB, handle.SessionID, string(handle.Spec.ID), sessiondb.ContextState{
+			AgentID: string(handle.Spec.ID), Generation: contextGeneration, Reason: "automatic_compaction",
+			Messages: append([]provider.ChatMessage(nil), commit.Messages...),
+		}, record)
+	}
+	if handle.DB != nil {
+		if err := sessiondb.BeginAgentTurn(handle.DB, handle.SessionID, string(handle.Spec.ID), 1, string(provider.OriginAssignment)); err != nil {
+			r.session.logger.Warn("SUBAGENT", "turn_state_begin_failed", "agent_id", handle.Spec.ID, "error", err.Error())
+		}
+	}
 	agentMsgs := handle.Agent.Run(ctx, userMsgs, systemPrompt, func(evt agent.AgentEvent) {
 		evt.AgentID = string(handle.Spec.ID)
+		if err := r.session.persistCompactionEvent(handle.DB, handle.SessionID, evt.AgentID, evt); err != nil {
+			r.session.logger.Warn("COMPACT", "child_lifecycle_persist_failed", "agent_id", evt.AgentID, "error", err.Error())
+		}
 		if r.sender != nil {
 			r.sender.SendAgentEventWithID(evt.Type, evt.Data, evt.AgentID)
 		}
 		if evt.Type == "usage" {
+			r.session.processUsageEvent(evt.Data, handle.Spec.Model, evt.AgentID, string(handle.Spec.ParentID))
+			if handle.DB != nil {
+				if record, ok := sessiondb.UsageRecordFromEvent(evt.Data, handle.SessionID, evt.AgentID, string(handle.Spec.ParentID), handle.Spec.Model); ok {
+					_ = sessiondb.UpsertUsageRecord(handle.DB, record)
+				}
+			}
 			if data, ok := evt.Data.(map[string]any); ok {
 				var promptT, compT int
 				if v, ok := data["prompt"]; ok {
@@ -832,6 +884,23 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 			}
 		}
 	}, handle.BlockCh, handle.SM, handle.SessionID, nil)
+	if handle.DB != nil {
+		active := handle.Agent.ActiveContext()
+		generation := contextGeneration
+		reason := "session_start"
+		if contextCheckpointContent(active) != "" && generation == 1 {
+			generation = 2
+			contextGeneration = generation
+		}
+		if contextCheckpointContent(active) != "" {
+			reason = "automatic_compaction"
+		}
+		if err := sessiondb.SaveContextState(handle.DB, handle.SessionID, string(handle.Spec.ID), sessiondb.ContextState{
+			AgentID: string(handle.Spec.ID), Generation: generation, Reason: reason, Messages: active,
+		}); err != nil {
+			r.session.logger.Warn("SUBAGENT", "context_state_save_failed", "agent_id", handle.Spec.ID, "error", err.Error())
+		}
+	}
 
 	if err := persistSubAgentTranscript(handle, agentMsgs); err != nil {
 		handle.AddError("persist transcript: " + err.Error())
@@ -859,6 +928,18 @@ func (r *SubAgentRunner) finalizeSubAgent(handle *agent.SubAgentHandle, result a
 		return
 	}
 	r.mgr.MarkFinished(handle.Spec.ID, result)
+	if handle.DB != nil {
+		turnState := sessiondb.TurnFailed
+		switch result.Status {
+		case agent.SubAgentCompleted:
+			turnState = sessiondb.TurnCompleted
+		case agent.SubAgentCancelled:
+			turnState = sessiondb.TurnInterrupted
+		}
+		if err := sessiondb.FinishAgentTurn(handle.DB, handle.SessionID, string(handle.Spec.ID), 1, turnState); err != nil {
+			r.session.logger.Warn("SUBAGENT", "turn_state_finish_failed", "agent_id", handle.Spec.ID, "error", err.Error())
+		}
+	}
 	r.persistResult(handle, result)
 	if r.sender != nil {
 		r.sender.SendAgentEventWithID("sub_agent_completed", map[string]string{

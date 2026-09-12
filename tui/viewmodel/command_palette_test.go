@@ -533,10 +533,10 @@ func TestPaletteExecuteCommandRoutesToHandler(t *testing.T) {
 	}
 }
 
-// TestDisplayOnlyPreservedForStatusBar ensures DisplayOnly entries
+// TestDisplayOnlyPreservedForFeedback ensures DisplayOnly entries
 // still appear in the registry so HintFor / HintLabelFor work
 // unchanged for the status bar.
-func TestDisplayOnlyPreservedForStatusBar(t *testing.T) {
+func TestDisplayOnlyPreservedForFeedback(t *testing.T) {
 	reg := ui.DefaultRegistry()
 	required := []string{
 		"editor.close", "focus.tab.next", "focus.tab.previous",
@@ -701,8 +701,8 @@ func TestExecutePaletteCommandEditUndoRedo(t *testing.T) {
 	// No editor open: must not crash, status bar gets a hint.
 	app.executePaletteCommand("edit.undo")
 	app.executePaletteCommand("edit.redo")
-	if app.StatusBar != nil {
-		// StatusBar was set in newFullTestApp; the info path sets a
+	if app.Feedback != nil {
+		// Feedback was set in newFullTestApp; the info path sets a
 		// non-error message. We only assert no panic here.
 	}
 }
@@ -761,7 +761,7 @@ func TestExecutePaletteCommandFocusEditorNoEditor(t *testing.T) {
 	// No editor open in this fixture.
 	app.executePaletteCommand("view.focus.editor")
 	// No panic; we don't assert the status text because newFullTestApp
-	// wires a real StatusBar only if it was set.
+	// wires a real Feedback only if it was set.
 }
 
 // TestExecutePaletteCommandFileSaveError verifies file.save surfaces a

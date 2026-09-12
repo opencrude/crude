@@ -81,11 +81,18 @@ func (m *App) helpCommands() []helpscreen.Command {
 }
 
 func (m *App) helpShortcuts() []helpscreen.Shortcut {
+	prefix, focused := m.contextualHelpSegments()
+	out := make([]helpscreen.Shortcut, 0, len(focused)+32)
+	for _, hint := range focused {
+		if hint.Key == "" || hint.Label == "" {
+			continue
+		}
+		out = append(out, helpscreen.Shortcut{Category: "Current Context", Keys: hint.Key, Label: hint.Label, Description: prefix})
+	}
 	if m.actionRegistry == nil {
-		return nil
+		return out
 	}
 	all := m.actionRegistry.All()
-	out := make([]helpscreen.Shortcut, 0, len(all))
 	for _, a := range all {
 		hint := ui.FormatShortcut(m.actionRegistry.HintFor(a.ID))
 		if hint == "" || a.DisplayOnly {

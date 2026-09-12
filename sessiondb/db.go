@@ -33,6 +33,8 @@ CREATE TABLE IF NOT EXISTS sessions (
 CREATE TABLE IF NOT EXISTS messages (
       id                INTEGER PRIMARY KEY AUTOINCREMENT,
       role              TEXT NOT NULL,
+      origin            TEXT NOT NULL,
+      visibility        TEXT NOT NULL,
       content           TEXT,
       content_type      TEXT NOT NULL DEFAULT 'text',
       reasoning_content TEXT,
@@ -48,21 +50,45 @@ CREATE TABLE IF NOT EXISTS messages (
     sequence_num      INTEGER NOT NULL,
     turn_number       INTEGER NOT NULL,
     agent_id          TEXT,
-    created_at        INTEGER NOT NULL
+    created_at        INTEGER NOT NULL,
+    display_meta      TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_messages_seq ON messages(sequence_num);
 CREATE INDEX IF NOT EXISTS idx_messages_turn ON messages(turn_number, sequence_num);
 
-CREATE TABLE IF NOT EXISTS cost_snapshots (
-    id                      INTEGER PRIMARY KEY AUTOINCREMENT,
-    total_prompt_tokens     INTEGER NOT NULL DEFAULT 0,
-    total_completion_tokens INTEGER NOT NULL DEFAULT 0,
-    total_cached_tokens     INTEGER NOT NULL DEFAULT 0,
-    total_cost              REAL NOT NULL DEFAULT 0.0,
-    by_model                TEXT,
-    snapshot_at             INTEGER NOT NULL
+CREATE TABLE IF NOT EXISTS usage_requests (
+    request_id          TEXT PRIMARY KEY,
+    session_id          TEXT NOT NULL,
+    agent_id            TEXT NOT NULL,
+    parent_agent_id     TEXT NOT NULL DEFAULT '',
+    turn_generation     TEXT NOT NULL DEFAULT '0',
+    attempt             INTEGER NOT NULL DEFAULT 1,
+    request_kind        TEXT NOT NULL DEFAULT 'normal',
+    provider_id         TEXT NOT NULL DEFAULT '',
+    model_id            TEXT NOT NULL DEFAULT '',
+    prompt_tokens       INTEGER NOT NULL DEFAULT 0,
+    completion_tokens   INTEGER NOT NULL DEFAULT 0,
+    cached_tokens       INTEGER NOT NULL DEFAULT 0,
+    cache_read_known    INTEGER NOT NULL DEFAULT 0,
+    cache_write_tokens  INTEGER NOT NULL DEFAULT 0,
+    cache_write_known   INTEGER NOT NULL DEFAULT 0,
+    reasoning_tokens    INTEGER NOT NULL DEFAULT 0,
+    reasoning_known     INTEGER NOT NULL DEFAULT 0,
+    reasoning_in_output INTEGER NOT NULL DEFAULT 1,
+    context_used        INTEGER NOT NULL DEFAULT 0,
+    context_window      INTEGER NOT NULL DEFAULT 0,
+    cost_usd            REAL NOT NULL DEFAULT 0.0,
+    cost_known          INTEGER NOT NULL DEFAULT 0,
+    cost_source         TEXT NOT NULL DEFAULT '',
+    estimated           INTEGER NOT NULL DEFAULT 0,
+    partial             INTEGER NOT NULL DEFAULT 0,
+    cost_upper_bound    INTEGER NOT NULL DEFAULT 0,
+    created_at          INTEGER NOT NULL,
+    updated_at          INTEGER NOT NULL
 );
+
+CREATE INDEX IF NOT EXISTS idx_usage_requests_agent ON usage_requests(agent_id, turn_generation, created_at);
 
 CREATE TABLE IF NOT EXISTS sub_agent_results (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -138,12 +164,65 @@ CREATE TABLE IF NOT EXISTS session_flags (
     FOREIGN KEY (session_id) REFERENCES sessions(id)
 );
 
-CREATE TABLE IF NOT EXISTS session_context_state (
-    session_id     TEXT PRIMARY KEY,
+CREATE TABLE IF NOT EXISTS agent_context_state (
+    session_id     TEXT NOT NULL,
+    agent_id       TEXT NOT NULL,
     generation     INTEGER NOT NULL DEFAULT 1,
     reason         TEXT NOT NULL DEFAULT 'session_start',
     messages_json  BLOB NOT NULL,
     updated_at     INTEGER NOT NULL,
+    PRIMARY KEY (session_id, agent_id),
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS agent_context_generations (
+    session_id     TEXT NOT NULL,
+    agent_id       TEXT NOT NULL,
+    generation     INTEGER NOT NULL,
+    reason         TEXT NOT NULL,
+    messages_json  BLOB NOT NULL,
+    created_at     INTEGER NOT NULL,
+    PRIMARY KEY (session_id, agent_id, generation),
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS context_compactions (
+    operation_id     TEXT PRIMARY KEY,
+    session_id       TEXT NOT NULL,
+    agent_id         TEXT NOT NULL,
+    trigger_kind     TEXT NOT NULL,
+    agent_role       TEXT NOT NULL,
+    provider_id      TEXT NOT NULL DEFAULT '',
+    model_id         TEXT NOT NULL DEFAULT '',
+    state            TEXT NOT NULL,
+    stage_name       TEXT NOT NULL DEFAULT '',
+    stage_index      INTEGER NOT NULL DEFAULT 0,
+    completed_stages INTEGER NOT NULL DEFAULT 0,
+    stage_count      INTEGER NOT NULL DEFAULT 4,
+    retry_attempt    INTEGER NOT NULL DEFAULT 0,
+    retry_limit      INTEGER NOT NULL DEFAULT 3,
+    before_tokens    INTEGER NOT NULL DEFAULT 0,
+    after_tokens     INTEGER NOT NULL DEFAULT 0,
+    context_window   INTEGER NOT NULL DEFAULT 0,
+    error_text       TEXT NOT NULL DEFAULT '',
+    started_at       INTEGER NOT NULL,
+    updated_at       INTEGER NOT NULL,
+    ended_at         INTEGER,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_context_compactions_agent
+    ON context_compactions(session_id, agent_id, started_at);
+
+CREATE TABLE IF NOT EXISTS agent_turns (
+    session_id  TEXT NOT NULL,
+    agent_id    TEXT NOT NULL,
+    generation INTEGER NOT NULL,
+    origin      TEXT NOT NULL,
+    state       TEXT NOT NULL,
+    started_at  INTEGER NOT NULL,
+    ended_at    INTEGER,
+    PRIMARY KEY (session_id, agent_id, generation),
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
 

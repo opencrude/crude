@@ -10,6 +10,7 @@ import (
 	"crude/provider"
 	"crude/session"
 	"crude/sessiondb"
+	"crude/types"
 )
 
 func TestHydrateCompletedSubAgentsRestoresReadOnlyReviewTree(t *testing.T) {
@@ -33,8 +34,13 @@ func TestHydrateCompletedSubAgentsRestoresReadOnlyReviewTree(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := sessiondb.InsertCostSnapshot(parentDB, 10, 4, 2, 0.01, nil); err != nil {
-		t.Fatal(err)
+	for _, record := range []sessiondb.UsageRecord{
+		{RequestID: "root/1/1", SessionID: "parent", AgentID: "root", PromptTokens: 10, CompletionTokens: 4, CachedTokens: 2, CacheReadKnown: true, CostUSD: 0.01, CostKnown: true, CreatedAt: 1, UpdatedAt: 1},
+		{RequestID: "child/1/1", SessionID: "parent", AgentID: "child", ParentAgentID: "root", PromptTokens: 100, CompletionTokens: 25, CostUSD: 0.05, CostKnown: true, CreatedAt: 2, UpdatedAt: 2},
+	} {
+		if err := sessiondb.UpsertUsageRecord(parentDB, record); err != nil {
+			t.Fatal(err)
+		}
 	}
 	if err := parentDB.Close(); err != nil {
 		t.Fatal(err)
@@ -84,9 +90,6 @@ func TestHydrateCompletedSubAgentsRestoresReadOnlyReviewTree(t *testing.T) {
 	t.Cleanup(backend.Close)
 	frontend := NewSession("parent", backend.SessionDir(), backend.DB(), nopLogger{})
 	frontend.attachBackend(backend)
-	if frontend.TokenPrompt != 110 || frontend.TokenCompletion != 29 || frontend.TokenCached != 2 {
-		t.Fatalf("hydrated cumulative usage = %d/%d/%d", frontend.TokenPrompt, frontend.TokenCompletion, frontend.TokenCached)
-	}
 	manager := NewAgentManager()
 	panes := NewPaneManager()
 	ws := &Workspace{
@@ -94,6 +97,10 @@ func TestHydrateCompletedSubAgentsRestoresReadOnlyReviewTree(t *testing.T) {
 		SessionsByAgent: map[string]*Session{"root": frontend}, Logger: nopLogger{},
 	}
 	manager.AddOrchestrator("root", NewAgentState("root", NewConversation(), nopLogger{}))
+	ws.Hydrate()
+	if usage, ok := ws.UsageSummary("root", types.UsageSession); !ok || usage.InputTotal.Value != 110 || usage.Output.Value != 29 || usage.CacheRead.Value != 2 {
+		t.Fatalf("hydrated request usage = %#v ok=%v", usage, ok)
+	}
 
 	ids := ws.HydrateCompletedSubAgents("root")
 	if len(ids) != 1 || ids[0] != "child" {

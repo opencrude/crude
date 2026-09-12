@@ -136,8 +136,8 @@ func (m *App) launcherNewSession() tea.Cmd {
 	if result != nil {
 		m.AddOrchestrator(result.OrchID)
 	}
-	if err := m.LastRegistryError(); err != nil && m.StatusBar != nil {
-		m.StatusBar.SetError("Session created but registry update failed: " + err.Error())
+	if err := m.LastRegistryError(); err != nil && m.Feedback != nil {
+		m.Feedback.NotifyError("Session created but registry update failed: " + err.Error())
 	}
 	return nil
 }
@@ -148,15 +148,15 @@ func (m *App) launcherOpenFolder(projectDir string) tea.Cmd {
 		m.Logger.Info("WORKSPACE", "open_from_launcher", "path", projectDir)
 	}
 	if err := m.SwitchProject(projectDir); err != nil {
-		if m.StatusBar != nil {
-			m.StatusBar.SetError("Failed to open workspace: " + err.Error())
+		if m.Feedback != nil {
+			m.Feedback.NotifyError("Failed to open workspace: " + err.Error())
 		}
 		return nil
 	}
 	// Stay on the single-phase launcher; refresh lists for the new project.
 	m.launcherScreen.Refresh(projectDir)
-	if m.StatusBar != nil {
-		m.StatusBar.SetInfo("Opened " + filepath.Base(projectDir))
+	if m.Feedback != nil {
+		m.Feedback.NotifyInfo("Opened " + filepath.Base(projectDir))
 	}
 	return nil
 }
@@ -172,8 +172,8 @@ func (m *App) launcherResumeSession(sessionID string, sessionMeta *sessiondb.Ses
 		cur, _ := filepath.Abs(m.RootPath)
 		if abs != "" && abs != cur {
 			if err := m.SwitchProject(abs); err != nil {
-				if m.StatusBar != nil {
-					m.StatusBar.SetError("Failed to open session project: " + err.Error())
+				if m.Feedback != nil {
+					m.Feedback.NotifyError("Failed to open session project: " + err.Error())
 				}
 				return nil
 			}
@@ -184,15 +184,15 @@ func (m *App) launcherResumeSession(sessionID string, sessionMeta *sessiondb.Ses
 	}
 	result := m.ResumeSessionFromLauncher(sessionID)
 	if result == nil {
-		if m.StatusBar != nil {
-			m.StatusBar.SetError("Failed to resume session")
+		if m.Feedback != nil {
+			m.Feedback.NotifyError("Failed to resume session")
 		}
 		return nil
 	}
 	m.startLSPForWorkspace()
 	m.AddOrchestrator(result.OrchID)
-	if err := m.LastRegistryError(); err != nil && m.StatusBar != nil {
-		m.StatusBar.SetError("Session resumed but registry update failed: " + err.Error())
+	if err := m.LastRegistryError(); err != nil && m.Feedback != nil {
+		m.Feedback.NotifyError("Session resumed but registry update failed: " + err.Error())
 	}
 	if m.ActiveSession != nil {
 		if msgs := m.ActiveSession.TakeHydratedMessages(); len(msgs) > 0 {

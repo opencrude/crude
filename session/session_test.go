@@ -1,81 +1,20 @@
 package session
 
 import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"crude/agent"
 	"crude/logger"
 	"crude/provider"
 	"crude/sessiondb"
 	ttypes "crude/types"
 )
-
-func TestDetectInterruption_Empty(t *testing.T) {
-	ok, _ := detectInterruption(nil)
-	if ok {
-		t.Error("empty messages should not be interrupted")
-	}
-}
-
-func TestDetectInterruption_CleanClose(t *testing.T) {
-	msgs := []provider.ChatMessage{
-		{Role: "user", Content: provider.TextContent("hi")},
-		{Role: "assistant", Content: provider.TextContent("hello")},
-	}
-	ok, _ := detectInterruption(msgs)
-	if ok {
-		t.Error("clean assistant-ending session should not be interrupted")
-	}
-}
-
-func TestDetectInterruption_MidToolCall(t *testing.T) {
-	msgs := []provider.ChatMessage{
-		{Role: "user", Content: provider.TextContent("read file")},
-		{Role: "assistant", Content: provider.TextContent(""), ToolCalls: []provider.ToolCall{
-			{ID: "tc1", Type: "function", Function: provider.FunctionCall{Name: "read"}},
-		}},
-	}
-	ok, action := detectInterruption(msgs)
-	if !ok {
-		t.Error("mid-tool-call should be interrupted")
-	}
-	if action == "" {
-		t.Error("action should not be empty for mid-tool-call")
-	}
-}
-
-func TestDetectInterruption_ToolResult(t *testing.T) {
-	msgs := []provider.ChatMessage{
-		{Role: "user", Content: provider.TextContent("hi")},
-		{Role: "assistant", Content: provider.TextContent("let me check"), ToolCalls: []provider.ToolCall{
-			{ID: "tc1", Type: "function", Function: provider.FunctionCall{Name: "read"}},
-		}},
-		{Role: "tool", Content: provider.TextContent("file contents"), ToolCallID: "tc1"},
-	}
-	ok, action := detectInterruption(msgs)
-	if !ok {
-		t.Error("orphaned tool result should be interrupted")
-	}
-	if action == "" {
-		t.Error("action should not be empty for tool result")
-	}
-}
-
-func TestDetectInterruption_UnansweredUser(t *testing.T) {
-	msgs := []provider.ChatMessage{
-		{Role: "user", Content: provider.TextContent("do something")},
-	}
-	ok, action := detectInterruption(msgs)
-	if !ok {
-		t.Error("unanswered user message should be interrupted")
-	}
-	if action == "" {
-		t.Error("action should not be empty for unanswered user")
-	}
-}
 
 func TestSanitizeMessages_CleanTail(t *testing.T) {
 	msgs := []provider.ChatMessage{
@@ -156,7 +95,7 @@ func TestPersistedToolStatusDoesNotMislabelValidationErrorAsCancelled(t *testing
 func TestCanonicalToolSnapshotCarriesLiveLifecycleAndSubPaneLink(t *testing.T) {
 	tracker := &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}
 	tracker.updateToolCall("call-1", "run_sub_agent", "description: inspect wait: true")
-	result := "## Sub-Agent Result\n**Session:** child-1\n**Status:** OK"
+	result := `{"session_id":"child-1","status":"completed"}`
 	tracker.updateToolResult("call-1", "run_sub_agent", result, "success", 1500, 42, 3, 1)
 	message := provider.NewTextMessage("tool", result)
 	message.ToolCallID = "call-1"
@@ -246,8 +185,7 @@ func TestFinalizeTurnPersistsActiveContextSeparatelyFromFullArchive(t *testing.T
 	}
 	agentMessages := append([]provider.ChatMessage{provider.NewTextMessage("system", "base")}, active...)
 	s.finalizeTurn(agentMessages, 2, &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}, "answer", "msg", ttypes.TurnIdentity{}, active)
-	s.flushWg.Wait()
-	state, ok, err := sessiondb.LoadContextState(db, "session")
+	state, ok, err := sessiondb.LoadContextState(db, "session", "session")
 	if err != nil || !ok || state.Generation < 3 || len(state.Messages) != 3 || !strings.Contains(state.Messages[0].Content.String(), "checkpoint") {
 		t.Fatalf("context state=%#v ok=%v err=%v", state, ok, err)
 	}
@@ -257,8 +195,23 @@ func TestFinalizeTurnPersistsActiveContextSeparatelyFromFullArchive(t *testing.T
 }
 
 func TestManualCompactRebuildsActiveContextWithoutDeletingArchive(t *testing.T) {
+	var calls int
+	var requestModels []string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request provider.ChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		requestModels = append(requestModels, request.Model)
+		calls++
+		encoded, _ := json.Marshal(fmt.Sprintf("- stage: %d\n- exact evidence retained", calls))
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"content\":%s},\"finish_reason\":\"stop\"}]}\n\n", encoded)
+		_, _ = fmt.Fprint(w, "data: [DONE]\n\n")
+	}))
+	defer server.Close()
 	var history []provider.ChatMessage
-	for i := 0; i < 80; i++ {
+	for i := 0; i < 20; i++ {
 		history = append(history,
 			provider.NewTextMessage("assistant", strings.Repeat("analysis ", 1000)),
 			provider.NewTextMessage("tool", strings.Repeat("output ", 1000)),
@@ -269,13 +222,46 @@ func TestManualCompactRebuildsActiveContextWithoutDeletingArchive(t *testing.T) 
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = lg.Close() })
+	db := sessiondb.OpenAndMigrateAt(t.TempDir())
+	t.Cleanup(func() { _ = db.Close() })
+	if err := sessiondb.CreateSessionRow(db, "compact"); err != nil {
+		t.Fatal(err)
+	}
+	if err := sessiondb.SaveContextState(db, "compact", "compact", sessiondb.ContextState{
+		AgentID: "compact", Generation: 1, Reason: "turn_complete", Messages: history,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cfg := testConfig()
+	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
+	profile.Categories[CategoryDefault] = CategoryConfig{Provider: cfg.ActiveProvider, Model: "main-test-model"}
+	profile.Categories[CategoryAeron] = CategoryConfig{Provider: cfg.ActiveProvider, Model: "aeron-test-model"}
+	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile
+	provider.SetModelContext("main-test-model", 200_000)
+	provider.SetModelContext("aeron-test-model", 200_000)
 	s := &Session{
 		logger: lg, msgs: append([]provider.ChatMessage(nil), history...),
 		activeContext: append([]provider.ChatMessage(nil), history...), contextGeneration: 1,
+		cfg: cfg, sessionID: "compact", db: db,
 	}
+	providerConfig := s.cfg.Providers[s.cfg.ActiveProvider]
+	providerConfig.ProviderURL = server.URL
+	s.cfg.Providers[s.cfg.ActiveProvider] = providerConfig
 	result := s.HandleCompact()
-	if result.Error != "" || len(s.msgs) != len(history) || len(s.activeContext) >= len(history) || s.contextGeneration <= 1 {
+	if result.Error != "" || calls != 4 || len(s.msgs) != len(history) || len(s.activeContext) >= len(history) || s.contextGeneration <= 1 {
 		t.Fatalf("compact result=%+v archive=%d active=%d generation=%d", result, len(s.msgs), len(s.activeContext), s.contextGeneration)
+	}
+	for index, model := range requestModels {
+		if model != "aeron-test-model" {
+			t.Fatalf("compaction request %d model=%q want Aeron category model", index, model)
+		}
+	}
+	if !strings.Contains(s.activeContext[0].ContentString(), `version="3"`) {
+		t.Fatalf("active checkpoint=%q", s.activeContext[0].ContentString())
+	}
+	records, err := sessiondb.ListCompactionRecords(db, "compact", "compact")
+	if err != nil || len(records) != 1 || records[0].State != sessiondb.CompactionCompleted || records[0].CompletedStages != 4 || records[0].ModelID != "aeron-test-model" {
+		t.Fatalf("compaction lifecycle=%+v err=%v", records, err)
 	}
 }
 
@@ -288,79 +274,6 @@ func TestSanitizeMessages_RemovesMiddleOrphanToolResult(t *testing.T) {
 	result := sanitizeMessages(msgs)
 	if len(result) != 2 || result[0].Role != "user" || result[1].Role != "assistant" {
 		t.Fatalf("orphan tool result survived sanitization: %+v", result)
-	}
-}
-
-func TestTruncateMessages_NoTruncation(t *testing.T) {
-	msgs := []provider.ChatMessage{
-		{Role: "user", Content: provider.TextContent("hi")},
-		{Role: "assistant", Content: provider.TextContent("hello")},
-	}
-	result := agent.CompactContext(msgs, 100000, 75, "test")
-	if len(result) != 2 {
-		t.Errorf("expected 2, got %d", len(result))
-	}
-}
-
-func TestTruncateMessages_ZeroWindow(t *testing.T) {
-	msgs := []provider.ChatMessage{
-		{Role: "user", Content: provider.TextContent("hi")},
-		{Role: "assistant", Content: provider.TextContent("hello")},
-	}
-	result := agent.CompactContext(msgs, 0, 75, "test")
-	if len(result) != 2 {
-		t.Errorf("expected 2 (zero window = no truncation), got %d", len(result))
-	}
-}
-
-func TestTruncateMessagesKeepsToolExchangeAtomic(t *testing.T) {
-	msgs := []provider.ChatMessage{
-		{Role: "user", Content: provider.TextContent(strings.Repeat("old context ", 100))},
-		{
-			Role:    "assistant",
-			Content: provider.TextContent(""),
-			ToolCalls: []provider.ToolCall{
-				{ID: "tc1", Type: "function", Function: provider.FunctionCall{Name: "read", Arguments: `{"path":"a"}`}},
-				{ID: "tc2", Type: "function", Function: provider.FunctionCall{Name: "read", Arguments: `{"path":"b"}`}},
-			},
-		},
-		{Role: "tool", ToolCallID: "tc1", Content: provider.TextContent(strings.Repeat("result ", 100))},
-		{Role: "tool", ToolCallID: "tc2", Content: provider.TextContent(strings.Repeat("result ", 100))},
-	}
-	result := agent.CompactContext(msgs, 80, 75, "test")
-	if len(result) != 4 {
-		t.Fatalf("result length = %d, want summary plus complete tool exchange: %+v", len(result), result)
-	}
-	if result[0].Role != "system" || result[1].Role != "assistant" ||
-		len(result[1].ToolCalls) != 2 || result[2].ToolCallID != "tc1" ||
-		result[3].ToolCallID != "tc2" {
-		t.Fatalf("tool exchange was split: %+v", result)
-	}
-}
-
-func TestTruncateMessagesBuildsUsefulCheckpoint(t *testing.T) {
-	msgs := []provider.ChatMessage{
-		provider.NewTextMessage("user", strings.Repeat("investigate the parser bug ", 40)),
-		provider.NewTextMessage("assistant", "The parser drops CR-only SSE boundaries."),
-		{
-			Role: "assistant",
-			ToolCalls: []provider.ToolCall{{
-				ID:       "call-1",
-				Function: provider.FunctionCall{Name: "read_file", Arguments: `{"path":"provider/sse.go"}`},
-			}},
-		},
-		{Role: "tool", ToolCallID: "call-1", Content: provider.TextContent("reader implementation")},
-		provider.NewTextMessage("user", strings.Repeat("continue ", 80)),
-	}
-	result := agent.CompactContext(msgs, 120, 75, "test")
-	if len(result) >= len(msgs) {
-		t.Fatalf("messages were not compacted: %d", len(result))
-	}
-	checkpoint := result[0].ContentString()
-	for _, want := range []string{"<context_checkpoint", "Tool call-1"} {
-		if !strings.Contains(checkpoint, want) {
-			t.Fatalf("checkpoint missing %q: %s", want, checkpoint)
-		}
 	}
 }
 
@@ -441,4 +354,56 @@ func TestFinalizeTurnPersistsBtwDisplayProjection(t *testing.T) {
 		len(messages[0].Meta.ReferenceLabels) != 1 || messages[0].Meta.ReferenceLabels[0] != "@notes" {
 		t.Fatalf("persisted BTW display projection=%#v", messages)
 	}
+}
+
+func TestPreparedCompactionOwnsCancellationBeforeCommandRuns(t *testing.T) {
+	lg, err := logger.New(logger.Options{HomeDir: t.TempDir(), SessionID: "compact-cancel"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = lg.Close() })
+	s := &Session{
+		sessionID: "session", logger: lg,
+		activeContext: []provider.ChatMessage{provider.NewTextMessage("user", "request")},
+	}
+	prepared, early := s.PrepareCompaction("root")
+	if early.Error != "" || prepared.Run == nil || !s.compactionActive("root") {
+		t.Fatalf("prepared=%+v early=%+v active=%v", prepared, early, s.compactionActive("root"))
+	}
+	if !s.CancelCompaction("root") {
+		t.Fatal("registered compaction did not accept cancellation")
+	}
+	result := prepared.Run()
+	if !result.Cancelled || result.Error != "" || s.compactionActive("root") {
+		t.Fatalf("cancel result=%+v active=%v", result, s.compactionActive("root"))
+	}
+}
+
+func TestCloseReleasesPreparedCompactionThatNeverRan(t *testing.T) {
+	lg, err := logger.New(logger.Options{HomeDir: t.TempDir(), SessionID: "compact-close"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &Session{
+		sessionID: "session", logger: lg,
+		activeContext: []provider.ChatMessage{provider.NewTextMessage("user", "request")},
+	}
+	prepared, early := s.PrepareCompaction("root")
+	if early.Error != "" || prepared.Run == nil {
+		t.Fatalf("prepare failed: %+v", early)
+	}
+	done := make(chan struct{})
+	go func() {
+		s.Close()
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Fatal("Close waited forever for an unstarted compaction command")
+	}
+	if result := prepared.Run(); !result.Cancelled {
+		t.Fatalf("late command run=%+v want cancelled", result)
+	}
+	_ = lg.Close()
 }

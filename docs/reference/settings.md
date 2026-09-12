@@ -144,6 +144,11 @@ filterable picker page. Filter inputs use `FilterSurface`
 title + rule, one line per field, a shared value column — every
 second-column value (nav columns, cycle controls, and single-line
 editors such as `Compact context at 85`) paints in that one column.
+The compaction percentage is a provider-context trigger, not a local JSON-size
+threshold. At the next legal request boundary Crude asks the resolved Aeron
+category model for four plain-text continuation sections against one unchanged
+cached source, then wraps them deterministically. Zero disables automatic
+compaction; `/compact` uses the same transaction.
 Leftover width is distributed as space after the label and before
 inherited text (not filler periods). `·` is a column separator only.
 Labels and values use `ColorFg`; inherited/meta use `ColorMuted`.

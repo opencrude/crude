@@ -22,7 +22,7 @@ func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
 				m.cancelAgentTurn(node.ID)
 			}
 		}
-		m.StatusBar.SetInfo("Stopping active turns...")
+		m.Feedback.NotifyInfo("Stopping active turns...")
 		return nil
 	}
 
@@ -56,8 +56,5 @@ func (m *App) cancelAgentTurn(agentID string) {
 		node.State.Messages.RemovePendingBtwIDs(clearedBtw)
 		m.syncPendingBtwCount()
 		m.syncAgentMessages(agentID, true)
-	}
-	if m.StatusBar != nil {
-		m.StatusBar.SetThinkingForAgent(agentID, true, false, false)
 	}
 }

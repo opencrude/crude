@@ -187,8 +187,8 @@ func TestTerminalDockAvailableWithoutAISession(t *testing.T) {
 	if lay.TermDockRect.Empty() {
 		t.Fatal("dock rect empty")
 	}
-	if lay.TermDockRect.Y+lay.TermDockRect.H != app.height-2 {
-		t.Fatalf("dock must sit above status: dock=%v height=%d", lay.TermDockRect, app.height)
+	if lay.TermDockRect.Y+lay.TermDockRect.H != app.height-app.chromeBottomRows() {
+		t.Fatalf("dock must end at bottom chrome: dock=%v height=%d", lay.TermDockRect, app.height)
 	}
 }
 
@@ -260,8 +260,8 @@ func TestTerminalDockDoesNotOverlapMainContent(t *testing.T) {
 		if !lay.DeckRect.Empty() && lay.DeckRect.Y+lay.DeckRect.H > dock.Y {
 			t.Fatalf("session deck overlaps dock: deck=%v dock=%v", lay.DeckRect, dock)
 		}
-		if dock.Y+dock.H != app.height-2 {
-			t.Fatalf("dock not above status: dock=%v h=%d", dock, app.height)
+		if dock.Y+dock.H != app.height-app.chromeBottomRows() {
+			t.Fatalf("dock does not end at bottom chrome: dock=%v h=%d", dock, app.height)
 		}
 		app.termDock.Unmount("layout")
 	}
