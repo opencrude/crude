@@ -350,6 +350,15 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	if activeCfg.ContextCompactionPercent != nil {
 		ag.ContextCompactionPercent = *activeCfg.ContextCompactionPercent
 	}
+	if len(frozenPrefix) > 0 && frozenPrefix[len(frozenPrefix)-1].Role == "assistant" && s.db != nil {
+		if baseline, ok, baselineErr := sessiondb.LatestNormalUsageRecord(s.db, s.sessionID, o.ID); baselineErr != nil {
+			l.Warn("COMPACT", "context_baseline_load_failed", "error", baselineErr.Error())
+		} else if ok && baseline.ModelID == activeCfg.Model {
+			// Agent.Run prepends one system message. The prior final assistant
+			// therefore begins at index len(frozenPrefix) in the new request.
+			ag.SeedContextUsage(baseline.ContextUsed, baseline.CompletionTokens, len(frozenPrefix))
+		}
+	}
 	ag.ContextArchive = archiveCopy
 	ag.FrozenPrefix = frozenPrefix
 	if o.subAgentSup != nil {

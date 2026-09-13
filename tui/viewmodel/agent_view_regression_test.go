@@ -109,32 +109,31 @@ func TestAgentView_ChatPaintsInsideSlot(t *testing.T) {
 		t.Fatal("precondition: chat slot active")
 	}
 
-	// Short chat starts at the slot top. Its leading inter-object spacer owns
-	// row zero and the header follows immediately, never at a double origin.
+	// Short chat anchors at the slot bottom. Its leading inter-object spacer
+	// remains inside that bottom-anchored block, never at a double origin.
 	contentH := app.chatScreen.ScrollModel().Content()
 	if contentH < 1 {
 		t.Fatal("precondition: message content exists")
 	}
-	headerY := app.chatRect.Y + 1
+	headerY := app.chatRect.Y + app.chatRect.H - contentH + 1
 	headerRow := rowText(app, headerY)
 	headerCol := lay.SidebarW + lay.PadLR
 	got := strings.TrimSpace(rowTextFrom(app, headerY, headerCol))
 	if strings.HasPrefix(got, "❯") || got == "" {
-		t.Fatalf("chat header not at col %d row %d (top-anchored); row=%q", headerCol, headerY, headerRow)
+		t.Fatalf("chat header not at col %d row %d (bottom-anchored); row=%q", headerCol, headerY, headerRow)
 	}
 
-	// Unused rows follow short content; resume must never synthesize a variable
-	// blank region before the first message.
-	emptyY := app.chatRect.Y + contentH + 1
+	// Rows above the bottom-anchored content must repaint cleanly.
+	emptyY := app.chatRect.Y + 3
 	emptyRow := rowText(app, emptyY)
 	if strings.TrimSpace(rowTextFrom(app, emptyY, app.chatRect.X+lay.PadLR)) != "" {
-		t.Fatalf("chat area rows below short content not clean: %q", emptyRow)
+		t.Fatalf("chat area rows above short content not clean: %q", emptyRow)
 	}
 }
 
-// TestAgentView_ShortChatStartsAtTopWithoutResumeGap guards resumed short
-// conversations against variable blank padding above their first message.
-func TestAgentView_ShortChatStartsAtTopWithoutResumeGap(t *testing.T) {
+// TestAgentView_ShortChatAnchorsToBottom guards short conversations against a
+// large variable gap between their last message and the input prompt.
+func TestAgentView_ShortChatAnchorsToBottom(t *testing.T) {
 	app := newTransitionApp(t)
 	t.Cleanup(func() {
 		app.Workspace.Close()
@@ -150,19 +149,13 @@ func TestAgentView_ShortChatStartsAtTopWithoutResumeGap(t *testing.T) {
 		t.Skipf("viewport too small for the gravity assertion (chatH=%d)", app.ChatAreaHeight)
 	}
 
-	foundAt := -1
-	for y := app.chatRect.Y; y < min(app.chatRect.Y+6, app.chatRect.Y+app.chatRect.H); y++ {
-		if strings.Contains(rowText(app, y), "hello from the agent view") {
-			foundAt = y
-			break
-		}
-	}
-	if foundAt < 0 {
-		t.Fatalf("short resumed chat did not start near slot top; chat=%q", rowText(app, app.chatRect.Y))
-	}
 	lastRow := app.chatRect.Y + app.chatRect.H - 1
-	if strings.TrimSpace(rowTextFrom(app, lastRow, app.chatRect.X+lay.PadLR)) != "" {
-		t.Fatalf("short chat still bottom-gravity padded content into last row: %q", rowText(app, lastRow))
+	last := rowText(app, lastRow)
+	if !strings.Contains(last, "hello from the agent view") {
+		t.Fatalf("last message not anchored to the slot bottom row; row=%q", last)
+	}
+	if strings.TrimSpace(rowTextFrom(app, app.chatRect.Y+2, app.chatRect.X+lay.PadLR)) != "" {
+		t.Fatalf("gravity pad rows above the message not blank: %q", rowText(app, app.chatRect.Y+2))
 	}
 }
 

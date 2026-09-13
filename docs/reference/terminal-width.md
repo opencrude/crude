@@ -67,10 +67,14 @@ About 50ms after initial paint, patched Bubble Tea sends one calibration burst:
 
 The burst contains Crude's product chrome plus representative disputed classes:
 East Asian ambiguous text, Unicode-version changes such as `☰`, combining
-marks, ZWJ emoji, flags, standalone modifiers, format characters, and complex
-language graphemes. Supporting terminals never display the scratch writes
-because synchronized output brackets them; save/erase/restore protects legacy
-terminals.
+marks, ZWJ emoji, flags, standalone modifiers, format characters, keycaps,
+text/emoji variation pairs, BMP media/control and geometric symbols, persistent
+Nerd Font rail glyphs, and complex language graphemes. Unqualified `⏺` is an
+important exact probe: some terminal/font grids render it in one cell despite
+Unicode's default two-cell emoji presentation; an unmeasured mismatch leaves a
+one-cell stale tail on every changed editor or chat row containing it.
+Supporting terminals never display the scratch writes because synchronized
+output brackets them; save/erase/restore protects legacy terminals.
 
 Inside tmux or screen, CPR normally reports the multiplexer's effective grid.
 That is the grid the application must match. Exact corrections handle product

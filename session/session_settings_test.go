@@ -14,6 +14,7 @@ import (
 )
 
 func TestConfigWithSessionOverridesUsesWorkspaceThenSession(t *testing.T) {
+	compact := 2
 	base := &Config{
 		ActiveProvider: "openrouter",
 		Providers: map[string]ProviderConfig{
@@ -35,7 +36,7 @@ func TestConfigWithSessionOverridesUsesWorkspaceThenSession(t *testing.T) {
 		},
 	}
 	overrides := map[string]sessiondb.AgentSettingOverride{
-		"crafter": {Provider: "openai", Model: "gpt-5", ThinkingEffort: "high"},
+		"crafter": {Provider: "openai", Model: "gpt-5", ThinkingEffort: "high", ContextCompactionPercent: &compact},
 	}
 
 	effective := configWithSessionOverrides(base, overrides)
@@ -46,6 +47,9 @@ func TestConfigWithSessionOverridesUsesWorkspaceThenSession(t *testing.T) {
 	}
 	if crafter.APIKey != "openai-key" {
 		t.Fatalf("provider credentials were not inherited: %#v", crafter)
+	}
+	if crafter.ContextCompactionPercent == nil || *crafter.ContextCompactionPercent != 2 {
+		t.Fatalf("crafter compaction threshold = %v, want 2", crafter.ContextCompactionPercent)
 	}
 	main := effective.GetActiveDefaultCategory()
 	if main.Model != "workspace-main" {
@@ -296,6 +300,7 @@ func TestHandleSettingsSavePreservesMultiAgentInheritance(t *testing.T) {
 }
 
 func TestSettingsToSessionOverridesHonorsExplicitMap(t *testing.T) {
+	compact := 2
 	settings := ttypes.Settings{
 		Agents: ttypes.AgentsSettings{Categories: map[string]ttypes.CategorySettings{
 			"default": {Provider: "ignored", Model: "ignored"},
@@ -304,12 +309,14 @@ func TestSettingsToSessionOverridesHonorsExplicitMap(t *testing.T) {
 			"researcher": {
 				Provider: "anthropic", Model: "claude",
 				APIStandard: "anthropic", ThinkingEffort: "low",
+				ContextCompactionPercent: &compact,
 			},
 		},
 	}
 	overrides := settingsToSessionOverrides(settings)
 	if len(overrides) != 1 || overrides["researcher"].Model != "claude" ||
-		overrides["researcher"].APIStandard != "anthropic" {
+		overrides["researcher"].APIStandard != "anthropic" || overrides["researcher"].ContextCompactionPercent == nil ||
+		*overrides["researcher"].ContextCompactionPercent != 2 {
 		t.Fatalf("explicit override map not honored: %#v", overrides)
 	}
 }

@@ -218,6 +218,62 @@ func TestCompactCancellationDoesNotRetry(t *testing.T) {
 	}
 }
 
+func TestProviderBaselineAboveTwoPercentTriggersAutomaticCompaction(t *testing.T) {
+	var calls atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		call := calls.Add(1)
+		if call <= int32(len(compactionStages)) {
+			writeChatSSE(w, fmt.Sprintf("- stage: %d\n- state: retained", call), "stop")
+			return
+		}
+		writeChatSSE(w, "continued", "stop")
+	}))
+	defer server.Close()
+	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p.Model = "two-percent-model"
+	provider.SetModelContext(p.Model, 1_000_000)
+	a := newTestAgent(t, p, p.Model)
+	a.ContextCompactionPercent = 2
+	// Previous request: system + user; assistant starts at message index 2 in
+	// Agent.Run's canonical request. The new user message is a local delta.
+	a.SeedContextUsage(43_000, 200, 2)
+	messages := []provider.ChatMessage{
+		provider.NewTextMessage("user", "previous request"),
+		provider.NewTextMessage("assistant", "previous answer"),
+		provider.NewTextMessage("user", "next request"),
+	}
+	var events []AgentEvent
+	result := a.Run(context.Background(), messages, "system", func(event AgentEvent) {
+		events = append(events, event)
+	}, nil, nil, "", nil)
+	if calls.Load() != int32(len(compactionStages)+1) {
+		t.Fatalf("provider calls=%d want four compaction stages plus one normal request", calls.Load())
+	}
+	if len(result) == 0 || !strings.Contains(result[len(result)-1].ContentString(), "continued") {
+		t.Fatalf("post-compaction result=%+v", result)
+	}
+	startedAt, compactedAt, preparingAt := -1, -1, -1
+	for index, event := range events {
+		switch event.Type {
+		case "context_compaction_started":
+			if startedAt < 0 {
+				startedAt = index
+			}
+		case "context_compacted":
+			if compactedAt < 0 {
+				compactedAt = index
+			}
+		case "phase":
+			if preparingAt < 0 {
+				preparingAt = index
+			}
+		}
+	}
+	if startedAt < 0 || compactedAt <= startedAt || preparingAt <= compactedAt {
+		t.Fatalf("ordinary request preparation was not blocked behind compaction: started=%d compacted=%d preparing=%d events=%+v", startedAt, compactedAt, preparingAt, events)
+	}
+}
+
 func TestChildCompactPreservesAssignmentAndReportContract(t *testing.T) {
 	requests := make(chan provider.ChatRequest, len(compactionStages))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {

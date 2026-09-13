@@ -75,6 +75,11 @@ usage but may not replace per-agent state.
 When the provider reports total request input, that value is the baseline.
 Crude projects the next request by adding provider-reported completion tokens
 and semantic estimates only for locally appended, unreported content.
+Session creates a fresh `Agent` per turn, so it seeds that meter from the latest
+persisted normal usage record at the previous final-assistant boundary. The
+session's nullable `ContextCompactionPercent` override is persisted independently
+of provider/model fields; a configured `2%` therefore compares against the same
+provider-reported occupancy shown in the header on the next request boundary.
 
 Before the first provider measurement, Crude estimates semantic content at
 `ceil(runes / 4)`. It counts actual system/tool descriptions and message text,
@@ -390,7 +395,8 @@ request does not masquerade as post-compaction occupancy.
 
 Compaction is a first-class retained context boundary, not a fake assistant
 message or transient turn status. Active and terminal forms share one compact
-four-row table on a dedicated theme background, bounded by full-bleed rules:
+four-row table on the normal chat background, bounded by full-bleed rules in
+the theme's active-rail accent color:
 
 ```text
 ────────────────────────────────────────────────────────────────

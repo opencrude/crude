@@ -368,11 +368,10 @@ Rules:
   and footer). Children must be laid out with `{X:0, Y:0, ...}` rects.
   Guarded by `TestAgentView_ChatPaintsInsideSlot` /
   `TestAgentView_LongChatDoesNotOverflowInputOrStatus`.
-- **Chat gravity:** chat content starts at the TOP of the viewport, including
-  after resume. Bottom gravity created a variable blank region above short
-  resumed conversations and made the transcript appear detached from its tab.
-  Auto-scroll still follows the newest row once content exceeds the viewport.
-  Guarded by `TestAgentView_ShortChatStartsAtTopWithoutResumeGap`.
+- **Chat gravity:** short chat content anchors to the BOTTOM of the viewport
+  (`ui.VirtualList.SetBottomGravity(true)`, set by `shellchat.New`) so the
+  transcript remains attached to the input prompt. Guarded by
+  `TestAgentView_ShortChatAnchorsToBottom`.
 - **Input shell is clamped to the footer:** `computeContentLayout`
   clamps `InputLineCount` to `height - 2 - 3 - deck - tabs - 1` (status +
   top + deck + tab bar, one chat row minimum). The old layer surfaces masked
@@ -723,6 +722,7 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
 - **go.mod replaces** (do not drop without understanding `docs/reference/terminal-width.md`):
   - `charm.land/bubbletea/v2` → `./third_party/bubbletea`
   - `github.com/charmbracelet/x/ansi` → `./third_party/xansi`
+  - `github.com/charmbracelet/ultraviolet` → `./third_party/ultraviolet`
   - `github.com/charmbracelet/x/powernap` → `./third_party/powernap`
     (vendored so the LSP transport can be patched; see LSP I/O below)
 
@@ -931,7 +931,8 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   in-flight turn state. Failure, cancellation, or pre-commit crash leaves that
   source authoritative.
 - Compaction presentation is one retained, operation-ID-keyed context-boundary
-  table with a dedicated theme surface and full-bleed top/bottom rules. It shows
+  table on the normal chat background with full-bleed top/bottom rules using
+  the active-rail accent color. It shows
   real stage units, never fabricated completion percentages. Active, retrying,
   completed, cancelled, failed, and resumed-interrupted forms share geometry;
   generic turn cleanup must never consume these durable operation rows.

@@ -56,7 +56,7 @@ func New(th *theme.Theme) *Screen {
 	list := ui.NewVirtualList(AreaID, tokens)
 	list.SetPointerPolicy(ui.PointerPolicyPassthrough)
 	list.SetSelectionAnchorsScroll(false)
-	list.SetBottomGravity(false)
+	list.SetBottomGravity(true) // short chats anchor above the input prompt
 	list.SetOpaqueRowFill(false)
 	list.Scroll().SetAutoScroll(true)
 	s := &Screen{
@@ -154,12 +154,13 @@ func (s *Screen) ViewportPaneLineMap() []chatprojection.PaneLineInfo {
 	visible := make([]chatprojection.PaneLineInfo, viewportH)
 	scrollY := scroll.Offset()
 	for i := range visible {
-		globalLine := 0
+		var globalLine int
 		if contentH <= viewportH {
-			if i >= contentH {
+			emptyTop := viewportH - contentH
+			if i < emptyTop {
 				continue
 			}
-			globalLine = i
+			globalLine = i - emptyTop
 		} else {
 			globalLine = scrollY + i
 			if globalLine >= contentH {

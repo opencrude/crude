@@ -22,8 +22,6 @@ func DefaultHighContrast() *Theme {
 		Hover:              lipgloss.Color("#222222"),
 		SubPaneBg:          lipgloss.Color("#0a0a0a"),
 		IncompleteBg:       lipgloss.Color("#440000"),
-		ContextBg:          lipgloss.Color("#111111"),
-		ContextBorder:      lipgloss.Color("#767676"),
 		PopupBg:            lipgloss.Color("#000000"),
 		PopupBorder:        lipgloss.Color("#ffffff"),
 		PopupBorderFocused: lipgloss.Color("#ffff00"),

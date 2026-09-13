@@ -20,8 +20,6 @@ func DefaultMidnight() *Theme {
 		Hover:              lipgloss.Color("#152238"),
 		SubPaneBg:          lipgloss.Color("#111827"),
 		IncompleteBg:       lipgloss.Color("#3f1d2e"),
-		ContextBg:          lipgloss.Color("#12172b"),
-		ContextBorder:      lipgloss.Color("#2d3859"),
 		PopupBg:            lipgloss.Color("#111827"),
 		PopupBorder:        lipgloss.Color("#334155"),
 		PopupBorderFocused: lipgloss.Color("#38bdf8"),

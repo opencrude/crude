@@ -27,9 +27,6 @@ type Colors struct {
 	Bg, Fg, Muted, Accent, Accent2     color.Color
 	Success, Error, Warning, Border    color.Color
 	Selection, SubPaneBg, IncompleteBg color.Color
-	// ContextBg/ContextBorder identify durable context-boundary blocks in chat.
-	// They remain visually distinct from hover, selection, popup, and tool rows.
-	ContextBg, ContextBorder color.Color
 	// Hover is the background color for interactive elements (file tree
 	// rows, tabs, command palette items, settings rows, etc.) when the
 	// mouse cursor is over them but they aren't selected. Slightly dimmer
@@ -157,21 +154,19 @@ type Styles struct {
 
 func DefaultDark() *Theme {
 	c := Colors{
-		Bg:            lipgloss.Color("#0d1117"),
-		Fg:            lipgloss.Color("#e6edf3"),
-		Muted:         lipgloss.Color("#8b949e"),
-		Accent:        lipgloss.Color("#f0883e"),
-		Accent2:       lipgloss.Color("#a5d6ff"),
-		Success:       lipgloss.Color("#7ee787"),
-		Error:         lipgloss.Color("#ff7b72"),
-		Warning:       lipgloss.Color("#d29922"),
-		Border:        lipgloss.Color("#30363d"),
-		Selection:     lipgloss.Color("#1e2a3a"),
-		Hover:         lipgloss.Color("#21262d"),
-		SubPaneBg:     lipgloss.Color("#1c2333"),
-		IncompleteBg:  lipgloss.Color("#3a1a1a"),
-		ContextBg:     lipgloss.Color("#16181b"),
-		ContextBorder: lipgloss.Color("#30363d"),
+		Bg:           lipgloss.Color("#0d1117"),
+		Fg:           lipgloss.Color("#e6edf3"),
+		Muted:        lipgloss.Color("#8b949e"),
+		Accent:       lipgloss.Color("#f0883e"),
+		Accent2:      lipgloss.Color("#a5d6ff"),
+		Success:      lipgloss.Color("#7ee787"),
+		Error:        lipgloss.Color("#ff7b72"),
+		Warning:      lipgloss.Color("#d29922"),
+		Border:       lipgloss.Color("#30363d"),
+		Selection:    lipgloss.Color("#1e2a3a"),
+		Hover:        lipgloss.Color("#21262d"),
+		SubPaneBg:    lipgloss.Color("#1c2333"),
+		IncompleteBg: lipgloss.Color("#3a1a1a"),
 		// Popup chrome — unified design across all popups.
 		// Code.Bg provides the "card on editor" feel used by the
 		// diagnostic hover popup. PopupBorder is intentionally

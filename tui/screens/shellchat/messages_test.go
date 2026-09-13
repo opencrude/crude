@@ -27,27 +27,27 @@ func TestMessageSyncPreservesUnchangedCaches(t *testing.T) {
 	}
 }
 
-func TestMessageAtLocalYResolvesTopGravityAndScroll(t *testing.T) {
+func TestMessageAtLocalYResolvesBottomGravityAndScroll(t *testing.T) {
 	th := theme.DefaultDark()
 	s := shellchat.New(th)
 	rows := []chatprojection.MessageRow{{ID: "user-1", Lines: []string{"one", "two"}}, {ID: "assistant", Lines: []string{"three"}}}
 	s.SetMessages(rows, shellchat.PaintParams{Compose: shellchat.ComposeParams{InnerW: 30, PadLR: th.Spacing.PadLR, Theme: th}})
 	s.SyncScrollMetrics(6, 3)
 	s.Layout(ui.LayoutContext{}, ui.Rect{W: 34, H: 6})
-	row, ok := s.MessageAtLocalY(0)
+	if _, ok := s.MessageAtLocalY(1); ok {
+		t.Fatal("blank gravity row resolved to a message")
+	}
+	row, ok := s.MessageAtLocalY(3)
 	if !ok || row.ID != "user-1" {
 		t.Fatalf("row=%+v ok=%v", row, ok)
 	}
-	row, ok = s.MessageAtLocalY(2)
+	row, ok = s.MessageAtLocalY(5)
 	if !ok || row.ID != "assistant" {
 		t.Fatalf("row=%+v ok=%v", row, ok)
 	}
-	if _, ok := s.MessageAtLocalY(5); ok {
-		t.Fatal("blank rows below short content resolved to a message")
-	}
 }
 
-func TestContextBoundaryPaintsFullBleedBandAndRules(t *testing.T) {
+func TestContextBoundaryPaintsAccentRulesOnChatBackground(t *testing.T) {
 	th := theme.DefaultDark()
 	s := shellchat.New(th)
 	lines := []string{"", "Context  Compaction", "Stage  Capturing state", "Source  420K", ""}
@@ -60,7 +60,7 @@ func TestContextBoundaryPaintsFullBleedBandAndRules(t *testing.T) {
 	s.SyncScrollMetrics(5, 5)
 	buf := s.PaintTestBuffer(40, 5)
 	tokens := ui.NewTokenSet(th)
-	wantBG := tokens.Color(ui.ColorContextBg)
+	wantBG := tokens.Color(ui.ColorBg)
 	for y := 0; y < 5; y++ {
 		for x := 0; x < 40; x++ {
 			if got := buf.Get(x, y).BG; got != wantBG {
@@ -70,8 +70,9 @@ func TestContextBoundaryPaintsFullBleedBandAndRules(t *testing.T) {
 	}
 	for _, y := range []int{0, 4} {
 		for x := 0; x < 40; x++ {
-			if got := buf.Get(x, y).Char; got != '─' {
-				t.Fatalf("rule cell (%d,%d)=%q want full-bleed separator", x, y, got)
+			got := buf.Get(x, y)
+			if got.Char != '─' || got.FG != tokens.Color(ui.ColorAccent) {
+				t.Fatalf("rule cell (%d,%d)=%+v want active-rail accent separator", x, y, got)
 			}
 		}
 	}
