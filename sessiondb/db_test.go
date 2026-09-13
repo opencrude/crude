@@ -796,3 +796,41 @@ func TestContextStateRoundTripsIndependentlyFromDisplayHistory(t *testing.T) {
 		t.Fatalf("context state round-trip got=%#v ok=%v err=%v want=%#v", got, ok, err, want)
 	}
 }
+
+func TestMigrateLegacyUsageAddsRequestKindBeforeContextIndex(t *testing.T) {
+	db, err := Open(filepath.Join(t.TempDir(), "legacy-usage.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	_, err = db.Exec(`CREATE TABLE usage_requests (
+		request_id TEXT PRIMARY KEY, session_id TEXT NOT NULL, agent_id TEXT NOT NULL,
+		parent_agent_id TEXT NOT NULL DEFAULT '', turn_generation INTEGER NOT NULL DEFAULT 0,
+		attempt INTEGER NOT NULL DEFAULT 1, provider_id TEXT NOT NULL DEFAULT '',
+		model_id TEXT NOT NULL DEFAULT '', prompt_tokens INTEGER NOT NULL DEFAULT 0,
+		completion_tokens INTEGER NOT NULL DEFAULT 0, cached_tokens INTEGER NOT NULL DEFAULT 0,
+		cache_read_known INTEGER NOT NULL DEFAULT 0, cache_write_tokens INTEGER NOT NULL DEFAULT 0,
+		cache_write_known INTEGER NOT NULL DEFAULT 0, reasoning_tokens INTEGER NOT NULL DEFAULT 0,
+		reasoning_known INTEGER NOT NULL DEFAULT 0, reasoning_in_output INTEGER NOT NULL DEFAULT 1,
+		context_used INTEGER NOT NULL DEFAULT 0, context_window INTEGER NOT NULL DEFAULT 0,
+		cost_usd REAL NOT NULL DEFAULT 0.0, cost_known INTEGER NOT NULL DEFAULT 0,
+		cost_source TEXT NOT NULL DEFAULT '', estimated INTEGER NOT NULL DEFAULT 0,
+		partial INTEGER NOT NULL DEFAULT 0, cost_upper_bound INTEGER NOT NULL DEFAULT 0,
+		created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL
+	)`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO usage_requests
+		(request_id, session_id, agent_id, model_id, context_used, created_at, updated_at)
+		VALUES ('legacy', 'session', 'agent', 'model', 43000, 1, 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := Migrate(db); err != nil {
+		t.Fatal(err)
+	}
+	record, ok, err := LatestNormalUsageRecord(db, "session", "agent")
+	if err != nil || !ok || record.RequestKind != "normal" || record.ContextUsed != 43000 {
+		t.Fatalf("migrated usage=%+v ok=%v err=%v", record, ok, err)
+	}
+}

@@ -133,6 +133,12 @@ func (m *App) launcherNewSession() tea.Cmd {
 		m.Logger.Info("SESSION", "new_session_from_launcher")
 	}
 	result := m.NewSessionFromLauncher()
+	if result != nil && result.Error != "" {
+		if m.Feedback != nil {
+			m.Feedback.NotifyError(result.Error)
+		}
+		return nil
+	}
 	if result != nil {
 		m.AddOrchestrator(result.OrchID)
 	}

@@ -16,6 +16,10 @@
 > journal; tools `remember` / `recall_memory` / `update_memory` /
 > `forget_memory` / `search_history`; `/memory` browser (Ctrl+Alt+M);
 > Settings > Memory across app/workspace inheritance.
+> Workspace persistence is a mandatory session dependency: create/resume
+> retries a transient startup open failure and wires the memory store before
+> any orchestrator can start. Crude never silently launches a degraded session
+> with `/memory` and agent memory tools unavailable.
 >
 > **Deliberately not implemented from this proposal:** ClawVM typed pages,
 > multi-resolution variants, and the three-phase writeback journal. Crude's

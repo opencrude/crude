@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"crude/localhistory"
@@ -19,6 +20,7 @@ import (
 // generation-bound Workspace methods rather than cross-layer channels.
 type NewSessionResult struct {
 	OrchID string
+	Error  string
 }
 
 // Workspace is the project-scoped composition root — the IDE instance.
@@ -185,7 +187,9 @@ type Workspace struct {
 	// registry write failure (RegisterSession / SyncSessionMeta / CloseSession).
 	// Cleared on the next successful registry write. Session create/resume
 	// must not fail because of this — it is surfaced for logging/UI only.
-	registryErr error
+	registryErr    error
+	persistenceMu  sync.Mutex
+	workspaceDBErr error
 }
 
 // SetEventBus connects workspace services to the workspace-to-frontend event path.
@@ -264,6 +268,7 @@ func NewWorkspace(
 		InitialSettings:    initial,
 		Username:           username,
 		StartTime:          time.Now(),
+		workspaceDBErr:     dbErr,
 	}
 	if historyStore != nil {
 		ws.HistoryService = NewLocalHistoryService(rootPath, historyStore, lg)
@@ -276,6 +281,67 @@ func NewWorkspace(
 	_ = ws.BackfillSessionRegistry()
 
 	return ws
+}
+
+// ensureWorkspacePersistence repairs a transient startup open failure before
+// any session can begin. Memory and the session registry are mandatory parts
+// of a workspace session; silently launching without them creates a degraded
+// runtime that cannot self-heal later.
+func (w *Workspace) ensureWorkspacePersistence() error {
+	if w == nil {
+		return fmt.Errorf("workspace is nil")
+	}
+	w.persistenceMu.Lock()
+	defer w.persistenceMu.Unlock()
+	if w.WorkspaceDB != nil && w.WorkspaceDB.Memory != nil {
+		return nil
+	}
+
+	previousErr := w.workspaceDBErr
+	db, err := OpenWorkspaceDB(w.RootPath)
+	if err != nil {
+		w.workspaceDBErr = err
+		return err
+	}
+	oldDB := w.WorkspaceDB
+	oldStatus := w.Status
+	oldWriter := w.registryCostWriter
+	w.WorkspaceDB = db
+	w.workspaceDBErr = nil
+	for _, frontendSession := range w.Sessions {
+		if frontendSession != nil && frontendSession.backend != nil {
+			frontendSession.backend.SetMemoryStore(db.Memory)
+			frontendSession.backend.StartMemoryMaintenance()
+		}
+	}
+	w.Status = NewStatusCenter(workspaceSQLDB(db), w.Logger)
+	w.registryCostWriter = newRegistryCostWriter(db, w.Logger)
+	if oldWriter != nil {
+		oldWriter.Close()
+	}
+	if oldStatus != nil {
+		oldStatus.Close()
+	}
+	if oldDB != nil {
+		_ = oldDB.Close()
+	}
+	if w.Logger != nil {
+		w.Logger.Info("WORKSPACE", "persistence_recovered", "had_startup_error", previousErr != nil)
+	}
+	status := w.Status
+	bus := w.eventBus
+	go func() {
+		if err := status.Hydrate(); err != nil {
+			if w.Logger != nil {
+				w.Logger.Warn("STATUS", "notification_hydrate_failed", "error", err.Error())
+			}
+			return
+		}
+		if bus != nil {
+			bus.Send(StatusCenterHydratedMsg{})
+		}
+	}()
+	return nil
 }
 
 // SessionDir returns the session directory for the active session.
@@ -676,21 +742,21 @@ func (w *Workspace) SetEventSender(sender session.EventSender) {
 func (w *Workspace) NewSessionFromLauncher() *NewSessionResult {
 	if w.sessionCfg == nil {
 		w.Logger.Warn("WORKSPACE", "no_session_config")
-		return nil
+		return &NewSessionResult{Error: "Session configuration is unavailable"}
 	}
 	_, err := w.CreateSession(w.sessionCfg, w.homeDir)
 	if err != nil {
 		w.Logger.Warn("WORKSPACE", "new_session_failed", "error", err.Error())
-		return nil
+		return &NewSessionResult{Error: "Failed to create session: " + err.Error()}
 	}
 	if w.sender == nil {
 		w.Logger.Warn("WORKSPACE", "no_event_sender")
-		return nil
+		return &NewSessionResult{Error: "Session event transport is unavailable"}
 	}
 	orch, err := w.StartOrchestrator(w.sender)
 	if err != nil {
 		w.Logger.Warn("WORKSPACE", "start_orchestrator_failed", "error", err.Error())
-		return nil
+		return &NewSessionResult{Error: "Failed to start session: " + err.Error()}
 	}
 	return &NewSessionResult{
 		OrchID: orch.ID,

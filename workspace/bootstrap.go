@@ -57,6 +57,9 @@ func (w *Workspace) Bootstrap(cfg *session.Config, homeDir string, resumeID stri
 // CreateSession creates a new AI conversation in this workspace.
 // The session DB, logs, and reports are stored under the workspace folder.
 func (w *Workspace) CreateSession(cfg *session.Config, homeDir string) (*Session, error) {
+	if err := w.ensureWorkspacePersistence(); err != nil {
+		return nil, fmt.Errorf("workspace persistence unavailable: %w", err)
+	}
 	// The backend session generates its own ID and directory under the
 	// workspace sessions folder. We create the parent dir first so the
 	// logger can land there.
@@ -111,6 +114,9 @@ func (w *Workspace) CreateSession(cfg *session.Config, homeDir string) (*Session
 
 // ResumeSession loads an existing workspace-scoped session by ID.
 func (w *Workspace) ResumeSession(sessionID string, cfg *session.Config, homeDir string) (*Session, error) {
+	if err := w.ensureWorkspacePersistence(); err != nil {
+		return nil, fmt.Errorf("workspace persistence unavailable: %w", err)
+	}
 	dbPath, err := SessionDBPath(w.RootPath, sessionID)
 	if err != nil {
 		return nil, fmt.Errorf("resolve session db: %w", err)
