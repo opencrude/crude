@@ -89,8 +89,6 @@ CREATE TABLE IF NOT EXISTS usage_requests (
 );
 
 CREATE INDEX IF NOT EXISTS idx_usage_requests_agent ON usage_requests(agent_id, turn_generation, created_at);
-CREATE INDEX IF NOT EXISTS idx_usage_requests_context_baseline
-    ON usage_requests(session_id, agent_id, request_kind, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS sub_agent_results (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -311,12 +309,20 @@ func Migrate(db *sql.DB) error {
 		"ALTER TABLE messages ADD COLUMN provider_items TEXT",
 		"ALTER TABLE session_agent_settings ADD COLUMN api_standard TEXT",
 		"ALTER TABLE session_agent_settings ADD COLUMN inherit_source TEXT",
+		"ALTER TABLE session_agent_settings ADD COLUMN context_compaction_percent INTEGER",
+		"ALTER TABLE context_compactions ADD COLUMN provider_id TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE context_compactions ADD COLUMN model_id TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE usage_requests ADD COLUMN request_kind TEXT NOT NULL DEFAULT 'normal'",
 	}
 	for _, m := range migrations {
 		if _, err := db.Exec(m); err != nil &&
 			!strings.Contains(strings.ToLower(err.Error()), "duplicate column name") {
 			return fmt.Errorf("sessiondb: migration %q: %w", m, err)
 		}
+	}
+	if _, err := db.Exec(`CREATE INDEX IF NOT EXISTS idx_usage_requests_context_baseline
+		ON usage_requests(session_id, agent_id, request_kind, updated_at DESC)`); err != nil {
+		return fmt.Errorf("sessiondb: context baseline index: %w", err)
 	}
 	return migrateSubAgentResultOwnership(db)
 }

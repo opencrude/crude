@@ -901,6 +901,10 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   cancels and joins them before the workspace DB closes, without launching new
   provider work. Durable turn mirrors finish, and pending extraction watermarks
   recover on next startup, including a resume of the same session.
+- Workspace memory and the session registry are mandatory session dependencies.
+  `CreateSession`/`ResumeSession` retry a transient workspace-DB startup failure
+  and wire the recovered store before returning; never launch an agent with a
+  nil memory store and a merely logged `db_open_failed` warning.
 - Turn finalization writes its one batched transcript mirror synchronously on the
   off-UI orchestrator goroutine before releasing the turn. Never register a
   flush WaitGroup after observers may already be waiting; that races shutdown,
