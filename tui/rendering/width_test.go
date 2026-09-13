@@ -1,6 +1,7 @@
 package rendering
 
 import (
+	"slices"
 	"testing"
 
 	"github.com/charmbracelet/x/ansi"
@@ -9,6 +10,29 @@ import (
 func TestWidthMethodIsGrapheme(t *testing.T) {
 	if WidthMethod != ansi.GraphemeWidth {
 		t.Fatalf("WidthMethod = %v, want GraphemeWidth", WidthMethod)
+	}
+}
+
+func TestTerminalWidthProbeCoversPresentationSensitiveClasses(t *testing.T) {
+	corpus := TerminalWidthProbeCorpus()
+	for _, cluster := range []string{"⏺", "⎿", "⏺︎", "⏺️", "▶", "▶️", "⚠︎", "⚠️", "#️⃣", "\uf17b"} {
+		if !slices.Contains(corpus, cluster) {
+			t.Errorf("terminal width probe lacks %q", cluster)
+		}
+	}
+}
+
+func TestMeasuredRecordSymbolWidthOverridesEmojiGuess(t *testing.T) {
+	ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{})
+	t.Cleanup(func() { ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{}) })
+	if got := PlainWidth("⏺"); got != 2 {
+		t.Fatalf("unmeasured record symbol width=%d want Unicode emoji guess 2", got)
+	}
+	line := "│   ⏺ Edit(test/parser.test.js)"
+	unmeasured := PlainWidth(line)
+	ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{Exact: map[string]int{"⏺": 1}})
+	if got := PlainWidth(line); got != unmeasured-1 {
+		t.Fatalf("measured cc-sample line width=%d want %d", got, unmeasured-1)
 	}
 }
 

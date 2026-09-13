@@ -22,10 +22,9 @@ to its children, so the chat list painted shifted by the slot origin and
 long conversations overwrote the input prompt and status bar. Fixed by
 laying children out parent-local (`{X:0,Y:0,...}`); guarded by
 `TestAgentView_ChatPaintsInsideSlot` /
-`TestAgentView_LongChatDoesNotOverflowInputOrStatus`. Short-chat bottom gravity
-was removed after resumed sessions exposed a variable blank region above their
-transcript; chat now starts at the slot top and auto-scrolls once overflowing,
-guarded by `TestAgentView_ShortChatStartsAtTopWithoutResumeGap`. The launcher workspace listing is
+`TestAgentView_LongChatDoesNotOverflowInputOrStatus`. Short chats remain
+bottom-anchored above the input prompt through `ui.VirtualList.SetBottomGravity`,
+guarded by `TestAgentView_ShortChatAnchorsToBottom`. The launcher workspace listing is
 loaded asynchronously (`refreshLauncherAsync` + `launcherWorkspacesMsg`,
 generation-deduped) so the ~200ms DB scan never blocks the back-to-launcher
 hotpath; guarded by `launcher_async_test.go`.

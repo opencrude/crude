@@ -112,7 +112,7 @@ func (a *Agent) Run(
 	var steps []StepRecord
 	var totalPromptTokens, totalCompletionTokens int
 	var lastPromptTokens int
-	var contextUsage contextMeter
+	contextUsage := a.contextBaseline
 
 	ctxWindow := a.Provider.ContextWindow(a.Model)
 	l.Debug("CTX", "window", "model", a.Model, "ctx_window", ctxWindow, "compaction_percent", a.ContextCompactionPercent)
@@ -125,7 +125,6 @@ func (a *Agent) Run(
 
 	btwInput := btwCh
 	continuations := 0
-	autoCompactions := 0
 	providerName := a.providerDisplayName()
 	cacheUsageUnknown := a.Provider.ProtocolID() == "ollama"
 	var admittedBtwIDs []string
@@ -147,14 +146,6 @@ func (a *Agent) Run(
 			emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
 			return returnMessages()
 		}
-
-		// A local turn counter is not a durable request identity: it can restart
-		// after resume or agent recreation. Revisions reuse this ID; new calls do not.
-		requestID := fmt.Sprintf("%016x%016x", rand2.Uint64(), rand2.Uint64())
-		emit(AgentEvent{Type: "phase", Data: map[string]any{
-			"name": "preparing", "progress": 0, "provider": providerName,
-			"request_id": requestID, "turn_generation": a.TurnGeneration,
-		}})
 
 		drainBtw := func() int {
 			consumed := 0
@@ -183,11 +174,7 @@ func (a *Agent) Run(
 			activeTokens := contextUsage.projected(msgs, allTools, a.Model)
 			threshold := compactionThreshold(ctxWindow, a.ContextCompactionPercent)
 			if threshold > 0 && activeTokens >= threshold {
-				if autoCompactions >= 2 {
-					a.emitError(emit, fmt.Errorf("context remains above the configured threshold after %d compactions; full transcript remains archived", autoCompactions))
-					return returnMessages()
-				}
-				autoCompactions++
+				requestID := fmt.Sprintf("%016x%016x", rand2.Uint64(), rand2.Uint64())
 				compactor := a.contextCompactor(ctxWindow)
 				outcome, compactErr := compactor.compactWithModel(ctx, msgs, allTools, requestID, activeTokens, "automatic", emit,
 					func(compactionRequest []provider.ChatMessage) {
@@ -214,6 +201,16 @@ func (a *Agent) Run(
 						emit(AgentEvent{Type: "context_compaction_failed", Data: data})
 						a.emitError(emit, fmt.Errorf("context compaction failed; original context retained: %w", compactErr))
 					}
+					return returnMessages()
+				}
+				if outcome.AfterTokens >= threshold {
+					compactErr := fmt.Errorf("compacted context remains above threshold (%d >= %d tokens)", outcome.AfterTokens, threshold)
+					data := compactionEventData(requestID, "automatic", outcome.Role, len(compactionStages), len(compactionStages), activeTokens, outcome.AfterTokens, outcome.ContextWindow)
+					data["provider_id"] = outcome.ProviderID
+					data["model_id"] = outcome.ModelID
+					data["error"] = compactErrorText(compactErr)
+					emit(AgentEvent{Type: "context_compaction_failed", Data: data})
+					a.emitError(emit, fmt.Errorf("context compaction failed; original context retained: %w", compactErr))
 					return returnMessages()
 				}
 				nextMessages := append([]provider.ChatMessage{msgs[0]}, outcome.Messages...)
@@ -244,6 +241,14 @@ func (a *Agent) Run(
 				continue
 			}
 		}
+
+		// A local turn counter is not a durable request identity: it can restart
+		// after resume or agent recreation. Revisions reuse this ID; new calls do not.
+		requestID := fmt.Sprintf("%016x%016x", rand2.Uint64(), rand2.Uint64())
+		emit(AgentEvent{Type: "phase", Data: map[string]any{
+			"name": "preparing", "progress": 0, "provider": providerName,
+			"request_id": requestID, "turn_generation": a.TurnGeneration,
+		}})
 
 		requestMsgs := msgs
 		if err := prefix.check(requestMsgs); err != nil {

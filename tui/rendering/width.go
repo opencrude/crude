@@ -22,13 +22,27 @@ var WidthMethod = ansi.GraphemeWidth
 // must be learned from the effective terminal or multiplexer. Bubble Tea adds
 // language/emoji representatives and deduplicates this list.
 func TerminalWidthProbeCorpus() []string {
-	return []string{
+	corpus := []string{
 		"●", "○", "·", "│", "─", "┌", "┐", "└", "┘", "╭", "╮", "╰", "╯",
 		"├", "┤", "┬", "┴", "┼", "╷", "╵", "▌", "▏", "▤", "▥", "▣",
 		"◆", "◇", "☰", "⚡", "⚠", "✓", "✕", "✎", "…", "↑", "↓", "←", "→",
 		"⇄", "⇡", "⇣", "⊕", "✂", "⌕", "⌘", "▸", "▾", "❯", "⚙", "☆", "✦", "♻",
 		"✅", "⭐", "📎", "🔒", "🔓",
+		// Text/emoji presentation boundaries. Terminals and fallback fonts often
+		// render these unqualified BMP symbols differently from Unicode's emoji
+		// default; exact CPR measurements prevent one-cell stale line tails.
+		"⌚", "⌛", "⏩", "⏪", "⏫", "⏬", "⏰", "⏳", "⏸", "⏹", "⏺",
+		"▪", "▫", "▶", "◀", "◻", "◼", "◽", "◾", "⎿",
+		"☔", "☕", "♿", "⚓", "⚪", "⚫", "⚽", "⚾", "⛄", "⛅", "⛎", "⛔",
+		"⛪", "⛲", "⛳", "⛵", "⛺", "⛽", "⬅", "⬆", "⬇", "⬛", "⬜", "⭕", "㊗", "㊙",
+		"♈", "♉", "♊", "♋", "♌", "♍", "♎", "♏", "♐", "♑", "♒", "♓",
+		"⏺︎", "⏺️", "▶︎", "▶️", "⚠︎", "⚠️", "©︎", "©️", "™︎", "™️",
+		"#️⃣", "*️⃣", "0️⃣",
+		// Crude's fixed Nerd Font chrome. Dynamic file icons share the same PUA
+		// cell policy, while these representatives protect every persistent rail.
+		"\uf17b", "\uf120", "\uf418", "\uf07b", "\uf085",
 	}
+	return corpus
 }
 
 // FirstGrapheme returns the first grapheme cluster and its cell width.

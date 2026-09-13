@@ -89,6 +89,8 @@ CREATE TABLE IF NOT EXISTS usage_requests (
 );
 
 CREATE INDEX IF NOT EXISTS idx_usage_requests_agent ON usage_requests(agent_id, turn_generation, created_at);
+CREATE INDEX IF NOT EXISTS idx_usage_requests_context_baseline
+    ON usage_requests(session_id, agent_id, request_kind, updated_at DESC);
 
 CREATE TABLE IF NOT EXISTS sub_agent_results (
     id                INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -153,6 +155,7 @@ CREATE TABLE IF NOT EXISTS session_agent_settings (
     model           TEXT,
     api_standard    TEXT,
     thinking_effort TEXT,
+    context_compaction_percent INTEGER,
     inherit_source  TEXT,
     PRIMARY KEY (session_id, category),
     FOREIGN KEY (session_id) REFERENCES sessions(id)

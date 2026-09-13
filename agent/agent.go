@@ -72,11 +72,22 @@ type Agent struct {
 	testHTTPClient       *http.Client
 	toolCallSeq          int
 	compactionRetryDelay func(int) time.Duration
+	contextBaseline      contextMeter
 
 	fileMu            sync.Map
 	writeReportCalled bool
 	autoHandleMu      sync.Mutex
 	autoHandleCounter int
+}
+
+// SeedContextUsage carries the latest provider-reported request baseline across
+// Session's per-turn Agent instances. requestMessages is the prior assistant
+// boundary in the new request's canonical message slice.
+func (a *Agent) SeedContextUsage(inputTokens, completionTokens, requestMessages int) {
+	if a == nil {
+		return
+	}
+	a.contextBaseline.observe(inputTokens, completionTokens, requestMessages)
 }
 
 func (a *Agent) ActiveContext() []provider.ChatMessage {

@@ -2,6 +2,7 @@ package sessiondb
 
 import (
 	"database/sql"
+	"errors"
 	"fmt"
 	"strconv"
 )
@@ -115,6 +116,39 @@ func ListUsageRecords(db *sql.DB) ([]UsageRecord, error) {
 		out = append(out, r)
 	}
 	return out, rows.Err()
+}
+
+func LatestNormalUsageRecord(db *sql.DB, sessionID, agentID string) (UsageRecord, bool, error) {
+	if db == nil {
+		return UsageRecord{}, false, nil
+	}
+	var r UsageRecord
+	err := db.QueryRow(`
+		SELECT request_id, session_id, agent_id, parent_agent_id, turn_generation,
+		       attempt, request_kind, provider_id, model_id, prompt_tokens, completion_tokens,
+		       cached_tokens, cache_read_known, cache_write_tokens, cache_write_known,
+		       reasoning_tokens, reasoning_known, reasoning_in_output,
+		       context_used, context_window, cost_usd, cost_known, estimated, partial,
+		       cost_source, cost_upper_bound, created_at, updated_at
+		FROM usage_requests
+		WHERE session_id = ? AND agent_id = ? AND request_kind = 'normal' AND context_used > 0
+		ORDER BY updated_at DESC, request_id DESC
+		LIMIT 1`, sessionID, agentID).Scan(
+		&r.RequestID, &r.SessionID, &r.AgentID, &r.ParentAgentID,
+		&r.TurnGeneration, &r.Attempt, &r.RequestKind, &r.ProviderID, &r.ModelID, &r.PromptTokens,
+		&r.CompletionTokens, &r.CachedTokens, &r.CacheReadKnown,
+		&r.CacheWriteTokens, &r.CacheWriteKnown, &r.ReasoningTokens,
+		&r.ReasoningKnown, &r.ReasoningInOutput, &r.ContextUsed, &r.ContextWindow, &r.CostUSD,
+		&r.CostKnown, &r.Estimated, &r.Partial, &r.CostSource, &r.CostUpperBound,
+		&r.CreatedAt, &r.UpdatedAt,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return UsageRecord{}, false, nil
+	}
+	if err != nil {
+		return UsageRecord{}, false, fmt.Errorf("sessiondb: latest normal usage: %w", err)
+	}
+	return r, true, nil
 }
 
 func requestKind(kind string) string {

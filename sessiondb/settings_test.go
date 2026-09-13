@@ -2,6 +2,7 @@ package sessiondb
 
 import (
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 )
@@ -56,10 +57,12 @@ func TestAgentSettingOverridesRoundTripAndClear(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	compact := 2
 	want := map[string]AgentSettingOverride{
 		"default": {
 			Provider: "openai", Model: "gpt-5",
 			APIStandard: "openai-responses", ThinkingEffort: "high",
+			ContextCompactionPercent: &compact,
 		},
 		"crafter": {Provider: "anthropic", Model: "claude-sonnet-4", APIStandard: "anthropic"},
 	}
@@ -70,7 +73,7 @@ func TestAgentSettingOverridesRoundTripAndClear(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(got) != len(want) || got["default"] != want["default"] || got["crafter"] != want["crafter"] {
+	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("loaded overrides = %#v, want %#v", got, want)
 	}
 

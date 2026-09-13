@@ -1,0 +1,33 @@
+> add a test for the parser
+│
+│   ⏺ I'll look at the parser first.
+│
+│   ⏺ Read(lib/parser.js)
+│     ⎿  Read 214 lines
+│
+│   ⏺ Edit(test/parser.test.js)
+│     ⎿  Added 14 lines, removed 1 line
+│
+│   ⏺ Ran bun test
+│     ⎿  2 passed, 0 failed · 14ms
+│
+> nice — do the same for the lexer
+│
+│   ⏺ Read(lib/lexer.js)
+│     ⎿  Read 96 lines
+│
+│   ⏺ Edit(test/lexer.test.js)
+│     ⎿  Added 9 lines, removed 0 lines
+│
+│   ⏺ Ran bun test
+│     ⎿  4 passed, 0 failed · 21ms
+│
+> and tidy up the imports
+│
+│   ⏺ Done — removed 3 unused imports.
+│     ⎿  Updated lib/lexer.js with 0 additions and 3 removals
+│
+> ship it
+│
+│   ⏺ Shipped.
+│     ⎿  71c2f4a test: cover parser and lexer

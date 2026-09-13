@@ -1786,12 +1786,9 @@ rootHost
   `launcher_async_test.go` (`TestLauncherOpen_PaintsWithoutWorkspaceScan`,
   `TestLauncherAsyncLoad_AppliesLatestGen`,
   `TestLauncherAsyncLoad_DroppedWhenLauncherClosed`).
-- **Chat gravity corrected** (2026-09-12): bottom anchoring made short resumed
-  transcripts appear after a variable blank region and required duplicate
-  gravity offsets in pane hit-testing. `shellchat` now uses top gravity for
-  short content and ordinary sticky auto-scroll after overflow. Pane line maps
-  share that geometry. Guarded by
-  `TestAgentView_ShortChatStartsAtTopWithoutResumeGap`,
+- **Chat gravity retained**: short transcripts anchor above the input prompt;
+  `shellchat.ViewportPaneLineMap` applies the same top-padding offset for nested
+  pane hit-testing. Guarded by `TestAgentView_ShortChatAnchorsToBottom`,
   `TestAgentView_ChatPaintsInsideSlot`, and nested-pane wheel tests.
 - **Input shell clamped to the status bar** (2026-08-01): `InputLineCount`
   was unclamped — a long/multiline input could exceed the vertical budget

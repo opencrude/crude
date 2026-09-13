@@ -195,7 +195,7 @@ func settingsToSessionOverrides(settings ttypes.Settings) map[string]sessiondb.A
 			overrides[category] = sessiondb.AgentSettingOverride{
 				Provider: cfg.Provider, Model: cfg.Model,
 				APIStandard: cfg.APIStandard, ThinkingEffort: cfg.ThinkingEffort,
-				Inherit: cfg.Inherit,
+				ContextCompactionPercent: cloneIntPtr(cfg.ContextCompactionPercent), Inherit: cfg.Inherit,
 			}
 		}
 		return overrides
@@ -204,14 +204,15 @@ func settingsToSessionOverrides(settings ttypes.Settings) map[string]sessiondb.A
 		overrides[category] = sessiondb.AgentSettingOverride{
 			Provider: cfg.Provider, Model: cfg.Model,
 			APIStandard: cfg.APIStandard, ThinkingEffort: cfg.ThinkingEffort,
-			Inherit: cfg.Inherit,
+			ContextCompactionPercent: cloneIntPtr(cfg.ContextCompactionPercent), Inherit: cfg.Inherit,
 		}
 	}
 	if _, ok := overrides[CategoryDefault]; !ok {
 		overrides[CategoryDefault] = sessiondb.AgentSettingOverride{
 			Provider: settings.ProviderID, Model: settings.Model,
 			APIStandard: settings.APIStandard, ThinkingEffort: settings.ThinkingEffort,
-			Inherit: settings.Agents.Categories[CategoryDefault].Inherit,
+			ContextCompactionPercent: cloneIntPtr(settings.Agents.Categories[CategoryDefault].ContextCompactionPercent),
+			Inherit:                  settings.Agents.Categories[CategoryDefault].Inherit,
 		}
 	}
 	return overrides
@@ -264,6 +265,9 @@ func configWithSessionOverrides(base *Config, overrides map[string]sessiondb.Age
 		}
 		if override.ThinkingEffort != "" {
 			current.ThinkingEffort = override.ThinkingEffort
+		}
+		if override.ContextCompactionPercent != nil {
+			current.ContextCompactionPercent = cloneIntPtr(override.ContextCompactionPercent)
 		}
 		current.Inherit = ""
 		profile.Categories[category] = current
