@@ -706,6 +706,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			if msg.Warning != "" {
 				m.Feedback.NotifyError(msg.Warning)
 			}
+			m.overlayHost.Close(ui.OverlayLocalHistory)
 		}
 	case historyLatestMsg:
 		if msg.Error != "" {

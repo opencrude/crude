@@ -949,13 +949,24 @@ func (m *App) buildChatContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 		if rect, ok := m.rootHost.ScreenRect(shellchat.AreaID); ok {
 			if row, ok := m.chatScreen.MessageAtLocalY(mouse.Y - rect.Y); ok {
 				role := ""
+				var canonical workspace.Message
+				canonicalFound := false
 				if node := m.AgentMgr.ActiveNode(); node != nil && node.State != nil && node.State.Messages != nil {
 					for _, msg := range node.State.Messages.Messages() {
 						if msg.InternalID == row.ID {
 							role = msg.Role
+							canonical = msg
+							canonicalFound = true
 							break
 						}
 					}
+				}
+				if role == workspace.MessageRoleStatus && canonicalFound && canonical.HistorySafetySnapshot != "" {
+					snapshotID := canonical.HistorySafetySnapshot
+					st.Sections = append(st.Sections, ui.ContextMenuSection{SectionLabel: "Local History", Items: []ui.ContextMenuItem{
+						{Label: "Undo this restore", Detail: "opens safety preview", Action: func() { m.runDetachedAsyncCmd(m.openLocalHistoryForSnapshot(snapshotID)) }},
+						{Label: "Open workspace history", Action: func() { m.runDetachedAsyncCmd(m.openLocalHistory()) }},
+					}})
 				}
 				if role == workspace.MessageRoleUser {
 					sessionID, messageID := m.ActiveSession.SessionID, row.ID
@@ -963,8 +974,8 @@ func (m *App) buildChatContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 					active := agentID != "" && m.AgentTurnActive(agentID)
 					open := func() { cmd := m.openLocalHistoryForMessage(sessionID, messageID, agentID); m.runDetachedAsyncCmd(cmd) }
 					st.Sections = append(st.Sections, ui.ContextMenuSection{SectionLabel: "Local History", Items: []ui.ContextMenuItem{
-						{Label: "Preview changes from this message", Disabled: active, Detail: map[bool]string{true: "turn active", false: ""}[active], Action: open},
-						{Label: "Undo changes from this message", Disabled: active, Detail: "opens preview", Action: open},
+						{Label: "Preview this agent's changes", Disabled: active, Detail: map[bool]string{true: "turn active", false: ""}[active], Action: open},
+						{Label: "Revert this agent's files", Disabled: active, Detail: "conversation retained", Action: open},
 						{Label: "Open workspace history", Action: func() { m.runDetachedAsyncCmd(m.openLocalHistory()) }},
 					}})
 				}

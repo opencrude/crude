@@ -853,7 +853,10 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   command/background service, never Bubble Tea `Update`. Project switch and
   shutdown wait for active restore ownership.
 - Restores append one hidden `<workspace_history_event>` to provider context and
-  one visible canonical status without rewriting accepted conversation prefix.
+  one visible canonical `history_restored` context-boundary table without
+  rewriting accepted conversation prefix. The completed boundary is static,
+  survives resume, closes the restore modal, and exposes its safety-snapshot
+  inverse from the row context menu; never render it through `ActivityDot`.
 
 ### Shared text input
 - `ui.TextEdit`, `ui.TextField`, and `ui.TextArea` own the non-document editing
@@ -925,6 +928,12 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
 - Completed provider replay metadata is canonicalized before estimation,
   persistence, replay, and logging. OpenAI reasoning fragments merge once;
   signed or encrypted protocol blocks remain byte-exact.
+- Opaque replay state is bound to the producing provider endpoint/protocol and
+  exact request prefix. Request-local filtering never mutates the transcript:
+  cross-provider or changed-prefix turns omit opaque reasoning, while a model
+  switch on the same provider preserves it for the provider's documented
+  compatibility check. Compaction summarizes visible/tool state only and never
+  attempts to inspect ciphertext.
 - Established partial download stalls never replay a stochastic request. Commit
   canonical partial assistant output and append one hidden continuation request;
   if tool-call construction was interrupted, execute none of those calls, drop

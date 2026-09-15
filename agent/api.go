@@ -39,6 +39,9 @@ type completionResult struct {
 	ProviderItems     []provider.ProviderItem
 	Usage             provider.TokenUsage
 	LastPromptTokens  int
+	ReplayScope       string
+	ReplayPrefixHash  string
+	ReplaySourceModel string
 }
 
 func (r completionResult) hasOutput() bool {
@@ -105,6 +108,7 @@ func (a *Agent) completeStreamWithOptions(
 	if a.Provider == nil {
 		return completionResult{}, fmt.Errorf("agent provider is nil")
 	}
+	msgs = provider.FilterReplayMessages(msgs, tools, a.Provider)
 	req := provider.ChatRequest{
 		Model:         a.Model,
 		Messages:      msgs,
@@ -161,6 +165,9 @@ func (a *Agent) completeStreamWithOptions(
 		ctx, client, &req, streamStart,
 		emit, emitThinking, onToolCallStart, onToolCallDelta,
 	)
+	result.ReplayScope = a.Provider.ReplayScope()
+	result.ReplayPrefixHash = provider.RequestPrefixHash(req.Messages, req.Tools)
+	result.ReplaySourceModel = a.Model
 	result.LastPromptTokens = result.Usage.PromptTokens
 	if consumeErr != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -273,7 +280,7 @@ func (a *Agent) consumeStream(
 	finish := func() {
 		result.Content = content.String()
 		result.ReasoningContent = reasoning.String()
-		result.ProviderItems = provider.CanonicalizeProviderItems(result.ProviderItems)
+		result.ProviderItems = provider.StampProviderItems(provider.CanonicalizeProviderItems(result.ProviderItems), a.Provider, a.Model, provider.RequestPrefixHash(req.Messages, req.Tools))
 		result.ToolCalls = finalizeToolCalls(toolCalls)
 		if !reasoningStarted.IsZero() {
 			if reasoningEnded.IsZero() {

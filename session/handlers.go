@@ -15,10 +15,11 @@ import (
 )
 
 func (s *Session) AppendWorkspaceHistoryEvent(content, display string) error {
-	return s.AppendWorkspaceHistoryEventWithID(fmt.Sprintf("history-%d", time.Now().UnixNano()), content, display)
+	eventID := fmt.Sprintf("history-%d", time.Now().UnixNano())
+	return s.AppendWorkspaceHistoryEventWithID(eventID, content, ttypes.ConversationMessage{InternalID: eventID + "-status", Role: "status", Content: display})
 }
 
-func (s *Session) AppendWorkspaceHistoryEventWithID(eventID, content, display string) error {
+func (s *Session) AppendWorkspaceHistoryEventWithID(eventID, content string, status ttypes.ConversationMessage) error {
 	if !s.turnGate.TryLock() {
 		return errors.New("stop the active turn before recording workspace restore")
 	}
@@ -28,8 +29,15 @@ func (s *Session) AppendWorkspaceHistoryEventWithID(eventID, content, display st
 	message.InternalID = eventID
 	message.Origin = provider.OriginRuntimeContext
 	message.Visibility = provider.VisibilityContextOnly
+	status.Role = "status"
+	if status.InternalID == "" {
+		status.InternalID = eventID + "-status"
+	}
+	if status.Time.IsZero() {
+		status.Time = createdAt
+	}
 	meta := sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, DisplayRole: "hidden_wire_context", ContextOnly: true,
-		Snapshots: []ttypes.ConversationMessage{{InternalID: message.InternalID + "-status", Role: "status", Content: display, Time: time.Now()}}}
+		Snapshots: []ttypes.ConversationMessage{status}}
 	s.msgsMu.Lock()
 	for _, existing := range s.msgs {
 		if existing.InternalID == eventID || (existing.EffectiveOrigin() == provider.OriginRuntimeContext && existing.Content.String() == content) {
@@ -91,7 +99,7 @@ func (s *Session) AppendWorkspaceHistoryEventWithID(eventID, content, display st
 // AppendSubAgentHistoryStatus durably adds restore status to a completed
 // child's own transcript. The root context event remains separate because it
 // informs future root requests about the changed workspace.
-func (s *Session) AppendSubAgentHistoryStatus(agentID, eventID, display string) (bool, error) {
+func (s *Session) AppendSubAgentHistoryStatus(agentID, eventID string, status ttypes.ConversationMessage) (bool, error) {
 	if s == nil || s.db == nil || agentID == "" {
 		return false, nil
 	}
@@ -126,12 +134,17 @@ func (s *Session) AppendSubAgentHistoryStatus(agentID, eventID, display string) 
 			}
 		}
 	}
-	message := provider.NewTextMessage("user", "<workspace_history_event>"+display+"</workspace_history_event>")
+	message := provider.NewTextMessage("user", "<workspace_history_event>"+status.Content+"</workspace_history_event>")
 	message.InternalID = eventID + "-wire"
 	message.Origin = provider.OriginRuntimeContext
 	message.Visibility = provider.VisibilityContextOnly
+	status.InternalID = eventID
+	status.Role = "status"
+	if status.Time.IsZero() {
+		status.Time = time.Now()
+	}
 	meta := sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, DisplayRole: "hidden_wire_context", ContextOnly: true,
-		Snapshots: []ttypes.ConversationMessage{{InternalID: eventID, Role: "status", Content: display, Time: time.Now()}}}
+		Snapshots: []ttypes.ConversationMessage{status}}
 	turn := 1
 	if len(rows) > 0 && rows[len(rows)-1].Turn > turn {
 		turn = rows[len(rows)-1].Turn

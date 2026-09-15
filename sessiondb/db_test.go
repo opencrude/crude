@@ -757,6 +757,7 @@ func TestCanonicalConversationSnapshotRoundTripsEveryField(t *testing.T) {
 		ThinkingInterrupted: true, ThinkingDuration: 2 * time.Second,
 		LifecyclePhase: "done", LifecycleProgress: 100, LifecycleProvider: "ollama",
 		LifecycleUploadedBytes: 7, LifecycleTotalBytes: 9,
+		HistoryPathCount: 2, HistoryTargetSnapshot: "target-snapshot", HistorySafetySnapshot: "safety-snapshot",
 		Incomplete: true, IncompleteReason: "partial", SubPaneID: "child-1", PermTag: "always",
 	}
 	message := provider.NewTextMessage("tool", "result")
@@ -784,7 +785,8 @@ func TestContextStateRoundTripsIndependentlyFromDisplayHistory(t *testing.T) {
 		{
 			Role: "user", Origin: provider.OriginCheckpoint, Visibility: provider.VisibilityContextOnly,
 			Content:       provider.TextContent(`<context_checkpoint role="root" version="2">checkpoint</context_checkpoint>`),
-			ProviderItems: []provider.ProviderItem{{Standard: "openai", Type: "reasoning", Data: json.RawMessage(`{"id":"reasoning-1"}`)}},
+			ProviderItems: []provider.ProviderItem{{Standard: "openai", Type: "reasoning", Data: json.RawMessage(`{"id":"reasoning-1"}`), ReplayScope: "scope", SourceModel: "model", PrefixHash: "prefix"}},
+			ReplayScope:   "scope", ReplaySourceModel: "model", ReplayPrefixHash: "prefix",
 		},
 		provider.NewTextMessage("user", "latest request"),
 	}}

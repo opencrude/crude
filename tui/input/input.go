@@ -55,7 +55,7 @@ type CmdInfo struct {
 var availableCmds = []CmdInfo{
 	{Name: "settings", Label: "settings", Desc: "Open session AI settings (models and multi-agent)"},
 	{Name: "model", Label: "model", Desc: "Choose this session's model"},
-	{Name: "undo", Label: "undo", Desc: "Review and restore snapshot-verified changes from this agent"},
+	{Name: "undo", Label: "undo", Desc: "Revert this agent's files; retain conversation history"},
 	{Name: "yolo", Label: "yolo", Desc: "Disable ALL safety checks (DANGEROUS)"},
 	{Name: "sessions", Label: "sessions", Desc: "Browse and resume past sessions"},
 	{Name: "memory", Label: "memory", Desc: "Browse durable workspace memory"},

@@ -104,13 +104,16 @@ func (w *Workspace) AppendHistoryRestoreEvent(result localhistory.RestoreResult)
 	}
 	display := fmt.Sprintf("Restored %d file(s) from Local History · safety snapshot %s", len(result.Paths), shortHistory(result.SafetySnapshotID))
 	hidden := fmt.Sprintf("<workspace_history_event>\nRestored %d paths to snapshot %s. Restore plan: %s. Safety snapshot: %s.\n</workspace_history_event>", len(result.Paths), result.TargetSnapshotID, result.PlanID, result.SafetySnapshotID)
+	status := Message{InternalID: "history-status-" + result.PlanID, Role: MessageRoleStatus, Content: display, Time: time.Now(),
+		LifecyclePhase: "history_restored", LifecycleOperationID: result.PlanID, HistoryPathCount: len(result.Paths),
+		HistoryTargetSnapshot: result.TargetSnapshotID, HistorySafetySnapshot: result.SafetySnapshotID}
 	agentState := frontend.AgentState
 	childPersisted := false
 	if frontend.backend != nil {
-		if err := frontend.backend.AppendWorkspaceHistoryEventWithID("history-restore-"+result.PlanID, hidden, display); err != nil {
+		if err := frontend.backend.AppendWorkspaceHistoryEventWithID("history-restore-"+result.PlanID, hidden, status); err != nil {
 			return err
 		}
-		if child, err := frontend.backend.AppendSubAgentHistoryStatus(result.AgentID, "history-status-"+result.PlanID, display); err != nil {
+		if child, err := frontend.backend.AppendSubAgentHistoryStatus(result.AgentID, status.InternalID, status); err != nil {
 			return err
 		} else if child {
 			childPersisted = true
@@ -124,7 +127,7 @@ func (w *Workspace) AppendHistoryRestoreEvent(result localhistory.RestoreResult)
 		}
 	}
 	if agentState != nil && agentState.Messages != nil {
-		statusID := "history-status-" + result.PlanID
+		statusID := status.InternalID
 		found := false
 		for _, message := range agentState.Messages.Messages() {
 			if message.InternalID == statusID {
@@ -133,7 +136,7 @@ func (w *Workspace) AppendHistoryRestoreEvent(result localhistory.RestoreResult)
 			}
 		}
 		if !found {
-			agentState.Messages.AppendMessage(Message{InternalID: statusID, Role: MessageRoleStatus, Content: display, Time: time.Now()})
+			agentState.Messages.AppendMessage(status)
 		}
 	}
 	if w.HistoryService != nil {

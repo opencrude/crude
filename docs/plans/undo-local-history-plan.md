@@ -423,6 +423,14 @@ restore preview. It never restores immediately. The preview contains only the
 selective inverse of that agent's direct file-tool operation receipts; it never
 includes watcher-only workspace changes.
 
+A successful restore never rewrites accepted conversation history. It appends
+one hidden runtime-context event and one permanent `history_restored` context
+boundary at the exact timeline position where filesystem state changed. The
+boundary uses the compaction table language, records operation/target/safety
+IDs and restored-path count, is static after completion, survives resume, and
+offers the safety-snapshot inverse through its context menu. The restore modal
+closes after success so the boundary is immediately visible.
+
 If the active agent has no verified file changes, it reports that clearly. If
 several concurrent scopes are candidates, it opens a message picker instead of
 guessing.
