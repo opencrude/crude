@@ -323,15 +323,20 @@ func renderErrorMessage(msg types.ChatMessage, ctx renderContext) messageLines {
 }
 
 func renderLifecycleMessage(msg types.ChatMessage, ctx renderContext) messageLines {
-	if msg.LifecycleOperationID != "" || strings.HasPrefix(msg.LifecyclePhase, "compaction_") {
+	if msg.LifecyclePhase == "history_restored" {
+		return renderHistoryRestoreMessage(msg, ctx)
+	}
+	if strings.HasPrefix(msg.LifecyclePhase, "compaction_") {
 		return renderCompactionMessage(msg, ctx)
 	}
 	label := msg.Content
 	role := ui.ColorAccent2
-	marker := ui.ActivityDot(ctx.spinFrame)
-	active := true
+	marker := "●"
+	active := false
 	switch msg.LifecyclePhase {
 	case "preparing":
+		marker = ui.ActivityDot(ctx.spinFrame)
+		active = true
 		label = "Getting next turn ready · ↑ "
 		if msg.LifecycleTotalBytes > 0 {
 			label += fmt.Sprintf("%s / %s · %d%%",
@@ -344,6 +349,8 @@ func renderLifecycleMessage(msg types.ChatMessage, ctx renderContext) messageLin
 		}
 		role = ui.ColorWarning
 	case "waiting_provider":
+		marker = ui.ActivityDot(ctx.spinFrame)
+		active = true
 		providerName := strings.TrimSpace(msg.LifecycleProvider)
 		if providerName == "" {
 			providerName = "provider"
@@ -357,6 +364,8 @@ func renderLifecycleMessage(msg types.ChatMessage, ctx renderContext) messageLin
 		}
 		role = ui.ColorAccent
 	case "compacting":
+		marker = ui.ActivityDot(ctx.spinFrame)
+		active = true
 		label = "Compacting conversation"
 		if msg.LifecycleBeforeTokens > 0 {
 			label += " · " + rendering.FormatTokens(msg.LifecycleBeforeTokens)
@@ -382,6 +391,8 @@ func renderLifecycleMessage(msg types.ChatMessage, ctx renderContext) messageLin
 		marker = "✕"
 		active = false
 	case "cancelling":
+		marker = ui.ActivityDot(ctx.spinFrame)
+		active = true
 		label = "Stopping turn"
 		role = ui.ColorWarning
 	}
@@ -391,6 +402,50 @@ func renderLifecycleMessage(msg types.ChatMessage, ctx renderContext) messageLin
 		{Text: label, Role: ui.ColorMuted},
 	}}
 	return messageLines{lines: []string{line.PlainText()}, native: []PaintLine{line}, frameSensitive: active}
+}
+
+func renderHistoryRestoreMessage(msg types.ChatMessage, ctx renderContext) messageLines {
+	header := buildAssistantHeader("Local History", false, rendering.FormatTimeLabel(msg.Time), ctx.innerW, false)
+	count := msg.HistoryPathCount
+	files := fmt.Sprintf("%d files restored", count)
+	if count == 1 {
+		files = "1 file restored"
+	}
+	rows := []PaintLine{
+		{},
+		header,
+		lifecycleBoundaryLine(ctx.innerW, "✓ Workspace restored", "complete", ui.ColorSuccess),
+		lifecycleBoundaryLine(ctx.innerW, files, "agent-scoped", ui.ColorFg),
+		lifecycleBoundaryLine(ctx.innerW, "Target "+shortHistoryID(msg.HistoryTargetSnapshot), "operation "+shortHistoryID(msg.LifecycleOperationID), ui.ColorMuted),
+		lifecycleBoundaryLine(ctx.innerW, "Safety "+shortHistoryID(msg.HistorySafetySnapshot), "undo available", ui.ColorMuted),
+		lifecycleBoundaryLine(ctx.innerW, "Conversation retained", "context updated", ui.ColorMuted),
+		{},
+	}
+	lines := make([]string, len(rows))
+	for index := range rows {
+		lines[index] = rows[index].PlainText()
+	}
+	return messageLines{lines: lines, native: rows}
+}
+
+func shortHistoryID(value string) string {
+	if len(value) > 12 {
+		return value[:12]
+	}
+	if value == "" {
+		return "unavailable"
+	}
+	return value
+}
+
+func lifecycleMessageFrameSensitive(msg types.ChatMessage) bool {
+	switch msg.LifecyclePhase {
+	case "preparing", "waiting_provider", "compacting", "cancelling",
+		"compaction_extracting", "compaction_retrying", "compaction_committing", "compaction_cancelling":
+		return true
+	default:
+		return false
+	}
 }
 
 func renderCompactionMessage(msg types.ChatMessage, ctx renderContext) messageLines {

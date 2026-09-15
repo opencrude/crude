@@ -138,6 +138,13 @@ func (m *App) openLocalHistoryForMessage(sessionID, messageID, agentID string) t
 	}
 }
 
+func (m *App) openLocalHistoryForSnapshot(snapshotID string) tea.Cmd {
+	if snapshotID == "" || m.openLocalHistoryForMessage("", "", "") == nil {
+		return nil
+	}
+	return m.historyPreviewCmd(historyscreen.PreviewRequest{SnapshotID: snapshotID})
+}
+
 func (m *App) newLocalHistoryWindow(screen *historyscreen.Screen) *wm.FloatingWindow {
 	w, h := fitFloatingSize(m.width, m.height, 82, 28, 58, 16)
 	minW, minH := min(58, w), min(16, h)

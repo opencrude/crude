@@ -317,6 +317,9 @@ type ChatMessage struct {
 	ReasoningDetails  []json.RawMessage `json:"reasoning_details,omitempty"`
 	ReasoningDuration time.Duration     `json:"reasoning_duration,omitempty"`
 	ProviderItems     []ProviderItem    `json:"provider_items,omitempty"`
+	ReplayScope       string            `json:"replay_scope,omitempty"`
+	ReplaySourceModel string            `json:"replay_source_model,omitempty"`
+	ReplayPrefixHash  string            `json:"replay_prefix_hash,omitempty"`
 	ToolError         bool              `json:"tool_error,omitempty"`
 }
 
@@ -390,9 +393,12 @@ type FunctionCall struct {
 // back unchanged on a later request. Examples include OpenAI reasoning items
 // and Anthropic signed thinking blocks.
 type ProviderItem struct {
-	Standard string          `json:"standard"`
-	Type     string          `json:"type"`
-	Data     json.RawMessage `json:"data"`
+	Standard    string          `json:"standard"`
+	Type        string          `json:"type"`
+	Data        json.RawMessage `json:"data"`
+	ReplayScope string          `json:"replay_scope,omitempty"`
+	SourceModel string          `json:"source_model,omitempty"`
+	PrefixHash  string          `json:"prefix_hash,omitempty"`
 }
 
 // TokenUsage is the protocol-neutral token accounting returned by a provider.

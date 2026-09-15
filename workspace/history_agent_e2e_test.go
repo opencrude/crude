@@ -148,6 +148,18 @@ func TestAgentUndoProductionPathPreservesExternalPreimage(t *testing.T) {
 	if err := ws.AppendHistoryRestoreEvent(result); err != nil {
 		t.Fatal(err)
 	}
+	persisted := frontend.backend.MessagesWithMeta()
+	foundBoundary := false
+	for _, row := range persisted {
+		for _, snapshot := range row.Meta.Snapshots {
+			if snapshot.LifecyclePhase == "history_restored" && snapshot.LifecycleOperationID == result.PlanID && snapshot.HistorySafetySnapshot == result.SafetySnapshotID {
+				foundBoundary = true
+			}
+		}
+	}
+	if !foundBoundary {
+		t.Fatal("restore boundary metadata was not persisted")
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)

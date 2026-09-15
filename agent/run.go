@@ -355,6 +355,9 @@ func (a *Agent) Run(
 					Reasoning:         completion.ReasoningContent,
 					ReasoningDuration: completion.ReasoningDuration,
 					ProviderItems:     completion.ProviderItems,
+					ReplayScope:       completion.ReplayScope,
+					ReplayPrefixHash:  completion.ReplayPrefixHash,
+					ReplaySourceModel: completion.ReplaySourceModel,
 				}
 				if len(completion.ToolCalls) > 0 {
 					// A stalled tool-call frame has no valid replay contract. No tool
@@ -493,6 +496,9 @@ func (a *Agent) Run(
 			Reasoning:         completion.ReasoningContent,
 			ReasoningDuration: completion.ReasoningDuration,
 			ProviderItems:     completion.ProviderItems,
+			ReplayScope:       completion.ReplayScope,
+			ReplayPrefixHash:  completion.ReplayPrefixHash,
+			ReplaySourceModel: completion.ReplaySourceModel,
 		}
 		if hasToolCalls {
 			assistantMsg.ToolCalls = toolCalls

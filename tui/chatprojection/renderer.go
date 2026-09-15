@@ -752,7 +752,7 @@ func (r *Renderer) InvalidateCache() {
 			msg.CachedLines = nil
 			r.vl.InvalidateItem(msg.InternalID)
 		}
-		if msg.Role == types.RoleStatus {
+		if msg.Role == types.RoleStatus && lifecycleMessageFrameSensitive(*msg) {
 			msg.CachedLines = nil
 			r.vl.InvalidateItem(msg.InternalID)
 		}

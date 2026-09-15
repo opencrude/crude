@@ -681,8 +681,8 @@ func TestPaletteUndoRedoLabelsDisambiguated(t *testing.T) {
 	if !ok {
 		t.Fatal("palette missing system.undo")
 	}
-	if su.Label != "Review Message Changes" {
-		t.Errorf("system.undo label = %q, want %q", su.Label, "Review Message Changes")
+	if su.Label != "Revert Agent Files" {
+		t.Errorf("system.undo label = %q, want %q", su.Label, "Revert Agent Files")
 	}
 	// Sanity: the two labels must not be equal.
 	if eu.Label == su.Label {

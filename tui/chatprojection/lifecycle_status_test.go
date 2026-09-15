@@ -38,6 +38,53 @@ func TestLifecycleStatusRendersAsToolShapedChatRow(t *testing.T) {
 	}
 }
 
+func TestPlainTerminalStatusNeverAnimates(t *testing.T) {
+	msg := types.ChatMessage{InternalID: "history-status", Role: types.RoleStatus, Content: "Restored 1 file from Local History"}
+	first := renderLifecycleMessage(msg, renderContext{spinFrame: 0})
+	second := renderLifecycleMessage(msg, renderContext{spinFrame: ui.ActivityBlinkPhaseMillis})
+	if first.frameSensitive || second.frameSensitive {
+		t.Fatalf("plain status remained frame-sensitive: first=%v second=%v", first.frameSensitive, second.frameSensitive)
+	}
+	if len(first.native) != 1 || len(second.native) != 1 || first.native[0].PlainText() != second.native[0].PlainText() {
+		t.Fatalf("plain status changed across animation phases: first=%q second=%q", first.native[0].PlainText(), second.native[0].PlainText())
+	}
+	if !strings.Contains(first.native[0].PlainText(), "● Restored") {
+		t.Fatalf("plain status marker=%q", first.native[0].PlainText())
+	}
+}
+
+func TestHistoryRestoreUsesPermanentContextBoundaryTable(t *testing.T) {
+	msg := types.ChatMessage{InternalID: "history", Role: types.RoleStatus, LifecyclePhase: "history_restored", LifecycleOperationID: "plan-1234567890abcdef",
+		HistoryPathCount: 1, HistoryTargetSnapshot: "target-1234567890", HistorySafetySnapshot: "safety-1234567890", Time: time.Now()}
+	rendered := renderLifecycleMessage(msg, renderContext{innerW: 92, spinFrame: 0})
+	if rendered.frameSensitive || len(rendered.native) != 8 {
+		t.Fatalf("history boundary rows=%d frameSensitive=%v", len(rendered.native), rendered.frameSensitive)
+	}
+	joined := strings.Join(rendered.lines, "\n")
+	for _, want := range []string{"Workspace restored", "1 file restored", "agent-scoped", "Target target-12345", "Safety safety-12345", "Conversation retained", "context updated"} {
+		if !strings.Contains(joined, want) {
+			t.Fatalf("history boundary missing %q:\n%s", want, joined)
+		}
+	}
+	second := renderLifecycleMessage(msg, renderContext{innerW: 92, spinFrame: ui.ActivityBlinkPhaseMillis})
+	if strings.Join(second.lines, "\n") != joined {
+		t.Fatal("history boundary changed across animation phases")
+	}
+}
+
+func TestLifecycleAnimationRequiresExplicitActivePhase(t *testing.T) {
+	for _, phase := range []string{"", "history_restored", "compacted", "compaction_completed", "compaction_cancelled", "compaction_failed", "compaction_interrupted", "unknown_future_state"} {
+		if lifecycleMessageFrameSensitive(types.ChatMessage{Role: types.RoleStatus, LifecyclePhase: phase}) {
+			t.Fatalf("terminal or unknown phase %q animated", phase)
+		}
+	}
+	for _, phase := range []string{"preparing", "waiting_provider", "compacting", "cancelling", "compaction_extracting", "compaction_retrying", "compaction_committing", "compaction_cancelling"} {
+		if !lifecycleMessageFrameSensitive(types.ChatMessage{Role: types.RoleStatus, LifecyclePhase: phase}) {
+			t.Fatalf("active phase %q did not animate", phase)
+		}
+	}
+}
+
 func TestLifecycleStatusProjectionTransformsInPlaceToTool(t *testing.T) {
 	renderer := NewRenderer(theme.DefaultDark())
 	renderer.SetSize(100, 20)

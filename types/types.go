@@ -57,6 +57,9 @@ type ConversationMessage struct {
 	LifecycleRetryAttempt  int           `json:"lifecycle_retry_attempt,omitempty"`
 	LifecycleRetryLimit    int           `json:"lifecycle_retry_limit,omitempty"`
 	LifecycleContextWindow int           `json:"lifecycle_context_window,omitempty"`
+	HistoryPathCount       int           `json:"history_path_count,omitempty"`
+	HistoryTargetSnapshot  string        `json:"history_target_snapshot,omitempty"`
+	HistorySafetySnapshot  string        `json:"history_safety_snapshot,omitempty"`
 	Incomplete             bool          `json:"incomplete,omitempty"`
 	IncompleteReason       string        `json:"incomplete_reason,omitempty"`
 	SubPaneID              string        `json:"sub_pane_id,omitempty"`
@@ -616,6 +619,9 @@ type ChatMessage struct {
 	LifecycleRetryAttempt  int
 	LifecycleRetryLimit    int
 	LifecycleContextWindow int
+	HistoryPathCount       int
+	HistoryTargetSnapshot  string
+	HistorySafetySnapshot  string
 
 	Incomplete       bool
 	IncompleteReason string

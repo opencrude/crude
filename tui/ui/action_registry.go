@@ -671,8 +671,8 @@ var defaultActions = []*ActionDef{
 	},
 	{
 		ID:          "system.undo",
-		Label:       "Review Message Changes",
-		Description: "preview and safely restore workspace changes from the latest message",
+		Label:       "Revert Agent Files",
+		Description: "preview this agent's file rollback while retaining conversation history",
 		Icon:        "⤺",
 		Category:    "System",
 	},

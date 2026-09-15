@@ -210,6 +210,19 @@ once before they reach:
 Signed and encrypted protocol blocks remain byte-exact. Canonicalization is
 protocol-owned and covered by round-trip tests.
 
+Opaque replay items are also bound to the producing provider endpoint/protocol
+and the exact request prefix (system, tools, and prior messages). Crude never
+sends them to another endpoint merely because it implements the same wire
+format. A changed prefix drops the item from that request copy without editing
+the immutable transcript. A model switch within the same provider retains the
+byte-exact item and lets the provider enforce its documented model-family or
+producer-model compatibility rules.
+
+Compaction never decrypts or summarizes ciphertext. Its extraction stages see
+the provider-neutral visible transcript and tool state. Atomic checkpoint commit
+then replaces active context with the checkpoint plus retained human intent;
+old signed/encrypted items remain only in the immutable full transcript.
+
 Token estimation counts semantic content once. If reasoning text and replay
 metadata represent the same content, the text wins. Opaque canonical replay data
 is counted only when no provider measurement or semantic equivalent exists.
