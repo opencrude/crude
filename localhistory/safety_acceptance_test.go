@@ -558,3 +558,55 @@ func TestHardlinkRestoreRejectsIgnoredAliasOutsideSelection(t *testing.T) {
 		t.Fatalf("ignored alias changed: %q", got)
 	}
 }
+
+func TestExternalRestoreRejectsReplacedParentWithMatchingFile(t *testing.T) {
+	store, _ := newTestStore(t)
+	externalRoot := filepath.Join(t.TempDir(), "external")
+	if err := os.Mkdir(externalRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	externalPath := filepath.Join(externalRoot, "agent.txt")
+	before, err := store.Snapshot(context.Background(), SnapshotOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.BeginMessageScope("session", "message", before.ID, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	key := filepath.ToSlash(externalPath)
+	if err := store.RecordAgentOperation(context.Background(), AgentOperation{
+		ID: "external-parent", SessionID: "session", MessageID: "message", AgentID: "agent", Source: "write_file",
+		Paths: []OperationPath{{Path: key, After: &OperationState{Type: EntryFile, Mode: 0o644, Data: []byte("agent")}}},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CompleteAgentOperation("external-parent", true); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, externalRoot, "agent.txt", []byte("agent"), 0o644)
+	after, err := store.Snapshot(context.Background(), SnapshotOptions{ParentID: before.ID})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := store.CloseMessageScope("session", "message", after.ID, nil, nil, time.Now()); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := store.PlanAgentRestore(context.Background(), "session", "message", "agent", SnapshotOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	backup := externalRoot + "-original"
+	if err := os.Rename(externalRoot, backup); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(externalRoot, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeTestFile(t, externalRoot, "agent.txt", []byte("agent"), 0o644)
+	if _, err := store.ApplyRestore(context.Background(), plan.ID, []string{key}); err == nil || !strings.Contains(err.Error(), "parent directory changed") {
+		t.Fatalf("restore error=%v", err)
+	}
+	if got := string(readTestFile(t, externalRoot, "agent.txt")); got != "agent" {
+		t.Fatalf("replacement parent file changed: %q", got)
+	}
+}

@@ -3,9 +3,7 @@ package session
 import (
 	"context"
 	"fmt"
-	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"crude/agent"
@@ -58,10 +56,6 @@ func (s *Session) buildToolFn(multiAgent bool, turnProvider *provider.Provider, 
 			}
 		}
 		s.resolveRelativeParams(tool, params)
-		if err := s.validateWorkspaceMutation(tool, params); err != nil {
-			content := "Error: " + err.Error()
-			return tools.ToolResult{Content: content}, fmt.Errorf("%s", content)
-		}
 		s.recordToolTouch(tool, params)
 		if result, handled, err := s.executeMemoryTool(ctx, tool, params); handled {
 			return result, err
@@ -199,69 +193,6 @@ func (s *Session) buildToolFn(multiAgent bool, turnProvider *provider.Provider, 
 			}
 			return result, nil
 		}
-	}
-}
-
-func (s *Session) validateWorkspaceMutation(tool string, params map[string]any) error {
-	for _, path := range writeToolTargets(tool, params) {
-		inside, err := pathInsideWorkspace(s.WorkDir(), path)
-		if err != nil {
-			return err
-		}
-		if !inside {
-			return fmt.Errorf("agent file mutation escapes workspace: %s", path)
-		}
-	}
-	return nil
-}
-
-func pathInsideWorkspace(root, path string) (bool, error) {
-	root, err := filepath.Abs(root)
-	if err != nil {
-		return false, err
-	}
-	if resolved, err := filepath.EvalSymlinks(root); err == nil {
-		root = resolved
-	}
-	abs, err := filepath.Abs(path)
-	if err != nil {
-		return false, err
-	}
-	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-		abs = resolved
-	} else {
-		parent, err := resolveExistingMutationParent(filepath.Dir(abs))
-		if err != nil {
-			return false, err
-		}
-		abs = filepath.Join(parent, filepath.Base(abs))
-	}
-	rel, err := filepath.Rel(root, abs)
-	if err != nil {
-		return false, err
-	}
-	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)), nil
-}
-
-func resolveExistingMutationParent(parent string) (string, error) {
-	var missing []string
-	for {
-		resolved, err := filepath.EvalSymlinks(parent)
-		if err == nil {
-			for index := len(missing) - 1; index >= 0; index-- {
-				resolved = filepath.Join(resolved, missing[index])
-			}
-			return resolved, nil
-		}
-		if !os.IsNotExist(err) {
-			return "", err
-		}
-		next := filepath.Dir(parent)
-		if next == parent {
-			return "", err
-		}
-		missing = append(missing, filepath.Base(parent))
-		parent = next
 	}
 }
 

@@ -474,10 +474,10 @@ func (s *LocalHistoryService) operationRelativePath(path string, preserveLeaf bo
 		abs = filepath.Join(parent, filepath.Base(abs))
 	}
 	rel, err := filepath.Rel(root, abs)
-	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("agent mutation path escapes workspace: %s", path)
+	if err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return filepath.ToSlash(rel), nil
 	}
-	return filepath.ToSlash(rel), nil
+	return filepath.ToSlash(filepath.Clean(abs)), nil
 }
 
 func canonicalExistingPath(path string) (string, error) {

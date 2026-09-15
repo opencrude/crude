@@ -138,6 +138,61 @@ func (s *Store) snapshot(ctx context.Context, opts SnapshotOptions) (Manifest, e
 	return manifest, nil
 }
 
+func (s *Store) snapshotIncludingPaths(ctx context.Context, opts SnapshotOptions, paths []string) (Manifest, error) {
+	entries, err := s.scan(ctx, opts, true)
+	if err != nil {
+		return Manifest{}, err
+	}
+	tracked := make([]string, 0, len(paths))
+	for _, key := range paths {
+		key, ok := cleanOperationPath(key)
+		if !ok || !filepath.IsAbs(filepath.FromSlash(key)) {
+			continue
+		}
+		tracked = append(tracked, key)
+		entry, exists, err := s.captureExternalEntry(ctx, key)
+		if err != nil {
+			return Manifest{}, err
+		}
+		if exists {
+			entries[key] = entry
+		}
+	}
+	manifest := Manifest{Version: FormatVersion, ParentID: opts.ParentID, CreatedAt: time.Now().UnixNano(), Kind: opts.Kind, Label: opts.Label, Entries: entries, TrackedPaths: sortedUnique(tracked)}
+	if manifest.Kind == "" {
+		manifest.Kind = "automatic"
+	}
+	if err := s.saveManifest(&manifest); err != nil {
+		return Manifest{}, err
+	}
+	if err := s.recordSnapshot(manifest); err != nil {
+		return Manifest{}, err
+	}
+	return manifest, nil
+}
+
+func (s *Store) captureExternalEntry(ctx context.Context, key string) (Entry, bool, error) {
+	path, err := s.workspacePath(key)
+	if err != nil {
+		return Entry{}, false, err
+	}
+	info, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return Entry{}, false, nil
+	}
+	if err != nil {
+		return Entry{}, false, err
+	}
+	if info.IsDir() {
+		return Entry{Type: EntryDirectory, Mode: storedMode(info.Mode())}, true, nil
+	}
+	if !info.Mode().IsRegular() {
+		return Entry{}, false, fmt.Errorf("localhistory: unsupported external safety path %s", key)
+	}
+	entry, err := s.storeRegularFile(ctx, path)
+	return entry, err == nil, err
+}
+
 func (s *Store) scan(ctx context.Context, opts SnapshotOptions, storeObjects bool) (map[string]Entry, error) {
 	if err := s.validateWorkspaceRoot(); err != nil {
 		return nil, err

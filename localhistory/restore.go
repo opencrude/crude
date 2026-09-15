@@ -76,11 +76,26 @@ func (s *Store) planRestore(ctx context.Context, targetSnapshotID string, opts S
 	if err != nil {
 		return RestorePlan{}, err
 	}
+	for _, path := range target.TrackedPaths {
+		if !filepath.IsAbs(filepath.FromSlash(path)) {
+			continue
+		}
+		entry, err := s.currentEntry(path)
+		if err != nil {
+			return RestorePlan{}, err
+		}
+		if entry != nil {
+			current[path] = *entry
+		}
+	}
 	paths := make(map[string]struct{}, len(target.Entries)+len(current))
 	for path := range target.Entries {
 		paths[path] = struct{}{}
 	}
 	for path := range current {
+		paths[path] = struct{}{}
+	}
+	for _, path := range target.TrackedPaths {
 		paths[path] = struct{}{}
 	}
 	changes := make([]Change, 0)
@@ -91,6 +106,12 @@ func (s *Store) planRestore(ctx context.Context, targetSnapshotID string, opts S
 			continue
 		}
 		change := Change{Path: path}
+		if filepath.IsAbs(filepath.FromSlash(path)) {
+			change.ParentIdentity, err = s.pathParentIdentity(path)
+			if err != nil {
+				change.UnsafeReason = "cannot verify restore parent: " + err.Error()
+			}
+		}
 		switch {
 		case !targetOK:
 			change.Action = ChangeDelete
@@ -160,6 +181,7 @@ func (s *Store) guardDirectoryDeletions(changes []Change) {
 			change.UnsafeReason = err.Error()
 			continue
 		}
+		external := filepath.IsAbs(filepath.FromSlash(change.Path))
 		err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 			if walkErr != nil {
 				return walkErr
@@ -167,11 +189,15 @@ func (s *Store) guardDirectoryDeletions(changes []Change) {
 			if path == root {
 				return nil
 			}
-			rel, err := filepath.Rel(s.workspaceRoot, path)
-			if err != nil {
-				return err
+			key := filepath.ToSlash(path)
+			if !external {
+				rel, err := filepath.Rel(s.workspaceRoot, path)
+				if err != nil {
+					return err
+				}
+				key = filepath.ToSlash(rel)
 			}
-			if !deletions[filepath.ToSlash(rel)] {
+			if !deletions[key] {
 				return errors.New("directory contains data outside the restore selection")
 			}
 			return nil
@@ -302,7 +328,7 @@ func (s *Store) ApplyRestoreChoices(ctx context.Context, planID string, selected
 	safetyOpts.Label = "Safety snapshot before restore " + plan.ID[:12]
 	safetyOpts.ParentID = ""
 	safetyOpts.IncludePaths = append([]string(nil), paths...)
-	safety, err := s.snapshot(ctx, safetyOpts)
+	safety, err := s.snapshotIncludingPaths(ctx, safetyOpts, paths)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("localhistory: capture safety snapshot: %w", err)
 	}
@@ -350,7 +376,7 @@ func (s *Store) ApplyRestoreChoices(ctx context.Context, planID string, selected
 	afterOpts.Label = "After restore " + plan.ID[:12]
 	afterOpts.ParentID = safety.ID
 	afterOpts.IncludePaths = append([]string(nil), paths...)
-	after, err := s.snapshot(ctx, afterOpts)
+	after, err := s.snapshotIncludingPaths(ctx, afterOpts, paths)
 	if err != nil {
 		return rollback(fmt.Errorf("after-restore snapshot failed: %w", err), changes)
 	}
@@ -524,6 +550,9 @@ func (s *Store) validateChanges(ctx context.Context, changes []Change) error {
 		if change.UnsafeReason != "" {
 			return fmt.Errorf("localhistory: unsafe restore path %s: %s", change.Path, change.UnsafeReason)
 		}
+		if err := s.validatePathParentIdentity(change); err != nil {
+			return err
+		}
 		current, err := s.currentEntryExpected(change.Path, change.Current)
 		if err != nil {
 			return err
@@ -593,12 +622,22 @@ func (s *Store) currentEntry(rel string) (*Entry, error) {
 	if err != nil {
 		return nil, err
 	}
-	exact, err := exactRelativePathExists(s.workspaceRoot, rel)
-	if err != nil {
-		return nil, err
-	}
-	if !exact {
-		return nil, nil
+	if filepath.IsAbs(filepath.FromSlash(rel)) {
+		exact, err := exactAbsolutePathExists(path)
+		if err != nil {
+			return nil, err
+		}
+		if !exact {
+			return nil, nil
+		}
+	} else {
+		exact, err := exactRelativePathExists(s.workspaceRoot, rel)
+		if err != nil {
+			return nil, err
+		}
+		if !exact {
+			return nil, nil
+		}
 	}
 	info, err := os.Lstat(path)
 	if os.IsNotExist(err) {
@@ -626,6 +665,16 @@ func (s *Store) currentEntry(rel string) (*Entry, error) {
 		return nil, fmt.Errorf("localhistory: unsupported current path %s", rel)
 	}
 	return &entry, nil
+}
+
+func exactAbsolutePathExists(path string) (bool, error) {
+	volume := filepath.VolumeName(path)
+	root := volume + string(filepath.Separator)
+	rel, err := filepath.Rel(root, path)
+	if err != nil {
+		return false, err
+	}
+	return exactRelativePathExists(root, filepath.ToSlash(rel))
 }
 
 func (s *Store) currentEntryExpected(rel string, expected *Entry) (*Entry, error) {
@@ -688,10 +737,21 @@ func entryPointersEqual(a, b *Entry) bool {
 }
 
 func (s *Store) workspacePath(rel string) (string, error) {
+	native := filepath.Clean(filepath.FromSlash(rel))
+	if filepath.IsAbs(native) {
+		volume := filepath.VolumeName(native)
+		if native == string(filepath.Separator) || native == volume+string(filepath.Separator) {
+			return "", errors.New("localhistory: refusing filesystem-root operation")
+		}
+		if err := validateAbsolutePathParents(native); err != nil {
+			return "", err
+		}
+		return native, nil
+	}
 	if err := s.validateWorkspaceRoot(); err != nil {
 		return "", err
 	}
-	if rel == "" || filepath.IsAbs(rel) {
+	if rel == "" {
 		return "", errors.New("localhistory: invalid workspace path")
 	}
 	clean := filepath.Clean(filepath.FromSlash(rel))
@@ -721,6 +781,33 @@ func (s *Store) workspacePath(rel string) (string, error) {
 		}
 	}
 	return path, nil
+}
+
+func validateAbsolutePathParents(path string) error {
+	parent := filepath.Dir(path)
+	volume := filepath.VolumeName(parent)
+	relative := strings.TrimPrefix(parent, volume)
+	current := volume + string(filepath.Separator)
+	for _, part := range strings.Split(filepath.ToSlash(relative), "/") {
+		if part == "" || part == "." {
+			continue
+		}
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if os.IsNotExist(err) {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("localhistory: absolute path has symlink parent %s", current)
+		}
+		if !info.IsDir() {
+			return fmt.Errorf("localhistory: absolute path parent is not a directory: %s", current)
+		}
+	}
+	return nil
 }
 
 func (s *Store) safeSymlink(rel, target string) bool {
@@ -782,7 +869,7 @@ func (s *Store) applySnapshotPaths(ctx context.Context, changes []Change, inject
 		if change.Target == nil || change.Target.Type != EntryFile {
 			continue
 		}
-		stagePath := filepath.Join(stageRoot, filepath.FromSlash(change.Path))
+		stagePath := filepath.Join(stageRoot, sha256Hex([]byte(change.Path)))
 		if err := s.materializeFile(change.Target.Hash, stagePath); err != nil {
 			return fmt.Errorf("materialize %s: %w", change.Path, err)
 		}
@@ -863,6 +950,9 @@ func (s *Store) applySnapshotPaths(ctx context.Context, changes []Change, inject
 			}
 		}
 		if inject {
+			if err := s.validatePathParentIdentity(change); err != nil {
+				return fail(err)
+			}
 			current, err := s.currentEntryExpected(change.Path, change.Current)
 			if err != nil {
 				return fail(err)
@@ -922,6 +1012,37 @@ func (s *Store) applySnapshotPaths(ctx context.Context, changes []Change, inject
 		if err := os.Chmod(path, os.FileMode(change.Target.Mode)); err != nil {
 			return fail(err)
 		}
+	}
+	return nil
+}
+
+func (s *Store) pathParentIdentity(key string) (string, error) {
+	path, err := s.workspacePath(key)
+	if err != nil {
+		return "", err
+	}
+	parent := filepath.Dir(path)
+	info, err := os.Stat(parent)
+	if err != nil {
+		return "", err
+	}
+	identity, ok := fileIdentityKey(parent, info)
+	if !ok {
+		return "", fmt.Errorf("localhistory: cannot identify parent directory %s", parent)
+	}
+	return identity, nil
+}
+
+func (s *Store) validatePathParentIdentity(change Change) error {
+	if change.ParentIdentity == "" {
+		return nil
+	}
+	identity, err := s.pathParentIdentity(change.Path)
+	if err != nil {
+		return err
+	}
+	if identity != change.ParentIdentity {
+		return fmt.Errorf("localhistory: parent directory changed after preview for %s", change.Path)
 	}
 	return nil
 }

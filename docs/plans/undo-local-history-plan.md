@@ -570,6 +570,11 @@ directories do not.
 - Persist direct `(operation_id, session_id, message_id, agent_id)` write-ahead
   receipts with every path's exact preimage and intended postimage before the
   first filesystem mutation.
+- Operation receipts cover every direct agent mutation allowed by its policy,
+  both inside and outside the project. Workspace paths use relative keys;
+  external paths use canonical absolute keys and are explicitly visible in the
+  preview. Restore safety/after manifests carry selected external paths,
+  including absence, so the safety-snapshot inverse is complete.
 - Build selective inverse plans from operation preimages, with strict reverse
   text merge for non-overlapping later edits. Do not treat claims, raw
   arguments, watcher timing, or opaque command effects as agent-owned changes.
