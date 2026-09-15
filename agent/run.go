@@ -544,17 +544,11 @@ func (a *Agent) Run(
 
 		results := make([]execResult, len(toolCalls))
 		receivedResults := make([]bool, len(toolCalls))
-	collectResults:
 		for received := 0; received < len(toolCalls); received++ {
-			select {
-			case r := <-resultCh:
-				if r.index >= 0 && r.index < len(results) {
-					results[r.index] = r
-					receivedResults[r.index] = true
-				}
-			case <-ctx.Done():
-				l.Warn("CANCEL", "context_cancelled", "step", step, "reason", ctx.Err().Error())
-				break collectResults
+			r := <-resultCh
+			if r.index >= 0 && r.index < len(results) {
+				results[r.index] = r
+				receivedResults[r.index] = true
 			}
 		}
 		for i := range results {

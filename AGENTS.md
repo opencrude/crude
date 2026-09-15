@@ -842,6 +842,13 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
 - `/undo` always opens preview. Conflicts require an explicit exact choice;
   non-conflicting later text edits may use the all-hunks-applied reverse merge.
   Esc, close, or an empty selection never changes files.
+- Agent undo is operation-scoped, not a message-wide workspace reset. Direct
+  file tools durably record exact preimages and intended postimages before the
+  first mutation; failure to persist aborts the tool. Watcher-only, editor,
+  external, and opaque-command changes remain workspace history but are never
+  assigned to an agent. Selective undo reverses operation receipts, preserving
+  pre-operation external state and failing closed across overlapping/later
+  ownership.
 - Snapshot, SQLite, verification, pruning, and restore work always runs in a
   command/background service, never Bubble Tea `Update`. Project switch and
   shutdown wait for active restore ownership.

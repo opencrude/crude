@@ -279,9 +279,15 @@ func (t *displayMetaTracker) get(toolID string) sessiondb.DisplayMeta {
 }
 
 func (s *Session) HasMessages() bool {
-	s.msgCounterMu.Lock()
-	defer s.msgCounterMu.Unlock()
-	return s.msgCounter > 0
+	s.msgsMu.Lock()
+	hasMessages := len(s.msgs) > 0
+	s.msgsMu.Unlock()
+	if !hasMessages {
+		s.writeMu.Lock()
+		hasMessages = len(s.writeBuf) > 0
+		s.writeMu.Unlock()
+	}
+	return hasMessages
 }
 
 func (s *Session) MessagesWithMeta() []sessiondb.MessageWithMeta {

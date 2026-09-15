@@ -130,7 +130,7 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 			m.Feedback.NotifyError("Stop the active turn before undoing file operations")
 			break
 		}
-		return m.openLatestHistoryCmd()
+		return m.openLatestHistoryCmd(agentID)
 	case "/undo-n", "/undo-all":
 		m.Feedback.NotifyError("Legacy destructive undo commands were removed. Use /undo to review message changes safely.")
 	default:

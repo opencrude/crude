@@ -2,7 +2,10 @@ package session
 
 import (
 	"context"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -30,6 +33,8 @@ import (
 // Must be large enough to handle bursts of concurrent sub-agent completions
 // without dropping wake events.
 const WakeChBufSize = 32
+
+var ErrHistoryDisabled = errors.New("local history disabled")
 
 type EventSender interface {
 	SendAgentEvent(typ string, data any)
@@ -68,14 +73,11 @@ type Session struct {
 	// consolidation) for this session.
 	memoryJobs memoryJobState
 
-	msgs         []provider.ChatMessage
-	msgTurns     []int
-	displayMetas []sessiondb.DisplayMeta
-	createdAts   []int64
-	msgsMu       sync.Mutex
-	msgCounter   int
-	msgCounterMu sync.Mutex
-
+	msgs              []provider.ChatMessage
+	msgTurns          []int
+	displayMetas      []sessiondb.DisplayMeta
+	createdAts        []int64
+	msgsMu            sync.Mutex
 	systemPromptMu    sync.Mutex
 	systemPrompts     map[bool]string
 	activeContext     []provider.ChatMessage
@@ -91,9 +93,6 @@ type Session struct {
 	usageMu      sync.RWMutex
 	usageRecords map[string]sessiondb.UsageRecord
 	tokens       *TokenTracker
-
-	autoHandleCounter int
-	autoHandleMu      sync.Mutex
 
 	toolCallCount   int
 	toolCallCountMu sync.Mutex
@@ -143,6 +142,52 @@ type Session struct {
 	historyMu          sync.RWMutex
 	historyStart       func(context.Context, string, string) error
 	historyEnd         func(context.Context, string, string) error
+	historyContinue    func(context.Context, string, string) error
+	historyContinueEnd func(context.Context, string, string) error
+	beforeTurn         func(context.Context, string) error
+	historyMutation    func(context.Context, HistoryMutation) error
+	historyWg          sync.WaitGroup
+	historyFinalizers  atomic.Int32
+}
+
+// HistoryMutation is a successful, direct filesystem mutation reported by an
+// agent. Local History verifies these targets against immutable snapshots before
+// allowing restore; the report alone is never restore authority.
+type HistoryMutation struct {
+	SessionID string
+	MessageID string
+	AgentID   string
+	Receipt   fileio.MutationReceipt
+	Committed *bool
+}
+
+type historyScope struct {
+	sessionID string
+	messageID string
+	agentID   string
+}
+
+type historyScopeKey struct{}
+
+func withHistoryScope(ctx context.Context, sessionID, messageID, agentID string) context.Context {
+	return context.WithValue(ctx, historyScopeKey{}, historyScope{sessionID: sessionID, messageID: messageID, agentID: agentID})
+}
+
+func withHistoryActor(ctx context.Context, agentID string) context.Context {
+	scope, ok := historyScopeFromContext(ctx)
+	if !ok {
+		return ctx
+	}
+	scope.agentID = agentID
+	return context.WithValue(ctx, historyScopeKey{}, scope)
+}
+
+func historyScopeFromContext(ctx context.Context) (historyScope, bool) {
+	if ctx == nil {
+		return historyScope{}, false
+	}
+	scope, ok := ctx.Value(historyScopeKey{}).(historyScope)
+	return scope, ok && scope.sessionID != "" && scope.messageID != "" && scope.agentID != ""
 }
 
 func (s *Session) SetHistoryHooks(start, end func(context.Context, string, string) error) {
@@ -150,12 +195,90 @@ func (s *Session) SetHistoryHooks(start, end func(context.Context, string, strin
 	s.historyStart, s.historyEnd = start, end
 	s.historyMu.Unlock()
 }
-func (s *Session) HasActiveTurns() bool { return s != nil && s.activeTurns.Load() > 0 }
+
+func (s *Session) SetHistoryContinuationHooks(start, end func(context.Context, string, string) error) {
+	s.historyMu.Lock()
+	s.historyContinue, s.historyContinueEnd = start, end
+	s.historyMu.Unlock()
+}
+
+func (s *Session) SetBeforeTurnHook(hook func(context.Context, string) error) {
+	s.historyMu.Lock()
+	s.beforeTurn = hook
+	s.historyMu.Unlock()
+}
+
+func (s *Session) runBeforeTurn(ctx context.Context) error {
+	s.historyMu.RLock()
+	hook := s.beforeTurn
+	s.historyMu.RUnlock()
+	if hook == nil {
+		return nil
+	}
+	return hook(ctx, s.sessionID)
+}
+
+func (s *Session) SetHistoryMutationHook(record func(context.Context, HistoryMutation) error) {
+	s.historyMu.Lock()
+	s.historyMutation = record
+	s.historyMu.Unlock()
+}
+
+func (s *Session) HasActiveTurns() bool {
+	if s == nil {
+		return false
+	}
+	return s.activeTurns.Load() > 0 || s.historyFinalizers.Load() > 0 ||
+		(s.subAgentSup != nil && s.subAgentSup.Running()) || (s.asyncMgr != nil && s.asyncMgr.Running())
+}
+
+func newMessageID() string {
+	var value [16]byte
+	if _, err := rand.Read(value[:]); err != nil {
+		panic(fmt.Sprintf("session: generate message ID: %v", err))
+	}
+	return "msg-" + hex.EncodeToString(value[:])
+}
 
 func (s *Session) historyHooks() (func(context.Context, string, string) error, func(context.Context, string, string) error) {
 	s.historyMu.RLock()
 	defer s.historyMu.RUnlock()
 	return s.historyStart, s.historyEnd
+}
+
+func (s *Session) historyContinuationHooks() (func(context.Context, string, string) error, func(context.Context, string, string) error) {
+	s.historyMu.RLock()
+	defer s.historyMu.RUnlock()
+	return s.historyContinue, s.historyContinueEnd
+}
+
+func (s *Session) prepareHistoryMutation(ctx context.Context, receipt fileio.MutationReceipt) (fileio.MutationComplete, error) {
+	if !receipt.HasChanges() {
+		return nil, nil
+	}
+	scope, ok := historyScopeFromContext(ctx)
+	if !ok || len(receipt.Paths) == 0 {
+		return nil, nil
+	}
+	s.historyMu.RLock()
+	record := s.historyMutation
+	s.historyMu.RUnlock()
+	if record == nil {
+		return nil, nil
+	}
+	if err := record(ctx, HistoryMutation{SessionID: scope.sessionID, MessageID: scope.messageID, AgentID: scope.agentID, Receipt: receipt}); err != nil {
+		if s.logger != nil {
+			s.logger.Warn("HISTORY", "agent_mutation_prepare_failed", "agent_id", scope.agentID, "source", receipt.OperationName, "error", err.Error())
+		}
+		return nil, err
+	}
+	return func(operationID string, committed bool) error {
+		completion := committed
+		return record(context.Background(), HistoryMutation{
+			SessionID: scope.sessionID, MessageID: scope.messageID, AgentID: scope.agentID,
+			Receipt: fileio.MutationReceipt{OperationID: operationID, OperationName: receipt.OperationName}, Committed: &completion,
+		})
+	}, nil
 }
 
 // New creates a backend session in the global sessions directory.
@@ -332,6 +455,18 @@ func (s *Session) Close() {
 		s.CloseOrchestrator(id)
 	}
 	s.orchWg.Wait()
+	if s.asyncMgr != nil {
+		s.asyncMgr.CloseAndWait()
+	}
+	if s.subAgentSup != nil {
+		s.subAgentSup.SessionCancel()
+		for _, h := range s.subAgentSup.Manager().ActiveHandles() {
+			s.subAgentSup.Manager().Cancel(h.Spec.ID)
+			s.subAgentSup.FileOwnership().Release(h.Spec.ID)
+		}
+		s.subAgentSup.Wait()
+	}
+	s.historyWg.Wait()
 
 	s.flushWriteBufSync()
 
@@ -343,15 +478,6 @@ func (s *Session) Close() {
 		s.editor.Close()
 	}
 	hasMsgs := s.HasMessages()
-
-	if s.subAgentSup != nil {
-		s.subAgentSup.SessionCancel()
-		for _, h := range s.subAgentSup.Manager().ActiveHandles() {
-			s.subAgentSup.Manager().Cancel(h.Spec.ID)
-			s.subAgentSup.FileOwnership().Release(h.Spec.ID)
-		}
-		s.subAgentSup.Wait()
-	}
 
 	if s.db != nil {
 		if err := persistConversationState(
@@ -711,6 +837,9 @@ func (s *Session) isHardCancelled() bool {
 func (s *Session) IsTurnActive() bool {
 	if s == nil {
 		return false
+	}
+	if s.HasActiveTurns() {
+		return true
 	}
 	if s.activeTurns.Load() > 0 {
 		return true

@@ -3,6 +3,7 @@ package fileio
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -36,11 +37,14 @@ type AsyncCmdInfo struct {
 }
 
 type asyncCmdState struct {
-	cmd    *exec.Cmd
-	output bytes.Buffer
-	cancel context.CancelFunc
-	info   AsyncCmdInfo
-	mu     sync.Mutex
+	cmd      *exec.Cmd
+	output   bytes.Buffer
+	cancel   context.CancelFunc
+	info     AsyncCmdInfo
+	done     chan struct{}
+	cleanup  func()
+	mu       sync.Mutex
+	outputMu sync.Mutex
 }
 
 func (st *asyncCmdState) killGroup() {
@@ -52,6 +56,13 @@ func (st *asyncCmdState) killGroup() {
 	}
 	killProcessGroup(pid)
 	st.cancel()
+}
+
+func (st *asyncCmdState) Write(data []byte) (int, error) {
+	st.outputMu.Lock()
+	n, err := st.output.Write(data)
+	st.outputMu.Unlock()
+	return n, err
 }
 
 func setProcessGroupCmd(ctx context.Context, name string, arg ...string) *exec.Cmd {
@@ -66,18 +77,23 @@ func setProcessGroupCmd(ctx context.Context, name string, arg ...string) *exec.C
 type AsyncCommandManager struct {
 	mu       sync.Mutex
 	commands map[string]*asyncCmdState
+	reserved map[string]bool
+	closing  bool
+	startWg  sync.WaitGroup
 	logger   *logger.Logger
 }
 
 func NewAsyncCommandManager() *AsyncCommandManager {
 	return &AsyncCommandManager{
 		commands: make(map[string]*asyncCmdState),
+		reserved: make(map[string]bool),
 	}
 }
 
 func NewAsyncCommandManagerWithLogger(lg *logger.Logger) *AsyncCommandManager {
 	return &AsyncCommandManager{
 		commands: make(map[string]*asyncCmdState),
+		reserved: make(map[string]bool),
 		logger:   lg,
 	}
 }
@@ -86,55 +102,70 @@ func (m *AsyncCommandManager) SetLogger(lg *logger.Logger) {
 	m.logger = lg
 }
 
-func buildCommand(ctx context.Context, command string, cwd string) (*exec.Cmd, error) {
+func buildCommand(ctx context.Context, command string, cwd string) (*exec.Cmd, func(), error) {
 	if runtime.GOOS == "windows" {
 		tmp, err := os.CreateTemp("", "crude_*.cmd")
 		if err != nil {
-			return nil, fmt.Errorf("prepare windows command: %w", err)
+			return nil, nil, fmt.Errorf("prepare windows command: %w", err)
 		}
 		batPath := tmp.Name()
 		if _, err := tmp.WriteString("@echo off\r\n" + command + "\r\n"); err != nil {
 			tmp.Close()
 			os.Remove(batPath)
-			return nil, fmt.Errorf("prepare windows command: %w", err)
+			return nil, nil, fmt.Errorf("prepare windows command: %w", err)
 		}
 		tmp.Close()
 		c := setProcessGroupCmd(ctx, "cmd", "/C", batPath)
 		if cwd != "" {
 			c.Dir = cwd
 		}
-		return c, nil
+		return c, func() { _ = os.Remove(batPath) }, nil
 	}
 
 	c := setProcessGroupCmd(ctx, "sh", "-c", command)
 	if cwd != "" {
 		c.Dir = cwd
 	}
-	return c, nil
+	return c, func() {}, nil
 }
 
 func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds int) (*AsyncCmdInfo, error) {
 	m.mu.Lock()
-	if _, ok := m.commands[handle]; ok {
+	if m.closing {
+		m.mu.Unlock()
+		return nil, errors.New("async command manager is closing")
+	}
+	if _, ok := m.commands[handle]; ok || m.reserved[handle] {
 		m.mu.Unlock()
 		return nil, fmt.Errorf("async command handle %q already in use; kill it first or use a different handle", handle)
 	}
+	m.reserved[handle] = true
+	m.startWg.Add(1)
 	m.mu.Unlock()
+	defer m.startWg.Done()
+	releaseReservation := func() {
+		m.mu.Lock()
+		delete(m.reserved, handle)
+		m.mu.Unlock()
+	}
 
 	ctx, cancel := context.WithCancel(context.Background())
 	if timeoutSeconds > 0 {
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
 	}
 
-	c, err := buildCommand(ctx, command, cwd)
+	c, cleanup, err := buildCommand(ctx, command, cwd)
 	if err != nil {
 		cancel()
+		releaseReservation()
 		return nil, err
 	}
 
 	state := &asyncCmdState{
-		cmd:    c,
-		cancel: cancel,
+		cmd:     c,
+		cancel:  cancel,
+		done:    make(chan struct{}),
+		cleanup: cleanup,
 		info: AsyncCmdInfo{
 			Handle:    handle,
 			Command:   command,
@@ -142,21 +173,39 @@ func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds 
 			StartedAt: time.Now(),
 		},
 	}
-	c.Stdout = &state.output
-	c.Stderr = &state.output
+	c.Stdout = state
+	c.Stderr = state
 
 	if err := c.Start(); err != nil {
 		cancel()
+		cleanup()
+		releaseReservation()
 		if m.logger != nil {
 			m.logger.Error("ASYNC", "start_failed", "handle", handle, "error", err.Error())
 		}
 		return nil, fmt.Errorf("failed to start async command %q: %w", handle, err)
 	}
-
 	state.info.PID = c.Process.Pid
+	treeCleanup, err := ownProcessTree(c)
+	if err != nil {
+		state.killGroup()
+		_ = c.Wait()
+		cleanup()
+		releaseReservation()
+		return nil, err
+	}
+	state.cleanup = func() { treeCleanup(); cleanup() }
+	if err := resumeOwnedProcess(c); err != nil {
+		state.cleanup()
+		state.killGroup()
+		_ = c.Wait()
+		releaseReservation()
+		return nil, err
+	}
 
 	m.mu.Lock()
 	m.commands[handle] = state
+	delete(m.reserved, handle)
 	m.mu.Unlock()
 
 	if m.logger != nil {
@@ -164,7 +213,13 @@ func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds 
 	}
 
 	go func() {
+		defer close(state.done)
+		defer state.cleanup()
 		err := c.Wait()
+		// A shell can exit while descendants continue in its process group.
+		// Terminate the group at the ownership boundary before publishing a
+		// terminal status so no hidden writer survives the handle.
+		killProcessGroup(state.info.PID)
 		state.mu.Lock()
 		defer state.mu.Unlock()
 		state.info.EndedAt = time.Now()
@@ -200,7 +255,10 @@ func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds 
 		}
 	}()
 
-	return &state.info, nil
+	state.mu.Lock()
+	info := state.info
+	state.mu.Unlock()
+	return &info, nil
 }
 
 func (m *AsyncCommandManager) Check(handle string) (*AsyncCmdInfo, bool) {
@@ -250,17 +308,17 @@ func (m *AsyncCommandManager) ReadOutput(handle string, sinceByte int) (string, 
 		}
 		return "", 0, fmt.Errorf("async command handle %q not found", handle)
 	}
-	state.mu.Lock()
+	state.outputMu.Lock()
 	total := state.output.Len()
 	if sinceByte >= total {
-		state.mu.Unlock()
+		state.outputMu.Unlock()
 		if m.logger != nil {
 			m.logger.Debug("ASYNC", "read_output_no_new", "handle", handle, "since_byte", sinceByte, "total", total)
 		}
 		return "", total, nil
 	}
 	out := string(state.output.Bytes()[sinceByte:total])
-	state.mu.Unlock()
+	state.outputMu.Unlock()
 	out = strings.ReplaceAll(out, "\r\n", "\n")
 	out = strings.ReplaceAll(out, "\r", "")
 	if m.logger != nil {
@@ -276,8 +334,8 @@ func (m *AsyncCommandManager) OutputTail(handle string, maxBytes int) string {
 	if !ok {
 		return ""
 	}
-	state.mu.Lock()
-	defer state.mu.Unlock()
+	state.outputMu.Lock()
+	defer state.outputMu.Unlock()
 	n := state.output.Len()
 	if n <= 0 {
 		return ""
@@ -332,39 +390,66 @@ type UntrackedCmd struct {
 }
 
 func (m *AsyncCommandManager) StartUntracked(command, cwd string, timeoutSeconds int) (*UntrackedCmd, error) {
+	m.mu.Lock()
+	if m.closing {
+		m.mu.Unlock()
+		return nil, errors.New("async command manager is closing")
+	}
+	m.startWg.Add(1)
+	m.mu.Unlock()
+	defer m.startWg.Done()
 	ctx, cancel := context.WithCancel(context.Background())
 	if timeoutSeconds > 0 {
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
 	}
 
-	c, err := buildCommand(ctx, command, cwd)
+	c, cleanup, err := buildCommand(ctx, command, cwd)
 	if err != nil {
 		cancel()
 		return nil, err
 	}
 
 	state := &asyncCmdState{
-		cmd:    c,
-		cancel: cancel,
+		cmd:     c,
+		cancel:  cancel,
+		done:    make(chan struct{}),
+		cleanup: cleanup,
 		info: AsyncCmdInfo{
 			Command:   command,
 			Status:    AsyncRunning,
 			StartedAt: time.Now(),
 		},
 	}
-	c.Stdout = &state.output
-	c.Stderr = &state.output
+	c.Stdout = state
+	c.Stderr = state
 
 	if err := c.Start(); err != nil {
 		cancel()
+		cleanup()
 		return nil, fmt.Errorf("failed to start command: %w", err)
 	}
-
 	state.info.PID = c.Process.Pid
+	treeCleanup, err := ownProcessTree(c)
+	if err != nil {
+		state.killGroup()
+		_ = c.Wait()
+		cleanup()
+		return nil, err
+	}
+	state.cleanup = func() { treeCleanup(); cleanup() }
+	if err := resumeOwnedProcess(c); err != nil {
+		state.cleanup()
+		state.killGroup()
+		_ = c.Wait()
+		return nil, err
+	}
 
 	lg := m.logger
 	go func() {
+		defer close(state.done)
+		defer state.cleanup()
 		err := c.Wait()
+		killProcessGroup(state.info.PID)
 		state.mu.Lock()
 		defer state.mu.Unlock()
 		state.info.EndedAt = time.Now()
@@ -407,15 +492,17 @@ func (uc *UntrackedCmd) Kill() {
 	uc.state.killGroup()
 }
 
+func (uc *UntrackedCmd) Done() <-chan struct{} { return uc.state.done }
+
 func (uc *UntrackedCmd) ReadOutput(sinceByte int) (string, int) {
-	uc.state.mu.Lock()
+	uc.state.outputMu.Lock()
 	total := uc.state.output.Len()
 	if sinceByte >= total {
-		uc.state.mu.Unlock()
+		uc.state.outputMu.Unlock()
 		return "", total
 	}
 	out := string(uc.state.output.Bytes()[sinceByte:total])
-	uc.state.mu.Unlock()
+	uc.state.outputMu.Unlock()
 	out = strings.ReplaceAll(out, "\r\n", "\n")
 	out = strings.ReplaceAll(out, "\r", "")
 	return out, total
@@ -450,4 +537,48 @@ func (m *AsyncCommandManager) Promote(uc *UntrackedCmd, handle string) (*AsyncCm
 	uc.state.mu.Unlock()
 	info.computeDuration()
 	return &info, nil
+}
+
+func (m *AsyncCommandManager) Running() bool {
+	if m == nil {
+		return false
+	}
+	m.mu.Lock()
+	states := make([]*asyncCmdState, 0, len(m.commands))
+	for _, state := range m.commands {
+		states = append(states, state)
+	}
+	m.mu.Unlock()
+	for _, state := range states {
+		state.mu.Lock()
+		running := state.info.Status == AsyncRunning
+		state.mu.Unlock()
+		if running {
+			return true
+		}
+	}
+	return false
+}
+
+// CloseAndWait prevents command processes from surviving their owning session.
+func (m *AsyncCommandManager) CloseAndWait() {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.closing = true
+	m.mu.Unlock()
+	m.startWg.Wait()
+	m.mu.Lock()
+	states := make([]*asyncCmdState, 0, len(m.commands))
+	for _, state := range m.commands {
+		states = append(states, state)
+	}
+	m.mu.Unlock()
+	for _, state := range states {
+		state.killGroup()
+	}
+	for _, state := range states {
+		<-state.done
+	}
 }

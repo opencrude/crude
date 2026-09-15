@@ -34,26 +34,27 @@ const (
 )
 
 type SubAgentSpec struct {
-	ID             AgentID       `json:"id"`
-	Name           string        `json:"name"`
-	Category       string        `json:"category"`
-	Description    string        `json:"description"`
-	Instructions   string        `json:"instructions"`
-	Model          string        `json:"model"`
-	Provider       string        `json:"provider"`
-	ProviderURL    string        `json:"provider_url,omitempty"`
-	APIKey         string        `json:"api_key,omitempty"`
-	APIStandard    string        `json:"api_standard,omitempty"`
-	ThinkingEffort string        `json:"thinking_effort,omitempty"`
-	PolicyName     string        `json:"policy"`
-	Policy         safety.Policy `json:"-"`
-	AllowedTools   []string      `json:"allowed_tools"`
-	DeniedTools    []string      `json:"denied_tools"`
-	Timeout        time.Duration `json:"timeout"`
-	Depth          int           `json:"depth"`
-	FileOwnership  []string      `json:"file_ownership"`
-	ParentID       AgentID       `json:"parent_id"`
-	ParentTurn     uint64        `json:"parent_turn"`
+	ID               AgentID       `json:"id"`
+	Name             string        `json:"name"`
+	Category         string        `json:"category"`
+	Description      string        `json:"description"`
+	Instructions     string        `json:"instructions"`
+	Model            string        `json:"model"`
+	Provider         string        `json:"provider"`
+	ProviderURL      string        `json:"provider_url,omitempty"`
+	APIKey           string        `json:"api_key,omitempty"`
+	APIStandard      string        `json:"api_standard,omitempty"`
+	ThinkingEffort   string        `json:"thinking_effort,omitempty"`
+	PolicyName       string        `json:"policy"`
+	Policy           safety.Policy `json:"-"`
+	AllowedTools     []string      `json:"allowed_tools"`
+	DeniedTools      []string      `json:"denied_tools"`
+	Timeout          time.Duration `json:"timeout"`
+	Depth            int           `json:"depth"`
+	FileOwnership    []string      `json:"file_ownership"`
+	ParentID         AgentID       `json:"parent_id"`
+	ParentTurn       uint64        `json:"parent_turn"`
+	HistoryMessageID string        `json:"history_message_id,omitempty"`
 
 	ModelContextWindow int      `json:"model_context_window,omitempty"`
 	ModelInputPrice    float64  `json:"model_input_price,omitempty"`
@@ -67,21 +68,22 @@ type SubAgentSpec struct {
 }
 
 type SubAgentResult struct {
-	AgentID      AgentID        `json:"agent_id"`
-	Name         string         `json:"name"`
-	Category     string         `json:"category"`
-	SessionID    string         `json:"session_id"`
-	Status       SubAgentStatus `json:"status"`
-	SummaryGist  string         `json:"summary_gist"`
-	ResultPath   string         `json:"result_path"`
-	LogPath      string         `json:"log_path"`
-	FilesRead    []string       `json:"files_read"`
-	FilesWritten []string       `json:"files_written"`
-	Errors       []string       `json:"errors"`
-	PromptTokens int            `json:"prompt_tokens"`
-	CompTokens   int            `json:"completion_tokens"`
-	CostUSD      float64        `json:"cost_usd"`
-	DurationMs   int64          `json:"duration_ms"`
+	AgentID          AgentID        `json:"agent_id"`
+	Name             string         `json:"name"`
+	Category         string         `json:"category"`
+	SessionID        string         `json:"session_id"`
+	Status           SubAgentStatus `json:"status"`
+	SummaryGist      string         `json:"summary_gist"`
+	ResultPath       string         `json:"result_path"`
+	LogPath          string         `json:"log_path"`
+	FilesRead        []string       `json:"files_read"`
+	FilesWritten     []string       `json:"files_written"`
+	Errors           []string       `json:"errors"`
+	PromptTokens     int            `json:"prompt_tokens"`
+	CompTokens       int            `json:"completion_tokens"`
+	CostUSD          float64        `json:"cost_usd"`
+	DurationMs       int64          `json:"duration_ms"`
+	HistoryMessageID string         `json:"history_message_id,omitempty"`
 }
 
 type SubAgentHandle struct {

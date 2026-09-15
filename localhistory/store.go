@@ -34,12 +34,18 @@ const (
 var chunkBufferPool = sync.Pool{New: func() any { buffer := make([]byte, chunkMax); return &buffer }}
 
 type Store struct {
-	mu            sync.Mutex
-	root          string
-	workspaceRoot string
-	db            *sql.DB
-	processLock   *flock.Flock
-	beforeApply   func(index int, change Change) error
+	mu                  sync.Mutex
+	opMu                sync.Mutex
+	opWg                sync.WaitGroup
+	closing             bool
+	root                string
+	workspaceRoot       string
+	workspaceInfo       os.FileInfo
+	db                  *sql.DB
+	processLock         *flock.Flock
+	instanceLock        *flock.Flock
+	beforeApply         func(index int, change Change) error
+	beforeDirectoryMode func(change Change) error
 }
 
 func Open(storeRoot, workspaceRoot string) (*Store, error) {
@@ -56,6 +62,10 @@ func Open(storeRoot, workspaceRoot string) (*Store, error) {
 	}
 	if sameOrInside(root, workspace) {
 		return nil, errors.New("localhistory: store must be outside workspace")
+	}
+	workspaceInfo, err := os.Stat(workspace)
+	if err != nil || !workspaceInfo.IsDir() {
+		return nil, errors.New("localhistory: workspace root is unavailable or not a directory")
 	}
 	if err := os.MkdirAll(root, 0o700); err != nil {
 		return nil, fmt.Errorf("localhistory: create store root: %w", err)
@@ -79,27 +89,50 @@ func Open(storeRoot, workspaceRoot string) (*Store, error) {
 			return nil, fmt.Errorf("localhistory: create store: %w", err)
 		}
 	}
+	instanceLock := flock.New(filepath.Join(root, "instance.lock"))
+	locked, err := instanceLock.TryLock()
+	if err != nil {
+		return nil, fmt.Errorf("localhistory: acquire instance lock: %w", err)
+	}
+	if !locked {
+		return nil, errors.New("localhistory: workspace history is already open in another process")
+	}
 	db, err := sql.Open("sqlite", filepath.Join(root, "history.db"))
 	if err != nil {
+		_ = instanceLock.Unlock()
 		return nil, fmt.Errorf("localhistory: open metadata: %w", err)
 	}
 	db.SetMaxOpenConns(1)
 	if err := migrateMetadata(db); err != nil {
 		_ = db.Close()
+		_ = instanceLock.Unlock()
 		return nil, err
 	}
-	store := &Store{root: root, workspaceRoot: workspace, db: db, processLock: flock.New(filepath.Join(root, "mutation.lock"))}
+	store := &Store{root: root, workspaceRoot: workspace, workspaceInfo: workspaceInfo, db: db, processLock: flock.New(filepath.Join(root, "mutation.lock")), instanceLock: instanceLock}
 	if err := store.recoverManifestIndex(); err != nil {
 		_ = db.Close()
+		_ = instanceLock.Unlock()
 		return nil, err
 	}
 	if err := store.recoverPlanIndex(); err != nil {
 		_ = db.Close()
+		_ = instanceLock.Unlock()
 		return nil, err
 	}
 	if err := store.MarkInterruptedScopes(time.Now()); err != nil {
 		_ = db.Close()
+		_ = instanceLock.Unlock()
 		return nil, fmt.Errorf("localhistory: recover interrupted scopes: %w", err)
+	}
+	if err := store.markPreparedOperationsAmbiguous(); err != nil {
+		_ = db.Close()
+		_ = instanceLock.Unlock()
+		return nil, fmt.Errorf("localhistory: reconcile prepared operations: %w", err)
+	}
+	if err := store.recoverInterruptedRestores(); err != nil {
+		_ = db.Close()
+		_ = instanceLock.Unlock()
+		return nil, fmt.Errorf("localhistory: recover interrupted restore: %w", err)
 	}
 	return store, nil
 }
@@ -111,10 +144,43 @@ func (s *Store) Close() error {
 	if s == nil || s.db == nil {
 		return nil
 	}
-	if s.processLock != nil {
-		_ = s.processLock.Unlock()
+	s.opMu.Lock()
+	if s.closing {
+		s.opMu.Unlock()
+		return nil
 	}
-	return s.db.Close()
+	s.closing = true
+	s.opMu.Unlock()
+	s.opWg.Wait()
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	err := s.db.Close()
+	if s.instanceLock != nil {
+		if unlockErr := s.instanceLock.Unlock(); err == nil {
+			err = unlockErr
+		}
+	}
+	return err
+}
+
+func (s *Store) beginOperation() error {
+	s.opMu.Lock()
+	defer s.opMu.Unlock()
+	if s.closing {
+		return errors.New("localhistory: store is closing")
+	}
+	s.opWg.Add(1)
+	return nil
+}
+
+func (s *Store) endOperation() { s.opWg.Done() }
+
+func (s *Store) validateWorkspaceRoot() error {
+	info, err := os.Stat(s.workspaceRoot)
+	if err != nil || !info.IsDir() || !os.SameFile(s.workspaceInfo, info) {
+		return errors.New("localhistory: workspace root identity changed; reopen the workspace before continuing")
+	}
+	return nil
 }
 
 func (s *Store) lockMutation(ctx context.Context) (func(), error) {
@@ -172,7 +238,7 @@ func (s *Store) storeRegularFile(ctx context.Context, path string) (Entry, error
 		if err := s.writeFileObject(obj); err != nil {
 			return Entry{}, err
 		}
-		return Entry{Type: EntryFile, Mode: uint32(info.Mode().Perm()), Hash: obj.Hash, Size: obj.Size}, nil
+		return Entry{Type: EntryFile, Mode: storedMode(info.Mode()), Hash: obj.Hash, Size: obj.Size}, nil
 	}
 	chnkr := chunker.New(f, chunkPolynomial, chunker.WithBoundaries(chunkMin, chunkMax))
 	buffer := chunkBufferPool.Get().(*[]byte)
@@ -206,7 +272,7 @@ func (s *Store) storeRegularFile(ctx context.Context, path string) (Entry, error
 	if err := s.writeFileObject(obj); err != nil {
 		return Entry{}, err
 	}
-	return Entry{Type: EntryFile, Mode: uint32(info.Mode().Perm()), Hash: obj.Hash, Size: obj.Size}, nil
+	return Entry{Type: EntryFile, Mode: storedMode(info.Mode()), Hash: obj.Hash, Size: obj.Size}, nil
 }
 
 func (s *Store) writeChunk(hash string, data []byte) error {
@@ -378,8 +444,12 @@ func (s *Store) storeBytes(ctx context.Context, data []byte, mode os.FileMode) (
 		return Entry{}, err
 	}
 	entry, err := s.storeRegularFile(ctx, name)
-	entry.Mode = uint32(mode.Perm())
+	entry.Mode = storedMode(mode)
 	return entry, err
+}
+
+func storedMode(mode os.FileMode) uint32 {
+	return uint32(mode & (os.ModePerm | os.ModeSetuid | os.ModeSetgid | os.ModeSticky))
 }
 
 func writeBytesAtomic(path string, data []byte, mode os.FileMode) error {

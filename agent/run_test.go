@@ -630,7 +630,9 @@ func TestRunBalancesToolCallsWhenCancelledDuringExecution(t *testing.T) {
 		t.Fatalf("tool results = %d, want one per call: %+v", len(toolResults), toolResults)
 	}
 	for i, result := range toolResults {
-		if result.ToolCallID != fmt.Sprintf("call_%d", i+1) || !result.ToolError {
+		cancelled := result.ToolError && strings.Contains(result.Content.String(), "cancelled before tool execution")
+		completed := !result.ToolError && result.Content.String() == "late result"
+		if result.ToolCallID != fmt.Sprintf("call_%d", i+1) || (!cancelled && !completed) {
 			t.Fatalf("tool result %d = %+v", i, result)
 		}
 	}
@@ -874,6 +876,53 @@ func TestDefaultToolDefinitionsValidateRequiredParameters(t *testing.T) {
 	}
 	if !result.toolError || !strings.Contains(result.result.Content, "path") {
 		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestFilteredToolListIsEnforcedAtExecution(t *testing.T) {
+	agent := newTestAgent(t, nil, "test-model")
+	agent.FilteredTools = FilterTools(tools.AgentTools, []string{"read_file"}, nil, "", false)
+	var executed atomic.Bool
+	agent.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
+		executed.Store(true)
+		return tools.ToolResult{Content: "unexpected"}, nil
+	}
+	result := agent.executeOneToolCall(context.Background(), provider.ToolCall{
+		ID: "call_denied", InternalID: "_denied", Function: provider.FunctionCall{Name: "write_file", Arguments: `{"path":"x","content":"x"}`},
+	}, func(AgentEvent) {}, nil, new(string))
+	if executed.Load() {
+		t.Fatal("unadvertised tool executed despite the runtime allowlist")
+	}
+	if !result.toolError || !strings.Contains(result.result.Content, "not available") {
+		t.Fatalf("result=%+v", result)
+	}
+}
+
+func TestCancellationDoesNotStartQueuedBlockingMutation(t *testing.T) {
+	agent := newTestAgent(t, nil, "test-model")
+	agent.Yolo = true
+	started := make(chan struct{})
+	var wrote atomic.Bool
+	agent.ToolFn = func(ctx context.Context, tool string, _ map[string]any) (tools.ToolResult, error) {
+		if tool == "execute_command" {
+			close(started)
+			<-ctx.Done()
+			return tools.ToolResult{Content: "cancelled"}, ctx.Err()
+		}
+		wrote.Store(true)
+		return tools.ToolResult{Content: "wrote"}, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	results := agent.executeToolCalls(ctx, []provider.ToolCall{
+		{ID: "command", Function: provider.FunctionCall{Name: "execute_command", Arguments: `{"command":"wait"}`}},
+		{ID: "write", Function: provider.FunctionCall{Name: "write_file", Arguments: `{"path":"x","content":"x"}`}},
+	}, func(AgentEvent) {}, nil, new(string), 1)
+	<-started
+	cancel()
+	<-results
+	<-results
+	if wrote.Load() {
+		t.Fatal("queued write started after cancellation")
 	}
 }
 

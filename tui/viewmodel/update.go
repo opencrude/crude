@@ -710,7 +710,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case historyLatestMsg:
 		if msg.Error != "" {
 			m.Feedback.NotifyError(msg.Error)
-		} else if cmd := m.openLocalHistoryForMessage(msg.SessionID, msg.MessageID); cmd != nil {
+		} else if cmd := m.openLocalHistoryForMessage(msg.SessionID, msg.MessageID, msg.AgentID); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 	case historyCandidatesMsg:

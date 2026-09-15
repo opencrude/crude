@@ -18,6 +18,10 @@ import (
 )
 
 func (s *Store) PlanRestore(ctx context.Context, targetSnapshotID string, opts SnapshotOptions) (RestorePlan, error) {
+	if err := s.beginOperation(); err != nil {
+		return RestorePlan{}, err
+	}
+	defer s.endOperation()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	unlock, err := s.lockMutation(ctx)
@@ -29,6 +33,10 @@ func (s *Store) PlanRestore(ctx context.Context, targetSnapshotID string, opts S
 }
 
 func (s *Store) PlanRestorePaths(ctx context.Context, targetSnapshotID string, opts SnapshotOptions, paths []string) (RestorePlan, error) {
+	if err := s.beginOperation(); err != nil {
+		return RestorePlan{}, err
+	}
+	defer s.endOperation()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	unlock, err := s.lockMutation(ctx)
@@ -123,6 +131,7 @@ func (s *Store) planRestore(ctx context.Context, targetSnapshotID string, opts S
 			}
 		}
 	}
+	s.guardDirectoryDeletions(changes)
 	sort.Slice(changes, func(i, j int) bool { return changes[i].Path < changes[j].Path })
 	plan := RestorePlan{
 		Version: FormatVersion, TargetSnapshotID: target.ID, CreatedAt: time.Now().UnixNano(),
@@ -132,6 +141,46 @@ func (s *Store) planRestore(ctx context.Context, targetSnapshotID string, opts S
 		return RestorePlan{}, err
 	}
 	return plan, nil
+}
+
+func (s *Store) guardDirectoryDeletions(changes []Change) {
+	deletions := make(map[string]bool)
+	for _, change := range changes {
+		if change.Target == nil {
+			deletions[change.Path] = true
+		}
+	}
+	for index := range changes {
+		change := &changes[index]
+		if change.Current == nil || change.Current.Type != EntryDirectory || (change.Target != nil && change.Target.Type == EntryDirectory) {
+			continue
+		}
+		root, err := s.workspacePath(change.Path)
+		if err != nil {
+			change.UnsafeReason = err.Error()
+			continue
+		}
+		err = filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if path == root {
+				return nil
+			}
+			rel, err := filepath.Rel(s.workspaceRoot, path)
+			if err != nil {
+				return err
+			}
+			if !deletions[filepath.ToSlash(rel)] {
+				return errors.New("directory contains data outside the restore selection")
+			}
+			return nil
+		})
+		if err != nil {
+			change.ConflictReason = err.Error()
+			change.ExactAllowed = false
+		}
+	}
 }
 
 func (s *Store) changeDiff(path string, target, current *Entry) string {
@@ -219,6 +268,10 @@ func (s *Store) ApplyRestore(ctx context.Context, planID string, selected []stri
 }
 
 func (s *Store) ApplyRestoreChoices(ctx context.Context, planID string, selected []RestoreChoice) (RestoreResult, error) {
+	if err := s.beginOperation(); err != nil {
+		return RestoreResult{}, err
+	}
+	defer s.endOperation()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	unlock, err := s.lockMutation(ctx)
@@ -240,10 +293,15 @@ func (s *Store) ApplyRestoreChoices(ctx context.Context, planID string, selected
 	if err := s.validateChanges(ctx, changes); err != nil {
 		return RestoreResult{}, err
 	}
+	if err := s.validateHardlinkClosure(changes); err != nil {
+		return RestoreResult{}, err
+	}
+	paths := changePaths(changes)
 	safetyOpts := plan.CaptureOptions
 	safetyOpts.Kind = "safety_before_restore"
 	safetyOpts.Label = "Safety snapshot before restore " + plan.ID[:12]
 	safetyOpts.ParentID = ""
+	safetyOpts.IncludePaths = append([]string(nil), paths...)
 	safety, err := s.snapshot(ctx, safetyOpts)
 	if err != nil {
 		return RestoreResult{}, fmt.Errorf("localhistory: capture safety snapshot: %w", err)
@@ -252,41 +310,210 @@ func (s *Store) ApplyRestoreChoices(ctx context.Context, planID string, selected
 	if err != nil {
 		return RestoreResult{}, err
 	}
-	paths := changePaths(changes)
-	if err := s.applySnapshotPaths(ctx, changes, true); err != nil {
-		rollbackChanges := changesForSnapshotPaths(safety, paths)
+	if err := s.beginRestoreTransaction(plan.ID, safety.ID, paths, changes); err != nil {
+		return RestoreResult{}, fmt.Errorf("localhistory: persist restore intent: %w", err)
+	}
+	rollback := func(cause error, applied []Change) (RestoreResult, error) {
+		rollbackChanges, conflicts, inspectErr := s.safeRollbackChanges(safety, applied)
+		if inspectErr != nil {
+			return RestoreResult{}, fmt.Errorf("localhistory: %v; inspect rollback state: %w", cause, inspectErr)
+		}
 		rollbackErr := s.applySnapshotPaths(context.Background(), rollbackChanges, false)
 		if rollbackErr != nil {
-			return RestoreResult{}, fmt.Errorf("localhistory: restore failed: %v; rollback failed: %w", err, rollbackErr)
+			return RestoreResult{}, fmt.Errorf("localhistory: %v; rollback failed: %w", cause, rollbackErr)
 		}
-		return RestoreResult{}, fmt.Errorf("localhistory: restore failed and was rolled back: %w", err)
+		if len(conflicts) > 0 {
+			if err := s.finishRestoreTransaction(plan.ID, "conflicted"); err != nil {
+				return RestoreResult{}, fmt.Errorf("localhistory: %v; newer writes preserved at %s; transaction update failed: %w", cause, strings.Join(conflicts, ", "), err)
+			}
+			return RestoreResult{}, fmt.Errorf("localhistory: %v; rolled back unchanged restore paths but preserved newer writes at %s", cause, strings.Join(conflicts, ", "))
+		}
+		if err := s.finishRestoreTransaction(plan.ID, "rolled_back"); err != nil {
+			return RestoreResult{}, fmt.Errorf("localhistory: %v; rollback succeeded but transaction update failed: %w", cause, err)
+		}
+		return RestoreResult{}, fmt.Errorf("localhistory: %w; workspace was rolled back", cause)
+	}
+	if err := s.applySnapshotPaths(ctx, changes, true); err != nil {
+		if !restoreApplyMutated(err) {
+			if finishErr := s.finishRestoreTransaction(plan.ID, "rolled_back"); finishErr != nil {
+				return RestoreResult{}, fmt.Errorf("localhistory: restore rejected: %v; transaction update failed: %w", err, finishErr)
+			}
+			return RestoreResult{}, err
+		}
+		return rollback(fmt.Errorf("restore failed: %w", err), restoreAppliedChanges(err))
+	}
+	if err := s.validateAppliedChanges(ctx, changes); err != nil {
+		return rollback(fmt.Errorf("restore verification failed: %w", err), changes)
 	}
 	afterOpts := plan.CaptureOptions
 	afterOpts.Kind = "after_restore"
 	afterOpts.Label = "After restore " + plan.ID[:12]
 	afterOpts.ParentID = safety.ID
+	afterOpts.IncludePaths = append([]string(nil), paths...)
 	after, err := s.snapshot(ctx, afterOpts)
 	if err != nil {
-		rollbackChanges := changesForSnapshotPaths(safety, paths)
-		rollbackErr := s.applySnapshotPaths(context.Background(), rollbackChanges, false)
-		if rollbackErr != nil {
-			return RestoreResult{}, fmt.Errorf("localhistory: after-restore snapshot failed: %v; rollback failed: %w", err, rollbackErr)
-		}
-		return RestoreResult{}, fmt.Errorf("localhistory: after-restore snapshot failed and was rolled back: %w", err)
+		return rollback(fmt.Errorf("after-restore snapshot failed: %w", err), changes)
 	}
 	result := RestoreResult{
 		PlanID: plan.ID, TargetSnapshotID: target.ID, SafetySnapshotID: safety.ID,
-		AfterSnapshotID: after.ID, Paths: paths,
+		AfterSnapshotID: after.ID, SessionID: plan.SessionID, MessageID: plan.MessageID,
+		AgentID: plan.AgentID, Paths: paths,
 	}
 	if err := s.recordRestore(result); err != nil {
-		rollbackChanges := changesForSnapshotPaths(safety, paths)
-		rollbackErr := s.applySnapshotPaths(context.Background(), rollbackChanges, false)
-		if rollbackErr != nil {
-			return RestoreResult{}, fmt.Errorf("localhistory: record restore event: %v; rollback failed: %w", err, rollbackErr)
-		}
-		return RestoreResult{}, fmt.Errorf("localhistory: record restore event failed and was rolled back: %w", err)
+		return rollback(fmt.Errorf("record restore event failed: %w", err), changes)
 	}
 	return result, nil
+}
+
+func (s *Store) safeRollbackChanges(safety Manifest, applied []Change) ([]Change, []string, error) {
+	changes := make([]Change, 0, len(applied))
+	var conflicts []string
+	for _, appliedChange := range applied {
+		current, err := s.currentEntry(appliedChange.Path)
+		if err != nil {
+			return nil, nil, err
+		}
+		if !entryPointersEqual(current, appliedChange.Target) {
+			conflicts = append(conflicts, appliedChange.Path)
+			continue
+		}
+		change := Change{Path: appliedChange.Path, Current: cloneEntry(current), Action: ChangeDelete}
+		if entry, ok := safety.Entries[appliedChange.Path]; ok {
+			entry := entry
+			change.Target = &entry
+			change.Action = ChangeRestore
+		}
+		changes = append(changes, change)
+	}
+	sort.Strings(conflicts)
+	return changes, conflicts, nil
+}
+
+func (s *Store) beginRestoreTransaction(planID, safetySnapshotID string, paths []string, changes ...[]Change) error {
+	payload, err := json.Marshal(paths)
+	if err != nil {
+		return err
+	}
+	appliedEntries := make(map[string]*Entry)
+	if len(changes) > 0 {
+		for _, change := range changes[0] {
+			appliedEntries[change.Path] = cloneEntry(change.Target)
+		}
+	}
+	entriesJSON, err := json.Marshal(appliedEntries)
+	if err != nil {
+		return err
+	}
+	_, err = s.db.Exec(`INSERT INTO history_restore_transactions(plan_id,safety_snapshot_id,paths,applied_entries,state,updated_at)
+VALUES(?,?,?,?,'applying',?) ON CONFLICT(plan_id) DO UPDATE SET safety_snapshot_id=excluded.safety_snapshot_id,
+paths=excluded.paths,applied_entries=excluded.applied_entries,state='applying',updated_at=excluded.updated_at`, planID, safetySnapshotID, string(payload), string(entriesJSON), time.Now().UnixNano())
+	return err
+}
+
+func (s *Store) finishRestoreTransaction(planID, state string) error {
+	_, err := s.db.Exec(`UPDATE history_restore_transactions SET state=?,updated_at=? WHERE plan_id=?`, state, time.Now().UnixNano(), planID)
+	return err
+}
+
+func (s *Store) recoverInterruptedRestores() error {
+	rows, err := s.db.Query(`SELECT plan_id,safety_snapshot_id,paths,applied_entries FROM history_restore_transactions WHERE state='applying' ORDER BY updated_at`)
+	if err != nil {
+		return err
+	}
+	type pending struct {
+		planID, safetyID string
+		paths            []string
+		applied          map[string]*Entry
+	}
+	var restores []pending
+	for rows.Next() {
+		var item pending
+		var pathsJSON, appliedJSON string
+		if err := rows.Scan(&item.planID, &item.safetyID, &pathsJSON, &appliedJSON); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if err := json.Unmarshal([]byte(pathsJSON), &item.paths); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		if err := json.Unmarshal([]byte(appliedJSON), &item.applied); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		restores = append(restores, item)
+	}
+	if err := rows.Close(); err != nil {
+		return err
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, item := range restores {
+		safety, err := s.LoadManifest(item.safetyID)
+		if err != nil {
+			return err
+		}
+		rollback := make([]Change, 0, len(item.paths))
+		var conflicts []string
+		for _, path := range item.paths {
+			current, err := s.currentEntryExpected(path, item.applied[path])
+			if err != nil {
+				return err
+			}
+			var safetyEntry *Entry
+			if entry, ok := safety.Entries[path]; ok {
+				entry := entry
+				safetyEntry = &entry
+			}
+			if entryPointersEqual(current, safetyEntry) {
+				continue
+			}
+			intended, ok := item.applied[path]
+			if !ok || !entryPointersEqual(current, intended) {
+				conflicts = append(conflicts, path)
+				continue
+			}
+			action := ChangeRestore
+			if safetyEntry == nil {
+				action = ChangeDelete
+			}
+			rollback = append(rollback, Change{Path: path, Current: cloneEntry(current), Target: safetyEntry, Action: action})
+		}
+		if err := s.applySnapshotPaths(context.Background(), rollback, false); err != nil {
+			return fmt.Errorf("recover restore %s: %w", item.planID, err)
+		}
+		state := "rolled_back"
+		if len(conflicts) > 0 {
+			state = "conflicted"
+		}
+		if err := s.finishRestoreTransaction(item.planID, state); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) validateAppliedChanges(ctx context.Context, changes []Change) error {
+	for _, change := range changes {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if change.Target != nil && change.Target.Type == EntryHardlink {
+			if err := s.validateHardlinkTarget(change.Path, *change.Target); err != nil {
+				return err
+			}
+			continue
+		}
+		current, err := s.currentEntryExpected(change.Path, change.Target)
+		if err != nil {
+			return err
+		}
+		if !entryPointersEqual(current, change.Target) {
+			return fmt.Errorf("%s does not match the immutable restore target", change.Path)
+		}
+	}
+	return nil
 }
 
 func (s *Store) validateChanges(ctx context.Context, changes []Change) error {
@@ -297,7 +524,7 @@ func (s *Store) validateChanges(ctx context.Context, changes []Change) error {
 		if change.UnsafeReason != "" {
 			return fmt.Errorf("localhistory: unsafe restore path %s: %s", change.Path, change.UnsafeReason)
 		}
-		current, err := s.currentEntry(change.Path)
+		current, err := s.currentEntryExpected(change.Path, change.Current)
 		if err != nil {
 			return err
 		}
@@ -347,6 +574,17 @@ func selectedChanges(plan RestorePlan, selected []RestoreChoice) ([]Change, erro
 			seen[path] = true
 		}
 	}
+	selectedPaths := make(map[string]bool, len(selected))
+	for _, choice := range selected {
+		selectedPaths[filepath.ToSlash(filepath.Clean(choice.Path))] = true
+	}
+	for _, change := range changes {
+		for _, peer := range change.AtomicPaths {
+			if _, planned := byPath[peer]; planned && !selectedPaths[peer] {
+				return nil, fmt.Errorf("localhistory: %s belongs to an atomic operation with %s", change.Path, peer)
+			}
+		}
+	}
 	return changes, nil
 }
 
@@ -354,6 +592,13 @@ func (s *Store) currentEntry(rel string) (*Entry, error) {
 	path, err := s.workspacePath(rel)
 	if err != nil {
 		return nil, err
+	}
+	exact, err := exactRelativePathExists(s.workspaceRoot, rel)
+	if err != nil {
+		return nil, err
+	}
+	if !exact {
+		return nil, nil
 	}
 	info, err := os.Lstat(path)
 	if os.IsNotExist(err) {
@@ -365,13 +610,13 @@ func (s *Store) currentEntry(rel string) (*Entry, error) {
 	var entry Entry
 	switch {
 	case info.IsDir():
-		entry = Entry{Type: EntryDirectory, Mode: uint32(info.Mode().Perm())}
+		entry = Entry{Type: EntryDirectory, Mode: storedMode(info.Mode())}
 	case info.Mode()&os.ModeSymlink != 0:
 		target, err := os.Readlink(path)
 		if err != nil {
 			return nil, err
 		}
-		entry = Entry{Type: EntrySymlink, Mode: uint32(info.Mode().Perm()), SymlinkTarget: target}
+		entry = Entry{Type: EntrySymlink, Mode: storedMode(info.Mode()), SymlinkTarget: target}
 	case info.Mode().IsRegular():
 		entry, err = hashRegularFile(path, info.Mode())
 		if err != nil {
@@ -383,6 +628,58 @@ func (s *Store) currentEntry(rel string) (*Entry, error) {
 	return &entry, nil
 }
 
+func (s *Store) currentEntryExpected(rel string, expected *Entry) (*Entry, error) {
+	current, err := s.currentEntry(rel)
+	if err != nil || expected == nil || expected.Type != EntryHardlink {
+		return current, err
+	}
+	path, err := s.workspacePath(rel)
+	if err != nil {
+		return nil, err
+	}
+	target, err := s.workspacePath(expected.HardlinkTarget)
+	if err != nil {
+		return nil, err
+	}
+	pathInfo, pathErr := os.Lstat(path)
+	targetInfo, targetErr := os.Lstat(target)
+	if pathErr != nil || targetErr != nil || !pathInfo.Mode().IsRegular() || !targetInfo.Mode().IsRegular() || !os.SameFile(pathInfo, targetInfo) {
+		return current, nil
+	}
+	actual, err := hashRegularFile(path, pathInfo.Mode())
+	if err != nil {
+		return nil, err
+	}
+	actual.Type = EntryHardlink
+	actual.HardlinkTarget = expected.HardlinkTarget
+	return &actual, nil
+}
+
+func exactRelativePathExists(root, rel string) (bool, error) {
+	current := root
+	for _, part := range strings.Split(filepath.ToSlash(rel), "/") {
+		entries, err := os.ReadDir(current)
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		if err != nil {
+			return false, err
+		}
+		found := false
+		for _, entry := range entries {
+			if entry.Name() == part {
+				current = filepath.Join(current, entry.Name())
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 func entryPointersEqual(a, b *Entry) bool {
 	if a == nil || b == nil {
 		return a == nil && b == nil
@@ -391,6 +688,9 @@ func entryPointersEqual(a, b *Entry) bool {
 }
 
 func (s *Store) workspacePath(rel string) (string, error) {
+	if err := s.validateWorkspaceRoot(); err != nil {
+		return "", err
+	}
 	if rel == "" || filepath.IsAbs(rel) {
 		return "", errors.New("localhistory: invalid workspace path")
 	}
@@ -429,7 +729,34 @@ func (s *Store) safeSymlink(rel, target string) bool {
 		return false
 	}
 	resolved := filepath.Clean(filepath.Join(filepath.Dir(path), target))
-	return sameOrInside(resolved, s.workspaceRoot)
+	if !sameOrInside(resolved, s.workspaceRoot) {
+		return false
+	}
+	resolvedExisting, err := resolveExistingPath(resolved)
+	return err == nil && sameOrInside(resolvedExisting, s.workspaceRoot)
+}
+
+func resolveExistingPath(path string) (string, error) {
+	original := path
+	var suffix []string
+	for {
+		resolved, err := filepath.EvalSymlinks(path)
+		if err == nil {
+			for index := len(suffix) - 1; index >= 0; index-- {
+				resolved = filepath.Join(resolved, suffix[index])
+			}
+			return resolved, nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		parent := filepath.Dir(path)
+		if parent == path {
+			return "", fmt.Errorf("cannot resolve symlink target %s", original)
+		}
+		suffix = append(suffix, filepath.Base(path))
+		path = parent
+	}
 }
 
 func changePaths(changes []Change) []string {
@@ -439,20 +766,6 @@ func changePaths(changes []Change) []string {
 	}
 	sort.Strings(paths)
 	return paths
-}
-
-func changesForSnapshotPaths(snapshot Manifest, paths []string) []Change {
-	changes := make([]Change, 0, len(paths))
-	for _, path := range paths {
-		change := Change{Path: path, Action: ChangeDelete}
-		if entry, ok := snapshot.Entries[path]; ok {
-			entry := entry
-			change.Target = &entry
-			change.Action = ChangeRestore
-		}
-		changes = append(changes, change)
-	}
-	return changes
 }
 
 func (s *Store) applySnapshotPaths(ctx context.Context, changes []Change, inject bool) error {
@@ -480,6 +793,13 @@ func (s *Store) applySnapshotPaths(ctx context.Context, changes []Change, inject
 			return err
 		}
 	}
+	hardlinkCanonicals := make(map[string]bool)
+	for _, change := range changes {
+		if change.Target != nil && change.Target.Type == EntryHardlink {
+			hardlinkCanonicals[change.Target.HardlinkTarget] = true
+		}
+	}
+	transitionedCanonicals := make(map[string]bool)
 	ordered := append([]Change(nil), changes...)
 	finalDirectories := make([]Change, 0)
 	for _, change := range changes {
@@ -489,16 +809,11 @@ func (s *Store) applySnapshotPaths(ctx context.Context, changes []Change, inject
 	}
 	sort.SliceStable(ordered, func(i, j int) bool {
 		a, b := ordered[i], ordered[j]
-		aCaseDelete := a.Action == ChangeDelete && a.MovePeer != "" && strings.EqualFold(a.Path, a.MovePeer)
-		bCaseDelete := b.Action == ChangeDelete && b.MovePeer != "" && strings.EqualFold(b.Path, b.MovePeer)
-		if aCaseDelete != bCaseDelete {
-			return aCaseDelete
-		}
 		if a.Action == ChangeDelete && b.Action != ChangeDelete {
-			return false
+			return true
 		}
 		if a.Action != ChangeDelete && b.Action == ChangeDelete {
-			return true
+			return false
 		}
 		if a.Action != ChangeDelete && b.Action != ChangeDelete {
 			rank := func(change Change) int {
@@ -523,44 +838,112 @@ func (s *Store) applySnapshotPaths(ctx context.Context, changes []Change, inject
 			}
 		}
 		if a.Action == ChangeDelete && b.Action == ChangeDelete {
-			return strings.Count(a.Path, "/") > strings.Count(b.Path, "/")
+			aDepth, bDepth := strings.Count(a.Path, "/"), strings.Count(b.Path, "/")
+			if aDepth != bDepth {
+				return aDepth > bDepth
+			}
 		}
 		return a.Path < b.Path
 	})
+	mutated := false
+	applied := make([]Change, 0, len(ordered))
+	fail := func(err error) error {
+		if err == nil {
+			return nil
+		}
+		return restoreApplyFailure{cause: err, mutated: mutated, applied: append([]Change(nil), applied...)}
+	}
 	for index, change := range ordered {
 		if err := ctx.Err(); err != nil {
-			return err
+			return fail(err)
 		}
 		if inject && s.beforeApply != nil {
 			if err := s.beforeApply(index, change); err != nil {
-				return err
+				return fail(err)
+			}
+		}
+		if inject {
+			current, err := s.currentEntryExpected(change.Path, change.Current)
+			if err != nil {
+				return fail(err)
+			}
+			preconditionMatches := entryPointersEqual(current, change.Current)
+			if !preconditionMatches && change.Target != nil && change.Target.Type == EntryHardlink && transitionedCanonicals[change.Target.HardlinkTarget] && change.Current != nil {
+				raw, rawErr := s.currentEntry(change.Path)
+				expectedFile := *change.Current
+				expectedFile.Type = EntryFile
+				expectedFile.HardlinkTarget = ""
+				preconditionMatches = rawErr == nil && entryPointersEqual(raw, &expectedFile)
+			}
+			if !preconditionMatches {
+				alreadyTarget, targetErr := s.currentEntryExpected(change.Path, change.Target)
+				if targetErr != nil || !entryPointersEqual(alreadyTarget, change.Target) {
+					return fail(fmt.Errorf("localhistory: %s changed immediately before apply", change.Path))
+				}
+				applied = append(applied, change)
+				continue
 			}
 		}
 		if change.Target == nil {
 			path, err := s.workspacePath(change.Path)
 			if err != nil {
-				return err
+				return fail(err)
 			}
-			if err := os.RemoveAll(path); err != nil {
-				return err
+			mutated = true
+			if err := removeExactPath(path); err != nil {
+				return fail(err)
 			}
+			applied = append(applied, change)
 			continue
 		}
-		if err := s.applyEntry(change.Path, *change.Target, staged[change.Path]); err != nil {
-			return err
+		mutated = true
+		applyErr := s.applyEntry(change.Path, *change.Target, staged[change.Path])
+		if applyErr != nil {
+			return fail(applyErr)
+		}
+		applied = append(applied, change)
+		if change.Target.Type == EntryFile && hardlinkCanonicals[change.Path] {
+			transitionedCanonicals[change.Path] = true
 		}
 	}
 	sort.Slice(finalDirectories, func(i, j int) bool {
 		return strings.Count(finalDirectories[i].Path, "/") > strings.Count(finalDirectories[j].Path, "/")
 	})
 	for _, change := range finalDirectories {
+		if inject && s.beforeDirectoryMode != nil {
+			if err := s.beforeDirectoryMode(change); err != nil {
+				return fail(err)
+			}
+		}
 		path, err := s.workspacePath(change.Path)
 		if err != nil {
-			return err
+			return fail(err)
 		}
 		if err := os.Chmod(path, os.FileMode(change.Target.Mode)); err != nil {
-			return err
+			return fail(err)
 		}
+	}
+	return nil
+}
+
+type restoreApplyFailure struct {
+	cause   error
+	mutated bool
+	applied []Change
+}
+
+func (e restoreApplyFailure) Error() string { return e.cause.Error() }
+func (e restoreApplyFailure) Unwrap() error { return e.cause }
+
+func restoreApplyMutated(err error) bool {
+	var failure restoreApplyFailure
+	return errors.As(err, &failure) && failure.mutated
+}
+
+func restoreAppliedChanges(err error) []Change {
+	var failure restoreApplyFailure
+	if errors.As(err, &failure) {
+		return append([]Change(nil), failure.applied...)
 	}
 	return nil
 }
@@ -573,14 +956,14 @@ func (s *Store) applyEntry(rel string, entry Entry, stagedPath string) error {
 	switch entry.Type {
 	case EntryDirectory:
 		if info, err := os.Lstat(path); err == nil && !info.IsDir() {
-			if err := os.RemoveAll(path); err != nil {
+			if err := removeExactPath(path); err != nil {
 				return err
 			}
 		}
-		if err := os.MkdirAll(path, 0o755); err != nil {
+		if err := os.MkdirAll(path, os.FileMode(entry.Mode)); err != nil {
 			return err
 		}
-		return os.Chmod(path, 0o755)
+		return os.Chmod(path, os.FileMode(entry.Mode))
 	case EntrySymlink:
 		if !s.safeSymlink(rel, entry.SymlinkTarget) {
 			return errors.New("localhistory: unsafe symlink target")
@@ -588,7 +971,7 @@ func (s *Store) applyEntry(rel string, entry Entry, stagedPath string) error {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return err
 		}
-		if err := os.RemoveAll(path); err != nil {
+		if err := removeExactPath(path); err != nil {
 			return err
 		}
 		return os.Symlink(entry.SymlinkTarget, path)
@@ -597,14 +980,13 @@ func (s *Store) applyEntry(rel string, entry Entry, stagedPath string) error {
 		if err != nil {
 			return err
 		}
-		targetInfo, err := os.Lstat(target)
-		if err != nil || !targetInfo.Mode().IsRegular() {
-			return errors.New("localhistory: hardlink source is unavailable")
+		if err := s.validateHardlinkSource(target, entry); err != nil {
+			return err
 		}
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			return err
 		}
-		if err := os.RemoveAll(path); err != nil {
+		if err := removeExactPath(path); err != nil {
 			return err
 		}
 		return os.Link(target, path)
@@ -613,7 +995,7 @@ func (s *Store) applyEntry(rel string, entry Entry, stagedPath string) error {
 			return errors.New("localhistory: missing staged file")
 		}
 		if info, err := os.Lstat(path); err == nil && info.IsDir() {
-			if err := os.RemoveAll(path); err != nil {
+			if err := removeExactPath(path); err != nil {
 				return err
 			}
 		}
@@ -621,6 +1003,107 @@ func (s *Store) applyEntry(rel string, entry Entry, stagedPath string) error {
 	default:
 		return errors.New("localhistory: unsupported target type")
 	}
+}
+
+func removeExactPath(path string) error {
+	_, err := os.Lstat(path)
+	if os.IsNotExist(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	return os.Remove(path)
+}
+
+func (s *Store) validateHardlinkSource(target string, entry Entry) error {
+	targetInfo, err := os.Lstat(target)
+	if err != nil || !targetInfo.Mode().IsRegular() {
+		return errors.New("localhistory: hardlink source is unavailable")
+	}
+	actual, err := hashRegularFile(target, targetInfo.Mode())
+	if err != nil {
+		return err
+	}
+	if actual.Hash != entry.Hash || actual.Size != entry.Size || actual.Mode != entry.Mode {
+		return errors.New("localhistory: hardlink source does not match immutable target")
+	}
+	return nil
+}
+
+func (s *Store) validateHardlinkClosure(changes []Change) error {
+	selected := make(map[string]bool, len(changes))
+	canonicals := make(map[string]bool)
+	for _, change := range changes {
+		selected[change.Path] = true
+		if change.Target != nil && change.Target.Type == EntryHardlink {
+			canonicals[change.Target.HardlinkTarget] = true
+		}
+	}
+	for canonical := range canonicals {
+		path, err := s.workspacePath(canonical)
+		if err != nil {
+			return err
+		}
+		canonicalInfo, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil || !canonicalInfo.Mode().IsRegular() {
+			return errors.New("localhistory: hardlink canonical path is unavailable")
+		}
+		err = filepath.WalkDir(s.workspaceRoot, func(candidate string, entry os.DirEntry, walkErr error) error {
+			if walkErr != nil {
+				return walkErr
+			}
+			if entry.IsDir() || candidate == path {
+				return nil
+			}
+			info, err := entry.Info()
+			if err != nil || !info.Mode().IsRegular() || !os.SameFile(canonicalInfo, info) {
+				return err
+			}
+			rel, err := filepath.Rel(s.workspaceRoot, candidate)
+			if err != nil {
+				return err
+			}
+			rel = filepath.ToSlash(rel)
+			if !selected[rel] {
+				return fmt.Errorf("localhistory: hardlink alias %s is outside the restore selection", rel)
+			}
+			return nil
+		})
+		if err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (s *Store) validateHardlinkTarget(rel string, entry Entry) error {
+	path, err := s.workspacePath(rel)
+	if err != nil {
+		return err
+	}
+	if err := s.validateHardlinkSource(path, entry); err != nil {
+		return err
+	}
+	target, err := s.workspacePath(entry.HardlinkTarget)
+	if err != nil {
+		return err
+	}
+	pathInfo, err := os.Lstat(path)
+	if err != nil {
+		return err
+	}
+	targetInfo, err := os.Lstat(target)
+	if err != nil {
+		return err
+	}
+	if !os.SameFile(pathInfo, targetInfo) {
+		return errors.New("localhistory: restored hardlink does not share the target inode")
+	}
+	return nil
 }
 
 func copyAtomic(source, target string, mode os.FileMode) error {

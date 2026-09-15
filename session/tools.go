@@ -3,7 +3,9 @@ package session
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"crude/agent"
@@ -12,8 +14,6 @@ import (
 	"crude/safety"
 	"crude/tools"
 )
-
-const asyncPromotionThreshold = 15 * time.Second
 
 // newToolFn builds the session tool closure shared by every agent this
 // session creates. multiAgent controls which agent tools are exposed.
@@ -52,7 +52,16 @@ func (s *Session) newAgent(p *provider.Provider, multiAgent bool, modalities []s
 // state (yolo, multiAgent) at call time so it stays correct across turns.
 func (s *Session) buildToolFn(multiAgent bool, turnProvider *provider.Provider, modalities []string) func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
 	return func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
+		if ctx != nil {
+			if err := ctx.Err(); err != nil {
+				return tools.ToolResult{Content: "Turn cancelled before tool execution."}, err
+			}
+		}
 		s.resolveRelativeParams(tool, params)
+		if err := s.validateWorkspaceMutation(tool, params); err != nil {
+			content := "Error: " + err.Error()
+			return tools.ToolResult{Content: content}, fmt.Errorf("%s", content)
+		}
 		s.recordToolTouch(tool, params)
 		if result, handled, err := s.executeMemoryTool(ctx, tool, params); handled {
 			return result, err
@@ -177,12 +186,82 @@ func (s *Session) buildToolFn(multiAgent bool, turnProvider *provider.Provider, 
 			return tools.ToolResult{Content: "write_report is for sub-agents only. Your response is already shown to the user."}, nil
 
 		default:
-			result := tools.ExecuteWithJSONOptions(tool, params, s.exec, s.editor, s.YoloEnabled(), s.logger, ctx, toolOptionsForProvider(turnProvider, modalities, params))
+			opts := toolOptionsForProvider(turnProvider, modalities, params)
+			if opts == nil {
+				opts = &tools.ToolOptions{}
+			}
+			opts.PrepareMutation = func(receipt fileio.MutationReceipt) (fileio.MutationComplete, error) {
+				return s.prepareHistoryMutation(ctx, receipt)
+			}
+			result := tools.ExecuteWithJSONOptions(tool, params, s.exec, s.editor, s.YoloEnabled(), s.logger, ctx, opts)
 			if agent.IsToolError(result.Content) {
 				return result, fmt.Errorf("%s", result.Content)
 			}
 			return result, nil
 		}
+	}
+}
+
+func (s *Session) validateWorkspaceMutation(tool string, params map[string]any) error {
+	for _, path := range writeToolTargets(tool, params) {
+		inside, err := pathInsideWorkspace(s.WorkDir(), path)
+		if err != nil {
+			return err
+		}
+		if !inside {
+			return fmt.Errorf("agent file mutation escapes workspace: %s", path)
+		}
+	}
+	return nil
+}
+
+func pathInsideWorkspace(root, path string) (bool, error) {
+	root, err := filepath.Abs(root)
+	if err != nil {
+		return false, err
+	}
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return false, err
+	}
+	if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+		abs = resolved
+	} else {
+		parent, err := resolveExistingMutationParent(filepath.Dir(abs))
+		if err != nil {
+			return false, err
+		}
+		abs = filepath.Join(parent, filepath.Base(abs))
+	}
+	rel, err := filepath.Rel(root, abs)
+	if err != nil {
+		return false, err
+	}
+	return rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)), nil
+}
+
+func resolveExistingMutationParent(parent string) (string, error) {
+	var missing []string
+	for {
+		resolved, err := filepath.EvalSymlinks(parent)
+		if err == nil {
+			for index := len(missing) - 1; index >= 0; index-- {
+				resolved = filepath.Join(resolved, missing[index])
+			}
+			return resolved, nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		next := filepath.Dir(parent)
+		if next == parent {
+			return "", err
+		}
+		missing = append(missing, filepath.Base(parent))
+		parent = next
 	}
 }
 
@@ -298,53 +377,28 @@ func (s *Session) executeCommandAutoPromote(ctx context.Context, params map[stri
 	pid := uc.PID()
 	s.logger.Info("EXEC", "auto_start", "pid", pid, "cmd", cmd)
 
-	deadline := time.After(asyncPromotionThreshold)
-	poll := time.NewTicker(200 * time.Millisecond)
-	defer poll.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			uc.Kill()
-			return tools.ToolResult{Content: "Command cancelled."}, nil
-		case <-deadline:
-			s.autoHandleMu.Lock()
-			s.autoHandleCounter++
-			handle := fmt.Sprintf("auto-%d", s.autoHandleCounter)
-			s.autoHandleMu.Unlock()
-
-			_, _ = s.asyncMgr.Promote(uc, handle)
-			s.logger.Info("ASYNC", "auto_promote", "handle", handle, "pid", pid, "threshold", asyncPromotionThreshold)
-			return tools.ToolResult{Content: fmt.Sprintf(
-				"Command promoted to async after %s (handle: %q, PID: %d).",
-				asyncPromotionThreshold, handle, pid,
-			)}, nil
-		case <-poll.C:
-			status := uc.Status()
-			if status == fileio.AsyncRunning {
-				continue
-			}
-			out, _ := uc.ReadOutput(0)
-			info := uc.Info()
-
-			if status == fileio.AsyncCompleted {
-				if out == "" {
-					return tools.ToolResult{Content: "(command completed with no output)"}, nil
-				}
-				return tools.ToolResult{Content: out}, nil
-			}
-
-			var errMsg string
-			if info.Error != "" {
-				errMsg = info.Error
-			} else {
-				errMsg = fmt.Sprintf("exit code %d", info.ExitCode)
-			}
-			content := fmt.Sprintf("Command failed: %s", errMsg)
-			if out != "" {
-				content += "\n\n" + out
-			}
-			return tools.ToolResult{Content: content}, fmt.Errorf("%s", content)
-		}
+	select {
+	case <-ctx.Done():
+		uc.Kill()
+		<-uc.Done()
+		return tools.ToolResult{Content: "Command cancelled."}, nil
+	case <-uc.Done():
 	}
+	out, _ := uc.ReadOutput(0)
+	info := uc.Info()
+	if info.Status == fileio.AsyncCompleted {
+		if out == "" {
+			return tools.ToolResult{Content: "(command completed with no output)"}, nil
+		}
+		return tools.ToolResult{Content: out}, nil
+	}
+	errMsg := info.Error
+	if errMsg == "" {
+		errMsg = fmt.Sprintf("exit code %d", info.ExitCode)
+	}
+	content := fmt.Sprintf("Command failed: %s", errMsg)
+	if out != "" {
+		content += "\n\n" + out
+	}
+	return tools.ToolResult{Content: content}, fmt.Errorf("%s", content)
 }

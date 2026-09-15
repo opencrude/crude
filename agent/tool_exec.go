@@ -79,10 +79,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []provider.ToolC
 	}
 
 	send := func(result execResult) {
-		select {
-		case ch <- result:
-		case <-ctx.Done():
-		}
+		ch <- result
 	}
 
 	for _, indexed := range nonBlocking {
@@ -115,6 +112,9 @@ func (a *Agent) executeOneToolCallSafely(
 	blockResolveCh <-chan ttypes.BlockResponse,
 	lastReply *string,
 ) (result execResult) {
+	if err := ctx.Err(); err != nil {
+		return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: "Turn cancelled before tool execution."}, toolError: true}
+	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			message := fmt.Sprintf("Error: tool %q panicked: %v", tc.Function.Name, recovered)
@@ -196,7 +196,13 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 	if len(validationDefs) == 0 {
 		validationDefs = tools.AgentTools
 	}
-	if errMsg := validateRequiredParams(tc.Function.Name, params, validationDefs); errMsg != "" {
+	errMsg := ""
+	if len(a.FilteredTools) > 0 && findToolDef(tc.Function.Name, a.FilteredTools) == nil {
+		errMsg = fmt.Sprintf("Error: tool %q is not available to this agent.", tc.Function.Name)
+	} else {
+		errMsg = validateRequiredParams(tc.Function.Name, params, validationDefs)
+	}
+	if errMsg != "" {
 		a.logger.Warn("TOOL", "empty_required_param", "name", tc.Function.Name)
 		emit(AgentEvent{Type: "tool_call", Data: map[string]any{
 			"internal_id": internalID,

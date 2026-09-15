@@ -34,6 +34,7 @@ type TimelineMsg struct {
 type MessageRef struct {
 	SessionID string
 	MessageID string
+	AgentID   string
 }
 type PlanMsg struct {
 	Plan  localhistory.RestorePlan
@@ -49,6 +50,7 @@ type PreviewRequest struct {
 	Paths      []string
 	SessionID  string
 	MessageID  string
+	AgentID    string
 }
 type ApplyRequest struct {
 	PlanID  string
@@ -365,7 +367,14 @@ func (s *Screen) toggleSelected() {
 	if c.ConflictReason != "" && !s.exact[c.Path] {
 		return
 	}
-	s.selected[c.Path] = !s.selected[c.Path]
+	selected := !s.selected[c.Path]
+	paths := c.AtomicPaths
+	if len(paths) == 0 {
+		paths = []string{c.Path}
+	}
+	for _, path := range paths {
+		s.selected[path] = selected
+	}
 	s.armed = false
 	s.status = ""
 	s.rebuildPlan()
@@ -401,7 +410,7 @@ func (s *Screen) activate() ui.EventResult {
 		s.loading = true
 		request := PreviewRequest{SnapshotID: r.ID, Paths: append([]string(nil), s.previewPaths...)}
 		if ref, ok := s.messageRefs[r.ID]; ok {
-			request.SessionID, request.MessageID = ref.SessionID, ref.MessageID
+			request.SessionID, request.MessageID, request.AgentID = ref.SessionID, ref.MessageID, ref.AgentID
 		}
 		return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionPreview, Payload: request}, Invalidate: ui.InvalidatePaint}
 	}

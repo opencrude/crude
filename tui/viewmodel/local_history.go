@@ -20,6 +20,7 @@ import (
 type historyLatestMsg struct {
 	SessionID string
 	MessageID string
+	AgentID   string
 	Error     string
 }
 type historyCandidatesMsg struct {
@@ -32,10 +33,10 @@ type historyOperationMsg struct {
 	Error string
 }
 
-func (m *App) openLocalHistory() tea.Cmd { return m.openLocalHistoryForMessage("", "") }
+func (m *App) openLocalHistory() tea.Cmd { return m.openLocalHistoryForMessage("", "", "") }
 
 func (m *App) openLocalHistoryForPath(path string) tea.Cmd {
-	cmd := m.openLocalHistoryForMessage("", "")
+	cmd := m.openLocalHistoryForMessage("", "", "")
 	if cmd == nil || m.LocalHistory == nil {
 		return cmd
 	}
@@ -57,25 +58,28 @@ func (m *App) openLocalHistoryForPath(path string) tea.Cmd {
 	}
 }
 
-func (m *App) openLatestHistoryCmd() tea.Cmd {
+func (m *App) openLatestHistoryCmd(agentID string) tea.Cmd {
 	if m.ActiveSession == nil || m.HistoryService == nil {
 		return func() tea.Msg { return historyLatestMsg{Error: "No active session history"} }
 	}
+	if agentID == "" {
+		return func() tea.Msg { return historyLatestMsg{Error: "No active agent history"} }
+	}
 	sessionID := m.ActiveSession.SessionID
 	return func() tea.Msg {
-		scopes, err := m.HistoryService.UndoableScopes(sessionID)
+		scopes, err := m.HistoryService.AgentUndoableScopes(sessionID, agentID)
 		if err != nil {
 			return historyLatestMsg{Error: err.Error()}
 		}
 		if len(scopes) == 0 {
-			return historyLatestMsg{Error: "No message with workspace changes to undo"}
+			return historyLatestMsg{Error: "No snapshot-verified file changes from the active agent to undo"}
 		}
 		latest := scopes[0]
 		overlapping := overlappingLatestScopes(scopes)
 		if len(overlapping) > 1 {
 			return historyCandidatesMsg{SessionID: sessionID, Scopes: overlapping}
 		}
-		return historyLatestMsg{SessionID: sessionID, MessageID: latest.MessageID}
+		return historyLatestMsg{SessionID: sessionID, MessageID: latest.MessageID, AgentID: agentID}
 	}
 }
 
@@ -93,7 +97,7 @@ func overlappingLatestScopes(scopes []localhistory.MessageScope) []localhistory.
 	return out
 }
 
-func (m *App) openLocalHistoryForMessage(sessionID, messageID string) tea.Cmd {
+func (m *App) openLocalHistoryForMessage(sessionID, messageID, agentID string) tea.Cmd {
 	if m.Workspace == nil || m.HistoryService == nil {
 		if m.Feedback != nil {
 			m.Feedback.NotifyError("Local history is unavailable")
@@ -108,7 +112,13 @@ func (m *App) openLocalHistoryForMessage(sessionID, messageID string) tea.Cmd {
 	m.overlayHost.Open(ui.OverlayLocalHistory, win, ui.ModalDialogPolicy(), func() { m.historyScreen = nil })
 	if messageID != "" {
 		return func() tea.Msg {
-			plan, err := m.HistoryService.PlanMessageRestore(context.Background(), sessionID, messageID)
+			var plan localhistory.RestorePlan
+			var err error
+			if agentID == "" {
+				plan, err = m.HistoryService.PlanMessageRestore(context.Background(), sessionID, messageID)
+			} else {
+				plan, err = m.HistoryService.PlanAgentRestore(context.Background(), sessionID, messageID, agentID)
+			}
 			if err != nil {
 				return historyscreen.PlanMsg{Error: err.Error()}
 			}
@@ -138,7 +148,7 @@ func (m *App) newLocalHistoryWindow(screen *historyscreen.Screen) *wm.FloatingWi
 }
 
 func (m *App) openHistoryCandidates(msg historyCandidatesMsg) tea.Cmd {
-	if m.openLocalHistoryForMessage("", "") == nil {
+	if m.openLocalHistoryForMessage("", "", "") == nil {
 		return nil
 	}
 	return func() tea.Msg {
@@ -154,9 +164,10 @@ func (m *App) openHistoryCandidates(msg historyCandidatesMsg) tea.Cmd {
 		refs := make(map[string]historyscreen.MessageRef)
 		for _, scope := range msg.Scopes {
 			record := byID[scope.BeforeSnapshot]
+			record.ID = "message-scope:" + msg.SessionID + ":" + scope.MessageID + ":" + scope.AgentID
 			record.Label = "Message " + scope.MessageID + fmt.Sprintf(" · %d changed path(s)", len(scope.ChangedPaths))
 			records = append(records, record)
-			refs[record.ID] = historyscreen.MessageRef{SessionID: msg.SessionID, MessageID: scope.MessageID}
+			refs[record.ID] = historyscreen.MessageRef{SessionID: msg.SessionID, MessageID: scope.MessageID, AgentID: scope.AgentID}
 		}
 		stats, _ := m.LocalHistory.Stats()
 		return historyscreen.TimelineMsg{Records: records, Stats: stats, Messages: refs}
@@ -240,7 +251,13 @@ func (m *App) historyPreviewCmd(request historyscreen.PreviewRequest) tea.Cmd {
 	settings := m.LoadAppSettings().LocalHistory
 	return func() tea.Msg {
 		if request.MessageID != "" {
-			plan, err := m.HistoryService.PlanMessageRestore(context.Background(), request.SessionID, request.MessageID)
+			var plan localhistory.RestorePlan
+			var err error
+			if request.AgentID == "" {
+				plan, err = m.HistoryService.PlanMessageRestore(context.Background(), request.SessionID, request.MessageID)
+			} else {
+				plan, err = m.HistoryService.PlanAgentRestore(context.Background(), request.SessionID, request.MessageID, request.AgentID)
+			}
 			if err != nil {
 				return historyscreen.PlanMsg{Error: err.Error()}
 			}

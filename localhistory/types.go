@@ -39,6 +39,30 @@ type Entry struct {
 	SpecialMode    string    `json:"special_mode,omitempty"`
 }
 
+// OperationState is the exact filesystem state an agent file operation read or
+// intended to commit. Data is persisted into the content-addressed store before
+// the operation mutates the workspace.
+type OperationState struct {
+	Type EntryType
+	Mode uint32
+	Data []byte
+}
+
+type OperationPath struct {
+	Path   string
+	Before *OperationState
+	After  *OperationState
+}
+
+type AgentOperation struct {
+	ID        string
+	SessionID string
+	MessageID string
+	AgentID   string
+	Source    string
+	Paths     []OperationPath
+}
+
 type Manifest struct {
 	Version   int              `json:"version"`
 	ID        string           `json:"id"`
@@ -59,6 +83,7 @@ type SnapshotOptions struct {
 	DisableGitIgnore    bool     `json:"disable_gitignore,omitempty"`
 	ExtraIgnorePatterns []string `json:"extra_ignore_patterns,omitempty"`
 	MaxFileSize         int64    `json:"max_file_size,omitempty"`
+	IncludePaths        []string `json:"include_paths,omitempty"`
 }
 
 type ChangeAction string
@@ -81,6 +106,7 @@ type Change struct {
 	AutoMerged     bool         `json:"auto_merged,omitempty"`
 	TextDiff       string       `json:"text_diff,omitempty"`
 	MovePeer       string       `json:"move_peer,omitempty"`
+	AtomicPaths    []string     `json:"atomic_paths,omitempty"`
 }
 
 type RestorePlan struct {
@@ -91,6 +117,7 @@ type RestorePlan struct {
 	CaptureOptions   SnapshotOptions `json:"capture_options"`
 	SessionID        string          `json:"session_id,omitempty"`
 	MessageID        string          `json:"message_id,omitempty"`
+	AgentID          string          `json:"agent_id,omitempty"`
 	Changes          []Change        `json:"changes"`
 }
 
@@ -104,6 +131,9 @@ type RestoreResult struct {
 	TargetSnapshotID string
 	SafetySnapshotID string
 	AfterSnapshotID  string
+	SessionID        string
+	MessageID        string
+	AgentID          string
 	Paths            []string
 }
 
@@ -128,6 +158,7 @@ type SnapshotRecord struct {
 type MessageScope struct {
 	SessionID      string
 	MessageID      string
+	AgentID        string
 	BeforeSnapshot string
 	AfterSnapshot  string
 	OpenedAt       int64

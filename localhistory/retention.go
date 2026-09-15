@@ -9,6 +9,10 @@ import (
 )
 
 func (s *Store) VerifyAll(ctx context.Context) error {
+	if err := s.beginOperation(); err != nil {
+		return err
+	}
+	defer s.endOperation()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	unlock, err := s.lockMutation(ctx)
@@ -16,7 +20,7 @@ func (s *Store) VerifyAll(ctx context.Context) error {
 		return err
 	}
 	defer unlock()
-	records, err := s.Timeline(10000)
+	records, err := s.timeline(-1)
 	if err != nil {
 		return err
 	}
@@ -29,6 +33,10 @@ func (s *Store) VerifyAll(ctx context.Context) error {
 }
 
 func (s *Store) Prune(ctx context.Context, policy RetentionPolicy) (PruneResult, error) {
+	if err := s.beginOperation(); err != nil {
+		return PruneResult{}, err
+	}
+	defer s.endOperation()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	unlock, err := s.lockMutation(ctx)
@@ -36,12 +44,12 @@ func (s *Store) Prune(ctx context.Context, policy RetentionPolicy) (PruneResult,
 		return PruneResult{}, err
 	}
 	defer unlock()
-	before, err := s.Stats()
+	before, err := s.stats()
 	if err != nil {
 		return PruneResult{}, err
 	}
 	originalPhysical := before.PhysicalBytes
-	records, err := s.Timeline(10000)
+	records, err := s.timeline(-1)
 	if err != nil {
 		return PruneResult{}, err
 	}
@@ -77,11 +85,22 @@ func (s *Store) Prune(ctx context.Context, policy RetentionPolicy) (PruneResult,
 		}
 	}
 	if policy.MaxSnapshots > 0 {
-		for index, record := range records {
-			if index < policy.MaxSnapshots {
-				keep[record.ID] = true
+		bounded := make(map[string]bool, max(policy.MaxSnapshots, len(protected)))
+		for id := range protected {
+			bounded[id] = true
+		}
+		bounded[records[0].ID] = true
+		for _, record := range records {
+			if keep[record.ID] && len(bounded) < policy.MaxSnapshots {
+				bounded[record.ID] = true
 			}
 		}
+		for _, record := range records {
+			if len(bounded) < policy.MaxSnapshots {
+				bounded[record.ID] = true
+			}
+		}
+		keep = bounded
 	}
 	var remove []string
 	for _, record := range records {
@@ -90,13 +109,15 @@ func (s *Store) Prune(ctx context.Context, policy RetentionPolicy) (PruneResult,
 		}
 	}
 	if policy.BudgetBytes > 0 && before.PhysicalBytes > policy.BudgetBytes {
-		for index := len(records) - 1; index >= 0 && before.PhysicalBytes > policy.BudgetBytes; index-- {
+		// Content-addressed objects are shared, so a snapshot's logical size
+		// cannot predict physical bytes freed. When over budget, remove every
+		// unprotected generation and measure the store after GC.
+		for index := len(records) - 1; index >= 0; index-- {
 			record := records[index]
 			if protected[record.ID] || record.ID == records[0].ID || containsString(remove, record.ID) {
 				continue
 			}
 			remove = append(remove, record.ID)
-			before.PhysicalBytes -= max64(0, record.LogicalBytes)
 		}
 	}
 	if len(remove) == 0 {
@@ -107,6 +128,14 @@ func (s *Store) Prune(ctx context.Context, policy RetentionPolicy) (PruneResult,
 		return PruneResult{}, err
 	}
 	for _, id := range remove {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM history_message_scopes WHERE state='closed' AND (before_snapshot_id=? OR after_snapshot_id=?)`, id, id); err != nil {
+			_ = tx.Rollback()
+			return PruneResult{}, err
+		}
+		if _, err := tx.ExecContext(ctx, `DELETE FROM history_restore_events WHERE notified=1 AND (target_snapshot_id=? OR safety_snapshot_id=? OR after_snapshot_id=?)`, id, id, id); err != nil {
+			_ = tx.Rollback()
+			return PruneResult{}, err
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM history_snapshots WHERE snapshot_id=?`, id); err != nil {
 			_ = tx.Rollback()
 			return PruneResult{}, err
@@ -125,7 +154,7 @@ func (s *Store) Prune(ctx context.Context, policy RetentionPolicy) (PruneResult,
 	if err != nil {
 		return PruneResult{}, err
 	}
-	after, err := s.Stats()
+	after, err := s.stats()
 	if err != nil {
 		return PruneResult{}, err
 	}
@@ -164,8 +193,10 @@ func (s *Store) removeStalePlans() error {
 func (s *Store) protectedSnapshots() (map[string]bool, error) {
 	protected := make(map[string]bool)
 	queries := []string{
-		`SELECT before_snapshot_id FROM history_message_scopes UNION SELECT after_snapshot_id FROM history_message_scopes WHERE after_snapshot_id<>''`,
-		`SELECT target_snapshot_id FROM history_restore_events UNION SELECT safety_snapshot_id FROM history_restore_events UNION SELECT after_snapshot_id FROM history_restore_events`,
+		`SELECT before_snapshot_id FROM history_message_scopes WHERE state<>'closed' UNION SELECT after_snapshot_id FROM history_message_scopes WHERE state<>'closed' AND after_snapshot_id<>''`,
+		`SELECT target_snapshot_id FROM history_restore_plans WHERE state='preview'`,
+		`SELECT safety_snapshot_id FROM history_restore_transactions WHERE state IN ('applying','conflicted')`,
+		`SELECT target_snapshot_id FROM history_restore_events WHERE notified=0 UNION SELECT safety_snapshot_id FROM history_restore_events WHERE notified=0 UNION SELECT after_snapshot_id FROM history_restore_events WHERE notified=0`,
 	}
 	for _, query := range queries {
 		rows, err := s.db.Query(query)
@@ -190,7 +221,7 @@ func (s *Store) protectedSnapshots() (map[string]bool, error) {
 }
 
 func (s *Store) collectGarbage(ctx context.Context) (int, error) {
-	records, err := s.Timeline(10000)
+	records, err := s.timeline(-1)
 	if err != nil {
 		return 0, err
 	}
@@ -245,6 +276,42 @@ func (s *Store) collectGarbage(ctx context.Context) (int, error) {
 				}
 			}
 		}
+	}
+	rows, err := s.db.Query(`SELECT before_entry,after_entry FROM history_agent_operation_paths`)
+	if err != nil {
+		return 0, err
+	}
+	for rows.Next() {
+		var beforeJSON, afterJSON string
+		if err := rows.Scan(&beforeJSON, &afterJSON); err != nil {
+			_ = rows.Close()
+			return 0, err
+		}
+		for _, encoded := range []string{beforeJSON, afterJSON} {
+			entry, err := unmarshalOptionalEntry(encoded)
+			if err != nil {
+				_ = rows.Close()
+				return 0, err
+			}
+			if entry == nil || entry.Type != EntryFile || files[entry.Hash] {
+				continue
+			}
+			files[entry.Hash] = true
+			object, err := s.readFileObject(entry.Hash)
+			if err != nil {
+				_ = rows.Close()
+				return 0, err
+			}
+			for _, chunk := range object.Chunks {
+				chunks[chunk.Hash] = true
+			}
+		}
+	}
+	if err := rows.Close(); err != nil {
+		return 0, err
+	}
+	if err := rows.Err(); err != nil {
+		return 0, err
 	}
 	removed, err := removeUnreferenced(filepath.Join(s.root, "objects", "files"), ".json", files)
 	if err != nil {

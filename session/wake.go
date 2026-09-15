@@ -15,7 +15,25 @@ const (
 // on a select of user input and wake events. A wake event causes the session
 // to process the event and potentially re-enter the agent loop.
 type WakeEvent struct {
-	Type     WakeEventType
-	Data     any
-	SourceID string
+	Type             WakeEventType
+	Data             any
+	SourceID         string
+	HistoryMessageID string
+}
+
+func commonWakeHistoryMessage(events []WakeEvent) string {
+	messageID := ""
+	for _, event := range events {
+		if event.HistoryMessageID == "" {
+			return ""
+		}
+		if messageID == "" {
+			messageID = event.HistoryMessageID
+			continue
+		}
+		if messageID != event.HistoryMessageID {
+			return ""
+		}
+	}
+	return messageID
 }
