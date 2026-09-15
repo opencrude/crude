@@ -845,10 +845,15 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
 - Agent undo is operation-scoped, not a message-wide workspace reset. Direct
   file tools durably record exact preimages and intended postimages before the
   first mutation; failure to persist aborts the tool. Watcher-only, editor,
-  external, and opaque-command changes remain workspace history but are never
-  assigned to an agent. Selective undo reverses operation receipts, preserving
+  external-actor, and opaque-command changes remain workspace history but are
+  never assigned to an agent. Selective undo reverses operation receipts, preserving
   pre-operation external state and failing closed across overlapping/later
   ownership.
+- Agent filesystem authority is not confined to the project root. Direct tool
+  mutations use compact relative keys inside the workspace and canonical
+  absolute keys outside it; both receive the same operation receipt, preview,
+  safety snapshot, crash recovery, and selective restore guarantees. Never
+  reject or silently omit a direct mutation merely because its path is external.
 - Snapshot, SQLite, verification, pruning, and restore work always runs in a
   command/background service, never Bubble Tea `Update`. Project switch and
   shutdown wait for active restore ownership.

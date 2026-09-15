@@ -64,13 +64,14 @@ type AgentOperation struct {
 }
 
 type Manifest struct {
-	Version   int              `json:"version"`
-	ID        string           `json:"id"`
-	ParentID  string           `json:"parent_id,omitempty"`
-	CreatedAt int64            `json:"created_at"`
-	Kind      string           `json:"kind"`
-	Label     string           `json:"label,omitempty"`
-	Entries   map[string]Entry `json:"entries"`
+	Version      int              `json:"version"`
+	ID           string           `json:"id"`
+	ParentID     string           `json:"parent_id,omitempty"`
+	CreatedAt    int64            `json:"created_at"`
+	Kind         string           `json:"kind"`
+	Label        string           `json:"label,omitempty"`
+	Entries      map[string]Entry `json:"entries"`
+	TrackedPaths []string         `json:"tracked_paths,omitempty"`
 }
 
 func (m Manifest) Time() time.Time { return time.Unix(0, m.CreatedAt) }
@@ -107,6 +108,7 @@ type Change struct {
 	TextDiff       string       `json:"text_diff,omitempty"`
 	MovePeer       string       `json:"move_peer,omitempty"`
 	AtomicPaths    []string     `json:"atomic_paths,omitempty"`
+	ParentIdentity string       `json:"parent_identity,omitempty"`
 }
 
 type RestorePlan struct {

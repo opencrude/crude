@@ -400,3 +400,97 @@ func TestDisabledHistoryTurnStillExcludesRestore(t *testing.T) {
 		t.Fatal("restore did not proceed after disabled-history turn completed")
 	}
 }
+
+func TestAgentUndoTracksInsideAndOutsideFilesystemMutations(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	project, outside := t.TempDir(), t.TempDir()
+	insidePath := filepath.Join(project, "inside.txt")
+	outsidePath := filepath.Join(outside, "outside.txt")
+	unrelatedPath := filepath.Join(outside, "unrelated.txt")
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		if requests.Add(1) == 1 {
+			insideArgs, _ := json.Marshal(map[string]string{"path": "inside.txt", "content": "inside agent change"})
+			outsideArgs, _ := json.Marshal(map[string]string{"path": outsidePath, "content": "outside agent change"})
+			_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"call_inside\",\"type\":\"function\",\"function\":{\"name\":\"write_file\",\"arguments\":%q}},{\"index\":1,\"id\":\"call_outside\",\"type\":\"function\",\"function\":{\"name\":\"write_file\",\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", string(insideArgs), string(outsideArgs))
+			return
+		}
+		if err := os.WriteFile(unrelatedPath, []byte("unrelated external change"), 0o644); err != nil {
+			t.Errorf("write unrelated external file: %v", err)
+			return
+		}
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}))
+	defer server.Close()
+	ws := NewWorkspace(project, "history-model", "tester", ttypes.Settings{}, &testLogger{})
+	t.Cleanup(ws.Close)
+	ws.SetAppDefaults(ttypes.AppSettings{LocalHistory: ttypes.LocalHistorySettings{Enabled: "on", UseGitIgnore: "on", CaptureExternalChanges: "on", SafetySnapshotBeforeRestore: "on", MaxFileSizeMB: 10}})
+	frontend, err := ws.CreateSession(historyE2EConfig(server.URL), home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	frontend.backend.SetYolo(true)
+	sender := &historyE2ESender{events: make(chan historyE2EEvent, 64)}
+	orchestrator, err := ws.StartOrchestrator(sender)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !frontend.backend.SubmitInput(orchestrator.ID, provider.PlainInput("write inside and outside")) {
+		t.Fatal("turn was not admitted")
+	}
+	waitHistoryAgentDone(t, sender, orchestrator.ID)
+	scopes := waitAgentHistoryScopes(t, ws.HistoryService, frontend.SessionID, orchestrator.ID)
+	plan, err := ws.HistoryService.PlanAgentRestore(context.Background(), frontend.SessionID, scopes[0].MessageID, orchestrator.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	wantOutside := filepath.ToSlash(filepath.Clean(outsidePath))
+	wantPaths := map[string]bool{"inside.txt": true, wantOutside: true}
+	if len(plan.Changes) != 2 {
+		t.Fatalf("agent plan=%+v", plan.Changes)
+	}
+	choices := make([]localhistory.RestoreChoice, 0, len(plan.Changes))
+	for _, change := range plan.Changes {
+		if !wantPaths[change.Path] {
+			t.Fatalf("unowned path entered plan: %+v", change)
+		}
+		choices = append(choices, localhistory.RestoreChoice{Path: change.Path})
+	}
+	result, err := ws.ApplyHistoryRestoreChoices(context.Background(), plan.ID, choices)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{insidePath, outsidePath} {
+		if _, err := os.Lstat(path); !os.IsNotExist(err) {
+			t.Fatalf("agent path remained after undo: %s err=%v", path, err)
+		}
+	}
+	if data, err := os.ReadFile(unrelatedPath); err != nil || string(data) != "unrelated external change" {
+		t.Fatalf("unrelated external file=%q err=%v", data, err)
+	}
+	safetyPlan, err := ws.LocalHistory.PlanRestore(context.Background(), result.SafetySnapshotID, localhistory.SnapshotOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var safetyChoices []localhistory.RestoreChoice
+	for _, change := range safetyPlan.Changes {
+		if wantPaths[change.Path] {
+			safetyChoices = append(safetyChoices, localhistory.RestoreChoice{Path: change.Path})
+		}
+	}
+	if len(safetyChoices) != 2 {
+		t.Fatalf("safety inverse omitted external path: %+v", safetyPlan.Changes)
+	}
+	if _, err := ws.ApplyHistoryRestoreChoices(context.Background(), safetyPlan.ID, safetyChoices); err != nil {
+		t.Fatal(err)
+	}
+	if data, err := os.ReadFile(insidePath); err != nil || string(data) != "inside agent change" {
+		t.Fatalf("inside safety restore=%q err=%v", data, err)
+	}
+	if data, err := os.ReadFile(outsidePath); err != nil || string(data) != "outside agent change" {
+		t.Fatalf("outside safety restore=%q err=%v", data, err)
+	}
+}

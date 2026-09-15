@@ -163,7 +163,7 @@ func TestRestoreActivityGateIncludesChildAndHistoryFinalizer(t *testing.T) {
 	}
 }
 
-func TestAgentMutationsCannotEscapeWorkspace(t *testing.T) {
+func TestAgentMutationsMayTargetOutsideWorkspace(t *testing.T) {
 	project, outside := t.TempDir(), t.TempDir()
 	sess, err := NewWithSessionDir("history-confine", testConfig(), t.TempDir(), filepath.Join(t.TempDir(), "sessions"))
 	if err != nil {
@@ -172,21 +172,10 @@ func TestAgentMutationsCannotEscapeWorkspace(t *testing.T) {
 	defer sess.Close()
 	sess.SetWorkDir(project)
 	outsidePath := filepath.Join(outside, "escaped.txt")
-	if result, err := sess.ExecuteToolForTest(context.Background(), "write_file", map[string]any{"path": outsidePath, "content": "escaped"}); err == nil || !strings.Contains(result.Content, "escapes workspace") {
+	if result, err := sess.ExecuteToolForTest(context.Background(), "write_file", map[string]any{"path": outsidePath, "content": "outside"}); err != nil {
 		t.Fatalf("outside write result=%q err=%v", result.Content, err)
 	}
-	if _, err := os.Lstat(outsidePath); !os.IsNotExist(err) {
-		t.Fatalf("outside file was created: %v", err)
-	}
-	link := filepath.Join(project, "linked")
-	if err := os.Symlink(outside, link); err != nil {
-		t.Skipf("symlinks unavailable: %v", err)
-	}
-	symlinkEscape := filepath.Join(link, "through-link.txt")
-	if result, err := sess.ExecuteToolForTest(context.Background(), "write_file", map[string]any{"path": symlinkEscape, "content": "escaped"}); err == nil || !strings.Contains(result.Content, "escapes workspace") {
-		t.Fatalf("symlink write result=%q err=%v", result.Content, err)
-	}
-	if _, err := os.Lstat(filepath.Join(outside, "through-link.txt")); !os.IsNotExist(err) {
-		t.Fatalf("symlink escape file was created: %v", err)
+	if data, err := os.ReadFile(outsidePath); err != nil || string(data) != "outside" {
+		t.Fatalf("outside file=%q err=%v", data, err)
 	}
 }

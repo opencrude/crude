@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"sort"
 	"time"
 	"unicode/utf8"
@@ -25,7 +26,7 @@ type persistedOperationPath struct {
 }
 
 // RecordAgentOperation writes exact preimages and intended postimages before a
-// direct file tool mutates the workspace. This is the selective-undo WAL: if
+// direct file tool mutates the filesystem. This is the selective-undo WAL: if
 // persistence fails, the tool must not proceed.
 func (s *Store) RecordAgentOperation(ctx context.Context, operation AgentOperation) error {
 	if err := s.beginOperation(); err != nil {
@@ -50,7 +51,7 @@ func (s *Store) RecordAgentOperation(ctx context.Context, operation AgentOperati
 	stored := make([]storedPath, 0, len(operation.Paths))
 	seen := make(map[string]bool, len(operation.Paths))
 	for _, operationPath := range operation.Paths {
-		path, ok := cleanRelativeHistoryPath(operationPath.Path)
+		path, ok := cleanOperationPath(operationPath.Path)
 		if !ok || seen[path] {
 			return fmt.Errorf("localhistory: invalid or duplicate operation path %q", operationPath.Path)
 		}
@@ -101,6 +102,21 @@ func (s *Store) RecordAgentOperation(ctx context.Context, operation AgentOperati
 		}
 	}
 	return tx.Commit()
+}
+
+func cleanOperationPath(path string) (string, bool) {
+	if path == "" {
+		return "", false
+	}
+	native := filepath.Clean(filepath.FromSlash(path))
+	if filepath.IsAbs(native) {
+		volume := filepath.VolumeName(native)
+		if native == string(filepath.Separator) || native == volume+string(filepath.Separator) {
+			return "", false
+		}
+		return filepath.ToSlash(native), true
+	}
+	return cleanRelativeHistoryPath(path)
 }
 
 func (s *Store) CompleteAgentOperation(operationID string, committed bool) error {
@@ -405,6 +421,15 @@ func (s *Store) operationRestoreChanges(ctx context.Context, sessionID, messageI
 			continue
 		}
 		change := Change{Path: path, Current: cloneEntry(current), Target: cloneEntry(working), ConflictReason: conflict, ExactAllowed: conflict != "" && exactAllowed, AutoMerged: autoMerged && conflict == "", AtomicPaths: append([]string(nil), atomicGroups[path]...)}
+		change.ParentIdentity, err = s.pathParentIdentity(path)
+		if err != nil {
+			change.UnsafeReason = "cannot verify restore parent: " + err.Error()
+			change.ExactAllowed = false
+		}
+		if filepath.IsAbs(filepath.FromSlash(path)) && (!operationExternalStateSupported(current) || !operationExternalStateSupported(working)) {
+			change.UnsafeReason = "external operation changed to an unsupported filesystem entry"
+			change.ExactAllowed = false
+		}
 		if autoMerged && conflict == "" {
 			change.ExactTarget = cloneEntry(exact)
 		}
@@ -444,6 +469,10 @@ func (s *Store) operationRestoreChanges(ctx context.Context, sessionID, messageI
 	s.guardDirectoryDeletions(changes)
 	linkMovePeers(changes)
 	return changes, nil
+}
+
+func operationExternalStateSupported(entry *Entry) bool {
+	return entry == nil || entry.Type == EntryFile || entry.Type == EntryDirectory
 }
 
 func operationStateMatches(actual, intended *Entry) bool {
