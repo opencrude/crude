@@ -1,11 +1,12 @@
 # Message-Scoped Undo and Workspace Local History Plan
 
-> Status: LANDED - end-to-end Local History system completed on 2026-09-01:
+> Status: LANDED - end-to-end Local History system completed on 2026-09-01;
+> agent-scoped provenance hardening landed on 2026-09-14:
 > content-defined storage, SQLite timeline/index recovery, recursive watcher and
 > reconciliation, message/child attribution, collision handling, bounded text
 > merge, immutable preview plans, partial/exact restore, safety rollback,
-> retention/GC, settings, timeline/file/message UX, `/undo`, context actions,
-> refresh events, and append-only provider context notification.
+> retention/GC, settings, timeline/file/message UX, active-agent `/undo`, context
+> actions, refresh events, and append-only provider context notification.
 
 ## 1. Product Intent
 
@@ -20,7 +21,9 @@ The user-facing contract is:
    the exact restore plan before the filesystem changes.
 4. Restoring history is itself undoable.
 5. Agent edits, shell-command side effects, editor saves, file-tree operations,
-   and external filesystem writes are captured by the same workspace history.
+   and external filesystem writes are retained by the same workspace history.
+   Only a direct file-tool operation with an agent identity and a durable
+   write-ahead receipt is eligible for agent-scoped undo.
 6. Generated and reproducible content is not tracked by default.
 7. The full conversation and provider context history remain immutable. Undo adds a
    new event; it never deletes or rewrites chat history and therefore does the
@@ -94,6 +97,23 @@ Current limitations:
 - A file version may record multiple owners when concurrent actors touched it.
 - Ambiguous ownership is displayed as a collision and never silently assigned
   to one agent or message.
+- Watcher timing, declared file ownership, and raw tool arguments are not
+  sufficient proof of a writer. Before its first filesystem mutation, a direct
+  tool durably records exact preimages and intended postimages for every file
+  endpoint. If the receipt cannot be persisted, the tool does not mutate.
+- Agent undo reverses those operation receipts, never the message baseline. An
+  external/editor/command change made before the direct tool is therefore part
+  of its preimage and survives undo. Later non-overlapping text edits use a
+  strict reverse three-way merge; overlaps, binary changes, and later ownership
+  by another agent fail closed behind an explicit conflict.
+- The receipt is a write-ahead record with `prepared`, `committed`, and
+  `aborted` states. File tools compare their preimage again after WAL commit and
+  immediately before replacement; aborted receipts never become undo entries.
+  Move/copy endpoints and operation-created parents are one atomic selection,
+  so a conflicted endpoint blocks the whole operation chain.
+- Selective tools reject existing hardlinked files until an operation receipt
+  can represent the complete link topology. Full workspace restore preserves
+  hardlinks and verifies both content and inode identity.
 
 ### 3.3 Cache-safe conversation semantics
 
@@ -297,6 +317,17 @@ The watcher captures changes regardless of whether they came from:
 
 Direct Crude file operations still publish intent metadata. That improves
 attribution and avoids unnecessary scans, but it is not the source of truth.
+For agent undo, exact operation preimages and intended postimages are committed
+to the content-addressed store before mutation. Watcher-only, opaque-command,
+editor, and external changes remain available in workspace timeline history but
+never become an agent undo candidate without equivalent write-ahead provenance.
+Blocking commands remain blocking; asynchronous command trees are lifecycle-
+owned, joined on shutdown, and block restores while running.
+Human turns, detached children, and child-wake continuations retain a shared
+activity lease. Restore owns the exclusive side, eliminating check-then-admit
+races. A durable restore transaction rolls back interrupted process death, and
+provider-context notification is a protected, idempotent outbox retried before
+the next provider turn and on resume.
 
 ### 6.4 Concurrent attribution
 
@@ -387,11 +418,14 @@ Settings UI requirements:
 
 Keep only `/undo`.
 
-`/undo` finds the latest undoable root user message in the active session and
-opens its restore preview. It never restores immediately.
+`/undo` finds the latest undoable scope for the active agent and opens its
+restore preview. It never restores immediately. The preview contains only the
+selective inverse of that agent's direct file-tool operation receipts; it never
+includes watcher-only workspace changes.
 
-If no message has file changes, it reports that clearly. If several concurrent
-message scopes are candidates, it opens a message picker instead of guessing.
+If the active agent has no verified file changes, it reports that clearly. If
+several concurrent scopes are candidates, it opens a message picker instead of
+guessing.
 
 Remove:
 
@@ -525,8 +559,14 @@ directories do not.
 
 - Use canonical user `message_id` as the root scope.
 - Propagate root message ID to every child.
-- Add before/after labels and collision detection.
-- Add message-to-files query API.
+- Persist direct `(operation_id, session_id, message_id, agent_id)` write-ahead
+  receipts with every path's exact preimage and intended postimage before the
+  first filesystem mutation.
+- Build selective inverse plans from operation preimages, with strict reverse
+  text merge for non-overlapping later edits. Do not treat claims, raw
+  arguments, watcher timing, or opaque command effects as agent-owned changes.
+- Add before/after labels, collision detection, and agent/message-to-files query
+  APIs.
 
 Exit gate: one root message with parallel children produces one reviewable
 change set, with ambiguous paths marked.
@@ -573,6 +613,8 @@ completed/resumed sessions retain message associations.
 - restore of restore
 - partial selection restore
 - concurrent agents touching disjoint and shared files
+- an external write after a successful agent file tool is never auto-selected;
+  it appears only as a guarded conflict or a strict non-overlapping reverse merge
 - resumed session message attribution
 
 ### Ignore policy

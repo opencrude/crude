@@ -42,6 +42,10 @@ type SubAgentRunner struct {
 	sessionCtx     context.Context
 	sessionCancel  context.CancelFunc
 	parentTurn     atomic.Uint64
+	running        atomic.Int32
+	turnMu         sync.Mutex
+	turnCounts     map[uint64]int
+	turnDone       map[uint64]chan struct{}
 }
 
 func NewSubAgentRunner(s *Session, maxConcurrent int) *SubAgentRunner {
@@ -54,6 +58,8 @@ func NewSubAgentRunner(s *Session, maxConcurrent int) *SubAgentRunner {
 		wakeCh:        s.WakeCh(),
 		sessionCtx:    ctx,
 		sessionCancel: cancel,
+		turnCounts:    make(map[uint64]int),
+		turnDone:      make(map[uint64]chan struct{}),
 	}
 }
 
@@ -67,6 +73,54 @@ func (r *SubAgentRunner) FileOwnership() *agent.FileOwnership {
 
 func (r *SubAgentRunner) Wait() {
 	r.wg.Wait()
+}
+
+func (r *SubAgentRunner) Running() bool { return r != nil && r.running.Load() > 0 }
+
+func (r *SubAgentRunner) TurnRunning(generation uint64) bool {
+	if r == nil || generation == 0 {
+		return false
+	}
+	r.turnMu.Lock()
+	running := r.turnCounts[generation] > 0
+	r.turnMu.Unlock()
+	return running
+}
+
+func (r *SubAgentRunner) WaitForTurn(generation uint64) {
+	if r == nil || generation == 0 {
+		return
+	}
+	r.turnMu.Lock()
+	if r.turnCounts[generation] == 0 {
+		r.turnMu.Unlock()
+		return
+	}
+	done := r.turnDone[generation]
+	r.turnMu.Unlock()
+	<-done
+}
+
+func (r *SubAgentRunner) beginTurnChild(generation uint64) {
+	r.running.Add(1)
+	r.turnMu.Lock()
+	if r.turnCounts[generation] == 0 {
+		r.turnDone[generation] = make(chan struct{})
+	}
+	r.turnCounts[generation]++
+	r.turnMu.Unlock()
+}
+
+func (r *SubAgentRunner) finishTurnChild(generation uint64) {
+	r.turnMu.Lock()
+	r.turnCounts[generation]--
+	if r.turnCounts[generation] == 0 {
+		close(r.turnDone[generation])
+		delete(r.turnCounts, generation)
+		delete(r.turnDone, generation)
+	}
+	r.turnMu.Unlock()
+	r.running.Add(-1)
 }
 
 func (r *SubAgentRunner) SessionCancel() {
@@ -146,6 +200,9 @@ func (r *SubAgentRunner) SetParentToolFn(fn func(ctx context.Context, tool strin
 }
 
 func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any) (tools.ToolResult, error) {
+	if err := ctx.Err(); err != nil {
+		return tools.ToolResult{Content: "Turn cancelled before sub-agent launch."}, err
+	}
 	description := getStrParam(params, "description")
 	if description == "" {
 		return tools.ToolResult{}, fmt.Errorf("run_sub_agent: 'description' is required")
@@ -161,7 +218,7 @@ func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any)
 	}
 
 	spec := agent.SubAgentSpec{
-		ID:           agent.AgentID(name + "-" + generateShortID()),
+		ID:           agent.AgentID("agent-" + generateShortID()),
 		Name:         name,
 		Category:     category,
 		Description:  description,
@@ -172,6 +229,9 @@ func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any)
 		ParentID:     agent.AgentID(r.orchestratorID),
 		ParentTurn:   r.parentTurn.Load(),
 	}
+	if history, ok := historyScopeFromContext(ctx); ok {
+		spec.HistoryMessageID = history.messageID
+	}
 
 	if raw, ok := params["allowed_tools"]; ok {
 		spec.AllowedTools = toStringSlice(raw)
@@ -181,6 +241,11 @@ func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any)
 	}
 	if raw, ok := params["file_ownership"]; ok {
 		spec.FileOwnership = toStringSlice(raw)
+		for index, path := range spec.FileOwnership {
+			if path != "" && !filepath.IsAbs(path) {
+				spec.FileOwnership[index] = filepath.Join(r.session.WorkDir(), path)
+			}
+		}
 	}
 
 	profileInstructions := r.resolveProfile(name, category, &spec)
@@ -674,12 +739,16 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	a.AsyncMgr = fileio.NewAsyncCommandManagerWithLogger(r.session.logger)
 	a.FilteredTools = filteredTools
 
+	baseCtx := r.sessionCtx
+	if scope, ok := historyScopeFromContext(ctx); ok {
+		baseCtx = withHistoryScope(baseCtx, scope.sessionID, scope.messageID, scope.agentID)
+	}
 	var subCtx context.Context
 	var subCancel context.CancelFunc
 	if spec.Timeout > 0 {
-		subCtx, subCancel = context.WithTimeout(r.sessionCtx, spec.Timeout)
+		subCtx, subCancel = context.WithTimeout(baseCtx, spec.Timeout)
 	} else {
-		subCtx, subCancel = context.WithCancel(r.sessionCtx)
+		subCtx, subCancel = context.WithCancel(baseCtx)
 	}
 	a.Ctx = subCtx
 	r.session.logger.Info("SUBAGENT", "ctx_independence", "agent_id", spec.ID, "session_ctx_valid", r.sessionCtx.Err() == nil)
@@ -703,6 +772,15 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 
 	systemPrompt, userPrompt := agent.BuildSubAgentPromptInDir(spec, profileInstructions, r.session.WorkDir())
 
+	if err := ctx.Err(); err != nil {
+		r.fileOwnership.Release(spec.ID)
+		if subDB != nil {
+			_ = sessiondb.CloseSession(subDB, subSessionID)
+			_ = subDB.Close()
+		}
+		subCancel()
+		return nil, err
+	}
 	if err := r.mgr.Register(handle); err != nil {
 		r.fileOwnership.Release(spec.ID)
 		if subDB != nil {
@@ -717,8 +795,10 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	})
 
 	r.wg.Add(1)
+	r.beginTurnChild(spec.ParentTurn)
 	go func() {
 		defer r.wg.Done()
+		defer r.finishTurnChild(spec.ParentTurn)
 		r.runSubAgentLoop(subCtx, handle, systemPrompt, userPrompt)
 	}()
 
@@ -927,7 +1007,12 @@ func (r *SubAgentRunner) finalizeSubAgent(handle *agent.SubAgentHandle, result a
 	if handle == nil {
 		return
 	}
-	r.mgr.MarkFinished(handle.Spec.ID, result)
+	if handle.Agent != nil && handle.Agent.AsyncMgr != nil {
+		handle.Agent.AsyncMgr.CloseAndWait()
+	}
+	if result.HistoryMessageID == "" {
+		result.HistoryMessageID = handle.Spec.HistoryMessageID
+	}
 	if handle.DB != nil {
 		turnState := sessiondb.TurnFailed
 		switch result.Status {
@@ -960,6 +1045,7 @@ func (r *SubAgentRunner) finalizeSubAgent(handle *agent.SubAgentHandle, result a
 		_ = sessiondb.CloseSession(handle.DB, handle.SessionID)
 		_ = handle.DB.Close()
 	}
+	r.mgr.MarkFinished(handle.Spec.ID, result)
 }
 
 func persistSubAgentTranscript(
@@ -1052,7 +1138,7 @@ func (r *SubAgentRunner) deliverCompletionWake(result agent.SubAgentResult) bool
 	}
 	select {
 	case r.wakeCh <- WakeEvent{
-		Type: WakeSubAgentDone, Data: result, SourceID: string(result.AgentID),
+		Type: WakeSubAgentDone, Data: result, SourceID: string(result.AgentID), HistoryMessageID: result.HistoryMessageID,
 	}:
 		return true
 	case <-r.sessionCtx.Done():
@@ -1253,6 +1339,7 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 		if !agent.PolicyAllows(spec.Policy, tool) {
 			return tools.ToolResult{}, fmt.Errorf("[POLICY BLOCK] Tool %q is not allowed for this agent. Your policy is %q", tool, spec.PolicyName)
 		}
+		r.session.resolveRelativeParams(tool, params)
 
 		isReadOnlyExec := spec.Policy.AllowedCapabilities[safety.CanExecuteReadOnly] && !spec.Policy.AllowedCapabilities[safety.CanExecute]
 		if isReadOnlyExec && (tool == "execute_command" || tool == "async_execute_command") {
@@ -1287,11 +1374,7 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 		}
 
 		if isWriteTool(tool) {
-			target := getStrParam(params, "path")
-			if target == "" {
-				target = getStrParam(params, "source")
-			}
-			if target != "" {
+			for _, target := range writeToolTargets(tool, params) {
 				if err := r.fileOwnership.CheckOrClaim(spec.ID, spec.Name, target, true); err != nil {
 					return tools.ToolResult{}, err
 				}
@@ -1345,7 +1428,7 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 				p["_media_standard"] = handle.Agent.Provider.StandardID()
 				p["_media_modalities"] = append([]string(nil), spec.ModelModalities...)
 			}
-			return parentFn(ctx, tool, p)
+			return parentFn(withHistoryActor(ctx, string(spec.ID)), tool, p)
 		}
 		var opts *tools.ToolOptions
 		if handle != nil && handle.Agent != nil && handle.Agent.Provider != nil {
@@ -1357,6 +1440,29 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 		}
 		return result, nil
 	}
+}
+
+func writeToolTargets(tool string, params map[string]any) []string {
+	switch tool {
+	case "write_file", "edit_file", "delete_file":
+		return nonEmptyStrings(getStrParam(params, "path"))
+	case "move_file":
+		return nonEmptyStrings(getStrParam(params, "source"), getStrParam(params, "destination"))
+	case "copy_file":
+		return nonEmptyStrings(getStrParam(params, "destination"))
+	default:
+		return nil
+	}
+}
+
+func nonEmptyStrings(values ...string) []string {
+	result := make([]string, 0, len(values))
+	for _, value := range values {
+		if value != "" {
+			result = append(result, value)
+		}
+	}
+	return result
 }
 
 func summarizeSubAgentQuestions(params map[string]any) string {
@@ -1720,57 +1826,37 @@ func (r *SubAgentRunner) executeSubAgentCommandAutoPromote(ctx context.Context, 
 	pid := uc.PID()
 	r.session.logger.Info("EXEC", "subagent_auto_start", "agent_id", a.AgentID, "pid", pid, "cmd", cmd)
 
-	deadline := time.After(asyncPromotionThreshold)
-	poll := time.NewTicker(200 * time.Millisecond)
-	defer poll.Stop()
-
-	for {
-		select {
-		case <-ctx.Done():
-			uc.Kill()
-			return tools.ToolResult{Content: "Command cancelled."}, nil
-		case <-deadline:
-			h := a.NextAutoHandle()
-
-			_, _ = mgr.Promote(uc, h)
-			r.session.logger.Info("ASYNC", "subagent_auto_promote", "agent_id", a.AgentID, "handle", h, "pid", pid, "threshold", asyncPromotionThreshold)
-			return tools.ToolResult{Content: fmt.Sprintf(
-				"Command promoted to async after %s (handle: %q, PID: %d).",
-				asyncPromotionThreshold, h, pid,
-			)}, nil
-		case <-poll.C:
-			status := uc.Status()
-			if status == fileio.AsyncRunning {
-				continue
-			}
-			out, _ := uc.ReadOutput(0)
-			info := uc.Info()
-
-			if status == fileio.AsyncCompleted {
-				if out == "" {
-					return tools.ToolResult{Content: "(command completed with no output)"}, nil
-				}
-				return tools.ToolResult{Content: out}, nil
-			}
-
-			var errMsg string
-			if info.Error != "" {
-				errMsg = info.Error
-			} else {
-				errMsg = fmt.Sprintf("exit code %d", info.ExitCode)
-			}
-			content := fmt.Sprintf("Command failed: %s", errMsg)
-			if out != "" {
-				content += "\n\n" + out
-			}
-			return tools.ToolResult{Content: content}, fmt.Errorf("%s", content)
-		}
+	select {
+	case <-ctx.Done():
+		uc.Kill()
+		<-uc.Done()
+		return tools.ToolResult{Content: "Command cancelled."}, nil
+	case <-uc.Done():
 	}
+	out, _ := uc.ReadOutput(0)
+	info := uc.Info()
+	if info.Status == fileio.AsyncCompleted {
+		if out == "" {
+			return tools.ToolResult{Content: "(command completed with no output)"}, nil
+		}
+		return tools.ToolResult{Content: out}, nil
+	}
+	errMsg := info.Error
+	if errMsg == "" {
+		errMsg = fmt.Sprintf("exit code %d", info.ExitCode)
+	}
+	content := fmt.Sprintf("Command failed: %s", errMsg)
+	if out != "" {
+		content += "\n\n" + out
+	}
+	return tools.ToolResult{Content: content}, fmt.Errorf("%s", content)
 }
 
 func generateShortID() string {
-	var b [4]byte
-	_, _ = rand.Read(b[:])
+	var b [16]byte
+	if _, err := rand.Read(b[:]); err != nil {
+		panic(fmt.Sprintf("session: generate agent ID: %v", err))
+	}
 	return hex.EncodeToString(b[:])
 }
 

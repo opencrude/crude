@@ -71,8 +71,9 @@ type Workspace struct {
 
 	// LocalHistory owns immutable project snapshots and restore plans. Capture
 	// scheduling remains opt-in until the watcher/settings phase is enabled.
-	LocalHistory   *localhistory.Store
-	HistoryService *LocalHistoryService
+	LocalHistory    *localhistory.Store
+	HistoryService  *LocalHistoryService
+	localHistoryErr error
 
 	// ── Managers (workspace-scoped) ──
 	//
@@ -250,6 +251,7 @@ func NewWorkspace(
 		WorkspaceDir:       wsDir,
 		WorkspaceDB:        wsDB,
 		LocalHistory:       historyStore,
+		localHistoryErr:    historyErr,
 		AgentMgr:           NewAgentManager(),
 		PaneMgr:            NewPaneManager(),
 		LSPMgr:             lspMgr,
@@ -643,6 +645,7 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 	w.WorkspaceDB = wsDB
 	w.LocalHistory = historyStore
 	w.HistoryService = NewLocalHistoryService(abs, historyStore, w.Logger)
+	w.localHistoryErr = nil
 	dbTransferred = true
 
 	w.LSPMgr = NewLSPManager(w.Logger)

@@ -10,7 +10,13 @@ import (
 	"crude/logger"
 )
 
+const maxTrackedMutationBytes int64 = 256 << 20
+
 func writeAtomic(path string, data []byte, perm os.FileMode, lg *logger.Logger) error {
+	return writeAtomicChecked(path, data, perm, lg, nil)
+}
+
+func writeAtomicChecked(path string, data []byte, perm os.FileMode, lg *logger.Logger, precommit func() error) error {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return fmt.Errorf("atomic write: resolve path: %w", err)
@@ -57,6 +63,11 @@ func writeAtomic(path string, data []byte, perm os.FileMode, lg *logger.Logger) 
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("atomic write: close: %w", err)
 	}
+	if precommit != nil {
+		if err := precommit(); err != nil {
+			return fmt.Errorf("atomic write: precondition: %w", err)
+		}
+	}
 
 	if err := os.Rename(tmpName, abs); err != nil {
 		lg.Error("ATOMIC", "rename_failed", "tmp", tmpName, "path", abs, "error", err.Error())
@@ -75,6 +86,9 @@ func readFile(absPath string) ([]byte, os.FileInfo, error) {
 	}
 	if !fi.Mode().IsRegular() {
 		return nil, nil, fmt.Errorf("read file: %s is not a regular file", absPath)
+	}
+	if fi.Size() > maxTrackedMutationBytes {
+		return nil, nil, fmt.Errorf("read file: %s exceeds the %d MiB tracked-mutation limit", absPath, maxTrackedMutationBytes>>20)
 	}
 	data, err := os.ReadFile(absPath)
 	if err != nil {

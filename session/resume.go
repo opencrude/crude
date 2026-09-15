@@ -203,7 +203,6 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		dbPath:             dbPath,
 		turnNumber:         resumeTurnNumber,
 		seqNum:             len(msgs),
-		msgCounter:         len(msgs),
 		msgs:               msgs,
 		msgTurns:           msgTurns,
 		displayMetas:       displayMetas,

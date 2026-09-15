@@ -451,7 +451,39 @@ func TestHardlinkIdentityRoundTrips(t *testing.T) {
 	}
 }
 
-func TestMutationLockSerializesStoresAcrossProcesses(t *testing.T) {
+func TestChangedExistingHardlinkPassesStaleValidation(t *testing.T) {
+	store, workspace := newTestStore(t)
+	writeTestFile(t, workspace, "source", []byte("old"), 0o644)
+	if err := os.Link(filepath.Join(workspace, "source"), filepath.Join(workspace, "alias")); err != nil {
+		t.Skipf("hardlinks unavailable: %v", err)
+	}
+	target, err := store.Snapshot(context.Background(), SnapshotOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(workspace, "source"), []byte("new"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	plan, err := store.PlanRestore(context.Background(), target.ID, SnapshotOptions{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.ApplyRestore(context.Background(), plan.ID, nil); err != nil {
+		t.Fatal(err)
+	}
+	for _, path := range []string{"source", "alias"} {
+		if got := string(readTestFile(t, workspace, path)); got != "old" {
+			t.Fatalf("%s=%q", path, got)
+		}
+	}
+	sourceInfo, _ := os.Stat(filepath.Join(workspace, "source"))
+	aliasInfo, _ := os.Stat(filepath.Join(workspace, "alias"))
+	if !os.SameFile(sourceInfo, aliasInfo) {
+		t.Fatal("changed hardlink topology was not restored")
+	}
+}
+
+func TestInstanceLockRejectsSecondStoreWithoutInterruptingLiveScope(t *testing.T) {
 	workspace := t.TempDir()
 	root := t.TempDir()
 	first, err := Open(root, workspace)
@@ -459,19 +491,19 @@ func TestMutationLockSerializesStoresAcrossProcesses(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer first.Close()
-	second, err := Open(root, workspace)
+	writeTestFile(t, workspace, "live.txt", []byte("before"), 0o644)
+	before, err := first.Snapshot(context.Background(), SnapshotOptions{})
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer second.Close()
-	locked, err := first.processLock.TryLock()
-	if err != nil || !locked {
-		t.Fatalf("first lock=%v err=%v", locked, err)
+	if err := first.BeginMessageScope("session", "message", before.ID, time.Now()); err != nil {
+		t.Fatal(err)
 	}
-	defer func() { _ = first.processLock.Unlock() }()
-	ctx, cancel := context.WithTimeout(context.Background(), 75*time.Millisecond)
-	defer cancel()
-	if _, err := second.Prune(ctx, RetentionPolicy{MaxSnapshots: 1}); err == nil {
-		t.Fatal("second store bypassed process lock")
+	if _, err := Open(root, workspace); err == nil {
+		t.Fatal("second store opened while the first instance owned live scopes")
+	}
+	scope, ok, err := first.MessageScope("session", "message")
+	if err != nil || !ok || scope.State != "active" {
+		t.Fatalf("second open altered live scope: scope=%+v ok=%v err=%v", scope, ok, err)
 	}
 }

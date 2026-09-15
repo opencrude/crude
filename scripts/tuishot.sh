@@ -16,7 +16,7 @@
 #   sleep:<seconds>
 #   shot[:label]              extra screenshot
 #
-# Env: COLS ROWS PAINT_WAIT STEP_WAIT FONT_SIZE CRUDE_ARGS KEEP_OPEN
+# Env: COLS ROWS PAINT_WAIT STEP_WAIT FONT_SIZE CRUDE_ARGS CRUDE_CWD KEEP_OPEN
 set -uo pipefail
 
 OUTDIR="${1:?usage: tuishot.sh <outdir> [step ...]}"
@@ -31,6 +31,7 @@ CRUDE_ARGS="${CRUDE_ARGS:-}"
 KEEP_OPEN="${KEEP_OPEN:-0}"
 
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
+CRUDE_CWD="${CRUDE_CWD:-$REPO}"
 WORK=/tmp/crude-tuishot
 BIN="$WORK/crude"
 LOG="$WORK/crude.log"
@@ -65,7 +66,7 @@ cat > "$LAUNCH" <<EOF
 unset NO_COLOR CLICOLOR NO_COLOUR
 export COLORTERM=truecolor
 export TERM=${TERM_NAME:-alacritty}
-cd "$REPO" || exit 1
+cd "$CRUDE_CWD" || exit 1
 "$BIN" $CRUDE_ARGS 2>>"$LOG"
 echo "CRUDE-EXITED rc=\$?" >>"$LOG"
 sleep 900

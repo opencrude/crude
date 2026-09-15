@@ -92,18 +92,79 @@ func (w *Workspace) historyTurnActive() bool {
 }
 
 func (w *Workspace) AppendHistoryRestoreEvent(result localhistory.RestoreResult) error {
-	if w == nil || w.ActiveSession == nil {
+	if w == nil {
 		return nil
+	}
+	frontend := w.ActiveSession
+	if result.SessionID != "" {
+		frontend = w.SessionsByID[result.SessionID]
+	}
+	if frontend == nil {
+		return fmt.Errorf("workspace history restore owner is unavailable")
 	}
 	display := fmt.Sprintf("Restored %d file(s) from Local History · safety snapshot %s", len(result.Paths), shortHistory(result.SafetySnapshotID))
 	hidden := fmt.Sprintf("<workspace_history_event>\nRestored %d paths to snapshot %s. Restore plan: %s. Safety snapshot: %s.\n</workspace_history_event>", len(result.Paths), result.TargetSnapshotID, result.PlanID, result.SafetySnapshotID)
-	if w.ActiveSession.backend != nil {
-		if err := w.ActiveSession.backend.AppendWorkspaceHistoryEvent(hidden, display); err != nil {
+	agentState := frontend.AgentState
+	childPersisted := false
+	if frontend.backend != nil {
+		if err := frontend.backend.AppendWorkspaceHistoryEventWithID("history-restore-"+result.PlanID, hidden, display); err != nil {
+			return err
+		}
+		if child, err := frontend.backend.AppendSubAgentHistoryStatus(result.AgentID, "history-status-"+result.PlanID, display); err != nil {
+			return err
+		} else if child {
+			childPersisted = true
+		}
+	}
+	if result.AgentID != "" && w.AgentMgr != nil {
+		if node := w.AgentMgr.Get(result.AgentID); node != nil && node.State != nil {
+			agentState = node.State
+		} else if childPersisted {
+			agentState = nil
+		}
+	}
+	if agentState != nil && agentState.Messages != nil {
+		statusID := "history-status-" + result.PlanID
+		found := false
+		for _, message := range agentState.Messages.Messages() {
+			if message.InternalID == statusID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			agentState.Messages.AppendMessage(Message{InternalID: statusID, Role: MessageRoleStatus, Content: display, Time: time.Now()})
+		}
+	}
+	if w.HistoryService != nil {
+		if err := w.HistoryService.MarkRestoreNotified(result.PlanID); err != nil {
 			return err
 		}
 	}
-	if w.ActiveSession.AgentState != nil && w.ActiveSession.AgentState.Messages != nil {
-		w.ActiveSession.AgentState.Messages.AppendMessage(Message{InternalID: fmt.Sprintf("history-status-%d", time.Now().UnixNano()), Role: MessageRoleStatus, Content: display, Time: time.Now()})
+	return nil
+}
+
+func (w *Workspace) deliverPendingHistoryNotifications(sessionID string) {
+	if w == nil || w.HistoryService == nil || sessionID == "" {
+		return
+	}
+	if err := w.retryPendingHistoryNotifications(sessionID); err != nil {
+		w.Logger.Warn("HISTORY", "notification_delivery_failed", "session_id", sessionID, "error", err.Error())
+	}
+}
+
+func (w *Workspace) retryPendingHistoryNotifications(sessionID string) error {
+	if w == nil || w.HistoryService == nil || sessionID == "" {
+		return nil
+	}
+	results, err := w.HistoryService.PendingRestoreNotifications(sessionID)
+	if err != nil {
+		return err
+	}
+	for _, result := range results {
+		if err := w.AppendHistoryRestoreEvent(result); err != nil {
+			return fmt.Errorf("deliver restore notification %s: %w", result.PlanID, err)
+		}
 	}
 	return nil
 }

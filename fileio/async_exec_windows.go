@@ -4,12 +4,20 @@ package fileio
 
 import (
 	"os/exec"
+	"strconv"
+	"syscall"
+
+	"golang.org/x/sys/windows"
 )
 
-func killProcessGroup(_ int) {
+func killProcessGroup(pid int) {
+	if pid > 0 {
+		_ = exec.Command("taskkill", "/T", "/F", "/PID", strconv.Itoa(pid)).Run()
+	}
 }
 
-func setCmdSysProcAttr(_ *exec.Cmd) {
+func setCmdSysProcAttr(cmd *exec.Cmd) {
+	cmd.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_SUSPENDED}
 }
 
 func cancelProcess(c *exec.Cmd) error {

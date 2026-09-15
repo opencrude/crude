@@ -3,15 +3,18 @@ package workspace
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
 	"github.com/fsnotify/fsnotify"
 
+	"crude/fileio"
 	"crude/localhistory"
 	"crude/session"
 	ttypes "crude/types"
@@ -29,7 +32,6 @@ type historyScopeState struct {
 	sessionID  string
 	messageID  string
 	beforeID   string
-	paths      map[string]bool
 	collisions map[string]bool
 }
 
@@ -39,6 +41,7 @@ type LocalHistoryService struct {
 	logger Logger
 
 	mu         sync.Mutex
+	activityMu sync.RWMutex
 	settings   ttypes.LocalHistorySettings
 	bus        *EventBus
 	cancel     context.CancelFunc
@@ -269,16 +272,6 @@ func (s *LocalHistoryService) recordPath(path string) {
 		return
 	}
 	s.pending[path] = true
-	if len(s.active) == 1 {
-		for _, scope := range s.active {
-			scope.paths[path] = true
-		}
-	} else if len(s.active) > 1 {
-		for _, scope := range s.active {
-			scope.paths[path] = true
-			scope.collisions[path] = true
-		}
-	}
 }
 
 func (s *LocalHistoryService) captureIfChanged(ctx context.Context, opts localhistory.SnapshotOptions) (localhistory.Manifest, bool, error) {
@@ -335,17 +328,20 @@ func (s *LocalHistoryService) BeginMessage(ctx context.Context, sessionID, messa
 	enabled := settings.EnabledValue()
 	s.mu.Unlock()
 	if !enabled {
-		return nil
+		return session.ErrHistoryDisabled
 	}
+	s.activityMu.RLock()
 	manifest, _, err := s.captureIfChanged(ctx, historyOptions(settings, "before_message", "Before message "+messageID, ""))
 	if err != nil {
+		s.activityMu.RUnlock()
 		return err
 	}
 	if err := s.store.BeginMessageScope(sessionID, messageID, manifest.ID, time.Now()); err != nil {
+		s.activityMu.RUnlock()
 		return err
 	}
 	s.mu.Lock()
-	s.active[scopeKey(sessionID, messageID)] = &historyScopeState{sessionID: sessionID, messageID: messageID, beforeID: manifest.ID, paths: make(map[string]bool), collisions: make(map[string]bool)}
+	s.active[scopeKey(sessionID, messageID)] = &historyScopeState{sessionID: sessionID, messageID: messageID, beforeID: manifest.ID, collisions: make(map[string]bool)}
 	s.mu.Unlock()
 	return nil
 }
@@ -359,6 +355,7 @@ func (s *LocalHistoryService) EndMessage(ctx context.Context, sessionID, message
 	if scope == nil {
 		return nil
 	}
+	defer s.activityMu.RUnlock()
 	manifest, _, err := s.captureIfChanged(ctx, historyOptions(settings, "after_message", "After message "+messageID, scope.beforeID))
 	if err != nil {
 		return err
@@ -379,9 +376,175 @@ func (s *LocalHistoryService) EndMessage(ctx context.Context, sessionID, message
 		}
 	}
 	collisions := mapKeys(scope.collisions)
-	delete(s.active, key)
 	s.mu.Unlock()
-	return s.store.CloseMessageScope(sessionID, messageID, manifest.ID, changed, collisions, time.Now())
+	if err := s.store.CloseMessageScope(sessionID, messageID, manifest.ID, changed, collisions, time.Now()); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	if s.active[key] == scope {
+		delete(s.active, key)
+	}
+	s.mu.Unlock()
+	return nil
+}
+
+func (s *LocalHistoryService) BeginContinuation(_ context.Context, _, _ string) error {
+	s.activityMu.RLock()
+	s.mu.Lock()
+	stopping := s.stopping
+	s.mu.Unlock()
+	if stopping {
+		s.activityMu.RUnlock()
+		return errors.New("local history service is stopping")
+	}
+	return nil
+}
+
+func (s *LocalHistoryService) EndContinuation(_ context.Context, _, _ string) error {
+	s.activityMu.RUnlock()
+	return nil
+}
+
+// RecordAgentMutation persists the direct tool's exact operation receipt before
+// the tool mutates the workspace. Failure aborts the tool rather than allowing
+// an unrewindable write.
+func (s *LocalHistoryService) RecordAgentMutation(ctx context.Context, mutation session.HistoryMutation) error {
+	if mutation.SessionID == "" || mutation.MessageID == "" || mutation.AgentID == "" || mutation.Receipt.OperationID == "" || mutation.Receipt.OperationName == "" {
+		return errors.New("local history agent mutation is incomplete")
+	}
+	if mutation.Committed != nil {
+		return s.store.CompleteAgentOperation(mutation.Receipt.OperationID, *mutation.Committed)
+	}
+	operation := localhistory.AgentOperation{
+		ID: mutation.Receipt.OperationID, SessionID: mutation.SessionID, MessageID: mutation.MessageID,
+		AgentID: mutation.AgentID, Source: mutation.Receipt.OperationName,
+		Paths: make([]localhistory.OperationPath, 0, len(mutation.Receipt.Paths)),
+	}
+	for index, receiptPath := range mutation.Receipt.Paths {
+		preserveLeaf := false
+		if mutation.Receipt.OperationName == "move_file" && index == len(mutation.Receipt.Paths)-1 && index > 0 {
+			source := mutation.Receipt.Paths[index-1].Path
+			preserveLeaf = source != receiptPath.Path && strings.EqualFold(source, receiptPath.Path)
+		}
+		rel, err := s.operationRelativePath(receiptPath.Path, preserveLeaf)
+		if err != nil {
+			return err
+		}
+		before, err := operationState(receiptPath.Before)
+		if err != nil {
+			return err
+		}
+		after, err := operationState(receiptPath.After)
+		if err != nil {
+			return err
+		}
+		operation.Paths = append(operation.Paths, localhistory.OperationPath{Path: rel, Before: before, After: after})
+	}
+	return s.store.RecordAgentOperation(ctx, operation)
+}
+
+func (s *LocalHistoryService) operationRelativePath(path string, preserveLeaf bool) (string, error) {
+	if path == "" {
+		return "", errors.New("local history operation path is empty")
+	}
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return "", err
+	}
+	root := s.root
+	if resolved, err := filepath.EvalSymlinks(root); err == nil {
+		root = resolved
+	}
+	if preserveLeaf {
+		parent, err := resolveOperationParent(filepath.Dir(abs))
+		if err != nil {
+			return "", fmt.Errorf("resolve operation parent: %w", err)
+		}
+		abs = filepath.Join(parent, filepath.Base(abs))
+	} else if canonical, canonicalErr := canonicalExistingPath(abs); canonicalErr == nil {
+		abs, err = filepath.EvalSymlinks(canonical)
+		if err != nil {
+			return "", err
+		}
+	} else {
+		parent, err := resolveOperationParent(filepath.Dir(abs))
+		if err != nil {
+			return "", fmt.Errorf("resolve operation parent: %w", err)
+		}
+		abs = filepath.Join(parent, filepath.Base(abs))
+	}
+	rel, err := filepath.Rel(root, abs)
+	if err != nil || rel == "." || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return "", fmt.Errorf("agent mutation path escapes workspace: %s", path)
+	}
+	return filepath.ToSlash(rel), nil
+}
+
+func canonicalExistingPath(path string) (string, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return "", err
+	}
+	parent := filepath.Dir(path)
+	if parent == path {
+		return path, nil
+	}
+	canonicalParent, err := canonicalExistingPath(parent)
+	if err != nil {
+		return "", err
+	}
+	entries, err := os.ReadDir(canonicalParent)
+	if err != nil {
+		return "", err
+	}
+	base := filepath.Base(path)
+	for _, entry := range entries {
+		if entry.Name() != base && !strings.EqualFold(entry.Name(), base) {
+			continue
+		}
+		candidate := filepath.Join(canonicalParent, entry.Name())
+		candidateInfo, err := os.Lstat(candidate)
+		if err == nil && os.SameFile(info, candidateInfo) {
+			return candidate, nil
+		}
+	}
+	return path, nil
+}
+
+func resolveOperationParent(parent string) (string, error) {
+	var missing []string
+	for {
+		resolved, err := filepath.EvalSymlinks(parent)
+		if err == nil {
+			for index := len(missing) - 1; index >= 0; index-- {
+				resolved = filepath.Join(resolved, missing[index])
+			}
+			return resolved, nil
+		}
+		if !os.IsNotExist(err) {
+			return "", err
+		}
+		base := filepath.Base(parent)
+		next := filepath.Dir(parent)
+		if next == parent {
+			return "", err
+		}
+		missing = append(missing, base)
+		parent = next
+	}
+}
+
+func operationState(state fileio.MutationState) (*localhistory.OperationState, error) {
+	switch state.Kind {
+	case fileio.MutationAbsent:
+		return nil, nil
+	case fileio.MutationRegular:
+		return &localhistory.OperationState{Type: localhistory.EntryFile, Mode: uint32(state.Mode), Data: append([]byte(nil), state.Bytes...)}, nil
+	case fileio.MutationDirectory:
+		return &localhistory.OperationState{Type: localhistory.EntryDirectory, Mode: uint32(state.Mode)}, nil
+	default:
+		return nil, fmt.Errorf("unsupported mutation state %q", state.Kind)
+	}
 }
 
 func mapKeys(values map[string]bool) []string {
@@ -399,6 +562,15 @@ func (s *LocalHistoryService) LatestUndoable(sessionID string) (localhistory.Mes
 func (s *LocalHistoryService) UndoableScopes(sessionID string) ([]localhistory.MessageScope, error) {
 	return s.store.UndoableScopes(sessionID, 100)
 }
+func (s *LocalHistoryService) AgentUndoableScopes(sessionID, agentID string) ([]localhistory.MessageScope, error) {
+	return s.store.AgentUndoableScopes(sessionID, agentID, 100)
+}
+func (s *LocalHistoryService) PendingRestoreNotifications(sessionID string) ([]localhistory.RestoreResult, error) {
+	return s.store.PendingRestoreNotifications(sessionID)
+}
+func (s *LocalHistoryService) MarkRestoreNotified(planID string) error {
+	return s.store.MarkRestoreNotified(planID)
+}
 func (s *LocalHistoryService) MessageScope(sessionID, messageID string) (localhistory.MessageScope, bool, error) {
 	return s.store.MessageScope(sessionID, messageID)
 }
@@ -408,12 +580,28 @@ func (s *LocalHistoryService) PlanMessageRestore(ctx context.Context, sessionID,
 	s.mu.Unlock()
 	return s.store.PlanMessageRestore(ctx, sessionID, messageID, historyOptions(settings, "", "", ""))
 }
+func (s *LocalHistoryService) PlanAgentRestore(ctx context.Context, sessionID, messageID, agentID string) (localhistory.RestorePlan, error) {
+	s.mu.Lock()
+	settings := s.settings
+	s.mu.Unlock()
+	return s.store.PlanAgentRestore(ctx, sessionID, messageID, agentID, historyOptions(settings, "", "", ""))
+}
 
 func (s *LocalHistoryService) ApplyRestore(ctx context.Context, planID string, selected []string) (localhistory.RestoreResult, error) {
+	s.activityMu.Lock()
+	defer s.activityMu.Unlock()
 	s.mu.Lock()
 	if s.stopping {
 		s.mu.Unlock()
 		return localhistory.RestoreResult{}, errors.New("local history service is stopping")
+	}
+	if s.restoring {
+		s.mu.Unlock()
+		return localhistory.RestoreResult{}, errors.New("local history restore already in progress")
+	}
+	if len(s.active) > 0 {
+		s.mu.Unlock()
+		return localhistory.RestoreResult{}, errors.New("local history message scope is still active")
 	}
 	s.opWg.Add(1)
 	s.restoring = true
@@ -431,10 +619,20 @@ func (s *LocalHistoryService) ApplyRestore(ctx context.Context, planID string, s
 }
 
 func (s *LocalHistoryService) ApplyRestoreChoices(ctx context.Context, planID string, choices []localhistory.RestoreChoice) (localhistory.RestoreResult, error) {
+	s.activityMu.Lock()
+	defer s.activityMu.Unlock()
 	s.mu.Lock()
 	if s.stopping {
 		s.mu.Unlock()
 		return localhistory.RestoreResult{}, errors.New("local history service is stopping")
+	}
+	if s.restoring {
+		s.mu.Unlock()
+		return localhistory.RestoreResult{}, errors.New("local history restore already in progress")
+	}
+	if len(s.active) > 0 {
+		s.mu.Unlock()
+		return localhistory.RestoreResult{}, errors.New("local history message scope is still active")
 	}
 	s.opWg.Add(1)
 	s.restoring = true
@@ -458,8 +656,26 @@ func (s *LocalHistoryService) Busy() bool {
 }
 
 func (w *Workspace) bindSessionHistory(backend *session.Session) {
-	if backend == nil || w.HistoryService == nil {
+	if backend == nil {
+		return
+	}
+	if w.HistoryService == nil {
+		openErr := w.localHistoryErr
+		backend.SetHistoryHooks(func(context.Context, string, string) error {
+			if !w.EffectiveAppSettings().LocalHistory.EnabledValue() {
+				return session.ErrHistoryDisabled
+			}
+			if openErr != nil {
+				return fmt.Errorf("local history is required but unavailable: %w", openErr)
+			}
+			return errors.New("local history is required but unavailable")
+		}, nil)
 		return
 	}
 	backend.SetHistoryHooks(w.HistoryService.BeginMessage, w.HistoryService.EndMessage)
+	backend.SetHistoryContinuationHooks(w.HistoryService.BeginContinuation, w.HistoryService.EndContinuation)
+	backend.SetHistoryMutationHook(w.HistoryService.RecordAgentMutation)
+	backend.SetBeforeTurnHook(func(_ context.Context, sessionID string) error {
+		return w.retryPendingHistoryNotifications(sessionID)
+	})
 }

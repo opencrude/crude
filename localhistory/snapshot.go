@@ -17,6 +17,10 @@ import (
 )
 
 func (s *Store) Snapshot(ctx context.Context, opts SnapshotOptions) (Manifest, error) {
+	if err := s.beginOperation(); err != nil {
+		return Manifest{}, err
+	}
+	defer s.endOperation()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	unlock, err := s.lockMutation(ctx)
@@ -28,6 +32,10 @@ func (s *Store) Snapshot(ctx context.Context, opts SnapshotOptions) (Manifest, e
 }
 
 func (s *Store) SnapshotIfChanged(ctx context.Context, opts SnapshotOptions) (Manifest, bool, error) {
+	if err := s.beginOperation(); err != nil {
+		return Manifest{}, false, err
+	}
+	defer s.endOperation()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	unlock, err := s.lockMutation(ctx)
@@ -39,7 +47,7 @@ func (s *Store) SnapshotIfChanged(ctx context.Context, opts SnapshotOptions) (Ma
 	if err != nil {
 		return Manifest{}, false, err
 	}
-	records, err := s.Timeline(1)
+	records, err := s.timeline(1)
 	if err != nil {
 		return Manifest{}, false, err
 	}
@@ -131,6 +139,9 @@ func (s *Store) snapshot(ctx context.Context, opts SnapshotOptions) (Manifest, e
 }
 
 func (s *Store) scan(ctx context.Context, opts SnapshotOptions, storeObjects bool) (map[string]Entry, error) {
+	if err := s.validateWorkspaceRoot(); err != nil {
+		return nil, err
+	}
 	matcher, err := newIgnoreMatcher(s.workspaceRoot, opts)
 	if err != nil {
 		return nil, fmt.Errorf("localhistory: resolve ignores: %w", err)
@@ -140,11 +151,8 @@ func (s *Store) scan(ctx context.Context, opts SnapshotOptions, storeObjects boo
 		maxFileSize = defaultMaxFileSize
 	}
 	entries := make(map[string]Entry)
-	type linkCandidate struct {
-		path string
-		info os.FileInfo
-	}
-	hardlinks := make(map[string][]linkCandidate)
+	included := normalizedIncludedPaths(opts.IncludePaths)
+	hardlinks := make(map[string]string)
 	err = filepath.WalkDir(s.workspaceRoot, func(path string, dirEntry fs.DirEntry, walkErr error) error {
 		if walkErr != nil {
 			return walkErr
@@ -164,7 +172,8 @@ func (s *Store) scan(ctx context.Context, opts SnapshotOptions, storeObjects boo
 		if err != nil {
 			return err
 		}
-		if matcher.ignored(rel, info.IsDir()) {
+		forced := pathForcedIncluded(rel, included)
+		if !forced && matcher.ignored(rel, info.IsDir()) {
 			if info.IsDir() {
 				return filepath.SkipDir
 			}
@@ -173,15 +182,15 @@ func (s *Store) scan(ctx context.Context, opts SnapshotOptions, storeObjects boo
 		mode := info.Mode()
 		switch {
 		case mode.IsDir():
-			entries[rel] = Entry{Type: EntryDirectory, Mode: uint32(mode.Perm())}
+			entries[rel] = Entry{Type: EntryDirectory, Mode: storedMode(mode)}
 		case mode&os.ModeSymlink != 0:
 			target, err := os.Readlink(path)
 			if err != nil {
 				return err
 			}
-			entries[rel] = Entry{Type: EntrySymlink, Mode: uint32(mode.Perm()), SymlinkTarget: target}
+			entries[rel] = Entry{Type: EntrySymlink, Mode: storedMode(mode), SymlinkTarget: target}
 		case mode.IsRegular():
-			if info.Size() > maxFileSize {
+			if !forced && info.Size() > maxFileSize {
 				return nil
 			}
 			var entry Entry
@@ -193,19 +202,17 @@ func (s *Store) scan(ctx context.Context, opts SnapshotOptions, storeObjects boo
 			if err != nil {
 				return err
 			}
-			for _, candidate := range hardlinks[entry.Hash] {
-				if os.SameFile(info, candidate.info) {
+			if identity, ok := fileIdentityKey(path, info); ok {
+				if canonical := hardlinks[identity]; canonical != "" {
 					entry.Type = EntryHardlink
-					entry.HardlinkTarget = candidate.path
-					break
+					entry.HardlinkTarget = canonical
+				} else {
+					hardlinks[identity] = rel
 				}
-			}
-			if entry.Type == EntryFile {
-				hardlinks[entry.Hash] = append(hardlinks[entry.Hash], linkCandidate{path: rel, info: info})
 			}
 			entries[rel] = entry
 		default:
-			entries[rel] = Entry{Type: EntrySpecial, Mode: uint32(mode.Perm()), SpecialMode: mode.Type().String()}
+			entries[rel] = Entry{Type: EntrySpecial, Mode: storedMode(mode), SpecialMode: mode.Type().String()}
 		}
 		return nil
 	})
@@ -213,6 +220,26 @@ func (s *Store) scan(ctx context.Context, opts SnapshotOptions, storeObjects boo
 		return nil, fmt.Errorf("localhistory: scan workspace: %w", err)
 	}
 	return entries, nil
+}
+
+func normalizedIncludedPaths(paths []string) []string {
+	result := make([]string, 0, len(paths))
+	for _, path := range paths {
+		path, ok := cleanRelativeHistoryPath(filepath.ToSlash(filepath.Clean(filepath.FromSlash(path))))
+		if ok {
+			result = append(result, path)
+		}
+	}
+	return sortedUnique(result)
+}
+
+func pathForcedIncluded(path string, included []string) bool {
+	for _, candidate := range included {
+		if path == candidate || strings.HasPrefix(path, candidate+"/") || strings.HasPrefix(candidate, path+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 func hashRegularFile(path string, mode os.FileMode) (Entry, error) {
@@ -226,7 +253,7 @@ func hashRegularFile(path string, mode os.FileMode) (Entry, error) {
 	if err != nil {
 		return Entry{}, err
 	}
-	return Entry{Type: EntryFile, Mode: uint32(mode.Perm()), Hash: hex.EncodeToString(h.Sum(nil)), Size: size}, nil
+	return Entry{Type: EntryFile, Mode: storedMode(mode), Hash: hex.EncodeToString(h.Sum(nil)), Size: size}, nil
 }
 
 func (s *Store) saveManifest(manifest *Manifest) error {
@@ -291,6 +318,10 @@ func (s *Store) ListManifests() ([]Manifest, error) {
 }
 
 func (s *Store) Verify(ctx context.Context, manifestID string) error {
+	if err := s.beginOperation(); err != nil {
+		return err
+	}
+	defer s.endOperation()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	unlock, err := s.lockMutation(ctx)
@@ -329,6 +360,14 @@ func validID(id string) bool {
 }
 
 func (s *Store) Stats() (Stats, error) {
+	if err := s.beginOperation(); err != nil {
+		return Stats{}, err
+	}
+	defer s.endOperation()
+	return s.stats()
+}
+
+func (s *Store) stats() (Stats, error) {
 	var stats Stats
 	err := filepath.WalkDir(s.root, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {

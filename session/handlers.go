@@ -15,16 +15,49 @@ import (
 )
 
 func (s *Session) AppendWorkspaceHistoryEvent(content, display string) error {
+	return s.AppendWorkspaceHistoryEventWithID(fmt.Sprintf("history-%d", time.Now().UnixNano()), content, display)
+}
+
+func (s *Session) AppendWorkspaceHistoryEventWithID(eventID, content, display string) error {
 	if !s.turnGate.TryLock() {
 		return errors.New("stop the active turn before recording workspace restore")
 	}
 	defer s.turnGate.Unlock()
 	message := provider.NewTextMessage("user", content)
 	createdAt := time.Now()
-	message.InternalID = fmt.Sprintf("history-%d", createdAt.UnixNano())
+	message.InternalID = eventID
+	message.Origin = provider.OriginRuntimeContext
+	message.Visibility = provider.VisibilityContextOnly
 	meta := sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, DisplayRole: "hidden_wire_context", ContextOnly: true,
 		Snapshots: []ttypes.ConversationMessage{{InternalID: message.InternalID + "-status", Role: "status", Content: display, Time: time.Now()}}}
 	s.msgsMu.Lock()
+	for _, existing := range s.msgs {
+		if existing.InternalID == eventID || (existing.EffectiveOrigin() == provider.OriginRuntimeContext && existing.Content.String() == content) {
+			for _, active := range s.activeContext {
+				if active.Content.String() == content {
+					s.msgsMu.Unlock()
+					return nil
+				}
+			}
+			active := append(append([]provider.ChatMessage(nil), s.activeContext...), existing)
+			generation := s.contextGeneration + 1
+			if generation == 1 {
+				generation = 2
+			}
+			s.msgsMu.Unlock()
+			if s.db != nil {
+				if err := sessiondb.SaveContextState(s.db, s.sessionID, s.sessionID, sessiondb.ContextState{Generation: generation, Reason: "workspace_restore", Messages: active}); err != nil {
+					return err
+				}
+			}
+			s.msgsMu.Lock()
+			s.activeContext = active
+			s.contextGeneration = generation
+			s.contextReason = "workspace_restore"
+			s.msgsMu.Unlock()
+			return nil
+		}
+	}
 	msgs := append(append([]provider.ChatMessage(nil), s.msgs...), message)
 	turns := append(append([]int(nil), s.msgTurns...), s.turnNumber)
 	metas := append(append([]sessiondb.DisplayMeta(nil), s.displayMetas...), meta)
@@ -53,6 +86,57 @@ func (s *Session) AppendWorkspaceHistoryEvent(content, display string) error {
 	s.contextReason = "workspace_restore"
 	s.msgsMu.Unlock()
 	return nil
+}
+
+// AppendSubAgentHistoryStatus durably adds restore status to a completed
+// child's own transcript. The root context event remains separate because it
+// informs future root requests about the changed workspace.
+func (s *Session) AppendSubAgentHistoryStatus(agentID, eventID, display string) (bool, error) {
+	if s == nil || s.db == nil || agentID == "" {
+		return false, nil
+	}
+	results, err := sessiondb.ListSubAgentResults(s.db, s.sessionID)
+	if err != nil {
+		return false, err
+	}
+	childSessionID := ""
+	for _, result := range results {
+		if result.AgentID == agentID {
+			childSessionID = result.ChildSessionID
+			break
+		}
+	}
+	if childSessionID == "" {
+		return false, nil
+	}
+	dbPath := filepath.Join(s.logger.SessionDir(), "subagents", filepath.Base(childSessionID)+".db")
+	childDB, err := sessiondb.Open(dbPath)
+	if err != nil {
+		return true, err
+	}
+	defer childDB.Close()
+	rows, err := sessiondb.LoadMessagesWithMeta(childDB)
+	if err != nil {
+		return true, err
+	}
+	for _, row := range rows {
+		for _, snapshot := range row.Meta.Snapshots {
+			if snapshot.InternalID == eventID {
+				return true, nil
+			}
+		}
+	}
+	message := provider.NewTextMessage("user", "<workspace_history_event>"+display+"</workspace_history_event>")
+	message.InternalID = eventID + "-wire"
+	message.Origin = provider.OriginRuntimeContext
+	message.Visibility = provider.VisibilityContextOnly
+	meta := sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, DisplayRole: "hidden_wire_context", ContextOnly: true,
+		Snapshots: []ttypes.ConversationMessage{{InternalID: eventID, Role: "status", Content: display, Time: time.Now()}}}
+	turn := 1
+	if len(rows) > 0 && rows[len(rows)-1].Turn > turn {
+		turn = rows[len(rows)-1].Turn
+	}
+	return true, sessiondb.AppendMessageWithMeta(childDB, childSessionID, message, turn, meta)
 }
 
 func (s *Session) SetYolo(enabled bool) {

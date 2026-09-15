@@ -959,8 +959,9 @@ func (m *App) buildChatContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 				}
 				if role == workspace.MessageRoleUser {
 					sessionID, messageID := m.ActiveSession.SessionID, row.ID
-					active := m.AgentMgr.ActiveID() != "" && m.AgentTurnActive(m.AgentMgr.ActiveID())
-					open := func() { cmd := m.openLocalHistoryForMessage(sessionID, messageID); m.runDetachedAsyncCmd(cmd) }
+					agentID := m.AgentMgr.ActiveID()
+					active := agentID != "" && m.AgentTurnActive(agentID)
+					open := func() { cmd := m.openLocalHistoryForMessage(sessionID, messageID, agentID); m.runDetachedAsyncCmd(cmd) }
 					st.Sections = append(st.Sections, ui.ContextMenuSection{SectionLabel: "Local History", Items: []ui.ContextMenuItem{
 						{Label: "Preview changes from this message", Disabled: active, Detail: map[bool]string{true: "turn active", false: ""}[active], Action: open},
 						{Label: "Undo changes from this message", Disabled: active, Detail: "opens preview", Action: open},

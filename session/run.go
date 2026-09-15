@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -93,6 +94,7 @@ func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
 	for {
 		if len(pendingWakes) > 0 && !o.TurnActive() {
 			wakeInput := provider.RuntimeInput(provider.OriginSubAgentWake, formatSubAgentWakeBatch(pendingWakes))
+			wakeInput.InternalID = commonWakeHistoryMessage(pendingWakes)
 			if o.SubmitInput(wakeInput) {
 				pendingWakes = pendingWakes[:0]
 				request := <-o.inputCh
@@ -122,17 +124,6 @@ func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
 			if !queueWake(wake) {
 				return
 			}
-			for {
-				select {
-				case wake = <-s.wakeCh:
-					if !queueWake(wake) {
-						return
-					}
-				default:
-					goto wakesDrained
-				}
-			}
-		wakesDrained:
 		}
 	}
 }
@@ -176,6 +167,11 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		}
 	}
 	defer finishTurn()
+	if err := s.runBeforeTurn(ctx); err != nil {
+		l.Error("SESSION", "before_turn_failed", "error", err.Error())
+		sender.SendAgentEventWithID("error", "Pending workspace state could not be reconciled before the turn: "+err.Error(), o.ID)
+		return
+	}
 	if s.db != nil {
 		if err := sessiondb.BeginAgentTurn(s.db, s.sessionID, o.ID, turnGeneration, string(userInput.EffectiveOrigin())); err != nil {
 			l.Error("SESSION", "turn_state_begin_failed", "error", err.Error())
@@ -206,18 +202,70 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	s.toolCallCountMu.Lock()
 	s.toolCallCount = 0
 	s.toolCallCountMu.Unlock()
-	s.msgCounterMu.Lock()
-	s.msgCounter++
-	currentMsgID := fmt.Sprintf("msg-%d", s.msgCounter)
-	s.msgCounterMu.Unlock()
+	currentMsgID := newMessageID()
+	inputOrigin := userInput.EffectiveOrigin()
+	humanTurn := inputOrigin == provider.OriginHuman
 	historyStart, historyEnd := s.historyHooks()
+	historyContinue, historyContinueEnd := s.historyContinuationHooks()
 	historyStarted := false
-	if historyStart != nil {
+	historyContinuationStarted := false
+	historyContinuationID := ""
+	historyCtx := ctx
+	if historyStart != nil && humanTurn {
 		if err := historyStart(ctx, s.sessionID, currentMsgID); err != nil {
-			l.Warn("HISTORY", "message_scope_start_failed", "msg_id", currentMsgID, "error", err.Error())
+			if errors.Is(err, ErrHistoryDisabled) {
+				l.Debug("HISTORY", "message_scope_disabled", "msg_id", currentMsgID)
+				if historyContinue != nil {
+					if continueErr := historyContinue(ctx, s.sessionID, currentMsgID); continueErr != nil {
+						sender.SendAgentEventWithID("error", "Workspace mutation gating could not start: "+continueErr.Error(), o.ID)
+						return
+					}
+					historyContinuationStarted = true
+					historyContinuationID = currentMsgID
+				}
+			} else {
+				l.Error("HISTORY", "message_scope_start_failed", "msg_id", currentMsgID, "error", err.Error())
+				sender.SendAgentEventWithID("error", "File-change tracking could not start; the turn was aborted before provider or tool execution: "+err.Error(), o.ID)
+				return
+			}
 		} else {
 			historyStarted = true
+			historyCtx = withHistoryScope(ctx, s.sessionID, currentMsgID, o.ID)
 		}
+	} else if inputOrigin == provider.OriginSubAgentWake {
+		if historyContinue != nil {
+			if err := historyContinue(ctx, s.sessionID, userInput.InternalID); err != nil {
+				l.Error("HISTORY", "continuation_scope_start_failed", "msg_id", userInput.InternalID, "error", err.Error())
+				sender.SendAgentEventWithID("error", "File-change tracking could not continue; runtime work was aborted before provider or tool execution: "+err.Error(), o.ID)
+				return
+			}
+			historyContinuationStarted = true
+			historyContinuationID = userInput.InternalID
+		}
+		if userInput.InternalID != "" {
+			historyCtx = withHistoryScope(ctx, s.sessionID, userInput.InternalID, o.ID)
+		}
+	}
+	if historyContinuationStarted && historyContinueEnd != nil {
+		defer func() {
+			finishContinuation := func() {
+				if err := historyContinueEnd(context.Background(), s.sessionID, historyContinuationID); err != nil {
+					l.Warn("HISTORY", "continuation_scope_end_failed", "msg_id", historyContinuationID, "error", err.Error())
+				}
+			}
+			if o.subAgentSup != nil && o.subAgentSup.TurnRunning(turnGeneration) {
+				s.historyWg.Add(1)
+				s.historyFinalizers.Add(1)
+				go func() {
+					defer s.historyWg.Done()
+					defer s.historyFinalizers.Add(-1)
+					o.subAgentSup.WaitForTurn(turnGeneration)
+					finishContinuation()
+				}()
+				return
+			}
+			finishContinuation()
+		}()
 	}
 	if historyStarted && historyEnd != nil {
 		defer func() {
@@ -226,8 +274,15 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 					l.Warn("HISTORY", "message_scope_end_failed", "msg_id", currentMsgID, "error", err.Error())
 				}
 			}
-			if o.subAgentSup != nil && o.subAgentSup.Manager().ActiveCount() > 0 {
-				go func() { o.subAgentSup.Wait(); finishHistory() }()
+			if o.subAgentSup != nil && o.subAgentSup.TurnRunning(turnGeneration) {
+				s.historyWg.Add(1)
+				s.historyFinalizers.Add(1)
+				go func() {
+					defer s.historyWg.Done()
+					defer s.historyFinalizers.Add(-1)
+					o.subAgentSup.WaitForTurn(turnGeneration)
+					finishHistory()
+				}()
 				return
 			}
 			finishHistory()
@@ -235,8 +290,6 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 	l.Info("INPUT", "received", "len", len(userInput.Text), "refs", len(userInput.ReferenceIDs), "msg_id", currentMsgID, "turn", s.turnNumber)
 
-	inputOrigin := userInput.EffectiveOrigin()
-	humanTurn := inputOrigin == provider.OriginHuman
 	userMsg, referenceLabels := s.buildUserMessageWithDisplay(userInput, activeCfg.Model)
 	userMsg.InternalID = currentMsgID
 	userMsg.DisplayContent = userInput.Text
@@ -374,7 +427,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		metas: make(map[string]*sessiondb.DisplayMeta),
 	}
 
-	ag.Ctx = ctx
+	ag.Ctx = historyCtx
 	activeCfg = effectiveCfg.GetActiveDefaultCategory()
 
 	btwMsgCh := make(chan agent.BtwMessage, 8)
@@ -450,7 +503,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		}
 	}
 	ag.Emit = emit
-	agentMsgs := ag.Run(ctx, contextMsgs, prompt, emit, o.BlockResolveCh, s.sm, s.sessionID, btwMsgCh)
+	agentMsgs := ag.Run(historyCtx, contextMsgs, prompt, emit, o.BlockResolveCh, s.sm, s.sessionID, btwMsgCh)
 	finishTurn()
 	<-btwForwardDone
 	emitActive.Store(false)

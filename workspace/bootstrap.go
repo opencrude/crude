@@ -96,6 +96,7 @@ func (w *Workspace) CreateSession(cfg *session.Config, homeDir string) (*Session
 	)
 
 	w.addSession(fs)
+	w.deliverPendingHistoryNotifications(fs.SessionID)
 
 	if w.WorkspaceDB != nil {
 		model := bs.ModelName()
@@ -149,6 +150,7 @@ func (w *Workspace) ResumeSession(sessionID string, cfg *session.Config, homeDir
 	)
 
 	w.addSession(fs)
+	w.deliverPendingHistoryNotifications(fs.SessionID)
 
 	// Ensure the workspace-scoped session is registered in the local registry.
 	if w.WorkspaceDB != nil {
