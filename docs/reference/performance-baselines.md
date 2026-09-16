@@ -46,6 +46,15 @@ snapshots and their entries were committed atomically. Loading a manifest for
 restore or verification still checks its hash. Hydration normalizes stopped
 streams and publishes one transcript instead of every growing prefix.
 
+Resume visibility is applied before row geometry: context-only provider envelopes
+without display snapshots produce no display rows. Otherwise each recalled-memory
+envelope becomes two blank fallback rows, sorted after visible messages by the
+later persistence timestamp. `TestAgentView_ResumeContextOnlyMessagesDoNotCreateBlankTail`
+covers SQLite round-trip, one and six turns, immediate/settled frames, and narrow
+resize. Explicit restore/compaction snapshots remain visible. Lazy width reflow
+still touches viewport plus overscan only; its second materialization pass must
+invalidate the height index when it changes newly exposed rows.
+
 Memory shutdown no longer starts a new provider request or waits a fixed five
 seconds. It cancels optional extraction/maintenance, joins workers before the
 workspace DB closes, and preserves durable turn mirrors and extraction watermarks

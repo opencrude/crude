@@ -68,6 +68,43 @@ func TestCanonicalEmptySnapshotSuppressesProviderOnlyAssistantEnvelope(t *testin
 	}
 }
 
+func TestConvertMessagesForDisplayExcludesContextOnlyWithoutSnapshots(t *testing.T) {
+	for _, test := range []struct {
+		name       string
+		meta       sessiondb.DisplayMeta
+		visibility provider.MessageVisibility
+	}{
+		{name: "memory metadata", meta: sessiondb.DisplayMeta{ContextOnly: true, DisplayRole: "hidden_runtime_context"}},
+		{name: "context metadata", meta: sessiondb.DisplayMeta{ContextOnly: true, DisplayRole: "user"}},
+		{name: "visibility only", visibility: provider.VisibilityContextOnly},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			message := provider.NewTextMessage("user", "runtime context must not become display geometry")
+			message.Visibility = test.visibility
+			if views := ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{Msg: message, Meta: test.meta}}); len(views) != 0 {
+				t.Fatalf("context-only message became visible rows: %+v", views)
+			}
+		})
+	}
+}
+
+func TestConvertMessagesForDisplayKeepsExplicitContextBoundarySnapshots(t *testing.T) {
+	for _, phase := range []string{"history_restored", "compaction_completed"} {
+		t.Run(phase, func(t *testing.T) {
+			message := provider.NewTextMessage("user", "hidden provider context")
+			message.Visibility = provider.VisibilityContextOnly
+			boundary := types.ConversationMessage{InternalID: phase, Role: "status", LifecyclePhase: phase, LifecycleOperationID: "operation", Time: time.Unix(1000, 0)}
+			views := ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{Msg: message, Meta: sessiondb.DisplayMeta{
+				ContextOnly: true, DisplayRole: "hidden_wire_context", SnapshotVersion: sessiondb.ConversationSnapshotVersion,
+				Snapshots: []types.ConversationMessage{boundary},
+			}}})
+			if len(views) != 1 || !reflect.DeepEqual(views[0], boundary) {
+				t.Fatalf("explicit context boundary was lost: %+v", views)
+			}
+		})
+	}
+}
+
 func TestConvertMessagesForDisplayRetainsToolResultBody(t *testing.T) {
 	message := provider.NewTextMessage("tool", "=== RUN TestOne\n--- PASS: TestOne")
 	message.ToolCallID = "call-1"

@@ -429,7 +429,8 @@ boundary at the exact timeline position where filesystem state changed. The
 boundary uses the compaction table language, records operation/target/safety
 IDs and restored-path count, is static after completion, survives resume, and
 offers the safety-snapshot inverse through its context menu. The restore modal
-closes after success so the boundary is immediately visible.
+closes after success so the boundary is immediately visible. Its rule and body
+rows participate in the shared chat drag-selection and clipboard path.
 
 If the active agent has no verified file changes, it reports that clearly. If
 several concurrent scopes are candidates, it opens a message picker instead of

@@ -912,6 +912,11 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
 - Hydration publishes one normalized stopped transcript, never each growing
   prefix. Diff previews select their lexer once per file and tokenize only their
   visible preview budget; counting omitted visual rows must not highlight them.
+- Hydration projects explicit display snapshots first, then excludes context-only
+  provider envelopes using visibility/metadata. Recalled memory without a display
+  snapshot must contribute zero chat rows, not blank fallback rows sorted at the
+  transcript tail by their later persistence timestamp. Restore and compaction
+  boundary snapshots remain visible; provider history is not deleted.
 - Memory extraction and maintenance are session-owned cancellable jobs. Closing
   cancels and joins them before the workspace DB closes, without launching new
   provider work. Durable turn mirrors finish, and pending extraction watermarks
@@ -961,6 +966,10 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   real stage units, never fabricated completion percentages. Active, retrying,
   completed, cancelled, failed, and resumed-interrupted forms share geometry;
   generic turn cleanup must never consume these durable operation rows.
+- Context-boundary tables are ordinary chat content for interaction: native
+  rows, full-bleed rules, and body cells all participate in drag selection,
+  clipboard copy, hover/hit testing, and row context menus. Their distinct
+  visual treatment must never create a second opaque interaction path.
 - Message origin and visibility, not provider role or string prefixes,
   distinguish human/BTW input, runtime context, continuation controls, child
   wakes, assignments, and checkpoints. Runtime or memory data is never

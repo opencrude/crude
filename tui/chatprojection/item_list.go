@@ -398,6 +398,7 @@ func (vl *itemList) RenderVisible(renderFn func(idx int, item *renderItem, width
 				item.Rendered = rendered
 				item.Height = len(rendered)
 				item.Dirty = false
+				vl.indexDirty = true
 			}
 		}
 	}

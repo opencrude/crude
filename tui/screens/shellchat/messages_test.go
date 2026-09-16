@@ -78,6 +78,32 @@ func TestContextBoundaryPaintsAccentRulesOnChatBackground(t *testing.T) {
 	}
 }
 
+func TestContextBoundaryPaintHonorsTextSelection(t *testing.T) {
+	th := theme.DefaultDark()
+	s := shellchat.New(th)
+	lines := []string{"", "", "✓ Workspace restored", "2 files restored", "Conversation retained", ""}
+	native := make([]chatprojection.PaintLine, len(lines))
+	for i, line := range lines {
+		native[i] = chatprojection.PaintLine{Spans: []chatprojection.RowSpan{{Text: line, Role: ui.ColorFg}}}
+	}
+	row := chatprojection.MessageRow{ID: "restore", Lines: lines, Native: native, ContextBoundary: true, ContextBoundaryStart: 1}
+	s.SetMessages([]chatprojection.MessageRow{row}, shellchat.PaintParams{
+		Compose:      shellchat.ComposeParams{InnerW: 36, PadLR: 2, Theme: th},
+		HasSelection: true, SelStartLine: 1, SelStartCol: 1, SelEndLine: 3, SelEndCol: 8,
+	})
+	s.SyncScrollMetrics(len(lines), len(lines))
+	buf := s.PaintTestBuffer(40, len(lines))
+	tokens := ui.NewTokenSet(th)
+	want := tokens.Color(ui.ColorSelection)
+	// The top rule and a body row both visibly participate in one selection.
+	if got := buf.Get(2+1, 1).BG; got != want {
+		t.Fatalf("selected boundary rule bg=%v want selection", got)
+	}
+	if got := buf.Get(2+2, 2).BG; got != want {
+		t.Fatalf("selected boundary body bg=%v want selection", got)
+	}
+}
+
 func TestShellChatScrollModelStickToBottom(t *testing.T) {
 	th := theme.DefaultDark()
 	s := shellchat.New(th)

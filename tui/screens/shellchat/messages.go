@@ -160,11 +160,17 @@ func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item 
 			fg := tokens.Color(ui.ColorAccent)
 			rule := ui.FirstRune(ui.DefaultGlyphsFromTokens(tokens).BorderH, '─')
 			for col := 0; col < width; col++ {
-				buf.Set(x+col, y, cell.NewCell(rule, fg, bg, 0))
+				cellFG, cellBG := fg, bg
+				contentCol := col - layout.PadLeft
+				if selStart < selEnd && contentCol >= selStart && contentCol < selEnd {
+					cellFG = tokens.Color(ui.ColorFg)
+					cellBG = tokens.Color(ui.ColorSelection)
+				}
+				buf.Set(x+col, y, cell.NewCell(rule, cellFG, cellBG, 0))
 			}
 			return
 		}
-		chatprojection.PaintLineAtBackground(buf, lineX, y, layout.ContentMax, pl, tokens, 0, 0, bg)
+		chatprojection.PaintLineAtBackground(buf, lineX, y, layout.ContentMax, pl, tokens, selStart, selEnd, bg)
 		return
 	}
 	chatprojection.PaintLineAt(buf, lineX, y, layout.ContentMax, pl, tokens, selStart, selEnd, layout.HasPaneBg)
