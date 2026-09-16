@@ -1319,3 +1319,47 @@ func assertEqual(t *testing.T, want, got string) {
 		t.Errorf("\ngot:  %q\nwant: %q", got, want)
 	}
 }
+
+// ============================================================================
+// Edge trimming must be mirrored on the replacement side
+// ============================================================================
+
+// The model routinely sends both old_string and new_string with a trailing
+// newline (that is how tool arguments are written). The search edges are
+// trimmed before matching, so the replacement must be trimmed the same way
+// or an extra blank line lands in the file.
+func TestApplySearchReplace_trailingNewlineInSearchAndReplace(t *testing.T) {
+	content := "import (\n\t\"fmt\"\n\t\"path/filepath\"\n\t\"time\"\n\n\ttea \"charm.land/bubbletea/v2\"\n)"
+	search := "import (\n\t\"fmt\"\n\t\"path/filepath\"\n\t\"time\"\n\n\ttea \"charm.land/bubbletea/v2\"\n"
+	replace := "import (\n\t\"fmt\"\n\t\"os\"\n\t\"path/filepath\"\n\t\"time\"\n\n\ttea \"charm.land/bubbletea/v2\"\n"
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := "import (\n\t\"fmt\"\n\t\"os\"\n\t\"path/filepath\"\n\t\"time\"\n\n\ttea \"charm.land/bubbletea/v2\"\n)"
+	assertEqual(t, want, got)
+}
+
+// Collapsing blank lines still works when both sides carry a trailing newline.
+func TestApplySearchReplace_blankLineCollapseWithTrailingNewlines(t *testing.T) {
+	content := "a\n\n\nb\n"
+	search := "a\n\n\nb\n"
+	replace := "a\n\nb\n"
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "a\n\nb\n", got)
+}
+
+// A deliberately added trailing blank line in new_string must survive.
+func TestApplySearchReplace_deliberateBlankLineIsKept(t *testing.T) {
+	content := "a\nb\n"
+	search := "a\n"
+	replace := "a\n\n"
+	got, err := ApplySearchReplace(content, []SearchReplace{{Search: search, Replace: replace}}, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertEqual(t, "a\n\nb\n", got)
+}

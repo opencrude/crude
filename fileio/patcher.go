@@ -64,7 +64,7 @@ func applySingleOp(content string, op SearchReplace, lg *logger.Logger) (string,
 	contentLines := strings.Split(content, "\n")
 	fullSearchLines := strings.Split(search, "\n")
 	trimmedSearchLines := trimBlankEdges(fullSearchLines)
-	replaceLines := strings.Split(replace, "\n")
+	replaceLines := trimMirroredEdges(fullSearchLines, strings.Split(replace, "\n"))
 
 	lg.Debug("DIFF", "apply_single", "content_lines", len(contentLines), "search_lines", len(fullSearchLines), "trimmed_lines", len(trimmedSearchLines), "replace_lines", len(replaceLines))
 
@@ -185,6 +185,33 @@ func trimBlankEdges(lines []string) []string {
 		lines = lines[:len(lines)-1]
 	}
 	return lines
+}
+
+// trimMirroredEdges drops from the replacement the same leading/trailing blank
+// lines that trimBlankEdges removed from the search.
+//
+// Tool arguments carry a trailing newline, which strings.Split turns into a
+// blank edge line. Trimming only the search would splice that extra blank line
+// into the file. Mirroring the trim also keeps a deliberately added blank line
+// (search "a\n" → replace "a\n\n") intact: one edge line is removed from each
+// side, so the replacement still contributes exactly one blank line.
+func trimMirroredEdges(search, replace []string) []string {
+	leading, trailing := 0, 0
+	for leading < len(search) && strings.TrimSpace(search[leading]) == "" {
+		leading++
+	}
+	for trailing < len(search)-leading && strings.TrimSpace(search[len(search)-1-trailing]) == "" {
+		trailing++
+	}
+	for leading > 0 && len(replace) > 0 && strings.TrimSpace(replace[0]) == "" {
+		replace = replace[1:]
+		leading--
+	}
+	for trailing > 0 && len(replace) > 0 && strings.TrimSpace(replace[len(replace)-1]) == "" {
+		replace = replace[:len(replace)-1]
+		trailing--
+	}
+	return replace
 }
 
 func findMatches(contentLines, searchLines []string, eq func(a, b string) bool) []int {
