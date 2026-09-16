@@ -2,8 +2,10 @@ package viewmodel
 
 import (
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -26,13 +28,10 @@ import (
 
 func (m *App) View() tea.View {
 	if m.width == 0 || m.height == 0 {
-		return tea.NewView("")
+		return m.newTerminalView("")
 	}
 	if m.shouldDeferFrame() {
-		v := tea.NewView(m.cachedOutput)
-		v.AltScreen = true
-		v.MouseMode = tea.MouseModeAllMotion
-		return v
+		return m.newTerminalView(m.cachedOutput)
 	}
 	m.maybeHydrateComposerDraft()
 
@@ -67,10 +66,30 @@ func (m *App) View() tea.View {
 	m.cachedOutput = output
 	m.noteFramePresented(time.Now())
 
+	return m.newTerminalView(output)
+}
+
+func (m *App) newTerminalView(output string) tea.View {
 	v := tea.NewView(output)
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeAllMotion
+	v.WindowTitle = m.terminalIdentity()
+	v.IconName = v.WindowTitle
 	return v
+}
+
+func (m *App) terminalIdentity() string {
+	workspaceName := filepath.Base(filepath.Clean(m.RootPath))
+	workspaceName = strings.TrimSpace(strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, workspaceName))
+	if workspaceName == "" || workspaceName == "." || workspaceName == string(filepath.Separator) {
+		return "Crude"
+	}
+	return workspaceName + " - Crude"
 }
 
 // contentLayout is the per-frame shell geometry computed by

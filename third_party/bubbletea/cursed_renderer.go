@@ -134,6 +134,9 @@ func (s *cursedRenderer) start() {
 	if s.lastView.WindowTitle != "" {
 		_, _ = s.scr.WriteString(ansi.SetWindowTitle(s.lastView.WindowTitle))
 	}
+	if s.lastView.IconName != "" {
+		_, _ = s.scr.WriteString(ansi.SetIconName(s.lastView.IconName))
+	}
 	if s.lastView.ProgressBar != nil {
 		setProgressBar(s, s.lastView.ProgressBar)
 	}
@@ -203,6 +206,10 @@ func (s *cursedRenderer) close() (err error) {
 		if lv.WindowTitle != "" {
 			// Clear the window title if it was set.
 			_, _ = s.scr.WriteString(ansi.SetWindowTitle(""))
+		}
+		if lv.IconName != "" {
+			// Clear the icon name if it was set.
+			_, _ = s.scr.WriteString(ansi.SetIconName(""))
 		}
 		if lc := lv.Cursor; lc != nil {
 			curShape := encodeCursorStyle(lc.Shape, lc.Blink)
@@ -386,6 +393,11 @@ func (s *cursedRenderer) flush(closing bool) error {
 	if s.lastView == nil || view.WindowTitle != s.lastView.WindowTitle {
 		if s.lastView != nil || view.WindowTitle != "" {
 			_, _ = s.scr.WriteString(ansi.SetWindowTitle(view.WindowTitle))
+		}
+	}
+	if s.lastView == nil || view.IconName != s.lastView.IconName {
+		if s.lastView != nil || view.IconName != "" {
+			_, _ = s.scr.WriteString(ansi.SetIconName(view.IconName))
 		}
 	}
 
@@ -819,6 +831,7 @@ func viewEquals(a, b *View) bool {
 		a.ReportFocus != b.ReportFocus ||
 		a.MouseMode != b.MouseMode ||
 		a.WindowTitle != b.WindowTitle ||
+		a.IconName != b.IconName ||
 		a.ForegroundColor != b.ForegroundColor ||
 		a.BackgroundColor != b.BackgroundColor ||
 		a.KeyboardEnhancements != b.KeyboardEnhancements {
