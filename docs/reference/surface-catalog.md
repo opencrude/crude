@@ -12,7 +12,7 @@ only against this catalog.
 
 | Surface | Primary files | Notes |
 |---------|---------------|-------|
-| Header | `tui/screens/shellheader/`, `tui/viewmodel/view.go` | Native Host paint; logo, model, view label, YOLO, usage, uptime; legacy `widgets/header.go` deleted |
+| Header | `tui/screens/shellheader/`, `tui/viewmodel/view.go` | Native Host paint; app name, active workspace root (`~`-abbreviated), branch, model, view label, YOLO, usage, uptime; legacy `widgets/header.go` deleted |
 | Activity bar | `tui/screens/activitybar/` | Always-on 8-col left rail (one blank outer gutter, Files / Agents / Terminals / Source Control, a VS Code-style manage gear at the bottom that opens Application Settings, one blank column before the panel rule, then the rule), mounted below the two-row global header with three-row mouse targets, active marker, badges, icons, and a persistent right rule |
 | File-tree sidebar | `tui/screens/shelltree/`, `tui/ui/tree.go`, `tui/filetree/tree_rows.go` | Shared panel title chrome + persistent clickable fuzzy search; native `ui.Tree` + `ScrollbarControl`; icon breadcrumbs, connectors, git, diagnostics, left inset, and **`ui.SplitDivider` right border/resize** |
 | Activity lists | `tui/screens/activitylist/` | Shared titled/filterable sidebar body for hierarchical Agents and Terminals (`ui.List` + scrollbar + divider) |
@@ -24,7 +24,7 @@ only against this catalog.
 | Terminal dock | `tui/screens/termdock/`, `tui/viewmodel/terminals.go` | Workspace-level tabbed PTY dock above the footer; independent of session PanelDeck |
 | In-app terminal (docked) | `tui/screens/shellterm/`, `tui/term/`, `workspace/terminal.go` | libghostty-vt PTY + VT paint in the workspace dock. See [`docs/reference/in-app-terminals.md`](./in-app-terminals.md) |
 | Legacy inline panel tabs | deleted | Replaced by native per-session PanelDeck tabs; not the floating OverlayHost |
-| Header + footer status | `tui/screens/shellheader/`, `tui/screens/shellfooter/`, `tui/viewmodel/status_overview.go` | Native Host paint on one shared token-derived text rail. Header owns active agent/editor/terminal facts plus branch, current-line blame, and uptime; footer owns LSP health, project Problems, Git changes/tracking, background attention, selective hints, Notices, and Help. Typed status/notifications live in `workspace.StatusCenter`; no rendering-owned agent state. |
+| Header + footer status | `tui/screens/shellheader/`, `tui/screens/shellfooter/`, `tui/viewmodel/status_overview.go` | Native Host paint on one shared token-derived text rail. Header owns the workspace identity (`Crude` + active root path, home collapsed to `~`) and active agent/editor/terminal facts plus branch, current-line blame, and uptime; footer owns LSP health, project Problems, Git changes/tracking, background attention, selective hints, Notices, and Help. Typed status/notifications live in `workspace.StatusCenter`; no rendering-owned agent state. |
 | Contextual help | `tui/ui/hint.go`, `tui/ui/key_chord.go`, `tui/viewmodel/view.go` | Registry-derived Hint/KeyChord segments (Phase 13 item 2) |
 | Main content surface | `tui/viewmodel/view.go` | Editor/chat/launcher compositor layer |
 
