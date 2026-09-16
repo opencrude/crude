@@ -194,7 +194,25 @@ var (
 	cmdPrefixRe = regexp.MustCompile(`(?i)^cmd\s+/c\s+`)
 )
 
-var shellNames = []string{"sh", "bash", "zsh", "dash", "fish", "source"}
+// shellInterpreters can execute piped or scripted input as code.
+var shellInterpreters = []string{"sh", "bash", "zsh", "dash", "fish", "ksh", "ash"}
+
+// shellNames additionally lists `source`, which executes code but cannot
+// consume a pipeline.
+var shellNames = append(append([]string{}, shellInterpreters...), "source")
+
+// remoteSourceCommands can move code in from a network peer. Piped into a
+// shell they are a supply-chain risk; anywhere else they are network access.
+var remoteSourceCommands = map[string]bool{
+	"curl": true, "wget": true, "fetch": true, "xh": true, "httpie": true,
+	"ssh": true, "scp": true, "sftp": true,
+	"nc": true, "ncat": true, "netcat": true, "socat": true,
+}
+
+// remotePipeToShellRe is the text fallback for commands the parser rejects;
+// everything that parses is classified from the syntax tree, so command text
+// that is only data (heredoc bodies, quoted arguments) cannot trigger it.
+var remotePipeToShellRe = regexp.MustCompile(`(?i)\b(curl|wget|ssh|scp|sftp|nc|ncat|netcat|socat|fetch|xh)\b[^|]*\|\s*(bash|sh|zsh|dash|fish|ksh|ash)\b`)
 
 var expandCfg = &expand.Config{
 	Env: expand.FuncEnviron(os.Getenv),
@@ -305,28 +323,29 @@ func isObfuscatedWord(w *syntax.Word) bool {
 	return false
 }
 
+// extractCmds walks a parsed command and reports the commands it would run.
+//
+// pipedToShell is true only when an interpreter consumes a pipe (`fetch | sh`).
+// A shell that merely appears inside an && list, or whose output is piped
+// somewhere else, is not a sink, so ordinary tooling wrappers such as
+// `cd x && bash -c '...' | tail` are never mistaken for remote code execution.
 func extractCmds(prog *syntax.File) (calls []string, pipedToShell bool, redirectTargets []string, stmts []*syntax.CallExpr, obfuscated bool) {
-	pipeChain := false
-	lastInPipe := false
-
 	syntax.Walk(prog, func(node syntax.Node) bool {
 		switch n := node.(type) {
 		case *syntax.BinaryCmd:
-			pipeChain = (n.Op == syntax.AndStmt || n.Op == syntax.OrStmt || n.Op == syntax.PipeAll || n.Op == syntax.Pipe)
-		case *syntax.Stmt:
-			lastInPipe = pipeChain && n.Cmd != nil
+			if n.Op == syntax.Pipe || n.Op == syntax.PipeAll {
+				if isShellSink(callExpr(n.Y)) {
+					pipedToShell = true
+				}
+			}
 		case *syntax.CallExpr:
 			if len(n.Args) == 0 {
 				return true
 			}
-			cmdName := resolveWord(n.Args[0])
-			calls = append(calls, cmdName)
+			calls = append(calls, resolveWord(n.Args[0]))
 			stmts = append(stmts, n)
 			if isObfuscatedWord(n.Args[0]) {
 				obfuscated = true
-			}
-			if lastInPipe && (cmdName == "sh" || cmdName == "bash" || cmdName == "zsh" || cmdName == "dash" || cmdName == "fish" || cmdName == "source") {
-				pipedToShell = true
 			}
 		case *syntax.Redirect:
 			target := resolveWord(n.Word)
@@ -337,6 +356,66 @@ func extractCmds(prog *syntax.File) (calls []string, pipedToShell bool, redirect
 		return true
 	})
 	return
+}
+
+func callExpr(stmt *syntax.Stmt) *syntax.CallExpr {
+	if stmt == nil {
+		return nil
+	}
+	call, _ := stmt.Cmd.(*syntax.CallExpr)
+	return call
+}
+
+// wrapperCommands launch another command and can therefore sit between a pipe
+// and an interpreter (`curl … | sudo bash`, `curl … | env bash`).
+var wrapperCommands = map[string]bool{
+	"sudo": true, "doas": true, "env": true, "nohup": true, "nice": true,
+	"ionice": true, "setsid": true, "stdbuf": true, "time": true,
+	"exec": true, "command": true, "xargs": true,
+}
+
+// isShellSink reports whether the command on the receiving end of a pipe
+// interprets that input as code, including through exec wrappers.
+func isShellSink(call *syntax.CallExpr) bool {
+	if call == nil || len(call.Args) == 0 {
+		return false
+	}
+	first := strings.ToLower(filepath.Base(resolveWord(call.Args[0])))
+	if isShellInterpreter(first) {
+		return true
+	}
+	if !wrapperCommands[first] {
+		return false
+	}
+	for _, arg := range call.Args[1:] {
+		if isShellInterpreter(strings.ToLower(filepath.Base(resolveWord(arg)))) {
+			return true
+		}
+	}
+	return false
+}
+
+// isShellInterpreter reports whether a command name can execute piped input.
+func isShellInterpreter(name string) bool {
+	base := strings.ToLower(filepath.Base(strings.TrimSpace(name)))
+	for _, shell := range shellInterpreters {
+		if base == shell {
+			return true
+		}
+	}
+	return false
+}
+
+// pipelineFetchesRemote reports whether any command in a pipeline can move
+// code in from a network peer.
+func pipelineFetchesRemote(calls []string) bool {
+	for _, call := range calls {
+		base := strings.ToLower(filepath.Base(strings.TrimSpace(call)))
+		if remoteSourceCommands[base] {
+			return true
+		}
+	}
+	return false
 }
 
 func checkCommandSafetyBase(cmd string, lg *logger.Logger) *CommandSafetyResult {
@@ -456,7 +535,21 @@ func checkCommandSafetyBase(cmd string, lg *logger.Logger) *CommandSafetyResult 
 		return res
 	}
 
-	if pipedToShell || regexp.MustCompile(`(?i)(curl|wget)\s+.*\|\s*(ba|sh|zsh|bash|dash|fish|source)\b`).MatchString(cmd) {
+	if pipedToShell {
+		if pipelineFetchesRemote(calls) {
+			res.Risk = RiskBlocked
+			res.Reason = "Downloading and immediately executing code from the internet — possible supply chain or prompt injection attack"
+			res.Suggestion = "Download to a file first, inspect it, then execute separately"
+			lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+			return res
+		}
+		res.Risk = RiskDestructive
+		res.Reason = "Piping command output into a shell — arbitrary code execution vector"
+		res.Suggestion = "Write the code to a file and review it before executing"
+		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
+		return res
+	}
+	if prog == nil && remotePipeToShellRe.MatchString(cmd) {
 		res.Risk = RiskBlocked
 		res.Reason = "Downloading and immediately executing code from the internet — possible supply chain or prompt injection attack"
 		res.Suggestion = "Download to a file first, inspect it, then execute separately"
@@ -671,13 +764,6 @@ func checkCommandSafetyBase(cmd string, lg *logger.Logger) *CommandSafetyResult 
 		return res
 
 	case "curl", "wget":
-		if pipedToShell || (prog != nil && isPipedToShell(prog)) {
-			res.Risk = RiskBlocked
-			res.Reason = "Downloading and immediately executing code — possible supply chain or prompt injection attack"
-			res.Suggestion = "Download to a file first, inspect it, then execute separately"
-			lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
-			return res
-		}
 		res.Risk = RiskNetwork
 		res.Reason = "Network request"
 		lg.Debug("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
@@ -747,14 +833,6 @@ func checkCommandSafetyBase(cmd string, lg *logger.Logger) *CommandSafetyResult 
 	if prog != nil && isHeredocEval(prog) {
 		res.Risk = RiskDestructive
 		res.Reason = "Evaluating code from heredoc — possible arbitrary code execution"
-		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
-		return res
-	}
-
-	if res.PipedToShell || (len(calls) > 1 && (calls[len(calls)-1] == "sh" || calls[len(calls)-1] == "bash")) {
-		res.Risk = RiskBlocked
-		res.Reason = "Piping command output to a shell for execution — potential injection vector"
-		res.Suggestion = "Avoid piping to shell. Use explicit commands instead."
 		lg.Warn("COMMAND", "risk", "risk", res.Risk.String(), "base", res.BaseCommand, "reason", res.Reason)
 		return res
 	}
@@ -840,27 +918,6 @@ func hasAnyArg(args []string, targets ...string) bool {
 		}
 	}
 	return false
-}
-
-func isPipedToShell(prog *syntax.File) bool {
-	var lastCmd string
-	var isPiped bool
-	syntax.Walk(prog, func(node syntax.Node) bool {
-		switch n := node.(type) {
-		case *syntax.BinaryCmd:
-			if n.Op == syntax.Pipe || n.Op == syntax.PipeAll {
-				isPiped = true
-			} else {
-				isPiped = false
-			}
-		case *syntax.CallExpr:
-			if len(n.Args) > 0 {
-				lastCmd = resolveWord(n.Args[0])
-			}
-		}
-		return true
-	})
-	return isPiped && (lastCmd == "sh" || lastCmd == "bash" || lastCmd == "zsh" || lastCmd == "dash" || lastCmd == "fish" || lastCmd == "source")
 }
 
 func isHeredocEval(prog *syntax.File) bool {
