@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"sort"
 	"strconv"
@@ -69,9 +70,8 @@ func (m *App) openStatusOverview(view statusoverview.ViewID, targetID string) {
 
 func (m *App) statusHeaderLeftSegments() []shellheader.Segment {
 	segments := []shellheader.Segment{{Text: "Crude", Role: ui.ColorAccent, Priority: 0}}
-	workspaceName := filepath.Base(m.RootPath)
-	if workspaceName != "" && workspaceName != "." && !strings.EqualFold(workspaceName, "crude") {
-		segments = append(segments, shellheader.Segment{Text: workspaceName, Role: ui.ColorMuted, Priority: 6})
+	if workspacePath := shortWorkspacePath(m.RootPath); workspacePath != "" {
+		segments = append(segments, shellheader.Segment{Text: workspacePath, Role: ui.ColorMuted, Priority: 1})
 	}
 	if m.sourceControl != nil {
 		if branch := m.sourceControl.Snapshot().Branch; branch != "" {
@@ -80,6 +80,36 @@ func (m *App) statusHeaderLeftSegments() []shellheader.Segment {
 		}
 	}
 	return segments
+}
+
+// shortWorkspacePath renders the active workspace root for the header identity
+// group. The home directory collapses to "~" so the workspace stays readable
+// next to the app name and the branch. Unresolved roots and the filesystem
+// root carry no identity and return "".
+func shortWorkspacePath(root string) string {
+	if strings.TrimSpace(root) == "" {
+		return ""
+	}
+	cleaned := filepath.Clean(root)
+	if cleaned == "." || cleaned == string(filepath.Separator) {
+		return ""
+	}
+	if !filepath.IsAbs(cleaned) {
+		return cleaned
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || strings.TrimSpace(home) == "" {
+		return cleaned
+	}
+	home = filepath.Clean(home)
+	if cleaned == home {
+		return "~"
+	}
+	relative, err := filepath.Rel(home, cleaned)
+	if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+		return cleaned
+	}
+	return "~" + string(filepath.Separator) + relative
 }
 
 func (m *App) configureFooterScreen() {
