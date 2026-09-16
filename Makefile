@@ -1,3 +1,7 @@
+# Recipes source scripts/libghostty_env.sh, which uses BASH_SOURCE; make's
+# default /bin/sh (dash) rejects it with "Bad substitution".
+SHELL := /bin/bash
+
 .PHONY: libghostty ensure-libghostty build test-tui test-race-tui design-audit bench-gate docs-check
 
 libghostty:

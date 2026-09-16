@@ -85,6 +85,23 @@ func NewLocalExecWithLogger(lg *logger.Logger) *LocalExec {
 	return &LocalExec{logger: lg}
 }
 
+// shellForExec chooses the interpreter for agent commands. Bash comes first
+// because command lines written for this agent use bash semantics (`source`/`.`
+// with BASH_SOURCE, `[[ ]]`, arrays) and this repository's own scripts are
+// bash; the user's login shell and POSIX sh are fallbacks for hosts without
+// bash. Windows commands never reach here (they run through cmd /C).
+func shellForExec() (string, []string) {
+	if bash, err := exec.LookPath("bash"); err == nil {
+		return bash, []string{"-c"}
+	}
+	if userShell := strings.TrimSpace(os.Getenv("SHELL")); userShell != "" {
+		if resolved, err := exec.LookPath(userShell); err == nil {
+			return resolved, []string{"-c"}
+		}
+	}
+	return "sh", []string{"-c"}
+}
+
 func (l *LocalExec) Execute(ctx context.Context, cmd string, opts ExecOptions) (string, error) {
 	var c *exec.Cmd
 
@@ -119,7 +136,8 @@ func (l *LocalExec) Execute(ctx context.Context, cmd string, opts ExecOptions) (
 		defer os.Remove(batPath)
 		c = exec.CommandContext(ctx, "cmd", "/C", batPath)
 	} else {
-		c = exec.CommandContext(ctx, "sh", "-c", cmd)
+		shell, args := shellForExec()
+		c = exec.CommandContext(ctx, shell, append(args, cmd)...)
 	}
 
 	if opts.CWD != "" {

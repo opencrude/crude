@@ -122,7 +122,8 @@ func buildCommand(ctx context.Context, command string, cwd string) (*exec.Cmd, f
 		return c, func() { _ = os.Remove(batPath) }, nil
 	}
 
-	c := setProcessGroupCmd(ctx, "sh", "-c", command)
+	shell, args := shellForExec()
+	c := setProcessGroupCmd(ctx, shell, append(args, command)...)
 	if cwd != "" {
 		c.Dir = cwd
 	}
