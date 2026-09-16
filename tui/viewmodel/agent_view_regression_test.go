@@ -1,15 +1,20 @@
 package viewmodel
 
 import (
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/provider"
+	"crude/sessiondb"
 	"crude/tui/rendering"
 	"crude/tui/screens/activitybar"
 	ttypes "crude/tui/types"
+	"crude/workspace"
 )
 
 // A long input must clamp to the terminal/frame and scroll internally. The
@@ -224,5 +229,64 @@ func TestAgentView_LongChatDoesNotOverflowInputOrStatus(t *testing.T) {
 	footer := rowText(app, app.height-app.frameBottomRow()-1)
 	if !strings.Contains(footer, "Help") {
 		t.Fatalf("footer Help entry missing after long chat: %q", footer)
+	}
+}
+
+func TestAgentView_ResumeContextOnlyMessagesDoNotCreateBlankTail(t *testing.T) {
+	for _, turns := range []int{1, 6} {
+		t.Run(fmt.Sprintf("%d_turns", turns), func(t *testing.T) {
+			app := newTransitionApp(t)
+			t.Cleanup(func() { app.Workspace.Close() })
+			db := sessiondb.OpenAndMigrateAt(t.TempDir())
+			t.Cleanup(func() { _ = db.Close() })
+			if err := sessiondb.CreateSessionRow(db, "resume"); err != nil {
+				t.Fatal(err)
+			}
+			var messages []provider.ChatMessage
+			var metas []sessiondb.DisplayMeta
+			for turn := 0; turn < turns; turn++ {
+				runtimeContext := provider.NewTextMessage("user", "<turn_context>private recalled memory</turn_context>")
+				runtimeContext.Origin = provider.OriginRuntimeContext
+				runtimeContext.Visibility = provider.VisibilityContextOnly
+				messages = append(messages, runtimeContext)
+				// This is the production memory envelope: it has no display snapshot.
+				metas = append(metas, sessiondb.DisplayMeta{ContextOnly: true, DisplayRole: "hidden_runtime_context"})
+				for _, role := range []string{"user", "assistant"} {
+					text := "hi"
+					if role == "assistant" {
+						text = "Hi! Ready when you are.\n\nEND-OF-CHAT"
+					}
+					messages = append(messages, provider.NewTextMessage(role, text))
+					metas = append(metas, sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion,
+						Snapshots: []workspace.Message{{InternalID: fmt.Sprintf("turn-%d-%s", turn, role), Role: role, Content: text,
+							Time: time.Unix(1000+int64(turn), 0)}}})
+				}
+			}
+			if _, err := sessiondb.ReplaceMessagesWithMeta(db, "resume", messages, nil, metas); err != nil {
+				t.Fatal(err)
+			}
+			stored, err := sessiondb.LoadMessagesWithMeta(db)
+			if err != nil {
+				t.Fatal(err)
+			}
+			views := workspace.ConvertMessagesForDisplay(stored)
+			// Resume merges display snapshots by their display timestamps, while
+			// unprojected envelopes carry the later DB commit timestamp.
+			slices.SortStableFunc(views, func(a, b workspace.ChatMessageView) int { return a.Time.Compare(b.Time) })
+			app.hydrateActiveMessages(ChatMessagesFromViews(views))
+			for _, width := range []int{120, 80} {
+				_, _ = app.Update(tea.WindowSizeMsg{Width: width, Height: 40})
+				for frame := 0; frame < 2; frame++ {
+					app.paintShellFrame()
+					bottom := rowText(app, app.chatRect.Y+app.chatRect.H-1)
+					if !strings.Contains(bottom, "END-OF-CHAT") {
+						t.Fatalf("width=%d frame=%d: resumed chat left a blank tail; bottom=%q", width, frame, bottom)
+					}
+				}
+			}
+			if got := len(stored); got != turns*3 {
+				t.Fatalf("provider history was changed: got %d messages", got)
+			}
+		})
 	}
 }

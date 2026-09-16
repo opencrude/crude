@@ -223,6 +223,11 @@ the provider-neutral visible transcript and tool state. Atomic checkpoint commit
 then replaces active context with the checkpoint plus retained human intent;
 old signed/encrypted items remain only in the immutable full transcript.
 
+The retained checkpoint boundary remains ordinary transcript content for
+interaction. Full-bleed rules and native table rows use the same global chat
+line map as messages, so drag selection, clipboard extraction, hover targeting,
+and context menus cross the boundary without a separate opaque widget path.
+
 Token estimation counts semantic content once. If reasoning text and replay
 metadata represent the same content, the text wins. Opaque canonical replay data
 is counted only when no provider measurement or semantic equivalent exists.

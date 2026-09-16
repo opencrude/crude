@@ -1152,6 +1152,11 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 			}
 			continue
 		}
+		// Explicit snapshots above may expose a context boundary. The provider
+		// envelope itself must never enter the visible transcript or its geometry.
+		if mm.Meta.ContextOnly || mm.Msg.EffectiveVisibility() == provider.VisibilityContextOnly {
+			continue
+		}
 		role := mm.Meta.DisplayRole
 		if role == "" {
 			role = mm.Msg.Role

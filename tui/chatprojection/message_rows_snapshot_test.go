@@ -134,3 +134,28 @@ func TestStreamingCursorDependencyChangesWithTypingState(t *testing.T) {
 		t.Fatal("frame dependency did not restore filled cursor")
 	}
 }
+
+func TestRenderVisibleIndexesRowsExposedByHeightCorrection(t *testing.T) {
+	list := newItemList()
+	list.SetViewport(4)
+	items := make([]renderItem, 12)
+	for index := range items {
+		items[index] = renderItem{Height: 20, Dirty: true}
+	}
+	list.SetItems(items)
+	rendered := 0
+	list.RenderVisible(func(_ int, _ *renderItem, _ int) []string {
+		rendered++
+		return []string{"row"}
+	}, 80)
+	if rendered <= 5 || rendered >= len(items) {
+		t.Fatalf("expected newly exposed rows but not a whole-list reflow; rendered %d", rendered)
+	}
+	height := 0
+	for _, item := range list.Items() {
+		height += item.Height
+	}
+	if indexed := list.TotalHeight(); indexed != height {
+		t.Fatalf("second-pass heights were not indexed: total=%d actual=%d", indexed, height)
+	}
+}
