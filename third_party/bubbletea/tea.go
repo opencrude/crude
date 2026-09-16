@@ -142,6 +142,10 @@ type View struct {
 	// terminal.
 	WindowTitle string
 
+	// IconName sets the terminal window icon name. Support depends on the
+	// terminal; modern terminals may ignore it.
+	IconName string
+
 	// ProgressBar when not nil, shows a progress bar in the terminal's
 	// progress bar section. Support depends on the terminal.
 	ProgressBar *ProgressBar

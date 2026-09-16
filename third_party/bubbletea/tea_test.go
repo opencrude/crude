@@ -29,6 +29,19 @@ type testModel struct {
 	counter  atomic.Value
 }
 
+type iconNameModel struct{}
+
+func (iconNameModel) Init() Cmd { return nil }
+func (iconNameModel) Update(Msg) (Model, Cmd) {
+	return iconNameModel{}, nil
+}
+func (iconNameModel) View() View {
+	v := NewView("icon name")
+	v.WindowTitle = "workspace - Crude"
+	v.IconName = "workspace - Crude"
+	return v
+}
+
 func (m *testModel) Init() Cmd {
 	return nil
 }
@@ -84,6 +97,23 @@ func TestTeaModel(t *testing.T) {
 
 	if buf.Len() == 0 {
 		t.Fatal("no output")
+	}
+}
+
+func TestViewIconName(t *testing.T) {
+	var output bytes.Buffer
+	p := NewProgram(iconNameModel{},
+		WithWindowSize(80, 24),
+		WithEnvironment([]string{"TERM=xterm-256color"}),
+		WithInput(strings.NewReader("")),
+		WithOutput(&output),
+	)
+	go p.Send(Quit)
+	if _, err := p.Run(); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(output.String(), "\x1b]1;workspace - Crude\x07") {
+		t.Fatalf("output did not set icon name: %q", output.String())
 	}
 }
 
