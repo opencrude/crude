@@ -301,7 +301,13 @@ func (s *Screen) SetData(cwd string, workspaces []workspace.WorkspaceInfo) {
 	if cwdAbs == "" {
 		cwdAbs = cwd
 	}
+	currentID := workspace.WorkspaceID(cwdAbs)
 	for _, w := range workspaces {
+		// The current workspace is already open. Recent is a switcher, so it
+		// contains only other actionable workspaces.
+		if w.ID == currentID || sameWorkspacePath(w.ProjectDir, cwdAbs) {
+			continue
+		}
 		name := workspace.WorkspaceDisplayName(w)
 		s.workspaces = append(s.workspaces, WorkspaceEntry{
 			ID:           w.ID,
@@ -312,6 +318,18 @@ func (s *Screen) SetData(cwd string, workspaces []workspace.WorkspaceInfo) {
 	}
 	s.cwd = cwdAbs
 	s.rebuildItems()
+}
+
+func sameWorkspacePath(left, right string) bool {
+	if left == "" || right == "" {
+		return false
+	}
+	leftAbs, leftErr := filepath.Abs(left)
+	rightAbs, rightErr := filepath.Abs(right)
+	if leftErr != nil || rightErr != nil {
+		return filepath.Clean(left) == filepath.Clean(right)
+	}
+	return filepath.Clean(leftAbs) == filepath.Clean(rightAbs)
 }
 
 func (s *Screen) loadData(cwd string) {

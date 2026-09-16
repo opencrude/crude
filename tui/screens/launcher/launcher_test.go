@@ -501,14 +501,17 @@ func TestWorkspaceSearchUsesFilledField(t *testing.T) {
 	}
 }
 
-func TestSetDataKeepsCurrentWorkspaceInRecent(t *testing.T) {
+func TestSetDataExcludesCurrentWorkspaceFromRecent(t *testing.T) {
 	s := New(theme.DefaultDark())
 	current := filepath.FromSlash("/projects/crude")
-	s.SetData(current, []workspace.WorkspaceInfo{{
-		ID: workspace.WorkspaceID(current), ProjectName: "crude", ProjectDir: current, SessionCount: 7,
-	}})
-	if len(s.workspaces) != 1 || s.workspaces[0].Name != "crude" || s.workspaces[0].SessionCount != 7 {
-		t.Fatalf("current workspace was excluded from Recent: %+v", s.workspaces)
+	other := filepath.FromSlash("/projects/other")
+	s.SetData(current, []workspace.WorkspaceInfo{
+		{ID: workspace.WorkspaceID(current), ProjectName: "crude", ProjectDir: current, SessionCount: 7},
+		{ID: "legacy-current", ProjectName: "crude", ProjectDir: filepath.Join(current, "."), SessionCount: 7},
+		{ID: workspace.WorkspaceID(other), ProjectName: "other", ProjectDir: other, SessionCount: 3},
+	})
+	if len(s.workspaces) != 1 || s.workspaces[0].Name != "other" || s.workspaces[0].SessionCount != 3 {
+		t.Fatalf("recent workspaces=%+v, want only the other workspace", s.workspaces)
 	}
 }
 
