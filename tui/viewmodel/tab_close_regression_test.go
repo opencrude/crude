@@ -101,8 +101,10 @@ func clickLastTabClose(t *testing.T, app *App) {
 	if closeLocal < 0 {
 		t.Fatal("no close local X for the last tab")
 	}
-	layout := app.computeLayout()
-	screenX := layout.SidebarW + layout.PadLR + closeLocal
+	// Screen X of the close glyph: the strip's rail column plus the local X
+	// the control reports (the bar reserves one separator column by the nav
+	// rail; tabBarRailCol owns that offset).
+	screenX := app.tabBarRailCol() + closeLocal
 	idx, closeHit := app.tabBarHitTest(screenX)
 	if idx != 0 || !closeHit {
 		t.Fatalf("tabBarHitTest(%d)=(%d,%v) want (0,true)", screenX, idx, closeHit)

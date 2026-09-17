@@ -59,6 +59,62 @@ func TestPanelDeckRetainsPanelsAndRoutesTabs(t *testing.T) {
 	}
 }
 
+func TestPanelDeckStripOwnsBaselineAndKeepsChromeRows(t *testing.T) {
+	th := theme.DefaultDark()
+	tokens := NewTokenSet(th)
+	deck := NewPanelDeck("deck", tokens)
+	first := NewButton("deck/first", "First action", "first.activate")
+	second := NewButton("deck/second", "Second action", "second.activate")
+	deck.Open(PanelEntry{ID: "first", Title: "First", Content: first, Policy: PanelInteractive, PreferredHeight: 4})
+	deck.Open(PanelEntry{ID: "second", Title: "Second", Content: second, Policy: PanelInteractive, PreferredHeight: 5})
+
+	host := NewHost(th, deck)
+	host.Resize(60, 10)
+	host.Layout()
+	buf := surface.NewCellBuffer(60, 10)
+	host.Paint(buf)
+
+	// Deck chrome: row 0 is the deck's own top rule, rows 1-2 are the strip
+	// (labels + baseline), content starts on row 3. The strip's baseline
+	// replaced the deck's old row-2 rule at the same row, so panels lost no
+	// height.
+	if got := deck.tabs.Bounds(); got.Y != 1 || got.H != StripHeight {
+		t.Fatalf("deck strip bounds=%+v want y=1 h=%d", got, StripHeight)
+	}
+	if got := deck.content.Y; got != 1+StripHeight {
+		t.Fatalf("deck content y=%d want %d", got, 1+StripHeight)
+	}
+	if got := deck.PreferredHeight(20); got != 8 {
+		t.Fatalf("deck preferred height=%d want 8 (content 5 + 3 chrome rows)", got)
+	}
+	if labels := stripRow(buf, 1, 60); !strings.Contains(labels, "First") || !strings.Contains(labels, "Second") {
+		t.Fatalf("deck strip labels missing: %q", labels)
+	}
+	if baseline := stripRow(buf, 2, 60); strings.Trim(baseline, "─") != "" {
+		t.Fatalf("deck baseline must span the deck row: %q", baseline)
+	}
+}
+
+func TestPanelDeckSinglePanelHasNoStrip(t *testing.T) {
+	th := theme.DefaultDark()
+	tokens := NewTokenSet(th)
+	deck := NewPanelDeck("deck", tokens)
+	deck.Open(PanelEntry{ID: "only", Title: "Only", Content: NewButton("deck/only", "Only", "only.activate"), Policy: PanelInteractive, PreferredHeight: 4})
+
+	host := NewHost(th, deck)
+	host.Resize(60, 8)
+	host.Layout()
+	buf := surface.NewCellBuffer(60, 8)
+	host.Paint(buf)
+
+	if got := deck.content.Y; got != 1 {
+		t.Fatalf("single-panel deck content y=%d want 1", got)
+	}
+	if !deck.tabs.Bounds().Empty() {
+		t.Fatalf("single-panel deck laid out a tab strip: %+v", deck.tabs.Bounds())
+	}
+}
+
 func TestPanelDeckBlockingPanelCannotBeBackgrounded(t *testing.T) {
 	deck := NewPanelDeck("deck", NewTokenSet(theme.DefaultDark()))
 	first := NewLabel("deck/first", "First", theme.DefaultDark())

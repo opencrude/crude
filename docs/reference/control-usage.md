@@ -37,13 +37,59 @@ target replacement under `tui/ui/`.
 | Activity lists (Agents / Terminals / Git) | `ui.List` via `activitylist` |
 | Message list | ✅ `chatprojection.Renderer` export; `shellchat` paints message-level `ui.VirtualList`; all rows native `PaintLine` (markdown/thinking bridged at render time via `BridgeAnsiLine`); main `ScrollbarControl` |
 | Context menu | `ui/overlay.ContextMenu` / WindowFrame + List |
-| Tabs | `ui.Tabs` via `shelltabs` |
+| Tabs | `ui.Tabs` only — consumers: `shelltabs` (main tab bar), `termdock` (terminal dock), `ui/panel_deck.go` (session deck), `statusoverview` (mode strip), `tui/settings` (scope strip) |
 | File picker entries | native `ui.List` |
 | Session picker | native `ui.List` section headers + `ScrollbarControl` (`tui/screens/sessionpicker`) |
 | Find in Files results | native `ui.VirtualList` + `ui.ScrollbarControl` |
 | Launcher workspaces | VirtualList + SearchField + ScrollbarControl; shared pane viewport geometry |
 | LSP popup lists | List |
 | Agent question choices | native Form select/multi-select collection | List-backed form collection |
+
+### Tab bar contract (one look)
+
+Every tab bar in the app is the same control with the same look — the Status
+Overview mode strip is the reference. `ui.Tabs` owns the structure; `TabsChrome`
+selects only the background the strip sits on (shell `ColorBg` vs popup
+`ColorPopupBg`), and no consumer may restyle it.
+
+- **Two rows, owned by the strip.** Row 0 is labels, row 1 is the baseline rule.
+  `ui.StripHeight` is the row count every host reserves (shell slot, dock chrome,
+  deck chrome, settings footer).
+- **Active tab** = accent + bold on the label row, plus an accent underline under
+  that tab's exact columns on the baseline row.
+- **Focus** = the whole baseline turns into the heavy accent rule (`━`). Focus is
+  distinct from hover and from the active tab; hover only fills the tab
+  background (`ColorHover`) and never underlines.
+- **Inactive labels** are muted. Truncation is `…`; the close affordance (` ×`)
+  and the attention marker (`• `) are additive and never restyle the tab.
+- **Sizing** is content-sized. Short labels are never padded into fixed slots, so
+  the active underline matches the label. A strip that does not fit shrinks
+  toward `tabMinW` (8) and then scrolls to keep the active tab visible; arrows
+  wrap (Left from the first tab selects the last).
+- **The baseline row always starts at the strip's own left edge.** The rule is
+  the row's spine and so is the active underline: both reach the row start, never
+  begin inside the row with empty columns to their left. Inset the strip's
+  *bounds* only when some chrome owns those columns; otherwise the row reads as
+  floating stray space.
+- **Only the label content may be inset.** `SetLabelInset(n)` indents the label
+  content (and, with it, the truncation budget) while the tab's *cell* still
+  reaches the row edge: hover fill, hit area, and the active underline start at
+  the cell start, so the first tab's indicator touches the bar's start. That is
+  the main tab bar's shape (`shelltabs.RailInset`, one column): `Main Agent`
+  gets one column of air beside the navigation rail while the underline still
+  begins on the rail. No other strip takes an inset — the terminal dock, panel
+  deck, Status Overview mode strip, and settings scope strip sit inside their own
+  chrome and a bar-local inset would misalign them against it
+  (`TestRailInsetIsMainBarOnly`).
+- **Rule bleed** is only for a strip that does not span its row: the parent
+  publishes the row geometry (`SetRuleFullBleed` + `SetRuleBleed`) so the
+  baseline still reaches the row edge while labels stay on the content rail.
+  Today only the terminal dock needs it (its header action glyphs occupy the
+  right end of the strip row). The shell tab bar, session deck, Status Overview
+  mode strip, and settings scope strip all span their row and need no bleed.
+- **Icons are not painted in tab bars.** Window tab icons live in `window.Tab`
+  (disambiguation) and are deliberately not plumbed into the strip — glyph tofu
+  risk. Labels are the only tab content.
 
 ## Splits
 

@@ -37,6 +37,18 @@ implementation is `tui/ui/confirm_frame.go` (confirms) and
 - Dirty-state markers (`●`) never enter dialog text: use `editor.BaseTitle()`
   when the tab title carries the modified marker.
 
+## Mode strips
+
+Dialogs that switch modes (Status Overview's Tabs/Workspace/Activity/
+Notifications, Workspace Settings' Application/Workspace scope) use the shared
+`ui.Tabs` strip — no bespoke segmented switch, no local painter. The strip
+reserves its own two rows: labels on the first, baseline rule on the second,
+active mode in accent + accent underline, heavy accent baseline while the strip
+holds focus. In a dialog footer the strip's rule and the command row follow the
+Status Overview layout exactly: labels, one rule, then the command row flush on
+the bottom row — never a blank row between them. Full contract:
+[`docs/reference/control-usage.md`](./control-usage.md) Tab bar contract.
+
 ## Buttons
 
 - Sized to their labels, packed left with gap 2 (`Stack` with expand-last

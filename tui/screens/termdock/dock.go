@@ -19,10 +19,10 @@ const (
 
 const (
 	dividerH = 1
-	tabsH    = 1
+	tabsH    = ui.StripHeight
 	chromeH  = dividerH + tabsH
 
-	// MinRenderableHeight guarantees that the divider and tab row never
+	// MinRenderableHeight guarantees that the divider and the tab strip never
 	// consume the whole dock: the active terminal always retains the shared
 	// minimum PTY grid height.
 	MinRenderableHeight = chromeH + workspace.MinTerminalRows
@@ -314,6 +314,8 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.actions = append(s.actions, glyphs...)
 
 	tabsW := max(0, r.W-actionsW-2)
+	s.tabs.SetRuleFullBleed(true)
+	s.tabs.SetRuleBleed(0, r.W)
 	s.tabs.Layout(ctx, ui.Rect{X: 0, Y: dividerH, W: tabsW, H: tabsH})
 	if child := s.Active(); child != nil {
 		child.Layout(ctx, ui.Rect{X: 0, Y: chromeH, W: r.W, H: max(0, r.H-chromeH)})

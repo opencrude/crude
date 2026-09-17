@@ -14,12 +14,20 @@ func (m *App) tabBarVisible() bool {
 	return m.Win != nil && m.Win.IsOpen() && m.Win.TabCount() >= 1 && m.Win.Layout() == window.TabHorizontal
 }
 
+// tabBarRailCol is the screen column where the strip's first label (and so its
+// underline and hit area) begins: the content column plus the separator column
+// the main bar leaves beside the navigation rail. The baseline sits one column
+// left of it, on the rail itself. Hit testing and tests share this one owner
+// instead of re-deriving the arithmetic.
+func (m *App) tabBarRailCol() int {
+	return m.computeLayout().SidebarW + shelltabs.RailInset
+}
+
 // tabBarLocalX converts a raw screen X into the tab bar screen's
 // slot-local X. The slot spans the whole content column; the shelltabs
-// screen translates through its padded tabs bounds internally.
+// screen translates through its tabs bounds internally.
 func (m *App) tabBarLocalX(screenX int) int {
-	layout := m.computeLayout()
-	x := screenX - layout.SidebarW
+	x := screenX - m.computeLayout().SidebarW
 	if x < 0 {
 		return 0
 	}

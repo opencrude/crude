@@ -160,6 +160,54 @@ func TestEditorMouseWheelUsesHostLocalCoords(t *testing.T) {
 	}
 }
 
+func TestEditorHorizontalWheelPaintsThroughApp(t *testing.T) {
+	for _, size := range []struct {
+		name    string
+		w, h    int
+		sidebar bool
+	}{
+		{"narrow", 80, 24, false},
+		{"desktop_sidebar", 160, 40, true},
+	} {
+		t.Run(size.name, func(t *testing.T) {
+			app := setupEditorMouseApp(t, size.w, size.h, size.sidebar)
+			app.Logger = stubLogger{}
+			line := strings.Repeat("abcdefghijklmnopqrstuvwxyz", 20)
+			openMultiLineEditor(t, app, strings.Repeat(line+"\n", 100))
+			_, _ = app.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
+			_ = app.View()
+			r, ok := app.rootHost.ScreenRect(shelleditor.ScreenID)
+			if !ok || r.Empty() {
+				t.Fatal("editor is not mounted")
+			}
+			ed := app.EditorState.Editor
+			textX := r.X + ed.PadL + ed.GutterWidth()
+			for _, step := range []struct {
+				button tea.MouseButton
+				mod    tea.KeyMod
+				x      int
+			}{
+				{tea.MouseWheelRight, 0, 3},
+				{tea.MouseWheelRight, 0, 6},
+				{tea.MouseWheelLeft, 0, 3},
+				{tea.MouseWheelDown, tea.ModShift, 6},
+				{tea.MouseWheelUp, tea.ModShift, 3},
+			} {
+				_, _ = app.Update(tea.MouseWheelMsg{X: textX + 10, Y: r.Y + 2, Button: step.button, Mod: step.mod})
+				for frame := 0; frame < 2; frame++ {
+					_ = app.View()
+					if got := app.mainSurf.Buffer().Get(textX, r.Y+2).Char; got != rune(line[step.x]) {
+						t.Fatalf("button=%v mod=%v frame=%d painted %q, want %q at offset %d", step.button, step.mod, frame, got, line[step.x], step.x)
+					}
+					if ed.ScrollY() != 0 || ed.CursorLine() != 0 || ed.CursorCol() != 0 {
+						t.Fatalf("horizontal gesture moved vertical viewport or cursor: y=%d cursor=%d:%d", ed.ScrollY(), ed.CursorLine(), ed.CursorCol())
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestEditorScrollbarDragUsesRootCaptureOutsideEditor(t *testing.T) {
 	var content strings.Builder
 	for i := 0; i < 80; i++ {

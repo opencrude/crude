@@ -231,8 +231,7 @@ func TestInputContractsAug13ShortcutMetadataAndHelpStayConsistent(t *testing.T) 
 	if closeLocalX < 0 {
 		t.Fatal("could not resolve tab geometry")
 	}
-	layout := app.computeLayout()
-	menu := app.buildTabBarContextMenu(tea.Mouse{X: layout.SidebarW + layout.PadLR + closeLocalX, Y: 3})
+	menu := app.buildTabBarContextMenu(tea.Mouse{X: app.tabBarRailCol() + closeLocalX, Y: 3})
 	closeItem, ok := contextMenuItemAug13(menu, "Close tab")
 	if !ok {
 		t.Fatal("tab context menu has no Close tab action")

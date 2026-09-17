@@ -39,7 +39,7 @@ type WorkspaceSettingsSurface struct {
 	ui.Base
 	model      *Model
 	tokens     *ui.TokenSet
-	scope      *settingsScopeBar
+	scope      *settingsScopeStrip
 	search     *settingsSearchField
 	categories *settingsCategoryList
 	form       *ui.Form
@@ -58,7 +58,7 @@ func NewSurface(th *theme.Theme, model *Model) *WorkspaceSettingsSurface {
 	}
 	tokens := ui.NewTokenSet(th)
 	s := &WorkspaceSettingsSurface{Base: ui.NewBase(WorkspaceSettingsSurfaceID), model: model, tokens: tokens}
-	s.scope = &settingsScopeBar{Base: ui.NewBase(WorkspaceSettingsScopeID), owner: s, hover: -1}
+	s.scope = newSettingsScopeStrip(s, tokens)
 	s.search = &settingsSearchField{Base: ui.NewBase(WorkspaceSettingsSearchID), field: ui.NewFilterField(WorkspaceSettingsSearchID, tokens), owner: s}
 	s.search.field.SetPrompt(ui.SearchGlyphEnd(tokens))
 	s.search.field.SetPromptPlacement(ui.PromptEnd)
@@ -129,6 +129,9 @@ func (s *WorkspaceSettingsSurface) Children() []ui.Component {
 }
 func (s *WorkspaceSettingsSurface) SetTokens(tokens *ui.TokenSet) {
 	s.tokens = tokens
+	if s.scope != nil {
+		s.scope.SetTokens(tokens)
+	}
 	if s.search != nil {
 		s.search.SetTokens(tokens)
 		s.search.field.SetBackgroundColor(tokens.Color(ui.ColorPopupSubtleBg))
@@ -191,6 +194,9 @@ func (s *WorkspaceSettingsSurface) syncModel() {
 	}
 	s.search.field.SetValue(s.model.searchText())
 	s.categories.syncItems()
+	if s.scope != nil {
+		s.scope.sync()
+	}
 	s.refreshForm()
 }
 func (s *WorkspaceSettingsSurface) refreshForm() {
@@ -211,7 +217,7 @@ func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	leftW, gap := s.railGeometry(innerW)
 	railX := workspaceSettingsInset
 	formX, formW := railX+leftW+gap, max(1, r.W-(railX+leftW+gap)-workspaceSettingsInset)
-	footerH := 2
+	footerH := 1 + ui.StripHeight
 	topPad := s.topPad()
 	searchY := topPad
 	catY, catH := topPad+2, max(1, r.H-footerH-(topPad+2))
@@ -235,7 +241,7 @@ func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		s.formScroll.Layout(ctx, ui.Rect{})
 	}
 	if s.scope != nil {
-		s.scope.Layout(ctx, ui.Rect{X: railX, Y: footerY, W: leftW, H: 1})
+		s.scope.Layout(ctx, ui.Rect{X: railX, Y: max(0, r.H-(1+ui.StripHeight)), W: leftW, H: min(ui.StripHeight, max(1, r.H))})
 	}
 	resetW := 0
 	if s.reset != nil {
@@ -305,26 +311,22 @@ func (s *WorkspaceSettingsSurface) Paint(buf *surface.CellBuffer, originX, origi
 	if r.Empty() {
 		return
 	}
-	bg, divider, muted := cell.NoColor, cell.NoColor, cell.NoColor
+	bg, divider := cell.NoColor, cell.NoColor
 	if s.tokens != nil {
 		bg = s.tokens.Color(ui.ColorPopupBg)
 		divider = s.tokens.Color(ui.ColorPopupDivider)
-		muted = s.tokens.Color(ui.ColorMuted)
 	}
 	ui.FillRect(buf, originX, originY, r, cell.BlankCell(bg))
 	ox, oy := originX+r.X, originY+r.Y
 	innerW := max(1, r.W-workspaceSettingsInset*2)
 	leftW, _ := s.railGeometry(innerW)
 	railX := workspaceSettingsInset
-	actionY := oy + r.H - 2
 	searchY := oy + s.topPad() + 1
 	for x := ox + railX; x < ox+railX+leftW; x++ {
 		buf.Set(x, searchY, cell.NewCell(ui.FirstRune(ui.DefaultGlyphsFromTokens(s.tokens).BorderH, '-'), divider, bg, 0))
 	}
-	_ = muted
-	for x := ox + railX; x < ox+r.W-workspaceSettingsInset; x++ {
-		buf.Set(x, actionY, cell.NewCell(ui.FirstRune(ui.DefaultGlyphsFromTokens(s.tokens).BorderH, '-'), divider, bg, 0))
-	}
+	// The scope strip paints the footer rule itself (bled across the content
+	// row), so the surface only draws the rail's search underline.
 }
 
 // Handle receives keys bubbled from focused children (search TextField leaves
@@ -458,6 +460,19 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 		}}
 	case "settings.reset":
 		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return ResetSectionMsg{Key: s.model.currentOverrideKey()} }}
+	case "tabs.activate":
+		id, _ := action.Payload.(string)
+		next := types.SettingsScopeApplication
+		if id == scopeTabWorkspace {
+			next = types.SettingsScopeWorkspace
+		}
+		if s.model.Scope() == next {
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+		}
+		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return ScopeMsg{Scope: next} }}
+	case "tabs.enter":
+		s.FocusSearch()
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	case "settings.cancel":
 		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return CancelMsg{} }}
 	case ui.ActionSplitResize:
@@ -606,133 +621,86 @@ var _ ui.Component = (*WorkspaceSettingsSurface)(nil)
 var _ ui.Parent = (*WorkspaceSettingsSurface)(nil)
 var _ ui.ActionHandler = (*WorkspaceSettingsSurface)(nil)
 
-type settingsScopeBar struct {
+// Settings scope tab ids: the strip's payload doubles as the scope selector.
+const (
+	scopeTabApplication = "scope:application"
+	scopeTabWorkspace   = "scope:workspace"
+)
+
+// settingsScopeStrip hosts the shared tab strip as the settings scope switch.
+// The strip owns the labels and the baseline rule (bled across the footer row);
+// the wrapper only preserves the surface's focus contract — Tab/Shift+Tab/Up
+// leave the strip, while the strip's own arrows and clicks drive the scope.
+type settingsScopeStrip struct {
 	ui.Base
 	owner *WorkspaceSettingsSurface
-	hover int
+	tabs  *ui.Tabs
 }
 
-func (s *settingsScopeBar) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
-	return cs.ClampSize(ui.Size{W: cs.MaxW, H: 1})
-}
-func (s *settingsScopeBar) Layout(_ ui.LayoutContext, r ui.Rect) { s.SetBounds(r) }
-
-func (s *settingsScopeBar) segmentWidths() (appW, wsW int) {
-	r := s.Bounds()
-	appW = rendering.VisibleWidth("Application") + 2
-	wsW = rendering.VisibleWidth("Workspace") + 2
-	if r.W > 0 && appW+wsW > r.W {
-		appW = r.W / 2
-		wsW = r.W - appW
-	}
-	return appW, wsW
+func newSettingsScopeStrip(owner *WorkspaceSettingsSurface, tokens *ui.TokenSet) *settingsScopeStrip {
+	s := &settingsScopeStrip{Base: ui.NewBase(WorkspaceSettingsScopeID), owner: owner}
+	s.tabs = ui.NewTabs(WorkspaceSettingsScopeID, tokens)
+	s.tabs.SetRuleFullBleed(true)
+	s.sync()
+	return s
 }
 
-func (s *settingsScopeBar) hitSegment(x int) int {
-	appW, wsW := s.segmentWidths()
-	if x < 0 {
-		return -1
+// sync projects the model's scope onto the strip.
+func (s *settingsScopeStrip) sync() {
+	active := scopeTabApplication
+	if s.owner != nil && s.owner.model != nil && s.owner.model.Scope() == types.SettingsScopeWorkspace {
+		active = scopeTabWorkspace
 	}
-	if x < appW {
-		return 0
-	}
-	if x < appW+wsW {
-		return 1
-	}
-	return -1
+	s.tabs.SetItems([]ui.TabItem{
+		{ID: scopeTabApplication, Label: "Application"},
+		{ID: scopeTabWorkspace, Label: "Workspace"},
+	}, active)
 }
 
-func (s *settingsScopeBar) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
-	r := s.Bounds()
-	if r.Empty() || s.owner == nil || s.owner.tokens == nil {
-		return
-	}
-	tokens := s.owner.tokens
-	baseBG := tokens.Color(ui.ColorPopupBg)
-	ui.FillRect(buf, ox, oy, r, cell.BlankCell(baseBG))
-	active := 0
-	if s.owner.model != nil && s.owner.model.Scope() == types.SettingsScopeWorkspace {
-		active = 1
-	}
-	appW, wsW := s.segmentWidths()
-	s.paintSegment(buf, ox+r.X, oy+r.Y, appW, "Application", active == 0, s.hover == 0, ctx.Focused, tokens)
-	s.paintSegment(buf, ox+r.X+appW, oy+r.Y, wsW, "Workspace", active == 1, s.hover == 1, ctx.Focused, tokens)
+func (s *settingsScopeStrip) SetTokens(tokens *ui.TokenSet) { s.tabs.SetTokens(tokens) }
+
+func (s *settingsScopeStrip) Measure(ctx ui.LayoutContext, cs ui.Constraints) ui.Size {
+	return s.tabs.Measure(ctx, cs)
 }
 
-func (s *settingsScopeBar) paintSegment(buf *surface.CellBuffer, x, y, width int, label string, active, hovered, barFocused bool, tokens *ui.TokenSet) {
-	if width < 1 {
-		return
+func (s *settingsScopeStrip) Layout(ctx ui.LayoutContext, r ui.Rect) {
+	s.SetBounds(r)
+	// The labels sit on the settings rail; the baseline spans the dialog's
+	// content row so the footer still reads as one rule above the actions.
+	rowW := r.W
+	if s.owner != nil && !s.owner.Bounds().Empty() {
+		rowW = max(r.W, s.owner.Bounds().W-2*workspaceSettingsInset)
 	}
-	fg, bg := tokens.Color(ui.ColorMuted), tokens.Color(ui.ColorPopupBg)
-	attr := cell.Attrs(0)
-	switch {
-	case active:
-		fg = tokens.Color(ui.ColorAccent)
-		bg = tokens.Color(ui.ColorPopupSubtleBg)
-		attr = cell.AttrBold
-		if barFocused {
-			bg = tokens.Color(ui.ColorSelection)
+	s.tabs.SetRuleBleed(0, rowW)
+	s.tabs.Layout(ctx, ui.Rect{W: r.W, H: r.H})
+}
+
+func (s *settingsScopeStrip) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
+	s.tabs.Paint(buf, ox+s.Bounds().X, oy+s.Bounds().Y, ctx)
+}
+
+func (s *settingsScopeStrip) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+	if s.owner == nil {
+		return s.tabs.Handle(ctx, evt)
+	}
+	if evt.IsKey() {
+		key := evt.Key
+		switch key.Code {
+		case tea.KeyTab:
+			if key.Mod.Contains(tea.ModShift) {
+				s.owner.FocusActions()
+			} else {
+				s.owner.FocusSearch()
+			}
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+		case tea.KeyUp:
+			s.owner.FocusCategories()
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 		}
-	case hovered:
-		fg, bg = tokens.ListRowColors(ui.StateHovered)
 	}
-	ui.FillRect(buf, 0, 0, ui.Rect{X: x, Y: y, W: width, H: 1}, cell.BlankCell(bg))
-	text := rendering.TruncateVisual(" "+label+" ", width, "")
-	buf.WriteString(x, y, text, fg, bg, attr)
+	return s.tabs.Handle(ctx, evt)
 }
 
-func (s *settingsScopeBar) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
-	if s.owner == nil || s.owner.model == nil {
-		return ui.EventResult{}
-	}
-	if evt.Kind == ui.EventMouseMotion {
-		h := s.hitSegment(ctx.LocalX)
-		if h != s.hover {
-			s.hover = h
-			return ui.EventResult{Handled: h >= 0, Invalidate: ui.InvalidatePaint}
-		}
-		return ui.EventResult{Handled: h >= 0}
-	}
-	if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft {
-		if seg := s.hitSegment(ctx.LocalX); seg >= 0 {
-			return s.selectSegment(seg)
-		}
-		return ui.EventResult{}
-	}
-	if !evt.IsKey() {
-		return ui.EventResult{}
-	}
-	key := evt.Key
-	switch key.Code {
-	case tea.KeyLeft:
-		return s.selectSegment(0)
-	case tea.KeyRight:
-		return s.selectSegment(1)
-	case tea.KeyTab:
-		if key.Mod.Contains(tea.ModShift) {
-			s.owner.FocusActions()
-		} else {
-			s.owner.FocusSearch()
-		}
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
-	case tea.KeyUp:
-		s.owner.FocusCategories()
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
-	}
-	return ui.EventResult{}
-}
-
-func (s *settingsScopeBar) selectSegment(seg int) ui.EventResult {
-	next := types.SettingsScopeApplication
-	if seg == 1 {
-		next = types.SettingsScopeWorkspace
-	}
-	if s.owner.model.Scope() == next {
-		return ui.EventResult{Handled: true}
-	}
-	return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return ScopeMsg{Scope: next} }}
-}
-
-func (s *settingsScopeBar) Semantics() ui.Semantics {
-	return ui.Semantics{Role: ui.RoleButton, Label: "Settings scope"}
+func (s *settingsScopeStrip) Semantics() ui.Semantics {
+	return ui.Semantics{Role: ui.RoleButton, Label: "Settings scope", Value: s.tabs.ActiveID()}
 }

@@ -221,7 +221,7 @@ func (d *PanelDeck) PreferredHeight(maxHeight int) int {
 	}
 	chrome := 1
 	if len(d.panels) > 1 {
-		chrome = 3
+		chrome = 1 + StripHeight
 	}
 	contentH := panel.PreferredHeight
 	if provider, ok := panel.Content.(PreferredHeightComponent); ok {
@@ -266,8 +266,11 @@ func (d *PanelDeck) Layout(ctx LayoutContext, r Rect) {
 	innerW := max(0, r.W-2*padX)
 	contentY := 1
 	if len(d.panels) > 1 {
-		d.tabs.Layout(ctx, Rect{X: padX, Y: 1, W: innerW, H: 1})
-		contentY = 3
+		// The strip spans the deck row: labels sit flush on the deck's left
+		// edge (matching the deck rule above them and the baseline they own),
+		// while panel content keeps the padded column below.
+		d.tabs.Layout(ctx, Rect{X: 0, Y: 1, W: r.W, H: StripHeight})
+		contentY = 1 + StripHeight
 	}
 	contentW := innerW
 	if panel := d.Active(); panel != nil {
@@ -299,11 +302,6 @@ func (d *PanelDeck) Paint(buf *surface.CellBuffer, originX, originY int, _ Paint
 	if r.W > 0 && r.H > 0 {
 		for x := 0; x < r.W; x++ {
 			buf.Set(originX+r.X+x, originY+r.Y, cell.NewCell(hBorder, divider, bg, 0))
-		}
-	}
-	if len(d.panels) > 1 && r.H > 2 {
-		for x := 0; x < r.W; x++ {
-			buf.Set(originX+r.X+x, originY+r.Y+2, cell.NewCell(hBorder, divider, bg, 0))
 		}
 	}
 }
