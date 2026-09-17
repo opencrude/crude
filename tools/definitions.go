@@ -28,7 +28,9 @@ var AgentTools = []ToolDef{
 			Description: "Execute a shell command SYNCHRONOUSLY (blocks until completion). " +
 				"The agent loop PAUSES while this runs. Returns stdout+stderr. " +
 				"Default timeout is 60 seconds — commands are auto-killed if they exceed this. " +
-				"Set timeout_seconds=0 for unlimited. For background / long-running work, use async_execute_command instead. " +
+				"Set timeout_seconds=0 for unlimited. Commands still running after 30 seconds are automatically " +
+				"promoted to an async handle (manage them with check_async_command, read_async_output, kill_async_command) " +
+				"instead of blocking the turn. For work you already know is long-running, use async_execute_command directly. " +
 				"Set cwd to run in a specific directory.",
 			Parameters: json.RawMessage(`{
 				"type":"object",

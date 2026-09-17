@@ -8,10 +8,17 @@ import (
 
 	"crude/agent"
 	"crude/fileio"
+	"crude/logger"
 	"crude/provider"
 	"crude/safety"
 	"crude/tools"
 )
+
+// asyncPromotionThreshold is how long a synchronous execute_command may run
+// before it is promoted to an async handle. It must stay below the 60s default
+// command timeout, otherwise default-timeout commands are killed before they
+// can ever be promoted.
+var asyncPromotionThreshold = 30 * time.Second
 
 // newToolFn builds the session tool closure shared by every agent this
 // session creates. multiAgent controls which agent tools are exposed.
@@ -305,16 +312,13 @@ func (s *Session) executeCommandAutoPromote(ctx context.Context, params map[stri
 	if err != nil {
 		return tools.ToolResult{}, fmt.Errorf("execute_command: %w", err)
 	}
-	pid := uc.PID()
-	s.logger.Info("EXEC", "auto_start", "pid", pid, "cmd", cmd)
+	s.logger.Info("EXEC", "auto_start", "pid", uc.PID(), "cmd", cmd)
+	return awaitCommandWithPromotion(ctx, s.asyncMgr, uc, s.logger, "")
+}
 
-	select {
-	case <-ctx.Done():
-		uc.Kill()
-		<-uc.Done()
-		return tools.ToolResult{Content: "Command cancelled."}, nil
-	case <-uc.Done():
-	}
+// commandOutcome renders the terminal state of an untracked command as a tool
+// result, preserving partial output on failure.
+func commandOutcome(uc *fileio.UntrackedCmd) (tools.ToolResult, error) {
 	out, _ := uc.ReadOutput(0)
 	info := uc.Info()
 	if info.Status == fileio.AsyncCompleted {
@@ -332,4 +336,61 @@ func (s *Session) executeCommandAutoPromote(ctx context.Context, params map[stri
 		content += "\n\n" + out
 	}
 	return tools.ToolResult{Content: content}, fmt.Errorf("%s", content)
+}
+
+// awaitCommandWithPromotion waits for a command started via StartUntracked.
+// A command still running after asyncPromotionThreshold is registered with mgr
+// under a fresh auto handle so the turn can continue instead of blocking; the
+// result then tells the model how to check, read, or kill it. agentID is only
+// used for log attribution and is empty for session-level commands.
+func awaitCommandWithPromotion(
+	ctx context.Context,
+	mgr *fileio.AsyncCommandManager,
+	uc *fileio.UntrackedCmd,
+	lg *logger.Logger,
+	agentID string,
+) (tools.ToolResult, error) {
+	select {
+	case <-ctx.Done():
+		uc.Kill()
+		<-uc.Done()
+		return tools.ToolResult{Content: "Command cancelled."}, nil
+	case <-uc.Done():
+		return commandOutcome(uc)
+	case <-time.After(asyncPromotionThreshold):
+	}
+
+	if uc.Status() == fileio.AsyncRunning {
+		handle := mgr.NextAutoHandle()
+		if _, err := mgr.Promote(uc, handle); err == nil {
+			if lg != nil {
+				fields := []any{"handle", handle, "pid", uc.PID(), "threshold", asyncPromotionThreshold.String()}
+				if agentID != "" {
+					fields = append(fields, "agent_id", agentID)
+				}
+				lg.Info("ASYNC", "auto_promote", fields...)
+			}
+			return tools.ToolResult{Content: fmt.Sprintf(
+				"Command still running after %s — promoted to async command [%s] (PID %d).\n"+
+					"It keeps running while you continue. Manage it with:\n"+
+					"- check_async_command(handle=%q) — status and exit code\n"+
+					"- read_async_output(handle=%q, since_byte=0) — output so far\n"+
+					"- kill_async_command(handle=%q) — stop it",
+				asyncPromotionThreshold, handle, uc.PID(), handle, handle, handle,
+			)}, nil
+		} else if lg != nil {
+			lg.Error("ASYNC", "auto_promote_failed", "handle", handle, "error", err.Error())
+		}
+	}
+
+	// The command finished inside the promotion window, or promotion failed:
+	// fall back to the blocking path rather than losing the command.
+	select {
+	case <-ctx.Done():
+		uc.Kill()
+		<-uc.Done()
+		return tools.ToolResult{Content: "Command cancelled."}, nil
+	case <-uc.Done():
+		return commandOutcome(uc)
+	}
 }

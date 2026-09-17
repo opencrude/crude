@@ -75,12 +75,13 @@ func setProcessGroupCmd(ctx context.Context, name string, arg ...string) *exec.C
 }
 
 type AsyncCommandManager struct {
-	mu       sync.Mutex
-	commands map[string]*asyncCmdState
-	reserved map[string]bool
-	closing  bool
-	startWg  sync.WaitGroup
-	logger   *logger.Logger
+	mu          sync.Mutex
+	commands    map[string]*asyncCmdState
+	reserved    map[string]bool
+	autoCounter int
+	closing     bool
+	startWg     sync.WaitGroup
+	logger      *logger.Logger
 }
 
 func NewAsyncCommandManager() *AsyncCommandManager {
@@ -515,6 +516,25 @@ func (uc *UntrackedCmd) Info() AsyncCmdInfo {
 	uc.state.mu.Unlock()
 	info.computeDuration()
 	return info
+}
+
+// NextAutoHandle allocates the next manager-unique handle for a command
+// promoted out of synchronous execution. Handles are never reused, so a
+// promoted command stays addressable for the lifetime of the manager.
+func (m *AsyncCommandManager) NextAutoHandle() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for {
+		m.autoCounter++
+		handle := fmt.Sprintf("auto-%d", m.autoCounter)
+		if _, ok := m.commands[handle]; ok {
+			continue
+		}
+		if m.reserved[handle] {
+			continue
+		}
+		return handle
+	}
 }
 
 func (m *AsyncCommandManager) Promote(uc *UntrackedCmd, handle string) (*AsyncCmdInfo, error) {
