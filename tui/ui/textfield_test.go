@@ -35,6 +35,13 @@ func TestTextFieldMouseDragSelectionUsesPointerCapture(t *testing.T) {
 	f := NewTextField("q", nil)
 	f.SetValue("abcdef")
 	f.Layout(LayoutContext{}, Rect{W: 10, H: 1})
+	var copied []string
+	f.SetClipboardCopy(func(text string) tea.Cmd {
+		return func() tea.Msg {
+			copied = append(copied, text)
+			return nil
+		}
+	})
 	clicked := f.Handle(EventContext{LocalX: 1}, MouseClickEvent(tea.MouseClickMsg{Button: tea.MouseLeft}))
 	if clicked.Action == nil || clicked.Action.ID != "ui.capture" || !f.IsSelecting() {
 		t.Fatalf("click did not capture selection: %+v", clicked)
@@ -43,9 +50,35 @@ func TestTextFieldMouseDragSelectionUsesPointerCapture(t *testing.T) {
 	if got := f.SelectedText(); got != "bcd" {
 		t.Fatalf("selected text=%q", got)
 	}
-	f.Handle(EventContext{}, MouseReleaseEvent(tea.MouseReleaseMsg{Button: tea.MouseLeft}))
-	if f.IsSelecting() || !f.HasSelection() {
-		t.Fatal("release did not retain completed selection")
+	res := f.Handle(EventContext{}, MouseReleaseEvent(tea.MouseReleaseMsg{Button: tea.MouseLeft}))
+	if f.IsSelecting() || f.HasSelection() {
+		t.Fatal("release kept the drag selection")
+	}
+	if res.Cmd == nil {
+		t.Fatal("release returned no clipboard command")
+	}
+	if len(copied) != 0 {
+		t.Fatalf("clipboard write ran synchronously: copied=%q", copied)
+	}
+	_ = res.Cmd()
+	if len(copied) != 1 || copied[0] != "bcd" {
+		t.Fatalf("copied=%q want [bcd]", copied)
+	}
+}
+
+// A press that never drags must not copy: it only ends the drag, so a
+// shift-click or a plain click on an existing keyboard selection keeps it.
+func TestTextFieldClickWithoutDragKeepsSelection(t *testing.T) {
+	f := NewTextField("q", nil)
+	f.SetValue("abcdef")
+	f.Layout(LayoutContext{}, Rect{W: 10, H: 1})
+	f.Edit().SetCursor(1, false)
+	f.Edit().SetCursor(4, true)
+	f.Handle(EventContext{LocalX: 2}, MouseClickEvent(tea.MouseClickMsg{Button: tea.MouseLeft, Mod: 0}))
+	// Shift-click re-extends from the anchor instead of collapsing it.
+	res := f.Handle(EventContext{}, MouseReleaseEvent(tea.MouseReleaseMsg{Button: tea.MouseLeft}))
+	if res.Cmd != nil {
+		t.Fatal("click without drag returned a clipboard command")
 	}
 }
 

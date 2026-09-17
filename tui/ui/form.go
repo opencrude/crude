@@ -188,6 +188,21 @@ func (f *Form) rebuild() {
 // scope controls field traversal and action routing.
 func (f *Form) Children() []Component { return nil }
 
+// TextControlAt returns the field owning the text control at a form-local
+// point (TextControlAtProvider). Fields are hidden from host hit-testing, so
+// context menus ask the form instead of guessing.
+func (f *Form) TextControlAt(x, y int) Component {
+	for _, field := range f.fields {
+		if field == nil || !field.Bounds().Contains(x, y) {
+			continue
+		}
+		if target := TextClipboardTargetIn(field); target != nil {
+			return field
+		}
+	}
+	return nil
+}
+
 func (f *Form) Measure(_ LayoutContext, cs Constraints) Size {
 	return cs.ClampSize(Size{W: cs.MaxW, H: f.PreferredHeight(cs.MaxH)})
 }

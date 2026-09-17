@@ -145,6 +145,16 @@ func (h *Host) Focus(id ComponentID) bool {
 // Focused returns the focused component ID.
 func (h *Host) Focused() ComponentID { return h.focused }
 
+// Component returns the mounted component registered for id, if any. Hosts
+// (viewmodel context menus) inspect the control under the pointer for
+// capabilities such as TextClipboardTarget.
+func (h *Host) Component(id ComponentID) Component {
+	if h.registry == nil {
+		return nil
+	}
+	return h.registry[id]
+}
+
 // Hovered returns the hovered component ID.
 func (h *Host) Hovered() ComponentID { return h.hovered }
 

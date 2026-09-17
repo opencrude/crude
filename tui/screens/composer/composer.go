@@ -171,6 +171,10 @@ type composerInput struct {
 	owner *Screen
 }
 
+// TextEditor returns the overlay's editor so context menus can copy or cut the
+// draft (TextEditorProvider).
+func (c *composerInput) TextEditor() ui.TextClipboardTarget { return c.area }
+
 func (c *composerInput) Measure(ctx ui.LayoutContext, cs ui.Constraints) ui.Size {
 	return c.area.Measure(ctx, cs)
 }

@@ -110,18 +110,40 @@ func TestComposerPaintsNativeControlsAcrossThemesAndSizes(t *testing.T) {
 	}
 }
 
-func TestComposerPasteAndMouseSelection(t *testing.T) {
+func TestComposerDragSelectionCopiesOnRelease(t *testing.T) {
 	screen, host := composerHost(t)
 	screen.Open("")
 	result := host.Handle(tea.PasteMsg{Content: "pasted"})
 	if !result.Handled || screen.Value() != "pasted" {
 		t.Fatalf("paste result=%#v value=%q", result, screen.Value())
 	}
+	var copied []string
+	screen.input.area.SetClipboardCopy(func(text string) tea.Cmd {
+		return func() tea.Msg {
+			copied = append(copied, text)
+			return nil
+		}
+	})
 	host.Handle(tea.MouseClickMsg{X: 3, Y: 0, Button: tea.MouseLeft})
 	host.Handle(tea.MouseMotionMsg{X: 7, Y: 0, Button: tea.MouseLeft})
-	host.Handle(tea.MouseReleaseMsg{X: 7, Y: 0, Button: tea.MouseLeft})
 	if !screen.HasActiveSelection() || screen.SelectedText() == "" {
-		t.Fatalf("expected persisted selection after mouse release, got %q selecting=%v", screen.SelectedText(), screen.Selecting())
+		t.Fatalf("expected a live selection during the drag, got %q selecting=%v", screen.SelectedText(), screen.Selecting())
+	}
+	released := host.Handle(tea.MouseReleaseMsg{X: 7, Y: 0, Button: tea.MouseLeft})
+	// Copy-on-release: the drag writes the selection and drops it, so the composer
+	// never keeps selection state the pointer no longer owns.
+	if screen.HasActiveSelection() || screen.Selecting() {
+		t.Fatalf("release kept selection %q selecting=%v", screen.SelectedText(), screen.Selecting())
+	}
+	if released.Cmd == nil {
+		t.Fatal("release returned no clipboard command")
+	}
+	if len(copied) != 0 {
+		t.Fatalf("clipboard write ran synchronously: copied=%q", copied)
+	}
+	_ = released.Cmd()
+	if len(copied) != 1 || copied[0] != "ted" {
+		t.Fatalf("copied=%q want [ted]", copied)
 	}
 }
 

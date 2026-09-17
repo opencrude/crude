@@ -760,17 +760,25 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 	}
 
 	// If a different floating window was hit (composer, command
-	// palette, find/replace, etc.), let it handle its own context
-	// menu if any. For now, the find/replace popup also gets a
-	// dismiss-on-right-click behavior.
+	// palette, find/replace, etc.), its text controls offer whole-text
+	// Copy/Cut; anything else keeps its own right-click behavior.
 	if m.windowManager != nil {
 		if hitWin := m.windowManager.HandleMouse(msg); hitWin != nil {
+			if hit, ok := windowTextClipboardHit(hitWin, mouse); ok {
+				return m, m.openContextMenuState(mouse, m.textClipboardMenu(hitWin.Title, hit))
+			}
 			// Right-click on a floating window: do nothing for now.
 			return m, nil
 		}
 	}
 	if m.blockingDeckShieldsPointer(mouse.X, mouse.Y, false) {
 		return m, nil
+	}
+	// A session deck panel covers the chat: a right-click inside it belongs to
+	// the panel's own controls (question write-ins), never to the message rows
+	// painted behind it.
+	if hit, ok := m.deckTextClipboardHit(mouse); ok {
+		return m, m.openContextMenuState(mouse, m.textClipboardMenu("", hit))
 	}
 
 	region := m.classifyShellRegion(mouse.X, mouse.Y, false)
@@ -789,14 +797,40 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 	case regionLauncher:
 		st = m.buildLauncherContextMenu(mouse)
 	default:
-		return m, nil
+		st = nil
 	}
+	// Any text control under the pointer (tree filter, launcher search,
+	// activity filter, question-deck write-in) offers the same whole-text
+	// Copy/Cut, so inline inputs never need a bespoke menu builder.
+	if hit, ok := m.textClipboardHitAt(mouse); ok {
+		if st == nil {
+			st = &ui.ContextMenuState{Title: "Text"}
+		}
+		st.Sections = append(st.Sections, m.textClipboardMenuSection(hit))
+	}
+	return m, m.openContextMenuState(mouse, st)
+}
+
+// textClipboardMenu builds the popup for a text control that has no
+// region-specific menu of its own (a field inside a floating window).
+func (m *App) textClipboardMenu(title string, hit textClipboardHit) *ui.ContextMenuState {
+	if title == "" {
+		title = "Text"
+	}
+	st := &ui.ContextMenuState{Title: title}
+	st.Sections = append(st.Sections, m.textClipboardMenuSection(hit))
+	return st
+}
+
+// openContextMenuState measures, positions, and opens a context menu popup at
+// the pointer. A nil or empty state is a no-op.
+func (m *App) openContextMenuState(mouse tea.Mouse, st *ui.ContextMenuState) tea.Cmd {
 	if st == nil || len(st.Sections) == 0 {
-		return m, nil
+		return nil
 	}
 	st.Build()
 	if len(st.FlatItems) == 0 {
-		return m, nil
+		return nil
 	}
 
 	// Position the popup near the cursor without going off-screen.
@@ -829,7 +863,7 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 	// OpenedAt retained for any remaining animation consumers; WindowFrame
 	// path does not animate reveal.
 	m.ContextMenuOpenedAt = time.Now()
-	return m, nil
+	return nil
 }
 
 // clampPopupPosition returns a (x, y) for the popup that anchors at

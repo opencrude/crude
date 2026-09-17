@@ -117,10 +117,10 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 
-	// A chat-message selection owns Ctrl+C before keyboard activity tears down
+	// A chat-message selection owns copy before keyboard activity tears down
 	// pointer capture. CancelPointerCapture clears the selection, so reading it
 	// afterward would silently turn copy into a no-op.
-	if msg.String() == "ctrl+c" && m.chatScreen != nil && m.chatScreen.HasActiveSelection() {
+	if ui.IsCopyChord(msg) && m.chatScreen != nil && m.chatScreen.HasActiveSelection() {
 		selected := m.chatScreen.SelectedText()
 		if m.rootHost != nil && m.rootHost.HasPointerCapture() {
 			m.rootHost.CancelPointerCapture()
@@ -248,7 +248,7 @@ func (m *App) treeFilterBlocksEscPop() bool {
 }
 
 func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
-	if msg.String() == "ctrl+c" {
+	if ui.IsCopyChord(msg) {
 		if m.EditorState.Editor.HasSelection() {
 			selected := m.EditorState.Editor.SelectedText()
 			if selected != "" {
@@ -464,9 +464,9 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			if composer == nil {
 				return m, nil
 			}
-			// Ctrl+C with a selection: copy (don't close the
+			// Copy with a selection: copy (don't close the
 			// composer — matches the chat input's behavior).
-			if msg.String() == "ctrl+c" && composer.HasActiveSelection() {
+			if ui.IsCopyChord(msg) && composer.HasActiveSelection() {
 				return m, rendering.CopyToClipboardCmd(composer.SelectedText())
 			}
 			if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
@@ -544,13 +544,13 @@ func (m *App) dispatchTabBarKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *App) handleTextOverlayKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, tea.Cmd) {
-	// Ctrl+C with a selection: copy. Without a selection, Ctrl+C
+	// Copy with a selection: copy. Without a selection, the copy chord
 	// is the cancel shortcut (handled by the native screen).
 	overlay := m.sessionTextOverlay()
 	if overlay == nil {
 		return m, nil
 	}
-	if msg.String() == "ctrl+c" && overlay.HasActiveSelection() {
+	if ui.IsCopyChord(msg) && overlay.HasActiveSelection() {
 		return m, rendering.CopyToClipboardCmd(overlay.SelectedText())
 	}
 	if fw := m.windowManager.Focused(); fw != nil {
@@ -563,23 +563,20 @@ func (m *App) handleTextOverlayKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Mo
 }
 
 func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, tea.Cmd) {
-	if msg.String() == "ctrl+c" {
-		if m.Logger != nil {
-			m.Logger.Debug("COPY", "ctrl_c", "mode", m.OverlayState.Name())
-		}
-		if m.Input.InputSelecting() {
-			selected := m.Input.SelectedText()
-			if selected != "" {
-				return m, rendering.CopyToClipboardCmd(selected)
-			}
-		}
-		return m, nil
-	}
+	// Chat input copy/cut/clear chords are owned by the composer's
+	// TextArea (see tui/input applyClipboardChord): Ctrl+C and Ctrl+Shift+C
+	// copy a live selection, Ctrl+C with no selection clears the draft, and
+	// Ctrl+X cuts. The viewmodel must not shadow them or the two layers would
+	// disagree about selection state.
 	if msg.Code == tea.KeyEsc {
 		if m.Logger != nil {
 			m.Logger.Debug("CANCEL", "esc", "mode", m.OverlayState.Name())
 		}
-		return m, m.handleCancel(msg)
+		cmd := m.handleCancel()
+		// The ladder can drop the selection or clear the draft, so the
+		// persisted draft is refreshed on the same keystroke.
+		m.persistComposerDraftIfChanged()
+		return m, cmd
 	}
 
 	// Ctrl+V / Ctrl+Shift+V read the SYSTEM clipboard (image-first) instead of

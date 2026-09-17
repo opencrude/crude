@@ -24,6 +24,15 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Eve
 		return m.handleMouse(mouseMsg)
 	}
 
+	// Shared text-control chords run before every other key layer so a live
+	// selection behaves identically while the slash popup is open (copy, cut,
+	// Esc drops the selection first).
+	if keyMsg, ok := msg.(tea.KeyPressMsg); ok {
+		if updated, cmd, handled := m.applyClipboardChord(keyMsg); handled {
+			return updated, cmd, nil
+		}
+	}
+
 	if m.slashActive {
 		return m.updateSlash(msg)
 	}
@@ -340,12 +349,35 @@ func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd, Event) {
 		}
 
 	case tea.MouseReleaseMsg:
-		if m.input.IsSelecting() {
-			// Keep the selection range so Ctrl+C can copy it; only
-			// clear the drag flag.
-			m.input.SetSelecting(false)
-		}
+		// Copy-on-release, matching the chat message area and docked
+		// terminals: a drag writes the selection to the clipboard and drops
+		// it, so the drag never leaves stale selection state behind.
+		return m, m.input.EndMouseSelection(), nil
 	}
 
 	return m, nil, nil
+}
+
+// applyClipboardChord applies the shared text-control clipboard chords
+// (Ctrl+C / Ctrl+Shift+C copy, Ctrl+X cuts, Esc drops a selection) and the
+// composer's own fallback on top of them: an unhandled plain Ctrl+C clears the
+// draft, so the key copies when there is a selection and otherwise gives a
+// fast "start over". The explicit Ctrl+Shift+C copy never clears anything.
+// It reports whether the key was consumed.
+func (m Model) applyClipboardChord(key tea.KeyPressMsg) (Model, tea.Cmd, bool) {
+	if res, handled := m.input.HandleClipboardKey(key); handled {
+		// Cut and clear can rewrite the draft, so chips and the slash popup
+		// are resynced exactly like every other key path.
+		m.applyReferenceRanges()
+		m.syncSlashState()
+		return m, res.Cmd, true
+	}
+	if ui.ClipboardChordFor(key) != ui.ClipboardChordCopy {
+		return m, nil, false
+	}
+	if m.input.Value() == "" {
+		return m, nil, true
+	}
+	m.ClearInput()
+	return m, nil, true
 }
