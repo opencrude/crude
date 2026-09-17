@@ -80,7 +80,7 @@ func TestZZLiveCommandCodeToolResultImageSemantics(t *testing.T) {
 	defer cancel()
 	result := a.Run(ctx, messages,
 		"Analyze the supplied image directly. It has four solid quadrants. Name the top-left, top-right, bottom-left, and bottom-right colors. Do not call tools.",
-		func(agent.AgentEvent) {}, nil, nil, "", nil)
+		func(agent.AgentEvent) {}, nil, "", nil)
 	if ctx.Err() != nil {
 		t.Fatalf("live media request timed out: %v", ctx.Err())
 	}

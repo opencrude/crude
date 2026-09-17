@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"crude/safety"
-	"crude/statemachine"
 	ttypes "crude/types"
 )
 
@@ -95,7 +94,6 @@ type SubAgentHandle struct {
 	StartedAt         time.Time
 	SessionID         string
 	DB                *sql.DB
-	SM                *statemachine.ConversationStateMachine
 	StepCount         atomic.Int32
 	Finished          bool
 	mu                sync.Mutex

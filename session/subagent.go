@@ -23,7 +23,6 @@ import (
 	"crude/provider"
 	"crude/safety"
 	"crude/sessiondb"
-	"crude/statemachine"
 	"crude/tools"
 	ttypes "crude/types"
 )
@@ -753,7 +752,6 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	a.Ctx = subCtx
 	r.session.logger.Info("SUBAGENT", "ctx_independence", "agent_id", spec.ID, "session_ctx_valid", r.sessionCtx.Err() == nil)
 
-	subSM := statemachine.NewConversationStateMachine(r.session.logger)
 	blockCh := make(chan ttypes.BlockResponse, 8)
 
 	handle := &agent.SubAgentHandle{
@@ -765,7 +763,6 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 		StartedAt: time.Now(),
 		SessionID: subSessionID,
 		DB:        subDB,
-		SM:        subSM,
 	}
 
 	a.ToolFn = r.buildProxiedToolFn(spec, blockCh, handle)
@@ -963,7 +960,7 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 				}
 			}
 		}
-	}, handle.BlockCh, handle.SM, handle.SessionID, nil)
+	}, handle.BlockCh, handle.SessionID, nil)
 	if handle.DB != nil {
 		active := handle.Agent.ActiveContext()
 		generation := contextGeneration

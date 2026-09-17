@@ -49,7 +49,7 @@ func TestZZLiveOllamaAtomicWriteLifecycle(t *testing.T) {
 	a.Run(ctx, []provider.ChatMessage{provider.NewTextMessage("user",
 		`Call write_file exactly once with path "live-probe.txt" and content "cache-safe". After the tool succeeds, reply DONE without another tool call.`)},
 		"Follow the user exactly. Use the provided tool instead of describing it.",
-		func(event AgentEvent) { events = append(events, event) }, nil, nil, "", nil)
+		func(event AgentEvent) { events = append(events, event) }, nil, "", nil)
 
 	if calls != 1 {
 		t.Fatalf("write tool calls = %d, want exactly 1; events=%s", calls, summarizeLiveEvents(events))
@@ -87,7 +87,7 @@ func TestZZLiveOllamaStructuredQuestionLifecycle(t *testing.T) {
 				Outcome:   ttypes.BlockAnswered,
 				Value:     "Q1: Which runtime should we use?\nA1: Go",
 			}
-		}, responses, nil, "", nil)
+		}, responses, "", nil)
 
 	want := []string{"tool_call", "blocking", "blocking_complete", "tool_result", "done"}
 	if err := requireLiveEventOrder(events, want); err != nil {
@@ -124,7 +124,7 @@ func TestZZLiveOllamaConfiguredContextCompaction(t *testing.T) {
 		if event.Type == "error" {
 			errors = append(errors, event)
 		}
-	}, nil, nil, "", nil)
+	}, nil, "", nil)
 	active := a.ActiveContext()
 	currentSurvived := false
 	for _, message := range active {

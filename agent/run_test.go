@@ -14,7 +14,6 @@ import (
 	"time"
 
 	"crude/provider"
-	"crude/statemachine"
 	"crude/tools"
 )
 
@@ -68,7 +67,7 @@ func TestRunDoesNotSpinOnClosedBTWChannel(t *testing.T) {
 	var events []AgentEvent
 	messages := agent.Run(ctx, nil, "system", func(event AgentEvent) {
 		events = append(events, event)
-	}, nil, nil, "", btw)
+	}, nil, "", btw)
 	if ctx.Err() != nil {
 		t.Fatal("Run hung while draining a closed BTW channel")
 	}
@@ -115,7 +114,7 @@ func TestRunContinuesWithBTWArrivingDuringFinalCompletion(t *testing.T) {
 	go func() {
 		done <- agent.Run(context.Background(), nil, "system", func(event AgentEvent) {
 			events <- event
-		}, nil, nil, "", btw)
+		}, nil, "", btw)
 	}()
 
 	<-firstStarted
@@ -184,7 +183,7 @@ func TestRunClearsBtwWhenProviderRejectsRequest(t *testing.T) {
 	var events []AgentEvent
 	messages := agent.Run(context.Background(), nil, "system", func(event AgentEvent) {
 		events = append(events, event)
-	}, nil, nil, "", btw)
+	}, nil, "", btw)
 	if hasEvent(events, "btw_consumed") || !hasEvent(events, "btw_cleared") {
 		t.Fatalf("rejected BTW lifecycle events = %+v", events)
 	}
@@ -210,7 +209,7 @@ func TestRunAutomaticallyContinuesTruncatedResponse(t *testing.T) {
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
 
-	messages := agent.Run(context.Background(), nil, "system", func(AgentEvent) {}, nil, nil, "", nil)
+	messages := agent.Run(context.Background(), nil, "system", func(AgentEvent) {}, nil, "", nil)
 	if requests.Load() != 2 {
 		t.Fatalf("requests = %d, want 2", requests.Load())
 	}
@@ -251,7 +250,7 @@ func TestRunAutomaticallyContinuesInterruptedTextStream(t *testing.T) {
 	var events []AgentEvent
 	messages := agent.Run(context.Background(), nil, "system", func(event AgentEvent) {
 		events = append(events, event)
-	}, nil, nil, "", nil)
+	}, nil, "", nil)
 	if requests.Load() != 2 {
 		t.Fatalf("requests = %d, want 2", requests.Load())
 	}
@@ -325,7 +324,7 @@ func TestRunRecoversInterruptedToolCallWithoutExecuting(t *testing.T) {
 	var events []AgentEvent
 	agent.Run(context.Background(), nil, "system", func(event AgentEvent) {
 		events = append(events, event)
-	}, nil, nil, "", nil)
+	}, nil, "", nil)
 	if requests.Load() != 2 || toolExecutions.Load() != 0 {
 		t.Fatalf("requests = %d, tool executions = %d", requests.Load(), toolExecutions.Load())
 	}
@@ -349,7 +348,7 @@ func TestRunDoesNotContinueAfterContextWindowExhaustion(t *testing.T) {
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
 
-	messages := agent.Run(context.Background(), nil, "system", func(AgentEvent) {}, nil, nil, "", nil)
+	messages := agent.Run(context.Background(), nil, "system", func(AgentEvent) {}, nil, "", nil)
 	if requests.Load() != 1 {
 		t.Fatalf("requests = %d, want 1", requests.Load())
 	}
@@ -391,7 +390,7 @@ func TestRunAppendsParallelToolResultsInCallOrder(t *testing.T) {
 		eventMu.Lock()
 		eventMu.Unlock()
 	}
-	messages := agent.Run(context.Background(), nil, "system", emit, nil, nil, "", nil)
+	messages := agent.Run(context.Background(), nil, "system", emit, nil, "", nil)
 
 	var toolMessages []provider.ChatMessage
 	for _, message := range messages {
@@ -429,7 +428,7 @@ func TestRunPersistsPartialResponseWhenCancelled(t *testing.T) {
 		if event.Type == "stream_token" {
 			cancel()
 		}
-	}, nil, nil, "", nil)
+	}, nil, "", nil)
 
 	var found bool
 	for _, message := range messages {
@@ -473,7 +472,7 @@ func TestRunContinuesAcceptedPartialDownloadStall(t *testing.T) {
 	var events []AgentEvent
 	archive := a.Run(context.Background(), []provider.ChatMessage{provider.NewTextMessage("user", "do the work")}, "system", func(event AgentEvent) {
 		events = append(events, event)
-	}, nil, nil, "", nil)
+	}, nil, "", nil)
 	if calls.Load() != 2 || len(requestBodies) != 2 {
 		t.Fatalf("requests = %d bodies=%d, want initial plus continuation", calls.Load(), len(requestBodies))
 	}
@@ -537,7 +536,7 @@ func TestRunRecoversPartialToolCallWithoutExecutingIt(t *testing.T) {
 			data, _ := event.Data.(map[string]any)
 			discardedTool = data["tool_id"] == "call_partial" && data["error"] == "true"
 		}
-	}, nil, nil, "", nil)
+	}, nil, "", nil)
 	if calls.Load() != 2 || toolExecutions.Load() != 0 || emittedError || !discardedTool {
 		t.Fatalf("requests=%d tool executions=%d emitted error=%v discarded=%v", calls.Load(), toolExecutions.Load(), emittedError, discardedTool)
 	}
@@ -575,7 +574,7 @@ func TestRunDoesNotExecuteTruncatedToolCalls(t *testing.T) {
 	var events []AgentEvent
 	messages := agent.Run(context.Background(), nil, "system", func(event AgentEvent) {
 		events = append(events, event)
-	}, nil, nil, "", nil)
+	}, nil, "", nil)
 	if executions.Load() != 0 {
 		t.Fatalf("truncated tool was executed %d times", executions.Load())
 	}
@@ -618,7 +617,7 @@ func TestRunBalancesToolCallsWhenCancelledDuringExecution(t *testing.T) {
 		if event.Type == "tool_call" {
 			cancel()
 		}
-	}, nil, nil, "", nil)
+	}, nil, "", nil)
 
 	var toolResults []provider.ChatMessage
 	for _, message := range messages {
@@ -674,7 +673,7 @@ func TestRunRecoversToolPanicsAndContinues(t *testing.T) {
 	agent.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
 		panic("boom")
 	}
-	messages := agent.Run(context.Background(), nil, "system", func(AgentEvent) {}, nil, nil, "", nil)
+	messages := agent.Run(context.Background(), nil, "system", func(AgentEvent) {}, nil, "", nil)
 	if requests.Load() != 2 {
 		t.Fatalf("requests = %d, want 2", requests.Load())
 	}
@@ -718,10 +717,8 @@ func TestRunAppendsToolRoundWithoutSyntheticRuntimeMessages(t *testing.T) {
 	agent.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
 		return tools.ToolResult{Content: "contents"}, nil
 	}
-	sm := statemachine.NewConversationStateMachine(agent.logger)
-	sm.CreateGoal("session", "finish the task", "request", statemachine.PriorityNormal, false)
 
-	agent.Run(context.Background(), []provider.ChatMessage{{Role: "user", Content: provider.TextContent("start")}}, "stable system", func(AgentEvent) {}, nil, sm, "session", nil)
+	agent.Run(context.Background(), []provider.ChatMessage{{Role: "user", Content: provider.TextContent("start")}}, "stable system", func(AgentEvent) {}, nil, "session", nil)
 	close(requests)
 
 	var captured [][]provider.ChatMessage
@@ -772,10 +769,10 @@ func TestUncompactedUserTurnsKeepPriorRequestAsExactPrefix(t *testing.T) {
 	a.ContextCompactionPercent = 0
 	first := a.Run(context.Background(), []provider.ChatMessage{
 		provider.NewTextMessage("user", "first request\n\n<turn_context>remembered once</turn_context>"),
-	}, "stable system", func(AgentEvent) {}, nil, nil, "", nil)
+	}, "stable system", func(AgentEvent) {}, nil, "", nil)
 	secondInput := append(append([]provider.ChatMessage(nil), first[1:]...),
 		provider.NewTextMessage("user", "second request\n\n<turn_context>new recall</turn_context>"))
-	_ = a.Run(context.Background(), secondInput, "stable system", func(AgentEvent) {}, nil, nil, "", nil)
+	_ = a.Run(context.Background(), secondInput, "stable system", func(AgentEvent) {}, nil, "", nil)
 	close(requests)
 	var captured [][]provider.ChatMessage
 	for request := range requests {
@@ -818,7 +815,7 @@ func TestRunHasNoStepBudget(t *testing.T) {
 	var events []AgentEvent
 	messages := a.Run(context.Background(), nil, "system", func(event AgentEvent) {
 		events = append(events, event)
-	}, nil, nil, "", nil)
+	}, nil, "", nil)
 
 	if got := requests.Load(); got != toolCycles+1 {
 		t.Fatalf("requests=%d want %d; agent stopped before work completed", got, toolCycles+1)

@@ -25,7 +25,6 @@ import (
 	"crude/safety"
 	"crude/search"
 	"crude/sessiondb"
-	"crude/statemachine"
 	ttypes "crude/types"
 )
 
@@ -51,7 +50,6 @@ type Session struct {
 	editor      *fileio.Editor
 	logger      *logger.Logger
 	permStore   *safety.PermissionStore
-	sm          *statemachine.ConversationStateMachine
 	asyncMgr    *fileio.AsyncCommandManager
 	memoryStore *memory.Store
 
@@ -351,8 +349,6 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 	clipboard.SetLogger(lg)
 	jsonrepair.SetLogger(lg)
 	diff.SetLogger(lg)
-	statemachine.SetGoalLogger(lg)
-	statemachine.SetStepResultLogger(lg)
 	fileio.SetSafetyLogger(lg)
 
 	var editor *fileio.Editor
@@ -374,8 +370,6 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 	if editor != nil {
 		editor.SetLegacyJournalWrites(false)
 	}
-
-	sm := statemachine.NewConversationStateMachine(lg)
 
 	var db *sql.DB
 	var dbPath string
@@ -412,7 +406,6 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 		editor:           editor,
 		logger:           lg,
 		permStore:        permStore,
-		sm:               sm,
 		asyncMgr:         fileio.NewAsyncCommandManagerWithLogger(lg),
 		subAgentSup:      nil,
 		sessionID:        sessionID,
@@ -480,11 +473,6 @@ func (s *Session) Close() {
 	hasMsgs := s.HasMessages()
 
 	if s.db != nil {
-		if err := persistConversationState(
-			context.Background(), s.db, s.sm, s.sessionID,
-		); err != nil {
-			s.logger.Error("STATE", "persist_on_close_failed", "error", err.Error())
-		}
 		if err := sessiondb.CloseSession(s.db, s.sessionID); err != nil {
 			s.logger.Error("SESSION", "close_session_error", "error", err.Error())
 		}
