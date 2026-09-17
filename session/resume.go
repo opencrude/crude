@@ -1,7 +1,6 @@
 package session
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"os/user"
@@ -18,7 +17,6 @@ import (
 	"crude/safety"
 	"crude/search"
 	"crude/sessiondb"
-	"crude/statemachine"
 )
 
 // ResumeSession loads a backend session from a database file in the
@@ -93,8 +91,6 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	clipboard.SetLogger(lg)
 	jsonrepair.SetLogger(lg)
 	diff.SetLogger(lg)
-	statemachine.SetGoalLogger(lg)
-	statemachine.SetStepResultLogger(lg)
 	fileio.SetSafetyLogger(lg)
 
 	var editor *fileio.Editor
@@ -114,13 +110,6 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	}
 	if editor != nil {
 		editor.SetLegacyJournalWrites(false)
-	}
-
-	sm := statemachine.NewConversationStateMachine(lg)
-	if err := restoreConversationState(context.Background(), db, sm, meta.ID); err != nil {
-		_ = lg.Close()
-		_ = db.Close()
-		return nil, fmt.Errorf("resume: %w", err)
 	}
 
 	workspaceCfg := copyConfig(cfg)
@@ -193,7 +182,6 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		editor:             editor,
 		logger:             lg,
 		permStore:          permStore,
-		sm:                 sm,
 		asyncMgr:           fileio.NewAsyncCommandManagerWithLogger(lg),
 		sessionID:          meta.ID,
 		sessionStart:       time.Now(),

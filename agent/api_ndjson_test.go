@@ -87,7 +87,7 @@ func TestConfiguredAgentCompactsWithCurrentModelAtThreshold(t *testing.T) {
 		)
 	}
 	largeHistory = append(largeHistory, provider.NewTextMessage("user", "current instruction must survive"))
-	archive := a.Run(context.Background(), largeHistory, "system", func(AgentEvent) {}, nil, nil, "", nil)
+	archive := a.Run(context.Background(), largeHistory, "system", func(AgentEvent) {}, nil, "", nil)
 	if len(bodies) != len(compactionStages)+1 || len(bodies[0]) < 400000 || !strings.Contains(string(bodies[0]), "compaction") ||
 		!strings.Contains(string(bodies[0]), "request 0") {
 		t.Fatalf("summary request did not retain cached context: requests=%d sizes=%v", len(bodies), []int{len(bodies[0]), len(bodies[1])})

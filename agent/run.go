@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"crude/provider"
-	"crude/statemachine"
 	"crude/tools"
 	ttypes "crude/types"
 )
@@ -33,7 +32,6 @@ func (a *Agent) Run(
 	systemPrompt string,
 	emit func(AgentEvent),
 	blockResolveCh <-chan ttypes.BlockResponse,
-	sm *statemachine.ConversationStateMachine,
 	sessionID string,
 	btwCh <-chan BtwMessage,
 ) []provider.ChatMessage {

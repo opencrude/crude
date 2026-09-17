@@ -245,7 +245,7 @@ func TestProviderBaselineAboveTwoPercentTriggersAutomaticCompaction(t *testing.T
 	var events []AgentEvent
 	result := a.Run(context.Background(), messages, "system", func(event AgentEvent) {
 		events = append(events, event)
-	}, nil, nil, "", nil)
+	}, nil, "", nil)
 	if calls.Load() != int32(len(compactionStages)+1) {
 		t.Fatalf("provider calls=%d want four compaction stages plus one normal request", calls.Load())
 	}

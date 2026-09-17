@@ -305,9 +305,6 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		}
 	}
 	var runtimeParts []string
-	if status := agent.BuildStateMachineStatus(s.sm, s.sessionID); status != "" {
-		runtimeParts = append(runtimeParts, "## Current State\n"+status)
-	}
 	if status := agent.BuildAsyncCommandStatus(s.asyncMgr); status != "" {
 		runtimeParts = append(runtimeParts, status)
 	}
@@ -503,7 +500,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		}
 	}
 	ag.Emit = emit
-	agentMsgs := ag.Run(historyCtx, contextMsgs, prompt, emit, o.BlockResolveCh, s.sm, s.sessionID, btwMsgCh)
+	agentMsgs := ag.Run(historyCtx, contextMsgs, prompt, emit, o.BlockResolveCh, s.sessionID, btwMsgCh)
 	finishTurn()
 	<-btwForwardDone
 	emitActive.Store(false)
