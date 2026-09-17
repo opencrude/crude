@@ -390,6 +390,30 @@ surface is already distinct from the list.
 
 ---
 
+## Text editing controls and the clipboard
+
+Text is edited by `ui.TextArea` (multi-line) and `ui.TextField` (single-line);
+never hand-roll key handling or a selection model for a new screen. Both own one
+shared capability contract (`ui.TextClipboardTarget`, `textClipboardChord` in
+`tui/ui/text_clipboard.go`): Ctrl+C / Ctrl+Shift+C copy the selection, Ctrl+X
+cuts the selection or the whole value, Esc drops the selection and stays
+unhandled when there is none, and a mouse drag copies on release and drops the
+highlight.
+
+- A composite that wraps an editor (form field, filter, search, overlay pane)
+  implements `TextEditorProvider` (`TextEditor()`) so context menus reach the
+  editor through it. A composite that hides its children from host hit-testing
+  (a form) also implements `TextControlAtProvider` (`TextControlAt`).
+- Hosts add policy on top instead of re-implementing copy: the chat composer
+  clears its draft on an unhandled Ctrl+C, and its Esc ladder is selection →
+  draft → cancel the turn. `App.textClipboardMenuSection` builds the
+  whole-text Copy/Cut context-menu items for any text control under a
+  right-click; Cut is dispatched through the owning component so models stay in
+  sync.
+- Masked controls report `TextSecret()` and refuse every clipboard command.
+
+---
+
 ## Checklist for a new screen
 
 1. Define `ScreenID` and child `ComponentID` constants.

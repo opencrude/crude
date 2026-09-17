@@ -770,6 +770,23 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   Ctrl+V (KeyPressMsg) is a fallback that emits a `tea.PasteMsg`.
 - **Ctrl+C is copy, NOT back.** Never reuse Ctrl+C for navigation.
   Esc is the universal back.
+- **One owner for text selection and copy**: `ui.TextClipboardTarget` +
+  `textClipboardChord` in `tui/ui/text_clipboard.go`. Every text control
+  (TextArea, TextField, and the composites that wrap them) accepts Ctrl+C and
+  Ctrl+Shift+C (copy the selection), Ctrl+X (cut the selection, or the whole
+  value when nothing is selected), Esc (drop the selection, then fall through),
+  and copy-on-release after a mouse drag — never keep a pointer-owned selection
+  after the release. Hosts add policy on top: the chat composer clears its
+  draft on an unhandled Ctrl+C, and its Esc ladder is selection → draft →
+  cancel the turn.
+- **Whole-text Copy/Cut in context menus** comes from
+  `App.textClipboardMenuSection` (`tui/viewmodel/text_clipboard_menu.go`): the
+  composer menu acts on the draft, and any text control under a right-click
+  (popup forms, filters, search fields, question-deck write-ins) gets the same
+  section. Cut must flow through the owning component's `Handle`, never by
+  mutating the inner editor directly, so composite models stay in sync.
+- **Masked controls (`TextSecret`) refuse every clipboard command**, so a
+  password/API-key field can never be exfiltrated through the clipboard.
 
 ### Hover
 - **`widget.Hover`** is the canonical hover type (`tui/widget/hoverable.go`).
