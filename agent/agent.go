@@ -2,7 +2,6 @@ package agent
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -76,8 +75,6 @@ type Agent struct {
 
 	fileMu            sync.Map
 	writeReportCalled bool
-	autoHandleMu      sync.Mutex
-	autoHandleCounter int
 }
 
 // SeedContextUsage carries the latest provider-reported request baseline across
@@ -118,13 +115,6 @@ func (a *Agent) providerDisplayName() string {
 		return id
 	}
 	return "provider"
-}
-
-func (a *Agent) NextAutoHandle() string {
-	a.autoHandleMu.Lock()
-	defer a.autoHandleMu.Unlock()
-	a.autoHandleCounter++
-	return fmt.Sprintf("auto-%d", a.autoHandleCounter)
 }
 
 func (a *Agent) fileMutex(path string) *sync.Mutex {

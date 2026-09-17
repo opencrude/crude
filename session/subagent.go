@@ -1820,33 +1820,8 @@ func (r *SubAgentRunner) executeSubAgentCommandAutoPromote(ctx context.Context, 
 	if err != nil {
 		return tools.ToolResult{}, fmt.Errorf("execute_command: %w", err)
 	}
-	pid := uc.PID()
-	r.session.logger.Info("EXEC", "subagent_auto_start", "agent_id", a.AgentID, "pid", pid, "cmd", cmd)
-
-	select {
-	case <-ctx.Done():
-		uc.Kill()
-		<-uc.Done()
-		return tools.ToolResult{Content: "Command cancelled."}, nil
-	case <-uc.Done():
-	}
-	out, _ := uc.ReadOutput(0)
-	info := uc.Info()
-	if info.Status == fileio.AsyncCompleted {
-		if out == "" {
-			return tools.ToolResult{Content: "(command completed with no output)"}, nil
-		}
-		return tools.ToolResult{Content: out}, nil
-	}
-	errMsg := info.Error
-	if errMsg == "" {
-		errMsg = fmt.Sprintf("exit code %d", info.ExitCode)
-	}
-	content := fmt.Sprintf("Command failed: %s", errMsg)
-	if out != "" {
-		content += "\n\n" + out
-	}
-	return tools.ToolResult{Content: content}, fmt.Errorf("%s", content)
+	r.session.logger.Info("EXEC", "subagent_auto_start", "agent_id", a.AgentID, "pid", uc.PID(), "cmd", cmd)
+	return awaitCommandWithPromotion(ctx, mgr, uc, r.session.logger, string(a.AgentID))
 }
 
 func generateShortID() string {

@@ -92,3 +92,47 @@ func TestCompletedShellCannotLeaveDetachedWriter(t *testing.T) {
 		t.Fatalf("detached child survived command ownership: %v", err)
 	}
 }
+
+func TestNextAutoHandleSkipsLiveHandles(t *testing.T) {
+	manager := NewAsyncCommandManager()
+	if _, err := manager.Start("auto-1", asyncHelperCommand(), t.TempDir(), 0); err != nil {
+		t.Fatal(err)
+	}
+	if handle := manager.NextAutoHandle(); handle != "auto-2" {
+		t.Fatalf("handle=%q, want auto-2 because auto-1 is already in use", handle)
+	}
+	manager.CloseAndWait()
+}
+
+func TestPromoteRegistersRunningCommandUnderNewHandle(t *testing.T) {
+	manager := NewAsyncCommandManager()
+	uc, err := manager.StartUntracked(asyncHelperCommand(), t.TempDir(), 0)
+	if err != nil {
+		t.Fatal(err)
+	}
+	handle := manager.NextAutoHandle()
+	info, err := manager.Promote(uc, handle)
+	if err != nil {
+		t.Fatalf("promote: %v", err)
+	}
+	if info.Handle != handle || info.Status != AsyncRunning || info.PID != uc.PID() {
+		t.Fatalf("promoted info = %+v, want handle %q running with pid %d", info, handle, uc.PID())
+	}
+	if _, ok := manager.Check(handle); !ok {
+		t.Fatal("promoted handle is not addressable through the manager")
+	}
+	if !manager.Running() {
+		t.Fatal("promoted command is not covered by the activity gate")
+	}
+	if _, err := manager.Promote(uc, handle); err == nil {
+		t.Fatal("re-promoting an in-use handle must fail")
+	}
+	if err := manager.Kill(handle); err != nil {
+		t.Fatalf("kill: %v", err)
+	}
+	<-uc.Done()
+	if got := uc.Status(); got != AsyncKilled {
+		t.Fatalf("status=%s, want %s", got, AsyncKilled)
+	}
+	manager.CloseAndWait()
+}
