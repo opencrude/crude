@@ -14,8 +14,8 @@ import (
 func TestShellTabsInteractionContractTable(t *testing.T) {
 	th := theme.DefaultDark()
 	baseItems := []TabProjection{
-		{ID: "1", Label: "Editor", Icon: "📄", Closable: true},
-		{ID: "2", Label: "Chat", Icon: "💬", Closable: true},
+		{ID: "1", Label: "Editor", Closable: true},
+		{ID: "2", Label: "Chat", Closable: true},
 	}
 
 	tests := []struct {

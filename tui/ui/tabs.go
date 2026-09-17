@@ -10,7 +10,9 @@ import (
 	"crude/tui/surface"
 )
 
-// TabsChrome selects popup vs persistent shell styling.
+// TabsChrome selects the background the strip sits on: shell chrome uses the
+// shell background, popup chrome the popup background. It never changes the
+// strip's structure — every tab bar in the app shares one look.
 type TabsChrome uint8
 
 const (
@@ -18,39 +20,46 @@ const (
 	TabsShell
 )
 
-type TabsAppearance uint8
-
-const (
-	TabsAppearanceDefault TabsAppearance = iota
-	TabsAppearanceStrip
-)
-
-// Tab sizing policy (shell + popup):
-//   - Content-sized: width = leading pad + optional marker + label + close + trailing pad.
+// Tab sizing policy (one rule for every surface):
+//   - Content-sized: width = label + attention marker + close affordance.
 //   - Long labels ellipsis-truncate at tabMaxLabelW (28).
 //   - Overflow: shrink all tabs proportionally down to tabMinW (8).
 //   - If still too narrow: horizontally scroll so the active tab stays visible.
 const (
 	tabMaxLabelW = 28
-	tabMinW      = 8
-	tabLeadPad   = 1 // leading space
-	tabGap       = 1 // column between tabs
+	tabMinW      = 8 // shrink floor; never a padding width
+	tabGap       = 2 // column between tabs
 )
 
-// TabItem is one entry in a Tabs control.
+// TabItem is one entry in a Tabs control. Tab bars paint labels only: an icon
+// here would be a tofu risk (the legacy shell tab bar deliberately omitted the
+// window tab icon), and every consumer is label-first.
 type TabItem struct {
 	ID        string
 	Label     string
-	Icon      string
 	Closable  bool
 	Attention bool
 }
 
 type tabRange struct {
-	start, end, closeStart int
+	// start/end bound the tab's cell: hover fill, hit area, and active
+	// underline. labelStart is where the label content is drawn, which is the
+	// cell start except for the first visible tab, whose cell reaches back to
+	// the bar's left edge while its content keeps the bar's leading inset.
+	start, end, closeStart, labelStart int
 }
 
 // Tabs is a horizontal retained tab strip with keyboard and mouse parity.
+//
+// Structure (the Status Overview mode strip is the reference):
+//
+//	row 0: labels — active accent+bold, others muted, hover fills the tab
+//	row 1: baseline rule — border ink, accent when the strip is focused, and
+//	       accent under the active tab so the selection reads at a glance
+//
+// The strip owns its baseline. Parents may publish a wider rule row (RuleBleed)
+// so a docked strip's rule still runs edge to edge, exactly like Form and
+// ActionBar consumers do with their own rules.
 type Tabs struct {
 	Base
 	items      []TabItem
@@ -60,28 +69,53 @@ type Tabs struct {
 	ranges     []tabRange
 	chrome     TabsChrome
 	barFocused bool
-	scroll     int // first visible tab index when strip overflows past min widths
-	appearance TabsAppearance
-	leadPad    int
-	gap        int
-	minWidth   int
+	scroll     int // first visible tab index when the strip overflows past min widths
+	ruleBleed  bool
+	bleedX     int
+	bleedW     int
+	labelInset int
 }
 
 func NewTabs(id ComponentID, tokens *TokenSet) *Tabs {
-	return &Tabs{Base: NewBase(id), active: -1, hover: -1, tokens: tokens, leadPad: tabLeadPad, gap: tabGap, minWidth: tabMinW}
+	return &Tabs{Base: NewBase(id), active: -1, hover: -1, tokens: tokens}
 }
 
 func (t *Tabs) SetTokens(tokens *TokenSet) { t.tokens = tokens }
 
-// SetChrome selects popup or shell color roles.
-func (t *Tabs) SetChrome(chrome TabsChrome)             { t.chrome = chrome }
-func (t *Tabs) SetAppearance(appearance TabsAppearance) { t.appearance = appearance }
-func (t *Tabs) SetLeadPadding(pad int)                  { t.leadPad = max(0, pad) }
-func (t *Tabs) SetGap(gap int)                          { t.gap = max(0, gap) }
-func (t *Tabs) SetMinWidth(width int)                   { t.minWidth = max(0, width) }
+// SetChrome selects the strip's background palette (shell or popup).
+func (t *Tabs) SetChrome(chrome TabsChrome) { t.chrome = chrome }
 
-// SetBarFocused marks keyboard focus on the tab strip (shell separator accent).
+// SetBarFocused marks keyboard focus on the tab strip: the baseline rule turns
+// accent-heavy so focus is distinct from hover and from the active tab.
 func (t *Tabs) SetBarFocused(focused bool) { t.barFocused = focused }
+
+// SetRuleFullBleed allows the baseline rule to span the parent-published row
+// geometry instead of the strip's own bounds (docked surfaces opt in).
+func (t *Tabs) SetRuleFullBleed(v bool) { t.ruleBleed = v }
+
+// SetRuleBleed is called by the parent at layout time with the deck row
+// geometry: offsetX columns sit left of the strip origin, width is the full
+// row width. Mirrors Form/ActionBar/panel-deck rule publishing.
+func (t *Tabs) SetRuleBleed(offsetX, width int) { t.bleedX, t.bleedW = offsetX, width }
+
+// SetLabelInset insets the label row from the strip's left edge while the
+// baseline rule keeps spanning the full row from that edge. This is the shape a
+// bar takes when its labels need breathing room beside neighbouring chrome (the
+// main tab bar beside the navigation rail): the labels, their hit areas, the
+// hover fill, and the active underline shift together, so the assignment stays
+// legible and nothing is left floating left of the rule.
+func (t *Tabs) SetLabelInset(n int) { t.labelInset = max(0, n) }
+
+// LabelInset returns the label-row inset.
+func (t *Tabs) LabelInset() int { return t.labelInset }
+
+// ruleSpan resolves the baseline rule columns for a strip of contentW columns.
+func (t *Tabs) ruleSpan(contentW int) (x, w int) {
+	if t.ruleBleed && t.bleedW-t.bleedX > contentW {
+		return -t.bleedX, t.bleedW
+	}
+	return 0, contentW
+}
 
 // SetScroll sets the first visible tab index (used by tests).
 func (t *Tabs) SetScroll(offset int) { t.scroll = max(0, offset) }
@@ -140,12 +174,11 @@ func (t *Tabs) ActiveID() string {
 	return t.items[t.active].ID
 }
 
+// StripHeight is the row count every tab bar reserves: labels + baseline.
+const StripHeight = 2
+
 func (t *Tabs) Measure(_ LayoutContext, cs Constraints) Size {
-	height := 1
-	if t.appearance == TabsAppearanceStrip {
-		height = 2
-	}
-	return cs.ClampSize(Size{W: cs.MaxW, H: height})
+	return cs.ClampSize(Size{W: cs.MaxW, H: StripHeight})
 }
 
 func (t *Tabs) Layout(_ LayoutContext, r Rect) {
@@ -153,35 +186,23 @@ func (t *Tabs) Layout(_ LayoutContext, r Rect) {
 	t.ranges = t.computeRanges(r.W)
 }
 
+// idealTabWidth is the content-sized width: ordinary strips never pad short
+// labels out to a fixed slot, so the active underline matches the label.
 func (t *Tabs) idealTabWidth(i int, label string) int {
 	item := t.items[i]
-	w := t.leadPad + rendering.VisibleWidth(label)
-	if t.chrome != TabsShell && item.Icon != "" {
-		w += rendering.VisibleWidth(item.Icon) + 1
-	}
+	w := rendering.VisibleWidth(label)
 	if item.Attention {
 		w += 2 // "• "
 	}
 	if item.Closable {
 		w += rendering.VisibleWidth(" ×")
 	}
-	if t.chrome == TabsShell && i == t.active {
-		w += rendering.VisibleWidth(t.activeMarker())
-	}
-	return max(t.minWidth, w)
-}
-
-// activeMarker is empty: the active tab uses bold + accent, never a prompt glyph.
-func (t *Tabs) activeMarker() string {
-	return ""
+	return max(1, w)
 }
 
 func (t *Tabs) displayLabel(i int) string {
 	item := t.items[i]
 	label := item.Label
-	if t.chrome != TabsShell && item.Icon != "" {
-		label = item.Icon + " " + label
-	}
 	if item.Attention {
 		label = "• " + label
 	}
@@ -196,6 +217,15 @@ func (t *Tabs) computeRanges(width int) []tabRange {
 		return ranges
 	}
 
+	// Labels are laid out in the content width left of the row after the
+	// label-row inset, then offset back into strip coordinates so the baseline
+	// keeps spanning the whole row.
+	inset := t.labelInset
+	if inset > width-1 {
+		inset = max(0, width-1)
+	}
+	avail := width - inset
+
 	ideal := make([]int, n)
 	total := 0
 	for i := range t.items {
@@ -203,12 +233,12 @@ func (t *Tabs) computeRanges(width int) []tabRange {
 		total += ideal[i]
 	}
 	gaps := n - 1
-	total += gaps * t.gap
+	total += gaps * tabGap
 
 	widths := append([]int(nil), ideal...)
-	if total > width {
+	if total > avail {
 		// Shrink proportionally down to tabMinW.
-		available := max(1, width-gaps*t.gap)
+		available := max(1, avail-gaps*tabGap)
 		sumIdeal := 0
 		for _, w := range ideal {
 			sumIdeal += w
@@ -219,11 +249,11 @@ func (t *Tabs) computeRanges(width int) []tabRange {
 		assigned := 0
 		for i := range widths {
 			if i == n-1 {
-				widths[i] = max(t.minWidth, available-assigned)
+				widths[i] = max(tabMinW, available-assigned)
 			} else {
 				w := available * ideal[i] / sumIdeal
-				if w < t.minWidth {
-					w = t.minWidth
+				if w < tabMinW {
+					w = tabMinW
 				}
 				widths[i] = w
 				assigned += w
@@ -234,9 +264,9 @@ func (t *Tabs) computeRanges(width int) []tabRange {
 		for _, w := range widths {
 			sum += w
 		}
-		if sum+gaps*t.gap > width {
+		if sum+gaps*tabGap > avail {
 			for i := range widths {
-				widths[i] = t.minWidth
+				widths[i] = tabMinW
 			}
 		}
 	}
@@ -245,22 +275,22 @@ func (t *Tabs) computeRanges(width int) []tabRange {
 	for _, w := range widths {
 		sum += w
 	}
-	needScroll := sum+gaps*t.gap > width
+	needScroll := sum+gaps*tabGap > avail
 	if !needScroll {
 		t.scroll = 0
 	} else {
-		t.ensureActiveVisible(widths, width)
+		t.ensureActiveVisible(widths, avail)
 	}
 
-	x := 0
+	x := inset
 	for i := 0; i < n; i++ {
 		if i < t.scroll {
-			ranges[i] = tabRange{start: -1, end: -1, closeStart: -1}
+			ranges[i] = tabRange{start: -1, end: -1, closeStart: -1, labelStart: -1}
 			continue
 		}
 		w := widths[i]
 		if x >= width {
-			ranges[i] = tabRange{start: -1, end: -1, closeStart: -1}
+			ranges[i] = tabRange{start: -1, end: -1, closeStart: -1, labelStart: -1}
 			continue
 		}
 		end := min(width, x+w)
@@ -269,8 +299,15 @@ func (t *Tabs) computeRanges(width int) []tabRange {
 			closeW := rendering.VisibleWidth(" ×")
 			closeStart = max(x, end-closeW)
 		}
-		ranges[i] = tabRange{start: x, end: end, closeStart: closeStart}
-		x = end + t.gap
+		ranges[i] = tabRange{start: x, end: end, closeStart: closeStart, labelStart: x}
+		x = end + tabGap
+	}
+	if inset > 0 && t.scroll < n && ranges[t.scroll].start == inset {
+		// The leading inset is bar-level breathing room, not part of a tab: the
+		// first visible tab still owns every column up to the bar's left edge,
+		// so its hover fill, hit area, and active underline reach that edge
+		// while its label content stays inset.
+		ranges[t.scroll].start = 0
 	}
 	return ranges
 }
@@ -291,7 +328,7 @@ func (t *Tabs) ensureActiveVisible(widths []int, width int) {
 		activeEnd := -1
 		for i := t.scroll; i < n; i++ {
 			if i > t.scroll {
-				x += t.gap
+				x += tabGap
 			}
 			end := x + widths[i]
 			if i == t.active {
@@ -315,31 +352,40 @@ func (t *Tabs) ensureActiveVisible(widths []int, width int) {
 	}
 }
 
+// focused reports whether the strip paints its focus treatment: the shell
+// forwards bar focus, every other surface relies on Host focus.
+func (t *Tabs) focused(ctx PaintContext) bool { return t.barFocused || ctx.Focused }
+
 func (t *Tabs) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintContext) {
 	r := t.Bounds()
 	if r.Empty() {
 		return
 	}
-	var bg, fg, muted, accent, hover cell.Color
-	if t.chrome == TabsShell {
-		bg = t.color(ColorBg)
-		fg = t.color(ColorFg)
-		muted = t.color(ColorMuted)
-		accent = t.color(ColorAccent)
-		hover = t.color(ColorHover)
-	} else {
+	bg := t.color(ColorBg)
+	if t.chrome != TabsShell {
 		bg = t.color(ColorPopupBg)
-		fg = t.color(ColorFg)
-		muted = t.color(ColorMuted)
-		accent = t.color(ColorAccent)
-		hover = t.color(ColorHover)
 	}
+	muted := t.color(ColorMuted)
+	accent := t.color(ColorAccent)
+	hover := t.color(ColorHover)
+	border := t.color(ColorBorder)
 	FillRect(buf, originX, originY, r, cell.BlankCell(bg))
-	if t.appearance == TabsAppearanceStrip && r.H > 1 {
-		for x := 0; x < r.W; x++ {
-			buf.Set(originX+r.X+x, originY+r.Y+1, cell.NewCell(FirstRune(t.tokens.Glyphs().BorderH, '-'), t.color(ColorBorder), bg, 0))
+
+	// Baseline row: one rule for the whole strip, wider than the strip when
+	// the parent published a rule row.
+	glyph := FirstRune(DefaultGlyphsFromTokens(t.tokens).BorderH, '-')
+	if r.H > 1 {
+		ruleX, ruleW := t.ruleSpan(r.W)
+		ruleFG, attr := border, cell.Attrs(0)
+		if t.focused(ctx) {
+			ruleFG, attr = accent, cell.AttrBold
+			glyph = FirstRune("━", '-')
+		}
+		for x := 0; x < ruleW; x++ {
+			buf.Set(originX+r.X+ruleX+x, originY+r.Y+1, cell.NewCell(glyph, ruleFG, bg, attr))
 		}
 	}
+
 	for i, item := range t.items {
 		if i >= len(t.ranges) {
 			break
@@ -350,15 +396,10 @@ func (t *Tabs) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 			continue
 		}
 		itemFG, itemBG, attr := muted, bg, cell.Attrs(0)
-		if i == t.active {
-			if t.chrome == TabsShell {
-				itemFG, attr = fg, cell.AttrBold
-			} else if t.appearance == TabsAppearanceStrip {
-				itemFG, attr = accent, cell.AttrBold
-			} else {
-				itemFG, itemBG, attr = fg, t.color(ColorPopupSubtleBg), cell.AttrBold
-			}
-		} else if i == t.hover || (ctx.Hovered && i == t.hover) {
+		switch i {
+		case t.active:
+			itemFG, attr = accent, cell.AttrBold
+		case t.hover:
 			itemBG = hover
 		}
 
@@ -367,27 +408,16 @@ func (t *Tabs) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 		if item.Closable {
 			close = " ×"
 		}
-		marker := ""
-		if t.chrome == TabsShell && i == t.active {
-			marker = t.activeMarker()
-		}
 		closeW := rendering.VisibleWidth(close)
-		markerW := rendering.VisibleWidth(marker)
-		availForLabel := max(1, w-t.leadPad-markerW-closeW)
-		label = rendering.TruncateVisual(label, availForLabel, "…")
+		label = rendering.TruncateVisual(label, max(1, hit.end-hit.labelStart-closeW), "…")
 		labelW := rendering.VisibleWidth(label)
 
 		FillRect(buf, 0, 0, Rect{X: originX + r.X + hit.start, Y: originY + r.Y, W: w, H: 1}, cell.BlankCell(itemBG))
-		x := originX + r.X + hit.start
+		// Content starts at labelStart, not the cell start: the first visible
+		// tab's cell reaches the bar's left edge so its fill and underline do,
+		// while its label keeps the bar's leading inset.
+		x := originX + r.X + hit.labelStart
 		y := originY + r.Y
-		if t.leadPad > 0 {
-			buf.WriteString(x, y, strings.Repeat(" ", t.leadPad), itemFG, itemBG, attr)
-			x += t.leadPad
-		}
-		if marker != "" {
-			buf.WriteString(x, y, marker, accent, itemBG, attr)
-			x += markerW
-		}
 		buf.WriteString(x, y, label, itemFG, itemBG, attr)
 		x += labelW
 		pad := (originX + r.X + hit.end) - x - closeW
@@ -398,9 +428,12 @@ func (t *Tabs) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 		if close != "" {
 			buf.WriteString(x, y, close, itemFG, itemBG, attr)
 		}
-		if i == t.active && t.appearance == TabsAppearanceStrip && r.H > 1 {
+		// The active tab owns its slice of the baseline: same slot as the
+		// rule, accent ink, so the selected mode is unambiguous even when the
+		// strip itself is unfocused.
+		if i == t.active && r.H > 1 {
 			for underlineX := hit.start; underlineX < hit.end; underlineX++ {
-				buf.Set(originX+r.X+underlineX, originY+r.Y+1, cell.NewCell(FirstRune(t.tokens.Glyphs().BorderH, '-'), accent, bg, cell.AttrBold))
+				buf.Set(originX+r.X+underlineX, originY+r.Y+1, cell.NewCell(glyph, accent, bg, cell.AttrBold))
 			}
 		}
 	}
@@ -475,5 +508,5 @@ func (t *Tabs) color(role SemanticColor) cell.Color {
 }
 
 func (t *Tabs) Semantics() Semantics {
-	return Semantics{Role: RoleGroup, Label: "Panel tabs", Value: t.ActiveID(), Selected: t.active >= 0}
+	return Semantics{Role: RoleGroup, Label: "Tabs", Value: t.ActiveID(), Selected: t.active >= 0}
 }

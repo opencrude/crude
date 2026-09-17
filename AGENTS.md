@@ -162,6 +162,15 @@ close it and verify `xdotool search --class CrudeShot` returns no window.
 - Prefer established, theme-aware symbols over spelled-out words in constrained
   chrome when the symbol is meaningful and consistent elsewhere in Crude. Keep
   text when a symbol would be ambiguous; never introduce one-off icon dialects.
+- **One tab-bar look**: every tab bar is the shared `ui.Tabs` strip (labels row
+  + its own baseline rule, accent bold + accent underline on the active tab,
+  heavy accent baseline while the strip is focused). Never hand-paint a tab row,
+  never add a bespoke segmented switch, and never restyle per consumer —
+  `TabsChrome` only picks the background, `SetLabelInset` only indents label
+  content. `ui.StripHeight` rows are reserved by every host, and the baseline row
+  — rule and active underline — always starts at the strip's own left edge
+  (empty columns to its left read as a broken bar). Contract:
+  `docs/reference/control-usage.md` (Tab bar contract).
 
 ### Validation baseline
 

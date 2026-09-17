@@ -88,6 +88,10 @@ Read that first; this index only organizes the reference material.
 - [Render authority and editor scrolling hardening](plans/render-authority-hardening-plan.md)
   — **LANDED** single-authority plan for frame coalescing, warm tab
   transitions, cursor cadence, and document-wide horizontal scrolling.
+- [Editor gutter and non-disruptive autosave](plans/editor-gutter-autosave-plan.md)
+  — **IN PROGRESS, PLANNING**: exact Git hunks, native gutter inspection,
+  revision-aware asynchronous saves, and opt-in autosave without LSP or watcher
+  interference. Implementation has not started.
 - [Tree picker and internal Fastwalk plan](plans/tree-picker-fastwalk-plan.md)
   — **IN PROGRESS, APPROVED** design for preserving the current New
   Workspace UI while replacing picker lists with bounded tree/path search.

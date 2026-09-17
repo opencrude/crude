@@ -61,13 +61,14 @@ func TestTabBarCloseClickAtProductionGeometry(t *testing.T) {
 	if closeLocal < 0 {
 		t.Fatal("could not resolve close local X for tab 0")
 	}
-	layout := app.computeLayout()
-	screenX := layout.SidebarW + layout.PadLR + closeLocal
+	// The close glyph sits closeLocal columns right of the strip's rail column
+	// (one separator column in from the sidebar).
+	screenX := app.tabBarRailCol() + closeLocal
 
 	idx, closeHit := app.tabBarHitTest(screenX)
 	if idx != 0 || !closeHit {
-		t.Fatalf("tabBarHitTest(%d)=(%d,%v) want (0,true); sidebar=%d pad=%d local=%d",
-			screenX, idx, closeHit, layout.SidebarW, layout.PadLR, closeLocal)
+		t.Fatalf("tabBarHitTest(%d)=(%d,%v) want (0,true); rail=%d local=%d",
+			screenX, idx, closeHit, app.tabBarRailCol(), closeLocal)
 	}
 
 	_, _ = app.dispatchMouseClick(tea.MouseClickMsg{

@@ -115,10 +115,6 @@ func New(th *theme.Theme, projection Projection) *Surface {
 	tokens := ui.NewTokenSet(th)
 	s := &Surface{Base: ui.NewBase(SurfaceID), tokens: tokens, items: make(map[string]Item)}
 	s.views = ui.NewTabs(ViewsID, tokens)
-	s.views.SetAppearance(ui.TabsAppearanceStrip)
-	s.views.SetLeadPadding(0)
-	s.views.SetGap(2)
-	s.views.SetMinWidth(0)
 	s.views.SetItems([]ui.TabItem{
 		{ID: string(ViewTabs), Label: "Tabs"},
 		{ID: string(ViewWorkspace), Label: "Workspace"},

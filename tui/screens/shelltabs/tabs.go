@@ -3,9 +3,7 @@ package shelltabs
 
 import (
 	"fmt"
-	"strings"
 
-	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -17,23 +15,33 @@ const (
 	TabsID   ui.ComponentID = "shelltabs/tabs"
 )
 
-// TabProjection is one tab row for the shell tab bar.
+// RailInset is the empty column the main tab bar leaves between the navigation
+// rail's border and its first tab label. Only the label row takes it: the
+// baseline keeps spanning the whole content column from the rail, so the rule
+// stays put and nothing is left floating to its left. Only this bar takes it —
+// the dock, deck, and mode strips sit inside their own chrome and would read as
+// misaligned with it.
+const RailInset = 1
+
+// TabProjection is one tab row for the shell tab bar. Tab bars paint labels
+// only: the window tab icon is never drawn (tofu risk), so it is not plumbed
+// into the strip.
 type TabProjection struct {
 	ID        string
 	Label     string
-	Icon      string
 	Closable  bool
 	Attention bool
 }
 
-// Screen paints the main tab strip (tabs row + separator) via Host.Paint.
+// Screen hosts the main tab strip. The strip owns its own baseline row and
+// fills the whole content column handed to it, so the first label, the active
+// underline, and the baseline all start on the same rail column.
 type Screen struct {
 	ui.Base
-	th         *theme.Theme
-	tokens     *ui.TokenSet
-	tabs       *ui.Tabs
-	barFocused bool
-	width      int
+	th     *theme.Theme
+	tokens *ui.TokenSet
+	tabs   *ui.Tabs
+	width  int
 }
 
 // New creates a shell tab bar screen.
@@ -79,14 +87,12 @@ func (s *Screen) SetProjection(items []TabProjection, activeID string, hoverInde
 		tabItems[i] = ui.TabItem{
 			ID:        item.ID,
 			Label:     item.Label,
-			Icon:      item.Icon,
 			Closable:  item.Closable,
 			Attention: item.Attention,
 		}
 	}
 	s.tabs.SetItems(tabItems, activeID)
 	s.tabs.SyncHover(hoverIndex)
-	s.barFocused = barFocused
 	s.tabs.SetBarFocused(barFocused)
 }
 
@@ -108,7 +114,6 @@ func (s *Screen) SetProjectionFromWindow(w *window.Window, hoverIndex int, barFo
 		items[i] = TabProjection{
 			ID:        id,
 			Label:     label,
-			Icon:      tab.Icon,
 			Closable:  tab.Closable,
 			Attention: tabAttention(tab),
 		}
@@ -136,7 +141,7 @@ func tabAttention(tab window.Tab) bool {
 func (s *Screen) Children() []ui.Component { return []ui.Component{s.tabs} }
 
 func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
-	h := 2
+	h := ui.StripHeight
 	if cs.MaxH > 0 && cs.MaxH < h {
 		h = cs.MaxH
 	}
@@ -148,36 +153,24 @@ func (s *Screen) Layout(_ ui.LayoutContext, r ui.Rect) {
 	if r.W > 0 {
 		s.width = r.W
 	}
-	// The tab strip slot spans the whole content column so the bottom
-	// separator runs edge to edge; the tabs control itself keeps the
-	// theme's horizontal padding (the parent enforces the theme). Narrow
-	// strips cap the padding at half the width, like the shell's content
-	// geometry.
-	pad := 0
-	if s.tokens != nil {
-		pad = min(max(0, s.tokens.PadLR()), max(0, r.W)/2)
-	}
-	s.tabs.Layout(ui.LayoutContext{}, ui.Rect{X: pad, Y: 0, W: max(0, r.W-2*pad), H: 1})
-}
-
-func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
-	b := s.Bounds()
-	if b.Empty() || buf == nil || b.H < 2 {
-		return
-	}
-	border := s.color(ui.ColorBorder)
-	accent := s.color(ui.ColorAccent)
-	sep := string(ui.FirstRune(s.tokens.Glyphs().BorderH, '─'))
-	sepFG := border
-	if s.barFocused {
-		sep = "━"
-		sepFG = accent
-	}
-	sepY := oy + b.Y + 1
-	buf.WriteString(ox+b.X, sepY, strings.Repeat(sep, max(0, b.W)), sepFG, cell.NoColor, 0)
+	// The strip spans the whole content column so its baseline runs from the
+	// navigation rail to the right edge; only the labels take RailInset, which
+	// gives the first tab breathing room without moving the rule.
+	s.tabs.SetLabelInset(RailInset)
+	s.tabs.Layout(ui.LayoutContext{}, ui.Rect{
+		X: 0,
+		Y: 0,
+		W: max(0, r.W),
+		H: min(ui.StripHeight, max(1, r.H)),
+	})
 }
 
 func (s *Screen) Handle(_ ui.EventContext, _ ui.Event) ui.EventResult { return ui.EventResult{} }
+
+// Paint is intentionally empty: the strip control paints its own labels and
+// baseline (bleeding into the parent-published rule row), so the screen has no
+// chrome left of its own to draw.
+func (s *Screen) Paint(*surface.CellBuffer, int, int, ui.PaintContext) {}
 
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
 	switch action.ID {
@@ -195,18 +188,4 @@ func (s *Screen) HitTest(localX int) (int, bool) {
 
 func (s *Screen) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleGroup, Label: "Tab bar", Value: s.tabs.ActiveID()}
-}
-
-func (s *Screen) color(role ui.SemanticColor) cell.Color {
-	if s.tokens != nil {
-		return s.tokens.Color(role)
-	}
-	return cell.NoColor
-}
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
 }
