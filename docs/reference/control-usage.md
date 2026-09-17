@@ -170,6 +170,7 @@ API: `HasPointerCapture()`, `CancelPointerCapture()` on each product Host;
 | Session PanelDeck (docked) | `tui/viewmodel/panel_deck_contract_test.go`, `tui/viewmodel/session_deck_test.go`, screen `*_test.go` | Blocking capture, settings Esc/Tab, confirmation `y`/Esc, question cancel, YOLO Esc, passive background jobs, session isolation |
 | Help overlay | `tui/screens/help/help_test.go`, `tui/viewmodel/help_test.go` | Modal Ignore; live catalog; F1 toggle; Esc closes; `/help` does not dump into chat |
 | Agent chat list | `tui/screens/shellchat/scroll_contract_test.go`, `host_test.go`, `tui/viewmodel/chat_keyboard_contract_test.go`, `host_capture_test.go`, `mouse_capture_test.go` | PgUp/PgDown/Home/End, wheel disarm/re-arm, scrollbar drag, selection copy once, capture teardown, input-empty routing |
+| Text selection & clipboard chords | `tui/ui/text_area_clipboard_test.go`, `tui/ui/textfield_clipboard_test.go`, `tui/input/clipboard_test.go`, `tui/viewmodel/text_clipboard_menu_test.go` | Ctrl+C / Ctrl+Shift+C copy, Ctrl+X cut (selection → whole value), Esc selection-first ladder, copy-on-release, masked fields refuse the clipboard, whole-text Copy/Cut menus (composer + popup forms) |
 
 ## Async I/O boundaries
 

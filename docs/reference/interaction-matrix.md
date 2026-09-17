@@ -20,10 +20,13 @@ preserve or intentionally improve.
 | Composer | Alt+C | |
 | Quit application | Ctrl+Q | |
 | Close active editor tab | Ctrl+W | Uses the dirty-close Save / Don't Save / Cancel prompt; terminal focus keeps the key as PTY input |
-| Cancel/back | Esc | Never Ctrl+C for back; in editor focus, Back closes the tab after transient editor UI is dismissed. On a tool permission dock, Esc stops the turn without denying permission; Deny / `n` is the explicit rejection path. |
+| Cancel/back | Esc | Never Ctrl+C for back; in editor focus, Back closes the tab after transient editor UI is dismissed. On a tool permission dock, Esc stops the turn without denying permission; Deny / `n` is the explicit rejection path. In a text control Esc first drops the selection; the chat composer's ladder is selection → draft → cancel the turn. |
 | Previous / next tab | Ctrl+[ / Ctrl+] | Global outside terminal key ownership, including editor focus |
 | Attach file / choose current folder | Ctrl+O | Opens Attach File from non-terminal shell views; a focused Open Workspace folder picker owns the same key locally and selects its current folder |
-| Copy | Ctrl+C | Copies an active editor, chat-input, or chat-message selection |
+| Copy | Ctrl+C / Ctrl+Shift+C | Copies the selection of the chat input, chat messages, editor, overlay editors, terminals, and every inline text control. Ctrl+Shift+C is the explicit copy chord (terminals already used it); unhandled Ctrl+C clears the chat draft, and Ctrl+C never navigates back. |
+| Cut | Ctrl+X | Text controls: cuts the selection, or the whole value when nothing is selected (masked fields refuse it) |
+| Copy on release | drag release over a text control | Text areas and inline inputs copy the dragged selection and drop the highlight on release, matching the chat message area and docked terminals |
+| Whole-text Copy/Cut | right-click on a text control | Context menu Copy/Cut act on the entire value; the composer menu (Paste / Copy / Cut / Clear input) acts on the draft. Cut runs through the owning control so composite models stay in sync. |
 | Paste | Bracketed paste primary; Ctrl+V fallback | Routes to the focused control; launcher/tree paste never leaks into hidden chat input |
 
 ## Editor context
