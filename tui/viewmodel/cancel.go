@@ -1,12 +1,24 @@
 package viewmodel
 
 import (
-	"strings"
-
 	tea "charm.land/bubbletea/v2"
 )
 
-func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
+// handleCancel runs the composer's Esc ladder. Esc frees the text area before
+// it cancels anything: an active selection is dropped first, then the draft is
+// cleared, and only then does Esc cancel a running turn (or a whole batch of
+// them). Cancelling the turn therefore always needs the draft out of the way,
+// which is what the user sees as "Esc clears the text area".
+func (m *App) handleCancel() tea.Cmd {
+	if m.Input.HasInputSelection() {
+		m.Input.ClearInputSelection()
+		return nil
+	}
+	if m.Input.Value() != "" {
+		m.Input.ClearInput()
+		return nil
+	}
+
 	if m.AgentMgr.VisibleCount() == 0 && m.EditorState.ActiveView == "" {
 		return nil
 	}
@@ -23,12 +35,6 @@ func (m *App) handleCancel(msg tea.KeyPressMsg) tea.Cmd {
 			}
 		}
 		m.Feedback.NotifyInfo("Stopping active turns...")
-		return nil
-	}
-
-	inputText := strings.TrimSpace(m.Input.Value())
-	if inputText != "" {
-		m.Input.ClearInput()
 		return nil
 	}
 

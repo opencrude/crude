@@ -33,6 +33,10 @@ func NewFilterField(id ComponentID, tokens *TokenSet) *FilterField {
 	return f
 }
 
+// TextEditor returns the single-line editor this filter owns
+// (TextEditorProvider).
+func (f *FilterField) TextEditor() TextClipboardTarget { return f.field }
+
 // OnChanged registers the callback invoked whenever the value changes through
 // editing or Esc-to-clear. Programmatic value replacement via SetValue does
 // not notify — screens restore model state with SetValue and must not re-enter

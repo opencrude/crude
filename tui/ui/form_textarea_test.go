@@ -113,13 +113,20 @@ func TestTextAreaSyncReflectsProgrammaticValue(t *testing.T) {
 	}
 }
 
-func TestFormTextAreaDragUsesHostCaptureAndPersistsSelection(t *testing.T) {
+func TestFormTextAreaDragUsesHostCaptureAndCopiesOnRelease(t *testing.T) {
 	form, field := newTextAreaForm(t)
 	form.model.SetValue("body", StringValue("alpha beta"))
 	form.SetForm(form.model, "Form", "Edit")
 	host := NewHost(theme.DefaultDark(), form)
 	host.Resize(60, 20)
 	host.Layout()
+	var copied []string
+	field.Area().SetClipboardCopy(func(text string) tea.Cmd {
+		return func() tea.Msg {
+			copied = append(copied, text)
+			return nil
+		}
+	})
 	fr := field.Bounds()
 	ar := field.Area().Bounds()
 	x, y := fr.X+ar.X, fr.Y+ar.Y
@@ -129,15 +136,30 @@ func TestFormTextAreaDragUsesHostCaptureAndPersistsSelection(t *testing.T) {
 		owner, _, _ := host.CapturedPointer()
 		t.Fatalf("drag owner=%q capture=%v selecting=%v range=%v selection=%q", owner, host.HasPointerCapture(), field.Area().IsSelecting(), func() [2]int { a, b := field.Area().SelectionRange(); return [2]int{a, b} }(), field.Area().SelectedText())
 	}
-	host.Handle(tea.MouseReleaseMsg{X: x + 5, Y: y, Button: tea.MouseLeft})
-	if host.HasPointerCapture() || field.Area().SelectedText() == "" {
-		t.Fatalf("release capture=%v selection=%q", host.HasPointerCapture(), field.Area().SelectedText())
-	}
+	// The drag itself is highlighted before release.
 	buf := surface.NewCellBuffer(60, 20)
 	host.Paint(buf)
 	selectedBG := NewTokenSet(theme.DefaultDark()).Color(ColorSelection)
 	if got := buf.Get(x, y).BG; !got.Equal(selectedBG) {
-		t.Fatalf("persisted selection bg=%v want %v", got, selectedBG)
+		t.Fatalf("drag selection bg=%v want %v", got, selectedBG)
+	}
+
+	res := host.Handle(tea.MouseReleaseMsg{X: x + 5, Y: y, Button: tea.MouseLeft})
+	if host.HasPointerCapture() {
+		t.Fatal("release kept pointer capture")
+	}
+	if field.Area().HasActiveSelection() || field.Area().IsSelecting() {
+		t.Fatalf("release kept selection=%q selecting=%v", field.Area().SelectedText(), field.Area().IsSelecting())
+	}
+	if res.Cmd == nil {
+		t.Fatal("release returned no clipboard command")
+	}
+	if len(copied) != 0 {
+		t.Fatalf("clipboard write ran synchronously: copied=%q", copied)
+	}
+	_ = res.Cmd()
+	if len(copied) != 1 || copied[0] != "alpha" {
+		t.Fatalf("copied=%q want [alpha]", copied)
 	}
 }
 

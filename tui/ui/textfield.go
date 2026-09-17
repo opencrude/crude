@@ -40,6 +40,14 @@ type TextField struct {
 	lastClickTime time.Time
 	lastClickX    int
 	clickCount    int
+	// dragMoved records that the pointer actually moved during the active
+	// drag, so copy-on-release only fires for a real drag (a click that
+	// extends a keyboard selection keeps its selection).
+	dragMoved bool
+	// clipboardCopy builds the command that writes text to the system
+	// clipboard. Hosts may inject their own write path; tests inject a
+	// recorder so copy payloads are asserted without touching the clipboard.
+	clipboardCopy func(string) tea.Cmd
 }
 
 // NewTextField creates a single-line field.
@@ -126,11 +134,14 @@ func (t *TextField) SyncEditFrom(ed *TextEdit) {
 }
 
 // Edit exposes the underlying model for advanced callers/tests.
-func (t *TextField) Edit() *TextEdit       { return t.edit }
-func (t *TextField) HasSelection() bool    { return t.edit.HasSelection() }
-func (t *TextField) SelectedText() string  { return t.edit.SelectedText() }
-func (t *TextField) IsSelecting() bool     { return t.selecting }
-func (t *TextField) CancelPointerCapture() { t.selecting = false }
+func (t *TextField) Edit() *TextEdit      { return t.edit }
+func (t *TextField) HasSelection() bool   { return t.edit.HasSelection() }
+func (t *TextField) SelectedText() string { return t.edit.SelectedText() }
+func (t *TextField) IsSelecting() bool    { return t.selecting }
+func (t *TextField) CancelPointerCapture() {
+	t.selecting = false
+	t.dragMoved = false
+}
 func (t *TextField) PasteText(text string) { t.edit.InsertRunes(text); t.ensureCursorVisible() }
 func (t *TextField) PasteActive() bool     { return !t.disabled && !t.readOnly }
 func (t *TextField) NeedsFrame() bool      { return !t.disabled }
@@ -389,6 +400,7 @@ func (t *TextField) Handle(ctx EventContext, evt Event) EventResult {
 			t.edit.SetCursor(idx, true)
 		}
 		t.selecting = true
+		t.dragMoved = false
 		t.cursor.MarkActivity()
 		t.ensureCursorVisible()
 		return EventResult{Handled: true, Action: &Action{ID: "ui.capture"}, Invalidate: InvalidatePaint | InvalidateFocus}
@@ -396,6 +408,7 @@ func (t *TextField) Handle(ctx EventContext, evt Event) EventResult {
 		if !t.selecting {
 			return EventResult{}
 		}
+		t.dragMoved = true
 		lx := ctx.LocalX - t.contentX()
 		if lx < 0 && t.viewStart > 0 {
 			t.viewStart--
@@ -411,10 +424,98 @@ func (t *TextField) Handle(ctx EventContext, evt Event) EventResult {
 		if !t.selecting {
 			return EventResult{}
 		}
-		t.selecting = false
-		return EventResult{Handled: true, Invalidate: InvalidatePaint}
+		return EventResult{
+			Handled:    true,
+			Cmd:        t.EndMouseSelection(),
+			Invalidate: InvalidatePaint,
+		}
 	}
 	return EventResult{}
+}
+
+// TextValue returns the entire value (TextClipboardTarget).
+func (t *TextField) TextValue() string { return t.edit.Value() }
+
+// TextEditable reports whether edits are allowed (TextClipboardTarget).
+func (t *TextField) TextEditable() bool { return !t.readOnly && !t.disabled }
+
+// TextSecret reports a masked field: clipboard commands are refused so a
+// rewritten key can never be exfiltrated through the clipboard
+// (TextClipboardTarget).
+func (t *TextField) TextSecret() bool { return t.password }
+
+// ReplaceTextValue replaces the entire value, parking the cursor at the end
+// (TextClipboardTarget). Read-only and disabled fields ignore the call.
+func (t *TextField) ReplaceTextValue(v string) {
+	if !t.TextEditable() {
+		return
+	}
+	t.SetValue(v)
+}
+
+// TextSelection returns the active selected text (TextClipboardTarget).
+func (t *TextField) TextSelection() (string, bool) {
+	if !t.edit.HasSelection() {
+		return "", false
+	}
+	return t.edit.SelectedText(), true
+}
+
+// ClearTextSelection drops the selection without touching the text
+// (TextClipboardTarget).
+func (t *TextField) ClearTextSelection() { t.edit.ClearSelection() }
+
+// DeleteTextSelection deletes the active selection and reports whether
+// anything was deleted (TextClipboardTarget).
+func (t *TextField) DeleteTextSelection() bool {
+	if !t.TextEditable() || !t.edit.DeleteSelection() {
+		return false
+	}
+	t.ensureCursorVisible()
+	return true
+}
+
+// EndMouseSelection finishes a pointer drag: a real drag copies the selected
+// text to the clipboard and drops the selection (copy-on-release, matching the
+// chat message area and the terminals). A press that never moved only stops
+// the drag so keyboard-style extending keeps its selection.
+func (t *TextField) EndMouseSelection() tea.Cmd {
+	if !t.selecting {
+		return nil
+	}
+	wasDrag := t.dragMoved
+	t.selecting = false
+	t.dragMoved = false
+	if !wasDrag {
+		return nil
+	}
+	selected, ok := t.TextSelection()
+	if !ok {
+		return nil
+	}
+	t.edit.ClearSelection()
+	if t.TextSecret() {
+		return nil
+	}
+	return t.clipboardCopyFn()(selected)
+}
+
+// SetClipboardCopy overrides how copy commands are built (tests inject a
+// recorder; hosts may route copies through their own write path). Passing nil
+// restores the system-clipboard writer.
+func (t *TextField) SetClipboardCopy(fn func(string) tea.Cmd) {
+	if fn == nil {
+		fn = rendering.CopyToClipboardCmd
+	}
+	t.clipboardCopy = fn
+}
+
+// clipboardCopyFn returns the active clipboard writer.
+func (t *TextField) clipboardCopyFn() func(string) tea.Cmd {
+	if t.clipboardCopy == nil {
+		return rendering.CopyToClipboardCmd
+	}
+	return t.clipboardCopy
 }
 
 func (t *TextField) indexAtContentX(x int) int {
@@ -431,21 +532,17 @@ func (t *TextField) handleKey(m tea.KeyPressMsg) EventResult {
 	primary := m.Mod.Contains(tea.ModCtrl) || m.Mod.Contains(tea.ModSuper)
 	word := primary || m.Mod.Contains(tea.ModAlt)
 
+	if res, handled := textClipboardChord(t, t.clipboardCopyFn(), m); handled {
+		t.cursor.MarkActivity()
+		return res
+	}
+	// A clipboard chord that fell through (Ctrl+C with nothing selected) stays
+	// unhandled so the host owns the next rung of its ladder.
+	if ClipboardChordFor(m) != ClipboardChordNone {
+		return EventResult{}
+	}
 	if primary {
 		switch m.Code {
-		case 'c':
-			if selected := t.edit.SelectedText(); selected != "" {
-				return EventResult{Handled: true, Cmd: rendering.CopyToClipboardCmd(selected)}
-			}
-			return EventResult{}
-		case 'x':
-			if t.readOnly || !t.edit.HasSelection() {
-				return EventResult{Handled: true}
-			}
-			selected := t.edit.SelectedText()
-			t.edit.DeleteSelection()
-			t.ensureCursorVisible()
-			return EventResult{Handled: true, Cmd: rendering.CopyToClipboardCmd(selected), Invalidate: InvalidatePaint}
 		case 'v':
 			if t.readOnly {
 				return EventResult{Handled: true}
@@ -482,10 +579,9 @@ func (t *TextField) handleKey(m tea.KeyPressMsg) EventResult {
 			Invalidate: InvalidatePaint,
 		}
 	case tea.KeyEsc:
-		if t.edit.HasSelection() {
-			t.edit.ClearSelection()
-			return EventResult{Handled: true, Invalidate: InvalidatePaint}
-		}
+		// An active selection was already dropped by the shared chord
+		// handler; Esc is otherwise the host's key (popups close, forms
+		// cancel, the chat composer clears its draft).
 		return EventResult{}
 	case tea.KeyLeft:
 		if word {
@@ -559,3 +655,6 @@ func (t *TextField) Semantics() Semantics {
 		Disabled: t.disabled,
 	}
 }
+
+var _ Component = (*TextField)(nil)
+var _ TextClipboardTarget = (*TextField)(nil)

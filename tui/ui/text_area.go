@@ -81,6 +81,10 @@ type TextArea struct {
 	lastClickX    int
 	lastClickY    int
 	clickCount    int
+	// clipboardCopy builds the command that writes text to the system
+	// clipboard. Hosts may inject their own write path; tests inject a
+	// recorder so copy payloads are asserted without touching the clipboard.
+	clipboardCopy func(string) tea.Cmd
 }
 
 // NewTextArea creates a multi-line text area. multiLine controls Enter
@@ -274,10 +278,111 @@ func (t *TextArea) SelectedText() string { return t.edit.SelectedText() }
 // SetSelecting sets the selecting flag directly.
 func (t *TextArea) SetSelecting(v bool) { t.edit.SetSelecting(v) }
 
-// StopSelecting clears the drag flag but keeps the selection range so
-// Ctrl+C can copy after a mouse-release. The selection is cleared on
-// the next non-shift cursor movement.
+// StopSelecting clears the drag flag but keeps the selection range, so a
+// cancelled capture (another window claimed the pointer) leaves the text
+// selected for Ctrl+C. A completed drag goes through EndMouseSelection, which
+// copies and drops the selection.
 func (t *TextArea) StopSelecting() { t.edit.StopSelecting() }
+
+// TextValue returns the entire value (TextClipboardTarget).
+func (t *TextArea) TextValue() string { return t.edit.Value() }
+
+// TextEditable reports whether edits are allowed (TextClipboardTarget).
+func (t *TextArea) TextEditable() bool { return !t.readOnly }
+
+// TextSecret is always false: TextArea has no masked mode
+// (TextClipboardTarget).
+func (t *TextArea) TextSecret() bool { return false }
+
+// ReplaceTextValue replaces the entire value and parks the cursor at the end
+// (TextClipboardTarget). Read-only areas ignore the call.
+func (t *TextArea) ReplaceTextValue(v string) {
+	if t.readOnly {
+		return
+	}
+	t.SetValue(v)
+}
+
+// TextSelection returns the active selected text (TextClipboardTarget).
+func (t *TextArea) TextSelection() (string, bool) {
+	if !t.edit.HasActiveSelection() {
+		return "", false
+	}
+	return t.edit.SelectedText(), true
+}
+
+// ClearTextSelection drops the selection without touching the text
+// (TextClipboardTarget).
+func (t *TextArea) ClearTextSelection() { t.edit.ClearSelection() }
+
+// DeleteTextSelection deletes the active selection as one undo step and
+// reports whether anything was deleted (TextClipboardTarget).
+func (t *TextArea) DeleteTextSelection() bool {
+	if !t.edit.deleteActiveSelectionWithHistory() {
+		return false
+	}
+	t.EnsureCursorVisible()
+	return true
+}
+
+// HandleClipboardKey applies the shared clipboard/selection chords
+// (Ctrl+C and Ctrl+Shift+C copy, Ctrl+X cuts, Esc drops the selection) and
+// reports whether the key was consumed. Legacy (non-component) hosts call this
+// before their own key handling so they inherit exactly the component
+// contract; hosts with a fallback (the chat composer clears its draft on an
+// unhandled Ctrl+C) inspect the handled flag.
+func (t *TextArea) HandleClipboardKey(m tea.KeyPressMsg) (EventResult, bool) {
+	res, handled := textClipboardChord(t, t.clipboardCopyFn(), m)
+	if handled {
+		t.cursor.MarkActivity()
+		t.EnsureCursorVisible()
+	}
+	return res, handled
+}
+
+// EndMouseSelection finishes a pointer drag: a real drag copies the selected
+// text to the clipboard and drops the selection, matching the chat message
+// area and the terminals (copy-on-release). A press that never moved only
+// stops the drag so keyboard-style extending keeps its selection. It returns
+// the clipboard command so both the component tree and the legacy composer
+// pointer path share one implementation.
+func (t *TextArea) EndMouseSelection() tea.Cmd {
+	if !t.edit.IsSelecting() {
+		return nil
+	}
+	wasDrag := t.edit.takeDragMoved()
+	t.edit.StopSelecting()
+	if !wasDrag {
+		return nil
+	}
+	selected, ok := t.TextSelection()
+	if !ok {
+		return nil
+	}
+	t.ClearTextSelection()
+	if t.TextSecret() {
+		return nil
+	}
+	return t.clipboardCopyFn()(selected)
+}
+
+// SetClipboardCopy overrides how copy commands are built (tests inject a
+// recorder; hosts may route copies through their own write path). Passing nil
+// restores the system-clipboard writer.
+func (t *TextArea) SetClipboardCopy(fn func(string) tea.Cmd) {
+	if fn == nil {
+		fn = rendering.CopyToClipboardCmd
+	}
+	t.clipboardCopy = fn
+}
+
+// clipboardCopyFn returns the active clipboard writer.
+func (t *TextArea) clipboardCopyFn() func(string) tea.Cmd {
+	if t.clipboardCopy == nil {
+		return rendering.CopyToClipboardCmd
+	}
+	return t.clipboardCopy
+}
 
 // FlatToLineCol converts a flat offset to (line, col).
 func (t *TextArea) FlatToLineCol(pos int) (int, int) { return t.edit.FlatToLineCol(pos) }
@@ -623,16 +728,19 @@ func (t *TextArea) paintAtomicChip(buf *surface.CellBuffer, x, y int, label stri
 	return col
 }
 
-// Handle processes keyboard, paste, and mouse events.
+// Handle processes keyboard, paste, and mouse events. Read-only areas still
+// accept every reading interaction — pointer selection with copy-on-release,
+// Ctrl+C, scrolling, cursor movement — and refuse only what would mutate the
+// text (typing, paste, delete, undo, cut).
 func (t *TextArea) Handle(ctx EventContext, evt Event) EventResult {
-	if t.readOnly {
-		return EventResult{}
-	}
 	switch evt.Kind {
 	case EventKey:
 		return t.handleKey(evt.Key)
 	case EventCustom:
 		if paste, ok := evt.Custom.(tea.PasteMsg); ok {
+			if t.readOnly {
+				return EventResult{Handled: true}
+			}
 			t.edit.InsertString(paste.Content)
 			t.cursor.MarkActivity()
 			t.EnsureCursorVisible()
@@ -691,10 +799,11 @@ func (t *TextArea) Handle(ctx EventContext, evt Event) EventResult {
 		}
 		return EventResult{Handled: true, Invalidate: InvalidatePaint}
 	case EventMouseRelease:
-		if t.edit.IsSelecting() {
-			t.edit.StopSelecting()
+		return EventResult{
+			Handled:    true,
+			Cmd:        t.EndMouseSelection(),
+			Invalidate: InvalidatePaint,
 		}
-		return EventResult{Handled: true, Invalidate: InvalidatePaint}
 	case EventMouseWheel:
 		before := t.scroll
 		switch evt.MouseWheel.Button {
@@ -713,25 +822,25 @@ func (t *TextArea) Handle(ctx EventContext, evt Event) EventResult {
 func (t *TextArea) CancelPointerCapture() { t.edit.StopSelecting() }
 
 func (t *TextArea) handleKey(m tea.KeyPressMsg) EventResult {
+	if res, handled := textClipboardChord(t, t.clipboardCopyFn(), m); handled {
+		t.cursor.MarkActivity()
+		return res
+	}
+	// A clipboard chord that fell through (Ctrl+C with nothing selected) stays
+	// unhandled so the host owns the next rung of its ladder — the chat
+	// composer clears its draft.
+	if ClipboardChordFor(m) != ClipboardChordNone {
+		return EventResult{}
+	}
+	if t.readOnly && !t.readOnlyKeyAllowed(m) {
+		return EventResult{Handled: true}
+	}
 	primary := m.Mod.Contains(tea.ModCtrl) || m.Mod.Contains(tea.ModSuper)
-	if primary {
-		switch m.Code {
-		case 'c':
-			if selected := t.edit.SelectedText(); selected != "" {
-				return EventResult{Handled: true, Cmd: rendering.CopyToClipboardCmd(selected)}
-			}
-			return EventResult{}
-		case 'x':
-			if !t.edit.HasActiveSelection() {
-				return EventResult{Handled: true}
-			}
-			selected := t.edit.SelectedText()
-			t.edit.deleteActiveSelectionWithHistory()
-			t.EnsureCursorVisible()
-			return EventResult{Handled: true, Cmd: rendering.CopyToClipboardCmd(selected), Invalidate: InvalidatePaint}
-		case 'v':
-			return EventResult{Handled: true, Action: &Action{ID: ActionTextPaste, Payload: ClipboardPasteTarget(t)}}
+	if primary && m.Code == 'v' {
+		if t.readOnly {
+			return EventResult{Handled: true}
 		}
+		return EventResult{Handled: true, Action: &Action{ID: ActionTextPaste, Payload: ClipboardPasteTarget(t)}}
 	}
 	if m.Code == tea.KeyPgUp || m.Code == tea.KeyPgDown {
 		delta := max(1, t.viewH-1)
@@ -752,12 +861,10 @@ func (t *TextArea) handleKey(m tea.KeyPressMsg) EventResult {
 			}
 		}
 	}
-	// Esc clears selection or falls through
+	// Esc drops an active selection in the shared chord handler above;
+	// otherwise it is left to the host, which owns the next rung of its ladder
+	// (popups close, the chat composer clears its draft, a turn is cancelled).
 	if m.Code == tea.KeyEsc {
-		if t.edit.HasActiveSelection() {
-			t.edit.ClearSelection()
-			return EventResult{Handled: true, Invalidate: InvalidatePaint}
-		}
 		return EventResult{}
 	}
 	// Single-line Enter submits
@@ -778,6 +885,34 @@ func (t *TextArea) handleKey(m tea.KeyPressMsg) EventResult {
 	return EventResult{Handled: true, Invalidate: InvalidatePaint}
 }
 
+// readOnlyKeyAllowed reports whether a key may reach the engine while the area
+// is read-only. Reading keys (cursor movement, scrolling, select-all) never
+// mutate the text; everything else — typing, newlines, delete, word-delete,
+// undo/redo — is refused so a preview stays immutable.
+func (t *TextArea) readOnlyKeyAllowed(m tea.KeyPressMsg) bool {
+	if m.Code == tea.KeyEsc {
+		return false
+	}
+	primary := m.Mod.Contains(tea.ModCtrl) || m.Mod.Contains(tea.ModSuper)
+	if len(m.Text) > 0 && !primary {
+		return false
+	}
+	switch m.Code {
+	case tea.KeyLeft, tea.KeyRight, tea.KeyUp, tea.KeyDown,
+		tea.KeyHome, tea.KeyEnd, tea.KeyPgUp, tea.KeyPgDown:
+		return true
+	}
+	if !primary || m.Mod.Contains(tea.ModAlt) {
+		return false
+	}
+	switch m.Code {
+	case 'a', 'e':
+		// Select all / move to line end: cursor and selection only.
+		return true
+	}
+	return false
+}
+
 // Semantics returns the accessibility/test metadata.
 func (t *TextArea) Semantics() Semantics {
 	return Semantics{
@@ -790,11 +925,23 @@ func (t *TextArea) Semantics() Semantics {
 // Update applies a message to the engine, mirroring the legacy
 // components.TextInput.Update signature for bridge callers. Single-line
 // Enter returns TextAreaSubmitEvent; multi-line Enter inserts a newline.
+//
+// Clipboard and selection chords run through the same shared handler the
+// component path uses, so bridge hosts (the chat composer) can never drift
+// from the component contract. Callers that need the handled/unhandled
+// distinction (the composer clears its draft on an unhandled Ctrl+C) call
+// HandleClipboardKey themselves before delegating.
 func (t *TextArea) Update(msg tea.Msg, disabled bool) tea.Cmd {
 	if disabled {
 		return nil
 	}
 	if key, ok := msg.(tea.KeyPressMsg); ok {
+		if res, handled := t.HandleClipboardKey(key); handled {
+			return res.Cmd
+		}
+		if t.readOnly && !t.readOnlyKeyAllowed(key) {
+			return nil
+		}
 		if key.Code == tea.KeyEnter && !t.multiLine && !key.Mod.Contains(tea.ModAlt) {
 			return func() tea.Msg { return TextAreaSubmitEvent{Text: t.Value()} }
 		}
@@ -804,6 +951,9 @@ func (t *TextArea) Update(msg tea.Msg, disabled bool) tea.Cmd {
 		return nil
 	}
 	if paste, ok := msg.(tea.PasteMsg); ok {
+		if t.readOnly {
+			return nil
+		}
 		t.edit.InsertString(paste.Content)
 		t.cursor.MarkActivity()
 		t.EnsureCursorVisible()
@@ -829,6 +979,7 @@ func segmentIdxFor(curLine, curCol int, buf [][]rune, textW int) int {
 }
 
 var _ Component = (*TextArea)(nil)
+var _ TextClipboardTarget = (*TextArea)(nil)
 
 // ---------------------------------------------------------------------------
 // textAreaEngine — the multi-line editing model
@@ -839,11 +990,16 @@ var _ Component = (*TextArea)(nil)
 // vertical navigation with goal column, atomic ranges, multi-line selection.
 // ---------------------------------------------------------------------------
 type textAreaEngine struct {
-	buf           [][]rune
-	curLine       int
-	curCol        int
-	lastVisCol    int
-	selecting     bool
+	buf        [][]rune
+	curLine    int
+	curCol     int
+	lastVisCol int
+	selecting  bool
+	// dragMoved records that pointer motion extended the selection, so
+	// copy-on-release only fires for a real drag: a press (SetSelection) clears
+	// it, motion (UpdateSelectionEnd) sets it. Both the component pointer path
+	// and the legacy composer path funnel through these two calls.
+	dragMoved     bool
 	selAnchor     int
 	selEnd        int
 	lastInputTime time.Time
@@ -1347,14 +1503,31 @@ func (e *textAreaEngine) IsSelecting() bool { return e.selecting }
 
 func (e *textAreaEngine) SetSelection(anchor, end int) {
 	e.selecting = true
+	// A press starts a fresh drag: only pointer motion after it counts as a
+	// drag for copy-on-release.
+	e.dragMoved = false
 	e.selAnchor = anchor
 	e.selEnd = end
 }
 
-func (e *textAreaEngine) UpdateSelectionEnd(end int) { e.selEnd = end }
+// UpdateSelectionEnd extends the selection during a pointer drag and records
+// that the pointer actually moved.
+func (e *textAreaEngine) UpdateSelectionEnd(end int) {
+	e.selEnd = end
+	e.dragMoved = true
+}
+
+// takeDragMoved reports whether pointer motion extended the current selection
+// and clears the marker.
+func (e *textAreaEngine) takeDragMoved() bool {
+	moved := e.dragMoved
+	e.dragMoved = false
+	return moved
+}
 
 func (e *textAreaEngine) ClearSelection() {
 	e.selecting = false
+	e.dragMoved = false
 	e.selAnchor = 0
 	e.selEnd = 0
 }
@@ -1486,10 +1659,13 @@ func (e *textAreaEngine) moveVisualRows(delta int, extend bool) {
 	}
 }
 
-// StopSelecting keeps the selection range but clears the mouse-drag
-// flag, so the selection survives a mouse release and Ctrl+C can copy it.
-// The selection is cleared on the next non-shift cursor movement.
-func (e *textAreaEngine) StopSelecting() { e.selecting = false }
+// StopSelecting keeps the selection range but clears the mouse-drag flag and
+// the drag marker, so a cancelled capture keeps the text selectable while the
+// next press starts a fresh drag.
+func (e *textAreaEngine) StopSelecting() {
+	e.selecting = false
+	e.dragMoved = false
+}
 
 func (e *textAreaEngine) FlatToLineCol(pos int) (int, int) { return e.flatToLineCol(pos) }
 func (e *textAreaEngine) SetCursorFlat(pos int)            { e.setCursorFlat(pos) }

@@ -111,6 +111,16 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	return s.model.HandleShell(ctx, evt)
 }
 
+// CancelPointerCapture resets the composer's drag/selection state when the Host
+// revokes pointer capture (another window claimed the pointer, slot hidden).
+// Without it the TextArea's drag flag outlived the capture and the viewmodel
+// kept routing pointer events into the composer.
+func (s *Screen) CancelPointerCapture() {
+	if s.model != nil {
+		s.model.CancelPointerCapture()
+	}
+}
+
 func (s *Screen) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleTextInput, Label: "Chat input"}
 }

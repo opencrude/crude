@@ -28,6 +28,10 @@ type SearchField struct {
 	generation uint64
 }
 
+// TextEditor returns the single-line editor this search field owns
+// (TextEditorProvider).
+func (s *SearchField) TextEditor() TextClipboardTarget { return s.field }
+
 // NewSearchField creates a debounced single-line search input.
 func NewSearchField(id ComponentID, tokens *TokenSet) *SearchField {
 	s := &SearchField{

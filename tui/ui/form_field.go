@@ -128,6 +128,18 @@ func (ff *FormField) Control() *TextField {
 // Area returns the retained multi-line editor for FieldTextArea fields, or nil.
 func (ff *FormField) Area() *TextArea { return ff.area }
 
+// TextEditor returns the editor this field owns so context menus can copy or
+// cut the field's text (TextEditorProvider). Nil for non-text fields.
+func (ff *FormField) TextEditor() TextClipboardTarget {
+	if ff.area != nil {
+		return ff.area
+	}
+	if ff.control != nil {
+		return ff.control
+	}
+	return nil
+}
+
 // MultiLine reports whether the field owns a multi-row editor, so form-level
 // Up/Down focus movement must reach the caret inside it first.
 func (ff *FormField) MultiLine() bool { return ff.field != nil && ff.field.Type == FieldTextArea }

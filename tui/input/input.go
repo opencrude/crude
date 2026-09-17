@@ -392,7 +392,13 @@ func (m Model) MouseToInputPos(mouseX, mouseY int) (runeIdx int, ok bool) {
 	return -1, false
 }
 
+// InputSelecting reports a drag or selection in progress: true while the
+// pointer owns the composer (IsSelecting) and true for a live selection.
 func (m Model) InputSelecting() bool { return m.input.HasActiveSelection() || m.input.IsSelecting() }
+
+// HasInputSelection reports an active non-empty text selection, ignoring an
+// in-flight pointer drag (InputSelecting covers that).
+func (m Model) HasInputSelection() bool { return m.input.HasActiveSelection() }
 
 func (m Model) SelectedText() string { return m.input.SelectedText() }
 
@@ -403,6 +409,12 @@ func (m Model) InputSelectionRange() (start, end int) {
 func (m *Model) ClearInputSelection() {
 	m.input.ClearSelection()
 }
+
+// CancelPointerCapture resets the composer's text-drag state when the Host
+// revokes pointer capture without a matching release (another window claimed
+// the pointer, the slot was hidden). It forwards to the TextArea so the drag
+// flag can never outlive the pointer capture that justified it.
+func (m *Model) CancelPointerCapture() { m.input.CancelPointerCapture() }
 
 // CursorFlat returns the flat rune index of the text cursor. Attachment
 // flows (context-menu remove/rename) use it to keep the caret stable while

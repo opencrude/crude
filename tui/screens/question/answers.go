@@ -96,6 +96,13 @@ func (g *focusGate) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 
 func (g *focusGate) Semantics() ui.Semantics { return g.child.Semantics() }
 
+// TextEditor exposes the wrapped control's editor so a context menu inside the
+// gate's pane can copy or cut it (TextEditorProvider). The gate owns the pane's
+// rect; the child keeps a zero-origin rect, so the editor spans the whole gate.
+func (g *focusGate) TextEditor() ui.TextClipboardTarget {
+	return ui.TextClipboardTargetIn(g.child)
+}
+
 var _ ui.Component = (*focusGate)(nil)
 
 // answerInput wraps the shared prompt-area (TextArea) with change detection

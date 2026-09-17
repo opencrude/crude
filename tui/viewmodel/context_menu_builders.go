@@ -757,8 +757,15 @@ func (m *App) buildInputContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 			{Label: "Paste", Detail: "Ctrl+V", Action: func() {
 				m.pasteIntoInput()
 			}},
-			{Label: "Copy input", Action: func() {
+			// Copy/Cut act on the whole draft, matching every other text
+			// control's menu. The Ctrl+C/Ctrl+X chords keep their selection
+			// semantics (copy a selection, or clear the draft).
+			{Label: "Copy", Detail: "Ctrl+C", Disabled: m.Input.Value() == "", Action: func() {
 				m.copyToClipboard(m.Input.Value())
+			}},
+			{Label: "Cut", Detail: "Ctrl+X", Disabled: m.Input.Value() == "", Action: func() {
+				m.copyToClipboard(m.Input.Value())
+				m.Input.ClearInput()
 			}},
 			{Label: "Clear input", Action: func() {
 				m.Input.ClearInput()

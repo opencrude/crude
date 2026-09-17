@@ -204,6 +204,10 @@ type overlayInput struct {
 	owner *Screen
 }
 
+// TextEditor returns the overlay's editor so context menus can copy or cut its
+// content (TextEditorProvider).
+func (o *overlayInput) TextEditor() ui.TextClipboardTarget { return o.area }
+
 func (o *overlayInput) Measure(ctx ui.LayoutContext, cs ui.Constraints) ui.Size {
 	return o.area.Measure(ctx, cs)
 }
