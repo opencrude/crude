@@ -5,9 +5,20 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/editor"
 	filepickerscreen "crude/tui/screens/filepicker"
 	"crude/tui/ui"
 )
+
+func editableClipboardFixture(t *testing.T, app *App, path string) *editor.Editor {
+	t.Helper()
+	buffer := editor.NewBufferManager().CreateScratch()
+	buffer.Path = path
+	ed := editor.New(app.Theme)
+	ed.OpenBuffer(buffer)
+	t.Cleanup(ed.Close)
+	return ed
+}
 
 func resetAsyncIOStateForTest(m *App) {
 	if m != nil {

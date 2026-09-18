@@ -8,7 +8,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/clipboard"
-	"crude/tui/editor"
 	filepickerscreen "crude/tui/screens/filepicker"
 	"crude/workspace"
 )
@@ -160,8 +159,8 @@ func TestEditorCtrlVAsyncResultKeepsInitiatingEditor91d3(t *testing.T) {
 	app := newTestApp(t)
 	t.Cleanup(func() { resetAsyncIOStateForTest(app) })
 
-	first := editor.NewPreview(app.Theme, "first.go", "", 1)
-	second := editor.NewPreview(app.Theme, "second.go", "", 1)
+	first := editableClipboardFixture(t, app, "first.go")
+	second := editableClipboardFixture(t, app, "second.go")
 	app.EditorState.Editor = first
 	app.EditorState.ActiveView = "first.go"
 	app.EditorState.Tabs["first.go"] = NewEditorTab("first.go", first)

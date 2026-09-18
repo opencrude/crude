@@ -1,20 +1,20 @@
 package viewmodel
 
 import (
-	"fmt"
+	"time"
 
 	"charm.land/bubbletea/v2"
 
 	"crude/tui/ui"
 	"crude/tui/wm"
+	"crude/types"
+	"crude/workspace"
 )
 
 // showDirtyClosePrompt opens the unsaved-changes modal. Default focus is
 // "Cancel" (index 2) so an accidental Enter keeps the user's work safe.
 func (m *App) showDirtyClosePrompt(path string) {
 	if m.windowManager == nil {
-		// No floating-window support? Just close and lose the data.
-		m.closeEditorTabForce(path)
 		return
 	}
 	tab, ok := m.EditorState.Tabs[path]
@@ -24,6 +24,9 @@ func (m *App) showDirtyClosePrompt(path string) {
 	// BaseTitle: the tab's ● dirty marker must not leak into dialog text —
 	// the dialog itself communicates state.
 	filename := tab.Editor.BaseTitle()
+	if m.Documents != nil {
+		m.Documents.Cancel(tab.Editor.BufferID())
+	}
 	m.DirtyPromptChoice = 2
 	frame := ui.BuildDirtyCloseFrame(m.Theme, filename, m.DirtyPromptChoice)
 	w, h := frame.Measure(80, 40)
@@ -48,26 +51,18 @@ func (m *App) showDirtyClosePrompt(path string) {
 // dirty-close prompt. Saves the file (if it has a path) and then
 // closes the tab. If save fails, the popup stays open so the user
 // can pick "Don't Save" or "Cancel".
-func (m *App) dirtyPromptSave() {
+func (m *App) dirtyPromptSave() tea.Cmd {
 	path := m.DirtyPromptPath
 	if path == "" {
-		return
+		return nil
 	}
 	tab, ok := m.EditorState.Tabs[path]
 	if !ok {
 		// Tab was already closed somehow; just dismiss.
 		m.overlayHost.Close(ui.OverlayDirtyClose)
-		return
+		return nil
 	}
-	// Save (synchronous). The editor's Save() returns an error; on
-	// failure, surface it in the status bar and keep the popup open.
-	if err := tab.Editor.Save(); err != nil {
-		m.Feedback.NotifyError(fmt.Sprintf("Save failed: %v", err))
-		return
-	}
-	// Saved successfully — close the tab.
-	m.overlayHost.Close(ui.OverlayDirtyClose)
-	m.closeEditorTabForce(path)
+	return m.requestEditorSave(tab.Editor, workspace.DocumentSaveManual, true)
 }
 
 // dirtyPromptDiscard is called when the user picks "Don't Save" in
@@ -77,13 +72,50 @@ func (m *App) dirtyPromptDiscard() {
 	m.overlayHost.Close(ui.OverlayDirtyClose)
 	if path != "" {
 		m.closeEditorTabForce(path)
+		// The user resolved this buffer's close decision, so a bulk close
+		// waiting on it may proceed. A deferred close (writer still in flight)
+		// resumes the walk from the save acknowledgement instead.
+		if _, open := m.EditorState.Tabs[path]; !open {
+			m.continuePendingTabClose()
+		}
 	}
 }
 
 // dirtyPromptCancel is called when the user picks "Cancel" in
 // the dirty-close prompt. Dismisses the popup and keeps the tab open.
 func (m *App) dirtyPromptCancel() {
+	path := m.DirtyPromptPath
+	if tab := m.EditorState.Tabs[path]; tab != nil && tab.Editor != nil {
+		if state := m.editorSaves[tab.Editor.BufferID()]; state != nil {
+			state.closeAfter = false
+		}
+	}
 	m.overlayHost.Close(ui.OverlayDirtyClose)
+	// Cancelling a close preserves the document, so the deadline the prompt
+	// suspended has to come back: otherwise a dirty buffer would sit with no
+	// scheduled save until the next keystroke.
+	m.rearmAfterDelayAutosave(path)
+	m.abortPendingTabClose()
+}
+
+// rearmAfterDelayAutosave restores the After Delay deadline for one dirty
+// buffer after a close decision stopped suppressing scheduling.
+func (m *App) rearmAfterDelayAutosave(path string) {
+	if m.editorSettings.AutoSave != types.AutoSaveAfterDelay || m.Documents == nil || path == "" {
+		return
+	}
+	tab := m.EditorState.Tabs[path]
+	if tab == nil || tab.Editor == nil || !tab.Editor.Modified() {
+		return
+	}
+	if m.DirtyPromptPath == path {
+		return
+	}
+	id := tab.Editor.BufferID()
+	if state := m.editorSaves[id]; state != nil && (state.err != nil || state.discard || state.closeAfter) {
+		return
+	}
+	m.Documents.Schedule(id, path, tab.Editor.Revision(), time.Duration(m.editorSettings.AutoSaveDelay)*time.Millisecond)
 }
 
 // dirtyPromptCount is the number of buttons in the dirty-close dialog.
@@ -121,8 +153,7 @@ func (m *App) handleDirtyPromptKey(msg tea.KeyPressMsg) tea.Cmd {
 		}
 		return nil
 	case tea.KeyEnter:
-		m.activateDirtyPromptButton(m.DirtyPromptChoice)
-		return nil
+		return m.activateDirtyPromptButton(m.DirtyPromptChoice)
 	case tea.KeyEsc:
 		m.dirtyPromptCancel()
 		return nil
@@ -130,8 +161,7 @@ func (m *App) handleDirtyPromptKey(msg tea.KeyPressMsg) tea.Cmd {
 	switch msg.String() {
 	case "s", "S":
 		m.DirtyPromptChoice = 0
-		m.dirtyPromptSave()
-		return nil
+		return m.dirtyPromptSave()
 	case "d", "D":
 		m.DirtyPromptChoice = 1
 		m.dirtyPromptDiscard()

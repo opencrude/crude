@@ -5,7 +5,20 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"crude/fileio"
 )
+
+func TestFileOpsFailFastWhileMutationLeaseIsOwned(t *testing.T) {
+	dir := t.TempDir()
+	svc := NewFileOpsService(dir, NewEventBus(), testLogger{})
+	unlock := fileio.LockTreeMutation()
+	defer unlock()
+	result := svc.CreateFile(filepath.Join(dir, "blocked.txt"))
+	if result.Err == nil || !strings.Contains(result.Err.Error(), "mutation is in progress") {
+		t.Fatalf("error=%v", result.Err)
+	}
+}
 
 // ── FileOpsService tests ──
 

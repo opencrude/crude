@@ -61,9 +61,16 @@ selects only the background the strip sits on (shell `ColorBg` vs popup
   distinct from hover and from the active tab; hover only fills the tab
   background (`ColorHover`) and never underlines.
 - **Inactive labels** are muted. Truncation is `…`; the close affordance (` ×`)
-  and the attention marker (`• `) are additive and never restyle the tab.
+  and the attention marker (`● `) are additive and never restyle the tab. The
+  marker is a prefix, so it can never collide with a label's own trailing
+  characters; consumers mark a state with it instead of editing label text. The
+  main bar uses it for an editor tab with unsaved changes (`window.TabModified`,
+  synced per frame from the live editor by `viewmodel.syncEditorTabPresentation`).
 - **Sizing** is content-sized. Short labels are never padded into fixed slots, so
-  the active underline matches the label. A strip that does not fit shrinks
+  the active underline matches the label. The cell is exactly `label + close
+  affordance`, marker included: `idealTabWidth` measures the composed label the
+  painter draws, so a marked tab never grows padding columns between its name and
+  its close glyph. A strip that does not fit shrinks
   toward `tabMinW` (8) and then scrolls to keep the active tab visible; arrows
   wrap (Left from the first tab selects the last).
 - **The baseline row always starts at the strip's own left edge.** The rule is

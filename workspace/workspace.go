@@ -104,6 +104,9 @@ type Workspace struct {
 	// Git owns source-control reads and mutations for this workspace.
 	// Frontends consume neutral snapshots and never execute Git directly.
 	Git *GitService
+	// Documents is the single scheduler and disk-commit authority for editor
+	// buffers in this workspace.
+	Documents *DocumentSaveService
 
 	// TermMgr owns in-app PTY sessions (the terminal multiplexer).
 	TermMgr *TerminalManager
@@ -205,6 +208,9 @@ func (w *Workspace) SetEventBus(bus *EventBus) {
 	if w.HistoryService != nil {
 		w.HistoryService.SetEventBus(bus)
 	}
+	if w.Documents != nil {
+		w.Documents.SetEventBus(bus)
+	}
 }
 
 // NewWorkspace creates an empty workspace rooted at the given directory.
@@ -258,6 +264,7 @@ func NewWorkspace(
 		ProjectSearch:      NewProjectSearchService(),
 		FileOps:            NewFileOpsService(rootPath, nil, lg),
 		Git:                NewGitService(rootPath),
+		Documents:          NewDocumentSaveService(),
 		TermMgr:            NewTerminalManager(rootPath),
 		Status:             NewStatusCenter(workspaceSQLDB(wsDB), lg),
 		registryCostWriter: newRegistryCostWriter(wsDB, lg),
@@ -394,6 +401,9 @@ func (w *Workspace) ReportPath() string {
 func (w *Workspace) Close() {
 	w.CloseAllSessions()
 	w.CancelProjectSearch()
+	if w.Documents != nil {
+		w.Documents.Close()
+	}
 	if w.TermMgr != nil {
 		w.TermMgr.CloseAll()
 	}
@@ -656,6 +666,11 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 	}
 	w.FileOps = NewFileOpsService(abs, w.eventBus, w.Logger)
 	w.Git = NewGitService(abs)
+	if w.Documents != nil {
+		w.Documents.Close()
+	}
+	w.Documents = NewDocumentSaveService()
+	w.Documents.SetEventBus(w.eventBus)
 	w.TermMgr = NewTerminalManager(abs)
 	w.Status = NewStatusCenter(workspaceSQLDB(wsDB), w.Logger)
 	w.registryCostWriter = newRegistryCostWriter(wsDB, w.Logger)

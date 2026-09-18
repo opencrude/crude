@@ -412,15 +412,25 @@ func (t ThemeSettings) PadRightOrDefault() int {
 	return padWithDefault(t.PadRight, DefaultThemeFramePad)
 }
 
+type AutoSaveMode string
+
+const (
+	AutoSaveOff               AutoSaveMode = "off"
+	AutoSaveAfterDelay        AutoSaveMode = "after_delay"
+	AutoSaveEditorFocusChange AutoSaveMode = "editor_focus_change"
+	AutoSaveTerminalFocusLoss AutoSaveMode = "terminal_focus_loss"
+)
+
 type EditorSettings struct {
-	TabSize          int    `json:"tab_size,omitempty"`
-	WordWrap         bool   `json:"word_wrap,omitempty"`
-	LineNumbers      bool   `json:"line_numbers,omitempty"`
-	SyntaxTheme      string `json:"syntax_theme,omitempty"`
-	Minimap          bool   `json:"minimap,omitempty"`
-	AutoSaveDelay    int    `json:"auto_save_delay,omitempty"`
-	RenderWhitespace string `json:"render_whitespace,omitempty"`
-	FormatOnSave     bool   `json:"format_on_save,omitempty"`
+	TabSize          int          `json:"tab_size,omitempty"`
+	WordWrap         bool         `json:"word_wrap,omitempty"`
+	LineNumbers      bool         `json:"line_numbers,omitempty"`
+	SyntaxTheme      string       `json:"syntax_theme,omitempty"`
+	Minimap          bool         `json:"minimap,omitempty"`
+	AutoSave         AutoSaveMode `json:"auto_save"`
+	AutoSaveDelay    int          `json:"auto_save_delay,omitempty"`
+	RenderWhitespace string       `json:"render_whitespace,omitempty"`
+	FormatOnSave     bool         `json:"format_on_save,omitempty"`
 }
 
 // LSPLanguageSettings is the per-language overlay for one language server.

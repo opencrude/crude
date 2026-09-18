@@ -1,8 +1,11 @@
 package viewmodel
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -107,18 +110,58 @@ func (m *App) startRenameInTree(path string) {
 			m.Tree.Model.ApplyLocalMutation(filetree.FileChangeEvent{
 				Type: filetree.FileRenamed, OldPath: path, Path: newPath,
 			})
-			// If the file was open in an editor tab, retarget
-			// the tab to the new path so the user keeps their
-			// cursor/scroll/undo.
-			if tab, ok := m.EditorState.Tabs[path]; ok {
-				delete(m.EditorState.Tabs, path)
-				tab.Path = newPath
-				m.EditorState.Tabs[newPath] = tab
+			type editorRetarget struct {
+				oldPath, newPath string
+				tab              *EditorTab
 			}
-			// Update the active editor pointer if the renamed
-			// file is currently active.
-			if m.EditorState.ActiveView == path {
-				m.EditorState.ActiveView = newPath
+			var retargets []editorRetarget
+			for tabPath, tab := range m.EditorState.Tabs {
+				target := ""
+				if tabPath == path {
+					target = newPath
+				}
+				if msg.IsDir {
+					rel, err := filepath.Rel(path, tabPath)
+					if err == nil && rel != "." && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+						target = filepath.Join(newPath, rel)
+					}
+				}
+				if target != "" {
+					retargets = append(retargets, editorRetarget{tabPath, target, tab})
+				}
+			}
+			for _, item := range retargets {
+				if m.Documents != nil {
+					m.Documents.Cancel(item.tab.Editor.BufferID())
+				}
+				if m.BufferMgr != nil {
+					if err := m.BufferMgr.Retarget(item.oldPath, item.newPath); err != nil {
+						return err
+					}
+				}
+				if err := item.tab.Editor.Retarget(item.newPath); err != nil {
+					return err
+				}
+				delete(m.EditorState.Tabs, item.oldPath)
+				item.tab.Path = item.newPath
+				m.EditorState.Tabs[item.newPath] = item.tab
+				if m.EditorState.ActiveView == item.oldPath {
+					m.EditorState.ActiveView = item.newPath
+				}
+				m.retitleEditorWindowTab(item.oldPath, item.newPath, item.tab.Editor)
+				if m.LSPMgr != nil {
+					lsp, oldFile, newFile, text := m.LSPMgr, item.oldPath, item.newPath, item.tab.Editor.Value()
+					m.startSourceControlMutation(func() tea.Msg {
+						ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+						defer cancel()
+						lsp.CloseFile(ctx, oldFile)
+						lsp.OpenFile(ctx, newFile, text)
+						return nil
+					})
+				}
+			}
+			if len(retargets) > 0 {
+				m.markEditorGitStaleNow()
 			}
 			m.Feedback.NotifyInfo(fmt.Sprintf("Renamed to %s", value))
 			return nil
@@ -143,6 +186,16 @@ func (m *App) startDeleteInTree(path string) {
 	} else {
 		question = fmt.Sprintf("Delete %q?", base)
 		detail = path
+	}
+	for tabPath, tab := range m.EditorState.Tabs {
+		if tab == nil || tab.Editor == nil || !tab.Editor.Modified() {
+			continue
+		}
+		rel, err := filepath.Rel(path, tabPath)
+		if tabPath == path || isDir && err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			detail += "\nUnsaved editor changes will be discarded."
+			break
+		}
 	}
 	// Default focus No (safe) so accidental Enter does not delete.
 	m.GitDiscardPending = nil

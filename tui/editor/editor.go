@@ -6,7 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/alecthomas/chroma/v2"
 	"github.com/fsnotify/fsnotify"
@@ -75,8 +74,6 @@ type Editor struct {
 	// The main shell keeps this false: status lives in the top header.
 	statusChrome bool
 
-	modified bool
-
 	changes     []Change
 	changeIndex int
 	maxHistory  int
@@ -124,11 +121,6 @@ type Editor struct {
 	watchDone    chan struct{}
 	watchMu      sync.Mutex
 
-	// lastSaveTime records when the editor last wrote to disk. The watcher
-	// suppresses fsnotify events that arrive within a short window of our own
-	// save to avoid self-triggering a Reload + redundant LSP notification.
-	lastSaveTime time.Time
-
 	diagMu      sync.RWMutex
 	diagnostics []LSPDiagnostic
 	diagByLine  map[int][]diagSpan
@@ -136,17 +128,19 @@ type Editor struct {
 	// onContentChanged is called after every edit so the App can sync LSP.
 	onContentChanged func(filePath, text string)
 
-	// gitEdits/gitBlame are presentation copies of the workspace Git
-	// annotation. Index 0 is editor line 0.
-	gitEdits  []GitLineKind
-	gitBlame  []GitBlameLine
-	gitLoaded bool
-
-	// formatOnSave, when true, runs the file's language-specific formatter
-	// (gofmt/rustfmt/black) right after Save() succeeds. Set via
-	// SetFormatOnSave(). Defaults to false to keep save behavior predictable
-	// for users who don't want surprise reformatting.
-	formatOnSave bool
+	// gitHunks/gitBlame are presentation copies of the workspace Git
+	// annotation. Index 0 is editor line 0. gitProvisional holds the paint-only
+	// marks for lines edited since that annotation (see gitProvisionalMark).
+	gitHunks        []GitHunk
+	gitProvisional  []gitProvisionalMark
+	gitBlame        []GitBlameLine
+	gitLoaded       bool
+	gitConflicted   bool
+	gitRevision     uint64
+	readOnly        bool
+	hideLineNumbers bool
+	gutterDrag      bool
+	gutterAnchor    int
 
 	// hover state for diagnostic tooltip popup.
 	hoverMessages []string
@@ -183,9 +177,11 @@ const (
 )
 
 func New(th *theme.Theme) *Editor {
+	buffer := newBuffer(NewPieceTable(), "", false)
 	e := &Editor{
 		th:          th,
-		buf:         NewPieceTable(),
+		buf:         buffer.buf,
+		buffer:      buffer,
 		scrollModel: ui.NewScrollModel(),
 		tokens:      ui.NewTokenSet(th),
 		maxHistory:  500,
@@ -206,9 +202,10 @@ func New(th *theme.Theme) *Editor {
 // excerpt. firstLine is the 1-based source line represented by text line 1.
 func NewPreview(th *theme.Theme, path, text string, firstLine int) *Editor {
 	e := New(th)
+	e.readOnly = true
 	e.filePath = path
 	e.title = filepath.Base(path)
-	e.buf.ReplaceAll(text)
+	e.buffer.ApplyDisk([]byte(text))
 	e.open = true
 	e.cursorBlink.MarkActivity()
 	if firstLine > 1 {
@@ -217,6 +214,10 @@ func NewPreview(th *theme.Theme, path, text string, firstLine int) *Editor {
 	e.initChroma()
 	return e
 }
+
+func (e *Editor) ReadOnly() bool { return e.readOnly }
+
+func (e *Editor) SetLineNumbers(visible bool) { e.hideLineNumbers = !visible }
 
 func (e *Editor) Open(path string) error {
 	abs, err := filepath.Abs(path)
@@ -232,12 +233,12 @@ func (e *Editor) Open(path string) error {
 		return err
 	}
 	e.buf = buf
-	e.buffer = nil
+	_, statErr := os.Stat(abs)
+	e.buffer = newBuffer(buf, abs, statErr == nil)
 
 	e.cursor = Position{Line: 0, Col: 0}
 	e.scrollX = 0
 	e.scrollY = 0
-	e.modified = false
 	e.changes = nil
 	e.changeIndex = 0
 	e.scrollModel = ui.NewScrollModel()
@@ -271,7 +272,6 @@ func (e *Editor) OpenBuffer(buf *Buffer) {
 	e.cursor = Position{Line: 0, Col: 0}
 	e.scrollX = 0
 	e.scrollY = 0
-	e.modified = false
 	e.changes = nil
 	e.changeIndex = 0
 	e.scrollModel = ui.NewScrollModel()
@@ -300,13 +300,30 @@ func (e *Editor) ReplaceDocument(text string) {
 		e.buffer.ReplaceContents(text)
 	} else if e.buf != nil {
 		e.buf.ReplaceAll(text)
-		e.modified = true
 	}
 	e.invalidateEditorCaches()
 	e.markDocumentWidthAll()
 	if e.cursor.Line >= e.LineCount() {
 		e.cursor.Line = max(0, e.LineCount()-1)
 	}
+	e.notifyContentChanged()
+}
+
+func (e *Editor) ApplyFormatted(text string) {
+	if e.Value() == text {
+		return
+	}
+	cursor, x, y := e.cursor, e.scrollX, e.scrollY
+	last := e.LineCount() - 1
+	e.beginUndoGroup()
+	e.deleteRecorded(Position{}, Position{Line: last, Col: e.lineVisualWidth(last)}, cursor)
+	e.insertRecorded(Position{}, text, cursor)
+	e.endUndoGroup()
+	e.cursor = cursor
+	e.invalidateEditorCaches()
+	e.markDocumentWidthAll()
+	e.clampCursorToLine()
+	e.scrollX, e.scrollY = x, y
 	e.notifyContentChanged()
 }
 
@@ -323,24 +340,53 @@ func (e *Editor) Close() {
 	e.diagMu.Unlock()
 }
 
-func (e *Editor) Reload() error {
-	if !e.open || e.filePath == "" {
-		return nil
-	}
-	buf := NewPieceTable()
-	err := buf.Load(e.filePath)
+func (e *Editor) Retarget(path string) error {
+	abs, err := filepath.Abs(path)
 	if err != nil {
 		return err
 	}
-	e.buf = buf
-	e.modified = false
+	e.stopWatching()
+	e.filePath, e.title = abs, filepath.Base(abs)
+	if e.buffer != nil {
+		e.buffer.Path, e.buffer.Title = abs, e.title
+		e.buffer.buf.filePath = abs
+	}
+	e.startWatching()
+	return nil
+}
+
+func (e *Editor) ApplyDisk(data []byte) {
+	if e.buffer == nil {
+		return
+	}
+	e.buffer.ApplyDisk(data)
+	e.changes = nil
+	e.changeIndex = 0
+	e.cursor.Line = min(e.cursor.Line, max(0, e.LineCount()-1))
+	e.clampCursorToLine()
 	e.chromaLineCache = nil
 	e.chromaDirtyFrom = 0
 	e.invalidateEditorCaches()
 	e.markDocumentWidthAll()
 	e.ClearHover()
-	e.notifyContentChanged()
-	return nil
+	e.emitContentChanged()
+}
+
+func (e *Editor) MatchesDisk(hash [32]byte) bool {
+	return e.buffer != nil && e.buffer.MatchesDisk(hash)
+}
+
+func (e *Editor) DiskGeneration() uint64 {
+	if e.buffer == nil {
+		return 0
+	}
+	return e.buffer.diskGeneration
+}
+
+func (e *Editor) NoteDiskMissing() {
+	if e.buffer != nil {
+		e.buffer.NoteDiskMissing()
+	}
 }
 
 func (e *Editor) invalidateEditorCaches() {
@@ -370,9 +416,13 @@ func (e *Editor) FilePath() string { return e.filePath }
 // ScrollY returns the first visible document line index.
 func (e *Editor) ScrollY() int { return e.scrollY }
 
+// Title returns the display label including the unsaved marker. The marker is a
+// prefix so it can never collide with the filename or its extension, and it is
+// the only place a dirty marker is composed: callers that must not carry it
+// (dialogs, location strings, tab keys) use BaseTitle.
 func (e *Editor) Title() string {
 	if e.Modified() {
-		return e.title + " ●"
+		return "● " + e.title
 	}
 	return e.title
 }
@@ -385,7 +435,35 @@ func (e *Editor) Modified() bool {
 	if e.buffer != nil {
 		return e.buffer.IsDirty()
 	}
-	return e.modified
+	return false
+}
+
+func (e *Editor) BufferSnapshot() BufferSnapshot {
+	if e == nil || e.buffer == nil {
+		return BufferSnapshot{}
+	}
+	return e.buffer.Snapshot()
+}
+
+func (e *Editor) BufferID() string {
+	if e == nil || e.buffer == nil {
+		return ""
+	}
+	return e.buffer.ID
+}
+
+func (e *Editor) Revision() uint64 {
+	if e == nil || e.buf == nil {
+		return 0
+	}
+	return e.buf.Revision()
+}
+
+func (e *Editor) AcceptSave(revision uint64, diskHash [32]byte) {
+	if e == nil || e.buffer == nil {
+		return
+	}
+	e.buffer.AcceptSave(revision, diskHash)
 }
 func (e *Editor) Value() string {
 	if e.buffer != nil {
@@ -412,6 +490,14 @@ func (e *Editor) LineText(line int) string {
 	return strings.TrimRight(string(b), "\n")
 }
 func (e *Editor) notifyContentChanged() {
+	if e.buffer != nil {
+		e.buffer.NoteEdit()
+	}
+	e.emitContentChanged()
+}
+
+func (e *Editor) emitContentChanged() {
+	e.remapGitProjection()
 	e.markDocumentWidthChanged()
 	if e.onContentChanged != nil {
 		e.onContentChanged(e.filePath, string(e.buf.Bytes()))
@@ -421,12 +507,6 @@ func (e *Editor) notifyContentChanged() {
 // SetOnContentChanged registers a callback for text edits.
 func (e *Editor) SetOnContentChanged(fn func(filePath, text string)) {
 	e.onContentChanged = fn
-}
-
-// SetFormatOnSave controls whether the editor runs the file's
-// language-specific formatter (gofmt, rustfmt, black) after Save().
-func (e *Editor) SetFormatOnSave(v bool) {
-	e.formatOnSave = v
 }
 
 // SetDiagnostics replaces the current diagnostics for the editor.
@@ -624,10 +704,6 @@ func (e *Editor) DeleteSelection() bool {
 		CursorBefore: cursorBefore,
 	})
 	e.cursor = start
-	e.modified = true
-	if e.buffer != nil {
-		e.buffer.MarkDirty()
-	}
 	e.invalidateEditorCaches()
 	e.ClearSelection()
 	e.notifyContentChanged()

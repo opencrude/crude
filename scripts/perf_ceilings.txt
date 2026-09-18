@@ -23,6 +23,7 @@ BenchmarkEditorPaint_80x24 5200 760
 BenchmarkEditorPaint_120x40 9600 1380
 BenchmarkEditorPaint_LargeFile_120x40 9600 1380
 BenchmarkEditorScrollRepaint_120x40 9600 1380
+BenchmarkBufferDirtyCheckLargeFile 0 0
 BenchmarkChatStreamPaint_80x24 9000 300
 BenchmarkChatStreamPaint_120x40 20000 400
 # Scenario benches (tui/viewmodel) — steady-state work budgets.

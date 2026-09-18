@@ -132,7 +132,7 @@ func TestFilterFieldEditNotifiesExactlyOncePerKey(t *testing.T) {
 	f.OnChanged(func(string) { count++ })
 	f.Layout(LayoutContext{}, Rect{W: 30, H: 1})
 
-	for _, r := range []rune("abc") {
+	for _, r := range "abc" {
 		f.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: r, Text: string(r)}))
 	}
 	if count != 3 {

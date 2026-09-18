@@ -13,8 +13,8 @@ import (
 	"crude/provider"
 	"crude/tui/rendering"
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 )
 
 // SaveMsg is returned as a tea.Msg on save.
@@ -214,8 +214,10 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 			ui.BoolFieldState("line-numbers", "Line numbers", editor.LineNumbers, "Show the document line-number gutter."),
 			ui.CycleFieldState("syntax-theme", "Syntax theme", []string{"catppuccin", "dracula", "github", "monokai", "solarized"}, editor.SyntaxTheme, "Color grammar used for source code."),
 			ui.CycleFieldState("render-whitespace", "Render whitespace", []string{"none", "boundary", "all"}, editor.RenderWhitespace, "Show spaces and tabs when inspecting layout."),
-			ui.TextFieldState("auto-save-delay", "Auto-save delay", fmt.Sprintf("%d", editor.AutoSaveDelay), "Delay in milliseconds; zero disables automatic saves."),
-			ui.BoolFieldState("format-on-save", "Format on save", editor.FormatOnSave, "Run the language server formatter when a file is saved."),
+			ui.SeparatorFieldState("saving", "Saving"),
+			autoSaveModeField(editor.AutoSave),
+			autoSaveDelayField(editor.AutoSaveDelay),
+			ui.BoolFieldState("format-on-save", "Format on manual save", editor.FormatOnSave, "Format explicit saves only. Automatic saves always preserve the exact text you typed."),
 		)},
 		{Name: "Language Servers", Group: "IDE", Description: "Language intelligence and diagnostics.", Form: m.buildLSPForm(lsp)},
 		{Name: "Interface", Group: "IDE", Description: "File tree, sidebar, icons, and diagnostics.", Form: formModel(
@@ -271,6 +273,29 @@ func formModel(fields ...*ui.FieldState) *ui.FormModel {
 		m.AddField(field)
 	}
 	return m
+}
+
+func autoSaveModeField(mode types.AutoSaveMode) *ui.FieldState {
+	field := ui.CycleFieldState("auto-save", "Auto save", nil, string(mode), "Save text without formatting. Terminal focus loss requires focus reports from the host terminal.")
+	field.Options = []ui.FormOption{
+		{ID: string(types.AutoSaveOff), Label: "Off (default)"},
+		{ID: string(types.AutoSaveAfterDelay), Label: "After delay"},
+		{ID: string(types.AutoSaveEditorFocusChange), Label: "On editor focus change"},
+		{ID: string(types.AutoSaveTerminalFocusLoss), Label: "On terminal focus loss"},
+	}
+	return field
+}
+
+func autoSaveDelayField(delay int) *ui.FieldState {
+	field := ui.TextFieldState("auto-save-delay", "Auto-save delay (ms)", strconv.Itoa(delay), "Quiet period for After delay mode (250-60000 ms).")
+	field.Validator = func(value ui.FieldValue) []string {
+		delay, err := strconv.Atoi(strings.TrimSpace(value.String()))
+		if err != nil || delay < 250 || delay > 60000 {
+			return []string{"Enter a delay from 250 to 60000 milliseconds"}
+		}
+		return nil
+	}
+	return field
 }
 
 // appearanceColorFields builds read-only hex+swatch rows reflecting the active
@@ -1710,7 +1735,7 @@ func (m *Model) collectAppearance(cfg *types.ThemeSettings) {
 }
 
 func (m *Model) collectEditor(cfg *types.EditorSettings) {
-	*cfg = types.EditorSettings{TabSize: parseOpt(m.value(catEditor, "tab-size"), 4), WordWrap: m.value(catEditor, "word-wrap") == "on", LineNumbers: m.value(catEditor, "line-numbers") == "on", SyntaxTheme: m.value(catEditor, "syntax-theme"), RenderWhitespace: m.value(catEditor, "render-whitespace"), AutoSaveDelay: parseOpt(m.value(catEditor, "auto-save-delay"), 0), FormatOnSave: m.value(catEditor, "format-on-save") == "on"}
+	*cfg = types.EditorSettings{TabSize: parseOpt(m.value(catEditor, "tab-size"), 4), WordWrap: m.value(catEditor, "word-wrap") == "on", LineNumbers: m.value(catEditor, "line-numbers") == "on", SyntaxTheme: m.value(catEditor, "syntax-theme"), RenderWhitespace: m.value(catEditor, "render-whitespace"), AutoSave: types.AutoSaveMode(m.value(catEditor, "auto-save")), AutoSaveDelay: parseOpt(m.value(catEditor, "auto-save-delay"), 1000), FormatOnSave: m.value(catEditor, "format-on-save") == "on"}
 }
 
 func (m *Model) collectLSP(cfg *types.LSPSettings) {

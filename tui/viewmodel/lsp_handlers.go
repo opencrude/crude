@@ -24,7 +24,7 @@ func (m *App) showDiagnosticAt(line, col int) {
 	// Build structured content lines.
 	var lines []ui.DiagLine
 	lines = append(lines, ui.DiagLine{
-		Text: fmt.Sprintf("%s:%d:%d", m.EditorState.Editor.Title(), line+1, col),
+		Text: fmt.Sprintf("%s:%d:%d", m.EditorState.Editor.BaseTitle(), line+1, col),
 		Kind: ui.DiagLineTitle,
 	})
 	sourceLine := strings.TrimRight(m.EditorState.Editor.LineText(line), "\n\r ")
@@ -162,6 +162,11 @@ func (m *App) handleFileWatcherEvent(msg workspace.FileWatcherMsg) tea.Cmd {
 	activeFilePath := ""
 	if m.EditorState.Editor != nil {
 		activeFilePath = m.EditorState.Editor.FilePath()
+	}
+	if tab := m.EditorState.Tabs[msg.FilePath]; tab != nil && tab.Editor != nil {
+		// Every open document owns its LSP text, including inactive dirty tabs.
+		activeFilePath = msg.FilePath
+		tab.Editor.SignalDiskChanged()
 	}
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

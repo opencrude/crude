@@ -21,17 +21,26 @@ type piece struct {
 }
 
 type PieceTable struct {
-	original []byte
-	add      []byte
-	pieces   []piece
+	lineChanges [32]bufferLineChange
+	original    []byte
+	add         []byte
+	pieces      []piece
 
 	filePath string
-	modified bool
 
 	cachedBytes []byte
 	lineOffsets []int
 	cacheValid  bool
 	revision    uint64
+}
+
+type bufferLineChange struct {
+	revision          uint64
+	start, end, delta int
+}
+
+func (pt *PieceTable) recordLineChange(start, end, delta int) {
+	pt.lineChanges[pt.revision%uint64(len(pt.lineChanges))] = bufferLineChange{pt.revision, start, end, delta}
 }
 
 func NewPieceTable() *PieceTable {
@@ -50,7 +59,6 @@ func (pt *PieceTable) Load(filePath string) error {
 			pt.original = []byte{}
 			pt.add = []byte{}
 			pt.pieces = []piece{{buffer: originalBuffer, start: 0, length: 0}}
-			pt.modified = false
 			pt.revision++
 			pt.invalidateCache()
 			return nil
@@ -62,16 +70,13 @@ func (pt *PieceTable) Load(filePath string) error {
 	pt.add = []byte{}
 	pt.pieces = []piece{{buffer: originalBuffer, start: 0, length: len(content)}}
 	pt.filePath = filePath
-	pt.modified = false
 	pt.revision++
 	pt.invalidateCache()
 	return nil
 }
 
 // ReplaceAll discards the current buffer contents and replaces them with
-// the supplied text. The cursor is reset to (0, 0) and the modified flag
-// is cleared. Used after a successful formatter run to push the new
-// content into the editor without round-tripping through disk.
+// the supplied text. Savepoint and view state belong to Buffer and Editor.
 //
 // We keep the filePath unchanged so the editor stays bound to the same
 // file. The "didChange" notification must be fired by the caller — this
@@ -80,7 +85,6 @@ func (pt *PieceTable) ReplaceAll(text string) {
 	pt.original = []byte(text)
 	pt.add = []byte{}
 	pt.pieces = []piece{{buffer: originalBuffer, start: 0, length: len(text)}}
-	pt.modified = false
 	pt.revision++
 	pt.invalidateCache()
 }
@@ -243,8 +247,8 @@ func (pt *PieceTable) Insert(pos Position, text []byte) (EditInfo, error) {
 	if len(pt.pieces) == 1 && pt.pieces[0].length == 0 {
 		pt.add = append(pt.add, text...)
 		pt.pieces[0] = piece{buffer: addBuffer, start: 0, length: len(text)}
-		pt.modified = true
 		pt.revision++
+		pt.recordLineChange(pos.Line, pos.Line, bytes.Count(text, []byte{'\n'}))
 		pt.invalidateCache()
 		return EditInfo{}, nil
 	}
@@ -284,8 +288,8 @@ func (pt *PieceTable) Insert(pos Position, text []byte) (EditInfo, error) {
 	}
 
 	pt.pieces = newPieces
-	pt.modified = true
 	pt.revision++
+	pt.recordLineChange(pos.Line, pos.Line, bytes.Count(text, []byte{'\n'}))
 	pt.invalidateCache()
 
 	return EditInfo{}, nil
@@ -329,38 +333,15 @@ func (pt *PieceTable) Delete(start, end Position) (EditInfo, error) {
 	}
 
 	pt.pieces = newPieces
-	pt.modified = true
 	pt.revision++
+	pt.recordLineChange(start.Line, end.Line, start.Line-end.Line)
 	pt.invalidateCache()
 
 	return EditInfo{}, nil
 }
 
-func (pt *PieceTable) Save(filePath string) error {
-	path := filePath
-	if path == "" {
-		path = pt.filePath
-	}
-	if path == "" {
-		return fmt.Errorf("no file path specified")
-	}
-
-	err := os.WriteFile(path, pt.Bytes(), 0644)
-	if err != nil {
-		return err
-	}
-
-	pt.filePath = path
-	pt.modified = false
-	return nil
-}
-
 func (pt *PieceTable) FilePath() string {
 	return pt.filePath
-}
-
-func (pt *PieceTable) IsModified() bool {
-	return pt.modified
 }
 
 func (pt *PieceTable) Revision() uint64 { return pt.revision }

@@ -2,9 +2,11 @@ package workspace
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -53,14 +55,8 @@ func TestAnnotateFileBlameAndLineEdits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ann.Edits) != 4 {
-		t.Fatalf("edits=%d want 4: %#v", len(ann.Edits), ann.Edits)
-	}
-	if ann.Edits[2] != GitLineModified {
-		t.Fatalf("line 3 kind=%d want modified", ann.Edits[2])
-	}
-	if ann.Edits[3] != GitLineAdded {
-		t.Fatalf("line 4 kind=%d want added", ann.Edits[3])
+	if len(ann.Hunks) != 1 || ann.Hunks[0].OldStart != 2 || ann.Hunks[0].NewStart != 2 || len(ann.Hunks[0].OldLines) != 1 || len(ann.Hunks[0].NewLines) != 2 {
+		t.Fatalf("hunks=%#v", ann.Hunks)
 	}
 	if len(ann.Blame) < 3 {
 		t.Fatalf("blame lines=%d want at least HEAD lines", len(ann.Blame))
@@ -96,8 +92,84 @@ func TestAnnotateFileUntrackedIsAllAdded(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(ann.Edits) != 1 || ann.Edits[0] != GitLineAdded {
-		t.Fatalf("edits=%v want [added]", ann.Edits)
+	if len(ann.Hunks) != 1 || len(ann.Hunks[0].OldLines) != 0 || len(ann.Hunks[0].NewLines) != 1 {
+		t.Fatalf("hunks=%#v", ann.Hunks)
+	}
+}
+
+func TestAnnotateFileUnbornHeadMarksAdded(t *testing.T) {
+	root := t.TempDir()
+	cmd := exec.Command("git", "init", root)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	path := filepath.Join(root, "first.txt")
+	content := "first\nsecond\n"
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ann, err := NewGitService(root).AnnotateFile(context.Background(), path, content)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(ann.Hunks) != 1 || len(ann.Hunks[0].OldLines) != 0 || len(ann.Hunks[0].NewLines) != 2 {
+		t.Fatalf("hunks=%#v", ann.Hunks)
+	}
+}
+
+func TestAnnotateFileReportsUnmergedConflict(t *testing.T) {
+	root := t.TempDir()
+	git := func(args ...string) ([]byte, error) {
+		cmd := exec.Command("git", append([]string{"-C", root}, args...)...)
+		return cmd.CombinedOutput()
+	}
+	if out, err := exec.Command("git", "init", root).CombinedOutput(); err != nil {
+		t.Fatalf("git init: %v: %s", err, out)
+	}
+	for _, args := range [][]string{{"config", "user.email", "test@example.com"}, {"config", "user.name", "Test"}} {
+		if out, err := git(args...); err != nil {
+			t.Fatalf("git %v: %v: %s", args, err, out)
+		}
+	}
+	path := filepath.Join(root, "conflict.txt")
+	commit := func(text, message string) {
+		if err := os.WriteFile(path, []byte(text), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		if out, err := git("add", "conflict.txt"); err != nil {
+			t.Fatalf("git add: %v: %s", err, out)
+		}
+		if out, err := git("commit", "-m", message); err != nil {
+			t.Fatalf("git commit: %v: %s", err, out)
+		}
+	}
+	commit("base\n", "base")
+	branchBytes, err := git("branch", "--show-current")
+	if err != nil {
+		t.Fatal(err)
+	}
+	baseBranch := strings.TrimSpace(string(branchBytes))
+	if out, err := git("checkout", "-b", "other"); err != nil {
+		t.Fatalf("branch: %v: %s", err, out)
+	}
+	commit("other\n", "other")
+	if out, err := git("checkout", baseBranch); err != nil {
+		t.Fatalf("checkout: %v: %s", err, out)
+	}
+	commit("main\n", "main")
+	if _, err := git("merge", "other"); err == nil {
+		t.Fatal("expected merge conflict")
+	}
+	content, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ann, err := NewGitService(root).AnnotateFile(context.Background(), path, string(content))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !ann.Conflicted {
+		t.Fatal("unmerged index was not reported as conflicted")
 	}
 }
 
@@ -110,17 +182,34 @@ func TestAnnotateFileHonorsCancel(t *testing.T) {
 	}
 }
 
-func TestLineEditsMarksModifiedAndAdded(t *testing.T) {
+func TestLineHunksRetainReplacementAndAddition(t *testing.T) {
 	before := "a\nb\nc\n"
 	after := "a\nB\nc\nd\n"
-	got := lineEdits(before, after)
-	want := []GitLineKind{GitLineUnchanged, GitLineModified, GitLineUnchanged, GitLineAdded}
-	if len(got) != len(want) {
-		t.Fatalf("len=%d want %d (%v)", len(got), len(want), got)
+	hunks := lineHunks(before, after)
+	if len(hunks) != 2 || hunks[0].NewStart != 1 || len(hunks[0].OldLines) != 1 || len(hunks[0].NewLines) != 1 || hunks[1].NewStart != 3 || len(hunks[1].NewLines) != 1 {
+		t.Fatalf("hunks=%#v", hunks)
 	}
-	for i := range want {
-		if got[i] != want[i] {
-			t.Fatalf("line %d kind=%d want %d", i+1, got[i], want[i])
-		}
+}
+
+func TestLineAnnotationHonorsDistantAndSeparateHunkCoordinates(t *testing.T) {
+	beforeLines := make([]string, 220)
+	for i := range beforeLines {
+		beforeLines[i] = fmt.Sprintf("line %03d", i+1)
+	}
+	afterLines := append([]string(nil), beforeLines...)
+	afterLines[164] = "changed 165"
+	afterLines[199] = "changed 200"
+	afterLines = append(afterLines[:205], append([]string{"inserted 206"}, afterLines[205:]...)...)
+
+	hunks := lineHunks(strings.Join(beforeLines, "\n")+"\n", strings.Join(afterLines, "\n")+"\n")
+	if len(hunks) != 3 || hunks[0].NewStart != 164 || hunks[1].NewStart != 199 || hunks[2].NewStart != 205 {
+		t.Fatalf("hunks=%#v", hunks)
+	}
+}
+
+func TestLineAnnotationRetainsDeletionBoundary(t *testing.T) {
+	hunks := lineHunks("a\nb\nc\nd\n", "a\nd\n")
+	if len(hunks) != 1 || hunks[0].NewStart != 1 || len(hunks[0].OldLines) != 2 || len(hunks[0].NewLines) != 0 {
+		t.Fatalf("hunks=%#v", hunks)
 	}
 }

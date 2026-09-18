@@ -242,6 +242,8 @@ func (e *Editor) WriteTracked(path string, content string, prepare MutationPrepa
 	if err := e.policy.validatePath(abs); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
+	unlock := LockFileMutation(abs)
+	defer unlock()
 	parentGuard, err := captureMutationParentGuard(abs)
 	if err != nil {
 		return fmt.Errorf("write %s: parent guard: %w", path, err)
@@ -342,6 +344,8 @@ func (e *Editor) PatchTracked(path string, ops []SearchReplace, prepare Mutation
 	if err != nil {
 		return fmt.Errorf("patch %s: %w", path, err)
 	}
+	unlock := LockFileMutation(abs)
+	defer unlock()
 	e.logger.Debug("FILEIO", "patch_enter", "path", abs, "ops", len(ops))
 	parentGuard, err := captureMutationParentGuard(abs)
 	if err != nil {
@@ -407,6 +411,8 @@ func (e *Editor) DeleteTracked(path string, prepare MutationPrepare) (resultErr 
 	if err := e.policy.validatePath(abs); err != nil {
 		return fmt.Errorf("delete %s: %w", path, err)
 	}
+	unlock := LockTreeMutation()
+	defer unlock()
 	parentGuard, err := captureMutationParentGuard(abs)
 	if err != nil {
 		return fmt.Errorf("delete %s: parent guard: %w", path, err)
@@ -472,6 +478,8 @@ func (e *Editor) MoveTracked(src, dst string, prepare MutationPrepare) (resultEr
 	if err := e.policy.validatePath(dstAbs); err != nil {
 		return fmt.Errorf("move dest %s: %w", dst, err)
 	}
+	unlock := LockTreeMutation()
+	defer unlock()
 	srcParentGuard, err := captureMutationParentGuard(srcAbs)
 	if err != nil {
 		return fmt.Errorf("move %s: parent guard: %w", src, err)
@@ -579,6 +587,8 @@ func (e *Editor) CopyTracked(src, dst string, prepare MutationPrepare) (resultEr
 	if err := e.policy.validatePath(dstAbs); err != nil {
 		return fmt.Errorf("copy dest %s: %w", dst, err)
 	}
+	unlock := LockTreeMutation()
+	defer unlock()
 	dstParentGuard, err := captureMutationParentGuard(dstAbs)
 	if err != nil {
 		return fmt.Errorf("copy %s: destination parent guard: %w", dst, err)

@@ -328,10 +328,6 @@ func (e *Editor) ReplaceCurrent() int {
 	if repl != "" {
 		_, _ = e.buf.Insert(m.Start, []byte(repl))
 	}
-	e.modified = true
-	if e.buffer != nil {
-		e.buffer.MarkDirty()
-	}
 	e.notifyContentChanged()
 	e.markDocumentWidthAll()
 	e.invalidateEditorCaches()
@@ -370,10 +366,6 @@ func (e *Editor) ReplaceAll() int {
 			_, _ = e.buf.Insert(m.Start, []byte(repl))
 		}
 		count++
-	}
-	e.modified = true
-	if e.buffer != nil {
-		e.buffer.MarkDirty()
 	}
 	e.notifyContentChanged()
 	e.markDocumentWidthAll()

@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"context"
+	"fmt"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -92,18 +93,26 @@ type App struct {
 	composerDirtySinceSave bool
 	DirtyPromptPath        string
 	DirtyPromptChoice      int
-	ChatAreaHeight         int
-	LastInteractionTime    time.Time
-	SpinFrame              int
-	History                []string // recall slice mirrored from Prompts
-	Prompts                *history.Store
-	promptHistoryPath      string
-	LastSettings           ttypes.Settings
+	// pendingTabClose holds the tabs still to close after a bulk close
+	// ("Close others" / "Close to the right") stopped at a dirty buffer and
+	// opened the unsaved-changes prompt. Cancel drops it; a confirmed close
+	// resumes the walk.
+	pendingTabClose     []string
+	ChatAreaHeight      int
+	LastInteractionTime time.Time
+	SpinFrame           int
+	History             []string // recall slice mirrored from Prompts
+	Prompts             *history.Store
+	promptHistoryPath   string
+	LastSettings        ttypes.Settings
 
 	// Display state (owned by viewmodel — tracks what's visible/active)
-	EditorState  *EditorState
-	OverlayState *OverlayState
-	LSPPopup     *LSPPopupState
+	EditorState    *EditorState
+	OverlayState   *OverlayState
+	LSPPopup       *LSPPopupState
+	editorSettings ttypes.EditorSettings
+	editorSaves    map[string]*editorSaveState
+	editorChanges  *editorChangesView
 
 	eventBus *workspace.EventBus
 	width    int
@@ -182,8 +191,10 @@ type App struct {
 	launcherLoadGen        atomic.Uint64 // generation of the in-flight async launcher load
 	gitRefreshGen          atomic.Uint64
 	editorGitGen           atomic.Uint64
-	editorGitAt            time.Time
 	editorGitStale         atomic.Bool
+	editorGitEditAt        time.Time // most recent text change awaiting projection refresh
+	editorGitSince         time.Time // start of the current unrefreshed burst (hold cap)
+	editorGitCancel        context.CancelFunc
 	sourceControlTimeout   time.Duration
 	treeGitRefreshAt       time.Time
 	workspaceSwitchGen     atomic.Uint64   // invalidates project-bound async callbacks
@@ -274,6 +285,8 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 		EditorState:        edState,
 		OverlayState:       NewOverlayState(),
 		LSPPopup:           NewLSPPopupState(),
+		editorSettings:     ws.LoadAppSettings().Editor,
+		editorSaves:        make(map[string]*editorSaveState),
 		headerScreen:       headerScreen,
 		footerScreen:       footerScreen,
 		tabScreen:          tabScreen,
@@ -321,6 +334,17 @@ func (m *App) SwitchProject(projectDir string) error {
 	if sameWorkspaceRoot(m.RootPath, projectDir) {
 		return nil
 	}
+	for _, tab := range m.EditorState.Tabs {
+		if tab != nil && tab.Editor != nil {
+			if saving := m.editorSaves[tab.Editor.BufferID()]; saving != nil && saving.inFlight {
+				return fmt.Errorf("file save is still in progress; retry the workspace switch after it finishes")
+			}
+			if tab.Editor.Modified() {
+				m.showDirtyClosePrompt(tab.Path)
+				return fmt.Errorf("save or discard changes in %s before switching workspaces", tab.Editor.BaseTitle())
+			}
+		}
+	}
 	state := m.beginWorkspaceSwitch()
 	if err := m.Workspace.SwitchProject(projectDir); err != nil {
 		state.restore(m)
@@ -330,6 +354,8 @@ func (m *App) SwitchProject(projectDir string) error {
 	// its effective palette before constructing any target-owned projections.
 	m.applyThemePreset(themePresetFromSettings(m.LoadAppSettings()))
 	m.finishWorkspaceSwitch(state)
+	m.editorSaves = make(map[string]*editorSaveState)
+	m.applyEditorSettings(m.LoadAppSettings().Editor)
 	return nil
 }
 
@@ -677,6 +703,21 @@ func (m *App) handleQuit() (tea.Model, tea.Cmd) {
 	}
 
 	// No tabs left and no sessions — quit
+	for _, tab := range m.EditorState.Tabs {
+		if tab == nil || tab.Editor == nil {
+			continue
+		}
+		if state := m.editorSaves[tab.Editor.BufferID()]; state != nil && state.inFlight {
+			if m.Feedback != nil {
+				m.Feedback.NotifyInfo("Waiting for the file save to finish")
+			}
+			return m, nil
+		}
+		if tab.Editor.Modified() {
+			m.showDirtyClosePrompt(tab.Path)
+			return m, nil
+		}
+	}
 	m.Quit = true
 	return m, tea.Quit
 }

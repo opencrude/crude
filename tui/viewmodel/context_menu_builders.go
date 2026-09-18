@@ -14,6 +14,7 @@ import (
 	"crude/tui/screens/activitylist"
 	"crude/tui/screens/launcher"
 	"crude/tui/screens/shellchat"
+	"crude/tui/screens/shelleditor"
 	"crude/tui/screens/shelltree"
 	"crude/tui/screens/sourcecontrol"
 	"crude/tui/ui"
@@ -24,6 +25,14 @@ import (
 func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	if m.EditorState.Editor == nil || !m.EditorState.Editor.IsOpen() {
 		return nil
+	}
+	ed := m.EditorState.Editor
+	if m.rootHost != nil {
+		if rect, ok := m.rootHost.ScreenRect(shelleditor.ScreenID); ok && rect.Contains(mouse.X, mouse.Y) {
+			if pos, valid := ed.PositionAt(mouse.X-rect.X, mouse.Y-rect.Y); valid {
+				ed.SetCursorPosition(pos.Line, pos.Col)
+			}
+		}
 	}
 	st := &ui.ContextMenuState{Title: "Editor"}
 
@@ -46,7 +55,7 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	// Diagnostic- and symbol-aware items.
 	// Use the current cursor position to find diagnostics at point.
 	// Future: translate mouse X/Y to (line, col) for accuracy.
-	pos := struct{ Line, Col int }{Line: m.EditorState.Editor.CursorLine(), Col: m.EditorState.Editor.CursorCol()}
+	pos := struct{ Line, Col int }{Line: ed.CursorLine(), Col: ed.CursorCol()}
 	// Use the diagnostics helper on the editor. We don't expose
 	// it, but the editor has a diagnosticsAt function via
 	// SetDiagnostics/LSPDiagnostic; we just need the existence
@@ -83,11 +92,17 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 		st.Sections = append(st.Sections, lspSection)
 	}
 
-	blame, hasBlame := m.EditorState.Editor.BlameAtLine(m.EditorState.Editor.CursorLine())
+	blame, hasBlame := ed.BlameAtLine(ed.CursorLine())
 	blameHash := blame.Hash
+	line := ed.CursorLine()
+	_, _, hasHunk := ed.GitHunkAtLine(line)
 	st.Sections = append(st.Sections, ui.ContextMenuSection{
 		SectionLabel: "Git",
 		Items: []ui.ContextMenuItem{
+			{Label: "Inspect change", Disabled: !hasHunk, Action: func() { m.inspectEditorChange(ed, line) }},
+			{Label: "Compare with disk", Action: func() { m.startSourceControlMutation(m.compareEditorWithDisk(ed)) }},
+			{Label: "Next change", Disabled: len(ed.GitHunks()) == 0, Action: func() { m.jumpEditorChange(1) }},
+			{Label: "Previous change", Disabled: len(ed.GitHunks()) == 0, Action: func() { m.jumpEditorChange(-1) }},
 			{Label: "Copy blame commit", Disabled: !hasBlame || blameHash == "" || blame.Uncommitted, Action: func() {
 				m.copyToClipboard(blameHash)
 			}},

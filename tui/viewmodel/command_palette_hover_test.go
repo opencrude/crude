@@ -51,15 +51,14 @@ func TestCommandPalette_HoverViaHost(t *testing.T) {
 		t.Fatal("expected list")
 	}
 
-	// Simulate mouse motion at a screen position inside the list area.
-	// The WindowFrame content starts at y=1 (after title border).
-	// The search field is at y=1, divider at y=2, list starts at y=3.
-	host.Handle(tea.MouseMotionMsg{X: 5, Y: 5})
-	// Hover should have updated; the exact index depends on layout but
-	// the host should not crash and should mark paint.
-	if !host.NeedsPaint() {
-		// Hover may not have changed if already pointing at same item;
-		// just verify no crash.
+	host.Resize(60, 14)
+	host.Layout()
+	r, ok := host.ScreenRect(list.ID())
+	if !ok || r.Empty() {
+		t.Fatal("palette list has no hit geometry")
+	}
+	if result := host.Handle(tea.MouseMotionMsg{X: r.X + 1, Y: r.Y + 1}); !result.Handled || result.Invalidate&ui.InvalidatePaint == 0 {
+		t.Fatal("palette list did not handle hover motion")
 	}
 }
 

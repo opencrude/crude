@@ -454,7 +454,7 @@ func (m *App) activateDirtyPromptButton(choice int) tea.Cmd {
 	m.DirtyPromptChoice = choice
 	switch choice {
 	case 0:
-		m.dirtyPromptSave()
+		return m.dirtyPromptSave()
 	case 1:
 		m.dirtyPromptDiscard()
 	default:

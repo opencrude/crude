@@ -126,6 +126,14 @@ func NewSearchModel(rootPath string, options ModelOptions, matches []PathMatch) 
 	}
 	sortTree(root)
 	m.rebuildVisibleNodes()
+	// Construction must establish an actionable ranked selection. The default
+	// root cursor makes Enter merely collapse the result tree after filtering.
+	for _, match := range matches {
+		if index := m.visibleIndexLocked(filepath.Clean(match.Entry.Path)); index >= 0 {
+			m.setCursorIndexLocked(index)
+			break
+		}
+	}
 	return m
 }
 

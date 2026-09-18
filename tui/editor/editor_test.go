@@ -648,18 +648,19 @@ func TestEditorNew(t *testing.T) {
 	assert.NotNil(t, e)
 	assert.NotNil(t, e.buf)
 	assert.False(t, e.open)
-	assert.False(t, e.modified)
+	assert.False(t, e.Modified())
 }
 
 func TestEditorOpenClose(t *testing.T) {
 	e := editorWithTheme()
 	e.filePath = "/tmp/test.go"
 	e.title = "test.go"
-	_, _ = e.buf.Insert(Position{}, []byte("package main\nfunc main() {\n}\n"))
+	e.buffer.Insert(Position{}, []byte("package main\nfunc main() {\n}\n"))
 	e.open = true
 	e.initChroma()
 	assert.True(t, e.IsOpen())
-	assert.Equal(t, "test.go", e.Title())
+	assert.Equal(t, "test.go", e.BaseTitle())
+	assert.True(t, e.Modified())
 	assert.Equal(t, 4, e.LineCount())
 
 	e.Close()

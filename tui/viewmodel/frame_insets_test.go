@@ -197,7 +197,7 @@ func TestHeaderRightRunStaysInsidePaddedSlot(t *testing.T) {
 func TestThemeFrameFromWorkspaceSettings(t *testing.T) {
 	app := newFullTestApp(t)
 	two, three, one, four := 2, 3, 1, 4
-	app.Workspace.SetAppDefaults(ttypes.AppSettings{
+	app.SetAppDefaults(ttypes.AppSettings{
 		Theme: ttypes.ThemeSettings{PadTop: &two, PadBottom: &three, PadLeft: &one, PadRight: &four},
 	})
 	app.ApplyThemePreset("dark")
@@ -226,7 +226,7 @@ func TestThemeFrameDefaultsWhenUnset(t *testing.T) {
 func TestFramePadClamped(t *testing.T) {
 	app := newFullTestApp(t)
 	huge := 100
-	app.Workspace.SetAppDefaults(ttypes.AppSettings{
+	app.SetAppDefaults(ttypes.AppSettings{
 		Theme: ttypes.ThemeSettings{PadTop: &huge},
 	})
 	app.ApplyThemePreset("dark")

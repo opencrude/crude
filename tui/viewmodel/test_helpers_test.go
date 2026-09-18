@@ -119,11 +119,11 @@ func newTestApp(t testing.TB) *App {
 			app.Tree.Model.StopWatcher()
 		}
 		if app.Workspace != nil {
-			if app.Workspace.TermMgr != nil {
-				app.Workspace.TermMgr.CloseAll()
+			if app.TermMgr != nil {
+				app.TermMgr.CloseAll()
 			}
-			if app.Workspace.LSPMgr != nil {
-				app.Workspace.LSPMgr.Stop()
+			if app.LSPMgr != nil {
+				app.LSPMgr.Stop()
 			}
 		}
 		resetAsyncIOStateForTest(app)

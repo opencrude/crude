@@ -385,11 +385,7 @@ func TestRunAppendsParallelToolResultsInCallOrder(t *testing.T) {
 		return tools.ToolResult{Content: "Error: fast failed"}, nil
 	}
 
-	var eventMu sync.Mutex
-	emit := func(AgentEvent) {
-		eventMu.Lock()
-		eventMu.Unlock()
-	}
+	emit := func(AgentEvent) {}
 	messages := agent.Run(context.Background(), nil, "system", emit, nil, "", nil)
 
 	var toolMessages []provider.ChatMessage

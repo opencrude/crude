@@ -99,10 +99,8 @@ func TestAsyncPipeWriter_FIFOOrdering(t *testing.T) {
 		}
 	}
 	deadline := time.Now().Add(2 * time.Second)
-	for {
-		if sink.all() == "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwx" {
-			break
-		}
+	for sink.all() != "abcdefghijklmnopqrstuvwxyzabcdefghijklmnopqrstuvwx" {
+
 		if time.Now().After(deadline) {
 			t.Fatalf("ordering not complete: %q", sink.all())
 		}

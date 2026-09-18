@@ -854,6 +854,25 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   compatibility fallback for terminals that encode horizontal trackpad motion
   that way. Horizontal gestures must not change vertical offset.
 
+### Editor gutter and save authority
+- `editor.Buffer` is the one live-text/savepoint authority shared by views.
+  `workspace.DocumentSaveService` is the one autosave-deadline and disk-commit
+  authority. Editor, PieceTable, watchers, and LSP must never write files or
+  maintain competing dirty flags.
+- Git gutter state is structured HEAD-to-buffer hunks, never reparsed rendered
+  patches. Paint derives current-line rails and exact deletion boundaries from
+  those hunks; diagnostics, numbers, change rails, and source spacing keep
+  independent stable lanes. Stale async hunks never attach to new revisions.
+- Automatic saves are opt-in and text-only. They never format, reload, move the
+  cursor, clear selection/undo, or emit synthetic text changes. Manual format
+  runs on an immutable snapshot and applies as one revision-checked undo group.
+- Save acknowledgements identify an exact buffer revision. Newer text remains
+  dirty. Exact watcher reconciliation replaces time-based self-event suppression;
+  known external changes fail closed and preserve both local and disk content.
+- Every Crude-owned writer, file operation, and Local History restore shares
+  `fileio`'s cancellable mutation lease. This prevents autosave, agent tools,
+  rename/delete, workspace edits, and restore from racing each other.
+
 ### Local History
 - Startup recovery reads only manifests/plans missing from the SQLite index.
   Snapshot identity and entries commit atomically; never replay all historical

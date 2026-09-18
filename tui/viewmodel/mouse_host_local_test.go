@@ -247,6 +247,29 @@ func TestEditorScrollbarDragUsesRootCaptureOutsideEditor(t *testing.T) {
 	}
 }
 
+func TestEditorGutterLineSelectionUsesRootCaptureOutsideEditor(t *testing.T) {
+	app := setupEditorMouseApp(t, 100, 30, false)
+	openMultiLineEditor(t, app, "one\ntwo\nthree\nfour\nfive\n")
+	app.paintShellFrame()
+	r, ok := app.rootHost.ScreenRect(shelleditor.ScreenID)
+	if !ok {
+		t.Fatal("editor screen missing")
+	}
+	x := r.X + app.EditorState.Editor.PadL + 3
+	_, _ = app.dispatchMouseClick(tea.MouseClickMsg{X: x, Y: r.Y + 1, Button: tea.MouseLeft})
+	if !app.rootHost.HasPointerCapture() {
+		t.Fatal("line-number drag did not capture through Host")
+	}
+	_, _ = app.dispatchMouseMotion(tea.MouseMotionMsg{X: x, Y: r.Y + r.H + 3, Button: tea.MouseLeft})
+	if !app.EditorState.Editor.HasSelection() {
+		t.Fatal("captured line drag did not select complete lines")
+	}
+	_, _ = app.dispatchMouseRelease(tea.MouseReleaseMsg{X: x, Y: r.Y + r.H + 3, Button: tea.MouseLeft})
+	if app.rootHost.HasPointerCapture() || app.EditorState.Editor.IsMouseDragging() {
+		t.Fatal("outside release retained gutter capture")
+	}
+}
+
 // TestEditorMouseDegenerateSizesNoPanic verifies the migrated editor mouse path
 // degrades gracefully (never panics) at zero/min/narrow viewport sizes.
 func TestEditorMouseDegenerateSizesNoPanic(t *testing.T) {

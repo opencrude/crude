@@ -29,7 +29,7 @@ func TestStaleTerminalMessagesCannotTargetReplacementManagerSession(t *testing.T
 	oldMgr.CloseAll()
 
 	newMgr := workspace.NewTerminalManager(t.TempDir())
-	app.Workspace.TermMgr = newMgr
+	app.TermMgr = newMgr
 	newInfo, err := newMgr.Create(workspace.TerminalCreateOpts{
 		Command: "/bin/cat",
 		CWD:     t.TempDir(),

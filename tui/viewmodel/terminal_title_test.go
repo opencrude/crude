@@ -32,7 +32,7 @@ func TestTerminalTitleOutputDoesNotDeadlockOrDuplicate(t *testing.T) {
 		t.Skip("in-app PTYs are unix-only")
 	}
 	app := newTestApp(t)
-	mgr := app.Workspace.TermMgr
+	mgr := app.TermMgr
 	info, err := mgr.Create(workspace.TerminalCreateOpts{
 		Command: "/bin/cat",
 		CWD:     t.TempDir(),
@@ -136,7 +136,7 @@ func TestWorkspaceSwitchTerminalCloseAllDoesNotReenterEventBus(t *testing.T) {
 		t.Skip("in-app PTYs are unix-only")
 	}
 	app := newTestApp(t)
-	mgr := app.Workspace.TermMgr
+	mgr := app.TermMgr
 	info, err := mgr.Create(workspace.TerminalCreateOpts{
 		Command: "/bin/cat",
 		CWD:     t.TempDir(),

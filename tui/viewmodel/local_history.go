@@ -325,6 +325,7 @@ func (m *App) historyPathDirty(rel string) bool {
 }
 
 func (m *App) applyHistoryRefresh(result localhistory.RestoreResult) tea.Cmd {
+	var cmds []tea.Cmd
 	if m.EditorState != nil {
 		for path, tab := range m.EditorState.Tabs {
 			if tab == nil || tab.Editor == nil || tab.Editor.Modified() {
@@ -332,13 +333,10 @@ func (m *App) applyHistoryRefresh(result localhistory.RestoreResult) tea.Cmd {
 			}
 			rel, err := filepath.Rel(m.RootPath, path)
 			if err == nil && slices.Contains(result.Paths, filepath.ToSlash(rel)) {
-				if err := tab.Editor.Reload(); err != nil && m.Logger != nil {
-					m.Logger.Warn("HISTORY", "editor_reload_failed", "file", path, "error", err.Error())
-				}
+				cmds = append(cmds, m.refreshEditorDiskCmd(tab.Editor))
 			}
 		}
 	}
-	var cmds []tea.Cmd
 	if m.Tree != nil && m.Tree.Model != nil {
 		cmds = append(cmds, m.Tree.Model.RefreshFromDisk())
 		if cmd := m.Tree.Model.RefreshGitStatus(); cmd != nil {

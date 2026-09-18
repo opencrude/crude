@@ -42,3 +42,15 @@ func TestGoldenHashSensitiveToAnyCell(t *testing.T) {
 		}
 	}
 }
+
+func TestGoldenHashIncludesFullGraphemeAndEmptyDimensions(t *testing.T) {
+	a, b := surface.NewCellBuffer(2, 1), surface.NewCellBuffer(2, 1)
+	a.Set(0, 0, cell.NewClusterCell("e\u0301", 1, cell.Red, cell.Blue, 0))
+	b.Set(0, 0, cell.NewClusterCell("e\u0300", 1, cell.Red, cell.Blue, 0))
+	if GoldenHash(a) == GoldenHash(b) {
+		t.Fatal("different combining marks produced identical goldens")
+	}
+	if GoldenHash(surface.NewCellBuffer(0, 1)) == GoldenHash(surface.NewCellBuffer(0, 2)) {
+		t.Fatal("empty buffer dimensions were omitted")
+	}
+}

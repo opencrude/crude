@@ -19,7 +19,7 @@ import (
 	"crude/tui/surface"
 )
 
-// updateGoldens is set via `go test ./tui/... -update` to (re)generate
+// updateGoldens is set via `go test <golden-package> -update` to (re)generate
 // golden files. CI never passes it, so any drift fails there.
 var updateGoldens = flag.Bool("update", false, "update golden cell-buffer hashes")
 
@@ -29,11 +29,12 @@ var updateGoldens = flag.Bool("update", false, "update golden cell-buffer hashes
 // be given fixed inputs by the caller (fixed StartTime / spinFrame).
 func GoldenHash(buf *surface.CellBuffer) string {
 	h := sha256.New()
+	fmt.Fprintf(h, "%d,%d;", buf.Width(), buf.Height())
 	for y := 0; y < buf.Height(); y++ {
 		for x := 0; x < buf.Width(); x++ {
 			c := buf.Get(x, y)
-			fmt.Fprintf(h, "%d,%d,%d,%d,%s,%s,%d,%t;",
-				x, y, c.Char, c.Width,
+			fmt.Fprintf(h, "%d,%d,%d,%q,%d,%s,%s,%d,%t;",
+				x, y, c.Char, c.Content, c.Width,
 				colorKey(c.FG), colorKey(c.BG),
 				c.Attr, c.Transparent)
 		}
@@ -97,14 +98,14 @@ func CheckGolden(t *testing.T, name string, buf *surface.CellBuffer) {
 
 	raw, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		t.Fatalf("golden %s missing; run `go test ./tui/... -update` to create it (hash=%s)", path, got)
+		t.Fatalf("golden %s missing; run `go test . -update` in this package to create it after visual verification (hash=%s)", path, got)
 	}
 	if err != nil {
 		t.Fatal(err)
 	}
 	want := strings.TrimSpace(string(raw))
 	if got != want {
-		t.Fatalf("golden %s mismatch:\n  got  %s\n  want %s\n  Run `go test ./tui/... -update` only if the paint change is INTENTIONAL.",
+		t.Fatalf("golden %s mismatch:\n  got  %s\n  want %s\n  Run `go test . -update` in this package only after verifying the intentional paint change.",
 			name, got, want)
 	}
 }

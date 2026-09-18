@@ -230,8 +230,13 @@ func TestTabsAttentionAndCloseActions(t *testing.T) {
 
 	buf := surface.NewCellBuffer(30, StripHeight)
 	tabs.Paint(buf, 0, 0, PaintContext{})
-	if line := stripRow(buf, 0, 30); !strings.Contains(line, "•") {
-		t.Fatalf("expected attention marker, got %q", line)
+	// The attention marker is a prefix so it can never collide with the label
+	// (and so a dirty filename can never grow a second dot).
+	if line := stripRow(buf, 0, 30); !strings.Contains(line, "● One") {
+		t.Fatalf("expected the attention marker in front of the label, got %q", line)
+	}
+	if line := stripRow(buf, 0, 30); strings.Contains(strings.ReplaceAll(line, "● One", ""), "●") {
+		t.Fatalf("attention marker repeated in the strip: %q", line)
 	}
 
 	ranges := tabs.ranges
@@ -247,6 +252,38 @@ func TestTabsAttentionAndCloseActions(t *testing.T) {
 	act := tabs.Handle(EventContext{}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyRight}))
 	if act.Action == nil || act.Action.ID != "tabs.activate" || act.Action.Payload != "two" {
 		t.Fatalf("expected tabs.activate two, got %+v", act.Action)
+	}
+}
+
+// A dirty tab's marker must not push its own content: the cell stays
+// content-sized, so the close glyph follows the label with its single
+// separating space and no stray padding columns. The marker used to be counted
+// twice (once in the composed label, once in the width), which left the
+// filename looking detached from its close glyph.
+func TestTabsAttentionMarkerDoesNotPadTheLabel(t *testing.T) {
+	tokens := NewTokenSet(theme.DefaultDark())
+	tabs := NewTabs("test/tabs", tokens)
+	tabs.SetItems([]TabItem{
+		{ID: "dirty", Label: "README.md", Closable: true, Attention: true},
+		{ID: "clean", Label: "README.md", Closable: true},
+	}, "dirty")
+	tabs.Layout(LayoutContext{}, Rect{X: 0, Y: 0, W: 40, H: StripHeight})
+
+	buf := surface.NewCellBuffer(40, StripHeight)
+	tabs.Paint(buf, 0, 0, PaintContext{})
+
+	ranges := tabs.ranges
+	dirtyW := ranges[0].end - ranges[0].start
+	cleanW := ranges[1].end - ranges[1].start
+	if dirtyW != cleanW+2 {
+		t.Fatalf("dirty cell=%d clean cell=%d, want exactly the 2-column marker", dirtyW, cleanW)
+	}
+	row := stripRow(buf, 0, 40)
+	if !strings.Contains(row, "● README.md ×") {
+		t.Fatalf("close glyph is not adjacent to the label: %q", row)
+	}
+	if strings.Contains(row, "README.md  ×") {
+		t.Fatalf("attention marker padded the label: %q", row)
 	}
 }
 
@@ -307,7 +344,7 @@ func TestTabsLabelInsetKeepsUnderlineOnTheRowEdge(t *testing.T) {
 
 	// First tab active: the label is inset, the underline is not — it starts
 	// on the bar's own left edge and runs through the tab's cell.
-	tabs, buf := build("one")
+	_, buf := build("one")
 	if c := buf.Get(0, 0); c.Char != 0 && c.Char != ' ' {
 		t.Fatalf("label row must keep the inset column empty, got %q at x=0", c.Char)
 	}
@@ -320,7 +357,7 @@ func TestTabsLabelInsetKeepsUnderlineOnTheRowEdge(t *testing.T) {
 
 	// The first tab's cell owns that edge column: hovering the inactive first
 	// tab fills it and a click there selects that tab.
-	tabs, buf = build("two")
+	tabs, _ := build("two")
 	tabs.SyncHover(0)
 	hoverBuf := surface.NewCellBuffer(24, StripHeight)
 	tabs.Paint(hoverBuf, 0, 0, PaintContext{})

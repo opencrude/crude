@@ -28,6 +28,24 @@ func TestRankPathEntriesPrefersBasenameAndBoundaries(t *testing.T) {
 	}
 }
 
+func TestAsyncSearchEnterOpensRankedMatchWithoutTreeNavigation(t *testing.T) {
+	root := t.TempDir()
+	file := filepath.Join(root, "workspace", "git_editor.go")
+	base := NewFileTreeModelWithOptions(root, ModelOptions{InitialLoad: false})
+	model := NewSearchModelFromBase(base, []PathMatch{{Entry: pathwalk.Entry{Path: file, Name: "git_editor.go"}}})
+	if selected := model.SelectedNode(); selected == nil || selected.Path != file {
+		t.Fatalf("selected=%+v, want matching file", selected)
+	}
+	cmd := model.Update(TreeKeyPressMsg{Key: tea.KeyPressMsg{Code: tea.KeyEnter}})
+	if cmd == nil {
+		t.Fatal("Enter did not produce file activation")
+	}
+	msg, ok := cmd().(FileSelectedMsg)
+	if !ok || msg.Path != file {
+		t.Fatalf("Enter returned %#v", msg)
+	}
+}
+
 func TestRankPathEntriesExactNameWithRepeatedLetters(t *testing.T) {
 	entry := pathwalk.Entry{Path: "/repo/README.md", Relative: "README.md", Name: "README.md"}
 	matches := RankPathEntries([]pathwalk.Entry{entry}, "README.md")

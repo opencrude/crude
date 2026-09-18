@@ -59,6 +59,10 @@ func (m *App) beginWorkspaceSwitch() workspaceSwitchState {
 	m.resetLSPRequestContext()
 	m.gitRefreshGen.Add(1)
 	m.editorGitGen.Add(1)
+	if m.editorGitCancel != nil {
+		m.editorGitCancel()
+		m.editorGitCancel = nil
+	}
 	m.launcherLoadGen.Add(1)
 	if m.rootHost != nil {
 		m.rootHost.CancelPointerCapture()
@@ -267,6 +271,9 @@ func (m *App) wireAndStartWorkspaceTreeWatcher(model *filetree.FileTreeModel) {
 // editor is normally also present in Tabs, but tests and transitional states
 // may leave a distinct active projection outside the map.
 func (m *App) closeWorkspaceEditors() {
+	if m.overlayHost != nil {
+		m.overlayHost.Close(editorChangesOverlay)
+	}
 	if m == nil || m.EditorState == nil {
 		return
 	}
@@ -324,6 +331,7 @@ func (m *App) closeWorkspaceBoundOverlays() {
 	m.GitDiscardPending = nil
 	m.DirtyPromptPath = ""
 	m.DirtyPromptChoice = 0
+	m.pendingTabClose = nil
 	m.DiagPopupID = ""
 	m.sessionPicker = nil
 	m.memoryBrowser = nil

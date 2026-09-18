@@ -201,7 +201,7 @@ func TestBlendAlpha(t *testing.T) {
 	}
 	// Transparent source cell skipped
 	if dst.Get(1, 0).Char != 0 && dst.Get(1, 0).Char != ' ' {
-		// originally transparent blank after New — actually New is transparent blank
+		t.Fatalf("transparent source overwrote destination: %+v", dst.Get(1, 0))
 	}
 }
 

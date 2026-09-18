@@ -1,7 +1,6 @@
 package viewmodel
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -13,11 +12,13 @@ import (
 	"crude/fileio"
 	"crude/provider"
 	"crude/sessiondb"
+	"crude/tui/editor"
 	"crude/tui/filetree"
 	"crude/tui/perf"
 	"crude/tui/rendering"
 	"crude/tui/screens/composer"
 	"crude/tui/screens/confirmation"
+	"crude/tui/screens/editorchanges"
 	filepickerscreen "crude/tui/screens/filepicker"
 	findinfiles "crude/tui/screens/findinfiles"
 	helpscreen "crude/tui/screens/help"
@@ -42,6 +43,17 @@ import (
 )
 
 func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	previousEditor := m.logicalEditorFocus()
+	previousMode := m.editorSettings.AutoSave
+	model, command := m.update(msg)
+	if previousMode == types.AutoSaveEditorFocusChange && m.editorSettings.AutoSave == previousMode && previousEditor != nil &&
+		previousEditor.IsOpen() && previousEditor != m.logicalEditorFocus() && m.DirtyPromptPath == "" {
+		command = tea.Batch(command, m.requestEditorSave(previousEditor, workspace.DocumentSaveFocusOut, false))
+	}
+	return model, command
+}
+
+func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
 	coalescePresentation := false
 	switch msg.(type) {
@@ -151,6 +163,37 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.TerminalWidthProfileMsg:
 		m.applyTerminalWidthProfile(msg)
+	case workspace.DocumentAutosaveDueMsg:
+		return m, m.handleAutosaveDue(msg)
+	case editorSaveResultMsg:
+		return m, m.handleEditorSaveResult(msg)
+	case editorFormatResultMsg:
+		return m, m.handleEditorFormatResult(msg)
+	case editorDiskResultMsg:
+		m.applyEditorDisk(msg)
+		return m, nil
+	case editor.InspectChangeMsg:
+		if msg.Editor.IsOpen() && msg.Editor.Revision() == msg.Revision {
+			m.inspectEditorChange(msg.Editor, msg.Line)
+		}
+		return m, nil
+	case editorchanges.NavigateMsg:
+		m.navigateEditorChanges(msg)
+		return m, nil
+	case editorDiskComparisonMsg:
+		m.applyEditorDiskComparison(msg)
+		return m, nil
+	case tea.BlurMsg:
+		if m.editorSettings.AutoSave == types.AutoSaveTerminalFocusLoss && m.DirtyPromptPath == "" {
+			var saves []tea.Cmd
+			for _, tab := range m.EditorState.Tabs {
+				if tab != nil && tab.Editor != nil && tab.Editor.Modified() {
+					saves = append(saves, m.requestEditorSave(tab.Editor, workspace.DocumentSaveFocusOut, false))
+				}
+			}
+			return m, tea.Batch(saves...)
+		}
+		return m, nil
 
 	case ttypes.TickMsg:
 		return m.handleTick(msg)
@@ -216,8 +259,7 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 		}
 	}
 	var gitCmd tea.Cmd
-	if m.editorGitStale.Load() && now.Sub(m.editorGitAt) >= 400*time.Millisecond {
-		m.editorGitStale.Store(false)
+	if m.editorGitDue(now) {
 		gitCmd = m.refreshEditorGitCmd()
 	}
 	var treeGitCmd tea.Cmd
@@ -259,37 +301,19 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	}
 	m.subPaneProjections.TickAll(spinFrame)
 	m.syncAgentWindowTabs()
-	if m.EditorState.Editor.IsOpen() && m.EditorState.Editor.DiskChanged() {
-		filePath := m.EditorState.Editor.FilePath()
-		var reloadedText string
-		updateOpenFile := false
-		// Only auto-reload when the editor has no unsaved (dirty) changes;
-		// otherwise the user's in-progress edits would be lost.
-		if !m.EditorState.Editor.Modified() {
-			if err := m.EditorState.Editor.Reload(); err != nil {
-				m.Logger.Error("EDITOR", "reload_error", "error", err.Error())
-			} else {
-				reloadedText = m.EditorState.Editor.Value()
-				updateOpenFile = true
-				m.editorGitStale.Store(true)
-				m.editorGitAt = time.Time{}
-			}
+	var diskCmds []tea.Cmd
+	for _, tab := range m.EditorState.Tabs {
+		if tab == nil || tab.Editor == nil {
+			continue
 		}
-		// LSP writes can wait on a subprocess pipe. Keep them off Bubble Tea's
-		// update goroutine so an external edit cannot stall input or rendering.
-		if m.LSPMgr != nil {
-			lspMgr := m.LSPMgr
-			diskSyncCmd = func() tea.Msg {
-				lspCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-				defer cancel()
-				lspMgr.NotifyWatchedFilesChanged(lspCtx, filePath, 2) // 2 = Changed
-				if updateOpenFile {
-					lspMgr.UpdateFile(lspCtx, filePath, reloadedText)
-				}
-				return nil
-			}
+		if state := m.editorSaves[tab.Editor.BufferID()]; state != nil && state.inFlight {
+			continue
+		}
+		if tab.Editor.DiskChanged() {
+			diskCmds = append(diskCmds, m.refreshEditorDiskCmd(tab.Editor))
 		}
 	}
+	diskSyncCmd = tea.Batch(diskCmds...)
 
 	m.syncLSPStatusIssues()
 	m.syncAgentStatusInventory()
@@ -626,6 +650,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 				m.Feedback.NotifyError("Failed to save workspace settings: " + err.Error())
 			} else {
 				m.applyThemePreset(themePresetFromSettings(m.LoadAppSettings()))
+				m.applyEditorSettings(m.LoadAppSettings().Editor)
 				m.refreshAllSessionSettingsProjections()
 				m.Feedback.NotifyInfo("Workspace settings saved")
 			}
@@ -639,6 +664,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 				m.Feedback.NotifyError("Failed to save providers: " + err.Error())
 			} else {
 				m.applyThemePreset(themePresetFromSettings(appSets))
+				m.applyEditorSettings(m.LoadAppSettings().Editor)
 				m.refreshAllSessionSettingsProjections()
 				m.Feedback.NotifyInfo("Application settings saved")
 			}
@@ -655,6 +681,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			m.applyThemePreset(themePresetFromSettings(m.LoadAppSettings()))
 			m.refreshAllSessionSettingsProjections()
 			m.openSettings(ttypes.SettingsScopeWorkspace)
+			m.applyEditorSettings(m.LoadAppSettings().Editor)
 		}
 	case settingsui.CancelMsg:
 		// Live preset cycling previews via ThemePreviewMsg without persisting.
@@ -1053,13 +1080,14 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 
 	if m.isEditorTabTitle(tab.Title) {
 		path := m.editorPathFromTabTitle(tab.Title)
-		// If the tab has unsaved edits, prompt before destroying the
-		// buffer. Otherwise close immediately.
+		// If the tab has unsaved edits, prompt before destroying the buffer.
+		// The prompt is the only gate: no mode or missing host may close a
+		// dirty document silently. Otherwise close immediately.
 		ed := m.EditorState.Editor
 		if t, ok := m.EditorState.Tabs[path]; ok {
 			ed = t.Editor
 		}
-		if ed != nil && ed.Modified() && m.OverlayState.IsChat() {
+		if ed != nil && ed.Modified() {
 			m.showDirtyClosePrompt(path)
 			return nil
 		}
@@ -1132,8 +1160,7 @@ func (m *App) handleTabSwitch() {
 		m.EditorState.ActiveView = path
 		m.EditorState.Editor = tab.Editor
 		m.closeFindReplaceForTab(prevEditorPath, path)
-		m.editorGitStale.Store(true)
-		m.editorGitAt = time.Time{}
+		m.markEditorGitStaleNow()
 		return
 	}
 

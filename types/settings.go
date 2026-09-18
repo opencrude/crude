@@ -117,6 +117,7 @@ func ApplyAppDefaults(s *AppSettings) {
 	if s.Editor.RenderWhitespace == "" {
 		s.Editor.RenderWhitespace = "none"
 	}
+	s.Editor = NormalizeEditorSettings(s.Editor)
 	if lspUnset(s.LSP) {
 		s.LSP = DefaultLSPSettings()
 	} else {
@@ -206,6 +207,19 @@ func lspUnset(s LSPSettings) bool {
 	return !s.Enabled && !s.AutoDetect && !s.Diagnostics && !s.Completions &&
 		!s.Hover && !s.Definition && s.MinSeverity == "" && len(s.Languages) == 0 &&
 		len(s.Servers) == 0
+}
+
+func NormalizeEditorSettings(s EditorSettings) EditorSettings {
+	switch s.AutoSave {
+	case AutoSaveOff, AutoSaveAfterDelay, AutoSaveEditorFocusChange, AutoSaveTerminalFocusLoss:
+	default:
+		s.AutoSave = AutoSaveOff
+	}
+	if s.AutoSaveDelay <= 0 {
+		s.AutoSaveDelay = 1000
+	}
+	s.AutoSaveDelay = min(60000, max(250, s.AutoSaveDelay))
+	return s
 }
 
 // lspLegacyFeaturesUnset reports a config written before per-feature flags

@@ -2,16 +2,9 @@ package editor
 
 import (
 	"path/filepath"
-	"time"
 
 	"github.com/fsnotify/fsnotify"
 )
-
-// saveSuppressWindow is the grace period after an editor-initiated save during
-// which fsnotify events for the saved file are treated as self-triggered and
-// ignored. fsnotify latency is typically <50ms on Linux; 200ms provides a
-// comfortable margin without risking missed external writes.
-const saveSuppressWindow = 200 * time.Millisecond
 
 func (e *Editor) DiskChanged() bool {
 	e.watchMu.Lock()
@@ -49,7 +42,6 @@ func (e *Editor) startWatching() {
 	e.watchDir = dir
 	e.watchChanged = changed
 	e.watchDone = done
-	e.lastSaveTime = time.Time{}
 	e.watchMu.Unlock()
 	go e.watchLoop(w, done, changed, filepath.Base(e.filePath))
 }
@@ -80,16 +72,6 @@ func (e *Editor) watchLoop(w *fsnotify.Watcher, done <-chan struct{}, changed ch
 			if filepath.Base(event.Name) != filename {
 				continue
 			}
-			// Suppress self-triggered events from our own save(). Without
-			// this, every editor save fires fsnotify → watchChanged →
-			// tick → Reload(), which needlessly rebuilds the buffer and
-			// can clobber rapid typing between save and the next tick.
-			e.watchMu.Lock()
-			lastSaveTime := e.lastSaveTime
-			e.watchMu.Unlock()
-			if !lastSaveTime.IsZero() && time.Since(lastSaveTime) < saveSuppressWindow {
-				continue
-			}
 			select {
 			case changed <- struct{}{}:
 			default:
@@ -100,6 +82,17 @@ func (e *Editor) watchLoop(w *fsnotify.Watcher, done <-chan struct{}, changed ch
 			}
 		case <-done:
 			return
+		}
+	}
+}
+
+func (e *Editor) SignalDiskChanged() {
+	e.watchMu.Lock()
+	defer e.watchMu.Unlock()
+	if e.watchChanged != nil {
+		select {
+		case e.watchChanged <- struct{}{}:
+		default:
 		}
 	}
 }

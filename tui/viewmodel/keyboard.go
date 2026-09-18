@@ -273,16 +273,7 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		if match := m.actionRegistry.MatchContext("editor", msg); match != nil {
 			switch match.ID {
 			case "file.save":
-				if err := m.EditorState.Editor.Save(); err != nil {
-					if m.Feedback != nil {
-						m.Feedback.NotifyError(fmt.Sprintf("Save failed: %v", err))
-					}
-					return m, nil
-				}
-				if m.Feedback != nil {
-					m.Feedback.NotifyInfo("Saved")
-				}
-				return m, m.refreshEditorGitCmd()
+				return m, m.requestActiveEditorSave(workspace.DocumentSaveManual)
 			case "edit.undo":
 				m.EditorState.Editor.Undo()
 				return m, nil
@@ -1103,9 +1094,7 @@ func (m *App) handleRenameResult(msg lspRenameResultMsg) {
 	// Reload editors for changed files.
 	for _, fp := range filePaths {
 		if m.EditorState.Editor.IsOpen() && m.EditorState.Editor.FilePath() == fp {
-			if err := m.EditorState.Editor.Reload(); err != nil {
-				m.Logger.Warn("LSP", "rename_reload", "file", fp, "error", err.Error())
-			}
+			m.startSourceControlMutation(m.refreshEditorDiskCmd(m.EditorState.Editor))
 		}
 	}
 

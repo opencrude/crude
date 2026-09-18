@@ -60,8 +60,7 @@ func TestCharPool_OverflowReset(t *testing.T) {
 	}
 	// Re-intern existing
 	if p.Intern(1) != 0 {
-		// first rune was 1 at id 0
-		// ok either way as long as stable
+		t.Fatal("re-interning first rune changed its ID")
 	}
 	// Ensure Get works at edges
 	if p.Get(uint16(n-1)) != rune(n) {
@@ -106,7 +105,7 @@ func TestStylePool_InternGetReset(t *testing.T) {
 		t.Fatalf("Get: %+v", e)
 	}
 	if p.Get(9999).Attr != 0 {
-		// zero-value entry
+		t.Fatal("out-of-range style must be the zero value")
 	}
 	if p.Len() != 2 {
 		t.Fatalf("Len=%d", p.Len())
@@ -136,8 +135,7 @@ func TestStylePool_FullOverflow(t *testing.T) {
 		p.Intern(NewTrueColor(r, g, b), NoColor, 0)
 	}
 	if p.Len() != maxPoolSize {
-		// truecolor r,g,b with only r,g varying may still collide for large i
-		// because r is uint8(i) wraps. Use sequential unique via Attrs if needed.
+		t.Fatalf("unique styles filled %d entries, want %d", p.Len(), maxPoolSize)
 	}
 	// Guaranteed unique: use Attrs as high bits via truecolor R from index low bits
 	// and palette separately — simplest path already tested for CharPool.

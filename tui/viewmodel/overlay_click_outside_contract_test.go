@@ -372,6 +372,7 @@ func TestDispatchMouseClickOutsidePolicyGroups(t *testing.T) {
 			t.Fatal("context menu should open via dispatchMouseRightClick")
 		}
 
+		ed.SetCursorPosition(0, 0)
 		beforeLine, beforeCol := editorCursor(app)
 		outX, outY := editorClickOutsideOverlay(app, fw, clickY)
 		_, _ = app.dispatchMouseClick(tea.MouseClickMsg{

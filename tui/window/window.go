@@ -502,6 +502,16 @@ func (w *Window) Tabs() []Tab {
 	return result
 }
 
+// TabAt returns one tab without copying the whole strip. Per-frame consumers
+// that only need to read or refresh a single tab's state use this instead of
+// Tabs() so painting stays allocation-quiet.
+func (w *Window) TabAt(index int) (Tab, bool) {
+	if index < 0 || index >= len(w.tabs) {
+		return Tab{}, false
+	}
+	return w.tabs[index], true
+}
+
 func (w *Window) HasClosableTabs() bool {
 	for _, t := range w.tabs {
 		if t.Closable {

@@ -30,13 +30,18 @@ func TestFeedbackActionRegistryChordsDispatch(t *testing.T) {
 	defer ed.Close()
 	app.EditorState.Editor = ed
 	app.EditorState.ActiveView = path
+	app.EditorState.Tabs[path] = NewEditorTab(path, ed)
 
 	ed.InsertRune('x')
 	if !ed.Modified() {
 		t.Fatal("setup: editor should be dirty before save chord")
 	}
 
-	app.dispatchKeyPress(tea.KeyPressMsg{Text: "ctrl+s", Mod: tea.ModCtrl, Code: 's'})
+	_, cmd := app.dispatchKeyPress(tea.KeyPressMsg{Text: "ctrl+s", Mod: tea.ModCtrl, Code: 's'})
+	if cmd == nil || !ed.Modified() {
+		t.Fatal("save must be command-owned and dirty until completion")
+	}
+	_, _ = app.Update(cmd())
 	if ed.Modified() {
 		t.Fatal("Ctrl+S via ActionRegistry should save and clear dirty flag")
 	}

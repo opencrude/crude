@@ -60,12 +60,13 @@ func TestKeyboardSelection_BareMouseMotionDoesNotExtend(t *testing.T) {
 func TestMousePressDragRelease_ExtendsSelection(t *testing.T) {
 	ed := newMotionTestEditor(t)
 
-	_ = ed.HandleEvent(tea.MouseClickMsg{X: 5, Y: 0, Button: tea.MouseLeft})
+	textX := ed.gutterWidth() + 2
+	_ = ed.HandleEvent(tea.MouseClickMsg{X: textX, Y: 0, Button: tea.MouseLeft})
 	if !ed.IsMouseDragging() || !ed.IsSelecting() {
 		t.Fatal("left click should start mouseDragging + selecting")
 	}
 
-	_ = ed.HandleEvent(tea.MouseMotionMsg{X: 5, Y: 4, Button: tea.MouseLeft})
+	_ = ed.HandleEvent(tea.MouseMotionMsg{X: textX, Y: 4, Button: tea.MouseLeft})
 	_, _, eLine, _, has := selectionSnapshot(ed)
 	if !has || eLine != 4 {
 		t.Fatalf("drag motion should extend selEnd.Line to 4, got eLine=%d has=%v range=%v",
@@ -75,7 +76,7 @@ func TestMousePressDragRelease_ExtendsSelection(t *testing.T) {
 		t.Fatal("mouseDragging should stay armed during drag")
 	}
 
-	_ = ed.HandleEvent(tea.MouseReleaseMsg{X: 5, Y: 4, Button: tea.MouseLeft})
+	_ = ed.HandleEvent(tea.MouseReleaseMsg{X: textX, Y: 4, Button: tea.MouseLeft})
 	if ed.IsMouseDragging() {
 		t.Fatal("release should clear mouseDragging")
 	}
@@ -100,8 +101,9 @@ func TestCancelPointerCapture_ClearsMouseDragKeepsKeyboardSelection(t *testing.T
 
 	// Mouse drag is cleared without copying.
 	ed.ClearSelection()
-	_ = ed.HandleEvent(tea.MouseClickMsg{X: 5, Y: 0, Button: tea.MouseLeft})
-	_ = ed.HandleEvent(tea.MouseMotionMsg{X: 5, Y: 3, Button: tea.MouseLeft})
+	textX := ed.gutterWidth() + 2
+	_ = ed.HandleEvent(tea.MouseClickMsg{X: textX, Y: 0, Button: tea.MouseLeft})
+	_ = ed.HandleEvent(tea.MouseMotionMsg{X: textX, Y: 3, Button: tea.MouseLeft})
 	if !ed.IsMouseDragging() || !ed.HasSelection() {
 		t.Fatal("expected active mouse drag selection")
 	}

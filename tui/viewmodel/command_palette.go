@@ -12,6 +12,7 @@ import (
 	ttypes "crude/tui/types"
 	"crude/tui/ui"
 	"crude/tui/wm"
+	"crude/workspace"
 )
 
 type cmdCategory string
@@ -619,23 +620,21 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		m.startNewFileInTree(dir)
 
 	case "file.save":
-		if m.EditorState.Editor != nil && m.EditorState.Editor.IsOpen() {
-			// Save() returns an error on write failure; surface it in
-			// the status bar rather than silently dropping it. Mirrors
-			// the dirty-prompt save path (dirty_prompt.go:63).
-			if err := m.EditorState.Editor.Save(); err != nil {
-				if m.Feedback != nil {
-					m.Feedback.NotifyError(fmt.Sprintf("Save failed: %v", err))
-				}
-			} else {
-				if m.Feedback != nil {
-					m.Feedback.NotifyInfo("Saved")
-				}
-				cmds = append(cmds, m.refreshEditorGitCmd())
-			}
-		} else if m.Feedback != nil {
-			m.Feedback.NotifyInfo("No file open to save")
+		return m.requestActiveEditorSave(workspace.DocumentSaveManual)
+	case "editor.change.inspect":
+		if ed := m.EditorState.Editor; ed != nil {
+			m.inspectEditorChange(ed, ed.CursorLine())
 		}
+	case "editor.compareDisk":
+		if ed := m.EditorState.Editor; ed != nil && ed.IsOpen() {
+			return m.compareEditorWithDisk(ed)
+		}
+	case "editor.change.next":
+		m.jumpEditorChange(1)
+	case "editor.change.previous":
+		m.jumpEditorChange(-1)
+	case "editor.autosave.enable", "editor.autosave.disable":
+		m.setWorkspaceAutosave(cmdID == "editor.autosave.enable")
 
 	case "file.close":
 		m.closeEditorTab()

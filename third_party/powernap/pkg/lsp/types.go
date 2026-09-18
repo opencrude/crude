@@ -74,6 +74,9 @@ type Client struct {
 	initialized      atomic.Bool
 	shutdown         atomic.Bool
 	capabilities     protocol.ServerCapabilities
+	willSave         bool
+	didSave          bool
+	didSaveText      bool
 	offsetEncoding   OffsetEncoding
 	rootURI          string
 	workspaceFolders []protocol.WorkspaceFolder
@@ -87,7 +90,7 @@ type ClientConfig struct {
 	// process starts. Consumers use it to decouple pipe I/O from their own
 	// goroutines (async serialized writes) and to observe connection death.
 	// If nil, the raw pipes are used.
-	TransportWrap func(reader io.Reader, writer io.Writer) (io.Reader, io.Writer)
+	TransportWrap    func(reader io.Reader, writer io.Writer) (io.Reader, io.Writer)
 	Command          string
 	Args             []string
 	RootURI          string

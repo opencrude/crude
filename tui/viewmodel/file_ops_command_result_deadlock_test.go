@@ -129,6 +129,10 @@ func TestTreeMutationsDoNotReenterEventBus(t *testing.T) {
 		}
 		app, bus := newUndrainedTreeMutationApp(t, root)
 		newPath := filepath.Join(root, "after.go")
+		if _, err := app.openEditorTab(oldPath); err != nil {
+			t.Fatal(err)
+		}
+		app.EditorState.Editor.InsertRune('x')
 
 		app.startRenameInTree(oldPath)
 		app.TreePrompt.Edit.SetValue(filepath.Base(newPath))
@@ -140,6 +144,16 @@ func TestTreeMutationsDoNotReenterEventBus(t *testing.T) {
 		assertPathExists(t, newPath, false)
 		assertTreeContainsPath(t, app.Tree.Model, oldPath, false)
 		assertTreeContainsPath(t, app.Tree.Model, newPath, true)
+		if app.EditorState.ActiveView != newPath || app.EditorState.Editor.FilePath() != newPath {
+			t.Fatalf("editor was not retargeted: active=%q file=%q", app.EditorState.ActiveView, app.EditorState.Editor.FilePath())
+		}
+		if app.BufferMgr.Get(oldPath) != nil || app.BufferMgr.Get(newPath) == nil {
+			t.Fatal("buffer manager retained stale rename path")
+		}
+		finishSaveCommand(t, app, app.requestEditorSave(app.EditorState.Editor, workspace.DocumentSaveManual, false))
+		if _, err := os.Stat(oldPath); !os.IsNotExist(err) {
+			t.Fatal("save recreated renamed source")
+		}
 		assertNoEventBusReentry(t, bus)
 	})
 
