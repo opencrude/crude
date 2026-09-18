@@ -24,7 +24,7 @@ func CategoryToolDefaults(category string) CategoryToolConfig {
 		return CategoryToolConfig{
 			AllowedTools: []string{
 				"read_file", "glob_files", "grep_files", "list_directory",
-				"web_search", "web_fetch", "arxiv_search", "run_javascript",
+				"web_search", "web_fetch", "arxiv_search",
 				"execute_command",
 				"write_report", "question",
 				"update_plan", "get_plan",
@@ -51,7 +51,6 @@ func CategoryToolDefaults(category string) CategoryToolConfig {
 				"delete_file", "move_file", "copy_file",
 				"execute_command", "async_execute_command",
 				"web_search", "web_fetch", "arxiv_search",
-				"run_javascript",
 			},
 		}
 	default:

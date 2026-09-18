@@ -12,7 +12,7 @@ import (
 	"crude/workspace"
 )
 
-func TestFindReplaceAsyncPasteKeepsInitiatingTextEdit91d3(t *testing.T) {
+func TestFindReplaceAsyncPasteKeepsInitiatingTextEdit(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
 	t.Cleanup(func() { resetAsyncIOStateForTest(app) })
 	app.openFindReplace(true)
@@ -85,7 +85,7 @@ func TestFindReplaceAsyncPasteKeepsInitiatingTextEdit91d3(t *testing.T) {
 	}
 }
 
-func TestFindReplaceAsyncPasteDropsClosedPopupResult91d3(t *testing.T) {
+func TestFindReplaceAsyncPasteDropsClosedPopupResult(t *testing.T) {
 	app := newTestAppForPopupMouse(t)
 	t.Cleanup(func() { resetAsyncIOStateForTest(app) })
 	app.openFindReplace(false)
@@ -155,7 +155,7 @@ func TestFindReplaceAsyncPasteDropsClosedPopupResult91d3(t *testing.T) {
 	}
 }
 
-func TestEditorCtrlVAsyncResultKeepsInitiatingEditor91d3(t *testing.T) {
+func TestEditorCtrlVAsyncResultKeepsInitiatingEditor(t *testing.T) {
 	app := newTestApp(t)
 	t.Cleanup(func() { resetAsyncIOStateForTest(app) })
 
@@ -221,7 +221,7 @@ func TestEditorCtrlVAsyncResultKeepsInitiatingEditor91d3(t *testing.T) {
 	}
 }
 
-func TestClosedPickerResultCleansAsyncBookkeeping91d3(t *testing.T) {
+func TestClosedPickerResultCleansAsyncBookkeeping(t *testing.T) {
 	app := newTestApp(t)
 	t.Cleanup(func() { resetAsyncIOStateForTest(app) })
 	root := t.TempDir()

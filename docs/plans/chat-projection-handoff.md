@@ -266,7 +266,7 @@ Implemented behavior:
 
 Current budgets:
 
-- command/async/javascript evidence: `TerminalResultHeight`
+- command/async evidence: `TerminalResultHeight`
 - grep/glob/list/web/arxiv: maximum 10 rows
 - memory/history: maximum 8 rows
 - generic: maximum 12 rows

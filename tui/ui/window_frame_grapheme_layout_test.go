@@ -9,7 +9,7 @@ import (
 	"crude/tui/theme"
 )
 
-func TestWindowFrameTitleTruncatesByGraphemeColumnsGPT56(t *testing.T) {
+func TestWindowFrameTitleTruncatesByGraphemeColumns(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
 		title     string
@@ -33,7 +33,7 @@ func TestWindowFrameTitleTruncatesByGraphemeColumnsGPT56(t *testing.T) {
 			// W=12 with a close action leaves exactly five title columns.
 			titleX := originX + bounds.X + 3
 			titleY := originY + bounds.Y
-			got := frameTitleClustersGPT56(buf, titleX, titleY, 5)
+			got := frameTitleClusters(buf, titleX, titleY, 5)
 			if got != tc.wantTitle {
 				t.Fatalf("painted title=%q, want %q", got, tc.wantTitle)
 			}
@@ -74,12 +74,12 @@ func TestWindowFrameTitlePreservesRightBorderWithoutControls(t *testing.T) {
 	if got := buf.Get(ox+bounds.W-1, oy).Char; got != '╮' {
 		t.Fatalf("long title overwrote top-right border: got %q, want ╮", got)
 	}
-	if got := frameTitleClustersGPT56(buf, ox+3, oy, 7); got != "a titl…" {
+	if got := frameTitleClusters(buf, ox+3, oy, 7); got != "a titl…" {
 		t.Fatalf("painted title=%q, want %q", got, "a titl…")
 	}
 }
 
-func frameTitleClustersGPT56(buf *surface.CellBuffer, x, y, width int) string {
+func frameTitleClusters(buf *surface.CellBuffer, x, y, width int) string {
 	var out strings.Builder
 	for col := x; col < x+width; col++ {
 		c := buf.Get(col, y)

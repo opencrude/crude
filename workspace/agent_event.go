@@ -76,7 +76,7 @@ func ToolLabel(tool, argsSummary string) string {
 		label = "Editing"
 	case "read_file":
 		label = "Reading"
-	case "execute_command", "async_execute_command", "run_javascript":
+	case "execute_command", "async_execute_command":
 		label = "Running"
 	case "grep_files", "glob_files", "web_search", "arxiv_search":
 		label = "Searching"

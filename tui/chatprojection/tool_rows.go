@@ -269,7 +269,7 @@ func appendToolDisclosureGlyph(pl PaintLine, glyph string) PaintLine {
 
 func toolSupportsDisclosure(toolName string) bool {
 	switch toolName {
-	case "execute_command", "async_execute_command", "read_async_output", "check_async_command", "run_javascript",
+	case "execute_command", "async_execute_command", "read_async_output", "check_async_command",
 		"edit_file", "write_file", "update_plan", "get_plan", "read_file", "grep_files", "glob_files",
 		"list_directory", "web_search", "web_fetch", "arxiv_search":
 		return true
@@ -413,7 +413,7 @@ func (ml *messageLines) appendPlainToolBody(toolName, resultContent string, widt
 
 func toolPreviewHeight(toolName string, height int) int {
 	switch toolName {
-	case "execute_command", "async_execute_command", "read_async_output", "check_async_command", "run_javascript":
+	case "execute_command", "async_execute_command", "read_async_output", "check_async_command":
 		return tools.TerminalResultHeight(height)
 	case "grep_files", "web_search", "web_fetch", "arxiv_search":
 		return min(4, tools.TerminalResultHeight(height))
@@ -428,7 +428,7 @@ func toolPreviewHeight(toolName string, height int) int {
 
 func isCommandEvidenceTool(toolName string) bool {
 	switch toolName {
-	case "execute_command", "async_execute_command", "read_async_output", "check_async_command", "run_javascript":
+	case "execute_command", "async_execute_command", "read_async_output", "check_async_command":
 		return true
 	}
 	return false

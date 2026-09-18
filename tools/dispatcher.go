@@ -11,12 +11,10 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 
 	"crude/diff"
 	"crude/docconv"
 	"crude/fileio"
-	"crude/js"
 	"crude/logger"
 	"crude/provider"
 	"crude/search"
@@ -577,18 +575,6 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 		result = ToolResult{Content: resultText}
 		lg.Info("TOOL", "result", "tool", tool, "url", url, "latency_ms", time.Since(start).Milliseconds())
 
-	case "run_javascript":
-		code := GetStrArg(params, "code", "")
-		lg.Info("TOOL", "call", "tool", tool, "code_len", len(code))
-		resultText, err := js.Run(code)
-		if err != nil {
-			result = ToolResult{Content: "JavaScript error: " + sanitizeDispatcherError(err.Error())}
-			lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
-			break
-		}
-		result = ToolResult{Content: resultText}
-		lg.Info("TOOL", "result", "tool", tool, "latency_ms", time.Since(start).Milliseconds())
-
 	case "reply":
 		content := GetStrArg(params, "content", "")
 		lg.Info("TOOL", "call", "tool", tool, "content_len", len(content))
@@ -601,21 +587,6 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 	}
 
 	return result
-}
-
-func sanitizeDispatcherError(s string) string {
-	s = strings.ReplaceAll(s, "\n", " ")
-	s = strings.ReplaceAll(s, "\t", " ")
-	var b strings.Builder
-	b.Grow(len(s))
-	for _, r := range s {
-		if unicode.IsControl(r) {
-			b.WriteString(" ")
-		} else {
-			b.WriteRune(r)
-		}
-	}
-	return b.String()
 }
 
 // tryDocRead attempts to convert a binary document file to Markdown

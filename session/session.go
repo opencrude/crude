@@ -17,7 +17,6 @@ import (
 	"crude/clipboard"
 	"crude/diff"
 	"crude/fileio"
-	"crude/js"
 	"crude/jsonrepair"
 	"crude/logger"
 	"crude/memory"
@@ -345,7 +344,6 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 
 	provider.SetLogger(lg)
 	search.SetLogger(lg)
-	js.SetLogger(lg)
 	clipboard.SetLogger(lg)
 	jsonrepair.SetLogger(lg)
 	diff.SetLogger(lg)

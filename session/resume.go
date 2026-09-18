@@ -10,7 +10,6 @@ import (
 	"crude/clipboard"
 	"crude/diff"
 	"crude/fileio"
-	"crude/js"
 	"crude/jsonrepair"
 	"crude/logger"
 	"crude/provider"
@@ -87,7 +86,6 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	safety.SetCapabilitiesLogger(lg)
 	provider.SetLogger(lg)
 	search.SetLogger(lg)
-	js.SetLogger(lg)
 	clipboard.SetLogger(lg)
 	jsonrepair.SetLogger(lg)
 	diff.SetLogger(lg)

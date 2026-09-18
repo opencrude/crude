@@ -8,7 +8,7 @@ import (
 	"crude/tui/theme"
 )
 
-func TestComposeGeometryStaysWithinNarrowRowsGPT56(t *testing.T) {
+func TestComposeGeometryStaysWithinNarrowRows(t *testing.T) {
 	const padLR = 2
 	raw := "界🧑‍💻abcdefghijklmnopqrstuvwxyz"
 	rawW := rendering.VisibleWidth(raw)
@@ -67,7 +67,7 @@ func TestComposeGeometryStaysWithinNarrowRowsGPT56(t *testing.T) {
 	}
 }
 
-func TestComposeDoesNotRestoreLegacyTwentyColumnFloorGPT56(t *testing.T) {
+func TestComposeDoesNotRestoreLegacyTwentyColumnFloor(t *testing.T) {
 	p := ComposeParams{InnerW: 5, PadLR: 0, Theme: theme.DefaultDark()}
 	got := rendering.VisibleWidth(ComposeRow(p, 0, 0, "a very long row", chatprojection.PaneLineInfo{}))
 	if got != 5 {
@@ -75,7 +75,7 @@ func TestComposeDoesNotRestoreLegacyTwentyColumnFloorGPT56(t *testing.T) {
 	}
 }
 
-func TestComposeRowsFitEffectiveRealContentWidthGPT56(t *testing.T) {
+func TestComposeRowsFitEffectiveRealContentWidth(t *testing.T) {
 	const requestedPad = 2
 	raw := "界🧑‍💻abcdefghijklmnopqrstuvwxyz"
 

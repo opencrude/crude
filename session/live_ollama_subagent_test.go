@@ -99,7 +99,7 @@ func newLiveOllamaSubAgentRunner(t *testing.T) (*Session, *SubAgentRunner, *live
 	return s, runner, sender
 }
 
-func TestZZLiveOllamaSubAgentWaitTrueReturnsTerminalResult(t *testing.T) {
+func TestLiveOllamaSubAgentWaitTrueReturnsTerminalResult(t *testing.T) {
 	s, runner, sender := newLiveOllamaSubAgentRunner(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 120*time.Second)
 	defer cancel()
@@ -156,7 +156,7 @@ func TestZZLiveOllamaSubAgentWaitTrueReturnsTerminalResult(t *testing.T) {
 	}
 }
 
-func TestZZLiveOllamaAsyncSubAgentSurvivesParentContextEnd(t *testing.T) {
+func TestLiveOllamaAsyncSubAgentSurvivesParentContextEnd(t *testing.T) {
 	_, runner, _ := newLiveOllamaSubAgentRunner(t)
 	parentCtx, cancelParent := context.WithCancel(t.Context())
 	result, err := runner.RunSubAgent(parentCtx, map[string]any{

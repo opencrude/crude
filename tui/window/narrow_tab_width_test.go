@@ -2,7 +2,7 @@ package window
 
 import "testing"
 
-func TestTabWidthsStayInsideNarrowAvailableWidthGPT56(t *testing.T) {
+func TestTabWidthsStayInsideNarrowAvailableWidth(t *testing.T) {
 	for _, width := range []int{-4, 0, 1, 2, 5, 8, 12, 19} {
 		w := newTestWindow()
 		w.SetWidth(width)
@@ -35,7 +35,7 @@ func TestTabWidthsStayInsideNarrowAvailableWidthGPT56(t *testing.T) {
 	}
 }
 
-func TestSingleTabShrinksBelowPreferredMinimumGPT56(t *testing.T) {
+func TestSingleTabShrinksBelowPreferredMinimum(t *testing.T) {
 	w := newTestWindow()
 	w.SetWidth(5)
 	w.OpenTab("alpha", "", true)
@@ -54,7 +54,7 @@ func TestSingleTabShrinksBelowPreferredMinimumGPT56(t *testing.T) {
 	}
 }
 
-func TestTabIdealWidthUsesCanonicalGraphemeColumnsGPT56(t *testing.T) {
+func TestTabIdealWidthUsesCanonicalGraphemeColumns(t *testing.T) {
 	w := newTestWindow()
 	w.SetWidth(80)
 	w.OpenTab("界🧑‍💻", "", true)

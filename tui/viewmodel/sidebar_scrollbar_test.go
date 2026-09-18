@@ -11,9 +11,9 @@ import (
 	"crude/tui/screens/shelltree"
 )
 
-// TestZZProbeSidebarScrollbarDrag drives a real drag on the sidebar tree
+// TestSidebarScrollbarDrag drives a real drag on the sidebar tree
 // scrollbar through the root host and verifies the tree content scrolls.
-func TestZZProbeSidebarScrollbarDrag(t *testing.T) {
+func TestSidebarScrollbarDrag(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 100, 30
 	app.renderShellToSurface()

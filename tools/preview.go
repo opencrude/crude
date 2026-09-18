@@ -219,12 +219,6 @@ var previewRegistry = map[string]PreviewSpec{
 			return name
 		},
 	},
-	"run_javascript": {
-		Keys: []string{"code"},
-		Format: func(name string, p map[string]string) string {
-			return name
-		},
-	},
 	"reply": {
 		Keys: []string{"content"},
 		Format: func(name string, p map[string]string) string {

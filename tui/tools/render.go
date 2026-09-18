@@ -96,8 +96,6 @@ func resultSummary(tool, content, target, dur string) string {
 		return execResultSummary(content, target, dur)
 	case "web_fetch":
 		return webFetchResultSummary(content, target, dur)
-	case "run_javascript":
-		return jsResultSummary(content, target, dur)
 	case "async_execute_command":
 		return asyncExecResultSummary(content, target, dur)
 	case "check_async_command":
@@ -399,24 +397,6 @@ func webFetchResultSummary(content, target, duration string) string {
 	charCount := utf8.RuneCountInString(content)
 	label := "Fetched " + rendering.TruncateLine(target, 50)
 	label += fmt.Sprintf(" — %s chars", rendering.FormatCount(charCount))
-	if duration != "" {
-		label += " " + duration
-	}
-	return label
-}
-
-// ── run_javascript ──────────────────────────────────────────
-
-func jsResultSummary(content, target, duration string) string {
-	if strings.HasPrefix(content, "JavaScript error") {
-		return "" // let default handle error
-	}
-
-	firstLine := strings.SplitN(content, "\n", 2)[0]
-	label := "Ran JS"
-	if firstLine != "" {
-		label += " — " + rendering.TruncateLine(firstLine, 40)
-	}
 	if duration != "" {
 		label += " " + duration
 	}

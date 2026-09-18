@@ -15,7 +15,7 @@ import (
 	"crude/workspace"
 )
 
-func TestAsyncClipboardBridgeAndUpdateReturnBeforeSlowWrite4f7c(t *testing.T) {
+func TestAsyncClipboardBridgeAndUpdateReturnBeforeSlowWrite(t *testing.T) {
 	app := newTestApp(t)
 	t.Cleanup(func() { resetAsyncIOStateForTest(app) })
 
@@ -154,7 +154,7 @@ func TestClipboardCopyThenPasteExecutesInRequestOrder(t *testing.T) {
 	}
 }
 
-func TestAsyncClipboardPasteKeepsOwnerAndDropsOlderResult4f7c(t *testing.T) {
+func TestAsyncClipboardPasteKeepsOwnerAndDropsOlderResult(t *testing.T) {
 	app := newTestApp(t)
 	t.Cleanup(func() { resetAsyncIOStateForTest(app) })
 
@@ -257,7 +257,7 @@ func TestAsyncClipboardPasteKeepsOwnerAndDropsOlderResult4f7c(t *testing.T) {
 	}
 }
 
-func TestAsyncClipboardImageResultDoesNotCrossSessions4f7c(t *testing.T) {
+func TestAsyncClipboardImageResultDoesNotCrossSessions(t *testing.T) {
 	app := newTestApp(t)
 	t.Cleanup(func() { resetAsyncIOStateForTest(app) })
 
@@ -351,7 +351,7 @@ func TestClipboardImagePersistenceRunsOutsideUpdate(t *testing.T) {
 	}
 }
 
-func TestAsyncDirectoryUpdateReturnsPromptlyAndDropsStaleResult4f7c(t *testing.T) {
+func TestAsyncDirectoryUpdateReturnsPromptlyAndDropsStaleResult(t *testing.T) {
 	app := newTestApp(t)
 	t.Cleanup(func() { resetAsyncIOStateForTest(app) })
 
@@ -441,7 +441,7 @@ func TestAsyncDirectoryUpdateReturnsPromptlyAndDropsStaleResult4f7c(t *testing.T
 	}
 }
 
-func TestAsyncDirectoryInitialOpenReturnsBeforeSlowRead4f7c(t *testing.T) {
+func TestAsyncDirectoryInitialOpenReturnsBeforeSlowRead(t *testing.T) {
 	app := newFullTestApp(t)
 	t.Cleanup(func() { resetAsyncIOStateForTest(app) })
 
@@ -505,7 +505,7 @@ func TestAsyncDirectoryInitialOpenReturnsBeforeSlowRead4f7c(t *testing.T) {
 	}
 }
 
-func TestAsyncDirectoryErrorRestoresPreviousListing4f7c(t *testing.T) {
+func TestAsyncDirectoryErrorRestoresPreviousListing(t *testing.T) {
 	app := newTestApp(t)
 	t.Cleanup(func() { resetAsyncIOStateForTest(app) })
 
