@@ -6,6 +6,17 @@ import (
 	"testing"
 )
 
+func TestSingleRuneCellsUseCharWithoutAllocatingContent(t *testing.T) {
+	ordinary := NewCell('x', NoColor, NoColor, 0)
+	if ordinary.Char != 'x' || ordinary.Content != "" || ordinary.Width != 1 {
+		t.Fatalf("ordinary cell=%+v", ordinary)
+	}
+	cluster := NewClusterCell("e\u0301", 1, NoColor, NoColor, 0)
+	if cluster.Char != 'e' || cluster.Content != "e\u0301" {
+		t.Fatalf("cluster cell=%+v", cluster)
+	}
+}
+
 func TestColorConstructors(t *testing.T) {
 	tc := NewTrueColor(1, 2, 3)
 	if tc.Type != ColorTrueColor || tc.R != 1 || tc.G != 2 || tc.B != 3 {

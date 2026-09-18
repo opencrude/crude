@@ -64,7 +64,7 @@ func chatAreaText(app *App) string {
 func TestTransition_EditorCloseRestoresChat(t *testing.T) {
 	app := newTransitionApp(t)
 	t.Cleanup(func() {
-		app.Workspace.Close()
+		app.Close()
 	})
 	app.paintShellFrame()
 
@@ -108,7 +108,7 @@ func TestTransition_EditorCloseRestoresChat(t *testing.T) {
 func TestTransition_EditorCloseShowsCleanLauncher(t *testing.T) {
 	app := newTransitionApp(t)
 	t.Cleanup(func() {
-		app.Workspace.Close()
+		app.Close()
 	})
 	app.AgentMgr.ClearActive()
 	app.AgentMgr.Remove("agent-1")
@@ -166,7 +166,7 @@ func TestTransition_EditorCloseShowsCleanLauncher(t *testing.T) {
 func TestTransition_TabSwitchEditorToAgentRestoresChat(t *testing.T) {
 	app := newTransitionApp(t)
 	t.Cleanup(func() {
-		app.Workspace.Close()
+		app.Close()
 	})
 	app.paintShellFrame()
 	if !app.shellSlotActive(shellChatSlot) {

@@ -1,6 +1,6 @@
 # Editor Gutter and Non-Disruptive Autosave
 
-> Status: IN PROGRESS - design and implementation plan, 2026-09-17. Research and defect diagnosis complete; feature implementation has not started.
+> Status: LANDED - implemented and acceptance-validated 2026-09-17. Structured Git hunks, native gutter interaction, revision-aware saves, LSP/watcher ordering, shared mutation leases, and opt-in autosave are the authoritative product paths.
 
 ## 1. Outcome and Scope
 
@@ -159,13 +159,27 @@ revision, repository baseline, and relevant diff options. Compute off the UI thr
 with latest-wins bounded work. Discard stale results at application time.
 
 Invalidate annotations for changed text, not save acknowledgements or repaint.
-Map unaffected hunks exactly through committed document edits so typing in one
-place does not blink the entire file's change rail. Suppress ambiguous affected
-markers until recomputed, retaining gutter width and an inspectable pending state.
-Do not attach old line positions to new text. Full invalidation is appropriate for
-an unknown replacement or baseline change, not every keystroke. Schedule latest
-work at a bounded cadence during continuous editing as well as after a quiet delay;
-do not let a permanently reset debounce starve annotations indefinitely.
+Map hunks exactly through committed document edits so typing in one place does not
+blink the entire file's change rail, and never drop the marker of a region the
+keystroke landed in: it is still changed relative to HEAD, and only an
+authoritative refresh may replace the projection. An annotation that arrives after
+further edits is mapped forward from the revision it was computed at instead of
+being attached to newer text, so the async result and the live edits do not fight
+over the same rail. Full invalidation is appropriate for an unknown replacement or
+baseline change, not every keystroke. Recompute after a quiet delay (400 ms) so a
+typing burst coalesces into one refresh, and bound the hold (2 s) during
+uninterrupted typing so the projection cannot go stale indefinitely. A transient
+Git failure keeps the last projection instead of blanking the rail.
+
+Waiting for the refresh before showing anything is not acceptable either: the rail
+must answer the keystroke. The editor therefore keeps one subordinate, paint-only
+claim layer for lines it just touched. It is not a second authority: it holds no
+old text, it is invisible to inspection and navigation (`GitHunks`/`GitHunkAtLine`
+answer from the authoritative projection only), it never covers a line an
+authoritative hunk owns, and every arriving annotation discards it wholesale. Its
+flavour is structural — the line the edit started on reads as edited, lines the
+edit created with newlines read as added — and the authoritative refresh is what
+refines that into real HEAD-relative hunks.
 
 Cache HEAD content by blob identity. Separate fast line-change projection from
 slow blame retrieval so blame never delays marker correctness. Active views get
@@ -556,13 +570,36 @@ as current behavior before its acceptance gates pass.
 
 ## 13. Completion Checklist
 
-- [ ] Exact structured annotation replaces the broken rendered-diff parser.
-- [ ] Deletions, current baseline, stale results, and external commits are covered.
-- [ ] Gutter geometry, appearance, inspection, selection, and keyboard access pass.
-- [ ] Manual save and save-and-close use the one asynchronous save transaction.
-- [ ] Shared buffers have one text/savepoint authority; no detached reload path.
-- [ ] LSP ordering and exact watcher reconciliation pass race/failure tests.
-- [ ] Autosave is opt-in, setting changes are live, and automatic saves are text-only.
-- [ ] Conflicts, inactive buffers, disable, close/discard, rename, restore, and shutdown pass.
-- [ ] Performance, cross-platform, visual, lint, build, tests, and documentation gates pass.
-- [ ] Removed legacy paths and supported filesystem/terminal limitations are documented.
+- [x] Exact structured annotation replaces the broken rendered-diff parser.
+- [x] Deletions, current baseline, stale results, and external commits are covered.
+- [x] Gutter geometry, appearance, inspection, selection, and keyboard access pass.
+- [x] Manual save and save-and-close use the one asynchronous save transaction.
+- [x] Shared buffers have one text/savepoint authority; no detached reload path.
+- [x] LSP ordering and exact watcher reconciliation pass race/failure tests.
+- [x] Autosave is opt-in, setting changes are live, and automatic saves are text-only.
+- [x] Conflicts, inactive buffers, disable, close/discard, rename, restore, and shutdown pass.
+- [x] Performance, cross-platform, visual, lint, build, tests, and documentation gates pass.
+- [x] Removed legacy paths and supported filesystem/terminal limitations are documented.
+
+## 14. Post-Landing Audit Fixes (2026-09-18)
+
+An independent pass over the landed save paths found three ways the §10 lifecycle
+table could still be violated. Each is fixed and now carries a regression test that
+fails against the pre-fix behavior:
+
+- **Rename during a committed save.** The save acknowledgement was resolved by the
+  path captured at request time, so a tree rename that landed first made the tab
+  unreachable: the buffer stayed dirty against a stale disk baseline and the next
+  save reported a false "file changed on disk" conflict. Acknowledgements now
+  resolve by buffer lifetime (`editorTabByBufferID` in
+  `tui/viewmodel/editor_tabs.go`), with the request path as a preference only.
+- **Cancel close left no autosave deadline.** The dirty-close prompt cancelled the
+  pending After Delay deadline and cancelling the prompt never restored it, so a
+  dirty buffer could sit with no scheduled save until the next keystroke.
+  `dirtyPromptCancel` now re-arms normal eligible scheduling without duplicates.
+- **Bulk close discarded dirty buffers.** "Close others" and "Close to the right"
+  force-closed every tab, losing unsaved work with no confirmation. Bulk closes now
+  stop at the first dirty tab, open the unsaved-changes prompt, and resume the
+  remaining walk only after the user chooses save or discard; cancel aborts it.
+
+Coverage: `tui/viewmodel/editor_save_test.go` and `tui/viewmodel/dirty_prompt_test.go`.

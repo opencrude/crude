@@ -152,6 +152,7 @@ func (c *Client) Initialize(ctx context.Context, enableSnippets bool) error {
 
 	// Store server capabilities
 	c.capabilities = result.Capabilities
+	c.cacheDocumentSaveCapabilities()
 
 	c.offsetEncoding = parseOffsetEncoding(result.Capabilities.PositionEncoding, result.OffsetEncoding)
 
@@ -285,6 +286,49 @@ func (c *Client) NotifyDidCloseTextDocument(ctx context.Context, uri string) err
 }
 
 // NotifyDidChangeTextDocument notifies the server that a document was changed.
+func (c *Client) NotifyDocumentSave(ctx context.Context, uri, text string, reason int, before bool) error {
+	if !c.initialized.Load() {
+		return fmt.Errorf("client not initialized")
+	}
+	params := map[string]any{fieldTextDocument: map[string]any{fieldURI: uri}}
+	if before {
+		if !c.willSave {
+			return nil
+		}
+		params["reason"] = reason
+		return c.conn.Notify(ctx, "textDocument/willSave", params)
+	}
+	if !c.didSave {
+		return nil
+	}
+	if c.didSaveText {
+		params["text"] = text
+	}
+	return c.conn.Notify(ctx, MethodTextDocumentDidSave, params)
+}
+
+func (c *Client) cacheDocumentSaveCapabilities() {
+	raw, err := json.Marshal(c.capabilities.TextDocumentSync)
+	if err != nil {
+		return
+	}
+	var options map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &options); err != nil {
+		return
+	}
+	c.willSave = string(options["willSave"]) == "true"
+	save := options["save"]
+	c.didSave = len(save) > 0 && string(save) != "false" && string(save) != "null"
+	if c.didSave && string(save) != "true" {
+		var detail struct {
+			IncludeText bool `json:"includeText"`
+		}
+		if json.Unmarshal(save, &detail) == nil {
+			c.didSaveText = detail.IncludeText
+		}
+	}
+}
+
 func (c *Client) NotifyDidChangeTextDocument(ctx context.Context, uri string, version int, changes []protocol.TextDocumentContentChangeEvent) error {
 	if !c.initialized.Load() {
 		return fmt.Errorf("client not initialized")
@@ -642,9 +686,9 @@ func (c *Client) makeClientCapabilities(enableSnippets bool) map[string]any {
 	return map[string]any{
 		fieldTextDocument: map[string]any{
 			"synchronization": map[string]any{
-				fieldDynamicRegistration: true,
+				fieldDynamicRegistration: false,
 				"willSave":               true,
-				"willSaveWaitUntil":      true,
+				"willSaveWaitUntil":      false,
 				"didSave":                true,
 			},
 			"completion": map[string]any{

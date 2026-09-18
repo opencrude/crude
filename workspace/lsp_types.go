@@ -46,6 +46,7 @@ type LSPClient interface {
 	OpenFile(context.Context, string, string, string)
 	UpdateFile(context.Context, string, string)
 	CloseFile(context.Context, string)
+	NotifySave(context.Context, string, string, int, bool)
 	NotifyWatchedFilesChanged(context.Context, string, int)
 	SyncFileFromDisk(context.Context, string, int)
 	RequestDefinition(context.Context, string, int, int) []LSPLocation

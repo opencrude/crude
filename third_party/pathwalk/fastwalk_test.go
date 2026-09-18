@@ -1492,7 +1492,7 @@ func init() {
 		}
 		benchDir = &value
 	} else {
-		benchDir = flag.String("benchdir", runtime.GOROOT(), "The directory to scan for BenchmarkFastWalk")
+		benchDir = flag.String("benchdir", "", "The directory to scan for BenchmarkFastWalk (default: go env GOROOT)")
 	}
 }
 
@@ -1502,17 +1502,25 @@ func benchmarkFastWalk(b *testing.B, conf *fastwalk.Config,
 	adapter func(fs.WalkDirFunc) fs.WalkDirFunc) {
 
 	b.ReportAllocs()
+	root := *benchDir
+	if root == "" {
+		out, err := exec.Command("go", "env", "GOROOT").Output()
+		if err != nil {
+			b.Fatal(err)
+		}
+		root = strings.TrimSpace(string(out))
+	}
 	if adapter != nil {
 		walkFn := noopWalkFunc
 		for i := 0; i < b.N; i++ {
-			err := fastwalk.Walk(conf, *benchDir, adapter(walkFn))
+			err := fastwalk.Walk(conf, root, adapter(walkFn))
 			if err != nil {
 				b.Fatal(err)
 			}
 		}
 	} else {
 		for i := 0; i < b.N; i++ {
-			err := fastwalk.Walk(conf, *benchDir, noopWalkFunc)
+			err := fastwalk.Walk(conf, root, noopWalkFunc)
 			if err != nil {
 				b.Fatal(err)
 			}

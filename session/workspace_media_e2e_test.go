@@ -569,7 +569,7 @@ func TestCapabilityEnabledMediaReturnsStructuredAttachment(t *testing.T) {
 			}
 			defer sess.Close()
 			sess.SetWorkDir(project)
-			result, err := sess.ExecuteToolForTest(nil, "read_file", map[string]any{"path": testCase.fixture.name})
+			result, err := sess.ExecuteToolForTest(context.Background(), "read_file", map[string]any{"path": testCase.fixture.name})
 			if err != nil {
 				t.Fatalf("read_file: %v", err)
 			}
@@ -603,7 +603,7 @@ func TestEnabledModalityRejectedWhenProtocolCannotCarryIt(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer sess.Close()
-	result, err := sess.ExecuteToolForTest(nil, "read_file", map[string]any{"path": path})
+	result, err := sess.ExecuteToolForTest(context.Background(), "read_file", map[string]any{"path": path})
 	if err == nil || !strings.Contains(result.Content, `protocol "anthropic" cannot carry audio attachments`) {
 		t.Fatalf("protocol refusal = %q, err=%v", result.Content, err)
 	}
@@ -625,7 +625,7 @@ func TestBinaryEditSafetyUnaffectedByReadCapability(t *testing.T) {
 	}
 	defer sess.Close()
 	sess.SetWorkDir(project)
-	result, err := sess.ExecuteToolForTest(nil, "edit_file", map[string]any{
+	result, err := sess.ExecuteToolForTest(context.Background(), "edit_file", map[string]any{
 		"path": mediaPNG.name, "old_string": "PNG", "new_string": "BAD",
 	})
 	if err == nil || !strings.Contains(result.Content, "binary file") {
@@ -654,7 +654,7 @@ func TestMediaReadPreservesSymlinkAndSizeSafety(t *testing.T) {
 	}
 	defer sess.Close()
 	sess.SetWorkDir(project)
-	result, err := sess.ExecuteToolForTest(nil, "read_file", map[string]any{"path": link})
+	result, err := sess.ExecuteToolForTest(context.Background(), "read_file", map[string]any{"path": link})
 	if err == nil || !strings.Contains(result.Content, "refusing to follow symlink") {
 		t.Fatalf("media symlink was followed: content=%q err=%v", result.Content, err)
 	}
@@ -672,7 +672,7 @@ func TestMediaReadPreservesSymlinkAndSizeSafety(t *testing.T) {
 	if err := file.Close(); err != nil {
 		t.Fatal(err)
 	}
-	result, err = sess.ExecuteToolForTest(nil, "read_file", map[string]any{"path": large})
+	result, err = sess.ExecuteToolForTest(context.Background(), "read_file", map[string]any{"path": large})
 	if err == nil || !strings.Contains(result.Content, "file too large") {
 		t.Fatalf("oversized media was accepted: content=%q err=%v", result.Content, err)
 	}

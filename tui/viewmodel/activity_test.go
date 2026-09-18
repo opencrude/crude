@@ -259,8 +259,7 @@ func TestNewTerminalRowActivatesOnSingleClick(t *testing.T) {
 		t.Fatal("New Terminal row not found in the Terminals panel")
 	}
 
-	m, cmd := app.dispatchMouseClick(tea.MouseClickMsg{X: rect.X + 2, Y: row, Button: tea.MouseLeft})
-	app = m.(*App)
+	_, cmd := app.dispatchMouseClick(tea.MouseClickMsg{X: rect.X + 2, Y: row, Button: tea.MouseLeft})
 	if cmd != nil {
 		cmd()
 	}

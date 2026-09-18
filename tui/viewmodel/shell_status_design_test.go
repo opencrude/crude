@@ -23,7 +23,7 @@ func TestShellStatusUsesSharedRailsAndOmitsZeroNoise(t *testing.T) {
 	app.SessionsByAgent = make(map[string]*workspace.Session)
 	app.SessionsByAgent["root"] = session
 	app.AgentMgr.Get("root").Model = "glm-5.3"
-	app.Workspace.Status.SetAgent(types.AgentStatusSnapshot{Ref: types.ResourceRef{Kind: types.ResourceAgent, ID: "root"}, Label: "Main Agent", Phase: types.AgentIdle, Detail: "Idle", ModelID: "glm-5.3"})
+	app.Status.SetAgent(types.AgentStatusSnapshot{Ref: types.ResourceRef{Kind: types.ResourceAgent, ID: "root"}, Label: "Main Agent", Phase: types.AgentIdle, Detail: "Idle", ModelID: "glm-5.3"})
 	app.RecordAgentUsage("root", map[string]any{
 		"request_id": "root/1/1", "prompt": 71500, "completion": 177,
 		"prompt_cached": 14300, "cache_read_known": true,
@@ -130,7 +130,7 @@ func TestEditorAndGitFactsLiveInHeaderNotFooterHints(t *testing.T) {
 	}
 	defer ed.Close()
 	app.EditorState.Editor, app.EditorState.ActiveView = ed, path
-	ed.SetGitAnnotation(nil, []editor.GitBlameLine{{Line: 1, Hash: "abcdef123456", ShortHash: "abcdef1", Author: "Ada", When: time.Now().Add(-2 * time.Hour), Subject: "test"}})
+	ed.SetGitAnnotation(ed.Revision(), nil, []editor.GitBlameLine{{Line: 1, Hash: "abcdef123456", ShortHash: "abcdef1", Author: "Ada", When: time.Now().Add(-2 * time.Hour), Subject: "test"}}, false)
 	app.sourceControl.SetSnapshot(workspace.GitSnapshot{Branch: "main", Ahead: 1, Behind: 2, Changes: []workspace.GitChange{{Path: "one"}, {Path: "two"}}})
 	app.paintShellFrame()
 	header, footer := rowText(app, 0), rowText(app, app.height-1)

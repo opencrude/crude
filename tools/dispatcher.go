@@ -292,7 +292,7 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
 			}
-			if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+			if err := fileio.WriteFile(path, []byte(content), 0o644); err != nil {
 				result = ToolResult{Content: "Error: " + err.Error()}
 				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
@@ -346,7 +346,7 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 				break
 			}
 			replaced := strings.ReplaceAll(orig, oldString, newString)
-			if err := os.WriteFile(path, []byte(replaced), 0644); err != nil {
+			if err := fileio.WriteFile(path, []byte(replaced), 0o644); err != nil {
 				result = ToolResult{Content: "Error: " + err.Error()}
 				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
@@ -370,7 +370,10 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 				result = ToolResult{Content: "Error: mutation receipt requires an editor"}
 				break
 			}
-			if err := os.Remove(path); err != nil {
+			unlock := fileio.LockTreeMutation()
+			err := os.Remove(path)
+			unlock()
+			if err != nil {
 				result = ToolResult{Content: "Error: " + err.Error()}
 				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
@@ -395,16 +398,20 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 				result = ToolResult{Content: "Error: mutation receipt requires an editor"}
 				break
 			}
+			unlock := fileio.LockTreeMutation()
 			if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+				unlock()
 				result = ToolResult{Content: "Error: " + err.Error()}
 				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
 			}
 			if err := os.Rename(source, dest); err != nil {
+				unlock()
 				result = ToolResult{Content: "Error: " + err.Error()}
 				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
 			}
+			unlock()
 			result = ToolResult{Content: fmt.Sprintf("Moved %s → %s", source, dest)}
 		}
 		lg.Info("TOOL", "result", "tool", tool, "source", source, "destination", dest, "latency_ms", time.Since(start).Milliseconds())
@@ -425,30 +432,36 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 				result = ToolResult{Content: "Error: mutation receipt requires an editor"}
 				break
 			}
+			unlock := fileio.LockTreeMutation()
 			in, err := os.Open(source)
 			if err != nil {
+				unlock()
 				result = ToolResult{Content: "Error: " + err.Error()}
 				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
 			}
 			defer in.Close()
 			if err := os.MkdirAll(filepath.Dir(dest), 0755); err != nil {
+				unlock()
 				result = ToolResult{Content: "Error: " + err.Error()}
 				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
 			}
 			out, err := os.Create(dest)
 			if err != nil {
+				unlock()
 				result = ToolResult{Content: "Error: " + err.Error()}
 				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
 			}
 			defer out.Close()
 			if _, err := io.Copy(out, in); err != nil {
+				unlock()
 				result = ToolResult{Content: "Error: " + err.Error()}
 				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
 				break
 			}
+			unlock()
 			result = ToolResult{Content: fmt.Sprintf("Copied %s → %s", source, dest)}
 		}
 		lg.Info("TOOL", "result", "tool", tool, "source", source, "destination", dest, "latency_ms", time.Since(start).Milliseconds())

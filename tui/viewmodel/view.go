@@ -73,6 +73,7 @@ func (m *App) newTerminalView(output string) tea.View {
 	v := tea.NewView(output)
 	v.AltScreen = true
 	v.MouseMode = tea.MouseModeAllMotion
+	v.ReportFocus = true
 	v.WindowTitle = m.terminalIdentity()
 	v.IconName = v.WindowTitle
 	return v
@@ -825,10 +826,9 @@ func (m *App) contextualHelpSegments() (prefix string, segs []ui.HintSegment) {
 	}
 	if m.EditorState.ActiveView != "" && m.EditorState.Editor != nil && m.EditorState.Editor.IsOpen() {
 		ed := m.EditorState.Editor
+		// Title() already carries the unsaved marker as a prefix; appending a
+		// second dot here produced "name ● ●".
 		title := ed.Title()
-		if ed.Modified() {
-			title += " ●"
-		}
 		prefix = fmt.Sprintf(
 			"%s  %d:%d  %dL",
 			title,

@@ -21,7 +21,7 @@ func TestChatGPTSignInResultUpdatesOpenSettingsWindow(t *testing.T) {
 	app.Logger = noopLogger{}
 	// Seed the workspace with a chatgpt provider so the settings form shows the
 	// OAuth status row.
-	app.Workspace.SetAppDefaults(ttypes.AppSettings{
+	app.SetAppDefaults(ttypes.AppSettings{
 		ActiveProvider: "chatgpt",
 		Providers:      map[string]ttypes.ProviderConfig{"chatgpt": {}},
 	})
@@ -69,7 +69,7 @@ func TestChatGPTSignInResultUpdatesOpenSettingsWindow(t *testing.T) {
 func TestSignInThenSwitchBackDoesNotCorruptConfig(t *testing.T) {
 	app := newTestApp(t)
 	app.Logger = noopLogger{}
-	app.Workspace.SetAppDefaults(ttypes.AppSettings{
+	app.SetAppDefaults(ttypes.AppSettings{
 		ActiveProvider: "opencode-go",
 		Providers: map[string]ttypes.ProviderConfig{
 			"opencode-go": {Model: "deepseek-v4-flash", APIKey: "sk-opencode"},

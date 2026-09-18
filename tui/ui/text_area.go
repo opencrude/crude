@@ -999,15 +999,19 @@ type textAreaEngine struct {
 	// copy-on-release only fires for a real drag: a press (SetSelection) clears
 	// it, motion (UpdateSelectionEnd) sets it. Both the component pointer path
 	// and the legacy composer path funnel through these two calls.
-	dragMoved     bool
-	selAnchor     int
-	selEnd        int
-	lastInputTime time.Time
-	frame         int
-	textWidth     int
-	atomicRanges  []AtomicRange
-	undo          []textAreaSnapshot
-	redo          []textAreaSnapshot
+	dragMoved         bool
+	selAnchor         int
+	selEnd            int
+	lastInputTime     time.Time
+	frame             int
+	textWidth         int
+	atomicRanges      []AtomicRange
+	undo              []textAreaSnapshot
+	redo              []textAreaSnapshot
+	contentRevision   uint64
+	wrapCacheRevision uint64
+	wrapCacheWidth    int
+	wrapCacheCount    int
 }
 
 type textAreaSnapshot struct {
@@ -1016,7 +1020,11 @@ type textAreaSnapshot struct {
 	selecting           bool
 }
 
-func newTextAreaEngine() *textAreaEngine { return &textAreaEngine{buf: [][]rune{{}}} }
+func newTextAreaEngine() *textAreaEngine {
+	return &textAreaEngine{buf: [][]rune{{}}, wrapCacheRevision: ^uint64(0)}
+}
+
+func (e *textAreaEngine) touchContent() { e.contentRevision++ }
 
 // beginSelectionIfShift starts or extends a selection when Shift is held.
 // When no selection is active and Shift is pressed, it anchors at the
@@ -1316,6 +1324,7 @@ func (e *textAreaEngine) SetValue(s string) {
 	e.selAnchor, e.selEnd = 0, 0
 	e.undo = nil
 	e.redo = nil
+	e.touchContent()
 }
 
 func (e *textAreaEngine) InsertString(s string) {
@@ -1357,6 +1366,7 @@ func (e *textAreaEngine) Clear() {
 	e.selEnd = 0
 	e.undo = nil
 	e.redo = nil
+	e.touchContent()
 }
 
 func (e *textAreaEngine) Len() int {
@@ -1439,6 +1449,7 @@ func (e *textAreaEngine) deleteRange(start, end int) {
 	if start >= end {
 		return
 	}
+	defer e.touchContent()
 	sLine, sCol := e.flatToLineCol(start)
 	eLine, eCol := e.flatToLineCol(end)
 	if sLine == eLine {
@@ -1476,6 +1487,9 @@ func (e *textAreaEngine) VisualLineCount(textW int) int {
 	if textW < 1 {
 		textW = 1
 	}
+	if e.wrapCacheRevision == e.contentRevision && e.wrapCacheWidth == textW {
+		return e.wrapCacheCount
+	}
 	count := 0
 	for _, l := range e.buf {
 		segments := rendering.WordWrap(string(l), textW)
@@ -1484,6 +1498,7 @@ func (e *textAreaEngine) VisualLineCount(textW int) int {
 	if count < 1 {
 		count = 1
 	}
+	e.wrapCacheRevision, e.wrapCacheWidth, e.wrapCacheCount = e.contentRevision, textW, count
 	return count
 }
 
@@ -1567,6 +1582,7 @@ func (e *textAreaEngine) restore(snapshot textAreaSnapshot) {
 	}
 	e.setCursorFlat(snapshot.cursor)
 	e.selAnchor, e.selEnd, e.selecting = snapshot.anchor, snapshot.end, snapshot.selecting
+	e.touchContent()
 }
 
 func (e *textAreaEngine) Undo() bool {
@@ -1761,6 +1777,7 @@ func (e *textAreaEngine) lineColToFlat(line, col int) int {
 func (e *textAreaEngine) insertRuneAt(pos int, r rune) {
 	if len(e.buf) == 0 {
 		e.buf = [][]rune{{r}}
+		e.touchContent()
 		return
 	}
 	line, col := e.flatToLineCol(pos)
@@ -1772,12 +1789,14 @@ func (e *textAreaEngine) insertRuneAt(pos int, r rune) {
 	newLine[col] = r
 	copy(newLine[col+1:], e.buf[line][col:])
 	e.buf[line] = newLine
+	e.touchContent()
 }
 
 func (e *textAreaEngine) deleteRuneAt(pos int) {
 	if pos <= 0 {
 		return
 	}
+	defer e.touchContent()
 	line, col := e.flatToLineCol(pos)
 	if col > 0 {
 		newLine := make([]rune, len(e.buf[line])-1)
@@ -1799,6 +1818,7 @@ func (e *textAreaEngine) deleteForwardAt(pos int) {
 	if line >= len(e.buf) {
 		return
 	}
+	defer e.touchContent()
 	lineLen := len(e.buf[line])
 	if col < lineLen {
 		newLine := make([]rune, lineLen-1)
@@ -1833,21 +1853,14 @@ func (e *textAreaEngine) splitLineAt(line, col int) {
 	newLines[line+1] = right
 	copy(newLines[line+2:], e.buf[line+1:])
 	e.buf = newLines
+	e.touchContent()
 }
 
 func (e *textAreaEngine) visualLineCount() int {
 	if e.textWidth < 1 {
 		return len(e.buf)
 	}
-	count := 0
-	for _, l := range e.buf {
-		segs := rendering.WordWrap(string(l), e.textWidth)
-		count += len(segs)
-	}
-	if count < 1 {
-		count = 1
-	}
-	return count
+	return e.VisualLineCount(e.textWidth)
 }
 
 func (e *textAreaEngine) cursorVisualInfo() (visualLine, visualCol int) {

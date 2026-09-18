@@ -14,15 +14,6 @@ import (
 	"github.com/aymanbagabas/go-udiff"
 )
 
-// GitLineKind is the HEAD-vs-buffer status of one editor line.
-type GitLineKind uint8
-
-const (
-	GitLineUnchanged GitLineKind = iota
-	GitLineAdded
-	GitLineModified
-)
-
 // GitBlameLine is porcelain blame for one 1-based file line.
 type GitBlameLine struct {
 	Line        int
@@ -36,9 +27,19 @@ type GitBlameLine struct {
 
 // GitFileAnnotation is the editor-local Git projection for one path.
 type GitFileAnnotation struct {
-	Path  string
-	Blame []GitBlameLine
-	Edits []GitLineKind
+	Path       string
+	Blame      []GitBlameLine
+	Hunks      []GitHunk
+	Conflicted bool
+}
+
+// GitHunk is one exact HEAD-to-buffer change. Starts are zero-based line
+// positions; line slices retain their original line endings for inspection.
+type GitHunk struct {
+	OldStart int
+	NewStart int
+	OldLines []string
+	NewLines []string
 }
 
 // AnnotateFile reads blame and HEAD-vs-content line edits for absPath.
@@ -66,17 +67,31 @@ func (s *GitService) AnnotateFile(ctx context.Context, absPath, content string) 
 	annotation := GitFileAnnotation{Path: absPath}
 	head, headErr := s.showHEAD(ctx, root, rel)
 	if headErr == nil {
-		annotation.Edits = lineEdits(head, content)
+		annotation.Hunks = lineHunks(head, content)
 	} else if isUntrackedGitError(headErr) {
-		annotation.Edits = addedEdits(content)
+		annotation.Hunks = addedHunks(content)
+	} else if !s.hasHEAD(ctx, root) {
+		annotation.Hunks = addedHunks(content)
 	} else {
 		return GitFileAnnotation{}, headErr
 	}
+	annotation.Conflicted = s.isConflicted(ctx, root, rel)
 	blame, blameErr := s.blameFile(ctx, root, rel, content)
 	if blameErr == nil {
 		annotation.Blame = blame
 	}
 	return annotation, nil
+}
+
+func (s *GitService) hasHEAD(ctx context.Context, root string) bool {
+	cmd := exec.CommandContext(ctx, "git", "-C", root, "rev-parse", "--verify", "HEAD")
+	return cmd.Run() == nil
+}
+
+func (s *GitService) isConflicted(ctx context.Context, root, rel string) bool {
+	cmd := exec.CommandContext(ctx, "git", "-C", root, "ls-files", "-u", "--", rel)
+	out, err := cmd.Output()
+	return err == nil && strings.TrimSpace(string(out)) != ""
 }
 
 func errorsNewGitUnavailable() error {
@@ -150,74 +165,54 @@ func isUntrackedGitError(err error) bool {
 		strings.Contains(msg, "is outside repository")
 }
 
-func addedEdits(content string) []GitLineKind {
-	n := countLines(content)
-	edits := make([]GitLineKind, n)
-	for i := range edits {
-		edits[i] = GitLineAdded
-	}
-	return edits
+// DocumentHunks compares exact immutable text snapshots without Git or disk I/O.
+func DocumentHunks(before, after string) []GitHunk {
+	return lineHunks(before, after)
 }
 
-func lineEdits(before, after string) []GitLineKind {
-	afterN := countLines(after)
-	edits := make([]GitLineKind, afterN)
+func lineHunks(before, after string) []GitHunk {
 	if before == after {
-		return edits
+		return nil
 	}
-	if strings.TrimRight(before, "\n") == "" {
-		return addedEdits(after)
+	if before == "" {
+		return addedHunks(after)
 	}
-	unified := udiff.Unified("a", "b", before, after)
-	afterIdx := 0
-	pendingDeletes := 0
-	for _, line := range strings.Split(unified, "\n") {
-		if strings.HasPrefix(line, "@@") {
-			pendingDeletes = 0
-			continue
-		}
-		if strings.HasPrefix(line, "---") || strings.HasPrefix(line, "+++") {
-			continue
-		}
-		if line == "" {
-			continue
-		}
-		switch line[0] {
-		case '-':
-			if !strings.HasPrefix(line, "---") {
-				pendingDeletes++
-			}
-		case '+':
-			if strings.HasPrefix(line, "+++") {
-				continue
-			}
-			if afterIdx >= afterN {
-				continue
-			}
-			if pendingDeletes > 0 {
-				edits[afterIdx] = GitLineModified
-				pendingDeletes--
-			} else {
-				edits[afterIdx] = GitLineAdded
-			}
-			afterIdx++
-		case ' ':
-			afterIdx++
-			pendingDeletes = 0
-		}
+	unified, err := udiff.ToUnifiedDiff("a", "b", before, udiff.Lines(before, after), 0)
+	if err != nil {
+		return nil
 	}
-	return edits
+	hunks := make([]GitHunk, 0, len(unified.Hunks))
+	for _, source := range unified.Hunks {
+		hunk := GitHunk{OldStart: max(0, source.FromLine-1), NewStart: max(0, source.ToLine-1)}
+		for _, line := range source.Lines {
+			switch line.Kind {
+			case udiff.Delete:
+				hunk.OldLines = append(hunk.OldLines, line.Content)
+			case udiff.Insert:
+				hunk.NewLines = append(hunk.NewLines, line.Content)
+			}
+		}
+		hunks = append(hunks, hunk)
+	}
+	return hunks
 }
 
-func countLines(text string) int {
+func addedHunks(content string) []GitHunk {
+	if content == "" {
+		return nil
+	}
+	return []GitHunk{{NewLines: splitGitLines(content)}}
+}
+
+func splitGitLines(text string) []string {
 	if text == "" {
-		return 0
+		return nil
 	}
-	n := strings.Count(text, "\n")
-	if !strings.HasSuffix(text, "\n") {
-		n++
+	lines := strings.SplitAfter(text, "\n")
+	if lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
 	}
-	return n
+	return lines
 }
 
 func parseBlamePorcelain(text string) ([]GitBlameLine, error) {

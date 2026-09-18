@@ -358,13 +358,13 @@ type Cell struct {
 
 // NewCell creates a normal-width cell with the given character and style.
 func NewCell(ch rune, fg, bg Color, attr Attrs) Cell {
-	return Cell{Char: ch, Content: string(ch), Width: 1, FG: fg, BG: bg, Attr: attr}
+	return Cell{Char: ch, Width: 1, FG: fg, BG: bg, Attr: attr}
 }
 
 // NewWideCell creates a wide (2-column) cell.
 // The caller is responsible for placing a ContinuationCell at the next column.
 func NewWideCell(ch rune, fg, bg Color, attr Attrs) Cell {
-	return Cell{Char: ch, Content: string(ch), Width: 2, FG: fg, BG: bg, Attr: attr}
+	return Cell{Char: ch, Width: 2, FG: fg, BG: bg, Attr: attr}
 }
 
 // NewClusterCell creates a cell whose visible glyph is a full grapheme

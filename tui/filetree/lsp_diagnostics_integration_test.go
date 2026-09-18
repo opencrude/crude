@@ -30,8 +30,9 @@ func (c *treeLSPTestClient) Stop()                       {}
 func (c *treeLSPTestClient) Done() <-chan struct{}       { return nil }
 func (c *treeLSPTestClient) OpenFile(context.Context, string, string, string) {
 }
-func (c *treeLSPTestClient) UpdateFile(context.Context, string, string) {}
-func (c *treeLSPTestClient) CloseFile(context.Context, string)          {}
+func (c *treeLSPTestClient) UpdateFile(context.Context, string, string)            {}
+func (c *treeLSPTestClient) CloseFile(context.Context, string)                     {}
+func (c *treeLSPTestClient) NotifySave(context.Context, string, string, int, bool) {}
 func (c *treeLSPTestClient) NotifyWatchedFilesChanged(context.Context, string, int) {
 }
 func (c *treeLSPTestClient) SyncFileFromDisk(context.Context, string, int) {}

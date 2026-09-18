@@ -322,8 +322,14 @@ var defaultActions = []*ActionDef{
 		},
 		HintKey: "Ctrl+Alt+H",
 	},
+	{ID: "editor.autosave.enable", Label: "Enable Auto Save", Description: "enable after-delay autosave in this workspace", Category: "File"},
+	{ID: "editor.autosave.disable", Label: "Disable Auto Save", Description: "disable autosave in this workspace", Category: "File"},
+	{ID: "editor.compareDisk", Label: "Compare With Disk", Description: "compare current buffer with external file content", Category: "File"},
 
 	// ─── Edit ────────────────────────────────────────────────────────
+	{ID: "editor.change.inspect", Label: "Inspect Current Change", Description: "inspect HEAD versus buffer", Category: "Edit"},
+	{ID: "editor.change.next", Label: "Next Change", Description: "go to next HEAD-relative change", Category: "Edit"},
+	{ID: "editor.change.previous", Label: "Previous Change", Description: "go to previous HEAD-relative change", Category: "Edit"},
 	{
 		ID:           "edit.undo",
 		Label:        "Undo Typing",

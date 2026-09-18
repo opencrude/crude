@@ -89,8 +89,12 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 			ri++
 		}
 
-		numW := sw - 3 // git marker + diagnostic icon + rule
-		numStr := e.formatLineNum(lineIdx+1+e.lineNumberOffset, numW)
+		gutter := e.gutterGeometry()
+		lineExists := lineIdx >= 0 && lineIdx < e.buf.LineCount()
+		numStr := ""
+		if lineExists {
+			numStr = e.formatLineNum(lineIdx+1+e.lineNumberOffset, gutter.numberW)
+		}
 
 		// Determine highest severity diagnostic on this line for the gutter icon.
 		lineSev := 0
@@ -100,18 +104,9 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 			}
 		}
 		gitKind := e.gitKindAt(lineIdx)
-		diagCol := sw - 3
-		gitCol := sw - 2
-		ruleCol := sw - 1
 
 		for x := 0; x < sbX; x++ {
-			if x < diagCol {
-				if x < len(numStr) {
-					buf.Set(x, bufY, cell.NewCell(rune(numStr[x]), e.cellColor(e.th.Colors.Muted), e.cellColor(e.th.Colors.Bg), 0))
-				} else {
-					buf.Set(x, bufY, blankCell)
-				}
-			} else if x == diagCol {
+			if x == gutter.diagX {
 				// Diagnostic icon column.
 				if lineSev > 0 {
 					icon, ok := diagIcons[lineSev]
@@ -119,21 +114,38 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 						icon = 'ℹ'
 					}
 					iconColor := diagIconColors[lineSev]
-					buf.Set(x, bufY, cell.NewCell(icon, iconColor, bgColor, 0))
+					cluster := string(icon)
+					buf.Set(x, bufY, cell.NewClusterCell(cluster, max(1, rendering.VisibleWidth(cluster)), iconColor, bgColor, 0))
 				} else {
 					buf.Set(x, bufY, blankCell)
 				}
-			} else if x == gitCol {
+			} else if x >= gutter.numberX && x < gutter.numberX+gutter.numberW {
+				index := x - gutter.numberX
+				if index < len(numStr) {
+					fg := e.cellColor(e.th.Colors.Muted)
+					attrs := cell.Attrs(0)
+					if lineIdx == e.cursor.Line {
+						fg = e.cellColor(e.th.Colors.Fg)
+						attrs = cell.AttrBold
+					}
+					buf.Set(x, bufY, cell.NewCell(rune(numStr[index]), fg, bgColor, attrs))
+				} else {
+					buf.Set(x, bufY, blankCell)
+				}
+			} else if x == gutter.railX {
 				ch, fg := e.gitGutterCell(gitKind)
 				buf.Set(x, bufY, cell.NewCell(ch, fg, bgColor, 0))
-			} else if x == ruleCol {
-				borderCh := '│'
-				if e.tokens != nil {
-					if g := e.tokens.Glyphs().BorderV; g != "" {
-						borderCh = []rune(g)[0]
+			} else if x == gutter.gapX {
+				marker := e.gitDeletionMarkerAt(lineIdx, e.buf.LineCount())
+				fg := bgColor
+				if marker != ' ' {
+					color := e.th.Tree.Colors.GitDeleted
+					if e.gitConflicted {
+						color = e.th.Tree.Colors.GitConflicted
 					}
+					fg = e.cellColor(color)
 				}
-				buf.Set(x, bufY, cell.NewCell(borderCh, e.cellColor(e.th.Colors.Border), bgColor, 0))
+				buf.Set(x, bufY, cell.NewCell(marker, fg, bgColor, 0))
 			} else {
 				cx := x
 				vCol := e.scrollX + (cx - sw)
@@ -228,7 +240,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 			}
 		}
 	}
-	if ctx.Focused && e.cursorBlink.Visible(ctx.Frame) {
+	if ctx.Focused && !e.readOnly && e.cursorBlink.Visible(ctx.Frame) {
 		cursorX := sw + e.cursor.Col - e.scrollX
 		cursorY := e.cursor.Line - e.scrollY
 		if cursorX >= sw && cursorX < sbX && cursorY >= 0 && cursorY < bodyH {
@@ -268,6 +280,19 @@ func diagSeverityAtCol(diags []diagSpan, col int) int {
 }
 
 func (e *Editor) gutterWidth() int {
+	return e.gutterGeometry().width
+}
+
+type gutterGeometry struct {
+	diagX   int
+	numberX int
+	numberW int
+	railX   int
+	gapX    int
+	width   int
+}
+
+func (e *Editor) gutterGeometry() gutterGeometry {
 	lineCount := e.buf.LineCount() + e.lineNumberOffset
 	digits := 1
 	for n := lineCount; n >= 10; n /= 10 {
@@ -276,9 +301,15 @@ func (e *Editor) gutterWidth() int {
 	if digits < 2 {
 		digits = 2
 	}
-	// The gutter is: line number (digits) + diagnostic icon (1) +
-	// git line-edit marker (1) + column guide (1).
-	return digits + 3
+	if e.hideLineNumbers {
+		digits = 0
+	}
+	// Fixed lanes prevent source movement while diagnostics/Git arrive:
+	// diagnostic, right-aligned number, change rail, deletion/source gap.
+	diagWidth := max(rendering.VisibleWidth("✕"), rendering.VisibleWidth("⚠"), rendering.VisibleWidth("ℹ"))
+	numberX := diagWidth + 1
+	railX := numberX + digits + 1
+	return gutterGeometry{diagX: 0, numberX: numberX, numberW: digits, railX: railX, gapX: railX + 1, width: railX + 2}
 }
 
 // GutterWidth is the painted left chrome width in columns.
@@ -289,7 +320,7 @@ func (e *Editor) formatLineNum(n int, width int) string {
 	if len(s) > width {
 		s = s[len(s)-width:]
 	}
-	return s
+	return strings.Repeat(" ", max(0, width-len(s))) + s
 }
 
 func (e *Editor) itoa(n int) string {
@@ -307,7 +338,7 @@ func (e *Editor) itoa(n int) string {
 func (e *Editor) renderStatusLine(w int) string {
 	lc := e.buf.LineCount()
 	left := e.title
-	if e.modified {
+	if e.Modified() {
 		left += " ●"
 	}
 	if errs, warns, hints := e.DiagnosticCounts(); errs > 0 || warns > 0 || hints > 0 {

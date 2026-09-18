@@ -106,6 +106,29 @@ workspace). Application defaults alone are `AppDefaults()`.
 | `/settings` or `/model` dock | session agent provider/model/protocol/thinking **and multi-agent** | app/workspace IDE prefs, API keys |
 | Theme cycle (`app.toggleTheme`) | application layer | workspace overlay |
 
+Editor autosave is an application/workspace field-level setting and is **Off by
+default**. Modes are After Delay (1,000 ms default, 250-60,000 ms), On Editor
+Focus Change, and On Terminal Focus Loss. The last mode depends on terminal
+focus reporting; Crude does not infer window blur from idle time. Workspace Off
+is an explicit override of application On. The palette's Enable/Disable Auto
+Save actions write only that workspace override.
+
+All automatic modes persist the exact buffer snapshot: no formatting, import
+organization, reload, cursor movement, selection change, or success toast.
+Format on manual save applies only to explicit saves. Shared editor buffers own
+live text and savepoint state; `workspace.DocumentSaveService` alone owns save
+deadlines and checked atomic disk commits. Revision acknowledgements cannot
+clear newer edits, filesystem watcher echoes are reconciled by content identity
+rather than a time window, and a detected external change blocks writes until
+the user compares or discards it.
+
+Crude-owned writers share one cancellable mutation lease and editor commits
+recheck before and after atomic replacement. No portable filesystem primitive
+can compare-and-replace against an uncooperative external process atomically;
+the final check-to-rename interval is therefore narrowed and post-verified, not
+misrepresented as a universal race-free guarantee. Local History remains the
+recovery boundary for external states it has observed.
+
 Local History is an application/workspace IDE category with field-level live
 inheritance. Defaults are enabled, `.gitignore` on, external capture on, 100 MB
 per file, 750 ms debounce, 60 second reconciliation, 24 hourly snapshots, 30
@@ -201,7 +224,14 @@ Layer coverage lives next to the code:
   fields, explicit `false` overrides, round-trip stability, credential
   stripping, LSP language/severity
 - `workspace/settings_test.go` — overlay persistence vs app defaults, live
-  inheritance of untouched fields, legacy whole-category migration
+  inheritance of untouched fields, explicit autosave Off, legacy whole-category migration
+- `tui/settings/autosave_test.go` and `tui/viewmodel/editor_save_test.go` —
+  autosave defaults/round-trip, stale revisions, formatting separation,
+  conflicts, disable, discard, watcher reconciliation, and committed save
+  acknowledgements that must survive a mid-flight rename
+- `tui/viewmodel/dirty_prompt_test.go` — cancel close re-arms After Delay
+  scheduling, and bulk close (Close others / Close to the right) prompts for
+  dirty buffers instead of discarding them
 - `workspace/lsp_manager_test.go` — feature gates and diagnostic filtering
 - `tui/ui/form_select_test.go` — overlay height and paint/hit-testing
 - `tui/ui/scrollbar_paint_test.go` — on-demand scrollbar

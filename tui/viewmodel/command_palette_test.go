@@ -701,9 +701,8 @@ func TestExecutePaletteCommandEditUndoRedo(t *testing.T) {
 	// No editor open: must not crash, status bar gets a hint.
 	app.executePaletteCommand("edit.undo")
 	app.executePaletteCommand("edit.redo")
-	if app.Feedback != nil {
-		// Feedback was set in newFullTestApp; the info path sets a
-		// non-error message. We only assert no panic here.
+	if app.Feedback == nil {
+		t.Fatal("editor actions require a feedback sink")
 	}
 }
 

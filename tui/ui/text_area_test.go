@@ -10,6 +10,28 @@ import (
 	"crude/tui/theme"
 )
 
+func TestTextAreaVisualLineCountCacheInvalidatesOnContentChanges(t *testing.T) {
+	engine := newTextAreaEngine()
+	engine.SetValue("abcd")
+	if got := engine.VisualLineCount(2); got != 2 {
+		t.Fatalf("initial rows=%d", got)
+	}
+	engine.InsertString("ef")
+	if got := engine.VisualLineCount(2); got != 3 {
+		t.Fatalf("edited rows=%d", got)
+	}
+	if !engine.Undo() {
+		t.Fatal("undo failed")
+	}
+	if got := engine.VisualLineCount(2); got != 2 {
+		t.Fatalf("undo rows=%d", got)
+	}
+	engine.Clear()
+	if got := engine.VisualLineCount(2); got != 1 {
+		t.Fatalf("cleared rows=%d", got)
+	}
+}
+
 func TestTextArea_NewIsEmpty(t *testing.T) {
 	ta := NewTextArea("test/area", NewTokenSet(theme.DefaultDark()), true)
 	if ta.Value() != "" || ta.Len() != 0 {

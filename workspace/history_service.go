@@ -588,6 +588,11 @@ func (s *LocalHistoryService) PlanAgentRestore(ctx context.Context, sessionID, m
 }
 
 func (s *LocalHistoryService) ApplyRestore(ctx context.Context, planID string, selected []string) (localhistory.RestoreResult, error) {
+	unlock, err := fileio.LockMutationContext(ctx)
+	if err != nil {
+		return localhistory.RestoreResult{}, err
+	}
+	defer unlock()
 	s.activityMu.Lock()
 	defer s.activityMu.Unlock()
 	s.mu.Lock()
@@ -619,6 +624,11 @@ func (s *LocalHistoryService) ApplyRestore(ctx context.Context, planID string, s
 }
 
 func (s *LocalHistoryService) ApplyRestoreChoices(ctx context.Context, planID string, choices []localhistory.RestoreChoice) (localhistory.RestoreResult, error) {
+	unlock, err := fileio.LockMutationContext(ctx)
+	if err != nil {
+		return localhistory.RestoreResult{}, err
+	}
+	defer unlock()
 	s.activityMu.Lock()
 	defer s.activityMu.Unlock()
 	s.mu.Lock()

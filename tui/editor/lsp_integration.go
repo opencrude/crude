@@ -54,6 +54,7 @@ func WithServerEnv(env map[string]string) LSPIntegrationOption {
 type openFileState struct {
 	uri        string
 	languageID string
+	text       string
 }
 
 // OnDiagnostics sets the callback for receiving diagnostics for open files.
@@ -157,55 +158,64 @@ func (l *LSPIntegration) Done() <-chan struct{} {
 
 func (l *LSPIntegration) OpenFile(ctx context.Context, filePath, languageID, text string) {
 	l.mu.Lock()
+	defer l.mu.Unlock()
 	if l.client == nil {
-		l.mu.Unlock()
 		return
 	}
 	fp := filepath.Clean(filePath)
 	uri := string(protocol.URIFromPath(fp))
 	l.versionCounter++
 	version := l.versionCounter
-	l.openFiles[fp] = &openFileState{uri: uri, languageID: languageID}
-	l.mu.Unlock()
+	l.openFiles[fp] = &openFileState{uri: uri, languageID: languageID, text: text}
 
 	_ = l.client.NotifyDidOpenTextDocument(ctx, uri, languageID, version, text)
 }
 
 func (l *LSPIntegration) UpdateFile(ctx context.Context, filePath, text string) {
 	l.mu.Lock()
+	defer l.mu.Unlock()
 	fp := filepath.Clean(filePath)
 	state, ok := l.openFiles[fp]
-	if l.client == nil || !ok {
-		l.mu.Unlock()
+	if l.client == nil || !ok || state.text == text {
 		return
 	}
 	l.versionCounter++
 	version := l.versionCounter
 	uri := state.uri
-	l.mu.Unlock()
 
-	_ = l.client.NotifyDidChangeTextDocument(ctx, uri, version, []protocol.TextDocumentContentChangeEvent{
+	if err := l.client.NotifyDidChangeTextDocument(ctx, uri, version, []protocol.TextDocumentContentChangeEvent{
 		{Value: protocol.TextDocumentContentChangeWholeDocument{Text: text}},
-	})
+	}); err == nil {
+		state.text = text
+	}
 }
 
 func (l *LSPIntegration) CloseFile(ctx context.Context, filePath string) {
 	l.mu.Lock()
+	defer l.mu.Unlock()
 	fp := filepath.Clean(filePath)
 	state, ok := l.openFiles[fp]
 	if !ok {
-		l.mu.Unlock()
 		return
 	}
 	delete(l.openFiles, fp)
 	uri := state.uri
 	client := l.client
-	l.mu.Unlock()
 
 	if client == nil {
 		return
 	}
 	_ = client.NotifyDidCloseTextDocument(ctx, uri)
+}
+
+func (l *LSPIntegration) NotifySave(ctx context.Context, path, text string, reason int, before bool) {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	state := l.openFiles[filepath.Clean(path)]
+	if l.client == nil || state == nil {
+		return
+	}
+	_ = l.client.NotifyDocumentSave(ctx, state.uri, text, reason, before)
 }
 
 // RequestCompletions returns a flat list of completion items at (line, col).

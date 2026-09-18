@@ -4,6 +4,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	"crude/fileio"
 )
 
 // ── File operation results ──
@@ -104,6 +106,12 @@ func (s *FileOpsService) CreateFile(path string) FileOperationResultMsg {
 	if msg.Err != nil {
 		return msg
 	}
+	unlock, ok := fileio.TryLockMutation()
+	if !ok {
+		msg.Err = fmt.Errorf("another file mutation is in progress")
+		return msg
+	}
+	defer unlock()
 
 	// Check if file already exists.
 	if _, err := os.Stat(path); err == nil {
@@ -135,6 +143,12 @@ func (s *FileOpsService) CreateFolder(path string) FileOperationResultMsg {
 	if msg.Err != nil {
 		return msg
 	}
+	unlock, ok := fileio.TryLockMutation()
+	if !ok {
+		msg.Err = fmt.Errorf("another file mutation is in progress")
+		return msg
+	}
+	defer unlock()
 
 	// Check if folder already exists.
 	if _, err := os.Stat(path); err == nil {
@@ -178,6 +192,12 @@ func (s *FileOpsService) RenamePath(oldPath, newPath string) FileOperationResult
 		msg.Detail = "invalid target path"
 		return msg
 	}
+	unlock, ok := fileio.TryLockMutation()
+	if !ok {
+		msg.Err = fmt.Errorf("another file mutation is in progress")
+		return msg
+	}
+	defer unlock()
 
 	// Check source exists.
 	srcInfo, err := os.Stat(oldPath)
@@ -217,6 +237,12 @@ func (s *FileOpsService) DeletePath(path string) FileOperationResultMsg {
 	if msg.Err != nil {
 		return msg
 	}
+	unlock, ok := fileio.TryLockMutation()
+	if !ok {
+		msg.Err = fmt.Errorf("another file mutation is in progress")
+		return msg
+	}
+	defer unlock()
 
 	// Check if path exists.
 	info, err := os.Stat(path)
@@ -253,6 +279,12 @@ func (s *FileOpsService) ApplyWorkspaceEdit(edits []FileEdit) FileOperationResul
 	msg := FileOperationResultMsg{
 		Path: "(workspace edit)",
 	}
+	unlock, ok := fileio.TryLockMutation()
+	if !ok {
+		msg.Err = fmt.Errorf("another file mutation is in progress")
+		return msg
+	}
+	defer unlock()
 
 	if len(edits) == 0 {
 		msg.Err = fmt.Errorf("no edits provided")

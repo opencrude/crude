@@ -69,6 +69,7 @@ func (noopLSPClient) Done() <-chan struct{}                                 { re
 func (noopLSPClient) OpenFile(context.Context, string, string, string)      {}
 func (noopLSPClient) UpdateFile(context.Context, string, string)            {}
 func (noopLSPClient) CloseFile(context.Context, string)                     {}
+func (noopLSPClient) NotifySave(context.Context, string, string, int, bool) {}
 func (noopLSPClient) NotifyWatchedFilesChanged(context.Context, string, int) {
 }
 func (noopLSPClient) SyncFileFromDisk(context.Context, string, int) {}

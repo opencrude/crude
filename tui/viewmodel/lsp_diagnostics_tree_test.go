@@ -66,8 +66,9 @@ func (c *immediateTreeDiagClient) Stop()                       {}
 func (c *immediateTreeDiagClient) Done() <-chan struct{}       { return nil }
 func (c *immediateTreeDiagClient) OpenFile(context.Context, string, string, string) {
 }
-func (c *immediateTreeDiagClient) UpdateFile(context.Context, string, string) {}
-func (c *immediateTreeDiagClient) CloseFile(context.Context, string)          {}
+func (c *immediateTreeDiagClient) UpdateFile(context.Context, string, string)            {}
+func (c *immediateTreeDiagClient) CloseFile(context.Context, string)                     {}
+func (c *immediateTreeDiagClient) NotifySave(context.Context, string, string, int, bool) {}
 func (c *immediateTreeDiagClient) NotifyWatchedFilesChanged(context.Context, string, int) {
 }
 func (c *immediateTreeDiagClient) SyncFileFromDisk(context.Context, string, int) {}

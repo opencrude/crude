@@ -612,7 +612,7 @@ func (m *App) updateDiagHoverPopup(screenX, screenY int) {
 		sevIcon = "ℹ"
 	}
 
-	titleStr := fmt.Sprintf("%s:%d:%d", m.EditorState.Editor.Title(), state.Line+1, state.Col+1)
+	titleStr := fmt.Sprintf("%s:%d:%d", m.EditorState.Editor.BaseTitle(), state.Line+1, state.Col+1)
 	sourceLine := strings.TrimRight(m.EditorState.Editor.LineText(state.Line), "\n\r ")
 
 	// Build structured content lines.

@@ -224,6 +224,9 @@ GOMAXPROCS=12 go test -run '^$' \
   -benchmem -count=5 \
   ./tui/screens/shelleditor/ ./tui/screens/shellchat/
 
+GOMAXPROCS=12 go test -run '^$' -bench '^BenchmarkBufferDirtyCheckLargeFile$' \
+  -benchmem -count=5 ./tui/editor/
+
 # Scenario benches (steady-state work budgets)
 GOMAXPROCS=12 go test -run '^$' \
   -bench 'Benchmark(IdleTick|TabRederive)' -benchmem -count=5 ./tui/viewmodel
@@ -254,6 +257,7 @@ compare across power modes without noting it.
 | `EditorPaint_120x40` | 249,929-257,167 | 7,952 | 1,144 |
 | `EditorPaint_LargeFile_120x40` | 253,526-256,495 | 7,952 | 1,144 |
 | `EditorScrollRepaint_120x40` | 249,929-253,725 | 7,952 | 1,144 |
+| `BufferDirtyCheckLargeFile` (2026-09-17) | 0.59-0.63 | 0 | 0 |
 | `ChatStreamPaint_80x24` | 106,946-109,622 | 6,747 | 122 |
 | `ChatStreamPaint_120x40` | 231,827-235,747 | 16,412 | 226 |
 | `BenchmarkIdleTick_200Msgs` | 191,188-197,788 | 12,233 | 269 |

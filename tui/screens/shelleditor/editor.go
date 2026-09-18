@@ -138,6 +138,11 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	}
 	var msg tea.Msg
 	switch evt.Kind {
+	case ui.EventKey:
+		if !s.ed.ReadOnly() {
+			return ui.EventResult{}
+		}
+		msg = evt.Key
 	case ui.EventMouseClick:
 		m := evt.MouseClick
 		m.X, m.Y = ctx.LocalX-s.padL, ctx.LocalY
@@ -158,11 +163,15 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		// Keyboard remains routed by viewmodel policy into DocumentEditor.
 		return ui.EventResult{}
 	}
-	return ui.EventResult{
+	result := ui.EventResult{
 		Handled:    true,
 		Cmd:        s.ed.HandleEvent(msg),
 		Invalidate: ui.InvalidatePaint,
 	}
+	if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft && (s.ed.IsMouseDragging() || s.ed.IsScrollbarDragging()) {
+		result.Action = &ui.Action{ID: "ui.capture", Payload: s.ID()}
+	}
+	return result
 }
 
 // CancelPointerCapture ends an in-progress mouse selection drag (and

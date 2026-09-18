@@ -25,7 +25,7 @@ func (l *testLogger) Debug(tag, msg string, pairs ...any) {}
 func newTestAppWithLauncher(t *testing.T) *App {
 	t.Helper()
 	app := newTestApp(t)
-	app.Workspace.Logger = &testLogger{}
+	app.Logger = &testLogger{}
 	// Seed enough list rows for pointer-capture geometry tests that click mid-list.
 	workspaces := make([]workspace.WorkspaceInfo, 12)
 	for i := range workspaces {

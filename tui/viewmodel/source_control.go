@@ -153,6 +153,9 @@ func (m *App) applySourceControlResult(msg sourceControlResultMsg) tea.Cmd {
 	m.finishGitOperation(msg.gen, types.OperationSucceeded, "")
 	m.Status.ResolveIssue("git")
 	m.sourceControl.SetSnapshot(msg.snapshot)
+	if m.EditorState.Editor != nil && m.EditorState.Editor.IsOpen() {
+		m.markEditorGitStaleNow()
+	}
 	if msg.clearCommit {
 		m.sourceControl.ClearCommitMessage()
 	}

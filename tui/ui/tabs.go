@@ -188,13 +188,12 @@ func (t *Tabs) Layout(_ LayoutContext, r Rect) {
 
 // idealTabWidth is the content-sized width: ordinary strips never pad short
 // labels out to a fixed slot, so the active underline matches the label.
-func (t *Tabs) idealTabWidth(i int, label string) int {
-	item := t.items[i]
-	w := rendering.VisibleWidth(label)
-	if item.Attention {
-		w += 2 // "• "
-	}
-	if item.Closable {
+// The caller passes the composed display label, which already carries the
+// attention prefix — adding it here as well padded every dirty tab with two
+// stray columns between the filename and its close glyph.
+func (t *Tabs) idealTabWidth(i int, displayLabel string) int {
+	w := rendering.VisibleWidth(displayLabel)
+	if t.items[i].Closable {
 		w += rendering.VisibleWidth(" ×")
 	}
 	return max(1, w)
@@ -204,7 +203,7 @@ func (t *Tabs) displayLabel(i int) string {
 	item := t.items[i]
 	label := item.Label
 	if item.Attention {
-		label = "• " + label
+		label = "● " + label
 	}
 	return rendering.TruncateVisual(label, tabMaxLabelW, "…")
 }

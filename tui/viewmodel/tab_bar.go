@@ -59,6 +59,7 @@ func (m *App) syncTabBarHost() {
 	if m.tabScreen == nil {
 		return
 	}
+	m.syncEditorTabPresentation()
 	hover := -1
 	if m.Win.Hover.IsActive() {
 		hover = m.Win.Hover.Index

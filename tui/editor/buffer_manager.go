@@ -1,26 +1,27 @@
 package editor
 
 import (
+	"crypto/sha256"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strconv"
 	"sync"
+	"sync/atomic"
 )
 
 // Buffer is the data model for a text file. It owns the PieceTable (the
 // actual text content), the file path, the dirty flag, and cached LSP
 // diagnostics.
 //
-// Multiple Editor views can share the same Buffer (for split views, diff
-// views, or scratch buffers). The Buffer is reference-counted through the
-// BufferManager — it is only closed when the last view releases it.
+// Multiple Editor views can share the same Buffer. The viewmodel removes its
+// manager entry only when the last managed tab closes.
 //
 // Buffer is the "what IS" layer — it has no knowledge of cursor position,
 // scroll offset, undo history, or any view-specific state. Those live on
 // the Editor.
 type Buffer struct {
-	// ID is the canonical identifier. For file-backed buffers, this is the
-	// absolute file path. For scratch buffers, it's "scratch:<uuid>".
+	// ID identifies this buffer lifetime, never a reusable file path.
 	ID string
 
 	// Path is the file path on disk. Empty for scratch buffers.
@@ -31,7 +32,10 @@ type Buffer struct {
 
 	buf *PieceTable
 
-	dirty bool
+	diskHash       [sha256.Size]byte
+	diskExists     bool
+	diskGeneration uint64
+	dirty          bool
 
 	diags   []LSPDiagnostic
 	diagsMu sync.RWMutex
@@ -55,40 +59,97 @@ func (b *Buffer) Line(i int) string {
 // Insert inserts text at a Position. Marks the buffer dirty.
 func (b *Buffer) Insert(pos Position, text []byte) {
 	_, _ = b.buf.Insert(pos, text)
-	b.dirty = true
+	b.NoteEdit()
 }
 
 // Delete removes a range. Marks the buffer dirty.
 func (b *Buffer) Delete(start, end Position) {
 	_, _ = b.buf.Delete(start, end)
-	b.dirty = true
+	b.NoteEdit()
 }
 
-// Save writes the buffer to disk. For scratch buffers (Path == ""),
-// returns os.ErrInvalid.
-func (b *Buffer) Save() error {
-	if b.Path == "" {
-		return os.ErrInvalid
+// BufferSnapshot is an immutable revision selected for a workspace save.
+type BufferSnapshot struct {
+	ID             string
+	Path           string
+	Data           []byte
+	Revision       uint64
+	ExpectedHash   [sha256.Size]byte
+	ExpectedExists bool
+}
+
+func (b *Buffer) Snapshot() BufferSnapshot {
+	if b == nil || b.buf == nil {
+		return BufferSnapshot{}
 	}
-	if err := b.buf.Save(b.Path); err != nil {
-		return err
+	return BufferSnapshot{
+		ID: b.ID, Path: b.Path, Data: b.buf.Bytes(), Revision: b.buf.Revision(),
+		ExpectedHash: b.diskHash, ExpectedExists: b.diskExists,
 	}
-	b.dirty = false
-	return nil
+}
+
+// AcceptSave advances the disk baseline for exactly the committed snapshot.
+// Newer edits remain dirty.
+func (b *Buffer) AcceptSave(revision uint64, diskHash [sha256.Size]byte) {
+	if b == nil || b.buf == nil {
+		return
+	}
+	b.diskHash = diskHash
+	b.diskExists = true
+	b.diskGeneration++
+	b.dirty = b.buf.Revision() != revision
 }
 
 // ReplaceContents swaps the entire document text and marks the buffer dirty.
 // Used by project-wide replace so an open editor stays the source of truth.
 func (b *Buffer) ReplaceContents(text string) {
 	b.buf.ReplaceAll(text)
-	b.dirty = true
+	b.NoteEdit()
 }
 
-// MarkDirty marks the buffer as having unsaved changes.
-func (b *Buffer) MarkDirty() { b.dirty = true }
-
 // IsDirty returns true if the buffer has unsaved changes.
-func (b *Buffer) IsDirty() bool { return b.dirty }
+func (b *Buffer) IsDirty() bool {
+	return b != nil && b.dirty
+}
+
+func (b *Buffer) NoteEdit() {
+	if b != nil {
+		b.dirty = true
+	}
+}
+
+func (b *Buffer) ReconcileSavepoint() {
+	if b == nil {
+		return
+	}
+	b.buf.ensureCache()
+	b.dirty = sha256.Sum256(b.buf.cachedBytes) != b.diskHash
+}
+
+func newBuffer(pt *PieceTable, path string, exists bool) *Buffer {
+	pt.ensureCache()
+	hash := sha256.Sum256(pt.cachedBytes)
+	return &Buffer{ID: nextScratchID(), Path: path, Title: filepath.Base(path), buf: pt,
+		diskHash: hash, diskExists: exists}
+}
+
+// ApplyDisk replaces the shared text, not the PieceTable identity held by views.
+func (b *Buffer) ApplyDisk(data []byte) {
+	b.buf.ReplaceAll(string(data))
+	b.AcceptSave(b.buf.Revision(), sha256.Sum256(data))
+}
+
+func (b *Buffer) MatchesDisk(hash [sha256.Size]byte) bool { return b.diskExists && b.diskHash == hash }
+
+func (b *Buffer) NoteDiskMissing() {
+	if b == nil {
+		return
+	}
+	b.diskHash = [sha256.Size]byte{}
+	b.diskExists = false
+	b.diskGeneration++
+	b.dirty = true
+}
 
 // SetDiagnostics stores LSP diagnostics for this buffer. Thread-safe.
 func (b *Buffer) SetDiagnostics(diags []LSPDiagnostic) {
@@ -108,7 +169,8 @@ func (b *Buffer) Diagnostics() []LSPDiagnostic {
 
 // BufferManager owns all open buffers. It is the single source of truth
 // for "which buffers exist" and "what is their text content". Editors
-// reference buffers by ID (typically the file path).
+// reference stable Buffer pointers; the map is keyed by canonical file path
+// for files and lifetime ID for scratches.
 //
 // When an editor tab opens, it asks the manager for the buffer (creating
 // it if needed). Multiple editors can share the same buffer (split view)
@@ -145,13 +207,9 @@ func (m *BufferManager) OpenFile(path string) (*Buffer, error) {
 	if err := pt.Load(abs); err != nil {
 		return nil, err
 	}
-
-	buf := &Buffer{
-		ID:    abs,
-		Path:  abs,
-		Title: filepath.Base(abs),
-		buf:   pt,
-	}
+	_, statErr := os.Stat(abs)
+	exists := statErr == nil
+	buf := newBuffer(pt, abs, exists)
 
 	m.mu.Lock()
 	// Double-check after acquiring write lock.
@@ -167,11 +225,8 @@ func (m *BufferManager) OpenFile(path string) (*Buffer, error) {
 // CreateScratch creates a new unnamed buffer with no file path. Used for
 // diff views, temporary notes, or "untitled" buffers.
 func (m *BufferManager) CreateScratch() *Buffer {
-	id := "scratch:" + nextScratchID()
-	buf := &Buffer{
-		ID:  id,
-		buf: NewPieceTable(),
-	}
+	buf := newBuffer(NewPieceTable(), "", false)
+	id := buf.ID
 	m.mu.Lock()
 	m.buffers[id] = buf
 	m.mu.Unlock()
@@ -185,19 +240,42 @@ func (m *BufferManager) Get(id string) *Buffer {
 	return m.buffers[id]
 }
 
-// Close removes a buffer from the manager. If other editors are still
-// viewing it, those references become nil-safe (they check IsOpen()).
-// Call this when the last tab/view for a buffer is closed.
+// Close removes the manager's path/ID entry. Existing views retain the Buffer;
+// callers invoke it only when the last managed tab closes.
 func (m *BufferManager) Close(id string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	delete(m.buffers, id)
 }
 
+func (m *BufferManager) Retarget(oldPath, newPath string) error {
+	oldAbs, err := filepath.Abs(oldPath)
+	if err != nil {
+		return err
+	}
+	newAbs, err := filepath.Abs(newPath)
+	if err != nil {
+		return err
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	buffer := m.buffers[oldAbs]
+	if buffer == nil {
+		return fmt.Errorf("buffer not open: %s", oldPath)
+	}
+	if existing := m.buffers[newAbs]; existing != nil && existing != buffer {
+		return fmt.Errorf("buffer already open: %s", newPath)
+	}
+	delete(m.buffers, oldAbs)
+	buffer.Path, buffer.Title = newAbs, filepath.Base(newAbs)
+	buffer.buf.filePath = newAbs
+	m.buffers[newAbs] = buffer
+	return nil
+}
+
 // scratchCounter produces unique IDs for scratch buffers.
-var scratchCounter int
+var scratchCounter atomic.Uint64
 
 func nextScratchID() string {
-	scratchCounter++
-	return strconv.Itoa(scratchCounter)
+	return strconv.FormatUint(scratchCounter.Add(1), 10)
 }

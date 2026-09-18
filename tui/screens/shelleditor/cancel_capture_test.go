@@ -29,8 +29,8 @@ func TestScreenCancelPointerCapture_ForwardsToEditor(t *testing.T) {
 	surf := surface.NewSurface("geom", 40, 12, cell.TransparentBlank())
 	ed.Render(surf, ui.PaintContext{Theme: th, Focused: true})
 
-	_ = ed.HandleEvent(tea.MouseClickMsg{X: 5, Y: 0, Button: tea.MouseLeft})
-	_ = ed.HandleEvent(tea.MouseMotionMsg{X: 5, Y: 2, Button: tea.MouseLeft})
+	_ = ed.HandleEvent(tea.MouseClickMsg{X: 10, Y: 0, Button: tea.MouseLeft})
+	_ = ed.HandleEvent(tea.MouseMotionMsg{X: 10, Y: 2, Button: tea.MouseLeft})
 	if !ed.IsMouseDragging() {
 		t.Fatal("setup: expected mouse drag")
 	}

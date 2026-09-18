@@ -68,10 +68,6 @@ func (e *Editor) deleteRecorded(start, end Position, cursorBefore Position) stri
 // that call the buffer directly instead of going through insertText.
 func (e *Editor) finishEdit() {
 	e.clearGoal()
-	e.modified = true
-	if e.buffer != nil {
-		e.buffer.MarkDirty()
-	}
 	e.invalidateEditorCaches()
 	e.markDocumentWidthAll()
 	e.ensureCursorVisible()

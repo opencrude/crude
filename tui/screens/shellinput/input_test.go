@@ -103,14 +103,12 @@ func TestShellInputUsesShellBackground(t *testing.T) {
 	s.Bind(&m)
 	buf := s.PaintTestBuffer(40, s.ContentHeight(40))
 
-	found := false
 	for y := 0; y < buf.Height(); y++ {
 		for x := 0; x < buf.Width(); x++ {
 			c := buf.Get(x, y)
 			if c.Char != 'h' {
 				continue
 			}
-			found = true
 			if c.BG.Equal(popupBG) {
 				t.Fatal("chat prompt used popup background")
 			}
@@ -120,9 +118,7 @@ func TestShellInputUsesShellBackground(t *testing.T) {
 			return
 		}
 	}
-	if !found {
-		t.Fatal("did not find input text to check background")
-	}
+	t.Fatal("did not find input text to check background")
 }
 
 func TestShellInputSlashPopupIncreasesHeight(t *testing.T) {
@@ -164,13 +160,11 @@ func TestShellInputSlashListUsesShellBackground(t *testing.T) {
 	s.Bind(&m)
 	buf := s.PaintTestBuffer(48, m.ShellHeight(48))
 
-	found := false
 	for y := 0; y < buf.Height(); y++ {
 		plain := PlainRow(buf, y, 48)
 		if !strings.Contains(plain, "settings") {
 			continue
 		}
-		found = true
 		for x := 0; x < buf.Width(); x++ {
 			c := buf.Get(x, y)
 			if c.Char == 0 {
@@ -182,7 +176,5 @@ func TestShellInputSlashListUsesShellBackground(t *testing.T) {
 		}
 		return
 	}
-	if !found {
-		t.Fatal("did not find slash command row to check background")
-	}
+	t.Fatal("did not find slash command row to check background")
 }

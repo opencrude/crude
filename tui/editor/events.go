@@ -12,6 +12,12 @@ type EditorCloseMsg struct {
 	FilePath string
 }
 
+type InspectChangeMsg struct {
+	Editor   *Editor
+	Line     int
+	Revision uint64
+}
+
 func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 	if !e.open {
 		return nil
@@ -19,20 +25,66 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
+		if e.readOnly {
+			if ui.IsCopyChord(msg) {
+				return rendering.CopyToClipboardCmd(e.SelectedText())
+			}
+			switch msg.Code {
+			case tea.KeyLeft, tea.KeyRight, tea.KeyUp, tea.KeyDown, tea.KeyHome, tea.KeyEnd, tea.KeyPgUp, tea.KeyPgDown:
+			default:
+				return nil
+			}
+		}
 		e.cursorBlink.MarkActivity()
 		return e.handleKey(msg)
 	case tea.PasteMsg:
+		if e.readOnly {
+			return nil
+		}
 		e.cursorBlink.MarkActivity()
 		e.insertText(msg.Content)
 	case tea.MouseWheelMsg:
 		e.cursorBlink.MarkActivity()
 		e.handleMouseWheel(msg)
 	case tea.MouseClickMsg:
+		if msg.Button == tea.MouseLeft && msg.Y >= 0 && msg.Y < e.bodyHeight() {
+			gutter := e.gutterGeometry()
+			line := e.scrollY + msg.Y
+			if msg.X == gutter.railX || msg.X == gutter.gapX {
+				if _, _, ok := e.GitHunkAtLine(line); ok {
+					revision := e.Revision()
+					return func() tea.Msg { return InspectChangeMsg{Editor: e, Line: line, Revision: revision} }
+				}
+				return nil
+			}
+			if msg.X == gutter.diagX {
+				e.refreshMouseHover(msg.X, msg.Y)
+				return nil
+			}
+			if msg.X >= gutter.numberX && msg.X < gutter.numberX+gutter.numberW && line < e.LineCount() {
+				if !msg.Mod.Contains(tea.ModShift) || !e.HasSelection() {
+					e.gutterAnchor = line
+				}
+				e.gutterDrag, e.mouseDragging = true, true
+				e.selectGutterLines(line)
+				return nil
+			}
+		}
 		e.cursorBlink.MarkActivity()
 		e.refreshScrollbarHover(msg.Mouse().X, msg.Mouse().Y)
 		e.handleMouseClick(msg)
 		e.refreshMouseHover(msg.Mouse().X, msg.Mouse().Y)
 	case tea.MouseMotionMsg:
+		if e.gutterDrag && e.mouseDragging {
+			if msg.Y < 0 {
+				e.scrollY = max(0, e.scrollY-1)
+			}
+			if msg.Y >= e.bodyHeight() {
+				e.scrollY = min(max(0, e.LineCount()-e.bodyHeight()), e.scrollY+1)
+			}
+			e.selectGutterLines(min(e.LineCount()-1, max(0, e.scrollY+msg.Y)))
+			return nil
+		}
 		e.refreshScrollbarHover(msg.Mouse().X, msg.Mouse().Y)
 		if e.IsScrollbarDragging() {
 			if e.IsHorizontalScrollbarDragging() {
@@ -54,6 +106,7 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 		}
 		e.refreshMouseHover(msg.Mouse().X, msg.Mouse().Y)
 	case tea.MouseReleaseMsg:
+		e.gutterDrag = false
 		if e.IsHorizontalScrollbarDragging() && e.handleHorizontalScrollbarEvent(msg, msg.Mouse().X-e.gutterWidth()) {
 			return nil
 		}
@@ -71,6 +124,18 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 		}
 	}
 	return nil
+}
+
+func (e *Editor) selectGutterLines(line int) {
+	first, last := min(line, e.gutterAnchor), max(line, e.gutterAnchor)
+	e.selAnchor = Position{Line: first}
+	if last+1 < e.LineCount() {
+		e.selEnd = Position{Line: last + 1}
+	} else {
+		e.selEnd = Position{Line: last, Col: e.lineVisualWidth(last)}
+	}
+	e.cursor = Position{Line: line}
+	e.selecting = true
 }
 
 func (e *Editor) handleMouseWheel(msg tea.MouseWheelMsg) {
@@ -143,6 +208,10 @@ func (e *Editor) mouseToPosition(mouseX, mouseY int) (Position, bool) {
 		col = lineVisW
 	}
 	return Position{Line: lineIdx, Col: col}, true
+}
+
+func (e *Editor) PositionAt(mouseX, mouseY int) (Position, bool) {
+	return e.mouseToPosition(mouseX, mouseY)
 }
 
 func (e *Editor) handleMouseClick(msg tea.MouseClickMsg) {

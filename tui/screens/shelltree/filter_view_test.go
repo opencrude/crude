@@ -39,9 +39,9 @@ func TestAsyncSearchFilterArrowKeysNavigateProjection(t *testing.T) {
 	host.Layout()
 	host.Focus(FilterID)
 	before := screen.searchModel.CursorIndex()
-	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
-	if !result.Handled || screen.searchModel.CursorIndex() != before+1 {
-		t.Fatalf("Down in async search did not navigate: before=%d after=%d result=%#v", before, screen.searchModel.CursorIndex(), result)
+	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyUp})
+	if !result.Handled || screen.searchModel.CursorIndex() != before-1 {
+		t.Fatalf("Up in async search did not navigate: before=%d after=%d result=%#v", before, screen.searchModel.CursorIndex(), result)
 	}
 }
 

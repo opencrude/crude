@@ -97,7 +97,7 @@ func TestLiveOllamaWaitLatency(t *testing.T) {
 	frames := 0
 	for {
 		finished := false
-		update := time.Now()
+		var update time.Time
 		select {
 		case event := <-sender.events:
 			update = time.Now()

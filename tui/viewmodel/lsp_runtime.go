@@ -40,6 +40,10 @@ func (c *editorLSPClient) UpdateFile(ctx context.Context, path, text string) {
 func (c *editorLSPClient) CloseFile(ctx context.Context, path string) {
 	c.client.CloseFile(ctx, path)
 }
+
+func (c *editorLSPClient) NotifySave(ctx context.Context, path, text string, reason int, before bool) {
+	c.client.NotifySave(ctx, path, text, reason, before)
+}
 func (c *editorLSPClient) NotifyWatchedFilesChanged(ctx context.Context, path string, changeType int) {
 	c.client.NotifyWatchedFilesChanged(ctx, path, changeType)
 }

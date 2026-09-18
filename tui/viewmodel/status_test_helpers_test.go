@@ -7,11 +7,11 @@ import (
 )
 
 func testActiveAgentCount(app *App) int {
-	if app == nil || app.Workspace == nil || app.Workspace.Status == nil {
+	if app == nil || app.Workspace == nil || app.Status == nil {
 		return 0
 	}
 	count := 0
-	for _, status := range app.Workspace.Status.Agents() {
+	for _, status := range app.Status.Agents() {
 		switch status.Phase {
 		case types.AgentOpening, types.AgentPreparing, types.AgentUploading, types.AgentWaiting, types.AgentThinking, types.AgentResponding, types.AgentTool, types.AgentChildren, types.AgentRetrying, types.AgentCancelling:
 			count++
@@ -21,11 +21,11 @@ func testActiveAgentCount(app *App) int {
 }
 
 func testIdleAgentCount(app *App) int {
-	if app == nil || app.Workspace == nil || app.Workspace.Status == nil {
+	if app == nil || app.Workspace == nil || app.Status == nil {
 		return 0
 	}
 	count := 0
-	for _, status := range app.Workspace.Status.Agents() {
+	for _, status := range app.Status.Agents() {
 		if status.Phase == types.AgentIdle && !status.ReadOnly {
 			count++
 		}
@@ -34,18 +34,18 @@ func testIdleAgentCount(app *App) int {
 }
 
 func testStatusText(app *App) string {
-	if app == nil || app.Workspace == nil || app.Workspace.Status == nil {
+	if app == nil || app.Workspace == nil || app.Status == nil {
 		return ""
 	}
-	for _, issue := range app.Workspace.Status.Issues() {
+	for _, issue := range app.Status.Issues() {
 		if issue.ResolvedAt.IsZero() {
 			return issue.Summary
 		}
 	}
-	if notice, ok := app.Workspace.Status.LatestUnread(types.SeverityInfo); ok {
+	if notice, ok := app.Status.LatestUnread(types.SeverityInfo); ok {
 		return notice.Summary
 	}
-	if notice, ok := app.Workspace.Status.LatestTransient(time.Now(), 10*time.Second); ok {
+	if notice, ok := app.Status.LatestTransient(time.Now(), 10*time.Second); ok {
 		return notice.Summary
 	}
 	return ""

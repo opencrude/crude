@@ -37,10 +37,11 @@ type lspClientState struct {
 // file in the project (not just open tabs), and routes them to the
 // editor / file tree / status bar.
 type LSPManager struct {
-	mu      sync.Mutex
-	clients map[string]LSPClient      // keyed by clientKey(rootURI, cmd)
-	states  map[string]lspClientState // retained even when a client fails to start
-	logger  Logger
+	mu           sync.Mutex
+	documentSend sync.Mutex                // serializes change/save notifications, never disk I/O
+	clients      map[string]LSPClient      // keyed by clientKey(rootURI, cmd)
+	states       map[string]lspClientState // retained even when a client fails to start
+	logger       Logger
 
 	activeFilePath string
 	pendingText    map[string]string // latest text for files pending async start
@@ -415,6 +416,8 @@ func (m *LSPManager) OpenFile(ctx context.Context, filePath string, text string)
 		return
 	}
 	langID := m.languageID(ext)
+	m.documentSend.Lock()
+	defer m.documentSend.Unlock()
 	client.OpenFile(ctx, filePath, langID, text)
 }
 
@@ -578,6 +581,8 @@ func scanProjectFiles(rootPath string, extSet map[string]bool) []string {
 }
 
 func (m *LSPManager) CloseFile(ctx context.Context, filePath string) {
+	m.documentSend.Lock()
+	defer m.documentSend.Unlock()
 	m.mu.Lock()
 	m.activeFilePath = ""
 	delete(m.pendingText, filePath)
@@ -586,16 +591,26 @@ func (m *LSPManager) CloseFile(ctx context.Context, filePath string) {
 		delete(m.updateTimers, filePath)
 	}
 	m.recomputeActiveStatusLocked()
+	clients := make([]LSPClient, 0, len(m.clients))
+	for _, client := range m.clients {
+		clients = append(clients, client)
+	}
 	m.mu.Unlock()
 
-	for _, client := range m.clients {
+	for _, client := range clients {
 		client.CloseFile(ctx, filePath)
 	}
 }
 
 func (m *LSPManager) UpdateFile(ctx context.Context, filePath, text string) {
+	m.documentSend.Lock()
+	defer m.documentSend.Unlock()
 	m.mu.Lock()
 	m.pendingText[filePath] = text
+	if timer := m.updateTimers[filePath]; timer != nil {
+		timer.Stop()
+		delete(m.updateTimers, filePath)
+	}
 	m.mu.Unlock()
 
 	client := m.clientForFile(filePath)
@@ -616,6 +631,8 @@ func (m *LSPManager) QueueFileUpdate(filePath, text string) {
 	}
 	var timer *time.Timer
 	timer = time.AfterFunc(debounce, func() {
+		m.documentSend.Lock()
+		defer m.documentSend.Unlock()
 		m.mu.Lock()
 		if m.updateTimers[filePath] != timer {
 			m.mu.Unlock()
@@ -635,6 +652,36 @@ func (m *LSPManager) QueueFileUpdate(filePath, text string) {
 	})
 	m.updateTimers[filePath] = timer
 	m.mu.Unlock()
+}
+
+// NotifyFileSave runs off the UI thread. A pending text change is flushed before
+// either save boundary; newer edits are never replaced by the saved snapshot.
+func (m *LSPManager) NotifyFileSave(ctx context.Context, path, savedText string, reason DocumentSaveReason, before bool) {
+	m.documentSend.Lock()
+	defer m.documentSend.Unlock()
+	m.mu.Lock()
+	timer := m.updateTimers[path]
+	latest := m.pendingText[path]
+	if timer != nil {
+		timer.Stop()
+		delete(m.updateTimers, path)
+	}
+	m.mu.Unlock()
+	client := m.clientForFile(path)
+	if client == nil {
+		return
+	}
+	if timer != nil {
+		client.UpdateFile(ctx, path, latest)
+	}
+	saveReason := 1
+	switch reason {
+	case DocumentSaveAfterDelay:
+		saveReason = 2
+	case DocumentSaveFocusOut:
+		saveReason = 3
+	}
+	client.NotifySave(ctx, path, savedText, saveReason, before)
 }
 
 func (m *LSPManager) Status() (connected bool, status LSPStatus, errMsg string) {

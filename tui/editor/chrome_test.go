@@ -122,7 +122,14 @@ func TestHorizontalScrollbarAppearsOnDemandAndDrags(t *testing.T) {
 
 func TestEditorCursorIsBlinkingReverseOverlay(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "cursor.go")
-	ed := NewPreview(theme.DefaultDark(), path, "abc", 1)
+	if err := os.WriteFile(path, []byte("abc"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ed := New(theme.DefaultDark())
+	if err := ed.Open(path); err != nil {
+		t.Fatal(err)
+	}
+	defer ed.Close()
 	ed.cursor = Position{Line: 0, Col: 1}
 	ed.cursorBlink.ResetAt(0)
 	surf := surface.NewSurface("cursor", 20, 5, cell.TransparentBlank())
@@ -251,9 +258,9 @@ func TestRenderDiagnosticsAndSearchChrome(t *testing.T) {
 	ed.Render(surf, ui.PaintContext{Theme: ed.th, Focused: true})
 	buf := surf.Buffer()
 
-	// Gutter diagnostic icon in icon column (gutterWidth-3).
+	// The diagnostic lane stays independent from line numbers and Git state.
 	sw := ed.gutterWidth()
-	icon := buf.Get(sw-3, 0)
+	icon := buf.Get(0, 0)
 	if icon.Char != '✕' {
 		t.Fatalf("diag icon = %q, want ✕", icon.Char)
 	}
@@ -276,6 +283,305 @@ func TestRenderDiagnosticsAndSearchChrome(t *testing.T) {
 	}
 }
 
+func TestGutterAlignsNumbersAndPaintsDeletionBoundaries(t *testing.T) {
+	lines := make([]string, 100)
+	for i := range lines {
+		lines[i] = "line"
+	}
+	ed := NewPreview(theme.DefaultDark(), "gutter.txt", strings.Join(lines, "\n"), 1)
+	ed.SetGitAnnotation(ed.Revision(),
+		[]GitHunk{
+			{OldStart: 4, NewStart: 4, OldLines: []string{"old\n"}},
+			{OldStart: 100, NewStart: 100, OldLines: []string{"gone\n"}},
+		},
+		nil,
+		false,
+	)
+
+	surf := surface.NewSurface("gutter", 50, 110, cell.TransparentBlank())
+	ed.Render(surf, ui.PaintContext{Theme: ed.th, Focused: true})
+	buf := surf.Buffer()
+	geometry := ed.gutterGeometry()
+
+	if got := string([]rune{buf.Get(geometry.numberX, 0).Char, buf.Get(geometry.numberX+1, 0).Char, buf.Get(geometry.numberX+2, 0).Char}); got != "  1" {
+		t.Fatalf("line 1 gutter=%q, want right-aligned", got)
+	}
+	if got := buf.Get(geometry.gapX, 4).Char; got != '▔' {
+		t.Fatalf("middle deletion marker=%q, want top cap", got)
+	}
+	if got := buf.Get(geometry.gapX, 99).Char; got != '▁' {
+		t.Fatalf("EOF deletion marker=%q, want bottom cap", got)
+	}
+	if got := buf.Get(geometry.numberX, 100).Char; got != ' ' {
+		t.Fatalf("row after EOF painted phantom line number %q", got)
+	}
+}
+
+func TestGitHunksShiftAcrossUnrelatedEdits(t *testing.T) {
+	ed := New(theme.DefaultDark())
+	ed.ReplaceDocument(strings.Repeat("line\n", 20))
+	ed.SetGitAnnotation(ed.Revision(), []GitHunk{
+		{OldStart: 5, NewStart: 5, OldLines: []string{"old\n"}, NewLines: []string{"new\n"}},
+		{OldStart: 15, NewStart: 15, NewLines: []string{"added\n"}},
+	}, nil, false)
+	ed.SetCursorPosition(0, 0)
+	ed.InsertRune('\n')
+	hunks := ed.GitHunks()
+	if len(hunks) != 2 || hunks[0].NewStart != 6 || hunks[1].NewStart != 16 {
+		t.Fatalf("unaffected hunks were not mapped: %#v", hunks)
+	}
+}
+
+// gutterRailCharAt renders the editor and returns the Git rail cell for a
+// document line. The surface is taller than the test documents so the editor
+// never scrolls: the assertion reads the line's own row instead of depending on
+// viewport arithmetic.
+func gutterRailCharAt(t *testing.T, ed *Editor, line int) rune {
+	t.Helper()
+	const width, height = 50, 48
+	if line < 0 || line >= height {
+		t.Fatalf("line %d is outside the painted surface", line)
+	}
+	surf := surface.NewSurface("git-gutter", width, height, cell.TransparentBlank())
+	ed.Render(surf, ui.PaintContext{Theme: ed.th, Focused: true})
+	if ed.ScrollY() != 0 {
+		t.Fatalf("gutter assertion assumes an unscrolled viewport, got scrollY=%d", ed.ScrollY())
+	}
+	return surf.Buffer().Get(ed.gutterGeometry().railX, line).Char
+}
+
+// Typing inside a changed region must not drop its marker: the region is still
+// changed relative to HEAD, and dropping it is what made the gutter blink on
+// every keystroke before the debounced refresh replaced the projection.
+func TestTypingInsideAHunkKeepsItsGutterMarker(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "blink.go")
+	if err := os.WriteFile(path, []byte(strings.Repeat("line\n", 20)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ed := New(theme.DefaultDark())
+	if err := ed.Open(path); err != nil {
+		t.Fatal(err)
+	}
+	defer ed.Close()
+	ed.SetGitAnnotation(ed.Revision(), []GitHunk{
+		{OldStart: 5, NewStart: 5, OldLines: []string{"old\n"}, NewLines: []string{"new\n"}},
+	}, nil, false)
+	if got := gutterRailCharAt(t, ed, 5); got != '▌' {
+		t.Fatalf("pre-edit marker=%q, want the git rail", got)
+	}
+
+	ed.SetCursorPosition(5, 0)
+	ed.InsertRune('x')
+	if got := gutterRailCharAt(t, ed, 5); got != '▌' {
+		t.Fatalf("typing inside the hunk dropped its marker (gutter blinks): %q", got)
+	}
+	hunks := ed.GitHunks()
+	if len(hunks) != 1 || hunks[0].NewStart != 5 {
+		t.Fatalf("hunk projection did not hold its position: %#v", hunks)
+	}
+}
+
+// A refresh that was already in flight when the user kept typing describes an
+// older revision. It must be mapped forward and stay put, so the arriving
+// projection cannot make the gutter blink under the keys.
+func TestAnnotationArrivingMidBurstSurvivesTheNextKeystrokes(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "inflight.go")
+	if err := os.WriteFile(path, []byte(strings.Repeat("line\n", 20)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ed := New(theme.DefaultDark())
+	if err := ed.Open(path); err != nil {
+		t.Fatal(err)
+	}
+	defer ed.Close()
+	// Establish the viewport first: the scroll-to-cursor pass on a first render
+	// with no known height parks the viewport elsewhere.
+	if got := gutterRailCharAt(t, ed, 0); got != ' ' {
+		t.Fatalf("unannotated line painted %q", got)
+	}
+
+	ed.SetCursorPosition(5, 0)
+	ed.InsertRune('x')
+	ed.InsertRune('y')
+	snapshotRevision := ed.Revision() - 2 // the annotation was computed before these keys
+
+	ed.SetGitAnnotation(snapshotRevision, []GitHunk{
+		{OldStart: 5, NewStart: 5, OldLines: []string{"line\n"}, NewLines: []string{"xyline\n"}},
+	}, nil, false)
+	if got := gutterRailCharAt(t, ed, 5); got != '▌' {
+		t.Fatalf("mid-burst annotation did not paint: %q", got)
+	}
+
+	ed.InsertRune('z')
+	if got := gutterRailCharAt(t, ed, 5); got != '▌' {
+		t.Fatalf("next keystroke dropped the mid-burst marker: %q", got)
+	}
+	if hunks := ed.GitHunks(); len(hunks) != 1 || hunks[0].NewStart != 5 {
+		t.Fatalf("mid-burst annotation was discarded: %#v", hunks)
+	}
+}
+
+// The rail must answer the keystroke, not the Git round trip: editing a line no
+// hunk covers marks it at once, and further keystrokes keep that mark steady
+// instead of re-claiming it line by line.
+func TestTypingMarksAnUnchangedLineImmediately(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "immediate.go")
+	if err := os.WriteFile(path, []byte(strings.Repeat("line\n", 20)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ed := New(theme.DefaultDark())
+	if err := ed.Open(path); err != nil {
+		t.Fatal(err)
+	}
+	defer ed.Close()
+	// A clean file relative to HEAD: nothing is marked yet.
+	ed.SetGitAnnotation(ed.Revision(), nil, nil, false)
+	if got := gutterRailCharAt(t, ed, 5); got != ' ' {
+		t.Fatalf("clean file already marked line 5: %q", got)
+	}
+
+	ed.SetCursorPosition(5, 0)
+	ed.InsertRune('x')
+	if got := gutterRailCharAt(t, ed, 5); got != '▌' {
+		t.Fatalf("first keystroke did not mark its line: %q", got)
+	}
+
+	for i := 0; i < 5; i++ {
+		ed.InsertRune('y')
+		if got := gutterRailCharAt(t, ed, 5); got != '▌' {
+			t.Fatalf("keystroke %d dropped the mark: %q", i+2, got)
+		}
+	}
+	if got := gutterRailCharAt(t, ed, 4); got != ' ' {
+		t.Fatalf("mark bled into the line above: %q", got)
+	}
+	if got := gutterRailCharAt(t, ed, 6); got != ' ' {
+		t.Fatalf("mark bled into the line below: %q", got)
+	}
+	if len(ed.gitProvisional) != 1 {
+		t.Fatalf("typing one line left %d claims: %#v", len(ed.gitProvisional), ed.gitProvisional)
+	}
+}
+
+// Lines created beyond the annotated document read as added, not edited.
+func TestTypingNewLinesMarksThemAsAdded(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "append.go")
+	if err := os.WriteFile(path, []byte(strings.Repeat("line\n", 5)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ed := New(theme.DefaultDark())
+	if err := ed.Open(path); err != nil {
+		t.Fatal(err)
+	}
+	defer ed.Close()
+	ed.SetGitAnnotation(ed.Revision(), nil, nil, false)
+
+	ed.SetCursorPosition(ed.LineCount()-1, 0)
+	ed.InsertRune('\n')
+	ed.InsertRune('n')
+	ed.InsertRune('e')
+	ed.InsertRune('w')
+	if got := ed.gitKindAt(ed.LineCount() - 1); got != GitLineAdded {
+		t.Fatalf("appended line kind=%d, want added", got)
+	}
+}
+
+// An authoritative hunk already owns its lines; the local claim must not stack a
+// second mark on top of them.
+func TestEditingInsideAHunkAddsNoLocalClaim(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "owned.go")
+	if err := os.WriteFile(path, []byte(strings.Repeat("line\n", 10)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ed := New(theme.DefaultDark())
+	if err := ed.Open(path); err != nil {
+		t.Fatal(err)
+	}
+	defer ed.Close()
+	ed.SetGitAnnotation(ed.Revision(), []GitHunk{
+		{OldStart: 4, NewStart: 4, OldLines: []string{"line\n"}, NewLines: []string{"line\n"}},
+	}, nil, false)
+
+	ed.SetCursorPosition(4, 0)
+	ed.InsertRune('x')
+	if len(ed.gitProvisional) != 0 {
+		t.Fatalf("hunk-owned line gained a local claim: %#v", ed.gitProvisional)
+	}
+	if got := ed.gitKindAt(4); got != GitLineModified {
+		t.Fatalf("kind=%d, want the authoritative modified marker", got)
+	}
+}
+
+// The authoritative annotation replaces the local claim: the marker must stay
+// on screen across the handover instead of blinking off and back on.
+func TestAuthoritativeAnnotationTakesOverWithoutBlanking(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "handover.go")
+	if err := os.WriteFile(path, []byte(strings.Repeat("line\n", 10)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ed := New(theme.DefaultDark())
+	if err := ed.Open(path); err != nil {
+		t.Fatal(err)
+	}
+	defer ed.Close()
+	ed.SetGitAnnotation(ed.Revision(), nil, nil, false)
+	// Establish the viewport before typing: the first paint is what sets the
+	// scroll model's viewport size, and an edit before it parks a bogus offset.
+	if got := gutterRailCharAt(t, ed, 5); got != ' ' {
+		t.Fatalf("clean file already marked line 5: %q", got)
+	}
+
+	ed.SetCursorPosition(5, 0)
+	ed.InsertRune('x')
+	if got := gutterRailCharAt(t, ed, 5); got != '▌' {
+		t.Fatalf("local mark missing before handover: %q", got)
+	}
+
+	// The debounced refresh lands with the authoritative hunk for that line.
+	ed.SetGitAnnotation(ed.Revision(), []GitHunk{
+		{OldStart: 5, NewStart: 5, OldLines: []string{"line\n"}, NewLines: []string{"xline\n"}},
+	}, nil, false)
+	if got := gutterRailCharAt(t, ed, 5); got != '▌' {
+		t.Fatalf("handover blanked the marker: %q", got)
+	}
+	if len(ed.gitProvisional) != 0 {
+		t.Fatalf("authoritative annotation kept local claims: %#v", ed.gitProvisional)
+	}
+
+	// ...and the line is still marked on the next keystroke.
+	ed.InsertRune('y')
+	if got := gutterRailCharAt(t, ed, 5); got != '▌' {
+		t.Fatalf("keystroke after handover lost the marker: %q", got)
+	}
+}
+
+// A local claim carries no old text, so it must stay out of inspection and
+// navigation: only the authoritative hunk can answer those.
+func TestLocalClaimsAreNotInspectable(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "claim.go")
+	if err := os.WriteFile(path, []byte(strings.Repeat("line\n", 10)), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	ed := New(theme.DefaultDark())
+	if err := ed.Open(path); err != nil {
+		t.Fatal(err)
+	}
+	defer ed.Close()
+	ed.SetGitAnnotation(ed.Revision(), nil, nil, false)
+
+	ed.SetCursorPosition(5, 0)
+	ed.InsertRune('x')
+	if _, _, ok := ed.GitHunkAtLine(5); ok {
+		t.Fatal("inspection accepted a local claim with no old text")
+	}
+	if hunks := ed.GitHunks(); len(hunks) != 0 {
+		t.Fatalf("navigation sees local claims: %#v", hunks)
+	}
+	if kind := ed.gitKindAt(5); kind == GitLineUnchanged {
+		t.Fatal("local claim is not painted")
+	}
+}
+
 func TestRenderGitGutterBesideDiagnostics(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "g.go")
 	if err := os.WriteFile(path, []byte("alpha\nbeta\n"), 0o600); err != nil {
@@ -289,19 +595,28 @@ func TestRenderGitGutterBesideDiagnostics(t *testing.T) {
 	ed.SetDiagnostics([]LSPDiagnostic{{
 		Line: 0, Col: 0, EndLine: 0, EndCol: 5, Severity: DiagError, Message: "err",
 	}})
-	ed.SetGitAnnotation([]GitLineKind{GitLineAdded, GitLineModified}, nil)
+	ed.SetGitAnnotation(ed.Revision(), []GitHunk{{NewLines: []string{"alpha\n"}}, {NewStart: 1, OldStart: 1, NewLines: []string{"beta\n"}, OldLines: []string{"before\n"}}}, nil, false)
 
 	surf := surface.NewSurface("ed", 50, 6, cell.TransparentBlank())
 	ed.Render(surf, ui.PaintContext{Theme: ed.th, Focused: true})
 	buf := surf.Buffer()
 	sw := ed.gutterWidth()
-	if got := buf.Get(sw-3, 0).Char; got != '✕' {
+	if got := buf.Get(0, 0).Char; got != '✕' {
 		t.Fatalf("diag col = %q, want ✕", got)
 	}
-	if got := buf.Get(sw-2, 0).Char; got != '+' {
-		t.Fatalf("git added col = %q, want +", got)
+	if got := buf.Get(sw-2, 0).Char; got != '▌' {
+		t.Fatalf("git added col = %q, want rail", got)
 	}
-	if got := buf.Get(sw-2, 1).Char; got != '~' {
-		t.Fatalf("git modified col = %q, want ~", got)
+	if got := buf.Get(sw-2, 1).Char; got != '▌' {
+		t.Fatalf("git modified col = %q, want rail", got)
+	}
+}
+
+func TestGitConflictUsesDistinctLineState(t *testing.T) {
+	ed := New(theme.DefaultDark())
+	ed.ReplaceDocument("conflict\n")
+	ed.SetGitAnnotation(ed.Revision(), []GitHunk{{OldLines: []string{"old\n"}, NewLines: []string{"conflict\n"}}}, nil, true)
+	if got := ed.gitKindAt(0); got != GitLineConflict {
+		t.Fatalf("kind=%d", got)
 	}
 }

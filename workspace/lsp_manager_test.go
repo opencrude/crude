@@ -4,6 +4,8 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"slices"
+	"sync"
 	"testing"
 	"time"
 
@@ -358,6 +360,56 @@ func TestLSPManager_QueueFileUpdateCoalescesWithoutBlocking(t *testing.T) {
 	m.mu.Unlock()
 	if remaining != 0 {
 		t.Fatalf("Stop should cancel queued updates, got %d", remaining)
+	}
+}
+
+type saveOrderClient struct {
+	reapableClient
+	mu    sync.Mutex
+	calls []string
+}
+
+func (c *saveOrderClient) UpdateFile(_ context.Context, _ string, text string) {
+	c.mu.Lock()
+	c.calls = append(c.calls, "change:"+text)
+	c.mu.Unlock()
+}
+func (c *saveOrderClient) NotifySave(_ context.Context, _ string, text string, _ int, before bool) {
+	phase := "didSave:"
+	if before {
+		phase = "willSave:"
+	}
+	c.mu.Lock()
+	c.calls = append(c.calls, phase+text)
+	c.mu.Unlock()
+}
+
+type saveOrderRuntime struct{}
+
+func (saveOrderRuntime) NewClient(string, []string, string) LSPClient { return nil }
+func (saveOrderRuntime) ServerConfigForExt(ext string) (string, []string, bool) {
+	return "test-lsp", nil, ext == ".go"
+}
+func (saveOrderRuntime) RootURIForFile(string) string { return "file:///tmp" }
+func (saveOrderRuntime) LanguageID(string) string     { return "go" }
+func (saveOrderRuntime) AllServerConfigs() map[string]LSPServerConfig {
+	return map[string]LSPServerConfig{".go": {Cmd: "test-lsp"}}
+}
+
+func TestNotifyFileSaveFlushesLatestChangeBeforeSaveBoundary(t *testing.T) {
+	m := NewLSPManager(nil, saveOrderRuntime{})
+	client := &saveOrderClient{}
+	m.clients[clientKey("file:///tmp", "test-lsp")] = client
+	path := "/tmp/file.go"
+	m.QueueFileUpdate(path, "old")
+	m.QueueFileUpdate(path, "latest")
+	m.NotifyFileSave(context.Background(), path, "saved", DocumentSaveAfterDelay, true)
+	m.NotifyFileSave(context.Background(), path, "saved", DocumentSaveAfterDelay, false)
+	client.mu.Lock()
+	defer client.mu.Unlock()
+	want := []string{"change:latest", "willSave:saved", "didSave:saved"}
+	if !slices.Equal(client.calls, want) {
+		t.Fatalf("calls=%v want %v", client.calls, want)
 	}
 }
 

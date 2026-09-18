@@ -208,8 +208,7 @@ func TestTokenSet_ThemeSwitchBumpsVersion(t *testing.T) {
 		t.Fatal("version should bump")
 	}
 	if ts.Color(ColorAccent).IsDefault() {
-		// accent should resolve from dark theme
-		// might still be truecolor non-default
+		t.Fatal("dark theme accent did not resolve to a concrete color")
 	}
 	fg, bg := ts.ButtonColors(StateFocused)
 	if fg.IsDefault() && bg.IsDefault() {

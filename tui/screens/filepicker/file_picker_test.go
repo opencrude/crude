@@ -70,7 +70,7 @@ func TestFilePickerDirectoryNavigationAndDoubleClick(t *testing.T) {
 		t.Fatalf("keyboard load=%#v", load)
 	}
 
-	screen, host = pickerHost(t, ModeFile)
+	_, host = pickerHost(t, ModeFile)
 	if !host.Focus(ListID) {
 		t.Fatal("could not focus tree")
 	}

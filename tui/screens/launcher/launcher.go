@@ -890,10 +890,6 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 }
 
 func (s *Screen) Paint(buf *surface.CellBuffer, originX, originY int, ctx ui.PaintContext) {
-	r := s.Bounds()
-	if r.Empty() {
-		return
-	}
 	// Launcher lives on the main content layer; transparent background lets the
 	// terminal/theme default show through, matching the legacy welcome view.
 }
