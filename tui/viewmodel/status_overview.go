@@ -74,12 +74,35 @@ func (m *App) statusHeaderLeftSegments() []shellheader.Segment {
 		segments = append(segments, shellheader.Segment{Text: workspacePath, Role: ui.ColorMuted, Priority: 1})
 	}
 	if m.sourceControl != nil {
-		if branch := m.sourceControl.Snapshot().Branch; branch != "" {
+		snapshot := m.sourceControl.Snapshot()
+		if branch := snapshot.Branch; branch != "" {
 			branchIcon := activitybar.ViewGit.Icon(panelchrome.NerdFont(m.Theme))
-			segments = append(segments, shellheader.Segment{Text: branchIcon + " " + branch, Role: ui.ColorMuted, Action: "git", Priority: 2})
+			segments = append(segments, shellheader.Segment{Text: headerGitIdentity(branchIcon, gitChangesIcon(), snapshot), Role: ui.ColorMuted, Action: "git-branch", Priority: 2})
 		}
 	}
 	return segments
+}
+
+// gitChangesIcon is the header's changed-file marker. It deliberately differs
+// from the branch glyph — and matches the dirty-tab pencil — so
+// "⑂ master · ✎ 9" never reads as two branch icons. A BMP glyph keeps it
+// font-independent (already in the terminal-width probe corpus).
+func gitChangesIcon() string { return "✎" }
+
+// headerGitIdentity renders the header's Git identity: the current branch
+// plus the working-tree counts that used to live in the footer (changed file
+// count and ahead/behind tracking). Keeping demand (M files) and direction
+// (↑/↓) on one clickable segment puts the whole repo state next to the branch
+// picker without growing the segment count.
+func headerGitIdentity(branchIcon, changesIcon string, snapshot workspace.GitSnapshot) string {
+	identity := branchIcon + " " + snapshot.Branch
+	if count := len(snapshot.Changes); count > 0 {
+		identity += fmt.Sprintf(" · %s %d", changesIcon, count)
+	}
+	if snapshot.Ahead > 0 || snapshot.Behind > 0 {
+		identity += fmt.Sprintf(" ↑%d ↓%d", snapshot.Ahead, snapshot.Behind)
+	}
+	return identity
 }
 
 // shortWorkspacePath renders the active workspace root for the header identity
@@ -344,16 +367,6 @@ func (m *App) footerLSPAndGitSegments() []shellfooter.Segment {
 			parts = append(parts, fmt.Sprintf("⚠%d", insights.Warnings))
 		}
 		segments = append(segments, shellfooter.Segment{Text: strings.Join(parts, " "), Role: diagnosticRole(insights.Errors, insights.Warnings), Action: "workspace", TargetID: "workspace-problems", Priority: 1})
-	}
-	if m.sourceControl != nil {
-		snapshot := m.sourceControl.Snapshot()
-		gitIcon := activitybar.ViewGit.Icon(panelchrome.NerdFont(m.Theme))
-		if len(snapshot.Changes) > 0 {
-			segments = append(segments, shellfooter.Segment{Text: fmt.Sprintf("%s %d", gitIcon, len(snapshot.Changes)), Role: ui.ColorWarning, Action: "git", Priority: 2})
-		}
-		if snapshot.Ahead > 0 || snapshot.Behind > 0 {
-			segments = append(segments, shellfooter.Segment{Text: fmt.Sprintf("↑%d ↓%d", snapshot.Ahead, snapshot.Behind), Role: ui.ColorMuted, Action: "git", Priority: 3})
-		}
 	}
 	return segments
 }

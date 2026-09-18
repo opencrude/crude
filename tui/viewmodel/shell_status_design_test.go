@@ -144,9 +144,15 @@ func TestEditorAndGitFactsLiveInHeaderNotFooterHints(t *testing.T) {
 			t.Fatalf("footer missing useful editor hint %q: %q", hint, footer)
 		}
 	}
+	// The branch identity owns the repo state: changed-file count and
+	// ahead/behind tracking paint next to the branch in the header, not in
+	// the footer hint row.
 	for _, fact := range []string{"2", "↑1 ↓2"} {
-		if !strings.Contains(footer, fact) {
-			t.Fatalf("footer missing Git workspace fact %q: %q", fact, footer)
+		if !strings.Contains(header, fact) {
+			t.Fatalf("header missing Git workspace fact %q: %q", fact, header)
+		}
+		if strings.Contains(footer, fact) {
+			t.Fatalf("footer retained Git workspace fact %q (lives in the header branch segment): %q", fact, footer)
 		}
 	}
 	if strings.Contains(header, "Git main") {

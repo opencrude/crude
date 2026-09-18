@@ -55,7 +55,7 @@ func setupReproAgent(t *testing.T, app *App, id string) {
 
 }
 
-func TestZZThinkingScrollbarGeometry(t *testing.T) {
+func TestThinkingScrollbarGeometry(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 80
 	app.height = 24
@@ -155,7 +155,7 @@ func TestZZThinkingScrollbarGeometry(t *testing.T) {
 	}
 }
 
-func TestZZThinkingScrolledWindowStable(t *testing.T) {
+func TestThinkingScrolledWindowStable(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 80
 	app.height = 24

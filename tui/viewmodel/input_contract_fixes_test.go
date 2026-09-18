@@ -15,7 +15,7 @@ import (
 	"crude/tui/ui"
 )
 
-func newInputContractEditorAppAug13(t *testing.T, names ...string) (*App, []string) {
+func newInputContractEditorApp(t *testing.T, names ...string) (*App, []string) {
 	t.Helper()
 	dir := t.TempDir()
 	app := newFullTestApp(t)
@@ -38,7 +38,7 @@ func newInputContractEditorAppAug13(t *testing.T, names ...string) (*App, []stri
 	return app, paths
 }
 
-func contextMenuItemAug13(st *ui.ContextMenuState, label string) (ui.ContextMenuItem, bool) {
+func contextMenuItem(st *ui.ContextMenuState, label string) (ui.ContextMenuItem, bool) {
 	if st == nil {
 		return ui.ContextMenuItem{}, false
 	}
@@ -52,7 +52,7 @@ func contextMenuItemAug13(st *ui.ContextMenuState, label string) (ui.ContextMenu
 	return ui.ContextMenuItem{}, false
 }
 
-func TestInputContractsAug13FocusChatTypesIntoInputWithEditorOpen(t *testing.T) {
+func TestInputContractsFocusChatTypesIntoInputWithEditorOpen(t *testing.T) {
 	app, _ := setupChatRoutingApp(t, 3, []chatprojection.MessageRow{{
 		ID: "m1", Lines: []string{"assistant reply"},
 	}})
@@ -77,9 +77,9 @@ func TestInputContractsAug13FocusChatTypesIntoInputWithEditorOpen(t *testing.T) 
 	}
 }
 
-func TestInputContractsAug13CtrlWUsesDirtySafeEditorClose(t *testing.T) {
+func TestInputContractsCtrlWUsesDirtySafeEditorClose(t *testing.T) {
 	t.Run("clean tab closes", func(t *testing.T) {
-		app, paths := newInputContractEditorAppAug13(t, "clean.go")
+		app, paths := newInputContractEditorApp(t, "clean.go")
 		_, _ = app.dispatchKeyPress(tea.KeyPressMsg{Code: 'w', Mod: tea.ModCtrl})
 		if _, ok := app.EditorState.Tabs[paths[0]]; ok {
 			t.Fatal("Ctrl+W left the clean editor tab open")
@@ -90,7 +90,7 @@ func TestInputContractsAug13CtrlWUsesDirtySafeEditorClose(t *testing.T) {
 	})
 
 	t.Run("dirty tab prompts", func(t *testing.T) {
-		app, paths := newInputContractEditorAppAug13(t, "dirty.go")
+		app, paths := newInputContractEditorApp(t, "dirty.go")
 		app.EditorState.Editor.InsertRune('x')
 		if !app.EditorState.Editor.Modified() {
 			t.Fatal("precondition: editor should be dirty")
@@ -109,8 +109,8 @@ func TestInputContractsAug13CtrlWUsesDirtySafeEditorClose(t *testing.T) {
 	})
 }
 
-func TestInputContractsAug13GlobalTabSwitchWorksFromEditor(t *testing.T) {
-	app, paths := newInputContractEditorAppAug13(t, "first.go", "second.go")
+func TestInputContractsGlobalTabSwitchWorksFromEditor(t *testing.T) {
+	app, paths := newInputContractEditorApp(t, "first.go", "second.go")
 	if app.focusTarget() != FocusEditor || app.EditorState.ActiveView != paths[1] {
 		t.Fatalf("precondition: focus=%v active=%q", app.focusTarget(), app.EditorState.ActiveView)
 	}
@@ -125,7 +125,7 @@ func TestInputContractsAug13GlobalTabSwitchWorksFromEditor(t *testing.T) {
 	}
 }
 
-func TestInputContractsAug13PasteStaysWithFocusedRootControl(t *testing.T) {
+func TestInputContractsPasteStaysWithFocusedRootControl(t *testing.T) {
 	t.Run("launcher search", func(t *testing.T) {
 		app, screen := setupLauncherRoutingApp(t, nil)
 		app.Input.SetInput("chat-sentinel")
@@ -162,8 +162,8 @@ func TestInputContractsAug13PasteStaysWithFocusedRootControl(t *testing.T) {
 	})
 }
 
-func TestInputContractsAug13EditorMenuHasNoNoopFormatSelection(t *testing.T) {
-	app, _ := newInputContractEditorAppAug13(t, "selection.go")
+func TestInputContractsEditorMenuHasNoNoopFormatSelection(t *testing.T) {
+	app, _ := newInputContractEditorApp(t, "selection.go")
 	app.EditorState.Editor.SetSelection(0, 0, 0, 7)
 	if !app.EditorState.Editor.HasSelection() {
 		t.Fatal("precondition: editor selection is not active")
@@ -179,7 +179,7 @@ func TestInputContractsAug13EditorMenuHasNoNoopFormatSelection(t *testing.T) {
 	}
 }
 
-func TestInputContractsAug13CtrlCCopiesActiveChatSelection(t *testing.T) {
+func TestInputContractsCtrlCCopiesActiveChatSelection(t *testing.T) {
 	app := newFullTestApp(t)
 	screen, host, localX := setupCapturedChatSelection(t, app, 2, []chatprojection.MessageRow{{
 		ID: "m1", Lines: []string{"hello world"},
@@ -202,7 +202,7 @@ func TestInputContractsAug13CtrlCCopiesActiveChatSelection(t *testing.T) {
 	}
 }
 
-func TestInputContractsAug13ShortcutMetadataAndHelpStayConsistent(t *testing.T) {
+func TestInputContractsShortcutMetadataAndHelpStayConsistent(t *testing.T) {
 	reg := ui.DefaultRegistry()
 
 	if cancel := reg.Get("input.cancel"); cancel == nil || cancel.Label != "Cancel" {
@@ -225,14 +225,14 @@ func TestInputContractsAug13ShortcutMetadataAndHelpStayConsistent(t *testing.T) 
 		}
 	}
 
-	app, _ := newInputContractEditorAppAug13(t, "menu.go")
+	app, _ := newInputContractEditorApp(t, "menu.go")
 	app.paintShellFrame()
 	closeLocalX := app.tabScreen.TabsControl().CloseLocalX(0)
 	if closeLocalX < 0 {
 		t.Fatal("could not resolve tab geometry")
 	}
 	menu := app.buildTabBarContextMenu(tea.Mouse{X: app.tabBarRailCol() + closeLocalX, Y: 3})
-	closeItem, ok := contextMenuItemAug13(menu, "Close tab")
+	closeItem, ok := contextMenuItem(menu, "Close tab")
 	if !ok {
 		t.Fatal("tab context menu has no Close tab action")
 	}
@@ -263,8 +263,8 @@ func TestInputContractsAug13ShortcutMetadataAndHelpStayConsistent(t *testing.T) 
 	}
 }
 
-func TestInputContractsAug13CtrlOOpensAttachFileGlobally(t *testing.T) {
-	app, _ := newInputContractEditorAppAug13(t, "attach.go")
+func TestInputContractsCtrlOOpensAttachFileGlobally(t *testing.T) {
+	app, _ := newInputContractEditorApp(t, "attach.go")
 	if app.focusTarget() != FocusEditor {
 		t.Fatalf("precondition: focus=%v want editor", app.focusTarget())
 	}

@@ -28,6 +28,7 @@ func TestScreenPaintsGroupedRepositoryState(t *testing.T) {
 		Branches: []workspace.GitBranchSummary{
 			{Name: "feature/polish", Current: true},
 			{Name: "main"},
+			{Name: "origin/feature/polish", Remote: true},
 		},
 	})
 	host := ui.NewHost(th, screen)
@@ -41,7 +42,8 @@ func TestScreenPaintsGroupedRepositoryState(t *testing.T) {
 	}
 	for _, want := range []string{
 		"feature/polish", "STAGED CHANGES", "CHANGES",
-		"UNTRACKED", "RECENT COMMITS", "LOCAL BRANCHES", "polish source control",
+		"UNTRACKED", "RECENT COMMITS", "LOCAL BRANCHES", "REMOTE BRANCHES",
+		"origin/feature/polish", "polish source control",
 	} {
 		if !strings.Contains(text, want) {
 			t.Fatalf("missing %q:\n%s", want, text)

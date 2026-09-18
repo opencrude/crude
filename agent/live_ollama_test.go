@@ -28,7 +28,7 @@ func liveOllamaAgent(t *testing.T, allowedTools ...string) *Agent {
 	return a
 }
 
-func TestZZLiveOllamaAtomicWriteLifecycle(t *testing.T) {
+func TestLiveOllamaAtomicWriteLifecycle(t *testing.T) {
 	a := liveOllamaAgent(t, "write_file")
 	a.Yolo = true
 	var calls int
@@ -60,7 +60,7 @@ func TestZZLiveOllamaAtomicWriteLifecycle(t *testing.T) {
 	}
 }
 
-func TestZZLiveOllamaStructuredQuestionLifecycle(t *testing.T) {
+func TestLiveOllamaStructuredQuestionLifecycle(t *testing.T) {
 	a := liveOllamaAgent(t, "question")
 	responses := make(chan ttypes.BlockResponse, 1)
 	var events []AgentEvent
@@ -105,7 +105,7 @@ func TestZZLiveOllamaStructuredQuestionLifecycle(t *testing.T) {
 	}
 }
 
-func TestZZLiveOllamaConfiguredContextCompaction(t *testing.T) {
+func TestLiveOllamaConfiguredContextCompaction(t *testing.T) {
 	a := liveOllamaAgent(t)
 	previousWindow := provider.LookupContextWindow(liveOllamaFlashModel)
 	provider.SetModelContext(liveOllamaFlashModel, 16384)

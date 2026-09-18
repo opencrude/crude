@@ -275,22 +275,6 @@ var AgentTools = []ToolDef{
 	{
 		Type: "function",
 		Function: ToolFuncDef{
-			Name: "run_javascript",
-			Description: "Execute JavaScript code and return the result. " +
-				"Use for calculations, data transformations, or any logic that benefits from JavaScript's capabilities. " +
-				"You are TERRIBLE at math — use this tool for any calculations.",
-			Parameters: json.RawMessage(`{
-				"type":"object",
-				"properties":{
-					"code":{"type":"string","description":"JavaScript code to execute"}
-				},
-				"required":["code"]
-			}`),
-		},
-	},
-	{
-		Type: "function",
-		Function: ToolFuncDef{
 			Name:        "reply",
 			Description: "Send a brief progress update to the user WITHOUT ending the loop. Maximum 1 line — this is for short status updates only (e.g. 'Running tests...', 'Found 3 issues'). Do NOT use this for full reports, detailed explanations, or long text — instead, respond with text only (no tool calls) when done. Long content will not be displayed properly.",
 			Parameters: json.RawMessage(`{

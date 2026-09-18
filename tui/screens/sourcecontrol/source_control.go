@@ -453,11 +453,29 @@ func (s *Screen) branchRows() []ui.ListItem {
 	if len(s.snapshot.Branches) == 0 {
 		return nil
 	}
-	rows := []ui.ListItem{{
-		ID: "header:branches", Label: "LOCAL BRANCHES",
-		Detail: strconv.Itoa(len(s.snapshot.Branches)), Header: true,
-	}}
+	var local, remote []workspace.GitBranchSummary
 	for _, branch := range s.snapshot.Branches {
+		if branch.Remote {
+			remote = append(remote, branch)
+		} else {
+			local = append(local, branch)
+		}
+	}
+	rows := make([]ui.ListItem, 0, len(s.snapshot.Branches)+2)
+	rows = append(rows, branchGroupRows("LOCAL BRANCHES", local)...)
+	rows = append(rows, branchGroupRows("REMOTE BRANCHES", remote)...)
+	return rows
+}
+
+func branchGroupRows(label string, branches []workspace.GitBranchSummary) []ui.ListItem {
+	if len(branches) == 0 {
+		return nil
+	}
+	rows := []ui.ListItem{{
+		ID: "header:" + label, Label: label,
+		Detail: strconv.Itoa(len(branches)), Header: true,
+	}}
+	for _, branch := range branches {
 		icon := "⑂"
 		detail := ""
 		if branch.Current {

@@ -127,6 +127,8 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.openHelp()
 		case "git":
 			return m, m.toggleActivity(activityGit)
+		case "git-branch":
+			return m, m.openBranchSwitcher()
 		default:
 			m.openStatusOverview(statusoverview.ViewTabs, msg.TargetID)
 		}

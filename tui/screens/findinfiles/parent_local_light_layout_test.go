@@ -9,7 +9,7 @@ import (
 	"crude/tui/ui"
 )
 
-func TestFindInFilesPaintUsesParentLocalOriginInLightThemeGPT56(t *testing.T) {
+func TestFindInFilesPaintUsesParentLocalOriginInLightTheme(t *testing.T) {
 	for _, tc := range []struct {
 		name string
 		mode Mode

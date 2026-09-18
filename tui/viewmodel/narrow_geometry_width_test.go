@@ -8,7 +8,7 @@ import (
 	"crude/tui/screens/shellchat"
 )
 
-func TestNarrowContentLayoutNeverFabricatesInnerColumnsGPT56(t *testing.T) {
+func TestNarrowContentLayoutNeverFabricatesInnerColumns(t *testing.T) {
 	app := newTestApp(t)
 	app.launcherScreen = nil
 	app.Tree.Visible = false

@@ -24,7 +24,7 @@ func gitGutterChar(t *testing.T, ed *editor.Editor, line int) rune {
 }
 
 func TestEditorGitAnnotationIgnoresStaleGeneration(t *testing.T) {
-	app, paths := newInputContractEditorAppAug13(t, "main.go")
+	app, paths := newInputContractEditorApp(t, "main.go")
 	path := paths[0]
 	ws := app.workspaceSwitchGen.Load()
 	app.editorGitGen.Store(2)
@@ -63,7 +63,7 @@ func TestEditorGitAnnotationIgnoresStaleGeneration(t *testing.T) {
 }
 
 func TestEditorGitAnnotationIgnoresWorkspaceSwitch(t *testing.T) {
-	app, paths := newInputContractEditorAppAug13(t, "switched.go")
+	app, paths := newInputContractEditorApp(t, "switched.go")
 	app.editorGitGen.Store(1)
 	app.applyEditorGitAnnotation(editorGitAnnotationMsg{
 		generation: 1,
@@ -80,9 +80,9 @@ func TestEditorGitAnnotationIgnoresWorkspaceSwitch(t *testing.T) {
 }
 
 func TestEditorContextMenuCopyBlameCommit(t *testing.T) {
-	app, paths := newInputContractEditorAppAug13(t, "blame.go")
+	app, paths := newInputContractEditorApp(t, "blame.go")
 	menu := app.buildEditorContextMenu(tea.Mouse{})
-	item, ok := contextMenuItemAug13(menu, "Copy blame commit")
+	item, ok := contextMenuItem(menu, "Copy blame commit")
 	if !ok {
 		t.Fatal("editor menu is missing Copy blame commit")
 	}
@@ -103,14 +103,14 @@ func TestEditorContextMenuCopyBlameCommit(t *testing.T) {
 		},
 	})
 	menu = app.buildEditorContextMenu(tea.Mouse{})
-	item, ok = contextMenuItemAug13(menu, "Copy blame commit")
+	item, ok = contextMenuItem(menu, "Copy blame commit")
 	if !ok || item.Disabled {
 		t.Fatal("Copy blame commit should enable once the cursor line has blame")
 	}
 }
 
 func TestInspectEditorChangeStaysOpenAcrossEquivalentGitRefresh(t *testing.T) {
-	app, paths := newInputContractEditorAppAug13(t, "inspect.go")
+	app, paths := newInputContractEditorApp(t, "inspect.go")
 	ed := app.EditorState.Editor
 	hunk := editor.GitHunk{OldLines: []string{"old\n"}, NewLines: []string{"new\n"}}
 	ed.SetGitAnnotation(ed.Revision(), []editor.GitHunk{hunk}, nil, false)
@@ -180,7 +180,7 @@ func TestGutterRefreshForNonTypingFactsIsImmediate(t *testing.T) {
 // A refresh clears the pending burst so the next keystroke starts a new idle
 // window instead of inheriting the previous one.
 func TestGutterRefreshResetsTheTypingBurst(t *testing.T) {
-	app, _ := newInputContractEditorAppAug13(t, "burst.go")
+	app, _ := newInputContractEditorApp(t, "burst.go")
 	app.markEditorGitDirty(time.Now())
 	if cmd := app.refreshEditorGitCmd(); cmd == nil {
 		t.Fatal("refresh command missing")
@@ -194,7 +194,7 @@ func TestGutterRefreshResetsTheTypingBurst(t *testing.T) {
 // A transient Git failure must not blank the projection the user is reading,
 // while a deterministic failure still clears it.
 func TestTransientGitFailureKeepsTheProjection(t *testing.T) {
-	app, paths := newInputContractEditorAppAug13(t, "transient.go")
+	app, paths := newInputContractEditorApp(t, "transient.go")
 	ed := app.EditorState.Editor
 	ed.SetGitAnnotation(ed.Revision(), []editor.GitHunk{{OldStart: 0, NewStart: 0, NewLines: []string{"package main\n"}}}, nil, false)
 	if got := gitGutterChar(t, ed, 0); got != '▌' {
@@ -222,7 +222,7 @@ func TestTransientGitFailureKeepsTheProjection(t *testing.T) {
 // The first keystroke must show its marker without dispatching Git work: the
 // editor answers the edit locally and the debounced refresh follows later.
 func TestFirstKeystrokePaintsTheGutterWithoutDispatchingGit(t *testing.T) {
-	app, _ := newInputContractEditorAppAug13(t, "instant.go")
+	app, _ := newInputContractEditorApp(t, "instant.go")
 	ed := app.EditorState.Editor
 	ed.SetGitAnnotation(ed.Revision(), nil, nil, false)
 	if got := gitGutterChar(t, ed, 0); got != ' ' {
@@ -247,7 +247,7 @@ func TestFirstKeystrokePaintsTheGutterWithoutDispatchingGit(t *testing.T) {
 // The authoritative refresh takes over without blanking: the rail keeps its
 // marker across the handover and the local claim is retired.
 func TestAuthoritativeRefreshTakesOverTheGutterLocallyClaimedLine(t *testing.T) {
-	app, paths := newInputContractEditorAppAug13(t, "handover.go")
+	app, paths := newInputContractEditorApp(t, "handover.go")
 	ed := app.EditorState.Editor
 	ed.SetGitAnnotation(ed.Revision(), nil, nil, false)
 	// First paint establishes the viewport before the cursor moves.
@@ -280,7 +280,7 @@ func TestAuthoritativeRefreshTakesOverTheGutterLocallyClaimedLine(t *testing.T) 
 // dispatch a recompute: the burst stays on the last known projection until the
 // tick decides the user has paused.
 func TestTypingBurstKeepsThePaintedMarkerAndDefersTheRefresh(t *testing.T) {
-	app, _ := newInputContractEditorAppAug13(t, "burst.go")
+	app, _ := newInputContractEditorApp(t, "burst.go")
 	ed := app.EditorState.Editor
 	ed.SetGitAnnotation(ed.Revision(), []editor.GitHunk{
 		{OldStart: 0, NewStart: 0, OldLines: []string{"package main\n"}, NewLines: []string{"package main\n"}},

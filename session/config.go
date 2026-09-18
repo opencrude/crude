@@ -104,7 +104,7 @@ func DefaultAgentsConfig() AgentsConfig {
 					CategoryResearcher: {
 						Policy:       "read-only",
 						Description:  "Gatherer — explores codebase, searches web, runs experiments",
-						AllowedTools: []string{"read_file", "glob_files", "grep_files", "list_directory", "web_search", "web_fetch", "arxiv_search", "run_javascript", "write_report", "question"},
+						AllowedTools: []string{"read_file", "glob_files", "grep_files", "list_directory", "web_search", "web_fetch", "arxiv_search", "write_report", "question"},
 						DeniedTools:  []string{"write_file", "edit_file", "delete_file", "move_file", "copy_file", "execute_command", "async_execute_command"},
 					},
 					CategoryCrafter: {
@@ -115,7 +115,7 @@ func DefaultAgentsConfig() AgentsConfig {
 					CategoryAeron: {
 						Policy:      "read-only",
 						Description: "Grunt — formatting, linting, boilerplate, monitoring",
-						DeniedTools: []string{"delete_file", "move_file", "copy_file", "execute_command", "async_execute_command", "web_search", "web_fetch", "arxiv_search", "run_javascript"},
+						DeniedTools: []string{"delete_file", "move_file", "copy_file", "execute_command", "async_execute_command", "web_search", "web_fetch", "arxiv_search"},
 					},
 				},
 			},

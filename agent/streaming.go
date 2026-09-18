@@ -188,7 +188,6 @@ var toolPreviewKeys = map[string][]string{
 	"web_search":            {"query"},
 	"web_fetch":             {"url", "offset", "limit"},
 	"arxiv_search":          {"query", "max_results"},
-	"run_javascript":        {"code"},
 	"reply":                 {"content"},
 	"update_plan":           {"plan_id", "revision", "objective", "status", "steps"},
 	"get_plan":              {"plan_id"},

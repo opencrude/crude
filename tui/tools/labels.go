@@ -102,8 +102,6 @@ func BuildStreamingLabel(tool, target string, added, removed, tokens int) string
 		return fmt.Sprintf("Globbing %s", target)
 	case "list_directory":
 		return fmt.Sprintf("Listing %s", target)
-	case "run_javascript":
-		return "Running JavaScript"
 	case "arxiv_search":
 		if target != "" {
 			return fmt.Sprintf("Searching ArXiv \"%s\"", rendering.TruncateLine(target, 40))
@@ -266,12 +264,6 @@ func BuildDoneLabel(tool, target string, added, removed, tokens int, duration st
 		if target != "" {
 			label += " " + target
 		}
-		if duration != "" {
-			label += " " + duration
-		}
-		return label
-	case "run_javascript":
-		label := "Ran JavaScript"
 		if duration != "" {
 			label += " " + duration
 		}

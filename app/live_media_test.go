@@ -17,7 +17,7 @@ import (
 	"crude/provider"
 )
 
-func TestZZLiveCommandCodeToolResultImageSemantics(t *testing.T) {
+func TestLiveCommandCodeToolResultImageSemantics(t *testing.T) {
 	if os.Getenv("CRUDE_LIVE_MEDIA") != "1" {
 		t.Skip("CRUDE_LIVE_MEDIA=1 not set")
 	}

@@ -12,9 +12,9 @@ import (
 	"crude/tui/ui"
 )
 
-// TestZZProbeTreeScrollbarDrag drives a real click+drag on the tree scrollbar
+// TestTreeScrollbarDrag drives a real click+drag on the tree scrollbar
 // through Screen.Handle and asserts the tree content scrolls (both directions).
-func TestZZProbeTreeScrollbarDrag(t *testing.T) {
+func TestTreeScrollbarDrag(t *testing.T) {
 	dir := t.TempDir()
 	for i := 0; i < 60; i++ {
 		name := filepath.Join(dir, "file"+string(rune('a'+i%26))+string(rune('a'+i/26))+".go")

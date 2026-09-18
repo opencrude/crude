@@ -8,7 +8,7 @@ import (
 	"crude/tui/ui"
 )
 
-func TestRendererDerivesNarrowWidthsFromActualBoundsGPT56(t *testing.T) {
+func TestRendererDerivesNarrowWidthsFromActualBounds(t *testing.T) {
 	th := theme.DefaultDark()
 	r := NewRenderer(th)
 	padLR := th.Spacing.PadLR
@@ -28,15 +28,15 @@ func TestRendererDerivesNarrowWidthsFromActualBoundsGPT56(t *testing.T) {
 				width, contentW, innerW, wantContent, wantInner,
 			)
 		}
-		if contentW < minimumMarkdownBodyWidthGPT56 && r.MdRenderer() != nil {
+		if contentW < minimumMarkdownBodyWidth && r.MdRenderer() != nil {
 			t.Fatalf("width=%d content=%d unexpectedly enabled minimum-20 markdown renderer", width, contentW)
 		}
 	}
 }
 
-const minimumMarkdownBodyWidthGPT56 = 20
+const minimumMarkdownBodyWidth = 20
 
-func TestSubPaneCallbackReceivesNoSyntheticNarrowWidthGPT56(t *testing.T) {
+func TestSubPaneCallbackReceivesNoSyntheticNarrowWidth(t *testing.T) {
 	r := NewRenderer(theme.DefaultDark())
 	r.SetSize(3, 6)
 	r.SetChatAreaBounds(0, 6)

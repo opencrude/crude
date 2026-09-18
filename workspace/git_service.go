@@ -47,10 +47,11 @@ type GitCommitSummary struct {
 	When      time.Time
 }
 
-// GitBranchSummary is one local branch.
+// GitBranchSummary is one branch, local or remote-tracking.
 type GitBranchSummary struct {
 	Name    string
 	Current bool
+	Remote  bool
 }
 
 // GitSnapshot is an immutable source-control projection.
@@ -103,7 +104,7 @@ func (s *GitService) Snapshot(ctx context.Context) (GitSnapshot, error) {
 	snapshot.readTracking(ctx)
 	snapshot.Changes = projectGitChanges(root, status)
 	snapshot.RecentCommits = recentGitCommits(repo, 8)
-	snapshot.Branches = localGitBranches(repo, snapshot.Branch)
+	snapshot.Branches = gitBranches(repo, snapshot.Branch)
 	return snapshot, nil
 }
 
@@ -212,13 +213,33 @@ func (s *GitService) Commit(ctx context.Context, message string) error {
 	return s.mutate(ctx, "commit", "-m", message)
 }
 
-// Checkout switches to an existing local branch.
+// Checkout switches to an existing local branch, or creates and switches to
+// a local tracking branch when given a remote-tracking name (origin/foo).
+// This is the go-git equivalent of `git switch <branch>`: passing "origin/x"
+// creates local "x" tracking "origin/x", while passing plain "x" switches to
+// the existing local branch.
 func (s *GitService) Checkout(ctx context.Context, branch string) error {
 	branch = strings.TrimSpace(branch)
 	if branch == "" {
 		return errors.New("branch is empty")
 	}
+	if strings.Contains(branch, "/") {
+		if err := s.mutate(ctx, "switch", "-c", shortRemoteBranch(branch), "--track", branch); err == nil {
+			return nil
+		}
+	}
 	return s.mutate(ctx, "switch", branch)
+}
+
+// shortRemoteBranch strips the remote prefix ("origin/foo" -> "foo"). A
+// nested branch name keeps everything after the first slash ("origin/a/b" ->
+// "a/b"): only the first component is the remote name, matching `git switch
+// <guess>` DWIM behavior.
+func shortRemoteBranch(branch string) string {
+	if index := strings.Index(branch, "/"); index >= 0 && index+1 < len(branch) {
+		return branch[index+1:]
+	}
+	return branch
 }
 
 func (s *GitService) mutate(ctx context.Context, args ...string) error {
@@ -369,25 +390,44 @@ func recentGitCommits(repo *git.Repository, limit int) []GitCommitSummary {
 	return out
 }
 
-func localGitBranches(repo *git.Repository, current string) []GitBranchSummary {
-	iter, err := repo.Branches()
+// gitBranches lists local branches first (current pinned top), then
+// remote-tracking branches (origin/foo, excluding the symbolic HEAD aliases
+// like origin/HEAD). Symbolic HEAD refs are skipped: they duplicate the
+// branch they point at and `git switch` rejects them as checkout targets.
+func gitBranches(repo *git.Repository, current string) []GitBranchSummary {
+	iter, err := repo.References()
 	if err != nil {
 		return nil
 	}
 	defer iter.Close()
-	var branches []GitBranchSummary
+	var local, remote []GitBranchSummary
 	_ = iter.ForEach(func(ref *plumbing.Reference) error {
-		name := ref.Name().Short()
-		branches = append(branches, GitBranchSummary{Name: name, Current: name == current})
+		name := ref.Name()
+		switch {
+		case name.IsBranch():
+			short := name.Short()
+			local = append(local, GitBranchSummary{Name: short, Current: short == current})
+		case name.IsRemote():
+			short := strings.TrimPrefix(string(name), "refs/remotes/")
+			// Skip symbolic HEAD aliases ("origin/HEAD -> origin/main").
+			if short == "HEAD" || strings.HasSuffix(short, "/HEAD") {
+				return nil
+			}
+			if target, err := repo.Reference(name, false); err == nil && target.Type() == plumbing.SymbolicReference {
+				return nil
+			}
+			remote = append(remote, GitBranchSummary{Name: short, Remote: true})
+		}
 		return nil
 	})
-	sort.Slice(branches, func(i, j int) bool {
-		if branches[i].Current != branches[j].Current {
-			return branches[i].Current
+	sort.Slice(local, func(i, j int) bool {
+		if local[i].Current != local[j].Current {
+			return local[i].Current
 		}
-		return branches[i].Name < branches[j].Name
+		return local[i].Name < local[j].Name
 	})
-	return branches
+	sort.Slice(remote, func(i, j int) bool { return remote[i].Name < remote[j].Name })
+	return append(local, remote...)
 }
 
 func shortGitHash(hash string) string {

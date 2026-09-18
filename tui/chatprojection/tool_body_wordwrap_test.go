@@ -18,7 +18,7 @@ func TestPlainToolBodyWordWrapsAtWordBoundaries(t *testing.T) {
 	long := "func (p *LayoutPainter) paintRows(buf *Buffer) { zqx.TokenPair"
 	runless := strings.Repeat("x", 80) // no whitespace: exercises hard-break fallback
 	msg := types.ChatMessage{
-		Role: "tool", ToolName: "run_javascript", ToolStatus: "success",
+		Role: "tool", ToolName: "execute_command", ToolStatus: "success",
 		ToolPreviewPhase: "done",
 		Content:          long + "\n" + runless,
 	}

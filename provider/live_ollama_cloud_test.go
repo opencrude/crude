@@ -10,9 +10,9 @@ import (
 	"time"
 )
 
-// TestZZLiveOllamaCloud exercises the real ollama.com endpoint. Requires
+// TestLiveOllamaCloud exercises the real ollama.com endpoint. Requires
 // CRUDE_LIVE_OLLAMA_KEY; skipped otherwise.
-func TestZZLiveOllamaCloud(t *testing.T) {
+func TestLiveOllamaCloud(t *testing.T) {
 	key := os.Getenv("CRUDE_LIVE_OLLAMA_KEY")
 	if key == "" {
 		t.Skip("CRUDE_LIVE_OLLAMA_KEY not set")
@@ -64,11 +64,11 @@ func TestZZLiveOllamaCloud(t *testing.T) {
 	}
 }
 
-// TestZZLiveOllamaCloudPrefixReuse sends a byte-identical, non-trivial prompt
+// TestLiveOllamaCloudPrefixReuse sends a byte-identical, non-trivial prompt
 // repeatedly and records Ollama's native prompt-evaluation timing. The API does
 // not expose cache-read token counts, so timing is diagnostic rather than
 // billing data; at least one warm request should evaluate materially faster.
-func TestZZLiveOllamaCloudPrefixReuse(t *testing.T) {
+func TestLiveOllamaCloudPrefixReuse(t *testing.T) {
 	key := os.Getenv("CRUDE_LIVE_OLLAMA_KEY")
 	if key == "" {
 		t.Skip("CRUDE_LIVE_OLLAMA_KEY not set")

@@ -24,9 +24,9 @@ func diffContentRows(bufA, bufB *surface.CellBuffer, x0, x1, w, h int) int {
 	return diff
 }
 
-// TestZZDragScrollbarMovesForm does a real click+drag on the form scrollbar
+// TestDragScrollbarMovesForm does a real click+drag on the form scrollbar
 // through the Host and verifies the form field content actually moves.
-func TestZZDragScrollbarMovesForm(t *testing.T) {
+func TestDragScrollbarMovesForm(t *testing.T) {
 	th := theme.DefaultDark()
 	model := New(th, types.AppSettings{}, nil)
 	model.SelectCategory(catLSP)
@@ -67,8 +67,8 @@ func TestZZDragScrollbarMovesForm(t *testing.T) {
 	}
 }
 
-// TestZZWheelScrollbarMovesForm drives a wheel over the form scrollbar.
-func TestZZWheelScrollbarMovesForm(t *testing.T) {
+// TestWheelScrollbarMovesForm drives a wheel over the form scrollbar.
+func TestWheelScrollbarMovesForm(t *testing.T) {
 	th := theme.DefaultDark()
 	model := New(th, types.AppSettings{}, nil)
 	model.SelectCategory(catLSP)
@@ -103,7 +103,7 @@ func TestZZWheelScrollbarMovesForm(t *testing.T) {
 	}
 }
 
-func TestZZTrackClickPagesFormAndMovesPaintedContent(t *testing.T) {
+func TestTrackClickPagesFormAndMovesPaintedContent(t *testing.T) {
 	th := theme.DefaultDark()
 	model := New(th, types.AppSettings{}, nil)
 	model.SelectCategory(catLSP)
@@ -139,9 +139,9 @@ func TestZZTrackClickPagesFormAndMovesPaintedContent(t *testing.T) {
 	}
 }
 
-// TestZZDragScrollbarMovesList drives click+drag on the category-list
+// TestDragScrollbarMovesList drives click+drag on the category-list
 // scrollbar and verifies row content scrolls.
-func TestZZDragScrollbarMovesList(t *testing.T) {
+func TestDragScrollbarMovesList(t *testing.T) {
 	th := theme.DefaultDark()
 	model := New(th, types.AppSettings{}, nil)
 	model.SelectCategory(catLSP)

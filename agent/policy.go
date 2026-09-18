@@ -65,7 +65,7 @@ func categoryPolicy(category string) safety.Policy {
 func PolicyAllows(policy safety.Policy, toolName string) bool {
 	switch toolName {
 	case "read_file", "glob_files", "grep_files", "list_directory",
-		"web_search", "web_fetch", "arxiv_search", "run_javascript",
+		"web_search", "web_fetch", "arxiv_search",
 		"reply", "question", "write_report",
 		"update_plan", "get_plan",
 		"list_sub_agents", "poll_sub_agent", "wait":
