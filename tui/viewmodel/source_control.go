@@ -23,6 +23,11 @@ type sourceControlResultMsg struct {
 	err         error
 	notice      string
 	clearCommit bool
+	// silent marks a watcher-driven reconciliation. Nobody asked for it, so it
+	// never sets the panel's loading state, records a status operation, notifies
+	// a failure, or touches the commit field — and it publishes only a snapshot
+	// that actually differs from the painted one.
+	silent bool
 }
 
 func (m *App) sourceControlContext() (context.Context, context.CancelFunc) {
@@ -44,6 +49,7 @@ func (m *App) refreshSourceControl() tea.Cmd {
 	gen := m.gitRefreshGen.Add(1)
 	m.recordGitOperation(gen, "Refresh source control")
 	service := m.Git
+	m.gitReadsInFlight++
 	return func() tea.Msg {
 		ctx, cancel := m.sourceControlContext()
 		defer cancel()
@@ -66,6 +72,7 @@ func (m *App) sourceControlMutation(
 	gen := m.gitRefreshGen.Add(1)
 	m.recordGitOperation(gen, firstNonempty(notice, "Update source control"))
 	service := m.Git
+	m.gitReadsInFlight++
 	return func() tea.Msg {
 		ctx, cancel := m.sourceControlContext()
 		defer cancel()
@@ -138,10 +145,26 @@ func (m *App) handleSourceControlAction(action ui.Action) (tea.Cmd, bool) {
 }
 
 func (m *App) applySourceControlResult(msg sourceControlResultMsg) tea.Cmd {
+	// Every read settles exactly one in-flight slot. A read invalidated by a
+	// workspace boundary no longer owns a slot: that boundary resets the count
+	// itself (beginWorkspaceSwitch / finishWorkspaceSwitch).
+	if msg.gen != 0 && msg.gen == m.gitRefreshGen.Load() && m.gitReadsInFlight > 0 {
+		m.gitReadsInFlight--
+	}
 	if msg.gen == 0 || msg.gen != m.gitRefreshGen.Load() || m.sourceControl == nil {
 		return nil
 	}
+	m.gitSnapshotAt = time.Now()
 	if msg.err != nil {
+		if msg.silent {
+			// Unrequested reads never report: a workspace without a repository,
+			// or a transient failure, must not raise an issue or toast. The last
+			// known projection stays painted.
+			if m.Logger != nil {
+				m.Logger.Debug("GIT", "snapshot_reconcile_failed", "error", msg.err.Error())
+			}
+			return nil
+		}
 		m.finishGitOperation(msg.gen, types.OperationFailed, msg.err.Error())
 		m.Status.SetIssue(types.IssueSnapshot{ID: "git", Owner: types.ResourceRef{Kind: types.ResourceGit, ID: m.RootPath}, Severity: types.SeverityError, Summary: "Source control failed", Detail: msg.err.Error()})
 		m.sourceControl.SetError(msg.err)
@@ -150,17 +173,18 @@ func (m *App) applySourceControlResult(msg sourceControlResultMsg) tea.Cmd {
 		}
 		return nil
 	}
+	if msg.silent {
+		if sameGitSnapshot(m.sourceControl.Snapshot(), msg.snapshot) {
+			return nil // already painted: no list rebuild, no gutter invalidation
+		}
+		m.presentGitSnapshot(msg.snapshot)
+		return nil
+	}
 	m.finishGitOperation(msg.gen, types.OperationSucceeded, "")
 	m.Status.ResolveIssue("git")
-	m.sourceControl.SetSnapshot(msg.snapshot)
-	if m.EditorState.Editor != nil && m.EditorState.Editor.IsOpen() {
-		m.markEditorGitStaleNow()
-	}
+	m.presentGitSnapshot(msg.snapshot)
 	if msg.clearCommit {
 		m.sourceControl.ClearCommitMessage()
-	}
-	if m.activityBar != nil {
-		m.activityBar.SetBadge(activityGit, len(msg.snapshot.Changes))
 	}
 	if msg.notice != "" && m.Feedback != nil {
 		m.Feedback.NotifyInfo(msg.notice)
@@ -169,6 +193,22 @@ func (m *App) applySourceControlResult(msg sourceControlResultMsg) tea.Cmd {
 		return m.Tree.Model.RefreshGitStatus()
 	}
 	return nil
+}
+
+// presentGitSnapshot publishes one repository projection to every surface that
+// derives from it: the Source Control panel, the header identity, the activity
+// badge, and the editor's gutter/blame annotation (a moved HEAD invalidates it).
+func (m *App) presentGitSnapshot(snapshot workspace.GitSnapshot) {
+	if m == nil || m.sourceControl == nil {
+		return
+	}
+	m.sourceControl.SetSnapshot(snapshot)
+	if m.EditorState != nil && m.EditorState.Editor != nil && m.EditorState.Editor.IsOpen() {
+		m.markEditorGitStaleNow()
+	}
+	if m.activityBar != nil {
+		m.activityBar.SetBadge(activityGit, len(snapshot.Changes))
+	}
 }
 
 func (m *App) recordGitOperation(generation uint64, label string) {

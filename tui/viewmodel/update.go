@@ -264,6 +264,13 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	if m.editorGitDue(now) {
 		gitCmd = m.refreshEditorGitCmd()
 	}
+	// Header Git identity: the file and repository-metadata watchers arm a
+	// debounced reconciliation read here, so the branch and change counts follow
+	// the repository without the user opening the Source Control panel.
+	var headerGitCmd tea.Cmd
+	if m.gitSnapshotReady(now) {
+		headerGitCmd = m.startGitSnapshotRead()
+	}
 	var treeGitCmd tea.Cmd
 	const treeGitFallbackInterval = 15 * time.Second
 	if m.treeGitRefreshAt.IsZero() {
@@ -324,10 +331,10 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	// re-rendered even when main content hasn't changed.
 	if m.wantsFastTick() {
 		perf.SentinelTick()
-		return m, tea.Batch(diskSyncCmd, gitCmd, treeGitCmd, streamingTickCmd())
+		return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, streamingTickCmd())
 	}
 	perf.SentinelTick()
-	return m, tea.Batch(diskSyncCmd, gitCmd, treeGitCmd, tickCmd())
+	return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, tickCmd())
 }
 
 // wantsFastTick reports whether the 16 ms streaming tick is justified right
@@ -416,6 +423,9 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 				cmds = append(cmds, cmd)
 			}
 		}
+		// A working-tree write (our save, an agent edit, an external tool) can
+		// change the header's change count; arm the coalesced reconcile read.
+		m.requestGitSnapshot(time.Now())
 	case findinfiles.SearchRequestMsg:
 		if m.findInFiles != nil && m.findInFiles.AcceptsSearch(msg.Screen, msg.Generation) {
 			m.findInFilesRequest = m.StartProjectSearch(msg.Query, msg.Options)
@@ -934,6 +944,10 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 				cmds = append(cmds, cmd)
 			}
 		}
+		// Index, ref, and HEAD writes (commit, checkout, reset — ours or an
+		// external tool's) move the branch and tracking counts: arm the header's
+		// own reconciliation instead of waiting for the panel to be opened.
+		m.requestGitSnapshot(time.Now())
 	case filetree.TreeGitRefreshMsg:
 		if msg.Model == nil || m.Tree == nil || m.Tree.Model != msg.Model {
 			break
