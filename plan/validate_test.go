@@ -1,6 +1,7 @@
 package plan
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -238,6 +239,14 @@ func TestValidate_EmptyObjectiveRejected(t *testing.T) {
 	req.Objective = "   "
 	if err := Validate(nil, req); err == nil {
 		t.Fatal("expected empty objective error")
+	}
+}
+
+func TestValidate_AcceptsLongObjective(t *testing.T) {
+	req := validReq()
+	req.Objective = strings.Repeat("describe the outcome without an arbitrary cap ", 20)
+	if err := Validate(nil, req); err != nil {
+		t.Fatalf("long objective rejected: %v", err)
 	}
 }
 

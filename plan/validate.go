@@ -12,7 +12,7 @@ import (
 //
 // The validation set mirrors the handoff's "Atomic validation rules" list:
 //  1. existing updates require matching revision
-//  2. objective is non-empty and bounded
+//  2. objective is non-empty
 //  3. step IDs are stable and unique
 //  4. dependency IDs exist
 //  5. no self-dependency or cycle
@@ -49,13 +49,9 @@ func Validate(existing *Plan, req UpdateRequest) error {
 	if objective == "" {
 		return fmt.Errorf("plan objective is required")
 	}
-	const maxObjective = 200
-	if len([]rune(objective)) > maxObjective {
-		return fmt.Errorf("plan objective exceeds %d runes", maxObjective)
-	}
 
 	if !req.Status.Valid() {
-		return fmt.Errorf("invalid plan status %q", req.Status)
+		return fmt.Errorf("invalid plan status %q; valid statuses are active, paused, completed, cancelled", req.Status)
 	}
 
 	if len(req.Steps) == 0 {
@@ -77,7 +73,7 @@ func Validate(existing *Plan, req UpdateRequest) error {
 			return fmt.Errorf("plan step %q has an empty description", id)
 		}
 		if !step.Status.Valid() {
-			return fmt.Errorf("plan step %q has invalid status %q", id, step.Status)
+			return fmt.Errorf("plan step %q has invalid status %q; valid statuses are pending, in_progress, completed, skipped, blocked, failed, cancelled", id, step.Status)
 		}
 	}
 	if req.Status == StatusCancelled && strings.TrimSpace(req.Explanation) == "" {

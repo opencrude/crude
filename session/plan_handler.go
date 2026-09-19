@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
+	"strings"
 
 	"crude/plan"
 	ccrude "crude/tools"
@@ -121,45 +123,198 @@ func mustJSON(value any) string {
 func decodeUpdateRequest(params map[string]any) (plan.UpdateRequest, error) {
 	var req plan.UpdateRequest
 	req.PlanID = getStrParam(params, "plan_id")
-	req.Objective = getStrParam(params, "objective")
-	req.Explanation = getStrParam(params, "explanation")
+	req.Objective = firstStrParam(params, "objective", "goal", "title")
+	req.Explanation = firstStrParam(params, "explanation", "note", "notes")
 	req.Revision = uint64(getIntParam(params, "revision"))
-	req.Status = plan.PlanStatus(getStrParam(params, "status"))
+	req.Status = plan.PlanStatus(firstStrParam(params, "status", "state"))
 
-	rawSteps, ok := params["steps"]
+	rawSteps, ok := firstParam(params, "steps", "todos", "tasks")
 	if !ok {
 		return req, nil
 	}
-	stepsJSON, err := json.Marshal(rawSteps)
+	entries, err := normalizeStepEntries(rawSteps)
 	if err != nil {
-		return req, fmt.Errorf("update_plan: marshal steps: %w", err)
+		return req, err
 	}
-	var steps []map[string]any
-	if err := json.Unmarshal(stepsJSON, &steps); err != nil {
-		return req, fmt.Errorf("update_plan: invalid steps: %w", err)
+	steps := make([]plan.PlanStep, 0, len(entries))
+	for i, entry := range entries {
+		step, err := decodePlanStep(entry)
+		if err != nil {
+			return req, err
+		}
+		if step.ID == "" {
+			step.ID = slugStepID(step.Description, i)
+		}
+		steps = append(steps, step)
 	}
-	req.Steps = make([]plan.PlanStep, 0, len(steps))
-	for _, raw := range steps {
-		step := plan.PlanStep{
-			ID:          strFromAny(raw["id"]),
-			Description: strFromAny(raw["description"]),
-			Status:      plan.StepStatus(strFromAny(raw["status"])),
-			Result:      strFromAny(raw["result"]),
-			Reason:      strFromAny(raw["reason"]),
+	req.Steps = steps
+	return req, nil
+}
+
+// decodePlanStep accepts one step object. Models legitimately reach for field
+// aliases (a step "content" or "title" instead of "description"), so the
+// obvious spellings are repaired rather than rejected — a rejection costs a
+// whole turn and teaches nothing the schema did not already say.
+func decodePlanStep(raw any) (plan.PlanStep, error) {
+	if text, ok := raw.(string); ok {
+		if strings.TrimSpace(text) == "" {
+			return plan.PlanStep{}, fmt.Errorf("update_plan: steps cannot contain an empty string; give each step an id (e.g. \"audit\") and a short description")
 		}
-		if step.Status == "" {
-			step.Status = plan.StepPending
+		return plan.PlanStep{Description: strings.TrimSpace(text), Status: plan.StepPending}, nil
+	}
+	object, ok := raw.(map[string]any)
+	if !ok {
+		return plan.PlanStep{}, fmt.Errorf("update_plan: each step must be an object like {\"id\":\"audit\",\"description\":\"Audit repo\",\"status\":\"pending\"}, got %T", raw)
+	}
+	step := plan.PlanStep{
+		ID:          firstStrParam(object, "id", "step_id", "key"),
+		Description: firstStrParam(object, "description", "content", "title", "name", "text", "action"),
+		Status:      plan.StepStatus(firstStrParam(object, "status", "state")),
+		Result:      firstStrParam(object, "result", "outcome", "note", "notes", "summary"),
+		Reason:      firstStrParam(object, "reason", "why", "detail"),
+	}
+	if step.ID == "" && step.Description == "" {
+		return plan.PlanStep{}, fmt.Errorf("update_plan: every step needs a stable id and a short description (a few imperative words); received %s", describeStepKeys(object))
+	}
+	if step.Description == "" {
+		step.Description = step.ID
+	}
+	if step.ID == "" {
+		step.ID = slugStepID(step.Description, 0)
+	}
+	if step.Status == "" {
+		step.Status = plan.StepPending
+	}
+	step.DependsOn = stringListParam(object, "depends_on", "depends", "blocked_by", "blockedBy", "prerequisites")
+	return step, nil
+}
+
+// normalizeStepEntries repairs the shapes a step list arrives in: a plain
+// array, a JSON-encoded string, an object wrapper ({"items": [...]}), or a
+// single step object sent where the array belongs.
+func normalizeStepEntries(raw any) ([]any, error) {
+	switch value := raw.(type) {
+	case nil:
+		return nil, nil
+	case []any:
+		return value, nil
+	case string:
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			return nil, nil
 		}
-		if root, ok := raw["depends_on"].([]any); ok {
-			for _, d := range root {
-				if ds, ok := d.(string); ok && ds != "" {
-					step.DependsOn = append(step.DependsOn, ds)
-				}
+		var decoded []any
+		if err := json.Unmarshal([]byte(trimmed), &decoded); err != nil {
+			return nil, fmt.Errorf("update_plan: 'steps' was sent as a string; pass the array itself, e.g. [{\"id\":\"audit\",\"description\":\"Audit repo\"}]")
+		}
+		return decoded, nil
+	case map[string]any:
+		for _, key := range []string{"steps", "todos", "tasks", "items"} {
+			if nested, ok := value[key]; ok {
+				return normalizeStepEntries(nested)
 			}
 		}
-		req.Steps = append(req.Steps, step)
+		return []any{value}, nil
+	default:
+		return nil, fmt.Errorf("update_plan: 'steps' must be an array of step objects, got %T", raw)
 	}
-	return req, nil
+}
+
+// slugStepID derives a stable step id from the step text so a missing id never
+// fails the update: the first few meaningful words, lowercased and hyphenated.
+func slugStepID(description string, index int) string {
+	var parts []string
+	for _, word := range strings.Fields(description) {
+		clean := strings.Map(func(r rune) rune {
+			switch {
+			case r >= 'a' && r <= 'z', r >= '0' && r <= '9':
+				return r
+			case r >= 'A' && r <= 'Z':
+				return r + ('a' - 'A')
+			default:
+				return -1
+			}
+		}, word)
+		if clean == "" {
+			continue
+		}
+		parts = append(parts, clean)
+		if len(parts) == 4 {
+			break
+		}
+	}
+	slug := strings.Join(parts, "-")
+	if len(slug) > 40 {
+		slug = strings.Trim(slug[:40], "-")
+	}
+	if slug == "" {
+		return fmt.Sprintf("step-%d", index+1)
+	}
+	return slug
+}
+
+func describeStepKeys(object map[string]any) string {
+	keys := make([]string, 0, len(object))
+	for key := range object {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	if len(keys) == 0 {
+		return "an empty object"
+	}
+	return "fields: " + strings.Join(keys, ", ")
+}
+
+// firstStrParam returns the first non-empty string among the aliases of a
+// single logical field.
+func firstStrParam(params map[string]any, keys ...string) string {
+	for _, key := range keys {
+		if value, ok := params[key]; ok {
+			if text := strFromAny(value); strings.TrimSpace(text) != "" {
+				return text
+			}
+		}
+	}
+	return ""
+}
+
+// stringListParam collects a string list from the first alias that carries one,
+// accepting a bare string where the schema expects an array.
+func stringListParam(params map[string]any, keys ...string) []string {
+	for _, key := range keys {
+		value, ok := params[key]
+		if !ok {
+			continue
+		}
+		switch typed := value.(type) {
+		case string:
+			if strings.TrimSpace(typed) != "" {
+				return []string{strings.TrimSpace(typed)}
+			}
+		case []any:
+			var out []string
+			for _, item := range typed {
+				if text := strings.TrimSpace(strFromAny(item)); text != "" {
+					out = append(out, text)
+				}
+			}
+			if len(out) > 0 {
+				return out
+			}
+		}
+	}
+	return nil
+}
+
+// firstParam returns the first present alias of a parameter, so callers can
+// accept e.g. "steps", "todos", or "tasks" for the same logical field.
+func firstParam(params map[string]any, keys ...string) (any, bool) {
+	for _, key := range keys {
+		if value, ok := params[key]; ok {
+			return value, true
+		}
+	}
+	return nil, false
 }
 
 func strFromAny(v any) string {
