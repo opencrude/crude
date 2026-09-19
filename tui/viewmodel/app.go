@@ -197,10 +197,17 @@ type App struct {
 	editorGitCancel        context.CancelFunc
 	sourceControlTimeout   time.Duration
 	treeGitRefreshAt       time.Time
-	workspaceSwitchGen     atomic.Uint64   // invalidates project-bound async callbacks
-	lspRequestCtx          context.Context // canceled whenever the workspace generation changes
-	lspRequestCancel       context.CancelFunc
-	reveals                map[string]revealAnim // in-flight popup reveal animations (overlay ID → anim)
+	// Header Git reconciliation (git_snapshot.go): watcher events arm a
+	// debounced, coalesced silent snapshot read so the header identity follows
+	// the repository without the user opening the Source Control panel.
+	gitSnapshotEventAt time.Time       // most recent unreconciled watcher event
+	gitSnapshotBurstAt time.Time       // start of the current unreconciled burst
+	gitSnapshotAt      time.Time       // when the last snapshot read settled
+	gitReadsInFlight   int             // snapshot reads (explicit or silent) awaiting a result
+	workspaceSwitchGen atomic.Uint64   // invalidates project-bound async callbacks
+	lspRequestCtx      context.Context // canceled whenever the workspace generation changes
+	lspRequestCancel   context.CancelFunc
+	reveals            map[string]revealAnim // in-flight popup reveal animations (overlay ID → anim)
 
 	OnQuit        func()
 	OnExitMessage func()

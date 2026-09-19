@@ -21,6 +21,7 @@ type workspaceSwitchState struct {
 	gitGen       uint64
 	editorGitGen uint64
 	launcherGen  uint64
+	gitReads     int
 }
 
 type workspaceTreeReadyMsg struct {
@@ -51,6 +52,7 @@ func (m *App) beginWorkspaceSwitch() workspaceSwitchState {
 		gitGen:       m.gitRefreshGen.Load(),
 		editorGitGen: m.editorGitGen.Load(),
 		launcherGen:  m.launcherLoadGen.Load(),
+		gitReads:     m.gitReadsInFlight,
 	}
 	if m.Tree != nil {
 		state.tree = m.Tree.Model
@@ -58,6 +60,9 @@ func (m *App) beginWorkspaceSwitch() workspaceSwitchState {
 	m.workspaceSwitchGen.Add(1)
 	m.resetLSPRequestContext()
 	m.gitRefreshGen.Add(1)
+	// Reads started for the old project are abandoned by that generation bump:
+	// their results settle without occupying a slot for the new project.
+	m.gitReadsInFlight = 0
 	m.editorGitGen.Add(1)
 	if m.editorGitCancel != nil {
 		m.editorGitCancel()
@@ -88,6 +93,9 @@ func (state workspaceSwitchState) restore(m *App) {
 	m.gitRefreshGen.Store(state.gitGen)
 	m.editorGitGen.Store(state.editorGitGen)
 	m.launcherLoadGen.Store(state.launcherGen)
+	// The rewound Git generation makes the old project's in-flight reads valid
+	// again, so their slots come back with it.
+	m.gitReadsInFlight = state.gitReads
 	m.wireLSPDiagnostics()
 	if state.tree != nil {
 		m.wireAndStartWorkspaceTreeWatcher(state.tree)
@@ -169,6 +177,14 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	}
 	m.cachedOutput = ""
 	m.treeGitRefreshAt = time.Time{}
+	// The header identity belongs to the new project: drop the old pacing and
+	// reconcile the replacement repository as soon as the switch settles
+	// instead of waiting for the user to open the Source Control panel.
+	m.gitSnapshotEventAt = time.Time{}
+	m.gitSnapshotBurstAt = time.Time{}
+	m.gitSnapshotAt = time.Time{}
+	m.gitReadsInFlight = 0
+	m.requestGitSnapshot(time.Now())
 }
 
 func (m *App) beginWorkspaceTreeLoad(rootPath string) {
