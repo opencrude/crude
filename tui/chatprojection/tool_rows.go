@@ -28,19 +28,27 @@ func toolSpinnerRole(msg types.ChatMessage, titlePhase string) ui.SemanticColor 
 			return ui.ColorAccent2
 		}
 	}
-	if msg.ToolPreviewPhase == types.ToolPreviewDone {
-		if msg.ToolStatus == types.ToolStatusCancelled {
-			return ui.ColorWarning
-		}
-		return ui.ColorSuccess
-	}
-	if msg.ToolPreviewPhase == types.ToolPreviewError || msg.ToolStatus == "error" {
-		return ui.ColorError
-	}
-	if msg.ToolStatus == "cancelled" {
+	if msg.ToolStatus == types.ToolStatusCancelled {
 		return ui.ColorWarning
 	}
+	// Failure wins over any other terminal phase: a finished-with-error row
+	// carries the red contract dot, never the success colour.
+	if msg.ToolPreviewPhase == types.ToolPreviewError || msg.ToolStatus == types.ToolStatusError {
+		return ui.ColorError
+	}
+	if msg.ToolPreviewPhase == types.ToolPreviewDone {
+		return ui.ColorSuccess
+	}
 	return ui.ColorMuted
+}
+
+// hasTitleReason reports whether a structured failure reason is already
+// surfaced on the title row, which means a body payload would only repeat it.
+func hasTitleReason(msg types.ChatMessage) bool {
+	if msg.ToolStatus != types.ToolStatusError {
+		return false
+	}
+	return tools.ToolErrorReason(msg.ToolName, msg.Content) != ""
 }
 
 func buildToolTitleLine(msg types.ChatMessage, titlePhase string, spinFrame int, maxWidths ...int) PaintLine {
@@ -206,7 +214,10 @@ func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth
 			}
 		}
 	} else if msg.ToolStatus == "error" {
-		if msg.Content != "" {
+		// A structured planning failure already explains itself in the title
+		// ("Update plan failed — revision conflict …"); its canonical JSON
+		// payload addresses the model, not the reader.
+		if msg.Content != "" && !hasTitleReason(msg) {
 			out.appendPlainToolBody(msg.ToolName, msg.Content, innerW, height, true, true)
 		}
 	} else if msg.ToolStatus == types.ToolStatusCancelled {
