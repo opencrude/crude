@@ -57,7 +57,7 @@ preserve or intentionally improve.
 | Action | Binding / control | Notes |
 |--------|-------------------|-------|
 | Commit staged changes | Ctrl+Enter in commit field | Empty messages are rejected; refreshes snapshot after commit |
-| Refresh repository | Ctrl+R / context menu | Status, branch tracking, history, and branch list refresh asynchronously |
+| Refresh repository | Ctrl+R / context menu | Status, branch tracking, history, and branch list refresh asynchronously. The header's own Git identity also reconciles automatically after file and repository-metadata changes, so opening this panel is never required to see current state; an automatic reconcile never shows the loading state or raises a failure of its own |
 | Stage / unstage | change context menu | Supports individual paths and stage/unstage all |
 | Checkout local branch | Enter / branch context menu | Current branch is disabled |
 | Discard tracked changes | change context menu | Opens a danger confirmation with Cancel focused; untracked files are never deleted |

@@ -695,6 +695,20 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
   the root tree plus recursive watcher asynchronously with generation checks.
   Terminal IDs are process-wide monotonic so queued old-manager messages cannot
   target a replacement PTY.
+- **The header Git identity reconciles itself from watcher events.** The
+  branch, changed-file count, and tracking on the header segment come from the
+  Source Control snapshot, so that snapshot must not depend on the user opening
+  the Source Control panel: file-watcher and repository-metadata events arm a
+  debounced (`gitSnapshotIdleDelay`), burst-capped (`gitSnapshotHoldLimit`),
+  fallback-bounded (`gitSnapshotFallback`) silent read that the tick loop
+  starts (`tui/viewmodel/git_snapshot.go`). Reconciliation is silent by
+  contract — no panel loading flash, no toast, no `StatusCenter` operation, no
+  commit-field touch — and it never starts while any Git read is in flight,
+  because superseding a refresh or mutation would drop that operation's notice,
+  commit clear, and error report. An unchanged projection must not rebuild the
+  panel list or invalidate the editor gutter. `beginWorkspaceSwitch` abandons
+  in-flight read slots and `restore` gives them back, so an old project's
+  result can never occupy the replacement project's slot.
 - **Blocking PanelDecks shield pointer input as well as keys.**
   `blockingDeckShieldsPointer` consumes coordinates outside the deck before
   root-Host hit testing, cancels stale underlying captures, and permits only a
@@ -933,13 +947,17 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   user action (`⚠`) and failures (`✕`) receive attention signs.
 - Compact editor status retains current-line blame in the active header; full
   blame identity and Copy blame commit stay available in Status Overview and
-  the editor context menu. Footer-left carries meaningful workspace-scoped LSP
-  health, project Problems, Git changes/tracking, and background work; it omits
-  zero counts but must not collapse to a placeholder when those facts exist.
+  the editor context menu. Footer-right carries meaningful workspace-scoped LSP
+  health, project Problems, and background work (Git identity and tracking stay in
+  the header branch segment); it omits zero counts but must not collapse to a
+  placeholder when those facts exist.
 - Editor position uses compact `line:column` header geometry in the same muted
-  treatment as blame/uptime. With useful footer capacity, compact help may show
-  a small ranked navigation set (find, next tab, focus tree); it must remain
-  focus-aware and must not regress into the old Save/Undo/Redo inventory.
+  treatment as blame/uptime. Footer-left is the guidance group: unread Notices,
+  then a small ranked navigation set (find, next tab, focus tree), then Help.
+  It must remain focus-aware and must not regress into the old Save/Undo/Redo
+  inventory. The status group is capped at half the footer row so a wide status
+  set never truncates the guidance group; keep the two-group split in
+  `configureFooterScreen`, not in the screen painter.
 - Agent header is muted telemetry only: model, `↑` latest reported input tokens
   over that request's runtime context capacity/occupancy, `↓` cumulative agent
   output, reported cache-hit rate, known estimated cost, and uptime. It never

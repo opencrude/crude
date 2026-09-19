@@ -224,12 +224,18 @@ No feature-level input state machine is permitted.
 
 #### Plans
 
-- Agent prompt/tool schema requires one-line step descriptions.
+- Plan prompt/schema teach one-line step descriptions; the renderer enforces it:
+  every step is exactly one row (whitespace collapsed, overlong text elided).
 - Long notes belong in explanation/result, never description.
+- The objective is never truncated: it wraps with a hanging indent and the
+  status/count suffix trails the final row.
 - Completed steps render check plus strikethrough description.
-- Collapsed view is windowed around active work: active step, immediate previous
-  and next steps, plus concise counts for hidden earlier/later work.
-- If no active step, anchor around latest changed or first incomplete step.
+- Collapsed view is windowed around active work with a floor of five rows: the
+  active step plus two neighbours on each side, widened at the plan's ends, plus
+  concise counts for hidden earlier/later work.
+- If no active step, anchor around the first pending, else latest touched, step.
+- Structured planning failures render the red contract dot plus a one-line
+  reason; the canonical JSON payload stays model-facing and never enters a row.
 - Expansion exposes complete plan and history.
 - Typed PlanView/store remains the target from
   `chat-projection-handoff.md`; do not add more formatted-string parsing.
