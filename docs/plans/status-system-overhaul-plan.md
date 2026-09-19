@@ -192,10 +192,11 @@ An active item's own failure remains contextual; unrelated failures are global.
 
 Use a quiet utility rail, not a second title bar:
 
-- Left: meaningful LSP health, project Problems, Git changes/tracking, and
-  background state; `Status` is only the quiet no-signal fallback.
-- Right: unread Notices when present, zero to two contextual hints, and Help.
-- In an idle healthy workspace, `Status` and `Help` may be the only text. That
+- Left: unread Notices when present, zero to two contextual hints, and Help.
+- Right: meaningful LSP health, project Problems, and background state (Git
+  changes/tracking belong to the header branch segment); `Status` is only the
+  quiet no-signal fallback.
+- In an idle healthy workspace, `Help` and `Status` may be the only text. That
   is intentional, not a loading state or a missing feature.
 
 Suppress `0 active`, `0 idle`, `0 warnings`, and routine idle-agent counts. If
@@ -206,7 +207,9 @@ work still counts as background work and must remain discoverable.
 Every visible state needs a useful destination. `Status` opens the overview at
 Workspace; an agent-work count opens Activity; an LSP failure opens that server;
 Notices opens Notifications. Avoid a generic click on the whole footer that
-opens an unrelated view. Help is the final right-aligned entry.
+opens an unrelated view. Help closes the left guidance group, after unread
+Notices and the ranked hints; the status group is right-aligned and capped at
+half the row so it can never truncate the guidance group.
 
 Issue/read counters have different meanings. Deduplicate their compact display:
 one failed save must not produce an error label, another IDE issue label, and
