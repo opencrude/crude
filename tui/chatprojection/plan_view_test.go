@@ -1,6 +1,7 @@
 package chatprojection_test
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -72,17 +73,25 @@ func TestPlanProjectionCoalescesSamePlanAcrossTools(t *testing.T) {
 	}
 }
 
-func TestBuildPlanViewRowsPreservesWrappedExplanationAndStep(t *testing.T) {
+func TestBuildPlanViewRowsWrapsExplanationAndKeepsStepsOneLine(t *testing.T) {
 	raw := `{"id":"plan-123","revision":1,"objective":"A deliberately long plan objective","status":"active","explanation":"first explanation segment second explanation segment third explanation segment","steps":[{"id":"a","description":"first step segment second step segment third step segment","status":"in_progress"}]}`
 	rows := chatprojection.BuildPlanViewRows(raw, 28)
 	plain := ""
+	stepRows := 0
 	for _, row := range rows {
-		plain += row.PlainText() + "\n"
+		text := row.PlainText()
+		plain += text + "\n"
+		if strings.Contains(text, "→") {
+			stepRows++
+		}
 	}
-	for _, want := range []string{"first explanation", "third explanation", "first step", "third step", "0/1"} {
+	for _, want := range []string{"first explanation", "third explanation", "first step", "…", "0/1"} {
 		if !strings.Contains(plain, want) {
 			t.Fatalf("plan view lost %q:\n%s", want, plain)
 		}
+	}
+	if stepRows != 1 {
+		t.Fatalf("step must stay one row, got %d:\n%s", stepRows, plain)
 	}
 }
 
@@ -130,12 +139,14 @@ func TestPlanViewStrikesThroughCompletedSteps(t *testing.T) {
 
 func TestBuildPlanViewRowsCollapsedWindowsAroundLiveStep(t *testing.T) {
 	raw := `{"id":"plan-123","revision":1,"objective":"Ship it","status":"active","steps":[
-		{"id":"one","description":"Done hours ago","status":"completed"},
-		{"id":"two","description":"Also old","status":"completed"},
+		{"id":"one","description":"Done long ago","status":"completed"},
+		{"id":"two","description":"Older context","status":"completed"},
 		{"id":"three","description":"Previous step","status":"completed"},
 		{"id":"four","description":"Live step now","status":"in_progress"},
 		{"id":"five","description":"Coming up next","status":"pending"},
-		{"id":"six","description":"Far future work","status":"pending"}
+		{"id":"six","description":"Planned later","status":"pending"},
+		{"id":"seven","description":"Far future work","status":"pending"},
+		{"id":"eight","description":"Distant horizon","status":"pending"}
 	]}`
 	collapsed := chatprojection.BuildPlanViewRowsCollapsed(raw, 80)
 	plain := make([]string, len(collapsed))
@@ -143,12 +154,15 @@ func TestBuildPlanViewRowsCollapsedWindowsAroundLiveStep(t *testing.T) {
 		plain[i] = row.PlainText()
 	}
 	joined := strings.Join(plain, "\n")
-	for _, want := range []string{"Plan: Ship it", "Live step now", "Previous step", "Coming up next", "2 earlier steps", "1 remaining steps"} {
+	for _, want := range []string{
+		"Plan: Ship it", "Older context", "Previous step", "Live step now",
+		"Coming up next", "Planned later", "1 earlier step", "2 remaining steps",
+	} {
 		if !strings.Contains(joined, want) {
 			t.Fatalf("collapsed card missing %q:\n%s", want, joined)
 		}
 	}
-	for _, hidden := range []string{"Done hours ago", "Also old", "Far future work"} {
+	for _, hidden := range []string{"Done long ago", "Far future work", "Distant horizon"} {
 		if strings.Contains(joined, hidden) {
 			t.Fatalf("collapsed card leaked %q:\n%s", hidden, joined)
 		}
@@ -160,10 +174,99 @@ func TestBuildPlanViewRowsCollapsedWindowsAroundLiveStep(t *testing.T) {
 		fullJoined.WriteString(row.PlainText())
 		fullJoined.WriteString("\n")
 	}
-	for _, want := range []string{"Done hours ago", "Far future work"} {
+	for _, want := range []string{"Done long ago", "Far future work"} {
 		if !strings.Contains(fullJoined.String(), want) {
 			t.Fatalf("expanded card lost %q:\n%s", want, fullJoined.String())
 		}
+	}
+}
+
+func TestPlanWindowShowsFiveStepsAtEveryPosition(t *testing.T) {
+	step := func(index, live int) string {
+		status := "pending"
+		if index == live {
+			status = "in_progress"
+		}
+		return fmt.Sprintf(`{"id":"s%d","description":"Step %d","status":"%s"}`, index, index, status)
+	}
+	cases := []struct {
+		live      int
+		wantShown int
+		gotHidden []int
+	}{
+		{live: 0, wantShown: 5, gotHidden: []int{5, 6, 7}},
+		{live: 3, wantShown: 5, gotHidden: []int{0, 6, 7}},
+		{live: 7, wantShown: 5, gotHidden: []int{0, 1, 2}},
+	}
+	for _, c := range cases {
+		parts := make([]string, 8)
+		for i := range parts {
+			parts[i] = step(i, c.live)
+		}
+		raw := `{"id":"plan-123","revision":1,"objective":"Window","status":"active","steps":[` + strings.Join(parts, ",") + `]}`
+		rows := chatprojection.BuildPlanViewRowsCollapsed(raw, 80)
+		shown := 0
+		for _, row := range rows {
+			if strings.Contains(row.PlainText(), "Step ") {
+				shown++
+			}
+		}
+		if shown != c.wantShown {
+			t.Fatalf("live step %d showed %d steps, want %d", c.live, shown, c.wantShown)
+		}
+		joined := plainRows(rows)
+		for _, hidden := range c.gotHidden {
+			if strings.Contains(joined, fmt.Sprintf("Step %d", hidden)) {
+				t.Fatalf("live step %d leaked hidden Step %d:\n%s", c.live, hidden, joined)
+			}
+		}
+	}
+}
+
+func plainRows(rows []chatprojection.PaintLine) string {
+	var joined strings.Builder
+	for _, row := range rows {
+		joined.WriteString(row.PlainText())
+		joined.WriteString("\n")
+	}
+	return joined.String()
+}
+
+func TestBuildPlanViewHeaderShowsObjectiveInFull(t *testing.T) {
+	objective := "Remove the stale objective length limit and render every plan step as one compact banner line"
+	raw := fmt.Sprintf(`{"id":"plan-123","revision":1,"objective":%q,"status":"active","steps":[{"id":"a","description":"Audit","status":"pending"}]}`, objective)
+	for _, width := range []int{40, 80} {
+		rows := chatprojection.BuildPlanViewRows(raw, width)
+		var joined strings.Builder
+		for _, row := range rows {
+			if row.VisibleWidth() > width {
+				t.Fatalf("row overflows width %d: %q", width, row.PlainText())
+			}
+			joined.WriteString(row.PlainText())
+			joined.WriteString("\n")
+		}
+		compact := strings.Join(strings.Fields(strings.ReplaceAll(joined.String(), "│", " ")), " ")
+		want := "Plan: " + objective + " (active · 0/1)"
+		if !strings.Contains(compact, want) {
+			t.Fatalf("width %d header lost the objective:\n%s", width, joined.String())
+		}
+		if strings.Contains(joined.String(), "…") {
+			t.Fatalf("width %d header was truncated:\n%s", width, joined.String())
+		}
+	}
+}
+
+func TestPlanViewStepStaysOneLineDespiteNotepadText(t *testing.T) {
+	raw := `{"id":"plan-123","revision":1,"objective":"Ship it","status":"active","steps":[
+		{"id":"a","description":"Audit\n  the   renderer\nnow","status":"completed","result":"found 22 files\nplus notes"}
+	]}`
+	rows := chatprojection.BuildPlanViewRows(raw, 80)
+	if len(rows) != 2 {
+		t.Fatalf("card rows = %d (%+v)", len(rows), rows)
+	}
+	step := rows[1].PlainText()
+	if strings.Contains(step, "\n") || !strings.Contains(step, "Audit the renderer now — found 22 files plus notes") {
+		t.Fatalf("step row = %q", step)
 	}
 }
 
