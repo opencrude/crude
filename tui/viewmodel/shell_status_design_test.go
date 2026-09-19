@@ -71,6 +71,34 @@ func TestShellStatusUsesSharedRailsAndOmitsZeroNoise(t *testing.T) {
 	}
 }
 
+// TestFooterLeadsWithGuidanceAndTrailsStatus pins the footer's rail split: the
+// guidance group (contextual hints, then Help) starts on the shared left rail
+// and the quieter status group is right-aligned on the shared right rail.
+func TestFooterLeadsWithGuidanceAndTrailsStatus(t *testing.T) {
+	app := newFullTestApp(t)
+	app.width, app.height = 120, 28
+	app.AddOrchestrator("root")
+	app.paintShellFrame()
+
+	footer := strings.TrimRight(rowText(app, app.height-1), " ")
+	left, right := ui.ShellContentRail(ui.NewTokenSet(app.Theme), app.width)
+	if firstTextColumn(footer) != left {
+		t.Fatalf("footer guidance does not start on the left rail %d: %q", left, footer)
+	}
+	if lastTextColumn(footer) != right-1 {
+		t.Fatalf("footer status does not end on the right rail %d: %q", right-1, footer)
+	}
+	if !strings.HasPrefix(footer[left:], "Alt+Enter new line") {
+		t.Fatalf("footer left rail does not lead with the composer hints: %q", footer)
+	}
+	if !strings.HasSuffix(footer, "Status") {
+		t.Fatalf("footer right rail does not carry the status group: %q", footer)
+	}
+	if help, status := strings.Index(footer, "Help"), strings.Index(footer, "Status"); help > status {
+		t.Fatalf("Help must stay inside the leading guidance group: %q", footer)
+	}
+}
+
 func TestAgentHeaderRetainsUploadSizeAfterProviderWaitTransition(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 28

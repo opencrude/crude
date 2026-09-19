@@ -135,11 +135,15 @@ func shortWorkspacePath(root string) string {
 	return "~" + string(filepath.Separator) + relative
 }
 
+// configureFooterScreen places the footer's two groups on their rails: the
+// guidance group (unread Notices, contextual hints, Help) owns the left rail
+// and the quieter status group (LSP health, project Problems, background work,
+// the Status fallback) is right-aligned.
 func (m *App) configureFooterScreen() {
 	if m.footerScreen == nil {
 		return
 	}
-	m.footerScreen.SetProjection(shellfooter.Projection{Left: m.statusFooterLeftSegments(), Right: m.statusFooterRightSegments()})
+	m.footerScreen.SetProjection(shellfooter.Projection{Left: m.footerHelpSegments(), Right: m.footerStatusSegments()})
 }
 
 func (m *App) statusHeaderRightSegments() []shellheader.Segment {
@@ -295,13 +299,16 @@ func (m *App) terminalHeaderContext(id string) (context, metrics, target string)
 	return context, metrics, target
 }
 
-func (m *App) statusFooterLeftSegments() []shellfooter.Segment {
+// footerStatusSegments is the footer's status group: meaningful
+// workspace-scoped LSP health, project Problems, background attention, and the
+// quiet Status fallback. configureFooterScreen right-aligns it.
+func (m *App) footerStatusSegments() []shellfooter.Segment {
 	segments := make([]shellfooter.Segment, 0, 8)
 	center := m.Status
 	if center == nil {
 		return []shellfooter.Segment{{Text: "Status", Role: ui.ColorMuted, Action: "workspace", Priority: 0}}
 	}
-	segments = append(segments, m.footerLSPAndGitSegments()...)
+	segments = append(segments, m.footerHealthSegments()...)
 	_, _, activeTarget := m.activeHeaderContext()
 	for _, issue := range center.Issues() {
 		if issue.ResolvedAt.IsZero() && ownerNavigation(issue.Owner) != activeTarget {
@@ -331,7 +338,9 @@ func (m *App) statusFooterLeftSegments() []shellfooter.Segment {
 	return segments
 }
 
-func (m *App) footerLSPAndGitSegments() []shellfooter.Segment {
+// footerHealthSegments reports LSP server health and the current project
+// Problem counts; Git identity lives in the header branch segment.
+func (m *App) footerHealthSegments() []shellfooter.Segment {
 	segments := make([]shellfooter.Segment, 0, 4)
 	servers := m.LSPMgr.ServerHealthSnapshots()
 	failed, working, ready := 0, 0, 0
@@ -371,7 +380,10 @@ func (m *App) footerLSPAndGitSegments() []shellfooter.Segment {
 	return segments
 }
 
-func (m *App) statusFooterRightSegments() []shellfooter.Segment {
+// footerHelpSegments is the footer's guidance group: unread Notices when
+// present, a small ranked set of contextual hints, and the Help entry.
+// configureFooterScreen left-aligns it.
+func (m *App) footerHelpSegments() []shellfooter.Segment {
 	segments := make([]shellfooter.Segment, 0, 4)
 	if center := m.Status; center != nil {
 		if unread := center.UnreadCount(); unread > 0 {

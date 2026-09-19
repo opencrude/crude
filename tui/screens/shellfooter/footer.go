@@ -76,10 +76,14 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	leftRail, rightRail := ui.ShellContentRail(s.tokens, r.W)
 	innerW := rightRail - leftRail
 	s.hits = s.hits[:0]
-	left := fitSegments(s.projection.Left, max(8, innerW/2), " · ")
-	leftW := segmentsWidth(left, " · ")
-	right := fitSegments(s.projection.Right, max(0, innerW-leftW-2), " · ")
+	// The two rails keep independent budgets: the right group is the short
+	// status group and is capped at half the row, so a wide status set can
+	// never truncate the left guidance group, which then borrows whatever the
+	// status group leaves unused.
+	right := fitSegments(s.projection.Right, max(8, innerW/2), " · ")
 	rightW := segmentsWidth(right, " · ")
+	left := fitSegments(s.projection.Left, max(0, innerW-rightW-2), " · ")
+	leftW := segmentsWidth(left, " · ")
 	s.paintGroup(buf, ox+r.X+leftRail, oy+r.Y+1, left, " · ", leftRail)
 	rightX := max(leftRail+leftW+2, rightRail-rightW)
 	s.paintGroup(buf, ox+r.X+rightX, oy+r.Y+1, right, " · ", rightX)
