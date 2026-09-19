@@ -20,19 +20,11 @@ func BuildToolTitle(msg types.ChatMessage, phase string) string {
 	case types.ToolPreviewStreaming:
 		return BuildStreamingLabel(msg.ToolName, target, msg.ToolLivedAdded, msg.ToolLivedRemoved, msg.ToolEstTokens)
 	case types.ToolPreviewError:
-		return BuildErrorLabel(msg.ToolName, target, rendering.FormatDuration(msg.ToolDuration))
+		return BuildErrorLabelWithReason(msg.ToolName, target, rendering.FormatDuration(msg.ToolDuration), ToolErrorReason(msg.ToolName, msg.Content))
 	case types.ToolPreviewDone:
 		dur := rendering.FormatDuration(msg.ToolDuration)
 		if msg.ToolStatus == "error" {
-			label := rendering.PascalCaseTool(msg.ToolName)
-			if target != "" {
-				label += " " + target
-			}
-			label += " failed"
-			if dur != "" {
-				label += " " + dur
-			}
-			return label
+			return BuildErrorLabelWithReason(msg.ToolName, target, dur, ToolErrorReason(msg.ToolName, msg.Content))
 		}
 		if msg.ToolStatus == types.ToolStatusCancelled {
 			label := rendering.PascalCaseTool(msg.ToolName)
@@ -45,7 +37,7 @@ func BuildToolTitle(msg types.ChatMessage, phase string) string {
 		return BuildDoneLabel(msg.ToolName, target, msg.ToolLivedAdded, msg.ToolLivedRemoved, msg.ToolEstTokens, dur)
 	default:
 		if msg.ToolStatus == "error" {
-			return BuildErrorLabel(msg.ToolName, target, rendering.FormatDuration(msg.ToolDuration))
+			return BuildErrorLabelWithReason(msg.ToolName, target, rendering.FormatDuration(msg.ToolDuration), ToolErrorReason(msg.ToolName, msg.Content))
 		}
 		if msg.ToolStatus == "success" {
 			dur := rendering.FormatDuration(msg.ToolDuration)
@@ -384,6 +376,13 @@ func BuildDoneLabel(tool, target string, added, removed, tokens int, duration st
 }
 
 func BuildErrorLabel(tool, target, duration string) string {
+	return BuildErrorLabelWithReason(tool, target, duration, "")
+}
+
+// BuildErrorLabelWithReason renders the one-line failure row: the labeled
+// outcome, the elapsed time, then a short reason. Structured payloads are never
+// rendered — the reason explains the failure in prose.
+func BuildErrorLabelWithReason(tool, target, duration, reason string) string {
 	label := rendering.PascalCaseTool(tool) + " failed"
 	switch tool {
 	case "run_sub_agent":
@@ -392,12 +391,19 @@ func BuildErrorLabel(tool, target, duration string) string {
 		label = "Command failed"
 	case "question":
 		label = "Question failed"
+	case "update_plan":
+		label = "Update plan failed"
+	case "get_plan":
+		label = "Read plan failed"
 	}
 	if target != "" && tool != "run_sub_agent" {
 		label += " " + target
 	}
 	if duration != "" {
 		label += " " + duration
+	}
+	if reason != "" {
+		label += " — " + reason
 	}
 	return label
 }
