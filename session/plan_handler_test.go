@@ -122,6 +122,91 @@ func TestExecutePlanTool_CreateStillRequiresObjectiveAndSteps(t *testing.T) {
 	}
 }
 
+// Models legitimately reach for other field spellings and shapes when calling
+// update_plan. These repairs keep an obvious call from costing a whole turn,
+// mirroring the alias/backfill layer other harnesses use for their task tools.
+func TestExecutePlanTool_RepairsAliasedStepFields(t *testing.T) {
+	s := newTestSessionForPlan(t)
+	result, err := s.executePlanTool(context.Background(), "update_plan", map[string]any{
+		"plan_id": "plan-1",
+		"goal":    "Ship the fix",
+		"steps": []any{
+			map[string]any{"id": "audit", "content": "Audit repo", "state": "completed", "outcome": "found 3 bugs"},
+			map[string]any{"title": "Fix window bounds"},
+			"Run gofmt + lint",
+		},
+	})
+	if err != nil {
+		t.Fatalf("aliased update rejected: %v, result=%s", err, result.Content)
+	}
+	var updated plan.Plan
+	if err := json.Unmarshal([]byte(result.Content), &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Objective != "Ship the fix" {
+		t.Fatalf("objective = %q", updated.Objective)
+	}
+	if len(updated.Steps) != 3 {
+		t.Fatalf("steps = %+v", updated.Steps)
+	}
+	if updated.Steps[0].Description != "Audit repo" || updated.Steps[0].Result != "found 3 bugs" {
+		t.Fatalf("aliased step 0 = %+v", updated.Steps[0])
+	}
+	if updated.Steps[1].ID != "fix-window-bounds" || updated.Steps[1].Description != "Fix window bounds" {
+		t.Fatalf("derived id for step 1 = %+v", updated.Steps[1])
+	}
+	if updated.Steps[2].Description != "Run gofmt + lint" || updated.Steps[2].Status != plan.StepPending {
+		t.Fatalf("string step = %+v", updated.Steps[2])
+	}
+}
+
+func TestExecutePlanTool_RepairsStepsSentAsEncodedString(t *testing.T) {
+	s := newTestSessionForPlan(t)
+	result, err := s.executePlanTool(context.Background(), "update_plan", map[string]any{
+		"plan_id":   "plan-1",
+		"objective": "O",
+		"todos":     `[{"id":"a","description":"Audit","status":"pending"}]`,
+	})
+	if err != nil {
+		t.Fatalf("encoded steps rejected: %v, result=%s", err, result.Content)
+	}
+	var updated plan.Plan
+	if err := json.Unmarshal([]byte(result.Content), &updated); err != nil {
+		t.Fatal(err)
+	}
+	if len(updated.Steps) != 1 || updated.Steps[0].ID != "a" {
+		t.Fatalf("encoded steps = %+v", updated.Steps)
+	}
+}
+
+func TestExecutePlanTool_SteersUnusableStepShapes(t *testing.T) {
+	s := newTestSessionForPlan(t)
+	cases := []struct {
+		name   string
+		params map[string]any
+		want   string
+	}{
+		{
+			name:   "steps sent as a non-JSON string",
+			params: map[string]any{"plan_id": "plan-1", "objective": "O", "steps": "audit then verify"},
+			want:   "pass the array itself",
+		},
+		{
+			name:   "step object without id or description",
+			params: map[string]any{"plan_id": "plan-1", "objective": "O", "steps": []any{map[string]any{"notes": "do the thing"}}},
+			want:   "every step needs a stable id and a short description",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			_, err := s.executePlanTool(context.Background(), "update_plan", c.params)
+			if err == nil || !containsString(err.Error(), c.want) {
+				t.Fatalf("error = %v, want %q", err, c.want)
+			}
+		})
+	}
+}
+
 func TestExecutePlanTool_GetHistory(t *testing.T) {
 	s := newTestSessionForPlan(t)
 	_, err := s.executePlanTool(context.Background(), "update_plan", map[string]any{
