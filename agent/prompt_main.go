@@ -33,7 +33,9 @@ const toolContractPrompt = `<tool_contract>
 
 const PlanningPrompt = `<planning_contract>
 <rule>Use update_plan for work with three or more substantive outcomes; do not plan trivial one-step work.</rule>
-<rule>The plan is not a notepad. Keep statuses honest and usually keep one step in_progress.</rule>
+<rule>The plan is a short working banner, not a notepad: the user reads it at a glance, so each step is a few imperative words and usually one step is in_progress.</rule>
+<rule>Work the plan as you go: mark the live step in_progress before starting it, mark it completed when it is done, and edit steps in place instead of narrating progress into them.</rule>
+<rule>Put a one-line result on a completed step and a one-line reason on a blocked/failed/skipped/cancelled step. Never paste logs, code, command output, or narration into the objective or any step.</rule>
 <rule>On an existing plan omit unchanged objective/status/steps and provide the current revision.</rule>
 <rule>On a revision conflict call get_plan, reconcile canonical state, and retry update_plan.</rule>
 </planning_contract>`
