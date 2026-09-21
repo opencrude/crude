@@ -330,7 +330,7 @@ var AgentTools = []ToolDef{
 		Type: "function",
 		Function: ToolFuncDef{
 			Name:        "update_plan",
-			Description: "Create or update the session plan the user sees as a compact banner. Creation requires plan_id, objective, and a complete ordered steps snapshot. On an existing plan omit objective/status/steps to preserve them and send the latest revision; when steps are supplied they are the complete desired ordered snapshot — reorder by array order, edit descriptions/dependencies in place, and retain every prior step (mark it cancelled rather than dropping it). Keep the banner short: the objective names the outcome in one line, each step is a few imperative words, completed steps carry a one-line result, and skipped/blocked/failed/cancelled steps carry a one-line reason. Never paste logs, code, or running narration into a plan.",
+			Description: "Create or update the session plan the user sees as a compact banner. Creation requires plan_id, objective, and a complete ordered steps snapshot. On an existing plan omit objective/status/steps to preserve them and send the latest revision; when steps are supplied they are the complete desired ordered snapshot — reorder by array order and retain every prior step (mark it cancelled rather than dropping it). Step statuses are declarative reporting, not execution gates: update any step in any order, including cancelling dependencies or reopening prior work. The banner is not a notebook: keep each step concise and never paste logs, code, or running narration into a plan.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
@@ -346,11 +346,10 @@ var AgentTools = []ToolDef{
 							"type":"object",
 							"properties":{
 								"id":{"type":"string","description":"Stable step id (e.g. 'audit')."},
-								"description":{"type":"string","description":"What this step does, as a short one-line action (a few words) shown verbatim on the plan card. Never paste logs, code, or narration — put a one-line outcome in result/reason instead."},
+								"description":{"type":"string","description":"What this step does, as a short one-line action (a few words) shown verbatim on the plan card. Never paste logs, code, or narration."},
 								"status":{"type":"string","enum":["pending","in_progress","completed","skipped","blocked","failed","cancelled"],"description":"Step status. Default pending."},
-								"depends_on":{"type":"array","items":{"type":"string"},"description":"Ids that must be completed/skipped first."},
-								"result":{"type":"string","description":"One-line summary of what the step accomplished (on completed). Never logs, code, or command output."},
-								"reason":{"type":"string","description":"One-line reason required for skipped/blocked/failed/cancelled and for retrying/reopening."}
+								"depends_on":{"type":"array","items":{"type":"string"},"description":"Related prerequisite ids for display and context; does not restrict update order."},
+								"reason":{"type":"string","description":"Optional one-line context for this status, especially blocked/failed/skipped/cancelled work."}
 							},
 							"required":["id","description"]
 						}
@@ -364,7 +363,7 @@ var AgentTools = []ToolDef{
 		Type: "function",
 		Function: ToolFuncDef{
 			Name:        "get_plan",
-			Description: "Fetch the current plan. Pass plan_id to fetch a specific plan, or omit it to fetch the active plan for this session. Returns the canonical plan JSON (id, revision, objective, status, steps with statuses/dependencies/results). Use this after a revision conflict or before a major update to re-read the exact current state.",
+			Description: "Fetch the current plan. Pass plan_id to fetch a specific plan, or omit it to fetch the active plan for this session. Returns the canonical plan JSON (id, revision, objective, status, steps with their statuses and dependencies). Use this after a revision conflict or before a major update to re-read the exact current state.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{

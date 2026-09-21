@@ -28,13 +28,12 @@ const (
 	ViewsID          ui.ComponentID = "status-overview/views"
 	SearchID         ui.ComponentID = "status-overview/search"
 	ListID           ui.ComponentID = "status-overview/list"
-	DetailsID        ui.ComponentID = "status-overview/details"
 	UtilityActionsID ui.ComponentID = "status-overview/actions/utility"
 	PrimaryActionsID ui.ComponentID = "status-overview/actions/primary"
 	ListScrollID     ui.ComponentID = "status-overview/list-scroll"
-	DetailScrollID   ui.ComponentID = "status-overview/detail-scroll"
-	DividerID        ui.ComponentID = "status-overview/divider"
 )
+
+const expandedDetailIndent = 4
 
 type DetailLine struct {
 	Label string
@@ -86,26 +85,29 @@ type MarkReadMsg struct{ ID string }
 type DismissMsg struct{ ID string }
 type CloseMsg struct{}
 
+type statusRow struct {
+	ItemID       string
+	Detail       bool
+	Line         DetailLine
+	Continuation bool
+}
+
 type Surface struct {
 	ui.Base
 	tokens         *ui.TokenSet
 	views          *ui.Tabs
 	search         *searchControl
 	list           *listControl
-	details        *detailControl
 	utilityActions *ui.ActionBar
 	primaryActions *ui.ActionBar
 	listScroll     *ui.ScrollbarControl
-	detailScroll   *ui.ScrollbarControl
-	split          *ui.SplitModel
-	divider        *dividerControl
 	focus          func(ui.ComponentID)
 	projection     Projection
 	activeView     ViewID
 	query          string
 	items          map[string]Item
-	narrow         bool
-	detailMode     bool
+	expanded       map[string]bool
+	listWidth      int
 }
 
 func New(th *theme.Theme, projection Projection) *Surface {
@@ -113,14 +115,14 @@ func New(th *theme.Theme, projection Projection) *Surface {
 		th = theme.DefaultDark()
 	}
 	tokens := ui.NewTokenSet(th)
-	s := &Surface{Base: ui.NewBase(SurfaceID), tokens: tokens, items: make(map[string]Item)}
+	s := &Surface{
+		Base:     ui.NewBase(SurfaceID),
+		tokens:   tokens,
+		items:    make(map[string]Item),
+		expanded: make(map[string]bool),
+	}
 	s.views = ui.NewTabs(ViewsID, tokens)
-	s.views.SetItems([]ui.TabItem{
-		{ID: string(ViewTabs), Label: "Tabs"},
-		{ID: string(ViewWorkspace), Label: "Workspace"},
-		{ID: string(ViewActivity), Label: "Activity"},
-		{ID: string(ViewNotifications), Label: "Notifications"},
-	}, string(ViewTabs))
+	s.views.SetItems(viewItems(), string(ViewTabs))
 	s.search = &searchControl{Base: ui.NewBase(SearchID), owner: s, field: ui.NewFilterField(SearchID, tokens)}
 	s.search.field.SetPrompt(ui.SearchGlyphEnd(tokens))
 	s.search.field.SetPromptPlacement(ui.PromptEnd)
@@ -129,48 +131,34 @@ func New(th *theme.Theme, projection Projection) *Surface {
 	s.search.field.SetBackgroundColor(tokens.Color(ui.ColorPopupSubtleBg))
 	s.search.field.SetPromptColor(tokens.Color(ui.ColorAccent))
 	s.list = &listControl{Base: ui.NewBase(ListID), owner: s, list: ui.NewList(ListID, tokens)}
-	s.list.list.SetActivateAction("status.item.open")
-	s.details = newDetailControl(s, tokens)
+	s.list.list.SetActivateAction("status.item.toggle")
+	s.list.list.SetRowPainter(s.paintStatusRow)
 	s.listScroll = ui.NewScrollbarControl(ListScrollID, s.list.list.Scroll(), tokens)
 	s.listScroll.SetSurfaceBackground(ui.ColorPopupBg)
-	s.detailScroll = ui.NewScrollbarControl(DetailScrollID, s.details.scroll, tokens)
-	s.detailScroll.SetSurfaceBackground(ui.ColorPopupBg)
-	s.split = ui.NewSplitModel(ui.Horizontal)
-	s.split.SetDividerSize(3)
-	s.split.SetMinSizes(16, 24)
-	innerDivider := ui.NewSplitDivider(DividerID, s.split)
-	innerDivider.SetTokens(tokens)
-	innerDivider.SetColorRole(ui.ColorPopupDivider)
-	innerDivider.SetTransparent(true)
-	s.divider = &dividerControl{Base: ui.NewBase(DividerID), owner: s, inner: innerDivider}
 	s.utilityActions = ui.NewActionBar(UtilityActionsID, tokens)
 	s.utilityActions.SetAlignEnd(false)
-	s.utilityActions.SetExitActions("status.focus.primary", "status.focus.details")
+	s.utilityActions.SetExitActions("status.focus.primary", "status.focus.list")
 	s.primaryActions = ui.NewActionBar(PrimaryActionsID, tokens)
 	s.primaryActions.SetExitActions("status.focus.views", "status.focus.utility")
 	s.SetProjection(projection)
 	return s
 }
 
+func viewItems() []ui.TabItem {
+	return []ui.TabItem{
+		{ID: string(ViewTabs), Label: "Tabs"},
+		{ID: string(ViewWorkspace), Label: "Workspace"},
+		{ID: string(ViewActivity), Label: "Activity"},
+		{ID: string(ViewNotifications), Label: "Notifications"},
+	}
+}
+
 func (s *Surface) Children() []ui.Component {
-	children := []ui.Component{s.views}
-	if !s.narrow || !s.detailMode {
-		children = append(children, s.search, s.list)
-		if s.listScroll.Needed() {
-			children = append(children, s.listScroll)
-		}
+	children := []ui.Component{s.views, s.search, s.list}
+	if s.listScroll.Needed() {
+		children = append(children, s.listScroll)
 	}
-	if !s.narrow || s.detailMode {
-		children = append(children, s.details)
-		if s.detailScroll.Needed() {
-			children = append(children, s.detailScroll)
-		}
-	}
-	children = append(children, s.utilityActions, s.primaryActions)
-	if !s.narrow {
-		children = append(children, s.divider)
-	}
-	return children
+	return append(children, s.utilityActions, s.primaryActions)
 }
 
 func (s *Surface) SetTokens(tokens *ui.TokenSet) {
@@ -182,10 +170,6 @@ func (s *Surface) SetTokens(tokens *ui.TokenSet) {
 	s.search.field.SetPromptColor(tokens.Color(ui.ColorAccent))
 	s.list.list.SetTokens(tokens)
 	s.listScroll.SetTokens(tokens)
-	s.detailScroll.SetTokens(tokens)
-	s.details.setTokens(tokens)
-	s.divider.SetTokens(tokens)
-	s.divider.SetColorRole(ui.ColorPopupDivider)
 	s.utilityActions.SetTokens(tokens)
 	s.primaryActions.SetTokens(tokens)
 	s.rebuildActions()
@@ -194,7 +178,6 @@ func (s *Surface) SetTokens(tokens *ui.TokenSet) {
 func (s *Surface) SetFocusHandler(fn func(ui.ComponentID)) { s.focus = fn }
 func (s *Surface) FocusSearch()                            { s.focusID(SearchID) }
 func (s *Surface) FocusList()                              { s.focusID(ListID) }
-func (s *Surface) FocusDetails()                           { s.focusID(DetailsID) }
 func (s *Surface) FocusUtilityActions()                    { s.focusID(UtilityActionsID) }
 func (s *Surface) FocusPrimaryActions()                    { s.focusID(PrimaryActionsID) }
 func (s *Surface) focusID(id ui.ComponentID) {
@@ -211,24 +194,20 @@ func (s *Surface) SetProjection(projection Projection) {
 	if s.activeView == "" {
 		s.activeView = ViewTabs
 	}
-	s.views.SetItems([]ui.TabItem{
-		{ID: string(ViewTabs), Label: "Tabs"},
-		{ID: string(ViewWorkspace), Label: "Workspace"},
-		{ID: string(ViewActivity), Label: "Activity"},
-		{ID: string(ViewNotifications), Label: "Notifications"},
-	}, string(s.activeView))
+	s.views.SetItems(viewItems(), string(s.activeView))
 	s.syncItems(true)
 }
 
 func (s *Surface) ActiveView() ViewID { return s.activeView }
 
 func (s *Surface) Select(id string) bool {
-	for index, item := range s.list.list.Items() {
-		if item.ID == id && s.list.list.SelectIndex(index) {
-			s.details.syncSelected()
-			s.rebuildActions()
-			return true
+	for index, row := range s.list.list.Items() {
+		if row.ID != id || !s.list.list.SelectIndex(index) {
+			continue
 		}
+		s.expanded[id] = true
+		s.syncItems(true)
+		return true
 	}
 	return false
 }
@@ -242,6 +221,9 @@ func (s *Surface) Selected() (Item, bool) {
 	return item, ok
 }
 
+func (s *Surface) IsExpanded(id string) bool { return s.expanded[id] }
+func (s *Surface) ListBounds() ui.Rect       { return s.list.Bounds() }
+
 func (s *Surface) syncItems(stable bool) {
 	s.items = make(map[string]Item)
 	rows := make([]ui.ListItem, 0)
@@ -253,41 +235,141 @@ func (s *Surface) syncItems(stable bool) {
 			}
 			continue
 		}
-		if query != "" && !strings.Contains(strings.ToLower(item.Label+" "+item.Summary), query) {
+		if query != "" && !strings.Contains(strings.ToLower(searchText(item)), query) {
 			continue
 		}
-		label := item.Label
-		if item.Active {
-			label = "• " + label
-		}
 		s.items[item.ID] = item
-		rows = append(rows, ui.ListItem{ID: item.ID, Label: label, Detail: item.Summary, Icon: item.Icon})
+		rows = append(rows, ui.ListItem{ID: item.ID, Label: item.Label, Detail: item.Summary, Icon: item.Icon, Payload: statusRow{ItemID: item.ID}})
+		if s.expanded[item.ID] {
+			rows = s.appendExpandedRows(rows, item)
+		}
 	}
 	if stable {
 		s.list.list.SetItemsStable(rows)
 	} else {
 		s.list.list.SetItems(rows)
 	}
-	s.details.syncSelected()
 	s.rebuildActions()
+}
+
+func searchText(item Item) string {
+	var text strings.Builder
+	text.WriteString(item.Label)
+	text.WriteByte(' ')
+	text.WriteString(item.Summary)
+	text.WriteByte(' ')
+	text.WriteString(item.Subtitle)
+	for _, line := range item.Lines {
+		text.WriteByte(' ')
+		text.WriteString(line.Label)
+		text.WriteByte(' ')
+		text.WriteString(line.Value)
+	}
+	for _, section := range item.Usage {
+		text.WriteByte(' ')
+		text.WriteString(section.Label)
+		for _, line := range section.Lines {
+			text.WriteByte(' ')
+			text.WriteString(line.Label)
+			text.WriteByte(' ')
+			text.WriteString(line.Value)
+		}
+	}
+	return text.String()
+}
+
+func (s *Surface) appendExpandedRows(rows []ui.ListItem, item Item) []ui.ListItem {
+	lines := make([]DetailLine, 0, len(item.Lines)+8)
+	if item.Subtitle != "" {
+		lines = append(lines, DetailLine{Value: item.Subtitle, Role: ui.ColorMuted})
+	}
+	if len(item.Lines) > 0 {
+		if len(lines) > 0 {
+			lines = append(lines, DetailLine{Blank: true})
+		}
+		lines = append(lines, item.Lines...)
+	}
+	for _, section := range item.Usage {
+		if len(lines) > 0 {
+			lines = append(lines, DetailLine{Blank: true})
+		}
+		lines = append(lines, DetailLine{Value: section.Label, Role: ui.ColorAccent})
+		lines = append(lines, section.Lines...)
+	}
+	if !item.PrimaryEnabled && item.DisabledReason != "" {
+		if len(lines) > 0 {
+			lines = append(lines, DetailLine{Blank: true})
+		}
+		lines = append(lines, DetailLine{Label: "Unavailable", Value: item.DisabledReason, Role: ui.ColorWarning})
+	}
+	if len(lines) == 0 {
+		lines = append(lines, DetailLine{Value: "No additional status information.", Role: ui.ColorMuted})
+	}
+	width := max(1, s.listWidth-expandedDetailIndent)
+	labelW := expandedLabelWidth(width)
+	detailIndex := 0
+	for _, line := range lines {
+		if line.Blank {
+			rows = append(rows, ui.ListItem{ID: item.ID + "/detail/blank/" + strconv.Itoa(detailIndex), Spacer: true})
+			detailIndex++
+			continue
+		}
+		valueWidth := width
+		if line.Label != "" {
+			valueWidth = max(1, width-labelW)
+		}
+		parts := rendering.HardWrap(line.Value, valueWidth)
+		if len(parts) == 0 {
+			parts = []string{""}
+		}
+		for partIndex, value := range parts {
+			visual := line
+			visual.Value = value
+			if partIndex > 0 {
+				visual.Label = ""
+			}
+			rows = append(rows, ui.ListItem{
+				ID:       item.ID + "/detail/" + strconv.Itoa(detailIndex),
+				Disabled: true,
+				Payload:  statusRow{ItemID: item.ID, Detail: true, Line: visual, Continuation: partIndex > 0 && line.Label != ""},
+			})
+			detailIndex++
+		}
+	}
+	return append(rows, ui.ListItem{ID: item.ID + "/detail/end", Spacer: true})
+}
+
+func (s *Surface) toggleSelected(expandOnly, collapseOnly bool) (bool, tea.Cmd) {
+	item, ok := s.Selected()
+	if !ok {
+		return false, nil
+	}
+	wasExpanded := s.expanded[item.ID]
+	switch {
+	case expandOnly && wasExpanded:
+		return false, nil
+	case collapseOnly && !wasExpanded:
+		return false, nil
+	default:
+		s.expanded[item.ID] = !wasExpanded
+	}
+	s.syncItems(true)
+	if !wasExpanded {
+		return true, s.selectedReadCmd()
+	}
+	return true, nil
 }
 
 func (s *Surface) rebuildActions() {
 	item, ok := s.Selected()
 	utility := make([]ui.ActionBarButton, 0, 2)
-	if ok && !s.narrow {
+	if ok {
 		utility = append(utility, ui.ActionBarButton{ID: "status-overview/copy", Label: "Copy summary", Action: "status.copy", Variant: ui.VariantSecondary, Enabled: true})
 		if item.NotificationID != "" || len(item.Actions) > 0 {
 			utility = append(utility, ui.ActionBarButton{ID: "status-overview/more", Label: "More", Action: "status.more", Variant: ui.VariantSecondary, Enabled: true})
 		}
 	}
 	primary := make([]ui.ActionBarButton, 0, 2)
-	if s.narrow && s.detailMode {
-		primary = append(primary, ui.ActionBarButton{ID: "status-overview/back", Label: "Back", Action: "status.back", Variant: ui.VariantSecondary, Enabled: true})
-	}
-	if ok && s.narrow {
-		primary = append(primary, ui.ActionBarButton{ID: "status-overview/more", Label: "More", Action: "status.more", Variant: ui.VariantSecondary, Enabled: true})
-	}
 	if ok && item.PrimaryLabel != "" {
 		primary = append(primary, ui.ActionBarButton{ID: "status-overview/primary", Label: item.PrimaryLabel, Action: "status.primary", Variant: ui.VariantPrimary, Enabled: item.PrimaryEnabled})
 	}
@@ -301,19 +383,8 @@ func (s *Surface) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 	return cs.ClampSize(ui.Size{W: cs.MaxW, H: cs.MaxH})
 }
 
-func (s *Surface) SplitFirst() int                { return s.split.FirstSize() }
-func (s *Surface) SetSplitFirst(width int)        { s.split.SetFirstSize(width) }
-func (s *Surface) PaneBounds() (ui.Rect, ui.Rect) { return s.list.Bounds(), s.details.Bounds() }
-
 func (s *Surface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
-	narrow := r.W < 82
-	if narrow != s.narrow {
-		s.narrow = narrow
-		s.rebuildActions()
-	}
-	// Content hugs the two-row tab strip and the action row sits flush on
-	// the bottom edge; the rule separates it from the panes.
 	topY := min(2, max(0, r.H-2))
 	ruleY := max(topY+1, r.H-2)
 	actionY := min(r.H-1, ruleY+1)
@@ -324,60 +395,24 @@ func (s *Surface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	primaryX := innerX + innerW - primaryW
 	s.primaryActions.Layout(ctx, ui.Rect{X: primaryX, Y: actionY, W: primaryW, H: 1})
 	utilityW := max(0, primaryX-innerX-2)
-	if s.narrow {
-		utilityW = 0
-	}
 	s.utilityActions.Layout(ctx, ui.Rect{X: innerX, Y: actionY, W: utilityW, H: 1})
 	contentH := max(1, ruleY-topY)
-	if s.narrow {
-		if s.detailMode {
-			s.details.Layout(ctx, ui.Rect{X: innerX, Y: topY, W: innerW, H: contentH})
-			s.layoutDetailScroll(ctx)
-			s.search.Layout(ctx, ui.Rect{})
-			s.list.Layout(ctx, ui.Rect{})
-			s.listScroll.Layout(ctx, ui.Rect{})
-		} else {
-			s.search.Layout(ctx, ui.Rect{X: innerX, Y: topY, W: innerW, H: 1})
-			s.list.Layout(ctx, ui.Rect{X: innerX, Y: topY + 2, W: innerW, H: max(1, contentH-2)})
-			s.layoutListScroll(ctx)
-			s.details.Layout(ctx, ui.Rect{})
-			s.detailScroll.Layout(ctx, ui.Rect{})
-		}
-		s.divider.Layout(ctx, ui.Rect{})
-		return
+	listH := max(1, contentH-2)
+	s.search.Layout(ctx, ui.Rect{X: innerX, Y: topY, W: innerW, H: 1})
+	listW := innerW
+	showScroll := s.listScroll.NeededForViewport(listH)
+	if showScroll && listW > 2 {
+		listW -= 2
 	}
-	s.split.SetDividerSize(3)
-	s.split.SetMinSizes(24, 48)
-	if !s.split.HasFirstSize() {
-		s.split.SetFirstSize(min(28, max(24, innerW/3)))
+	if listW != s.listWidth {
+		s.listWidth = listW
+		s.syncItems(true)
 	}
-	leftW, gap, rightW := s.split.Resolve(innerW)
-	s.search.Layout(ctx, ui.Rect{X: innerX, Y: topY, W: leftW, H: 1})
-	s.list.Layout(ctx, ui.Rect{X: innerX, Y: topY + 2, W: leftW, H: max(1, contentH-2)})
-	s.details.Layout(ctx, ui.Rect{X: innerX + leftW + gap, Y: topY, W: rightW, H: contentH})
-	s.divider.SetCurrentFirst(leftW)
-	s.divider.Layout(ctx, ui.Rect{X: innerX + leftW, Y: topY, W: gap, H: contentH})
-	s.layoutListScroll(ctx)
-	s.layoutDetailScroll(ctx)
-}
-
-func (s *Surface) layoutListScroll(ctx ui.LayoutContext) {
-	r := s.list.Bounds()
-	if s.listScroll.Needed() && r.W > 2 {
-		s.list.Layout(ctx, ui.Rect{X: r.X, Y: r.Y, W: r.W - 2, H: r.H})
-		s.listScroll.Layout(ctx, ui.Rect{X: r.X + r.W - 2, Y: r.Y, W: 2, H: r.H})
+	s.list.Layout(ctx, ui.Rect{X: innerX, Y: topY + 2, W: listW, H: listH})
+	if showScroll && innerW > 2 {
+		s.listScroll.Layout(ctx, ui.Rect{X: innerX + innerW - 2, Y: topY + 2, W: 2, H: listH})
 	} else {
 		s.listScroll.Layout(ctx, ui.Rect{})
-	}
-}
-
-func (s *Surface) layoutDetailScroll(ctx ui.LayoutContext) {
-	r := s.details.Bounds()
-	if s.detailScroll.Needed() && r.W > 2 {
-		s.details.Layout(ctx, ui.Rect{X: r.X, Y: r.Y, W: r.W - 2, H: r.H})
-		s.detailScroll.Layout(ctx, ui.Rect{X: r.X + r.W - 2, Y: r.Y, W: 2, H: r.H})
-	} else {
-		s.detailScroll.Layout(ctx, ui.Rect{})
 	}
 }
 
@@ -392,12 +427,80 @@ func (s *Surface) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) 
 	for x := ox + r.X + 2; x < ox+r.X+r.W-2; x++ {
 		buf.Set(x, oy+r.Y+ruleY, cell.NewCell(ui.FirstRune(s.tokens.Glyphs().BorderH, '-'), divider, bg, 0))
 	}
-	if !s.narrow || !s.detailMode {
-		y := oy + r.Y + s.search.Bounds().Y + 1
-		for x := ox + r.X + 2; x < ox+r.X+2+s.search.Bounds().W; x++ {
-			buf.Set(x, y, cell.NewCell(ui.FirstRune(s.tokens.Glyphs().BorderH, '-'), divider, bg, 0))
-		}
+	y := oy + r.Y + s.search.Bounds().Y + 1
+	for x := ox + r.X + 2; x < ox+r.X+2+s.search.Bounds().W; x++ {
+		buf.Set(x, y, cell.NewCell(ui.FirstRune(s.tokens.Glyphs().BorderH, '-'), divider, bg, 0))
 	}
+}
+
+func (s *Surface) paintStatusRow(buf *surface.CellBuffer, x, y, width int, item ui.ListItem, state ui.ControlState, _ ui.PaintContext, tokens *ui.TokenSet) {
+	payload, ok := item.Payload.(statusRow)
+	if !ok {
+		return
+	}
+	_, bg := tokens.ListRowColors(state)
+	if payload.Detail {
+		role := payload.Line.Role
+		if role == 0 {
+			role = ui.ColorFg
+		}
+		labelW := expandedLabelWidth(max(1, width-expandedDetailIndent))
+		valueX := x + expandedDetailIndent
+		if payload.Continuation {
+			valueX += labelW
+		} else if payload.Line.Label != "" {
+			label := rendering.TruncateVisual(payload.Line.Label, max(1, labelW-1), "…")
+			buf.WriteString(valueX, y, padVisual(label, labelW), tokens.Color(ui.ColorMuted), bg, 0)
+			valueX += labelW
+		}
+		buf.WriteString(valueX, y, rendering.TruncateVisual(payload.Line.Value, max(0, x+width-valueX), "…"), tokens.Color(role), bg, 0)
+		return
+	}
+	fg, _ := tokens.ListRowColors(state)
+	fg, muted := tokens.MenuInk(state, fg)
+	attr := cell.Attrs(0)
+	if state == ui.StateFocused || state == ui.StateSelected {
+		attr = cell.AttrBold
+	}
+	chevron := string(ui.FirstRune(tokens.Glyphs().TreeCollapsed, '▸'))
+	if s.expanded[payload.ItemID] {
+		chevron = string(ui.FirstRune(tokens.Glyphs().TreeExpanded, '▾'))
+	}
+	prefix := strings.Repeat(" ", max(0, tokens.FormIndent())) + chevron + " "
+	if item.Icon != "" {
+		prefix += item.Icon + " "
+	}
+	buf.WriteString(x, y, prefix, fg, bg, attr)
+	contentX := x + rendering.VisibleWidth(prefix)
+	contentW := max(0, width-rendering.VisibleWidth(prefix))
+	label := item.Label
+	if statusItem, exists := s.items[payload.ItemID]; exists && statusItem.Active {
+		label = "• " + label
+	}
+	paintStatusMainLine(buf, contentX, y, contentW, label, item.Detail, fg, muted, bg, attr)
+}
+
+func paintStatusMainLine(buf *surface.CellBuffer, x, y, width int, label, detail string, fg, muted, bg cell.Color, attr cell.Attrs) {
+	if width <= 0 {
+		return
+	}
+	if detail == "" {
+		buf.WriteString(x, y, rendering.TruncateVisual(label, width, "…"), fg, bg, attr)
+		return
+	}
+	detailW := min(rendering.VisibleWidth(detail), max(0, width/2))
+	labelW := max(0, width-detailW-2)
+	if labelW == 0 {
+		buf.WriteString(x, y, rendering.TruncateVisual(detail, width, "…"), muted, bg, attr)
+		return
+	}
+	buf.WriteString(x, y, rendering.TruncateVisual(label, labelW, "…"), fg, bg, attr)
+	detailX := x + width - detailW
+	buf.WriteString(detailX, y, rendering.TruncateVisual(detail, detailW, "…"), muted, bg, attr)
+}
+
+func expandedLabelWidth(width int) int {
+	return min(16, max(10, width/4))
 }
 
 func (s *Surface) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
@@ -406,20 +509,12 @@ func (s *Surface) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
 	}
 	switch evt.Key.Code {
 	case tea.KeyEsc:
-		if s.narrow && s.detailMode {
-			s.detailMode = false
-			s.rebuildActions()
-			s.FocusList()
-			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
-		}
 		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return CloseMsg{} }}
 	case tea.KeyTab:
 		if evt.Key.Mod.Contains(tea.ModShift) {
 			s.FocusPrimaryActions()
-		} else if !s.narrow || !s.detailMode {
-			s.FocusSearch()
 		} else {
-			s.FocusDetails()
+			s.FocusSearch()
 		}
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	}
@@ -431,24 +526,21 @@ func (s *Surface) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResu
 	case "tabs.activate":
 		if id, ok := action.Payload.(string); ok {
 			s.activeView, s.query = ViewID(id), ""
-			if s.narrow {
-				s.detailMode = false
-			}
 			s.search.field.SetValue("")
 			s.syncItems(false)
 			s.FocusSearch()
 		}
-		return ui.EventResult{Handled: true, Cmd: tea.Batch(func() tea.Msg { return ViewChangedMsg{View: s.activeView} }, s.selectedReadCmd()), Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
+		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return ViewChangedMsg{View: s.activeView} }, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
 	case "tabs.enter":
 		s.FocusSearch()
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
-	case "status.item.open":
-		if s.narrow {
-			s.detailMode = true
-			s.rebuildActions()
+	case "status.item.toggle":
+		changed, cmd := s.toggleSelected(false, false)
+		invalidate := ui.InvalidatePaint
+		if changed {
+			invalidate |= ui.InvalidateLayout
 		}
-		s.FocusDetails()
-		return ui.EventResult{Handled: true, Cmd: s.selectedReadCmd(), Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
+		return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: invalidate}
 	case "status.primary":
 		if item, ok := s.Selected(); ok && item.PrimaryEnabled {
 			return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return NavigateMsg{Item: item, Action: item.PrimaryAction} }}
@@ -474,23 +566,11 @@ func (s *Surface) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResu
 		}
 	case "status.close":
 		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return CloseMsg{} }}
-	case "status.back":
-		if s.narrow && s.detailMode {
-			s.detailMode = false
-			s.rebuildActions()
-			s.FocusList()
-		}
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
-	case ui.ActionSplitResize:
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
-	case "status.focus.details":
-		s.FocusDetails()
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	case "status.focus.utility":
 		if s.utilityActions.Bounds().W > 0 {
 			s.FocusUtilityActions()
 		} else {
-			s.FocusDetails()
+			s.FocusList()
 		}
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	case "status.focus.primary":
@@ -498,6 +578,9 @@ func (s *Surface) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResu
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	case "status.focus.views":
 		s.focusID(ViewsID)
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+	case "status.focus.list":
+		s.FocusList()
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	}
 	if strings.HasPrefix(action.ID, "status.action:") {
@@ -512,24 +595,34 @@ func (s *Surface) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResu
 }
 
 func (s *Surface) copyItem(item Item) Item {
+	lines := make([]DetailLine, 0, len(item.Lines)+8)
 	if item.Subtitle != "" {
-		item.Lines = append([]DetailLine{{Value: item.Subtitle, Role: ui.ColorMuted}, {Blank: true}}, item.Lines...)
+		lines = append(lines, DetailLine{Value: item.Subtitle, Role: ui.ColorMuted}, DetailLine{Blank: true})
 	}
-	if len(item.Usage) == 0 {
-		return item
-	}
-	selected := s.details.scopeByItem[item.ID]
-	if selected == "" {
-		selected = item.Usage[0].ID
-	}
+	lines = append(lines, item.Lines...)
 	for _, section := range item.Usage {
-		if section.ID == selected {
-			item.Lines = append(item.Lines, DetailLine{Blank: true}, DetailLine{Label: "Usage scope", Value: section.Label, Role: ui.ColorFg})
-			item.Lines = append(item.Lines, section.Lines...)
-			break
-		}
+		lines = append(lines, DetailLine{Blank: true}, DetailLine{Value: section.Label, Role: ui.ColorAccent})
+		lines = append(lines, section.Lines...)
 	}
+	item.Lines = lines
 	return item
+}
+
+func (s *Surface) selectedReadCmd() tea.Cmd {
+	item, ok := s.Selected()
+	if !ok || !s.expanded[item.ID] || item.NotificationID == "" || !item.NotificationUnread {
+		return nil
+	}
+	id := item.NotificationID
+	return func() tea.Msg { return MarkReadMsg{ID: id} }
+}
+
+func (s *Surface) DisplayedUnreadID() string {
+	item, ok := s.Selected()
+	if !ok || !s.expanded[item.ID] || !item.NotificationUnread {
+		return ""
+	}
+	return item.NotificationID
 }
 
 func (s *Surface) Semantics() ui.Semantics {
@@ -583,344 +676,42 @@ func (l *listControl) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintCon
 	l.list.Paint(buf, ox+l.Bounds().X, oy+l.Bounds().Y, ctx)
 }
 func (l *listControl) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+	if evt.IsKey() {
+		switch evt.Key.Code {
+		case tea.KeyRight:
+			if changed, cmd := l.owner.toggleSelected(true, false); changed {
+				return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
+			}
+		case tea.KeyLeft:
+			if changed, cmd := l.owner.toggleSelected(false, true); changed {
+				return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
+			}
+		case tea.KeySpace:
+			changed, cmd := l.owner.toggleSelected(false, false)
+			if changed {
+				return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
+			}
+		}
+	}
 	before := l.list.SelectedIndex()
 	result := l.list.Handle(ctx, evt)
 	if before != l.list.SelectedIndex() {
-		l.owner.details.syncSelected()
 		l.owner.rebuildActions()
 		result.Invalidate |= ui.InvalidateLayout | ui.InvalidatePaint
-		if readCmd := l.owner.selectedReadCmd(); readCmd != nil {
-			result.Cmd = tea.Batch(result.Cmd, readCmd)
-		}
 	}
 	if evt.IsKey() && evt.Key.Code == tea.KeyTab {
 		if evt.Key.Mod.Contains(tea.ModShift) {
 			l.owner.FocusSearch()
-		} else if !l.owner.narrow {
-			l.owner.focusID(DividerID)
+		} else if l.owner.utilityActions.Bounds().W > 0 {
+			l.owner.FocusUtilityActions()
 		} else {
-			l.owner.FocusDetails()
+			l.owner.FocusPrimaryActions()
 		}
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	}
 	return result
 }
-
-func (s *Surface) selectedReadCmd() tea.Cmd {
-	if s.narrow && !s.detailMode {
-		return nil
-	}
-	item, ok := s.Selected()
-	if !ok || item.NotificationID == "" || !item.NotificationUnread {
-		return nil
-	}
-	id := item.NotificationID
-	return func() tea.Msg { return MarkReadMsg{ID: id} }
-}
-
-func (s *Surface) DisplayedUnreadID() string {
-	if s.narrow && !s.detailMode {
-		return ""
-	}
-	item, ok := s.Selected()
-	if !ok || !item.NotificationUnread {
-		return ""
-	}
-	return item.NotificationID
-}
 func (l *listControl) Semantics() ui.Semantics { return l.list.Semantics() }
-
-type detailControl struct {
-	ui.Base
-	owner       *Surface
-	scroll      *ui.ScrollModel
-	rawLines    []DetailLine
-	lines       []DetailLine
-	scopeModel  *ui.FormModel
-	scopeState  *ui.FieldState
-	scopeField  *scopeCycleControl
-	scopeByItem map[string]string
-	scopeRow    int
-	rawScopeRow int
-	scopeShown  bool
-}
-
-func newDetailControl(owner *Surface, tokens *ui.TokenSet) *detailControl {
-	d := &detailControl{Base: ui.NewBase(DetailsID), owner: owner, scroll: ui.NewScrollModel(), scopeByItem: make(map[string]string), scopeRow: -1, rawScopeRow: -1}
-	d.scopeModel = ui.NewFormModel()
-	d.scopeState = ui.CycleFieldState("usage-scope", "Usage scope", []string{"agent"}, "agent", "")
-	d.scopeModel.AddField(d.scopeState)
-	d.scopeModel.OnChanged(func(string) {
-		if item, ok := owner.Selected(); ok {
-			d.scopeByItem[item.ID] = d.scopeState.Value.String()
-			d.syncSelected()
-		}
-	})
-	field := ui.NewBoundFormField(ui.NewID(DetailsID, "usage-scope-field"), d.scopeModel, d.scopeState, tokens)
-	field.SetCompact(true)
-	field.SetLabelWidth(14)
-	field.SetSurfaceBackground(ui.ColorPopupBg)
-	d.scopeField = &scopeCycleControl{Base: ui.NewBase(ui.NewID(DetailsID, "usage-scope")), owner: d, field: field}
-	return d
-}
-
-func (d *detailControl) Children() []ui.Component {
-	if d.scopeShown {
-		return []ui.Component{d.scopeField}
-	}
-	return nil
-}
-
-func (d *detailControl) setTokens(tokens *ui.TokenSet) { d.scopeField.SetTokens(tokens) }
-
-func (d *detailControl) syncSelected() {
-	d.rawLines = nil
-	d.scopeShown, d.scopeRow, d.rawScopeRow = false, -1, -1
-	if item, ok := d.owner.Selected(); ok {
-		heading := item.Label
-		if item.Summary != "" {
-			heading += "  " + item.Summary
-		}
-		d.rawLines = append(d.rawLines, DetailLine{Value: heading, Role: ui.ColorFg})
-		if item.Subtitle != "" {
-			d.rawLines = append(d.rawLines, DetailLine{Value: item.Subtitle, Role: ui.ColorMuted})
-		}
-		d.rawLines = append(d.rawLines, DetailLine{Blank: true})
-		d.rawLines = append(d.rawLines, item.Lines...)
-		if len(item.Usage) > 0 {
-			d.rawLines = append(d.rawLines, DetailLine{Blank: true})
-			selected := d.scopeByItem[item.ID]
-			if selected == "" {
-				selected = item.Usage[0].ID
-			}
-			if len(item.Usage) > 1 {
-				d.scopeShown, d.rawScopeRow = true, len(d.rawLines)
-				values := make([]string, 0, len(item.Usage))
-				d.scopeState.Options = d.scopeState.Options[:0]
-				for _, section := range item.Usage {
-					values = append(values, section.ID)
-					d.scopeState.Options = append(d.scopeState.Options, ui.FormOption{ID: section.ID, Label: section.Label})
-				}
-				if !contains(values, selected) {
-					selected = item.Usage[0].ID
-				}
-				d.scopeState.Value, d.scopeState.Initial = ui.StringValue(selected), ui.StringValue(selected)
-				d.rawLines = append(d.rawLines, DetailLine{Blank: true})
-			} else {
-				d.rawLines = append(d.rawLines, DetailLine{Value: "Usage", Role: ui.ColorAccent})
-			}
-			for _, section := range item.Usage {
-				if section.ID == selected {
-					d.rawLines = append(d.rawLines, section.Lines...)
-					break
-				}
-			}
-		}
-		if !item.PrimaryEnabled && item.DisabledReason != "" {
-			d.rawLines = append(d.rawLines, DetailLine{Blank: true}, DetailLine{Label: "Unavailable", Value: item.DisabledReason, Role: ui.ColorWarning})
-		}
-	}
-	d.reflow(max(1, d.Bounds().W))
-}
-func (d *detailControl) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
-	return cs.ClampSize(ui.Size{W: cs.MaxW, H: cs.MaxH})
-}
-func (d *detailControl) Layout(_ ui.LayoutContext, r ui.Rect) {
-	d.SetBounds(r)
-	d.reflow(max(1, r.W))
-	d.scroll.SetViewport(r.H)
-	if d.scopeShown {
-		y := d.scopeRow - d.scroll.Offset()
-		if y >= 0 && y < r.H {
-			d.scopeField.Layout(ui.LayoutContext{}, ui.Rect{X: 0, Y: y, W: r.W, H: 1})
-		} else {
-			d.scopeField.Layout(ui.LayoutContext{}, ui.Rect{})
-		}
-	} else {
-		d.scopeField.Layout(ui.LayoutContext{}, ui.Rect{})
-	}
-}
-
-func (d *detailControl) reflow(width int) {
-	d.lines = d.lines[:0]
-	d.scopeRow = -1
-	labelW := d.labelWidth(width)
-	for index, line := range d.rawLines {
-		if index == d.rawScopeRow {
-			d.scopeRow = len(d.lines)
-			d.lines = append(d.lines, DetailLine{Blank: true})
-			continue
-		}
-		if line.Blank || line.Value == "" {
-			d.lines = append(d.lines, line)
-			continue
-		}
-		valueWidth := width
-		if line.Label != "" {
-			valueWidth = max(1, width-labelW)
-		}
-		wrapped := rendering.HardWrap(line.Value, valueWidth)
-		if len(wrapped) == 0 {
-			wrapped = []string{""}
-		}
-		for part, value := range wrapped {
-			visual := DetailLine{Value: value, Role: line.Role}
-			if part == 0 {
-				visual.Label = line.Label
-			} else if line.Label != "" {
-				visual.Value = strings.Repeat(" ", labelW) + value
-			}
-			d.lines = append(d.lines, visual)
-		}
-	}
-	d.scroll.SetContent(len(d.lines))
-}
-func (d *detailControl) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
-	r := d.Bounds()
-	bg := d.owner.tokens.Color(ui.ColorPopupBg)
-	ui.FillRect(buf, ox, oy, r, cell.BlankCell(bg))
-	start := d.scroll.Offset()
-	labelW := d.labelWidth(r.W)
-	for row := 0; row < r.H && start+row < len(d.lines); row++ {
-		line := d.lines[start+row]
-		if line.Blank || start+row == d.scopeRow {
-			continue
-		}
-		x, y := ox+r.X, oy+r.Y+row
-		role := line.Role
-		if role == 0 {
-			role = ui.ColorFg
-		}
-		if line.Label != "" {
-			buf.WriteString(x, y, padVisual(rendering.TruncateVisual(line.Label, labelW-1, "…"), labelW), d.owner.tokens.Color(ui.ColorMuted), bg, 0)
-			x += labelW
-		}
-		buf.WriteString(x, y, rendering.TruncateVisual(line.Value, max(0, r.W-(x-(ox+r.X))), "…"), d.owner.tokens.Color(role), bg, 0)
-	}
-}
-
-func (d *detailControl) labelWidth(width int) int {
-	longest := 0
-	for _, line := range d.rawLines {
-		longest = max(longest, rendering.VisibleWidth(line.Label))
-	}
-	return min(max(10, longest+2), min(16, max(10, width/2)))
-}
-
-func contains(values []string, target string) bool {
-	for _, value := range values {
-		if value == target {
-			return true
-		}
-	}
-	return false
-}
-func (d *detailControl) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
-	if !evt.IsKey() {
-		return ui.EventResult{}
-	}
-	switch evt.Key.Code {
-	case tea.KeyUp:
-		d.scroll.ScrollBy(-1)
-	case tea.KeyDown:
-		d.scroll.ScrollBy(1)
-	case tea.KeyPgUp:
-		d.scroll.ScrollBy(-max(1, d.scroll.Viewport()))
-	case tea.KeyPgDown:
-		d.scroll.ScrollBy(max(1, d.scroll.Viewport()))
-	case tea.KeyLeft, tea.KeyEsc:
-		if d.owner.narrow {
-			d.owner.detailMode = false
-		}
-		d.owner.FocusList()
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidateFocus | ui.InvalidatePaint}
-	case tea.KeyTab:
-		if evt.Key.Mod.Contains(tea.ModShift) {
-			if d.owner.narrow {
-				d.owner.FocusList()
-			} else {
-				d.owner.focusID(DividerID)
-			}
-		} else if d.scopeShown {
-			d.owner.focusID(d.scopeField.ID())
-		} else if d.owner.utilityActions.Bounds().W > 0 {
-			d.owner.FocusUtilityActions()
-		} else {
-			d.owner.FocusPrimaryActions()
-		}
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
-	default:
-		return ui.EventResult{}
-	}
-	return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
-}
-
-type scopeCycleControl struct {
-	ui.Base
-	owner *detailControl
-	field *ui.FormField
-}
-
-func (c *scopeCycleControl) SetTokens(tokens *ui.TokenSet) { c.field.SetTokens(tokens) }
-func (c *scopeCycleControl) Measure(ctx ui.LayoutContext, cs ui.Constraints) ui.Size {
-	return c.field.Measure(ctx, cs)
-}
-func (c *scopeCycleControl) Layout(ctx ui.LayoutContext, r ui.Rect) {
-	c.SetBounds(r)
-	c.field.Layout(ctx, ui.Rect{W: r.W, H: r.H})
-}
-func (c *scopeCycleControl) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
-	c.field.Paint(buf, ox+c.Bounds().X, oy+c.Bounds().Y, ctx)
-}
-func (c *scopeCycleControl) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
-	if evt.IsKey() && evt.Key.Code == tea.KeyTab {
-		if evt.Key.Mod.Contains(tea.ModShift) {
-			c.owner.owner.FocusDetails()
-		} else if c.owner.owner.utilityActions.Bounds().W > 0 {
-			c.owner.owner.FocusUtilityActions()
-		} else {
-			c.owner.owner.FocusPrimaryActions()
-		}
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
-	}
-	return c.field.Handle(ctx, evt)
-}
-func (c *scopeCycleControl) Semantics() ui.Semantics { return c.field.Semantics() }
-
-type dividerControl struct {
-	ui.Base
-	owner *Surface
-	inner *ui.SplitDivider
-}
-
-func (d *dividerControl) SetTokens(tokens *ui.TokenSet)      { d.inner.SetTokens(tokens) }
-func (d *dividerControl) SetColorRole(role ui.SemanticColor) { d.inner.SetColorRole(role) }
-func (d *dividerControl) SetCurrentFirst(width int)          { d.inner.SetCurrentFirst(width) }
-func (d *dividerControl) Measure(ctx ui.LayoutContext, cs ui.Constraints) ui.Size {
-	return d.inner.Measure(ctx, cs)
-}
-func (d *dividerControl) Layout(ctx ui.LayoutContext, r ui.Rect) {
-	d.SetBounds(r)
-	d.inner.Layout(ctx, ui.Rect{W: r.W, H: r.H})
-}
-func (d *dividerControl) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
-	d.inner.Paint(buf, ox+d.Bounds().X, oy+d.Bounds().Y, ctx)
-}
-func (d *dividerControl) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
-	if evt.IsKey() && evt.Key.Code == tea.KeyTab {
-		if evt.Key.Mod.Contains(tea.ModShift) {
-			d.owner.FocusList()
-		} else {
-			d.owner.FocusDetails()
-		}
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
-	}
-	return d.inner.Handle(ctx, evt)
-}
-func (d *dividerControl) Semantics() ui.Semantics { return d.inner.Semantics() }
-func (d *detailControl) Semantics() ui.Semantics {
-	return ui.Semantics{Role: ui.RoleGroup, Label: "Status details"}
-}
 
 func padVisual(value string, width int) string {
 	valueWidth := rendering.VisibleWidth(value)

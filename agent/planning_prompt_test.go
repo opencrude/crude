@@ -10,14 +10,14 @@ import (
 
 func TestSystemPromptUsesCanonicalPlanningContract(t *testing.T) {
 	prompt := BuildSystemPrompt(true)
-	for _, required := range []string{"update_plan", "get_plan", "omit unchanged objective/status/steps", "revision conflict", "not a notepad"} {
+	for _, required := range []string{"update_plan", "get_plan", "omit unchanged objective/status/steps", "revision conflict", "not a notepad", "Statuses are declarative, not execution gates", "cancel, reopen, retry, or reorder"} {
 		if !strings.Contains(prompt, required) {
 			t.Fatalf("system prompt missing %q", required)
 		}
 	}
-	for _, removed := range []string{"mark_step_complete", "mark_step_doing", "report_blocker", "list_goal_status"} {
+	for _, removed := range []string{"mark_step_complete", "mark_step_doing", "report_blocker", "list_goal_status", "Put a one-line result"} {
 		if strings.Contains(prompt, removed) {
-			t.Fatalf("system prompt still names removed tool %q", removed)
+			t.Fatalf("system prompt still carries %q", removed)
 		}
 	}
 }

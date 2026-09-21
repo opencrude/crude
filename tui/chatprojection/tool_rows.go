@@ -125,6 +125,14 @@ func buildToolTruncationLine(remaining, width int) PaintLine {
 	}}
 }
 
+// isToolRichBody reports whether a tool result renders through a rich body
+// builder instead of the plain prose rows. A patch card must contain a patch
+// from a tool that writes file content: the route needs both the patching tool
+// name and a payload that really is a unified diff. Content sniffing alone
+// misroutes evidence — a read of a fixture that embeds "```diff" in a string
+// literal would be painted in the patch gutter — and a tool name alone
+// misroutes prose — a no-change edit whose body is only the result's own
+// summary sentence would become a fake hunk row through the lenient parser.
 func isToolRichBody(msg types.ChatMessage, resultContent string) bool {
 	if tools.IsPlanTool(msg.ToolName) {
 		return true
@@ -132,18 +140,7 @@ func isToolRichBody(msg types.ChatMessage, resultContent string) bool {
 	if tools.IsMemorySearchTool(msg.ToolName) {
 		return true
 	}
-	if isDiffToolName(msg.ToolName) || tools.IsDiffContent(resultContent) {
-		return true
-	}
-	return false
-}
-
-func isDiffToolName(name string) bool {
-	switch name {
-	case "write_file", "edit_file":
-		return true
-	}
-	return false
+	return tools.IsPatchCardTool(msg.ToolName) && tools.IsDiffContent(resultContent)
 }
 
 func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth, innerW, width, spinFrame, height int, phase string, disclosure DisclosureState) messageLines {

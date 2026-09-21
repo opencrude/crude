@@ -209,6 +209,12 @@ const (
 	// used by the native diff row builder to match the ANSI renderer's
 	// context-trimming behaviour.
 	CompactContextLines = compactContextLines
+
+	// compactElisionMinGap is the smallest hidden run between two change
+	// groups that earns a "···" marker. Hiding a handful of lines with a
+	// notation costs a row and loses context, so gaps of at most this many
+	// lines render in full and only wider ones collapse.
+	compactElisionMinGap = 4
 )
 
 // ── RenderDiff — the single unified diff renderer
@@ -429,8 +435,9 @@ func trimContext(lines []renderLine, keep int) []renderLine {
 	}
 
 	if len(changePositions) == 0 {
-		// No changes — return first and last context line
-		if len(lines) <= keep*2 {
+		// No changes — return first and last context line, unless the hidden
+		// middle is small enough to keep whole.
+		if len(lines) <= keep*2+compactElisionMinGap {
 			return lines
 		}
 		var result []renderLine
@@ -447,6 +454,25 @@ func trimContext(lines []renderLine, keep int) []renderLine {
 				keepFlags[j] = true
 			}
 		}
+	}
+
+	// Interior gaps no wider than compactElisionMinGap stay visible: the
+	// marker is only worth a row when it actually hides more than that.
+	for i := 0; i < len(keepFlags); {
+		if keepFlags[i] {
+			i++
+			continue
+		}
+		j := i
+		for j < len(keepFlags) && !keepFlags[j] {
+			j++
+		}
+		if i > 0 && j < len(keepFlags) && j-i <= compactElisionMinGap {
+			for k := i; k < j; k++ {
+				keepFlags[k] = true
+			}
+		}
+		i = j
 	}
 
 	// Merge overlapping kept regions and build result with ellipsis
@@ -487,4 +513,18 @@ func IsDiffContent(content string) bool {
 		}
 	}
 	return (hasMinus && hasPlus) || hasHunk
+}
+
+// IsPatchCardTool reports whether a success body belongs to a file writer whose
+// result is a patch the transcript paints in the patch card. Evidence tools are
+// excluded by name even when their body contains diff-like text — a read of a
+// fixture file can embed "```diff" inside a string literal — so the card is
+// gated by this predicate together with IsDiffContent, never by content alone.
+func IsPatchCardTool(name string) bool {
+	switch name {
+	case "edit_file", "write_file":
+		return true
+	default:
+		return false
+	}
 }

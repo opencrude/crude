@@ -71,11 +71,18 @@ func formatToolArgs(params map[string]any) string {
 		v := params[k]
 		switch val := v.(type) {
 		case string:
-			if len([]rune(val)) > 80 {
-				parts = append(parts, k+": "+string([]rune(val)[:80])+"…")
-			} else {
-				parts = append(parts, k+": "+val)
+			text := val
+			if len([]rune(text)) > 80 {
+				text = string([]rune(text)[:80]) + "…"
 			}
+			// Quote values that contain whitespace: the summary is a
+			// space-separated "key: value" line, and every consumer that reads
+			// operands back out of it (tool labels, live and resumed rows) can
+			// only recover a multi-word value when it is delimited.
+			if strings.ContainsAny(text, " \t") {
+				text = `"` + text + `"`
+			}
+			parts = append(parts, k+": "+text)
 		case []any:
 			var items []string
 			for _, item := range val {

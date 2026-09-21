@@ -27,9 +27,6 @@ func (m *App) openStatusOverview(view statusoverview.ViewID, targetID string) {
 	m.overlayHost.Close(ui.OverlayStatusOverview)
 	projection := m.statusOverviewProjection(view)
 	screen := statusoverview.New(m.Theme, projection)
-	if m.statusOverviewSplit > 0 {
-		screen.SetSplitFirst(m.statusOverviewSplit)
-	}
 	m.statusOverview = screen
 	m.statusOverviewSourceVersion = m.LSPMgr.Version()
 	if m.Status != nil {
@@ -61,9 +58,6 @@ func (m *App) openStatusOverview(view statusoverview.ViewID, targetID string) {
 	)
 	wm.CenterOnScreen(win, m.width, m.height)
 	m.overlayHost.Open(ui.OverlayStatusOverview, win, ui.ModalDialogPolicy(), func() {
-		if split := screen.SplitFirst(); split > 0 {
-			m.statusOverviewSplit = split
-		}
 		m.statusOverview = nil
 	})
 }

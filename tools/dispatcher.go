@@ -324,6 +324,11 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 			}
 			newData, _ := os.ReadFile(path)
 			replaced := string(newData)
+			if replaced == orig {
+				result = noChangeEditResult(oldString, newString)
+				lg.Warn("TOOL", "edit_no_change", "tool", tool, "path", path)
+				break
+			}
 			result = formatEditResult(path, 1, orig, replaced)
 		} else {
 			if mutationPreparer(opts) != nil {
@@ -344,6 +349,11 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 				break
 			}
 			replaced := strings.ReplaceAll(orig, oldString, newString)
+			if replaced == orig {
+				result = noChangeEditResult(oldString, newString)
+				lg.Warn("TOOL", "edit_no_change", "tool", tool, "path", path)
+				break
+			}
 			if err := fileio.WriteFile(path, []byte(replaced), 0o644); err != nil {
 				result = ToolResult{Content: "Error: " + err.Error()}
 				lg.Warn("TOOL", "error", "tool", tool, "error", err.Error())
@@ -670,4 +680,20 @@ func formatEditResult(path string, count int, oldContent, newContent string) Too
 		sb.WriteString("\n```\n")
 	}
 	return ToolResult{Content: sb.String(), Added: additions, Removed: removals}
+}
+
+// noChangeEditResult reports a patch that would leave the file byte-identical as
+// a failure rather than a success. Crude always recovers a match (exact,
+// whitespace-normalised, then re-indented), so a patch can resolve to the text
+// the file already holds: the edit did not happen, and reporting "Replaced 1
+// occurrence" would both mislead the model and hand the projection a body that
+// is prose instead of a patch. A no-change edit is an error the model must
+// correct — the same contract Claude Code's Edit tool ships ("No changes to
+// make: old_string and new_string are exactly the same.").
+func noChangeEditResult(oldString, newString string) ToolResult {
+	reason := "no changes to make: the patch left the file byte-identical"
+	if oldString == newString {
+		reason = "no changes to make: old_string and new_string are exactly the same"
+	}
+	return ToolResult{Content: fmt.Sprintf("Error: %s\nHint: match the file's current bytes exactly — read_file the section first, and make old_string and new_string differ.", reason)}
 }

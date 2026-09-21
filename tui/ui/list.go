@@ -31,6 +31,9 @@ func (it ListItem) Selectable() bool {
 	return !it.Disabled && !it.Header && !it.Separator && !it.Spacer
 }
 
+// ListRowPainter paints one row after the list has resolved and filled its state background.
+type ListRowPainter func(buf *surface.CellBuffer, x, y, width int, item ListItem, state ControlState, ctx PaintContext, tokens *TokenSet)
+
 // List is a uniform-height selectable list with shared Selection + Scroll models.
 type List struct {
 	Base
@@ -40,6 +43,7 @@ type List struct {
 	tokens        *TokenSet
 	activate      string // action ID on Enter/click
 	hoverIdx      int
+	rowPainter    ListRowPainter
 	defaultBgRole SemanticColor
 	defaultBgSet  bool
 }
@@ -207,6 +211,9 @@ func (l *List) Selected() (ListItem, bool) {
 // SetActivateAction sets the action ID for activation.
 func (l *List) SetActivateAction(id string) { l.activate = id }
 
+// SetRowPainter replaces the default label/detail painter for selectable rows.
+func (l *List) SetRowPainter(fn ListRowPainter) { l.rowPainter = fn }
+
 // rowBg resolves the background for non-interactive rows, honoring the
 // SetDefaultRowBackground override when configured.
 func (l *List) rowBg() cell.Color {
@@ -319,6 +326,10 @@ func (l *List) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 		}
 		if !bg.IsDefault() {
 			FillRect(buf, 0, 0, Rect{X: x, Y: y, W: r.W, H: 1}, cell.BlankCell(bg))
+		}
+		if l.rowPainter != nil {
+			l.rowPainter(buf, x, y, r.W, item, st, ctx, l.tokens)
+			continue
 		}
 		// Subsection rows sit one column in from section titles. Selection
 		// is background + bold only — never a prompt glyph or leading marker.

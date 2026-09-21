@@ -67,7 +67,6 @@ type App struct {
 	Input                       input.Model
 	Feedback                    *feedbackSink
 	statusOverview              *statusoverview.Surface
-	statusOverviewSplit         int
 	statusOverviewSourceVersion uint64
 	statusOverviewCenterVersion uint64
 	statusOverviewSecond        int64

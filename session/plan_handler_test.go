@@ -125,13 +125,15 @@ func TestExecutePlanTool_CreateStillRequiresObjectiveAndSteps(t *testing.T) {
 // Models legitimately reach for other field spellings and shapes when calling
 // update_plan. These repairs keep an obvious call from costing a whole turn,
 // mirroring the alias/backfill layer other harnesses use for their task tools.
+// Step annotations are the one thing never repaired: a result/note/outcome is
+// dropped so the card stays a banner instead of becoming a progress log.
 func TestExecutePlanTool_RepairsAliasedStepFields(t *testing.T) {
 	s := newTestSessionForPlan(t)
 	result, err := s.executePlanTool(context.Background(), "update_plan", map[string]any{
 		"plan_id": "plan-1",
 		"goal":    "Ship the fix",
 		"steps": []any{
-			map[string]any{"id": "audit", "content": "Audit repo", "state": "completed", "outcome": "found 3 bugs"},
+			map[string]any{"id": "audit", "content": "Audit repo", "state": "completed", "outcome": "found 3 bugs", "note": "extra narration"},
 			map[string]any{"title": "Fix window bounds"},
 			"Run gofmt + lint",
 		},
@@ -149,8 +151,8 @@ func TestExecutePlanTool_RepairsAliasedStepFields(t *testing.T) {
 	if len(updated.Steps) != 3 {
 		t.Fatalf("steps = %+v", updated.Steps)
 	}
-	if updated.Steps[0].Description != "Audit repo" || updated.Steps[0].Result != "found 3 bugs" {
-		t.Fatalf("aliased step 0 = %+v", updated.Steps[0])
+	if updated.Steps[0].Description != "Audit repo" {
+		t.Fatalf("aliased step 0 = %+v (result annotations must be dropped)", updated.Steps[0])
 	}
 	if updated.Steps[1].ID != "fix-window-bounds" || updated.Steps[1].Description != "Fix window bounds" {
 		t.Fatalf("derived id for step 1 = %+v", updated.Steps[1])
@@ -204,6 +206,67 @@ func TestExecutePlanTool_SteersUnusableStepShapes(t *testing.T) {
 				t.Fatalf("error = %v, want %q", err, c.want)
 			}
 		})
+	}
+}
+
+func TestExecutePlanToolAcceptsOutOfOrderCancellationSnapshot(t *testing.T) {
+	s := newTestSessionForPlan(t)
+	_, err := s.executePlanTool(context.Background(), "update_plan", map[string]any{
+		"plan_id": "plan-1", "objective": "O", "status": "active",
+		"steps": []any{
+			map[string]any{"id": "trace", "description": "Trace", "status": "in_progress"},
+			map[string]any{"id": "fix", "description": "Fix", "status": "pending", "depends_on": []any{"trace"}},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := s.executePlanTool(context.Background(), "update_plan", map[string]any{
+		"plan_id": "plan-1", "revision": 1, "status": "cancelled", "explanation": "deferred",
+		"steps": []any{
+			map[string]any{"id": "trace", "description": "Trace", "status": "cancelled"},
+			map[string]any{"id": "fix", "description": "Fix", "status": "pending", "depends_on": []any{"trace"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("cancellation snapshot rejected: %v, result=%s", err, result.Content)
+	}
+	var updated plan.Plan
+	if err := json.Unmarshal([]byte(result.Content), &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status != plan.StatusCancelled || len(updated.Steps) != 2 {
+		t.Fatalf("cancelled plan = %+v", updated)
+	}
+	for _, step := range updated.Steps {
+		if step.Status != plan.StepCancelled || step.FinishedAt == nil {
+			t.Fatalf("cancelled plan left live step: %+v", step)
+		}
+	}
+}
+
+func TestExecutePlanToolReopensCancelledPlanWithoutExplanation(t *testing.T) {
+	s := newTestSessionForPlan(t)
+	_, err := s.executePlanTool(context.Background(), "update_plan", map[string]any{
+		"plan_id": "plan-1", "objective": "O", "status": "cancelled",
+		"steps": []any{map[string]any{"id": "a", "description": "A", "status": "cancelled"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	result, err := s.executePlanTool(context.Background(), "update_plan", map[string]any{
+		"plan_id": "plan-1", "revision": 1, "status": "active",
+		"steps": []any{map[string]any{"id": "a", "description": "A", "status": "in_progress"}},
+	})
+	if err != nil {
+		t.Fatalf("reopen rejected: %v, result=%s", err, result.Content)
+	}
+	var updated plan.Plan
+	if err := json.Unmarshal([]byte(result.Content), &updated); err != nil {
+		t.Fatal(err)
+	}
+	if updated.Status != plan.StatusActive || updated.Steps[0].Status != plan.StepInProgress {
+		t.Fatalf("reopened plan = %+v", updated)
 	}
 }
 
