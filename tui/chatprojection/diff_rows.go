@@ -459,7 +459,6 @@ type PlanStepView struct {
 	Description string   `json:"description"`
 	Status      string   `json:"status"`
 	DependsOn   []string `json:"depends_on,omitempty"`
-	Result      string   `json:"result,omitempty"`
 	Reason      string   `json:"reason,omitempty"`
 }
 
@@ -501,8 +500,8 @@ func buildPlanViewBody(view *PlanViewData, contentWidth int, collapsed bool) []P
 			}})
 		}
 	}
-	steps := view.Steps
-	if collapsed {
+	steps := planDisplaySteps(view)
+	if collapsed && view.Status != "completed" && view.Status != "cancelled" {
 		lo, hi, windowed := planWindowBounds(steps)
 		if windowed && lo > 0 {
 			out = append(out, planWindowSummaryLine(lo, "earlier"))
@@ -511,14 +510,14 @@ func buildPlanViewBody(view *PlanViewData, contentWidth int, collapsed bool) []P
 			steps = steps[lo:hi]
 		}
 		for _, step := range steps {
-			out = append(out, buildPlanViewStep(step, contentWidth))
+			out = append(out, buildPlanViewStep(step, contentWidth, true)...)
 		}
 		if windowed && hi < len(view.Steps) {
 			out = append(out, planWindowSummaryLine(len(view.Steps)-hi, "remaining"))
 		}
 	} else {
-		for _, step := range view.Steps {
-			out = append(out, buildPlanViewStep(step, contentWidth))
+		for _, step := range steps {
+			out = append(out, buildPlanViewStep(step, contentWidth, collapsed)...)
 		}
 	}
 	if len(out) == 0 {
@@ -581,6 +580,24 @@ func planWindowBounds(steps []PlanStepView) (int, int, bool) {
 	return lo, hi, true
 }
 
+func planDisplaySteps(view *PlanViewData) []PlanStepView {
+	steps := append([]PlanStepView(nil), view.Steps...)
+	if view.Status != "cancelled" {
+		return steps
+	}
+	reason := tools.CollapseLine(view.Explanation)
+	for i := range steps {
+		if steps[i].Status != "pending" && steps[i].Status != "in_progress" {
+			continue
+		}
+		steps[i].Status = "cancelled"
+		if tools.CollapseLine(steps[i].Reason) == "" {
+			steps[i].Reason = reason
+		}
+	}
+	return steps
+}
+
 func planWindowSummaryLine(n int, position string) PaintLine {
 	noun := "steps"
 	if n == 1 {
@@ -627,8 +644,8 @@ func buildPlanViewHeader(view *PlanViewData, contentWidth int) []PaintLine {
 		status = "active"
 	}
 	done := 0
-	for _, step := range view.Steps {
-		if step.Status == "completed" || step.Status == "skipped" || step.Status == "cancelled" {
+	for _, step := range planDisplaySteps(view) {
+		if step.Status == "completed" {
 			done++
 		}
 	}
@@ -664,7 +681,7 @@ func buildPlanViewHeader(view *PlanViewData, contentWidth int) []PaintLine {
 		curWidth = rendering.VisibleWidth(indent)
 	}
 	for _, word := range words {
-		for _, chunk := range planHeaderChunks(word.text, avail) {
+		for _, chunk := range planTextChunks(word.text, avail) {
 			chunkWidth := rendering.VisibleWidth(chunk)
 			space := 0
 			if curWidth > 0 {
@@ -686,54 +703,94 @@ func buildPlanViewHeader(view *PlanViewData, contentWidth int) []PaintLine {
 	return rows
 }
 
-// planHeaderChunks splits a single header word that is wider than the row into
-// hard-wrapped pieces, so even an unbroken token stays fully visible.
-func planHeaderChunks(word string, width int) []string {
+// planTextChunks splits one token wider than the row into hard-wrapped
+// pieces, so even an unbroken token stays fully visible — shared by the header
+// objective words and the expanded step text.
+func planTextChunks(word string, width int) []string {
 	if rendering.VisibleWidth(word) <= width {
 		return []string{word}
 	}
 	return rendering.HardWrap(word, width)
 }
 
-func buildPlanViewStep(step PlanStepView, contentWidth int) PaintLine {
+// buildPlanViewStep renders one step. Compact keeps the banner contract of
+// exactly one elided row per step. Expanded is the reading view: the step's
+// full text — description plus any result or reason — wraps across rows with a
+// hanging indent aligned under the text, so nothing a step carries stays
+// hidden behind an ellipsis.
+func buildPlanViewStep(step PlanStepView, contentWidth int, collapsed bool) []PaintLine {
 	marker, role := planStepMarker(step.Status)
-	finished := step.Status == "completed"
+	settled := step.Status == "completed" || step.Status == "skipped" || step.Status == "cancelled"
 	textRole, textAttr := ui.ColorFg, cell.Attrs(0)
-	if finished {
-		// A finished step reads as closed: strike it through beyond the
-		// check mark alone.
+	if settled {
+		// Settled work reads as closed: strike the whole step text, while the
+		// status marker preserves whether it completed, skipped, or cancelled.
 		textRole, textAttr = ui.ColorMuted, cell.AttrStrikethrough
 	}
-	return PaintLine{Spans: []RowSpan{
-		{Text: "│   ", Role: ui.ColorMuted},
-		{Text: marker + " ", Role: role},
-		{Text: planStepLabel(step, max(1, contentWidth-6)), Role: textRole, Attr: textAttr},
-	}}
+	text := planStepText(step)
+	avail := max(1, contentWidth-6)
+	if collapsed {
+		return []PaintLine{{
+			Spans: []RowSpan{
+				{Text: "│   ", Role: ui.ColorMuted},
+				{Text: marker + " ", Role: role},
+				{Text: rendering.TruncateLine(text, avail), Role: textRole, Attr: textAttr},
+			},
+		}}
+	}
+	chunks := wrapPlanText(text, avail)
+	indent := strings.Repeat(" ", rendering.VisibleWidth(marker+" "))
+	rows := make([]PaintLine, 0, len(chunks))
+	for i, chunk := range chunks {
+		lead, leadRole := marker+" ", role
+		if i > 0 {
+			lead, leadRole = indent, ui.ColorMuted
+		}
+		rows = append(rows, PaintLine{Spans: []RowSpan{
+			{Text: "│   ", Role: ui.ColorMuted},
+			{Text: lead, Role: leadRole},
+			{Text: chunk, Role: textRole, Attr: textAttr},
+		}})
+	}
+	return rows
 }
 
-// planStepLabel composes the one-line step text: a short description plus an
-// optional trailing detail (result, else reason). Long text is elided rather
-// than wrapped so every step stays a single row — the plan card is a banner,
-// and the full text belongs in conversation, not in the card.
-func planStepLabel(step PlanStepView, width int) string {
+// planStepText composes a step's full text from its description plus optional
+// lifecycle reason. Compact elides this text to one row and expanded wraps it
+// whole, so both forms show the same sentence.
+func planStepText(step PlanStepView) string {
 	description := tools.CollapseLine(step.Description)
 	if description == "" {
 		description = tools.CollapseLine(step.ID)
 	}
-	detail := tools.CollapseLine(step.Result)
-	sep := " — "
-	if detail == "" {
-		if reason := tools.CollapseLine(step.Reason); reason != "" {
-			detail, sep = "("+reason+")", " "
+	if reason := tools.CollapseLine(step.Reason); reason != "" {
+		return description + " (" + reason + ")"
+	}
+	return description
+}
+
+// wrapPlanText word-wraps plan text to width, hard-breaking a single token
+// wider than the row so no content can overflow the card.
+func wrapPlanText(text string, width int) []string {
+	var rows []string
+	cur := ""
+	for _, word := range strings.Fields(text) {
+		for _, chunk := range planTextChunks(word, width) {
+			switch {
+			case cur == "":
+				cur = chunk
+			case rendering.VisibleWidth(cur)+1+rendering.VisibleWidth(chunk) <= width:
+				cur += " " + chunk
+			default:
+				rows = append(rows, cur)
+				cur = chunk
+			}
 		}
 	}
-	if detail == "" {
-		return rendering.TruncateLine(description, width)
+	if cur != "" || len(rows) == 0 {
+		rows = append(rows, cur)
 	}
-	descriptionBudget := max(8, width-max(8, width/2)-rendering.VisibleWidth(sep))
-	description = rendering.TruncateLine(description, descriptionBudget)
-	remaining := max(4, width-rendering.VisibleWidth(description)-rendering.VisibleWidth(sep))
-	return description + sep + rendering.TruncateLine(detail, remaining)
+	return rows
 }
 
 func planStatusRole(status string) ui.SemanticColor {
@@ -759,8 +816,10 @@ func planStepMarker(status string) (string, ui.SemanticColor) {
 		return "!", ui.ColorWarning
 	case "failed":
 		return "✗", ui.ColorError
-	case "skipped", "cancelled":
-		return "·", ui.ColorMuted
+	case "skipped":
+		return "−", ui.ColorMuted
+	case "cancelled":
+		return "×", ui.ColorError
 	default:
 		return "☐", ui.ColorMuted
 	}

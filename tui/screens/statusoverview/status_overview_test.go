@@ -17,15 +17,15 @@ func testProjection() Projection {
 	return Projection{Active: ViewTabs, Views: map[ViewID][]Item{
 		ViewTabs: {
 			{ID: "group", Label: "Agents", Header: true},
-			{ID: "agent:one", Label: "One", Summary: "Waiting", PrimaryAction: "agent:one", PrimaryLabel: "Switch to Tab", PrimaryEnabled: true},
+			{ID: "agent:one", Label: "One", Summary: "Waiting", Subtitle: "Ollama / glm", Lines: []DetailLine{{Label: "Context", Value: "71.5k / 1.05M · 6.8%", Role: ui.ColorFg}}, PrimaryAction: "agent:one", PrimaryLabel: "Switch to Tab", PrimaryEnabled: true},
 			{ID: "agent:two", Label: "Two", Summary: "Idle", PrimaryAction: "agent:two", PrimaryLabel: "Switch to Tab", PrimaryEnabled: true},
 		},
-		ViewWorkspace:     {{ID: "workspace", Label: "Workspace", Summary: "Ready"}},
-		ViewNotifications: {{ID: "notice:n", Label: "Failed", Summary: "Unread", NotificationID: "n", NotificationUnread: true, Owner: ttypes.ResourceRef{Kind: ttypes.ResourceAgent, ID: "one"}}},
+		ViewWorkspace:     {{ID: "workspace", Label: "Workspace", Summary: "Ready", Lines: []DetailLine{{Label: "Path", Value: "/tmp/project", Role: ui.ColorFg}}}},
+		ViewNotifications: {{ID: "notice:n", Label: "Failed", Summary: "Unread", NotificationID: "n", NotificationUnread: true, Owner: ttypes.ResourceRef{Kind: ttypes.ResourceAgent, ID: "one"}, Lines: []DetailLine{{Label: "Source", Value: "Agent", Role: ui.ColorMuted}}}},
 	}}
 }
 
-func TestOverviewRegionsAndActionsDoNotOverlap(t *testing.T) {
+func TestOverviewUsesFullWidthSearchAndList(t *testing.T) {
 	screen := New(theme.DefaultDark(), testProjection())
 	host := ui.NewHost(theme.DefaultDark(), screen)
 	host.Resize(100, 28)
@@ -33,15 +33,11 @@ func TestOverviewRegionsAndActionsDoNotOverlap(t *testing.T) {
 	if screen.views.Bounds() != (ui.Rect{X: 2, Y: 0, W: 96, H: 2}) {
 		t.Fatalf("mode strip bounds=%+v", screen.views.Bounds())
 	}
-	if screen.search.Bounds().X != screen.views.Bounds().X {
-		t.Fatalf("first tab/search rails differ: tabs=%+v search=%+v", screen.views.Bounds(), screen.search.Bounds())
+	if screen.search.Bounds() != (ui.Rect{X: 2, Y: 2, W: 96, H: 1}) {
+		t.Fatalf("search is not full width: %+v", screen.search.Bounds())
 	}
-	if screen.search.Bounds().Y != screen.views.Bounds().Y+screen.views.Bounds().H {
-		t.Fatalf("gap under tab strip: tabs=%+v search=%+v", screen.views.Bounds(), screen.search.Bounds())
-	}
-	left, right := screen.PaneBounds()
-	if left.W != 28 || right.W < 48 {
-		t.Fatalf("default panes are not navigation/detail weighted: left=%+v right=%+v", left, right)
+	if screen.list.Bounds().X != 2 || screen.list.Bounds().W < 94 {
+		t.Fatalf("list is not full width: %+v", screen.list.Bounds())
 	}
 	if screen.primaryActions.Bounds().Y != 27 || screen.utilityActions.Bounds().Y != 27 {
 		t.Fatalf("command row not flush with the last host row: %+v/%+v", screen.utilityActions.Bounds(), screen.primaryActions.Bounds())
@@ -51,9 +47,6 @@ func TestOverviewRegionsAndActionsDoNotOverlap(t *testing.T) {
 	row := PlainRow(buf, 27, 100)
 	if !strings.Contains(row, "[ Copy summary ]") || !strings.Contains(row, "[ Switch to Tab ]") || !strings.Contains(row, "[ Close ]") {
 		t.Fatalf("command row missing stable groups: %q", row)
-	}
-	if strings.Contains(row, strings.Repeat("-", 8)) {
-		t.Fatalf("separator overlaps command row: %q", row)
 	}
 }
 
@@ -72,55 +65,73 @@ func TestOverviewFrameDropsGapsUnderStripAndCommandRow(t *testing.T) {
 	}
 }
 
-func TestOverviewDividerKeyboardAndPointerResizePaintedPanes(t *testing.T) {
+func TestOverviewClickTogglesInlineDetails(t *testing.T) {
 	screen := New(theme.DefaultDark(), testProjection())
 	host := ui.NewHost(theme.DefaultDark(), screen)
 	host.Resize(100, 28)
 	host.Layout()
-	before, _ := screen.PaneBounds()
-	host.Focus(DividerID)
-	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyRight})
-	if !result.Handled {
-		t.Fatal("focused divider ignored Right")
+	buf := surface.NewCellBuffer(100, 28)
+	host.Paint(buf)
+	if screen.IsExpanded("agent:one") {
+		t.Fatal("first item starts expanded")
+	}
+	rowY := screen.list.Bounds().Y + 1
+	result := host.Handle(tea.MouseClickMsg{X: screen.list.Bounds().X + 4, Y: rowY, Button: tea.MouseLeft})
+	if !result.Handled || !screen.IsExpanded("agent:one") {
+		t.Fatalf("click did not expand first item: result=%#v", result)
 	}
 	host.MarkLayout()
 	host.Layout()
-	afterKey, _ := screen.PaneBounds()
-	if afterKey.W != before.W+1 {
-		t.Fatalf("keyboard resize did not move painted pane: before=%+v after=%+v", before, afterKey)
+	buf = surface.NewCellBuffer(100, 28)
+	host.Paint(buf)
+	painted := bufferText(buf, 100, 28)
+	if !strings.Contains(painted, "Context") || !strings.Contains(painted, "71.5k / 1.05M") || !strings.Contains(painted, "Ollama / glm") {
+		t.Fatalf("expanded details missing:\n%s", painted)
 	}
-	divider := screen.divider.Bounds()
-	pressX, pressY := divider.X+divider.W/2, divider.Y+1
-	result = host.Handle(tea.MouseClickMsg{X: pressX, Y: pressY, Button: tea.MouseLeft})
-	if !result.Handled || !host.HasPointerCapture() {
-		t.Fatalf("divider press did not capture pointer: result=%#v", result)
+	result = host.Handle(tea.MouseClickMsg{X: screen.list.Bounds().X + 4, Y: rowY, Button: tea.MouseLeft})
+	if !result.Handled || screen.IsExpanded("agent:one") {
+		t.Fatalf("second click did not collapse first item: result=%#v", result)
 	}
-	host.Handle(tea.MouseMotionMsg{X: pressX + 5, Y: pressY, Button: tea.MouseLeft})
-	host.Handle(tea.MouseReleaseMsg{X: pressX + 5, Y: pressY, Button: tea.MouseLeft})
-	host.MarkLayout()
+}
+
+func TestOverviewKeyboardExpandsWithoutNavigating(t *testing.T) {
+	screen := New(theme.DefaultDark(), testProjection())
+	host := ui.NewHost(theme.DefaultDark(), screen)
+	host.Resize(100, 28)
 	host.Layout()
-	afterPointer, _ := screen.PaneBounds()
-	if afterPointer.W <= afterKey.W || host.HasPointerCapture() {
-		t.Fatalf("pointer resize/release failed: key=%+v pointer=%+v captured=%v", afterKey, afterPointer, host.HasPointerCapture())
+	host.Focus(ListID)
+	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if !result.Handled || !screen.IsExpanded("agent:one") {
+		t.Fatalf("Enter did not expand selected row: %#v", result)
+	}
+	if result.Cmd != nil {
+		if _, ok := result.Cmd().(NavigateMsg); ok {
+			t.Fatal("row expansion unexpectedly navigated")
+		}
+	}
+	result = host.Handle(tea.KeyPressMsg{Code: tea.KeyLeft})
+	if !result.Handled || screen.IsExpanded("agent:one") {
+		t.Fatalf("Left did not collapse selected row: %#v", result)
 	}
 }
 
-func PlainRow(buf *surface.CellBuffer, y, width int) string {
-	var out strings.Builder
-	for x := 0; x < width; x++ {
-		out.WriteRune(buf.Get(x, y).Char)
+func TestOverviewSearchMatchesAdditionalDetails(t *testing.T) {
+	screen := New(theme.DefaultDark(), testProjection())
+	screen.query = "1.05m"
+	screen.syncItems(false)
+	if len(screen.list.list.Items()) != 1 || screen.list.list.Items()[0].ID != "agent:one" {
+		t.Fatalf("detail search rows=%#v", screen.list.list.Items())
 	}
-	return out.String()
 }
 
-func TestOverviewSeparatesInspectionFromNavigation(t *testing.T) {
+func TestOverviewSeparatesExpansionFromNavigation(t *testing.T) {
 	screen := New(theme.DefaultDark(), testProjection())
 	if !screen.Select("agent:two") {
-		t.Fatal("could not inspect second item")
+		t.Fatal("could not select second item")
 	}
 	selected, _ := screen.Selected()
-	if selected.ID != "agent:two" {
-		t.Fatalf("inspected=%q", selected.ID)
+	if selected.ID != "agent:two" || !screen.IsExpanded("agent:two") {
+		t.Fatalf("selected=%q expanded=%v", selected.ID, screen.IsExpanded("agent:two"))
 	}
 	result := screen.HandleAction(ui.EventContext{}, ui.Action{ID: "status.primary"})
 	if result.Cmd == nil {
@@ -132,44 +143,26 @@ func TestOverviewSeparatesInspectionFromNavigation(t *testing.T) {
 	}
 }
 
-func TestOverviewArrowInspectionMarksDisplayedNoticeRead(t *testing.T) {
+func TestOverviewExpandedUnreadNoticeMarksRead(t *testing.T) {
 	screen := New(theme.DefaultDark(), testProjection())
 	result := screen.HandleAction(ui.EventContext{}, ui.Action{ID: "tabs.activate", Payload: string(ViewNotifications)})
 	if result.Cmd == nil {
-		t.Fatal("displaying an unread notice produced no read command")
+		t.Fatal("view change produced no command")
 	}
-	msg := result.Cmd()
-	found := false
-	if batch, ok := msg.(tea.BatchMsg); ok {
-		for _, cmd := range batch {
-			if read, ok := cmd().(MarkReadMsg); ok && read.ID == "n" {
-				found = true
-			}
-		}
+	if screen.DisplayedUnreadID() != "" {
+		t.Fatal("collapsed unread notice counts as displayed")
 	}
-	if !found {
-		t.Fatalf("read command=%#v", msg)
+	result = screen.HandleAction(ui.EventContext{}, ui.Action{ID: "status.item.toggle"})
+	if result.Cmd == nil {
+		t.Fatal("expanding unread notice produced no read command")
 	}
-}
-
-func TestOverviewNarrowLayoutUsesDrillDown(t *testing.T) {
-	screen := New(theme.DefaultDark(), testProjection())
-	screen.Layout(ui.LayoutContext{}, ui.Rect{W: 50, H: 16})
-	if !screen.narrow || screen.detailMode {
-		t.Fatalf("initial narrow state=%v detail=%v", screen.narrow, screen.detailMode)
-	}
-	screen.HandleAction(ui.EventContext{}, ui.Action{ID: "status.item.open"})
-	screen.Layout(ui.LayoutContext{}, ui.Rect{W: 50, H: 16})
-	if !screen.detailMode || screen.details.Bounds().Empty() {
-		t.Fatal("narrow inspector did not enter details")
-	}
-	result := screen.Handle(ui.EventContext{}, ui.KeyEvent(tea.KeyPressMsg{Code: tea.KeyEsc}))
-	if !result.Handled || screen.detailMode {
-		t.Fatal("Esc did not return to narrow master list")
+	read, ok := result.Cmd().(MarkReadMsg)
+	if !ok || read.ID != "n" {
+		t.Fatalf("read command=%#v", result.Cmd())
 	}
 }
 
-func TestAgentDetailsShowOneContextAndOneSelectedUsageScope(t *testing.T) {
+func TestExpandedAgentShowsAllUsageScopes(t *testing.T) {
 	projection := testProjection()
 	projection.Views[ViewTabs] = []Item{{
 		ID: "agent:one", Label: "One", Summary: "Idle", Subtitle: "Ollama Cloud / glm-5.3",
@@ -184,29 +177,32 @@ func TestAgentDetailsShowOneContextAndOneSelectedUsageScope(t *testing.T) {
 	host := ui.NewHost(theme.DefaultDark(), screen)
 	host.Resize(100, 28)
 	host.Layout()
-	if got := detailText(screen.details.lines); strings.Count(got, "Context") != 1 || !strings.Contains(got, "Input 10") || strings.Contains(got, "Input 20") {
-		t.Fatalf("default details repeat or mix scopes: %q", got)
-	}
-	host.Focus(screen.details.scopeField.ID())
-	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyRight})
-	if !result.Handled {
-		t.Fatal("scope cycle ignored Right")
-	}
+	host.Focus(ListID)
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
 	host.MarkLayout()
 	host.Layout()
-	if got := detailText(screen.details.lines); !strings.Contains(got, "Input 20") || strings.Contains(got, "Input 10") {
-		t.Fatalf("scope cycle did not replace the one usage table: %q", got)
+	buf := surface.NewCellBuffer(100, 28)
+	host.Paint(buf)
+	painted := bufferText(buf, 100, 28)
+	for _, want := range []string{"Context", "This Agent", "Input", "10", "Session", "20"} {
+		if !strings.Contains(painted, want) {
+			t.Fatalf("expanded usage missing %q:\n%s", want, painted)
+		}
 	}
 }
 
-func detailText(lines []DetailLine) string {
+func PlainRow(buf *surface.CellBuffer, y, width int) string {
 	var out strings.Builder
-	for _, line := range lines {
-		if line.Label != "" {
-			out.WriteString(line.Label)
-			out.WriteByte(' ')
-		}
-		out.WriteString(strings.TrimSpace(line.Value))
+	for x := 0; x < width; x++ {
+		out.WriteRune(buf.Get(x, y).Char)
+	}
+	return out.String()
+}
+
+func bufferText(buf *surface.CellBuffer, width, height int) string {
+	var out strings.Builder
+	for y := 0; y < height; y++ {
+		out.WriteString(PlainRow(buf, y, width))
 		out.WriteByte('\n')
 	}
 	return out.String()

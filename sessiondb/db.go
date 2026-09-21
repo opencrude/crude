@@ -258,7 +258,6 @@ CREATE TABLE IF NOT EXISTS plan_steps (
     description   TEXT NOT NULL,
     status        TEXT NOT NULL,
     depends_on_json TEXT,
-    result        TEXT,
     reason        TEXT,
     attempts      INTEGER NOT NULL DEFAULT 0,
     created_at    INTEGER NOT NULL,

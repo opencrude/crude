@@ -154,7 +154,10 @@ func decodeUpdateRequest(params map[string]any) (plan.UpdateRequest, error) {
 // decodePlanStep accepts one step object. Models legitimately reach for field
 // aliases (a step "content" or "title" instead of "description"), so the
 // obvious spellings are repaired rather than rejected — a rejection costs a
-// whole turn and teaches nothing the schema did not already say.
+// whole turn and teaches nothing the schema did not already say. Step
+// annotations are the exception: a result/note/outcome field is dropped, never
+// stored. The card shows the step banner, not a progress log — narration
+// belongs in conversation, and only a deviation status carries a reason.
 func decodePlanStep(raw any) (plan.PlanStep, error) {
 	if text, ok := raw.(string); ok {
 		if strings.TrimSpace(text) == "" {
@@ -170,8 +173,7 @@ func decodePlanStep(raw any) (plan.PlanStep, error) {
 		ID:          firstStrParam(object, "id", "step_id", "key"),
 		Description: firstStrParam(object, "description", "content", "title", "name", "text", "action"),
 		Status:      plan.StepStatus(firstStrParam(object, "status", "state")),
-		Result:      firstStrParam(object, "result", "outcome", "note", "notes", "summary"),
-		Reason:      firstStrParam(object, "reason", "why", "detail"),
+		Reason:      firstStrParam(object, "reason", "why"),
 	}
 	if step.ID == "" && step.Description == "" {
 		return plan.PlanStep{}, fmt.Errorf("update_plan: every step needs a stable id and a short description (a few imperative words); received %s", describeStepKeys(object))

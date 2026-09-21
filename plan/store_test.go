@@ -66,7 +66,7 @@ func TestStore_UpdateIncrementsRevision(t *testing.T) {
 
 	plan2, cs, err := s.Update(ctx, UpdateRequest{
 		PlanID: "p1", Revision: 1, Objective: "O2", Status: StatusActive,
-		Steps: []PlanStep{{ID: "a", Description: "A", Status: StepCompleted, Result: "done"}},
+		Steps: []PlanStep{{ID: "a", Description: "A", Status: StepCompleted}},
 	})
 	if err != nil {
 		t.Fatalf("Update existing: %v", err)
@@ -162,7 +162,7 @@ func TestStore_CompletedPlanIsNotActive(t *testing.T) {
 	})
 	_, _, err := s.Update(ctx, UpdateRequest{
 		PlanID: "p1", Revision: 1, Objective: "O", Status: StatusCompleted,
-		Steps: []PlanStep{{ID: "a", Description: "A", Status: StepCompleted, Result: "done"}},
+		Steps: []PlanStep{{ID: "a", Description: "A", Status: StepCompleted}},
 	})
 	if err != nil {
 		t.Fatal(err)

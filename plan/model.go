@@ -54,24 +54,8 @@ func (s StepStatus) Valid() bool {
 	return false
 }
 
-// Terminal reports whether a step is in a terminal state — it can only be
-// reopened into a non-terminal state with an explicit explanation. Blocked is
-// terminal in the sense that it cannot be resolved in place; resolution is a
-// normal status change (blocked -> in_progress) that requires no explanation
-// because it is not a "reopen" of completed/failed work.
-func (s StepStatus) Terminal() bool {
-	switch s {
-	case StepCompleted, StepFailed, StepSkipped, StepCancelled:
-		return true
-	}
-	return false
-}
-
-// DependencySatisfied reports whether a step in this state satisfies a
-// dependency of another step that wants to run.
-func (s StepStatus) DependencySatisfied() bool {
-	return s == StepCompleted || s == StepSkipped
-}
+// Step statuses are declarative lifecycle labels. The plan store does not
+// interpret them as a scheduler or gate transitions using dependency order.
 
 // Plan is the canonical, persisted plan snapshot.
 type Plan struct {
@@ -92,7 +76,6 @@ type PlanStep struct {
 	Description string     `json:"description"`
 	Status      StepStatus `json:"status"`
 	DependsOn   []string   `json:"depends_on,omitempty"`
-	Result      string     `json:"result,omitempty"`
 	Reason      string     `json:"reason,omitempty"`
 	Attempts    int        `json:"attempts,omitempty"`
 	CreatedAt   time.Time  `json:"created_at"`

@@ -517,8 +517,8 @@ Current implementation uses:
 
 Observed defects:
 
-- dependencies are stored but not validated/enforced
-- result/reason fields are not durably recorded
+- dependency references were not structurally validated
+- lifecycle reasons and revision history were not durably recorded
 - no edit/reorder/add/remove/skip/reopen/pause/resume/cancel operations
 - failed steps count as terminal and may auto-complete the plan
 - completion clears plan state and loses history
@@ -555,8 +555,7 @@ Example:
       "id": "audit",
       "description": "Audit live and hydrated history flow",
       "status": "completed",
-      "depends_on": [],
-      "result": "Found persistence bypass in submit path."
+      "depends_on": []
     },
     {
       "id": "verify",
@@ -618,7 +617,6 @@ type PlanStep struct {
     Description string
     Status      StepStatus
     DependsOn   []string
-    Result      string
     Reason      string
     Attempts    int
     CreatedAt   time.Time
@@ -643,22 +641,18 @@ duplicated planning switch logic after canonical cutover.
 
 ### Atomic validation rules
 
-Validate everything before mutation:
+Validate structure before mutation, but do not turn the plan into a scheduler:
 
 1. existing updates require matching `revision`
-2. objective is non-empty and bounded
+2. objective is non-empty
 3. step IDs are stable and unique
 4. dependency IDs exist
 5. no self-dependency or cycle
-6. `in_progress` dependencies are satisfied
-7. completed may include result
-8. skipped/blocked/failed/cancelled require reason
-9. cancelling a depended-on step requires dependents to change in same update
-10. terminal step reopening requires explanation
-11. plan completion requires every step completed/skipped/validly cancelled
-12. failed/blocked steps prevent completion
-13. no automatic plan completion
-14. entire request commits or rolls back
+6. previously persisted steps remain in a supplied complete snapshot
+7. statuses may transition in any order, including cancel/reopen/retry
+8. dependencies are display/context metadata and never gate status changes
+9. cancelling a plan settles its pending and in-progress steps as cancelled
+10. entire request commits or rolls back
 
 Revision conflict returns the canonical current plan.
 
@@ -685,7 +679,7 @@ plans
 
 plan_steps
   plan_id, step_id, position, description, status,
-  depends_on_json, result, reason, attempts,
+  depends_on_json, reason, attempts,
   created_at, started_at, finished_at
 
 plan_events
@@ -723,7 +717,7 @@ Required tests:
 - fail/retry
 - block/unblock one step
 - pause/resume/cancel plan
-- explicit completion validation
+- completed-plan snapshots with mixed step states
 - stale revision conflict
 - rollback invalid update
 - persistence round trip
@@ -793,9 +787,9 @@ Planning is done only when:
 - two advertised tools replace seven micro-tools
 - updates are declarative, revisioned, validated, and atomic
 - skip/reopen/edit/reorder/add/cancel/pause/resume all work
-- dependencies and cycles are enforced
-- results/reasons/history survive completion and hydration
-- failed steps never auto-complete the plan
+- dependency references and cycles are structurally validated without enforcing execution order
+- reasons/history survive completion and hydration
+- plan status is rendered exactly as reported without inferred auto-completion
 - main and sub-agent execution share one service
 - one persisted PlanView drives live and hydrated TUI
 - removed legacy plan tools/state are not imported or advertised

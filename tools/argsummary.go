@@ -1,0 +1,151 @@
+package tools
+
+import (
+	"encoding/json"
+	"fmt"
+	"strings"
+)
+
+// This file is the single authority for turning a tool call's arguments into the
+// compact label every projection shows. Both producers of a transcript row call
+// it: the live path (agent events → workspace.AgentState → the conversation) and
+// the resumed path (the persisted tool snapshot → workspace.ConvertMessagesForDisplay).
+// Keeping one implementation is the point — a second copy drifted before, and
+// duplicated label logic is how live and hydrated rows start disagreeing.
+
+// ExtractArg reads one argument out of a tool-call payload. Two encodings reach
+// the UI: the JSON object the provider sent, and the presentation-neutral
+// "key: value" summary AgentFormatToolArgs produces for events and snapshots.
+// Values in the summary form are quoted when they contain spaces, so a pattern
+// like `func main` survives instead of collapsing to its first token.
+func ExtractArg(str, key string) string {
+	var object map[string]any
+	if json.Unmarshal([]byte(str), &object) == nil {
+		if value, ok := object[key]; ok {
+			switch typed := value.(type) {
+			case string:
+				return typed
+			case float64, bool:
+				return fmt.Sprint(typed)
+			}
+		}
+	}
+	for _, prefix := range []string{key + ": ", key + ":"} {
+		idx := strings.Index(str, prefix)
+		if idx == -1 {
+			continue
+		}
+		rest := strings.TrimLeft(str[idx+len(prefix):], " \t")
+		if rest == "" {
+			continue
+		}
+		if rest[0] == '"' {
+			if end := strings.IndexByte(rest[1:], '"'); end >= 0 {
+				return rest[1 : 1+end]
+			}
+			return rest[1:]
+		}
+		if end := strings.IndexAny(rest, " ,}]"); end >= 0 {
+			if end == 0 {
+				continue
+			}
+			token := strings.TrimSpace(rest[:end])
+			// "pattern: path: x" — the value is another key, so this key has no
+			// value in the summary form.
+			if strings.HasSuffix(token, ":") {
+				continue
+			}
+			return token
+		}
+		return strings.TrimSpace(rest)
+	}
+	return ""
+}
+
+// SummarizeArgs produces the compact label a tool row shows for its operands:
+// the file, command, pattern, query, or handle the call acted on, never the raw
+// argument payload when a known operand exists.
+func SummarizeArgs(tool, argsStr string) string {
+	if tool == "update_plan" || tool == "get_plan" {
+		return ExtractArg(argsStr, "plan_id")
+	}
+	if tool == "grep_files" {
+		pattern := ExtractArg(argsStr, "pattern")
+		path := ExtractArg(argsStr, "path")
+		label := ""
+		if pattern != "" {
+			label = "\"" + truncateLabel(pattern, 30) + "\""
+		}
+		if path != "" && path != "." {
+			if label != "" {
+				label += " in " + path
+			} else {
+				label = path
+			}
+		}
+		if label != "" {
+			return label
+		}
+	}
+	if path := ExtractArg(argsStr, "path"); path != "" {
+		return path
+	}
+	if pattern := ExtractArg(argsStr, "pattern"); pattern != "" {
+		return pattern
+	}
+	if command := ExtractArg(argsStr, "command"); command != "" {
+		return truncateLabel(command, 50)
+	}
+	if content := ExtractArg(argsStr, "content"); content != "" {
+		return truncateLabel(content, 50) + " (content)"
+	}
+	if query := ExtractArg(argsStr, "query"); query != "" {
+		return truncateLabel(query, 50)
+	}
+	if url := ExtractArg(argsStr, "url"); url != "" {
+		return truncateLabel(url, 50)
+	}
+	if source := ExtractArg(argsStr, "source"); source != "" {
+		if dest := ExtractArg(argsStr, "destination"); dest != "" {
+			return source + " → " + dest
+		}
+		return source
+	}
+	if code := ExtractArg(argsStr, "code"); code != "" {
+		return truncateLabel(code, 50)
+	}
+	if tool == "async_execute_command" {
+		handle := ExtractArg(argsStr, "handle")
+		if command := ExtractArg(argsStr, "command"); command != "" {
+			if handle != "" {
+				return truncateLabel(command, 40) + " [" + handle + "]"
+			}
+			return truncateLabel(command, 50)
+		}
+		if handle != "" {
+			return handle
+		}
+	}
+	if tool == "check_async_command" || tool == "kill_async_command" || tool == "read_async_output" {
+		if handle := ExtractArg(argsStr, "handle"); handle != "" {
+			return handle
+		}
+	}
+	if tool == "wait" {
+		if seconds := ExtractArg(argsStr, "seconds"); seconds != "" {
+			return seconds + "s"
+		}
+	}
+	return truncateLabel(argsStr, 60)
+}
+
+// truncateLabel shortens a label on a rune boundary, counting the ellipsis in
+// the budget, so the painted row never exceeds the width the caller reserved and
+// a wide glyph is never cut in half.
+func truncateLabel(value string, limit int) string {
+	runes := []rune(value)
+	if len(runes) <= limit || limit <= 0 {
+		return value
+	}
+	return string(runes[:limit-1]) + "…"
+}

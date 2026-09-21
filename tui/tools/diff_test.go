@@ -1,6 +1,7 @@
 package tools
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
@@ -146,7 +147,7 @@ func TestRenderDiffCompactMode(t *testing.T) {
 	}
 	lines = append(lines, "-    old code here")
 	lines = append(lines, "+    new code here")
-	for i := 5; i <= 12; i++ {
+	for i := 5; i <= 14; i++ {
 		lines = append(lines, " // middle context "+strings.Repeat("m", i))
 	}
 	lines = append(lines, "-    second old code")
@@ -241,6 +242,81 @@ func TestIsDiffContent(t *testing.T) {
 		got := IsDiffContent(tt.input)
 		if got != tt.expect {
 			t.Errorf("IsDiffContent(%q) = %v, want %v", tt.input, got, tt.expect)
+		}
+	}
+}
+
+// gapDiff builds a compact-mode diff whose two change groups are separated by
+// exactly `gap` hidden context lines. With CompactContextLines of context kept
+// around each change, the change rows sit at 2/3 and 6+gap/7+gap, which leaves
+// rows 6…5+gap — exactly `gap` lines — uncovered between them.
+func gapDiff(gap int) string {
+	lines := []string{
+		"--- a/f.go", "+++ b/f.go", "@@ -1,40 +1,40 @@",
+		" ctx-head-1", " ctx-head-2",
+		"-old-a", "+new-a",
+	}
+	for i := 1; i <= gap+4; i++ {
+		lines = append(lines, " ctx-mid-"+strconv.Itoa(i))
+	}
+	lines = append(lines, "-old-b", "+new-b", " ctx-tail-1", " ctx-tail-2")
+	return strings.Join(lines, "\n")
+}
+
+func trimGapDiff(t *testing.T, gap int) []DiffRow {
+	t.Helper()
+	files := ParseUnifiedDiffStruct(gapDiff(gap))
+	if len(files) != 1 {
+		t.Fatalf("gap %d: parsed %d files", gap, len(files))
+	}
+	return TrimDiffContext(BuildDiffRows(files[0]), CompactContextLines)
+}
+
+// The "···" marker must earn its row: hiding one or two untouched lines loses
+// context for nothing, so only gaps wider than four lines collapse. ctx-mid-3 is
+// the first line of the uncovered run at every gap size.
+func TestTrimDiffContextKeepsGapsOfFourOrFewer(t *testing.T) {
+	for gap := 1; gap <= 8; gap++ {
+		rows := trimGapDiff(t, gap)
+		ellipses := 0
+		seen := map[string]bool{}
+		for _, r := range rows {
+			if r.Ellipsis {
+				ellipses++
+				continue
+			}
+			seen[r.Content] = true
+		}
+		if gap <= 4 {
+			if ellipses != 0 {
+				t.Fatalf("gap %d: elided with %d marker row(s)", gap, ellipses)
+			}
+			if !seen["ctx-mid-3"] {
+				t.Fatalf("gap %d: hidden context was dropped instead of kept: %+v", gap, rows)
+			}
+		} else {
+			if ellipses != 1 {
+				t.Fatalf("gap %d: got %d marker row(s), want exactly 1", gap, ellipses)
+			}
+			if seen["ctx-mid-3"] {
+				t.Fatalf("gap %d: collapsed gap leaked its context: %+v", gap, rows)
+			}
+		}
+	}
+}
+
+// Both end states keep the surrounding change groups and their context.
+func TestTrimDiffContextAlwaysKeepsChangesAndAdjacentContext(t *testing.T) {
+	for _, gap := range []int{2, 6} {
+		rows := trimGapDiff(t, gap)
+		seen := map[string]bool{}
+		for _, r := range rows {
+			seen[r.Content] = true
+		}
+		for _, want := range []string{"old-a", "new-a", "old-b", "new-b", "ctx-head-1", "ctx-tail-2"} {
+			if !seen[want] {
+				t.Fatalf("gap %d: %q missing from trimmed rows: %+v", gap, want, rows)
+			}
 		}
 	}
 }

@@ -1,6 +1,9 @@
 package tools
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func TestToolErrorReasonSummarizesPlanFailures(t *testing.T) {
 	cases := []struct {
@@ -52,6 +55,64 @@ func TestToolErrorReasonSummarizesPlanFailures(t *testing.T) {
 				t.Fatalf("ToolErrorReason() = %q, want %q", got, c.want)
 			}
 		})
+	}
+}
+
+// An edit-tool failure carries prose plus a model-facing hint; the row keeps the
+// reason line and never the hint, so the failure reads as one compact red row.
+func TestToolErrorReasonCompactsEditFailures(t *testing.T) {
+	cases := []struct {
+		name    string
+		tool    string
+		content string
+		want    string
+	}{
+		{
+			name:    "no-change patch",
+			tool:    "edit_file",
+			content: "Error: no changes to make: old_string and new_string are exactly the same\nHint: match the file's current bytes exactly.",
+			want:    "no changes to make: old_string and new_string are exactly the same",
+		},
+		{
+			name:    "ambiguous patch keeps its location detail",
+			tool:    "edit_file",
+			content: "Error: op[0]: search text matched 2 locations after whitespace normalisation\nHint: use read_file to verify the exact content before retrying.",
+			want:    "op[0]: search text matched 2 locations after whitespace normalisation",
+		},
+		{
+			name:    "write failure",
+			tool:    "write_file",
+			content: "Error: write x.go: permission denied",
+			want:    "write x.go: permission denied",
+		},
+		{
+			name:    "content without the error label is left alone",
+			tool:    "edit_file",
+			content: "Deleted: x.go",
+			want:    "",
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := ToolErrorReason(c.tool, c.content)
+			if got != c.want {
+				t.Fatalf("ToolErrorReason() = %q, want %q", got, c.want)
+			}
+			if strings.Contains(got, "Hint:") {
+				t.Fatalf("hint leaked into the row reason: %q", got)
+			}
+		})
+	}
+}
+
+// The compact failure row is one line: the reason rides the title, so no body
+// payload is rendered below it.
+func TestEditFailureRowKeepsOneLine(t *testing.T) {
+	got := BuildErrorLabelWithReason("edit_file", "tools/dispatcher.go", "2ms",
+		ToolErrorReason("edit_file", "Error: no changes to make: old_string and new_string are exactly the same\nHint: read_file first."))
+	want := "Edit File failed tools/dispatcher.go 2ms — no changes to make: old_string and new_string are exactly the same"
+	if got != want {
+		t.Fatalf("label = %q, want %q", got, want)
 	}
 }
 

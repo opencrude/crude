@@ -1137,6 +1137,20 @@ func compactionRecordView(record sessiondb.CompactionRecord) ChatMessageView {
 	}
 }
 
+// canonicalizeToolSnapshotForDisplay makes a persisted tool snapshot displayable:
+// the session stores the raw argument summary (agent.FormatToolArgs), while the
+// live conversation stores the compact label SummarizeToolArgs derives from that
+// same string. Rows label themselves from the view's ToolArgs, so hydration must
+// run the identical helper — otherwise a resumed session prints raw arguments
+// ("pattern: func main path: tui/tools") where the live row printed the label
+// ("func main" in tui/tools).
+func canonicalizeToolSnapshotForDisplay(snapshot *ChatMessageView) {
+	if snapshot == nil || snapshot.Role != "tool" || snapshot.ToolArgs == "" {
+		return
+	}
+	snapshot.ToolArgs = SummarizeToolArgs(snapshot.ToolName, snapshot.ToolArgs)
+}
+
 // ConvertMessagesForDisplay converts persisted backend messages into the
 // workspace-owned view data consumed by frontends.
 func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageView {
@@ -1148,6 +1162,7 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 		if mm.Meta.SnapshotVersion > 0 {
 			for _, snapshot := range mm.Meta.Snapshots {
 				snapshot.ReferenceLabels = append([]string(nil), snapshot.ReferenceLabels...)
+				canonicalizeToolSnapshotForDisplay(&snapshot)
 				result = append(result, snapshot)
 			}
 			continue

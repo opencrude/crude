@@ -9,11 +9,11 @@ import (
 	"crude/tui/ui"
 )
 
-func TestStatusOverviewDividerRoutesThroughFloatingWindowHost(t *testing.T) {
+func TestStatusOverviewRowClickRoutesThroughFloatingWindowHost(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 36
 	app.AddOrchestrator("root")
-	app.openStatusOverview(statusoverview.ViewTabs, "agent:root")
+	app.openStatusOverview(statusoverview.ViewTabs, "")
 	app.paintShellFrame()
 	fw := app.windowManager.Window(string(ui.OverlayStatusOverview))
 	if fw == nil || app.statusOverview == nil {
@@ -23,28 +23,18 @@ func TestStatusOverviewDividerRoutesThroughFloatingWindowHost(t *testing.T) {
 	if !ok || widget.Host() == nil {
 		t.Fatalf("window content=%T", fw.Content)
 	}
-	before := app.statusOverview.SplitFirst()
-	list, detail := app.statusOverview.PaneBounds()
-	localX := (list.X + list.W + detail.X) / 2
-	localY := list.Y + 2
+	list := app.statusOverview.ListBounds()
+	if list.Empty() {
+		t.Fatal("status overview list has no bounds")
+	}
 	winX, winY := fw.Position()
 	content := fw.ContentBounds()
-	screenX, screenY := winX+content.X+localX, winY+content.Y+localY
+	body := widget.Frame().ContentBounds()
+	screenX, screenY := winX+content.X+body.X+list.X+3, winY+content.Y+body.Y+list.Y
 	if cmd := app.forwardEventToWindowContent(fw, tea.MouseClickMsg{X: screenX, Y: screenY, Button: tea.MouseLeft}); cmd != nil {
 		_ = cmd()
 	}
-	if !widget.Host().HasPointerCapture() {
-		t.Fatal("floating host did not retain divider capture")
-	}
-	app.handlePopupContentHover(fw, screenX+5, screenY, tea.MouseLeft)
-	_, cmd := app.dispatchMouseRelease(tea.MouseReleaseMsg{X: screenX + 5, Y: screenY, Button: tea.MouseLeft})
-	if cmd != nil {
-		_ = cmd()
-	}
-	widget.Host().MarkLayout()
-	widget.Host().Layout()
-	after := app.statusOverview.SplitFirst()
-	if after <= before || widget.Host().HasPointerCapture() {
-		t.Fatalf("floating divider did not resize/release: before=%d after=%d captured=%v", before, after, widget.Host().HasPointerCapture())
+	if !app.statusOverview.IsExpanded("agent:root") {
+		t.Fatal("floating host click did not expand status row")
 	}
 }

@@ -99,7 +99,7 @@ func (s *Store) create(ctx context.Context, req UpdateRequest) (Plan, ChangeSet,
 		Objective:   strings.TrimSpace(req.Objective),
 		Status:      req.Status,
 		Explanation: req.Explanation,
-		Steps:       normalizeSteps(req.Steps, now, true),
+		Steps:       applyPlanLifecycle(req.Status, req.Explanation, normalizeSteps(req.Steps, now, true), now),
 		CreatedAt:   now,
 		UpdatedAt:   now,
 	}
@@ -140,10 +140,6 @@ func (s *Store) create(ctx context.Context, req UpdateRequest) (Plan, ChangeSet,
 }
 
 func (s *Store) updateExisting(ctx context.Context, req UpdateRequest, existing Plan) (Plan, ChangeSet, error) {
-	if existing.Status == StatusCancelled {
-		return Plan{}, ChangeSet{}, fmt.Errorf("plan %q is cancelled", req.PlanID)
-	}
-
 	// Validation mutates nothing; run it before opening the write transaction
 	// so an invalid request is rejected without locking the DB.
 	if err := Validate(&existing, req); err != nil {
@@ -157,7 +153,7 @@ func (s *Store) updateExisting(ctx context.Context, req UpdateRequest, existing 
 		Objective:   strings.TrimSpace(req.Objective),
 		Status:      req.Status,
 		Explanation: req.Explanation,
-		Steps:       updateSteps(existing, req.Steps, now),
+		Steps:       applyPlanLifecycle(req.Status, req.Explanation, updateSteps(existing, req.Steps, now), now),
 		CreatedAt:   existing.CreatedAt,
 		UpdatedAt:   now,
 		ClosedAt:    existing.ClosedAt,
@@ -210,7 +206,7 @@ func planEventType(previous, current Plan) string {
 		case StatusCancelled:
 			return "plan_cancelled"
 		case StatusActive:
-			if previous.Status == StatusPaused || previous.Status == StatusCompleted {
+			if previous.Status == StatusPaused || previous.Status == StatusCompleted || previous.Status == StatusCancelled {
 				return "plan_resumed"
 			}
 		}
@@ -249,7 +245,7 @@ func (s *Store) Get(ctx context.Context, id string) (Plan, error) {
 
 func (s *Store) loadSteps(ctx context.Context, id string) ([]PlanStep, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT step_id, description, status, COALESCE(depends_on_json,''), COALESCE(result,''), COALESCE(reason,''), attempts, created_at, COALESCE(started_at,0), COALESCE(finished_at,0)
+		`SELECT step_id, description, status, COALESCE(depends_on_json,''), COALESCE(reason,''), attempts, created_at, COALESCE(started_at,0), COALESCE(finished_at,0)
 		 FROM plan_steps WHERE plan_id = ? ORDER BY position`, id)
 	if err != nil {
 		return nil, fmt.Errorf("plan steps: %w", err)
@@ -259,14 +255,13 @@ func (s *Store) loadSteps(ctx context.Context, id string) ([]PlanStep, error) {
 	var steps []PlanStep
 	for rows.Next() {
 		var st PlanStep
-		var deps, result, reason string
+		var deps, reason string
 		var attempts int
 		var created, started, finished int64
-		if err := rows.Scan(&st.ID, &st.Description, &st.Status, &deps, &result, &reason, &attempts, &created, &started, &finished); err != nil {
+		if err := rows.Scan(&st.ID, &st.Description, &st.Status, &deps, &reason, &attempts, &created, &started, &finished); err != nil {
 			return nil, fmt.Errorf("plan step scan: %w", err)
 		}
 		st.DependsOn = decodeDeps(deps)
-		st.Result = result
 		st.Reason = reason
 		st.Attempts = attempts
 		st.CreatedAt = time.Unix(0, created).UTC()
@@ -426,10 +421,10 @@ func writeSteps(ctx context.Context, tx *sql.Tx, planID string, steps []PlanStep
 			finished = step.FinishedAt.UnixNano()
 		}
 		if _, err := tx.ExecContext(ctx,
-			`INSERT INTO plan_steps (plan_id, step_id, position, description, status, depends_on_json, result, reason, attempts, created_at, started_at, finished_at)
-			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			`INSERT INTO plan_steps (plan_id, step_id, position, description, status, depends_on_json, reason, attempts, created_at, started_at, finished_at)
+			 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 			planID, step.ID, i, step.Description, string(step.Status), encodeDeps(step.DependsOn),
-			step.Result, step.Reason, step.Attempts, step.CreatedAt.UnixNano(), started, finished); err != nil {
+			step.Reason, step.Attempts, step.CreatedAt.UnixNano(), started, finished); err != nil {
 			return fmt.Errorf("plan steps write: %w", err)
 		}
 	}
@@ -485,6 +480,25 @@ func normalizeSteps(steps []PlanStep, now time.Time, isNew bool) []PlanStep {
 		out[i] = cp
 	}
 	return out
+}
+
+func applyPlanLifecycle(status PlanStatus, explanation string, steps []PlanStep, now time.Time) []PlanStep {
+	if status != StatusCancelled {
+		return steps
+	}
+	reason := strings.TrimSpace(explanation)
+	for i := range steps {
+		if steps[i].Status != StepPending && steps[i].Status != StepInProgress {
+			continue
+		}
+		steps[i].Status = StepCancelled
+		if strings.TrimSpace(steps[i].Reason) == "" {
+			steps[i].Reason = reason
+		}
+		ts := now
+		steps[i].FinishedAt = &ts
+	}
+	return steps
 }
 
 func updateSteps(existing Plan, requested []PlanStep, now time.Time) []PlanStep {

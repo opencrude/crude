@@ -107,7 +107,7 @@ func TestBuildDiffRowsTruncationIndicator(t *testing.T) {
 	}
 	lines = append(lines, "-    old code here")
 	lines = append(lines, "+    new code here")
-	for i := 5; i <= 12; i++ {
+	for i := 5; i <= 14; i++ {
 		lines = append(lines, " // middle context "+strings.Repeat("m", i))
 	}
 	lines = append(lines, "-    second old code")
