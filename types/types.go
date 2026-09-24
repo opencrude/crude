@@ -18,6 +18,7 @@ type ConversationMessage struct {
 	Time            time.Time `json:"time,omitempty"`
 	TurnGeneration  uint64    `json:"turn_generation,omitempty"`
 	ProviderID      string    `json:"provider_id,omitempty"`
+	AccountID       string    `json:"account_id,omitempty"`
 	ModelID         string    `json:"model_id,omitempty"`
 
 	ToolName            string        `json:"tool_name,omitempty"`
@@ -73,6 +74,7 @@ type ConversationMessage struct {
 type TurnIdentity struct {
 	Generation uint64
 	ProviderID string
+	AccountID  string
 	ModelID    string
 }
 
@@ -131,9 +133,10 @@ const (
 
 type CategorySettings struct {
 	Provider    string
+	AccountID   string `json:"account_id,omitempty"`
 	ProviderURL string
-	// APIKey is never a category property. Credentials live on the
-	// provider; json:"-" keeps them out of workspace overlays.
+	// APIKey is never a category property. Credentials live on accounts;
+	// json:"-" keeps them out of workspace and session snapshots.
 	APIKey         string `json:"-"`
 	APIStandard    string
 	Model          string
@@ -182,6 +185,7 @@ type Settings struct {
 	APIKey           string
 	Model            string
 	ProviderID       string
+	AccountID        string `json:"account_id,omitempty"`
 	ProviderURL      string
 	ProviderAPIKey   string
 	APIStandard      string
@@ -203,17 +207,18 @@ type Settings struct {
 }
 
 type AppSettings struct {
-	Theme          ThemeSettings             `json:"theme,omitempty"`
-	Editor         EditorSettings            `json:"editor,omitempty"`
-	LSP            LSPSettings               `json:"lsp,omitempty"`
-	UI             UISettings                `json:"ui,omitempty"`
-	Font           FontSettings              `json:"font,omitempty"`
-	ActiveProvider string                    `json:"active_provider,omitempty"`
-	Providers      map[string]ProviderConfig `json:"providers,omitempty"`
-	Agents         AgentsSettings            `json:"agents,omitempty"`
-	Memory         MemorySettings            `json:"memory,omitempty"`
-	Safety         SafetySettings            `json:"safety,omitempty"`
-	LocalHistory   LocalHistorySettings      `json:"local_history,omitempty"`
+	Theme          ThemeSettings               `json:"theme,omitempty"`
+	Editor         EditorSettings              `json:"editor,omitempty"`
+	LSP            LSPSettings                 `json:"lsp,omitempty"`
+	UI             UISettings                  `json:"ui,omitempty"`
+	Font           FontSettings                `json:"font,omitempty"`
+	ActiveProvider string                      `json:"active_provider,omitempty"`
+	Providers      map[string]ProviderConfig   `json:"providers,omitempty"`
+	Accounts       map[string]provider.Account `json:"accounts,omitempty"`
+	Agents         AgentsSettings              `json:"agents,omitempty"`
+	Memory         MemorySettings              `json:"memory,omitempty"`
+	Safety         SafetySettings              `json:"safety,omitempty"`
+	LocalHistory   LocalHistorySettings        `json:"local_history,omitempty"`
 }
 
 type CommandSeverityRule struct {
@@ -222,11 +227,58 @@ type CommandSeverityRule struct {
 }
 
 type SafetySettings struct {
-	ConfirmAt           string                `json:"confirm_at,omitempty"`
-	UnknownCommandRisk  string                `json:"unknown_command_risk,omitempty"`
-	ScriptExecutionRisk string                `json:"script_execution_risk,omitempty"`
-	CommandRules        []CommandSeverityRule `json:"command_rules,omitempty"`
-	NotifyDangerous     string                `json:"notify_dangerous,omitempty"`
+	ConfirmAt           string                 `json:"confirm_at,omitempty"`
+	UnknownCommandRisk  string                 `json:"unknown_command_risk,omitempty"`
+	ScriptExecutionRisk string                 `json:"script_execution_risk,omitempty"`
+	CommandRules        []CommandSeverityRule  `json:"command_rules,omitempty"`
+	NotifyDangerous     string                 `json:"notify_dangerous,omitempty"`
+	AutoPermission      AutoPermissionSettings `json:"auto_permission,omitempty"`
+}
+
+// AutoPermissionSettings configures the optional root-agent permission
+// reviewer. Provider and Model are deliberately explicit: an empty value means
+// unconfigured rather than silently spending against the main agent's model.
+type AutoPermissionSettings struct {
+	Enabled           string `json:"enabled,omitempty"`
+	AccountID         string `json:"account_id,omitempty"`
+	Provider          string `json:"provider,omitempty"`
+	Model             string `json:"model,omitempty"`
+	DenyMode          string `json:"deny_mode,omitempty"`
+	Instructions      string `json:"instructions,omitempty"`
+	TimeoutSeconds    int    `json:"timeout_seconds,omitempty"`
+	MaxOutputTokens   int    `json:"max_output_tokens,omitempty"`
+	MaxInputBytes     int    `json:"max_input_bytes,omitempty"`
+	MaxReviewsPerTurn int    `json:"max_reviews_per_turn,omitempty"`
+}
+
+// Normalized returns safe effective values for the bounded permission
+// reviewer. It is opt-in: only the exact value "on" enables remote review.
+func (s AutoPermissionSettings) Normalized() AutoPermissionSettings {
+	if s.Enabled == "on" {
+		s.Enabled = "on"
+	} else {
+		s.Enabled = "off"
+	}
+	if s.DenyMode != "deny" {
+		s.DenyMode = "ask"
+	}
+	if s.TimeoutSeconds == 0 {
+		s.TimeoutSeconds = 8
+	}
+	if s.MaxOutputTokens == 0 {
+		s.MaxOutputTokens = 96
+	}
+	if s.MaxInputBytes == 0 {
+		s.MaxInputBytes = 4096
+	}
+	if s.MaxReviewsPerTurn == 0 {
+		s.MaxReviewsPerTurn = 12
+	}
+	s.TimeoutSeconds = min(30, max(1, s.TimeoutSeconds))
+	s.MaxOutputTokens = min(256, max(16, s.MaxOutputTokens))
+	s.MaxInputBytes = min(8192, max(256, s.MaxInputBytes))
+	s.MaxReviewsPerTurn = min(100, max(1, s.MaxReviewsPerTurn))
+	return s
 }
 
 type LocalHistorySettings struct {
@@ -326,11 +378,12 @@ func (m MemorySettings) ExtractCadenceOrDefault(fallback int) int {
 }
 
 type SessionSettings struct {
-	APIKey          string         `json:"api_key,omitempty"`
+	APIKey          string         `json:"-"`
 	Model           string         `json:"model,omitempty"`
 	ProviderID      string         `json:"provider_id,omitempty"`
+	AccountID       string         `json:"account_id,omitempty"`
 	ProviderURL     string         `json:"provider_url,omitempty"`
-	ProviderAPIKey  string         `json:"provider_api_key,omitempty"`
+	ProviderAPIKey  string         `json:"-"`
 	APIStandard     string         `json:"api_standard,omitempty"`
 	ThinkingEffort  string         `json:"thinking_effort,omitempty"`
 	TurnLogsEnabled string         `json:"turn_logs_enabled,omitempty"`
@@ -353,6 +406,7 @@ func (s Settings) SessionPart() SessionSettings {
 		APIKey:          s.APIKey,
 		Model:           s.Model,
 		ProviderID:      s.ProviderID,
+		AccountID:       s.AccountID,
 		ProviderURL:     s.ProviderURL,
 		ProviderAPIKey:  s.ProviderAPIKey,
 		APIStandard:     s.APIStandard,
@@ -525,25 +579,9 @@ func ModelEntriesFromInfos(models []provider.ModelInfo) []ModelEntry {
 	return entries
 }
 
-type ProviderConfig struct {
-	APIKey         string                     `json:"api_key,omitempty"`
-	ProviderURL    string                     `json:"provider_url,omitempty"`
-	APIStandard    string                     `json:"api_standard,omitempty"`
-	Model          string                     `json:"model,omitempty"`
-	ModelStandards map[string]string          `json:"model_standards,omitempty"`
-	ThinkingEffort string                     `json:"thinking_effort,omitempty"`
-	OAuth          *provider.OAuthCredentials `json:"oauth,omitempty"`
-	// Dialer carries user-tunable transport settings. nil means defaults.
-	Dialer *provider.DialSettings `json:"dialer,omitempty"`
-	// Protocol carries the protocol-level request switches (server-side
-	// storage, zero data retention, reasoning summaries). nil means the
-	// protocol defaults.
-	Protocol *provider.ProtocolSettings `json:"protocol,omitempty"`
-	// ExtraBody is a raw JSON object merged into every request body sent to
-	// this provider. It is the power-user escape hatch for protocol options
-	// the app does not model natively.
-	ExtraBody map[string]any `json:"extra_body,omitempty"`
-}
+// ProviderConfig is the editable request template selected by a provider ID.
+// Per-account differences live only in provider.Account.Overrides.
+type ProviderConfig = provider.Template
 
 type ProviderPreset struct {
 	ID         string
@@ -589,6 +627,7 @@ type ChatMessage struct {
 	Time            time.Time
 	TurnGeneration  uint64
 	ProviderID      string
+	AccountID       string
 	ModelID         string
 
 	ToolName    string
@@ -668,8 +707,8 @@ type ConfigReloadedMsg struct {
 
 type FetchModelsMsg struct {
 	ProviderID string
+	AccountID  string
 	BaseURL    string
-	APIKey     string
 }
 
 type SaveSettingsMsg Settings

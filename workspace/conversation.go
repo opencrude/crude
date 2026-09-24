@@ -39,6 +39,7 @@ type TurnStatus struct {
 	ContextWindow int
 	Detail        string
 	ProviderID    string
+	AccountID     string
 	ModelID       string
 }
 
@@ -101,6 +102,7 @@ func (c *Conversation) attributeTurn(message *Message) {
 	}
 	message.TurnGeneration = c.turnIdentity.Generation
 	message.ProviderID = c.turnIdentity.ProviderID
+	message.AccountID = c.turnIdentity.AccountID
 	message.ModelID = c.turnIdentity.ModelID
 }
 
@@ -263,6 +265,7 @@ func (c *Conversation) AppendThinking(content string) {
 		Time:           time.Now(),
 		ThinkingActive: true,
 		TurnGeneration: c.turnIdentity.Generation,
+		AccountID:      c.turnIdentity.AccountID,
 		ProviderID:     c.turnIdentity.ProviderID,
 		ModelID:        c.turnIdentity.ModelID,
 	})
@@ -279,6 +282,7 @@ func (c *Conversation) EnsureAssistant() {
 	c.AppendMessage(Message{
 		Role: MessageRoleAssistant, Time: time.Now(),
 		TurnGeneration: c.turnIdentity.Generation,
+		AccountID:      c.turnIdentity.AccountID,
 		ProviderID:     c.turnIdentity.ProviderID, ModelID: c.turnIdentity.ModelID,
 	})
 }
@@ -316,6 +320,7 @@ func (c *Conversation) UpdateTurnStatus(status TurnStatus) {
 			LifecycleRetryLimit:    status.RetryLimit,
 			LifecycleContextWindow: status.ContextWindow,
 			Content:                status.Detail,
+			AccountID:              status.AccountID,
 			ProviderID:             status.ProviderID,
 			ModelID:                status.ModelID,
 		}
@@ -344,6 +349,7 @@ func (c *Conversation) UpdateTurnStatus(status TurnStatus) {
 		message.LifecycleRetryLimit == status.RetryLimit &&
 		message.LifecycleContextWindow == status.ContextWindow &&
 		message.Content == status.Detail &&
+		message.AccountID == status.AccountID &&
 		message.ProviderID == status.ProviderID &&
 		message.ModelID == status.ModelID {
 		return
@@ -365,6 +371,9 @@ func (c *Conversation) UpdateTurnStatus(status TurnStatus) {
 	message.LifecycleRetryLimit = status.RetryLimit
 	message.LifecycleContextWindow = status.ContextWindow
 	message.Content = status.Detail
+	if status.AccountID != "" {
+		message.AccountID = status.AccountID
+	}
 	if status.ProviderID != "" {
 		message.ProviderID = status.ProviderID
 	}
@@ -915,6 +924,7 @@ func (c *Conversation) MarkError(reason string) {
 	c.AppendMessage(Message{
 		Role: MessageRoleError, Content: reason, Time: time.Now(),
 		TurnGeneration: c.turnIdentity.Generation,
+		AccountID:      c.turnIdentity.AccountID,
 		ProviderID:     c.turnIdentity.ProviderID, ModelID: c.turnIdentity.ModelID,
 	})
 }
@@ -939,6 +949,7 @@ func (c *Conversation) Finish(content, reason string, wasStreaming bool) {
 		c.AppendMessage(Message{
 			Role: MessageRoleAssistant, Content: content, Time: time.Now(),
 			TurnGeneration: c.turnIdentity.Generation,
+			AccountID:      c.turnIdentity.AccountID,
 			ProviderID:     c.turnIdentity.ProviderID, ModelID: c.turnIdentity.ModelID,
 		})
 		return
@@ -962,6 +973,7 @@ func (c *Conversation) Finish(content, reason string, wasStreaming bool) {
 	c.AppendMessage(Message{
 		Role: MessageRoleAssistant, Incomplete: true, IncompleteReason: label, Time: time.Now(),
 		TurnGeneration: c.turnIdentity.Generation,
+		AccountID:      c.turnIdentity.AccountID,
 		ProviderID:     c.turnIdentity.ProviderID, ModelID: c.turnIdentity.ModelID,
 	})
 }

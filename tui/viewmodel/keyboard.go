@@ -26,6 +26,9 @@ import (
 
 func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+	if m.settingsPromptOnTop() {
+		return m, m.handleSettingsPromptKey(msg)
+	}
 
 	// Global keybindings from the action registry — checked first,
 	// before focus routing. These work across shell views, while terminal
@@ -404,6 +407,12 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			return m, m.handleContextMenuKey(msg)
 		case "dirty-close-prompt":
 			return m, m.handleDirtyPromptKey(msg)
+		case string(ui.OverlayAccountRecovery):
+			return m, m.handleAccountRecoveryKey(msg)
+		case string(ui.OverlaySettingsPrompt):
+			return m, m.handleSettingsPromptKey(msg)
+		case "agent-prompt":
+			return m, m.handleAgentPromptKey(msg)
 		case "tree-prompt":
 			return m, m.handleTreePromptKey(msg)
 		case "tree-delete-confirm":

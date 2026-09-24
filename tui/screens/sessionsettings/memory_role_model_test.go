@@ -3,6 +3,7 @@ package sessionsettings
 import (
 	"testing"
 
+	"crude/provider"
 	"crude/session"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -17,23 +18,23 @@ func memoryAgentCfg() *session.Config {
 	return &session.Config{
 		ActiveProvider: "commandcode",
 		Providers: map[string]session.ProviderConfig{
-			"commandcode":  {APIKey: "k", ProviderURL: "https://cc"},
-			"ollama-cloud": {APIKey: "k", ProviderURL: "https://oc"},
+			"commandcode":  {ProviderURL: "https://cc"},
+			"ollama-cloud": {ProviderURL: "https://oc"},
 		},
 		Agents: session.AgentsConfig{
 			Enabled:       true,
 			ActiveProfile: "test",
 			Profiles: map[string]session.ProfileConfig{
 				"test": {Categories: map[string]session.CategoryConfig{
-					"default":    {Provider: "commandcode", Model: "main-agent-model", ThinkingEffort: "high"},
-					"researcher": {Provider: "ollama-cloud", Model: "glm-5.3-flash", ThinkingEffort: "high"},
+					"default":    {AccountID: "main", Model: "main-agent-model", ThinkingEffort: "high"},
+					"researcher": {AccountID: "memory", Model: "glm-5.3-flash", ThinkingEffort: "high"},
 				}},
 			},
 		},
 		Memory: types.MemorySettings{
 			AutoRecall: "on", AutoExtract: "on", Consolidation: "on",
 			MemoryCategory: types.CategorySettings{
-				Provider:                 "ollama-cloud",
+				Provider: "ollama-cloud", AccountID: "memory",
 				Model:                    "memory-agent-model",
 				ThinkingEffort:           "high",
 				ContextCompactionPercent: &comp,
@@ -69,14 +70,11 @@ func applyOverrides(base *session.Config, overrides map[string]types.CategorySet
 			profile.Categories[category] = session.CategoryConfig{Inherit: ov.Inherit}
 			continue
 		}
-		if ov.Provider != "" {
-			current.Provider = ov.Provider
+		if ov.AccountID != "" {
+			current.AccountID = ov.AccountID
 		}
 		if ov.Model != "" {
 			current.Model = ov.Model
-		}
-		if ov.APIStandard != "" {
-			current.APIStandard = ov.APIStandard
 		}
 		if ov.ThinkingEffort != "" {
 			current.ThinkingEffort = ov.ThinkingEffort
@@ -91,6 +89,7 @@ func applyOverrides(base *session.Config, overrides map[string]types.CategorySet
 func openSettingsDeck(t *testing.T, st types.Settings) *Screen {
 	t.Helper()
 	screen := New(theme.DefaultDark(), cloneSettings(st), st, nil)
+	screen.ConfigureAccounts(map[string]provider.Account{"main": {ID: "main", ProviderID: "commandcode", Label: "Main"}, "memory": {ID: "memory", ProviderID: "ollama-cloud", Label: "Memory"}})
 	deck := ui.NewPanelDeck("deck", ui.NewTokenSet(theme.DefaultDark()))
 	deck.Open(ui.PanelEntry{ID: "settings", Title: "Session Settings", Content: screen, Closable: true, Policy: ui.PanelInteractive, PreferredHeight: 14})
 	host := ui.NewHost(theme.DefaultDark(), deck)
@@ -114,11 +113,13 @@ func TestMemoryAgentRoleShowsItsOwnModel(t *testing.T) {
 	}
 
 	screen := openSettingsDeck(t, st)
+	screen.ConfigureAccounts(map[string]provider.Account{"main": {ID: "main", ProviderID: "commandcode", Label: "Main"}, "memory": {ID: "memory", ProviderID: "ollama-cloud", Label: "Memory"}})
+	screen.openRoot()
 	row := screen.formModel.Field(memoryRole)
 	if row == nil {
 		t.Fatal("root form missing Memory Agent row")
 	}
-	if len(row.Columns) < 2 || row.Columns[0] != "memory-agent-model" || row.Columns[1] != "ollama-cloud" {
+	if len(row.Columns) < 2 || row.Columns[0] != "memory-agent-model" || row.Columns[1] != "ollama-cloud · Memory" {
 		t.Errorf("Memory Agent row shows %v, want model=memory-agent-model provider=ollama-cloud", row.Columns)
 	}
 
@@ -126,8 +127,8 @@ func TestMemoryAgentRoleShowsItsOwnModel(t *testing.T) {
 	if got := screen.formModel.Field(fieldModel).Value.String(); got != "memory-agent-model" {
 		t.Errorf("memory role form prefills model %q, want memory-agent-model", got)
 	}
-	if got := screen.formModel.Field(fieldProvider).Value.String(); got != "ollama-cloud" {
-		t.Errorf("memory role form prefills provider %q, want ollama-cloud", got)
+	if got := screen.formModel.Field(fieldProvider).Value.String(); got != "memory" {
+		t.Errorf("memory role form prefills account %q, want ollama-cloud", got)
 	}
 }
 
@@ -139,6 +140,7 @@ func TestMemoryAgentRoleApplyPreservesModel(t *testing.T) {
 	st := session.ConfigToSettings(cfg)
 
 	screen := openSettingsDeck(t, st)
+	screen.ConfigureAccounts(map[string]provider.Account{"main": {ID: "main", ProviderID: "commandcode", Label: "Main"}, "memory": {ID: "memory", ProviderID: "ollama-cloud", Label: "Memory"}})
 	screen.openRole(memoryRole)
 	screen.formModel.Field(fieldThinking).Value = ui.StringValue("medium")
 	screen.applyRoleForm()
@@ -149,9 +151,9 @@ func TestMemoryAgentRoleApplyPreservesModel(t *testing.T) {
 	}
 
 	resolved := applyOverrides(cfg, out.SessionOverrides).GetMemoryCategory()
-	if resolved.Model != "memory-agent-model" || resolved.Provider != "ollama-cloud" {
-		t.Fatalf("after save backend resolves provider=%q model=%q, want ollama-cloud/memory-agent-model",
-			resolved.Provider, resolved.Model)
+	if resolved.Model != "memory-agent-model" || resolved.AccountID != "memory" {
+		t.Fatalf("after save backend resolves account=%q model=%q, want memory/memory-agent-model",
+			resolved.AccountID, resolved.Model)
 	}
 }
 
@@ -162,6 +164,7 @@ func TestMemoryAgentRoleExplicitModelOverrides(t *testing.T) {
 	st := session.ConfigToSettings(cfg)
 
 	screen := openSettingsDeck(t, st)
+	screen.ConfigureAccounts(map[string]provider.Account{"main": {ID: "main", ProviderID: "commandcode", Label: "Main"}, "memory": {ID: "memory", ProviderID: "ollama-cloud", Label: "Memory"}})
 	screen.openRole(memoryRole)
 	screen.formModel.Field(fieldModel).Value = ui.StringValue("chosen-memory-model")
 	screen.applyRoleForm()
@@ -194,6 +197,7 @@ func TestMemoryAgentRoleResetRestoresWorkspaceSetting(t *testing.T) {
 			cfg := memoryAgentCfg()
 			st := session.ConfigToSettings(cfg)
 			screen := openSettingsDeck(t, st)
+			screen.ConfigureAccounts(map[string]provider.Account{"main": {ID: "main", ProviderID: "commandcode", Label: "Main"}, "memory": {ID: "memory", ProviderID: "ollama-cloud", Label: "Memory"}})
 			tc.act(screen)
 
 			out := screen.ToSettings()
@@ -218,6 +222,7 @@ func TestMemoryAgentRoleInheritMainStillWorks(t *testing.T) {
 	st := session.ConfigToSettings(cfg)
 
 	screen := openSettingsDeck(t, st)
+	screen.ConfigureAccounts(map[string]provider.Account{"main": {ID: "main", ProviderID: "commandcode", Label: "Main"}, "memory": {ID: "memory", ProviderID: "ollama-cloud", Label: "Memory"}})
 	screen.inheritMain(memoryRole)
 	out := screen.ToSettings()
 	if got := out.SessionOverrides[memoryRole].Inherit; got != InheritMainMarker {

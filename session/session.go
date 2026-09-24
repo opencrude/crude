@@ -40,17 +40,22 @@ type EventSender interface {
 }
 
 type Session struct {
-	ID  string
-	cfg *Config
-	mu  sync.Mutex
+	agentName string
+	nameHome  string
+	ID        string
+	cfg       *Config
+	mu        sync.Mutex
 
-	provider    *provider.Provider
-	exec        fileio.Executer
-	editor      *fileio.Editor
-	logger      *logger.Logger
-	permStore   *safety.PermissionStore
-	asyncMgr    *fileio.AsyncCommandManager
-	memoryStore *memory.Store
+	provider *provider.Provider
+	// An older transcript without a connection pin stays disconnected until
+	// the user explicitly saves a session connection.
+	accountUnpinned bool
+	exec            fileio.Executer
+	editor          *fileio.Editor
+	logger          *logger.Logger
+	permStore       *safety.PermissionStore
+	asyncMgr        *fileio.AsyncCommandManager
+	memoryStore     *memory.Store
 
 	// workDir is the workspace root this session executes tools against.
 	// Relative tool paths and commands without an explicit cwd resolve
@@ -94,30 +99,35 @@ type Session struct {
 	toolCallCount   int
 	toolCallCountMu sync.Mutex
 
-	db                *sql.DB
-	dbPath            string
-	turnNumber        int
-	toolCallSeq       int
-	seqNum            int
-	writeBuf          []taggedMessage
-	writeMu           sync.Mutex
-	closing           int32
-	hardCancelled     int32
-	activeTurns       atomic.Int32
-	turnGate          sync.RWMutex
-	compactionMu      sync.Mutex
-	compactionCancel  context.CancelFunc
-	compactionID      string
-	compactionAgent   string
-	compactionStarted bool
-	compactionWg      sync.WaitGroup
-	wakeCh            chan WakeEvent
-	sender            EventSender
-	subAgentSup       *SubAgentRunner
-	orchestrators     map[string]*Orchestrator
-	orchMu            sync.Mutex
-	orchWg            sync.WaitGroup
-	orchNextID        atomic.Int64
+	db                       *sql.DB
+	dbPath                   string
+	turnNumber               int
+	toolCallSeq              int
+	seqNum                   int
+	writeBuf                 []taggedMessage
+	writeMu                  sync.Mutex
+	closing                  int32
+	hardCancelled            int32
+	activeTurns              atomic.Int32
+	turnGate                 sync.RWMutex
+	compactionMu             sync.Mutex
+	compactionCancel         context.CancelFunc
+	compactionID             string
+	compactionAgent          string
+	compactionStarted        bool
+	compactionWg             sync.WaitGroup
+	wakeCh                   chan WakeEvent
+	sender                   EventSender
+	subAgentSup              *SubAgentRunner
+	subAgentMu               sync.Mutex
+	delegationMu             sync.Mutex
+	delegationNoticeMu       sync.Mutex
+	permissionReviewRevision atomic.Uint64
+	delegationNotices        []provider.ChatMessage
+	orchestrators            map[string]*Orchestrator
+	orchMu                   sync.Mutex
+	orchWg                   sync.WaitGroup
+	orchNextID               atomic.Int64
 
 	// consumedReports tracks sub-agent IDs whose results the main agent has already
 	// consumed during an active turn (typically via poll_sub_agent). When a WakeSubAgentDone
@@ -226,7 +236,7 @@ func (s *Session) HasActiveTurns() bool {
 		return false
 	}
 	return s.activeTurns.Load() > 0 || s.historyFinalizers.Load() > 0 ||
-		(s.subAgentSup != nil && s.subAgentSup.Running()) || (s.asyncMgr != nil && s.asyncMgr.Running())
+		(s.SubAgentRunner() != nil && s.SubAgentRunner().Running()) || (s.asyncMgr != nil && s.asyncMgr.Running())
 }
 
 func newMessageID() string {
@@ -294,6 +304,9 @@ func New(id string, cfg *Config, homeDir string) (*Session, error) {
 func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Session, error) {
 	workspaceCfg := copyConfig(cfg)
 	cfg = copyConfig(cfg)
+	if err := cfg.pinAccounts(); err != nil {
+		return nil, err
+	}
 	mainCat := cfg.GetActiveDefaultCategory()
 	p, err := cfg.providerForCategory(mainCat)
 	if err != nil {
@@ -336,7 +349,7 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 		id = sessionID
 	}
 	lg.Info("SESSION", "start", "version", "1.0")
-	lg.Info("SESSION", "config", "provider", mainCat.Provider, "model", mainCat.Model)
+	lg.Info("SESSION", "config", "template", p.ID, "account", p.AccountID, "model", mainCat.Model)
 
 	permStore := safety.NewPermissionStore()
 	permStore.SetLogger(lg)
@@ -369,6 +382,11 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 		editor.SetLegacyJournalWrites(false)
 	}
 
+	name, nameErr := allocateAgentName(homeDir)
+	if nameErr != nil {
+		_ = lg.Close()
+		return nil, fmt.Errorf("allocate agent name: %w", nameErr)
+	}
 	var db *sql.DB
 	var dbPath string
 	if sessionDir != "" {
@@ -385,18 +403,28 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 			}
 			if sErr := sessiondb.Create(db, sessiondb.SessionMeta{
 				ID:          sessionID,
+				AgentName:   sql.NullString{String: name, Valid: true},
 				ProjectPath: wd,
 				ProjectName: projectName,
 				Model:       mainCat.Model,
-				Provider:    mainCat.Provider,
+				Provider:    p.ID,
+				AccountID:   mainCat.AccountID,
 				CreatedAt:   time.Now().UnixNano(),
 			}); sErr != nil {
-				lg.Warn("SESSION", "db_session_create_error", "error", fmt.Sprintf("%v", sErr))
+				_ = db.Close()
+				_ = lg.Close()
+				return nil, fmt.Errorf("create session metadata: %w", sErr)
+			}
+			if err := sessiondb.SaveAgentSettingOverrides(db, sessionID, pinnedAccountOverrides(cfg)); err != nil {
+				_ = db.Close()
+				_ = lg.Close()
+				return nil, fmt.Errorf("persist account connections: %w", err)
 			}
 		}
 	}
 
 	sess := &Session{
+		agentName: name, nameHome: homeDir,
 		ID:               id,
 		cfg:              cfg,
 		provider:         p,
@@ -418,10 +446,7 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 		orchestrators:    make(map[string]*Orchestrator),
 		runtimeProfile:   NewRuntimeProfile(cfg),
 		workspaceCfg:     workspaceCfg,
-		sessionOverrides: make(map[string]sessiondb.AgentSettingOverride),
-	}
-	if cfg.IsMultiAgentEnabled() {
-		sess.subAgentSup = NewSubAgentRunner(sess, cfg.Agents.MaxConcurrent)
+		sessionOverrides: pinnedAccountOverrides(cfg),
 	}
 
 	if dir := lg.SessionDir(); dir != "" {
@@ -560,6 +585,7 @@ func (s *Session) systemPrompt(multiAgent bool) string {
 	// against; a stale cwd here misdirects the model after a workspace
 	// switch even when execution itself is correctly re-rooted.
 	prompt := agent.BuildSystemPromptInDir(multiAgent, s.WorkDir())
+	prompt += fmt.Sprintf("\n<agent_identity>Your name is %s.</agent_identity>", s.agentName)
 	s.systemPrompts[multiAgent] = prompt
 	return prompt
 }
@@ -592,7 +618,7 @@ func (s *Session) CostSnapshot() CostSnapshot {
 			model.Cost += record.CostUSD
 		}
 		snapshot.ByModel[record.ModelID] = model
-		if record.UpdatedAt >= latest {
+		if record.RequestKind != "permission_review" && record.UpdatedAt >= latest {
 			latest = record.UpdatedAt
 			snapshot.LastPromptTokens = record.PromptTokens
 			snapshot.LastCompletionTokens = record.CompletionTokens
@@ -604,23 +630,59 @@ func (s *Session) CostSnapshot() CostSnapshot {
 
 func (s *Session) Logger() *logger.Logger { return s.logger }
 
-// initSubAgentRunner lazily creates the sub-agent runner if multi-agent is enabled.
-// Returns true if the runner is available after the call.
+// initSubAgentRunner creates the runner only on demand. Registration and
+// identity are published together, including when Settings enabled delegation
+// after the orchestrator had already started.
 func (s *Session) initSubAgentRunner() bool {
+	s.orchMu.Lock()
+	defer s.orchMu.Unlock()
+	s.subAgentMu.Lock()
+	defer s.subAgentMu.Unlock()
+	if atomic.LoadInt32(&s.closing) != 0 {
+		return false
+	}
 	if s.subAgentSup != nil {
 		return true
 	}
-	if s.cfg != nil && s.cfg.IsMultiAgentEnabled() {
-		s.subAgentSup = NewSubAgentRunner(s, s.cfg.Agents.MaxConcurrent)
-		if s.sender != nil {
-			s.subAgentSup.SetSender(s.sender)
+	var owner *Orchestrator
+	for _, o := range s.orchestrators {
+		if !o.closing.Load() {
+			owner = o
+			break
 		}
-		return true
 	}
-	return false
+	var cfg *Config
+	if s.runtimeProfile != nil {
+		id := ""
+		if owner != nil {
+			id = owner.ID
+		}
+		cfg = s.runtimeProfile.GetEffectiveConfig(id)
+	} else {
+		s.mu.Lock()
+		if s.cfg != nil {
+			cfg = copyConfig(s.cfg)
+		}
+		s.mu.Unlock()
+	}
+	if cfg == nil || !cfg.IsMultiAgentEnabled() {
+		return false
+	}
+	runner := NewSubAgentRunner(s, cfg.Agents.MaxConcurrent)
+	if owner != nil {
+		runner.SetSender(owner.sender)
+		runner.SetOrchestratorID(owner.ID)
+		owner.turnMu.Lock()
+		runner.SetParentTurnGeneration(owner.turnGeneration)
+		owner.turnMu.Unlock()
+	}
+	s.subAgentSup = runner
+	return true
 }
 
 func (s *Session) SubAgentRunner() *SubAgentRunner {
+	s.subAgentMu.Lock()
+	defer s.subAgentMu.Unlock()
 	return s.subAgentSup
 }
 
@@ -635,10 +697,10 @@ type SubAgentSnapshot struct {
 }
 
 func (s *Session) CompletedSubAgentSnapshots() []SubAgentSnapshot {
-	if s == nil || s.subAgentSup == nil {
+	if s == nil || s.SubAgentRunner() == nil {
 		return nil
 	}
-	results := s.subAgentSup.Manager().CompletedResults()
+	results := s.SubAgentRunner().Manager().CompletedResults()
 	snapshots := make([]SubAgentSnapshot, 0, len(results))
 	for _, result := range results {
 		snapshot := SubAgentSnapshot{Result: result}
@@ -748,12 +810,12 @@ func (s *Session) HardCancel() {
 	for _, orchestrator := range orchestrators {
 		orchestrator.CancelTurn()
 	}
-	if s.subAgentSup != nil {
-		s.subAgentSup.CancelAllActive()
+	if runner := s.SubAgentRunner(); runner != nil {
+		runner.CancelAllActive()
 	}
 	s.logger.Info(
 		"CANCEL", "hard_cancel",
-		"orchestrators", len(orchestrators), "sub_agents_cancelled", s.subAgentSup != nil,
+		"orchestrators", len(orchestrators), "sub_agents_cancelled", s.SubAgentRunner() != nil,
 	)
 }
 
@@ -811,7 +873,8 @@ func (s *Session) ResolveBlock(id string, response ttypes.BlockResponse) bool {
 	if orchestrator != nil {
 		return orchestrator.ResolveBlock(response)
 	}
-	return s.subAgentSup != nil && s.subAgentSup.ResolveBlock(agent.AgentID(id), response)
+	runner := s.SubAgentRunner()
+	return runner != nil && runner.ResolveBlock(agent.AgentID(id), response)
 }
 
 func (s *Session) isHardCancelled() bool {
@@ -876,17 +939,16 @@ func (s *Session) NewOrchestrator(sender EventSender) (*Orchestrator, error) {
 	}
 	nextID := s.orchNextID.Add(1)
 	o := NewOrchestrator(fmt.Sprintf("%s_orch_%d", s.ID, nextID), s)
+	o.sender = sender
 
 	// Initialize a runtime profile override for this orchestrator.
 	// This is a fresh, empty override that starts from base config.
 	s.runtimeProfile.GetOrCreateOverride(o.ID)
 
-	if s.subAgentSup == nil && s.cfg.IsMultiAgentEnabled() {
-		s.subAgentSup = NewSubAgentRunner(s, s.cfg.Agents.MaxConcurrent)
-	}
-	if s.subAgentSup != nil {
-		s.subAgentSup.SetSender(sender)
-		o.subAgentSup = s.subAgentSup
+	// A restored runner is attached before the orchestrator is published.
+	if runner := s.SubAgentRunner(); runner != nil {
+		runner.SetSender(sender)
+		runner.SetOrchestratorID(o.ID)
 	}
 
 	if atomic.LoadInt32(&s.closing) == 1 {
@@ -916,8 +978,8 @@ func (s *Session) CloseOrchestrator(id string) {
 	s.orchMu.Unlock()
 	if ok && o.closing.CompareAndSwap(false, true) {
 		o.CancelTurn()
-		if o.subAgentSup != nil {
-			for _, childID := range o.subAgentSup.CancelAllActive() {
+		if runner := o.subAgentRunner(); runner != nil {
+			for _, childID := range runner.CancelAllActive() {
 				s.MarkReportConsumed(string(childID))
 			}
 		}

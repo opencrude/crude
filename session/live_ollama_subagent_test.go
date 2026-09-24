@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"crude/agent"
+	"crude/provider"
 	"crude/sessiondb"
 )
 
@@ -62,7 +63,7 @@ func newLiveOllamaSubAgentRunner(t *testing.T) (*Session, *SubAgentRunner, *live
 	agents := DefaultAgentsConfig()
 	profile := agents.Profiles[agents.ActiveProfile]
 	liveCategory := CategoryConfig{
-		Provider:           "ollama-cloud",
+		AccountID:          "account",
 		Model:              liveOllamaSubAgentModel,
 		Policy:             "read-only",
 		AllowedTools:       []string{"write_report"},
@@ -73,8 +74,9 @@ func newLiveOllamaSubAgentRunner(t *testing.T) (*Session, *SubAgentRunner, *live
 	agents.Profiles[agents.ActiveProfile] = profile
 	cfg := &Config{
 		ActiveProvider: "ollama-cloud",
+		Accounts:       map[string]provider.Account{"account": {ID: "account", ProviderID: "ollama-cloud", APIKey: key}},
 		Providers: map[string]ProviderConfig{
-			"ollama-cloud": {APIKey: key, Model: liveOllamaSubAgentModel},
+			"ollama-cloud": provider.DefaultTemplates()["ollama-cloud"],
 		},
 		TurnLogsEnabled: true,
 		Agents:          agents,

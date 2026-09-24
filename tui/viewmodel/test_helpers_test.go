@@ -4,6 +4,7 @@ import (
 	"testing"
 	"time"
 
+	"crude/provider"
 	"crude/session"
 	"crude/tui/cell"
 	"crude/tui/compositor"
@@ -109,6 +110,7 @@ func newTestApp(t testing.TB) *App {
 		height:             24,
 	}
 	app.Feedback = newFeedbackSink(app)
+	app.initWorkspacePanels()
 	deck.app = app
 	app.Win = window.New(th)
 	launcherScreen.SetFocusHandler(rootHost.Focus)
@@ -153,7 +155,7 @@ func addBackendTestOrchestrator(t *testing.T, app *App) string {
 	if app.SessionsByAgent == nil {
 		app.SessionsByAgent = make(map[string]*workspace.Session)
 	}
-	_, err := app.CreateSession(&session.Config{}, t.TempDir())
+	_, err := app.CreateSession(testAccountConfig(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -217,4 +219,16 @@ func (m *App) rootHandleFocus(focus ui.ComponentID, msg any) ui.EventResult {
 	}
 	m.rootHost.Focus(focus)
 	return m.rootHost.Handle(msg)
+}
+
+// testAccountConfig is an explicitly configured local test connection. Tests
+// that exercise real session admission must not rely on credential fallbacks.
+func testAccountConfig() *session.Config {
+	agents := session.DefaultAgentsConfig()
+	profile := agents.Profiles[agents.ActiveProfile]
+	main := profile.Categories[session.CategoryDefault]
+	main.AccountID, main.Model = "test", "test-model"
+	profile.Categories[session.CategoryDefault] = main
+	agents.Profiles[agents.ActiveProfile] = profile
+	return &session.Config{ActiveProvider: "openai", Providers: map[string]session.ProviderConfig{"openai": {Name: "OpenAI", ProviderURL: "http://127.0.0.1:1", APIStandard: "openai", AuthType: provider.AuthProtocol}}, Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", Label: "Test", APIKey: "test"}}, Agents: agents}
 }

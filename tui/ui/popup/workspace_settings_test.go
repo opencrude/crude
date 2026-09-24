@@ -14,8 +14,9 @@ func TestSignInResultUpdatesOpenModel(t *testing.T) {
 	th := theme.DefaultDark()
 	ws := NewWorkspaceSettings(th, ttypes.AppSettings{
 		ActiveProvider: "chatgpt",
-		Providers:      map[string]ttypes.ProviderConfig{"chatgpt": {}},
-	}, []ttypes.ProviderPreset{{ID: "chatgpt", Name: "OpenAI (ChatGPT subscription)", StandardID: "codex"}})
+		Accounts:       map[string]provider.Account{"personal": {ID: "personal", ProviderID: "chatgpt", Label: "Personal"}},
+		Providers:      map[string]ttypes.ProviderConfig{"chatgpt": provider.DefaultTemplates()["chatgpt"]},
+	}, []ttypes.ProviderPreset{{ID: "chatgpt", Name: "Codex", StandardID: "codex"}})
 
 	frame := ui.NewWindowFrameWidget(th, "settings-frame", ui.FrameWindow, "Settings", ws.Component(), ws, true, 90, 24)
 	ws.SetFocusHandler(frame.Focus)
@@ -24,38 +25,40 @@ func TestSignInResultUpdatesOpenModel(t *testing.T) {
 	host.Layout()
 
 	model := ws.ModelForTest()
-	model.SelectCategory(0) // Providers
+	ws.ShowAccounts()
+	ws.Component().(*settings.WorkspaceSettingsSurface).HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.edit"})
+	host.MarkLayout()
 	host.Layout()
 
-	if status := model.ValueForTest(0, "chatgpt-status"); status != "Not signed in" {
+	if status := model.ValueForTest(1, "chatgpt-status"); status != "Not signed in" {
 		t.Fatalf("initial status = %q, want 'Not signed in'", status)
 	}
 
 	// Dispatch exactly as viewmodel.forwardEventToWindowContent does.
-	frame.Dispatch(settings.ChatGPTSignInResultMsg{
+	id, generation := model.SignInRequest()
+	frame.Dispatch(settings.ChatGPTSignInResultMsg{AccountID: id, Generation: generation,
 		Creds: &provider.OAuthCredentials{AccessToken: "AT", Email: "u@example.com"},
 	})
 
-	if status := model.ValueForTest(0, "chatgpt-status"); status != "Signed in as u@example.com" {
-		t.Errorf("status after dispatch = %q, want 'Signed in as u@example.com'", status)
+	if status := model.ValueForTest(1, "chatgpt-status"); status != "Sign-in stored" {
+		t.Errorf("status after dispatch = %q, want stored sign-in", status)
 	}
 }
 
-// TestProviderSwitchAfterSignInKeepsModelConsistent reproduces the reported
-// bug: after a sign-in result is handled (which rebuilds the provider form),
-// switching the provider dropdown no longer updates the model's providerID —
-// the form's onChanged closure still points at the pre-sign-in model copy.
-func TestProviderSwitchAfterSignInKeepsModelConsistent(t *testing.T) {
+// Sign-in updates only the account draft. A template selected in the table
+// stays independent even while the account editor receives async OAuth data.
+func TestAccountSignInKeepsSelectedTemplateIndependent(t *testing.T) {
 	th := theme.DefaultDark()
 	ws := NewWorkspaceSettings(th, ttypes.AppSettings{
 		ActiveProvider: "opencode-go",
 		Providers: map[string]ttypes.ProviderConfig{
-			"opencode-go": {Model: "deepseek-v4-flash", APIKey: "sk-opencode"},
-			"chatgpt":     {},
+			"opencode-go": provider.DefaultTemplates()["opencode-go"],
+			"chatgpt":     provider.DefaultTemplates()["chatgpt"],
 		},
+		Accounts: map[string]provider.Account{"personal": {ID: "personal", ProviderID: "chatgpt", Label: "Personal"}, "work": {ID: "work", ProviderID: "opencode-go", Label: "Work", APIKey: "sk-opencode"}},
 	}, []ttypes.ProviderPreset{
 		{ID: "opencode-go", Name: "OpenCode Go", BaseURL: "https://opencode.ai/zen/go/v1", StandardID: "openai"},
-		{ID: "chatgpt", Name: "OpenAI (ChatGPT subscription)", StandardID: "codex"},
+		{ID: "chatgpt", Name: "Codex", StandardID: "codex"},
 	})
 
 	frame := ui.NewWindowFrameWidget(th, "settings-frame", ui.FrameWindow, "Settings", ws.Component(), ws, true, 90, 24)
@@ -65,36 +68,30 @@ func TestProviderSwitchAfterSignInKeepsModelConsistent(t *testing.T) {
 	host.Layout()
 
 	model := ws.ModelForTest()
-	model.SelectCategory(0) // Providers
-	host.Layout()
-
-	// Switch to chatgpt.
-	model.SetValueForTest(0, "provider", "chatgpt")
-	if model.ProviderIDForTest() != "chatgpt" {
-		t.Fatalf("providerID = %q, want chatgpt", model.ProviderIDForTest())
+	if model.ProviderIDForTest() != "opencode-go" {
+		t.Fatalf("selected template = %q, want opencode-go", model.ProviderIDForTest())
 	}
+	model.SelectAccountForTest("personal")
+	ws.ShowAccounts()
+	ws.Component().(*settings.WorkspaceSettingsSurface).HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.edit"})
 
-	// Sign in (rebuilds the provider form).
-	frame.Dispatch(settings.ChatGPTSignInResultMsg{
+	// Sign in (rebuilds only the retained account editor).
+	id, generation := model.SignInRequest()
+	frame.Dispatch(settings.ChatGPTSignInResultMsg{AccountID: id, Generation: generation,
 		Creds: &provider.OAuthCredentials{AccessToken: "AT", Email: "u@example.com"},
 	})
-
-	// Switch back to opencode-go. The CURRENT model (ws.model) must follow the
-	// dropdown. This is the reported bug: the form's onChanged closure points at
-	// the pre-sign-in model copy, so ws.model stays on chatgpt while the form
-	// shows opencode-go.
-	ws.ModelForTest().SetValueForTest(0, "provider", "opencode-go")
-	if got := ws.ModelForTest().ProviderIDForTest(); got != "opencode-go" {
-		t.Errorf("providerID after switch back = %q, want opencode-go (form onChanged closure is stale)", got)
+	if ws.ModelForTest() != model || model.ProviderIDForTest() != "opencode-go" {
+		t.Fatal("async result replaced the model pointer or selected a different template")
 	}
-
-	// Saving must not corrupt the opencode-go provider with chatgpt values.
+	if model.AppSettings().Accounts["personal"].OAuth != nil {
+		t.Fatal("unconfirmed sign-in changed a saved account")
+	}
 	got := ws.ModelForTest().AppSettings()
 	ocg := got.Providers["opencode-go"]
 	if ocg.ProviderURL != "https://opencode.ai/zen/go/v1" {
 		t.Errorf("opencode-go ProviderURL = %q, want opencode-go URL", ocg.ProviderURL)
 	}
-	if ocg.APIStandard != "openai" {
-		t.Errorf("opencode-go APIStandard = %q, want openai", ocg.APIStandard)
+	if ocg.APIStandard != provider.DefaultTemplates()["opencode-go"].APIStandard {
+		t.Errorf("opencode-go APIStandard changed by account sign-in: %q", ocg.APIStandard)
 	}
 }

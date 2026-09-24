@@ -474,16 +474,16 @@ var AgentTools = []ToolDef{
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
-					"name":{"type":"string","description":"Optional short name for display and tracking. When omitted, Crude derives a stable descriptive name from the task."},
+					"name":{"type":"string","description":"Optional task/profile hint. Crude allocates a unique personal first name and parent label independently of this hint."},
 					"category":{"type":"string","description":"Capability tier: 'researcher' (read-only, cheap, fast), 'crafter' (implementation, write-capable, mid-cost), or 'aeron' (grunt work, ultra-cheap, restricted). Default: 'crafter'.","enum":["researcher","crafter","aeron"]},
-					"description":{"type":"string","description":"The task this sub-agent should accomplish. Be specific."},
+					"description":{"type":"string","description":"Bounded outcome, owned paths, acceptance criteria, and stopping condition. Keep shared integration with the parent."},
 					"instructions":{"type":"string","description":"Custom instructions appended to the sub-agent's system prompt. Use to specialize behavior."},
 					"policy":{"type":"string","description":"Permission policy: 'default', 'read-only', 'no-delete', or 'no-execute'. Default: inherited from category.","enum":["default","read-only","no-delete","no-execute"]},
 					"allowed_tools":{"type":"array","items":{"type":"string"},"description":"Explicit tool whitelist. If provided, only these tools are available (intersected with category defaults)."},
 					"denied_tools":{"type":"array","items":{"type":"string"},"description":"Explicit tool blacklist. These tools are removed (unioned with category defaults)."},
 					"file_ownership":{"type":"array","items":{"type":"string"},"description":"Optional pre-declared paths this sub-agent claims exclusive write access to."},
 					"timeout_seconds":{"type":"integer","minimum":1,"maximum":86400,"description":"Optional maximum runtime in seconds (up to 24 hours). Omit for no runtime deadline; session/root termination still cancels the child."},
-					"wait":{"type":"boolean","description":"If true (default), block until the sub-agent completes. If false, return immediately with a handle ID for later polling."}
+					"wait":{"type":"boolean","description":"If true (default), block until the sub-agent completes. If false, return immediately; completion automatically notifies the parent. Do not poll routinely."}
 				},
 				"required":["description"]
 			}`),
@@ -493,7 +493,7 @@ var AgentTools = []ToolDef{
 		Type: "function",
 		Function: ToolFuncDef{
 			Name:        "poll_sub_agent",
-			Description: "Check the status and retrieve results from an asynchronously spawned sub-agent. Returns the SubAgentResult if completed, or current status if still running.",
+			Description: "Recover a result needed for a decision or diagnose a genuinely stalled child. Completion is delivered automatically; do not repeatedly poll to wait for normal work.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
@@ -623,11 +623,11 @@ var AgentTools = []ToolDef{
 		Type: "function",
 		Function: ToolFuncDef{
 			Name:        "write_report",
-			Description: "Write your full detailed report to disk. The report is saved in the main agent's reports directory. After writing, continue working or finish naturally — the main agent will read the report file. Your report should contain ALL findings, file contents, analysis, and results in full detail. Do NOT summarize — the main agent needs verbatim content.",
+			Description: "Deliver the bounded assignment to the parent, then stop. Report the outcome (complete, partial, or blocked), changes or findings with exact paths, focused verification, and remaining blockers. Include only decision-relevant evidence, not copied source files, raw logs, or repeated analysis. Write once when finished or blocked; do not keep checking sibling work after handoff.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
-					"report":{"type":"string","description":"Full detailed report content. Include ALL findings, verbatim file contents, analysis, and results. The main agent will read this file."}
+					"report":{"type":"string","description":"Concise, self-contained handoff: outcome, findings or changed paths, verification performed, blockers, and any parent integration actions. Never include credentials."}
 				},
 				"required":["report"]
 			}`),

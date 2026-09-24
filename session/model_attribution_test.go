@@ -102,9 +102,10 @@ func modelAttributionConfig(baseURL, model string) *Config {
 	off := false
 	return &Config{
 		ActiveProvider: "openrouter",
+		Accounts:       map[string]provider.Account{"account": {ID: "account", ProviderID: "openrouter", APIKey: "test-key"}},
 		Providers: map[string]ProviderConfig{
 			"openrouter": {
-				APIKey: "test-key", ProviderURL: baseURL, APIStandard: "openai", Model: model,
+				Name: "OpenRouter", ProviderURL: baseURL, APIStandard: "openai", AuthType: provider.AuthProtocol,
 			},
 		},
 		Agents: AgentsConfig{
@@ -113,7 +114,7 @@ func modelAttributionConfig(baseURL, model string) *Config {
 				"default": {
 					MultiAgent: &off,
 					Categories: map[string]CategoryConfig{
-						CategoryDefault: {Provider: "openrouter", Model: model, APIStandard: "openai"},
+						CategoryDefault: {AccountID: "account", Model: model},
 					},
 				},
 			},

@@ -37,11 +37,12 @@ func (m *App) AddOrchestrator(orchID string) {
 
 	agent := workspace.NewAgentState(orchID, sp.Messages, m.Logger)
 	node := m.AgentMgr.AddOrchestrator(orchID, agent)
-	// Root orchestrators are the session's default/main agent. Seed category
-	// so presentation can show "Main Agent" without leaking orch IDs.
+	// Bind the durable session identity; task/model labels never own names.
 	if node != nil {
 		node.Category = "default"
 		node.Model = m.ModelName
+		node.Label = m.AgentNameFor(orchID)
+		sp.Title = node.Label
 	}
 	for _, childID := range m.HydrateCompletedSubAgents(orchID) {
 		child := m.AgentMgr.Get(childID)

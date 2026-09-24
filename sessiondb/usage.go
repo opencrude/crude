@@ -17,6 +17,7 @@ type UsageRecord struct {
 	Attempt           int
 	RequestKind       string
 	ProviderID        string
+	AccountID         string
 	ModelID           string
 	PromptTokens      int
 	CompletionTokens  int
@@ -46,13 +47,14 @@ func UpsertUsageRecord(db *sql.DB, r UsageRecord) error {
 	_, err := db.Exec(`
 		INSERT INTO usage_requests (
 			request_id, session_id, agent_id, parent_agent_id, turn_generation,
-			attempt, request_kind, provider_id, model_id, prompt_tokens, completion_tokens,
+			attempt, request_kind, provider_id, account_id, model_id, prompt_tokens, completion_tokens,
 			cached_tokens, cache_read_known, cache_write_tokens, cache_write_known,
 			reasoning_tokens, reasoning_known, reasoning_in_output,
 			context_used, context_window, cost_usd, cost_known, estimated, partial,
 			cost_source, cost_upper_bound, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(request_id) DO UPDATE SET
+			account_id=excluded.account_id,
 			prompt_tokens=excluded.prompt_tokens,
 			completion_tokens=excluded.completion_tokens,
 			request_kind=excluded.request_kind,
@@ -74,7 +76,7 @@ func UpsertUsageRecord(db *sql.DB, r UsageRecord) error {
 			updated_at=excluded.updated_at
 		WHERE excluded.updated_at > usage_requests.updated_at
 	`, r.RequestID, r.SessionID, r.AgentID, r.ParentAgentID, strconv.FormatUint(r.TurnGeneration, 10),
-		r.Attempt, requestKind(r.RequestKind), r.ProviderID, r.ModelID, r.PromptTokens, r.CompletionTokens,
+		r.Attempt, requestKind(r.RequestKind), r.ProviderID, r.AccountID, r.ModelID, r.PromptTokens, r.CompletionTokens,
 		r.CachedTokens, r.CacheReadKnown, r.CacheWriteTokens, r.CacheWriteKnown,
 		r.ReasoningTokens, r.ReasoningKnown, r.ReasoningInOutput,
 		r.ContextUsed, r.ContextWindow, r.CostUSD, r.CostKnown, r.Estimated, r.Partial,
@@ -91,7 +93,7 @@ func ListUsageRecords(db *sql.DB) ([]UsageRecord, error) {
 	}
 	rows, err := db.Query(`
 		SELECT request_id, session_id, agent_id, parent_agent_id, turn_generation,
-		       attempt, request_kind, provider_id, model_id, prompt_tokens, completion_tokens,
+		       attempt, request_kind, provider_id, account_id, model_id, prompt_tokens, completion_tokens,
 		       cached_tokens, cache_read_known, cache_write_tokens, cache_write_known,
 		       reasoning_tokens, reasoning_known, reasoning_in_output,
 		       context_used, context_window, cost_usd, cost_known, estimated, partial,
@@ -105,7 +107,7 @@ func ListUsageRecords(db *sql.DB) ([]UsageRecord, error) {
 	for rows.Next() {
 		var r UsageRecord
 		if err := rows.Scan(&r.RequestID, &r.SessionID, &r.AgentID, &r.ParentAgentID,
-			&r.TurnGeneration, &r.Attempt, &r.RequestKind, &r.ProviderID, &r.ModelID, &r.PromptTokens,
+			&r.TurnGeneration, &r.Attempt, &r.RequestKind, &r.ProviderID, &r.AccountID, &r.ModelID, &r.PromptTokens,
 			&r.CompletionTokens, &r.CachedTokens, &r.CacheReadKnown,
 			&r.CacheWriteTokens, &r.CacheWriteKnown, &r.ReasoningTokens,
 			&r.ReasoningKnown, &r.ReasoningInOutput, &r.ContextUsed, &r.ContextWindow, &r.CostUSD,
@@ -125,7 +127,7 @@ func LatestNormalUsageRecord(db *sql.DB, sessionID, agentID string) (UsageRecord
 	var r UsageRecord
 	err := db.QueryRow(`
 		SELECT request_id, session_id, agent_id, parent_agent_id, turn_generation,
-		       attempt, request_kind, provider_id, model_id, prompt_tokens, completion_tokens,
+		       attempt, request_kind, provider_id, account_id, model_id, prompt_tokens, completion_tokens,
 		       cached_tokens, cache_read_known, cache_write_tokens, cache_write_known,
 		       reasoning_tokens, reasoning_known, reasoning_in_output,
 		       context_used, context_window, cost_usd, cost_known, estimated, partial,
@@ -135,7 +137,7 @@ func LatestNormalUsageRecord(db *sql.DB, sessionID, agentID string) (UsageRecord
 		ORDER BY updated_at DESC, request_id DESC
 		LIMIT 1`, sessionID, agentID).Scan(
 		&r.RequestID, &r.SessionID, &r.AgentID, &r.ParentAgentID,
-		&r.TurnGeneration, &r.Attempt, &r.RequestKind, &r.ProviderID, &r.ModelID, &r.PromptTokens,
+		&r.TurnGeneration, &r.Attempt, &r.RequestKind, &r.ProviderID, &r.AccountID, &r.ModelID, &r.PromptTokens,
 		&r.CompletionTokens, &r.CachedTokens, &r.CacheReadKnown,
 		&r.CacheWriteTokens, &r.CacheWriteKnown, &r.ReasoningTokens,
 		&r.ReasoningKnown, &r.ReasoningInOutput, &r.ContextUsed, &r.ContextWindow, &r.CostUSD,

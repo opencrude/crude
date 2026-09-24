@@ -5,12 +5,14 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/provider"
 	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/types"
 	"crude/tui/ui"
 	"crude/tui/wm"
+	modeltypes "crude/types"
 )
 
 func TestAppSettingsPreserveProvidersAndAgentDefaults(t *testing.T) {
@@ -18,12 +20,13 @@ func TestAppSettingsPreserveProvidersAndAgentDefaults(t *testing.T) {
 	current := types.AppSettings{
 		ActiveProvider: "openrouter",
 		Providers: map[string]types.ProviderConfig{
-			"openrouter": {APIKey: "key-a", Model: "model-a", ThinkingEffort: "low"},
-			"openai":     {APIKey: "key-b", Model: "model-b", ThinkingEffort: "high"},
+			"openrouter": provider.DefaultTemplates()["openrouter"],
+			"openai":     provider.DefaultTemplates()["openai"],
 		},
+		Accounts: map[string]provider.Account{"router": {ID: "router", ProviderID: "openrouter", Label: "Personal"}, "work": {ID: "work", ProviderID: "openai", Label: "Work"}},
 		Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
-			"default": {Provider: "openrouter", Model: "main-model", ThinkingEffort: "medium"},
-			"crafter": {Provider: "openai", Model: "craft-model", ThinkingEffort: "high"},
+			"default": {AccountID: "router", Model: "main-model", ThinkingEffort: "medium"},
+			"crafter": {AccountID: "work", Model: "craft-model", ThinkingEffort: "high"},
 		}},
 	}
 	m := New(th, current, []types.ProviderPreset{
@@ -32,8 +35,8 @@ func TestAppSettingsPreserveProvidersAndAgentDefaults(t *testing.T) {
 	})
 
 	got := m.AppSettings()
-	if got.Providers["openrouter"].Model != "model-a" || got.Providers["openai"].Model != "model-b" {
-		t.Fatalf("provider defaults were lost: %#v", got.Providers)
+	if got.Providers["openrouter"].ProviderURL != current.Providers["openrouter"].ProviderURL || got.Providers["openai"].APIStandard != current.Providers["openai"].APIStandard {
+		t.Fatalf("provider templates were lost: %#v", got.Providers)
 	}
 	if got.Agents.Categories["default"].Model != "main-model" || got.Agents.Categories["crafter"].Model != "craft-model" {
 		t.Fatalf("agent defaults were lost: %#v", got.Agents.Categories)
@@ -56,16 +59,16 @@ func TestSettingsSurfacePaintAndNavigation(t *testing.T) {
 		}
 	}
 
-	// Rail rows: 3=AI header, 4=Providers, 5=Main Agent (search + gap above).
-	cw.Host().Handle(tea.MouseClickMsg{X: 2, Y: 5, Button: tea.MouseLeft})
+	// Rail rows: 3=AI header, 4=Providers, 5=Accounts, 6=Main Agent.
+	cw.Host().Handle(tea.MouseClickMsg{X: 2, Y: 6, Button: tea.MouseLeft})
 	if m.SelectedCategory() != catMain || m.Pane() != 0 {
 		t.Fatalf("category click selected=%d pane=%d, want %d/0", m.SelectedCategory(), m.Pane(), catMain)
 	}
 
 	surfaceRoot.FocusForm()
 	result := cw.Host().Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if !result.Handled || !surfaceRoot.form.Field(fieldProvider).SelectOpen() {
-		t.Fatal("native provider field should open its shared select control")
+	if !result.Handled || surfaceRoot.form.Field(fieldConnection) == nil {
+		t.Fatal("native account field should open its shared select control")
 	}
 }
 
@@ -105,8 +108,8 @@ func TestSettingsSurfaceRailUsesConsistentInset(t *testing.T) {
 	if got := surfaceRoot.categories.Bounds().X; got != workspaceSettingsInset {
 		t.Fatalf("category rail X=%d want shared inset %d", got, workspaceSettingsInset)
 	}
-	if got := surfaceRoot.form.Bounds().X; got <= surfaceRoot.categories.Bounds().X {
-		t.Fatalf("form X=%d must follow category rail X=%d", got, surfaceRoot.categories.Bounds().X)
+	if got := surfaceRoot.contentRect.X; got <= surfaceRoot.categories.Bounds().X {
+		t.Fatalf("settings content X=%d must follow category rail X=%d", got, surfaceRoot.categories.Bounds().X)
 	}
 }
 
@@ -166,7 +169,7 @@ func TestSettingsSurfaceNativeFormPersistsTextAndCategoryChanges(t *testing.T) {
 	cw.Render(surf, &wm.RenderContext{Theme: th})
 
 	// Rail: scope/search, AI roles, Security/Safety, then IDE/Appearance/Editor.
-	cw.Host().Handle(tea.MouseClickMsg{X: 2, Y: 16, Button: tea.MouseLeft})
+	cw.Host().Handle(tea.MouseClickMsg{X: 2, Y: 17, Button: tea.MouseLeft})
 	if m.SelectedCategory() != catEditor {
 		t.Fatalf("selected category=%d, want editor", m.SelectedCategory())
 	}
@@ -192,33 +195,91 @@ func TestSettingsSurfaceNativeFormPersistsTextAndCategoryChanges(t *testing.T) {
 	}
 }
 
-func TestSettingsSurfaceNativeSelectCommitsProvider(t *testing.T) {
+func TestSettingsSurfaceTemplateBrowsingDoesNotSwitchMainAgentAccount(t *testing.T) {
 	th := theme.DefaultDark()
-	m := New(th, types.AppSettings{ActiveProvider: "openrouter", Providers: map[string]types.ProviderConfig{
-		"openrouter": {ProviderURL: "https://router"},
-		"openai":     {ProviderURL: "https://openai"},
-	}}, []types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}, {ID: "openai", Name: "OpenAI"}})
-	surfaceRoot := NewSurface(th, m)
-	cw := ui.NewComponentWidget(th, surfaceRoot, 90, 28)
-	surfaceRoot.SetFocusHandler(cw.Focus)
-	surf := surface.NewSurface("settings-native-select", 90, 28, cell.TransparentBlank())
-	cw.Render(surf, &wm.RenderContext{Theme: th})
+	m := New(th, types.AppSettings{ActiveProvider: "openrouter", Providers: map[string]types.ProviderConfig{"openrouter": provider.DefaultTemplates()["openrouter"], "openai": provider.DefaultTemplates()["openai"]}, Accounts: map[string]provider.Account{"personal": {ID: "personal", ProviderID: "openrouter", Label: "Personal"}, "work": {ID: "work", ProviderID: "openai", Label: "Work"}}, Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {AccountID: "personal", Model: "m"}}}}, []types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}, {ID: "openai", Name: "OpenAI"}})
+	surf := NewSurface(th, m)
+	host := ui.NewHost(th, surf)
+	host.Resize(90, 28)
+	host.Layout()
+	m.providerID = "openai"
+	surf.templates.syncRows()
+	if m.providerID != "openai" {
+		t.Fatalf("browsing provider = %q", m.providerID)
+	}
+	if saved := m.AppSettings(); saved.Agents.Categories["default"].AccountID != "personal" {
+		t.Fatalf("browsing changed the Main Agent account: %+v", saved.Agents.Categories["default"])
+	}
+}
 
-	surfaceRoot.FocusForm()
-	cw.Host().Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
-	cw.Host().Handle(tea.KeyPressMsg{Code: tea.KeyDown})
-	cw.Host().Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if got := m.AppSettings().ActiveProvider; got != "openai" {
-		t.Fatalf("native select saved provider %q, want openai", got)
+func TestSafetyAutoPermissionDefaultsAndRoundTrip(t *testing.T) {
+	th := theme.DefaultDark()
+	m := New(th, types.AppSettings{Accounts: map[string]provider.Account{"review": {ID: "review", ProviderID: "openai", Label: "Review"}}}, []types.ProviderPreset{{ID: "openai", Name: "OpenAI"}})
+	if got := m.ValueForTest(catSafety, fieldAutoPermission); got != "off" {
+		t.Fatalf("default enabled = %q, want off", got)
+	}
+	if got := m.ValueForTest(catSafety, fieldAutoPermAccount); got != "" {
+		t.Fatalf("default provider = %q, want unconfigured", got)
+	}
+	if got := m.ValueForTest(catSafety, fieldAutoPermModel); got != "" {
+		t.Fatalf("default model = %q, want unconfigured", got)
 	}
 
-	// Provider selection updates retained text controls before the user edits them.
-	cw.Host().Handle(tea.KeyPressMsg{Code: tea.KeyTab})
-	cw.Host().Handle(tea.KeyPressMsg{Code: tea.KeyTab})
-	cw.Host().Handle(tea.KeyPressMsg{Code: tea.KeyEnd})
-	cw.Host().Handle(tea.KeyPressMsg{Code: '2', Text: "2"})
-	if got := m.AppSettings().Providers["openai"].ProviderURL; got != "https://openai2" {
-		t.Fatalf("programmatic provider synchronization saved base URL %q", got)
+	m.SetValueForTest(catSafety, fieldAutoPermission, "on")
+	m.SetValueForTest(catSafety, fieldAutoPermAccount, "review")
+	m.SetValueForTest(catSafety, fieldAutoPermModel, "gpt-review")
+	m.SetValueForTest(catSafety, fieldAutoPermDenyMode, "deny")
+	m.SetValueForTest(catSafety, fieldAutoPermTimeout, "13")
+	m.SetValueForTest(catSafety, fieldAutoPermOutputTokens, "72")
+	m.SetValueForTest(catSafety, fieldAutoPermInputBytes, "3072")
+	m.SetValueForTest(catSafety, fieldAutoPermReviews, "9")
+	m.SetValueForTest(catSafety, fieldAutoPermInstructions, " No deployments. ")
+	auto := m.AppSettings().Safety.AutoPermission
+	if auto.Enabled != "on" || auto.Provider != "openai" || auto.Model != "gpt-review" || auto.DenyMode != "deny" ||
+		auto.TimeoutSeconds != 13 || auto.MaxOutputTokens != 72 || auto.MaxInputBytes != 3072 ||
+		auto.MaxReviewsPerTurn != 9 || auto.Instructions != "No deployments." {
+		t.Fatalf("auto permission settings = %+v", auto)
+	}
+}
+
+func TestSafetyAutoPermissionProviderAndModelPickerAreExplicit(t *testing.T) {
+	th := theme.DefaultDark()
+	m := New(th, types.AppSettings{
+		ActiveProvider: "openrouter",
+		Providers: map[string]types.ProviderConfig{
+			"openrouter": provider.DefaultTemplates()["openrouter"],
+			"openai":     {Name: "OpenAI", ProviderURL: "https://api.example/v1", APIStandard: "openai-responses", AuthType: provider.AuthProtocol},
+		},
+		Accounts: map[string]provider.Account{"review": {ID: "review", ProviderID: "openai", Label: "Review", APIKey: "secret"}},
+		Safety:   types.SafetySettings{AutoPermission: modeltypes.AutoPermissionSettings{Provider: "openrouter", Model: "reviewer-old"}},
+	}, []types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}, {ID: "openai", Name: "OpenAI"}})
+
+	m.SetValueForTest(catSafety, fieldAutoPermAccount, "review")
+	if got := m.ValueForTest(catSafety, fieldAutoPermModel); got != "" {
+		t.Fatalf("provider switch selected model %q; reviewer must stay explicitly unconfigured", got)
+	}
+	m.SelectCategory(catSafety)
+	cmd := m.OpenSelect(fieldAutoPermModel)
+	if cmd == nil {
+		t.Fatal("opening auto-permission model did not use the standard fetch workflow")
+	}
+	request, ok := cmd().(FetchModelsMsg)
+	if !ok || request.ProviderID != "openai" || request.BaseURL != "https://api.example/v1" || request.APIKey != "secret" {
+		t.Fatalf("model fetch request = %#v", request)
+	}
+	field := m.currentForm().Field(fieldAutoPermModel)
+	if !field.Loading {
+		t.Fatal("auto-permission model picker did not enter loading state")
+	}
+	updated, _ := m.Update(ModelsMsg{ProviderID: "openai", AccountID: "review", Generation: request.Generation, Models: []types.ModelEntry{{ID: "gpt-5-mini", Name: "GPT-5 mini"}}})
+	m = &updated
+	field = m.currentForm().Field(fieldAutoPermModel)
+	if field.Loading || len(field.Options) != 1 || field.Options[0].ID != "gpt-5-mini" {
+		t.Fatalf("auto-permission model picker after fetch = %+v", field)
+	}
+	m.SetValueForTest(catSafety, fieldAutoPermModel, "gpt-5-mini")
+	if got := m.AppSettings().Safety.AutoPermission.Model; got != "gpt-5-mini" {
+		t.Fatalf("picked reviewer model = %q", got)
 	}
 }
 
@@ -227,8 +288,10 @@ func TestSettingsModelSelectFetchStaysOpenWhenModelsArrive(t *testing.T) {
 	m := New(th, types.AppSettings{
 		ActiveProvider: "openai",
 		Providers: map[string]types.ProviderConfig{
-			"openai": {ProviderURL: "https://api.example/v1", APIKey: "secret"},
+			"openai": {Name: "OpenAI", ProviderURL: "https://api.example/v1", APIStandard: "openai-responses", AuthType: provider.AuthProtocol},
 		},
+		Accounts: map[string]provider.Account{"review": {ID: "review", ProviderID: "openai", Label: "Review", APIKey: "secret"}},
+		Agents:   types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {Provider: "openai", AccountID: "review"}}},
 	}, []types.ProviderPreset{{ID: "openai", Name: "OpenAI"}})
 	surfaceRoot := NewSurface(th, m)
 	frame := ui.NewWindowFrameWidget(th, "settings-frame", ui.FrameWindow, "Settings", surfaceRoot, nil, true, 90, 28)
@@ -255,7 +318,7 @@ func TestSettingsModelSelectFetchStaysOpenWhenModelsArrive(t *testing.T) {
 		t.Fatal("model select closed before asynchronous result")
 	}
 
-	updated, _ := m.Update(ModelsMsg{ProviderID: "openai", Models: []types.ModelEntry{{ID: "gpt-5", Name: "GPT-5"}}})
+	updated, _ := m.Update(ModelsMsg{ProviderID: "openai", AccountID: "review", Generation: request.Generation, Models: []types.ModelEntry{{ID: "gpt-5", Name: "GPT-5"}}})
 	m = &updated
 	surfaceRoot.SetModel(m)
 	if m.currentForm().Field(fieldModel).Loading {

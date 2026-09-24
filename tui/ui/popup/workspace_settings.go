@@ -37,6 +37,10 @@ func (ws *WorkspaceSettings) SetFocusHandler(fn func(ui.ComponentID)) {
 
 func (ws *WorkspaceSettings) FocusSearch() { ws.surface.FocusSearch() }
 
+func (ws *WorkspaceSettings) ShowAccounts() { ws.surface.ShowAccounts() }
+
+func (ws *WorkspaceSettings) ShowAccountSetup() { ws.surface.ShowAccountSetup() }
+
 func (ws *WorkspaceSettings) HandleEvent(msg tea.Msg) tea.Cmd {
 	oldPane := ws.model.Pane()
 	// Update mutates the model in place and returns a copy; keep ws.model

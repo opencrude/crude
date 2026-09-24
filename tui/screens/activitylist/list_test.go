@@ -62,36 +62,6 @@ func rowText(buf *surface.CellBuffer, y int) string {
 	return strings.TrimRight(b.String(), " ")
 }
 
-func TestFooterPinnedBelowListAndScrollbar(t *testing.T) {
-	s, host := newTestScreen(t, gitItems(3))
-	s.SetFooter("Browse all sessions", "↻")
-	host.MarkLayout()
-	host.Layout()
-
-	fb := s.footer.Bounds()
-	if fb.Y != testH-1 || fb.H != 1 {
-		t.Fatalf("footer bounds=%+v, want pinned bottom row", fb)
-	}
-	listB := s.list.Bounds()
-	if listB.Y+listB.H > fb.Y {
-		t.Fatalf("list overlaps footer: list=%+v footer=%+v", listB, fb)
-	}
-	sb := s.scrollbar.Bounds()
-	if sb.Y+sb.H > fb.Y {
-		t.Fatalf("scrollbar overlaps footer: scrollbar=%+v footer=%+v", sb, fb)
-	}
-
-	buf := paintFrame(host, testW, testH)
-	if !strings.Contains(rowText(buf, testH-1), "Browse all sessions") {
-		t.Fatalf("footer row missing: %q", rowText(buf, testH-1))
-	}
-
-	res := host.Handle(tea.MouseClickMsg{X: 2, Y: testH - 1, Button: tea.MouseLeft})
-	if res.Action == nil || res.Action.ID != ActionBrowseSessions {
-		t.Fatalf("footer click action=%#v, want %q", res.Action, ActionBrowseSessions)
-	}
-}
-
 func TestFocusedFilterArrowKeysNavigateFilteredRows(t *testing.T) {
 	s, host := newTestScreen(t, gitItems(4))
 	host.Focus(FilterID)
@@ -102,44 +72,6 @@ func TestFocusedFilterArrowKeysNavigateFilteredRows(t *testing.T) {
 	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
 	if !result.Handled || s.list.inner.SelectedIndex() != before+1 {
 		t.Fatalf("Down in filter did not navigate results: before=%d after=%d result=%#v", before, s.list.inner.SelectedIndex(), result)
-	}
-}
-
-func TestFooterHiddenFreesScrollableRow(t *testing.T) {
-	s, host := newTestScreen(t, gitItems(3))
-	host.MarkLayout()
-	host.Layout()
-	fullH := s.list.Bounds().H
-
-	s.SetFooter("Browse all sessions", "↻")
-	host.MarkLayout()
-	host.Layout()
-	if s.list.Bounds().H != fullH-1 {
-		t.Fatalf("footer must reserve one row: list H=%d want %d", s.list.Bounds().H, fullH-1)
-	}
-
-	s.SetFooter("", "")
-	host.MarkLayout()
-	host.Layout()
-	if s.footerVisible() {
-		t.Fatal("empty label must hide the footer")
-	}
-	if s.list.Bounds().H != fullH {
-		t.Fatalf("hidden footer must free its row: list H=%d want %d", s.list.Bounds().H, fullH)
-	}
-}
-
-func TestFooterHoverTintsRow(t *testing.T) {
-	s, host := newTestScreen(t, gitItems(3))
-	s.SetFooter("Browse all sessions", "↻")
-	host.MarkLayout()
-	host.Layout()
-	host.Handle(tea.MouseMotionMsg{X: 2, Y: testH - 1})
-	buf := paintFrame(host, testW, testH)
-	tokens := ui.NewTokenSet(theme.DefaultDark())
-	want := tokens.TreeHoverBg()
-	if got := buf.Get(2, testH-1).BG; !got.Equal(want) {
-		t.Fatalf("footer hover bg=%v want %v", got, want)
 	}
 }
 

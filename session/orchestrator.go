@@ -13,9 +13,9 @@ type Orchestrator struct {
 	ID             string
 	session        *Session
 	BlockResolveCh chan ttypes.BlockResponse
-	subAgentSup    *SubAgentRunner
 	closing        atomic.Bool
 	stopCh         chan struct{}
+	sender         EventSender
 
 	turnMu          sync.Mutex
 	turnGeneration  uint64
@@ -126,8 +126,8 @@ func (o *Orchestrator) CancelTurn() (bool, []string) {
 	cleared := o.clearPendingBtwLocked()
 	o.turnMu.Unlock()
 	cancel()
-	if o.subAgentSup != nil {
-		for _, id := range o.subAgentSup.CancelActiveForTurn(generation) {
+	if runner := o.subAgentRunner(); runner != nil {
+		for _, id := range runner.CancelActiveForTurn(generation) {
 			if o.session != nil {
 				o.session.MarkReportConsumed(string(id))
 			}
@@ -222,4 +222,11 @@ func (o *Orchestrator) clearPendingBtwLocked() []string {
 	}
 	o.pendingBtwOrder = o.pendingBtwOrder[:0]
 	return cleared
+}
+
+func (o *Orchestrator) subAgentRunner() *SubAgentRunner {
+	if o == nil || o.session == nil {
+		return nil
+	}
+	return o.session.SubAgentRunner()
 }

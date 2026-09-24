@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 
+	"crude/provider"
 	"crude/session"
 	"crude/tui/perf"
 )
@@ -12,6 +13,7 @@ import (
 // CLIFlags holds parsed command-line flags.
 type CLIFlags struct {
 	APIKey        string
+	Account       string
 	Model         string
 	Provider      string
 	SystemPrompt  string
@@ -24,7 +26,8 @@ type CLIFlags struct {
 
 // ParseFlags parses os.Args flags into CLIFlags.
 func ParseFlags() CLIFlags {
-	apiKeyFlag := flag.String("key", "", "API key (or set CRUDE_API_KEY)")
+	apiKeyFlag := flag.String("key", "", "API key for the selected provider account")
+	accountFlag := flag.String("account", "", "Explicit account ID for the selected provider")
 	modelFlag := flag.String("model", "", "Model to use")
 	providerFlag := flag.String("provider", "", "Provider ID (openrouter, openai, anthropic, etc.)")
 	sysPromptFlag := flag.String("system", "", "Override system prompt")
@@ -39,6 +42,7 @@ func ParseFlags() CLIFlags {
 
 	return CLIFlags{
 		APIKey:        *apiKeyFlag,
+		Account:       *accountFlag,
 		Model:         *modelFlag,
 		Provider:      *providerFlag,
 		SystemPrompt:  *sysPromptFlag,
@@ -50,43 +54,88 @@ func ParseFlags() CLIFlags {
 	}
 }
 
-// ResolveConfig loads FileConfig and applies CLI flag / env overrides.
+// ResolveConfig loads FileConfig and applies invocation-local CLI selectors.
 func ResolveConfig(flags CLIFlags) (FileConfig, error) {
 	fc := LoadFileConfig()
 	if fc.Providers == nil {
 		fc.Providers = make(map[string]session.ProviderConfig)
 	}
-
-	// Resolve provider ID from flag → config → default.
-	providerID := fc.ActiveProvider
-	if providerID == "" {
-		providerID = "openrouter"
-		fc.ActiveProvider = providerID
-	}
-	if flags.Provider != "" {
-		providerID = flags.Provider
-		fc.ActiveProvider = providerID
+	if flags.APIKey != "" && flags.Account == "" {
+		return FileConfig{}, fmt.Errorf("--key requires an explicit --account")
 	}
 
-	// Resolve API key from flag → env vars → config.
-	pc := fc.Providers[providerID]
-	if pc.APIKey == "" {
-		if flags.APIKey != "" {
-			pc.APIKey = flags.APIKey
-		} else {
-			pc.APIKey = os.Getenv("CRUDE_API_KEY")
-			if pc.APIKey == "" {
-				pc.APIKey = os.Getenv("WAFER_API_KEY")
-			}
-			if pc.APIKey == "" {
-				pc.APIKey = os.Getenv("OPENROUTER_API_KEY")
-			}
+	profileName := "default"
+	var mainCat session.CategoryConfig
+	if fc.Agents != nil {
+		if fc.Agents.ActiveProfile != "" {
+			profileName = fc.Agents.ActiveProfile
+		}
+		profile := fc.Agents.Profiles[profileName]
+		var exists bool
+		mainCat, exists = profile.Categories[session.CategoryDefault]
+		if !exists {
+			mainCat = profile.Categories["main"]
 		}
 	}
-	fc.Providers[providerID] = pc
 
-	// Apply --model flag to the active profile's default category.
-	if flags.Model != "" {
+	// --resume uses the session database's account pin, even if that account is
+	// no longer available in the current application config.
+	providerID := flags.Provider
+	if providerID == "" {
+		if mainCat.AccountID != "" {
+			if account, exists := fc.Accounts[mainCat.AccountID]; exists {
+				providerID = account.ProviderID
+			}
+		}
+		if providerID == "" {
+			providerID = fc.ActiveProvider
+		}
+		if providerID == "" {
+			providerID = "openrouter"
+		}
+	}
+	configuredTemplate, configured := fc.Providers[providerID]
+	if !configured && provider.GetPreset(providerID) == nil {
+		return FileConfig{}, fmt.Errorf("provider template %q not found; choose a configured template with --provider", providerID)
+	}
+
+	accountID := flags.Account
+	if accountID == "" && flags.Resume == "" {
+		accountID = mainCat.AccountID
+	}
+	var selectedAccount provider.Account
+	if accountID != "" {
+		var exists bool
+		selectedAccount, exists = fc.Accounts[accountID]
+		if !exists {
+			if flags.Account == "" || flags.APIKey == "" {
+				return FileConfig{}, fmt.Errorf("account %q not found; select or create it in Application Settings → Accounts (or use --account %s with --key)", accountID, accountID)
+			}
+			selectedAccount = provider.Account{ID: accountID, ProviderID: providerID, Label: accountID}
+		} else if selectedAccount.ID != accountID {
+			return FileConfig{}, fmt.Errorf("account %q is invalid; select an account in Application Settings → Accounts", accountID)
+		} else if selectedAccount.ProviderID != providerID {
+			return FileConfig{}, fmt.Errorf("account %q uses template %q, not selected template %q", accountID, selectedAccount.ProviderID, providerID)
+		}
+		if flags.APIKey != "" {
+			selectedAccount.APIKey = flags.APIKey
+			selectedAccount.OAuth = nil
+			if fc.Accounts == nil {
+				fc.Accounts = make(map[string]provider.Account)
+			}
+			fc.Accounts[accountID] = selectedAccount
+		}
+		template := provider.ResolveTemplate(providerID, configuredTemplate, selectedAccount.Overrides)
+		if template.AuthType != provider.AuthNone && selectedAccount.APIKey == "" &&
+			(selectedAccount.OAuth == nil || (selectedAccount.OAuth.AccessToken == "" && selectedAccount.OAuth.RefreshToken == "")) {
+			return FileConfig{}, fmt.Errorf("account %q has no credentials for template %q; configure it in Application Settings → Accounts or pass --key with --account", accountID, providerID)
+		}
+	} else if flags.Resume == "" && (flags.Provider != "" || flags.Account != "" || flags.Model != "") {
+		return FileConfig{}, fmt.Errorf("provider template %q needs an explicitly selected account; use --account <id> or configure one in Application Settings → Accounts", providerID)
+	}
+
+	// CLI selectors update only this invocation's main-agent session spec.
+	if flags.Model != "" || flags.Account != "" || flags.Provider != "" {
 		if fc.Agents == nil {
 			agents := session.DefaultAgentsConfig()
 			fc.Agents = &agents
@@ -102,10 +151,17 @@ func ResolveConfig(flags CLIFlags) (FileConfig, error) {
 		if prof.Categories == nil {
 			prof.Categories = make(map[string]session.CategoryConfig)
 		}
-		mainCat := prof.Categories[session.CategoryDefault]
-		mainCat.Model = flags.Model
-		mainCat.Provider = providerID
-		prof.Categories[session.CategoryDefault] = mainCat
+		currentMain, ok := prof.Categories[session.CategoryDefault]
+		if !ok {
+			currentMain = prof.Categories["main"]
+		}
+		if flags.Model != "" {
+			currentMain.Model = flags.Model
+		}
+		if flags.Account != "" {
+			currentMain.AccountID = accountID
+		}
+		prof.Categories[session.CategoryDefault] = currentMain
 		fc.Agents.Profiles[ap] = prof
 	}
 

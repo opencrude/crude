@@ -15,14 +15,28 @@ import (
 
 const ScreenID ui.ComponentID = "shell/footer"
 
+// pillPad keeps each label off the edge of its background fill.
+const pillPad = " "
+
 type Segment struct {
-	Text     string
-	Role     ui.SemanticColor
-	Action   string
-	TargetID string
-	Priority int
+	Text string
+	// Role is the ink for plain text. Pills choose contrasting ink for their fill.
+	Role ui.SemanticColor
+	// Pill paints a padded control with a vivid, theme-derived background.
+	// FillRole supplies its hue; active controls keep that hue with added emphasis.
+	FillRole  ui.SemanticColor
+	Pill      bool
+	Active    bool
+	Attention bool
+	Action    string
+	TargetID  string
+	Priority  int
 }
 
+// Projection is the footer's two groups. A group is either a pill strip (every
+// segment a Pill) or a plain text row — the separator between segments follows
+// the group's kind, so the two never mix inside one group: pills abut their
+// neighbours and plain segments keep the dotted separator.
 type Projection struct {
 	Left  []Segment
 	Right []Segment
@@ -76,17 +90,42 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	leftRail, rightRail := ui.ShellContentRail(s.tokens, r.W)
 	innerW := rightRail - leftRail
 	s.hits = s.hits[:0]
-	// The two rails keep independent budgets: the right group is the short
-	// status group and is capped at half the row, so a wide status set can
-	// never truncate the left guidance group, which then borrows whatever the
-	// status group leaves unused.
-	right := fitSegments(s.projection.Right, max(8, innerW/2), " · ")
-	rightW := segmentsWidth(right, " · ")
+	// The labeled workspace-panel controls are stable navigation, so the right
+	// group gets its complete width first. Contextual hints use the remainder
+	// and may collapse while momentary feedback is visible.
+	rightSeparator := groupSeparator(s.projection.Right)
+	rightBudget := innerW
+	if !hasPills(s.projection.Right) {
+		rightBudget = max(8, innerW/2)
+	}
+	right := fitSegments(s.projection.Right, rightBudget, rightSeparator)
+	rightW := paintedGroupWidth(right, rightSeparator)
 	left := fitSegments(s.projection.Left, max(0, innerW-rightW-2), " · ")
-	leftW := segmentsWidth(left, " · ")
 	s.paintGroup(buf, ox+r.X+leftRail, oy+r.Y+1, left, " · ", leftRail)
-	rightX := max(leftRail+leftW+2, rightRail-rightW)
-	s.paintGroup(buf, ox+r.X+rightX, oy+r.Y+1, right, " · ", rightX)
+	// The left budget already reserves separation when hints fit. Do not reserve
+	// a phantom gap when they collapse: a full-width strip must stay on the rail.
+	rightX := rightRail - rightW
+	s.paintGroup(buf, ox+r.X+rightX, oy+r.Y+1, right, rightSeparator, rightX)
+}
+
+// paintedGroupWidth measures the columns paintGroup writes for a group. A pill
+// strip drops its trailing pad on the last pill so the strip's label and its
+// fill both end exactly on the shared rail instead of a column short of it.
+func paintedGroupWidth(segments []Segment, separator string) int {
+	width := segmentsWidth(segments, separator)
+	if len(segments) > 0 && segments[len(segments)-1].Pill && width > 0 {
+		width--
+	}
+	return width
+}
+
+// groupSeparator keeps the pill strip contiguous: color changes are the only
+// boundaries. Plain guidance segments keep their dotted separator.
+func groupSeparator(segments []Segment) string {
+	if hasPills(segments) {
+		return ""
+	}
+	return " · "
 }
 
 func (s *Screen) paintGroup(buf *surface.CellBuffer, x, y int, segments []Segment, separator string, localX int) {
@@ -97,8 +136,24 @@ func (s *Screen) paintGroup(buf *surface.CellBuffer, x, y int, segments []Segmen
 			x, localX = x+width, localX+width
 		}
 		start := localX
-		buf.WriteString(x, y, segment.Text, s.tokens.Color(segment.Role), s.tokens.Color(ui.ColorBg), 0)
-		width := rendering.VisibleWidth(segment.Text)
+		text := segment.Text
+		fg, bg := s.tokens.Color(segment.Role), s.tokens.Color(ui.ColorBg)
+		attr := cell.Attrs(0)
+		leftPad, rightPad := "", ""
+		if segment.Pill {
+			leftPad, rightPad = pillPad, pillPad
+			if index == len(segments)-1 {
+				// The strip's trailing edge is the rail itself: its last label
+				// ends on the shared rail instead of one padded column inside it.
+				rightPad = ""
+			}
+			fg, bg = s.tokens.StatusStripColors(segment.FillRole, segment.Active, segment.Attention)
+			if segment.Active {
+				attr = cell.AttrBold
+			}
+		}
+		buf.WriteString(x, y, leftPad+text+rightPad, fg, bg, attr)
+		width := rendering.VisibleWidth(leftPad + text + rightPad)
 		x, localX = x+width, localX+width
 		if segment.Action != "" {
 			s.hits = append(s.hits, segmentHit{start: start, end: localX, action: segment.Action, target: segment.TargetID})
@@ -142,6 +197,11 @@ func fitSegments(segments []Segment, width int, separator string) []Segment {
 	used, count := 0, 0
 	for _, index := range indices {
 		needed := rendering.VisibleWidth(segments[index].Text)
+		if segments[index].Pill {
+			// Conservative: a strip's last pill drops its trailing pad, so a kept
+			// set paints up to one column narrower than measured here.
+			needed += 2
+		}
 		if count > 0 {
 			needed += rendering.VisibleWidth(separator)
 		}
@@ -158,6 +218,15 @@ func fitSegments(segments []Segment, width int, separator string) []Segment {
 	return out
 }
 
+func hasPills(segments []Segment) bool {
+	for _, segment := range segments {
+		if segment.Pill {
+			return true
+		}
+	}
+	return false
+}
+
 func segmentsWidth(segments []Segment, separator string) int {
 	width := 0
 	for index, segment := range segments {
@@ -165,6 +234,9 @@ func segmentsWidth(segments []Segment, separator string) int {
 			width += rendering.VisibleWidth(separator)
 		}
 		width += rendering.VisibleWidth(segment.Text)
+		if segment.Pill {
+			width += 2
+		}
 	}
 	return width
 }

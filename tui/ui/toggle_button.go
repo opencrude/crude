@@ -11,12 +11,13 @@ import (
 // ToggleButton is a compact checkable action control.
 type ToggleButton struct {
 	Base
-	label    string
-	actionID string
-	cancelID string
-	checked  bool
-	disabled bool
-	tokens   *TokenSet
+	label        string
+	actionID     string
+	cancelID     string
+	checked      bool
+	disabled     bool
+	switchChrome bool
+	tokens       *TokenSet
 }
 
 // NewToggleButton creates a compact checkable action control.
@@ -26,6 +27,12 @@ func NewToggleButton(id ComponentID, label, actionID string, tokens *TokenSet) *
 
 // SetTokens updates the theme token set.
 func (b *ToggleButton) SetTokens(tokens *TokenSet) { b.tokens = tokens }
+
+func (b *ToggleButton) SetLabel(label string) { b.label = label }
+
+// SetSwitchChrome uses a quiet unselected track and a persistent selected
+// background, rather than the standalone action-button background.
+func (b *ToggleButton) SetSwitchChrome(enabled bool) { b.switchChrome = enabled }
 
 // SetChecked updates the displayed state.
 func (b *ToggleButton) SetChecked(checked bool) { b.checked = checked }
@@ -54,13 +61,24 @@ func (b *ToggleButton) Paint(buf *surface.CellBuffer, originX, originY int, ctx 
 	fg, bg := cell.NoColor, cell.NoColor
 	if b.tokens != nil {
 		fg, bg = b.tokens.ButtonColors(st)
-		if b.checked && st != StateDisabled {
+		if b.switchChrome {
+			fg, bg = b.tokens.Color(ColorMuted), b.tokens.Color(ColorPopupBg)
+			if b.checked {
+				fg, bg = b.tokens.Color(ColorAccent), b.tokens.Color(ColorSelection)
+			} else if ctx.Hovered || ctx.Focused {
+				fg, bg = b.tokens.Color(ColorFg), b.tokens.Color(ColorHover)
+			}
+		} else if b.checked && st != StateDisabled {
 			fg = b.tokens.Color(ColorAccent)
 			bg = b.tokens.Color(ColorPopupSubtleBg)
 		}
 	}
 	FillRect(buf, originX, originY, r, cell.BlankCell(bg))
-	buf.WriteString(originX+r.X, originY+r.Y, rendering.TruncateVisual(b.label, r.W, ""), fg, bg, 0)
+	attr := cell.Attrs(0)
+	if b.switchChrome && b.checked {
+		attr = cell.AttrBold
+	}
+	buf.WriteString(originX+r.X, originY+r.Y, rendering.TruncateVisual(b.label, r.W, ""), fg, bg, attr)
 }
 
 func (b *ToggleButton) Handle(_ EventContext, evt Event) EventResult {

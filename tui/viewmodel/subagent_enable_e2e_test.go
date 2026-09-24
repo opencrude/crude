@@ -1,0 +1,215 @@
+package viewmodel
+
+import (
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
+	"sync"
+	"sync/atomic"
+	"testing"
+	"time"
+
+	"crude/provider"
+	"crude/session"
+	"crude/sessiondb"
+	ttypes "crude/tui/types"
+	"crude/workspace"
+)
+
+// Exercise the exact regression: start with delegation disabled, finish a
+// normal turn, enable it in Settings, then launch children through model tool
+// calls. Hand-crafted sub_agent_started events cannot catch missing parentage.
+func TestEnableSubAgentsMidSessionSurfacesChildren(t *testing.T) {
+	for _, wait := range []bool{true, false} {
+		t.Run(fmt.Sprintf("wait=%t", wait), func(t *testing.T) {
+			var parentRequests atomic.Int32
+			var childRequests atomic.Int32
+			releaseChildren := make(chan struct{})
+			var releaseOnce sync.Once
+			release := func() { releaseOnce.Do(func() { close(releaseChildren) }) }
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				var request struct {
+					Model string `json:"model"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+					t.Error(err)
+					return
+				}
+				w.Header().Set("Content-Type", "text/event-stream")
+				if request.Model == "child-model" {
+					select {
+					case <-releaseChildren:
+					case <-r.Context().Done():
+						return
+					}
+					if childRequests.Add(1) == 1 {
+						_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"report-1\",\"type\":\"function\",\"function\":{\"name\":\"write_report\",\"arguments\":\"{\\\"report\\\":\\\"child evidence\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n")
+						return
+					}
+				} else if parentRequests.Add(1) == 2 {
+					args, _ := json.Marshal(map[string]any{"name": "visible-child", "description": "Reply with child evidence.", "category": "researcher", "wait": wait})
+					_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"spawn-1\",\"type\":\"function\",\"function\":{\"name\":\"run_sub_agent\",\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", string(args))
+					return
+				}
+				_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"child evidence\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+			}))
+			defer server.Close()
+			// Release handlers before closing the server even when an assertion fails.
+			defer release()
+			home := t.TempDir()
+			t.Setenv("HOME", home)
+			t.Setenv("USERPROFILE", home)
+			off := false
+			cfg := &session.Config{
+				ActiveProvider: "openai", Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", Label: "Test", APIKey: "test"}}, Providers: map[string]session.ProviderConfig{"openai": {Name: "OpenAI", ProviderURL: server.URL, APIStandard: "openai", AuthType: provider.AuthProtocol}},
+				Agents: session.AgentsConfig{Enabled: false, MaxConcurrent: 2, ActiveProfile: "default", Profiles: map[string]session.ProfileConfig{"default": {MultiAgent: &off, Categories: map[string]session.CategoryConfig{
+					session.CategoryDefault:    {AccountID: "test", Model: "parent-model", ModelSupportsTools: true},
+					session.CategoryResearcher: {AccountID: "test", Model: "child-model", ModelSupportsTools: true},
+				}}}},
+			}
+			app := newFullTestApp(t)
+			app.RootPath, app.WorkspaceDir = t.TempDir(), t.TempDir()
+			app.Logger = &testLogger{}
+			app.SetAppDefaults(ttypes.AppSettings{LocalHistory: ttypes.LocalHistorySettings{Enabled: "off"}})
+			app.SessionsByID = make(map[string]*workspace.Session)
+			app.SessionsByAgent = make(map[string]*workspace.Session)
+			if _, err := app.CreateSession(cfg, home); err != nil {
+				t.Fatal(err)
+			}
+			defer app.CloseAllSessions()
+			sender := &latencyEventSender{ctx: t.Context(), events: make(chan ttypes.AgentEventMsg, 4096)}
+			orch, err := app.StartOrchestrator(sender)
+			if err != nil {
+				t.Fatal(err)
+			}
+			app.AddOrchestrator(orch.ID)
+			backend := app.BackendSession()
+			if app.AgentMgr.Get(orch.ID).Label != "Jeff" || app.Win.TabByTitle(app.agentTabTitle(orch.ID)).DisplayTitle != "Jeff" {
+				t.Fatal("root tab did not render the allocated first name")
+			}
+			backend.SetYolo(true)
+			if !backend.SubmitInput(orch.ID, provider.PlainInput("initial turn without delegation")) {
+				t.Fatal("initial turn not admitted")
+			}
+			deadline := time.After(10 * time.Second)
+			for orch.TurnActive() {
+				select {
+				case evt := <-sender.events:
+					app.handleAgentEvent(evt)
+					if evt.Type == "error" {
+						t.Fatalf("backend error: %v", evt.Data)
+					}
+				case <-time.After(time.Millisecond):
+				case <-deadline:
+					t.Fatal("initial turn timed out")
+				}
+			}
+			settings := backend.SettingsSnapshot()
+			on := true
+			settings.SessionMultiAgent = &on
+			settings.Agents.Enabled = true
+			if err := app.HandleSettingsSave(settings); err != nil {
+				t.Fatal(err)
+			}
+			if !backend.SubmitInput(orch.ID, provider.PlainInput("launch the child now")) {
+				t.Fatal("delegation turn not admitted")
+			}
+			childID := ""
+			deadline = time.After(10 * time.Second)
+			for childID == "" {
+				select {
+				case evt := <-sender.events:
+					app.handleAgentEvent(evt)
+					if evt.Type == "error" {
+						t.Fatalf("backend error: %v", evt.Data)
+					}
+					if evt.Type == "sub_agent_started" {
+						childID = evt.AgentID
+						data, _ := evt.Data.(map[string]string)
+						if data["parent_id"] != orch.ID {
+							t.Fatalf("child start parent=%q, want %q", data["parent_id"], orch.ID)
+						}
+					}
+				case <-deadline:
+					t.Fatalf("child start event missing after enabling delegation; requests=%d; messages=%+v", parentRequests.Load(), backend.MessagesWithMeta())
+				}
+			}
+			node := app.AgentMgr.Get(childID)
+			if node == nil || node.Parent == nil || node.Parent.ID != orch.ID {
+				t.Fatal("running child missing from agent tree")
+			}
+			if !agentTabPresent(app, childID) {
+				t.Fatal("running child missing from tabs")
+			}
+			if node.Label != "Tom sub Jeff" || app.Win.TabByTitle(app.agentTabTitle(childID)).DisplayTitle != "Tom sub Jeff" {
+				t.Fatalf("child task hint replaced personal identity/parentage: %q", node.Label)
+			}
+			if app.PaneMgr.Get(childID) == nil {
+				t.Fatal("running child missing from conversation panes")
+			}
+			app.switchToAgentView(childID)
+			assertAgentIsPaintedView(t, app, childID)
+			// Disabling while the child is awaiting its provider must leave its
+			// real tab, identity, and cancellation/review surface intact.
+			settings = backend.SettingsSnapshot()
+			settings.SessionMultiAgent = &off
+			settings.Agents.Enabled = false
+			if err := app.HandleSettingsSave(settings); err != nil {
+				t.Fatal(err)
+			}
+			if !agentTabPresent(app, childID) || app.AgentMgr.Get(childID) != node {
+				t.Fatal("disabling delegation hid or replaced the active child")
+			}
+			// Let the real child finish, then verify its retained conversation and DB.
+			release()
+			deadline = time.After(10 * time.Second)
+			completed := false
+			for !completed {
+				select {
+				case evt := <-sender.events:
+					app.handleAgentEvent(evt)
+					if evt.Type == "error" {
+						t.Fatalf("backend error: %v", evt.Data)
+					}
+					completed = evt.Type == "sub_agent_completed" && evt.AgentID == childID
+				case <-deadline:
+					data, _ := os.ReadFile(filepath.Join(backend.SessionDir(), "session.log"))
+					t.Fatalf("child completion event missing: %s", data)
+				}
+			}
+			backend.SubAgentRunner().Wait()
+			node = app.AgentMgr.Get(childID)
+			if node == nil || !node.State.Completed {
+				t.Fatal("completed child missing from retained agent list")
+			}
+			found := false
+			for _, message := range node.State.Messages.Messages() {
+				if strings.Contains(message.Content, "child evidence") {
+					found = true
+				}
+			}
+			if !found {
+				t.Fatal("child evidence missing from retained conversation")
+			}
+			rows, err := sessiondb.ListSubAgentResults(backend.DB(), backend.SessionID())
+			if err != nil || len(rows) < 1 || rows[len(rows)-1].AgentID != childID || rows[len(rows)-1].Status != "completed" {
+				t.Fatalf("persisted children=%+v, err=%v", rows, err)
+			}
+			snapshots := backend.CompletedSubAgentSnapshots()
+			if len(snapshots) != 1 || len(snapshots[0].Messages) < 2 {
+				t.Fatalf("child history snapshots=%+v", snapshots)
+			}
+			if snapshots[0].Result.Name != "Tom sub Jeff" || rows[len(rows)-1].AgentName != "Tom sub Jeff" {
+				t.Fatal("saved child history lost personal identity and parentage")
+			}
+			registered, err := app.WorkspaceDB.ListSessions()
+			if err != nil || len(registered) != 1 || registered[0].AgentName.String != "Jeff" {
+				t.Fatalf("previous-session registry lost root name: %+v err=%v", registered, err)
+			}
+		})
+	}
+}

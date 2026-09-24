@@ -98,8 +98,7 @@ func (rp *RuntimeProfile) HasOverride(orchID string) bool {
 func (rp *RuntimeProfile) SetCategoryOverride(orchID, category string, cat CategoryConfig) {
 	oo := rp.GetOrCreateOverride(orchID)
 	rp.mu.Lock()
-	if cat.Provider == "" && cat.Model == "" && cat.APIKey == "" &&
-		cat.ProviderURL == "" && cat.ThinkingEffort == "" && cat.ContextCompactionPercent == nil {
+	if cat.Model == "" && cat.AccountID == "" && cat.ThinkingEffort == "" && cat.ContextCompactionPercent == nil {
 		delete(oo.CategoryOverrides, category)
 	} else {
 		if oo.CategoryOverrides == nil {
@@ -124,16 +123,15 @@ func (rp *RuntimeProfile) SetOrchestratorModel(orchID, model string) {
 	rp.mu.Unlock()
 }
 
-// SetOrchestratorProvider is a convenience method to set the provider for
-// the default category of a specific orchestrator.
-func (rp *RuntimeProfile) SetOrchestratorProvider(orchID, provider string) {
+// SetOrchestratorAccount selects the account for one orchestrator's main role.
+func (rp *RuntimeProfile) SetOrchestratorAccount(orchID, accountID string) {
 	oo := rp.GetOrCreateOverride(orchID)
 	rp.mu.Lock()
 	if oo.CategoryOverrides == nil {
 		oo.CategoryOverrides = make(map[string]CategoryConfig)
 	}
 	cat := oo.CategoryOverrides[CategoryDefault]
-	cat.Provider = provider
+	cat.AccountID = accountID
 	oo.CategoryOverrides[CategoryDefault] = cat
 	rp.mu.Unlock()
 }
@@ -205,24 +203,8 @@ func (rp *RuntimeProfile) applyOverrideToCategories(cfg *Config, oo *Orchestrato
 // API keys are never a category property and are cleared on the result.
 func mergeCategoryConfig(base, override CategoryConfig) CategoryConfig {
 	merged := base
-	// A provider switch invalidates the base's URL and wire standard from the
-	// old provider. The settings forms never carry a per-category URL, and set
-	// the standard to "inherit" on a switch, so without clearing here the stale
-	// values survive and the agent posts the new provider's credentials to the
-	// old provider's endpoint (the reported "Authentication failed").
-	providerChanged := override.Provider != "" && override.Provider != base.Provider
-	if override.Provider != "" {
-		merged.Provider = override.Provider
-	}
-	if override.ProviderURL != "" {
-		merged.ProviderURL = override.ProviderURL
-	} else if providerChanged {
-		merged.ProviderURL = ""
-	}
-	if override.APIStandard != "" {
-		merged.APIStandard = override.APIStandard
-	} else if providerChanged {
-		merged.APIStandard = ""
+	if override.AccountID != "" {
+		merged.AccountID = override.AccountID
 	}
 	if override.Model != "" {
 		merged.Model = override.Model
@@ -273,7 +255,6 @@ func mergeCategoryConfig(base, override CategoryConfig) CategoryConfig {
 		value := *override.ContextCompactionPercent
 		merged.ContextCompactionPercent = &value
 	}
-	merged.APIKey = ""
 	return merged
 }
 
@@ -281,9 +262,17 @@ func mergeCategoryConfig(base, override CategoryConfig) CategoryConfig {
 func copyConfig(src *Config) *Config {
 	dst := &Config{
 		ActiveProvider:  src.ActiveProvider,
+		AccountManager:  src.AccountManager,
+		Accounts:        src.Accounts,
 		TurnLogsEnabled: src.TurnLogsEnabled,
 		Memory:          src.Memory,
 		Safety:          src.Safety,
+	}
+	if src.Accounts != nil {
+		dst.Accounts = make(map[string]provider.Account, len(src.Accounts))
+		for id, account := range src.Accounts {
+			dst.Accounts[id] = provider.CloneAccount(account)
+		}
 	}
 	dst.Safety.CommandRules = append([]ttypes.CommandSeverityRule(nil), src.Safety.CommandRules...)
 	dst.Memory.MemoryCategory.ContextCompactionPercent = cloneIntPtr(src.Memory.MemoryCategory.ContextCompactionPercent)
@@ -297,10 +286,7 @@ func copyConfig(src *Config) *Config {
 	if src.Providers != nil {
 		dst.Providers = make(map[string]ProviderConfig, len(src.Providers))
 		for k, v := range src.Providers {
-			if v.ModelStandards != nil {
-				v.ModelStandards = cloneProviderModelStandards(v.ModelStandards)
-			}
-			dst.Providers[k] = v
+			dst.Providers[k] = provider.CloneTemplate(v)
 		}
 	}
 
@@ -316,6 +302,9 @@ func copyConfig(src *Config) *Config {
 				profCopy.Categories = make(map[string]CategoryConfig, len(prof.Categories))
 				for k, v := range prof.Categories {
 					v.ContextCompactionPercent = cloneIntPtr(v.ContextCompactionPercent)
+					v.ModelModalities = append([]string(nil), v.ModelModalities...)
+					v.ModelTemperature = cloneFloatPtr(v.ModelTemperature)
+					v.ModelTopP = cloneFloatPtr(v.ModelTopP)
 					profCopy.Categories[k] = v
 				}
 			}
@@ -334,30 +323,12 @@ func copyConfig(src *Config) *Config {
 	return dst
 }
 
-func cloneProviderModelStandards(src map[string]string) map[string]string {
+func cloneFloatPtr(src *float64) *float64 {
 	if src == nil {
 		return nil
 	}
-	out := make(map[string]string, len(src))
-	for model, standard := range src {
-		out[model] = standard
-	}
-	return out
-}
-
-// cloneExtraBody copies a raw extra-body map so config layers never share it.
-// Values are assumed to be JSON-decoded scalars/nested maps from unmarshalling;
-// a shallow copy of the top level is sufficient because nothing mutates the
-// nested values in place.
-func cloneExtraBody(src map[string]any) map[string]any {
-	if src == nil {
-		return nil
-	}
-	out := make(map[string]any, len(src))
-	for key, value := range src {
-		out[key] = value
-	}
-	return out
+	value := *src
+	return &value
 }
 
 // Snapshot creates an immutable snapshot of the overrides for a specific

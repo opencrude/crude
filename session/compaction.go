@@ -26,6 +26,7 @@ type PreparedCompaction struct {
 	OperationID string
 	AgentID     string
 	ProviderID  string
+	AccountID   string
 	ModelID     string
 	Run         func() ttypes.CompactResultMsg
 }
@@ -74,7 +75,8 @@ func (s *Session) PrepareCompaction(agentID string) (PreparedCompaction, ttypes.
 			effectiveCfg = s.runtimeProfile.GetEffectiveConfig(agentID)
 		}
 		compactionCfg := effectiveCfg.GetCategoryConfig(CategoryAeron)
-		prepared.ProviderID = compactionCfg.Provider
+		prepared.ProviderID = effectiveCfg.templateIDForAccount(compactionCfg.AccountID)
+		prepared.AccountID = compactionCfg.AccountID
 		prepared.ModelID = compactionCfg.Model
 	}
 	prepared.Run = func() ttypes.CompactResultMsg {
@@ -181,6 +183,7 @@ func (s *Session) runPreparedCompaction(
 	commitData := compactionLifecycleData(operationID, "manual", "root", compactionStageCount, compactionStageCount, result.BeforeTokens, result.AfterTokens)
 	commitData["context_window"] = result.ContextWindow
 	commitData["provider_id"] = result.ProviderID
+	commitData["account_id"] = result.AccountID
 	commitData["model_id"] = result.ModelID
 	emit(agent.AgentEvent{Type: "context_compaction_committing", Data: commitData})
 	if generation == 0 {
@@ -227,6 +230,7 @@ func (s *Session) finishManualCompactionError(
 	data["stage_label"] = result.StageName
 	data["retry"] = result.RetryAttempt
 	data["provider_id"] = result.ProviderID
+	data["account_id"] = result.AccountID
 	data["model_id"] = result.ModelID
 	if ctx.Err() != nil || errors.Is(err, context.Canceled) {
 		emit(agent.AgentEvent{Type: "context_compaction_cancelled", Data: data})
@@ -306,7 +310,7 @@ func compactionRecordFromData(sessionID, agentID, state string, data map[string]
 	record := sessiondb.CompactionRecord{
 		OperationID: compactionEventString(data, "request_id"), SessionID: sessionID, AgentID: agentID,
 		Trigger: compactionEventString(data, "trigger"), Role: compactionEventString(data, "role"), State: state,
-		ProviderID: compactionEventString(data, "provider_id"), ModelID: compactionEventString(data, "model_id"),
+		ProviderID: compactionEventString(data, "provider_id"), AccountID: compactionEventString(data, "account_id"), ModelID: compactionEventString(data, "model_id"),
 		StageName: compactionEventString(data, "stage_name"), StageIndex: compactionEventInt(data, "stage"),
 		CompletedStages: compactionEventInt(data, "completed_stages"), StageCount: compactionEventInt(data, "stage_count"),
 		RetryAttempt: compactionEventInt(data, "retry"), RetryLimit: compactionEventInt(data, "retry_limit"),
@@ -368,6 +372,7 @@ func (s *Session) commitRootCompaction(agentID string, commit agent.CompactionCo
 	data := compactionLifecycleData(commit.RequestID, commit.Trigger, commit.Role, compactionStageCount, compactionStageCount, commit.BeforeTokens, commit.AfterTokens)
 	data["context_window"] = commit.ContextWindow
 	data["provider_id"] = commit.ProviderID
+	data["account_id"] = commit.AccountID
 	data["model_id"] = commit.ModelID
 	record := compactionRecordFromData(s.sessionID, agentID, sessiondb.CompactionCompleted, data)
 	state := sessiondb.ContextState{
@@ -395,6 +400,7 @@ func (s *Session) beginRootCompaction(agentID string, source agent.CompactionSou
 	data := compactionLifecycleData(source.RequestID, source.Trigger, source.Role, 0, 0, source.BeforeTokens, 0)
 	data["context_window"] = source.ContextWindow
 	data["provider_id"] = source.ProviderID
+	data["account_id"] = source.AccountID
 	data["model_id"] = source.ModelID
 	record := compactionRecordFromData(s.sessionID, agentID, sessiondb.CompactionPreparing, data)
 	state := sessiondb.ContextState{

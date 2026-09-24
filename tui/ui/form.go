@@ -14,22 +14,23 @@ import (
 // expansion, and form-local focus while screens translate its emitted actions.
 type Form struct {
 	Base
-	model         *FormModel
-	title         string
-	detail        string
-	tokens        *TokenSet
-	fields        []*FormField
-	focused       int
-	fieldGap      int
-	scroll        *ScrollModel
-	arrowExits    bool
-	compact       bool
-	surfaceRole   SemanticColor
-	surfaceSet    bool
-	ruleFullBleed bool
-	ruleBleedX    int
-	ruleBleedW    int
-	pointerField  int
+	model            *FormModel
+	title            string
+	detail           string
+	tokens           *TokenSet
+	fields           []*FormField
+	focused          int
+	fieldGap         int
+	scroll           *ScrollModel
+	arrowExits       bool
+	compact          bool
+	hideDescriptions bool
+	surfaceRole      SemanticColor
+	surfaceSet       bool
+	ruleFullBleed    bool
+	ruleBleedX       int
+	ruleBleedW       int
+	pointerField     int
 }
 
 func NewForm(id ComponentID, model *FormModel, title, detail string, tokens *TokenSet) *Form {
@@ -85,6 +86,18 @@ func (f *Form) SetCompact(v bool) {
 	}
 	for _, field := range f.fields {
 		field.SetCompact(v)
+	}
+}
+
+// SetHideDescriptions omits cramped explanatory rows while retaining field
+// content, validation, textarea height, and semantic help for keyboard users.
+func (f *Form) SetHideDescriptions(v bool) {
+	if f.hideDescriptions == v {
+		return
+	}
+	f.hideDescriptions = v
+	for _, field := range f.fields {
+		field.SetHideDescription(v)
 	}
 }
 
@@ -182,6 +195,11 @@ func (f *Form) rebuild() {
 			field.SetCompact(true)
 		}
 	}
+	if f.hideDescriptions {
+		for _, field := range f.fields {
+			field.SetHideDescription(true)
+		}
+	}
 }
 
 // Children is intentionally empty. Form retains its fields so a single focus
@@ -255,6 +273,10 @@ func (f *Form) Layout(ctx LayoutContext, r Rect) {
 	if f.scroll == nil {
 		f.scroll = NewScrollModel()
 	}
+	// Clamp against the final viewport before publishing field bounds. Doing
+	// this after layout leaves the first resized frame at an obsolete offset.
+	f.scroll.SetContent(f.contentHeight())
+	f.scroll.SetViewport(r.H)
 	y := f.headerHeight()
 	labelW := 0
 	for _, field := range f.fields {
@@ -289,8 +311,6 @@ func (f *Form) Layout(ctx LayoutContext, r Rect) {
 			contentY += f.fieldGap
 		}
 	}
-	f.scroll.SetContent(contentY)
-	f.scroll.SetViewport(r.H)
 	for _, field := range f.fields {
 		field.layoutOverlay(ctx, r.H)
 	}
@@ -579,6 +599,20 @@ func (f *Form) FocusFirst() {
 			return
 		}
 	}
+}
+
+// FocusField moves keyboard ownership to a retained field by semantic ID.
+// Composite hosts can focus a target after replacing the form's model without
+// depending on its row index or current scroll position.
+func (f *Form) FocusField(id string) bool {
+	for index, field := range f.fields {
+		if field.FieldState().ID == id && !field.FieldState().skipFocus() {
+			f.focused = index
+			f.ensureFocusedVisible()
+			return true
+		}
+	}
+	return false
 }
 func (f *Form) FocusLast() {
 	for index := len(f.fields) - 1; index >= 0; index-- {

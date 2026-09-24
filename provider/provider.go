@@ -41,14 +41,14 @@ func logIf(fn func(lg *logger.Logger)) {
 	}
 }
 
-// Provider is the configuration of one backend: identity, endpoint,
-// credentials, and transport tuning. It composes protocol (wire format) and
-// Client (transport) for the workflows; it holds no request logic itself.
+// Provider is a backend connection. Application credentials are owned by an
+// AccountManager; direct APIKey/SetOAuth remain transient client credentials.
 type Provider struct {
 	ID           string `json:"id"`
 	Name         string `json:"name"`
 	BaseURL      string `json:"base_url"`
-	APIKey       string `json:"api_key"`
+	APIKey       string `json:"-"`
+	AccountID    string `json:"-"` // application account identity, not OAuth.AccountID
 	Model        string `json:"model"`
 	StandardName string `json:"standard,omitempty"` // protocol ID; JSON key kept for stored configs
 
@@ -57,8 +57,14 @@ type Provider struct {
 	thinkingEffort   string
 	protocolSettings *ProtocolSettings
 	sampling         Sampling
+	authType         string
+	authHeader       string
+	headers          map[string]string
+	authMu           sync.RWMutex
 	oauth            *OAuthCredentials
+	binding          *accountBinding
 	sessionID        string
+	sessionOnce      sync.Once
 }
 
 // StandardInfo describes a registered protocol for display purposes.
@@ -203,9 +209,8 @@ func cloneProtocolSettings(settings *ProtocolSettings) *ProtocolSettings {
 	return &cloned
 }
 
-// Client builds a transport client for this provider. Every call shares the
-// provider's current credentials; OAuth tokens are refreshed by the header
-// source before each attempt as needed.
+// Client builds a transport client whose headers resolve the current bound
+// account at every attempt, including refresh and reconnect checks.
 func (p *Provider) Client(opts ...ClientOption) (*Client, error) {
 	proto := p.Protocol()
 	if proto == nil {
@@ -215,7 +220,7 @@ func (p *Provider) Client(opts ...ClientOption) (*Client, error) {
 		WithRequestExtras(p.requestExtras()),
 		WithHeaderSource(p.headerSource(proto)),
 	}, opts...)
-	return NewClient(proto, p.BaseURL, p.effectiveAPIKey(), p.dial.resolve(), all...)
+	return NewClient(proto, p.BaseURL, "", p.dial.resolve(), all...)
 }
 
 // requestExtras merges the protocol-derived extras with provider extras;
@@ -246,26 +251,48 @@ func (p *Provider) requestExtras() map[string]any {
 // per-session headers for protocols that require them.
 func (p *Provider) headerSource(proto Protocol) func(ctx context.Context) (http.Header, error) {
 	return func(ctx context.Context) (http.Header, error) {
-		if err := p.EnsureAuth(ctx); err != nil {
-			return nil, fmt.Errorf("refresh oauth token: %w", err)
+		authType := p.authType
+		if authType == "" {
+			authType = AuthProtocol
+		}
+		var auth AuthContext
+		if authType != AuthNone {
+			var err error
+			auth, err = p.resolveAuth(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("resolve account authentication: %w", err)
+			}
 		}
 		headers := protocolHeaders(proto)
-		if key := p.effectiveAPIKey(); key != "" {
-			if pa, ok := proto.(ProtocolAuth); ok {
-				for key, values := range pa.AuthHeaders(key) {
-					for _, value := range values {
-						headers.Set(key, value)
+		for key, value := range p.headers {
+			headers.Set(key, value)
+		}
+		switch authType {
+		case AuthNone:
+		case AuthCustomHeader:
+			if auth.APIKey != "" {
+				headers.Set(p.authHeader, auth.APIKey)
+			}
+		case AuthBearer, AuthChatGPT:
+			if auth.APIKey != "" {
+				headers.Set("Authorization", "Bearer "+auth.APIKey)
+			}
+		default:
+			if auth.APIKey != "" {
+				if pa, ok := proto.(ProtocolAuth); ok {
+					for key, values := range pa.AuthHeaders(auth.APIKey) {
+						for _, value := range values {
+							headers.Set(key, value)
+						}
 					}
+				} else {
+					headers.Set("Authorization", "Bearer "+auth.APIKey)
 				}
-			} else {
-				headers.Set("Authorization", "Bearer "+key)
 			}
 		}
 		if ss, ok := proto.(SessionScope); ok {
-			if p.sessionID == "" {
-				p.sessionID = newSessionUUID()
-			}
-			for key, values := range ss.SessionHeaders(p.authContext(), p.sessionID) {
+			p.sessionOnce.Do(func() { p.sessionID = newSessionUUID() })
+			for key, values := range ss.SessionHeaders(auth, p.sessionID) {
 				for _, value := range values {
 					headers.Set(key, value)
 				}
@@ -282,59 +309,95 @@ func (p *Provider) RequestHeaders(ctx context.Context) (http.Header, error) {
 	return p.headerSource(p.Protocol())(ctx)
 }
 
-// authContext resolves the credentials passed to protocol capabilities.
-func (p *Provider) authContext() AuthContext {
-	return AuthContext{APIKey: p.effectiveAPIKey(), OAuth: p.oauth}
-}
-
-// effectiveAPIKey returns the credential used as the bearer: the OAuth access
-// token when present (e.g. the ChatGPT subscription flow), falling back to the
-// static API key.
-func (p *Provider) effectiveAPIKey() string {
-	if p.oauth != nil && p.oauth.AccessToken != "" {
-		return p.oauth.AccessToken
+// resolveAuth obtains a consistent bearer/session-identity pair. For bound
+// providers the manager is the only credential authority.
+func (p *Provider) resolveAuth(ctx context.Context) (AuthContext, error) {
+	p.authMu.RLock()
+	binding := p.binding
+	p.authMu.RUnlock()
+	if binding != nil {
+		auth, err := binding.auth(ctx)
+		if err != nil {
+			return AuthContext{}, err
+		}
+		p.authMu.RLock()
+		unchanged := p.binding == binding
+		p.authMu.RUnlock()
+		if !unchanged {
+			return AuthContext{}, fmt.Errorf("account connection changed during request; retry with the new connection")
+		}
+		return auth, nil
 	}
-	return p.APIKey
+	if err := p.EnsureAuth(ctx); err != nil {
+		return AuthContext{}, err
+	}
+	p.authMu.RLock()
+	defer p.authMu.RUnlock()
+	var oauth *OAuthCredentials
+	if p.oauth != nil {
+		copy := *p.oauth
+		oauth = &copy
+	}
+	key := p.APIKey
+	if oauth != nil && oauth.AccessToken != "" {
+		key = oauth.AccessToken
+	}
+	return AuthContext{APIKey: key, OAuth: oauth}, nil
 }
 
-// SetOAuth attaches OAuth credentials (from a Sign-in with ChatGPT flow) to
-// the provider.
+// SetOAuth attaches detached transient OAuth credentials. Application account
+// clients must use AccountManager.Bind instead, for durable refresh rotation.
 func (p *Provider) SetOAuth(creds *OAuthCredentials) {
-	p.oauth = creds
+	p.authMu.Lock()
+	defer p.authMu.Unlock()
+	p.binding = nil
+	p.AccountID = ""
+	p.oauth = nil
+	if creds != nil {
+		copy := *creds
+		p.oauth = &copy
+	}
 }
 
-// OAuth returns the stored OAuth credentials, or nil if none are set.
-func (p *Provider) OAuth() *OAuthCredentials { return p.oauth }
-
-// EnsureAuth refreshes the OAuth access token in memory if it is missing or
-// about to expire. It is a no-op for providers without OAuth credentials.
-// Refresh updates only the live provider state; the persisted refresh token
-// remains valid across restarts, so a restart re-refreshes without re-sign-in.
-func (p *Provider) EnsureAuth(ctx context.Context) error {
-	if p.oauth == nil || p.oauth.RefreshToken == "" {
+// OAuth returns a detached credential snapshot; callers cannot mutate state.
+func (p *Provider) OAuth() *OAuthCredentials {
+	p.authMu.RLock()
+	binding := p.binding
+	if binding == nil {
+		defer p.authMu.RUnlock()
+		if p.oauth == nil {
+			return nil
+		}
+		copy := *p.oauth
+		return &copy
+	}
+	p.authMu.RUnlock()
+	account, err := binding.snapshot()
+	if err != nil {
 		return nil
 	}
-	if !p.oauth.expiredSoon() {
+	return account.OAuth
+}
+
+// EnsureAuth refreshes transient OAuth in memory or a bound account durably.
+func (p *Provider) EnsureAuth(ctx context.Context) error {
+	p.authMu.RLock()
+	binding := p.binding
+	p.authMu.RUnlock()
+	if binding != nil {
+		_, err := binding.auth(ctx)
+		return err
+	}
+	p.authMu.Lock()
+	defer p.authMu.Unlock()
+	if p.oauth == nil || p.oauth.RefreshToken == "" || !p.oauth.expiredSoon() {
 		return nil
 	}
 	creds, err := RefreshOpenAIToken(ctx, p.oauth.RefreshToken)
 	if err != nil {
 		return err
 	}
-	p.oauth.AccessToken = creds.AccessToken
-	if creds.RefreshToken != "" {
-		p.oauth.RefreshToken = creds.RefreshToken
-	}
-	if creds.IDToken != "" {
-		p.oauth.IDToken = creds.IDToken
-	}
-	if creds.Email != "" {
-		p.oauth.Email = creds.Email
-	}
-	p.oauth.ExpiresAt = creds.ExpiresAt
-	if creds.AccountID != "" {
-		p.oauth.AccountID = creds.AccountID
-	}
+	mergeOAuth(p.oauth, creds)
 	return nil
 }
 
@@ -364,177 +427,6 @@ func (p *Provider) Validate() error {
 	return nil
 }
 
-type Preset struct {
-	ID         string
-	Name       string
-	BaseURL    string
-	HelpText   string
-	StandardID string
-	ExtraBody  map[string]any
-}
-
-var presets = []Preset{
-	{
-		ID:         "openrouter",
-		Name:       "OpenRouter",
-		BaseURL:    "https://openrouter.ai/api/v1",
-		HelpText:   "API keys: openrouter.ai/keys",
-		StandardID: "openai",
-		ExtraBody:  map[string]any{"include_reasoning": true},
-	},
-	{
-		ID:         "openai",
-		Name:       "OpenAI",
-		BaseURL:    "https://api.openai.com/v1",
-		HelpText:   "API keys: platform.openai.com/api-keys",
-		StandardID: "openai-responses",
-	},
-	{
-		ID:         "openai-chat",
-		Name:       "OpenAI (Chat Completions)",
-		BaseURL:    "https://api.openai.com/v1",
-		HelpText:   "Legacy Chat Completions compatibility.",
-		StandardID: "openai",
-	},
-	{
-		ID:         "anthropic",
-		Name:       "Anthropic",
-		BaseURL:    "https://api.anthropic.com/v1",
-		HelpText:   "API keys: console.anthropic.com",
-		StandardID: "anthropic",
-	},
-	{
-		ID:         "google",
-		Name:       "Google AI",
-		BaseURL:    "https://generativelanguage.googleapis.com/v1beta/openai",
-		HelpText:   "API keys: aistudio.google.com/apikey",
-		StandardID: "openai",
-	},
-	{
-		ID:         "groq",
-		Name:       "Groq",
-		BaseURL:    "https://api.groq.com/openai/v1",
-		HelpText:   "API keys: console.groq.com/keys",
-		StandardID: "openai",
-	},
-	{
-		ID:         "together",
-		Name:       "Together AI",
-		BaseURL:    "https://api.together.xyz/v1",
-		HelpText:   "API keys: api.together.ai/settings/api-keys",
-		StandardID: "openai",
-	},
-	{
-		ID:         "deepseek",
-		Name:       "DeepSeek",
-		BaseURL:    "https://api.deepseek.com/v1",
-		HelpText:   "API keys: platform.deepseek.com/api_keys",
-		StandardID: "openai",
-	},
-	{
-		ID:         "mistral",
-		Name:       "Mistral",
-		BaseURL:    "https://api.mistral.ai/v1",
-		HelpText:   "API keys: console.mistral.ai/api-keys",
-		StandardID: "openai",
-	},
-	{
-		ID:         "ollama",
-		Name:       "Ollama (local)",
-		BaseURL:    "http://localhost:11434/v1",
-		HelpText:   "Local models. No API key needed.",
-		StandardID: "openai",
-	},
-	{
-		ID:         "alibaba",
-		Name:       "Alibaba",
-		BaseURL:    "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
-		HelpText:   "API keys: dashscope.console.aliyun.com/apiKey",
-		StandardID: "openai",
-	},
-	{
-		ID:         "opencode-zen",
-		Name:       "OpenCode Zen",
-		BaseURL:    "https://opencode.ai/zen/v1",
-		HelpText:   "API keys: opencode.ai/zen",
-		StandardID: "openai",
-	},
-	{
-		ID:         "opencode-go",
-		Name:       "OpenCode Go",
-		BaseURL:    "https://opencode.ai/zen/go/v1",
-		HelpText:   "Subscription models. opencode.ai/go",
-		StandardID: "openai",
-	},
-	{
-		ID:         "wafer",
-		Name:       "Wafer AI",
-		BaseURL:    "https://pass.wafer.ai/v1",
-		HelpText:   "API keys: wafer.ai/pass",
-		StandardID: "openai",
-	},
-	{
-		ID:         "crof",
-		Name:       "Crof AI",
-		BaseURL:    "https://crof.ai/v1",
-		HelpText:   "API keys: crof.ai",
-		StandardID: "openai",
-	},
-	{
-		ID:         "ollama-cloud",
-		Name:       "Ollama Cloud",
-		BaseURL:    "https://ollama.com/api",
-		HelpText:   "Hosted Ollama models. API keys: ollama.com/settings/keys",
-		StandardID: "ollama",
-	},
-	{
-		ID:         "synthetic",
-		Name:       "Synthetic",
-		BaseURL:    "https://api.synthetic.new/openai/v1",
-		HelpText:   "API keys: synthetic.new",
-		StandardID: "openai",
-	},
-	{
-		ID:         "commandcode",
-		Name:       "Command Code",
-		BaseURL:    "https://api.commandcode.ai/provider/v1",
-		HelpText:   "API keys: Studio → API keys at commandcode.ai",
-		StandardID: "openai",
-	},
-	{
-		ID:         "chatgpt",
-		Name:       "OpenAI (ChatGPT subscription)",
-		BaseURL:    "https://chatgpt.com/backend-api/codex",
-		HelpText:   "Use a ChatGPT Plus/Pro subscription via Sign in with ChatGPT.",
-		StandardID: "codex",
-	},
-	{
-		ID:         "custom",
-		Name:       "Custom",
-		BaseURL:    "",
-		HelpText:   "Any OpenAI-compatible API endpoint",
-		StandardID: "openai",
-	},
-}
-
-func PresetList() []Preset {
-	out := make([]Preset, len(presets))
-	for i, preset := range presets {
-		out[i] = clonePreset(preset)
-	}
-	return out
-}
-
-func GetPreset(id string) *Preset {
-	for _, preset := range presets {
-		if preset.ID == id {
-			copy := clonePreset(preset)
-			return &copy
-		}
-	}
-	return nil
-}
-
 // FromPreset builds a Provider from a preset, overriding the base URL when
 // a custom one is configured. The preset's protocol is applied as the
 // default wire format.
@@ -547,30 +439,19 @@ func FromPreset(presetID, apiKey, customBaseURL string) *Provider {
 		preset = GetPreset("openrouter")
 	}
 
-	baseURL := preset.BaseURL
+	template := CloneTemplate(builtinTemplates[preset.ID])
 	if customBaseURL != "" {
-		baseURL = customBaseURL
+		template.ProviderURL = customBaseURL
 	}
-
-	p := &Provider{
-		ID:           preset.ID,
-		Name:         preset.Name,
-		BaseURL:      baseURL,
-		APIKey:       apiKey,
-		StandardName: preset.StandardID,
-	}
-	if len(preset.ExtraBody) > 0 {
-		p.extraBody = make(map[string]any)
-		for k, v := range preset.ExtraBody {
-			p.extraBody[k] = v
-		}
+	p := &Provider{ID: preset.ID, APIKey: apiKey}
+	if err := template.apply(p); err != nil {
+		// Embedded seeds are validated by tests; retain a deterministic fallback
+		// because this legacy constructor cannot return an error.
+		p.Name = preset.Name
+		p.BaseURL = template.ProviderURL
+		p.StandardName = preset.StandardID
 	}
 	return p
-}
-
-func clonePreset(preset Preset) Preset {
-	preset.ExtraBody = cloneAnyMap(preset.ExtraBody)
-	return preset
 }
 
 func cloneAnyMap(input map[string]any) map[string]any {
@@ -609,20 +490,4 @@ func cloneAnyValue(value any) any {
 	default:
 		return value
 	}
-}
-
-func PresetNames() []string {
-	names := make([]string, len(presets))
-	for i, p := range presets {
-		names[i] = p.Name
-	}
-	return names
-}
-
-func PresetIDs() []string {
-	ids := make([]string, len(presets))
-	for i, p := range presets {
-		ids[i] = p.ID
-	}
-	return ids
 }

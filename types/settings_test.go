@@ -2,6 +2,8 @@ package types
 
 import (
 	"strings"
+
+	"crude/provider"
 	"testing"
 )
 
@@ -10,14 +12,14 @@ func TestMergeAppWorkspaceInheritsNilOverrides(t *testing.T) {
 		Theme:          ThemeSettings{Preset: "dark"},
 		Editor:         EditorSettings{TabSize: 4, WordWrap: true},
 		ActiveProvider: "openrouter",
-		Providers:      map[string]ProviderConfig{"openrouter": {APIKey: "app-key", Model: "app-model"}},
+		Providers:      map[string]ProviderConfig{"openrouter": {Name: "OpenRouter", ProviderURL: "https://openrouter.ai/api/v1", APIStandard: "openai"}},
 	}
 	got := MergeAppWorkspace(app, WorkspaceOverrides{})
 	if got.Theme.Preset != "dark" || got.Editor.TabSize != 4 || !got.Editor.WordWrap {
 		t.Fatalf("inherited app values lost: %#v", got)
 	}
-	if got.Providers["openrouter"].APIKey != "app-key" {
-		t.Fatalf("provider credentials must stay app-level unless overridden: %#v", got.Providers)
+	if got.Providers["openrouter"].ProviderURL != "https://openrouter.ai/api/v1" {
+		t.Fatalf("provider templates must stay application-level: %#v", got.Providers)
 	}
 }
 
@@ -58,8 +60,8 @@ func TestOverridesFromDiffRecordsOnlyChangedCategories(t *testing.T) {
 	if string(got.Editor) != `{"tab_size":2}` {
 		t.Fatalf("editor override should carry only the changed leaf, got %s", got.Editor)
 	}
-	if got.ActiveProvider == nil || *got.ActiveProvider != "openai" {
-		t.Fatalf("provider override missing: %#v", got.ActiveProvider)
+	if merged := MergeAppWorkspace(app, got); merged.ActiveProvider != "openrouter" {
+		t.Fatalf("workspace changed application template selection: %q", merged.ActiveProvider)
 	}
 }
 
@@ -128,6 +130,49 @@ func TestWorkspaceCanOverrideBoolToFalse(t *testing.T) {
 	}
 	if got := MergeAppWorkspace(app, overrides); got.Editor.WordWrap {
 		t.Fatalf("explicit false must win over an inherited true: %#v", got.Editor)
+	}
+}
+
+func TestAutoPermissionSettingsNormalizedDefaultsAndBounds(t *testing.T) {
+	got := (AutoPermissionSettings{}).Normalized()
+	if got.Enabled != "off" || got.DenyMode != "ask" || got.TimeoutSeconds != 8 ||
+		got.MaxOutputTokens != 96 || got.MaxInputBytes != 4096 || got.MaxReviewsPerTurn != 12 {
+		t.Fatalf("normalized defaults = %+v", got)
+	}
+
+	got = (AutoPermissionSettings{
+		Enabled: "yes", DenyMode: "reject", TimeoutSeconds: -4,
+		MaxOutputTokens: 999, MaxInputBytes: 10, MaxReviewsPerTurn: 500,
+	}).Normalized()
+	if got.Enabled != "off" || got.DenyMode != "ask" || got.TimeoutSeconds != 1 ||
+		got.MaxOutputTokens != 256 || got.MaxInputBytes != 256 || got.MaxReviewsPerTurn != 100 {
+		t.Fatalf("normalized bounds = %+v", got)
+	}
+
+	got = (AutoPermissionSettings{Enabled: "on", DenyMode: "deny", TimeoutSeconds: 30,
+		MaxOutputTokens: 16, MaxInputBytes: 8192, MaxReviewsPerTurn: 1}).Normalized()
+	if got.Enabled != "on" || got.DenyMode != "deny" {
+		t.Fatalf("valid choices changed = %+v", got)
+	}
+}
+
+func TestWorkspaceAutoPermissionExplicitOffStaysSparse(t *testing.T) {
+	app := AppSettings{Safety: SafetySettings{AutoPermission: AutoPermissionSettings{
+		Enabled: "on", Provider: "openai", Model: "gpt-review", DenyMode: "ask",
+		TimeoutSeconds: 8, MaxOutputTokens: 96, MaxInputBytes: 4096, MaxReviewsPerTurn: 12,
+	}}}
+	ApplyAppDefaults(&app)
+	working := cloneAppSettings(app)
+	working.Safety.AutoPermission.Enabled = "off"
+	overrides := OverridesFromDiff(app, working)
+	if string(overrides.Safety) != `{"auto_permission":{"enabled":"off"}}` {
+		t.Fatalf("auto-permission override = %s", overrides.Safety)
+	}
+
+	app.Safety.AutoPermission.Model = "gpt-review-v2"
+	got := MergeAppWorkspace(app, overrides).Safety.AutoPermission
+	if got.Enabled != "off" || got.Model != "gpt-review-v2" || got.Provider != "openai" {
+		t.Fatalf("merged auto-permission = %+v", got)
 	}
 }
 
@@ -230,40 +275,33 @@ func TestLSPSeverityAtLeast(t *testing.T) {
 	}
 }
 
-func TestWorkspaceOverridesFromDiffOmitsAPIKeys(t *testing.T) {
-	app := AppSettings{
-		ActiveProvider: "openrouter",
-		Providers:      map[string]ProviderConfig{"openrouter": {APIKey: "app-key", Model: "app-model"}},
-	}
+func TestWorkspaceOverridesFromDiffNeverIncludesAccounts(t *testing.T) {
+	app := AppSettings{ActiveProvider: "openrouter", Providers: map[string]ProviderConfig{"openrouter": {Name: "OpenRouter", ProviderURL: "https://openrouter.ai/api/v1", APIStandard: "openai"}},
+		Accounts: map[string]provider.Account{"account": {ID: "account", ProviderID: "openrouter", APIKey: "app-key"}}}
 	ApplyAppDefaults(&app)
 	working := cloneAppSettings(app)
-	working.Providers["openrouter"] = ProviderConfig{APIKey: "workspace-key", Model: "app-model"}
+	working.Accounts["account"] = provider.Account{ID: "account", ProviderID: "openrouter", APIKey: "workspace-key"}
 	got := WorkspaceOverridesFromDiff(app, working)
-	if len(got.Providers) != 0 {
-		t.Fatalf("credential-only edit must not create a workspace overlay: %#v", got.Providers)
+	if !got.IsEmpty() {
+		t.Fatalf("credential edit became workspace override: %+v", got)
 	}
-
-	working.Providers["openrouter"] = ProviderConfig{APIKey: "workspace-key", Model: "ws-model"}
+	cfg := working.Providers["openrouter"]
+	cfg.ProviderURL = "https://workspace.invalid/v1"
+	working.Providers["openrouter"] = cfg
 	got = WorkspaceOverridesFromDiff(app, working)
-	if strings.Contains(string(got.Providers), "workspace-key") {
-		t.Fatalf("workspace overlay leaked API key: %s", got.Providers)
-	}
-	if !strings.Contains(string(got.Providers), "ws-model") {
-		t.Fatalf("model override missing: %s", got.Providers)
+	if !got.IsEmpty() {
+		t.Fatalf("workspace must not own templates or accounts: %+v", got)
 	}
 	merged := MergeAppWorkspace(app, got)
-	if merged.Providers["openrouter"].APIKey != "app-key" {
-		t.Fatalf("effective API key should stay app-level, got %#v", merged.Providers)
-	}
-	if merged.Providers["openrouter"].Model != "ws-model" {
-		t.Fatalf("effective model should use workspace overlay, got %#v", merged.Providers)
+	if merged.Accounts["account"].APIKey != "app-key" || merged.Providers["openrouter"].ProviderURL != "https://openrouter.ai/api/v1" {
+		t.Fatal("workspace changed application template or account credentials")
 	}
 }
 
 func TestWorkspaceOverridesFromDiffOmitsAgentAPIKeys(t *testing.T) {
 	app := AppSettings{
 		ActiveProvider: "opencode-go",
-		Providers:      map[string]ProviderConfig{"opencode-go": {APIKey: "app-key", Model: "app-model"}},
+		Providers:      map[string]ProviderConfig{"opencode-go": provider.DefaultTemplates()["opencode-go"]},
 		Agents: AgentsSettings{Categories: map[string]CategorySettings{
 			"default": {Provider: "opencode-go", APIKey: "app-key", Model: "app-model"},
 		}},
@@ -282,32 +320,32 @@ func TestWorkspaceOverridesFromDiffOmitsAgentAPIKeys(t *testing.T) {
 	}
 }
 
-func TestProviderProtocolOverridesMergeAndClone(t *testing.T) {
+func TestProviderTemplatesAndAccountOverridesCannotBeWorkspaceOverrides(t *testing.T) {
 	app := AppSettings{
 		ActiveProvider: "openai",
 		Providers: map[string]ProviderConfig{
-			"openai": {
-				APIStandard:    "openai-responses",
-				ModelStandards: map[string]string{"gpt-legacy": "openai"},
-			},
+			"openai": {Name: "OpenAI", ProviderURL: "https://api.openai.com/v1", APIStandard: "openai-responses", Headers: map[string]string{"X-Trace": "app"}},
 		},
+		Accounts: map[string]provider.Account{"work": {ID: "work", ProviderID: "openai", APIKey: "app-key"}},
 	}
 	ApplyAppDefaults(&app)
 	working := cloneAppSettings(app)
-	working.Providers["openai"] = ProviderConfig{
-		APIStandard:    "openai",
-		ModelStandards: map[string]string{"gpt-legacy": "openai", "gpt-5.6": "openai-responses"},
-	}
+	modified := working.Providers["openai"]
+	modified.APIStandard = "openai"
+	modified.Headers["X-Trace"] = "workspace"
+	working.Providers["openai"] = modified
+	account := working.Accounts["work"]
+	account.APIKey = "workspace-key"
+	working.Accounts["work"] = account
 	overlay := OverridesFromDiff(app, working)
-	got := MergeAppWorkspace(app, overlay)
-	cfg := got.Providers["openai"]
-	if cfg.APIStandard != "openai" ||
-		cfg.ModelStandards["gpt-legacy"] != "openai" ||
-		cfg.ModelStandards["gpt-5.6"] != "openai-responses" {
-		t.Fatalf("merged provider protocols = %#v", cfg)
+	if !overlay.IsEmpty() {
+		t.Fatalf("workspace persisted template/account data: %+v", overlay)
 	}
-	cfg.ModelStandards["gpt-legacy"] = "anthropic"
-	if app.Providers["openai"].ModelStandards["gpt-legacy"] != "openai" {
-		t.Fatal("merged model-standard map aliases application settings")
+	got := MergeAppWorkspace(app, overlay)
+	if got.Providers["openai"].APIStandard != "openai-responses" || got.Providers["openai"].Headers["X-Trace"] != "app" || got.Accounts["work"].APIKey != "app-key" {
+		t.Fatal("workspace changed an app-owned template or account")
+	}
+	if app.Providers["openai"].Headers["X-Trace"] != "app" {
+		t.Fatal("cloned template headers alias application settings")
 	}
 }

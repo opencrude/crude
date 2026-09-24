@@ -54,15 +54,14 @@ func TestSettingsNavigation_TabOrderFromEveryRegion(t *testing.T) {
 	order := []ui.ComponentID{
 		WorkspaceSettingsSearchID,
 		WorkspaceSettingsListID,
-		WorkspaceSettingsFormID,
+		WorkspaceSettingsTemplatesID,
+		WorkspaceSettingsTemplateAddID,
+		WorkspaceSettingsTemplateBarID,
 		WorkspaceSettingsActionID,
 		WorkspaceSettingsScopeID,
 	}
 	for startIdx, startID := range order {
 		frame.Focus(startID)
-		if startID == WorkspaceSettingsFormID {
-			surfaceRoot.form.FocusFirst()
-		}
 		host.Layout()
 		if host.Focused() != startID {
 			t.Fatalf("start focus=%q want %q", host.Focused(), startID)
@@ -102,14 +101,14 @@ func TestSettingsNavigation_TabOrderFromEveryRegion(t *testing.T) {
 
 	frame.Focus(WorkspaceSettingsActionID)
 	host.Layout()
-	for i := 0; i < 6 && host.Focused() != WorkspaceSettingsFormID; i++ {
+	for i := 0; i < 6 && host.Focused() != WorkspaceSettingsTemplateBarID; i++ {
 		res := host.Handle(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
 		if res.Action != nil {
 			_ = surfaceRoot.HandleAction(ui.EventContext{Theme: th}, *res.Action)
 		}
 	}
-	if host.Focused() != WorkspaceSettingsFormID {
-		t.Fatalf("Shift+Tab from actions focus=%q want form", host.Focused())
+	if host.Focused() != WorkspaceSettingsTemplateBarID {
+		t.Fatalf("Shift+Tab from actions focus=%q want template actions", host.Focused())
 	}
 }
 
@@ -206,6 +205,8 @@ func TestSettingsPresetCycle_EmitsLiveThemePreview(t *testing.T) {
 
 	model.SelectCategory(catAppearance)
 	surfaceRoot.refreshForm()
+	host.MarkLayout()
+	host.Layout()
 	surfaceRoot.form.FocusFirst()
 	surfaceRoot.FocusForm()
 	host.Layout()
@@ -252,6 +253,8 @@ func TestSettingsPresetCycle_LiveApplyThroughHost(t *testing.T) {
 
 	model.SelectCategory(catAppearance)
 	surfaceRoot.syncModel()
+	host.MarkLayout()
+	host.Layout()
 	surfaceRoot.form.FocusFirst()
 	surfaceRoot.FocusForm()
 	host.Layout()
@@ -291,6 +294,7 @@ func TestSettingsAppearance_ColorFieldsShowResolvedHex(t *testing.T) {
 	surfaceRoot.FocusForm()
 	host := frame.Host()
 	host.Resize(80, 24)
+	host.MarkLayout()
 	host.Layout()
 
 	buf := surface.NewCellBuffer(80, 24)
@@ -335,6 +339,8 @@ func TestSettingsSave_PersistsPresetThroughHost(t *testing.T) {
 
 	model.SelectCategory(catAppearance)
 	surfaceRoot.syncModel()
+	host.MarkLayout()
+	host.Layout()
 	surfaceRoot.form.FocusFirst()
 	surfaceRoot.FocusForm()
 	host.Layout()

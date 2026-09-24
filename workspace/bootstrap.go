@@ -12,7 +12,6 @@ package workspace
 // session internals directly.
 
 import (
-	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -40,8 +39,7 @@ func (w *Workspace) Bootstrap(cfg *session.Config, homeDir string, resumeID stri
 		fs, err = w.ResumeSession(resumeID, cfg, homeDir)
 		if err != nil {
 			w.Logger.Warn("WORKSPACE", "resume_failed", "id", resumeID, "error", err.Error())
-			w.Logger.Info("WORKSPACE", "fallback_new_session")
-			fs, err = w.CreateSession(cfg, homeDir)
+			return nil, fmt.Errorf("resume session: %w", err)
 		}
 	} else {
 		fs, err = w.CreateSession(cfg, homeDir)
@@ -99,6 +97,9 @@ func (w *Workspace) CreateSession(cfg *session.Config, homeDir string) (*Session
 	w.deliverPendingHistoryNotifications(fs.SessionID)
 
 	if w.WorkspaceDB != nil {
+		if err := w.WorkspaceDB.SetAgentName(fs.SessionID, bs.AgentName()); err != nil {
+			w.noteRegistryErr("agent_name_register_failed", err)
+		}
 		model := bs.ModelName()
 		providerID := cfg.EffectiveProviderID()
 		projectName := filepath.Base(w.RootPath)
@@ -351,173 +352,29 @@ func (w *Workspace) AllProviderConfigs() map[string]ttypes.ProviderConfig {
 	}
 	out := make(map[string]ttypes.ProviderConfig, len(w.sessionCfg.Providers))
 	for k, v := range w.sessionCfg.Providers {
-		out[k] = ttypes.ProviderConfig{
-			APIKey: v.APIKey, ProviderURL: v.ProviderURL,
-			APIStandard: v.APIStandard, Model: v.Model,
-			ModelStandards: copyStringMap(v.ModelStandards),
-			ThinkingEffort: v.ThinkingEffort,
-			OAuth:          cloneSessionOAuth(v.OAuth),
-			Dialer:         cloneDialSettings(v.Dialer),
-			Protocol:       cloneProtocolSettings(v.Protocol),
-			ExtraBody:      copyExtraBody(v.ExtraBody),
-		}
+		out[k] = provider.CloneTemplate(v)
 	}
 	return out
 }
 
-func copyStringMap(src map[string]string) map[string]string {
-	if src == nil {
-		return nil
-	}
-	out := make(map[string]string, len(src))
-	for key, value := range src {
-		out[key] = value
-	}
-	return out
-}
-
-// cloneSessionOAuth returns a shallow copy of OAuth credentials. All fields are
-// value types, so a struct copy is enough to keep the session config from
-// aliasing the UI provider map.
-func cloneSessionOAuth(src *provider.OAuthCredentials) *provider.OAuthCredentials {
-	if src == nil {
-		return nil
-	}
-	dup := *src
-	return &dup
-}
-
-// cloneDialSettings copies user-tunable transport settings so neither side of
-// the session/UI boundary can mutate the other's copy.
-func cloneDialSettings(src *provider.DialSettings) *provider.DialSettings {
-	if src == nil {
-		return nil
-	}
-	dup := *src
-	return &dup
-}
-
-// copyExtraBody copies a raw extra-body map so neither side of the session/UI
-// boundary can mutate the other's copy. Values are JSON-decoded and never
-// mutated in place, so a top-level copy suffices.
-func copyExtraBody(src map[string]any) map[string]any {
-	if src == nil {
-		return nil
-	}
-	out := make(map[string]any, len(src))
-	for key, value := range src {
-		out[key] = value
-	}
-	return out
-}
-
-// cloneProtocolSettings copies the protocol-level request switches so neither
-// side of the session/UI boundary can mutate the other's copy.
-func cloneProtocolSettings(src *provider.ProtocolSettings) *provider.ProtocolSettings {
-	if src == nil {
-		return nil
-	}
-	dup := *src
-	if src.Store != nil {
-		store := *src.Store
-		dup.Store = &store
-	}
-	if src.ReasoningSummaries != nil {
-		summaries := *src.ReasoningSummaries
-		dup.ReasoningSummaries = &summaries
-	}
-	if src.Truncation != nil {
-		truncation := *src.Truncation
-		dup.Truncation = &truncation
-	}
-	return &dup
-}
-
-// SaveProviderSettings updates the live session config and persists via OnConfigSave.
-// Category-level keys resolve from Config.Providers via resolveCategoryDefaults.
-func (w *Workspace) SaveProviderSettings(active string, providers map[string]ttypes.ProviderConfig) error {
+// applyProviderSettings installs provider connection defaults without changing any
+// existing session's selected account. Persistence belongs to SaveAppSettings.
+func (w *Workspace) applyProviderSettings(settings ttypes.AppSettings) {
 	if w.sessionCfg == nil {
-		return fmt.Errorf("no session config")
+		return
 	}
-	if active != "" {
-		w.sessionCfg.ActiveProvider = active
+	w.sessionCfg.ActiveProvider = settings.ActiveProvider
+	w.sessionCfg.Providers = make(map[string]session.ProviderConfig, len(settings.Providers))
+	for id, pc := range settings.Providers {
+		w.sessionCfg.Providers[id] = provider.CloneTemplate(pc)
 	}
-	if w.sessionCfg.Providers == nil {
-		w.sessionCfg.Providers = make(map[string]session.ProviderConfig)
-	}
-	for id, pc := range providers {
-		w.sessionCfg.Providers[id] = session.ProviderConfig{
-			APIKey:         pc.APIKey,
-			ProviderURL:    pc.ProviderURL,
-			APIStandard:    pc.APIStandard,
-			Model:          pc.Model,
-			ModelStandards: copyStringMap(pc.ModelStandards),
-			ThinkingEffort: pc.ThinkingEffort,
-			OAuth:          cloneSessionOAuth(pc.OAuth),
-			Dialer:         cloneDialSettings(pc.Dialer),
-			Protocol:       cloneProtocolSettings(pc.Protocol),
-			ExtraBody:      copyExtraBody(pc.ExtraBody),
-		}
-	}
-	for _, frontendSession := range w.Sessions {
-		if frontendSession != nil && frontendSession.backend != nil {
-			frontendSession.backend.UpdateWorkspaceDefaults(ttypes.AppSettings{
-				ActiveProvider: active, Providers: providers,
-			})
-			if frontendSession.Settings != nil {
-				frontendSession.Settings.SetInheritance(
-					frontendSession.backend.SettingsSnapshot(),
-					frontendSession.backend.WorkspaceSettingsSnapshot(),
-					frontendSession.backend.SessionOverridesSnapshot(),
-				)
-			}
-		}
-	}
-	if w.OnConfigSave != nil {
-		return w.OnConfigSave(w.sessionCfg)
-	}
-	return nil
+	w.sessionCfg.Accounts = cloneAccounts(settings.Accounts)
 }
 
-// HandleFetchModels fetches available models from a provider.
-func (w *Workspace) HandleFetchModels(providerID, baseURL, apiKey, standardID string) ([]ttypes.ModelEntry, error) {
-	if b := w.BackendSession(); b != nil {
-		return b.HandleFetchModels(providerID, baseURL, apiKey, standardID)
-	}
-	p := provider.FromPreset(providerID, apiKey, baseURL)
-	if standardID != "" {
-		if err := p.SetProtocolID(standardID); err != nil {
-			return nil, err
-		}
-	}
-	// Attach stored OAuth credentials (e.g. ChatGPT subscription) and
-	// transport/protocol tuning so the listing request is authenticated and
-	// transported exactly like chat traffic.
-	if w.sessionCfg != nil {
-		if pc, ok := w.sessionCfg.Providers[providerID]; ok {
-			if pc.OAuth != nil {
-				p.SetOAuth(pc.OAuth)
-			}
-			if pc.Dialer != nil {
-				p.SetDialSettings(*pc.Dialer)
-			}
-			if pc.Protocol != nil {
-				p.SetProtocolSettings(pc.Protocol)
-			}
-			if len(pc.ExtraBody) > 0 {
-				p.SetExtraBody(pc.ExtraBody)
-			}
-		}
-	}
-	client, err := p.Client()
-	if err != nil {
-		return nil, err
-	}
-	models, err := client.ListModels(context.Background())
-	if err != nil {
-		return nil, err
-	}
-	return ttypes.ModelEntriesFromInfos(models), nil
+// HandleFetchModels lists models for an explicitly selected account. It never
+// borrows the active tab's credentials or another account's default.
+func (w *Workspace) HandleFetchModels(providerID, accountID, baseURL, standardID string) ([]ttypes.ModelEntry, error) {
+	return w.PrepareAccountModels(providerID, accountID, baseURL, standardID)()
 }
 
 // HandleUndo undoes the last message.
@@ -871,6 +728,7 @@ func (w *Workspace) adoptCurrentDefaults(b *session.Session) {
 		Agents:         effective.Agents,
 		ActiveProvider: effective.ActiveProvider,
 		Providers:      effective.Providers,
+		Accounts:       effective.Accounts,
 	})
 }
 
@@ -960,16 +818,7 @@ func (w *Workspace) CostSnapshot() session.CostSnapshot {
 func (w *Workspace) ProviderConfig(providerID string) ttypes.ProviderConfig {
 	if w.sessionCfg != nil {
 		if cfg, ok := w.sessionCfg.Providers[providerID]; ok {
-			return ttypes.ProviderConfig{
-				APIKey: cfg.APIKey, ProviderURL: cfg.ProviderURL,
-				APIStandard: cfg.APIStandard, Model: cfg.Model,
-				ModelStandards: copyStringMap(cfg.ModelStandards),
-				ThinkingEffort: cfg.ThinkingEffort,
-				OAuth:          cloneSessionOAuth(cfg.OAuth),
-				Dialer:         cloneDialSettings(cfg.Dialer),
-				Protocol:       cloneProtocolSettings(cfg.Protocol),
-				ExtraBody:      copyExtraBody(cfg.ExtraBody),
-			}
+			return provider.CloneTemplate(cfg)
 		}
 	}
 	b := w.BackendSession()
@@ -977,16 +826,7 @@ func (w *Workspace) ProviderConfig(providerID string) ttypes.ProviderConfig {
 		return ttypes.ProviderConfig{}
 	}
 	if cfg, ok := b.Config().Providers[providerID]; ok {
-		return ttypes.ProviderConfig{
-			APIKey: cfg.APIKey, ProviderURL: cfg.ProviderURL,
-			APIStandard: cfg.APIStandard, Model: cfg.Model,
-			ModelStandards: copyStringMap(cfg.ModelStandards),
-			ThinkingEffort: cfg.ThinkingEffort,
-			OAuth:          cloneSessionOAuth(cfg.OAuth),
-			Dialer:         cloneDialSettings(cfg.Dialer),
-			Protocol:       cloneProtocolSettings(cfg.Protocol),
-			ExtraBody:      copyExtraBody(cfg.ExtraBody),
-		}
+		return provider.CloneTemplate(cfg)
 	}
 	return ttypes.ProviderConfig{}
 }
@@ -1121,6 +961,7 @@ func compactionRecordView(record sessiondb.CompactionRecord) ChatMessageView {
 		Content:                record.Error,
 		Time:                   timestamp,
 		ProviderID:             record.ProviderID,
+		AccountID:              record.AccountID,
 		ModelID:                record.ModelID,
 		LifecyclePhase:         phase,
 		LifecycleOperationID:   record.OperationID,
@@ -1199,6 +1040,7 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 			result = append(result, ChatMessageView{
 				Role: "assistant", Content: mm.Msg.Content.String(), Time: msgTime,
 				TurnGeneration: mm.Meta.TurnGeneration,
+				AccountID:      mm.Meta.AccountID,
 				ProviderID:     mm.Meta.ProviderID, ModelID: mm.Meta.ModelID,
 			})
 
@@ -1213,6 +1055,7 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 				Time:             msgTime,
 				ThinkingDuration: thinkingDuration,
 				TurnGeneration:   mm.Meta.TurnGeneration,
+				AccountID:        mm.Meta.AccountID,
 				ProviderID:       mm.Meta.ProviderID,
 				ModelID:          mm.Meta.ModelID,
 			})
@@ -1220,6 +1063,7 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 				result = append(result, ChatMessageView{
 					Role: "assistant", Content: mm.Msg.Content.String(), Time: msgTime,
 					TurnGeneration: mm.Meta.TurnGeneration,
+					AccountID:      mm.Meta.AccountID,
 					ProviderID:     mm.Meta.ProviderID, ModelID: mm.Meta.ModelID,
 				})
 			}
@@ -1261,6 +1105,7 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 				PermTag:           mm.Meta.PermTag,
 				ToolPreviewPhase:  "done",
 				TurnGeneration:    mm.Meta.TurnGeneration,
+				AccountID:         mm.Meta.AccountID,
 				ProviderID:        mm.Meta.ProviderID,
 				ModelID:           mm.Meta.ModelID,
 			}

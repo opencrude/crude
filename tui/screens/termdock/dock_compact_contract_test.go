@@ -23,8 +23,8 @@ func TestDockMinimumHeightPreservesUsableTerminalBody(t *testing.T) {
 	if got := screen.Bounds().H; got != workspace.MinTerminalRows {
 		t.Fatalf("terminal body height=%d want=%d", got, workspace.MinTerminalRows)
 	}
-	if len(dock.Children()) != 3 {
-		t.Fatalf("renderable dock children=%d want divider, tabs, terminal", len(dock.Children()))
+	if len(dock.Children()) != 2 {
+		t.Fatalf("renderable dock children=%d want divider and terminal", len(dock.Children()))
 	}
 
 	dock.Layout(ui.LayoutContext{}, ui.Rect{W: 40, H: MinRenderableHeight - 1})

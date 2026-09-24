@@ -18,6 +18,7 @@ type DisplayMeta struct {
 	ContextOnly     bool                         `json:"context_only,omitempty"`
 	TurnGeneration  uint64                       `json:"turn_generation,omitempty"`
 	ProviderID      string                       `json:"provider_id,omitempty"`
+	AccountID       string                       `json:"account_id,omitempty"`
 	ModelID         string                       `json:"model_id,omitempty"`
 
 	// Legacy fields remain readable for sessions written before canonical

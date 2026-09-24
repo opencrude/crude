@@ -12,9 +12,8 @@ import (
 	"crude/tui/ui"
 )
 
-// TestScopeStripArrowsSwitchScope drives the standardized strip: the scope
-// switch is the shared tab strip now, so arrows move the active scope and emit
-// the same ScopeMsg the legacy segmented bar produced.
+// The scope toggle uses arrow keys to request a scope change without becoming
+// a content tab strip.
 func TestScopeStripArrowsSwitchScope(t *testing.T) {
 	th := theme.DefaultDark()
 	model := NewScoped(th, types.AppSettings{}, nil, types.SettingsScopeApplication, types.AppSettings{}, types.WorkspaceOverrides{})
@@ -26,8 +25,7 @@ func TestScopeStripArrowsSwitchScope(t *testing.T) {
 	host.Layout()
 	host.Focus(WorkspaceSettingsScopeID)
 
-	// The host bubbles the strip's action through the surface, so the ScopeMsg
-	// command comes back on the key result itself.
+	// The host bubbles the toggle's action through the surface.
 	res := host.Handle(tea.KeyPressMsg{Code: tea.KeyRight})
 	if res.Cmd == nil {
 		t.Fatalf("Right on the scope strip produced no command (action=%+v)", res.Action)
@@ -51,9 +49,8 @@ func TestScopeStripArrowsSwitchScope(t *testing.T) {
 	}
 }
 
-// TestScopeStripKeepsFocusContract pins the region exits the legacy segmented
-// bar had: Tab leaves for the search field, Shift+Tab for the actions, Up for
-// the category list.
+// The scope toggle keeps the documented region exits: Tab to search,
+// Shift+Tab to actions, and Up to categories.
 func TestScopeStripKeepsFocusContract(t *testing.T) {
 	th := theme.DefaultDark()
 	model := New(th, types.AppSettings{}, nil)
@@ -88,9 +85,8 @@ func TestScopeStripKeepsFocusContract(t *testing.T) {
 	}
 }
 
-// TestSettingsFooterHasNoBlankRowBetweenScopeAndActions guards the layout the
-// strip standard brings: scope labels, one rule, then the command row flush on
-// the bottom row — never the extra blank row the legacy footer carried.
+// The scope switch and command buttons occupy one row. Their separator is one
+// continuous rule on the row above, not a tab-bar baseline between controls.
 func TestSettingsFooterHasNoBlankRowBetweenScopeAndActions(t *testing.T) {
 	th := theme.DefaultDark()
 	for _, scope := range []types.SettingsScope{types.SettingsScopeApplication, types.SettingsScopeWorkspace} {
@@ -105,11 +101,9 @@ func TestSettingsFooterHasNoBlankRowBetweenScopeAndActions(t *testing.T) {
 		host.Paint(buf)
 
 		strip := surfaceRoot.scope.Bounds()
-		if strip.H != ui.StripHeight {
-			t.Fatalf("scope=%s strip height=%d want %d", scope, strip.H, ui.StripHeight)
+		if strip.H != 1 || strip.Y != surfaceRoot.actions.Bounds().Y {
+			t.Fatalf("scope=%s toggle=%+v actions=%+v not on same footer row", scope, strip, surfaceRoot.actions.Bounds())
 		}
-		// The strip owns the footer: labels on its first row, baseline on its
-		// second, and the command row immediately after — no blank row.
 		labelsRow := -1
 		for y := 0; y < 28; y++ {
 			if strings.Contains(settingsRow(buf, y, 104), "Application") {
@@ -124,12 +118,16 @@ func TestSettingsFooterHasNoBlankRowBetweenScopeAndActions(t *testing.T) {
 		if !strings.Contains(labels, "Workspace") {
 			t.Fatalf("scope=%s footer labels=%q", scope, labels)
 		}
-		if rule := settingsRow(buf, labelsRow+1, 104); strings.Trim(rule, " ─│┃") != "" {
+		if rule := settingsRow(buf, labelsRow-1, 104); strings.Trim(rule, " ─│┃") != "" {
 			t.Fatalf("scope=%s footer rule row carries text: %q", scope, rule)
 		}
-		actions := settingsRow(buf, labelsRow+2, 104)
+		actions := settingsRow(buf, labelsRow, 104)
 		if !strings.Contains(actions, "[ Save ]") || !strings.Contains(actions, "[ Cancel ]") {
 			t.Fatalf("scope=%s command row=%q", scope, actions)
+		}
+		appX, workX := bufferIndexOnRow(buf, labelsRow, "Application"), bufferIndexOnRow(buf, labelsRow, "Workspace")
+		if appX < 0 || workX < 0 || buf.Get(appX, labelsRow).BG.Equal(buf.Get(workX, labelsRow).BG) {
+			t.Fatalf("scope=%s selected and unselected toggle backgrounds are indistinguishable", scope)
 		}
 	}
 }

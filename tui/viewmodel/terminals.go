@@ -34,16 +34,16 @@ func (m *App) termMgr() *workspace.TerminalManager {
 	return m.TermMgr
 }
 
-func (m *App) termDockHasSessions() bool {
-	return m.termDock != nil && !m.termDock.Empty()
-}
-
 func (m *App) termDockVisible() bool {
-	return m.termDockHasSessions() && m.termDockHeightClamped() > 0
+	return m.termDock != nil && m.termDock.IsOpen() && m.termDockHeightClamped() > 0
 }
 
 func (m *App) termDockOwnsKeys() bool {
 	return m.termDockFocused && m.termDockVisible() && !m.sessionDeckBlocking()
+}
+
+func (m *App) terminalDockOwnsKeys() bool {
+	return m.termDockOwnsKeys() && m.termDock != nil && m.termDock.TerminalActive()
 }
 
 func (m *App) terminalOwnsKeys() bool {
@@ -52,11 +52,11 @@ func (m *App) terminalOwnsKeys() bool {
 			return ui.IsTerminalOverlay(ui.OverlayID(fw.ID))
 		}
 	}
-	return m.termDockOwnsKeys()
+	return m.terminalDockOwnsKeys()
 }
 
 func (m *App) termDockHeightClamped() int {
-	if !m.termDockHasSessions() {
+	if m.termDock == nil || !m.termDock.IsOpen() {
 		return 0
 	}
 	availableH := m.height - m.chromeBottomRows() - m.termDockTopRow()
@@ -197,7 +197,6 @@ func (m *App) openNewTerminal() tea.Cmd {
 	}
 	m.ensureTermScreen(info.ID, info.Title)
 	m.dockTerminal(info.ID)
-	m.setActivity(activityTerminals, true)
 	return nil
 }
 
@@ -220,6 +219,7 @@ func (m *App) dockTerminal(id string) {
 	}
 	mgr.SetPlacement(id, workspace.TerminalDocked)
 	m.termDock.Mount(id, screen)
+	m.termDock.ShowPanel(termdock.PanelTerminal)
 	m.setSessionDeckFocused(false)
 	m.setTermDockFocused(true)
 	m.FocusStack.Clear()
@@ -429,7 +429,7 @@ func (m *App) markTerminalBell(id string) {
 		return
 	}
 	wmFocused := m.windowManager != nil && m.windowManager.Focused() != nil
-	focused := !wmFocused && m.termDockOwnsKeys() && m.termDock.ActiveID() == id
+	focused := !wmFocused && m.terminalDockOwnsKeys() && m.termDock.ActiveID() == id
 	if focused {
 		return
 	}
@@ -474,9 +474,7 @@ func (m *App) setFloatingTerminalAttention(id string, attention bool) {
 }
 
 func (m *App) handleTerminalExited(msg workspace.TerminalExitedMsg) {
-	if s := m.termScreens[msg.ID]; s != nil {
-		s.SetExited(true)
-	}
+	m.closeTerminal(msg.ID)
 }
 
 func (m *App) handleTerminalAction(action ui.Action) bool {
@@ -522,7 +520,6 @@ func (m *App) toggleTerminalFocus() tea.Cmd {
 		return m.openNewTerminal()
 	}
 	last := list[len(list)-1]
-	m.setActivity(activityTerminals, true)
 	m.focusTerminal(last.ID)
 	return nil
 }

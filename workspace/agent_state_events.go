@@ -256,6 +256,10 @@ func (a *AgentState) handlePermissionResolved(evt AgentEvent, target *Conversati
 	switch decision {
 	case "denied":
 		onStatusLine("Permission denied for " + PascalCaseTool(tool))
+	case "reviewer-denied":
+		onStatusLine("Automatic reviewer denied " + PascalCaseTool(tool))
+	case "reviewer-allowed":
+		onStatusLine("Automatic reviewer allowed " + PascalCaseTool(tool))
 	case "always":
 		onStatusLine("Permission always allowed for " + PascalCaseTool(tool))
 	default:

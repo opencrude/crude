@@ -6,7 +6,6 @@ import (
 	"crude/provider"
 	"crude/tui/theme"
 	"crude/tui/types"
-	"crude/tui/ui"
 )
 
 // TestProviderSwitchDoesNotCorruptOtherProviderConfig reproduces the reported
@@ -17,26 +16,27 @@ func TestProviderSwitchDoesNotCorruptOtherProviderConfig(t *testing.T) {
 	model := New(th, types.AppSettings{
 		ActiveProvider: "opencode-go",
 		Providers: map[string]types.ProviderConfig{
-			"opencode-go": {Model: "deepseek-v4-flash", APIKey: "sk-opencode"},
-			"chatgpt":     {},
+			"opencode-go": provider.DefaultTemplates()["opencode-go"],
+			"chatgpt":     provider.DefaultTemplates()["chatgpt"],
 		},
+		Accounts: map[string]provider.Account{"cg": {ID: "cg", ProviderID: "chatgpt", Label: "Work"}},
 	}, []types.ProviderPreset{
 		{ID: "opencode-go", Name: "OpenCode Go", BaseURL: "https://opencode.ai/zen/go/v1", StandardID: "openai"},
 		chatgptPreset(),
 	})
 
-	// Switch to chatgpt.
-	model.categories[catProviders].Form.SetValue(fieldProvider, ui.StringValue("chatgpt"))
-	if model.providerID != "chatgpt" {
-		t.Fatalf("providerID = %q, want chatgpt", model.providerID)
+	// Selecting Codex account does not switch or mutate the OpenCode template.
+	model.selectAccount("cg")
+	if err := model.beginAccountEdit(false, ""); err != nil {
+		t.Fatal(err)
 	}
 
 	// Sign in. Update mutates the model in place (the popup HandleEvent keeps
 	// the same pointer so form onChanged closures stay valid).
-	_, _ = model.Update(ChatGPTSignInResultMsg{Creds: &provider.OAuthCredentials{AccessToken: "AT", Email: "u@example.com"}})
+	_, generation := model.SignInRequest()
+	_, _ = model.Update(ChatGPTSignInResultMsg{AccountID: "cg", Generation: generation, Creds: &provider.OAuthCredentials{AccessToken: "AT", Email: "u@example.com"}})
 
-	// Switch back to opencode-go.
-	model.categories[catProviders].Form.SetValue(fieldProvider, ui.StringValue("opencode-go"))
+	// Keep browsing account drafts independent of template selection.
 	if model.providerID != "opencode-go" {
 		t.Fatalf("providerID = %q, want opencode-go", model.providerID)
 	}
@@ -54,8 +54,8 @@ func TestProviderSwitchDoesNotCorruptOtherProviderConfig(t *testing.T) {
 	if got.ActiveProvider != "opencode-go" {
 		t.Errorf("ActiveProvider = %q, want opencode-go", got.ActiveProvider)
 	}
-	// chatgpt OAuth must survive the round trip.
-	if got.Providers["chatgpt"].OAuth == nil || got.Providers["chatgpt"].OAuth.Email != "u@example.com" {
-		t.Errorf("chatgpt OAuth lost: %+v", got.Providers["chatgpt"].OAuth)
+	// Preferences cannot commit the still-unconfirmed account edit.
+	if got.Accounts["cg"].OAuth != nil || model.accountEditor.draft.OAuth == nil || model.accountEditor.draft.OAuth.Email != "u@example.com" {
+		t.Fatal("provider switch committed or discarded an account draft")
 	}
 }

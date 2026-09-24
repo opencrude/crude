@@ -19,6 +19,7 @@ import (
 	"crude/provider"
 	"crude/safety"
 	"crude/sessiondb"
+	"crude/tools"
 	ttypes "crude/types"
 )
 
@@ -26,10 +27,7 @@ func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
 	l := s.logger
 	l.Info("SESSION", "run_start", "orchestrator_id", o.ID)
 	s.sender = sender
-	if o.subAgentSup != nil {
-		o.subAgentSup.SetSender(sender)
-		o.subAgentSup.SetOrchestratorID(o.ID)
-	}
+
 	defer func() {
 		if r := recover(); r != nil {
 			l.Error("SESSION", "panic", "error", fmt.Sprintf("%v", r))
@@ -185,13 +183,6 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	activeCfg := effectiveCfg.GetActiveDefaultCategory()
 	provider.MergeModelCap(activeCfg.Model, slices.Contains(activeCfg.ModelModalities, provider.ModalityImage), activeCfg.ModelSupportsTools)
 	provider.MergeModelModalities(activeCfg.Model, activeCfg.ModelModalities)
-	// The ChatGPT subscription provider authenticates via OAuth, not an API
-	// key, so an empty key is fine when OAuth credentials are present.
-	if activeCfg.APIKey == "" && activeCfg.OAuth == nil {
-		l.Warn("INPUT", "no_api_key")
-		sender.SendAgentEventWithID("error", "No API key configured. Press Ctrl+S to open settings.", o.ID)
-		return
-	}
 
 	s.turnGate.RLock()
 	defer s.turnGate.RUnlock()
@@ -253,13 +244,13 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 					l.Warn("HISTORY", "continuation_scope_end_failed", "msg_id", historyContinuationID, "error", err.Error())
 				}
 			}
-			if o.subAgentSup != nil && o.subAgentSup.TurnRunning(turnGeneration) {
+			if runner := o.subAgentRunner(); runner != nil && runner.TurnRunning(turnGeneration) {
 				s.historyWg.Add(1)
 				s.historyFinalizers.Add(1)
 				go func() {
 					defer s.historyWg.Done()
 					defer s.historyFinalizers.Add(-1)
-					o.subAgentSup.WaitForTurn(turnGeneration)
+					runner.WaitForTurn(turnGeneration)
 					finishContinuation()
 				}()
 				return
@@ -274,13 +265,13 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 					l.Warn("HISTORY", "message_scope_end_failed", "msg_id", currentMsgID, "error", err.Error())
 				}
 			}
-			if o.subAgentSup != nil && o.subAgentSup.TurnRunning(turnGeneration) {
+			if runner := o.subAgentRunner(); runner != nil && runner.TurnRunning(turnGeneration) {
 				s.historyWg.Add(1)
 				s.historyFinalizers.Add(1)
 				go func() {
 					defer s.historyWg.Done()
 					defer s.historyFinalizers.Add(-1)
-					o.subAgentSup.WaitForTurn(turnGeneration)
+					runner.WaitForTurn(turnGeneration)
 					finishHistory()
 				}()
 				return
@@ -308,8 +299,8 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	if status := agent.BuildAsyncCommandStatus(s.asyncMgr); status != "" {
 		runtimeParts = append(runtimeParts, status)
 	}
-	if o.subAgentSup != nil {
-		if status := agent.BuildSubAgentStatus(o.subAgentSup.Manager()); status != "" {
+	if runner := o.subAgentRunner(); runner != nil {
+		if status := agent.BuildSubAgentStatus(runner.Manager()); status != "" {
 			runtimeParts = append(runtimeParts, status)
 		}
 	}
@@ -384,6 +375,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	turnIdentity := ttypes.TurnIdentity{
 		Generation: turnGeneration,
 		ProviderID: turnProvider.ID,
+		AccountID:  turnProvider.AccountID,
 		ModelID:    turnProvider.Model,
 	}
 	sender.SendAgentEventWithID("turn_started", turnIdentity, o.ID)
@@ -411,11 +403,80 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 	ag.ContextArchive = archiveCopy
 	ag.FrozenPrefix = frozenPrefix
-	if o.subAgentSup != nil {
-		o.subAgentSup.SetParentTurnGeneration(turnGeneration)
-		o.subAgentSup.SetParentToolFn(ag.ToolFn)
-		ag.SubAgentMgr = o.subAgentSup.Manager()
+	if runner := o.subAgentRunner(); runner != nil {
+		runner.SetParentTurnGeneration(turnGeneration)
+		ag.SubAgentMgr = runner.Manager()
 	}
+	baseToolFn := ag.ToolFn
+	ag.ToolFn = func(toolCtx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
+		return baseToolFn(withDelegationOwner(toolCtx, o.ID, turnGeneration), tool, params)
+	}
+	ag.PrepareStep = func() ([]tools.ToolDef, []provider.ChatMessage) {
+		// Publish the tool snapshot and its settings notices together, after
+		// any concurrent save has completed its launch-admission barrier.
+		s.delegationMu.Lock()
+		defer s.delegationMu.Unlock()
+		enabled := s.runtimeProfile.GetEffectiveConfig(o.ID).IsMultiAgentEnabled()
+		return orchestratorTools(enabled), s.takeDelegationNotices()
+	}
+	var pendingRuntimeWakes []WakeEvent
+	ag.PrepareRuntimeNotices = func() []provider.ChatMessage {
+		if ctx.Err() != nil || s.isHardCancelled() {
+			return nil
+		}
+		// RunOrchestrator cannot receive wakes while this turn is active. Drain
+		// only here, after tool results have had a chance to mark consumed reports.
+		for {
+			select {
+			case wake := <-s.wakeCh:
+				if wake.Type == WakeShutdown {
+					// Preserve shutdown for the owning outer session loop.
+					s.wakeCh <- wake
+					goto drained
+				}
+				if wake.Type == WakeSubAgentDone {
+					pendingRuntimeWakes = append(pendingRuntimeWakes, wake)
+				}
+			default:
+				goto drained
+			}
+		}
+	drained:
+		// A synchronous wait, poll or cancellation may have consumed a result
+		// after its wake was queued. Check again at the request boundary.
+		kept := pendingRuntimeWakes[:0]
+		for _, wake := range pendingRuntimeWakes {
+			if !s.IsAndClearReportConsumed(wake.SourceID) {
+				kept = append(kept, wake)
+			}
+		}
+		pendingRuntimeWakes = kept
+		if len(kept) == 0 {
+			return nil
+		}
+		notice := provider.RuntimeInput(provider.OriginSubAgentWake, formatSubAgentWakeBatch(kept))
+		notice.InternalID = newMessageID()
+		message := inputMessage(provider.NewTextMessage("user", notice.Text), notice)
+		message.InternalID = notice.InternalID
+		return []provider.ChatMessage{message}
+	}
+	ag.RuntimeNoticesAccepted = func() { pendingRuntimeWakes = nil }
+	defer func() {
+		// A provider may reject the request before accepting the notification.
+		// Give the idle loop another chance rather than silently losing the wake.
+		if ctx.Err() != nil || s.isHardCancelled() {
+			return
+		}
+		for _, wake := range pendingRuntimeWakes {
+			if !s.IsAndClearReportConsumed(wake.SourceID) {
+				select {
+				case s.wakeCh <- wake:
+				case <-o.stopCh:
+				}
+			}
+		}
+	}()
+
 	ag.SetToolCallSeqStart(s.toolCallSeq)
 	var finalContent string
 	prompt := s.systemPrompt(effectiveCfg.IsMultiAgentEnabled())
@@ -757,6 +818,7 @@ func (s *Session) finalizeTurn(
 		if m.Role == "assistant" || m.Role == "tool" {
 			dm.TurnGeneration = turnIdentity.Generation
 			dm.ProviderID = turnIdentity.ProviderID
+			dm.AccountID = turnIdentity.AccountID
 			dm.ModelID = turnIdentity.ModelID
 		}
 		if m.Role != "system" {
@@ -777,7 +839,7 @@ func (s *Session) finalizeTurn(
 		s.displayMetas = append(s.displayMetas, canonicalizeDisplayMeta(message,
 			sessiondb.DisplayMeta{
 				DisplayRole: "assistant", TurnGeneration: turnIdentity.Generation,
-				ProviderID: turnIdentity.ProviderID, ModelID: turnIdentity.ModelID,
+				ProviderID: turnIdentity.ProviderID, AccountID: turnIdentity.AccountID, ModelID: turnIdentity.ModelID,
 			}, "", len(s.msgs)-1, time.Now()))
 	}
 	nextContext := returned

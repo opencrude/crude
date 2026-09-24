@@ -417,6 +417,7 @@ func parseCompactionStatus(phase string, data any) TurnStatus {
 	status.RetryLimit = int(phaseInt64(values["retry_limit"]))
 	status.ContextWindow = int(phaseInt64(values["context_window"]))
 	status.Detail, _ = values["error"].(string)
+	status.AccountID, _ = values["account_id"].(string)
 	status.ProviderID, _ = values["provider_id"].(string)
 	status.ModelID, _ = values["model_id"].(string)
 	if status.StageCount == 0 {
@@ -437,6 +438,7 @@ func parseTurnIdentity(data any) (ttypes.TurnIdentity, bool) {
 	if !ok {
 		return ttypes.TurnIdentity{}, false
 	}
+	identity.AccountID, _ = values["account_id"].(string)
 	identity.ProviderID, _ = values["provider_id"].(string)
 	identity.ModelID, _ = values["model_id"].(string)
 	identity.Generation = uint64(phaseInt64(values["generation"]))

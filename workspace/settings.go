@@ -2,10 +2,30 @@ package workspace
 
 import (
 	"encoding/json"
+	"fmt"
 
+	"crude/provider"
 	"crude/session"
 	ttypes "crude/types"
 )
+
+// SaveAccountChange writes one explicit account operation through the app's
+// atomic config owner. An unwired workspace must fail, never claim success.
+func (w *Workspace) SaveAccountChange(change ttypes.AccountChange) error {
+	if w.OnAppAccountChange == nil {
+		return fmt.Errorf("application account persistence is unavailable")
+	}
+	return w.OnAppAccountChange(change)
+}
+
+// SaveTemplateChange writes one explicit provider-template operation through
+// the app's atomic config owner.
+func (w *Workspace) SaveTemplateChange(change provider.TemplateChange) error {
+	if w.OnAppTemplateChange == nil {
+		return fmt.Errorf("application provider-template persistence is unavailable")
+	}
+	return w.OnAppTemplateChange(change)
+}
 
 const (
 	workspaceSettingsKey   = "workspace_settings"
@@ -22,6 +42,7 @@ func (w *Workspace) SetAppDefaults(s ttypes.AppSettings) {
 // AppDefaults returns the application-layer settings (no workspace overlay).
 func (w *Workspace) AppDefaults() ttypes.AppSettings {
 	s := w.appDefaults
+	s.Accounts = w.AllAccounts()
 	ttypes.ApplyAppDefaults(&s)
 	return s
 }
@@ -83,12 +104,26 @@ func (w *Workspace) SaveWorkspaceSettings(overrides ttypes.WorkspaceOverrides) e
 // stay on SaveWorkspaceSettings.
 func (w *Workspace) SaveAppSettings(s ttypes.AppSettings) error {
 	ttypes.ApplyAppDefaults(&s)
-	w.appDefaults = s
 	if w.OnAppSettingsSave != nil {
 		if err := w.OnAppSettingsSave(s); err != nil {
 			w.Logger.Warn("WORKSPACE", "save_app_settings_failed", "error", err.Error())
 			return err
 		}
+		// Account and provider-template operations commit independently of
+		// preference drafts. Keep the complete live provider snapshot published
+		// by the app owner, rather than re-installing stale templates/defaults.
+		persisted := w.AppDefaults()
+		s.Accounts = persisted.Accounts
+		s.Providers = persisted.Providers
+	}
+	w.appDefaults = s
+	if w.sessionCfg != nil && w.sessionCfg.AccountManager != nil {
+		// The app callback publishes its normalized, durably saved snapshot.
+		// Never replace it again with the stale form's pre-refresh credentials.
+		if w.OnAppSettingsSave == nil {
+			w.sessionCfg.AccountManager.Replace(s.Accounts)
+		}
+		w.appDefaults.Accounts = w.sessionCfg.AccountManager.Snapshot()
 	}
 	w.applyEffectiveSettings()
 	return nil
@@ -96,6 +131,7 @@ func (w *Workspace) SaveAppSettings(s ttypes.AppSettings) error {
 
 func (w *Workspace) applyEffectiveSettings() {
 	effective := w.EffectiveAppSettings()
+	w.applyProviderSettings(effective)
 	if w.LSPMgr != nil {
 		w.LSPMgr.SetSettings(effective.LSP)
 	}
@@ -104,6 +140,7 @@ func (w *Workspace) applyEffectiveSettings() {
 	}
 	if w.sessionCfg != nil {
 		w.sessionCfg.Memory = effective.Memory
+		w.sessionCfg.Safety = effective.Safety
 	}
 	if w.HistoryService != nil {
 		w.HistoryService.UpdateSettings(effective.LocalHistory)
@@ -116,7 +153,9 @@ func (w *Workspace) applyEffectiveSettings() {
 			Agents:         effective.Agents,
 			ActiveProvider: effective.ActiveProvider,
 			Providers:      effective.Providers,
+			Accounts:       effective.Accounts,
 			Memory:         effective.Memory,
+			Safety:         effective.Safety,
 		})
 		if frontendSession.Settings != nil {
 			frontendSession.Settings.SetInheritance(

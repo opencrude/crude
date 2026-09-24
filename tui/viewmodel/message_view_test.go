@@ -89,3 +89,15 @@ func TestCanonicalMessageFrontendRoundTrip(t *testing.T) {
 		t.Fatalf("frontend canonical round-trip\n got: %#v\nwant: %#v", got, want)
 	}
 }
+
+func TestAccountAttributionSurvivesFrontendRoundTrip(t *testing.T) {
+	canonical := workspace.ChatMessageView{Role: "assistant", Content: "answer", ProviderID: "chatgpt", AccountID: "work", ModelID: "gpt-5", TurnGeneration: 7}
+	messages := ChatMessagesFromViews([]workspace.ChatMessageView{canonical})
+	if len(messages) != 1 || messages[0].AccountID != "work" {
+		t.Fatalf("account lost in frontend projection: %+v", messages)
+	}
+	back := workspaceMessageFromChat(messages[0])
+	if back.AccountID != "work" || back.ProviderID != "chatgpt" || back.TurnGeneration != 7 {
+		t.Fatalf("account lost in canonical conversion: %+v", back)
+	}
+}

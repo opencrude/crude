@@ -145,7 +145,7 @@ func isPotentiallyBlocking(name string) bool {
 	switch name {
 	case "question":
 		return true
-	case "execute_command":
+	case "execute_command", "async_execute_command":
 		return true
 	case "write_file", "edit_file", "delete_file", "move_file", "copy_file":
 		return true
@@ -290,7 +290,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		return execResult{id: tc.ID, name: "question", result: tools.ToolResult{Content: result}, toolError: resultError}
 	}
 
-	if tc.Function.Name == "execute_command" {
+	if tc.Function.Name == "execute_command" || tc.Function.Name == "async_execute_command" {
 		cmd := getStr(params, "command")
 		sr := safety.CheckCommandSafetyWithPolicy(cmd, a.logger, a.CommandPolicy)
 		if a.CommandPolicy.NotifyDangerous && sr.Risk >= safety.RiskDestructive {
@@ -304,24 +304,32 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
 				"internal_id": internalID,
 				"tool_id":     tc.ID,
-				"name":        "execute_command",
+				"name":        tc.Function.Name,
 				"phase":       "error",
 			}})
 			emit(AgentEvent{Type: "tool_result", Data: map[string]any{
 				"internal_id": internalID,
 				"tool_id":     tc.ID,
-				"name":        "execute_command",
+				"name":        tc.Function.Name,
 				"result":      errMsg,
 				"error":       "true",
 			}})
-			return execResult{id: tc.ID, name: "execute_command", result: tools.ToolResult{Content: errMsg}, toolError: true}
+			return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errMsg}, toolError: true}
 		}
+		autoAllowed := false
 		if !a.yoloEnabled() && sr.NeedsConfirmation() {
+			var denied *execResult
+			autoAllowed, denied = a.reviewPermission(ctx, tc, params, sr.Risk, emit)
+			if denied != nil {
+				return *denied
+			}
+		}
+		if !autoAllowed && !a.yoloEnabled() && sr.NeedsConfirmation() {
 			drainStaleBlockResponses(blockResolveCh)
 			emit(AgentEvent{Type: "blocking", Data: map[string]string{
 				"block_id":   blockID,
 				"operation":  sr.Risk.String(),
-				"tool":       "execute_command",
+				"tool":       tc.Function.Name,
 				"target":     cmd,
 				"question":   fmt.Sprintf("Allow this %s command?", sr.Risk.String()),
 				"risk":       sr.Risk.String(),
@@ -332,7 +340,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			response, ok := waitForBlockResponse(ctx, blockResolveCh, blockID)
 			if !ok {
 				emit(AgentEvent{Type: "blocking_complete"})
-				return execResult{id: tc.ID, name: "execute_command", result: tools.ToolResult{Content: "Permission request interrupted because the active turn was cancelled."}, toolError: true}
+				return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: "Permission request interrupted because the active turn was cancelled."}, toolError: true}
 			}
 			resp := response.Value
 			emitPermissionDecision(emit, tc, resp)
@@ -342,24 +350,24 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 				emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
 					"internal_id": internalID,
 					"tool_id":     tc.ID,
-					"name":        "execute_command",
+					"name":        tc.Function.Name,
 					"phase":       "error",
 				}})
 				emit(AgentEvent{Type: "tool_result", Data: map[string]any{
 					"internal_id": internalID,
 					"tool_id":     tc.ID,
-					"name":        "execute_command",
+					"name":        tc.Function.Name,
 					"result":      errMsg,
 					"error":       "true",
 				}})
-				return execResult{id: tc.ID, name: "execute_command", result: tools.ToolResult{Content: errMsg}, toolError: true}
+				return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errMsg}, toolError: true}
 			}
 			a.logger.Info("BLOCK", "resolved", "response", resp, "operation", sr.Risk.String(), "tool", "execute_command")
 			emit(AgentEvent{Type: "blocking_complete"})
 			if resp == "always" {
 				emit(AgentEvent{Type: "confirmation_always", Data: map[string]string{
 					"operation": sr.Risk.String(),
-					"tool":      "execute_command",
+					"tool":      tc.Function.Name,
 					"target":    cmd,
 				}})
 			}
@@ -404,7 +412,15 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		fileTarget = src + " → " + dst
 	}
 
+	autoAllowed := false
 	if fileCheck && !a.yoloEnabled() {
+		var denied *execResult
+		autoAllowed, denied = a.reviewPermission(ctx, tc, params, safety.RiskProjectWrite, emit)
+		if denied != nil {
+			return *denied
+		}
+	}
+	if fileCheck && !autoAllowed && !a.yoloEnabled() {
 		question := fmt.Sprintf("Allow this %s operation on %s?", fileOp, fileTarget)
 		drainStaleBlockResponses(blockResolveCh)
 		emit(AgentEvent{Type: "blocking", Data: map[string]string{

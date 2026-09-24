@@ -160,6 +160,9 @@ func migrateWorkspaceSchema(db *sql.DB) error {
 		return err
 	}
 
+	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS workspace_agent_names (session_id TEXT PRIMARY KEY, name TEXT NOT NULL)`); err != nil {
+		return err
+	}
 	return ensureWorkspaceSessionColumns(db)
 }
 
@@ -325,7 +328,7 @@ func (wdb *WorkspaceDB) ListSessions() ([]sessiondb.SessionMeta, error) {
 	rows, err := wdb.DB.Query(`
 		SELECT session_id, project_dir, project_name, model, provider,
 		       created_at, closed_at, message_count, turn_count,
-		       first_prompt, last_prompt
+		       first_prompt, last_prompt, (SELECT name FROM workspace_agent_names n WHERE n.session_id = workspace_sessions.session_id)
 		FROM workspace_sessions
 		WHERE db_missing = 0
 		ORDER BY created_at DESC
@@ -341,7 +344,7 @@ func (wdb *WorkspaceDB) ListSessions() ([]sessiondb.SessionMeta, error) {
 		if err := rows.Scan(
 			&m.ID, &m.ProjectPath, &m.ProjectName, &m.Model, &m.Provider,
 			&m.CreatedAt, &m.ClosedAt, &m.MessageCount, &m.TurnCount,
-			&m.FirstPrompt, &m.LastPrompt,
+			&m.FirstPrompt, &m.LastPrompt, &m.AgentName,
 		); err != nil {
 			return nil, err
 		}
@@ -409,6 +412,9 @@ func (wdb *WorkspaceDB) syncSessionMetaFromDB(sdb *sql.DB, sessionID string) err
 	if err != nil {
 		return err
 	}
+	if err := wdb.SetAgentName(sessionID, meta.AgentName.String); err != nil {
+		return err
+	}
 	return wdb.UpdateSessionMeta(sessionID, meta.TurnCount, meta.MessageCount,
 		nullStr(&meta.FirstPrompt), nullStr(&meta.LastPrompt), totalCost)
 }
@@ -419,4 +425,12 @@ func (wdb *WorkspaceDB) Close() error {
 		return wdb.DB.Close()
 	}
 	return nil
+}
+
+func (wdb *WorkspaceDB) SetAgentName(sessionID, name string) error {
+	if name == "" {
+		return nil
+	}
+	_, err := wdb.DB.Exec(`INSERT INTO workspace_agent_names(session_id,name) VALUES(?,?) ON CONFLICT(session_id) DO UPDATE SET name=excluded.name`, sessionID, name)
+	return err
 }

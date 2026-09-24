@@ -234,8 +234,8 @@ func TestManualCompactRebuildsActiveContextWithoutDeletingArchive(t *testing.T) 
 	}
 	cfg := testConfig()
 	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
-	profile.Categories[CategoryDefault] = CategoryConfig{Provider: cfg.ActiveProvider, Model: "main-test-model"}
-	profile.Categories[CategoryAeron] = CategoryConfig{Provider: cfg.ActiveProvider, Model: "aeron-test-model"}
+	profile.Categories[CategoryDefault] = CategoryConfig{AccountID: "account", Model: "main-test-model"}
+	profile.Categories[CategoryAeron] = CategoryConfig{AccountID: "account", Model: "aeron-test-model"}
 	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile
 	provider.SetModelContext("main-test-model", 200_000)
 	provider.SetModelContext("aeron-test-model", 200_000)

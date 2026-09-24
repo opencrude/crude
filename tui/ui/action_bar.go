@@ -250,8 +250,14 @@ func (ab *ActionBar) SetLabel(action, label string) bool {
 		if ab.buttons[i].action != action {
 			continue
 		}
+		if ab.buttons[i].label == label {
+			return true // action exists; callers must not recreate the bar
+		}
 		ab.buttons[i].label = label
 		ab.buttons[i].button.SetLabel(label)
+		if !ab.Bounds().Empty() {
+			ab.Layout(LayoutContext{}, ab.Bounds())
+		}
 		return true
 	}
 	return false

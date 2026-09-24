@@ -21,6 +21,7 @@ CREATE TABLE IF NOT EXISTS sessions (
     project_name    TEXT NOT NULL,
     model           TEXT,
     provider        TEXT,
+    account_id      TEXT NOT NULL DEFAULT '',
     created_at      INTEGER NOT NULL,
     closed_at       INTEGER,
     message_count   INTEGER DEFAULT 0,
@@ -66,6 +67,7 @@ CREATE TABLE IF NOT EXISTS usage_requests (
     attempt             INTEGER NOT NULL DEFAULT 1,
     request_kind        TEXT NOT NULL DEFAULT 'normal',
     provider_id         TEXT NOT NULL DEFAULT '',
+    account_id          TEXT NOT NULL DEFAULT '',
     model_id            TEXT NOT NULL DEFAULT '',
     prompt_tokens       INTEGER NOT NULL DEFAULT 0,
     completion_tokens   INTEGER NOT NULL DEFAULT 0,
@@ -150,6 +152,7 @@ CREATE TABLE IF NOT EXISTS session_agent_settings (
     session_id      TEXT NOT NULL,
     category        TEXT NOT NULL,
     provider        TEXT,
+    account_id      TEXT NOT NULL DEFAULT '',
     model           TEXT,
     api_standard    TEXT,
     thinking_effort TEXT,
@@ -194,6 +197,7 @@ CREATE TABLE IF NOT EXISTS context_compactions (
     trigger_kind     TEXT NOT NULL,
     agent_role       TEXT NOT NULL,
     provider_id      TEXT NOT NULL DEFAULT '',
+    account_id       TEXT NOT NULL DEFAULT '',
     model_id         TEXT NOT NULL DEFAULT '',
     state            TEXT NOT NULL,
     stage_name       TEXT NOT NULL DEFAULT '',
@@ -311,7 +315,11 @@ func Migrate(db *sql.DB) error {
 		"ALTER TABLE session_agent_settings ADD COLUMN context_compaction_percent INTEGER",
 		"ALTER TABLE context_compactions ADD COLUMN provider_id TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE context_compactions ADD COLUMN model_id TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE context_compactions ADD COLUMN account_id TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE usage_requests ADD COLUMN request_kind TEXT NOT NULL DEFAULT 'normal'",
+		"ALTER TABLE sessions ADD COLUMN account_id TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE session_agent_settings ADD COLUMN account_id TEXT NOT NULL DEFAULT ''",
+		"ALTER TABLE usage_requests ADD COLUMN account_id TEXT NOT NULL DEFAULT ''",
 	}
 	for _, m := range migrations {
 		if _, err := db.Exec(m); err != nil &&

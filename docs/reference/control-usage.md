@@ -27,6 +27,7 @@ target replacement under `tui/ui/`.
 | `PopupButton` / `PopupButtonRow` | same Button + ActionBar |
 | Agent question actions | native `ui.ActionBar` in `tui/screens/question` | same |
 | Tool confirmation / YOLO actions | native PanelDeck `ui.ActionBar` with typed quick keys and Escape actions | same |
+| Footer workspace-panel controls | `tui/screens/shellfooter` | Contiguous theme-derived strip: `Problems`, `Notices`, `Terminals`, `Workspace`, with color boundaries and no gaps. `TokenSet.StatusStripColors` blends each hue into the current shell theme: idle / attention / open-panel weights are 55% / 75% / 90%, with WCAG-contrasting ink and bold active labels. Problems uses error/warning only for real issues; unread notices, live terminals, and background work/input change their controls' color or strength. Previous sessions are actual searchable, date-grouped rows inside Workspace, resumed directly without a picker popup. |
 
 ## Collections
 
@@ -37,7 +38,7 @@ target replacement under `tui/ui/`.
 | Activity lists (Agents / Terminals / Git) | `ui.List` via `activitylist` |
 | Message list | ✅ `chatprojection.Renderer` export; `shellchat` paints message-level `ui.VirtualList`; all rows native `PaintLine` (markdown/thinking bridged at render time via `BridgeAnsiLine`); main `ScrollbarControl` |
 | Context menu | `ui/overlay.ContextMenu` / WindowFrame + List |
-| Tabs | `ui.Tabs` only — consumers: `shelltabs` (main tab bar), `termdock` (terminal dock), `ui/panel_deck.go` (session deck), `statusoverview` (mode strip), `tui/settings` (scope strip) |
+| Tabs | `ui.Tabs` only for actual content/mode tabs — consumers include `shelltabs` (main tab bar) and `ui/panel_deck.go` (session deck). Provider templates use a table and focused editor, not tab pages. Application/Workspace scope is a two-option, background-selected `ui.ToggleButton` switch aligned on the same row as Save/Cancel; one full-width separator sits directly above that footer row. It is not a tab strip. The workspace panel has no duplicate mode strip; terminal instances use a right-side `ui.List` rail. |
 | File picker entries | native `ui.List` |
 | Session picker | native `ui.List` section headers + `ScrollbarControl` (`tui/screens/sessionpicker`) |
 | Find in Files results | native `ui.VirtualList` + `ui.ScrollbarControl` |
@@ -47,14 +48,13 @@ target replacement under `tui/ui/`.
 
 ### Tab bar contract (one look)
 
-Every tab bar in the app is the same control with the same look — the Status
+Every actual tab bar in the app is the same control with the same look — the Status
 Overview mode strip is the reference. `ui.Tabs` owns the structure; `TabsChrome`
 selects only the background the strip sits on (shell `ColorBg` vs popup
 `ColorPopupBg`), and no consumer may restyle it.
 
 - **Two rows, owned by the strip.** Row 0 is labels, row 1 is the baseline rule.
-  `ui.StripHeight` is the row count every host reserves (shell slot, dock chrome,
-  deck chrome, settings footer).
+  `ui.StripHeight` is the row count every host reserves when it mounts a tab strip.
 - **Active tab** = accent + bold on the label row, plus an accent underline under
   that tab's exact columns on the baseline row.
 - **Focus** = the whole baseline turns into the heavy accent rule (`━`). Focus is
@@ -84,16 +84,16 @@ selects only the background the strip sits on (shell `ColorBg` vs popup
   the cell start, so the first tab's indicator touches the bar's start. That is
   the main tab bar's shape (`shelltabs.RailInset`, one column): `Main Agent`
   gets one column of air beside the navigation rail while the underline still
-  begins on the rail. No other strip takes an inset — the terminal dock, panel
-  deck, Status Overview mode strip, and settings scope strip sit inside their own
-  chrome and a bar-local inset would misalign them against it
+  begins on the rail. No other strip takes an inset — the session deck
+  sits inside its own chrome, while the workspace panel
+  and tab-statistics modal intentionally have no mode strip
   (`TestRailInsetIsMainBarOnly`).
 - **Rule bleed** is only for a strip that does not span its row: the parent
   publishes the row geometry (`SetRuleFullBleed` + `SetRuleBleed`) so the
   baseline still reaches the row edge while labels stay on the content rail.
-  Today only the terminal dock needs it (its header action glyphs occupy the
-  right end of the strip row). The shell tab bar, session deck, Status Overview
-  mode strip, and settings scope strip all span their row and need no bleed.
+  The shell tab bar and session deck span their row and need no bleed. Settings
+  scope is not a tab strip. Terminal mode has no horizontal strip; its action glyphs sit
+  above the PTY and its instance list is vertical on the right.
 - **Icons are not painted in tab bars.** Window tab icons live in `window.Tab`
   (disambiguation) and are deliberately not plumbed into the strip — glyph tofu
   risk. Labels are the only tab content.

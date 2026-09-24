@@ -44,6 +44,28 @@ func makeTestRows(n int) []TableRow {
 	return rows
 }
 
+func TestTableColumnGapKeepsTruncatedLabelsOffNextColumn(t *testing.T) {
+	tb := NewTable("t", NewTokenSet(theme.DefaultDark()))
+	tb.SetColumnGap(2)
+	tb.SetColumns([]TableColumn{{ID: "name", Label: "Account", Track: FractionGridTrack(3)}, {ID: "template", Label: "Template", Track: FractionGridTrack(2)}})
+	tb.SetRows([]TableRow{{ID: "one", Cells: []TableCell{{Text: "a very long account label"}, {Text: "Codex"}}}})
+	tb.SetShowHeader(true)
+	tb.Layout(LayoutContext{}, Rect{W: 22, H: 3})
+	if gap := tb.colX[1] - tb.colX[0] - tb.widths[0]; gap != 2 {
+		t.Fatalf("column gap=%d want 2", gap)
+	}
+	buf := surface.NewCellBuffer(22, 3)
+	tb.Paint(buf, 0, 0, PaintContext{})
+	for x := tb.colX[0] + tb.widths[0]; x < tb.colX[1]; x++ {
+		if char := buf.Get(x, 1).Char; char != ' ' && char != 0 {
+			t.Fatalf("account label crossed gutter at x=%d: %q", x, char)
+		}
+	}
+	if got := tableRowText(buf, 1, tb.colX[1], tb.widths[1]); !strings.Contains(got, "Codex") {
+		t.Fatalf("template text lost after gap: %q", got)
+	}
+}
+
 func TestTable_PageHomeEnd(t *testing.T) {
 	tb := newTestTable(10)
 	tb.Layout(LayoutContext{}, Rect{W: 20, H: 4})

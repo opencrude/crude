@@ -51,7 +51,7 @@ type tabRange struct {
 
 // Tabs is a horizontal retained tab strip with keyboard and mouse parity.
 //
-// Structure (the Status Overview mode strip is the reference):
+// Structure (the shared shell mode strip is the reference):
 //
 //	row 0: labels — active accent+bold, others muted, hover fills the tab
 //	row 1: baseline rule — border ink, accent when the strip is focused, and
