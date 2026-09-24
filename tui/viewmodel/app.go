@@ -35,8 +35,8 @@ import (
 	"crude/tui/screens/shellterm"
 	"crude/tui/screens/shelltree"
 	"crude/tui/screens/sourcecontrol"
-	statusoverview "crude/tui/screens/statusoverview"
 	"crude/tui/screens/termdock"
+	settingsui "crude/tui/settings"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	ttypes "crude/tui/types"
@@ -63,25 +63,24 @@ type App struct {
 
 	// TUI-owned presentation state. Workspace retains only domain data and
 	// services; these controls and render projections are owned by the host.
-	Theme                       *theme.Theme
-	Input                       input.Model
-	Feedback                    *feedbackSink
-	statusOverview              *statusoverview.Surface
-	statusOverviewSourceVersion uint64
-	statusOverviewCenterVersion uint64
-	statusOverviewSecond        int64
-	Win                         *window.Window
-	BufferMgr                   *editor.BufferManager
-	Tree                        *TreeState
-	FindReplace                 *popup.FindReplaceState
-	LastContextMenu             *ui.ContextMenuState
-	ContextMenuOpenedAt         time.Time
-	TreePrompt                  *ui.TextPromptState
-	TreeDeletePending           string
-	TreeDeleteChoice            int
-	GitDiscardPending           *workspace.GitChange
-	FilePicker                  *filepickerscreen.Screen
-	DiagPopupID                 string
+	Theme                     *theme.Theme
+	Input                     input.Model
+	Feedback                  *feedbackSink
+	workspacePanelLastVersion uint64
+	workspacePanelLastSecond  int64
+	workspaceSessions         workspaceSessionCache
+	Win                       *window.Window
+	BufferMgr                 *editor.BufferManager
+	Tree                      *TreeState
+	FindReplace               *popup.FindReplaceState
+	LastContextMenu           *ui.ContextMenuState
+	ContextMenuOpenedAt       time.Time
+	TreePrompt                *ui.TextPromptState
+	TreeDeletePending         string
+	TreeDeleteChoice          int
+	GitDiscardPending         *workspace.GitChange
+	FilePicker                *filepickerscreen.Screen
+	DiagPopupID               string
 
 	// Composer draft persistence (hydration). The active-session pointer is
 	// compared every frame; on change the composer clears immediately and the
@@ -92,6 +91,11 @@ type App struct {
 	composerDirtySinceSave bool
 	DirtyPromptPath        string
 	DirtyPromptChoice      int
+	accountRecoveryChoice  int
+	accountRecoverySession bool
+	settingsPrompt         *settingsPromptState
+	agentPrompt            *agentPromptState
+	agentPromptQueue       []agentPromptRequest
 	// pendingTabClose holds the tabs still to close after a bulk close
 	// ("Close others" / "Close to the right") stopped at a dirty buffer and
 	// opened the unsaved-changes prompt. Cancel drops it; a confirmed close
@@ -324,6 +328,7 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	}
 	deck.app = app
 	app.Feedback = newFeedbackSink(app)
+	app.initWorkspacePanels()
 	if app.sidebarScreen != nil {
 		app.sidebarScreen.SetPathSearchHandler(app.beginTreePathSearch)
 	}
@@ -531,7 +536,7 @@ func (m *App) openFilePickerWindow() {
 		wm.WithResizable(true),
 		wm.WithModal(true),
 		wm.WithFocusable(true),
-		wm.WithMinSize(minInt(60, w), minInt(18, h)),
+		wm.WithMinSize(minInt(60, w), minInt(14, h)),
 		wm.WithMaxSize(maxInt(w, m.width-2), maxInt(h, m.height-2)),
 		wm.WithClickOutside(wm.ClickOutsideIgnore),
 	)
@@ -553,7 +558,28 @@ func (m *App) openApplicationSettings() {
 	m.openSettings(ttypes.SettingsScopeApplication)
 }
 
+func (m *App) openApplicationAccounts() {
+	m.openSettingsTo(ttypes.SettingsScopeApplication, true)
+}
+
+func (m *App) openApplicationMainAgent() {
+	m.openSettingsTo(ttypes.SettingsScopeApplication, false)
+	if fw := m.windowManager.Window(string(ui.OverlayWorkspaceSettings)); fw != nil {
+		if frame, ok := fw.Content.(*ui.WindowFrameWidget); ok {
+			if body, ok := frame.Body().(*settingsui.WorkspaceSettingsSurface); ok {
+				body.ShowMainAgent()
+				frame.Host().MarkLayout()
+			}
+		}
+	}
+}
+
 func (m *App) openSettings(scope ttypes.SettingsScope) {
+	m.openSettingsTo(scope, false)
+}
+
+func (m *App) openSettingsTo(scope ttypes.SettingsScope, accounts bool) {
+	m.overlayHost.Close(ui.OverlaySettingsPrompt)
 	m.overlayHost.Close(ui.OverlayWorkspaceSettings)
 
 	appDefaults := m.AppDefaults()
@@ -586,7 +612,7 @@ func (m *App) openSettings(scope ttypes.SettingsScope) {
 
 	wsWidget := popup.NewWorkspaceSettingsScoped(m.Theme, working, m.providerPresets, scope, appDefaults, overrides)
 
-	w, h := fitFloatingSize(m.width, m.height, 104, 28, 60, 18)
+	w, h := fitFloatingSize(m.width, m.height, minInt(124, m.width-8), minInt(28, m.height-4), 60, 18)
 	frame := ui.NewWindowFrameWidget(
 		m.Theme,
 		ui.NewID(ui.RootID, "workspace-settings-frame"),
@@ -599,7 +625,6 @@ func (m *App) openSettings(scope ttypes.SettingsScope) {
 		h,
 	)
 	wsWidget.SetFocusHandler(frame.Focus)
-	wsWidget.FocusSearch()
 	win := wm.NewFloatingWindow(string(ui.OverlayWorkspaceSettings), title, frame,
 		w, h,
 		wm.WithDecoration(true),
@@ -613,7 +638,48 @@ func (m *App) openSettings(scope ttypes.SettingsScope) {
 		wm.WithClickOutside(wm.ClickOutsideIgnore),
 	)
 	wm.CenterOnScreen(win, m.width, m.height)
-	m.overlayHost.Open(ui.OverlayWorkspaceSettings, win, ui.ModalDialogPolicy(), nil)
+	m.overlayHost.Open(ui.OverlayWorkspaceSettings, win, ui.ModalDialogPolicy(), func() {
+		if m.settingsPrompt != nil && m.settingsPrompt.parent == win {
+			m.overlayHost.Close(ui.OverlaySettingsPrompt)
+		}
+	})
+	frame.Host().MarkLayout()
+	frame.Host().Layout()
+	if accounts {
+		if len(appDefaults.Accounts) == 0 {
+			wsWidget.ShowAccountSetup()
+		} else {
+			wsWidget.ShowAccounts()
+		}
+		frame.Host().MarkLayout()
+		frame.Host().Layout()
+	} else {
+		wsWidget.FocusSearch()
+	}
+	win.MarkContentDirty()
+}
+
+func (m *App) updateSettingsWindowTitle() {
+	if m.windowManager == nil {
+		return
+	}
+	fw := m.windowManager.Window(string(ui.OverlayWorkspaceSettings))
+	if fw == nil {
+		return
+	}
+	frame, ok := fw.Content.(*ui.WindowFrameWidget)
+	if !ok {
+		return
+	}
+	body, ok := frame.Body().(*settingsui.WorkspaceSettingsSurface)
+	if !ok || frame.Frame() == nil {
+		return
+	}
+	if title := body.WindowTitle(); title != frame.Frame().Title() {
+		frame.Frame().SetTitle(title)
+		frame.Host().MarkLayout()
+		fw.MarkContentDirty()
+	}
 }
 
 func fitFloatingSize(screenW, screenH, preferredW, preferredH, minW, minH int) (int, int) {
@@ -660,6 +726,9 @@ func (m *App) handleQuit() (tea.Model, tea.Cmd) {
 	// First, close any focused floating window
 	if m.windowManager != nil {
 		if fw := m.windowManager.Focused(); fw != nil {
+			if fw.ID == string(ui.OverlayWorkspaceSettings) {
+				return m, m.closePopupWindowByID(fw.ID)
+			}
 			m.overlayHost.Close(ui.OverlayID(fw.ID))
 			return m, nil
 		}
@@ -772,6 +841,7 @@ func (m *App) openSessionSettings() {
 		return
 	}
 	p.settings.ConfigureProviders(m.providerPresets, m.AllProviderConfigs())
+	p.settings.ConfigureAccounts(m.AllAccounts())
 	p.settings.SaveSnapshot()
 	m.openSessionSettingsPanel()
 }
@@ -838,6 +908,43 @@ func (m *App) registerOverlayHandlers() {
 	})
 	oh.RegisterHoverHandler(ui.OverlayDirtyClose, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
 		m.hoverDirtyPrompt(localX, localY)
+	})
+	oh.RegisterContentHandler(ui.OverlayAccountRecovery, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
+		choice := confirmFrameButtonAt(fw, localX, localY)
+		if choice >= 0 {
+			return m.activateAccountRecovery(choice)
+		}
+		return nil
+	})
+	oh.RegisterHoverHandler(ui.OverlayAccountRecovery, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
+		choice := confirmFrameButtonAt(fw, localX, localY)
+		if choice >= 0 && choice != m.accountRecoveryChoice {
+			m.accountRecoveryChoice = choice
+			if cw, ok := fw.Content.(*ui.ComponentWidget); ok {
+				ui.SetConfirmHover(cw, choice)
+			}
+		}
+	})
+	oh.RegisterContentHandler(ui.OverlaySettingsPrompt, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
+		if choice := confirmFrameButtonAt(fw, localX, localY); choice >= 0 {
+			return m.activateSettingsPrompt(choice)
+		}
+		return nil
+	})
+	oh.RegisterHoverHandler(ui.OverlaySettingsPrompt, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
+		if cw, ok := fw.Content.(*ui.ComponentWidget); ok {
+			ui.SetConfirmHover(cw, confirmFrameButtonAt(fw, localX, localY))
+		}
+	})
+	oh.RegisterContentHandler(ui.OverlayAgentPrompt, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
+		if m.agentPrompt != nil && m.agentPrompt.request.kind == agentPromptConfirmation {
+			choice := confirmFrameButtonAt(fw, localX, localY)
+			if choice >= 0 {
+				m.resolveAgentConfirmationChoice(choice)
+			}
+			return nil
+		}
+		return m.forwardEventToWindowContent(fw, msg)
 	})
 
 	oh.RegisterContentHandler(ui.OverlayTreePrompt, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {

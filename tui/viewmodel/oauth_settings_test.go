@@ -1,6 +1,9 @@
 package viewmodel
 
 import (
+	tea "charm.land/bubbletea/v2"
+	"errors"
+	"strings"
 	"testing"
 
 	"crude/provider"
@@ -9,6 +12,7 @@ import (
 	"crude/tui/ui"
 	"crude/tui/ui/popup"
 	"crude/tui/wm"
+	coretypes "crude/types"
 )
 
 // TestChatGPTSignInResultUpdatesOpenSettingsWindow verifies the app-level
@@ -19,11 +23,11 @@ import (
 func TestChatGPTSignInResultUpdatesOpenSettingsWindow(t *testing.T) {
 	app := newTestApp(t)
 	app.Logger = noopLogger{}
-	// Seed the workspace with a chatgpt provider so the settings form shows the
-	// OAuth status row.
+	// Seed an account so the Application Accounts page shows OAuth status.
 	app.SetAppDefaults(ttypes.AppSettings{
 		ActiveProvider: "chatgpt",
-		Providers:      map[string]ttypes.ProviderConfig{"chatgpt": {}},
+		Providers:      map[string]ttypes.ProviderConfig{"chatgpt": provider.DefaultTemplates()["chatgpt"]},
+		Accounts:       map[string]provider.Account{"personal": {ID: "personal", ProviderID: "chatgpt", Label: "Personal"}},
 	})
 	app.openSettings(ttypes.SettingsScopeApplication)
 
@@ -33,16 +37,19 @@ func TestChatGPTSignInResultUpdatesOpenSettingsWindow(t *testing.T) {
 	}
 	ws := settingsWidgetForTest(t, fw)
 	model := ws.ModelForTest()
-	model.SelectCategory(0) // Providers
+	model.SelectAccounts()
+	surfaceRoot := ws.Component().(*settingsui.WorkspaceSettingsSurface)
+	surfaceRoot.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.edit"})
 
 	// The settings model starts signed out.
-	if status := model.ValueForTest(0, "chatgpt-status"); status != "Not signed in" {
+	if status := model.ValueForTest(1, "chatgpt-status"); status != "Not signed in" {
 		t.Fatalf("initial status = %q, want 'Not signed in'", status)
 	}
 
 	// Dispatch the sign-in result through the app Update, exactly as the
 	// background sign-in command would.
-	_, cmd := app.Update(settingsui.ChatGPTSignInResultMsg{
+	accountID, generation := model.SignInRequest()
+	_, cmd := app.Update(settingsui.ChatGPTSignInResultMsg{AccountID: accountID, Generation: generation,
 		Creds: &provider.OAuthCredentials{AccessToken: "AT", Email: "u@example.com"},
 	})
 	if cmd != nil {
@@ -51,14 +58,26 @@ func TestChatGPTSignInResultUpdatesOpenSettingsWindow(t *testing.T) {
 
 	// The open window's model must now show signed in — this is the reported
 	// bug: it stayed "Not signed in" until the window was reopened.
-	if status := model.ValueForTest(0, "chatgpt-status"); status != "Signed in as u@example.com" {
-		t.Errorf("status after sign-in = %q, want 'Signed in as u@example.com'", status)
+	if status := model.ValueForTest(1, "chatgpt-status"); status != "Sign-in stored" {
+		t.Errorf("status after sign-in = %q, want stored sign-in", status)
 	}
 
-	// The persisted app settings must carry the OAuth creds.
+	// Authentication is staged in the account editor until confirmed.
+	if app.LoadAppSettings().Accounts["personal"].OAuth != nil {
+		t.Fatal("sign-in persisted before confirming the account editor")
+	}
+	app.OnAppAccountChange = func(change coretypes.AccountChange) error {
+		settings := app.LoadAppSettings()
+		settings.Accounts[change.ID] = *change.After
+		app.SetAppDefaults(settings)
+		return nil
+	}
+	change := surfaceRoot.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.commit"}).Cmd().(settingsui.AccountChangeMsg)
+	_, save := app.Update(change)
+	_, _ = app.Update(save())
 	saved := app.LoadAppSettings()
-	if saved.Providers["chatgpt"].OAuth == nil || saved.Providers["chatgpt"].OAuth.Email != "u@example.com" {
-		t.Errorf("persisted chatgpt OAuth = %+v, want email u@example.com", saved.Providers["chatgpt"].OAuth)
+	if saved.Accounts["personal"].OAuth == nil || saved.Accounts["personal"].OAuth.Email != "u@example.com" {
+		t.Errorf("persisted chatgpt OAuth = %+v, want email u@example.com", saved.Accounts["personal"].OAuth)
 	}
 }
 
@@ -72,8 +91,12 @@ func TestSignInThenSwitchBackDoesNotCorruptConfig(t *testing.T) {
 	app.SetAppDefaults(ttypes.AppSettings{
 		ActiveProvider: "opencode-go",
 		Providers: map[string]ttypes.ProviderConfig{
-			"opencode-go": {Model: "deepseek-v4-flash", APIKey: "sk-opencode"},
-			"chatgpt":     {},
+			"opencode-go": provider.DefaultTemplates()["opencode-go"],
+			"chatgpt":     provider.DefaultTemplates()["chatgpt"],
+		},
+		Accounts: map[string]provider.Account{
+			"opencode": {ID: "opencode", ProviderID: "opencode-go", Label: "Work", APIKey: "sk-opencode"},
+			"personal": {ID: "personal", ProviderID: "chatgpt", Label: "Personal"},
 		},
 	})
 	app.openSettings(ttypes.SettingsScopeApplication)
@@ -84,24 +107,34 @@ func TestSignInThenSwitchBackDoesNotCorruptConfig(t *testing.T) {
 	}
 	ws := settingsWidgetForTest(t, fw)
 	model := ws.ModelForTest()
-	model.SelectCategory(0) // Providers
-
-	// Switch to chatgpt.
-	model.SetValueForTest(0, "provider", "chatgpt")
-	if model.ProviderIDForTest() != "chatgpt" {
-		t.Fatalf("providerID = %q, want chatgpt", model.ProviderIDForTest())
+	// An OAuth edit must not switch the selected provider template.
+	if model.ProviderIDForTest() != "opencode-go" {
+		t.Fatalf("selected template = %q, want opencode-go", model.ProviderIDForTest())
 	}
+	model.SelectAccountForTest("personal")
+	model.SelectAccounts()
+	surfaceRoot := ws.Component().(*settingsui.WorkspaceSettingsSurface)
+	surfaceRoot.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.edit"})
 
 	// Sign in.
-	_, cmd := app.Update(settingsui.ChatGPTSignInResultMsg{
+	accountID, generation := model.SignInRequest()
+	_, cmd := app.Update(settingsui.ChatGPTSignInResultMsg{AccountID: accountID, Generation: generation,
 		Creds: &provider.OAuthCredentials{AccessToken: "AT", Email: "u@example.com"},
 	})
 	if cmd != nil {
 		t.Fatalf("unexpected cmd: %v", cmd)
 	}
+	app.OnAppAccountChange = func(change coretypes.AccountChange) error {
+		settings := app.LoadAppSettings()
+		settings.Accounts[change.ID] = *change.After
+		app.SetAppDefaults(settings)
+		return nil
+	}
+	change := surfaceRoot.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.commit"}).Cmd().(settingsui.AccountChangeMsg)
+	_, save := app.Update(change)
+	_, _ = app.Update(save())
 
-	// Switch back to opencode-go. The model must follow the dropdown.
-	ws.ModelForTest().SetValueForTest(0, "provider", "opencode-go")
+	// Browsing and signing into a separate account never reselects the template.
 	if got := ws.ModelForTest().ProviderIDForTest(); got != "opencode-go" {
 		t.Fatalf("providerID after switch back = %q, want opencode-go", got)
 	}
@@ -118,18 +151,18 @@ func TestSignInThenSwitchBackDoesNotCorruptConfig(t *testing.T) {
 	// The persisted opencode-go provider must keep its own URL/standard.
 	saved := app.LoadAppSettings()
 	ocg := saved.Providers["opencode-go"]
-	if ocg.ProviderURL != "https://opencode.ai/zen/go/v1" {
-		t.Errorf("opencode-go ProviderURL = %q, want opencode-go URL (config corrupted)", ocg.ProviderURL)
+	if ocg.ProviderURL != provider.DefaultTemplates()["opencode-go"].ProviderURL {
+		t.Errorf("opencode-go ProviderURL changed after Codex sign-in: %q", ocg.ProviderURL)
 	}
-	if ocg.APIStandard != "openai" {
-		t.Errorf("opencode-go APIStandard = %q, want openai", ocg.APIStandard)
+	if ocg.APIStandard != provider.DefaultTemplates()["opencode-go"].APIStandard {
+		t.Errorf("opencode-go wire protocol changed after Codex sign-in: %q", ocg.APIStandard)
 	}
 	if saved.ActiveProvider != "opencode-go" {
 		t.Errorf("ActiveProvider = %q, want opencode-go", saved.ActiveProvider)
 	}
 	// chatgpt OAuth must survive the save.
-	if saved.Providers["chatgpt"].OAuth == nil || saved.Providers["chatgpt"].OAuth.Email != "u@example.com" {
-		t.Errorf("chatgpt OAuth lost after save: %+v", saved.Providers["chatgpt"].OAuth)
+	if saved.Accounts["personal"].OAuth == nil || saved.Accounts["personal"].OAuth.Email != "u@example.com" {
+		t.Errorf("chatgpt OAuth lost after save: %+v", saved.Accounts["personal"].OAuth)
 	}
 }
 
@@ -155,4 +188,68 @@ func settingsWidgetForTest(t *testing.T, fw *wm.FloatingWindow) *popup.Workspace
 		t.Fatalf("settings event target is %T, want *popup.WorkspaceSettings", target)
 	}
 	return ws
+}
+
+func TestAccountEditorStaysWithinUnmovedSettingsWindow(t *testing.T) {
+	app := newTestApp(t)
+	app.Logger = noopLogger{}
+	app.width, app.height = 160, 40
+	app.SetAppDefaults(ttypes.AppSettings{Providers: provider.DefaultTemplates()})
+	app.openApplicationSettings()
+	fw := app.windowManager.Window(string(ui.OverlayWorkspaceSettings))
+	if fw == nil {
+		t.Fatal("settings window did not open")
+	}
+	frame := fw.Content.(*ui.WindowFrameWidget)
+	surfaceRoot := frame.Body().(*settingsui.WorkspaceSettingsSurface)
+	surfaceRoot.ShowAccounts()
+	frame.Host().MarkLayout()
+	frame.Host().Layout()
+	x, y := fw.Position()
+	w, h := fw.Size()
+	result := surfaceRoot.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.begin-add"})
+	if !result.Handled {
+		t.Fatal("Add account did not enter editor")
+	}
+	frame.Host().MarkLayout()
+	frame.Host().Layout()
+	_, _ = app.Update(tea.WindowSizeMsg{Width: 160, Height: 40})
+	newX, newY := fw.Position()
+	newW, newH := fw.Size()
+	if x != newX || y != newY || w != newW || h != newH {
+		t.Fatalf("Add account moved/resized settings: before=(%d,%d,%d,%d) after=(%d,%d,%d,%d)", x, y, w, h, newX, newY, newW, newH)
+	}
+	if title := frame.Frame().Title(); !strings.Contains(title, "Accounts") || !strings.Contains(title, "Add") {
+		t.Fatalf("missing editor breadcrumb: %q", title)
+	}
+	if surfaceRoot.Model().SelectedCategory() < 0 {
+		t.Fatal("editor lost account category")
+	}
+}
+
+func TestAccountSaveFailureKeepsOpenFormAndPersistedState(t *testing.T) {
+	app := newTestApp(t)
+	app.Logger = noopLogger{}
+	app.SetAppDefaults(ttypes.AppSettings{ActiveProvider: "chatgpt", Providers: map[string]ttypes.ProviderConfig{"chatgpt": provider.DefaultTemplates()["chatgpt"]}, Accounts: map[string]provider.Account{"personal": {ID: "personal", ProviderID: "chatgpt", Label: "Personal"}}})
+	app.openSettings(ttypes.SettingsScopeApplication)
+	fw := app.windowManager.Window("workspace-settings")
+	model := settingsWidgetForTest(t, fw).ModelForTest()
+	model.SelectAccounts()
+	surfaceRoot := settingsWidgetForTest(t, fw).Component().(*settingsui.WorkspaceSettingsSurface)
+	surfaceRoot.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.edit"})
+	id, generation := model.SignInRequest()
+	_, _ = app.Update(settingsui.ChatGPTSignInResultMsg{AccountID: id, Generation: generation, Creds: &provider.OAuthCredentials{AccessToken: "staged"}})
+	app.OnAppAccountChange = func(coretypes.AccountChange) error { return errors.New("disk unavailable") }
+	change := surfaceRoot.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.commit"}).Cmd().(settingsui.AccountChangeMsg)
+	_, save := app.Update(change)
+	_, _ = app.Update(save())
+	if app.windowManager.Window("workspace-settings") != fw {
+		t.Fatal("failed save closed the form")
+	}
+	if app.LoadAppSettings().Accounts[id].OAuth != nil {
+		t.Fatal("failed save changed persisted account state")
+	}
+	if model.ValueForTest(1, "chatgpt-status") != "Sign-in stored" {
+		t.Fatal("failed save discarded staged credentials")
+	}
 }

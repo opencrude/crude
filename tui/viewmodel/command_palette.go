@@ -7,7 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	statusoverview "crude/tui/screens/statusoverview"
+	"crude/tui/screens/termdock"
 	"crude/tui/theme"
 	ttypes "crude/tui/types"
 	"crude/tui/ui"
@@ -524,7 +524,7 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 	case "settings.workspace":
 		m.openWorkspaceSettings()
 	case "status.overview":
-		m.openStatusOverview(statusoverview.ViewTabs, "")
+		m.toggleWorkspacePanel(termdock.PanelWorkspace)
 	case "lsp.start":
 		m.startLSPForWorkspace()
 	case "lsp.stop":
@@ -533,7 +533,7 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		m.StopLSP()
 		m.startLSPForWorkspace()
 	case "lsp.problems":
-		m.openStatusOverview(statusoverview.ViewWorkspace, "workspace-problems")
+		m.toggleWorkspacePanel(termdock.PanelProblems)
 
 	case "agent.orchestrator.reset":
 		m.resetOrchestratorOverrides()

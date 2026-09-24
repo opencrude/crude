@@ -116,28 +116,24 @@ func (m *App) refreshActivityList() {
 	case activityAgents:
 		m.activityList.SetHeading("Agents")
 		m.activityList.SetIcon(activitybar.ViewAgents.Icon(nerd))
-		m.activityList.SetFooter("Browse all sessions", "↻")
 		items := m.agentSidebarItems()
 		m.activityList.SetBadge(sidebarCountBadge(items))
 		m.activityList.SetItems(items)
 	case activityTerminals:
 		m.activityList.SetHeading("Terminals")
 		m.activityList.SetIcon(activitybar.ViewTerminals.Icon(nerd))
-		m.activityList.SetFooter("", "")
 		items := m.terminalSidebarItems()
 		m.activityList.SetBadge(sidebarCountBadge(items))
 		m.activityList.SetItems(items)
 	case activityGit:
 		m.activityList.SetHeading("Source Control")
 		m.activityList.SetIcon(activitybar.ViewGit.Icon(nerd))
-		m.activityList.SetFooter("", "")
 		items := m.gitSidebarItems()
 		m.activityList.SetBadge(sidebarCountBadge(items))
 		m.activityList.SetItems(items)
 	default:
 		m.activityList.SetHeading("Explorer")
 		m.activityList.SetIcon(activitybar.ViewFiles.Icon(nerd))
-		m.activityList.SetFooter("", "")
 		m.activityList.SetBadge("")
 	}
 }
@@ -364,9 +360,6 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		if ok {
 			return m.handleSidebarActivate(item)
 		}
-	case activitylist.ActionBrowseSessions:
-		m.openSessionPicker()
-		return nil
 	case chatprojection.ChatToggleActionID:
 		payload, ok := action.Payload.(chatprojection.ChatTogglePayload)
 		if !ok {

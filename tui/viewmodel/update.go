@@ -1,7 +1,6 @@
 package viewmodel
 
 import (
-	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -32,6 +31,7 @@ import (
 	"crude/tui/screens/shellfooter"
 	"crude/tui/screens/shellheader"
 	statusoverview "crude/tui/screens/statusoverview"
+	"crude/tui/screens/termdock"
 	textoverlay "crude/tui/screens/textoverlay"
 	"crude/tui/screens/yolo"
 	settingsui "crude/tui/settings"
@@ -46,6 +46,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	previousEditor := m.logicalEditorFocus()
 	previousMode := m.editorSettings.AutoSave
 	model, command := m.update(msg)
+	m.updateSettingsWindowTitle()
 	if previousMode == types.AutoSaveEditorFocusChange && m.editorSettings.AutoSave == previousMode && previousEditor != nil &&
 		previousEditor.IsOpen() && previousEditor != m.logicalEditorFocus() && m.DirtyPromptPath == "" {
 		command = tea.Batch(command, m.requestEditorSave(previousEditor, workspace.DocumentSaveFocusOut, false))
@@ -81,7 +82,7 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.notifyStatus(types.SeverityWarning, "status", "Notification history unavailable", msg.Err.Error(), types.ResourceRef{Kind: types.ResourceWorkspace, ID: m.RootPath})
 		return m, nil
 	case workspace.StatusCenterHydratedMsg:
-		m.syncStatusOverview()
+		m.syncWorkspacePanels()
 		return m, nil
 	case statusoverview.NavigateMsg:
 		return m, m.handleStatusOverviewNavigate(msg)
@@ -92,13 +93,7 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.openStatusOverviewMore(msg.Item)
 		return m, nil
 	case statusoverview.ViewChangedMsg:
-		if m.statusOverview != nil {
-			m.statusOverviewSourceVersion = m.LSPMgr.Version()
-			m.statusOverviewCenterVersion = 0
-			m.statusOverviewSecond = 0
-			m.statusOverview.SetProjection(m.statusOverviewProjection(msg.View))
-			m.syncStatusOverview()
-		}
+		m.syncWorkspacePanels()
 		return m, nil
 	case statusoverview.MarkReadMsg:
 		if m.Workspace != nil && m.Status != nil {
@@ -113,44 +108,48 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case statusoverview.CloseMsg:
-		m.overlayHost.Close(ui.OverlayStatusOverview)
+		if m.termDock != nil {
+			m.termDock.ClosePanel()
+			m.setTermDockFocused(false)
+		}
 		return m, nil
 	case shellheader.ActionMsg:
 		switch msg.Action {
 		case "workspace":
-			m.openStatusOverview(statusoverview.ViewWorkspace, msg.TargetID)
+			m.openTabStats(msg.TargetID)
 		case "activity":
-			m.openStatusOverview(statusoverview.ViewActivity, msg.TargetID)
+			m.openTabStats(msg.TargetID)
 		case "notifications":
-			m.openStatusOverview(statusoverview.ViewNotifications, msg.TargetID)
+			m.toggleWorkspacePanel(termdock.PanelNotices)
+		case "tabs":
+			m.openTabStats(msg.TargetID)
 		case "help":
 			m.openHelp()
 		case "git":
 			return m, m.toggleActivity(activityGit)
 		case "git-branch":
 			return m, m.openBranchSwitcher()
-		default:
-			m.openStatusOverview(statusoverview.ViewTabs, msg.TargetID)
 		}
 		return m, nil
 	case shellfooter.ActionMsg:
 		switch msg.Action {
-		case "activity":
-			m.openStatusOverview(statusoverview.ViewActivity, msg.TargetID)
-		case "notifications":
-			m.openStatusOverview(statusoverview.ViewNotifications, msg.TargetID)
 		case "help":
 			m.openHelp()
 		case "workspace":
-			m.openStatusOverview(statusoverview.ViewWorkspace, msg.TargetID)
-		default:
-			m.openStatusOverview(statusoverview.ViewTabs, msg.TargetID)
+			m.toggleWorkspacePanel(termdock.PanelWorkspace)
+		case "problems":
+			m.toggleWorkspacePanel(termdock.PanelProblems)
+		case "notices", "notifications":
+			m.toggleWorkspacePanel(termdock.PanelNotices)
+		case "terminals":
+			m.toggleWorkspacePanel(termdock.PanelTerminal)
 		}
 		return m, nil
 	case interactiveFrameMsg:
 		m.handleInteractiveFrame(msg)
 		return m, nil
 	case tea.WindowSizeMsg:
+		initialSize := m.width == 0 || m.height == 0
 		m.Logger.Debug("UI", "resize", "width", msg.Width, "height", msg.Height)
 		m.width = msg.Width
 		m.height = msg.Height
@@ -158,6 +157,11 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Input.SetWidth(msg.Width)
 		if m.compositor != nil {
 			m.compositor.Resize(msg.Width, msg.Height)
+		}
+		if initialSize && m.ActiveSession != nil {
+			if err := m.ActiveSessionConnectionIssue(); err != nil {
+				m.showAccountRecovery(true)
+			}
 		}
 		// The shell surface is resized on the next View() frame by
 		// renderShellToSurface (single full-screen surface).
@@ -208,17 +212,41 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case tea.MouseClickMsg:
 		m.Logger.Debug("UI", "mouse", "click", "x", msg.Mouse().X, "y", msg.Mouse().Y, "button", fmt.Sprintf("%d", msg.Button))
+		if m.settingsPromptOnTop() && msg.Button == tea.MouseRight {
+			return m, nil
+		}
+		// The WM close hit is normally handled by dispatchMouseClick, which
+		// cannot return its close command. The settings X must preserve the
+		// surface's pure PromptMsg/CancelMsg command instead.
+		if msg.Button == tea.MouseLeft && m.windowManager != nil {
+			if fw := m.windowManager.Window(string(ui.OverlayWorkspaceSettings)); fw != nil &&
+				m.overlayHost != nil && m.overlayHost.Top() != nil && m.overlayHost.Top().Window == fw &&
+				fw.IsOnCloseButton(msg.Mouse().X, msg.Mouse().Y) {
+				return m, m.closePopupWindowByID(fw.ID)
+			}
+		}
 		return m.dispatchMouseClick(msg)
 
 	case tea.MouseWheelMsg:
+		if m.settingsPromptOnTop() {
+			return m, nil
+		}
 		m.Logger.Debug("UI", "mouse", "wheel", "x", msg.X, "y", msg.Y, "button", fmt.Sprintf("%d", msg.Button))
 		return m.dispatchMouseWheel(msg)
 
 	case tea.MouseMotionMsg:
+		if m.settingsPromptOnTop() && m.windowManager != nil && !m.windowManager.IsDragging() {
+			if prompt := m.overlayHost.Window(ui.OverlaySettingsPrompt); prompt != nil && !prompt.ContainsPoint(msg.Mouse().X, msg.Mouse().Y) {
+				return m, nil
+			}
+		}
 		model, cmd := m.dispatchMouseMotion(msg)
 		return model, tea.Batch(cmd, m.requestCoalescedFrame(time.Now()))
 
 	case tea.MouseReleaseMsg:
+		if m.settingsPromptOnTop() && m.windowManager != nil && !m.windowManager.IsDragging() {
+			return m, nil
+		}
 		// Same as MouseMotionMsg: let the release handler set
 		// dirty when it actually does something visible.
 		if m.Logger != nil {
@@ -254,6 +282,7 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	m.Input.SetSpinFrame(spinFrame)
 	m.refreshSessionBackgroundJobs(now)
 	m.syncStatusOverview()
+	m.syncWorkspacePanels()
 	m.tickTerminalCursors(now)
 	if fw := m.windowManager.Focused(); fw != nil {
 		if animated, ok := fw.Content.(interface{ NeedsFrame() bool }); ok && animated.NeedsFrame() {
@@ -672,8 +701,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			}
 			if err := m.SaveAppSettings(appSets); err != nil {
 				m.Feedback.NotifyError("Failed to save application settings: " + err.Error())
-			} else if err := m.SaveProviderSettings(appSets.ActiveProvider, appSets.Providers); err != nil {
-				m.Feedback.NotifyError("Failed to save providers: " + err.Error())
+				break // Keep the form and staged account edits available for retry.
 			} else {
 				m.applyThemePreset(themePresetFromSettings(appSets))
 				m.applyEditorSettings(m.LoadAppSettings().Editor)
@@ -682,6 +710,70 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			}
 		}
 		m.overlayHost.Close(ui.OverlayWorkspaceSettings)
+	case settingsui.AccountChangeMsg:
+		request := msg
+		owner := m.Workspace
+		generation := m.workspaceSwitchGen.Load()
+		cmds = append(cmds, func() tea.Msg {
+			err := owner.SaveAccountChange(request.Change)
+			var settings ttypes.AppSettings
+			if err == nil {
+				settings = owner.AppDefaults()
+			}
+			return settingsui.AccountChangeResultMsg{Target: request.Target, Change: request.Change, Settings: settings, Err: err, WorkspaceGeneration: generation}
+		})
+	case settingsui.AccountChangeResultMsg:
+		if msg.WorkspaceGeneration != m.workspaceSwitchGen.Load() {
+			break
+		}
+		if msg.Err != nil {
+			m.Feedback.NotifyError("Account not saved: " + msg.Err.Error())
+		} else {
+			m.refreshAllSessionSettingsProjections()
+			m.Feedback.NotifyInfo("Account change saved")
+		}
+		if fw := m.windowManager.Window(string(ui.OverlayWorkspaceSettings)); fw != nil {
+			if w, ok := fw.Content.(*ui.WindowFrameWidget); ok {
+				if body, ok := w.Body().(*settingsui.WorkspaceSettingsSurface); ok && body.Model() == msg.Target {
+					if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+					w.Host().MarkLayout()
+				}
+			}
+		}
+	case settingsui.TemplateChangeMsg:
+		request := msg
+		owner := m.Workspace
+		generation := m.workspaceSwitchGen.Load()
+		cmds = append(cmds, func() tea.Msg {
+			err := owner.SaveTemplateChange(request.Change)
+			var settings ttypes.AppSettings
+			if err == nil {
+				settings = owner.AppDefaults()
+			}
+			return settingsui.TemplateChangeResultMsg{Target: request.Target, Change: request.Change, Settings: settings, Err: err, WorkspaceGeneration: generation}
+		})
+	case settingsui.TemplateChangeResultMsg:
+		if msg.WorkspaceGeneration != m.workspaceSwitchGen.Load() {
+			break
+		}
+		if msg.Err != nil {
+			m.Feedback.NotifyError("Provider template not saved: " + msg.Err.Error())
+		} else {
+			m.refreshAllSessionSettingsProjections()
+			m.Feedback.NotifyInfo("Provider template saved")
+		}
+		if fw := m.windowManager.Window(string(ui.OverlayWorkspaceSettings)); fw != nil {
+			if w, ok := fw.Content.(*ui.WindowFrameWidget); ok {
+				if body, ok := w.Body().(*settingsui.WorkspaceSettingsSurface); ok && body.Model() == msg.Target {
+					if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
+						cmds = append(cmds, cmd)
+					}
+					w.Host().MarkLayout()
+				}
+			}
+		}
 	case settingsui.ScopeMsg:
 		m.openSettings(msg.Scope)
 	case settingsui.ResetSectionMsg:
@@ -701,6 +793,8 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		m.applyThemePreset(themePresetFromSettings(m.LoadAppSettings()))
 		m.clearFramePreview()
 		m.overlayHost.Close(ui.OverlayWorkspaceSettings)
+	case settingsui.PromptMsg:
+		m.showSettingsPrompt(msg)
 	case settingsui.ThemePreviewMsg:
 		if msg.Preset != "" {
 			m.applyThemePreset(msg.Preset)
@@ -711,14 +805,13 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		m.applyFramePreview(msg)
 	case settingsui.FetchModelsMsg:
 		request := msg
+		fetch := m.PrepareDraftAccountModels(request.Account, request.BaseURL, request.StandardID)
 		cmds = append(cmds, func() tea.Msg {
-			models, err := m.HandleFetchModels(
-				request.ProviderID, request.BaseURL, request.APIKey, request.StandardID,
-			)
+			models, err := fetch()
 			if err != nil {
-				return settingsui.ModelsErrorMsg{ProviderID: request.ProviderID, Error: err.Error()}
+				return settingsui.ModelsErrorMsg{ProviderID: request.ProviderID, AccountID: request.AccountID, Generation: request.Generation, Error: err.Error()}
 			}
-			return settingsui.ModelsMsg{ProviderID: request.ProviderID, Models: models}
+			return settingsui.ModelsMsg{ProviderID: request.ProviderID, AccountID: request.AccountID, Generation: request.Generation, Models: models}
 		})
 	case settingsui.ModelsMsg, settingsui.ModelsErrorMsg:
 		if fw := m.windowManager.Window("workspace-settings"); fw != nil {
@@ -770,46 +863,10 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			m.Logger.Error("HISTORY", "service_error", "error", msg.Error)
 			m.Feedback.NotifyError("Local history: " + msg.Error)
 		}
-	case settingsui.ChatGPTSignInResultMsg:
-		if msg.Err == nil && msg.Creds != nil {
-			if err := m.saveChatGPTOAuth(msg.Creds); err != nil {
-				m.Feedback.NotifyError("Failed to save ChatGPT sign-in: " + err.Error())
-			} else {
-				m.refreshAllSessionSettingsProjections()
-				label := msg.Creds.Email
-				if label == "" {
-					label = "ChatGPT"
-				}
-				m.Feedback.NotifyInfo("Signed in as " + label)
-			}
-		} else {
-			reason := "Sign in with ChatGPT failed"
-			if msg.Err != nil {
-				reason = msg.Err.Error()
-			}
-			// A fatal error (revoked consent, bad refresh token) means the
-			// stored session is dead — clear it so we don't keep retrying.
-			var signInErr *provider.ChatGPTSignInError
-			if msg.Err != nil && errors.As(msg.Err, &signInErr) && signInErr.Fatal {
-				if err := m.saveChatGPTOAuth(nil); err == nil {
-					m.refreshAllSessionSettingsProjections()
-				}
-			}
-			m.Feedback.NotifyError(reason)
-		}
-		// Refresh the open form so the status row + sign-in/sign-out button swap.
-		if fw := m.windowManager.Window("workspace-settings"); fw != nil {
-			if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-		}
-	case settingsui.ChatGPTSignOutMsg:
-		if err := m.saveChatGPTOAuth(nil); err != nil {
-			m.Feedback.NotifyError("Failed to clear ChatGPT sign-in: " + err.Error())
-		} else {
-			m.refreshAllSessionSettingsProjections()
-			m.Feedback.NotifyInfo("Signed out of ChatGPT")
-		}
+	case settingsui.ChatGPTSignInResultMsg, settingsui.ChatGPTSignOutMsg:
+		// The settings owner validates account identity and generation. Auth edits
+		// are staged there and persisted only by Save; closing/cancelling the
+		// window makes a late callback inert, rather than resurrecting an account.
 		if fw := m.windowManager.Window("workspace-settings"); fw != nil {
 			if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
 				cmds = append(cmds, cmd)
@@ -887,30 +944,53 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case sessionsettings.FetchModelsMsg:
 		request := msg
 		target := m.sessionSettings()
+		fetch := m.PrepareAccountModels(request.ProviderID, request.AccountID, request.BaseURL, request.StandardID)
 		cmds = append(cmds, func() tea.Msg {
-			models, err := m.HandleFetchModels(
-				request.ProviderID, request.BaseURL, request.APIKey, request.StandardID,
-			)
-			return sessionSettingsModelsResultMsg{target: target, providerID: request.ProviderID, models: models, err: err}
+			models, err := fetch()
+			return sessionSettingsModelsResultMsg{target: target, providerID: request.ProviderID, accountID: request.AccountID, generation: request.Generation, models: models, err: err}
 		})
 	case sessionSettingsModelsResultMsg:
 		_, projection := m.sessionProjections.projectionForSettings(msg.target)
 		if projection != nil {
 			if msg.err != nil {
-				msg.target.ApplyModelsError(msg.providerID, msg.err.Error())
+				msg.target.ApplyModelsErrorForAccount(msg.providerID, msg.accountID, msg.generation, msg.err.Error())
 			} else {
-				msg.target.ApplyModels(msg.providerID, msg.models)
+				msg.target.ApplyModelsForAccount(msg.providerID, msg.accountID, msg.generation, msg.models)
 			}
 			projection.deckHost.MarkLayout()
 		}
 	case question.ResultMsg:
-		m.resolveSessionQuestion(msg.Target, msg.Result, false)
+		if m.agentPrompt != nil && m.agentPrompt.question == msg.Target && !m.agentPrompt.inline {
+			m.resolveAgentQuestion(msg.Target, msg.Result, false)
+		} else {
+			m.resolveSessionQuestion(msg.Target, msg.Result, false)
+			if m.agentPrompt != nil && m.agentPrompt.question == msg.Target {
+				m.agentPrompt = nil
+				m.openNextAgentPrompt()
+			}
+		}
 	case question.CancelMsg:
-		m.resolveSessionQuestion(msg.Target, question.Result{}, true)
+		if m.agentPrompt != nil && m.agentPrompt.question == msg.Target && !m.agentPrompt.inline {
+			m.resolveAgentQuestion(msg.Target, question.Result{}, true)
+		} else {
+			m.resolveSessionQuestion(msg.Target, question.Result{}, true)
+			if m.agentPrompt != nil && m.agentPrompt.question == msg.Target {
+				m.agentPrompt = nil
+				m.openNextAgentPrompt()
+			}
+		}
 	case confirmation.ResultMsg:
 		m.resolveSessionConfirmation(msg.Target, msg.Choice)
+		if m.agentPrompt != nil && m.agentPrompt.confirmation == msg.Target {
+			m.agentPrompt = nil
+			m.openNextAgentPrompt()
+		}
 	case confirmation.CancelMsg:
 		m.cancelSessionConfirmation(msg.Target)
+		if m.agentPrompt != nil && m.agentPrompt.confirmation == msg.Target {
+			m.agentPrompt = nil
+			m.openNextAgentPrompt()
+		}
 	case yolo.ResultMsg:
 		m.resolveSessionYolo(msg.Target, msg.Enabled)
 	case filetree.FileSelectedMsg:
@@ -1011,25 +1091,6 @@ func (m *App) translateToLocalMouse(msg tea.Msg, fw *wm.FloatingWindow) tea.Msg 
 	return msg
 }
 
-// saveChatGPTOAuth persists ChatGPT OAuth credentials at application scope.
-// A nil creds clears the tokens (sign-out / fatal sign-in failure). OAuth is
-// always stored at app scope — workspace overlays strip credentials — so this
-// loads the full app settings, mutates only the chatgpt entry, and saves both
-// the file and the live session config so the running agent picks it up.
-func (m *App) saveChatGPTOAuth(creds *provider.OAuthCredentials) error {
-	s := m.LoadAppSettings()
-	if s.Providers == nil {
-		s.Providers = make(map[string]ttypes.ProviderConfig)
-	}
-	cfg := s.Providers["chatgpt"]
-	cfg.OAuth = creds
-	s.Providers["chatgpt"] = cfg
-	if err := m.SaveAppSettings(s); err != nil {
-		return err
-	}
-	return m.SaveProviderSettings(s.ActiveProvider, s.Providers)
-}
-
 func (m *App) forwardEventToWindowContent(fw *wm.FloatingWindow, msg tea.Msg) tea.Cmd {
 	if fw == nil || fw.Content == nil {
 		return nil
@@ -1044,8 +1105,7 @@ func (m *App) forwardEventToWindowContent(fw *wm.FloatingWindow, msg tea.Msg) te
 		result := w.Dispatch(localMsg)
 		fw.MarkContentDirty()
 		if result.Action != nil && result.Action.ID == "window.close" {
-			m.closePopupWindowByID(fw.ID)
-			return result.Cmd
+			return tea.Batch(result.Cmd, m.closePopupWindowByID(fw.ID))
 		}
 		if result.Action != nil && result.Action.ID == "window.titleaction" {
 			// Terminal windows use the title action as their Dock button.

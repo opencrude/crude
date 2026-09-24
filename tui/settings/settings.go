@@ -1,12 +1,15 @@
 package settings
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"image/color"
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
+	"sync/atomic"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -27,6 +30,59 @@ type SaveMsg struct {
 // CancelMsg is returned as a tea.Msg on cancel.
 type CancelMsg struct{}
 
+// PromptKind identifies a settings decision handled by the floating overlay
+// host. The settings window and its editor remain mounted underneath.
+type PromptKind uint8
+
+const (
+	PromptRemoveAccount PromptKind = iota + 1
+	PromptRemoveTemplate
+	PromptTemplateInUse
+	PromptDiscardEditor
+	PromptDiscardSettings
+)
+
+type PromptMsg struct {
+	Target         *Model
+	Kind           PromptKind
+	ID             string
+	Label          string
+	RelatedCount   int
+	beforeAccount  *provider.Account
+	beforeTemplate *provider.Template
+	accountEditor  *accountEdit
+	accountDraft   *provider.Account
+	providerEditor *providerEdit
+	providerDraft  *provider.Template
+	preferences    []byte
+}
+
+type AccountChangeMsg struct {
+	Target *Model
+	Change types.AccountChange
+}
+
+type AccountChangeResultMsg struct {
+	Target              *Model
+	Change              types.AccountChange
+	Settings            types.AppSettings
+	Err                 error
+	WorkspaceGeneration uint64
+}
+
+type TemplateChangeMsg struct {
+	Target *Model
+	Change provider.TemplateChange
+}
+
+type TemplateChangeResultMsg struct {
+	Target              *Model
+	Change              provider.TemplateChange
+	Settings            types.AppSettings
+	Err                 error
+	WorkspaceGeneration uint64
+}
+
 // ThemePreviewMsg applies a theme preset immediately while Settings stays open.
 type ThemePreviewMsg struct {
 	Preset string
@@ -42,19 +98,26 @@ type FramePreviewMsg struct {
 // FetchModelsMsg asks the workspace layer to load models for a provider.
 type FetchModelsMsg struct {
 	ProviderID string
+	AccountID  string
+	Generation uint64
 	BaseURL    string
 	APIKey     string
 	StandardID string
+	Account    provider.Account // detached draft; never persisted by model discovery
 }
 
 // ModelsMsg and ModelsErrorMsg deliver an asynchronous model-list result.
 type ModelsMsg struct {
 	ProviderID string
+	AccountID  string
+	Generation uint64
 	Models     []types.ModelEntry
 }
 
 type ModelsErrorMsg struct {
 	ProviderID string
+	AccountID  string
+	Generation uint64
 	Error      string
 }
 
@@ -68,12 +131,17 @@ type ScopeMsg struct{ Scope types.SettingsScope }
 // On success Creds holds the tokens to persist; on failure Err is set (and may
 // wrap a ChatGPTSignInError whose Fatal flag means the stored session is dead).
 type ChatGPTSignInResultMsg struct {
-	Creds *provider.OAuthCredentials
-	Err   error
+	AccountID  string
+	Generation uint64
+	Creds      *provider.OAuthCredentials
+	Err        error
 }
 
 // ChatGPTSignOutMsg clears the stored ChatGPT tokens.
-type ChatGPTSignOutMsg struct{}
+type ChatGPTSignOutMsg struct {
+	AccountID  string
+	Generation uint64
+}
 
 // Category is a presentation-neutral settings section backed by the shared
 // form model. It deliberately has no legacy tui/form state.
@@ -87,60 +155,98 @@ type Category struct {
 type categorySnapshot struct{ values map[string]ui.FieldValue }
 
 type modelSnapshot struct {
-	categories    []categorySnapshot
-	selected      int
-	pane          int
-	providerID    string
-	providerModel string
+	categories     []categorySnapshot
+	selected       int
+	pane           int
+	providerID     string
+	accountID      string
+	activeProvider string
+	providers      map[string]types.ProviderConfig
+	accounts       map[string]provider.Account
 }
 
 // Model is the workspace settings screen state.
 type Model struct {
-	th            *theme.Theme
-	categories    []Category
-	selected      int
-	pane          int // 0: category rail, 1: form
-	snapshot      *modelSnapshot
-	presets       []types.ProviderPreset
-	providers     map[string]types.ProviderConfig
-	providerID    string
-	providerModel string
-	models        map[string][]types.ModelEntry
-	searchEd      *ui.TextEdit
-	searchActive  bool
-	scope         types.SettingsScope
-	appDefaults   types.AppSettings
+	th              *theme.Theme
+	categories      []Category
+	selected        int
+	pane            int // 0: category rail, 1: form
+	snapshot        *modelSnapshot
+	presets         []types.ProviderPreset
+	providers       map[string]types.ProviderConfig
+	accounts        map[string]provider.Account
+	accountID       string // account being browsed, never an active connection
+	activeProvider  string
+	authGeneration  map[string]uint64
+	authErrors      map[string]string
+	authWaitingID   string
+	fetchGeneration map[string]uint64
+	accountEditor   *accountEdit
+	accountBusy     bool
+	accountError    string
+	providerEditor  *providerEdit
+	providerError   string
+	nextCategory    int
+	nextScope       types.SettingsScope
+	preferencesBase []byte
+	providerID      string
+	models          map[string][]types.ModelEntry
+	searchEd        *ui.TextEdit
+	searchActive    bool
+	accountQuery    string
+	templateQuery   string
+	scope           types.SettingsScope
+	appDefaults     types.AppSettings
 	// agents holds the working AgentsSettings so the main agent form's
 	// Multi-Agent toggle reads and writes the real workspace flag.
 	agents *types.AgentsSettings
 }
 
+type accountEdit struct {
+	original        *provider.Account
+	draft           provider.Account
+	initialProvider string
+	isNew           bool
+}
+
 const (
-	fieldProvider          = "provider"
-	fieldModel             = "model"
-	fieldAPIKey            = "api-key"
-	fieldBaseURL           = "base-url"
-	fieldAPIStandard       = "api-standard"
-	fieldThinkingEffort    = "thinking-effort"
-	fieldMultiAgent        = "multi-agent"
-	fieldContextCompaction = "context-compaction-percent"
-	fieldSafetyConfirmAt   = "safety-confirm-at"
-	fieldSafetyUnknown     = "safety-unknown-risk"
-	fieldSafetyScript      = "safety-script-risk"
-	fieldSafetyRules       = "safety-command-rules"
-	fieldSafetyNotify      = "safety-notify-dangerous"
-	fieldHistoryEnabled    = "history-enabled"
-	fieldHistoryGitIgnore  = "history-gitignore"
-	fieldHistoryExternal   = "history-external"
-	fieldHistorySafety     = "history-safety"
-	fieldHistoryMaxFile    = "history-max-file"
-	fieldHistoryDebounce   = "history-debounce"
-	fieldHistoryReconcile  = "history-reconcile"
-	fieldHistoryKeepHours  = "history-keep-hours"
-	fieldHistoryKeepDaily  = "history-keep-daily"
-	fieldHistoryMaxSnaps   = "history-max-snapshots"
-	fieldHistoryBudget     = "history-budget"
-	fieldHistoryIgnores    = "history-ignores"
+	fieldProvider             = "provider"
+	fieldModel                = "model"
+	fieldAPIKey               = "api-key"
+	fieldAccount              = "account"
+	fieldAccountLabel         = "account-label"
+	fieldConnection           = "connection"
+	fieldAutoPermAccount      = "auto-permission-account"
+	fieldBaseURL              = "base-url"
+	fieldAPIStandard          = "api-standard"
+	fieldThinkingEffort       = "thinking-effort"
+	fieldMultiAgent           = "multi-agent"
+	fieldContextCompaction    = "context-compaction-percent"
+	fieldSafetyConfirmAt      = "safety-confirm-at"
+	fieldSafetyUnknown        = "safety-unknown-risk"
+	fieldSafetyScript         = "safety-script-risk"
+	fieldSafetyRules          = "safety-command-rules"
+	fieldSafetyNotify         = "safety-notify-dangerous"
+	fieldAutoPermission       = "auto-permission-enabled"
+	fieldAutoPermModel        = "auto-permission-model"
+	fieldAutoPermDenyMode     = "auto-permission-deny-mode"
+	fieldAutoPermTimeout      = "auto-permission-timeout"
+	fieldAutoPermOutputTokens = "auto-permission-output-tokens"
+	fieldAutoPermInputBytes   = "auto-permission-input-bytes"
+	fieldAutoPermReviews      = "auto-permission-reviews"
+	fieldAutoPermInstructions = "auto-permission-instructions"
+	fieldHistoryEnabled       = "history-enabled"
+	fieldHistoryGitIgnore     = "history-gitignore"
+	fieldHistoryExternal      = "history-external"
+	fieldHistorySafety        = "history-safety"
+	fieldHistoryMaxFile       = "history-max-file"
+	fieldHistoryDebounce      = "history-debounce"
+	fieldHistoryReconcile     = "history-reconcile"
+	fieldHistoryKeepHours     = "history-keep-hours"
+	fieldHistoryKeepDaily     = "history-keep-daily"
+	fieldHistoryMaxSnaps      = "history-max-snapshots"
+	fieldHistoryBudget        = "history-budget"
+	fieldHistoryIgnores       = "history-ignores"
 )
 
 // New creates a settings model from current AppSettings (application scope).
@@ -166,21 +272,31 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 	}
 	providers := make(map[string]types.ProviderConfig, len(current.Providers))
 	for id, cfg := range current.Providers {
-		cfg.ModelStandards = cloneStandardMap(cfg.ModelStandards)
-		providers[id] = cfg
+		providers[id] = provider.CloneTemplate(cfg)
 	}
 	active := current.ActiveProvider
 	if active == "" {
 		active = "openrouter"
 	}
-	if _, ok := providers[active]; !ok {
-		providers[active] = types.ProviderConfig{}
-	}
 	m := &Model{
-		th: th, presets: presets, providers: providers, providerID: active,
-		providerModel: providers[active].Model,
-		models:        make(map[string][]types.ModelEntry), scope: scope, appDefaults: appDefaults,
+		th: th, presets: presets, providers: providers, providerID: active, activeProvider: active,
+		accounts: cloneAccounts(current.Accounts), authGeneration: map[string]uint64{}, authErrors: map[string]string{}, fetchGeneration: map[string]uint64{},
+		models: make(map[string][]types.ModelEntry), scope: scope, appDefaults: appDefaults,
 		agents: &current.Agents,
+	}
+	if _, ok := providers[m.providerID]; !ok {
+		ids := sortedTemplateIDs(providers)
+		if len(ids) > 0 {
+			m.providerID = ids[0]
+		}
+	}
+	accountIDs := make([]string, 0, len(m.accounts))
+	for id := range m.accounts {
+		accountIDs = append(accountIDs, id)
+	}
+	slices.Sort(accountIDs)
+	if len(accountIDs) > 0 {
+		m.accountID = accountIDs[0]
 	}
 	appearanceFields := append([]*ui.FieldState{
 		ui.SeparatorFieldState("theme", "Theme"),
@@ -199,7 +315,8 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		liveFramePadField("frame-right", "Right padding", appearance.PadRightOrDefault(), "Blank columns reserved right of the content."),
 	)
 	m.categories = []Category{
-		{Name: "Providers", Group: "AI", Description: "Connections, credentials, and communication protocol.", Form: m.buildProvidersForm()},
+		{Name: "Providers", Group: "AI", Description: "Reusable provider templates for endpoint, authentication, protocol, and request options.", Form: m.buildProvidersForm()},
+		{Name: "Accounts", Group: "AI", Description: "Named account credentials with optional template overrides.", Form: m.buildAccountsForm()},
 		{Name: "Main Agent", Group: "AI", Description: "Workspace defaults for planning and delegation.", Form: m.buildAgentForm(current.Agents.Categories["default"], true)},
 		{Name: "Researcher", Group: "AI", Description: "Workspace defaults for research and context gathering.", Form: m.buildAgentForm(current.Agents.Categories["researcher"], false)},
 		{Name: "Crafter", Group: "AI", Description: "Workspace defaults for implementation work.", Form: m.buildAgentForm(current.Agents.Categories["crafter"], false)},
@@ -242,7 +359,35 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		category := index
 		m.categories[index].Form.OnChanged(func(fieldID string) { m.handleFieldChanged(category, fieldID) })
 	}
+	m.ensureVisibleSelection()
+	m.preferencesBase = m.preferenceBytes()
+	m.nextCategory = -1
 	return m
+}
+
+func (m *Model) preferenceBytes() []byte {
+	s := m.AppSettings()
+	s.Accounts = nil
+	s.Providers = nil // templates are saved as independent entities
+	s.ActiveProvider = ""
+	encoded, _ := json.Marshal(s)
+	return encoded
+}
+
+func (m *Model) hasUnsavedPreferences() bool {
+	return !bytes.Equal(m.preferencesBase, m.preferenceBytes())
+}
+
+func (m *Model) accountEditorDirty() bool {
+	if m.accountEditor == nil {
+		return false
+	}
+	m.storeAccountForm()
+	edit := m.accountEditor
+	if edit.isNew {
+		return edit.draft.Label != "" || edit.draft.APIKey != "" || edit.draft.OAuth != nil || edit.draft.ProviderID != edit.initialProvider || edit.draft.Overrides != (provider.TemplateOverrides{})
+	}
+	return edit.original != nil && !reflect.DeepEqual(*edit.original, edit.draft)
 }
 
 func (m *Model) buildHistoryForm(settings types.LocalHistorySettings) *ui.FormModel {
@@ -330,42 +475,256 @@ func readOnlyColorField(id, label, hex string) *ui.FieldState {
 }
 
 func (m *Model) buildProvidersForm() *ui.FormModel {
-	cfg := m.providers[m.providerID]
-	baseURL := cfg.ProviderURL
-	if baseURL == "" {
-		if preset := provider.GetPreset(m.providerID); preset != nil {
-			baseURL = preset.BaseURL
+	return m.buildProviderEditorForm()
+}
+
+func (m *Model) buildAccountsForm() *ui.FormModel {
+	return m.buildAccountEditorForm()
+}
+
+func cloneAccounts(src map[string]provider.Account) map[string]provider.Account {
+	out := make(map[string]provider.Account, len(src))
+	for id, a := range src {
+		out[id] = provider.CloneAccount(a)
+	}
+	return out
+}
+
+func (m *Model) accountRows() []ui.TableRow {
+	ids := make([]string, 0, len(m.accounts))
+	for id := range m.accounts {
+		a := m.accounts[id]
+		query := strings.ToLower(strings.TrimSpace(m.accountQuery))
+		if query != "" && !strings.Contains(strings.ToLower(m.providerLabel(a.ProviderID)+" "+a.Label), query) {
+			continue
+		}
+		ids = append(ids, id)
+	}
+	slices.SortFunc(ids, func(a, b string) int {
+		left, right := m.accounts[a], m.accounts[b]
+		if c := strings.Compare(m.providerLabel(left.ProviderID), m.providerLabel(right.ProviderID)); c != 0 {
+			return c
+		}
+		if c := strings.Compare(left.Label, right.Label); c != 0 {
+			return c
+		}
+		return strings.Compare(a, b)
+	})
+	rows := make([]ui.TableRow, 0, len(ids))
+	for _, id := range ids {
+		a := m.accounts[id]
+		status := "No credentials"
+		switch {
+		case a.OAuth != nil && a.OAuth.AccessToken != "":
+			status = "Sign-in stored"
+		case a.APIKey != "":
+			status = "API key configured"
+		}
+		rows = append(rows, ui.TableRow{ID: id, Cells: []ui.TableCell{
+			{Text: m.providerLabel(a.ProviderID)}, {Text: a.Label}, {Text: status},
+		}})
+	}
+	return rows
+}
+
+func (m *Model) selectAccount(id string) {
+	if id == m.accountID || m.accounts[id].ID != id {
+		return
+	}
+	m.accountID = id
+}
+func (m *Model) connectionOptions(includeBlank bool) []ui.FormOption {
+	out := []ui.FormOption{}
+	if includeBlank {
+		out = append(out, ui.FormOption{ID: "", Label: "Unconfigured"})
+	}
+	ids := make([]string, 0, len(m.accounts))
+	for id := range m.accounts {
+		ids = append(ids, id)
+	}
+	slices.SortFunc(ids, func(a, b string) int {
+		aa, bb := m.accounts[a], m.accounts[b]
+		if c := strings.Compare(aa.ProviderID, bb.ProviderID); c != 0 {
+			return c
+		}
+		return strings.Compare(a, b)
+	})
+	for _, id := range ids {
+		a := m.accounts[id]
+		label := a.Label
+		if label == "" {
+			label = id
+		}
+		out = append(out, ui.FormOption{ID: id, Label: label})
+	}
+	return out
+}
+func (m *Model) providerLabel(id string) string {
+	if configured, ok := m.providers[id]; ok {
+		if configured.Name != "" {
+			return configured.Name
+		}
+		if resolved := provider.ResolveTemplate(id, configured, provider.TemplateOverrides{}); resolved.Name != "" {
+			return resolved.Name
 		}
 	}
-	fields := []*ui.FieldState{
-		ui.SeparatorFieldState("connection", "Connection"),
-		ui.SelectFieldState(fieldProvider, "Provider", m.providerID, ui.ProviderOptions(m.presets), "The service used for model requests."),
+	for _, p := range m.presets {
+		if p.ID == id {
+			return p.Name
+		}
 	}
-	// The ChatGPT subscription provider authenticates via OAuth, not an API
-	// key, so it gets a status row plus a sign-in / sign-out drill-in instead
-	// of the masked key field. The field set differs per provider, which is
-	// why the form is rebuilt on provider switch (see rebuildProvidersForm).
-	if m.providerID == "chatgpt" {
-		fields = append(fields, m.chatgptAuthFields(cfg)...)
+	return id
+}
+func (m *Model) beginAccountEdit(create bool, providerID string) error {
+	if m.accountBusy {
+		return nil
+	}
+	edit := &accountEdit{isNew: create}
+	if create {
+		id, err := provider.NewAccountID()
+		if err != nil {
+			return err
+		}
+		if _, ok := m.providers[providerID]; !ok {
+			providerID = m.providerID
+		}
+		if _, ok := m.providers[providerID]; !ok {
+			providerIDs := sortedTemplateIDs(m.providers)
+			if len(providerIDs) > 0 {
+				providerID = providerIDs[0]
+			}
+		}
+		edit.draft = provider.Account{ID: id, ProviderID: providerID}
+		edit.initialProvider = providerID
 	} else {
-		fields = append(fields, ui.PasswordFieldState(fieldAPIKey, "API key", cfg.APIKey, "Stored locally and masked while editing."))
+		a, ok := m.accounts[m.accountID]
+		if !ok {
+			return fmt.Errorf("select an account to edit")
+		}
+		copy := provider.CloneAccount(a)
+		edit.original = &copy
+		edit.draft = provider.CloneAccount(a)
 	}
-	fields = append(fields,
-		ui.TextFieldState(fieldBaseURL, "Base URL", baseURL, "Override the endpoint when using a proxy or gateway."),
-		ui.SeparatorFieldState("protocol", "Communication protocol"),
-		ui.SelectFieldState(
-			fieldAPIStandard, "Provider default", providerStandard(m.providerID, cfg),
-			standardOptions(nil),
-			"Wire protocol used by this provider.",
-		),
-	)
-	fields = append(fields, m.protocolOptionFields(cfg)...)
-	fields = append(fields, dialerFields(cfg.Dialer)...)
-	fields = append(fields,
-		ui.SeparatorFieldState("advanced", "Advanced"),
-		m.extraBodyField(cfg),
-	)
-	return formModel(fields...)
+	m.accountEditor = edit
+	m.accountError = ""
+	m.rebuildAccountsForm()
+	return nil
+}
+
+func (m *Model) cancelAccountEdit() {
+	if m.accountBusy {
+		return
+	}
+	if m.accountEditor != nil {
+		m.authGeneration[m.accountEditor.draft.ID] = nextAccountRequest.Add(1)
+		delete(m.authErrors, m.accountEditor.draft.ID)
+		if m.authWaitingID == m.accountEditor.draft.ID {
+			m.authWaitingID = ""
+		}
+	}
+	m.accountEditor = nil
+	m.accountError = ""
+	m.rebuildAccountsForm()
+}
+
+func (m *Model) accountEditChange() (types.AccountChange, error) {
+	if m.accountEditor == nil {
+		return types.AccountChange{}, fmt.Errorf("no account editor is open")
+	}
+	m.storeAccountForm()
+	form := m.categories[catAccounts].Form
+	form.ValidateAll()
+	if form.AnyErrors() {
+		return types.AccountChange{}, fmt.Errorf("correct the highlighted fields")
+	}
+	edit := m.accountEditor
+	a := edit.draft
+	if a.ProviderID == "" || a.ID == "" {
+		return types.AccountChange{}, fmt.Errorf("choose a provider template")
+	}
+	template, ok := m.providers[a.ProviderID]
+	if !ok {
+		return types.AccountChange{}, fmt.Errorf("the selected provider template is no longer available")
+	}
+	effective := provider.ResolveTemplate(a.ProviderID, template, a.Overrides)
+	if err := effective.Validate(); err != nil {
+		return types.AccountChange{}, err
+	}
+	for id, existing := range m.accounts {
+		if id != a.ID && strings.EqualFold(strings.TrimSpace(existing.Label), a.Label) {
+			if name := form.Field(fieldAccountLabel); name != nil {
+				name.Errors = []string{"Account names must be unique."}
+			}
+			return types.AccountChange{}, fmt.Errorf("choose a distinct account name")
+		}
+	}
+	if effective.AuthType == provider.AuthChatGPT {
+		if a.OAuth == nil || a.OAuth.AccessToken == "" && a.OAuth.RefreshToken == "" {
+			return types.AccountChange{}, fmt.Errorf("sign in with ChatGPT before adding this account")
+		}
+	} else if effective.AuthType != provider.AuthNone && a.APIKey == "" {
+		if field := form.Field(fieldAPIKey); field != nil {
+			field.Errors = []string{"Enter an API key for this account."}
+		}
+		return types.AccountChange{}, fmt.Errorf("configure this account's credentials")
+	}
+	a = provider.CloneAccount(a)
+	change := types.AccountChange{ID: a.ID, ProviderID: a.ProviderID, Before: edit.original, After: &a}
+	return change, nil
+}
+
+func (m *Model) accountSelectionChange(action string) (types.AccountChange, error) {
+	a, ok := m.accounts[m.accountID]
+	if !ok {
+		return types.AccountChange{}, fmt.Errorf("select an account")
+	}
+	previous := provider.CloneAccount(a)
+	change := types.AccountChange{ID: a.ID, ProviderID: a.ProviderID, Before: &previous}
+	switch action {
+	case "remove":
+		return change, nil
+	default:
+		return types.AccountChange{}, fmt.Errorf("unknown account action")
+	}
+}
+
+func (m *Model) applyAccountChange(result AccountChangeResultMsg) {
+	m.accountBusy = false
+	if result.Err != nil {
+		m.accountError = result.Err.Error()
+		m.rebuildAccountsForm()
+		return
+	}
+	m.accountError = ""
+	if m.accountEditor != nil {
+		m.authGeneration[m.accountEditor.draft.ID] = nextAccountRequest.Add(1)
+	}
+	m.accountEditor = nil
+	m.accounts = cloneAccounts(result.Settings.Accounts)
+	m.accountQuery = ""
+	if result.Change.After == nil {
+		m.authGeneration[result.Change.ID] = nextAccountRequest.Add(1)
+		m.fetchGeneration[accountModelKey(result.Change.ProviderID, result.Change.ID)]++
+		m.accountID = ""
+		for _, row := range m.accountRows() {
+			m.accountID = row.ID
+			break
+		}
+	} else {
+		m.accountID = result.Change.ID
+	}
+	m.rebuildAccountsForm()
+}
+
+var nextAccountRequest atomic.Uint64
+
+func (m *Model) SignInRequest() (string, uint64) {
+	id := m.accountID
+	if m.accountEditor != nil {
+		id = m.accountEditor.draft.ID
+	}
+	m.authGeneration[id] = nextAccountRequest.Add(1)
+	return id, m.authGeneration[id]
 }
 
 // Field IDs for the protocol option, capability, and sampling rows.
@@ -382,62 +741,6 @@ const (
 	fieldTemperature       = "model-temperature"
 	fieldTopP              = "model-top-p"
 )
-
-// protocolOptionFields renders the protocol-level request switches the
-// resolved protocol declares via ProtocolInfo.Options. Protocols without a
-// knob render nothing, so the section is data-driven, not type-switched.
-func (m *Model) protocolOptionFields(cfg types.ProviderConfig) []*ui.FieldState {
-	proto, ok := provider.ProtocolByID(providerStandard(m.providerID, cfg))
-	if !ok {
-		return nil
-	}
-	options := proto.Info().Options
-	settings := cfg.Protocol
-	var fields []*ui.FieldState
-
-	if options.Store {
-		defaultLabel := "Off (default)"
-		if options.StoreDefault {
-			defaultLabel = "On (default)"
-		}
-		fields = append(fields, ui.TriStateFieldState(fieldProtocolStore, "Server-side caching", defaultLabel,
-			protocolStoreValue(settings),
-			"Cache context server-side instead of re-uploading it each request."))
-	}
-	if options.ZeroDataRetention {
-		zdr := false
-		if settings != nil {
-			zdr = settings.ZeroDataRetention
-		}
-		fields = append(fields, ui.ToggleFieldState(fieldProtocolZDR, "Zero data retention", zdr,
-			"Never store the conversation server-side; reasoning stays encrypted."))
-	}
-	if options.ReasoningSummaries {
-		fields = append(fields, ui.TriStateFieldState(fieldProtocolSummaries, "Reasoning summaries", "On (default)",
-			protocolSummariesValue(settings),
-			"Include summarized reasoning alongside the final answer."))
-	}
-	if options.Truncation {
-		current := "fail"
-		if settings != nil && settings.Truncation != nil && *settings.Truncation {
-			current = "truncate"
-		}
-		f := ui.CycleFieldState(fieldProtocolTruncate, "Context overflow", []string{"fail", "truncate"}, current,
-			"Truncate context beyond the model window instead of failing.")
-		f.Options = []ui.FormOption{{ID: "fail", Label: "Fail (default)"}, {ID: "truncate", Label: "Truncate"}}
-		fields = append(fields, f)
-	}
-	if len(options.ServiceTiers) > 0 {
-		current := ""
-		if settings != nil {
-			current = settings.ServiceTier
-		}
-		fields = append(fields, ui.SelectFieldState(fieldProtocolTier, "Service tier", current,
-			serviceTierOptions(options.ServiceTiers),
-			"Processing tier: flex is cheaper, priority is faster."))
-	}
-	return fields
-}
 
 // serviceTierOptions turns the protocol's declared tiers into select options.
 // The first tier is the wire default and carries the empty ID (inherit).
@@ -649,42 +952,26 @@ func dialerFromForm(timeout, connect, attempts, backoff string) *provider.DialSe
 
 // chatgptAuthFields builds the OAuth status + sign-in/sign-out rows shown in
 // place of the API-key field for the ChatGPT subscription provider.
-func (m *Model) chatgptAuthFields(cfg types.ProviderConfig) []*ui.FieldState {
-	signedIn := cfg.OAuth != nil && cfg.OAuth.AccessToken != ""
+func (m *Model) chatgptAuthFields(account provider.Account) []*ui.FieldState {
+	signedIn := account.OAuth != nil && account.OAuth.AccessToken != ""
 	status := "Not signed in"
 	if signedIn {
-		switch {
-		case cfg.OAuth.Email != "":
-			status = "Signed in as " + cfg.OAuth.Email
-		case cfg.OAuth.AccountID != "":
-			status = "Signed in (account " + cfg.OAuth.AccountID + ")"
-		default:
-			status = "Signed in"
-		}
+		status = "Sign-in stored"
 	}
-	statusField := ui.TextFieldState("chatgpt-status", "Account", status,
-		"ChatGPT subscription account; authenticates via browser, no API key.")
+	if m.authWaitingID == account.ID {
+		status = "Waiting for browser sign-in"
+	}
+	statusField := ui.TextFieldState("chatgpt-status", "Status", status, "OAuth credentials belong only to this account.")
 	statusField.ReadOnly = true
-	if signedIn {
-		return []*ui.FieldState{
-			statusField,
-			{ID: "chatgpt-signout", Label: "Sign out", Type: ui.FieldNav, Target: "settings.chatgpt.signout",
-				Button:      true,
-				Description: "Forget the stored ChatGPT tokens. You can sign in again any time."},
-		}
+	if message := m.authErrors[account.ID]; message != "" {
+		statusField.Errors = []string{message}
 	}
-	return []*ui.FieldState{
-		statusField,
-		{ID: "chatgpt-signin", Label: "Sign in with ChatGPT", Type: ui.FieldNav, Target: "settings.chatgpt.signin",
-			Button:      true,
-			Description: "Opens a browser to authorize your ChatGPT subscription."},
-	}
+	fields := []*ui.FieldState{statusField}
+	return fields
 }
 
-// rebuildProvidersForm rebuilds the provider form for the current providerID.
-// The field set is provider-specific (ChatGPT swaps the API-key row for OAuth
-// rows), so switching providers must replace the form model, not just its
-// values. The surface rebinds its form widget in the form.changed handler.
+// Rebuild after a provider or protocol switch: the protocol's option rows
+// depend on its capabilities. The surface rebinds the retained form widget.
 func (m *Model) rebuildProvidersForm() {
 	form := m.buildProvidersForm()
 	m.categories[catProviders].Form = form
@@ -692,29 +979,23 @@ func (m *Model) rebuildProvidersForm() {
 	form.OnChanged(func(fieldID string) { m.handleFieldChanged(category, fieldID) })
 }
 
+func (m *Model) rebuildAccountsForm() {
+	form := m.buildAccountsForm()
+	m.categories[catAccounts].Form = form
+	form.OnChanged(func(fieldID string) { m.handleFieldChanged(catAccounts, fieldID) })
+}
+
 // buildAgentForm builds an agent's behavior form. When isMain is true it also
 // carries the Multi-Agent enable/disable toggle so the main settings surface
 // mirrors the /settings deck. Communication protocol is deliberately not an
 // agent property — it is resolved from the provider at use time.
 func (m *Model) buildAgentForm(cfg types.CategorySettings, isMain bool) *ui.FormModel {
-	providerID := cfg.Provider
-	if providerID == "" {
-		providerID = m.providerID
-	}
-	providerCfg := m.providers[providerID]
-	model := cfg.Model
-	if model == "" {
-		model = providerCfg.Model
-	}
-	thinking := cfg.ThinkingEffort
-	if thinking == "" {
-		thinking = providerCfg.ThinkingEffort
-	}
+	providerID := m.accounts[cfg.AccountID].ProviderID
 	fields := []*ui.FieldState{
 		ui.SeparatorFieldState("agent", "Agent behavior"),
-		ui.SelectFieldState(fieldProvider, "Provider", providerID, ui.ProviderOptions(m.presets), "Override the workspace provider for this agent."),
-		ui.ModelFieldState(fieldModel, "Model", model, ui.ModelOptions(m.models[providerID]), "Override the workspace default model."),
-		ui.ThinkingFieldState(fieldThinkingEffort, thinking, "Override the workspace reasoning budget."),
+		ui.SelectFieldState(fieldConnection, "Account", cfg.AccountID, m.connectionOptions(false), "Select the named account this agent uses."),
+		ui.ModelFieldState(fieldModel, "Model", cfg.Model, ui.ModelOptions(m.models[accountModelKey(providerID, cfg.AccountID)]), "Model for this agent account."),
+		ui.ThinkingFieldState(fieldThinkingEffort, cfg.ThinkingEffort, "Reasoning budget for this agent."),
 	}
 	fields = append(fields, m.capabilityFields(cfg)...)
 	compaction := types.DefaultContextCompactionPercent
@@ -876,21 +1157,10 @@ func (m *Model) agentsEnabled() bool {
 // inherit the main agent at use time.
 func (m *Model) buildMemoryForm(mem types.MemorySettings) *ui.FormModel {
 	cat := mem.MemoryCategory
-	providerID := cat.Provider
-	if providerID == "" {
-		providerID = m.providerID
-	}
-	providerCfg := m.providers[providerID]
+	providerID := m.accounts[cat.AccountID].ProviderID
 	model := cat.Model
 	if model == "" {
 		model = mem.Model // legacy bare override
-	}
-	if model == "" {
-		model = providerCfg.Model
-	}
-	thinking := cat.ThinkingEffort
-	if thinking == "" {
-		thinking = providerCfg.ThinkingEffort
 	}
 	compaction := types.DefaultContextCompactionPercent
 	if cat.ContextCompactionPercent != nil {
@@ -909,9 +1179,9 @@ func (m *Model) buildMemoryForm(mem types.MemorySettings) *ui.FormModel {
 		ui.TextFieldState("extract-every", "Extract cadence", fmt.Sprintf("%d", mem.ExtractCadenceOrDefault(types.DefaultMemoryExtractCadence)), "Run extraction every N turns."),
 		ui.BoolFieldState("consolidation", "Consolidation", mem.ConsolidationEnabled(), "Background dedup, contradiction resolution, and memory decay."),
 		ui.SeparatorFieldState("memory-agent", "Memory agent"),
-		ui.SelectFieldState(fieldProvider, "Provider", providerID, ui.ProviderOptions(m.presets), "Override the workspace provider for the memory agent."),
-		ui.ModelFieldState(fieldModel, "Model", model, ui.ModelOptions(m.models[providerID]), "Model for background memory jobs. Blank inherits the main agent."),
-		ui.ThinkingFieldState(fieldThinkingEffort, thinking, "Override the memory agent's reasoning budget."),
+		ui.SelectFieldState(fieldConnection, "Account", cat.AccountID, m.connectionOptions(false), "Select the named account used for memory jobs."),
+		ui.ModelFieldState(fieldModel, "Model", model, ui.ModelOptions(m.models[accountModelKey(providerID, cat.AccountID)]), "Model for background memory jobs. Blank inherits the main agent."),
+		ui.ThinkingFieldState(fieldThinkingEffort, cat.ThinkingEffort, "Reasoning budget for the memory agent."),
 		compactionField,
 	)
 }
@@ -922,6 +1192,10 @@ func (m *Model) buildSafetyForm(settings types.SafetySettings) *ui.FormModel {
 	rules := ui.TextFieldState(fieldSafetyRules, "Command rules", formatCommandRules(settings.CommandRules),
 		"Semicolon-separated glob=severity rules, for example scripts/*.sh=safe; deploy*=destructive.")
 	rules.Validator = commandRulesValidator
+	auto := settings.AutoPermission.Normalized()
+	instructions := ui.TextAreaFieldState(fieldAutoPermInstructions, "Extra restrictions", auto.Instructions,
+		"Optional brief restrictions for the reviewer. Backend length caps still apply.")
+	instructions.Rows = 3
 	return formModel(
 		ui.SeparatorFieldState("command-policy", "Command policy"),
 		ui.CycleFieldState(fieldSafetyConfirmAt, "Confirm commands at", confirmOptions, settings.ConfirmAt,
@@ -931,10 +1205,34 @@ func (m *Model) buildSafetyForm(settings types.SafetySettings) *ui.FormModel {
 		ui.CycleFieldState(fieldSafetyScript, "Local scripts", riskOptions, settings.ScriptExecutionRisk,
 			"Severity for direct .sh execution and shell/source wrappers."),
 		rules,
+		ui.SeparatorFieldState("auto-permissions", "Auto permissions"),
+		ui.BoolFieldState(fieldAutoPermission, "Enabled", auto.Enabled == "on",
+			"Opt in for the root agent only. Child agents preserve their own policy."),
+		ui.SelectFieldState(fieldAutoPermAccount, "Connection", auto.AccountID, m.connectionOptions(true),
+			"Required explicit reviewer account. Blank cannot silently inherit the main agent."),
+		ui.ModelFieldState(fieldAutoPermModel, "Model", auto.Model, ui.ModelOptions(m.models[accountModelKey(auto.Provider, auto.AccountID)]),
+			"Required explicit reviewer model. Blank is unconfigured; the main agent model is never chosen implicitly."),
+		ui.CycleFieldState(fieldAutoPermDenyMode, "Denied review", []string{"ask", "deny"}, auto.DenyMode,
+			"Ask routes a denied review to you; Deny rejects it without another prompt."),
+		autoPermissionIntField(fieldAutoPermTimeout, "Timeout (seconds)", auto.TimeoutSeconds, 1, 30,
+			"Remote review timeout. Uncertainty, timeout, and errors always ask you."),
+		autoPermissionIntField(fieldAutoPermOutputTokens, "Output token cap", auto.MaxOutputTokens, 16, 256,
+			"Maximum reviewer response tokens for each eligible request."),
+		autoPermissionIntField(fieldAutoPermInputBytes, "Input byte cap", auto.MaxInputBytes, 256, 8192,
+			"Maximum bounded tool-argument bytes shared with the remote reviewer."),
+		autoPermissionIntField(fieldAutoPermReviews, "Review cap per turn", auto.MaxReviewsPerTurn, 1, 100,
+			"Maximum eligible remote reviews in one root-agent turn."),
+		instructions,
 		ui.SeparatorFieldState("safety-attention", "Attention"),
 		ui.BoolFieldState(fieldSafetyNotify, "Danger notifications", settings.NotifyDangerous != "off",
-			"Keep dangerous and blocked agent actions visible across tabs and editor views."),
+			"Keep dangerous and blocked actions visible. Policy hard blocks always apply before auto review."),
 	)
+}
+
+func autoPermissionIntField(id, label string, value, minValue, maxValue int, description string) *ui.FieldState {
+	field := ui.TextFieldState(id, label, strconv.Itoa(value), description)
+	field.Validator = intRangeValidator(minValue, maxValue)
+	return field
 }
 
 func formatCommandRules(rules []types.CommandSeverityRule) string {
@@ -999,17 +1297,6 @@ func providerStandard(providerID string, cfg types.ProviderConfig) string {
 	return provider.DefaultStandardID(providerID)
 }
 
-func cloneStandardMap(src map[string]string) map[string]string {
-	if src == nil {
-		return nil
-	}
-	out := make(map[string]string, len(src))
-	for model, standard := range src {
-		out[model] = standard
-	}
-	return out
-}
-
 func parseOpt(value string, defaultVal int) int {
 	if value == "" {
 		return defaultVal
@@ -1060,6 +1347,8 @@ func (m *Model) ProviderIDForTest() string {
 	return m.providerID
 }
 
+func (m *Model) SelectAccountForTest(id string) { m.selectAccount(id) }
+
 func (m *Model) isAgentCategory(index int) bool {
 	return index == catMain || index == catResearcher || index == catCrafter || index == catAeron
 }
@@ -1069,32 +1358,66 @@ func (m *Model) handleFieldChanged(category int, fieldID string) {
 		m.syncAppearanceColors()
 		return
 	}
-	if category == catProviders && fieldID == fieldProvider {
-		providerID := m.value(catProviders, fieldProvider)
-		if providerID != "" && providerID != m.providerID {
-			m.storeProviderForm(m.providerID)
-			m.providerID = providerID
-			m.providerModel = m.providers[providerID].Model
-			// The field set is provider-specific (ChatGPT swaps the API-key row
-			// for OAuth rows), so rebuild rather than just repopulating values.
+	if category == catAccounts && m.accountEditor != nil {
+		if fieldID == fieldProvider {
+			templateID := m.value(catAccounts, fieldProvider)
+			if templateID != m.accountEditor.draft.ProviderID {
+				m.accountEditor.draft.ProviderID = templateID
+				m.accountEditor.draft.APIKey = ""
+				m.accountEditor.draft.OAuth = nil
+				m.accountEditor.draft.Overrides = provider.TemplateOverrides{}
+				m.rebuildAccountsForm()
+			}
+			return
+		}
+		m.storeAccountForm()
+		if strings.HasPrefix(fieldID, "account-override-") && strings.HasSuffix(fieldID, "-enabled") {
+			m.rebuildAccountsForm()
+		}
+		return
+	}
+	if category == catProviders && m.providerEditor != nil {
+		if fieldID == templateFieldSeed && m.providerEditor.isNew {
+			id := m.value(catProviders, templateFieldSeed)
+			m.providerEditor.seedID = id
+			if id == "" {
+				m.providerEditor.draft = provider.Template{AuthType: provider.AuthProtocol, APIStandard: "openai"}
+			} else {
+				m.providerEditor.draft = provider.CloneTemplate(provider.DefaultTemplates()[id])
+				for templateID, existing := range m.providers {
+					if strings.EqualFold(provider.ResolveTemplate(templateID, existing, provider.TemplateOverrides{}).Name, m.providerEditor.draft.Name) {
+						m.providerEditor.draft.Name += " copy"
+						break
+					}
+				}
+			}
+			m.rebuildProvidersForm()
+			return
+		}
+		m.storeProviderForm(m.providerID)
+		if fieldID == templateFieldAuthType || fieldID == templateFieldProtocol {
 			m.rebuildProvidersForm()
 		}
 		return
 	}
-	if category == catProviders && fieldID == fieldAPIStandard {
-		// Persist the switch, then rebuild: the protocol option rows are
-		// capability-driven by the selected protocol and must change with it.
-		m.storeProviderForm(m.providerID)
-		m.rebuildProvidersForm()
+	if (m.isAgentCategory(category) || category == catMemory) && fieldID == fieldConnection {
+		accountID := m.value(category, fieldConnection)
+		account, ok := m.accounts[accountID]
+		if !ok {
+			return
+		}
+		form := m.categories[category].Form
+		if field := form.Field(fieldModel); field != nil {
+			field.Options = ui.ModelOptions(m.models[accountModelKey(account.ProviderID, accountID)])
+			field.Errors, field.Loading, field.LoadMessage = nil, false, ""
+		}
 		return
 	}
-	if (m.isAgentCategory(category) || category == catMemory) && fieldID == fieldProvider {
-		providerID := m.value(category, fieldProvider)
-		cfg := m.providers[providerID]
-		form := m.categories[category].Form
-		form.SetValue(fieldModel, ui.StringValue(cfg.Model))
-		if field := form.Field(fieldModel); field != nil {
-			field.Options = ui.ModelOptions(m.models[providerID])
+	if category == catSafety && fieldID == fieldAutoPermAccount {
+		form := m.categories[catSafety].Form
+		form.SetValue(fieldAutoPermModel, ui.StringValue(""))
+		if field := form.Field(fieldAutoPermModel); field != nil {
+			field.Options = nil
 			field.Errors, field.Loading, field.LoadMessage = nil, false, ""
 		}
 		return
@@ -1114,10 +1437,11 @@ func (m *Model) autofillCapabilities(category int) {
 		return
 	}
 	modelID := m.value(category, fieldModel)
-	providerID := m.value(category, fieldProvider)
+	accountID := m.value(category, fieldConnection)
+	providerID := m.accounts[accountID].ProviderID
 	var entry types.ModelEntry
 	var found bool
-	for _, model := range m.models[providerID] {
+	for _, model := range m.models[accountModelKey(providerID, accountID)] {
 		if model.ID == modelID {
 			entry, found = model, true
 			break
@@ -1165,112 +1489,162 @@ func (m *Model) syncAppearanceColors() {
 // the mounted component tree rather than a parallel legacy form event loop.
 func (m *Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case TemplateChangeResultMsg:
+		if msg.Target == m {
+			m.applyTemplateChange(msg)
+		}
+	case AccountChangeResultMsg:
+		if msg.Target == m {
+			m.applyAccountChange(msg)
+		}
 	case ModelsMsg:
-		m.setModels(msg.ProviderID, msg.Models)
+		if account, ok := m.accounts[msg.AccountID]; ok && account.ProviderID == msg.ProviderID && msg.Generation > 0 && m.fetchGeneration[accountModelKey(msg.ProviderID, msg.AccountID)] == msg.Generation {
+			m.setModelsForAccount(msg.ProviderID, msg.AccountID, msg.Models)
+		}
 	case ModelsErrorMsg:
-		m.setModelsError(msg.ProviderID, msg.Error)
+		if account, ok := m.accounts[msg.AccountID]; ok && account.ProviderID == msg.ProviderID && msg.Generation > 0 && m.fetchGeneration[accountModelKey(msg.ProviderID, msg.AccountID)] == msg.Generation {
+			m.setModelsErrorForAccount(msg.ProviderID, msg.AccountID, msg.Error)
+		}
 	case ChatGPTSignInResultMsg:
-		if msg.Err == nil && msg.Creds != nil {
-			m.setChatGPTAuth(msg.Creds, "")
-		} else {
-			// Surface the failure on the status row; keep the sign-in button.
-			msg2 := ""
-			if msg.Err != nil {
-				msg2 = msg.Err.Error()
+		if m.accountEditor != nil && m.accountEditor.draft.ID == msg.AccountID && m.accountEditor.draft.ProviderID == "chatgpt" && msg.Generation > 0 && m.authGeneration[msg.AccountID] == msg.Generation {
+			m.authWaitingID = ""
+			if msg.Err == nil && msg.Creds != nil {
+				m.setChatGPTAuth(msg.AccountID, msg.Creds, "")
+			} else {
+				text := "Sign-in failed"
+				if msg.Err != nil {
+					text = msg.Err.Error()
+				}
+				m.authErrors[msg.AccountID] = text
+				m.rebuildAccountsForm()
 			}
-			m.setChatGPTAuth(nil, msg2)
 		}
 	case ChatGPTSignOutMsg:
-		m.setChatGPTAuth(nil, "")
+		if m.accountEditor != nil && m.accountEditor.draft.ID == msg.AccountID && m.accountEditor.draft.ProviderID == "chatgpt" && msg.Generation > 0 && m.authGeneration[msg.AccountID] == msg.Generation {
+			m.authWaitingID = ""
+			m.authGeneration[msg.AccountID] = nextAccountRequest.Add(1)
+			m.setChatGPTAuth(msg.AccountID, nil, "")
+		}
 	}
 	return *m, nil
 }
-
-// setChatGPTAuth updates the chatgpt provider's OAuth state and refreshes the
-// provider form when chatgpt is the selected provider. A nil creds clears the
-// tokens (sign-out or fatal sign-in failure); errMsg is shown on the status
-// row so the user sees why a sign-in attempt failed.
-func (m *Model) setChatGPTAuth(creds *provider.OAuthCredentials, errMsg string) {
-	cfg := m.providers["chatgpt"]
-	cfg.OAuth = creds
-	m.providers["chatgpt"] = cfg
-	if m.providerID != "chatgpt" {
+func (m *Model) setChatGPTAuth(id string, creds *provider.OAuthCredentials, errMsg string) {
+	if m.accountEditor == nil || m.accountEditor.draft.ID != id {
 		return
 	}
-	m.rebuildProvidersForm()
+	a := m.accountEditor.draft
+	if creds != nil {
+		copy := *creds
+		a.OAuth = &copy
+	} else {
+		a.OAuth = nil
+	}
+	m.accountEditor.draft = a
+	delete(m.authErrors, id)
+	m.fetchGeneration[accountModelKey(a.ProviderID, id)] = nextAccountRequest.Add(1)
+	delete(m.models, accountModelKey(a.ProviderID, id))
+	m.rebuildAccountsForm()
 	if errMsg != "" {
-		if f := m.categories[catProviders].Form.Field("chatgpt-status"); f != nil {
+		if f := m.categories[catAccounts].Form.Field("chatgpt-status"); f != nil {
 			f.Errors = []string{errMsg}
 		}
 	}
 }
 
+func accountModelKey(providerID, accountID string) string { return providerID + "/" + accountID }
+func (m *Model) resolvedAccount(category int) (string, string) {
+	switch category {
+	case catAccounts:
+		if m.accountEditor != nil {
+			return m.accountEditor.draft.ProviderID, m.accountEditor.draft.ID
+		}
+		return m.accounts[m.accountID].ProviderID, m.accountID
+	case catSafety:
+		id := m.value(catSafety, fieldAutoPermAccount)
+		return m.accounts[id].ProviderID, id
+	default:
+		id := m.value(category, fieldConnection)
+		return m.accounts[id].ProviderID, id
+	}
+}
 func (m *Model) OpenSelect(fieldID string) tea.Cmd {
-	if fieldID != fieldModel || m.currentForm() == nil {
+	modelFieldID := fieldModel
+	if m.selected == catSafety {
+		modelFieldID = fieldAutoPermModel
+	}
+	if fieldID != modelFieldID || m.currentForm() == nil {
 		return nil
 	}
-	field := m.currentForm().Field(fieldModel)
+	providerID, accountID := m.resolvedAccount(m.selected)
+	if providerID == "" || accountID == "" {
+		return nil
+	}
+	field := m.currentForm().Field(modelFieldID)
 	if field == nil || len(field.Options) > 0 {
 		return nil
 	}
 	field.Loading, field.LoadMessage = true, "Fetching models..."
-	if m.selected == catProviders {
-		return m.fetchModelsCmd()
-	}
-	if m.isAgentCategory(m.selected) || m.selected == catMemory {
-		return m.fetchModelsForProviderCmd(m.value(m.selected, fieldProvider))
-	}
-	return nil
+	return m.fetchModelsForAccountCmd(providerID, accountID)
 }
-
 func (m *Model) fetchModelsCmd() tea.Cmd {
+	account := m.accounts[m.accountID]
+	return m.fetchModelsForAccountCmd(account.ProviderID, m.accountID)
+}
+func (m *Model) fetchModelsForAccountCmd(providerID, accountID string) tea.Cmd {
+	account, ok := cloneAccounts(m.accounts)[accountID]
+	if m.accountEditor != nil && m.accountEditor.draft.ID == accountID {
+		m.storeAccountForm()
+		account = cloneAccounts(map[string]provider.Account{accountID: m.accountEditor.draft})[accountID]
+		ok = true
+	}
+	if !ok || account.ProviderID != providerID {
+		return nil
+	}
+	cfg, exists := m.providers[providerID]
+	if !exists {
+		return nil
+	}
+	effective := provider.ResolveTemplate(providerID, cfg, account.Overrides)
+	key := accountModelKey(providerID, accountID)
+	m.fetchGeneration[key] = nextAccountRequest.Add(1)
+	generation := m.fetchGeneration[key]
 	return func() tea.Msg {
-		return FetchModelsMsg{
-			ProviderID: m.providerID, BaseURL: m.value(catProviders, fieldBaseURL),
-			APIKey:     m.value(catProviders, fieldAPIKey),
-			StandardID: m.value(catProviders, fieldAPIStandard),
-		}
+		return FetchModelsMsg{ProviderID: providerID, AccountID: accountID, Generation: generation, BaseURL: effective.ProviderURL, APIKey: account.APIKey, StandardID: providerStandard(providerID, effective), Account: account}
 	}
 }
-
-func (m *Model) fetchModelsForProviderCmd(providerID string) tea.Cmd {
-	cfg := m.providers[providerID]
-	baseURL := cfg.ProviderURL
-	if baseURL == "" {
-		if preset := provider.GetPreset(providerID); preset != nil {
-			baseURL = preset.BaseURL
-		}
-	}
-	return func() tea.Msg {
-		return FetchModelsMsg{
-			ProviderID: providerID, BaseURL: baseURL, APIKey: cfg.APIKey,
-			StandardID: providerStandard(providerID, cfg),
-		}
-	}
-}
-
-func (m *Model) setModels(providerID string, models []types.ModelEntry) {
-	m.models[providerID] = models
+func (m *Model) setModelsForAccount(providerID, accountID string, models []types.ModelEntry) {
+	m.models[accountModelKey(providerID, accountID)] = models
 	for index := range m.categories {
-		if index == catProviders && m.providerID != providerID {
+		fieldID := fieldModel
+		if index == catSafety {
+			fieldID = fieldAutoPermModel
+		} else if !m.isAgentCategory(index) && index != catMemory {
 			continue
 		}
-		if m.isAgentCategory(index) && m.value(index, fieldProvider) != providerID {
+		pid, aid := m.resolvedAccount(index)
+		if pid != providerID || aid != accountID {
 			continue
 		}
-		if field := m.categories[index].Form.Field(fieldModel); field != nil {
+		if field := m.categories[index].Form.Field(fieldID); field != nil {
 			field.Options = ui.ModelOptions(models)
 			field.Errors, field.Loading, field.LoadMessage = nil, false, ""
 		}
 	}
 }
-
-func (m *Model) setModelsError(providerID, message string) {
+func (m *Model) setModelsErrorForAccount(providerID, accountID, message string) {
 	for index := range m.categories {
-		if (index == catProviders && m.providerID == providerID) || (m.isAgentCategory(index) && m.value(index, fieldProvider) == providerID) {
-			if field := m.categories[index].Form.Field(fieldModel); field != nil {
-				field.Errors, field.Loading, field.LoadMessage = []string{message}, false, ""
-			}
+		fieldID := fieldModel
+		if index == catSafety {
+			fieldID = fieldAutoPermModel
+		} else if !m.isAgentCategory(index) && index != catMemory {
+			continue
+		}
+		pid, aid := m.resolvedAccount(index)
+		if pid != providerID || aid != accountID {
+			continue
+		}
+		if field := m.categories[index].Form.Field(fieldID); field != nil {
+			field.Errors, field.Loading, field.LoadMessage = []string{message}, false, ""
 		}
 	}
 }
@@ -1299,7 +1673,21 @@ func (m *Model) Scope() types.SettingsScope {
 	}
 	return m.scope
 }
-func (m *Model) SetScope(scope types.SettingsScope) { m.scope = scope }
+func (m *Model) SetScope(scope types.SettingsScope) {
+	if m.scope == scope {
+		return
+	}
+	m.storeProviderForm(m.providerID)
+	m.storeAccountForm()
+	m.scope = scope
+	if scope == types.SettingsScopeWorkspace && (m.selected == catAccounts || m.selected == catProviders) {
+		m.SelectCategory(catMain)
+	}
+	if len(m.categories) > catProviders {
+		m.rebuildProvidersForm()
+		m.rebuildAccountsForm()
+	}
+}
 func (m *Model) Overrides() types.WorkspaceOverrides {
 	if m.Scope() != types.SettingsScopeWorkspace {
 		return types.WorkspaceOverrides{}
@@ -1308,9 +1696,15 @@ func (m *Model) Overrides() types.WorkspaceOverrides {
 }
 
 func (m *Model) SelectCategory(index int) {
-	if index >= 0 && index < len(m.categories) {
+	if index >= 0 && index < len(m.categories) && ((index != catAccounts && index != catProviders) || m.Scope() == types.SettingsScopeApplication) {
 		m.selected, m.pane = index, 0
 	}
+}
+
+// SelectAccounts routes connection recovery to the application-wide roster.
+func (m *Model) SelectAccounts() {
+	m.SetScope(types.SettingsScopeApplication)
+	m.SelectCategory(catAccounts)
 }
 
 // MoveCategory shifts the selected category by delta within the currently
@@ -1350,6 +1744,9 @@ func (m *Model) CategoryItems() []ui.ListItem {
 	items := make([]ui.ListItem, 0, len(visible)*2)
 	lastGroup := ""
 	for _, index := range visible {
+		if (index == catAccounts || index == catProviders) && m.Scope() != types.SettingsScopeApplication {
+			continue
+		}
 		category := m.categories[index]
 		if category.Group != lastGroup {
 			if lastGroup != "" {
@@ -1367,6 +1764,9 @@ func (m *Model) visibleCategoryIndices() []int {
 	query := strings.ToLower(strings.TrimSpace(m.searchText()))
 	indices := make([]int, 0, len(m.categories))
 	for index, category := range m.categories {
+		if (index == catAccounts || index == catProviders) && m.Scope() != types.SettingsScopeApplication {
+			continue
+		}
 		if query == "" || strings.Contains(strings.ToLower(category.Name), query) || strings.Contains(strings.ToLower(category.Group), query) {
 			indices = append(indices, index)
 		}
@@ -1389,6 +1789,7 @@ func (m *Model) ensureVisibleSelection() {
 
 const (
 	catProviders = iota
+	catAccounts
 	catMain
 	catResearcher
 	catCrafter
@@ -1474,7 +1875,8 @@ func (m *Model) collectMemory(cfg *types.MemorySettings) {
 		RecallLimit:        parseOpt(m.value(catMemory, "recall-limit"), types.DefaultMemoryRecallLimit),
 		ExtractEveryTurns:  parseOpt(m.value(catMemory, "extract-every"), types.DefaultMemoryExtractCadence),
 		MemoryCategory: types.CategorySettings{
-			Provider:                 m.value(catMemory, fieldProvider),
+			Provider:                 m.accounts[m.value(catMemory, fieldConnection)].ProviderID,
+			AccountID:                m.value(catMemory, fieldConnection),
 			Model:                    m.value(catMemory, fieldModel),
 			ThinkingEffort:           m.value(catMemory, fieldThinkingEffort),
 			ContextCompactionPercent: parsePercentPtr(m.value(catMemory, fieldContextCompaction)),
@@ -1489,6 +1891,18 @@ func (m *Model) collectSafety(settings *types.SafetySettings) {
 		ScriptExecutionRisk: m.value(catSafety, fieldSafetyScript),
 		CommandRules:        parseCommandRules(m.value(catSafety, fieldSafetyRules)),
 		NotifyDangerous:     onOff(m.value(catSafety, fieldSafetyNotify) == "on"),
+		AutoPermission: types.AutoPermissionSettings{
+			Enabled:           onOff(m.value(catSafety, fieldAutoPermission) == "on"),
+			Provider:          m.accounts[m.value(catSafety, fieldAutoPermAccount)].ProviderID,
+			AccountID:         m.value(catSafety, fieldAutoPermAccount),
+			Model:             m.value(catSafety, fieldAutoPermModel),
+			DenyMode:          m.value(catSafety, fieldAutoPermDenyMode),
+			Instructions:      strings.TrimSpace(m.value(catSafety, fieldAutoPermInstructions)),
+			TimeoutSeconds:    parseOpt(m.value(catSafety, fieldAutoPermTimeout), 8),
+			MaxOutputTokens:   parseOpt(m.value(catSafety, fieldAutoPermOutputTokens), 96),
+			MaxInputBytes:     parseOpt(m.value(catSafety, fieldAutoPermInputBytes), 4096),
+			MaxReviewsPerTurn: parseOpt(m.value(catSafety, fieldAutoPermReviews), 12),
+		}.Normalized(),
 	}
 }
 
@@ -1501,32 +1915,18 @@ func onOff(enabled bool) string {
 
 func (m *Model) collectProviders(settings *types.AppSettings) {
 	m.storeProviderForm(m.providerID)
-	settings.ActiveProvider = m.providerID
+	m.storeAccountForm()
+	settings.ActiveProvider = m.activeProvider
+	settings.Accounts = cloneAccounts(m.accounts)
 	settings.Providers = make(map[string]types.ProviderConfig, len(m.providers))
 	for id, cfg := range m.providers {
-		cfg.ModelStandards = cloneStandardMap(cfg.ModelStandards)
-		settings.Providers[id] = cfg
+		settings.Providers[id] = provider.CloneTemplate(cfg)
 	}
 }
 
-func (m *Model) storeProviderForm(providerID string) {
-	if providerID == "" || len(m.categories) == 0 {
-		return
-	}
-	cfg := m.providers[providerID]
-	cfg.APIKey = m.value(catProviders, fieldAPIKey)
-	cfg.ProviderURL = m.value(catProviders, fieldBaseURL)
-	cfg.APIStandard = m.value(catProviders, fieldAPIStandard)
-	cfg.Dialer = dialerFromForm(
-		m.value(catProviders, fieldDialTimeout),
-		m.value(catProviders, fieldDialConnect),
-		m.value(catProviders, fieldDialAttempts),
-		m.value(catProviders, fieldDialBackoff),
-	)
-	cfg.Protocol = m.protocolSettingsFromForm(catProviders)
-	cfg.ExtraBody = extraBodyFromForm(m.value(catProviders, fieldExtraBody))
-	m.providers[providerID] = cfg
-}
+func (m *Model) storeProviderForm(string) { m.storeProviderEditorForm() }
+
+func (m *Model) storeAccountForm() { m.storeAccountEditorForm() }
 
 // protocolSettingsFromForm folds the protocol option rows back into persisted
 // settings. A form left entirely on defaults stores nil — protocol defaults,
@@ -1596,14 +1996,15 @@ func (m *Model) collectAgents(agents *types.AgentsSettings) {
 		key   string
 	}{{catMain, "default"}, {catResearcher, "researcher"}, {catCrafter, "crafter"}, {catAeron, "aeron"}} {
 		category := types.CategorySettings{
-			Provider:       m.value(entry.index, fieldProvider),
+			Provider:       m.accounts[m.value(entry.index, fieldConnection)].ProviderID,
+			AccountID:      m.value(entry.index, fieldConnection),
 			Model:          m.value(entry.index, fieldModel),
 			ThinkingEffort: m.value(entry.index, fieldThinkingEffort),
 		}
 		// Registry facts (pricing, tool support) mirror onto the category when
 		// the model entry is known. User-editable capabilities come from the
 		// form, where blank means inherit from the registry at use time.
-		for _, model := range m.models[category.Provider] {
+		for _, model := range m.models[accountModelKey(category.Provider, category.AccountID)] {
 			if model.ID == category.Model {
 				category.ModelInputPrice, category.ModelOutputPrice, category.ModelCachePrice = model.InputPrice, model.OutputPrice, model.CacheReadPrice
 				category.ModelSupportsTools = model.SupportsTools
@@ -1841,7 +2242,8 @@ func (m *Model) Snapshot() {
 	snapshot := &modelSnapshot{
 		categories: make([]categorySnapshot, len(m.categories)),
 		selected:   m.selected, pane: m.pane,
-		providerID: m.providerID, providerModel: m.providerModel,
+		providerID: m.providerID, accountID: m.accountID, activeProvider: m.activeProvider,
+		providers: provider.CloneTemplates(m.providers), accounts: cloneAccounts(m.accounts),
 	}
 	for index, category := range m.categories {
 		values := make(map[string]ui.FieldValue, category.Form.FieldCount())
@@ -1870,5 +2272,11 @@ func (m *Model) Restore() {
 		}
 	}
 	m.selected, m.pane = m.snapshot.selected, m.snapshot.pane
-	m.providerID, m.providerModel = m.snapshot.providerID, m.snapshot.providerModel
+	m.providerID, m.activeProvider = m.snapshot.providerID, m.snapshot.activeProvider
+	m.providers = provider.CloneTemplates(m.snapshot.providers)
+	m.accountID, m.accounts = m.snapshot.accountID, cloneAccounts(m.snapshot.accounts)
+	m.providerEditor, m.accountEditor = nil, nil
+	m.providerError, m.accountError = "", ""
+	m.rebuildProvidersForm()
+	m.rebuildAccountsForm()
 }

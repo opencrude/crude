@@ -70,10 +70,8 @@ func TestDockHeaderActionsEmitPanelCommands(t *testing.T) {
 		t.Fatalf("close icon action=%+v want %s", res.Action, shellterm.ActionClose)
 	}
 
-	// Tabs must not extend under the header actions.
-	tabsRight := dock.tabs.Bounds().X + dock.tabs.Bounds().W
-	if tabsRight > dock.actions[0].rect.X {
-		t.Fatalf("tabs end %d overlaps actions at %d", tabsRight, dock.actions[0].rect.X)
+	if got := dock.Active().Bounds().Y; got != dividerH+1 {
+		t.Fatalf("terminal body starts at %d want one action row below divider", got)
 	}
 }
 

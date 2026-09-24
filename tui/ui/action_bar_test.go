@@ -33,6 +33,24 @@ func TestActionBarRoutesOnlyFocusedAndHitButtons(t *testing.T) {
 	}
 }
 
+func TestActionBarSetSameLabelRetainsButtonBounds(t *testing.T) {
+	bar := NewActionBar("actions", NewTokenSet(theme.DefaultDark()),
+		ActionBarButton{Label: "Open Workspace", Action: "open", Enabled: true},
+		ActionBarButton{Label: "Cancel", Action: "cancel", Enabled: true})
+	bar.Layout(LayoutContext{}, Rect{X: 2, Y: 1, W: 42, H: 1})
+	for frame := 0; frame < 20; frame++ {
+		if !bar.SetLabel("open", "Open Workspace") {
+			t.Fatalf("frame %d did not find stable action", frame)
+		}
+		if bounds := bar.buttons[0].button.Bounds(); bounds.W == 0 || bounds.H == 0 {
+			t.Fatalf("frame %d dropped button bounds: %+v", frame, bounds)
+		}
+	}
+	if !bar.SetLabel("open", "Attach Files") || bar.buttons[0].button.Bounds().W == 0 {
+		t.Fatal("changing a button label lost its hit bounds")
+	}
+}
+
 func TestActionBarAlignStartPacksFromLeft(t *testing.T) {
 	bar := NewActionBar("actions", NewTokenSet(theme.DefaultDark()),
 		ActionBarButton{ID: "reset", Label: "Reset section", Action: "reset", Variant: VariantDanger, Enabled: true},

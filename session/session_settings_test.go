@@ -17,36 +17,37 @@ func TestConfigWithSessionOverridesUsesWorkspaceThenSession(t *testing.T) {
 	compact := 2
 	base := &Config{
 		ActiveProvider: "openrouter",
+		Accounts: map[string]provider.Account{
+			"router-account": {ID: "router-account", ProviderID: "openrouter", APIKey: "router-secret"},
+			"openai-account": {ID: "openai-account", ProviderID: "openai", APIKey: "openai-secret"},
+		},
 		Providers: map[string]ProviderConfig{
-			"openrouter": {APIKey: "workspace-key", Model: "workspace-model", ThinkingEffort: "low"},
+			"openrouter": provider.DefaultTemplates()["openrouter"],
 			"openai": {
-				APIKey: "openai-key", ProviderURL: "https://api.openai.com/v1",
-				APIStandard:    "openai-responses",
-				ModelStandards: map[string]string{"gpt-5": "openai"},
+				Name: "OpenAI", ProviderURL: "https://api.openai.com/v1", APIStandard: "openai-responses", AuthType: provider.AuthProtocol,
 			},
 		},
 		Agents: AgentsConfig{
 			ActiveProfile: "default",
 			Profiles: map[string]ProfileConfig{
 				"default": {Categories: map[string]CategoryConfig{
-					CategoryDefault: {Provider: "openrouter", Model: "workspace-main", ThinkingEffort: "medium"},
-					"crafter":       {Provider: "openrouter", Model: "workspace-crafter"},
+					CategoryDefault: {AccountID: "router-account", Model: "workspace-main", ThinkingEffort: "medium"},
+					"crafter":       {AccountID: "router-account", Model: "workspace-crafter"},
 				}},
 			},
 		},
 	}
 	overrides := map[string]sessiondb.AgentSettingOverride{
-		"crafter": {Provider: "openai", Model: "gpt-5", ThinkingEffort: "high", ContextCompactionPercent: &compact},
+		"crafter": {AccountID: "openai-account", Model: "gpt-5", ThinkingEffort: "high", ContextCompactionPercent: &compact},
 	}
 
 	effective := configWithSessionOverrides(base, overrides)
 	crafter := effective.GetCategoryConfig("crafter")
-	if crafter.Provider != "openai" || crafter.Model != "gpt-5" ||
-		crafter.APIStandard != "openai" || crafter.ThinkingEffort != "high" {
+	if crafter.AccountID != "openai-account" || crafter.Model != "gpt-5" || crafter.ThinkingEffort != "high" {
 		t.Fatalf("crafter override not applied: %#v", crafter)
 	}
-	if crafter.APIKey != "openai-key" {
-		t.Fatalf("provider credentials were not inherited: %#v", crafter)
+	if effective.templateIDForAccount(crafter.AccountID) != "openai" {
+		t.Fatalf("crafter account did not resolve its template: %#v", crafter)
 	}
 	if crafter.ContextCompactionPercent == nil || *crafter.ContextCompactionPercent != 2 {
 		t.Fatalf("crafter compaction threshold = %v, want 2", crafter.ContextCompactionPercent)
@@ -67,8 +68,8 @@ func TestCategoryModelKeepsVendorPrefix(t *testing.T) {
 	const vendored = "z-ai/glm-5.3-flash"
 
 	stored := catSettingsToConfig(ttypes.CategorySettings{
-		Provider: "commandcode",
-		Model:    vendored,
+		AccountID: "command-account",
+		Model:     vendored,
 	})
 	if stored.Model != vendored {
 		t.Fatalf("catSettingsToConfig stripped the vendor prefix: %q", stored.Model)
@@ -82,13 +83,13 @@ func TestCategoryModelKeepsVendorPrefix(t *testing.T) {
 	base := &Config{
 		ActiveProvider: "commandcode",
 		Providers: map[string]ProviderConfig{
-			"commandcode": {APIKey: "key", ProviderURL: "https://api.commandcode.ai/provider/v1"},
+			"commandcode": provider.DefaultTemplates()["commandcode"],
 		},
 		Agents: AgentsConfig{
 			ActiveProfile: "default",
 			Profiles: map[string]ProfileConfig{
 				"default": {Categories: map[string]CategoryConfig{
-					CategoryDefault: {Provider: "commandcode", Model: vendored},
+					CategoryDefault: {AccountID: "command-account", Model: vendored},
 				}},
 			},
 		},
@@ -98,71 +99,34 @@ func TestCategoryModelKeepsVendorPrefix(t *testing.T) {
 	}
 }
 
-func TestCategoryAPIKeyAlwaysComesFromProvider(t *testing.T) {
-	cfg := &Config{
-		ActiveProvider: "opencode-go",
-		Providers: map[string]ProviderConfig{
-			"opencode-go": {APIKey: "provider-key", ProviderURL: "https://opencode.ai/zen/go/v1"},
-		},
-		Agents: AgentsConfig{
-			ActiveProfile: "test",
-			Profiles: map[string]ProfileConfig{
-				"test": {Categories: map[string]CategoryConfig{
-					CategoryDefault: {
-						Provider: "opencode-go",
-						APIKey:   "stale-profile-key",
-						Model:    "deepseek-v4-flash",
-					},
-				}},
-			},
-		},
-	}
+func TestCategoryAccountRequiresMainAgentSelection(t *testing.T) {
+	cfg := &Config{ActiveProvider: "opencode-go", Providers: map[string]ProviderConfig{"opencode-go": provider.DefaultTemplates()["opencode-go"]},
+		Agents: DefaultAgentsConfig()}
 	got := cfg.GetActiveDefaultCategory()
-	if got.APIKey != "provider-key" {
-		t.Fatalf("resolved API key = %q, want provider-key", got.APIKey)
+	if got.AccountID != "" {
+		t.Fatalf("category selected an account implicitly: %q", got.AccountID)
 	}
 	settings := ConfigToSettings(cfg)
-	if settings.Agents.Categories[CategoryDefault].APIKey != "" {
-		t.Fatalf("agent category settings leaked API key: %#v", settings.Agents.Categories[CategoryDefault])
-	}
-	if settings.APIKey != "provider-key" {
-		t.Fatalf("session snapshot API key = %q, want provider-key", settings.APIKey)
+	if settings.AccountID != "" || settings.APIKey != "" || settings.ProviderAPIKey != "" {
+		t.Fatalf("session settings leaked credentials or lost account: %+v", settings)
 	}
 }
 
-func TestApplyWorkspaceAgentDefaultsDoesNotStoreAPIKey(t *testing.T) {
-	cfg := &Config{
-		Providers: map[string]ProviderConfig{
-			"opencode-go": {APIKey: "provider-key"},
-		},
-		Agents: AgentsConfig{
-			ActiveProfile: "default",
-			Profiles: map[string]ProfileConfig{
-				"default": {Categories: map[string]CategoryConfig{
-					CategoryDefault: {Provider: "opencode-go", APIKey: "old-key"},
-				}},
-			},
-		},
-	}
+func TestWorkspaceAgentDefaultStoresAccountNotSecret(t *testing.T) {
+	cfg := &Config{ActiveProvider: "opencode-go", Providers: map[string]ProviderConfig{"opencode-go": provider.DefaultTemplates()["opencode-go"]}, Agents: DefaultAgentsConfig()}
 	ApplyWorkspaceAgentDefaults(cfg, ttypes.AgentsSettings{Categories: map[string]ttypes.CategorySettings{
-		CategoryDefault: {Provider: "opencode-go", APIKey: "from-form", Model: "m"},
+		CategoryDefault: {Provider: "opencode-go", AccountID: "account", APIKey: "discarded", Model: "m"},
 	}})
 	stored := cfg.Agents.Profiles["default"].Categories[CategoryDefault]
-	if stored.APIKey != "" {
-		t.Fatalf("stored category API key = %q, want empty", stored.APIKey)
-	}
-	if stored.Model != "m" {
-		t.Fatalf("stored model = %q, want m", stored.Model)
-	}
-	if got := cfg.GetActiveDefaultCategory().APIKey; got != "provider-key" {
-		t.Fatalf("resolved API key = %q, want provider-key", got)
+	if stored.AccountID != "account" || stored.Model != "m" {
+		t.Fatalf("stored category: %+v", stored)
 	}
 }
 
 func TestEnsureAgentsDefaultsRestoresOmittedMultiAgent(t *testing.T) {
 	agents := AgentsConfig{ActiveProfile: "default", Profiles: map[string]ProfileConfig{
 		"default": {Categories: map[string]CategoryConfig{
-			CategoryDefault: {Provider: "openrouter", Model: "m"},
+			CategoryDefault: {AccountID: "router-account", Model: "m"},
 		}},
 	}}
 	EnsureAgentsDefaults(&agents)
@@ -203,8 +167,8 @@ func TestHandleSettingsSaveAppliesMultiAgent(t *testing.T) {
 	if !sess.SettingsSnapshot().Agents.Enabled {
 		t.Fatal("saved multi-agent on did not enable the session")
 	}
-	if sess.SubAgentRunner() == nil {
-		t.Fatal("enabling multi-agent did not create the sub-agent runner")
+	if sess.SubAgentRunner() != nil {
+		t.Fatal("enabling multi-agent eagerly created a runner before any launch")
 	}
 	snap := sess.SettingsSnapshot()
 	if snap.SessionMultiAgent == nil || !*snap.SessionMultiAgent {
@@ -221,7 +185,7 @@ func TestApplyWorkspaceAgentDefaultsUpdatesMultiAgentFlag(t *testing.T) {
 			"default": {
 				MultiAgent: &on,
 				Categories: map[string]CategoryConfig{
-					CategoryDefault: {Provider: "openrouter", Model: "model"},
+					CategoryDefault: {AccountID: "account", Model: "model"},
 				},
 			},
 		},
@@ -307,15 +271,14 @@ func TestSettingsToSessionOverridesHonorsExplicitMap(t *testing.T) {
 		}},
 		SessionOverrides: map[string]ttypes.CategorySettings{
 			"researcher": {
-				Provider: "anthropic", Model: "claude",
-				APIStandard: "anthropic", ThinkingEffort: "low",
+				AccountID: "anthropic-account", Model: "claude", ThinkingEffort: "low",
 				ContextCompactionPercent: &compact,
 			},
 		},
 	}
 	overrides := settingsToSessionOverrides(settings)
 	if len(overrides) != 1 || overrides["researcher"].Model != "claude" ||
-		overrides["researcher"].APIStandard != "anthropic" || overrides["researcher"].ContextCompactionPercent == nil ||
+		overrides["researcher"].AccountID != "anthropic-account" || overrides["researcher"].ContextCompactionPercent == nil ||
 		*overrides["researcher"].ContextCompactionPercent != 2 {
 		t.Fatalf("explicit override map not honored: %#v", overrides)
 	}
@@ -329,7 +292,7 @@ func TestResumeHydratesCompletedSubAgents(t *testing.T) {
 		t.Fatalf("OpenAndMigrate: %v", err)
 	}
 	if err := sessiondb.Create(db, sessiondb.SessionMeta{
-		ID: "parent", ProjectPath: root, ProjectName: "project",
+		ID: "parent", AccountID: "account", ProjectPath: root, ProjectName: "project",
 		CreatedAt: time.Now().UnixNano(),
 	}); err != nil {
 		t.Fatalf("Create: %v", err)
@@ -411,7 +374,7 @@ func TestResumeRestoresActiveContextIndependentlyFromFullArchive(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := sessiondb.Create(db, sessiondb.SessionMeta{
-		ID: "wire-parent", ProjectPath: root, ProjectName: "project", CreatedAt: time.Now().UnixNano(),
+		ID: "wire-parent", AccountID: "account", ProjectPath: root, ProjectName: "project", CreatedAt: time.Now().UnixNano(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -472,7 +435,7 @@ func TestContextCompactionDefaultsAndLiveInheritance(t *testing.T) {
 	disabled := 0
 	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
 	profile.Categories[CategoryDefault] = CategoryConfig{
-		Provider: cfg.ActiveProvider, Model: main.Model, ContextCompactionPercent: &disabled,
+		AccountID: main.AccountID, Model: main.Model, ContextCompactionPercent: &disabled,
 	}
 	profile.Categories[CategoryResearcher] = CategoryConfig{Inherit: InheritMain}
 	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile

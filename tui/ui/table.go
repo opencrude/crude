@@ -53,6 +53,7 @@ type Table struct {
 	scroll     *ScrollModel
 	tokens     *TokenSet
 	showHeader bool
+	columnGap  int
 	widths     []int
 	colX       []int
 	hoverIdx   int
@@ -82,6 +83,13 @@ func (t *Table) SetColumns(cols []TableColumn) {
 
 // SetShowHeader toggles the sticky header row.
 func (t *Table) SetShowHeader(show bool) { t.showHeader = show }
+
+// SetColumnGap reserves unpainted cells between columns. The default is zero;
+// compact settings tables opt in so truncated names cannot touch status text.
+func (t *Table) SetColumnGap(gap int) {
+	t.columnGap = max(0, gap)
+	t.recomputeWidths()
+}
 
 // SetRows replaces rows and selects the first row if needed.
 func (t *Table) SetRows(rows []TableRow) {
@@ -142,7 +150,9 @@ func (t *Table) Layout(_ LayoutContext, r Rect) {
 		vp--
 	}
 	t.scroll.SetViewport(max(1, vp))
-	t.scroll.EnsureVisible(t.sel.Index())
+	// Layout may run during scrollbar drags and resize. Selection changes call
+	// EnsureVisible at the time of the change; layout must not snap scrolling
+	// back to an offscreen selected row.
 	t.recomputeWidths()
 }
 
@@ -153,6 +163,11 @@ func (t *Table) recomputeWidths() {
 		availW = 80
 	}
 	n := len(t.cols)
+	gap := t.columnGap
+	if n > 1 {
+		gap = min(gap, max(0, (availW-n)/(n-1)))
+	}
+	availW = max(0, availW-gap*max(0, n-1))
 	widths := make([]int, n)
 	colX := make([]int, n)
 	consumed := 0
@@ -213,7 +228,7 @@ func (t *Table) recomputeWidths() {
 	x := 0
 	for i := range widths {
 		colX[i] = x
-		x += widths[i]
+		x += widths[i] + gap
 	}
 	t.widths = widths
 	t.colX = colX

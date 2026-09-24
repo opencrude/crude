@@ -125,12 +125,30 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	if flags.MultiAgent != nil {
 		applySessionMultiAgent(cfg, *flags.MultiAgent)
 	}
+	// Session metadata is authoritative for the main account pin. An empty pin
+	// remains disconnected even if a workspace or application now has accounts.
+	prof, name := activeProfileCfg(cfg)
+	if prof.Categories == nil {
+		prof.Categories = make(map[string]CategoryConfig)
+	}
+	main := prof.Categories[CategoryDefault]
+	// The account ID is the connection identity. Its current template supplies
+	// transport settings; the old provider column is retained only as history.
+	main.Inherit = ""
+	main.AccountID = meta.AccountID
+	prof.Categories[CategoryDefault] = main
+	cfg.Agents.Profiles[name] = prof
 	activeCfg := cfg.GetActiveDefaultCategory()
-	p, err := cfg.providerForCategory(activeCfg)
-	if err != nil {
-		_ = lg.Close()
-		db.Close()
-		return nil, fmt.Errorf("resume: provider standard: %w", err)
+	var p *provider.Provider
+	if _, accountErr := cfg.resolveAccount(meta.AccountID); accountErr != nil {
+		lg.Warn("SESSION", "pinned_account_unavailable", "account", meta.AccountID, "error", accountErr.Error())
+	} else {
+		p, err = cfg.providerForCategory(activeCfg)
+		if err != nil {
+			_ = lg.Close()
+			_ = db.Close()
+			return nil, fmt.Errorf("resume: account template: %w", err)
+		}
 	}
 
 	var displayMetas []sessiondb.DisplayMeta
@@ -154,6 +172,22 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		msgs, msgTurns = cleanMsgs, cleanTurns
 	}
 
+	// An unnamed session receives its personal identity once, before it is
+	// exposed as a live agent. Subsequent resumes use the durable value.
+	if meta.AgentName.String == "" {
+		name, nameErr := allocateAgentName(homeDir)
+		if nameErr != nil {
+			_ = lg.Close()
+			_ = db.Close()
+			return nil, fmt.Errorf("allocate agent identity: %w", nameErr)
+		}
+		if _, err := db.Exec(`UPDATE sessions SET agent_name=? WHERE id=?`, name, meta.ID); err != nil {
+			_ = lg.Close()
+			_ = db.Close()
+			return nil, fmt.Errorf("persist agent identity: %w", err)
+		}
+		meta.AgentName.String, meta.AgentName.Valid = name, true
+	}
 	resumeTurnNumber := maxTurn
 	if meta.TurnCount > maxTurn {
 		resumeTurnNumber = meta.TurnCount
@@ -173,9 +207,11 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		contextReason = state.Reason
 	}
 	sess := &Session{
+		agentName: meta.AgentName.String, nameHome: homeDir,
 		ID:                 meta.ID,
 		cfg:                cfg,
 		provider:           p,
+		accountUnpinned:    meta.AccountID == "",
 		exec:               exec,
 		editor:             editor,
 		logger:             lg,
@@ -230,7 +266,7 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		}
 		results = append(results, result)
 	}
-	if cfg.IsMultiAgentEnabled() || len(results) > 0 {
+	if len(results) > 0 {
 		sess.subAgentSup = NewSubAgentRunner(sess, cfg.Agents.MaxConcurrent)
 		for _, result := range results {
 			sess.subAgentSup.Manager().HydrateCompleted(result)

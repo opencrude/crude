@@ -10,7 +10,7 @@ import (
 
 func TestConversationKeepsImmutableIdentityPerTurnDerivedMessage(t *testing.T) {
 	conversation := NewConversation()
-	first := ttypes.TurnIdentity{Generation: 1, ProviderID: "provider-a", ModelID: "model-a"}
+	first := ttypes.TurnIdentity{Generation: 1, ProviderID: "provider-a", AccountID: "personal", ModelID: "model-a"}
 	if !conversation.BeginTurn(first) {
 		t.Fatal("first turn identity was rejected")
 	}
@@ -19,7 +19,7 @@ func TestConversationKeepsImmutableIdentityPerTurnDerivedMessage(t *testing.T) {
 	conversation.EnsureAssistant()
 	conversation.AppendToken("first answer")
 
-	second := ttypes.TurnIdentity{Generation: 2, ProviderID: "provider-b", ModelID: "model-b"}
+	second := ttypes.TurnIdentity{Generation: 2, ProviderID: "provider-a", AccountID: "work", ModelID: "model-b"}
 	if !conversation.BeginTurn(second) {
 		t.Fatal("second turn identity was rejected")
 	}
@@ -33,13 +33,13 @@ func TestConversationKeepsImmutableIdentityPerTurnDerivedMessage(t *testing.T) {
 	messages := conversation.Messages()
 	for _, message := range messages[:3] {
 		if message.Role == MessageRoleThinking || message.Role == MessageRoleTool || message.Role == MessageRoleAssistant {
-			if message.ModelID != "model-a" || message.ProviderID != "provider-a" || message.TurnGeneration != 1 {
+			if message.ModelID != "model-a" || message.ProviderID != "provider-a" || message.AccountID != "personal" || message.TurnGeneration != 1 {
 				t.Fatalf("first turn message was relabeled: %#v", message)
 			}
 		}
 	}
 	last := messages[len(messages)-1]
-	if last.Role != MessageRoleAssistant || last.ModelID != "model-b" || last.ProviderID != "provider-b" || last.TurnGeneration != 2 {
+	if last.Role != MessageRoleAssistant || last.ModelID != "model-b" || last.ProviderID != "provider-a" || last.AccountID != "work" || last.TurnGeneration != 2 {
 		t.Fatalf("second turn assistant attribution = %#v", last)
 	}
 }

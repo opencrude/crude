@@ -70,6 +70,7 @@ func (m *App) dirtyPromptSave() tea.Cmd {
 func (m *App) dirtyPromptDiscard() {
 	path := m.DirtyPromptPath
 	m.overlayHost.Close(ui.OverlayDirtyClose)
+	m.openNextAgentPrompt()
 	if path != "" {
 		m.closeEditorTabForce(path)
 		// The user resolved this buffer's close decision, so a bulk close
@@ -91,6 +92,7 @@ func (m *App) dirtyPromptCancel() {
 		}
 	}
 	m.overlayHost.Close(ui.OverlayDirtyClose)
+	m.openNextAgentPrompt()
 	// Cancelling a close preserves the document, so the deadline the prompt
 	// suspended has to come back: otherwise a dirty buffer would sit with no
 	// scheduled save until the next keystroke.

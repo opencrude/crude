@@ -23,7 +23,7 @@ func TestCommitContextCompactionArchivesPreviousGenerationAtomically(t *testing.
 	started := time.Now().Add(-time.Second)
 	if err := SaveCompactionRecord(db, CompactionRecord{
 		OperationID: "compact-1", SessionID: "session", AgentID: "root", Trigger: "manual", Role: "root",
-		State: CompactionExtracting, StageName: "state", StageIndex: 3, CompletedStages: 2,
+		State: CompactionExtracting, AccountID: "work", StageName: "state", StageIndex: 3, CompletedStages: 2,
 		StartedAt: started, UpdatedAt: started,
 	}); err != nil {
 		t.Fatal(err)
@@ -50,7 +50,7 @@ func TestCommitContextCompactionArchivesPreviousGenerationAtomically(t *testing.
 		t.Fatalf("archived generation=%+v err=%v", oldMessages, err)
 	}
 	records, err := ListCompactionRecords(db, "session", "root")
-	if err != nil || len(records) != 1 || records[0].State != CompactionCompleted || records[0].BeforeTokens != 155955 || records[0].AfterTokens != 10476 {
+	if err != nil || len(records) != 1 || records[0].State != CompactionCompleted || records[0].BeforeTokens != 155955 || records[0].AfterTokens != 10476 || records[0].AccountID != "work" {
 		t.Fatalf("records=%+v err=%v", records, err)
 	}
 }

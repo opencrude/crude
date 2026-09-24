@@ -3,12 +3,15 @@ package app
 import (
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
 	"crude/history"
+	"crude/provider"
 	"crude/session"
 	ttypes "crude/tui/types"
+	typesmodel "crude/types"
 )
 
 // setTestHome redirects the home directory to a temp dir for the duration of
@@ -36,10 +39,28 @@ func TestFileConfigRoundTrip(t *testing.T) {
 	defer restore()
 
 	// Build a FileConfig with all extended settings.
+	providerHeaders := map[string]string{"X-Tenant": "alpha"}
+	accountHeaders := map[string]string{"X-Tenant": "work"}
+	accountEndpoint := "https://gateway.example/v1"
 	fc := FileConfig{
 		ActiveProvider: "openrouter",
-		Providers: map[string]session.ProviderConfig{
-			"openrouter": {APIKey: "sk-test", ProviderURL: "https://openrouter.ai/api/v1"},
+		Providers: map[string]provider.Template{
+			"openrouter": {
+				Name: "OpenRouter", ProviderURL: "https://openrouter.ai/api/v1", APIStandard: "openai",
+				AuthType: provider.AuthProtocol, Headers: providerHeaders,
+				Dialer:    &provider.DialSettings{MaxAttempts: 3},
+				Protocol:  &provider.ProtocolSettings{Store: boolPtr(false)},
+				ExtraBody: map[string]any{"include_reasoning": true},
+			},
+		},
+		Accounts: map[string]provider.Account{
+			"work": {
+				ID: "work", ProviderID: "openrouter", APIKey: "sk-test",
+				Overrides: provider.TemplateOverrides{
+					ProviderURL: &accountEndpoint, Headers: &accountHeaders,
+					ExtraBody: &map[string]any{},
+				},
+			},
 		},
 		TurnLogsEnabled: boolPtr(true),
 		Agents:          &session.AgentsConfig{Enabled: true, ActiveProfile: "default"},
@@ -89,8 +110,16 @@ func TestFileConfigRoundTrip(t *testing.T) {
 	if loaded.ActiveProvider != fc.ActiveProvider {
 		t.Errorf("ActiveProvider: expected %q, got %q", fc.ActiveProvider, loaded.ActiveProvider)
 	}
-	if loaded.Providers["openrouter"].APIKey != fc.Providers["openrouter"].APIKey {
-		t.Errorf("APIKey mismatch")
+	if loaded.Accounts["work"].APIKey != fc.Accounts["work"].APIKey {
+		t.Errorf("account mismatch")
+	}
+	if !reflect.DeepEqual(loaded.Providers["openrouter"], fc.Providers["openrouter"]) {
+		t.Fatalf("provider template mismatch: got %#v, want %#v", loaded.Providers["openrouter"], fc.Providers["openrouter"])
+	}
+	overrides := loaded.Accounts["work"].Overrides
+	if overrides.ProviderURL == nil || *overrides.ProviderURL != accountEndpoint || overrides.Headers == nil ||
+		!reflect.DeepEqual(*overrides.Headers, accountHeaders) || overrides.ExtraBody == nil || len(*overrides.ExtraBody) != 0 {
+		t.Fatalf("account sparse overrides mismatch: %#v", overrides)
 	}
 
 	// Verify Theme settings.
@@ -145,6 +174,9 @@ func TestFileConfigRoundTrip(t *testing.T) {
 
 func TestDefaultFileConfigHasNoExtendedSettings(t *testing.T) {
 	fc := DefaultFileConfig()
+	if len(fc.Providers) == 0 || fc.Providers["openrouter"].Name != "OpenRouter" {
+		t.Fatalf("default config is missing seeded provider templates: %#v", fc.Providers)
+	}
 	if fc.Theme != nil {
 		t.Error("Default FileConfig should have nil Theme")
 	}
@@ -159,6 +191,10 @@ func TestDefaultFileConfigHasNoExtendedSettings(t *testing.T) {
 	}
 	if fc.Font != nil {
 		t.Error("Default FileConfig should have nil Font")
+	}
+	fc.Providers["openrouter"] = provider.Template{}
+	if DefaultFileConfig().Providers["openrouter"].Name != "OpenRouter" {
+		t.Fatal("default provider templates share mutable state")
 	}
 }
 
@@ -182,6 +218,11 @@ func TestSafetySettingsRoundTripThroughFileConfig(t *testing.T) {
 	settings := ttypes.AppSettings{Safety: ttypes.SafetySettings{
 		ConfirmAt: "network", UnknownCommandRisk: "project-write", ScriptExecutionRisk: "safe",
 		NotifyDangerous: "off", CommandRules: []ttypes.CommandSeverityRule{{Pattern: "scripts/*.sh", Risk: "safe"}},
+		AutoPermission: typesmodel.AutoPermissionSettings{
+			Enabled: "on", Provider: "openai", Model: "gpt-5-mini", DenyMode: "deny",
+			Instructions: "Never approve deployment commands.", TimeoutSeconds: 11,
+			MaxOutputTokens: 80, MaxInputBytes: 2048, MaxReviewsPerTurn: 7,
+		},
 	}}
 	fc := DefaultFileConfig()
 	ApplyAppSettingsToFileConfig(&fc, settings)
@@ -189,6 +230,12 @@ func TestSafetySettingsRoundTripThroughFileConfig(t *testing.T) {
 	if got.ConfirmAt != "network" || got.UnknownCommandRisk != "project-write" || got.ScriptExecutionRisk != "safe" ||
 		got.NotifyDangerous != "off" || len(got.CommandRules) != 1 || got.CommandRules[0].Pattern != "scripts/*.sh" {
 		t.Fatalf("safety round-trip = %#v", got)
+	}
+	auto := got.AutoPermission
+	if auto.Enabled != "on" || auto.Provider != "openai" || auto.Model != "gpt-5-mini" || auto.DenyMode != "deny" ||
+		auto.Instructions != "Never approve deployment commands." || auto.TimeoutSeconds != 11 ||
+		auto.MaxOutputTokens != 80 || auto.MaxInputBytes != 2048 || auto.MaxReviewsPerTurn != 7 {
+		t.Fatalf("auto permission round-trip = %#v", auto)
 	}
 }
 
@@ -239,14 +286,15 @@ func TestSaveFileConfigOmitsAgentProfileAPIKeys(t *testing.T) {
 
 	fc := FileConfig{
 		ActiveProvider: "opencode-go",
-		Providers: map[string]session.ProviderConfig{
-			"opencode-go": {APIKey: "provider-key", ProviderURL: "https://opencode.ai/zen/go/v1"},
+		Providers: map[string]provider.Template{
+			"opencode-go": {Name: "OpenCode Go", ProviderURL: "https://opencode.ai/zen/go/v1", APIStandard: "openai", AuthType: provider.AuthProtocol},
 		},
+		Accounts: map[string]provider.Account{"go-account": {ID: "go-account", ProviderID: "opencode-go", APIKey: "provider-key"}},
 		Agents: &session.AgentsConfig{
 			ActiveProfile: "test",
 			Profiles: map[string]session.ProfileConfig{
 				"test": {Categories: map[string]session.CategoryConfig{
-					"default": {Provider: "opencode-go", APIKey: "should-not-persist", Model: "deepseek-v4-flash"},
+					"default": {AccountID: "go-account", Model: "deepseek-v4-flash"},
 				}},
 			},
 		},
@@ -261,8 +309,26 @@ func TestSaveFileConfigOmitsAgentProfileAPIKeys(t *testing.T) {
 	if strings.Contains(string(data), "should-not-persist") {
 		t.Fatalf("agent profile API key leaked into config.json: %s", data)
 	}
-	if !strings.Contains(string(data), "provider-key") {
-		t.Fatal("provider API key should still persist")
+	if !strings.Contains(string(data), `"accounts"`) || !strings.Contains(string(data), "provider-key") {
+		t.Fatal("account credential should persist in accounts only")
+	}
+	if strings.Contains(string(data), "should-not-persist") {
+		t.Fatal("profile credential leaked")
+	}
+}
+
+func TestRemovedSeedTemplateStaysRemovedAfterReload(t *testing.T) {
+	defer setTestHome(t, t.TempDir())()
+	cfg := DefaultFileConfig()
+	if _, exists := cfg.Providers["chatgpt"]; !exists {
+		t.Fatal("Codex seed missing from a new config")
+	}
+	delete(cfg.Providers, "chatgpt")
+	if err := SaveFileConfig(cfg); err != nil {
+		t.Fatal(err)
+	}
+	if _, exists := LoadFileConfig().Providers["chatgpt"]; exists {
+		t.Fatal("deleted built-in template was reseeded over saved user configuration")
 	}
 }
 
@@ -297,22 +363,15 @@ func TestLoadFileConfigIgnoresAgentProfileAPIKeys(t *testing.T) {
 		t.Fatal(err)
 	}
 	loaded := LoadFileConfig()
-	if loaded.Providers["opencode-go"].APIKey != "provider-key" {
-		t.Fatalf("provider key = %q", loaded.Providers["opencode-go"].APIKey)
+	if len(loaded.Accounts) != 0 {
+		t.Fatal("legacy provider credential must not be imported automatically")
 	}
 	cat := loaded.Agents.Profiles["test"].Categories["default"]
-	if cat.APIKey != "" {
-		t.Fatalf("loaded agent profile API key = %q, want empty", cat.APIKey)
-	}
-	if cat.Provider != "opencode-go" || cat.Model != "deepseek-v4-flash" {
+	if cat.AccountID != "" || cat.Model != "deepseek-v4-flash" {
 		t.Fatalf("agent profile reference lost: %#v", cat)
 	}
-	sess := FileConfigToSession(loaded)
-	if sess.Agents.Profiles["test"].Categories["default"].APIKey != "" {
-		t.Fatal("session config kept a profile API key")
-	}
-	if got := sess.GetActiveDefaultCategory().APIKey; got != "provider-key" {
-		t.Fatalf("resolved key = %q, want provider-key", got)
+	if sess := FileConfigToSession(loaded); len(sess.Accounts) != 0 || sess.GetActiveDefaultCategory().AccountID != "" {
+		t.Fatal("legacy credential entered session configuration")
 	}
 }
 

@@ -29,6 +29,8 @@ Read that first; this index only organizes the reference material.
 
 ### Reference
 
+- [Agent orchestration](reference/agent-orchestration.md) — bounded delegation,
+  evidence-based handoffs, completion delivery, and external design references.
 - [Terminal display width](reference/terminal-width.md) — canonical Unicode
   column-measurement contract shared by layout, surfaces, ultraviolet, and the
   renderer.

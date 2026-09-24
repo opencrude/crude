@@ -19,7 +19,6 @@ type ViewID string
 const (
 	ViewTabs          ViewID = "tabs"
 	ViewWorkspace     ViewID = "workspace"
-	ViewActivity      ViewID = "activity"
 	ViewNotifications ViewID = "notifications"
 )
 
@@ -49,16 +48,18 @@ type UsageSection struct {
 }
 
 type Item struct {
-	ID                 string
-	Label              string
-	Summary            string
-	Subtitle           string
-	Icon               string
-	Header             bool
-	Active             bool
-	Owner              ttypes.ResourceRef
-	Lines              []DetailLine
-	Usage              []UsageSection
+	ID       string
+	Label    string
+	Summary  string
+	Subtitle string
+	Icon     string
+	Header   bool
+	Active   bool
+	Owner    ttypes.ResourceRef
+	Lines    []DetailLine
+	Usage    []UsageSection
+	// ActivateAction makes this a command row instead of a disclosure row.
+	ActivateAction     string
 	PrimaryAction      string
 	PrimaryLabel       string
 	PrimaryEnabled     bool
@@ -108,9 +109,28 @@ type Surface struct {
 	items          map[string]Item
 	expanded       map[string]bool
 	listWidth      int
+	docked         bool
+	stats          bool
 }
 
 func New(th *theme.Theme, projection Projection) *Surface {
+	return newSurface(th, projection, false, false)
+}
+
+// NewDocked creates the single-view status surface used by the workspace dock.
+// The footer owns panel switching; the surface contains search, expandable
+// statistics, and optional command rows, without a separate action bar.
+func NewDocked(th *theme.Theme, projection Projection) *Surface {
+	return newSurface(th, projection, true, false)
+}
+
+// NewStats creates the searchable Open Tabs modal. Rows start collapsed and
+// disclose only on a mouse click; no mode strip or action bar is shown.
+func NewStats(th *theme.Theme, projection Projection) *Surface {
+	return newSurface(th, projection, false, true)
+}
+
+func newSurface(th *theme.Theme, projection Projection, docked, stats bool) *Surface {
 	if th == nil {
 		th = theme.DefaultDark()
 	}
@@ -120,6 +140,8 @@ func New(th *theme.Theme, projection Projection) *Surface {
 		tokens:   tokens,
 		items:    make(map[string]Item),
 		expanded: make(map[string]bool),
+		docked:   docked,
+		stats:    stats,
 	}
 	s.views = ui.NewTabs(ViewsID, tokens)
 	s.views.SetItems(viewItems(), string(ViewTabs))
@@ -127,14 +149,28 @@ func New(th *theme.Theme, projection Projection) *Surface {
 	s.search.field.SetPrompt(ui.SearchGlyphEnd(tokens))
 	s.search.field.SetPromptPlacement(ui.PromptEnd)
 	s.search.field.SetPlaceholder("Search status")
+	if stats {
+		s.search.field.SetPlaceholder("Search open tabs")
+	}
 	s.search.field.SetSubmitAction("")
-	s.search.field.SetBackgroundColor(tokens.Color(ui.ColorPopupSubtleBg))
+	searchBG := tokens.Color(ui.ColorPopupSubtleBg)
+	if docked {
+		searchBG = tokens.Color(ui.ColorBg)
+	}
+	s.search.field.SetBackgroundColor(searchBG)
 	s.search.field.SetPromptColor(tokens.Color(ui.ColorAccent))
 	s.list = &listControl{Base: ui.NewBase(ListID), owner: s, list: ui.NewList(ListID, tokens)}
+	if docked {
+		s.list.list.SetDefaultRowBackground(ui.ColorBg)
+	}
 	s.list.list.SetActivateAction("status.item.toggle")
 	s.list.list.SetRowPainter(s.paintStatusRow)
 	s.listScroll = ui.NewScrollbarControl(ListScrollID, s.list.list.Scroll(), tokens)
-	s.listScroll.SetSurfaceBackground(ui.ColorPopupBg)
+	if docked {
+		s.listScroll.SetSurfaceBackground(ui.ColorBg)
+	} else {
+		s.listScroll.SetSurfaceBackground(ui.ColorPopupBg)
+	}
 	s.utilityActions = ui.NewActionBar(UtilityActionsID, tokens)
 	s.utilityActions.SetAlignEnd(false)
 	s.utilityActions.SetExitActions("status.focus.primary", "status.focus.list")
@@ -148,17 +184,24 @@ func viewItems() []ui.TabItem {
 	return []ui.TabItem{
 		{ID: string(ViewTabs), Label: "Tabs"},
 		{ID: string(ViewWorkspace), Label: "Workspace"},
-		{ID: string(ViewActivity), Label: "Activity"},
 		{ID: string(ViewNotifications), Label: "Notifications"},
 	}
 }
 
 func (s *Surface) Children() []ui.Component {
-	children := []ui.Component{s.views, s.search, s.list}
+	children := make([]ui.Component, 0, 6)
+	if !s.docked && !s.stats {
+		children = append(children, s.views)
+	}
+	children = append(children, s.search)
+	children = append(children, s.list)
 	if s.listScroll.Needed() {
 		children = append(children, s.listScroll)
 	}
-	return append(children, s.utilityActions, s.primaryActions)
+	if !s.docked && !s.stats {
+		children = append(children, s.utilityActions, s.primaryActions)
+	}
+	return children
 }
 
 func (s *Surface) SetTokens(tokens *ui.TokenSet) {
@@ -166,7 +209,11 @@ func (s *Surface) SetTokens(tokens *ui.TokenSet) {
 	s.views.SetTokens(tokens)
 	s.search.field.SetTokens(tokens)
 	s.search.field.SetPrompt(ui.SearchGlyphEnd(tokens))
-	s.search.field.SetBackgroundColor(tokens.Color(ui.ColorPopupSubtleBg))
+	searchBG := tokens.Color(ui.ColorPopupSubtleBg)
+	if s.docked {
+		searchBG = tokens.Color(ui.ColorBg)
+	}
+	s.search.field.SetBackgroundColor(searchBG)
 	s.search.field.SetPromptColor(tokens.Color(ui.ColorAccent))
 	s.list.list.SetTokens(tokens)
 	s.listScroll.SetTokens(tokens)
@@ -205,7 +252,9 @@ func (s *Surface) Select(id string) bool {
 		if row.ID != id || !s.list.list.SelectIndex(index) {
 			continue
 		}
-		s.expanded[id] = true
+		if !s.stats && s.items[id].ActivateAction == "" {
+			s.expanded[id] = true
+		}
 		s.syncItems(true)
 		return true
 	}
@@ -240,7 +289,7 @@ func (s *Surface) syncItems(stable bool) {
 		}
 		s.items[item.ID] = item
 		rows = append(rows, ui.ListItem{ID: item.ID, Label: item.Label, Detail: item.Summary, Icon: item.Icon, Payload: statusRow{ItemID: item.ID}})
-		if s.expanded[item.ID] {
+		if item.ActivateAction == "" && s.expanded[item.ID] {
 			rows = s.appendExpandedRows(rows, item)
 		}
 	}
@@ -344,6 +393,12 @@ func (s *Surface) toggleSelected(expandOnly, collapseOnly bool) (bool, tea.Cmd) 
 	if !ok {
 		return false, nil
 	}
+	if item.ActivateAction != "" {
+		if expandOnly || collapseOnly {
+			return false, nil
+		}
+		return true, func() tea.Msg { return NavigateMsg{Item: item, Action: item.ActivateAction} }
+	}
 	wasExpanded := s.expanded[item.ID]
 	switch {
 	case expandOnly && wasExpanded:
@@ -385,19 +440,24 @@ func (s *Surface) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 
 func (s *Surface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
-	topY := min(2, max(0, r.H-2))
-	ruleY := max(topY+1, r.H-2)
-	actionY := min(r.H-1, ruleY+1)
 	innerX, innerW := 2, max(1, r.W-4)
-	s.views.Layout(ctx, ui.Rect{X: innerX, Y: 0, W: innerW, H: min(2, r.H)})
-	primarySize := s.primaryActions.Measure(ctx, ui.Constraints{MaxW: innerW, MaxH: 1})
-	primaryW := min(innerW, primarySize.W)
-	primaryX := innerX + innerW - primaryW
-	s.primaryActions.Layout(ctx, ui.Rect{X: primaryX, Y: actionY, W: primaryW, H: 1})
-	utilityW := max(0, primaryX-innerX-2)
-	s.utilityActions.Layout(ctx, ui.Rect{X: innerX, Y: actionY, W: utilityW, H: 1})
+	topY := 0
+	ruleY := r.H
+	if !s.docked && !s.stats {
+		topY = min(2, max(0, r.H-2))
+		ruleY = max(topY+1, r.H-2)
+		actionY := min(r.H-1, ruleY+1)
+		s.views.Layout(ctx, ui.Rect{X: innerX, Y: 0, W: innerW, H: min(2, r.H)})
+		primarySize := s.primaryActions.Measure(ctx, ui.Constraints{MaxW: innerW, MaxH: 1})
+		primaryW := min(innerW, primarySize.W)
+		primaryX := innerX + innerW - primaryW
+		s.primaryActions.Layout(ctx, ui.Rect{X: primaryX, Y: actionY, W: primaryW, H: 1})
+		utilityW := max(0, primaryX-innerX-2)
+		s.utilityActions.Layout(ctx, ui.Rect{X: innerX, Y: actionY, W: utilityW, H: 1})
+	}
 	contentH := max(1, ruleY-topY)
-	listH := max(1, contentH-2)
+	listOffset := 2
+	listH := max(1, contentH-listOffset)
 	s.search.Layout(ctx, ui.Rect{X: innerX, Y: topY, W: innerW, H: 1})
 	listW := innerW
 	showScroll := s.listScroll.NeededForViewport(listH)
@@ -408,9 +468,9 @@ func (s *Surface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		s.listWidth = listW
 		s.syncItems(true)
 	}
-	s.list.Layout(ctx, ui.Rect{X: innerX, Y: topY + 2, W: listW, H: listH})
+	s.list.Layout(ctx, ui.Rect{X: innerX, Y: topY + listOffset, W: listW, H: listH})
 	if showScroll && innerW > 2 {
-		s.listScroll.Layout(ctx, ui.Rect{X: innerX + innerW - 2, Y: topY + 2, W: 2, H: listH})
+		s.listScroll.Layout(ctx, ui.Rect{X: innerX + innerW - 2, Y: topY + listOffset, W: 2, H: listH})
 	} else {
 		s.listScroll.Layout(ctx, ui.Rect{})
 	}
@@ -422,10 +482,15 @@ func (s *Surface) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) 
 		return
 	}
 	bg, divider := s.tokens.Color(ui.ColorPopupBg), s.tokens.Color(ui.ColorPopupDivider)
+	if s.docked {
+		bg, divider = s.tokens.Color(ui.ColorBg), s.tokens.Color(ui.ColorBorder)
+	}
 	ui.FillRect(buf, ox, oy, r, cell.BlankCell(bg))
-	ruleY := max(0, r.H-2)
-	for x := ox + r.X + 2; x < ox+r.X+r.W-2; x++ {
-		buf.Set(x, oy+r.Y+ruleY, cell.NewCell(ui.FirstRune(s.tokens.Glyphs().BorderH, '-'), divider, bg, 0))
+	if !s.docked && !s.stats {
+		ruleY := max(0, r.H-2)
+		for x := ox + r.X + 2; x < ox+r.X+r.W-2; x++ {
+			buf.Set(x, oy+r.Y+ruleY, cell.NewCell(ui.FirstRune(s.tokens.Glyphs().BorderH, '-'), divider, bg, 0))
+		}
 	}
 	y := oy + r.Y + s.search.Bounds().Y + 1
 	for x := ox + r.X + 2; x < ox+r.X+2+s.search.Bounds().W; x++ {
@@ -438,7 +503,18 @@ func (s *Surface) paintStatusRow(buf *surface.CellBuffer, x, y, width int, item 
 	if !ok {
 		return
 	}
-	_, bg := tokens.ListRowColors(state)
+	fg, bg := tokens.ListRowColors(state)
+	fg, muted := tokens.MenuInk(state, fg)
+	if s.docked {
+		// Docked rows share the panel surface, including text and details.
+		// Emphasize focus with ink/bold rather than a filled selection slab.
+		bg = tokens.Color(ui.ColorBg)
+		fg, muted = tokens.Color(ui.ColorFg), tokens.Color(ui.ColorMuted)
+		if state == ui.StateFocused || state == ui.StateSelected || state == ui.StateHovered {
+			fg = tokens.Color(ui.ColorAccent2)
+		}
+		ui.FillRect(buf, 0, 0, ui.Rect{X: x, Y: y, W: width, H: 1}, cell.BlankCell(bg))
+	}
 	if payload.Detail {
 		role := payload.Line.Role
 		if role == 0 {
@@ -456,17 +532,21 @@ func (s *Surface) paintStatusRow(buf *surface.CellBuffer, x, y, width int, item 
 		buf.WriteString(valueX, y, rendering.TruncateVisual(payload.Line.Value, max(0, x+width-valueX), "…"), tokens.Color(role), bg, 0)
 		return
 	}
-	fg, _ := tokens.ListRowColors(state)
-	fg, muted := tokens.MenuInk(state, fg)
 	attr := cell.Attrs(0)
 	if state == ui.StateFocused || state == ui.StateSelected {
 		attr = cell.AttrBold
 	}
-	chevron := string(ui.FirstRune(tokens.Glyphs().TreeCollapsed, '▸'))
-	if s.expanded[payload.ItemID] {
-		chevron = string(ui.FirstRune(tokens.Glyphs().TreeExpanded, '▾'))
+	chevron := ""
+	if s.items[payload.ItemID].ActivateAction == "" {
+		chevron = string(ui.FirstRune(tokens.Glyphs().TreeCollapsed, '▸'))
+		if s.expanded[payload.ItemID] {
+			chevron = string(ui.FirstRune(tokens.Glyphs().TreeExpanded, '▾'))
+		}
 	}
-	prefix := strings.Repeat(" ", max(0, tokens.FormIndent())) + chevron + " "
+	prefix := strings.Repeat(" ", max(0, tokens.FormIndent()))
+	if chevron != "" {
+		prefix += chevron + " "
+	}
 	if item.Icon != "" {
 		prefix += item.Icon + " "
 	}
@@ -474,9 +554,6 @@ func (s *Surface) paintStatusRow(buf *surface.CellBuffer, x, y, width int, item 
 	contentX := x + rendering.VisibleWidth(prefix)
 	contentW := max(0, width-rendering.VisibleWidth(prefix))
 	label := item.Label
-	if statusItem, exists := s.items[payload.ItemID]; exists && statusItem.Active {
-		label = "• " + label
-	}
 	paintStatusMainLine(buf, contentX, y, contentW, label, item.Detail, fg, muted, bg, attr)
 }
 
@@ -509,9 +586,14 @@ func (s *Surface) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
 	}
 	switch evt.Key.Code {
 	case tea.KeyEsc:
+		if s.docked {
+			return ui.EventResult{}
+		}
 		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return CloseMsg{} }}
 	case tea.KeyTab:
-		if evt.Key.Mod.Contains(tea.ModShift) {
+		if s.stats || s.docked {
+			s.FocusSearch()
+		} else if evt.Key.Mod.Contains(tea.ModShift) {
 			s.FocusPrimaryActions()
 		} else {
 			s.FocusSearch()
@@ -664,6 +746,18 @@ type listControl struct {
 	owner *Surface
 }
 
+func (l *listControl) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
+	if action.ID == "status.item.toggle" {
+		changed, cmd := l.owner.toggleSelected(false, false)
+		invalidate := ui.InvalidatePaint
+		if changed {
+			invalidate |= ui.InvalidateLayout
+		}
+		return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: invalidate}
+	}
+	return ui.EventResult{Action: &action}
+}
+
 func (l *listControl) Bounds() ui.Rect { return l.Base.Bounds() }
 func (l *listControl) Measure(ctx ui.LayoutContext, cs ui.Constraints) ui.Size {
 	return l.list.Measure(ctx, cs)
@@ -676,6 +770,12 @@ func (l *listControl) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintCon
 	l.list.Paint(buf, ox+l.Bounds().X, oy+l.Bounds().Y, ctx)
 }
 func (l *listControl) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+	if evt.IsKey() && l.owner.stats {
+		switch evt.Key.Code {
+		case tea.KeyEnter, tea.KeySpace, tea.KeyRight, tea.KeyLeft:
+			return ui.EventResult{Handled: true}
+		}
+	}
 	if evt.IsKey() {
 		switch evt.Key.Code {
 		case tea.KeyRight:
@@ -700,7 +800,7 @@ func (l *listControl) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		result.Invalidate |= ui.InvalidateLayout | ui.InvalidatePaint
 	}
 	if evt.IsKey() && evt.Key.Code == tea.KeyTab {
-		if evt.Key.Mod.Contains(tea.ModShift) {
+		if l.owner.docked || l.owner.stats || evt.Key.Mod.Contains(tea.ModShift) {
 			l.owner.FocusSearch()
 		} else if l.owner.utilityActions.Bounds().W > 0 {
 			l.owner.FocusUtilityActions()
@@ -712,6 +812,8 @@ func (l *listControl) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	return result
 }
 func (l *listControl) Semantics() ui.Semantics { return l.list.Semantics() }
+
+var _ ui.ActionHandler = (*listControl)(nil)
 
 func padVisual(value string, width int) string {
 	valueWidth := rendering.VisibleWidth(value)

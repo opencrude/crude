@@ -22,15 +22,16 @@ type FormField struct {
 	area    *TextArea
 	labelW  int
 
-	selectOpen   bool
-	selectList   *List
-	selectFilter *FilterField
-	selectQuery  string
-	overlayY     int
-	surfaceRole  SemanticColor
-	surfaceSet   bool
-	compact      bool
-	colWidths    []int
+	selectOpen      bool
+	selectList      *List
+	selectFilter    *FilterField
+	selectQuery     string
+	overlayY        int
+	surfaceRole     SemanticColor
+	surfaceSet      bool
+	compact         bool
+	hideDescription bool
+	colWidths       []int
 }
 
 const selectOverlayChrome = 1
@@ -84,6 +85,8 @@ func (ff *FormField) SetSurfaceBackground(role SemanticColor) {
 }
 
 func (ff *FormField) SetCompact(v bool) { ff.compact = v }
+
+func (ff *FormField) SetHideDescription(v bool) { ff.hideDescription = v }
 
 func (ff *FormField) SetColumnWidths(w []int) { ff.colWidths = w }
 
@@ -207,7 +210,7 @@ func (ff *FormField) height() int {
 	if ff.field.Type == FieldTextArea {
 		h += ff.areaRows()
 	}
-	if ff.field.Description != "" {
+	if ff.field.Description != "" && !ff.hideDescription {
 		h++
 	}
 	h += len(ff.field.Errors)
@@ -439,7 +442,7 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 	}
 
 	line := 1
-	if !ff.compact && ff.field.Description != "" && line < r.H {
+	if !ff.compact && !ff.hideDescription && ff.field.Description != "" && line < r.H {
 		buf.WriteString(contentX, y+line, rendering.TruncateVisual(ff.field.Description, contentW, "…"), mutedFG, bg, 0)
 		line++
 	}
@@ -475,7 +478,7 @@ func (ff *FormField) paintTextAreaBody(buf *surface.CellBuffer, x, y int, r Rect
 	ff.area.Paint(buf, x, y, ctx)
 
 	line := 1 + ff.areaRows()
-	if ff.field.Description != "" && line < r.H {
+	if !ff.hideDescription && ff.field.Description != "" && line < r.H {
 		buf.WriteString(editorX, y+line, rendering.TruncateVisual(ff.field.Description, editorW, "…"), mutedFG, bg, 0)
 		line++
 	}
@@ -1103,6 +1106,9 @@ func (ff *FormField) navDetail() string {
 		return ""
 	}
 	detail := strings.TrimSpace(ff.field.Description)
+	if ff.hideDescription {
+		detail = ""
+	}
 	suffix := ff.inheritedSuffix()
 	if suffix == "" {
 		return detail

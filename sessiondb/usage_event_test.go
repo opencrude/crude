@@ -9,10 +9,10 @@ func TestUsageEventAndPersistencePreserveFullGeneration(t *testing.T) {
 	generation := uint64(1)<<63 + 17
 	r, ok := UsageRecordFromEvent(map[string]any{
 		"request_id": "request", "turn_generation": generation,
-		"reported_at": int64(123), "prompt": 100, "completion": 10,
+		"reported_at": int64(123), "account_id": "work", "prompt": 100, "completion": 10,
 		"context_prompt": 100, "request_kind": "compaction",
 	}, "session", "agent", "", "model")
-	if !ok || r.TurnGeneration != generation || r.RequestKind != "compaction" {
+	if !ok || r.TurnGeneration != generation || r.RequestKind != "compaction" || r.AccountID != "work" {
 		t.Fatalf("generation lost: %+v", r)
 	}
 	db, err := OpenAndMigrate(filepath.Join(t.TempDir(), "session.db"))
@@ -24,7 +24,7 @@ func TestUsageEventAndPersistencePreserveFullGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	records, err := ListUsageRecords(db)
-	if err != nil || len(records) != 1 || records[0].TurnGeneration != generation || records[0].RequestKind != "compaction" {
+	if err != nil || len(records) != 1 || records[0].TurnGeneration != generation || records[0].RequestKind != "compaction" || records[0].AccountID != "work" {
 		t.Fatalf("generation changed at SQLite boundary: %+v err=%v", records, err)
 	}
 }

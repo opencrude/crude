@@ -53,6 +53,41 @@ func TestFormRoutesPasteAndMouseToRetainedFields(t *testing.T) {
 	}
 }
 
+func TestFormHideDescriptionsPreservesTextareaAndErrors(t *testing.T) {
+	tokens := NewTokenSet(theme.DefaultDark())
+	model := NewFormModel()
+	name := TextFieldState("name", "Name", "", "Helpful but too wide on narrow terminals")
+	name.Errors = []string{"Name required"}
+	model.AddField(name)
+	area := TextAreaFieldState("body", "Extra JSON", "{}", "The request body is merged with template fields")
+	area.Rows = 3
+	model.AddField(area)
+	form := NewForm("form", model, "", "", tokens)
+	form.SetFieldGap(1)
+	form.Layout(LayoutContext{}, Rect{W: 40, H: 12})
+	withDescriptions := form.Scroll().Content()
+	form.SetHideDescriptions(true)
+	form.SetFieldGap(0)
+	form.Layout(LayoutContext{}, Rect{W: 40, H: 12})
+	if form.Scroll().Content() >= withDescriptions || form.Field("body").Bounds().H < 3 {
+		t.Fatal("hiding help rows collapsed the textarea or kept clipped height")
+	}
+	buf := surface.NewCellBuffer(40, 12)
+	form.Paint(buf, 0, 0, PaintContext{})
+	var painted strings.Builder
+	for y := 0; y < 12; y++ {
+		for x := 0; x < 40; x++ {
+			painted.WriteRune(buf.Get(x, y).Char)
+		}
+	}
+	if strings.Contains(painted.String(), "Helpful but too wide") || !strings.Contains(painted.String(), "Name required") {
+		t.Fatalf("help leaked or validation disappeared in narrow form: %q", painted.String())
+	}
+	if model.Field("name").Description == "" {
+		t.Fatal("hidden visual help was removed from semantic field state")
+	}
+}
+
 func TestActionBarPaintsSemanticVariants(t *testing.T) {
 	tokens := NewTokenSet(theme.DefaultDark())
 	bar := NewActionBar("actions", tokens,

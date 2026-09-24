@@ -3,6 +3,7 @@ package settings
 import (
 	"testing"
 
+	"crude/provider"
 	"crude/tui/theme"
 	"crude/tui/types"
 )
@@ -17,9 +18,10 @@ func TestMemoryFormKeepsRecallAndAddsAgentBehavior(t *testing.T) {
 	current := types.AppSettings{
 		ActiveProvider: "openrouter",
 		Providers: map[string]types.ProviderConfig{
-			"openrouter": {APIKey: "k", Model: "model-a"},
-			"openai":     {APIKey: "k2", Model: "model-b"},
+			"openrouter": provider.DefaultTemplates()["openrouter"],
+			"openai":     provider.DefaultTemplates()["openai"],
 		},
+		Accounts: map[string]provider.Account{"router": {ID: "router", ProviderID: "openrouter", Label: "Personal"}, "work": {ID: "work", ProviderID: "openai", Label: "Work"}},
 		Memory: types.MemorySettings{
 			AutoRecall:         "off",
 			AutoExtract:        "off",
@@ -28,11 +30,11 @@ func TestMemoryFormKeepsRecallAndAddsAgentBehavior(t *testing.T) {
 			RecallLimit:        20,
 			ExtractEveryTurns:  7,
 			MemoryCategory: types.CategorySettings{
-				Provider: "openai", Model: "model-b", ThinkingEffort: "high", ContextCompactionPercent: &disabled,
+				Provider: "openai", AccountID: "work", Model: "model-b", ThinkingEffort: "high", ContextCompactionPercent: &disabled,
 			},
 		},
 		Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
-			"default": {Provider: "openrouter", Model: "model-a"},
+			"default": {AccountID: "router", Model: "model-a"},
 		}},
 	}
 	m := New(th, current, []types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}, {ID: "openai", Name: "OpenAI"}})
@@ -42,7 +44,7 @@ func TestMemoryFormKeepsRecallAndAddsAgentBehavior(t *testing.T) {
 		got.Memory.RecallLimit != 20 || got.Memory.ExtractEveryTurns != 7 {
 		t.Fatalf("recall settings lost: %#v", got.Memory)
 	}
-	if got.Memory.MemoryCategory.Provider != "openai" || got.Memory.MemoryCategory.Model != "model-b" ||
+	if got.Memory.MemoryCategory.AccountID != "work" || got.Memory.MemoryCategory.Model != "model-b" ||
 		got.Memory.MemoryCategory.ThinkingEffort != "high" || got.Memory.MemoryCategory.ContextCompactionPercent == nil ||
 		*got.Memory.MemoryCategory.ContextCompactionPercent != 0 {
 		t.Fatalf("memory agent behavior lost: %#v", got.Memory.MemoryCategory)

@@ -101,10 +101,6 @@ func TestUsageAccountingAllProtocolsAcrossResume(t *testing.T) {
 			pc := cfg.Providers["openrouter"]
 			pc.APIStandard = protocol
 			cfg.Providers["openrouter"] = pc
-			profile := cfg.Agents.Profiles["default"]
-			category := profile.Categories[CategoryDefault]
-			category.APIStandard = protocol
-			profile.Categories[CategoryDefault] = category
 			home, directory := t.TempDir(), filepath.Join(t.TempDir(), "sessions")
 			s, err := NewWithSessionDir("protocol-usage", cfg, home, directory)
 			if err != nil {

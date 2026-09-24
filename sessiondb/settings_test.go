@@ -60,11 +60,11 @@ func TestAgentSettingOverridesRoundTripAndClear(t *testing.T) {
 	compact := 2
 	want := map[string]AgentSettingOverride{
 		"default": {
-			Provider: "openai", Model: "gpt-5",
+			Provider: "openai", AccountID: "work", Model: "gpt-5",
 			APIStandard: "openai-responses", ThinkingEffort: "high",
 			ContextCompactionPercent: &compact,
 		},
-		"crafter": {Provider: "anthropic", Model: "claude-sonnet-4", APIStandard: "anthropic"},
+		"crafter": {Provider: "anthropic", AccountID: "personal", Model: "claude-sonnet-4", APIStandard: "anthropic"},
 	}
 	if err := SaveAgentSettingOverrides(db, "session-1", want); err != nil {
 		t.Fatal(err)

@@ -227,6 +227,7 @@ func applyTurnIdentity(snapshot *ttypes.ConversationMessage, meta sessiondb.Disp
 	}
 	snapshot.TurnGeneration = meta.TurnGeneration
 	snapshot.ProviderID = meta.ProviderID
+	snapshot.AccountID = meta.AccountID
 	snapshot.ModelID = meta.ModelID
 }
 

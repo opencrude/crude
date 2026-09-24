@@ -29,15 +29,21 @@ func (m *mockEventSender) SendAgentEventWithID(typ string, data any, agentID str
 }
 
 func testConfig() *Config {
+	agents := DefaultAgentsConfig()
+	profile := agents.Profiles[agents.ActiveProfile]
+	main := profile.Categories[CategoryDefault]
+	main.AccountID, main.Model = "account", "test-model"
+	profile.Categories[CategoryDefault] = main
+	agents.Profiles[agents.ActiveProfile] = profile
 	return &Config{
 		ActiveProvider: "openrouter",
 		Providers: map[string]ProviderConfig{
 			"openrouter": {
-				APIKey:      "test-key",
-				ProviderURL: "https://openrouter.ai/api/v1",
+				Name: "OpenRouter", ProviderURL: "https://openrouter.ai/api/v1", APIStandard: "openai", AuthType: provider.AuthProtocol,
 			},
 		},
-		Agents: DefaultAgentsConfig(),
+		Accounts: map[string]provider.Account{"account": {ID: "account", ProviderID: "openrouter", APIKey: "test-key"}},
+		Agents:   agents,
 	}
 }
 

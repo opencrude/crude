@@ -3,7 +3,7 @@
 > Status: LANDED - revision 2, 2026-09-10. The footer-preserving redesign,
 > Status Overview, request-ledger accounting, typed status/notifications,
 > service-health projections, selective hints, and search/input fixes are
-> implemented and validated. This document replaces the earlier design.
+> implemented and validated. Superseded on 2026-09-21 by the workspace bottom-panel design: Status Overview's modal shell and Activity mode were removed; its retained disclosure content now lives behind labeled footer controls. Historical domain requirements below remain reference material.
 
 ## 1. Product Direction
 

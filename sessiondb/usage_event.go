@@ -38,6 +38,7 @@ func UsageRecordFromEvent(data any, sessionID, agentID, parentAgentID, fallbackM
 		r.TurnGeneration = generation
 	}
 	r.ProviderID, _ = values["provider"].(string)
+	r.AccountID, _ = values["account_id"].(string)
 	r.CostUSD, _ = values["cost"].(float64)
 	r.CostKnown, _ = values["cost_known"].(bool)
 	r.CostSource, _ = values["cost_source"].(string)

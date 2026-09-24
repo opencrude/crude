@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/provider"
 	"crude/tui/theme"
 	"crude/tui/types"
 	"crude/tui/ui"
@@ -22,11 +23,12 @@ func TestModelFetchResultClearsLoadingViaFrameForwarding(t *testing.T) {
 	m := New(th, types.AppSettings{
 		ActiveProvider: "openai",
 		Providers: map[string]types.ProviderConfig{
-			"openai": {ProviderURL: "https://api.example/v1", APIKey: "secret"},
+			"openai": {Name: "OpenAI", ProviderURL: "https://api.example/v1", APIStandard: "openai-responses", AuthType: provider.AuthProtocol},
 		},
 		Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
-			"default": {Provider: "openai"},
+			"default": {Provider: "openai", AccountID: "work"},
 		}},
+		Accounts: map[string]provider.Account{"work": {ID: "work", ProviderID: "openai", Label: "Work", APIKey: "secret"}},
 	}, []types.ProviderPreset{{ID: "openai", Name: "OpenAI"}})
 
 	// Build the real surface + popup bridge.
@@ -55,7 +57,7 @@ func TestModelFetchResultClearsLoadingViaFrameForwarding(t *testing.T) {
 	// The host must NOT claim the custom message as Handled: if it does, the
 	// WindowFrameWidget returns early and the eventTarget fallback (which
 	// calls model.Update → setModels) never runs, leaving Loading stuck on.
-	msg := ModelsMsg{ProviderID: "openai", Models: []types.ModelEntry{{ID: "gpt-5", Name: "GPT-5"}}}
+	msg := ModelsMsg{ProviderID: "openai", AccountID: "work", Generation: m.fetchGeneration[accountModelKey("openai", "work")], Models: []types.ModelEntry{{ID: "gpt-5", Name: "GPT-5"}}}
 	if hostResult := host.Handle(msg); hostResult.Handled {
 		t.Fatal("host claimed the ModelsMsg as handled — eventTarget fallback never runs, fetch result is swallowed")
 	}
@@ -70,7 +72,7 @@ func TestModelFetchResultClearsLoadingViaFrameForwarding(t *testing.T) {
 	if len(field.Options) != 1 || field.Options[0].Label != "GPT-5" {
 		t.Fatalf("options=%#v, want GPT-5", field.Options)
 	}
-	if _, ok := bridge.m.models["openai"]; !ok {
+	if _, ok := bridge.m.models[accountModelKey("openai", "work")]; !ok {
 		t.Fatal("model list not stored on the settings model after fetch result")
 	}
 }
@@ -83,11 +85,12 @@ func TestModelFetchErrorClearsLoadingViaFrameForwarding(t *testing.T) {
 	m := New(th, types.AppSettings{
 		ActiveProvider: "openai",
 		Providers: map[string]types.ProviderConfig{
-			"openai": {ProviderURL: "https://api.example/v1", APIKey: "secret"},
+			"openai": {Name: "OpenAI", ProviderURL: "https://api.example/v1", APIStandard: "openai-responses", AuthType: provider.AuthProtocol},
 		},
 		Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
-			"default": {Provider: "openai"},
+			"default": {Provider: "openai", AccountID: "work"},
 		}},
+		Accounts: map[string]provider.Account{"work": {ID: "work", ProviderID: "openai", Label: "Work", APIKey: "secret"}},
 	}, []types.ProviderPreset{{ID: "openai", Name: "OpenAI"}})
 
 	surf := NewSurface(th, m)
@@ -108,7 +111,7 @@ func TestModelFetchErrorClearsLoadingViaFrameForwarding(t *testing.T) {
 		t.Fatal("field should be in Loading state after OpenSelect")
 	}
 
-	widget.HandleEvent(ModelsErrorMsg{ProviderID: "openai", Error: "openai requires an API key to list models"})
+	widget.HandleEvent(ModelsErrorMsg{ProviderID: "openai", AccountID: "work", Generation: m.fetchGeneration[accountModelKey("openai", "work")], Error: "openai requires an API key to list models"})
 
 	field := m.currentForm().Field(fieldModel)
 	if field.Loading {

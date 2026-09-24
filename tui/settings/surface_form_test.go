@@ -1,25 +1,75 @@
 package settings
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/provider"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/types"
 	"crude/tui/ui"
 )
 
+func TestSettingsScrollbarReachesBottomAcrossResize(t *testing.T) {
+	th := theme.DefaultDark()
+	model := New(th, types.AppSettings{ActiveProvider: "custom", Providers: map[string]types.ProviderConfig{"custom": provider.DefaultTemplates()["custom"]}}, nil)
+	if err := model.beginProviderEdit(false, false); err != nil {
+		t.Fatal(err)
+	}
+	s := NewSurface(th, model)
+	host := ui.NewHost(th, s)
+	paint := func() string {
+		host.Layout()
+		buf := newTestBuffer(s.Bounds().W, s.Bounds().H)
+		host.Paint(buf)
+		return bufferPlain(buf)
+	}
+	for _, size := range [][2]int{{100, 20}, {78, 22}, {120, 26}, {72, 18}} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			host.Resize(size[0], size[1])
+			paint()
+			if !s.formScroll.Needed() {
+				t.Fatal("fixture does not overflow")
+			}
+			r := s.formScroll.Bounds()
+			top, _ := s.form.Scroll().ThumbBounds(r.H)
+			host.Handle(tea.MouseClickMsg{X: r.X, Y: r.Y + top, Button: tea.MouseLeft})
+			host.Handle(tea.MouseMotionMsg{X: r.X, Y: r.Y + r.H + 3, Button: tea.MouseLeft})
+			host.Handle(tea.MouseReleaseMsg{X: r.X, Y: r.Y + r.H + 3, Button: tea.MouseLeft})
+			immediate := paint()
+			if s.form.Scroll().Offset() != s.form.Scroll().MaxOffset() {
+				t.Fatalf("drag clamped before bottom: %d/%d", s.form.Scroll().Offset(), s.form.Scroll().MaxOffset())
+			}
+			if !strings.Contains(immediate, "Extra JSON") {
+				t.Fatalf("final field not painted:\n%s", immediate)
+			}
+			host.MarkLayout()
+			if settled := paint(); settled != immediate {
+				t.Fatal("settled frame moved after scrollbar release")
+			}
+			if s.scope.Bounds().Y+s.scope.Bounds().H != s.Bounds().H {
+				t.Fatal("scope toggle is not aligned with footer buttons")
+			}
+		})
+	}
+}
+
 func TestSettingsPasteIntoAPIKey_UpdatesFieldAndScrollsToCursor(t *testing.T) {
 	th := theme.DefaultDark()
 	model := New(th, types.AppSettings{
 		ActiveProvider: "openrouter",
 		Providers: map[string]types.ProviderConfig{
-			"openrouter": {},
+			"openrouter": provider.DefaultTemplates()["openrouter"],
 		},
+		Accounts: map[string]provider.Account{"personal": {ID: "personal", ProviderID: "openrouter", Label: "Personal"}},
 	}, []types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}})
+	if err := model.beginAccountEdit(false, ""); err != nil {
+		t.Fatal(err)
+	}
 	surfaceRoot := NewSurface(th, model)
 	frame := ui.NewWindowFrameWidget(th, "settings-frame", ui.FrameWindow, "Settings", surfaceRoot, nil, true, 80, 22)
 	surfaceRoot.SetFocusHandler(frame.Focus)
@@ -27,14 +77,16 @@ func TestSettingsPasteIntoAPIKey_UpdatesFieldAndScrollsToCursor(t *testing.T) {
 	host.Resize(80, 22)
 	host.Layout()
 
-	model.SelectCategory(catProviders)
+	model.SelectCategory(catAccounts)
 	surfaceRoot.refreshForm()
-	surfaceRoot.form.FocusFirst()
+	if !surfaceRoot.form.FocusField(fieldAPIKey) {
+		t.Fatal("API key field is not focusable")
+	}
 	surfaceRoot.FocusForm()
+	host.MarkLayout()
 	host.Layout()
 
-	// Focus moves to the API key field (provider is a select; second focusable).
-	_ = host.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
+	// Focus the masked account credential field.
 	field := surfaceRoot.form.Field(fieldAPIKey)
 	if field == nil {
 		t.Fatal("providers form missing api-key field")
@@ -60,9 +112,13 @@ func TestSettingsPasteIntoAPIKey_MovesCursorIntoView(t *testing.T) {
 	model := New(th, types.AppSettings{
 		ActiveProvider: "openrouter",
 		Providers: map[string]types.ProviderConfig{
-			"openrouter": {},
+			"openrouter": provider.DefaultTemplates()["openrouter"],
 		},
+		Accounts: map[string]provider.Account{"personal": {ID: "personal", ProviderID: "openrouter", Label: "Personal"}},
 	}, []types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}})
+	if err := model.beginAccountEdit(false, ""); err != nil {
+		t.Fatal(err)
+	}
 	surfaceRoot := NewSurface(th, model)
 	frame := ui.NewWindowFrameWidget(th, "settings-frame", ui.FrameWindow, "Settings", surfaceRoot, nil, true, 80, 22)
 	surfaceRoot.SetFocusHandler(frame.Focus)
@@ -70,15 +126,15 @@ func TestSettingsPasteIntoAPIKey_MovesCursorIntoView(t *testing.T) {
 	host.Resize(80, 22)
 	host.Layout()
 
-	model.SelectCategory(catProviders)
+	model.SelectCategory(catAccounts)
 	surfaceRoot.refreshForm()
-	surfaceRoot.form.FocusFirst()
+	if !surfaceRoot.form.FocusField(fieldAPIKey) {
+		t.Fatal("API key field is not focusable")
+	}
 	surfaceRoot.FocusForm()
+	host.MarkLayout()
 	host.Layout()
 
-	// The api-key field is the second focusable field (after the provider
-	// select), so one Down lands on it.
-	_ = host.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
 	field := surfaceRoot.form.Field(fieldAPIKey)
 	if field == nil {
 		t.Fatal("providers form missing api-key field")
@@ -122,6 +178,16 @@ func TestSettingsCategories_AllFormsPopulateFields(t *testing.T) {
 		host.Layout()
 
 		wantFields := category.Form.Fields()
+		if category.Name == "Accounts" || category.Name == "Providers" {
+			want := "Add account"
+			if category.Name == "Providers" {
+				want = "Add template"
+			}
+			if painted := bufferPlain(paintAccountSurface(t, surface, 90, 24)); !strings.Contains(painted, want) {
+				t.Fatalf("%s overview table is not painted", category.Name)
+			}
+			continue
+		}
 		if len(wantFields) == 0 {
 			t.Fatalf("category %q model has zero fields — fixture broken", category.Name)
 		}

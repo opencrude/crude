@@ -14,6 +14,10 @@ func PermTagSuffix(tag string) string {
 		return "  ✓ auto"
 	case "denied":
 		return "  ✗"
+	case "reviewer-allowed":
+		return "  ✓ reviewer"
+	case "reviewer-denied":
+		return "  ✗ reviewer"
 	default:
 		return "  " + tag
 	}

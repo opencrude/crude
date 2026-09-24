@@ -69,6 +69,11 @@ const (
 // server to exercise the token exchange / refresh request shape end-to-end.
 var openAITokenURL = "https://auth.openai.com/oauth/token"
 
+// The local callback ports and callback result slots belong to one browser
+// sign-in at a time. Queue flows before starting either listener so a second
+// login cannot consume the first account's authorization response.
+var signInGate = make(chan struct{}, 1)
+
 // ChatGPTSignInError is returned by SignInWithChatGPT/RefreshOpenAIToken when the
 // OAuth server response indicates a fatal auth failure (HTTP 400/401/403) that
 // should clear stored credentials, as opposed to a transient network/server
@@ -86,6 +91,12 @@ func (e *ChatGPTSignInError) Error() string { return e.Msg }
 // tokens. It blocks until the flow completes, the context is cancelled, or the
 // callback wait times out (5 minutes).
 func SignInWithChatGPT(ctx context.Context) (*OAuthCredentials, error) {
+	select {
+	case signInGate <- struct{}{}:
+		defer func() { <-signInGate }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
 	verifier, challenge, err := pkceChallenge()
 	if err != nil {
 		return nil, fmt.Errorf("generate pkce: %w", err)

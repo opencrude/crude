@@ -11,50 +11,40 @@ import (
 	"crude/workspace"
 )
 
-// TestDockStripOwnsLabelsAndFullWidthBaseline pins the standardized tab strip
-// inside the dock: the strip reserves its own baseline row, that baseline runs
-// the full dock width (rule bleed), and the terminal body starts below the
-// chrome instead of losing rows to the terminal.
-func TestDockStripOwnsLabelsAndFullWidthBaseline(t *testing.T) {
+func TestDockUsesSingleDividerChromeAndVerticalTerminalRail(t *testing.T) {
 	th := theme.DefaultDark()
 	dock := New(th)
-	screen := shellterm.New(th, "strip", "strip")
-	t.Cleanup(screen.Close)
-	dock.Mount("strip", screen)
-	dock.SetActive("strip")
+	first := shellterm.New(th, "one", "one")
+	second := shellterm.New(th, "two", "two")
+	t.Cleanup(first.Close)
+	t.Cleanup(second.Close)
+	dock.Mount("one", first)
+	dock.Mount("two", second)
 
 	host := ui.NewHost(th, dock)
-	host.Resize(40, 12)
+	host.Resize(80, 12)
 	host.Layout()
-	buf := surface.NewCellBuffer(40, 12)
+	buf := surface.NewCellBuffer(80, 12)
 	host.Paint(buf)
 
-	if got := dock.tabs.Bounds(); got.H != ui.StripHeight || got.Y != dividerH {
-		t.Fatalf("dock strip bounds=%+v want y=%d h=%d", got, dividerH, ui.StripHeight)
+	if got := second.Bounds().Y; got != dividerH+1 {
+		t.Fatalf("terminal body starts at y=%d want %d", got, dividerH+1)
 	}
-	if got := chromeH; got != dividerH+ui.StripHeight {
-		t.Fatalf("dock chrome rows=%d want %d", got, dividerH+ui.StripHeight)
+	if MinRenderableHeight != dividerH+1+workspace.MinTerminalRows {
+		t.Fatalf("MinRenderableHeight=%d want divider+actions+PTY rows", MinRenderableHeight)
 	}
-	if got := screen.Bounds().Y; got != chromeH {
-		t.Fatalf("terminal body starts at y=%d want %d", got, chromeH)
+	if dock.rail.Bounds().W == 0 {
+		t.Fatal("multiple terminals did not create a vertical rail")
 	}
-	if MinRenderableHeight != chromeH+workspace.MinTerminalRows {
-		t.Fatalf("MinRenderableHeight=%d does not include the strip", MinRenderableHeight)
-	}
-
-	labelRow := strings.TrimRight(readCells(buf, dividerH, 40), " ")
-	if !strings.Contains(labelRow, "strip") {
-		t.Fatalf("dock tab label missing: %q", labelRow)
-	}
-	baseline := readCells(buf, dividerH+1, 40)
-	if strings.Trim(baseline, "─") != "" {
-		t.Fatalf("dock baseline must span the whole dock row: %q", baseline)
+	painted := readCellsRange(buf, dock.rail.Bounds().Y, dock.rail.Bounds().X, dock.rail.Bounds().W)
+	if !strings.Contains(painted, "one") {
+		t.Fatalf("terminal rail label missing: %q", painted)
 	}
 }
 
-func readCells(buf *surface.CellBuffer, y, w int) string {
+func readCellsRange(buf *surface.CellBuffer, y, start, w int) string {
 	var b strings.Builder
-	for x := 0; x < w; x++ {
+	for x := start; x < start+w; x++ {
 		c := buf.Get(x, y)
 		if c.Char != 0 && c.Width != 0 {
 			b.WriteRune(c.Char)

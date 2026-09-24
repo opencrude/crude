@@ -539,6 +539,9 @@ func sessionLabel(s sessiondb.SessionMeta) string {
 		title = "untitled session"
 	}
 	title = strings.TrimSpace(strings.ReplaceAll(title, "\n", " "))
+	if s.AgentName.String != "" {
+		title = s.AgentName.String + " — " + title
+	}
 	return rendering.TruncateLine(title, 36)
 }
 

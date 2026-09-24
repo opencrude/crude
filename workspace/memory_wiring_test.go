@@ -4,6 +4,7 @@ import (
 	"errors"
 	"testing"
 
+	"crude/provider"
 	"crude/session"
 	ttypes "crude/types"
 )
@@ -27,10 +28,16 @@ func TestCreateSessionRecoversWorkspaceMemoryAfterInitialDBFailure(t *testing.T)
 	ws.workspaceDBErr = errors.New("simulated workspace open failure")
 
 	agents := session.DefaultAgentsConfig()
+	profile := agents.Profiles[agents.ActiveProfile]
+	main := profile.Categories[session.CategoryDefault]
+	main.AccountID, main.Model = "test-account", "model"
+	profile.Categories[session.CategoryDefault] = main
+	agents.Profiles[agents.ActiveProfile] = profile
 	cfg := &session.Config{
 		ActiveProvider: "openai",
+		Accounts:       map[string]provider.Account{"test-account": {ID: "test-account", ProviderID: "openai", Label: "Test", APIKey: "test"}},
 		Providers: map[string]session.ProviderConfig{
-			"openai": {APIKey: "test", ProviderURL: "http://127.0.0.1", APIStandard: "openai-chat", Model: "model"},
+			"openai": {Name: "OpenAI", ProviderURL: "http://127.0.0.1", APIStandard: "openai-chat"},
 		},
 		Agents: agents,
 	}

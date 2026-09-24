@@ -104,7 +104,7 @@ synchronously echoing through `EventBus.Send` would deadlock on `Program.Send`.
 | `workspace.TerminalManager` | PTY lifecycle, I/O, placement snapshot, events |
 | `tui/term` | libghostty-vt bridge painted into `CellBuffer` |
 | `tui/screens/shellterm` | One session: paint + keys/paste/mouse into the PTY + Float/Dock/Close |
-| `tui/screens/termdock` | Workspace-level tab strip + resize handle under the root Host |
+| `tui/screens/termdock` | Workspace bottom-panel host, resize handle, terminal vertical rail, and retained PTY mounting |
 | `tui/viewmodel` | Dock slot, OverlayHost windows, activity list, focus |
 
 `workspace/` must not import `tui`.
@@ -122,12 +122,14 @@ outer emulator matches the Ghostty pin. In-app PTYs always set:
 
 ## Placement
 
-- **Docked:** workspace terminal dock (`tui/screens/termdock`) above the
-  status bar, independent of AI session `PanelDeck`. Available in launcher,
-  editor, and chat. Dock chrome is two rows and is shown only when at least
-  two terminal body rows fit below the application header; at an 8-row
-  application height the dock stays unmounted instead of overlapping header
-  chrome. Closing the last docked tab hides the dock.
+- **Docked:** Terminal mode in the workspace bottom panel (`tui/screens/termdock`)
+  above the footer, independent of AI session `PanelDeck`. Available in launcher,
+  editor, and chat. The footer's labeled `Terminals` control toggles this mode.
+  Multiple PTYs use a scrollable vertical instance rail on the right; one PTY gets the full width. The
+  divider plus one terminal-action row still reserve at least two PTY body rows.
+  Closing the last docked terminal closes Terminal mode without affecting the
+  other workspace panel views. A shell's natural exit removes its instance;
+  exited PTYs never remain as stale `process killed` rows requiring manual close.
 - **Floating:** `OverlayHost` + `FloatingWindow` + `WindowFrame`,
   `DefaultOverlayPolicy` (KeepRoute, movable, resizable). Overlay IDs are
   dynamic: `ui.TerminalOverlayID(id)` → `"terminal/"+id`.

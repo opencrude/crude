@@ -15,6 +15,7 @@ type SessionMeta struct {
 	ProjectName     string
 	Model           string
 	Provider        string
+	AccountID       string
 	CreatedAt       int64
 	ClosedAt        sql.NullInt64
 	MessageCount    int
@@ -37,9 +38,9 @@ func CountAssistantRounds(db *sql.DB) (int, error) {
 
 func Create(db *sql.DB, meta SessionMeta) error {
 	_, err := db.Exec(`
-		INSERT INTO sessions (id, project_path, project_name, model, provider, created_at, message_count, turn_count, first_prompt, last_prompt, parent_session_id, agent_category, agent_name, depth)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-	`, meta.ID, meta.ProjectPath, meta.ProjectName, meta.Model, meta.Provider,
+		INSERT INTO sessions (id, project_path, project_name, model, provider, account_id, created_at, message_count, turn_count, first_prompt, last_prompt, parent_session_id, agent_category, agent_name, depth)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	`, meta.ID, meta.ProjectPath, meta.ProjectName, meta.Model, meta.Provider, meta.AccountID,
 		meta.CreatedAt, meta.MessageCount, meta.TurnCount,
 		meta.FirstPrompt, meta.LastPrompt,
 		meta.ParentSessionID, meta.AgentCategory, meta.AgentName, meta.Depth)
@@ -47,6 +48,12 @@ func Create(db *sql.DB, meta SessionMeta) error {
 		return fmt.Errorf("sessiondb: create session: %w", err)
 	}
 	return nil
+}
+
+// UpdateConnection persists the main role's provider/account pair atomically.
+func UpdateConnection(db *sql.DB, sessionID, providerID, accountID string) error {
+	_, err := db.Exec(`UPDATE sessions SET provider=?, account_id=? WHERE id=?`, providerID, accountID, sessionID)
+	return err
 }
 
 // UpdateProject rebinds a session's project metadata when a workspace-owned
@@ -95,12 +102,12 @@ func UpdateFirstPrompt(db *sql.DB, sessionID, prompt string) error {
 func GetMeta(db *sql.DB) (SessionMeta, error) {
 	var m SessionMeta
 	err := db.QueryRow(`
-		SELECT id, project_path, project_name, model, provider,
+		SELECT id, project_path, project_name, model, provider, account_id,
 		       created_at, closed_at, message_count, turn_count,
 		       first_prompt, last_prompt, summary,
 		       parent_session_id, agent_category, agent_name, depth
 		FROM sessions
-	`).Scan(&m.ID, &m.ProjectPath, &m.ProjectName, &m.Model, &m.Provider,
+	`).Scan(&m.ID, &m.ProjectPath, &m.ProjectName, &m.Model, &m.Provider, &m.AccountID,
 		&m.CreatedAt, &m.ClosedAt, &m.MessageCount, &m.TurnCount,
 		&m.FirstPrompt, &m.LastPrompt, &m.Summary,
 		&m.ParentSessionID, &m.AgentCategory, &m.AgentName, &m.Depth)
@@ -169,12 +176,12 @@ func ListSessionsPaginated(sessionsRoot string, opts ListSessionsOpts) ([]Sessio
 
 		var m SessionMeta
 		err = db.QueryRow(`
-			SELECT id, project_path, project_name, model, provider,
+			SELECT id, project_path, project_name, model, provider, account_id,
 			       created_at, closed_at, message_count, turn_count,
 			       first_prompt, last_prompt, summary,
 			       parent_session_id, agent_category, agent_name, depth
 			FROM sessions
-		`).Scan(&m.ID, &m.ProjectPath, &m.ProjectName, &m.Model, &m.Provider,
+		`).Scan(&m.ID, &m.ProjectPath, &m.ProjectName, &m.Model, &m.Provider, &m.AccountID,
 			&m.CreatedAt, &m.ClosedAt, &m.MessageCount, &m.TurnCount,
 			&m.FirstPrompt, &m.LastPrompt, &m.Summary,
 			&m.ParentSessionID, &m.AgentCategory, &m.AgentName, &m.Depth)

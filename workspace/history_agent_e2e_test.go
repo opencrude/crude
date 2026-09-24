@@ -39,12 +39,13 @@ func historyE2EConfig(url string) *session.Config {
 	off := false
 	return &session.Config{
 		ActiveProvider: "openai",
+		Accounts:       map[string]provider.Account{"test-account": {ID: "test-account", ProviderID: "openai", Label: "Test", APIKey: "test"}},
 		Providers: map[string]session.ProviderConfig{"openai": {
-			APIKey: "test", ProviderURL: url, APIStandard: "openai", Model: "history-model",
+			Name: "OpenAI", ProviderURL: url, APIStandard: "openai", AuthType: provider.AuthProtocol,
 		}},
 		Agents: session.AgentsConfig{Enabled: false, ActiveProfile: "default", Profiles: map[string]session.ProfileConfig{
 			"default": {MultiAgent: &off, Categories: map[string]session.CategoryConfig{
-				session.CategoryDefault: {Provider: "openai", Model: "history-model", APIStandard: "openai"},
+				session.CategoryDefault: {AccountID: "test-account", Model: "history-model"},
 			}},
 		}},
 	}

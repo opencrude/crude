@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"crude/provider"
 	"crude/session"
 	ttypes "crude/tui/types"
 	"crude/workspace"
@@ -46,25 +47,32 @@ func TestLiveOllamaWaitLatency(t *testing.T) {
 	}
 	var stored struct {
 		Providers map[string]session.ProviderConfig `json:"providers"`
+		Accounts  map[string]provider.Account       `json:"accounts"`
 	}
 	if err := json.Unmarshal(data, &stored); err != nil {
 		t.Fatal("invalid provider config")
 	}
 	pc, ok := stored.Providers["ollama-cloud"]
-	if !ok || pc.APIKey == "" {
+	accountID := ""
+	for id, account := range stored.Accounts {
+		if account.ProviderID == "ollama-cloud" && account.APIKey != "" {
+			accountID = id
+			break
+		}
+	}
+	if !ok || accountID == "" {
 		t.Fatal("Ollama Cloud credentials unavailable")
 	}
-	pc.Model = "glm-5.3"
 	off := false
 	agents := session.DefaultAgentsConfig()
 	agents.Enabled = false
 	profile := agents.Profiles[agents.ActiveProfile]
 	profile.MultiAgent = &off
 	profile.Categories[session.CategoryDefault] = session.CategoryConfig{
-		Provider: "ollama-cloud", Model: pc.Model, Policy: "read-only", AllowedTools: []string{"read_file"},
+		AccountID: accountID, Model: "glm-5.3", Policy: "read-only", AllowedTools: []string{"read_file"},
 	}
 	agents.Profiles[agents.ActiveProfile] = profile
-	cfg := &session.Config{ActiveProvider: "ollama-cloud", Providers: map[string]session.ProviderConfig{"ollama-cloud": pc}, Agents: agents}
+	cfg := &session.Config{ActiveProvider: "ollama-cloud", Accounts: stored.Accounts, Providers: map[string]session.ProviderConfig{"ollama-cloud": pc}, Agents: agents}
 	t.Setenv("HOME", t.TempDir())
 	app := newFullTestApp(t)
 	app.RootPath, app.WorkspaceDir = t.TempDir(), t.TempDir()

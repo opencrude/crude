@@ -3,7 +3,18 @@ package types
 import (
 	"encoding/json"
 	"reflect"
+
+	"crude/provider"
 )
+
+// AccountChange is one revision-checked application credential mutation.
+// Other app preferences are never included in the write.
+type AccountChange struct {
+	ID         string
+	ProviderID string
+	Before     *provider.Account
+	After      *provider.Account
+}
 
 // SettingsScope selects which layer a settings editor is writing.
 type SettingsScope string
@@ -25,24 +36,21 @@ const (
 // application happened to hold that day, so a later app-level change to an
 // untouched field silently did nothing.
 type WorkspaceOverrides struct {
-	Theme          json.RawMessage `json:"theme,omitempty"`
-	Editor         json.RawMessage `json:"editor,omitempty"`
-	LSP            json.RawMessage `json:"lsp,omitempty"`
-	UI             json.RawMessage `json:"ui,omitempty"`
-	Font           json.RawMessage `json:"font,omitempty"`
-	ActiveProvider *string         `json:"active_provider,omitempty"`
-	Providers      json.RawMessage `json:"providers,omitempty"`
-	Agents         json.RawMessage `json:"agents,omitempty"`
-	Memory         json.RawMessage `json:"memory,omitempty"`
-	Safety         json.RawMessage `json:"safety,omitempty"`
-	LocalHistory   json.RawMessage `json:"local_history,omitempty"`
+	Theme        json.RawMessage `json:"theme,omitempty"`
+	Editor       json.RawMessage `json:"editor,omitempty"`
+	LSP          json.RawMessage `json:"lsp,omitempty"`
+	UI           json.RawMessage `json:"ui,omitempty"`
+	Font         json.RawMessage `json:"font,omitempty"`
+	Agents       json.RawMessage `json:"agents,omitempty"`
+	Memory       json.RawMessage `json:"memory,omitempty"`
+	Safety       json.RawMessage `json:"safety,omitempty"`
+	LocalHistory json.RawMessage `json:"local_history,omitempty"`
 }
 
 // IsEmpty reports that the workspace inherits everything.
 func (o WorkspaceOverrides) IsEmpty() bool {
 	return len(o.Theme) == 0 && len(o.Editor) == 0 && len(o.LSP) == 0 &&
-		len(o.UI) == 0 && len(o.Font) == 0 && o.ActiveProvider == nil &&
-		len(o.Providers) == 0 && len(o.Agents) == 0 && len(o.Memory) == 0 && len(o.Safety) == 0 && len(o.LocalHistory) == 0
+		len(o.UI) == 0 && len(o.Font) == 0 && len(o.Agents) == 0 && len(o.Memory) == 0 && len(o.Safety) == 0 && len(o.LocalHistory) == 0
 }
 
 // LSPLanguage describes a built-in language server the settings UI can
@@ -137,6 +145,9 @@ func ApplyAppDefaults(s *AppSettings) {
 	}
 	if s.Providers == nil {
 		s.Providers = map[string]ProviderConfig{s.ActiveProvider: {}}
+	}
+	if s.Accounts == nil {
+		s.Accounts = make(map[string]provider.Account)
 	}
 	if s.Memory.AutoRecall == "" {
 		s.Memory.AutoRecall = "on"
@@ -277,14 +288,10 @@ func MergeAppWorkspace(app AppSettings, ws WorkspaceOverrides) AppSettings {
 	applySparse(&out.LSP, ws.LSP)
 	applySparse(&out.UI, ws.UI)
 	applySparse(&out.Font, ws.Font)
-	applySparse(&out.Providers, ws.Providers)
 	applySparse(&out.Agents, ws.Agents)
 	applySparse(&out.Memory, ws.Memory)
 	applySparse(&out.Safety, ws.Safety)
 	applySparse(&out.LocalHistory, ws.LocalHistory)
-	if ws.ActiveProvider != nil && *ws.ActiveProvider != "" {
-		out.ActiveProvider = *ws.ActiveProvider
-	}
 	return out
 }
 
@@ -301,15 +308,10 @@ func OverridesFromDiff(app, working AppSettings) WorkspaceOverrides {
 	out.LSP = sparseDiff(app.LSP, working.LSP)
 	out.UI = sparseDiff(app.UI, working.UI)
 	out.Font = sparseDiff(app.Font, working.Font)
-	out.Providers = sparseDiff(app.Providers, working.Providers)
 	out.Agents = sparseDiff(app.Agents, working.Agents)
 	out.Memory = sparseDiff(app.Memory, working.Memory)
 	out.Safety = sparseDiff(app.Safety, working.Safety)
 	out.LocalHistory = sparseDiff(app.LocalHistory, working.LocalHistory)
-	if app.ActiveProvider != working.ActiveProvider {
-		p := working.ActiveProvider
-		out.ActiveProvider = &p
-	}
 	return out
 }
 
@@ -441,16 +443,9 @@ func mergeObjects(dst, overlay map[string]any) {
 func WorkspaceOverridesFromDiff(app, working AppSettings) WorkspaceOverrides {
 	appSans := cloneAppSettings(app)
 	workingSans := cloneAppSettings(working)
-	for id, cfg := range appSans.Providers {
-		cfg.APIKey = ""
-		cfg.OAuth = nil
-		appSans.Providers[id] = cfg
-	}
-	for id, cfg := range workingSans.Providers {
-		cfg.APIKey = ""
-		cfg.OAuth = nil
-		workingSans.Providers[id] = cfg
-	}
+	// Accounts are app-global: never compare or persist their credentials in workspace overlays.
+	appSans.Accounts = nil
+	workingSans.Accounts = nil
 	stripAgentAPIKeys(&appSans.Agents)
 	stripAgentAPIKeys(&workingSans.Agents)
 	return OverridesFromDiff(appSans, workingSans)
@@ -497,8 +492,6 @@ func (o WorkspaceOverrides) CategoryOverridden(name string) bool {
 		return len(o.UI) > 0
 	case "font":
 		return len(o.Font) > 0
-	case "providers":
-		return o.ActiveProvider != nil || len(o.Providers) > 0
 	case "agents":
 		return len(o.Agents) > 0
 	case "memory":
@@ -525,9 +518,6 @@ func (o *WorkspaceOverrides) ClearCategory(name string) {
 		o.UI = nil
 	case "font":
 		o.Font = nil
-	case "providers":
-		o.ActiveProvider = nil
-		o.Providers = nil
 	case "agents":
 		o.Agents = nil
 	case "memory":
@@ -542,6 +532,14 @@ func (o *WorkspaceOverrides) ClearCategory(name string) {
 func cloneAppSettings(s AppSettings) AppSettings {
 	out := s
 	out.Providers = cloneProviders(s.Providers)
+	out.Accounts = make(map[string]provider.Account, len(s.Accounts))
+	for id, account := range s.Accounts {
+		if account.OAuth != nil {
+			copy := *account.OAuth
+			account.OAuth = &copy
+		}
+		out.Accounts[id] = account
+	}
 	out.Agents = cloneAgents(s.Agents)
 	out.Memory.MemoryCategory.ContextCompactionPercent = cloneIntSetting(s.Memory.MemoryCategory.ContextCompactionPercent)
 	out.Safety.CommandRules = append([]CommandSeverityRule(nil), s.Safety.CommandRules...)
@@ -558,8 +556,7 @@ func cloneProviders(src map[string]ProviderConfig) map[string]ProviderConfig {
 	}
 	out := make(map[string]ProviderConfig, len(src))
 	for k, v := range src {
-		v.ModelStandards = cloneStringMap(v.ModelStandards)
-		out[k] = v
+		out[k] = provider.CloneTemplate(v)
 	}
 	return out
 }

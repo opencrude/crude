@@ -127,11 +127,12 @@ func (w *Workspace) UsageSummary(agentID string, scope ttypes.UsageScope) (ttype
 		}
 		// Context is the selected agent's latest report, not whichever child
 		// happened to finish last in a session/subtree aggregate.
-		if record.AgentID == agentID && record.RequestKind != "compaction" && record.ContextUsed > 0 && record.UpdatedAt > latest {
+		if record.AgentID == agentID && record.RequestKind != "compaction" && record.RequestKind != "permission_review" && record.ContextUsed > 0 && record.UpdatedAt > latest {
 			latest = record.UpdatedAt
 			summary.ContextUsed = knownUsage(int64(record.ContextUsed), record.ContextUsed > 0, record.Estimated)
 			summary.ContextLimit = knownUsage(int64(record.ContextWindow), record.ContextWindow > 0, false)
 			summary.ModelID, summary.ProviderID = record.ModelID, record.ProviderID
+			summary.AccountID = record.AccountID
 			summary.MeasuredAt = time.Unix(0, record.UpdatedAt)
 			summary.ReasoningInOut = record.ReasoningInOutput
 		}

@@ -6,35 +6,28 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	statusoverview "crude/tui/screens/statusoverview"
-	"crude/tui/ui"
+	"crude/tui/screens/termdock"
 )
 
-func TestStatusOverviewRowClickRoutesThroughFloatingWindowHost(t *testing.T) {
+func TestWorkspacePanelRowClickRoutesThroughRootHost(t *testing.T) {
 	app := newFullTestApp(t)
-	app.width, app.height = 120, 36
+	app.width, app.height = 120, 30
 	app.AddOrchestrator("root")
-	app.openStatusOverview(statusoverview.ViewTabs, "")
+	app.toggleWorkspacePanel(termdock.PanelWorkspace)
 	app.paintShellFrame()
-	fw := app.windowManager.Window(string(ui.OverlayStatusOverview))
-	if fw == nil || app.statusOverview == nil {
-		t.Fatal("status overview did not open")
+
+	content := app.termDock.Panel(termdock.PanelWorkspace)
+	screen, ok := content.(*statusoverview.Surface)
+	if !ok || screen == nil {
+		t.Fatal("workspace status panel was not mounted")
 	}
-	widget, ok := fw.Content.(*ui.WindowFrameWidget)
-	if !ok || widget.Host() == nil {
-		t.Fatalf("window content=%T", fw.Content)
+	list := screen.ListBounds()
+	dock := app.termDockRect
+	x := dock.X + list.X + 4
+	for y := dock.Y + 1 + list.Y; y < dock.Y+1+list.Y+4 && !screen.IsExpanded("agent:root"); y++ {
+		app.rootHost.Handle(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
 	}
-	list := app.statusOverview.ListBounds()
-	if list.Empty() {
-		t.Fatal("status overview list has no bounds")
-	}
-	winX, winY := fw.Position()
-	content := fw.ContentBounds()
-	body := widget.Frame().ContentBounds()
-	screenX, screenY := winX+content.X+body.X+list.X+3, winY+content.Y+body.Y+list.Y
-	if cmd := app.forwardEventToWindowContent(fw, tea.MouseClickMsg{X: screenX, Y: screenY, Button: tea.MouseLeft}); cmd != nil {
-		_ = cmd()
-	}
-	if !app.statusOverview.IsExpanded("agent:root") {
-		t.Fatal("floating host click did not expand status row")
+	if !screen.IsExpanded("agent:root") {
+		t.Fatal("workspace-panel row click did not expand through the shell host")
 	}
 }

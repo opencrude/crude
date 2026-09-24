@@ -34,19 +34,50 @@ so a workspace that disables one language server keeps inheriting the other
 ten, and explicit `false` is a real override rather than an absent key
 (`omitempty` elides it, so the diff re-adds the zero).
 
-**Sessions snapshot.** A session captures the agent baseline — which provider,
-model, and thinking effort each role runs — when it starts, and keeps it. A
-running conversation must not switch models because another tab saved
-settings. Agent profiles store a **provider ID only**; API keys live on
-`providers` in `config.json` and are resolved at use time. Updating a key in
-Application Settings → Providers is enough for every role that references
-that provider. `Session.UpdateWorkspaceDefaults` refreshes provider
-endpoints, wire standards, and credentials, so fixing a bad API key still
-reaches live sessions. `AdoptWorkspaceDefaults` is the deliberate re-inherit
-and runs only from user-invoked resets. New sessions always start from the
-current effective defaults.
+**Sessions snapshot.** A session captures the selected account ID, model, and
+thinking effort when it starts. There is no provider/account default and no
+silent account choice. Agent profiles and session overrides store account IDs,
+not credentials. The account's template identifies its provider configuration;
+model selection remains on the agent. `AdoptWorkspaceDefaults` is the deliberate
+re-inherit action; normal settings edits affect later turns only.
 
-Each admitted turn also snapshots the resolved provider ID and model ID from
+**Provider templates and accounts.** Application Settings → Providers lists
+editable named request templates. Built-in presets are initial configuration
+data, not special provider implementations. Display names are concise (the
+ChatGPT subscription endpoint is named `Codex`; its stable internal ID is not
+shown). A template contains its name,
+endpoint, authentication mode, authentication header, additional headers, wire
+protocol, protocol options, transport settings, and extra request fields. It
+does not contain a model, credential, or account default. Clone creates an
+independent named template; custom endpoints use the same model. Go owns actual
+wire-protocol encoders and authentication mechanisms, not provider-specific
+endpoint/name entries.
+
+Application Settings → Accounts lists every account across templates. An
+account selects one template, has its own distinct name and secret, and may
+override every template request parameter. Unchanged fields inherit; an
+explicit override can differ independently for this account. Adding another
+account for a template starts with inherited settings and empty credentials; it
+never copies another account's secret. Account Add and Save changes persist only
+that entity. A preferences save never replays stale account or template data.
+Workspace Settings never exposes credentials. Agents select an Account by name;
+there is no combined provider/account "connection" picker. The agent keeps its
+own model and model capabilities.
+
+Account IDs and template IDs are stable; labels and provider-side OAuth account
+IDs are not local identity. Removal requires confirmation and never reassigns
+sessions. A missing account requires explicit selection, not silent failover.
+OAuth refreshes are serialized per account and rotated tokens are persisted
+before use. Model discovery, if offered in an agent/model picker, is scoped to
+the selected account; stale auth and model results must not cross account
+boundaries. Credentials remain application-only and do not enter workspace or
+session data. Older or disconnected session history remains readable and asks
+for an explicit account before sending another turn. Creating a session without
+an account presents a setup warning. There is no automatic legacy credential
+migration path; existing local credentials must be explicitly transferred or
+re-entered.
+
+Each admitted turn also snapshots the resolved provider, account, and model IDs from
 the exact backend request. That identity is stored on every assistant,
 thinking, and tool display snapshot and restored unchanged on resume. Session
 settings choose only later turns; changing a model never relabels prior chat
@@ -64,6 +95,62 @@ encoder maps the neutral attachment to the resolved protocol: OpenAI-compatible
 before a provider request with an explicit reason. Binary edit/write operations
 remain forbidden regardless of read capability.
 
+**Agents have persistent personal identities.** Root sessions receive names such
+as Jeff, Tom, and Jake. Child identities include their parent: `Tom sub Jeff`.
+Task/profile hints supplied to the delegation tool do not replace these names.
+An app-wide transactional counter in `agent-names.db` allocates identities across
+workspaces and processes. After the initial first-name pool, numbered variants
+(`Jeff 2`, `Tom 2`, …) extend the namespace using arbitrary-precision integers.
+Names are retained in session metadata, tabs, agent lists, reports, and history;
+resuming a named session does not allocate another name. Unnamed sessions obtain
+their identity before becoming live. The guarantee assumes the allocator database
+is retained, just as session identity assumes its session database is retained.
+
+**Multi-agent mode is a live capability, not a startup-only setting.** A fresh
+session creates no runner until its first permitted launch. The session owns the
+runner; initialization binds its event sender and parent identity before any
+child starts. Changing the switch does not replace that owner. Disabling blocks
+new launches immediately, including calls from a model response already in
+flight, while retaining running children, cancellation controls, and review
+history. Already-running children finish normally unless explicitly cancelled.
+The next parent model request receives a context-only settings notice, separate
+from child failures; a refused stale launch returns `disabled_by_user` with
+`user_disabled_multi_agent`, not an execution error. Re-enabling restores launch
+tools on the next model request, including within an active turn. Toggling alone
+does not start an idle model request. Persisted child history may instantiate a
+runner on resume for review; this does not enable new launches.
+
+**Auto permissions are an explicit, bounded opt-in.** Settings → Security →
+Safety → Auto permissions selects a dedicated account and model; blank values
+never silently inherit the main model. Application/workspace settings propagate
+live to existing sessions. The root agent reviews eligible operations only when
+a permission prompt would otherwise be required and YOLO is off. Children keep
+their existing capability policies; this setting does not loosen those policies.
+
+The reviewer sees only a fixed safety instruction, optional extra restrictions,
+and bounded tool arguments—not conversation history, environment variables, or
+file contents fetched behind the user's back. Recognizable credential markers,
+out-of-workspace paths, symlinks, oversized arguments, delete/move operations,
+and unknown/network/destructive shell commands stay on the human path without a
+review request. Shell metacharacters and compound commands are also excluded.
+This filter reduces risk; it is not a guarantee that arbitrary secrets or prompt
+injections can be recognized. Eligible arguments are sent to the chosen provider.
+
+A strict `allow` response grants only this call. `deny` asks the human by default;
+users may choose automatic denial instead. `ask`, malformed/truncated responses,
+provider errors, timeout, exhausted budget, and stale settings always return to
+human confirmation. No reviewer result creates an “Always allow” grant. Hard
+command blocks apply to synchronous and asynchronous execution before review.
+
+Defaults: 8-second timeout, 96 output tokens, 4,096 argument bytes, and 12 reviews
+per root turn; each is configurable within enforced bounds. Transport retries
+are disabled and response bodies are capped at 16 KiB. Extra restrictions are
+limited to 1,024 bytes. Usage is recorded as `permission_review`, contributing to
+cost totals without replacing the root's context measurement. Approved/denied
+tool rows carry a persisted reviewer label, distinct from human permission tags.
+Choose a fast, inexpensive instruction-following model; model judgment remains
+fallible, so keep high-impact operations on the human path.
+
 **Workspace root is execution truth.** Every workspace-created or resumed
 backend session is bound to that workspace's `RootPath`. Relative file, glob,
 grep, directory, synchronous command, async command, main-agent prompt, and
@@ -77,21 +164,20 @@ snapshot cannot say which of its values the user meant, so migration keeps
 whatever still differs; **Reset section** in the workspace scope is how a
 category goes back to full inheritance.
 
-Provider protocol resolution is equally layered:
+The selected account resolves its request template fields independently:
 
 ```
-session role override
+account field override
     ↓
-provider's selected-model override
+provider template field
     ↓
-provider default
-    ↓
-built-in preset default
+protocol implementation registry
 ```
 
-Supported standards are OpenAI Responses, OpenAI Chat Completions, and
-Anthropic Messages. Existing configs with no protocol fields continue to use
-their preset default.
+Models are not template fields. The agent selects an Account and separately
+selects its Model; the account's effective template supplies endpoint,
+authentication, headers, wire protocol, and request behavior. Built-in template
+records are seed data, while protocol implementations remain registered code.
 
 `workspace.LoadAppSettings()` returns the **effective** snapshot (app +
 workspace). Application defaults alone are `AppDefaults()`.
@@ -100,10 +186,10 @@ workspace). Application defaults alone are `AppDefaults()`.
 
 | Action | Persistence | Must not write |
 |--------|-------------|----------------|
-| Application Settings → Save | `config.json` via `SaveAppSettings` + provider credentials via `SaveProviderSettings` | `workspace.db`, API keys on agent profiles |
+| Application Settings → Save | `config.json` via `SaveAppSettings` | `workspace.db`, API keys on agent profiles |
 | Workspace Settings → Save | field-level `WorkspaceOverrides` in `workspace.db` key `workspace_settings` | `config.json`, API keys, untouched fields |
 | Workspace Settings → Reset section | `ClearCategory` then `SaveWorkspaceSettings` | other categories, app config |
-| `/settings` or `/model` dock | session agent provider/model/protocol/thinking **and multi-agent** | app/workspace IDE prefs, API keys |
+| `/settings` or `/model` dock | session agent connection/model/protocol/thinking **and multi-agent** | app/workspace IDE prefs, API keys |
 | Theme cycle (`app.toggleTheme`) | application layer | workspace overlay |
 
 Editor autosave is an application/workspace field-level setting and is **Off by
@@ -192,6 +278,8 @@ Visual contracts for this window:
 - Group gap on the left rail (`ListItem.Spacer` between AI and IDE)
 - Section gap on the right (`Form` field gap + separator rows)
 - Focused form row uses one background for label and control
+- The Application/Workspace background toggle shares the Save/Cancel footer
+  row; one full-width separator is directly above the entire row
 - Save/Cancel right-align; Reset section sits on the opposite side of the
   form footer (just right of the vertical divider)
 - `FieldSelect` is an overlay (z-order paint pass) with box-drawing chrome.
@@ -201,9 +289,40 @@ Visual contracts for this window:
   false while content fits)
 - Form paint clips to the panel viewport. Scrolled fields must not overwrite
   the footer separator or Save/Cancel row
-- The Providers page separates Connection, Communication protocol, and Model
-  defaults. A provider protocol can be overridden for one selected model
-  without changing other models on the same gateway.
+- Providers and Accounts are searchable compact tables. Providers has stable
+  Add/Edit/Clone/Remove controls; Accounts has Add/Edit/Add another/Remove.
+  Table errors and progress use the reserved row directly above these actions,
+  never their button row, including after a resize.
+  Each editor replaces only the right-hand table pane, keeps the left settings
+  navigation visible, shows a title breadcrumb, and offers an explicit Back.
+  The window never resizes or moves because an editor opened. Table scroll and
+  selection survive returning from an editor; resize and thumb drag commit the
+  latest painted row, not a selected-row snapback.
+- Account/template removal, dirty editor Back/Esc, dirty preferences close,
+  and navigation from a template still used by accounts open separate **stacked
+  modal `WindowFrame` prompts** above the retained Settings window. They do not
+  replace its table, editor, header, or action row with an inline confirmation.
+  The in-use prompt can take the user to Accounts in the same Settings window
+  with a linked account selected; it never removes a referenced template.
+  Cancel/stay keeps the exact draft and focus context. A requested category or
+  scope switch happens only after explicit discard; closing with dirty edits
+  never silently drops them. Confirmation carries the selected entity's ID and
+  current preimage, and persistence starts only after the decision, with no
+  optimistic account or template removal before acknowledgement.
+- Validation errors stay attached to editor fields. Persistence errors/progress
+  use the reserved table status row or the editor's field/status area, not a
+  navigation prompt or the table action row. The stacked prompt is modal:
+  focus remains in its decision controls, clicking outside cannot activate the
+  retained Settings window, and dismissing restores focus safely to Settings.
+- Provider templates edit name, endpoint, auth mode/header, request headers,
+  wire protocol, transport, protocol options, and extra request fields. They
+  contain no model or credential. Clone creates a separately named template.
+- Account editors select a template and keep credentials private to that
+  account. Every template field can remain inherited or be explicitly
+  overridden. Multiple accounts may share one template without sharing secrets.
+- Agent settings select an Account directly and keep model/capability settings
+  on the agent; there is no provider-default account or combined Connection
+  selector.
 - Model choices show context size, per-million-token pricing, and
   vision/tools/file capability badges when models.dev metadata is available.
 
@@ -236,8 +355,11 @@ Layer coverage lives next to the code:
 - `tui/ui/form_select_test.go` — overlay height and paint/hit-testing
 - `tui/ui/scrollbar_paint_test.go` — on-demand scrollbar
 - `tui/settings/settings_scope_test.go` — workspace save payload and overflow scrollbars
-- `tui/settings/provider_switch_test.go` — provider/model protocol isolation
-- `tui/screens/sessionsettings/session_settings_test.go` — session protocol overrides and multi-agent toggle
+- `tui/settings/provider_switch_test.go` — template/account protocol isolation
+- `tui/settings/layered_prompt_test.go` and `accounts_regression_test.go` —
+  owner-bound prompts, explicit discard/removal decisions, retained painted
+  settings tables/editors at desktop and constrained terminal sizes
+- `tui/screens/sessionsettings/session_settings_test.go` — account selection and multi-agent toggle
 - `session/model_attribution_test.go`, `workspace/message_view_test.go`, and
   `tui/chatprojection/model_attribution_test.go` — request-time model switching,
   durable resume attribution, and immutable per-row chat headers

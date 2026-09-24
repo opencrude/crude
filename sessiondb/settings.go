@@ -9,6 +9,7 @@ import "database/sql"
 // override carrying explicit values.
 type AgentSettingOverride struct {
 	Provider    string
+	AccountID   string
 	Model       string
 	APIStandard string
 	// Inherit is the live-inheritance marker: "main" follows this session's
@@ -20,7 +21,7 @@ type AgentSettingOverride struct {
 
 func LoadAgentSettingOverrides(db *sql.DB, sessionID string) (map[string]AgentSettingOverride, error) {
 	rows, err := db.Query(`
-		SELECT category, provider, model, api_standard, thinking_effort, context_compaction_percent, inherit_source
+		SELECT category, provider, account_id, model, api_standard, thinking_effort, context_compaction_percent, inherit_source
 		FROM session_agent_settings
 		WHERE session_id = ?
 	`, sessionID)
@@ -32,13 +33,13 @@ func LoadAgentSettingOverrides(db *sql.DB, sessionID string) (map[string]AgentSe
 	overrides := make(map[string]AgentSettingOverride)
 	for rows.Next() {
 		var category string
-		var provider, model, standard, thinking, inherit sql.NullString
+		var provider, account, model, standard, thinking, inherit sql.NullString
 		var compact sql.NullInt64
-		if err := rows.Scan(&category, &provider, &model, &standard, &thinking, &compact, &inherit); err != nil {
+		if err := rows.Scan(&category, &provider, &account, &model, &standard, &thinking, &compact, &inherit); err != nil {
 			return nil, err
 		}
 		override := AgentSettingOverride{
-			Provider: provider.String, Model: model.String,
+			Provider: provider.String, AccountID: account.String, Model: model.String,
 			APIStandard: standard.String, ThinkingEffort: thinking.String,
 			Inherit: inherit.String,
 		}
@@ -61,16 +62,16 @@ func SaveAgentSettingOverrides(db *sql.DB, sessionID string, overrides map[strin
 		return err
 	}
 	for category, override := range overrides {
-		if override.Provider == "" && override.Model == "" &&
+		if override.Provider == "" && override.AccountID == "" && override.Model == "" &&
 			override.APIStandard == "" && override.ThinkingEffort == "" &&
 			override.ContextCompactionPercent == nil && override.Inherit == "" {
 			continue
 		}
 		if _, err := tx.Exec(`
 			INSERT INTO session_agent_settings
-				(session_id, category, provider, model, api_standard, thinking_effort, context_compaction_percent, inherit_source)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-		`, sessionID, category, override.Provider, override.Model, override.APIStandard, override.ThinkingEffort, override.ContextCompactionPercent, override.Inherit); err != nil {
+				(session_id, category, provider, account_id, model, api_standard, thinking_effort, context_compaction_percent, inherit_source)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, sessionID, category, override.Provider, override.AccountID, override.Model, override.APIStandard, override.ThinkingEffort, override.ContextCompactionPercent, override.Inherit); err != nil {
 			return err
 		}
 	}

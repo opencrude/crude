@@ -70,6 +70,7 @@ func NewWindowFrame(id ComponentID, role FrameRole, tokens *TokenSet) *WindowFra
 
 // SetTitle sets the title text.
 func (f *WindowFrame) SetTitle(s string) { f.title = s }
+func (f *WindowFrame) Title() string     { return f.title }
 
 // SetIcon sets an optional leading icon in the title bar.
 func (f *WindowFrame) SetIcon(s string) { f.icon = s }

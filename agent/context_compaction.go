@@ -68,6 +68,7 @@ type CompactResult struct {
 	Completed     int
 	RetryAttempt  int
 	ProviderID    string
+	AccountID     string
 	ModelID       string
 }
 
@@ -80,6 +81,7 @@ type CompactionCommit struct {
 	Trigger       string
 	Role          string
 	ProviderID    string
+	AccountID     string
 	ModelID       string
 }
 
@@ -91,6 +93,7 @@ type CompactionSource struct {
 	Trigger       string
 	Role          string
 	ProviderID    string
+	AccountID     string
 	ModelID       string
 }
 
@@ -107,6 +110,7 @@ type compactOutcome struct {
 	Completed     int
 	RetryAttempt  int
 	ProviderID    string
+	AccountID     string
 	ModelID       string
 }
 
@@ -348,11 +352,11 @@ func (a *Agent) compactWithModel(
 		if err := a.PrepareCompaction(CompactionSource{
 			Messages: append([]provider.ChatMessage(nil), msgs[1:]...), BeforeTokens: beforeTokens,
 			ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role,
-			ProviderID: a.Provider.ID, ModelID: a.Model,
+			AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model,
 		}); err != nil {
 			return compactOutcome{
 				ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role,
-				ProviderID: a.Provider.ID, ModelID: a.Model,
+				AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model,
 			}, fmt.Errorf("persist compaction source: %w", err)
 		}
 	}
@@ -425,7 +429,7 @@ func (a *Agent) compactWithModel(
 			return compactOutcome{
 					Usage: aggregate, ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role,
 					StageName: stage.Label, StageIndex: index + 1, Completed: index, RetryAttempt: lastAttempt,
-					ProviderID: a.Provider.ID, ModelID: a.Model,
+					AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model,
 				},
 				fmt.Errorf("%s stage: %w", stage.Name, stageErr)
 		}
@@ -434,11 +438,11 @@ func (a *Agent) compactWithModel(
 
 	checkpoint, err := buildContextCheckpoint(role, sections)
 	if err != nil {
-		return compactOutcome{Usage: aggregate, ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role, StageIndex: len(compactionStages), Completed: len(compactionStages), ProviderID: a.Provider.ID, ModelID: a.Model}, err
+		return compactOutcome{Usage: aggregate, ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role, StageIndex: len(compactionStages), Completed: len(compactionStages), AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model}, err
 	}
 	checkpoint, err = validateContextCheckpoint(checkpoint, role)
 	if err != nil {
-		return compactOutcome{Usage: aggregate, ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role, StageIndex: len(compactionStages), Completed: len(compactionStages), ProviderID: a.Provider.ID, ModelID: a.Model}, err
+		return compactOutcome{Usage: aggregate, ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role, StageIndex: len(compactionStages), Completed: len(compactionStages), AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model}, err
 	}
 
 	checkpointMsg := provider.NewTextMessage("user", checkpoint)
@@ -448,14 +452,14 @@ func (a *Agent) compactWithModel(
 	compacted := append([]provider.ChatMessage{checkpointMsg}, recentUsers...)
 	afterTokens := estimateCanonicalRequest(append([]provider.ChatMessage{msgs[0]}, compacted...), tools, targetModel)
 	if beforeTokens > 0 && afterTokens >= beforeTokens {
-		return compactOutcome{Usage: aggregate, ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role, StageIndex: len(compactionStages), Completed: len(compactionStages), ProviderID: a.Provider.ID, ModelID: a.Model},
+		return compactOutcome{Usage: aggregate, ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role, StageIndex: len(compactionStages), Completed: len(compactionStages), AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model},
 			fmt.Errorf("compaction did not reduce active context (%d -> %d tokens)", beforeTokens, afterTokens)
 	}
 
 	return compactOutcome{
 		Messages: compacted, Usage: aggregate, AfterTokens: afterTokens,
 		ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role,
-		ProviderID: a.Provider.ID, ModelID: a.Model,
+		AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model,
 	}, nil
 }
 
@@ -470,6 +474,7 @@ func compactionEventData(requestID, trigger, role string, stage, completed, befo
 func (a *Agent) compactionEventData(requestID, trigger, role string, stage, completed, before, after, ctxWindow int) map[string]any {
 	data := compactionEventData(requestID, trigger, role, stage, completed, before, after, ctxWindow)
 	if a != nil && a.Provider != nil {
+		data["account_id"] = a.Provider.AccountID
 		data["provider_id"] = a.Provider.ID
 		data["provider_name"] = a.Provider.Name
 		data["model_id"] = a.Model
@@ -492,6 +497,7 @@ func (a *Agent) emitCompactionUsage(emit func(AgentEvent), usage provider.TokenU
 		"cost":                turnCost, "cost_known": costKnown, "cost_source": costSource,
 		"request_id": requestID, "operation_id": operationID, "request_kind": "compaction",
 		"compaction_role": role, "compaction_stage": stage, "compaction_trigger": trigger,
+		"account_id":  a.Provider.AccountID,
 		"provider_id": a.Provider.ID, "provider_name": a.Provider.Name, "model_id": a.Model,
 		"provider": a.Provider.ID, "model": a.Model,
 		"context_window": a.Provider.ContextWindow(a.Model),
@@ -626,13 +632,13 @@ func (a *Agent) CompactWithRequestID(
 			BeforeTokens: before, ContextWindow: outcome.ContextWindow, Usage: outcome.Usage,
 			RequestID: outcome.RequestID, Trigger: "manual", Role: checkpointRole(a.Depth),
 			StageName: outcome.StageName, StageIndex: outcome.StageIndex, Completed: outcome.Completed, RetryAttempt: outcome.RetryAttempt,
-			ProviderID: outcome.ProviderID, ModelID: outcome.ModelID,
+			AccountID: outcome.AccountID, ProviderID: outcome.ProviderID, ModelID: outcome.ModelID,
 		}, err
 	}
 	return CompactResult{
 		Messages: outcome.Messages, BeforeTokens: before, AfterTokens: outcome.AfterTokens,
 		ContextWindow: outcome.ContextWindow, Usage: outcome.Usage,
 		RequestID: outcome.RequestID, Trigger: outcome.Trigger, Role: outcome.Role,
-		ProviderID: outcome.ProviderID, ModelID: outcome.ModelID,
+		AccountID: outcome.AccountID, ProviderID: outcome.ProviderID, ModelID: outcome.ModelID,
 	}, nil
 }

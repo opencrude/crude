@@ -87,6 +87,7 @@ type UsageSummary struct {
 	Requests       int
 	ModelID        string
 	ProviderID     string
+	AccountID      string
 	MeasuredAt     time.Time
 }
 
@@ -117,6 +118,7 @@ type AgentStatusSnapshot struct {
 	Phase          AgentPhase
 	Detail         string
 	ProviderID     string
+	AccountID      string
 	ModelID        string
 	TurnGeneration uint64
 	RequestID      string

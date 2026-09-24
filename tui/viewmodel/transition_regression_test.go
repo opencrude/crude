@@ -9,7 +9,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/session"
 	ttypes "crude/tui/types"
 	"crude/workspace"
 )
@@ -26,7 +25,8 @@ func newTransitionApp(t *testing.T) *App {
 		t.Fatal(err)
 	}
 	ws := workspace.NewWorkspace(dir, "openrouter", "test", ttypes.Settings{}, regressionLogger{})
-	ws.SetBackendConfig(&session.Config{}, home)
+	ws.SetBackendConfig(testAccountConfig(), home)
+	ws.SetAppDefaults(ttypes.AppSettings{ActiveProvider: "openai", Providers: ws.AllProviderConfigs(), Accounts: ws.AllAccounts()})
 	ws.SetEventSender(noopEventSender{})
 	t.Setenv("MODELS_DEV_URL", "http://127.0.0.1:9/models-dev-unreachable")
 	app := NewApp(ws, nil)

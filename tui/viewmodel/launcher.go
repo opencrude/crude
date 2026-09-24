@@ -134,6 +134,10 @@ func (m *App) launcherNewSession() tea.Cmd {
 	}
 	result := m.NewSessionFromLauncher()
 	if result != nil && result.Error != "" {
+		if result.NeedsAccount {
+			m.showAccountRecovery(false)
+			return nil
+		}
 		if m.Feedback != nil {
 			m.Feedback.NotifyError(result.Error)
 		}
@@ -189,9 +193,17 @@ func (m *App) launcherResumeSession(sessionID string, sessionMeta *sessiondb.Ses
 		m.Logger.Info("SESSION", "resume_selected", "id", sessionID)
 	}
 	result := m.ResumeSessionFromLauncher(sessionID)
-	if result == nil {
+	if result == nil || result.Error != "" {
+		if result != nil && result.NeedsAccount {
+			m.showAccountRecovery(true)
+			return nil
+		}
 		if m.Feedback != nil {
-			m.Feedback.NotifyError("Failed to resume session")
+			if result == nil {
+				m.Feedback.NotifyError("Failed to resume session")
+			} else {
+				m.Feedback.NotifyError(result.Error)
+			}
 		}
 		return nil
 	}
@@ -207,6 +219,9 @@ func (m *App) launcherResumeSession(sessionID string, sessionMeta *sessiondb.Ses
 		if refs := m.ActiveSession.TakeHydratedRefs(); len(refs) > 0 {
 			m.SetReferences(refs)
 		}
+	}
+	if err := m.ActiveSessionConnectionIssue(); err != nil {
+		m.showAccountRecovery(true)
 	}
 	return nil
 }

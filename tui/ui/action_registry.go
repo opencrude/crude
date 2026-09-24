@@ -539,8 +539,8 @@ var defaultActions = []*ActionDef{
 	},
 	{
 		ID:          "status.overview",
-		Label:       "Status Overview",
-		Description: "inspect tabs, workspace health, activity, and notifications",
+		Label:       "Workspace Status",
+		Description: "inspect tabs and workspace health",
 		Icon:        "◉",
 		Category:    "View",
 	},

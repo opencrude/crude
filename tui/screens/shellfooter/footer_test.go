@@ -24,12 +24,20 @@ func hintSegments() []Segment {
 
 func paintFooter(t *testing.T, projection Projection, width int) (*Screen, string) {
 	t.Helper()
-	screen := New(theme.DefaultDark(), ui.DefaultRegistry())
+	screen, buf := paintFooterBuffer(t, theme.DefaultDark(), projection, width)
+	return screen, strings.TrimRight(rowText(buf, 1), " ")
+}
+
+// paintFooterBuffer paints the footer on its own buffer so tests can inspect the
+// painted fills, not just the text.
+func paintFooterBuffer(t *testing.T, th *theme.Theme, projection Projection, width int) (*Screen, *surface.CellBuffer) {
+	t.Helper()
+	screen := New(th, ui.DefaultRegistry())
 	screen.SetProjection(projection)
 	screen.Layout(ui.LayoutContext{}, ui.Rect{X: 0, Y: 0, W: width, H: 2})
 	buf := surface.NewCellBuffer(width, 2)
 	screen.Paint(buf, 0, 0, ui.PaintContext{})
-	return screen, strings.TrimRight(rowText(buf, 1), " ")
+	return screen, buf
 }
 
 func rowText(buf *surface.CellBuffer, y int) string {
@@ -46,6 +54,25 @@ func rowText(buf *surface.CellBuffer, y int) string {
 
 func railColumns(width int) (int, int) {
 	return ui.ShellContentRail(ui.NewTokenSet(theme.DefaultDark()), width)
+}
+
+func firstTextColumn(row string) int {
+	for index, r := range []rune(row) {
+		if r != ' ' {
+			return index
+		}
+	}
+	return -1
+}
+
+func lastTextColumn(row string) int {
+	runes := []rune(row)
+	for index := len(runes) - 1; index >= 0; index-- {
+		if runes[index] != ' ' {
+			return index
+		}
+	}
+	return -1
 }
 
 // The guidance group (contextual hints, then Help) owns the left rail and the
@@ -149,23 +176,4 @@ func TestMovedGroupsKeepTheirHitTargets(t *testing.T) {
 	if res := click(strings.Index(row, "Ctrl+O attach file")); res.Handled || res.Cmd != nil {
 		t.Fatalf("non-actionable hint became clickable: %+v", res)
 	}
-}
-
-func firstTextColumn(row string) int {
-	for index, r := range []rune(row) {
-		if r != ' ' {
-			return index
-		}
-	}
-	return -1
-}
-
-func lastTextColumn(row string) int {
-	runes := []rune(row)
-	for index := len(runes) - 1; index >= 0; index-- {
-		if runes[index] != ' ' {
-			return index
-		}
-	}
-	return -1
 }

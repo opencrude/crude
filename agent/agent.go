@@ -45,6 +45,7 @@ type Agent struct {
 	TurnGeneration           uint64
 	Policy                   safety.Policy
 	CommandPolicy            safety.CommandPolicy
+	PermissionReviewer       PermissionReviewer
 	Depth                    int
 	ParentID                 AgentID
 	MaxRetries               int
@@ -53,14 +54,20 @@ type Agent struct {
 	FrozenPrefix             []provider.ChatMessage
 	lastActiveContext        []provider.ChatMessage
 	FilteredTools            []tools.ToolDef
-	ToolFn                   func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error)
-	logger                   *logger.Logger
-	turn                     *logger.TurnLogger
-	Emit                     func(AgentEvent)
-	PrepareCompaction        func(CompactionSource) error
-	CommitCompaction         func(CompactionCommit) error
-	Ctx                      context.Context
-	Yolo                     bool
+	// PrepareStep snapshots live tools and runtime notices between requests,
+	// never while a parallel tool batch is using the previous snapshot.
+	PrepareStep func() ([]tools.ToolDef, []provider.ChatMessage)
+	// Runtime notices are admitted only at a root model-request boundary, not via BTW.
+	PrepareRuntimeNotices  func() []provider.ChatMessage
+	RuntimeNoticesAccepted func()
+	ToolFn                 func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error)
+	logger                 *logger.Logger
+	turn                   *logger.TurnLogger
+	Emit                   func(AgentEvent)
+	PrepareCompaction      func(CompactionSource) error
+	CommitCompaction       func(CompactionCommit) error
+	Ctx                    context.Context
+	Yolo                   bool
 	// YoloMode supplies the owning session's live policy. Yolo remains the
 	// fallback for standalone agents and always-YOLO sub-agents.
 	YoloMode    func() bool

@@ -40,8 +40,9 @@ type SubAgentSpec struct {
 	Instructions     string        `json:"instructions"`
 	Model            string        `json:"model"`
 	Provider         string        `json:"provider"`
+	AccountID        string        `json:"account_id,omitempty"`
 	ProviderURL      string        `json:"provider_url,omitempty"`
-	APIKey           string        `json:"api_key,omitempty"`
+	APIKey           string        `json:"-"`
 	APIStandard      string        `json:"api_standard,omitempty"`
 	ThinkingEffort   string        `json:"thinking_effort,omitempty"`
 	PolicyName       string        `json:"policy"`

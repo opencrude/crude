@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"slices"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -19,8 +20,12 @@ func TestOAuthResultReachesModelThroughFrameDispatch(t *testing.T) {
 	th := theme.DefaultDark()
 	model := New(th, types.AppSettings{
 		ActiveProvider: "chatgpt",
-		Providers:      map[string]types.ProviderConfig{"chatgpt": {}},
+		Providers:      map[string]types.ProviderConfig{"chatgpt": provider.DefaultTemplates()["chatgpt"]},
+		Accounts:       map[string]provider.Account{"cg": {ID: "cg", ProviderID: "chatgpt", Label: "Personal"}},
 	}, []types.ProviderPreset{chatgptPreset()})
+	if err := model.beginAccountEdit(false, ""); err != nil {
+		t.Fatal(err)
+	}
 
 	// The real app passes the WorkspaceSettings widget as the frame's
 	// eventTarget so unhandled host events reach HandleEvent → model.Update.
@@ -31,26 +36,27 @@ func TestOAuthResultReachesModelThroughFrameDispatch(t *testing.T) {
 	host.Resize(90, 24)
 	host.Layout()
 
-	model.SelectCategory(catProviders)
+	model.SelectCategory(catAccounts)
 	ws.surface.refreshForm()
 	ws.surface.FocusForm()
 	host.Layout()
 
-	if status := model.value(catProviders, "chatgpt-status"); status != "Not signed in" {
+	if status := model.value(catAccounts, "chatgpt-status"); status != "Not signed in" {
 		t.Fatalf("initial status = %q, want 'Not signed in'", status)
 	}
 
 	// Dispatch the sign-in result exactly as viewmodel does.
-	res := frame.Dispatch(ChatGPTSignInResultMsg{Creds: &provider.OAuthCredentials{AccessToken: "AT", Email: "u@example.com"}})
+	_, generation := model.SignInRequest()
+	res := frame.Dispatch(ChatGPTSignInResultMsg{AccountID: "cg", Generation: generation, Creds: &provider.OAuthCredentials{AccessToken: "AT", Email: "u@example.com"}})
 	if res.Cmd != nil {
 		t.Fatalf("unexpected cmd from dispatch: %v", res.Cmd)
 	}
 
-	if status := model.value(catProviders, "chatgpt-status"); status != "Signed in as u@example.com" {
-		t.Errorf("status after dispatch = %q, want 'Signed in as u@example.com'", status)
+	if status := model.value(catAccounts, "chatgpt-status"); status != "Sign-in stored" {
+		t.Errorf("status after dispatch = %q, want stored sign-in", status)
 	}
-	if f := model.categories[catProviders].Form.Field("chatgpt-signout"); f == nil {
-		t.Errorf("sign-out nav should appear after sign-in")
+	if buttons := ws.surface.accountAuthBar.ButtonLabelsForTest(); !slices.Contains(buttons, "Disconnect") {
+		t.Errorf("disconnect button should appear after sign-in: %v", buttons)
 	}
 }
 
@@ -62,22 +68,27 @@ func TestFetchModelsAfterSwitchFromOpenCodeGo(t *testing.T) {
 	model := New(th, types.AppSettings{
 		ActiveProvider: "opencode-go",
 		Providers: map[string]types.ProviderConfig{
-			"opencode-go": {Model: "qwen3-coder", APIKey: "sk-opencode"},
-			"chatgpt":     {},
+			"opencode-go": provider.DefaultTemplates()["opencode-go"],
+			"chatgpt":     provider.DefaultTemplates()["chatgpt"],
 		},
+		Accounts: map[string]provider.Account{"cg": {ID: "cg", ProviderID: "chatgpt", Label: "Personal"}},
 	}, []types.ProviderPreset{
 		{ID: "opencode-go", Name: "OpenCode Go", StandardID: "openai"},
 		chatgptPreset(),
 	})
 
-	// Switch the provider dropdown to chatgpt (fires OnChanged → rebuild).
-	model.categories[catProviders].Form.SetValue(fieldProvider, ui.StringValue("chatgpt"))
-	if model.providerID != "chatgpt" {
-		t.Fatalf("providerID = %q, want chatgpt", model.providerID)
+	// Browsing template settings is independent of the selected account.
+	if model.providerID != "opencode-go" {
+		t.Fatal("fixture selected wrong template")
+	}
+	model.selectAccount("cg")
+	if err := model.beginAccountEdit(false, ""); err != nil {
+		t.Fatal(err)
 	}
 
 	// Sign in.
-	updated, _ := model.Update(ChatGPTSignInResultMsg{Creds: &provider.OAuthCredentials{AccessToken: "AT", Email: "u@example.com"}})
+	_, generation := model.SignInRequest()
+	updated, _ := model.Update(ChatGPTSignInResultMsg{AccountID: "cg", Generation: generation, Creds: &provider.OAuthCredentials{AccessToken: "AT", Email: "u@example.com"}})
 	model = &updated
 
 	// Now fetch models and inspect the FetchModelsMsg payload.
@@ -112,8 +123,7 @@ func (ws *workspaceSettingsForTest) Component() ui.Component { return ws.surface
 
 func (ws *workspaceSettingsForTest) HandleEvent(msg tea.Msg) tea.Cmd {
 	oldPane := ws.model.Pane()
-	updated, cmd := ws.model.Update(msg)
-	ws.model = &updated
+	_, cmd := ws.model.Update(msg)
 	ws.surface.SetModel(ws.model)
 	if oldPane == 1 && ws.model.Pane() == 0 {
 		ws.surface.FocusCategories()

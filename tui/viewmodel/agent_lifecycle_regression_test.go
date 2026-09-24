@@ -224,14 +224,15 @@ func TestUsageEventTokensAccumulatesProviderNumericForms(t *testing.T) {
 	}
 }
 
-func TestDangerousBackgroundAgentAlertEscapesEditorAndMinimizedState(t *testing.T) {
-	app := newFullTestApp(t)
+func TestDangerousBackgroundAgentAlertIsVisibleWithoutChangingSelection(t *testing.T) {
+	app, ws := newRealShellApp(t)
+	defer ws.Close()
 	app.AddOrchestrator("root")
 	pane := app.PaneMgr.GetOrCreate("child", workspace.PaneAgent, "child")
 	childState := workspace.NewAgentState("child", pane.Messages, app.Logger)
 	app.AgentMgr.AddSubAgent("child", "root", "child", "model", "crafter", childState)
 	app.MinimizeAgent("child")
-	app.EditorState.ActiveView = "/tmp/file.go"
+	path := openEditorTabs(t, app, "main.go")[0]
 
 	app.handleAgentEvent(ttypes.AgentEventMsg{
 		Type: "safety_alert", AgentID: "child",
@@ -239,9 +240,10 @@ func TestDangerousBackgroundAgentAlertEscapesEditorAndMinimizedState(t *testing.
 	})
 	app.paintShellFrame()
 	child := app.AgentMgr.Get("child")
-	if child.Hidden || app.AgentMgr.ActiveID() != "child" || app.EditorState.ActiveView != "" {
-		t.Fatalf("danger alert stayed hidden: hidden=%v active=%q editor=%q", child.Hidden, app.AgentMgr.ActiveID(), app.EditorState.ActiveView)
+	if !child.Hidden || app.AgentMgr.ActiveID() == "child" || app.EditorState.ActiveView != path {
+		t.Fatalf("background alert changed navigation: hidden=%v active=%q editor=%q", child.Hidden, app.AgentMgr.ActiveID(), app.EditorState.ActiveView)
 	}
+	assertEditorStillPainted(t, app, path)
 	if status := testStatusText(app); !strings.Contains(status, "Blocked disk write") {
 		t.Fatalf("danger alert not visible in global status: %q", status)
 	}

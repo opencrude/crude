@@ -11,10 +11,19 @@ import (
 
 func newTestModel(t *testing.T, current types.AppSettings) *Model {
 	t.Helper()
-	return New(theme.DefaultDark(), current, []types.ProviderPreset{
+	if current.Providers == nil {
+		current.Providers = provider.DefaultTemplates()
+	}
+	m := New(theme.DefaultDark(), current, []types.ProviderPreset{
 		{ID: "openai", Name: "OpenAI", StandardID: "openai-responses"},
 		{ID: "anthropic", Name: "Anthropic", StandardID: "anthropic"},
 	})
+	if _, ok := m.providers[m.providerID]; ok {
+		if err := m.beginProviderEdit(false, false); err != nil {
+			t.Fatal(err)
+		}
+	}
+	return m
 }
 
 func TestProvidersFormRendersProtocolRowsByCapability(t *testing.T) {
@@ -54,7 +63,7 @@ func TestProvidersFormRendersProtocolRowsByCapability(t *testing.T) {
 func TestProtocolSettingsRoundTripDefaultsToNil(t *testing.T) {
 	m := newTestModel(t, types.AppSettings{ActiveProvider: "openai"})
 	m.storeProviderForm("openai")
-	if cfg := m.providers["openai"]; cfg.Protocol != nil {
+	if cfg := m.providerEditor.draft; cfg.Protocol != nil {
 		t.Fatalf("all-default protocol rows = %+v, want nil", cfg.Protocol)
 	}
 }
@@ -68,7 +77,7 @@ func TestProtocolSettingsRoundTripCapturesOverrides(t *testing.T) {
 	m.SetValueForTest(catProviders, fieldProtocolTier, "flex")
 	m.storeProviderForm("openai")
 
-	cfg := m.providers["openai"]
+	cfg := m.providerEditor.draft
 	if cfg.Protocol == nil {
 		t.Fatal("overrides were not persisted")
 	}
@@ -218,11 +227,12 @@ func TestCollectAgentsReadsCapabilityAndSamplingFields(t *testing.T) {
 
 func TestAutofillCapabilitiesFromModelEntry(t *testing.T) {
 	m := newTestModel(t, types.AppSettings{})
-	m.setModels("openai", []types.ModelEntry{{
+	m.accounts["work"] = provider.Account{ID: "work", ProviderID: "openai", Label: "Work"}
+	m.setModelsForAccount("openai", "work", []types.ModelEntry{{
 		ID: "gpt-test", Name: "GPT Test", ContextWindow: 128000, MaxOutput: 4096,
 		Modalities: []string{provider.ModalityImage},
 	}})
-	m.SetValueForTest(catMain, fieldProvider, "openai")
+	m.SetValueForTest(catMain, fieldConnection, "work")
 	m.SetValueForTest(catMain, fieldModel, "gpt-test")
 
 	form := m.categories[catMain].Form

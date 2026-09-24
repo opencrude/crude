@@ -199,6 +199,30 @@ func (r *SubAgentRunner) SetParentToolFn(fn func(ctx context.Context, tool strin
 }
 
 func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any) (tools.ToolResult, error) {
+	// Serialize launch admission, not the child's work or wait=true. This also
+	// makes concurrent first launches share one parent/configuration snapshot.
+	r.session.delegationMu.Lock()
+	locked := true
+	defer func() {
+		if locked {
+			r.session.delegationMu.Unlock()
+		}
+	}()
+	if owner, ok := ctx.Value(delegationOwnerKey{}).(delegationOwner); ok {
+		r.SetParentTurnGeneration(owner.generation)
+		r.effectiveCfg = r.session.runtimeProfile.GetEffectiveConfig(owner.id)
+		if !r.effectiveCfg.IsMultiAgentEnabled() {
+			return delegationDisabledResult(), nil
+		}
+		// Tools retain the launching turn's media/history context, not another
+		// turn's mutable proxy. Child policy is still enforced by its own wrapper.
+		cat := r.effectiveCfg.GetActiveDefaultCategory()
+		parentProvider, err := r.effectiveCfg.providerForCategory(cat)
+		if err != nil {
+			return tools.ToolResult{}, fmt.Errorf("sub-agent parent provider: %w", err)
+		}
+		r.parentToolFn = r.session.buildToolFn(false, parentProvider, cat.ModelModalities)
+	}
 	if err := ctx.Err(); err != nil {
 		return tools.ToolResult{Content: "Turn cancelled before sub-agent launch."}, err
 	}
@@ -248,6 +272,11 @@ func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any)
 	}
 
 	profileInstructions := r.resolveProfile(name, category, &spec)
+	identity, err := allocateAgentName(r.session.nameHome)
+	if err != nil {
+		return tools.ToolResult{}, fmt.Errorf("allocate child name: %w", err)
+	}
+	spec.Name = identity + " sub " + r.session.AgentName()
 
 	r.applyCategoryDefaults(&spec)
 
@@ -280,6 +309,9 @@ func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any)
 		r.fileOwnership.Release(spec.ID)
 		return tools.ToolResult{Content: fmt.Sprintf("Error launching sub-agent: %s", err)}, fmt.Errorf("launch: %w", err)
 	}
+
+	r.session.delegationMu.Unlock()
+	locked = false
 
 	if !wait {
 		go func() {
@@ -460,9 +492,8 @@ func (r *SubAgentRunner) PollSubAgent(params map[string]any) (tools.ToolResult, 
 		result.CompTokens = compTokens
 		result.CostUSD = costUSD
 		result.Errors = errs
-		// The agent now has the result and report path; suppress the
-		// pending WakeSubAgentDone to avoid a redundant wake-up turn.
-		r.session.MarkReportConsumed(handleID)
+		// An intermediate report is not the terminal result. Keep its later
+		// completion notification: the child may still fail or be cancelled.
 		return tools.ToolResult{Content: formatSubAgentResult(result)}, nil
 	}
 
@@ -597,57 +628,41 @@ func (r *SubAgentRunner) WriteReport(agentID agent.AgentID, params map[string]an
 
 func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgentSpec, profileInstructions string) (*agent.SubAgentHandle, error) {
 	subSessionID := string(spec.ID)
-	resolvedProvider := spec.Provider
-	resolvedURL := spec.ProviderURL
-	resolvedAPIStandard := spec.APIStandard
 	resolvedModelName := spec.Model
 	resolvedThinkingEffort := spec.ThinkingEffort
 
-	cfg := r.session.cfg
-	if r.effectiveCfg != nil {
-		cfg = r.effectiveCfg
+	cfg := r.effectiveCfg
+	if cfg == nil {
+		r.session.mu.Lock()
+		cfg = copyConfig(r.session.cfg)
+		r.session.mu.Unlock()
 	}
 
-	if resolvedProvider == "" {
-		mainCat := cfg.GetActiveDefaultCategory()
-		resolvedProvider = mainCat.Provider
-	}
-	resolvedAPIKey := ""
-	var resolvedOAuth *provider.OAuthCredentials
-	if prov, ok := cfg.Providers[resolvedProvider]; ok {
-		resolvedAPIKey = prov.APIKey
-		resolvedOAuth = prov.OAuth
-		if resolvedURL == "" {
-			resolvedURL = prov.ProviderURL
-		}
-	} else {
-		mainCat := cfg.GetActiveDefaultCategory()
-		resolvedAPIKey = mainCat.APIKey
-		resolvedOAuth = mainCat.OAuth
-		if resolvedURL == "" {
-			resolvedURL = mainCat.ProviderURL
-		}
-	}
+	categoryCfg := cfg.GetCategoryConfig(spec.Category)
 	if resolvedModelName == "" {
-		mainCat := cfg.GetActiveDefaultCategory()
-		resolvedModelName = mainCat.Model
+		resolvedModelName = categoryCfg.Model
 	}
 	if resolvedThinkingEffort == "" {
-		mainCat := cfg.GetActiveDefaultCategory()
-		resolvedThinkingEffort = mainCat.ThinkingEffort
+		resolvedThinkingEffort = categoryCfg.ThinkingEffort
 	}
-	if resolvedAPIStandard == "" {
-		if configured, ok := cfg.Providers[resolvedProvider]; ok {
-			resolvedAPIStandard = configured.StandardForModel(resolvedModelName, resolvedProvider)
-		} else {
-			resolvedAPIStandard = provider.DefaultStandardID(resolvedProvider)
-		}
+	if spec.AccountID == "" {
+		spec.AccountID = categoryCfg.AccountID
 	}
-	spec.Provider = resolvedProvider
-	spec.ProviderURL = resolvedURL
-	spec.APIStandard = resolvedAPIStandard
 	spec.Model = resolvedModelName
 	spec.ThinkingEffort = resolvedThinkingEffort
+	turnCfg := CategoryConfig{
+		AccountID: spec.AccountID, Model: spec.Model, ThinkingEffort: spec.ThinkingEffort,
+		ModelTemperature: spec.ModelTemperature, ModelTopP: spec.ModelTopP,
+	}
+	p, err := cfg.providerForCategory(turnCfg)
+	if err != nil {
+		return nil, fmt.Errorf("sub-agent account %q: %w", spec.AccountID, err)
+	}
+	// Provider identity is derived for telemetry and persistence only; account
+	// ID above is the only connection selector.
+	spec.Provider = p.ID
+	spec.ProviderURL = p.BaseURL
+	spec.APIStandard = p.StandardID()
 
 	var subDB *sql.DB
 	if dbPath, pathErr := r.subAgentDBPath(subSessionID); pathErr != nil {
@@ -669,6 +684,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 				ProjectName:     projectName,
 				Model:           spec.Model,
 				Provider:        spec.Provider,
+				AccountID:       spec.AccountID,
 				CreatedAt:       time.Now().UnixNano(),
 				ParentSessionID: toNullString(r.session.sessionID),
 				AgentCategory:   toNullString(spec.Category),
@@ -678,29 +694,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 		}
 	}
 
-	r.session.logger.Info("SUBAGENT", "launch", "agent_id", spec.ID, "category", spec.Category, "provider", resolvedProvider, "model", resolvedModelName)
-
-	p := provider.FromPreset(resolvedProvider, resolvedAPIKey, resolvedURL)
-	p.Model = resolvedModelName
-	if err := p.SetStandardID(resolvedAPIStandard); err != nil {
-		if subDB != nil {
-			_ = subDB.Close()
-		}
-		return nil, fmt.Errorf("sub-agent provider standard: %w", err)
-	}
-	if resolvedOAuth != nil {
-		p.SetOAuth(resolvedOAuth)
-	}
-	if dialer := cfg.dialerFor(resolvedProvider); dialer != nil {
-		p.SetDialSettings(*dialer)
-	}
-	if protocol := cfg.protocolSettingsFor(resolvedProvider); protocol != nil {
-		p.SetProtocolSettings(protocol)
-	}
-	if resolvedThinkingEffort != "" {
-		p.SetThinkingEffort(resolvedThinkingEffort)
-	}
-	p.SetSampling(spec.ModelTemperature, spec.ModelTopP)
+	r.session.logger.Info("SUBAGENT", "launch", "agent_id", spec.ID, "category", spec.Category, "template", p.ID, "account", spec.AccountID, "model", resolvedModelName)
 	if spec.ModelContextWindow > 0 {
 		provider.SetModelContext(resolvedModelName, spec.ModelContextWindow)
 	}
@@ -723,8 +717,8 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 			r.session.logger.Warn("COMPACT", "aeron_provider_unavailable", "agent_id", spec.ID, "error", compactionErr.Error())
 		}
 	}
-	if r.session.cfg != nil {
-		a.CommandPolicy = safety.CommandPolicyFromSettings(r.session.cfg.Safety)
+	if cfg != nil {
+		a.CommandPolicy = safety.CommandPolicyFromSettings(cfg.Safety)
 	}
 	if spec.ContextCompactionPercent != nil {
 		a.ContextCompactionPercent = *spec.ContextCompactionPercent
@@ -831,11 +825,12 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 			"provider":   handle.Spec.Provider,
 			"task":       handle.Spec.Description,
 			"prompt":     userPrompt,
-			"parent_id":  r.orchestratorID,
+			"parent_id":  string(handle.Spec.ParentID),
 		}, string(handle.Spec.ID))
 		r.sender.SendAgentEventWithID("turn_started", ttypes.TurnIdentity{
 			Generation: 1,
 			ProviderID: handle.Spec.Provider,
+			AccountID:  handle.Spec.AccountID,
 			ModelID:    handle.Spec.Model,
 		}, string(handle.Spec.ID))
 	}
@@ -882,6 +877,7 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 		data := compactionLifecycleData(source.RequestID, source.Trigger, source.Role, 0, 0, source.BeforeTokens, 0)
 		data["context_window"] = source.ContextWindow
 		data["provider_id"] = source.ProviderID
+		data["account_id"] = source.AccountID
 		data["model_id"] = source.ModelID
 		record := compactionRecordFromData(handle.SessionID, string(handle.Spec.ID), sessiondb.CompactionPreparing, data)
 		return sessiondb.BeginContextCompaction(handle.DB, handle.SessionID, string(handle.Spec.ID), sessiondb.ContextState{
@@ -894,6 +890,7 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 		data := compactionLifecycleData(commit.RequestID, commit.Trigger, commit.Role, compactionStageCount, compactionStageCount, commit.BeforeTokens, commit.AfterTokens)
 		data["context_window"] = commit.ContextWindow
 		data["provider_id"] = commit.ProviderID
+		data["account_id"] = commit.AccountID
 		data["model_id"] = commit.ModelID
 		record := compactionRecordFromData(handle.SessionID, string(handle.Spec.ID), sessiondb.CompactionCompleted, data)
 		return sessiondb.CommitContextCompaction(handle.DB, handle.SessionID, string(handle.Spec.ID), sessiondb.ContextState{
@@ -918,6 +915,9 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 			r.session.processUsageEvent(evt.Data, handle.Spec.Model, evt.AgentID, string(handle.Spec.ParentID))
 			if handle.DB != nil {
 				if record, ok := sessiondb.UsageRecordFromEvent(evt.Data, handle.SessionID, evt.AgentID, string(handle.Spec.ParentID), handle.Spec.Model); ok {
+					if record.AccountID == "" {
+						record.AccountID = handle.Spec.AccountID
+					}
 					_ = sessiondb.UpsertUsageRecord(handle.DB, record)
 				}
 			}
@@ -952,10 +952,13 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 			if msg, ok := evt.Data.(string); ok && msg != "" {
 				handle.AddError(msg)
 			}
+			// Agent.Run emits no done event after an unrecovered API/stream error.
+			// A later done event supersedes this marker if the run recovered.
+			handle.SetTermReason("error")
 		}
 		if evt.Type == "done" {
 			if data, ok := evt.Data.(map[string]any); ok {
-				if reason, ok := data["reason"].(string); ok && reason != "completed" && reason != "cancelled" {
+				if reason, ok := data["reason"].(string); ok {
 					handle.SetTermReason(reason)
 				}
 			}
@@ -1072,6 +1075,7 @@ func persistSubAgentTranscript(
 	turnIdentity := ttypes.TurnIdentity{
 		Generation: 1,
 		ProviderID: handle.Spec.Provider,
+		AccountID:  handle.Spec.AccountID,
 		ModelID:    handle.Spec.Model,
 	}
 	for _, message := range messages {
@@ -1113,6 +1117,7 @@ func persistSubAgentTranscript(
 		if message.Role == "assistant" || message.Role == "tool" {
 			meta.TurnGeneration = turnIdentity.Generation
 			meta.ProviderID = turnIdentity.ProviderID
+			meta.AccountID = turnIdentity.AccountID
 			meta.ModelID = turnIdentity.ModelID
 		}
 		if message.Role != "system" && !isProviderControlMessage(message) {
@@ -1155,7 +1160,9 @@ func (r *SubAgentRunner) buildResultFromMessages(handle *agent.SubAgentHandle, m
 
 	switch handle.TermReason() {
 	case "stop_condition_met", "context_limit_reached":
-		status = agent.SubAgentFailedError
+		if status == agent.SubAgentCompleted {
+			status = agent.SubAgentFailedError
+		}
 	}
 
 	// Check for tool-level errors (quota, auth, etc.)
@@ -1180,22 +1187,23 @@ func (r *SubAgentRunner) buildResultFromMessages(handle *agent.SubAgentHandle, m
 		}
 	}
 
-	// If the agent has errors (LLM API failures, HTTP errors, etc.) and no
-	// successful work was done, mark as failed error rather than completed.
-	_, _, _, errs := handle.Usage()
-	if len(errs) > 0 && status == agent.SubAgentCompleted {
-		// Check if the agent actually did any work: meaningful assistant
-		// messages (not just the system prompt), tool calls, or file writes.
-		hadWork := false
-		for _, m := range msgs {
-			if m.Role == "assistant" && (m.ContentString() != "" || len(m.ToolCalls) > 0) {
-				hadWork = true
-				break
-			}
+	// Calls and read claims are activity, not a deliverable. An unrecovered
+	// stream error can leave both tool calls and a partial assistant message in
+	// the transcript; neither proves the child completed its assignment. A
+	// report written through write_report is authored evidence, unlike the
+	// diagnostic report generated below after this status is decided.
+	authoredReport := handle.ReportDone()
+	finalAnswer := false
+	for i := len(msgs) - 1; i >= 0; i-- {
+		m := msgs[i]
+		if m.Role == "assistant" {
+			finalAnswer = len(m.ToolCalls) == 0 && strings.TrimSpace(m.ContentString()) != ""
+			break
 		}
-		if !hadWork && len(msgs) <= 2 { // system + maybe one user message
-			status = agent.SubAgentFailedError
-		}
+	}
+	if status == agent.SubAgentCompleted && !authoredReport &&
+		(handle.TermReason() == "error" || !finalAnswer) {
+		status = agent.SubAgentFailedError
 	}
 
 	gist := ""
@@ -1326,7 +1334,8 @@ func (r *SubAgentRunner) autoGenerateReport(handle *agent.SubAgentHandle, msgs [
 		return
 	}
 
-	handle.SetReportPath(reportPath)
+	// This fallback is a diagnostic artifact, not an agent-authored report.
+	// Do not set ReportDone: consumers must never mistake it for completion.
 	result.ResultPath = reportPath
 }
 
@@ -1394,16 +1403,8 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 			return r.executeSubAgentCommandAutoPromote(ctx, handle, params)
 		}
 
-		resolvedProvider := spec.Provider
-		if resolvedProvider == "" {
-			cfg := r.session.cfg
-			if r.effectiveCfg != nil {
-				cfg = r.effectiveCfg
-			}
-			resolvedProvider = cfg.GetActiveDefaultCategory().Provider
-		}
-		if err := r.rateLimiter.Wait(ctx, resolvedProvider); err != nil {
-			return tools.ToolResult{}, fmt.Errorf("rate limit exceeded for provider %q", resolvedProvider)
+		if err := r.rateLimiter.Wait(ctx, spec.AccountID); err != nil {
+			return tools.ToolResult{}, fmt.Errorf("rate limit exceeded for account %q", spec.AccountID)
 		}
 
 		if tool == "write_report" {
@@ -1497,9 +1498,11 @@ func (r *SubAgentRunner) persistResult(_ *agent.SubAgentHandle, result agent.Sub
 
 func (r *SubAgentRunner) resolveProfile(name string, category string, spec *agent.SubAgentSpec) string {
 	// Use effective config if available, otherwise fall back to base config.
-	cfg := r.session.cfg
-	if r.effectiveCfg != nil {
-		cfg = r.effectiveCfg
+	cfg := r.effectiveCfg
+	if cfg == nil {
+		r.session.mu.Lock()
+		cfg = copyConfig(r.session.cfg)
+		r.session.mu.Unlock()
 	}
 	activeProfile := cfg.Agents.ActiveProfile
 	if activeProfile == "" {
@@ -1520,11 +1523,8 @@ func (r *SubAgentRunner) resolveProfile(name string, category string, spec *agen
 		if spec.Model == "" && catCfg.Model != "" {
 			spec.Model = catCfg.Model
 		}
-		if spec.Provider == "" && catCfg.Provider != "" {
-			spec.Provider = catCfg.Provider
-		}
-		if spec.ProviderURL == "" && catCfg.ProviderURL != "" {
-			spec.ProviderURL = catCfg.ProviderURL
+		if spec.AccountID == "" && catCfg.AccountID != "" {
+			spec.AccountID = catCfg.AccountID
 		}
 		if spec.ThinkingEffort == "" && catCfg.ThinkingEffort != "" {
 			spec.ThinkingEffort = catCfg.ThinkingEffort
@@ -1563,15 +1563,11 @@ func (r *SubAgentRunner) resolveProfile(name string, category string, spec *agen
 
 	if agentProfiles := cfg.Agents.AgentProfiles; agentProfiles != nil {
 		if ap, ok := agentProfiles[name]; ok {
-			if ap.Model != "" && ap.Model != spec.Model {
+			if ap.Model != "" {
 				spec.Model = ap.Model
-				spec.APIStandard = ""
 			}
-			if ap.Provider != "" && ap.Provider != spec.Provider {
-				spec.Provider = ap.Provider
-				spec.ProviderURL = ""
-				spec.APIKey = ""
-				spec.APIStandard = ""
+			if ap.AccountID != "" {
+				spec.AccountID = ap.AccountID
 			}
 			if spec.Instructions == "" && ap.Instructions != "" {
 				spec.Instructions = ap.Instructions
@@ -1601,39 +1597,21 @@ func (r *SubAgentRunner) resolveProfile(name string, category string, spec *agen
 }
 
 func (r *SubAgentRunner) applyCategoryDefaults(spec *agent.SubAgentSpec) {
-	cfg := r.session.cfg
-	if r.effectiveCfg != nil {
-		cfg = r.effectiveCfg
+	cfg := r.effectiveCfg
+	if cfg == nil {
+		r.session.mu.Lock()
+		cfg = copyConfig(r.session.cfg)
+		r.session.mu.Unlock()
 	}
 	categoryCfg := cfg.GetCategoryConfig(spec.Category)
 	if spec.Model == "" {
 		spec.Model = categoryCfg.Model
 	}
-	if spec.Provider == "" {
-		spec.Provider = categoryCfg.Provider
-	}
-	configured, hasConfiguredProvider := cfg.Providers[spec.Provider]
-	spec.APIKey = configured.APIKey
-	if spec.ProviderURL == "" {
-		spec.ProviderURL = configured.ProviderURL
-		if spec.ProviderURL == "" && categoryCfg.Provider == spec.Provider {
-			spec.ProviderURL = categoryCfg.ProviderURL
-		}
-		if spec.ProviderURL == "" {
-			if preset := provider.GetPreset(spec.Provider); preset != nil {
-				spec.ProviderURL = preset.BaseURL
-			}
-		}
+	if spec.AccountID == "" {
+		spec.AccountID = categoryCfg.AccountID
 	}
 	if spec.ThinkingEffort == "" {
 		spec.ThinkingEffort = categoryCfg.ThinkingEffort
-	}
-	if spec.APIStandard == "" {
-		if hasConfiguredProvider {
-			spec.APIStandard = configured.StandardForModel(spec.Model, spec.Provider)
-		} else {
-			spec.APIStandard = provider.DefaultStandardID(spec.Provider)
-		}
 	}
 	if spec.Model == categoryCfg.Model {
 		if spec.ModelContextWindow == 0 {
@@ -1715,6 +1693,9 @@ func (r *SubAgentRunner) executeSubAgentAsyncCommand(handle *agent.SubAgentHandl
 	switch tool {
 	case "async_execute_command":
 		command := getStrParam(params, "command")
+		if sr := safety.CheckCommandSafetyWithPolicy(command, r.session.logger, handle.Agent.CommandPolicy); sr.Risk.IsAlwaysBlocked() {
+			return tools.ToolResult{}, fmt.Errorf("[SAFETY BLOCK] %s", sr.Reason)
+		}
 		handleName := getStrParam(params, "handle")
 		if command == "" {
 			return tools.ToolResult{}, fmt.Errorf("async_execute_command: missing 'command'")

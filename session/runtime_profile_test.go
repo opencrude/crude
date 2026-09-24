@@ -93,15 +93,14 @@ func TestGetEffectiveConfigWithModelOverride(t *testing.T) {
 	rp := NewRuntimeProfile(base)
 
 	rp.SetOrchestratorModel("orch-1", "gpt-4-turbo")
-	rp.SetOrchestratorProvider("orch-1", "openai")
 
 	cfg := rp.GetEffectiveConfig("orch-1")
 	mainCat := cfg.GetActiveDefaultCategory()
 	if mainCat.Model != "gpt-4-turbo" {
 		t.Errorf("expected model 'gpt-4-turbo', got %q", mainCat.Model)
 	}
-	if mainCat.Provider != "openai" {
-		t.Errorf("expected provider 'openai', got %q", mainCat.Provider)
+	if mainCat.AccountID != base.GetActiveDefaultCategory().AccountID {
+		t.Errorf("model override changed selected account: %q", mainCat.AccountID)
 	}
 
 	// Verify base config was not modified.
@@ -161,8 +160,7 @@ func TestSnapshotOverrides(t *testing.T) {
 
 func TestMergeCategoryConfig(t *testing.T) {
 	base := CategoryConfig{
-		Model:    "base-model",
-		Provider: "base-provider",
+		Model: "base-model", AccountID: "base-account",
 	}
 	override := CategoryConfig{
 		Model: "override-model",
@@ -172,8 +170,8 @@ func TestMergeCategoryConfig(t *testing.T) {
 	if merged.Model != "override-model" {
 		t.Errorf("expected model 'override-model', got %q", merged.Model)
 	}
-	if merged.Provider != "base-provider" {
-		t.Errorf("expected provider 'base-provider', got %q", merged.Provider)
+	if merged.AccountID != "base-account" {
+		t.Errorf("expected original account, got %q", merged.AccountID)
 	}
 }
 
@@ -192,7 +190,7 @@ func TestSetCategoryOverride(t *testing.T) {
 	base := DefaultConfig()
 	rp := NewRuntimeProfile(base)
 
-	cat := CategoryConfig{Model: "custom-model", Provider: "custom-provider"}
+	cat := CategoryConfig{Model: "custom-model", AccountID: "account"}
 	rp.SetCategoryOverride("orch-1", CategoryResearcher, cat)
 
 	cfg := rp.GetEffectiveConfig("orch-1")
@@ -226,7 +224,7 @@ func TestClearCategoryOverride(t *testing.T) {
 func TestCopyConfigDeepCopy(t *testing.T) {
 	base := DefaultConfig()
 	base.Providers = map[string]ProviderConfig{
-		"openrouter": {APIKey: "key-1", ProviderURL: "https://openrouter.ai"},
+		"openrouter": {Name: "OpenRouter", ProviderURL: "https://openrouter.ai", APIStandard: "openai"},
 	}
 
 	copied := copyConfig(base)
@@ -240,8 +238,8 @@ func TestCopyConfigDeepCopy(t *testing.T) {
 		t.Error("copy was not deep: modifying copy affected original")
 	}
 
-	copied.Providers["openrouter"] = ProviderConfig{APIKey: "modified"}
-	if base.Providers["openrouter"].APIKey == "modified" {
+	copied.Providers["openrouter"] = ProviderConfig{Name: "Modified"}
+	if base.Providers["openrouter"].Name == "Modified" {
 		t.Error("providers map was not deep-copied")
 	}
 }
@@ -280,6 +278,11 @@ func TestAllOrchestratorIDs(t *testing.T) {
 
 func DefaultConfig() *Config {
 	agents := DefaultAgentsConfig()
+	profile := agents.Profiles[agents.ActiveProfile]
+	main := profile.Categories[CategoryDefault]
+	main.AccountID = "account"
+	profile.Categories[CategoryDefault] = main
+	agents.Profiles[agents.ActiveProfile] = profile
 	return &Config{
 		ActiveProvider:  "openrouter",
 		Providers:       map[string]ProviderConfig{"openrouter": {}},

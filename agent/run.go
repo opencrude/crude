@@ -145,6 +145,15 @@ func (a *Agent) Run(
 			return returnMessages()
 		}
 
+		if a.PrepareStep != nil {
+			var notices []provider.ChatMessage
+			a.FilteredTools, notices = a.PrepareStep()
+			allTools = toolDefsToProviderDefs(a.FilteredTools)
+			for _, notice := range notices {
+				appendWire(notice)
+			}
+		}
+
 		drainBtw := func() int {
 			consumed := 0
 			for {
@@ -187,6 +196,7 @@ func (a *Agent) Run(
 				if compactErr != nil {
 					clearUnsentBtw()
 					data := compactionEventData(requestID, "automatic", checkpointRole(a.Depth), outcome.StageIndex, outcome.Completed, activeTokens, 0, ctxWindow)
+					data["account_id"] = outcome.AccountID
 					data["provider_id"] = outcome.ProviderID
 					data["model_id"] = outcome.ModelID
 					data["stage_label"] = outcome.StageName
@@ -204,6 +214,7 @@ func (a *Agent) Run(
 				if outcome.AfterTokens >= threshold {
 					compactErr := fmt.Errorf("compacted context remains above threshold (%d >= %d tokens)", outcome.AfterTokens, threshold)
 					data := compactionEventData(requestID, "automatic", outcome.Role, len(compactionStages), len(compactionStages), activeTokens, outcome.AfterTokens, outcome.ContextWindow)
+					data["account_id"] = outcome.AccountID
 					data["provider_id"] = outcome.ProviderID
 					data["model_id"] = outcome.ModelID
 					data["error"] = compactErrorText(compactErr)
@@ -213,6 +224,7 @@ func (a *Agent) Run(
 				}
 				nextMessages := append([]provider.ChatMessage{msgs[0]}, outcome.Messages...)
 				commitData := compactionEventData(requestID, "automatic", outcome.Role, len(compactionStages), len(compactionStages), activeTokens, outcome.AfterTokens, outcome.ContextWindow)
+				commitData["account_id"] = outcome.AccountID
 				commitData["provider_id"] = outcome.ProviderID
 				commitData["model_id"] = outcome.ModelID
 				emit(AgentEvent{Type: "context_compaction_committing", Data: commitData})
@@ -220,7 +232,7 @@ func (a *Agent) Run(
 					if err := a.CommitCompaction(CompactionCommit{
 						Messages: outcome.Messages, BeforeTokens: activeTokens, AfterTokens: outcome.AfterTokens,
 						ContextWindow: outcome.ContextWindow, RequestID: requestID, Trigger: "automatic", Role: outcome.Role,
-						ProviderID: outcome.ProviderID, ModelID: outcome.ModelID,
+						AccountID: outcome.AccountID, ProviderID: outcome.ProviderID, ModelID: outcome.ModelID,
 					}); err != nil {
 						commitData["error"] = compactErrorText(err)
 						emit(AgentEvent{Type: "context_compaction_failed", Data: commitData})
@@ -240,6 +252,23 @@ func (a *Agent) Run(
 			}
 		}
 
+		// Completion notifications belong to the next parent request, after tools
+		// finish; they are ordinary runtime input, never urgent human BTW input.
+		var runtimeNoticeIDs []string
+		if a.PrepareRuntimeNotices != nil {
+			for _, notice := range a.PrepareRuntimeNotices() {
+				appendWire(notice)
+				runtimeNoticeIDs = append(runtimeNoticeIDs, notice.InternalID)
+			}
+		}
+		runtimeNoticesAccepted := false
+		clearUnsentRuntimeNotices := func() {
+			if runtimeNoticesAccepted || len(runtimeNoticeIDs) == 0 {
+				return
+			}
+			msgs = removeMessagesByInternalID(msgs, runtimeNoticeIDs)
+			archiveMsgs = removeMessagesByInternalID(archiveMsgs, runtimeNoticeIDs)
+		}
 		// A local turn counter is not a durable request identity: it can restart
 		// after resume or agent recreation. Revisions reuse this ID; new calls do not.
 		requestID := fmt.Sprintf("%016x%016x", rand2.Uint64(), rand2.Uint64())
@@ -250,6 +279,7 @@ func (a *Agent) Run(
 
 		requestMsgs := msgs
 		if err := prefix.check(requestMsgs); err != nil {
+			clearUnsentRuntimeNotices()
 			a.emitError(emit, fmt.Errorf("refusing mutated context before provider request: %w", err))
 			return returnMessages()
 		}
@@ -285,6 +315,10 @@ func (a *Agent) Run(
 				if err := prefix.accept(requestMsgs); err != nil {
 					l.Error("CACHE", "prefix_accept_failed", "error", err.Error())
 				}
+				runtimeNoticesAccepted = true
+				if len(runtimeNoticeIDs) > 0 && a.RuntimeNoticesAccepted != nil {
+					a.RuntimeNoticesAccepted()
+				}
 				for _, internalID := range admittedBtwIDs {
 					emit(AgentEvent{Type: "btw_consumed", Data: map[string]any{"internal_id": internalID}})
 				}
@@ -312,6 +346,7 @@ func (a *Agent) Run(
 		)
 		if err != nil {
 			clearUnsentBtw()
+			clearUnsentRuntimeNotices()
 			if completion.Usage.PromptTokens > 0 || completion.Usage.CompletionTokens > 0 ||
 				completion.Usage.PromptTokensCached > 0 || completion.Usage.PromptTokensWritten > 0 {
 				price, costKnown, costSource := provider.LookupPriceKnown(a.Model)
@@ -336,6 +371,7 @@ func (a *Agent) Run(
 					"cost_source":         costSource,
 					"model":               a.Model,
 					"provider":            providerName,
+					"account_id":          a.Provider.AccountID,
 					"request_id":          requestID,
 					"request_kind":        "normal",
 					"turn_generation":     a.TurnGeneration,
@@ -456,6 +492,7 @@ func (a *Agent) Run(
 			"cost_source":         costSource,
 			"model":               a.Model,
 			"provider":            providerName,
+			"account_id":          a.Provider.AccountID,
 			"request_id":          requestID,
 			"request_kind":        "normal",
 			"turn_generation":     a.TurnGeneration,

@@ -78,19 +78,29 @@ func (m *App) handlePopupContentHover(fw *wm.FloatingWindow, screenX, screenY in
 	}
 
 	switch fw.ID {
-	case "filepicker", "workspace-settings", "status-overview", "find-in-files", "replace-in-files":
+	case "filepicker", "workspace-settings", "tab-stats", "find-in-files", "replace-in-files":
 		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: screenX, Y: screenY, Button: button})
 	}
 }
 
 // closePopupWindowByID routes close by popup ID to the OverlayHost.
-// Closing workspace settings also reverts any live theme preview so the X
-// button matches Cancel/Esc.
-func (m *App) closePopupWindowByID(id string) {
+// Settings close requests return a pure command; CancelMsg later restores
+// live previews, while PromptMsg keeps the original window mounted.
+func (m *App) closePopupWindowByID(id string) tea.Cmd {
 	if id == string(ui.OverlayWorkspaceSettings) {
-		m.applyThemePreset(themePresetFromSettings(m.LoadAppSettings()))
+		if fw := m.windowManager.Window(id); fw != nil {
+			if w, ok := fw.Content.(*ui.WindowFrameWidget); ok {
+				if body := m.settingsSurface(fw); body != nil {
+					result := body.RequestClose()
+					w.Host().MarkLayout()
+					fw.MarkContentDirty()
+					return result.Cmd
+				}
+			}
+		}
 	}
 	m.overlayHost.Close(ui.OverlayID(id))
+	return nil
 }
 
 // popupClickOutsideBehavior is a reference: which popup ID has which behavior.

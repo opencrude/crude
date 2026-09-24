@@ -204,35 +204,51 @@ func (s *Session) HandleUndo(cmd string) ttypes.UndoResultMsg {
 
 func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 	l := s.logger
+	s.delegationMu.Lock()
+	defer s.delegationMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	s.permissionReviewRevision.Add(1)
 
-	oldProvider := s.cfg.ActiveProvider
-	oldModel := s.cfg.GetActiveDefaultCategory().Model
-	l.Info("CONFIG", "save_begin", "old_provider", oldProvider, "old_model", oldModel, "turn_logs", tuiSettings.TurnLogsEnabled)
+	oldDelegation := s.cfg.IsMultiAgentEnabled()
+	defer func() { s.recordDelegationChange(oldDelegation, s.cfg.IsMultiAgentEnabled()) }()
+	oldMain := s.cfg.GetActiveDefaultCategory()
+	oldTemplate := s.cfg.templateIDForAccount(oldMain.AccountID)
+	oldModel := oldMain.Model
+	l.Info("CONFIG", "save_begin", "old_template", oldTemplate, "old_account", oldMain.AccountID, "old_model", oldModel, "turn_logs", tuiSettings.TurnLogsEnabled)
 
 	overrides := settingsToSessionOverrides(tuiSettings)
+	if s.accountUnpinned && overrides[CategoryDefault].AccountID == "" {
+		return fmt.Errorf("select a connection for this session before saving: %w", ErrAccountRequired)
+	}
 	newCfg := configWithSessionOverrides(s.workspaceCfg, overrides)
 	mainCat := newCfg.GetActiveDefaultCategory()
-	// OAuth providers (e.g. ChatGPT subscription) have no API key; allow them.
-	if mainCat.APIKey == "" && mainCat.OAuth == nil {
-		l.Warn("CONFIG", "save_blocked", "reason", "empty_api_key")
-		return fmt.Errorf("API key cannot be empty — settings not saved")
-	}
-	configuredProvider, err := s.cfg.providerForCategory(mainCat)
+	configuredProvider, err := newCfg.providerForCategory(mainCat)
 	if err != nil {
-		return fmt.Errorf("invalid provider communication standard: %w", err)
+		return fmt.Errorf("invalid provider connection: %w", err)
+	}
+	// Every explicit role override is validated before any DB write or runtime
+	// update; a mismatched account cannot be saved to fail only on launch.
+	for role := range overrides {
+		if _, err := newCfg.providerForCategory(newCfg.GetCategoryConfig(role)); err != nil {
+			return fmt.Errorf("%s connection: %w", role, err)
+		}
 	}
 
-	providerChanged := s.cfg.ActiveProvider != newCfg.ActiveProvider
+	newTemplate := newCfg.templateIDForAccount(mainCat.AccountID)
+	connectionChanged := oldMain.AccountID != mainCat.AccountID
 	modelChanged := mainCat.Model != oldModel
 	if s.db != nil {
 		if err := sessiondb.SaveAgentSettingOverrides(s.db, s.sessionID, overrides); err != nil {
 			return fmt.Errorf("save session settings: %w", err)
 		}
+		if err := sessiondb.UpdateConnection(s.db, s.sessionID, newTemplate, mainCat.AccountID); err != nil {
+			return fmt.Errorf("save session account: %w", err)
+		}
 	}
 
 	s.cfg = newCfg
+	s.accountUnpinned = false
 	s.sessionOverrides = overrides
 	if tuiSettings.SessionMultiAgent != nil {
 		applySessionMultiAgent(s.cfg, *tuiSettings.SessionMultiAgent)
@@ -249,14 +265,6 @@ func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 		s.runtimeProfile.UpdateBase(s.cfg)
 	}
 
-	// If multi-agent was just enabled, create the sub-agent runner if missing
-	if s.cfg.IsMultiAgentEnabled() && s.subAgentSup == nil {
-		l.Info("CONFIG", "sub_agent_runner_create", "reason", "multi_agent_enabled")
-		s.subAgentSup = NewSubAgentRunner(s, s.cfg.Agents.MaxConcurrent)
-		if s.sender != nil {
-			s.subAgentSup.SetSender(s.sender)
-		}
-	}
 	s.provider = configuredProvider
 	if mainCat.ModelContextWindow > 0 {
 		provider.SetModelContext(mainCat.Model, mainCat.ModelContextWindow)
@@ -275,13 +283,14 @@ func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 	s.logger.SetTurnEnabled(tuiSettings.TurnLogsEnabled != "off")
 	s.cfg.TurnLogsEnabled = tuiSettings.TurnLogsEnabled != "off"
 
-	if providerChanged {
-		l.Info("CONFIG", "provider_switch", "from", oldProvider, "to", newCfg.ActiveProvider)
+	if connectionChanged {
+		l.Info("CONFIG", "account_switch", "from", oldMain.AccountID, "to", mainCat.AccountID,
+			"from_template", oldTemplate, "to_template", newTemplate)
 	}
 	if modelChanged {
 		l.Info("CONFIG", "model_change", "from", oldModel, "to", mainCat.Model)
 	}
-	l.Info("CONFIG", "save_complete", "provider", newCfg.ActiveProvider, "model", mainCat.Model, "turn_logs", s.cfg.TurnLogsEnabled)
+	l.Info("CONFIG", "save_complete", "template", newTemplate, "account", mainCat.AccountID, "model", mainCat.Model, "turn_logs", s.cfg.TurnLogsEnabled)
 	return nil
 }
 
@@ -290,8 +299,7 @@ func settingsToSessionOverrides(settings ttypes.Settings) map[string]sessiondb.A
 	if settings.SessionOverrides != nil {
 		for category, cfg := range settings.SessionOverrides {
 			overrides[category] = sessiondb.AgentSettingOverride{
-				Provider: cfg.Provider, Model: cfg.Model,
-				APIStandard: cfg.APIStandard, ThinkingEffort: cfg.ThinkingEffort,
+				AccountID: cfg.AccountID, Model: cfg.Model, ThinkingEffort: cfg.ThinkingEffort,
 				ContextCompactionPercent: cloneIntPtr(cfg.ContextCompactionPercent), Inherit: cfg.Inherit,
 			}
 		}
@@ -299,15 +307,13 @@ func settingsToSessionOverrides(settings ttypes.Settings) map[string]sessiondb.A
 	}
 	for category, cfg := range settings.Agents.Categories {
 		overrides[category] = sessiondb.AgentSettingOverride{
-			Provider: cfg.Provider, Model: cfg.Model,
-			APIStandard: cfg.APIStandard, ThinkingEffort: cfg.ThinkingEffort,
+			AccountID: cfg.AccountID, Model: cfg.Model, ThinkingEffort: cfg.ThinkingEffort,
 			ContextCompactionPercent: cloneIntPtr(cfg.ContextCompactionPercent), Inherit: cfg.Inherit,
 		}
 	}
 	if _, ok := overrides[CategoryDefault]; !ok {
 		overrides[CategoryDefault] = sessiondb.AgentSettingOverride{
-			Provider: settings.ProviderID, Model: settings.Model,
-			APIStandard: settings.APIStandard, ThinkingEffort: settings.ThinkingEffort,
+			AccountID: settings.AccountID, Model: settings.Model, ThinkingEffort: settings.ThinkingEffort,
 			ContextCompactionPercent: cloneIntPtr(settings.Agents.Categories[CategoryDefault].ContextCompactionPercent),
 			Inherit:                  settings.Agents.Categories[CategoryDefault].Inherit,
 		}
@@ -317,7 +323,7 @@ func settingsToSessionOverrides(settings ttypes.Settings) map[string]sessiondb.A
 
 func configWithSessionOverrides(base *Config, overrides map[string]sessiondb.AgentSettingOverride) *Config {
 	if base == nil {
-		base = &Config{ActiveProvider: "openrouter"}
+		base = &Config{}
 	}
 	cfg := copyConfig(base)
 	// Capture the live workspace main-agent category so categories marked
@@ -338,27 +344,20 @@ func configWithSessionOverrides(base *Config, overrides map[string]sessiondb.Age
 	for category, override := range overrides {
 		current := profile.Categories[category]
 		if override.Inherit != "" {
-			// A live reference: replace any stored manual values with the
-			// marker and let resolution follow the chain at read time.
-			profile.Categories[category] = CategoryConfig{Inherit: override.Inherit}
+			// Inheritance controls model/policy, while a previously pinned
+			// connection remains stable until the user explicitly changes it.
+			pin := current.AccountID
+			if override.AccountID != "" {
+				pin = override.AccountID
+			}
+			profile.Categories[category] = CategoryConfig{Inherit: override.Inherit, AccountID: pin}
 			continue
 		}
-		if override.Provider != "" {
-			if current.Provider != override.Provider {
-				current.APIKey = ""
-				current.ProviderURL = ""
-				current.APIStandard = ""
-			}
-			current.Provider = override.Provider
+		if override.AccountID != "" {
+			current.AccountID = override.AccountID
 		}
 		if override.Model != "" {
-			if current.Model != override.Model && override.APIStandard == "" {
-				current.APIStandard = ""
-			}
 			current.Model = override.Model
-		}
-		if override.APIStandard != "" {
-			current.APIStandard = override.APIStandard
 		}
 		if override.ThinkingEffort != "" {
 			current.ThinkingEffort = override.ThinkingEffort
@@ -370,9 +369,6 @@ func configWithSessionOverrides(base *Config, overrides map[string]sessiondb.Age
 		profile.Categories[category] = current
 	}
 	cfg.Agents.Profiles[profileName] = profile
-	if main := cfg.GetActiveDefaultCategory(); main.Provider != "" {
-		cfg.ActiveProvider = main.Provider
-	}
 	return cfg
 }
 
@@ -390,7 +386,7 @@ func workspaceMainCategory(base *Config) *CategoryConfig {
 			return &dup
 		}
 	}
-	cat := CategoryConfig{Provider: base.EffectiveProviderID()}
+	cat := CategoryConfig{}
 	base.resolveCategoryDefaults(&cat)
 	return &cat
 }
@@ -405,6 +401,19 @@ func (s *Session) SettingsSnapshot() ttypes.Settings {
 		settings.Agents.Enabled = *s.multiAgentOverride
 	}
 	return settings
+}
+
+// ConnectionIssue reports a missing pinned connection without replacing it
+// with the workspace default. History remains available for inspection.
+func (s *Session) ConnectionIssue() error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.accountUnpinned {
+		return ErrAccountRequired
+	}
+	main := s.cfg.GetActiveDefaultCategory()
+	_, err := s.cfg.resolveAccount(main.AccountID)
+	return err
 }
 
 // WorkspaceSettingsSnapshot returns the inherited workspace baseline without
@@ -422,9 +431,9 @@ func (s *Session) SessionOverridesSnapshot() map[string]ttypes.CategorySettings 
 	out := make(map[string]ttypes.CategorySettings, len(s.sessionOverrides))
 	for category, override := range s.sessionOverrides {
 		out[category] = ttypes.CategorySettings{
-			Provider: override.Provider, Model: override.Model,
-			APIStandard: override.APIStandard, ThinkingEffort: override.ThinkingEffort,
-			Inherit: override.Inherit,
+			AccountID: override.AccountID, Model: override.Model,
+			ThinkingEffort: override.ThinkingEffort,
+			Inherit:        override.Inherit,
 		}
 	}
 	return out
@@ -433,26 +442,50 @@ func (s *Session) SessionOverridesSnapshot() map[string]ttypes.CategorySettings 
 // ResetSessionSettings removes persisted overrides and immediately restores
 // the workspace defaults for this session.
 func (s *Session) ResetSessionSettings() error {
+	s.delegationMu.Lock()
+	defer s.delegationMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.accountUnpinned {
+		return fmt.Errorf("select a connection for this session before resetting: %w", ErrAccountRequired)
+	}
+	s.permissionReviewRevision.Add(1)
+	oldDelegation := s.cfg.IsMultiAgentEnabled()
+	defer func() { s.recordDelegationChange(oldDelegation, s.cfg.IsMultiAgentEnabled()) }()
+	// Reset can adopt current workspace role models, but this session's
+	// connection pin survives until an explicit connection change is saved.
+	pins := make(map[string]sessiondb.AgentSettingOverride)
+	for role, override := range s.sessionOverrides {
+		if override.AccountID != "" {
+			pins[role] = sessiondb.AgentSettingOverride{AccountID: override.AccountID}
+		}
+	}
+	if _, ok := pins[CategoryDefault]; !ok {
+		main := s.cfg.GetActiveDefaultCategory()
+		pins[CategoryDefault] = sessiondb.AgentSettingOverride{AccountID: main.AccountID}
+	}
+	newCfg := configWithSessionOverrides(s.workspaceCfg, pins)
+	main := newCfg.GetActiveDefaultCategory()
+	configuredProvider, err := newCfg.providerForCategory(main)
+	if err != nil {
+		return err
+	}
 	if s.db != nil {
-		if err := sessiondb.ClearAgentSettingOverrides(s.db, s.sessionID); err != nil {
+		if err := sessiondb.SaveAgentSettingOverrides(s.db, s.sessionID, pins); err != nil {
 			return err
 		}
 		if err := sessiondb.ClearSessionFlags(s.db, s.sessionID); err != nil {
 			return err
 		}
+		if err := sessiondb.UpdateConnection(s.db, s.sessionID, newCfg.templateIDForAccount(main.AccountID), main.AccountID); err != nil {
+			return err
+		}
 	}
-	s.cfg = configWithSessionOverrides(s.workspaceCfg, nil)
-	s.sessionOverrides = make(map[string]sessiondb.AgentSettingOverride)
+	s.cfg = newCfg
+	s.sessionOverrides = pins
 	s.multiAgentOverride = nil
 	if s.runtimeProfile != nil {
 		s.runtimeProfile.UpdateBase(s.cfg)
-	}
-	main := s.cfg.GetActiveDefaultCategory()
-	configuredProvider, err := s.cfg.providerForCategory(main)
-	if err != nil {
-		return err
 	}
 	s.provider = configuredProvider
 	return nil
@@ -468,14 +501,14 @@ func (s *Session) ResetSessionSettings() error {
 // rebuildEffectiveConfigLocked, which re-applies them on top of the refreshed
 // baseline.
 func (s *Session) UpdateWorkspaceDefaults(settings ttypes.AppSettings) {
+	s.delegationMu.Lock()
+	defer s.delegationMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.refreshProviderCredentialsLocked(settings)
-	if settings.ActiveProvider != "" {
-		s.workspaceCfg.ActiveProvider = settings.ActiveProvider
-	}
 	ApplyWorkspaceAgentDefaults(s.workspaceCfg, settings.Agents)
 	s.workspaceCfg.Memory = settings.Memory
+	s.workspaceCfg.Safety = settings.Safety
 	s.rebuildEffectiveConfigLocked()
 }
 
@@ -483,14 +516,14 @@ func (s *Session) UpdateWorkspaceDefaults(settings ttypes.AppSettings) {
 // agent role defaults. Only explicit user action (resetting a session's
 // settings) reaches it.
 func (s *Session) AdoptWorkspaceDefaults(settings ttypes.AppSettings) {
+	s.delegationMu.Lock()
+	defer s.delegationMu.Unlock()
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.refreshProviderCredentialsLocked(settings)
-	if settings.ActiveProvider != "" {
-		s.workspaceCfg.ActiveProvider = settings.ActiveProvider
-	}
 	ApplyWorkspaceAgentDefaults(s.workspaceCfg, settings.Agents)
 	s.workspaceCfg.Memory = settings.Memory
+	s.workspaceCfg.Safety = settings.Safety
 	s.rebuildEffectiveConfigLocked()
 }
 
@@ -499,103 +532,72 @@ func (s *Session) AdoptWorkspaceDefaults(settings ttypes.AppSettings) {
 // snapshot has never seen is adopted whole; there is nothing to keep stable.
 func (s *Session) refreshProviderCredentialsLocked(settings ttypes.AppSettings) {
 	if s.workspaceCfg == nil {
-		s.workspaceCfg = &Config{ActiveProvider: "openrouter"}
+		s.workspaceCfg = &Config{}
 	}
-	if len(settings.Providers) == 0 {
-		return
-	}
-	if s.workspaceCfg.Providers == nil {
-		s.workspaceCfg.Providers = make(map[string]ProviderConfig)
-	}
-	for id, cfg := range settings.Providers {
-		existing, known := s.workspaceCfg.Providers[id]
-		if !known {
-			s.workspaceCfg.Providers[id] = ProviderConfig{
-				APIKey: cfg.APIKey, ProviderURL: cfg.ProviderURL,
-				APIStandard: cfg.APIStandard, Model: cfg.Model,
-				ModelStandards: cloneProviderModelStandards(cfg.ModelStandards),
-				ThinkingEffort: cfg.ThinkingEffort,
-				OAuth:          cfg.OAuth,
-				Dialer:         cfg.Dialer,
-				Protocol:       cfg.Protocol,
-				ExtraBody:      cloneExtraBody(cfg.ExtraBody),
-			}
-			continue
-		}
-		existing.APIKey = cfg.APIKey
-		existing.ProviderURL = cfg.ProviderURL
-		existing.APIStandard = cfg.APIStandard
-		existing.ModelStandards = cloneProviderModelStandards(cfg.ModelStandards)
-		existing.OAuth = cfg.OAuth
-		existing.Dialer = cfg.Dialer
-		existing.Protocol = cfg.Protocol
-		existing.ExtraBody = cloneExtraBody(cfg.ExtraBody)
-		s.workspaceCfg.Providers[id] = existing
+	s.workspaceCfg.Accounts = provider.CloneAccounts(settings.Accounts)
+	s.workspaceCfg.Providers = make(map[string]ProviderConfig, len(settings.Providers))
+	for id, template := range settings.Providers {
+		s.workspaceCfg.Providers[id] = provider.CloneTemplate(template)
 	}
 }
 
 func (s *Session) rebuildEffectiveConfigLocked() {
+	s.permissionReviewRevision.Add(1)
+	oldDelegation := s.cfg.IsMultiAgentEnabled()
+	defer func() { s.recordDelegationChange(oldDelegation, s.cfg.IsMultiAgentEnabled()) }()
 	s.cfg = configWithSessionOverrides(s.workspaceCfg, s.sessionOverrides)
+	if s.accountUnpinned {
+		profile, name := activeProfileCfg(s.cfg)
+		cat := profile.Categories[CategoryDefault]
+		cat.AccountID = ""
+		cat.Inherit = ""
+		profile.Categories[CategoryDefault] = cat
+		s.cfg.Agents.Profiles[name] = profile
+		s.provider = nil
+	}
 	if s.multiAgentOverride != nil {
 		applySessionMultiAgent(s.cfg, *s.multiAgentOverride)
 	}
 	if s.runtimeProfile != nil {
 		s.runtimeProfile.UpdateBase(s.cfg)
 	}
+	s.provider = nil
 	main := s.cfg.GetActiveDefaultCategory()
 	configuredProvider, err := s.cfg.providerForCategory(main)
 	if err != nil {
-		s.logger.Warn("PROVIDER", "invalid_standard", "standard", main.APIStandard, "error", err.Error())
+		s.logger.Warn("PROVIDER", "account_unavailable", "account", main.AccountID, "error", err.Error())
 		return
 	}
 	s.provider = configuredProvider
 }
 
-func (s *Session) HandleFetchModels(providerID, baseURL, apiKey, standardID string) ([]ttypes.ModelEntry, error) {
-	l := s.logger
-	l.Info("MODEL", "fetch_begin", "provider", providerID)
-	models, err := fetchProviderModels(providerID, baseURL, apiKey, standardID, func() (*provider.OAuthCredentials, *provider.DialSettings, *provider.ProtocolSettings, map[string]any) {
-		if cfg := s.Config(); cfg != nil {
-			if pc, ok := cfg.Providers[providerID]; ok {
-				return pc.OAuth, pc.Dialer, pc.Protocol, pc.ExtraBody
-			}
-		}
-		return nil, nil, nil, nil
-	})
+// HandleFetchModelsForAccount lists models using the exact selected connection.
+// The caller must correlate asynchronous results to ProviderID and AccountID.
+func (s *Session) HandleFetchModelsForAccount(providerID, accountID, baseURL, standardID string) ([]ttypes.ModelEntry, error) {
+	s.mu.Lock()
+	cfg := copyConfig(s.cfg)
+	s.mu.Unlock()
+	_ = providerID // The selected account, not the UI's provider label, owns routing.
+	p, err := cfg.ProviderForAccount(accountID, "")
 	if err != nil {
-		l.Error("MODEL", "fetch_error", "provider", providerID, "error", err.Error())
 		return nil, err
 	}
-	l.Info("MODEL", "fetch_ok", "provider", providerID, "count", len(models))
-	return ttypes.ModelEntriesFromInfos(models), nil
-}
-
-// fetchProviderModels resolves a provider from settings and lists its models
-// through the provider client. The stored lookup returns the saved OAuth
-// credentials (e.g. ChatGPT subscription) and transport/protocol tuning so
-// listing is authenticated and transported exactly like chat traffic.
-func fetchProviderModels(providerID, baseURL, apiKey, standardID string, stored func() (*provider.OAuthCredentials, *provider.DialSettings, *provider.ProtocolSettings, map[string]any)) ([]provider.ModelInfo, error) {
-	p := provider.FromPreset(providerID, apiKey, baseURL)
+	if baseURL != "" {
+		p.BaseURL = baseURL
+	}
 	if standardID != "" {
 		if err := p.SetProtocolID(standardID); err != nil {
 			return nil, err
 		}
 	}
-	if stored != nil {
-		oauth, dialer, protocol, extra := stored()
-		if oauth != nil {
-			p.SetOAuth(oauth)
-		}
-		if dialer != nil {
-			p.SetDialSettings(*dialer)
-		}
-		if protocol != nil {
-			p.SetProtocolSettings(protocol)
-		}
-		if len(extra) > 0 {
-			p.SetExtraBody(extra)
-		}
+	models, err := listBoundProviderModels(p)
+	if err != nil {
+		return nil, err
 	}
+	return ttypes.ModelEntriesFromInfos(models), nil
+}
+
+func listBoundProviderModels(p *provider.Provider) ([]provider.ModelInfo, error) {
 	client, err := p.Client()
 	if err != nil {
 		return nil, err
@@ -604,13 +606,7 @@ func fetchProviderModels(providerID, baseURL, apiKey, standardID string, stored 
 	if err != nil {
 		switch {
 		case errors.Is(err, provider.ErrUnauthorized):
-			if p.OAuth() != nil {
-				return nil, fmt.Errorf("%s authentication failed — re-sign in with ChatGPT in Settings → Providers", p.Name)
-			}
-			if apiKey == "" {
-				return nil, fmt.Errorf("%s requires an API key to list models — enter one in Settings → Providers", p.Name)
-			}
-			return nil, fmt.Errorf("invalid API key for %s", p.Name)
+			return nil, fmt.Errorf("%s account %q authentication failed — reconnect it in Settings → Providers", p.Name, p.AccountID)
 		case errors.Is(err, provider.ErrModelsUnsupported):
 			return nil, fmt.Errorf("models endpoint not supported by %s", p.Name)
 		}

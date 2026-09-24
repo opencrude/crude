@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"strings"
 	"testing"
 
 	"crude/provider"
@@ -16,21 +17,24 @@ func chatgptPreset() types.ProviderPreset {
 func TestChatGPTFormShowsSignInWhenNoOAuth(t *testing.T) {
 	m := New(theme.DefaultDark(), types.AppSettings{
 		ActiveProvider: "chatgpt",
-		Providers:      map[string]types.ProviderConfig{"chatgpt": {}},
+		Providers:      map[string]types.ProviderConfig{"chatgpt": provider.DefaultTemplates()["chatgpt"]},
+		Accounts:       map[string]provider.Account{"cg": {ID: "cg", ProviderID: "chatgpt", Label: "Personal"}},
 	}, []types.ProviderPreset{chatgptPreset()})
+	if err := m.beginAccountEdit(false, ""); err != nil {
+		t.Fatal(err)
+	}
 
-	if f := m.categories[catProviders].Form.Field(fieldAPIKey); f != nil {
+	if f := m.categories[catAccounts].Form.Field(fieldAPIKey); f != nil {
 		t.Errorf("chatgpt form must not show an API-key field")
 	}
-	status := m.value(catProviders, "chatgpt-status")
+	status := m.value(catAccounts, "chatgpt-status")
 	if status != "Not signed in" {
 		t.Errorf("status = %q, want 'Not signed in'", status)
 	}
-	if f := m.categories[catProviders].Form.Field("chatgpt-signin"); f == nil || f.Target != "settings.chatgpt.signin" {
-		t.Errorf("missing sign-in nav field")
-	}
-	if f := m.categories[catProviders].Form.Field("chatgpt-signout"); f != nil {
-		t.Errorf("should not show sign-out when not signed in")
+	m.SelectCategory(catAccounts)
+	buttons := strings.Join(NewSurface(theme.DefaultDark(), m).accountAuthBar.ButtonLabelsForTest(), " ")
+	if !strings.Contains(buttons, "Sign in") || !strings.Contains(buttons, "Disconnect") {
+		t.Errorf("sign-in controls = %q", buttons)
 	}
 }
 
@@ -38,18 +42,21 @@ func TestChatGPTFormShowsSignOutWhenSignedIn(t *testing.T) {
 	m := New(theme.DefaultDark(), types.AppSettings{
 		ActiveProvider: "chatgpt",
 		Providers: map[string]types.ProviderConfig{
-			"chatgpt": {OAuth: &provider.OAuthCredentials{AccessToken: "AT", Email: "u@example.com"}},
+			"chatgpt": provider.DefaultTemplates()["chatgpt"],
 		},
+		Accounts: map[string]provider.Account{"cg": {ID: "cg", ProviderID: "chatgpt", Label: "Personal", OAuth: &provider.OAuthCredentials{AccessToken: "AT", Email: "u@example.com"}}},
 	}, []types.ProviderPreset{chatgptPreset()})
+	if err := m.beginAccountEdit(false, ""); err != nil {
+		t.Fatal(err)
+	}
 
-	if status := m.value(catProviders, "chatgpt-status"); status != "Signed in as u@example.com" {
+	if status := m.value(catAccounts, "chatgpt-status"); status != "Sign-in stored" {
 		t.Errorf("status = %q", status)
 	}
-	if f := m.categories[catProviders].Form.Field("chatgpt-signout"); f == nil || f.Target != "settings.chatgpt.signout" {
-		t.Errorf("missing sign-out nav field")
-	}
-	if f := m.categories[catProviders].Form.Field("chatgpt-signin"); f != nil {
-		t.Errorf("should not show sign-in when already signed in")
+	m.SelectCategory(catAccounts)
+	buttons := strings.Join(NewSurface(theme.DefaultDark(), m).accountAuthBar.ButtonLabelsForTest(), " ")
+	if !strings.Contains(buttons, "Disconnect") || !strings.Contains(buttons, "Reconnect") {
+		t.Errorf("connected account controls = %q", buttons)
 	}
 }
 
@@ -57,28 +64,27 @@ func TestSwitchToChatGPTRebuildsFormWithAuthRows(t *testing.T) {
 	m := New(theme.DefaultDark(), types.AppSettings{
 		ActiveProvider: "openrouter",
 		Providers: map[string]types.ProviderConfig{
-			"openrouter": {},
-			"chatgpt":    {OAuth: &provider.OAuthCredentials{AccessToken: "AT", AccountID: "acct_1"}},
+			"openrouter": provider.DefaultTemplates()["openrouter"],
+			"chatgpt":    provider.DefaultTemplates()["chatgpt"],
 		},
+		Accounts: map[string]provider.Account{"router": {ID: "router", ProviderID: "openrouter", Label: "Work"}, "cg": {ID: "cg", ProviderID: "chatgpt", Label: "Personal", OAuth: &provider.OAuthCredentials{AccessToken: "AT", AccountID: "acct_1"}}},
 	}, []types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}, chatgptPreset()})
 
-	if f := m.categories[catProviders].Form.Field(fieldAPIKey); f == nil {
-		t.Fatal("openrouter form should show an API-key field initially")
+	// Selecting a connection leaves the separate provider-configuration page alone.
+	m.selectAccount("cg")
+	if err := m.beginAccountEdit(false, ""); err != nil {
+		t.Fatal(err)
 	}
-
-	// Changing the provider select fires the form's OnChanged → rebuild.
-	m.categories[catProviders].Form.SetValue(fieldProvider, ui.StringValue("chatgpt"))
-
-	if m.providerID != "chatgpt" {
-		t.Fatalf("providerID = %q, want chatgpt", m.providerID)
+	if m.providerID != "openrouter" {
+		t.Fatalf("account browsing changed provider configuration: %q", m.providerID)
 	}
-	if f := m.categories[catProviders].Form.Field(fieldAPIKey); f != nil {
+	if f := m.categories[catAccounts].Form.Field(fieldAPIKey); f != nil {
 		t.Errorf("chatgpt form must not show an API-key field after switch")
 	}
-	if f := m.categories[catProviders].Form.Field("chatgpt-signout"); f == nil {
-		t.Errorf("chatgpt form should show sign-out after switch (has OAuth)")
+	if buttons := strings.Join(NewSurface(theme.DefaultDark(), m).accountAuthBar.ButtonLabelsForTest(), " "); !strings.Contains(buttons, "Disconnect") {
+		t.Errorf("chatgpt actions not shown after selecting account: %q", buttons)
 	}
-	if status := m.value(catProviders, "chatgpt-status"); status != "Signed in (account acct_1)" {
+	if status := m.value(catAccounts, "chatgpt-status"); status != "Sign-in stored" {
 		t.Errorf("status = %q", status)
 	}
 }
@@ -86,172 +92,94 @@ func TestSwitchToChatGPTRebuildsFormWithAuthRows(t *testing.T) {
 func TestSetChatGPTAuthSwapsRowsAndPreservesOAuthOnCollect(t *testing.T) {
 	m := New(theme.DefaultDark(), types.AppSettings{
 		ActiveProvider: "chatgpt",
-		Providers:      map[string]types.ProviderConfig{"chatgpt": {Model: "gpt-5.6"}},
+		Providers:      map[string]types.ProviderConfig{"chatgpt": provider.DefaultTemplates()["chatgpt"]},
+		Accounts:       map[string]provider.Account{"cg": {ID: "cg", ProviderID: "chatgpt", Label: "Personal"}},
 	}, []types.ProviderPreset{chatgptPreset()})
+	if err := m.beginAccountEdit(false, ""); err != nil {
+		t.Fatal(err)
+	}
 
-	updated, _ := m.Update(ChatGPTSignInResultMsg{Creds: &provider.OAuthCredentials{AccessToken: "AT", Email: "a@b.com"}})
+	_, generation := m.SignInRequest()
+	updated, _ := m.Update(ChatGPTSignInResultMsg{AccountID: "cg", Generation: generation, Creds: &provider.OAuthCredentials{AccessToken: "AT", Email: "a@b.com"}})
 	m = &updated
 
-	if status := m.value(catProviders, "chatgpt-status"); status != "Signed in as a@b.com" {
+	if status := m.value(catAccounts, "chatgpt-status"); status != "Sign-in stored" {
 		t.Errorf("status = %q", status)
 	}
-	if f := m.categories[catProviders].Form.Field("chatgpt-signout"); f == nil {
-		t.Errorf("sign-out nav should appear after sign-in")
+	if buttons := strings.Join(NewSurface(theme.DefaultDark(), m).accountAuthBar.ButtonLabelsForTest(), " "); !strings.Contains(buttons, "Disconnect") {
+		t.Errorf("disconnect action missing after sign-in: %q", buttons)
 	}
 
-	// collectProviders copies the whole ProviderConfig, so OAuth survives while
-	// the model field the user picked is also preserved.
-	m.categories[catProviders].Form.SetValue(fieldModel, ui.StringValue("gpt-5.6"))
-	got := m.AppSettings().Providers["chatgpt"]
+	// OAuth stays in the editor until the account change is confirmed.
+	got := m.accountEditor.draft
 	if got.OAuth == nil || got.OAuth.Email != "a@b.com" {
-		t.Errorf("OAuth not preserved on collect: %+v", got.OAuth)
+		t.Errorf("OAuth not preserved on account: %+v", got.OAuth)
 	}
-	if got.Model != "gpt-5.6" {
-		t.Errorf("model = %q", got.Model)
+	if m.AppSettings().Accounts["cg"].OAuth != nil {
+		t.Fatal("unconfirmed login changed saved accounts")
 	}
 
 	// Sign-out clears OAuth and swaps back to the sign-in button.
-	updated, _ = m.Update(ChatGPTSignOutMsg{})
+	updated, _ = m.Update(ChatGPTSignOutMsg{AccountID: "cg", Generation: generation})
 	m = &updated
-	if got := m.providers["chatgpt"].OAuth; got != nil {
+	if got := m.accountEditor.draft.OAuth; got != nil {
 		t.Errorf("OAuth should be nil after sign-out: %+v", got)
 	}
-	if status := m.value(catProviders, "chatgpt-status"); status != "Not signed in" {
+	if status := m.value(catAccounts, "chatgpt-status"); status != "Not signed in" {
 		t.Errorf("status = %q after sign-out", status)
 	}
-	if f := m.categories[catProviders].Form.Field("chatgpt-signin"); f == nil {
-		t.Errorf("sign-in nav should reappear after sign-out")
+	if buttons := strings.Join(NewSurface(theme.DefaultDark(), m).accountAuthBar.ButtonLabelsForTest(), " "); !strings.Contains(buttons, "Sign in") {
+		t.Errorf("sign-in action missing after disconnect: %q", buttons)
 	}
 }
 
 func TestChatGPTSignInErrorShownOnStatusRow(t *testing.T) {
 	m := New(theme.DefaultDark(), types.AppSettings{
 		ActiveProvider: "chatgpt",
-		Providers:      map[string]types.ProviderConfig{"chatgpt": {}},
+		Providers:      map[string]types.ProviderConfig{"chatgpt": provider.DefaultTemplates()["chatgpt"]},
+		Accounts:       map[string]provider.Account{"cg": {ID: "cg", ProviderID: "chatgpt", Label: "Personal"}},
 	}, []types.ProviderPreset{chatgptPreset()})
+	if err := m.beginAccountEdit(false, ""); err != nil {
+		t.Fatal(err)
+	}
 
-	updated, _ := m.Update(ChatGPTSignInResultMsg{Err: &provider.ChatGPTSignInError{Fatal: true, Msg: "authorization denied"}})
+	_, generation := m.SignInRequest()
+	updated, _ := m.Update(ChatGPTSignInResultMsg{AccountID: "cg", Generation: generation, Err: &provider.ChatGPTSignInError{Fatal: true, Msg: "authorization denied"}})
 	m = &updated
-	f := m.categories[catProviders].Form.Field("chatgpt-status")
+	f := m.categories[catAccounts].Form.Field("chatgpt-status")
 	if f == nil || len(f.Errors) == 0 || f.Errors[0] != "authorization denied" {
 		t.Errorf("status errors = %#v", f)
 	}
-	if m.categories[catProviders].Form.Field("chatgpt-signin") == nil {
-		t.Errorf("sign-in nav should remain after a failed sign-in")
+	if buttons := strings.Join(NewSurface(theme.DefaultDark(), m).accountAuthBar.ButtonLabelsForTest(), " "); !strings.Contains(buttons, "Sign in") {
+		t.Errorf("sign-in action missing after failure: %q", buttons)
 	}
 }
 
-// TestChatGPTSignInButtonIsInsetBoxed pins the restyle: the sign-in affordance
-// is an inset boxed button filling the right control column, with the ▸ chevron
-// inset one gutter from the right border so it never sticks to the scrollbar —
-// matching the dropdown/select affordance, not the old full-width drill-in row.
-func TestChatGPTSignInButtonIsInsetBoxed(t *testing.T) {
+func TestChatGPTSignInActionIsPaintedButton(t *testing.T) {
 	th := theme.DefaultDark()
 	model := New(th, types.AppSettings{
 		ActiveProvider: "chatgpt",
-		Providers:      map[string]types.ProviderConfig{"chatgpt": {}},
+		Providers:      map[string]types.ProviderConfig{"chatgpt": provider.DefaultTemplates()["chatgpt"]},
+		Accounts:       map[string]provider.Account{"cg": {ID: "cg", ProviderID: "chatgpt", Label: "Personal"}},
 	}, []types.ProviderPreset{chatgptPreset()})
+	if err := model.beginAccountEdit(false, ""); err != nil {
+		t.Fatal(err)
+	}
 	surfaceRoot := NewSurface(th, model)
-	frame := ui.NewWindowFrameWidget(th, "settings-frame", ui.FrameWindow, "Settings", surfaceRoot, nil, true, 90, 24)
+	frame := ui.NewWindowFrameWidget(th, "settings-frame", ui.FrameWindow, "Settings", surfaceRoot, nil, true, 90, 36)
 	surfaceRoot.SetFocusHandler(frame.Focus)
 	host := frame.Host()
-	host.Resize(90, 24)
+	host.Resize(90, 36)
 	host.Layout()
 
-	model.SelectCategory(catProviders)
+	model.SelectCategory(catAccounts)
 	surfaceRoot.refreshForm()
-	surfaceRoot.FocusForm()
 	host.Layout()
-
-	if ff := surfaceRoot.form.Field("chatgpt-signin"); ff == nil {
-		t.Fatal("chatgpt-signin field not registered with surface form")
-	}
-
-	buf := newTestBuffer(90, 24)
+	host.MarkLayout()
+	host.Layout()
+	buf := newTestBuffer(90, 36)
 	host.Paint(buf)
-
-	borderRune := []rune(theme.DefaultGlyphs().BorderV)[0]
-	chevronRune := []rune(theme.DefaultGlyphs().TreeCollapsed)[0]
-	label := []rune("Sign in with ChatGPT")
-
-	// Locate the painted button row by its label, then reason about chevron and
-	// border positions on that row by scanning cells — avoids fragile nested
-	// coordinate math (surface → frame → form → field).
-	var rowY = -1
-	var rowRunes []rune
-	for y := 0; y < buf.Height(); y++ {
-		var rr []rune
-		for x := 0; x < buf.Width(); x++ {
-			rr = append(rr, buf.Get(x, y).Char)
-		}
-		if containsRunes(rr, label) {
-			rowY, rowRunes = y, rr
-			break
-		}
+	if !strings.Contains(bufferPlain(buf), "Sign in") {
+		t.Fatalf("sign-in button not painted:\n%s", bufferPlain(buf))
 	}
-	if rowY < 0 {
-		t.Fatalf("no painted row contains %q\n%s", string(label), bufferPlain(buf))
-	}
-
-	// Find the chevron and the box borders on the button row.
-	chevX, leftBorder, rightBorder := -1, -1, -1
-	for x, c := range rowRunes {
-		switch c {
-		case chevronRune:
-			chevX = x
-		case borderRune:
-			if leftBorder < 0 {
-				leftBorder = x
-			}
-			rightBorder = x
-		}
-	}
-	if chevX < 0 {
-		t.Fatalf("chevron %q missing on sign-in row\nrow=%q", chevronRune, string(rowRunes))
-	}
-	if leftBorder < 0 || rightBorder < 0 || leftBorder == rightBorder {
-		t.Fatalf("boxed button needs distinct left+right borders (left=%d right=%d)\nrow=%q",
-			leftBorder, rightBorder, string(rowRunes))
-	}
-
-	// The chevron must sit strictly inside the box, inset from the right border —
-	// not stuck to the right edge / scrollbar. Require a blank gutter between the
-	// chevron and the right border.
-	if chevX >= rightBorder-1 {
-		t.Errorf("chevron at x=%d not inset from right border at x=%d (no right padding)\nrow=%q",
-			chevX, rightBorder, string(rowRunes))
-	}
-	if c := rowRunes[rightBorder-1]; c == chevronRune || c == borderRune {
-		t.Errorf("cell at x=%d (left of right border) = %q, want blank gutter padding\nrow=%q",
-			rightBorder-1, c, string(rowRunes))
-	}
-	// The label must sit between the left and right borders (inside the box).
-	labelStart := indexOfRunes(rowRunes, label)
-	if labelStart <= leftBorder || labelStart+len(label) >= rightBorder {
-		t.Errorf("label at x=%d not inside box borders [%d,%d]\nrow=%q",
-			labelStart, leftBorder, rightBorder, string(rowRunes))
-	}
-}
-
-func indexOfRunes(haystack, needle []rune) int {
-	if len(needle) == 0 {
-		return 0
-	}
-	for i := 0; i+len(needle) <= len(haystack); i++ {
-		match := true
-		for j := range needle {
-			if haystack[i+j] != needle[j] {
-				match = false
-				break
-			}
-		}
-		if match {
-			return i
-		}
-	}
-	return -1
-}
-
-func containsRunes(haystack, needle []rune) bool {
-	return indexOfRunes(haystack, needle) >= 0
 }

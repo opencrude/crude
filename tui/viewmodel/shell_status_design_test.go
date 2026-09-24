@@ -61,7 +61,7 @@ func TestShellStatusUsesSharedRailsAndOmitsZeroNoise(t *testing.T) {
 	if strings.Contains(footer, "Enter send") || strings.Contains(footer, "cancel") {
 		t.Fatalf("footer retained obvious composer inventory: %q", footer)
 	}
-	for _, hint := range []string{"Alt+Enter", "Ctrl+O", "history"} {
+	for _, hint := range []string{"Alt+Enter", "Ctrl+O"} {
 		if !strings.Contains(footer, hint) {
 			t.Fatalf("footer missing useful composer hint %q: %q", hint, footer)
 		}
@@ -91,10 +91,10 @@ func TestFooterLeadsWithGuidanceAndTrailsStatus(t *testing.T) {
 	if !strings.HasPrefix(footer[left:], "Alt+Enter new line") {
 		t.Fatalf("footer left rail does not lead with the composer hints: %q", footer)
 	}
-	if !strings.HasSuffix(footer, "Status") {
-		t.Fatalf("footer right rail does not carry the status group: %q", footer)
+	if !strings.HasSuffix(footer, "Workspace") {
+		t.Fatalf("footer right rail does not carry the workspace controls: %q", footer)
 	}
-	if help, status := strings.Index(footer, "Help"), strings.Index(footer, "Status"); help > status {
+	if help, workspace := strings.Index(footer, "Help"), strings.Index(footer, "Workspace"); help > workspace {
 		t.Fatalf("Help must stay inside the leading guidance group: %q", footer)
 	}
 }
@@ -167,7 +167,7 @@ func TestEditorAndGitFactsLiveInHeaderNotFooterHints(t *testing.T) {
 			t.Fatalf("header missing %q: %q", fact, header)
 		}
 	}
-	for _, hint := range []string{"Ctrl+F", "Ctrl+]", "Ctrl+1", "Help"} {
+	for _, hint := range []string{"Ctrl+F", "Ctrl+]", "Help"} {
 		if !strings.Contains(footer, hint) {
 			t.Fatalf("footer missing useful editor hint %q: %q", hint, footer)
 		}

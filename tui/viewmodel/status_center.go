@@ -55,7 +55,7 @@ func (m *App) syncAgentStatusEvent(evt types.AgentEventMsg) {
 		switch result {
 		case "cancelled":
 			snapshot.Phase, snapshot.Detail = ttypes.AgentCancelled, "Cancelled"
-		case "failed", "error":
+		case "failed", "error", "crashed", "failed_error", "failed_timeout", "failed_quota", "failed_policy":
 			snapshot.Phase, snapshot.Detail = ttypes.AgentFailed, "Failed"
 		default:
 			snapshot.Phase, snapshot.Detail = ttypes.AgentCompleted, "Completed"
@@ -67,6 +67,7 @@ func (m *App) syncAgentStatusEvent(evt types.AgentEventMsg) {
 		if identity, ok := evt.Data.(ttypes.TurnIdentity); ok {
 			snapshot.TurnGeneration = identity.Generation
 			snapshot.ProviderID, snapshot.ModelID = identity.ProviderID, identity.ModelID
+			snapshot.AccountID = identity.AccountID
 		}
 	case "phase":
 		phase, ok := workspace.ParseAgentPhase(evt.Data)
@@ -99,7 +100,22 @@ func (m *App) syncAgentStatusEvent(evt types.AgentEventMsg) {
 	case "tool_call_streaming", "tool_call", "tool_update", "tool_result":
 		snapshot.Phase, snapshot.Detail = ttypes.AgentTool, agentToolDetail(evt.Data)
 	case "blocking", "confirmation":
-		snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = ttypes.AgentApproval, "Needs approval", true
+		operation := ""
+		switch data := evt.Data.(type) {
+		case map[string]any:
+			operation, _ = data["operation"].(string)
+		case map[string]string:
+			operation = data["operation"]
+		}
+		if operation == "question" || operation == "questions" {
+			snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = ttypes.AgentQuestion, "Needs answer", true
+		} else if !m.agentYoloEnabled(evt.AgentID) {
+			snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = ttypes.AgentApproval, "Needs approval", true
+		} else {
+			snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = ttypes.AgentTool, "Working", false
+		}
+	case "blocking_auto", "permission_resolved", "blocking_complete":
+		snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = ttypes.AgentTool, "Working", false
 	case "question":
 		snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = ttypes.AgentQuestion, "Needs answer", true
 	case "safety_alert":
@@ -229,23 +245,31 @@ func (m *App) syncAgentStatusInventory() {
 		status.Label, status.Hidden = node.Label, node.Hidden
 		status.ModelID = firstNonempty(node.Model, status.ModelID)
 		status.ReadOnly = node.State.Completed
-		status.NeedsAction = node.State.PendingPermTool != "" || node.State.SafetyAlert != ""
+		// PendingPermTool is a display tag for an already-decided permission,
+		// not a pending request. Only a correlated block can need input.
+		blocked := node.State.PendingBlockID != "" && node.State.PendingPermTag == ""
+		question := blocked && status.Phase == ttypes.AgentQuestion
+		approval := blocked && !question && !m.agentYoloEnabled(node.ID)
+		status.NeedsAction = question || approval || node.State.SafetyAlert != ""
 		switch {
 		case node.State.Cancelling:
 			status.Phase, status.Detail = ttypes.AgentCancelling, "Stopping"
-		case node.State.PendingPermTool != "":
+			status.NeedsAction = false
+		case question:
+			status.Phase, status.Detail = ttypes.AgentQuestion, "Needs answer"
+		case approval:
 			status.Phase, status.Detail = ttypes.AgentApproval, "Needs approval"
 		case node.State.SafetyAlert != "":
 			status.Detail = node.State.SafetyAlert
-		case node.State.Thinking:
-			status.Phase, status.Detail = ttypes.AgentThinking, "Reasoning"
-		case node.State.Streaming:
-			status.Phase, status.Detail = ttypes.AgentResponding, "Receiving response"
 		case node.State.Completed && status.Phase != ttypes.AgentCancelled && status.Phase != ttypes.AgentFailed:
 			status.Phase, status.Detail = ttypes.AgentCompleted, "Completed"
 		case !node.State.IsActive() && status.Phase != ttypes.AgentCompleted && status.Phase != ttypes.AgentCancelled && status.Phase != ttypes.AgentFailed:
 			status.Phase, status.Detail = ttypes.AgentIdle, "Idle"
+		case node.State.IsActive() && (!exists || status.Phase == ttypes.AgentIdle || status.Phase == ttypes.AgentApproval || status.Phase == ttypes.AgentQuestion):
+			status.Phase, status.Detail = ttypes.AgentThinking, "Working"
 		}
+		// Preserve the event-owned phase while working. Thinking/Streaming are
+		// broad lifecycle flags, not permission to overwrite each tool/retry phase.
 		m.Status.SetAgent(status)
 	}
 }

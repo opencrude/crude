@@ -109,7 +109,7 @@ func TestTurnFinalizationAndExplicitCancellationHaveDistinctChildOwnership(t *te
 			t.Fatal(err)
 		}
 		orchestrator := NewOrchestrator("root", s)
-		orchestrator.subAgentSup = runner
+		s.subAgentSup = runner
 		return orchestrator, childCtx
 	}
 
@@ -144,7 +144,7 @@ func TestCancellingLaterTurnDoesNotKillEarlierAsyncChild(t *testing.T) {
 	runner := NewSubAgentRunner(s, 2)
 	t.Cleanup(runner.SessionCancel)
 	orchestrator := NewOrchestrator("root", s)
-	orchestrator.subAgentSup = runner
+	s.subAgentSup = runner
 
 	earlierCtx, cancelEarlier := context.WithCancel(context.Background())
 	t.Cleanup(cancelEarlier)

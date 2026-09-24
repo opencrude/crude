@@ -1,61 +1,67 @@
 package session
 
 import (
+	"context"
 	"testing"
+
+	"crude/provider"
 )
 
-// TestMergeCategoryConfigClearsStaleURLOnProviderSwitch reproduces the bug
-// where switching a role from opencode-go to chatgpt kept the opencode-go base
-// URL and standard, so the agent posted the chatgpt OAuth token to the wrong
-// endpoint and failed auth.
-func TestMergeCategoryConfigClearsStaleURLOnProviderSwitch(t *testing.T) {
-	base := CategoryConfig{
-		Provider:    "opencode-go",
-		ProviderURL: "https://opencode.ai/zen/go/v1",
-		APIStandard: "openai",
-		Model:       "deepseek-v4-flash",
-	}
-	// A settings save for chatgpt carries only provider + model + standard;
-	// ProviderURL is not part of the agent form, and the standard is "inherit"
-	// (empty) after a provider switch.
-	override := CategoryConfig{
-		Provider: "chatgpt",
-		Model:    "gpt-5.6-luna",
-	}
-
+// Switching an agent's account changes the endpoint and wire protocol as one
+// unit. Stale transport values from a former account must never receive a new
+// account's OAuth token.
+func TestAgentAccountSwitchUsesNewTemplateWithoutStaleTransport(t *testing.T) {
+	base := CategoryConfig{AccountID: "opencode", Model: "deepseek-v4-flash"}
+	override := CategoryConfig{AccountID: "codex", Model: "gpt-5.6-luna"}
 	merged := mergeCategoryConfig(base, override)
-	if merged.Provider != "chatgpt" {
-		t.Errorf("provider = %q, want chatgpt", merged.Provider)
+	cfg := &Config{
+		Providers: provider.DefaultTemplates(),
+		Accounts: map[string]provider.Account{
+			"opencode": {ID: "opencode", ProviderID: "opencode-go", APIKey: "opencode-secret"},
+			"codex":    {ID: "codex", ProviderID: "chatgpt", OAuth: &provider.OAuthCredentials{AccessToken: "codex-secret"}},
+		},
 	}
-	if merged.ProviderURL != "" {
-		t.Errorf("provider_url = %q, want empty so it resolves from chatgpt's preset", merged.ProviderURL)
+	p, err := cfg.providerForCategory(merged)
+	if err != nil {
+		t.Fatal(err)
 	}
-	if merged.APIStandard != "" {
-		t.Errorf("api_standard = %q, want empty so it resolves to codex", merged.APIStandard)
-	}
-	if merged.Model != "gpt-5.6-luna" {
-		t.Errorf("model = %q, want gpt-5.6-luna", merged.Model)
+	if merged.AccountID != "codex" || merged.Model != "gpt-5.6-luna" || p.AccountID != "codex" || p.StandardName != "codex" || p.BaseURL != cfg.Providers["chatgpt"].ProviderURL {
+		t.Fatalf("agent account switch retained prior transport: merged=%+v provider=%+v", merged, p)
 	}
 }
 
-// TestMergeCategoryConfigKeepsExplicitOverrideValues verifies that an explicit
-// ProviderURL/APIStandard in the override still wins.
-func TestMergeCategoryConfigKeepsExplicitOverrideValues(t *testing.T) {
-	base := CategoryConfig{
-		Provider:    "opencode-go",
-		ProviderURL: "https://opencode.ai/zen/go/v1",
-		APIStandard: "openai",
+func TestAccountOverrideWinsWithoutChangingAgentModel(t *testing.T) {
+	endpoint := "https://private.example/v1"
+	protocol := "anthropic"
+	auth := provider.AuthCustomHeader
+	header := "X-Work-Key"
+	headers := map[string]string{"X-Trace": "work"}
+	extra := map[string]any{"work": true}
+	disabled := false
+	cfg := &Config{Providers: provider.DefaultTemplates(), Accounts: map[string]provider.Account{
+		"work": {ID: "work", ProviderID: "openrouter", APIKey: "work-secret", Overrides: provider.TemplateOverrides{
+			ProviderURL: &endpoint, APIStandard: &protocol, AuthType: &auth, AuthHeader: &header, Headers: &headers,
+			Dialer: &provider.DialSettings{MaxAttempts: 2}, Protocol: &provider.ProtocolSettings{Store: &disabled}, ExtraBody: &extra,
+		}},
+		"personal": {ID: "personal", ProviderID: "openrouter", APIKey: "personal-secret"},
+	}}
+	cat := CategoryConfig{AccountID: "work", Model: "one-model"}
+	p, err := cfg.providerForCategory(cat)
+	if err != nil {
+		t.Fatal(err)
 	}
-	override := CategoryConfig{
-		Provider:    "chatgpt",
-		ProviderURL: "https://proxy.example.com/codex",
-		APIStandard: "codex",
+	if p.BaseURL != endpoint || p.Model != "one-model" || p.ProtocolID() != "anthropic" || p.DialSettings().MaxAttempts != 2 || p.ProtocolSettings().Store == nil || *p.ProtocolSettings().Store || p.ExtraBody()["work"] != true {
+		t.Fatalf("account override or agent model lost: %+v", p)
 	}
-	merged := mergeCategoryConfig(base, override)
-	if merged.ProviderURL != "https://proxy.example.com/codex" {
-		t.Errorf("provider_url = %q, want the explicit override", merged.ProviderURL)
+	h, err := p.RequestHeaders(context.Background())
+	if err != nil || h.Get("X-Work-Key") != "work-secret" || h.Get("X-Trace") != "work" {
+		t.Fatalf("work account auth/headers were not resolved: %v", err)
 	}
-	if merged.APIStandard != "codex" {
-		t.Errorf("api_standard = %q, want codex", merged.APIStandard)
+	other, err := cfg.providerForCategory(CategoryConfig{AccountID: "personal", Model: "two-model"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if other.BaseURL == endpoint || other.ProtocolID() == "anthropic" || other.DialSettings().MaxAttempts == 2 || other.ExtraBody()["work"] != nil || other.Model != "two-model" {
+		t.Fatal("account override leaked into another account using the same template")
 	}
 }

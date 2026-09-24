@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"crude/localhistory"
+	"crude/provider"
 	"crude/session"
 	ttypes "crude/types"
 )
@@ -19,8 +20,9 @@ import (
 // Turn input, blocking responses, BTW, and cancellation are routed through
 // generation-bound Workspace methods rather than cross-layer channels.
 type NewSessionResult struct {
-	OrchID string
-	Error  string
+	OrchID       string
+	Error        string
+	NeedsAccount bool
 }
 
 // Workspace is the project-scoped composition root — the IDE instance.
@@ -158,13 +160,15 @@ type Workspace struct {
 	// Set after TUI creation.
 	sender session.EventSender
 
-	// OnConfigSave is called when provider credentials change so the app
-	// layer can persist them to config.json. Optional.
-	OnConfigSave func(cfg *session.Config) error
-
 	// OnAppSettingsSave persists application-layer settings to config.json.
 	// Workspace overrides are stored separately in workspace.db.
 	OnAppSettingsSave func(s ttypes.AppSettings) error
+	// OnAppAccountChange persists one application account without writing other
+	// settings drafts. The app layer owns the config file and account manager.
+	OnAppAccountChange func(change ttypes.AccountChange) error
+	// OnAppTemplateChange persists one application provider template without
+	// writing settings drafts. The app layer owns config.json and account state.
+	OnAppTemplateChange func(change provider.TemplateChange) error
 
 	// ── Shared state (references, not owned)
 	//
@@ -765,7 +769,7 @@ func (w *Workspace) NewSessionFromLauncher() *NewSessionResult {
 	_, err := w.CreateSession(w.sessionCfg, w.homeDir)
 	if err != nil {
 		w.Logger.Warn("WORKSPACE", "new_session_failed", "error", err.Error())
-		return &NewSessionResult{Error: "Failed to create session: " + err.Error()}
+		return &NewSessionResult{Error: "Failed to create session: " + err.Error(), NeedsAccount: errors.Is(err, session.ErrAccountRequired)}
 	}
 	if w.sender == nil {
 		w.Logger.Warn("WORKSPACE", "no_event_sender")
@@ -782,13 +786,13 @@ func (w *Workspace) NewSessionFromLauncher() *NewSessionResult {
 }
 
 // ResumeSessionFromLauncher resumes an existing session by ID and starts
-// its orchestrator in-place (no process restart). Returns nil on failure.
+// its orchestrator in-place (no process restart). Returns the failure reason.
 // If the session is already open, it is activated and a new orchestrator
 // is started for multi-session support.
 func (w *Workspace) ResumeSessionFromLauncher(sessionID string) *NewSessionResult {
 	if w.sessionCfg == nil {
 		w.Logger.Warn("WORKSPACE", "no_session_config")
-		return nil
+		return &NewSessionResult{Error: "Session configuration is unavailable"}
 	}
 
 	// Already open: activate its existing orchestrator when it still has one.
@@ -803,18 +807,18 @@ func (w *Workspace) ResumeSessionFromLauncher(sessionID string) *NewSessionResul
 		_, err := w.ResumeSession(sessionID, w.sessionCfg, w.homeDir)
 		if err != nil {
 			w.Logger.Warn("WORKSPACE", "resume_failed", "id", sessionID, "error", err.Error())
-			return nil
+			return &NewSessionResult{Error: "Failed to resume session: " + err.Error(), NeedsAccount: errors.Is(err, session.ErrAccountRequired)}
 		}
 	}
 
 	if w.sender == nil {
 		w.Logger.Warn("WORKSPACE", "no_event_sender")
-		return nil
+		return &NewSessionResult{Error: "Session event transport is unavailable"}
 	}
 	orch, err := w.StartOrchestrator(w.sender)
 	if err != nil {
 		w.Logger.Warn("WORKSPACE", "start_orchestrator_failed", "error", err.Error())
-		return nil
+		return &NewSessionResult{Error: "Failed to start session: " + err.Error()}
 	}
 
 	// Hydrate history for the resumed session.

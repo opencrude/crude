@@ -3,6 +3,7 @@ package session
 import (
 	"crude/provider"
 	ttypes "crude/types"
+	"fmt"
 )
 
 const (
@@ -23,18 +24,9 @@ const (
 )
 
 type CategoryConfig struct {
-	Provider    string `json:"provider,omitempty"`
-	ProviderURL string `json:"provider_url,omitempty"`
-	// APIKey is filled at use time from Config.Providers. Agent profiles
-	// store a provider ID, never credentials — json:"-" so legacy
-	// category api_key fields are ignored on load and omitted on save.
-	APIKey string `json:"-"`
-	// OAuth is filled at use time from Config.Providers, like APIKey. It is
-	// never persisted on a category — json:"-" keeps it out of agent profiles.
-	OAuth          *provider.OAuthCredentials `json:"-"`
-	APIStandard    string                     `json:"api_standard,omitempty"`
-	Model          string                     `json:"model,omitempty"`
-	ThinkingEffort string                     `json:"thinking_effort,omitempty"`
+	AccountID      string `json:"account_id,omitempty"`
+	Model          string `json:"model,omitempty"`
+	ThinkingEffort string `json:"thinking_effort,omitempty"`
 	// Inherit is the session-level live-inheritance marker: "main" follows
 	// this session's main agent, "workspace" follows the workspace's main
 	// agent. A category carrying a marker stores no provider/model values;
@@ -78,7 +70,7 @@ type AgentProfileConfig struct {
 	Category                 string   `json:"category,omitempty"`
 	Description              string   `json:"description,omitempty"`
 	Model                    string   `json:"model,omitempty"`
-	Provider                 string   `json:"provider,omitempty"`
+	AccountID                string   `json:"account_id,omitempty"`
 	Instructions             string   `json:"instructions,omitempty"`
 	AllowedTools             []string `json:"allowed_tools,omitempty"`
 	DeniedTools              []string `json:"denied_tools,omitempty"`
@@ -150,8 +142,12 @@ func DefaultAgentsConfig() AgentsConfig {
 }
 
 type Config struct {
+	// ActiveProvider is retained only as an app-settings projection. Runtime
+	// routing never reads it; each agent must select an account ID.
 	ActiveProvider  string
 	Providers       map[string]ProviderConfig
+	Accounts        map[string]provider.Account
+	AccountManager  *provider.AccountManager
 	TurnLogsEnabled bool
 	Agents          AgentsConfig
 	Memory          ttypes.MemorySettings
@@ -165,122 +161,54 @@ type Config struct {
 	workspaceMain *CategoryConfig
 }
 
-type ProviderConfig struct {
-	APIKey         string                     `json:"api_key,omitempty"`
-	ProviderURL    string                     `json:"provider_url,omitempty"`
-	APIStandard    string                     `json:"api_standard,omitempty"`
-	Model          string                     `json:"model,omitempty"`
-	ModelStandards map[string]string          `json:"model_standards,omitempty"`
-	ThinkingEffort string                     `json:"thinking_effort,omitempty"`
-	OAuth          *provider.OAuthCredentials `json:"oauth,omitempty"`
-	Dialer         *provider.DialSettings     `json:"dialer,omitempty"`
-	Protocol       *provider.ProtocolSettings `json:"protocol,omitempty"`
-	ExtraBody      map[string]any             `json:"extra_body,omitempty"`
-}
+type ProviderConfig = provider.Template
 
-func (c ProviderConfig) StandardForModel(model, providerID string) string {
-	if standard := c.ModelStandards[model]; standard != "" {
-		return standard
-	}
-	if c.APIStandard != "" {
-		return c.APIStandard
-	}
-	return provider.DefaultStandardID(providerID)
-}
-
-// providerForCategory builds the provider for one agent category, resolving
-// credentials and transport settings from the stored provider entry.
+// providerForCategory resolves all transport behavior from the selected
+// account's template and account overrides, then binds that account's auth.
 func (c *Config) providerForCategory(category CategoryConfig) (*provider.Provider, error) {
-	p := provider.FromPreset(category.Provider, category.APIKey, category.ProviderURL)
+	account, err := c.resolveAccount(category.AccountID)
+	if err != nil {
+		return nil, err
+	}
+	template, err := c.templateForAccount(account)
+	if err != nil {
+		return nil, err
+	}
+	p := &provider.Provider{ID: account.ProviderID, Name: template.Name}
+	if err := template.Apply(p); err != nil {
+		return nil, fmt.Errorf("account %q template %q: %w", account.ID, account.ProviderID, err)
+	}
 	p.Model = category.Model
 	p.SetThinkingEffort(category.ThinkingEffort)
 	p.SetSampling(category.ModelTemperature, category.ModelTopP)
-	if err := p.SetStandardID(category.APIStandard); err != nil {
+	if err := c.bindAccount(p, category.AccountID); err != nil {
 		return nil, err
 	}
-	if category.OAuth != nil {
-		p.SetOAuth(category.OAuth)
-	}
-	if dialer := c.dialerFor(category.Provider); dialer != nil {
-		p.SetDialSettings(*dialer)
-	}
-	if protocol := c.protocolSettingsFor(category.Provider); protocol != nil {
-		p.SetProtocolSettings(protocol)
-	}
-	if extra := c.extraBodyFor(category.Provider); len(extra) > 0 {
-		p.SetExtraBody(extra)
-	}
 	return p, nil
-}
-
-// extraBodyFor returns the stored raw-JSON extras for a provider, falling back
-// to the effective provider when the category's own entry has none.
-func (c *Config) extraBodyFor(providerID string) map[string]any {
-	if c == nil {
-		return nil
-	}
-	if cfg, ok := c.Providers[providerID]; ok && len(cfg.ExtraBody) > 0 {
-		return cfg.ExtraBody
-	}
-	if cfg, ok := c.Providers[c.EffectiveProviderID()]; ok && len(cfg.ExtraBody) > 0 {
-		return cfg.ExtraBody
-	}
-	return nil
-}
-
-// dialerFor returns the stored transport settings for a provider, falling back
-// to the effective provider when the category's own entry has none.
-func (c *Config) dialerFor(providerID string) *provider.DialSettings {
-	if c == nil {
-		return nil
-	}
-	if cfg, ok := c.Providers[providerID]; ok && cfg.Dialer != nil {
-		return cfg.Dialer
-	}
-	if cfg, ok := c.Providers[c.EffectiveProviderID()]; ok && cfg.Dialer != nil {
-		return cfg.Dialer
-	}
-	return nil
-}
-
-// protocolSettingsFor returns the stored protocol switches for a provider,
-// falling back to the effective provider when the category's own entry has
-// none.
-func (c *Config) protocolSettingsFor(providerID string) *provider.ProtocolSettings {
-	if c == nil {
-		return nil
-	}
-	if cfg, ok := c.Providers[providerID]; ok && cfg.Protocol != nil {
-		return cfg.Protocol
-	}
-	if cfg, ok := c.Providers[c.EffectiveProviderID()]; ok && cfg.Protocol != nil {
-		return cfg.Protocol
-	}
-	return nil
 }
 
 func (c *Config) GetActiveProviderConfig() ProviderConfig {
 	if c.Providers == nil {
 		return ProviderConfig{}
 	}
-	if cfg, ok := c.Providers[c.ActiveProvider]; ok {
+	if cfg, ok := c.Providers[c.EffectiveProviderID()]; ok {
 		return cfg
 	}
 	return ProviderConfig{}
 }
 
-func (c *Config) SetActiveProviderConfig(providerID string, cfg ProviderConfig) {
+func (c *Config) SetActiveProviderConfig(templateID string, cfg ProviderConfig) {
 	if c.Providers == nil {
 		c.Providers = make(map[string]ProviderConfig)
 	}
-	c.Providers[providerID] = cfg
+	c.Providers[templateID] = provider.CloneTemplate(cfg)
 }
 
 func (c *Config) EffectiveProviderID() string {
-	if c.ActiveProvider != "" {
-		return c.ActiveProvider
+	if c == nil {
+		return ""
 	}
-	return "openrouter"
+	return c.templateIDForAccount(c.GetActiveDefaultCategory().AccountID)
 }
 
 func (c *Config) IsMultiAgentEnabled() bool {
@@ -342,20 +270,16 @@ func cloneBoolPtr(src *bool) *bool {
 }
 
 // GetActiveDefaultCategory resolves the main agent ("default", legacy "main")
-// category. Inheritance is resolved live at read time:
-//
-//	main without a stored category → the workspace baseline (via the
-//	  EffectiveProviderID + provider settings fallbacks)
-//	main marked Inherit="workspace" → the workspace baseline main agent
-//
-// The returned value is a resolved copy; callers may mutate it freely.
+// category. No provider or account is inferred when the category is absent.
 func (c *Config) GetActiveDefaultCategory() CategoryConfig {
 	prof, _ := activeProfileCfg(c)
-	// Try "default" first, then backward-compat "main"
 	for _, key := range []string{CategoryDefault, "main"} {
 		if cat, ok := prof.Categories[key]; ok {
 			if cat.Inherit == InheritWorkspace && c.workspaceMain != nil {
 				resolved := *c.workspaceMain
+				if cat.AccountID != "" {
+					resolved.AccountID = cat.AccountID
+				}
 				c.resolveCategoryDefaults(&resolved)
 				return resolved
 			}
@@ -363,7 +287,7 @@ func (c *Config) GetActiveDefaultCategory() CategoryConfig {
 			return cat
 		}
 	}
-	cat := CategoryConfig{Provider: c.EffectiveProviderID()}
+	cat := CategoryConfig{}
 	c.resolveCategoryDefaults(&cat)
 	return cat
 }
@@ -374,8 +298,8 @@ func (c *Config) GetActiveDefaultCategory() CategoryConfig {
 //	role marked Inherit="main"        → this session's main agent
 //	role marked Inherit="workspace"   → the workspace main agent
 //	role absent from the profile      → this session's main agent
-//	role present but no provider/model/thinking → its own values, with the
-//	  empty fields field-inherited from the main agent
+//	role present but no account/model/thinking → its own values, with empty
+//	  fields inherited from the main agent
 //
 // Editing the source therefore propagates to every role that inherits it.
 func (c *Config) GetCategoryConfig(category string) CategoryConfig {
@@ -387,27 +311,31 @@ func (c *Config) GetCategoryConfig(category string) CategoryConfig {
 		switch {
 		case cat.Inherit == InheritWorkspace && c.workspaceMain != nil:
 			resolved := *c.workspaceMain
+			if cat.AccountID != "" {
+				resolved.AccountID = cat.AccountID
+			}
 			c.resolveCategoryDefaults(&resolved)
 			return resolved
 		case cat.Inherit == InheritMain:
-			return c.GetActiveDefaultCategory()
-		}
-		c.resolveCategoryDefaults(&cat)
-		// Field-level inheritance: a role that doesn't set its own
-		// provider/model/thinking takes them from the main agent.
-		if cat.Model == "" || cat.Provider == "" || cat.ThinkingEffort == "" || cat.APIStandard == "" {
 			main := c.GetActiveDefaultCategory()
-			if cat.Provider == "" {
-				cat.Provider = main.Provider
+			if cat.AccountID != "" {
+				main.AccountID = cat.AccountID
+			}
+			return main
+		}
+		inheritsAccount := cat.AccountID == ""
+		c.resolveCategoryDefaults(&cat)
+		// Models and thinking remain role-owned; only absent values inherit.
+		if cat.Model == "" || inheritsAccount || cat.ThinkingEffort == "" {
+			main := c.GetActiveDefaultCategory()
+			if inheritsAccount {
+				cat.AccountID = main.AccountID
 			}
 			if cat.Model == "" {
 				cat.Model = main.Model
 			}
 			if cat.ThinkingEffort == "" {
 				cat.ThinkingEffort = main.ThinkingEffort
-			}
-			if cat.APIStandard == "" {
-				cat.APIStandard = main.APIStandard
 			}
 			c.resolveCategoryDefaults(&cat)
 		}
@@ -428,10 +356,21 @@ func (c *Config) GetMemoryCategory() CategoryConfig {
 		switch {
 		case cat.Inherit == InheritWorkspace && c.workspaceMain != nil:
 			resolved := *c.workspaceMain
+			if cat.AccountID != "" {
+				resolved.AccountID = cat.AccountID
+			}
 			c.resolveCategoryDefaults(&resolved)
 			return resolved
 		case cat.Inherit == InheritMain:
-			return c.GetActiveDefaultCategory()
+			main := c.GetActiveDefaultCategory()
+			if cat.AccountID != "" {
+				main.AccountID = cat.AccountID
+			}
+			return main
+		}
+		if cat.AccountID == "" {
+			main := c.GetActiveDefaultCategory()
+			cat.AccountID = main.AccountID
 		}
 		c.resolveCategoryDefaults(&cat)
 		return cat
@@ -442,7 +381,11 @@ func (c *Config) GetMemoryCategory() CategoryConfig {
 	if cat.Model == "" && c.Memory.Model != "" {
 		cat.Model = c.Memory.Model
 	}
-	if cat.Model != "" || cat.Provider != "" || cat.ThinkingEffort != "" {
+	if cat.Model != "" || cat.AccountID != "" || cat.ThinkingEffort != "" {
+		if cat.AccountID == "" {
+			main := c.GetActiveDefaultCategory()
+			cat.AccountID = main.AccountID
+		}
 		c.resolveCategoryDefaults(&cat)
 		return cat
 	}
@@ -456,58 +399,6 @@ func (c *Config) resolveCategoryDefaults(cat *CategoryConfig) {
 	} else {
 		value := min(100, max(0, *cat.ContextCompactionPercent))
 		cat.ContextCompactionPercent = &value
-	}
-	if cat.Provider == "" {
-		cat.Provider = c.EffectiveProviderID()
-	}
-	prov, ok := c.Providers[cat.Provider]
-	if !ok {
-		prov, ok = c.Providers[c.EffectiveProviderID()]
-	}
-	if ok {
-		// Always take credentials from the provider. A stored category key
-		// is leftover from older configs and must not shadow Settings.
-		cat.APIKey = prov.APIKey
-		cat.OAuth = prov.OAuth
-		if cat.ProviderURL == "" {
-			cat.ProviderURL = prov.ProviderURL
-		}
-		// No provider→model inheritance: an agent's model is set on the agent
-		// (or inherited from the main agent), never on a provider.
-		if cat.ThinkingEffort == "" {
-			cat.ThinkingEffort = prov.ThinkingEffort
-		}
-	}
-	if cat.ProviderURL == "" {
-		p := provider.GetPreset(cat.Provider)
-		if p != nil {
-			cat.ProviderURL = p.BaseURL
-		}
-	}
-	// The model is stored verbatim. Gateway catalogs (Command Code,
-	// OpenRouter) require the full vendored id — "z-ai/glm-5.3-flash" — on
-	// the wire, so it is never reduced to the bare name.
-	if cat.APIStandard == "" {
-		if configured, ok := c.Providers[cat.Provider]; ok {
-			cat.APIStandard = configured.StandardForModel(cat.Model, cat.Provider)
-		} else {
-			cat.APIStandard = provider.DefaultStandardID(cat.Provider)
-		}
-	}
-}
-
-// StripStoredAgentAPIKeys removes credentials from every agent profile
-// category. Profiles reference a provider; keys live on Config.Providers.
-func StripStoredAgentAPIKeys(agents *AgentsConfig) {
-	if agents == nil {
-		return
-	}
-	for name, profile := range agents.Profiles {
-		for id, cat := range profile.Categories {
-			cat.APIKey = ""
-			profile.Categories[id] = cat
-		}
-		agents.Profiles[name] = profile
 	}
 }
 
@@ -524,9 +415,7 @@ func activeProfileCfg(cfg *Config) (ProfileConfig, string) {
 
 func catConfigToSettings(v CategoryConfig) ttypes.CategorySettings {
 	return ttypes.CategorySettings{
-		Provider:                 v.Provider,
-		ProviderURL:              v.ProviderURL,
-		APIStandard:              v.APIStandard,
+		AccountID:                v.AccountID,
 		Model:                    v.Model,
 		ThinkingEffort:           v.ThinkingEffort,
 		Inherit:                  v.Inherit,
@@ -547,9 +436,7 @@ func catConfigToSettings(v CategoryConfig) ttypes.CategorySettings {
 
 func catSettingsToConfig(v ttypes.CategorySettings) CategoryConfig {
 	return CategoryConfig{
-		Provider:                 v.Provider,
-		ProviderURL:              v.ProviderURL,
-		APIStandard:              v.APIStandard,
+		AccountID:                v.AccountID,
 		Model:                    v.Model,
 		ThinkingEffort:           v.ThinkingEffort,
 		Inherit:                  v.Inherit,
@@ -578,14 +465,10 @@ func cloneIntPtr(src *int) *int {
 
 func ConfigToSettings(cfg *Config) ttypes.Settings {
 	mainCat := cfg.GetActiveDefaultCategory()
-
-	providerURL := mainCat.ProviderURL
-	if providerURL == "" {
-		p := provider.GetPreset(mainCat.Provider)
-		if p == nil {
-			p = provider.GetPreset("openrouter")
-		}
-		providerURL = p.BaseURL
+	mainProviderID := cfg.templateIDForAccount(mainCat.AccountID)
+	var mainTemplate provider.Template
+	if resolved, err := cfg.templateForAccountID(mainCat.AccountID); err == nil {
+		mainTemplate = resolved
 	}
 
 	activeProf, ap := activeProfileCfg(cfg)
@@ -611,21 +494,17 @@ func ConfigToSettings(cfg *Config) ttypes.Settings {
 		Categories:    make(map[string]ttypes.CategorySettings),
 	}
 	for k := range activeProf.Categories {
-		// Resolve through the live inheritance chain so a role marked
-		// Inherit="main"/"workspace" reports its effective provider/model.
-		agentsSettings.Categories[k] = catConfigToSettings(cfg.GetCategoryConfig(k))
+		agentsSettings.Categories[k] = categoryToSettings(cfg, cfg.GetCategoryConfig(k))
 	}
 
 	if _, hasDefault := agentsSettings.Categories[CategoryDefault]; !hasDefault {
-		agentsSettings.Categories[CategoryDefault] = catConfigToSettings(mainCat)
+		agentsSettings.Categories[CategoryDefault] = categoryToSettings(cfg, mainCat)
 	}
 
 	for name, p := range cfg.Agents.Profiles {
 		ps := ttypes.ProfileSettings{Name: name, Categories: make(map[string]ttypes.CategorySettings)}
-		for k, v := range p.Categories {
-			resolved := v
-			cfg.resolveCategoryDefaults(&resolved)
-			ps.Categories[k] = catConfigToSettings(resolved)
+		for k := range p.Categories {
+			ps.Categories[k] = categoryToSettings(cfg, cfg.GetCategoryConfig(k))
 		}
 		if p.MultiAgent != nil {
 			if *p.MultiAgent {
@@ -647,18 +526,29 @@ func ConfigToSettings(cfg *Config) ttypes.Settings {
 	safetySettings.CommandRules = append([]ttypes.CommandSeverityRule(nil), cfg.Safety.CommandRules...)
 
 	return ttypes.Settings{
-		APIKey:          mainCat.APIKey,
 		Model:           mainCat.Model,
-		ProviderID:      mainCat.Provider,
-		ProviderURL:     providerURL,
-		ProviderAPIKey:  mainCat.APIKey,
-		APIStandard:     mainCat.APIStandard,
+		ProviderID:      mainProviderID,
+		AccountID:       mainCat.AccountID,
+		ProviderURL:     mainTemplate.ProviderURL,
+		APIStandard:     mainTemplate.APIStandard,
 		ThinkingEffort:  mainCat.ThinkingEffort,
 		TurnLogsEnabled: turnLogs,
 		Agents:          agentsSettings,
 		Memory:          cfg.Memory,
 		Safety:          safetySettings,
 	}
+}
+
+// categoryToSettings exposes provider details only as a projection of the
+// explicitly selected account; they are never read back as routing authority.
+func categoryToSettings(cfg *Config, category CategoryConfig) ttypes.CategorySettings {
+	settings := catConfigToSettings(category)
+	settings.Provider = cfg.templateIDForAccount(category.AccountID)
+	if template, err := cfg.templateForAccountID(category.AccountID); err == nil {
+		settings.ProviderURL = template.ProviderURL
+		settings.APIStandard = template.APIStandard
+	}
+	return settings
 }
 
 // ApplyWorkspaceAgentDefaults overlays workspace-scoped agent defaults onto
@@ -696,9 +586,10 @@ func ApplyWorkspaceAgentDefaults(cfg *Config, agents ttypes.AgentsSettings) {
 	for category, value := range agents.Categories {
 		existing := profile.Categories[category]
 		merged := mergeCategoryConfig(existing, catSettingsToConfig(value))
-		merged.APIKey = ""
+		// Workspace agent settings publish complete account selections. An empty
+		// ID clears this layer rather than inheriting a prior account.
+		merged.AccountID = value.AccountID
 		profile.Categories[category] = merged
 	}
 	cfg.Agents.Profiles[profileName] = profile
-	StripStoredAgentAPIKeys(&cfg.Agents)
 }

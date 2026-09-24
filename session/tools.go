@@ -40,16 +40,12 @@ func (s *Session) newAgent(p *provider.Provider, multiAgent bool, modalities []s
 	a.YoloMode = s.YoloEnabled
 	a.AsyncMgr = s.asyncMgr
 
-	if multiAgent {
-		a.FilteredTools = agent.ApplyOrchestratorOverrides(
-			agent.FilterTools(tools.AgentTools, nil, []string{"write_report"}, "", false),
-		)
-	} else {
-		a.FilteredTools = agent.FilterTools(tools.AgentTools, nil, []string{"write_report", "run_sub_agent", "poll_sub_agent", "cancel_sub_agent", "list_sub_agents"}, "", false)
-	}
+	a.FilteredTools = orchestratorTools(multiAgent)
+
 	a.Policy = safety.DefaultPolicy()
 
 	a.ToolFn = s.buildToolFn(multiAgent, p, modalities)
+	a.PermissionReviewer = s.permissionReviewer(a)
 	return a
 }
 
@@ -72,6 +68,9 @@ func (s *Session) buildToolFn(multiAgent bool, turnProvider *provider.Provider, 
 			return s.executePlanTool(ctx, tool, params)
 		case "async_execute_command":
 			command := getStrParam(params, "command")
+			if sr := safety.CheckCommandSafety(command, s.logger); sr.Risk.IsAlwaysBlocked() {
+				return tools.ToolResult{}, fmt.Errorf("[SAFETY BLOCK] %s", sr.Reason)
+			}
 			handle := getStrParam(params, "handle")
 			if command == "" {
 				return tools.ToolResult{}, fmt.Errorf("async_execute_command: missing 'command'")
@@ -149,39 +148,32 @@ func (s *Session) buildToolFn(multiAgent bool, turnProvider *provider.Provider, 
 			return s.executeCommandAutoPromote(ctx, params)
 
 		case "run_sub_agent":
-			if !multiAgent {
-				return tools.ToolResult{Content: "Error: multi-agent mode is disabled"}, fmt.Errorf("multi-agent mode is disabled")
+			owner, _ := ctx.Value(delegationOwnerKey{}).(delegationOwner)
+			enabled := multiAgent
+			if s.runtimeProfile != nil {
+				enabled = s.runtimeProfile.GetEffectiveConfig(owner.id).IsMultiAgentEnabled()
 			}
-			if s.subAgentSup == nil {
-				if !s.initSubAgentRunner() {
-					return tools.ToolResult{Content: "Error: sub-agent system not initialized"}, fmt.Errorf("sub-agent system not initialized")
-				}
+			if !enabled {
+				return delegationDisabledResult(), nil
 			}
-			return s.subAgentSup.RunSubAgent(ctx, params)
+			if !s.initSubAgentRunner() {
+				return delegationDisabledResult(), nil
+			}
+			return s.SubAgentRunner().RunSubAgent(ctx, params)
 
-		case "poll_sub_agent":
-			if s.subAgentSup == nil {
-				if !s.initSubAgentRunner() {
-					return tools.ToolResult{Content: "Error: sub-agent system not initialized"}, fmt.Errorf("sub-agent system not initialized")
-				}
+		case "poll_sub_agent", "cancel_sub_agent", "list_sub_agents":
+			runner := s.SubAgentRunner()
+			if runner == nil {
+				return tools.ToolResult{Content: "No sub-agents have been launched in this session."}, nil
 			}
-			return s.subAgentSup.PollSubAgent(params)
-
-		case "cancel_sub_agent":
-			if s.subAgentSup == nil {
-				if !s.initSubAgentRunner() {
-					return tools.ToolResult{Content: "Error: sub-agent system not initialized"}, fmt.Errorf("sub-agent system not initialized")
-				}
+			switch tool {
+			case "poll_sub_agent":
+				return runner.PollSubAgent(params)
+			case "cancel_sub_agent":
+				return runner.CancelSubAgent(params)
+			default:
+				return runner.ListSubAgents(params)
 			}
-			return s.subAgentSup.CancelSubAgent(params)
-
-		case "list_sub_agents":
-			if s.subAgentSup == nil {
-				if !s.initSubAgentRunner() {
-					return tools.ToolResult{Content: "Error: sub-agent system not initialized"}, fmt.Errorf("sub-agent system not initialized")
-				}
-			}
-			return s.subAgentSup.ListSubAgents(params)
 
 		case "write_report":
 			return tools.ToolResult{Content: "write_report is for sub-agents only. Your response is already shown to the user."}, nil

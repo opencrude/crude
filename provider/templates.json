@@ -1,0 +1,203 @@
+[
+  {
+    "id": "openrouter",
+    "template": {
+      "name": "OpenRouter",
+      "help_text": "API keys: openrouter.ai/keys",
+      "provider_url": "https://openrouter.ai/api/v1",
+      "api_standard": "openai",
+      "auth_type": "protocol",
+      "extra_body": {"include_reasoning": true}
+    }
+  },
+  {
+    "id": "openai",
+    "template": {
+      "name": "OpenAI",
+      "help_text": "API keys: platform.openai.com/api-keys",
+      "provider_url": "https://api.openai.com/v1",
+      "api_standard": "openai-responses",
+      "auth_type": "protocol"
+    }
+  },
+  {
+    "id": "openai-chat",
+    "template": {
+      "name": "OpenAI Chat",
+      "help_text": "Legacy Chat Completions compatibility.",
+      "provider_url": "https://api.openai.com/v1",
+      "api_standard": "openai",
+      "auth_type": "protocol"
+    }
+  },
+  {
+    "id": "anthropic",
+    "template": {
+      "name": "Anthropic",
+      "help_text": "API keys: console.anthropic.com",
+      "provider_url": "https://api.anthropic.com/v1",
+      "api_standard": "anthropic",
+      "auth_type": "protocol"
+    }
+  },
+  {
+    "id": "google",
+    "template": {
+      "name": "Google AI",
+      "help_text": "API keys: aistudio.google.com/apikey",
+      "provider_url": "https://generativelanguage.googleapis.com/v1beta/openai",
+      "api_standard": "openai",
+      "auth_type": "protocol"
+    }
+  },
+  {
+    "id": "groq",
+    "template": {
+      "name": "Groq",
+      "help_text": "API keys: console.groq.com/keys",
+      "provider_url": "https://api.groq.com/openai/v1",
+      "api_standard": "openai",
+      "auth_type": "protocol"
+    }
+  },
+  {
+    "id": "together",
+    "template": {
+      "name": "Together AI",
+      "help_text": "API keys: api.together.ai/settings/api-keys",
+      "provider_url": "https://api.together.xyz/v1",
+      "api_standard": "openai",
+      "auth_type": "protocol"
+    }
+  },
+  {
+    "id": "deepseek",
+    "template": {
+      "name": "DeepSeek",
+      "help_text": "API keys: platform.deepseek.com/api_keys",
+      "provider_url": "https://api.deepseek.com/v1",
+      "api_standard": "openai",
+      "auth_type": "protocol"
+    }
+  },
+  {
+    "id": "mistral",
+    "template": {
+      "name": "Mistral",
+      "help_text": "API keys: console.mistral.ai/api-keys",
+      "provider_url": "https://api.mistral.ai/v1",
+      "api_standard": "openai",
+      "auth_type": "protocol"
+    }
+  },
+  {
+    "id": "ollama",
+    "template": {
+      "name": "Ollama Local",
+      "help_text": "Local models. No API key needed.",
+      "provider_url": "http://localhost:11434/v1",
+      "api_standard": "openai",
+      "auth_type": "none"
+    }
+  },
+  {
+    "id": "alibaba",
+    "template": {
+      "name": "Alibaba",
+      "help_text": "API keys: dashscope.console.aliyun.com/apiKey",
+      "provider_url": "https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+      "api_standard": "openai",
+      "auth_type": "protocol"
+    }
+  },
+  {
+    "id": "opencode-zen",
+    "template": {
+      "name": "OpenCode Zen",
+      "help_text": "API keys: opencode.ai/zen",
+      "provider_url": "https://opencode.ai/zen/v1",
+      "api_standard": "openai",
+      "auth_type": "protocol"
+    }
+  },
+  {
+    "id": "opencode-go",
+    "template": {
+      "name": "OpenCode Go",
+      "help_text": "Subscription models. opencode.ai/go",
+      "provider_url": "https://opencode.ai/zen/go/v1",
+      "api_standard": "openai",
+      "auth_type": "protocol"
+    }
+  },
+  {
+    "id": "wafer",
+    "template": {
+      "name": "Wafer AI",
+      "help_text": "API keys: wafer.ai/pass",
+      "provider_url": "https://pass.wafer.ai/v1",
+      "api_standard": "openai",
+      "auth_type": "protocol"
+    }
+  },
+  {
+    "id": "crof",
+    "template": {
+      "name": "Crof AI",
+      "help_text": "API keys: crof.ai",
+      "provider_url": "https://crof.ai/v1",
+      "api_standard": "openai",
+      "auth_type": "protocol"
+    }
+  },
+  {
+    "id": "ollama-cloud",
+    "template": {
+      "name": "Ollama Cloud",
+      "help_text": "Hosted Ollama models. API keys: ollama.com/settings/keys",
+      "provider_url": "https://ollama.com/api",
+      "api_standard": "ollama",
+      "auth_type": "protocol"
+    }
+  },
+  {
+    "id": "synthetic",
+    "template": {
+      "name": "Synthetic",
+      "help_text": "API keys: synthetic.new",
+      "provider_url": "https://api.synthetic.new/openai/v1",
+      "api_standard": "openai",
+      "auth_type": "protocol"
+    }
+  },
+  {
+    "id": "commandcode",
+    "template": {
+      "name": "Command Code",
+      "help_text": "API keys: Studio > API keys at commandcode.ai",
+      "provider_url": "https://api.commandcode.ai/provider/v1",
+      "api_standard": "openai",
+      "auth_type": "protocol"
+    }
+  },
+  {
+    "id": "chatgpt",
+    "template": {
+      "name": "Codex",
+      "help_text": "Use a ChatGPT Plus/Pro subscription via Sign in with ChatGPT.",
+      "provider_url": "https://chatgpt.com/backend-api/codex",
+      "api_standard": "codex",
+      "auth_type": "chatgpt"
+    }
+  },
+  {
+    "id": "custom",
+    "template": {
+      "name": "Custom",
+      "help_text": "Any OpenAI-compatible API endpoint",
+      "provider_url": "",
+      "api_standard": "openai",
+      "auth_type": "protocol"
+    }
+  }
+]

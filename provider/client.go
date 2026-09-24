@@ -74,6 +74,16 @@ func WithHTTPClient(hc *http.Client) ClientOption {
 	return func(c *Client) { c.hc = hc }
 }
 
+// WithResponseLimit bounds buffered response and error bodies for small,
+// specialized requests. It never increases the provider's existing limit.
+func WithResponseLimit(bytes int64) ClientOption {
+	return func(c *Client) {
+		if bytes > 0 && bytes < c.dial.MaxResponseBytes {
+			c.dial.MaxResponseBytes = bytes
+		}
+	}
+}
+
 // WithRequestExtras sets fields merged into every chat request body. Keys
 // overwrite what the protocol encoded (shallow merge).
 func WithRequestExtras(extra map[string]any) ClientOption {

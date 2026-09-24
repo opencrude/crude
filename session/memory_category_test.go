@@ -9,12 +9,11 @@ import (
 func TestGetMemoryCategoryInheritsMainByDefault(t *testing.T) {
 	cfg := &Config{ActiveProvider: "openrouter", Agents: AgentsConfig{
 		Profiles: map[string]ProfileConfig{"default": {Categories: map[string]CategoryConfig{
-			CategoryDefault: {Provider: "openai", Model: "gpt-5.6"},
+			CategoryDefault: {AccountID: "openai-account", Model: "gpt-5.6"},
 		}}},
 	}}
-	cfg.Providers = map[string]ProviderConfig{"openai": {APIKey: "k"}}
 	got := cfg.GetMemoryCategory()
-	if got.Model != "gpt-5.6" || got.Provider != "openai" {
+	if got.Model != "gpt-5.6" || got.AccountID != "openai-account" {
 		t.Fatalf("memory category = %+v, want inherit main", got)
 	}
 }
@@ -22,16 +21,12 @@ func TestGetMemoryCategoryInheritsMainByDefault(t *testing.T) {
 func TestGetMemoryCategoryUsesProfileOverride(t *testing.T) {
 	cfg := &Config{ActiveProvider: "openrouter", Agents: AgentsConfig{
 		Profiles: map[string]ProfileConfig{"default": {Categories: map[string]CategoryConfig{
-			CategoryDefault: {Provider: "openai", Model: "gpt-5.6"},
-			CategoryMemory:  {Provider: "anthropic", Model: "claude-sonnet-4"},
+			CategoryDefault: {AccountID: "openai-account", Model: "gpt-5.6"},
+			CategoryMemory:  {AccountID: "anthropic-account", Model: "claude-sonnet-4"},
 		}}},
 	}}
-	cfg.Providers = map[string]ProviderConfig{
-		"openai":    {APIKey: "k"},
-		"anthropic": {APIKey: "k2"},
-	}
 	got := cfg.GetMemoryCategory()
-	if got.Model != "claude-sonnet-4" || got.Provider != "anthropic" {
+	if got.Model != "claude-sonnet-4" || got.AccountID != "anthropic-account" {
 		t.Fatalf("memory category = %+v, want anthropic claude-sonnet-4", got)
 	}
 }
@@ -39,13 +34,12 @@ func TestGetMemoryCategoryUsesProfileOverride(t *testing.T) {
 func TestGetMemoryCategoryFoldsLegacyModel(t *testing.T) {
 	cfg := &Config{ActiveProvider: "openrouter", Agents: AgentsConfig{
 		Profiles: map[string]ProfileConfig{"default": {Categories: map[string]CategoryConfig{
-			CategoryDefault: {Provider: "openai", Model: "gpt-5.6"},
+			CategoryDefault: {AccountID: "openai-account", Model: "gpt-5.6"},
 		}}},
 	}}
-	cfg.Providers = map[string]ProviderConfig{"openai": {APIKey: "k"}}
 	cfg.Memory = ttypes.MemorySettings{Model: "gpt-4o"}
 	got := cfg.GetMemoryCategory()
-	if got.Model != "gpt-4o" {
+	if got.Model != "gpt-4o" || got.AccountID != "openai-account" {
 		t.Fatalf("memory category = %+v, want legacy gpt-4o", got)
 	}
 }

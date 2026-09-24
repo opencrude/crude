@@ -418,14 +418,10 @@ func (m *App) syncRootFocus() {
 	defer m.syncTerminalFocusReports()
 	if m.termDockOwnsKeys() && m.termDock != nil {
 		cur := m.rootHost.Focused()
-		if cur == termdock.TabsID || cur == termdock.DividerID {
+		if cur == termdock.RailID || cur == termdock.DividerID || m.termDock.OwnsFocus(cur) {
 			return
 		}
-		if child := m.termDock.Active(); child != nil {
-			m.rootHost.Focus(child.ID())
-			return
-		}
-		m.rootHost.Focus(termdock.ScreenID)
+		m.rootHost.Focus(m.termDock.PreferredFocus())
 		return
 	}
 	var id ui.ComponentID
@@ -508,7 +504,7 @@ func (m *App) syncTerminalFocusReports() {
 		}
 	}
 	dockActive := ""
-	if focusedFloating == "" && !wmFocused && m.termDockOwnsKeys() && m.termDock != nil {
+	if focusedFloating == "" && !wmFocused && m.terminalDockOwnsKeys() && m.termDock != nil {
 		dockActive = m.termDock.ActiveID()
 	}
 	for id, s := range m.termScreens {

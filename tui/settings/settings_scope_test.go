@@ -12,31 +12,49 @@ import (
 	"crude/tui/wm"
 )
 
+func TestWorkspaceSettingsPaintMainAgentOnFirstFrame(t *testing.T) {
+	th := theme.DefaultDark()
+	app := types.AppSettings{Providers: map[string]types.ProviderConfig{"openrouter": {Name: "OpenRouter", ProviderURL: "https://openrouter.ai/api/v1", APIStandard: "openai"}},
+		Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {AccountID: "work", Model: "selected-model"}}}}
+	model := NewScoped(th, app, nil, types.SettingsScopeWorkspace, app, types.WorkspaceOverrides{})
+	if model.SelectedCategory() != catMain {
+		t.Fatalf("workspace initially selected hidden application-only category %d", model.SelectedCategory())
+	}
+	s := NewSurface(th, model)
+	host := ui.NewHost(th, s)
+	host.Resize(104, 28)
+	host.Layout()
+	buf := surface.NewCellBuffer(104, 28)
+	host.Paint(buf)
+	painted := bufferPlain(buf)
+	if !strings.Contains(painted, "Account") || !strings.Contains(painted, "selected-model") {
+		t.Fatalf("first workspace settings frame omitted Main Agent fields:\n%s", painted)
+	}
+}
+
 func TestWorkspaceScopeSaveEmitsOverridesWithoutAPIKeys(t *testing.T) {
 	th := theme.DefaultDark()
 	app := types.AppSettings{
 		Theme:          types.ThemeSettings{Preset: "dark"},
 		Editor:         types.EditorSettings{TabSize: 4},
 		ActiveProvider: "openrouter",
-		Providers:      map[string]types.ProviderConfig{"openrouter": {APIKey: "app-key", Model: "app-model"}},
+		Agents:         types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {Model: "app-model"}}},
 	}
 	working := app
 	working.Editor.TabSize = 8
-	// A shallow struct copy shares the providers map; mutating it in place
-	// would edit the application baseline too and hide the diff.
-	working.Providers = map[string]types.ProviderConfig{
-		"openrouter": {APIKey: "ws-key", Model: "ws-model"},
-	}
+	working.Agents = types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {Model: "ws-model"}}}
 	model := NewScoped(th, working, nil, types.SettingsScopeWorkspace, app, types.WorkspaceOverrides{})
 	got := model.Overrides()
 	if !strings.Contains(string(got.Editor), `"tab_size":8`) {
 		t.Fatalf("editor override missing: %s", got.Editor)
 	}
-	if strings.Contains(string(got.Providers), "ws-key") {
-		t.Fatalf("workspace save leaked API key: %s", got.Providers)
+	if !strings.Contains(string(got.Agents), "ws-model") {
+		t.Fatalf("workspace Main Agent model overlay missing: %s", got.Agents)
 	}
-	if !strings.Contains(string(got.Providers), "ws-model") {
-		t.Fatalf("workspace model overlay missing: %s", got.Providers)
+	for _, item := range model.CategoryItems() {
+		if item.Label == "Providers" || item.Label == "Accounts" {
+			t.Fatal("workspace settings exposed application templates or secrets")
+		}
 	}
 }
 
@@ -109,7 +127,7 @@ func TestSettingsFormAlignsWithSearch(t *testing.T) {
 	host.Layout()
 	buf := surface.NewCellBuffer(90, 24)
 	host.Paint(buf)
-	searchY, sectionY := bufferRow(buf, "Search settings"), bufferRow(buf, "Connection")
+	searchY, sectionY := bufferRow(buf, "Search settings"), bufferRow(buf, "Provider templates")
 	if searchY < 0 || sectionY < 0 {
 		t.Fatalf("searchY=%d sectionY=%d", searchY, sectionY)
 	}

@@ -23,7 +23,7 @@ func TestHydrateCompletedSubAgentsRestoresReadOnlyReviewTree(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := sessiondb.Create(parentDB, sessiondb.SessionMeta{
-		ID: "parent", ProjectPath: root, ProjectName: "project", Model: "main-model", CreatedAt: time.Now().UnixNano(),
+		ID: "parent", ProjectPath: root, ProjectName: "project", Model: "main-model", Provider: "openai", AccountID: "test-account", CreatedAt: time.Now().UnixNano(),
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -72,13 +72,13 @@ func TestHydrateCompletedSubAgentsRestoresReadOnlyReviewTree(t *testing.T) {
 	}
 
 	agents := session.DefaultAgentsConfig()
-	cfg := &session.Config{ActiveProvider: "openai", Agents: agents}
+	cfg := &session.Config{ActiveProvider: "openai", Accounts: map[string]provider.Account{"test-account": {ID: "test-account", ProviderID: "openai", Label: "Test", APIKey: "test"}}, Agents: agents}
 	cfg.Providers = map[string]session.ProviderConfig{
-		"openai": {APIKey: "test", ProviderURL: "http://127.0.0.1", APIStandard: "openai-chat", Model: "main-model"},
+		"openai": {Name: "OpenAI", ProviderURL: "http://127.0.0.1", APIStandard: "openai-chat"},
 	}
 	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
 	main := profile.Categories[session.CategoryDefault]
-	main.Provider = "openai"
+	main.AccountID = "test-account"
 	main.Model = "main-model"
 	profile.Categories[session.CategoryDefault] = main
 	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile

@@ -34,6 +34,10 @@ func (d *CompletionTokenDetails) UnmarshalJSON(data []byte) error {
 	return nil
 }
 
+// Normalized exposes the same accounting normalization used by streaming
+// for bounded non-streaming auxiliary requests.
+func (u *ChatUsage) Normalized() TokenUsage { return u.normalized() }
+
 // normalized is shared by streaming and non-streaming OpenAI-compatible paths.
 // Presence is per field, not inferred from an enclosing details object.
 func (u *ChatUsage) normalized() TokenUsage {

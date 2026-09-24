@@ -25,6 +25,7 @@ type CompactionRecord struct {
 	Trigger         string
 	Role            string
 	ProviderID      string
+	AccountID       string
 	ModelID         string
 	State           string
 	StageName       string
@@ -77,7 +78,7 @@ func SaveCompactionRecord(db *sql.DB, record CompactionRecord) error {
 		ended = record.UpdatedAt.UnixNano()
 	}
 	_, err := db.Exec(compactionUpsertSQL,
-		record.OperationID, record.SessionID, record.AgentID, record.Trigger, record.Role, record.ProviderID, record.ModelID,
+		record.OperationID, record.SessionID, record.AgentID, record.Trigger, record.Role, record.ProviderID, record.AccountID, record.ModelID,
 		record.State, record.StageName, record.StageIndex, record.CompletedStages, record.StageCount,
 		record.RetryAttempt, record.RetryLimit, record.BeforeTokens, record.AfterTokens,
 		record.ContextWindow, record.Error, record.StartedAt.UnixNano(), record.UpdatedAt.UnixNano(), ended,
@@ -87,13 +88,14 @@ func SaveCompactionRecord(db *sql.DB, record CompactionRecord) error {
 
 const compactionUpsertSQL = `
 	INSERT INTO context_compactions (
-		operation_id, session_id, agent_id, trigger_kind, agent_role, provider_id, model_id, state,
+		operation_id, session_id, agent_id, trigger_kind, agent_role, provider_id, account_id, model_id, state,
 		stage_name, stage_index, completed_stages, stage_count, retry_attempt,
 		retry_limit, before_tokens, after_tokens, context_window, error_text,
 		started_at, updated_at, ended_at
-	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+	) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	ON CONFLICT(operation_id) DO UPDATE SET
 		provider_id = CASE WHEN excluded.provider_id != '' THEN excluded.provider_id ELSE context_compactions.provider_id END,
+		account_id = CASE WHEN excluded.account_id != '' THEN excluded.account_id ELSE context_compactions.account_id END,
 		model_id = CASE WHEN excluded.model_id != '' THEN excluded.model_id ELSE context_compactions.model_id END,
 		state = excluded.state,
 		stage_name = excluded.stage_name,
@@ -114,7 +116,7 @@ func ListCompactionRecords(db *sql.DB, sessionID, agentID string) ([]CompactionR
 		return nil, nil
 	}
 	rows, err := db.Query(`
-		SELECT operation_id, session_id, agent_id, trigger_kind, agent_role, provider_id, model_id, state,
+		SELECT operation_id, session_id, agent_id, trigger_kind, agent_role, provider_id, account_id, model_id, state,
 		       stage_name, stage_index, completed_stages, stage_count, retry_attempt,
 		       retry_limit, before_tokens, after_tokens, context_window, error_text,
 		       started_at, updated_at, ended_at
@@ -131,7 +133,7 @@ func ListCompactionRecords(db *sql.DB, sessionID, agentID string) ([]CompactionR
 		var started, updated int64
 		var ended sql.NullInt64
 		if err := rows.Scan(
-			&record.OperationID, &record.SessionID, &record.AgentID, &record.Trigger, &record.Role, &record.ProviderID, &record.ModelID, &record.State,
+			&record.OperationID, &record.SessionID, &record.AgentID, &record.Trigger, &record.Role, &record.ProviderID, &record.AccountID, &record.ModelID, &record.State,
 			&record.StageName, &record.StageIndex, &record.CompletedStages, &record.StageCount, &record.RetryAttempt,
 			&record.RetryLimit, &record.BeforeTokens, &record.AfterTokens, &record.ContextWindow, &record.Error,
 			&started, &updated, &ended,
@@ -223,7 +225,7 @@ func BeginContextCompaction(db *sql.DB, sessionID, agentID string, source Contex
 		record.RetryLimit = 3
 	}
 	if _, err := tx.Exec(compactionUpsertSQL,
-		record.OperationID, record.SessionID, record.AgentID, record.Trigger, record.Role, record.ProviderID, record.ModelID,
+		record.OperationID, record.SessionID, record.AgentID, record.Trigger, record.Role, record.ProviderID, record.AccountID, record.ModelID,
 		record.State, record.StageName, record.StageIndex, record.CompletedStages, record.StageCount,
 		record.RetryAttempt, record.RetryLimit, record.BeforeTokens, record.AfterTokens,
 		record.ContextWindow, record.Error, record.StartedAt.UnixNano(), record.UpdatedAt.UnixNano(), nil,
@@ -298,7 +300,7 @@ func CommitContextCompaction(db *sql.DB, sessionID, agentID string, state Contex
 		record.RetryLimit = 3
 	}
 	if _, err := tx.Exec(compactionUpsertSQL,
-		record.OperationID, record.SessionID, record.AgentID, record.Trigger, record.Role, record.ProviderID, record.ModelID,
+		record.OperationID, record.SessionID, record.AgentID, record.Trigger, record.Role, record.ProviderID, record.AccountID, record.ModelID,
 		record.State, record.StageName, record.StageIndex, record.CompletedStages, record.StageCount,
 		record.RetryAttempt, record.RetryLimit, record.BeforeTokens, record.AfterTokens,
 		record.ContextWindow, record.Error, record.StartedAt.UnixNano(), record.UpdatedAt.UnixNano(), record.EndedAt.UnixNano(),

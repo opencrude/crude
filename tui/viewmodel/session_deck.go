@@ -100,6 +100,8 @@ func (m *App) refreshSessionBackgroundJobs(now time.Time) {
 type sessionSettingsModelsResultMsg struct {
 	target     *sessionsettings.Screen
 	providerID string
+	accountID  string
+	generation uint64
 	models     []types.ModelEntry
 	err        error
 }
@@ -194,6 +196,18 @@ func (m *App) openSessionModelPicker() tea.Cmd {
 		return nil
 	}
 	cmd := projection.settings.OpenModelPicker("default")
+	projection.deckFocus = sessionsettings.ScreenID
+	projection.deckHost.MarkLayout()
+	return cmd
+}
+
+func (m *App) openSessionAccountPicker() tea.Cmd {
+	m.openSessionSettings()
+	projection := m.activeSessionDeck()
+	if projection == nil || projection.settings == nil {
+		return nil
+	}
+	cmd := projection.settings.OpenAccountPicker("default")
 	projection.deckFocus = sessionsettings.ScreenID
 	projection.deckHost.MarkLayout()
 	return cmd

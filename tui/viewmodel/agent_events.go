@@ -8,7 +8,6 @@ import (
 
 	"crude/fileio"
 	"crude/provider"
-	"crude/tui/screens/confirmation"
 	ttypes "crude/tui/types"
 	"crude/workspace"
 )
@@ -230,7 +229,8 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 				}
 				return nil
 			}
-			m.AgentMgr.SetActive(agentID)
+			// A late state initialization is structural; the selected window
+			// tab remains the only authority for the active view.
 			m.syncAgentWindowTabs()
 		} else {
 			// A sub-agent start can arrive after its orchestrator tab was
@@ -307,9 +307,9 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 	if agent == nil {
 		return nil
 	}
-	if (evt.Type == "blocking" || evt.Type == "safety_alert") && m.AgentMgr.ActiveID() != agentID {
-		m.switchToAgentView(agentID)
-	}
+	// Permission and question prompts open inline for the selected owner or
+	// as a modal for a background owner. Neither requires switching tabs;
+	// safety alerts likewise update their owner without changing navigation.
 
 	switch evt.Type {
 	case "sub_agent_started":
@@ -337,45 +337,18 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 			m.Feedback.NotifyInfo("")
 		},
 		func(question, operation, tool, target, risk, reason, suggestion string) {
-			_, projection := m.sessionProjectionForAgent(agentID)
-			if projection == nil || projection.confirmation == nil {
-				return
-			}
-			projection.confirmation.Reset(confirmation.Details{Question: question, Operation: operation, Tool: tool, Target: target, Risk: risk, Reason: reason, Suggestion: suggestion})
-			projection.confirmationAgentID = agentID
-			projection.confirmationBlockID = agent.PendingBlockID
-			m.openSessionConfirmationPanel(projection)
+			m.enqueueAgentConfirmation(agentPromptRequest{
+				kind: agentPromptConfirmation, agentID: agentID, blockID: agent.PendingBlockID,
+				question: question, operation: operation, tool: tool, target: target,
+				risk: risk, reason: reason, suggestion: suggestion,
+			})
 		},
 		func(questionsJSON string) {
-			_, projection := m.sessionProjectionForAgent(agentID)
-			if projection == nil || projection.question == nil {
-				return
-			}
-			n, err := projection.question.ResetWithError(questionsJSON)
-			if err != nil || n == 0 {
-				m.Feedback.NotifyError("Agent sent an invalid question request")
-				detail := "question payload could not be rendered"
-				if err != nil {
-					detail = err.Error()
-				}
-				m.RejectQuestion(agentID, agent.PendingBlockID, detail)
-				return
-			}
-			projection.questionAgentID = agentID
-			projection.questionBlockID = agent.PendingBlockID
-			m.openSessionQuestionPanel(projection)
+			m.enqueueAgentQuestions(agentPromptRequest{kind: agentPromptQuestions, agentID: agentID, blockID: agent.PendingBlockID, questionsJSON: questionsJSON})
 		},
 		func() {
-			projection := m.activeSessionProjection()
 			m.OverlayState.SetBlocking(false)
-			if projection != nil && projection.confirmation != nil {
-				projection.confirmation.Dismiss()
-				m.closeProjectionPanel(projection, sessionConfirmationPanelID)
-			}
-			if projection != nil && projection.question != nil {
-				projection.question.Dismiss()
-				m.closeProjectionPanel(projection, sessionQuestionPanelID)
-			}
+			m.dismissAgentPromptFor(agentID)
 			m.Input.ResetPrompt()
 			m.Input.ClearInput()
 		},
