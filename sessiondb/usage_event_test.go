@@ -1,9 +1,32 @@
 package sessiondb
 
 import (
+	"crude/types/accounting"
 	"path/filepath"
 	"testing"
 )
+
+func TestRequestOutcomePersistsIndependentlyOfBillingRevisions(t *testing.T) {
+	db := OpenAndMigrateAt(t.TempDir())
+	t.Cleanup(func() { _ = db.Close() })
+	for i, outcome := range []string{"succeeded", "", "interrupted"} {
+		record, ok := UsageRecordFromEvent(map[string]any{"request_id": "request", "reported_at": int64(i + 1), "request_outcome": outcome, "prompt": 10 + i}, "session", "agent", "", "model")
+		if !ok {
+			t.Fatal("event rejected")
+		}
+		if err := UpsertUsageRecord(db, record); err != nil {
+			t.Fatal(err)
+		}
+	}
+	records, err := ListUsageRecords(db)
+	if err != nil || len(records) != 1 || records[0].Outcome != accounting.Succeeded || records[0].PromptTokens != 12 {
+		t.Fatalf("billing revision changed successful call identity: %+v %v", records, err)
+	}
+	unknown, ok := UsageRecordFromEvent(map[string]any{"request_id": "unknown", "prompt": 20}, "session", "agent", "", "model")
+	if !ok || unknown.Outcome.Known() {
+		t.Fatalf("inferred unreported outcome: %+v", unknown)
+	}
+}
 
 func TestUsageEventAndPersistencePreserveFullGeneration(t *testing.T) {
 	generation := uint64(1)<<63 + 17

@@ -219,8 +219,12 @@ func TestAccountEditorStaysWithinUnmovedSettingsWindow(t *testing.T) {
 	if x != newX || y != newY || w != newW || h != newH {
 		t.Fatalf("Add account moved/resized settings: before=(%d,%d,%d,%d) after=(%d,%d,%d,%d)", x, y, w, h, newX, newY, newW, newH)
 	}
-	if title := frame.Frame().Title(); !strings.Contains(title, "Accounts") || !strings.Contains(title, "Add") {
-		t.Fatalf("missing editor breadcrumb: %q", title)
+	// The window frame title is fixed: navigation is reported by the pane.
+	if title := frame.Frame().Title(); title != "Application Settings" {
+		t.Fatalf("window title must stay fixed during navigation: %q", title)
+	}
+	if pane := surfaceRoot.PaneTitle(); !strings.Contains(pane, "Accounts") || !strings.Contains(pane, "Add account") {
+		t.Fatalf("pane title missing editor breadcrumb: %q", pane)
 	}
 	if surfaceRoot.Model().SelectedCategory() < 0 {
 		t.Fatal("editor lost account category")

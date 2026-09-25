@@ -9,22 +9,15 @@ import (
 	"crude/tui/ui"
 )
 
-func spanWithBg(text string, role, bg ui.SemanticColor, attr cell.Attrs) RowSpan {
-	return RowSpan{Text: text, Role: role, BgRole: bg, BgSet: true, Attr: attr}
-}
-
 func buildUserHeader(username, timeLabel string, innerW int, suppressHeader bool) PaintLine {
 	if suppressHeader {
 		return PaintLine{}
 	}
 	label := username + " "
 	pl := PaintLine{Spans: []RowSpan{
-		spanWithBg(label, ui.ColorFg, ui.ColorPopupSubtleBg, cell.AttrBold),
+		{Text: label, Role: ui.ColorFg, Attr: cell.AttrBold},
 	}}
-	if timeLabel != "" {
-		pl = padHeaderWithTime(pl, timeLabel, innerW)
-	}
-	return pl
+	return padHeaderWithTime(pl, timeLabel, innerW)
 }
 
 func buildAssistantHeader(modelName string, incomplete bool, timeLabel string, innerW int, suppressHeader bool) PaintLine {
@@ -32,37 +25,47 @@ func buildAssistantHeader(modelName string, incomplete bool, timeLabel string, i
 		return PaintLine{}
 	}
 	var label string
-	var role, bg ui.SemanticColor
+	var role ui.SemanticColor
 	var attr cell.Attrs
 	if incomplete {
-		label = "⚠ Crude " + modelName + " "
-		role = ui.ColorError
-		bg = ui.ColorIncompleteBg
-		attr = cell.AttrBold | cell.AttrItalic
+		label = "Crude " + modelName + " · partial "
+		role = ui.ColorMuted
+		attr = cell.AttrBold
 	} else {
 		label = "Crude " + modelName + " "
 		role = ui.ColorAccent2
-		bg = ui.ColorPopupSubtleBg
 		attr = cell.AttrBold
 	}
-	pl := PaintLine{Spans: []RowSpan{spanWithBg(label, role, bg, attr)}}
-	if timeLabel != "" {
-		pl = padHeaderWithTime(pl, timeLabel, innerW)
-	}
-	return pl
+	pl := PaintLine{Spans: []RowSpan{{Text: label, Role: role, Attr: attr}}}
+	return padHeaderWithTime(pl, timeLabel, innerW)
 }
 
 func padHeaderWithTime(header PaintLine, timeLabel string, innerW int) PaintLine {
 	lineW := header.VisibleWidth()
 	timeW := rendering.VisibleWidth(timeLabel)
-	sp := innerW - lineW - timeW
-	if sp < 1 {
-		sp = 1
+	if lineW+1+timeW > innerW {
+		timeLabel = ""
+		timeW = 0
 	}
+	sp := innerW - lineW - timeW
 	spans := append([]RowSpan{}, header.Spans...)
-	spans = append(spans, RowSpan{Text: strings.Repeat(" ", sp), Role: ui.ColorFg})
-	spans = append(spans, RowSpan{Text: timeLabel, Role: ui.ColorMuted})
-	return PaintLine{Spans: spans}
+	// A faint rule carries the header across available space without putting a
+	// colored block behind the name. Keep short/narrow headers readable.
+	if sp >= 3 {
+		spans = append(spans, RowSpan{Text: " ", Role: ui.ColorBorder},
+			RowSpan{Text: strings.Repeat("─", sp-2), Role: ui.ColorBorder})
+		if timeLabel != "" {
+			spans = append(spans, RowSpan{Text: " ", Role: ui.ColorBorder})
+		} else {
+			spans = append(spans, RowSpan{Text: "─", Role: ui.ColorBorder})
+		}
+	} else if timeLabel != "" {
+		spans = append(spans, RowSpan{Text: " ", Role: ui.ColorFg})
+	}
+	if timeLabel != "" {
+		spans = append(spans, RowSpan{Text: timeLabel, Role: ui.ColorMuted})
+	}
+	return PaintLine{Spans: spans, HeaderRule: true}
 }
 
 func buildPlainBodyLine(text string) PaintLine {
@@ -260,19 +263,6 @@ func buildThinkingBodyLine(line string, firstLine bool, spinFrame int, active, i
 	}
 	spans = append(spans, RowSpan{Text: line, Role: ui.ColorMuted, Attr: cell.AttrItalic})
 	return PaintLine{Spans: spans}
-}
-
-// strikeBody applies a strikethrough attribute to every span of every supplied
-// PaintLine. Used for cancelled/interrupted content (assistant text, thinking,
-// tool calls) so the partial work reads as struck-through rather than truncated
-// with an inline "(operation cancelled by user)" suffix that wraps off-screen.
-func strikeBody(lines []PaintLine) {
-	for i := range lines {
-		spans := lines[i].Spans
-		for j := range spans {
-			spans[j].Attr |= cell.AttrStrikethrough
-		}
-	}
 }
 
 func appendBlockCursor(pl PaintLine, frame int, activeTyping bool) PaintLine {

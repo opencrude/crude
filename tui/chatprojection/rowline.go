@@ -38,6 +38,10 @@ type RowSpan struct {
 type PaintLine struct {
 	Spans        []RowSpan
 	ANSIFallback bool
+	HeaderRule   bool // Extend the faint message header rule through the chat margins.
+	TextTide     bool // Paint-only animation, independent of Markdown/source caches.
+	TideForward  bool // Confirmed reasoning travels left-to-right; provisional reverses.
+	TideFrame    int
 }
 
 // PlainText returns visible text without styling for selection and width math.
@@ -76,7 +80,6 @@ func (pl PaintLine) PreferANSI() bool {
 type SubPaneLine struct {
 	Native         *PaintLine
 	Text           string
-	Separator      bool
 	FrameSensitive bool
 }
 
@@ -93,12 +96,4 @@ func (sl SubPaneLine) PlainText() string {
 func NativeLine(pl PaintLine) SubPaneLine {
 	t := pl.PlainText()
 	return SubPaneLine{Native: &pl, Text: t}
-}
-
-// SeparatorLine returns an empty row that belongs to the parent chat rather
-// than the pane. Collapsed panes use it to separate their summary from the
-// next message without inheriting pane background, scrollbar, or wheel input.
-func SeparatorLine() SubPaneLine {
-	pl := PaintLine{Spans: []RowSpan{{Text: "", Role: ui.ColorFg}}}
-	return SubPaneLine{Native: &pl, Separator: true}
 }

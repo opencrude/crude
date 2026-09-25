@@ -4,6 +4,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+
+	"crude/codexio"
 )
 
 // This file is the single authority for turning a tool call's arguments into the
@@ -66,6 +68,34 @@ func ExtractArg(str, key string) string {
 // the file, command, pattern, query, or handle the call acted on, never the raw
 // argument payload when a known operand exists.
 func SummarizeArgs(tool, argsStr string) string {
+	if tool == "multi_tool_use.parallel" {
+		var batch struct {
+			Uses []json.RawMessage `json:"tool_uses"`
+		}
+		if json.Unmarshal([]byte(argsStr), &batch) == nil && len(batch.Uses) > 0 {
+			if len(batch.Uses) == 1 {
+				return "1 tool"
+			}
+			return fmt.Sprintf("%d tools", len(batch.Uses))
+		}
+		return ""
+	}
+	if tool == "exec_command" {
+		return ExtractArg(argsStr, "cmd")
+	}
+	if tool == "write_stdin" {
+		return "session " + ExtractArg(argsStr, "session_id")
+	}
+	if tool == "apply_patch" {
+		if patch, err := codexio.Parse(argsStr); err == nil {
+			return strings.Join(patch.Paths(""), ", ")
+		}
+		if strings.Contains(argsStr, "*** Begin Patch") {
+			paths, _, _ := codexio.Preview(argsStr)
+			return strings.Join(paths, ", ")
+		}
+		return argsStr
+	}
 	if tool == "update_plan" || tool == "get_plan" {
 		return ExtractArg(argsStr, "plan_id")
 	}
@@ -74,7 +104,7 @@ func SummarizeArgs(tool, argsStr string) string {
 		path := ExtractArg(argsStr, "path")
 		label := ""
 		if pattern != "" {
-			label = "\"" + truncateLabel(pattern, 30) + "\""
+			label = "\"" + pattern + "\""
 		}
 		if path != "" && path != "." {
 			if label != "" {
@@ -94,16 +124,16 @@ func SummarizeArgs(tool, argsStr string) string {
 		return pattern
 	}
 	if command := ExtractArg(argsStr, "command"); command != "" {
-		return truncateLabel(command, 50)
+		return command
 	}
 	if content := ExtractArg(argsStr, "content"); content != "" {
 		return truncateLabel(content, 50) + " (content)"
 	}
 	if query := ExtractArg(argsStr, "query"); query != "" {
-		return truncateLabel(query, 50)
+		return query
 	}
 	if url := ExtractArg(argsStr, "url"); url != "" {
-		return truncateLabel(url, 50)
+		return url
 	}
 	if source := ExtractArg(argsStr, "source"); source != "" {
 		if dest := ExtractArg(argsStr, "destination"); dest != "" {

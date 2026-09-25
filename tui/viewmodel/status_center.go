@@ -38,6 +38,10 @@ func (m *App) syncAgentStatusEvent(evt types.AgentEventMsg) {
 		if node.State != nil {
 			snapshot.TurnGeneration = node.State.TurnIdentity.Generation
 			snapshot.ReadOnly = node.State.Completed
+			if node.State.IsActive() && node.State.TurnIdentity.ModelID != "" {
+				identity := node.State.TurnIdentity
+				snapshot.ModelID, snapshot.ProviderID, snapshot.AccountID = identity.ModelID, identity.ProviderID, identity.AccountID
+			}
 		}
 	}
 	snapshot.UpdatedAt = time.Now()
@@ -87,6 +91,9 @@ func (m *App) syncAgentStatusEvent(evt types.AgentEventMsg) {
 		}
 		if phase.Phase == "waiting_provider" {
 			snapshot.Phase, snapshot.Detail = ttypes.AgentWaiting, "Waiting for provider"
+			if phase.Provider != "" {
+				snapshot.Detail = "Waiting for " + phase.Provider
+			}
 		} else if phase.Progress > 0 || phase.UploadedBytes > 0 {
 			snapshot.Phase, snapshot.Detail = ttypes.AgentUploading, "Uploading context"
 		} else {

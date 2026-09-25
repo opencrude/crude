@@ -18,6 +18,7 @@ import (
 	"encoding/hex"
 
 	"crude/agent"
+	"crude/codexio"
 	"crude/fileio"
 	"crude/plan"
 	"crude/provider"
@@ -277,6 +278,9 @@ func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any)
 		return tools.ToolResult{}, fmt.Errorf("allocate child name: %w", err)
 	}
 	spec.Name = identity + " sub " + r.session.AgentName()
+	if callID, _ := ctx.Value(agent.SubAgentToolCallIDKey{}).(string); callID != "" {
+		spec.ParentToolCallID = callID
+	}
 
 	r.applyCategoryDefaults(&spec)
 
@@ -323,6 +327,7 @@ func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any)
 		}()
 		resultJSON, _ := json.Marshal(map[string]string{
 			"handle_id":  string(spec.ID),
+			"agent_id":   string(spec.ID),
 			"name":       spec.Name,
 			"category":   spec.Category,
 			"status":     "running",
@@ -338,7 +343,7 @@ func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any)
 		r.session.MarkReportConsumed(string(spec.ID))
 		return tools.ToolResult{Content: formatSubAgentResult(result)}, nil
 	case <-ctx.Done():
-		return tools.ToolResult{Content: fmt.Sprintf("Sub-agent %q still running (turn ended). Use poll_sub_agent with handle_id=%q to check later.", spec.Name, spec.ID)}, nil
+		return tools.ToolResult{Content: fmt.Sprintf("Sub-agent %q still running (turn ended). Agent ID: %s. Use poll_sub_agent with handle_id=%q to check later.", spec.Name, spec.ID, spec.ID)}, nil
 	}
 }
 
@@ -390,6 +395,7 @@ func formatSubAgentResult(result agent.SubAgentResult) string {
 		icon = string(result.Status)
 	}
 	fmt.Fprintf(&sb, "## Sub-Agent Result: %s [%s]\n", result.Name, result.Category)
+	fmt.Fprintf(&sb, "**Agent:** %s\n", result.AgentID)
 	fmt.Fprintf(&sb, "**Status:** %s", icon)
 	switch icon {
 	case "CRASH":
@@ -707,7 +713,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	}
 
 	allToolDefs := tools.AgentTools
-	filteredTools := agent.FilterTools(allToolDefs, spec.AllowedTools, spec.DeniedTools, spec.Category, true)
+	filteredTools := agent.FilterToolsForModel(allToolDefs, spec.AllowedTools, spec.DeniedTools, spec.Category, true, p.Model)
 
 	a := agent.NewAgent(p, p.Model, r.session.logger)
 	if compactionCfg := cfg.GetCategoryConfig(CategoryAeron); compactionCfg.Model != "" {
@@ -730,7 +736,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	a.Policy = spec.Policy
 	a.Yolo = true
 	a.AsyncMgr = fileio.NewAsyncCommandManagerWithLogger(r.session.logger)
-	a.FilteredTools = filteredTools
+	a.FilteredTools = tools.ForModel(filteredTools, p.Model)
 
 	baseCtx := r.sessionCtx
 	if scope, ok := historyScopeFromContext(ctx); ok {
@@ -818,14 +824,15 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 	// Send agent identity to TUI for tab labeling
 	if r.sender != nil {
 		r.sender.SendAgentEventWithID("sub_agent_started", map[string]string{
-			"agent_id":   string(handle.Spec.ID),
-			"agent_name": handle.Spec.Name,
-			"category":   handle.Spec.Category,
-			"model":      handle.Spec.Model,
-			"provider":   handle.Spec.Provider,
-			"task":       handle.Spec.Description,
-			"prompt":     userPrompt,
-			"parent_id":  string(handle.Spec.ParentID),
+			"agent_id":       string(handle.Spec.ID),
+			"agent_name":     handle.Spec.Name,
+			"category":       handle.Spec.Category,
+			"model":          handle.Spec.Model,
+			"provider":       handle.Spec.Provider,
+			"task":           handle.Spec.Description,
+			"prompt":         userPrompt,
+			"parent_id":      string(handle.Spec.ParentID),
+			"parent_tool_id": handle.Spec.ParentToolCallID,
 		}, string(handle.Spec.ID))
 		r.sender.SendAgentEventWithID("turn_started", ttypes.TurnIdentity{
 			Generation: 1,
@@ -1065,7 +1072,8 @@ func persistSubAgentTranscript(
 		for _, call := range message.ToolCalls {
 			toolNames[call.ID] = call.Function.Name
 			var params map[string]any
-			if json.Unmarshal([]byte(call.Function.Arguments), &params) == nil {
+			if parsed, err := provider.ToolCallParams(call); err == nil {
+				params = parsed
 				toolArgs[call.ID] = agent.FormatToolArgs(params)
 			}
 		}
@@ -1346,10 +1354,21 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 			return tools.ToolResult{}, fmt.Errorf("[POLICY BLOCK] Tool %q is not allowed for this agent. Your policy is %q", tool, spec.PolicyName)
 		}
 		r.session.resolveRelativeParams(tool, params)
+		if tool == "apply_patch" {
+			if err := agent.CheckPatchPolicy(spec.Policy, getStrParam(params, "input")); err != nil {
+				return tools.ToolResult{}, err
+			}
+		}
 
 		isReadOnlyExec := spec.Policy.AllowedCapabilities[safety.CanExecuteReadOnly] && !spec.Policy.AllowedCapabilities[safety.CanExecute]
-		if isReadOnlyExec && (tool == "execute_command" || tool == "async_execute_command") {
+		if isReadOnlyExec && (tool == "execute_command" || tool == "async_execute_command" || tool == "exec_command" || tool == "write_stdin") {
 			command := getStrParam(params, "command")
+			if tool == "exec_command" {
+				command = getStrParam(params, "cmd")
+			}
+			if tool == "write_stdin" && getStrParam(params, "chars") != "" {
+				return tools.ToolResult{}, fmt.Errorf("[POLICY BLOCK] interactive input requires execute permission")
+			}
 			if command != "" {
 				safetyRes := safety.CheckCommandSafety(command, r.session.logger)
 				if safetyRes.Risk != safety.RiskSafe {
@@ -1395,6 +1414,12 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 			}
 		}
 
+		if tool == "exec_command" || tool == "write_stdin" {
+			if handle == nil || handle.Agent == nil {
+				return tools.ToolResult{}, fmt.Errorf("child command manager unavailable")
+			}
+			return executeCodexCommand(ctx, handle.Agent.AsyncMgr, r.session.WorkDir(), tool, params, handle.Agent.CommandPolicy)
+		}
 		if isAsyncCommandTool(tool) {
 			return r.executeSubAgentAsyncCommand(handle, tool, params)
 		}
@@ -1442,6 +1467,12 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 
 func writeToolTargets(tool string, params map[string]any) []string {
 	switch tool {
+	case "apply_patch":
+		patch, err := codexio.Parse(getStrParam(params, "input"))
+		if err != nil {
+			return nil
+		}
+		return patch.Paths(getStrParam(params, "_patch_root"))
 	case "write_file", "edit_file", "delete_file":
 		return nonEmptyStrings(getStrParam(params, "path"))
 	case "move_file":
@@ -1654,7 +1685,7 @@ func (r *SubAgentRunner) applyCategoryDefaults(spec *agent.SubAgentSpec) {
 
 func isWriteTool(name string) bool {
 	switch name {
-	case "write_file", "edit_file", "delete_file", "move_file", "copy_file":
+	case "apply_patch", "write_file", "edit_file", "delete_file", "move_file", "copy_file":
 		return true
 	}
 	return false

@@ -51,6 +51,7 @@ type Item struct {
 	ID       string
 	Label    string
 	Summary  string
+	Compact  string
 	Subtitle string
 	Icon     string
 	Header   bool
@@ -91,6 +92,7 @@ type statusRow struct {
 	Detail       bool
 	Line         DetailLine
 	Continuation bool
+	Compact      bool
 }
 
 type Surface struct {
@@ -291,6 +293,8 @@ func (s *Surface) syncItems(stable bool) {
 		rows = append(rows, ui.ListItem{ID: item.ID, Label: item.Label, Detail: item.Summary, Icon: item.Icon, Payload: statusRow{ItemID: item.ID}})
 		if item.ActivateAction == "" && s.expanded[item.ID] {
 			rows = s.appendExpandedRows(rows, item)
+		} else if item.Subtitle != "" {
+			rows = append(rows, ui.ListItem{ID: item.ID + "/compact", Disabled: true, Label: item.Subtitle, Detail: item.Compact, Payload: statusRow{ItemID: item.ID, Compact: true}})
 		}
 	}
 	if stable {
@@ -308,6 +312,8 @@ func searchText(item Item) string {
 	text.WriteString(item.Summary)
 	text.WriteByte(' ')
 	text.WriteString(item.Subtitle)
+	text.WriteByte(' ')
+	text.WriteString(item.Compact)
 	for _, line := range item.Lines {
 		text.WriteByte(' ')
 		text.WriteString(line.Label)
@@ -514,6 +520,10 @@ func (s *Surface) paintStatusRow(buf *surface.CellBuffer, x, y, width int, item 
 			fg = tokens.Color(ui.ColorAccent2)
 		}
 		ui.FillRect(buf, 0, 0, ui.Rect{X: x, Y: y, W: width, H: 1}, cell.BlankCell(bg))
+	}
+	if payload.Compact {
+		paintStatusMainLine(buf, x+expandedDetailIndent, y, max(0, width-expandedDetailIndent), item.Label, item.Detail, muted, muted, bg, 0)
+		return
 	}
 	if payload.Detail {
 		role := payload.Line.Role
@@ -770,6 +780,22 @@ func (l *listControl) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintCon
 	l.list.Paint(buf, ox+l.Bounds().X, oy+l.Bounds().Y, ctx)
 }
 func (l *listControl) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+	if evt.Kind == ui.EventMouseClick {
+		index := l.list.Scroll().Offset() + ctx.LocalY
+		rows := l.list.Items()
+		if index >= 0 && index < len(rows) {
+			if payload, ok := rows[index].Payload.(statusRow); ok && payload.Compact {
+				for i, row := range rows {
+					if row.ID == payload.ItemID {
+						l.list.Selection().SetIndex(i)
+						break
+					}
+				}
+				changed, cmd := l.owner.toggleSelected(false, false)
+				return ui.EventResult{Handled: changed, Cmd: cmd, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
+			}
+		}
+	}
 	if evt.IsKey() && l.owner.stats {
 		switch evt.Key.Code {
 		case tea.KeyEnter, tea.KeySpace, tea.KeyRight, tea.KeyLeft:

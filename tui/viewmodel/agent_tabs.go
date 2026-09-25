@@ -220,8 +220,14 @@ func (m *App) completeSubAgent(agentID string) {
 	// The Agents panel reopens it without restarting execution.
 	m.MinimizeAgent(agentID)
 
-	if sp := m.PaneMgr.Get(agentID); sp != nil && !sp.Done {
-		sp.Collapse()
+	if sp := m.PaneMgr.Get(agentID); sp != nil {
+		sp.Status = n.State.Status
+		if sp.Status == "" || sp.Status == "running" {
+			sp.Status = "completed"
+		}
+		if !sp.Done {
+			sp.Collapse()
+		}
 		if parentID != "" {
 			m.subPaneProjections.InvalidateSubPane(parentID, agentID)
 		}

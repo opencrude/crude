@@ -50,7 +50,7 @@ func TestLiveOllamaCloud(t *testing.T) {
 			t.Fatalf("Next: %v", err)
 		}
 		content.WriteString(u.ContentDelta)
-		reasoning.WriteString(u.ReasoningDelta)
+		reasoning.WriteString(u.ReasoningText())
 		calls = append(calls, u.ToolCalls...)
 	}
 	t.Logf("reasoning=%q content=%q calls=%+v", truncate(reasoning.String(), 80), content.String(), calls)

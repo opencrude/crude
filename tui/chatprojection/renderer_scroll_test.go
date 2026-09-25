@@ -135,13 +135,12 @@ func TestRendererPaneOnlyDisarmedPreservesOffsetOnAppend(t *testing.T) {
 	}
 }
 
-func TestCollapsedSubPaneSeparatorIsNotPaneOwned(t *testing.T) {
+func TestSubPaneLeadingSpacerIsNotPaneOwned(t *testing.T) {
 	r := NewRenderer(theme.DefaultDark())
 	r.SetChatAreaBounds(0, 4)
 	r.SetSubPaneContentFn(func(_ string, _, _, _ int, _ bool) []SubPaneLine {
 		return []SubPaneLine{
 			NativeLine(PaintLine{Spans: []RowSpan{{Text: "Thought for 2s", Role: ui.ColorMuted}}}),
-			SeparatorLine(),
 		}
 	})
 	r.AppendMessage(types.ChatMessage{
@@ -151,24 +150,24 @@ func TestCollapsedSubPaneSeparatorIsNotPaneOwned(t *testing.T) {
 	})
 
 	rows, paneMap, contentH := r.ExportMessageRows(40)
-	if len(rows) != 1 || len(rows[0].Lines) != 3 || contentH != 3 {
+	if len(rows) != 1 || len(rows[0].Lines) != 2 || contentH != 2 {
 		t.Fatalf("collapsed pane rows/content = %+v / %d", rows, contentH)
 	}
-	if rows[0].Lines[0] != "" || rows[0].Lines[1] != "Thought for 2s" || rows[0].Lines[2] != "" {
+	if rows[0].Lines[0] != "" || rows[0].Lines[1] != "Thought for 2s" {
 		t.Fatalf("collapsed pane lines = %#v", rows[0].Lines)
 	}
-	if len(paneMap) != 3 || paneMap[1].PaneID != "thinking-1" || paneMap[0].PaneID != "" || paneMap[2].PaneID != "" {
-		t.Fatalf("separator must not inherit pane ownership: %+v", paneMap)
+	if len(paneMap) != 2 || paneMap[1].PaneID != "thinking-1" || paneMap[0].PaneID != "" {
+		t.Fatalf("leading spacer must not inherit pane ownership: %+v", paneMap)
 	}
 }
 
 func TestCollapsedThinkingThenToolIsSingleGap(t *testing.T) {
 	r := NewRenderer(theme.DefaultDark())
+	r.SetSize(60, 24)
 	r.SetChatAreaBounds(0, 6)
 	r.SetSubPaneContentFn(func(_ string, _, _, _ int, _ bool) []SubPaneLine {
 		return []SubPaneLine{
 			NativeLine(PaintLine{Spans: []RowSpan{{Text: "Thought for 2s", Role: ui.ColorMuted}}}),
-			SeparatorLine(),
 		}
 	})
 	r.AppendMessage(types.ChatMessage{
@@ -187,18 +186,37 @@ func TestCollapsedThinkingThenToolIsSingleGap(t *testing.T) {
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 message rows, got %d", len(rows))
 	}
-	// rows[0] is the collapsed pane: leading blank, label, trailing separator
-	// blank. That trailing blank is the ONE row separating it from the tool.
-	if len(rows[0].Lines) != 3 || rows[0].Lines[2] != "" {
-		t.Fatalf("collapsed pane should end on a separator blank: %#v", rows[0].Lines)
+	if len(rows[0].Lines) != 2 || rows[0].Lines[1] == "" {
+		t.Fatalf("collapsed pane should end on content: %#v", rows[0].Lines)
 	}
-	// The tool must start immediately after that separator — no extra leading
-	// spacer, so exactly one blank row sits between the thought and the tool.
-	if len(rows[1].Lines) == 0 || strings.TrimSpace(rows[1].Lines[0]) == "" {
-		t.Fatalf("tool message should start right after the pane's separator, got %#v", rows[1].Lines)
+	if len(rows[1].Lines) < 2 || rows[1].Lines[0] != "" {
+		t.Fatalf("tool must own the single inter-item gap, got %#v", rows[1].Lines)
 	}
-	if !strings.Contains(rows[1].Lines[0], "Search History") {
-		t.Fatalf("tool first line should carry the tool content, got %q", rows[1].Lines[0])
+	if !strings.Contains(rows[1].Lines[1], "Search History") {
+		t.Fatalf("tool content missing after spacer: %q", rows[1].Lines[1])
+	}
+}
+
+func TestPaneThenActivityHasExactlyOneGap(t *testing.T) {
+	r := newActivityRenderer()
+	r.SetSubPaneContentFn(func(_ string, _, _, _ int, _ bool) []SubPaneLine {
+		return []SubPaneLine{NativeLine(buildPlainBodyLine("Finished child"))}
+	})
+	r.SyncMessages([]types.ChatMessage{
+		{InternalID: "child", Role: types.RoleTool, SubPaneID: "child-pane"},
+		{InternalID: "empty", Role: types.RoleAssistant},
+		{InternalID: "one", Role: types.RoleTool, ToolName: "read_file", ToolArgs: "one.go", ToolStatus: types.ToolStatusSuccess},
+		{InternalID: "two", Role: types.RoleTool, ToolName: "read_file", ToolArgs: "two.go", ToolStatus: types.ToolStatusSuccess},
+	}, 1)
+	rows, _, _ := r.ExportMessageRows(100)
+	var lines []string
+	for _, row := range rows {
+		lines = append(lines, row.Lines...)
+	}
+	for i := 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == "" && strings.TrimSpace(lines[i-1]) == "" {
+			t.Fatalf("pane/activity boundary painted duplicate gaps:\n%q", lines)
+		}
 	}
 }
 

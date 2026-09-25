@@ -14,6 +14,25 @@ import (
 // only the first line as the reason. Returns "" when the content carries no
 // recognizable reason (plain-text errors keep their own message).
 func ToolErrorReason(tool, content string) string {
+	if tool == "multi_tool_use.parallel" {
+		var batch struct {
+			Results []struct {
+				Error bool `json:"error"`
+			} `json:"results"`
+		}
+		if json.Unmarshal([]byte(content), &batch) == nil && len(batch.Results) > 0 {
+			failed := 0
+			for _, result := range batch.Results {
+				if result.Error {
+					failed++
+				}
+			}
+			if failed > 0 {
+				return fmt.Sprintf("%d failed", failed)
+			}
+		}
+		return ""
+	}
 	if isEditFailureTool(tool) {
 		return editFailureReason(content)
 	}

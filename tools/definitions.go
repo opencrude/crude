@@ -2,12 +2,15 @@ package tools
 
 import (
 	"encoding/json"
+
+	"crude/codexio"
 )
 
 // ToolDef describes a tool available to the model.
 type ToolDef struct {
-	Type     string      `json:"type"`
-	Function ToolFuncDef `json:"function"`
+	Type     string              `json:"type"`
+	Function ToolFuncDef         `json:"function"`
+	Format   *codexio.ToolFormat `json:"format,omitempty"`
 }
 
 // ToolFuncDef is the function schema within a tool definition.
@@ -91,7 +94,7 @@ var AgentTools = []ToolDef{
 			Name: "edit_file",
 			Description: "Replace an exact string inside a file (Update primitive). " +
 				"Copy FULL lines from read_file output for old_string — start each line from the very beginning including ALL leading whitespace/indentation. " +
-				"Use read_file first to verify the exact text. " +
+				"Use read_file first to verify the exact text. Do not call edit_file if old_string and new_string are identical; use read_file for inspection and skip edits when nothing changes. " +
 				"If old_string is not found exactly, a whitespace-normalised fallback match is attempted automatically. " +
 				"Ambiguous matches (found in multiple locations) are rejected — add more surrounding lines to make the match unique. " +
 				"NEVER start old_string from the middle of a line — always include the full line from column 0. " +
@@ -102,7 +105,7 @@ var AgentTools = []ToolDef{
 				"properties":{
 					"path":{"type":"string","description":"Path to the file to edit"},
 					"old_string":{"type":"string","description":"Exact text to find and replace"},
-					"new_string":{"type":"string","description":"Text to replace it with"}
+					"new_string":{"type":"string","description":"Replacement text. MUST differ from old_string; do not use this tool for inspection or no-op edits."}
 				},
 				"required":["path","old_string","new_string"]
 			}`),
@@ -276,7 +279,7 @@ var AgentTools = []ToolDef{
 		Type: "function",
 		Function: ToolFuncDef{
 			Name:        "reply",
-			Description: "Send a brief progress update to the user WITHOUT ending the loop. Maximum 1 line — this is for short status updates only (e.g. 'Running tests...', 'Found 3 issues'). Do NOT use this for full reports, detailed explanations, or long text — instead, respond with text only (no tool calls) when done. Long content will not be displayed properly.",
+			Description: "Send a brief, truthful one-line progress update to the user WITHOUT ending the loop. Use at a meaningful phase change, milestone, or blocker, not after every tool call: routine tool calls are already grouped into an expandable activity trail. Explain what the work is for, not just the next tool's name. Do NOT use for full reports or final answers; end with a normal response (no tool calls).",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{

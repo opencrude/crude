@@ -123,18 +123,18 @@ func TestSubPaneProjectionRenderAgentPaneCompact(t *testing.T) {
 	if !subPanePlainContains(lines, "my-agent") {
 		t.Fatal("header does not contain 'my-agent'")
 	}
-	if !subPanePlainContains(lines, "read_file") {
-		t.Fatal("no tool line references 'read_file'")
+	if !subPanePlainContains(lines, "Read main.go") {
+		t.Fatal("no tool line names the read action and operand")
 	}
 	sp.Collapse()
 	expanded := app.subPaneProjections.Render("agent-1", sp, 40, 5, 0, true)
-	if len(expanded) == 0 || !expanded[len(expanded)-1].Separator {
-		t.Fatalf("expanded completed pane has no trailing block separator: %+v", expanded)
+	if len(expanded) == 0 || strings.TrimSpace(expanded[len(expanded)-1].PlainText()) == "" {
+		t.Fatalf("expanded completed pane must end on content: %+v", expanded)
 	}
 }
 
 // TestSubPaneProjectionRenderDoneSummary verifies that a Done pane renders
-// its summary followed by one unformatted separator row.
+// its summary only. The transcript owns inter-item spacing.
 func TestSubPaneProjectionRenderDoneSummary(t *testing.T) {
 	app := newFullTestApp(t)
 	sp := app.PaneMgr.GetOrCreate("done-1", workspace.PaneAgent, "my-agent")
@@ -142,17 +142,14 @@ func TestSubPaneProjectionRenderDoneSummary(t *testing.T) {
 	sp.Collapse()
 	app.subPaneProjections.Get("done-1", workspace.PaneAgent)
 	lines := app.subPaneProjections.Render("done-1", sp, 40, 5, 0, false)
-	if len(lines) != 2 {
-		t.Fatalf("expected summary plus separator, got %d lines", len(lines))
+	if len(lines) != 1 {
+		t.Fatalf("expected summary only, got %d lines", len(lines))
 	}
 	if !subPanePlainContains(lines, "my-agent") {
 		t.Fatalf("summary does not contain the agent title")
 	}
 	if !subPanePlainContains(lines, "for") {
 		t.Fatalf("summary does not contain 'for'")
-	}
-	if !lines[1].Separator || lines[1].PlainText() != "" {
-		t.Fatalf("done pane separator = %+v", lines[1])
 	}
 }
 
@@ -269,8 +266,8 @@ func TestThinkingPanePromotionRoundTrip(t *testing.T) {
 	// Collapse and verify the summary path.
 	sp.Collapse()
 	doneLines := app.subPaneProjections.Render(paneID, sp, 40, 5, 0, false)
-	if len(doneLines) != 2 || !doneLines[1].Separator {
-		t.Fatalf("expected summary plus separator after Collapse, got %+v", doneLines)
+	if len(doneLines) != 1 {
+		t.Fatalf("expected summary only after Collapse, got %+v", doneLines)
 	}
 }
 

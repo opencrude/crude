@@ -8,6 +8,7 @@ import (
 	"crude/tui/chatprojection"
 	"crude/tui/screens/shellchat"
 	"crude/tui/theme"
+	"crude/tui/types"
 	"crude/tui/ui"
 	"crude/workspace"
 )
@@ -65,11 +66,8 @@ func TestCompactNativeRowPaintGutterAlignment(t *testing.T) {
 }
 
 func TestCompactNativeSelectionPlainText(t *testing.T) {
-	tool := chatprojection.BuildSubPaneToolLines(workspace.SubPaneView{
-		ToolLines: []workspace.SubPaneToolLineView{
-			{Label: "read_file main.go", Phase: "done", Status: "success"},
-		},
-	}, 30)[0]
+	lines, _ := chatprojection.BuildSubPaneToolLines([]*types.ChatMessage{{Role: types.RoleTool, ToolName: "read_file", ToolArgs: "main.go", ToolPreviewPhase: "done", ToolStatus: "success"}}, 30, 0)
+	tool := lines[0]
 
 	rows := []chatprojection.MessageRow{{
 		ID:     "pane",
@@ -78,7 +76,7 @@ func TestCompactNativeSelectionPlainText(t *testing.T) {
 	}}
 
 	flat := flattenRows(rows)
-	if len(flat) != 1 || !strings.Contains(flat[0], "read_file") {
+	if len(flat) != 1 || !strings.Contains(flat[0], "Read main.go") {
 		t.Fatalf("flatten=%#v", flat)
 	}
 }

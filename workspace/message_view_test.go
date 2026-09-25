@@ -46,15 +46,15 @@ func TestConvertMessagesForDisplayUsesCanonicalSnapshotWithoutReconstruction(t *
 	}
 }
 
-func TestConvertMessagesForDisplayRepairsLegacySubAgentLink(t *testing.T) {
-	message := provider.NewTextMessage("tool", "## Sub-Agent Result\n**Session:** child-legacy\n**Status:** OK")
+func TestConvertMessagesForDisplayUsesAgentIDNotSessionIDForChildLink(t *testing.T) {
+	message := provider.NewTextMessage("tool", "## Sub-Agent Result: Lily [researcher]\n**Agent:** child-1\n**Status:** OK\n**Session:** session-1")
 	message.ToolCallID = "call"
 	views := ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{
 		Msg:  message,
 		Meta: sessiondb.DisplayMeta{DisplayRole: "tool", ToolName: "run_sub_agent", ToolStatus: "success"},
 	}})
-	if len(views) != 1 || views[0].SubPaneID != "child-legacy" {
-		t.Fatalf("legacy sub-agent link = %#v", views)
+	if len(views) != 1 || views[0].SubPaneID != "child-1" {
+		t.Fatalf("sub-agent link = %#v", views)
 	}
 }
 

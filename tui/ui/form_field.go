@@ -20,6 +20,7 @@ type FormField struct {
 	tokens  *TokenSet
 	control *TextField
 	area    *TextArea
+	grid    *KeyValueGrid
 	labelW  int
 
 	selectOpen      bool
@@ -62,6 +63,12 @@ func NewBoundFormField(id ComponentID, model *FormModel, f *FieldState, tokens *
 		ff.area.SetValue(f.Value.String())
 		ff.area.SetPlaceholder(f.Placeholder)
 		ff.area.SetReadOnly(f.ReadOnly)
+	}
+	if f.Type == FieldKeyValues {
+		ff.grid = NewKeyValueGrid(NewID(id, "grid"), tokens)
+		ff.grid.SetTitle(f.Label, f.Description)
+		ff.grid.SetValue(f.Value.String())
+		ff.grid.SetReadOnly(f.ReadOnly || f.Disabled)
 	}
 	if f.Type == FieldSelect || f.Type == FieldMultiSelect {
 		ff.selectList = NewList(NewID(id, "options"), tokens)
@@ -108,6 +115,9 @@ func (ff *FormField) SetTokens(ts *TokenSet) {
 	if ff.area != nil {
 		ff.area.SetTokens(ts)
 	}
+	if ff.grid != nil {
+		ff.grid.SetTokens(ts)
+	}
 	if ff.selectList != nil {
 		ff.selectList.SetTokens(ts)
 	}
@@ -131,9 +141,15 @@ func (ff *FormField) Control() *TextField {
 // Area returns the retained multi-line editor for FieldTextArea fields, or nil.
 func (ff *FormField) Area() *TextArea { return ff.area }
 
+// Grid returns the retained key/value table for FieldKeyValues fields, or nil.
+func (ff *FormField) Grid() *KeyValueGrid { return ff.grid }
+
 // TextEditor returns the editor this field owns so context menus can copy or
 // cut the field's text (TextEditorProvider). Nil for non-text fields.
 func (ff *FormField) TextEditor() TextClipboardTarget {
+	if ff.grid != nil {
+		return ff.grid.ActiveEditor()
+	}
 	if ff.area != nil {
 		return ff.area
 	}
@@ -145,7 +161,12 @@ func (ff *FormField) TextEditor() TextClipboardTarget {
 
 // MultiLine reports whether the field owns a multi-row editor, so form-level
 // Up/Down focus movement must reach the caret inside it first.
-func (ff *FormField) MultiLine() bool { return ff.field != nil && ff.field.Type == FieldTextArea }
+func (ff *FormField) MultiLine() bool {
+	if ff.field == nil {
+		return false
+	}
+	return ff.field.Type == FieldTextArea || ff.field.Type == FieldKeyValues
+}
 
 // areaRows returns the visible editor rows for the multi-line field.
 func (ff *FormField) areaRows() int {
@@ -173,7 +194,40 @@ func (ff *FormField) Sync() {
 		ff.area.SetPlaceholder(ff.field.Placeholder)
 		ff.area.SetReadOnly(ff.field.ReadOnly)
 	}
+	if ff.grid != nil {
+		if ff.grid.Value() != ff.field.Value.String() {
+			ff.grid.SetValue(ff.field.Value.String())
+		}
+		ff.grid.SetTitle(ff.field.Label, ff.field.Description)
+		ff.grid.SetReadOnly(ff.field.ReadOnly || ff.field.Disabled)
+	}
 	ff.syncSelectItems(ff.selectOpen)
+}
+
+// keyValuesHeight reports the rows the key/value table occupies below the
+// label: the column header, the live rows (capped), and the add row when the
+// set is editable. An inherited table drops the add row so the panel ends with
+// the last inherited pair.
+func (ff *FormField) keyValuesHeight() int {
+	rows := len(ff.grid.Rows())
+	if ff.compact {
+		rows = min(rows, compactKeyValueRows)
+	} else {
+		rows = min(rows, maxKeyValueRows)
+	}
+	height := 1 + rows
+	if !ff.grid.ReadOnly() {
+		height++
+	}
+	return height
+}
+
+// Blur ends any in-progress cell edit so a field that lost focus never keeps a
+// caret blinking or holds text the row has not absorbed yet.
+func (ff *FormField) Blur() {
+	if ff.grid != nil {
+		ff.grid.BlurCell()
+	}
 }
 
 // Children is intentionally empty. FormField retains its input/list controls
@@ -196,6 +250,13 @@ func (ff *FormField) Measure(_ LayoutContext, cs Constraints) Size {
 func (ff *FormField) height() int {
 	if ff.field.Type == FieldSeparator || ff.field.Type == FieldSpacer {
 		return 1
+	}
+	if ff.field.Type == FieldKeyValues {
+		h := 1 + ff.keyValuesHeight()
+		if !ff.compact && !ff.hideDescription && ff.field.Description != "" {
+			h++
+		}
+		return h + len(ff.field.Errors)
 	}
 	if ff.compact {
 		return 1 + len(ff.field.Errors)
@@ -234,6 +295,12 @@ func (ff *FormField) Layout(ctx LayoutContext, r Rect) {
 		// Multi-line editor sits below the label row and spans the form width.
 		indent := ff.labelIndent()
 		ff.area.Layout(ctx, Rect{X: indent + 1, Y: 1, W: max(1, r.W-indent-2), H: ff.areaRows()})
+	}
+	if ff.grid != nil {
+		// The key/value table uses the same body geometry as the multi-line
+		// editor so both editors share one left edge and width.
+		indent := ff.labelIndent()
+		ff.grid.Layout(ctx, Rect{X: indent + 1, Y: 1, W: max(1, r.W-indent-2), H: ff.keyValuesHeight()})
 	}
 }
 
@@ -336,13 +403,15 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 		errorFG = ff.tokens.Color(ColorError)
 		dividerFG = ff.tokens.Color(ColorPopupDivider)
 	}
-	// Form focus uses the same hover fill as menus. The label carries accent
-	// + bold; values stay ColorFg and inherited/meta stay ColorMuted so the
-	// row does not invent a third ink.
+	// Hover tints a row without moving its keyboard focus. Only the focused
+	// field gets accent ink and bold; values and meta keep their usual ink.
 	focusedRow := ctx.Focused && !ff.field.skipFocus()
+	hoveredRow := ctx.Hovered && !ff.field.skipFocus() && !focusedRow
 	rowBG := bg
-	if focusedRow {
+	if focusedRow || hoveredRow {
 		rowBG = ff.tokensColor(ColorHover, bg)
+	}
+	if focusedRow {
 		labelFG = ff.tokensColor(ColorAccent, labelFG)
 		valueFG = ff.tokensColor(ColorFg, valueFG)
 		mutedFG = ff.tokensColor(ColorMuted, mutedFG)
@@ -369,7 +438,7 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 		return
 	}
 
-	if focusedRow {
+	if focusedRow || hoveredRow {
 		FillRect(buf, 0, 0, Rect{X: x, Y: y, W: r.W, H: 1}, cell.BlankCell(rowBG))
 	}
 	labelX := x + ff.labelIndent()
@@ -400,6 +469,10 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 		ff.paintTextAreaBody(buf, x, y, r, ctx, valueFG, mutedFG, errorFG, focusedRow, rowBG, bg)
 		return
 	}
+	if ff.field.Type == FieldKeyValues {
+		ff.paintKeyValuesBody(buf, x, y, r, ctx, mutedFG, errorFG, focusedRow, rowBG, bg)
+		return
+	}
 
 	// Compact editor rows align at the shared table column; every other row
 	// keeps the label-hugging control with a one-cell inset.
@@ -414,10 +487,10 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 		contentX = controlX
 	}
 	contentW := max(1, controlW-2)
-	// Spacious settings raise the unfocused control so it reads as a field.
-	// Compact docks keep the chat surface and only highlight the focused row.
+	// Spacious settings raise idle controls; hovered controls share the
+	// row's tint. Compact docks keep the chat surface beneath idle rows.
 	controlBG := rowBG
-	if !ff.compact && !focusedRow {
+	if !ff.compact && !focusedRow && !hoveredRow {
 		controlBG = ff.tokensColor(ColorPopupSubtleBg, bg)
 		FillRect(buf, 0, 0, Rect{X: controlX, Y: y, W: controlW, H: 1}, cell.BlankCell(controlBG))
 	}
@@ -479,6 +552,41 @@ func (ff *FormField) paintTextAreaBody(buf *surface.CellBuffer, x, y int, r Rect
 
 	line := 1 + ff.areaRows()
 	if !ff.hideDescription && ff.field.Description != "" && line < r.H {
+		buf.WriteString(editorX, y+line, rendering.TruncateVisual(ff.field.Description, editorW, "…"), mutedFG, bg, 0)
+		line++
+	}
+	for _, err := range ff.field.Errors {
+		if line >= r.H {
+			break
+		}
+		buf.WriteString(editorX, y+line, rendering.TruncateVisual(err, editorW, "…"), errorFG, bg, 0)
+		line++
+	}
+}
+
+// paintKeyValuesBody renders the key/value table below the label row plus the
+// description and validation errors underneath it. It shares the multi-line
+// editor's body geometry and surface treatment.
+func (ff *FormField) paintKeyValuesBody(buf *surface.CellBuffer, x, y int, r Rect, ctx PaintContext, mutedFG, errorFG cell.Color, focusedRow bool, rowBG, bg cell.Color) {
+	if ff.grid == nil {
+		return
+	}
+	indent := ff.labelIndent()
+	editorX := x + indent + 1
+	editorW := max(1, r.W-indent-2)
+	gridH := ff.keyValuesHeight()
+	// Unfocused editors keep the raised field fill; the focused editor keeps
+	// the row highlight so the whole field reads as one surface.
+	editorBG := rowBG
+	if !focusedRow {
+		editorBG = ff.tokensColor(ColorPopupSubtleBg, bg)
+	}
+	FillRect(buf, 0, 0, Rect{X: editorX - 1, Y: y + 1, W: editorW + 2, H: gridH}, cell.BlankCell(editorBG))
+	// Grid bounds already carry Y=1: pass the field's paint origin unchanged.
+	ff.grid.Paint(buf, x, y, ctx)
+
+	line := 1 + gridH
+	if !ff.compact && !ff.hideDescription && ff.field.Description != "" && line < r.H {
 		buf.WriteString(editorX, y+line, rendering.TruncateVisual(ff.field.Description, editorW, "…"), mutedFG, bg, 0)
 		line++
 	}
@@ -760,6 +868,19 @@ func (ff *FormField) Handle(ctx EventContext, evt Event) EventResult {
 			ff.setValue(StringValue(ff.area.Value()))
 		}
 		return result
+	case FieldKeyValues:
+		if ff.grid == nil {
+			return EventResult{}
+		}
+		before := ff.grid.Value()
+		result := ff.grid.Handle(ChildEventContext(ctx, ff.grid.Bounds()), evt)
+		if ff.grid.Value() != before {
+			// Row count can change, so the field re-measures.
+			ff.setValue(StringValue(ff.grid.Value()))
+			result.Handled = true
+			result.Invalidate |= InvalidateLayout | InvalidatePaint
+		}
+		return result
 	case FieldSelect, FieldMultiSelect:
 		return ff.handleSelect(ctx, evt)
 	case FieldCycle:
@@ -789,11 +910,14 @@ func (ff *FormField) paintNav(buf *surface.CellBuffer, x, y, width int, ctx Pain
 		fg = muted
 	}
 	focused := ctx.Focused && !ff.field.Disabled
+	hovered := ctx.Hovered && !ff.field.Disabled && !focused
 	rowBG := bg
-	if focused {
+	if focused || hovered {
 		rowBG = ff.tokensColor(ColorHover, bg)
-		fg = ff.tokensColor(ColorAccent, fg)
 		FillRect(buf, 0, 0, Rect{X: x, Y: y, W: width, H: ff.height()}, cell.BlankCell(rowBG))
+	}
+	if focused {
+		fg = ff.tokensColor(ColorAccent, fg)
 	}
 	chevron := string(FirstRune(DefaultGlyphsFromTokens(ff.tokens).TreeCollapsed, '▸'))
 	chevronW := rendering.VisibleWidth(chevron)
@@ -839,6 +963,9 @@ func (ff *FormField) paintNavButton(buf *surface.CellBuffer, x, y, width int, ct
 	}
 
 	buttonBG := ff.tokensColor(ColorPopupSubtleBg, bg)
+	if ctx.Hovered && !ff.field.Disabled {
+		buttonBG = rowBG
+	}
 	borderFG := ff.tokensColor(ColorPopupBorder, muted)
 	chevronFG := muted
 	labelFG := fg
@@ -891,11 +1018,14 @@ func (ff *FormField) paintCompactRow(buf *surface.CellBuffer, x, y, width int, c
 		valueFG = muted
 	}
 	focused := ctx.Focused && !ff.field.Disabled && !ff.field.skipFocus()
+	hovered := ctx.Hovered && !ff.field.Disabled && !ff.field.skipFocus() && !focused
 	rowBG := bg
-	if focused {
+	if focused || hovered {
 		rowBG = ff.tokensColor(ColorHover, bg)
-		labelFG = ff.tokensColor(ColorAccent, labelFG)
 		FillRect(buf, 0, 0, Rect{X: x, Y: y, W: width, H: 1}, cell.BlankCell(rowBG))
+	}
+	if focused {
+		labelFG = ff.tokensColor(ColorAccent, labelFG)
 	}
 	chevron := string(FirstRune(DefaultGlyphsFromTokens(ff.tokens).TreeCollapsed, '▸'))
 	chevronW := rendering.VisibleWidth(chevron)

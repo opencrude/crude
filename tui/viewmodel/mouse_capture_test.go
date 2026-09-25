@@ -27,7 +27,7 @@ func chatViewportApp(t *testing.T, app *App, viewportH int) *App {
 		app = newFullTestApp(t)
 	}
 	app.width = 80
-	app.height = viewportH + 6
+	app.height = viewportH + 6 + ui.StripHeight + shellchat.ActivityHeight
 	return app
 }
 
@@ -66,7 +66,7 @@ func setupCapturedChatSelection(t *testing.T, app *App, viewportH int, rows []ch
 		t.Fatal("chat click should handle and capture pointer on the root host")
 	}
 	if !app.chatScreen.IsSelecting() {
-		t.Fatal("expected in-progress text selection")
+		t.Fatalf("expected in-progress text selection: slot=%+v viewport=%d appH=%d", app.chatRect, app.chatScreen.ScrollModel().Viewport(), app.height)
 	}
 	return app.chatScreen, app.rootHost, localX
 }
@@ -317,7 +317,7 @@ func setupCapturedChatScrollbar(t *testing.T, app *App, viewportH int, rows []ch
 	for _, row := range rows {
 		app.appendActiveMessage(ttypes.ChatMessage{
 			Role:    ttypes.RoleAssistant,
-			Content: strings.Join(row.Lines, "\n"),
+			Content: strings.Join(row.Lines, "\n\n"),
 			Time:    time.Now(),
 		})
 	}
@@ -330,7 +330,8 @@ func setupCapturedChatScrollbar(t *testing.T, app *App, viewportH int, rows []ch
 	}
 	padLR := app.Theme.Spacing.PadLR
 	sbX := app.chatRect.W - padLR - 1
-	res := app.rootHost.Handle(tea.MouseClickMsg{X: app.chatRect.X + sbX, Y: app.chatRect.Y, Button: tea.MouseLeft})
+	thumbTop, _ := app.chatScreen.ScrollModel().ThumbBounds(app.chatScreen.ScrollModel().Viewport())
+	res := app.rootHost.Handle(tea.MouseClickMsg{X: app.chatRect.X + sbX, Y: app.chatRect.Y + thumbTop, Button: tea.MouseLeft})
 	if !res.Handled || !app.rootHost.HasPointerCapture() {
 		t.Fatal("chat scrollbar click should handle and capture pointer")
 	}

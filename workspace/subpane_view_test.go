@@ -128,7 +128,7 @@ func TestSubPaneViewSummaryTokenFormatting(t *testing.T) {
 	}
 }
 
-func TestSubPaneViewToolLinesForAgentPane(t *testing.T) {
+func TestSubPaneViewKeepsCanonicalToolMessages(t *testing.T) {
 	sp := NewSubPane("agent-1", PaneAgent, "my-agent")
 	sp.Messages.AppendMessage(Message{
 		Role:             "tool",
@@ -148,27 +148,16 @@ func TestSubPaneViewToolLinesForAgentPane(t *testing.T) {
 	})
 
 	view := sp.View()
-	if len(view.ToolLines) != 2 {
-		t.Fatalf("expected 2 tool lines, got %d", len(view.ToolLines))
+	if view.Messages != sp.Messages {
+		t.Fatal("view created a competing tool-message projection")
 	}
-	if view.ToolLines[0].Label != "read_file main.go" {
-		t.Fatalf("expected label 'read_file main.go', got %q", view.ToolLines[0].Label)
-	}
-	if view.ToolLines[0].Phase != "done" {
-		t.Fatalf("expected phase 'done', got %q", view.ToolLines[0].Phase)
-	}
-	if view.ToolLines[0].Status != "success" {
-		t.Fatalf("expected status 'success', got %q", view.ToolLines[0].Status)
-	}
-	if view.ToolLines[1].Label != "write_file out.go" {
-		t.Fatalf("expected label 'write_file out.go', got %q", view.ToolLines[1].Label)
-	}
-	if view.ToolLines[1].Phase != "streaming" {
-		t.Fatalf("expected phase 'streaming', got %q", view.ToolLines[1].Phase)
+	messages := view.Messages.Messages()
+	if len(messages) != 2 || messages[0].ToolName != "read_file" || messages[0].ToolArgs != "main.go" || messages[0].ToolStatus != "success" || messages[1].ToolName != "write_file" || messages[1].ToolPreviewPhase != "streaming" {
+		t.Fatalf("canonical operands or lifecycle lost: %+v", messages)
 	}
 }
 
-func TestSubPaneViewToolLinesNilForThinking(t *testing.T) {
+func TestSubPaneViewKeepsThinkingMessageSource(t *testing.T) {
 	sp := NewSubPane("think-1", PaneThinking, "Thinking")
 	sp.Messages.AppendMessage(Message{
 		Role:       "tool",
@@ -178,8 +167,8 @@ func TestSubPaneViewToolLinesNilForThinking(t *testing.T) {
 	})
 
 	view := sp.View()
-	if view.ToolLines != nil {
-		t.Fatalf("expected ToolLines to be nil for PaneThinking, got %v", view.ToolLines)
+	if view.Messages != sp.Messages {
+		t.Fatal("thinking pane did not retain its canonical message source")
 	}
 }
 

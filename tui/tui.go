@@ -10,10 +10,12 @@ import (
 	"github.com/charmbracelet/x/ansi"
 
 	"crude/history"
+
 	"crude/sessiondb"
 	"crude/tui/rendering"
 	"crude/tui/types"
 	"crude/tui/viewmodel"
+	"crude/types/reasoning"
 	"crude/workspace"
 )
 
@@ -109,9 +111,8 @@ func coalescePendingAgentDelta(tail *list.Element, msg tea.Msg) bool {
 		}
 		switch next.Type {
 		case "thinking", "stream_token":
-			left, leftOK := previous.Data.(string)
-			right, rightOK := next.Data.(string)
-			if !leftOK || !rightOK {
+			left, right, compatible := adjacentDeltaText(previous.Data, next.Data)
+			if !compatible {
 				return false
 			}
 			tail.Value = &pendingAgentDelta{
@@ -132,7 +133,7 @@ func coalescePendingAgentDelta(tail *list.Element, msg tea.Msg) bool {
 		if previous == nil || previous.event.AgentID != next.AgentID || previous.event.Type != next.Type {
 			return false
 		}
-		right, ok := next.Data.(string)
+		_, right, ok := adjacentDeltaText(previous.event.Data, next.Data)
 		if !ok {
 			return false
 		}
@@ -142,6 +143,16 @@ func coalescePendingAgentDelta(tail *list.Element, msg tea.Msg) bool {
 	default:
 		return false
 	}
+}
+
+func adjacentDeltaText(left, right any) (string, string, bool) {
+	if a, ok := left.(reasoning.Delta); ok {
+		b, valid := right.(reasoning.Delta)
+		return a.Text, b.Text, valid && a.Kind == b.Kind && a.BlockID == b.BlockID
+	}
+	a, aOK := left.(string)
+	b, bOK := right.(string)
+	return a, b, aOK && bOK
 }
 
 func (p *programMessagePump) close() {
@@ -197,7 +208,12 @@ func (p *programMessagePump) run() {
 			for _, chunk := range pending.chunks {
 				text.WriteString(chunk)
 			}
-			pending.event.Data = text.String()
+			if delta, ok := pending.event.Data.(reasoning.Delta); ok {
+				delta.Text = text.String()
+				pending.event.Data = delta
+			} else {
+				pending.event.Data = text.String()
+			}
 			msg = pending.event
 		}
 		if isAgentVisualUpdate(msg) {

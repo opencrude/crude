@@ -330,7 +330,7 @@ func TestOpenAIChatPrefersStructuredReasoningFragments(t *testing.T) {
 		if len(update.ProviderItems) != 1 {
 			t.Fatalf("update %d provider items = %+v", index, update.ProviderItems)
 		}
-		reasoning += update.ReasoningDelta
+		reasoning += update.ReasoningText()
 	}
 	if reasoning != "The reasoning\n\nNext" {
 		t.Fatalf("reasoning = %q", reasoning)
@@ -453,8 +453,8 @@ func TestOpenAIChatUsesStructuredReasoningSummary(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Decode: %v", err)
 	}
-	if update.ReasoningDelta != "Checked constraints" {
-		t.Fatalf("reasoning delta = %q", update.ReasoningDelta)
+	if update.ReasoningText() != "Checked constraints" {
+		t.Fatalf("reasoning delta = %q", update.ReasoningText())
 	}
 }
 

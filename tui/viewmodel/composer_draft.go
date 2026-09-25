@@ -64,6 +64,9 @@ func (m *App) maybeHydrateComposerDraft() {
 	if m.RefStore() != nil {
 		m.Input.SetReferenceStore(m.RefStore())
 	}
+	if m.ActiveSession != nil && m.ActiveSession.DB == nil {
+		m.applyFailedBtwDrafts()
+	}
 	sess := m.ActiveSession
 	if sess == nil || sess.DB == nil {
 		return
@@ -82,12 +85,15 @@ func (m *App) loadComposerDraftMsg(sess *workspace.Session) tea.Msg {
 	ctx, cancel := context.WithTimeout(context.Background(), composerDraftIOTimeout)
 	defer cancel()
 	raw, err := sessiondb.LoadRuntimeState(ctx, sess.DB, composerDraftStateKey)
-	if err != nil || len(raw) == 0 {
-		return nil
+	if err != nil {
+		return composerDraftLoadedMsg{session: sess}
+	}
+	if len(raw) == 0 {
+		return composerDraftLoadedMsg{session: sess}
 	}
 	var snap composerDraftSnapshot
 	if err := json.Unmarshal(raw, &snap); err != nil {
-		return nil
+		return composerDraftLoadedMsg{session: sess}
 	}
 	return composerDraftLoadedMsg{
 		session: sess,
@@ -106,8 +112,15 @@ func (m *App) applyComposerDraft(msg composerDraftLoadedMsg) {
 	if msg.session == nil || m.ActiveSession != msg.session {
 		return
 	}
+	// A note may be restored while this asynchronous DB read is in flight.
+	// Preserve the newer local edit instead of replacing it with the old draft.
+	if m.Input.Value() != "" && m.Input.Value() != msg.text {
+		m.applyFailedBtwDrafts()
+		return
+	}
 	store := m.RefStore()
 	if store == nil {
+		m.applyFailedBtwDrafts()
 		return
 	}
 	runes := []rune(msg.text)
@@ -141,6 +154,17 @@ func (m *App) applyComposerDraft(msg composerDraftLoadedMsg) {
 		cursor = n
 	}
 	m.Input.SetCursorFlat(cursor)
+	m.applyFailedBtwDrafts()
+}
+
+func (m *App) applyFailedBtwDrafts() {
+	texts := m.failedBtwDrafts[m.ActiveSession]
+	if len(texts) == 0 {
+		return
+	}
+	delete(m.failedBtwDrafts, m.ActiveSession)
+	m.Input.SetInput(joinFailedBtwDrafts(texts, m.Input.Value()))
+	m.persistComposerDraftIfChanged()
 }
 
 // persistComposerDraftIfChanged saves the draft asynchronously whenever the

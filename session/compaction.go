@@ -175,7 +175,7 @@ func (s *Session) runPreparedCompaction(
 	compactAgent.PrepareCompaction = func(source agent.CompactionSource) error {
 		return s.beginRootCompaction(agentID, source)
 	}
-	result, err := compactAgent.CompactWithRequestID(ctx, active, s.systemPrompt(effectiveCfg.IsMultiAgentEnabled()), operationID, emit)
+	result, err := compactAgent.CompactWithRequestID(ctx, active, s.systemPromptForModel(effectiveCfg.IsMultiAgentEnabled(), activeCfg.Model), operationID, emit)
 	if err != nil {
 		return s.finishManualCompactionError(ctx, emit, operationID, result, err)
 	}

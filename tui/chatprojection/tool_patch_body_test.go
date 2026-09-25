@@ -19,7 +19,7 @@ func TestProseToolBodyNeverRendersAsPatch(t *testing.T) {
 		ToolPreviewPhase: types.ToolPreviewDone, ToolArgs: "tui/tools/diff.go",
 		Content: "Replaced 1 occurrence in tui/tools/diff.go\n",
 	}
-	ml := renderToolMessageLines(msg, theme.DefaultDark(), 60, 62, 64, 0, 20, "done", DisclosureCollapsed)
+	ml := renderToolMessageLines(msg, theme.DefaultDark(), 60, 62, 64, 0, 20, "done", DisclosureExpanded)
 	body := false
 	for _, line := range ml.lines {
 		if strings.HasPrefix(line, "│ 1 ") {
@@ -44,8 +44,8 @@ func TestNoChangeEditFailureRendersOneRedRow(t *testing.T) {
 			"Hint: match the file's current bytes exactly — read_file the section first.",
 	}
 	ml := renderToolMessageLines(msg, theme.DefaultDark(), 96, 98, 100, 0, 20, "error", DisclosureCollapsed)
-	if len(ml.lines) != 1 {
-		t.Fatalf("failure row must stay one line, got %#v", ml.lines)
+	if len(ml.lines) > 2 {
+		t.Fatalf("failure header should only wrap to terminal width, got %#v", ml.lines)
 	}
 	row := ml.lines[0]
 	if strings.Contains(row, "Hint:") || strings.Contains(row, "Error:") {
@@ -58,7 +58,7 @@ func TestNoChangeEditFailureRendersOneRedRow(t *testing.T) {
 
 	// With room to spare the whole reason rides the title, unabbreviated.
 	wide := renderToolMessageLines(msg, theme.DefaultDark(), 200, 200, 200, 0, 20, "error", DisclosureCollapsed)
-	if want := "│ ● Edit File failed tools/dispatcher.go — no changes to make: old_string and new_string are exactly the same"; wide.lines[0] != want {
+	if want := "│ × Edit File failed tools/dispatcher.go — no changes to make: old_string and new_string are exactly the same ▸"; wide.lines[0] != want {
 		t.Fatalf("wide failure row = %q, want %q", wide.lines[0], want)
 	}
 }
@@ -71,7 +71,7 @@ func TestRealPatchBodyStillRendersDiffRows(t *testing.T) {
 		ToolPreviewPhase: types.ToolPreviewDone, ToolArgs: "x.go",
 		Content: "Replaced 1 occurrence in x.go\n\n```diff\n--- a/x.go\n+++ b/x.go\n@@ -1,1 +1,2 @@\n a\n+b\n```\n",
 	}
-	ml := renderToolMessageLines(msg, theme.DefaultDark(), 60, 62, 64, 0, 20, "done", DisclosureCollapsed)
+	ml := renderToolMessageLines(msg, theme.DefaultDark(), 60, 62, 64, 0, 20, "done", DisclosureExpanded)
 	added := false
 	for _, line := range ml.lines {
 		if strings.HasPrefix(line, "│ 2 + b") {

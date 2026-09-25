@@ -4,6 +4,7 @@ import (
 	"time"
 
 	ttypes "crude/types"
+	"crude/types/reasoning"
 )
 
 const (
@@ -35,6 +36,7 @@ type TurnStatus struct {
 	Completed     int
 	StageCount    int
 	RetryAttempt  int
+	RetryAt       time.Time
 	RetryLimit    int
 	ContextWindow int
 	Detail        string
@@ -46,6 +48,7 @@ type TurnStatus struct {
 // Conversation is the canonical live message state for one agent or thinking
 // pane. It deliberately contains no rendering or interaction state.
 type Conversation struct {
+	brief         string
 	messages      []*Message
 	byID          map[string]*Message
 	toolTimelines map[*Message]*toolTimeline
@@ -122,6 +125,14 @@ func (c *Conversation) AppendMessage(message Message) string {
 		return ""
 	}
 	copy := message
+	if c.brief == "" && message.Role == MessageRoleUser && !message.PendingBtw {
+		for _, ch := range message.Content {
+			if ch == '\n' || len(c.brief) >= 240 {
+				break
+			}
+			c.brief += string(ch)
+		}
+	}
 	if copy.InternalID == "" || c.byID[copy.InternalID] != nil {
 		copy.InternalID = c.nextMessageID()
 	}
@@ -129,6 +140,14 @@ func (c *Conversation) AppendMessage(message Message) string {
 	c.index(&copy)
 	c.version++
 	return copy.InternalID
+}
+
+// Brief retains the first accepted human intent without per-frame transcript scans.
+func (c *Conversation) Brief() string {
+	if c == nil {
+		return ""
+	}
+	return c.brief
 }
 
 // insertMessage keeps unresolved BTW notes at the visual tail. Provider output
@@ -161,6 +180,42 @@ func (c *Conversation) lastNonPending() *Message {
 	return nil
 }
 
+// ActiveThinking returns the current live thought without exporting the dense
+// transcript. Promoted thoughts live in their owning pane's Conversation.
+func (c *Conversation) ActiveThinking() (Message, bool) {
+	if c != nil {
+		if last := c.lastNonPending(); last != nil && last.Role == MessageRoleThinking && last.ThinkingActive {
+			return *last, true
+		}
+	}
+	return Message{}, false
+}
+
+// SetLatestThinkingKind settles presentation metadata without moving the
+// accepted trace. A provisional thought keeps its original transcript slot,
+// stable ID, and full body when post-response accounting becomes available.
+func (c *Conversation) SetLatestThinkingKind(kind reasoning.Kind) bool {
+	if c == nil || kind == reasoning.Unknown || kind == reasoning.Provisional {
+		return false
+	}
+	for i := len(c.messages) - 1; i >= 0; i-- {
+		message := c.messages[i]
+		if message.TurnGeneration != c.turnIdentity.Generation {
+			break
+		}
+		if message.Role != MessageRoleThinking {
+			continue
+		}
+		if message.ThinkingDisplay.Kind != reasoning.Provisional {
+			return false
+		}
+		message.ThinkingDisplay.Kind = kind
+		c.version++
+		return true
+	}
+	return false
+}
+
 func (c *Conversation) AppendPendingBtw(message Message) string {
 	message.PendingBtw = true
 	return c.AppendMessage(message)
@@ -177,13 +232,21 @@ func (c *Conversation) ConsumePendingBtw(id string) bool {
 		return false
 	}
 	message.PendingBtw = false
+	// The note is now part of the next request. Keep the live turn indicator
+	// below it even if that indicator existed before the note was submitted.
+	if status := c.activeTurnStatus(""); status != nil {
+		c.moveBeforePending(status)
+	}
 	c.version++
 	return true
 }
 
-func (c *Conversation) RemovePendingBtwIDs(ids []string) int {
+// RemovePendingBtwMessages returns notes in transcript order for draft recovery.
+// Upload-start acknowledgement may have removed PendingBtw already, so match
+// the exact backend-supplied IDs of user messages, regardless of their flag.
+func (c *Conversation) RemovePendingBtwMessages(ids []string) []Message {
 	if c == nil || len(ids) == 0 {
-		return 0
+		return nil
 	}
 	wanted := make(map[string]struct{}, len(ids))
 	for _, id := range ids {
@@ -192,24 +255,28 @@ func (c *Conversation) RemovePendingBtwIDs(ids []string) int {
 		}
 	}
 	if len(wanted) == 0 {
-		return 0
+		return nil
 	}
 	kept := c.messages[:0]
-	removed := 0
+	var removed []Message
 	for _, message := range c.messages {
 		_, selected := wanted[message.InternalID]
-		if selected && message.PendingBtw {
+		if selected && message.Role == MessageRoleUser {
 			delete(c.byID, message.InternalID)
-			removed++
+			removed = append(removed, *message)
 			continue
 		}
 		kept = append(kept, message)
 	}
-	if removed > 0 {
+	if len(removed) > 0 {
 		c.messages = kept
 		c.version++
 	}
 	return removed
+}
+
+func (c *Conversation) RemovePendingBtwIDs(ids []string) int {
+	return len(c.RemovePendingBtwMessages(ids))
 }
 
 func (c *Conversation) PendingBtwCount() int {
@@ -241,7 +308,11 @@ func (c *Conversation) AppendToken(token string) {
 }
 
 func (c *Conversation) AppendThinking(content string) {
-	if c == nil || content == "" {
+	c.AppendReasoning(reasoning.Delta{Text: content})
+}
+
+func (c *Conversation) AppendReasoning(delta reasoning.Delta) {
+	if c == nil || delta.Text == "" || delta.Kind == reasoning.Encrypted {
 		return
 	}
 	c.ClearTurnStatus()
@@ -250,8 +321,8 @@ func (c *Conversation) AppendThinking(content string) {
 		if last == nil {
 			return
 		}
-		if last.Role == MessageRoleThinking {
-			last.Content += content
+		if last.Role == MessageRoleThinking && last.ThinkingActive {
+			last.Content = last.ThinkingDisplay.Append(last.Content, delta)
 			c.version++
 			return
 		}
@@ -259,15 +330,18 @@ func (c *Conversation) AppendThinking(content string) {
 	for _, message := range c.messages {
 		message.ThinkingActive = false
 	}
+	display := reasoning.Display{}
+	content := display.Append("", delta)
 	c.AppendMessage(Message{
-		Role:           MessageRoleThinking,
-		Content:        content,
-		Time:           time.Now(),
-		ThinkingActive: true,
-		TurnGeneration: c.turnIdentity.Generation,
-		AccountID:      c.turnIdentity.AccountID,
-		ProviderID:     c.turnIdentity.ProviderID,
-		ModelID:        c.turnIdentity.ModelID,
+		Role:            MessageRoleThinking,
+		Content:         content,
+		ThinkingDisplay: display,
+		Time:            time.Now(),
+		ThinkingActive:  true,
+		TurnGeneration:  c.turnIdentity.Generation,
+		AccountID:       c.turnIdentity.AccountID,
+		ProviderID:      c.turnIdentity.ProviderID,
+		ModelID:         c.turnIdentity.ModelID,
 	})
 }
 
@@ -317,6 +391,7 @@ func (c *Conversation) UpdateTurnStatus(status TurnStatus) {
 			LifecycleCompleted:     status.Completed,
 			LifecycleStageCount:    status.StageCount,
 			LifecycleRetryAttempt:  status.RetryAttempt,
+			LifecycleRetryAt:       status.RetryAt,
 			LifecycleRetryLimit:    status.RetryLimit,
 			LifecycleContextWindow: status.ContextWindow,
 			Content:                status.Detail,
@@ -346,6 +421,7 @@ func (c *Conversation) UpdateTurnStatus(status TurnStatus) {
 		message.LifecycleCompleted == status.Completed &&
 		message.LifecycleStageCount == status.StageCount &&
 		message.LifecycleRetryAttempt == status.RetryAttempt &&
+		message.LifecycleRetryAt.Equal(status.RetryAt) &&
 		message.LifecycleRetryLimit == status.RetryLimit &&
 		message.LifecycleContextWindow == status.ContextWindow &&
 		message.Content == status.Detail &&
@@ -368,6 +444,7 @@ func (c *Conversation) UpdateTurnStatus(status TurnStatus) {
 	message.LifecycleCompleted = status.Completed
 	message.LifecycleStageCount = status.StageCount
 	message.LifecycleRetryAttempt = status.RetryAttempt
+	message.LifecycleRetryAt = status.RetryAt
 	message.LifecycleRetryLimit = status.RetryLimit
 	message.LifecycleContextWindow = status.ContextWindow
 	message.Content = status.Detail
@@ -498,25 +575,39 @@ func (c *Conversation) MarkStreamingToolsCancelled() {
 	c.bumpIf(changed)
 }
 
-func (c *Conversation) RemoveActiveThinking() string {
-	if c == nil {
-		return ""
-	}
-	var content string
-	kept := c.messages[:0]
-	for _, message := range c.messages {
-		if message.Role == MessageRoleThinking && message.ThinkingActive {
-			content = message.Content
-			delete(c.byID, message.InternalID)
-			continue
+// PromoteThinking transfers the active block to a pane, leaving its stable
+// identity and position in the transcript. The pane owns the body until restore.
+func (c *Conversation) PromoteThinking(paneID string) (Message, bool) {
+	if c != nil && paneID != "" {
+		for _, message := range c.messages {
+			if message.Role == MessageRoleThinking && message.ThinkingActive {
+				thought := *message
+				*message = Message{InternalID: thought.InternalID, Role: MessageRoleTool, Content: "Thinking", SubPaneID: paneID, Time: thought.Time}
+				c.version++
+				return thought, true
+			}
 		}
-		kept = append(kept, message)
 	}
-	if len(kept) != len(c.messages) {
-		c.messages = kept
-		c.version++
+	return Message{}, false
+}
+
+// RestoreThinking returns a settled pane body to its original transcript slot.
+// Completion is not a permanent pane boundary: inline and promoted thoughts
+// must have identical semantics for grouping, disclosure, and recovery.
+func (c *Conversation) RestoreThinking(paneID string, thought Message) bool {
+	if c == nil || paneID == "" || thought.Role != MessageRoleThinking || thought.ThinkingActive {
+		return false
 	}
-	return content
+	for _, message := range c.messages {
+		if message.SubPaneID == paneID {
+			thought.InternalID = message.InternalID
+			thought.SubPaneID = ""
+			*message = thought
+			c.version++
+			return true
+		}
+	}
+	return false
 }
 
 func (c *Conversation) UpdateToolStreaming(toolID, internalID, name string, data map[string]any) {
@@ -660,27 +751,22 @@ func (c *Conversation) UpdateToolCall(toolID, internalID, name, argsCompact stri
 	c.version++
 }
 
-// AttachSubPaneToLatestTool promotes the live run_sub_agent tool row into its
-// retained child pane. One message identity then owns spawning, synchronous
-// waiting, completion, and later review instead of rendering two projections
-// for one child.
-func (c *Conversation) AttachSubPaneToLatestTool(toolName, paneID string) bool {
-	if c == nil || paneID == "" {
+// AttachSubPaneToTool links a child to the exact parent run_sub_agent call.
+// Simultaneous launches may finish or send start events in any order; neither
+// the latest call nor a guessed description is a safe correlation key.
+func (c *Conversation) AttachSubPaneToTool(toolID, paneID, label string) bool {
+	if c == nil || toolID == "" || paneID == "" {
 		return false
 	}
-	for i := len(c.messages) - 1; i >= 0; i-- {
-		message := c.messages[i]
-		if message == nil || message.Role != MessageRoleTool || message.ToolName != toolName || message.SubPaneID != "" {
-			continue
-		}
-		if message.ToolStatus == "success" || message.ToolStatus == "error" || message.ToolStatus == "cancelled" {
-			continue
-		}
-		message.SubPaneID = paneID
-		c.version++
-		return true
+	message := c.findTool("", toolID)
+	if message == nil || message.ToolID != toolID || message.Role != MessageRoleTool || message.ToolName != "run_sub_agent" || message.SubPaneID != "" ||
+		message.ToolStatus == "error" || message.ToolStatus == "cancelled" {
+		return false
 	}
-	return false
+	message.SubPaneID = paneID
+	message.ToolProgressLabel = label
+	c.version++
+	return true
 }
 
 // SetToolCommand snapshots the exact command separately from the compact title
@@ -691,6 +777,21 @@ func (c *Conversation) SetToolCommand(toolID, internalID, command string) {
 	}
 	if message := c.findTool(internalID, toolID); message != nil {
 		message.ToolCommand = command
+		c.version++
+	}
+}
+
+func (c *Conversation) SetToolRound(toolID, internalID, roundID string) {
+	if message := c.findTool(internalID, toolID); message != nil && roundID != "" && message.ToolRoundID != roundID {
+		message.ToolRoundID = roundID
+		c.version++
+	}
+}
+
+func (c *Conversation) MarkToolNotExecuted(toolID, internalID string) {
+	if msg := c.findTool(internalID, toolID); msg != nil {
+		msg.ToolStatus, msg.ToolPreviewPhase = "interrupted", ttypes.ToolPreviewDone
+		delete(c.toolTimelines, msg)
 		c.version++
 	}
 }
@@ -918,7 +1019,6 @@ func (c *Conversation) MarkError(reason string) {
 			message.Incomplete = true
 			message.IncompleteReason = reason
 			c.version++
-			return
 		}
 	}
 	c.AppendMessage(Message{
@@ -929,11 +1029,15 @@ func (c *Conversation) MarkError(reason string) {
 	})
 }
 
-func (c *Conversation) Finish(content, reason string, wasStreaming bool) {
+func (c *Conversation) Finish(content, reason string, wasStreaming bool, boundaryID string) {
 	if c == nil {
 		return
 	}
 	c.ClearTurnStatus()
+	if reason == "cancelled" {
+		c.AppendMessage(Message{InternalID: boundaryID, Role: MessageRoleStatus, LifecyclePhase: "stopped", LifecycleOperationID: boundaryID, Time: time.Now(), TurnGeneration: c.turnIdentity.Generation})
+		return
+	}
 	incomplete := reason != "" && reason != "completed"
 	if content != "" && !incomplete {
 		if wasStreaming && len(c.messages) > 0 {
@@ -958,11 +1062,11 @@ func (c *Conversation) Finish(content, reason string, wasStreaming bool) {
 		return
 	}
 	label := reason
-	if reason == "cancelled" {
-		label = "operation cancelled by user"
-	}
 	for i := len(c.messages) - 1; i >= 0; i-- {
 		message := c.messages[i]
+		if message.Role == MessageRoleUser {
+			break
+		}
 		if message.Role == MessageRoleAssistant || message.Role == MessageRoleThinking {
 			message.Incomplete = true
 			message.IncompleteReason = label

@@ -59,6 +59,9 @@ func (s *CodexStandard) EncodeRequest(req *ChatRequest) ([]byte, error) {
 	}
 	wire["store"] = false
 	wire["stream"] = true
+	// Stateless Codex requests need the encrypted replay item to retain the
+	// provider's reasoning continuity across tool turns.
+	wire["include"] = []string{"reasoning.encrypted_content"}
 	delete(wire, "max_output_tokens")
 	delete(wire, "max_completion_tokens")
 	delete(wire, "max_tokens")

@@ -3,6 +3,7 @@ package agent
 import (
 	"encoding/json"
 
+	"crude/codexio"
 	"crude/tools"
 )
 
@@ -59,7 +60,36 @@ func CategoryToolDefaults(category string) CategoryToolConfig {
 }
 
 func FilterTools(allTools []tools.ToolDef, specAllowed []string, specDenied []string, category string, isSubAgent bool) []tools.ToolDef {
-	catCfg := CategoryToolDefaults(category)
+	return filterToolsWithCategory(allTools, specAllowed, specDenied, CategoryToolDefaults(category), isSubAgent)
+}
+
+// FilterToolsForModel resolves tool identity before applying allow/deny lists.
+// A patch is one complete tool, never a set of selectively disabled operations.
+func FilterToolsForModel(allTools []tools.ToolDef, specAllowed, specDenied []string, category string, isSubAgent bool, model string) []tools.ToolDef {
+	if !codexio.IsGPT(model) {
+		return FilterTools(allTools, specAllowed, specDenied, category, isSubAgent)
+	}
+	cat := CategoryToolDefaults(category)
+	cat.AllowedTools = patchToolNames(cat.AllowedTools)
+	cat.DeniedTools = patchToolNames(cat.DeniedTools)
+	return filterToolsWithCategory(tools.WithModelCommands(tools.ForModel(allTools, model), model), patchToolNames(specAllowed), patchToolNames(specDenied), cat, isSubAgent)
+}
+
+func patchToolNames(names []string) []string {
+	result := make([]string, 0, len(names))
+	for _, name := range names {
+		if name == "write_file" || name == "edit_file" {
+			name = "apply_patch"
+		}
+		result = append(result, name)
+		if name == "execute_command" {
+			result = append(result, "exec_command", "write_stdin")
+		}
+	}
+	return result
+}
+
+func filterToolsWithCategory(allTools []tools.ToolDef, specAllowed, specDenied []string, catCfg CategoryToolConfig, isSubAgent bool) []tools.ToolDef {
 	filtered := allTools
 
 	if len(catCfg.DeniedTools) > 0 {
@@ -156,7 +186,7 @@ func makeStringSet(items []string) map[string]bool {
 }
 
 func filterToolSlice(tds []tools.ToolDef, pred func(tools.ToolDef) bool) []tools.ToolDef {
-	var result []tools.ToolDef
+	result := make([]tools.ToolDef, 0, len(tds))
 	for _, t := range tds {
 		if pred(t) {
 			result = append(result, t)

@@ -26,8 +26,11 @@ func TestStatsSearchAndClickOnlyDisclosure(t *testing.T) {
 	if !screen.Select("agent:one") || screen.IsExpanded("agent:one") {
 		t.Fatal("selecting the header target must not expand it")
 	}
-	if len(screen.list.list.Items()) != 3 {
-		t.Fatal("initial rows must contain only one header and two single-line items")
+	if len(screen.list.list.Items()) != 4 {
+		t.Fatal("collapsed rows must include the first agent's compact identity")
+	}
+	if rows := screen.list.list.Items(); rows[2].Label != "Ollama / glm" {
+		t.Fatalf("compact model identity missing: %+v", rows)
 	}
 	host.Focus(ListID)
 	for _, code := range []rune{tea.KeyEnter, tea.KeySpace, tea.KeyRight, tea.KeyLeft, tea.KeyDown, tea.KeyUp} {

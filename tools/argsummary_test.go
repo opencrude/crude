@@ -58,14 +58,15 @@ func TestSummarizeArgsLabelsOperands(t *testing.T) {
 	}
 }
 
-// A label never grows past the budget the row reserved for it.
-func TestSummarizeArgsTruncatesWithinBudget(t *testing.T) {
+// Semantic operands reach layout intact; only unknown-payload fallbacks use a
+// summary budget. The renderer owns wrapping at the actual terminal width.
+func TestSummarizeArgsPreservesKnownOperands(t *testing.T) {
 	long := ""
 	for i := 0; i < 90; i++ {
 		long += "x"
 	}
-	if got := SummarizeArgs("execute_command", `command: "`+long+`"`); len([]rune(got)) != 50 {
-		t.Fatalf("command label = %d runes, want 50", len([]rune(got)))
+	if got := SummarizeArgs("execute_command", `command: "`+long+`"`); got != long {
+		t.Fatalf("command operand shortened: %q", got)
 	}
 	if got := SummarizeArgs("mystery_tool", long); len([]rune(got)) != 60 {
 		t.Fatalf("fallback label = %d runes, want 60", len([]rune(got)))

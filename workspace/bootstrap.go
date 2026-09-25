@@ -269,6 +269,7 @@ func (w *Workspace) HydrateCompletedSubAgents(parentID string) []string {
 			pane.StartTime = time.Now().Add(-time.Duration(result.DurationMs) * time.Millisecond)
 		}
 		pane.TokenCount = result.PromptTokens + result.CompTokens
+		pane.Status = string(result.Status)
 		pane.Collapse()
 
 		state := NewAgentState(id, pane.Messages, w.Logger)
@@ -997,11 +998,14 @@ func canonicalizeToolSnapshotForDisplay(snapshot *ChatMessageView) {
 func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageView {
 	var result []ChatMessageView
 
-	toolNameByCallID := buildToolNameIndex(msgs)
+	toolNameByCallID, batchArgsByCallID := buildToolNameIndex(msgs)
 
 	for _, mm := range msgs {
 		if mm.Meta.SnapshotVersion > 0 {
 			for _, snapshot := range mm.Meta.Snapshots {
+				if snapshot.ToolName == "multi_tool_use.parallel" && snapshot.ToolInput == "" {
+					snapshot.ToolInput = batchArgsByCallID[snapshot.ToolID]
+				}
 				snapshot.ReferenceLabels = append([]string(nil), snapshot.ReferenceLabels...)
 				canonicalizeToolSnapshotForDisplay(&snapshot)
 				result = append(result, snapshot)
@@ -1054,6 +1058,7 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 				Content:          mm.Msg.ReasoningContent,
 				Time:             msgTime,
 				ThinkingDuration: thinkingDuration,
+				ThinkingDisplay:  mm.Msg.ReasoningDisplay,
 				TurnGeneration:   mm.Meta.TurnGeneration,
 				AccountID:        mm.Meta.AccountID,
 				ProviderID:       mm.Meta.ProviderID,
@@ -1109,6 +1114,9 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 				ProviderID:        mm.Meta.ProviderID,
 				ModelID:           mm.Meta.ModelID,
 			}
+			if toolName == "multi_tool_use.parallel" && chatMsg.ToolInput == "" {
+				chatMsg.ToolInput = batchArgsByCallID[mm.Msg.ToolCallID]
+			}
 
 			if mm.Meta.DurationMs > 0 {
 				chatMsg.ToolDuration = time.Duration(mm.Meta.DurationMs) * time.Millisecond
@@ -1145,26 +1153,30 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 func persistedSubAgentID(content string) string {
 	var payload map[string]any
 	if json.Unmarshal([]byte(content), &payload) == nil {
-		for _, key := range []string{"session_id", "handle_id", "agent_id"} {
+		for _, key := range []string{"agent_id", "handle_id"} {
 			if value, _ := payload[key].(string); value != "" {
 				return value
 			}
 		}
 	}
-	marker := "**Session:**"
-	index := strings.Index(content, marker)
-	if index < 0 {
-		return ""
+	for _, line := range strings.Split(content, "\n") {
+		if strings.HasPrefix(line, "**Agent:** ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "**Agent:** "))
+		}
 	}
-	fields := strings.Fields(strings.TrimSpace(content[index+len(marker):]))
-	if len(fields) == 0 {
-		return ""
+	if index := strings.Index(content, `handle_id="`); index >= 0 {
+		id := content[index+len(`handle_id="`):]
+		if end := strings.IndexByte(id, '"'); end >= 0 {
+			return id[:end]
+		}
 	}
-	return strings.Trim(fields[0], "`*()")
+	return ""
 }
 
 func persistedToolInput(toolName, args string) string {
 	switch toolName {
+	case "multi_tool_use.parallel":
+		return args
 	case "grep_files":
 		return extractJSONStringValue(args, "pattern")
 	case "web_search", "arxiv_search":
@@ -1197,18 +1209,22 @@ func userMessageDisplayContent(content provider.MessageContent) string {
 	return content.ContentDescription()
 }
 
-func buildToolNameIndex(msgs []sessiondb.MessageWithMeta) map[string]string {
+func buildToolNameIndex(msgs []sessiondb.MessageWithMeta) (map[string]string, map[string]string) {
 	index := make(map[string]string)
+	batchArgs := make(map[string]string)
 	for _, mm := range msgs {
 		if mm.Msg.Role == "assistant" && len(mm.Msg.ToolCalls) > 0 {
 			for _, tc := range mm.Msg.ToolCalls {
 				if tc.ID != "" && tc.Function.Name != "" {
 					index[tc.ID] = tc.Function.Name
+					if tc.Function.Name == "multi_tool_use.parallel" {
+						batchArgs[tc.ID] = tc.Function.Arguments
+					}
 				}
 			}
 		}
 	}
-	return index
+	return index, batchArgs
 }
 
 func nullStr(ns *sql.NullString) string {

@@ -2,6 +2,7 @@ package provider
 
 import (
 	"bytes"
+	"crude/types/reasoning"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -46,6 +47,7 @@ const (
 	OriginAssistant         MessageOrigin = "assistant"
 	OriginTool              MessageOrigin = "tool"
 	OriginRuntimeContext    MessageOrigin = "runtime_context"
+	OriginTurnStopped       MessageOrigin = "turn_stopped"
 	OriginContinuation      MessageOrigin = "continuation"
 	OriginSubAgentWake      MessageOrigin = "subagent_wake"
 	OriginAssignment        MessageOrigin = "assignment"
@@ -316,6 +318,7 @@ type ChatMessage struct {
 	CacheControl      *CacheControl     `json:"cache_control,omitempty"`
 	ReasoningDetails  []json.RawMessage `json:"reasoning_details,omitempty"`
 	ReasoningDuration time.Duration     `json:"reasoning_duration,omitempty"`
+	ReasoningDisplay  reasoning.Display `json:"reasoning_display,omitempty"`
 	ProviderItems     []ProviderItem    `json:"provider_items,omitempty"`
 	ReplayScope       string            `json:"replay_scope,omitempty"`
 	ReplaySourceModel string            `json:"replay_source_model,omitempty"`
@@ -384,6 +387,31 @@ type ToolCall struct {
 	InternalID string       `json:"internal_id,omitempty"`
 }
 
+// UnmarshalJSON normalizes Chat Completions custom calls into the same raw
+// input representation used by Responses. Marshaling retains canonical state.
+func (t *ToolCall) UnmarshalJSON(data []byte) error {
+	type plain ToolCall
+	var wire struct {
+		plain
+		Custom *struct {
+			Name  string `json:"name"`
+			Input string `json:"input"`
+		} `json:"custom"`
+	}
+	if err := json.Unmarshal(data, &wire); err != nil {
+		return err
+	}
+	*t = ToolCall(wire.plain)
+	if t.Function.Name == "multi_tool_use_parallel" {
+		t.Function.Name = "multi_tool_use.parallel"
+	}
+	if wire.Custom != nil {
+		t.Type = "custom"
+		t.Function = FunctionCall{Name: wire.Custom.Name, Arguments: wire.Custom.Input}
+	}
+	return nil
+}
+
 type FunctionCall struct {
 	Name      string `json:"name"`
 	Arguments string `json:"arguments"`
@@ -442,13 +470,23 @@ type StreamEvent struct {
 
 // StreamUpdate is the normalized output of one provider stream event.
 type StreamUpdate struct {
-	ContentDelta   string
-	ReasoningDelta string
-	ToolCalls      []ToolCallDelta
-	FinishReason   string
-	Usage          *TokenUsage
-	ProviderItems  []ProviderItem
-	Done           bool
+	ContentDelta  string
+	Reasoning     []reasoning.Delta
+	ToolCalls     []ToolCallDelta
+	FinishReason  string
+	Usage         *TokenUsage
+	ProviderItems []ProviderItem
+	Done          bool
+}
+
+func (u StreamUpdate) ReasoningText() string {
+	var text strings.Builder
+	for _, delta := range u.Reasoning {
+		if delta.Kind != reasoning.Encrypted {
+			text.WriteString(delta.Text)
+		}
+	}
+	return text.String()
 }
 
 // CompletionResponse is the normalized form of a non-streaming response.
@@ -502,6 +540,10 @@ type ChatRequest struct {
 	// backend default applies. Each protocol maps them to its wire shape.
 	Temperature *float64 `json:"-"`
 	TopP        *float64 `json:"-"`
+	// ReasoningContentKind applies only to unlabelled compatibility fields.
+	// The caller supplies an observation about this serving connection, never
+	// a model-name guess; explicit wire kinds always take precedence.
+	ReasoningContentKind reasoning.Kind `json:"-"`
 }
 
 type ChatResponse struct {
@@ -557,7 +599,15 @@ type ChatAPIError struct {
 type ToolDef struct {
 	Type         string        `json:"type"`
 	Function     FunctionDef   `json:"function"`
+	Format       *ToolFormat   `json:"format,omitempty"`
 	CacheControl *CacheControl `json:"cache_control,omitempty"`
+}
+
+// ToolFormat is the native custom-tool grammar contract.
+type ToolFormat struct {
+	Type       string `json:"type"`
+	Syntax     string `json:"syntax"`
+	Definition string `json:"definition"`
 }
 
 type FunctionDef struct {

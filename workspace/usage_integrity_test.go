@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"reflect"
 	"testing"
 
 	"crude/sessiondb"
@@ -41,7 +42,7 @@ func TestUsageContextIsAgentLocalAndLiveEqualsPersisted(t *testing.T) {
 	for _, scope := range []types.UsageScope{types.UsageThisAgent, types.UsageSubtree, types.UsageSession} {
 		a, _ := live.UsageSummary("root", scope)
 		b, _ := resumed.UsageSummary("root", scope)
-		if a != b {
+		if !reflect.DeepEqual(a, b) {
 			t.Fatalf("live and resumed usage disagree for %s: live=%+v resumed=%+v", scope, a, b)
 		}
 		if a.ContextUsed.Value != 100 || a.ContextLimit.Value != 1000 || a.ModelID != "root-model" {

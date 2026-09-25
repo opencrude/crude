@@ -1,6 +1,9 @@
 package sessiondb
 
-import "time"
+import (
+	"crude/types/accounting"
+	"time"
+)
 
 // UsageRecordFromEvent is the one accounting decoder for durable writes and
 // live projections. It never invents a request ID or infers cost availability.
@@ -31,6 +34,9 @@ func UsageRecordFromEvent(data any, sessionID, agentID, parentAgentID, fallbackM
 		ContextWindow: int(usageInteger(values["context_window"])), CreatedAt: reported, UpdatedAt: reported,
 	}
 	r.RequestKind, _ = values["request_kind"].(string)
+	if outcome, ok := values["request_outcome"].(string); ok && accounting.Outcome(outcome).Known() {
+		r.Outcome = accounting.Outcome(outcome)
+	}
 	if r.RequestKind == "" {
 		r.RequestKind = "normal"
 	}

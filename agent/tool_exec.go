@@ -7,6 +7,7 @@ import (
 	"strings"
 	"time"
 
+	"crude/codexio"
 	"crude/provider"
 	"crude/safety"
 	"crude/tools"
@@ -36,6 +37,12 @@ func findToolDef(name string, defs []tools.ToolDef) *tools.ToolFuncDef {
 }
 
 func validateRequiredParams(toolName string, params map[string]any, defs []tools.ToolDef) string {
+	if toolName == "apply_patch" {
+		if _, err := codexio.Parse(getStr(params, "input")); err != nil {
+			return "Error: " + err.Error()
+		}
+		return ""
+	}
 	def := findToolDef(toolName, defs)
 	if def == nil {
 		return ""
@@ -55,10 +62,17 @@ func validateRequiredParams(toolName string, params map[string]any, defs []tools
 			empty = append(empty, req)
 		}
 	}
-	if len(empty) == 0 {
-		return ""
+	if len(empty) > 0 {
+		return fmt.Sprintf("Error: tool %q has empty required parameter(s): %s. You MUST provide a non-empty value for each required parameter. Call %s again with %s filled in.", toolName, strings.Join(empty, ", "), toolName, strings.Join(empty, ", "))
 	}
-	return fmt.Sprintf("Error: tool %q has empty required parameter(s): %s. You MUST provide a non-empty value for each required parameter. Call %s again with %s filled in.", toolName, strings.Join(empty, ", "), toolName, strings.Join(empty, ", "))
+	if toolName == "edit_file" {
+		old, oldOK := params["old_string"].(string)
+		replacement, newOK := params["new_string"].(string)
+		if oldOK && newOK && old == replacement {
+			return "Error: no changes to make: old_string and new_string are exactly the same. Do not call edit_file unless the replacement differs."
+		}
+	}
+	return ""
 }
 
 func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []provider.ToolCall, emit func(AgentEvent), blockResolveCh <-chan ttypes.BlockResponse, lastReply *string, step int) <-chan execResult {
@@ -71,7 +85,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []provider.ToolC
 	var nonBlocking, blocking []indexedToolCall
 	for index, tc := range toolCalls {
 		indexed := indexedToolCall{index: index, call: tc}
-		if isPotentiallyBlocking(tc.Function.Name) {
+		if isPotentiallyBlocking(tc.Function.Name) && !a.parallelCommandAllowed(tc) {
 			blocking = append(blocking, indexed)
 		} else {
 			nonBlocking = append(nonBlocking, indexed)
@@ -143,11 +157,11 @@ func (a *Agent) executeOneToolCallSafely(
 
 func isPotentiallyBlocking(name string) bool {
 	switch name {
-	case "question":
+	case "question", "multi_tool_use.parallel":
 		return true
-	case "execute_command", "async_execute_command":
+	case "exec_command", "write_stdin", "execute_command", "async_execute_command":
 		return true
-	case "write_file", "edit_file", "delete_file", "move_file", "copy_file":
+	case "apply_patch", "write_file", "edit_file", "delete_file", "move_file", "copy_file":
 		return true
 	case "reply", "write_report":
 		return true
@@ -166,8 +180,8 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 	}
 	goroutineStart := time.Now()
 
-	var params map[string]any
-	if err := json.Unmarshal([]byte(tc.Function.Arguments), &params); err != nil {
+	params, parseErr := provider.ToolCallParams(tc)
+	if err := parseErr; err != nil {
 		a.logger.Error("TOOL", "invalid_args", "name", tc.Function.Name, "error", err.Error())
 		errResult := "Error: invalid arguments: " + err.Error()
 		emit(AgentEvent{Type: "tool_call", Data: map[string]any{
@@ -193,14 +207,17 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 	}
 
 	validationDefs := a.FilteredTools
-	if len(validationDefs) == 0 {
-		validationDefs = tools.AgentTools
+	if validationDefs == nil {
+		validationDefs = tools.ForModel(tools.AgentTools, a.Model)
 	}
 	errMsg := ""
-	if len(a.FilteredTools) > 0 && findToolDef(tc.Function.Name, a.FilteredTools) == nil {
+	if a.FilteredTools != nil && findToolDef(tc.Function.Name, validationDefs) == nil {
 		errMsg = fmt.Sprintf("Error: tool %q is not available to this agent.", tc.Function.Name)
 	} else {
 		errMsg = validateRequiredParams(tc.Function.Name, params, validationDefs)
+	}
+	if errMsg == "" && tc.Function.Name == "apply_patch" {
+		errMsg = a.validatePatchPermissions(params)
 	}
 	if errMsg != "" {
 		a.logger.Warn("TOOL", "empty_required_param", "name", tc.Function.Name)
@@ -230,6 +247,8 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		content := getStr(params, "content")
 		*lastReply = content
 		a.logger.Debug("AGENT", "goroutine_reply", "content_len", len(content), "tool_id", tc.ID)
+		// Deliver progress in the ordered result loop: a parallel reply must
+		// occupy the same position live and in the persisted transcript.
 		return execResult{id: tc.ID, params: params, name: tc.Function.Name, result: tools.ToolResult{Content: content}}
 	}
 
@@ -290,9 +309,21 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		return execResult{id: tc.ID, name: "question", result: tools.ToolResult{Content: result}, toolError: resultError}
 	}
 
-	if tc.Function.Name == "execute_command" || tc.Function.Name == "async_execute_command" {
+	if tc.Function.Name == "execute_command" || tc.Function.Name == "async_execute_command" || tc.Function.Name == "exec_command" || (tc.Function.Name == "write_stdin" && getStr(params, "chars") != "") {
 		cmd := getStr(params, "command")
+		if tc.Function.Name == "exec_command" {
+			cmd = getStr(params, "cmd")
+		}
+		if tc.Function.Name == "write_stdin" {
+			cmd = getStr(params, "chars")
+		}
 		sr := safety.CheckCommandSafetyWithPolicy(cmd, a.logger, a.CommandPolicy)
+		if getStr(params, "sandbox_permissions") == "require_escalated" || (tc.Function.Name == "write_stdin" && cmd != "\x03") {
+			if !sr.Risk.IsAlwaysBlocked() {
+				sr.Risk = safety.RiskUnknown
+				sr.Reason = "Explicit execution permission or interactive input requires approval"
+			}
+		}
 		if a.CommandPolicy.NotifyDangerous && sr.Risk >= safety.RiskDestructive {
 			emit(AgentEvent{Type: "safety_alert", Data: map[string]any{
 				"risk": sr.Risk.String(), "reason": sr.Reason, "command": cmd,
@@ -381,6 +412,11 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 	fileTarget := ""
 	filePath := ""
 	switch tc.Function.Name {
+	case "apply_patch":
+		fileCheck = true
+		fileOp = "Update"
+		parsed, _ := codexio.Parse(getStr(params, "input"))
+		fileTarget = strings.Join(parsed.Paths(""), ", ")
 	case "write_file":
 		fileCheck = true
 		fileOp = "Create"
@@ -423,7 +459,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 	if fileCheck && !autoAllowed && !a.yoloEnabled() {
 		question := fmt.Sprintf("Allow this %s operation on %s?", fileOp, fileTarget)
 		drainStaleBlockResponses(blockResolveCh)
-		emit(AgentEvent{Type: "blocking", Data: map[string]string{
+		blockingData := map[string]string{
 			"block_id":   blockID,
 			"operation":  fileOp,
 			"tool":       tc.Function.Name,
@@ -432,7 +468,11 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			"risk":       "write",
 			"reason":     fmt.Sprintf("The %s tool modifies files on disk", tc.Function.Name),
 			"suggestion": "",
-		}})
+		}
+		if tc.Function.Name == "apply_patch" {
+			blockingData["patch_input"] = getStr(params, "input")
+		}
+		emit(AgentEvent{Type: "blocking", Data: blockingData})
 		response, ok := waitForBlockResponse(ctx, blockResolveCh, blockID)
 		if !ok {
 			emit(AgentEvent{Type: "blocking_complete"})
@@ -460,7 +500,9 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		}
 		a.logger.Info("BLOCK", "resolved", "response", resp, "operation", fileOp, "tool", tc.Function.Name)
 		emit(AgentEvent{Type: "blocking_complete"})
-		if resp == "always" {
+		if resp == "always" && tc.Function.Name == "apply_patch" {
+			emit(AgentEvent{Type: "confirmation_always", Data: map[string]string{"operation": fileOp, "tool": tc.Function.Name, "patch_input": getStr(params, "input")}})
+		} else if resp == "always" {
 			emit(AgentEvent{Type: "confirmation_always", Data: map[string]string{
 				"operation": fileOp,
 				"tool":      tc.Function.Name,
@@ -471,17 +513,20 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		a.logger.Debug("SAFETY", "yolo_skip", "tool", tc.Function.Name, "op", fileOp)
 	}
 
-	argsStr := formatToolArgs(params)
 	emit(AgentEvent{Type: "tool_call", Data: map[string]any{
 		"internal_id": internalID,
 		"tool_id":     tc.ID,
 		"name":        tc.Function.Name,
-		"args":        argsStr,
+		"args":        tc.Function.Arguments,
 	}})
 
 	path := getStr(params, "path")
 
 	switch tc.Function.Name {
+	case "apply_patch":
+		paths, _, _ := codexio.Preview(getStr(params, "input"))
+		path = strings.Join(paths, ", ")
+		emit(AgentEvent{Type: "tool_progress", Data: map[string]any{"internal_id": internalID, "tool_id": tc.ID, "name": tc.Function.Name, "phase": "patching", "path": path}})
 	case "write_file":
 		content := getStr(params, "content")
 		lines := CountLines(content)
@@ -550,12 +595,17 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 
 	var result tools.ToolResult
 	var toolErr error
-	if fileCheck && filePath != "" {
+	if tc.Function.Name == "multi_tool_use.parallel" {
+		result, toolErr = a.executeParallel(ctx, tc, params, emit, blockResolveCh, lastReply)
+	} else if fileCheck && filePath != "" {
 		mu := a.fileMutex(filePath)
 		mu.Lock()
 		result, toolErr = a.ToolFn(ctx, tc.Function.Name, params)
 		mu.Unlock()
 	} else {
+		if tc.Function.Name == "run_sub_agent" {
+			ctx = context.WithValue(ctx, SubAgentToolCallIDKey{}, tc.ID)
+		}
 		result, toolErr = a.ToolFn(ctx, tc.Function.Name, params)
 	}
 	if toolErr != nil && result.Content == "" {
@@ -576,7 +626,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		a.logger.Info("TOOL", "result", "name", tc.Function.Name, "latency_ms", toolDur, "len", len(result.Content))
 	}
 
-	if (tc.Function.Name == "write_file" || tc.Function.Name == "edit_file") && !toolFailed {
+	if (tc.Function.Name == "apply_patch" || tc.Function.Name == "write_file" || tc.Function.Name == "edit_file") && !toolFailed {
 		emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
 			"internal_id":     internalID,
 			"tool_id":         tc.ID,
@@ -623,7 +673,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		"tool_dur_ms":     toolDur,
 		"tool_est_tokens": provider.EstimateTokens(tc.Function.Arguments, a.Model),
 	}
-	if tc.Function.Name == "write_file" || tc.Function.Name == "edit_file" || tc.Function.Name == "write_report" {
+	if tc.Function.Name == "apply_patch" || tc.Function.Name == "write_file" || tc.Function.Name == "edit_file" || tc.Function.Name == "write_report" {
 		resultData["lines_added"] = result.Added
 		resultData["lines_removed"] = result.Removed
 	}

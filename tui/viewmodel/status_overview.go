@@ -114,14 +114,14 @@ func (m *App) statusHeaderRightSegments() []shellheader.Segment {
 	if strings.HasPrefix(target, "agent:") {
 		agentID := strings.TrimPrefix(target, "agent:")
 		if node := m.AgentMgr.Get(agentID); node != nil {
-			status, _ := m.Status.Agent(node.ID)
 			usage, _ := m.UsageSummary(node.ID, ttypes.UsageThisAgent)
-			backendModel := ""
-			if backend := m.BackendSession(); backend != nil {
-				backendModel = backend.ModelName()
-			}
-			if model := firstNonempty(usage.ModelID, node.Model, status.ModelID, backendModel, m.ModelName); model != "" {
+			identity := m.AgentModelIdentity(node.ID)
+			if model := firstNonempty(identity.ModelID, m.ModelName); model != "" {
 				segments = append(segments, shellheader.Segment{Text: model, Role: ui.ColorMuted, Action: "tabs", TargetID: target, Priority: 4})
+			}
+			// A previous model's last request is not the new model's context.
+			if usage.ModelID != identity.ModelID || usage.AccountID != identity.AccountID {
+				usage.ContextUsed.Known, usage.ContextLimit.Known = false, false
 			}
 			segments = append(segments, agentHeaderUsageSegments(usage, target)...)
 		}
@@ -487,19 +487,22 @@ func (m *App) statusTabItems() []statusoverview.Item {
 			actionLabel = "Return to Tab"
 		}
 		agentUsage, hasUsage := m.UsageSummary(node.ID, ttypes.UsageThisAgent)
-		backendModel := ""
-		if backend := m.BackendSession(); backend != nil {
-			backendModel = backend.ModelName()
-		}
-		model := firstNonempty(state.ModelID, node.Model, agentUsage.ModelID, backendModel, "Model unavailable")
+		identity := m.AgentModelIdentity(node.ID)
+		model := firstNonempty(identity.ModelID, "Model unavailable")
 		subtitle := model
-		provider := firstNonempty(state.ProviderID, agentUsage.ProviderID)
+		provider := identity.ProviderID
 		if provider != "" {
 			subtitle = displayProvider(provider) + " / " + model
 		}
 		lines := []statusoverview.DetailLine{{Label: "Activity", Value: firstNonempty(state.Detail, string(state.Phase)), Role: ui.ColorMuted}}
+		if activity := m.AgentActivity(node.ID); activity.Summary != "" {
+			lines = append(lines, statusoverview.DetailLine{Label: "Session", Value: activity.Summary, Role: ui.ColorMuted})
+		}
+		if node.IsActive() && state.ModelID != "" && state.ModelID != identity.ModelID {
+			lines = append(lines, statusoverview.DetailLine{Label: "Active request", Value: state.ModelID + " / " + state.ProviderID, Role: ui.ColorMuted})
+		}
 		if hasUsage {
-			lines = append(lines, statusoverview.DetailLine{Label: "Context", Value: formatContext(agentUsage), Role: contextRole(agentUsage)})
+			lines = append(lines, statusoverview.DetailLine{Label: "Last context", Value: formatContext(agentUsage) + " / " + agentUsage.ModelID, Role: contextRole(agentUsage)})
 			lines = append(lines, statusoverview.DetailLine{Label: "Reported", Value: agentUsage.MeasuredAt.Local().Format("2006-01-02 15:04:05"), Role: ui.ColorMuted})
 		}
 		if state.TotalBytes > 0 {
@@ -511,8 +514,15 @@ func (m *App) statusTabItems() []statusoverview.Item {
 		if state.ReadOnly {
 			lines = append(lines, statusoverview.DetailLine{Label: "Access", Value: "Read only", Role: ui.ColorMuted})
 		}
+		compact := ""
+		if hasUsage {
+			compact = usageTurns(agentUsage.Turns, agentUsage.TurnsKnown) + " · " + formatCost(agentUsage.Cost)
+			if len(agentUsage.Models) > 1 {
+				compact = fmt.Sprintf("%d models · %s", len(agentUsage.Models), compact)
+			}
+		}
 		items = append(items, statusoverview.Item{
-			ID: "agent:" + node.ID, Label: label, Summary: formatAgentState(state),
+			ID: "agent:" + node.ID, Label: label, Summary: formatAgentState(state), Compact: compact,
 			Active: node.ID == activeAgent && m.EditorState.ActiveView == "", Owner: state.Ref,
 			Subtitle: subtitle, Lines: lines, Usage: m.agentUsageSections(node.ID),
 			PrimaryAction: action, PrimaryLabel: actionLabel, PrimaryEnabled: true,
@@ -640,6 +650,23 @@ func compactSingleGroup(items []statusoverview.Item) []statusoverview.Item {
 	return out
 }
 
+func usageCount(count int, label string) string {
+	if count != 1 {
+		label += "s"
+	}
+	return fmt.Sprintf("%d %s", count, label)
+}
+
+func usageTurns(count int, known bool) string {
+	if !known {
+		if count == 0 {
+			return "turns unreported"
+		}
+		return fmt.Sprintf("%d+ turns", count)
+	}
+	return usageCount(count, "turn")
+}
+
 func (m *App) agentUsageSections(agentID string) []statusoverview.UsageSection {
 	sections := make([]statusoverview.UsageSection, 0, 4)
 	var previous ttypes.UsageSummary
@@ -652,10 +679,24 @@ func (m *App) agentUsageSections(agentID string) []statusoverview.UsageSection {
 			continue
 		}
 		lines := []statusoverview.DetailLine{
+			{Label: "Turns", Value: usageTurns(summary.Turns, summary.TurnsKnown) + " (successful API calls)", Role: ui.ColorMuted},
 			{Label: "Input", Value: formatUsageValue(summary.InputTotal), Role: ui.ColorFg},
 			{Label: "Output", Value: formatUsageValue(summary.Output), Role: ui.ColorFg},
 			{Label: "Cost", Value: formatCost(summary.Cost), Role: ui.ColorFg},
 			{Label: "Requests", Value: fmt.Sprintf("%d", summary.Requests), Role: ui.ColorMuted},
+		}
+		if len(summary.Models) > 0 {
+			lines = append(lines, statusoverview.DetailLine{Blank: true}, statusoverview.DetailLine{Value: "Usage by model", Role: ui.ColorAccent2})
+			for _, model := range summary.Models {
+				identity := firstNonempty(model.ModelID, "Unknown model")
+				if model.ProviderID != "" {
+					identity += " / " + model.ProviderID
+				}
+				if model.AccountID != "" {
+					identity += " / " + model.AccountID
+				}
+				lines = append(lines, statusoverview.DetailLine{Value: identity, Role: ui.ColorFg}, statusoverview.DetailLine{Value: usageTurns(model.Turns, model.TurnsKnown) + " · " + usageCount(model.Requests, "request") + " · " + formatCost(model.Cost), Role: ui.ColorMuted})
+			}
 		}
 		optional := false
 		if summary.UncachedInput.Known {

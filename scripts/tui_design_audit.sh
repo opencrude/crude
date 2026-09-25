@@ -11,6 +11,21 @@ fail=0
 
 echo "== TUI design audit =="
 
+# Rendering and message coalescing consume neutral events, never protocol adapters.
+if rg -n '"crude/provider(/[^\"]*)?"' --glob '*.go' --glob '!*_test.go' \
+  tui/chatprojection tui/screens/shellchat tui/rendering tui/ui tui/tui.go types/reasoning types/accounting types/activity; then
+  echo "FAIL: provider dependency in rendering or neutral reasoning contracts"
+  fail=1
+else
+  echo "OK: rendering and reasoning contracts have no provider imports"
+fi
+if rg -n '"crude/(tui|workspace|session|provider)(/[^\"]*)?"' --glob '*.go' types/reasoning types/accounting types/activity; then
+  echo "FAIL: neutral reasoning contract depends on a runtime layer"
+  fail=1
+else
+  echo "OK: neutral reasoning contract is runtime-independent"
+fi
+
 # 1) Forbidden width libraries in tui/
 if rg -n '"github.com/rivo/uniseg"' --glob '*.go' tui/ 2>/dev/null; then
   echo "FAIL: uniseg import in tui/"

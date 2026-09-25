@@ -6,17 +6,21 @@ package shellchat
 import (
 	"strings"
 
+	tea "charm.land/bubbletea/v2"
+
 	"crude/tui/chatprojection"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/types"
 	"crude/tui/ui"
+	ctypes "crude/types"
 )
 
 const (
-	ScreenID    ui.ComponentID = "shellchat"
-	AreaID      ui.ComponentID = "shellchat/area"
-	ScrollbarID ui.ComponentID = "shellchat/scrollbar"
+	ScreenID       ui.ComponentID = "shellchat"
+	AreaID         ui.ComponentID = "shellchat/area"
+	ScrollbarID    ui.ComponentID = "shellchat/scrollbar"
+	ActivityHeight                = 2 // one gap and one fixed activity line
 )
 
 type chatLayout struct {
@@ -45,7 +49,20 @@ type Screen struct {
 	paintState     messagePaintState
 	width          int
 	height         int
+	activity       ctypes.AgentActivityView
+	activitySet    bool
+	activityStrip  chatprojection.ActivityStrip
+	stripLineWidth int
 }
+
+func (s *Screen) SetActivity(activity ctypes.AgentActivityView) {
+	s.activity = activity
+	s.activitySet = true
+}
+
+// ActivityRows preserves one readable transcript row in extremely short grids.
+// Reservation depends only on geometry, never the current lifecycle phase.
+func ActivityRows(height int) int { return min(ActivityHeight, max(0, height-1)) }
 
 // New creates an agent-chat shell screen.
 func New(th *theme.Theme) *Screen {
@@ -197,6 +214,9 @@ func (s *Screen) mainScrollbarVisible() bool {
 
 func (s *Screen) listLayoutRect(r ui.Rect) ui.Rect {
 	list := r
+	if s.activitySet {
+		list.H -= ActivityRows(list.H)
+	}
 	if !s.layout.mainSBVisible || s.scrollbar == nil {
 		return list
 	}
@@ -212,6 +232,9 @@ func (s *Screen) listLayoutRect(r ui.Rect) ui.Rect {
 }
 
 func (s *Screen) scrollbarLayoutRect(r ui.Rect) ui.Rect {
+	if s.activitySet {
+		r.H -= ActivityRows(r.H)
+	}
 	gw := ui.ScrollbarWidth
 	sbX := r.W - s.layout.padLR - gw
 	if sbX < 0 {
@@ -250,18 +273,34 @@ func (s *Screen) Layout(_ ui.LayoutContext, r ui.Rect) {
 		s.scrollbar.SetScroll(s.list.Scroll())
 		s.scrollbar.Layout(ui.LayoutContext{}, s.scrollbarLayoutRect(local))
 	}
+	if s.activitySet {
+		s.activityStrip.Update(s.activity, max(0, r.W-2*s.layout.padLR), s.th, s.tokens)
+	}
 }
 
 func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
-	_ = ox
-	_ = oy
-	_ = buf
-	_ = ctx
+	if !s.activitySet || ActivityRows(s.height) == 0 {
+		return
+	}
+	r := s.Bounds()
+	width := max(0, r.W-2*s.layout.padLR)
+	pl := s.activityStrip.Line(ctx.Frame)
+	s.stripLineWidth = min(width, pl.VisibleWidth())
+	chatprojection.PaintLineAt(buf, ox+r.X+s.layout.padLR, oy+r.Y+r.H-1, width, pl, s.tokens, 0, 0, false)
 }
 
 func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if s == nil {
 		return ui.EventResult{}
+	}
+	if s.activitySet && ctx.LocalY >= s.height-ActivityRows(s.height) && (evt.Kind == ui.EventMouseClick || evt.Kind == ui.EventMouseMotion) && !s.selection.selecting && s.paneDrag == nil {
+		if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft && ctx.LocalY == s.height-1 &&
+			s.activity.ThinkingID != "" && s.activity.ThinkingDisplay.Kind.HasCompactPreview() &&
+			ctx.LocalX >= s.layout.padLR && ctx.LocalX < s.layout.padLR+s.stripLineWidth {
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint,
+				Action: &ui.Action{ID: chatprojection.ChatToggleActionID, Payload: chatprojection.ChatTogglePayload{MessageID: s.activity.ThinkingID}}}
+		}
+		return ui.EventResult{Handled: true}
 	}
 
 	if evt.Kind == ui.EventCustom {

@@ -144,6 +144,7 @@ func sameMessageData(current, incoming *types.ChatMessage) bool {
 		current.ToolInput == incoming.ToolInput &&
 		current.ToolScope == incoming.ToolScope &&
 		current.ToolID == incoming.ToolID &&
+		current.ToolRoundID == incoming.ToolRoundID &&
 		current.ToolStatus == incoming.ToolStatus &&
 		current.ToolIndex == incoming.ToolIndex &&
 		current.ToolProgressPhase == incoming.ToolProgressPhase &&
@@ -158,6 +159,7 @@ func sameMessageData(current, incoming *types.ChatMessage) bool {
 		current.ThinkingActive == incoming.ThinkingActive &&
 		current.ThinkingInterrupted == incoming.ThinkingInterrupted &&
 		current.ThinkingDuration == incoming.ThinkingDuration &&
+		current.ThinkingDisplay == incoming.ThinkingDisplay &&
 		current.LifecyclePhase == incoming.LifecyclePhase &&
 		current.LifecycleProgress == incoming.LifecycleProgress &&
 		current.LifecycleProvider == incoming.LifecycleProvider &&
@@ -172,6 +174,7 @@ func sameMessageData(current, incoming *types.ChatMessage) bool {
 		current.LifecycleCompleted == incoming.LifecycleCompleted &&
 		current.LifecycleStageCount == incoming.LifecycleStageCount &&
 		current.LifecycleRetryAttempt == incoming.LifecycleRetryAttempt &&
+		current.LifecycleRetryAt.Equal(incoming.LifecycleRetryAt) &&
 		current.LifecycleRetryLimit == incoming.LifecycleRetryLimit &&
 		current.LifecycleContextWindow == incoming.LifecycleContextWindow &&
 		current.PendingBtw == incoming.PendingBtw &&

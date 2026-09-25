@@ -30,11 +30,13 @@ type subPaneProjection struct {
 	// scrollbar/cursor state; this projection does.
 	scroll *ui.ScrollModel
 
-	// compact tool-line native cache (keyed by source version + width + count).
+	// Compact titles retain source/geometry caches; only active dots depend on phase.
 	compactToolLines  []chatprojection.SubPaneLine
 	compactCacheWidth int
 	compactMsgVersion uint64
 	compactMsgCount   int
+	compactAnimating  bool
+	compactDot        string
 	// expanded mirrors the parent chat block's disclosure state so completed
 	// panes retain their scrollbar when reopened.
 	expanded bool
@@ -342,7 +344,6 @@ func (reg *subPaneProjectionRegistry) Render(paneID string, sp *workspace.SubPan
 	if sp.Done && !expanded {
 		return []chatprojection.SubPaneLine{
 			chatprojection.BuildSubPaneSummaryLine(view, width),
-			chatprojection.SeparatorLine(),
 		}
 	}
 
@@ -410,10 +411,12 @@ func (reg *subPaneProjectionRegistry) renderAgentCompact(paneID string, sp *work
 	msgs := p.renderer.Messages()
 	var allToolLines []chatprojection.SubPaneLine
 	msgVersion := p.renderer.Version()
-	if p.compactToolLines != nil && p.compactMsgVersion == msgVersion && p.compactMsgCount == len(msgs) && p.compactCacheWidth == width {
+	dot := ui.ActivityDot(spinFrame)
+	if p.compactToolLines != nil && p.compactMsgVersion == msgVersion && p.compactMsgCount == len(msgs) && p.compactCacheWidth == width && (!p.compactAnimating || p.compactDot == dot) {
 		allToolLines = p.compactToolLines
 	} else {
-		allToolLines = chatprojection.BuildSubPaneToolLines(view, width)
+		allToolLines, p.compactAnimating = chatprojection.BuildSubPaneToolLines(msgs, width, spinFrame)
+		p.compactDot = dot
 		p.compactToolLines = allToolLines
 		p.compactMsgVersion = msgVersion
 		p.compactMsgCount = len(msgs)
@@ -456,9 +459,6 @@ func (reg *subPaneProjectionRegistry) renderAgentCompact(paneID string, sp *work
 	lines := make([]chatprojection.SubPaneLine, 0, 1+len(toolLines))
 	lines = append(lines, headerLine)
 	lines = append(lines, toolLines...)
-	if sp.Done && expanded {
-		lines = append(lines, chatprojection.SeparatorLine())
-	}
 	return lines
 }
 

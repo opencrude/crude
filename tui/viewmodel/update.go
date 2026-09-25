@@ -917,6 +917,8 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 				}
 				owner, _ := m.sessionProjectionForAgent(node.ID)
 				if owner == session {
+					node.Model = msg.settings.Model
+					node.Model = m.AgentModelIdentity(node.ID).ModelID
 					m.subPaneProjections.Get(node.ID, workspace.PaneAgent).renderer.SetLegacyModelFallback(msg.settings.Model)
 				}
 			}

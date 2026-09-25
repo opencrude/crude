@@ -1,16 +1,70 @@
 package shellchat_test
 
 import (
+	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/chatprojection"
+	"crude/tui/rendering"
 	"crude/tui/screens/shellchat"
 	"crude/tui/theme"
 	"crude/tui/types"
 	"crude/tui/ui"
 )
+
+func TestUserAndAgentHeadersPaintSubtleThemeRulesAcrossViewport(t *testing.T) {
+	for _, themeCase := range []struct {
+		name string
+		th   *theme.Theme
+	}{
+		{"dark", theme.DefaultDark()},
+		{"light", theme.DefaultLight()},
+	} {
+		for _, width := range []int{80, 24} {
+			t.Run(themeCase.name+"/"+strconv.Itoa(width), func(t *testing.T) {
+				th := themeCase.th
+				renderer := chatprojection.NewRenderer(th)
+				renderer.SetSize(width, 16)
+				renderer.SetChatAreaBounds(0, 16)
+				renderer.SetUsername("You")
+				renderer.SyncMessages([]types.ChatMessage{
+					{InternalID: "user", Role: types.RoleUser, Content: "first", Time: time.Unix(1000, 0)},
+					{InternalID: "agent", Role: types.RoleAssistant, Content: "second", ModelID: "m", Time: time.Unix(1001, 0)},
+				}, 1)
+				rows, _, height := renderer.ExportMessageRows(width)
+				screen := shellchat.New(th)
+				screen.SetMessages(rows, shellchat.PaintParams{Compose: shellchat.ComposeParams{InnerW: width - 4, PadLR: 2, Theme: th}})
+				screen.SyncScrollMetrics(height, height)
+				buf := screen.PaintTestBuffer(width, height)
+				tokens := ui.NewTokenSet(th)
+				y := 0
+				for _, row := range rows {
+					for i, line := range row.Lines {
+						if i < len(row.Native) && row.Native[i].HeaderRule {
+							if strings.Contains(line, "first") || strings.Contains(line, "second") {
+								t.Fatalf("body was marked as a header: %q", line)
+							}
+							for _, x := range []int{0, 1, width - 2, width - 1} {
+								cell := buf.Get(x, y)
+								if cell.Char != '─' || cell.FG != tokens.Color(ui.ColorBorder) {
+									t.Fatalf("header edge (%d,%d) = %+v; want themed rule", x, y, cell)
+								}
+							}
+							if row.Native[i].Spans[0].BgSet || buf.Get(2, y).BG == tokens.Color(ui.ColorPopupSubtleBg) {
+								t.Fatalf("name still has label background: %+v", row.Native[i].Spans[0])
+							}
+						}
+						y++
+					}
+				}
+			})
+		}
+	}
+}
 
 func TestMessageSyncPreservesUnchangedCaches(t *testing.T) {
 	store := chatprojection.NewMessageSync()
@@ -24,6 +78,102 @@ func TestMessageSyncPreservesUnchangedCaches(t *testing.T) {
 	}
 	if got := store.Messages[0].CachedLines; len(got) != 1 || got[0] != "rendered" {
 		t.Fatalf("unchanged cache discarded: %#v", got)
+	}
+}
+
+func TestParallelBatchPaintsChildActionsInsteadOfEscapedJSON(t *testing.T) {
+	th := theme.DefaultDark()
+	renderer := chatprojection.NewRenderer(th)
+	renderer.SetSize(116, 18)
+	renderer.SetChatAreaBounds(0, 18)
+	renderer.SyncMessages([]types.ChatMessage{{InternalID: "batch", Role: types.RoleTool, ToolName: "multi_tool_use.parallel", ToolInput: `{"tool_uses":[{"recipient_name":"functions.execute_command","parameters":{"command":"git status --short"}},{"recipient_name":"functions.read_file","parameters":{"path":"main.go"}}]}`, ToolStatus: "success", ToolPreviewPhase: "done", Content: `{"results":[{"recipient_name":"execute_command","result":"M main.go\nM go.mod","error":false},{"recipient_name":"read_file","result":"package main","error":false}]}`}}, 1)
+	renderer.ToggleDisclosure("activity:batch:0")
+	rows, _, height := renderer.ExportMessageRows(116)
+	screen := shellchat.New(th)
+	screen.SetMessages(rows, shellchat.PaintParams{Compose: shellchat.ComposeParams{InnerW: 116, PadLR: 2, Theme: th}})
+	screen.SyncScrollMetrics(height, 18)
+	screen.Layout(ui.LayoutContext{}, ui.Rect{W: 120, H: 18})
+	buf := screen.PaintTestBuffer(120, 18)
+	var painted strings.Builder
+	for y := range 18 {
+		painted.WriteString(shellchat.PlainRow(buf, y, 120))
+		painted.WriteByte('\n')
+	}
+	for _, want := range []string{"Ran 1 command", "git status --short", "main.go"} {
+		if !strings.Contains(painted.String(), want) {
+			t.Fatalf("painted chat missing %q:\n%s", want, painted.String())
+		}
+	}
+	if strings.Contains(painted.String(), `{"results"`) || strings.Contains(painted.String(), `\nM`) {
+		t.Fatalf("painted chat leaked raw batch response:\n%s", painted.String())
+	}
+}
+
+func TestRetainedToolLeavesPaintQuietlyWithColoredActivity(t *testing.T) {
+	for _, th := range []*theme.Theme{theme.DefaultDark(), theme.DefaultLight(), theme.DefaultWarm(), theme.DefaultMidnight(), theme.DefaultHighContrast()} {
+		for _, width := range []int{48, 120} {
+			r := chatprojection.NewRenderer(th)
+			r.SetSize(width-4, 40)
+			r.SetChatAreaBounds(0, 40)
+			r.SyncMessages([]types.ChatMessage{
+				{InternalID: "read", ToolRoundID: "previous", Role: types.RoleTool, ToolName: "read_file", ToolArgs: "src/source.go", ToolStatus: types.ToolStatusSuccess, ToolPreviewPhase: types.ToolPreviewDone},
+				{InternalID: "command", ToolRoundID: "previous", Role: types.RoleTool, ToolName: "execute_command", ToolCommand: "go test ./tui/chatprojection ./tui/screens/shellchat", ToolStatus: types.ToolStatusSuccess, ToolPreviewPhase: types.ToolPreviewDone},
+				{InternalID: "active", ToolRoundID: "current", Role: types.RoleTool, ToolName: "execute_command", ToolCommand: "go test ./...", ToolStatus: types.ToolStatusCalling, ToolPreviewPhase: types.ToolPreviewStreaming},
+				{InternalID: "failed", ToolRoundID: "current", Role: types.RoleTool, ToolName: "exec_command", ToolCommand: "fixture --fail", ToolStatus: types.ToolStatusError, ToolPreviewPhase: types.ToolPreviewError, Content: `{"exit_code":2,"output":"fixture failed"}`},
+			}, 1)
+			rows, _, height := r.ExportMessageRows(width - 4)
+			s := shellchat.New(th)
+			s.SetMessages(rows, shellchat.PaintParams{Compose: shellchat.ComposeParams{InnerW: width - 4, PadLR: 2, Theme: th}})
+			s.SyncScrollMetrics(height, 40)
+			s.Layout(ui.LayoutContext{}, ui.Rect{W: width, H: 40})
+			buf := s.PaintTestBuffer(width, 40)
+			tokens := ui.NewTokenSet(th)
+			if tokens.Color(ui.ColorToolTitle) == tokens.Color(ui.ColorToolOperand) || tokens.Color(ui.ColorToolOperand) == tokens.Color(ui.ColorMuted) || tokens.Color(ui.ColorToolOperand) == tokens.Color(ui.ColorFg) || tokens.Color(ui.ColorToolTitle) == tokens.Color(ui.ColorError) {
+				t.Fatalf("theme %s lost distinct tool roles", th.Name)
+			}
+			completed, active, failed := 0, 0, 0
+			for y := range 40 {
+				text := shellchat.PlainRow(buf, y, width)
+				if !strings.Contains(text, "├─") && !strings.Contains(text, "└─") && !strings.Contains(text, "Command failed") {
+					continue
+				}
+				for _, label := range []string{"Read ", "Ran ", "Running ", "Command failed "} {
+					pos := strings.Index(text, label)
+					if pos < 0 {
+						continue
+					}
+					want := ui.ColorToolTitle
+					dotWant := ui.ColorToolTitle
+					switch label {
+					case "Running ":
+						active++
+					case "Command failed ":
+						want, dotWant = ui.ColorError, ui.ColorError
+						failed++
+					default:
+						completed++
+					}
+					x := rendering.VisibleWidth(text[:pos])
+					if got := buf.Get(x, y).FG; got != tokens.Color(want) {
+						t.Fatalf("width %d, %q painted %v instead of %v", width, label, got, tokens.Color(want))
+					}
+					operandX := rendering.VisibleWidth(text[:pos+len(label)])
+					if got := buf.Get(operandX, y).FG; got != tokens.Color(ui.ColorToolOperand) {
+						t.Fatalf("theme %s width %d operand recolored by lifecycle: %s", th.Name, width, text)
+					}
+					dot := strings.IndexAny(text, "●○×")
+					if dot < 0 || buf.Get(rendering.VisibleWidth(text[:dot]), y).FG != tokens.Color(dotWant) {
+						t.Fatalf("width %d lost colored outcome/activity dot: %s", width, text)
+					}
+					if (label == "Command failed ") != strings.Contains(text, "×") {
+						t.Fatalf("failure icon missing or used for normal work: %s", text)
+					}
+				}
+			}
+			if completed != 2 || active != 1 || failed != 1 {
+				t.Fatalf("width %d: expected two completed, one active and one failed leaf, got %d/%d/%d", width, completed, active, failed)
+			}
+		}
 	}
 }
 

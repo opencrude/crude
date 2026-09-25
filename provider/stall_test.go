@@ -107,7 +107,7 @@ func TestStreamRetriesDownloadBlackholeWithoutRST(t *testing.T) {
 	}
 }
 
-func TestStreamRetriesPartialDownloadAndSuppressesReplayPrefix(t *testing.T) {
+func TestStreamNeverReplaysAcceptedPartialOutput(t *testing.T) {
 	var calls atomic.Int32
 	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		if calls.Add(1) == 1 {
@@ -121,23 +121,18 @@ func TestStreamRetriesPartialDownloadAndSuppressesReplayPrefix(t *testing.T) {
 	})
 	stream := testStallStream(t, transport)
 	defer stream.Close()
-	var content strings.Builder
-	for {
-		update, err := stream.Next()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		if err != nil {
-			t.Fatal(err)
-		}
-		content.WriteString(update.ContentDelta)
+	update, err := stream.Next()
+	if err != nil || update.ContentDelta != "par" {
+		t.Fatalf("partial update=%+v err=%v", update, err)
 	}
-	if content.String() != "partial-ok" || calls.Load() != 2 {
-		t.Fatalf("content=%q calls=%d", content.String(), calls.Load())
+	_, err = stream.Next()
+	var stalled *ProgressStallError
+	if !errors.As(err, &stalled) || calls.Load() != 1 {
+		t.Fatalf("accepted output replayed: err=%v calls=%d", err, calls.Load())
 	}
 }
 
-func TestStreamRejectsDivergentPartialReplay(t *testing.T) {
+func TestStreamDoesNotRequestDivergentPartialReplay(t *testing.T) {
 	var calls atomic.Int32
 	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
 		if calls.Add(1) == 1 {
@@ -155,7 +150,8 @@ func TestStreamRejectsDivergentPartialReplay(t *testing.T) {
 		t.Fatal(err)
 	}
 	_, err := stream.Next()
-	if err == nil || !strings.Contains(err.Error(), "replay diverged") {
+	var stalled *ProgressStallError
+	if !errors.As(err, &stalled) || calls.Load() != 1 {
 		t.Fatalf("divergent retry error=%v", err)
 	}
 }

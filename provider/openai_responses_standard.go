@@ -2,6 +2,7 @@ package provider
 
 import (
 	"bytes"
+	"crude/types/reasoning"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -76,6 +77,14 @@ func (s *OpenAIResponsesStandard) EncodeRequest(req *ChatRequest) ([]byte, error
 
 func encodeResponsesInput(messages []ChatMessage) ([]any, error) {
 	input := make([]any, 0, len(messages))
+	customCalls := map[string]bool{}
+	for _, message := range messages {
+		for _, call := range message.ToolCalls {
+			if call.Type == "custom" {
+				customCalls[call.ID] = true
+			}
+		}
+	}
 	for _, msg := range messages {
 		preservedMessage := false
 		preservedCalls := make(map[string]bool)
@@ -97,8 +106,11 @@ func encodeResponsesInput(messages []ChatMessage) ([]any, error) {
 				switch descriptor.Type {
 				case "message":
 					preservedMessage = true
-				case "function_call":
+				case "function_call", "custom_tool_call":
 					preservedCalls[descriptor.CallID] = true
+					if descriptor.Type == "custom_tool_call" {
+						customCalls[descriptor.CallID] = true
+					}
 				}
 				input = append(input, json.RawMessage(bytes.Clone(item.Data)))
 			}
@@ -114,8 +126,12 @@ func encodeResponsesInput(messages []ChatMessage) ([]any, error) {
 				}
 				output = content
 			}
+			outputType := "function_call_output"
+			if customCalls[msg.ToolCallID] {
+				outputType = "custom_tool_call_output"
+			}
 			input = append(input, map[string]any{
-				"type":    "function_call_output",
+				"type":    outputType,
 				"call_id": msg.ToolCallID,
 				"output":  output,
 			})
@@ -146,12 +162,16 @@ func encodeResponsesInput(messages []ChatMessage) ([]any, error) {
 				if preservedCalls[call.ID] {
 					continue
 				}
-				input = append(input, map[string]any{
-					"type":      "function_call",
-					"call_id":   call.ID,
-					"name":      call.Function.Name,
-					"arguments": call.Function.Arguments,
-				})
+				if call.Type == "custom" {
+					input = append(input, map[string]any{"type": "custom_tool_call", "call_id": call.ID, "name": call.Function.Name, "input": call.Function.Arguments})
+					continue
+				}
+				item := map[string]any{"type": "function_call", "call_id": call.ID, "name": call.Function.Name, "arguments": call.Function.Arguments}
+				if namespace, name, ok := strings.Cut(call.Function.Name, "."); ok {
+					item["namespace"] = namespace
+					item["name"] = name
+				}
+				input = append(input, item)
 			}
 		}
 	}
@@ -241,12 +261,17 @@ func validateOpenAIImageURL(value string) error {
 func encodeResponsesTools(tools []ToolDef) []any {
 	result := make([]any, 0, len(tools))
 	for _, tool := range tools {
-		result = append(result, map[string]any{
-			"type":        "function",
-			"name":        tool.Function.Name,
-			"description": tool.Function.Description,
-			"parameters":  tool.Function.Parameters,
-		})
+		if tool.Type == "custom" {
+			result = append(result, map[string]any{"type": "custom", "name": tool.Function.Name, "description": tool.Function.Description, "format": tool.Format})
+			continue
+		}
+		definition := map[string]any{"type": "function", "name": tool.Function.Name, "description": tool.Function.Description, "parameters": tool.Function.Parameters}
+		if namespace, name, ok := strings.Cut(tool.Function.Name, "."); ok {
+			definition["name"] = name
+			result = append(result, map[string]any{"type": "namespace", "name": namespace, "description": "Parallel tool execution", "tools": []any{definition}})
+		} else {
+			result = append(result, definition)
+		}
 	}
 	return result
 }
@@ -361,7 +386,9 @@ type openAIOutputItem struct {
 	Status    string `json:"status"`
 	CallID    string `json:"call_id"`
 	Name      string `json:"name"`
+	Namespace string `json:"namespace"`
 	Arguments string `json:"arguments"`
+	Input     string `json:"input"`
 	Content   []struct {
 		Type    string `json:"type"`
 		Text    string `json:"text"`
@@ -396,7 +423,7 @@ func (r *openAIResponse) toChatResponse() (*ChatResponse, error) {
 
 	msg := ChatMessage{Role: "assistant", Content: TextContent("")}
 	var text strings.Builder
-	var reasoning strings.Builder
+	var trace string
 	for index, raw := range r.Output {
 		var item openAIOutputItem
 		if err := json.Unmarshal(raw, &item); err != nil {
@@ -417,36 +444,33 @@ func (r *openAIResponse) toChatResponse() (*ChatResponse, error) {
 					text.WriteString(firstNonEmpty(part.Refusal, part.Text))
 				}
 			}
-		case "function_call":
+		case "function_call", "custom_tool_call":
 			if responseOutputItemComplete(item.Status) {
-				arguments := item.Arguments
-				if arguments == "" {
-					arguments = "{}"
-				}
+				arguments, callType := item.toolInput()
 				msg.ToolCalls = append(msg.ToolCalls, ToolCall{
 					Index: index,
 					ID:    item.CallID,
-					Type:  "function",
+					Type:  callType,
 					Function: FunctionCall{
-						Name:      item.Name,
+						Name:      item.toolName(),
 						Arguments: arguments,
 					},
 				})
 			}
 		case "reasoning":
-			for _, part := range item.Summary {
-				reasoning.WriteString(part.Text)
+			for partIndex, part := range item.Summary {
+				trace = msg.ReasoningDisplay.Append(trace, reasoning.Delta{Text: part.Text, Kind: reasoning.Summary, BlockID: fmt.Sprintf("%d:%d:summary", index, partIndex)})
 			}
-			for _, part := range item.Content {
+			for partIndex, part := range item.Content {
 				if part.Type == "reasoning_text" {
-					reasoning.WriteString(part.Text)
+					trace = msg.ReasoningDisplay.Append(trace, reasoning.Delta{Text: part.Text, Kind: reasoning.Raw, BlockID: fmt.Sprintf("%d:%d:raw", index, partIndex)})
 				}
 			}
 		}
 	}
 	msg.Content = TextContent(text.String())
-	msg.ReasoningContent = reasoning.String()
-	msg.Reasoning = reasoning.String()
+	msg.ReasoningContent = trace
+	msg.Reasoning = trace
 
 	finishReason := "stop"
 	if len(msg.ToolCalls) > 0 {
@@ -482,9 +506,29 @@ func responseOutputItemComplete(status string) bool {
 }
 
 type openAIResponsesStreamDecoder struct {
-	seenProviderItems map[string]struct{}
-	content           strings.Builder
-	reasoning         strings.Builder
+	seenProviderItems  map[string]struct{}
+	pendingCustomCalls map[string]bool
+	content            strings.Builder
+	reasoningBlocks    map[string]string
+}
+
+func (d *openAIResponsesStreamDecoder) customCallState(item openAIOutputItem, done bool) {
+	if item.Type != "custom_tool_call" {
+		return
+	}
+	if d.pendingCustomCalls == nil {
+		d.pendingCustomCalls = make(map[string]bool)
+	}
+	d.pendingCustomCalls[item.CallID] = !done
+}
+
+func (d *openAIResponsesStreamDecoder) checkCustomCallsComplete() error {
+	for id, pending := range d.pendingCustomCalls {
+		if pending {
+			return fmt.Errorf("stream ended before custom tool call %s completed", id)
+		}
+	}
+	return nil
 }
 
 func (d *openAIResponsesStreamDecoder) Decode(event StreamEvent) (StreamUpdate, error) {
@@ -493,23 +537,29 @@ func (d *openAIResponsesStreamDecoder) Decode(event StreamEvent) (StreamUpdate, 
 		return StreamUpdate{}, nil
 	}
 	if bytes.Equal(data, []byte("[DONE]")) {
+		if err := d.checkCustomCallsComplete(); err != nil {
+			return StreamUpdate{}, err
+		}
 		return StreamUpdate{Done: true}, nil
 	}
 
 	var envelope struct {
-		Type        string                `json:"type"`
-		Delta       string                `json:"delta"`
-		Text        string                `json:"text"`
-		Refusal     string                `json:"refusal"`
-		Arguments   string                `json:"arguments"`
-		Name        string                `json:"name"`
-		ItemID      string                `json:"item_id"`
-		OutputIndex int                   `json:"output_index"`
-		Item        json.RawMessage       `json:"item"`
-		Response    *openAIResponse       `json:"response"`
-		Error       *openAIResponsesError `json:"error"`
-		Code        string                `json:"code"`
-		Message     string                `json:"message"`
+		Type         string                `json:"type"`
+		Delta        string                `json:"delta"`
+		Text         string                `json:"text"`
+		Refusal      string                `json:"refusal"`
+		Arguments    string                `json:"arguments"`
+		Input        string                `json:"input"`
+		Name         string                `json:"name"`
+		ItemID       string                `json:"item_id"`
+		OutputIndex  int                   `json:"output_index"`
+		SummaryIndex int                   `json:"summary_index"`
+		ContentIndex int                   `json:"content_index"`
+		Item         json.RawMessage       `json:"item"`
+		Response     *openAIResponse       `json:"response"`
+		Error        *openAIResponsesError `json:"error"`
+		Code         string                `json:"code"`
+		Message      string                `json:"message"`
 	}
 	if err := json.Unmarshal(data, &envelope); err != nil {
 		return StreamUpdate{}, fmt.Errorf("decode OpenAI Responses stream event: %w", err)
@@ -527,13 +577,16 @@ func (d *openAIResponsesStreamDecoder) Decode(event StreamEvent) (StreamUpdate, 
 		delta := unseenStreamSuffix(d.content.String(), firstNonEmpty(envelope.Text, envelope.Refusal, envelope.Delta))
 		d.content.WriteString(delta)
 		return StreamUpdate{ContentDelta: delta}, nil
-	case "response.reasoning_text.delta", "response.reasoning_summary_text.delta":
-		d.reasoning.WriteString(envelope.Delta)
-		return StreamUpdate{ReasoningDelta: envelope.Delta}, nil
-	case "response.reasoning_text.done", "response.reasoning_summary_text.done":
-		delta := unseenStreamSuffix(d.reasoning.String(), firstNonEmpty(envelope.Text, envelope.Delta))
-		d.reasoning.WriteString(delta)
-		return StreamUpdate{ReasoningDelta: delta}, nil
+	case "response.reasoning_text.delta", "response.reasoning_summary_text.delta", "response.reasoning_text.done", "response.reasoning_summary_text.done":
+		kind, index := reasoning.Raw, envelope.ContentIndex
+		if strings.Contains(typ, "summary") {
+			kind, index = reasoning.Summary, envelope.SummaryIndex
+		}
+		return StreamUpdate{Reasoning: []reasoning.Delta{d.reasoningDelta(envelope.OutputIndex, index, kind, firstNonEmpty(envelope.Text, envelope.Delta), strings.HasSuffix(typ, ".done"))}}, nil
+	case "response.custom_tool_call_input.delta":
+		return StreamUpdate{ToolCalls: []ToolCallDelta{{Index: envelope.OutputIndex, Type: "custom", Arguments: envelope.Delta}}}, nil
+	case "response.custom_tool_call_input.done":
+		return StreamUpdate{ToolCalls: []ToolCallDelta{{Index: envelope.OutputIndex, Type: "custom", Name: envelope.Name, Arguments: envelope.Input, ReplaceArguments: true}}}, nil
 	case "response.function_call_arguments.delta":
 		return StreamUpdate{ToolCalls: []ToolCallDelta{{
 			Index:     envelope.OutputIndex,
@@ -602,19 +655,23 @@ func (d *openAIResponsesStreamDecoder) decodeOutputItem(index int, raw json.RawM
 	}
 
 	switch item.Type {
-	case "function_call":
+	case "function_call", "custom_tool_call":
 		if done && !responseOutputItemComplete(item.Status) {
+			if item.Type == "custom_tool_call" {
+				return update, fmt.Errorf("incomplete custom tool call %s", item.CallID)
+			}
 			return update, nil
 		}
-		arguments := item.Arguments
-		if done && arguments == "" {
-			arguments = "{}"
+		d.customCallState(item, done)
+		arguments, callType := item.toolInput()
+		if !done && item.Type == "function_call" {
+			arguments = item.Arguments
 		}
 		update.ToolCalls = []ToolCallDelta{{
 			Index:            index,
 			ID:               item.CallID,
-			Type:             "function",
-			Name:             item.Name,
+			Type:             callType,
+			Name:             item.toolName(),
 			Arguments:        arguments,
 			ReplaceArguments: done,
 		}}
@@ -665,7 +722,6 @@ func (d *openAIResponsesStreamDecoder) decodeTerminalResponse(response *openAIRe
 	}
 
 	var terminalContent strings.Builder
-	var terminalReasoning strings.Builder
 	for index, raw := range response.Output {
 		var item openAIOutputItem
 		if err := json.Unmarshal(raw, &item); err != nil {
@@ -693,40 +749,56 @@ func (d *openAIResponsesStreamDecoder) decodeTerminalResponse(response *openAIRe
 					terminalContent.WriteString(firstNonEmpty(part.Refusal, part.Text))
 				}
 			}
-		case "function_call":
+		case "function_call", "custom_tool_call":
+			if item.Type == "custom_tool_call" && !responseOutputItemComplete(item.Status) && !incomplete {
+				return StreamUpdate{}, fmt.Errorf("terminal response contains incomplete custom tool call %s", item.CallID)
+			}
 			if responseOutputItemComplete(item.Status) {
 				if !incomplete {
 					update.FinishReason = "tool_calls"
 				}
-				arguments := item.Arguments
-				if arguments == "" {
-					arguments = "{}"
-				}
+				d.customCallState(item, true)
+				arguments, callType := item.toolInput()
 				update.ToolCalls = append(update.ToolCalls, ToolCallDelta{
 					Index:            index,
 					ID:               item.CallID,
-					Type:             "function",
-					Name:             item.Name,
+					Type:             callType,
+					Name:             item.toolName(),
 					Arguments:        arguments,
 					ReplaceArguments: true,
 				})
 			}
 		case "reasoning":
-			for _, part := range item.Summary {
-				terminalReasoning.WriteString(part.Text)
+			for partIndex, part := range item.Summary {
+				update.Reasoning = append(update.Reasoning, d.reasoningDelta(index, partIndex, reasoning.Summary, part.Text, true))
 			}
-			for _, part := range item.Content {
+			for partIndex, part := range item.Content {
 				if part.Type == "reasoning_text" {
-					terminalReasoning.WriteString(part.Text)
+					update.Reasoning = append(update.Reasoning, d.reasoningDelta(index, partIndex, reasoning.Raw, part.Text, true))
 				}
 			}
 		}
 	}
+	if !incomplete {
+		if err := d.checkCustomCallsComplete(); err != nil {
+			return StreamUpdate{}, err
+		}
+	}
 	update.ContentDelta = unseenStreamSuffix(d.content.String(), terminalContent.String())
-	update.ReasoningDelta = unseenStreamSuffix(d.reasoning.String(), terminalReasoning.String())
 	d.content.WriteString(update.ContentDelta)
-	d.reasoning.WriteString(update.ReasoningDelta)
 	return update, nil
+}
+
+func (d *openAIResponsesStreamDecoder) reasoningDelta(output, index int, kind reasoning.Kind, text string, complete bool) reasoning.Delta {
+	id := fmt.Sprintf("%d:%d:%s", output, index, kind)
+	if d.reasoningBlocks == nil {
+		d.reasoningBlocks = make(map[string]string)
+	}
+	if complete {
+		text = unseenStreamSuffix(d.reasoningBlocks[id], text)
+	}
+	d.reasoningBlocks[id] += text
+	return reasoning.Delta{Text: text, Kind: kind, BlockID: id}
 }
 
 func unseenStreamSuffix(seen, complete string) string {
@@ -749,4 +821,21 @@ func firstNonEmpty(values ...string) string {
 		}
 	}
 	return ""
+}
+
+func (item openAIOutputItem) toolInput() (string, string) {
+	if item.Type == "custom_tool_call" {
+		return item.Input, "custom"
+	}
+	if item.Arguments == "" {
+		return "{}", "function"
+	}
+	return item.Arguments, "function"
+}
+
+func (item openAIOutputItem) toolName() string {
+	if item.Namespace != "" {
+		return item.Namespace + "." + item.Name
+	}
+	return item.Name
 }

@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -87,6 +88,7 @@ func (m *App) submitBtw(sessionID, text string, refIDs []string) tea.Cmd {
 	input.InternalID = messageID
 	if m.Workspace == nil || !m.SubmitAgentBtw(sessionID, input) {
 		agent.Messages.RemovePendingBtwIDs([]string{messageID})
+		m.restoreFailedBtw(sessionID, []workspace.Message{{Content: text}})
 		if m.Feedback != nil {
 			m.Feedback.NotifyError("BTW was not queued: this turn is no longer accepting notes")
 		}
@@ -128,11 +130,15 @@ func (m *App) referenceLabels(refIDs []string) []string {
 }
 
 func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
-	cmd := m.handleAgentDomainEvent(workspace.AgentEvent{
+	domain := workspace.AgentEvent{
 		Type:    evt.Type,
 		Data:    evt.Data,
 		AgentID: evt.AgentID,
-	})
+	}
+	if m.StaleAgentUpload(domain) {
+		return nil
+	}
+	cmd := m.handleAgentDomainEvent(domain)
 	m.syncAgentStatusEvent(evt)
 	return cmd
 }
@@ -151,7 +157,8 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 	}
 	if evt.Type == "btw_cleared" {
 		if node := m.AgentMgr.Get(evt.AgentID); node != nil && node.State != nil && node.State.Messages != nil {
-			node.State.Messages.RemovePendingBtwIDs(agentEventStringSlice(evt.Data, "internal_ids"))
+			ids := agentEventStringSlice(evt.Data, "internal_ids")
+			m.restoreFailedBtw(evt.AgentID, node.State.Messages.RemovePendingBtwMessages(ids))
 			m.syncAgentMessages(evt.AgentID, true)
 		}
 		m.syncPendingBtwCount()
@@ -179,7 +186,7 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 		}
 		return nil
 	}
-	if evt.Type == "async_command_status" || evt.Type == "retry" {
+	if evt.Type == "async_command_status" {
 		switch evt.Type {
 		case "async_command_status":
 			if cmds, ok := evt.Data.([]fileio.AsyncCmdInfo); ok {
@@ -253,6 +260,7 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 			}
 			sp := m.PaneMgr.GetOrCreate(agentID, workspace.PaneAgent, label)
 			sp.Title = label
+			sp.Status = "running"
 			subModel := m.ModelName
 			if model, ok := evtData["model"]; ok && model != "" {
 				subModel = model
@@ -286,15 +294,15 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 				return nil
 			}
 			if parent := m.AgentMgr.Get(parentID); parent != nil && parent.State != nil && parent.State.Messages != nil {
-				if !parent.State.Messages.AttachSubPaneToLatestTool("run_sub_agent", agentID) {
-					parent.State.Messages.AppendMessage(workspace.Message{
-						Role:      ttypes.RoleTool,
-						Content:   agentID,
-						SubPaneID: agentID,
-						Time:      time.Now(),
-					})
+				childLabel := label
+				if task := evtData["task"]; task != "" {
+					childLabel += " — " + task
 				}
-				m.syncAgentMessages(parentID, false)
+				// Without the exact call ID, keep child review in its tab/Agents
+				// panel instead of creating a second or incorrectly linked row.
+				if parent.State.Messages.AttachSubPaneToTool(evtData["parent_tool_id"], agentID, childLabel) {
+					m.syncAgentMessages(parentID, false)
+				}
 			}
 		}
 	} else if agent.Completed {
@@ -364,9 +372,11 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 	}
 
 	if hasThinking && agent.ThinkingPaneID != "" {
-		switch evt.Type {
-		case "stream_token", "tool_call", "tool_call_streaming":
-			m.handleSubPaneCompletion(agentID)
+		if pane := m.PaneMgr.Get(agent.ThinkingPaneID); pane != nil {
+			messages := pane.Messages.Messages()
+			if len(messages) == 1 && !messages[0].ThinkingActive {
+				m.handleSubPaneCompletion(agentID)
+			}
 		}
 	}
 
@@ -388,6 +398,47 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 	m.syncAgentWindowTabs()
 
 	return m.processAgentResults(cmd)
+}
+
+// restoreFailedBtw puts transport-rejected/cancelled notes back in the owning
+// session's composer. Keep anything the user has typed since the submission.
+func (m *App) restoreFailedBtw(agentID string, messages []workspace.Message) {
+	if len(messages) == 0 || m.Workspace == nil {
+		return
+	}
+	owner := m.SessionsByAgent[agentID]
+	if owner == nil {
+		return
+	}
+	texts := make([]string, 0, len(messages))
+	for _, message := range messages {
+		if message.Content != "" {
+			texts = append(texts, message.Content)
+		}
+	}
+	if len(texts) == 0 {
+		return
+	}
+	if owner != m.ActiveSession || (owner.DB != nil && m.composerHydratedFor != owner) {
+		if m.failedBtwDrafts == nil {
+			m.failedBtwDrafts = make(map[*workspace.Session][]string)
+		}
+		m.failedBtwDrafts[owner] = append(m.failedBtwDrafts[owner], texts...)
+		return
+	}
+	m.Input.SetInput(joinFailedBtwDrafts(texts, m.Input.Value()))
+	m.persistComposerDraftIfChanged()
+}
+
+func joinFailedBtwDrafts(failed []string, current string) string {
+	if len(failed) == 0 {
+		return current
+	}
+	text := strings.Join(failed, "\n\n")
+	if current != "" {
+		text += "\n\n" + current
+	}
+	return text
 }
 
 func agentEventStringSlice(data any, key string) []string {
@@ -469,53 +520,27 @@ func (m *App) promoteThinkingToPane(agent *workspace.AgentState) {
 		return
 	}
 	paneID := m.nextThinkingPaneID(agent.ID, time.Now())
-	// Preserve the original thinking start time so the eventual
-	// "thought for Xs" label covers the whole block, not just the
-	// post-promotion window.
-	start := time.Time{}
-	for _, msg := range agent.Messages.Messages() {
-		if msg.Role == ttypes.RoleThinking && msg.ThinkingActive {
-			start = msg.Time
-		}
+	thought, ok := agent.Messages.PromoteThinking(paneID)
+	if !ok {
+		return
 	}
-	content := agent.Messages.RemoveActiveThinking()
 
 	sp := m.PaneMgr.GetOrCreate(paneID, workspace.PaneThinking, "Thinking")
 	proj := m.subPaneProjections.Get(paneID, workspace.PaneThinking)
 	proj.renderer.SetLegacyModelFallback(m.ModelName)
 	proj.renderer.SetUsername(m.Username)
 
-	if content != "" {
-		if start.IsZero() {
-			sp.Messages.AppendThinking(content)
-		} else {
-			sp.Messages.AppendMessage(workspace.Message{
-				Role:           ttypes.RoleThinking,
-				Content:        content,
-				Time:           start,
-				ThinkingActive: true,
-			})
-			// The pane's own clock starts at the block start so the header
-			// and the collapsed "thought for X" summary cover the whole
-			// block, not just the post-promotion window.
-			sp.StartTime = start
-		}
-	}
+	sp.Messages.AppendMessage(thought)
+	sp.StartTime = thought.Time
 
 	agent.ThinkingPaneID = paneID
 
-	agent.Messages.AppendMessage(workspace.Message{
-		Role:      ttypes.RoleTool,
-		Content:   "Thinking",
-		SubPaneID: paneID,
-		Time:      time.Now(),
-	})
 	m.syncAgentMessages(agent.ID, false)
 	m.syncPaneMessages(paneID, false)
 }
 
 func (m *App) nextThinkingPaneID(agentID string, now time.Time) string {
-	base := "thinking-" + agentID + "-" + now.Format("150405")
+	base := "thinking-" + agentID + "-" + now.Format("150405.000000000")
 	paneID := base
 	for suffix := 2; m.PaneMgr.Has(paneID) || m.subPaneProjections.Has(paneID); suffix++ {
 		paneID = fmt.Sprintf("%s-%d", base, suffix)
@@ -528,23 +553,19 @@ func (m *App) handleSubPaneCompletion(agentID string) {
 	if n == nil {
 		return
 	}
-	// Find the parent agent's concrete MessageList for InvalidateSubPane.
-	var parentID string
-	if n.Parent != nil {
-		parentID = n.Parent.ID
-	} else if active := m.AgentMgr.ActiveNode(); active != nil {
-		parentID = active.ID
-	}
-
 	if n.State != nil && n.State.ThinkingPaneID != "" {
-		sp := m.PaneMgr.Get(n.State.ThinkingPaneID)
+		paneID := n.State.ThinkingPaneID
+		sp := m.PaneMgr.Get(paneID)
 		if sp != nil {
-			sp.Collapse()
-			if parentID != "" {
-				m.subPaneProjections.InvalidateSubPane(parentID, n.State.ThinkingPaneID)
+			messages := sp.Messages.Messages()
+			if len(messages) != 1 || !n.State.Messages.RestoreThinking(paneID, messages[0]) {
+				return
 			}
+			m.PaneMgr.Remove(paneID)
+			m.subPaneProjections.Remove(paneID)
 		}
 		n.State.ThinkingPaneID = ""
+		m.syncAgentMessages(agentID, false)
 		return
 	}
 
@@ -553,8 +574,8 @@ func (m *App) handleSubPaneCompletion(agentID string) {
 		return
 	}
 	sp.Collapse()
-	if parentID != "" {
-		m.subPaneProjections.InvalidateSubPane(parentID, agentID)
+	if n.Parent != nil {
+		m.subPaneProjections.InvalidateSubPane(n.Parent.ID, agentID)
 	}
 }
 
@@ -568,15 +589,12 @@ func (m *App) processAgentResults(cmd tea.Cmd) tea.Cmd {
 		case workspace.AgentDoneResultMsg:
 			if result.Reason == "completed" {
 				m.Feedback.NotifyInfo("✓ done")
-			} else if result.Reason == "cancelled" {
-				m.Feedback.NotifyInfo("Turn stopped")
-			} else if result.Reason != "" {
+			} else if result.Reason != "" && result.Reason != "cancelled" {
 				m.Feedback.NotifyError("⚠ " + result.Reason)
 			}
 		case workspace.AgentErrorResultMsg:
 			m.Feedback.NotifyError(result.Err)
 			m.Feedback.NotifyInfo("")
-		case workspace.AgentRetryResultMsg:
 		}
 		return nil
 	}
@@ -694,6 +712,8 @@ func (m *App) handleSubAgentCompleted(evt workspace.AgentEvent) {
 	if status == "running" {
 		return
 	}
-
+	if pane := m.PaneMgr.Get(agentID); pane != nil {
+		pane.Status = status
+	}
 	m.completeSubAgent(agentID)
 }

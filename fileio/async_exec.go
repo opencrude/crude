@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"runtime"
@@ -37,14 +38,17 @@ type AsyncCmdInfo struct {
 }
 
 type asyncCmdState struct {
-	cmd      *exec.Cmd
-	output   bytes.Buffer
-	cancel   context.CancelFunc
-	info     AsyncCmdInfo
-	done     chan struct{}
-	cleanup  func()
-	mu       sync.Mutex
-	outputMu sync.Mutex
+	cmd              *exec.Cmd
+	output           bytes.Buffer
+	cancel           context.CancelFunc
+	info             AsyncCmdInfo
+	done             chan struct{}
+	cleanup          func()
+	mu               sync.Mutex
+	outputMu         sync.Mutex
+	input            io.WriteCloser
+	interactionLease chan struct{}
+	outputCursor     int
 }
 
 func (st *asyncCmdState) killGroup() {
@@ -392,6 +396,10 @@ type UntrackedCmd struct {
 }
 
 func (m *AsyncCommandManager) StartUntracked(command, cwd string, timeoutSeconds int) (*UntrackedCmd, error) {
+	return m.startUntracked(command, cwd, timeoutSeconds, nil)
+}
+
+func (m *AsyncCommandManager) startUntracked(command, cwd string, timeoutSeconds int, interactive *InteractiveOptions) (*UntrackedCmd, error) {
 	m.mu.Lock()
 	if m.closing {
 		m.mu.Unlock()
@@ -405,7 +413,14 @@ func (m *AsyncCommandManager) StartUntracked(command, cwd string, timeoutSeconds
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
 	}
 
-	c, cleanup, err := buildCommand(ctx, command, cwd)
+	var c *exec.Cmd
+	var cleanup func()
+	var err error
+	if interactive == nil {
+		c, cleanup, err = buildCommand(ctx, command, cwd)
+	} else {
+		c, cleanup, err = buildInteractiveCommand(ctx, *interactive)
+	}
 	if err != nil {
 		cancel()
 		return nil, err
@@ -425,7 +440,17 @@ func (m *AsyncCommandManager) StartUntracked(command, cwd string, timeoutSeconds
 	c.Stdout = state
 	c.Stderr = state
 
-	if err := c.Start(); err != nil {
+	var outputDone <-chan struct{}
+	start := c.Start
+	if interactive != nil {
+		state.interactionLease = make(chan struct{}, 1)
+		start = func() error {
+			var startErr error
+			state.input, outputDone, startErr = startInteractiveProcess(c, interactive.TTY, state)
+			return startErr
+		}
+	}
+	if err := start(); err != nil {
 		cancel()
 		cleanup()
 		return nil, fmt.Errorf("failed to start command: %w", err)
@@ -435,14 +460,29 @@ func (m *AsyncCommandManager) StartUntracked(command, cwd string, timeoutSeconds
 	if err != nil {
 		state.killGroup()
 		_ = c.Wait()
+		if state.input != nil {
+			_ = state.input.Close()
+		}
+		if outputDone != nil {
+			<-outputDone
+		}
 		cleanup()
 		return nil, err
 	}
-	state.cleanup = func() { treeCleanup(); cleanup() }
+	state.cleanup = func() {
+		if state.input != nil {
+			_ = state.input.Close()
+		}
+		treeCleanup()
+		cleanup()
+	}
 	if err := resumeOwnedProcess(c); err != nil {
-		state.cleanup()
 		state.killGroup()
 		_ = c.Wait()
+		state.cleanup()
+		if outputDone != nil {
+			<-outputDone
+		}
 		return nil, err
 	}
 
@@ -451,6 +491,15 @@ func (m *AsyncCommandManager) StartUntracked(command, cwd string, timeoutSeconds
 		defer close(state.done)
 		defer state.cleanup()
 		err := c.Wait()
+		if outputDone != nil {
+			// Closing a PTY after process exit is safe after its final output drains.
+			select {
+			case <-outputDone:
+			case <-time.After(time.Second):
+				_ = state.input.Close()
+				<-outputDone
+			}
+		}
 		killProcessGroup(state.info.PID)
 		state.mu.Lock()
 		defer state.mu.Unlock()
@@ -539,6 +588,12 @@ func (m *AsyncCommandManager) NextAutoHandle() string {
 
 func (m *AsyncCommandManager) Promote(uc *UntrackedCmd, handle string) (*AsyncCmdInfo, error) {
 	m.mu.Lock()
+	if m.closing {
+		m.mu.Unlock()
+		uc.Kill()
+		<-uc.Done()
+		return nil, errors.New("async command manager is closing")
+	}
 	if _, ok := m.commands[handle]; ok {
 		m.mu.Unlock()
 		return nil, fmt.Errorf("async command handle %q already in use; kill it first or use a different handle", handle)

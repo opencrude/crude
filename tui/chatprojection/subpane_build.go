@@ -5,6 +5,7 @@ import (
 
 	"crude/tui/cell"
 	"crude/tui/rendering"
+	"crude/tui/types"
 	"crude/tui/ui"
 	"crude/workspace"
 )
@@ -37,9 +38,18 @@ func BuildSubPaneHeaderLine(header workspace.SubPaneHeaderView, width, spinFrame
 		spans = append(spans, RowSpan{Text: "● Thought for " + duration, Role: ui.ColorMuted})
 		spans = append(spans, RowSpan{Text: " ▾", Role: ui.ColorMuted})
 	} else {
-		titleWidth := max(1, width-rendering.VisibleWidth("│ ● ")-rendering.VisibleWidth(" ▾"))
+		status := ""
+		role := ui.ColorMuted
+		if header.Status != "" && header.Status != "completed" {
+			status = " — " + header.Status
+			role = ui.ColorError
+		}
+		titleWidth := max(1, width-rendering.VisibleWidth("│ ● ")-rendering.VisibleWidth(status+" ▾"))
 		title := rendering.TruncateMiddleVisual(header.Title, titleWidth, "…")
-		spans = append(spans, RowSpan{Text: "● " + title, Role: ui.ColorMuted})
+		spans = append(spans, RowSpan{Text: "● ", Role: role}, RowSpan{Text: title, Role: ui.ColorMuted})
+		if status != "" {
+			spans = append(spans, RowSpan{Text: status, Role: role})
+		}
 		spans = append(spans, RowSpan{Text: " ▾", Role: ui.ColorMuted})
 	}
 
@@ -65,38 +75,35 @@ func BuildSubPaneSummaryLine(view workspace.SubPaneView, width int) SubPaneLine 
 	}
 	summaryWidth := max(1, width-rendering.VisibleWidth("│ ● ")-rendering.VisibleWidth(" ▸"))
 	summary = rendering.TruncateMiddleVisual(summary, summaryWidth, "…")
+	statusRole := ui.ColorMuted
+	marker := "● "
+	if view.Header.Type == workspace.PaneAgent && (view.Header.Status == "error" || view.Header.Status == "failed") {
+		statusRole = ui.ColorError
+		marker = "× "
+	}
 	spans := []RowSpan{
 		{Text: "│ ", Role: ui.ColorBorder},
-		{Text: "● " + summary + " ▸", Role: ui.ColorMuted},
+		{Text: marker, Role: statusRole},
+		{Text: summary + " ▸", Role: ui.ColorMuted},
 	}
 	pl := padPaintLine(PaintLine{Spans: spans}, width)
 	return NativeLine(pl)
 }
 
-// BuildSubPaneToolLines builds tool rows from SubPaneView.ToolLines.
-func BuildSubPaneToolLines(view workspace.SubPaneView, width int) []SubPaneLine {
+// BuildSubPaneToolLines uses the same semantic titles as ordinary tool leaves.
+func BuildSubPaneToolLines(messages []*types.ChatMessage, width, frame int) ([]SubPaneLine, bool) {
 	var lines []SubPaneLine
-	for _, tl := range view.ToolLines {
-		if tl.Label == "" {
+	active := false
+	for _, msg := range messages {
+		if msg.Role != types.RoleTool || msg.ToolName == "" {
 			continue
 		}
-		spans := []RowSpan{{Text: "│ ", Role: ui.ColorBorder}}
-		switch {
-		case tl.Status == "error" || tl.Phase == "error":
-			spans = append(spans, RowSpan{Text: "✗ ", Role: ui.ColorError})
-		case tl.Phase == "done" || tl.Status == "success":
-			spans = append(spans, RowSpan{Text: "✓ ", Role: ui.ColorSuccess})
-		case tl.Phase == "streaming" || tl.Status == "streaming" || tl.Status == "calling":
-			spans = append(spans, RowSpan{Text: "● ", Role: ui.ColorFg})
-		default:
-			spans = append(spans, RowSpan{Text: "○ ", Role: ui.ColorFg})
+		active = active || toolRowFrameSensitive(*msg)
+		for _, pl := range wrapToolTitle(buildToolTitleLine(*msg, msg.ToolPreviewPhase, frame), width) {
+			lines = append(lines, NativeLine(padPaintLine(pl, width)))
 		}
-		labelWidth := max(1, width-rendering.VisibleWidth("│ ✓ "))
-		spans = append(spans, RowSpan{Text: rendering.TruncateMiddleVisual(tl.Label, labelWidth, "…"), Role: ui.ColorFg})
-		pl := padPaintLine(PaintLine{Spans: spans}, width)
-		lines = append(lines, NativeLine(pl))
 	}
-	return lines
+	return lines, active
 }
 
 // BuildCompactWorkingLine builds the placeholder when a compact pane has no tools yet.

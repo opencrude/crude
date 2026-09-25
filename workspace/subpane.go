@@ -12,6 +12,7 @@ type SubPane struct {
 	StartTime  time.Time
 	EndTime    time.Time
 	TokenCount int
+	Status     string // child outcome; empty for thinking panes
 
 	compactScrollY    int
 	compactContentH   int

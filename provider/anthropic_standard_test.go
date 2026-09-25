@@ -216,7 +216,7 @@ func TestAnthropicStreamDecoderUsageThinkingAndTool(t *testing.T) {
 		if update.Usage != nil {
 			usage = *update.Usage
 		}
-		reasoning += update.ReasoningDelta
+		reasoning += update.ReasoningText()
 		providerItems = append(providerItems, update.ProviderItems...)
 		toolDeltas = append(toolDeltas, update.ToolCalls...)
 		if update.FinishReason != "" {

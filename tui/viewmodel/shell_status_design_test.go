@@ -25,6 +25,7 @@ func TestShellStatusUsesSharedRailsAndOmitsZeroNoise(t *testing.T) {
 	app.AgentMgr.Get("root").Model = "glm-5.3"
 	app.Status.SetAgent(types.AgentStatusSnapshot{Ref: types.ResourceRef{Kind: types.ResourceAgent, ID: "root"}, Label: "Main Agent", Phase: types.AgentIdle, Detail: "Idle", ModelID: "glm-5.3"})
 	app.RecordAgentUsage("root", map[string]any{
+		"model":      "glm-5.3",
 		"request_id": "root/1/1", "prompt": 71500, "completion": 177,
 		"prompt_cached": 14300, "cache_read_known": true,
 		"context_prompt": 71500, "context_window": 1_050_000,

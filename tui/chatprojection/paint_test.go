@@ -9,6 +9,7 @@ import (
 	"crude/tui/chatprojection"
 	"crude/tui/surface"
 	"crude/tui/theme"
+	"crude/tui/types"
 	"crude/tui/ui"
 	"crude/workspace"
 )
@@ -33,15 +34,16 @@ func TestBuildSubPaneHeaderThinkingNative(t *testing.T) {
 }
 
 func TestBuildSubPaneToolStates(t *testing.T) {
-	view := workspace.SubPaneView{
-		ToolLines: []workspace.SubPaneToolLineView{
-			{Label: "read ok", Phase: "done", Status: "success"},
-			{Label: "write fail", Phase: "error", Status: "error"},
-			{Label: "streaming", Phase: "streaming", Status: "streaming"},
-		},
+	messages := []*types.ChatMessage{
+		{Role: types.RoleTool, ToolName: "read_file", ToolArgs: "ok", ToolPreviewPhase: "done", ToolStatus: "success"},
+		{Role: types.RoleTool, ToolName: "write_file", ToolArgs: "fail", ToolPreviewPhase: "error", ToolStatus: "error"},
+		{Role: types.RoleTool, ToolName: "read_file", ToolArgs: "next", ToolPreviewPhase: "streaming", ToolStatus: "streaming"},
 	}
-	lines := chatprojection.BuildSubPaneToolLines(view, 24)
-	if len(lines) != 3 {
+	lines, active := chatprojection.BuildSubPaneToolLines(messages, 24, 0)
+	if !active {
+		t.Fatal("compact projection lost its active frame sensitivity")
+	}
+	if len(lines) != 4 {
 		t.Fatalf("got %d tool lines", len(lines))
 	}
 	for i, l := range lines {
@@ -49,14 +51,21 @@ func TestBuildSubPaneToolStates(t *testing.T) {
 			t.Fatalf("line %d not native", i)
 		}
 	}
-	if !strings.Contains(lines[0].PlainText(), "✓") {
+	if !strings.Contains(lines[0].PlainText(), "●") {
 		t.Fatalf("success line %q", lines[0].PlainText())
 	}
-	if !strings.Contains(lines[1].PlainText(), "✗") {
+	if !strings.Contains(lines[1].PlainText(), "×") {
 		t.Fatalf("error line %q", lines[1].PlainText())
 	}
-	if !strings.Contains(lines[2].PlainText(), "●") {
-		t.Fatalf("streaming line %q", lines[2].PlainText())
+	if !strings.Contains(lines[3].PlainText(), "●") {
+		t.Fatalf("streaming line %q", lines[3].PlainText())
+	}
+	next, _ := chatprojection.BuildSubPaneToolLines(messages, 24, ui.ActivityBlinkPhaseMillis)
+	if !strings.Contains(next[3].PlainText(), "○") || next[0].PlainText() != lines[0].PlainText() {
+		t.Fatal("compact blink changed a completed row or failed to animate active work")
+	}
+	if lines[0].Native.Spans[2].Role != ui.ColorToolTitle || lines[1].Native.Spans[2].Role != ui.ColorError || lines[3].Native.Spans[2].Role != ui.ColorToolTitle {
+		t.Fatal("compact tool titles bypassed shared semantic colors")
 	}
 }
 

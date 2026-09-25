@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	ttypes "crude/types"
+	"crude/types/reasoning"
 )
 
 const IdleTickInterval = 400 * time.Millisecond
@@ -38,11 +39,6 @@ type AgentErrorResultMsg struct {
 	AgentID string
 }
 
-type AgentRetryResultMsg struct {
-	Msg     string
-	AgentID string
-}
-
 func DoneResultCmd(agentID, reason string) tea.Cmd {
 	return func() tea.Msg {
 		return AgentDoneResultMsg{Reason: reason, AgentID: agentID}
@@ -52,12 +48,6 @@ func DoneResultCmd(agentID, reason string) tea.Cmd {
 func ErrorResultCmd(agentID, errMsg string) tea.Cmd {
 	return func() tea.Msg {
 		return AgentErrorResultMsg{Err: errMsg, AgentID: agentID}
-	}
-}
-
-func RetryResultCmd(agentID, msg string) tea.Cmd {
-	return func() tea.Msg {
-		return AgentRetryResultMsg{Msg: msg, AgentID: agentID}
 	}
 }
 
@@ -81,6 +71,7 @@ type AgentState struct {
 	Logger           Logger
 
 	ThinkingPaneID string
+	ReasoningMode  reasoning.Kind
 
 	// Index of the last blocking question message in the message list,
 	// so it can be updated in-place when the user confirms/denies.
@@ -144,6 +135,9 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 		}
 		if !target.BeginTurn(identity) {
 			return nil
+		}
+		if a.TurnIdentity.ProviderID != identity.ProviderID || a.TurnIdentity.AccountID != identity.AccountID || a.TurnIdentity.ModelID != identity.ModelID {
+			a.ReasoningMode = reasoning.Unknown
 		}
 		a.TurnIdentity = identity
 		if thinkTarget != target {
@@ -255,24 +249,44 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 				switch status.Phase {
 				case "preparing", "waiting_provider":
 					target.UpdateTurnStatus(status)
+				case "executing":
+					target.ClearTurnStatus()
 				}
 			}
 			onThinking(true, false, false)
 		}
 
+	case "retry":
+		if data, ok := evt.Data.(map[string]any); ok && !a.Cancelling {
+			reason, _ := data["reason"].(string)
+			backoff, _ := data["backoff"].(float64)
+			target.UpdateTurnStatus(TurnStatus{Phase: "retrying", Detail: reason, RetryAttempt: int(phaseInt64(data["attempt"])) + 1, RetryLimit: int(phaseInt64(data["limit"])), RetryAt: time.Now().Add(time.Duration(backoff * float64(time.Second)))})
+			onStatusLine("Recovering provider connection")
+		}
 	case "thinking":
-		if s, ok := evt.Data.(string); ok && s != "" {
-			a.logIfInvalidUTF8("thinking", s)
+		if delta, ok := evt.Data.(reasoning.Delta); ok && delta.Text != "" && delta.Kind != reasoning.Encrypted {
+			a.logIfInvalidUTF8("thinking", delta.Text)
 			target.ClearTurnStatus()
 			if thinkTarget != target {
 				thinkTarget.ClearTurnStatus()
 			}
-			thinkTarget.AppendThinking(SanitizeForTerminal(s))
+			delta.Text = SanitizeForTerminal(delta.Text)
+			thinkTarget.AppendReasoning(delta)
+			if delta.Kind.IsSummary() || delta.Kind == reasoning.Raw {
+				a.ReasoningMode = delta.Kind
+			}
 			a.Running = true
 			a.Thinking = true
 			a.LastTokenTime = time.Now()
 			onStatusLine("Thinking")
 			onThinking(true, false, false)
+		}
+	case "reasoning_classified":
+		if kind, ok := evt.Data.(reasoning.Kind); ok {
+			thinkTarget.SetLatestThinkingKind(kind)
+			if kind.IsSummary() || kind == reasoning.Raw {
+				a.ReasoningMode = kind
+			}
 		}
 
 	case "stream_token":

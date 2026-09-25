@@ -28,6 +28,38 @@ terminal-width invariants, component ownership, or accessibility semantics.
 
 ## Resume And Lifecycle Freezes (2026-09-10)
 
+Activity tree follow-up (2026-09-25, Linux/i7-10750H):
+`BenchmarkDenseActivityPresentedFrame`, 4,000 settled file reads plus one active
+command at 100 columns, measures each blinking-dot presentation separately from
+source mutation. Caching summary/visible membership at source-change boundaries
+reduced 199-201 us / 36 KB per frame to 6.6 us / 3.3 KB for the original one-leaf
+window. Retaining two request rounds measures 10.7 us / 5.1 KB, including the
+additional completed leaf. Stable action/operand/metadata color spans and
+span-preserving wrapping measure 12.2-12.9 us / 6.1 KB for the same retained
+window. The six-tool / whole-request-round retention floor measures 30.7-31.0 us
+/ 14.2 KB per frame (three isolated runs), now painting six leaves instead of
+two. Completed source messages are not rescanned on ticks; model updates are not
+deferred or discarded. Live local-provider acceptance exercised nine promoted
+thought/read requests, stop, expanded tree disclosure, and passive resume at
+160x40 and 80x24. Long thoughts rejoin the tree on completion; pane-to-tree
+boundaries retain exactly one transcript-owned spacer.
+
+`BenchmarkTextTidePaint` measures the shared paint-only summary/activity ink
+sweep at 15.8-16.3 us and 192 B / 2 allocations for a 120-column line (three
+isolated runs). The clock does not invalidate summary Markdown or transcript
+row snapshots. Live captures covered semantic chunk replacement, expanded
+history, stop, passive resume, model-accounting disclosure, and dark/light
+desktop/narrow terminal layouts.
+
+`BenchmarkLargeOpenDiff` covers a fully expanded 3,000-line Go diff, without
+omitting any source rows. A bounded render-local syntax cache avoids tokenizing
+identical segments repeatedly: repeated source fell from 130-143 ms / 39 MB to
+13.6-13.8 ms / 8.9 MB. The all-unique control remains 130-132 ms / 39 MB. The
+existing race-instrumented `TestProviderWaitWithLargeDiffRemainsResponsive` now
+passes its unchanged 500 ms first-frame ceiling; before this correction it took
+6.7 seconds even in isolation. The cache is per file/render and capped at 256
+entries, with independent gutter/background spans for each painted row.
+
 Measured on Linux/i7-10750H. The archive reproduction reads a session DB in
 read-only mode without starting a backend or transmitting its contents.
 

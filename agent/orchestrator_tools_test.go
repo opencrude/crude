@@ -36,7 +36,7 @@ func TestHarnessAllowsDirectWorkAndRequiresIndependentBatching(t *testing.T) {
 	}
 	leaf, _ := BuildSubAgentPrompt(SubAgentSpec{Category: CatCrafter}, "")
 	for _, prompt := range []string{orchestrator, BuildSystemPrompt(false), leaf} {
-		for _, required := range []string{"Prefer standard read/search/edit/write tools", "Batch independent tool calls", "including launches, cancellations", "one needs another's result", "async_execute_command"} {
+		for _, required := range []string{"Use read/search/edit/write tools", "Batch independent tool calls", "including launches, cancellations", "edits and writes to different files", "especially edits to the same file", "one needs another's result", "async_execute_command"} {
 			if !strings.Contains(prompt, required) {
 				t.Errorf("tool contract missing %q", required)
 			}

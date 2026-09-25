@@ -124,7 +124,7 @@ func (s *Screen) MessageAtLocalY(localY int) (chatprojection.MessageRow, bool) {
 	return row, ok
 }
 
-func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item ui.VirtItem, localRow int, _ ui.ControlState, _ ui.PaintContext, tokens *ui.TokenSet) {
+func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item ui.VirtItem, localRow int, _ ui.ControlState, ctx ui.PaintContext, tokens *ui.TokenSet) {
 	if buf == nil || item.Height < 1 {
 		return
 	}
@@ -152,6 +152,7 @@ func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item 
 		pl = chatprojection.PaintLine{Spans: []chatprojection.RowSpan{{Text: row.Lines[localRow], Role: ui.ColorFg}}}
 	}
 	layout := LayoutRow(s.paintState.compose, pl.VisibleWidth(), paneInfo)
+	pl.TideFrame = ctx.Frame
 	lineX := x + layout.PadLeft
 	if row.ContextBoundary && localRow >= row.ContextBoundaryStart {
 		bg := tokens.Color(ui.ColorBg)
@@ -181,6 +182,19 @@ func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item 
 	col := drawn
 	padX := lineX + drawn
 	paintNativeSpaces(buf, padX, y, layout.PadRight, tokens, selStart, selEnd, layout.HasPaneBg, col)
+	if pl.HeaderRule {
+		// Only the margins are outside PaintLineAt's selection columns. The
+		// label, faint rule, and timestamp inside the content use native spans.
+		fg := tokens.Color(ui.ColorBorder)
+		bg := tokens.Color(ui.ColorBg)
+		rule := ui.FirstRune(ui.DefaultGlyphsFromTokens(tokens).BorderH, '─')
+		for edge := x; edge < lineX && edge < x+width; edge++ {
+			buf.Set(edge, y, cell.NewCell(rule, fg, bg, 0))
+		}
+		for edge := lineX + layout.ContentMax; edge < x+width; edge++ {
+			buf.Set(edge, y, cell.NewCell(rule, fg, bg, 0))
+		}
+	}
 
 	gx := NestedGutterX(s.paintState.compose, width)
 	if gx >= 0 && paneInfo.PaneID != "" {

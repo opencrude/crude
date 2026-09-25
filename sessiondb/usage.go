@@ -1,6 +1,7 @@
 package sessiondb
 
 import (
+	"crude/types/accounting"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -16,6 +17,7 @@ type UsageRecord struct {
 	TurnGeneration    uint64
 	Attempt           int
 	RequestKind       string
+	Outcome           accounting.Outcome
 	ProviderID        string
 	AccountID         string
 	ModelID           string
@@ -51,13 +53,14 @@ func UpsertUsageRecord(db *sql.DB, r UsageRecord) error {
 			cached_tokens, cache_read_known, cache_write_tokens, cache_write_known,
 			reasoning_tokens, reasoning_known, reasoning_in_output,
 			context_used, context_window, cost_usd, cost_known, estimated, partial,
-			cost_source, cost_upper_bound, created_at, updated_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			cost_source, cost_upper_bound, created_at, updated_at, request_outcome
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(request_id) DO UPDATE SET
 			account_id=excluded.account_id,
 			prompt_tokens=excluded.prompt_tokens,
 			completion_tokens=excluded.completion_tokens,
 			request_kind=excluded.request_kind,
+			request_outcome=CASE WHEN usage_requests.request_outcome != '' THEN usage_requests.request_outcome ELSE excluded.request_outcome END,
 			cached_tokens=excluded.cached_tokens,
 			cache_read_known=excluded.cache_read_known,
 			cache_write_tokens=excluded.cache_write_tokens,
@@ -80,7 +83,7 @@ func UpsertUsageRecord(db *sql.DB, r UsageRecord) error {
 		r.CachedTokens, r.CacheReadKnown, r.CacheWriteTokens, r.CacheWriteKnown,
 		r.ReasoningTokens, r.ReasoningKnown, r.ReasoningInOutput,
 		r.ContextUsed, r.ContextWindow, r.CostUSD, r.CostKnown, r.Estimated, r.Partial,
-		r.CostSource, r.CostUpperBound, r.CreatedAt, r.UpdatedAt)
+		r.CostSource, r.CostUpperBound, r.CreatedAt, r.UpdatedAt, r.Outcome)
 	if err != nil {
 		return fmt.Errorf("sessiondb: upsert usage request: %w", err)
 	}
@@ -97,7 +100,7 @@ func ListUsageRecords(db *sql.DB) ([]UsageRecord, error) {
 		       cached_tokens, cache_read_known, cache_write_tokens, cache_write_known,
 		       reasoning_tokens, reasoning_known, reasoning_in_output,
 		       context_used, context_window, cost_usd, cost_known, estimated, partial,
-		       cost_source, cost_upper_bound, created_at, updated_at
+		       cost_source, cost_upper_bound, created_at, updated_at, request_outcome
 		FROM usage_requests ORDER BY created_at, request_id`)
 	if err != nil {
 		return nil, fmt.Errorf("sessiondb: list usage requests: %w", err)
@@ -112,7 +115,7 @@ func ListUsageRecords(db *sql.DB) ([]UsageRecord, error) {
 			&r.CacheWriteTokens, &r.CacheWriteKnown, &r.ReasoningTokens,
 			&r.ReasoningKnown, &r.ReasoningInOutput, &r.ContextUsed, &r.ContextWindow, &r.CostUSD,
 			&r.CostKnown, &r.Estimated, &r.Partial, &r.CostSource, &r.CostUpperBound,
-			&r.CreatedAt, &r.UpdatedAt); err != nil {
+			&r.CreatedAt, &r.UpdatedAt, &r.Outcome); err != nil {
 			return nil, fmt.Errorf("sessiondb: scan usage request: %w", err)
 		}
 		out = append(out, r)
@@ -131,7 +134,7 @@ func LatestNormalUsageRecord(db *sql.DB, sessionID, agentID string) (UsageRecord
 		       cached_tokens, cache_read_known, cache_write_tokens, cache_write_known,
 		       reasoning_tokens, reasoning_known, reasoning_in_output,
 		       context_used, context_window, cost_usd, cost_known, estimated, partial,
-		       cost_source, cost_upper_bound, created_at, updated_at
+		       cost_source, cost_upper_bound, created_at, updated_at, request_outcome
 		FROM usage_requests
 		WHERE session_id = ? AND agent_id = ? AND request_kind = 'normal' AND context_used > 0
 		ORDER BY updated_at DESC, request_id DESC
@@ -142,7 +145,7 @@ func LatestNormalUsageRecord(db *sql.DB, sessionID, agentID string) (UsageRecord
 		&r.CacheWriteTokens, &r.CacheWriteKnown, &r.ReasoningTokens,
 		&r.ReasoningKnown, &r.ReasoningInOutput, &r.ContextUsed, &r.ContextWindow, &r.CostUSD,
 		&r.CostKnown, &r.Estimated, &r.Partial, &r.CostSource, &r.CostUpperBound,
-		&r.CreatedAt, &r.UpdatedAt,
+		&r.CreatedAt, &r.UpdatedAt, &r.Outcome,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return UsageRecord{}, false, nil

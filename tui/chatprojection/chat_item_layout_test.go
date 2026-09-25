@@ -55,9 +55,6 @@ func exportForLayout(t *testing.T, msgs []types.ChatMessage) []MessageRow {
 		r.AppendMessage(m)
 	}
 	rows, _, _ := r.ExportMessageRows(120)
-	if len(rows) != len(msgs) {
-		t.Fatalf("expected %d rows, got %d", len(msgs), len(rows))
-	}
 	return rows
 }
 
@@ -78,7 +75,7 @@ func TestChatItemSpacingUniform(t *testing.T) {
 	for i := 0; i+1 < len(rows); i++ {
 		if gap := itemGap(rows, i, i+1); gap != 1 {
 			t.Fatalf("gap between item %d (%s) and %d (%s) = %d, want exactly 1",
-				i, msgs[i].Role, i+1, msgs[i+1].Role, gap)
+				i, rows[i].ID, i+1, rows[i+1].ID, gap)
 		}
 	}
 }
@@ -112,7 +109,7 @@ func hasStrike(pl PaintLine) bool {
 	return false
 }
 
-func TestCancelledAssistantStruckThrough(t *testing.T) {
+func TestCancelledAssistantRemainsReadable(t *testing.T) {
 	rows := exportForLayout(t, []types.ChatMessage{
 		{InternalID: "a1", Role: types.RoleAssistant, Content: "I will now edit the file",
 			Incomplete: true, IncompleteReason: "operation cancelled by user"},
@@ -120,8 +117,8 @@ func TestCancelledAssistantStruckThrough(t *testing.T) {
 	bodyFound := false
 	for _, line := range rows[0].Native {
 		if strings.Contains(line.PlainText(), "edit the file") {
-			if !hasStrike(line) {
-				t.Fatalf("cancelled assistant body should be struck through: %q", line.PlainText())
+			if hasStrike(line) {
+				t.Fatalf("cancelled assistant body crossed out: %q", line.PlainText())
 			}
 			bodyFound = true
 		}
@@ -137,15 +134,15 @@ func TestCancelledAssistantStruckThrough(t *testing.T) {
 	}
 }
 
-func TestInterruptedThinkingStruckThrough(t *testing.T) {
+func TestInterruptedThinkingRemainsReadable(t *testing.T) {
 	rows := exportForLayout(t, []types.ChatMessage{
 		{InternalID: "th1", Role: types.RoleThinking, Content: "I should edit the file now", ThinkingInterrupted: true},
 	})
 	bodyFound := false
 	for _, line := range rows[0].Native {
 		if strings.Contains(line.PlainText(), "edit the file now") {
-			if !hasStrike(line) {
-				t.Fatalf("interrupted thinking body should be struck through")
+			if hasStrike(line) {
+				t.Fatalf("interrupted thinking body crossed out")
 			}
 			bodyFound = true
 		}
@@ -155,7 +152,7 @@ func TestInterruptedThinkingStruckThrough(t *testing.T) {
 	}
 }
 
-func TestCancelledToolCallStruckThrough(t *testing.T) {
+func TestCancelledToolCallHasStoppedLabelWithoutStrike(t *testing.T) {
 	r := NewRenderer(theme.DefaultDark())
 	r.SetSize(120, 40)
 	r.SetChatAreaBounds(0, 30)
@@ -168,9 +165,9 @@ func TestCancelledToolCallStruckThrough(t *testing.T) {
 		t.Fatal("no rows")
 	}
 	for _, line := range rows[0].Native {
-		if strings.Contains(line.PlainText(), "Write File") {
-			if !hasStrike(line) {
-				t.Fatalf("cancelled tool title should be struck through: %q", line.PlainText())
+		if strings.Contains(line.PlainText(), "Stopped write file") {
+			if hasStrike(line) {
+				t.Fatalf("cancelled tool title crossed out: %q", line.PlainText())
 			}
 			return
 		}

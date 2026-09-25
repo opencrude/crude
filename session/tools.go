@@ -40,7 +40,7 @@ func (s *Session) newAgent(p *provider.Provider, multiAgent bool, modalities []s
 	a.YoloMode = s.YoloEnabled
 	a.AsyncMgr = s.asyncMgr
 
-	a.FilteredTools = orchestratorTools(multiAgent)
+	a.FilteredTools = tools.WithModelCommands(tools.ForModel(orchestratorTools(multiAgent), p.Model), p.Model)
 
 	a.Policy = safety.DefaultPolicy()
 
@@ -64,6 +64,12 @@ func (s *Session) buildToolFn(multiAgent bool, turnProvider *provider.Provider, 
 			return result, err
 		}
 		switch tool {
+		case "exec_command", "write_stdin":
+			policy := safety.DefaultCommandPolicy()
+			if s.cfg != nil {
+				policy = safety.CommandPolicyFromSettings(s.cfg.Safety)
+			}
+			return executeCodexCommand(ctx, s.asyncMgr, s.WorkDir(), tool, params, policy)
 		case "update_plan", "get_plan":
 			return s.executePlanTool(ctx, tool, params)
 		case "async_execute_command":
@@ -183,6 +189,7 @@ func (s *Session) buildToolFn(multiAgent bool, turnProvider *provider.Provider, 
 			if opts == nil {
 				opts = &tools.ToolOptions{}
 			}
+			opts.WorkDir = s.WorkDir()
 			opts.PrepareMutation = func(receipt fileio.MutationReceipt) (fileio.MutationComplete, error) {
 				return s.prepareHistoryMutation(ctx, receipt)
 			}
@@ -235,6 +242,8 @@ func (s *Session) resolveRelativeParams(tool string, params map[string]any) {
 		return
 	}
 	switch tool {
+	case "apply_patch":
+		params["_patch_root"] = root
 	case "glob_files":
 		if getStrParam(params, "base_dir") == "" {
 			params["base_dir"] = root

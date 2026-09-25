@@ -234,7 +234,26 @@ func (e *Editor) Write(path string, content string) error {
 	return e.WriteTracked(path, content, nil)
 }
 
-func (e *Editor) WriteTracked(path string, content string, prepare MutationPrepare) (resultErr error) {
+func (e *Editor) WriteTracked(path string, content string, prepare MutationPrepare) error {
+	unlock := LockFileMutation(path)
+	defer unlock()
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	if err := e.policy.validatePath(abs); err != nil {
+		return err
+	}
+	existing, info, err := readFile(abs)
+	if err == nil && IsBinary(existing) {
+		return &BinaryFileError{Path: path, Size: info.Size()}
+	}
+	return e.writeBytesTracked(path, []byte(content), prepare)
+}
+
+// writeBytesTracked requires the shared mutation lease. Text-only callers
+// enforce their own binary policy before reaching this shared byte writer.
+func (e *Editor) writeBytesTracked(path string, newBytes []byte, prepare MutationPrepare) (resultErr error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
@@ -242,14 +261,11 @@ func (e *Editor) WriteTracked(path string, content string, prepare MutationPrepa
 	if err := e.policy.validatePath(abs); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
-	unlock := LockFileMutation(abs)
-	defer unlock()
 	parentGuard, err := captureMutationParentGuard(abs)
 	if err != nil {
 		return fmt.Errorf("write %s: parent guard: %w", path, err)
 	}
 
-	newBytes := []byte(content)
 	if int64(len(newBytes)) > maxTrackedMutationBytes {
 		return fmt.Errorf("write %s: content exceeds the %d MiB tracked-mutation limit", path, maxTrackedMutationBytes>>20)
 	}
@@ -291,10 +307,6 @@ func (e *Editor) WriteTracked(path string, content string, prepare MutationPrepa
 		return writeErr
 	}
 
-	if IsBinary(existing) {
-		e.logger.Warn("FILEIO", "write_binary_skip", "path", abs, "size", fi.Size())
-		return &BinaryFileError{Path: abs, Size: fi.Size()}
-	}
 	if err := rejectHardlinkMutation(abs, fi); err != nil {
 		return err
 	}
@@ -403,7 +415,14 @@ func (e *Editor) Delete(path string) error {
 	return e.DeleteTracked(path, nil)
 }
 
-func (e *Editor) DeleteTracked(path string, prepare MutationPrepare) (resultErr error) {
+func (e *Editor) DeleteTracked(path string, prepare MutationPrepare) error {
+	unlock := LockTreeMutation()
+	defer unlock()
+	return e.deleteTracked(path, prepare)
+}
+
+// deleteTracked requires the shared mutation lease.
+func (e *Editor) deleteTracked(path string, prepare MutationPrepare) (resultErr error) {
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return fmt.Errorf("delete %s: %w", path, err)
@@ -411,8 +430,6 @@ func (e *Editor) DeleteTracked(path string, prepare MutationPrepare) (resultErr 
 	if err := e.policy.validatePath(abs); err != nil {
 		return fmt.Errorf("delete %s: %w", path, err)
 	}
-	unlock := LockTreeMutation()
-	defer unlock()
 	parentGuard, err := captureMutationParentGuard(abs)
 	if err != nil {
 		return fmt.Errorf("delete %s: parent guard: %w", path, err)
@@ -648,7 +665,7 @@ func finishPreparedMutation(result *error, complete MutationComplete, operationI
 	if complete == nil {
 		return
 	}
-	completionErr := complete(operationID, *result == nil)
+	completionErr := complete(operationID, *result == nil || WriteCommitted(*result))
 	if *result == nil && completionErr != nil {
 		*result = fmt.Errorf("complete mutation receipt: %w", completionErr)
 	}

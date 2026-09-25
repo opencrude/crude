@@ -5,6 +5,7 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"crude/codexio"
 	"crude/jsonrepair"
 	"crude/logger"
 
@@ -29,6 +30,14 @@ func ExtractPreview(id, name, accumulatedJSON string, lg *logger.Logger) ToolCal
 		return p
 	}
 
+	if name == "apply_patch" {
+		input := patchPreviewInput(accumulatedJSON)
+		paths, _, _ := codexio.Preview(input)
+		p.Params = map[string]any{"input": input, "path": strings.Join(paths, ", ")}
+		_, err := codexio.Parse(input)
+		p.Complete = err == nil && (!strings.HasPrefix(strings.TrimSpace(accumulatedJSON), "{") || json.Valid([]byte(accumulatedJSON)))
+		return p
+	}
 	cleaned := strings.TrimSpace(accumulatedJSON)
 
 	var m map[string]any
@@ -40,6 +49,13 @@ func ExtractPreview(id, name, accumulatedJSON string, lg *logger.Logger) ToolCal
 	}
 
 	if !looksComplete(cleaned) {
+		if name == "multi_tool_use.parallel" {
+			// This repaired prefix is only a preview, never execution input.
+			if repaired, err := jsonrepair.Repair(cleaned); err == nil && json.Unmarshal([]byte(repaired), &m) == nil {
+				p.Params = m
+				return p
+			}
+		}
 		p.Params = extractWithJSONParser(cleaned, name)
 		return p
 	}
@@ -70,6 +86,14 @@ func ExtractPreview(id, name, accumulatedJSON string, lg *logger.Logger) ToolCal
 	}
 	p.Params = extractWithJSONParser(fallbackData, name)
 	return p
+}
+
+func patchPreviewInput(args string) string {
+	if !strings.HasPrefix(strings.TrimSpace(args), "{") {
+		return args
+	}
+	input, _ := extractWithJSONParser(args, "apply_patch")["input"].(string)
+	return input
 }
 
 func looksComplete(s string) bool {
@@ -174,6 +198,8 @@ func defaultParamKeys() []string {
 }
 
 var toolPreviewKeys = map[string][]string{
+	"exec_command":          {"cmd", "workdir"},
+	"write_stdin":           {"session_id", "chars"},
 	"write_file":            {"path", "content"},
 	"write_report":          {"report"},
 	"edit_file":             {"path", "old_string", "new_string", "new_text"},
@@ -411,6 +437,8 @@ func isNumChar(c byte) bool {
 
 func EstimateStreamingLines(name, rawArgs string) (contentLines, oldLines, newLines int) {
 	switch name {
+	case "apply_patch":
+		_, newLines, oldLines = codexio.Preview(patchPreviewInput(rawArgs))
 	case "write_file":
 		contentLines = countNewlinesInJSONValue(rawArgs, "content")
 	case "write_report":

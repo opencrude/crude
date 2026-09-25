@@ -5,13 +5,12 @@ import (
 	"testing"
 	"time"
 
-	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/types"
 	"crude/tui/ui"
 )
 
-func TestLifecycleStatusRendersAsToolShapedChatRow(t *testing.T) {
+func TestTransientLifecycleDoesNotChangeTranscriptGeometry(t *testing.T) {
 	renderer := NewRenderer(theme.DefaultDark())
 	renderer.SetSize(100, 20)
 	renderer.SetChatAreaBounds(0, 12)
@@ -23,18 +22,14 @@ func TestLifecycleStatusRendersAsToolShapedChatRow(t *testing.T) {
 	}}, 1)
 
 	rows, _, _ := renderer.ExportMessageRows(100)
-	if len(rows) != 1 {
+	if len(rows) != 0 {
 		t.Fatalf("rows = %#v", rows)
-	}
-	joined := strings.Join(rows[0].Lines, "\n")
-	if !strings.Contains(joined, "│ ● Getting next turn ready · ↑ 42 KB / 100 KB · 42%") {
-		t.Fatalf("preparing lifecycle row = %q", joined)
 	}
 	renderer.SetSpinFrame(ui.ActivityBlinkPhaseMillis)
 	renderer.InvalidateCache()
 	rows, _, _ = renderer.ExportMessageRows(100)
-	if joined = strings.Join(rows[0].Lines, "\n"); !strings.Contains(joined, "│ ○ Getting next turn ready") {
-		t.Fatalf("hollow lifecycle phase = %q", joined)
+	if len(rows) != 0 {
+		t.Fatalf("animation reintroduced a transient row: %+v", rows)
 	}
 }
 
@@ -95,7 +90,7 @@ func TestLifecycleStatusProjectionTransformsInPlaceToTool(t *testing.T) {
 	}}, 1)
 
 	waiting, _, _ := renderer.ExportMessageRows(100)
-	if len(waiting) != 1 || !strings.Contains(strings.Join(waiting[0].Lines, "\n"), "Waiting for OpenAI · 2s") {
+	if len(waiting) != 0 {
 		t.Fatalf("provider wait row = %#v", waiting)
 	}
 
@@ -109,7 +104,7 @@ func TestLifecycleStatusProjectionTransformsInPlaceToTool(t *testing.T) {
 		t.Fatalf("tool transform changed row identity: %#v", toolRows)
 	}
 	joined := strings.Join(toolRows[0].Lines, "\n")
-	if !strings.Contains(joined, "Preparing Edit File") || strings.Contains(joined, "Waiting for provider") {
+	if !strings.Contains(joined, "Preparing changes") || strings.Contains(joined, "Waiting for provider") {
 		t.Fatalf("transformed tool row = %q", joined)
 	}
 }
@@ -186,14 +181,14 @@ func TestActivityDotSemanticColorsStayStableAcrossBlinkPhases(t *testing.T) {
 			ToolName: "edit_file", ToolStatus: types.ToolStatusStreaming,
 			ToolPreviewPhase: types.ToolPreviewPreparing,
 		}, types.ToolPreviewPreparing, frame)
-		if tool.Spans[1].Role != ui.ColorWarning {
+		if tool.Spans[1].Role != ui.ColorToolTitle {
 			t.Fatalf("tool preparing dot role at frame %d = %v", frame, tool.Spans[1].Role)
 		}
 		doing := buildToolTitleLine(types.ChatMessage{
 			ToolName: "edit_file", ToolStatus: types.ToolStatusStreaming,
 			ToolPreviewPhase: types.ToolPreviewStreaming,
 		}, types.ToolPreviewStreaming, frame)
-		if doing.Spans[1].Role != ui.ColorAccent2 {
+		if doing.Spans[1].Role != ui.ColorToolTitle {
 			t.Fatalf("tool doing dot role at frame %d = %v", frame, doing.Spans[1].Role)
 		}
 		thinking := renderThinkingMessage(types.ChatMessage{
@@ -218,26 +213,38 @@ func TestInvalidateWidthProfileDropsCompletedMessageCache(t *testing.T) {
 	}
 }
 
-func TestLongToolTitleFitsWidthWithVisibleElision(t *testing.T) {
-	line := buildToolTitleLine(types.ChatMessage{
+func TestLongToolTitleWrapsWithoutLosingOperand(t *testing.T) {
+	path := "/home/lenovo/.crude/workspaces/hash/sessions/id/reports/smoke-blocking-aeron-report.md"
+	lines := buildToolTitleLines(types.ChatMessage{
 		ToolName: "write_report", ToolStatus: types.ToolStatusSuccess,
 		ToolPreviewPhase: types.ToolPreviewDone,
-		ToolArgs:         "/home/lenovo/.crude/workspaces/hash/sessions/id/reports/smoke-blocking-aeron-report.md",
+		ToolArgs:         path,
 		ToolLivedAdded:   21, ToolDuration: 50 * time.Millisecond,
-	}, types.ToolPreviewDone, 0, 52)
-	plain := line.PlainText()
-	if line.VisibleWidth() > 52 || !strings.Contains(plain, "…") || !strings.Contains(plain, "<0.1s") {
-		t.Fatalf("width-planned tool title = %q (%d cells)", plain, rendering.VisibleWidth(plain))
+	}, types.ToolPreviewDone, 0, 52, DisclosureCollapsed)
+	var operand, plain strings.Builder
+	for _, line := range lines {
+		if line.VisibleWidth() > 52 {
+			t.Fatalf("overflowing title: %q", line.PlainText())
+		}
+		plain.WriteString(line.PlainText())
+		for _, span := range line.Spans {
+			if span.Role == ui.ColorToolOperand {
+				operand.WriteString(span.Text)
+			}
+		}
+	}
+	if strings.TrimSpace(operand.String()) != path || !strings.Contains(plain.String(), "<0.1s") {
+		t.Fatalf("wrapped title lost operand or metadata: %q", plain.String())
 	}
 }
 
-func TestSubAgentToolLabelsDistinguishWaitingAndFailure(t *testing.T) {
+func TestSubAgentToolLabelsDistinguishRunningAndFailure(t *testing.T) {
 	waiting := buildToolTitleLine(types.ChatMessage{
 		ToolName: "run_sub_agent", ToolStatus: types.ToolStatusStreaming,
-		ToolPreviewPhase: types.ToolPreviewStreaming,
+		ToolPreviewPhase: types.ToolPreviewStreaming, ToolProgressLabel: "Lily — survey",
 	}, types.ToolPreviewStreaming, 0).PlainText()
-	if !strings.Contains(waiting, "Waiting for sub-agent") || strings.Contains(waiting, "Spawning") {
-		t.Fatalf("synchronous label = %q", waiting)
+	if !strings.Contains(waiting, "Running sub-agent Lily — survey") || strings.Contains(waiting, "Spawning") {
+		t.Fatalf("running label = %q", waiting)
 	}
 	failed := buildToolTitleLine(types.ChatMessage{
 		ToolName: "run_sub_agent", ToolStatus: types.ToolStatusError,

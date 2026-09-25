@@ -15,11 +15,13 @@ import (
 
 	"crude/agent"
 	"crude/clipboard"
+	"crude/codexio"
 	"crude/diff"
 	"crude/fileio"
 	"crude/jsonrepair"
 	"crude/logger"
 	"crude/memory"
+	"crude/plan"
 	"crude/provider"
 	"crude/safety"
 	"crude/search"
@@ -40,6 +42,7 @@ type EventSender interface {
 }
 
 type Session struct {
+	plans     atomic.Pointer[plan.Store]
 	agentName string
 	nameHome  string
 	ID        string
@@ -56,6 +59,7 @@ type Session struct {
 	permStore       *safety.PermissionStore
 	asyncMgr        *fileio.AsyncCommandManager
 	memoryStore     *memory.Store
+	memorySummary   atomic.Pointer[memory.SessionSummary]
 
 	// workDir is the workspace root this session executes tools against.
 	// Relative tool paths and commands without an explicit cwd resolve
@@ -81,12 +85,13 @@ type Session struct {
 	createdAts        []int64
 	msgsMu            sync.Mutex
 	systemPromptMu    sync.Mutex
-	systemPrompts     map[bool]string
+	systemPrompts     map[string]string
 	activeContext     []provider.ChatMessage
 	contextGeneration uint64
 	contextReason     string
 
 	recoveredSubAgentMessages map[string][]sessiondb.MessageWithMeta
+	recoveredTurnGenerations  map[string]uint64
 
 	sessionID    string
 	sessionStart time.Time
@@ -569,24 +574,43 @@ func (s *Session) ModelName() string {
 	return s.cfg.GetActiveDefaultCategory().Model
 }
 
+// ModelIdentity reports configuration, not the last request's historical usage.
+func (s *Session) ModelIdentity() ttypes.TurnIdentity {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	main := s.cfg.GetActiveDefaultCategory()
+	return ttypes.TurnIdentity{ModelID: main.Model, AccountID: main.AccountID, ProviderID: s.cfg.Accounts[main.AccountID].ProviderID}
+}
+
 func (s *Session) systemPrompt(multiAgent bool) string {
+	model := ""
+	if s != nil && s.cfg != nil {
+		model = s.ModelName()
+	}
+	return s.systemPromptForModel(multiAgent, model)
+}
+
+func (s *Session) systemPromptForModel(multiAgent bool, model string) string {
 	if s == nil {
 		return agent.BuildSystemPrompt(multiAgent)
 	}
 	s.systemPromptMu.Lock()
 	defer s.systemPromptMu.Unlock()
 	if s.systemPrompts == nil {
-		s.systemPrompts = make(map[bool]string, 2)
+		s.systemPrompts = make(map[string]string)
 	}
-	if prompt, ok := s.systemPrompts[multiAgent]; ok {
+	key := fmt.Sprintf("%t:%s", multiAgent, model)
+	if prompt, ok := s.systemPrompts[key]; ok {
 		return prompt
 	}
 	// The prompt must advertise the same working directory tools resolve
 	// against; a stale cwd here misdirects the model after a workspace
 	// switch even when execution itself is correctly re-rooted.
-	prompt := agent.BuildSystemPromptInDir(multiAgent, s.WorkDir())
-	prompt += fmt.Sprintf("\n<agent_identity>Your name is %s.</agent_identity>", s.agentName)
-	s.systemPrompts[multiAgent] = prompt
+	prompt := agent.BuildSystemPromptForModel(multiAgent, s.WorkDir(), model)
+	if !codexio.IsGPT(model) {
+		prompt += fmt.Sprintf("\n<agent_identity>Your name is %s.</agent_identity>", s.agentName)
+	}
+	s.systemPrompts[key] = prompt
 	return prompt
 }
 

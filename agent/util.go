@@ -5,6 +5,7 @@ import (
 	"sort"
 	"strings"
 
+	"crude/codexio"
 	"crude/provider"
 	"crude/tools"
 )
@@ -35,6 +36,9 @@ func toolDefsToProviderDefs(tds []tools.ToolDef) []provider.ToolDef {
 			},
 			CacheControl: ephemeral,
 		}
+		if td.Format != nil {
+			result[i].Format = &provider.ToolFormat{Type: td.Format.Type, Syntax: td.Format.Syntax, Definition: td.Format.Definition}
+		}
 	}
 	return result
 }
@@ -57,6 +61,11 @@ func allToolDefs() []provider.ToolDef {
 }
 
 func formatToolArgs(params map[string]any) string {
+	if input, ok := params["input"].(string); ok {
+		if patch, err := codexio.Parse(input); err == nil {
+			return strings.Join(patch.Paths(""), ", ")
+		}
+	}
 	if len(params) == 0 {
 		return ""
 	}

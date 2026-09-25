@@ -70,11 +70,11 @@ func PolicyAllows(policy safety.Policy, toolName string) bool {
 		"update_plan", "get_plan",
 		"list_sub_agents", "poll_sub_agent", "wait":
 		return policy.IsAllowed(safety.OpRead)
-	case "write_file", "edit_file", "move_file", "copy_file":
+	case "apply_patch", "write_file", "edit_file", "move_file", "copy_file":
 		return policy.IsAllowed(safety.OpUpdate)
 	case "delete_file":
 		return policy.IsAllowed(safety.OpDelete)
-	case "execute_command", "async_execute_command", "check_async_command",
+	case "exec_command", "write_stdin", "execute_command", "async_execute_command", "check_async_command",
 		"kill_async_command", "read_async_output":
 		return policy.IsAllowed(safety.OpExecute) || policy.IsAllowed(safety.OpExecuteReadOnly)
 	case "run_sub_agent":
@@ -93,7 +93,7 @@ func UpgradePolicyForAllowedTools(policy safety.Policy, allowedTools []string) s
 	}
 	for _, tool := range allowedTools {
 		switch tool {
-		case "write_file", "edit_file", "move_file", "copy_file":
+		case "apply_patch", "write_file", "edit_file", "move_file", "copy_file":
 			policy.AllowedCapabilities[safety.CanUpdate] = true
 		case "delete_file":
 			policy.AllowedCapabilities[safety.CanDelete] = true

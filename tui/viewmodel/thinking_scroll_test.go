@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	ttypes "crude/tui/types"
+	"crude/types/reasoning"
 	"crude/workspace"
 )
 
@@ -68,12 +69,12 @@ func TestThinkingScrollbarGeometry(t *testing.T) {
 	fillAgentChat(app, "repro-agent", 6, "fill")
 
 	// Promote thinking via the real threshold path.
-	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "repro-agent", Data: thinkingLines(40)})
+	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "repro-agent", Data: reasoning.Delta{Text: thinkingLines(40)}})
 	if agent.ThinkingPaneID == "" {
 		t.Fatal("thinking was not promoted")
 	}
 	for i := 0; i < 10; i++ {
-		app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "repro-agent", Data: thinkingLines(5)})
+		app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "repro-agent", Data: reasoning.Delta{Text: thinkingLines(5)}})
 	}
 
 	// Assistant reply right after the pane.
@@ -164,12 +165,12 @@ func TestThinkingScrolledWindowStable(t *testing.T) {
 	node := app.AgentMgr.Get("scro-agent")
 	agent := node.State
 
-	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "scro-agent", Data: thinkingLines(40)})
+	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "scro-agent", Data: reasoning.Delta{Text: thinkingLines(40)}})
 	if agent.ThinkingPaneID == "" {
 		t.Fatal("thinking was not promoted")
 	}
 	for i := 0; i < 10; i++ {
-		app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "scro-agent", Data: thinkingLines(5)})
+		app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "scro-agent", Data: reasoning.Delta{Text: thinkingLines(5)}})
 	}
 	agent.Messages.AppendMessage(workspace.Message{
 		Role:    ttypes.RoleAssistant,
@@ -192,7 +193,7 @@ func TestThinkingScrolledWindowStable(t *testing.T) {
 	dumpChatRows(app, t)
 }
 
-func TestCompletedExpandedThinkingPaneWheelOwnsScroll(t *testing.T) {
+func TestCompletedExpandedThoughtScrollsWithTranscript(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 80
 	app.height = 24
@@ -205,7 +206,7 @@ func TestCompletedExpandedThinkingPaneWheelOwnsScroll(t *testing.T) {
 	for i := 0; i < 50; i++ {
 		fmt.Fprintf(&uniqueThinking, "reasoning-row-%02d %s\n", i, strings.Repeat("x", 35))
 	}
-	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "done-scroll", Data: uniqueThinking.String()})
+	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "done-scroll", Data: reasoning.Delta{Text: uniqueThinking.String()}})
 	paneID := state.ThinkingPaneID
 	if paneID == "" {
 		t.Fatal("thinking was not promoted")
@@ -218,60 +219,45 @@ func TestCompletedExpandedThinkingPaneWheelOwnsScroll(t *testing.T) {
 	})
 	app.syncAgentMessages("done-scroll", false)
 
-	placeholderID := ""
+	thoughtID := ""
 	for _, message := range state.Messages.Messages() {
-		if message.SubPaneID == paneID {
-			placeholderID = message.InternalID
+		if message.Role == ttypes.RoleThinking {
+			thoughtID = message.InternalID
 			break
 		}
 	}
-	if placeholderID == "" {
-		t.Fatal("thinking pane placeholder missing")
+	if thoughtID == "" || app.PaneMgr.Has(paneID) {
+		t.Fatal("completed thought did not return to transcript ownership")
 	}
 	ml := app.activeMessageList()
 	if ml == nil {
 		t.Fatal("active message list missing")
 	}
-	ml.ToggleDisclosure(placeholderID)
+	ml.ToggleDisclosure(thoughtID)
 	rows, _, _ := ml.ExportMessageRows(80)
 	for i := 0; i+1 < len(rows); i++ {
-		if rows[i].ID != placeholderID {
+		if rows[i].ID != thoughtID {
 			continue
 		}
 		if len(rows[i].Lines) == 0 || strings.TrimSpace(rows[i].Lines[len(rows[i].Lines)-1]) == "" {
-			t.Fatalf("expanded pane ended with an owned separator: %#v", rows[i].Lines)
+			t.Fatalf("expanded thought ended with an extra spacer: %#v", rows[i].Lines)
 		}
 		if len(rows[i+1].Lines) < 2 || strings.TrimSpace(rows[i+1].Lines[0]) != "" || strings.TrimSpace(rows[i+1].Lines[1]) == "" {
-			t.Fatalf("expanded pane -> assistant spacing is not exactly one row: %#v", rows[i+1].Lines)
+			t.Fatalf("expanded thought -> assistant spacing is not exactly one row: %#v", rows[i+1].Lines)
 		}
 	}
 	app.paintShellFrame()
 
-	scroll := app.subPaneProjections.ScrollModel(paneID)
+	scroll := app.chatScreen.ScrollModel()
 	if scroll == nil || scroll.MaxOffset() <= 0 {
-		t.Fatalf("expanded pane scroll = %+v", scroll)
+		t.Fatalf("expanded thought scroll = %+v", scroll)
 	}
 	scroll.StickToBottom()
-	paneBefore := scroll.Offset()
-	mainBefore := app.chatScreen.ScrollModel().Offset()
-	paneY := -1
-	for y, info := range app.chatScreen.ViewportPaneLineMap() {
-		if info.PaneID == paneID && info.LineIdx >= 0 {
-			paneY = app.chatRect.Y + y
-			break
-		}
-	}
-	if paneY < 0 {
-		t.Fatal("expanded completed pane has no visible content row")
-	}
-	visiblePaneText := func() string {
+	before := scroll.Offset()
+	visibleText := func() string {
 		buf := app.mainSurf.Buffer()
 		var text strings.Builder
-		for y, info := range app.chatScreen.ViewportPaneLineMap() {
-			if info.PaneID != paneID || info.LineIdx < 0 {
-				continue
-			}
-			screenY := app.chatRect.Y + y
+		for screenY := app.chatRect.Y; screenY < app.chatRect.Y+app.chatRect.H; screenY++ {
 			for x := app.chatRect.X; x < app.chatRect.X+app.chatRect.W; x++ {
 				cell := buf.Get(x, screenY)
 				if cell.Char != 0 {
@@ -282,19 +268,16 @@ func TestCompletedExpandedThinkingPaneWheelOwnsScroll(t *testing.T) {
 		}
 		return text.String()
 	}
-	beforeText := visiblePaneText()
+	beforeText := visibleText()
 	_, _ = app.dispatchMouseWheel(tea.MouseWheelMsg{
 		X: app.chatRect.X + app.Theme.Spacing.PadLR + 8,
-		Y: paneY, Button: tea.MouseWheelUp,
+		Y: app.chatRect.Y + 2, Button: tea.MouseWheelUp,
 	})
-	if scroll.Offset() >= paneBefore {
-		t.Fatalf("completed pane wheel did not scroll: %d -> %d", paneBefore, scroll.Offset())
-	}
-	if got := app.chatScreen.ScrollModel().Offset(); got != mainBefore {
-		t.Fatalf("completed pane wheel moved main chat: %d -> %d", mainBefore, got)
+	if scroll.Offset() >= before {
+		t.Fatalf("completed thought wheel did not scroll: %d -> %d", before, scroll.Offset())
 	}
 	app.paintShellFrame()
-	if afterText := visiblePaneText(); afterText == beforeText {
-		t.Fatalf("pane offset moved but visible body stayed stale:\n%s", afterText)
+	if afterText := visibleText(); afterText == beforeText {
+		t.Fatalf("offset moved but visible thought stayed stale:\n%s", afterText)
 	}
 }

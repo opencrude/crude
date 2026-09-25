@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -150,6 +151,80 @@ func TestLiveAndHydratedToolRowsAreIdentical(t *testing.T) {
 			// operands (command/pattern/scope) each path derives its own way.
 			assertSameRows(t, "expanded", renderLive(t, toolID, c, true)[0], renderHydrated(t, toolID, c, true)[0])
 		})
+	}
+}
+
+// The activity regression exercises the real live conversation operations and
+// the persisted snapshot converter, not two copies of the renderer's grouping
+// helper. The messages intentionally include a progress boundary, a mutation,
+// and a failure so grouping cannot cross any of them.
+func TestLiveAndHydratedActivityGroupsAreIdentical(t *testing.T) {
+	conv := workspace.NewConversation()
+	conv.AppendMessage(workspace.Message{InternalID: "progress", Role: "assistant", Content: "Checking the workspace.", Time: time.Unix(1, 0)})
+	for i, c := range []projectionCase{
+		{tool: "read_file", rawArgs: `path: one.go`, content: "package one"},
+		{tool: "execute_command", rawArgs: `command: go test ./...`, operands: map[string]any{"command": "go test ./..."}, content: "PASS"},
+	} {
+		id := "call-" + string(rune('a'+i))
+		conv.UpdateToolStreaming(id, "persisted-"+id, c.tool, map[string]any{"command": operandString(c.operands, "command")})
+		conv.UpdateToolCall(id, "persisted-"+id, c.tool, workspace.SummarizeToolArgs(c.tool, c.rawArgs))
+		conv.UpdateToolResult(id, "persisted-"+id, c.tool, c.content, false, 0, 0, 0)
+	}
+	for i := 0; i < 8; i++ {
+		if !conv.AdvanceToolLifecycles(time.Now().Add(time.Duration(i+1) * time.Second)) {
+			break
+		}
+	}
+	conv.AppendMessage(workspace.Message{InternalID: "edit", Role: "tool", ToolName: "edit_file", ToolStatus: "success", ToolPreviewPhase: "done", ToolArgs: "main.go", Content: "Replaced 1 occurrence", Time: time.Unix(4, 0)})
+	conv.AppendMessage(workspace.Message{InternalID: "reply:progress-2", Role: "assistant", Content: "Running final checks.", Time: time.Unix(5, 0)})
+	conv.AppendMessage(workspace.Message{InternalID: "failure", Role: "tool", ToolName: "execute_command", ToolStatus: "error", ToolPreviewPhase: "error", ToolArgs: "go test ./...", Content: "Command failed: exit 1", Time: time.Unix(6, 0)})
+	live, _ := chatMessagesFromConversation(conv)
+	// The persisted transcript uses the same canonical facts with durable
+	// tool-result metadata. Row identity, text, disclosure, and order must agree.
+	var history []sessiondb.MessageWithMeta
+	for _, message := range conv.Messages() {
+		snapshot := ctypes.ConversationMessage(message)
+		if snapshot.Role == "tool" && snapshot.ToolName != "edit_file" && snapshot.InternalID != "failure" {
+			snapshot.ToolArgs = ""
+			switch snapshot.ToolName {
+			case "read_file":
+				snapshot.ToolArgs = "path: one.go"
+			case "execute_command":
+				snapshot.ToolArgs = "command: go test ./..."
+			}
+		}
+		history = append(history, sessiondb.MessageWithMeta{Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []ctypes.ConversationMessage{snapshot}}})
+	}
+	hydrated := ChatMessagesFromViews(workspace.ConvertMessagesForDisplay(history))
+	lr, hr := newParityRenderer(), newParityRenderer()
+	lr.SyncMessages(live, 1)
+	hr.SyncMessages(hydrated, 1)
+	left, _, _ := lr.ExportMessageRows(200)
+	right, _, _ := hr.ExportMessageRows(200)
+	if len(left) != len(right) || len(left) != 5 {
+		t.Fatalf("activity rows live=%d hydrated=%d", len(left), len(right))
+	}
+	for i := range left {
+		if left[i].ID != right[i].ID || left[i].Toggle != right[i].Toggle {
+			t.Fatalf("collapsed row identity/disclosure differs at %d: %+v vs %+v", i, left[i], right[i])
+		}
+		assertSameRows(t, "collapsed", left[i], right[i])
+	}
+	if left[1].ID != "activity:persisted-call-a" || !strings.Contains(strings.Join(left[1].Lines, "\n"), "Ran 1 command") || right[2].ID != "edit" || right[3].ID != "reply:progress-2" || right[4].ID != "failure" {
+		t.Fatalf("activity boundaries or counts: %+v", left)
+	}
+	lr.ToggleDisclosure(left[1].ID)
+	hr.ToggleDisclosure(right[1].ID)
+	left, _, _ = lr.ExportMessageRows(200)
+	right, _, _ = hr.ExportMessageRows(200)
+	if len(left) != len(right) || len(left) != 5 {
+		t.Fatalf("expanded rows live=%d hydrated=%d", len(left), len(right))
+	}
+	for i := range left {
+		if left[i].ID != right[i].ID || left[i].Toggle != right[i].Toggle {
+			t.Fatalf("expanded row identity/disclosure differs at %d: %+v vs %+v", i, left[i], right[i])
+		}
+		assertSameRows(t, "expanded", left[i], right[i])
 	}
 }
 

@@ -1,6 +1,28 @@
 package theme
 
-import "charm.land/lipgloss/v2"
+import (
+	"charm.land/lipgloss/v2"
+	"image/color"
+)
+
+// ToolTextColors derives quiet, distinct title and operand colors from the
+// current palette. Lifecycle does not recolor these; failures use Error.
+func (c Colors) ToolTextColors() (color.Color, color.Color) {
+	title := c.Code.Function
+	if title == nil {
+		title = c.Accent2
+	}
+	operand := c.Code.String
+	if operand == nil {
+		return title, c.Muted
+	}
+	if c.Muted == nil {
+		return title, operand
+	}
+	r, g, b, a := operand.RGBA()
+	mr, mg, mb, ma := c.Muted.RGBA()
+	return title, color.RGBA64{R: uint16((r + 2*mr) / 3), G: uint16((g + 2*mg) / 3), B: uint16((b + 2*mb) / 3), A: uint16((a + 2*ma) / 3)}
+}
 
 // DefaultFrameInsets is the shell frame every theme starts with: zero on all
 // four sides — the shell renders edge to edge. Frame padding is a user
@@ -64,8 +86,8 @@ func newTheme(c Colors) *Theme {
 		ToolDone:        lipgloss.NewStyle().Foreground(c.Success),
 		ToolError:       lipgloss.NewStyle().Foreground(c.Error),
 		ThinkingLine:    lipgloss.NewStyle().Foreground(c.Muted).Italic(true),
-		UserLabel:       lipgloss.NewStyle().Foreground(c.Fg).Bold(true).Background(c.PopupSubtleBg),
-		AsstLabel:       lipgloss.NewStyle().Foreground(c.Accent2).Bold(true).Background(c.PopupSubtleBg),
+		UserLabel:       lipgloss.NewStyle().Foreground(c.Fg).Bold(true),
+		AsstLabel:       lipgloss.NewStyle().Foreground(c.Accent2).Bold(true),
 		IncompleteLabel: lipgloss.NewStyle().Foreground(c.Error).Italic(true).Bold(true).Background(c.IncompleteBg),
 		ErrorText:       lipgloss.NewStyle().Foreground(c.Error).Bold(true),
 		StatusBar:       lipgloss.NewStyle().Foreground(c.Muted),

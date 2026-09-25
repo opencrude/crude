@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"crude/types/accounting"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"crude/agent"
+	"crude/codexio"
 	"crude/provider"
 	"crude/safety"
 )
@@ -74,7 +76,7 @@ func (s *Session) permissionReviewer(a *agent.Agent) agent.PermissionReviewer {
 			provider.NewTextMessage("system", prompt), provider.NewTextMessage("user", string(payload)),
 		}})
 		if response != nil && response.Usage != nil {
-			emitPermissionReviewUsage(a, p, response.Usage, emit)
+			emitPermissionReviewUsage(a, p, response.Usage, err == nil && response.Error == nil, emit)
 		}
 		if err != nil || reviewCtx.Err() != nil || response == nil || response.Error != nil || len(response.Choices) != 1 {
 			return ask
@@ -125,6 +127,16 @@ func permissionReviewPayload(root, tool string, params map[string]any, risk safe
 		}
 	} else {
 		switch tool {
+		case "apply_patch":
+			patch, err := codexio.Parse(getStrParam(params, "input"))
+			if err != nil || len(patch.Operations) == 0 || patch.EnvironmentID != "" {
+				return nil, false
+			}
+			for _, op := range patch.Operations {
+				if op.Kind == codexio.DeleteFile || op.MoveTo != "" || !reviewPathWithin(root, op.Path) {
+					return nil, false
+				}
+			}
 		case "write_file", "edit_file":
 			path, _ := params["path"].(string)
 			if !reviewPathWithin(root, path) {
@@ -211,12 +223,17 @@ func parsePermissionReview(text string) (agent.PermissionReview, bool) {
 	return agent.PermissionReview{Decision: wire.Decision, Reason: wire.Reason}, true
 }
 
-func emitPermissionReviewUsage(a *agent.Agent, p *provider.Provider, usage *provider.ChatUsage, emit func(agent.AgentEvent)) {
+func emitPermissionReviewUsage(a *agent.Agent, p *provider.Provider, usage *provider.ChatUsage, succeeded bool, emit func(agent.AgentEvent)) {
+	outcome := accounting.Failed
+	if succeeded {
+		outcome = accounting.Succeeded
+	}
 	normalized := usage.Normalized()
 	cached := normalized.PromptTokensCached
 	price, known, source := provider.LookupPriceKnown(p.Model)
 	emit(agent.AgentEvent{Type: "usage", Data: map[string]any{
-		"request_id": fmt.Sprintf("permission-review-%s", newMessageID()), "request_kind": "permission_review",
+		"request_outcome": string(outcome),
+		"request_id":      fmt.Sprintf("permission-review-%s", newMessageID()), "request_kind": "permission_review",
 		"provider": p.ID, "account_id": p.AccountID, "model": p.Model, "turn_generation": a.TurnGeneration, "reported_at": time.Now().UnixNano(),
 		"prompt": usage.PromptTokens, "completion": usage.CompletionTokens, "prompt_cached": cached,
 		"cost": price.CalculateCost(usage.PromptTokens, usage.CompletionTokens, cached), "cost_known": known, "cost_source": source,
@@ -228,6 +245,9 @@ func emitPermissionReviewUsage(a *agent.Agent, p *provider.Provider, usage *prov
 }
 
 func (s *Session) permissionAlreadyGranted(tool string, params map[string]any, risk safety.CommandRisk) bool {
+	if tool == "apply_patch" {
+		return s.patchAlwaysAllowed(getStrParam(params, "input"))
+	}
 	if s.permStore == nil {
 		return false
 	}

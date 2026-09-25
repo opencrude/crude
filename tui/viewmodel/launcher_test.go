@@ -144,10 +144,11 @@ func TestSubAgentStarted_SubAgentWithParent(t *testing.T) {
 		Type:    "sub_agent_started",
 		AgentID: "ses_1_orch_1_sub_abc",
 		Data: map[string]string{
-			"agent_id":   "ses_1_orch_1_sub_abc",
-			"agent_name": fullName,
-			"parent_id":  "ses_1_orch_1",
-			"prompt":     "# Assignment\n- Description: inspect lifecycle",
+			"agent_id":       "ses_1_orch_1_sub_abc",
+			"agent_name":     fullName,
+			"parent_id":      "ses_1_orch_1",
+			"parent_tool_id": "tool-1",
+			"prompt":         "# Assignment\n- Description: inspect lifecycle",
 		},
 	}
 	app.handleAgentEvent(subEvt)

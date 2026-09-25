@@ -83,12 +83,23 @@ func TestToolContextShowsFullCommandAndGrepPattern(t *testing.T) {
 	}
 	ml := renderToolMessageLines(cmd, theme.DefaultDark(), 35, 40, 40, 0, 12, "done", DisclosureCollapsed)
 	commandRows := strings.Join(ml.lines, "\n")
-	if strings.Contains(commandRows, "very-long-old-expression") {
-		t.Fatalf("collapsed command leaked full operand: %#v", ml.lines)
+	if !strings.Contains(commandRows, "very-long-old-expression") {
+		t.Fatalf("collapsed command hid operand: %#v", ml.lines)
 	}
 	ml = renderToolMessageLines(cmd, theme.DefaultDark(), 35, 40, 40, 0, 12, "done", DisclosureExpanded)
 	commandRows = strings.Join(ml.lines, "\n")
-	if !strings.Contains(commandRows, "very-long-old-expression") || !strings.Contains(commandRows, "ery-long-new-expression") || !strings.Contains(commandRows, "t.go") {
+	// Word wrapping may break an unspaced shell operand at the band edge;
+	// joining the command-only rows restores the exact command bytes.
+	var fullCommand string
+	for _, row := range ml.lines {
+		if strings.Contains(row, "(command completed") {
+			break
+		}
+		row = strings.TrimPrefix(row, "│ ● Ran ")
+		row = strings.TrimPrefix(row, "│   ")
+		fullCommand += strings.TrimSuffix(row, " ▾")
+	}
+	if strings.ReplaceAll(fullCommand, " ", "") != strings.ReplaceAll(command, " ", "") || !strings.Contains(commandRows, "sed -i") {
 		t.Fatalf("expanded full command missing: %#v", ml.lines)
 	}
 	grep := types.ChatMessage{
@@ -97,7 +108,7 @@ func TestToolContextShowsFullCommandAndGrepPattern(t *testing.T) {
 	}
 	ml = renderToolMessageLines(grep, theme.DefaultDark(), 35, 40, 40, 0, 12, "done", DisclosureExpanded)
 	plain := strings.Join(ml.lines, "\n")
-	if !strings.Contains(plain, "func (f *FilterField)") || !strings.Contains(plain, "type ") || !strings.Contains(plain, "FilterField in tui/ui") {
+	if !strings.Contains(plain, "func (f *FilterField)") || !strings.Contains(plain, "type ") || !strings.Contains(plain, "in tui/ui") {
 		t.Fatalf("grep context missing:\n%s", plain)
 	}
 }

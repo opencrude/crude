@@ -2,6 +2,7 @@ package provider
 
 import (
 	"bytes"
+	"crude/types/reasoning"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -45,14 +46,29 @@ func (s *OpenAIStandard) EncodeRequest(req *ChatRequest) ([]byte, error) {
 		"stream":   req.Stream,
 	}
 	if len(req.Tools) > 0 {
-		tools := make([]openAIChatToolParam, 0, len(req.Tools))
+		tools := make([]any, 0, len(req.Tools))
 		for _, tool := range req.Tools {
+			if tool.Type == "custom" {
+				// Chat Completions gateways do not accept Responses custom tools.
+				// Carry the freeform input as a required string function argument.
+				description := tool.Function.Description
+				if tool.Function.Name == "apply_patch" {
+					description = "Apply a patch. Pass the complete *** Begin Patch ... *** End Patch text in the input string."
+				}
+				tools = append(tools, openAIChatToolParam{
+					Type: "function", Function: FunctionDef{
+						Name: tool.Function.Name, Description: description,
+						Parameters: json.RawMessage(`{"type":"object","properties":{"input":{"type":"string"}},"required":["input"],"additionalProperties":false}`),
+					},
+				})
+				continue
+			}
 			toolType := tool.Type
 			if toolType == "" {
 				toolType = "function"
 			}
 			tools = append(tools, openAIChatToolParam{
-				Type: toolType, Function: tool.Function,
+				Type: toolType, Function: chatFunctionDef(tool.Function),
 			})
 		}
 		wire["tools"] = tools
@@ -132,14 +148,22 @@ func encodeOpenAIChatMessages(messages []ChatMessage) ([]any, error) {
 			wire["tool_call_id"] = message.ToolCallID
 		}
 		if len(message.ToolCalls) > 0 {
-			calls := make([]openAIChatToolCallParam, 0, len(message.ToolCalls))
+			calls := make([]any, 0, len(message.ToolCalls))
 			for _, call := range message.ToolCalls {
+				if call.Type == "custom" {
+					args, err := json.Marshal(map[string]string{"input": call.Function.Arguments})
+					if err != nil {
+						return nil, fmt.Errorf("encode custom tool input: %w", err)
+					}
+					calls = append(calls, openAIChatToolCallParam{ID: call.ID, Type: "function", Function: FunctionCall{Name: call.Function.Name, Arguments: string(args)}})
+					continue
+				}
 				callType := call.Type
 				if callType == "" {
 					callType = "function"
 				}
 				calls = append(calls, openAIChatToolCallParam{
-					ID: call.ID, Type: callType, Function: call.Function,
+					ID: call.ID, Type: callType, Function: chatFunctionCall(call.Function),
 				})
 			}
 			wire["tool_calls"] = calls
@@ -269,6 +293,11 @@ func (s *OpenAIStandard) DecodeResponse(body []byte) (*ChatResponse, error) {
 		if reasoning, ok := openAIVisibleReasoning(details); ok {
 			choice.Message.ReasoningContent = reasoning
 			choice.Message.Reasoning = reasoning
+			var visible string
+			for _, delta := range openAIVisibleReasoningFragments(details) {
+				visible = choice.Message.ReasoningDisplay.Append(visible, delta)
+			}
+			choice.Message.ReasoningContent, choice.Message.Reasoning = visible, visible
 		}
 		captureOpenAIReasoningDetails(&choice.Message, choice.Delta.ReasoningDetails)
 		if choice.Message.ContentString() == "" && choice.Message.Refusal != "" {
@@ -282,7 +311,7 @@ func (s *OpenAIStandard) NewStreamDecoder() StreamDecoder {
 	return &openAIChatStreamDecoder{}
 }
 
-type openAIChatStreamDecoder struct{}
+type openAIChatStreamDecoder struct{ pendingCustom bool }
 
 func (d *openAIChatStreamDecoder) Decode(event StreamEvent) (StreamUpdate, error) {
 	data := strings.TrimSpace(string(event.Data))
@@ -290,6 +319,9 @@ func (d *openAIChatStreamDecoder) Decode(event StreamEvent) (StreamUpdate, error
 		return StreamUpdate{}, nil
 	}
 	if data == "[DONE]" {
+		if d.pendingCustom {
+			return StreamUpdate{}, fmt.Errorf("stream ended before custom tool call completion")
+		}
 		return StreamUpdate{Done: true}, nil
 	}
 
@@ -315,17 +347,21 @@ func (d *openAIChatStreamDecoder) Decode(event StreamEvent) (StreamUpdate, error
 	if update.ContentDelta == "" {
 		update.ContentDelta = choice.Delta.Refusal
 	}
-	if reasoning, ok := openAIVisibleReasoning(choice.Delta.ReasoningDetails); ok {
-		update.ReasoningDelta = reasoning
+	if fragments := openAIVisibleReasoningFragments(choice.Delta.ReasoningDetails); len(fragments) > 0 {
+		update.Reasoning = fragments
 	} else {
-		update.ReasoningDelta = choice.Delta.ReasoningContent
-		if update.ReasoningDelta == "" {
-			update.ReasoningDelta = choice.Delta.Reasoning
+		text := firstNonEmpty(choice.Delta.ReasoningContent, choice.Delta.Reasoning)
+		if text != "" && len(choice.Delta.ReasoningDetails) == 0 {
+			// Compatible gateways can flatten either raw or summarized text.
+			update.Reasoning = []reasoning.Delta{{Text: text}}
 		}
 	}
 	update.FinishReason = choice.FinishReason
 	update.ProviderItems = openAIReasoningDetailItems(choice.Delta.ReasoningDetails, nil)
 	for _, tc := range choice.Delta.ToolCalls {
+		if tc.Type == "custom" || tc.Function.Name == "apply_patch" {
+			d.pendingCustom = true
+		}
 		update.ToolCalls = append(update.ToolCalls, ToolCallDelta{
 			Index:     tc.Index,
 			ID:        tc.ID,
@@ -333,6 +369,9 @@ func (d *openAIChatStreamDecoder) Decode(event StreamEvent) (StreamUpdate, error
 			Name:      tc.Function.Name,
 			Arguments: tc.Function.Arguments,
 		})
+	}
+	if choice.FinishReason != "" {
+		d.pendingCustom = false
 	}
 	return update, nil
 }
@@ -348,13 +387,13 @@ func openAIVisibleReasoning(details []json.RawMessage) (string, bool) {
 	}
 	var reasoning strings.Builder
 	for _, fragment := range fragments {
-		reasoning.WriteString(fragment)
+		reasoning.WriteString(fragment.Text)
 	}
 	return reasoning.String(), true
 }
 
-func openAIVisibleReasoningFragments(details []json.RawMessage) []string {
-	var fragments []string
+func openAIVisibleReasoningFragments(details []json.RawMessage) []reasoning.Delta {
+	var fragments []reasoning.Delta
 	for _, raw := range details {
 		if len(raw) == 0 || !json.Valid(raw) {
 			continue
@@ -363,15 +402,19 @@ func openAIVisibleReasoningFragments(details []json.RawMessage) []string {
 			Type    string `json:"type"`
 			Text    string `json:"text"`
 			Summary string `json:"summary"`
+			ID      string `json:"id"`
+			Index   int    `json:"index"`
 		}
 		if err := json.Unmarshal(raw, &detail); err != nil {
 			continue
 		}
 		var fragment string
+		kind := reasoning.Raw
 		switch detail.Type {
 		case "reasoning.text":
 			fragment = detail.Text
 		case "reasoning.summary":
+			kind = reasoning.Summary
 			fragment = detail.Summary
 			if fragment == "" {
 				fragment = detail.Text
@@ -382,7 +425,7 @@ func openAIVisibleReasoningFragments(details []json.RawMessage) []string {
 		if fragment == "" {
 			continue
 		}
-		fragments = append(fragments, fragment)
+		fragments = append(fragments, reasoning.Delta{Text: fragment, Kind: kind, BlockID: fmt.Sprintf("%s:%s:%d", detail.Type, detail.ID, detail.Index)})
 	}
 	return fragments
 }
@@ -615,4 +658,19 @@ func (s *OpenAIStandard) RequestExtras(modelID, thinkingEffort string, settings 
 // ContextWindow implements ProtocolMetadata.
 func (s *OpenAIStandard) ContextWindow(modelID string) int {
 	return LookupContextWindow(modelID)
+}
+
+// Chat Completions has no tool namespaces, so encode the runtime namespace in
+// its legal flat name. Responses carries the native namespace field instead.
+func chatFunctionDef(def FunctionDef) FunctionDef {
+	if def.Name == "multi_tool_use.parallel" {
+		def.Name = "multi_tool_use_parallel"
+	}
+	return def
+}
+func chatFunctionCall(call FunctionCall) FunctionCall {
+	if call.Name == "multi_tool_use.parallel" {
+		call.Name = "multi_tool_use_parallel"
+	}
+	return call
 }

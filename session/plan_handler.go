@@ -10,6 +10,7 @@ import (
 
 	"crude/plan"
 	ccrude "crude/tools"
+	"crude/types/activity"
 )
 
 // planStore lazily constructs the session-scoped plan store. It is safe for
@@ -18,7 +19,23 @@ func (s *Session) planStore() (*plan.Store, error) {
 	if s.db == nil {
 		return nil, fmt.Errorf("plan: no session database")
 	}
-	return plan.NewStore(s.db, s.sessionID), nil
+	if store := s.plans.Load(); store != nil {
+		return store, nil
+	}
+	store := plan.NewStore(s.db, s.sessionID)
+	if s.plans.CompareAndSwap(nil, store) {
+		return store, nil
+	}
+	return s.plans.Load(), nil
+}
+
+// PlanActivity reads the plan owner's committed projection, never tool output
+// or a database. Normal tool-result events already notify presentation clients.
+func (s *Session) PlanActivity() *activity.Plan {
+	if store := s.plans.Load(); store != nil {
+		return store.ActivitySnapshot()
+	}
+	return nil
 }
 
 // executePlanTool handles the declarative planning tools. Both the main agent
@@ -35,6 +52,9 @@ func (s *Session) executePlanTool(ctx context.Context, tool string, params map[s
 func executePlanToolWithStore(ctx context.Context, store *plan.Store, sessionID, tool string, params map[string]any) (ccrude.ToolResult, error) {
 	switch tool {
 	case "update_plan":
+		if _, native := params["plan"]; native {
+			return updateCodexPlan(ctx, store, sessionID, params)
+		}
 		return updatePlanTool(ctx, store, params)
 	case "get_plan":
 		return getPlanTool(ctx, store, sessionID, params)

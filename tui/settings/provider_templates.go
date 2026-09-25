@@ -126,8 +126,7 @@ func (m *Model) buildProviderEditorForm() *ui.FormModel {
 		return nil
 	}
 	auth := ui.SelectFieldState(templateFieldAuthType, "Authentication", effective.AuthType, authTypeOptions(), "The credential transport used by accounts based on this template.")
-	headers := ui.TextAreaFieldState(templateFieldHeaders, "Extra headers", formatHeaders(effective.Headers), "One request header per line: Name: value.")
-	headers.Rows = 3
+	headers := ui.KeyValuesFieldState(templateFieldHeaders, "Extra headers", formatHeaders(effective.Headers), "Sent with every request made through this template.")
 	headers.Validator = headerMapValidator
 	fields := []*ui.FieldState{
 		ui.SeparatorFieldState("template-identity", "Template"),
@@ -453,7 +452,7 @@ func (m *Model) buildAccountEditorForm() *ui.FormModel {
 		accountOverrideSwitch(accountOverrideHeader+"-enabled", "Override key header", account.Overrides.AuthHeader != nil, "Use an account-specific credential header name."),
 		accountOverrideText(accountOverrideHeader, "Key header", effective.AuthHeader, account.Overrides.AuthHeader != nil, "Header name inherited from the template when disabled."),
 		accountOverrideSwitch(accountOverrideHeaders+"-enabled", "Override headers", account.Overrides.Headers != nil, "Replace the template's additional request headers."),
-		accountOverrideArea(accountOverrideHeaders, "Headers", formatHeaders(effective.Headers), account.Overrides.Headers != nil, "Header set inherited from the template when disabled.", 3),
+		accountOverrideHeadersTable(accountOverrideHeaders, "Headers", formatHeaders(effective.Headers), account.Overrides.Headers != nil, "Header set inherited from the template when disabled."),
 		accountOverrideSwitch(accountOverrideProtocol+"-enabled", "Override wire", account.Overrides.APIStandard != nil, "Use an account-specific wire protocol."),
 		accountOverrideSelect(accountOverrideProtocol, "Wire protocol", effective.APIStandard, standardOptions(nil), account.Overrides.APIStandard != nil, "Wire protocol inherited from the template when disabled."),
 		accountOverrideSwitch(accountOverrideDialer+"-enabled", "Override dialer", account.Overrides.Dialer != nil, "Replace all four template dial settings for this account."),
@@ -599,9 +598,11 @@ func accountOverrideSelect(id, label, value string, options []ui.FormOption, ena
 	return field
 }
 
-func accountOverrideArea(id, label, value string, enabled bool, description string, rows int) *ui.FieldState {
-	field := ui.TextAreaFieldState(id, label, value, description)
-	field.Rows = rows
+// accountOverrideHeadersTable edits a keyed header set as a Name/value table.
+// The stored value keeps the "Name: value" line protocol, so the table is a
+// presentation and editing layer only.
+func accountOverrideHeadersTable(id, label, value string, enabled bool, description string) *ui.FieldState {
+	field := ui.KeyValuesFieldState(id, label, value, description)
 	field.ReadOnly = !enabled
 	field.Validator = headerMapValidator
 	return field

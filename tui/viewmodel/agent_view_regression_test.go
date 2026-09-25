@@ -120,7 +120,7 @@ func TestAgentView_ChatPaintsInsideSlot(t *testing.T) {
 	if contentH < 1 {
 		t.Fatal("precondition: message content exists")
 	}
-	headerY := app.chatRect.Y + app.chatRect.H - contentH + 1
+	headerY := app.chatRect.Y + app.chatScreen.ScrollModel().Viewport() - contentH + 1
 	headerRow := rowText(app, headerY)
 	headerCol := lay.SidebarW + lay.PadLR
 	got := strings.TrimSpace(rowTextFrom(app, headerY, headerCol))
@@ -154,7 +154,7 @@ func TestAgentView_ShortChatAnchorsToBottom(t *testing.T) {
 		t.Skipf("viewport too small for the gravity assertion (chatH=%d)", app.ChatAreaHeight)
 	}
 
-	lastRow := app.chatRect.Y + app.chatRect.H - 1
+	lastRow := app.chatRect.Y + app.chatScreen.ScrollModel().Viewport() - 1
 	last := rowText(app, lastRow)
 	if !strings.Contains(last, "hello from the agent view") {
 		t.Fatalf("last message not anchored to the slot bottom row; row=%q", last)
@@ -278,7 +278,7 @@ func TestAgentView_ResumeContextOnlyMessagesDoNotCreateBlankTail(t *testing.T) {
 				_, _ = app.Update(tea.WindowSizeMsg{Width: width, Height: 40})
 				for frame := 0; frame < 2; frame++ {
 					app.paintShellFrame()
-					bottom := rowText(app, app.chatRect.Y+app.chatRect.H-1)
+					bottom := rowText(app, app.chatRect.Y+app.chatScreen.ScrollModel().Viewport()-1)
 					if !strings.Contains(bottom, "END-OF-CHAT") {
 						t.Fatalf("width=%d frame=%d: resumed chat left a blank tail; bottom=%q", width, frame, bottom)
 					}
