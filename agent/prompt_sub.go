@@ -3,6 +3,8 @@ package agent
 import (
 	"fmt"
 	"strings"
+
+	"crude/codexio"
 )
 
 func categoryContract(category string) string {
@@ -50,6 +52,11 @@ func BuildSubAgentPromptInDir(spec SubAgentSpec, profileInstructions, workDir st
 		`</crude_sub_agent>`,
 	}, "\n")
 
+	if codexio.IsGPT(spec.Model) {
+		base, _ := codexio.Instructions(spec.Model)
+		systemPrompt = base + "\n\n" + gatherStableEnvContextInDir(workDir).buildStableSection() + "\n" +
+			fmt.Sprintf(`<assignment_context><file_ownership>%s</file_ownership><profile>%s</profile><handoff>Complete the delegated assignment, then call write_report with the outcome, verification, and unresolved blockers. Report to the parent, not the user.</handoff></assignment_context>`, xmlText(strings.Join(spec.FileOwnership, ", ")), xmlText(profileInstructions)) + budget
+	}
 	userPrompt = fmt.Sprintf(`<delegated_assignment id="%s" parent_id="%s" parent_turn="%d">
 <name>%s</name>
 <description>%s</description>

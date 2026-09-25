@@ -1,0 +1,32 @@
+applypatch
+Copyright 2026 Fredrik Gustafsson
+
+This product includes software derived from OpenAI Codex
+(https://github.com/openai/codex), licensed under the Apache License,
+Version 2.0 (see ../LICENSE-APACHE):
+
+  OpenAI Codex
+  Copyright 2025 OpenAI
+
+The following files are derived from Codex (codex-rs/apply-patch and
+codex-rs/core), were ported to Go and modified by Fredrik Gustafsson, and
+are licensed under the Apache License, Version 2.0: codex.go, patch.go,
+tool.go, and apply_patch.lark (copied unchanged). testdata/codex-parity.json
+contains test fixtures from Codex and outputs recorded from the Codex
+apply_patch binary.
+
+The remaining copied test sources are licensed under MIT (see ../LICENSE-MIT).
+The Strict-mode implementation from fgn/applypatch is not included.
+
+Crude adaptations (2026): first-party package codexio; both upstream update
+modes; complete pre-mutation validation; line-number diagnostics; public
+partial results; tracked filesystem integration and native tool transport.
+Copied Go sources: github.com/fgn/applypatch at
+95ed66f6d36a575b00001f2e27aedc1ec7455812.
+Additional Rust algorithms and unchanged model instruction templates:
+github.com/openai/codex at aa380897f67b91e1a47d530d7286d497b6726d3f.
+The prompts under prompts/ and apply_patch.lark are Apache-2.0 upstream
+assets, copied without editorial changes. prompts/manifest.json records hashes.
+The recorded reference corpus retains its original upstream revision metadata.
+commands.go and plan_tool.go preserve descriptions and schemas from upstream
+core/src/tools/handlers/shell_spec.rs and plan_spec.rs (Apache-2.0).

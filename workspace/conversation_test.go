@@ -6,6 +6,7 @@ import (
 	"time"
 
 	ttypes "crude/types"
+	"crude/types/reasoning"
 )
 
 func TestConversationKeepsImmutableIdentityPerTurnDerivedMessage(t *testing.T) {
@@ -59,7 +60,7 @@ func TestConversationStreamingLifecycle(t *testing.T) {
 	identity := ttypes.TurnIdentity{Generation: 3, ProviderID: "ollama-cloud", ModelID: "kimi-k3"}
 
 	agent.HandleEvent(AgentEvent{Type: "turn_started", AgentID: "agent", Data: identity}, nil, ignoreStatus, ignoreThinking, func() {}, ignoreConfirm, func(string) {}, func() {})
-	agent.HandleEvent(AgentEvent{Type: "thinking", AgentID: "agent", Data: "considering"}, nil, ignoreStatus, ignoreThinking, func() {}, ignoreConfirm, func(string) {}, func() {})
+	agent.HandleEvent(AgentEvent{Type: "thinking", AgentID: "agent", Data: reasoning.Delta{Text: "considering"}}, nil, ignoreStatus, ignoreThinking, func() {}, ignoreConfirm, func(string) {}, func() {})
 	agent.HandleEvent(AgentEvent{Type: "stream_token", AgentID: "agent", Data: "hello"}, nil, ignoreStatus, ignoreThinking, func() {}, ignoreConfirm, func(string) {}, func() {})
 	agent.Tick(1)
 
@@ -127,23 +128,51 @@ func TestConversationSnapshotDoesNotExposeMutableState(t *testing.T) {
 	}
 }
 
-func TestConversationFinishCancelledMarksIncomplete(t *testing.T) {
+func TestConversationFinishCancelledPreservesContentAndAppendsStop(t *testing.T) {
 	conversation := NewConversation()
 	conversation.AppendMessage(Message{Role: MessageRoleAssistant, Content: "partial"})
-	conversation.Finish("", "cancelled", true)
+	conversation.Finish("", "cancelled", true, "stop")
 
 	message := conversation.Messages()[0]
-	if !message.Incomplete || message.IncompleteReason != "operation cancelled by user" {
+	if message.Incomplete || message.Content != "partial" || len(conversation.Messages()) != 2 || conversation.Messages()[1].LifecyclePhase != "stopped" {
 		t.Fatalf("unexpected cancelled message: %#v", message)
 	}
 }
 
-func TestConversationRemoveActiveThinking(t *testing.T) {
+func TestConversationThinkingPromotionRestoresIdentityAndPosition(t *testing.T) {
 	conversation := NewConversation()
+	conversation.BeginTurn(ttypes.TurnIdentity{Generation: 2, ModelID: "model", ProviderID: "provider"})
 	conversation.AppendThinking("private reasoning")
-	content := conversation.RemoveActiveThinking()
-	if content != "private reasoning" || len(conversation.Messages()) != 0 {
-		t.Fatalf("RemoveActiveThinking() = %q, messages=%#v", content, conversation.Messages())
+	original := conversation.Messages()[0]
+	thought, ok := conversation.PromoteThinking("pane")
+	if !ok || !reflect.DeepEqual(thought, original) || conversation.Messages()[0].InternalID != original.InternalID {
+		t.Fatalf("promotion lost thought identity: %+v", thought)
+	}
+	conversation.AppendMessage(Message{Role: MessageRoleTool, ToolName: "read_file"})
+	if conversation.RestoreThinking("pane", thought) {
+		t.Fatal("active thought restored before it finished")
+	}
+	thought.Content += " continued"
+	thought.ThinkingActive = false
+	thought.ThinkingDuration = time.Second
+	if !conversation.RestoreThinking("pane", thought) {
+		t.Fatal("settled thought was not restored")
+	}
+	got := conversation.Messages()
+	if len(got) != 2 || got[0].InternalID != original.InternalID || got[0].Content != thought.Content || got[0].SubPaneID != "" || got[0].ModelID != "model" {
+		t.Fatalf("restore lost thought position, content, or attribution: %+v", got)
+	}
+}
+
+func TestConversationNewThinkingDoesNotExtendSettledBlock(t *testing.T) {
+	conversation := NewConversation()
+	conversation.AppendThinking("first block")
+	conversation.MarkAllThinkingDone()
+	first := conversation.Messages()[0]
+	conversation.AppendThinking("second block")
+	messages := conversation.Messages()
+	if len(messages) != 2 || !reflect.DeepEqual(messages[0], first) || !messages[1].ThinkingActive || messages[1].InternalID == first.InternalID {
+		t.Fatalf("new reasoning overwrote settled evidence: %+v", messages)
 	}
 }
 
@@ -203,10 +232,28 @@ func TestPendingBtwStaysAfterProviderOutputUntilAcknowledged(t *testing.T) {
 	}
 }
 
+func TestBtwUploadHandoffMovesAboveTurnIndicatorAndRejectedNotesReturn(t *testing.T) {
+	conversation := NewConversation()
+	conversation.UpdateTurnStatus(TurnStatus{Phase: "preparing"})
+	first := conversation.AppendPendingBtw(Message{Role: MessageRoleUser, Content: "first"})
+	second := conversation.AppendPendingBtw(Message{Role: MessageRoleUser, Content: "second"})
+	if !conversation.ConsumePendingBtw(first) {
+		t.Fatal("first upload was not acknowledged")
+	}
+	messages := conversation.Messages()
+	if len(messages) != 3 || messages[0].InternalID != first || messages[0].PendingBtw || messages[1].Role != MessageRoleStatus || messages[2].InternalID != second || !messages[2].PendingBtw {
+		t.Fatalf("upload handoff did not move note above indicator: %+v", messages)
+	}
+	removed := conversation.RemovePendingBtwMessages([]string{first, second})
+	if len(removed) != 2 || removed[0].Content != "first" || removed[1].Content != "second" || len(conversation.Messages()) != 1 {
+		t.Fatalf("failed upload did not return both notes in order: %+v, remaining %+v", removed, conversation.Messages())
+	}
+}
+
 func TestAttachSubPanePromotesExistingSubAgentToolWithoutDuplicate(t *testing.T) {
 	conversation := NewConversation()
 	conversation.UpdateToolCall("tool-1", "internal-1", "run_sub_agent", "category: researcher description: survey")
-	if !conversation.AttachSubPaneToLatestTool("run_sub_agent", "child-1") {
+	if !conversation.AttachSubPaneToTool("tool-1", "child-1", "Lily — survey") {
 		t.Fatal("active sub-agent tool row was not promoted")
 	}
 	conversation.UpdateToolResult("tool-1", "internal-1", "run_sub_agent", "completed", false, 0, 0, 0)
@@ -214,8 +261,24 @@ func TestAttachSubPanePromotesExistingSubAgentToolWithoutDuplicate(t *testing.T)
 	conversation.AdvanceToolLifecycles(now)
 	conversation.AdvanceToolLifecycles(now.Add(time.Second))
 	messages := conversation.Messages()
-	if len(messages) != 1 || messages[0].SubPaneID != "child-1" || messages[0].ToolStatus == "calling" {
+	if len(messages) != 1 || messages[0].SubPaneID != "child-1" || messages[0].ToolProgressLabel != "Lily — survey" || messages[0].ToolStatus == "calling" {
 		t.Fatalf("promoted sub-agent lifecycle = %+v", messages)
+	}
+}
+
+func TestAttachSubPaneCorrelatesParallelCallsAndRejectsUnmatched(t *testing.T) {
+	conversation := NewConversation()
+	conversation.UpdateToolCall("first", "first-id", "run_sub_agent", "survey")
+	conversation.UpdateToolCall("second", "second-id", "run_sub_agent", "implement")
+	if conversation.AttachSubPaneToTool("missing", "ghost", "ghost") ||
+		!conversation.AttachSubPaneToTool("first", "child-a", "Lily — survey") ||
+		!conversation.AttachSubPaneToTool("second", "child-b", "Jane — implement") ||
+		conversation.AttachSubPaneToTool("first", "child-c", "duplicate") {
+		t.Fatal("failed to correlate children by exact tool call IDs")
+	}
+	msgs := conversation.Messages()
+	if len(msgs) != 2 || msgs[0].SubPaneID != "child-a" || msgs[1].SubPaneID != "child-b" {
+		t.Fatalf("parallel child links crossed: %+v", msgs)
 	}
 }
 
@@ -380,3 +443,17 @@ func ignoreStatus(string) {}
 func ignoreThinking(bool, bool, bool) {}
 
 func ignoreConfirm(string, string, string, string, string, string, string) {}
+func TestCancellationDoesNotMarkPreviousTurnIncomplete(t *testing.T) {
+	c := NewConversation()
+	c.AppendMessage(Message{InternalID: "old", Role: MessageRoleAssistant, Content: "Prior turn completed"})
+	c.AppendMessage(Message{InternalID: "new", Role: MessageRoleUser, Content: "New request"})
+	c.Finish("", "cancelled", false, "stop")
+	msgs := c.Messages()
+	if msgs[0].Incomplete {
+		t.Fatal("cancelling a new turn invalidated previous completed work")
+	}
+	last := msgs[len(msgs)-1]
+	if last.Role != MessageRoleStatus || last.LifecyclePhase != "stopped" {
+		t.Fatalf("missing clear stopped outcome: %+v", last)
+	}
+}

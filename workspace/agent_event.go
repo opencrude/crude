@@ -15,6 +15,26 @@ type AgentEvent struct {
 	AgentID string
 }
 
+// StaleAgentUpload identifies late upload callbacks after a request has begun
+// producing output. Ingress must not rewind either actor state or its status;
+// a genuinely new request has a different request identity.
+func (w *Workspace) StaleAgentUpload(evt AgentEvent) bool {
+	if w == nil || evt.Type != "phase" || w.Status == nil {
+		return false
+	}
+	snapshot, exists := w.Status.Agent(evt.AgentID)
+	if !exists || snapshot.Phase != "thinking" && snapshot.Phase != "responding" {
+		return false
+	}
+	phase, ok := ParseAgentPhase(evt.Data)
+	data, mapped := evt.Data.(map[string]any)
+	if !ok || !mapped {
+		return false
+	}
+	requestID, _ := data["request_id"].(string)
+	return requestID == snapshot.RequestID && (phase.Phase == "preparing" || phase.Phase == "waiting_provider")
+}
+
 // SanitizeForTerminal removes control characters and invalid UTF-8 from
 // agent text before it enters conversation data. This is a domain concern
 // (data hygiene), not a rendering concern — the workspace stores clean text
@@ -68,11 +88,17 @@ func TruncateLine(s string, max int) string {
 // ToolLabel builds a compact "tool args" status label. This is domain
 // data formatting, not terminal rendering.
 func ToolLabel(tool, argsSummary string) string {
+	if tool == "multi_tool_use.parallel" {
+		if argsSummary != "" {
+			return "Running " + argsSummary
+		}
+		return "Running tools"
+	}
 	label := PascalCaseTool(tool)
 	switch tool {
 	case "write_file":
 		label = "Writing"
-	case "edit_file":
+	case "edit_file", "apply_patch":
 		label = "Editing"
 	case "read_file":
 		label = "Reading"

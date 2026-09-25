@@ -89,6 +89,8 @@ type App struct {
 	composerSavedDraft     string
 	composerSaving         bool
 	composerDirtySinceSave bool
+	// Failed BTW uploads belong to their session until its composer is active.
+	failedBtwDrafts        map[*workspace.Session][]string
 	DirtyPromptPath        string
 	DirtyPromptChoice      int
 	accountRecoveryChoice  int

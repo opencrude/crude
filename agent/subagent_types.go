@@ -54,6 +54,7 @@ type SubAgentSpec struct {
 	FileOwnership    []string      `json:"file_ownership"`
 	ParentID         AgentID       `json:"parent_id"`
 	ParentTurn       uint64        `json:"parent_turn"`
+	ParentToolCallID string        `json:"parent_tool_call_id,omitempty"`
 	HistoryMessageID string        `json:"history_message_id,omitempty"`
 
 	ModelContextWindow int      `json:"model_context_window,omitempty"`

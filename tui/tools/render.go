@@ -135,13 +135,12 @@ func readResultSummary(content, path, duration string) string {
 	if path == "" {
 		path = "file"
 	}
+	return (ToolTitle{Action: "Read", Operand: path, Metadata: strings.TrimSpace(readResultMetadata(content) + " " + duration)}).Text()
+}
 
+func readResultMetadata(content string) string {
 	if strings.Contains(content, "— (empty file)") {
-		label := "Read " + path + " — empty"
-		if duration != "" {
-			label += " " + duration
-		}
-		return label
+		return "— empty"
 	}
 
 	// Partial read: first line is "Lines X–Y of path (N total):"
@@ -162,22 +161,14 @@ func readResultSummary(content, path, duration string) string {
 			if openParen > 0 && closeParen > openParen {
 				totalStr := rest[openParen+1 : closeParen]
 				totalStr = strings.TrimSuffix(totalStr, " total")
-				label := fmt.Sprintf("Read %s — L%s (of %s)", path, rangeStr, totalStr)
-				if duration != "" {
-					label += " " + duration
-				}
-				return label
+				return fmt.Sprintf("— L%s (of %s)", rangeStr, totalStr)
 			}
 		}
 	}
 
 	// Full read: count lines in the returned content
-	contentLines := len(strings.Split(content, "\n"))
-	label := fmt.Sprintf("Read %s — %s lines", path, rendering.FormatCount(contentLines))
-	if duration != "" {
-		label += " " + duration
-	}
-	return label
+	contentLines := strings.Count(content, "\n") + 1
+	return fmt.Sprintf("— %s lines", rendering.FormatCount(contentLines))
 }
 
 // ── grep_files ─
@@ -509,6 +500,22 @@ func subAgentRunSummary(content, target, duration string) string {
 	cat := m["category"]
 	status := m["status"]
 	handle := m["handle_id"]
+	if name == "" && strings.HasPrefix(content, "## Sub-Agent Result: ") {
+		first := strings.SplitN(content, "\n", 2)[0]
+		name = strings.TrimPrefix(first, "## Sub-Agent Result: ")
+		if open := strings.LastIndex(name, " ["); open >= 0 && strings.HasSuffix(name, "]") {
+			cat = strings.TrimSuffix(name[open+2:], "]")
+			name = name[:open]
+		}
+		switch {
+		case strings.Contains(content, "**Status:** OK"):
+			status = "completed"
+		case strings.Contains(content, "**Status:** CANCELLED"):
+			status = "cancelled"
+		default:
+			status = "failed"
+		}
+	}
 
 	if status == "running" {
 		parts := []string{"Spawned"}
@@ -525,7 +532,16 @@ func subAgentRunSummary(content, target, duration string) string {
 		return label + " (async)"
 	}
 
-	parts := []string{"Sub-agent"}
+	verb := "Sub-agent"
+	switch status {
+	case "completed":
+		verb = "Completed sub-agent"
+	case "cancelled":
+		verb = "Cancelled sub-agent"
+	case "failed":
+		verb = "Failed sub-agent"
+	}
+	parts := []string{verb}
 	if name != "" {
 		parts = append(parts, "\""+name+"\"")
 	}

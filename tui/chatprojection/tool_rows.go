@@ -16,32 +16,6 @@ func toolRowFrameSensitive(msg types.ChatMessage) bool {
 	return (msg.ToolStatus == "streaming" || msg.ToolStatus == "calling") && msg.ToolPreviewPhase != types.ToolPreviewDone && msg.ToolPreviewPhase != types.ToolPreviewError
 }
 
-func toolSpinnerRole(msg types.ChatMessage, titlePhase string) ui.SemanticColor {
-	isActive := toolRowFrameSensitive(msg)
-	if isActive {
-		switch titlePhase {
-		case types.ToolPreviewPreparing:
-			return ui.ColorWarning
-		case types.ToolPreviewStreaming:
-			return ui.ColorAccent2
-		default:
-			return ui.ColorAccent2
-		}
-	}
-	if msg.ToolStatus == types.ToolStatusCancelled {
-		return ui.ColorWarning
-	}
-	// Failure wins over any other terminal phase: a finished-with-error row
-	// carries the red contract dot, never the success colour.
-	if msg.ToolPreviewPhase == types.ToolPreviewError || msg.ToolStatus == types.ToolStatusError {
-		return ui.ColorError
-	}
-	if msg.ToolPreviewPhase == types.ToolPreviewDone {
-		return ui.ColorSuccess
-	}
-	return ui.ColorMuted
-}
-
 // hasTitleReason reports whether a structured failure reason is already
 // surfaced on the title row, which means a body payload would only repeat it.
 func hasTitleReason(msg types.ChatMessage) bool {
@@ -51,22 +25,16 @@ func hasTitleReason(msg types.ChatMessage) bool {
 	return tools.ToolErrorReason(msg.ToolName, msg.Content) != ""
 }
 
-func buildToolTitleLine(msg types.ChatMessage, titlePhase string, spinFrame int, maxWidths ...int) PaintLine {
+func buildToolTitleLine(msg types.ChatMessage, titlePhase string, spinFrame int) PaintLine {
 	title := tools.BuildToolTitle(msg, titlePhase)
-	if msg.ToolStatus == "success" {
-		dur := rendering.FormatDuration(msg.ToolDuration)
-		target := msg.ToolArgs
-		if target == "" {
-			target = msg.ToolProgressLabel
-		}
-		if summary := tools.ResultSummary(msg.ToolName, msg.Content, target, dur); summary != "" {
-			title = summary
-		}
-	}
 	isActive := toolRowFrameSensitive(msg)
 
 	dot := "● "
-	if isActive {
+	if title.Failed {
+		dot = "× "
+	} else if msg.ToolStatus == types.ToolStatusCancelled || msg.ToolStatus == "interrupted" {
+		dot = "○ "
+	} else if isActive {
 		dot = ui.ActivityDot(spinFrame) + " "
 	} else if !isActive && msg.ToolPreviewPhase != types.ToolPreviewDone &&
 		msg.ToolPreviewPhase != types.ToolPreviewError &&
@@ -75,19 +43,57 @@ func buildToolTitleLine(msg types.ChatMessage, titlePhase string, spinFrame int,
 	}
 
 	permSuffix := tools.PermTagSuffix(msg.PermTag)
-	if len(maxWidths) > 0 && maxWidths[0] > 0 {
-		fixedWidth := rendering.VisibleWidth("│ ") + rendering.VisibleWidth(dot) + rendering.VisibleWidth(permSuffix)
-		title = rendering.TruncateMiddleVisual(title, max(1, maxWidths[0]-fixedWidth), "…")
+	titleRole := ui.ColorToolTitle
+	iconRole := ui.ColorToolTitle
+	if msg.ToolStatus == types.ToolStatusCancelled || msg.ToolStatus == "interrupted" {
+		iconRole = ui.ColorMuted
+	}
+	if title.Failed {
+		titleRole, iconRole = ui.ColorError, ui.ColorError
 	}
 	spans := []RowSpan{
 		{Text: "│ ", Role: ui.ColorMuted},
-		{Text: dot, Role: toolSpinnerRole(msg, titlePhase)},
-		{Text: title, Role: ui.ColorMuted},
+		{Text: dot, Role: iconRole},
+		{Text: rendering.SanitizeForTerminal(title.Action), Role: titleRole},
+	}
+	if title.Operand != "" {
+		spans = append(spans, RowSpan{Text: " " + rendering.SanitizeForTerminal(title.Operand), Role: ui.ColorToolOperand})
+	}
+	if title.Metadata != "" {
+		spans = append(spans, RowSpan{Text: " " + rendering.SanitizeForTerminal(title.Metadata), Role: ui.ColorMuted})
 	}
 	if permSuffix != "" {
 		spans = append(spans, RowSpan{Text: permSuffix, Role: ui.ColorMuted})
 	}
 	return PaintLine{Spans: spans}
+}
+
+func buildToolTitleLines(msg types.ChatMessage, phase string, frame, width int, disclosure DisclosureState) []PaintLine {
+	header := buildToolTitleLine(msg, phase, frame)
+	if toolSupportsDisclosure(msg.ToolName) && (msg.Content != "" || msg.ToolCommand != "") {
+		glyph := " ▸"
+		if disclosure == DisclosureExpanded {
+			glyph = " ▾"
+		}
+		header.Spans = append(header.Spans, RowSpan{Text: glyph, Role: ui.ColorMuted})
+	}
+	return wrapToolTitle(header, width)
+}
+
+func wrapToolTitle(header PaintLine, width int) []PaintLine {
+	label := PaintLine{Spans: header.Spans[2:]}
+	var lines []PaintLine
+	prefixWidth := rendering.VisibleWidth(header.Spans[0].Text + header.Spans[1].Text)
+	continuation := header.Spans[0].Text + strings.Repeat(" ", rendering.VisibleWidth(header.Spans[1].Text))
+	for i, line := range wrapPaintLine(label, max(1, width-prefixWidth)) {
+		prefix := []RowSpan{{Text: continuation, Role: ui.ColorMuted}}
+		if i == 0 {
+			prefix = append([]RowSpan(nil), header.Spans[:2]...)
+		}
+		line.Spans = append(prefix, line.Spans...)
+		lines = append(lines, line)
+	}
+	return lines
 }
 
 func buildToolPlainResultLine(prefix, text string, errorStyle bool) PaintLine {
@@ -144,42 +150,33 @@ func isToolRichBody(msg types.ChatMessage, resultContent string) bool {
 }
 
 func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth, innerW, width, spinFrame, height int, phase string, disclosure DisclosureState) messageLines {
+	if _, exit, _, ok := tools.CommandResult(msg.ToolName, msg.Content); ok && exit != nil && *exit != 0 {
+		msg.ToolStatus, msg.ToolPreviewPhase = types.ToolStatusError, types.ToolPreviewError
+	}
 	titlePhase := msg.ToolPreviewPhase
 	if titlePhase == "" {
 		titlePhase = phase
 	}
+	switch msg.ToolStatus {
+	case types.ToolStatusSuccess:
+		titlePhase = types.ToolPreviewDone
+	case types.ToolStatusError:
+		titlePhase = types.ToolPreviewError
+	case types.ToolStatusCalling, types.ToolStatusStreaming:
+		if titlePhase == "" {
+			titlePhase = types.ToolPreviewStreaming
+		}
+	}
 
-	expandable := msg.ToolStatus == "success" && msg.Content != "" && toolSupportsDisclosure(msg.ToolName)
-	titleWidth := contentWidth
-	if titleWidth <= 0 {
-		titleWidth = innerW
-	}
-	if expandable && titleWidth > 0 {
-		titleWidth -= rendering.VisibleWidth(" ▸")
-	}
 	var out messageLines
 	out.frameSensitive = toolRowFrameSensitive(msg)
-	var titlePL PaintLine
-	if titleWidth > 0 {
-		titlePL = buildToolTitleLine(msg, titlePhase, spinFrame, max(1, titleWidth))
-	} else {
-		titlePL = buildToolTitleLine(msg, titlePhase, spinFrame)
+	expanded := disclosure == DisclosureExpanded
+	for _, line := range buildToolTitleLines(msg, titlePhase, spinFrame, innerW, disclosure) {
+		out.lines = append(out.lines, line.PlainText())
+		out.native = append(out.native, line)
 	}
-	if expandable {
-		glyph := "▸"
-		if disclosure == DisclosureExpanded {
-			glyph = "▾"
-		}
-		titlePL = appendToolDisclosureGlyph(titlePL, glyph)
-	}
-	expanded := expandable && disclosure == DisclosureExpanded
-	out.lines = append(out.lines, titlePL.PlainText())
-	out.native = append(out.native, titlePL)
-	if expanded && msg.ToolCommand != "" && (msg.ToolName == "execute_command" || msg.ToolName == "async_execute_command") {
-		out.appendCommandContext(msg.ToolCommand, innerW)
-	}
-	if expanded && msg.ToolInput != "" {
-		out.appendToolInputContext(msg, innerW)
+	if output, _, _, ok := tools.CommandResult(msg.ToolName, msg.Content); ok {
+		msg.Content = rendering.SanitizeForTerminal(output)
 	}
 
 	// Completed tools render a budgeted preview by default; full output only
@@ -191,9 +188,7 @@ func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth
 		resultContent = strings.TrimSpace(resultContent)
 		if resultContent != "" {
 			switch {
-			case msg.ToolName == "write_file" && !expanded:
-				// Writes stay title-only in preview; counts already live in the
-				// title and expansion reveals the full tinted additions diff.
+			case (msg.ToolName == "write_file" || msg.ToolName == "edit_file" || msg.ToolName == "apply_patch") && !expanded:
 			case isToolRichBody(msg, resultContent):
 				out.appendRichToolBody(msg, resultContent, th, contentWidth, innerW, height, expanded)
 			case tools.IsSummaryOnlyTool(msg.ToolName) && !expanded:
@@ -214,71 +209,26 @@ func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth
 		// A structured planning failure already explains itself in the title
 		// ("Update plan failed — revision conflict …"); its canonical JSON
 		// payload addresses the model, not the reader.
-		if msg.Content != "" && !hasTitleReason(msg) {
-			out.appendPlainToolBody(msg.ToolName, msg.Content, innerW, height, true, true)
+		if msg.ToolName == "apply_patch" && tools.IsDiffContent(msg.Content) {
+			prefix, _, _ := strings.Cut(msg.Content, "```diff")
+			out.appendPlainToolBody(msg.ToolName, prefix, innerW, height, false, true)
+			out.appendRichToolBody(msg, msg.Content, th, contentWidth, innerW, height, true)
+		} else if msg.Content != "" && (!hasTitleReason(msg) || expanded && (msg.ToolName == "write_file" || msg.ToolName == "edit_file" || msg.ToolName == "apply_patch")) {
+			out.appendPlainToolBody(msg.ToolName, msg.Content, innerW, min(height, 9), false, expanded)
 		}
-	} else if msg.ToolStatus == types.ToolStatusCancelled {
+	} else if msg.ToolStatus == types.ToolStatusCancelled || msg.ToolStatus == "interrupted" && expanded {
 		if msg.Content != "" {
 			out.appendPlainToolBody(msg.ToolName, msg.Content, innerW, height, false, true)
 		}
 	}
 
-	// A cancelled tool call struck through entirely: the title line and any
-	// body lines read as withdrawn work rather than a completed result.
-	if msg.ToolStatus == types.ToolStatusCancelled {
-		strikeBody(out.native)
-	}
-
 	return out
-}
-
-func (ml *messageLines) appendCommandContext(command string, width int) {
-	command = rendering.SanitizeForTerminal(command)
-	for _, line := range rendering.HardWrap(command, max(1, width-toolBodyGutterWidth)) {
-		pl := PaintLine{Spans: []RowSpan{
-			{Text: "│   ", Role: ui.ColorMuted},
-			{Text: line, Role: ui.ColorFg},
-		}}
-		ml.lines = append(ml.lines, pl.PlainText())
-		ml.native = append(ml.native, pl)
-	}
-}
-
-func (ml *messageLines) appendToolInputContext(msg types.ChatMessage, width int) {
-	label := "input: "
-	switch msg.ToolName {
-	case "grep_files":
-		label = "pattern: "
-	case "web_search", "arxiv_search":
-		label = "query: "
-	case "web_fetch":
-		label = "url: "
-	}
-	text := label + rendering.SanitizeForTerminal(msg.ToolInput)
-	if msg.ToolScope != "" && msg.ToolScope != "." {
-		text += " in " + rendering.SanitizeForTerminal(msg.ToolScope)
-	}
-	for _, line := range rendering.HardWrap(text, max(1, width-toolBodyGutterWidth)) {
-		pl := PaintLine{Spans: []RowSpan{
-			{Text: "│   ", Role: ui.ColorMuted},
-			{Text: line, Role: ui.ColorMuted, Attr: cell.AttrItalic},
-		}}
-		ml.lines = append(ml.lines, pl.PlainText())
-		ml.native = append(ml.native, pl)
-	}
-}
-
-// appendToolDisclosureGlyph adds the " ▸" affordance to a collapsed tool's
-// title row so it reads as clickable even when the body is a budgeted preview.
-func appendToolDisclosureGlyph(pl PaintLine, glyph string) PaintLine {
-	pl.Spans = append(pl.Spans, RowSpan{Text: " " + glyph, Role: ui.ColorMuted})
-	return pl
 }
 
 func toolSupportsDisclosure(toolName string) bool {
 	switch toolName {
 	case "execute_command", "async_execute_command", "read_async_output", "check_async_command",
-		"edit_file", "write_file", "update_plan", "get_plan", "read_file", "grep_files", "glob_files",
+		"exec_command", "write_stdin", "apply_patch", "edit_file", "write_file", "update_plan", "get_plan", "read_file", "grep_files", "glob_files",
 		"list_directory", "web_search", "web_fetch", "arxiv_search":
 		return true
 	}
@@ -287,7 +237,7 @@ func toolSupportsDisclosure(toolName string) bool {
 
 func isCompactEvidenceTool(name string) bool {
 	switch name {
-	case "execute_command", "async_execute_command", "read_async_output", "check_async_command",
+	case "exec_command", "write_stdin", "execute_command", "async_execute_command", "read_async_output", "check_async_command",
 		"read_file", "grep_files", "glob_files", "list_directory", "web_search", "web_fetch", "arxiv_search":
 		return true
 	default:
@@ -421,7 +371,7 @@ func (ml *messageLines) appendPlainToolBody(toolName, resultContent string, widt
 
 func toolPreviewHeight(toolName string, height int) int {
 	switch toolName {
-	case "execute_command", "async_execute_command", "read_async_output", "check_async_command":
+	case "exec_command", "write_stdin", "execute_command", "async_execute_command", "read_async_output", "check_async_command":
 		return tools.TerminalResultHeight(height)
 	case "grep_files", "web_search", "web_fetch", "arxiv_search":
 		return min(4, tools.TerminalResultHeight(height))
@@ -436,7 +386,7 @@ func toolPreviewHeight(toolName string, height int) int {
 
 func isCommandEvidenceTool(toolName string) bool {
 	switch toolName {
-	case "execute_command", "async_execute_command", "read_async_output", "check_async_command":
+	case "exec_command", "write_stdin", "execute_command", "async_execute_command", "read_async_output", "check_async_command":
 		return true
 	}
 	return false

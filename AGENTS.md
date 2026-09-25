@@ -940,9 +940,64 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
 ### Activity-dot animation
 - `ui.ActivityDot(spinFrame)` is the only product activity-dot animation:
   synchronized Unix-millisecond clock, `●` for 400ms then `○` for 400ms.
+- Every active fixed-strip page uses `ui.TextTide`, a paint-only ink sweep that
+  remains visible throughout its cycle. Explicit reasoning kind and semantic
+  blocks come from provider wire contracts. Flattened unlabelled text gets a
+  neutral provisional strip preview and expandable full train, not a guessed
+  raw pane or confirmed summary. A strong provider-reported usage discrepancy
+  can settle the accepted request and, with repeated connection-scoped evidence,
+  calibrate subsequent streams. Explicit wire raw always keeps its pane. Never
+  classify by model name or infer from current-request usage before it arrives.
+- Active collapsed compact thoughts paint no stray transcript header. The fixed
+  strip owns a clickable chevron and the normal disclosure shortcut reveals the
+  complete retained trace in the transcript. Thinking ink is muted/theme-aware,
+  not foreground white. Provisional thinking tides reversibly; a confirmed
+  summary tides left-to-right through the remaining active turn for that serving
+  connection. A provider/account/model change resets the direction. Do not
+  change transcript text, width or rows on animation frames.
+- Reasoning contracts live in `types/reasoning`, request outcomes in
+  `types/accounting`, and immutable plan activity in `types/activity`. Rendering
+  and the event pump never import provider implementations for these contracts.
+  `chatprojection.ActivityStrip` derives cached rows; `shellchat` only publishes
+  geometry and paints. Never parse Markdown, decode plan-tool JSON, or access
+  storage from `Screen.Paint`.
+- Chat reserves activity-strip geometry independently of phase. Transient
+  provider/tool status must not appear/disappear as transcript rows. Durable
+  stop, history and compaction boundaries remain visible. Memory-summary titles
+  load through session-owned cancellable jobs, never from a screen or Update.
+- The strip prioritizes upload bytes/percent, provider waiting, retry and required
+  action over optional rotation. Tidal motion applies to every active strip
+  state; provisional and summarized thinking get the compact preview. Do not
+  echo the user prompt there. Plan progress/current
+  steps, objective and next step follow in order, packing to width or rotating
+  on the shared clock. Successful-call counts are trailing, lowest-priority data.
+  The session's one `plan.Store` publishes its committed immutable activity view;
+  the strip never becomes another plan owner.
 - Active chat lifecycle/thinking/tool/sub-agent/session rows use it with one
   stable semantic color. Never add local speed formulas, brightness/color
   pulses, braille frames, or `AttrBlink`; see `docs/guides/component-authoring.md`.
+- Activity groups and parallel batches share one staged tool-leaf projection.
+  Expansion reveals hidden branches in place; it never replaces the tree with
+  standalone legacy rows. Execution events carry exact tool arguments, not
+  formatted/truncated summaries. Native command JSON envelopes are decoded only
+  at presentation; file edits/writes/patches stay separate and default-open.
+  Summary counts and visible membership are source/disclosure-derived, not
+  rescanned on animation ticks. See `docs/reference/chat-activity.md`.
+- Tool titles keep action, operand and metadata as distinct semantic spans,
+  with theme-dependent colors that do not change with lifecycle. Wrapping must
+  retain those roles, including in compact sub-agent lists. Reserve the red
+  title and `×` indicator for actual failures; never recolor the operand or
+  whole result red, or turn settled tool rows into full-foreground text.
+- Keep at least six recent eligible tool leaves and the last two tool request
+  rounds visible, extending backward by whole rounds; completion alone must not
+  fold a leaf. Completed thoughts do not consume that tool budget. Promoted
+  thinking returns to its original canonical transcript slot on completion and
+  releases the temporary pane, so long thoughts cannot orphan adjacent tools.
+  Transcript items own one leading spacer; subpanes never add trailing gaps.
+  Persist `ToolRoundID` and inherit it in parallel projections. Retry
+  feedback is one retained, cancellable row. User stops preserve readable work
+  and append a durable `turn_stopped` boundary; never strike through cancelled
+  content or invalidate a prior completed turn.
 - The footer is static, low-profile aggregate text. Only required
   user action (`⚠`) and failures (`✕`) receive attention signs.
 - Compact editor status retains current-line blame in the active header; full
@@ -970,6 +1025,12 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   reported availability. Provider omissions are not measured zeros. A revision
   replaces the same request once and older revisions cannot overwrite it. Context
   stays agent-local even when inspecting subtree/session totals.
+- Current model selection is read from the owning session's configuration, not
+  its last usage record or another tab's backend. Per-model accounting groups
+  the immutable producing account/provider/model. Displayed turns count successful
+  API calls, not actor generations; request outcomes are durable and immutable
+  across billing revisions. Unknown outcomes remain unknown. Actor generations
+  are separate cancellation/recovery identities. Preserve cost availability.
 
 ### Dense resume and memory shutdown
 - Hydration publishes one normalized stopped transcript, never each growing
@@ -1007,7 +1068,7 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   switch on the same provider preserves it for the provider's documented
   compatibility check. Compaction summarizes visible/tool state only and never
   attempts to inspect ciphertext.
-- Established partial download stalls never replay a stochastic request. Commit
+- Established partial stream interruptions never replay a stochastic request. Commit
   canonical partial assistant output and append one hidden continuation request;
   if tool-call construction was interrupted, execute none of those calls, drop
   malformed protocol fragments, and ask the model to issue complete calls from

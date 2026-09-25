@@ -20,6 +20,10 @@ func TestEngineeringContractInEveryExecutionMode(t *testing.T) {
 			if strings.Count(prompt, engineeringContractPrompt) != 1 {
 				t.Fatal("prompt must include exactly one canonical engineering contract")
 			}
+			if !strings.Contains(prompt, "never call edit_file with identical old_string and new_string") ||
+				strings.Contains(prompt, "Prefer incremental edits over whole-file rewrites") {
+				t.Fatal("all agents must skip no-op edits without forcing incremental patches")
+			}
 			var document struct {
 				Engineering struct {
 					Rules []string `xml:"rule"`
@@ -47,6 +51,19 @@ func TestEngineeringContractInEveryExecutionMode(t *testing.T) {
 				}
 			}
 		})
+	}
+	for _, mode := range []string{"solo", "orchestrator"} {
+		prompt := prompts[mode]
+		for _, want := range []string{"<activity_communication>", "brief, truthful one-line progress update", "automatically groups routine settled tool calls", "End with a normal response"} {
+			if !strings.Contains(prompt, want) {
+				t.Errorf("%s prompt missing activity guidance %q", mode, want)
+			}
+		}
+	}
+	for _, category := range []string{CatResearcher, CatCrafter, CatAeron} {
+		if strings.Contains(prompts[category], "<activity_communication>") {
+			t.Errorf("%s leaf prompt must report to parent, not send user-facing progress", category)
+		}
 	}
 	if !strings.Contains(prompts[CatResearcher], "Do not edit files.") {
 		t.Fatal("shared contract must not remove the researcher's read-only boundary")

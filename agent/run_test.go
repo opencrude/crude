@@ -136,8 +136,15 @@ func TestRunContinuesWithBTWArrivingDuringFinalCompletion(t *testing.T) {
 		}
 	}
 	drainEvents()
-	if hasEvent(observed, "btw_consumed") {
-		t.Fatal("BTW was acknowledged before the provider accepted its request")
+	if !hasEvent(observed, "btw_consumed") {
+		t.Fatal("BTW remained pending after its context started uploading")
+	}
+	// The second provider response is still blocked. The handoff belongs to
+	// the upload, independently of the model's first output.
+	for _, event := range observed {
+		if event.Type == "stream_token" && event.Data == "second response" {
+			t.Fatal("second model output arrived before the response was released")
+		}
 	}
 	close(releaseSecond)
 
@@ -148,6 +155,19 @@ func TestRunContinuesWithBTWArrivingDuringFinalCompletion(t *testing.T) {
 	}
 	if requests.Load() != 2 {
 		t.Fatalf("requests=%d want BTW to force a second request", requests.Load())
+	}
+	drainEvents()
+	successful := map[string]bool{}
+	for _, event := range observed {
+		if event.Type == "usage" {
+			data := event.Data.(map[string]any)
+			if data["request_outcome"] == "succeeded" {
+				successful[data["request_id"].(string)] = true
+			}
+		}
+	}
+	if len(successful) != 2 {
+		t.Fatalf("one actor turn made two successful API calls, accounted %+v", successful)
 	}
 	requestMessages := <-secondMessages
 	foundBTW := false
@@ -184,14 +204,71 @@ func TestRunClearsBtwWhenProviderRejectsRequest(t *testing.T) {
 	messages := agent.Run(context.Background(), nil, "system", func(event AgentEvent) {
 		events = append(events, event)
 	}, nil, "", btw)
-	if hasEvent(events, "btw_consumed") || !hasEvent(events, "btw_cleared") {
-		t.Fatalf("rejected BTW lifecycle events = %+v", events)
+	if !hasEvent(events, "btw_consumed") || !hasEvent(events, "btw_cleared") {
+		t.Fatalf("rejected BTW must move during upload and clear after rejection: %+v", events)
 	}
 	for _, message := range messages {
 		if message.InternalID == "btw-rejected" {
 			t.Fatal("provider-rejected BTW leaked into canonical history")
 		}
 	}
+}
+
+func TestRunClearsBtwWhenCancelledDuringUpload(t *testing.T) {
+	p := provider.FromPreset("openai-chat", "key", "https://example.invalid/v1")
+	p.Model = "test-model"
+	agent := newTestAgent(t, p, p.Model)
+	requestUploaded := make(chan struct{})
+	agent.testHTTPClient = &http.Client{Transport: agentRoundTripFunc(func(req *http.Request) (*http.Response, error) {
+		if _, err := io.Copy(io.Discard, req.Body); err != nil {
+			return nil, err
+		}
+		close(requestUploaded)
+		<-req.Context().Done()
+		return nil, req.Context().Err()
+	})}
+	btwMessage := provider.NewTextMessage("user", "restore if cancelled")
+	btwMessage.InternalID = "btw-cancelled"
+	btw := make(chan BtwMessage, 1)
+	btw <- BtwMessage{Message: btwMessage, Accept: func() bool { return true }}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	var eventsMu sync.Mutex
+	var events []AgentEvent
+	done := make(chan []provider.ChatMessage, 1)
+	go func() {
+		done <- agent.Run(ctx, nil, "system", func(event AgentEvent) {
+			eventsMu.Lock()
+			events = append(events, event)
+			eventsMu.Unlock()
+		}, nil, "", btw)
+	}()
+	select {
+	case <-requestUploaded:
+	case <-time.After(2 * time.Second):
+		t.Fatal("request upload did not start")
+	}
+	eventsMu.Lock()
+	if !hasEvent(events, "btw_consumed") {
+		t.Fatal("note did not move when upload started")
+	}
+	eventsMu.Unlock()
+	cancel()
+	select {
+	case messages := <-done:
+		for _, message := range messages {
+			if message.InternalID == btwMessage.InternalID {
+				t.Fatal("cancelled note remained in canonical history")
+			}
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("cancelled request did not stop")
+	}
+	eventsMu.Lock()
+	if !hasEvent(events, "btw_cleared") {
+		t.Fatalf("cancelled upload did not return note to UI: %+v", events)
+	}
+	eventsMu.Unlock()
 }
 
 func TestRunAutomaticallyContinuesTruncatedResponse(t *testing.T) {
@@ -869,6 +946,23 @@ func TestDefaultToolDefinitionsValidateRequiredParameters(t *testing.T) {
 	}
 	if !result.toolError || !strings.Contains(result.result.Content, "path") {
 		t.Fatalf("result = %+v", result)
+	}
+}
+
+func TestIdenticalEditIsRejectedBeforeDispatcher(t *testing.T) {
+	a := newTestAgent(t, nil, "test-model")
+	var executed atomic.Bool
+	a.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
+		executed.Store(true)
+		return tools.ToolResult{Content: "unexpected"}, nil
+	}
+	result := a.executeOneToolCall(context.Background(), provider.ToolCall{
+		ID: "no-op", InternalID: "no-op-message", Function: provider.FunctionCall{
+			Name: "edit_file", Arguments: `{"path":"x.go","old_string":"unchanged","new_string":"unchanged"}`,
+		},
+	}, func(AgentEvent) {}, nil, new(string))
+	if executed.Load() || !result.toolError || !strings.Contains(result.result.Content, "old_string and new_string are exactly the same") {
+		t.Fatalf("identical edit reached dispatcher or was reported as success: %+v", result)
 	}
 }
 

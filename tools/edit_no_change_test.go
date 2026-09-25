@@ -1,9 +1,32 @@
 package tools
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
+
+func TestEditFileSchemaWarnsAgainstIdenticalReplacement(t *testing.T) {
+	for _, def := range AgentTools {
+		if def.Function.Name != "edit_file" {
+			continue
+		}
+		var schema struct {
+			Properties map[string]struct {
+				Description string `json:"description"`
+			} `json:"properties"`
+		}
+		if err := json.Unmarshal(def.Function.Parameters, &schema); err != nil {
+			t.Fatal(err)
+		}
+		if !strings.Contains(def.Function.Description, "Do not call edit_file if old_string and new_string are identical") ||
+			!strings.Contains(schema.Properties["new_string"].Description, "MUST differ from old_string") {
+			t.Fatal("model-facing edit_file schema must prohibit no-op edit calls")
+		}
+		return
+	}
+	t.Fatal("edit_file tool definition missing")
+}
 
 // A no-change patch is a failure, not a success whose body is only prose: the
 // chat projection renders edit results as patch cards, so a "Replaced 1

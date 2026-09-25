@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"charm.land/glamour/v2"
 
@@ -12,6 +13,7 @@ import (
 	"crude/tui/theme"
 	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types/reasoning"
 )
 
 // messageLines is one render pass producing parallel plain-text lines and
@@ -200,27 +202,23 @@ func renderAssistantMessage(msg types.ChatMessage, ctx renderContext, suppressHe
 		bodyLines = []string{""}
 		bodyNative = []PaintLine{buildPlainBodyLine("")}
 	}
-	if msg.Incomplete {
-		strikeBody(bodyNative)
-	}
 	ml.lines = append(ml.lines, bodyLines...)
 	ml.native = append(ml.native, bodyNative...)
 	return ml
 }
 
 func renderThinkingMessage(msg types.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {
+	if msg.ThinkingDisplay.Kind.HasCompactPreview() {
+		return renderThinkingSummary(msg, ctx)
+	}
 	var ml messageLines
 	ml.frameSensitive = msg.ThinkingActive
 	if ctx.thinkingBodyOnly {
 		wrapped := rendering.WrapText(msg.Content, ctx.contentWidth)
-		bodyStart := len(ml.native)
 		for _, line := range wrapped {
 			pl := buildThinkingBodyLine(line, false, ctx.spinFrame, msg.ThinkingActive, msg.ThinkingInterrupted)
 			ml.lines = append(ml.lines, pl.PlainText())
 			ml.native = append(ml.native, pl)
-		}
-		if msg.Incomplete || msg.ThinkingInterrupted {
-			strikeBody(ml.native[bodyStart:])
 		}
 		return ml
 	}
@@ -254,14 +252,10 @@ func renderThinkingMessage(msg types.ChatMessage, ctx renderContext, suppressHea
 			return ml
 		}
 		wrapped := rendering.WrapText(msg.Content, ctx.contentWidth)
-		bodyStart := len(ml.native)
 		for _, line := range wrapped {
 			pl := buildThinkingBodyLine(line, false, ctx.spinFrame, false, msg.ThinkingInterrupted)
 			ml.lines = append(ml.lines, pl.PlainText())
 			ml.native = append(ml.native, pl)
-		}
-		if msg.ThinkingInterrupted {
-			strikeBody(ml.native[bodyStart:])
 		}
 		return ml
 	}
@@ -293,17 +287,114 @@ func renderThinkingMessage(msg types.ChatMessage, ctx renderContext, suppressHea
 	ml.native = append(ml.native, header)
 
 	wrapped := rendering.WrapText(msg.Content, ctx.contentWidth)
-	bodyStart := len(ml.native)
 	for _, line := range wrapped {
 		pl := buildThinkingBodyLine(line, false, ctx.spinFrame, msg.ThinkingActive, msg.ThinkingInterrupted)
 		ml.lines = append(ml.lines, pl.PlainText())
 		ml.native = append(ml.native, pl)
 	}
 
-	if msg.Incomplete || msg.ThinkingInterrupted {
-		strikeBody(ml.native[bodyStart:])
-	}
 	return ml
+}
+
+func renderThinkingSummary(msg types.ChatMessage, ctx renderContext) messageLines {
+	label, chevron := "Thought", " ▸ "
+	if msg.ThinkingActive {
+		label = "Thinking"
+	} else if msg.ThinkingInterrupted {
+		label = "Thought interrupted"
+	}
+	if ctx.disclosure == DisclosureExpanded {
+		chevron = " ▾ "
+	}
+	header := PaintLine{Spans: []RowSpan{{Text: label + chevron, Role: ui.ColorMuted}}}
+	if msg.ThinkingActive && ctx.disclosure != DisclosureExpanded {
+		// The live preview belongs to the fixed strip. Keep one transcript
+		// disclosure affordance, not a duplicate animated copy of the thought.
+		header.Spans[0].Text = strings.TrimRight(header.Spans[0].Text, " ")
+		return messageLines{lines: []string{header.PlainText()}, native: []PaintLine{header}}
+	}
+	md := ctx.mdRenderer
+	if md == nil {
+		// Unlike block chat, compact summaries always need Markdown parsing.
+		// Compose at the shared readable minimum, then bound native spans below.
+		md = rendering.MakeMdRenderer(40, ctx.th)
+	}
+	if ctx.disclosure != DisclosureExpanded {
+		preview := ThinkingPreviewLine(msg.Content, msg.ThinkingDisplay, md, ctx.tokens)
+		header.Spans = append(header.Spans, preview.Spans...)
+		if header.VisibleWidth() > ctx.contentWidth {
+			header = TruncatePaintLine(header, max(0, ctx.contentWidth-1))
+			header.Spans = append(header.Spans, RowSpan{Text: "…", Role: ui.ColorMuted})
+		}
+		return messageLines{lines: []string{header.PlainText()}, native: []PaintLine{header}}
+	}
+	rendered, markdown := renderMarkdown(msg.Content, md)
+	if !markdown {
+		rendered = msg.Content
+	}
+	var rows []PaintLine
+	for _, line := range strings.Split(rendered, "\n") {
+		pl := BridgeAnsiLine(line, ctx.tokens)
+		rows = append(rows, wrapPaintLine(pl, ctx.contentWidth)...)
+	}
+	native := append([]PaintLine{header}, rows...)
+	lines := make([]string, len(native))
+	for i, line := range native {
+		lines[i] = line.PlainText()
+	}
+	return messageLines{lines: lines, native: native}
+}
+
+// ThinkingPreviewLine paints the latest semantic block/paragraph of live
+// reasoning. It is shared by compact summary rows and the fixed activity strip;
+// the complete canonical body is never truncated by this presentation.
+func ThinkingPreviewLine(content string, display reasoning.Display, md *glamour.TermRenderer, tokens *ui.TokenSet) PaintLine {
+	body := thinkingPreviewBody(content, display)
+	rendered, ok := renderMarkdown(body, md)
+	if !ok {
+		rendered = body
+	}
+	line := PaintLine{}
+	for _, part := range strings.Split(rendered, "\n") {
+		pl := BridgeAnsiLine(part, tokens)
+		for len(pl.Spans) > 0 {
+			last := &pl.Spans[len(pl.Spans)-1]
+			last.Text = strings.TrimRight(last.Text, " \t")
+			if last.Text != "" {
+				break
+			}
+			pl.Spans = pl.Spans[:len(pl.Spans)-1]
+		}
+		if len(pl.Spans) == 0 {
+			continue
+		}
+		pl.Spans[0].Text = strings.TrimLeft(pl.Spans[0].Text, " \t")
+		if len(line.Spans) > 0 {
+			line.Spans = append(line.Spans, RowSpan{Text: " ", Role: ui.ColorMuted})
+		}
+		line.Spans = append(line.Spans, pl.Spans...)
+	}
+	return line
+}
+
+func thinkingPreviewBody(content string, display reasoning.Display) string {
+	content = content[min(max(0, display.Start), len(content)):]
+	// Raw traces can be long. Parse only a bounded suffix of the current block.
+	if len(content) > 2048 {
+		start := len(content) - 2048
+		for start < len(content) && !utf8.RuneStart(content[start]) {
+			start++
+		}
+		content = content[start:]
+	}
+	content = strings.TrimSpace(content)
+	if split := strings.LastIndex(content, "\n\n"); split >= 0 {
+		return strings.TrimSpace(content[split+2:])
+	}
+	if split := strings.LastIndex(content, "\n"); split >= 0 {
+		return strings.TrimSpace(content[split+1:])
+	}
+	return content
 }
 
 func renderErrorMessage(msg types.ChatMessage, ctx renderContext) messageLines {
@@ -395,13 +486,41 @@ func renderLifecycleMessage(msg types.ChatMessage, ctx renderContext) messageLin
 		active = true
 		label = "Stopping turn"
 		role = ui.ColorWarning
+	case "stopped":
+		label = "Stopped by you · completed work is kept · send a message to continue"
+		marker = "■"
+		role = ui.ColorMuted
+	case "retrying":
+		marker = ui.ActivityDot(ctx.spinFrame)
+		active = true
+		role = ui.ColorWarning
+		label = msg.Content
+		if label == "" {
+			label = "Connection interrupted"
+		}
+		remaining := max(0, int(msg.LifecycleRetryAt.Sub(time.UnixMilli(int64(ctx.spinFrame))).Seconds()+0.999))
+		if remaining > 0 {
+			label += fmt.Sprintf(" · retry %d/%d in %ds", msg.LifecycleRetryAttempt, msg.LifecycleRetryLimit, remaining)
+		} else {
+			label += fmt.Sprintf(" · retrying %d/%d", msg.LifecycleRetryAttempt, msg.LifecycleRetryLimit)
+		}
+		label += " · Esc to stop"
 	}
-	line := PaintLine{Spans: []RowSpan{
-		{Text: "│ ", Role: ui.ColorMuted},
-		{Text: marker + " ", Role: role},
-		{Text: label, Role: ui.ColorMuted},
-	}}
-	return messageLines{lines: []string{line.PlainText()}, native: []PaintLine{line}, frameSensitive: active}
+	out := messageLines{frameSensitive: active}
+	width := ctx.innerW
+	if width <= 0 {
+		width = rendering.VisibleWidth(label) + 4
+	}
+	for i, text := range rendering.WordWrap(label, max(1, width-4)) {
+		prefix := []RowSpan{{Text: "│   ", Role: ui.ColorMuted}}
+		if i == 0 {
+			prefix = []RowSpan{{Text: "│ ", Role: ui.ColorMuted}, {Text: marker + " ", Role: role}}
+		}
+		line := PaintLine{Spans: append(prefix, RowSpan{Text: text, Role: ui.ColorMuted})}
+		out.lines = append(out.lines, line.PlainText())
+		out.native = append(out.native, line)
+	}
+	return out
 }
 
 func renderHistoryRestoreMessage(msg types.ChatMessage, ctx renderContext) messageLines {
@@ -614,7 +733,8 @@ func renderMessageContent(msg types.ChatMessage, ctx renderContext, suppressHead
 		if ctx.planSuperseded && ctx.disclosure != DisclosureExpanded {
 			msg.Content = ""
 		}
-		return renderToolMessageLines(msg, ctx.th, ctx.contentWidth, ctx.innerW, ctx.width, ctx.spinFrame, ctx.chatHeight, ctx.phase, ctx.disclosure)
+		ml := renderToolMessageLines(msg, ctx.th, ctx.contentWidth, ctx.innerW, ctx.width, ctx.spinFrame, ctx.chatHeight, ctx.phase, ctx.disclosure)
+		return ml
 	case types.RoleError:
 		return renderErrorMessage(msg, ctx)
 	case types.RoleStatus:

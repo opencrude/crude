@@ -1,6 +1,7 @@
 package session
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/user"
@@ -247,6 +248,22 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		for _, record := range records {
 			sess.usageRecords[record.RequestID] = record
 		}
+	}
+	turns, err := sessiondb.AgentTurnGenerations(db, meta.ID)
+	if err != nil {
+		_ = lg.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("restore agent turn generations: %w", err)
+	}
+	sess.recoveredTurnGenerations = turns
+	store, err := sess.planStore()
+	if err == nil {
+		err = store.RestoreActivity(context.Background())
+	}
+	if err != nil {
+		_ = lg.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("restore active plan: %w", err)
 	}
 	rows, loadErr := sessiondb.ListSubAgentResults(db, meta.ID)
 	if loadErr != nil {

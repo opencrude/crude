@@ -2,6 +2,7 @@ package provider
 
 import (
 	"bytes"
+	"crude/types/reasoning"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -119,6 +120,14 @@ func encodeOllamaMessages(messages []ChatMessage) ([]map[string]any, error) {
 				})
 				calls[len(calls)-1].Function.Name = call.Function.Name
 				calls[len(calls)-1].Function.Arguments = ollamaToolCallArgsRaw(call.Function.Arguments)
+				if call.Type == "custom" {
+					calls[len(calls)-1].Type = "function"
+					raw, err := json.Marshal(map[string]string{"input": call.Function.Arguments})
+					if err != nil {
+						return nil, err
+					}
+					calls[len(calls)-1].Function.Arguments = raw
+				}
 			}
 			wire["tool_calls"] = calls
 		}
@@ -253,6 +262,8 @@ func (s *OllamaStandard) DecodeResponse(body []byte) (*ChatResponse, error) {
 	}
 	if chunk.Message.Thinking != "" {
 		choice.Message.Reasoning = chunk.Message.Thinking
+		choice.Message.ReasoningContent = chunk.Message.Thinking
+		choice.Message.ReasoningDisplay.Kind = reasoning.Raw
 	}
 	choice.Message.ToolCalls = ollamaToolCallsFromWire(chunk.Message.ToolCalls)
 	resp.Choices = []ChatChoice{choice}
@@ -299,6 +310,8 @@ func decodeOllamaNDJSON(body []byte) (*ChatResponse, error) {
 		choice.Message.Content = TextContent(choice.Message.Content.String() + chunk.Message.Content)
 		if chunk.Message.Thinking != "" {
 			choice.Message.Reasoning += chunk.Message.Thinking
+			choice.Message.ReasoningContent = choice.Message.Reasoning
+			choice.Message.ReasoningDisplay.Kind = reasoning.Raw
 		}
 		choice.Message.ToolCalls = append(choice.Message.ToolCalls,
 			ollamaToolCallsFromWire(chunk.Message.ToolCalls)...)
@@ -336,8 +349,8 @@ func (d *ollamaStreamDecoder) Decode(event StreamEvent) (StreamUpdate, error) {
 		return StreamUpdate{}, fmt.Errorf("ollama: %s", chunk.Error)
 	}
 	update := StreamUpdate{
-		ContentDelta:   chunk.Message.Content,
-		ReasoningDelta: chunk.Message.Thinking,
+		ContentDelta: chunk.Message.Content,
+		Reasoning:    []reasoning.Delta{{Text: chunk.Message.Thinking, Kind: reasoning.Raw}},
 	}
 	for _, call := range ollamaToolCallsFromWire(chunk.Message.ToolCalls) {
 		update.ToolCalls = append(update.ToolCalls, ToolCallDelta{

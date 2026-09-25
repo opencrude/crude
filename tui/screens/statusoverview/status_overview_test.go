@@ -119,7 +119,7 @@ func TestOverviewSearchMatchesAdditionalDetails(t *testing.T) {
 	screen := New(theme.DefaultDark(), testProjection())
 	screen.query = "1.05m"
 	screen.syncItems(false)
-	if len(screen.list.list.Items()) != 1 || screen.list.list.Items()[0].ID != "agent:one" {
+	if len(screen.list.list.Items()) != 2 || screen.list.list.Items()[0].ID != "agent:one" || screen.list.list.Items()[1].ID != "agent:one/compact" {
 		t.Fatalf("detail search rows=%#v", screen.list.list.Items())
 	}
 }

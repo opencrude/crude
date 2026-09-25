@@ -18,6 +18,7 @@ func TestCtrlAltE_TogglesNewestDisclosure(t *testing.T) {
 	app := newTestApp(t)
 	th := theme.DefaultDark()
 	ml := chatprojection.NewRenderer(th)
+	ml.SetSize(80, 30)
 	ml.SetChatAreaBounds(0, 30)
 	sp := app.PaneMgr.GetOrCreate("ses_1_orch_1", workspace.PaneAgent, "ses_1_orch_1")
 	proj := app.subPaneProjections.Get("ses_1_orch_1", workspace.PaneAgent)
@@ -33,10 +34,11 @@ func TestCtrlAltE_TogglesNewestDisclosure(t *testing.T) {
 
 	app.dispatchKeyPress(tea.KeyPressMsg{Text: "ctrl+alt+e", Mod: tea.ModCtrl | tea.ModAlt, Code: 'e'})
 
-	if !ml.DisclosureExpanded("tool-1") {
-		t.Fatal("Ctrl+Alt+E should expand the newest expandable block (tool-1)")
+	rows, _, _ := ml.ExportMessageRows(80)
+	if len(rows) != 1 || !ml.DisclosureExpanded("activity:thought-1") || rows[0].LeafToggles[3] != "tool-1" {
+		t.Fatalf("Ctrl+Alt+E should expand the newest activity group for audit: %+v", rows)
 	}
-	if ml.DisclosureExpanded("thought-1") {
-		t.Fatal("Ctrl+Alt+E must not toggle the older completed thought")
+	if ml.DisclosureExpanded("tool-1") {
+		t.Fatal("Group expansion must not also expand the child tool output")
 	}
 }

@@ -1,8 +1,10 @@
 package tools
 
 import (
+	"crude/tui/types"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestToolErrorReasonSummarizesPlanFailures(t *testing.T) {
@@ -124,5 +126,19 @@ func TestBuildErrorLabelWithReasonKeepsOneLine(t *testing.T) {
 	}
 	if plain := BuildErrorLabel("update_plan", "", "1s"); plain != "Update plan failed 1s" {
 		t.Fatalf("reasonless label = %q", plain)
+	}
+}
+
+func TestToolTitleDoesNotInferRolesOrFailureFromOperandText(t *testing.T) {
+	command := "rg 'Command failed 1s' source.go"
+	msg := types.ChatMessage{ToolName: "execute_command", ToolCommand: command, ToolStatus: types.ToolStatusSuccess, ToolDuration: time.Second}
+	title := BuildToolTitle(msg, types.ToolPreviewDone)
+	if title.Action != "Ran" || title.Operand != command || title.Metadata != "1s" || title.Failed {
+		t.Fatalf("operand text changed title semantics: %+v", title)
+	}
+	msg.ToolStatus = types.ToolStatusError
+	title = BuildToolTitle(msg, types.ToolPreviewError)
+	if !title.Failed || title.Action != "Command failed" || title.Operand != command || title.Metadata != "1s" {
+		t.Fatalf("failure changed operand or metadata semantics: %+v", title)
 	}
 }

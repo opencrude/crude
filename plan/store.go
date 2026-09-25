@@ -7,7 +7,11 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
+
+	"crude/types/activity"
 )
 
 // ErrNotFound is returned when a plan does not exist.
@@ -18,8 +22,10 @@ var ErrNotFound = errors.New("plan: not found")
 // a single transaction: revision check, validation, plan/step/event writes,
 // revision increment, and commit.
 type Store struct {
-	db        *sql.DB
-	sessionID string
+	db         *sql.DB
+	sessionID  string
+	activityMu sync.Mutex
+	activity   atomic.Pointer[activity.Plan]
 }
 
 // NewStore creates a Store backed by db scoped to sessionID.
@@ -43,7 +49,14 @@ func (s *Store) DB() *sql.DB { return s.db }
 // validates, rewrites steps, appends a plan_updated event, and bumps revision.
 // Any validation failure returns the error before any write, so the request is
 // all-or-nothing.
-func (s *Store) Update(ctx context.Context, req UpdateRequest) (Plan, ChangeSet, error) {
+func (s *Store) Update(ctx context.Context, req UpdateRequest) (updated Plan, change ChangeSet, updateErr error) {
+	s.activityMu.Lock()
+	defer s.activityMu.Unlock()
+	defer func() {
+		if updateErr == nil {
+			s.publishActivity(updated)
+		}
+	}()
 	if s.db == nil {
 		return Plan{}, ChangeSet{}, fmt.Errorf("plan store: nil db")
 	}

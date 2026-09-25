@@ -613,7 +613,12 @@ func (m *App) configureChatScreenWithLayout(layout contentLayout) {
 	} else {
 		m.chatReflowContentW, m.chatReflowInnerW = renderContentW, renderInnerW
 	}
-	chatH := m.chatRect.H
+	activity := m.AgentActivity(m.AgentMgr.ActiveID())
+	if activity.ThinkingID != "" {
+		activity.ThinkingExpanded = activeML.DisclosureExpanded(activity.ThinkingID)
+	}
+	m.chatScreen.SetActivity(activity)
+	chatH := m.chatRect.H - shellchat.ActivityRows(m.chatRect.H)
 
 	activeAgent := m.agentForView()
 	activeTyping := false

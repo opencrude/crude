@@ -46,6 +46,8 @@ const (
 	// Diff background bands tint the full row behind changed lines.
 	ColorDiffAdditionBg
 	ColorDiffDeletionBg
+	ColorToolTitle
+	ColorToolOperand
 )
 
 // ControlState is the interactive state matrix used for token resolution.
@@ -119,6 +121,7 @@ func (ts *TokenSet) Rebuild(th *theme.Theme) {
 		ts.MetricVersion++
 	}
 	c := th.Colors
+	toolTitle, toolOperand := c.ToolTextColors()
 	ts.colors = map[SemanticColor]cell.Color{
 		ColorFg:                 rendering.ThemeColorToCell(c.Fg),
 		ColorBg:                 rendering.ThemeColorToCell(c.Bg),
@@ -150,6 +153,8 @@ func (ts *TokenSet) Rebuild(th *theme.Theme) {
 		ColorDiffDeletion:       rendering.ThemeColorToCell(c.Diff.Delete),
 		ColorDiffAdditionBg:     rendering.ThemeColorToCell(c.Diff.AddBg),
 		ColorDiffDeletionBg:     rendering.ThemeColorToCell(c.Diff.DeleteBg),
+		ColorToolTitle:          rendering.ThemeColorToCell(toolTitle),
+		ColorToolOperand:        rendering.ThemeColorToCell(toolOperand),
 	}
 }
 

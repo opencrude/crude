@@ -35,6 +35,10 @@ func TestCodexEncodeRequestRequiresStoreFalseAndStreamTrue(t *testing.T) {
 	if wire["model"] != "gpt-5.6-luna" {
 		t.Errorf("model = %v", wire["model"])
 	}
+	include, ok := wire["include"].([]any)
+	if !ok || len(include) != 1 || include[0] != "reasoning.encrypted_content" {
+		t.Fatalf("stateless Codex request lost reasoning continuity: %v", wire["include"])
+	}
 }
 
 // TestCodexEncodeStripsUnsupportedOutputParams pins that max_output_tokens /

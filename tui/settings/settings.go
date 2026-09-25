@@ -830,8 +830,8 @@ const (
 var (
 	dialTimeoutLadder  = []int{30, 60, 120, 300, 600} // default: unlimited (0)
 	dialConnectLadder  = []int{5, 10, 60}             // default: 30s
-	dialAttemptsLadder = []int{1, 2, 3, 5}            // default: 10
-	dialBackoffLadder  = []int{15, 30, 60, 300}       // default: 120s
+	dialAttemptsLadder = []int{1, 2, 3, 5, 10}        // default: 6
+	dialBackoffLadder  = []int{15, 30, 60, 300}       // default: 30s
 )
 
 // dialerFields builds the transport-tuning rows for one provider. A nil dialer

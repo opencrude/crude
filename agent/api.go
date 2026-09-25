@@ -13,6 +13,7 @@ import (
 
 	"crude/logger"
 	"crude/provider"
+	"crude/types/reasoning"
 )
 
 type apiCallError struct {
@@ -27,13 +28,14 @@ func (e *apiCallError) Error() string { return e.Message }
 func (e *apiCallError) Unwrap() error { return e.Cause }
 
 func (e *apiCallError) IsCancellation() bool {
-	return errors.Is(e, context.Canceled) || errors.Is(e, context.DeadlineExceeded)
+	return errors.Is(e, context.Canceled)
 }
 
 type completionResult struct {
 	Content           string
 	ReasoningContent  string
 	ReasoningDuration time.Duration
+	ReasoningDisplay  reasoning.Display
 	FinishReason      string
 	ToolCalls         []provider.ToolCall
 	ProviderItems     []provider.ProviderItem
@@ -71,10 +73,10 @@ func (a *Agent) completeStream(
 	msgs []provider.ChatMessage,
 	tools []provider.ToolDef,
 	emit func(token string),
-	emitThinking func(text string),
+	emitThinking func(reasoning.Delta),
 	onToolCallStart func(internalID, id, name string),
 	onToolCallDelta func(internalID, id, name, accumulatedArgs string),
-	onRetry func(attempt int, backoffSeconds float64),
+	onRetry func(attempt int, backoffSeconds float64, reason string),
 	onRequestAccepted func(),
 	onRequestProgress func(uploaded, total int64),
 ) (completionResult, error) {
@@ -94,10 +96,10 @@ func (a *Agent) completeStreamWithOptions(
 	msgs []provider.ChatMessage,
 	tools []provider.ToolDef,
 	emit func(token string),
-	emitThinking func(text string),
+	emitThinking func(reasoning.Delta),
 	onToolCallStart func(internalID, id, name string),
 	onToolCallDelta func(internalID, id, name, accumulatedArgs string),
-	onRetry func(attempt int, backoffSeconds float64),
+	onRetry func(attempt int, backoffSeconds float64, reason string),
 	onRequestAccepted func(),
 	onRequestProgress func(uploaded, total int64),
 	requestOptions completionRequestOptions,
@@ -110,11 +112,12 @@ func (a *Agent) completeStreamWithOptions(
 	}
 	msgs = provider.FilterReplayMessages(msgs, tools, a.Provider)
 	req := provider.ChatRequest{
-		Model:         a.Model,
-		Messages:      msgs,
-		Tools:         tools,
-		Stream:        true,
-		StreamOptions: &provider.StreamOptions{IncludeUsage: true},
+		Model:                a.Model,
+		ReasoningContentKind: a.ReasoningContentKind,
+		Messages:             msgs,
+		Tools:                tools,
+		Stream:               true,
+		StreamOptions:        &provider.StreamOptions{IncludeUsage: true},
 	}
 	if requestOptions.toolChoice != nil {
 		req.ToolChoice = requestOptions.toolChoice
@@ -212,7 +215,7 @@ func maxOutputTokensForContext(ctxWindow int) int {
 // newClient builds the provider transport client wired to this agent's
 // callbacks and test injection.
 func (a *Agent) newClient(
-	onRetry func(attempt int, backoffSeconds float64),
+	onRetry func(attempt int, backoffSeconds float64, reason string),
 	onRequestAccepted func(),
 	onRequestProgress func(uploaded, total int64),
 	onRequestEncoded func(body []byte),
@@ -223,7 +226,7 @@ func (a *Agent) newClient(
 			a.logger.Warn("RETRY", "attempt", "model", a.Model, "attempt", attempt,
 				"backoff_ms", delay.Milliseconds(), "error", err.Error())
 			if onRetry != nil {
-				onRetry(attempt, delay.Seconds())
+				onRetry(attempt, delay.Seconds(), provider.ErrorSummary(err))
 			}
 		}),
 	}
@@ -260,7 +263,7 @@ func (a *Agent) consumeStream(
 	req *provider.ChatRequest,
 	streamStart time.Time,
 	emit func(string),
-	emitThinking func(string),
+	emitThinking func(reasoning.Delta),
 	onToolCallStart func(string, string, string),
 	onToolCallDelta func(string, string, string, string),
 ) (completionResult, error) {
@@ -271,7 +274,7 @@ func (a *Agent) consumeStream(
 	defer stream.Close()
 
 	var content strings.Builder
-	var reasoning strings.Builder
+	var trace string
 	var reasoningStarted time.Time
 	var reasoningEnded time.Time
 	result := completionResult{}
@@ -279,9 +282,30 @@ func (a *Agent) consumeStream(
 	firstTokenLogged := false
 	finish := func() {
 		result.Content = content.String()
-		result.ReasoningContent = reasoning.String()
+		result.ReasoningContent = trace
 		result.ProviderItems = provider.StampProviderItems(provider.CanonicalizeProviderItems(result.ProviderItems), a.Provider, a.Model, provider.RequestPrefixHash(req.Messages, req.Tools))
 		result.ToolCalls = finalizeToolCalls(toolCalls)
+		if a.Provider.ProtocolID() == "openai" {
+			for i := range result.ToolCalls {
+				call := &result.ToolCalls[i]
+				if call.Type != "function" {
+					continue
+				}
+				for _, def := range req.Tools {
+					if def.Type != "custom" || def.Function.Name != call.Function.Name {
+						continue
+					}
+					params, err := provider.ToolCallParams(*call)
+					if err == nil {
+						if input, ok := params["input"].(string); ok {
+							call.Type = "custom"
+							call.Function.Arguments = input
+						}
+					}
+					break
+				}
+			}
+		}
 		if !reasoningStarted.IsZero() {
 			if reasoningEnded.IsZero() {
 				reasoningEnded = time.Now()
@@ -312,13 +336,16 @@ func (a *Agent) consumeStream(
 		if len(update.ProviderItems) > 0 {
 			result.ProviderItems = append(result.ProviderItems, update.ProviderItems...)
 		}
-		if update.ReasoningDelta != "" {
+		for _, delta := range update.Reasoning {
+			if delta.Text == "" || delta.Kind == reasoning.Encrypted {
+				continue
+			}
 			if reasoningStarted.IsZero() {
 				reasoningStarted = time.Now()
 			}
-			reasoning.WriteString(update.ReasoningDelta)
+			trace = result.ReasoningDisplay.Append(trace, delta)
 			if emitThinking != nil {
-				emitThinking(update.ReasoningDelta)
+				emitThinking(delta)
 			}
 		}
 		if update.ContentDelta != "" {
@@ -470,7 +497,7 @@ func (a *Agent) emitError(emit func(AgentEvent), err error) {
 	if err == nil {
 		return
 	}
-	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+	if errors.Is(err, context.Canceled) {
 		a.logger.Warn("LLM", "cancel_intercepted", "original", err.Error())
 		emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
 		return
@@ -479,18 +506,38 @@ func (a *Agent) emitError(emit func(AgentEvent), err error) {
 	display := err.Error()
 	var apiErr *apiCallError
 	if errors.As(err, &apiErr) {
+		display = provider.ErrorSummary(apiErr.Cause)
 		switch apiErr.StatusCode {
 		case http.StatusTooManyRequests:
-			display = "Rate limited — please wait a moment and try again"
-		case http.StatusUnauthorized, http.StatusForbidden:
+			var status *provider.StatusError
+			if errors.As(apiErr.Cause, &status) && !status.Retryable() {
+				display += ". Check this account's quota or billing before continuing."
+			} else {
+				display += ". Automatic recovery stopped; your work is kept. Send a message to retry when the provider is available."
+			}
+		case http.StatusUnauthorized:
 			if a.Provider != nil && a.Provider.OAuth() != nil {
 				display = "Authentication failed — re-sign in with ChatGPT in Settings → Providers"
 			} else {
 				display = "Authentication failed — check the provider API key in Settings → Providers"
 			}
+		case http.StatusForbidden:
+			display = "Provider access denied. Check this account's permissions for the configured endpoint and model."
 		default:
-			if apiErr.StatusCode >= 500 {
-				display = "API server error — please try again"
+			switch apiErr.StatusCode {
+			case 400, 422:
+				var status *provider.StatusError
+				if errors.As(apiErr.Cause, &status) {
+					detail := status.Message
+					if len([]rune(detail)) > 140 {
+						detail = string([]rune(detail)[:140]) + "..."
+					}
+					display += ". " + detail
+				}
+			case 404:
+				display += ". Check the configured model and endpoint in Settings."
+			default:
+				display += ". Automatic recovery stopped; completed work is kept. Send a message to continue."
 			}
 		}
 	}

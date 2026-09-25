@@ -20,6 +20,11 @@ import (
 //	FieldCycle                "←" left edge, "→" right edge (value centered);
 //	                          compact docks share the FieldNav table columns
 //	FieldToggle, FieldCheckbox "[x]" / "[ ]" inline
+//	FieldKeyValues            editable two-column table (Name/value rows plus
+//	                          an add row) below the label; row states reuse the
+//	                          shared list language, the shared Close glyph
+//	                          marks row removal. Value stays the "Name: value"
+//	                          line protocol so hosts need no new codec
 //	FieldNav                  drill-in row: label + trailing ▸; compact docks
 //	                          paint Columns as an aligned table. Never ❯.
 //	FieldSeparator            label + "─" rule; not focusable
@@ -34,6 +39,7 @@ const (
 	FieldCycle
 	FieldToggle
 	FieldCheckbox
+	FieldKeyValues
 	FieldNav
 	FieldSeparator
 	FieldMultiSelect

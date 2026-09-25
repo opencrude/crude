@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	ttypes "crude/tui/types"
+	"crude/types/reasoning"
 )
 
 func TestTUIEventSenderEnqueuesWhileDeliveryBlockedAndPreservesOrder(t *testing.T) {
@@ -145,7 +146,7 @@ func TestProgramMessagePumpCoalescesOnlyBackpressuredAdjacentDeltas(t *testing.T
 	}
 	<-started
 	for _, text := range []string{"one", " two", " three"} {
-		if !pump.enqueue(ttypes.AgentMsg{Type: "thinking", AgentID: "agent", Data: text}) {
+		if !pump.enqueue(ttypes.AgentMsg{Type: "thinking", AgentID: "agent", Data: reasoning.Delta{Text: text}}) {
 			t.Fatal("failed to enqueue thinking delta")
 		}
 	}
@@ -158,7 +159,7 @@ func TestProgramMessagePumpCoalescesOnlyBackpressuredAdjacentDeltas(t *testing.T
 		t.Fatalf("first delivery=%v, want block", got)
 	}
 	merged, ok := (<-delivered).(ttypes.AgentMsg)
-	if !ok || merged.Type != "thinking" || merged.Data != "one two three" {
+	if !ok || merged.Type != "thinking" || merged.Data != (reasoning.Delta{Text: "one two three"}) {
 		t.Fatalf("merged delivery=%#v", merged)
 	}
 	done, ok := (<-delivered).(ttypes.AgentMsg)

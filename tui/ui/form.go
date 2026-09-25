@@ -20,6 +20,7 @@ type Form struct {
 	tokens           *TokenSet
 	fields           []*FormField
 	focused          int
+	hovered          int
 	fieldGap         int
 	scroll           *ScrollModel
 	arrowExits       bool
@@ -34,7 +35,7 @@ type Form struct {
 }
 
 func NewForm(id ComponentID, model *FormModel, title, detail string, tokens *TokenSet) *Form {
-	f := &Form{Base: NewBase(id), model: model, title: title, detail: detail, tokens: tokens, focused: -1, pointerField: -1, scroll: NewScrollModel()}
+	f := &Form{Base: NewBase(id), model: model, title: title, detail: detail, tokens: tokens, focused: -1, hovered: -1, pointerField: -1, scroll: NewScrollModel()}
 	f.rebuild()
 	return f
 }
@@ -163,6 +164,7 @@ func (f *Form) rebuild() {
 		f.fields[f.pointerField].CancelPointerCapture()
 	}
 	f.pointerField = -1
+	f.hovered = -1
 	focusedID := ""
 	if f.focused >= 0 && f.focused < len(f.fields) {
 		focusedID = f.fields[f.focused].FieldState().ID
@@ -350,6 +352,7 @@ func (f *Form) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 		}
 		fieldCtx := ctx
 		fieldCtx.Focused = ctx.Focused && index == f.focused
+		fieldCtx.Hovered = ctx.Hovered && index == f.hovered && !fieldCtx.Focused
 		field.Paint(inner, off, 0, fieldCtx)
 	}
 	for index, field := range f.fields {
@@ -400,23 +403,20 @@ func (f *Form) Handle(ctx EventContext, evt Event) EventResult {
 				return f.handleField(index, f.fieldContext(ctx, field), evt)
 			}
 		}
-		// Hover-focusing: the row under the pointer takes the field highlight,
-		// like menus and lists. Decorative rows never take it.
+		// Hover is visual only: typing and Enter still target the keyboard-
+		// focused field. Decorative and disabled rows have no hover state.
+		hovered := -1
 		for index, field := range f.fields {
-			if !field.Bounds().Contains(ctx.LocalX, ctx.LocalY) {
-				continue
+			if field.Bounds().Contains(ctx.LocalX, ctx.LocalY) && !field.FieldState().skipFocus() {
+				hovered = index
+				break
 			}
-			state := field.FieldState()
-			if state.skipFocus() || state.Disabled {
-				return EventResult{Handled: true}
-			}
-			if f.focused != index {
-				f.focused = index
-				return EventResult{Handled: true, Invalidate: InvalidatePaint}
-			}
-			return EventResult{Handled: true}
 		}
-		return EventResult{}
+		if hovered != f.hovered {
+			f.hovered = hovered
+			return EventResult{Handled: hovered >= 0, Invalidate: InvalidatePaint}
+		}
+		return EventResult{Handled: hovered >= 0}
 	}
 	if evt.Kind == EventMouseClick && evt.MouseClick.Button == tea.MouseLeft {
 		// An open dropdown swallows clicks outside its panel: cancel it
@@ -490,7 +490,16 @@ func fieldPointerSelecting(field *FormField) bool {
 	if control := field.Control(); control != nil && control.IsSelecting() {
 		return true
 	}
-	return field.Area() != nil && field.Area().IsSelecting()
+	if area := field.Area(); area != nil && area.IsSelecting() {
+		return true
+	}
+	// A key/value table drags inside its open cell editor.
+	if grid := field.Grid(); grid != nil {
+		if editor := grid.ActiveEditor(); editor != nil && editor.IsSelecting() {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *Form) CancelPointerCapture() {
@@ -507,6 +516,9 @@ func (f *Form) NeedsFrame() bool {
 	field := f.fields[f.focused]
 	if field == nil {
 		return false
+	}
+	if grid := field.Grid(); grid != nil {
+		return grid.NeedsFrame()
 	}
 	if area := field.Area(); area != nil {
 		return area.NeedsFrame()
@@ -578,6 +590,11 @@ func (f *Form) moveFocus(delta int, exit bool) EventResult {
 	for next := f.focused + delta; next >= 0 && next < len(f.fields); next += delta {
 		field := f.fields[next].FieldState()
 		if !field.skipFocus() {
+			// The outgoing field drops any open cell editor: an unfocused
+			// field must never keep a caret or hold unabsorbed text.
+			if f.focused >= 0 && f.focused < len(f.fields) {
+				f.fields[f.focused].Blur()
+			}
 			f.focused = next
 			f.ensureFocusedVisible()
 			return EventResult{Handled: true, Invalidate: InvalidatePaint | InvalidateLayout}

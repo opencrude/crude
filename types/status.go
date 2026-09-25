@@ -1,6 +1,10 @@
 package types
 
-import "time"
+import (
+	"crude/types/activity"
+	"crude/types/reasoning"
+	"time"
+)
 
 // ResourceKind identifies the owner of status, activity, and notification data.
 type ResourceKind string
@@ -85,10 +89,41 @@ type UsageSummary struct {
 	ContextLimit   UsageValue
 	Cost           CostValue
 	Requests       int
+	Turns          int
+	TurnsKnown     bool
+	AgentTurns     int
+	Models         []ModelUsage
 	ModelID        string
 	ProviderID     string
 	AccountID      string
 	MeasuredAt     time.Time
+}
+
+// ModelUsage retains the producing account/provider/model identity, independent
+// of the model selected for the next request. Turns count successful API calls;
+// AgentTurns counts distinct actor generations and never substitutes for calls.
+type ModelUsage struct {
+	ModelID, ProviderID, AccountID string
+	Turns, Requests                int
+	AgentTurns                     int
+	TurnsKnown                     bool
+	Cost                           CostValue
+}
+
+type AgentActivityView struct {
+	Summary                  string
+	SuccessfulCalls          int
+	CallsKnown               bool
+	Active                   bool
+	Status                   AgentStatusSnapshot
+	Thinking                 string
+	ThinkingID               string
+	ThinkingExpanded         bool
+	ThinkingDisplay          reasoning.Display
+	TideForward              bool
+	RetryAttempt, RetryLimit int
+	RetryReason              string
+	Plan                     *activity.Plan
 }
 
 type AgentPhase string

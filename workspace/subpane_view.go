@@ -11,25 +11,12 @@ type SubPaneHeaderView struct {
 	Title      string
 	Type       PaneType
 	Done       bool
+	Status     string
 	Elapsed    time.Duration
 	TokenCount int
 	// Thinking is true when the pane has active thinking content (used by
 	// the TUI to drive the spinner animation phase).
 	Thinking bool
-}
-
-// SubPaneToolLineView is one row of the compact agent tool list. The TUI
-// renders the icon + label + border from this struct.
-type SubPaneToolLineView struct {
-	// Label is the pre-formatted tool title (e.g. "read_file file.go").
-	// The workspace computes this from the message's tool name + args
-	// summary. The TUI does no further tool-title computation.
-	Label string
-	// Phase is the tool lifecycle phase: "streaming", "calling", "done",
-	// "success", "error", or "" (idle).
-	Phase string
-	// Status mirrors msg.ToolStatus for icon selection.
-	Status string
 }
 
 // SubPaneSummaryView is the collapsed-pane summary. Non-nil only when
@@ -45,9 +32,8 @@ type SubPaneSummaryView struct {
 // TUI reads this struct and the Messages pointer to render the pane;
 // it never reaches back into SubPane methods for rendering.
 type SubPaneView struct {
-	Header    SubPaneHeaderView
-	ToolLines []SubPaneToolLineView
-	Summary   *SubPaneSummaryView
+	Header  SubPaneHeaderView
+	Summary *SubPaneSummaryView
 	// Messages is the canonical Conversation pointer. The TUI projection
 	// reads Messages()/Version() to synchronize its MessageList by stable
 	// ID/version — same pattern as AgentState.Messages.
@@ -64,6 +50,7 @@ func (sp *SubPane) View() SubPaneView {
 		Title:      sp.Title,
 		Type:       sp.Type,
 		Done:       sp.Done,
+		Status:     sp.Status,
 		Elapsed:    sp.Elapsed(),
 		TokenCount: sp.TokenCount,
 	}
@@ -73,15 +60,11 @@ func (sp *SubPane) View() SubPaneView {
 	}
 
 	view := SubPaneView{
-		Header:    header,
-		Messages:  sp.Messages,
-		ToolLines: nil,
-		Summary:   nil,
+		Header:   header,
+		Messages: sp.Messages,
+		Summary:  nil,
 	}
 
-	if sp.Type == PaneAgent {
-		view.ToolLines = buildToolLines(msgs)
-	}
 	if sp.Done {
 		view.Summary = sp.buildSummaryView()
 	}
@@ -103,6 +86,9 @@ func (sp *SubPane) buildSummaryView() *SubPaneSummaryView {
 		verb = sp.Title
 	}
 	text := fmt.Sprintf("%s for %s%s", verb, formatDurationHuman(dur), tokens)
+	if sp.Type == PaneAgent && sp.Status != "" && sp.Status != "completed" {
+		text = fmt.Sprintf("%s — %s", text, sp.Status)
+	}
 	return &SubPaneSummaryView{
 		Text:       text,
 		TokenCount: sp.TokenCount,
@@ -132,32 +118,6 @@ func formatDurationHuman(d time.Duration) string {
 	default:
 		return fmt.Sprintf("%ds", rem)
 	}
-}
-
-func buildToolLines(msgs []Message) []SubPaneToolLineView {
-	var lines []SubPaneToolLineView
-	for _, msg := range msgs {
-		if msg.Role != "tool" || msg.ToolName == "" {
-			continue
-		}
-		label := msg.ToolName
-		if msg.ToolArgs != "" {
-			label = msg.ToolName + " " + msg.ToolArgs
-		}
-		if label == "" {
-			continue
-		}
-		phase := msg.ToolPreviewPhase
-		if phase == "" {
-			phase = msg.ToolStatus
-		}
-		lines = append(lines, SubPaneToolLineView{
-			Label:  label,
-			Phase:  phase,
-			Status: msg.ToolStatus,
-		})
-	}
-	return lines
 }
 
 func formatTokenCount(n int) string {

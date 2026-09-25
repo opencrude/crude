@@ -13,6 +13,7 @@ import (
 	"crude/safety"
 	"crude/tools"
 	ttypes "crude/types"
+	"crude/types/reasoning"
 )
 
 type AgentEvent struct {
@@ -38,6 +39,9 @@ type StepRecord struct {
 type Agent struct {
 	Provider                 *provider.Provider
 	Model                    string
+	ReasoningContentKind     reasoning.Kind
+	condensedSamples         int
+	sawRawReasoning          bool
 	CompactionProvider       *provider.Provider
 	CompactionTargetModel    string
 	CompactionTargetWindow   int

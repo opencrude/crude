@@ -38,6 +38,15 @@ func TextAreaFieldState(id, label, value, description string) *FieldState {
 	return f
 }
 
+// KeyValuesFieldState builds an editable Name/value table below the label.
+// The value uses the shared "Name: value" line protocol, so a host that
+// already round-trips that text (settings headers) keeps its codec.
+func KeyValuesFieldState(id, label, value, description string) *FieldState {
+	f := TextFieldState(id, label, value, description)
+	f.Type = FieldKeyValues
+	return f
+}
+
 // CycleFieldState builds a left/right cycle field over a fixed value list.
 func CycleFieldState(id, label string, values []string, current, description string) *FieldState {
 	options := make([]FormOption, len(values))

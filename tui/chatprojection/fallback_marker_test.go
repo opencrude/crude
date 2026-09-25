@@ -54,7 +54,7 @@ func TestBlankNativeSpacerNotANSIFallback(t *testing.T) {
 	// Markdown/rich rows are now bridged to native PaintLines (no ANSI fallback).
 	// The bridge reuses the SGR parser and carries explicit colour overrides for
 	// Chroma syntax colours; known theme colours map back to roles.
-	md := rendering.MakeMdRenderer(80)
+	md := rendering.MakeMdRenderer(80, th)
 	if md == nil {
 		t.Fatal("MakeMdRenderer returned nil")
 	}
@@ -70,22 +70,22 @@ func TestBlankNativeSpacerNotANSIFallback(t *testing.T) {
 			t.Fatalf("row %d PreferANSI — markdown must bridge to native, got %#v", i, pl)
 		}
 	}
-	// The heading row must carry at least one span with explicit colour override
-	// (Glamour emits palette colours that don't map to theme roles).
-	foundOverride := false
+	// Theme-bound Markdown may map every colour back to a semantic role; rich
+	// emphasis must still survive the native bridge without ANSI fallback.
+	foundStyle := false
 	for _, pl := range rich.native {
 		for _, s := range pl.Spans {
-			if s.FGSet {
-				foundOverride = true
+			if s.FGSet || s.Attr != 0 || s.Role != ui.ColorFg {
+				foundStyle = true
 				break
 			}
 		}
-		if foundOverride {
+		if foundStyle {
 			break
 		}
 	}
-	if !foundOverride {
-		t.Fatalf("expected at least one bridged span with explicit FG override, got %#v", rich.native)
+	if !foundStyle {
+		t.Fatalf("expected styled native Markdown spans, got %#v", rich.native)
 	}
 
 	// Paint proof: blank native writes cells without needing the ANSI string path.

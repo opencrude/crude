@@ -3,6 +3,7 @@ package workspace
 import (
 	"fmt"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 )
@@ -31,7 +32,7 @@ func (a *AgentState) handleToolCallStreaming(evt AgentEvent, target *Conversatio
 
 	var tgt string
 	if name == "grep_files" && pattern != "" {
-		tgt = fmt.Sprintf("\"%s\"", TruncateLine(pattern, 30))
+		tgt = fmt.Sprintf("\"%s\"", pattern)
 		if path != "" && path != "." {
 			tgt += " in " + path
 		}
@@ -56,7 +57,7 @@ func (a *AgentState) handleToolCallStreaming(evt AgentEvent, target *Conversatio
 		}
 		if tgt == "" && handle != "" {
 			if command != "" {
-				tgt = TruncateLine(command, 40) + " [" + handle + "]"
+				tgt = command + " [" + handle + "]"
 			} else {
 				tgt = handle
 			}
@@ -96,13 +97,17 @@ func (a *AgentState) handleToolCallStreaming(evt AgentEvent, target *Conversatio
 				} else if s != "" {
 					tgt = s
 				}
+			case "exec_command":
+				if c := extractJSONStringValue(rawArgs, "cmd"); c != "" {
+					tgt = c
+				}
 			case "execute_command", "async_execute_command":
 				if c := extractJSONStringValue(rawArgs, "command"); c != "" {
-					tgt = TruncateLine(c, 50)
+					tgt = c
 				}
 			case "web_search", "arxiv_search":
 				if q := extractJSONStringValue(rawArgs, "query"); q != "" {
-					tgt = fmt.Sprintf("\"%s\"", TruncateLine(q, 40))
+					tgt = fmt.Sprintf("\"%s\"", q)
 				}
 			case "web_fetch":
 				if u := extractJSONStringValue(rawArgs, "url"); u != "" {
@@ -110,7 +115,7 @@ func (a *AgentState) handleToolCallStreaming(evt AgentEvent, target *Conversatio
 				}
 			case "grep_files":
 				if p := extractJSONStringValue(rawArgs, "pattern"); p != "" {
-					tgt = fmt.Sprintf("\"%s\"", TruncateLine(p, 30))
+					tgt = fmt.Sprintf("\"%s\"", p)
 				}
 			case "write_report":
 				if r := extractJSONStringValue(rawArgs, "report"); r != "" {
@@ -149,8 +154,16 @@ func (a *AgentState) handleToolCallStreaming(evt AgentEvent, target *Conversatio
 	data["old_lines_int"] = int(oldLines)
 	data["new_lines_int"] = int(newLines)
 
-	onStatusLine("Preparing " + PascalCaseTool(name))
+	onStatusLine(toolOperationStatus(name, "preparing"))
 	target.UpdateToolStreaming(toolID, internalID, name, data)
+	if round, _ := origData["request_id"].(string); round != "" {
+		target.SetToolRound(toolID, internalID, round)
+	}
+	if name == "multi_tool_use.parallel" {
+		if input, _ := origData["batch_input"].(string); input != "" {
+			target.SetToolInput(toolID, internalID, input, "")
+		}
+	}
 	return nil
 }
 
@@ -160,16 +173,26 @@ func (a *AgentState) handleToolCall(evt AgentEvent, target *Conversation, onStat
 		internalID, _ := data["internal_id"].(string)
 		name, _ := data["name"].(string)
 		if name == "" || name == "reply" {
+			// Reply tool calls only contribute a user-facing message when their
+			// result arrives; they never allocate a tool row.
 			return nil
 		}
 		args, _ := data["args"].(string)
 		argsCompact := SummarizeToolArgs(name, args)
 		onStatusLine(ToolLabel(name, argsCompact))
 		target.UpdateToolCall(toolID, internalID, name, argsCompact)
+		if round, _ := data["request_id"].(string); round != "" {
+			target.SetToolRound(toolID, internalID, round)
+		}
 		if name == "execute_command" || name == "async_execute_command" {
 			target.SetToolCommand(toolID, internalID, extractJSONStringValue(args, "command"))
 		}
+		if name == "exec_command" {
+			target.SetToolCommand(toolID, internalID, extractJSONStringValue(args, "cmd"))
+		}
 		switch name {
+		case "multi_tool_use.parallel":
+			target.SetToolInput(toolID, internalID, args, "")
 		case "grep_files":
 			target.SetToolInput(toolID, internalID, extractJSONStringValue(args, "pattern"), extractJSONStringValue(args, "path"))
 		case "web_search", "arxiv_search":
@@ -203,9 +226,9 @@ func (a *AgentState) handleToolProgress(evt AgentEvent, target *Conversation, on
 
 		target.UpdateToolProgress(toolID, internalID, name, phase, message, path, int(linesAdded), int(linesRemoved), int(estTokens))
 		if phase == "done" {
-			onStatusLine(PascalCaseTool(name) + " done")
+			onStatusLine(toolOperationStatus(name, "done"))
 		} else if phase == "error" {
-			onStatusLine(PascalCaseTool(name) + " failed")
+			onStatusLine(toolOperationStatus(name, "failed"))
 		} else if phase != "" && message != "" {
 			onStatusLine(message)
 		}
@@ -218,23 +241,60 @@ func (a *AgentState) handleToolResult(evt AgentEvent, target *Conversation, onSt
 		toolID, _ := data["tool_id"].(string)
 		internalID, _ := data["internal_id"].(string)
 		name, _ := data["name"].(string)
-		if name == "" || name == "reply" {
+		if name == "" {
 			return nil
 		}
 		result, _ := data["result"].(string)
 		errFlag, _ := data["error"].(string)
 		isError := errFlag == "true"
+		if name == "reply" {
+			if result != "" {
+				role := MessageRoleAssistant
+				if isError {
+					role = MessageRoleError
+				}
+				target.AppendMessage(Message{InternalID: "reply:" + toolID, Role: role,
+					Content: SanitizeForTerminal(result), Time: time.Now(),
+					TurnGeneration: target.turnIdentity.Generation, AccountID: target.turnIdentity.AccountID,
+					ProviderID: target.turnIdentity.ProviderID, ModelID: target.turnIdentity.ModelID})
+			}
+			return nil
+		}
 		estTokens := toInt(data["tool_est_tokens"])
 		linesAdded := toInt(data["lines_added"])
 		linesRemoved := toInt(data["lines_removed"])
 		if isError {
-			onStatusLine(PascalCaseTool(name) + " failed")
+			onStatusLine(toolOperationStatus(name, "failed"))
 		} else {
-			onStatusLine(PascalCaseTool(name) + " done")
+			onStatusLine(toolOperationStatus(name, "done"))
 		}
 		target.UpdateToolResult(toolID, internalID, name, result, isError, int(estTokens), int(linesAdded), int(linesRemoved))
+		if interrupted, _ := data["interrupted"].(bool); interrupted {
+			target.MarkToolNotExecuted(toolID, internalID)
+			onStatusLine("Reconnecting before running tool")
+		}
 	}
 	return nil
+}
+
+func toolOperationStatus(name, phase string) string {
+	if name == "multi_tool_use.parallel" {
+		switch phase {
+		case "preparing":
+			return "Preparing tools"
+		case "failed":
+			return "Parallel tools failed"
+		default:
+			return "Parallel tools finished"
+		}
+	}
+	if phase == "preparing" {
+		return "Preparing " + PascalCaseTool(name)
+	}
+	if phase == "failed" {
+		return PascalCaseTool(name) + " failed"
+	}
+	return PascalCaseTool(name) + " done"
 }
 
 func (a *AgentState) handlePermissionResolved(evt AgentEvent, target *Conversation, onStatusLine func(string)) tea.Cmd {
@@ -394,7 +454,11 @@ func (a *AgentState) handleDone(evt AgentEvent, target *Conversation, thinkTarge
 	onThinking(false, false, false)
 	onStatusLine("")
 
-	target.Finish(content, reason, wasStreaming)
+	boundaryID := ""
+	if data, ok := evt.Data.(map[string]any); ok {
+		boundaryID, _ = data["internal_id"].(string)
+	}
+	target.Finish(content, reason, wasStreaming, boundaryID)
 
 	return DoneResultCmd(a.ID, reason)
 }

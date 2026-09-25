@@ -95,7 +95,7 @@ func TestPersistedToolStatusDoesNotMislabelValidationErrorAsCancelled(t *testing
 func TestCanonicalToolSnapshotCarriesLiveLifecycleAndSubPaneLink(t *testing.T) {
 	tracker := &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}
 	tracker.updateToolCall("call-1", "run_sub_agent", "description: inspect wait: true")
-	result := `{"session_id":"child-1","status":"completed"}`
+	result := `{"session_id":"child-session","agent_id":"child-1","status":"completed"}`
 	tracker.updateToolResult("call-1", "run_sub_agent", result, "success", 1500, 42, 3, 1)
 	message := provider.NewTextMessage("tool", result)
 	message.ToolCallID = "call-1"
@@ -114,6 +114,40 @@ func TestCanonicalToolSnapshotCarriesLiveLifecycleAndSubPaneLink(t *testing.T) {
 		snapshot.ToolLinesAdded != 3 || snapshot.ToolLinesRemoved != 1 ||
 		snapshot.TurnGeneration != 4 || snapshot.ProviderID != "ollama-cloud" || snapshot.ModelID != "kimi-k3" {
 		t.Fatalf("canonical tool snapshot = %#v", snapshot)
+	}
+	toolText := "## Sub-Agent Result: Lily [researcher]\n**Agent:** agent-7\n**Status:** OK\n**Session:** session-7"
+	tracker.updateToolResult("call-1", "run_sub_agent", toolText, "success", 1500, 42, 3, 1)
+	message.Content = provider.TextContent(toolText)
+	meta = canonicalizeDisplayMeta(message, tracker.get("call-1"), `{"description":"inspect","wait":true}`, 3, time.Now())
+	if meta.Snapshots[0].SubPaneID != "agent-7" {
+		t.Fatalf("synchronous child link was not the agent ID: %+v", meta.Snapshots)
+	}
+}
+
+func TestReplyToolResultBecomesDurableProgressBoundary(t *testing.T) {
+	call := provider.ToolCall{ID: "progress-1", Type: "function", Function: provider.FunctionCall{Name: "reply", Arguments: `{"content":"Checking tests."}`}}
+	wire := []provider.ChatMessage{
+		provider.NewTextMessage("user", "fix the issue"),
+		{Role: "assistant", ToolCalls: []provider.ToolCall{call}},
+		{Role: "tool", ToolCallID: call.ID, Content: provider.TextContent("Checking tests.")},
+	}
+	clean := sanitizeMessages(wire)
+	if len(clean) != 3 || clean[2].ToolCallID != "progress-1" {
+		t.Fatalf("reply tool result lost its durable identity: %+v", clean)
+	}
+	tracker := &displayMetaTracker{metas: map[string]*sessiondb.DisplayMeta{}}
+	tracker.updateToolCall(call.ID, "reply", `content: "Checking tests."`)
+	meta := canonicalizeDisplayMeta(clean[2], tracker.get(call.ID), call.Function.Arguments, 2, time.Unix(10, 0))
+	if len(meta.Snapshots) != 1 || meta.Snapshots[0].Role != "assistant" || meta.Snapshots[0].Content != "Checking tests." || meta.Snapshots[0].InternalID != "reply:progress-1" {
+		t.Fatalf("reply recovery snapshot = %+v", meta.Snapshots)
+	}
+	failed := clean[2]
+	failed.ToolError = true
+	meta = tracker.get(call.ID)
+	meta.ToolStatus = "error"
+	meta = canonicalizeDisplayMeta(failed, meta, call.Function.Arguments, 2, time.Unix(10, 0))
+	if len(meta.Snapshots) != 1 || meta.Snapshots[0].Role != "error" || meta.Snapshots[0].InternalID != "reply:progress-1" {
+		t.Fatalf("failed reply incorrectly shown as progress: %+v", meta.Snapshots)
 	}
 }
 

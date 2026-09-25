@@ -31,6 +31,10 @@ Read that first; this index only organizes the reference material.
 
 - [Agent orchestration](reference/agent-orchestration.md) — bounded delegation,
   evidence-based handoffs, completion delivery, and external design references.
+- [Codex tools and GPT profiles](reference/codex-tools.md) — native patch,
+  command, prompt, permission, and history contracts.
+- [Chat activity projection](reference/chat-activity.md) — grouped, expandable
+  tool activity with matching live and recovered transcript behavior.
 - [Terminal display width](reference/terminal-width.md) — canonical Unicode
   column-measurement contract shared by layout, surfaces, ultraviolet, and the
   renderer.

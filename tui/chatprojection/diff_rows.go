@@ -148,8 +148,12 @@ func BuildBandedDiffRows(raw string, textWidth, totalWidth int, expanded bool) [
 
 		contentWidth := max(1, textWidth-maxNumWidth-3)
 		var lexer chroma.Lexer
+		var syntaxCache map[diffSyntaxKey][]RowSpan
 		if expanded || len(all) < previewDiffRows {
 			lexer = lexers.Match(file.Path)
+			if lexer != nil {
+				syntaxCache = make(map[diffSyntaxKey][]RowSpan)
+			}
 		}
 
 		for _, r := range rows {
@@ -171,7 +175,7 @@ func BuildBandedDiffRows(raw string, textWidth, totalWidth int, expanded bool) [
 				segments = segments[:min(len(segments), previewDiffRows-len(all))]
 			}
 			if len(segments) > 0 {
-				all = append(all, buildBandedDiffContentRows(r, lexer, segments, maxNumWidth, totalWidth)...)
+				all = append(all, buildBandedDiffContentRows(r, lexer, syntaxCache, segments, maxNumWidth, totalWidth)...)
 			}
 		}
 	}
@@ -238,7 +242,7 @@ func normalizeDiffPresentationBlock(rows []tools.DiffRow) {
 // buildBandedDiffContentRows renders one diff row with the tight gutter and
 // full-width band. Long content hard-wraps with continuation rows that keep
 // the band and blank the number/sign columns.
-func buildBandedDiffContentRows(r tools.DiffRow, lexer chroma.Lexer, segments []string, maxNumWidth, totalWidth int) []PaintLine {
+func buildBandedDiffContentRows(r tools.DiffRow, lexer chroma.Lexer, syntaxCache map[diffSyntaxKey][]RowSpan, segments []string, maxNumWidth, totalWidth int) []PaintLine {
 	numStr := ""
 	// Deletions reference the old-file line; additions/context reference the
 	// new-file line. This gives each changed row a meaningful gutter.
@@ -289,7 +293,7 @@ func buildBandedDiffContentRows(r tools.DiffRow, lexer chroma.Lexer, segments []
 			{Text: " ", Role: ui.ColorMuted},
 			{Text: sign + " ", Role: indicatorRole},
 		}
-		spans = append(spans, syntaxDiffSpans(lexer, seg, contentRole)...)
+		spans = append(spans, syntaxDiffSpans(lexer, seg, contentRole, syntaxCache)...)
 		pl := PaintLine{Spans: spans}
 		if bandSet {
 			pl = bandPaintLine(pl, band, totalWidth)
@@ -299,9 +303,18 @@ func buildBandedDiffContentRows(r tools.DiffRow, lexer chroma.Lexer, segments []
 	return out
 }
 
-func syntaxDiffSpans(lexer chroma.Lexer, text string, fallback ui.SemanticColor) []RowSpan {
+type diffSyntaxKey struct {
+	text string
+	role ui.SemanticColor
+}
+
+func syntaxDiffSpans(lexer chroma.Lexer, text string, fallback ui.SemanticColor, cache map[diffSyntaxKey][]RowSpan) []RowSpan {
 	if lexer == nil {
 		return []RowSpan{{Text: text, Role: fallback}}
+	}
+	key := diffSyntaxKey{text, fallback}
+	if spans, ok := cache[key]; ok {
+		return spans
 	}
 	iterator, err := chroma.Coalesce(lexer).Tokenise(nil, text)
 	if err != nil {
@@ -323,6 +336,12 @@ func syntaxDiffSpans(lexer chroma.Lexer, text string, fallback ui.SemanticColor)
 	}
 	if len(spans) == 0 {
 		return []RowSpan{{Text: text, Role: fallback}}
+	}
+	// Diff lines tokenize independently. Repeated source segments share their
+	// immutable syntax within this file/render only; gutter and band are copied.
+	// Bound the temporary index so unique large files do not grow another cache.
+	if cache != nil && len(cache) < 256 {
+		cache[key] = spans
 	}
 	return spans
 }

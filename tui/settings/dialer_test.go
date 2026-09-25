@@ -21,14 +21,14 @@ func TestDialSecondsRoundTrip(t *testing.T) {
 }
 
 func TestDialAttemptsRoundTrip(t *testing.T) {
-	for _, attempts := range []int{1, 2, 3, 5} {
+	for _, attempts := range []int{1, 2, 3, 5, 10} {
 		id := dialChoiceID(attempts, provider.DefaultMaxAttempts)
 		if got := dialAttemptsFromChoice(id); got != attempts {
 			t.Errorf("round trip %d -> %q -> %d", attempts, id, got)
 		}
 	}
 	// The built-in default persists as unset, by design.
-	if got := dialAttemptsFromChoice(dialChoiceID(10, provider.DefaultMaxAttempts)); got != 0 {
+	if got := dialAttemptsFromChoice(dialChoiceID(provider.DefaultMaxAttempts, provider.DefaultMaxAttempts)); got != 0 {
 		t.Errorf("built-in default attempts parsed to %d, want 0 (unset)", got)
 	}
 }
@@ -47,12 +47,12 @@ func TestDialerFromFormAllDefaultYieldsNil(t *testing.T) {
 }
 
 func TestDialerFromFormCapturesNonDefaults(t *testing.T) {
-	dialer := dialerFromForm("60", "10", "3", "30")
+	dialer := dialerFromForm("60", "10", "3", "60")
 	want := provider.DialSettings{
 		RequestTimeoutSeconds: 60,
 		ConnectTimeoutSeconds: 10,
 		MaxAttempts:           3,
-		MaxBackoffSeconds:     30,
+		MaxBackoffSeconds:     60,
 	}
 	if dialer == nil || *dialer != want {
 		t.Fatalf("dialer = %+v, want %+v", dialer, want)
@@ -63,7 +63,7 @@ func TestDialerFromFormPersistsBuiltInDefaultAsUnset(t *testing.T) {
 	// A row explicitly moved to the built-in default must not freeze that
 	// number into the config — it persists as unset so a future change to the
 	// built-in default is honored.
-	dialer := dialerFromForm("0", "30", "10", "120")
+	dialer := dialerFromForm("0", "30", strconv.Itoa(provider.DefaultMaxAttempts), strconv.Itoa(int(provider.DefaultMaxBackoff.Seconds())))
 	if dialer != nil {
 		t.Fatalf("built-in-default selections = %+v, want nil", dialer)
 	}
@@ -94,7 +94,7 @@ func TestDialerFieldsRenderCurrentValues(t *testing.T) {
 		t.Errorf("connect timeout field = %q, want %q (built-in default)", got,
 			dialChoiceID(0, int(provider.DefaultConnectTimeout.Seconds())))
 	}
-	if got := byID[fieldDialBackoff]; got != "120" {
+	if got := byID[fieldDialBackoff]; got != strconv.Itoa(int(provider.DefaultMaxBackoff.Seconds())) {
 		t.Errorf("max backoff field = %q, want %q (built-in default)", got,
 			dialChoiceID(0, int(provider.DefaultMaxBackoff.Seconds())))
 	}

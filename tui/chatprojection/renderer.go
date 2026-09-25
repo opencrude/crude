@@ -59,6 +59,8 @@ type Renderer struct {
 	// deterministic default applies (see disclosure.go). Disclosure is TUI
 	// presentation state only — never persisted.
 	expanded         map[string]bool
+	activityMessages map[string]*types.ChatMessage   // transient batch children, keyed by stable call ID
+	activityBatches  map[string][]*types.ChatMessage // rebuilt only when the canonical batch changes
 	exportSnapshot   MessageRowsSnapshot
 	exportRevision   uint64
 	exportWidth      int
@@ -247,6 +249,7 @@ func (r *Renderer) SetTheme(t *theme.Theme) {
 			r.tokens.Rebuild(t)
 		}
 		r.InvalidateAllMessages()
+		r.mdRenderer = nil
 	}
 }
 
@@ -329,8 +332,8 @@ func (r *Renderer) AppendMessage(msg types.ChatMessage) {
 	}
 	r.sync.Messages = append(r.sync.Messages, &msgCopy)
 	r.bumpVersion()
-	item := r.messageToItem(len(r.sync.Messages) - 1)
-	r.vl.AppendItem(item)
+	// Group membership can change when a neighboring thought or tool arrives.
+	r.syncActivityItems([]string{msgCopy.InternalID})
 }
 
 func (r *Renderer) AppendToken(token string) {
@@ -354,11 +357,11 @@ func (r *Renderer) AppendToken(token string) {
 func (r *Renderer) AppendThinking(s string) {
 	if len(r.sync.Messages) > 0 {
 		last := r.sync.Messages[len(r.sync.Messages)-1]
-		if last.Role == types.RoleThinking {
+		if last.Role == types.RoleThinking && last.ThinkingActive {
 			last.Content += s
 			r.bumpVersion()
 			last.CachedLines = nil
-			r.vl.InvalidateItem(last.InternalID)
+			r.syncActivityItems([]string{last.InternalID})
 			return
 		}
 	}
@@ -367,7 +370,6 @@ func (r *Renderer) AppendThinking(s string) {
 			msg.ThinkingActive = false
 			r.bumpVersion()
 			msg.CachedLines = nil
-			r.vl.InvalidateItem(msg.InternalID)
 		}
 	}
 	r.invalidateStreamingCursorOwner()
@@ -381,8 +383,7 @@ func (r *Renderer) AppendThinking(s string) {
 	r.sync.MsgByID[newMsg.InternalID] = newMsg
 	r.sync.Messages = append(r.sync.Messages, newMsg)
 	r.bumpVersion()
-	item := r.messageToItem(len(r.sync.Messages) - 1)
-	r.vl.AppendItem(item)
+	r.syncActivityItems([]string{newMsg.InternalID})
 }
 
 func toIntField(v any) int {
@@ -463,7 +464,7 @@ func (r *Renderer) UpdateToolStreaming(toolID, internalID, name string, data map
 					r.sync.MsgByID[toolID] = msg
 				}
 			}
-			r.vl.InvalidateItem(msg.InternalID)
+			r.syncActivityItems([]string{msg.InternalID})
 			return
 		}
 	}
@@ -499,8 +500,7 @@ func (r *Renderer) UpdateToolStreaming(toolID, internalID, name string, data map
 	}
 	r.sync.Messages = append(r.sync.Messages, msg)
 	r.bumpVersion()
-	item := r.messageToItem(len(r.sync.Messages) - 1)
-	r.vl.AppendItem(item)
+	r.syncActivityItems([]string{msg.InternalID})
 }
 
 func (r *Renderer) UpdateToolCall(toolID, internalID, name, argsCompact string) {
@@ -524,7 +524,7 @@ func (r *Renderer) UpdateToolCall(toolID, internalID, name, argsCompact string) 
 					r.sync.MsgByID[toolID] = msg
 				}
 			}
-			r.vl.InvalidateItem(msg.InternalID)
+			r.syncActivityItems([]string{msg.InternalID})
 			return
 		}
 	}
@@ -554,8 +554,7 @@ func (r *Renderer) UpdateToolCall(toolID, internalID, name, argsCompact string) 
 	}
 	r.sync.Messages = append(r.sync.Messages, msg)
 	r.bumpVersion()
-	item := r.messageToItem(len(r.sync.Messages) - 1)
-	r.vl.AppendItem(item)
+	r.syncActivityItems([]string{msg.InternalID})
 }
 
 func (r *Renderer) UpdateToolProgress(toolID, internalID, name, phase, message, path string, linesAdded, linesRemoved, estTokens int) {
@@ -602,7 +601,7 @@ func (r *Renderer) UpdateToolProgress(toolID, internalID, name, phase, message, 
 	}
 	r.bumpVersion()
 	msg.CachedLines = nil
-	r.vl.InvalidateItem(msg.InternalID)
+	r.syncActivityItems([]string{msg.InternalID})
 }
 
 func (r *Renderer) UpdateToolResult(toolID, internalID, name, result string, isError bool, estTokens, linesAdded, linesRemoved int) {
@@ -639,7 +638,7 @@ func (r *Renderer) UpdateToolResult(toolID, internalID, name, result string, isE
 	}
 	r.bumpVersion()
 	msg.CachedLines = nil
-	r.vl.InvalidateItem(msg.InternalID)
+	r.syncActivityItems([]string{msg.InternalID})
 }
 
 // SetToolPermTag sets the PermTag on a tool message matched by toolID.
@@ -651,11 +650,11 @@ func (r *Renderer) SetToolPermTag(toolID, internalID, tag string) {
 	msg.PermTag = tag
 	r.bumpVersion()
 	msg.CachedLines = nil
-	r.vl.InvalidateItem(msg.InternalID)
+	r.syncActivityItems([]string{msg.InternalID})
 }
 
 func (r *Renderer) MarkStreamingToolsCancelled() {
-	changed := false
+	var changed []string
 	for _, msg := range r.sync.Messages {
 		if msg.ToolStatus == "streaming" || msg.ToolStatus == "calling" {
 			msg.ToolStatus = types.ToolStatusCancelled
@@ -663,47 +662,47 @@ func (r *Renderer) MarkStreamingToolsCancelled() {
 			msg.ToolProgressPhase = ""
 			msg.ToolProgressMessage = ""
 			msg.CachedLines = nil
-			r.vl.InvalidateItem(msg.InternalID)
-			changed = true
+			changed = append(changed, msg.InternalID)
 		}
 	}
-	if changed {
+	if len(changed) > 0 {
 		r.bumpVersion()
+		r.syncActivityItems(changed)
 	}
 }
 
 func (r *Renderer) MarkAllThinkingDone() {
-	changed := false
+	var changed []string
 	for _, msg := range r.sync.Messages {
 		if msg.Role == types.RoleThinking {
 			msg.ThinkingActive = false
 			msg.ThinkingInterrupted = false
 			msg.CachedLines = nil
-			r.vl.InvalidateItem(msg.InternalID)
-			changed = true
+			changed = append(changed, msg.InternalID)
 		}
 	}
-	if changed {
+	if len(changed) > 0 {
 		r.bumpVersion()
+		r.syncActivityItems(changed)
 	}
 }
 
 func (r *Renderer) MarkAllThinkingInterrupted() {
-	changed := false
+	var changed []string
 	for _, msg := range r.sync.Messages {
 		if msg.Role == types.RoleThinking && msg.ThinkingActive {
 			msg.ThinkingActive = false
 			msg.ThinkingInterrupted = true
 			msg.CachedLines = nil
-			r.vl.InvalidateItem(msg.InternalID)
-			changed = true
+			changed = append(changed, msg.InternalID)
 		} else if msg.Role == types.RoleThinking {
 			msg.ThinkingActive = false
-			changed = true
+			changed = append(changed, msg.InternalID)
 		}
 	}
-	if changed {
+	if len(changed) > 0 {
 		r.bumpVersion()
+		r.syncActivityItems(changed)
 	}
 }
 
@@ -732,6 +731,9 @@ func (r *Renderer) RemoveActiveThinking() string {
 func (r *Renderer) ActiveThinkingLineCount(contentWidth int) int {
 	for _, msg := range r.sync.Messages {
 		if msg.Role == types.RoleThinking && msg.ThinkingActive {
+			if msg.ThinkingDisplay.Kind.HasCompactPreview() {
+				return 1
+			}
 			if msg.CachedLines != nil {
 				return len(msg.CachedLines) + 1
 			}
@@ -747,6 +749,9 @@ func (r *Renderer) InvalidateCache() {
 		if msg.Role == types.RoleTool && (msg.ToolStatus == "streaming" || msg.ToolStatus == "calling") {
 			msg.CachedLines = nil
 			r.vl.InvalidateItem(msg.InternalID)
+			if _, ok := r.vl.byID["activity:"+msg.InternalID]; ok {
+				r.vl.InvalidateItem("activity:" + msg.InternalID)
+			}
 		}
 		if msg.Role == types.RoleThinking && msg.ThinkingActive {
 			msg.CachedLines = nil
@@ -815,8 +820,8 @@ func (r *Renderer) SetSpinFrame(f int) {
 	for id := range r.frameSensitive {
 		if message := r.sync.MsgByID[id]; message != nil {
 			message.CachedLines = nil
-			r.vl.InvalidateItem(id)
 		}
+		r.vl.InvalidateItem(id)
 	}
 }
 
@@ -884,32 +889,14 @@ func (r *Renderer) SyncMessages(messages []types.ChatMessage, sourceVersion uint
 		return
 	}
 
-	previousLen := result.PreviousLen
-	if result.PureAppend && len(messages) > previousLen {
-		if cursorOwnerID != "" {
-			if previous := r.sync.MsgByID[cursorOwnerID]; previous != nil {
-				previous.CachedLines = nil
-			}
-			r.vl.InvalidateItem(cursorOwnerID)
+	if cursorOwnerID != "" && result.PureAppend {
+		if previous := r.sync.MsgByID[cursorOwnerID]; previous != nil {
+			previous.CachedLines = nil
+			result.ChangedIDs = append(result.ChangedIDs, cursorOwnerID)
 		}
-		for index := previousLen; index < len(r.sync.Messages); index++ {
-			r.vl.AppendItem(r.messageToItem(index))
-		}
-		for _, id := range result.ChangedIDs {
-			if r.sync.MsgByID[id] != nil {
-				r.vl.InvalidateItem(id)
-			}
-		}
-		return
 	}
-	if result.StructureChanged {
-		r.pruneExpanded()
-		r.RebuildItems()
-		return
-	}
-	for _, id := range result.ChangedIDs {
-		r.vl.InvalidateItem(id)
-	}
+	r.syncActivityItems(result.ChangedIDs)
+	r.pruneExpanded()
 }
 
 func (r *Renderer) RemoveMessage(idx int) {
@@ -920,8 +907,8 @@ func (r *Renderer) RemoveMessage(idx int) {
 	delete(r.sync.MsgByID, msg.InternalID)
 	r.sync.Messages = append(r.sync.Messages[:idx], r.sync.Messages[idx+1:]...)
 	r.bumpVersion()
-	r.pruneExpanded()
 	r.RebuildItems()
+	r.pruneExpanded()
 }
 
 func (r *Renderer) InvalidateItem(id string) {
@@ -1080,9 +1067,14 @@ func (r *Renderer) messageRow(item *renderItem) MessageRow {
 	contextBoundary := false
 	toggleLine := -1
 	toggleAny := false
-	if msg, ok := item.Data.(*types.ChatMessage); ok && msg != nil {
+	var leafToggles map[int]string
+	if group, ok := item.Data.(*activityGroup); ok {
+		toggleLine = 0
+		toggleAny = r.expanded[group.id]
+		leafToggles = group.leafRows
+	} else if msg, ok := item.Data.(*types.ChatMessage); ok && msg != nil {
 		subPaneID = msg.SubPaneID
-		contextBoundary = msg.LifecycleOperationID != "" || strings.HasPrefix(msg.LifecyclePhase, "compaction_")
+		contextBoundary = msg.LifecyclePhase == "history_restored" || strings.HasPrefix(msg.LifecyclePhase, "compaction_")
 		if r.hasDisclosure(msg) {
 			toggleLine = 0
 			toggleAny = r.disclosureState(msg) == DisclosureExpanded
@@ -1116,6 +1108,7 @@ func (r *Renderer) messageRow(item *renderItem) MessageRow {
 		ContextBoundaryStart: contextBoundaryStart,
 		Toggle:               toggleLine >= 0,
 		ToggleAny:            toggleAny,
+		LeafToggles:          leafToggles,
 		ToggleLine:           toggleLine,
 	}
 }
@@ -1202,8 +1195,12 @@ func (r *Renderer) buildGlobalPaneLineMap() []PaneLineInfo {
 	if len(r.sync.Messages) == 0 || total == 0 {
 		return paneMap
 	}
-	for itemIdx, msg := range r.sync.Messages {
+	for _, msg := range r.sync.Messages {
 		if msg == nil || msg.SubPaneID == "" {
+			continue
+		}
+		itemIdx, found := r.vl.byID[msg.InternalID]
+		if !found {
 			continue
 		}
 		item := r.vl.Item(itemIdx)
@@ -1244,19 +1241,18 @@ func (r *Renderer) buildPaneLineMap(visible []string) {
 		}
 
 		itemIdx, localLine := r.vl.ItemAtLine(globalLine)
-		if itemIdx < 0 || itemIdx >= len(r.sync.Messages) {
+		item := r.vl.Item(itemIdx)
+		if item == nil {
 			continue
 		}
-		msg := r.sync.Messages[itemIdx]
-		if msg.SubPaneID == "" {
+		msg, ok := item.Data.(*types.ChatMessage)
+		if !ok || msg.SubPaneID == "" {
 			continue
 		}
 
-		// localLine 0 is the leading spacer. PaneRows excludes a collapsed
-		// pane's trailing separator, so neither blank row inherits pane
-		// background, scrollbar paint, or nested wheel ownership.
-		item := r.vl.Item(itemIdx)
-		if item != nil && localLine >= 1 && localLine <= item.PaneRows {
+		// localLine 0 is the transcript-owned leading spacer. It never
+		// inherits pane background, scrollbar paint, or nested wheel ownership.
+		if localLine >= 1 && localLine <= item.PaneRows {
 			r.paneLineMap[i] = PaneLineInfo{
 				PaneID:  msg.SubPaneID,
 				LineIdx: localLine - 2,
@@ -1292,6 +1288,13 @@ func (r *Renderer) PaneScrollMaxOffset() int {
 }
 
 func (r *Renderer) renderItem(idx int, item *renderItem, width int) []string {
+	if group, ok := item.Data.(*activityGroup); ok {
+		lines, native := r.renderActivity(group)
+		item.Native = native
+		item.PaneRows = 0
+		r.setFrameSensitive(group.id, group.active)
+		return lines
+	}
 	msg, ok := item.Data.(*types.ChatMessage)
 	if !ok {
 		item.Native = nil
@@ -1316,9 +1319,7 @@ func (r *Renderer) renderItem(idx int, item *renderItem, width int) []string {
 		native = append(native, buildPlainBodyLine(""))
 		for _, sl := range paneLines {
 			frameSensitive = frameSensitive || sl.FrameSensitive
-			if !sl.Separator {
-				item.PaneRows++
-			}
+			item.PaneRows++
 			if sl.Native != nil {
 				result = append(result, sl.PlainText())
 				native = append(native, *sl.Native)
@@ -1337,16 +1338,12 @@ func (r *Renderer) renderItem(idx int, item *renderItem, width int) []string {
 	item.PaneRows = 0
 
 	isStreamingCursor := r.isStreamingCursor(msg)
-	msgIdx := r.messageIndexOf(msg)
-	needsSpacer := r.needsLeadingSpacer(msgIdx)
 
-	if msg.CachedLines != nil && !isStreamingCursor && !msg.PendingBtw {
+	if r.sync.MsgByID[msg.InternalID] == msg && msg.CachedLines != nil && !isStreamingCursor && !msg.PendingBtw {
 		result := make([]string, 0, len(msg.CachedLines)+1)
 		native := make([]PaintLine, 0, len(msg.CachedLines)+1)
-		if needsSpacer {
-			result = append(result, "")
-			native = append(native, buildPlainBodyLine(""))
-		}
+		result = append(result, "")
+		native = append(native, buildPlainBodyLine(""))
 		result = append(result, msg.CachedLines...)
 		cachedNative := r.nativeCache[msg.InternalID]
 		if len(cachedNative) == len(msg.CachedLines) {
@@ -1484,7 +1481,6 @@ func (r *Renderer) renderSingleMessage(msg *types.ChatMessage) ([]string, []Pain
 
 	msgIdx := r.messageIndexOf(origMsg)
 	suppressHeader := r.shouldSuppressHeader(msgIdx)
-	needsSpacer := r.needsLeadingSpacer(msgIdx)
 
 	ctx := r.buildRenderContext(origMsg, suppressHeader)
 	if r.streaming && r.isLastMessage(origMsg) && origMsg.Role == types.RoleAssistant {
@@ -1497,7 +1493,7 @@ func (r *Renderer) renderSingleMessage(msg *types.ChatMessage) ([]string, []Pain
 		switch {
 		case msg.Role == types.RoleAssistant && r.streaming:
 			cursorIdx = len(ml.lines) - 1
-		case msg.Role == types.RoleThinking && msg.ThinkingActive:
+		case msg.Role == types.RoleThinking && msg.ThinkingActive && !msg.ThinkingDisplay.Kind.HasCompactPreview():
 			cursorIdx = len(ml.lines) - 1
 		}
 	}
@@ -1508,12 +1504,10 @@ func (r *Renderer) renderSingleMessage(msg *types.ChatMessage) ([]string, []Pain
 	}
 	r.setFrameSensitive(origMsg.InternalID, ml.frameSensitive)
 
-	var lines []string
-	var native []PaintLine
-	if needsSpacer {
-		lines = append(lines, "")
-		native = append(native, buildPlainBodyLine(""))
-	}
+	// Every transcript item owns exactly one leading spacer, including panes
+	// and activity groups. No geometry-dependent trailing-separator handoff.
+	lines := []string{""}
+	native := []PaintLine{buildPlainBodyLine("")}
 	lines = append(lines, ml.lines...)
 	native = append(native, ml.native...)
 
@@ -1531,7 +1525,7 @@ func (r *Renderer) renderSingleMessage(msg *types.ChatMessage) ([]string, []Pain
 	// left every message permanently cache-less, so itemList.EnsureHeights
 	// re-rendered the whole session every frame. Role/PendingBtw are identical
 	// on both, so only the write target changes.
-	if !isStreamingCursor && origMsg.Role != types.RoleStatus && !origMsg.PendingBtw {
+	if r.sync.MsgByID[origMsg.InternalID] == origMsg && !isStreamingCursor && origMsg.Role != types.RoleStatus && !origMsg.PendingBtw {
 		origMsg.CachedLines = make([]string, len(ml.lines))
 		copy(origMsg.CachedLines, ml.lines)
 		r.nativeCache[origMsg.InternalID] = append([]PaintLine(nil), ml.native...)
@@ -1571,34 +1565,6 @@ func messageParty(role string) string {
 	default:
 		return ""
 	}
-}
-
-// previousEndsWithPaneSeparator reports whether the rendered item immediately
-// before idx actually owns a trailing separator. Collapsed panes have leading
-// spacer + PaneRows + trailing separator; active/expanded panes do not.
-func (r *Renderer) previousEndsWithPaneSeparator(msgIdx int) bool {
-	if msgIdx <= 0 {
-		return false
-	}
-	previous := r.sync.Messages[msgIdx-1]
-	if previous == nil || previous.SubPaneID == "" {
-		return false
-	}
-	item := r.vl.Item(msgIdx - 1)
-	return item != nil && len(item.Rendered) > item.PaneRows+1
-}
-
-// needsLeadingSpacer decides whether a message should paint a blank row before
-// it. Exactly one blank row separates any two adjacent chat items: every
-// message gets a leading spacer (the first one's serves as top padding) except
-// when the previous rendered item already paints its own trailing separator.
-// Header suppression only controls whether a party
-// label is shown — it must never remove the inter-item separator, or a tool
-// followed by a same-party assistant (header suppressed) gets zero gap while a
-// tool followed by thinking gets two (the thinking's internal header↔body gap
-// stacks on top of the spacer).
-func (r *Renderer) needsLeadingSpacer(msgIdx int) bool {
-	return !r.previousEndsWithPaneSeparator(msgIdx)
 }
 
 func (r *Renderer) shouldSuppressHeader(msgIdx int) bool {
@@ -1642,47 +1608,6 @@ func (r *Renderer) messageIndexOf(target *types.ChatMessage) int {
 	return -1
 }
 
-func (r *Renderer) messageToItem(idx int) renderItem {
-	msg := r.sync.Messages[idx]
-	height := -1
-	var rendered []string
-	var native []PaintLine
-	if msg.CachedLines != nil {
-		cachedNative := r.nativeCache[msg.InternalID]
-		if len(cachedNative) != len(msg.CachedLines) {
-			// A text-only cache is invalid. Force a styled render when this item
-			// next enters the virtualized range.
-			msg.CachedLines = nil
-			delete(r.nativeCache, msg.InternalID)
-		} else {
-			needsSpacer := r.needsLeadingSpacer(idx)
-			if needsSpacer {
-				height = len(msg.CachedLines) + 1
-				rendered = make([]string, 0, height)
-				rendered = append(rendered, "")
-				rendered = append(rendered, msg.CachedLines...)
-				native = make([]PaintLine, 0, height)
-				native = append(native, buildPlainBodyLine(""))
-				native = append(native, cachedNative...)
-			} else {
-				height = len(msg.CachedLines)
-				rendered = append([]string(nil), msg.CachedLines...)
-				native = append([]PaintLine(nil), cachedNative...)
-			}
-		}
-	} else if h, ok := r.vl.ItemHeight(msg.InternalID); ok {
-		height = h
-	}
-	return renderItem{
-		ID:       msg.InternalID,
-		Height:   height,
-		Rendered: rendered,
-		Native:   native,
-		Dirty:    msg.CachedLines == nil,
-		Data:     msg,
-	}
-}
-
 func (r *Renderer) MdRenderer() *glamour.TermRenderer {
 	return r.makeMdRenderer()
 }
@@ -1704,7 +1629,7 @@ func (r *Renderer) makeMdRenderer() *glamour.TermRenderer {
 	// MakeMdRenderer subtracts four padding columns plus the same 16-column
 	// message chrome. Re-add those fixed columns after deriving the bounded
 	// content width so its word-wrap width equals contentWidth exactly.
-	md := rendering.MakeMdRenderer(contentWidth + 4 + messageBodyChromeWidth)
+	md := rendering.MakeMdRenderer(contentWidth+4+messageBodyChromeWidth, r.theme)
 	if md != nil {
 		r.mdRenderer = md
 		r.cachedWidth = contentWidth
@@ -1714,16 +1639,13 @@ func (r *Renderer) makeMdRenderer() *glamour.TermRenderer {
 
 func (r *Renderer) RebuildItems() {
 	r.lazyWidthReflow = false
-	for id := range r.frameSensitive {
-		if r.sync.MsgByID[id] == nil {
-			delete(r.frameSensitive, id)
+	// Explicit rebuilds repair missing native halves as well as source changes.
+	for _, msg := range r.sync.Messages {
+		if msg.CachedLines != nil && len(r.nativeCache[msg.InternalID]) != len(msg.CachedLines) {
+			msg.CachedLines = nil
 		}
 	}
-	items := make([]renderItem, len(r.sync.Messages))
-	for i := range r.sync.Messages {
-		items[i] = r.messageToItem(i)
-	}
-	r.vl.SetItems(items)
+	r.syncActivityItems(nil)
 }
 
 func (r *Renderer) InvalidateAllMessages() {
@@ -1731,6 +1653,11 @@ func (r *Renderer) InvalidateAllMessages() {
 	perf.MarkCacheInvalidation()
 	for i := range r.sync.Messages {
 		r.invalidateMessageCache(r.sync.Messages[i])
+	}
+	for _, batch := range r.activityBatches {
+		for _, msg := range batch {
+			r.invalidateMessageCache(msg)
+		}
 	}
 	r.vl.InvalidateHeights()
 	r.vl.InvalidateAll()

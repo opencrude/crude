@@ -25,8 +25,47 @@ const (
 // session. A nil store disables all memory features gracefully.
 func (s *Session) SetMemoryStore(store *memory.Store) {
 	s.mu.Lock()
+	previous := s.memoryStore
 	s.memoryStore = store
 	s.mu.Unlock()
+	if store == nil || store == previous {
+		return
+	}
+	ctx, ok := s.memoryJobs.begin()
+	if !ok {
+		return
+	}
+	go func() {
+		defer s.memoryJobs.wg.Done()
+		s.refreshMemorySummary(ctx, store)
+	}()
+}
+
+// SummaryTitle is a cached projection of the existing durable memory summary.
+// Reading it never performs I/O or starts a provider request.
+func (s *Session) SummaryTitle() string {
+	if summary := s.memorySummary.Load(); summary != nil {
+		return summary.Title
+	}
+	return ""
+}
+
+func (s *Session) refreshMemorySummary(ctx context.Context, store *memory.Store) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	summary, found, err := store.GetSessionSummary(ctx, s.sessionID)
+	if err != nil || !found || s.MemoryStore() != store {
+		return
+	}
+	for {
+		previous := s.memorySummary.Load()
+		if previous != nil && previous.UpdatedAt >= summary.UpdatedAt {
+			return
+		}
+		if s.memorySummary.CompareAndSwap(previous, &summary) {
+			return
+		}
+	}
 }
 
 // MemoryStore returns the wired store (nil when memory is unavailable).
@@ -50,7 +89,10 @@ func (s *Session) memorySettings() ttypes.MemorySettings {
 // Touched paths boost recall of memories scoped to the same files.
 func (s *Session) recordToolTouch(tool string, params map[string]any) {
 	var keys []string
+	var paths []string
 	switch tool {
+	case "apply_patch":
+		paths = writeToolTargets(tool, params)
 	case "read_file", "write_file", "edit_file", "delete_file", "list_directory":
 		keys = []string{"path"}
 	case "move_file", "copy_file":
@@ -64,7 +106,10 @@ func (s *Session) recordToolTouch(tool string, params map[string]any) {
 		s.touchedFiles = make(map[string]struct{})
 	}
 	for _, key := range keys {
-		path := strings.TrimSpace(getStrParam(params, key))
+		paths = append(paths, getStrParam(params, key))
+	}
+	for _, raw := range paths {
+		path := strings.TrimSpace(raw)
 		if path == "" || len(s.touchedFiles) >= 128 {
 			continue
 		}

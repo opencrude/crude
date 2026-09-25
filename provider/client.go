@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"crude/logger"
+	"crude/types/reasoning"
 )
 
 // Client performs API calls against one provider endpoint using one wire
@@ -244,12 +245,14 @@ func staticHeaderSource(proto Protocol, apiKey string) func(context.Context) (ht
 func newHTTPClient(dial DialConfig) *http.Client {
 	return &http.Client{
 		Transport: &http.Transport{
-			DialContext:           dialContext(dial.ConnectTimeout),
-			MaxIdleConns:          10,
-			MaxIdleConnsPerHost:   10,
-			IdleConnTimeout:       90 * time.Second,
-			TLSHandshakeTimeout:   10 * time.Second,
-			ResponseHeaderTimeout: dial.ConnectTimeout,
+			DialContext:         dialContext(dial.ConnectTimeout),
+			MaxIdleConns:        10,
+			MaxIdleConnsPerHost: 10,
+			IdleConnTimeout:     90 * time.Second,
+			TLSHandshakeTimeout: 10 * time.Second,
+			// The per-attempt progress watchdog owns header waiting. A TCP
+			// connect timeout must not also cut off a queued gateway response.
+			ResponseHeaderTimeout: 0,
 		},
 	}
 }
@@ -272,6 +275,9 @@ func (c *Client) Complete(ctx context.Context, req *ChatRequest) (*ChatResponse,
 		if err != nil {
 			if ctxErr := ctx.Err(); ctxErr != nil {
 				return nil, ctxErr
+			}
+			if !Retryable(err) {
+				return nil, err
 			}
 			lastErr = err
 			if attempt == c.dial.MaxAttempts {
@@ -302,7 +308,7 @@ func (c *Client) Complete(ctx context.Context, req *ChatRequest) (*ChatResponse,
 		_ = resp.Body.Close()
 		if err != nil {
 			lastErr = fmt.Errorf("read response: %w", err)
-			if attempt < c.dial.MaxAttempts && c.retryableStreamError(err) {
+			if attempt < c.dial.MaxAttempts && Retryable(err) {
 				if waitErr := c.backoff(ctx, attempt, nil, err); waitErr != nil {
 					return nil, waitErr
 				}
@@ -312,6 +318,12 @@ func (c *Client) Complete(ctx context.Context, req *ChatRequest) (*ChatResponse,
 		}
 		decoded, err := c.proto.DecodeResponse(payload)
 		if err != nil {
+			if Retryable(err) && attempt < c.dial.MaxAttempts {
+				if waitErr := c.backoff(ctx, attempt, nil, err); waitErr != nil {
+					return nil, waitErr
+				}
+				continue
+			}
 			return nil, err
 		}
 		return decoded, nil
@@ -320,10 +332,9 @@ func (c *Client) Complete(ctx context.Context, req *ChatRequest) (*ChatResponse,
 }
 
 // Stream performs a streaming chat request. Retry semantics: attempts are
-// made transparently until the response is established, and again for
-// retryable failures before the first update is yielded — callers never
-// observe a retry after they have seen output. Next returns io.EOF after
-// the terminal update.
+// made transparently until model output is accepted. Accounting-only updates
+// do not commit a stochastic response; content, reasoning, tool calls and opaque
+// provider items do. Next returns io.EOF after the terminal update.
 func (c *Client) Stream(ctx context.Context, req *ChatRequest) (*ChatStream, error) {
 	req = withStreamFlag(req, true)
 	body, err := c.encodeChatRequest(req)
@@ -331,32 +342,31 @@ func (c *Client) Stream(ctx context.Context, req *ChatRequest) (*ChatStream, err
 		return nil, err
 	}
 	return &ChatStream{
-		client: c,
-		ctx:    ctx,
-		body:   body,
+		client:               c,
+		ctx:                  ctx,
+		body:                 body,
+		reasoningContentKind: req.ReasoningContentKind,
 	}, nil
 }
 
 // ChatStream is a decoded, ordered view of one streaming response.
 type ChatStream struct {
-	client    *Client
-	ctx       context.Context
-	body      []byte
-	resp      *http.Response
-	reader    streamEventReader
-	decoder   StreamDecoder
-	attempt   int
-	yielded   bool
-	sawDone   bool
-	closed    bool
-	emitted   streamTranscript
-	replay    streamTranscript
-	replaying bool
+	client               *Client
+	reasoningContentKind reasoning.Kind
+	ctx                  context.Context
+	body                 []byte
+	resp                 *http.Response
+	reader               streamEventReader
+	decoder              StreamDecoder
+	attempt              int
+	yielded              bool
+	sawDone              bool
+	closed               bool
 }
 
 // Next returns the next decoded stream update. It returns io.EOF after the
-// terminal update. Errors that occur before any update has been yielded are
-// retried transparently when retryable; errors after output has been seen
+// terminal update. Errors before model output has been accepted are retried
+// transparently when retryable; errors after output has been seen
 // are surfaced as-is so callers can preserve the partial result.
 func (s *ChatStream) Next() (StreamUpdate, error) {
 	if s.closed {
@@ -365,6 +375,7 @@ func (s *ChatStream) Next() (StreamUpdate, error) {
 	for {
 		if s.resp == nil {
 			if err := s.establish(); err != nil {
+				s.closed = true
 				return StreamUpdate{}, err
 			}
 		}
@@ -383,40 +394,29 @@ func (s *ChatStream) Next() (StreamUpdate, error) {
 				}
 			}
 			if s.canRetryStream(err) {
-				s.beginReplay()
 				if waitErr := s.client.backoff(s.ctx, s.attempt, nil, err); waitErr != nil {
+					s.closed = true
 					return StreamUpdate{}, waitErr
 				}
 				continue
 			}
+			s.closed = true
 			return StreamUpdate{}, err
 		}
 		update, err := s.decoder.Decode(event)
 		if err != nil {
 			s.closeResp()
 			if s.canRetryStream(err) {
-				s.beginReplay()
 				if waitErr := s.client.backoff(s.ctx, s.attempt, nil, err); waitErr != nil {
+					s.closed = true
 					return StreamUpdate{}, waitErr
 				}
 				continue
 			}
+			s.closed = true
 			return StreamUpdate{}, err
 		}
-		if s.replaying {
-			adjusted, emit, replayErr := reconcileReplay(s.emitted, &s.replay, update)
-			if replayErr != nil {
-				s.closeResp()
-				return StreamUpdate{}, replayErr
-			}
-			if replayMatches(s.emitted, s.replay) || adjusted.ContentDelta != "" || adjusted.ReasoningDelta != "" || len(adjusted.ToolCalls) > 0 {
-				s.replaying = false
-			}
-			if !emit {
-				continue
-			}
-			update = adjusted
-		}
+		annotateFlattenedReasoning(&update, s.reasoningContentKind)
 		if update.Done {
 			s.sawDone = true
 		}
@@ -427,8 +427,9 @@ func (s *ChatStream) Next() (StreamUpdate, error) {
 			s.done()
 			return StreamUpdate{}, io.EOF
 		}
-		s.yielded = true
-		s.emitted.apply(update)
+		// Accounting/framing alone does not commit model output. Once content,
+		// reasoning, tools or opaque state is accepted, replay is never safe.
+		s.yielded = s.yielded || update.ContentDelta != "" || update.ReasoningText() != "" || len(update.ToolCalls) > 0 || len(update.ProviderItems) > 0
 		if update.Done {
 			s.done()
 		}
@@ -436,20 +437,26 @@ func (s *ChatStream) Next() (StreamUpdate, error) {
 	}
 }
 
-func (s *ChatStream) canRetryStream(err error) bool {
-	if s.attempt >= s.client.dial.MaxAttempts || !s.client.retryableStreamError(err) {
-		return false
-	}
-	return !s.yielded || !s.emitted.ProviderItems
-}
-
-func (s *ChatStream) beginReplay() {
-	if !s.yielded {
+func annotateFlattenedReasoning(update *StreamUpdate, kind reasoning.Kind) {
+	if update == nil {
 		return
 	}
-	s.replaying = true
-	s.replay = streamTranscript{}
-	s.sawDone = false
+	for i := range update.Reasoning {
+		if update.Reasoning[i].Kind == reasoning.Unknown {
+			if kind == reasoning.InferredSummary || kind == reasoning.Raw {
+				update.Reasoning[i].Kind = kind
+			} else {
+				update.Reasoning[i].Kind = reasoning.Provisional
+			}
+		}
+	}
+}
+
+func (s *ChatStream) canRetryStream(err error) bool {
+	if s.attempt >= s.client.dial.MaxAttempts || !Retryable(err) {
+		return false
+	}
+	return !s.yielded && s.ctx.Err() == nil
 }
 
 // done marks the stream finished and releases the response body.
@@ -489,6 +496,9 @@ func (s *ChatStream) establish() error {
 			if ctxErr := s.ctx.Err(); ctxErr != nil {
 				return ctxErr
 			}
+			if !Retryable(err) {
+				return err
+			}
 			if s.attempt >= c.dial.MaxAttempts {
 				return &ExhaustedError{Attempts: s.attempt, Cause: err}
 			}
@@ -499,8 +509,11 @@ func (s *ChatStream) establish() error {
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			statusErr := readStatusError(resp, c.dial.MaxResponseBytes)
-			if !statusErr.Retryable() || s.attempt >= c.dial.MaxAttempts {
+			if !statusErr.Retryable() {
 				return statusErr
+			}
+			if s.attempt >= c.dial.MaxAttempts {
+				return wrapExhausted(statusErr, s.attempt)
 			}
 			if waitErr := c.backoff(s.ctx, s.attempt, resp, statusErr); waitErr != nil {
 				return waitErr
@@ -623,6 +636,18 @@ func (c *Client) chatURL() *url.URL {
 
 // encodeChatRequest serializes the request and merges request extras.
 func (c *Client) encodeChatRequest(req *ChatRequest) ([]byte, error) {
+	if req == nil {
+		return nil, fmt.Errorf("request is nil")
+	}
+	for _, tool := range req.Tools {
+		if tool.Type == "custom" {
+			switch c.proto.Info().ID {
+			case "openai", "openai-responses", "codex":
+			default:
+				return nil, fmt.Errorf("protocol %s does not support native freeform tools; select an OpenAI custom-tool-capable endpoint for %s", c.proto.Info().ID, tool.Function.Name)
+			}
+		}
+	}
 	body, err := c.proto.EncodeRequest(req)
 	if err != nil {
 		return nil, fmt.Errorf("encode request: %w", err)
@@ -696,7 +721,12 @@ func (c *Client) do(ctx context.Context, method string, endpoint *url.URL, body 
 	}
 	headers, err := c.headerSource(attemptCtx)
 	if err != nil {
+		cause := context.Cause(attemptCtx)
 		watch.stop()
+		var stalled *ProgressStallError
+		if errors.As(cause, &stalled) {
+			return nil, stalled
+		}
 		return nil, fmt.Errorf("resolve request headers: %w", err)
 	}
 	for key, values := range headers {
@@ -729,7 +759,13 @@ func (c *Client) do(ctx context.Context, method string, endpoint *url.URL, body 
 
 // backoff waits before the next attempt, firing the retry callback.
 func (c *Client) backoff(ctx context.Context, attempt int, resp *http.Response, cause error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	delay := serverHintedDelay(resp, attempt, c.dial)
+	if delay < 0 {
+		return fmt.Errorf("provider requested a retry delay longer than %s; try again later: %w", maxServerRetryDelay, cause)
+	}
 	logIf(func(lg *logger.Logger) {
 		lg.Warn("RETRY", "attempt", "protocol", c.proto.Info().ID, "attempt", attempt,
 			"backoff_ms", delay.Milliseconds(), "error", cause.Error())
@@ -738,27 +774,6 @@ func (c *Client) backoff(ctx context.Context, attempt int, resp *http.Response, 
 		c.onRetry(attempt, delay, cause)
 	}
 	return waitForRetry(ctx, delay)
-}
-
-// retryableStreamError reports whether a mid-stream error warrants
-// re-establishing the stream (only valid before any output was yielded).
-func (c *Client) retryableStreamError(err error) bool {
-	var stalled *ProgressStallError
-	if errors.As(err, &stalled) {
-		return true
-	}
-	if errors.Is(err, io.ErrUnexpectedEOF) {
-		return true
-	}
-	var apiErr *APIError
-	if errors.As(err, &apiErr) {
-		typ := strings.ToLower(apiErr.Type + " " + apiErr.Code)
-		return strings.Contains(typ, "overload") || strings.Contains(typ, "rate_limit") ||
-			strings.Contains(typ, "temporar") || strings.Contains(typ, "api_error") ||
-			strings.Contains(typ, "server_error") || strings.Contains(typ, "internal_error") ||
-			strings.Contains(typ, "timeout") || strings.Contains(typ, "unavailable")
-	}
-	return false
 }
 
 // ExhaustedError reports that every attempt failed.
@@ -777,6 +792,8 @@ type StatusError struct {
 	StatusCode int
 	Message    string
 	RequestID  string
+	Code       string
+	RetryHint  string
 }
 
 func (e *StatusError) Error() string {
@@ -791,7 +808,15 @@ func (e *StatusError) Error() string {
 }
 
 // Retryable reports whether the status classically warrants a retry.
-func (e *StatusError) Retryable() bool { return isRetryableStatus(e.StatusCode) }
+func (e *StatusError) Retryable() bool {
+	if permanentAPIError(e.Code) || e.RetryHint == "false" {
+		return false
+	}
+	if e.StatusCode == 400 || e.StatusCode == 401 || e.StatusCode == 403 || e.StatusCode == 404 || e.StatusCode == 413 || e.StatusCode == 422 {
+		return false
+	}
+	return e.RetryHint == "true" || isRetryableStatus(e.StatusCode)
+}
 
 // readStatusError consumes a non-2xx response into a StatusError, parsing
 // the provider's error envelope when present.
@@ -827,10 +852,16 @@ func readStatusError(resp *http.Response, maxBody int64) *StatusError {
 	if message == "" {
 		message = http.StatusText(resp.StatusCode)
 	}
+	code := ""
+	if envelope.Error != nil {
+		code = envelope.Error.Type + " " + fmt.Sprint(envelope.Error.Code)
+	}
 	return &StatusError{
 		StatusCode: resp.StatusCode,
 		Message:    message,
 		RequestID:  firstNonEmptyString(resp.Header.Get("request-id"), resp.Header.Get("x-request-id")),
+		Code:       code,
+		RetryHint:  strings.ToLower(strings.TrimSpace(resp.Header.Get("x-should-retry"))),
 	}
 }
 
@@ -960,7 +991,13 @@ func chatResponseToUpdate(resp *ChatResponse) StreamUpdate {
 		update.FinishReason = choice.FinishReason
 		message := choice.Message
 		update.ContentDelta = message.ContentString()
-		update.ReasoningDelta = message.ReasoningContent
+		trace := firstNonEmpty(message.ReasoningContent, message.Reasoning)
+		display := message.ReasoningDisplay
+		if display.Start > 0 && display.Start < len(trace) {
+			update.Reasoning = append(update.Reasoning, reasoning.Delta{Text: strings.TrimSuffix(trace[:display.Start], "\n\n"), Kind: display.Kind, BlockID: "initial"})
+			trace = trace[display.Start:]
+		}
+		update.Reasoning = append(update.Reasoning, reasoning.Delta{Text: trace, Kind: display.Kind, BlockID: firstNonEmpty(display.BlockID, "latest")})
 		for _, call := range message.ToolCalls {
 			update.ToolCalls = append(update.ToolCalls, ToolCallDelta{
 				Index: call.Index, ID: call.ID, Type: call.Type,
@@ -1043,7 +1080,7 @@ func (r *singleJSONEventReader) next() (StreamEvent, error) {
 }
 
 func isEmptyUpdate(update StreamUpdate) bool {
-	return update.ContentDelta == "" && update.ReasoningDelta == "" &&
+	return update.ContentDelta == "" && update.ReasoningText() == "" &&
 		len(update.ToolCalls) == 0 && len(update.ProviderItems) == 0 &&
 		update.FinishReason == "" && update.Usage == nil
 }

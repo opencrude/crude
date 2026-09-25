@@ -1,6 +1,10 @@
 package chatprojection
 
-import "crude/tui/types"
+import (
+	"strings"
+
+	"crude/tui/types"
+)
 
 // disclosure.go owns the per-message disclosure (expand/collapse) state for
 // chat blocks. Disclosure is TUI-owned presentation state: it never persists
@@ -25,8 +29,11 @@ func (r *Renderer) disclosureState(msg *types.ChatMessage) DisclosureState {
 	if msg == nil {
 		return DisclosureCollapsed
 	}
-	if r.expanded[msg.InternalID] {
-		return DisclosureExpanded
+	if expanded, set := r.expanded[msg.InternalID]; set {
+		if expanded {
+			return DisclosureExpanded
+		}
+		return DisclosureCollapsed
 	}
 	return r.defaultDisclosure(msg)
 }
@@ -39,6 +46,9 @@ func (r *Renderer) disclosureState(msg *types.ChatMessage) DisclosureState {
 func (r *Renderer) defaultDisclosure(msg *types.ChatMessage) DisclosureState {
 	switch {
 	case msg.Role == types.RoleThinking:
+		if msg.ThinkingDisplay.Kind.HasCompactPreview() {
+			return DisclosureCollapsed
+		}
 		if msg.ThinkingActive || msg.ThinkingInterrupted {
 			return DisclosureExpanded
 		}
@@ -46,6 +56,9 @@ func (r *Renderer) defaultDisclosure(msg *types.ChatMessage) DisclosureState {
 	case msg.SubPaneID != "":
 		return DisclosureCollapsed
 	case msg.Role == types.RoleTool:
+		if msg.ToolName == "write_file" || msg.ToolName == "edit_file" || msg.ToolName == "apply_patch" {
+			return DisclosureExpanded
+		}
 		return DisclosureCollapsed
 	}
 	return DisclosureExpanded
@@ -54,15 +67,45 @@ func (r *Renderer) defaultDisclosure(msg *types.ChatMessage) DisclosureState {
 // ToggleDisclosure flips a message's disclosure state and invalidates its
 // cached render so the next frame re-renders with the new geometry.
 func (r *Renderer) ToggleDisclosure(msgID string) {
-	if r.sync.MsgByID[msgID] == nil {
+	if index, found := r.vl.byID[msgID]; found {
+		if _, ok := r.vl.Item(index).Data.(*activityGroup); ok {
+			if r.expanded[msgID] {
+				delete(r.expanded, msgID)
+			} else {
+				r.expanded[msgID] = true
+			}
+			r.syncActivityItems(nil)
+			r.vl.InvalidateItem(msgID)
+			return
+		}
+	}
+	msg := r.sync.MsgByID[msgID]
+	if msg == nil {
+		msg = r.activityMessages[msgID]
+	}
+	if msg == nil {
 		return
 	}
-	if r.expanded[msgID] {
-		delete(r.expanded, msgID)
-	} else {
-		r.expanded[msgID] = true
-	}
+	r.expanded[msgID] = r.disclosureState(msg) != DisclosureExpanded
+	msg.CachedLines = nil
 	r.InvalidateItem(msgID)
+	if msg.Role == types.RoleThinking && msg.ThinkingActive && msg.ThinkingDisplay.Kind.HasCompactPreview() {
+		r.syncActivityItems([]string{msgID}) // the hidden item enters/leaves the list
+		return
+	}
+	// A command leaf in the retained tree has no standalone render item.
+	// Its disclosure still needs to refresh the parent tree's geometry.
+	for _, item := range r.vl.Items() {
+		if group, ok := item.Data.(*activityGroup); ok {
+			for _, member := range group.messages {
+				if member.InternalID == msgID {
+					r.syncActivityItems([]string{msgID})
+					r.vl.InvalidateItem(group.id)
+					return
+				}
+			}
+		}
+	}
 }
 
 // pruneExpanded drops disclosure entries for messages that are no longer in the
@@ -71,9 +114,18 @@ func (r *Renderer) ToggleDisclosure(msgID string) {
 // set rebuild.
 func (r *Renderer) pruneExpanded() {
 	for id := range r.expanded {
-		if r.sync.MsgByID[id] == nil {
-			delete(r.expanded, id)
+		if r.sync.MsgByID[id] != nil {
+			continue
 		}
+		if r.activityMessages[id] != nil {
+			continue
+		}
+		if strings.HasPrefix(id, "activity:") {
+			if r.activityMessages[strings.TrimPrefix(id, "activity:")] != nil {
+				continue
+			}
+		}
+		delete(r.expanded, id)
 	}
 }
 
@@ -82,7 +134,21 @@ func (r *Renderer) pruneExpanded() {
 func (r *Renderer) ToggleLastDisclosure() {
 	for i := len(r.sync.Messages) - 1; i >= 0; i-- {
 		msg := r.sync.Messages[i]
-		if r.hasDisclosure(msg) {
+		if msg.Role == types.RoleThinking && msg.ThinkingActive && msg.ThinkingDisplay.Kind.HasCompactPreview() {
+			r.ToggleDisclosure(msg.InternalID)
+			return
+		}
+		if msg.Role != types.RoleStatus && (msg.Role != types.RoleAssistant || msg.Content != "") {
+			break
+		}
+	}
+	for i := r.vl.ItemCount() - 1; i >= 0; i-- {
+		item := r.vl.Item(i)
+		if _, ok := item.Data.(*activityGroup); ok {
+			r.ToggleDisclosure(item.ID)
+			return
+		}
+		if msg, ok := item.Data.(*types.ChatMessage); ok && r.hasDisclosure(msg) {
 			r.ToggleDisclosure(msg.InternalID)
 			return
 		}
@@ -96,10 +162,14 @@ func (r *Renderer) hasDisclosure(msg *types.ChatMessage) bool {
 	}
 	switch {
 	case msg.Role == types.RoleThinking:
-		return !msg.ThinkingActive && !msg.ThinkingInterrupted && msg.Content != ""
+		return msg.Content != "" && (msg.ThinkingDisplay.Kind.HasCompactPreview() || !msg.ThinkingActive && !msg.ThinkingInterrupted)
 	case msg.SubPaneID != "":
 		return true
-	case msg.Role == types.RoleTool && msg.ToolStatus == "success" && msg.Content != "":
+	case msg.Role == types.RoleTool && activityCommand(msg):
+		return true
+	case msg.Role == types.RoleTool && msg.ToolName == "multi_tool_use.parallel":
+		return msg.ToolInput != "" || msg.Content != ""
+	case msg.Role == types.RoleTool && msg.Content != "":
 		return toolSupportsDisclosure(msg.ToolName)
 	}
 	return false

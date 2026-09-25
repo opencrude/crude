@@ -535,7 +535,7 @@ func TestFormSeparatorFieldUsesBleedWidth(t *testing.T) {
 	}
 }
 
-func TestFormHoverMovesFieldHighlight(t *testing.T) {
+func TestFormHoverDoesNotMoveFocus(t *testing.T) {
 	tokens := NewTokenSet(theme.DefaultDark())
 	model := NewFormModel()
 	model.AddField(&FieldState{ID: "a", Label: "Alpha", Type: FieldNav, Target: "open.a"})
@@ -543,25 +543,55 @@ func TestFormHoverMovesFieldHighlight(t *testing.T) {
 	model.AddField(&FieldState{ID: "gap", Label: "", Type: FieldSpacer})
 	model.AddField(&FieldState{ID: "c", Label: "Gamma", Type: FieldNav, Target: "open.c"})
 	form := NewDockedForm("form", model, "Settings", "", tokens)
-	form.Layout(LayoutContext{}, Rect{W: 60, H: 8})
-	if form.focused != 0 {
-		t.Fatalf("initial focus=%d, want 0", form.focused)
+	host := NewHost(theme.DefaultDark(), form)
+	host.Resize(60, 8)
+	host.Layout()
+	host.Focus(form.ID())
+	paint := func() *surface.CellBuffer {
+		buf := surface.NewCellBuffer(60, 8)
+		host.Paint(buf)
+		return buf
 	}
 	// Compact form: header rows 0-1, fields at rows 2..4 (spacer included).
-	res := form.Handle(EventContext{LocalX: 5, LocalY: 3}, MouseMotionEvent(tea.MouseMotionMsg{}))
-	if !res.Handled || form.focused != 1 {
-		t.Fatalf("motion over Beta: handled=%v focus=%d, want focus 1", res.Handled, form.focused)
+	res := host.Handle(tea.MouseMotionMsg{X: 5, Y: 3})
+	if !res.Handled || res.Action != nil || form.focused != 0 {
+		t.Fatalf("motion over Beta: result=%+v focus=%d, want unchanged focus 0", res, form.focused)
 	}
 	if res.Invalidate&InvalidatePaint == 0 {
-		t.Fatal("hover-focus change must invalidate paint")
+		t.Fatal("hover change must invalidate paint")
 	}
-	res = form.Handle(EventContext{LocalX: 5, LocalY: 4}, MouseMotionEvent(tea.MouseMotionMsg{}))
-	if form.focused != 1 || res.Invalidate != 0 {
-		t.Fatalf("decorative spacer row must not take hover focus: focus=%d invalidate=%v", form.focused, res.Invalidate)
+	buf := paint()
+	if got, want := buf.Get(1, 3).BG, tokens.Color(ColorHover); !got.Equal(want) {
+		t.Fatalf("hovered Beta background=%v, want %v", got, want)
 	}
-	res = form.Handle(EventContext{LocalX: 5, LocalY: 7}, MouseMotionEvent(tea.MouseMotionMsg{}))
-	if res.Handled || form.focused != 1 {
-		t.Fatalf("motion outside fields: handled=%v focus=%d, want untouched", res.Handled, form.focused)
+	if got, want := buf.Get(0, 3).FG, tokens.Color(ColorFg); !got.Equal(want) {
+		t.Fatalf("hovered Beta label=%v, want plain %v (not focus accent)", got, want)
+	}
+	if got, want := buf.Get(0, 2).FG, tokens.Color(ColorAccent); !got.Equal(want) {
+		t.Fatalf("focused Alpha label=%v, want accent %v", got, want)
+	}
+	res = host.Handle(tea.MouseMotionMsg{X: 5, Y: 4})
+	if form.focused != 0 || res.Invalidate&InvalidatePaint == 0 {
+		t.Fatalf("decorative spacer should clear hover, not focus: focus=%d result=%+v", form.focused, res)
+	}
+	if got, want := paint().Get(1, 3).BG, tokens.Color(ColorBg); !got.Equal(want) {
+		t.Fatalf("hover persisted on Beta after leaving: background=%v want %v", got, want)
+	}
+	res = host.Handle(tea.MouseMotionMsg{X: 5, Y: 5})
+	if form.focused != 0 || res.Invalidate&InvalidatePaint == 0 {
+		t.Fatalf("motion over Gamma: focus=%d result=%+v", form.focused, res)
+	}
+	if got, want := paint().Get(1, 5).BG, tokens.Color(ColorHover); !got.Equal(want) {
+		t.Fatalf("Gamma hover=%v, want %v", got, want)
+	}
+	// Keyboard activation still targets Alpha, not the last hovered row.
+	res = host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if res.Action == nil || res.Action.ID != "open.a" {
+		t.Fatalf("Enter after hover activated %+v, want open.a", res.Action)
+	}
+	res = host.Handle(tea.MouseClickMsg{X: 5, Y: 3, Button: tea.MouseLeft})
+	if form.focused != 1 || res.Action == nil || res.Action.ID != "open.b" {
+		t.Fatalf("click Beta: focus=%d action=%+v, want focus 1 / open.b", form.focused, res.Action)
 	}
 }
 

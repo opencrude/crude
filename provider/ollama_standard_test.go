@@ -455,7 +455,7 @@ func TestOllamaStreamThroughMislabeledJSONWithToolCalls(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Next: %v", err)
 		}
-		reasoning.WriteString(u.ReasoningDelta)
+		reasoning.WriteString(u.ReasoningText())
 		calls = append(calls, u.ToolCalls...)
 		if u.Done {
 			done = true

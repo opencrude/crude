@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"crude/provider"
+	"crude/types/reasoning"
 )
 
 // ConversationMessage is the presentation-neutral canonical message shared by
@@ -27,6 +28,7 @@ type ConversationMessage struct {
 	ToolInput           string        `json:"tool_input,omitempty"`
 	ToolScope           string        `json:"tool_scope,omitempty"`
 	ToolID              string        `json:"tool_id,omitempty"`
+	ToolRoundID         string        `json:"tool_round_id,omitempty"`
 	ToolStatus          string        `json:"tool_status,omitempty"`
 	ToolIndex           int           `json:"tool_index,omitempty"`
 	ToolProgressPhase   string        `json:"tool_progress_phase,omitempty"`
@@ -39,33 +41,35 @@ type ConversationMessage struct {
 	ToolStartTime       time.Time     `json:"tool_start_time,omitempty"`
 	ToolDuration        time.Duration `json:"tool_duration,omitempty"`
 
-	ThinkingActive         bool          `json:"thinking_active,omitempty"`
-	ThinkingInterrupted    bool          `json:"thinking_interrupted,omitempty"`
-	ThinkingDuration       time.Duration `json:"thinking_duration,omitempty"`
-	LifecyclePhase         string        `json:"lifecycle_phase,omitempty"`
-	LifecycleProgress      int           `json:"lifecycle_progress,omitempty"`
-	LifecycleProvider      string        `json:"lifecycle_provider,omitempty"`
-	LifecycleUploadedBytes int64         `json:"lifecycle_uploaded_bytes,omitempty"`
-	LifecycleTotalBytes    int64         `json:"lifecycle_total_bytes,omitempty"`
-	LifecycleBeforeTokens  int           `json:"lifecycle_before_tokens,omitempty"`
-	LifecycleAfterTokens   int           `json:"lifecycle_after_tokens,omitempty"`
-	LifecycleOperationID   string        `json:"lifecycle_operation_id,omitempty"`
-	LifecycleTrigger       string        `json:"lifecycle_trigger,omitempty"`
-	LifecycleStageName     string        `json:"lifecycle_stage_name,omitempty"`
-	LifecycleStageIndex    int           `json:"lifecycle_stage_index,omitempty"`
-	LifecycleCompleted     int           `json:"lifecycle_completed,omitempty"`
-	LifecycleStageCount    int           `json:"lifecycle_stage_count,omitempty"`
-	LifecycleRetryAttempt  int           `json:"lifecycle_retry_attempt,omitempty"`
-	LifecycleRetryLimit    int           `json:"lifecycle_retry_limit,omitempty"`
-	LifecycleContextWindow int           `json:"lifecycle_context_window,omitempty"`
-	HistoryPathCount       int           `json:"history_path_count,omitempty"`
-	HistoryTargetSnapshot  string        `json:"history_target_snapshot,omitempty"`
-	HistorySafetySnapshot  string        `json:"history_safety_snapshot,omitempty"`
-	Incomplete             bool          `json:"incomplete,omitempty"`
-	IncompleteReason       string        `json:"incomplete_reason,omitempty"`
-	SubPaneID              string        `json:"sub_pane_id,omitempty"`
-	PermTag                string        `json:"perm_tag,omitempty"`
-	PendingBtw             bool          `json:"-"`
+	ThinkingActive         bool              `json:"thinking_active,omitempty"`
+	ThinkingInterrupted    bool              `json:"thinking_interrupted,omitempty"`
+	ThinkingDuration       time.Duration     `json:"thinking_duration,omitempty"`
+	ThinkingDisplay        reasoning.Display `json:"thinking_display,omitempty"`
+	LifecyclePhase         string            `json:"lifecycle_phase,omitempty"`
+	LifecycleProgress      int               `json:"lifecycle_progress,omitempty"`
+	LifecycleProvider      string            `json:"lifecycle_provider,omitempty"`
+	LifecycleUploadedBytes int64             `json:"lifecycle_uploaded_bytes,omitempty"`
+	LifecycleTotalBytes    int64             `json:"lifecycle_total_bytes,omitempty"`
+	LifecycleBeforeTokens  int               `json:"lifecycle_before_tokens,omitempty"`
+	LifecycleAfterTokens   int               `json:"lifecycle_after_tokens,omitempty"`
+	LifecycleOperationID   string            `json:"lifecycle_operation_id,omitempty"`
+	LifecycleTrigger       string            `json:"lifecycle_trigger,omitempty"`
+	LifecycleStageName     string            `json:"lifecycle_stage_name,omitempty"`
+	LifecycleStageIndex    int               `json:"lifecycle_stage_index,omitempty"`
+	LifecycleCompleted     int               `json:"lifecycle_completed,omitempty"`
+	LifecycleStageCount    int               `json:"lifecycle_stage_count,omitempty"`
+	LifecycleRetryAttempt  int               `json:"lifecycle_retry_attempt,omitempty"`
+	LifecycleRetryAt       time.Time         `json:"lifecycle_retry_at,omitempty"`
+	LifecycleRetryLimit    int               `json:"lifecycle_retry_limit,omitempty"`
+	LifecycleContextWindow int               `json:"lifecycle_context_window,omitempty"`
+	HistoryPathCount       int               `json:"history_path_count,omitempty"`
+	HistoryTargetSnapshot  string            `json:"history_target_snapshot,omitempty"`
+	HistorySafetySnapshot  string            `json:"history_safety_snapshot,omitempty"`
+	Incomplete             bool              `json:"incomplete,omitempty"`
+	IncompleteReason       string            `json:"incomplete_reason,omitempty"`
+	SubPaneID              string            `json:"sub_pane_id,omitempty"`
+	PermTag                string            `json:"perm_tag,omitempty"`
+	PendingBtw             bool              `json:"-"`
 }
 
 // TurnIdentity is the immutable backend identity resolved when one turn
@@ -636,6 +640,7 @@ type ChatMessage struct {
 	ToolInput   string
 	ToolScope   string
 	ToolID      string
+	ToolRoundID string
 	ToolStatus  string
 	ToolIndex   int
 
@@ -652,6 +657,7 @@ type ChatMessage struct {
 	ThinkingActive         bool
 	ThinkingInterrupted    bool
 	ThinkingDuration       time.Duration
+	ThinkingDisplay        reasoning.Display
 	LifecyclePhase         string
 	LifecycleProgress      int
 	LifecycleProvider      string
@@ -666,6 +672,7 @@ type ChatMessage struct {
 	LifecycleCompleted     int
 	LifecycleStageCount    int
 	LifecycleRetryAttempt  int
+	LifecycleRetryAt       time.Time
 	LifecycleRetryLimit    int
 	LifecycleContextWindow int
 	HistoryPathCount       int

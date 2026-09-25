@@ -380,6 +380,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 	sender.SendAgentEventWithID("turn_started", turnIdentity, o.ID)
 	ag := s.newAgent(turnProvider, effectiveCfg.IsMultiAgentEnabled(), activeCfg.ModelModalities)
+	ag.ReasoningContentKind = s.inferredReasoningKind(o.ID, turnProvider.ID, turnProvider.AccountID, turnProvider.Model)
 	ag.CompactionProvider = compactionProvider
 	ag.AgentID = agent.AgentID(o.ID)
 	ag.TurnGeneration = turnGeneration
@@ -417,7 +418,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		s.delegationMu.Lock()
 		defer s.delegationMu.Unlock()
 		enabled := s.runtimeProfile.GetEffectiveConfig(o.ID).IsMultiAgentEnabled()
-		return orchestratorTools(enabled), s.takeDelegationNotices()
+		return tools.WithModelCommands(tools.ForModel(orchestratorTools(enabled), ag.Model), ag.Model), s.takeDelegationNotices()
 	}
 	var pendingRuntimeWakes []WakeEvent
 	ag.PrepareRuntimeNotices = func() []provider.ChatMessage {
@@ -479,7 +480,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 
 	ag.SetToolCallSeqStart(s.toolCallSeq)
 	var finalContent string
-	prompt := s.systemPrompt(effectiveCfg.IsMultiAgentEnabled())
+	prompt := s.systemPromptForModel(effectiveCfg.IsMultiAgentEnabled(), ag.Model)
 
 	displayTracker := &displayMetaTracker{
 		metas: make(map[string]*sessiondb.DisplayMeta),
@@ -577,7 +578,11 @@ func (o *Orchestrator) handleBlockingEvent(data map[string]string, evt agent.Age
 		op := safety.CRUDEOp(data["operation"])
 		tool := data["tool"]
 		target := data["target"]
-		if s.permStore.IsAlwaysAllowed(op, tool, target) {
+		allowed := s.permStore.IsAlwaysAllowed(op, tool, target)
+		if tool == "apply_patch" {
+			allowed = s.patchAlwaysAllowed(data["patch_input"])
+		}
+		if allowed {
 			s.logger.Debug("PERM", "auto_allowed", "operation", op, "tool", tool, "target", target)
 			o.ResolveBlock(ttypes.BlockResponse{RequestID: data["block_id"], Outcome: ttypes.BlockAnswered, Value: "allow"})
 			agentID := evt.AgentID
@@ -626,6 +631,8 @@ func (s *Session) handleConfirmationAlways(data map[string]string) {
 	s.logger.Info("PERM", "grant", "operation", opStr, "tool", tool, "target", target)
 
 	switch tool {
+	case "apply_patch":
+		s.grantPatchAlways(data["patch_input"])
 	case "write_file", "edit_file", "delete_file", "move_file", "copy_file":
 		s.permStore.GrantAlways(safety.CRUDEOp(opStr), tool, target)
 	default:
@@ -653,6 +660,9 @@ func (s *Session) processUsageEvent(evtData any, model, agentID, parentAgentID s
 		s.usageMu.Unlock()
 		return
 	}
+	if previous.Outcome.Known() {
+		record.Outcome = previous.Outcome
+	}
 	if s.usageRecords == nil {
 		s.usageRecords = make(map[string]sessiondb.UsageRecord)
 	}
@@ -675,9 +685,12 @@ func (s *Session) updateDisplayFromEvent(evt agent.AgentEvent, tracker *displayM
 		if data, ok := evt.Data.(map[string]any); ok {
 			toolID, _ := data["tool_id"].(string)
 			name, _ := data["name"].(string)
-			if name != "" && name != "reply" && toolID != "" {
+			if name != "" && toolID != "" {
 				args, _ := data["args"].(string)
 				tracker.updateToolCall(toolID, name, args)
+				if round, _ := data["request_id"].(string); round != "" {
+					ensureToolSnapshot(tracker.metas[toolID]).ToolRoundID = round
+				}
 				label, _ := data["target"].(string)
 				if label == "" {
 					label, _ = data["path"].(string)
@@ -779,6 +792,12 @@ func (s *Session) finalizeTurn(
 	additions := append([]provider.ChatMessage(nil), returned[contextPrefixLen:]...)
 	additions = sanitizeMessages(additions)
 	rawToolArgs := toolCallArgsIndex(returned)
+	toolNames := make(map[string]string)
+	for _, earlier := range returned {
+		for _, call := range earlier.ToolCalls {
+			toolNames[call.ID] = call.Function.Name
+		}
+	}
 
 	additionTurns := make([]int, 0, len(additions))
 	additionMetas := make([]sessiondb.DisplayMeta, 0, len(additions))
@@ -797,6 +816,9 @@ func (s *Session) finalizeTurn(
 		switch m.Role {
 		case "tool":
 			dm = tracker.get(m.ToolCallID)
+			if name := toolNames[m.ToolCallID]; name != "" {
+				dm.ToolName = name
+			}
 			dm.ToolStatus = persistedToolStatus(m, dm.ToolStatus)
 		case "assistant":
 			dm.DisplayRole = "assistant"

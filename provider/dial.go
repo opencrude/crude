@@ -21,10 +21,10 @@ type DialSettings struct {
 	// ConnectTimeoutSeconds bounds TCP/TLS establishment per attempt.
 	ConnectTimeoutSeconds int `json:"connect_timeout_seconds,omitempty"`
 	// MaxAttempts is the total number of tries per request, including the
-	// first. 0 means the default (10).
+	// first. 0 means the default (6).
 	MaxAttempts int `json:"max_attempts,omitempty"`
 	// MaxBackoffSeconds caps the exponential retry delay. 0 means the
-	// default (120s).
+	// default (30s). Server Retry-After minimums are respected independently.
 	MaxBackoffSeconds int `json:"max_backoff_seconds,omitempty"`
 }
 
@@ -43,12 +43,13 @@ type DialConfig struct {
 
 // Defaults for DialConfig fields.
 const (
-	DefaultMaxAttempts       = 10
-	DefaultMaxBackoff        = 2 * time.Minute
+	DefaultMaxAttempts       = 6
+	DefaultMaxBackoff        = 30 * time.Second
 	DefaultConnectTimeout    = 30 * time.Second
 	DefaultBaseBackoff       = 500 * time.Millisecond
 	DefaultRequestTimeout    = 0 // streaming turns may legitimately run for minutes
 	DefaultMaxResponseBytes  = 64 << 20
+	maxServerRetryDelay      = 2 * time.Minute
 	listingRequestTimeout    = 30 * time.Second
 	defaultHTTPClientTimeout = 0 // overall timeout is enforced via context, not transport
 )
@@ -95,32 +96,39 @@ func isRetryableStatus(code int) bool {
 }
 
 // backoffDelay returns the exponential backoff with jitter for an attempt
-// (1-based). The first retry waits a randomized sub-2s interval to avoid
-// synchronized hammering; later attempts double up to MaxBackoff.
+// (1-based). Retry waits start at the configured base and double up to the
+// configured ceiling, with jitter to avoid synchronized retries.
 func backoffDelay(attempt int, cfg DialConfig) time.Duration {
-	if attempt <= 1 {
-		return DefaultBaseBackoff + time.Duration(rand.Intn(1500))*time.Millisecond
-	}
-	base := time.Duration(1<<min(attempt-1, 6)) * time.Second
-	jitter := time.Duration(rand.Intn(max(1, int(base/4))))
-	return min(base+jitter, cfg.MaxBackoff)
+	base := min(cfg.BaseBackoff*time.Duration(1<<min(max(0, attempt-1), 16)), cfg.MaxBackoff)
+	return base*3/4 + time.Duration(rand.Int63n(max(1, int64(base/4))))
 }
 
 // serverHintedDelay returns the delay the server asked for via
 // Retry-After / retry-after-ms, falling back to the computed backoff.
+// A negative result stops automatic recovery rather than violating an excessive
+// server minimum or waiting indefinitely.
 func serverHintedDelay(resp *http.Response, attempt int, cfg DialConfig) time.Duration {
 	if resp != nil {
 		if value := strings.TrimSpace(resp.Header.Get("retry-after-ms")); value != "" {
 			if milliseconds, err := strconv.ParseFloat(value, 64); err == nil && milliseconds >= 0 {
-				return min(time.Duration(milliseconds*float64(time.Millisecond)), cfg.MaxBackoff)
+				if milliseconds <= float64(maxServerRetryDelay/time.Millisecond) {
+					return time.Duration(milliseconds * float64(time.Millisecond))
+				}
+				return -1
 			}
 		}
 		if value := strings.TrimSpace(resp.Header.Get("Retry-After")); value != "" {
 			if seconds, err := strconv.ParseFloat(value, 64); err == nil && seconds >= 0 {
-				return min(time.Duration(seconds*float64(time.Second)), cfg.MaxBackoff)
+				if seconds <= maxServerRetryDelay.Seconds() {
+					return time.Duration(seconds * float64(time.Second))
+				}
+				return -1
 			}
 			if when, err := http.ParseTime(value); err == nil {
-				return min(max(0, time.Until(when)), cfg.MaxBackoff)
+				if delay := max(0, time.Until(when)); delay <= maxServerRetryDelay {
+					return delay
+				}
+				return -1
 			}
 		}
 	}

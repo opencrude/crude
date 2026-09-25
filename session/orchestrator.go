@@ -36,6 +36,7 @@ type turnRequest struct {
 func NewOrchestrator(id string, s *Session) *Orchestrator {
 	var generation uint64
 	if s != nil {
+		generation = s.recoveredTurnGenerations[id]
 		s.usageMu.RLock()
 		for _, record := range s.usageRecords {
 			if record.AgentID == id {
@@ -155,6 +156,23 @@ func (o *Orchestrator) TurnActive() bool {
 	o.turnMu.Lock()
 	defer o.turnMu.Unlock()
 	return o.turnCancel != nil
+}
+
+// AgentTurnGeneration includes interrupted and unbilled turns and is restored from
+// durable runtime state. Usage request counts are not the session turn clock.
+func (s *Session) AgentTurnGeneration(id string) uint64 {
+	if s == nil {
+		return 0
+	}
+	s.orchMu.Lock()
+	o := s.orchestrators[id]
+	s.orchMu.Unlock()
+	if o == nil {
+		return s.recoveredTurnGenerations[id]
+	}
+	o.turnMu.Lock()
+	defer o.turnMu.Unlock()
+	return o.turnGeneration
 }
 
 // SubmitBtw admits a note only into the currently active, non-cancelling turn.

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"crude/tui/types"
+	"crude/types/reasoning"
 	"crude/workspace"
 )
 
@@ -39,8 +40,8 @@ func TestPostCompactionThinkingCoalescesAndPaintsAfterBoundary(t *testing.T) {
 	_ = app.handleAgentDomainEvent(workspace.AgentEvent{Type: "context_compaction_started", AgentID: agentID, Data: base})
 	_ = app.handleAgentDomainEvent(workspace.AgentEvent{Type: "context_compacted", AgentID: agentID, Data: base})
 	app.appendAgentMessage(agentID, types.ChatMessage{Role: types.RoleUser, Content: "continue after compact"})
-	_ = app.handleAgentDomainEvent(workspace.AgentEvent{Type: "thinking", AgentID: agentID, Data: "first "})
-	_ = app.handleAgentDomainEvent(workspace.AgentEvent{Type: "thinking", AgentID: agentID, Data: "second"})
+	_ = app.handleAgentDomainEvent(workspace.AgentEvent{Type: "thinking", AgentID: agentID, Data: reasoning.Delta{Text: "first "}})
+	_ = app.handleAgentDomainEvent(workspace.AgentEvent{Type: "thinking", AgentID: agentID, Data: reasoning.Delta{Text: "second"}})
 
 	messages := app.AgentMgr.Get(agentID).State.Messages.Messages()
 	statusAt, userAt, thinkingAt, thinkingCount := -1, -1, -1, 0

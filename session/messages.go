@@ -17,14 +17,27 @@ type taggedMessage struct {
 	meta sessiondb.DisplayMeta
 }
 
-func childSessionIDFromResult(text string) string {
+func childAgentIDFromResult(text string) string {
 	var payload map[string]any
-	if json.Unmarshal([]byte(text), &payload) != nil {
-		return ""
-	}
-	for _, key := range []string{"session_id", "handle_id", "agent_id"} {
-		if value, _ := payload[key].(string); value != "" {
+	if json.Unmarshal([]byte(text), &payload) == nil {
+		if value, _ := payload["agent_id"].(string); value != "" {
 			return value
+		}
+		if value, _ := payload["handle_id"].(string); value != "" {
+			return value
+		}
+	}
+	for _, line := range strings.Split(text, "\n") {
+		if strings.HasPrefix(line, "**Agent:** ") {
+			return strings.TrimSpace(strings.TrimPrefix(line, "**Agent:** "))
+		}
+	}
+	// A synchronous wait can outlive its parent turn; the returned handle
+	// still identifies the child even when there is no terminal report yet.
+	if index := strings.Index(text, `handle_id="`); index >= 0 {
+		id := text[index+len(`handle_id="`):]
+		if end := strings.IndexByte(id, '"'); end >= 0 {
+			return id[:end]
 		}
 	}
 	return ""
@@ -67,6 +80,9 @@ func (t *displayMetaTracker) updateToolResult(toolID, name, result, status strin
 		t.metas[toolID] = m
 	}
 	m.ToolStatus = status
+	if name != "" {
+		m.ToolName = name
+	}
 	m.DurationMs = durMs
 	m.EstTokens = estTokens
 	m.LinesAdded = linesAdded
@@ -88,7 +104,7 @@ func (t *displayMetaTracker) updateToolResult(toolID, name, result, status strin
 	snapshot.ToolLinesAdded = linesAdded
 	snapshot.ToolLinesRemoved = linesRemoved
 	if snapshot.ToolName == "run_sub_agent" {
-		snapshot.SubPaneID = childSessionIDFromResult(result)
+		snapshot.SubPaneID = childAgentIDFromResult(result)
 	}
 }
 
@@ -147,8 +163,29 @@ func canonicalizeDisplayMeta(message provider.ChatMessage, meta sessiondb.Displa
 	if message.InternalID != "" {
 		internalID = message.InternalID
 	}
+	if message.EffectiveOrigin() == provider.OriginTurnStopped {
+		meta.Snapshots = []ttypes.ConversationMessage{{InternalID: internalID, Role: ttypes.RoleStatus, LifecyclePhase: "stopped", LifecycleOperationID: internalID, Time: now, TurnGeneration: meta.TurnGeneration}}
+		return meta
+	}
 	switch message.Role {
 	case "tool":
+		// A reply is delivered as assistant progress when its tool result
+		// arrives live. Its provider envelope projects to that same message on
+		// recovery, never a second tool row.
+		if meta.ToolName == "reply" {
+			meta.Snapshots = nil
+			if message.Content.String() != "" {
+				role := "assistant"
+				if message.ToolError {
+					role = "error"
+				}
+				meta.Snapshots = []ttypes.ConversationMessage{{
+					InternalID: "reply:" + message.ToolCallID, Role: role, Content: message.Content.String(), Time: now,
+					TurnGeneration: meta.TurnGeneration, ProviderID: meta.ProviderID, AccountID: meta.AccountID, ModelID: meta.ModelID,
+				}}
+			}
+			break
+		}
 		snapshot := ensureToolSnapshot(&meta)
 		applyTurnIdentity(snapshot, meta)
 		snapshot.InternalID = internalID
@@ -172,8 +209,8 @@ func canonicalizeDisplayMeta(message provider.ChatMessage, meta sessiondb.Displa
 			snapshot.ToolArgs = meta.ToolArgs
 		}
 		applyCanonicalToolOperands(snapshot, rawToolArgs)
-		if snapshot.ToolName == "run_sub_agent" && snapshot.SubPaneID == "" {
-			snapshot.SubPaneID = childSessionIDFromResult(snapshot.Content)
+		if snapshot.ToolName == "run_sub_agent" {
+			snapshot.SubPaneID = childAgentIDFromResult(snapshot.Content)
 		}
 		meta.Snapshots = []ttypes.ConversationMessage{*snapshot}
 	case "assistant":
@@ -186,6 +223,7 @@ func canonicalizeDisplayMeta(message provider.ChatMessage, meta sessiondb.Displa
 			thinking := ttypes.ConversationMessage{
 				InternalID: internalID + "-thinking", Role: "thinking", Content: content,
 				Time: now, ThinkingDuration: message.ReasoningDuration,
+				ThinkingDisplay: message.ReasoningDisplay,
 			}
 			applyTurnIdentity(&thinking, meta)
 			meta.Snapshots = append(meta.Snapshots, thinking)
@@ -244,6 +282,10 @@ func applyCanonicalToolOperands(snapshot *ttypes.ConversationMessage, rawArgs st
 		return value
 	}
 	switch snapshot.ToolName {
+	case "multi_tool_use.parallel":
+		snapshot.ToolInput = rawArgs
+	case "exec_command":
+		snapshot.ToolCommand = stringParam("cmd")
 	case "execute_command", "async_execute_command":
 		snapshot.ToolCommand = stringParam("command")
 	case "grep_files":
@@ -269,7 +311,7 @@ func toolCallArgsIndex(messages []provider.ChatMessage) map[string]string {
 }
 
 func isProviderControlMessage(message provider.ChatMessage) bool {
-	return message.EffectiveVisibility() == provider.VisibilityContextOnly
+	return message.EffectiveVisibility() == provider.VisibilityContextOnly && message.EffectiveOrigin() != provider.OriginTurnStopped
 }
 
 func (t *displayMetaTracker) get(toolID string) sessiondb.DisplayMeta {
@@ -383,22 +425,6 @@ func sanitizeMessages(msgs []provider.ChatMessage) []provider.ChatMessage {
 				continue
 			}
 		}
-		if last.Role == "assistant" && len(last.ToolCalls) > 0 && allCommTools(last.ToolCalls) {
-			content := last.ContentString()
-			for i := len(msgs) - 1; i > len(msgs)-1-len(last.ToolCalls); i-- {
-				if i >= 0 && msgs[i].Role == "tool" && msgs[i].ContentString() != "" && !strings.HasPrefix(msgs[i].ContentString(), "[cancelled]") {
-					if content == "" {
-						content = msgs[i].ContentString()
-					}
-				}
-			}
-			msgs = msgs[:len(msgs)-len(last.ToolCalls)]
-			msgs[len(msgs)-1].ToolCalls = nil
-			if content != "" {
-				msgs[len(msgs)-1].Content = provider.TextContent(content)
-			}
-			break
-		}
 		break
 	}
 	return msgs
@@ -441,11 +467,5 @@ func backfillMissingToolResults(msgs []provider.ChatMessage) []provider.ChatMess
 	return result
 }
 
-func allCommTools(toolCalls []provider.ToolCall) bool {
-	for _, tc := range toolCalls {
-		if tc.Function.Name != "reply" {
-			return false
-		}
-	}
-	return true
-}
+// Reply calls remain in the provider transcript; their display snapshots are
+// assistant progress messages with stable tool-call identities.

@@ -503,6 +503,60 @@ func TestBtwConsumedClearsPendingStatus(t *testing.T) {
 	}
 }
 
+func TestFailedBtwReturnsToOwningComposerWithoutLosingNewDraft(t *testing.T) {
+	app := newFullTestApp(t)
+	owner := workspace.NewSession("owner", t.TempDir(), nil, nil)
+	other := workspace.NewSession("other", t.TempDir(), nil, nil)
+	app.ActiveSession = owner
+	app.SessionsByAgent = map[string]*workspace.Session{"agent": owner}
+	conversation := workspace.NewConversation()
+	first := conversation.AppendPendingBtw(workspace.Message{Role: workspace.MessageRoleUser, Content: "first note"})
+	second := conversation.AppendPendingBtw(workspace.Message{Role: workspace.MessageRoleUser, Content: "second note"})
+	app.AgentMgr.AddOrchestrator("agent", workspace.NewAgentState("agent", conversation, nil))
+	app.Input.SetInput("newer draft")
+	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "btw_consumed", AgentID: "agent", Data: map[string]any{"internal_id": first}})
+	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "btw_cleared", AgentID: "agent", Data: map[string]any{"internal_ids": []string{first, second}}})
+	if got := app.Input.Value(); got != "first note\n\nsecond note\n\nnewer draft" {
+		t.Fatalf("restored composer = %q", got)
+	}
+	if len(conversation.Messages()) != 0 {
+		t.Fatalf("failed notes remained in transcript: %+v", conversation.Messages())
+	}
+
+	third := conversation.AppendPendingBtw(workspace.Message{Role: workspace.MessageRoleUser, Content: "background note"})
+	app.ActiveSession = other
+	app.Input.SetInput("other session draft")
+	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "btw_cleared", AgentID: "agent", Data: map[string]any{"internal_ids": []string{third}}})
+	if got := app.Input.Value(); got != "other session draft" {
+		t.Fatalf("failed note leaked into wrong session: %q", got)
+	}
+	app.ActiveSession = owner
+	app.maybeHydrateComposerDraft()
+	if got := app.Input.Value(); got != "background note" {
+		t.Fatalf("background failed note not restored on session switch: %q", got)
+	}
+}
+
+func TestCancelledPendingBtwReturnsToComposerAndIsIdempotent(t *testing.T) {
+	app := newFullTestApp(t)
+	owner := workspace.NewSession("owner", t.TempDir(), nil, nil)
+	app.ActiveSession = owner
+	app.SessionsByAgent = map[string]*workspace.Session{"agent": owner}
+	conversation := workspace.NewConversation()
+	id := conversation.AppendPendingBtw(workspace.Message{Role: workspace.MessageRoleUser, Content: "cancel me"})
+	app.AgentMgr.AddOrchestrator("agent", workspace.NewAgentState("agent", conversation, nil))
+	app.Input.SetInput("typed while waiting")
+	clear := workspace.AgentEvent{Type: "btw_cleared", AgentID: "agent", Data: map[string]any{"internal_ids": []string{id}}}
+	app.handleAgentDomainEvent(clear)
+	app.handleAgentDomainEvent(clear)
+	if got := app.Input.Value(); got != "cancel me\n\ntyped while waiting" {
+		t.Fatalf("cancel recovery duplicated or discarded draft: %q", got)
+	}
+	if got := conversation.PendingBtwCount(); got != 0 {
+		t.Fatalf("cancel left %d blinking notes", got)
+	}
+}
+
 // removeOrchestrator tests
 
 func TestRemoveOrchestrator_CleansUp(t *testing.T) {

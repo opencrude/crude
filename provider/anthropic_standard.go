@@ -2,6 +2,7 @@ package provider
 
 import (
 	"bytes"
+	"crude/types/reasoning"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -176,7 +177,9 @@ func encodeAnthropicMessages(messages []ChatMessage) (system []any, result []ant
 			for _, call := range msg.ToolCalls {
 				input := any(map[string]any{})
 				var decoded map[string]any
-				if err := json.Unmarshal([]byte(call.Function.Arguments), &decoded); err == nil && decoded != nil {
+				if call.Type == "custom" {
+					input = map[string]any{"input": call.Function.Arguments}
+				} else if err := json.Unmarshal([]byte(call.Function.Arguments), &decoded); err == nil && decoded != nil {
 					input = decoded
 				}
 				blocks = append(blocks, map[string]any{
@@ -434,6 +437,12 @@ func (s *AnthropicStandard) DecodeModelsPage(body []byte) (ModelPage, error) {
 // thinking configuration applies.
 func (s *AnthropicStandard) RequestExtras(modelID, thinkingEffort string, _ ProtocolSettings) map[string]any {
 	if thinkingEffort == "" {
+		// New default-on families omit visible summaries unless requested.
+		// Preserve the older opt-in default on 4.6 and earlier models.
+		normalized := strings.ReplaceAll(strings.ToLower(modelID), ".", "-")
+		if supportsAnthropicAdaptiveThinking(modelID) && !strings.Contains(normalized, "-4-6") {
+			return map[string]any{"thinking": map[string]any{"type": "adaptive", "display": "summarized"}}
+		}
 		return nil
 	}
 	if thinkingEffort == "none" {
@@ -449,19 +458,32 @@ func (s *AnthropicStandard) RequestExtras(modelID, thinkingEffort string, _ Prot
 		return nil
 	}
 	return map[string]any{
-		"thinking":      map[string]any{"type": "adaptive"},
+		"thinking":      map[string]any{"type": "adaptive", "display": "summarized"},
 		"output_config": map[string]any{"effort": thinkingEffort},
 	}
 }
 
 func supportsAnthropicAdaptiveThinking(modelID string) bool {
 	modelID = strings.ToLower(modelID)
-	return strings.Contains(modelID, "-4-6") || strings.Contains(modelID, "4.6")
+	modelID = strings.ReplaceAll(modelID, ".", "-")
+	for _, family := range []string{"opus", "sonnet", "fable", "mythos"} {
+		_, version, found := strings.Cut(modelID, "claude-"+family+"-")
+		if !found {
+			continue
+		}
+		if family == "mythos" && strings.HasPrefix(version, "preview") {
+			return true
+		}
+		var major, minor int
+		_, _ = fmt.Sscanf(version, "%d-%d", &major, &minor)
+		return major >= 5 || major == 4 && minor >= 6
+	}
+	return false
 }
 
 func supportsAnthropicThinking(modelID string) bool {
 	modelID = strings.ToLower(modelID)
-	return strings.Contains(modelID, "-3-7") ||
+	return supportsAnthropicAdaptiveThinking(modelID) || strings.Contains(modelID, "-3-7") ||
 		strings.Contains(modelID, "3.7") ||
 		strings.Contains(modelID, "-4-") ||
 		strings.Contains(modelID, "4.")
@@ -538,7 +560,7 @@ func (r *anthropicResponse) toChatResponse() (*ChatResponse, error) {
 
 	msg := ChatMessage{Role: "assistant", Content: TextContent("")}
 	var content strings.Builder
-	var reasoning strings.Builder
+	var trace string
 	for index, raw := range r.Content {
 		var block anthropicContentBlock
 		if err := json.Unmarshal(raw, &block); err != nil {
@@ -551,7 +573,7 @@ func (r *anthropicResponse) toChatResponse() (*ChatResponse, error) {
 		case "text", "refusal":
 			content.WriteString(block.Text)
 		case "thinking":
-			reasoning.WriteString(block.Thinking)
+			trace = msg.ReasoningDisplay.Append(trace, reasoning.Delta{Text: block.Thinking, Kind: reasoning.Summary, BlockID: fmt.Sprint(index)})
 		case "redacted_thinking":
 		case "tool_use":
 			args := string(block.Input)
@@ -570,8 +592,8 @@ func (r *anthropicResponse) toChatResponse() (*ChatResponse, error) {
 		}
 	}
 	msg.Content = TextContent(content.String())
-	msg.ReasoningContent = reasoning.String()
-	msg.Reasoning = reasoning.String()
+	msg.ReasoningContent = trace
+	msg.Reasoning = trace
 
 	promptTokens := r.Usage.InputTokens + r.Usage.CacheCreationInputTokens + r.Usage.CacheReadInputTokens
 	resp := &ChatResponse{
@@ -721,7 +743,7 @@ func (d *anthropicStreamDecoder) startBlock(index int, raw json.RawMessage) (Str
 	case "text", "refusal":
 		return StreamUpdate{ContentDelta: block.Text}, nil
 	case "thinking":
-		return StreamUpdate{ReasoningDelta: block.Thinking}, nil
+		return StreamUpdate{Reasoning: []reasoning.Delta{{Text: block.Thinking, Kind: reasoning.Summary, BlockID: fmt.Sprint(index)}}}, nil
 	case "tool_use":
 		args := state.ToolInput.String()
 		return StreamUpdate{ToolCalls: []ToolCallDelta{{
@@ -761,7 +783,7 @@ func (d *anthropicStreamDecoder) deltaBlock(
 		if state != nil {
 			state.Thinking.WriteString(thinking)
 		}
-		return StreamUpdate{ReasoningDelta: thinking}, nil
+		return StreamUpdate{Reasoning: []reasoning.Delta{{Text: thinking, Kind: reasoning.Summary, BlockID: fmt.Sprint(index)}}}, nil
 	case "signature_delta":
 		if state != nil {
 			state.Signature += signature

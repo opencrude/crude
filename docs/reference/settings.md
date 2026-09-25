@@ -53,6 +53,18 @@ independent named template; custom endpoints use the same model. Go owns actual
 wire-protocol encoders and authentication mechanisms, not provider-specific
 endpoint/name entries.
 
+Additional request headers are edited as a **key/value table**
+(`ui.KeyValuesFieldState`), never as a free-text `Name: value` blob: one row per
+header, `Name` and `Value` column captions, an `Add header` row that appends the
+next pair, and a trailing remove affordance that uses the shared `Close` glyph.
+Arrows move between rows and cells, Enter advances Name → Value → next row,
+Backspace/Delete removes the focused row, and typing on a row starts a fresh
+edit of that cell. Row states reuse the shared list language (focused accent,
+selected, hovered) so the table reads like every other table in the app. The
+stored value keeps the `Name: value` line protocol, so persistence and injection
+validation are unchanged. An account that has not enabled `Override headers`
+renders the inherited set read-only and without the add row.
+
 Application Settings → Accounts lists every account across templates. An
 account selects one template, has its own distinct name and secret, and may
 override every template request parameter. Unchanged fields inherit; an
@@ -294,7 +306,12 @@ Visual contracts for this window:
   Table errors and progress use the reserved row directly above these actions,
   never their button row, including after a resize.
   Each editor replaces only the right-hand table pane, keeps the left settings
-  navigation visible, shows a title breadcrumb, and offers an explicit Back.
+  navigation visible, and offers an explicit Back. **The window frame title is
+  fixed**: it names the scope only (`Application Settings` / `Workspace
+  Settings`) and never changes while the user navigates. The page hierarchy
+  lives in the right pane's own heading, painted in the accent title row
+  (`Accounts 3`, `Providers ▸ Add account`, `Providers ▸ Edit template`),
+  joined with the theme `BreadcrumbSep` glyph.
   The window never resizes or moves because an editor opened. Table scroll and
   selection survive returning from an editor; resize and thumb drag commit the
   latest painted row, not a selected-row snapback.

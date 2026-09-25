@@ -81,17 +81,17 @@ func TestRenderDeclaredFrameDependenciesAnimateWithoutStaticInvalidation(t *test
 	for _, index := range second.ChangedIndices {
 		changed[index] = true
 	}
-	if changed[0] || !changed[1] || !changed[2] || !changed[3] || !changed[4] {
+	if changed[0] || !changed[1] || !changed[2] || !changed[3] || len(second.Rows) != 4 {
 		t.Fatalf("animated indices=%v", second.ChangedIndices)
 	}
-	for _, index := range []int{1, 2, 3, 4} {
+	for _, index := range []int{1, 2, 3} {
 		if !strings.Contains(strings.Join(second.Rows[index].Lines, "\n"), "○") {
 			t.Fatalf("row %d did not advance hollow phase: %v", index, second.Rows[index].Lines)
 		}
 	}
 }
 
-func TestLifecycleMetricSourceVersionUpdatesExactRow(t *testing.T) {
+func TestTransientLifecycleMetricsDoNotInvalidateTranscript(t *testing.T) {
 	r := NewRenderer(theme.DefaultDark())
 	r.SetChatAreaBounds(0, 10)
 	r.SetSize(80, 20)
@@ -102,12 +102,8 @@ func TestLifecycleMetricSourceVersionUpdatesExactRow(t *testing.T) {
 	base.LifecycleUploadedBytes = 75
 	r.SyncMessages([]types.ChatMessage{base}, 2)
 	second := r.ExportMessageRowsSnapshot(76)
-	if second.Generation == first.Generation || len(second.ChangedIndices) != 1 || second.ChangedIndices[0] != 0 {
+	if second.Generation != first.Generation || len(second.Rows) != 0 {
 		t.Fatalf("metric delta=%+v", second)
-	}
-	plain := strings.Join(second.Rows[0].Lines, " ")
-	if !strings.Contains(plain, "75%") || !strings.Contains(plain, "75 B / 100 B") {
-		t.Fatalf("metric row=%q", plain)
 	}
 }
 

@@ -2,19 +2,22 @@ package agent
 
 import (
 	"context"
+	"crude/types/accounting"
 	"crypto/sha256"
+	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	rand2 "math/rand/v2"
 	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"crude/provider"
 	"crude/tools"
 	ttypes "crude/types"
+	"crude/types/reasoning"
 )
 
 const continuePreviousResponse = "Continue the previous response exactly where it stopped. Do not repeat completed content. Continue using tools if the task still requires them."
@@ -46,6 +49,8 @@ func (a *Agent) Run(
 	var emitActive atomic.Bool
 	emitActive.Store(true)
 	origEmit := emit
+	stopID := fmt.Sprintf("turn-stopped:%016x", rand2.Uint64())
+	stopped := false
 	var emitMu sync.Mutex
 	defer func() {
 		emitMu.Lock()
@@ -62,6 +67,10 @@ func (a *Agent) Run(
 			return
 		}
 		if evt.Type == "done" || evt.Type == "error" {
+			if data, ok := evt.Data.(map[string]any); ok && data["reason"] == "cancelled" {
+				data["internal_id"] = stopID
+				stopped = true
+			}
 			emitActive.Store(false)
 		}
 		origEmit(evt)
@@ -71,8 +80,9 @@ func (a *Agent) Run(
 		return append([]provider.ChatMessage(nil), sessionMessages...)
 	}
 
+	a.configureModelTools()
 	allTools := toolDefsToProviderDefs(a.FilteredTools)
-	if len(allTools) == 0 {
+	if a.FilteredTools == nil {
 		allTools = allToolDefs()
 	}
 
@@ -103,6 +113,13 @@ func (a *Agent) Run(
 		archiveMsgs = append(archiveMsgs, messages...)
 	}
 	returnMessages := func() []provider.ChatMessage {
+		if stopped {
+			boundary := provider.NewTextMessage("user", "The user stopped the previous turn. Completed tool effects remain. Running tools may have partial effects; inspect current state before resuming them. Calls with incomplete streamed arguments were not executed. Follow the user's next instruction; do not automatically repeat completed operations.")
+			boundary.Origin, boundary.Visibility = provider.OriginTurnStopped, provider.VisibilityContextOnly
+			boundary.InternalID = stopID
+			appendWire(boundary)
+			stopped = false
+		}
 		a.lastActiveContext = append([]provider.ChatMessage(nil), msgs[1:]...)
 		return append([]provider.ChatMessage(nil), archiveMsgs...)
 	}
@@ -123,6 +140,7 @@ func (a *Agent) Run(
 
 	btwInput := btwCh
 	continuations := 0
+	interruptionRecoveries := 0
 	providerName := a.providerDisplayName()
 	cacheUsageUnknown := a.Provider.ProtocolID() == "ollama"
 	var admittedBtwIDs []string
@@ -148,6 +166,7 @@ func (a *Agent) Run(
 		if a.PrepareStep != nil {
 			var notices []provider.ChatMessage
 			a.FilteredTools, notices = a.PrepareStep()
+			a.configureModelTools()
 			allTools = toolDefsToProviderDefs(a.FilteredTools)
 			for _, notice := range notices {
 				appendWire(notice)
@@ -285,29 +304,63 @@ func (a *Agent) Run(
 		}
 
 		prevPreviewKeys := make(map[string]string)
+		requestBtwIDs := append([]string(nil), admittedBtwIDs...)
+		var btwMu sync.Mutex
+		btwAcknowledged := false
+		requestFinished := false
+		acknowledgeBtw := func() {
+			btwMu.Lock()
+			defer btwMu.Unlock()
+			if btwAcknowledged || requestFinished {
+				return
+			}
+			btwAcknowledged = true
+			for _, internalID := range requestBtwIDs {
+				emit(AgentEvent{Type: "btw_consumed", Data: map[string]any{"internal_id": internalID}})
+			}
+		}
+		// Upload notifications may arrive on a transport goroutine after the
+		// first streamed output. They must not resurrect a provider-wait row.
+		var progressMu sync.Mutex
+		outputStarted := false
+		beginOutput := func() { progressMu.Lock(); outputStarted = true; progressMu.Unlock() }
+		requestEmit := func(event AgentEvent) {
+			if data, ok := event.Data.(map[string]any); ok && strings.HasPrefix(event.Type, "tool_") && data["request_id"] == nil {
+				data["request_id"] = requestID
+			}
+			emit(event)
+		}
+		toolDelta := a.makeStreamingDeltaCallback(requestEmit, prevPreviewKeys)
 
 		completion, err := a.completeStream(ctx, requestMsgs, allTools,
 			func(token string) {
+				beginOutput()
 				emit(AgentEvent{Type: "stream_token", Data: token})
 			},
-			func(text string) {
+			func(text reasoning.Delta) {
+				beginOutput()
 				emit(AgentEvent{Type: "thinking", Data: text})
 			},
 			func(internalID, id, name string) {
-				emit(AgentEvent{Type: "tool_call_streaming", Data: map[string]any{
+				beginOutput()
+				requestEmit(AgentEvent{Type: "tool_call_streaming", Data: map[string]any{
 					"internal_id": internalID,
 					"tool_id":     id,
 					"name":        name,
 					"preview":     tools.FormatPreview(name, ExtractPreview(id, name, "", a.logger).Params),
 				}})
 			},
-			a.makeStreamingDeltaCallback(emit, prevPreviewKeys),
-			func(attempt int, backoffSeconds float64) {
-				if attempt <= 3 {
-					return
+			func(internalID, id, name, args string) { beginOutput(); toolDelta(internalID, id, name, args) },
+			func(attempt int, backoffSeconds float64, reason string) {
+				limit := a.Provider.DialSettings().MaxAttempts
+				if a.MaxRetries > 0 {
+					limit = a.MaxRetries
+				}
+				if limit <= 0 {
+					limit = provider.DefaultMaxAttempts
 				}
 				emit(AgentEvent{Type: "retry", Data: map[string]any{
-					"attempt": attempt, "backoff": backoffSeconds,
+					"attempt": attempt, "backoff": backoffSeconds, "limit": limit, "reason": reason,
 					"request_id": requestID, "turn_generation": a.TurnGeneration,
 				}})
 			},
@@ -319,12 +372,22 @@ func (a *Agent) Run(
 				if len(runtimeNoticeIDs) > 0 && a.RuntimeNoticesAccepted != nil {
 					a.RuntimeNoticesAccepted()
 				}
-				for _, internalID := range admittedBtwIDs {
-					emit(AgentEvent{Type: "btw_consumed", Data: map[string]any{"internal_id": internalID}})
-				}
+				acknowledgeBtw()
 				admittedBtwIDs = nil
 			},
 			func(uploaded, total int64) {
+				// A positive byte count means the provider transport has started
+				// reading the encoded context. Move the note into the transcript
+				// now, while retaining its ID until the response is accepted so
+				// a rejected request can still clear the note.
+				if uploaded > 0 {
+					acknowledgeBtw()
+				}
+				progressMu.Lock()
+				defer progressMu.Unlock()
+				if outputStarted {
+					return
+				}
 				percent := 0
 				if total > 0 {
 					percent = int(uploaded * 100 / total)
@@ -344,9 +407,16 @@ func (a *Agent) Run(
 				}})
 			},
 		)
+		btwMu.Lock()
+		requestFinished = true
+		btwMu.Unlock()
 		if err != nil {
 			clearUnsentBtw()
 			clearUnsentRuntimeNotices()
+			outcome := accounting.Failed
+			if completion.hasOutput() || ctx.Err() != nil {
+				outcome = accounting.Interrupted
+			}
 			if completion.Usage.PromptTokens > 0 || completion.Usage.CompletionTokens > 0 ||
 				completion.Usage.PromptTokensCached > 0 || completion.Usage.PromptTokensWritten > 0 {
 				price, costKnown, costSource := provider.LookupPriceKnown(a.Model)
@@ -356,6 +426,7 @@ func (a *Agent) Run(
 					completion.Usage.PromptTokensCached,
 				)
 				emit(AgentEvent{Type: "usage", Data: map[string]any{
+					"request_outcome":     string(outcome),
 					"prompt":              completion.Usage.PromptTokens,
 					"completion":          completion.Usage.CompletionTokens,
 					"prompt_cached":       completion.Usage.PromptTokensCached,
@@ -370,7 +441,7 @@ func (a *Agent) Run(
 					"cost_known":          costKnown,
 					"cost_source":         costSource,
 					"model":               a.Model,
-					"provider":            providerName,
+					"provider":            a.Provider.ID,
 					"account_id":          a.Provider.AccountID,
 					"request_id":          requestID,
 					"request_kind":        "normal",
@@ -388,6 +459,7 @@ func (a *Agent) Run(
 					ReasoningContent:  completion.ReasoningContent,
 					Reasoning:         completion.ReasoningContent,
 					ReasoningDuration: completion.ReasoningDuration,
+					ReasoningDisplay:  completion.ReasoningDisplay,
 					ProviderItems:     completion.ProviderItems,
 					ReplayScope:       completion.ReplayScope,
 					ReplayPrefixHash:  completion.ReplayPrefixHash,
@@ -410,10 +482,10 @@ func (a *Agent) Run(
 				emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
 				return returnMessages()
 			}
-			if apiErr != nil && apiErr.Partial && isContinuableStreamInterruption(err) &&
-				completion.hasOutput() &&
-				continuations < maxAutoContinuations {
-				continuations++
+			if apiErr != nil && apiErr.Partial && provider.Retryable(err) &&
+				ctx.Err() == nil && completion.hasOutput() &&
+				interruptionRecoveries < 3 {
+				interruptionRecoveries++
 				recovery := continuePreviousResponse
 				reason := "partial_response"
 				if len(completion.ToolCalls) > 0 {
@@ -422,27 +494,40 @@ func (a *Agent) Run(
 					for _, call := range completion.ToolCalls {
 						emit(AgentEvent{Type: "tool_result", Data: map[string]any{
 							"tool_id": call.ID, "internal_id": call.InternalID,
-							"name": call.Function.Name, "error": "true",
+							"name": call.Function.Name, "error": "true", "interrupted": true,
 							"result": "Provider stream interrupted before execution; this partial call was discarded and will be re-evaluated.",
 						}})
 					}
 				}
-				l.Warn("AGENT", "auto_continue_interrupted_stream", "continuation", continuations, "reason", reason, "error", err.Error())
+				l.Warn("AGENT", "auto_continue_interrupted_stream", "continuation", interruptionRecoveries, "reason", reason, "error", err.Error())
+				delay := time.Second * time.Duration(1<<min(interruptionRecoveries-1, 2))
 				emit(AgentEvent{Type: "retry", Data: map[string]any{
-					"attempt": continuations + 1,
-					"backoff": float64(0),
-					"reason":  reason,
+					"attempt": interruptionRecoveries, "limit": 4,
+					"backoff": delay.Seconds(),
+					"reason":  "Connection interrupted; continuing from saved work",
 				}})
 				continuation := provider.NewTextMessage("user", "<runtime_continuation reason=\""+reason+"\">"+recovery+"</runtime_continuation>")
 				continuation.Origin = provider.OriginContinuation
 				continuation.Visibility = provider.VisibilityContextOnly
 				appendWire(continuation)
+				timer := time.NewTimer(delay)
+				select {
+				case <-timer.C:
+				case <-ctx.Done():
+					timer.Stop()
+					emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
+					return returnMessages()
+				}
 				continue
 			}
 			a.emitError(emit, err)
 			return returnMessages()
 		}
+		if settled := a.observeReasoningVisibility(&completion); settled != reasoning.Unknown {
+			emit(AgentEvent{Type: "reasoning_classified", Data: settled})
+		}
 
+		interruptionRecoveries = 0
 		promptTokens := completion.Usage.PromptTokens
 		completionTokens := completion.Usage.CompletionTokens
 		promptTokensCached := completion.Usage.PromptTokensCached
@@ -476,6 +561,7 @@ func (a *Agent) Run(
 		price, costKnown, costSource := provider.LookupPriceKnown(a.Model)
 		turnCost := price.CalculateCost(promptTokens, completionTokens, promptTokensCached)
 		emit(AgentEvent{Type: "usage", Data: map[string]any{
+			"request_outcome":     string(accounting.Succeeded),
 			"prompt":              promptTokens,
 			"completion":          completionTokens,
 			"prompt_cached":       promptTokensCached,
@@ -491,7 +577,7 @@ func (a *Agent) Run(
 			"cost_known":          costKnown,
 			"cost_source":         costSource,
 			"model":               a.Model,
-			"provider":            providerName,
+			"provider":            a.Provider.ID,
 			"account_id":          a.Provider.AccountID,
 			"request_id":          requestID,
 			"request_kind":        "normal",
@@ -508,9 +594,6 @@ func (a *Agent) Run(
 		a.logger.Info("LLM", "step_done", "text_len", len(accumulatedText), "tool_calls", len(toolCalls), "finish_reason", finishReason, "cumulative_prompt_tokens", totalPromptTokens, "ctx_window", ctxWindow)
 
 		hasToolCalls := len(toolCalls) > 0
-		if accumulatedText == "" && !hasToolCalls {
-			accumulatedText = lastReply
-		}
 		if hasToolCalls {
 			l.Debug("AGENT", "branch_has_tool_calls", "count", len(toolCalls), "step", step)
 		} else {
@@ -530,6 +613,7 @@ func (a *Agent) Run(
 			ReasoningContent:  completion.ReasoningContent,
 			Reasoning:         completion.ReasoningContent,
 			ReasoningDuration: completion.ReasoningDuration,
+			ReasoningDisplay:  completion.ReasoningDisplay,
 			ProviderItems:     completion.ProviderItems,
 			ReplayScope:       completion.ReplayScope,
 			ReplayPrefixHash:  completion.ReplayPrefixHash,
@@ -572,6 +656,8 @@ func (a *Agent) Run(
 			}
 			if accumulatedText != "" {
 				emit(AgentEvent{Type: "done", Data: map[string]any{"content": accumulatedText, "reason": doneReason}})
+			} else if lastReply != "" {
+				emit(AgentEvent{Type: "done", Data: map[string]any{"content": "", "reason": doneReason}})
 			} else {
 				emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Done.", "reason": doneReason}})
 			}
@@ -581,7 +667,7 @@ func (a *Agent) Run(
 
 		emit(AgentEvent{Type: "phase", Data: "executing"})
 
-		resultCh := a.executeToolCalls(ctx, toolCalls, emit, blockResolveCh, &lastReply, step)
+		resultCh := a.executeToolCalls(ctx, toolCalls, requestEmit, blockResolveCh, &lastReply, step)
 
 		results := make([]execResult, len(toolCalls))
 		receivedResults := make([]bool, len(toolCalls))
@@ -627,6 +713,13 @@ func (a *Agent) Run(
 			}
 			appendWire(toolMessage)
 			lastToolResultIdx = len(msgs) - 1
+			if r.name == "reply" && r.result.Content != "" {
+				data := map[string]any{"tool_id": r.id, "name": r.name, "result": r.result.Content}
+				if toolError {
+					data["error"] = "true"
+				}
+				emit(AgentEvent{Type: "tool_result", Data: data})
+			}
 			steps = append(steps, StepRecord{
 				Content:      accumulatedText,
 				ToolName:     r.name,
@@ -634,9 +727,6 @@ func (a *Agent) Run(
 				ToolResult:   r.result.Content,
 				FinishReason: finishReason,
 			})
-			if r.name == "reply" && r.result.Content != "" {
-				emit(AgentEvent{Type: "stream_token", Data: r.result.Content})
-			}
 		}
 		if lastToolResultIdx > 0 && lastToolResultIdx < len(msgs) {
 			l.Debug("CACHE", "breakpoint", "msg_idx", lastToolResultIdx, "role", msgs[lastToolResultIdx].Role)
@@ -662,14 +752,39 @@ func (a *Agent) Run(
 			}
 			l.Debug("LOOP", "check", "steps", len(steps), "window", loopDetectWindow, "unique_sigs", loopSigs)
 			l.Warn("AGENT", "stop_condition", "reason", reason, "steps", len(steps), "prompt_tokens", lastPromptTokens, "total_prompt_tokens_spent", totalPromptTokens, "ctx_window", ctxWindow)
-			if lastReply != "" {
-				emit(AgentEvent{Type: "done", Data: map[string]any{"content": lastReply, "reason": reason}})
-			} else {
-				emit(AgentEvent{Type: "done", Data: map[string]any{"content": accumulatedText, "reason": reason}})
-			}
+			// The latest reply (if any) was delivered as progress. Do not
+			// fabricate a second answer when a stop condition ends the turn.
+			emit(AgentEvent{Type: "done", Data: map[string]any{"content": "", "reason": reason}})
 			return returnMessages()
 		}
 	}
+}
+
+func (a *Agent) observeReasoningVisibility(completion *completionResult) reasoning.Kind {
+	if completion == nil {
+		return reasoning.Unknown
+	}
+	if completion.ReasoningDisplay.Kind == reasoning.Raw {
+		a.ReasoningContentKind, a.condensedSamples, a.sawRawReasoning = reasoning.Unknown, 0, true
+		return reasoning.Unknown
+	}
+	if a.sawRawReasoning || completion.ReasoningDisplay.Kind != reasoning.Provisional {
+		return reasoning.Unknown
+	}
+	runes := utf8.RuneCountInString(completion.ReasoningContent)
+	if reasoning.CondensedByUsage(runes, completion.Usage.ReasoningTokens, completion.Usage.ReasoningKnown) {
+		completion.ReasoningDisplay.Kind = reasoning.InferredSummary
+		a.condensedSamples++
+		if a.condensedSamples >= 2 || completion.Usage.ReasoningTokens >= 16*((runes+3)/4) {
+			a.ReasoningContentKind = reasoning.InferredSummary
+		}
+		return reasoning.InferredSummary
+	}
+	if completion.Usage.ReasoningKnown && runes >= 12 && completion.Usage.ReasoningTokens >= 128 && completion.Usage.ReasoningTokens <= 2*((runes+3)/4) {
+		completion.ReasoningDisplay.Kind = reasoning.Raw
+		return reasoning.Raw
+	}
+	return reasoning.Unknown
 }
 
 func (a *Agent) makeStreamingDeltaCallback(emit func(AgentEvent), prevPreviewKeys map[string]string) func(internalID, id, name, args string) {
@@ -677,6 +792,9 @@ func (a *Agent) makeStreamingDeltaCallback(emit func(AgentEvent), prevPreviewKey
 		preview := ExtractPreview(id, name, args, a.logger)
 		path := getStr(preview.Params, "path")
 		command := getStr(preview.Params, "command")
+		if name == "exec_command" {
+			command = getStr(preview.Params, "cmd")
+		}
 		urlStr := getStr(preview.Params, "url")
 		query := getStr(preview.Params, "query")
 		source := getStr(preview.Params, "source")
@@ -728,7 +846,7 @@ func (a *Agent) makeStreamingDeltaCallback(emit func(AgentEvent), prevPreviewKey
 			newLines = CountLines(newStr)
 		}
 
-		if name == "write_file" || name == "edit_file" || name == "write_report" {
+		if name == "apply_patch" || name == "write_file" || name == "edit_file" || name == "write_report" {
 			estContent, estOld, estNew := EstimateStreamingLines(name, args)
 			if contentLines == 0 && estContent > 0 {
 				contentLines = estContent
@@ -744,6 +862,9 @@ func (a *Agent) makeStreamingDeltaCallback(emit func(AgentEvent), prevPreviewKey
 		previewKey := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%d|%d|%d|%d|%d",
 			path, command, urlStr, query, source, dest, pattern,
 			offsetVal, limitVal, contentLines, oldLines, newLines)
+		if name == "multi_tool_use.parallel" {
+			previewKey = args
+		}
 		if prev, ok := prevPreviewKeys[internalID]; ok && prev == previewKey {
 			return
 		}
@@ -756,6 +877,11 @@ func (a *Agent) makeStreamingDeltaCallback(emit func(AgentEvent), prevPreviewKey
 			"preview":         tools.FormatPreview(name, preview.Params),
 			"args":            args,
 			"tool_est_tokens": provider.EstimateTokens(args, a.Model),
+		}
+		if name == "multi_tool_use.parallel" && preview.Params["tool_uses"] != nil {
+			if input, err := json.Marshal(preview.Params); err == nil {
+				data["batch_input"] = string(input)
+			}
 		}
 		if path != "" {
 			data["path"] = path
@@ -804,14 +930,6 @@ func (a *Agent) makeStreamingDeltaCallback(emit func(AgentEvent), prevPreviewKey
 		}
 		emit(AgentEvent{Type: "tool_call_streaming", Data: data})
 	}
-}
-
-func isContinuableStreamInterruption(err error) bool {
-	if errors.Is(err, io.ErrUnexpectedEOF) {
-		return true
-	}
-	var stalled *provider.ProgressStallError
-	return errors.As(err, &stalled) && stalled.Phase == "download"
 }
 
 func isTruncatedFinishReason(reason string) bool {

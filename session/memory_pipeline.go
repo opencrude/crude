@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"crude/agent"
+	"crude/codexio"
 	"crude/memory"
 	"crude/provider"
 )
@@ -150,6 +151,9 @@ func turnRecordFromMessages(
 // pathsFromToolArgs pulls file-path parameters out of a tool call's JSON
 // arguments.
 func pathsFromToolArgs(arguments string) []string {
+	if patch, err := codexio.Parse(arguments); err == nil {
+		return patch.Paths("")
+	}
 	if arguments == "" {
 		return nil
 	}
@@ -296,6 +300,8 @@ func (s *Session) runExtraction(parent context.Context, sessionID string, notify
 			TurnCount: lastTurn,
 		}); err != nil {
 			s.logger.Warn("MEMORY", "summary_save_failed", "error", err.Error())
+		} else {
+			s.refreshMemorySummary(ctx, store)
 		}
 	}
 	if err := store.SetMeta(ctx, extractWatermarkKey(sessionID),

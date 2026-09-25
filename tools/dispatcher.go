@@ -116,6 +116,8 @@ type ToolOptions struct {
 	Media *MediaReadPolicy
 	// PrepareMutation receives an exact receipt before an Editor mutation.
 	PrepareMutation fileio.MutationPrepare
+	// WorkDir resolves operands inside freeform patches without rewriting input.
+	WorkDir string
 }
 
 func mutationPreparer(opts *ToolOptions) fileio.MutationPrepare {
@@ -136,6 +138,8 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 	var result ToolResult
 
 	switch tool {
+	case "apply_patch":
+		result = executeApplyPatch(ctx, params, ed, opts)
 
 	case "read_file":
 		path := GetStrArg(params, "path", "")
@@ -304,6 +308,10 @@ func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Exec
 		path := GetStrArg(params, "path", "")
 		oldString := GetStrArg(params, "old_string", "")
 		newString := GetStrArg(params, "new_string", "")
+		if oldString == newString {
+			result = noChangeEditResult(oldString, newString)
+			break
+		}
 		lg.Info("TOOL", "call", "tool", tool, "path", path, "old_len", len(oldString), "new_len", len(newString))
 		if len([]rune(oldString)) > 80 {
 			lg.Debug("DISPATCH", "old_preview", "first_80", string([]rune(oldString)[:80])+"…")

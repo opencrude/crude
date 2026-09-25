@@ -3,6 +3,8 @@ package tools
 import (
 	"fmt"
 	"strings"
+
+	"crude/codexio"
 )
 
 type PreviewSpec struct {
@@ -19,6 +21,15 @@ func (s PreviewSpec) ExtractStrings(raw map[string]any) map[string]string {
 }
 
 var previewRegistry = map[string]PreviewSpec{
+	"exec_command": {Keys: []string{"cmd"}, Format: func(name string, p map[string]string) string { return name + " " + trunc(p["cmd"], 50) }},
+	"write_stdin":  {Keys: []string{"session_id"}, Format: func(name string, p map[string]string) string { return name + " session " + p["session_id"] }},
+	"apply_patch": {
+		Keys: []string{"input"},
+		Format: func(name string, p map[string]string) string {
+			paths, added, removed := codexio.Preview(p["input"])
+			return fmt.Sprintf("%s %s (−%d/+%d lines)", name, strings.Join(paths, ", "), removed, added)
+		},
+	},
 	"write_file": {
 		Keys: []string{"path", "content"},
 		Format: func(name string, p map[string]string) string {

@@ -98,6 +98,27 @@ func TestLateSubAgentStartAfterParentCloseIsDropped(t *testing.T) {
 	}
 }
 
+func TestRetryEventReachesCanonicalTranscript(t *testing.T) {
+	app := newFullTestApp(t)
+	app.AddOrchestrator("root")
+	for _, attempt := range []int{1, 2} {
+		app.handleAgentEvent(ttypes.AgentEventMsg{AgentID: "root", Type: "retry", Data: map[string]any{"attempt": attempt, "limit": 6, "backoff": float64(3), "reason": "Provider temporarily unavailable"}})
+	}
+	messages := app.AgentMgr.Get("root").State.Messages.Messages()
+	count := 0
+	for _, message := range messages {
+		if message.LifecyclePhase == "retrying" {
+			count++
+			if message.LifecycleRetryAttempt != 3 {
+				t.Fatalf("stale retry attempt: %+v", message)
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("retry event swallowed or duplicated: %+v", messages)
+	}
+}
+
 func TestSubAgentTerminalEventCannotRecreateGhostIdleStatus(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("root")
@@ -128,6 +149,50 @@ func TestSubAgentTerminalEventCannotRecreateGhostIdleStatus(t *testing.T) {
 	}
 	if got := testIdleAgentCount(app); got != baselineIdle {
 		t.Fatalf("terminal child recreated ghost idle status: got %d want %d", got, baselineIdle)
+	}
+}
+
+func TestFailedSubAgentParentRowAndReviewPaneRemainAuditable(t *testing.T) {
+	app := newFullTestApp(t)
+	app.AddOrchestrator("root")
+	root := app.AgentMgr.Get("root").State.Messages
+	root.UpdateToolCall("spawn-1", "tool-1", "run_sub_agent", "category: researcher")
+	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "sub_agent_started", AgentID: "child", Data: map[string]string{
+		"agent_id": "child", "agent_name": "Lily", "category": "researcher", "task": "Inspect recovery", "parent_id": "root", "parent_tool_id": "spawn-1",
+	}})
+	parent := root.Messages()
+	if len(parent) != 1 || parent[0].SubPaneID != "child" || parent[0].ToolProgressLabel != "Lily — Inspect recovery" {
+		t.Fatalf("running child identity not in parent row: %+v", parent)
+	}
+	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "sub_agent_completed", AgentID: "child", Data: map[string]string{
+		"agent_id": "child", "agent_name": "Lily", "status": "failed_error",
+	}})
+	pane := app.PaneMgr.Get("child")
+	if pane == nil || !pane.Done || pane.Status != "failed_error" {
+		t.Fatalf("failed child pane = %+v", pane)
+	}
+	view := pane.View()
+	if view.Summary == nil || !strings.Contains(view.Summary.Text, "failed_error") {
+		t.Fatalf("failed child summary hidden: %+v", view)
+	}
+}
+
+func TestParallelSubAgentStartsLinkToTheirOwnParentCalls(t *testing.T) {
+	app := newFullTestApp(t)
+	app.AddOrchestrator("root")
+	parent := app.AgentMgr.Get("root").State.Messages
+	parent.UpdateToolCall("first", "first-msg", "run_sub_agent", "description: inspect")
+	parent.UpdateToolCall("second", "second-msg", "run_sub_agent", "description: test")
+	for _, start := range []struct{ id, name, call string }{
+		{"child-two", "Jane", "second"}, {"child-one", "Lily", "first"},
+	} {
+		app.handleAgentEvent(ttypes.AgentEventMsg{Type: "sub_agent_started", AgentID: start.id, Data: map[string]string{
+			"agent_id": start.id, "agent_name": start.name, "parent_id": "root", "parent_tool_id": start.call,
+		}})
+	}
+	rows := parent.Messages()
+	if len(rows) != 2 || rows[0].SubPaneID != "child-one" || rows[1].SubPaneID != "child-two" {
+		t.Fatalf("parallel child links crossed: %+v", rows)
 	}
 }
 

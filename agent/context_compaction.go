@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"crude/types/accounting"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -396,7 +397,7 @@ func (a *Agent) compactWithModel(
 						}
 					}
 				}, nil, completionRequestOptions{toolChoice: "none", maxOutputTokens: compactionCheckpointMaxTokens, maxAttempts: 1})
-			a.emitCompactionUsage(emit, completion.Usage, stageRequestID, requestID, trigger, role, stage.Name, attempt > 0 || err != nil)
+			a.emitCompactionUsage(emit, completion.Usage, stageRequestID, requestID, trigger, role, stage.Name, attempt > 0 || err != nil, err == nil)
 			aggregate = addTokenUsage(aggregate, completion.Usage)
 			if err == nil {
 				stageText = strings.TrimSpace(completion.Content)
@@ -482,14 +483,22 @@ func (a *Agent) compactionEventData(requestID, trigger, role string, stage, comp
 	return data
 }
 
-func (a *Agent) emitCompactionUsage(emit func(AgentEvent), usage provider.TokenUsage, requestID, operationID, trigger, role, stage string, partial bool) {
-	if emit == nil || (usage.PromptTokens == 0 && usage.CompletionTokens == 0) {
+func (a *Agent) emitCompactionUsage(emit func(AgentEvent), usage provider.TokenUsage, requestID, operationID, trigger, role, stage string, partial, succeeded bool) {
+	if emit == nil || !succeeded && usage.PromptTokens == 0 && usage.CompletionTokens == 0 {
 		return
 	}
+	outcome := accounting.Interrupted
+	if succeeded {
+		outcome = accounting.Succeeded
+	}
 	price, costKnown, costSource := provider.LookupPriceKnown(a.Model)
+	if usage.PromptTokens == 0 && usage.CompletionTokens == 0 {
+		costKnown = false
+	}
 	turnCost := price.CalculateCost(usage.PromptTokens, usage.CompletionTokens, usage.PromptTokensCached)
 	emit(AgentEvent{Type: "usage", Data: map[string]any{
-		"prompt": usage.PromptTokens, "completion": usage.CompletionTokens,
+		"request_outcome": string(outcome),
+		"prompt":          usage.PromptTokens, "completion": usage.CompletionTokens,
 		"prompt_cached": usage.PromptTokensCached, "prompt_written": usage.PromptTokensWritten,
 		"cache_read_known": usage.CacheReadKnown, "cache_write_known": usage.CacheWriteKnown,
 		"reasoning": usage.ReasoningTokens, "reasoning_known": usage.ReasoningKnown,

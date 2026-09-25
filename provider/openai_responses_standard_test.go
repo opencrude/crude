@@ -240,8 +240,8 @@ func TestOpenAIResponsesTerminalEventFillsMissingDeltas(t *testing.T) {
 	if err != nil {
 		t.Fatalf("completed: %v", err)
 	}
-	if update.ContentDelta != "lo" || update.ReasoningDelta != "son" {
-		t.Fatalf("terminal deltas = content %q reasoning %q", update.ContentDelta, update.ReasoningDelta)
+	if update.ContentDelta != "lo" || update.ReasoningText() != "son" {
+		t.Fatalf("terminal deltas = content %q reasoning %q", update.ContentDelta, update.ReasoningText())
 	}
 }
 

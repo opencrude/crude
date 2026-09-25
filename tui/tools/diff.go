@@ -522,7 +522,7 @@ func IsDiffContent(content string) bool {
 // gated by this predicate together with IsDiffContent, never by content alone.
 func IsPatchCardTool(name string) bool {
 	switch name {
-	case "edit_file", "write_file":
+	case "apply_patch", "edit_file", "write_file":
 		return true
 	default:
 		return false

@@ -270,7 +270,7 @@ func (s *WorkspaceSettingsSurface) Children() []ui.Component {
 	case s.providersOpen() && s.model.providerEditor != nil:
 		children = append(children, s.templateEditorBar)
 	case s.providersOpen():
-		children = append(children, s.templates, s.templateAdd, s.templateFilter, s.templateBar)
+		children = append(children, s.templates, s.templateFilter, s.templateAdd, s.templateBar)
 		if s.templateScroll.Needed() {
 			children = append(children, s.templateScroll)
 		}
@@ -280,7 +280,7 @@ func (s *WorkspaceSettingsSurface) Children() []ui.Component {
 			children = append(children, s.accountAuthBar)
 		}
 	case s.accountsOpen():
-		children = append(children, s.accounts, s.accountAdd, s.accountFilter, s.accountBar, s.accountMoreBar)
+		children = append(children, s.accounts, s.accountFilter, s.accountAdd, s.accountBar, s.accountMoreBar)
 		if s.accountScroll.Needed() {
 			children = append(children, s.accountScroll)
 		}
@@ -457,36 +457,52 @@ func (s *WorkspaceSettingsSurface) SetModel(model *Model) {
 
 func (s *WorkspaceSettingsSurface) Model() *Model { return s.model }
 
+// WindowTitle is the frame title of the floating settings window. It names the
+// window's scope and nothing else: navigation inside the window is reported by
+// the right pane's own title (see PaneTitle), never by mutating the window
+// frame the user has already positioned.
 func (s *WorkspaceSettingsSurface) WindowTitle() string {
-	if s.model == nil {
-		return "Settings"
+	if s.model != nil && s.model.Scope() == types.SettingsScopeWorkspace {
+		return "Workspace Settings"
 	}
-	base := "Application Settings"
-	if s.model.Scope() == types.SettingsScopeWorkspace {
-		base = "Workspace Settings"
-	}
-	if s.model.accountEditor == nil && s.model.providerEditor == nil {
-		return base
-	}
+	return "Application Settings"
+}
+
+// PaneTitle is the right pane's heading. At list level it names the page and
+// counts its rows; once an editor opens it carries the page hierarchy
+// ("Accounts ▸ Add account") so the user always knows where they are.
+func (s *WorkspaceSettingsSurface) PaneTitle() string {
 	sep := " / "
 	if s.tokens != nil {
 		sep = " " + s.tokens.Glyphs().BreadcrumbSep + " "
 	}
+	if s.model == nil {
+		return ""
+	}
 	if s.model.accountEditor != nil {
-		action := "Edit"
+		action := "Edit account"
 		if s.model.accountEditor.isNew {
-			action = "Add"
+			action = "Add account"
 		}
-		return base + sep + "Accounts" + sep + action
+		return "Accounts" + sep + action
 	}
 	if s.model.providerEditor != nil {
-		action := "Edit"
+		action := "Edit template"
 		if s.model.providerEditor.isNew {
-			action = "Add"
+			action = "Add template"
 		}
-		return base + sep + "Providers" + sep + action
+		return "Providers" + sep + action
 	}
-	return base
+	if s.accountsOpen() {
+		if len(s.model.accounts) > 0 {
+			return "Accounts  " + strconv.Itoa(len(s.model.accounts))
+		}
+		return "Accounts"
+	}
+	if s.providersOpen() {
+		return "Provider templates  " + strconv.Itoa(len(s.model.providers))
+	}
+	return ""
 }
 
 // RequestClose applies the same dirty-editor and preference-draft policy to
@@ -579,12 +595,15 @@ func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 			if formW < 42 {
 				headerRows, addW = 4, formW
 			}
-			s.accountAdd.Layout(ctx, ui.Rect{X: formX, Y: topPad + 1, W: addW, H: 1})
-			filter := ui.Rect{X: formX + addW + 2, Y: topPad + 1, W: max(1, formW-addW-2), H: 1}
+			// Search leads the header row; the add button trails it.
+			filter := ui.Rect{X: formX, Y: topPad + 1, W: max(1, formW-addW-2), H: 1}
+			add := ui.Rect{X: formX + filter.W + 2, Y: topPad + 1, W: addW, H: 1}
 			if headerRows == 4 {
-				filter = ui.Rect{X: formX, Y: topPad + 2, W: formW, H: 1}
+				filter = ui.Rect{X: formX, Y: topPad + 1, W: formW, H: 1}
+				add = ui.Rect{X: formX, Y: topPad + 2, W: formW, H: 1}
 			}
 			s.accountFilter.Layout(ctx, filter)
+			s.accountAdd.Layout(ctx, add)
 			actionRows := 1
 			if formW < 73 {
 				actionRows = 2
@@ -618,12 +637,15 @@ func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 			if formW < 42 {
 				headerRows, addW = 4, formW
 			}
-			s.templateAdd.Layout(ctx, ui.Rect{X: formX, Y: topPad + 1, W: addW, H: 1})
-			filter := ui.Rect{X: formX + addW + 2, Y: topPad + 1, W: max(1, formW-addW-2), H: 1}
+			// Search leads the header row; the add button trails it.
+			filter := ui.Rect{X: formX, Y: topPad + 1, W: max(1, formW-addW-2), H: 1}
+			add := ui.Rect{X: formX + filter.W + 2, Y: topPad + 1, W: addW, H: 1}
 			if headerRows == 4 {
-				filter = ui.Rect{X: formX, Y: topPad + 2, W: formW, H: 1}
+				filter = ui.Rect{X: formX, Y: topPad + 1, W: formW, H: 1}
+				add = ui.Rect{X: formX, Y: topPad + 2, W: formW, H: 1}
 			}
 			s.templateFilter.Layout(ctx, filter)
+			s.templateAdd.Layout(ctx, add)
 			// Keep one row between the table and actions for errors/progress.
 			tableH := max(1, formH-headerRows-3)
 			s.templates.Layout(ctx, ui.Rect{X: formX, Y: topPad + headerRows, W: formW, H: tableH})
@@ -749,18 +771,7 @@ func (s *WorkspaceSettingsSurface) Paint(buf *surface.CellBuffer, originX, origi
 	if s.accountsOpen() {
 		accent := s.tokens.Color(ui.ColorAccent)
 		contentX, contentW := s.contentRect.X, s.contentRect.W
-		heading := "Accounts"
-		switch {
-		case s.model.accountEditor != nil:
-			if s.model.accountEditor.isNew {
-				heading = "Add account"
-			} else {
-				heading = "Edit account"
-			}
-		case len(s.model.accounts) > 0:
-			heading = "Accounts  " + strconv.Itoa(len(s.model.accounts))
-		}
-		buf.WriteString(ox+contentX, oy+s.topPad(), rendering.TruncateVisual(heading, contentW, ""), accent, bg, cell.AttrBold)
+		buf.WriteString(ox+contentX, oy+s.topPad(), rendering.TruncateVisual(s.PaneTitle(), contentW, ""), accent, bg, cell.AttrBold)
 		if s.model.accountEditor == nil && len(s.model.accounts) == 0 {
 			buf.WriteString(ox+contentX, oy+s.topPad()+4, "No accounts yet. Add one to start a session.", s.tokens.Color(ui.ColorMuted), bg, 0)
 		} else if s.model.accountEditor == nil && len(s.model.accountRows()) == 0 {
@@ -779,15 +790,7 @@ func (s *WorkspaceSettingsSurface) Paint(buf *surface.CellBuffer, originX, origi
 	if s.providersOpen() {
 		accent := s.tokens.Color(ui.ColorAccent)
 		contentX, contentW := s.contentRect.X, s.contentRect.W
-		heading := "Provider templates  " + strconv.Itoa(len(s.model.providers))
-		if s.model.providerEditor != nil {
-			if s.model.providerEditor.isNew {
-				heading = "Add template"
-			} else {
-				heading = "Edit template"
-			}
-		}
-		buf.WriteString(ox+contentX, oy+s.topPad(), rendering.TruncateVisual(heading, contentW, ""), accent, bg, cell.AttrBold)
+		buf.WriteString(ox+contentX, oy+s.topPad(), rendering.TruncateVisual(s.PaneTitle(), contentW, ""), accent, bg, cell.AttrBold)
 		if s.model.providerEditor == nil && len(s.model.providers) == 0 {
 			buf.WriteString(ox+contentX, oy+s.topPad()+4, "No templates yet. Add one to configure a provider.", s.tokens.Color(ui.ColorMuted), bg, 0)
 		} else if s.model.providerEditor == nil && len(s.model.providerRows()) == 0 {

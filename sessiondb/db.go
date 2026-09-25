@@ -11,9 +11,9 @@ import (
 )
 
 const schema = `
+PRAGMA busy_timeout = 5000;
 PRAGMA journal_mode = WAL;
 PRAGMA foreign_keys = ON;
-PRAGMA busy_timeout = 5000;
 
 CREATE TABLE IF NOT EXISTS sessions (
     id              TEXT PRIMARY KEY,
@@ -66,6 +66,7 @@ CREATE TABLE IF NOT EXISTS usage_requests (
     turn_generation     TEXT NOT NULL DEFAULT '0',
     attempt             INTEGER NOT NULL DEFAULT 1,
     request_kind        TEXT NOT NULL DEFAULT 'normal',
+	request_outcome     TEXT NOT NULL DEFAULT '',
     provider_id         TEXT NOT NULL DEFAULT '',
     account_id          TEXT NOT NULL DEFAULT '',
     model_id            TEXT NOT NULL DEFAULT '',
@@ -287,7 +288,9 @@ CREATE INDEX IF NOT EXISTS idx_plan_events_plan ON plan_events(plan_id, revision
 `
 
 func Open(dbPath string) (*sql.DB, error) {
-	dsn := dbPath + "?_journal_mode=WAL&_foreign_keys=on&_busy_timeout=5000"
+	// modernc applies _pragma in order, including on replacement connections.
+	// Waiting must be enabled before WAL takes its initial schema lock.
+	dsn := dbPath + "?_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)&_pragma=journal_mode(WAL)"
 	db, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("sessiondb: open: %w", err)
@@ -317,6 +320,7 @@ func Migrate(db *sql.DB) error {
 		"ALTER TABLE context_compactions ADD COLUMN model_id TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE context_compactions ADD COLUMN account_id TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE usage_requests ADD COLUMN request_kind TEXT NOT NULL DEFAULT 'normal'",
+		"ALTER TABLE usage_requests ADD COLUMN request_outcome TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE sessions ADD COLUMN account_id TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE session_agent_settings ADD COLUMN account_id TEXT NOT NULL DEFAULT ''",
 		"ALTER TABLE usage_requests ADD COLUMN account_id TEXT NOT NULL DEFAULT ''",
