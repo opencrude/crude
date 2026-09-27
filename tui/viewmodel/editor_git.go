@@ -124,7 +124,7 @@ func (m *App) applyEditorGitAnnotation(msg editorGitAnnotationMsg) {
 		// Deterministic failures — no repository, path outside it — genuinely
 		// have no annotation, so they clear.
 		if !errors.Is(msg.err, context.Canceled) && !errors.Is(msg.err, context.DeadlineExceeded) {
-			m.EditorState.Editor.SetGitAnnotation(msg.revision, nil, nil, false)
+			m.EditorState.Editor.ClearGitAnnotation()
 		}
 		return
 	}
@@ -149,5 +149,5 @@ func (m *App) applyEditorGitAnnotation(msg editorGitAnnotationMsg) {
 			NewLines: append([]string(nil), hunk.NewLines...),
 		}
 	}
-	m.EditorState.Editor.SetGitAnnotation(msg.revision, hunks, blame, msg.annotation.Conflicted)
+	m.EditorState.Editor.SetGitAnnotation(msg.revision, msg.annotation.HeadContent, hunks, blame, msg.annotation.Conflicted)
 }

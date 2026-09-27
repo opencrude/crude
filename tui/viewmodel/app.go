@@ -47,8 +47,6 @@ import (
 	"crude/workspace"
 )
 
-var OnHistorySave func([]string)
-
 type Mode = workspace.Mode
 
 const (
@@ -106,7 +104,6 @@ type App struct {
 	ChatAreaHeight      int
 	LastInteractionTime time.Time
 	SpinFrame           int
-	History             []string // recall slice mirrored from Prompts
 	Prompts             *history.Store
 	promptHistoryPath   string
 	LastSettings        ttypes.Settings
@@ -387,28 +384,43 @@ func (m *App) SetPromptHistory(store *history.Store) {
 // command that persists the store to disk off the UI thread. The in-memory
 // fold is synchronous so ↑ recalls the prompt immediately; the file write is
 // deferred. Merged repeats still save — they change count/lastSeen/text.
-func (m *App) recordPrompt(text string) tea.Cmd {
+func (m *App) recordPrompt(text string, referenceIDs ...string) tea.Cmd {
 	if m.Prompts == nil {
 		return nil
 	}
 	if strings.TrimSpace(text) == "" {
 		return nil
 	}
-	m.Prompts.Record(text, time.Now())
+	text = strings.TrimSpace(text)
+	var refs []sessiondb.Reference
+	if store := m.RefStore(); store != nil {
+		for _, id := range referenceIDs {
+			if ref, ok := store.GetReference(id); ok && ref.Active() {
+				refs = append(refs, ref)
+			}
+		}
+	}
+	var attachments []history.Attachment
+	for _, span := range input.FindRefRanges(text, refs) {
+		for _, ref := range refs {
+			if ref.ID == span.ID {
+				attachments = append(attachments, history.Attachment{Start: span.Start, End: span.End, Reference: ref})
+				break
+			}
+		}
+	}
+	m.Prompts.Record(text, time.Now(), attachments...)
 	m.syncPromptRecall()
 	path := m.promptHistoryPath
+	store := m.Prompts
 	return func() tea.Msg {
-		if err := m.Prompts.Save(path); err != nil && m.Logger != nil {
-			m.Logger.Warn("HISTORY", "save_failed", "error", err.Error())
-		}
-		return nil
+		return promptHistorySavedMsg{store: store, err: store.Save(path)}
 	}
 }
 
 // syncPromptRecall refreshes the composer's recall slice from the store.
 func (m *App) syncPromptRecall() {
-	m.History = m.Prompts.Recall()
-	m.Input.SetHistory(m.History)
+	m.Input.SetHistory(m.Prompts.Entries())
 }
 
 func modeName(m Mode) string {

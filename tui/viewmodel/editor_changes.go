@@ -103,10 +103,7 @@ func (m *App) applyEditorDiskComparison(msg editorDiskComparisonMsg) {
 		m.Feedback.NotifyInfo("Buffer matches disk")
 		return
 	}
-	hunks := make([]editor.GitHunk, len(msg.hunks))
-	for i, hunk := range msg.hunks {
-		hunks[i] = editor.GitHunk{OldStart: hunk.OldStart, NewStart: hunk.NewStart, OldLines: hunk.OldLines, NewLines: hunk.NewLines}
-	}
+	hunks := append([]editor.GitHunk(nil), msg.hunks...)
 	m.openEditorChanges(msg.ed, hunks, 0, "disk")
 }
 

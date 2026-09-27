@@ -1,11 +1,16 @@
 package viewmodel
 
 import (
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 
 	"crude/tui/cell"
+	"crude/tui/surface"
+	"crude/tui/ui"
 	"crude/types"
+	"crude/types/activity"
 	"crude/types/reasoning"
 	"crude/workspace"
 )
@@ -54,6 +59,61 @@ func TestActivityStripShowsUploadThenOwningThinkingInsteadOfPrompt(t *testing.T)
 		if line = shellBufferRow(app, activityY); strings.Contains(line, "Checking hidden files") || strings.Contains(line, "check grep") {
 			t.Fatalf("width=%d stale thought after response=%q", width, line)
 		}
+	}
+}
+
+func TestStoppedAgentPlanStripPaintRemainsStatic(t *testing.T) {
+	for _, width := range []int{80, 160} {
+		t.Run(fmt.Sprint(width), func(t *testing.T) {
+			app := newFullTestApp(t)
+			app.AddOrchestrator("agent")
+			app.handleAgentEvent(types.AgentEventMsg{AgentID: "agent", Type: "turn_started", Data: types.TurnIdentity{Generation: 1}})
+			app.handleAgentEvent(types.AgentEventMsg{AgentID: "agent", Type: "thinking", Data: reasoning.Delta{Text: "Refining the activity strip", Kind: reasoning.Summary}})
+			p := &activity.Plan{ID: "plan", Status: "active", Total: 3, Objective: "Refine the activity strip without losing the retained plan",
+				Current: []activity.Step{{Number: 1, Status: "in_progress", Text: "Smooth the light sweep"}},
+				Next:    &activity.Step{Number: 2, Text: "Check the stopped plan and goal presentation"}}
+			paint := func(frame int) []cell.Cell {
+				// Plan is the immutable backend projection; lifecycle comes from the
+				// real cancellation path and is independent of the plan's status.
+				view := app.AgentActivity("agent")
+				view.Plan = p
+				app.chatScreen.SetActivity(view)
+				app.chatScreen.Layout(ui.LayoutContext{}, ui.Rect{X: 2, Y: 1, W: width - 4, H: 3})
+				buf := surface.NewCellBuffer(width, 5)
+				app.chatScreen.Paint(buf, 0, 0, ui.PaintContext{Frame: frame})
+				cells := make([]cell.Cell, width)
+				for x := range cells {
+					cells[x] = buf.Get(x, 3)
+				}
+				return cells
+			}
+			first := paint(1000)
+			if reflect.DeepEqual(first, paint(1800)) {
+				t.Fatal("active fixture must animate")
+			}
+			_ = app.handleCancel()
+			if app.AgentActivity("agent").Active {
+				t.Fatal("cancellation left the activity view running")
+			}
+			stopping := paint(1800)
+			if !reflect.DeepEqual(stopping, paint(8000)) {
+				t.Fatal("strip moved while waiting for cancellation acknowledgement")
+			}
+			app.handleAgentEvent(types.AgentEventMsg{AgentID: "agent", Type: "done", Data: map[string]any{"reason": "cancelled"}})
+			stopped := paint(8100)
+			for _, frame := range []int{8116, 14100, 20100, 40000} {
+				if !reflect.DeepEqual(stopped, paint(frame)) {
+					t.Fatalf("cancelled plan strip moved at %d", frame)
+				}
+			}
+			var text strings.Builder
+			for _, c := range stopped {
+				text.WriteRune(c.Char)
+			}
+			if !strings.Contains(text.String(), "Stopped") {
+				t.Fatalf("cancelled strip did not identify the stop: %q", text.String())
+			}
+		})
 	}
 }
 
@@ -139,7 +199,11 @@ func TestAgentActivityStripHasStableGeometryAndPaintOnlyTide(t *testing.T) {
 		if app.chatScreen.ScrollModel().Viewport() != viewport || renderer.ExportMessageRowsSnapshot(app.chatReflowInnerW).ContentHeight != before.ContentHeight {
 			t.Fatalf("phase %s moved the page", phase)
 		}
-		if !strings.Contains(shellBufferRow(app, y), string(phase)) {
+		label := string(phase)
+		if phase == types.AgentCancelled {
+			label = "Stopped"
+		}
+		if !strings.Contains(shellBufferRow(app, y), label) {
 			t.Fatalf("phase %s missing from stable strip", phase)
 		}
 	}

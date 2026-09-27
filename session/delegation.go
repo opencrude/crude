@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"html"
+	"slices"
+	"strings"
 	"time"
 
 	"crude/agent"
@@ -29,6 +32,41 @@ func orchestratorTools(enabled bool) []tools.ToolDef {
 	// Management stays available while disabled: existing children still need
 	// cancellation/review and must not become inaccessible when a switch flips.
 	return agent.ApplyOrchestratorOverrides(agent.FilterTools(tools.AgentTools, nil, denied, "", false))
+}
+
+func configuredOrchestratorTools(cfg *Config, enabled bool, model string) []tools.ToolDef {
+	category := cfg.GetActiveDefaultCategory()
+	return agent.FilterToolsForModel(orchestratorTools(enabled), category.AllowedTools, category.DeniedTools, "", false, model)
+}
+
+func constrainConfiguredTools(spec *agent.SubAgentSpec, allowed, denied []string) {
+	spec.DeniedTools = append(spec.DeniedTools, denied...)
+	if len(allowed) > 0 {
+		for _, tool := range tools.AgentTools {
+			if !slices.Contains(allowed, tool.Function.Name) {
+				spec.DeniedTools = append(spec.DeniedTools, tool.Function.Name)
+			}
+		}
+	}
+}
+
+func agentProfileCatalog(cfg *Config) string {
+	if cfg == nil || len(cfg.Agents.AgentProfiles) == 0 {
+		return ""
+	}
+	keys := make([]string, 0, len(cfg.Agents.AgentProfiles))
+	for key := range cfg.Agents.AgentProfiles {
+		keys = append(keys, key)
+	}
+	slices.Sort(keys)
+	var out strings.Builder
+	out.WriteString("\n<available_agent_profiles>Use a profile's name in run_sub_agent when its purpose matches a delegated task.\n")
+	for _, name := range keys {
+		p := cfg.Agents.AgentProfiles[name]
+		fmt.Fprintf(&out, "<profile name=\"%s\" role=\"%s\">%s</profile>\n", html.EscapeString(name), html.EscapeString(p.Category), html.EscapeString(p.Description))
+	}
+	out.WriteString("</available_agent_profiles>")
+	return out.String()
 }
 
 const delegationDisabledNotice = "The user has disabled multi-agent mode in Settings. Do not launch new sub-agents. This is a user settings change, not an agent or execution failure. Continue the task yourself. Already-running children retain their actual status and can still be reviewed or cancelled."

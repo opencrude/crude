@@ -36,6 +36,7 @@ type Buffer struct {
 	diskExists     bool
 	diskGeneration uint64
 	dirty          bool
+	savepoint      textSnapshot
 
 	diags   []LSPDiagnostic
 	diagsMu sync.RWMutex
@@ -90,14 +91,24 @@ func (b *Buffer) Snapshot() BufferSnapshot {
 
 // AcceptSave advances the disk baseline for exactly the committed snapshot.
 // Newer edits remain dirty.
-func (b *Buffer) AcceptSave(revision uint64, diskHash [sha256.Size]byte) {
+func (b *Buffer) AcceptSave(revision uint64, diskHash [sha256.Size]byte, data []byte) {
 	if b == nil || b.buf == nil {
 		return
 	}
 	b.diskHash = diskHash
 	b.diskExists = true
 	b.diskGeneration++
-	b.dirty = b.buf.Revision() != revision
+	current := b.buf.snapshotText()
+	if b.buf.Revision() == revision {
+		b.savepoint = current
+		b.dirty = false
+		return
+	}
+	b.savepoint = snapshotBytes(data)
+	b.dirty = !b.savepoint.equal(current)
+	if !b.dirty {
+		b.savepoint = current
+	}
 }
 
 // ReplaceContents swaps the entire document text and marks the buffer dirty.
@@ -113,30 +124,22 @@ func (b *Buffer) IsDirty() bool {
 }
 
 func (b *Buffer) NoteEdit() {
-	if b != nil {
-		b.dirty = true
+	if b != nil && b.buf != nil {
+		b.dirty = (!b.diskExists && b.diskGeneration > 0) || !b.savepoint.equal(b.buf.snapshotText())
 	}
-}
-
-func (b *Buffer) ReconcileSavepoint() {
-	if b == nil {
-		return
-	}
-	b.buf.ensureCache()
-	b.dirty = sha256.Sum256(b.buf.cachedBytes) != b.diskHash
 }
 
 func newBuffer(pt *PieceTable, path string, exists bool) *Buffer {
 	pt.ensureCache()
 	hash := sha256.Sum256(pt.cachedBytes)
 	return &Buffer{ID: nextScratchID(), Path: path, Title: filepath.Base(path), buf: pt,
-		diskHash: hash, diskExists: exists}
+		diskHash: hash, diskExists: exists, savepoint: pt.snapshotText()}
 }
 
 // ApplyDisk replaces the shared text, not the PieceTable identity held by views.
 func (b *Buffer) ApplyDisk(data []byte) {
 	b.buf.ReplaceAll(string(data))
-	b.AcceptSave(b.buf.Revision(), sha256.Sum256(data))
+	b.AcceptSave(b.buf.Revision(), sha256.Sum256(data), data)
 }
 
 func (b *Buffer) MatchesDisk(hash [sha256.Size]byte) bool { return b.diskExists && b.diskHash == hash }

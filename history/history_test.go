@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"crude/sessiondb"
 )
 
 func at(mins int) time.Time {
@@ -207,5 +209,80 @@ func TestLoadFileMissingAndCorrupt(t *testing.T) {
 	}
 	if _, err := LoadFile(corrupt); err == nil {
 		t.Fatal("corrupt file should error")
+	}
+}
+
+func TestMultimodalHistorySnapshotsAssetsAndKeepsDistinctPrompts(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "history.json")
+	image := filepath.Join(dir, "clipboard.png")
+	if err := os.WriteFile(image, []byte("first image bytes"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s := New()
+	ref := sessiondb.Reference{ID: "image", Kind: sessiondb.KindPastedImage, Label: "[Image]", Mime: "image/png", FilePath: image}
+	s.Record("inspect [Image]", at(0), Attachment{Start: 8, End: 15, Reference: ref})
+	if err := s.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(image, []byte("second image bytes"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	s.Record("inspect [Image]", at(1), Attachment{Start: 8, End: 15, Reference: ref})
+	if err := s.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(image); err != nil {
+		t.Fatal(err)
+	}
+	loaded, err := LoadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	entries := loaded.Entries()
+	if len(entries) != 2 {
+		t.Fatalf("different attachments folded into one prompt: %+v", entries)
+	}
+	for i, want := range []string{"first image bytes", "second image bytes"} {
+		data, err := os.ReadFile(entries[i].Attachments[0].Reference.FilePath)
+		if err != nil || string(data) != want {
+			t.Fatalf("attachment %d was not retained independently: %q, %v", i, data, err)
+		}
+	}
+	entries[0].Attachments[0].Reference.FilePath = "mutated"
+	if loaded.Entries()[0].Attachments[0].Reference.FilePath == "mutated" {
+		t.Fatal("history snapshots share mutable attachment state")
+	}
+	// Eviction releases media that no retained prompt uses.
+	loaded.max = 1
+	loaded.Record("new prompt", at(10))
+	if err := loaded.Save(path); err != nil {
+		t.Fatal(err)
+	}
+	assets, err := os.ReadDir(path + ".assets")
+	if err != nil || len(assets) != 0 {
+		t.Fatalf("evicted attachments leaked: %+v, %v", assets, err)
+	}
+}
+
+func TestMissingMediaDoesNotBlockOtherHistoryAndFailsClosed(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "history.json")
+	store := New()
+	ref := sessiondb.Reference{ID: "missing", Label: "[Image]", Kind: sessiondb.KindPastedImage, FilePath: filepath.Join(t.TempDir(), "missing.png")}
+	store.Record("  inspect [Image]  ", at(0), Attachment{Start: 10, End: 17, Reference: ref})
+	store.Record("another prompt", at(1))
+	if err := store.Save(path); err == nil {
+		t.Fatal("missing attachment was silently ignored")
+	}
+	loaded, err := LoadFile(path)
+	if err != nil || loaded.Len() != 2 {
+		t.Fatalf("missing media blocked unrelated history: %v %v", loaded, err)
+	}
+	attachment := loaded.Entries()[0].Attachments[0]
+	if !attachment.Unavailable || attachment.Start != 8 || attachment.End != 15 {
+		t.Fatalf("missing media or trimmed spans lost: %+v", attachment)
+	}
+	if err := loaded.Save(path); err != nil {
+		t.Fatalf("known unavailable media must not poison subsequent saves: %v", err)
 	}
 }

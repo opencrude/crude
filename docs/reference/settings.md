@@ -89,6 +89,37 @@ an account presents a setup warning. There is no automatic legacy credential
 migration path; existing local credentials must be explicitly transferred or
 re-entered.
 
+The `/settings` session deck shows only configured account labels, without
+provider-template groups or template names. Changing accounts clears the old
+model choice. Model discovery resolves the selected account's endpoint and
+protocol overrides, not the template defaults, and its result belongs to the
+requesting session deck and account generation even if another tab becomes
+active. Changing account credentials or template configuration invalidates that
+account's cached models. Templates remain an Application Settings concern.
+
+### Agents Catalog
+
+Application Settings has one **Agents** catalog for Main Agent, Researcher,
+Crafter, Aeron, and reusable named agents. Built-in roles can be edited but not
+removed. Named agents can be added, duplicated and removed; removal does not
+terminate running work. Search matches names, roles, models and purposes.
+
+Each editor uses the shared tab strip: **Model**, **Instructions**, and **Tool
+Access**. Model/account selectors use configured connections and discovered
+models. Named agents inherit the role's sampling/capability defaults rather than
+displaying controls the profile cannot persist. Instructions are an actual
+multiline editor, not encoded JSON. Tool access offers role defaults or explicit
+checkboxes; unavailable tools are disabled, and child reporting stays required.
+Configured restrictions also apply to native model-command aliases and cannot
+be bypassed by a model-supplied delegation allow list.
+
+**Apply agent** stages the entity in the preferences draft; **Save** persists
+settings. Invalid names stay in the editor, and closing or changing scopes
+requires an explicit choice before discarding a changed draft. Named profiles
+round-trip through `types.AgentProfileSettings` and session configuration; the
+orchestrator advertises their names/purposes, and delegation resolves their
+role, model/account, instructions and restrictions.
+
 Each admitted turn also snapshots the resolved provider, account, and model IDs from
 the exact backend request. That identity is stored on every assistant,
 thinking, and tool display snapshot and restored unchanged on resume. Session
@@ -153,6 +184,11 @@ users may choose automatic denial instead. `ask`, malformed/truncated responses,
 provider errors, timeout, exhausted budget, and stale settings always return to
 human confirmation. No reviewer result creates an “Always allow” grant. Hard
 command blocks apply to synchronous and asynchronous execution before review.
+
+System-path classification protects the filesystem root itself and descendants
+of named system directories such as `/etc` and `/usr`. An absolute path under
+`/tmp` or a user's project is not a system path merely because it begins with
+`/`; normal command classification and approval rules still apply.
 
 Defaults: 8-second timeout, 96 output tokens, 4,096 argument bytes, and 12 reviews
 per root turn; each is configurable within enforced bounds. Transport retries

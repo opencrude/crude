@@ -50,6 +50,9 @@ func TestComposerDraftRoundTripWithDB(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer db.Close()
+	if err := sessiondb.Create(db, sessiondb.SessionMeta{ID: "roundtrip", ProjectPath: t.TempDir(), ProjectName: "test", Model: "test", Provider: "test", CreatedAt: 1}); err != nil {
+		t.Fatal(err)
+	}
 
 	app := newFullTestApp(t)
 	sess := workspace.NewSession("roundtrip", t.TempDir(), db, nil)

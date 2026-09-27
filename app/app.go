@@ -193,6 +193,13 @@ func (a *App) Run() {
 
 	// 7. Wait for exit.
 	t.Wait()
+	// Finish media capture before releasing session resources. Save serializes
+	// with any command still completing after the UI loop has stopped.
+	if prompts.Len() > 0 {
+		if err := prompts.Save(history.DefaultPath()); err != nil {
+			lg.Warn("APP", "history_save_failed", "error", err.Error())
+		}
+	}
 	ws.CloseAllSessions()
 	ws.Close()
 }

@@ -122,7 +122,7 @@ func TestNewSessionWithSavedAccountsOpensMainAgentSelection(t *testing.T) {
 	model := settingsWidgetForTest(t, fw).ModelForTest()
 	mainSelected := false
 	for _, item := range model.CategoryItems() {
-		if item.Label == "Main Agent" && item.Payload == model.SelectedCategory() {
+		if item.Label == "Agents" && item.Payload == model.SelectedCategory() {
 			mainSelected = true
 		}
 	}

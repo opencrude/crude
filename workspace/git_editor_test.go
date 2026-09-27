@@ -185,7 +185,7 @@ func TestAnnotateFileHonorsCancel(t *testing.T) {
 func TestLineHunksRetainReplacementAndAddition(t *testing.T) {
 	before := "a\nb\nc\n"
 	after := "a\nB\nc\nd\n"
-	hunks := lineHunks(before, after)
+	hunks := DocumentHunks(before, after)
 	if len(hunks) != 2 || hunks[0].NewStart != 1 || len(hunks[0].OldLines) != 1 || len(hunks[0].NewLines) != 1 || hunks[1].NewStart != 3 || len(hunks[1].NewLines) != 1 {
 		t.Fatalf("hunks=%#v", hunks)
 	}
@@ -201,14 +201,14 @@ func TestLineAnnotationHonorsDistantAndSeparateHunkCoordinates(t *testing.T) {
 	afterLines[199] = "changed 200"
 	afterLines = append(afterLines[:205], append([]string{"inserted 206"}, afterLines[205:]...)...)
 
-	hunks := lineHunks(strings.Join(beforeLines, "\n")+"\n", strings.Join(afterLines, "\n")+"\n")
+	hunks := DocumentHunks(strings.Join(beforeLines, "\n")+"\n", strings.Join(afterLines, "\n")+"\n")
 	if len(hunks) != 3 || hunks[0].NewStart != 164 || hunks[1].NewStart != 199 || hunks[2].NewStart != 205 {
 		t.Fatalf("hunks=%#v", hunks)
 	}
 }
 
 func TestLineAnnotationRetainsDeletionBoundary(t *testing.T) {
-	hunks := lineHunks("a\nb\nc\nd\n", "a\nd\n")
+	hunks := DocumentHunks("a\nb\nc\nd\n", "a\nd\n")
 	if len(hunks) != 1 || hunks[0].NewStart != 1 || len(hunks[0].OldLines) != 2 || len(hunks[0].NewLines) != 0 {
 		t.Fatalf("hunks=%#v", hunks)
 	}

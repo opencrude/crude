@@ -469,7 +469,7 @@ func (m *App) statusTabItems() []statusoverview.Item {
 	activeAgent := m.AgentMgr.ActiveID()
 	nodes := m.AgentMgr.AllNodes()
 	if len(nodes) > 0 {
-		items = append(items, statusoverview.Item{ID: "group-agents", Label: "Agents", Header: true})
+		items = append(items, statusoverview.Item{ID: "group-agents", Label: fmt.Sprintf("Open Agents (%d)", len(nodes)), Header: true})
 	}
 	for _, node := range nodes {
 		label := node.Label
@@ -516,7 +516,10 @@ func (m *App) statusTabItems() []statusoverview.Item {
 		}
 		compact := ""
 		if hasUsage {
-			compact = usageTurns(agentUsage.Turns, agentUsage.TurnsKnown) + " · " + formatCost(agentUsage.Cost)
+			compact = usageTurns(agentUsage.Turns, agentUsage.TurnsKnown)
+			if agentUsage.Cost.Known {
+				compact += " · " + headerCost(agentUsage.Cost)
+			}
 			if len(agentUsage.Models) > 1 {
 				compact = fmt.Sprintf("%d models · %s", len(agentUsage.Models), compact)
 			}
@@ -524,7 +527,7 @@ func (m *App) statusTabItems() []statusoverview.Item {
 		items = append(items, statusoverview.Item{
 			ID: "agent:" + node.ID, Label: label, Summary: formatAgentState(state), Compact: compact,
 			Active: node.ID == activeAgent && m.EditorState.ActiveView == "", Owner: state.Ref,
-			Subtitle: subtitle, Lines: lines, Usage: m.agentUsageSections(node.ID),
+			Context: model, Subtitle: subtitle, Lines: lines, Usage: m.agentUsageSections(node.ID),
 			PrimaryAction: action, PrimaryLabel: actionLabel, PrimaryEnabled: true,
 		})
 	}
@@ -547,7 +550,7 @@ func (m *App) statusTabItems() []statusoverview.Item {
 	sort.Strings(missing)
 	paths = append(paths, missing...)
 	if len(paths) > 0 {
-		items = append(items, statusoverview.Item{ID: "group-editors", Label: "Editors", Header: true})
+		items = append(items, statusoverview.Item{ID: "group-editors", Label: fmt.Sprintf("Open Files (%d)", len(paths)), Header: true})
 	}
 	for _, path := range paths {
 		tab := m.EditorState.Tabs[path]
@@ -591,6 +594,7 @@ func (m *App) statusTabItems() []statusoverview.Item {
 		items = append(items, statusoverview.Item{
 			ID: "editor:" + path, Label: filepath.Base(path), Summary: summary, Icon: "▤",
 			Subtitle:      path,
+			Compact:       fmt.Sprintf("%d:%d · %d lines", ed.CursorLine()+1, ed.CursorCol()+1, ed.LineCount()),
 			Active:        path == m.EditorState.ActiveView,
 			Owner:         ttypes.ResourceRef{Kind: ttypes.ResourceEditor, ID: path},
 			Lines:         lines,
@@ -628,26 +632,7 @@ func (m *App) statusTabItems() []statusoverview.Item {
 			})
 		}
 	}
-	return compactSingleGroup(items)
-}
-
-func compactSingleGroup(items []statusoverview.Item) []statusoverview.Item {
-	headers := 0
-	for _, item := range items {
-		if item.Header {
-			headers++
-		}
-	}
-	if headers != 1 {
-		return items
-	}
-	out := items[:0]
-	for _, item := range items {
-		if !item.Header {
-			out = append(out, item)
-		}
-	}
-	return out
+	return items
 }
 
 func usageCount(count int, label string) string {
@@ -770,6 +755,18 @@ func (m *App) statusNotificationItems() []statusoverview.Item {
 func (m *App) handleStatusOverviewNavigate(msg statusoverview.NavigateMsg) tea.Cmd {
 	action := msg.Action
 	switch {
+	case strings.HasPrefix(action, "prompt:attachment:"):
+		return m.openHistoricalAttachment(strings.TrimPrefix(action, "prompt:attachment:"))
+	case strings.HasPrefix(action, "prompt:restore:"):
+		if m.Prompts != nil {
+			for _, entry := range m.Prompts.Entries() {
+				if entry.ID == strings.TrimPrefix(action, "prompt:restore:") {
+					m.overlayHost.Close(ui.OverlayPromptHistory)
+					return m.recallPrompt(m.Input.RecallPrompt(entry))
+				}
+			}
+		}
+		return nil
 	case strings.HasPrefix(action, "agent:"):
 		m.restoreAgent(strings.TrimPrefix(action, "agent:"))
 	case strings.HasPrefix(action, "editor:"):
@@ -823,6 +820,9 @@ func (m *App) handleStatusOverviewNavigate(msg statusoverview.NavigateMsg) tea.C
 	if m.termDock != nil {
 		m.termDock.ClosePanel()
 		m.setTermDockFocused(false)
+	}
+	if m.overlayHost != nil {
+		m.overlayHost.Close(ui.OverlayTabStats)
 	}
 	return nil
 }

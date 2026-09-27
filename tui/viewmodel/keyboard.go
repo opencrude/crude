@@ -664,14 +664,14 @@ func (m *App) handleInputEvent(evt any) []tea.Cmd {
 			cmds = append(cmds, m.submitRename(e.Text))
 			return cmds
 		}
-		cmds = append(cmds, m.recordPrompt(e.Text))
+		cmds = append(cmds, m.recordPrompt(e.Text, e.ReferenceIDs...))
 		if agentID := m.activeAgentTabID(); agentID != "" {
 			cmds = append(cmds, m.submitInput(agentID, e.Text, e.ReferenceIDs))
 		} else if m.Feedback != nil {
 			m.Feedback.NotifyError("Message was not sent: no active agent tab")
 		}
 	case input.BtwSubmitEvent:
-		cmds = append(cmds, m.recordPrompt(e.Text))
+		cmds = append(cmds, m.recordPrompt(e.Text, e.ReferenceIDs...))
 		if agentID := m.activeAgentTabID(); agentID != "" {
 			cmds = append(cmds, m.submitBtw(agentID, e.Text, e.ReferenceIDs))
 		} else if m.Feedback != nil {
@@ -679,6 +679,8 @@ func (m *App) handleInputEvent(evt any) []tea.Cmd {
 		}
 	case input.SlashCommandEvent:
 		cmds = append(cmds, m.executeSlashCommand(e.Command))
+	case input.HistoryRecallEvent:
+		cmds = append(cmds, m.recallPrompt(e))
 	case input.SettingsOpenEvent:
 		m.openSessionSettings()
 	case input.RefOpenEvent:

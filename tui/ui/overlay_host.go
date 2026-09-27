@@ -20,6 +20,7 @@ const (
 	OverlayAccountRecovery   OverlayID = "account-recovery"
 	OverlayAgentPrompt       OverlayID = "agent-prompt"
 	OverlayTabStats          OverlayID = "tab-stats"
+	OverlayPromptHistory     OverlayID = "prompt-history"
 	OverlayTreePrompt        OverlayID = "tree-prompt"
 	OverlayTreeDelete        OverlayID = "tree-delete-confirm"
 	OverlayFilePicker        OverlayID = "filepicker"

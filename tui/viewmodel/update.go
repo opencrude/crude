@@ -108,6 +108,10 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case statusoverview.CloseMsg:
+		if m.overlayHost != nil {
+			m.overlayHost.Close(ui.OverlayTabStats)
+			m.overlayHost.Close(ui.OverlayPromptHistory)
+		}
 		if m.termDock != nil {
 			m.termDock.ClosePanel()
 			m.setTermDockFocused(false)
@@ -406,6 +410,19 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		m.applyClipboardAsyncImageStored(msg)
 	case composerDraftLoadedMsg:
 		m.applyComposerDraft(msg)
+	case promptHistoryRestoredMsg:
+		m.applyPromptHistory(msg)
+	case attachmentOpenedMsg:
+		if msg.owner == m.ActiveSession && msg.err != nil {
+			m.Feedback.NotifyError(msg.err.Error())
+		}
+	case promptHistorySavedMsg:
+		if msg.store == m.Prompts {
+			m.syncPromptRecall()
+			if msg.err != nil {
+				m.Feedback.NotifyError("Could not save prompt history: " + msg.err.Error())
+			}
+		}
 	case composerDraftSavedMsg:
 		m.onComposerDraftSaved()
 	case directoryAsyncResultMsg:
@@ -945,8 +962,13 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		m.closeProjectionPanel(projection, sessionSettingsPanelID)
 	case sessionsettings.FetchModelsMsg:
 		request := msg
-		target := m.sessionSettings()
-		fetch := m.PrepareAccountModels(request.ProviderID, request.AccountID, request.BaseURL, request.StandardID)
+		target := request.Target
+		if _, projection := m.sessionProjections.projectionForSettings(target); projection == nil {
+			break
+		}
+		// Resolve the selected account, including its endpoint/protocol overrides.
+		// Template defaults must not overwrite the account during discovery.
+		fetch := m.PrepareAccountModels(request.ProviderID, request.AccountID, "", "")
 		cmds = append(cmds, func() tea.Msg {
 			models, err := fetch()
 			return sessionSettingsModelsResultMsg{target: target, providerID: request.ProviderID, accountID: request.AccountID, generation: request.Generation, models: models, err: err}

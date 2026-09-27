@@ -599,7 +599,15 @@ func (s *Session) systemPromptForModel(multiAgent bool, model string) string {
 	if s.systemPrompts == nil {
 		s.systemPrompts = make(map[string]string)
 	}
-	key := fmt.Sprintf("%t:%s", multiAgent, model)
+	instructions := ""
+	if s.cfg != nil {
+		instructions = s.cfg.GetActiveDefaultCategory().Instructions
+	}
+	catalog := ""
+	if multiAgent {
+		catalog = agentProfileCatalog(s.cfg)
+	}
+	key := fmt.Sprintf("%t:%s:%s:%s", multiAgent, model, instructions, catalog)
 	if prompt, ok := s.systemPrompts[key]; ok {
 		return prompt
 	}
@@ -607,6 +615,10 @@ func (s *Session) systemPromptForModel(multiAgent bool, model string) string {
 	// against; a stale cwd here misdirects the model after a workspace
 	// switch even when execution itself is correctly re-rooted.
 	prompt := agent.BuildSystemPromptForModel(multiAgent, s.WorkDir(), model)
+	if instructions != "" {
+		prompt += "\n\nAdditional user-configured instructions:\n" + instructions
+	}
+	prompt += catalog
 	if !codexio.IsGPT(model) {
 		prompt += fmt.Sprintf("\n<agent_identity>Your name is %s.</agent_identity>", s.agentName)
 	}

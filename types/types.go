@@ -152,6 +152,9 @@ type CategorySettings struct {
 	Inherit            string `json:"inherit,omitempty"`
 	Policy             string
 	Description        string
+	Instructions       string
+	AllowedTools       []string
+	DeniedTools        []string
 	ModelContextWindow int
 	ModelInputPrice    float64
 	ModelOutputPrice   float64
@@ -183,6 +186,38 @@ type AgentsSettings struct {
 	MaxConcurrent int
 	Categories    map[string]CategorySettings
 	Profiles      []ProfileSettings
+	AgentProfiles map[string]AgentProfileSettings `json:"agent_profiles,omitempty"`
+}
+
+// AgentProfileSettings is a named, reusable specialization of a built-in role.
+type AgentProfileSettings struct {
+	Category                 string   `json:"category,omitempty"`
+	Description              string   `json:"description,omitempty"`
+	Model                    string   `json:"model,omitempty"`
+	AccountID                string   `json:"account_id,omitempty"`
+	Instructions             string   `json:"instructions,omitempty"`
+	AllowedTools             []string `json:"allowed_tools,omitempty"`
+	DeniedTools              []string `json:"denied_tools,omitempty"`
+	FileOwnership            []string `json:"file_ownership,omitempty"`
+	ContextCompactionPercent *int     `json:"context_compaction_percent,omitempty"`
+}
+
+func CloneAgentProfiles(source map[string]AgentProfileSettings) map[string]AgentProfileSettings {
+	if source == nil {
+		return nil
+	}
+	out := make(map[string]AgentProfileSettings, len(source))
+	for key, value := range source {
+		value.AllowedTools = append([]string(nil), value.AllowedTools...)
+		value.DeniedTools = append([]string(nil), value.DeniedTools...)
+		value.FileOwnership = append([]string(nil), value.FileOwnership...)
+		if value.ContextCompactionPercent != nil {
+			n := *value.ContextCompactionPercent
+			value.ContextCompactionPercent = &n
+		}
+		out[key] = value
+	}
+	return out
 }
 
 type Settings struct {

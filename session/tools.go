@@ -40,7 +40,7 @@ func (s *Session) newAgent(p *provider.Provider, multiAgent bool, modalities []s
 	a.YoloMode = s.YoloEnabled
 	a.AsyncMgr = s.asyncMgr
 
-	a.FilteredTools = tools.WithModelCommands(tools.ForModel(orchestratorTools(multiAgent), p.Model), p.Model)
+	a.FilteredTools = configuredOrchestratorTools(s.cfg, multiAgent, p.Model)
 
 	a.Policy = safety.DefaultPolicy()
 

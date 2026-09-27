@@ -38,10 +38,9 @@ type RowSpan struct {
 type PaintLine struct {
 	Spans        []RowSpan
 	ANSIFallback bool
-	HeaderRule   bool // Extend the faint message header rule through the chat margins.
-	TextTide     bool // Paint-only animation, independent of Markdown/source caches.
-	TideForward  bool // Confirmed reasoning travels left-to-right; provisional reverses.
-	TideFrame    int
+	HeaderRule   bool    // Extend the faint message header rule through the chat margins.
+	TextTide     bool    // Paint-only animation, independent of Markdown/source caches.
+	TideCenter   float64 // Crest position supplied by the owning presentation state.
 }
 
 // PlainText returns visible text without styling for selection and width math.

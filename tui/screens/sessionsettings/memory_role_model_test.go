@@ -119,8 +119,8 @@ func TestMemoryAgentRoleShowsItsOwnModel(t *testing.T) {
 	if row == nil {
 		t.Fatal("root form missing Memory Agent row")
 	}
-	if len(row.Columns) < 2 || row.Columns[0] != "memory-agent-model" || row.Columns[1] != "ollama-cloud · Memory" {
-		t.Errorf("Memory Agent row shows %v, want model=memory-agent-model provider=ollama-cloud", row.Columns)
+	if len(row.Columns) < 2 || row.Columns[0] != "memory-agent-model" || row.Columns[1] != "Memory" {
+		t.Errorf("Memory Agent row shows %v, want model=memory-agent-model account=Memory", row.Columns)
 	}
 
 	screen.openRole(memoryRole)

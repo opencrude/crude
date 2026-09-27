@@ -159,7 +159,7 @@ func TestEditorAndGitFactsLiveInHeaderNotFooterHints(t *testing.T) {
 	}
 	defer ed.Close()
 	app.EditorState.Editor, app.EditorState.ActiveView = ed, path
-	ed.SetGitAnnotation(ed.Revision(), nil, []editor.GitBlameLine{{Line: 1, Hash: "abcdef123456", ShortHash: "abcdef1", Author: "Ada", When: time.Now().Add(-2 * time.Hour), Subject: "test"}}, false)
+	ed.SetGitAnnotation(ed.Revision(), ed.Value(), nil, []editor.GitBlameLine{{Line: 1, Hash: "abcdef123456", ShortHash: "abcdef1", Author: "Ada", When: time.Now().Add(-2 * time.Hour), Subject: "test"}}, false)
 	app.sourceControl.SetSnapshot(workspace.GitSnapshot{Branch: "main", Ahead: 1, Behind: 2, Changes: []workspace.GitChange{{Path: "one"}, {Path: "two"}}})
 	app.paintShellFrame()
 	header, footer := rowText(app, 0), rowText(app, app.height-1)

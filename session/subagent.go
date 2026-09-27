@@ -1535,6 +1535,9 @@ func (r *SubAgentRunner) resolveProfile(name string, category string, spec *agen
 		cfg = copyConfig(r.session.cfg)
 		r.session.mu.Unlock()
 	}
+	if profile, ok := cfg.Agents.AgentProfiles[name]; ok && profile.Category != "" {
+		category, spec.Category = profile.Category, profile.Category
+	}
 	activeProfile := cfg.Agents.ActiveProfile
 	if activeProfile == "" {
 		activeProfile = "default"
@@ -1563,12 +1566,7 @@ func (r *SubAgentRunner) resolveProfile(name string, category string, spec *agen
 		if spec.PolicyName == "" && catCfg.Policy != "" {
 			spec.PolicyName = catCfg.Policy
 		}
-		if len(spec.AllowedTools) == 0 && len(catCfg.AllowedTools) > 0 {
-			spec.AllowedTools = catCfg.AllowedTools
-		}
-		if len(spec.DeniedTools) == 0 && len(catCfg.DeniedTools) > 0 {
-			spec.DeniedTools = catCfg.DeniedTools
-		}
+		constrainConfiguredTools(spec, catCfg.AllowedTools, catCfg.DeniedTools)
 		if spec.ModelContextWindow == 0 && catCfg.ModelContextWindow > 0 {
 			spec.ModelContextWindow = catCfg.ModelContextWindow
 		}
@@ -1590,6 +1588,9 @@ func (r *SubAgentRunner) resolveProfile(name string, category string, spec *agen
 		if catCfg.Description != "" {
 			instructionsParts = append(instructionsParts, catCfg.Description)
 		}
+		if catCfg.Instructions != "" {
+			instructionsParts = append(instructionsParts, catCfg.Instructions)
+		}
 	}
 
 	if agentProfiles := cfg.Agents.AgentProfiles; agentProfiles != nil {
@@ -1600,15 +1601,7 @@ func (r *SubAgentRunner) resolveProfile(name string, category string, spec *agen
 			if ap.AccountID != "" {
 				spec.AccountID = ap.AccountID
 			}
-			if spec.Instructions == "" && ap.Instructions != "" {
-				spec.Instructions = ap.Instructions
-			}
-			if len(spec.AllowedTools) == 0 && len(ap.AllowedTools) > 0 {
-				spec.AllowedTools = ap.AllowedTools
-			}
-			if len(spec.DeniedTools) == 0 && len(ap.DeniedTools) > 0 {
-				spec.DeniedTools = ap.DeniedTools
-			}
+			constrainConfiguredTools(spec, ap.AllowedTools, ap.DeniedTools)
 			if len(spec.FileOwnership) == 0 && len(ap.FileOwnership) > 0 {
 				spec.FileOwnership = ap.FileOwnership
 			}

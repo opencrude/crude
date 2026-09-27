@@ -126,15 +126,21 @@ func (m *App) syncAgentStatusEvent(evt types.AgentEventMsg) {
 	case "question":
 		snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = ttypes.AgentQuestion, "Needs answer", true
 	case "safety_alert":
-		detail := "Safety policy blocked an operation"
+		detail := "Command safety warning"
+		severity := ttypes.SeverityWarning
 		if values, ok := evt.Data.(map[string]any); ok {
 			if reason, _ := values["reason"].(string); reason != "" {
 				detail = reason
 			}
+			if risk, _ := values["risk"].(string); risk == "blocked" {
+				severity = ttypes.SeverityCritical
+			}
 		}
-		snapshot.Detail, snapshot.NeedsAction = detail, true
-		center.SetIssue(ttypes.IssueSnapshot{ID: "safety:" + evt.AgentID, Owner: snapshot.Ref, Severity: ttypes.SeverityCritical, Summary: detail, Detail: detail})
-		center.Notify(ttypes.NotificationRecord{DedupKey: "safety:" + evt.AgentID, Owner: snapshot.Ref, Severity: ttypes.SeverityCritical, Source: "safety", Summary: detail, Detail: detail})
+		// This event records a command assessment, not a pending decision or
+		// an agent phase. Permission prompts own NeedsAction; Notices retains
+		// the warning without replacing subsequent work or terminal status.
+		center.Notify(ttypes.NotificationRecord{DedupKey: "safety:" + evt.AgentID, Owner: snapshot.Ref, Severity: severity, Source: "safety", Summary: detail, Detail: detail})
+		return
 	case "retry":
 		snapshot.Phase, snapshot.Detail = ttypes.AgentRetrying, "Retrying provider request"
 		if values, ok := evt.Data.(map[string]any); ok {
@@ -257,7 +263,7 @@ func (m *App) syncAgentStatusInventory() {
 		blocked := node.State.PendingBlockID != "" && node.State.PendingPermTag == ""
 		question := blocked && status.Phase == ttypes.AgentQuestion
 		approval := blocked && !question && !m.agentYoloEnabled(node.ID)
-		status.NeedsAction = question || approval || node.State.SafetyAlert != ""
+		status.NeedsAction = question || approval
 		switch {
 		case node.State.Cancelling:
 			status.Phase, status.Detail = ttypes.AgentCancelling, "Stopping"
@@ -266,8 +272,6 @@ func (m *App) syncAgentStatusInventory() {
 			status.Phase, status.Detail = ttypes.AgentQuestion, "Needs answer"
 		case approval:
 			status.Phase, status.Detail = ttypes.AgentApproval, "Needs approval"
-		case node.State.SafetyAlert != "":
-			status.Detail = node.State.SafetyAlert
 		case node.State.Completed && status.Phase != ttypes.AgentCancelled && status.Phase != ttypes.AgentFailed:
 			status.Phase, status.Detail = ttypes.AgentCompleted, "Completed"
 		case !node.State.IsActive() && status.Phase != ttypes.AgentCompleted && status.Phase != ttypes.AgentCancelled && status.Phase != ttypes.AgentFailed:

@@ -246,7 +246,7 @@ func (pt *PieceTable) Insert(pos Position, text []byte) (EditInfo, error) {
 
 	if len(pt.pieces) == 1 && pt.pieces[0].length == 0 {
 		pt.add = append(pt.add, text...)
-		pt.pieces[0] = piece{buffer: addBuffer, start: 0, length: len(text)}
+		pt.pieces = []piece{{buffer: addBuffer, start: 0, length: len(text)}}
 		pt.revision++
 		pt.recordLineChange(pos.Line, pos.Line, bytes.Count(text, []byte{'\n'}))
 		pt.invalidateCache()

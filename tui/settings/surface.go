@@ -74,6 +74,7 @@ type WorkspaceSettingsSurface struct {
 	accountAuthBar    *ui.ActionBar
 	accountScroll     *ui.ScrollbarControl
 	form              *ui.Form
+	agents            *agentCatalog
 	reset             *ui.ActionBar
 	actions           *ui.ActionBar
 	listScroll        *ui.ScrollbarControl
@@ -124,6 +125,7 @@ func NewSurface(th *theme.Theme, model *Model) *WorkspaceSettingsSurface {
 	s.form = ui.NewForm(WorkspaceSettingsFormID, nil, "", "", tokens)
 	s.form.SetFieldGap(1)
 	s.form.SetArrowExitsForm(true)
+	s.agents = newAgentCatalog(s)
 	s.listScroll = ui.NewScrollbarControl(WorkspaceSettingsListScrollID, s.categories.list.Scroll(), tokens)
 	s.listScroll.SetSurfaceBackground(ui.ColorPopupBg)
 	s.formScroll = ui.NewScrollbarControl(WorkspaceSettingsFormScrollID, s.form.Scroll(), tokens)
@@ -208,6 +210,10 @@ func (s *WorkspaceSettingsSurface) providersOpen() bool {
 	return s.model != nil && s.model.Scope() == types.SettingsScopeApplication && s.model.SelectedCategory() == catProviders
 }
 
+func (s *WorkspaceSettingsSurface) agentsOpen() bool {
+	return s.model != nil && s.model.SelectedCategory() == catAgents
+}
+
 func (s *WorkspaceSettingsSurface) syncTemplateControls() {
 	if s.model == nil {
 		return
@@ -265,7 +271,7 @@ func (s *WorkspaceSettingsSurface) Children() []ui.Component {
 	// The form keeps its Host identity even while a table owns the content
 	// area. This lets a category switch focus its first input before the next
 	// frame's layout, without painting or hit-testing an empty form over rows.
-	children := []ui.Component{s.scope, s.search, s.categories, s.form}
+	children := []ui.Component{s.scope, s.search, s.categories, s.form, s.agents}
 	switch {
 	case s.providersOpen() && s.model.providerEditor != nil:
 		children = append(children, s.templateEditorBar)
@@ -289,13 +295,13 @@ func (s *WorkspaceSettingsSurface) Children() []ui.Component {
 	if s.reset != nil {
 		children = append(children, s.reset)
 	}
-	if (!s.accountsOpen() || s.model.accountEditor == nil) && (!s.providersOpen() || s.model.providerEditor == nil) {
+	if (!s.accountsOpen() || s.model.accountEditor == nil) && (!s.providersOpen() || s.model.providerEditor == nil) && (s.agents.draft == nil) {
 		children = append(children, s.actions)
 	}
 	if s.listScroll != nil && s.listScroll.Needed() {
 		children = append(children, s.listScroll)
 	}
-	if s.formScroll != nil && s.formScroll.Needed() && (!s.accountsOpen() || s.model.accountEditor != nil) && (!s.providersOpen() || s.model.providerEditor != nil) {
+	if s.formScroll != nil && s.formScroll.Needed() && !s.agentsOpen() && (!s.accountsOpen() || s.model.accountEditor != nil) && (!s.providersOpen() || s.model.providerEditor != nil) {
 		children = append(children, s.formScroll)
 	}
 	if s.divider != nil {
@@ -305,6 +311,9 @@ func (s *WorkspaceSettingsSurface) Children() []ui.Component {
 }
 func (s *WorkspaceSettingsSurface) SetTokens(tokens *ui.TokenSet) {
 	s.tokens = tokens
+	if s.agents != nil {
+		s.agents.SetTokens(tokens)
+	}
 	if s.scope != nil {
 		s.scope.SetTokens(tokens)
 	}
@@ -382,10 +391,20 @@ func (s *WorkspaceSettingsSurface) SetFocusHandler(fn func(ui.ComponentID)) { s.
 func (s *WorkspaceSettingsSurface) FocusScope()                             { s.focusID(WorkspaceSettingsScopeID) }
 func (s *WorkspaceSettingsSurface) FocusSearch()                            { s.focusID(WorkspaceSettingsSearchID) }
 func (s *WorkspaceSettingsSurface) FocusCategories()                        { s.focusID(WorkspaceSettingsListID) }
-func (s *WorkspaceSettingsSurface) FocusForm()                              { s.focusID(WorkspaceSettingsFormID) }
-func (s *WorkspaceSettingsSurface) FocusAccountList()                       { s.focusID(WorkspaceSettingsAccountsID) }
-func (s *WorkspaceSettingsSurface) FocusAccountFilter()                     { s.focusID(WorkspaceSettingsAccountFilterID) }
-func (s *WorkspaceSettingsSurface) FocusTemplates()                         { s.focusID(WorkspaceSettingsTemplatesID) }
+func (s *WorkspaceSettingsSurface) FocusForm() {
+	if s.agentsOpen() {
+		if s.agents.draft != nil {
+			s.focusID(s.agents.form.ID())
+		} else {
+			s.focusID(s.agents.filter.ID())
+		}
+		return
+	}
+	s.focusID(WorkspaceSettingsFormID)
+}
+func (s *WorkspaceSettingsSurface) FocusAccountList()   { s.focusID(WorkspaceSettingsAccountsID) }
+func (s *WorkspaceSettingsSurface) FocusAccountFilter() { s.focusID(WorkspaceSettingsAccountFilterID) }
+func (s *WorkspaceSettingsSurface) FocusTemplates()     { s.focusID(WorkspaceSettingsTemplatesID) }
 func (s *WorkspaceSettingsSurface) FocusTemplateFilter() {
 	s.focusID(WorkspaceSettingsTemplateFilterID)
 }
@@ -430,10 +449,9 @@ func (s *WorkspaceSettingsSurface) ShowAccountSetup() {
 
 func (s *WorkspaceSettingsSurface) ShowMainAgent() {
 	s.model.SetScope(types.SettingsScopeApplication)
-	s.model.SelectCategory(catMain)
+	s.model.SelectCategory(catAgents)
 	s.syncModel()
-	s.form.FocusFirst()
-	s.FocusForm()
+	s.agents.begin("role/default", false)
 }
 func (s *WorkspaceSettingsSurface) FocusReset() {
 	if s.reset != nil {
@@ -479,6 +497,21 @@ func (s *WorkspaceSettingsSurface) PaneTitle() string {
 	if s.model == nil {
 		return ""
 	}
+	if s.agentsOpen() {
+		if s.agents.draft == nil {
+			return "Agents"
+		}
+		label := s.agents.id
+		if label == "" {
+			label = "New agent"
+		}
+		for _, role := range agentRoles {
+			if s.agents.roleIndex == role.index {
+				label = role.label
+			}
+		}
+		return "Agents" + sep + label
+	}
 	if s.model.accountEditor != nil {
 		action := "Edit account"
 		if s.model.accountEditor.isNew {
@@ -514,6 +547,7 @@ func (s *WorkspaceSettingsSurface) syncModel() {
 	if s.model == nil {
 		return
 	}
+	s.agents.syncModel()
 	s.search.field.SetValue(s.model.searchText())
 	s.categories.syncItems()
 	s.accounts.syncRows()
@@ -531,7 +565,11 @@ func (s *WorkspaceSettingsSurface) refreshForm() {
 		return
 	}
 	category := s.model.categories[s.model.selected]
-	s.form.SetForm(category.Form, "", "")
+	if s.agentsOpen() {
+		s.form.SetForm(nil, "", "")
+	} else {
+		s.form.SetForm(category.Form, "", "")
+	}
 	if s.accountsOpen() {
 		s.accounts.syncRows()
 		s.syncAccountControls()
@@ -662,7 +700,12 @@ func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	}
 	// One authoritative viewport height per layout. Laying out the full form
 	// first would clamp away a scrollbar drag before the shorter tab body ran.
-	if s.accountsOpen() && s.model.accountEditor == nil || s.providersOpen() && s.model.providerEditor == nil {
+	if s.agentsOpen() {
+		s.agents.Layout(ctx, ui.Rect{X: formX, Y: topPad, W: formW, H: r.H - topPad})
+	} else {
+		s.agents.Layout(ctx, ui.Rect{})
+	}
+	if s.agentsOpen() || s.accountsOpen() && s.model.accountEditor == nil || s.providersOpen() && s.model.providerEditor == nil {
 		s.form.Layout(ctx, ui.Rect{})
 	} else {
 		s.form.Layout(ctx, formRect)
@@ -674,7 +717,7 @@ func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	} else if s.listScroll != nil {
 		s.listScroll.Layout(ctx, ui.Rect{})
 	}
-	if s.formScroll != nil && (!s.accountsOpen() || s.model.accountEditor != nil) && (!s.providersOpen() || s.model.providerEditor != nil) && s.formScroll.Needed() {
+	if !s.agentsOpen() && s.formScroll != nil && (!s.accountsOpen() || s.model.accountEditor != nil) && (!s.providersOpen() || s.model.providerEditor != nil) && s.formScroll.Needed() {
 		barW := min(ui.ScrollbarWidth+1, formRect.W)
 		s.form.Layout(ctx, ui.Rect{X: formRect.X, Y: formRect.Y, W: max(1, formRect.W-barW), H: formRect.H})
 		s.formScroll.Layout(ctx, ui.Rect{X: formRect.X + formRect.W - barW, Y: formRect.Y, W: barW, H: formRect.H})
@@ -1126,6 +1169,13 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 		s.FocusScope()
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	case "settings.save":
+		if s.agents.draft != nil {
+			s.model.SelectCategory(catAgents)
+			s.agents.notice = "Apply or discard the agent draft before saving settings."
+			s.syncModel()
+			s.FocusForm()
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
+		}
 		if s.model.accountBusy || s.model.accountEditor != nil || s.model.providerEditor != nil {
 			return ui.EventResult{Handled: true}
 		}
@@ -1133,6 +1183,9 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 			return SaveMsg{Scope: s.model.Scope(), AppSettings: s.model.AppSettings(), Overrides: s.model.Overrides()}
 		}}
 	case "settings.reset":
+		if s.agents.draft != nil {
+			return s.agents.back()
+		}
 		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return ResetSectionMsg{Key: s.model.currentOverrideKey()} }}
 	case "settings.scope":
 		id, _ := action.Payload.(string)
@@ -1142,6 +1195,13 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 		}
 		if s.model.Scope() == next {
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+		}
+		if s.agents.draft != nil {
+			if s.agents.dirty() {
+				s.model.nextScope = next
+				return s.agents.back()
+			}
+			s.agents.closeDraft()
 		}
 		if s.model.providerEditor != nil || s.model.accountEditor != nil {
 			var result ui.EventResult
@@ -1340,6 +1400,11 @@ func (s *WorkspaceSettingsSurface) cancelAccountEdit() ui.EventResult {
 }
 
 func (s *WorkspaceSettingsSurface) cancelSettings() ui.EventResult {
+	if s.agents.draft != nil {
+		s.model.SelectCategory(catAgents)
+		s.syncModel()
+		return s.agents.back()
+	}
 	if s.model.accountBusy {
 		return ui.EventResult{Handled: true}
 	}

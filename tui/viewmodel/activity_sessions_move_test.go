@@ -77,8 +77,23 @@ func TestPreviousSessionsResumeDirectlyInsideWorkspace(t *testing.T) {
 			} else {
 				result = app.rootHost.Handle(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
 			}
-			if !result.Handled || result.Cmd == nil {
-				t.Fatalf("session row did not activate: %+v", result)
+			if !result.Handled || result.Cmd != nil {
+				t.Fatalf("session row must expand without resuming: %+v", result)
+			}
+			app.paintShellFrame()
+			if keyboard {
+				app.rootHost.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
+				result = app.rootHost.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+			} else {
+				for row := 0; row < app.height-2; row++ {
+					if col := strings.Index(rowText(app, row), "Resume session"); col >= 0 {
+						result = app.rootHost.Handle(tea.MouseClickMsg{X: col, Y: row, Button: tea.MouseLeft})
+						break
+					}
+				}
+			}
+			if result.Cmd == nil {
+				t.Fatal("expanded session has no usable Resume action")
 			}
 			msg, ok := result.Cmd().(statusoverview.NavigateMsg)
 			if !ok || msg.Action != "session:resume:saved-session" {

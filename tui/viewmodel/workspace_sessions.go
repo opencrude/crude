@@ -10,6 +10,7 @@ import (
 	"crude/sessiondb"
 	"crude/tui/screens/sessionpicker"
 	"crude/tui/screens/statusoverview"
+	"crude/tui/ui"
 	"crude/workspace"
 )
 
@@ -47,37 +48,45 @@ func (m *App) workspaceSessionItems() []statusoverview.Item {
 	if cache.err != nil {
 		return append(items, statusoverview.Item{ID: "sessions-error", Label: "Unable to load previous sessions", Summary: "Reopen Workspace to retry", Header: true})
 	}
-	if len(cache.sessions) == 0 {
+	sessions := make([]sessiondb.SessionMeta, 0, len(cache.sessions))
+	for _, meta := range cache.sessions {
+		if m.SessionsByID[meta.ID] == nil {
+			sessions = append(sessions, meta)
+		}
+	}
+	if len(sessions) == 0 {
 		return append(items, statusoverview.Item{ID: "sessions-empty", Label: "No previous sessions yet", Header: true})
 	}
-	live := m.sessionLiveInfos(cache.sessions)
-	for _, group := range sessionpicker.BuildSessionGroups(cache.sessions) {
+	items[0].Label = fmt.Sprintf("Previous Sessions (%d)", len(sessions))
+	live := m.sessionLiveInfos(sessions)
+	for _, group := range sessionpicker.BuildSessionGroups(sessions) {
 		items = append(items, statusoverview.Item{ID: "sessions-date:" + group.Label, Label: group.Label, Header: true})
 		for _, meta := range group.Sessions {
 			label := firstNonempty(meta.FirstPrompt.String, meta.LastPrompt.String, meta.ProjectName, "Untitled session")
 			label = strings.Join(strings.Fields(label), " ")
-			if meta.AgentName.String != "" {
-				label = meta.AgentName.String + " — " + label
-			}
 			info := live[meta.ID]
 			state := "saved"
 			if info.Status != sessionpicker.StatusTerminated {
 				state = info.Status.String()
 			}
-			parts := []string{state, fmt.Sprintf("%d prompts", meta.TurnCount)}
+			parts := []string{fmt.Sprintf("%d prompts", meta.TurnCount)}
 			if info.SubAgents > 0 {
 				parts = append(parts, fmt.Sprintf("%d sub-agents", info.SubAgents))
-			}
-			if meta.Model != "" {
-				parts = append(parts, meta.Model)
 			}
 			if meta.CreatedAt > 0 {
 				parts = append(parts, time.Unix(0, meta.CreatedAt).Format("15:04"))
 			}
 			items = append(items, statusoverview.Item{
-				ID: "session:" + meta.ID, Label: label, Summary: strings.Join(parts, " · "),
-				Subtitle:       strings.Join([]string{meta.ID, meta.Provider, meta.LastPrompt.String}, " "),
-				ActivateAction: "session:resume:" + meta.ID,
+				ID: "session:" + meta.ID, Label: firstNonempty(meta.AgentName.String, "Session"), Summary: state,
+				Context: label, Compact: strings.Join(parts, " · "),
+				Lines: []statusoverview.DetailLine{
+					{Label: "First prompt", Value: meta.FirstPrompt.String},
+					{Label: "Last prompt", Value: meta.LastPrompt.String},
+					{Label: "Model", Value: meta.Model, Role: ui.ColorMuted},
+					{Label: "Created", Value: time.Unix(0, meta.CreatedAt).Format("2006-01-02 15:04"), Role: ui.ColorMuted},
+					{Label: "Session ID", Value: meta.ID, Role: ui.ColorMuted},
+				},
+				PrimaryAction: "session:resume:" + meta.ID, PrimaryLabel: "Resume session", PrimaryEnabled: true,
 			})
 		}
 	}

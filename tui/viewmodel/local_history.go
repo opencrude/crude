@@ -3,13 +3,12 @@ package viewmodel
 import (
 	"context"
 	"fmt"
-	"os/exec"
 	"path/filepath"
-	"runtime"
 	"slices"
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/fileio"
 	"crude/localhistory"
 	historyscreen "crude/tui/screens/localhistory"
 	"crude/tui/ui"
@@ -227,16 +226,7 @@ func (m *App) openHistoryLocationCmd() tea.Cmd {
 	}
 	path := m.LocalHistory.Root()
 	return func() tea.Msg {
-		var cmd *exec.Cmd
-		switch runtime.GOOS {
-		case "darwin":
-			cmd = exec.Command("open", path)
-		case "windows":
-			cmd = exec.Command("explorer.exe", path)
-		default:
-			cmd = exec.Command("xdg-open", path)
-		}
-		if err := cmd.Run(); err != nil {
+		if err := fileio.OpenDesktopPath(path, false); err != nil {
 			return historyOperationMsg{Error: "Open history folder: " + err.Error()}
 		}
 		return historyOperationMsg{Label: "Opened local history folder"}

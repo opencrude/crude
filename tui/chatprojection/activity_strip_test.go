@@ -1,10 +1,14 @@
 package chatprojection
 
 import (
+	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
+	"crude/tui/cell"
+	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/types"
@@ -117,18 +121,18 @@ func TestActivityStripNeverAppliesSummaryTreatmentToRawOrUnknown(t *testing.T) {
 	}
 	view.ThinkingDisplay.Kind = reasoning.Provisional
 	strip.Update(view, 100, th, tokens)
-	if line := strip.Line(200); !line.TextTide || line.TideForward || !strings.Contains(line.PlainText(), "Thinking ▸ · Measured summary") {
+	if line := strip.Line(200); !line.TextTide || !strings.Contains(line.PlainText(), "Thinking ▸ · Measured summary") {
 		t.Fatalf("unclassified first request was not safely previewed: %+v", line)
 	}
 	view.ThinkingDisplay.Kind = reasoning.InferredSummary
 	view.TideForward = true
 	strip.Update(view, 100, th, tokens)
 	line := strip.Line(300)
-	if !line.TideForward || !strings.Contains(line.PlainText(), "Reasoning ▸ · Measured summary") {
+	if !line.TextTide || !strings.Contains(line.PlainText(), "Reasoning ▸ · Measured summary") {
 		t.Fatalf("settling the same thought did not switch direction: %+v", line)
 	}
 	for _, span := range line.Spans {
-		if span.Text != "" && (span.Role != ui.ColorMuted || span.FGSet) {
+		if span.Text != "" && (span.Role != ui.ColorActivityText || span.FGSet) {
 			t.Fatalf("thinking preview used foreground-white Markdown ink: %+v", span)
 		}
 	}
@@ -136,8 +140,90 @@ func TestActivityStripNeverAppliesSummaryTreatmentToRawOrUnknown(t *testing.T) {
 	view.ThinkingDisplay = reasoning.Display{}
 	view.Status.Phase, view.Status.Detail = types.AgentTool, "Running tools"
 	strip.Update(view, 100, th, tokens)
-	if after := strip.Line(400); !after.TideForward || !after.TextTide {
+	line = strip.Line(400)
+	if after := strip.Line(416); !after.TextTide || after.TideCenter <= line.TideCenter {
 		t.Fatalf("direction reset before the active turn settled: %+v", after)
+	}
+}
+
+func TestActivityStripStoppedPlansStayStill(t *testing.T) {
+	th := theme.DefaultDark()
+	tokens := ui.NewTokenSet(th)
+	for _, width := range []int{40, 120} {
+		for _, phase := range []types.AgentPhase{types.AgentCancelling, types.AgentCancelled, types.AgentIdle, types.AgentCompleted, types.AgentFailed, types.AgentRetrying} {
+			t.Run(fmt.Sprintf("%s/%d", phase, width), func(t *testing.T) {
+				var strip ActivityStrip
+				p := &activity.Plan{ID: "plan", Status: "active", Total: 3, Objective: "Polish the activity presentation",
+					Current: []activity.Step{{Number: 1, Status: "in_progress", Text: "Smooth the animation"}},
+					Next:    &activity.Step{Number: 2, Text: "Verify the stopped plan and goal strip"}}
+				view := types.AgentActivityView{Active: true, TideForward: true, Plan: p,
+					Status: types.AgentStatusSnapshot{Phase: types.AgentTool, Detail: "Working"}}
+				strip.Update(view, width, th, tokens)
+				first := strip.Line(0)
+				if rotated := strip.Line(6100); !rotated.TextTide || rotated.PlainText() == first.PlainText() {
+					t.Fatal("fixture must rotate multiple active plan pages")
+				}
+				view.Active, view.Status.Phase, view.Status.Detail = false, phase, string(phase)
+				view.Status.RetryAt = time.UnixMilli(12000)
+				strip.Update(view, width, th, tokens)
+				paint := func(frame int) []cell.Cell {
+					line := strip.Line(frame)
+					if line.TextTide {
+						t.Fatal("stopped strip still has a light sweep")
+					}
+					if phase == types.AgentCancelled && !strings.HasPrefix(line.PlainText(), "Stopped") {
+						t.Fatalf("stopped plan lacks its lifecycle label: %s", line.PlainText())
+					}
+					buf := surface.NewCellBuffer(width, 1)
+					PaintLineAt(buf, 0, 0, width, line, tokens, 0, 0, false)
+					cells := make([]cell.Cell, width)
+					for x := range cells {
+						cells[x] = buf.Get(x, 0)
+					}
+					return cells
+				}
+				stopped := paint(7000)
+				for _, frame := range []int{7016, 13100, 20100, 100000} {
+					if !reflect.DeepEqual(stopped, paint(frame)) {
+						t.Fatalf("stopped plan changed its painted cells at %d", frame)
+					}
+				}
+				if p.Status != "active" || p.Current[0].Status != "in_progress" {
+					t.Fatal("stopping presentation changed the persisted plan lifecycle")
+				}
+				// The same strip resumes from a quiet entry and rotates again.
+				view.Active, view.Status.Phase, view.Status.Detail = true, types.AgentTool, "Working"
+				strip.Update(view, width, th, tokens)
+				restarted := strip.Line(110000)
+				if !restarted.TextTide || restarted.TideCenter >= 0 {
+					t.Fatal("resumed tide did not enter from outside the text")
+				}
+				if strip.Line(116100).PlainText() == restarted.PlainText() {
+					t.Fatal("plan pages did not resume rotation")
+				}
+			})
+		}
+	}
+}
+
+func TestActivityStripLiveTextKeepsCrestPosition(t *testing.T) {
+	th := theme.DefaultDark()
+	tokens := ui.NewTokenSet(th)
+	var strip ActivityStrip
+	view := types.AgentActivityView{Active: true, TideForward: true, Thinking: "Inspecting state",
+		ThinkingDisplay: reasoning.Display{Kind: reasoning.Summary}, Status: types.AgentStatusSnapshot{Phase: types.AgentThinking}}
+	strip.Update(view, 100, th, tokens)
+	strip.Line(1700000000013)
+	before := strip.Line(1700000001613)
+	view.Thinking += " while more words arrive from the provider"
+	strip.Update(view, 100, th, tokens)
+	after := strip.Line(1700000001613)
+	if after.VisibleWidth() <= before.VisibleWidth() || after.TideCenter != before.TideCenter {
+		t.Fatalf("streamed words moved the crest: %f -> %f", before.TideCenter, after.TideCenter)
+	}
+	strip.Update(view, 45, th, tokens)
+	if resized := strip.Line(1700000001613); resized.TideCenter != before.TideCenter {
+		t.Fatal("resize rephased a visible crest")
 	}
 }
 

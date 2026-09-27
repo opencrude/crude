@@ -35,10 +35,11 @@ const (
 const expandedDetailIndent = 4
 
 type DetailLine struct {
-	Label string
-	Value string
-	Role  ui.SemanticColor
-	Blank bool
+	Action string
+	Label  string
+	Value  string
+	Role   ui.SemanticColor
+	Blank  bool
 }
 
 type UsageSection struct {
@@ -52,6 +53,7 @@ type Item struct {
 	Label    string
 	Summary  string
 	Compact  string
+	Context  string
 	Subtitle string
 	Icon     string
 	Header   bool
@@ -92,7 +94,7 @@ type statusRow struct {
 	Detail       bool
 	Line         DetailLine
 	Continuation bool
-	Compact      bool
+	Action       string
 }
 
 type Surface struct {
@@ -127,7 +129,7 @@ func NewDocked(th *theme.Theme, projection Projection) *Surface {
 }
 
 // NewStats creates the searchable Open Tabs modal. Rows start collapsed and
-// disclose only on a mouse click; no mode strip or action bar is shown.
+// disclose with a click or keyboard; no mode strip or action bar is shown.
 func NewStats(th *theme.Theme, projection Projection) *Surface {
 	return newSurface(th, projection, false, true)
 }
@@ -153,6 +155,8 @@ func newSurface(th *theme.Theme, projection Projection, docked, stats bool) *Sur
 	s.search.field.SetPlaceholder("Search status")
 	if stats {
 		s.search.field.SetPlaceholder("Search open tabs")
+	} else if docked && projection.Active == ViewTabs {
+		s.search.field.SetPlaceholder("Search agents, files and previous sessions")
 	}
 	s.search.field.SetSubmitAction("")
 	searchBG := tokens.Color(ui.ColorPopupSubtleBg)
@@ -226,6 +230,7 @@ func (s *Surface) SetTokens(tokens *ui.TokenSet) {
 
 func (s *Surface) SetFocusHandler(fn func(ui.ComponentID)) { s.focus = fn }
 func (s *Surface) FocusSearch()                            { s.focusID(SearchID) }
+func (s *Surface) SetSearchPlaceholder(text string)        { s.search.field.SetPlaceholder(text) }
 func (s *Surface) FocusList()                              { s.focusID(ListID) }
 func (s *Surface) FocusUtilityActions()                    { s.focusID(UtilityActionsID) }
 func (s *Surface) FocusPrimaryActions()                    { s.focusID(PrimaryActionsID) }
@@ -254,7 +259,7 @@ func (s *Surface) Select(id string) bool {
 		if row.ID != id || !s.list.list.SelectIndex(index) {
 			continue
 		}
-		if !s.stats && s.items[id].ActivateAction == "" {
+		if !s.stats && !s.docked && s.items[id].ActivateAction == "" {
 			s.expanded[id] = true
 		}
 		s.syncItems(true)
@@ -268,7 +273,11 @@ func (s *Surface) Selected() (Item, bool) {
 	if !ok {
 		return Item{}, false
 	}
-	item, ok := s.items[row.ID]
+	payload, ok := row.Payload.(statusRow)
+	if !ok {
+		return Item{}, false
+	}
+	item, ok := s.items[payload.ItemID]
 	return item, ok
 }
 
@@ -293,8 +302,6 @@ func (s *Surface) syncItems(stable bool) {
 		rows = append(rows, ui.ListItem{ID: item.ID, Label: item.Label, Detail: item.Summary, Icon: item.Icon, Payload: statusRow{ItemID: item.ID}})
 		if item.ActivateAction == "" && s.expanded[item.ID] {
 			rows = s.appendExpandedRows(rows, item)
-		} else if item.Subtitle != "" {
-			rows = append(rows, ui.ListItem{ID: item.ID + "/compact", Disabled: true, Label: item.Subtitle, Detail: item.Compact, Payload: statusRow{ItemID: item.ID, Compact: true}})
 		}
 	}
 	if stable {
@@ -314,6 +321,8 @@ func searchText(item Item) string {
 	text.WriteString(item.Subtitle)
 	text.WriteByte(' ')
 	text.WriteString(item.Compact)
+	text.WriteByte(' ')
+	text.WriteString(item.Context)
 	for _, line := range item.Lines {
 		text.WriteByte(' ')
 		text.WriteString(line.Label)
@@ -334,6 +343,9 @@ func searchText(item Item) string {
 }
 
 func (s *Surface) appendExpandedRows(rows []ui.ListItem, item Item) []ui.ListItem {
+	if (s.docked || s.stats) && item.PrimaryAction != "" && item.PrimaryEnabled {
+		rows = append(rows, ui.ListItem{ID: item.ID + "/open", Label: item.PrimaryLabel, Command: true, Payload: statusRow{ItemID: item.ID, Action: item.PrimaryAction}})
+	}
 	lines := make([]DetailLine, 0, len(item.Lines)+8)
 	if item.Subtitle != "" {
 		lines = append(lines, DetailLine{Value: item.Subtitle, Role: ui.ColorMuted})
@@ -385,16 +397,21 @@ func (s *Surface) appendExpandedRows(rows []ui.ListItem, item Item) []ui.ListIte
 			}
 			rows = append(rows, ui.ListItem{
 				ID:       item.ID + "/detail/" + strconv.Itoa(detailIndex),
-				Disabled: true,
-				Payload:  statusRow{ItemID: item.ID, Detail: true, Line: visual, Continuation: partIndex > 0 && line.Label != ""},
+				Disabled: line.Action == "", Command: line.Action != "",
+				Payload: statusRow{ItemID: item.ID, Action: line.Action, Detail: true, Line: visual, Continuation: partIndex > 0 && line.Label != ""},
 			})
 			detailIndex++
 		}
 	}
-	return append(rows, ui.ListItem{ID: item.ID + "/detail/end", Spacer: true})
+	return rows
 }
 
 func (s *Surface) toggleSelected(expandOnly, collapseOnly bool) (bool, tea.Cmd) {
+	if row, ok := s.list.list.Selected(); ok {
+		if payload, ok := row.Payload.(statusRow); ok && payload.Action != "" && !expandOnly && !collapseOnly {
+			return true, func() tea.Msg { return NavigateMsg{Item: s.items[payload.ItemID], Action: payload.Action} }
+		}
+	}
 	item, ok := s.Selected()
 	if !ok {
 		return false, nil
@@ -521,8 +538,8 @@ func (s *Surface) paintStatusRow(buf *surface.CellBuffer, x, y, width int, item 
 		}
 		ui.FillRect(buf, 0, 0, ui.Rect{X: x, Y: y, W: width, H: 1}, cell.BlankCell(bg))
 	}
-	if payload.Compact {
-		paintStatusMainLine(buf, x+expandedDetailIndent, y, max(0, width-expandedDetailIndent), item.Label, item.Detail, muted, muted, bg, 0)
+	if payload.Action != "" && !payload.Detail {
+		buf.WriteString(x+expandedDetailIndent, y, rendering.TruncateVisual("[ "+item.Label+" ]", max(0, width-expandedDetailIndent), "…"), tokens.Color(ui.ColorAccent), bg, cell.AttrBold)
 		return
 	}
 	if payload.Detail {
@@ -539,7 +556,12 @@ func (s *Surface) paintStatusRow(buf *surface.CellBuffer, x, y, width int, item 
 			buf.WriteString(valueX, y, padVisual(label, labelW), tokens.Color(ui.ColorMuted), bg, 0)
 			valueX += labelW
 		}
-		buf.WriteString(valueX, y, rendering.TruncateVisual(payload.Line.Value, max(0, x+width-valueX), "…"), tokens.Color(role), bg, 0)
+		attr := cell.Attrs(0)
+		if payload.Action != "" {
+			attr = cell.AttrUnderline
+			role = ui.ColorAccent2
+		}
+		buf.WriteString(valueX, y, rendering.TruncateVisual(payload.Line.Value, max(0, x+width-valueX), "…"), tokens.Color(role), bg, attr)
 		return
 	}
 	attr := cell.Attrs(0)
@@ -563,8 +585,30 @@ func (s *Surface) paintStatusRow(buf *surface.CellBuffer, x, y, width int, item 
 	buf.WriteString(x, y, prefix, fg, bg, attr)
 	contentX := x + rendering.VisibleWidth(prefix)
 	contentW := max(0, width-rendering.VisibleWidth(prefix))
-	label := item.Label
-	paintStatusMainLine(buf, contentX, y, contentW, label, item.Detail, fg, muted, bg, attr)
+	entry := s.items[payload.ItemID]
+	metadata := entry.Context
+	if metadata == "" {
+		metadata = entry.Subtitle
+	}
+	if metadata == "" && entry.Compact == "" {
+		paintStatusMainLine(buf, contentX, y, contentW, item.Label, item.Detail, fg, muted, bg, attr)
+		return
+	}
+	// Stable columns keep identity, useful facts and lifecycle on one row.
+	// At narrow widths identity and lifecycle take priority over optional facts.
+	stateW := min(rendering.VisibleWidth(item.Detail), min(22, contentW/3))
+	labelW := min(34, max(10, contentW/4))
+	labelW = min(labelW, max(0, contentW-stateW-2))
+	buf.WriteString(contentX, y, rendering.TruncateVisual(item.Label, labelW, "…"), fg, bg, attr)
+	metaX := contentX + labelW + 2
+	metaW := max(0, contentW-labelW-stateW-4)
+	if entry.Compact != "" && metaW >= 36 {
+		compactW := min(rendering.VisibleWidth(entry.Compact), metaW/2)
+		buf.WriteString(metaX+metaW-compactW, y, rendering.TruncateVisual(entry.Compact, compactW, "…"), muted, bg, 0)
+		metaW -= compactW + 2
+	}
+	buf.WriteString(metaX, y, rendering.TruncateVisual(metadata, metaW, "…"), muted, bg, 0)
+	buf.WriteString(contentX+contentW-stateW, y, rendering.TruncateVisual(item.Detail, stateW, "…"), muted, bg, 0)
 }
 
 func paintStatusMainLine(buf *surface.CellBuffer, x, y, width int, label, detail string, fg, muted, bg cell.Color, attr cell.Attrs) {
@@ -780,28 +824,6 @@ func (l *listControl) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintCon
 	l.list.Paint(buf, ox+l.Bounds().X, oy+l.Bounds().Y, ctx)
 }
 func (l *listControl) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
-	if evt.Kind == ui.EventMouseClick {
-		index := l.list.Scroll().Offset() + ctx.LocalY
-		rows := l.list.Items()
-		if index >= 0 && index < len(rows) {
-			if payload, ok := rows[index].Payload.(statusRow); ok && payload.Compact {
-				for i, row := range rows {
-					if row.ID == payload.ItemID {
-						l.list.Selection().SetIndex(i)
-						break
-					}
-				}
-				changed, cmd := l.owner.toggleSelected(false, false)
-				return ui.EventResult{Handled: changed, Cmd: cmd, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
-			}
-		}
-	}
-	if evt.IsKey() && l.owner.stats {
-		switch evt.Key.Code {
-		case tea.KeyEnter, tea.KeySpace, tea.KeyRight, tea.KeyLeft:
-			return ui.EventResult{Handled: true}
-		}
-	}
 	if evt.IsKey() {
 		switch evt.Key.Code {
 		case tea.KeyRight:

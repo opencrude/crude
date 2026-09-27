@@ -105,10 +105,6 @@ func PaintLineAtBackground(buf *surface.CellBuffer, x, y, maxW int, pl PaintLine
 
 	col := 0
 	curX := x
-	tideWidth := 0
-	if pl.TextTide {
-		tideWidth = pl.VisibleWidth()
-	}
 	for _, span := range pl.Spans {
 		fg := cell.NoColor
 		if span.FGSet {
@@ -144,7 +140,7 @@ func PaintLineAtBackground(buf *surface.CellBuffer, x, y, maxW int, pl PaintLine
 			cellBG := spanBG
 			cellAttr := span.Attr
 			if pl.TextTide {
-				cellFG, cellAttr = ui.TextTide(cellFG, cellAttr, tokens, pl.TideFrame, col, tideWidth, pl.TideForward)
+				cellFG, cellAttr = ui.TextTide(cellFG, cellAttr, tokens, pl.TideCenter, col)
 			}
 			if selStart < selEnd && nextCol > selStart && col < selEnd && tokens != nil {
 				// Text selection is not a focused list row — always Selection.

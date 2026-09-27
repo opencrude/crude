@@ -19,6 +19,14 @@ const (
 func (m Model) Update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Event) {
 	m.thinking = thinking
 	m.blocking = blocking
+	if key, ok := msg.(tea.KeyPressMsg); ok && key.Code == tea.KeyEnter && m.historyLoading {
+		return m, nil, nil
+	}
+	switch msg.(type) {
+	case tea.KeyPressMsg, tea.PasteMsg:
+		m.historyGeneration++
+		m.historyLoading = false
+	}
 
 	if mouseMsg, ok := msg.(tea.MouseMsg); ok {
 		return m.handleMouse(mouseMsg)
@@ -64,7 +72,6 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Eve
 				return m, nil, nil
 			}
 			refIDs := m.ReferencedIDs()
-			m.appendHistory(text)
 			m.input.Clear()
 			m.slashActive = false
 			m.histIdx = -1
@@ -80,16 +87,16 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Eve
 
 		case tea.KeyUp:
 			if m.input.CursorVisualLine() == 0 {
-				m.browseHistoryUp()
-				return m, nil, nil
+				event := m.browseHistoryUp()
+				return m, nil, event
 			}
 			cmd := m.input.Update(msg, false)
 			return m, cmd, nil
 
 		case tea.KeyDown:
 			if m.input.CursorVisualLine() >= m.input.TotalVisualLines()-1 {
-				m.browseHistoryDown()
-				return m, nil, nil
+				event := m.browseHistoryDown()
+				return m, nil, event
 			}
 			cmd := m.input.Update(msg, false)
 			return m, cmd, nil
@@ -254,7 +261,6 @@ func (m Model) updateSlash(msg tea.Msg) (Model, tea.Cmd, Event) {
 		if res.Action != nil && res.Action.ID == "slash.select" {
 			if item, ok := m.slashList.Selected(); ok {
 				cmd := "/" + item.ID
-				m.appendHistory(cmd)
 				m.input.Clear()
 				m.slashActive = false
 				m.histIdx = -1
@@ -265,7 +271,6 @@ func (m Model) updateSlash(msg tea.Msg) (Model, tea.Cmd, Event) {
 		}
 		text := strings.TrimSpace(m.input.Value())
 		if text != "" && strings.HasPrefix(text, "/") {
-			m.appendHistory(text)
 			m.input.Clear()
 			m.slashActive = false
 			m.histIdx = -1
@@ -303,16 +308,6 @@ func (m Model) updateSlash(msg tea.Msg) (Model, tea.Cmd, Event) {
 			m.slashActive = false
 		}
 		return m, cmd, nil
-	}
-}
-
-func (m *Model) appendHistory(text string) {
-	if len(m.history) > 0 && m.history[len(m.history)-1] == text {
-		return
-	}
-	m.history = append(m.history, text)
-	if len(m.history) > 500 {
-		m.history = m.history[len(m.history)-500:]
 	}
 }
 

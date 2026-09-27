@@ -42,12 +42,13 @@ func TestSummaryMarkdownFollowsThemeAndInvalidatesCachedPalette(t *testing.T) {
 func TestTextTidePreservesGraphemesGeometryAndSelection(t *testing.T) {
 	for _, th := range []*theme.Theme{theme.DefaultDark(), theme.DefaultLight()} {
 		tokens := ui.NewTokenSet(th)
-		pl := PaintLine{TextTide: true, Spans: []RowSpan{{Text: "Inspecting e\u0301 🧑‍💻 界 files", Role: ui.ColorMuted}}}
+		pl := PaintLine{TextTide: true, Spans: []RowSpan{{Text: "Inspecting e\u0301 🧑‍💻 界 files", Role: ui.ColorActivityText}}}
+		var motion ui.TextTideMotion
 		var previous *surface.CellBuffer
 		changed := false
-		for frame := 0; frame < 2600; frame += 100 {
+		for frame := 0; frame < 10000; frame += 16 {
 			buf := surface.NewCellBuffer(50, 1)
-			pl.TideFrame = frame
+			pl.TideCenter = motion.Advance(frame, pl.VisibleWidth(), true)
 			PaintLineAt(buf, 0, 0, 50, pl, tokens, 1, 3, false)
 			if previous != nil {
 				for x := 0; x < 50; x++ {
@@ -73,9 +74,11 @@ func BenchmarkTextTidePaint(b *testing.B) {
 	tokens := ui.NewTokenSet(theme.DefaultDark())
 	buf := surface.NewCellBuffer(120, 1)
 	pl := PaintLine{TextTide: true, Spans: []RowSpan{{Text: "Thinking ▸ Inspecting the provider lifecycle and preserving every summary block", Role: ui.ColorMuted}}}
+	var motion ui.TextTideMotion
+	width := pl.VisibleWidth()
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
-		pl.TideFrame = i * 16
+		pl.TideCenter = motion.Advance(i*16, width, true)
 		PaintLineAt(buf, 0, 0, 120, pl, tokens, 0, 0, false)
 	}
 }

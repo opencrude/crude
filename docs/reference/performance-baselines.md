@@ -9,6 +9,28 @@ Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
 Canonical plan: [`docs/plans/tui-component-system-plan.md`](../plans/tui-component-system-plan.md)
 
+## Editor Savepoints And Gutter (2026-09-26)
+
+Measured on Linux/i7-10750H, two isolated runs. Immutable piece-span savepoints
+make a change/revert identity check on a 100,000-line buffer cost 79.6-81.8 ns,
+0 B and 0 allocations (`BenchmarkBufferSavepointManualRoundTripLargeFile`).
+This checks bytes, not a probabilistic hash, and is distinct from the cached
+`Buffer.IsDirty` query.
+
+`BenchmarkImmediateGitGutterLargeFile` measures a real edit plus undo on a
+20,000-line file: 1.66-1.67 ms / 3.59 MB / 91 allocations with a tracked Git
+baseline, versus 1.72-1.97 ms / 3.58 MB / 48 allocations without annotations.
+The untracked-file control measures 2.71-2.79 ms / 5.73 MB / 56 allocations.
+Most allocation remains in existing PieceTable mutation/cache construction;
+ordinary tracked changes re-diff only the affected line window. Full replacement
+and changes touching a large existing hunk may require a larger exact diff.
+
+Known independent gate failure: `BenchmarkDenseChatSingleRowChange_500Msgs`
+reports 3,217 allocations against its 2,740 ceiling. Three isolated runs of
+both untouched commit `a348e22` and this worktree reproduce exactly 3,217
+allocations with `CGO_ENABLED=0`. Its Markdown rendering profile is unrelated to
+the editor/settings/history changes. The ceiling remains unchanged.
+
 ## Purpose
 
 A CPU-hammering regression in a tick-driven TUI is almost never one

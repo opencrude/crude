@@ -257,6 +257,12 @@ func New(th *theme.Theme, current types.AppSettings, presets []types.ProviderPre
 // NewScoped creates a settings model for application or workspace scope.
 func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.ProviderPreset, scope types.SettingsScope, appDefaults types.AppSettings, _ types.WorkspaceOverrides) *Model {
 	types.ApplyAppDefaults(&current)
+	current.Agents.AgentProfiles = types.CloneAgentProfiles(current.Agents.AgentProfiles)
+	categories := make(map[string]types.CategorySettings, len(current.Agents.Categories))
+	for id, value := range current.Agents.Categories {
+		categories[id] = value
+	}
+	current.Agents.Categories = categories
 	appearance := current.Theme
 	editor := current.Editor
 	lsp := current.LSP
@@ -355,6 +361,7 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		)},
 		{Name: "Local History", Group: "IDE", Description: "Automatic project snapshots, retention, and safe restore policy.", Form: m.buildHistoryForm(current.LocalHistory)},
 	}
+	m.categories = append(m.categories, Category{Name: "Agents", Group: "AI", Description: "Built-in roles and reusable named agents.", Form: formModel()})
 	for index := range m.categories {
 		category := index
 		m.categories[index].Form.OnChanged(func(fieldID string) { m.handleFieldChanged(category, fieldID) })
@@ -1010,6 +1017,9 @@ func (m *Model) buildAgentForm(cfg types.CategorySettings, isMain bool) *ui.Form
 		compactionField,
 	)
 	fields = append(fields, m.samplingFields(cfg)...)
+	prompt := ui.TextAreaFieldState("agent-instructions", "System instructions", cfg.Instructions, "Additional instructions. Crude's core safety and reporting rules remain in force.")
+	prompt.Rows = 10
+	fields = append(fields, ui.TextFieldState("agent-description", "Purpose", cfg.Description, "A short description of when to use this agent."), prompt)
 	if isMain {
 		fields = append(fields,
 			ui.SeparatorFieldState("delegation", "Delegation"),
@@ -1350,7 +1360,7 @@ func (m *Model) ProviderIDForTest() string {
 func (m *Model) SelectAccountForTest(id string) { m.selectAccount(id) }
 
 func (m *Model) isAgentCategory(index int) bool {
-	return index == catMain || index == catResearcher || index == catCrafter || index == catAeron
+	return index == catMain || index == catResearcher || index == catCrafter || index == catAeron || index == catAgents
 }
 
 func (m *Model) handleFieldChanged(category int, fieldID string) {
@@ -1764,6 +1774,12 @@ func (m *Model) visibleCategoryIndices() []int {
 	query := strings.ToLower(strings.TrimSpace(m.searchText()))
 	indices := make([]int, 0, len(m.categories))
 	for index, category := range m.categories {
+		if index == catAgents || index == catResearcher || index == catCrafter || index == catAeron {
+			continue
+		}
+		if index == catMain {
+			index, category = catAgents, m.categories[catAgents]
+		}
 		if (index == catAccounts || index == catProviders) && m.Scope() != types.SettingsScopeApplication {
 			continue
 		}
@@ -1802,6 +1818,7 @@ const (
 	catUI
 	catFont
 	catHistory
+	catAgents
 )
 
 func (m *Model) currentOverrideKey() string {
@@ -1988,46 +2005,53 @@ func extraBodyFromForm(value string) map[string]any {
 }
 
 func (m *Model) collectAgents(agents *types.AgentsSettings) {
-	if agents.Categories == nil {
-		agents.Categories = make(map[string]types.CategorySettings)
-	}
+	*agents = *m.agents
+	agents.AgentProfiles = types.CloneAgentProfiles(m.agents.AgentProfiles)
+	agents.Categories = make(map[string]types.CategorySettings)
 	for _, entry := range []struct {
 		index int
 		key   string
 	}{{catMain, "default"}, {catResearcher, "researcher"}, {catCrafter, "crafter"}, {catAeron, "aeron"}} {
-		category := types.CategorySettings{
-			Provider:       m.accounts[m.value(entry.index, fieldConnection)].ProviderID,
-			AccountID:      m.value(entry.index, fieldConnection),
-			Model:          m.value(entry.index, fieldModel),
-			ThinkingEffort: m.value(entry.index, fieldThinkingEffort),
-		}
-		// Registry facts (pricing, tool support) mirror onto the category when
-		// the model entry is known. User-editable capabilities come from the
-		// form, where blank means inherit from the registry at use time.
-		for _, model := range m.models[accountModelKey(category.Provider, category.AccountID)] {
-			if model.ID == category.Model {
-				category.ModelInputPrice, category.ModelOutputPrice, category.ModelCachePrice = model.InputPrice, model.OutputPrice, model.CacheReadPrice
-				category.ModelSupportsTools = model.SupportsTools
-				break
-			}
-		}
-		category.ModelContextWindow = parsePositiveInt(m.value(entry.index, fieldCtxWindow))
-		category.ModelMaxOutput = parsePositiveInt(m.value(entry.index, fieldMaxOutput))
-		for _, modality := range provider.KnownModalities() {
-			if m.value(entry.index, fieldModalityPrefix+modality) == "yes" {
-				category.ModelModalities = append(category.ModelModalities, modality)
-			}
-		}
-		category.ModelTemperature = parseFloatPtr(m.value(entry.index, fieldTemperature))
-		category.ModelTopP = parseFloatPtr(m.value(entry.index, fieldTopP))
-		category.ContextCompactionPercent = parsePercentPtr(m.value(entry.index, fieldContextCompaction))
+		category := m.agentCategoryFromForm(m.categories[entry.index].Form, m.agents.Categories[entry.key])
 		agents.Categories[entry.key] = category
 	}
-	// The main agent form owns the Multi-Agent toggle; mirror it into the
-	// collected agents settings.
 	if field := m.categories[catMain].Form.Field(fieldMultiAgent); field != nil {
 		agents.Enabled = ui.BoolFieldValue(field)
 	}
+}
+
+func (m *Model) agentCategoryFromForm(form *ui.FormModel, category types.CategorySettings) types.CategorySettings {
+	value := func(id string) string {
+		if field := form.Field(id); field != nil {
+			return field.Value.String()
+		}
+		return ""
+	}
+	category.AccountID, category.Model, category.ThinkingEffort = value(fieldConnection), value(fieldModel), value(fieldThinkingEffort)
+	category.Provider = m.accounts[category.AccountID].ProviderID
+	category.Description, category.Instructions = value("agent-description"), value("agent-instructions")
+	// Registry facts (pricing, tool support) mirror onto the category when
+	// the model entry is known. User-editable capabilities come from the
+	// form, where blank means inherit from the registry at use time.
+	for _, model := range m.models[accountModelKey(category.Provider, category.AccountID)] {
+		if model.ID == category.Model {
+			category.ModelInputPrice, category.ModelOutputPrice, category.ModelCachePrice = model.InputPrice, model.OutputPrice, model.CacheReadPrice
+			category.ModelSupportsTools = model.SupportsTools
+			break
+		}
+	}
+	category.ModelContextWindow = parsePositiveInt(value(fieldCtxWindow))
+	category.ModelMaxOutput = parsePositiveInt(value(fieldMaxOutput))
+	category.ModelModalities = nil
+	for _, modality := range provider.KnownModalities() {
+		if value(fieldModalityPrefix+modality) == "yes" {
+			category.ModelModalities = append(category.ModelModalities, modality)
+		}
+	}
+	category.ModelTemperature = parseFloatPtr(value(fieldTemperature))
+	category.ModelTopP = parseFloatPtr(value(fieldTopP))
+	category.ContextCompactionPercent = parsePercentPtr(value(fieldContextCompaction))
+	return category
 }
 
 // parsePositiveInt parses an optional integer field; blank or invalid is 0.

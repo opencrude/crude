@@ -6,6 +6,7 @@ import (
 	"crude/tui/screens/question"
 	ttypes "crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 	"crude/workspace"
 )
 
@@ -49,8 +50,9 @@ func TestBackgroundAgentEventsPreserveSelectedTabAndPromptOwner(t *testing.T) {
 		"risk": "destructive", "reason": "test alert",
 	}})
 	assertSelectedTab(t, app, app.agentTabTitle("other"))
-	if app.AgentMgr.ActiveID() != "other" || app.AgentMgr.Get("root").State.SafetyAlert != "test alert" {
-		t.Fatal("background safety alert changed navigation or lost owner state")
+	notice, ok := app.Status.LatestUnread(types.SeverityWarning)
+	if app.AgentMgr.ActiveID() != "other" || !ok || notice.Owner.ID != "root" || notice.Summary != "test alert" {
+		t.Fatal("background safety alert changed navigation or lost its owning notification")
 	}
 
 	path := openEditorTabs(t, app, "main.go")[0]

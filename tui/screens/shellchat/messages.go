@@ -124,7 +124,7 @@ func (s *Screen) MessageAtLocalY(localY int) (chatprojection.MessageRow, bool) {
 	return row, ok
 }
 
-func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item ui.VirtItem, localRow int, _ ui.ControlState, ctx ui.PaintContext, tokens *ui.TokenSet) {
+func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item ui.VirtItem, localRow int, _ ui.ControlState, _ ui.PaintContext, tokens *ui.TokenSet) {
 	if buf == nil || item.Height < 1 {
 		return
 	}
@@ -152,7 +152,6 @@ func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item 
 		pl = chatprojection.PaintLine{Spans: []chatprojection.RowSpan{{Text: row.Lines[localRow], Role: ui.ColorFg}}}
 	}
 	layout := LayoutRow(s.paintState.compose, pl.VisibleWidth(), paneInfo)
-	pl.TideFrame = ctx.Frame
 	lineX := x + layout.PadLeft
 	if row.ContextBoundary && localRow >= row.ContextBoundaryStart {
 		bg := tokens.Color(ui.ColorBg)

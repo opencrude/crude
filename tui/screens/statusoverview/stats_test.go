@@ -11,7 +11,7 @@ import (
 	"crude/tui/ui"
 )
 
-func TestStatsSearchAndClickOnlyDisclosure(t *testing.T) {
+func TestStatsSingleLineAndKeyboardDisclosure(t *testing.T) {
 	screen := NewStats(theme.DefaultDark(), testProjection())
 	host := ui.NewHost(theme.DefaultDark(), screen)
 	screen.SetFocusHandler(func(id ui.ComponentID) { host.Focus(id) })
@@ -26,21 +26,20 @@ func TestStatsSearchAndClickOnlyDisclosure(t *testing.T) {
 	if !screen.Select("agent:one") || screen.IsExpanded("agent:one") {
 		t.Fatal("selecting the header target must not expand it")
 	}
-	if len(screen.list.list.Items()) != 4 {
-		t.Fatal("collapsed rows must include the first agent's compact identity")
-	}
-	if rows := screen.list.list.Items(); rows[2].Label != "Ollama / glm" {
-		t.Fatalf("compact model identity missing: %+v", rows)
+	if len(screen.list.list.Items()) != 3 {
+		t.Fatal("collapsed entries must occupy exactly one row")
 	}
 	host.Focus(ListID)
-	for _, code := range []rune{tea.KeyEnter, tea.KeySpace, tea.KeyRight, tea.KeyLeft, tea.KeyDown, tea.KeyUp} {
-		host.Handle(tea.KeyPressMsg{Code: code})
-		if screen.IsExpanded("agent:one") || screen.IsExpanded("agent:two") {
-			t.Fatalf("key %v expanded a click-only row", code)
-		}
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyRight})
+	if !screen.IsExpanded("agent:one") {
+		t.Fatal("Right must expand the selected row")
 	}
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyLeft})
 	buf := surface.NewCellBuffer(108, 24)
 	host.Paint(buf)
+	if row := PlainRow(buf, screen.list.Bounds().Y+1, 108); !strings.Contains(row, "One") || !strings.Contains(row, "Ollama / glm") || !strings.Contains(row, "Waiting") {
+		t.Fatalf("compact identity and state must share a row: %q", row)
+	}
 	x, y := -1, -1
 	for row := 0; row < 24; row++ {
 		if col := strings.Index(PlainRow(buf, row, 108), "One"); col >= 0 {

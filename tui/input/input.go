@@ -1,10 +1,11 @@
 package input
 
 import (
+	tea "charm.land/bubbletea/v2"
 	"strings"
 
+	"crude/history"
 	"crude/sessiondb"
-	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -37,10 +38,6 @@ type SettingsOpenEvent struct{}
 
 func (SettingsOpenEvent) event() {}
 
-type HistorySaveEvent struct{ History []string }
-
-func (HistorySaveEvent) event() {}
-
 type AttachFilesEvent struct{}
 
 func (AttachFilesEvent) event() {}
@@ -55,6 +52,7 @@ type CmdInfo struct {
 var availableCmds = []CmdInfo{
 	{Name: "settings", Label: "settings", Desc: "Open session AI settings (models and multi-agent)"},
 	{Name: "model", Label: "model", Desc: "Choose this session's model"},
+	{Name: "history", Label: "history", Desc: "Search and reuse prompts with their attachments"},
 	{Name: "undo", Label: "undo", Desc: "Revert this agent's files; retain conversation history"},
 	{Name: "yolo", Label: "yolo", Desc: "Disable ALL safety checks (DANGEROUS)"},
 	{Name: "sessions", Label: "sessions", Desc: "Browse and resume past sessions"},
@@ -84,9 +82,14 @@ type Model struct {
 	theme                 *theme.Theme
 	tokens                *ui.TokenSet
 	input                 *ui.TextArea
-	history               []string
+	history               []history.Entry
 	histIdx               int
 	histDraft, histPrefix string
+	historyGeneration     uint64
+	historyLoading        bool
+	attachmentOffset      int
+	promptReferenceIDs    map[string]bool
+	histDraftReferenceIDs []string
 
 	slashActive bool
 	slashList   *ui.List
@@ -208,6 +211,9 @@ func (m *Model) ContextHint() string {
 // hides via DismissHint. Callers with a full ActionRegistry should prefer
 // these ActionSeg values.
 func (m *Model) ContextHelpSegments() []ui.HintSegment {
+	if m.historyLoading {
+		return []ui.HintSegment{ui.TextSeg("Restoring prompt and attachments...")}
+	}
 	if !m.showHint {
 		return nil
 	}
@@ -290,20 +296,24 @@ func (m *Model) SetSpinFrame(frame int) {
 	m.spinFrame = frame
 }
 
-func (m *Model) SetHistory(h []string) {
+func (m *Model) SetHistory(h []history.Entry) {
 	m.history = h
 }
 
-func (m Model) History() []string {
+func (m Model) History() []history.Entry {
 	return m.history
 }
 
 func (m *Model) SetInput(s string) {
+	m.promptReferenceIDs = nil
 	m.SetValuePreserveReferences(s)
 	m.syncSlashState()
 }
 
 func (m *Model) ClearInput() {
+	m.promptReferenceIDs = nil
+	m.historyGeneration++
+	m.historyLoading = false
 	m.input.Clear()
 	m.histIdx = -1
 	m.histDraft = ""
@@ -568,7 +578,7 @@ func (m Model) PaintShell(buf *surface.CellBuffer, ox, oy, width, height int, ct
 	y := 1
 	refs := m.activePromptRefs()
 	if len(refs) > 0 && y < height {
-		paintRefChips(buf, ox+pad, oy+y, width-pad*2, refs, m.tokens)
+		m.paintRefChips(buf, ox, oy, width)
 		y++
 	}
 	if y >= height {
@@ -598,6 +608,30 @@ func (m Model) PaintShell(buf *surface.CellBuffer, ox, oy, width, height int, ct
 
 // HandleShell routes mouse/key events that target the shell surface locally.
 func (m *Model) HandleShell(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+	if ctx.LocalY == 1 && len(m.activePromptRefs()) > 0 {
+		if evt.Kind == ui.EventMouseWheel {
+			delta := 1
+			if evt.MouseWheel.Button == tea.MouseWheelUp || evt.MouseWheel.Button == tea.MouseWheelLeft {
+				delta = -1
+			}
+			m.attachmentOffset = max(0, min(len(m.activePromptRefs())-1, m.attachmentOffset+delta))
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+		}
+		if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft {
+			for _, chip := range m.ReferenceChips(m.width) {
+				if chip.Body.Contains(ctx.LocalX, ctx.LocalY) {
+					if chip.ID == "" {
+						m.attachmentOffset = chip.Next
+						return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+					}
+					return ui.EventResult{Handled: true, Action: &ui.Action{ID: "input.attachment.open", Payload: chip.ID}}
+				}
+				if chip.Remove.Contains(ctx.LocalX, ctx.LocalY) {
+					return ui.EventResult{Handled: true, Action: &ui.Action{ID: "input.attachment.remove", Payload: chip.ID}}
+				}
+			}
+		}
+	}
 	if m.showSlashPopup() && m.slashList != nil {
 		b := m.slashList.Bounds()
 		if ctx.LocalY >= b.Y && ctx.LocalY < b.Y+b.H {
@@ -617,40 +651,6 @@ func (m *Model) HandleShell(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		}
 	}
 	return ui.EventResult{}
-}
-
-func paintRefChips(buf *surface.CellBuffer, x, y, width int, refs []sessiondb.Reference, tokens *ui.TokenSet) {
-	if width < 1 {
-		return
-	}
-	bg := tokens.Color(ui.ColorSelection)
-	fg := tokens.Color(ui.ColorAccent2)
-	errC := tokens.Color(ui.ColorError)
-	baseBG := tokens.Color(ui.ColorBg)
-	cx := x
-	remain := width
-	for _, ref := range refs {
-		if !ref.Active() {
-			continue
-		}
-		label := " " + ref.DisplayName() + " "
-		closeMark := "×"
-		need := rendering.VisibleWidth(label) + rendering.VisibleWidth(closeMark)
-		if need+1 > remain {
-			break
-		}
-		buf.WriteString(cx, y, label, fg, bg, 0)
-		cx += rendering.VisibleWidth(label)
-		buf.WriteString(cx, y, closeMark, errC, bg, cell.AttrBold)
-		cx += rendering.VisibleWidth(closeMark)
-		if remain > need+1 {
-			buf.WriteString(cx, y, " ", tokens.Color(ui.ColorFg), baseBG, 0)
-			cx++
-			remain -= need + 1
-		} else {
-			remain -= need
-		}
-	}
 }
 
 func max(a, b int) int {

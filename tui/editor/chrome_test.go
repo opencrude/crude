@@ -289,7 +289,7 @@ func TestGutterAlignsNumbersAndPaintsDeletionBoundaries(t *testing.T) {
 		lines[i] = "line"
 	}
 	ed := NewPreview(theme.DefaultDark(), "gutter.txt", strings.Join(lines, "\n"), 1)
-	ed.SetGitAnnotation(ed.Revision(),
+	setEditorAnnotationForTest(ed, ed.Revision(),
 		[]GitHunk{
 			{OldStart: 4, NewStart: 4, OldLines: []string{"old\n"}},
 			{OldStart: 100, NewStart: 100, OldLines: []string{"gone\n"}},
@@ -320,14 +320,14 @@ func TestGutterAlignsNumbersAndPaintsDeletionBoundaries(t *testing.T) {
 func TestGitHunksShiftAcrossUnrelatedEdits(t *testing.T) {
 	ed := New(theme.DefaultDark())
 	ed.ReplaceDocument(strings.Repeat("line\n", 20))
-	ed.SetGitAnnotation(ed.Revision(), []GitHunk{
+	setEditorAnnotationForTest(ed, ed.Revision(), []GitHunk{
 		{OldStart: 5, NewStart: 5, OldLines: []string{"old\n"}, NewLines: []string{"new\n"}},
 		{OldStart: 15, NewStart: 15, NewLines: []string{"added\n"}},
 	}, nil, false)
 	ed.SetCursorPosition(0, 0)
 	ed.InsertRune('\n')
 	hunks := ed.GitHunks()
-	if len(hunks) != 2 || hunks[0].NewStart != 6 || hunks[1].NewStart != 16 {
+	if len(hunks) != 3 || hunks[0].NewStart != 0 || hunks[1].NewStart != 6 || hunks[2].NewStart != 16 {
 		t.Fatalf("unaffected hunks were not mapped: %#v", hunks)
 	}
 }
@@ -363,7 +363,7 @@ func TestTypingInsideAHunkKeepsItsGutterMarker(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ed.Close()
-	ed.SetGitAnnotation(ed.Revision(), []GitHunk{
+	setEditorAnnotationForTest(ed, ed.Revision(), []GitHunk{
 		{OldStart: 5, NewStart: 5, OldLines: []string{"old\n"}, NewLines: []string{"new\n"}},
 	}, nil, false)
 	if got := gutterRailCharAt(t, ed, 5); got != '▌' {
@@ -405,7 +405,7 @@ func TestAnnotationArrivingMidBurstSurvivesTheNextKeystrokes(t *testing.T) {
 	ed.InsertRune('y')
 	snapshotRevision := ed.Revision() - 2 // the annotation was computed before these keys
 
-	ed.SetGitAnnotation(snapshotRevision, []GitHunk{
+	setEditorAnnotationForTest(ed, snapshotRevision, []GitHunk{
 		{OldStart: 5, NewStart: 5, OldLines: []string{"line\n"}, NewLines: []string{"xyline\n"}},
 	}, nil, false)
 	if got := gutterRailCharAt(t, ed, 5); got != '▌' {
@@ -435,7 +435,7 @@ func TestTypingMarksAnUnchangedLineImmediately(t *testing.T) {
 	}
 	defer ed.Close()
 	// A clean file relative to HEAD: nothing is marked yet.
-	ed.SetGitAnnotation(ed.Revision(), nil, nil, false)
+	setEditorAnnotationForTest(ed, ed.Revision(), nil, nil, false)
 	if got := gutterRailCharAt(t, ed, 5); got != ' ' {
 		t.Fatalf("clean file already marked line 5: %q", got)
 	}
@@ -458,8 +458,8 @@ func TestTypingMarksAnUnchangedLineImmediately(t *testing.T) {
 	if got := gutterRailCharAt(t, ed, 6); got != ' ' {
 		t.Fatalf("mark bled into the line below: %q", got)
 	}
-	if len(ed.gitProvisional) != 1 {
-		t.Fatalf("typing one line left %d claims: %#v", len(ed.gitProvisional), ed.gitProvisional)
+	if len(ed.gitHunks) != 1 {
+		t.Fatalf("typing one line left %d hunks: %#v", len(ed.gitHunks), ed.gitHunks)
 	}
 }
 
@@ -474,7 +474,7 @@ func TestTypingNewLinesMarksThemAsAdded(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ed.Close()
-	ed.SetGitAnnotation(ed.Revision(), nil, nil, false)
+	setEditorAnnotationForTest(ed, ed.Revision(), nil, nil, false)
 
 	ed.SetCursorPosition(ed.LineCount()-1, 0)
 	ed.InsertRune('\n')
@@ -498,14 +498,14 @@ func TestEditingInsideAHunkAddsNoLocalClaim(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ed.Close()
-	ed.SetGitAnnotation(ed.Revision(), []GitHunk{
+	setEditorAnnotationForTest(ed, ed.Revision(), []GitHunk{
 		{OldStart: 4, NewStart: 4, OldLines: []string{"line\n"}, NewLines: []string{"line\n"}},
 	}, nil, false)
 
 	ed.SetCursorPosition(4, 0)
 	ed.InsertRune('x')
-	if len(ed.gitProvisional) != 0 {
-		t.Fatalf("hunk-owned line gained a local claim: %#v", ed.gitProvisional)
+	if len(ed.gitHunks) != 1 {
+		t.Fatalf("editing one hunk produced overlapping changes: %#v", ed.gitHunks)
 	}
 	if got := ed.gitKindAt(4); got != GitLineModified {
 		t.Fatalf("kind=%d, want the authoritative modified marker", got)
@@ -524,7 +524,7 @@ func TestAuthoritativeAnnotationTakesOverWithoutBlanking(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ed.Close()
-	ed.SetGitAnnotation(ed.Revision(), nil, nil, false)
+	setEditorAnnotationForTest(ed, ed.Revision(), nil, nil, false)
 	// Establish the viewport before typing: the first paint is what sets the
 	// scroll model's viewport size, and an edit before it parks a bogus offset.
 	if got := gutterRailCharAt(t, ed, 5); got != ' ' {
@@ -538,14 +538,14 @@ func TestAuthoritativeAnnotationTakesOverWithoutBlanking(t *testing.T) {
 	}
 
 	// The debounced refresh lands with the authoritative hunk for that line.
-	ed.SetGitAnnotation(ed.Revision(), []GitHunk{
+	setEditorAnnotationForTest(ed, ed.Revision(), []GitHunk{
 		{OldStart: 5, NewStart: 5, OldLines: []string{"line\n"}, NewLines: []string{"xline\n"}},
 	}, nil, false)
 	if got := gutterRailCharAt(t, ed, 5); got != '▌' {
 		t.Fatalf("handover blanked the marker: %q", got)
 	}
-	if len(ed.gitProvisional) != 0 {
-		t.Fatalf("authoritative annotation kept local claims: %#v", ed.gitProvisional)
+	if len(ed.gitHunks) != 1 {
+		t.Fatalf("refresh changed live hunk geometry: %#v", ed.gitHunks)
 	}
 
 	// ...and the line is still marked on the next keystroke.
@@ -555,9 +555,8 @@ func TestAuthoritativeAnnotationTakesOverWithoutBlanking(t *testing.T) {
 	}
 }
 
-// A local claim carries no old text, so it must stay out of inspection and
-// navigation: only the authoritative hunk can answer those.
-func TestLocalClaimsAreNotInspectable(t *testing.T) {
+// The immediate projection has complete old/new text, not speculative claims.
+func TestImmediateChangesAreInspectable(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "claim.go")
 	if err := os.WriteFile(path, []byte(strings.Repeat("line\n", 10)), 0o600); err != nil {
 		t.Fatal(err)
@@ -567,15 +566,15 @@ func TestLocalClaimsAreNotInspectable(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer ed.Close()
-	ed.SetGitAnnotation(ed.Revision(), nil, nil, false)
+	setEditorAnnotationForTest(ed, ed.Revision(), nil, nil, false)
 
 	ed.SetCursorPosition(5, 0)
 	ed.InsertRune('x')
-	if _, _, ok := ed.GitHunkAtLine(5); ok {
-		t.Fatal("inspection accepted a local claim with no old text")
+	if h, _, ok := ed.GitHunkAtLine(5); !ok || strings.Join(h.OldLines, "") != "line\n" || strings.Join(h.NewLines, "") != "xline\n" {
+		t.Fatal("immediate inspection did not receive exact old/new text")
 	}
-	if hunks := ed.GitHunks(); len(hunks) != 0 {
-		t.Fatalf("navigation sees local claims: %#v", hunks)
+	if hunks := ed.GitHunks(); len(hunks) != 1 {
+		t.Fatalf("navigation did not receive the immediate change: %#v", hunks)
 	}
 	if kind := ed.gitKindAt(5); kind == GitLineUnchanged {
 		t.Fatal("local claim is not painted")
@@ -595,7 +594,7 @@ func TestRenderGitGutterBesideDiagnostics(t *testing.T) {
 	ed.SetDiagnostics([]LSPDiagnostic{{
 		Line: 0, Col: 0, EndLine: 0, EndCol: 5, Severity: DiagError, Message: "err",
 	}})
-	ed.SetGitAnnotation(ed.Revision(), []GitHunk{{NewLines: []string{"alpha\n"}}, {NewStart: 1, OldStart: 1, NewLines: []string{"beta\n"}, OldLines: []string{"before\n"}}}, nil, false)
+	setEditorAnnotationForTest(ed, ed.Revision(), []GitHunk{{NewLines: []string{"alpha\n"}}, {NewStart: 1, OldStart: 1, NewLines: []string{"beta\n"}, OldLines: []string{"before\n"}}}, nil, false)
 
 	surf := surface.NewSurface("ed", 50, 6, cell.TransparentBlank())
 	ed.Render(surf, ui.PaintContext{Theme: ed.th, Focused: true})
@@ -615,7 +614,7 @@ func TestRenderGitGutterBesideDiagnostics(t *testing.T) {
 func TestGitConflictUsesDistinctLineState(t *testing.T) {
 	ed := New(theme.DefaultDark())
 	ed.ReplaceDocument("conflict\n")
-	ed.SetGitAnnotation(ed.Revision(), []GitHunk{{OldLines: []string{"old\n"}, NewLines: []string{"conflict\n"}}}, nil, true)
+	setEditorAnnotationForTest(ed, ed.Revision(), []GitHunk{{OldLines: []string{"old\n"}, NewLines: []string{"conflict\n"}}}, nil, true)
 	if got := ed.gitKindAt(0); got != GitLineConflict {
 		t.Fatalf("kind=%d", got)
 	}
