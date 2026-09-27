@@ -869,6 +869,15 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   that way. Horizontal gestures must not change vertical offset.
 
 ### Editor gutter and save authority
+- Dirty means byte identity, not revision identity. `Buffer` retains an immutable
+  piece-span savepoint; normal edits, undo/redo and save acknowledgements use the
+  same exact comparison. Never hash/export the whole file per keystroke or let
+  a late acknowledgement mark identical newer text dirty.
+- The gutter has one exact live HEAD-to-buffer projection. Immutable piece
+  snapshots bound each changed line window, which is re-diffed through shared
+  `textdiff` logic. Paint, deletion markers, inspection and navigation all use
+  those hunks immediately; never reintroduce paint-only local claims. Same-HEAD
+  async refreshes update blame without replacing the live projection.
 - `editor.Buffer` is the one live-text/savepoint authority shared by views.
   `workspace.DocumentSaveService` is the one autosave-deadline and disk-commit
   authority. Editor, PieceTable, watchers, and LSP must never write files or
@@ -923,6 +932,21 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   inverse from the row context menu; never render it through `ActivityDot`.
 
 ### Shared text input
+- Attachment paint and hit testing share `ReferenceChips` geometry. Filename
+  bodies open; separate three-cell remove targets only detach the draft.
+  External opens run off the UI thread through `fileio.OpenDesktopPath` (native
+  Windows associations, macOS `open`, Linux `xdg-open`). History media is copied
+  into the session before external opening, so viewers cannot edit snapshots.
+- Prompt history entries retain exact chip spans and immutable attachment
+  snapshots, not session-local labels alone. `history.Store` is the sole recall
+  source; input emits owner/generation-keyed recall events, and
+  `workspace.ReferenceStore.RestorePrompt` imports session-owned media off the UI
+  thread. A late result never overwrites a newer draft. Missing media fails
+  closed; history eviction must not delete a session's restored attachments.
+- Workspace and Open Tabs collapsed resource rows occupy exactly one line.
+  Keep explicit Workspace section headings even for a single group. Click,
+  Enter/Space, and Left/Right own disclosure; Open/Resume is an explicit action
+  inside expanded details, not an ambiguous first click.
 - `ui.TextEdit`, `ui.TextField`, and `ui.TextArea` own the non-document editing
   contract: selection replacement, undo/redo, word/document/page movement,
   Ctrl/Super shortcuts, copy/cut, bracketed paste, owner-keyed async Ctrl+V,
@@ -941,18 +965,23 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
 - `ui.ActivityDot(spinFrame)` is the only product activity-dot animation:
   synchronized Unix-millisecond clock, `●` for 400ms then `○` for 400ms.
 - Every active fixed-strip page uses `ui.TextTide`, a paint-only ink sweep that
-  remains visible throughout its cycle. Explicit reasoning kind and semantic
-  blocks come from provider wire contracts. Flattened unlabelled text gets a
-  neutral provisional strip preview and expandable full train, not a guessed
+  fades off both ends before wrapping in forward mode. `ui.TextTideMotion` keeps
+  the crest in cell columns on the shared clock, so text growth and resize do
+  not rephase a visible sweep. Entry and exit share its travel speed; the full
+  highlight clears the last character before reentering from the left.
+  Explicit reasoning kind and semantic blocks come from provider wire contracts.
+  Flattened unlabelled text gets a neutral provisional strip preview and
+  expandable full train, not a guessed
   raw pane or confirmed summary. A strong provider-reported usage discrepancy
   can settle the accepted request and, with repeated connection-scoped evidence,
   calibrate subsequent streams. Explicit wire raw always keeps its pane. Never
   classify by model name or infer from current-request usage before it arrives.
 - Active collapsed compact thoughts paint no stray transcript header. The fixed
   strip owns a clickable chevron and the normal disclosure shortcut reveals the
-  complete retained trace in the transcript. Thinking ink is muted/theme-aware,
-  not foreground white. Provisional thinking tides reversibly; a confirmed
-  summary tides left-to-right through the remaining active turn for that serving
+  complete retained trace in the transcript. `ColorActivityText` blends muted
+  ink 30% toward the theme foreground, keeping the strip distinct from metadata.
+  Provisional thinking tides reversibly; a confirmed summary tides left-to-right
+  through the remaining active turn for that serving
   connection. A provider/account/model change resets the direction. Do not
   change transcript text, width or rows on animation frames.
 - Reasoning contracts live in `types/reasoning`, request outcomes in
@@ -970,9 +999,17 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   state; provisional and summarized thinking get the compact preview. Do not
   echo the user prompt there. Plan progress/current
   steps, objective and next step follow in order, packing to width or rotating
-  on the shared clock. Successful-call counts are trailing, lowest-priority data.
+  on the shared clock only while the agent is active. Stopping, cancelled,
+  completed and idle strips have no sweep or page rotation; the first page keeps
+  the lifecycle label and any plan facts that fit. Stopping never changes the
+  persisted plan lifecycle. Successful-call counts are trailing, lowest-priority
+  data.
   The session's one `plan.Store` publishes its committed immutable activity view;
   the strip never becomes another plan owner.
+- Command safety assessments belong to owner-scoped Notices, not retained
+  `AgentState` alerts or live `NeedsAction` status. Only pending permissions and
+  questions need input. Completed, cancelled and failed turns keep their own
+  phase while safety notification history stays unread until acknowledged.
 - Active chat lifecycle/thinking/tool/sub-agent/session rows use it with one
   stable semantic color. Never add local speed formulas, brightness/color
   pulses, braille frames, or `AttrBlink`; see `docs/guides/component-authoring.md`.

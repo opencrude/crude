@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"crude/history"
 	"database/sql"
 	"encoding/base64"
 	"fmt"
@@ -102,11 +103,101 @@ func (s *ReferenceStore) CreateReference(req sessiondb.CreateRequest) (sessiondb
 		ref.FilePath = path
 	}
 
-	s.refs[ref.ID] = ref
 	if s.db != nil {
-		_ = sessiondb.InsertPromptReference(s.db, ref)
+		if err := sessiondb.InsertPromptReference(s.db, ref); err != nil {
+			return sessiondb.Reference{}, err
+		}
 	}
+	s.refs[ref.ID] = ref
 	return ref, nil
+}
+
+// RestorePrompt imports history attachments into this session's namespace.
+// Call off the UI thread. Validate the entire draft before creating references;
+// a missing attachment must never degrade into an apparently valid text prompt.
+func (s *ReferenceStore) RestorePrompt(entry history.Entry) (string, []string, error) {
+	runes := []rune(entry.Text)
+	end := 0
+	for _, attachment := range entry.Attachments {
+		ref := attachment.Reference
+		if attachment.Unavailable {
+			return "", nil, fmt.Errorf("attachment %s could not be saved; reattach it before reusing this prompt", ref.DisplayName())
+		}
+		if attachment.Start < end || attachment.End <= attachment.Start || attachment.End > len(runes) || string(runes[attachment.Start:attachment.End]) != ref.DisplayName() {
+			return "", nil, fmt.Errorf("invalid attachment span in prompt history")
+		}
+		if ref.FilePath != "" {
+			info, err := os.Stat(ref.FilePath)
+			if err != nil || !info.Mode().IsRegular() {
+				return "", nil, fmt.Errorf("attachment %s is unavailable; the current draft was kept", ref.DisplayName())
+			}
+		}
+		end = attachment.End
+	}
+	var text strings.Builder
+	var ids []string
+	imported := make(map[string]sessiondb.Reference)
+	inProse := func(label string) bool {
+		start := 0
+		for _, attachment := range entry.Attachments {
+			if strings.Contains(string(runes[start:attachment.Start]), label) {
+				return true
+			}
+			start = attachment.End
+		}
+		return strings.Contains(string(runes[start:]), label)
+	}
+	end = 0
+	for _, attachment := range entry.Attachments {
+		old := attachment.Reference
+		ref, ok := imported[old.ID]
+		if !ok {
+			var err error
+			ref, err = s.ImportReference(old)
+			if err == nil {
+				imported[old.ID] = ref
+				label := strings.TrimSuffix(ref.DisplayName(), "]")
+				for suffix := 1; inProse(ref.DisplayName()); suffix++ {
+					renamed, ok := s.RenameReference(ref.ID, fmt.Sprintf("%s (recalled %d)]", label, suffix))
+					if !ok {
+						err = fmt.Errorf("could not assign a safe attachment label")
+						break
+					}
+					ref.Label = renamed
+				}
+			}
+			if err != nil {
+				for _, created := range imported {
+					_ = s.DeleteReference(created.ID)
+				}
+				return "", nil, err
+			}
+			imported[old.ID] = ref
+			ids = append(ids, ref.ID)
+		}
+		text.WriteString(string(runes[end:attachment.Start]))
+		text.WriteString(ref.DisplayName())
+		end = attachment.End
+	}
+	text.WriteString(string(runes[end:]))
+	return text.String(), ids, nil
+}
+
+// ImportReference keeps recalled and externally viewed media session-owned.
+// Neither eviction nor an external application's edits can mutate history.
+func (s *ReferenceStore) ImportReference(old sessiondb.Reference) (sessiondb.Reference, error) {
+	path := old.FilePath
+	if path != "" {
+		data, err := history.ReadAttachment(path)
+		if err != nil {
+			return sessiondb.Reference{}, err
+		}
+		path, err = s.writeReferenceFile("history", data, filepath.Ext(path))
+		if err != nil {
+			return sessiondb.Reference{}, err
+		}
+	}
+	return s.CreateReference(sessiondb.CreateRequest{Kind: old.Kind, Title: old.Title, Mime: old.Mime, Content: old.Content, FilePath: path, Inline: old.Inline})
 }
 
 func (s *ReferenceStore) UpdateReferenceContent(id, content string) error {
@@ -178,12 +269,12 @@ func (s *ReferenceStore) RenameReference(id, label string) (string, bool) {
 		break
 	}
 	ref.Label = label
-	s.refs[id] = ref
 	if s.db != nil {
 		if err := sessiondb.UpdatePromptReferenceLabel(s.db, id, label); err != nil {
 			return "", false
 		}
 	}
+	s.refs[id] = ref
 	return label, true
 }
 
@@ -265,7 +356,7 @@ func (s *ReferenceStore) writeReferenceFile(label string, data []byte, ext strin
 	if dir == "" {
 		dir = filepath.Join(os.TempDir(), "crude-references")
 	}
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", err
 	}
 	base := strings.Trim(label, "[]")
@@ -274,7 +365,7 @@ func (s *ReferenceStore) writeReferenceFile(label string, data []byte, ext strin
 		base = "reference"
 	}
 	path := filepath.Join(dir, fmt.Sprintf("%s-%d%s", base, time.Now().UnixNano(), ext))
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(path, data, 0600); err != nil {
 		return "", err
 	}
 	return path, nil

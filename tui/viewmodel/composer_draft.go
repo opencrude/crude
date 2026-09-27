@@ -149,6 +149,7 @@ func (m *App) applyComposerDraft(msg composerDraftLoadedMsg) {
 	m.composerSavedDraft = text
 	m.Input.SetReferenceStore(store)
 	m.Input.SetValuePreserveReferences(text)
+	m.Input.UseReferenceIDs(msg.refIDs)
 	cursor := msg.cursor
 	if n := len([]rune(text)); cursor < 0 || cursor > n {
 		cursor = n

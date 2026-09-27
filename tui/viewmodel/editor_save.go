@@ -145,6 +145,10 @@ func (m *App) onEditorContentChanged(ed *editor.Editor, filePath, text string) {
 	if state := m.editorSaves[ed.BufferID()]; state != nil && (state.err != nil || state.discard || state.closeAfter) {
 		return
 	}
+	if !ed.Modified() {
+		m.Documents.Cancel(ed.BufferID())
+		return
+	}
 	if m.editorSettings.AutoSave == types.AutoSaveAfterDelay && ed.Modified() && m.DirtyPromptPath != filePath {
 		delay := time.Duration(m.editorSettings.AutoSaveDelay) * time.Millisecond
 		m.Documents.Schedule(ed.BufferID(), filePath, ed.Revision(), delay)
@@ -273,7 +277,7 @@ func (m *App) handleEditorSaveResult(msg editorSaveResultMsg) tea.Cmd {
 		return nil
 	}
 	if result.Committed || result.Unchanged {
-		tab.Editor.AcceptSave(result.Request.Revision, result.DiskHash)
+		tab.Editor.AcceptSave(result.Request.Revision, result.DiskHash, result.Request.Data)
 	}
 	if result.Err != nil {
 		state.err = result.Err

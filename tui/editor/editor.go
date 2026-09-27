@@ -128,11 +128,14 @@ type Editor struct {
 	// onContentChanged is called after every edit so the App can sync LSP.
 	onContentChanged func(filePath, text string)
 
-	// gitHunks/gitBlame are presentation copies of the workspace Git
-	// annotation. Index 0 is editor line 0. gitProvisional holds the paint-only
-	// marks for lines edited since that annotation (see gitProvisionalMark).
+	// Git supplies an immutable HEAD baseline. The editor owns one exact live
+	// projection for paint, navigation and inspection; there are no local claims.
 	gitHunks        []GitHunk
-	gitProvisional  []gitProvisionalMark
+	gitHead         string
+	gitHeadLines    []string
+	gitSnapshot     textSnapshot
+	gitLineOffsets  []int
+	gitBlameHunks   []GitHunk
 	gitBlame        []GitBlameLine
 	gitLoaded       bool
 	gitConflicted   bool
@@ -233,6 +236,7 @@ func (e *Editor) Open(path string) error {
 		return err
 	}
 	e.buf = buf
+	e.ClearGitAnnotation()
 	_, statErr := os.Stat(abs)
 	e.buffer = newBuffer(buf, abs, statErr == nil)
 
@@ -268,6 +272,7 @@ func (e *Editor) OpenBuffer(buf *Buffer) {
 	e.filePath = buf.Path
 	e.title = buf.Title
 	e.buf = buf.buf
+	e.ClearGitAnnotation()
 
 	e.cursor = Position{Line: 0, Col: 0}
 	e.scrollX = 0
@@ -459,11 +464,11 @@ func (e *Editor) Revision() uint64 {
 	return e.buf.Revision()
 }
 
-func (e *Editor) AcceptSave(revision uint64, diskHash [32]byte) {
+func (e *Editor) AcceptSave(revision uint64, diskHash [32]byte, data []byte) {
 	if e == nil || e.buffer == nil {
 		return
 	}
-	e.buffer.AcceptSave(revision, diskHash)
+	e.buffer.AcceptSave(revision, diskHash, data)
 }
 func (e *Editor) Value() string {
 	if e.buffer != nil {

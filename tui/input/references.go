@@ -32,11 +32,17 @@ type RefSelectEvent struct{ ID string }
 func (RefSelectEvent) event() {}
 
 func (m *Model) SetReferenceStore(store ReferenceStore) {
+	if m.refStore != store {
+		m.promptReferenceIDs = nil
+	}
 	m.refStore = store
 	m.applyReferenceRanges()
 }
 
 func (m *Model) InsertReference(ref sessiondb.Reference) {
+	if m.promptReferenceIDs != nil {
+		m.promptReferenceIDs[ref.ID] = true
+	}
 	m.input.InsertString(ref.DisplayName())
 	m.applyReferenceRanges()
 }
@@ -45,7 +51,27 @@ func (m Model) RefRanges() []RefRange {
 	if m.refStore == nil {
 		return nil
 	}
-	return FindRefRanges(m.input.Value(), m.refStore.ListReferences())
+	refs := m.refStore.ListReferences()
+	if m.promptReferenceIDs != nil {
+		var selected []sessiondb.Reference
+		for _, ref := range refs {
+			if m.promptReferenceIDs[ref.ID] {
+				selected = append(selected, ref)
+			}
+		}
+		refs = selected
+	}
+	return FindRefRanges(m.input.Value(), refs)
+}
+
+// Pin recalled/hydrated drafts to their recorded attachment identities, so
+// literal prose cannot acquire an unrelated attachment with the same label.
+func (m *Model) UseReferenceIDs(ids []string) {
+	m.promptReferenceIDs = make(map[string]bool, len(ids))
+	for _, id := range ids {
+		m.promptReferenceIDs[id] = true
+	}
+	m.applyReferenceRanges()
 }
 
 func (m Model) ActiveReferenceID() string {
@@ -73,6 +99,8 @@ func (m Model) ReferencedIDs() []string {
 }
 
 func (m *Model) SetValuePreserveReferences(text string) {
+	m.historyGeneration++
+	m.historyLoading = false
 	m.input.SetValue(text)
 	m.applyReferenceRanges()
 }

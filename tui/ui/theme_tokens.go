@@ -48,6 +48,7 @@ const (
 	ColorDiffDeletionBg
 	ColorToolTitle
 	ColorToolOperand
+	ColorActivityText // Supporting strip text, more distinct than muted metadata.
 )
 
 // ControlState is the interactive state matrix used for token resolution.
@@ -155,6 +156,7 @@ func (ts *TokenSet) Rebuild(th *theme.Theme) {
 		ColorDiffDeletionBg:     rendering.ThemeColorToCell(c.Diff.DeleteBg),
 		ColorToolTitle:          rendering.ThemeColorToCell(toolTitle),
 		ColorToolOperand:        rendering.ThemeColorToCell(toolOperand),
+		ColorActivityText:       rendering.ThemeColorToCell(c.Muted).Blend(rendering.ThemeColorToCell(c.Fg), 0.3),
 	}
 }
 

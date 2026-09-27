@@ -56,15 +56,13 @@ func TestBuildAttachmentContextMenu(t *testing.T) {
 
 	// A click away from any chip must NOT produce the attachment menu.
 	app.inputRect = rectForInputMenu()
-	if _, ok := app.refRangeAtMouse(tea.Mouse{X: 2, Y: 1}); ok {
+	if _, ok := app.refRangeAtMouse(tea.Mouse{X: 90, Y: 1}); ok {
 		t.Fatal("plain draft position resolved to a chip")
 	}
 }
 
-// TestRemoveAttachmentStripsTokenAndDeletesRef guards chip removal: the token
-// leaves the draft, the backing reference is soft-deleted, and the caret
-// stays at the removal point.
-func TestRemoveAttachmentStripsTokenAndDeletesRef(t *testing.T) {
+// Detaching must not break references already owned by sent messages.
+func TestRemoveAttachmentStripsTokenAndPreservesRef(t *testing.T) {
 	app, ref := newAttachmentTestApp(t)
 	app.Input.SetInput("keep " + ref.DisplayName() + " tail")
 	ranges := app.Input.RefRanges()
@@ -77,8 +75,8 @@ func TestRemoveAttachmentStripsTokenAndDeletesRef(t *testing.T) {
 		t.Fatalf("draft after removal = %q", got)
 	}
 	deleted, ok := app.ActiveSession.RefStore.GetReference(ref.ID)
-	if !ok || deleted.Active() {
-		t.Fatal("backing reference was not soft-deleted")
+	if !ok || !deleted.Active() {
+		t.Fatal("draft removal deleted a retained reference")
 	}
 	if ids := app.Input.ReferencedIDs(); len(ids) != 0 {
 		t.Fatalf("stale referenced IDs after removal: %v", ids)

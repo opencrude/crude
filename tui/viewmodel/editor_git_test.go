@@ -57,8 +57,8 @@ func TestEditorGitAnnotationIgnoresStaleGeneration(t *testing.T) {
 	if got := gitGutterChar(t, app.EditorState.Editor, 0); got != '▌' {
 		t.Fatalf("current generation git gutter=%q want rail", got)
 	}
-	if got := app.EditorState.Editor.CursorBlameSummary(); !strings.Contains(got, "Ada") {
-		t.Fatalf("blame summary=%q want Ada", got)
+	if got := app.EditorState.Editor.CursorBlameSummary(); got != "Not committed yet" {
+		t.Fatalf("changed-line blame summary=%q", got)
 	}
 }
 
@@ -97,6 +97,7 @@ func TestEditorContextMenuCopyBlameCommit(t *testing.T) {
 		path:       paths[0],
 		revision:   app.EditorState.Editor.Revision(),
 		annotation: workspace.GitFileAnnotation{
+			HeadContent: app.EditorState.Editor.Value(),
 			Blame: []workspace.GitBlameLine{{
 				Line: 1, Hash: "deadbeefcafebabe", ShortHash: "deadbee", Author: "Ada",
 			}},
@@ -113,7 +114,7 @@ func TestInspectEditorChangeStaysOpenAcrossEquivalentGitRefresh(t *testing.T) {
 	app, paths := newInputContractEditorApp(t, "inspect.go")
 	ed := app.EditorState.Editor
 	hunk := editor.GitHunk{OldLines: []string{"old\n"}, NewLines: []string{"new\n"}}
-	ed.SetGitAnnotation(ed.Revision(), []editor.GitHunk{hunk}, nil, false)
+	ed.SetGitAnnotation(ed.Revision(), "old\n", []editor.GitHunk{hunk}, nil, false)
 	app.inspectEditorChange(ed, 0)
 	if app.overlayHost.Window(editorChangesOverlay) == nil {
 		t.Fatal("change inspector did not open")
@@ -122,7 +123,7 @@ func TestInspectEditorChangeStaysOpenAcrossEquivalentGitRefresh(t *testing.T) {
 	app.applyEditorGitAnnotation(editorGitAnnotationMsg{
 		generation: 1, workspace: app.workspaceSwitchGen.Load(), path: paths[0],
 		revision:   app.EditorState.Editor.Revision(),
-		annotation: workspace.GitFileAnnotation{Hunks: []workspace.GitHunk{{OldLines: []string{"old\n"}, NewLines: []string{"new\n"}}}},
+		annotation: workspace.GitFileAnnotation{HeadContent: "old\n", Hunks: []workspace.GitHunk{{OldLines: []string{"old\n"}, NewLines: []string{"new\n"}}}},
 	})
 	if app.overlayHost.Window(editorChangesOverlay) == nil {
 		t.Fatal("equivalent refresh closed immutable inspection")
@@ -196,7 +197,7 @@ func TestGutterRefreshResetsTheTypingBurst(t *testing.T) {
 func TestTransientGitFailureKeepsTheProjection(t *testing.T) {
 	app, paths := newInputContractEditorApp(t, "transient.go")
 	ed := app.EditorState.Editor
-	ed.SetGitAnnotation(ed.Revision(), []editor.GitHunk{{OldStart: 0, NewStart: 0, NewLines: []string{"package main\n"}}}, nil, false)
+	ed.SetGitAnnotation(ed.Revision(), "", []editor.GitHunk{{OldStart: 0, NewStart: 0, NewLines: []string{"package main\n"}}}, nil, false)
 	if got := gitGutterChar(t, ed, 0); got != '▌' {
 		t.Fatalf("annotation did not paint: %q", got)
 	}
@@ -224,7 +225,7 @@ func TestTransientGitFailureKeepsTheProjection(t *testing.T) {
 func TestFirstKeystrokePaintsTheGutterWithoutDispatchingGit(t *testing.T) {
 	app, _ := newInputContractEditorApp(t, "instant.go")
 	ed := app.EditorState.Editor
-	ed.SetGitAnnotation(ed.Revision(), nil, nil, false)
+	ed.SetGitAnnotation(ed.Revision(), ed.Value(), nil, nil, false)
 	if got := gitGutterChar(t, ed, 0); got != ' ' {
 		t.Fatalf("clean file already marked line 0: %q", got)
 	}
@@ -249,7 +250,7 @@ func TestFirstKeystrokePaintsTheGutterWithoutDispatchingGit(t *testing.T) {
 func TestAuthoritativeRefreshTakesOverTheGutterLocallyClaimedLine(t *testing.T) {
 	app, paths := newInputContractEditorApp(t, "handover.go")
 	ed := app.EditorState.Editor
-	ed.SetGitAnnotation(ed.Revision(), nil, nil, false)
+	ed.SetGitAnnotation(ed.Revision(), ed.Value(), nil, nil, false)
 	// First paint establishes the viewport before the cursor moves.
 	if got := gitGutterChar(t, ed, 0); got != ' ' {
 		t.Fatalf("clean file already marked line 0: %q", got)
@@ -264,7 +265,7 @@ func TestAuthoritativeRefreshTakesOverTheGutterLocallyClaimedLine(t *testing.T) 
 	app.applyEditorGitAnnotation(editorGitAnnotationMsg{
 		generation: 5, workspace: app.workspaceSwitchGen.Load(), path: paths[0],
 		revision: ed.Revision(),
-		annotation: workspace.GitFileAnnotation{Hunks: []workspace.GitHunk{{
+		annotation: workspace.GitFileAnnotation{HeadContent: "package main\n", Hunks: []workspace.GitHunk{{
 			OldStart: 0, NewStart: 0, OldLines: []string{"package main\n"}, NewLines: []string{"xpackage main\n"},
 		}}},
 	})
@@ -282,8 +283,8 @@ func TestAuthoritativeRefreshTakesOverTheGutterLocallyClaimedLine(t *testing.T) 
 func TestTypingBurstKeepsThePaintedMarkerAndDefersTheRefresh(t *testing.T) {
 	app, _ := newInputContractEditorApp(t, "burst.go")
 	ed := app.EditorState.Editor
-	ed.SetGitAnnotation(ed.Revision(), []editor.GitHunk{
-		{OldStart: 0, NewStart: 0, OldLines: []string{"package main\n"}, NewLines: []string{"package main\n"}},
+	ed.SetGitAnnotation(ed.Revision(), "package legacy\n", []editor.GitHunk{
+		{OldStart: 0, NewStart: 0, OldLines: []string{"package legacy\n"}, NewLines: []string{"package main\n"}},
 	}, nil, false)
 	if got := gitGutterChar(t, ed, 0); got != '▌' {
 		t.Fatalf("annotation did not paint: %q", got)

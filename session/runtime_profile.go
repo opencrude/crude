@@ -218,6 +218,9 @@ func mergeCategoryConfig(base, override CategoryConfig) CategoryConfig {
 	if override.Description != "" {
 		merged.Description = override.Description
 	}
+	if override.Instructions != "" {
+		merged.Instructions = override.Instructions
+	}
 	if len(override.AllowedTools) > 0 {
 		merged.AllowedTools = override.AllowedTools
 	}
@@ -301,6 +304,8 @@ func copyConfig(src *Config) *Config {
 			if prof.Categories != nil {
 				profCopy.Categories = make(map[string]CategoryConfig, len(prof.Categories))
 				for k, v := range prof.Categories {
+					v.AllowedTools = append([]string(nil), v.AllowedTools...)
+					v.DeniedTools = append([]string(nil), v.DeniedTools...)
 					v.ContextCompactionPercent = cloneIntPtr(v.ContextCompactionPercent)
 					v.ModelModalities = append([]string(nil), v.ModelModalities...)
 					v.ModelTemperature = cloneFloatPtr(v.ModelTemperature)
@@ -311,13 +316,7 @@ func copyConfig(src *Config) *Config {
 			agents.Profiles[name] = profCopy
 		}
 	}
-	if src.Agents.AgentProfiles != nil {
-		agents.AgentProfiles = make(map[string]AgentProfileConfig, len(src.Agents.AgentProfiles))
-		for k, v := range src.Agents.AgentProfiles {
-			v.ContextCompactionPercent = cloneIntPtr(v.ContextCompactionPercent)
-			agents.AgentProfiles[k] = v
-		}
-	}
+	agents.AgentProfiles = ttypes.CloneAgentProfiles(src.Agents.AgentProfiles)
 	dst.Agents = agents
 
 	return dst

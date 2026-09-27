@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"crude/tui/editor"
+	"crude/tui/ui"
 	"crude/types"
 	"crude/workspace"
 )
@@ -99,6 +100,40 @@ func TestEditorSaveSnapshotDoesNotClearNewerEdits(t *testing.T) {
 	ed.Redo()
 	if ed.Modified() {
 		t.Fatal("redo to saved content must become clean")
+	}
+}
+
+func TestByteIdenticalManualEditClosesWithoutSavePrompt(t *testing.T) {
+	app := newAutosaveTestApp(t)
+	app.editorSettings = types.NormalizeEditorSettings(types.EditorSettings{AutoSave: types.AutoSaveAfterDelay, AutoSaveDelay: 60_000})
+	ed := newSaveTestEditor(t, app, "original bytes\n")
+	path := ed.FilePath()
+	ed.InsertRune('x')
+	if app.Documents.PendingDeadlines() != 1 {
+		t.Fatal("real edit did not arm autosave")
+	}
+	ed.HandleEvent(tea.KeyPressMsg{Code: tea.KeyBackspace})
+	if ed.Modified() || app.Documents.PendingDeadlines() != 0 {
+		t.Fatal("byte-identical edit retained dirty state or autosave deadline")
+	}
+	app.closeEditorTab()
+	if app.overlayHost.IsOpen(ui.OverlayDirtyClose) || app.EditorState.Tabs[path] != nil {
+		t.Fatal("byte-identical file prompted instead of closing")
+	}
+}
+
+func TestLateSaveAckAfterUndoClosesWithoutSavePrompt(t *testing.T) {
+	app := newFullTestApp(t)
+	ed := newSaveTestEditor(t, app, "base")
+	ed.InsertRune('x')
+	cmd := app.requestEditorSave(ed, workspace.DocumentSaveManual, false)
+	ed.InsertRune('y')
+	ed.Undo()
+	finishSaveCommand(t, app, cmd)
+	path := ed.FilePath()
+	app.closeEditorTab()
+	if app.overlayHost.IsOpen(ui.OverlayDirtyClose) || app.EditorState.Tabs[path] != nil {
+		t.Fatal("late acknowledgement re-dirtied byte-identical undo state")
 	}
 }
 

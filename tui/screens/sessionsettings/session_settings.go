@@ -1,6 +1,7 @@
 package sessionsettings
 
 import (
+	"reflect"
 	"slices"
 	"strconv"
 	"strings"
@@ -50,12 +51,10 @@ type CancelMsg struct{ Target *Screen }
 type ResetMsg struct{ Target *Screen }
 
 type FetchModelsMsg struct {
+	Target     *Screen
 	ProviderID string
 	AccountID  string
 	Generation uint64
-	BaseURL    string
-	APIKey     string
-	StandardID string
 }
 
 type page uint8
@@ -93,7 +92,6 @@ type Screen struct {
 	base            types.Settings
 	effective       types.Settings
 	overrides       map[string]types.CategorySettings
-	presets         []types.ProviderPreset
 	providers       map[string]types.ProviderConfig
 	accounts        map[string]provider.Account
 	fetchGeneration map[string]uint64
@@ -134,8 +132,14 @@ func New(th *theme.Theme, effective, base types.Settings, overrides map[string]t
 	return s
 }
 
-func (s *Screen) ConfigureProviders(presets []types.ProviderPreset, providers map[string]types.ProviderConfig) {
-	s.presets = append(s.presets[:0], presets...)
+func (s *Screen) ConfigureProviders(_ []types.ProviderPreset, providers map[string]types.ProviderConfig) {
+	for id, account := range s.accounts {
+		if !reflect.DeepEqual(s.providers[account.ProviderID], providers[account.ProviderID]) {
+			key := sessionModelKey(account.ProviderID, id)
+			delete(s.models, key)
+			s.fetchGeneration[key]++
+		}
+	}
 	s.providers = make(map[string]types.ProviderConfig, len(providers))
 	for id, cfg := range providers {
 		s.providers[id] = provider.CloneTemplate(cfg)
@@ -151,13 +155,16 @@ func (s *Screen) ConfigureProviders(presets []types.ProviderPreset, providers ma
 // ConfigureAccounts projects application-owned credentials into this session picker.
 // It never copies them into session settings or overrides.
 func (s *Screen) ConfigureAccounts(accounts map[string]provider.Account) {
+	for id, old := range s.accounts {
+		if !reflect.DeepEqual(old, accounts[id]) {
+			key := sessionModelKey(old.ProviderID, id)
+			delete(s.models, key)
+			s.fetchGeneration[key]++
+		}
+	}
 	s.accounts = make(map[string]provider.Account, len(accounts))
 	for id, a := range accounts {
-		if a.OAuth != nil {
-			c := *a.OAuth
-			a.OAuth = &c
-		}
-		s.accounts[id] = a
+		s.accounts[id] = provider.CloneAccount(a)
 	}
 	if s.page == rolePage {
 		s.openRole(s.role)
@@ -180,7 +187,7 @@ func (s *Screen) accountLabel(id string) string {
 	if label == "" {
 		label = id
 	}
-	return s.providerLabel(a.ProviderID) + " · " + label
+	return label
 }
 
 func (s *Screen) SetTokens(tokens *ui.TokenSet) {
@@ -338,6 +345,7 @@ func (s *Screen) applyModelToEffective(id string) {
 		return
 	}
 	cfg := categoryFor(s.effective, s.base, s.role)
+	cfg.Inherit = ""
 	cfg.Model = id
 	setCategory(&s.effective, s.role, cfg)
 }
@@ -353,6 +361,10 @@ func (s *Screen) applyProviderToEffective(id string) {
 		return
 	}
 	cfg := categoryFor(s.effective, s.base, s.role)
+	if cfg.AccountID != id {
+		cfg.Model = ""
+	}
+	cfg.Inherit = ""
 	cfg.Provider = account.ProviderID
 	cfg.AccountID = id
 	setCategory(&s.effective, s.role, cfg)
@@ -628,7 +640,7 @@ func (s *Screen) openProviderPicker() tea.Cmd {
 	s.modelQuery = ""
 	if s.modelFilter != nil {
 		s.modelFilter.SetValue("")
-		s.modelFilter.SetPlaceholder("Filter connections…")
+		s.modelFilter.SetPlaceholder("Filter accounts…")
 	}
 	if s.modelList != nil {
 		s.modelList.SetActivateAction("session-settings.provider.select")
@@ -650,14 +662,9 @@ func (s *Screen) fetchModelsCmd() tea.Cmd {
 	if !ok || account.ProviderID != providerID {
 		return nil
 	}
-	if len(s.models[sessionModelKey(providerID, accountID)]) > 0 {
+	if _, loaded := s.models[sessionModelKey(providerID, accountID)]; loaded {
 		s.syncPickerList()
 		return nil
-	}
-	cfg := s.providers[providerID]
-	standardID := cfg.APIStandard
-	if standardID == "" {
-		standardID = provider.DefaultStandardID(providerID)
 	}
 	s.syncPickerList()
 	key := sessionModelKey(providerID, accountID)
@@ -665,8 +672,7 @@ func (s *Screen) fetchModelsCmd() tea.Cmd {
 	generation := s.fetchGeneration[key]
 	return func() tea.Msg {
 		return FetchModelsMsg{
-			ProviderID: providerID, AccountID: accountID, Generation: generation, BaseURL: cfg.ProviderURL,
-			APIKey: account.APIKey, StandardID: standardID,
+			Target: s, ProviderID: providerID, AccountID: accountID, Generation: generation,
 		}
 	}
 }
@@ -693,8 +699,17 @@ func (s *Screen) syncModelList() {
 		}
 		items = append(items, ui.ListItem{ID: option.ID, Label: option.Label, Detail: option.Detail, Payload: option.ID})
 	}
-	if len(items) == 0 && len(s.models[sessionModelKey(providerID, s.currentAccountID())]) == 0 {
-		items = append(items, ui.ListItem{ID: "loading", Label: "Fetching models…", Disabled: true})
+	if len(items) == 0 {
+		label := "No matching models"
+		if _, loaded := s.models[sessionModelKey(providerID, s.currentAccountID())]; !loaded {
+			label = "Fetching models…"
+			if _, exists := s.accounts[s.currentAccountID()]; !exists {
+				label = "Select an account first"
+			}
+		} else if query == "" {
+			label = "This account returned no models"
+		}
+		items = append(items, ui.ListItem{ID: "empty", Label: label, Disabled: true})
 	}
 	s.modelList.SetItems(items)
 	s.selectPickerItem(fieldModel, items)
@@ -706,50 +721,24 @@ func (s *Screen) syncProviderList() {
 	}
 	query := strings.ToLower(strings.TrimSpace(s.modelQuery))
 	items := []ui.ListItem{}
-	providerIDs := make([]string, 0)
-	seen := map[string]bool{}
-	for _, p := range s.presets {
-		if !seen[p.ID] {
-			providerIDs = append(providerIDs, p.ID)
-			seen[p.ID] = true
-		}
-	}
-	for _, a := range s.accounts {
-		if !seen[a.ProviderID] {
-			providerIDs = append(providerIDs, a.ProviderID)
-			seen[a.ProviderID] = true
-		}
-	}
-	for _, pid := range providerIDs {
-		accounts := []string{}
-		for id, a := range s.accounts {
-			if a.ProviderID == pid {
-				accounts = append(accounts, id)
-			}
-		}
-		slices.SortFunc(accounts, func(a, b string) int { return strings.Compare(s.accounts[a].Label, s.accounts[b].Label) })
-		if len(accounts) == 0 {
-			continue
-		}
-		section := false
-		for _, id := range accounts {
-			a := s.accounts[id]
-			label := a.Label
-			if label == "" {
-				label = id
-			}
-			if query != "" && !strings.Contains(strings.ToLower(label), query) && !strings.Contains(strings.ToLower(pid), query) && !strings.Contains(strings.ToLower(s.providerLabel(pid)), query) {
-				continue
-			}
-			if !section {
-				items = append(items, ui.ListItem{ID: "group/" + pid, Label: s.providerLabel(pid), Header: true})
-				section = true
-			}
+	for id := range s.accounts {
+		label := s.accountLabel(id)
+		if query == "" || strings.Contains(strings.ToLower(label), query) {
 			items = append(items, ui.ListItem{ID: id, Label: label, Payload: id})
 		}
 	}
+	slices.SortFunc(items, func(a, b ui.ListItem) int {
+		if cmp := strings.Compare(strings.ToLower(a.Label), strings.ToLower(b.Label)); cmp != 0 {
+			return cmp
+		}
+		return strings.Compare(a.ID, b.ID)
+	})
 	if len(items) == 0 {
-		items = append(items, ui.ListItem{ID: "empty", Label: "No configured accounts — add one in Settings > Providers", Disabled: true})
+		label := "No matching accounts"
+		if len(s.accounts) == 0 {
+			label = "No accounts. Add one in Application Settings > Accounts"
+		}
+		items = append(items, ui.ListItem{ID: "empty", Label: label, Disabled: true})
 	}
 	s.modelList.SetItems(items)
 	s.selectPickerItem(fieldProvider, items)
@@ -896,21 +885,6 @@ func (s *Screen) title(parts ...string) string {
 
 func (s *Screen) pickerPage() bool {
 	return s.page == modelPage || s.page == providerPage
-}
-
-func (s *Screen) providerLabel(id string) string {
-	for _, preset := range s.presets {
-		if preset.ID == id {
-			if preset.Name != "" {
-				return preset.Name
-			}
-			return preset.ID
-		}
-	}
-	if id == "" {
-		return "Not set"
-	}
-	return id
 }
 
 func (s *Screen) applyRootForm() {

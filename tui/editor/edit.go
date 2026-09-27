@@ -250,7 +250,7 @@ func (e *Editor) undo() {
 	e.ensureCursorVisible()
 	e.markDocumentWidthAll()
 	if e.buffer != nil {
-		e.buffer.ReconcileSavepoint()
+		e.buffer.NoteEdit()
 	}
 	e.emitContentChanged()
 }
@@ -286,7 +286,7 @@ func (e *Editor) redo() {
 	e.ensureCursorVisible()
 	e.markDocumentWidthAll()
 	if e.buffer != nil {
-		e.buffer.ReconcileSavepoint()
+		e.buffer.NoteEdit()
 	}
 	e.emitContentChanged()
 }

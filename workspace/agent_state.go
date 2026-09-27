@@ -86,8 +86,6 @@ type AgentState struct {
 	// so it's only applied to the correct tool message.
 	PendingPermTool string
 	PendingBlockID  string
-	SafetyAlert     string
-	SafetyRisk      string
 	TurnIdentity    ttypes.TurnIdentity
 }
 
@@ -372,12 +370,6 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 		onThinking(true, false, false)
 		a.BlockingMsgIdx = -1
 
-	case "safety_alert":
-		if data, ok := evt.Data.(map[string]any); ok {
-			a.SafetyRisk, _ = data["risk"].(string)
-			a.SafetyAlert, _ = data["reason"].(string)
-		}
-
 	case "done":
 		return a.handleDone(evt, target, thinkTarget, onThinking, onStatusLine)
 
@@ -468,7 +460,6 @@ func (a *AgentState) SubmitInput(text string) {
 	a.PendingPermTag = ""
 	a.PendingPermTool = ""
 	a.PendingBlockID = ""
-	a.SafetyAlert, a.SafetyRisk = "", ""
 	a.BlockingMsgIdx = -1
 	a.Messages.UpdateTurnStatus(TurnStatus{Phase: "preparing"})
 }

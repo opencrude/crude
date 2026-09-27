@@ -36,6 +36,8 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 	case "/settings":
 		m.Logger.Info("INPUT", "slash", "command", "settings")
 		m.openSessionSettings()
+	case "/history":
+		m.openPromptHistory()
 	case "/model":
 		m.Logger.Info("INPUT", "slash", "command", "model")
 		if cmd := m.openSessionModelPicker(); cmd != nil {

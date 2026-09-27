@@ -119,3 +119,98 @@ func TestFailedChildStatusesNeverRenderAsCompleted(t *testing.T) {
 		}
 	}
 }
+
+func TestSafetyNoticeDoesNotReplaceLiveOrFinishedAgentStatus(t *testing.T) {
+	const reason = "Command targets system files: /tmp/crude-tide-review-160"
+	for _, outcome := range []string{"completed", "cancelled", "error"} {
+		t.Run(outcome, func(t *testing.T) {
+			app := newFullTestApp(t)
+			app.AddOrchestrator("root")
+			app.handleAgentEvent(tuitypes.AgentEventMsg{AgentID: "root", Type: "phase", Data: "waiting_provider"})
+			beforeNotice, _ := app.Status.Agent("root")
+			app.handleAgentEvent(tuitypes.AgentEventMsg{AgentID: "root", Type: "safety_alert", Data: map[string]any{
+				"risk": "destructive", "reason": reason,
+			}})
+			if afterNotice, _ := app.Status.Agent("root"); afterNotice != beforeNotice {
+				t.Errorf("safety notification changed the live status: %+v", afterNotice)
+			}
+			app.handleAgentEvent(tuitypes.AgentEventMsg{AgentID: "root", Type: "stream_token", Data: "Finished checking."})
+			app.syncAgentStatusInventory()
+			live, _ := app.Status.Agent("root")
+			if live.NeedsAction || live.Phase != ttypes.AgentResponding || live.Detail == reason {
+				t.Errorf("historical warning replaced live response status: %+v", live)
+			}
+			wantPhase, wantText := ttypes.AgentCompleted, "Completed"
+			event := tuitypes.AgentEventMsg{AgentID: "root", Type: "done", Data: map[string]any{"reason": outcome}}
+			switch outcome {
+			case "cancelled":
+				wantPhase, wantText = ttypes.AgentCancelled, "Stopped"
+			case "error":
+				event.Type, event.Data = "error", "Provider connection failed"
+				wantPhase, wantText = ttypes.AgentFailed, "Provider connection failed"
+			}
+			app.handleAgentEvent(event)
+			for _, frame := range []int{1000, 8000, 20000} {
+				app.SpinFrame = frame
+				app.syncAgentStatusInventory()
+				status, _ := app.Status.Agent("root")
+				if status.NeedsAction || status.Phase != wantPhase || status.Detail == reason {
+					t.Errorf("terminal status overwritten by old warning: %+v", status)
+				}
+				app.paintShellFrame()
+				line := shellBufferRow(app, app.chatRect.Y+app.chatRect.H-1)
+				if strings.Contains(line, "Command targets") || !strings.Contains(line, wantText) {
+					t.Errorf("finished strip=%q, want %q", line, wantText)
+				}
+			}
+			notices := app.Status.Notifications(false)
+			found := false
+			for _, notice := range notices {
+				if notice.Source == "safety" && notice.Owner.ID == "root" && notice.Summary == reason {
+					found = true
+					if notice.Severity != ttypes.SeverityWarning {
+						t.Error("reviewable command warning was classified as a hard block")
+					}
+					if notice.Read || notice.Dismissed {
+						t.Error("turn completion acknowledged the user's notification")
+					}
+				}
+			}
+			if !found {
+				t.Fatal("safety notice was lost from notification history")
+			}
+			for _, issue := range app.Status.Issues() {
+				if issue.ID == "safety:root" && issue.ResolvedAt.IsZero() {
+					t.Error("completed command assessment left an actionable issue")
+				}
+			}
+		})
+	}
+}
+
+func TestSafetyNoticesPreserveRealPermissionRequests(t *testing.T) {
+	app := newFullTestApp(t)
+	app.AddOrchestrator("root")
+	app.syncAgentStatusEvent(tuitypes.AgentEventMsg{AgentID: "root", Type: "safety_alert", Data: map[string]any{
+		"risk": "blocked", "reason": "Blocked disk write",
+	}})
+	notice, ok := app.Status.LatestUnread(ttypes.SeverityCritical)
+	if !ok || notice.Owner.ID != "root" || notice.Summary != "Blocked disk write" {
+		t.Fatal("hard block did not retain its critical notification")
+	}
+	state := app.AgentMgr.Get("root").State
+	state.Running, state.PendingBlockID = true, "permission-1"
+	app.syncAgentStatusEvent(tuitypes.AgentEventMsg{AgentID: "root", Type: "blocking", Data: map[string]any{"operation": "execute"}})
+	app.syncAgentStatusInventory()
+	status, _ := app.Status.Agent("root")
+	if !status.NeedsAction || status.Phase != ttypes.AgentApproval {
+		t.Fatal("safety notice hid the real permission request")
+	}
+	state.PendingBlockID = ""
+	app.syncAgentStatusEvent(tuitypes.AgentEventMsg{AgentID: "root", Type: "permission_resolved"})
+	app.syncAgentStatusInventory()
+	status, _ = app.Status.Agent("root")
+	if status.NeedsAction || status.Phase == ttypes.AgentApproval {
+		t.Fatal("resolved permission remained actionable")
+	}
+}

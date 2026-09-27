@@ -70,6 +70,11 @@ func BoolFieldState(id, label string, value bool, description string) *FieldStat
 // BoolValue reads back a BoolFieldState field.
 func BoolFieldValue(f *FieldState) bool { return f != nil && f.Value.String() == "on" }
 
+func CheckboxFieldState(id, label string, value bool, description string) *FieldState {
+	v := BoolValue(value)
+	return &FieldState{ID: id, Label: label, Description: description, Type: FieldCheckbox, Value: v, Initial: v}
+}
+
 // ToggleFieldState builds an explicit Yes/No cycle field for settings where
 // the bare on/off wording would be ambiguous.
 func ToggleFieldState(id, label string, value bool, description string) *FieldState {

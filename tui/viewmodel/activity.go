@@ -333,6 +333,19 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		return cmd
 	}
 	switch action.ID {
+	case "input.attachment.open":
+		id, _ := action.Payload.(string)
+		return m.openAttachment(id, false)
+	case "input.attachment.remove":
+		id, _ := action.Payload.(string)
+		for _, rr := range m.Input.RefRanges() {
+			if rr.ID == id {
+				m.removeAttachment(rr)
+				break
+			}
+		}
+		m.persistComposerDraftIfChanged()
+		return nil
 	case historyscreen.ActionPreview:
 		request, _ := action.Payload.(historyscreen.PreviewRequest)
 		return m.historyPreviewCmd(request)

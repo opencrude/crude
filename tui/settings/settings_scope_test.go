@@ -17,7 +17,7 @@ func TestWorkspaceSettingsPaintMainAgentOnFirstFrame(t *testing.T) {
 	app := types.AppSettings{Providers: map[string]types.ProviderConfig{"openrouter": {Name: "OpenRouter", ProviderURL: "https://openrouter.ai/api/v1", APIStandard: "openai"}},
 		Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {AccountID: "work", Model: "selected-model"}}}}
 	model := NewScoped(th, app, nil, types.SettingsScopeWorkspace, app, types.WorkspaceOverrides{})
-	if model.SelectedCategory() != catMain {
+	if model.SelectedCategory() != catAgents {
 		t.Fatalf("workspace initially selected hidden application-only category %d", model.SelectedCategory())
 	}
 	s := NewSurface(th, model)
@@ -27,7 +27,7 @@ func TestWorkspaceSettingsPaintMainAgentOnFirstFrame(t *testing.T) {
 	buf := surface.NewCellBuffer(104, 28)
 	host.Paint(buf)
 	painted := bufferPlain(buf)
-	if !strings.Contains(painted, "Account") || !strings.Contains(painted, "selected-model") {
+	if !strings.Contains(painted, "Main Agent") || !strings.Contains(painted, "selected-model") {
 		t.Fatalf("first workspace settings frame omitted Main Agent fields:\n%s", painted)
 	}
 }

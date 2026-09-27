@@ -207,7 +207,7 @@ func TestModelSelectEmitsFetchAndAppliesAsyncResult(t *testing.T) {
 		t.Fatal("model picker did not request models")
 	}
 	request, ok := result.Cmd().(FetchModelsMsg)
-	if !ok || request.ProviderID != "openrouter" || request.APIKey != "secret" {
+	if !ok || request.ProviderID != "openrouter" || request.AccountID != "router" || request.Target != screen {
 		t.Fatalf("fetch request=%#v", request)
 	}
 	if screen.page != modelPage {
@@ -382,8 +382,8 @@ func TestRootPaintsAlignedModelThenProvider(t *testing.T) {
 	if colOf(main, "deepseek-v4-flash") != colOf(craft, "glm-5.1-precision") {
 		t.Fatalf("model columns misaligned: main=%d crafter=%d\n%s\n%s", colOf(main, "deepseek-v4-flash"), colOf(craft, "glm-5.1-precision"), main, craft)
 	}
-	if colOf(main, "deepseek-v4-flash") > colOf(main, "opencode-go · Work") {
-		t.Fatalf("model should precede provider: %q", main)
+	if colOf(main, "deepseek-v4-flash") > colOf(main, "Work") {
+		t.Fatalf("model should precede account: %q", main)
 	}
 	if colOf(main, "·") != colOf(craft, "·") {
 		t.Fatalf("first table dots misaligned: main=%d crafter=%d\n%s\n%s", colOf(main, "·"), colOf(craft, "·"), main, craft)
@@ -415,7 +415,7 @@ func TestRolePageUsesBreadcrumbAndAlignedValues(t *testing.T) {
 	if provider == "" || model == "" {
 		t.Fatalf("missing role rows:\n%s", plain)
 	}
-	if colOf(provider, "OpenCode Go · Work") != colOf(model, "deepseek-v4-flash") {
+	if colOf(provider, "Work") != colOf(model, "deepseek-v4-flash") {
 		t.Fatalf("role values misaligned:\n%s\n%s", provider, model)
 	}
 }
@@ -447,9 +447,9 @@ func TestRolePageTextEditorJoinsValueColumn(t *testing.T) {
 	}
 	// The "85" must share the nav rows' value column (Ollama-style nav value
 	// cell), never dangle at the label edge.
-	if colOf(compaction, value) != colOf(provider, "OpenCode Go · Work") {
+	if colOf(compaction, value) != colOf(provider, "Work") {
 		t.Fatalf("compaction editor at col %d, want shared value column %d\n%s\n%s",
-			colOf(compaction, value), colOf(provider, "OpenCode Go · Work"), provider, compaction)
+			colOf(compaction, value), colOf(provider, "Work"), provider, compaction)
 	}
 }
 
@@ -472,6 +472,55 @@ func TestProviderPickerHasOwnPage(t *testing.T) {
 	}
 	if item, ok := screen.modelList.Selected(); !ok || item.ID != "router" {
 		t.Fatalf("provider picker selection=%#v ok=%v", item, ok)
+	}
+}
+
+func TestInheritedAccountChangeRefreshesModelPicker(t *testing.T) {
+	base := types.Settings{Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+		"default": {Provider: "custom", AccountID: "old", Model: "old-model"},
+	}}}
+	effective := cloneSettings(base)
+	setCategory(&effective, "default", types.CategorySettings{Inherit: InheritWorkspaceMarker})
+	screen := New(theme.DefaultDark(), effective, base, nil)
+	screen.ConfigureAccounts(map[string]provider.Account{
+		"old": {ID: "old", ProviderID: "custom", Label: "Personal"},
+		"new": {ID: "new", ProviderID: "custom", Label: "Work"},
+	})
+	screen.OpenAccountPicker("default")
+	for i, item := range screen.modelList.Items() {
+		if item.ID == "new" {
+			screen.modelList.SelectIndex(i)
+		}
+	}
+	screen.HandleAction(ui.EventContext{}, ui.Action{ID: "session-settings.provider.select"})
+	result := screen.HandleAction(ui.EventContext{}, ui.Action{ID: "session-settings.model.open"})
+	if result.Cmd == nil {
+		t.Fatal("account change did not request models")
+	}
+	request := result.Cmd().(FetchModelsMsg)
+	if request.AccountID != "new" {
+		t.Fatalf("model discovery still targets inherited account: %+v", request)
+	}
+	screen.ApplyModelsForAccount("custom", "new", request.Generation, []types.ModelEntry{{ID: "work-model"}})
+	if rows := screen.modelList.Items(); len(rows) != 1 || rows[0].ID != "work-model" {
+		t.Fatalf("new account models not displayed: %+v", rows)
+	}
+	screen.HandleAction(ui.EventContext{}, ui.Action{ID: "session-settings.model.select"})
+	screen.HandleAction(ui.EventContext{}, ui.Action{ID: "session-settings.role.apply"})
+	got := screen.ToSettings()
+	if got.AccountID != "new" || got.Model != "work-model" {
+		t.Fatalf("new selection not saved: account=%q model=%q", got.AccountID, got.Model)
+	}
+}
+
+func TestAccountPickerHasNoTemplateRows(t *testing.T) {
+	screen := New(theme.DefaultDark(), types.Settings{}, types.Settings{}, nil)
+	screen.ConfigureProviders([]types.ProviderPreset{{ID: "custom", Name: "Template noise"}}, nil)
+	screen.ConfigureAccounts(map[string]provider.Account{"work": {ID: "work", ProviderID: "custom", Label: "Work"}})
+	screen.OpenAccountPicker("default")
+	rows := screen.modelList.Items()
+	if len(rows) != 1 || rows[0].Header || rows[0].Label != "Work" || screen.accountLabel("work") != "Work" {
+		t.Fatalf("session account picker exposes templates: %+v label=%q", rows, screen.accountLabel("work"))
 	}
 }
 

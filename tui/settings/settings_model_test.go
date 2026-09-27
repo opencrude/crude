@@ -59,16 +59,16 @@ func TestSettingsSurfacePaintAndNavigation(t *testing.T) {
 		}
 	}
 
-	// Rail rows: 3=AI header, 4=Providers, 5=Accounts, 6=Main Agent.
+	// Roles live in the Agents catalog instead of four separate rail pages.
 	cw.Host().Handle(tea.MouseClickMsg{X: 2, Y: 6, Button: tea.MouseLeft})
-	if m.SelectedCategory() != catMain || m.Pane() != 0 {
-		t.Fatalf("category click selected=%d pane=%d, want %d/0", m.SelectedCategory(), m.Pane(), catMain)
+	if m.SelectedCategory() != catAgents || m.Pane() != 0 {
+		t.Fatalf("category click selected=%d pane=%d, want %d/0", m.SelectedCategory(), m.Pane(), catAgents)
 	}
-
-	surfaceRoot.FocusForm()
+	cw.Render(surf, &wm.RenderContext{Theme: th})
+	cw.Focus(surfaceRoot.agents.table.ID())
 	result := cw.Host().Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if !result.Handled || surfaceRoot.form.Field(fieldConnection) == nil {
-		t.Fatal("native account field should open its shared select control")
+	if !result.Handled || surfaceRoot.agents.draft == nil || surfaceRoot.agents.draft.Field(fieldConnection) == nil {
+		t.Fatal("agent row should open its native model form")
 	}
 }
 
@@ -169,7 +169,12 @@ func TestSettingsSurfaceNativeFormPersistsTextAndCategoryChanges(t *testing.T) {
 	cw.Render(surf, &wm.RenderContext{Theme: th})
 
 	// Rail: scope/search, AI roles, Security/Safety, then IDE/Appearance/Editor.
-	cw.Host().Handle(tea.MouseClickMsg{X: 2, Y: 17, Button: tea.MouseLeft})
+	for row, item := range m.CategoryItems() {
+		if item.Payload == catEditor {
+			cw.Host().Handle(tea.MouseClickMsg{X: 2, Y: surfaceRoot.categories.Bounds().Y + row, Button: tea.MouseLeft})
+			break
+		}
+	}
 	if m.SelectedCategory() != catEditor {
 		t.Fatalf("selected category=%d, want editor", m.SelectedCategory())
 	}

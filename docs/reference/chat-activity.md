@@ -120,17 +120,35 @@ reasoning continues to use its pane.
 
 `ui.TextTide` is a paint-only light sweep for *every active strip page*,
 including upload, provider wait, plan progress, provisional thinking and
-summarized reasoning. Its crest always remains on visible ink; provisional
-thinking reverses at the ends, while confirmed summary thinking and subsequent
-active pages for that same serving connection sweep left-to-right. Changing
-account, provider or model resets this presentation direction. Markdown emphasis
-and code backgrounds survive in the thinking preview, but foreground ink stays
-muted and theme-aware rather than white. Ordinary work also uses muted ink
-rather than an orange warning. The tide preserves every
-grapheme, semantic span, selection,
-background, and cell width. The shared frame clock drives ink and crest emphasis;
+summarized reasoning. Provisional thinking reverses at the ends; confirmed
+summary thinking and subsequent active pages for that same serving connection
+sweep left-to-right, clearing the full highlight beyond the text before
+reentering from the left. `ui.TextTideMotion` retains the crest in cell columns:
+text growth and resize change the remaining distance without rephasing it.
+The nominal on-text traversal remains 2.4 seconds, with a minimum speed for short
+labels; entry and exit use that same speed, so the loop duration follows the
+distance instead of cutting off a visible tail. Changing account, provider or
+model resets this presentation direction. Markdown emphasis and code backgrounds
+survive in the thinking preview. `ColorActivityText` blends muted ink 30% toward
+the theme foreground for a slightly more distinct supporting line. The tide
+preserves every grapheme, semantic span, selection, background, and cell width.
+The shared frame clock drives ink and crest emphasis;
 there are no private timers, shifting glyphs, source invalidations, or Markdown
 reflows on animation frames. Tool leaves retain `ui.ActivityDot`.
+
+The sweep and automatic page rotation both stop when the owning agent becomes
+inactive or enters stopping, cancelled, completed, failed or idle state. The
+static first page retains the lifecycle label (`Stopped` after cancellation) and
+plan facts that fit; the full plan stays in the transcript. A retained active
+plan never implies that the agent is still running, and the presentation does
+not alter its persisted lifecycle. A new active turn resumes animation.
+
+Command safety assessments are retained as owner-scoped Notices. They do not
+replace the agent's live phase or mark it as needing input: only an outstanding
+permission or question does that. Reviewable command warnings use warning
+severity; hard blocks remain critical notifications and tool errors. Completion,
+cancellation and failure retain their own strip status without replaying old
+warnings, and do not mark those notifications read or dismissed.
 
 The chat screen reserves a fixed activity line and one separator row above the
 composer. Waiting, preparation, thinking, tools, retry, cancellation, and idle

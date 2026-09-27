@@ -34,6 +34,7 @@ type CategoryConfig struct {
 	Inherit      string   `json:"inherit,omitempty"`
 	Policy       string   `json:"policy,omitempty"`
 	Description  string   `json:"description,omitempty"`
+	Instructions string   `json:"instructions,omitempty"`
 	AllowedTools []string `json:"allowed_tools,omitempty"`
 	DeniedTools  []string `json:"denied_tools,omitempty"`
 
@@ -66,17 +67,7 @@ type AgentsConfig struct {
 	AgentProfiles map[string]AgentProfileConfig `json:"agent_profiles,omitempty"`
 }
 
-type AgentProfileConfig struct {
-	Category                 string   `json:"category,omitempty"`
-	Description              string   `json:"description,omitempty"`
-	Model                    string   `json:"model,omitempty"`
-	AccountID                string   `json:"account_id,omitempty"`
-	Instructions             string   `json:"instructions,omitempty"`
-	AllowedTools             []string `json:"allowed_tools,omitempty"`
-	DeniedTools              []string `json:"denied_tools,omitempty"`
-	FileOwnership            []string `json:"file_ownership,omitempty"`
-	ContextCompactionPercent *int     `json:"context_compaction_percent,omitempty"`
-}
+type AgentProfileConfig = ttypes.AgentProfileSettings
 
 // DefaultAgentsConfig returns the built-in agent scaffolding. No category
 // ships a model: the user configures the main agent (and any role that should
@@ -415,6 +406,8 @@ func activeProfileCfg(cfg *Config) (ProfileConfig, string) {
 
 func catConfigToSettings(v CategoryConfig) ttypes.CategorySettings {
 	return ttypes.CategorySettings{
+		Instructions: v.Instructions,
+		AllowedTools: append([]string(nil), v.AllowedTools...), DeniedTools: append([]string(nil), v.DeniedTools...),
 		AccountID:                v.AccountID,
 		Model:                    v.Model,
 		ThinkingEffort:           v.ThinkingEffort,
@@ -436,6 +429,8 @@ func catConfigToSettings(v CategoryConfig) ttypes.CategorySettings {
 
 func catSettingsToConfig(v ttypes.CategorySettings) CategoryConfig {
 	return CategoryConfig{
+		Instructions: v.Instructions,
+		AllowedTools: append([]string(nil), v.AllowedTools...), DeniedTools: append([]string(nil), v.DeniedTools...),
 		AccountID:                v.AccountID,
 		Model:                    v.Model,
 		ThinkingEffort:           v.ThinkingEffort,
@@ -488,6 +483,7 @@ func ConfigToSettings(cfg *Config) ttypes.Settings {
 	}
 
 	agentsSettings := ttypes.AgentsSettings{
+		AgentProfiles: ttypes.CloneAgentProfiles(cfg.Agents.AgentProfiles),
 		Enabled:       maEnabled,
 		ActiveProfile: ap,
 		MaxConcurrent: cfg.Agents.MaxConcurrent,
@@ -558,6 +554,9 @@ func ApplyWorkspaceAgentDefaults(cfg *Config, agents ttypes.AgentsSettings) {
 	if cfg == nil {
 		return
 	}
+	if agents.AgentProfiles != nil {
+		cfg.Agents.AgentProfiles = ttypes.CloneAgentProfiles(agents.AgentProfiles)
+	}
 	if len(agents.Categories) == 0 && agents.ActiveProfile == "" &&
 		agents.MaxConcurrent == 0 && len(agents.Profiles) == 0 {
 		return
@@ -589,6 +588,9 @@ func ApplyWorkspaceAgentDefaults(cfg *Config, agents ttypes.AgentsSettings) {
 		// Workspace agent settings publish complete account selections. An empty
 		// ID clears this layer rather than inheriting a prior account.
 		merged.AccountID = value.AccountID
+		merged.Instructions = value.Instructions
+		merged.AllowedTools = append([]string(nil), value.AllowedTools...)
+		merged.DeniedTools = append([]string(nil), value.DeniedTools...)
 		profile.Categories[category] = merged
 	}
 	cfg.Agents.Profiles[profileName] = profile

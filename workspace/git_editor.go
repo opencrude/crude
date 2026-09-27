@@ -11,7 +11,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/aymanbagabas/go-udiff"
+	"crude/textdiff"
 )
 
 // GitBlameLine is porcelain blame for one 1-based file line.
@@ -27,20 +27,16 @@ type GitBlameLine struct {
 
 // GitFileAnnotation is the editor-local Git projection for one path.
 type GitFileAnnotation struct {
-	Path       string
-	Blame      []GitBlameLine
-	Hunks      []GitHunk
-	Conflicted bool
+	HeadContent string
+	Path        string
+	Blame       []GitBlameLine
+	Hunks       []GitHunk
+	Conflicted  bool
 }
 
 // GitHunk is one exact HEAD-to-buffer change. Starts are zero-based line
 // positions; line slices retain their original line endings for inspection.
-type GitHunk struct {
-	OldStart int
-	NewStart int
-	OldLines []string
-	NewLines []string
-}
+type GitHunk = textdiff.Hunk
 
 // AnnotateFile reads blame and HEAD-vs-content line edits for absPath.
 // content is the editor buffer (unsaved text included). Results are
@@ -66,12 +62,16 @@ func (s *GitService) AnnotateFile(ctx context.Context, absPath, content string) 
 
 	annotation := GitFileAnnotation{Path: absPath}
 	head, headErr := s.showHEAD(ctx, root, rel)
+	if err := ctx.Err(); err != nil {
+		return GitFileAnnotation{}, err
+	}
 	if headErr == nil {
-		annotation.Hunks = lineHunks(head, content)
+		annotation.HeadContent = head
+		annotation.Hunks = DocumentHunks(head, content)
 	} else if isUntrackedGitError(headErr) {
-		annotation.Hunks = addedHunks(content)
+		annotation.Hunks = DocumentHunks("", content)
 	} else if !s.hasHEAD(ctx, root) {
-		annotation.Hunks = addedHunks(content)
+		annotation.Hunks = DocumentHunks("", content)
 	} else {
 		return GitFileAnnotation{}, headErr
 	}
@@ -79,6 +79,9 @@ func (s *GitService) AnnotateFile(ctx context.Context, absPath, content string) 
 	blame, blameErr := s.blameFile(ctx, root, rel, content)
 	if blameErr == nil {
 		annotation.Blame = blame
+	}
+	if err := ctx.Err(); err != nil {
+		return GitFileAnnotation{}, err
 	}
 	return annotation, nil
 }
@@ -141,6 +144,9 @@ func (s *GitService) outputStdin(ctx context.Context, root string, stdin []byte,
 	}
 	out, err := cmd.CombinedOutput()
 	if err != nil {
+		if ctx.Err() != nil {
+			return nil, ctx.Err()
+		}
 		detail := strings.TrimSpace(string(out))
 		if detail == "" {
 			detail = err.Error()
@@ -167,52 +173,7 @@ func isUntrackedGitError(err error) bool {
 
 // DocumentHunks compares exact immutable text snapshots without Git or disk I/O.
 func DocumentHunks(before, after string) []GitHunk {
-	return lineHunks(before, after)
-}
-
-func lineHunks(before, after string) []GitHunk {
-	if before == after {
-		return nil
-	}
-	if before == "" {
-		return addedHunks(after)
-	}
-	unified, err := udiff.ToUnifiedDiff("a", "b", before, udiff.Lines(before, after), 0)
-	if err != nil {
-		return nil
-	}
-	hunks := make([]GitHunk, 0, len(unified.Hunks))
-	for _, source := range unified.Hunks {
-		hunk := GitHunk{OldStart: max(0, source.FromLine-1), NewStart: max(0, source.ToLine-1)}
-		for _, line := range source.Lines {
-			switch line.Kind {
-			case udiff.Delete:
-				hunk.OldLines = append(hunk.OldLines, line.Content)
-			case udiff.Insert:
-				hunk.NewLines = append(hunk.NewLines, line.Content)
-			}
-		}
-		hunks = append(hunks, hunk)
-	}
-	return hunks
-}
-
-func addedHunks(content string) []GitHunk {
-	if content == "" {
-		return nil
-	}
-	return []GitHunk{{NewLines: splitGitLines(content)}}
-}
-
-func splitGitLines(text string) []string {
-	if text == "" {
-		return nil
-	}
-	lines := strings.SplitAfter(text, "\n")
-	if lines[len(lines)-1] == "" {
-		lines = lines[:len(lines)-1]
-	}
-	return lines
+	return textdiff.Hunks(before, after)
 }
 
 func parseBlamePorcelain(text string) ([]GitBlameLine, error) {

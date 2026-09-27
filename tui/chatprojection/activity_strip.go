@@ -34,6 +34,7 @@ type ActivityStrip struct {
 	retryPrefix, retryReason string
 	waitSecond               int
 	waitLine                 PaintLine
+	tide                     ui.TextTideMotion
 }
 
 func (s *ActivityStrip) Update(source types.AgentActivityView, width int, th *theme.Theme, tokens *ui.TokenSet) {
@@ -42,6 +43,13 @@ func (s *ActivityStrip) Update(source types.AgentActivityView, width int, th *th
 	}
 	if s.width != width || s.theme != th || s.tokens != tokens {
 		s.md = nil
+	}
+	if source.Status.Ref != s.source.Status.Ref || source.Status.TurnGeneration != s.source.Status.TurnGeneration ||
+		source.Status.ProviderID != s.source.Status.ProviderID || source.Status.AccountID != s.source.Status.AccountID || source.Status.ModelID != s.source.Status.ModelID {
+		s.tide = ui.TextTideMotion{}
+	}
+	if source.Active != s.source.Active {
+		s.resetCycle = true
 	}
 	s.source, s.width, s.theme, s.tokens, s.ready = source, width, th, tokens, true
 	key := source.Status.Ref.ID + ":" + source.Status.RequestID + ":" + string(source.Status.Phase) + ":" + source.ThinkingDisplay.BlockID
@@ -66,12 +74,18 @@ func (s *ActivityStrip) Update(source types.AgentActivityView, width int, th *th
 			label = "Working"
 		}
 	}
-	role := ui.ColorMuted
+	role := ui.ColorActivityText
 	if status.NeedsAction {
 		role = ui.ColorWarning
 	}
 	if status.Phase == types.AgentFailed {
 		role = ui.ColorError
+	}
+	if !s.animating() {
+		s.tide = ui.TextTideMotion{}
+	}
+	if status.Phase == types.AgentCancelled {
+		label = "Stopped"
 	}
 	if status.NeedsAction || status.Phase == types.AgentFailed || status.Phase == types.AgentRetrying || status.Phase == types.AgentCancelling {
 		if status.Phase == types.AgentRetrying {
@@ -131,14 +145,14 @@ func (s *ActivityStrip) Update(source types.AgentActivityView, width int, th *th
 		if source.ThinkingExpanded {
 			label = strings.Replace(label, "▸", "▾", 1)
 		}
-		line := PaintLine{Spans: []RowSpan{{Text: label, Role: ui.ColorMuted}}}
+		line := PaintLine{Spans: []RowSpan{{Text: label, Role: ui.ColorActivityText}}}
 		for _, span := range preview.Spans {
-			span.Role = ui.ColorMuted // Markdown emphasis survives without foreground-white ink.
+			span.Role = ui.ColorActivityText // Keep Markdown emphasis with the strip's supporting ink.
 			span.FGSet = false
 			line.Spans = append(line.Spans, span)
 		}
 		s.add(line)
-	} else if source.Active || source.Plan == nil {
+	} else {
 		s.add(PaintLine{Spans: []RowSpan{{Text: label, Role: role}}})
 	}
 	if p := source.Plan; p != nil {
@@ -157,28 +171,26 @@ func (s *ActivityStrip) Update(source types.AgentActivityView, width int, th *th
 		}
 		for i, step := range p.Current {
 			prefix := fmt.Sprintf("Step %d/%d", step.Number, p.Total)
-			stepRole := ui.ColorMuted
 			if i == 0 {
 				prefix = progress + " · " + prefix
 			}
 			if step.Status == "blocked" || step.Status == "failed" {
 				prefix += " " + step.Status
-				stepRole = ui.ColorMuted
 			}
 			text := stripText(step.Text)
 			if step.Reason != "" {
 				text += " · " + stripText(step.Reason)
 			}
-			s.add(PaintLine{Spans: []RowSpan{{Text: prefix + ": ", Role: stepRole}, {Text: text, Role: ui.ColorMuted}}})
+			s.add(PaintLine{Spans: []RowSpan{{Text: prefix + ": ", Role: ui.ColorActivityText}, {Text: text, Role: ui.ColorActivityText}}})
 		}
 		if len(p.Current) == 0 {
-			s.add(PaintLine{Spans: []RowSpan{{Text: progress, Role: ui.ColorMuted}}})
+			s.add(PaintLine{Spans: []RowSpan{{Text: progress, Role: ui.ColorActivityText}}})
 		}
 		if p.Objective != "" && len(p.Current) > 0 {
-			s.add(PaintLine{Spans: []RowSpan{{Text: "Goal · " + stripText(p.Objective), Role: ui.ColorMuted}}})
+			s.add(PaintLine{Spans: []RowSpan{{Text: "Goal · " + stripText(p.Objective), Role: ui.ColorActivityText}}})
 		}
 		if step := p.Next; step != nil {
-			s.add(PaintLine{Spans: []RowSpan{{Text: fmt.Sprintf("Next %d/%d · %s", step.Number, p.Total, stripText(step.Text)), Role: ui.ColorMuted}}})
+			s.add(PaintLine{Spans: []RowSpan{{Text: fmt.Sprintf("Next %d/%d · %s", step.Number, p.Total, stripText(step.Text)), Role: ui.ColorActivityText}}})
 		}
 	}
 	// Counts never consume a page or displace useful activity. They occupy only
@@ -195,7 +207,7 @@ func (s *ActivityStrip) Update(source types.AgentActivityView, width int, th *th
 		suffix := " · " + count + label
 		last := &s.pages[len(s.pages)-1]
 		if last.VisibleWidth()+rendering.VisibleWidth(suffix) <= width {
-			last.Spans = append(last.Spans, RowSpan{Text: suffix, Role: ui.ColorMuted})
+			last.Spans = append(last.Spans, RowSpan{Text: suffix, Role: ui.ColorActivityText})
 		}
 	}
 }
@@ -205,14 +217,13 @@ func (s *ActivityStrip) Update(source types.AgentActivityView, width int, th *th
 func (s *ActivityStrip) add(line PaintLine) {
 	if line.VisibleWidth() > s.width {
 		line = TruncatePaintLine(line, max(0, s.width-1))
-		line.Spans = append(line.Spans, RowSpan{Text: "…", Role: ui.ColorMuted})
+		line.Spans = append(line.Spans, RowSpan{Text: "…", Role: ui.ColorActivityText})
 	}
 	if len(s.pages) > 0 {
 		last := &s.pages[len(s.pages)-1]
 		if last.VisibleWidth()+3+line.VisibleWidth() <= s.width {
-			last.Spans = append(last.Spans, RowSpan{Text: " · ", Role: ui.ColorMuted})
+			last.Spans = append(last.Spans, RowSpan{Text: " · ", Role: ui.ColorActivityText})
 			last.Spans = append(last.Spans, line.Spans...)
-			last.TextTide = last.TextTide || line.TextTide
 			return
 		}
 	}
@@ -226,8 +237,14 @@ func (s *ActivityStrip) Line(frame int) PaintLine {
 	if s.resetCycle || frame < s.cycleStart {
 		s.cycleStart, s.resetCycle = frame, false
 	}
-	index := max(0, (frame-s.cycleStart)/ActivityPageDuration) % len(s.pages)
+	index := 0
+	if s.animating() {
+		index = max(0, (frame-s.cycleStart)/ActivityPageDuration) % len(s.pages)
+	}
 	line := s.pages[index]
+	if !s.animating() {
+		return line
+	}
 	if !s.retryAt.IsZero() {
 		remaining := max(0, (int(s.retryAt.UnixMilli())-frame+999)/1000)
 		if remaining != s.waitSecond {
@@ -236,14 +253,11 @@ func (s *ActivityStrip) Line(frame int) PaintLine {
 				text += " · " + s.retryReason
 			}
 			text = rendering.TruncateVisual(text, s.width, "…")
-			s.waitLine = PaintLine{Spans: []RowSpan{{Text: text, Role: ui.ColorMuted}}}
+			s.waitLine = PaintLine{Spans: []RowSpan{{Text: text, Role: ui.ColorActivityText}}}
 			s.waitSecond = remaining
 		}
 		line = s.waitLine
-		line.TextTide = s.source.Active
-		line.TideForward = s.source.TideForward || s.source.ThinkingDisplay.Kind.IsSummary()
-		line.TideFrame = frame
-		return line
+		return s.animate(line, frame)
 	}
 	if !s.waitStart.IsZero() {
 		seconds := max(0, (frame-int(s.waitStart.UnixMilli()))/1000)
@@ -254,15 +268,30 @@ func (s *ActivityStrip) Line(frame int) PaintLine {
 				elapsed = " · " + rendering.FormatThinkingDuration(time.Duration(seconds)*time.Second)
 			}
 			if line.VisibleWidth()+rendering.VisibleWidth(elapsed) <= s.width {
-				s.waitLine.Spans = append(append([]RowSpan(nil), line.Spans...), RowSpan{Text: elapsed, Role: ui.ColorMuted})
+				s.waitLine.Spans = append(append([]RowSpan(nil), line.Spans...), RowSpan{Text: elapsed, Role: ui.ColorActivityText})
 			}
 			s.waitSecond = seconds
 		}
 		line = s.waitLine
 	}
-	line.TextTide = s.source.Active
-	line.TideForward = s.source.TideForward || s.source.ThinkingDisplay.Kind.IsSummary()
-	line.TideFrame = frame
+	return s.animate(line, frame)
+}
+
+func (s *ActivityStrip) animating() bool {
+	switch s.source.Status.Phase {
+	case types.AgentIdle, types.AgentCancelling, types.AgentCancelled, types.AgentCompleted, types.AgentFailed:
+		return false
+	default:
+		return s.source.Active
+	}
+}
+
+func (s *ActivityStrip) animate(line PaintLine, frame int) PaintLine {
+	line.TextTide = s.animating()
+	if line.TextTide {
+		forward := s.source.TideForward || s.source.ThinkingDisplay.Kind.IsSummary()
+		line.TideCenter = s.tide.Advance(frame, line.VisibleWidth(), forward)
+	}
 	return line
 }
 

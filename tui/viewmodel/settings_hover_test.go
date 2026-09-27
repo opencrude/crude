@@ -20,10 +20,10 @@ func TestSettingsWindowHoverRendersWithoutChangingKeyboardTarget(t *testing.T) {
 	body.ShowMainAgent() // focuses Account, the first interactive field
 	host.MarkLayout()
 	host.Layout()
-	if got := host.Focused(); got != settingsui.WorkspaceSettingsFormID {
+	if got := host.Focused(); got != settingsui.AgentSettingsFormID {
 		t.Fatalf("form focus=%q", got)
 	}
-	formRect, ok := host.ScreenRect(settingsui.WorkspaceSettingsFormID)
+	formRect, ok := host.ScreenRect(settingsui.AgentSettingsFormID)
 	if !ok {
 		t.Fatal("settings form not mounted")
 	}
@@ -44,7 +44,7 @@ func TestSettingsWindowHoverRendersWithoutChangingKeyboardTarget(t *testing.T) {
 	px, py := window.Position()
 	selected := body.Model().SelectedCategory()
 	_, _ = app.Update(tea.MouseMotionMsg{X: px + localX, Y: py + rowY, Button: tea.MouseNone})
-	if host.Focused() != settingsui.WorkspaceSettingsFormID || body.Model().SelectedCategory() != selected {
+	if host.Focused() != settingsui.AgentSettingsFormID || body.Model().SelectedCategory() != selected {
 		t.Fatal("hover changed keyboard focus or category")
 	}
 	window.Render(&wm.RenderContext{Theme: app.Theme})
@@ -63,7 +63,7 @@ func TestSettingsWindowHoverRendersWithoutChangingKeyboardTarget(t *testing.T) {
 		t.Fatal("settings category rail not mounted")
 	}
 	_, _ = app.Update(tea.MouseMotionMsg{X: px + rail.X + 2, Y: py + rail.Y + 1, Button: tea.MouseNone})
-	if body.Model().SelectedCategory() != selected || host.Focused() != settingsui.WorkspaceSettingsFormID {
+	if body.Model().SelectedCategory() != selected || host.Focused() != settingsui.AgentSettingsFormID {
 		t.Fatal("rail motion selected a category or stole focus")
 	}
 	window.Render(&wm.RenderContext{Theme: app.Theme})

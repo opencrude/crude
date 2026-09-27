@@ -3,12 +3,13 @@ package editor
 import (
 	"fmt"
 	"sort"
+	"strings"
 	"time"
 
+	"crude/textdiff"
 	"crude/tui/cell"
 )
 
-// GitLineKind is the HEAD-vs-buffer status of one editor line.
 type GitLineKind uint8
 
 const (
@@ -18,248 +19,169 @@ const (
 	GitLineConflict
 )
 
-// GitBlameLine is blame metadata for one 1-based source line.
 type GitBlameLine struct {
-	Line        int
-	Hash        string
-	ShortHash   string
-	Author      string
-	When        time.Time
-	Subject     string
-	Uncommitted bool
+	Line                    int
+	Hash, ShortHash, Author string
+	When                    time.Time
+	Subject                 string
+	Uncommitted             bool
 }
 
-// GitHunk is one exact HEAD-to-buffer change using zero-based line positions.
-type GitHunk struct {
-	OldStart int
-	NewStart int
-	OldLines []string
-	NewLines []string
-}
+type GitHunk = textdiff.Hunk
 
-// gitProvisionalMark is a paint-only claim about lines the user touched since the
-// last authoritative annotation: the region is certainly changed (it was just
-// edited), so the rail can say so at once instead of waiting for the debounced
-// Git refresh. It carries no old text, so it is deliberately invisible to
-// inspection and navigation — those need the authoritative hunk.
-type gitProvisionalMark struct {
-	start int // zero-based first covered line
-	lines int // covered line count, at least 1
-	// added reports that the whole range lies past the end of the annotated
-	// document, so it reads as an appended line rather than an edited one.
-	added bool
-}
-
-// SetGitAnnotation installs a projection that was computed from the buffer at
-// sourceRevision. Edits that landed while the annotation was in flight are
-// mapped forward here, so the arriving projection neither blanks the gutter nor
-// fights the live edits. Callers that already hold the live buffer pass
-// Revision(). Passing no hunks clears the projection.
-func (e *Editor) SetGitAnnotation(sourceRevision uint64, hunks []GitHunk, blame []GitBlameLine, conflicted bool) {
-	if e == nil {
+// SetGitAnnotation publishes an immutable HEAD baseline and revision-bound blame.
+// Background refreshes of the same HEAD never replace the live hunk projection.
+func (e *Editor) SetGitAnnotation(sourceRevision uint64, head string, hunks []GitHunk, blame []GitBlameLine, conflicted bool) {
+	if e == nil || e.buf == nil {
 		return
 	}
-	e.gitHunks = hunks
 	e.gitBlame = blame
+	e.gitBlameHunks = append([]GitHunk(nil), hunks...)
 	e.gitConflicted = conflicted
-	e.gitLoaded = true
-	e.gitRevision = sourceRevision
-	// The arriving projection is authoritative: whatever the local provisional
-	// marks claimed is now either confirmed or resolved away by it, so they are
-	// replaced rather than kept alongside.
-	e.gitProvisional = e.gitProvisional[:0]
-	e.remapGitProjection()
-}
-
-// remapGitProjection keeps the projection continuous across edits. An edit
-// inside a hunk keeps that hunk in place — the region is still changed relative
-// to HEAD — and only the hunks after the edit shift by its line delta. Unknown
-// full replacements invalidate the projection.
-//
-// This runs on every text change. It is the display-continuity half of the
-// projection: the asynchronous Git annotation remains the only producer of
-// complete truth, while a touched line is marked locally right away so the rail
-// answers the keystroke instead of waiting for the debounced refresh. Dropping a
-// touched hunk or waiting for Git is what made gutter markers blink or lag.
-func (e *Editor) remapGitProjection() {
-	if !e.gitLoaded || e.gitRevision == e.Revision() {
+	if e.gitLoaded && e.gitHead == head {
+		e.remapGitProjection()
 		return
 	}
-	for revision := e.gitRevision + 1; revision <= e.Revision(); revision++ {
-		change := e.buf.lineChanges[revision%uint64(len(e.buf.lineChanges))]
-		if change.revision != revision {
-			e.gitHunks = nil
-			e.gitBlame = nil
-			e.gitProvisional = nil
-			break
-		}
-		e.shiftGitProjection(change)
-		e.noteProvisionalEdit(change)
+	e.buf.ensureCache()
+	e.gitHead = head
+	e.gitHeadLines = textdiff.Lines(head)
+	e.gitLoaded = true
+	if sourceRevision == e.Revision() {
+		e.gitHunks = append([]GitHunk(nil), hunks...)
+	} else {
+		e.gitHunks = textdiff.Hunks(head, string(e.buf.cachedBytes))
 	}
+	e.gitSnapshot = e.buf.snapshotText()
+	e.gitLineOffsets = e.buf.lineOffsets
 	e.gitRevision = e.Revision()
 }
 
-// shiftGitProjection moves everything that sits below one edit.
-func (e *Editor) shiftGitProjection(change bufferLineChange) {
-	for i := range e.gitHunks {
-		if e.gitHunks[i].NewStart > change.end {
-			e.gitHunks[i].NewStart += change.delta
-		}
-	}
-	for i := range e.gitProvisional {
-		mark := &e.gitProvisional[i]
-		if mark.start > change.end {
-			mark.start += change.delta
-		}
-	}
-	// Blame is stored 1-based and follows the same shift rule, so a keystroke
-	// does not make the status-bar blame disappear.
-	for i := range e.gitBlame {
-		if e.gitBlame[i].Line-1 > change.end {
-			e.gitBlame[i].Line += change.delta
-		}
-	}
+func (e *Editor) ClearGitAnnotation() {
+	e.gitHead = ""
+	e.gitHeadLines = nil
+	e.gitHunks = nil
+	e.gitBlame = nil
+	e.gitBlameHunks = nil
+	e.gitSnapshot = textSnapshot{}
+	e.gitLineOffsets = nil
+	e.gitLoaded = false
+	e.gitConflicted = false
+	e.gitRevision = 0
 }
 
-// noteProvisionalEdit claims the lines one edit touched, minus whatever the
-// authoritative projection already covers, so the marker is on screen at the
-// first keystroke and never duplicated.
-//
-// The flavour is structural, not a diff: the line the edit started on is an
-// edit, and the lines it created with newlines are additions. The authoritative
-// refresh refines that into real HEAD-relative hunks; until then the rail shows
-// what the keystroke itself proves.
-func (e *Editor) noteProvisionalEdit(change bufferLineChange) {
-	if e.gitConflicted {
-		// A conflicted file already paints every line as conflicted.
+// remapGitProjection re-diffs only the exact changed line window plus touching
+// hunks and one unchanged anchor on either side. Immutable piece spans locate
+// the window without scanning the document or replaying a bounded edit log.
+// Paint, inspection and navigation consume this same truthful projection.
+func (e *Editor) remapGitProjection() {
+	if e == nil || !e.gitLoaded || e.gitRevision == e.Revision() {
 		return
 	}
-	lineCount := e.buf.LineCount()
-	start := max(0, change.start)
-	if start <= lineCount-1 {
-		// Editing a line that is itself only a local addition keeps the added
-		// flavour: the whole region reads as new text.
-		e.addProvisionalMark(start, 1, e.locallyAddedAt(start))
-	}
-	if change.delta > 0 {
-		addedFrom := start + 1
-		addedLines := min(change.delta, lineCount-addedFrom)
-		if addedLines > 0 {
-			e.addProvisionalMark(addedFrom, addedLines, true)
-		}
-	}
-}
-
-// locallyAddedAt reports whether a line is already claimed as a local addition.
-func (e *Editor) locallyAddedAt(line int) bool {
-	for _, mark := range e.gitProvisional {
-		if mark.added && line >= mark.start && line < mark.start+mark.lines {
-			return true
-		}
-	}
-	return false
-}
-
-// addProvisionalMark claims a line range, minus the authoritative coverage:
-// hunk-owned lines already carry a marker, and a second claim over them is what
-// turns a rail into a stutter.
-func (e *Editor) addProvisionalMark(start, lines int, added bool) {
-	if lines <= 0 {
+	e.buf.ensureCache()
+	current := e.buf.snapshotText()
+	prefix, suffix := e.gitSnapshot.matchingEdges(current)
+	defer func() { e.gitSnapshot = current; e.gitLineOffsets = e.buf.lineOffsets; e.gitRevision = e.Revision() }()
+	if prefix == current.size && prefix == e.gitSnapshot.size {
 		return
 	}
-	gaps := [][2]int{{start, start + lines - 1}}
-	for _, hunk := range e.gitHunks {
-		hunkStart := hunk.NewStart
-		hunkEnd := hunk.NewStart + max(1, len(hunk.NewLines)) - 1
-		kept := gaps[:0]
-		for _, gap := range gaps {
-			if hunkEnd < gap[0] || hunkStart > gap[1] {
-				kept = append(kept, gap)
-				continue
-			}
-			if hunkStart > gap[0] {
-				kept = append(kept, [2]int{gap[0], hunkStart - 1})
-			}
-			if hunkEnd < gap[1] {
-				kept = append(kept, [2]int{hunkEnd + 1, gap[1]})
-			}
-		}
-		gaps = kept
-		if len(gaps) == 0 {
-			return
-		}
+	oldOffsets, newOffsets := e.gitLineOffsets, e.buf.lineOffsets
+	lineAt := func(offsets []int, offset int) int {
+		return max(0, sort.Search(len(offsets), func(i int) bool { return offsets[i] > offset })-1)
 	}
-	for _, gap := range gaps {
-		e.unionProvisionalRange(gap[0], gap[1]-gap[0]+1, added)
+	lineCount := func(offsets []int, size int) int {
+		count := len(offsets)
+		if count > 0 && offsets[count-1] == size {
+			count--
+		}
+		return count
 	}
-}
-
-// unionProvisionalRange merges a range into the claims of the same flavour, so
-// typing line by line grows one continuous mark instead of stacking claims.
-func (e *Editor) unionProvisionalRange(start, lines int, added bool) {
-	if lines <= 0 {
+	oldCount, newCount := lineCount(oldOffsets, e.gitSnapshot.size), lineCount(newOffsets, current.size)
+	from := max(0, min(oldCount, lineAt(oldOffsets, prefix))-1)
+	to := min(oldCount, lineAt(oldOffsets, e.gitSnapshot.size-suffix)+2)
+	first, deltaBefore := 0, 0
+	for first < len(e.gitHunks) && e.gitHunks[first].NewStart+len(e.gitHunks[first].NewLines) < from {
+		h := e.gitHunks[first]
+		deltaBefore += len(h.OldLines) - len(h.NewLines)
+		first++
+	}
+	last := first
+	for last < len(e.gitHunks) && e.gitHunks[last].NewStart <= to {
+		h := e.gitHunks[last]
+		from = min(from, h.NewStart)
+		to = max(to, h.NewStart+len(h.NewLines))
+		last++
+	}
+	for first > 0 && e.gitHunks[first-1].NewStart+len(e.gitHunks[first-1].NewLines) >= from {
+		first--
+		h := e.gitHunks[first]
+		deltaBefore -= len(h.OldLines) - len(h.NewLines)
+		from = min(from, h.NewStart)
+	}
+	headFrom, headTo := from+deltaBefore, to+deltaBefore
+	for i := first; i < last; i++ {
+		headTo += len(e.gitHunks[i].OldLines) - len(e.gitHunks[i].NewLines)
+	}
+	delta := newCount - oldCount
+	newTo := to + delta
+	if headFrom < 0 || headTo < headFrom || headTo > len(e.gitHeadLines) || from < 0 || newTo < from || newTo > newCount {
+		// An externally supplied annotation cannot establish this range. Rebuild
+		// from the authoritative baseline rather than inventing a local marker.
+		e.gitHunks = textdiff.Hunks(e.gitHead, string(e.buf.cachedBytes))
 		return
 	}
-	for i := range e.gitProvisional {
-		mark := &e.gitProvisional[i]
-		if mark.added != added {
-			continue
+	byteAt := func(line int) int {
+		if line >= len(newOffsets) {
+			return current.size
 		}
-		if start > mark.start+mark.lines || mark.start > start+lines {
-			continue
-		}
-		mark.start = min(mark.start, start)
-		mark.lines = max(mark.start+mark.lines, start+lines) - mark.start
-		return
+		return newOffsets[line]
 	}
-	e.gitProvisional = append(e.gitProvisional, gitProvisionalMark{start: start, lines: lines, added: added})
-}
-
-func (e *Editor) provisionalKindAt(line int) GitLineKind {
-	for _, mark := range e.gitProvisional {
-		if line < mark.start || line >= mark.start+mark.lines {
-			continue
-		}
-		if mark.added {
-			return GitLineAdded
-		}
-		return GitLineModified
+	changed := textdiff.Hunks(strings.Join(e.gitHeadLines[headFrom:headTo], ""), string(e.buf.cachedBytes[byteAt(from):byteAt(newTo)]))
+	next := make([]GitHunk, 0, first+len(changed)+len(e.gitHunks)-last)
+	next = append(next, e.gitHunks[:first]...)
+	for _, h := range changed {
+		h.OldStart += headFrom
+		h.NewStart += from
+		next = append(next, h)
 	}
-	return GitLineUnchanged
+	for _, h := range e.gitHunks[last:] {
+		h.NewStart += delta
+		next = append(next, h)
+	}
+	e.gitHunks = next
 }
 
 func (e *Editor) gitKindAt(line int) GitLineKind {
-	if e == nil || e.gitRevision != e.Revision() || line < 0 {
+	if e == nil || !e.gitLoaded || line < 0 {
 		return GitLineUnchanged
 	}
+	e.remapGitProjection()
 	index := sort.Search(len(e.gitHunks), func(i int) bool { return e.gitHunks[i].NewStart > line }) - 1
 	if index >= 0 {
-		hunk := e.gitHunks[index]
-		offset := line - hunk.NewStart
-		if offset >= 0 && offset < len(hunk.NewLines) {
+		h := e.gitHunks[index]
+		offset := line - h.NewStart
+		if offset >= 0 && offset < len(h.NewLines) {
 			if e.gitConflicted {
 				return GitLineConflict
 			}
-			if offset < len(hunk.OldLines) {
+			if offset < len(h.OldLines) {
 				return GitLineModified
 			}
 			return GitLineAdded
 		}
 	}
-	// No authoritative hunk owns the line, but the local edit claim does: the
-	// marker appears with the keystroke instead of after the Git round trip.
-	return e.provisionalKindAt(line)
+	return GitLineUnchanged
 }
 
 func (e *Editor) gitDeletionMarkerAt(line, lineCount int) rune {
-	if e.gitRevision != e.Revision() {
+	e.remapGitProjection()
+	if !e.gitLoaded {
 		return ' '
 	}
-	for _, hunk := range e.gitHunks {
-		if len(hunk.OldLines) <= len(hunk.NewLines) {
+	for _, h := range e.gitHunks {
+		if len(h.OldLines) <= len(h.NewLines) {
 			continue
 		}
-		boundary := hunk.NewStart + len(hunk.NewLines)
+		boundary := h.NewStart + len(h.NewLines)
 		if boundary >= lineCount {
 			if lineCount > 0 && line == lineCount-1 {
 				return '▁'
@@ -273,31 +195,27 @@ func (e *Editor) gitDeletionMarkerAt(line, lineCount int) rune {
 	return ' '
 }
 
-// GitHunkAtLine returns the change owning a current-buffer line or deletion
-// boundary. The returned index is stable only for the current annotation.
 func (e *Editor) GitHunkAtLine(line int) (GitHunk, int, bool) {
-	if e == nil || e.gitRevision != e.Revision() {
+	if e == nil {
 		return GitHunk{}, -1, false
 	}
-	for index, hunk := range e.gitHunks {
-		newEnd := hunk.NewStart + len(hunk.NewLines)
-		if line >= hunk.NewStart && line < newEnd {
-			return hunk, index, true
+	e.remapGitProjection()
+	for index, h := range e.gitHunks {
+		end := h.NewStart + len(h.NewLines)
+		if line >= h.NewStart && line < end {
+			return h, index, true
 		}
-		if len(hunk.OldLines) > len(hunk.NewLines) {
-			boundary := newEnd
-			if line == boundary || (boundary >= e.LineCount() && line == e.LineCount()-1) {
-				return hunk, index, true
-			}
+		if len(h.OldLines) > len(h.NewLines) && (line == end || (end >= e.LineCount() && line == e.LineCount()-1)) {
+			return h, index, true
 		}
 	}
 	return GitHunk{}, -1, false
 }
-
 func (e *Editor) GitHunks() []GitHunk {
-	if e.gitRevision != e.Revision() {
+	if e == nil {
 		return nil
 	}
+	e.remapGitProjection()
 	return e.gitHunks
 }
 
@@ -307,9 +225,9 @@ func (e *Editor) NextChange(line, direction int) (int, bool) {
 		return 0, false
 	}
 	if direction > 0 {
-		for _, hunk := range hunks {
-			if hunk.NewStart > line {
-				return min(hunk.NewStart, e.LineCount()-1), true
+		for _, h := range hunks {
+			if h.NewStart > line {
+				return min(h.NewStart, e.LineCount()-1), true
 			}
 		}
 		return min(hunks[0].NewStart, e.LineCount()-1), true
@@ -322,21 +240,39 @@ func (e *Editor) NextChange(line, direction int) (int, bool) {
 	return min(hunks[len(hunks)-1].NewStart, e.LineCount()-1), true
 }
 
-// BlameAtLine returns blame for a 0-based editor line.
+// Map unchanged live rows through HEAD into the blame snapshot. Edits never
+// shift an entire per-line blame array on the UI thread.
 func (e *Editor) BlameAtLine(line int) (GitBlameLine, bool) {
-	if e == nil {
+	if e == nil || line < 0 {
 		return GitBlameLine{}, false
 	}
-	want := line + 1
-	for _, b := range e.gitBlame {
-		if b.Line == want {
-			return b, true
+	if e.gitKindAt(line) != GitLineUnchanged {
+		return GitBlameLine{Line: line + 1, Uncommitted: true}, true
+	}
+	headLine := line
+	index := sort.Search(len(e.gitHunks), func(i int) bool { return e.gitHunks[i].NewStart > line }) - 1
+	if index >= 0 {
+		h := e.gitHunks[index]
+		headLine = h.OldStart + len(h.OldLines) + line - h.NewStart - len(h.NewLines)
+	}
+	sourceLine := headLine
+	index = sort.Search(len(e.gitBlameHunks), func(i int) bool { return e.gitBlameHunks[i].OldStart > headLine }) - 1
+	if index >= 0 {
+		h := e.gitBlameHunks[index]
+		if headLine < h.OldStart+len(h.OldLines) {
+			return GitBlameLine{}, false
 		}
+		sourceLine = h.NewStart + len(h.NewLines) + headLine - h.OldStart - len(h.OldLines)
+	}
+	index = sort.Search(len(e.gitBlame), func(i int) bool { return e.gitBlame[i].Line >= sourceLine+1 })
+	if index < len(e.gitBlame) && e.gitBlame[index].Line == sourceLine+1 {
+		b := e.gitBlame[index]
+		b.Line = line + 1
+		return b, true
 	}
 	return GitBlameLine{}, false
 }
 
-// CursorBlameSummary is the compact status-bar blame for the cursor line.
 func (e *Editor) CursorBlameSummary() string {
 	if e == nil {
 		return ""
@@ -358,14 +294,13 @@ func (e *Editor) CursorBlameSummary() string {
 	if when == "" {
 		return fmt.Sprintf("%s  %s", b.Author, b.ShortHash)
 	}
-	return fmt.Sprintf("%s  %s  %s", b.Author, when, b.ShortHash)
+	return fmt.Sprintf("%s  %s  %s", b.Author, b.ShortHash, when)
 }
 
 func (e *Editor) gitGutterCell(kind GitLineKind) (rune, cell.Color) {
 	if e == nil || e.th == nil {
 		return ' ', cell.NoColor
 	}
-	bg := e.cellColor(e.th.Colors.Bg)
 	switch kind {
 	case GitLineAdded:
 		return '▌', e.cellColor(e.th.Tree.Colors.GitAdded)
@@ -374,7 +309,7 @@ func (e *Editor) gitGutterCell(kind GitLineKind) (rune, cell.Color) {
 	case GitLineConflict:
 		return '▌', e.cellColor(e.th.Tree.Colors.GitConflicted)
 	default:
-		return ' ', bg
+		return ' ', e.cellColor(e.th.Colors.Bg)
 	}
 }
 

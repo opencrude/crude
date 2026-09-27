@@ -417,8 +417,8 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		// any concurrent save has completed its launch-admission barrier.
 		s.delegationMu.Lock()
 		defer s.delegationMu.Unlock()
-		enabled := s.runtimeProfile.GetEffectiveConfig(o.ID).IsMultiAgentEnabled()
-		return tools.WithModelCommands(tools.ForModel(orchestratorTools(enabled), ag.Model), ag.Model), s.takeDelegationNotices()
+		current := s.runtimeProfile.GetEffectiveConfig(o.ID)
+		return configuredOrchestratorTools(current, current.IsMultiAgentEnabled(), ag.Model), s.takeDelegationNotices()
 	}
 	var pendingRuntimeWakes []WakeEvent
 	ag.PrepareRuntimeNotices = func() []provider.ChatMessage {

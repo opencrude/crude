@@ -135,7 +135,7 @@ func isPathUnderPrefix(path string, prefix string) bool {
 			// Match against POSIX-style prefixes only — Windows drive
 			// prefixes (C:\Windows) don't apply to root-relative paths.
 			if cleanPrefix == "/" || cleanPrefix == "\\" {
-				return true
+				return cleaned == cleanPrefix
 			}
 			if !strings.HasPrefix(cleaned, cleanPrefix) {
 				return false
@@ -152,7 +152,9 @@ func isPathUnderPrefix(path string, prefix string) bool {
 	}
 
 	if absPrefix == string(filepath.Separator) {
-		return strings.HasPrefix(abs, absPrefix)
+		// Protect the root itself. Its descendants are classified by the
+		// specific system directories, not by being absolute paths.
+		return abs == absPrefix
 	}
 	if !strings.HasPrefix(abs, absPrefix) {
 		return false

@@ -1,7 +1,7 @@
 // Package history keeps the global cross-session prompt history
-// (~/.crude/history.json) useful instead of noisy. It is deliberately
-// dependency-free: an in-memory ordered store with three cheap, well-defined
-// mechanisms layered on top of a normalization function.
+// (~/.crude/history.json) useful instead of noisy. Text-only prompts use three
+// mechanisms layered on top of a normalization function. Multimodal prompts
+// retain exact attachment spans and independent, content-addressed media.
 //
 //  1. Exact-repeat folding — prompts are keyed by their normalized text
 //     (trim + whitespace collapse + lowercase). A repeat bumps the entry's
@@ -24,8 +24,13 @@
 package history
 
 import (
+	"crypto/sha256"
 	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
 	"math"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,6 +39,7 @@ import (
 	"unicode/utf8"
 
 	"crude/buildinfo"
+	"crude/sessiondb"
 )
 
 const (
@@ -57,16 +63,33 @@ const (
 // Entry is one distinct prompt. Text is the most recent raw variant typed by
 // the user; FirstSeen/LastSeen/Count describe how the prompt is used.
 type Entry struct {
-	Text      string `json:"text"`
-	Count     int    `json:"count"`
-	FirstSeen int64  `json:"first_seen"` // unix seconds
-	LastSeen  int64  `json:"last_seen"`  // unix seconds
+	ID          string       `json:"id"`
+	Text        string       `json:"text"`
+	Attachments []Attachment `json:"attachments,omitempty"`
+	Count       int          `json:"count"`
+	FirstSeen   int64        `json:"first_seen"` // unix seconds
+	LastSeen    int64        `json:"last_seen"`  // unix seconds
+}
+
+// Attachment binds an immutable reference snapshot to an exact rune span.
+// Labels alone are not identities: every session can have a [Pasted IMG1].
+type Attachment struct {
+	Start       int                 `json:"start"`
+	End         int                 `json:"end"`
+	Reference   sessiondb.Reference `json:"reference"`
+	Unavailable bool                `json:"unavailable,omitempty"`
+}
+
+func (e Entry) Clone() Entry {
+	e.Attachments = append([]Attachment(nil), e.Attachments...)
+	return e
 }
 
 // Store is safe for concurrent use: Record runs on the UI thread while Save
 // snapshots from a detached goroutine.
 type Store struct {
 	mu      sync.Mutex
+	saveMu  sync.Mutex
 	entries []Entry // oldest → newest (distinct entries)
 	index   map[string]int
 	max     int
@@ -85,7 +108,7 @@ func (s *Store) Len() int {
 
 // Record folds one submitted prompt into the store and reports whether it
 // created a new entry (true) or merged into an existing one (false).
-func (s *Store) Record(text string, now time.Time) bool {
+func (s *Store) Record(text string, now time.Time, attachments ...Attachment) bool {
 	raw := strings.TrimSpace(text)
 	if raw == "" || len(raw) > maxRecordBytes {
 		return false
@@ -100,18 +123,21 @@ func (s *Store) Record(text string, now time.Time) bool {
 	ts := now.Unix()
 
 	// 1. Exact repeat.
-	if i, ok := s.index[key]; ok {
+	if i, ok := s.index[key]; ok && len(attachments) == 0 {
 		s.mergeLocked(i, raw, ts)
 		return false
 	}
 
 	// 2. Retry of a recent near-identical prompt (newest first).
-	if utf8.RuneCountInString(key) >= minShingleLen {
+	if len(attachments) == 0 && utf8.RuneCountInString(key) >= minShingleLen {
 		sh := shingles(key)
 		for i := len(s.entries) - 1; i >= 0; i-- {
 			e := &s.entries[i]
 			if ts-e.LastSeen > int64(RetryWindow/time.Second) {
 				break // MRU tail: anything older is outside the window
+			}
+			if len(e.Attachments) > 0 {
+				continue
 			}
 			if utf8.RuneCountInString(Normalize(e.Text)) < minShingleLen {
 				continue
@@ -124,8 +150,16 @@ func (s *Store) Record(text string, now time.Time) bool {
 	}
 
 	// 3. New entry.
-	s.entries = append(s.entries, Entry{Text: raw, Count: 1, FirstSeen: ts, LastSeen: ts})
-	s.index[key] = len(s.entries) - 1
+	attachments = append([]Attachment(nil), attachments...)
+	trimmedRunes := utf8.RuneCountInString(text[:strings.Index(text, raw)])
+	for i := range attachments {
+		attachments[i].Start -= trimmedRunes
+		attachments[i].End -= trimmedRunes
+	}
+	s.entries = append(s.entries, Entry{ID: fmt.Sprintf("%016x", rand.Uint64()), Text: raw, Attachments: attachments, Count: 1, FirstSeen: ts, LastSeen: ts})
+	if len(attachments) == 0 {
+		s.index[key] = len(s.entries) - 1
+	}
 	s.evictLocked(now)
 	return true
 }
@@ -170,7 +204,9 @@ func (s *Store) evictLocked(now time.Time) {
 func (s *Store) reindexLocked() {
 	s.index = make(map[string]int, len(s.entries))
 	for i := range s.entries {
-		s.index[Normalize(s.entries[i].Text)] = i
+		if len(s.entries[i].Attachments) == 0 {
+			s.index[Normalize(s.entries[i].Text)] = i
+		}
 	}
 }
 
@@ -190,7 +226,11 @@ func (s *Store) Recall() []string {
 func (s *Store) Entries() []Entry {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return append([]Entry(nil), s.entries...)
+	out := make([]Entry, len(s.entries))
+	for i, entry := range s.entries {
+		out[i] = entry.Clone()
+	}
+	return out
 }
 
 // ── Normalization and similarity ─────────────────────────────────────────────
@@ -282,7 +322,11 @@ func LoadFile(path string) (*Store, error) {
 			if first <= 0 {
 				first = seen
 			}
-			s.entries = append(s.entries, Entry{Text: e.Text, Count: e.Count, FirstSeen: first, LastSeen: seen})
+			e.FirstSeen, e.LastSeen = first, seen
+			if e.ID == "" {
+				e.ID = fmt.Sprintf("%016x", rand.Uint64())
+			}
+			s.entries = append(s.entries, e)
 		}
 		s.reindexLocked()
 		s.evictLocked(now)
@@ -301,7 +345,7 @@ func LoadFile(path string) (*Store, error) {
 			continue
 		}
 		ts := base.Add(-time.Duration(len(legacy)-i) * time.Second).Unix()
-		s.entries = append(s.entries, Entry{Text: text, Count: 1, FirstSeen: ts, LastSeen: ts})
+		s.entries = append(s.entries, Entry{ID: fmt.Sprintf("%016x", rand.Uint64()), Text: text, Count: 1, FirstSeen: ts, LastSeen: ts})
 	}
 	s.reindexLocked()
 	s.evictLocked(time.Now())
@@ -320,18 +364,143 @@ func fileMtime(path string) time.Time {
 // Entries are sorted oldest → newest as stored; LastSeen ordering is what
 // matters downstream, not array order, but stable output keeps diffs sane.
 func (s *Store) Save(path string) error {
-	s.mu.Lock()
-	entries := append([]Entry(nil), s.entries...)
-	s.mu.Unlock()
+	s.saveMu.Lock()
+	defer s.saveMu.Unlock()
+	entries := s.Entries()
+	assets := make(map[string]string)
+	var captureErr error
+	for i := range entries {
+		for j := range entries[i].Attachments {
+			attachment := &entries[i].Attachments[j]
+			if attachment.Unavailable {
+				continue
+			}
+			ref := &attachment.Reference
+			if ref.FilePath == "" {
+				continue
+			}
+			source := ref.FilePath
+			if filepath.Clean(filepath.Dir(source)) == filepath.Clean(path+".assets") {
+				continue // Already published immutable history content.
+			}
+			asset, ok := assets[source]
+			if !ok {
+				var err error
+				asset, err = snapshotAttachment(path+".assets", source)
+				if err != nil {
+					attachment.Unavailable = true
+					captureErr = errors.Join(captureErr, fmt.Errorf("attachment %s: %w", ref.DisplayName(), err))
+					continue
+				}
+				assets[source] = asset
+			}
+			ref.FilePath = asset
+		}
+	}
 
 	payload := fileV1{Version: 1, Entries: entries}
 	data, err := json.MarshalIndent(payload, "", "  ")
 	if err != nil {
 		return err
 	}
-	tmp := path + ".tmp"
-	if err := os.WriteFile(tmp, data, 0600); err != nil {
+	if err := writeAtomic(path, data); err != nil {
 		return err
 	}
-	return os.Rename(tmp, path)
+	s.mu.Lock()
+	byID := make(map[string]Entry, len(entries))
+	for _, entry := range entries {
+		byID[entry.ID] = entry
+	}
+	for i, entry := range s.entries {
+		if saved, ok := byID[entry.ID]; ok {
+			s.entries[i].Attachments = saved.Attachments
+		}
+	}
+	retained := make(map[string]bool)
+	for _, entry := range s.entries {
+		for _, attachment := range entry.Attachments {
+			retained[attachment.Reference.FilePath] = true
+		}
+	}
+	s.mu.Unlock()
+	files, err := os.ReadDir(path + ".assets")
+	if err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	for _, file := range files {
+		asset := filepath.Join(path+".assets", file.Name())
+		if !file.IsDir() && len(file.Name()) >= 64 && !retained[asset] {
+			if err := os.Remove(asset); err != nil && !os.IsNotExist(err) {
+				return err
+			}
+		}
+	}
+	return captureErr
+}
+
+// ReadAttachment bounds binary I/O for both history capture and session import.
+func ReadAttachment(source string) ([]byte, error) {
+	f, err := os.Open(source)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	info, err := f.Stat()
+	const maxAttachmentBytes = 64 << 20
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > maxAttachmentBytes {
+		return nil, fmt.Errorf("attachment must be a regular file of at most 64 MiB")
+	}
+	data, err := io.ReadAll(io.LimitReader(f, maxAttachmentBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxAttachmentBytes {
+		return nil, fmt.Errorf("attachment exceeds 64 MiB")
+	}
+	return data, nil
+}
+
+func snapshotAttachment(dir, source string) (string, error) {
+	data, err := ReadAttachment(source)
+	if err != nil {
+		return "", err
+	}
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return "", err
+	}
+	path := filepath.Join(dir, fmt.Sprintf("%x%s", sha256.Sum256(data), filepath.Ext(source)))
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		if err := writeAtomic(path, data); err != nil {
+			return "", err
+		}
+	} else if err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func writeAtomic(path string, data []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	f, err := os.CreateTemp(filepath.Dir(path), ".prompt-history-*")
+	if err != nil {
+		return err
+	}
+	defer func() { _ = os.Remove(f.Name()) }()
+	_, writeErr := f.Write(data)
+	if writeErr == nil {
+		writeErr = f.Sync()
+	}
+	closeErr := f.Close()
+	if writeErr != nil {
+		return writeErr
+	}
+	if closeErr != nil {
+		return closeErr
+	}
+	return os.Rename(f.Name(), path)
 }

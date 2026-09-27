@@ -11,7 +11,7 @@ import (
 	"crude/types"
 )
 
-func TestRoleAccountPickerGroupsAccountsAndPinsSelection(t *testing.T) {
+func TestRoleAccountPickerListsOnlyAccountsAndPinsSelection(t *testing.T) {
 	st := types.Settings{ProviderID: "openrouter", AccountID: "home", Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {Provider: "openrouter", AccountID: "home", Model: "home-model"}}}}
 	screen := New(theme.DefaultDark(), st, st, nil)
 	screen.ConfigureProviders([]types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}, {ID: "openai", Name: "OpenAI"}}, map[string]types.ProviderConfig{"openrouter": provider.DefaultTemplates()["openrouter"], "openai": provider.DefaultTemplates()["openai"]})
@@ -22,10 +22,13 @@ func TestRoleAccountPickerGroupsAccountsAndPinsSelection(t *testing.T) {
 	screen.Layout(ui.LayoutContext{}, ui.Rect{W: 95, H: 22})
 	screen.Paint(buf, 0, 0, ui.PaintContext{})
 	out := bufferString(buf)
-	for _, want := range []string{"Account", "OpenRouter", "OpenAI", "Home", "Work", "Team"} {
+	for _, want := range []string{"Account", "Home", "Work", "Team"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in picker:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "OpenRouter") || strings.Contains(out, "OpenAI") {
+		t.Fatal("session picker must not display template headings")
 	}
 	if strings.Contains(out, "h-key") || strings.Contains(out, "o-key") {
 		t.Fatal("picker painted credentials")

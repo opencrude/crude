@@ -798,6 +798,15 @@ func (m *App) refRangeAtMouse(mouse tea.Mouse) (input.RefRange, bool) {
 	}
 	localX := mouse.X - m.inputRect.X
 	localY := mouse.Y - m.inputRect.Y
+	for _, chip := range m.Input.ReferenceChips(m.inputRect.W) {
+		if chip.ID != "" && (chip.Body.Contains(localX, localY) || chip.Remove.Contains(localX, localY)) {
+			for _, rr := range m.Input.RefRanges() {
+				if rr.ID == chip.ID {
+					return rr, true
+				}
+			}
+		}
+	}
 	pos, ok := m.Input.MouseToInputPos(localX, localY)
 	if !ok {
 		return input.RefRange{}, false
@@ -836,6 +845,10 @@ func (m *App) buildAttachmentContextMenu(rr input.RefRange) *ui.ContextMenuState
 	}
 	if ref.FilePath != "" {
 		path := ref.FilePath
+		items = append(items,
+			ui.ContextMenuItem{Label: "Open with default app", Action: func() { m.runDetachedAsyncCmd(m.openAttachment(ref.ID, false)) }},
+			ui.ContextMenuItem{Label: "Show in file manager", Action: func() { m.runDetachedAsyncCmd(m.openAttachment(ref.ID, true)) }},
+		)
 		items = append(items, ui.ContextMenuItem{Label: "Open in editor", Action: func() {
 			if _, err := m.openEditorTab(path); err != nil {
 				m.Feedback.NotifyError("open attachment: " + err.Error())
@@ -846,25 +859,10 @@ func (m *App) buildAttachmentContextMenu(rr input.RefRange) *ui.ContextMenuState
 	return st
 }
 
-// removeAttachment strips a reference token from the draft and soft-deletes
-// its backing reference. The caret stays where the removal happened.
+// Removal detaches the draft, not references retained by sent messages.
 func (m *App) removeAttachment(rr input.RefRange) {
-	runes := []rune(m.Input.Value())
-	if rr.Start < 0 || rr.End > len(runes) || rr.Start >= rr.End {
-		return
-	}
-	cursor := m.Input.CursorFlat()
-	next := string(runes[:rr.Start]) + string(runes[rr.End:])
-	m.Input.SetInput(next)
-	if cursor > rr.Start {
-		if cursor -= rr.End - rr.Start; cursor < rr.Start {
-			cursor = rr.Start
-		}
-	}
-	m.Input.SetCursorFlat(cursor)
-	if m.ActiveSession != nil && m.ActiveSession.RefStore != nil {
-		_ = m.ActiveSession.RefStore.DeleteReference(rr.ID)
-	}
+	m.replaceRefSpans(m.refRangesFor(rr.ID), "")
+	m.persistComposerDraftIfChanged()
 	if m.Feedback != nil {
 		m.Feedback.NotifyInfo("Attachment removed")
 	}
@@ -921,7 +919,7 @@ func (m *App) replaceRefSpans(spans []input.RefRange, newLabel string) {
 	for _, rr := range valid {
 		runes = append(runes[:rr.Start], append([]rune(newLabel), runes[rr.End:]...)...)
 	}
-	m.Input.SetInput(string(runes))
+	m.Input.SetValuePreserveReferences(string(runes))
 	caret := leftmost + len([]rune(newLabel))
 	if caret > len(runes) {
 		caret = len(runes)

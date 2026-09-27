@@ -1,6 +1,7 @@
 package safety
 
 import (
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -278,6 +279,46 @@ func TestSystemPathRedirect(t *testing.T) {
 	r := CheckCommandSafety("> /etc/config.conf", nil)
 	if r.Risk != RiskDestructive {
 		t.Errorf("Expected destructive for redirect to /etc, got %s: %s", r.Risk.String(), r.Reason)
+	}
+}
+
+func TestSystemPathsDoNotIncludeEveryAbsolutePath(t *testing.T) {
+	for _, path := range []string{"/", "/etc", "/etc/config.conf", "/usr/local/bin/tool", "/var/lib/service"} {
+		t.Run(path, func(t *testing.T) {
+			result := CheckCommandSafety("touch "+path, nil)
+			if !result.TargetsSystem || result.Risk != RiskDestructive {
+				t.Fatalf("protected path %s lost its classification: %+v", path, result)
+			}
+		})
+	}
+	for _, command := range []string{
+		"gofmt -w tui/ui/text_tide.go && scripts/tuishot.sh /tmp/crude-tide-review-160",
+		"scripts/tuishot.sh /tmp/crude-tide-review-80",
+		"touch /home/developer/project/notes.txt",
+		"touch /tmp/notes.txt",
+		"touch /etc-backup/notes.txt",
+		"> /tmp/notes.txt",
+	} {
+		t.Run(command, func(t *testing.T) {
+			result := CheckCommandSafety(command, nil)
+			if result.TargetsSystem || len(result.AffectedPaths) != 0 || result.Risk >= RiskDestructive {
+				t.Fatalf("ordinary absolute path classified as system files: %+v", result)
+			}
+			if !result.NeedsConfirmation() {
+				t.Fatal("correcting the path category bypassed ordinary command approval")
+			}
+		})
+	}
+	if runtime.GOOS == "windows" {
+		for _, path := range []string{`C:\Windows\System32\config`, `C:\Program Files\tool`, `\etc\config`} {
+			found := false
+			for _, prefix := range systemPrefixes {
+				found = found || isPathUnderPrefix(path, prefix)
+			}
+			if !found {
+				t.Errorf("Windows system path not protected: %s", path)
+			}
+		}
 	}
 }
 

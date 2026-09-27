@@ -57,15 +57,6 @@ func (m *App) submitInput(sessionID, text string, refIDs []string) tea.Cmd {
 		ReferenceLabels: referenceLabels,
 		Time:            time.Now(),
 	})
-	if len(m.History) == 0 || m.History[len(m.History)-1] != text {
-		m.History = append(m.History, text)
-	}
-	if len(m.History) > 500 {
-		m.History = m.History[len(m.History)-500:]
-	}
-	if OnHistorySave != nil {
-		OnHistorySave(m.History)
-	}
 	agent.SubmitInput(text)
 	m.syncAgentMessages(sessionID, true)
 	return nil
@@ -93,15 +84,6 @@ func (m *App) submitBtw(sessionID, text string, refIDs []string) tea.Cmd {
 			m.Feedback.NotifyError("BTW was not queued: this turn is no longer accepting notes")
 		}
 		return nil
-	}
-	if len(m.History) == 0 || m.History[len(m.History)-1] != text {
-		m.History = append(m.History, text)
-	}
-	if len(m.History) > 500 {
-		m.History = m.History[len(m.History)-500:]
-	}
-	if OnHistorySave != nil {
-		OnHistorySave(m.History)
 	}
 	m.syncPendingBtwCount()
 	m.syncAgentMessages(sessionID, true)

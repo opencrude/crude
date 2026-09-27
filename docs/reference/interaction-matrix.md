@@ -29,7 +29,42 @@ preserve or intentionally improve.
 | Whole-text Copy/Cut | right-click on a text control | Context menu Copy/Cut act on the entire value; the composer menu (Paste / Copy / Cut / Clear input) acts on the draft. Cut runs through the owning control so composite models stay in sync. |
 | Paste | Bracketed paste primary; Ctrl+V fallback | Routes to the focused control; launcher/tree paste never leaks into hidden chat input |
 
+## Chat and Workspace
+
+| Action | Binding / control | Notes |
+|--------|-------------------|-------|
+| Browse prompt history | Up / Down at composer boundaries | Prefix-filtered recall preserves text and attachment snapshots; Down past the newest match restores the original draft. File I/O runs outside Update, with session and input-generation checks. |
+| Search prompt history | `/history` | Searchable single-line summaries show time, prompt preview, and attachment count. Click or Enter expands full text and attachment details; **Use in composer** restores without sending. Missing media fails closed and leaves the draft intact. |
+| Open attachment | Click its filename chip or a linked history attachment | File-backed media opens with the OS default application; inline text opens the native reference editor. History previews use session-owned copies, never writable history assets. |
+| Reveal attachment | Attachment context menu > Show in file manager | Windows Explorer selection, macOS Finder reveal, or the containing folder in the Linux file manager. Paths are arguments, never shell commands. |
+| Remove attachment | Separate three-cell `x` target on the chip | Detaches tokens from the draft without deleting references owned by sent messages. Overflow and wheel navigation keep hidden chips reachable. |
+| Session account / model | `/settings` or `/model` | Account labels only, no template groups. Model discovery uses that account's resolved connection and cannot update another session's deck. |
+| Workspace details | Footer **Workspace** | Explicit Open Agents, Open Files, and Previous Sessions sections. Collapsed resources occupy one row; click, Enter, or Space toggles details; Right expands and Left collapses. Saved sessions expose an explicit Resume action inside their details. |
+| Open Tabs details | Click header model / context telemetry | Same single-row disclosure pattern, restricted to visible tabs. Identity, current model, known call/cost totals and lifecycle share the row; less important facts yield first at narrow widths. Expanded details expose an Open action. |
+
+Prompt history owns content-addressed media beside `history.json` with
+owner-only permissions. Multimodal entries never merge by text similarity.
+Restoration imports fresh session references and rewrites only the recorded
+chip spans; literal bracketed prose is not treated as an attachment. Imported
+media is session-owned, so pruning the bounded history cannot break a resumed
+session. Individual binary reads are limited to 64 MiB. Capture failures are
+reported and marked unavailable rather than silently recalling text-only
+versions. Application shutdown flushes pending history before closing sessions.
+
 ## Editor context
+
+Dirty state means an exact byte difference from the accepted disk savepoint,
+not a different revision number. Manual reversal, undo/redo, and an in-flight
+save acknowledgement all use the same immutable piece-span checkpoint. Restoring
+saved bytes cancels pending autosave deadlines and closes without a save prompt.
+
+The Git gutter uses an immutable HEAD baseline plus an exact incremental live
+diff. Additions, modifications and deletion boundaries update on the edit, as
+do change inspection and next/previous-change navigation. There is no speculative
+local marker or separate settled representation. Background refreshes of the
+same HEAD update metadata without replacing live hunks; branch/HEAD changes
+establish a new baseline. Shared views and grouped undo beyond the edit-log
+window derive from current bytes, not replayed change guesses.
 
 | Action | Binding | Notes |
 |--------|---------|-------|
