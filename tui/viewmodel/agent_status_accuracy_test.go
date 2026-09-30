@@ -147,7 +147,7 @@ func TestSafetyNoticeDoesNotReplaceLiveOrFinishedAgentStatus(t *testing.T) {
 				wantPhase, wantText = ttypes.AgentCancelled, "Stopped"
 			case "error":
 				event.Type, event.Data = "error", "Provider connection failed"
-				wantPhase, wantText = ttypes.AgentFailed, "Provider connection failed"
+				wantPhase, wantText = ttypes.AgentFailed, "Turn failed · details in transcript"
 			}
 			app.handleAgentEvent(event)
 			for _, frame := range []int{1000, 8000, 20000} {
@@ -156,6 +156,9 @@ func TestSafetyNoticeDoesNotReplaceLiveOrFinishedAgentStatus(t *testing.T) {
 				status, _ := app.Status.Agent("root")
 				if status.NeedsAction || status.Phase != wantPhase || status.Detail == reason {
 					t.Errorf("terminal status overwritten by old warning: %+v", status)
+				}
+				if outcome == "error" && status.Detail != "Provider connection failed" {
+					t.Errorf("concise presentation discarded the diagnostic: %+v", status)
 				}
 				app.paintShellFrame()
 				line := shellBufferRow(app, app.chatRect.Y+app.chatRect.H-1)

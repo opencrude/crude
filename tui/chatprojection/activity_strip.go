@@ -80,6 +80,7 @@ func (s *ActivityStrip) Update(source types.AgentActivityView, width int, th *th
 	}
 	if status.Phase == types.AgentFailed {
 		role = ui.ColorError
+		label = "Turn failed · details in transcript"
 	}
 	if !s.animating() {
 		s.tide = ui.TextTideMotion{}

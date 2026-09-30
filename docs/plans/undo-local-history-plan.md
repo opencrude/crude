@@ -87,6 +87,12 @@ Current limitations:
 - A failed restore leaves the worktree exactly as it was before restore began.
 - The manifest commit is atomic: either the complete snapshot exists or none
   of it is visible.
+- Local History syncs its staged files and publishes through the same
+  `fileio.CommitAtomicFile` primitive as document/file writes. Unix retains
+  rename followed by parent-directory fsync; Windows uses write-through
+  replacement. No read-only directory flush, ignored access-denied error, or
+  delete-then-rename fallback is permitted. Genuine commit failures remain
+  fail-closed at the root turn's tracking boundary.
 
 ### 3.2 Durable attribution
 

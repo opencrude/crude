@@ -18,6 +18,7 @@ func TestYoloKeyboardMouseAndEscapeActions(t *testing.T) {
 		{key: tea.KeyPressMsg{Code: 'y', Text: "y"}, enabled: true},
 		{key: tea.KeyPressMsg{Code: 'n', Text: "n"}, enabled: false},
 		{key: tea.KeyPressMsg{Code: tea.KeyEsc}, enabled: false},
+		{key: tea.KeyPressMsg{Code: tea.KeyEnter}, enabled: false},
 	} {
 		screen, host := testHost(t)
 		result := host.Handle(test.key)
@@ -33,7 +34,7 @@ func TestYoloKeyboardMouseAndEscapeActions(t *testing.T) {
 	_, host := testHost(t)
 	buf := surface.NewCellBuffer(100, 12)
 	host.Paint(buf)
-	click := findPainted(buf, "Enable YOLO")
+	click := findPainted(buf, "[ Enable YOLO")
 	if click.x < 0 {
 		t.Fatalf("Enable button not painted:\n%s", text(buf))
 	}
@@ -47,10 +48,19 @@ func TestYoloPaintsCompleteWarning(t *testing.T) {
 	_, host := testHost(t)
 	buf := surface.NewCellBuffer(100, 12)
 	host.Paint(buf)
-	for _, want := range []string{"YOLO mode", "Disables all safety checks", "Prompt injection", "Unintended command execution"} {
+	for _, want := range []string{"Enable YOLO for this session?", "Approval prompts", "Skipped", "No confirmation", "Hard blocks", "Restore safeguards", "Enforced"} {
 		if !contains(buf, want) {
 			t.Fatalf("YOLO paint missing %q:\n%s", want, text(buf))
 		}
+	}
+}
+
+func TestYoloEnableRequiresExplicitSelection(t *testing.T) {
+	_, host := testHost(t)
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyLeft})
+	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if result.Cmd == nil || !result.Cmd().(ResultMsg).Enabled {
+		t.Fatal("explicit enable selection did not activate")
 	}
 }
 

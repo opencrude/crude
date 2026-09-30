@@ -39,20 +39,21 @@ func New(th *theme.Theme) *Screen {
 func (s *Screen) Reset() {
 	model := ui.NewFormModel()
 	for _, field := range []struct{ id, label, value string }{
-		{"effect", "Effect", "Disables all safety checks"},
-		{"files", "File safety", "Accidental deletion or damage is allowed"},
-		{"injection", "Prompt injection", "Untrusted instructions can execute"},
-		{"commands", "Commands", "Unintended command execution is allowed"},
+		{"approvals", "Approval prompts", "Skipped"},
+		{"execution", "Commands / edits", "No confirmation"},
+		{"blocks", "Hard blocks", "Enforced"},
+		{"history", "Restore safeguards", "Enforced"},
 	} {
 		value := ui.StringValue(field.value)
 		model.AddField(&ui.FieldState{ID: field.id, Label: field.label, Type: ui.FieldText, Value: value, Initial: value, ReadOnly: true})
 	}
-	s.form = ui.NewDockedForm(FormID, model, "YOLO mode", "Are you absolutely sure?", s.tokens)
+	s.form = ui.NewDockedForm(FormID, model, "Enable YOLO for this session?", "Use /yolo to restore approvals.", s.tokens)
 	s.actions = ui.NewDockedActionBar(ActionsID, s.tokens,
 		ui.ActionBarButton{ID: ui.NewID(ActionsID, "enable"), Label: "Enable YOLO", Action: "yolo.enable", Shortcut: "y", Variant: ui.VariantDanger, Enabled: true},
 		ui.ActionBarButton{ID: ui.NewID(ActionsID, "cancel"), Label: "Cancel", Action: "yolo.cancel", Shortcut: "n", Variant: ui.VariantSecondary, Enabled: true},
 	)
 	s.actions.SetCancelAction("yolo.cancel")
+	s.actions.FocusLast()
 }
 
 func (s *Screen) Children() []ui.Component { return []ui.Component{s.form, s.actions} }
@@ -89,8 +90,10 @@ func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
 	switch {
 	case key.Code == tea.KeyEsc || key.String() == "n":
 		return s.result(false)
-	case key.String() == "y" || key.Code == tea.KeyEnter:
+	case key.String() == "y":
 		return s.result(true)
+	case key.Code == tea.KeyEnter:
+		return s.result(false)
 	case key.Code == tea.KeyLeft || key.Code == tea.KeyRight || key.Code == tea.KeyTab:
 		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: ActionsID}, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	}
@@ -109,11 +112,7 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 		return s.result(enabled)
 	}
 	if action.ID == "form.exit.forward" || action.ID == "form.exit.backward" {
-		if action.ID == "form.exit.backward" {
-			s.actions.FocusLast()
-		} else {
-			s.actions.FocusFirst()
-		}
+		s.actions.FocusLast()
 		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: ActionsID}, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	}
 	if action.ID == "form.cancel" {

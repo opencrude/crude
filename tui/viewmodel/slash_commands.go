@@ -108,16 +108,8 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 			m.Feedback.NotifyError("No active session")
 			break
 		}
-		if m.YoloForAgent(agentID) || m.OverlayState.IsYolo() {
-			m.OverlayState.SetYolo(false)
-			if m.chatScreen != nil {
-				scroll := m.chatScreen.ScrollModel()
-				scroll.SetAutoScroll(true)
-				scroll.StickToBottom()
-			}
-			m.Feedback.NotifyInfo("YOLO mode disabled. Safety checks restored.")
-			m.Logger.Info("SAFETY", "yolo_disabled", "source", "slash")
-			m.SetYoloForAgent(agentID, false)
+		if m.YoloForAgent(agentID) {
+			m.setAgentYolo(agentID, false)
 		} else {
 			m.openSessionYoloPanel()
 			m.Logger.Info("SAFETY", "yolo_prompt", "source", "slash")

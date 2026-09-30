@@ -13,10 +13,11 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"sync"
 	"time"
+
+	"crude/fileio"
 
 	"github.com/gofrs/flock"
 	"github.com/restic/chunker"
@@ -499,36 +500,10 @@ func writeAtomic(path string, mode os.FileMode, write func(io.Writer) error) err
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	if err := os.Rename(name, path); err != nil {
-		// Windows cannot replace an existing file with Rename. Restores are
-		// protected by a safety snapshot, so remove only after the complete temp
-		// file has been synced and retry the final rename.
-		if runtime.GOOS != "windows" {
-			return err
-		}
-		if _, statErr := os.Stat(path); statErr != nil {
-			return err
-		}
-		if removeErr := os.Remove(path); removeErr != nil && !os.IsNotExist(removeErr) {
-			return err
-		}
-		if retryErr := os.Rename(name, path); retryErr != nil {
-			return retryErr
-		}
+	if err := fileio.CommitAtomicFile(name, path); err != nil {
+		return err
 	}
 	ok = true
-	return syncDir(filepath.Dir(path))
-}
-
-func syncDir(path string) error {
-	dir, err := os.Open(path)
-	if err != nil {
-		return err
-	}
-	defer dir.Close()
-	if err := dir.Sync(); err != nil && !errors.Is(err, os.ErrInvalid) {
-		return err
-	}
 	return nil
 }
 

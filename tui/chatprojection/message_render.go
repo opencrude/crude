@@ -389,22 +389,37 @@ func thinkingPreviewBody(content string, display reasoning.Display) string {
 }
 
 func renderErrorMessage(msg types.ChatMessage, ctx renderContext) messageLines {
-	var ml messageLines
-	timeLabel := rendering.FormatTimeLabel(msg.Time)
-	// Wrap at contentWidth-6 so the "error " first-line prefix (6 cols) and the
-	// matching 6-col continuation indent keep every visual row within
-	// contentWidth. This prevents continuation lines from overrunning the width
-	// and producing ragged, off-screen wraps.
-	wrapped := rendering.WrapText(msg.Content, ctx.contentWidth-6)
-	for i, line := range wrapped {
-		pl := buildErrorHeaderLine(line, timeLabel, ctx.innerW, i == 0)
-		ml.lines = append(ml.lines, pl.PlainText())
-		ml.native = append(ml.native, pl)
+	return renderNoticeMessage(msg, ctx, "Turn failed", ui.ColorError)
+}
+
+func renderNoticeMessage(msg types.ChatMessage, ctx renderContext, title string, role ui.SemanticColor) messageLines {
+	if ctx.innerW <= 0 {
+		return messageLines{}
+	}
+	header := PaintLine{Spans: []RowSpan{{Text: rendering.TruncateVisual(title, ctx.innerW, ""), Role: role, Attr: cell.AttrBold}}}
+	header = padHeaderWithTime(header, rendering.FormatTimeLabel(msg.Time), ctx.innerW)
+	ml := messageLines{lines: []string{header.PlainText()}, native: []PaintLine{header}}
+	width := ctx.innerW
+	if ctx.contentWidth > 0 {
+		width = min(width, ctx.contentWidth)
+	}
+	for _, paragraph := range strings.Split(msg.Content, "\n") {
+		for _, line := range rendering.WordWrap(paragraph, width) {
+			body := buildPlainBodyLine(line)
+			ml.lines = append(ml.lines, body.PlainText())
+			ml.native = append(ml.native, body)
+		}
 	}
 	return ml
 }
 
 func renderLifecycleMessage(msg types.ChatMessage, ctx renderContext) messageLines {
+	switch msg.LifecyclePhase {
+	case "yolo_enabled":
+		return renderNoticeMessage(msg, ctx, "YOLO enabled", ui.ColorWarning)
+	case "yolo_disabled":
+		return renderNoticeMessage(msg, ctx, "YOLO disabled", ui.ColorSuccess)
+	}
 	if msg.LifecyclePhase == "history_restored" {
 		return renderHistoryRestoreMessage(msg, ctx)
 	}

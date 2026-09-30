@@ -575,8 +575,9 @@ func (m *App) processAgentResults(cmd tea.Cmd) tea.Cmd {
 				m.Feedback.NotifyError("⚠ " + result.Reason)
 			}
 		case workspace.AgentErrorResultMsg:
-			m.Feedback.NotifyError(result.Err)
-			m.Feedback.NotifyInfo("")
+			// The canonical error row and syncAgentStatusEvent already publish
+			// the diagnostic and its owner-scoped Notice. Do not echo it through
+			// foreground feedback from this asynchronous completion command.
 		}
 		return nil
 	}

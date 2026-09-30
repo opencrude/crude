@@ -274,33 +274,3 @@ func appendBlockCursor(pl PaintLine, frame int, activeTyping bool) PaintLine {
 	}
 	return PaintLine{Spans: spans}
 }
-
-func buildErrorHeaderLine(line, timeLabel string, innerW int, first bool) PaintLine {
-	if first {
-		spans := []RowSpan{
-			{Text: "error", Role: ui.ColorError, Attr: cell.AttrBold},
-			{Text: " ", Role: ui.ColorError},
-			{Text: line, Role: ui.ColorError, Attr: cell.AttrBold},
-		}
-		pl := PaintLine{Spans: spans}
-		if timeLabel != "" {
-			timeW := rendering.VisibleWidth(timeLabel)
-			lineW := pl.VisibleWidth()
-			sp := innerW - lineW - timeW
-			if sp < 1 {
-				sp = 1
-			}
-			spans = append(spans, RowSpan{Text: strings.Repeat(" ", sp), Role: ui.ColorFg})
-			spans = append(spans, RowSpan{Text: timeLabel, Role: ui.ColorMuted})
-			pl = PaintLine{Spans: spans}
-		}
-		return pl
-	}
-	// Continuation lines hang under the message text (after "error "), not flush
-	// to the margin, and drop the bold so a long multi-line error reads as a
-	// wrapped paragraph rather than a wall of shouting red.
-	return PaintLine{Spans: []RowSpan{
-		{Text: "      ", Role: ui.ColorError},
-		{Text: line, Role: ui.ColorError},
-	}}
-}

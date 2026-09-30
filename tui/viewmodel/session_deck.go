@@ -381,29 +381,39 @@ func (m *App) cancelSessionConfirmation(target *confirmation.Screen) {
 }
 
 func (m *App) resolveSessionYolo(target *yolo.Screen, enabled bool) {
-	owner, projection := m.sessionProjections.projectionForYolo(target)
-	if projection == nil {
+	_, projection := m.sessionProjections.projectionForYolo(target)
+	if projection == nil || projection.yoloAgentID == "" {
 		return
 	}
 	agentID := projection.yoloAgentID
-	if owner == m.ActiveSession {
-		m.OverlayState.SetYolo(enabled)
-	}
-	content := "YOLO mode cancelled. Safety checks remain active."
 	if enabled {
-		content = "YOLO mode ACTIVE: all safety checks disabled. Use /yolo again to restore."
-		if m.Logger != nil {
-			m.Logger.Warn("SAFETY", "yolo_enabled")
-		}
-	} else {
-		if m.Logger != nil {
-			m.Logger.Info("SAFETY", "yolo_disabled")
-		}
+		m.setAgentYolo(agentID, true)
 	}
-	if node := m.AgentMgr.Get(agentID); node != nil && node.State != nil && node.State.Messages != nil {
-		node.State.Messages.AppendMessage(workspace.Message{Role: types.RoleAssistant, Content: content, Time: time.Now()})
+	projection.yoloAgentID = ""
+	m.closeProjectionPanel(projection, sessionYoloPanelID)
+}
+
+func (m *App) setAgentYolo(agentID string, enabled bool) {
+	previous := m.YoloForAgent(agentID)
+	if !m.SetYoloForAgent(agentID, enabled) {
+		m.notifyStatus(types.SeverityError, "safety", "YOLO mode was not changed", "The owning session is no longer available.", types.ResourceRef{Kind: types.ResourceAgent, ID: agentID})
+		return
+	}
+	node := m.AgentMgr.OrchestratorFor(agentID)
+	if node != nil && m.SessionsByAgent[node.ID] == m.ActiveSession {
+		m.OverlayState.SetYolo(m.YoloForAgent(agentID))
+	}
+	if previous == enabled {
+		return
+	}
+	phase, content := "yolo_disabled", "Tool approval prompts are restored for this session."
+	if enabled {
+		phase, content = "yolo_enabled", "Commands and file changes can run without confirmation. Hard blocks and restore safeguards remain enforced. Use /yolo to restore approval prompts."
+	}
+	if node != nil && node.State != nil && node.State.Messages != nil {
+		now := time.Now()
+		id := phase + ":" + now.Format(time.RFC3339Nano)
+		node.State.Messages.AppendMessage(workspace.Message{InternalID: id, Role: types.RoleStatus, LifecyclePhase: phase, LifecycleOperationID: id, Content: content, Time: now})
 		m.syncAgentMessages(node.ID, false)
 	}
-	m.SetYoloForAgent(agentID, enabled)
-	m.closeProjectionPanel(projection, sessionYoloPanelID)
 }

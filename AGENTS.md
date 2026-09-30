@@ -136,8 +136,13 @@ never sufficient.
 
 ### Visual capture workflow
 
-Use the repository workflow only: `scripts/tuishot.sh`. For discussion-sized
-captures use a readable full-width terminal, for example:
+On Linux use the repository workflow: `scripts/tuishot.sh`. On Windows use
+native Windows Terminal/conhost and NirCmd (`nircmd savescreenshotwin <path>`
+captures the active window), never WSL to inspect a Windows product failure.
+Use a dedicated capture window, activate that exact window before injecting
+input, and track/close its process after capture. Never capture or send input to
+an unrelated user window. For discussion-sized Linux captures use a readable
+full-width terminal, for example:
 
 **Never run two `scripts/tuishot.sh` captures concurrently.** Alacritty window
 matching, geometry, focus, and input injection are process-global; concurrent
@@ -952,6 +957,12 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   rename/delete, workspace edits, and restore from racing each other.
 
 ### Local History
+- Atomic publication has one shared low-level owner: `fileio.CommitAtomicFile`.
+  Local History stages and syncs its own files, then delegates replacement and
+  platform durability. Unix keeps rename plus parent-directory fsync; Windows
+  uses write-through replacement, never `Sync` on a read-only directory handle
+  or a delete-then-rename fallback. Real permission/write/commit errors propagate
+  and still abort tracked turns before provider or tool execution.
 - Startup recovery reads only manifests/plans missing from the SQLite index.
   Snapshot identity and entries commit atomically; never replay all historical
   entries on open. LoadManifest/LoadPlan still verify immutable data on use.
