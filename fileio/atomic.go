@@ -24,6 +24,19 @@ func WriteCommitted(err error) bool {
 	return errors.As(err, &committed)
 }
 
+// CommitAtomicFile publishes a closed, synced temporary file in the target's
+// directory. Callers own staging, permissions, mutation leases and preconditions;
+// this primitive owns platform-specific replacement and directory durability.
+func CommitAtomicFile(from, to string) error {
+	if err := replaceFile(from, to); err != nil {
+		return fmt.Errorf("atomic write: replace %s: %w", to, err)
+	}
+	if err := syncParentDirectory(filepath.Dir(to)); err != nil {
+		return committedWriteError{err: fmt.Errorf("atomic write: sync parent of %s: %w", to, err)}
+	}
+	return nil
+}
+
 const maxTrackedMutationBytes int64 = 256 << 20
 
 func writeAtomic(path string, data []byte, perm os.FileMode, lg *logger.Logger) error {
@@ -100,14 +113,11 @@ func replaceAtomic(path string, data []byte, perm os.FileMode, lg *logger.Logger
 		}
 	}
 
-	if err := replaceFile(tmpName, abs); err != nil {
+	if err := CommitAtomicFile(tmpName, abs); err != nil {
 		if lg != nil {
-			lg.Error("ATOMIC", "rename_failed", "tmp", tmpName, "path", abs, "error", err.Error())
+			lg.Error("ATOMIC", "commit_failed", "tmp", tmpName, "path", abs, "error", err.Error())
 		}
-		return fmt.Errorf("atomic write: rename: %w", err)
-	}
-	if err := syncParentDirectory(dir); err != nil {
-		return committedWriteError{err: fmt.Errorf("atomic write: sync parent: %w", err)}
+		return err
 	}
 
 	ok = true

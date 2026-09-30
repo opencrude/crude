@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -41,6 +42,54 @@ func readTestFile(t *testing.T, root, rel string) []byte {
 		t.Fatal(err)
 	}
 	return data
+}
+
+func TestHistoryAtomicWriteReplacesWithoutDeletingOnFailure(t *testing.T) {
+	root := t.TempDir()
+	path := filepath.Join(root, "snapshot.json")
+	for _, content := range []string{"before", "after"} {
+		if err := writeBytesAtomic(path, []byte(content), 0o600); err != nil {
+			t.Fatalf("publish %q: %v", content, err)
+		}
+		if got := string(readTestFile(t, root, "snapshot.json")); got != content {
+			t.Fatalf("published bytes=%q, want %q", got, content)
+		}
+	}
+	injected := errors.New("staging failed")
+	if err := writeAtomic(path, 0o600, func(w io.Writer) error {
+		if _, err := io.WriteString(w, "partial"); err != nil {
+			return err
+		}
+		return injected
+	}); !errors.Is(err, injected) {
+		t.Fatalf("staging error was not preserved: %v", err)
+	}
+	if got := string(readTestFile(t, root, "snapshot.json")); got != "after" {
+		t.Fatalf("failed write changed the destination: %q", got)
+	}
+	entries, err := os.ReadDir(root)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("staging files leaked: %v, error=%v", entries, err)
+	}
+}
+
+func TestHistoryAtomicWritePreservesReadOnlyWindowsDestination(t *testing.T) {
+	if runtime.GOOS != "windows" {
+		t.Skip("Windows read-only file replacement contract")
+	}
+	root := t.TempDir()
+	path := filepath.Join(root, "protected.json")
+	writeTestFile(t, root, "protected.json", []byte("original"), 0o600)
+	if err := os.Chmod(path, 0o400); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+	if err := writeBytesAtomic(path, []byte("replacement"), 0o600); !errors.Is(err, os.ErrPermission) {
+		t.Fatalf("genuine permission failure was not reported: %v", err)
+	}
+	if got := string(readTestFile(t, root, "protected.json")); got != "original" {
+		t.Fatalf("denied replacement destroyed the original: %q", got)
+	}
 }
 
 func TestSnapshotRestoreAndUndoRestore(t *testing.T) {

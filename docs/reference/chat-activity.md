@@ -217,6 +217,18 @@ existing aggregate totals.
 
 ## Recovery And Stop
 
+Turn failures use one static notice heading with severity-colored ink and the
+full, neutrally colored, word/grapheme-wrapped diagnostic beneath it. The fixed
+strip says that the turn failed and points to the transcript; it never repeats
+a truncated filesystem/provider diagnostic. One owner-scoped failure Notice
+retains the exact details, without an asynchronous foreground-feedback echo.
+
+YOLO enable and disable use that same notice-row layout as system status, never
+assistant speech. Slash and palette toggles share one policy path, and the
+backend session remains authoritative. Confirmation starts on Cancel; cancelling
+or a stale confirmation adds no transcript row. The warning accurately describes
+bypassed approval prompts while retaining hard blocks and restore safeguards.
+
 The transport owns retries only before model output has been accepted. It must
 never replay a stochastic request and compare the new response to an old prefix.
 Connection resets, premature EOF, stalled progress, transient gateway stream

@@ -57,12 +57,60 @@ func waitHistoryAgentDone(t *testing.T, sender *historyE2ESender, agentID string
 	for {
 		select {
 		case event := <-sender.events:
+			if event.typ == "error" && event.agentID == agentID {
+				t.Fatalf("real agent turn failed: %v", event.data)
+			}
 			if event.typ == "done" && event.agentID == agentID {
 				return
 			}
 		case <-deadline:
 			t.Fatal("timed out waiting for real agent turn")
 		}
+	}
+}
+
+func TestPromptWithFreshHistoryReachesProvider(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	project := t.TempDir()
+	if err := os.WriteFile(filepath.Join(project, "source.txt"), []byte("tracked before prompting\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ready\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}))
+	defer server.Close()
+	ws := NewWorkspace(project, "history-model", "tester", ttypes.Settings{}, &testLogger{})
+	t.Cleanup(ws.Close)
+	ws.SetAppDefaults(ttypes.AppSettings{LocalHistory: ttypes.LocalHistorySettings{Enabled: "on", UseGitIgnore: "on", MaxFileSizeMB: 10}})
+	_, err := ws.CreateSession(historyE2EConfig(server.URL), home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	sender := &historyE2ESender{events: make(chan historyE2EEvent, 64)}
+	orchestrator, err := ws.StartOrchestrator(sender)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws.AgentMgr.AddOrchestrator(orchestrator.ID, NewAgentState(orchestrator.ID, NewConversation(), &testLogger{}))
+	if !ws.SubmitAgentInput(orchestrator.ID, provider.PlainInput("hello")) {
+		t.Fatal("prompt was not admitted")
+	}
+	waitHistoryAgentDone(t, sender, orchestrator.ID)
+	if requests.Load() != 1 {
+		t.Fatalf("provider requests=%d, want 1", requests.Load())
+	}
+	records, err := ws.LocalHistory.Timeline(1)
+	if err != nil || len(records) != 1 {
+		t.Fatalf("prompt history was not indexed: %+v, error=%v", records, err)
+	}
+	manifest, err := ws.LocalHistory.LoadManifest(records[0].ID)
+	if err != nil || manifest.Entries["source.txt"].Hash == "" {
+		t.Fatalf("prompt baseline was not durably captured: %+v, error=%v", manifest, err)
 	}
 }
 

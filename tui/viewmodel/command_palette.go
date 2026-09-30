@@ -561,14 +561,7 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		return m.openHistoryLocationCmd()
 
 	case "safety.yolo.toggle":
-		if m.OverlayState.IsYolo() {
-			agentID := m.AgentMgr.ActiveID()
-			m.OverlayState.SetYolo(false)
-			m.Feedback.NotifyInfo("YOLO mode disabled")
-			m.SetYoloForAgent(agentID, false)
-		} else {
-			m.openSessionYoloPanel()
-		}
+		return m.executeSlashCommand("/yolo")
 
 	case "view.toggle.sidebar":
 		m.ToggleSidebar()
