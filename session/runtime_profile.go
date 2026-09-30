@@ -264,12 +264,18 @@ func mergeCategoryConfig(base, override CategoryConfig) CategoryConfig {
 // copyConfig creates a deep copy of a Config.
 func copyConfig(src *Config) *Config {
 	dst := &Config{
+		SelectedAgent:   src.SelectedAgent,
 		ActiveProvider:  src.ActiveProvider,
 		AccountManager:  src.AccountManager,
 		Accounts:        src.Accounts,
 		TurnLogsEnabled: src.TurnLogsEnabled,
 		Memory:          src.Memory,
 		Safety:          src.Safety,
+	}
+	if src.selectedMainOverride != nil {
+		override := *src.selectedMainOverride
+		override.ContextCompactionPercent = cloneIntPtr(override.ContextCompactionPercent)
+		dst.selectedMainOverride = &override
 	}
 	if src.Accounts != nil {
 		dst.Accounts = make(map[string]provider.Account, len(src.Accounts))
@@ -304,6 +310,7 @@ func copyConfig(src *Config) *Config {
 			if prof.Categories != nil {
 				profCopy.Categories = make(map[string]CategoryConfig, len(prof.Categories))
 				for k, v := range prof.Categories {
+					v.Enabled = cloneBoolPtr(v.Enabled)
 					v.AllowedTools = append([]string(nil), v.AllowedTools...)
 					v.DeniedTools = append([]string(nil), v.DeniedTools...)
 					v.ContextCompactionPercent = cloneIntPtr(v.ContextCompactionPercent)

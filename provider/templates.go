@@ -308,6 +308,11 @@ func (template Template) Validate() error {
 			return fmt.Errorf("authentication headers belong in the account credentials, not extra headers")
 		}
 	}
+	if template.Dialer != nil {
+		if err := template.Dialer.Validate(); err != nil {
+			return err
+		}
+	}
 	return nil
 }
 

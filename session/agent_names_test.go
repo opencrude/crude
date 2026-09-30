@@ -3,6 +3,7 @@ package session
 import (
 	"math/big"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -11,7 +12,79 @@ import (
 	"crude/sessiondb"
 )
 
-func TestAgentNameAllocatorIsDurableConcurrentAndUnbounded(t *testing.T) {
+func TestAgentNameCatalogAndTierBoundaries(t *testing.T) {
+	if len(agentFirstNames) < 512 || len(agentSurnames) < 512 {
+		t.Fatalf("catalog sizes: %d given names, %d surnames", len(agentFirstNames), len(agentSurnames))
+	}
+	first64 := []string{
+		"Jeff", "Tom", "Jake", "Ava", "Maya", "Leo", "Nora", "Sam", "Ella", "Noah", "Mia", "Owen", "Ivy", "Finn", "Zoe", "Liam",
+		"Ada", "Max", "Ruby", "Eli", "Luna", "Theo", "Rose", "Alex", "Iris", "Jack", "Lily", "Ben", "Esme", "Arlo", "June", "Luke",
+		"Clara", "Jude", "Nina", "Hugo", "Sara", "Miles", "Alice", "Oscar", "Grace", "Felix", "Emma", "Levi", "Lucy", "Ezra", "Cora", "Adam",
+		"Wren", "Dean", "Jade", "Cole", "Tess", "Joel", "Hope", "Paul", "Vera", "Seth", "Ruth", "Neil", "Faye", "Eric", "Dawn", "Ryan",
+	}
+	for position, expected := range first64 {
+		if actual := agentNameAt(big.NewInt(int64(position))); actual != expected {
+			t.Fatalf("original position %d: %q, want %q", position, actual, expected)
+		}
+	}
+	if actual := agentNameAt(big.NewInt(64)); actual == "Jeff 2" || strings.Contains(actual, " ") {
+		t.Fatalf("first new given name: %q", actual)
+	}
+
+	validToken := regexp.MustCompile(`^[A-Za-z]+$`)
+	for catalogName, catalog := range map[string][]string{"given": agentFirstNames, "surname": agentSurnames} {
+		seen := make(map[string]bool, len(catalog))
+		for _, entry := range catalog {
+			if seen[entry] || !validToken.MatchString(entry) {
+				t.Fatalf("invalid or duplicate %s catalog entry %q", catalogName, entry)
+			}
+			seen[entry] = true
+		}
+	}
+
+	firstCount := int64(len(agentFirstNames))
+	surnameCount := int64(len(agentSurnames))
+	boundaries := []struct {
+		position int64
+		want     string
+	}{
+		{firstCount - 1, agentFirstNames[firstCount-1]},
+		{firstCount, "Jeff " + agentSurnames[0]},
+		{firstCount + 1, "Tom " + agentSurnames[0]},
+		{firstCount + firstCount*surnameCount - 1, agentFirstNames[firstCount-1] + " " + agentSurnames[surnameCount-1]},
+		{firstCount + firstCount*surnameCount, "Jeff " + agentSurnames[0] + " " + agentSurnames[0]},
+		{firstCount + firstCount*surnameCount*(surnameCount+1) - 1, agentFirstNames[firstCount-1] + " " + agentSurnames[surnameCount-1] + " " + agentSurnames[surnameCount-1]},
+		{firstCount + firstCount*surnameCount*(surnameCount+1), "Jeff " + agentSurnames[0] + " " + agentSurnames[0] + " " + agentSurnames[0]},
+	}
+	for _, boundary := range boundaries {
+		if actual := agentNameAt(big.NewInt(boundary.position)); actual != boundary.want {
+			t.Fatalf("tier boundary %d: %q, want %q", boundary.position, actual, boundary.want)
+		}
+	}
+}
+
+func TestAgentNamePoolUniqueAndUnlimited(t *testing.T) {
+	seen := make(map[string]bool)
+	for position := int64(0); position < int64(len(agentFirstNames))*(int64(len(agentSurnames))+1)+1024; position++ {
+		name := agentNameAt(big.NewInt(position))
+		if seen[name] || strings.ContainsAny(name, "0123456789-") {
+			t.Fatalf("duplicate or numeric name at %d: %q", position, name)
+		}
+		seen[name] = true
+	}
+
+	huge := new(big.Int).Exp(big.NewInt(10), big.NewInt(200), nil)
+	for _, offset := range []int64{-1, 0, 1, 527, 528, 529} {
+		position := new(big.Int).Add(huge, big.NewInt(offset))
+		name := agentNameAt(position)
+		if seen[name] || strings.ContainsAny(name, "0123456789-") || len(strings.Fields(name)) < 3 {
+			t.Fatalf("huge position %s generated invalid name %q", position, name)
+		}
+		seen[name] = true
+	}
+}
+
+func TestAgentNameAllocatorIsDurableAndConcurrent(t *testing.T) {
 	home := t.TempDir()
 	first, err := allocateAgentName(home)
 	if err != nil || first != "Jeff" {
@@ -22,9 +95,9 @@ func TestAgentNameAllocatorIsDurableConcurrentAndUnbounded(t *testing.T) {
 		t.Fatalf("reopened allocator=%q err=%v", second, err)
 	}
 	names := make(chan string, 80)
-	var wg sync.WaitGroup
-	for i := 0; i < 80; i++ {
-		wg.Go(func() {
+	var waitGroup sync.WaitGroup
+	for allocation := 0; allocation < 80; allocation++ {
+		waitGroup.Go(func() {
 			name, err := allocateAgentName(home)
 			if err != nil {
 				t.Error(err)
@@ -33,7 +106,7 @@ func TestAgentNameAllocatorIsDurableConcurrentAndUnbounded(t *testing.T) {
 			names <- name
 		})
 	}
-	wg.Wait()
+	waitGroup.Wait()
 	close(names)
 	seen := map[string]bool{first: true, second: true}
 	for name := range names {
@@ -42,14 +115,12 @@ func TestAgentNameAllocatorIsDurableConcurrentAndUnbounded(t *testing.T) {
 		}
 		seen[name] = true
 	}
-	if len(seen) != 82 || !seen["Jeff 2"] {
-		t.Fatalf("pool did not extend uniquely: %d names", len(seen))
+	if len(seen) != 82 || !seen[agentFirstNames[64]] || seen["Jeff 2"] {
+		t.Fatalf("durable concurrent pool: %d names", len(seen))
 	}
-	huge, _ := new(big.Int).SetString("999999999999999999999999999999999999999999999999", 10)
-	a := agentNameAt(huge)
-	b := agentNameAt(new(big.Int).Add(huge, big.NewInt(1)))
-	if a == b || !strings.Contains(a, " ") {
-		t.Fatalf("large sequence exhausted: %q %q", a, b)
+	reopened, err := allocateAgentName(home)
+	if err != nil || reopened != agentNameAt(big.NewInt(82)) {
+		t.Fatalf("reopened sequence: %q, err=%v", reopened, err)
 	}
 }
 

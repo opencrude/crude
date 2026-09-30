@@ -16,6 +16,8 @@ type Form struct {
 	Base
 	model            *FormModel
 	title            string
+	breadcrumbs      []string
+	breadcrumbAction string
 	detail           string
 	tokens           *TokenSet
 	fields           []*FormField
@@ -114,6 +116,9 @@ func (f *Form) SetSurfaceBackground(role SemanticColor) {
 
 func (f *Form) SetForm(model *FormModel, title, detail string) {
 	sameModel := f.model == model && f.sameFieldStructure(model)
+	if f.title != title {
+		f.breadcrumbs, f.breadcrumbAction = nil, ""
+	}
 	f.model, f.title, f.detail = model, title, detail
 	if sameModel {
 		for _, field := range f.fields {
@@ -128,6 +133,13 @@ func (f *Form) SetForm(model *FormModel, title, detail string) {
 	if !f.Bounds().Empty() {
 		f.Layout(LayoutContext{}, f.Bounds())
 	}
+}
+
+// SetBreadcrumb keeps the existing title presentation and gives each segment
+// an action payload containing its index. The screen owns navigation policy.
+func (f *Form) SetBreadcrumb(parts []string, action string) {
+	f.breadcrumbs, f.breadcrumbAction = parts, action
+	f.title = TitleBreadcrumb(parts...)
 }
 
 func (f *Form) sameFieldStructure(model *FormModel) bool {
@@ -367,6 +379,11 @@ func (f *Form) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 }
 
 func (f *Form) Handle(ctx EventContext, evt Event) EventResult {
+	if evt.Kind == EventMouseClick && evt.MouseClick.Button == tea.MouseLeft && ctx.LocalY == 0 && f.breadcrumbAction != "" {
+		if index := BreadcrumbIndex(f.breadcrumbs, TitleBreadcrumbSeparator, ctx.LocalX, f.Bounds().W); index >= 0 {
+			return EventResult{Handled: true, Action: &Action{ID: f.breadcrumbAction, Payload: index}}
+		}
+	}
 	if len(f.fields) == 0 {
 		return EventResult{}
 	}

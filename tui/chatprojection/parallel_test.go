@@ -1,6 +1,7 @@
 package chatprojection
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -54,5 +55,27 @@ func TestParallelCancellationStopsIncompleteChild(t *testing.T) {
 	rows, _, _ := r.ExportMessageRows(100)
 	if len(rows) != 1 || !strings.Contains(strings.Join(rows[0].Lines, "\n"), "Stopped read file a.go") {
 		t.Fatalf("stopped child painted as success: %+v", rows)
+	}
+}
+
+func TestParallelSubAgentFailureUsesChildOutcome(t *testing.T) {
+	input := `{"tool_uses":[{"recipient_name":"run_sub_agent","parameters":{"category":"researcher","description":"Inspect renderer and report","wait":true}}]}`
+	result := "## Sub-Agent Result: Lily sub Dawn [researcher]\n**Agent:** child-1\n**Status:** TIMEOUT\n**Report:** report.md"
+	body, err := json.Marshal(map[string]any{"results": []map[string]any{{"recipient_name": "run_sub_agent", "result": result, "error": false}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r := newActivityRenderer()
+	r.SyncMessages([]types.ChatMessage{{InternalID: "batch", Role: "tool", ToolName: "multi_tool_use.parallel", ToolInput: input, Content: string(body), ToolStatus: "success", ToolPreviewPhase: "done"}}, 1)
+	rows, _, _ := r.ExportMessageRows(100)
+	if len(rows) != 1 {
+		t.Fatalf("parallel child rows: %+v", rows)
+	}
+	text := strings.Join(rows[0].Lines, "\n")
+	if !strings.Contains(text, "Sub-agent timed out Lily sub Dawn") || strings.Contains(text, "Sub-agent finished") || strings.Contains(text, `"category"`) || strings.Contains(text, "**Status:**") {
+		t.Fatalf("parallel child outcome rendered incorrectly: %q", text)
+	}
+	if !strings.Contains(text, "× ") || activityEligible(r.activityMessages["batch:0"]) {
+		t.Fatalf("parallel child failure was grouped as successful work: %q", text)
 	}
 }

@@ -19,8 +19,8 @@ type MediaReadPolicy struct {
 	// Standard is the resolved wire protocol ID (openai, openai-responses,
 	// anthropic, ollama, codex) — attachment encoding differs per protocol.
 	Standard string
-	// Modalities is the exact per-turn settings snapshot. Affirmative
-	// overrides win even if the asynchronous model catalog reloads later.
+	// Modalities is the exact per-turn override. Nil inherits the catalog;
+	// an explicit empty slice disables every media modality.
 	Modalities []string
 }
 
@@ -55,7 +55,7 @@ func (p *MediaReadPolicy) tryMediaAttachment(path string, lg *logger.Logger) (ha
 		return true, fmt.Sprintf("Error: binary file detected: %s — cannot read binary files, use execute_command instead", path), nil
 	}
 	supported := slices.Contains(p.Modalities, modality)
-	if !supported {
+	if p.Modalities == nil {
 		supported, _ = provider.ModalityCapability(p.Model, modality)
 	}
 	if !supported {

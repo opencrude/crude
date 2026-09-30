@@ -830,7 +830,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			}
 			return settingsui.ModelsMsg{ProviderID: request.ProviderID, AccountID: request.AccountID, Generation: request.Generation, Models: models}
 		})
-	case settingsui.ModelsMsg, settingsui.ModelsErrorMsg:
+	case settingsui.ModelsMsg, settingsui.ModelsErrorMsg, types.ModelCatalogUpdatedMsg:
 		if fw := m.windowManager.Window("workspace-settings"); fw != nil {
 			if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
 				cmds = append(cmds, cmd)
@@ -905,6 +905,10 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			return sessionSettingsSaveResultMsg{target: target, settings: s, err: err}
 		})
 	case sessionsettings.SaveAsWorkspaceMsg:
+		if msg.Settings.SessionMainAgent != "" {
+			m.Feedback.NotifyError("Choose Main Agent before saving agent settings as workspace defaults")
+			break
+		}
 		// Promote the current agent settings to workspace defaults so every
 		// future agent (and new session) inherits them.
 		m.Logger.Info("CONFIG", "session_settings_save_as_workspace")
@@ -924,9 +928,14 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			m.Logger.Error("CONFIG", "save_error", "error", msg.err.Error())
 			m.Feedback.NotifyError(msg.err.Error())
 		} else if projection != nil {
+			current := msg.settings
+			if session.Settings != nil {
+				m.refreshSessionSettingsProjection(session)
+				current = session.Settings.Effective
+			}
 			if msg.target == m.sessionSettings() {
-				m.ModelName = msg.settings.Model
-				m.LastSettings = msg.settings
+				m.ModelName = current.Model
+				m.LastSettings = current
 			}
 			for _, node := range m.AgentMgr.AllNodes() {
 				if node == nil || !node.IsOrchestrator() {
@@ -934,9 +943,9 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 				}
 				owner, _ := m.sessionProjectionForAgent(node.ID)
 				if owner == session {
-					node.Model = msg.settings.Model
+					node.Model = current.Model
 					node.Model = m.AgentModelIdentity(node.ID).ModelID
-					m.subPaneProjections.Get(node.ID, workspace.PaneAgent).renderer.SetLegacyModelFallback(msg.settings.Model)
+					m.subPaneProjections.Get(node.ID, workspace.PaneAgent).renderer.SetLegacyModelFallback(current.Model)
 				}
 			}
 			m.closeProjectionPanel(projection, sessionSettingsPanelID)

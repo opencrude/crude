@@ -9,12 +9,18 @@ type contextMeter struct {
 	inputTokens      int
 	completionTokens int
 	requestMessages  int
+	requestFixed     int
+	fixedKnown       bool
 }
 
-func (m *contextMeter) observe(inputTokens, completionTokens, requestMessages int) {
+func (m *contextMeter) observe(inputTokens, completionTokens, requestMessages int, fixedTokens ...int) {
 	m.inputTokens = inputTokens
 	m.completionTokens = completionTokens
 	m.requestMessages = requestMessages
+	m.fixedKnown = len(fixedTokens) > 0
+	if m.fixedKnown {
+		m.requestFixed = fixedTokens[0]
+	}
 }
 
 func (m *contextMeter) reset() {
@@ -26,6 +32,9 @@ func (m contextMeter) projected(messages []provider.ChatMessage, tools []provide
 		return estimateCanonicalRequest(messages, tools, model)
 	}
 	total := m.inputTokens
+	if m.fixedKnown && len(messages) > 0 {
+		total += estimateCanonicalRequest(messages[:1], tools, model) - m.requestFixed
+	}
 	index := m.requestMessages
 	if index < len(messages) && messages[index].Role == "assistant" {
 		if m.completionTokens > 0 {

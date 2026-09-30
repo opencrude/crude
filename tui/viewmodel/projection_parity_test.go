@@ -154,6 +154,52 @@ func TestLiveAndHydratedToolRowsAreIdentical(t *testing.T) {
 	}
 }
 
+// A successful run_sub_agent tool transport can return a running handle or a
+// terminal child failure. Both projections must report the child's outcome,
+// never the launch-call transport status or the raw JSON assignment.
+func TestLiveAndHydratedSubAgentOutcomeRows(t *testing.T) {
+	args := `{"category":"researcher","description":"Inspect the renderer and report findings","wait":true}`
+	for _, tc := range []struct {
+		name, content, want string
+		failed              bool
+	}{
+		{"running", `{"name":"Lily sub Dawn","category":"researcher","handle_id":"child-1","status":"running"}`, "Started sub-agent Lily sub Dawn", false},
+		{"completed", "## Sub-Agent Result: Lily sub Dawn [researcher]\n**Agent:** child-1\n**Status:** OK\n**Report:** report.md", "Sub-agent completed Lily sub Dawn", false},
+		{"failed", "## Sub-Agent Result: Lily sub Dawn [researcher]\n**Agent:** child-1\n**Status:** ERROR — provider failed\n**Report:** report.md", "Sub-agent failed Lily sub Dawn", true},
+		{"recorded timeout", "## Sub-Agent Result: Lily sub Dawn [researcher]\n**Agent:** child-1\n**Status:** TIMEOUT\n**Report:** report.md", "Sub-agent timed out Lily sub Dawn", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := projectionCase{name: tc.name, tool: "run_sub_agent", rawArgs: args, content: tc.content}
+			live := renderLive(t, "child-call", c, false)[0]
+			hydrated := renderHydrated(t, "child-call", c, false)[0]
+			assertSameRows(t, "collapsed", live, hydrated)
+			if !live.Toggle || !hydrated.Toggle {
+				t.Fatalf("child result lost disclosure: live=%v hydrated=%v", live.Toggle, hydrated.Toggle)
+			}
+			for _, row := range []chatprojection.MessageRow{live, hydrated} {
+				text := strings.Join(row.Lines, "\n")
+				if !strings.Contains(text, tc.want) || strings.Contains(text, "Sub-agent finished") || strings.Contains(text, `"category"`) || strings.Contains(text, "**Status:**") {
+					t.Fatalf("misleading child outcome: %q", text)
+				}
+				if tc.failed && !strings.Contains(text, "× ") {
+					t.Fatalf("child failure was not marked as failed: %q", text)
+				}
+				if !tc.failed && strings.Contains(text, "× ") {
+					t.Fatalf("successful launch/completion marked as failure: %q", text)
+				}
+			}
+			if tc.name != "running" {
+				liveFull := renderLive(t, "child-call", c, true)[0]
+				hydratedFull := renderHydrated(t, "child-call", c, true)[0]
+				assertSameRows(t, "expanded", liveFull, hydratedFull)
+				if !strings.Contains(strings.Join(liveFull.Lines, "\n"), "**Report:** report.md") {
+					t.Fatalf("child report unavailable on disclosure: %+v", liveFull.Lines)
+				}
+			}
+		})
+	}
+}
+
 // The activity regression exercises the real live conversation operations and
 // the persisted snapshot converter, not two copies of the renderer's grouping
 // helper. The messages intentionally include a progress boundary, a mutation,

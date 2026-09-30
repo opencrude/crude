@@ -9,6 +9,17 @@ Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
 Canonical plan: [`docs/plans/tui-component-system-plan.md`](../plans/tui-component-system-plan.md)
 
+## Oversized Context Extraction (2026-09-29)
+
+`BenchmarkSplitExtractionOversizedToolResult` splits a 2 MB text tool result into
+complete attributed fragments with a 60K-token request budget. Three runs on
+Linux/i7-10750H measured 7.26-7.85 ms, 6.37 MB and 134 allocations per complete
+split. Work runs on the compaction owner, never the UI thread, and is proportional
+to source size rather than allocating a maximum-context buffer per item.
+The benchmark excludes provider latency and does not assert summary quality.
+See [adaptive context handling](adaptive-context.md) for capacity, transactional
+recovery and source-retention contracts.
+
 ## Editor Savepoints And Gutter (2026-09-26)
 
 Measured on Linux/i7-10750H, two isolated runs. Immutable piece-span savepoints
@@ -30,6 +41,12 @@ reports 3,217 allocations against its 2,740 ceiling. Three isolated runs of
 both untouched commit `a348e22` and this worktree reproduce exactly 3,217
 allocations with `CGO_ENABLED=0`. Its Markdown rendering profile is unrelated to
 the editor/settings/history changes. The ceiling remains unchanged.
+
+The 2026-09-28 Markdown restoration preserves that allocation profile: three
+isolated `BenchmarkDenseChatSingleRowChange_500Msgs` runs measured 3,216
+allocations and 0.586-0.598 ms per update. Native bridging now shares the colour
+map across each rendered block and retains styles across line breaks. The
+existing 2,740-allocation gate overage remains; no ceiling was loosened.
 
 ## Purpose
 

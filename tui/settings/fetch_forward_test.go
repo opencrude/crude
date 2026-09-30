@@ -7,10 +7,67 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/provider"
+	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/types"
 	"crude/tui/ui"
 )
+
+func TestAgentModelFirstFetchPaintsChoicesAndCapabilities(t *testing.T) {
+	for _, currentModel := range []string{"", "vision-model"} {
+		t.Run("current="+currentModel, func(t *testing.T) {
+			th := theme.DefaultDark()
+			m := New(th, types.AppSettings{
+				Providers: map[string]types.ProviderConfig{"openai": {ProviderURL: "https://example.test/v1", APIStandard: "openai"}},
+				Accounts:  map[string]provider.Account{"work": {ID: "work", ProviderID: "openai", Label: "Work", APIKey: "test"}},
+				Agents:    types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {AccountID: "work", Model: currentModel}}},
+			}, nil)
+			s := NewSurface(th, m)
+			bridge := &popupBridge{m: m, surf: s}
+			widget := ui.NewWindowFrameWidget(th, "settings-frame", ui.FrameWindow, "Settings", s, bridge, true, 140, 40)
+			s.SetFocusHandler(widget.Focus)
+			host := widget.Host()
+			host.Resize(140, 40)
+			host.Layout()
+			s.ShowMainAgent()
+			host.MarkLayout()
+			host.Layout()
+			c := s.agents
+			c.form.FocusField(fieldModel)
+			host.Focus(AgentSettingsFormID)
+			result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+			if result.Cmd == nil || !c.form.Field(fieldModel).SelectOpen() {
+				t.Fatal("first model dropdown open did not start discovery")
+			}
+			request, ok := result.Cmd().(FetchModelsMsg)
+			if !ok {
+				t.Fatal("dropdown did not issue an account-scoped model request")
+			}
+			widget.HandleEvent(ModelsMsg{ProviderID: request.ProviderID, AccountID: request.AccountID, Generation: request.Generation, Models: []types.ModelEntry{
+				{ID: "text-model", Name: "Text Mini"},
+				{ID: "vision-model", Name: "Sight Pro", ContextWindow: 128000, MaxOutput: 8192, Modalities: []string{provider.ModalityImage, provider.ModalityPDF}},
+			}})
+			buf := surface.NewCellBuffer(140, 40)
+			host.Paint(buf)
+			if !c.form.Field(fieldModel).SelectOpen() || !strings.Contains(bufferPlain(buf), "Text Mini") {
+				t.Fatalf("first fetched choices were not painted in the open dropdown:\n%s", bufferPlain(buf))
+			}
+			if currentModel == "" {
+				host.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
+			}
+			host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+			host.Paint(buf)
+			for _, modality := range []string{provider.ModalityImage, provider.ModalityPDF} {
+				if got := c.draft.Field(fieldModalityPrefix + modality).Value.String(); got != "yes" {
+					t.Errorf("fetched %s capability = %q, want yes", modality, got)
+				}
+			}
+			if !strings.Contains(bufferPlain(buf), "128000") {
+				t.Errorf("fetched context window was not painted:\n%s", bufferPlain(buf))
+			}
+		})
+	}
+}
 
 // TestModelFetchResultClearsLoadingViaFrameForwarding simulates the full
 // production path: a ModelsMsg arrives at the viewmodel, which forwards it
@@ -131,8 +188,7 @@ type popupBridge struct {
 
 func (b *popupBridge) HandleEvent(msg tea.Msg) tea.Cmd {
 	oldPane := b.m.Pane()
-	updated, cmd := b.m.Update(msg)
-	b.m = &updated
+	_, cmd := b.m.Update(msg)
 	b.surf.SetModel(b.m)
 	if oldPane == 1 && b.m.Pane() == 0 {
 		b.surf.FocusCategories()

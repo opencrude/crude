@@ -4,6 +4,13 @@
 > four-stage model extraction with code-authored checkpoints, durable lifecycle
 > projection, deterministic resume, memory boundaries, and agent continuity.
 
+The current capacity and overflow hardening is documented in
+[adaptive context handling](../reference/adaptive-context.md). It supersedes this
+plan's full-source-only extraction assumption: fitting sources keep their cached
+prefix, oversized sources use complete attributed chunk-and-reduce, and extraction
+budgets output against its model's available capacity while retaining the selected
+reasoning effort.
+
 ## 1. Problem Statement
 
 The 2026-09-11 production session exposed a coupled failure across context
@@ -254,10 +261,10 @@ last measured request input
 If no provider measurement exists, the full canonical request is estimated at
 `ceil(runes / 4)`, including semantic system instructions and tool schemas.
 
-The effective trigger is the lower of the configured percentage and the context
-window minus summary-output and safety reserves. Zero disables automatic
-compaction. There is no target percentage and no repeated-compaction hysteresis
-loop.
+The effective trigger is the lower of the configured percentage and the main
+model's capacity minus its output and safety reserves. Extraction separately
+plans each request for its own model, chunking large sources. Zero disables
+automatic compaction. There is no repeated-compaction hysteresis loop.
 
 ## 8. Compaction Request
 
@@ -265,16 +272,25 @@ Automatic compaction runs at the next legal provider boundary. Every assistant
 tool call receives its tool result first. Pending BTW messages are admitted
 before summary generation.
 
-The extraction transaction uses:
+For sources that fit the extraction connection, the extraction transaction uses:
 
-- The same provider and model.
+- The resolved Aeron provider and model.
 - The same system prompt.
-- The same tool definitions and stable cached prefix.
+- No tool schemas and one stable source prefix shared by the extraction stages.
 - One shared hidden extraction contract followed by four stage-specific hidden
   requests over the same immutable source: intent, work, state, continuation.
 - `tool_choice: none` where supported.
-- No or minimal extended reasoning.
-- A maximum 16K aggregate checkpoint budget.
+- The Aeron model's configured reasoning effort, including thinking mode.
+- Generation capacity independent of checkpoint text size; the final checkpoint
+  is validated against the continuation model's actual remaining context.
+
+Oversized sources, including individual large tool results and arguments, are
+fully fragmented into chronological source data carrying role/origin/tool
+identity. Each stage extracts every bounded chunk and merges the extractions;
+recursive reduction must shrink and has a fixed depth cap. Provider context
+rejections reduce the extraction budget before a changed request is attempted.
+Reported usage also calibrates its budget for later requests in the transaction.
+The continuation model's budget controls checkpoint output and verbatim retention.
 
 Each stage emits plain telegraphic text, never XML. Crude escapes each body and
 wraps it in the deterministic version-3 envelope below. Successful prior stages

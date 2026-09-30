@@ -38,15 +38,18 @@ func BuildSubPaneHeaderLine(header workspace.SubPaneHeaderView, width, spinFrame
 		spans = append(spans, RowSpan{Text: "● Thought for " + duration, Role: ui.ColorMuted})
 		spans = append(spans, RowSpan{Text: " ▾", Role: ui.ColorMuted})
 	} else {
-		status := ""
+		status, failed := subAgentDisplayStatus(header.Status)
 		role := ui.ColorMuted
-		if header.Status != "" && header.Status != "completed" {
-			status = " — " + header.Status
-			role = ui.ColorError
+		marker := "● "
+		if failed {
+			role, marker = ui.ColorError, "× "
 		}
-		titleWidth := max(1, width-rendering.VisibleWidth("│ ● ")-rendering.VisibleWidth(status+" ▾"))
+		if status != "" {
+			status = " — " + status
+		}
+		titleWidth := max(1, width-rendering.VisibleWidth("│ "+marker)-rendering.VisibleWidth(status+" ▾"))
 		title := rendering.TruncateMiddleVisual(header.Title, titleWidth, "…")
-		spans = append(spans, RowSpan{Text: "● ", Role: role}, RowSpan{Text: title, Role: ui.ColorMuted})
+		spans = append(spans, RowSpan{Text: marker, Role: role}, RowSpan{Text: title, Role: ui.ColorMuted})
 		if status != "" {
 			spans = append(spans, RowSpan{Text: status, Role: role})
 		}
@@ -73,21 +76,52 @@ func BuildSubPaneSummaryLine(view workspace.SubPaneView, width int) SubPaneLine 
 	if view.Summary != nil {
 		summary = view.Summary.Text
 	}
-	summaryWidth := max(1, width-rendering.VisibleWidth("│ ● ")-rendering.VisibleWidth(" ▸"))
-	summary = rendering.TruncateMiddleVisual(summary, summaryWidth, "…")
+	status := ""
 	statusRole := ui.ColorMuted
 	marker := "● "
-	if view.Header.Type == workspace.PaneAgent && (view.Header.Status == "error" || view.Header.Status == "failed") {
-		statusRole = ui.ColorError
-		marker = "× "
+	if view.Header.Type == workspace.PaneAgent {
+		label, failed := subAgentDisplayStatus(view.Header.Status)
+		if label != "" {
+			status = " — " + label
+		}
+		if failed {
+			statusRole, marker = ui.ColorError, "× "
+		}
 	}
+	summaryWidth := max(1, width-rendering.VisibleWidth("│ "+marker)-rendering.VisibleWidth(status+" ▸"))
+	summary = rendering.TruncateMiddleVisual(summary, summaryWidth, "…")
 	spans := []RowSpan{
 		{Text: "│ ", Role: ui.ColorBorder},
 		{Text: marker, Role: statusRole},
-		{Text: summary + " ▸", Role: ui.ColorMuted},
+		{Text: summary, Role: ui.ColorMuted},
 	}
+	if status != "" {
+		spans = append(spans, RowSpan{Text: status, Role: statusRole})
+	}
+	spans = append(spans, RowSpan{Text: " ▸", Role: ui.ColorMuted})
 	pl := padPaintLine(PaintLine{Spans: spans}, width)
 	return NativeLine(pl)
+}
+
+func subAgentDisplayStatus(status string) (string, bool) {
+	switch status {
+	case "", "completed":
+		return "", false
+	case "cancelled":
+		return "cancelled", false
+	case "failed_timeout":
+		return "timed out", true
+	case "failed_error", "error", "failed":
+		return "failed", true
+	case "failed_quota":
+		return "quota exceeded", true
+	case "failed_policy":
+		return "policy blocked", true
+	case "crashed":
+		return "crashed", true
+	default:
+		return "failed", true
+	}
 }
 
 // BuildSubPaneToolLines uses the same semantic titles as ordinary tool leaves.

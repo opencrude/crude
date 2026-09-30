@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -85,6 +86,102 @@ func TestTopLevelRowsKeepChildConnectors(t *testing.T) {
 	}
 	if got := paint(nodes[len(nodes)-1]); !strings.Contains(got, "└") {
 		t.Fatalf("last top-level row %q should keep the child-branch rail", got)
+	}
+}
+
+func TestDeepTreeReclaimsGuideColumnsWithoutFlatteningAncestors(t *testing.T) {
+	root := t.TempDir()
+	current := root
+	var ancestors []string
+	for _, name := range []string{"a", "b", "c", "d", "e", "f", "g"} {
+		current = filepath.Join(current, name)
+		if err := os.Mkdir(current, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		ancestors = append(ancestors, current)
+	}
+	leaf := filepath.Join(current, "long_module_name.go")
+	if err := os.WriteFile(leaf, []byte("package p"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	model := NewFileTreeModel(root)
+	for _, path := range ancestors {
+		model.Expand(path)
+	}
+	nodes := model.VisibleNodes()
+	if len(nodes) != len(ancestors)+1 || nodes[len(nodes)-1].Path != leaf {
+		t.Fatalf("folder chain was flattened or leaf is missing: %d rows", len(nodes))
+	}
+	item := nodes[len(nodes)-1]
+	painter := NewTreeRowPainter(model, nil, PaintConfig{IndentWidth: 2, ShowIcons: false})
+	tokens := ui.NewTokenSet(theme.DefaultDark())
+	for _, tc := range []struct{ width, connectorX int }{{36, item.Depth}, {80, item.Depth * 3}} {
+		buf := surface.NewCellBuffer(tc.width, 1)
+		painter(buf, 0, 0, 0, tc.width, ui.TreeItem{ID: item.Path, Label: item.Name, Depth: item.Depth, Payload: item}, ui.TreeRowState{}, tokens)
+		if got := rowOf(buf, 0); !strings.Contains(got, item.Name) {
+			t.Fatalf("width %d spent name columns on guides: %q", tc.width, got)
+		}
+		if got := buf.Get(tc.connectorX, 0).Char; got != '└' {
+			t.Fatalf("width %d lost the leaf's depth-%d branch at %d: %q", tc.width, item.Depth, tc.connectorX, got)
+		}
+	}
+	model.Update(TreeHeightMsg{Height: 2})
+	model.SetScrollOffset(len(ancestors) - 1) // g and its file; f is the common offscreen parent.
+	context := ViewportContext(model, 2, 16, nil)
+	if !strings.HasPrefix(context.Breadcrumb, "…") || !strings.HasSuffix(context.Breadcrumb, "f") || context.PathAt(0) != "" {
+		t.Fatalf("narrow breadcrumb lost the closest parent or made ellipsis navigable: %+v", context)
+	}
+	if x := strings.LastIndex(context.Breadcrumb, "f"); context.PathAt(rendering.VisibleWidth(context.Breadcrumb[:x])) != ancestors[len(ancestors)-2] {
+		t.Fatalf("closest visible breadcrumb does not navigate to f: %q", context.Breadcrumb)
+	}
+	model.Collapse(ancestors[0])
+	if len(model.VisibleNodes()) != 1 {
+		t.Fatal("compressing guides must not change expand/collapse or visible membership")
+	}
+}
+
+func TestTreeBreadcrumbDoesNotClaimAncestorOutsideVisibleBranch(t *testing.T) {
+	root := t.TempDir()
+	for _, name := range []string{"a/b/c/long_module_name.go", "a/b/d/other.go", "z.go"} {
+		path := filepath.Join(root, name)
+		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(path, []byte("package p"), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	m := NewFileTreeModel(root)
+	for _, dir := range []string{"a", "a/b", "a/b/c", "a/b/d"} {
+		m.Expand(filepath.Join(root, dir))
+	}
+	m.Update(TreeHeightMsg{Height: 3})
+	m.SetScrollOffset(2) // c, long_module_name.go, d: all within a/b.
+	if got := BreadcrumbLine(m, 36); !strings.Contains(got, "a") || !strings.Contains(got, "b") {
+		t.Fatalf("missing shared offscreen ancestry for one subtree: %q", got)
+	}
+	context := ViewportContext(m, 3, 36, nil)
+	if context.BaseDepth != 2 || context.PathAt(0) != filepath.Join(root, "a") || context.PathAt(1) != "" {
+		t.Fatalf("breadcrumb and guide base disagree or separator navigates: %+v", context)
+	}
+	leaf := m.NodeByPath(filepath.Join(root, "a/b/c/long_module_name.go"))
+	buf := surface.NewCellBuffer(36, 1)
+	NewTreeRowPainter(m, nil, PaintConfig{IndentWidth: 2, IndentBaseDepth: context.BaseDepth, ShowIcons: false})(
+		buf, 0, 0, 0, 36, ui.TreeItem{ID: leaf.Path, Label: leaf.Name, Depth: leaf.Depth, Payload: leaf}, ui.TreeRowState{}, ui.NewTokenSet(theme.DefaultDark()))
+	if got := rowOf(buf, 0); !strings.Contains(got, leaf.Name) || buf.Get(3, 0).Char != '└' {
+		t.Fatalf("breadcrumb context did not reclaim ancestor rails without losing local branch: %q", got)
+	}
+	m.SetScrollOffset(3) // leaf, d, other: same a/b ancestry despite scroll.
+	if next := ViewportContext(m, 3, 36, nil); next.BaseDepth != context.BaseDepth || next.Breadcrumb != context.Breadcrumb {
+		t.Fatalf("row alignment jumped while breadcrumb context stayed the same: before=%+v after=%+v", context, next)
+	}
+	m.Update(TreeHeightMsg{Height: 4})
+	m.SetScrollOffset(3) // file in c, d, file in d, root-level z.go.
+	if got := BreadcrumbLine(m, 36); !strings.Contains(got, "a") || !strings.Contains(got, "c") {
+		t.Fatalf("normal breadcrumb disappeared when viewport crossed a root branch: %q", got)
+	}
+	if next := ViewportContext(m, 4, 36, nil); next.BaseDepth != 0 || next.PathAt(0) != filepath.Join(root, "a") {
+		t.Fatalf("mixed-branch breadcrumb should navigate but retain absolute guides: %+v", next)
 	}
 }
 

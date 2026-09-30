@@ -19,26 +19,43 @@ func TestCompactionThresholdReservesSummaryHeadroom(t *testing.T) {
 	if got := compactionThreshold(1_050_000, 40); got != 420_000 {
 		t.Fatalf("threshold = %d, want 420000", got)
 	}
-	if got := compactionThreshold(20_000, 100); got != 0 {
-		t.Fatalf("small-window threshold = %d, want disabled", got)
+	if got := compactionThreshold(20_000, 100); got != 19_000 {
+		t.Fatalf("small-window threshold = %d, want 19000", got)
 	}
 }
 
 func TestValidateContextCheckpointRequiresRoleContract(t *testing.T) {
 	root := testContextCheckpoint(t, "root")
 	child := testContextCheckpoint(t, "child")
-	if _, err := validateContextCheckpoint(root, "root"); err != nil {
+	if _, err := validateContextCheckpoint(root, "root", 16_000); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := validateContextCheckpoint(child, "child"); err != nil {
+	if _, err := validateContextCheckpoint(child, "child", 16_000); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := validateContextCheckpoint("not a checkpoint", "root"); err == nil {
+	if _, err := validateContextCheckpoint("not a checkpoint", "root", 16_000); err == nil {
 		t.Fatal("invalid checkpoint was accepted")
 	}
 	malformed := strings.Replace(root, "&lt;fact&gt;", "<injected>fact</injected>", 1)
-	if _, err := validateContextCheckpoint(malformed, "root"); err == nil {
+	if _, err := validateContextCheckpoint(malformed, "root", 16_000); err == nil {
 		t.Fatal("model-authored nested XML was accepted")
+	}
+	large := make(map[string]string, len(compactionStages))
+	for _, stage := range compactionStages {
+		large[stage.Name] = strings.Repeat(stage.Name+" evidence ", 2000)
+	}
+	checkpoint, err := buildContextCheckpoint("root", large)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if provider.EstimateTokens(checkpoint, "model") <= 16_000 {
+		t.Fatal("large checkpoint fixture did not exceed the old arbitrary limit")
+	}
+	if _, err := validateContextCheckpoint(checkpoint, "root", 60_000); err != nil {
+		t.Fatalf("checkpoint fitting the actual continuation context was rejected: %v", err)
+	}
+	if _, err := validateContextCheckpoint(checkpoint, "root", 1_000); err == nil {
+		t.Fatal("checkpoint exceeding the continuation context was accepted")
 	}
 }
 

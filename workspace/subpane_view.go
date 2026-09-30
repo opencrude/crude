@@ -86,9 +86,6 @@ func (sp *SubPane) buildSummaryView() *SubPaneSummaryView {
 		verb = sp.Title
 	}
 	text := fmt.Sprintf("%s for %s%s", verb, formatDurationHuman(dur), tokens)
-	if sp.Type == PaneAgent && sp.Status != "" && sp.Status != "completed" {
-		text = fmt.Sprintf("%s — %s", text, sp.Status)
-	}
 	return &SubPaneSummaryView{
 		Text:       text,
 		TokenCount: sp.TokenCount,

@@ -88,6 +88,28 @@ func TestFormHideDescriptionsPreservesTextareaAndErrors(t *testing.T) {
 	}
 }
 
+func TestImportantDescriptionSurvivesNarrowHelpPolicyWithoutBlockingSave(t *testing.T) {
+	model := NewFormModel()
+	field := ToggleFieldState("image", "Images", false, "Inconsistent: override no; card yes.")
+	field.DescriptionImportant = true
+	model.AddField(field)
+	form := NewForm("form", model, "", "", NewTokenSet(theme.DefaultDark()))
+	form.SetHideDescriptions(true)
+	form.Layout(LayoutContext{}, Rect{W: 38, H: 5})
+	buf := surface.NewCellBuffer(38, 5)
+	form.Paint(buf, 0, 0, PaintContext{})
+	var painted strings.Builder
+	for y := 0; y < 5; y++ {
+		for x := 0; x < 38; x++ {
+			painted.WriteRune(buf.Get(x, y).Char)
+		}
+	}
+	model.ValidateAll()
+	if !strings.Contains(painted.String(), "Inconsistent") || field.HasErrors() {
+		t.Fatal("capability warning was hidden or became a blocking validation error")
+	}
+}
+
 func TestActionBarPaintsSemanticVariants(t *testing.T) {
 	tokens := NewTokenSet(theme.DefaultDark())
 	bar := NewActionBar("actions", tokens,
@@ -158,6 +180,38 @@ func TestFormFieldPaintsDirtyMarkerOnModifiedLabel(t *testing.T) {
 	model.Commit()
 	if plain := paint(); strings.Contains(plain, "Tab size •") {
 		t.Fatalf("committed field must drop the dirty marker:\n%s", plain)
+	}
+}
+
+func TestMultilineFormLabelsStayOnSurfaceWhileSingleLineLabelsHighlight(t *testing.T) {
+	tokens := NewTokenSet(theme.DefaultDark())
+	for _, tc := range []struct {
+		name  string
+		field *FieldState
+		want  cell.Color
+	}{
+		{"textarea", TextAreaFieldState("value", "Instructions", "line one\nline two", ""), tokens.Color(ColorPopupBg)},
+		{"key-values", KeyValuesFieldState("value", "Headers", "Name: value", ""), tokens.Color(ColorPopupBg)},
+		{"single-line", TextFieldState("value", "Name", "short", ""), tokens.Color(ColorHover)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			model := NewFormModel()
+			model.AddField(tc.field)
+			form := NewForm("form", model, "", "", tokens)
+			form.Layout(LayoutContext{}, Rect{W: 55, H: 12})
+			form.FocusField(tc.field.ID)
+			buf := surface.NewCellBuffer(55, 12)
+			form.Paint(buf, 0, 0, PaintContext{Focused: true})
+			label := form.Field(tc.field.ID).Bounds()
+			if got := buf.Get(2, label.Y).BG; !got.Equal(tc.want) {
+				t.Fatalf("focused %s label background = %v, want %v", tc.name, got, tc.want)
+			}
+			if tc.name == "textarea" {
+				if got := buf.Get(3, label.Y+1).BG; got.IsDefault() || !got.Equal(tokens.Color(ColorHover)) {
+					t.Fatalf("textarea body lost its own focused fill: %v", got)
+				}
+			}
+		})
 	}
 }
 
@@ -738,6 +792,21 @@ func TestTitleBreadcrumbJoinsHierarchy(t *testing.T) {
 	}
 	if got := TitleBreadcrumb("Session Settings", "", "Provider"); got != "Session Settings · Provider" {
 		t.Fatalf("empty part=%q", got)
+	}
+}
+
+func TestBreadcrumbIndexUsesColumnsAndSkipsSeparators(t *testing.T) {
+	parts := []string{"Root", "界", "Leaf"}
+	separator := TitleBreadcrumbSeparator
+	parentX := rendering.VisibleWidth(parts[0] + separator)
+	leafX := rendering.VisibleWidth(parts[0] + separator + parts[1] + separator)
+	for _, tc := range []struct{ x, width, want int }{
+		{0, 40, 0}, {4, 40, -1}, {parentX, 40, 1}, {parentX + 1, 40, 1},
+		{leafX, 40, 2}, {leafX, leafX, -1}, {-1, 40, -1}, {39, 40, -1},
+	} {
+		if got := BreadcrumbIndex(parts, separator, tc.x, tc.width); got != tc.want {
+			t.Fatalf("breadcrumb at %d/%d = %d, want %d", tc.x, tc.width, got, tc.want)
+		}
 	}
 }
 

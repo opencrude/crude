@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	toolargs "crude/tools"
+	uitools "crude/tui/tools"
 	"crude/tui/types"
 )
 
@@ -67,7 +68,7 @@ func parallelMessages(msg *types.ChatMessage) []*types.ChatMessage {
 					child.ToolStatus, child.ToolPreviewPhase, child.Content = types.ToolStatusCancelled, types.ToolPreviewDone, "Stopped before a result was returned"
 				}
 			}
-			if result.Error {
+			if result.Error || child.ToolName == "run_sub_agent" && uitools.SubAgentResultFailed(result.Result) {
 				child.ToolStatus, child.ToolPreviewPhase = "error", types.ToolPreviewError
 			}
 		} else if msg.ToolStatus == "success" || msg.ToolStatus == "error" || msg.ToolStatus == types.ToolStatusCancelled {

@@ -6,20 +6,13 @@ import (
 	"math/big"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"crude/buildinfo"
 )
 
-var agentFirstNames = []string{
-	"Jeff", "Tom", "Jake", "Ava", "Maya", "Leo", "Nora", "Sam", "Ella", "Noah", "Mia", "Owen", "Ivy", "Finn", "Zoe", "Liam",
-	"Ada", "Max", "Ruby", "Eli", "Luna", "Theo", "Rose", "Alex", "Iris", "Jack", "Lily", "Ben", "Esme", "Arlo", "June", "Luke",
-	"Clara", "Jude", "Nina", "Hugo", "Sara", "Miles", "Alice", "Oscar", "Grace", "Felix", "Emma", "Levi", "Lucy", "Ezra", "Cora", "Adam",
-	"Wren", "Dean", "Jade", "Cole", "Tess", "Joel", "Hope", "Paul", "Vera", "Seth", "Ruth", "Neil", "Faye", "Eric", "Dawn", "Ryan",
-}
-
 // A durable app-wide arbitrary-precision counter gives names a never-exhausted
-// namespace across workspaces, restarts, and concurrent processes. First pass
-// uses plain first names, then Jeff 2, Tom 2, ... without reusing an identity.
+// namespace across workspaces, restarts, and concurrent processes.
 func allocateAgentName(home string) (string, error) {
 	if home == "" {
 		var err error
@@ -65,13 +58,32 @@ func allocateAgentName(home string) (string, error) {
 }
 
 func agentNameAt(index *big.Int) string {
-	cycle, slot := new(big.Int), new(big.Int)
-	cycle.QuoRem(index, big.NewInt(int64(len(agentFirstNames))), slot)
-	name := agentFirstNames[slot.Int64()]
-	if cycle.Sign() > 0 {
-		name += " " + cycle.Add(cycle, big.NewInt(1)).String()
+	firstCount := big.NewInt(int64(len(agentFirstNames)))
+	if index.Cmp(firstCount) < 0 {
+		return agentFirstNames[index.Int64()]
 	}
-	return name
+
+	remaining := new(big.Int).Sub(index, firstCount)
+	familyIndex, firstSlot := new(big.Int), new(big.Int)
+	familyIndex.QuoRem(remaining, firstCount, firstSlot)
+
+	surnameCount := big.NewInt(int64(len(agentSurnames)))
+	tierSize := new(big.Int).Set(surnameCount)
+	wordCount := 1
+	for familyIndex.Cmp(tierSize) >= 0 {
+		familyIndex.Sub(familyIndex, tierSize)
+		tierSize.Mul(tierSize, surnameCount)
+		wordCount++
+	}
+
+	words := make([]string, wordCount+1)
+	words[0] = agentFirstNames[firstSlot.Int64()]
+	for wordSlot := wordCount; wordSlot > 0; wordSlot-- {
+		digit := new(big.Int)
+		familyIndex.QuoRem(familyIndex, surnameCount, digit)
+		words[wordSlot] = agentSurnames[digit.Int64()]
+	}
+	return strings.Join(words, " ")
 }
 
 func (s *Session) AgentName() string { return s.agentName }

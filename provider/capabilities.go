@@ -23,8 +23,8 @@ const (
 	capAudioKnown
 )
 
-// dynamicCaps holds model capabilities populated from models.dev data.
-// It is mutex-protected for concurrent access.
+// dynamicCaps holds explicit registrations for standalone callers. An installed
+// application catalog is authoritative for discovered, not user, capabilities.
 var (
 	dynamicCaps   = make(map[string]modelCap)
 	dynamicCapsMu sync.RWMutex
@@ -110,7 +110,7 @@ func MergeModelCap(modelID string, vision, tools bool) {
 }
 
 // LoadModelCaps bulk-populates dynamicCaps from a map of model metadata
-// (typically the result of FetchModelsDevAll). Existing entries are
+// (for standalone callers and fixtures). Existing entries are
 // overwritten.
 func LoadModelCaps(metas map[string]ModelMeta) {
 	dynamicCapsMu.Lock()
@@ -133,6 +133,25 @@ func LoadModelCaps(metas map[string]ModelMeta) {
 // stripped provider prefix and then the full (lowercased) ID.
 // Returns the caps and whether a match was found.
 func lookupCaps(modelID string) (modelCap, bool) {
+	if catalog := activeModelCatalog.Load(); catalog != nil {
+		if meta, ok := catalog.Lookup(modelID); ok {
+			var caps modelCap
+			for modality, supported := range meta.ModalitySupport {
+				bits := modalityCapBits[modality]
+				caps |= bits.known
+				if supported {
+					caps |= bits.cap
+				}
+			}
+			if meta.ToolsKnown {
+				caps |= capToolsKnown
+			}
+			if meta.SupportsTools {
+				caps |= CapTools
+			}
+			return caps, true
+		}
+	}
 	lower := strings.ToLower(modelID)
 	stripped := stripProviderPrefix(lower)
 

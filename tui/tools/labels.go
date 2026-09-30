@@ -50,7 +50,7 @@ var toolVerbs = map[string][3]string{
 	"kill_async_command":      {"Preparing to stop command", "Stopping command", "Stopped command"},
 	"update_plan":             {"Preparing plan update", "Updating plan", "Updated plan"},
 	"get_plan":                {"Preparing plan read", "Reading plan", "Read plan"},
-	"run_sub_agent":           {"Preparing sub-agent", "Running sub-agent", "Sub-agent finished"},
+	"run_sub_agent":           {"Preparing sub-agent", "Running sub-agent", "Started sub-agent"},
 	"poll_sub_agent":          {"Preparing status check", "Polling", "Polled"},
 	"cancel_sub_agent":        {"Preparing to stop sub-agent", "Stopping sub-agent", "Stopped sub-agent"},
 	"list_sub_agents":         {"Preparing agent list", "Listing sub-agents", "Listed sub-agents"},
@@ -69,6 +69,31 @@ func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
 	}
 	if msg.ToolName == "read_file" && msg.ToolStatus == types.ToolStatusSuccess && msg.ToolArgs != "" {
 		target = msg.ToolArgs
+	}
+	if msg.ToolName == "run_sub_agent" && (msg.ToolStatus == types.ToolStatusSuccess || msg.ToolStatus == types.ToolStatusError || msg.ToolStatus == types.ToolStatusCancelled) {
+		if outcome, ok := subAgentOutcome(msg.Content); ok {
+			if outcome.name != "" {
+				target = outcome.name
+			}
+			duration := ""
+			if msg.ToolDuration > 0 {
+				duration = rendering.FormatDuration(msg.ToolDuration)
+			}
+			switch outcome.status {
+			case "running":
+				return ToolTitle{Action: "Started sub-agent", Operand: target, Metadata: duration}
+			case "completed":
+				return ToolTitle{Action: "Sub-agent completed", Operand: target, Metadata: duration}
+			case "cancelled":
+				return ToolTitle{Action: "Sub-agent cancelled", Operand: target, Metadata: duration}
+			case "failed_timeout":
+				// Also describes recorded results from sessions created before
+				// task deadlines were removed.
+				return ToolTitle{Action: "Sub-agent timed out", Operand: target, Metadata: duration, Failed: true}
+			default:
+				return ToolTitle{Action: "Sub-agent failed", Operand: target, Metadata: duration, Failed: true}
+			}
+		}
 	}
 	if msg.ToolInput != "" {
 		switch msg.ToolName {

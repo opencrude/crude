@@ -329,6 +329,9 @@ type FileTreeModel struct {
 
 	// visibleNodes is a flattened, depth-first list of currently visible nodes.
 	visibleNodes []*TreeNode
+	// maxVisibleDepth is derived with visibleNodes; row painters use it to
+	// keep one consistent guide width for the whole tree at each viewport width.
+	maxVisibleDepth int
 
 	// filterEd holds the active filter pattern (empty = no filter).
 	filterEd *ui.TextEdit
@@ -993,6 +996,7 @@ func (m *FileTreeModel) SelectedNode() *TreeNode {
 // filter. Hidden nodes are excluded when showHidden is false.
 func (m *FileTreeModel) rebuildVisibleNodes() {
 	m.visibleNodes = m.visibleNodes[:0] // reuse backing array
+	m.maxVisibleDepth = 0
 	if m.Root != nil {
 		// The workspace root is never a painted row, so it must stay
 		// expanded or the explorer would go blank after Collapse All.
@@ -1137,6 +1141,7 @@ func (m *FileTreeModel) unfilteredWalk(node *TreeNode) {
 	}
 	if node != m.Root {
 		m.visibleNodes = append(m.visibleNodes, node)
+		m.maxVisibleDepth = max(m.maxVisibleDepth, node.Depth)
 	}
 
 	if node.IsDir && node.IsExpanded {
@@ -1161,6 +1166,7 @@ func (m *FileTreeModel) filteredWalk(node *TreeNode, ancestorMatched bool) {
 	}
 	if node != m.Root {
 		m.visibleNodes = append(m.visibleNodes, node)
+		m.maxVisibleDepth = max(m.maxVisibleDepth, node.Depth)
 	}
 	if node.IsDir && node.IsExpanded {
 		for _, child := range node.Children {
@@ -1555,6 +1561,47 @@ func (m *FileTreeModel) VisibleNodes() []*TreeNode {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return append([]*TreeNode(nil), m.visibleNodes...)
+}
+
+// ViewportAncestor is the deepest offscreen directory shared by every painted
+// row. When the viewport spans root branches, return the first row's offscreen
+// parent for the normal breadcrumb, but mark it non-shared so guides stay full.
+func (m *FileTreeModel) ViewportAncestor(rows int) (*TreeNode, bool) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	if m.scrollOffset <= 0 || m.scrollOffset >= len(m.visibleNodes) || rows <= 0 {
+		return nil, false
+	}
+	firstParent := m.visibleNodes[m.scrollOffset].Parent
+	if firstParent == m.Root {
+		return nil, false
+	}
+	end := min(len(m.visibleNodes), m.scrollOffset+rows)
+	for candidate := firstParent; candidate != nil && candidate != m.Root; candidate = candidate.Parent {
+		shared := true
+		for _, node := range m.visibleNodes[m.scrollOffset+1 : end] {
+			ancestor := node
+			for ancestor != nil && ancestor != candidate {
+				ancestor = ancestor.Parent
+			}
+			if ancestor == nil {
+				shared = false
+				break
+			}
+		}
+		if shared {
+			return candidate, true
+		}
+	}
+	return firstParent, false
+}
+
+// MaxVisibleDepth is cached with the structural projection. It never scans
+// nodes during a paint or changes when only focus/scroll state moves.
+func (m *FileTreeModel) MaxVisibleDepth() int {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	return m.maxVisibleDepth
 }
 
 // VisibleRows returns the paths of currently visible nodes in

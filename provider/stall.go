@@ -17,10 +17,34 @@ type progressTimeouts struct {
 }
 
 var defaultProgressTimeouts = progressTimeouts{
-	Startup: 60 * time.Second,
-	Floor:   45 * time.Second,
-	Ceiling: 5 * time.Minute,
+	Startup: DefaultProgressStartupTimeout,
+	Floor:   DefaultProgressTimeoutFloor,
+	Ceiling: DefaultProgressTimeoutCeiling,
 	Margin:  5 * time.Second,
+}
+
+func (d DialConfig) progressTimeouts() progressTimeouts {
+	policy := defaultProgressTimeouts
+	if d.ProgressStartupTimeout > 0 {
+		policy.Startup = d.ProgressStartupTimeout
+	}
+	if d.ProgressTimeoutFloor > 0 {
+		policy.Floor = d.ProgressTimeoutFloor
+	}
+	if d.ProgressTimeoutCeiling > 0 {
+		policy.Ceiling = d.ProgressTimeoutCeiling
+	}
+	return policy
+}
+
+func (p progressTimeouts) validate() error {
+	if p.Floor > p.Startup {
+		return fmt.Errorf("minimum progress timeout must not exceed initial progress timeout")
+	}
+	if p.Startup > p.Ceiling {
+		return fmt.Errorf("initial progress timeout must not exceed maximum progress timeout")
+	}
+	return nil
 }
 
 // ProgressStallError reports an established HTTP attempt whose positive byte

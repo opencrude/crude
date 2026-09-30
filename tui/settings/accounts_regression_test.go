@@ -81,17 +81,82 @@ func TestAccountNoticeStaysAboveActionsAtBothWidths(t *testing.T) {
 		host.Layout()
 		buf := surface.NewCellBuffer(size.W, size.H)
 		host.Paint(buf)
-		noticeY := s.accountBar.Bounds().Y - 1
+		noticeY := min(s.accountAdd.Bounds().Y, s.accountBar.Bounds().Y) - 1
 		if notice := settingsRow(buf, noticeY, size.W); !strings.Contains(notice, "Account could not be saved") {
 			t.Fatalf("size=%+v notice missing from reserved row: %q", size, notice)
 		}
-		for _, actionY := range []int{s.accountBar.Bounds().Y, s.accountMoreBar.Bounds().Y} {
+		for _, actionY := range []int{s.accountAdd.Bounds().Y, s.accountBar.Bounds().Y, s.accountMoreBar.Bounds().Y} {
 			if actions := settingsRow(buf, actionY, size.W); strings.Contains(actions, "Account could not be saved") {
 				t.Fatalf("size=%+v notice painted over account action row: %q", size, actions)
 			}
 		}
 		if s.accounts.Bounds().Y+s.accounts.Bounds().H > noticeY {
 			t.Fatalf("size=%+v account rows overlap notice row", size)
+		}
+	}
+}
+
+func TestCatalogActionsShareBottomAnchorAndMeasuredGaps(t *testing.T) {
+	th := theme.DefaultDark()
+	m := New(th, accountSettingsFixture(), nil)
+	s := NewSurface(th, m)
+	host := ui.NewHost(th, s)
+	for _, size := range []ui.Size{{W: 124, H: 28}, {W: 88, H: 24}, {W: 70, H: 18}} {
+		host.Resize(size.W, size.H)
+		lastRow := size.H - 3 // one rule and the shared settings footer
+		for _, catalog := range []string{"agents", "accounts", "providers"} {
+			switch catalog {
+			case "agents":
+				m.SelectCategory(catAgents)
+			case "accounts":
+				m.SelectCategory(catAccounts)
+			case "providers":
+				m.SelectCategory(catProviders)
+			}
+			s.refreshForm()
+			host.MarkLayout()
+			host.Layout()
+			groups := []*ui.ActionBar{s.agents.bar}
+			table := s.agents.table.Bounds()
+			xOffset, yOffset := s.agents.Bounds().X, s.agents.Bounds().Y
+			if catalog == "agents" && s.agents.stackActions {
+				groups = append(groups, s.agents.more)
+			}
+			if catalog == "accounts" {
+				groups = []*ui.ActionBar{s.accountAdd, s.accountBar, s.accountMoreBar}
+				table = s.accounts.Bounds()
+				xOffset, yOffset = 0, 0
+			}
+			if catalog == "providers" {
+				groups = []*ui.ActionBar{s.templateAdd, s.templateBar, s.templateMoreBar}
+				table = s.templates.Bounds()
+				xOffset, yOffset = 0, 0
+			}
+			if groups[len(groups)-1].Bounds().Y+yOffset != lastRow || groups[0].Bounds().X+xOffset != s.contentRect.X {
+				t.Fatalf("%s at %+v: actions lack shared bottom/left anchors: %+v, %+v", catalog, size, groups[0].Bounds(), groups[len(groups)-1].Bounds())
+			}
+			first := groups[0].Bounds().Y + yOffset
+			if table.Y+yOffset+table.H >= first-1 {
+				t.Fatalf("%s at %+v: table overlaps action/notice area: table=%+v actions=%+v", catalog, size, table, groups[0].Bounds())
+			}
+			for i, group := range groups {
+				r := group.Bounds()
+				r.X += xOffset
+				r.Y += yOffset
+				if r.X+r.W > s.contentRect.X+s.contentRect.W || r.Y > lastRow || r.Y < lastRow-2 {
+					t.Fatalf("%s at %+v: group %d extends outside its action area: %+v", catalog, size, i, r)
+				}
+				if i > 0 && r.Y == groups[i-1].Bounds().Y && r.X-groups[i-1].Bounds().X-groups[i-1].Bounds().W != s.tokens.ButtonGap() {
+					t.Fatalf("%s at %+v: groups do not share button gap", catalog, size)
+				}
+			}
+			buf := surface.NewCellBuffer(size.W, size.H)
+			host.Paint(buf)
+			for _, label := range map[string][]string{"agents": {"Add", "Edit", "Clone", "Reset", "Remove"}, "accounts": {"Add account", "Edit", "Add another", "Remove"}, "providers": {"Add template", "Edit", "Clone", "Remove"}}[catalog] {
+				if !strings.Contains(bufferPlain(buf), label) {
+					t.Fatalf("%s at %+v: %q is clipped or missing", catalog, size, label)
+				}
+			}
 		}
 	}
 }

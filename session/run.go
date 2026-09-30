@@ -35,17 +35,6 @@ func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
 		}
 	}()
 
-	go func() {
-		l.Debug("MODEL", "models_dev_start")
-		metas, err := provider.FetchModelsDevAll()
-		if err != nil {
-			l.Warn("MODEL", "load_error", "error", err.Error())
-			return
-		}
-		provider.LoadModelMetas(metas)
-		l.Info("MODEL", "load_ok", "count", len(metas))
-	}()
-
 	asyncPollingStop := make(chan struct{})
 	defer close(asyncPollingStop)
 	go func() {
@@ -170,6 +159,16 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		sender.SendAgentEventWithID("error", "Pending workspace state could not be reconciled before the turn: "+err.Error(), o.ID)
 		return
 	}
+	// A disabled or removed selected agent must not silently turn into Main Agent.
+	effectiveCfg := s.runtimeProfile.GetEffectiveConfig(o.ID)
+	if err := effectiveCfg.ValidateSelectedAgent(); err != nil {
+		sender.SendAgentEventWithID("error", "Selected session agent is unavailable: "+err.Error(), o.ID)
+		return
+	}
+	if s.accountUnpinned {
+		sender.SendAgentEventWithID("error", "Select an account for this session before sending a request.", o.ID)
+		return
+	}
 	if s.db != nil {
 		if err := sessiondb.BeginAgentTurn(s.db, s.sessionID, o.ID, turnGeneration, string(userInput.EffectiveOrigin())); err != nil {
 			l.Error("SESSION", "turn_state_begin_failed", "error", err.Error())
@@ -179,7 +178,6 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 
 	// Use per-orchestrator effective config from runtime profile.
-	effectiveCfg := s.runtimeProfile.GetEffectiveConfig(o.ID)
 	activeCfg := effectiveCfg.GetActiveDefaultCategory()
 	provider.MergeModelCap(activeCfg.Model, slices.Contains(activeCfg.ModelModalities, provider.ModalityImage), activeCfg.ModelSupportsTools)
 	provider.MergeModelModalities(activeCfg.Model, activeCfg.ModelModalities)
@@ -380,8 +378,10 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 	sender.SendAgentEventWithID("turn_started", turnIdentity, o.ID)
 	ag := s.newAgent(turnProvider, effectiveCfg.IsMultiAgentEnabled(), activeCfg.ModelModalities)
+	ag.MaxOutputTokens = activeCfg.ModelMaxOutput
 	ag.ReasoningContentKind = s.inferredReasoningKind(o.ID, turnProvider.ID, turnProvider.AccountID, turnProvider.Model)
 	ag.CompactionProvider = compactionProvider
+	ag.CompactionMaxOutput = compactionCfg.ModelMaxOutput
 	ag.AgentID = agent.AgentID(o.ID)
 	ag.TurnGeneration = turnGeneration
 	ag.PrepareCompaction = func(source agent.CompactionSource) error {
@@ -396,7 +396,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	if len(frozenPrefix) > 0 && frozenPrefix[len(frozenPrefix)-1].Role == "assistant" && s.db != nil {
 		if baseline, ok, baselineErr := sessiondb.LatestNormalUsageRecord(s.db, s.sessionID, o.ID); baselineErr != nil {
 			l.Warn("COMPACT", "context_baseline_load_failed", "error", baselineErr.Error())
-		} else if ok && baseline.ModelID == activeCfg.Model {
+		} else if ok && baseline.ModelID == activeCfg.Model && baseline.ProviderID == turnProvider.ID && baseline.AccountID == turnProvider.AccountID {
 			// Agent.Run prepends one system message. The prior final assistant
 			// therefore begins at index len(frozenPrefix) in the new request.
 			ag.SeedContextUsage(baseline.ContextUsed, baseline.CompletionTokens, len(frozenPrefix))

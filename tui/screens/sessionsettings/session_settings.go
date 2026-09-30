@@ -26,6 +26,7 @@ const (
 )
 
 const (
+	fieldMainAgent         = "main-agent"
 	fieldProvider          = "connection"
 	fieldModel             = "model"
 	fieldThinking          = "thinking-effort"
@@ -64,6 +65,7 @@ const (
 	rolePage
 	modelPage
 	providerPage
+	agentPage
 )
 
 var agentRoles = []struct {
@@ -147,7 +149,7 @@ func (s *Screen) ConfigureProviders(_ []types.ProviderPreset, providers map[stri
 	switch s.page {
 	case rolePage:
 		s.openRole(s.role)
-	case modelPage, providerPage:
+	case modelPage, providerPage, agentPage:
 		s.syncPickerList()
 	}
 }
@@ -243,6 +245,7 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		listH := max(1, bodyH-3)
 		s.modelList.Layout(ctx, ui.Rect{X: 0, Y: 3, W: r.W, H: listH})
 	} else {
+		s.form.SetBreadcrumb(s.breadcrumbParts(), "session-settings.breadcrumb")
 		s.form.Layout(ctx, ui.Rect{X: 0, Y: 0, W: r.W, H: bodyH})
 	}
 	s.actions.Layout(ctx, ui.Rect{X: 0, Y: max(0, r.H-chrome), W: r.W, H: chrome})
@@ -257,11 +260,7 @@ func (s *Screen) Paint(buf *surface.CellBuffer, originX, originY int, ctx ui.Pai
 	bg := s.tokens.Color(ui.ColorBg)
 	fg := s.tokens.Color(ui.ColorFg)
 	divider := s.tokens.Color(ui.ColorPopupDivider)
-	leaf := "Model"
-	if s.page == providerPage {
-		leaf = "Account"
-	}
-	title := s.title(s.roleName(), leaf)
+	title := ui.TitleBreadcrumb(s.breadcrumbParts()...)
 	divX, divW := x, r.W
 	if s.ruleBleedW-s.ruleBleedX > r.W {
 		divX, divW = x-s.ruleBleedX, s.ruleBleedW
@@ -275,6 +274,11 @@ func (s *Screen) Paint(buf *surface.CellBuffer, originX, originY int, ctx ui.Pai
 func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if !s.pickerPage() {
 		return ui.EventResult{}
+	}
+	if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft && ctx.LocalY == 0 {
+		if index := ui.BreadcrumbIndex(s.breadcrumbParts(), ui.TitleBreadcrumbSeparator, ctx.LocalX, s.Bounds().W); index >= 0 {
+			return s.HandleAction(ctx, ui.Action{ID: "session-settings.breadcrumb", Payload: index})
+		}
 	}
 	if evt.Kind == ui.EventMouseClick || evt.Kind == ui.EventMouseMotion || evt.Kind == ui.EventMouseWheel {
 		fr := s.modelFilter.Bounds()
@@ -307,8 +311,7 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		if s.modelFilter.Value() != "" {
 			return s.modelFilter.Handle(ctx, evt)
 		}
-		s.openRole(s.role)
-		return focusFormResult(ui.InvalidateLayout)
+		return s.cancelOrBack()
 	}
 	switch key.Code {
 	case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd, tea.KeyEnter:
@@ -324,13 +327,25 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 }
 
 func (s *Screen) isPickerSelectAction(id string) bool {
-	return id == "session-settings.model.select" || id == "session-settings.provider.select"
+	return id == "session-settings.model.select" || id == "session-settings.provider.select" || id == "session-settings.agent.select"
 }
 
 func (s *Screen) commitPickerAction(res ui.EventResult) ui.EventResult {
-	if s.page == modelPage {
+	switch s.page {
+	case agentPage:
+		if selected, ok := s.modelList.Selected(); ok && selected.Selectable() {
+			id := selected.ID
+			if id == "default" {
+				id = ""
+			}
+			s.selectMainAgent(id)
+			s.openRoot()
+			return focusFormResult(ui.InvalidateLayout)
+		}
+		return ui.EventResult{Handled: true}
+	case modelPage:
 		s.commitModelSelection()
-	} else {
+	case providerPage:
 		s.commitProviderSelection()
 	}
 	s.openRole(s.role)
@@ -372,10 +387,29 @@ func (s *Screen) applyProviderToEffective(id string) {
 
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
 	switch action.ID {
+	case "session-settings.breadcrumb":
+		index, ok := action.Payload.(int)
+		if ok && index == 0 && s.page != rootPage {
+			if s.page == rolePage {
+				s.applyRoleForm()
+			}
+			s.openRoot()
+			return focusFormResult(ui.InvalidateLayout)
+		}
+		if ok && index == 1 && s.pickerPage() && s.page != agentPage {
+			s.openRole(s.role)
+			return focusFormResult(ui.InvalidateLayout)
+		}
+		return ui.EventResult{Handled: true}
 	case "session-settings.role.open":
 		role, _ := action.Payload.(string)
 		s.openRole(role)
 		return focusFormResult(ui.InvalidateLayout)
+	case "session-settings.agent.open":
+		s.openAgentPicker()
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint, Action: &ui.Action{ID: "ui.focus", Payload: ScreenID}}
+	case "session-settings.agent.select":
+		return s.commitPickerAction(ui.EventResult{})
 	case "session-settings.model.open":
 		return ui.EventResult{Handled: true, Cmd: s.openModelPicker(), Invalidate: ui.InvalidateLayout | ui.InvalidatePaint, Action: &ui.Action{ID: "ui.focus", Payload: ScreenID}}
 	case "session-settings.provider.open":
@@ -427,6 +461,10 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 		s.openRoot()
 		return focusFormResult(ui.InvalidateLayout)
 	case "session-settings.role.back":
+		if s.page == agentPage {
+			s.openRoot()
+			return focusFormResult(ui.InvalidateLayout)
+		}
 		if s.pickerPage() {
 			s.openRole(s.role)
 			return focusFormResult(ui.InvalidateLayout)
@@ -473,13 +511,14 @@ func (s *Screen) openRoot() {
 		})
 	}
 	model.AddField(ui.SpacerFieldState("roles-gap"))
+	model.AddField(&ui.FieldState{
+		ID: fieldMainAgent, Label: "Default agent", Type: ui.FieldNav,
+		Value: ui.StringValue(s.effective.SessionMainAgent), Description: s.mainAgentLabel(),
+		Target: "session-settings.agent.open",
+	})
 	multi := ui.BoolFieldState(fieldMultiAgent, "Multi Agent", s.effective.Agents.Enabled,
-		"Allow this session to spawn researcher, crafter, and aeron sub-agents.")
-	// No spacer slots: the switch rides under the agent rows' first value
-	// column (· model) — the same alignment anchor as the model names. For an
-	// inherited row padInheritedColumns pushes "inherited from workspace" to the
-	// last column, so the control sits under the model column with the
-	// provider column left blank and the inherit text pinned to the row edge.
+		"Allow delegation to other agents.")
+	// Match the first value column of the existing compact agent table.
 	if s.effective.SessionMultiAgent == nil {
 		multi.Inherited = true
 		multi.InheritedFrom = "workspace"
@@ -488,6 +527,44 @@ func (s *Screen) openRoot() {
 	s.formModel = model
 	s.form.SetForm(model, s.title(), "")
 	s.actions = s.rootActions()
+	s.actions.SetEnabled("session-settings.save-workspace", s.effective.SessionMainAgent == "")
+}
+
+func (s *Screen) mainAgentOptions() []ui.FormOption {
+	options := []ui.FormOption{{ID: "default", Label: "Main Agent"}}
+	for _, role := range agentRoles[1:4] {
+		cfg := s.effective.Agents.Categories[role.Key]
+		if cfg.Enabled == nil || *cfg.Enabled || s.effective.SessionMainAgent == role.Key {
+			options = append(options, ui.FormOption{ID: role.Key, Label: role.Name, Disabled: cfg.Enabled != nil && !*cfg.Enabled})
+		}
+	}
+	keys := make([]string, 0, len(s.effective.Agents.AgentProfiles))
+	for name := range s.effective.Agents.AgentProfiles {
+		keys = append(keys, name)
+	}
+	slices.Sort(keys)
+	for _, name := range keys {
+		profile := s.effective.Agents.AgentProfiles[name]
+		role := s.effective.Agents.Categories[profile.Category]
+		enabled := (profile.Enabled == nil || *profile.Enabled) && (role.Enabled == nil || *role.Enabled)
+		if profile.Category != memoryRole && (enabled || s.effective.SessionMainAgent == "profile/"+name) {
+			options = append(options, ui.FormOption{ID: "profile/" + name, Label: name, Detail: profile.Description, Disabled: !enabled})
+		}
+	}
+	return options
+}
+
+func (s *Screen) mainAgentLabel() string {
+	id := s.effective.SessionMainAgent
+	if id == "" {
+		return "Main Agent"
+	}
+	for _, option := range s.mainAgentOptions() {
+		if option.ID == id {
+			return option.Label
+		}
+	}
+	return strings.TrimPrefix(id, "profile/") + " (unavailable)"
 }
 
 func (s *Screen) rootActions() *ui.ActionBar {
@@ -564,6 +641,9 @@ func (s *Screen) openRole(role string) {
 
 func (s *Screen) cancelOrBack() ui.EventResult {
 	switch s.page {
+	case agentPage:
+		s.openRoot()
+		return focusFormResult(ui.InvalidateLayout)
 	case modelPage, providerPage:
 		s.openRole(s.role)
 		return focusFormResult(ui.InvalidateLayout)
@@ -652,6 +732,18 @@ func (s *Screen) openProviderPicker() tea.Cmd {
 	return nil
 }
 
+func (s *Screen) openAgentPicker() {
+	s.applyRootForm()
+	s.page, s.role, s.modelQuery = agentPage, "", ""
+	s.modelFilter.SetValue("")
+	s.modelFilter.SetPlaceholder("Filter agents…")
+	s.modelList.SetActivateAction("session-settings.agent.select")
+	s.syncPickerList()
+	s.actions = ui.NewDockedActionBar(ActionsID, s.tokens,
+		ui.ActionBarButton{ID: ui.NewID(ActionsID, "back"), Label: "Back", Action: "session-settings.role.back", Variant: ui.VariantSecondary, Enabled: true},
+	)
+}
+
 func (s *Screen) fetchModelsCmd() tea.Cmd {
 	providerID := s.currentProviderID()
 	if providerID == "" {
@@ -678,6 +770,22 @@ func (s *Screen) fetchModelsCmd() tea.Cmd {
 }
 
 func (s *Screen) syncPickerList() {
+	if s.page == agentPage {
+		query := strings.ToLower(strings.TrimSpace(s.modelQuery))
+		var items []ui.ListItem
+		for _, option := range s.mainAgentOptions() {
+			if query != "" && !strings.Contains(strings.ToLower(option.Label+" "+option.Detail), query) {
+				continue
+			}
+			items = append(items, ui.ListItem{ID: option.ID, Label: option.Label, Detail: option.Detail, Disabled: option.Disabled, Payload: option.ID})
+		}
+		if len(items) == 0 {
+			items = []ui.ListItem{{ID: "empty", Label: "No matching agents", Disabled: true}}
+		}
+		s.modelList.SetItems(items)
+		s.selectPickerItem(fieldMainAgent, items)
+		return
+	}
 	if s.page == providerPage {
 		s.syncProviderList()
 		return
@@ -753,7 +861,9 @@ func (s *Screen) selectPickerItem(fieldID string, items []ui.ListItem) {
 		return
 	}
 	current := field.Value.String()
-	if current == "" {
+	if fieldID == fieldMainAgent && current == "" {
+		current = "default"
+	} else if current == "" {
 		current = field.Description
 	}
 	for i, item := range items {
@@ -883,13 +993,32 @@ func (s *Screen) title(parts ...string) string {
 	return ui.TitleBreadcrumb(append([]string{"Session Settings"}, parts...)...)
 }
 
+func (s *Screen) breadcrumbParts() []string {
+	parts := []string{"Session Settings"}
+	if s.page != rootPage && s.page != agentPage {
+		parts = append(parts, s.roleName())
+	}
+	switch s.page {
+	case modelPage:
+		parts = append(parts, "Model")
+	case providerPage:
+		parts = append(parts, "Account")
+	case agentPage:
+		parts = append(parts, "Default agent")
+	}
+	return parts
+}
+
 func (s *Screen) pickerPage() bool {
-	return s.page == modelPage || s.page == providerPage
+	return s.page == modelPage || s.page == providerPage || s.page == agentPage
 }
 
 func (s *Screen) applyRootForm() {
 	if s.page != rootPage || s.formModel == nil {
 		return
+	}
+	if selected := s.formModel.Field(fieldMainAgent); selected != nil && selected.Value.String() != s.effective.SessionMainAgent {
+		s.selectMainAgent(selected.Value.String())
 	}
 	field := s.formModel.Field(fieldMultiAgent)
 	if field == nil {
@@ -900,6 +1029,84 @@ func (s *Screen) applyRootForm() {
 	s.effective.SessionMultiAgent = boolPtr(enabled)
 	field.Inherited = false
 	field.InheritedFrom = ""
+}
+
+func (s *Screen) selectMainAgent(id string) {
+	base := s.base.Agents.Categories["default"]
+	if previous, ok := s.overrides["default"]; ok {
+		if previous.AccountID != "" {
+			base.AccountID = previous.AccountID
+		}
+		if previous.Model != "" {
+			base.Model = previous.Model
+		}
+		if previous.ThinkingEffort != "" {
+			base.ThinkingEffort = previous.ThinkingEffort
+		}
+	}
+	selected := base
+	if id != "" {
+		role := id
+		if strings.HasPrefix(id, "profile/") {
+			profile := s.effective.Agents.AgentProfiles[strings.TrimPrefix(id, "profile/")]
+			role = profile.Category
+		}
+		if configured, ok := s.base.Agents.Categories[role]; ok {
+			selected = configured
+			if roleOverride, exists := s.overrides[role]; exists {
+				if roleOverride.AccountID != "" {
+					selected.AccountID = roleOverride.AccountID
+				}
+				if roleOverride.Model != "" {
+					selected.Model = roleOverride.Model
+				}
+				if roleOverride.ThinkingEffort != "" {
+					selected.ThinkingEffort = roleOverride.ThinkingEffort
+				}
+			}
+			if selected.AccountID == "" {
+				selected.AccountID = base.AccountID
+			}
+			if selected.Model == "" {
+				selected.Model = base.Model
+			}
+		}
+		if strings.HasPrefix(id, "profile/") {
+			profile := s.effective.Agents.AgentProfiles[strings.TrimPrefix(id, "profile/")]
+			if profile.AccountID != "" {
+				selected.AccountID = profile.AccountID
+			}
+			if profile.Model != "" {
+				selected.Model = profile.Model
+			}
+			if profile.ThinkingEffort != "" {
+				selected.ThinkingEffort = profile.ThinkingEffort
+			}
+		}
+		if pin, ok := s.overrides["root/"+id]; ok {
+			if pin.AccountID != "" {
+				selected.AccountID = pin.AccountID
+			}
+			if pin.Model != "" {
+				selected.Model = pin.Model
+			}
+			if pin.ThinkingEffort != "" {
+				selected.ThinkingEffort = pin.ThinkingEffort
+			}
+		} else {
+			s.overrides["root/"+id] = types.CategorySettings{AccountID: selected.AccountID}
+		}
+	}
+	s.effective.SessionMainAgent = id
+	setCategory(&s.effective, "default", selected)
+	if field := s.formModel.Field(fieldMainAgent); field != nil {
+		field.Value = ui.StringValue(id)
+		field.Description = s.mainAgentLabel()
+	}
+	s.actions.SetEnabled("session-settings.save-workspace", id == "")
+	if field := s.formModel.Field("default"); field != nil {
+		field.Columns = []string{selected.Model, s.accountLabel(selected.AccountID)}
+	}
 }
 
 func boolPtr(v bool) *bool { return &v }
@@ -935,14 +1142,33 @@ func (s *Screen) applyRoleForm() {
 	// A manual override never carries a live-inherit marker.
 	cfg.Inherit = ""
 	setCategory(&s.effective, s.role, cfg)
-	s.overrides[s.role] = types.CategorySettings{
-		Provider: cfg.Provider, AccountID: cfg.AccountID, Model: cfg.Model,
-		ThinkingEffort:           cfg.ThinkingEffort,
-		ContextCompactionPercent: cloneIntPtr(cfg.ContextCompactionPercent),
+	key := s.role
+	if key == "default" && s.effective.SessionMainAgent != "" {
+		key = "root/" + s.effective.SessionMainAgent
 	}
+	override := s.overrides[key]
+	override.AccountID = cfg.AccountID
+	if key == "default" || s.role != "default" || !s.formModel.Field(fieldModel).Value.Equal(s.formModel.Field(fieldModel).Initial) {
+		override.Model = cfg.Model
+	}
+	if key == "default" || s.role != "default" || !s.formModel.Field(fieldThinking).Value.Equal(s.formModel.Field(fieldThinking).Initial) {
+		override.ThinkingEffort = cfg.ThinkingEffort
+	}
+	if key == "default" || s.role != "default" || !s.formModel.Field(fieldContextCompaction).Value.Equal(s.formModel.Field(fieldContextCompaction).Initial) {
+		override.ContextCompactionPercent = cloneIntPtr(cfg.ContextCompactionPercent)
+	}
+	if key == "default" {
+		override.Provider = cfg.Provider
+	}
+	s.overrides[key] = override
 }
 
 func (s *Screen) resetRole(role string) {
+	if role == "default" && s.effective.SessionMainAgent != "" {
+		delete(s.overrides, "root/"+s.effective.SessionMainAgent)
+		s.selectMainAgent(s.effective.SessionMainAgent)
+		return
+	}
 	// Point the role back at its live inheritance source rather than restoring
 	// a snapshot copy. The main agent's "reset" means no override at all
 	// (inherit workspace by default). A sub-agent's reset means inherit the
@@ -976,6 +1202,9 @@ func (s *Screen) inheritMain(role string) {
 // inheritWorkspace points any agent at the live workspace main agent. The
 // memory agent instead re-inherits its own workspace-level memory setting.
 func (s *Screen) inheritWorkspace(role string) {
+	if role == "default" && s.effective.SessionMainAgent != "" {
+		s.selectMainAgent("")
+	}
 	delete(s.overrides, role)
 	if role == memoryRole {
 		clearCategory(&s.effective, role)
@@ -997,6 +1226,7 @@ func (s *Screen) ToSettings() types.Settings {
 	}
 	settings.Agents.Enabled = s.effective.Agents.Enabled
 	settings.SessionMultiAgent = cloneBoolPtr(s.effective.SessionMultiAgent)
+	settings.SessionMainAgent = s.effective.SessionMainAgent
 	// The Memory Agent role is stored alongside the other roles in
 	// Agents.Categories["memory"] but resolved as the session's memory
 	// category. Fold it into Memory.MemoryCategory so the backend picks up a
@@ -1125,6 +1355,7 @@ func copyCategoryMap(src map[string]types.CategorySettings) map[string]types.Cat
 
 func cloneSettings(src types.Settings) types.Settings {
 	dst := src
+	dst.Agents.AgentProfiles = types.CloneAgentProfiles(src.Agents.AgentProfiles)
 	dst.Agents.Categories = copyCategoryMap(src.Agents.Categories)
 	dst.SessionOverrides = copyCategoryMap(src.SessionOverrides)
 	dst.SessionMultiAgent = cloneBoolPtr(src.SessionMultiAgent)

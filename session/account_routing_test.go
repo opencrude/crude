@@ -170,3 +170,65 @@ func TestSaveRejectsRoleAccountMismatchWithoutPersistence(t *testing.T) {
 		t.Fatal("failed save wrote role override")
 	}
 }
+
+func TestTransportSettingsFollowTemplateAndAccountEditsAndResume(t *testing.T) {
+	cfg := accountRoutingConfig()
+	home, dir := t.TempDir(), filepath.Join(t.TempDir(), "sessions")
+	s, err := NewWithSessionDir("transport-settings", cfg, home, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current := s
+	t.Cleanup(func() {
+		if current != nil {
+			current.Close()
+		}
+	})
+	previous := s.provider
+	previousDial := previous.DialSettings()
+	template := cfg.Providers["openrouter"]
+	template.Dialer = &provider.DialSettings{
+		RequestTimeoutSeconds: 300, ConnectTimeoutSeconds: 60, MaxAttempts: 3, MaxBackoffSeconds: 60,
+		ProgressStartupTimeoutSeconds: 120, ProgressTimeoutFloorSeconds: 60, ProgressTimeoutCeilingSeconds: 600,
+	}
+	cfg.Providers["openrouter"] = template
+	override := provider.DialSettings{
+		RequestTimeoutSeconds: 600, ConnectTimeoutSeconds: 10, MaxAttempts: 2, MaxBackoffSeconds: 15,
+		ProgressStartupTimeoutSeconds: 300, ProgressTimeoutFloorSeconds: 120, ProgressTimeoutCeilingSeconds: 900,
+	}
+	for _, useOverride := range []bool{false, true, false} {
+		account := cfg.Accounts["work"]
+		account.Overrides.Dialer = nil
+		want := *template.Dialer
+		if useOverride {
+			account.Overrides.Dialer = &override
+			want = override
+		}
+		cfg.Accounts["work"] = account
+		s.UpdateWorkspaceDefaults(types.AppSettings{Accounts: cfg.Accounts, Providers: cfg.Providers, Agents: ConfigToSettings(cfg).Agents})
+		if s.provider == nil || s.provider.DialSettings() != want {
+			t.Fatalf("live account override=%t was not applied to requests: %+v", useOverride, s.provider)
+		}
+		other, err := s.cfg.ProviderForAccount("personal", "m")
+		if err != nil || other.DialSettings() != *template.Dialer {
+			t.Fatalf("account override leaked to another account: provider=%+v err=%v", other, err)
+		}
+	}
+	if previous.DialSettings() != previousDial {
+		t.Fatal("settings edit mutated an already constructed provider")
+	}
+	dbPath := filepath.Join(dir, s.SessionID()+".db")
+	if err := s.AppendWorkspaceHistoryEvent("transport-settings", "transport settings changed"); err != nil {
+		t.Fatal(err)
+	}
+	s.Close()
+	current = nil
+	resumed, err := ResumeSessionWithDir(dbPath, cfg, home, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current = resumed
+	if resumed.provider == nil || resumed.provider.DialSettings() != *template.Dialer || resumed.cfg.GetActiveDefaultCategory().AccountID != "work" {
+		t.Fatalf("resume lost pinned account or live transport settings: %+v", resumed.provider)
+	}
+}

@@ -29,6 +29,8 @@ Read that first; this index only organizes the reference material.
 
 ### Reference
 
+- [Adaptive context handling](reference/adaptive-context.md) — request budgeting,
+  complete oversized-source extraction, atomic recovery, and harness comparison.
 - [Agent orchestration](reference/agent-orchestration.md) — bounded delegation,
   evidence-based handoffs, completion delivery, and external design references.
 - [Codex tools and GPT profiles](reference/codex-tools.md) — native patch,
@@ -79,6 +81,9 @@ Read that first; this index only organizes the reference material.
   terminal defect resolution record. **RESOLVED.**
 - [Memory architecture proposal](plans/memory-architecture-proposal.md) —
   superseded proposal; native workspace memory is implemented.
+- [Agent capabilities, shared board, and evidence-based memory plan](plans/agent-capabilities-board-memory-plan.md)
+  — **IN PROGRESS** proposal for automatic skills and MCP acquisition,
+  agent communication, and memory improvements informed by Kilo and RRSI.
 - [Provider config plan](plans/provider-config-plan.md) — superseded by the
   capability-based provider protocol rework.
 - [Chat projection handoff](plans/chat-projection-handoff.md) — **ACTIVE

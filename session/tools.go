@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"crude/agent"
@@ -225,7 +226,7 @@ func toolOptionsForProvider(turnProvider *provider.Provider, modalities []string
 		Media: &tools.MediaReadPolicy{
 			Model:      model,
 			Standard:   standard,
-			Modalities: append([]string(nil), modalities...),
+			Modalities: slices.Clone(modalities),
 		},
 	}
 }

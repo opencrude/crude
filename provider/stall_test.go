@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -61,6 +62,103 @@ func TestProgressWatchCancelsGenuineStall(t *testing.T) {
 		}
 	case <-time.After(250 * time.Millisecond):
 		t.Fatal("stalled transfer was not cancelled")
+	}
+}
+
+func TestConfiguredProgressTimeoutsEnforced(t *testing.T) {
+	for _, phase := range []string{"response headers", "download"} {
+		for _, seconds := range []int{1, 2} {
+			t.Run(fmt.Sprintf("%s/%ds", phase, seconds), func(t *testing.T) {
+				server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					_, _ = io.Copy(io.Discard, r.Body)
+					w.Header().Set("Content-Type", "text/event-stream")
+					if phase == "download" {
+						_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n")
+						w.(http.Flusher).Flush()
+					}
+					timer := time.NewTimer(1150 * time.Millisecond)
+					defer timer.Stop()
+					select {
+					case <-r.Context().Done():
+						return
+					case <-timer.C:
+					}
+					_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"}}]}\n\ndata: [DONE]\n\n")
+				}))
+				defer server.Close()
+				p := FromPreset("openai-chat", "key", server.URL)
+				p.SetDialSettings(DialSettings{
+					MaxAttempts: 1, ProgressStartupTimeoutSeconds: seconds,
+					ProgressTimeoutFloorSeconds: seconds, ProgressTimeoutCeilingSeconds: seconds,
+				})
+				client, err := p.Client()
+				if err != nil {
+					t.Fatal(err)
+				}
+				ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
+				defer cancel()
+				stream, err := client.Stream(ctx, &ChatRequest{Model: "m"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer stream.Close()
+				var content strings.Builder
+				for err == nil {
+					var update StreamUpdate
+					update, err = stream.Next()
+					content.WriteString(update.ContentDelta)
+				}
+				if seconds == 1 {
+					var stalled *ProgressStallError
+					if !errors.As(err, &stalled) || stalled.Phase != phase {
+						t.Fatalf("configured stall not enforced: err=%v content=%q", err, content.String())
+					}
+					if phase == "download" && content.String() != "partial" {
+						t.Fatalf("partial output was lost: %q", content.String())
+					}
+				} else if !errors.Is(err, io.EOF) || !strings.HasSuffix(content.String(), "ok") {
+					t.Fatalf("raised timeout did not allow response: err=%v content=%q", err, content.String())
+				}
+			})
+		}
+	}
+}
+
+func TestConfiguredProgressTimeoutBoundsAndValidation(t *testing.T) {
+	p := FromPreset("openai-chat", "key", "https://example.invalid")
+	p.SetDialSettings(DialSettings{
+		ProgressStartupTimeoutSeconds: 120,
+		ProgressTimeoutFloorSeconds:   90,
+		ProgressTimeoutCeilingSeconds: 600,
+	})
+	client, err := p.Client()
+	if err != nil {
+		t.Fatal(err)
+	}
+	estimator := progressEstimator{policy: client.stall}
+	if got := estimator.timeout(); got != 120*time.Second {
+		t.Fatalf("initial timeout=%s", got)
+	}
+	estimator.observe(time.Millisecond)
+	if got := estimator.timeout(); got != 90*time.Second {
+		t.Fatalf("minimum timeout=%s", got)
+	}
+	estimator.observe(time.Hour)
+	if got := estimator.timeout(); got != 600*time.Second {
+		t.Fatalf("maximum timeout=%s", got)
+	}
+	for _, invalid := range []DialSettings{
+		{ProgressTimeoutFloorSeconds: 120},
+		{ProgressStartupTimeoutSeconds: 600},
+		{ProgressTimeoutCeilingSeconds: 30},
+	} {
+		if err := invalid.Validate(); err == nil {
+			t.Fatalf("conflicting settings accepted: %+v", invalid)
+		}
+		p.SetDialSettings(invalid)
+		if _, err := p.Client(); err == nil {
+			t.Fatalf("client silently clamped conflicting settings: %+v", invalid)
+		}
 	}
 }
 

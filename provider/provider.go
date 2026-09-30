@@ -55,6 +55,7 @@ type Provider struct {
 	dial             DialSettings
 	extraBody        map[string]any
 	thinkingEffort   string
+	contextWindow    int
 	protocolSettings *ProtocolSettings
 	sampling         Sampling
 	authType         string
@@ -401,9 +402,12 @@ func (p *Provider) EnsureAuth(ctx context.Context) error {
 	return nil
 }
 
-// ContextWindow returns the protocol's known context window for the model,
-// or 0 when unknown.
+func (p *Provider) SetContextWindow(window int) { p.contextWindow = window }
+
 func (p *Provider) ContextWindow(modelID string) int {
+	if modelID == p.Model && p.contextWindow > 0 {
+		return p.contextWindow
+	}
 	if meta, ok := p.Protocol().(ProtocolMetadata); ok {
 		return meta.ContextWindow(modelID)
 	}

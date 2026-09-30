@@ -6,14 +6,16 @@ import "database/sql"
 // A nil MultiAgent means inherit the workspace/profile default.
 type SessionFlags struct {
 	MultiAgent *bool
+	MainAgent  string
 }
 
 func LoadSessionFlags(db *sql.DB, sessionID string) (SessionFlags, error) {
 	var flags SessionFlags
 	var multi sql.NullInt64
+	var mainAgent string
 	err := db.QueryRow(`
-		SELECT multi_agent FROM session_flags WHERE session_id = ?
-	`, sessionID).Scan(&multi)
+		SELECT multi_agent, main_agent FROM session_flags WHERE session_id = ?
+	`, sessionID).Scan(&multi, &mainAgent)
 	if err == sql.ErrNoRows {
 		return flags, nil
 	}
@@ -24,22 +26,32 @@ func LoadSessionFlags(db *sql.DB, sessionID string) (SessionFlags, error) {
 		enabled := multi.Int64 != 0
 		flags.MultiAgent = &enabled
 	}
+	flags.MainAgent = mainAgent
 	return flags, nil
 }
 
 func SaveSessionFlags(db *sql.DB, sessionID string, flags SessionFlags) error {
-	if flags.MultiAgent == nil {
-		return ClearSessionFlags(db, sessionID)
+	return saveSessionFlags(db, sessionID, flags)
+}
+
+func saveSessionFlags(db interface {
+	Exec(string, ...any) (sql.Result, error)
+}, sessionID string, flags SessionFlags) error {
+	if flags.MultiAgent == nil && flags.MainAgent == "" {
+		_, err := db.Exec(`DELETE FROM session_flags WHERE session_id = ?`, sessionID)
+		return err
 	}
-	value := 0
-	if *flags.MultiAgent {
+	var value any
+	if flags.MultiAgent != nil && *flags.MultiAgent {
 		value = 1
+	} else if flags.MultiAgent != nil {
+		value = 0
 	}
 	_, err := db.Exec(`
-		INSERT INTO session_flags (session_id, multi_agent)
-		VALUES (?, ?)
-		ON CONFLICT(session_id) DO UPDATE SET multi_agent = excluded.multi_agent
-	`, sessionID, value)
+		INSERT INTO session_flags (session_id, multi_agent, main_agent)
+		VALUES (?, ?, ?)
+		ON CONFLICT(session_id) DO UPDATE SET multi_agent = excluded.multi_agent, main_agent = excluded.main_agent
+	`, sessionID, value, flags.MainAgent)
 	return err
 }
 

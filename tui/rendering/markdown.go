@@ -18,20 +18,23 @@ func MakeMdRenderer(width int, th *theme.Theme) *glamour.TermRenderer {
 	}
 	style := styles.DarkStyleConfig
 	c := th.Colors
+	r, g, b, _ := c.Bg.RGBA()
+	light := 299*r+587*g+114*b >= 500*65535
+	if light {
+		style = styles.LightStyleConfig
+	}
 	ink := func(value color.Color) *string {
 		r, g, b, _ := value.RGBA()
 		return strPtr(fmt.Sprintf("#%02x%02x%02x", r>>8, g>>8, b>>8))
 	}
 	style.Document.Color = ink(c.Fg)
-	style.Text.Color = ink(c.Fg)
-	style.Code.Color = ink(c.Code.String)
-	style.Code.BackgroundColor = ink(c.Code.Bg)
-	style.Link.Color, style.LinkText.Color = ink(c.Accent2), ink(c.Accent2)
-	style.Image.Color, style.ImageText.Color = ink(c.Muted), ink(c.Muted)
-	style.HorizontalRule.Color = ink(c.Border)
-	for _, heading := range []*ansi.StyleBlock{&style.Heading, &style.H1, &style.H2, &style.H3, &style.H4, &style.H5, &style.H6} {
-		heading.Color = ink(c.Accent2)
-		heading.BackgroundColor = nil
+	// Retain Glamour's established heading/link/inline-code hierarchy. A
+	// blanket Text.Color overrides inherited heading colours, not just prose.
+	if light {
+		style.Code.Color = ink(c.Code.Keyword)
+		style.Link.Color, style.LinkText.Color = ink(c.Accent2), ink(c.Success)
+		style.Image.Color, style.ImageText.Color = ink(c.Code.Function), ink(c.Muted)
+		style.HorizontalRule.Color = ink(c.Border)
 	}
 	style.Document.Margin = uintPtr(0)
 	style.CodeBlock.Margin = uintPtr(0)
@@ -47,8 +50,8 @@ func MakeMdRenderer(width int, th *theme.Theme) *glamour.TermRenderer {
 		Operator:            ansi.StylePrimitive{Color: ink(c.Code.Operator)},
 		Punctuation:         ansi.StylePrimitive{Color: ink(c.Fg)},
 		Name:                ansi.StylePrimitive{Color: ink(c.Fg)},
-		NameBuiltin:         ansi.StylePrimitive{Color: ink(c.Code.Function)},
-		NameTag:             ansi.StylePrimitive{Color: ink(c.Code.Type)},
+		NameBuiltin:         ansi.StylePrimitive{Color: ink(c.Code.Type)},
+		NameTag:             ansi.StylePrimitive{Color: ink(c.Success)},
 		NameAttribute:       ansi.StylePrimitive{Color: ink(c.Code.Property)},
 		NameClass:           ansi.StylePrimitive{Color: ink(c.Code.Type)},
 		NameConstant:        ansi.StylePrimitive{Color: ink(c.Code.Number)},
@@ -56,11 +59,11 @@ func MakeMdRenderer(width int, th *theme.Theme) *glamour.TermRenderer {
 		NameFunction:        ansi.StylePrimitive{Color: ink(c.Code.Function)},
 		LiteralNumber:       ansi.StylePrimitive{Color: ink(c.Code.Number)},
 		LiteralString:       ansi.StylePrimitive{Color: ink(c.Code.String)},
-		LiteralStringEscape: ansi.StylePrimitive{Color: ink(c.Code.String)},
+		LiteralStringEscape: ansi.StylePrimitive{Color: ink(c.Code.Type)},
 		GenericDeleted:      ansi.StylePrimitive{Color: ink(c.Diff.Delete)},
 		GenericInserted:     ansi.StylePrimitive{Color: ink(c.Diff.Add)},
 		GenericStrong:       ansi.StylePrimitive{Color: ink(c.Fg)},
-		GenericSubheading:   ansi.StylePrimitive{Color: ink(c.Accent2)},
+		GenericSubheading:   ansi.StylePrimitive{Color: ink(c.Fg)},
 	}
 	style.CodeBlock.Color = ink(c.Fg)
 	style.CodeBlock.BackgroundColor = ink(c.Code.Bg)
@@ -70,12 +73,12 @@ func MakeMdRenderer(width int, th *theme.Theme) *glamour.TermRenderer {
 	style.List.Margin = uintPtr(0)
 	style.Table.Margin = uintPtr(0)
 
-	r, err := glamour.NewTermRenderer(
+	renderer, err := glamour.NewTermRenderer(
 		glamour.WithStyles(style),
 		glamour.WithWordWrap(w),
 	)
 	if err == nil {
-		return r
+		return renderer
 	}
 	return nil
 }

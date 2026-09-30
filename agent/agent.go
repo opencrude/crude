@@ -45,6 +45,8 @@ type Agent struct {
 	CompactionProvider       *provider.Provider
 	CompactionTargetModel    string
 	CompactionTargetWindow   int
+	CompactionTargetTokens   int
+	CompactionMaxOutput      int
 	AgentID                  AgentID
 	TurnGeneration           uint64
 	Policy                   safety.Policy
@@ -53,6 +55,7 @@ type Agent struct {
 	Depth                    int
 	ParentID                 AgentID
 	MaxRetries               int
+	MaxOutputTokens          int
 	ContextCompactionPercent int
 	ContextArchive           []provider.ChatMessage
 	FrozenPrefix             []provider.ChatMessage

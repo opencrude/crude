@@ -253,7 +253,7 @@ func (ff *FormField) height() int {
 	}
 	if ff.field.Type == FieldKeyValues {
 		h := 1 + ff.keyValuesHeight()
-		if !ff.compact && !ff.hideDescription && ff.field.Description != "" {
+		if !ff.compact && (!ff.hideDescription || ff.field.DescriptionImportant) && ff.field.Description != "" {
 			h++
 		}
 		return h + len(ff.field.Errors)
@@ -271,7 +271,7 @@ func (ff *FormField) height() int {
 	if ff.field.Type == FieldTextArea {
 		h += ff.areaRows()
 	}
-	if ff.field.Description != "" && !ff.hideDescription {
+	if ff.field.Description != "" && (!ff.hideDescription || ff.field.DescriptionImportant) {
 		h++
 	}
 	h += len(ff.field.Errors)
@@ -438,8 +438,13 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 		return
 	}
 
-	if focusedRow || hoveredRow {
+	multiline := ff.field.Type == FieldTextArea || ff.field.Type == FieldKeyValues
+	if (focusedRow || hoveredRow) && !multiline {
 		FillRect(buf, 0, 0, Rect{X: x, Y: y, W: r.W, H: 1}, cell.BlankCell(rowBG))
+	}
+	labelBG := rowBG
+	if multiline {
+		labelBG = bg
 	}
 	labelX := x + ff.labelIndent()
 	labelMax := max(1, ff.labelWidth()-1)
@@ -463,7 +468,7 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 	if focusedRow {
 		labelAttr = cell.AttrBold
 	}
-	buf.WriteString(labelX, y, label, labelFG, rowBG, labelAttr)
+	buf.WriteString(labelX, y, label, labelFG, labelBG, labelAttr)
 
 	if ff.field.Type == FieldTextArea {
 		ff.paintTextAreaBody(buf, x, y, r, ctx, valueFG, mutedFG, errorFG, focusedRow, rowBG, bg)
@@ -515,7 +520,7 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 	}
 
 	line := 1
-	if !ff.compact && !ff.hideDescription && ff.field.Description != "" && line < r.H {
+	if !ff.compact && (!ff.hideDescription || ff.field.DescriptionImportant) && ff.field.Description != "" && line < r.H {
 		buf.WriteString(contentX, y+line, rendering.TruncateVisual(ff.field.Description, contentW, "…"), mutedFG, bg, 0)
 		line++
 	}
@@ -551,7 +556,7 @@ func (ff *FormField) paintTextAreaBody(buf *surface.CellBuffer, x, y int, r Rect
 	ff.area.Paint(buf, x, y, ctx)
 
 	line := 1 + ff.areaRows()
-	if !ff.hideDescription && ff.field.Description != "" && line < r.H {
+	if (!ff.hideDescription || ff.field.DescriptionImportant) && ff.field.Description != "" && line < r.H {
 		buf.WriteString(editorX, y+line, rendering.TruncateVisual(ff.field.Description, editorW, "…"), mutedFG, bg, 0)
 		line++
 	}
@@ -586,7 +591,7 @@ func (ff *FormField) paintKeyValuesBody(buf *surface.CellBuffer, x, y int, r Rec
 	ff.grid.Paint(buf, x, y, ctx)
 
 	line := 1 + gridH
-	if !ff.compact && !ff.hideDescription && ff.field.Description != "" && line < r.H {
+	if !ff.compact && (!ff.hideDescription || ff.field.DescriptionImportant) && ff.field.Description != "" && line < r.H {
 		buf.WriteString(editorX, y+line, rendering.TruncateVisual(ff.field.Description, editorW, "…"), mutedFG, bg, 0)
 		line++
 	}
@@ -1236,7 +1241,7 @@ func (ff *FormField) navDetail() string {
 		return ""
 	}
 	detail := strings.TrimSpace(ff.field.Description)
-	if ff.hideDescription {
+	if ff.hideDescription && !ff.field.DescriptionImportant {
 		detail = ""
 	}
 	suffix := ff.inheritedSuffix()
@@ -1510,8 +1515,12 @@ func (ff *FormField) syncSelectItems(preserveCursor bool) {
 		return
 	}
 	selectedID := ""
-	if selected, ok := ff.selectList.Selected(); ok {
+	if selected, ok := ff.selectList.Selected(); ok && selected.Selectable() {
 		selectedID = selected.ID
+	} else if ff.selectQuery == "" && ff.field.Type == FieldSelect {
+		// A loading/empty placeholder is not a user cursor choice. Anchor the
+		// first real response to the selected value, even if it is not row zero.
+		selectedID = ff.field.Value.String()
 	}
 	options := ff.filteredOptions()
 	items := make([]ListItem, 0, len(options))

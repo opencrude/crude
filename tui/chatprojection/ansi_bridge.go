@@ -68,7 +68,23 @@ func BridgeAnsiLine(line string, tokens *ui.TokenSet) PaintLine {
 	if len(runs) == 0 {
 		return buildPlainBodyLine("")
 	}
+	return bridgeAnsiRuns(runs, newAnsiBridgeState(tokens))
+}
+
+// BridgeAnsiLines converts one rendered Markdown block with shared SGR state.
+// Line breaks affect geometry, not the active text style. Theme role lookup is
+// built once for the block rather than once for each wrapped line.
+func BridgeAnsiLines(lines []string, tokens *ui.TokenSet) []PaintLine {
+	rows := make([]PaintLine, len(lines))
 	st := newAnsiBridgeState(tokens)
+	var parser rendering.AnsiRunParser
+	for index, line := range lines {
+		rows[index] = bridgeAnsiRuns(parser.ParseLine(line), st)
+	}
+	return rows
+}
+
+func bridgeAnsiRuns(runs []rendering.AnsiRun, st ansiBridgeState) PaintLine {
 	var spans []RowSpan
 	for _, r := range runs {
 		if r.Text == "" {

@@ -126,6 +126,11 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	if flags.MultiAgent != nil {
 		applySessionMultiAgent(cfg, *flags.MultiAgent)
 	}
+	cfg.SelectedAgent = flags.MainAgent
+	if flags.MainAgent != "" {
+		pin := overrides["root/"+flags.MainAgent]
+		cfg.selectedMainOverride = &pin
+	}
 	// Session metadata is authoritative for the main account pin. An empty pin
 	// remains disconnected even if a workspace or application now has accounts.
 	prof, name := activeProfileCfg(cfg)
@@ -139,6 +144,9 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	main.AccountID = meta.AccountID
 	prof.Categories[CategoryDefault] = main
 	cfg.Agents.Profiles[name] = prof
+	if cfg.selectedMainOverride != nil {
+		cfg.selectedMainOverride.AccountID = meta.AccountID
+	}
 	activeCfg := cfg.GetActiveDefaultCategory()
 	var p *provider.Provider
 	if _, accountErr := cfg.resolveAccount(meta.AccountID); accountErr != nil {
@@ -213,6 +221,7 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		cfg:                cfg,
 		provider:           p,
 		accountUnpinned:    meta.AccountID == "",
+		selectedMainAgent:  flags.MainAgent,
 		exec:               exec,
 		editor:             editor,
 		logger:             lg,

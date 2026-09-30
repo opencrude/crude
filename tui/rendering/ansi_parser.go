@@ -3,6 +3,7 @@ package rendering
 import (
 	"crude/tui/cell"
 	"crude/tui/surface"
+	"strings"
 )
 
 // RenderToSurface parses an ANSI string and writes the cells into a surface.
@@ -48,46 +49,24 @@ func RenderToBufferAt(buf *surface.CellBuffer, originX, originY int, ansiStr str
 	curBG := cell.NoColor
 	curAttr := cell.Attrs(0)
 
-	i := 0
-	for i < len(ansiStr) {
-		if ansiStr[i] == '\x1b' && i+1 < len(ansiStr) && ansiStr[i+1] == '[' {
-			j := i + 2
-			for j < len(ansiStr) && (ansiStr[j] >= '0' && ansiStr[j] <= '9' || ansiStr[j] == ';' || ansiStr[j] == ':') {
-				j++
-			}
-			if j < len(ansiStr) {
-				switch ansiStr[j] {
-				case 'm':
-					parseSGR(ansiStr[i+2:j], &curFG, &curBG, &curAttr)
-				case 'H':
-					// Cursor position (CUP) — reset to origin
-					curX = originX
-					curY = originY
-				}
-				i = j + 1
-				continue
-			}
+	var state byte
+	for len(ansiStr) > 0 {
+		cluster, dw, n, next := WidthMethod.DecodeSequenceInString(ansiStr, state, nil)
+		if n == 0 {
+			break
 		}
-
-		if ansiStr[i] == '\n' {
-			curY++
-			curX = originX
-			i++
-			continue
-		}
-		if ansiStr[i] == '\r' {
-			curX = originX
-			i++
-			continue
-		}
-
-		cluster, dw := FirstGrapheme(ansiStr[i:])
-		if len(cluster) == 0 {
-			i++
-			continue
-		}
-		i += len(cluster)
+		ansiStr, state = ansiStr[n:], next
 		if dw == 0 {
+			if params, ok := sgrParameters(cluster); ok {
+				parseSGR(params, &curFG, &curBG, &curAttr)
+			} else if cluster == "\n" {
+				curY++
+				curX = originX
+			} else if cluster == "\r" {
+				curX = originX
+			} else if strings.HasPrefix(cluster, "\x1b[") && strings.HasSuffix(cluster, "H") {
+				curX, curY = originX, originY
+			}
 			continue
 		}
 
@@ -102,6 +81,19 @@ func RenderToBufferAt(buf *surface.CellBuffer, originX, originY int, ansiStr str
 		buf.Set(curX, curY, cell.NewClusterCell(cluster, dw, curFG, curBG, curAttr))
 		curX += dw
 	}
+}
+
+func sgrParameters(sequence string) (string, bool) {
+	if !strings.HasSuffix(sequence, "m") {
+		return "", false
+	}
+	if strings.HasPrefix(sequence, "\x1b[") {
+		return sequence[2 : len(sequence)-1], true
+	}
+	if len(sequence) > 1 && sequence[0] == '\x9b' {
+		return sequence[1 : len(sequence)-1], true
+	}
+	return "", false
 }
 
 // parseSGR parses an SGR parameter string and updates the style state.

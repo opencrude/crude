@@ -57,7 +57,15 @@ func (r completionResult) hasOutput() bool {
 func CompleteText(
 	ctx context.Context, p *provider.Provider, model, system, user string,
 ) (string, error) {
+	return CompleteTextWithMaxOutput(ctx, p, model, system, user, 0)
+}
+
+// CompleteTextWithMaxOutput caps one-shot jobs by the configured agent limit.
+func CompleteTextWithMaxOutput(
+	ctx context.Context, p *provider.Provider, model, system, user string, maxOutput int,
+) (string, error) {
 	a := NewAgent(p, model, nil)
+	a.MaxOutputTokens = maxOutput
 	result, err := a.completeStream(ctx, []provider.ChatMessage{
 		provider.NewTextMessage("system", system),
 		provider.NewTextMessage("user", user),
@@ -89,6 +97,8 @@ type completionRequestOptions struct {
 	toolChoice      any
 	maxOutputTokens int
 	maxAttempts     int
+	inputTokens     int
+	compaction      bool
 }
 
 func (a *Agent) completeStreamWithOptions(
@@ -128,23 +138,22 @@ func (a *Agent) completeStreamWithOptions(
 		req.TopP = sampling.TopP
 	}
 
-	if ctxWindow := a.Provider.ContextWindow(a.Model); ctxWindow > 0 {
-		estimatedInput := estimateCanonicalRequest(msgs, tools, a.Model)
-		available := ctxWindow - estimatedInput
+	ctxWindow := a.Provider.ContextWindow(a.Model)
+	if requestOptions.compaction {
+		req.MaxOutputTokens = a.compactionOutputLimit(ctxWindow, requestOptions.maxOutputTokens)
+	} else {
+		req.MaxOutputTokens = a.outputTokenLimit(ctxWindow, requestOptions.maxOutputTokens)
+	}
+	if ctxWindow > 0 {
+		estimatedInput := requestOptions.inputTokens
+		if estimatedInput <= 0 {
+			estimatedInput = estimateCanonicalRequest(msgs, tools, a.Model)
+		}
+		available := ctxWindow - estimatedInput - contextSafetyReserve(ctxWindow)
 		if available <= 0 {
-			return completionResult{}, fmt.Errorf(
-				"estimated input exceeds the model context window (%d/%d tokens)",
-				estimatedInput, ctxWindow,
-			)
+			return completionResult{}, &provider.ContextWindowError{InputTokens: estimatedInput, ContextWindow: ctxWindow}
 		}
-		maxOut := maxOutputTokensForContext(ctxWindow)
-		if requestOptions.maxOutputTokens > 0 && requestOptions.maxOutputTokens < maxOut {
-			maxOut = requestOptions.maxOutputTokens
-		}
-		if maxOut > available {
-			maxOut = available
-		}
-		req.MaxOutputTokens = maxOut
+		req.MaxOutputTokens = min(req.MaxOutputTokens, available)
 	}
 
 	if err := a.Provider.Validate(); err != nil {

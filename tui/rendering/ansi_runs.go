@@ -17,55 +17,49 @@ type AnsiRun struct {
 	Attr cell.Attrs
 }
 
-// ParseAnsiRuns splits an ANSI-styled string into plain-text runs with their
-// active SGR style. Newlines terminate a run (the caller splits the input on
-// newlines first and calls this per line). SGR state carries across runs
-// within a single line, matching terminal semantics. This is the structural
-// half of the ANSI bridge; semantic colour->role mapping lives in
-// tui/chatprojection.
+// ParseAnsiRuns parses an independent styled line. Use AnsiRunParser for a
+// block whose SGR state can span line breaks.
 func ParseAnsiRuns(line string) []AnsiRun {
+	var parser AnsiRunParser
+	return parser.ParseLine(line)
+}
+
+// AnsiRunParser retains terminal style and escape-sequence state across lines.
+// The zero value starts with default colours and attributes. OSC/DCS/APC data
+// is metadata, never text. Tokenization uses the calibrated shared width path.
+type AnsiRunParser struct {
+	fg, bg cell.Color
+	attr   cell.Attrs
+	state  byte
+}
+
+func (p *AnsiRunParser) ParseLine(line string) []AnsiRun {
 	var runs []AnsiRun
-
-	curFG := cell.NoColor
-	curBG := cell.NoColor
-	curAttr := cell.Attrs(0)
-
 	var b strings.Builder
 	flush := func() {
 		if b.Len() == 0 {
 			return
 		}
-		runs = append(runs, AnsiRun{Text: b.String(), FG: curFG, BG: curBG, Attr: curAttr})
+		runs = append(runs, AnsiRun{Text: b.String(), FG: p.fg, BG: p.bg, Attr: p.attr})
 		b.Reset()
 	}
 
-	i := 0
-	for i < len(line) {
-		if line[i] == '\x1b' && i+1 < len(line) && line[i+1] == '[' {
-			j := i + 2
-			for j < len(line) && (line[j] >= '0' && line[j] <= '9' || line[j] == ';' || line[j] == ':') {
-				j++
-			}
-			if j < len(line) {
-				switch line[j] {
-				case 'm':
-					flush()
-					parseSGR(line[i+2:j], &curFG, &curBG, &curAttr)
-				}
-				i = j + 1
-				continue
-			}
+	for len(line) > 0 {
+		sequence, width, n, state := WidthMethod.DecodeSequenceInString(line, p.state, nil)
+		if n == 0 {
+			break
 		}
-		cluster, dw := FirstGrapheme(line[i:])
-		if len(cluster) == 0 {
-			i++
+		line, p.state = line[n:], state
+		if width == 0 {
+			if params, ok := sgrParameters(sequence); ok {
+				flush()
+				parseSGR(params, &p.fg, &p.bg, &p.attr)
+			} else if sequence == "\n" || sequence == "\r" {
+				flush()
+			}
 			continue
 		}
-		i += len(cluster)
-		if dw == 0 {
-			continue
-		}
-		b.WriteString(cluster)
+		b.WriteString(sequence)
 	}
 	flush()
 	return runs

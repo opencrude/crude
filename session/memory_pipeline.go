@@ -371,13 +371,19 @@ func (s *Session) memoryCompleter() (func(context.Context, string, string) (stri
 		return nil, fmt.Errorf("session has no config")
 	}
 	category := cfg.GetMemoryCategory()
+	if category.Enabled != nil && !*category.Enabled {
+		return nil, fmt.Errorf("memory agent is disabled")
+	}
 	p, err := cfg.providerForCategory(category)
 	if err != nil {
 		return nil, err
 	}
 	model := category.Model
 	return func(ctx context.Context, system, user string) (string, error) {
-		return agent.CompleteText(ctx, p, model, system, user)
+		if category.Instructions != "" {
+			system += "\n\nAdditional user-configured Memory Agent instructions:\n" + category.Instructions
+		}
+		return agent.CompleteTextWithMaxOutput(ctx, p, model, system, user, category.ModelMaxOutput)
 	}, nil
 }
 

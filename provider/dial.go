@@ -18,8 +18,14 @@ type DialSettings struct {
 	// including streaming. 0 means no overall timeout for chat; model
 	// listing always applies a bounded fallback.
 	RequestTimeoutSeconds int `json:"request_timeout_seconds,omitempty"`
-	// ConnectTimeoutSeconds bounds TCP/TLS establishment per attempt.
+	// ConnectTimeoutSeconds bounds each TCP connection and TLS handshake.
 	ConnectTimeoutSeconds int `json:"connect_timeout_seconds,omitempty"`
+	// ProgressStartupTimeoutSeconds bounds silence before the first byte in
+	// each upload/header/download phase. The adaptive floor and ceiling apply
+	// once positive byte progress has been observed.
+	ProgressStartupTimeoutSeconds int `json:"progress_startup_timeout_seconds,omitempty"`
+	ProgressTimeoutFloorSeconds   int `json:"progress_timeout_floor_seconds,omitempty"`
+	ProgressTimeoutCeilingSeconds int `json:"progress_timeout_ceiling_seconds,omitempty"`
 	// MaxAttempts is the total number of tries per request, including the
 	// first. 0 means the default (6).
 	MaxAttempts int `json:"max_attempts,omitempty"`
@@ -31,11 +37,14 @@ type DialSettings struct {
 // DialConfig is the resolved transport configuration used by Client. All
 // values are final — no zero-means-default semantics.
 type DialConfig struct {
-	RequestTimeout time.Duration
-	ConnectTimeout time.Duration
-	MaxAttempts    int
-	BaseBackoff    time.Duration
-	MaxBackoff     time.Duration
+	RequestTimeout         time.Duration
+	ConnectTimeout         time.Duration
+	ProgressStartupTimeout time.Duration
+	ProgressTimeoutFloor   time.Duration
+	ProgressTimeoutCeiling time.Duration
+	MaxAttempts            int
+	BaseBackoff            time.Duration
+	MaxBackoff             time.Duration
 	// MaxResponseBytes bounds a fully-buffered response body (non-streaming
 	// JSON and error bodies).
 	MaxResponseBytes int64
@@ -43,26 +52,32 @@ type DialConfig struct {
 
 // Defaults for DialConfig fields.
 const (
-	DefaultMaxAttempts       = 6
-	DefaultMaxBackoff        = 30 * time.Second
-	DefaultConnectTimeout    = 30 * time.Second
-	DefaultBaseBackoff       = 500 * time.Millisecond
-	DefaultRequestTimeout    = 0 // streaming turns may legitimately run for minutes
-	DefaultMaxResponseBytes  = 64 << 20
-	maxServerRetryDelay      = 2 * time.Minute
-	listingRequestTimeout    = 30 * time.Second
-	defaultHTTPClientTimeout = 0 // overall timeout is enforced via context, not transport
+	DefaultMaxAttempts            = 6
+	DefaultMaxBackoff             = 30 * time.Second
+	DefaultConnectTimeout         = 30 * time.Second
+	DefaultProgressStartupTimeout = 60 * time.Second
+	DefaultProgressTimeoutFloor   = 45 * time.Second
+	DefaultProgressTimeoutCeiling = 5 * time.Minute
+	DefaultBaseBackoff            = 500 * time.Millisecond
+	DefaultRequestTimeout         = 0 // streaming turns may legitimately run for minutes
+	DefaultMaxResponseBytes       = 64 << 20
+	maxServerRetryDelay           = 2 * time.Minute
+	listingRequestTimeout         = 30 * time.Second
+	defaultHTTPClientTimeout      = 0 // overall timeout is enforced via context, not transport
 )
 
 // DefaultDialConfig returns the built-in transport configuration.
 func DefaultDialConfig() DialConfig {
 	return DialConfig{
-		RequestTimeout:   DefaultRequestTimeout,
-		ConnectTimeout:   DefaultConnectTimeout,
-		MaxAttempts:      DefaultMaxAttempts,
-		BaseBackoff:      DefaultBaseBackoff,
-		MaxBackoff:       DefaultMaxBackoff,
-		MaxResponseBytes: DefaultMaxResponseBytes,
+		RequestTimeout:         DefaultRequestTimeout,
+		ConnectTimeout:         DefaultConnectTimeout,
+		ProgressStartupTimeout: DefaultProgressStartupTimeout,
+		ProgressTimeoutFloor:   DefaultProgressTimeoutFloor,
+		ProgressTimeoutCeiling: DefaultProgressTimeoutCeiling,
+		MaxAttempts:            DefaultMaxAttempts,
+		BaseBackoff:            DefaultBaseBackoff,
+		MaxBackoff:             DefaultMaxBackoff,
+		MaxResponseBytes:       DefaultMaxResponseBytes,
 	}
 }
 
@@ -76,6 +91,15 @@ func (s DialSettings) resolve() DialConfig {
 	if s.ConnectTimeoutSeconds > 0 {
 		cfg.ConnectTimeout = time.Duration(s.ConnectTimeoutSeconds) * time.Second
 	}
+	if s.ProgressStartupTimeoutSeconds > 0 {
+		cfg.ProgressStartupTimeout = time.Duration(s.ProgressStartupTimeoutSeconds) * time.Second
+	}
+	if s.ProgressTimeoutFloorSeconds > 0 {
+		cfg.ProgressTimeoutFloor = time.Duration(s.ProgressTimeoutFloorSeconds) * time.Second
+	}
+	if s.ProgressTimeoutCeilingSeconds > 0 {
+		cfg.ProgressTimeoutCeiling = time.Duration(s.ProgressTimeoutCeilingSeconds) * time.Second
+	}
 	if s.MaxAttempts > 0 {
 		cfg.MaxAttempts = s.MaxAttempts
 	}
@@ -83,6 +107,12 @@ func (s DialSettings) resolve() DialConfig {
 		cfg.MaxBackoff = time.Duration(s.MaxBackoffSeconds) * time.Second
 	}
 	return cfg
+}
+
+// Validate rejects conflicting watchdog limits rather than silently clamping
+// a configured timeout to a different value.
+func (s DialSettings) Validate() error {
+	return s.resolve().progressTimeouts().validate()
 }
 
 // isRetryableStatus reports whether an HTTP status warrants another attempt.

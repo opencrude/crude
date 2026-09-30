@@ -6,7 +6,7 @@
 
 The parent owns requirements, shared interfaces, integration, and final repository
 checks. Delegate independent tasks with owned paths, acceptance criteria, and a
-task-sized timeout. Children inspect and verify their assigned flow, not the
+clear stopping condition. Children inspect and verify their assigned flow, not the
 whole changing repository. A dependency or unrelated build failure is a reason
 to return a blocked/partial handoff, not repeatedly read files or rerun checks.
 Repeat verification only after a relevant change or new evidence.

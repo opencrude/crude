@@ -10,6 +10,7 @@ import (
 	"crude/agent"
 	"crude/provider"
 	"crude/sessiondb"
+	"crude/tools"
 )
 
 func TestSubAgentCompletionWakeWaitsForQueueCapacity(t *testing.T) {
@@ -147,6 +148,18 @@ func TestCancelledSubAgentResultCannotReadAsSuccess(t *testing.T) {
 	if !strings.Contains(formatted, "CANCELLED") || !strings.Contains(formatted, "did not complete") || strings.Contains(formatted, "Status:** OK") {
 		t.Fatalf("cancelled result = %q", formatted)
 	}
+}
+
+func TestSubAgentToolHasNoRuntimeDeadline(t *testing.T) {
+	for _, tool := range tools.AgentTools {
+		if tool.Function.Name == "run_sub_agent" {
+			if strings.Contains(string(tool.Function.Parameters), "timeout_seconds") {
+				t.Fatal("sub-agent launch still exposes a runtime deadline")
+			}
+			return
+		}
+	}
+	t.Fatal("run_sub_agent missing")
 }
 
 func TestSubAgentDatabaseIsScopedUnderParentSession(t *testing.T) {

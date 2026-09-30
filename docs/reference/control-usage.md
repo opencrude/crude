@@ -7,6 +7,11 @@ target replacement under `tui/ui/`.
 
 ## Text entry
 
+Form fields with one-line controls may highlight their label row. Multiline
+`TextArea` and `KeyValueGrid` fields keep the label on the containing surface
+even when focused or hovered; only their separate editor body gets the control
+fill. The shared `ui.FormField` painter owns this rule for every consumer.
+
 | Category | Current implementations | Target |
 |----------|------------------------|--------|
 | Full input engine | Chat via `shellinput` + `ui.TextArea` (shell `ColorBg`, not popup fill, no leading `❯`); composer + text overlay via `ui.TextArea` screens; find/replace via `ui.TextEdit` + `ui.TextField` (`BuildFindReplaceFrame`) | `ui.TextField` / `ui.TextArea` |

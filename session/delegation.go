@@ -63,6 +63,12 @@ func agentProfileCatalog(cfg *Config) string {
 	out.WriteString("\n<available_agent_profiles>Use a profile's name in run_sub_agent when its purpose matches a delegated task.\n")
 	for _, name := range keys {
 		p := cfg.Agents.AgentProfiles[name]
+		if p.Enabled != nil && !*p.Enabled {
+			continue
+		}
+		if role := cfg.GetCategoryConfig(p.Category); role.Enabled != nil && !*role.Enabled {
+			continue
+		}
 		fmt.Fprintf(&out, "<profile name=\"%s\" role=\"%s\">%s</profile>\n", html.EscapeString(name), html.EscapeString(p.Category), html.EscapeString(p.Description))
 	}
 	out.WriteString("</available_agent_profiles>")

@@ -1,10 +1,17 @@
 package session
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"crude/agent"
+	"crude/provider"
 	"crude/tools"
 	"crude/types"
 )
@@ -53,5 +60,123 @@ func TestNamedAgentProfilePinsItsConfiguredConnection(t *testing.T) {
 		if spec.Model != "review-model" || spec.AccountID != "work" || spec.ContextCompactionPercent == nil || *spec.ContextCompactionPercent != percent {
 			t.Fatalf("named profile did not own its configured connection: %+v", spec)
 		}
+	}
+}
+
+func TestSelectedRootAgentPersistsAndFollowsProfileWithoutLosingAccountPin(t *testing.T) {
+	home := t.TempDir()
+	cfg := testConfig()
+	cfg.Accounts["work"] = cfg.Accounts["account"]
+	work := cfg.Accounts["work"]
+	work.ID = "work"
+	cfg.Accounts["work"] = work
+	cfg.Agents.AgentProfiles["reviewer"] = AgentProfileConfig{Category: CategoryResearcher, AccountID: "work", Model: "review-v1", Instructions: "Check edge cases"}
+	sess, err := NewWithSessionDir("", cfg, home, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings := sess.SettingsSnapshot()
+	settings.SessionOverrides = sess.SessionOverridesSnapshot()
+	settings.SessionMainAgent = "profile/reviewer"
+	settings.SessionOverrides["root/profile/reviewer"] = types.CategorySettings{AccountID: "work"}
+	if err := sess.HandleSettingsSave(settings); err != nil {
+		t.Fatal(err)
+	}
+	if got := sess.RuntimeProfile().GetEffectiveConfig("root"); got.GetActiveDefaultCategory().Model != "review-v1" || got.GetActiveDefaultCategory().AccountID != "work" || got.SelectedAgent != "profile/reviewer" {
+		t.Fatalf("root request still uses Main Agent: %+v", got.GetActiveDefaultCategory())
+	}
+	if got := sess.SettingsSnapshot(); got.SessionMainAgent != "profile/reviewer" || got.Model != "review-v1" {
+		t.Fatalf("session projection does not match request: %+v", got)
+	}
+	if prompt := sess.systemPromptForModel(true, "review-v1"); !strings.Contains(prompt, "Check edge cases") {
+		t.Fatalf("selected agent instructions did not reach the next request: %q", prompt)
+	}
+	id := sess.SessionID()
+	// Empty sessions are discarded on Close; retain one fixture message to
+	// exercise the real persisted-session resume boundary.
+	sess.msgs = []provider.ChatMessage{provider.NewTextMessage("user", "Keep this session")}
+	sess.Close()
+	profile := cfg.Agents.AgentProfiles["reviewer"]
+	profile.Model, profile.Instructions = "review-v2", "New instructions"
+	cfg.Agents.AgentProfiles["reviewer"] = profile
+	resumed, err := ResumeSessionWithDir(filepath.Join(home, id+".db"), cfg, home, home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resumed.Close()
+	got := resumed.SettingsSnapshot()
+	if got.SessionMainAgent != "profile/reviewer" || got.Model != "review-v2" || got.AccountID != "work" {
+		t.Fatalf("selected agent did not survive resume/profile update: %+v", got)
+	}
+	if err := resumed.RuntimeProfile().GetEffectiveConfig("root").ValidateSelectedAgent(); err != nil {
+		t.Fatal(err)
+	}
+	profile.Enabled = new(bool)
+	cfg.Agents.AgentProfiles["reviewer"] = profile
+	resumed.UpdateWorkspaceDefaults(types.AppSettings{Agents: ConfigToSettings(cfg).Agents, Accounts: cfg.Accounts, Providers: cfg.Providers})
+	if err := resumed.RuntimeProfile().GetEffectiveConfig("root").ValidateSelectedAgent(); err == nil {
+		t.Fatal("disabled selected agent silently fell back to Main Agent")
+	}
+}
+
+func TestMemoryAgentDisableStopsBackgroundJobsAndRecall(t *testing.T) {
+	cfg := testConfig()
+	off := false
+	cfg.Memory.MemoryCategory.Enabled = &off
+	sess := &Session{cfg: cfg}
+	settings := sess.memorySettings()
+	if settings.AutoRecallEnabled() || settings.AutoExtractEnabled() || settings.ConsolidationEnabled() {
+		t.Fatalf("disabled Memory Agent still works in background: %+v", settings)
+	}
+	if _, err := sess.memoryCompleter(); err == nil {
+		t.Fatal("disabled Memory Agent still constructed a provider request")
+	}
+}
+
+func TestMemoryAgentUsesEditedInstructionsAndOutputLimit(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var request map[string]any
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Errorf("decode request: %v", err)
+		}
+		if request["model"] != "memory-model" || request["max_tokens"] != float64(56) || !strings.Contains(fmt.Sprint(request["messages"]), "Additional user-configured Memory Agent instructions:") || !strings.Contains(fmt.Sprint(request["messages"]), "Use factual summaries") {
+			t.Errorf("Memory Agent settings were ignored: %+v", request)
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"done\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}))
+	defer server.Close()
+	cfg := testConfig()
+	template := cfg.Providers["openrouter"]
+	template.ProviderURL = server.URL + "/v1"
+	cfg.Providers["openrouter"] = template
+	cfg.Memory.MemoryCategory = types.CategorySettings{Model: "memory-model", AccountID: "account", Instructions: "Use factual summaries", ModelMaxOutput: 56}
+	sess := &Session{cfg: cfg}
+	complete, err := sess.memoryCompleter()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result, err := complete(context.Background(), "Extract memory", "observations"); err != nil || result != "done" {
+		t.Fatalf("memory completion: %q, %v", result, err)
+	}
+}
+
+func TestExplicitNoModalitiesSurvivesConfigurationRoundTrip(t *testing.T) {
+	cfg := testConfig()
+	settings := ConfigToSettings(cfg).Agents
+	main := settings.Categories[CategoryDefault]
+	main.ModelModalities = []string{}
+	settings.Categories[CategoryDefault] = main
+	ApplyWorkspaceAgentDefaults(cfg, settings)
+	encoded, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var restored Config
+	if err := json.Unmarshal(encoded, &restored); err != nil {
+		t.Fatal(err)
+	}
+	if got := restored.GetActiveDefaultCategory().ModelModalities; got == nil || len(got) != 0 {
+		t.Fatalf("explicit No became automatic discovery after restart: %#v", got)
 	}
 }

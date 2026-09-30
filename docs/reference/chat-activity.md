@@ -182,8 +182,15 @@ Transient status messages are not additional transcript rows; durable stop,
 history, and compaction boundaries remain ordinary transcript content. Internal
 actor generations still include stopped/unbilled work for cancellation and
 recovery, but are not the displayed successful-call count.
-Markdown colors and code styling come from the active theme, and theme changes
-invalidate the Markdown renderer as well as its projected rows.
+Markdown retains its established Glamour heading, link and inline-code hierarchy.
+Document ink and fenced-code colours follow the active theme; light backgrounds
+use readable light-palette inks. Theme changes invalidate the Markdown renderer
+as well as its projected rows. Do not override every text leaf's colour: that
+overrides inherited heading colours and flattens the hierarchy.
+
+The native Markdown bridge uses the shared ANSI decoder and carries SGR state
+across wrapped lines. OSC hyperlink metadata is not printable content and must
+not change table widths, wrapping, selection text, or the painted transcript.
 
 ## Identity And Usage
 
@@ -222,7 +229,12 @@ seconds. An explicit `Retry-After` or `retry-after-ms` is a minimum, not shorten
 by that cap. Delays over two minutes stop automatic recovery rather than sending
 too early. A single progress watchdog owns response-header waiting; the TCP/TLS
 connection timeout is not a competing header deadline. Per-provider settings can
-override attempt/backoff budgets.
+override attempt/backoff budgets and initial/minimum/maximum progress timeouts;
+accounts can override the template's complete connection-tuning set. Defaults are
+60 seconds initially, a 45-second adaptive floor, and a 300-second ceiling.
+Configured overall request deadlines cover upload, streaming, retries and retry
+waits; a caller's earlier deadline still wins. Unlimited overall duration never
+disables progress detection. See [connection timeouts](settings.md#connection-timeouts).
 
 After accepted output, preserve the canonical partial response and issue a hidden
 continuation, at most three consecutive times with 1/2/4-second cooldowns. A clean

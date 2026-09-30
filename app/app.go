@@ -19,6 +19,7 @@ package app
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"sync"
@@ -102,6 +103,14 @@ func New(opts Opts) (*App, error) {
 // When the TUI exits, Run() returns.
 func (a *App) Run() {
 	lg := &appLogger{}
+	// The cache is application-wide and independent of configured accounts.
+	catalog, catalogErr := provider.OpenModelCatalog(filepath.Join(a.home, ".crude", "model-catalog.db"), provider.DefaultModelSources())
+	if catalogErr != nil {
+		lg.Debug("CATALOG", "cache_unavailable", "error", catalogErr.Error())
+	} else {
+		provider.UseModelCatalog(catalog)
+		defer func() { _ = catalog.Close() }()
+	}
 
 	// 1. Create the workspace shell (no session until launcher/resume picks one).
 	//
@@ -145,6 +154,22 @@ func (a *App) Run() {
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "Failed to start TUI: %v\n", err)
 		os.Exit(1)
+	}
+	if catalog != nil {
+		stop, joined := make(chan struct{}), make(chan struct{})
+		go func() {
+			defer close(joined)
+			for {
+				select {
+				case <-stop:
+					return
+				case generation := <-catalog.Updates():
+					ws.ModelCatalogUpdated(generation)
+				}
+			}
+		}()
+		catalog.Start()
+		defer func() { close(stop); _ = catalog.Close(); <-joined }()
 	}
 
 	// 4b. Live-reload config.json (theme preset) without restarting.

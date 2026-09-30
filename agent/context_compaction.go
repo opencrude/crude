@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"io"
 	rand2 "math/rand/v2"
-	"net/http"
 	"strings"
 	"time"
 
@@ -16,7 +15,6 @@ import (
 )
 
 const (
-	compactionCheckpointMaxTokens = 16_000
 	compactionRecentUserMaxTokens = 20_000
 	compactionStageRecoveries     = 3
 )
@@ -119,13 +117,8 @@ func compactionThreshold(ctxWindow, percent int) int {
 	if ctxWindow <= 0 || percent <= 0 {
 		return 0
 	}
-	if ctxWindow <= 2*compactionCheckpointMaxTokens {
-		return 0
-	}
 	threshold := ctxWindow * percent / 100
-	if threshold >= ctxWindow-compactionCheckpointMaxTokens {
-		threshold = ctxWindow - compactionCheckpointMaxTokens
-	}
+	threshold = min(threshold, ctxWindow-contextSafetyReserve(ctxWindow))
 	if threshold < 1 {
 		return 0
 	}
@@ -157,6 +150,8 @@ func (a *Agent) contextCompactor(targetWindow int) *Agent {
 	compactor.compactionRetryDelay = a.compactionRetryDelay
 	compactor.CompactionTargetModel = a.Model
 	compactor.CompactionTargetWindow = targetWindow
+	compactor.CompactionTargetTokens = a.contextThreshold(targetWindow)
+	compactor.MaxOutputTokens = a.CompactionMaxOutput
 	return compactor
 }
 
@@ -179,7 +174,7 @@ Rules:
 - Do not claim product code changed when only a mock, plan, or external file changed.
 - Do not turn runtime controls, memory, tool output, or child wakes into human intent.
 
-Recent genuine human input manifest (also retained verbatim outside the checkpoint):
+Recent genuine human or parent-assignment manifest (retained verbatim when it fits the continuation budget):
 %s`, roleContract, recentHuman)
 }
 
@@ -210,7 +205,7 @@ func buildContextCheckpoint(role string, sections map[string]string) (string, er
 	return b.String(), nil
 }
 
-func validateContextCheckpoint(content, role string) (string, error) {
+func validateContextCheckpoint(content, role string, maxTokens int) (string, error) {
 	content = strings.TrimSpace(content)
 	if content == "" {
 		return "", errors.New("compaction returned an empty checkpoint")
@@ -254,8 +249,8 @@ func validateContextCheckpoint(content, role string) (string, error) {
 			return "", fmt.Errorf("compaction checkpoint requires exactly one <%s> section", stage.Name)
 		}
 	}
-	if provider.EstimateMessageTokens(provider.NewTextMessage("user", content), "") > compactionCheckpointMaxTokens {
-		return "", fmt.Errorf("compaction checkpoint exceeds %d tokens", compactionCheckpointMaxTokens)
+	if provider.EstimateMessageTokens(provider.NewTextMessage("user", content), "") > maxTokens {
+		return "", fmt.Errorf("compaction checkpoint exceeds %d available tokens", maxTokens)
 	}
 	return content, nil
 }
@@ -278,7 +273,7 @@ func isCompactionStage(name string) bool {
 	return false
 }
 
-func validateCompactionStageText(text string, completed map[string]string) error {
+func validateCompactionStageText(text string) error {
 	if strings.TrimSpace(text) == "" {
 		return errors.New("model returned an empty extraction")
 	}
@@ -287,37 +282,7 @@ func validateCompactionStageText(text string, completed map[string]string) error
 			return fmt.Errorf("model returned invalid control character U+%04X", r)
 		}
 	}
-	var aggregate strings.Builder
-	current := ""
-	if len(completed) < len(compactionStages) {
-		current = compactionStages[len(completed)].Name
-	}
-	for _, stage := range compactionStages {
-		value := completed[stage.Name]
-		if stage.Name == current {
-			value = text
-		}
-		aggregate.WriteString(value)
-		aggregate.WriteByte('\n')
-	}
-	if provider.EstimateMessageTokens(provider.NewTextMessage("user", aggregate.String()), "") >= compactionCheckpointMaxTokens-256 {
-		return fmt.Errorf("extracted checkpoint exceeds %d-token aggregate budget", compactionCheckpointMaxTokens)
-	}
 	return nil
-}
-
-func recentHumanManifest(msgs []provider.ChatMessage) string {
-	var b strings.Builder
-	for i, message := range msgs {
-		if !message.IsGenuineUserInput() {
-			continue
-		}
-		fmt.Fprintf(&b, "- source_index=%d origin=%s text=%q\n", i, message.EffectiveOrigin(), message.ContentString())
-	}
-	if b.Len() == 0 {
-		return "- none"
-	}
-	return strings.TrimSpace(b.String())
 }
 
 func (a *Agent) compactWithModel(
@@ -328,8 +293,10 @@ func (a *Agent) compactWithModel(
 	beforeTokens int,
 	trigger string,
 	emit func(AgentEvent),
-	onAccepted func([]provider.ChatMessage),
 ) (compactOutcome, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	if len(msgs) == 0 {
 		return compactOutcome{}, errors.New("cannot compact empty context")
 	}
@@ -344,11 +311,13 @@ func (a *Agent) compactWithModel(
 	if targetModel == "" {
 		targetModel = a.Model
 	}
+	if a.CompactionTargetWindow == 0 && targetModel != a.Model {
+		return compactOutcome{}, errors.New("continuation model context window is unavailable for compaction")
+	}
 	ctxWindow := a.CompactionTargetWindow
 	if ctxWindow == 0 && a.Provider != nil {
 		ctxWindow = a.Provider.ContextWindow(targetModel)
 	}
-	base := append([]provider.ChatMessage(nil), msgs...)
 	if a.PrepareCompaction != nil {
 		if err := a.PrepareCompaction(CompactionSource{
 			Messages: append([]provider.ChatMessage(nil), msgs[1:]...), BeforeTokens: beforeTokens,
@@ -361,75 +330,71 @@ func (a *Agent) compactWithModel(
 			}, fmt.Errorf("persist compaction source: %w", err)
 		}
 	}
-	common := provider.NewTextMessage("user", compactionCommonPrompt(role, recentHumanManifest(retainRecentUserContext(msgs[1:], role, compactionRecentUserMaxTokens, targetModel))))
+	if ctxWindow <= 0 {
+		return compactOutcome{ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role,
+				AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model},
+			errors.New("continuation model context capacity is unavailable for compaction")
+	}
+	continuationLimit := ctxWindow - contextSafetyReserve(ctxWindow)
+	if a.CompactionTargetTokens > 0 {
+		continuationLimit = min(continuationLimit, a.CompactionTargetTokens)
+	}
+	if beforeTokens > 0 {
+		continuationLimit = min(continuationLimit, beforeTokens)
+	}
+	fixed := estimateCanonicalRequest(msgs[:1], tools, targetModel)
+	checkpointBudget := continuationLimit - fixed - 1
+	if checkpointBudget < 1 {
+		return compactOutcome{ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role,
+				AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model},
+			errors.New("target context has insufficient room for a checkpoint after system and tool instructions")
+	}
+	extractionWindow := a.Provider.ContextWindow(a.Model)
+	responseBudget := a.compactionOutputLimit(extractionWindow, 0)
+	manifestBudget := min(2048, max(128, extractionWindow/32))
+	common := provider.NewTextMessage("user", compactionCommonPrompt(role, compactionHumanManifest(msgs[1:], role, targetModel, manifestBudget)))
 	common.Origin = provider.OriginCompactionRequest
 	common.Visibility = provider.VisibilityContextOnly
-	base = append(base, common)
+	inputBudget := extractionWindow - contextSafetyReserve(extractionWindow) - 1
+	if extractionWindow <= 0 {
+		inputBudget = 128_000
+	}
 
 	emit(AgentEvent{Type: "context_compaction_started", Data: a.compactionEventData(requestID, trigger, role, 0, 0, beforeTokens, 0, ctxWindow)})
 
 	sections := make(map[string]string, len(compactionStages))
 	var aggregate provider.TokenUsage
-	accepted := false
+	usageRatio := float64(1)
 	for index, stage := range compactionStages {
+		remaining := checkpointBudget - 1
+		for _, section := range sections {
+			remaining -= provider.EstimateTokens(section, targetModel)
+		}
+		if remaining <= 0 {
+			return compactOutcome{Usage: aggregate, ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role,
+					StageName: stage.Label, StageIndex: index + 1, Completed: index,
+					AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model},
+				errors.New("extracted checkpoint consumed the continuation context budget")
+		}
 		data := a.compactionEventData(requestID, trigger, role, index+1, index, beforeTokens, 0, ctxWindow)
 		data["stage_name"] = stage.Name
 		data["stage_label"] = stage.Label
 		emit(AgentEvent{Type: "context_compaction_stage", Data: data})
 
-		stageRequest := provider.NewTextMessage("user", compactionStagePrompt(role, stage))
-		stageRequest.Origin = provider.OriginCompactionRequest
-		stageRequest.Visibility = provider.VisibilityContextOnly
-		requestMessages := append(append([]provider.ChatMessage(nil), base...), stageRequest)
-
-		var stageText string
-		var stageErr error
-		lastAttempt := 0
-		for attempt := 0; attempt <= compactionStageRecoveries; attempt++ {
-			lastAttempt = attempt
-			stageRequestID := fmt.Sprintf("%s/%s/%d", requestID, stage.Name, attempt+1)
-			completion, err := a.completeStreamWithOptions(ctx, requestMessages, nil, nil, nil, nil, nil, nil,
-				func() {
-					if !accepted {
-						accepted = true
-						if onAccepted != nil {
-							onAccepted(requestMessages)
-						}
-					}
-				}, nil, completionRequestOptions{toolChoice: "none", maxOutputTokens: compactionCheckpointMaxTokens, maxAttempts: 1})
-			a.emitCompactionUsage(emit, completion.Usage, stageRequestID, requestID, trigger, role, stage.Name, attempt > 0 || err != nil, err == nil)
-			aggregate = addTokenUsage(aggregate, completion.Usage)
-			if err == nil {
-				stageText = strings.TrimSpace(completion.Content)
-				err = validateCompactionStageText(stageText, sections)
-			}
-			if err == nil {
-				stageErr = nil
-				break
-			}
-			stageErr = err
-			if ctx.Err() != nil || !isRetryableCompactionError(err) || attempt == compactionStageRecoveries {
-				break
-			}
-			recovery := attempt + 1
-			delay := a.compactionRecoveryDelay(recovery)
-			retryData := a.compactionEventData(requestID, trigger, role, index+1, index, beforeTokens, 0, ctxWindow)
-			retryData["stage_name"] = stage.Name
-			retryData["stage_label"] = stage.Label
-			retryData["retry"] = recovery
-			retryData["retry_limit"] = compactionStageRecoveries
-			retryData["backoff"] = delay.Seconds()
-			retryData["error"] = compactErrorText(err)
-			emit(AgentEvent{Type: "context_compaction_retrying", Data: retryData})
-			if err := waitCompactionRetry(ctx, delay); err != nil {
-				stageErr = err
-				break
-			}
+		extractor := compactionExtractor{
+			agent: a, ctx: ctx, emit: emit, requestID: requestID, trigger: trigger, role: role,
+			stage: stage, stageIndex: index, beforeTokens: beforeTokens, targetWindow: ctxWindow,
+			system: msgs[0], common: common, inputBudget: inputBudget, outputBudget: remaining, responseBudget: responseBudget, usageRatio: usageRatio,
+			capacityBudget: extractionWindow - contextSafetyReserve(extractionWindow) - 1,
 		}
+		stageText, stageErr := extractor.request(msgs[1:], "Extract the complete source continuation state.", 0)
+		aggregate = addTokenUsage(aggregate, extractor.usage)
+		inputBudget = extractor.inputBudget
+		usageRatio = extractor.usageRatio
 		if stageErr != nil {
 			return compactOutcome{
 					Usage: aggregate, ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role,
-					StageName: stage.Label, StageIndex: index + 1, Completed: index, RetryAttempt: lastAttempt,
+					StageName: stage.Label, StageIndex: index + 1, Completed: index, RetryAttempt: extractor.retryAttempt,
 					AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model,
 				},
 				fmt.Errorf("%s stage: %w", stage.Name, stageErr)
@@ -441,7 +406,7 @@ func (a *Agent) compactWithModel(
 	if err != nil {
 		return compactOutcome{Usage: aggregate, ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role, StageIndex: len(compactionStages), Completed: len(compactionStages), AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model}, err
 	}
-	checkpoint, err = validateContextCheckpoint(checkpoint, role)
+	checkpoint, err = validateContextCheckpoint(checkpoint, role, checkpointBudget)
 	if err != nil {
 		return compactOutcome{Usage: aggregate, ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role, StageIndex: len(compactionStages), Completed: len(compactionStages), AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model}, err
 	}
@@ -449,9 +414,19 @@ func (a *Agent) compactWithModel(
 	checkpointMsg := provider.NewTextMessage("user", checkpoint)
 	checkpointMsg.Origin = provider.OriginCheckpoint
 	checkpointMsg.Visibility = provider.VisibilityContextOnly
-	recentUsers := retainRecentUserContext(msgs[1:], role, compactionRecentUserMaxTokens, targetModel)
+	retentionBudget := min(compactionRecentUserMaxTokens, max(0, continuationLimit-fixed-provider.EstimateMessageTokens(checkpointMsg, targetModel)-1))
+	recentUsers := boundedRecentUserContext(msgs[1:], role, retentionBudget, targetModel)
 	compacted := append([]provider.ChatMessage{checkpointMsg}, recentUsers...)
 	afterTokens := estimateCanonicalRequest(append([]provider.ChatMessage{msgs[0]}, compacted...), tools, targetModel)
+	if ctx.Err() != nil {
+		return compactOutcome{Usage: aggregate, ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role,
+			AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model}, ctx.Err()
+	}
+	if afterTokens >= continuationLimit {
+		return compactOutcome{Usage: aggregate, ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role,
+				AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model},
+			fmt.Errorf("checkpoint exceeds continuation budget (%d/%d tokens)", afterTokens, continuationLimit)
+	}
 	if beforeTokens > 0 && afterTokens >= beforeTokens {
 		return compactOutcome{Usage: aggregate, ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role, StageIndex: len(compactionStages), Completed: len(compactionStages), AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model},
 			fmt.Errorf("compaction did not reduce active context (%d -> %d tokens)", beforeTokens, afterTokens)
@@ -553,11 +528,13 @@ func isRetryableCompactionError(err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
-	var apiErr *apiCallError
-	if errors.As(err, &apiErr) {
-		if apiErr.StatusCode == http.StatusUnauthorized || apiErr.StatusCode == http.StatusForbidden || apiErr.StatusCode == http.StatusBadRequest || apiErr.StatusCode == http.StatusNotFound {
-			return false
-		}
+	if provider.IsContextWindowExceeded(err) {
+		return false
+	}
+	var status *provider.StatusError
+	var api *provider.APIError
+	if errors.As(err, &status) || errors.As(err, &api) {
+		return provider.Retryable(err)
 	}
 	return true
 }
@@ -599,6 +576,27 @@ func retainRecentUserContext(msgs []provider.ChatMessage, role string, budget in
 	return selected
 }
 
+func boundedRecentUserContext(messages []provider.ChatMessage, role string, budget int, model string) []provider.ChatMessage {
+	var selected []provider.ChatMessage
+	used := 0
+	for index := len(messages) - 1; index >= 0; index-- {
+		message := messages[index]
+		if !message.IsGenuineUserInput() && (role != "child" || message.EffectiveOrigin() != provider.OriginAssignment) {
+			continue
+		}
+		cost := provider.EstimateMessageTokens(message, model)
+		if used+cost > budget {
+			continue
+		}
+		selected = append(selected, message)
+		used += cost
+	}
+	for left, right := 0, len(selected)-1; left < right; left, right = left+1, right-1 {
+		selected[left], selected[right] = selected[right], selected[left]
+	}
+	return selected
+}
+
 func (a *Agent) Compact(
 	ctx context.Context,
 	active []provider.ChatMessage,
@@ -635,7 +633,7 @@ func (a *Agent) CompactWithRequestID(
 		targetModel = a.Model
 	}
 	before := estimateCanonicalRequest(msgs, tools, targetModel)
-	outcome, err := a.compactWithModel(ctx, msgs, tools, requestID, before, "manual", emit, nil)
+	outcome, err := a.compactWithModel(ctx, msgs, tools, requestID, before, "manual", emit)
 	if err != nil {
 		return CompactResult{
 			BeforeTokens: before, ContextWindow: outcome.ContextWindow, Usage: outcome.Usage,

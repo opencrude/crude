@@ -141,6 +141,8 @@ func (a *Agent) Run(
 	btwInput := btwCh
 	continuations := 0
 	interruptionRecoveries := 0
+	overflowRecoveries := 0
+	overflowPressure := false
 	providerName := a.providerDisplayName()
 	cacheUsageUnknown := a.Provider.ProtocolID() == "ollama"
 	var admittedBtwIDs []string
@@ -196,24 +198,36 @@ func (a *Agent) Run(
 			}
 		}
 		_ = drainBtw()
+		var runtimeNoticeIDs []string
+		if a.PrepareRuntimeNotices != nil {
+			for _, notice := range a.PrepareRuntimeNotices() {
+				appendWire(notice)
+				runtimeNoticeIDs = append(runtimeNoticeIDs, notice.InternalID)
+			}
+		}
+		runtimeNoticesAccepted := false
+		clearUnsentRuntimeNotices := func() {
+			if runtimeNoticesAccepted || len(runtimeNoticeIDs) == 0 {
+				return
+			}
+			msgs = removeMessagesByInternalID(msgs, runtimeNoticeIDs)
+			archiveMsgs = removeMessagesByInternalID(archiveMsgs, runtimeNoticeIDs)
+		}
+		ctxWindow = a.Provider.ContextWindow(a.Model)
 		if a.ContextCompactionPercent > 0 && ctxWindow > 0 {
 			activeTokens := contextUsage.projected(msgs, allTools, a.Model)
-			threshold := compactionThreshold(ctxWindow, a.ContextCompactionPercent)
-			if threshold > 0 && activeTokens >= threshold {
+			threshold := a.contextThreshold(ctxWindow)
+			if threshold > 0 && (activeTokens >= threshold || overflowPressure) {
 				requestID := fmt.Sprintf("%016x%016x", rand2.Uint64(), rand2.Uint64())
 				compactor := a.contextCompactor(ctxWindow)
-				outcome, compactErr := compactor.compactWithModel(ctx, msgs, allTools, requestID, activeTokens, "automatic", emit,
-					func(compactionRequest []provider.ChatMessage) {
-						if err := prefix.accept(compactionRequest); err != nil {
-							l.Error("CACHE", "compaction_prefix_accept_failed", "error", err.Error())
-						}
-						for _, internalID := range admittedBtwIDs {
-							emit(AgentEvent{Type: "btw_consumed", Data: map[string]any{"internal_id": internalID}})
-						}
-						admittedBtwIDs = nil
-					})
+				compactor.CompactionTargetTokens = threshold
+				if overflowPressure {
+					compactor.CompactionTargetTokens = min(threshold, activeTokens/2)
+				}
+				outcome, compactErr := compactor.compactWithModel(ctx, msgs, allTools, requestID, activeTokens, "automatic", emit)
 				if compactErr != nil {
 					clearUnsentBtw()
+					clearUnsentRuntimeNotices()
 					data := compactionEventData(requestID, "automatic", checkpointRole(a.Depth), outcome.StageIndex, outcome.Completed, activeTokens, 0, ctxWindow)
 					data["account_id"] = outcome.AccountID
 					data["provider_id"] = outcome.ProviderID
@@ -231,6 +245,7 @@ func (a *Agent) Run(
 					return returnMessages()
 				}
 				if outcome.AfterTokens >= threshold {
+					clearUnsentRuntimeNotices()
 					compactErr := fmt.Errorf("compacted context remains above threshold (%d >= %d tokens)", outcome.AfterTokens, threshold)
 					data := compactionEventData(requestID, "automatic", outcome.Role, len(compactionStages), len(compactionStages), activeTokens, outcome.AfterTokens, outcome.ContextWindow)
 					data["account_id"] = outcome.AccountID
@@ -253,6 +268,7 @@ func (a *Agent) Run(
 						ContextWindow: outcome.ContextWindow, RequestID: requestID, Trigger: "automatic", Role: outcome.Role,
 						AccountID: outcome.AccountID, ProviderID: outcome.ProviderID, ModelID: outcome.ModelID,
 					}); err != nil {
+						clearUnsentRuntimeNotices()
 						commitData["error"] = compactErrorText(err)
 						emit(AgentEvent{Type: "context_compaction_failed", Data: commitData})
 						a.emitError(emit, fmt.Errorf("context compaction commit failed; original context retained: %w", err))
@@ -260,6 +276,14 @@ func (a *Agent) Run(
 					}
 				}
 				msgs = nextMessages
+				for _, internalID := range admittedBtwIDs {
+					emit(AgentEvent{Type: "btw_consumed", Data: map[string]any{"internal_id": internalID}})
+				}
+				admittedBtwIDs = nil
+				if len(runtimeNoticeIDs) > 0 && a.RuntimeNoticesAccepted != nil {
+					a.RuntimeNoticesAccepted()
+				}
+				overflowPressure = false
 				emit(AgentEvent{Type: "context_compacted", Data: commitData})
 				contextUsage.reset()
 				totalPromptTokens += outcome.Usage.PromptTokens
@@ -271,23 +295,6 @@ func (a *Agent) Run(
 			}
 		}
 
-		// Completion notifications belong to the next parent request, after tools
-		// finish; they are ordinary runtime input, never urgent human BTW input.
-		var runtimeNoticeIDs []string
-		if a.PrepareRuntimeNotices != nil {
-			for _, notice := range a.PrepareRuntimeNotices() {
-				appendWire(notice)
-				runtimeNoticeIDs = append(runtimeNoticeIDs, notice.InternalID)
-			}
-		}
-		runtimeNoticesAccepted := false
-		clearUnsentRuntimeNotices := func() {
-			if runtimeNoticesAccepted || len(runtimeNoticeIDs) == 0 {
-				return
-			}
-			msgs = removeMessagesByInternalID(msgs, runtimeNoticeIDs)
-			archiveMsgs = removeMessagesByInternalID(archiveMsgs, runtimeNoticeIDs)
-		}
 		// A local turn counter is not a durable request identity: it can restart
 		// after resume or agent recreation. Revisions reuse this ID; new calls do not.
 		requestID := fmt.Sprintf("%016x%016x", rand2.Uint64(), rand2.Uint64())
@@ -332,7 +339,7 @@ func (a *Agent) Run(
 		}
 		toolDelta := a.makeStreamingDeltaCallback(requestEmit, prevPreviewKeys)
 
-		completion, err := a.completeStream(ctx, requestMsgs, allTools,
+		completion, err := a.completeStreamWithOptions(ctx, requestMsgs, allTools,
 			func(token string) {
 				beginOutput()
 				emit(AgentEvent{Type: "stream_token", Data: token})
@@ -406,11 +413,20 @@ func (a *Agent) Run(
 					"request_id": requestID, "turn_generation": a.TurnGeneration,
 				}})
 			},
+			completionRequestOptions{inputTokens: contextUsage.projected(requestMsgs, allTools, a.Model)},
 		)
 		btwMu.Lock()
 		requestFinished = true
 		btwMu.Unlock()
 		if err != nil {
+			if ctx.Err() == nil && !completion.hasOutput() && provider.IsContextWindowExceeded(err) &&
+				a.ContextCompactionPercent > 0 && overflowRecoveries < compactionStageRecoveries {
+				overflowRecoveries++
+				overflowPressure = true
+				clearUnsentRuntimeNotices()
+				l.Warn("COMPACT", "provider_context_recovery", "attempt", overflowRecoveries, "error", err.Error())
+				continue
+			}
 			clearUnsentBtw()
 			clearUnsentRuntimeNotices()
 			outcome := accounting.Failed
@@ -528,6 +544,7 @@ func (a *Agent) Run(
 		}
 
 		interruptionRecoveries = 0
+		overflowRecoveries = 0
 		promptTokens := completion.Usage.PromptTokens
 		completionTokens := completion.Usage.CompletionTokens
 		promptTokensCached := completion.Usage.PromptTokensCached
@@ -536,11 +553,11 @@ func (a *Agent) Run(
 
 		estimated := false
 		if promptTokens == 0 {
-			promptTokens = provider.EstimateMessagesTotal(requestMsgs, a.Model)
+			promptTokens = estimateCanonicalRequest(requestMsgs, allTools, a.Model)
 			estimated = true
 		}
 		if contextPromptTokens == 0 {
-			contextPromptTokens = provider.EstimateMessagesTotal(requestMsgs, a.Model)
+			contextPromptTokens = estimateCanonicalRequest(requestMsgs, allTools, a.Model)
 		}
 		if completionTokens == 0 {
 			completionTokens = provider.EstimateTokens(
@@ -556,7 +573,7 @@ func (a *Agent) Run(
 		totalPromptTokens += promptTokens
 		totalCompletionTokens += completionTokens
 		lastPromptTokens = contextPromptTokens
-		contextUsage.observe(contextPromptTokens, completionTokens, len(requestMsgs))
+		contextUsage.observe(contextPromptTokens, completionTokens, len(requestMsgs), estimateCanonicalRequest(requestMsgs[:1], allTools, a.Model))
 
 		price, costKnown, costSource := provider.LookupPriceKnown(a.Model)
 		turnCost := price.CalculateCost(promptTokens, completionTokens, promptTokensCached)

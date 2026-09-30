@@ -142,3 +142,14 @@ func TestToolTitleDoesNotInferRolesOrFailureFromOperandText(t *testing.T) {
 		t.Fatalf("failure changed operand or metadata semantics: %+v", title)
 	}
 }
+
+func TestSubAgentLaunchFailureKeepsItsDiagnostic(t *testing.T) {
+	msg := types.ChatMessage{
+		ToolName: "run_sub_agent", ToolArgs: "Inspect renderer", ToolStatus: types.ToolStatusError,
+		Content: "Error launching sub-agent: account unavailable",
+	}
+	title := BuildToolTitle(msg, types.ToolPreviewError)
+	if !title.Failed || title.Action != "Failed to spawn sub-agent" || title.Operand != "Inspect renderer" {
+		t.Fatalf("launch failure title = %+v", title)
+	}
+}

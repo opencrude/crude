@@ -218,11 +218,23 @@ func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 	l.Info("CONFIG", "save_begin", "old_template", oldTemplate, "old_account", oldMain.AccountID, "old_model", oldModel, "turn_logs", tuiSettings.TurnLogsEnabled)
 
 	overrides := settingsToSessionOverrides(tuiSettings)
-	if s.accountUnpinned && overrides[CategoryDefault].AccountID == "" {
+	newCfg := configWithSessionOverrides(s.workspaceCfg, overrides)
+	newCfg.SelectedAgent = tuiSettings.SessionMainAgent
+	if tuiSettings.SessionMainAgent != "" {
+		pin := overrides["root/"+tuiSettings.SessionMainAgent]
+		newCfg.selectedMainOverride = &pin
+	}
+	if err := newCfg.ValidateSelectedAgent(); err != nil {
+		return fmt.Errorf("select a usable root agent: %w", err)
+	}
+	mainCat := newCfg.GetActiveDefaultCategory()
+	pinKey := CategoryDefault
+	if tuiSettings.SessionMainAgent != "" {
+		pinKey = "root/" + tuiSettings.SessionMainAgent
+	}
+	if s.accountUnpinned && overrides[pinKey].AccountID == "" {
 		return fmt.Errorf("select a connection for this session before saving: %w", ErrAccountRequired)
 	}
-	newCfg := configWithSessionOverrides(s.workspaceCfg, overrides)
-	mainCat := newCfg.GetActiveDefaultCategory()
 	configuredProvider, err := newCfg.providerForCategory(mainCat)
 	if err != nil {
 		return fmt.Errorf("invalid provider connection: %w", err)
@@ -230,6 +242,9 @@ func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 	// Every explicit role override is validated before any DB write or runtime
 	// update; a mismatched account cannot be saved to fail only on launch.
 	for role := range overrides {
+		if strings.HasPrefix(role, "root/") {
+			continue
+		}
 		if _, err := newCfg.providerForCategory(newCfg.GetCategoryConfig(role)); err != nil {
 			return fmt.Errorf("%s connection: %w", role, err)
 		}
@@ -239,26 +254,18 @@ func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 	connectionChanged := oldMain.AccountID != mainCat.AccountID
 	modelChanged := mainCat.Model != oldModel
 	if s.db != nil {
-		if err := sessiondb.SaveAgentSettingOverrides(s.db, s.sessionID, overrides); err != nil {
+		if err := sessiondb.SaveSessionSettings(s.db, s.sessionID, newTemplate, mainCat.AccountID, overrides, sessiondb.SessionFlags{MultiAgent: tuiSettings.SessionMultiAgent, MainAgent: tuiSettings.SessionMainAgent}); err != nil {
 			return fmt.Errorf("save session settings: %w", err)
 		}
-		if err := sessiondb.UpdateConnection(s.db, s.sessionID, newTemplate, mainCat.AccountID); err != nil {
-			return fmt.Errorf("save session account: %w", err)
-		}
 	}
-
 	s.cfg = newCfg
+	s.selectedMainAgent = tuiSettings.SessionMainAgent
 	s.accountUnpinned = false
 	s.sessionOverrides = overrides
 	if tuiSettings.SessionMultiAgent != nil {
 		applySessionMultiAgent(s.cfg, *tuiSettings.SessionMultiAgent)
 	}
 	s.multiAgentOverride = cloneBoolPtr(tuiSettings.SessionMultiAgent)
-	if s.db != nil {
-		if err := sessiondb.SaveSessionFlags(s.db, s.sessionID, sessiondb.SessionFlags{MultiAgent: s.multiAgentOverride}); err != nil {
-			return fmt.Errorf("save session flags: %w", err)
-		}
-	}
 	// Update the runtime profile's base config so per-orchestrator overrides
 	// continue to work on top of the new saved config.
 	if s.runtimeProfile != nil {
@@ -266,10 +273,6 @@ func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 	}
 
 	s.provider = configuredProvider
-	if mainCat.ModelContextWindow > 0 {
-		provider.SetModelContext(mainCat.Model, mainCat.ModelContextWindow)
-		l.Debug("CONFIG", "ctx_window_set", "model", mainCat.Model, "window", mainCat.ModelContextWindow)
-	}
 	if mainCat.ModelInputPrice > 0 {
 		provider.SetModelPrice(mainCat.Model, provider.ModelPrice{
 			InputPricePerToken:       mainCat.ModelInputPrice,
@@ -342,6 +345,9 @@ func configWithSessionOverrides(base *Config, overrides map[string]sessiondb.Age
 		profile.Categories = make(map[string]CategoryConfig)
 	}
 	for category, override := range overrides {
+		if strings.HasPrefix(category, "root/") {
+			continue
+		}
 		current := profile.Categories[category]
 		if override.Inherit != "" {
 			// Inheritance controls model/policy, while a previously pinned
@@ -396,6 +402,7 @@ func (s *Session) SettingsSnapshot() ttypes.Settings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	settings := ConfigToSettings(s.cfg)
+	settings.SessionMainAgent = s.selectedMainAgent
 	settings.SessionMultiAgent = cloneBoolPtr(s.multiAgentOverride)
 	if s.multiAgentOverride != nil {
 		settings.Agents.Enabled = *s.multiAgentOverride
@@ -410,6 +417,9 @@ func (s *Session) ConnectionIssue() error {
 	defer s.mu.Unlock()
 	if s.accountUnpinned {
 		return ErrAccountRequired
+	}
+	if err := s.cfg.ValidateSelectedAgent(); err != nil {
+		return err
 	}
 	main := s.cfg.GetActiveDefaultCategory()
 	_, err := s.cfg.resolveAccount(main.AccountID)
@@ -432,8 +442,9 @@ func (s *Session) SessionOverridesSnapshot() map[string]ttypes.CategorySettings 
 	for category, override := range s.sessionOverrides {
 		out[category] = ttypes.CategorySettings{
 			AccountID: override.AccountID, Model: override.Model,
-			ThinkingEffort: override.ThinkingEffort,
-			Inherit:        override.Inherit,
+			ThinkingEffort:           override.ThinkingEffort,
+			Inherit:                  override.Inherit,
+			ContextCompactionPercent: cloneIntPtr(override.ContextCompactionPercent),
 		}
 	}
 	return out
@@ -456,6 +467,9 @@ func (s *Session) ResetSessionSettings() error {
 	// connection pin survives until an explicit connection change is saved.
 	pins := make(map[string]sessiondb.AgentSettingOverride)
 	for role, override := range s.sessionOverrides {
+		if strings.HasPrefix(role, "root/") {
+			continue
+		}
 		if override.AccountID != "" {
 			pins[role] = sessiondb.AgentSettingOverride{AccountID: override.AccountID}
 		}
@@ -471,17 +485,12 @@ func (s *Session) ResetSessionSettings() error {
 		return err
 	}
 	if s.db != nil {
-		if err := sessiondb.SaveAgentSettingOverrides(s.db, s.sessionID, pins); err != nil {
-			return err
-		}
-		if err := sessiondb.ClearSessionFlags(s.db, s.sessionID); err != nil {
-			return err
-		}
-		if err := sessiondb.UpdateConnection(s.db, s.sessionID, newCfg.templateIDForAccount(main.AccountID), main.AccountID); err != nil {
+		if err := sessiondb.SaveSessionSettings(s.db, s.sessionID, newCfg.templateIDForAccount(main.AccountID), main.AccountID, pins, sessiondb.SessionFlags{}); err != nil {
 			return err
 		}
 	}
 	s.cfg = newCfg
+	s.selectedMainAgent = ""
 	s.sessionOverrides = pins
 	s.multiAgentOverride = nil
 	if s.runtimeProfile != nil {
@@ -546,6 +555,11 @@ func (s *Session) rebuildEffectiveConfigLocked() {
 	oldDelegation := s.cfg.IsMultiAgentEnabled()
 	defer func() { s.recordDelegationChange(oldDelegation, s.cfg.IsMultiAgentEnabled()) }()
 	s.cfg = configWithSessionOverrides(s.workspaceCfg, s.sessionOverrides)
+	s.cfg.SelectedAgent = s.selectedMainAgent
+	if s.selectedMainAgent != "" {
+		pin := s.sessionOverrides["root/"+s.selectedMainAgent]
+		s.cfg.selectedMainOverride = &pin
+	}
 	if s.accountUnpinned {
 		profile, name := activeProfileCfg(s.cfg)
 		cat := profile.Categories[CategoryDefault]
