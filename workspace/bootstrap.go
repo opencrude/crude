@@ -312,8 +312,7 @@ func (w *Workspace) HandleSettingsSave(s ttypes.Settings) error {
 			return err
 		}
 		if w.ActiveSession != nil && w.ActiveSession.Settings != nil {
-			w.ActiveSession.Settings.Effective = s
-			w.ActiveSession.Settings.Overrides = copyCategoryMap(s.SessionOverrides)
+			w.ActiveSession.Settings.SetInheritance(b.SettingsSnapshot(), b.WorkspaceSettingsSnapshot(), b.SessionOverridesSnapshot())
 		}
 		return nil
 	}
@@ -331,8 +330,7 @@ func (w *Workspace) HandleSettingsSaveForSession(sessionID string, settings ttyp
 		return err
 	}
 	if frontendSession.Settings != nil {
-		frontendSession.Settings.Effective = settings
-		frontendSession.Settings.Overrides = copyCategoryMap(settings.SessionOverrides)
+		frontendSession.Settings.SetInheritance(frontendSession.backend.SettingsSnapshot(), frontendSession.backend.WorkspaceSettingsSnapshot(), frontendSession.backend.SessionOverridesSnapshot())
 	}
 	return nil
 }

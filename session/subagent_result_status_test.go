@@ -52,7 +52,6 @@ func TestSubAgentTerminalResultNeedsDeliverable(t *testing.T) {
 		authored     bool
 		errors       bool
 		cancelled    bool
-		deadline     bool
 		want         agent.SubAgentStatus
 	}{
 		{name: "only assignment", want: agent.SubAgentFailedError},
@@ -77,7 +76,6 @@ func TestSubAgentTerminalResultNeedsDeliverable(t *testing.T) {
 			messages: []provider.ChatMessage{provider.NewTextMessage("assistant", "Final findings and outcome.")}, want: agent.SubAgentCompleted},
 		{name: "authored report with no final answer", reason: "completed", authored: true, want: agent.SubAgentCompleted},
 		{name: "cancelled dominates missing deliverable", cancelled: true, want: agent.SubAgentCancelled},
-		{name: "timeout dominates missing deliverable", deadline: true, want: agent.SubAgentFailedTimeout},
 		{name: "quota dominates missing deliverable", messages: []provider.ChatMessage{provider.NewTextMessage("tool", "Error: 429 quota exceeded")}, want: agent.SubAgentFailedQuota},
 	}
 	for _, tc := range cases {
@@ -90,11 +88,6 @@ func TestSubAgentTerminalResultNeedsDeliverable(t *testing.T) {
 				var cancel context.CancelFunc
 				ctx, cancel = context.WithCancel(ctx)
 				cancel()
-			}
-			if tc.deadline {
-				var cancel context.CancelFunc
-				ctx, cancel = context.WithDeadline(ctx, time.Now().Add(-time.Second))
-				defer cancel()
 			}
 			handle := &agent.SubAgentHandle{Spec: agent.SubAgentSpec{ID: "child", Name: "child"}, Agent: &agent.Agent{Ctx: ctx}, StartedAt: time.Now()}
 			handle.SetTermReason(tc.reason)

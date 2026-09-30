@@ -10,8 +10,8 @@ import (
 )
 
 // ModelPrice holds per-token pricing for a single model, used for manual
-// cost calculation via CalculateCost. Prices are populated from models.dev
-// (or another canonical source) and cached in the config file.
+// cost calculation via CalculateCost. Prices come from the public catalog or
+// an explicit caller registration.
 type ModelPrice struct {
 	InputPricePerToken       float64
 	OutputPricePerToken      float64
@@ -40,8 +40,8 @@ func (p ModelPrice) CalculateCost(promptTokens, completionTokens, cachedTokens i
 	return cost
 }
 
-// ModelMeta is the serialisable form of a model's metadata, used to persist
-// pricing and context-window information to the config file.
+// ModelMeta is a complete public model card. Missing ModalitySupport keys are
+// unknown, not false; ConflictingModalities retains contrary source evidence.
 type ModelMeta struct {
 	ContextWindow  int     `json:"context_window"`
 	InputPrice     float64 `json:"input_price"`      // USD per token
@@ -49,9 +49,14 @@ type ModelMeta struct {
 	CacheReadPrice float64 `json:"cache_read_price"` // USD per token
 	// Modalities lists the input types beyond text the model accepts
 	// (ModalityImage, ModalityPDF, ModalityVideo, ModalityAudio).
-	Modalities    []string `json:"modalities,omitempty"`
-	SupportsTools bool     `json:"supports_tools,omitempty"`
-	MaxOutput     int      `json:"max_output,omitempty"`
+	Modalities            []string        `json:"modalities,omitempty"`
+	SupportsTools         bool            `json:"supports_tools,omitempty"`
+	MaxOutput             int             `json:"max_output,omitempty"`
+	ModalitySupport       map[string]bool `json:"modality_support,omitempty"`
+	Sources               []string        `json:"sources,omitempty"`
+	ConflictingModalities []string        `json:"conflicting_modalities,omitempty"`
+	PricingKnown          bool            `json:"pricing_known,omitempty"`
+	ToolsKnown            bool            `json:"tools_known,omitempty"`
 }
 
 // Input modalities a model can accept beyond text, in canonical order.
@@ -121,6 +126,7 @@ func FromModelPrice(price ModelPrice, contextWindow int) ModelMeta {
 
 var (
 	dynamicPrices   = make(map[string]ModelPrice)
+	modelCards      = make(map[string]ModelMeta)
 	dynamicPricesMu sync.RWMutex
 )
 
@@ -135,6 +141,7 @@ func SetModelPrice(modelID string, price ModelPrice) {
 func SetModelMeta(modelID string, meta ModelMeta) {
 	dynamicPricesMu.Lock()
 	dynamicPrices[strings.ToLower(modelID)] = meta.ToModelPrice()
+	modelCards[strings.ToLower(modelID)] = cloneModelMeta(meta)
 	dynamicPricesMu.Unlock()
 	if meta.ContextWindow > 0 {
 		SetModelContext(modelID, meta.ContextWindow)
@@ -155,18 +162,47 @@ func LoadModelMetas(metas map[string]ModelMeta) {
 	logIf(func(lg *logger.Logger) { lg.Info("PRICING", "load_metas", "count", len(metas)) })
 }
 
-// GetAllModelMetas returns a snapshot of every cached model metadata,
-// suitable for serialisation to the config file.
+// GetAllModelMetas returns independent complete model cards, not a lossy
+// reconstruction from runtime pricing/context caches or user overrides.
 func GetAllModelMetas() map[string]ModelMeta {
+	if catalog := activeModelCatalog.Load(); catalog != nil {
+		return catalog.Models()
+	}
 	dynamicPricesMu.RLock()
 	defer dynamicPricesMu.RUnlock()
 
-	result := make(map[string]ModelMeta, len(dynamicPrices))
-	for id, price := range dynamicPrices {
-		ctx := LookupContextWindow(id)
-		result[id] = FromModelPrice(price, ctx)
+	result := make(map[string]ModelMeta, len(modelCards))
+	for id, meta := range modelCards {
+		result[id] = cloneModelMeta(meta)
 	}
 	return result
+}
+
+func cloneModelMeta(meta ModelMeta) ModelMeta {
+	meta.Modalities = slices.Clone(meta.Modalities)
+	meta.Sources = slices.Clone(meta.Sources)
+	meta.ConflictingModalities = slices.Clone(meta.ConflictingModalities)
+	if meta.ModalitySupport != nil {
+		values := make(map[string]bool, len(meta.ModalitySupport))
+		for key, value := range meta.ModalitySupport {
+			values[key] = value
+		}
+		meta.ModalitySupport = values
+	}
+	return meta
+}
+
+// ModelCard is public-source metadata, never an agent's local overrides.
+func ModelCard(modelID string) (ModelMeta, bool) {
+	if catalog := activeModelCatalog.Load(); catalog != nil {
+		return catalog.Lookup(modelID)
+	}
+	dynamicPricesMu.RLock()
+	defer dynamicPricesMu.RUnlock()
+	if meta := LookupModelMeta(modelID, modelCards); meta != nil {
+		return cloneModelMeta(*meta), true
+	}
+	return ModelMeta{}, false
 }
 
 // ---------------------------------------------------------------------------
@@ -221,6 +257,11 @@ func LookupPrice(model string) ModelPrice {
 
 // LookupPriceKnown distinguishes an explicitly free model from absent pricing.
 func LookupPriceKnown(model string) (ModelPrice, bool, string) {
+	if catalog := activeModelCatalog.Load(); catalog != nil {
+		if meta, ok := catalog.Lookup(model); ok && meta.PricingKnown {
+			return meta.ToModelPrice(), true, "catalog"
+		}
+	}
 	lower := strings.ToLower(model)
 
 	// Exact match.

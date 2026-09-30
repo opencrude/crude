@@ -106,13 +106,12 @@ func TestLiveOllamaSubAgentWaitTrueReturnsTerminalResult(t *testing.T) {
 	ctx, cancel := context.WithTimeout(t.Context(), 120*time.Second)
 	defer cancel()
 	result, err := runner.RunSubAgent(ctx, map[string]any{
-		"name":            "live-wait",
-		"category":        agent.CatResearcher,
-		"description":     "Verify the synchronous child lifecycle without reading or changing files.",
-		"instructions":    `Immediately call write_report with the exact report text "live wait lifecycle ok". Do not call any other tool.`,
-		"allowed_tools":   []string{"write_report"},
-		"timeout_seconds": 90,
-		"wait":            true,
+		"name":          "live-wait",
+		"category":      agent.CatResearcher,
+		"description":   "Verify the synchronous child lifecycle without reading or changing files.",
+		"instructions":  `Immediately call write_report with the exact report text "live wait lifecycle ok". Do not call any other tool.`,
+		"allowed_tools": []string{"write_report"},
+		"wait":          true,
 	})
 	if err != nil {
 		t.Fatalf("RunSubAgent(wait=true): %v", err)
@@ -162,13 +161,12 @@ func TestLiveOllamaAsyncSubAgentSurvivesParentContextEnd(t *testing.T) {
 	_, runner, _ := newLiveOllamaSubAgentRunner(t)
 	parentCtx, cancelParent := context.WithCancel(t.Context())
 	result, err := runner.RunSubAgent(parentCtx, map[string]any{
-		"name":            "live-async",
-		"category":        agent.CatResearcher,
-		"description":     "Verify the asynchronous child lifecycle without reading or changing files.",
-		"instructions":    `Immediately call write_report with the exact report text "live async lifecycle ok". Do not call any other tool.`,
-		"allowed_tools":   []string{"write_report"},
-		"timeout_seconds": 90,
-		"wait":            false,
+		"name":          "live-async",
+		"category":      agent.CatResearcher,
+		"description":   "Verify the asynchronous child lifecycle without reading or changing files.",
+		"instructions":  `Immediately call write_report with the exact report text "live async lifecycle ok". Do not call any other tool.`,
+		"allowed_tools": []string{"write_report"},
+		"wait":          false,
 	})
 	if err != nil {
 		t.Fatalf("RunSubAgent(wait=false): %v", err)

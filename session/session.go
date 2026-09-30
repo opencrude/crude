@@ -147,8 +147,9 @@ type Session struct {
 
 	// workspaceCfg is the inherited workspace baseline. s.cfg is the effective
 	// per-session config after applying overrides loaded from this session's DB.
-	workspaceCfg     *Config
-	sessionOverrides map[string]sessiondb.AgentSettingOverride
+	workspaceCfg      *Config
+	sessionOverrides  map[string]sessiondb.AgentSettingOverride
+	selectedMainAgent string
 	// multiAgentOverride is the explicit session flag. nil inherits workspace.
 	multiAgentOverride *bool
 	historyMu          sync.RWMutex
@@ -316,9 +317,6 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 	p, err := cfg.providerForCategory(mainCat)
 	if err != nil {
 		return nil, fmt.Errorf("provider standard: %w", err)
-	}
-	if mainCat.ModelContextWindow > 0 {
-		provider.SetModelContext(mainCat.Model, mainCat.ModelContextWindow)
 	}
 	if mainCat.ModelInputPrice > 0 {
 		provider.SetModelPrice(mainCat.Model, provider.ModelPrice{

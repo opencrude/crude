@@ -76,6 +76,10 @@ Workspace Settings never exposes credentials. Agents select an Account by name;
 there is no combined provider/account "connection" picker. The agent keeps its
 own model and model capabilities.
 
+Providers, Accounts, and Agents catalogs share a full-width search, single-line
+results, and bottom action area. On narrow terminals actions stack below the
+table instead of shrinking the search field or clipping controls.
+
 Account IDs and template IDs are stable; labels and provider-side OAuth account
 IDs are not local identity. Removal requires confirmation and never reassigns
 sessions. A missing account requires explicit selection, not silent failover.
@@ -97,19 +101,74 @@ requesting session deck and account generation even if another tab becomes
 active. Changing account credentials or template configuration invalidates that
 account's cached models. Templates remain an Application Settings concern.
 
+### Connection Timeouts
+
+Application Settings -> Providers -> Edit template exposes **Connection tuning**.
+Application Settings -> Accounts -> Edit exposes the same controls; turn on
+**Override dialer** to use account-specific values. With that switch off, every
+connection setting inherits the template. Turning it on copies the effective
+values into an independent account override; turning it off restores inheritance.
+
+| Control | Default | Enforced scope |
+|---------|---------|----------------|
+| Request timeout | Unlimited | Entire chat request, including upload, streaming, retries and retry waits |
+| Connect timeout | 30 seconds | Each TCP connection and TLS handshake, not waiting for model output |
+| Initial progress timeout | 60 seconds | Silence before positive byte progress in each upload/header/download phase |
+| Min progress timeout | 45 seconds | Lower bound on adaptive silence after bytes start moving |
+| Max progress timeout | 300 seconds | Upper bound on adaptive silence after bytes start moving |
+| Max attempts | 6 | Total tries, including the first, before accepted model output |
+| Max backoff | 30 seconds | Exponential retry delay cap; explicit server Retry-After minimums still take precedence |
+
+Progress limits must satisfy **minimum <= initial <= maximum**. Invalid
+combinations stay in the editor with field errors and cannot be saved. The
+watchdog resets only on positive byte progress; a slow moving stream can exceed
+the initial timeout without being terminated. Raising only Request timeout does
+not increase the progress watchdog. Unlimited disables the overall chat deadline,
+not progress detection. For a model that stays silent for five minutes, set both
+Initial progress timeout and Min progress timeout to 300 seconds, with Max
+progress timeout at least 300 seconds.
+
+Request deadlines apply to streaming and non-streaming calls even when their
+caller has a deadline; the earlier deadline always wins. Model discovery honors
+a configured Request timeout and uses a 30-second fallback when it is Unlimited.
+Saved transport edits reach later turns and new auxiliary clients; requests
+already in flight retain the values captured when their client was constructed.
+The fields persist under the template's `dialer` or the account's
+`overrides.dialer` in `config.json`: `request_timeout_seconds`,
+`connect_timeout_seconds`, `progress_startup_timeout_seconds`,
+`progress_timeout_floor_seconds`, `progress_timeout_ceiling_seconds`,
+`max_attempts`, and `max_backoff_seconds`. An omitted/zero field uses its built-in
+default; zero Request timeout means Unlimited.
+
 ### Agents Catalog
 
 Application Settings has one **Agents** catalog for Main Agent, Researcher,
-Crafter, Aeron, and reusable named agents. Built-in roles can be edited but not
-removed. Named agents can be added, duplicated and removed; removal does not
-terminate running work. Search matches names, roles, models and purposes.
+Crafter, Aeron, **Memory Agent**, **Auto Review Agent**, and reusable named agents. Built-in roles can
+be edited and reset to shipped defaults but not removed; Main Agent stays
+available as a fallback. Named agents can be added, cloned, edited, disabled,
+re-enabled, reset when shipped, and removed. None of those actions cancels work
+already running. Search matches names, roles, models and purposes.
 
 Each editor uses the shared tab strip: **Model**, **Instructions**, and **Tool
 Access**. Model/account selectors use configured connections and discovered
-models. Named agents inherit the role's sampling/capability defaults rather than
-displaying controls the profile cannot persist. Instructions are an actual
-multiline editor, not encoded JSON. Tool access offers role defaults or explicit
-checkboxes; unavailable tools are disabled, and child reporting stays required.
+models. Named agents persist their own thinking effort, context/output caps,
+modalities, sampling, instructions, file ownership, tool limits, account, model,
+and availability; the role supplies unspecified values. Instructions are an
+actual multiline editor, not encoded JSON. Tool access offers role defaults or
+explicit checkboxes; role safety ceilings remain in force, unavailable tools
+are disabled, and child reporting stays required. Memory Agent uses no tools:
+its model, account, instructions, and availability live in Agents; automatic
+recall/extraction cadence remains on the Memory page. Disabling Memory Agent
+stops its automatic jobs and recall without deleting stored memories.
+Auto Review Agent is also a no-tools built-in. Its explicit account, model,
+enable switch, and additional restrictions live in Agents. It cannot inherit
+the Main Agent's connection or change its fixed safety prompt; restrictions
+can only narrow approvals and are limited to 1,024 bytes. Enabling it requires
+an account and model. Its review outcomes and request budgets are configured
+separately under Security → Auto Review Policy. Resetting its agent identity
+does not reset that policy. Hard constraints are stated beside the controls
+they constrain and in this reference; they are not presented as a settings
+page because they cannot be changed there.
 Configured restrictions also apply to native model-command aliases and cannot
 be bypassed by a model-supplied delegation allow list.
 
@@ -119,6 +178,36 @@ requires an explicit choice before discarding a changed draft. Named profiles
 round-trip through `types.AgentProfileSettings` and session configuration; the
 orchestrator advertises their names/purposes, and delegation resolves their
 role, model/account, instructions and restrictions.
+
+The existing Model dropdown remains the selector. Discovery refreshes both its
+retained items and open-list geometry, so the first response paints every visible
+row without reopening or moving the pointer. Discovered capabilities fill
+inherited values, including an already-selected model, without replacing saved
+or in-progress manual overrides. Multi Agent remains a separate delegation
+toggle in Main Agent and `/settings`; Main Agent has no redundant availability
+toggle. The Instructions tab accepts native multiline edits for every built-in
+role, including Memory.
+
+Breadcrumb labels are individual navigation targets; separators are not.
+Agents, Accounts, and Providers return through the normal back/discard policy.
+Session Settings and its role labels navigate to the corresponding level and
+retain staged role edits. Their appearance and the Model / Instructions / Tool
+Access tab layout are unchanged.
+
+The `/settings` root form offers **Default agent** for this session: built-in
+roles and enabled named agents (but not background-only Memory Agent). Choosing
+the shared navigation row opens the same filtered picker page as Account and
+Model, with the shared navigation chevron, breadcrumb, and Back/Esc behavior;
+it is not an inline dropdown. Selection updates the root model/account
+immediately. Save persists a
+session-only identity plus that agent's independent account pin. Prior turns
+retain their original identity. Future turns resolve the live profile, so later
+agent edits update the model/instructions while keeping the account pinned.
+Root overrides remain separate for each choice; switching back to Main Agent
+restores its settings. A disabled/removed selected profile reports an error and
+cannot start another turn until replaced; it never silently falls back. Session
+reset returns to Main Agent. Save as Workspace requires Main Agent because the
+root selection is session-only.
 
 Each admitted turn also snapshots the resolved provider, account, and model IDs from
 the exact backend request. That identity is stored on every assistant,
@@ -142,8 +231,10 @@ remain forbidden regardless of read capability.
 as Jeff, Tom, and Jake. Child identities include their parent: `Tom sub Jeff`.
 Task/profile hints supplied to the delegation tool do not replace these names.
 An app-wide transactional counter in `agent-names.db` allocates identities across
-workspaces and processes. After the initial first-name pool, numbered variants
-(`Jeff 2`, `Tom 2`, …) extend the namespace using arbitrary-precision integers.
+workspaces and processes. The catalog contains 544 given names and 528 surnames.
+After the given names, meaningful full names such as `Jeff Anderson` extend the
+namespace to 287,776 identities before compound family names are needed.
+Arbitrary-precision surname tiers continue without numeric suffixes.
 Names are retained in session metadata, tabs, agent lists, reports, and history;
 resuming a named session does not allocate another name. Unnamed sessions obtain
 their identity before becoming live. The guarantee assumes the allocator database
@@ -163,10 +254,14 @@ tools on the next model request, including within an active turn. Toggling alone
 does not start an idle model request. Persisted child history may instantiate a
 runner on resume for review; this does not enable new launches.
 
-**Auto permissions are an explicit, bounded opt-in.** Settings → Security →
-Safety → Auto permissions selects a dedicated account and model; blank values
-never silently inherit the main model. Application/workspace settings propagate
-live to existing sessions. The root agent reviews eligible operations only when
+**Auto permissions are an explicit, bounded opt-in.** Settings → Agents →
+Auto Review Agent selects an explicit account and model; blank values never
+silently inherit the main model. Security → Command Safety owns command
+severity and confirmation; Auto Review Policy owns bounded review outcomes and
+budgets. Hard blocks, human-only permanent grants, and uncertainty fallback
+remain enforced independently and are described by the relevant controls.
+Application/workspace settings propagate live to existing sessions. The root
+agent reviews eligible operations only when
 a permission prompt would otherwise be required and YOLO is off. Children keep
 their existing capability policies; this setting does not loosen those policies.
 
@@ -302,10 +397,21 @@ title + rule, one line per field, a shared value column — every
 second-column value (nav columns, cycle controls, and single-line
 editors such as `Compact context at 85`) paints in that one column.
 The compaction percentage is a provider-context trigger, not a local JSON-size
-threshold. At the next legal request boundary Crude asks the resolved Aeron
-category model for four plain-text continuation sections against one unchanged
-cached source, then wraps them deterministically. Zero disables automatic
-compaction; `/compact` uses the same transaction.
+threshold. The effective trigger reserves the main model's response and safety
+headroom; the Aeron model budgets each extraction request against its own
+capacity while preserving the configured reasoning effort. Each category's
+explicit context window belongs to its own connection, not a global model
+override. BTW and child-result notices count before the next request is admitted.
+Crude extracts four plain-text continuation sections, then wraps them
+deterministically. A source that fits uses the unchanged prefix; oversized
+histories and individual tool outputs use chronological, attributed source
+fragments and bounded model-backed chunk-and-reduce instead of deleting history.
+Provider-confirmed overflow retries only after reducing the request; extraction
+capacity adapts to reported usage and explicit context-limit rejections.
+Checkpoints and verbatim human retention are sized for the continuation model.
+Failure, truncated extraction, or cancellation installs no partial checkpoint.
+Zero disables automatic compaction and overflow recovery; `/compact` uses the
+same transaction. See [adaptive context handling](adaptive-context.md).
 Leftover width is distributed as space after the label and before
 inherited text (not filler periods). `·` is a column separator only.
 Labels and values use `ColorFg`; inherited/meta use `ColorMuted`.
@@ -409,6 +515,11 @@ Layer coverage lives next to the code:
 - `tui/ui/scrollbar_paint_test.go` — on-demand scrollbar
 - `tui/settings/settings_scope_test.go` — workspace save payload and overflow scrollbars
 - `tui/settings/provider_switch_test.go` — template/account protocol isolation
+- `tui/settings/dialer_test.go`, `provider/client_test.go`, and
+  `provider/stall_test.go` cover shared provider/account controls, invalid limits,
+  real HTTP header/body stalls, streaming request deadlines, and timer cleanup.
+- `session/account_routing_test.go` and `app/config_test.go` cover live transport
+  edits, account override isolation, persistence, and resumed account routing.
 - `tui/settings/layered_prompt_test.go` and `accounts_regression_test.go` —
   owner-bound prompts, explicit discard/removal decisions, retained painted
   settings tables/editors at desktop and constrained terminal sizes

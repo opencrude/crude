@@ -169,6 +169,7 @@ func (s *Session) runPreparedCompaction(
 	compactAgent.AgentID = agent.AgentID(agentID)
 	compactAgent.TurnGeneration = generation + 1
 	compactAgent.CompactionTargetModel = activeCfg.Model
+	compactAgent.MaxOutputTokens = compactionCfg.ModelMaxOutput
 	if targetProvider, targetErr := effectiveCfg.providerForCategory(activeCfg); targetErr == nil {
 		compactAgent.CompactionTargetWindow = targetProvider.ContextWindow(activeCfg.Model)
 	}

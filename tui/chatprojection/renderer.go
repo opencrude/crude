@@ -125,10 +125,7 @@ func (r *Renderer) streamNativeRows(msg *types.ChatMessage, tokens *ui.TokenSet)
 	if cached, ok := r.streamNative[msg.InternalID]; ok && r.streamNativeLen[msg.InternalID] == msg.StreamCompletedLen {
 		return cached
 	}
-	var rows []PaintLine
-	for _, line := range msg.StreamCompletedLines {
-		rows = append(rows, BridgeAnsiLine(line, tokens))
-	}
+	rows := BridgeAnsiLines(msg.StreamCompletedLines, tokens)
 	r.streamNative[msg.InternalID] = rows
 	r.streamNativeLen[msg.InternalID] = msg.StreamCompletedLen
 	return rows

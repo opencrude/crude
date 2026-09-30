@@ -40,6 +40,7 @@ type Screen struct {
 	height            int
 	visible           bool
 	breadcrumb        string
+	viewportContext   filetree.TreeViewportContext
 
 	filter    *treeFilterField
 	tree      *fileTreeView
@@ -123,15 +124,42 @@ func (v *fileTreeView) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult 
 	// breadcrumb is painted by ui.Tree inside the tree view's own rect (as its
 	// first row), so that one offset translates Host-local row into the
 	// filetree model's item-row space.
-	if v.owner.breadcrumb != "" {
+	if v.owner.breadcrumb != "" && evt.IsMouse() {
 		if localY == 0 {
 			v.owner.clearHover()
+			if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft {
+				path := v.owner.viewportContext.PathAt(ctx.LocalX)
+				for index, node := range model.VisibleNodes() {
+					if node.Path == path {
+						model.Select(path)
+						model.SetScrollOffset(index)
+						v.owner.syncFromModel()
+						return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
+					}
+				}
+			}
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 		}
 		localY--
 	}
 	switch evt.Kind {
 	case ui.EventKey:
+		if v.owner.filter != nil &&
+			(evt.Key.Code == tea.KeyEsc && model.FilterActive() ||
+				evt.Key.Text != "" && !evt.Key.Mod.Contains(tea.ModCtrl) &&
+					!evt.Key.Mod.Contains(tea.ModAlt) && !evt.Key.Mod.Contains(tea.ModSuper)) {
+			_ = model.EnterFilterMode()
+			if evt.Key.Code == tea.KeyEsc {
+				return v.owner.filter.Handle(ui.EventContext{Focused: true}, evt)
+			}
+			res := ui.EventResult{Handled: true}
+			if evt.Key.String() != "/" {
+				res = v.owner.filter.Handle(ui.EventContext{Focused: true}, evt)
+			}
+			res.Action = &ui.Action{ID: "ui.focus", Payload: FilterID}
+			res.Invalidate |= ui.InvalidateFocus | ui.InvalidateLayout | ui.InvalidatePaint
+			return res
+		}
 		filterWas := model.FilterActive()
 		cmd := model.Update(filetree.TreeKeyPressMsg{Key: evt.Key})
 		v.owner.syncFromModel()
@@ -402,7 +430,27 @@ func (s *Screen) Layout(_ ui.LayoutContext, r ui.Rect) {
 		s.height = r.H
 	}
 	if model := s.displayModel(); model != nil {
-		model.Update(filetree.TreeHeightMsg{Height: s.viewportHeight()})
+		rows := max(1, r.H-panelchrome.HeaderRows)
+		model.Update(filetree.TreeHeightMsg{Height: rows})
+		model.SetScrollOffset(model.ScrollOffset())
+		contentW := filetree.SidebarContentWidth(s.width)
+		context := filetree.ViewportContext(model, rows, contentW, s.icons)
+		if context.Breadcrumb != "" && rows > 1 {
+			rows--
+			model.Update(filetree.TreeHeightMsg{Height: rows})
+			if context.BaseDepth > 0 {
+				context = filetree.ViewportContext(model, rows, contentW, s.icons)
+			}
+		}
+		s.viewportContext = context
+		s.breadcrumb = context.Breadcrumb
+		if s.tree != nil && s.tree.tree != nil {
+			if s.cfg.IndentBaseDepth != context.BaseDepth {
+				s.cfg.IndentBaseDepth = context.BaseDepth
+				s.tree.tree.SetRowPainter(filetree.NewTreeRowPainter(model, s.icons, s.cfg))
+			}
+			s.tree.tree.SetBreadcrumb(s.breadcrumb)
+		}
 	}
 	s.layoutChildren(r)
 	s.syncFromModel()
@@ -496,7 +544,7 @@ func (s *Screen) syncFromModel() {
 	s.tree.tree.SyncHover(model.Hover.Index)
 	if s.filter != nil {
 		filter := model.Filter()
-		if s.searchActive {
+		if s.pathSearchHandler != nil {
 			filter = s.searchQuery
 		}
 		if s.filter.field.Value() != filter {
@@ -504,8 +552,6 @@ func (s *Screen) syncFromModel() {
 		}
 	}
 	s.syncSearchPlaceholder()
-	contentW := filetree.SidebarContentWidth(s.width)
-	s.breadcrumb = filetree.BreadcrumbLineWithIcons(model, contentW, s.icons)
 	s.tree.tree.SetBreadcrumb(s.breadcrumb)
 	filetree.SyncScrollModel(model, s.tree.tree.Scroll(), s.viewportHeight())
 	if s.scrollbar != nil {

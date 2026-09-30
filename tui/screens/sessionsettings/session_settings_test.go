@@ -8,6 +8,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/provider"
+	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -100,6 +101,98 @@ func TestRootIncludesMultiAgentToggle(t *testing.T) {
 	got := screen.ToSettings()
 	if !got.Agents.Enabled || got.SessionMultiAgent == nil || !*got.SessionMultiAgent {
 		t.Fatalf("saving multi-agent on did not persist: %#v", got.Agents)
+	}
+}
+
+func TestSessionDefaultAgentSwitchKeepsOtherRolesAndAccountPin(t *testing.T) {
+	base := types.Settings{Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+		"default":    {AccountID: "home", Model: "main-model"},
+		"researcher": {AccountID: "work", Model: "research-model"},
+	}, AgentProfiles: map[string]types.AgentProfileSettings{
+		"reviewer": {Category: "researcher", Model: "review-model", AccountID: "work"},
+	}}}
+	s := New(theme.DefaultDark(), base, base, map[string]types.CategorySettings{"default": {AccountID: "home"}})
+	s.ConfigureAccounts(map[string]provider.Account{"home": {ID: "home", Label: "Home"}, "work": {ID: "work", Label: "Work"}})
+	s.formModel.SetValue(fieldMainAgent, ui.StringValue("profile/reviewer"))
+	s.HandleAction(ui.EventContext{}, ui.Action{ID: "form.changed"})
+	if row := s.formModel.Field("default"); row.Columns[0] != "review-model" || row.Columns[1] != "Work" {
+		t.Fatalf("root row did not react to selection: %+v", row)
+	}
+	settings := s.ToSettings()
+	if settings.SessionMainAgent != "profile/reviewer" || settings.Model != "review-model" || settings.AccountID != "work" || settings.SessionOverrides["root/profile/reviewer"].AccountID != "work" || settings.SessionOverrides["default"].AccountID != "home" {
+		t.Fatalf("selected root rewrote another role or failed to pin account: %+v", settings)
+	}
+	s.formModel.SetValue(fieldMainAgent, ui.StringValue(""))
+	s.HandleAction(ui.EventContext{}, ui.Action{ID: "form.changed"})
+	if got := s.ToSettings(); got.Model != "main-model" || got.AccountID != "home" {
+		t.Fatalf("returning to Main Agent lost its session settings: %+v", got)
+	}
+}
+
+func TestDefaultAgentUsesTheExistingNavigationPicker(t *testing.T) {
+	base := types.Settings{Agents: types.AgentsSettings{
+		Categories: map[string]types.CategorySettings{"default": {Model: "main-model"}, "researcher": {AccountID: "work"}},
+		AgentProfiles: map[string]types.AgentProfileSettings{
+			"reviewer":          {Category: "researcher", Model: "review-model", Description: "Review changes"},
+			"background-memory": {Category: memoryRole},
+		},
+	}}
+	s := New(theme.DefaultDark(), base, base, nil)
+	host := ui.NewHost(theme.DefaultDark(), s)
+	host.Resize(90, 17)
+	host.Layout()
+	if row := s.formModel.Field(fieldMainAgent); row.Type != ui.FieldNav || row.Target != "session-settings.agent.open" {
+		t.Fatal("Default agent is not the same navigation-row control as Account and Model")
+	}
+	buf := surface.NewCellBuffer(90, 17)
+	host.Paint(buf)
+	row := rowContaining(buf, "Default agent")
+	if !strings.HasSuffix(strings.TrimSpace(row), s.tokens.Glyphs().TreeCollapsed) || strings.Contains(row, "▾") {
+		t.Fatalf("Default agent did not use the shared navigation chevron: %q", row)
+	}
+	s.form.FocusField(fieldMainAgent)
+	host.Focus(FormID)
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if s.page != agentPage || !s.pickerPage() {
+		t.Fatal("Default agent opened an inline dropdown instead of the existing picker page")
+	}
+	host.Paint(buf)
+	if !bufferContains(buf, "Session Settings · Default agent") || !bufferContains(buf, "Filter agents") {
+		t.Fatal("Default agent picker lost the shared breadcrumb/filter presentation")
+	}
+	for _, item := range s.modelList.Items() {
+		if strings.Contains(item.ID, "memory") {
+			t.Fatal("background-only Memory Agent appeared in the root picker")
+		}
+	}
+	for _, letter := range "review" {
+		host.Handle(tea.KeyPressMsg{Code: letter, Text: string(letter)})
+	}
+	if items := s.modelList.Items(); len(items) != 1 || items[0].ID != "profile/reviewer" {
+		t.Fatalf("agent picker filtering did not use the existing list path: %+v", items)
+	}
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if s.page != rootPage || s.ToSettings().SessionMainAgent != "profile/reviewer" || s.ToSettings().Model != "review-model" {
+		t.Fatal("picker selection did not update the session agent and return to its parent")
+	}
+	host.Paint(buf)
+	if row := rowContaining(buf, "Default agent"); !strings.Contains(row, "reviewer") {
+		t.Fatalf("parent row did not repaint the selected agent: %q", row)
+	}
+	s.form.FocusField(fieldMainAgent)
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if s.page != agentPage {
+		t.Fatalf("reopening the default agent picker stayed on page %d", s.page)
+	}
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if s.page != rootPage || s.effective.SessionMainAgent != "profile/reviewer" {
+		t.Fatalf("picker Back changed the selection or closed the entire settings deck: page=%d agent=%q", s.page, s.effective.SessionMainAgent)
+	}
+	s.form.FocusField(fieldMainAgent)
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
+	host.Handle(tea.MouseClickMsg{X: 1, Y: 0, Button: tea.MouseLeft})
+	if s.page != rootPage {
+		t.Fatal("agent-picker root breadcrumb did not navigate back")
 	}
 }
 
@@ -417,6 +510,42 @@ func TestRolePageUsesBreadcrumbAndAlignedValues(t *testing.T) {
 	}
 	if colOf(provider, "Work") != colOf(model, "deepseek-v4-flash") {
 		t.Fatalf("role values misaligned:\n%s\n%s", provider, model)
+	}
+}
+
+func TestSessionBreadcrumbSegmentsNavigateThroughHost(t *testing.T) {
+	for _, width := range []int{28, 90} {
+		base := types.Settings{Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {Model: "model"}}}}
+		s := New(theme.DefaultDark(), base, base, nil)
+		host := ui.NewHost(theme.DefaultDark(), s)
+		host.Resize(width, 16)
+		for _, picker := range []page{modelPage, providerPage} {
+			s.openRole("default")
+			if picker == modelPage {
+				s.openModelPicker()
+			} else {
+				s.openProviderPicker()
+			}
+			host.MarkLayout()
+			host.Layout()
+			host.Handle(tea.MouseClickMsg{X: rendering.VisibleWidth("Session Settings"), Y: 0, Button: tea.MouseLeft})
+			if s.page != picker {
+				t.Fatal("breadcrumb separator navigated as if it were a label")
+			}
+			parentX := rendering.VisibleWidth("Session Settings"+ui.TitleBreadcrumbSeparator) + 1
+			host.Handle(tea.MouseClickMsg{X: parentX, Y: 0, Button: tea.MouseLeft})
+			if s.page != rolePage || s.role != "default" {
+				t.Fatalf("intermediate breadcrumb did not return to Main Agent at width %d", width)
+			}
+			s.formModel.SetValue(fieldContextCompaction, ui.StringValue("42"))
+			host.Handle(tea.MouseClickMsg{X: 1, Y: 0, Button: tea.MouseLeft})
+			if s.page != rootPage {
+				t.Fatal("form-owned root breadcrumb did not return to session settings")
+			}
+			if value := s.ToSettings().SessionOverrides["default"].ContextCompactionPercent; value == nil || *value != 42 {
+				t.Fatal("breadcrumb navigation dropped the staged role edit")
+			}
+		}
 	}
 }
 

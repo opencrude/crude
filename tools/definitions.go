@@ -485,7 +485,6 @@ var AgentTools = []ToolDef{
 					"allowed_tools":{"type":"array","items":{"type":"string"},"description":"Explicit tool whitelist. If provided, only these tools are available (intersected with category defaults)."},
 					"denied_tools":{"type":"array","items":{"type":"string"},"description":"Explicit tool blacklist. These tools are removed (unioned with category defaults)."},
 					"file_ownership":{"type":"array","items":{"type":"string"},"description":"Optional pre-declared paths this sub-agent claims exclusive write access to."},
-					"timeout_seconds":{"type":"integer","minimum":1,"maximum":86400,"description":"Optional maximum runtime in seconds (up to 24 hours). Omit for no runtime deadline; session/root termination still cancels the child."},
 					"wait":{"type":"boolean","description":"If true (default), block until the sub-agent completes. If false, return immediately; completion automatically notifies the parent. Do not poll routinely."}
 				},
 				"required":["description"]

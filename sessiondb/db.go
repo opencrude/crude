@@ -166,6 +166,7 @@ CREATE TABLE IF NOT EXISTS session_agent_settings (
 CREATE TABLE IF NOT EXISTS session_flags (
     session_id  TEXT PRIMARY KEY,
     multi_agent INTEGER,
+    main_agent TEXT NOT NULL DEFAULT '',
     FOREIGN KEY (session_id) REFERENCES sessions(id)
 );
 

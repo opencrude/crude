@@ -220,25 +220,32 @@ func TestSettingsSurfaceTemplateBrowsingDoesNotSwitchMainAgentAccount(t *testing
 func TestSafetyAutoPermissionDefaultsAndRoundTrip(t *testing.T) {
 	th := theme.DefaultDark()
 	m := New(th, types.AppSettings{Accounts: map[string]provider.Account{"review": {ID: "review", ProviderID: "openai", Label: "Review"}}}, []types.ProviderPreset{{ID: "openai", Name: "OpenAI"}})
-	if got := m.ValueForTest(catSafety, fieldAutoPermission); got != "off" {
+	root := NewSurface(th, m)
+	m.SelectCategory(catAgents)
+	c := root.agents
+	c.begin("role/auto-review", false)
+	if got := c.draft.Field("agent-enabled").Value.String(); got != "off" {
 		t.Fatalf("default enabled = %q, want off", got)
 	}
-	if got := m.ValueForTest(catSafety, fieldAutoPermAccount); got != "" {
+	if got := c.draft.Field(fieldConnection).Value.String(); got != "" {
 		t.Fatalf("default provider = %q, want unconfigured", got)
 	}
-	if got := m.ValueForTest(catSafety, fieldAutoPermModel); got != "" {
+	if got := c.draft.Field(fieldModel).Value.String(); got != "" {
 		t.Fatalf("default model = %q, want unconfigured", got)
 	}
 
-	m.SetValueForTest(catSafety, fieldAutoPermission, "on")
-	m.SetValueForTest(catSafety, fieldAutoPermAccount, "review")
-	m.SetValueForTest(catSafety, fieldAutoPermModel, "gpt-review")
-	m.SetValueForTest(catSafety, fieldAutoPermDenyMode, "deny")
-	m.SetValueForTest(catSafety, fieldAutoPermTimeout, "13")
-	m.SetValueForTest(catSafety, fieldAutoPermOutputTokens, "72")
-	m.SetValueForTest(catSafety, fieldAutoPermInputBytes, "3072")
-	m.SetValueForTest(catSafety, fieldAutoPermReviews, "9")
-	m.SetValueForTest(catSafety, fieldAutoPermInstructions, " No deployments. ")
+	c.draft.SetValue("agent-enabled", ui.StringValue("on"))
+	c.draft.SetValue(fieldConnection, ui.StringValue("review"))
+	c.draft.SetValue(fieldModel, ui.StringValue("gpt-review"))
+	c.draft.SetValue("agent-instructions", ui.StringValue(" No deployments. "))
+	if !c.apply() {
+		t.Fatal("configured Auto Review Agent could not be applied")
+	}
+	m.SetValueForTest(catAutoReviewPolicy, fieldAutoPermDenyMode, "deny")
+	m.SetValueForTest(catAutoReviewPolicy, fieldAutoPermTimeout, "13")
+	m.SetValueForTest(catAutoReviewPolicy, fieldAutoPermOutputTokens, "72")
+	m.SetValueForTest(catAutoReviewPolicy, fieldAutoPermInputBytes, "3072")
+	m.SetValueForTest(catAutoReviewPolicy, fieldAutoPermReviews, "9")
 	auto := m.AppSettings().Safety.AutoPermission
 	if auto.Enabled != "on" || auto.Provider != "openai" || auto.Model != "gpt-review" || auto.DenyMode != "deny" ||
 		auto.TimeoutSeconds != 13 || auto.MaxOutputTokens != 72 || auto.MaxInputBytes != 3072 ||
@@ -259,12 +266,14 @@ func TestSafetyAutoPermissionProviderAndModelPickerAreExplicit(t *testing.T) {
 		Safety:   types.SafetySettings{AutoPermission: modeltypes.AutoPermissionSettings{Provider: "openrouter", Model: "reviewer-old"}},
 	}, []types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}, {ID: "openai", Name: "OpenAI"}})
 
-	m.SetValueForTest(catSafety, fieldAutoPermAccount, "review")
-	if got := m.ValueForTest(catSafety, fieldAutoPermModel); got != "" {
+	root := NewSurface(th, m)
+	m.SelectCategory(catAgents)
+	root.agents.begin("role/auto-review", false)
+	m.SetValueForTest(catAgents, fieldConnection, "review")
+	if got := m.ValueForTest(catAgents, fieldModel); got != "" {
 		t.Fatalf("provider switch selected model %q; reviewer must stay explicitly unconfigured", got)
 	}
-	m.SelectCategory(catSafety)
-	cmd := m.OpenSelect(fieldAutoPermModel)
+	cmd := m.OpenSelect(fieldModel)
 	if cmd == nil {
 		t.Fatal("opening auto-permission model did not use the standard fetch workflow")
 	}
@@ -272,17 +281,19 @@ func TestSafetyAutoPermissionProviderAndModelPickerAreExplicit(t *testing.T) {
 	if !ok || request.ProviderID != "openai" || request.BaseURL != "https://api.example/v1" || request.APIKey != "secret" {
 		t.Fatalf("model fetch request = %#v", request)
 	}
-	field := m.currentForm().Field(fieldAutoPermModel)
+	field := m.currentForm().Field(fieldModel)
 	if !field.Loading {
 		t.Fatal("auto-permission model picker did not enter loading state")
 	}
-	updated, _ := m.Update(ModelsMsg{ProviderID: "openai", AccountID: "review", Generation: request.Generation, Models: []types.ModelEntry{{ID: "gpt-5-mini", Name: "GPT-5 mini"}}})
-	m = &updated
-	field = m.currentForm().Field(fieldAutoPermModel)
+	_, _ = m.Update(ModelsMsg{ProviderID: "openai", AccountID: "review", Generation: request.Generation, Models: []types.ModelEntry{{ID: "gpt-5-mini", Name: "GPT-5 mini"}}})
+	field = m.currentForm().Field(fieldModel)
 	if field.Loading || len(field.Options) != 1 || field.Options[0].ID != "gpt-5-mini" {
 		t.Fatalf("auto-permission model picker after fetch = %+v", field)
 	}
-	m.SetValueForTest(catSafety, fieldAutoPermModel, "gpt-5-mini")
+	m.SetValueForTest(catAgents, fieldModel, "gpt-5-mini")
+	if !root.agents.apply() {
+		t.Fatal("reviewer model could not be applied")
+	}
 	if got := m.AppSettings().Safety.AutoPermission.Model; got != "gpt-5-mini" {
 		t.Fatalf("picked reviewer model = %q", got)
 	}

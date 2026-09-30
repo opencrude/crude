@@ -9,7 +9,7 @@ import (
 	"crude/tui/ui"
 )
 
-func TestAutoPermissionControlsPaintInSafetySection(t *testing.T) {
+func TestSecurityPagesSeparateCommandSafetyFromAutoReviewPolicy(t *testing.T) {
 	for _, width := range []int{90, 140} {
 		th := theme.DefaultDark()
 		model := New(th, types.AppSettings{}, nil)
@@ -20,10 +20,24 @@ func TestAutoPermissionControlsPaintInSafetySection(t *testing.T) {
 		host.Layout()
 		buf := surface.NewCellBuffer(width, 42)
 		host.Paint(buf)
-		for _, text := range []string{"Auto permissions", "Denied review", "Output token cap", "Save", "Cancel"} {
+		for _, text := range []string{"Command policy", "Unknown commands", "Save", "Cancel"} {
 			if !bufferContains(buf, text) {
 				t.Errorf("width %d missing rendered %q:\n%s", width, text, bufferPlain(buf))
 			}
+		}
+		model.SelectCategory(catAutoReviewPolicy)
+		root.refreshForm()
+		host.MarkLayout()
+		host.Layout()
+		buf.Clear()
+		host.Paint(buf)
+		for _, text := range []string{"Review outcomes", "Denied review", "Output token cap"} {
+			if !bufferContains(buf, text) {
+				t.Errorf("width %d missing Auto Review policy %q", width, text)
+			}
+		}
+		if bufferContains(buf, "Protections") {
+			t.Errorf("width %d still renders the non-interactive Protections page", width)
 		}
 	}
 }

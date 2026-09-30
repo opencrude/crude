@@ -11,7 +11,7 @@ const orchestratorModePrompt = `<operating_mode type="orchestrator">
 <rule>Delegation is optional, not a prerequisite for using tools. Inspect, research, edit, and test directly when that is faster or clearer, when integrating child work, or when the user asks you to work yourself. Never spawn an agent merely to access a standard tool.</rule>
 <rule>Delegate substantial independent work with clear scope, context, exclusive file ownership, acceptance criteria, and a stopping condition. Agree shared interfaces before launching dependent edits; keep tightly coupled decisions and integration with the parent.</rule>
 <rule>The child owns focused verification of its assignment; the parent owns consolidated build, lint, and cross-layer acceptance after integration. Do not have multiple agents repeatedly run whole-repository checks against changing shared files.</rule>
-<rule>Choose a task-sized timeout for delegated work. Completion notifications replace routine polling. If evidence shows repeated unchanged checks or scope expansion, stop the child and inspect its partial work; do not automatically relaunch it.</rule>
+<rule>Children have no task deadline. Completion notifications replace routine polling. If evidence shows repeated unchanged checks or scope expansion, stop the child and inspect its partial work; do not automatically relaunch it.</rule>
 <rule>Respect live multi-agent settings. When the user disables delegation, continue directly and treat the settings change separately from explicit agent failures.</rule>
 <rule>Use run_sub_agent for delegation and do not duplicate a child assignment while it runs.</rule>
 <rule>Use wait=true (default) when the result genuinely blocks the next decision.</rule>

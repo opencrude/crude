@@ -4,6 +4,7 @@ import (
 	"context"
 	"reflect"
 	"strconv"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -42,6 +43,7 @@ const (
 	WorkspaceSettingsTemplatesID      ui.ComponentID = "workspace-settings/templates"
 	WorkspaceSettingsTemplateAddID    ui.ComponentID = "workspace-settings/template-add"
 	WorkspaceSettingsTemplateBarID    ui.ComponentID = "workspace-settings/template-actions"
+	WorkspaceSettingsTemplateMoreID   ui.ComponentID = "workspace-settings/template-more-actions"
 	WorkspaceSettingsTemplateEditID   ui.ComponentID = "workspace-settings/template-editor-actions"
 	WorkspaceSettingsTemplateScrollID ui.ComponentID = "workspace-settings/template-scroll"
 	WorkspaceSettingsAccountFilterID  ui.ComponentID = "workspace-settings/account-filter"
@@ -65,6 +67,7 @@ type WorkspaceSettingsSurface struct {
 	templateFilter    *settingsTableFilter
 	templateAdd       *ui.ActionBar
 	templateBar       *ui.ActionBar
+	templateMoreBar   *ui.ActionBar
 	templateEditorBar *ui.ActionBar
 	templateScroll    *ui.ScrollbarControl
 	accountAdd        *ui.ActionBar
@@ -155,10 +158,13 @@ func NewSurface(th *theme.Theme, model *Model) *WorkspaceSettingsSurface {
 	s.templateAdd.SetExitActions("templates.add.forward", "templates.add.backward")
 	s.templateBar = ui.NewActionBar(WorkspaceSettingsTemplateBarID, tokens,
 		ui.ActionBarButton{Label: "Edit", Action: "settings.template.edit", Enabled: false},
-		ui.ActionBarButton{Label: "Clone", Action: "settings.template.clone", Enabled: false},
-		ui.ActionBarButton{Label: "Remove", Action: "settings.template.remove", Variant: ui.VariantDanger, Enabled: false})
+		ui.ActionBarButton{Label: "Clone", Action: "settings.template.clone", Enabled: false})
 	s.templateBar.SetAlignEnd(false)
 	s.templateBar.SetExitActions("templates.actions.forward", "templates.actions.backward")
+	s.templateMoreBar = ui.NewActionBar(WorkspaceSettingsTemplateMoreID, tokens,
+		ui.ActionBarButton{Label: "Remove", Action: "settings.template.remove", Variant: ui.VariantDanger, Enabled: false})
+	s.templateMoreBar.SetAlignEnd(false)
+	s.templateMoreBar.SetExitActions("templates.more.forward", "templates.more.backward")
 	s.templateEditorBar = ui.NewActionBar(WorkspaceSettingsTemplateEditID, tokens,
 		ui.ActionBarButton{Label: "Save template", Action: "settings.template.commit", Variant: ui.VariantPrimary, Enabled: true},
 		ui.ActionBarButton{Label: "Back", Action: "settings.template.cancel", Enabled: true})
@@ -220,9 +226,10 @@ func (s *WorkspaceSettingsSurface) syncTemplateControls() {
 	}
 	_, selected := s.model.providers[s.model.providerID]
 	s.templateAdd.SetEnabled("settings.template.add", !s.model.accountBusy)
-	for _, action := range []string{"settings.template.edit", "settings.template.clone", "settings.template.remove"} {
+	for _, action := range []string{"settings.template.edit", "settings.template.clone"} {
 		s.templateBar.SetEnabled(action, selected && !s.model.accountBusy)
 	}
+	s.templateMoreBar.SetEnabled("settings.template.remove", selected && !s.model.accountBusy)
 	if s.model.providerEditor != nil {
 		label := "Save template"
 		if s.model.providerEditor.isNew {
@@ -276,7 +283,7 @@ func (s *WorkspaceSettingsSurface) Children() []ui.Component {
 	case s.providersOpen() && s.model.providerEditor != nil:
 		children = append(children, s.templateEditorBar)
 	case s.providersOpen():
-		children = append(children, s.templates, s.templateFilter, s.templateAdd, s.templateBar)
+		children = append(children, s.templates, s.templateFilter, s.templateAdd, s.templateBar, s.templateMoreBar)
 		if s.templateScroll.Needed() {
 			children = append(children, s.templateScroll)
 		}
@@ -340,7 +347,7 @@ func (s *WorkspaceSettingsSurface) SetTokens(tokens *ui.TokenSet) {
 	if s.templateScroll != nil {
 		s.templateScroll.SetTokens(tokens)
 	}
-	for _, bar := range []*ui.ActionBar{s.templateAdd, s.templateBar, s.templateEditorBar} {
+	for _, bar := range []*ui.ActionBar{s.templateAdd, s.templateBar, s.templateMoreBar, s.templateEditorBar} {
 		if bar != nil {
 			bar.SetTokens(tokens)
 		}
@@ -490,16 +497,24 @@ func (s *WorkspaceSettingsSurface) WindowTitle() string {
 // counts its rows; once an editor opens it carries the page hierarchy
 // ("Accounts ▸ Add account") so the user always knows where they are.
 func (s *WorkspaceSettingsSurface) PaneTitle() string {
+	return strings.Join(s.paneTitleParts(), s.breadcrumbSeparator())
+}
+
+func (s *WorkspaceSettingsSurface) breadcrumbSeparator() string {
 	sep := " / "
 	if s.tokens != nil {
 		sep = " " + s.tokens.Glyphs().BreadcrumbSep + " "
 	}
+	return sep
+}
+
+func (s *WorkspaceSettingsSurface) paneTitleParts() []string {
 	if s.model == nil {
-		return ""
+		return nil
 	}
 	if s.agentsOpen() {
 		if s.agents.draft == nil {
-			return "Agents"
+			return []string{"Agents"}
 		}
 		label := s.agents.id
 		if label == "" {
@@ -510,32 +525,32 @@ func (s *WorkspaceSettingsSurface) PaneTitle() string {
 				label = role.label
 			}
 		}
-		return "Agents" + sep + label
+		return []string{"Agents", label}
 	}
 	if s.model.accountEditor != nil {
 		action := "Edit account"
 		if s.model.accountEditor.isNew {
 			action = "Add account"
 		}
-		return "Accounts" + sep + action
+		return []string{"Accounts", action}
 	}
 	if s.model.providerEditor != nil {
 		action := "Edit template"
 		if s.model.providerEditor.isNew {
 			action = "Add template"
 		}
-		return "Providers" + sep + action
+		return []string{"Providers", action}
 	}
 	if s.accountsOpen() {
 		if len(s.model.accounts) > 0 {
-			return "Accounts  " + strconv.Itoa(len(s.model.accounts))
+			return []string{"Accounts  " + strconv.Itoa(len(s.model.accounts))}
 		}
-		return "Accounts"
+		return []string{"Accounts"}
 	}
 	if s.providersOpen() {
-		return "Provider templates  " + strconv.Itoa(len(s.model.providers))
+		return []string{"Provider templates  " + strconv.Itoa(len(s.model.providers))}
 	}
-	return ""
+	return nil
 }
 
 // RequestClose applies the same dirty-editor and preference-draft policy to
@@ -629,33 +644,11 @@ func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 				s.accountAuthBar.Layout(ctx, ui.Rect{X: formX, Y: min(topPad+formH-2, topPad+4+s.form.PreferredHeight(formH-4)), W: formW, H: 1})
 			}
 		} else {
-			headerRows, addW := 3, min(18, formW/2)
-			if formW < 42 {
-				headerRows, addW = 4, formW
-			}
-			// Search leads the header row; the add button trails it.
-			filter := ui.Rect{X: formX, Y: topPad + 1, W: max(1, formW-addW-2), H: 1}
-			add := ui.Rect{X: formX + filter.W + 2, Y: topPad + 1, W: addW, H: 1}
-			if headerRows == 4 {
-				filter = ui.Rect{X: formX, Y: topPad + 1, W: formW, H: 1}
-				add = ui.Rect{X: formX, Y: topPad + 2, W: formW, H: 1}
-			}
-			s.accountFilter.Layout(ctx, filter)
-			s.accountAdd.Layout(ctx, add)
-			actionRows := 1
-			if formW < 73 {
-				actionRows = 2
-			}
+			s.accountFilter.Layout(ctx, ui.Rect{X: formX, Y: topPad + 1, W: formW, H: 1})
+			actionY := s.layoutCatalogActions(ctx, formX, formW, topPad+formH-1, s.accountAdd, s.accountBar, s.accountMoreBar)
 			// Keep one row between the table and actions for errors/progress.
-			tableH := max(1, formH-headerRows-2-actionRows)
-			s.accounts.Layout(ctx, ui.Rect{X: formX, Y: topPad + headerRows, W: formW, H: tableH})
-			if actionRows == 1 {
-				s.accountBar.Layout(ctx, ui.Rect{X: formX, Y: topPad + formH - 2, W: min(28, formW), H: 1})
-				s.accountMoreBar.Layout(ctx, ui.Rect{X: formX + 28, Y: topPad + formH - 2, W: max(1, formW-28), H: 1})
-			} else {
-				s.accountBar.Layout(ctx, ui.Rect{X: formX, Y: topPad + formH - 3, W: formW, H: 1})
-				s.accountMoreBar.Layout(ctx, ui.Rect{X: formX, Y: topPad + formH - 2, W: formW, H: 1})
-			}
+			tableH := max(1, actionY-(topPad+3)-2)
+			s.accounts.Layout(ctx, ui.Rect{X: formX, Y: topPad + 3, W: formW, H: tableH})
 			if s.accountScroll.NeededForViewport(max(1, tableH-1)) {
 				list := s.accounts.Bounds()
 				barW := min(ui.ScrollbarWidth+1, list.W)
@@ -671,23 +664,11 @@ func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		if s.model.providerEditor != nil {
 			formRect = ui.Rect{X: formX, Y: topPad + 2, W: formW, H: max(1, formH-3)}
 		} else {
-			headerRows, addW := 3, min(19, formW/2)
-			if formW < 42 {
-				headerRows, addW = 4, formW
-			}
-			// Search leads the header row; the add button trails it.
-			filter := ui.Rect{X: formX, Y: topPad + 1, W: max(1, formW-addW-2), H: 1}
-			add := ui.Rect{X: formX + filter.W + 2, Y: topPad + 1, W: addW, H: 1}
-			if headerRows == 4 {
-				filter = ui.Rect{X: formX, Y: topPad + 1, W: formW, H: 1}
-				add = ui.Rect{X: formX, Y: topPad + 2, W: formW, H: 1}
-			}
-			s.templateFilter.Layout(ctx, filter)
-			s.templateAdd.Layout(ctx, add)
+			s.templateFilter.Layout(ctx, ui.Rect{X: formX, Y: topPad + 1, W: formW, H: 1})
+			actionY := s.layoutCatalogActions(ctx, formX, formW, topPad+formH-1, s.templateAdd, s.templateBar, s.templateMoreBar)
 			// Keep one row between the table and actions for errors/progress.
-			tableH := max(1, formH-headerRows-3)
-			s.templates.Layout(ctx, ui.Rect{X: formX, Y: topPad + headerRows, W: formW, H: tableH})
-			s.templateBar.Layout(ctx, ui.Rect{X: formX, Y: topPad + formH - 2, W: formW, H: 1})
+			tableH := max(1, actionY-(topPad+3)-2)
+			s.templates.Layout(ctx, ui.Rect{X: formX, Y: topPad + 3, W: formW, H: tableH})
 			if s.templateScroll.NeededForViewport(max(1, tableH-1)) {
 				r := s.templates.Bounds()
 				barW := min(ui.ScrollbarWidth+1, r.W)
@@ -701,7 +682,7 @@ func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	// One authoritative viewport height per layout. Laying out the full form
 	// first would clamp away a scrollbar drag before the shorter tab body ran.
 	if s.agentsOpen() {
-		s.agents.Layout(ctx, ui.Rect{X: formX, Y: topPad, W: formW, H: r.H - topPad})
+		s.agents.Layout(ctx, ui.Rect{X: formX, Y: topPad, W: formW, H: formH})
 	} else {
 		s.agents.Layout(ctx, ui.Rect{})
 	}
@@ -746,6 +727,41 @@ func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		s.divider.SetCurrentFirst(leftW)
 		s.divider.Layout(ctx, ui.Rect{X: railX + leftW, Y: 0, W: gap, H: max(0, r.H-2)})
 	}
+}
+
+// layoutCatalogActions keeps every catalog's first button left-aligned and
+// anchors its last action row just above the shared settings footer.
+func (s *WorkspaceSettingsSurface) layoutCatalogActions(ctx ui.LayoutContext, x, width, bottom int, groups ...*ui.ActionBar) int {
+	gap := s.tokens.ButtonGap()
+	widths := make([]int, len(groups))
+	rows := make([]int, len(groups))
+	row, used := 0, 0
+	for i, group := range groups {
+		w := group.Measure(ctx, ui.Loose(1024, 1)).W
+		if used > 0 && used+gap+w > width {
+			row++
+			used = 0
+		}
+		rows[i], widths[i] = row, min(w, width)
+		if used > 0 {
+			used += gap
+		}
+		used += widths[i]
+	}
+	first := bottom - row
+	used = 0
+	previous := -1
+	for i, group := range groups {
+		if rows[i] != previous {
+			used = 0
+		} else {
+			used += gap
+		}
+		group.Layout(ctx, ui.Rect{X: x + used, Y: first + rows[i], W: widths[i], H: 1})
+		used += widths[i]
+		previous = rows[i]
+	}
+	return first
 }
 
 func (s *WorkspaceSettingsSurface) topPad() int {
@@ -823,6 +839,8 @@ func (s *WorkspaceSettingsSurface) Paint(buf *surface.CellBuffer, originX, origi
 		noticeY := s.accountBar.Bounds().Y - 1
 		if s.model.accountEditor != nil {
 			noticeY = s.accountEditorBar.Bounds().Y - 2
+		} else if s.accountAdd.Bounds().Y < s.accountBar.Bounds().Y {
+			noticeY = s.accountAdd.Bounds().Y - 1
 		}
 		if s.model.accountError != "" && s.model.accountEditor == nil {
 			buf.WriteString(ox+contentX, oy+noticeY, rendering.TruncateVisual(s.model.accountError, contentW, ""), s.tokens.Color(ui.ColorError), bg, 0)
@@ -842,6 +860,8 @@ func (s *WorkspaceSettingsSurface) Paint(buf *surface.CellBuffer, originX, origi
 		noticeY := s.templateBar.Bounds().Y - 1
 		if s.model.providerEditor != nil {
 			noticeY = s.templateEditorBar.Bounds().Y - 2
+		} else if s.templateAdd.Bounds().Y < s.templateBar.Bounds().Y {
+			noticeY = s.templateAdd.Bounds().Y - 1
 		}
 		if s.model.providerError != "" && s.model.providerEditor == nil {
 			buf.WriteString(ox+contentX, oy+noticeY, rendering.TruncateVisual(s.model.providerError, contentW, ""), s.tokens.Color(ui.ColorError), bg, 0)
@@ -867,9 +887,20 @@ func (s *WorkspaceSettingsSurface) Paint(buf *surface.CellBuffer, originX, origi
 //   - form (no select open): leave form → categories (form.exit.backward)
 //   - categories / empty search / actions / surface: CancelMsg (close +
 //     revert live theme preview to the last saved preset)
-func (s *WorkspaceSettingsSurface) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
+func (s *WorkspaceSettingsSurface) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if s.model == nil {
 		return ui.EventResult{}
+	}
+	if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft && ctx.LocalY == s.topPad() {
+		parts := s.paneTitleParts()
+		if len(parts) > 1 && ui.BreadcrumbIndex(parts, s.breadcrumbSeparator(), ctx.LocalX-s.contentRect.X, s.contentRect.W) == 0 {
+			if s.accountsOpen() && s.model.accountEditor != nil {
+				return s.cancelAccountEdit()
+			}
+			if s.providersOpen() && s.model.providerEditor != nil {
+				return s.cancelTemplateEditor()
+			}
+		}
 	}
 	// Custom events (paste, file drops) belong to the focused text control.
 	// Rejecting them here left the value inserted but the horizontal
@@ -1133,10 +1164,16 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 		s.FocusTemplateFilter()
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	case "templates.actions.forward":
-		s.FocusActions()
+		s.focusID(WorkspaceSettingsTemplateMoreID)
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	case "templates.actions.backward":
 		s.FocusTemplates()
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+	case "templates.more.forward":
+		s.FocusActions()
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+	case "templates.more.backward":
+		s.focusID(WorkspaceSettingsTemplateBarID)
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	case "templates.editor.forward":
 		s.form.FocusFirst()

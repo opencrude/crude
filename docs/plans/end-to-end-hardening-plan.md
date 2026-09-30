@@ -28,7 +28,7 @@ Canonical supporting documents remain authoritative for their areas:
 
 | Workstream | Status | Current evidence / next boundary |
 |---|---|---|
-| Context preservation and configurable compaction | LANDED | Provider-measured occupancy plus semantic deltas; canonical replay metadata; four-stage Aeron extraction into code-authored root/child checkpoints; durable boundary lifecycle; typed runtime messages; separate memory context; passive new-session resume; explicit 0 disables |
+| Context preservation and configurable compaction | LANDED, hardened | Provider-measured occupancy plus semantic deltas; connection-scoped capacities and output reserves; complete oversized-source chunk-and-reduce; progress-gated overflow recovery; four-stage atomic Aeron checkpoints; durable lifecycle and archive; passive resume; explicit 0 disables |
 | Cumulative token header and BTW marker | LANDED | Session totals plus per-agent context; resume restores root and child totals; plain `total` labels; `✎` note marker |
 | Chat color persistence | LANDED | RebuildItems now preserves parallel native rows; cache mismatch re-renders styled content; real 126-round session replay and work budgets pass |
 | Progress-aware HTTP stall recovery | LANDED | Adaptive byte-progress monitor; upload/header/download blackhole retries; partial replay suppression/divergence safety; provider race suite passes |
@@ -110,6 +110,14 @@ defaults must be proven by live/fault tests, not guessed into permanence:
 - ceiling: 5 minutes
 - reset only when byte count increases
 - very low but positive throughput never times out solely for being slow
+
+These initial/minimum/maximum limits are now configurable in provider-template
+and account Connection tuning. Settings and client construction reject
+minimum > initial or initial > maximum instead of silently clamping configured
+values. The overall request timeout is enforced across streaming and retry
+waits as well as non-streaming calls, using the earlier of it and the caller's
+deadline. Regression coverage includes real HTTP header/body pauses, account
+inheritance, saved configuration, and resume.
 
 #### Retry safety
 

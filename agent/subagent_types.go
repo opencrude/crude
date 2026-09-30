@@ -16,14 +16,13 @@ type AgentID string
 type SubAgentStatus string
 
 const (
-	SubAgentCompleted     SubAgentStatus = "completed"
-	SubAgentCrashed       SubAgentStatus = "crashed"
-	SubAgentFailedTimeout SubAgentStatus = "failed_timeout"
-	SubAgentFailedQuota   SubAgentStatus = "failed_quota"
-	SubAgentFailedError   SubAgentStatus = "failed_error"
-	SubAgentFailedPolicy  SubAgentStatus = "failed_policy"
-	SubAgentCancelled     SubAgentStatus = "cancelled"
-	SubAgentRunning       SubAgentStatus = "running"
+	SubAgentCompleted    SubAgentStatus = "completed"
+	SubAgentCrashed      SubAgentStatus = "crashed"
+	SubAgentFailedQuota  SubAgentStatus = "failed_quota"
+	SubAgentFailedError  SubAgentStatus = "failed_error"
+	SubAgentFailedPolicy SubAgentStatus = "failed_policy"
+	SubAgentCancelled    SubAgentStatus = "cancelled"
+	SubAgentRunning      SubAgentStatus = "running"
 )
 
 const (
@@ -49,7 +48,6 @@ type SubAgentSpec struct {
 	Policy           safety.Policy `json:"-"`
 	AllowedTools     []string      `json:"allowed_tools"`
 	DeniedTools      []string      `json:"denied_tools"`
-	Timeout          time.Duration `json:"timeout"`
 	Depth            int           `json:"depth"`
 	FileOwnership    []string      `json:"file_ownership"`
 	ParentID         AgentID       `json:"parent_id"`
@@ -58,10 +56,11 @@ type SubAgentSpec struct {
 	HistoryMessageID string        `json:"history_message_id,omitempty"`
 
 	ModelContextWindow int      `json:"model_context_window,omitempty"`
+	ModelMaxOutput     int      `json:"model_max_output,omitempty"`
 	ModelInputPrice    float64  `json:"model_input_price,omitempty"`
 	ModelOutputPrice   float64  `json:"model_output_price,omitempty"`
 	ModelCachePrice    float64  `json:"model_cache_price,omitempty"`
-	ModelModalities    []string `json:"model_modalities,omitempty"`
+	ModelModalities    []string `json:"model_modalities"`
 	// Sampling overrides; nil leaves the backend default in effect.
 	ModelTemperature         *float64 `json:"model_temperature,omitempty"`
 	ModelTopP                *float64 `json:"model_top_p,omitempty"`

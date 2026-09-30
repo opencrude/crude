@@ -57,6 +57,7 @@ func TestSettingsNavigation_TabOrderFromEveryRegion(t *testing.T) {
 		WorkspaceSettingsTemplatesID,
 		WorkspaceSettingsTemplateAddID,
 		WorkspaceSettingsTemplateBarID,
+		WorkspaceSettingsTemplateMoreID,
 		WorkspaceSettingsActionID,
 		WorkspaceSettingsScopeID,
 	}

@@ -38,6 +38,11 @@ func LookupContextWindow(modelID string) int {
 		return c
 	}
 	dynamicContextsMu.RUnlock()
+	if catalog := activeModelCatalog.Load(); catalog != nil {
+		if meta, ok := catalog.Lookup(modelID); ok && meta.ContextWindow > 0 {
+			return meta.ContextWindow
+		}
+	}
 
 	for _, entry := range contextHints {
 		if entry.pattern == "" {

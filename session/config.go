@@ -2,8 +2,11 @@ package session
 
 import (
 	"crude/provider"
+	"crude/sessiondb"
 	ttypes "crude/types"
 	"fmt"
+	"slices"
+	"strings"
 )
 
 const (
@@ -24,6 +27,7 @@ const (
 )
 
 type CategoryConfig struct {
+	Enabled        *bool  `json:"enabled,omitempty"`
 	AccountID      string `json:"account_id,omitempty"`
 	Model          string `json:"model,omitempty"`
 	ThinkingEffort string `json:"thinking_effort,omitempty"`
@@ -44,7 +48,7 @@ type CategoryConfig struct {
 	ModelCachePrice    float64 `json:"model_cache_price,omitempty"`
 	// Modalities lists accepted input types beyond text (image, pdf,
 	// video, audio).
-	ModelModalities    []string `json:"model_modalities,omitempty"`
+	ModelModalities    []string `json:"model_modalities"`
 	ModelSupportsTools bool     `json:"model_supports_tools,omitempty"`
 	ModelMaxOutput     int      `json:"model_max_output,omitempty"`
 	// Sampling overrides; nil leaves the backend default in effect.
@@ -75,6 +79,13 @@ type AgentProfileConfig = ttypes.AgentProfileSettings
 // configuration at read time.
 func DefaultAgentsConfig() AgentsConfig {
 	t := true
+	roles := ttypes.DefaultAgentRoleCategories()
+	delete(roles, CategoryDefault)
+	delete(roles, CategoryMemory)
+	categories := make(map[string]CategoryConfig, len(roles))
+	for name, role := range roles {
+		categories[name] = catSettingsToConfig(role)
+	}
 	return AgentsConfig{
 		Enabled:       true,
 		ActiveProfile: "default",
@@ -83,56 +94,16 @@ func DefaultAgentsConfig() AgentsConfig {
 			"default": {
 				MultiAgent: &t,
 				TurnLogs:   &t,
-				Categories: map[string]CategoryConfig{
-					CategoryResearcher: {
-						Policy:       "read-only",
-						Description:  "Gatherer — explores codebase, searches web, runs experiments",
-						AllowedTools: []string{"read_file", "glob_files", "grep_files", "list_directory", "web_search", "web_fetch", "arxiv_search", "write_report", "question"},
-						DeniedTools:  []string{"write_file", "edit_file", "delete_file", "move_file", "copy_file", "execute_command", "async_execute_command"},
-					},
-					CategoryCrafter: {
-						Policy:      "no-delete",
-						Description: "Implementer — writes code, edits files, runs tests",
-						DeniedTools: []string{"delete_file"},
-					},
-					CategoryAeron: {
-						Policy:      "read-only",
-						Description: "Grunt — formatting, linting, boilerplate, monitoring",
-						DeniedTools: []string{"delete_file", "move_file", "copy_file", "execute_command", "async_execute_command", "web_search", "web_fetch", "arxiv_search"},
-					},
-				},
+				Categories: categories,
 			},
 		},
-		AgentProfiles: map[string]AgentProfileConfig{
-			"explorer": {
-				Category:    CategoryResearcher,
-				Description: "Read-only codebase explorer for research and investigation",
-			},
-			"reviewer": {
-				Category:    CategoryResearcher,
-				Description: "Code reviewer with expensive model for thorough analysis",
-			},
-			"fixer": {
-				Category:    CategoryCrafter,
-				Description: "Implementation-focused agent for fixing bugs and writing code",
-			},
-			"tester": {
-				Category:    CategoryCrafter,
-				Description: "Test writer agent focused on writing and running tests",
-			},
-			"formatter": {
-				Category:    CategoryAeron,
-				Description: "Quick formatting and linting agent",
-			},
-			"monitor": {
-				Category:    CategoryAeron,
-				Description: "Watches running sub-agents and reports status",
-			},
-		},
+		AgentProfiles: ttypes.DefaultNamedAgents(),
 	}
 }
 
 type Config struct {
+	SelectedAgent        string // session-only root agent choice; never a workspace default
+	selectedMainOverride *sessiondb.AgentSettingOverride
 	// ActiveProvider is retained only as an app-settings projection. Runtime
 	// routing never reads it; each agent must select an account ID.
 	ActiveProvider  string
@@ -170,6 +141,7 @@ func (c *Config) providerForCategory(category CategoryConfig) (*provider.Provide
 		return nil, fmt.Errorf("account %q template %q: %w", account.ID, account.ProviderID, err)
 	}
 	p.Model = category.Model
+	p.SetContextWindow(category.ModelContextWindow)
 	p.SetThinkingEffort(category.ThinkingEffort)
 	p.SetSampling(category.ModelTemperature, category.ModelTopP)
 	if err := c.bindAccount(p, category.AccountID); err != nil {
@@ -264,6 +236,12 @@ func cloneBoolPtr(src *bool) *bool {
 // category. No provider or account is inferred when the category is absent.
 func (c *Config) GetActiveDefaultCategory() CategoryConfig {
 	prof, _ := activeProfileCfg(c)
+	if c.SelectedAgent != "" {
+		if selected, err := c.selectedMainCategory(prof); err == nil {
+			c.resolveCategoryDefaults(&selected)
+			return selected
+		}
+	}
 	for _, key := range []string{CategoryDefault, "main"} {
 		if cat, ok := prof.Categories[key]; ok {
 			if cat.Inherit == InheritWorkspace && c.workspaceMain != nil {
@@ -281,6 +259,123 @@ func (c *Config) GetActiveDefaultCategory() CategoryConfig {
 	cat := CategoryConfig{}
 	c.resolveCategoryDefaults(&cat)
 	return cat
+}
+
+// selectedMainCategory derives the selected root from its live role/profile,
+// then overlays only explicit session edits. The original workspace Main Agent
+// remains the inheritance source; resolving through GetCategoryConfig here
+// would recurse when a role inherits the selected main.
+func (c *Config) selectedMainCategory(prof ProfileConfig) (CategoryConfig, error) {
+	main := prof.Categories[CategoryDefault]
+	if main.Inherit == InheritWorkspace && c.workspaceMain != nil {
+		main = *c.workspaceMain
+	}
+	id := c.SelectedAgent
+	role := strings.TrimPrefix(id, "profile/")
+	var named *AgentProfileConfig
+	if role != id {
+		profile, exists := c.Agents.AgentProfiles[role]
+		if !exists {
+			return CategoryConfig{}, fmt.Errorf("selected agent %q was removed", role)
+		}
+		if profile.Enabled != nil && !*profile.Enabled {
+			return CategoryConfig{}, fmt.Errorf("selected agent %q is disabled", role)
+		}
+		named = &profile
+		role = profile.Category
+	}
+	if role != CategoryResearcher && role != CategoryCrafter && role != CategoryAeron {
+		return CategoryConfig{}, fmt.Errorf("unknown root agent role %q", role)
+	}
+	selected, exists := prof.Categories[role]
+	if !exists {
+		return CategoryConfig{}, fmt.Errorf("selected agent role %q is unavailable", role)
+	}
+	if selected.Enabled != nil && !*selected.Enabled {
+		return CategoryConfig{}, fmt.Errorf("selected agent role %q is disabled", role)
+	}
+	if selected.Inherit == InheritMain {
+		selected = main
+	} else if selected.Inherit == InheritWorkspace && c.workspaceMain != nil {
+		selected = *c.workspaceMain
+	}
+	if selected.AccountID == "" {
+		selected.AccountID = main.AccountID
+	}
+	if selected.Model == "" {
+		selected.Model = main.Model
+	}
+	if selected.ThinkingEffort == "" {
+		selected.ThinkingEffort = main.ThinkingEffort
+	}
+	if named != nil {
+		if named.AccountID != "" {
+			selected.AccountID = named.AccountID
+		}
+		if named.Model != "" {
+			if named.Model != selected.Model {
+				selected.ModelContextWindow = 0
+				selected.ModelInputPrice, selected.ModelOutputPrice, selected.ModelCachePrice = 0, 0, 0
+				selected.ModelModalities = nil
+				selected.ModelTemperature, selected.ModelTopP = nil, nil
+			}
+			selected.Model = named.Model
+		}
+		if named.ThinkingEffort != "" {
+			selected.ThinkingEffort = named.ThinkingEffort
+		}
+		if named.ModelContextWindow > 0 {
+			selected.ModelContextWindow = named.ModelContextWindow
+		}
+		if named.ModelMaxOutput > 0 {
+			selected.ModelMaxOutput = named.ModelMaxOutput
+		}
+		if named.ModelModalities != nil {
+			selected.ModelModalities = append([]string{}, named.ModelModalities...)
+		}
+		if named.ModelTemperature != nil {
+			selected.ModelTemperature = cloneFloatPtr(named.ModelTemperature)
+		}
+		if named.ModelTopP != nil {
+			selected.ModelTopP = cloneFloatPtr(named.ModelTopP)
+		}
+		if named.ContextCompactionPercent != nil {
+			selected.ContextCompactionPercent = cloneIntPtr(named.ContextCompactionPercent)
+		}
+		selected.Instructions = strings.TrimSpace(strings.Join([]string{selected.Instructions, named.Instructions}, "\n\n"))
+		selected.DeniedTools = append(append([]string(nil), selected.DeniedTools...), named.DeniedTools...)
+		if len(named.AllowedTools) > 0 {
+			selected.AllowedTools = append([]string(nil), named.AllowedTools...)
+		}
+	}
+	if over := c.selectedMainOverride; over != nil {
+		if over.AccountID != "" {
+			selected.AccountID = over.AccountID
+		}
+		if over.Model != "" {
+			selected.Model = over.Model
+		}
+		if over.ThinkingEffort != "" {
+			selected.ThinkingEffort = over.ThinkingEffort
+		}
+		if over.ContextCompactionPercent != nil {
+			selected.ContextCompactionPercent = cloneIntPtr(over.ContextCompactionPercent)
+		}
+	}
+	return selected, nil
+}
+
+func (c *Config) ValidateSelectedAgent() error {
+	if c.SelectedAgent == "" {
+		main := c.GetActiveDefaultCategory()
+		if main.Enabled != nil && !*main.Enabled {
+			return fmt.Errorf("main agent is disabled")
+		}
+		return nil
+	}
+	prof, _ := activeProfileCfg(c)
+	_, err := c.selectedMainCategory(prof)
+	return err
 }
 
 // GetCategoryConfig resolves a role's effective configuration live:
@@ -341,6 +436,16 @@ func (c *Config) GetCategoryConfig(category string) CategoryConfig {
 // agent live. Backward-compat Memory.Model (a bare override) is folded in when
 // the memory category sets no model of its own.
 func (c *Config) GetMemoryCategory() CategoryConfig {
+	memory := catSettingsToConfig(c.Memory.MemoryCategory)
+	finish := func(cat CategoryConfig) CategoryConfig {
+		if memory.Enabled != nil {
+			cat.Enabled = cloneBoolPtr(memory.Enabled)
+		}
+		if cat.Instructions == "" {
+			cat.Instructions = memory.Instructions
+		}
+		return cat
+	}
 	// A live session/workspace override stored in the active profile.
 	prof, _ := activeProfileCfg(c)
 	if cat, ok := prof.Categories[CategoryMemory]; ok {
@@ -351,36 +456,44 @@ func (c *Config) GetMemoryCategory() CategoryConfig {
 				resolved.AccountID = cat.AccountID
 			}
 			c.resolveCategoryDefaults(&resolved)
-			return resolved
+			return finish(resolved)
 		case cat.Inherit == InheritMain:
 			main := c.GetActiveDefaultCategory()
 			if cat.AccountID != "" {
 				main.AccountID = cat.AccountID
 			}
-			return main
+			return finish(main)
 		}
 		if cat.AccountID == "" {
 			main := c.GetActiveDefaultCategory()
 			cat.AccountID = main.AccountID
 		}
 		c.resolveCategoryDefaults(&cat)
-		return cat
+		return finish(cat)
 	}
-	cat := catSettingsToConfig(c.Memory.MemoryCategory)
+	cat := memory
 	// A legacy bare model override still applies when no explicit memory
 	// category model is set.
 	if cat.Model == "" && c.Memory.Model != "" {
 		cat.Model = c.Memory.Model
 	}
-	if cat.Model != "" || cat.AccountID != "" || cat.ThinkingEffort != "" {
-		if cat.AccountID == "" {
-			main := c.GetActiveDefaultCategory()
-			cat.AccountID = main.AccountID
-		}
-		c.resolveCategoryDefaults(&cat)
-		return cat
+	main := c.GetActiveDefaultCategory()
+	if cat.AccountID == "" && cat.Model == "" && cat.ThinkingEffort == "" && cat.ModelMaxOutput == 0 && cat.ModelContextWindow == 0 && cat.ModelTemperature == nil && cat.ModelTopP == nil && cat.ModelModalities == nil {
+		main.Enabled = cloneBoolPtr(cat.Enabled)
+		main.Instructions = cat.Instructions
+		return main
 	}
-	return c.GetActiveDefaultCategory()
+	if cat.AccountID == "" {
+		cat.AccountID = main.AccountID
+	}
+	if cat.Model == "" {
+		cat.Model = main.Model
+	}
+	if cat.ThinkingEffort == "" {
+		cat.ThinkingEffort = main.ThinkingEffort
+	}
+	c.resolveCategoryDefaults(&cat)
+	return cat
 }
 
 func (c *Config) resolveCategoryDefaults(cat *CategoryConfig) {
@@ -406,6 +519,7 @@ func activeProfileCfg(cfg *Config) (ProfileConfig, string) {
 
 func catConfigToSettings(v CategoryConfig) ttypes.CategorySettings {
 	return ttypes.CategorySettings{
+		Enabled:      cloneBoolPtr(v.Enabled),
 		Instructions: v.Instructions,
 		AllowedTools: append([]string(nil), v.AllowedTools...), DeniedTools: append([]string(nil), v.DeniedTools...),
 		AccountID:                v.AccountID,
@@ -429,6 +543,7 @@ func catConfigToSettings(v CategoryConfig) ttypes.CategorySettings {
 
 func catSettingsToConfig(v ttypes.CategorySettings) CategoryConfig {
 	return CategoryConfig{
+		Enabled:      cloneBoolPtr(v.Enabled),
 		Instructions: v.Instructions,
 		AllowedTools: append([]string(nil), v.AllowedTools...), DeniedTools: append([]string(nil), v.DeniedTools...),
 		AccountID:                v.AccountID,
@@ -522,16 +637,17 @@ func ConfigToSettings(cfg *Config) ttypes.Settings {
 	safetySettings.CommandRules = append([]ttypes.CommandSeverityRule(nil), cfg.Safety.CommandRules...)
 
 	return ttypes.Settings{
-		Model:           mainCat.Model,
-		ProviderID:      mainProviderID,
-		AccountID:       mainCat.AccountID,
-		ProviderURL:     mainTemplate.ProviderURL,
-		APIStandard:     mainTemplate.APIStandard,
-		ThinkingEffort:  mainCat.ThinkingEffort,
-		TurnLogsEnabled: turnLogs,
-		Agents:          agentsSettings,
-		Memory:          cfg.Memory,
-		Safety:          safetySettings,
+		SessionMainAgent: cfg.SelectedAgent,
+		Model:            mainCat.Model,
+		ProviderID:       mainProviderID,
+		AccountID:        mainCat.AccountID,
+		ProviderURL:      mainTemplate.ProviderURL,
+		APIStandard:      mainTemplate.APIStandard,
+		ThinkingEffort:   mainCat.ThinkingEffort,
+		TurnLogsEnabled:  turnLogs,
+		Agents:           agentsSettings,
+		Memory:           cfg.Memory,
+		Safety:           safetySettings,
 	}
 }
 
@@ -588,6 +704,17 @@ func ApplyWorkspaceAgentDefaults(cfg *Config, agents ttypes.AgentsSettings) {
 		// Workspace agent settings publish complete account selections. An empty
 		// ID clears this layer rather than inheriting a prior account.
 		merged.AccountID = value.AccountID
+		merged.Enabled = cloneBoolPtr(value.Enabled)
+		merged.Model = value.Model
+		merged.ThinkingEffort = value.ThinkingEffort
+		merged.Description = value.Description
+		merged.Policy = value.Policy
+		merged.ModelContextWindow = value.ModelContextWindow
+		merged.ModelMaxOutput = value.ModelMaxOutput
+		merged.ModelModalities = slices.Clone(value.ModelModalities)
+		merged.ModelTemperature = cloneFloatPtr(value.ModelTemperature)
+		merged.ModelTopP = cloneFloatPtr(value.ModelTopP)
+		merged.ContextCompactionPercent = cloneIntPtr(value.ContextCompactionPercent)
 		merged.Instructions = value.Instructions
 		merged.AllowedTools = append([]string(nil), value.AllowedTools...)
 		merged.DeniedTools = append([]string(nil), value.DeniedTools...)

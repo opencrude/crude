@@ -48,7 +48,10 @@ func TestFileConfigRoundTrip(t *testing.T) {
 			"openrouter": {
 				Name: "OpenRouter", ProviderURL: "https://openrouter.ai/api/v1", APIStandard: "openai",
 				AuthType: provider.AuthProtocol, Headers: providerHeaders,
-				Dialer:    &provider.DialSettings{MaxAttempts: 3},
+				Dialer: &provider.DialSettings{
+					MaxAttempts: 3, RequestTimeoutSeconds: 600, ConnectTimeoutSeconds: 60, MaxBackoffSeconds: 60,
+					ProgressStartupTimeoutSeconds: 120, ProgressTimeoutFloorSeconds: 60, ProgressTimeoutCeilingSeconds: 600,
+				},
 				Protocol:  &provider.ProtocolSettings{Store: boolPtr(false)},
 				ExtraBody: map[string]any{"include_reasoning": true},
 			},
@@ -59,6 +62,10 @@ func TestFileConfigRoundTrip(t *testing.T) {
 				Overrides: provider.TemplateOverrides{
 					ProviderURL: &accountEndpoint, Headers: &accountHeaders,
 					ExtraBody: &map[string]any{},
+					Dialer: &provider.DialSettings{
+						RequestTimeoutSeconds: 300, ConnectTimeoutSeconds: 10, MaxAttempts: 2, MaxBackoffSeconds: 15,
+						ProgressStartupTimeoutSeconds: 90, ProgressTimeoutFloorSeconds: 60, ProgressTimeoutCeilingSeconds: 900,
+					},
 				},
 			},
 		},
@@ -118,7 +125,8 @@ func TestFileConfigRoundTrip(t *testing.T) {
 	}
 	overrides := loaded.Accounts["work"].Overrides
 	if overrides.ProviderURL == nil || *overrides.ProviderURL != accountEndpoint || overrides.Headers == nil ||
-		!reflect.DeepEqual(*overrides.Headers, accountHeaders) || overrides.ExtraBody == nil || len(*overrides.ExtraBody) != 0 {
+		!reflect.DeepEqual(*overrides.Headers, accountHeaders) || overrides.ExtraBody == nil || len(*overrides.ExtraBody) != 0 ||
+		!reflect.DeepEqual(overrides.Dialer, fc.Accounts["work"].Overrides.Dialer) {
 		t.Fatalf("account sparse overrides mismatch: %#v", overrides)
 	}
 

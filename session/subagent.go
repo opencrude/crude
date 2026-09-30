@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"slices"
 	"strings"
 
 	"crypto/rand"
@@ -248,7 +249,6 @@ func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any)
 		Description:  description,
 		Instructions: getStrParam(params, "instructions"),
 		PolicyName:   getStrParam(params, "policy"),
-		Timeout:      time.Duration(getIntParam(params, "timeout_seconds")) * time.Second,
 		Depth:        1,
 		ParentID:     agent.AgentID(r.orchestratorID),
 		ParentTurn:   r.parentTurn.Load(),
@@ -273,6 +273,18 @@ func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any)
 	}
 
 	profileInstructions := r.resolveProfile(name, category, &spec)
+	activeConfig := r.effectiveCfg
+	if activeConfig == nil {
+		r.session.mu.Lock()
+		activeConfig = copyConfig(r.session.cfg)
+		r.session.mu.Unlock()
+	}
+	if categoryCfg := activeConfig.GetCategoryConfig(spec.Category); categoryCfg.Enabled != nil && !*categoryCfg.Enabled {
+		return tools.ToolResult{Content: "Agent role is disabled in settings."}, fmt.Errorf("%s role is disabled", spec.Category)
+	}
+	if profile, exists := activeConfig.Agents.AgentProfiles[name]; exists && profile.Enabled != nil && !*profile.Enabled {
+		return tools.ToolResult{Content: "Agent is disabled in settings."}, fmt.Errorf("%s agent is disabled", name)
+	}
 	identity, err := allocateAgentName(r.session.nameHome)
 	if err != nil {
 		return tools.ToolResult{}, fmt.Errorf("allocate child name: %w", err)
@@ -341,6 +353,9 @@ func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any)
 		// The agent now has the final result via synchronous wait; mark consumed
 		// so the pending WakeSubAgentDone event is suppressed.
 		r.session.MarkReportConsumed(string(spec.ID))
+		if result.Status != agent.SubAgentCompleted && result.Status != agent.SubAgentCancelled {
+			return tools.ToolResult{Content: formatSubAgentResult(result)}, fmt.Errorf("sub-agent %s: %s", spec.Name, result.Status)
+		}
 		return tools.ToolResult{Content: formatSubAgentResult(result)}, nil
 	case <-ctx.Done():
 		return tools.ToolResult{Content: fmt.Sprintf("Sub-agent %q still running (turn ended). Agent ID: %s. Use poll_sub_agent with handle_id=%q to check later.", spec.Name, spec.ID, spec.ID)}, nil
@@ -381,8 +396,6 @@ func formatSubAgentResult(result agent.SubAgentResult) string {
 		icon = "OK"
 	case agent.SubAgentCrashed:
 		icon = "CRASH"
-	case agent.SubAgentFailedTimeout:
-		icon = "TIMEOUT"
 	case agent.SubAgentFailedQuota:
 		icon = "QUOTA"
 	case agent.SubAgentFailedError:
@@ -702,7 +715,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 
 	r.session.logger.Info("SUBAGENT", "launch", "agent_id", spec.ID, "category", spec.Category, "template", p.ID, "account", spec.AccountID, "model", resolvedModelName)
 	if spec.ModelContextWindow > 0 {
-		provider.SetModelContext(resolvedModelName, spec.ModelContextWindow)
+		p.SetContextWindow(spec.ModelContextWindow)
 	}
 	if spec.ModelInputPrice > 0 {
 		provider.SetModelPrice(resolvedModelName, provider.ModelPrice{
@@ -716,9 +729,11 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	filteredTools := agent.FilterToolsForModel(allToolDefs, spec.AllowedTools, spec.DeniedTools, spec.Category, true, p.Model)
 
 	a := agent.NewAgent(p, p.Model, r.session.logger)
+	a.MaxOutputTokens = spec.ModelMaxOutput
 	if compactionCfg := cfg.GetCategoryConfig(CategoryAeron); compactionCfg.Model != "" {
 		if compactionProvider, compactionErr := cfg.providerForCategory(compactionCfg); compactionErr == nil {
 			a.CompactionProvider = compactionProvider
+			a.CompactionMaxOutput = compactionCfg.ModelMaxOutput
 		} else {
 			r.session.logger.Warn("COMPACT", "aeron_provider_unavailable", "agent_id", spec.ID, "error", compactionErr.Error())
 		}
@@ -742,13 +757,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	if scope, ok := historyScopeFromContext(ctx); ok {
 		baseCtx = withHistoryScope(baseCtx, scope.sessionID, scope.messageID, scope.agentID)
 	}
-	var subCtx context.Context
-	var subCancel context.CancelFunc
-	if spec.Timeout > 0 {
-		subCtx, subCancel = context.WithTimeout(baseCtx, spec.Timeout)
-	} else {
-		subCtx, subCancel = context.WithCancel(baseCtx)
-	}
+	subCtx, subCancel := context.WithCancel(baseCtx)
 	a.Ctx = subCtx
 	r.session.logger.Info("SUBAGENT", "ctx_independence", "agent_id", spec.ID, "session_ctx_valid", r.sessionCtx.Err() == nil)
 
@@ -1158,12 +1167,8 @@ func (r *SubAgentRunner) deliverCompletionWake(result agent.SubAgentResult) bool
 
 func (r *SubAgentRunner) buildResultFromMessages(handle *agent.SubAgentHandle, msgs []provider.ChatMessage) agent.SubAgentResult {
 	status := agent.SubAgentCompleted
-	if ctx := handle.Agent.Ctx; ctx != nil {
-		if ctx.Err() == context.DeadlineExceeded {
-			status = agent.SubAgentFailedTimeout
-		} else if ctx.Err() == context.Canceled {
-			status = agent.SubAgentCancelled
-		}
+	if ctx := handle.Agent.Ctx; ctx != nil && ctx.Err() != nil {
+		status = agent.SubAgentCancelled
 	}
 
 	switch handle.TermReason() {
@@ -1285,9 +1290,6 @@ func (r *SubAgentRunner) autoGenerateReport(handle *agent.SubAgentHandle, msgs [
 	if result.Status == agent.SubAgentCancelled && !hadAssistantMsg {
 		sb.WriteString("## Cancellation Summary\n\n")
 		sb.WriteString("The sub-agent was cancelled before it produced a complete result. No success should be inferred from this report.\n")
-	} else if result.Status == agent.SubAgentFailedTimeout && !hadAssistantMsg {
-		sb.WriteString("## Timeout Summary\n\n")
-		sb.WriteString("The sub-agent reached its runtime or step limit before it produced a complete result.\n")
 	} else if len(result.Errors) > 0 && !hadAssistantMsg {
 		// Agent never ran — API error on first call.
 		sb.WriteString("## Failure Summary\n\n")
@@ -1570,6 +1572,9 @@ func (r *SubAgentRunner) resolveProfile(name string, category string, spec *agen
 		if spec.ModelContextWindow == 0 && catCfg.ModelContextWindow > 0 {
 			spec.ModelContextWindow = catCfg.ModelContextWindow
 		}
+		if spec.ModelMaxOutput == 0 && catCfg.ModelMaxOutput > 0 {
+			spec.ModelMaxOutput = catCfg.ModelMaxOutput
+		}
 		if spec.ContextCompactionPercent == nil && catCfg.ContextCompactionPercent != nil {
 			spec.ContextCompactionPercent = cloneIntPtr(catCfg.ContextCompactionPercent)
 		}
@@ -1582,8 +1587,8 @@ func (r *SubAgentRunner) resolveProfile(name string, category string, spec *agen
 		if spec.ModelCachePrice == 0 && catCfg.ModelCachePrice > 0 {
 			spec.ModelCachePrice = catCfg.ModelCachePrice
 		}
-		if len(spec.ModelModalities) == 0 && len(catCfg.ModelModalities) > 0 {
-			spec.ModelModalities = append([]string(nil), catCfg.ModelModalities...)
+		if spec.ModelModalities == nil && catCfg.ModelModalities != nil {
+			spec.ModelModalities = slices.Clone(catCfg.ModelModalities)
 		}
 		if catCfg.Description != "" {
 			instructionsParts = append(instructionsParts, catCfg.Description)
@@ -1596,10 +1601,35 @@ func (r *SubAgentRunner) resolveProfile(name string, category string, spec *agen
 	if agentProfiles := cfg.Agents.AgentProfiles; agentProfiles != nil {
 		if ap, ok := agentProfiles[name]; ok {
 			if ap.Model != "" {
+				if ap.Model != spec.Model {
+					spec.ModelContextWindow = 0
+					spec.ModelMaxOutput = 0
+					spec.ModelInputPrice, spec.ModelOutputPrice, spec.ModelCachePrice = 0, 0, 0
+					spec.ModelModalities = nil
+					spec.ModelTemperature, spec.ModelTopP = nil, nil
+				}
 				spec.Model = ap.Model
 			}
 			if ap.AccountID != "" {
 				spec.AccountID = ap.AccountID
+			}
+			if ap.ThinkingEffort != "" {
+				spec.ThinkingEffort = ap.ThinkingEffort
+			}
+			if ap.ModelContextWindow > 0 {
+				spec.ModelContextWindow = ap.ModelContextWindow
+			}
+			if ap.ModelMaxOutput > 0 {
+				spec.ModelMaxOutput = ap.ModelMaxOutput
+			}
+			if ap.ModelModalities != nil {
+				spec.ModelModalities = append(make([]string, 0, len(ap.ModelModalities)), ap.ModelModalities...)
+			}
+			if ap.ModelTemperature != nil {
+				spec.ModelTemperature = cloneFloatPtr(ap.ModelTemperature)
+			}
+			if ap.ModelTopP != nil {
+				spec.ModelTopP = cloneFloatPtr(ap.ModelTopP)
 			}
 			constrainConfiguredTools(spec, ap.AllowedTools, ap.DeniedTools)
 			if len(spec.FileOwnership) == 0 && len(ap.FileOwnership) > 0 {
@@ -1641,6 +1671,9 @@ func (r *SubAgentRunner) applyCategoryDefaults(spec *agent.SubAgentSpec) {
 		if spec.ModelContextWindow == 0 {
 			spec.ModelContextWindow = categoryCfg.ModelContextWindow
 		}
+		if spec.ModelMaxOutput == 0 {
+			spec.ModelMaxOutput = categoryCfg.ModelMaxOutput
+		}
 		if spec.ModelInputPrice == 0 {
 			spec.ModelInputPrice = categoryCfg.ModelInputPrice
 		}
@@ -1650,8 +1683,8 @@ func (r *SubAgentRunner) applyCategoryDefaults(spec *agent.SubAgentSpec) {
 		if spec.ModelCachePrice == 0 {
 			spec.ModelCachePrice = categoryCfg.ModelCachePrice
 		}
-		if len(spec.ModelModalities) == 0 {
-			spec.ModelModalities = append([]string(nil), categoryCfg.ModelModalities...)
+		if spec.ModelModalities == nil {
+			spec.ModelModalities = slices.Clone(categoryCfg.ModelModalities)
 		}
 		if spec.ModelTemperature == nil {
 			spec.ModelTemperature = categoryCfg.ModelTemperature

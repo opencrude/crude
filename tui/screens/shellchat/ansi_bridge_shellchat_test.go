@@ -27,7 +27,7 @@ func TestShellchatPaintsMarkdownWithoutANSIPath(t *testing.T) {
 	r.SetStreaming(false)
 	r.AppendMessage(types.ChatMessage{
 		Role:    types.RoleAssistant,
-		Content: "# Title\n\nSome **bold** and `code`.\n\n```go\nfunc f() { x := 1 }\n```",
+		Content: "# Title\n\nSome **bold** and `code`.\n\n[Guide](https://example.test/docs)\n\n| Item | Status |\n| --- | --- |\n| [Library](https://example.test/library) | Ready |\n\n```go\nfunc f() { x := 1 }\n```",
 		Time:    time.Now(),
 	})
 	rows, paneMap, _ := r.ExportMessageRows(80)
@@ -37,6 +37,9 @@ func TestShellchatPaintsMarkdownWithoutANSIPath(t *testing.T) {
 		for i, pl := range row.Native {
 			if pl.PreferANSI() {
 				t.Fatalf("row %d native[%d] PreferANSI — ANSI path must be gone", ri, i)
+			}
+			if text := pl.PlainText(); strings.Contains(text, "id=") || strings.Contains(text, "]8;") {
+				t.Fatalf("terminal hyperlink metadata reached a product chat row: %q", text)
 			}
 		}
 	}
@@ -55,13 +58,18 @@ func TestShellchatPaintsMarkdownWithoutANSIPath(t *testing.T) {
 	if buf == nil {
 		t.Fatal("nil paint buffer")
 	}
+	var painted strings.Builder
 	for y := 0; y < 24; y++ {
 		for x := 0; x < 80; x++ {
 			c := buf.Get(x, y)
+			painted.WriteRune(c.Char)
 			if strings.ContainsRune(string(c.Char), '\x1b') {
 				t.Fatalf("ANSI escape at (%d,%d) char=%q", x, y, string(c.Char))
 			}
 		}
+	}
+	if !strings.Contains(painted.String(), "Ready") || strings.Contains(painted.String(), "]8;") {
+		t.Fatal("table content was clipped or hyperlink metadata was painted")
 	}
 }
 

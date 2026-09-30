@@ -99,6 +99,14 @@ func SummarizeArgs(tool, argsStr string) string {
 	if tool == "update_plan" || tool == "get_plan" {
 		return ExtractArg(argsStr, "plan_id")
 	}
+	if tool == "run_sub_agent" {
+		// The assignment is the useful operand. Raw launch arguments can include
+		// lengthy instructions and policy fields; neither belongs in a chat title.
+		if description := ExtractArg(argsStr, "description"); description != "" {
+			return truncateLabel(description, 80)
+		}
+		return ExtractArg(argsStr, "name")
+	}
 	if tool == "grep_files" {
 		pattern := ExtractArg(argsStr, "pattern")
 		path := ExtractArg(argsStr, "path")

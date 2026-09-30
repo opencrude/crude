@@ -41,6 +41,7 @@ func TestConvertMessagesForDisplayUsesCanonicalSnapshotWithoutReconstruction(t *
 	views := ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{
 		Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []types.ConversationMessage{want}},
 	}})
+	want.ToolArgs = "inspect"
 	if len(views) != 1 || !reflect.DeepEqual(types.ConversationMessage(views[0]), want) {
 		t.Fatalf("canonical conversion\n got: %#v\nwant: %#v", views, want)
 	}

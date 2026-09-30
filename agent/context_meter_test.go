@@ -41,3 +41,18 @@ func TestContextMeterFallsBackToSemanticRequestEstimate(t *testing.T) {
 		t.Fatalf("projected = %d, want %d", got, want)
 	}
 }
+
+func TestContextMeterProjectsChangedToolSchemasWithoutDoubleCounting(t *testing.T) {
+	messages := []provider.ChatMessage{provider.NewTextMessage("system", "instructions"), provider.NewTextMessage("user", "request")}
+	oldTools := []provider.ToolDef{{Function: provider.FunctionDef{Name: "old", Description: "small schema"}}}
+	newTools := append(append([]provider.ToolDef(nil), oldTools...), provider.ToolDef{Function: provider.FunctionDef{Name: "new", Description: "large new schema", Parameters: json.RawMessage(`{"type":"object","required":["path"]}`)}})
+	var meter contextMeter
+	meter.observe(10_000, 20, len(messages), estimateCanonicalRequest(messages[:1], oldTools, "model"))
+	if got := meter.projected(messages, oldTools, "model"); got != 10_000 {
+		t.Fatalf("unchanged overhead counted twice: %d", got)
+	}
+	want := 10_000 + estimateCanonicalRequest(nil, newTools[1:], "model")
+	if got := meter.projected(messages, newTools, "model"); got != want {
+		t.Fatalf("tool schema delta not projected: %d want %d", got, want)
+	}
+}

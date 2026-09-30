@@ -82,9 +82,7 @@ func renderUserMessage(msg types.ChatMessage, ctx renderContext, suppressHeader 
 
 	rendered, isMarkdown := renderMarkdown(msg.Content, ctx.mdRenderer)
 	if isMarkdown {
-		bodyLines := strings.Split(rendered, "\n")
-		for _, line := range bodyLines {
-			pl := BridgeAnsiLine(line, ctx.tokens)
+		for _, pl := range BridgeAnsiLines(strings.Split(rendered, "\n"), ctx.tokens) {
 			pl = styleReferenceLabels(pl, referenceLabels)
 			ml.lines = append(ml.lines, pl.PlainText())
 			ml.native = append(ml.native, pl)
@@ -120,8 +118,7 @@ func renderAssignmentMessage(msg types.ChatMessage, ctx renderContext, suppressH
 	}
 	rendered, isMarkdown := renderMarkdown(msg.Content, ctx.mdRenderer)
 	if isMarkdown {
-		for _, line := range strings.Split(rendered, "\n") {
-			pl := BridgeAnsiLine(line, ctx.tokens)
+		for _, pl := range BridgeAnsiLines(strings.Split(rendered, "\n"), ctx.tokens) {
 			ml.lines = append(ml.lines, pl.PlainText())
 			ml.native = append(ml.native, pl)
 		}
@@ -155,13 +152,10 @@ func renderAssistantMessage(msg types.ChatMessage, ctx renderContext, suppressHe
 		updateStreamingCache(&msg, ctx.mdRenderer, ctx.contentWidth)
 		if len(msg.StreamCompletedLines) > 0 {
 			native := ctx.streamNative
-			for i, line := range msg.StreamCompletedLines {
-				var pl PaintLine
-				if i < len(native) {
-					pl = native[i]
-				} else {
-					pl = BridgeAnsiLine(line, ctx.tokens)
-				}
+			if len(native) != len(msg.StreamCompletedLines) {
+				native = BridgeAnsiLines(msg.StreamCompletedLines, ctx.tokens)
+			}
+			for _, pl := range native {
 				bodyLines = append(bodyLines, pl.PlainText())
 				bodyNative = append(bodyNative, pl)
 			}
@@ -185,11 +179,10 @@ func renderAssistantMessage(msg types.ChatMessage, ctx renderContext, suppressHe
 	} else {
 		rendered, isMarkdown := renderMarkdown(msg.Content, ctx.mdRenderer)
 		if isMarkdown {
-			split := strings.Split(rendered, "\n")
-			for _, line := range split {
-				pl := BridgeAnsiLine(line, ctx.tokens)
-				bodyLines = append(bodyLines, pl.PlainText())
-				bodyNative = append(bodyNative, pl)
+			bodyNative = BridgeAnsiLines(strings.Split(rendered, "\n"), ctx.tokens)
+			bodyLines = make([]string, len(bodyNative))
+			for index, pl := range bodyNative {
+				bodyLines[index] = pl.PlainText()
 			}
 		} else {
 			wrapped := rendering.WrapText(msg.Content, ctx.contentWidth)
@@ -333,8 +326,7 @@ func renderThinkingSummary(msg types.ChatMessage, ctx renderContext) messageLine
 		rendered = msg.Content
 	}
 	var rows []PaintLine
-	for _, line := range strings.Split(rendered, "\n") {
-		pl := BridgeAnsiLine(line, ctx.tokens)
+	for _, pl := range BridgeAnsiLines(strings.Split(rendered, "\n"), ctx.tokens) {
 		rows = append(rows, wrapPaintLine(pl, ctx.contentWidth)...)
 	}
 	native := append([]PaintLine{header}, rows...)
@@ -355,8 +347,7 @@ func ThinkingPreviewLine(content string, display reasoning.Display, md *glamour.
 		rendered = body
 	}
 	line := PaintLine{}
-	for _, part := range strings.Split(rendered, "\n") {
-		pl := BridgeAnsiLine(part, tokens)
+	for _, pl := range BridgeAnsiLines(strings.Split(rendered, "\n"), tokens) {
 		for len(pl.Spans) > 0 {
 			last := &pl.Spans[len(pl.Spans)-1]
 			last.Text = strings.TrimRight(last.Text, " \t")

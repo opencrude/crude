@@ -41,6 +41,10 @@ func TestTemplateChangesAreAtomicRevisionCheckedAndIndependentOfPreferences(t *t
 	before := provider.CloneTemplate(custom)
 	after := provider.CloneTemplate(custom)
 	after.ProviderURL = "https://new.example/v1"
+	after.Dialer = &provider.DialSettings{
+		RequestTimeoutSeconds: 600, ConnectTimeoutSeconds: 60, MaxAttempts: 3, MaxBackoffSeconds: 60,
+		ProgressStartupTimeoutSeconds: 120, ProgressTimeoutFloorSeconds: 60, ProgressTimeoutCeilingSeconds: 600,
+	}
 	if err := ws.SaveTemplateChange(provider.TemplateChange{ID: "acme", Before: &before, After: &after}); err != nil {
 		t.Fatalf("save template edit: %v", err)
 	}

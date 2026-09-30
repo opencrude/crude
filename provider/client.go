@@ -152,13 +152,17 @@ func NewClient(proto Protocol, baseURL, apiKey string, dial DialConfig, opts ...
 	if dial.MaxAttempts < 1 {
 		dial.MaxAttempts = 1
 	}
+	stall := dial.progressTimeouts()
+	if err := stall.validate(); err != nil {
+		return nil, fmt.Errorf("provider: %w", err)
+	}
 	c := &Client{
 		proto:     proto,
 		base:      base,
 		hc:        newHTTPClient(dial),
 		dial:      dial,
 		sessionID: newSessionUUID(),
-		stall:     defaultProgressTimeouts,
+		stall:     stall,
 	}
 	if apiKey != "" {
 		c.headerSource = staticHeaderSource(proto, apiKey)
@@ -249,7 +253,7 @@ func newHTTPClient(dial DialConfig) *http.Client {
 			MaxIdleConns:        10,
 			MaxIdleConnsPerHost: 10,
 			IdleConnTimeout:     90 * time.Second,
-			TLSHandshakeTimeout: 10 * time.Second,
+			TLSHandshakeTimeout: dial.ConnectTimeout,
 			// The per-attempt progress watchdog owns header waiting. A TCP
 			// connect timeout must not also cut off a queued gateway response.
 			ResponseHeaderTimeout: 0,
@@ -341,9 +345,11 @@ func (c *Client) Stream(ctx context.Context, req *ChatRequest) (*ChatStream, err
 	if err != nil {
 		return nil, err
 	}
+	ctx, cancel := c.withTimeout(ctx)
 	return &ChatStream{
 		client:               c,
 		ctx:                  ctx,
+		cancel:               cancel,
 		body:                 body,
 		reasoningContentKind: req.ReasoningContentKind,
 	}, nil
@@ -354,6 +360,7 @@ type ChatStream struct {
 	client               *Client
 	reasoningContentKind reasoning.Kind
 	ctx                  context.Context
+	cancel               context.CancelFunc
 	body                 []byte
 	resp                 *http.Response
 	reader               streamEventReader
@@ -372,6 +379,11 @@ func (s *ChatStream) Next() (StreamUpdate, error) {
 	if s.closed {
 		return StreamUpdate{}, io.EOF
 	}
+	defer func() {
+		if s.closed {
+			s.cancel()
+		}
+	}()
 	for {
 		if s.resp == nil {
 			if err := s.establish(); err != nil {
@@ -470,6 +482,9 @@ func (s *ChatStream) done() {
 func (s *ChatStream) Close() error {
 	s.closed = true
 	s.closeResp()
+	if s.cancel != nil {
+		s.cancel()
+	}
 	return nil
 }
 
@@ -555,15 +570,12 @@ func (c *Client) ListModels(ctx context.Context) ([]ModelInfo, error) {
 
 	// Model listing is a short interactive request; bound it even when the
 	// dialer does not set an overall timeout.
-	if _, hasDeadline := ctx.Deadline(); !hasDeadline {
-		timeout := c.dial.RequestTimeout
-		if timeout <= 0 || timeout > listingRequestTimeout {
-			timeout = listingRequestTimeout
-		}
-		var cancel context.CancelFunc
-		ctx, cancel = context.WithTimeout(ctx, timeout)
-		defer cancel()
+	timeout := c.dial.RequestTimeout
+	if timeout <= 0 {
+		timeout = listingRequestTimeout
 	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
 
 	var models []ModelInfo
 	cursor := ""
@@ -622,9 +634,7 @@ const maxModelsResponseBytes = 16 << 20
 // withTimeout applies the dialer's overall request timeout, if configured.
 func (c *Client) withTimeout(ctx context.Context) (context.Context, context.CancelFunc) {
 	if c.dial.RequestTimeout > 0 {
-		if _, hasDeadline := ctx.Deadline(); !hasDeadline {
-			return context.WithTimeout(ctx, c.dial.RequestTimeout)
-		}
+		return context.WithTimeout(ctx, c.dial.RequestTimeout)
 	}
 	return context.WithCancel(ctx)
 }

@@ -625,6 +625,46 @@ next tick finally synced.
   from the tick path.
 - Guarded by `tui/viewmodel/agent_new_session_focus_test.go`.
 
+### Agent Settings and Session Root Selection
+
+- Providers, Accounts, and Agents catalogs share a full-width search and
+  bottom-anchored actions; narrow screens stack action rows below results.
+  Main Agent remains available as a fallback. Built-in roles, Memory Agent,
+  and Auto Review Agent
+  can be edited or reset; named agents can be cloned, enabled/disabled, or
+  removed. Memory's background jobs are no-tools completions: its account,
+  model, instructions and enable flag live in Agents, while job cadence and
+  recall limits stay on the Memory page.
+- Auto Review Agent is the bounded, no-tools root permission reviewer. Its
+  enable switch, explicitly pinned account/model and extra restrictions live
+  in Agents, while denial behavior and per-request/turn limits live in the
+  Security > Auto Review Policy form. Security separates that policy from
+  Command Safety. Never add a static settings page or toggles for hard blocks,
+  human-only grants, uncertainty fallback, or mandatory restore safeguards;
+  explain those constraints beside the controls they govern. A rejected
+  reviewer result never becomes an Always allow grant.
+- `ui.FormField` paints multiline labels (textarea and key/value grid) on the
+  containing surface even on hover/focus. Single-line labels may use the row
+  highlight; multiline editor bodies retain their own fill and interaction.
+- Agent model discovery must refresh retained dropdown items AND geometry on
+  the first result, without rebuilding the draft or closing its open selector.
+  Fill inherited capabilities without replacing manual overrides. Preserve the
+  Model / Instructions / Tool Access presentation and Main Agent's Multi Agent
+  delegation toggle; do not replace the model selector with a free-text redesign.
+- Breadcrumb labels are separate navigation targets measured with shared
+  terminal widths. Settings parents use existing back/discard ownership,
+  session parents preserve staged edits, and file-tree parents reveal their
+  row. Separators never navigate.
+- `/settings` persists a session-only `SessionMainAgent`. A named profile or
+  built-in role resolves the root connection/model/instructions at the next
+  request boundary; its account pin lives under a distinct `root/<choice>`
+  session override. Never collapse those overrides into workspace Main Agent
+  or silently fall back if a selected agent is removed or disabled. The root
+  selector excludes Memory. Save as Workspace must not promote this session-only
+  choice into workspace defaults.
+  Default agent uses the same compact navigation row and filtered picker page
+  as Account/Model, never an inline dropdown or a different chevron dialect.
+
 ### Popup Click-Outside Behaviors
 | Behavior | Meaning |
 |----------|---------|
@@ -717,6 +757,15 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
   complete payload or returns `ErrTerminalBackpressure`; never silently drop
   bytes. `NormalizeTerminalSize` is the shared emulator/PTY 8×2 floor, and a
   failed PTY resize must not commit the emulator grid.
+- **Provider timeouts are one shared transport policy.** Providers and Accounts
+  expose Request/Connect timeout, initial/minimum/maximum progress timeout, and
+  attempt/backoff budgets in Connection tuning. Account Override dialer replaces
+  that whole set; disabling it restores template inheritance. Progress defaults
+  are 60/45/300 seconds and require minimum <= initial <= maximum. Streaming and
+  non-streaming requests honor the overall deadline across retries, even when
+  the caller already has a longer deadline; close/completion/error releases the
+  stream timer. Unlimited overall duration does not disable progress detection.
+  The connect setting also owns TLS handshake timeouts, not header waiting.
 
 ### Editor motion
 - **`Editor.moveWordLeft` must keep climbing across blank lines**: word-left
@@ -728,6 +777,12 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
 
 ### ANSI & Width
 - **Full process:** see [`TERMINAL_WIDTH.md`](./docs/reference/terminal-width.md).
+- **Markdown keeps its established hierarchy:** use Glamour's differentiated
+  headings, links and inline code, with theme-bound document/fenced-code ink and
+  a readable light palette. Never force `StyleConfig.Text.Color` globally; it
+  overrides inherited heading colours. Native bridges tokenize through the
+  shared ANSI decoder, suppress OSC/control payloads, and carry SGR state across
+  a rendered block (`BridgeAnsiLines`), not only within individual rows.
 - **ANSI search false-matches**: NEVER use `strings.Index(rawLine, label)`
   on an ANSI-styled string — the label text can match inside escape codes.
   Always `stripAnsi` first, then search plain text.
@@ -1112,8 +1167,25 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   scratch. Upload/header stalls may retry the original request because no model
   output was accepted.
 - Automatic and manual compaction use the resolved Aeron category model for
-  four no-tools extraction stages over one immutable cached source (intent,
-  work, state, continuation). The retained boundary records that actual model.
+  four no-tools extraction stages over one immutable durable source (intent,
+  work, state, continuation). Fitting sources share the cached prefix; oversized
+  histories or individual tool inputs/results use complete chronological,
+  origin-attributed text fragments and bounded model-backed chunk-and-reduce,
+  never oldest-history deletion. Each fragment repeats its source role/origin
+  and tool-result identity instead of sending orphan protocol calls.
+  The retained boundary records the actual model and real chunk progress.
+  Context windows are connection-scoped when explicitly configured; ordinary
+  pressure reserves normal output and includes runtime notices before admission.
+  Every extraction request plans against its own model's available context.
+  Provider-confirmed overflow retries only after checkpoint reduction; extraction
+  shrinks its input budget on provider evidence. Preserve the configured thinking
+  mode during extraction: hidden reasoning counts toward the response allowance,
+  so checkpoint text size must never cap generation. Use the actual available
+  continuation space for checkpoint size; refine complete sections if necessary.
+  A truncated extraction reduces and reprocesses the complete source in smaller
+  regions; never replay the identical exhausted request or install a partial
+  checkpoint. Bounded genuine-input retention and continuation capacity are
+  validated before installation.
   Models emit terse plain text; Crude escapes and wraps the four bodies in one
   deterministic XML checkpoint. Retry only the current stage, at most three
   recoveries; cancellation never retries. Previous-generation archival,
@@ -1147,6 +1219,27 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
 `activitylist` arms resource rows on the first click and activates on the
 second (matching the pickers), but command rows fire on a single click — a
 button that needs a double click reads as broken.
+
+### File Tree Filter And Guide Geometry
+- `shelltree.FilterField` is the single text owner for clicked input AND
+  type-to-filter while the tree has focus. `FileTreeModel` may derive its
+  in-memory projection when no async path-search service is installed; the
+  product's async search never writes legacy model filter text over the input.
+  Clearing the final character cancels the old generation, so late results
+  cannot resurrect a removed query.
+- The shared `filetree.NewTreeRowPainter` adjusts the preferred whitespace
+  between ancestor rails using the visible tree's cached maximum depth and
+  viewport width. The shell computes the deepest offscreen ancestor shared by
+  every painted row. Its clickable breadcrumb owns that common prefix, and the
+  row painter omits ONLY those repeated ancestor guide columns. A viewport
+  crossing branches rebases to their common ancestor. When it crosses the
+  workspace root, the first visible row keeps its normal breadcrumb and ALL
+  absolute guides return; do not hide the breadcrumb in that transition.
+  narrow breadcrumbs keep the nearest parents and a non-clickable `…` prefix.
+  Local guides keep one column per remaining ancestor even on narrow grids;
+  directory rows, disclosure, scroll and path ownership stay intact. Focus and
+  selection alone never change guide alignment. Do not replace this with
+  single-child path flattening or row-local indent math that makes rails jump.
 
 ### Test Helper Ownership
 - Go `_test.go` files in one package share package scope. A helper defined in a

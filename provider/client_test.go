@@ -482,13 +482,18 @@ func TestProtocolAliasesResolve(t *testing.T) {
 
 func TestDialSettingsResolveOverridesDefaults(t *testing.T) {
 	cfg := DialSettings{
-		RequestTimeoutSeconds: 45,
-		ConnectTimeoutSeconds: 7,
-		MaxAttempts:           2,
-		MaxBackoffSeconds:     20,
+		RequestTimeoutSeconds:         45,
+		ConnectTimeoutSeconds:         7,
+		ProgressStartupTimeoutSeconds: 120,
+		ProgressTimeoutFloorSeconds:   90,
+		ProgressTimeoutCeilingSeconds: 600,
+		MaxAttempts:                   2,
+		MaxBackoffSeconds:             20,
 	}.resolve()
 	if cfg.RequestTimeout != 45*time.Second || cfg.ConnectTimeout != 7*time.Second ||
-		cfg.MaxAttempts != 2 || cfg.MaxBackoff != 20*time.Second {
+		cfg.MaxAttempts != 2 || cfg.MaxBackoff != 20*time.Second ||
+		cfg.ProgressStartupTimeout != 120*time.Second || cfg.ProgressTimeoutFloor != 90*time.Second ||
+		cfg.ProgressTimeoutCeiling != 600*time.Second {
 		t.Fatalf("resolved = %+v", cfg)
 	}
 	if cfg.BaseBackoff != DefaultBaseBackoff || cfg.MaxResponseBytes != DefaultMaxResponseBytes {
@@ -513,5 +518,206 @@ func TestDialConfigClampInClient(t *testing.T) {
 	}
 	if client.dial.MaxAttempts != 1 {
 		t.Fatalf("MaxAttempts = %d, want clamped to 1", client.dial.MaxAttempts)
+	}
+}
+
+func TestClientRequestTimeoutEnforced(t *testing.T) {
+	for _, test := range []struct {
+		name     string
+		stream   bool
+		partial  bool
+		deadline bool
+	}{
+		{name: "stream headers", stream: true},
+		{name: "stream body", stream: true, partial: true},
+		{name: "stream with parent deadline", stream: true, deadline: true},
+		{name: "complete with parent deadline", deadline: true},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				_, _ = io.Copy(io.Discard, r.Body)
+				if test.stream {
+					w.Header().Set("Content-Type", "text/event-stream")
+					if test.partial {
+						_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"partial\"}}]}\n\n")
+						w.(http.Flusher).Flush()
+					}
+				}
+				timer := time.NewTimer(150 * time.Millisecond)
+				defer timer.Stop()
+				progress := time.NewTicker(5 * time.Millisecond)
+				defer progress.Stop()
+			waiting:
+				for {
+					select {
+					case <-r.Context().Done():
+						return
+					case <-timer.C:
+						break waiting
+					case <-progress.C:
+						if test.partial {
+							_, _ = fmt.Fprint(w, ": heartbeat\n\n")
+							w.(http.Flusher).Flush()
+						}
+					}
+				}
+				if test.stream {
+					_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"late\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+				} else {
+					_, _ = fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"late"},"finish_reason":"stop"}]}`)
+				}
+			}))
+			defer server.Close()
+			p := FromPreset("openai-chat", "key", server.URL)
+			client, err := p.Client()
+			if err != nil {
+				t.Fatal(err)
+			}
+			client.dial.RequestTimeout = 40 * time.Millisecond
+			ctx := t.Context()
+			if test.deadline {
+				var cancel context.CancelFunc
+				ctx, cancel = context.WithTimeout(ctx, time.Second)
+				defer cancel()
+			}
+			req := &ChatRequest{Model: "m", Messages: []ChatMessage{NewTextMessage("user", "hi")}}
+			var content strings.Builder
+			if test.stream {
+				stream, streamErr := client.Stream(ctx, req)
+				if streamErr != nil {
+					t.Fatal(streamErr)
+				}
+				defer stream.Close()
+				for err == nil {
+					var update StreamUpdate
+					update, err = stream.Next()
+					content.WriteString(update.ContentDelta)
+				}
+			} else {
+				_, err = client.Complete(ctx, req)
+			}
+			if !errors.Is(err, context.DeadlineExceeded) {
+				t.Fatalf("error=%v content=%q, want configured request deadline", err, content.String())
+			}
+			if test.partial && content.String() != "partial" {
+				t.Fatalf("accepted partial output lost: %q", content.String())
+			}
+		})
+	}
+}
+
+func TestListModelsEnforcesRequestTimeoutWithParentDeadline(t *testing.T) {
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		timer := time.NewTimer(150 * time.Millisecond)
+		defer timer.Stop()
+		select {
+		case <-request.Context().Done():
+			return nil, request.Context().Err()
+		case <-timer.C:
+			return &http.Response{StatusCode: 200, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(`{"data":[]}`))}, nil
+		}
+	})
+	p := FromPreset("openai-chat", "key", "https://example.invalid")
+	client, err := p.Client(WithHTTPClient(&http.Client{Transport: transport}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.dial.RequestTimeout = 40 * time.Millisecond
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	if _, err := client.ListModels(ctx); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("listing error=%v, want configured request deadline", err)
+	}
+}
+
+func TestClientStreamRequestTimeoutIncludesRetryBackoff(t *testing.T) {
+	var calls atomic.Int32
+	transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+		calls.Add(1)
+		return nil, io.ErrUnexpectedEOF
+	})
+	p := FromPreset("openai-chat", "key", "https://example.invalid")
+	client, err := p.Client(WithHTTPClient(&http.Client{Transport: transport}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	client.dial.RequestTimeout = 40 * time.Millisecond
+	client.dial.BaseBackoff = time.Second
+	stream, err := client.Stream(t.Context(), &ChatRequest{Model: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	if _, err := stream.Next(); !errors.Is(err, context.DeadlineExceeded) || calls.Load() != 1 {
+		t.Fatalf("retry exceeded overall budget: err=%v calls=%d", err, calls.Load())
+	}
+}
+
+func TestClientStreamReleasesRequestDeadline(t *testing.T) {
+	for _, outcome := range []string{"close before reading", "completed", "failed"} {
+		t.Run(outcome, func(t *testing.T) {
+			transport := roundTripFunc(func(request *http.Request) (*http.Response, error) {
+				if outcome == "failed" {
+					return nil, errors.New("permanent test failure")
+				}
+				return sseResponse("ok"), nil
+			})
+			p := FromPreset("openai-chat", "key", "https://example.invalid")
+			p.SetDialSettings(DialSettings{RequestTimeoutSeconds: 120})
+			client, err := p.Client(WithHTTPClient(&http.Client{Transport: transport}))
+			if err != nil {
+				t.Fatal(err)
+			}
+			stream, err := client.Stream(t.Context(), &ChatRequest{Model: "m"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer stream.Close()
+			if outcome != "close before reading" {
+				for !stream.closed {
+					_, err = stream.Next()
+				}
+				if outcome == "failed" && err == nil {
+					t.Fatal("request failure was not returned")
+				}
+			} else if err := stream.Close(); err != nil {
+				t.Fatal(err)
+			}
+			if stream.ctx.Err() != context.Canceled {
+				t.Fatal("closed stream retained its request deadline")
+			}
+		})
+	}
+}
+
+func TestClientRequestTimeoutPreservesShorterParentDeadline(t *testing.T) {
+	p := FromPreset("openai-chat", "key", "https://example.invalid")
+	p.SetDialSettings(DialSettings{RequestTimeoutSeconds: 120})
+	client, err := p.Client()
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithTimeout(t.Context(), time.Second)
+	defer cancel()
+	stream, err := client.Stream(ctx, &ChatRequest{Model: "m"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	want, _ := ctx.Deadline()
+	if got, _ := stream.ctx.Deadline(); !got.Equal(want) {
+		t.Fatalf("parent deadline changed: got=%s want=%s", got, want)
+	}
+}
+
+func TestClientConnectTimeoutAlsoControlsTLSHandshake(t *testing.T) {
+	p := FromPreset("openai-chat", "key", "https://example.invalid")
+	p.SetDialSettings(DialSettings{ConnectTimeoutSeconds: 45})
+	client, err := p.Client()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := client.hc.Transport.(*http.Transport).TLSHandshakeTimeout; got != 45*time.Second {
+		t.Fatalf("TLS retained a hidden timeout: %s", got)
 	}
 }

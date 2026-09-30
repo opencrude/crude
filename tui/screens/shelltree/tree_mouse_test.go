@@ -9,7 +9,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/filetree"
+	"crude/tui/rendering"
 	"crude/tui/screens/shelltree"
+	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
 )
@@ -120,6 +122,43 @@ func TestTreeMouseClickRowMapping(t *testing.T) {
 			if got := cursorBase(model); got != want {
 				t.Errorf("click at screenY=%d (filter=%v): selected %q, want %q (visible[%d])",
 					tc.screenY, tc.filter, got, want, wantIdx)
+			}
+		})
+	}
+}
+
+func TestPathSearchCanDeleteLastCharacterFromBothEntryPaths(t *testing.T) {
+	for _, startInTree := range []bool{true, false} {
+		name := "clicked filter"
+		if startInTree {
+			name = "type-to-filter"
+		}
+		t.Run(name, func(t *testing.T) {
+			model := flatFileFixture(t, "alpha.go", "beta.go")
+			screen := shelltree.New(theme.DefaultDark(), model)
+			var queries []string
+			screen.SetPathSearchHandler(func(query string) tea.Cmd {
+				queries = append(queries, query)
+				return nil
+			})
+			host := ui.NewHost(theme.DefaultDark(), screen)
+			host.Resize(40, 10)
+			host.Layout()
+			if startInTree {
+				host.Focus(shelltree.TreeID)
+			} else {
+				host.Handle(tea.MouseClickMsg{X: 9, Y: 0, Button: tea.MouseLeft})
+			}
+			host.Handle(tea.KeyPressMsg{Code: 'a', Text: "a"})
+			if len(queries) == 0 || queries[0] != "a" || host.Focused() != shelltree.FilterID {
+				t.Fatalf("first character missed the authoritative search field: queries=%q focus=%q", queries, host.Focused())
+			}
+			host.Handle(tea.KeyPressMsg{Code: tea.KeyBackspace})
+			if len(queries) == 0 || queries[len(queries)-1] != "" || model.Filter() != "" {
+				t.Fatalf("last character reappeared or async clear was skipped: queries=%q model=%q", queries, model.Filter())
+			}
+			if got := shelltree.PlainRow(screen.PaintTestBuffer(40, 10), 0, 40); strings.Contains(got, "a⌕") {
+				t.Fatalf("painted filter retained deleted character: %q", got)
 			}
 		})
 	}
@@ -277,5 +316,150 @@ func TestTreeMouseClickBreadcrumbAndFilter(t *testing.T) {
 
 	if got := cursorBase(model); got != want {
 		t.Errorf("filter+breadcrumb active: click at screenY=2 selected %q, want %q (visible[3])", got, want)
+	}
+}
+
+func TestTreeBreadcrumbRevealsClickedAncestor(t *testing.T) {
+	for _, target := range []string{"parent", "child"} {
+		root := t.TempDir()
+		parent := filepath.Join(root, "parent")
+		child := filepath.Join(parent, "child")
+		if err := os.MkdirAll(child, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		for i := 0; i < 24; i++ {
+			if err := os.WriteFile(filepath.Join(child, "file"+string(rune('a'+i))+".go"), nil, 0o600); err != nil {
+				t.Fatal(err)
+			}
+		}
+		model := filetree.NewFileTreeModel(root)
+		model.Expand(parent)
+		model.Expand(child)
+		model.SetScrollOffset(5)
+		host := treeMouseHost(t, model)
+		buf := surface.NewCellBuffer(40, 10)
+		host.Paint(buf)
+		r, ok := host.ScreenRect(shelltree.TreeID)
+		if !ok {
+			t.Fatal("missing mounted tree")
+		}
+		x := -1
+		for column := r.X; column+len(target) <= r.X+r.W; column++ {
+			var label strings.Builder
+			for index := range len(target) {
+				label.WriteRune(buf.Get(column+index, r.Y).Char)
+			}
+			if label.String() == target {
+				x = column
+				break
+			}
+		}
+		if x < 0 {
+			t.Fatalf("ancestor %s is not painted in the breadcrumb", target)
+		}
+		host.Handle(tea.MouseClickMsg{X: x, Y: r.Y, Button: tea.MouseLeft})
+		if got := cursorBase(model); got != target || model.ScrollOffset() >= 5 {
+			t.Fatalf("breadcrumb did not select/reveal %s: selection=%s offset=%d", target, got, model.ScrollOffset())
+		}
+		host.Paint(buf)
+		rowY := r.Y
+		if filetree.BreadcrumbLine(model, r.W) != "" {
+			rowY++
+		}
+		var row strings.Builder
+		for column := r.X; column < r.X+r.W; column++ {
+			row.WriteRune(buf.Get(column, rowY).Char)
+		}
+		if !strings.Contains(row.String(), target) {
+			t.Fatalf("clicked ancestor was not revealed in the first painted tree row: %q", row.String())
+		}
+	}
+}
+
+func TestScrolledTreeRebasesOnlySharedOffscreenAncestry(t *testing.T) {
+	root := t.TempDir()
+	deep := filepath.Join(root, "a", "b", "c")
+	if err := os.MkdirAll(deep, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 10; i++ {
+		if err := os.WriteFile(filepath.Join(deep, "file"+string(rune('a'+i))+".go"), nil, 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.WriteFile(filepath.Join(root, "z.go"), nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	model := filetree.NewFileTreeModel(root)
+	for _, path := range []string{"a", "a/b", "a/b/c"} {
+		model.Expand(filepath.Join(root, path))
+	}
+	model.Update(filetree.TreeHeightMsg{Height: 6})
+	model.SetScrollOffset(3) // Only c's children fill the viewport.
+	screen := shelltree.New(theme.DefaultDark(), model)
+	host := ui.NewHost(theme.DefaultDark(), screen)
+	host.Resize(37, 7)
+	host.Layout()
+	if crumb := screen.TreeControl().Breadcrumb(); !strings.Contains(crumb, "c") {
+		t.Fatalf("viewport failed to publish its shared breadcrumb: %q", crumb)
+	}
+	paint := func() string {
+		buf := surface.NewCellBuffer(37, 7)
+		host.Paint(buf)
+		var text strings.Builder
+		for y := 1; y < 7; y++ {
+			// Scrollbar/thumb scheduling is independent of tree-row geometry.
+			text.WriteString(shelltree.PlainRow(buf, y, 30))
+			text.WriteByte('\n')
+		}
+		return text.String()
+	}
+	host.Focus(shelltree.TreeID)
+	immediate := paint()
+	first := strings.Split(immediate, "\n")[1]
+	idx := strings.Index(first, "filea.go")
+	if idx < 0 || rendering.VisibleWidth(first[:idx]) > 12 {
+		t.Fatalf("offscreen ancestors still consumed the first file's label space: %q", immediate)
+	}
+	compactX := rendering.VisibleWidth(first[:idx])
+	host.MarkLayout()
+	host.Layout()
+	if settled := paint(); settled != immediate {
+		t.Fatalf("immediate and settled tree geometry diverged:\n%s\n%s", immediate, settled)
+	}
+	host.Focus(shelltree.FilterID)
+	host.MarkLayout()
+	host.Layout()
+	if next := paint(); next != immediate {
+		t.Fatalf("focus changed the shared breadcrumb or row indentation:\n%s\n%s", immediate, next)
+	}
+	model.SetScrollOffset(len(model.VisibleNodes()) - 6) // Includes root-level z.go.
+	host.MarkLayout()
+	host.Layout()
+	if crumb := screen.TreeControl().Breadcrumb(); !strings.Contains(crumb, "a") || !strings.Contains(crumb, "c") {
+		t.Fatalf("normal breadcrumb disappeared at the mixed-branch boundary: %q", crumb)
+	}
+	normal := strings.Split(paint(), "\n")[1]
+	if index := strings.Index(normal, "file"); index < 0 || rendering.VisibleWidth(normal[:index]) <= compactX {
+		t.Fatalf("mixed-branch mode did not restore absolute guide columns: %q", normal)
+	}
+	buf := surface.NewCellBuffer(37, 7)
+	host.Paint(buf)
+	crumbRect, ok := host.ScreenRect(shelltree.TreeID)
+	if !ok {
+		t.Fatal("missing tree rect for normal breadcrumb hit test")
+	}
+	parentX := -1
+	for x := crumbRect.X; x < crumbRect.X+crumbRect.W; x++ {
+		if buf.Get(x, crumbRect.Y).Char == 'c' {
+			parentX = x
+		}
+	}
+	if parentX < 0 {
+		t.Fatal("normal breadcrumb did not paint the nearest parent")
+	}
+	host.Handle(tea.MouseClickMsg{X: parentX, Y: crumbRect.Y, Button: tea.MouseLeft})
+	if selected := model.SelectedNode(); selected == nil || selected.Path != deep {
+		t.Fatalf("normal breadcrumb lost its parent click target: %+v", selected)
 	}
 }

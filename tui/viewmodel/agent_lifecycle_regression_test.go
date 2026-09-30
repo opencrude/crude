@@ -4,6 +4,7 @@ import (
 	"strings"
 	"testing"
 
+	"crude/tui/chatprojection"
 	ttypes "crude/tui/types"
 	"crude/workspace"
 )
@@ -172,7 +173,8 @@ func TestFailedSubAgentParentRowAndReviewPaneRemainAuditable(t *testing.T) {
 		t.Fatalf("failed child pane = %+v", pane)
 	}
 	view := pane.View()
-	if view.Summary == nil || !strings.Contains(view.Summary.Text, "failed_error") {
+	if view.Summary == nil || !strings.Contains(chatprojection.BuildSubPaneSummaryLine(view, 80).PlainText(), "× Lily") ||
+		!strings.Contains(chatprojection.BuildSubPaneSummaryLine(view, 80).PlainText(), " — failed") {
 		t.Fatalf("failed child summary hidden: %+v", view)
 	}
 }

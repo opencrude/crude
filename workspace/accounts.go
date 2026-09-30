@@ -10,6 +10,13 @@ import (
 	"crude/types"
 )
 
+// ModelCatalogUpdated runs off the UI thread and never creates notices or jobs.
+func (w *Workspace) ModelCatalogUpdated(generation uint64) {
+	if w.eventBus != nil {
+		w.eventBus.Send(types.ModelCatalogUpdatedMsg{Generation: generation})
+	}
+}
+
 // AllAccounts returns independent snapshots from the live credential owner.
 // Settings must read these rather than an app snapshot containing old tokens.
 func (w *Workspace) AllAccounts() map[string]provider.Account {

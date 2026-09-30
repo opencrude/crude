@@ -199,7 +199,9 @@ type Model struct {
 	appDefaults     types.AppSettings
 	// agents holds the working AgentsSettings so the main agent form's
 	// Multi-Agent toggle reads and writes the real workspace flag.
-	agents *types.AgentsSettings
+	agents       *types.AgentsSettings
+	memoryAgent  types.CategorySettings
+	autoReviewer types.AutoPermissionSettings
 }
 
 type accountEdit struct {
@@ -288,7 +290,9 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		th: th, presets: presets, providers: providers, providerID: active, activeProvider: active,
 		accounts: cloneAccounts(current.Accounts), authGeneration: map[string]uint64{}, authErrors: map[string]string{}, fetchGeneration: map[string]uint64{},
 		models: make(map[string][]types.ModelEntry), scope: scope, appDefaults: appDefaults,
-		agents: &current.Agents,
+		agents:       &current.Agents,
+		memoryAgent:  current.Memory.MemoryCategory,
+		autoReviewer: current.Safety.AutoPermission.Normalized(),
 	}
 	if _, ok := providers[m.providerID]; !ok {
 		ids := sortedTemplateIDs(providers)
@@ -328,7 +332,8 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		{Name: "Crafter", Group: "AI", Description: "Workspace defaults for implementation work.", Form: m.buildAgentForm(current.Agents.Categories["crafter"], false)},
 		{Name: "Aeron", Group: "AI", Description: "Workspace defaults for mechanical tasks.", Form: m.buildAgentForm(current.Agents.Categories["aeron"], false)},
 		{Name: "Memory", Group: "AI", Description: "Durable workspace memory: recall, extraction, consolidation.", Form: m.buildMemoryForm(current.Memory)},
-		{Name: "Safety", Group: "Security", Description: "Command severity, confirmation thresholds, and dangerous-action attention.", Form: m.buildSafetyForm(current.Safety)},
+		{Name: "Command Safety", Group: "Security", Description: "Command severity, confirmation, and dangerous-action attention.", Form: m.buildSafetyForm(current.Safety)},
+		{Name: "Auto Review Policy", Group: "Security", Description: "Bounded remote review behavior and per-turn limits. Configure the reviewer in Agents.", Form: m.buildAutoReviewPolicyForm(current.Safety.AutoPermission)},
 		{Name: "Appearance", Group: "IDE", Description: "Theme palette and surface colors.", Form: formModel(appearanceFields...)},
 		{Name: "Editor", Group: "IDE", Description: "Editing, wrapping, syntax, and save behavior.", Form: formModel(
 			ui.SeparatorFieldState("editing", "Editing"),
@@ -707,6 +712,11 @@ func (m *Model) applyAccountChange(result AccountChangeResultMsg) {
 		m.authGeneration[m.accountEditor.draft.ID] = nextAccountRequest.Add(1)
 	}
 	m.accountEditor = nil
+	if result.Change.Before != nil {
+		key := accountModelKey(result.Change.ProviderID, result.Change.ID)
+		delete(m.models, key)
+		m.fetchGeneration[key] = nextAccountRequest.Add(1)
+	}
 	m.accounts = cloneAccounts(result.Settings.Accounts)
 	m.accountQuery = ""
 	if result.Change.After == nil {
@@ -721,6 +731,32 @@ func (m *Model) applyAccountChange(result AccountChangeResultMsg) {
 		m.accountID = result.Change.ID
 	}
 	m.rebuildAccountsForm()
+	m.refreshAgentConnectionFields()
+}
+
+func (m *Model) refreshAgentConnectionFields() {
+	for _, index := range []int{catMain, catResearcher, catCrafter, catAeron, catAgents} {
+		form := m.categories[index].Form
+		if form == nil {
+			continue
+		}
+		account := form.Field(fieldConnection)
+		if account == nil {
+			continue
+		}
+		account.Options = m.connectionOptions(false)
+		selected := account.Value.String()
+		if selected != "" {
+			if _, exists := m.accounts[selected]; !exists {
+				account.Errors = []string{"This account is missing. Choose another before saving."}
+			} else {
+				account.Errors = nil
+			}
+		}
+		if model := form.Field(fieldModel); model != nil {
+			model.Options = ui.ModelOptions(m.models[accountModelKey(m.accounts[selected].ProviderID, selected)])
+		}
+	}
 }
 
 var nextAccountRequest atomic.Uint64
@@ -828,10 +864,13 @@ func formatExtraBody(extra map[string]any) string {
 // default leads the ladder and is labeled "(default)" so the inherited
 // behavior is always visible in the control itself.
 const (
-	fieldDialTimeout  = "dial-request-timeout"
-	fieldDialConnect  = "dial-connect-timeout"
-	fieldDialAttempts = "dial-max-attempts"
-	fieldDialBackoff  = "dial-max-backoff"
+	fieldDialTimeout         = "dial-request-timeout"
+	fieldDialConnect         = "dial-connect-timeout"
+	fieldDialAttempts        = "dial-max-attempts"
+	fieldDialBackoff         = "dial-max-backoff"
+	fieldDialProgressStartup = "dial-progress-startup-timeout"
+	fieldDialProgressFloor   = "dial-progress-timeout-floor"
+	fieldDialProgressCeiling = "dial-progress-timeout-ceiling"
 )
 
 var (
@@ -839,6 +878,7 @@ var (
 	dialConnectLadder  = []int{5, 10, 60}             // default: 30s
 	dialAttemptsLadder = []int{1, 2, 3, 5, 10}        // default: 6
 	dialBackoffLadder  = []int{15, 30, 60, 300}       // default: 30s
+	dialProgressLadder = []int{15, 30, 45, 60, 120, 300, 600, 900, 1800}
 )
 
 // dialerFields builds the transport-tuning rows for one provider. A nil dialer
@@ -846,13 +886,38 @@ var (
 // its default.
 func dialerFields(dialer *provider.DialSettings) []*ui.FieldState {
 	d := dialerValue(dialer)
+	startup := dialSecondsField(fieldDialProgressStartup, "Initial progress timeout", d.ProgressStartupTimeoutSeconds,
+		int(provider.DefaultProgressStartupTimeout.Seconds()), dialProgressLadder,
+		"Silence before the first byte in each upload, response-header, or download phase.")
+	floor := dialSecondsField(fieldDialProgressFloor, "Min progress timeout", d.ProgressTimeoutFloorSeconds,
+		int(provider.DefaultProgressTimeoutFloor.Seconds()), dialProgressLadder,
+		"Minimum allowed silence after bytes start moving; must not exceed the initial timeout.")
+	ceiling := dialSecondsField(fieldDialProgressCeiling, "Max progress timeout", d.ProgressTimeoutCeilingSeconds,
+		int(provider.DefaultProgressTimeoutCeiling.Seconds()), dialProgressLadder,
+		"Maximum adaptive silence budget; must be at least the initial timeout.")
+	validateProgress := func(_ ui.FieldValue) []string {
+		if startup.ReadOnly {
+			return nil
+		}
+		policy := provider.DialSettings{
+			ProgressStartupTimeoutSeconds: dialSecondsFromChoice(startup.Value.String(), int(provider.DefaultProgressStartupTimeout.Seconds())),
+			ProgressTimeoutFloorSeconds:   dialSecondsFromChoice(floor.Value.String(), int(provider.DefaultProgressTimeoutFloor.Seconds())),
+			ProgressTimeoutCeilingSeconds: dialSecondsFromChoice(ceiling.Value.String(), int(provider.DefaultProgressTimeoutCeiling.Seconds())),
+		}
+		if err := policy.Validate(); err != nil {
+			return []string{err.Error()}
+		}
+		return nil
+	}
+	startup.Validator, floor.Validator, ceiling.Validator = validateProgress, validateProgress, validateProgress
 	return []*ui.FieldState{
 		ui.SeparatorFieldState("dialer", "Connection tuning"),
 		dialSecondsField(fieldDialTimeout, "Request timeout", d.RequestTimeoutSeconds, 0, dialTimeoutLadder,
-			"Overall cap per request, including streaming."),
+			"Overall cap including upload, streaming, retries and retry waits. Unlimited does not disable progress timeouts."),
 		dialSecondsField(fieldDialConnect, "Connect timeout", d.ConnectTimeoutSeconds,
 			int(provider.DefaultConnectTimeout.Seconds()), dialConnectLadder,
-			"Budget for establishing each connection (TCP + TLS)."),
+			"Budget for each TCP connection and TLS handshake, not waiting for model output."),
+		startup, floor, ceiling,
 		dialCountField(fieldDialAttempts, "Max attempts", d.MaxAttempts, provider.DefaultMaxAttempts, dialAttemptsLadder,
 			"Tries per request; failures retry with exponential backoff."),
 		dialSecondsField(fieldDialBackoff, "Max backoff", d.MaxBackoffSeconds,
@@ -888,7 +953,12 @@ func dialChoiceID(value, builtinDefault int) string {
 // default. A stored value outside the ladder is inserted so existing settings
 // stay visible and editable.
 func dialFieldOptions(current, builtinDefault int, ladder []int, unit string) []ui.FormOption {
-	values := append([]int{builtinDefault}, ladder...)
+	values := []int{builtinDefault}
+	for _, value := range ladder {
+		if !slices.Contains(values, value) {
+			values = append(values, value)
+		}
+	}
 	if current > 0 && !slices.Contains(values, current) {
 		values = append(values, current)
 		slices.Sort(values[1:])
@@ -941,15 +1011,18 @@ func dialAttemptsFromChoice(choice string) int {
 	return dialSecondsFromChoice(choice, provider.DefaultMaxAttempts)
 }
 
-// dialerFromForm folds the four dialer rows back into persisted settings.
+// dialerFromForm folds the connection-tuning rows back into persisted settings.
 // Rows left on the built-in default persist as unset, and an all-default form
 // stores nil — defaults, not a frozen copy of them.
-func dialerFromForm(timeout, connect, attempts, backoff string) *provider.DialSettings {
+func dialerFromForm(timeout, connect, attempts, backoff, startup, floor, ceiling string) *provider.DialSettings {
 	dialer := provider.DialSettings{
-		RequestTimeoutSeconds: dialSecondsFromChoice(timeout, 0),
-		ConnectTimeoutSeconds: dialSecondsFromChoice(connect, int(provider.DefaultConnectTimeout.Seconds())),
-		MaxAttempts:           dialAttemptsFromChoice(attempts),
-		MaxBackoffSeconds:     dialSecondsFromChoice(backoff, int(provider.DefaultMaxBackoff.Seconds())),
+		RequestTimeoutSeconds:         dialSecondsFromChoice(timeout, 0),
+		ConnectTimeoutSeconds:         dialSecondsFromChoice(connect, int(provider.DefaultConnectTimeout.Seconds())),
+		MaxAttempts:                   dialAttemptsFromChoice(attempts),
+		MaxBackoffSeconds:             dialSecondsFromChoice(backoff, int(provider.DefaultMaxBackoff.Seconds())),
+		ProgressStartupTimeoutSeconds: dialSecondsFromChoice(startup, int(provider.DefaultProgressStartupTimeout.Seconds())),
+		ProgressTimeoutFloorSeconds:   dialSecondsFromChoice(floor, int(provider.DefaultProgressTimeoutFloor.Seconds())),
+		ProgressTimeoutCeilingSeconds: dialSecondsFromChoice(ceiling, int(provider.DefaultProgressTimeoutCeiling.Seconds())),
 	}
 	if dialer == (provider.DialSettings{}) {
 		return nil
@@ -1000,9 +1073,9 @@ func (m *Model) buildAgentForm(cfg types.CategorySettings, isMain bool) *ui.Form
 	providerID := m.accounts[cfg.AccountID].ProviderID
 	fields := []*ui.FieldState{
 		ui.SeparatorFieldState("agent", "Agent behavior"),
-		ui.SelectFieldState(fieldConnection, "Account", cfg.AccountID, m.connectionOptions(false), "Select the named account this agent uses."),
-		ui.ModelFieldState(fieldModel, "Model", cfg.Model, ui.ModelOptions(m.models[accountModelKey(providerID, cfg.AccountID)]), "Model for this agent account."),
-		ui.ThinkingFieldState(fieldThinkingEffort, cfg.ThinkingEffort, "Reasoning budget for this agent."),
+		ui.SelectFieldState(fieldConnection, "Account", cfg.AccountID, m.connectionOptions(false), "Connection for this agent."),
+		ui.ModelFieldState(fieldModel, "Model", cfg.Model, ui.ModelOptions(m.models[accountModelKey(providerID, cfg.AccountID)]), "Models from this account."),
+		ui.ThinkingFieldState(fieldThinkingEffort, cfg.ThinkingEffort, "Reasoning budget."),
 	}
 	fields = append(fields, m.capabilityFields(cfg)...)
 	compaction := types.DefaultContextCompactionPercent
@@ -1010,21 +1083,21 @@ func (m *Model) buildAgentForm(cfg types.CategorySettings, isMain bool) *ui.Form
 		compaction = *cfg.ContextCompactionPercent
 	}
 	compactionField := ui.TextFieldState(fieldContextCompaction, "Compact context at", fmt.Sprintf("%d", compaction),
-		"Percentage of this agent's model context that triggers automatic compaction. 0 disables it.")
+		"Context percent; 0 disables.")
 	compactionField.Validator = intRangeValidator(0, 100)
 	fields = append(fields,
 		ui.SeparatorFieldState("context-management", "Context management"),
 		compactionField,
 	)
 	fields = append(fields, m.samplingFields(cfg)...)
-	prompt := ui.TextAreaFieldState("agent-instructions", "System instructions", cfg.Instructions, "Additional instructions. Crude's core safety and reporting rules remain in force.")
+	prompt := ui.TextAreaFieldState("agent-instructions", "System instructions", cfg.Instructions, "Agent-specific instructions.")
 	prompt.Rows = 10
-	fields = append(fields, ui.TextFieldState("agent-description", "Purpose", cfg.Description, "A short description of when to use this agent."), prompt)
+	fields = append(fields, ui.TextFieldState("agent-description", "Purpose", cfg.Description, "When to use this agent."), prompt)
 	if isMain {
 		fields = append(fields,
 			ui.SeparatorFieldState("delegation", "Delegation"),
 			ui.BoolFieldState(fieldMultiAgent, "Multi Agent",
-				m.agentsEnabled(), "Allow spawning researcher, crafter, and aeron sub-agents."),
+				m.agentsEnabled(), "Allow delegation to other agents."),
 		)
 	}
 	return formModel(fields...)
@@ -1037,17 +1110,21 @@ func (m *Model) capabilityFields(cfg types.CategorySettings) []*ui.FieldState {
 	fields := []*ui.FieldState{
 		ui.SeparatorFieldState("capabilities", "Model capabilities"),
 		numericField(fieldCtxWindow, "Context window", cfg.ModelContextWindow,
-			"Max input tokens; blank uses the model registry value."),
+			"Input tokens; blank = model default."),
 		numericField(fieldMaxOutput, "Max output", cfg.ModelMaxOutput,
-			"Max output tokens; blank uses the model registry value."),
+			"Output tokens; blank = model default."),
 	}
+	fields[1].Inherited = cfg.ModelContextWindow == 0
+	fields[2].Inherited = cfg.ModelMaxOutput == 0
 	for _, modality := range provider.KnownModalities() {
-		fields = append(fields, ui.ToggleFieldState(
+		field := ui.ToggleFieldState(
 			fieldModalityPrefix+modality,
 			modalityLabel(modality),
 			slices.Contains(cfg.ModelModalities, modality),
 			modalityDescription(modality),
-		))
+		)
+		field.Inherited = cfg.ModelModalities == nil
+		fields = append(fields, field)
 	}
 	return fields
 }
@@ -1063,10 +1140,10 @@ func (m *Model) samplingFields(cfg types.CategorySettings) []*ui.FieldState {
 		topP = strconv.FormatFloat(*cfg.ModelTopP, 'f', -1, 64)
 	}
 	temperatureField := ui.TextFieldState(fieldTemperature, "Temperature", temperature,
-		"Randomness from 0 to 2. Blank = default.")
+		"0-2; blank = provider default.")
 	temperatureField.Validator = floatRangeValidator(0, 2)
 	topPField := ui.TextFieldState(fieldTopP, "Top P", topP,
-		"Nucleus sampling cutoff, 0 to 1. Blank = default.")
+		"0-1; blank = provider default.")
 	topPField.Validator = floatRangeValidator(0, 1)
 	return []*ui.FieldState{
 		ui.SeparatorFieldState("sampling", "Sampling"),
@@ -1141,13 +1218,13 @@ func modalityLabel(modality string) string {
 func modalityDescription(modality string) string {
 	switch modality {
 	case provider.ModalityImage:
-		return "The model accepts image attachments."
+		return "Accept image attachments."
 	case provider.ModalityPDF:
-		return "The model accepts PDF attachments."
+		return "Accept PDF attachments."
 	case provider.ModalityVideo:
-		return "The model accepts video attachments."
+		return "Accept video attachments."
 	case provider.ModalityAudio:
-		return "The model accepts audio attachments."
+		return "Accept audio attachments."
 	}
 	return "The model accepts " + modality + " attachments."
 }
@@ -1161,24 +1238,8 @@ func (m *Model) agentsEnabled() bool {
 	return true
 }
 
-// buildMemoryForm builds the Memory settings form: all the recall/extract/
-// consolidation controls plus an Agent behavior section so the memory agent
-// can pick its own provider/model/thinking like any other agent. Empty fields
-// inherit the main agent at use time.
+// Memory's job cadence lives here; its agent identity and model live in Agents.
 func (m *Model) buildMemoryForm(mem types.MemorySettings) *ui.FormModel {
-	cat := mem.MemoryCategory
-	providerID := m.accounts[cat.AccountID].ProviderID
-	model := cat.Model
-	if model == "" {
-		model = mem.Model // legacy bare override
-	}
-	compaction := types.DefaultContextCompactionPercent
-	if cat.ContextCompactionPercent != nil {
-		compaction = *cat.ContextCompactionPercent
-	}
-	compactionField := ui.TextFieldState(fieldContextCompaction, "Compact context at", strconv.Itoa(compaction),
-		"Percentage of the memory agent context window; 0 disables automatic compaction.")
-	compactionField.Validator = intRangeValidator(0, 100)
 	return formModel(
 		ui.SeparatorFieldState("memory-recall", "Recall"),
 		ui.BoolFieldState("auto-recall", "Auto recall", mem.AutoRecallEnabled(), "Inject relevant workspace memories into context each turn."),
@@ -1187,12 +1248,7 @@ func (m *Model) buildMemoryForm(mem types.MemorySettings) *ui.FormModel {
 		ui.SeparatorFieldState("memory-background", "Background curation"),
 		ui.BoolFieldState("auto-extract", "Auto extract", mem.AutoExtractEnabled(), "Extract durable memories and summaries in a background job."),
 		ui.TextFieldState("extract-every", "Extract cadence", fmt.Sprintf("%d", mem.ExtractCadenceOrDefault(types.DefaultMemoryExtractCadence)), "Run extraction every N turns."),
-		ui.BoolFieldState("consolidation", "Consolidation", mem.ConsolidationEnabled(), "Background dedup, contradiction resolution, and memory decay."),
-		ui.SeparatorFieldState("memory-agent", "Memory agent"),
-		ui.SelectFieldState(fieldConnection, "Account", cat.AccountID, m.connectionOptions(false), "Select the named account used for memory jobs."),
-		ui.ModelFieldState(fieldModel, "Model", model, ui.ModelOptions(m.models[accountModelKey(providerID, cat.AccountID)]), "Model for background memory jobs. Blank inherits the main agent."),
-		ui.ThinkingFieldState(fieldThinkingEffort, cat.ThinkingEffort, "Reasoning budget for the memory agent."),
-		compactionField,
+		ui.BoolFieldState("consolidation", "Consolidation", mem.ConsolidationEnabled(), "Background dedup, contradiction resolution, and memory decay. Configure its agent in Agents > Memory Agent."),
 	)
 }
 
@@ -1202,10 +1258,6 @@ func (m *Model) buildSafetyForm(settings types.SafetySettings) *ui.FormModel {
 	rules := ui.TextFieldState(fieldSafetyRules, "Command rules", formatCommandRules(settings.CommandRules),
 		"Semicolon-separated glob=severity rules, for example scripts/*.sh=safe; deploy*=destructive.")
 	rules.Validator = commandRulesValidator
-	auto := settings.AutoPermission.Normalized()
-	instructions := ui.TextAreaFieldState(fieldAutoPermInstructions, "Extra restrictions", auto.Instructions,
-		"Optional brief restrictions for the reviewer. Backend length caps still apply.")
-	instructions.Rows = 3
 	return formModel(
 		ui.SeparatorFieldState("command-policy", "Command policy"),
 		ui.CycleFieldState(fieldSafetyConfirmAt, "Confirm commands at", confirmOptions, settings.ConfirmAt,
@@ -1215,27 +1267,48 @@ func (m *Model) buildSafetyForm(settings types.SafetySettings) *ui.FormModel {
 		ui.CycleFieldState(fieldSafetyScript, "Local scripts", riskOptions, settings.ScriptExecutionRisk,
 			"Severity for direct .sh execution and shell/source wrappers."),
 		rules,
-		ui.SeparatorFieldState("auto-permissions", "Auto permissions"),
-		ui.BoolFieldState(fieldAutoPermission, "Enabled", auto.Enabled == "on",
-			"Opt in for the root agent only. Child agents preserve their own policy."),
-		ui.SelectFieldState(fieldAutoPermAccount, "Connection", auto.AccountID, m.connectionOptions(true),
-			"Required explicit reviewer account. Blank cannot silently inherit the main agent."),
-		ui.ModelFieldState(fieldAutoPermModel, "Model", auto.Model, ui.ModelOptions(m.models[accountModelKey(auto.Provider, auto.AccountID)]),
-			"Required explicit reviewer model. Blank is unconfigured; the main agent model is never chosen implicitly."),
-		ui.CycleFieldState(fieldAutoPermDenyMode, "Denied review", []string{"ask", "deny"}, auto.DenyMode,
-			"Ask routes a denied review to you; Deny rejects it without another prompt."),
-		autoPermissionIntField(fieldAutoPermTimeout, "Timeout (seconds)", auto.TimeoutSeconds, 1, 30,
-			"Remote review timeout. Uncertainty, timeout, and errors always ask you."),
-		autoPermissionIntField(fieldAutoPermOutputTokens, "Output token cap", auto.MaxOutputTokens, 16, 256,
-			"Maximum reviewer response tokens for each eligible request."),
-		autoPermissionIntField(fieldAutoPermInputBytes, "Input byte cap", auto.MaxInputBytes, 256, 8192,
-			"Maximum bounded tool-argument bytes shared with the remote reviewer."),
-		autoPermissionIntField(fieldAutoPermReviews, "Review cap per turn", auto.MaxReviewsPerTurn, 1, 100,
-			"Maximum eligible remote reviews in one root-agent turn."),
-		instructions,
 		ui.SeparatorFieldState("safety-attention", "Attention"),
 		ui.BoolFieldState(fieldSafetyNotify, "Danger notifications", settings.NotifyDangerous != "off",
 			"Keep dangerous and blocked actions visible. Policy hard blocks always apply before auto review."),
+	)
+}
+
+func (m *Model) buildAutoReviewPolicyForm(settings types.AutoPermissionSettings) *ui.FormModel {
+	auto := settings.Normalized()
+	return formModel(
+		ui.SeparatorFieldState("review-outcomes", "Review outcomes"),
+		ui.CycleFieldState(fieldAutoPermDenyMode, "Denied review", []string{"ask", "deny"}, auto.DenyMode,
+			"Ask you or reject this call. Uncertainty asks; review never creates a permanent grant."),
+		ui.SeparatorFieldState("review-bounds", "Per-request limits"),
+		autoPermissionIntField(fieldAutoPermTimeout, "Timeout (seconds)", auto.TimeoutSeconds, 1, 30,
+			"A timed-out review asks you; it never approves."),
+		autoPermissionIntField(fieldAutoPermOutputTokens, "Output token cap", auto.MaxOutputTokens, 16, 256,
+			"Maximum reviewer response tokens."),
+		autoPermissionIntField(fieldAutoPermInputBytes, "Input byte cap", auto.MaxInputBytes, 256, 8192,
+			"Maximum eligible argument bytes; conversation, environment, and file contents are excluded."),
+		autoPermissionIntField(fieldAutoPermReviews, "Review cap per turn", auto.MaxReviewsPerTurn, 1, 100,
+			"Maximum reviews per root-agent turn; child-agent policies are unchanged."),
+	)
+}
+
+func (m *Model) buildAutoReviewerForm() *ui.FormModel {
+	auto := m.autoReviewer.Normalized()
+	purpose := ui.TextFieldState("agent-description", "Purpose", "Reviews eligible root-agent permission requests", "Fixed safety role; not an agent that executes tools.")
+	purpose.ReadOnly = true
+	instructions := ui.TextAreaFieldState("agent-instructions", "Extra restrictions", auto.Instructions,
+		"May only narrow approvals. Core reviewer safety instructions cannot be changed.")
+	instructions.Rows = 8
+	instructions.Validator = func(value ui.FieldValue) []string {
+		if len(strings.TrimSpace(value.String())) > 1024 {
+			return []string{"Use at most 1024 bytes of additional restrictions."}
+		}
+		return nil
+	}
+	return formModel(
+		ui.SelectFieldState(fieldConnection, "Account", auto.AccountID, m.connectionOptions(false), "Explicit reviewer account; never inherits Main Agent."),
+		ui.ModelFieldState(fieldModel, "Model", auto.Model, ui.ModelOptions(m.models[accountModelKey(auto.Provider, auto.AccountID)]),
+			"Explicit reviewer model; never inherits Main Agent."),
+		purpose, instructions,
 	)
 }
 
@@ -1418,22 +1491,28 @@ func (m *Model) handleFieldChanged(category int, fieldID string) {
 		}
 		form := m.categories[category].Form
 		if field := form.Field(fieldModel); field != nil {
+			form.SetValue(fieldModel, ui.StringValue(""))
 			field.Options = ui.ModelOptions(m.models[accountModelKey(account.ProviderID, accountID)])
-			field.Errors, field.Loading, field.LoadMessage = nil, false, ""
-		}
-		return
-	}
-	if category == catSafety && fieldID == fieldAutoPermAccount {
-		form := m.categories[catSafety].Form
-		form.SetValue(fieldAutoPermModel, ui.StringValue(""))
-		if field := form.Field(fieldAutoPermModel); field != nil {
-			field.Options = nil
 			field.Errors, field.Loading, field.LoadMessage = nil, false, ""
 		}
 		return
 	}
 	if (m.isAgentCategory(category) || category == catMemory) && fieldID == fieldModel {
 		m.autofillCapabilities(category)
+		return
+	}
+	if m.isAgentCategory(category) && strings.HasPrefix(fieldID, fieldModalityPrefix) {
+		for _, modality := range provider.KnownModalities() {
+			if field := m.categories[category].Form.Field(fieldModalityPrefix + modality); field != nil {
+				field.Inherited = false
+			}
+		}
+		m.autofillCapabilities(category)
+		return
+	}
+	if m.isAgentCategory(category) && (fieldID == fieldCtxWindow || fieldID == fieldMaxOutput) {
+		field := m.categories[category].Form.Field(fieldID)
+		field.Inherited = field.Value.IsEmpty()
 		return
 	}
 }
@@ -1458,16 +1537,51 @@ func (m *Model) autofillCapabilities(category int) {
 		}
 	}
 	if !found {
-		return
+		entry = types.ModelEntriesFromInfos([]provider.ModelInfo{{ID: modelID}})[0]
 	}
-	if entry.ContextWindow > 0 {
-		form.SetValue(fieldCtxWindow, ui.StringValue(strconv.Itoa(entry.ContextWindow)))
+	if field := form.Field(fieldCtxWindow); field != nil && field.Inherited {
+		value := ""
+		if entry.ContextWindow > 0 {
+			value = strconv.Itoa(entry.ContextWindow)
+		}
+		field.Value = ui.StringValue(value)
+		field.Initial, field.Dirty = field.Value, false
 	}
-	if entry.MaxOutput > 0 {
-		form.SetValue(fieldMaxOutput, ui.StringValue(strconv.Itoa(entry.MaxOutput)))
+	if field := form.Field(fieldMaxOutput); field != nil && field.Inherited {
+		value := ""
+		if entry.MaxOutput > 0 {
+			value = strconv.Itoa(entry.MaxOutput)
+		}
+		field.Value = ui.StringValue(value)
+		field.Initial, field.Dirty = field.Value, false
 	}
 	for _, modality := range provider.KnownModalities() {
-		form.SetValue(fieldModalityPrefix+modality, ui.StringValue(modalityChoice(slices.Contains(entry.Modalities, modality))))
+		field := form.Field(fieldModalityPrefix + modality)
+		if field == nil {
+			continue
+		}
+		supported, known := entry.ModalitySupport[modality]
+		if entry.ModalitySupport == nil && entry.Modalities != nil {
+			supported, known = slices.Contains(entry.Modalities, modality), true
+		}
+		if field.Inherited {
+			field.Value = ui.StringValue(modalityChoice(supported))
+			field.Initial = field.Value
+			field.Dirty = false
+		}
+		field.DescriptionImportant = false
+		field.Description = "Model card: unknown."
+		if known {
+			field.Description = "Model card: " + modalityChoice(supported) + "."
+			if !field.Inherited && (field.Value.String() == "yes") != supported {
+				field.Description = "Inconsistent: override " + field.Value.String() + "; card " + modalityChoice(supported) + "."
+				field.DescriptionImportant = true
+			}
+		}
+		if slices.Contains(entry.ConflictingModalities, modality) {
+			field.Description += " Catalog entries disagree."
+			field.DescriptionImportant = true
+		}
 	}
 }
 
@@ -1499,6 +1613,31 @@ func (m *Model) syncAppearanceColors() {
 // the mounted component tree rather than a parallel legacy form event loop.
 func (m *Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case types.ModelCatalogUpdatedMsg:
+		for accountID, account := range m.accounts {
+			key := accountModelKey(account.ProviderID, accountID)
+			if entries, loaded := m.models[key]; loaded {
+				infos := make([]provider.ModelInfo, len(entries))
+				for index, entry := range entries {
+					infos[index] = provider.ModelInfo{ID: entry.ID, Name: entry.Name}
+				}
+				entries = types.ModelEntriesFromInfos(infos)
+				m.models[key] = entries
+				for _, category := range []int{catMain, catResearcher, catCrafter, catAeron, catAgents} {
+					if m.value(category, fieldConnection) != accountID {
+						continue
+					}
+					if field := m.categories[category].Form.Field(fieldModel); field != nil && !field.Loading && len(field.Errors) == 0 {
+						field.Options = ui.ModelOptions(entries)
+					}
+				}
+			}
+		}
+		for _, category := range []int{catMain, catResearcher, catCrafter, catAeron, catAgents} {
+			if m.categories[category].Form.Field(fieldModel) != nil {
+				m.autofillCapabilities(category)
+			}
+		}
 	case TemplateChangeResultMsg:
 		if msg.Target == m {
 			m.applyTemplateChange(msg)
@@ -1569,27 +1708,20 @@ func (m *Model) resolvedAccount(category int) (string, string) {
 			return m.accountEditor.draft.ProviderID, m.accountEditor.draft.ID
 		}
 		return m.accounts[m.accountID].ProviderID, m.accountID
-	case catSafety:
-		id := m.value(catSafety, fieldAutoPermAccount)
-		return m.accounts[id].ProviderID, id
 	default:
 		id := m.value(category, fieldConnection)
 		return m.accounts[id].ProviderID, id
 	}
 }
 func (m *Model) OpenSelect(fieldID string) tea.Cmd {
-	modelFieldID := fieldModel
-	if m.selected == catSafety {
-		modelFieldID = fieldAutoPermModel
-	}
-	if fieldID != modelFieldID || m.currentForm() == nil {
+	if fieldID != fieldModel || m.currentForm() == nil {
 		return nil
 	}
 	providerID, accountID := m.resolvedAccount(m.selected)
 	if providerID == "" || accountID == "" {
 		return nil
 	}
-	field := m.currentForm().Field(modelFieldID)
+	field := m.currentForm().Field(fieldModel)
 	if field == nil || len(field.Options) > 0 {
 		return nil
 	}
@@ -1625,35 +1757,32 @@ func (m *Model) fetchModelsForAccountCmd(providerID, accountID string) tea.Cmd {
 func (m *Model) setModelsForAccount(providerID, accountID string, models []types.ModelEntry) {
 	m.models[accountModelKey(providerID, accountID)] = models
 	for index := range m.categories {
-		fieldID := fieldModel
-		if index == catSafety {
-			fieldID = fieldAutoPermModel
-		} else if !m.isAgentCategory(index) && index != catMemory {
+		if !m.isAgentCategory(index) && index != catMemory {
 			continue
 		}
 		pid, aid := m.resolvedAccount(index)
 		if pid != providerID || aid != accountID {
 			continue
 		}
-		if field := m.categories[index].Form.Field(fieldID); field != nil {
+		if field := m.categories[index].Form.Field(fieldModel); field != nil {
 			field.Options = ui.ModelOptions(models)
 			field.Errors, field.Loading, field.LoadMessage = nil, false, ""
+		}
+		if m.isAgentCategory(index) {
+			m.autofillCapabilities(index)
 		}
 	}
 }
 func (m *Model) setModelsErrorForAccount(providerID, accountID, message string) {
 	for index := range m.categories {
-		fieldID := fieldModel
-		if index == catSafety {
-			fieldID = fieldAutoPermModel
-		} else if !m.isAgentCategory(index) && index != catMemory {
+		if !m.isAgentCategory(index) && index != catMemory {
 			continue
 		}
 		pid, aid := m.resolvedAccount(index)
 		if pid != providerID || aid != accountID {
 			continue
 		}
-		if field := m.categories[index].Form.Field(fieldID); field != nil {
+		if field := m.categories[index].Form.Field(fieldModel); field != nil {
 			field.Errors, field.Loading, field.LoadMessage = []string{message}, false, ""
 		}
 	}
@@ -1812,6 +1941,7 @@ const (
 	catAeron
 	catMemory
 	catSafety
+	catAutoReviewPolicy
 	catAppearance
 	catEditor
 	catLSP
@@ -1837,7 +1967,7 @@ func (m *Model) currentOverrideKey() string {
 		return "providers"
 	case catMemory:
 		return "memory"
-	case catSafety:
+	case catSafety, catAutoReviewPolicy:
 		return "safety"
 	case catHistory:
 		return "local_history"
@@ -1891,13 +2021,7 @@ func (m *Model) collectMemory(cfg *types.MemorySettings) {
 		RecallBudgetTokens: parseOpt(m.value(catMemory, "recall-budget"), types.DefaultMemoryRecallBudget),
 		RecallLimit:        parseOpt(m.value(catMemory, "recall-limit"), types.DefaultMemoryRecallLimit),
 		ExtractEveryTurns:  parseOpt(m.value(catMemory, "extract-every"), types.DefaultMemoryExtractCadence),
-		MemoryCategory: types.CategorySettings{
-			Provider:                 m.accounts[m.value(catMemory, fieldConnection)].ProviderID,
-			AccountID:                m.value(catMemory, fieldConnection),
-			Model:                    m.value(catMemory, fieldModel),
-			ThinkingEffort:           m.value(catMemory, fieldThinkingEffort),
-			ContextCompactionPercent: parsePercentPtr(m.value(catMemory, fieldContextCompaction)),
-		},
+		MemoryCategory:     m.memoryAgent,
 	}
 }
 
@@ -1908,19 +2032,14 @@ func (m *Model) collectSafety(settings *types.SafetySettings) {
 		ScriptExecutionRisk: m.value(catSafety, fieldSafetyScript),
 		CommandRules:        parseCommandRules(m.value(catSafety, fieldSafetyRules)),
 		NotifyDangerous:     onOff(m.value(catSafety, fieldSafetyNotify) == "on"),
-		AutoPermission: types.AutoPermissionSettings{
-			Enabled:           onOff(m.value(catSafety, fieldAutoPermission) == "on"),
-			Provider:          m.accounts[m.value(catSafety, fieldAutoPermAccount)].ProviderID,
-			AccountID:         m.value(catSafety, fieldAutoPermAccount),
-			Model:             m.value(catSafety, fieldAutoPermModel),
-			DenyMode:          m.value(catSafety, fieldAutoPermDenyMode),
-			Instructions:      strings.TrimSpace(m.value(catSafety, fieldAutoPermInstructions)),
-			TimeoutSeconds:    parseOpt(m.value(catSafety, fieldAutoPermTimeout), 8),
-			MaxOutputTokens:   parseOpt(m.value(catSafety, fieldAutoPermOutputTokens), 96),
-			MaxInputBytes:     parseOpt(m.value(catSafety, fieldAutoPermInputBytes), 4096),
-			MaxReviewsPerTurn: parseOpt(m.value(catSafety, fieldAutoPermReviews), 12),
-		}.Normalized(),
 	}
+	auto := m.autoReviewer
+	auto.DenyMode = m.value(catAutoReviewPolicy, fieldAutoPermDenyMode)
+	auto.TimeoutSeconds = parseOpt(m.value(catAutoReviewPolicy, fieldAutoPermTimeout), 8)
+	auto.MaxOutputTokens = parseOpt(m.value(catAutoReviewPolicy, fieldAutoPermOutputTokens), 96)
+	auto.MaxInputBytes = parseOpt(m.value(catAutoReviewPolicy, fieldAutoPermInputBytes), 4096)
+	auto.MaxReviewsPerTurn = parseOpt(m.value(catAutoReviewPolicy, fieldAutoPermReviews), 12)
+	settings.AutoPermission = auto.Normalized()
 }
 
 func onOff(enabled bool) string {
@@ -2027,25 +2146,37 @@ func (m *Model) agentCategoryFromForm(form *ui.FormModel, category types.Categor
 		}
 		return ""
 	}
+	previousModel := category.Model
 	category.AccountID, category.Model, category.ThinkingEffort = value(fieldConnection), value(fieldModel), value(fieldThinkingEffort)
 	category.Provider = m.accounts[category.AccountID].ProviderID
 	category.Description, category.Instructions = value("agent-description"), value("agent-instructions")
-	// Registry facts (pricing, tool support) mirror onto the category when
-	// the model entry is known. User-editable capabilities come from the
-	// form, where blank means inherit from the registry at use time.
-	for _, model := range m.models[accountModelKey(category.Provider, category.AccountID)] {
-		if model.ID == category.Model {
-			category.ModelInputPrice, category.ModelOutputPrice, category.ModelCachePrice = model.InputPrice, model.OutputPrice, model.CacheReadPrice
-			category.ModelSupportsTools = model.SupportsTools
-			break
-		}
+	// Public catalog facts are not edits to the user's settings. Keep existing
+	// explicit values, but never carry old-model facts across a model change.
+	if previousModel != category.Model {
+		category.ModelInputPrice, category.ModelOutputPrice, category.ModelCachePrice = 0, 0, 0
+		category.ModelSupportsTools = false
 	}
 	category.ModelContextWindow = parsePositiveInt(value(fieldCtxWindow))
 	category.ModelMaxOutput = parsePositiveInt(value(fieldMaxOutput))
+	if field := form.Field(fieldCtxWindow); field != nil && field.Inherited {
+		category.ModelContextWindow = 0
+	}
+	if field := form.Field(fieldMaxOutput); field != nil && field.Inherited {
+		category.ModelMaxOutput = 0
+	}
 	category.ModelModalities = nil
+	explicitModalities := false
 	for _, modality := range provider.KnownModalities() {
-		if value(fieldModalityPrefix+modality) == "yes" {
-			category.ModelModalities = append(category.ModelModalities, modality)
+		if field := form.Field(fieldModalityPrefix + modality); field != nil && !field.Inherited {
+			explicitModalities = true
+		}
+	}
+	if explicitModalities {
+		category.ModelModalities = []string{}
+		for _, modality := range provider.KnownModalities() {
+			if value(fieldModalityPrefix+modality) == "yes" {
+				category.ModelModalities = append(category.ModelModalities, modality)
+			}
 		}
 	}
 	category.ModelTemperature = parseFloatPtr(value(fieldTemperature))

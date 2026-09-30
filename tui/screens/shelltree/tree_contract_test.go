@@ -71,8 +71,9 @@ func selectedBase(model *filetree.FileTreeModel) string {
 	return filepath.Base(node.Path)
 }
 
-// filterTypingCases exercises filter input at Host level; model owns value,
-// TextField is paint-only (synced from model in syncFromModel).
+// filterTypingCases exercises the shared FilterField input at Host level.
+// Programmatically seeded model projections synchronize on the next layout;
+// from then on the field owns edits and the model derives visible rows.
 func filterTypingCases() []struct {
 	name  string
 	setup func(*filetree.FileTreeModel, treePaths)
@@ -335,6 +336,8 @@ func TestShellTreeKeyboardContractTable(t *testing.T) {
 			host := setupTreeHost(t, model)
 			if tc.setup != nil {
 				tc.setup(model, paths)
+				host.MarkLayout()
+				host.Layout()
 			}
 			pressKey(host, tc.key)
 			if tc.check != nil {

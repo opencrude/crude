@@ -148,12 +148,12 @@ func orchestratorToolDescriptions() map[string]string {
 			"Context handoff: pass the file paths of any previous agent reports (.md) in the `instructions` parameter so the new agent has context. " +
 			"wait=true (default) returns the terminal result in this call; use it for a blocking dependency. " +
 			"wait=false returns a handle immediately; continue independent work or end your turn and completion will notify you. " +
-			"Assign exclusive owned paths, acceptance criteria, a stopping condition, and a task-sized timeout. Agree shared interfaces before parallel edits. " +
+			"Assign exclusive owned paths, acceptance criteria, and a stopping condition. Agree shared interfaces before parallel edits. " +
 			"Children run focused checks; the parent owns final integrated tests and lint. If sibling work blocks a child, it must report partial progress and stop, not repeatedly check changing files. " +
 			"Batch independent launches together when parallel tool calls are available. " +
 			"Do not actively wait or poll for routine results. " +
 			"Required: description. " +
-			"Optional: name (task/profile hint; personal identity is allocated automatically), category, instructions, policy, allowed_tools, denied_tools, file_ownership, timeout_seconds, wait. " +
+			"Optional: name (task/profile hint; personal identity is allocated automatically), category, instructions, policy, allowed_tools, denied_tools, file_ownership, wait. " +
 			"Model and provider are resolved automatically from your configuration; do not specify them.",
 
 		"poll_sub_agent": "Check a child status or recover a result when it is needed for a decision or user request. " +

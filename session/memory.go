@@ -82,7 +82,11 @@ func (s *Session) memorySettings() ttypes.MemorySettings {
 	if s.cfg == nil {
 		return ttypes.MemorySettings{}
 	}
-	return s.cfg.Memory
+	settings := s.cfg.Memory
+	if settings.MemoryCategory.Enabled != nil && !*settings.MemoryCategory.Enabled {
+		settings.AutoRecall, settings.AutoExtract, settings.Consolidation = "off", "off", "off"
+	}
+	return settings
 }
 
 // recordToolTouch accumulates files touched by tools during this session.

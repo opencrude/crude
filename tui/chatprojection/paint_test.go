@@ -33,6 +33,31 @@ func TestBuildSubPaneHeaderThinkingNative(t *testing.T) {
 	}
 }
 
+func TestSubAgentReviewPaneShowsTerminalFailureInCollapsedAndExpandedForms(t *testing.T) {
+	for _, tc := range []struct{ status, label, marker string }{
+		{"failed_error", "failed", "×"},
+		{"failed_timeout", "timed out", "×"},
+		{"failed_quota", "quota exceeded", "×"},
+		{"cancelled", "cancelled", "●"},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			sp := workspace.NewSubPane("child", workspace.PaneAgent, "Lily")
+			sp.Status = tc.status
+			sp.Collapse()
+			view := sp.View()
+			for _, line := range []chatprojection.SubPaneLine{
+				chatprojection.BuildSubPaneSummaryLine(view, 75),
+				chatprojection.BuildSubPaneHeaderLine(view.Header, 75, 0),
+			} {
+				text := line.PlainText()
+				if !strings.Contains(text, tc.label) || !strings.Contains(text, tc.marker) || strings.Contains(text, "failed_timeout") {
+					t.Fatalf("child review status = %q", text)
+				}
+			}
+		})
+	}
+}
+
 func TestBuildSubPaneToolStates(t *testing.T) {
 	messages := []*types.ChatMessage{
 		{Role: types.RoleTool, ToolName: "read_file", ToolArgs: "ok", ToolPreviewPhase: "done", ToolStatus: "success"},

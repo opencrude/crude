@@ -153,6 +153,11 @@ func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth
 	if _, exit, _, ok := tools.CommandResult(msg.ToolName, msg.Content); ok && exit != nil && *exit != 0 {
 		msg.ToolStatus, msg.ToolPreviewPhase = types.ToolStatusError, types.ToolPreviewError
 	}
+	if msg.ToolName == "run_sub_agent" && tools.SubAgentResultFailed(msg.Content) {
+		msg.ToolStatus, msg.ToolPreviewPhase = types.ToolStatusError, types.ToolPreviewError
+	} else if msg.ToolName == "run_sub_agent" && tools.SubAgentResultCancelled(msg.Content) {
+		msg.ToolStatus, msg.ToolPreviewPhase = types.ToolStatusCancelled, types.ToolPreviewDone
+	}
 	titlePhase := msg.ToolPreviewPhase
 	if titlePhase == "" {
 		titlePhase = phase
@@ -193,6 +198,8 @@ func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth
 				out.appendRichToolBody(msg, resultContent, th, contentWidth, innerW, height, expanded)
 			case tools.IsSummaryOnlyTool(msg.ToolName) && !expanded:
 				// title only
+			case msg.ToolName == "run_sub_agent":
+				out.appendPlainToolBody(msg.ToolName, resultContent, innerW, height, false, true)
 			case isCompactEvidenceTool(msg.ToolName) && !expanded:
 				// Compact evidence tools keep operands/count/duration in the title.
 			case tools.IsSummaryOnlyTool(msg.ToolName):
@@ -213,10 +220,10 @@ func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth
 			prefix, _, _ := strings.Cut(msg.Content, "```diff")
 			out.appendPlainToolBody(msg.ToolName, prefix, innerW, height, false, true)
 			out.appendRichToolBody(msg, msg.Content, th, contentWidth, innerW, height, true)
-		} else if msg.Content != "" && (!hasTitleReason(msg) || expanded && (msg.ToolName == "write_file" || msg.ToolName == "edit_file" || msg.ToolName == "apply_patch")) {
+		} else if msg.Content != "" && (msg.ToolName != "run_sub_agent" || expanded || !tools.SubAgentResultSettled(msg.Content)) && (!hasTitleReason(msg) || expanded && (msg.ToolName == "write_file" || msg.ToolName == "edit_file" || msg.ToolName == "apply_patch" || msg.ToolName == "run_sub_agent")) {
 			out.appendPlainToolBody(msg.ToolName, msg.Content, innerW, min(height, 9), false, expanded)
 		}
-	} else if msg.ToolStatus == types.ToolStatusCancelled || msg.ToolStatus == "interrupted" && expanded {
+	} else if (msg.ToolStatus == types.ToolStatusCancelled || msg.ToolStatus == "interrupted") && expanded {
 		if msg.Content != "" {
 			out.appendPlainToolBody(msg.ToolName, msg.Content, innerW, height, false, true)
 		}
@@ -228,7 +235,7 @@ func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth
 func toolSupportsDisclosure(toolName string) bool {
 	switch toolName {
 	case "execute_command", "async_execute_command", "read_async_output", "check_async_command",
-		"exec_command", "write_stdin", "apply_patch", "edit_file", "write_file", "update_plan", "get_plan", "read_file", "grep_files", "glob_files",
+		"exec_command", "write_stdin", "apply_patch", "edit_file", "write_file", "update_plan", "get_plan", "run_sub_agent", "read_file", "grep_files", "glob_files",
 		"list_directory", "web_search", "web_fetch", "arxiv_search":
 		return true
 	}

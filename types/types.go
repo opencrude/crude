@@ -136,6 +136,7 @@ const (
 )
 
 type CategorySettings struct {
+	Enabled     *bool `json:"enabled,omitempty"` // nil uses the built-in enabled state
 	Provider    string
 	AccountID   string `json:"account_id,omitempty"`
 	ProviderURL string
@@ -191,6 +192,7 @@ type AgentsSettings struct {
 
 // AgentProfileSettings is a named, reusable specialization of a built-in role.
 type AgentProfileSettings struct {
+	Enabled                  *bool    `json:"enabled,omitempty"`
 	Category                 string   `json:"category,omitempty"`
 	Description              string   `json:"description,omitempty"`
 	Model                    string   `json:"model,omitempty"`
@@ -200,6 +202,43 @@ type AgentProfileSettings struct {
 	DeniedTools              []string `json:"denied_tools,omitempty"`
 	FileOwnership            []string `json:"file_ownership,omitempty"`
 	ContextCompactionPercent *int     `json:"context_compaction_percent,omitempty"`
+	ThinkingEffort           string   `json:"thinking_effort,omitempty"`
+	ModelContextWindow       int      `json:"model_context_window,omitempty"`
+	ModelMaxOutput           int      `json:"model_max_output,omitempty"`
+	ModelModalities          []string `json:"model_modalities"`
+	ModelTemperature         *float64 `json:"model_temperature,omitempty"`
+	ModelTopP                *float64 `json:"model_top_p,omitempty"`
+}
+
+// DefaultAgentRoleCategories is the single reset/initialization source for
+// shipped roles. Memory inherits the main connection unless explicitly edited.
+func DefaultAgentRoleCategories() map[string]CategorySettings {
+	return map[string]CategorySettings{
+		"default": {},
+		"researcher": {
+			Policy: "read-only", Description: "Gatherer - explores codebase, searches web, runs experiments",
+			AllowedTools: []string{"read_file", "glob_files", "grep_files", "list_directory", "web_search", "web_fetch", "arxiv_search", "write_report", "question"},
+			DeniedTools:  []string{"write_file", "edit_file", "delete_file", "move_file", "copy_file", "execute_command", "async_execute_command"},
+		},
+		"crafter": {Policy: "no-delete", Description: "Implementer - writes code, edits files, runs tests", DeniedTools: []string{"delete_file"}},
+		"aeron": {
+			Policy: "read-only", Description: "Grunt - formatting, linting, boilerplate, monitoring",
+			DeniedTools: []string{"delete_file", "move_file", "copy_file", "execute_command", "async_execute_command", "web_search", "web_fetch", "arxiv_search"},
+		},
+		"memory": {},
+	}
+}
+
+// DefaultNamedAgents supplies reset targets for the shipped agent templates.
+func DefaultNamedAgents() map[string]AgentProfileSettings {
+	return map[string]AgentProfileSettings{
+		"explorer":  {Category: "researcher", Description: "Read-only codebase explorer for research and investigation"},
+		"reviewer":  {Category: "researcher", Description: "Code reviewer with expensive model for thorough analysis"},
+		"fixer":     {Category: "crafter", Description: "Implementation-focused agent for fixing bugs and writing code"},
+		"tester":    {Category: "crafter", Description: "Test writer agent focused on writing and running tests"},
+		"formatter": {Category: "aeron", Description: "Quick formatting and linting agent"},
+		"monitor":   {Category: "aeron", Description: "Watches running sub-agents and reports status"},
+	}
 }
 
 func CloneAgentProfiles(source map[string]AgentProfileSettings) map[string]AgentProfileSettings {
@@ -208,9 +247,24 @@ func CloneAgentProfiles(source map[string]AgentProfileSettings) map[string]Agent
 	}
 	out := make(map[string]AgentProfileSettings, len(source))
 	for key, value := range source {
+		if value.Enabled != nil {
+			enabled := *value.Enabled
+			value.Enabled = &enabled
+		}
 		value.AllowedTools = append([]string(nil), value.AllowedTools...)
 		value.DeniedTools = append([]string(nil), value.DeniedTools...)
 		value.FileOwnership = append([]string(nil), value.FileOwnership...)
+		if value.ModelModalities != nil {
+			value.ModelModalities = append(make([]string, 0, len(value.ModelModalities)), value.ModelModalities...)
+		}
+		if value.ModelTemperature != nil {
+			temperature := *value.ModelTemperature
+			value.ModelTemperature = &temperature
+		}
+		if value.ModelTopP != nil {
+			topP := *value.ModelTopP
+			value.ModelTopP = &topP
+		}
 		if value.ContextCompactionPercent != nil {
 			n := *value.ContextCompactionPercent
 			value.ContextCompactionPercent = &n
@@ -221,6 +275,9 @@ func CloneAgentProfiles(source map[string]AgentProfileSettings) map[string]Agent
 }
 
 type Settings struct {
+	// SessionMainAgent selects a built-in role or a named profile for root turns.
+	// Empty selects the ordinary Main Agent; this is a session-only setting.
+	SessionMainAgent string `json:"-"`
 	APIKey           string
 	Model            string
 	ProviderID       string
@@ -587,22 +644,27 @@ type ModelEntry struct {
 	OutputPrice    float64
 	CacheReadPrice float64
 	// Modalities lists accepted input types beyond text.
-	Modalities    []string
-	SupportsTools bool
-	MaxOutput     int
+	Modalities            []string
+	SupportsTools         bool
+	MaxOutput             int
+	ModalitySupport       map[string]bool
+	CapabilitySources     []string
+	ConflictingModalities []string
 }
 
+// ModelCatalogUpdatedMsg is silent metadata invalidation, not a notification.
+type ModelCatalogUpdatedMsg struct{ Generation uint64 }
+
 // ModelEntriesFromInfos converts provider model infos into UI model entries,
-// enriching each with the cached models.dev metadata (pricing, context
+// enriching each with the cached public-source metadata (pricing, context
 // window, capabilities). Context window from the wire wins over the catalog.
 func ModelEntriesFromInfos(models []provider.ModelInfo) []ModelEntry {
 	entries := make([]ModelEntry, 0, len(models))
-	metas := provider.GetAllModelMetas()
 	for _, model := range models {
 		entry := ModelEntry{
 			ID: model.ID, Name: model.Name, ContextWindow: model.ContextWindow,
 		}
-		if meta := provider.LookupModelMeta(model.ID, metas); meta != nil {
+		if meta, ok := provider.ModelCard(model.ID); ok {
 			if entry.ContextWindow == 0 {
 				entry.ContextWindow = meta.ContextWindow
 			}
@@ -612,6 +674,9 @@ func ModelEntriesFromInfos(models []provider.ModelInfo) []ModelEntry {
 			entry.Modalities = meta.Modalities
 			entry.SupportsTools = meta.SupportsTools
 			entry.MaxOutput = meta.MaxOutput
+			entry.ModalitySupport = meta.ModalitySupport
+			entry.CapabilitySources = meta.Sources
+			entry.ConflictingModalities = meta.ConflictingModalities
 		}
 		entries = append(entries, entry)
 	}

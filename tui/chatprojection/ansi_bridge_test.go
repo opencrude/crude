@@ -5,6 +5,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/charmbracelet/x/ansi"
+
+	"crude/tui/cell"
 	"crude/tui/chatprojection"
 	"crude/tui/rendering"
 	"crude/tui/surface"
@@ -312,4 +315,41 @@ func TestBridgeAnsiLineUnmatchedColourCarriedAsOverride(t *testing.T) {
 		}
 	}
 	t.Fatalf("no span with 'highlight': %#v", pl.Spans)
+}
+
+func TestMarkdownLinksAndTableRowsMatchGlamourVisibleGeometry(t *testing.T) {
+	const content = "## Sources\n\n[Guide](https://example.test/a/long/document) and **bold text**.\n\n| Library | Status |\n| --- | --- |\n| [Crude](https://example.test/project) | Ready |\n| `renderer` | Checked |"
+	for _, width := range []int{48, 100} {
+		for _, th := range []*theme.Theme{theme.DefaultDark(), theme.DefaultLight()} {
+			raw, err := rendering.MakeMdRenderer(width+20, th).Render(content)
+			if err != nil {
+				t.Fatal(err)
+			}
+			lines := strings.Split(raw, "\n")
+			native := chatprojection.BridgeAnsiLines(lines, ui.NewTokenSet(th))
+			for index, row := range native {
+				want := ansi.Strip(lines[index])
+				if got := row.PlainText(); got != want {
+					t.Fatalf("%s width=%d row=%d: native Markdown differs from Glamour\n got %q\nwant %q", th.Name, width, index, got, want)
+				}
+				if got, want := row.VisibleWidth(), rendering.WidthMethod.StringWidth(lines[index]); got != want {
+					t.Fatalf("hyperlink metadata changed table/wrap geometry: got %d want %d", got, want)
+				}
+			}
+		}
+	}
+}
+
+func TestMarkdownBridgeRetainsStylesAcrossWrappedLines(t *testing.T) {
+	rows := chatprojection.BridgeAnsiLines([]string{"\x1b[3;4mfirst line", "continued text\x1b[0m", "plain"}, ui.NewTokenSet(theme.DefaultDark()))
+	for _, span := range rows[1].Spans {
+		if span.Attr&cell.AttrItalic == 0 || span.Attr&cell.AttrUnderline == 0 {
+			t.Fatalf("wrapped style lost after newline: %+v", span)
+		}
+	}
+	for _, span := range rows[2].Spans {
+		if span.Attr != 0 {
+			t.Fatalf("reset style leaked into following line: %+v", span)
+		}
+	}
 }

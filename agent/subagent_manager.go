@@ -38,9 +38,6 @@ func (m *SubAgentManager) Validate(spec SubAgentSpec) error {
 	if spec.Category != CatResearcher && spec.Category != CatCrafter && spec.Category != CatAeron {
 		return fmt.Errorf("invalid category %q: must be researcher, crafter, or aeron", spec.Category)
 	}
-	if spec.Timeout < 0 || spec.Timeout > 24*time.Hour {
-		return fmt.Errorf("sub-agent timeout must be between 0 and 24 hours")
-	}
 	return nil
 }
 

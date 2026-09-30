@@ -2,9 +2,13 @@ package settings
 
 import (
 	"strconv"
+	"strings"
 	"testing"
 
 	"crude/provider"
+	"crude/tui/surface"
+	"crude/tui/theme"
+	"crude/tui/ui"
 )
 
 func TestDialSecondsRoundTrip(t *testing.T) {
@@ -40,6 +44,9 @@ func TestDialerFromFormAllDefaultYieldsNil(t *testing.T) {
 		dialChoiceID(0, int(provider.DefaultConnectTimeout.Seconds())),
 		dialChoiceID(0, provider.DefaultMaxAttempts),
 		dialChoiceID(0, int(provider.DefaultMaxBackoff.Seconds())),
+		dialChoiceID(0, int(provider.DefaultProgressStartupTimeout.Seconds())),
+		dialChoiceID(0, int(provider.DefaultProgressTimeoutFloor.Seconds())),
+		dialChoiceID(0, int(provider.DefaultProgressTimeoutCeiling.Seconds())),
 	)
 	if defaults != nil {
 		t.Fatalf("all-default form = %+v, want nil (inherit built-in defaults)", defaults)
@@ -47,12 +54,15 @@ func TestDialerFromFormAllDefaultYieldsNil(t *testing.T) {
 }
 
 func TestDialerFromFormCapturesNonDefaults(t *testing.T) {
-	dialer := dialerFromForm("60", "10", "3", "60")
+	dialer := dialerFromForm("60", "10", "3", "60", "120", "90", "600")
 	want := provider.DialSettings{
-		RequestTimeoutSeconds: 60,
-		ConnectTimeoutSeconds: 10,
-		MaxAttempts:           3,
-		MaxBackoffSeconds:     60,
+		RequestTimeoutSeconds:         60,
+		ConnectTimeoutSeconds:         10,
+		MaxAttempts:                   3,
+		MaxBackoffSeconds:             60,
+		ProgressStartupTimeoutSeconds: 120,
+		ProgressTimeoutFloorSeconds:   90,
+		ProgressTimeoutCeilingSeconds: 600,
 	}
 	if dialer == nil || *dialer != want {
 		t.Fatalf("dialer = %+v, want %+v", dialer, want)
@@ -63,7 +73,7 @@ func TestDialerFromFormPersistsBuiltInDefaultAsUnset(t *testing.T) {
 	// A row explicitly moved to the built-in default must not freeze that
 	// number into the config — it persists as unset so a future change to the
 	// built-in default is honored.
-	dialer := dialerFromForm("0", "30", strconv.Itoa(provider.DefaultMaxAttempts), strconv.Itoa(int(provider.DefaultMaxBackoff.Seconds())))
+	dialer := dialerFromForm("0", "30", strconv.Itoa(provider.DefaultMaxAttempts), strconv.Itoa(int(provider.DefaultMaxBackoff.Seconds())), "60", "45", "300")
 	if dialer != nil {
 		t.Fatalf("built-in-default selections = %+v, want nil", dialer)
 	}
@@ -75,9 +85,9 @@ func TestDialerFieldsRenderCurrentValues(t *testing.T) {
 		MaxAttempts:           5,
 	}
 	fields := dialerFields(dialer)
-	// Fields: separator + four rows.
-	if len(fields) != 5 {
-		t.Fatalf("fields = %d, want 5", len(fields))
+	// Fields: separator + seven connection-tuning rows.
+	if len(fields) != 8 {
+		t.Fatalf("fields = %d, want 8", len(fields))
 	}
 	byID := map[string]string{}
 	for _, field := range fields {
@@ -97,6 +107,13 @@ func TestDialerFieldsRenderCurrentValues(t *testing.T) {
 	if got := byID[fieldDialBackoff]; got != strconv.Itoa(int(provider.DefaultMaxBackoff.Seconds())) {
 		t.Errorf("max backoff field = %q, want %q (built-in default)", got,
 			dialChoiceID(0, int(provider.DefaultMaxBackoff.Seconds())))
+	}
+	for id, want := range map[string]string{
+		fieldDialProgressStartup: "60", fieldDialProgressFloor: "45", fieldDialProgressCeiling: "300",
+	} {
+		if got := byID[id]; got != want {
+			t.Errorf("%s = %q, want default %s", id, got, want)
+		}
 	}
 }
 
@@ -149,6 +166,145 @@ func TestDialFieldOptionsInsertOffLadderValue(t *testing.T) {
 		if prevInt, err1 := strconv.Atoi(prev); err1 == nil {
 			if nextInt, err2 := strconv.Atoi(next); err2 == nil && prevInt > nextInt {
 				t.Errorf("ladder not sorted at %d: %q > %q", i, prev, next)
+			}
+		}
+	}
+}
+
+func TestDialFieldOptionsDoNotDuplicateDefaults(t *testing.T) {
+	for _, builtin := range []int{30, 45, 60, 300} {
+		ids := map[string]bool{}
+		for _, option := range dialFieldOptions(0, builtin, dialProgressLadder, "s") {
+			if ids[option.ID] {
+				t.Fatalf("default %d duplicated option %q", builtin, option.ID)
+			}
+			ids[option.ID] = true
+		}
+	}
+}
+
+func TestConnectionTuningSettingsEditors(t *testing.T) {
+	for _, account := range []bool{false, true} {
+		name := "provider"
+		if account {
+			name = "account"
+		}
+		t.Run(name, func(t *testing.T) {
+			th := theme.DefaultDark()
+			m := New(th, accountSettingsFixture(), nil)
+			s := NewSurface(th, m)
+			category, prefix, save := catProviders, "", "settings.template.commit"
+			if account {
+				category, prefix, save = catAccounts, accountOverrideDialer+"-", "settings.account.commit"
+				m.SelectCategory(category)
+				m.selectAccount("work")
+				s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.edit"})
+				for _, id := range []string{fieldDialProgressStartup, fieldDialProgressFloor, fieldDialProgressCeiling} {
+					if f := m.categories[category].Form.Field(prefix + id); f == nil || !f.ReadOnly {
+						t.Fatalf("inherited account control %s is missing or editable", id)
+					}
+				}
+				m.SetValueForTest(category, accountOverrideDialer+"-enabled", "yes")
+			} else {
+				m.SelectCategory(category)
+				s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.template.edit"})
+			}
+			for id, value := range map[string]string{
+				fieldDialTimeout: "300", fieldDialConnect: "10", fieldDialAttempts: "3", fieldDialBackoff: "60",
+				fieldDialProgressStartup: "120", fieldDialProgressFloor: "60", fieldDialProgressCeiling: "600",
+			} {
+				m.SetValueForTest(category, prefix+id, value)
+			}
+			m.SetValueForTest(category, prefix+fieldDialProgressStartup, "900")
+			if result := s.HandleAction(ui.EventContext{}, ui.Action{ID: save}); result.Cmd != nil ||
+				!m.categories[category].Form.Field(prefix+fieldDialProgressStartup).HasErrors() {
+				t.Fatal("conflicting timeouts were not blocked and highlighted")
+			}
+			m.SetValueForTest(category, prefix+fieldDialProgressStartup, "120")
+			result := s.HandleAction(ui.EventContext{}, ui.Action{ID: save})
+			if result.Cmd == nil {
+				t.Fatalf("valid connection tuning was rejected: provider=%s account=%s", m.providerError, m.accountError)
+			}
+			var got *provider.DialSettings
+			if account {
+				got = result.Cmd().(AccountChangeMsg).Change.After.Overrides.Dialer
+			} else {
+				got = result.Cmd().(TemplateChangeMsg).Change.After.Dialer
+			}
+			want := provider.DialSettings{
+				RequestTimeoutSeconds: 300, ConnectTimeoutSeconds: 10, MaxAttempts: 3, MaxBackoffSeconds: 60,
+				ProgressStartupTimeoutSeconds: 120, ProgressTimeoutFloorSeconds: 60, ProgressTimeoutCeilingSeconds: 600,
+			}
+			if got == nil || *got != want {
+				t.Fatalf("settings save lost transport fields: got=%+v want=%+v", got, want)
+			}
+		})
+	}
+}
+
+func TestAccountProgressTimeoutOverrideRestoresInheritance(t *testing.T) {
+	settings := accountSettingsFixture()
+	template := settings.Providers["openrouter"]
+	template.Dialer = &provider.DialSettings{
+		ProgressStartupTimeoutSeconds: 120, ProgressTimeoutFloorSeconds: 60, ProgressTimeoutCeilingSeconds: 600,
+	}
+	settings.Providers["openrouter"] = template
+	m := New(theme.DefaultDark(), settings, nil)
+	m.SelectCategory(catAccounts)
+	m.selectAccount("work")
+	if err := m.beginAccountEdit(false, ""); err != nil {
+		t.Fatal(err)
+	}
+	prefix := accountOverrideDialer + "-"
+	if got := m.value(catAccounts, prefix+fieldDialProgressStartup); got != "120" {
+		t.Fatalf("account did not show template timeout: %q", got)
+	}
+	m.SetValueForTest(catAccounts, prefix+"enabled", "yes")
+	if got := m.accountEditor.draft.Overrides.Dialer; got == nil || *got != *template.Dialer {
+		t.Fatalf("enabling override did not copy inherited progress limits: %+v", got)
+	}
+	m.SetValueForTest(catAccounts, prefix+fieldDialProgressCeiling, "900")
+	m.SetValueForTest(catAccounts, prefix+"enabled", "no")
+	if m.accountEditor.draft.Overrides.Dialer != nil {
+		t.Fatal("disabling override retained an account timeout")
+	}
+	if f := m.categories[catAccounts].Form.Field(prefix + fieldDialProgressCeiling); f.Value.String() != "600" || !f.ReadOnly {
+		t.Fatalf("template inheritance not restored: %+v", f)
+	}
+}
+
+func TestProgressTimeoutControlsPaintAtDesktopAndNarrowSizes(t *testing.T) {
+	for _, account := range []bool{false, true} {
+		th := theme.DefaultDark()
+		m := New(th, accountSettingsFixture(), nil)
+		s := NewSurface(th, m)
+		prefix := ""
+		if account {
+			m.SelectCategory(catAccounts)
+			m.selectAccount("work")
+			s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.edit"})
+			prefix = accountOverrideDialer + "-"
+		} else {
+			m.SelectCategory(catProviders)
+			s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.template.edit"})
+		}
+		host := ui.NewHost(th, s)
+		for _, size := range []ui.Size{{W: 124, H: 28}, {W: 70, H: 18}} {
+			host.Resize(size.W, size.H)
+			host.Layout()
+			for id, label := range map[string]string{
+				fieldDialProgressStartup: "Initial progress", fieldDialProgressFloor: "Min progress", fieldDialProgressCeiling: "Max progress",
+			} {
+				if !s.form.FocusField(prefix + id) {
+					t.Fatalf("cannot focus progress field %s", id)
+				}
+				host.MarkLayout()
+				host.Layout()
+				buf := surface.NewCellBuffer(size.W, size.H)
+				host.Paint(buf)
+				if out := bufferPlain(buf); !strings.Contains(out, label) || !strings.Contains(out, "Save") {
+					t.Fatalf("account=%t size=%+v control or actions clipped:\n%s", account, size, out)
+				}
 			}
 		}
 	}

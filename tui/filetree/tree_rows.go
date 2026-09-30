@@ -1,6 +1,7 @@
 package filetree
 
 import (
+	"slices"
 	"strings"
 
 	"crude/tui/cell"
@@ -13,6 +14,7 @@ import (
 // PaintConfig holds tree paint options from the active theme.
 type PaintConfig struct {
 	IndentWidth     int
+	IndentBaseDepth int // offscreen common ancestry already named by the breadcrumb
 	ShowIcons       bool
 	ShowGitStatus   bool
 	ShowDiagnostics bool
@@ -96,11 +98,13 @@ func NewTreeRowPainter(model *FileTreeModel, icons *IconResolver, cfg PaintConfi
 
 		indentFG := tokens.TreeIndentFg()
 		remainingHOff := 0
+		indentWidth := cfg.IndentWidth
 		if model != nil {
 			remainingHOff = model.HScrollOffset()
+			indentWidth = adaptiveIndentWidth(width, max(0, model.MaxVisibleDepth()-cfg.IndentBaseDepth), cfg.IndentWidth)
 		}
-		for d := 0; d < node.Depth; d++ {
-			colW := 1 + cfg.IndentWidth
+		for d := cfg.IndentBaseDepth; d < node.Depth; d++ {
+			colW := 1 + indentWidth
 			if remainingHOff >= colW {
 				remainingHOff -= colW
 				continue
@@ -111,7 +115,7 @@ func NewTreeRowPainter(model *FileTreeModel, icons *IconResolver, cfg PaintConfi
 				buf.Set(x, y, cell.NewCell(' ', cell.NoColor, bg, 0))
 			}
 			x++
-			for s := 0; s < cfg.IndentWidth; s++ {
+			for s := 0; s < indentWidth; s++ {
 				buf.Set(x, y, cell.NewCell(' ', cell.NoColor, bg, 0))
 				x++
 			}
@@ -271,6 +275,19 @@ func NewTreeRowPainter(model *FileTreeModel, icons *IconResolver, cfg PaintConfi
 	}
 }
 
+// adaptiveIndentWidth spends spare columns on familiar, roomy guides, then
+// reclaims only guide whitespace when deeper rows need readable labels. The
+// reserved rail remains one column per ancestor even at the minimum width.
+// Using the whole visible tree's maximum depth keeps columns aligned on scroll.
+func adaptiveIndentWidth(width, depth, preferred int) int {
+	if depth <= 0 || width <= 0 {
+		return preferred
+	}
+	labelBudget := min(24, max(8, width/2))
+	guideBudget := width - labelBudget - 8 // branch, icon, and trailing status
+	return min(preferred, max(0, guideBudget/depth-1))
+}
+
 // writeNameHighlighted paints a (possibly truncated) node name rune by rune,
 // switching matched runes to the accent foreground with bold. Positions are
 // rune indices into the ORIGINAL name; truncation keeps a prefix plus a
@@ -344,60 +361,93 @@ func HeaderMarks(root *TreeNode, cfg PaintConfig, tokens *ui.TokenSet) []HeaderM
 	return marks
 }
 
-// BreadcrumbLine builds the sticky parent path header for a scrolled tree.
-func BreadcrumbLine(model *FileTreeModel, width int) string {
-	names := breadcrumbNames(model)
-	if len(names) == 0 {
-		return ""
-	}
-	sep := theme.DefaultGlyphs().BreadcrumbSep
-	if sep == "" {
-		sep = "▸"
-	}
-	return rendering.TruncateLine(strings.Join(names, " "+sep+" "), width)
+// TreeViewportContext is the single owner of sticky ancestry and guide offset.
+// Shared ancestry permits compact guides; a mixed-branch viewport keeps its
+// normal top-row breadcrumb without shifting any row's absolute indentation.
+type TreeViewportContext struct {
+	Breadcrumb string
+	BaseDepth  int
+	labels     []string
+	paths      []string
+	width      int
 }
 
-// BreadcrumbLineWithIcons builds the same sticky path as BreadcrumbLine but
-// resolves every folder through the file tree's active IconResolver. Sidebar
-// breadcrumbs therefore use the same icon family and Nerd Font policy as the
-// normal tree rows instead of becoming a visually unrelated plain-text path.
-func BreadcrumbLineWithIcons(model *FileTreeModel, width int, icons *IconResolver) string {
-	names := breadcrumbNames(model)
-	if len(names) == 0 {
-		return ""
-	}
+// PathAt resolves a breadcrumb label to its folder. Separators do not click.
+func (c TreeViewportContext) PathAt(x int) string {
 	sep := theme.DefaultGlyphs().BreadcrumbSep
 	if sep == "" {
 		sep = "▸"
 	}
-	parts := make([]string, 0, len(names))
-	for _, name := range names {
-		part := name
+	if index := ui.BreadcrumbIndex(c.labels, " "+sep+" ", x, c.width); index >= 0 {
+		return c.paths[index]
+	}
+	return ""
+}
+
+func ViewportContext(model *FileTreeModel, rows, width int, icons *IconResolver) TreeViewportContext {
+	result := TreeViewportContext{width: width}
+	if model == nil {
+		return result
+	}
+	ancestor, shared := model.ViewportAncestor(rows)
+	if ancestor == nil {
+		return result
+	}
+	if shared {
+		result.BaseDepth = ancestor.Depth + 1
+	}
+	for p := ancestor; p != nil && p != model.Root; p = p.Parent {
+		label := p.Name
 		if icons != nil {
-			if icon := icons.ResolveIcon(name, true, false, true).Icon; icon != "" {
-				part = icon + " " + name
+			if icon := icons.ResolveIcon(p.Name, true, false, true).Icon; icon != "" {
+				label = icon + " " + label
 			}
 		}
-		parts = append(parts, part)
+		result.labels = append(result.labels, label)
+		result.paths = append(result.paths, p.Path)
 	}
-	return rendering.TruncateLine(strings.Join(parts, " "+sep+" "), width)
+	slices.Reverse(result.labels)
+	slices.Reverse(result.paths)
+	sep := theme.DefaultGlyphs().BreadcrumbSep
+	if sep == "" {
+		sep = "▸"
+	}
+	separator := " " + sep + " "
+	separatorW := rendering.VisibleWidth(separator)
+	used := separatorW * (len(result.labels) - 1)
+	for _, label := range result.labels {
+		used += rendering.VisibleWidth(label)
+	}
+	hidden := false
+	for len(result.labels) > 1 && (used > width || hidden && used+1+separatorW > width) {
+		used -= rendering.VisibleWidth(result.labels[0]) + separatorW
+		result.labels, result.paths = result.labels[1:], result.paths[1:]
+		hidden = true
+	}
+	// Prefer the nearest parent over a prefix marker on exceptionally narrow
+	// grids. The ellipsis has no path and cannot capture a click.
+	if hidden && used+1+separatorW <= width {
+		result.labels = append([]string{"…"}, result.labels...)
+		result.paths = append([]string{""}, result.paths...)
+	}
+	result.Breadcrumb = rendering.TruncateLine(strings.Join(result.labels, separator), width)
+	return result
 }
 
-func breadcrumbNames(model *FileTreeModel) []string {
-	if model == nil || model.ScrollOffset() <= 0 {
-		return nil
+// BreadcrumbLine builds the sticky common-ancestor path for a scrolled tree.
+func BreadcrumbLine(model *FileTreeModel, width int) string {
+	if model == nil {
+		return ""
 	}
-	nodes := model.VisibleNodes()
-	off := model.ScrollOffset()
-	if off >= len(nodes) {
-		return nil
+	return ViewportContext(model, model.VisibleHeight(), width, nil).Breadcrumb
+}
+
+// BreadcrumbLineWithIcons uses the same icon policy as native tree rows.
+func BreadcrumbLineWithIcons(model *FileTreeModel, width int, icons *IconResolver) string {
+	if model == nil {
+		return ""
 	}
-	first := nodes[off]
-	var names []string
-	for p := first.Parent; p != nil && p != model.Root; p = p.Parent {
-		names = append([]string{p.Name}, names...)
-	}
-	return names
+	return ViewportContext(model, model.VisibleHeight(), width, icons).Breadcrumb
 }
 
 // SyncScrollModel copies model scroll state into a ui.ScrollModel.

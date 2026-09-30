@@ -137,28 +137,30 @@ type FormOption struct {
 
 // FieldState tracks the current state of a single field.
 type FieldState struct {
-	ID            string
-	Label         string
-	Description   string
-	Type          FieldType
-	Value         FieldValue
-	Initial       FieldValue
-	Default       FieldValue
-	Errors        []string
-	Dirty         bool
-	Touched       bool
-	Disabled      bool
-	ReadOnly      bool
-	Loading       bool
-	LoadMessage   string
-	Placeholder   string
-	SubmitAction  string
-	Required      bool
-	Inherited     bool
-	InheritedFrom string
-	Options       []FormOption
-	Columns       []string // compact FieldNav table cells after the label; for FieldCycle, empty spacer slots before the cycle control (column alignment)
-	Validator     func(value FieldValue) []string
+	// DescriptionImportant keeps non-blocking warnings visible on narrow forms.
+	DescriptionImportant bool
+	ID                   string
+	Label                string
+	Description          string
+	Type                 FieldType
+	Value                FieldValue
+	Initial              FieldValue
+	Default              FieldValue
+	Errors               []string
+	Dirty                bool
+	Touched              bool
+	Disabled             bool
+	ReadOnly             bool
+	Loading              bool
+	LoadMessage          string
+	Placeholder          string
+	SubmitAction         string
+	Required             bool
+	Inherited            bool
+	InheritedFrom        string
+	Options              []FormOption
+	Columns              []string // compact FieldNav table cells after the label; for FieldCycle, empty spacer slots before the cycle control (column alignment)
+	Validator            func(value FieldValue) []string
 	// Live marks fields whose edits fire the form.changed action on every
 	// value change (not just on commit). Used by numeric fields with a live
 	// visual effect (shell frame paddings) so the preview updates per keystroke.

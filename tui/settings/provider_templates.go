@@ -236,6 +236,9 @@ func (m *Model) storeProviderEditorForm() {
 		m.value(catProviders, fieldDialConnect),
 		m.value(catProviders, fieldDialAttempts),
 		m.value(catProviders, fieldDialBackoff),
+		m.value(catProviders, fieldDialProgressStartup),
+		m.value(catProviders, fieldDialProgressFloor),
+		m.value(catProviders, fieldDialProgressCeiling),
 	)
 	draft.ExtraBody = extraBodyFromForm(m.value(catProviders, fieldExtraBody))
 	m.providerEditor.draft = draft
@@ -388,6 +391,13 @@ func (m *Model) applyTemplateChange(result TemplateChangeResultMsg) {
 		return
 	}
 	m.providers = provider.CloneTemplates(result.Settings.Providers)
+	for id, account := range m.accounts {
+		if account.ProviderID == result.Change.ID {
+			key := accountModelKey(account.ProviderID, id)
+			delete(m.models, key)
+			m.fetchGeneration[key] = nextAccountRequest.Add(1)
+		}
+	}
 	m.templateQuery = ""
 	m.providerError = ""
 	m.providerEditor = nil
@@ -402,6 +412,7 @@ func (m *Model) applyTemplateChange(result TemplateChangeResultMsg) {
 	}
 	m.rebuildProvidersForm()
 	m.rebuildAccountsForm()
+	m.refreshAgentConnectionFields()
 }
 
 func (m *Model) buildAccountEditorForm() *ui.FormModel {
@@ -455,7 +466,7 @@ func (m *Model) buildAccountEditorForm() *ui.FormModel {
 		accountOverrideHeadersTable(accountOverrideHeaders, "Headers", formatHeaders(effective.Headers), account.Overrides.Headers != nil, "Header set inherited from the template when disabled."),
 		accountOverrideSwitch(accountOverrideProtocol+"-enabled", "Override wire", account.Overrides.APIStandard != nil, "Use an account-specific wire protocol."),
 		accountOverrideSelect(accountOverrideProtocol, "Wire protocol", effective.APIStandard, standardOptions(nil), account.Overrides.APIStandard != nil, "Wire protocol inherited from the template when disabled."),
-		accountOverrideSwitch(accountOverrideDialer+"-enabled", "Override dialer", account.Overrides.Dialer != nil, "Replace all four template dial settings for this account."),
+		accountOverrideSwitch(accountOverrideDialer+"-enabled", "Override dialer", account.Overrides.Dialer != nil, "Replace the template's connection timeouts, progress limits, and retry settings for this account."),
 	)
 	dialFields := dialerFields(effective.Dialer)
 	for _, field := range dialFields {
@@ -542,6 +553,9 @@ func (m *Model) storeAccountEditorForm() {
 			m.value(catAccounts, accountOverrideDialer+"-"+fieldDialConnect),
 			m.value(catAccounts, accountOverrideDialer+"-"+fieldDialAttempts),
 			m.value(catAccounts, accountOverrideDialer+"-"+fieldDialBackoff),
+			m.value(catAccounts, accountOverrideDialer+"-"+fieldDialProgressStartup),
+			m.value(catAccounts, accountOverrideDialer+"-"+fieldDialProgressFloor),
+			m.value(catAccounts, accountOverrideDialer+"-"+fieldDialProgressCeiling),
 		)
 		if dialer == nil {
 			dialer = &provider.DialSettings{}

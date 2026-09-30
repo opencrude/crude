@@ -58,6 +58,13 @@ func SaveAgentSettingOverrides(db *sql.DB, sessionID string, overrides map[strin
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err := saveAgentSettingOverrides(tx, sessionID, overrides); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func saveAgentSettingOverrides(tx *sql.Tx, sessionID string, overrides map[string]AgentSettingOverride) error {
 	if _, err := tx.Exec(`DELETE FROM session_agent_settings WHERE session_id = ?`, sessionID); err != nil {
 		return err
 	}
@@ -74,6 +81,26 @@ func SaveAgentSettingOverrides(db *sql.DB, sessionID string, overrides map[strin
 		`, sessionID, category, override.Provider, override.AccountID, override.Model, override.APIStandard, override.ThinkingEffort, override.ContextCompactionPercent, override.Inherit); err != nil {
 			return err
 		}
+	}
+	return nil
+}
+
+// SaveSessionSettings commits the account identity, role pins and session-only
+// choices together. The caller publishes its in-memory state after this commit.
+func SaveSessionSettings(db *sql.DB, sessionID, providerID, accountID string, overrides map[string]AgentSettingOverride, flags SessionFlags) error {
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := saveAgentSettingOverrides(tx, sessionID, overrides); err != nil {
+		return err
+	}
+	if err := saveSessionFlags(tx, sessionID, flags); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`UPDATE sessions SET provider=?, account_id=? WHERE id=?`, providerID, accountID, sessionID); err != nil {
+		return err
 	}
 	return tx.Commit()
 }
