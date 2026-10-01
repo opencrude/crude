@@ -115,6 +115,7 @@ type AgentActivityView struct {
 	SuccessfulCalls          int
 	CallsKnown               bool
 	Active                   bool
+	CompactionPhase          string
 	Status                   AgentStatusSnapshot
 	Thinking                 string
 	ThinkingID               string
@@ -129,22 +130,24 @@ type AgentActivityView struct {
 type AgentPhase string
 
 const (
-	AgentOpening    AgentPhase = "opening"
-	AgentIdle       AgentPhase = "idle"
-	AgentPreparing  AgentPhase = "preparing"
-	AgentUploading  AgentPhase = "uploading"
-	AgentWaiting    AgentPhase = "waiting_provider"
-	AgentThinking   AgentPhase = "thinking"
-	AgentResponding AgentPhase = "responding"
-	AgentTool       AgentPhase = "tool"
-	AgentChildren   AgentPhase = "children"
-	AgentApproval   AgentPhase = "approval"
-	AgentQuestion   AgentPhase = "question"
-	AgentRetrying   AgentPhase = "retrying"
-	AgentCancelling AgentPhase = "cancelling"
-	AgentCompleted  AgentPhase = "completed"
-	AgentCancelled  AgentPhase = "cancelled"
-	AgentFailed     AgentPhase = "failed"
+	AgentOpening          AgentPhase = "opening"
+	AgentIdle             AgentPhase = "idle"
+	AgentPreparing        AgentPhase = "preparing"
+	AgentUploading        AgentPhase = "uploading"
+	AgentWaiting          AgentPhase = "waiting_provider"
+	AgentCompacting       AgentPhase = "compacting_context"
+	AgentCompactionResult AgentPhase = "compaction_result"
+	AgentThinking         AgentPhase = "thinking"
+	AgentResponding       AgentPhase = "responding"
+	AgentTool             AgentPhase = "tool"
+	AgentChildren         AgentPhase = "children"
+	AgentApproval         AgentPhase = "approval"
+	AgentQuestion         AgentPhase = "question"
+	AgentRetrying         AgentPhase = "retrying"
+	AgentCancelling       AgentPhase = "cancelling"
+	AgentCompleted        AgentPhase = "completed"
+	AgentCancelled        AgentPhase = "cancelled"
+	AgentFailed           AgentPhase = "failed"
 )
 
 type AgentStatusSnapshot struct {

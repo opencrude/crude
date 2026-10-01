@@ -74,6 +74,9 @@ func parallelMessages(msg *types.ChatMessage) []*types.ChatMessage {
 		} else if msg.ToolStatus == "success" || msg.ToolStatus == "error" || msg.ToolStatus == types.ToolStatusCancelled {
 			child.ToolStatus, child.ToolPreviewPhase, child.Content = types.ToolStatusCancelled, types.ToolPreviewDone, "No result returned"
 		}
+		if strings.TrimSpace(child.ToolName) == "" {
+			continue // unresolved identity, not a standalone tool or a tree boundary
+		}
 		children = append(children, child)
 	}
 	return children

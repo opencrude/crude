@@ -170,6 +170,8 @@ func (s *Session) runPreparedCompaction(
 	compactAgent.TurnGeneration = generation + 1
 	compactAgent.CompactionTargetModel = activeCfg.Model
 	compactAgent.MaxOutputTokens = compactionCfg.ModelMaxOutput
+	_, agentProfile := activeProfileCfg(effectiveCfg)
+	compactAgent.CompactionAgentProfile = agentProfile + "/" + CategoryAeron
 	if targetProvider, targetErr := effectiveCfg.providerForCategory(activeCfg); targetErr == nil {
 		compactAgent.CompactionTargetWindow = targetProvider.ContextWindow(activeCfg.Model)
 	}

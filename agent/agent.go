@@ -41,12 +41,14 @@ type Agent struct {
 	Model                    string
 	ReasoningContentKind     reasoning.Kind
 	condensedSamples         int
+	rawSamples               int
 	sawRawReasoning          bool
 	CompactionProvider       *provider.Provider
 	CompactionTargetModel    string
 	CompactionTargetWindow   int
 	CompactionTargetTokens   int
 	CompactionMaxOutput      int
+	CompactionAgentProfile   string
 	AgentID                  AgentID
 	TurnGeneration           uint64
 	Policy                   safety.Policy

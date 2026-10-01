@@ -154,6 +154,61 @@ func TestParallelArgumentStreamingExposesPreparingChildren(t *testing.T) {
 	}
 }
 
+func TestParallelPreviewWaitsOnlyForToolNameBoundary(t *testing.T) {
+	for _, tc := range []struct {
+		name, input, boundary, want string
+	}{
+		{"read", `{"tool_uses":[{"recipient_name":"functions.read_file","parameters":{"path":"src/first.go"}}]}`, `"functions.read_file"`, "functions.read_file"},
+		{"known prefix of unknown tool", `{"tool_uses":[{"recipient_name":"read_file_extra","parameters":{"path":"src/first.go"}}]}`, `"read_file_extra"`, "read_file_extra"},
+		{"escaped name", `{"tool_uses":[{"recipient_name":"r\u0065ad_file","parameters":{"path":"src/first.go"}}]}`, `"r\u0065ad_file"`, "read_file"},
+		{"parameters first", `{"tool_uses":[{"parameters":{"content":"recipient_name: read_file","path":"a.go"},"recipient_name":"write_file"}]}`, `"write_file"`, "write_file"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			a := newTestAgent(t, provider.FromPreset("openai", "key", ""), "gpt-test")
+			var published map[string]any
+			callback := a.makeStreamingDeltaCallback(func(event AgentEvent) {
+				data, _ := event.Data.(map[string]any)
+				if input, _ := data["batch_input"].(string); input != "" {
+					if err := json.Unmarshal([]byte(input), &published); err != nil {
+						t.Fatal(err)
+					}
+				}
+			}, make(map[string]string))
+			boundary := strings.Index(tc.input, tc.boundary) + len(tc.boundary)
+			for end := 0; end <= len(tc.input); end++ {
+				callback("batch", "batch", "multi_tool_use.parallel", tc.input[:end])
+				got := ""
+				if uses, ok := published["tool_uses"].([]any); ok && len(uses) > 0 {
+					if use, ok := uses[0].(map[string]any); ok {
+						got, _ = use["recipient_name"].(string)
+					}
+				}
+				want := ""
+				if end >= boundary {
+					want = tc.want
+				}
+				if got != want {
+					t.Fatalf("prefix %q: name=%q, want %q", tc.input[:end], got, want)
+				}
+			}
+		})
+	}
+	// A closed name must not make us wait for the parameter string, object,
+	// child, or batch to finish before publishing the useful streaming preview.
+	for _, suffix := range []string{"src/fi", "src/first.go"} {
+		preview := ExtractPreview("batch", "multi_tool_use.parallel", `{"tool_uses":[{"recipient_name":"read_file","parameters":{"path":"`+suffix, nil)
+		uses, _ := preview.Params["tool_uses"].([]any)
+		if len(uses) != 1 {
+			t.Fatalf("named streaming child missing: %+v", preview)
+		}
+		use, _ := uses[0].(map[string]any)
+		params, _ := use["parameters"].(map[string]any)
+		if use["recipient_name"] != "read_file" || params["path"] != suffix || preview.Complete {
+			t.Fatalf("partial operand stopped streaming: %+v", preview)
+		}
+	}
+}
+
 func TestToolCallEventCarriesExactArguments(t *testing.T) {
 	a := newTestAgent(t, provider.FromPreset("openai", "key", ""), "gpt-test")
 	a.Yolo = true

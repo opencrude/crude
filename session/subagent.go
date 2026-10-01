@@ -593,6 +593,9 @@ func (r *SubAgentRunner) ListSubAgents(params map[string]any) (tools.ToolResult,
 	if len(entries) == 0 {
 		return tools.ToolResult{Content: "No sub-agents."}, nil
 	}
+	slices.SortFunc(entries, func(a, b agent.SubAgentStatusEntry) int {
+		return strings.Compare(a.HandleID, b.HandleID)
+	})
 
 	var sb strings.Builder
 	for _, e := range entries {
@@ -600,7 +603,7 @@ func (r *SubAgentRunner) ListSubAgents(params map[string]any) (tools.ToolResult,
 		if e.Status != "" {
 			status = e.Status
 		}
-		fmt.Fprintf(&sb, "- %s [%s] %s", e.Name, e.Category, status)
+		fmt.Fprintf(&sb, "- %s (%s) [%s] %s", e.Name, e.HandleID, e.Category, status)
 		if e.ElapsedSeconds > 0 {
 			fmt.Fprintf(&sb, " (%s)", (time.Duration(e.ElapsedSeconds) * time.Second).Round(time.Second))
 		}
@@ -633,14 +636,18 @@ func (r *SubAgentRunner) WriteReport(agentID agent.AgentID, params map[string]an
 		return tools.ToolResult{}, fmt.Errorf("write_report: failed to write report: %w", err)
 	}
 
+	name := ""
 	if handle, ok := r.mgr.GetActive(agentID); ok {
 		handle.SetReportPath(reportPath)
+		name = handle.Spec.Name
 	}
 
 	lines := strings.Count(report, "\n") + 1
 	resultJSON, _ := json.Marshal(map[string]string{
 		"status":      "report_written",
 		"report_path": reportPath,
+		"handle_id":   string(agentID),
+		"name":        name,
 	})
 	return tools.ToolResult{Content: string(resultJSON), Added: lines}, nil
 }
@@ -730,6 +737,8 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 
 	a := agent.NewAgent(p, p.Model, r.session.logger)
 	a.MaxOutputTokens = spec.ModelMaxOutput
+	_, agentProfile := activeProfileCfg(cfg)
+	a.CompactionAgentProfile = agentProfile + "/" + CategoryAeron
 	if compactionCfg := cfg.GetCategoryConfig(CategoryAeron); compactionCfg.Model != "" {
 		if compactionProvider, compactionErr := cfg.providerForCategory(compactionCfg); compactionErr == nil {
 			a.CompactionProvider = compactionProvider

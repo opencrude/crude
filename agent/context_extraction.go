@@ -14,26 +14,27 @@ import (
 const compactionReductionDepth = 8
 
 type compactionExtractor struct {
-	agent          *Agent
-	ctx            context.Context
-	emit           func(AgentEvent)
-	requestID      string
-	trigger        string
-	role           string
-	stage          compactionStage
-	stageIndex     int
-	beforeTokens   int
-	targetWindow   int
-	common         provider.ChatMessage
-	system         provider.ChatMessage
-	inputBudget    int
-	capacityBudget int
-	outputBudget   int
-	responseBudget int
-	usageRatio     float64
-	usage          provider.TokenUsage
-	requestNumber  int
-	retryAttempt   int
+	agent              *Agent
+	ctx                context.Context
+	emit               func(AgentEvent)
+	requestID          string
+	trigger            string
+	role               string
+	stage              compactionStage
+	stageIndex         int
+	beforeTokens       int
+	targetWindow       int
+	common             provider.ChatMessage
+	system             provider.ChatMessage
+	inputBudget        int
+	capacityBudget     int
+	outputBudget       int
+	responseBudget     int
+	learnedOutputLimit int
+	usageRatio         float64
+	usage              provider.TokenUsage
+	requestNumber      int
+	retryAttempt       int
 }
 
 func (extractor *compactionExtractor) request(source []provider.ChatMessage, directive string, depth int) (string, error) {
@@ -50,15 +51,19 @@ func (extractor *compactionExtractor) request(source []provider.ChatMessage, dir
 	messages = append(messages, extractor.common, instruction)
 	input := estimateCanonicalRequest(provider.FilterReplayMessages(messages, nil, extractor.agent.Provider), nil, extractor.agent.Model)
 	window := extractor.agent.Provider.ContextWindow(extractor.agent.Model)
+	// Each recursive source reduction gains its own response allowance; only a
+	// provider-confirmed output ceiling stays fixed across those requests.
+	extractor.responseBudget = extractor.agent.compactionOutputLimit(window, 0)
+	if extractor.learnedOutputLimit > 0 {
+		extractor.responseBudget = min(extractor.responseBudget, extractor.learnedOutputLimit)
+	}
 	if window > 0 {
 		predictedInput := int(math.Ceil(float64(input) * max(1, extractor.usageRatio)))
 		available := window - predictedInput - contextSafetyReserve(window)
 		if available <= 0 {
 			return extractor.partition(source, directive, depth)
 		}
-		extractor.responseBudget = min(extractor.agent.compactionOutputLimit(window, 0), available)
-	} else {
-		extractor.responseBudget = extractor.agent.compactionOutputLimit(window, 0)
+		extractor.responseBudget = min(extractor.responseBudget, available)
 	}
 	if input > extractor.inputBudget {
 		return extractor.partition(source, directive, depth)
@@ -98,6 +103,15 @@ func (extractor *compactionExtractor) request(source []provider.ChatMessage, dir
 		}
 		if extractor.ctx.Err() != nil {
 			return "", extractor.ctx.Err()
+		}
+		if ceiling, ok := provider.OutputCeilingFromError(err, extractor.responseBudget); ok {
+			if storeErr := provider.RecordOutputLimit(extractor.agent.CompactionAgentProfile, extractor.agent.Provider, extractor.agent.Model, ceiling); storeErr != nil {
+				return "", fmt.Errorf("persist learned extraction output limit: %w", storeErr)
+			}
+			extractor.learnedOutputLimit = ceiling
+			extractor.responseBudget = ceiling
+			extractor.progress("Adapting model output limit", 0, 0, attempt+1, err)
+			continue
 		}
 		if provider.IsContextWindowExceeded(err) {
 			previous := extractor.inputBudget

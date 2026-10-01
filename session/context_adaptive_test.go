@@ -242,6 +242,59 @@ func TestSessionAdaptiveCompactionInstallsCheckpointAndResumesPassively(t *testi
 	}
 }
 
+func TestSessionCompactionLearnsOutputLimitAcrossNewSessions(t *testing.T) {
+	catalog, err := provider.OpenModelCatalog(filepath.Join(t.TempDir(), "model-catalog.db"), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.UseModelCatalog(catalog)
+	t.Cleanup(func() { _ = catalog.Close() })
+	var outputs []int
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var body provider.ChatRequest
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Error(err)
+			return
+		}
+		output := max(body.MaxTokens, body.MaxCompletionTokens)
+		outputs = append(outputs, output)
+		if output > 393216 {
+			writer.WriteHeader(http.StatusBadRequest)
+			_, _ = fmt.Fprintf(writer, `{"error":{"type":"invalid_request_error","message":"max_tokens (current value: %d) must be between 0 and 393216"}}`, output)
+			return
+		}
+		writeAdaptiveCompactionSSE(t, writer, "- original evidence, correction and ownership preserved")
+	}))
+	defer server.Close()
+	for run := 0; run < 2; run++ {
+		history := adaptiveCompactionMessages(t, "assistant")
+		original := adaptiveMessageBytes(t, history)
+		s, _ := newAdaptiveCompactionSession(t, server.URL, 1_050_000, history)
+		profile := s.cfg.Agents.Profiles[s.cfg.Agents.ActiveProfile]
+		aeron := profile.Categories[CategoryAeron]
+		aeron.ModelMaxOutput = 600000
+		profile.Categories[CategoryAeron] = aeron
+		s.cfg.Agents.Profiles[s.cfg.Agents.ActiveProfile] = profile
+		outputs = nil
+		result := s.HandleCompact()
+		if result.Error != "" || result.Cancelled || !bytes.Equal(adaptiveMessageBytes(t, s.msgs), original) {
+			t.Fatalf("run %d: compaction failed or rewrote source: %+v", run, result)
+		}
+		if run == 0 {
+			if len(outputs) < 5 || outputs[0] <= 393216 {
+				t.Fatalf("first session did not exercise provider rejection: %v", outputs)
+			}
+		} else if len(outputs) != 4 {
+			t.Fatalf("new session did not inherit its Aeron profile's learned cap: %v", outputs)
+		}
+		for _, cap := range outputs[1:] {
+			if cap > 393216 {
+				t.Fatalf("session %d ignored learned cap: %v", run, outputs)
+			}
+		}
+	}
+}
+
 func TestSessionAdaptiveCompactionLaterChunkFailurePreservesDurableSource(t *testing.T) {
 	for _, failure := range []string{"permanent_401", "empty_after_retries"} {
 		t.Run(failure, func(t *testing.T) {

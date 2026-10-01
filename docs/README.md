@@ -84,6 +84,10 @@ Read that first; this index only organizes the reference material.
 - [Agent capabilities, shared board, and evidence-based memory plan](plans/agent-capabilities-board-memory-plan.md)
   — **IN PROGRESS** proposal for automatic skills and MCP acquisition,
   agent communication, and memory improvements informed by Kilo and RRSI.
+- [Workspace tools, capabilities, and TUI interaction plan](plans/workspace-tools-capabilities-tui-plan.md)
+  — **IN PROGRESS** revision 2: calmer Git sidebar with main-area review,
+  Skills/MCP settings catalogs and manual commands, terminal rail removal,
+  workspace Memory footer access, dock ownership and interaction acceptance.
 - [Provider config plan](plans/provider-config-plan.md) — superseded by the
   capability-based provider protocol rework.
 - [Chat projection handoff](plans/chat-projection-handoff.md) — **ACTIVE

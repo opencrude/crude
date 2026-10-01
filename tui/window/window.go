@@ -442,6 +442,43 @@ func (w *Window) MoveTab(from, to int) {
 	}
 }
 
+// OrderTabsSubset orders the named tabs within their existing slots. Other
+// tabs keep their positions, and the selected tab keeps its identity even if
+// its index changes. An incomplete or duplicate order leaves the bar intact.
+func (w *Window) OrderTabsSubset(ids []TabID) {
+	if len(ids) < 2 {
+		return
+	}
+	wanted := make(map[TabID]int, len(ids))
+	for i, id := range ids {
+		if _, exists := wanted[id]; exists {
+			return
+		}
+		wanted[id] = i
+	}
+	positions := make([]int, 0, len(ids))
+	selected := TabID(0)
+	if active := w.ActiveTab(); active != nil {
+		selected = active.ID
+	}
+	tabs := make([]Tab, len(ids))
+	for i, tab := range w.tabs {
+		if position, ok := wanted[tab.ID]; ok {
+			positions = append(positions, i)
+			tabs[position] = tab
+		}
+	}
+	if len(positions) != len(ids) {
+		return
+	}
+	for i, position := range positions {
+		w.tabs[position] = tabs[i]
+		if tabs[i].ID == selected {
+			w.active = position
+		}
+	}
+}
+
 func (w *Window) DisplayTitles(maxLen int) []string {
 	titles := make([]string, len(w.tabs))
 	for i, t := range w.tabs {

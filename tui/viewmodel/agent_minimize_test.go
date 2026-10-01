@@ -1,9 +1,13 @@
 package viewmodel
 
 import (
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"crude/sessiondb"
 	"crude/workspace"
 )
 
@@ -126,6 +130,157 @@ func TestMinimizeHidesSubAgentsWithTheirOrchestrator(t *testing.T) {
 	app.restoreAgent("orch-1")
 	if app.AgentMgr.IsHidden("sub-1") {
 		t.Fatal("restoring an orchestrator must restore its sub-agents")
+	}
+}
+
+// A resumed session hydrates completed children as hidden review surfaces.
+// Restoring the root must not open every historical review in the tab bar.
+func TestRestoreRootPreservesArchivedChildrenAndRootTabOrder(t *testing.T) {
+	app := newFullTestApp(t)
+	app.width, app.height = 120, 40
+	app.AddOrchestrator("root")
+	for i := 0; i < 24; i++ {
+		id := fmt.Sprintf("archived-%d", i)
+		child := app.AgentMgr.AddSubAgent(id, "root", "Review", "model", "researcher",
+			workspace.NewAgentState(id, nil, nil))
+		child.Hidden = true // hydrated completed sub-agent
+		child.State.Completed = true
+	}
+	live := app.AgentMgr.AddSubAgent("live", "root", "Live", "model", "researcher",
+		workspace.NewAgentState("live", nil, nil))
+	app.syncAgentWindowTabs()
+	app.minimizeAgent("root")
+	app.restoreAgent("root")
+
+	if live.Hidden || app.AgentMgr.IsHidden("live") {
+		t.Fatal("the previously open live child should return with its root")
+	}
+	if app.Win.TabCount() != 2 {
+		t.Fatalf("restoring root opened archived reviews: tabs=%d want 2", app.Win.TabCount())
+	}
+	tabs := app.Win.Tabs()
+	if tabs[0].Title != app.agentTabTitle("root") || tabs[1].Title != app.agentTabTitle("live") {
+		t.Fatalf("main agent must precede its live child: %+v", tabs)
+	}
+	for i := 0; i < 24; i++ {
+		id := fmt.Sprintf("archived-%d", i)
+		if !app.AgentMgr.IsHidden(id) || app.Win.TabByTitle(app.agentTabTitle(id)) != nil {
+			t.Fatalf("archived review %q was reopened", id)
+		}
+	}
+	app.syncAgentWindowTabs() // background sync must preserve the same projection
+	if app.Win.TabCount() != 2 {
+		t.Fatalf("background sync reopened archived reviews: tabs=%d", app.Win.TabCount())
+	}
+	painted := paintedTabStrip(t, app, 120)
+	rootPos, livePos := strings.Index(painted, "Main Agent"), strings.Index(painted, "Live")
+	if rootPos < 0 || livePos <= rootPos || strings.Contains(painted, "Review") {
+		t.Fatalf("painted bar reordered main/child or showed archived reviews: %q", painted)
+	}
+}
+
+func TestRestoreChildOfMinimizedRootOnlyOpensItsPath(t *testing.T) {
+	app := newFullTestApp(t)
+	app.AddOrchestrator("root")
+	for _, id := range []string{"review", "sibling"} {
+		child := app.AgentMgr.AddSubAgent(id, "root", id, "model", "researcher",
+			workspace.NewAgentState(id, nil, nil))
+		child.Hidden = true
+		child.State.Completed = true
+	}
+	app.minimizeAgent("root")
+	app.restoreAgent("review")
+	if app.AgentMgr.IsHidden("root") || app.AgentMgr.IsHidden("review") || !app.AgentMgr.IsHidden("sibling") {
+		t.Fatalf("restore child path lost visibility choices: root=%v review=%v sibling=%v",
+			app.AgentMgr.IsHidden("root"), app.AgentMgr.IsHidden("review"), app.AgentMgr.IsHidden("sibling"))
+	}
+	if tabs := app.Win.Tabs(); len(tabs) != 2 || tabs[0].Title != app.agentTabTitle("root") ||
+		tabs[1].Title != app.agentTabTitle("review") || app.AgentMgr.ActiveID() != "review" {
+		t.Fatalf("restore child path opened sibling or lost selection: tabs=%+v active=%q", tabs, app.AgentMgr.ActiveID())
+	}
+}
+
+func TestRestoreNestedReviewRevealsOnlyItsAncestors(t *testing.T) {
+	app := newFullTestApp(t)
+	app.AddOrchestrator("root")
+	app.AgentMgr.AddSubAgent("parent", "root", "parent", "model", "researcher",
+		workspace.NewAgentState("parent", nil, nil))
+	app.AgentMgr.AddSubAgent("review", "parent", "review", "model", "researcher",
+		workspace.NewAgentState("review", nil, nil))
+	sibling := app.AgentMgr.AddSubAgent("sibling", "parent", "sibling", "model", "researcher",
+		workspace.NewAgentState("sibling", nil, nil))
+	sibling.Hidden = true
+	app.minimizeAgent("parent")
+	app.minimizeAgent("root")
+	app.restoreAgent("review")
+	if got := app.AgentMgr.TabOrder(); !slices.Equal(got, []string{"root", "parent", "review"}) {
+		t.Fatalf("nested restore opened siblings or lost an ancestor: %v", got)
+	}
+	if app.AgentMgr.ActiveID() != "review" || app.Win.TabCount() != 3 ||
+		app.Win.ActiveTab().Title != app.agentTabTitle("review") {
+		t.Fatalf("nested review not selected: active=%q tabs=%+v", app.AgentMgr.ActiveID(), app.Win.Tabs())
+	}
+}
+
+func TestResumeSessionWithManyCompletedChildrenOnlyOpensMainAgent(t *testing.T) {
+	app, ws := newRealShellApp(t)
+	defer ws.Close()
+	if cmd := app.launcherNewSession(); cmd != nil {
+		_ = cmd()
+	}
+	rootID := app.AgentMgr.ActiveID()
+	if rootID == "" || app.ActiveSession == nil {
+		t.Fatal("failed to create session for resume")
+	}
+	sessionID := app.ActiveSession.SessionID
+	// Empty sessions are discarded by shutdown. Keep a real backend context
+	// boundary so this fixture takes the same resume path as a worked session.
+	if err := app.BackendSession().AppendWorkspaceHistoryEvent("Fixture continuity", "Continuity saved"); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 40; i++ {
+		id := fmt.Sprintf("archived-%d", i)
+		if err := sessiondb.InsertSubAgentResult(app.ActiveSession.DB, sessiondb.SubAgentResultRow{
+			ParentSessionID: sessionID, ChildSessionID: id, AgentID: id,
+			AgentName: "Review " + id, AgentCategory: "researcher", Status: "completed",
+			SummaryGist: "Review complete", CreatedAt: time.Now().Add(time.Duration(i) * time.Millisecond).UnixNano(),
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	app.cleanupAgent(rootID)
+	app.CloseAllSessions()
+	// A closed backend session and its in-memory root tree are separate:
+	// restarting the UI starts with an empty agent manager and tab strip.
+	app.AgentMgr.Remove(rootID)
+	app.Win.CloseAll()
+	result := app.ResumeSessionFromLauncher(sessionID)
+	if result == nil || result.Error != "" {
+		t.Fatalf("resume failed: %+v", result)
+	}
+	app.AddOrchestrator(result.OrchID)
+	if app.AgentMgr.ActiveID() == "" || app.Win.TabCount() != 1 ||
+		app.Win.ActiveTab().Title != app.agentTabTitle(app.AgentMgr.ActiveID()) {
+		t.Fatalf("resumed main agent did not own its only tab: active=%q tabs=%+v",
+			app.AgentMgr.ActiveID(), app.Win.Tabs())
+	}
+	if app.AgentMgr.Count() != 41 {
+		t.Fatalf("lost child reviews on resume: count=%d", app.AgentMgr.Count())
+	}
+	for i := 0; i < 40; i++ {
+		id := fmt.Sprintf("archived-%d", i)
+		if !app.AgentMgr.IsHidden(id) || app.Win.TabByTitle(app.agentTabTitle(id)) != nil {
+			t.Fatalf("resumed child %q opened a tab", id)
+		}
+	}
+	app.syncAgentWindowTabs()
+	if app.Win.TabCount() != 1 {
+		t.Fatalf("background sync reopened child tabs: %+v", app.Win.Tabs())
+	}
+	app.restoreAgent("archived-20")
+	if app.Win.TabCount() != 2 || app.AgentMgr.ActiveID() != "archived-20" ||
+		app.Win.Tabs()[0].Title != app.agentTabTitle(app.AgentMgr.OrchestratorFor("archived-20").ID) {
+		t.Fatalf("explicit review did not open just one child after root: %+v", app.Win.Tabs())
 	}
 }
 

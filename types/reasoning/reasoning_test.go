@@ -42,4 +42,7 @@ func TestCondensedByUsageRequiresStrongReportedEvidence(t *testing.T) {
 	if !Provisional.HasCompactPreview() || Provisional.IsSummary() || Raw.HasCompactPreview() {
 		t.Fatal("provisional thinking was confused with a confirmed summary or raw trace")
 	}
+	if !InferredRaw.IsRaw() || !Raw.IsRaw() || InferredRaw.IsSummary() || InferredRaw.HasCompactPreview() {
+		t.Fatal("measured raw thinking was confused with a compact summary")
+	}
 }

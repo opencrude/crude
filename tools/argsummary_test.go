@@ -72,3 +72,64 @@ func TestSummarizeArgsPreservesKnownOperands(t *testing.T) {
 		t.Fatalf("fallback label = %d runes, want 60", len([]rune(got)))
 	}
 }
+
+func TestStructuredToolArgumentsNeverBecomeTitlePayloads(t *testing.T) {
+	for _, tc := range []struct{ name, tool, args, want string }{
+		{"poll JSON", "poll_sub_agent", `{"handle_id":"agent-8f21","extra":{"state":"running"}}`, "agent-8f21"},
+		{"poll nested JSON string is not a handle", "poll_sub_agent", `{"handle_id":"{\"private\":\"not a handle\"}"}`, ""},
+		{"poll summary", "poll_sub_agent", `handle_id: agent-8f21`, "agent-8f21"},
+		{"poll normalized snapshot", "poll_sub_agent", "agent-8f21", "agent-8f21"},
+		{"cancel JSON", "cancel_sub_agent", `{"handle_id":"agent-8f21"}`, "agent-8f21"},
+		{"cancel summary", "cancel_sub_agent", `handle_id: agent-8f21`, "agent-8f21"},
+		{"cancel normalized snapshot", "cancel_sub_agent", "agent-8f21", "agent-8f21"},
+		{"spawn normalized snapshot", "run_sub_agent", "Inspect renderer", "Inspect renderer"},
+		{"list subagents", "list_sub_agents", `{"include_completed":true}`, ""},
+		{"empty object", "list_sub_agents", `{}`, ""},
+		{"empty plan", "get_plan", `{}`, ""},
+		{"plan missing id", "update_plan", `{"objective":"Do work","steps":[{"description":"Inspect"}]}`, ""},
+		{"question", "question", `{"questions":[{"prompt":"Choose"}]}`, ""},
+		{"memory title", "remember", `{"title":"Preferred layout","content":"Keep narrow screens readable"}`, "Preferred layout"},
+		{"memory update", "update_memory", `{"id":"memory-1","content":"updated"}`, "memory-1"},
+		{"memory forget", "forget_memory", `{"id":"memory-2"}`, "memory-2"},
+		{"report", "write_report", `{"report":"Large JSON report body"}`, ""},
+		{"patch wrapper", "apply_patch", `{"input":"not a patch"}`, ""},
+		{"unknown object", "plugin_tool", `{"mystery":{"secret":"do not paint"}}`, ""},
+		{"unknown array", "plugin_tool", `[{"secret":"do not paint"}]`, ""},
+		{"unknown partial object", "plugin_tool", `{"secret":"do not paint`, ""},
+		{"unknown partial array", "plugin_tool", `[{"secret":"do not paint`, ""},
+		{"string containing JSON remains a command", "execute_command", `{"command":"echo '{\"answer\":42}'"}`, `echo '{"answer":42}'`},
+		{"unstructured unknown keeps readable label", "plugin_tool", `alpha: beta`, "alpha: beta"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := SummarizeArgs(tc.tool, tc.args); got != tc.want {
+				t.Fatalf("title operand = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+func TestExtractArgNeverFindsAFieldInsideUnrelatedJSONText(t *testing.T) {
+	for _, input := range []string{
+		`{"description":"path: /do-not-use"}`,
+		`{"nested":{"path":"/do-not-use"}}`,
+		`{"path":{"nested":"/do-not-use"}}`,
+	} {
+		if got := ExtractArg(input, "path"); got != "" {
+			t.Fatalf("found fictitious path %q inside %s", got, input)
+		}
+	}
+}
+
+func TestToolDisplayNameRejectsStructuredOrUnboundedNames(t *testing.T) {
+	for _, tc := range []struct{ name, want string }{
+		{"poll_sub_agent", "poll_sub_agent"},
+		{"functions.read_file", "functions.read_file"},
+		{`{"handle_id":"agent-8f21"}`, "tool"},
+		{"read_file\n{\"secret\":1}", "tool"},
+		{"", "tool"},
+	} {
+		if got := DisplayToolName(tc.name); got != tc.want {
+			t.Fatalf("name %q displays as %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}

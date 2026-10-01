@@ -4,8 +4,33 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"regexp"
+	"strconv"
 	"strings"
 )
+
+var outputCeilingEvidence = regexp.MustCompile(`(?i)\b(max_tokens|max_completion_tokens|max_output_tokens)\s*\(current value:\s*(\d+)\)\s*must be between\s*0\s*and\s*(\d+)`)
+
+// OutputCeilingFromError accepts only a provider-reported limit for the exact
+// output token parameter/value we sent. Unrelated invalid requests cannot
+// change the learned capacity of this connection.
+func OutputCeilingFromError(err error, requested int) (int, bool) {
+	var status *StatusError
+	if requested < 1 || !errors.As(err, &status) ||
+		(status.StatusCode != http.StatusBadRequest && status.StatusCode != http.StatusUnprocessableEntity) {
+		return 0, false
+	}
+	match := outputCeilingEvidence.FindStringSubmatch(status.Message)
+	if len(match) != 4 {
+		return 0, false
+	}
+	actual, err1 := strconv.Atoi(match[2])
+	ceiling, err2 := strconv.Atoi(match[3])
+	if err1 != nil || err2 != nil || actual != requested || ceiling <= 0 || ceiling >= requested {
+		return 0, false
+	}
+	return ceiling, true
+}
 
 type ContextWindowError struct {
 	InputTokens   int

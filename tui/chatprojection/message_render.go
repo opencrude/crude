@@ -651,7 +651,7 @@ func renderCompactionMessage(msg types.ChatMessage, ctx renderContext) messageLi
 		}
 		source := "Calculating"
 		if msg.LifecycleBeforeTokens > 0 {
-			source = rendering.FormatTokens(msg.LifecycleBeforeTokens) + " source · full history retained"
+			source = rendering.FormatTokens(msg.LifecycleBeforeTokens) + " source · original context retained until commit"
 		}
 		rows = append(rows, lifecycleBoundaryLine(ctx.innerW, source, trailer, ui.ColorMuted))
 	} else if msg.LifecyclePhase == "compaction_completed" {
@@ -659,8 +659,12 @@ func renderCompactionMessage(msg types.ChatMessage, ctx renderContext) messageLi
 		if msg.LifecycleAfterTokens > 0 {
 			tokens += " → ~" + rendering.FormatTokens(msg.LifecycleAfterTokens)
 		}
-		rows = append(rows, lifecycleBoundaryLine(ctx.innerW, "All extraction stages", progress, ui.ColorFg))
-		rows = append(rows, lifecycleBoundaryLine(ctx.innerW, tokens+" · full transcript retained", "checkpoint active", ui.ColorMuted))
+		rows = append(rows, lifecycleBoundaryLine(ctx.innerW, "Active context ready", progress, ui.ColorFg))
+		trailer := "checkpoint active"
+		if msg.LifecycleTrigger == "manual" {
+			trailer = "ready to continue"
+		}
+		rows = append(rows, lifecycleBoundaryLine(ctx.innerW, tokens+" active · transcript archived", trailer, ui.ColorMuted))
 	} else {
 		rows = append(rows, lifecycleBoundaryLine(ctx.innerW, stage, progress, ui.ColorFg))
 		detail := "Stopped before context commit"

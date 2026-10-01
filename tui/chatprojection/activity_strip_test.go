@@ -206,6 +206,48 @@ func TestActivityStripStoppedPlansStayStill(t *testing.T) {
 	}
 }
 
+func TestCompactionActivityOwnsStripUntilNextTurn(t *testing.T) {
+	th := theme.DefaultDark()
+	tokens := ui.NewTokenSet(th)
+	var strip ActivityStrip
+	view := types.AgentActivityView{
+		Active: true,
+		Status: types.AgentStatusSnapshot{Phase: types.AgentCompacting, Detail: "Compacting context"},
+		Plan: &activity.Plan{ID: "unrelated-plan", Status: "active", Total: 4, Completed: 3,
+			Current: []activity.Step{{Number: 4, Text: "Run build, tests, and whole-repo lint"}}},
+	}
+	for _, phase := range []struct {
+		name, label string
+		active      bool
+	}{
+		{"compaction_preparing", "Compacting context", true},
+		{"compaction_extracting", "Compacting context", true},
+		{"compaction_retrying", "Recovering compaction", true},
+		{"compaction_committing", "Saving checkpoint", true},
+		{"compaction_cancelling", "Stopping compaction", false},
+		{"compaction_completed", "Context compacted · Ready to continue", false},
+		{"compaction_cancelled", "Compaction cancelled", false},
+		{"compaction_failed", "Compaction failed · details in transcript", false},
+		{"compaction_interrupted", "Compaction interrupted · original context retained", false},
+	} {
+		view.Active, view.CompactionPhase = phase.active, phase.name
+		strip.Update(view, 100, th, tokens)
+		for _, frame := range []int{0, 6500, 14000} {
+			line := strip.Line(frame)
+			if got := line.PlainText(); got != phase.label || line.TextTide != phase.active {
+				t.Fatalf("phase=%s frame=%d: strip=%q active=%v", phase.name, frame, got, line.TextTide)
+			}
+		}
+	}
+	view.CompactionPhase = ""
+	view.Active = true
+	view.Status.Phase, view.Status.Detail = types.AgentTool, "Working"
+	strip.Update(view, 100, th, tokens)
+	if got := strip.Line(15000).PlainText(); !strings.Contains(got, "Working") || !strings.Contains(got, "Plan 3/4") {
+		t.Fatalf("next turn did not restore the plan: %q", got)
+	}
+}
+
 func TestActivityStripLiveTextKeepsCrestPosition(t *testing.T) {
 	th := theme.DefaultDark()
 	tokens := ui.NewTokenSet(th)

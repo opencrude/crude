@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -106,5 +107,50 @@ func TestSubAgentTerminalResultNeedsDeliverable(t *testing.T) {
 				t.Fatal("diagnostic report existed before completion")
 			}
 		})
+	}
+}
+
+func TestSubAgentListShowsNameAndHandleTogether(t *testing.T) {
+	runner := NewSubAgentRunner(&Session{}, 1)
+	t.Cleanup(runner.SessionCancel)
+	handle := &agent.SubAgentHandle{Spec: agent.SubAgentSpec{ID: "agent-8f21", Name: "Lily sub Dawn", Category: agent.CatResearcher}, StartedAt: time.Now()}
+	if err := runner.mgr.Register(handle); err != nil {
+		t.Fatal(err)
+	}
+	result, err := runner.ListSubAgents(map[string]any{"include_completed": true})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(result.Content, "Lily sub Dawn (agent-8f21)") {
+		t.Fatalf("list lost identity: %s", result.Content)
+	}
+	if !strings.HasPrefix(result.Content, "- Lily sub Dawn (agent-8f21)") {
+		t.Fatalf("list identity not readable at start: %s", result.Content)
+	}
+}
+
+func TestSubAgentReportResultCarriesNameAndHandleTogether(t *testing.T) {
+	home := t.TempDir()
+	s, err := NewWithSessionDir("parent", testConfig(), home, filepath.Join(home, "sessions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
+	runner := NewSubAgentRunner(s, 1)
+	t.Cleanup(runner.SessionCancel)
+	handle := &agent.SubAgentHandle{Spec: agent.SubAgentSpec{ID: "agent-8f21", Name: "Lily sub Dawn", Category: agent.CatResearcher}, StartedAt: time.Now()}
+	if err := runner.mgr.Register(handle); err != nil {
+		t.Fatal(err)
+	}
+	result, err := runner.WriteReport("agent-8f21", map[string]any{"report": "The renderer is stable."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var parsed map[string]string
+	if err := json.Unmarshal([]byte(result.Content), &parsed); err != nil {
+		t.Fatal(err)
+	}
+	if parsed["name"] != "Lily sub Dawn" || parsed["handle_id"] != "agent-8f21" || parsed["status"] != "report_written" {
+		t.Fatalf("report result lost identity: %q", result.Content)
 	}
 }

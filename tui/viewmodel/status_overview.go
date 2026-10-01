@@ -358,7 +358,7 @@ func (m *App) backgroundAgentCounts() (working, needsAction int) {
 			needsAction++
 		}
 		switch status.Phase {
-		case ttypes.AgentPreparing, ttypes.AgentUploading, ttypes.AgentWaiting, ttypes.AgentThinking, ttypes.AgentResponding, ttypes.AgentTool, ttypes.AgentChildren, ttypes.AgentRetrying, ttypes.AgentCancelling:
+		case ttypes.AgentPreparing, ttypes.AgentUploading, ttypes.AgentWaiting, ttypes.AgentCompacting, ttypes.AgentThinking, ttypes.AgentResponding, ttypes.AgentTool, ttypes.AgentChildren, ttypes.AgentRetrying, ttypes.AgentCancelling:
 			working++
 		}
 	}
@@ -481,7 +481,7 @@ func (m *App) statusTabItems() []statusoverview.Item {
 			state = ttypes.AgentStatusSnapshot{Phase: ttypes.AgentIdle, Detail: "Idle", ModelID: node.Model}
 		}
 		action, actionLabel := "agent:"+node.ID, "Switch to Tab"
-		if node.Hidden {
+		if node.IsHidden() {
 			actionLabel = "Restore Agent"
 		} else if node.ID == activeAgent && m.EditorState.ActiveView == "" {
 			actionLabel = "Return to Tab"
@@ -508,7 +508,7 @@ func (m *App) statusTabItems() []statusoverview.Item {
 		if state.TotalBytes > 0 {
 			lines = append(lines, statusoverview.DetailLine{Label: "Payload", Value: rendering.FormatBytes(state.TotalBytes) + " serialized; not tokens", Role: ui.ColorMuted})
 		}
-		if node.Hidden {
+		if node.IsHidden() {
 			lines = append(lines, statusoverview.DetailLine{Label: "Visibility", Value: "Minimized", Role: ui.ColorMuted})
 		}
 		if state.ReadOnly {
@@ -900,7 +900,7 @@ func formatAgentState(state ttypes.AgentStatusSnapshot) string {
 	// The row reports the turn lifecycle, not token-by-token transport phases.
 	// Keep detailed tool/provider state in the expanded information.
 	switch state.Phase {
-	case ttypes.AgentOpening, ttypes.AgentPreparing, ttypes.AgentUploading, ttypes.AgentWaiting,
+	case ttypes.AgentOpening, ttypes.AgentPreparing, ttypes.AgentUploading, ttypes.AgentWaiting, ttypes.AgentCompacting,
 		ttypes.AgentThinking, ttypes.AgentResponding, ttypes.AgentTool, ttypes.AgentChildren:
 		if state.NeedsAction {
 			return firstNonempty(state.Detail, "Needs attention")

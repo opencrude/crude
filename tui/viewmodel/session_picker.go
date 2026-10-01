@@ -94,7 +94,7 @@ func (m *App) sessionLiveInfos(sessions []sessiondb.SessionMeta) map[string]sess
 			switch {
 			case node.IsActive():
 				status = sessionpicker.StatusWorking
-			case node.Hidden:
+			case node.IsHidden():
 				status = sessionpicker.StatusMinimized
 			}
 			live[sess.SessionID] = live[sess.SessionID].Merge(sessionpicker.LiveInfo{

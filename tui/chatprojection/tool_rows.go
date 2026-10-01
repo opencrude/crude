@@ -236,7 +236,7 @@ func toolSupportsDisclosure(toolName string) bool {
 	switch toolName {
 	case "execute_command", "async_execute_command", "read_async_output", "check_async_command",
 		"exec_command", "write_stdin", "apply_patch", "edit_file", "write_file", "update_plan", "get_plan", "run_sub_agent", "read_file", "grep_files", "glob_files",
-		"list_directory", "web_search", "web_fetch", "arxiv_search":
+		"list_directory", "web_search", "web_fetch", "arxiv_search", "poll_sub_agent", "cancel_sub_agent", "list_sub_agents", "write_report":
 		return true
 	}
 	return false

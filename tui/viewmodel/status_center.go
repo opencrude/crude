@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"time"
 
+	"crude/tools"
 	"crude/tui/types"
 	ttypes "crude/types"
 	"crude/workspace"
@@ -27,7 +28,7 @@ func (m *App) syncAgentStatusEvent(evt types.AgentEventMsg) {
 		snapshot.Ref.SessionID = session.SessionID
 	}
 	if node != nil {
-		snapshot.Label, snapshot.Hidden = node.Label, node.Hidden
+		snapshot.Label, snapshot.Hidden = node.Label, node.IsHidden()
 		if snapshot.Label == "" {
 			snapshot.Label = "Main Agent"
 		}
@@ -66,6 +67,7 @@ func (m *App) syncAgentStatusEvent(evt types.AgentEventMsg) {
 		}
 	case "turn_started":
 		snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = ttypes.AgentPreparing, "Preparing context", false
+		snapshot.RequestID = ""
 		snapshot.StartedAt = snapshot.UpdatedAt
 		snapshot.UploadedBytes, snapshot.TotalBytes, snapshot.ProgressKnown = 0, 0, false
 		if identity, ok := evt.Data.(ttypes.TurnIdentity); ok {
@@ -148,6 +150,39 @@ func (m *App) syncAgentStatusEvent(evt types.AgentEventMsg) {
 			snapshot.RetryAt = time.Now().Add(time.Duration(backoff * float64(time.Second)))
 			snapshot.RequestID, _ = values["request_id"].(string)
 		}
+	case "context_compaction_started", "context_compaction_stage", "context_compaction_retrying", "context_compaction_committing":
+		snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = ttypes.AgentCompacting, "Compacting context", false
+		if values, ok := evt.Data.(map[string]any); ok {
+			if id, _ := values["request_id"].(string); id != "" && id != snapshot.RequestID {
+				snapshot.StartedAt = snapshot.UpdatedAt
+				snapshot.RequestID = id
+			}
+			if label, _ := values["stage_label"].(string); label != "" {
+				snapshot.Detail = "Compacting context · " + label
+			}
+		}
+	case "context_compacted", "context_compaction_cancelled", "context_compaction_failed":
+		snapshot.NeedsAction = false
+		if values, ok := evt.Data.(map[string]any); ok {
+			if id, _ := values["request_id"].(string); id != "" {
+				snapshot.RequestID = id
+			}
+		}
+		// Automatic compaction resumes the same turn; the next request may
+		// update its phase. Manual compaction ends as a separate operation.
+		if node.State != nil && node.State.IsActive() {
+			snapshot.Phase, snapshot.Detail = ttypes.AgentPreparing, "Preparing context"
+		} else {
+			snapshot.Phase = ttypes.AgentCompactionResult
+			switch evt.Type {
+			case "context_compacted":
+				snapshot.Detail = "Context compacted"
+			case "context_compaction_cancelled":
+				snapshot.Detail = "Compaction cancelled"
+			case "context_compaction_failed":
+				snapshot.Detail = "Compaction failed"
+			}
+		}
 	case "done":
 		reason := "completed"
 		if values, ok := evt.Data.(map[string]any); ok {
@@ -197,7 +232,7 @@ func agentRequestOperation(snapshot ttypes.AgentStatusSnapshot) ttypes.Operation
 func agentToolDetail(data any) string {
 	if values, ok := data.(map[string]any); ok {
 		if name, _ := values["name"].(string); name != "" {
-			return "Running " + name
+			return "Running " + tools.DisplayToolName(name)
 		}
 	}
 	return "Running tool"
@@ -255,7 +290,7 @@ func (m *App) syncAgentStatusInventory() {
 				Phase: ttypes.AgentIdle, Detail: "Idle",
 			}
 		}
-		status.Label, status.Hidden = node.Label, node.Hidden
+		status.Label, status.Hidden = node.Label, node.IsHidden()
 		status.ModelID = firstNonempty(node.Model, status.ModelID)
 		status.ReadOnly = node.State.Completed
 		// PendingPermTool is a display tag for an already-decided permission,
@@ -274,9 +309,9 @@ func (m *App) syncAgentStatusInventory() {
 			status.Phase, status.Detail = ttypes.AgentApproval, "Needs approval"
 		case node.State.Completed && status.Phase != ttypes.AgentCancelled && status.Phase != ttypes.AgentFailed:
 			status.Phase, status.Detail = ttypes.AgentCompleted, "Completed"
-		case !node.State.IsActive() && status.Phase != ttypes.AgentCompleted && status.Phase != ttypes.AgentCancelled && status.Phase != ttypes.AgentFailed:
+		case !node.State.IsActive() && status.Phase != ttypes.AgentCompleted && status.Phase != ttypes.AgentCancelled && status.Phase != ttypes.AgentFailed && status.Phase != ttypes.AgentCompactionResult:
 			status.Phase, status.Detail = ttypes.AgentIdle, "Idle"
-		case node.State.IsActive() && (!exists || status.Phase == ttypes.AgentIdle || status.Phase == ttypes.AgentApproval || status.Phase == ttypes.AgentQuestion):
+		case node.State.IsActive() && (!exists || status.Phase == ttypes.AgentIdle || status.Phase == ttypes.AgentCompactionResult || status.Phase == ttypes.AgentApproval || status.Phase == ttypes.AgentQuestion):
 			status.Phase, status.Detail = ttypes.AgentThinking, "Working"
 		}
 		// Preserve the event-owned phase while working. Thinking/Streaming are

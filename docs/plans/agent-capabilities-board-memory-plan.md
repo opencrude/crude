@@ -264,6 +264,15 @@ symbols, and user decisions within the correct workspace scope.
 
 ## Service ownership and user experience
 
+The companion [workspace tools and capability TUI plan](workspace-tools-capabilities-tui-plan.md)
+audits the current rail, settings catalogs, workspace dock, session decks, and
+runtime capability gaps. Revision 2 incorporates the user's direction: no
+Terminals rail entry, calm Git navigation with main-area diffs, workspace Memory
+in the footer, and complete Skills/MCP browsing and manual management in Settings.
+It also recommends separate Skills/MCP rail entries and `/skills`, `/mcp`
+manager commands over one shared catalog. Detailed controls and layouts remain
+proposed; the examples below are only the original surface outline.
+
 | Owner | Proposed responsibility |
 |---|---|
 | `app/` | Global source defaults, artifact cache location, credential references, and application policy. |

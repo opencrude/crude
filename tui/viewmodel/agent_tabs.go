@@ -7,6 +7,7 @@ import (
 
 	"crude/tui/chatprojection"
 	"crude/tui/ui"
+	"crude/tui/window"
 	"crude/workspace"
 )
 
@@ -317,7 +318,7 @@ func (m *App) switchToAgentView(agentID string) {
 		m.AgentMgr.ClearActive()
 	} else if n := m.AgentMgr.Get(agentID); n != nil && n.State != nil {
 		// Selecting a minimized agent is how the user brings it back.
-		if n.Hidden {
+		if n.IsHidden() {
 			m.RestoreAgent(agentID)
 		} else {
 			m.AgentMgr.SetActive(agentID)
@@ -432,7 +433,7 @@ func (m *App) syncAgentWindowTabs() {
 	// prompt target.
 	for _, id := range m.AgentMgr.TabOrder() {
 		n := m.AgentMgr.Get(id)
-		if n == nil || n.Hidden {
+		if n == nil || n.IsHidden() {
 			continue
 		}
 		view, ok := viewByID[id]
@@ -456,6 +457,16 @@ func (m *App) syncAgentWindowTabs() {
 	}
 
 	m.purgeStaleAgentTabs()
+	// Root first within each agent tree, including a resumed session whose
+	// child tabs were opened before its root. Keep editor slots where they are.
+	order := m.AgentMgr.TabOrder()
+	ids := make([]window.TabID, 0, len(order))
+	for _, id := range order {
+		if tab := m.Win.TabByTitle(m.agentTabTitle(id)); tab != nil {
+			ids = append(ids, tab.ID)
+		}
+	}
+	m.Win.OrderTabsSubset(ids)
 	m.keepWindowTab(preserveTitle)
 	m.handleTabSwitch()
 }
@@ -469,7 +480,7 @@ func (m *App) activeAgentTabID() string {
 		return ""
 	}
 	id := m.agentIDFromTabTitle(tab.Title)
-	if node := m.AgentMgr.Get(id); node != nil && !node.Hidden {
+	if node := m.AgentMgr.Get(id); node != nil && !node.IsHidden() {
 		return id
 	}
 	return ""
@@ -532,7 +543,7 @@ func (m *App) purgeStaleAgentTabs() {
 		if m.isAgentTabTitle(tabs[i].Title) {
 			agentID := m.agentIDFromTabTitle(tabs[i].Title)
 			n := m.AgentMgr.Get(agentID)
-			if n == nil || n.Hidden {
+			if n == nil || n.IsHidden() {
 				m.Win.CloseTabByID(tabs[i].ID)
 			}
 		}

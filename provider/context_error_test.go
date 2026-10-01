@@ -31,3 +31,27 @@ func TestContextWindowErrorsRequireCanonicalCapacityEvidence(t *testing.T) {
 		})
 	}
 }
+
+func TestOutputCeilingRequiresExactProviderEvidence(t *testing.T) {
+	for _, test := range []struct {
+		name      string
+		err       error
+		requested int
+		want      int
+	}{
+		{"deepseek rejection", &StatusError{StatusCode: 400, Message: `invalid_request_error: {"code":400,"reason":"INVALID_REQUEST_BODY","message":"max_tokens (current value: 550463) must be between 0 and 393216 "}`}, 550463, 393216},
+		{"different output parameter", &StatusError{StatusCode: 422, Message: "max_completion_tokens (current value: 550463) must be between 0 and 393216"}, 550463, 393216},
+		{"wrong requested value", &StatusError{StatusCode: 400, Message: "max_tokens (current value: 123) must be between 0 and 393216"}, 550463, 0},
+		{"not smaller", &StatusError{StatusCode: 400, Message: "max_tokens (current value: 550463) must be between 0 and 999999"}, 550463, 0},
+		{"input rejection", &StatusError{StatusCode: 400, Message: "prompt is too long"}, 550463, 0},
+		{"untrusted text", errors.New("max_tokens (current value: 550463) must be between 0 and 393216"), 550463, 0},
+		{"auth failure", &StatusError{StatusCode: 401, Message: "max_tokens (current value: 550463) must be between 0 and 393216"}, 550463, 0},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			limit, ok := OutputCeilingFromError(fmt.Errorf("extract intent: %w", test.err), test.requested)
+			if limit != test.want || ok != (test.want != 0) {
+				t.Fatalf("limit=%d accepted=%v, want %d", limit, ok, test.want)
+			}
+		})
+	}
+}

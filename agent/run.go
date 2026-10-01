@@ -782,15 +782,19 @@ func (a *Agent) observeReasoningVisibility(completion *completionResult) reasoni
 		return reasoning.Unknown
 	}
 	if completion.ReasoningDisplay.Kind == reasoning.Raw {
-		a.ReasoningContentKind, a.condensedSamples, a.sawRawReasoning = reasoning.Unknown, 0, true
+		a.ReasoningContentKind, a.condensedSamples, a.rawSamples, a.sawRawReasoning = reasoning.Unknown, 0, 0, true
 		return reasoning.Unknown
 	}
-	if a.sawRawReasoning || completion.ReasoningDisplay.Kind != reasoning.Provisional {
+	if a.sawRawReasoning || completion.ReasoningDisplay.Kind != reasoning.Provisional && completion.ReasoningDisplay.Kind != reasoning.InferredRaw {
 		return reasoning.Unknown
 	}
 	runes := utf8.RuneCountInString(completion.ReasoningContent)
 	if reasoning.CondensedByUsage(runes, completion.Usage.ReasoningTokens, completion.Usage.ReasoningKnown) {
 		completion.ReasoningDisplay.Kind = reasoning.InferredSummary
+		if a.ReasoningContentKind == reasoning.InferredRaw {
+			a.ReasoningContentKind = reasoning.Unknown
+		}
+		a.rawSamples = 0
 		a.condensedSamples++
 		if a.condensedSamples >= 2 || completion.Usage.ReasoningTokens >= 16*((runes+3)/4) {
 			a.ReasoningContentKind = reasoning.InferredSummary
@@ -798,8 +802,16 @@ func (a *Agent) observeReasoningVisibility(completion *completionResult) reasoni
 		return reasoning.InferredSummary
 	}
 	if completion.Usage.ReasoningKnown && runes >= 12 && completion.Usage.ReasoningTokens >= 128 && completion.Usage.ReasoningTokens <= 2*((runes+3)/4) {
-		completion.ReasoningDisplay.Kind = reasoning.Raw
-		return reasoning.Raw
+		completion.ReasoningDisplay.Kind = reasoning.InferredRaw
+		if a.ReasoningContentKind == reasoning.InferredSummary {
+			a.ReasoningContentKind = reasoning.Unknown
+		}
+		a.condensedSamples = 0
+		a.rawSamples++
+		if a.rawSamples >= 2 {
+			a.ReasoningContentKind = reasoning.InferredRaw
+		}
+		return reasoning.InferredRaw
 	}
 	return reasoning.Unknown
 }

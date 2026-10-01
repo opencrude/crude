@@ -4,9 +4,12 @@ import (
 	"fmt"
 	"strings"
 	"time"
+
+	"crude/tools"
 )
 
 func PascalCaseTool(name string) string {
+	name = tools.DisplayToolName(name)
 	parts := strings.Split(name, "_")
 	for i, p := range parts {
 		if len(p) > 0 {

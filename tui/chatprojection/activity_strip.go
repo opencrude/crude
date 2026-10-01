@@ -67,6 +67,27 @@ func (s *ActivityStrip) Update(source types.AgentActivityView, width int, th *th
 	}
 
 	status := source.Status
+	if source.CompactionPhase != "" {
+		label, role := "Compacting context", ui.ColorActivityText
+		switch source.CompactionPhase {
+		case "compaction_cancelling":
+			label = "Stopping compaction"
+		case "compaction_retrying":
+			label = "Recovering compaction"
+		case "compaction_committing":
+			label = "Saving checkpoint"
+		case "compaction_completed":
+			label = "Context compacted · Ready to continue"
+		case "compaction_cancelled":
+			label = "Compaction cancelled"
+		case "compaction_failed":
+			label, role = "Compaction failed · details in transcript", ui.ColorError
+		case "compaction_interrupted":
+			label = "Compaction interrupted · original context retained"
+		}
+		s.add(PaintLine{Spans: []RowSpan{{Text: label, Role: role}}})
+		return
+	}
 	label := stripText(status.Detail)
 	if label == "" {
 		label = "Ready"
@@ -279,8 +300,14 @@ func (s *ActivityStrip) Line(frame int) PaintLine {
 }
 
 func (s *ActivityStrip) animating() bool {
+	switch s.source.CompactionPhase {
+	case "compaction_completed", "compaction_cancelled", "compaction_failed", "compaction_interrupted", "compaction_cancelling":
+		return false
+	case "compaction_preparing", "compaction_extracting", "compaction_retrying", "compaction_committing":
+		return s.source.Active
+	}
 	switch s.source.Status.Phase {
-	case types.AgentIdle, types.AgentCancelling, types.AgentCancelled, types.AgentCompleted, types.AgentFailed:
+	case types.AgentIdle, types.AgentCancelling, types.AgentCancelled, types.AgentCompleted, types.AgentFailed, types.AgentCompactionResult:
 		return false
 	default:
 		return s.source.Active

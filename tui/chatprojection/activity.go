@@ -27,6 +27,9 @@ type activityGroup struct {
 // communication. They must neither consume a row nor split adjacent activity.
 // Keep the live streaming placeholder until it is replaced by real content.
 func (r *Renderer) activityInvisible(msg *types.ChatMessage) bool {
+	if msg.ToolName == "multi_tool_use.parallel" && msg.ToolStatus == types.ToolStatusStreaming && msg.Content == "" {
+		return true // the empty argument-streaming envelope belongs to the fixed strip
+	}
 	if msg.Role == types.RoleThinking && msg.ThinkingActive && msg.ThinkingDisplay.Kind.HasCompactPreview() && r.disclosureState(msg) == DisclosureCollapsed {
 		return true // the live compact preview already lives in the fixed strip
 	}
@@ -229,6 +232,7 @@ func (r *Renderer) syncActivityItems(changedIDs []string) {
 		previous[item.ID] = item
 	}
 	messages := make([]*types.ChatMessage, 0, len(r.sync.Messages))
+	parallelLeaves := make(map[string]bool)
 	r.activityMessages = make(map[string]*types.ChatMessage)
 	if r.activityBatches == nil {
 		r.activityBatches = make(map[string][]*types.ChatMessage)
@@ -243,6 +247,7 @@ func (r *Renderer) syncActivityItems(changedIDs []string) {
 			if len(batch) > 0 {
 				for _, child := range batch {
 					messages = append(messages, child)
+					parallelLeaves[child.InternalID] = true
 					r.activityMessages[child.InternalID] = child
 					if changed[msg.InternalID] {
 						changed[child.InternalID] = true
@@ -299,9 +304,9 @@ func (r *Renderer) syncActivityItems(changedIDs []string) {
 			}
 			end++
 		}
-		// A single settled call uses its own informative row on both live
-		// and recovered paths. Only runs with multiple members keep a tree.
-		if len(members) == 1 {
+		// A batch leaf starts in its tree, even before its siblings arrive.
+		// Independent singleton calls retain their ordinary informative row.
+		if len(members) == 1 && !parallelLeaves[msg.InternalID] {
 			items = append(items, r.activityMessageItem(msg, previous, changed))
 			i = end
 			continue

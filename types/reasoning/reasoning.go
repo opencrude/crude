@@ -15,10 +15,16 @@ const (
 	// InferredSummary is an explicitly measured fallback for gateways that
 	// flatten the wire type. It must never override a raw/text wire event.
 	InferredSummary Kind = "summary_inferred"
-	Encrypted       Kind = "encrypted"
+	// InferredRaw is a measured raw trace from an unlabelled gateway field.
+	// Keep it distinct from explicit raw wire evidence so later usage can
+	// correct a changed serving contract.
+	InferredRaw Kind = "raw_inferred"
+	Encrypted   Kind = "encrypted"
 )
 
 func (k Kind) IsSummary() bool { return k == Summary || k == InferredSummary }
+
+func (k Kind) IsRaw() bool { return k == Raw || k == InferredRaw }
 
 func (k Kind) HasCompactPreview() bool { return k == Provisional || k.IsSummary() }
 

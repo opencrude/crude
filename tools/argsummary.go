@@ -31,6 +31,10 @@ func ExtractArg(str, key string) string {
 				return fmt.Sprint(typed)
 			}
 		}
+		return "" // never search another field's JSON string for this key
+	}
+	if structuredArguments(str) {
+		return "" // an unfinished envelope is not a key/value summary
 	}
 	for _, prefix := range []string{key + ": ", key + ":"} {
 		idx := strings.Index(str, prefix)
@@ -84,15 +88,25 @@ func SummarizeArgs(tool, argsStr string) string {
 		return ExtractArg(argsStr, "cmd")
 	}
 	if tool == "write_stdin" {
-		return "session " + ExtractArg(argsStr, "session_id")
+		if session := ExtractArg(argsStr, "session_id"); session != "" {
+			return "session " + session
+		}
+		return ""
 	}
 	if tool == "apply_patch" {
-		if patch, err := codexio.Parse(argsStr); err == nil {
+		input := argsStr
+		if structuredArguments(argsStr) {
+			input = ExtractArg(argsStr, "input")
+		}
+		if patch, err := codexio.Parse(input); err == nil {
 			return strings.Join(patch.Paths(""), ", ")
 		}
-		if strings.Contains(argsStr, "*** Begin Patch") {
-			paths, _, _ := codexio.Preview(argsStr)
+		if strings.Contains(input, "*** Begin Patch") {
+			paths, _, _ := codexio.Preview(input)
 			return strings.Join(paths, ", ")
+		}
+		if structuredArguments(argsStr) {
+			return ""
 		}
 		return argsStr
 	}
@@ -105,7 +119,29 @@ func SummarizeArgs(tool, argsStr string) string {
 		if description := ExtractArg(argsStr, "description"); description != "" {
 			return truncateLabel(description, 80)
 		}
-		return ExtractArg(argsStr, "name")
+		if name := ExtractArg(argsStr, "name"); name != "" {
+			return name
+		}
+		if !structuredArguments(argsStr) && !strings.Contains(argsStr, ":") {
+			return argsStr // an already summarized assignment in a canonical snapshot
+		}
+		return ""
+	}
+	switch tool {
+	case "poll_sub_agent", "cancel_sub_agent":
+		if id := ExtractArg(argsStr, "handle_id"); id != "" && !structuredArguments(id) {
+			return id
+		}
+		if !structuredArguments(argsStr) && !strings.Contains(argsStr, ":") {
+			return argsStr // already summarized handle in a canonical snapshot
+		}
+		return ""
+	case "list_sub_agents", "write_report", "question", "reply":
+		return "" // these calls have no useful operand in their argument envelope
+	case "remember":
+		return ExtractArg(argsStr, "title")
+	case "update_memory", "forget_memory":
+		return ExtractArg(argsStr, "id")
 	}
 	if tool == "grep_files" {
 		pattern := ExtractArg(argsStr, "pattern")
@@ -133,9 +169,6 @@ func SummarizeArgs(tool, argsStr string) string {
 	}
 	if command := ExtractArg(argsStr, "command"); command != "" {
 		return command
-	}
-	if content := ExtractArg(argsStr, "content"); content != "" {
-		return truncateLabel(content, 50) + " (content)"
 	}
 	if query := ExtractArg(argsStr, "query"); query != "" {
 		return query
@@ -174,7 +207,31 @@ func SummarizeArgs(tool, argsStr string) string {
 			return seconds + "s"
 		}
 	}
+	if structuredArguments(argsStr) || strings.Contains(argsStr, "map[") {
+		return "" // no structured payload is a safe fallback title
+	}
 	return truncateLabel(argsStr, 60)
+}
+
+func structuredArguments(value string) bool {
+	value = strings.TrimSpace(value)
+	return strings.HasPrefix(value, "{") || strings.HasPrefix(value, "[")
+}
+
+// DisplayToolName accepts a tool identifier, never an argument envelope or
+// an unbounded provider-provided string.
+func DisplayToolName(name string) string {
+	if name == "" || len(name) > 128 {
+		return "tool"
+	}
+	for i := 0; i < len(name); i++ {
+		ch := name[i]
+		if ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' || ch >= '0' && ch <= '9' || ch == '_' || ch == '.' || ch == '-' {
+			continue
+		}
+		return "tool"
+	}
+	return name
 }
 
 // truncateLabel shortens a label on a rune boundary, counting the ellipsis in

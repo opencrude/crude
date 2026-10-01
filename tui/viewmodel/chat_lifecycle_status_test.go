@@ -3,11 +3,111 @@ package viewmodel
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"crude/tui/types"
+	ttypes "crude/types"
+	"crude/types/activity"
 	"crude/types/reasoning"
 	"crude/workspace"
 )
+
+func TestManualCompactionShowsOperationStatusInsteadOfIdlePlan(t *testing.T) {
+	app := newFullTestApp(t)
+	app.Logger = stubLogger{}
+	id := addBackendTestOrchestrator(t, app)
+	data := map[string]any{
+		"request_id": "compact-status-1", "trigger": "manual", "role": "root",
+		"model_id": "aeron/model", "stage": 2, "completed_stages": 1,
+		"stage_count": 4, "stage_label": "Distilling work", "before_tokens": 510100,
+	}
+	plan := &activity.Plan{ID: "plan", Status: "active", Total: 4, Completed: 3,
+		Current: []activity.Step{{Number: 4, Text: "Run build, tests, and whole-repo lint"}}}
+	paint := func() string {
+		app.syncAgentStatusInventory()
+		app.configureShell()
+		view := app.AgentActivity(id)
+		view.Plan = plan
+		app.chatScreen.SetActivity(view)
+		app.renderShellToSurface()
+		return shellBufferRow(app, app.chatRect.Y+app.chatRect.H-1)
+	}
+	app.handleAgentEvent(types.AgentEventMsg{AgentID: id, Type: "context_compaction_started", Data: data})
+	app.handleAgentEvent(types.AgentEventMsg{AgentID: id, Type: "context_compaction_stage", Data: data})
+	if got := paint(); !strings.Contains(got, "Compacting context") || strings.Contains(got, "Idle") || strings.Contains(got, "Plan 3/4") {
+		t.Fatalf("active compaction strip=%q", got)
+	}
+	status, _ := app.Status.Agent(id)
+	if status.Phase != ttypes.AgentCompacting || status.RequestID != "compact-status-1" {
+		t.Fatalf("active status=%+v", status)
+	}
+	data["stage"], data["completed_stages"] = 4, 4
+	data["after_tokens"] = 20500
+	app.handleAgentEvent(types.AgentEventMsg{AgentID: id, Type: "context_compacted", Data: data})
+	for range 3 {
+		if got := paint(); !strings.Contains(got, "Context compacted") || !strings.Contains(got, "Ready to continue") || strings.Contains(got, "Idle") || strings.Contains(got, "Plan 3/4") {
+			t.Fatalf("settled compaction strip=%q", got)
+		}
+	}
+	status, _ = app.Status.Agent(id)
+	if status.Phase != ttypes.AgentCompactionResult || status.NeedsAction {
+		t.Fatalf("settled status=%+v", status)
+	}
+	// A resumed boundary is still the authoritative latest operation even when
+	// the transient status center has no event snapshot yet.
+	app.Status.RemoveAgent(id)
+	if got := paint(); !strings.Contains(got, "Context compacted") || strings.Contains(got, "Plan 3/4") {
+		t.Fatalf("rehydrated boundary strip=%q", got)
+	}
+	app.handleAgentEvent(types.AgentEventMsg{AgentID: id, Type: "turn_started", Data: ttypes.TurnIdentity{Generation: 1, ModelID: "model"}})
+	app.handleAgentEvent(types.AgentEventMsg{AgentID: id, Type: "stream_token", Data: "Ready"})
+	app.SpinFrame = int(time.Now().UnixMilli())
+	planVisible := false
+	for range 4 {
+		got := paint()
+		if strings.Contains(got, "Context compacted") {
+			t.Fatalf("old compaction displaced new turn: %q", got)
+		}
+		planVisible = planVisible || strings.Contains(got, "Plan 3/4")
+		app.SpinFrame += 6000
+	}
+	if !planVisible {
+		t.Fatal("new turn did not restore the plan's rotating activity")
+	}
+}
+
+func TestResumedManualCompactionBoundaryShowsReadyStatus(t *testing.T) {
+	app := newFullTestApp(t)
+	app.Logger = stubLogger{}
+	id := addBackendTestOrchestrator(t, app)
+	planView := &activity.Plan{ID: "resumed-plan", Status: "active", Total: 4, Completed: 3,
+		Current: []activity.Step{{Number: 4, Text: "Run build, tests, and lint"}}}
+	app.AgentMgr.Get(id).State.Messages.AppendMessage(workspace.Message{
+		InternalID: "resumed-compaction", Role: workspace.MessageRoleStatus,
+		LifecyclePhase: "compaction_completed", LifecycleOperationID: "resumed-compaction",
+		LifecycleTrigger: "manual", LifecycleCompleted: 4, LifecycleStageCount: 4,
+		LifecycleBeforeTokens: 510100, LifecycleAfterTokens: 20500, Time: time.Now(),
+	})
+	app.syncAgentMessages(id, true)
+	app.Status.SetAgent(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{ID: id}, Phase: ttypes.AgentIdle, Detail: "Idle", RequestID: "old-request"})
+	if status, found := app.Status.Agent(id); found && status.Phase == ttypes.AgentCompactionResult {
+		t.Fatal("fixture should restore from the durable boundary, not an event snapshot")
+	}
+	app.configureShell()
+	view := app.AgentActivity(id)
+	view.Plan = planView
+	app.chatScreen.SetActivity(view)
+	app.renderShellToSurface()
+	got := shellBufferRow(app, app.chatRect.Y+app.chatRect.H-1)
+	if !strings.Contains(got, "Context compacted") || !strings.Contains(got, "Ready to continue") || strings.Contains(got, "Plan 3/4") {
+		t.Fatalf("resumed boundary strip=%q", got)
+	}
+	app.appendAgentMessage(id, types.ChatMessage{Role: types.RoleUser, Content: "continue", Time: time.Now()})
+	app.paintShellFrame()
+	if got := shellBufferRow(app, app.chatRect.Y+app.chatRect.H-1); strings.Contains(got, "Context compacted") {
+		t.Fatalf("new input still showed old compaction: %q", got)
+	}
+}
 
 func TestSubmitProjectsLifecycleIntoChatNotBottomStatus(t *testing.T) {
 	app := newFullTestApp(t)

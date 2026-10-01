@@ -284,6 +284,15 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	userMsg.DisplayContent = userInput.Text
 	var requestContextParts []string
 	if humanTurn {
+		currentPlan, planErr := s.activePlanTurnContext(ctx)
+		if planErr != nil {
+			l.Error("PLAN", "turn_context_load_failed", "error", planErr.Error())
+			sender.SendAgentEventWithID("error", "Cannot read the active plan before starting this turn: "+planErr.Error(), o.ID)
+			return
+		}
+		if currentPlan != "" {
+			requestContextParts = append(requestContextParts, currentPlan)
+		}
 		if memoryContext := s.recallMemoryContext(ctx, userInput.Text, userInput.ActivePaths); memoryContext != "" {
 			requestContextParts = append(requestContextParts, memoryContext)
 		}
@@ -382,6 +391,8 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	ag.ReasoningContentKind = s.inferredReasoningKind(o.ID, turnProvider.ID, turnProvider.AccountID, turnProvider.Model)
 	ag.CompactionProvider = compactionProvider
 	ag.CompactionMaxOutput = compactionCfg.ModelMaxOutput
+	_, agentProfile := activeProfileCfg(effectiveCfg)
+	ag.CompactionAgentProfile = agentProfile + "/" + CategoryAeron
 	ag.AgentID = agent.AgentID(o.ID)
 	ag.TurnGeneration = turnGeneration
 	ag.PrepareCompaction = func(source agent.CompactionSource) error {

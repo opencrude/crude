@@ -158,7 +158,7 @@ func TestCompactionTerminalFormsKeepTableGeometry(t *testing.T) {
 			t.Fatalf("%s geometry=%d lines=%q", phase, len(rendered.native), rendered.lines)
 		}
 		joined := strings.Join(rendered.lines, "\n")
-		stageVisible := strings.Contains(joined, "Capturing state") || phase == "compaction_completed" && strings.Contains(joined, "All extraction stages")
+		stageVisible := strings.Contains(joined, "Capturing state") || phase == "compaction_completed" && strings.Contains(joined, "Active context ready")
 		if !strings.Contains(joined, "Crude aeron/model") || !stageVisible ||
 			(!strings.Contains(joined, "original context retained") && phase != "compaction_completed") {
 			t.Fatalf("%s table=%q", phase, joined)
@@ -252,5 +252,18 @@ func TestSubAgentToolLabelsDistinguishRunningAndFailure(t *testing.T) {
 	}, types.ToolPreviewError, 0).PlainText()
 	if !strings.Contains(failed, "Failed to spawn sub-agent") || strings.Contains(failed, "Spawned") {
 		t.Fatalf("failed label = %q", failed)
+	}
+}
+
+func TestCompactSubAgentToolKeepsNameAndHandleWithoutJSON(t *testing.T) {
+	msg := &types.ChatMessage{Role: types.RoleTool, ToolName: "poll_sub_agent", ToolArgs: `{"handle_id":"agent-8f21"}`,
+		Content: "## Sub-Agent Result: Lily sub Dawn [researcher]\n**Agent:** agent-8f21\n**Status:** OK", ToolStatus: types.ToolStatusSuccess, ToolPreviewPhase: types.ToolPreviewDone}
+	lines, _ := BuildSubPaneToolLines([]*types.ChatMessage{msg}, 42, 0)
+	var text strings.Builder
+	for _, line := range lines {
+		text.WriteString(line.PlainText())
+	}
+	if !strings.Contains(text.String(), "Lily sub Dawn (agent-8f21)") || strings.Contains(text.String(), `"handle_id"`) {
+		t.Fatalf("compact child tool label: %q", text.String())
 	}
 }

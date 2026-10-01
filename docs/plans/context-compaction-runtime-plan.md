@@ -131,6 +131,18 @@ stream, no tool has executed: Crude drops the malformed call/replay fragments,
 retains ordinary visible assistant text, records that no side effect occurred,
 and asks the model to issue complete calls from scratch.
 
+**Output-cap recovery (2026-09-30):** the DeepSeek Aeron extraction request
+returned `INVALID_REQUEST_BODY`: Crude had sent `max_tokens=550463` while
+the endpoint permits at most `393216`. This is an output-field rejection,
+not a context overflow or a reason to disable thinking. The extractor now
+recognizes a typed provider rejection with the exact sent value, retries that
+stage with the reported ceiling, and durably retains the learned bound in the
+app-wide model catalog keyed by agent profile, connection, account, and model.
+New sessions and workspaces reuse it; seven-day expiry lets changed provider
+limits be reprobed. The original source stays immutable until all four stages
+commit, and shrinking source for genuinely truncated completions still
+recomputes the available output allowance for each recursive request.
+
 ## 4. Message Contract
 
 `provider.ChatMessage` gains presentation-neutral origin and visibility fields.

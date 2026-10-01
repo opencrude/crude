@@ -134,6 +134,34 @@ func TestLiveAndHydratedToolRowsAreIdentical(t *testing.T) {
 			content:   `{"status":"completed","name":"aeron","result_path":"tmp/report.md"}`,
 			estTokens: 12,
 		},
+		{
+			name: "poll with original JSON", tool: "poll_sub_agent",
+			rawArgs: `{"handle_id":"agent-8f21"}`, content: `{"status":"completed","name":"Lily"}`,
+		},
+		{
+			name: "cancel with original JSON", tool: "cancel_sub_agent",
+			rawArgs: `{"handle_id":"agent-8f21"}`, content: `{"status":"cancelled","name":"Lily"}`,
+		},
+		{
+			name: "poll running with nickname", tool: "poll_sub_agent",
+			rawArgs: `{"handle_id":"agent-8f21"}`, content: "Sub-agent \"Lily sub Dawn\" [researcher] is still running.\nElapsed: 2s | Steps: 4",
+		},
+		{
+			name: "cancelled child with nickname", tool: "cancel_sub_agent",
+			rawArgs: `{"handle_id":"agent-8f21"}`, content: "## Sub-Agent Result: Lily sub Dawn [researcher]\n**Agent:** agent-8f21\n**Status:** CANCELLED",
+		},
+		{
+			name: "list with only boolean", tool: "list_sub_agents",
+			rawArgs: `{"include_completed":true}`, content: "No sub-agents found",
+		},
+		{
+			name: "list with identities", tool: "list_sub_agents",
+			rawArgs: `{"include_completed":true}`, content: "- Lily sub Dawn (agent-8f21) [researcher] running",
+		},
+		{
+			name: "authored report with identity", tool: "write_report",
+			rawArgs: `{"report":"Outcome"}`, content: `{"status":"report_written","report_path":"/tmp/agent-8f21-report.md","handle_id":"agent-8f21","name":"Lily sub Dawn"}`,
+		},
 	}
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
@@ -146,11 +174,93 @@ func TestLiveAndHydratedToolRowsAreIdentical(t *testing.T) {
 				t.Fatalf("disclosure differs: live=%v hydrated=%v", live[0].Toggle, hydrated[0].Toggle)
 			}
 			assertSameRows(t, "collapsed", live[0], hydrated[0])
+			if strings.Contains(c.name, "with nickname") || strings.Contains(c.name, "with identity") {
+				if !strings.Contains(strings.Join(live[0].Lines, "\n"), "Lily sub Dawn (agent-8f21)") && !strings.Contains(c.name, "list") {
+					t.Fatalf("known child title omitted nickname or handle: %v", live[0].Lines)
+				}
+			}
+			if strings.Contains(c.rawArgs, `"handle_id"`) || strings.Contains(c.rawArgs, `"include_completed"`) {
+				for _, row := range []chatprojection.MessageRow{live[0], hydrated[0]} {
+					text := strings.Join(row.Lines, "\n")
+					if strings.Contains(text, `"handle_id"`) || strings.Contains(text, `"include_completed"`) ||
+						(strings.Contains(c.rawArgs, `"handle_id"`) && !strings.Contains(text, "agent-8f21")) {
+						t.Fatalf("structured arguments in title or lost operand: %s", text)
+					}
+				}
+			}
 
 			// Expanding must stay consistent too: the expanded body reads
 			// operands (command/pattern/scope) each path derives its own way.
 			assertSameRows(t, "expanded", renderLive(t, toolID, c, true)[0], renderHydrated(t, toolID, c, true)[0])
+			if c.name == "list with identities" {
+				if !live[0].Toggle || !hydrated[0].Toggle {
+					t.Fatalf("sub-agent list evidence cannot be disclosed: live=%v resumed=%v", live[0].Toggle, hydrated[0].Toggle)
+				}
+				expanded := renderLive(t, toolID, c, true)[0]
+				if !strings.Contains(strings.Join(expanded.Lines, "\n"), "Lily sub Dawn (agent-8f21)") {
+					t.Fatalf("expanded list lost individual identity: %v", expanded.Lines)
+				}
+			}
 		})
+	}
+}
+
+func TestHydratedCompactToolSnapshotKeepsSubAgentHandle(t *testing.T) {
+	for _, name := range []string{"poll_sub_agent", "cancel_sub_agent"} {
+		views := workspace.ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{
+			Msg: provider.ChatMessage{Role: "tool", ToolCallID: "call"},
+			Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []ctypes.ConversationMessage{{
+				Role: "tool", ToolName: name, ToolArgs: "agent-8f21", ToolStatus: "success", ToolPreviewPhase: "done",
+			}}},
+		}})
+		if len(views) != 1 || views[0].ToolArgs != "agent-8f21" {
+			t.Fatalf("%s: normalized snapshot lost handle: %+v", name, views)
+		}
+	}
+}
+
+func TestLiveAndHydratedParallelSubAgentIdentitiesAreIdentical(t *testing.T) {
+	input := `{"tool_uses":[{"recipient_name":"poll_sub_agent","parameters":{"handle_id":"agent-8f21"}},{"recipient_name":"cancel_sub_agent","parameters":{"handle_id":"agent-39bf"}}]}`
+	result := `{"results":[{"recipient_name":"poll_sub_agent","result":"## Sub-Agent Result: Lily sub Dawn [researcher]\n**Agent:** agent-8f21\n**Status:** OK"},{"recipient_name":"cancel_sub_agent","result":"## Sub-Agent Result: Rose sub Dawn [crafter]\n**Agent:** agent-39bf\n**Status:** CANCELLED"}]}`
+	conv := workspace.NewConversation()
+	conv.UpdateToolCall("call", "batch", "multi_tool_use.parallel", "2 tools")
+	conv.SetToolInput("call", "batch", input, "")
+	conv.UpdateToolResult("call", "batch", "multi_tool_use.parallel", result, false, 0, 0, 0)
+	for i := range 8 {
+		conv.AdvanceToolLifecycles(time.Now().Add(time.Duration(i+1) * time.Second))
+	}
+	live, _ := chatMessagesFromConversation(conv)
+	live[0].ToolDuration = 0
+	views := workspace.ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{
+		Msg: provider.ChatMessage{Role: "tool", ToolCallID: "call"},
+		Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []ctypes.ConversationMessage{{
+			InternalID: "batch", Role: "tool", ToolID: "call", ToolName: "multi_tool_use.parallel", ToolInput: input,
+			ToolArgs: "2 tools", Content: result, ToolStatus: "success", ToolPreviewPhase: "done",
+		}}},
+	}})
+	for _, width := range []int{80, 160} {
+		root, recovered := newParityRenderer(), newParityRenderer()
+		root.SetSize(width, 40)
+		recovered.SetSize(width, 40)
+		root.SyncMessages(live, 1)
+		recovered.SyncMessages(ChatMessagesFromViews(views), 1)
+		for _, expand := range []bool{false, true} {
+			left, _, _ := root.ExportMessageRows(width)
+			right, _, _ := recovered.ExportMessageRows(width)
+			if len(left) != 2 || len(right) != 2 {
+				t.Fatalf("width %d: batch rows=%d/%d", width, len(left), len(right))
+			}
+			for i, want := range []string{"Lily sub Dawn (agent-8f21)", "Rose sub Dawn (agent-39bf)"} {
+				assertSameRows(t, "parallel live/resumed", left[i], right[i])
+				if !strings.Contains(strings.Join(left[i].Lines, "\n"), want) || strings.Contains(strings.Join(left[i].Lines, "\n"), `"handle_id"`) {
+					t.Fatalf("width %d expanded %v: bad sub-agent label: %v", width, expand, left[i].Lines)
+				}
+			}
+			if !expand {
+				root.ToggleDisclosure("batch:0")
+				recovered.ToggleDisclosure("batch:0")
+			}
+		}
 	}
 }
 
@@ -163,10 +273,10 @@ func TestLiveAndHydratedSubAgentOutcomeRows(t *testing.T) {
 		name, content, want string
 		failed              bool
 	}{
-		{"running", `{"name":"Lily sub Dawn","category":"researcher","handle_id":"child-1","status":"running"}`, "Started sub-agent Lily sub Dawn", false},
-		{"completed", "## Sub-Agent Result: Lily sub Dawn [researcher]\n**Agent:** child-1\n**Status:** OK\n**Report:** report.md", "Sub-agent completed Lily sub Dawn", false},
-		{"failed", "## Sub-Agent Result: Lily sub Dawn [researcher]\n**Agent:** child-1\n**Status:** ERROR — provider failed\n**Report:** report.md", "Sub-agent failed Lily sub Dawn", true},
-		{"recorded timeout", "## Sub-Agent Result: Lily sub Dawn [researcher]\n**Agent:** child-1\n**Status:** TIMEOUT\n**Report:** report.md", "Sub-agent timed out Lily sub Dawn", true},
+		{"running", `{"name":"Lily sub Dawn","category":"researcher","handle_id":"child-1","status":"running"}`, "Started sub-agent Lily sub Dawn (child-1)", false},
+		{"completed", "## Sub-Agent Result: Lily sub Dawn [researcher]\n**Agent:** child-1\n**Status:** OK\n**Report:** report.md", "Sub-agent completed Lily sub Dawn (child-1)", false},
+		{"failed", "## Sub-Agent Result: Lily sub Dawn [researcher]\n**Agent:** child-1\n**Status:** ERROR — provider failed\n**Report:** report.md", "Sub-agent failed Lily sub Dawn (child-1)", true},
+		{"recorded timeout", "## Sub-Agent Result: Lily sub Dawn [researcher]\n**Agent:** child-1\n**Status:** TIMEOUT\n**Report:** report.md", "Sub-agent timed out Lily sub Dawn (child-1)", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := projectionCase{name: tc.name, tool: "run_sub_agent", rawArgs: args, content: tc.content}

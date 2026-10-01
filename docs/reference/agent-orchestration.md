@@ -4,6 +4,14 @@
 
 ## Ownership and stopping
 
+Main agents and children are prompted to find and read applicable project guidance
+with tools before changing code or answering project-specific questions. They
+check `AGENTS.md`, `CLAUDE.md`, and relevant project documentation at the workspace
+root, in ancestor directories, and under the paths they work in. Crude does not
+inject repository files into their prompts or claim those files were read. The
+GPT fallback prompt makes the same distinction. Project guidance remains scoped
+to its files and subordinate to the current user and system instructions.
+
 The parent owns requirements, shared interfaces, integration, and final repository
 checks. Delegate independent tasks with owned paths, acceptance criteria, and a
 clear stopping condition. Children inspect and verify their assigned flow, not the

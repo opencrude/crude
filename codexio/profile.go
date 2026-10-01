@@ -11,8 +11,8 @@ const PortRevision = "95ed66f6d36a575b00001f2e27aedc1ec7455812"
 //go:embed prompts/*
 var promptFiles embed.FS
 
-// Instructions returns an unchanged upstream template. Unknown model slugs use
-// Codex's own models-manager/prompt.md, not a guessed neighboring model prompt.
+// Instructions returns a bundled model template. Unknown model slugs use the
+// bundled default, not a guessed neighboring model prompt.
 // The second return identifies which exact source was selected.
 func Instructions(model string) (string, string) {
 	name := strings.ToLower(strings.TrimSpace(model))
