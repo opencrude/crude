@@ -270,7 +270,7 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 			}
 			delta.Text = SanitizeForTerminal(delta.Text)
 			thinkTarget.AppendReasoning(delta)
-			if delta.Kind.IsSummary() || delta.Kind == reasoning.Raw {
+			if delta.Kind.IsSummary() || delta.Kind.IsRaw() {
 				a.ReasoningMode = delta.Kind
 			}
 			a.Running = true
@@ -282,7 +282,7 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 	case "reasoning_classified":
 		if kind, ok := evt.Data.(reasoning.Kind); ok {
 			thinkTarget.SetLatestThinkingKind(kind)
-			if kind.IsSummary() || kind == reasoning.Raw {
+			if kind.IsSummary() || kind.IsRaw() {
 				a.ReasoningMode = kind
 			}
 		}

@@ -11,10 +11,8 @@ type AgentNode struct {
 	Label    string
 	Model    string
 	Category string
-	// Hidden marks an agent that the user dismissed from the tab bar. The
-	// orchestrator keeps running and every buffer stays intact; only the
-	// surfaced tab is gone. Restore it from the Agents panel or the
-	// sessions picker.
+	// Hidden records this agent's own tab choice. An ancestor can hide the
+	// whole subtree without overwriting a child's archived/review choice.
 	Hidden bool
 }
 
@@ -30,6 +28,18 @@ func (n *AgentNode) IsActive() bool {
 // IsCompleted returns true if the agent finished (success, error, or cancel).
 func (n *AgentNode) IsCompleted() bool {
 	return n.State != nil && n.State.Completed
+}
+
+// IsHidden includes ancestor visibility while preserving this node's own
+// choice. A completed child archived before its parent was minimized must
+// stay archived when the parent returns.
+func (n *AgentNode) IsHidden() bool {
+	for current := n; current != nil; current = current.Parent {
+		if current.Hidden {
+			return true
+		}
+	}
+	return false
 }
 
 // AgentManager owns the agent forest and the flat ID index. Each orchestrator
@@ -232,29 +242,22 @@ func (m *AgentManager) Count() int {
 func (m *AgentManager) VisibleCount() int {
 	n := 0
 	for _, node := range m.byID {
-		if node != nil && !node.Hidden {
+		if node != nil && !node.IsHidden() {
 			n++
 		}
 	}
 	return n
 }
 
-// SetHidden minimizes or restores an agent subtree. Hiding a root hides its
-// sub-agents with it so a restored orchestrator comes back whole.
+// SetHidden changes this agent's own tab choice. Descendants inherit the
+// effective visibility without losing their independently archived choices.
 func (m *AgentManager) SetHidden(id string, hidden bool) {
 	node := m.byID[id]
 	if node == nil {
 		return
 	}
-	var walk func(*AgentNode)
-	walk = func(n *AgentNode) {
-		n.Hidden = hidden
-		for _, child := range n.Children {
-			walk(child)
-		}
-	}
-	walk(node)
-	if hidden && m.active == id {
+	node.Hidden = hidden
+	if hidden && m.byID[m.active] != nil && m.byID[m.active].IsHidden() {
 		m.active = ""
 	}
 }
@@ -262,7 +265,7 @@ func (m *AgentManager) SetHidden(id string, hidden bool) {
 // IsHidden reports whether an agent is minimized. Unknown IDs are not hidden.
 func (m *AgentManager) IsHidden(id string) bool {
 	node := m.byID[id]
-	return node != nil && node.Hidden
+	return node != nil && node.IsHidden()
 }
 
 // HiddenOrchestrators returns the minimized root agents in creation order.
@@ -276,21 +279,22 @@ func (m *AgentManager) HiddenOrchestrators() []*AgentNode {
 	return out
 }
 
-// TabOrder returns the agent IDs in the order they should appear as tabs:
-// sub-agents first (by pane order), then the orchestrator. Minimized agents
-// have no tab.
+// TabOrder groups each orchestrator before its visible descendants. Archived
+// reviews and descendants of a minimized root have no tab.
 func (m *AgentManager) TabOrder() []string {
 	var out []string
-	for _, child := range m.SubAgents() {
-		if !child.Hidden {
-			out = append(out, child.ID)
+	var visit func(*AgentNode)
+	visit = func(node *AgentNode) {
+		if node.IsHidden() {
+			return
+		}
+		out = append(out, node.ID)
+		for _, child := range node.Children {
+			visit(child)
 		}
 	}
 	for _, root := range m.roots {
-		if root.Hidden {
-			continue
-		}
-		out = append(out, root.ID)
+		visit(root)
 	}
 	return out
 }

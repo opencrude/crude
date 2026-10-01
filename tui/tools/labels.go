@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 
+	ccrude "crude/tools"
 	"crude/tui/rendering"
 	"crude/tui/types"
 )
@@ -60,20 +61,33 @@ var toolVerbs = map[string][3]string{
 }
 
 func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
+	msg.ToolName = ccrude.DisplayToolName(msg.ToolName)
 	target := msg.ToolProgressLabel
+	if structuredToolLabel(target) {
+		target = SummarizeToolArgs(msg.ToolName, target)
+	}
 	if target == "" {
 		target = msg.ToolArgs
+		if structuredToolLabel(target) {
+			target = SummarizeToolArgs(msg.ToolName, target)
+		}
 	}
 	if msg.ToolCommand != "" {
 		target = msg.ToolCommand
+		if structuredToolLabel(target) {
+			target = SummarizeToolArgs(msg.ToolName, target)
+		}
 	}
 	if msg.ToolName == "read_file" && msg.ToolStatus == types.ToolStatusSuccess && msg.ToolArgs != "" {
 		target = msg.ToolArgs
+		if structuredToolLabel(target) {
+			target = SummarizeToolArgs(msg.ToolName, target)
+		}
 	}
 	if msg.ToolName == "run_sub_agent" && (msg.ToolStatus == types.ToolStatusSuccess || msg.ToolStatus == types.ToolStatusError || msg.ToolStatus == types.ToolStatusCancelled) {
 		if outcome, ok := subAgentOutcome(msg.Content); ok {
-			if outcome.name != "" {
-				target = outcome.name
+			if outcome.name != "" || outcome.id != "" {
+				target = subAgentIdentityLabel(outcome.name, outcome.id)
 			}
 			duration := ""
 			if msg.ToolDuration > 0 {
@@ -92,6 +106,27 @@ func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
 				return ToolTitle{Action: "Sub-agent timed out", Operand: target, Metadata: duration, Failed: true}
 			default:
 				return ToolTitle{Action: "Sub-agent failed", Operand: target, Metadata: duration, Failed: true}
+			}
+		}
+	}
+	if msg.ToolName == "poll_sub_agent" || msg.ToolName == "cancel_sub_agent" {
+		id := SummarizeToolArgs(msg.ToolName, msg.ToolArgs)
+		if id == "" {
+			id = target
+		}
+		outcome, _ := subAgentOutcome(msg.Content)
+		if outcome.id != "" && id != "" && outcome.id != id {
+			outcome.name = "" // a mismatched result cannot label this handle
+		}
+		if id == "" {
+			id = outcome.id
+		}
+		target = subAgentIdentityLabel(outcome.name, id)
+	}
+	if msg.ToolName == "write_report" {
+		if outcome, ok := subAgentOutcome(msg.Content); ok && outcome.status == "report_written" {
+			if outcome.name != "" || outcome.id != "" {
+				target = subAgentIdentityLabel(outcome.name, outcome.id)
 			}
 		}
 	}
@@ -186,6 +221,15 @@ func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
 	return title
 }
 
+func structuredToolLabel(value string) bool {
+	value = strings.TrimSpace(value)
+	return strings.HasPrefix(value, "{") || strings.HasPrefix(value, "[")
+}
+
+func embeddedStructuredLabel(value string) bool {
+	return strings.Contains(value, "{") && strings.Contains(value, `"`)
+}
+
 func errorTitle(tool, target, duration, reason string) ToolTitle {
 	title := ToolTitle{Action: rendering.PascalCaseTool(tool) + " failed", Operand: target, Metadata: duration, Failed: true}
 	switch tool {
@@ -202,7 +246,7 @@ func errorTitle(tool, target, duration, reason string) ToolTitle {
 	case "get_plan":
 		title.Action = "Read plan failed"
 	}
-	if reason != "" {
+	if reason != "" && !structuredToolLabel(reason) && !embeddedStructuredLabel(reason) {
 		title.Metadata = strings.TrimSpace(title.Metadata + " — " + reason)
 	}
 	return title

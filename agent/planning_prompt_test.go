@@ -5,12 +5,13 @@ import (
 	"strings"
 	"testing"
 
+	"crude/codexio"
 	"crude/tools"
 )
 
 func TestSystemPromptUsesCanonicalPlanningContract(t *testing.T) {
 	prompt := BuildSystemPrompt(true)
-	for _, required := range []string{"update_plan", "get_plan", "omit unchanged objective/status/steps", "revision conflict", "not a notepad", "Statuses are declarative, not execution gates", "cancel, reopen, retry, or reorder"} {
+	for _, required := range []string{"update_plan", "get_plan", "omit unchanged objective/status/steps", "revision conflict", "not a notepad", "Statuses are declarative, not execution gates", "cancel, reopen, retry, or reorder", "On every new human message", "current active plan", "After compaction"} {
 		if !strings.Contains(prompt, required) {
 			t.Fatalf("system prompt missing %q", required)
 		}
@@ -19,6 +20,17 @@ func TestSystemPromptUsesCanonicalPlanningContract(t *testing.T) {
 		if strings.Contains(prompt, removed) {
 			t.Fatalf("system prompt still carries %q", removed)
 		}
+	}
+}
+
+func TestGPTSystemPromptReviewsSavedPlanWithoutReplacingNativeInstructions(t *testing.T) {
+	model := "gpt-6-sol"
+	upstream, _ := codexio.Instructions(model)
+	actual := BuildSystemPromptForModel(true, "/tmp/workspace", model)
+	if !strings.HasPrefix(actual, upstream) || !strings.Contains(actual, "<planning_contract>") ||
+		!strings.Contains(actual, "new human message") || !strings.Contains(actual, "update_plan") ||
+		!strings.Contains(actual, "turn_context") {
+		t.Fatalf("GPT instructions lost plan review contract or upstream base")
 	}
 }
 

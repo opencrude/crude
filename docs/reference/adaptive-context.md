@@ -42,6 +42,17 @@ default is a planning estimate, not proof of actual provider capacity.
    request has more response room. It never repeats an identical truncated
    request or installs partial text. Recursive reduction is bounded and must
    shrink its input.
+   A typed invalid-request rejection naming the exact sent `max_tokens`,
+   `max_completion_tokens`, or `max_output_tokens` and an allowed upper bound
+   instead tunes the output allowance immediately without changing the source,
+   reasoning, or completed stages. That bound applies to all following stages.
+   The app-owned `model-catalog.db` durably stores the lowest confirmed ceiling
+   under the Aeron agent profile, exact provider endpoint/protocol, account,
+   and model. New sessions, workspaces, and process restarts start below the
+   previously rejected value; other agent profiles or connections do not share
+   it. Learned limits expire after seven days so a changed provider cap can
+   be probed again. This is separate from the user-configured output ceiling,
+   which remains an upper bound.
 5. Tighten extraction estimates when reported usage exceeds the estimate. A
    canonical context-limit rejection cuts the input budget to at most two-thirds
    of the rejected size and replans; it never retries that impossible input.
@@ -65,6 +76,18 @@ default is a planning estimate, not proof of actual provider capacity.
 `ContextCompactionPercent: 0` still disables automatic pressure and overflow
 recovery; manual `/compact` uses the same extractor. Four lifecycle stages stay
 four stages; chunk progress is additional truthful detail within a stage.
+The chat boundary and the agent activity strip report the same operation:
+while manual compaction is active, its progress replaces the paused turn's
+plan activity; after success the strip says the context is ready to continue.
+The transcript remains archived, while the checkpoint replaces the active
+context. On resume, the durable boundary supplies the settled status until a
+new turn starts. Automatic compaction resumes its interrupted turn instead of
+displaying a manual completion prompt.
+The active plan lives in the session's plan store, outside the compacted
+conversation. Each new human turn receives its current revision and complete
+step snapshot as hidden runtime context; the stable system planning contract
+asks the model to compare it with the new request and revise or close stale
+work. The runtime snapshot is data and is never attributed as a user message.
 
 The September 29 failure sent roughly 598K input tokens with a 3,936-token
 generation cap derived from a 16K checkpoint split. The DeepSeek extraction
@@ -106,8 +129,10 @@ Regressions cover an approximately 540K-token source against a 256K extractor,
 real `Session.HandleCompact` histories above 350K with 64K/128K Aeron connections,
 huge tool arguments/results, UTF-8 boundaries, late child wakes, provider capacity
 rejections, stage-local retries, reasoning-preserving output-cap recovery,
-checkpoint refinement, truncated output, cancellation, exact source archival, and passive
-persisted checkpoint restoration. Name-allocation tests
+checkpoint refinement, typed output-ceiling learning across new sessions and
+catalog reopen, connection/profile isolation, expiry, truncated output,
+cancellation, exact source archival, and passive persisted checkpoint
+restoration. Name-allocation tests
 also exhaust the full first-name/surname tier without duplicate numeric labels.
 
 This is not a promise of perfect recall: model summaries can omit facts, token

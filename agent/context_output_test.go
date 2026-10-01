@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -293,5 +294,87 @@ func TestCompactionUsesReportedInputToLeaveRoomForReasoning(t *testing.T) {
 	want := 128_000 - 2*measuredInputs[1] - contextSafetyReserve(128_000)
 	if outputs[1] != want {
 		t.Fatalf("calibrated response allowance=%d want=%d", outputs[1], want)
+	}
+}
+
+func TestCompactionLearnsProviderOutputCeilingAcrossSessions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "model-catalog.db")
+	catalog, err := provider.OpenModelCatalog(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.UseModelCatalog(catalog)
+	t.Cleanup(func() { _ = catalog.Close() })
+
+	var outputs []int
+	var retainedSource bool
+	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		var body provider.ChatRequest
+		if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+			t.Error(err)
+			return
+		}
+		output := max(body.MaxTokens, body.MaxCompletionTokens)
+		outputs = append(outputs, output)
+		if len(body.Messages) > 1 && strings.Contains(body.Messages[1].ContentString(), "original evidence") {
+			retainedSource = true
+		}
+		if body.ToolChoice != "none" || len(body.Tools) != 0 || body.Model != "cmd/deepseek/deepseek-v4-flash" ||
+			string(body.Messages[len(body.Messages)-1].Content.String()) == "" {
+			t.Errorf("extraction request was changed instead of tuning its output cap: %+v", body)
+		}
+		if output > 393216 {
+			writer.WriteHeader(http.StatusBadRequest)
+			_, _ = fmt.Fprintf(writer, `{"error":{"type":"invalid_request_error","message":"{\"code\":400, \"reason\":\"INVALID_REQUEST_BODY\", \"message\":\"max_tokens (current value: %d) must be between 0 and 393216 \", \"metadata\":{}}"}}`, output)
+			return
+		}
+		writeChatSSE(writer, "- original evidence and human corrections retained", "stop")
+	}))
+	defer server.Close()
+	makeAgent := func() *Agent {
+		connection := provider.FromPreset("commandcode", "key", server.URL)
+		connection.Model = "cmd/deepseek/deepseek-v4-flash"
+		connection.AccountID = "test-account"
+		connection.SetContextWindow(1_050_000)
+		connection.SetThinkingEffort("high")
+		a := newTestAgent(t, connection, connection.Model)
+		a.MaxOutputTokens = 600_000
+		a.CompactionAgentProfile = "default/aeron"
+		return a
+	}
+	first := makeAgent()
+	history := []provider.ChatMessage{provider.NewTextMessage("assistant", strings.Repeat("original evidence ", 30000)), provider.NewTextMessage("user", "retain my correction")}
+	result, err := first.Compact(context.Background(), history, "stable system", nil)
+	if err != nil || len(result.Messages) == 0 || !retainedSource {
+		t.Fatalf("rejected extraction did not self-tune and preserve source: result=%+v err=%v", result, err)
+	}
+	if len(outputs) != 5 || outputs[0] <= 393216 {
+		t.Fatalf("expected one over-limit request and four bounded stage requests; output caps=%v", outputs)
+	}
+	for _, cap := range outputs[1:] {
+		if cap != 393216 {
+			t.Fatalf("output ceiling not learned after first rejection: %v", outputs)
+		}
+	}
+	if err := catalog.Close(); err != nil {
+		t.Fatal(err)
+	}
+	catalog, err = provider.OpenModelCatalog(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider.UseModelCatalog(catalog)
+	outputs = nil
+	second := makeAgent()
+	if _, err := second.Compact(context.Background(), history, "stable system", nil); err != nil {
+		t.Fatalf("learned ceiling did not survive catalog reopen: %v", err)
+	}
+	if len(outputs) != 4 {
+		t.Fatalf("new agent session retried the known-invalid output cap: %v", outputs)
+	}
+	for _, cap := range outputs {
+		if cap != 393216 {
+			t.Fatalf("reopened catalog did not bound extraction: %v", outputs)
+		}
 	}
 }

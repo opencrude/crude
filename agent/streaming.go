@@ -48,14 +48,16 @@ func ExtractPreview(id, name, accumulatedJSON string, lg *logger.Logger) ToolCal
 		return p
 	}
 
-	if !looksComplete(cleaned) {
-		if name == "multi_tool_use.parallel" {
-			// This repaired prefix is only a preview, never execution input.
-			if repaired, err := jsonrepair.Repair(cleaned); err == nil && json.Unmarshal([]byte(repaired), &m) == nil {
-				p.Params = m
-				return p
-			}
+	if name == "multi_tool_use.parallel" {
+		// Repair operands for live previews, but never invent a tool identity by
+		// closing its unfinished name. This remains separate from execution input.
+		if repaired, err := jsonrepair.Repair(cleaned); err == nil && json.Unmarshal([]byte(repaired), &m) == nil {
+			p.Params = m
+			retainParallelPreviewNames(cleaned, m)
 		}
+		return p
+	}
+	if !looksComplete(cleaned) {
 		p.Params = extractWithJSONParser(cleaned, name)
 		return p
 	}
@@ -86,6 +88,56 @@ func ExtractPreview(id, name, accumulatedJSON string, lg *logger.Logger) ToolCal
 	}
 	p.Params = extractWithJSONParser(fallbackData, name)
 	return p
+}
+
+func retainParallelPreviewNames(raw string, params map[string]any) {
+	uses, _ := params["tool_uses"].([]any)
+	for _, value := range uses {
+		if use, ok := value.(map[string]any); ok {
+			delete(use, "recipient_name")
+		}
+	}
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
+		return
+	}
+	for decoder.More() {
+		key, err := decoder.Token()
+		if err != nil {
+			return
+		}
+		if key != "tool_uses" {
+			var discard json.RawMessage
+			if decoder.Decode(&discard) != nil {
+				return
+			}
+			continue
+		}
+		if token, err := decoder.Token(); err != nil || token != json.Delim('[') {
+			return
+		}
+		for _, value := range uses {
+			if !decoder.More() {
+				return
+			}
+			start := decoder.InputOffset()
+			var child json.RawMessage
+			err := decoder.Decode(&child)
+			if err != nil {
+				// The final child can have a complete name and still-growing arguments.
+				child = []byte(strings.TrimLeft(raw[start:], ", \t\r\n"))
+			}
+			if use, ok := value.(map[string]any); ok {
+				if name, err := jsonparser.GetString(child, "recipient_name"); err == nil {
+					use["recipient_name"] = name
+				}
+			}
+			if err != nil {
+				return
+			}
+		}
+		return
+	}
 }
 
 func patchPreviewInput(args string) string {

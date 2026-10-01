@@ -33,16 +33,57 @@ CREATE TABLE IF NOT EXISTS sources (
 CREATE TABLE IF NOT EXISTS models (
  source TEXT NOT NULL, model TEXT NOT NULL, metadata BLOB NOT NULL,
  PRIMARY KEY(source, model)
+);
+CREATE TABLE IF NOT EXISTS agent_output_limits (
+ agent_profile TEXT NOT NULL, provider_scope TEXT NOT NULL,
+ account_id TEXT NOT NULL, model_id TEXT NOT NULL,
+ max_output_tokens INTEGER NOT NULL, updated_at INTEGER NOT NULL,
+ PRIMARY KEY(agent_profile, provider_scope, account_id, model_id)
 );`
 
 const modelCatalogRefreshInterval = 6 * time.Hour
 const modelCatalogMaxBytes = 32 << 20
+const learnedOutputLimitLifetime = 7 * 24 * time.Hour
 
 var activeModelCatalog atomic.Pointer[ModelCatalog]
 
 // UseModelCatalog installs the app-owned catalog. All readers use its immutable
 // memory snapshot; no model lookup performs database or network I/O.
 func UseModelCatalog(catalog *ModelCatalog) { activeModelCatalog.Store(catalog) }
+
+// LearnedOutputLimit returns the app-wide provider-confirmed output ceiling
+// for an agent profile and an exact account/endpoint/protocol/model connection.
+// It is queried only on the background extraction path, never during UI paint.
+func LearnedOutputLimit(agentProfile string, connection *Provider, model string) (int, error) {
+	catalog := activeModelCatalog.Load()
+	if catalog == nil || connection == nil || agentProfile == "" {
+		return 0, nil
+	}
+	var limit int
+	err := catalog.db.QueryRow(`SELECT max_output_tokens FROM agent_output_limits WHERE agent_profile=? AND provider_scope=? AND account_id=? AND model_id=? AND updated_at>=?`,
+		agentProfile, connection.ReplayScope(), connection.AccountID, model, time.Now().Add(-learnedOutputLimitLifetime).Unix()).Scan(&limit)
+	if err == sql.ErrNoRows {
+		return 0, nil
+	}
+	return limit, err
+}
+
+// RecordOutputLimit persists a proven upper bound without letting concurrent
+// agents or a later, weaker observation raise it again.
+func RecordOutputLimit(agentProfile string, connection *Provider, model string, limit int) error {
+	catalog := activeModelCatalog.Load()
+	if catalog == nil || connection == nil || agentProfile == "" || limit <= 0 {
+		return nil
+	}
+	now := time.Now()
+	_, err := catalog.db.Exec(`INSERT INTO agent_output_limits(agent_profile,provider_scope,account_id,model_id,max_output_tokens,updated_at)
+ VALUES(?,?,?,?,?,?) ON CONFLICT(agent_profile,provider_scope,account_id,model_id) DO UPDATE SET
+ max_output_tokens=CASE WHEN agent_output_limits.updated_at<? THEN excluded.max_output_tokens
+                       ELSE MIN(agent_output_limits.max_output_tokens, excluded.max_output_tokens) END,
+ updated_at=excluded.updated_at`,
+		agentProfile, connection.ReplayScope(), connection.AccountID, model, limit, now.Unix(), now.Add(-learnedOutputLimitLifetime).Unix())
+	return err
+}
 
 type catalogSnapshot struct {
 	models     map[string]ModelMeta

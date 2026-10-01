@@ -46,7 +46,7 @@ func (m *App) openTabItems() []statusoverview.Item {
 	for _, tab := range m.Win.Tabs() {
 		id := ""
 		if agentID := m.agentIDFromTabTitle(tab.Title); agentID != "" {
-			if node := m.AgentMgr.Get(agentID); node == nil || node.Hidden {
+			if node := m.AgentMgr.Get(agentID); node == nil || node.IsHidden() {
 				continue
 			}
 			id = "agent:" + agentID

@@ -1,6 +1,7 @@
 package window
 
 import (
+	"slices"
 	"testing"
 
 	"crude/tui/theme"
@@ -16,6 +17,33 @@ func TestOpenTabInactiveNeverStealsExistingActiveTab(t *testing.T) {
 	w.OpenTabInactive("background", "", true)
 	if active := w.ActiveTab(); active == nil || active.ID != first.ID {
 		t.Fatalf("background tab stole active selection: %#v", active)
+	}
+}
+
+func TestOrderTabsSubsetPreservesOtherPositionsSelectionAndTabIdentity(t *testing.T) {
+	w := newTestWindow()
+	child := w.OpenTab("child", "", true).ID
+	editor := w.OpenTab("editor", "", true).ID
+	root := w.OpenTab("root", "", true).ID
+	w.OpenTab("other editor", "", true)
+	w.SwitchTo(1)
+	w.OrderTabsSubset([]TabID{root, child})
+	if got := []string{w.tabs[0].Title, w.tabs[1].Title, w.tabs[2].Title, w.tabs[3].Title}; !slices.Equal(got, []string{"root", "editor", "child", "other editor"}) {
+		t.Fatalf("agent order shifted an editor tab: %v", got)
+	}
+	if w.ActiveTab().ID != editor || w.ActiveIndex() != 1 || w.tabs[0].ID != root || w.tabs[2].ID != child {
+		t.Fatalf("reordering changed the selected tab or tab identity: %+v active=%d", w.tabs, w.ActiveIndex())
+	}
+	w.SwitchTo(2)
+	w.OrderTabsSubset([]TabID{child, root})
+	if w.ActiveTab().ID != child || w.ActiveIndex() != 0 {
+		t.Fatal("moving the selected child should carry its selection")
+	}
+	before := w.Tabs()
+	w.OrderTabsSubset([]TabID{root, root})
+	w.OrderTabsSubset([]TabID{root, TabID(999999)})
+	if !slices.Equal(before, w.Tabs()) {
+		t.Fatal("invalid order changed the tab bar")
 	}
 }
 

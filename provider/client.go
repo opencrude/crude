@@ -455,7 +455,7 @@ func annotateFlattenedReasoning(update *StreamUpdate, kind reasoning.Kind) {
 	}
 	for i := range update.Reasoning {
 		if update.Reasoning[i].Kind == reasoning.Unknown {
-			if kind == reasoning.InferredSummary || kind == reasoning.Raw {
+			if kind == reasoning.InferredSummary || kind == reasoning.InferredRaw {
 				update.Reasoning[i].Kind = kind
 			} else {
 				update.Reasoning[i].Kind = reasoning.Provisional

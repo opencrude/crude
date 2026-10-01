@@ -559,10 +559,18 @@ func (w *Workspace) MinimizeAgent(agentID string) {
 
 // RestoreAgent brings a minimized agent back and makes it the active one.
 func (w *Workspace) RestoreAgent(agentID string) {
-	if w.AgentMgr == nil || w.AgentMgr.Get(agentID) == nil {
+	if w.AgentMgr == nil {
 		return
 	}
-	w.AgentMgr.SetHidden(agentID, false)
+	node := w.AgentMgr.Get(agentID)
+	if node == nil {
+		return
+	}
+	// A child opened from Agents must be reachable even when its root is
+	// minimized. Reveal only this path; sibling review tabs stay archived.
+	for current := node; current != nil; current = current.Parent {
+		w.AgentMgr.SetHidden(current.ID, false)
+	}
 	w.AgentMgr.SetActive(agentID)
 	w.ActivateSessionByAgent(agentID)
 }

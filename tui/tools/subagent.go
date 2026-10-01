@@ -8,18 +8,29 @@ import (
 // A launch call may return a running handle or the child's terminal report.
 // The tool transport completing does not mean the child completed its task.
 type subAgentResult struct {
-	name, status string
+	name, id, status string
 }
 
 func subAgentOutcome(content string) (subAgentResult, bool) {
 	var result struct {
-		Name   string `json:"name"`
-		Status string `json:"status"`
+		Name     string `json:"name"`
+		HandleID string `json:"handle_id"`
+		AgentID  string `json:"agent_id"`
+		Status   string `json:"status"`
 	}
 	if json.Unmarshal([]byte(content), &result) == nil && result.Status != "" {
-		return subAgentResult{name: result.Name, status: result.Status}, true
+		id := result.HandleID
+		if id == "" {
+			id = result.AgentID
+		}
+		return subAgentResult{name: result.Name, id: id, status: result.Status}, true
 	}
 	if !strings.HasPrefix(content, "## Sub-Agent Result: ") {
+		if rest, ok := strings.CutPrefix(content, `Sub-agent "`); ok {
+			if name, _, found := strings.Cut(rest, `"`); found {
+				return subAgentResult{name: name}, false // a status check, not a completed child result
+			}
+		}
 		return subAgentResult{}, false
 	}
 	first, _, _ := strings.Cut(content, "\n")
@@ -28,7 +39,11 @@ func subAgentOutcome(content string) (subAgentResult, bool) {
 		name = name[:index]
 	}
 	status := ""
+	id := ""
 	for _, line := range strings.Split(content, "\n") {
+		if value, ok := strings.CutPrefix(line, "**Agent:** "); ok {
+			id = strings.TrimSpace(value)
+		}
 		if !strings.HasPrefix(line, "**Status:** ") {
 			continue
 		}
@@ -56,7 +71,23 @@ func subAgentOutcome(content string) (subAgentResult, bool) {
 	if status == "" {
 		return subAgentResult{}, false
 	}
-	return subAgentResult{name: name, status: status}, true
+	return subAgentResult{name: name, id: id, status: status}, true
+}
+
+func subAgentIdentityLabel(name, id string) string {
+	if structuredToolLabel(name) || embeddedStructuredLabel(name) {
+		name = ""
+	}
+	if structuredToolLabel(id) || embeddedStructuredLabel(id) {
+		id = ""
+	}
+	if name == "" {
+		return id
+	}
+	if id == "" {
+		return name
+	}
+	return name + " (" + id + ")"
 }
 
 // SubAgentResultFailed recognizes a returned child failure even when an older

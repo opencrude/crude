@@ -18,6 +18,42 @@ func TestSummarizeToolArgsUsesCanonicalJSONOperands(t *testing.T) {
 	}
 }
 
+func TestToolEventsNeverPublishStructuredArgumentsAsStatusOrOperand(t *testing.T) {
+	for _, tc := range []struct{ tool, args, want string }{
+		{"poll_sub_agent", `{"handle_id":"agent-8f21"}`, "agent-8f21"},
+		{"cancel_sub_agent", `{"handle_id":"agent-8f21"}`, "agent-8f21"},
+		{"list_sub_agents", `{"include_completed":true}`, ""},
+		{"plugin_tool", `{"unrecognized":{"private":"detail"}}`, ""},
+	} {
+		t.Run(tc.tool, func(t *testing.T) {
+			state := NewAgentState("agent", nil, nil)
+			status := ""
+			state.HandleEvent(AgentEvent{Type: "tool_call", Data: map[string]any{
+				"internal_id": "message", "tool_id": "call", "name": tc.tool, "args": tc.args,
+			}}, nil, func(line string) { status = line }, func(bool, bool, bool) {}, func() {},
+				func(string, string, string, string, string, string, string) {}, func(string) {}, func() {})
+			messages := state.Messages.Messages()
+			if len(messages) != 1 || messages[0].ToolArgs != tc.want ||
+				strings.Contains(messages[0].ToolProgressLabel, `"`) || strings.Contains(status, `"`) {
+				t.Fatalf("tool event leaked JSON: messages=%+v status=%q", messages, status)
+			}
+		})
+	}
+}
+
+func TestToolStatusRejectsStructuredToolNames(t *testing.T) {
+	got := ToolLabel(`{"name":"poll_sub_agent","handle_id":"agent-8f21"}`, "")
+	if got != "Tool" {
+		t.Fatalf("structured name leaked into status: %q", got)
+	}
+	for _, phase := range []string{"preparing", "failed", "done"} {
+		status := toolOperationStatus(`{"handle_id":"agent-8f21"}`, phase)
+		if strings.Contains(status, "{") || strings.Contains(status, "\"") {
+			t.Fatalf("%s status leaked structured tool name: %q", phase, status)
+		}
+	}
+}
+
 func TestParallelToolEventRetainsChildrenWithoutShowingAPIFields(t *testing.T) {
 	input := `{"tool_uses":[{"recipient_name":"functions.execute_command","parameters":{"command":"go test ./..."}},{"recipient_name":"functions.read_file","parameters":{"path":"main.go"}}]}`
 	state := NewAgentState("agent", nil, nil)

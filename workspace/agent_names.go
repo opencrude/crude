@@ -16,6 +16,23 @@ func (w *Workspace) AgentActivity(agentID string) types.AgentActivityView {
 	view.Status.Ref.Kind, view.Status.Ref.ID = types.ResourceAgent, agentID
 	if node.State != nil {
 		view.Active = node.State.IsActive()
+		if node.State.ActiveCompaction.OperationID != "" {
+			view.CompactionPhase = node.State.ActiveCompaction.Phase
+			if node.State.Cancelling {
+				view.CompactionPhase = "compaction_cancelling"
+			}
+		} else if !view.Active && node.State.Messages != nil {
+			// The last durable boundary is the authority until another turn starts.
+			// A completed manual /compact is an operation result, not plan progress.
+			if last := node.State.Messages.lastNonPending(); last != nil &&
+				last.Role == MessageRoleStatus && last.LifecycleTrigger == "manual" &&
+				last.LifecycleOperationID != "" {
+				switch last.LifecyclePhase {
+				case "compaction_completed", "compaction_cancelled", "compaction_failed", "compaction_interrupted":
+					view.CompactionPhase = last.LifecyclePhase
+				}
+			}
+		}
 		view.TideForward = node.State.ReasoningMode.IsSummary()
 		if brief := node.State.Messages.Brief(); brief != "" {
 			view.Summary = brief

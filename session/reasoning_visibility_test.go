@@ -49,3 +49,23 @@ func TestInferredReasoningKindUsesMatchingGatewayObservations(t *testing.T) {
 		t.Fatal("partial record incorrectly contradicted completed evidence")
 	}
 }
+
+func TestInferredReasoningKindRestoresRawEvidenceForOwningConnection(t *testing.T) {
+	s := &Session{usageRecords: map[string]sessiondb.UsageRecord{}}
+	for i := range 2 {
+		generation := uint64(i + 1)
+		s.msgs = append(s.msgs, provider.ChatMessage{Role: "assistant", ReasoningContent: strings.Repeat("visible raw text ", 40), ReasoningDisplay: reasoning.Display{Kind: reasoning.InferredRaw}})
+		s.displayMetas = append(s.displayMetas, sessiondb.DisplayMeta{TurnGeneration: generation, ProviderID: "gateway", AccountID: "child-account", ModelID: "model"})
+		s.usageRecords[string(rune('a'+i))] = sessiondb.UsageRecord{AgentID: "child", ProviderID: "gateway", AccountID: "child-account", ModelID: "model", RequestKind: "normal", TurnGeneration: generation, ReasoningKnown: true, ReasoningTokens: 155}
+	}
+	if got := s.inferredReasoningKind("child", "gateway", "child-account", "model"); got != reasoning.InferredRaw {
+		t.Fatalf("resumed raw connection = %q", got)
+	}
+	if got := s.inferredReasoningKind("parent", "gateway", "child-account", "model"); got != reasoning.Unknown {
+		t.Fatalf("child inference leaked to parent: %q", got)
+	}
+	s.usageRecords["b"] = sessiondb.UsageRecord{AgentID: "child", ProviderID: "gateway", AccountID: "child-account", ModelID: "model", RequestKind: "normal", TurnGeneration: 2, ReasoningKnown: true, ReasoningTokens: 1700}
+	if got := s.inferredReasoningKind("child", "gateway", "child-account", "model"); got != reasoning.Unknown {
+		t.Fatalf("contradictory evidence did not clear raw inference: %q", got)
+	}
+}

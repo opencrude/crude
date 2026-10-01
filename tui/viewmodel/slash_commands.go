@@ -8,7 +8,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	ttypes "crude/tui/types"
-	"crude/workspace"
 )
 
 type slashBackendResultMsg struct {
@@ -74,7 +73,7 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 			}
 			break
 		}
-		_ = m.handleAgentDomainEvent(workspace.AgentEvent{Type: "context_compaction_started", AgentID: agentID, Data: map[string]any{
+		_ = m.handleAgentEvent(ttypes.AgentEventMsg{Type: "context_compaction_started", AgentID: agentID, Data: map[string]any{
 			"request_id": prepared.OperationID, "trigger": "manual", "role": "root",
 			"provider_id": prepared.ProviderID, "model_id": prepared.ModelID,
 			"stage": 0, "completed_stages": 0, "stage_count": 4, "retry_limit": 3,

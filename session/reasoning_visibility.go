@@ -28,7 +28,7 @@ func (s *Session) inferredReasoningKind(agentID, providerID, accountID, modelID 
 			s.msgsMu.Unlock()
 			return reasoning.Unknown // explicit raw wire evidence overrides ratios
 		}
-		if msg.ReasoningDisplay.Kind != reasoning.Unknown && msg.ReasoningDisplay.Kind != reasoning.Provisional && msg.ReasoningDisplay.Kind != reasoning.InferredSummary {
+		if msg.ReasoningDisplay.Kind != reasoning.Unknown && msg.ReasoningDisplay.Kind != reasoning.Provisional && msg.ReasoningDisplay.Kind != reasoning.InferredSummary && msg.ReasoningDisplay.Kind != reasoning.InferredRaw {
 			continue
 		}
 		visible[meta.TurnGeneration] += utf8.RuneCountInString(msg.ReasoningContent)
@@ -50,7 +50,7 @@ func (s *Session) inferredReasoningKind(agentID, providerID, accountID, modelID 
 		usage[record.TurnGeneration] = group
 	}
 	s.usageMu.RUnlock()
-	confirmed := 0
+	confirmed, rawConfirmed := 0, 0
 	exceptional := false
 	for generation, runes := range visible {
 		group := usage[generation]
@@ -58,12 +58,22 @@ func (s *Session) inferredReasoningKind(agentID, providerID, accountID, modelID 
 			continue
 		}
 		if !reasoning.CondensedByUsage(runes, group.tokens, true) {
-			return reasoning.Unknown // contradictory evidence fails closed
+			if runes >= 12 && group.tokens >= 128 && group.tokens <= 2*((runes+3)/4) {
+				rawConfirmed++
+				continue
+			}
+			return reasoning.Unknown // insufficient evidence fails closed
 		}
 		confirmed++
 		if group.tokens >= 16*((runes+3)/4) {
 			exceptional = true
 		}
+	}
+	if confirmed > 0 && rawConfirmed > 0 {
+		return reasoning.Unknown // contradictory evidence fails closed
+	}
+	if rawConfirmed >= 2 {
+		return reasoning.InferredRaw
 	}
 	if confirmed >= 2 || confirmed == 1 && exceptional {
 		return reasoning.InferredSummary

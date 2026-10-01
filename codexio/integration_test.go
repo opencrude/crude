@@ -9,7 +9,7 @@ import (
 	"testing"
 )
 
-func TestUpstreamInstructionAssetsUnchanged(t *testing.T) {
+func TestBundledInstructionAssetsMatchManifest(t *testing.T) {
 	raw, err := promptFiles.ReadFile("prompts/manifest.json")
 	if err != nil {
 		t.Fatal(err)
@@ -27,7 +27,7 @@ func TestUpstreamInstructionAssetsUnchanged(t *testing.T) {
 			t.Fatal(err)
 		}
 		if got := fmt.Sprintf("%x", sha256.Sum256(data)); got != asset.SHA256 {
-			t.Fatalf("edited upstream instructions: %s", slug)
+			t.Fatalf("instruction asset differs from manifest: %s", slug)
 		}
 		text, source := Instructions("openai/" + strings.ToUpper(slug))
 		if source != slug || text != string(data) {

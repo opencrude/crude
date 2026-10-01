@@ -136,6 +136,7 @@ func ExtractArg(str, key string) string {
 
 // PascalCaseTool converts a snake_case tool name to readable title words.
 func PascalCaseTool(tool string) string {
+	tool = tools.DisplayToolName(tool)
 	upper := true
 	out := make([]byte, 0, len(tool))
 	for i := 0; i < len(tool); i++ {

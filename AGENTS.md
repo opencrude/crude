@@ -586,12 +586,19 @@ tab goes away, and nothing else changes. The orchestrator keeps streaming,
 the conversation, panes, chat projections, scroll offsets, and session
 ownership are all retained. A stray click must never destroy work in flight.
 
-- `Workspace.MinimizeAgent` / `RestoreAgent` own the domain flag;
-  `AgentManager.SetHidden` hides a whole subtree so a restored orchestrator
-  comes back with its sub-agents.
-- `AgentTabViews()` filters hidden nodes, so `syncAgentWindowTabs` cannot
+- `Workspace.MinimizeAgent` / `RestoreAgent` own the domain flag. Each node's
+  `Hidden` records its own tab choice; `AgentNode.IsHidden()` also checks
+  ancestors. Minimizing a root hides its subtree without overwriting archived
+  child choices. Restoring it returns previously open children, while completed
+  review children remain closed. Explicitly opening a nested child reveals its
+  ancestor path and leaves archived siblings closed.
+- `AgentTabViews()` filters effectively hidden nodes, so `syncAgentWindowTabs` cannot
   resurrect a minimized tab, and `purgeStaleAgentTabs` closes one that
   lingers.
+- Tabs for each session put its main agent before visible descendants.
+  Background tab sync repairs that order inside agent slots without moving
+  editor tabs or changing the selected tab. Resumed completed children are
+  retained in the Agents panel as closed review surfaces, never mass-opened.
 - **`AgentMgr.Count()` vs `VisibleCount()`**: shell gates choosing between
   launcher / chat / editor must use `VisibleCount()`, otherwise a workspace
   whose agents are all minimized shows an empty chat instead of the
@@ -1084,6 +1091,28 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   standalone legacy rows. Execution events carry exact tool arguments, not
   formatted/truncated summaries. Native command JSON envelopes are decoded only
   at presentation; file edits/writes/patches stay separate and default-open.
+  **Never print a raw JSON tool-argument envelope in any tool title, status,
+  compact pane, or batch leaf.** `tools.SummarizeArgs` is the single semantic
+  operand authority for live events, child projections, and resumed snapshots.
+  Missing, malformed, nested, and unfamiliar argument shapes fail closed to a
+  name-only title, not a truncated JSON fallback; a real command/query/path
+  extracted from a field remains readable. The shared title painter must also
+  guard raw structured progress labels, unsafe tool identifiers, and nested
+  structured error reasons. Every new tool schema needs live,
+  parallel (when applicable), and hydrated tests asserting the same title,
+  row geometry, disclosure, and full evidence access across both paths.
+  Sub-agent tool identities include BOTH the allocated nickname and exact handle
+  whenever those facts are available: launch outcomes, polls, cancellations,
+  list entries and authored reports. A call awaiting its result may show the
+  handle alone; never guess the nickname from a requested role/task, or attach
+  a name from a mismatched result. Lists keep a bounded title and expose each
+  name+handle pair in their expanded evidence. Live, batch and hydrated rows
+  share the same title builder and must paint identically.
+  Batch preview names come from closed strings in the original input, never
+  JSON-repaired partial names. Unnamed children and empty live envelopes occupy
+  no transcript row; named children stream their arguments immediately in the
+  correct tree/standalone placement. A batch's first groupable child starts in
+  its tree rather than reparenting when its siblings arrive.
   Summary counts and visible membership are source/disclosure-derived, not
   rescanned on animation ticks. See `docs/reference/chat-activity.md`.
 - Tool titles keep action, operand and metadata as distinct semantic spans,
@@ -1204,6 +1233,15 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   The exact source context is durable before extraction starts, including
   in-flight turn state. Failure, cancellation, or pre-commit crash leaves that
   source authoritative.
+- Provider-reported output-parameter ceilings are distinct from context-window
+  errors. A typed 400/422 naming the exact sent output token value and valid
+  upper bound reduces that stage's allowance, not its source or thinking mode.
+  App-wide `model-catalog.db` retains the lowest confirmed ceiling keyed by
+  Aeron agent profile, provider endpoint/protocol, account, and model across
+  new sessions/workspaces and restarts, expiring after seven days. Never tie
+  this learned transport capacity to one session DB or retry a known-invalid
+  output request for every stage. Recursive source reduction still recomputes
+  the response room for each smaller request under the learned ceiling.
 - Compaction presentation is one retained, operation-ID-keyed context-boundary
   table on the normal chat background with full-bleed top/bottom rules using
   the active-rail accent color. It shows

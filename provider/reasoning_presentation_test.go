@@ -85,7 +85,9 @@ func TestMeasuredGatewayKindOnlyAnnotatesFlattenedReasoning(t *testing.T) {
 	}{
 		{"first unlabelled request", `{"choices":[{"delta":{"reasoning_content":"**A short summary**"}}]}`, reasoning.Unknown, reasoning.Provisional},
 		{"measured connection", `{"choices":[{"delta":{"reasoning_content":"**A short summary**"}}]}`, reasoning.InferredSummary, reasoning.InferredSummary},
+		{"measured raw connection", `{"choices":[{"delta":{"reasoning_content":"private raw trace"}}]}`, reasoning.InferredRaw, reasoning.InferredRaw},
 		{"explicit raw", `{"choices":[{"delta":{"reasoning_details":[{"type":"reasoning.text","text":"private raw trace"}]}}]}`, reasoning.InferredSummary, reasoning.Raw},
+		{"explicit summary despite raw inference", `{"choices":[{"delta":{"reasoning_details":[{"type":"reasoning.summary","summary":"public summary"}]}}]}`, reasoning.InferredRaw, reasoning.Summary},
 		{"explicit summary", `{"choices":[{"delta":{"reasoning_details":[{"type":"reasoning.summary","summary":"public summary"}]}}]}`, reasoning.Unknown, reasoning.Summary},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

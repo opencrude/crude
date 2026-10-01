@@ -152,6 +152,7 @@ func (a *Agent) contextCompactor(targetWindow int) *Agent {
 	compactor.CompactionTargetWindow = targetWindow
 	compactor.CompactionTargetTokens = a.contextThreshold(targetWindow)
 	compactor.MaxOutputTokens = a.CompactionMaxOutput
+	compactor.CompactionAgentProfile = a.CompactionAgentProfile
 	return compactor
 }
 
@@ -350,7 +351,10 @@ func (a *Agent) compactWithModel(
 			errors.New("target context has insufficient room for a checkpoint after system and tool instructions")
 	}
 	extractionWindow := a.Provider.ContextWindow(a.Model)
-	responseBudget := a.compactionOutputLimit(extractionWindow, 0)
+	learnedLimit, err := provider.LearnedOutputLimit(a.CompactionAgentProfile, a.Provider, a.Model)
+	if err != nil {
+		return compactOutcome{}, fmt.Errorf("load learned extraction output limit: %w", err)
+	}
 	manifestBudget := min(2048, max(128, extractionWindow/32))
 	common := provider.NewTextMessage("user", compactionCommonPrompt(role, compactionHumanManifest(msgs[1:], role, targetModel, manifestBudget)))
 	common.Origin = provider.OriginCompactionRequest
@@ -384,13 +388,17 @@ func (a *Agent) compactWithModel(
 		extractor := compactionExtractor{
 			agent: a, ctx: ctx, emit: emit, requestID: requestID, trigger: trigger, role: role,
 			stage: stage, stageIndex: index, beforeTokens: beforeTokens, targetWindow: ctxWindow,
-			system: msgs[0], common: common, inputBudget: inputBudget, outputBudget: remaining, responseBudget: responseBudget, usageRatio: usageRatio,
+			system: msgs[0], common: common, inputBudget: inputBudget, outputBudget: remaining,
+			learnedOutputLimit: learnedLimit, usageRatio: usageRatio,
 			capacityBudget: extractionWindow - contextSafetyReserve(extractionWindow) - 1,
 		}
 		stageText, stageErr := extractor.request(msgs[1:], "Extract the complete source continuation state.", 0)
 		aggregate = addTokenUsage(aggregate, extractor.usage)
 		inputBudget = extractor.inputBudget
 		usageRatio = extractor.usageRatio
+		if extractor.learnedOutputLimit > 0 {
+			learnedLimit = extractor.learnedOutputLimit
+		}
 		if stageErr != nil {
 			return compactOutcome{
 					Usage: aggregate, ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role,

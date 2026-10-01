@@ -346,10 +346,10 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 	m.syncAgentMessages(agentID, evt.Type == "done" || evt.Type == "error")
 	m.syncConversationMessages(thinkingTarget, evt.Type == "done" || evt.Type == "error")
 
-	// Promotion is guarded inside checkThinkingPromotion (no-op once the
-	// thinking block already lives in its own pane), so it is safe to call
-	// on every thinking event.
-	if evt.Type == "thinking" {
+	// Provider usage may settle an unlabelled stream as raw after the last
+	// thinking delta. Give that same active block a pane before tool execution
+	// moves on; promotion itself is a no-op once it already has a pane.
+	if evt.Type == "thinking" || evt.Type == "reasoning_classified" {
 		m.checkThinkingPromotion(agent)
 	}
 

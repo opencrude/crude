@@ -228,6 +228,61 @@ func TestBackgroundSubAgentTabCreationDoesNotStealRootSelection(t *testing.T) {
 	}
 }
 
+func TestAgentTabSyncRepairsRootOrderWithoutMovingEditorOrSelection(t *testing.T) {
+	app, ws := newRealShellApp(t)
+	defer ws.Close()
+	app.AddOrchestrator("root")
+	firstEditor := openEditorTabs(t, app, "first.go")[0]
+	for _, id := range []string{"older", "newer"} {
+		pane := app.PaneMgr.GetOrCreate(id, workspace.PaneAgent, id)
+		app.AgentMgr.AddSubAgent(id, "root", id, "model", "researcher",
+			workspace.NewAgentState(id, pane.Messages, app.Logger))
+		app.syncAgentWindowTabs()
+	}
+	secondEditor := openEditorTabs(t, app, "second.go")[0]
+	// Simulate a restored strip that listed children before the main agent.
+	rootTab := app.Win.TabByTitle(app.agentTabTitle("root"))
+	app.Win.MoveTab(app.Win.IndexOf(rootTab.ID), 3)
+	app.syncAgentWindowTabs()
+	want := []string{app.editorTabTitle(firstEditor), app.agentTabTitle("root"),
+		app.agentTabTitle("older"), app.agentTabTitle("newer"), app.editorTabTitle(secondEditor)}
+	tabs := app.Win.Tabs()
+	if len(tabs) != len(want) {
+		t.Fatalf("tabs=%+v want %v", tabs, want)
+	}
+	for i, tab := range tabs {
+		if tab.Title != want[i] {
+			t.Fatalf("tab order=%+v want %v", tabs, want)
+		}
+	}
+	assertEditorStillPainted(t, app, secondEditor)
+	app.switchToAgentView("older")
+	app.syncAgentWindowTabs()
+	if app.activeAgentTabID() != "older" || app.Win.Tabs()[1].Title != app.agentTabTitle("root") {
+		t.Fatal("background sync changed selected child or main-first order")
+	}
+}
+
+func TestAgentTabSyncGroupsMultipleRootsWithoutStealingSelection(t *testing.T) {
+	app := newFullTestApp(t)
+	app.AddOrchestrator("first")
+	app.AgentMgr.AddSubAgent("first-child", "first", "first child", "model", "researcher",
+		workspace.NewAgentState("first-child", nil, nil))
+	app.AddOrchestrator("second")
+	app.AgentMgr.AddSubAgent("second-child", "second", "second child", "model", "researcher",
+		workspace.NewAgentState("second-child", nil, nil))
+	app.syncAgentWindowTabs()
+	want := []string{"first", "first-child", "second", "second-child"}
+	for i, id := range want {
+		if got := app.Win.Tabs()[i].Title; got != app.agentTabTitle(id) {
+			t.Fatalf("two roots grouped incorrectly: tabs=%+v", app.Win.Tabs())
+		}
+	}
+	if app.activeAgentTabID() != "second" {
+		t.Fatalf("background tab sync stole active main agent: %q", app.activeAgentTabID())
+	}
+}
+
 func TestTabSyncRepairsStaleManagerSelectionFromVisibleWindow(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("root")

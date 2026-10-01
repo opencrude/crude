@@ -25,7 +25,9 @@ transcript scroll and tree disclosure, not a second retained pane.
 Assistant progress messages are real communication boundaries. Empty provider
 envelopes neither occupy a row nor split a group.
 
-A singleton uses one ordinary tool row, not a redundant tree header. A group's
+An independent singleton uses one ordinary tool row, not a redundant tree header.
+A parallel batch's groupable first child starts in its tree immediately, so
+later siblings do not reparent it. A group's
 header summarizes settled work, counts preparing/running calls, and reports how
 many members are hidden. Retain at least six recent eligible tool leaves and
 at least two tool request rounds in the current user turn. Extend backward by
@@ -54,6 +56,24 @@ ranges, durations and permission/disclosure marks use `ColorMuted`. These roles
 stay fixed through preparing, running and completion: lifecycle does not recolor
 the whole label, and completed tool histories never turn into foreground-white
 blocks. Wrapping preserves every span rather than flattening and restyling text.
+The title and status line must **never** expose an argument envelope as raw or
+truncated JSON, including unknown tools, missing operands, invalid/partial
+arguments, parallel children, structured progress labels, invalid tool names,
+and structured error reasons. Use one semantic
+operand projection for live events and resumed snapshots; if no safe operand
+exists, show only the action. Preserve genuine extracted commands, paths and
+queries verbatim, even if they themselves contain JSON text. Do not fix one
+widget by stripping braces: producer, batch projection, main chat, compact pane,
+and resume must share the same source rule. For every tool schema or new argument
+encoding, test identical live and hydrated rows (collapsed and expanded),
+disclosure and result evidence, with no raw API field names in any title.
+Sub-agent titles pair the allocated nickname with the exact handle once both
+are known (`Lily sub Dawn (agent-8f21)`), across spawn, poll, cancel and report
+results. Before identity is available, show the handle or assignment, never an
+invented nickname from the requested profile. A result whose handle conflicts
+with the requested handle cannot label that call. The list title remains bounded;
+expanded list entries include each nickname AND handle. Results carry the same
+immutable identity through live, parallel-child and hydrated projections.
 
 Normal indicators share the title color: active work uses `ui.ActivityDot` on
 the shared frame clock, completed work uses a steady dot, and stopped/not-run
@@ -77,6 +97,14 @@ prefixes expose child operands during argument streaming; ordered partial result
 snapshots expose each child's real start/completion while siblings are active.
 Preview repair never changes execution input. Resume derives the same children
 from the original call and final result. Missing results never imply success.
+For streamed batch arguments, a child's name must have its closing quote in the
+original JSON before it can determine tree versus standalone placement. Repair
+may complete partial operands, but must never fabricate that name boundary.
+Once the name is present, paths, commands, patterns and edit content continue
+streaming without waiting for the child or batch to finish. Unnamed children
+occupy no row and keep their original batch indices; an empty live wrapper stays
+in the fixed activity strip, not a temporary standalone tool row. Terminal errors
+and stopped/not-run outcomes remain visible even when no named child arrived.
 
 Group summaries and visible membership are derived on source/disclosure changes,
 not rescanned over a dense transcript on animation ticks. The batch projection
@@ -100,10 +128,14 @@ the fixed strip, while its entire trace stays expandable. No pane promotion or
 geometry change depends on guessing the kind while the request is streaming.
 When reported usage arrives, a strong visible-to-billed reasoning-token gap
 can settle the exact request as `summary_inferred`. Insufficient evidence
-preserves `provisional`; measured near-parity can settle it as raw. Explicit
+preserves `provisional`; measured near-parity settles that request as
+`raw_inferred` and promotes a long active trace into its own pane. Explicit
 wire-labelled raw/summary events always win. Two independent confirmed groups
 from the same agent/account/provider/model may calibrate later requests on that
-serving connection; an exceptional single response can calibrate sooner. The
+serving connection for either raw or summary. An exceptional single condensed
+response can calibrate summary sooner. Child agents use their own connection's
+completed requests within their tool loop; neither the parent's classification
+nor its model supplies a hint. The
 derivation is off-UI, scoped to the producing connection, and uses existing
 persisted messages and request records on resume. It is never a model-name
 catalogue, current-request guess, or per-frame transcript scan.
@@ -182,6 +214,16 @@ Transient status messages are not additional transcript rows; durable stop,
 history, and compaction boundaries remain ordinary transcript content. Internal
 actor generations still include stopped/unbilled work for cancellation and
 recovery, but are not the displayed successful-call count.
+Manual compaction owns the activity strip while its boundary is current:
+preparing, extraction, retry, and commit show operation progress without
+rotating an unrelated plan. Completion reports "Context compacted · Ready to
+continue"; failure and cancellation retain their own settled label. A resumed
+boundary provides the same status until the next turn. The old session
+transcript stays in the archive; the new checkpoint is the active context.
+At the next human turn, the session supplies the current plan revision and
+steps in hidden runtime context so the model can assess whether the plan is
+still relevant; the system planning contract calls for prompt updates when
+the user's request changes the work. The plan store remains the authority.
 Markdown retains its established Glamour heading, link and inline-code hierarchy.
 Document ink and fenced-code colours follow the active theme; light backgrounds
 use readable light-palette inks. Theme changes invalidate the Markdown renderer

@@ -367,7 +367,7 @@ func (m *App) buildAgentSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState
 				{Label: "Open agent", Action: func() {
 					m.restoreAgent(node.ID)
 				}},
-				{Label: "Minimize agent", Disabled: node.Hidden, Detail: "keeps running", Action: func() {
+				{Label: "Minimize agent", Disabled: node.IsHidden(), Detail: "keeps running", Action: func() {
 					m.minimizeAgent(node.ID)
 				}},
 				{Label: "Cancel agent", Disabled: !node.IsActive(), Action: func() {
