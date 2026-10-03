@@ -79,6 +79,153 @@ func TestRunDoesNotSpinOnClosedBTWChannel(t *testing.T) {
 	}
 }
 
+func TestRunRestartsUploadToCoalesceQueuedBTW(t *testing.T) {
+	var requests atomic.Int32
+	firstUploadPaused := make(chan struct{})
+	secondMessages := make(chan []provider.ChatMessage, 1)
+	transport := agentRoundTripFunc(func(request *http.Request) (*http.Response, error) {
+		if requests.Add(1) == 1 {
+			partialBytes := request.ContentLength / 2
+			if partialBytes < 1 {
+				partialBytes = 1
+			}
+			if _, err := io.CopyN(io.Discard, request.Body, partialBytes); err != nil {
+				return nil, fmt.Errorf("read partial request body: %w", err)
+			}
+			close(firstUploadPaused)
+			<-request.Context().Done()
+			return nil, request.Context().Err()
+		}
+
+		body, err := io.ReadAll(request.Body)
+		if err != nil {
+			return nil, fmt.Errorf("read restarted request body: %w", err)
+		}
+		var chatRequest provider.ChatRequest
+		if err := json.Unmarshal(body, &chatRequest); err != nil {
+			return nil, fmt.Errorf("decode restarted request: %w", err)
+		}
+		secondMessages <- chatRequest.Messages
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body: io.NopCloser(strings.NewReader(
+				"data: {\"choices\":[{\"delta\":{\"content\":\"combined response\"},\"finish_reason\":\"stop\"}]}\n\n" +
+					"data: [DONE]\n\n",
+			)),
+			Request: request,
+		}, nil
+	})
+
+	p := provider.FromPreset("openai-chat", "key", "https://btw-upload.invalid")
+	p.SetDialSettings(provider.DialSettings{MaxAttempts: 1})
+	p.Model = "test-model"
+	agent := newTestAgent(t, p, p.Model)
+	agent.testHTTPClient = &http.Client{Transport: transport}
+
+	btw := make(chan BtwMessage, 4)
+	var accepts atomic.Int32
+	var events []AgentEvent
+	done := make(chan []provider.ChatMessage, 1)
+	go func() {
+		done <- agent.Run(
+			context.Background(),
+			[]provider.ChatMessage{provider.NewTextMessage("user", strings.Repeat("initial context ", 256))},
+			"system",
+			func(event AgentEvent) { events = append(events, event) },
+			nil,
+			"",
+			btw,
+		)
+	}()
+
+	select {
+	case <-firstUploadPaused:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first upload did not reach the restartable range")
+	}
+	first := provider.NewTextMessage("user", "first queued correction")
+	first.InternalID = "btw-restart-1"
+	second := provider.NewTextMessage("user", "second queued correction")
+	second.InternalID = "btw-restart-2"
+	btw <- BtwMessage{Message: first, Accept: func() bool {
+		accepts.Add(1)
+		return true
+	}}
+	btw <- BtwMessage{Message: second, Accept: func() bool {
+		accepts.Add(1)
+		return true
+	}}
+
+	var archive []provider.ChatMessage
+	select {
+	case archive = <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("agent did not finish restarted BTW upload")
+	}
+	if requests.Load() != 2 {
+		t.Fatalf("requests = %d, want one interrupted upload and one restarted upload", requests.Load())
+	}
+	if accepts.Load() != 2 {
+		t.Fatalf("BTW accepts = %d, want 2", accepts.Load())
+	}
+
+	requestMessages := <-secondMessages
+	requestCounts := map[string]int{}
+	for _, message := range requestMessages {
+		if message.Role == "assistant" {
+			t.Fatalf("interrupted upload created an assistant message: %#v", message)
+		}
+		switch message.ContentString() {
+		case first.ContentString():
+			requestCounts[first.InternalID]++
+		case second.ContentString():
+			requestCounts[second.InternalID]++
+		}
+	}
+	if requestCounts[first.InternalID] != 1 || requestCounts[second.InternalID] != 1 {
+		t.Fatalf("restarted request BTW counts = %#v", requestCounts)
+	}
+
+	archiveCounts := map[string]int{}
+	for _, message := range archive {
+		archiveCounts[message.InternalID]++
+	}
+	if archiveCounts[first.InternalID] != 1 || archiveCounts[second.InternalID] != 1 {
+		t.Fatalf("archive BTW counts = %#v", archiveCounts)
+	}
+
+	consumed := map[string]int{}
+	successfulRequests := 0
+	for _, event := range events {
+		switch event.Type {
+		case "btw_consumed":
+			data, _ := event.Data.(map[string]any)
+			if internalID, _ := data["internal_id"].(string); internalID != "" {
+				consumed[internalID]++
+			}
+		case "btw_cleared", "error", "retry":
+			t.Fatalf("restart emitted unexpected %s event: %#v", event.Type, event)
+		case "done":
+			data, _ := event.Data.(map[string]any)
+			if data["reason"] == "cancelled" {
+				t.Fatalf("internal upload restart became a turn cancellation: %#v", event)
+			}
+		case "usage":
+			data, _ := event.Data.(map[string]any)
+			if data["request_outcome"] == "succeeded" {
+				successfulRequests++
+			}
+		}
+	}
+	if consumed[first.InternalID] != 1 || consumed[second.InternalID] != 1 {
+		t.Fatalf("BTW consumed counts = %#v", consumed)
+	}
+	if successfulRequests != 1 {
+		t.Fatalf("successful request accounting = %d, want only the restarted request", successfulRequests)
+	}
+}
+
 func TestRunContinuesWithBTWArrivingDuringFinalCompletion(t *testing.T) {
 	var requests atomic.Int32
 	firstStarted := make(chan struct{}, 1)

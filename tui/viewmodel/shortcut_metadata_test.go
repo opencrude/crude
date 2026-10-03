@@ -99,35 +99,20 @@ func TestStatusTabBarHelpDerivesNavFromRegistry(t *testing.T) {
 // fixed dismiss/search/delete rows source their keys from the registry
 // (launcher.filter.clear/filter/delete), not hardcoded "Esc"//"/"/"d".
 func TestLauncherShortcutsDeriveFromRegistryMetadata(t *testing.T) {
-	app := newTestApp(t)
-	app.actionRegistry = overrideHintKey(t, "launcher.delete", "Ctrl+Shift+D")
-
-	scs := app.launcherShortcuts()
-	keys := make(map[string]string)
-	for _, sc := range scs {
-		keys[sc[0]] = sc[1]
+	app := newFullTestApp(t)
+	app.width, app.height = 160, 40
+	app.Tree = &TreeState{}
+	app.actionRegistry = overrideHintKey(t, "launcher.filter", "Ctrl+Shift+F2")
+	app.paintShellFrame()
+	text := bufferPlain(app.mainSurf.Buffer())
+	if !strings.Contains(text, "Ctrl+Shift+F2") {
+		t.Fatalf("launcher missing registry shortcut:\n%s", text)
 	}
-	want := ui.FormatShortcut(app.actionRegistry.HintFor("launcher.delete"))
-	if _, ok := keys[want]; !ok {
-		t.Fatalf("launcher must render launcher.delete key %q from registry metadata, got keys %v", want, keys)
-	}
-	if _, ok := keys["d"]; ok {
-		t.Fatalf("launcher must not render the hardcoded literal %q when the registry overrides the binding", "d")
-	}
-	for _, id := range []ui.ActionID{"launcher.filter.clear", "launcher.filter"} {
-		want := ui.FormatShortcut(app.actionRegistry.HintFor(id))
-		if want == "" {
-			continue
-		}
-		if _, ok := keys[want]; !ok {
-			t.Fatalf("launcher must render %q from registry (%s), got keys %v", want, id, keys)
-		}
+	if strings.Contains(text, "D remove") {
+		t.Fatal("launcher offers destructive shortcut")
 	}
 }
 
-// TestHelpListingDerivesShortcutsFromRegistryMetadata proves the Help overlay
-// catalog uses FormatShortcut(registry.HintFor(id)) and excludes DisplayOnly
-// hint fragments.
 func TestHelpListingDerivesShortcutsFromRegistryMetadata(t *testing.T) {
 	app := newTestApp(t)
 	app.width, app.height = 100, 30

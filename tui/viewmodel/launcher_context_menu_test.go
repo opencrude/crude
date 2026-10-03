@@ -42,7 +42,7 @@ func TestLauncherContextMenuOpensOnWorkspaceRow(t *testing.T) {
 			labels = append(labels, it.Label)
 		}
 	}
-	want := []string{"Open", "Copy path", "Remove from list"}
+	want := []string{"Open", "Copy path", "Delete workspace…"}
 	if len(labels) != len(want) {
 		t.Fatalf("menu labels=%v want %v", labels, want)
 	}
@@ -58,26 +58,19 @@ func TestLauncherContextMenuOpensOnWorkspaceRow(t *testing.T) {
 		t.Fatal("second right-click should close the context menu")
 	}
 
-	// Right-click above the workspace rows (hero/search area) opens nothing.
+	// Right-click above the workspace rows (heading/search area) opens nothing.
 	_, _ = app.dispatchMouseRightClick(tea.MouseClickMsg{X: rect.X + 2, Y: rect.Y - 4, Button: tea.MouseRight})
 	if app.windowManager.Window(string(ui.OverlayContextMenu)) != nil {
 		t.Fatal("right-click off the workspace rows must not open a menu")
 	}
-}
 
-// TestLauncherContextMenuRemoveAction verifies the Remove-from-list action
-// drops the row from the launcher listing. The persisted delete targets the
-// fake test ID (a non-existent workspace hash), so no real data is touched.
-func TestLauncherContextMenuRemoveAction(t *testing.T) {
-	app := newTestAppWithLauncher(t)
-	before := app.launcherScreen.TotalItems()
-	if before != 14 { // 2 fixed actions + 12 seeded workspaces
-		t.Fatalf("setup: TotalItems=%d want 14", before)
+	// A visual separator is not part of either neighboring resource.
+	_, _ = app.dispatchMouseRightClick(tea.MouseClickMsg{X: rect.X + 2, Y: rect.Y + 2, Button: tea.MouseRight})
+	if app.windowManager.Window(string(ui.OverlayContextMenu)) != nil {
+		t.Fatal("right-click on a workspace separator opened a menu")
 	}
-
-	app.removeLauncherWorkspace(launcher.WorkspaceEntry{ID: "ws7", Name: "proj-07", Path: "/tmp/proj-07"})
-
-	if got := app.launcherScreen.TotalItems(); got != before-1 {
-		t.Fatalf("TotalItems=%d want %d after removal", got, before-1)
+	_, _ = app.dispatchMouseRightClick(tea.MouseClickMsg{X: rect.X + 2, Y: rect.Y + 1, Button: tea.MouseRight})
+	if app.windowManager.Window(string(ui.OverlayContextMenu)) == nil {
+		t.Fatal("right-click on a workspace path lost the menu")
 	}
 }

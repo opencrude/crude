@@ -40,11 +40,15 @@ preserve or intentionally improve.
 | Remove attachment | Separate three-cell `x` target on the chip | Detaches tokens from the draft without deleting references owned by sent messages. Overflow and wheel navigation keep hidden chips reachable. |
 | Session account / model | `/settings` or `/model` | Account labels only, no template groups. Model discovery uses that account's resolved connection and cannot update another session's deck. |
 | Session default agent | `/settings` > Default agent | Pick Main Agent, a built-in role, or an enabled named agent for future root turns. Its account stays pinned to this session, switching choices retains the other root settings, and disabled/removed selections fail closed. |
-| Auto Review Agent | Application/Workspace Settings > Agents | Select an explicit reviewer account/model, edit bounded extra restrictions, and enable or disable future automatic reviews. Security > Auto Review Policy holds denial behavior and budgets; enforced boundaries are explained inline rather than exposed as controls. |
+| Auto Review Agent | Application/Workspace Settings > Agents | Select an explicit reviewer account/model, edit bounded extra restrictions, and configure thinking, response format, timeout, retries, token growth/ceiling, denied/unresolved behavior, and request/recovery bounds on the Review tab. There is no review-count cap. Every exact non-hard-blocked call, including unknown commands, can be reviewed. Each root and child has an independent reviewer lifecycle. YOLO bypasses the owning session tree only. Unresolved can ask or safely deny for unattended continuation, never approve. Security > Auto Review Policy is a synchronized view of the same persisted policy. |
+| Permission completion | Allow / Deny / Always / cancel | Closing a confirmation releases blocking focus and its deck/overlay only. It never clears or rewrites the existing composer text, attachment references, selection, undo state, or history position; only explicit send/clear actions consume a draft. |
+| Permission presentation | Agent or child requests confirmation | Any painted member of the owning root family uses that family's retained dock. Concurrent family requests receive exact-owner tabs only while two or more exist; tab close denies that exact call. Leaving the family hides without discarding it, and returning restores selection. A background family, or a request received while an editor/file is painted, uses the FIFO global modal without switching tabs or sessions. Owner/subtree termination removes its active and queued requests. |
 | Breadcrumb navigation | Click an individual ancestor label | Settings editors retain discard confirmation; session settings retain staged role edits. File-tree ancestors reveal their row, and file-picker ancestors navigate directories. Separators do not navigate. |
+| Close Settings | Window × or footer Close/Cancel | Closes the entire Application/Workspace Settings window at every depth, never Back. Unsaved preferences and editor drafts require one explicit discard decision; Keep settings open preserves the current page and draft. Breadcrumbs/Back/Esc own navigation. |
 | File-tree search and deep folders | Type while the tree is focused, or click its search field | Both paths edit the same retained filter and request the async path projection. Backspace on the final letter clears it; late results cannot restore the query. Every folder remains a row. Shared offscreen ancestry is compacted into a clickable breadcrumb; when visible rows reach another root branch, the normal top-row breadcrumb stays while absolute guides return. Narrow breadcrumbs keep the nearest folders visible. |
 | Workspace details | Footer **Workspace** | Explicit Open Agents, Open Files, and Previous Sessions sections. Collapsed resources occupy one row; click, Enter, or Space toggles details; Right expands and Left collapses. Saved sessions expose an explicit Resume action inside their details. |
 | Open Tabs details | Click header model / context telemetry | Same single-row disclosure pattern, restricted to visible tabs. Identity, current model, known call/cost totals and lifecycle share the row; less important facts yield first at narrow widths. Expanded details expose an Open action. |
+| Terminate background command | Its row's Terminate button; compact close glyph on narrow grids | Only running rows expose the action. Click selects the exact command; Enter/Space activates a focused button, Up/Down or Tab moves between buttons, and Esc returns to the composer. Handle, PID, start time and owning session must still match. Finished/stale/replaced rows never signal a process, and the session and other jobs remain alive. |
 
 Prompt history owns content-addressed media beside `history.json` with
 owner-only permissions. Multimodal entries never merge by text similarity.
@@ -54,6 +58,14 @@ media is session-owned, so pruning the bounded history cannot break a resumed
 session. Individual binary reads are limited to 64 MiB. Capture failures are
 reported and marked unavailable rather than silently recalling text-only
 versions. Application shutdown flushes pending history before closing sessions.
+
+Windows background-command termination uses the retained Job Object for both
+pipe and ConPTY commands; normal completion cleans descendants before waiting
+for inherited output pipes. Native acceptance remains a Windows-machine check:
+`go test ./fileio -run 'TestWindows(KillRef|CompletedCommand|InteractiveCommands)|TestKillRef|TestSettledCommand' -count=1`.
+These tests do not skip missing/broken process ownership: failures include
+`TODO(Windows)` and the exact ownership, child-cleanup, unrelated-process or
+ConPTY behavior to investigate. Linux cross-compilation is not a native pass.
 
 ## Editor context
 
@@ -112,9 +124,18 @@ window derive from current bytes, not replayed change guesses.
 | Action | Binding / control | Notes |
 |--------|-------------------|-------|
 | New / float / close | `+` `⇱` `✕` header icons | Panel header, right of the tabs (VS Code style) |
+| Select terminal instance | Compact numbered tabs; picker `≡` for overflow | Tab labels and terminal actions share one row; selecting retains the same PTY and focuses its body. All tabs use the shared baseline and active-tab scrolling. |
+| Browse overflowing tabs | Horizontal trackpad/wheel, wheel up/down over strip, `‹` / `›` | Browsing never changes the active PTY or snaps back on repaint. Labels are `Terminal 1` / `Terminal 2`, adapting to `T 1` / `T 2` when cramped; picker numbers match and placement is named, never `0`. |
 | Dock a floating terminal | `⇲` title-bar button | Same PTY, no restart |
 | Scrollback | Wheel, Shift+PgUp/PgDn/Home/End | Primary screen only; typing snaps to bottom |
 | Selection / copy | Drag; double-click word; triple-click line | Copy-on-release + Ctrl+Shift+C; Shift bypasses app mouse tracking |
+
+Workspace, Problems, and Notices put search and More/Maximize/Hide on the same
+header row. Memory and Board put their tabs or detail title beside those host
+controls; browse search and local actions share a row. Narrow panels replace the
+local buttons with a same-row More button; its action list preserves all commands
+and restores the retained search/query on Back or Esc. Extremely constrained
+slots retain a vertical action fallback rather than clipping buttons.
 
 ## Focus precedence (current)
 
@@ -149,7 +170,38 @@ tab attention until the panel is activated or closed.
 | Replace in Files | yes | yes | yes | clamp | same search surface; Replace/All on the right of the replace row; Ctrl+Enter replaces all |
 | File tree | yes | custom | no | clamp | expand/open |
 | Context menu | yes | no | no | wrap | activate |
-| Launcher | yes | step | yes | clamp | activate; fixed search row; workspace viewport scrolls independently |
+| Launcher | Up/Down | viewport | yes outside the search editor | clamp | open exact resource; Tab/Shift+Tab visit original action controls, Skills, MCP, search, resources and Retry; hover never redirects keyboard activation |
+
+### Workspace home
+
+- On wide grids, the original four-row New Session control (cycling sparkle,
+  project path and Enter hint) spans the complete top section. Beneath it, the
+  original folder-icon New Workspace control starts the left pane. There is no
+  additional workspace heading or duplicate Settings, Help, palette or Sessions
+  control. On cramped grids the two action controls stack with exactly one blank
+  row between them. Retry belongs to the Recent workspaces heading row and never
+  shortens the dedicated search row.
+- Skills and MCP retain their named current resources and independent scrolling
+  in the wide left pane. After one blank row below New Workspace, they divide all
+  remaining height equally. Clicking a resource opens its exact source-qualified
+  detail in the existing manager. The left pane, including both capability panels,
+  is hidden in cramped mode.
+- Recent workspaces occupy the right pane, never a full-width resource grid.
+  Each name and path share a two-row hit target, with one quiet, non-interactive
+  row between resources. The last resource has no trailing spacer. Search always
+  owns a separate full-width row below the heading and remains fixed while
+  scrolling. Its navigation guide is pinned to the bottom of the pane regardless
+  of resource count. Below 72 available columns Recent workspaces takes the full
+  content width beneath the stacked actions.
+- Loading uses a thin `ProgressRule` ink sweep, not blinking dots or fake
+  percentages. The last successful listing stays usable during refresh. Only
+  the current owner/generation can settle loading; errors expose Retry.
+- Right-click a workspace name or path offers Open, Copy path and Delete
+  workspace. Delete opens an asynchronous review with Cancel focused. It moves
+  saved workspace/session data into recovery storage; project files are never
+  removed. Undo in the completed dialog refuses a later replacement workspace.
+  Recovery location is recorded in Notices and an on-disk manifest; after the
+  dialog closes, recovery is manual. The bare D key never deletes saved data.
 
 ## Known defects to fix during migration
 

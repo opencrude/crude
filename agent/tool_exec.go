@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -85,7 +86,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []provider.ToolC
 	var nonBlocking, blocking []indexedToolCall
 	for index, tc := range toolCalls {
 		indexed := indexedToolCall{index: index, call: tc}
-		if isPotentiallyBlocking(tc.Function.Name) && !a.parallelCommandAllowed(tc) {
+		if (isPotentiallyBlocking(tc.Function.Name) || strings.HasPrefix(tc.Function.Name, "mcp__") || tc.Function.Name == "capability_activate") && !a.parallelCommandAllowed(tc) {
 			blocking = append(blocking, indexed)
 		} else {
 			nonBlocking = append(nonBlocking, indexed)
@@ -219,6 +220,15 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 	if errMsg == "" && tc.Function.Name == "apply_patch" {
 		errMsg = a.validatePatchPermissions(params)
 	}
+	if errMsg == "" {
+		metadata, known := tools.NativeMetadata(tc.Function.Name)
+		if a.ToolMetadata != nil {
+			metadata, known = a.ToolMetadata(tc.Function.Name)
+		}
+		if strings.HasPrefix(tc.Function.Name, "mcp__") && (!known || !PolicyAllowsMetadata(a.Policy, metadata)) {
+			errMsg = "Error: dynamic tool is unknown or denied by the effective agent policy."
+		}
+	}
 	if errMsg != "" {
 		a.logger.Warn("TOOL", "empty_required_param", "name", tc.Function.Name)
 		emit(AgentEvent{Type: "tool_call", Data: map[string]any{
@@ -283,7 +293,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		}})
 		resp, ok := waitForBlockResponse(ctx, blockResolveCh, blockID)
 		if !ok {
-			emit(AgentEvent{Type: "blocking_complete"})
+			emit(AgentEvent{Type: "blocking_complete", Data: map[string]string{"block_id": blockID}})
 			result := "Question interrupted because the active turn was cancelled."
 			emit(AgentEvent{Type: "tool_result", Data: map[string]any{
 				"internal_id": internalID,
@@ -294,7 +304,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			}})
 			return execResult{id: tc.ID, name: "question", result: tools.ToolResult{Content: result}, toolError: true}
 		}
-		emit(AgentEvent{Type: "blocking_complete"})
+		emit(AgentEvent{Type: "blocking_complete", Data: map[string]string{"block_id": blockID}})
 		result, resultError := questionBlockResult(resp)
 		resultData := map[string]any{
 			"internal_id": internalID,
@@ -370,7 +380,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			}})
 			response, ok := waitForBlockResponse(ctx, blockResolveCh, blockID)
 			if !ok {
-				emit(AgentEvent{Type: "blocking_complete"})
+				emit(AgentEvent{Type: "blocking_complete", Data: map[string]string{"block_id": blockID}})
 				return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: "Permission request interrupted because the active turn was cancelled."}, toolError: true}
 			}
 			resp := response.Value
@@ -394,7 +404,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 				return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errMsg}, toolError: true}
 			}
 			a.logger.Info("BLOCK", "resolved", "response", resp, "operation", sr.Risk.String(), "tool", "execute_command")
-			emit(AgentEvent{Type: "blocking_complete"})
+			emit(AgentEvent{Type: "blocking_complete", Data: map[string]string{"block_id": blockID}})
 			if resp == "always" {
 				emit(AgentEvent{Type: "confirmation_always", Data: map[string]string{
 					"operation": sr.Risk.String(),
@@ -475,7 +485,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		emit(AgentEvent{Type: "blocking", Data: blockingData})
 		response, ok := waitForBlockResponse(ctx, blockResolveCh, blockID)
 		if !ok {
-			emit(AgentEvent{Type: "blocking_complete"})
+			emit(AgentEvent{Type: "blocking_complete", Data: map[string]string{"block_id": blockID}})
 			return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: "Permission request interrupted because the active turn was cancelled."}, toolError: true}
 		}
 		resp := response.Value
@@ -499,7 +509,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errMsg}, toolError: true}
 		}
 		a.logger.Info("BLOCK", "resolved", "response", resp, "operation", fileOp, "tool", tc.Function.Name)
-		emit(AgentEvent{Type: "blocking_complete"})
+		emit(AgentEvent{Type: "blocking_complete", Data: map[string]string{"block_id": blockID}})
 		if resp == "always" && tc.Function.Name == "apply_patch" {
 			emit(AgentEvent{Type: "confirmation_always", Data: map[string]string{"operation": fileOp, "tool": tc.Function.Name, "patch_input": getStr(params, "input")}})
 		} else if resp == "always" {
@@ -592,6 +602,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 
 	a.logger.Info("TOOL", "call", "name", tc.Function.Name, "params", formatToolArgs(params))
 	toolStart := time.Now()
+	ctx = context.WithValue(ctx, tools.ExecutionIdentityKey{}, tools.ExecutionIdentity{AgentID: string(a.AgentID), MessageID: tc.InternalID, ToolCallID: tc.ID})
 
 	var result tools.ToolResult
 	var toolErr error
@@ -607,6 +618,25 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			ctx = context.WithValue(ctx, SubAgentToolCallIDKey{}, tc.ID)
 		}
 		result, toolErr = a.ToolFn(ctx, tc.Function.Name, params)
+	}
+	var approval interface {
+		CapabilityApproval() (string, string)
+		CapabilityApprovalContext(context.Context) context.Context
+	}
+	if tc.Function.Name == "capability_activate" && errors.As(toolErr, &approval) {
+		id, reason := approval.CapabilityApproval()
+		drainStaleBlockResponses(blockResolveCh)
+		emit(AgentEvent{Type: "blocking", Data: map[string]string{"block_id": blockID, "operation": "Read", "tool": tc.Function.Name, "target": id, "question": "Acquire and activate this exact capability?", "reason": reason}})
+		response, answered := waitForBlockResponse(ctx, blockResolveCh, blockID)
+		emit(AgentEvent{Type: "blocking_complete", Data: map[string]string{"block_id": blockID}})
+		if answered && (response.Value == "allow" || response.Value == "always") {
+			emitPermissionDecision(emit, tc, "allow")
+			approvedContext := approval.CapabilityApprovalContext(ctx)
+			result, toolErr = a.ToolFn(approvedContext, tc.Function.Name, params)
+		} else {
+			result = tools.ToolResult{Content: "Capability acquisition was denied or cancelled. Do not retry or expand permissions; use an available adequate method."}
+			toolErr = errors.New("acquisition not approved")
+		}
 	}
 	if toolErr != nil && result.Content == "" {
 		result.Content = fmt.Sprintf("Error: %s", toolErr.Error())

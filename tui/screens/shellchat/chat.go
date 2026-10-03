@@ -42,6 +42,7 @@ type Screen struct {
 	paneWheel      ui.WheelAccelState
 	paneDrag       *paneGutterDrag
 	paneHover      string
+	rowsSourceID   uint64
 	rowsGeneration uint64
 	onPaneScroll   func(string)
 	rows           []chatprojection.MessageRow

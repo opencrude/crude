@@ -9,6 +9,7 @@ import (
 
 	"crude/fileio"
 	"crude/logger"
+	rootprompt "crude/prompt"
 	"crude/provider"
 	"crude/safety"
 	"crude/tools"
@@ -56,6 +57,8 @@ type Agent struct {
 	PermissionReviewer       PermissionReviewer
 	Depth                    int
 	ParentID                 AgentID
+	WorkDir                  string
+	GuidancePaths            []string
 	MaxRetries               int
 	MaxOutputTokens          int
 	ContextCompactionPercent int
@@ -70,15 +73,21 @@ type Agent struct {
 	PrepareRuntimeNotices  func() []provider.ChatMessage
 	RuntimeNoticesAccepted func()
 	ToolFn                 func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error)
+	ToolMetadata           func(string) (tools.ToolMetadata, bool)
+	ToolResultAccepted     func(string, string, []provider.ChatMessage)
 	logger                 *logger.Logger
 	turn                   *logger.TurnLogger
 	Emit                   func(AgentEvent)
 	PrepareCompaction      func(CompactionSource) error
 	CommitCompaction       func(CompactionCommit) error
+	ContinuationContext    func(context.Context) (rootprompt.SessionContinuityData, error)
+	LatestHumanTurnState   func(context.Context) (string, bool, error)
+	GuidanceCacheLoad      func(string) (string, bool)
+	GuidanceCacheStore     func(string, string)
 	Ctx                    context.Context
 	Yolo                   bool
-	// YoloMode supplies the owning session's live policy. Yolo remains the
-	// fallback for standalone agents and always-YOLO sub-agents.
+	// YoloMode supplies the owning session's live policy to roots and children.
+	// Yolo remains the fallback for standalone agents.
 	YoloMode    func() bool
 	AsyncMgr    *fileio.AsyncCommandManager
 	SubAgentMgr *SubAgentManager
@@ -91,6 +100,7 @@ type Agent struct {
 
 	fileMu            sync.Map
 	writeReportCalled bool
+	guidance          *projectGuidance
 }
 
 // SeedContextUsage carries the latest provider-reported request baseline across

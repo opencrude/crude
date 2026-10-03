@@ -41,7 +41,8 @@ func (s *OpenAIResponsesStandard) EncodeRequest(req *ChatRequest) ([]byte, error
 	if req == nil {
 		return nil, fmt.Errorf("request is nil")
 	}
-	input, err := encodeResponsesInput(req.Messages)
+	previous, start := responseContinuation(req)
+	input, err := encodeResponsesInput(req.Messages, start)
 	if err != nil {
 		return nil, err
 	}
@@ -49,6 +50,9 @@ func (s *OpenAIResponsesStandard) EncodeRequest(req *ChatRequest) ([]byte, error
 		"model":  req.Model,
 		"input":  input,
 		"stream": req.Stream,
+	}
+	if previous != "" {
+		wire["previous_response_id"] = previous
 	}
 	if len(req.Tools) > 0 {
 		wire["tools"] = encodeResponsesTools(req.Tools)
@@ -75,7 +79,7 @@ func (s *OpenAIResponsesStandard) EncodeRequest(req *ChatRequest) ([]byte, error
 	return json.Marshal(wire)
 }
 
-func encodeResponsesInput(messages []ChatMessage) ([]any, error) {
+func encodeResponsesInput(messages []ChatMessage, start int) ([]any, error) {
 	input := make([]any, 0, len(messages))
 	customCalls := map[string]bool{}
 	for _, message := range messages {
@@ -85,7 +89,18 @@ func encodeResponsesInput(messages []ChatMessage) ([]any, error) {
 			}
 		}
 	}
-	for _, msg := range messages {
+	for _, message := range messages[:start] {
+		for _, item := range message.ProviderItems {
+			if item.Standard == "openai-responses" && item.Type == "custom_tool_call" {
+				var call openAIOutputItem
+				if err := json.Unmarshal(item.Data, &call); err != nil {
+					return nil, fmt.Errorf("decode omitted custom tool call: %w", err)
+				}
+				customCalls[call.CallID] = true
+			}
+		}
+	}
+	for _, msg := range messages[start:] {
 		preservedMessage := false
 		preservedCalls := make(map[string]bool)
 		if msg.Role == "assistant" {
@@ -137,11 +152,24 @@ func encodeResponsesInput(messages []ChatMessage) ([]any, error) {
 			})
 			continue
 		case "user", "system", "developer", "assistant":
-			if (msg.ContentString() != "" || msg.Content.HasImage()) &&
+			if (msg.ContentString() != "" || msg.Content.HasImage() || msg.Content.HasMedia() || msg.Refusal != "") &&
 				(msg.Role != "assistant" || !preservedMessage) {
-				content, err := encodeResponsesContent(msg)
-				if err != nil {
-					return nil, err
+				var content any
+				if msg.Role == "assistant" {
+					// Canonical history has no server output-message ID. Use the
+					// documented string-content message, not input-only blocks or
+					// a fabricated ResponseOutputMessage. Exact output items above
+					// retain their original IDs, phases and output_text/refusal parts.
+					content = msg.ContentString()
+					if content == "" {
+						content = msg.Refusal
+					}
+				} else {
+					var err error
+					content, err = encodeResponsesContent(msg)
+					if err != nil {
+						return nil, err
+					}
 				}
 				input = append(input, map[string]any{
 					"role":    msg.Role,
@@ -166,8 +194,9 @@ func encodeResponsesInput(messages []ChatMessage) ([]any, error) {
 					input = append(input, map[string]any{"type": "custom_tool_call", "call_id": call.ID, "name": call.Function.Name, "input": call.Function.Arguments})
 					continue
 				}
-				item := map[string]any{"type": "function_call", "call_id": call.ID, "name": call.Function.Name, "arguments": call.Function.Arguments}
-				if namespace, name, ok := strings.Cut(call.Function.Name, "."); ok {
+				wireName := wireFunctionName(call.Function.Name)
+				item := map[string]any{"type": "function_call", "call_id": call.ID, "name": wireName, "arguments": call.Function.Arguments}
+				if namespace, name, ok := strings.Cut(wireName, "."); ok {
 					item["namespace"] = namespace
 					item["name"] = name
 				}
@@ -184,9 +213,6 @@ func encodeResponsesContent(msg ChatMessage) ([]any, error) {
 	for _, part := range parts {
 		switch part.Type {
 		case "text":
-			// Reconstructed conversation messages use the Responses
-			// EasyInputMessage shape. output_text is reserved for raw output
-			// message items returned by the API.
 			content = append(content, map[string]any{"type": "input_text", "text": part.Text})
 		case "image_url":
 			if msg.Role == "assistant" {
@@ -265,8 +291,9 @@ func encodeResponsesTools(tools []ToolDef) []any {
 			result = append(result, map[string]any{"type": "custom", "name": tool.Function.Name, "description": tool.Function.Description, "format": tool.Format})
 			continue
 		}
-		definition := map[string]any{"type": "function", "name": tool.Function.Name, "description": tool.Function.Description, "parameters": tool.Function.Parameters}
-		if namespace, name, ok := strings.Cut(tool.Function.Name, "."); ok {
+		wireName := wireFunctionName(tool.Function.Name)
+		definition := map[string]any{"type": "function", "name": wireName, "description": tool.Function.Description, "parameters": tool.Function.Parameters}
+		if namespace, name, ok := strings.Cut(wireName, "."); ok {
 			definition["name"] = name
 			result = append(result, map[string]any{"type": "namespace", "name": namespace, "description": "Parallel tool execution", "tools": []any{definition}})
 		} else {
@@ -286,14 +313,22 @@ func encodeResponsesToolChoice(choice any) any {
 		return choice
 	}
 	fn, ok := obj["function"].(map[string]any)
-	if !ok {
+	if !ok && obj["type"] != "function" {
 		return choice
+	}
+	if !ok {
+		fn = obj
 	}
 	name, _ := fn["name"].(string)
 	if name == "" {
 		return choice
 	}
-	return map[string]any{"type": "function", "name": name}
+	name = wireFunctionName(name)
+	result := map[string]any{"type": "function", "name": name}
+	if namespace, function, ok := strings.Cut(name, "."); ok {
+		result["namespace"], result["name"] = namespace, function
+	}
+	return result
 }
 
 func (s *OpenAIResponsesStandard) DecodeResponse(body []byte) (*ChatResponse, error) {
@@ -320,9 +355,9 @@ func (s *OpenAIResponsesStandard) ModelsURL(base *url.URL, cursor string) *url.U
 // and ZDR additionally requests encrypted reasoning passthrough so the
 // reasoning continuity survives without server storage.
 func (s *OpenAIResponsesStandard) RequestExtras(modelID, thinkingEffort string, settings ProtocolSettings) map[string]any {
-	extras := map[string]any{}
-	if !settings.ResolveStore(true) {
-		extras["store"] = false
+	store := settings.ResolveStore(true)
+	extras := map[string]any{"store": store}
+	if !store {
 		if settings.ZeroDataRetention {
 			extras["include"] = []string{"reasoning.encrypted_content"}
 		}
@@ -353,6 +388,7 @@ func (s *OpenAIResponsesStandard) ContextWindow(modelID string) int {
 }
 
 type openAIResponse struct {
+	Store             *bool                    `json:"store"`
 	ID                string                   `json:"id"`
 	Model             string                   `json:"model"`
 	Status            string                   `json:"status"`
@@ -370,6 +406,7 @@ type openAIResponsesUsage struct {
 }
 
 type openAIResponsesError struct {
+	Param   string `json:"param"`
 	Type    string `json:"type"`
 	Code    string `json:"code"`
 	Message string `json:"message"`
@@ -402,7 +439,7 @@ type openAIOutputItem struct {
 
 func (r *openAIResponse) toChatResponse() (*ChatResponse, error) {
 	if r.Error != nil {
-		return nil, &APIError{Type: r.Error.Type, Code: r.Error.Code, Message: r.Error.Message}
+		return nil, &APIError{Type: r.Error.Type, Code: r.Error.Code, Message: r.Error.Message, Param: r.Error.Param}
 	}
 	switch r.Status {
 	case "completed", "incomplete":
@@ -487,6 +524,18 @@ func (r *openAIResponse) toChatResponse() (*ChatResponse, error) {
 		Model:   r.Model,
 		Choices: []ChatChoice{{Message: msg, FinishReason: finishReason}},
 	}
+	if r.Status == "completed" && (r.Store == nil || *r.Store) {
+		resp.ContinuationID = r.ID
+		if r.ID != "" {
+			resp.ContinuationReason = "response_id_retained"
+		} else {
+			resp.ContinuationReason = "response_id_missing"
+		}
+	} else if r.Status == "completed" {
+		resp.ContinuationReason = "response_not_stored"
+	} else {
+		resp.ContinuationReason = "response_incomplete"
+	}
 	if r.Usage != nil {
 		resp.Usage = &ChatUsage{
 			PromptTokens:     r.Usage.InputTokens,
@@ -510,6 +559,8 @@ type openAIResponsesStreamDecoder struct {
 	pendingCustomCalls map[string]bool
 	content            strings.Builder
 	reasoningBlocks    map[string]string
+	responseID         string
+	responseStore      *bool
 }
 
 func (d *openAIResponsesStreamDecoder) customCallState(item openAIOutputItem, done bool) {
@@ -570,6 +621,14 @@ func (d *openAIResponsesStreamDecoder) Decode(event StreamEvent) (StreamUpdate, 
 	}
 
 	switch typ {
+	case "response.created", "response.queued", "response.in_progress":
+		if envelope.Response == nil {
+			return StreamUpdate{}, fmt.Errorf("%s event is missing response", typ)
+		}
+		if err := d.observeResponse(envelope.Response); err != nil {
+			return StreamUpdate{}, err
+		}
+		return StreamUpdate{}, nil
 	case "response.output_text.delta", "response.refusal.delta":
 		d.content.WriteString(envelope.Delta)
 		return StreamUpdate{ContentDelta: envelope.Delta}, nil
@@ -599,7 +658,7 @@ func (d *openAIResponsesStreamDecoder) Decode(event StreamEvent) (StreamUpdate, 
 		}
 		return StreamUpdate{ToolCalls: []ToolCallDelta{{
 			Index:            envelope.OutputIndex,
-			Name:             envelope.Name,
+			Name:             canonicalToolName(envelope.Name),
 			Arguments:        arguments,
 			ReplaceArguments: true,
 		}}}, nil
@@ -613,14 +672,14 @@ func (d *openAIResponsesStreamDecoder) Decode(event StreamEvent) (StreamUpdate, 
 	case "response.failed":
 		if envelope.Response != nil && envelope.Response.Error != nil {
 			apiErr := envelope.Response.Error
-			return StreamUpdate{}, &APIError{Type: apiErr.Type, Code: apiErr.Code, Message: apiErr.Message}
+			return StreamUpdate{}, &APIError{Type: apiErr.Type, Code: apiErr.Code, Message: apiErr.Message, Param: apiErr.Param}
 		}
 		return StreamUpdate{}, &APIError{Type: "response_failed", Message: "OpenAI response failed"}
 	case "response.cancelled":
 		return StreamUpdate{}, &APIError{Type: "response_cancelled", Message: "OpenAI response was cancelled"}
 	case "error":
 		if envelope.Error != nil {
-			return StreamUpdate{}, &APIError{Type: envelope.Error.Type, Code: envelope.Error.Code, Message: envelope.Error.Message}
+			return StreamUpdate{}, &APIError{Type: envelope.Error.Type, Code: envelope.Error.Code, Message: envelope.Error.Message, Param: envelope.Error.Param}
 		}
 		return StreamUpdate{}, &APIError{Type: "stream_error", Code: envelope.Code, Message: envelope.Message}
 	default:
@@ -687,9 +746,12 @@ func (d *openAIResponsesStreamDecoder) decodeOutputItem(index int, raw json.RawM
 }
 
 func (d *openAIResponsesStreamDecoder) decodeTerminalResponse(response *openAIResponse, incomplete bool) (StreamUpdate, error) {
+	if err := d.observeResponse(response); err != nil {
+		return StreamUpdate{}, err
+	}
 	if response.Error != nil {
 		return StreamUpdate{}, &APIError{
-			Type: response.Error.Type, Code: response.Error.Code, Message: response.Error.Message,
+			Type: response.Error.Type, Code: response.Error.Code, Message: response.Error.Message, Param: response.Error.Param,
 		}
 	}
 	expectedStatus := "completed"
@@ -704,6 +766,21 @@ func (d *openAIResponsesStreamDecoder) decodeTerminalResponse(response *openAIRe
 	}
 
 	update := StreamUpdate{Done: true, FinishReason: "stop"}
+	stored := response.Store
+	if stored == nil {
+		stored = d.responseStore
+	}
+	switch {
+	case incomplete:
+		update.ContinuationReason = "response_incomplete"
+	case stored != nil && !*stored:
+		update.ContinuationReason = "response_not_stored"
+	case d.responseID == "":
+		update.ContinuationReason = "response_id_missing"
+	default:
+		update.ContinuationID = d.responseID
+		update.ContinuationReason = "response_id_retained"
+	}
 	if incomplete {
 		update.FinishReason = "incomplete"
 		if response.IncompleteDetails != nil && response.IncompleteDetails.Reason != "" {
@@ -789,6 +866,26 @@ func (d *openAIResponsesStreamDecoder) decodeTerminalResponse(response *openAIRe
 	return update, nil
 }
 
+func (d *openAIResponsesStreamDecoder) observeResponse(response *openAIResponse) error {
+	if response == nil {
+		return nil
+	}
+	if response.ID != "" {
+		if d.responseID != "" && d.responseID != response.ID {
+			return fmt.Errorf("OpenAI stream response ID changed from %q to %q", d.responseID, response.ID)
+		}
+		d.responseID = response.ID
+	}
+	if response.Store != nil {
+		stored := *response.Store
+		if d.responseStore != nil && *d.responseStore != stored {
+			return fmt.Errorf("OpenAI stream storage state changed during one response")
+		}
+		d.responseStore = &stored
+	}
+	return nil
+}
+
 func (d *openAIResponsesStreamDecoder) reasoningDelta(output, index int, kind reasoning.Kind, text string, complete bool) reasoning.Delta {
 	id := fmt.Sprintf("%d:%d:%s", output, index, kind)
 	if d.reasoningBlocks == nil {
@@ -837,5 +934,5 @@ func (item openAIOutputItem) toolName() string {
 	if item.Namespace != "" {
 		return item.Namespace + "." + item.Name
 	}
-	return item.Name
+	return canonicalToolName(item.Name)
 }

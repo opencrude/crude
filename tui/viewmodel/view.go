@@ -13,6 +13,7 @@ import (
 	"crude/tui/filetree"
 	"crude/tui/rendering"
 	"crude/tui/screens/activitylist"
+	"crude/tui/screens/gitreview"
 	"crude/tui/screens/launcher"
 	"crude/tui/screens/shellchat"
 	"crude/tui/screens/shelleditor"
@@ -21,7 +22,6 @@ import (
 	"crude/tui/screens/shelltabs"
 	"crude/tui/screens/shelltree"
 	"crude/tui/screens/sourcecontrol"
-	"crude/tui/screens/termdock"
 	"crude/tui/ui"
 	"crude/workspace"
 )
@@ -30,6 +30,7 @@ func (m *App) View() tea.View {
 	if m.width == 0 || m.height == 0 {
 		return m.newTerminalView("")
 	}
+	m.syncMemoryBrowserLifecycle()
 	if m.shouldDeferFrame() {
 		return m.newTerminalView(m.cachedOutput)
 	}
@@ -145,7 +146,8 @@ func (m *App) computeContentLayout() contentLayout {
 	m.Win.SetWidth(lay.InnerW)
 
 	isEditorActive := m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen()
-	isLauncherActive := m.AgentMgr.VisibleCount() == 0 && m.EditorState.ActiveView == "" && m.launcherScreen != nil
+	isReviewActive := m.isGitReviewActive()
+	isLauncherActive := !isReviewActive && m.AgentMgr.VisibleCount() == 0 && m.EditorState.ActiveView == "" && m.launcherScreen != nil
 	// The file picker is a FloatingWindow over the chat, not an input-replacing
 	// mode: hiding the composer while it is open made Ctrl+O look like the
 	// prompt area vanished. Every other overlay mode still owns the full frame.
@@ -154,7 +156,7 @@ func (m *App) computeContentLayout() contentLayout {
 	if node := m.AgentMgr.ActiveNode(); node != nil && node.State != nil {
 		reviewingCompletedAgent = node.State.Completed
 	}
-	lay.ShowMainInput = !isLauncherActive && !isEditorActive && !overlayHidesInput && !reviewingCompletedAgent
+	lay.ShowMainInput = !isReviewActive && !isLauncherActive && !isEditorActive && !overlayHidesInput && !reviewingCompletedAgent
 
 	m.syncFormHint()
 
@@ -353,6 +355,11 @@ func (m *App) configureShell() {
 	})
 	m.shell.setSlot(shellChatSlot, m.chatHostVisible(), lay.ChatRect)
 	m.shell.setSlot(shellEditorSlot, m.isEditorActive(), lay.EditorRect)
+	m.shell.SetScreen(shellGitReviewSlot, m.gitReview)
+	m.shell.setSlot(shellGitReviewSlot, m.isGitReviewActive(), ui.Rect{X: lay.SidebarW, Y: lay.ChatAreaTop, W: lay.ContentW, H: lay.ChatH})
+	if m.gitReview != nil {
+		m.gitReview.SetSidebarAvailable(m.sidebarHostVisible() && m.activityView == activityGit)
+	}
 	m.shell.setSlot(shellInputSlot, !lay.InputRect.Empty(), lay.InputRect)
 	m.shell.setSlot(shellDeckSlot, !lay.DeckRect.Empty(), lay.DeckRect)
 	m.shell.setSlot(shellTermDockSlot, !lay.TermDockRect.Empty(), lay.TermDockRect)
@@ -418,7 +425,7 @@ func (m *App) syncRootFocus() {
 	defer m.syncTerminalFocusReports()
 	if m.termDockOwnsKeys() && m.termDock != nil {
 		cur := m.rootHost.Focused()
-		if cur == termdock.RailID || cur == termdock.DividerID || m.termDock.OwnsFocus(cur) {
+		if m.termDock.OwnsFocus(cur) {
 			return
 		}
 		m.rootHost.Focus(m.termDock.PreferredFocus())
@@ -434,7 +441,7 @@ func (m *App) syncRootFocus() {
 			}
 		} else if m.activityView == activityGit && m.sourceControl != nil {
 			id = sourcecontrol.ListID
-			if current := m.rootHost.Focused(); current == sourcecontrol.CommitID || current == sourcecontrol.ListID {
+			if current := m.rootHost.Focused(); current == sourcecontrol.FilterID || current == sourcecontrol.ListID || current == sourcecontrol.ActionsID {
 				id = current
 			}
 		} else {
@@ -449,13 +456,21 @@ func (m *App) syncRootFocus() {
 		id = shelleditor.ScreenID
 	case FocusLauncher:
 		id = launcher.ScreenID
-		switch current := m.rootHost.Focused(); current {
-		case launcher.ScreenID, launcher.HeroID, launcher.NewWorkspaceID,
-			launcher.SearchID, launcher.WorkspaceListID:
+		if m.launcherScreen != nil && m.rootHost.Focused() == launcher.ScreenID {
+			m.launcherScreen.SyncFocus()
+		}
+		if current := m.rootHost.Focused(); m.launcherScreen != nil && m.launcherScreen.OwnsFocus(current) {
 			id = current
 		}
 	case FocusInput:
-		id = shellinput.ScreenID
+		if m.isGitReviewActive() {
+			id = gitreview.ScreenID
+			if current := m.rootHost.Focused(); strings.HasPrefix(string(current), "gitreview") {
+				id = current
+			}
+		} else {
+			id = shellinput.ScreenID
+		}
 	default:
 		id = shellchat.ScreenID
 	}
@@ -689,7 +704,7 @@ func (m *App) configureChatScreenWithLayout(layout contentLayout) {
 		},
 	}
 
-	paint := shellchat.PaintParams{Generation: snapshot.Generation, ChangedIndices: snapshot.ChangedIndices, StructureChanged: snapshot.StructureChanged, Compose: composeParams, PaneLineMap: paneLineMap, OnPaneScroll: func(paneID string) { m.subPaneProjections.InvalidateSubPane(activeAgentID, paneID) }}
+	paint := shellchat.PaintParams{SourceID: snapshot.SourceID, Generation: snapshot.Generation, ChangedIndices: snapshot.ChangedIndices, StructureChanged: snapshot.StructureChanged, Compose: composeParams, PaneLineMap: paneLineMap, OnPaneScroll: func(paneID string) { m.subPaneProjections.InvalidateSubPane(activeAgentID, paneID) }}
 	if m.chatScreen.HasActiveSelection() {
 		paint.HasSelection = true
 		paint.SelStartLine, paint.SelStartCol, paint.SelEndLine, paint.SelEndCol = m.chatScreen.SelectionRange()
@@ -720,7 +735,7 @@ func (m *App) configureLauncherScreen() {
 	if m.launcherScreen == nil || !m.launcherHostVisible() {
 		return
 	}
-	m.launcherScreen.SetShortcuts(m.launcherShortcuts())
+	m.launcherScreen.SetRegistry(m.actionRegistry)
 	m.launcherScreen.SetAnimation(m.SpinFrame, time.Since(m.LastInteractionTime).Seconds())
 }
 

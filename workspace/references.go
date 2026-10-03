@@ -373,6 +373,10 @@ func (s *ReferenceStore) writeReferenceFile(label string, data []byte, ext strin
 
 func defaultReferenceLabel(kind sessiondb.Kind, idx int) string {
 	switch kind {
+	case sessiondb.KindMCPTool:
+		return fmt.Sprintf("[Tool%d]", idx)
+	case sessiondb.KindMCPContext:
+		return fmt.Sprintf("[MCP Context%d]", idx)
 	case sessiondb.KindPastedText:
 		return fmt.Sprintf("[Pasted Text%d]", idx)
 	case sessiondb.KindPastedTextFile:

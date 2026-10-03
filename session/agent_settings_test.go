@@ -139,7 +139,7 @@ func TestMemoryAgentUsesEditedInstructionsAndOutputLimit(t *testing.T) {
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 			t.Errorf("decode request: %v", err)
 		}
-		if request["model"] != "memory-model" || request["max_tokens"] != float64(56) || !strings.Contains(fmt.Sprint(request["messages"]), "Additional user-configured Memory Agent instructions:") || !strings.Contains(fmt.Sprint(request["messages"]), "Use factual summaries") {
+		if request["model"] != "memory-model" || request["max_tokens"] != float64(56) || !strings.Contains(fmt.Sprint(request["messages"]), "agent_profile_instructions") || !strings.Contains(fmt.Sprint(request["messages"]), "Use factual summaries") {
 			t.Errorf("Memory Agent settings were ignored: %+v", request)
 		}
 		w.Header().Set("Content-Type", "text/event-stream")

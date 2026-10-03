@@ -10,6 +10,7 @@ import (
 	"crude/fileio"
 	"crude/provider"
 	ttypes "crude/tui/types"
+	coretypes "crude/types"
 	"crude/workspace"
 )
 
@@ -37,11 +38,14 @@ func (m *App) memoryContextPaths() []string {
 }
 
 func (m *App) submitInput(sessionID, text string, refIDs []string) tea.Cmd {
+	return m.submitPreparedInput(sessionID, provider.InputWithRefs(text, refIDs))
+}
+
+func (m *App) submitPreparedInput(sessionID string, input provider.UserInput) tea.Cmd {
 	n := m.AgentMgr.Get(sessionID)
 	if n == nil || n.State == nil {
 		return nil
 	}
-	input := provider.InputWithRefs(text, refIDs)
 	input.ActivePaths = m.memoryContextPaths()
 	if m.Workspace == nil || !m.SubmitAgentInput(sessionID, input) {
 		if m.Feedback != nil {
@@ -50,14 +54,14 @@ func (m *App) submitInput(sessionID, text string, refIDs []string) tea.Cmd {
 		return nil
 	}
 	agent := n.State
-	referenceLabels := m.referenceLabels(refIDs)
+	referenceLabels := m.referenceLabels(input.ReferenceIDs)
 	agent.Messages.AppendMessage(workspace.Message{
 		Role:            ttypes.RoleUser,
-		Content:         text,
+		Content:         input.Text,
 		ReferenceLabels: referenceLabels,
 		Time:            time.Now(),
 	})
-	agent.SubmitInput(text)
+	agent.SubmitInput(input.Text)
 	m.syncAgentMessages(sessionID, true)
 	return nil
 }
@@ -126,6 +130,18 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 }
 
 func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
+	if evt.Type == "response_continuation_unavailable" {
+		data, _ := evt.Data.(map[string]any)
+		reason, _ := data["reason"].(string)
+		message := "Responses delta unavailable: the endpoint returned no response ID; full uploads continue"
+		if reason == "response_not_stored" {
+			message = "Responses delta unavailable: the endpoint declined server storage; full uploads continue"
+		}
+		if m.Feedback != nil {
+			m.Feedback.NotifyInfo(message)
+		}
+		return nil
+	}
 	if evt.Type == "btw_consumed" {
 		if node := m.AgentMgr.Get(evt.AgentID); node != nil && node.State != nil && node.State.Messages != nil {
 			data, _ := evt.Data.(map[string]any)
@@ -162,11 +178,7 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 				m.Feedback.NotifyInfo(notice)
 			}
 		}
-		if m.memoryBrowser != nil {
-			m.memoryBrowser.Refresh()
-			m.markMemoryBrowserDirty()
-		}
-		return nil
+		return m.refreshMemoryBrowser()
 	}
 	if evt.Type == "async_command_status" {
 		switch evt.Type {
@@ -240,8 +252,10 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 			if label == "" {
 				label = agentID
 			}
-			sp := m.PaneMgr.GetOrCreate(agentID, workspace.PaneAgent, label)
-			sp.Title = label
+			cat := evtData["category"]
+			paneTitle := workspace.SubAgentActivityLabel(label, cat, "")
+			sp := m.PaneMgr.GetOrCreate(agentID, workspace.PaneAgent, paneTitle)
+			sp.Title = paneTitle
 			sp.Status = "running"
 			subModel := m.ModelName
 			if model, ok := evtData["model"]; ok && model != "" {
@@ -265,10 +279,6 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 			if md, ok := evtData["model"]; ok && md != "" {
 				modelStr = md
 			}
-			cat := ""
-			if c, ok := evtData["category"]; ok {
-				cat = c
-			}
 			agentNode = m.AgentMgr.AddSubAgent(agentID, parentID, label, modelStr, cat, agent)
 			if agentNode == nil {
 				m.PaneMgr.Remove(agentID)
@@ -276,10 +286,7 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 				return nil
 			}
 			if parent := m.AgentMgr.Get(parentID); parent != nil && parent.State != nil && parent.State.Messages != nil {
-				childLabel := label
-				if task := evtData["task"]; task != "" {
-					childLabel += " — " + task
-				}
+				childLabel := workspace.SubAgentActivityLabel(label, cat, evtData["task"])
 				// Without the exact call ID, keep child review in its tab/Agents
 				// panel instead of creating a second or incorrectly linked row.
 				if parent.State.Messages.AttachSubPaneToTool(evtData["parent_tool_id"], agentID, childLabel) {
@@ -297,8 +304,8 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 	if agent == nil {
 		return nil
 	}
-	// Permission and question prompts open inline for the selected owner or
-	// as a modal for a background owner. Neither requires switching tabs;
+	// Permission and question prompts dock for the selected family or
+	// use a modal for a background family. Neither requires switching tabs;
 	// safety alerts likewise update their owner without changing navigation.
 
 	switch evt.Type {
@@ -337,12 +344,19 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 			m.enqueueAgentQuestions(agentPromptRequest{kind: agentPromptQuestions, agentID: agentID, blockID: agent.PendingBlockID, questionsJSON: questionsJSON})
 		},
 		func() {
-			m.OverlayState.SetBlocking(false)
-			m.dismissAgentPromptFor(agentID)
-			m.Input.ResetPrompt()
-			m.Input.ClearInput()
+			blockID := ""
+			switch data := evt.Data.(type) {
+			case map[string]string:
+				blockID = data["block_id"]
+			case map[string]any:
+				blockID, _ = data["block_id"].(string)
+			}
+			m.dismissAgentPromptBlock(agentID, blockID)
 		},
 	)
+	if evt.Type == "done" || evt.Type == "error" {
+		m.dismissAgentPromptFor(agentID)
+	}
 	m.syncAgentMessages(agentID, evt.Type == "done" || evt.Type == "error")
 	m.syncConversationMessages(thinkingTarget, evt.Type == "done" || evt.Type == "error")
 
@@ -379,7 +393,7 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 	// caused flickering by mutating render state every frame.
 	m.syncAgentWindowTabs()
 
-	return m.processAgentResults(cmd)
+	return m.processAgentResults(agentID, cmd)
 }
 
 // restoreFailedBtw puts transport-rejected/cancelled notes back in the owning
@@ -561,7 +575,12 @@ func (m *App) handleSubPaneCompletion(agentID string) {
 	}
 }
 
-func (m *App) processAgentResults(cmd tea.Cmd) tea.Cmd {
+type agentResultFeedbackMsg struct {
+	agentID string
+	reason  string
+}
+
+func (m *App) processAgentResults(agentID string, cmd tea.Cmd) tea.Cmd {
 	if cmd == nil {
 		return nil
 	}
@@ -569,11 +588,7 @@ func (m *App) processAgentResults(cmd tea.Cmd) tea.Cmd {
 		msg := cmd()
 		switch result := msg.(type) {
 		case workspace.AgentDoneResultMsg:
-			if result.Reason == "completed" {
-				m.Feedback.NotifyInfo("✓ done")
-			} else if result.Reason != "" && result.Reason != "cancelled" {
-				m.Feedback.NotifyError("⚠ " + result.Reason)
-			}
+			return agentResultFeedbackMsg{agentID: agentID, reason: result.Reason}
 		case workspace.AgentErrorResultMsg:
 			// The canonical error row and syncAgentStatusEvent already publish
 			// the diagnostic and its owner-scoped Notice. Do not echo it through
@@ -581,6 +596,24 @@ func (m *App) processAgentResults(cmd tea.Cmd) tea.Cmd {
 		}
 		return nil
 	}
+}
+
+func (m *App) handleAgentResultFeedback(msg agentResultFeedbackMsg) {
+	node := m.AgentMgr.Get(msg.agentID)
+	if node == nil || node.Parent != nil || msg.reason == "" || msg.reason == "cancelled" {
+		return // child terminal feedback is richer in sub_agent_completed
+	}
+	label := workspace.AgentDisplayLabel(node)
+	if label == "" {
+		label = "Main Agent"
+	}
+	severity := coretypes.SeverityInfo
+	message := "✓ " + label + " completed"
+	if msg.reason != "completed" {
+		severity, message = coretypes.SeverityError, "✕ "+label+" "+msg.reason
+	}
+	m.Feedback.NotifyAgentTransient(msg.agentID, message, severity)
+	m.forceFrame()
 }
 
 func (m *App) handleUsageData(data any, agentID string) {
@@ -655,6 +688,10 @@ func (m *App) handleSubAgentStarted(evt workspace.AgentEvent) {
 		return
 	}
 	label := agentName
+	category := data["category"]
+	if pane := m.PaneMgr.Get(agentID); pane != nil {
+		pane.Title = workspace.SubAgentActivityLabel(label, category, "")
+	}
 	if n := m.AgentMgr.Get(agentID); n != nil {
 		n.Label = label
 		if n.State != nil {
@@ -669,7 +706,7 @@ func (m *App) handleSubAgentStarted(evt workspace.AgentEvent) {
 			p.renderer.SetLegacyModelFallback(model)
 		}
 	}
-	if category := data["category"]; category != "" {
+	if category != "" {
 		if n := m.AgentMgr.Get(agentID); n != nil {
 			n.Category = category
 		}
@@ -695,8 +732,41 @@ func (m *App) handleSubAgentCompleted(evt workspace.AgentEvent) {
 	if status == "running" {
 		return
 	}
+	m.publishSubAgentTerminalStatus(agentID, data["agent_name"], data["category"], status)
 	if pane := m.PaneMgr.Get(agentID); pane != nil {
 		pane.Status = status
 	}
 	m.completeSubAgent(agentID)
+}
+
+func (m *App) publishSubAgentTerminalStatus(agentID, name, category, status string) {
+	if name == "" {
+		if node := m.AgentMgr.Get(agentID); node != nil {
+			name = workspace.AgentDisplayLabel(node)
+		}
+	}
+	if name == "" {
+		name = agentID
+	}
+	identity := name
+	if role := workspace.CategoryDisplayName(category); role != "" {
+		identity += " · " + role
+	}
+	marker, outcome, severity := "✕", "failed", coretypes.SeverityError
+	switch status {
+	case "completed":
+		marker, outcome, severity = "✓", "completed", coretypes.SeverityInfo
+	case "cancelled":
+		marker, outcome, severity = "○", "cancelled", coretypes.SeverityInfo
+	case "crashed":
+		outcome = "crashed"
+	case "failed_timeout":
+		outcome = "timed out"
+	case "failed_quota":
+		outcome = "quota exceeded"
+	case "failed_policy":
+		outcome = "blocked by policy"
+	}
+	m.Feedback.NotifyAgentTransient(agentID, marker+" "+identity+" "+outcome, severity)
+	m.forceFrame()
 }

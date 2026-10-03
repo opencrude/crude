@@ -2,9 +2,11 @@ package session
 
 import (
 	"context"
+	captypes "crude/types/capability"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"runtime/debug"
@@ -22,6 +24,7 @@ import (
 	"crude/codexio"
 	"crude/fileio"
 	"crude/plan"
+	rootprompt "crude/prompt"
 	"crude/provider"
 	"crude/safety"
 	"crude/sessiondb"
@@ -54,7 +57,7 @@ func NewSubAgentRunner(s *Session, maxConcurrent int) *SubAgentRunner {
 	return &SubAgentRunner{
 		session:       s,
 		mgr:           agent.NewSubAgentManager(maxConcurrent),
-		fileOwnership: agent.NewFileOwnership(),
+		fileOwnership: s.FileOwnership(),
 		rateLimiter:   agent.NewRateLimiter(),
 		wakeCh:        s.WakeCh(),
 		sessionCtx:    ctx,
@@ -298,10 +301,6 @@ func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any)
 
 	parentPolicy := safety.DefaultPolicy()
 	spec.Policy = agent.ComposePolicy(parentPolicy, spec.PolicyName, spec.Category)
-
-	if len(spec.AllowedTools) > 0 {
-		spec.Policy = agent.UpgradePolicyForAllowedTools(spec.Policy, spec.AllowedTools)
-	}
 
 	if err := r.mgr.Validate(spec); err != nil {
 		return tools.ToolResult{Content: fmt.Sprintf("Error: %s", err)}, fmt.Errorf("%s", err)
@@ -736,6 +735,10 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	filteredTools := agent.FilterToolsForModel(allToolDefs, spec.AllowedTools, spec.DeniedTools, spec.Category, true, p.Model)
 
 	a := agent.NewAgent(p, p.Model, r.session.logger)
+	a.WorkDir = r.session.WorkDir()
+	a.GuidancePaths = append([]string(nil), spec.FileOwnership...)
+	r.session.bindContinuity(a, subDB, subSessionID)
+	r.session.bindGuidanceCache(a)
 	a.MaxOutputTokens = spec.ModelMaxOutput
 	_, agentProfile := activeProfileCfg(cfg)
 	a.CompactionAgentProfile = agentProfile + "/" + CategoryAeron
@@ -758,7 +761,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	a.Depth = spec.Depth
 	a.ParentID = spec.ParentID
 	a.Policy = spec.Policy
-	a.Yolo = true
+	r.session.bindAgentPermissionPolicy(a)
 	a.AsyncMgr = fileio.NewAsyncCommandManagerWithLogger(r.session.logger)
 	a.FilteredTools = tools.ForModel(filteredTools, p.Model)
 
@@ -784,8 +787,17 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	}
 
 	a.ToolFn = r.buildProxiedToolFn(spec, blockCh, handle)
+	a.PrepareStep = func() ([]tools.ToolDef, []provider.ChatMessage) {
+		return tools.ForModel(filteredTools, p.Model), nil
+	}
+	r.session.bindAgentRuntime(subCtx, a, captypes.RuntimeActor{ID: string(spec.ID), ParentID: string(spec.ParentID), SessionID: subSessionID, AllowedTools: spec.AllowedTools, DeniedTools: spec.DeniedTools, SkillModes: spec.SkillModes}, spec.Name)
 
-	systemPrompt, userPrompt := agent.BuildSubAgentPromptInDir(spec, profileInstructions, r.session.WorkDir())
+	systemPrompt, userPrompt := rootprompt.BuildChild(rootprompt.ChildOptions{
+		Category: spec.Category, Name: spec.Name, ID: string(spec.ID), ParentID: string(spec.ParentID), ParentTurn: spec.ParentTurn,
+		Description: spec.Description, Instructions: spec.Instructions, PolicyName: spec.PolicyName,
+		AllowedTools: spec.AllowedTools, DeniedTools: spec.DeniedTools, FileOwnership: spec.FileOwnership,
+		ProfileInstructions: profileInstructions, WorkDir: r.session.WorkDir(), Model: spec.Model,
+	})
 
 	if err := ctx.Err(); err != nil {
 		r.fileOwnership.Release(spec.ID)
@@ -898,6 +910,7 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 	assignment.Origin = provider.OriginAssignment
 	userMsgs := []provider.ChatMessage{assignment}
 	contextGeneration := uint64(1)
+	r.session.bindBoardAdmission(handle.Agent, handle.DB, handle.SessionID, string(handle.Spec.ID), func() uint64 { return contextGeneration })
 	handle.Agent.PrepareCompaction = func(source agent.CompactionSource) error {
 		data := compactionLifecycleData(source.RequestID, source.Trigger, source.Role, 0, 0, source.BeforeTokens, 0)
 		data["context_window"] = source.ContextWindow
@@ -1013,6 +1026,8 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 			"SUBAGENT", "transcript_persist_failed",
 			"agent_id", handle.Spec.ID, "error", err.Error(),
 		)
+	} else {
+		r.session.acceptBoardResults(context.Background(), handle.DB, string(handle.Spec.ID), agentMsgs)
 	}
 	result := r.buildResultFromMessages(handle, agentMsgs)
 
@@ -1032,6 +1047,7 @@ func (r *SubAgentRunner) finalizeSubAgent(handle *agent.SubAgentHandle, result a
 	if handle == nil {
 		return
 	}
+	r.session.finishedBoardAgent(context.Background(), string(handle.Spec.ID), handle.Spec.Name, string(handle.Spec.ParentID))
 	if handle.Agent != nil && handle.Agent.AsyncMgr != nil {
 		handle.Agent.AsyncMgr.CloseAndWait()
 	}
@@ -1578,6 +1594,7 @@ func (r *SubAgentRunner) resolveProfile(name string, category string, spec *agen
 			spec.PolicyName = catCfg.Policy
 		}
 		constrainConfiguredTools(spec, catCfg.AllowedTools, catCfg.DeniedTools)
+		spec.SkillModes = maps.Clone(catCfg.SkillModes)
 		if spec.ModelContextWindow == 0 && catCfg.ModelContextWindow > 0 {
 			spec.ModelContextWindow = catCfg.ModelContextWindow
 		}
@@ -1641,6 +1658,12 @@ func (r *SubAgentRunner) resolveProfile(name string, category string, spec *agen
 				spec.ModelTopP = cloneFloatPtr(ap.ModelTopP)
 			}
 			constrainConfiguredTools(spec, ap.AllowedTools, ap.DeniedTools)
+			if len(ap.SkillModes) > 0 {
+				if spec.SkillModes == nil {
+					spec.SkillModes = make(map[string]string)
+				}
+				maps.Copy(spec.SkillModes, ap.SkillModes)
+			}
 			if len(spec.FileOwnership) == 0 && len(ap.FileOwnership) > 0 {
 				spec.FileOwnership = ap.FileOwnership
 			}
@@ -1839,7 +1862,7 @@ func (r *SubAgentRunner) executeSubAgentCommandAutoPromote(ctx context.Context, 
 	}
 
 	isReadOnlyExec := a.Policy.AllowedCapabilities[safety.CanExecuteReadOnly] && !a.Policy.AllowedCapabilities[safety.CanExecute]
-	if !a.Yolo {
+	if !r.session.YoloEnabled() {
 		sr := safety.CheckCommandSafetyWithPolicy(cmd, r.session.logger, a.CommandPolicy)
 		if sr.Risk.IsAlwaysBlocked() {
 			errMsg := fmt.Sprintf("Error: [SAFETY] %s\nSuggestion: %s", sr.Reason, sr.Suggestion)

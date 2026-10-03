@@ -1,6 +1,7 @@
 package types
 
 import (
+	captypes "crude/types/capability"
 	"time"
 
 	"crude/provider"
@@ -156,6 +157,7 @@ type CategorySettings struct {
 	Instructions       string
 	AllowedTools       []string
 	DeniedTools        []string
+	SkillModes         map[string]string `json:"skill_modes,omitempty"`
 	ModelContextWindow int
 	ModelInputPrice    float64
 	ModelOutputPrice   float64
@@ -192,22 +194,23 @@ type AgentsSettings struct {
 
 // AgentProfileSettings is a named, reusable specialization of a built-in role.
 type AgentProfileSettings struct {
-	Enabled                  *bool    `json:"enabled,omitempty"`
-	Category                 string   `json:"category,omitempty"`
-	Description              string   `json:"description,omitempty"`
-	Model                    string   `json:"model,omitempty"`
-	AccountID                string   `json:"account_id,omitempty"`
-	Instructions             string   `json:"instructions,omitempty"`
-	AllowedTools             []string `json:"allowed_tools,omitempty"`
-	DeniedTools              []string `json:"denied_tools,omitempty"`
-	FileOwnership            []string `json:"file_ownership,omitempty"`
-	ContextCompactionPercent *int     `json:"context_compaction_percent,omitempty"`
-	ThinkingEffort           string   `json:"thinking_effort,omitempty"`
-	ModelContextWindow       int      `json:"model_context_window,omitempty"`
-	ModelMaxOutput           int      `json:"model_max_output,omitempty"`
-	ModelModalities          []string `json:"model_modalities"`
-	ModelTemperature         *float64 `json:"model_temperature,omitempty"`
-	ModelTopP                *float64 `json:"model_top_p,omitempty"`
+	Enabled                  *bool             `json:"enabled,omitempty"`
+	Category                 string            `json:"category,omitempty"`
+	Description              string            `json:"description,omitempty"`
+	Model                    string            `json:"model,omitempty"`
+	AccountID                string            `json:"account_id,omitempty"`
+	Instructions             string            `json:"instructions,omitempty"`
+	AllowedTools             []string          `json:"allowed_tools,omitempty"`
+	DeniedTools              []string          `json:"denied_tools,omitempty"`
+	SkillModes               map[string]string `json:"skill_modes,omitempty"`
+	FileOwnership            []string          `json:"file_ownership,omitempty"`
+	ContextCompactionPercent *int              `json:"context_compaction_percent,omitempty"`
+	ThinkingEffort           string            `json:"thinking_effort,omitempty"`
+	ModelContextWindow       int               `json:"model_context_window,omitempty"`
+	ModelMaxOutput           int               `json:"model_max_output,omitempty"`
+	ModelModalities          []string          `json:"model_modalities"`
+	ModelTemperature         *float64          `json:"model_temperature,omitempty"`
+	ModelTopP                *float64          `json:"model_top_p,omitempty"`
 }
 
 // DefaultAgentRoleCategories is the single reset/initialization source for
@@ -289,6 +292,7 @@ type Settings struct {
 	TurnLogsEnabled  string
 	Agents           AgentsSettings
 	Memory           MemorySettings              `json:"memory,omitempty"`
+	Capabilities     captypes.Settings           `json:"capabilities,omitempty"`
 	Safety           SafetySettings              `json:"safety,omitempty"`
 	LocalHistory     LocalHistorySettings        `json:"local_history,omitempty"`
 	SessionOverrides map[string]CategorySettings `json:"-"`
@@ -313,6 +317,7 @@ type AppSettings struct {
 	Accounts       map[string]provider.Account `json:"accounts,omitempty"`
 	Agents         AgentsSettings              `json:"agents,omitempty"`
 	Memory         MemorySettings              `json:"memory,omitempty"`
+	Capabilities   captypes.Settings           `json:"capabilities,omitempty"`
 	Safety         SafetySettings              `json:"safety,omitempty"`
 	LocalHistory   LocalHistorySettings        `json:"local_history,omitempty"`
 }
@@ -331,21 +336,37 @@ type SafetySettings struct {
 	AutoPermission      AutoPermissionSettings `json:"auto_permission,omitempty"`
 }
 
-// AutoPermissionSettings configures the optional root-agent permission
-// reviewer. Provider and Model are deliberately explicit: an empty value means
-// unconfigured rather than silently spending against the main agent's model.
+// AutoPermissionSettings configures the permission reviewer used independently
+// by each root and child. Provider and Model are deliberately explicit: an
+// empty value means unconfigured rather than inheriting the acting model.
 type AutoPermissionSettings struct {
-	Enabled           string `json:"enabled,omitempty"`
-	AccountID         string `json:"account_id,omitempty"`
-	Provider          string `json:"provider,omitempty"`
-	Model             string `json:"model,omitempty"`
-	DenyMode          string `json:"deny_mode,omitempty"`
-	Instructions      string `json:"instructions,omitempty"`
-	TimeoutSeconds    int    `json:"timeout_seconds,omitempty"`
-	MaxOutputTokens   int    `json:"max_output_tokens,omitempty"`
-	MaxInputBytes     int    `json:"max_input_bytes,omitempty"`
-	MaxReviewsPerTurn int    `json:"max_reviews_per_turn,omitempty"`
+	Enabled              string `json:"enabled,omitempty"`
+	AccountID            string `json:"account_id,omitempty"`
+	Provider             string `json:"provider,omitempty"`
+	Model                string `json:"model,omitempty"`
+	DenyMode             string `json:"deny_mode,omitempty"`
+	UnresolvedMode       string `json:"unresolved_mode,omitempty"`
+	Instructions         string `json:"instructions,omitempty"`
+	ThinkingEffort       string `json:"thinking_effort,omitempty"`
+	ResponseFormat       string `json:"response_format,omitempty"`
+	TimeoutSeconds       int    `json:"timeout_seconds,omitempty"`
+	MaxOutputTokens      int    `json:"max_output_tokens,omitempty"`
+	MaxAttempts          int    `json:"max_attempts,omitempty"`
+	RetryTokenGrowth     string `json:"retry_token_growth,omitempty"`
+	MaxRetryOutputTokens int    `json:"max_retry_output_tokens,omitempty"`
+	MaxInputBytes        int    `json:"max_input_bytes,omitempty"`
 }
+
+const (
+	AutoPermissionFormatAuto       = "auto"
+	AutoPermissionFormatJSONSchema = "json-schema"
+	AutoPermissionFormatJSONObject = "json-object"
+	AutoPermissionFormatPrompt     = "prompt"
+
+	AutoPermissionGrowthFixed = "fixed"
+	AutoPermissionGrowth2x    = "2x"
+	AutoPermissionGrowth4x    = "4x"
+)
 
 // Normalized returns safe effective values for the bounded permission
 // reviewer. It is opt-in: only the exact value "on" enables remote review.
@@ -358,23 +379,69 @@ func (s AutoPermissionSettings) Normalized() AutoPermissionSettings {
 	if s.DenyMode != "deny" {
 		s.DenyMode = "ask"
 	}
+	if s.UnresolvedMode != "deny" {
+		s.UnresolvedMode = "ask"
+	}
+	switch s.ThinkingEffort {
+	case "low", "medium", "high", "max":
+	default:
+		s.ThinkingEffort = "low"
+	}
+	switch s.ResponseFormat {
+	case AutoPermissionFormatAuto, AutoPermissionFormatJSONSchema, AutoPermissionFormatJSONObject, AutoPermissionFormatPrompt:
+	default:
+		s.ResponseFormat = AutoPermissionFormatAuto
+	}
+	switch s.RetryTokenGrowth {
+	case AutoPermissionGrowthFixed, AutoPermissionGrowth2x, AutoPermissionGrowth4x:
+	default:
+		s.RetryTokenGrowth = AutoPermissionGrowth4x
+	}
 	if s.TimeoutSeconds == 0 {
-		s.TimeoutSeconds = 8
+		s.TimeoutSeconds = 15
 	}
 	if s.MaxOutputTokens == 0 {
-		s.MaxOutputTokens = 96
+		s.MaxOutputTokens = 256
+	}
+	if s.MaxAttempts == 0 {
+		s.MaxAttempts = 3
+	}
+	if s.MaxRetryOutputTokens == 0 {
+		s.MaxRetryOutputTokens = 1024
 	}
 	if s.MaxInputBytes == 0 {
-		s.MaxInputBytes = 4096
+		s.MaxInputBytes = 64 << 10
 	}
-	if s.MaxReviewsPerTurn == 0 {
-		s.MaxReviewsPerTurn = 12
+	s.TimeoutSeconds = min(120, max(1, s.TimeoutSeconds))
+	s.MaxOutputTokens = min(4096, max(16, s.MaxOutputTokens))
+	s.MaxAttempts = min(6, max(1, s.MaxAttempts))
+	s.MaxRetryOutputTokens = min(8192, max(16, s.MaxRetryOutputTokens))
+	if s.MaxRetryOutputTokens < s.MaxOutputTokens {
+		s.MaxRetryOutputTokens = s.MaxOutputTokens
 	}
-	s.TimeoutSeconds = min(30, max(1, s.TimeoutSeconds))
-	s.MaxOutputTokens = min(256, max(16, s.MaxOutputTokens))
-	s.MaxInputBytes = min(8192, max(256, s.MaxInputBytes))
-	s.MaxReviewsPerTurn = min(100, max(1, s.MaxReviewsPerTurn))
+	s.MaxInputBytes = min(1<<20, max(64<<10, s.MaxInputBytes))
 	return s
+}
+
+// ReviewOutputTokens returns the configured output budget for a zero-based
+// attempt. Growth is deterministic and always stops at the persisted ceiling.
+func (s AutoPermissionSettings) ReviewOutputTokens(attempt int) int {
+	s = s.Normalized()
+	if attempt <= 0 || s.RetryTokenGrowth == AutoPermissionGrowthFixed {
+		return s.MaxOutputTokens
+	}
+	multiplier := 2
+	if s.RetryTokenGrowth == AutoPermissionGrowth4x {
+		multiplier = 4
+	}
+	budget := s.MaxOutputTokens
+	for range attempt {
+		if budget >= s.MaxRetryOutputTokens/multiplier {
+			return s.MaxRetryOutputTokens
+		}
+		budget *= multiplier
+	}
+	return min(budget, s.MaxRetryOutputTokens)
 }
 
 type LocalHistorySettings struct {

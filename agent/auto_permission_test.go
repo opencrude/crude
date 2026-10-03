@@ -62,6 +62,7 @@ func TestHardBlocksAndCancellationCannotBeAutoApproved(t *testing.T) {
 	for _, tool := range []string{"execute_command", "async_execute_command"} {
 		t.Run(tool, func(t *testing.T) {
 			a := newPermissionLifecycleAgent(t)
+			a.Yolo = true
 			a.PermissionReviewer = func(context.Context, provider.ToolCall, map[string]any, safety.CommandRisk, func(AgentEvent)) PermissionReview {
 				t.Fatal("hard block reached reviewer")
 				return PermissionReview{Decision: "allow"}

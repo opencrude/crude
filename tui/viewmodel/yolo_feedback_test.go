@@ -4,7 +4,9 @@ import (
 	"testing"
 
 	tuitypes "crude/tui/types"
+	"crude/tui/ui"
 	"crude/types"
+	"crude/workspace"
 )
 
 func TestYoloTransitionsUseOnePathAndDoNotImpersonateAssistant(t *testing.T) {
@@ -40,6 +42,34 @@ func TestYoloTransitionsUseOnePathAndDoNotImpersonateAssistant(t *testing.T) {
 	app.resolveSessionYolo(projection.yolo, true)
 	if len(state.Messages.Messages()) != 2 || app.YoloForAgent(id) {
 		t.Fatal("cancel or stale confirmation changed policy/transcript")
+	}
+}
+
+func TestYoloScopesToOwningRootAndCompleteDescendantTree(t *testing.T) {
+	app := newFullTestApp(t)
+	app.Logger = stubLogger{}
+	first := addBackendTestOrchestrator(t, app)
+	second := addBackendTestOrchestrator(t, app)
+	t.Cleanup(app.CloseAllSessions)
+	pane := app.PaneMgr.GetOrCreate("child", workspace.PaneAgent, "child")
+	childState := workspace.NewAgentState("child", pane.Messages, app.Logger)
+	app.AgentMgr.AddSubAgent("child", first, "Child", "model", "researcher", childState)
+
+	if !app.SetYoloForAgent("child", true) {
+		t.Fatal("could not enable YOLO through child owner")
+	}
+	if !app.YoloForAgent(first) || !app.YoloForAgent("child") || app.YoloForAgent(second) {
+		t.Fatal("YOLO did not stay within the first root's session tree")
+	}
+	app.enqueueAgentConfirmation(agentPromptRequest{kind: agentPromptConfirmation, agentID: "child", blockID: "child-yolo", question: "Allow write?"})
+	if app.agentPrompt != nil || app.overlayHost.IsOpen(ui.OverlayAgentPrompt) {
+		t.Fatal("YOLO descendant still presented a confirmation")
+	}
+	if !app.SetYoloForAgent(second, true) || !app.SetYoloForAgent(first, false) {
+		t.Fatal("could not update independent session policies")
+	}
+	if app.YoloForAgent(first) || app.YoloForAgent("child") || !app.YoloForAgent(second) {
+		t.Fatal("changing the first session leaked into the second session")
 	}
 }
 

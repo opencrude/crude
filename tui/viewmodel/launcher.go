@@ -31,65 +31,12 @@ func (m *App) launcherHelpSegments() []ui.HintSegment {
 		ui.ActionSeg("list.navigate"),
 		ui.ActionSeg("list.open"),
 		ui.ActionSeg("launcher.filter"),
-		ui.ActionSeg("launcher.delete"),
 		ui.ActionSeg("view.focus.sidebar"),
 	}
 	if m.actionRegistry != nil && m.actionRegistry.HintFor("palette.open") != "" {
 		segs = append(segs, ui.ActionSeg("palette.open"))
 	}
 	return segs
-}
-
-// launcherShortcuts returns the key/label rows shown in the left column.
-func (m *App) launcherShortcuts() [][2]string {
-	if m.actionRegistry == nil {
-		return nil
-	}
-	ids := []ui.ActionID{
-		"palette.open",
-		"app.sessions",
-		"search.project.open",
-		"view.toggle.sidebar",
-		"view.focus.sidebar",
-		"settings.open",
-		"file.attach",
-		"composer.toggle",
-		"app.quit",
-	}
-	out := make([][2]string, 0, len(ids)+3)
-	for _, id := range ids {
-		a := m.actionRegistry.Get(id)
-		if a == nil {
-			continue
-		}
-		hint := m.actionRegistry.HintFor(id)
-		if hint == "" && len(a.Bindings) > 0 {
-			hint = a.Bindings[0].Key
-		}
-		if hint == "" {
-			continue
-		}
-		out = append(out, [2]string{ui.FormatShortcut(hint), a.Label})
-	}
-	// The dismiss/search/delete rows keep descriptive labels but source
-	// their keys from the registry (launcher.filter.clear/filter/delete)
-	// so they can never drift from the active bindings.
-	fixed := []struct {
-		id    ui.ActionID
-		label string
-	}{
-		{"launcher.filter.clear", "Cancel / dismiss"},
-		{"launcher.filter", "Search workspaces"},
-		{"launcher.delete", "Delete item"},
-	}
-	for _, f := range fixed {
-		hint := ui.FormatShortcut(m.actionRegistry.HintFor(f.id))
-		if hint == "" {
-			continue
-		}
-		out = append(out, [2]string{hint, f.label})
-	}
-	return out
 }
 
 // handleLauncherActivate handles ActivateMsg from the launcher screen.
@@ -109,19 +56,18 @@ func (m *App) handleLauncherActivate(msg launcher.ActivateMsg) tea.Cmd {
 	return nil
 }
 
-// handleLauncherDelete performs the domain delete for a launcher deletion.
-func (m *App) handleLauncherDelete(msg launcher.DeleteMsg) tea.Cmd {
+// handleLauncherCommand accepts only deliberate, owner-tagged home actions.
+func (m *App) handleLauncherCommand(msg launcher.CommandMsg) tea.Cmd {
 	if m.launcherScreen != msg.Screen {
 		return nil
 	}
-	switch msg.Kind {
-	case launcher.ItemWorkspace:
-		if msg.WorkspaceID != "" {
-			if m.Logger != nil {
-				m.Logger.Info("WORKSPACE", "deleted_from_launcher", "id", msg.WorkspaceID)
-			}
-			_ = workspace.DeleteWorkspace(msg.WorkspaceID)
-		}
+	switch msg.Action {
+	case "launcher.retry":
+		m.refreshLauncherAsync(m.RootPath)
+	case "skills.manage":
+		return m.openCapabilityManager(activitySkills, "", msg.TargetID)
+	case "mcp.manage":
+		return m.openCapabilityManager(activityMCP, "", msg.TargetID)
 	}
 	return nil
 }
@@ -163,8 +109,8 @@ func (m *App) launcherOpenFolder(projectDir string) tea.Cmd {
 		}
 		return nil
 	}
-	// Stay on the single-phase launcher; refresh lists for the new project.
-	m.launcherScreen.Refresh(projectDir)
+	// SwitchProject already starts the generation-owned async listing. Never
+	// run a second synchronous scan on the UI goroutine here.
 	if m.Feedback != nil {
 		m.Feedback.NotifyInfo("Opened " + filepath.Base(projectDir))
 	}
@@ -244,8 +190,12 @@ func (m *App) openLauncher() {
 		m.launcherScreen.SetFocusHandler(m.rootHost.Focus)
 		m.shell.SetScreen(shellLauncherSlot, m.launcherScreen)
 	}
-	m.launcherScreen.SetData(cwd, nil)
 	m.refreshLauncherAsync(cwd)
+	if m.capabilitySnapshot.Generation != 0 || m.capabilitySnapshot.Error != "" {
+		m.projectLauncherCapabilities(m.capabilitySnapshot)
+	}
+	m.launcherCapabilityAt = time.Time{}
+	m.runDetachedAsyncCmd(m.launcherCapabilitiesCmd(time.Now()))
 	m.LastInteractionTime = time.Now()
 }
 
@@ -253,9 +203,11 @@ func (m *App) openLauncher() {
 // the update goroutine. Gen matches the launcherLoadGen that started the
 // load; stale generations are dropped by the handler.
 type launcherWorkspacesMsg struct {
-	Cwd   string
-	Infos []workspace.WorkspaceInfo
-	Gen   uint64
+	Cwd    string
+	Infos  []workspace.WorkspaceInfo
+	Gen    uint64
+	Screen *launcher.Screen
+	Err    error
 }
 
 // refreshLauncherAsync loads the workspace list OFF the tea update goroutine
@@ -265,16 +217,21 @@ type launcherWorkspacesMsg struct {
 // listing for a previous directory.
 func (m *App) refreshLauncherAsync(cwd string) {
 	gen := m.launcherLoadGen.Add(1)
-	go func() {
-		if m.eventBus == nil {
-			return
-		}
-		infos, _ := workspace.ListWorkspaceInfos()
+	screen := m.launcherScreen
+	if screen == nil {
+		return
+	}
+	screen.BeginLoad(cwd)
+	if m.eventBus == nil {
+		return
+	}
+	m.runDetachedAsyncCmd(func() tea.Msg {
+		infos, err := workspace.ListWorkspaceInfos()
 		if m.launcherLoadGen.Load() != gen {
-			return
+			return nil
 		}
-		m.eventBus.Send(launcherWorkspacesMsg{Cwd: cwd, Infos: infos, Gen: gen})
-	}()
+		return launcherWorkspacesMsg{Cwd: cwd, Infos: infos, Gen: gen, Screen: screen, Err: err}
+	})
 }
 
 // openFolderPicker opens the existing file-picker UI in folder-select mode.

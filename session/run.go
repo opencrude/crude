@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -16,11 +17,13 @@ import (
 	"crude/docconv"
 	"crude/fileio"
 	"crude/logger"
+	rootprompt "crude/prompt"
 	"crude/provider"
 	"crude/safety"
 	"crude/sessiondb"
 	"crude/tools"
 	ttypes "crude/types"
+	captypes "crude/types/capability"
 )
 
 func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
@@ -116,18 +119,15 @@ func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
 }
 
 func formatSubAgentWakeBatch(wakes []WakeEvent) string {
-	var b strings.Builder
-	fmt.Fprintf(&b, "[System notification: %d sub-agent result(s) are ready.]", len(wakes))
+	entries := make([]rootprompt.SubAgentWakeEntry, 0, len(wakes))
 	for _, wake := range wakes {
-		b.WriteString("\n\n")
 		if result, ok := wake.Data.(agent.SubAgentResult); ok {
-			b.WriteString(formatSubAgentResult(result))
+			entries = append(entries, rootprompt.SubAgentWakeEntry{ResultText: formatSubAgentResult(result)})
 			continue
 		}
-		fmt.Fprintf(&b, "Sub-agent %q reached a terminal state, but its structured result was unavailable.", wake.SourceID)
+		entries = append(entries, rootprompt.SubAgentWakeEntry{UnavailableID: wake.SourceID})
 	}
-	b.WriteString("\n\nReview every status above. A cancelled or failed sub-agent is not a completed result; retry or continue explicitly as appropriate.")
-	return b.String()
+	return rootprompt.SubAgentWakeBatch(entries)
 }
 
 func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, sender EventSender, l *logger.Logger) {
@@ -135,7 +135,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	ctx := request.ctx
 	turnGeneration := request.generation
 	turnFinished := false
-	turnFinalState := sessiondb.TurnCompleted
+	turnFinalState := sessiondb.TurnFailed
 	finishTurn := func() {
 		if turnFinished {
 			return
@@ -282,7 +282,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	userMsg, referenceLabels := s.buildUserMessageWithDisplay(userInput, activeCfg.Model)
 	userMsg.InternalID = currentMsgID
 	userMsg.DisplayContent = userInput.Text
-	var requestContextParts []string
+	requestContextParts := append([]string(nil), userInput.ContextParts...)
 	if humanTurn {
 		currentPlan, planErr := s.activePlanTurnContext(ctx)
 		if planErr != nil {
@@ -316,7 +316,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 	var runtimeContext *provider.ChatMessage
 	if content := strings.TrimSpace(strings.Join(requestContextParts, "\n\n")); content != "" {
-		message := provider.NewTextMessage("user", "<turn_context>\n"+content+"\n</turn_context>")
+		message := provider.NewTextMessage("user", rootprompt.TurnContext(content))
 		message.InternalID = currentMsgID + "-context"
 		message.Origin = provider.OriginRuntimeContext
 		message.Visibility = provider.VisibilityContextOnly
@@ -387,6 +387,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 	sender.SendAgentEventWithID("turn_started", turnIdentity, o.ID)
 	ag := s.newAgent(turnProvider, effectiveCfg.IsMultiAgentEnabled(), activeCfg.ModelModalities)
+	ag.GuidancePaths = append([]string(nil), userInput.ActivePaths...)
 	ag.MaxOutputTokens = activeCfg.ModelMaxOutput
 	ag.ReasoningContentKind = s.inferredReasoningKind(o.ID, turnProvider.ID, turnProvider.AccountID, turnProvider.Model)
 	ag.CompactionProvider = compactionProvider
@@ -431,6 +432,9 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		current := s.runtimeProfile.GetEffectiveConfig(o.ID)
 		return configuredOrchestratorTools(current, current.IsMultiAgentEnabled(), ag.Model), s.takeDelegationNotices()
 	}
+	s.bindAgentRuntime(ctx, ag, captypes.RuntimeActor{ID: o.ID, SessionID: s.sessionID, AllowedTools: activeCfg.AllowedTools, DeniedTools: activeCfg.DeniedTools, SkillModes: activeCfg.SkillModes}, s.AgentName())
+	s.bindBoardAdmission(ag, s.db, s.sessionID, s.sessionID, func() uint64 { return max(1, s.contextGeneration) })
+	defer s.finishedBoardAgent(context.Background(), o.ID, s.AgentName(), "")
 	var pendingRuntimeWakes []WakeEvent
 	ag.PrepareRuntimeNotices = func() []provider.ChatMessage {
 		if ctx.Err() != nil || s.isHardCancelled() {
@@ -471,6 +475,25 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		message := inputMessage(provider.NewTextMessage("user", notice.Text), notice)
 		message.InternalID = notice.InternalID
 		return []provider.ChatMessage{message}
+	}
+	continuationContext := ag.ContinuationContext
+	ag.ContinuationContext = func(ctx context.Context) (rootprompt.SessionContinuityData, error) {
+		dataContext, err := continuationContext(ctx)
+		if err != nil {
+			return rootprompt.SessionContinuityData{}, err
+		}
+		if len(pendingRuntimeWakes) > 0 {
+			var ids []string
+			for _, wake := range pendingRuntimeWakes {
+				ids = append(ids, wake.SourceID)
+			}
+			data, err := json.Marshal(ids)
+			if err != nil {
+				return rootprompt.SessionContinuityData{}, err
+			}
+			dataContext.Additional = "Child result notifications already admitted to this continuation (do not await their completion again): " + string(data)
+		}
+		return dataContext, nil
 	}
 	ag.RuntimeNoticesAccepted = func() { pendingRuntimeWakes = nil }
 	defer func() {
@@ -534,6 +557,11 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	emit := func(evt agent.AgentEvent) {
 		if evt.Type == "error" && ctx.Err() == nil {
 			turnFinalState = sessiondb.TurnFailed
+		}
+		if evt.Type == "done" {
+			if data, ok := evt.Data.(map[string]any); ok && data["reason"] == "completed" {
+				turnFinalState = sessiondb.TurnCompleted
+			}
 		}
 		if !emitActive.Load() {
 			return
@@ -915,6 +943,7 @@ func (s *Session) finalizeTurn(
 			s.logger.Error("COMPACT", "context_state_persist_failed", "error", err.Error())
 		}
 		s.flushWriteBufSync()
+		s.acceptBoardResults(context.Background(), s.db, "", turnMsgs)
 	}
 
 	s.afterTurnMemory(turnNumber, turnMsgs, finalContent)
@@ -1126,8 +1155,6 @@ func inputMessage(message provider.ChatMessage, input provider.UserInput) provid
 	return message
 }
 
-const btwUrgentPrefix = "[USER INTERRUPTION — READ THIS NOW]\nThe user interrupted your work with an important message while you were running. Stop what you're doing, read this carefully, and adjust your approach accordingly. This takes priority over whatever you are doing.\n\n"
-
 // buildBtwMessage creates a ChatMessage for a BTW (by-the-way) interruption.
 // It resolves any reference IDs via buildUserMessage and prepends the urgent
 // interruption prefix so the LLM prioritises the message.
@@ -1141,11 +1168,11 @@ func (s *Session) buildBtwMessage(input provider.UserInput, model string) provid
 			Role:            "user",
 			Origin:          provider.OriginBTW,
 			Visibility:      provider.VisibilityConversation,
-			Content:         provider.TextContent(btwUrgentPrefix + msg.Content.String()),
+			Content:         provider.TextContent(rootprompt.BTWInterruptionPrefix() + msg.Content.String()),
 		}
 	}
 	// Multipart: insert the urgent prefix as a text part at the beginning
-	prefixPart := provider.ContentPart{Type: "text", Text: btwUrgentPrefix}
+	prefixPart := provider.ContentPart{Type: "text", Text: rootprompt.BTWInterruptionPrefix()}
 	parts := []provider.ContentPart{prefixPart}
 	parts = append(parts, msg.Content.Parts()...)
 	result := provider.NewMultiPartMessage("user", parts)

@@ -7,10 +7,10 @@ import (
 
 // --- responses ---
 
-func TestResponsesExtrasDefaultsOmitStore(t *testing.T) {
+func TestResponsesExtrasDefaultsRequestStorageExplicitly(t *testing.T) {
 	extras := (&OpenAIResponsesStandard{}).RequestExtras("gpt-5.6", "high", ProtocolSettings{})
-	if _, ok := extras["store"]; ok {
-		t.Fatalf("store sent by default: %#v", extras)
+	if got := extras["store"]; got != true {
+		t.Fatalf("store = %v, want explicit true: %#v", got, extras)
 	}
 	if got := extras["reasoning"].(map[string]any)["summary"]; got != "auto" {
 		t.Fatalf("summary = %v, want auto", got)

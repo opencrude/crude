@@ -78,7 +78,7 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Eve
 			m.histDraft = ""
 			m.histPrefix = ""
 			if strings.HasPrefix(text, "/") {
-				return m, nil, SlashCommandEvent{Command: text}
+				return m, nil, SlashCommandEvent{Command: text, ReferenceIDs: refIDs}
 			}
 			if m.thinking && !m.blocking {
 				return m, nil, BtwSubmitEvent{Text: text, ReferenceIDs: refIDs}
@@ -257,6 +257,7 @@ func (m Model) updateSlash(msg tea.Msg) (Model, tea.Cmd, Event) {
 		return m, nil, nil
 
 	case tea.KeyEnter:
+		refIDs := m.ReferencedIDs()
 		res := m.slashList.Handle(ui.EventContext{}, ui.KeyEvent(keyMsg))
 		if res.Action != nil && res.Action.ID == "slash.select" {
 			if item, ok := m.slashList.Selected(); ok {
@@ -266,7 +267,7 @@ func (m Model) updateSlash(msg tea.Msg) (Model, tea.Cmd, Event) {
 				m.histIdx = -1
 				m.histDraft = ""
 				m.histPrefix = ""
-				return m, nil, SlashCommandEvent{Command: cmd}
+				return m, nil, SlashCommandEvent{Command: cmd, ReferenceIDs: refIDs}
 			}
 		}
 		text := strings.TrimSpace(m.input.Value())
@@ -276,7 +277,7 @@ func (m Model) updateSlash(msg tea.Msg) (Model, tea.Cmd, Event) {
 			m.histIdx = -1
 			m.histDraft = ""
 			m.histPrefix = ""
-			return m, nil, SlashCommandEvent{Command: text}
+			return m, nil, SlashCommandEvent{Command: text, ReferenceIDs: refIDs}
 		}
 		m.slashActive = false
 		return m, nil, nil

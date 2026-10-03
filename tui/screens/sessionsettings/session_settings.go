@@ -1,6 +1,7 @@
 package sessionsettings
 
 import (
+	"maps"
 	"reflect"
 	"slices"
 	"strconv"
@@ -15,6 +16,7 @@ import (
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/types"
+	captypes "crude/types/capability"
 )
 
 const (
@@ -66,6 +68,7 @@ const (
 	modelPage
 	providerPage
 	agentPage
+	capabilityPage
 )
 
 var agentRoles = []struct {
@@ -102,6 +105,7 @@ type Screen struct {
 	modelFilter     *ui.FilterField
 	modelList       *ui.List
 	modelQuery      string
+	capabilities    captypes.Snapshot
 	ruleBleedX      int
 	ruleBleedW      int
 }
@@ -405,6 +409,21 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 		role, _ := action.Payload.(string)
 		s.openRole(role)
 		return focusFormResult(ui.InvalidateLayout)
+	case "session-settings.capabilities.open":
+		s.applyRoleForm()
+		if s.role == "" {
+			s.role = "default"
+		}
+		s.openCapabilities()
+		return focusFormResult(ui.InvalidateLayout)
+	case "session-settings.capabilities.apply":
+		s.applyCapabilities()
+		s.openRoot()
+		return focusFormResult(ui.InvalidateLayout)
+	case "session-settings.capabilities.reset":
+		s.clearCapabilityOverrides()
+		s.openCapabilities()
+		return focusFormResult(ui.InvalidateLayout)
 	case "session-settings.agent.open":
 		s.openAgentPicker()
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint, Action: &ui.Action{ID: "ui.focus", Payload: ScreenID}}
@@ -524,6 +543,7 @@ func (s *Screen) openRoot() {
 		multi.InheritedFrom = "workspace"
 	}
 	model.AddField(multi)
+	model.AddField(&ui.FieldState{ID: "capabilities", Label: "Capabilities", Type: ui.FieldNav, Columns: []string{"Inherit / override"}, Target: "session-settings.capabilities.open"})
 	s.formModel = model
 	s.form.SetForm(model, s.title(), "")
 	s.actions = s.rootActions()
@@ -620,6 +640,9 @@ func (s *Screen) openRole(role string) {
 		return nil
 	}
 	model.AddField(compactionField)
+	if role != memoryRole {
+		model.AddField(&ui.FieldState{ID: "capabilities", Label: "Capabilities", Type: ui.FieldNav, Target: "session-settings.capabilities.open"})
+	}
 	s.formModel = model
 	s.form.SetForm(model, s.title(name), "")
 	buttons := []ui.ActionBarButton{
@@ -1005,6 +1028,8 @@ func (s *Screen) breadcrumbParts() []string {
 		parts = append(parts, "Account")
 	case agentPage:
 		parts = append(parts, "Default agent")
+	case capabilityPage:
+		parts = append(parts, "Capabilities")
 	}
 	return parts
 }
@@ -1347,6 +1372,9 @@ func clearCategory(settings *types.Settings, role string) {
 func copyCategoryMap(src map[string]types.CategorySettings) map[string]types.CategorySettings {
 	dst := make(map[string]types.CategorySettings, len(src))
 	for key, value := range src {
+		value.AllowedTools = slices.Clone(value.AllowedTools)
+		value.DeniedTools = slices.Clone(value.DeniedTools)
+		value.SkillModes = maps.Clone(value.SkillModes)
 		value.ContextCompactionPercent = cloneIntPtr(value.ContextCompactionPercent)
 		dst[key] = value
 	}
@@ -1355,6 +1383,7 @@ func copyCategoryMap(src map[string]types.CategorySettings) map[string]types.Cat
 
 func cloneSettings(src types.Settings) types.Settings {
 	dst := src
+	dst.Capabilities = captypes.Clone(src.Capabilities)
 	dst.Agents.AgentProfiles = types.CloneAgentProfiles(src.Agents.AgentProfiles)
 	dst.Agents.Categories = copyCategoryMap(src.Agents.Categories)
 	dst.SessionOverrides = copyCategoryMap(src.SessionOverrides)

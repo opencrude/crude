@@ -1,16 +1,30 @@
 # Agent orchestration
 
-> Status: Current — bounded delegation, explicit handoff, and event-driven completion.
+> Status: Current — bounded delegation, enforced guidance intake, explicit handoff, and event-driven completion.
 
 ## Ownership and stopping
 
-Main agents and children are prompted to find and read applicable project guidance
-with tools before changing code or answering project-specific questions. They
-check `AGENTS.md`, `CLAUDE.md`, and relevant project documentation at the workspace
-root, in ancestor directories, and under the paths they work in. Crude does not
-inject repository files into their prompts or claim those files were read. The
-GPT fallback prompt makes the same distinction. Project guidance remains scoped
-to its files and subordinate to the current user and system instructions.
+The canonical ownership, intake and development contract is
+[model prompts and project guidance](prompt-architecture.md). `prompt/` owns
+root/child and specialized job instructions; execution packages supply typed
+facts and own lifecycle/persistence. Callers use direct prompt APIs rather than
+forwarding wrappers or provider-specific behavioral forks. Editable profile
+instructions remain lower-priority overlays. Real tool/wire differences stay in
+their interface adapters.
+
+Before normal project work, Crude consumes complete applicable `SOUL.md`,
+`CLAUDE.md`, and `AGENTS.md` sources accepted by the 64 MiB aggregate ceiling,
+or fails closed. Fitting sets are verbatim; oversized sets are compiled and
+model-verified into bounded ledgers. The task model need not receive every raw
+byte, and verification is not proof of perfect semantic preservation. Other
+documentation stays selective. Newly discovered applicable guidance defers the
+entire planned tool batch before effects. See the canonical reference for exact
+scope discovery, budget/cache identity, resource limits and guard coverage.
+
+Supplied guidance ends with an intake-complete notice; consuming it satisfies
+its own startup read requirements. Unchanged rereads remain legal and do not
+republish guidance or rewrite the accepted cache prefix. Known source changes
+publish one complete superseding snapshot, including removal of deleted rules.
 
 The parent owns requirements, shared interfaces, integration, and final repository
 checks. Delegate independent tasks with owned paths, acceptance criteria, and a
@@ -43,6 +57,14 @@ Notifications are runtime context, not human instructions. They do not cancel an
 active request, invoke an extra human turn, or change the selected tab. Background
 permission/question requests use their owner-correlated prompt surface; safety
 alerts remain globally visible without navigating away from the user's work.
+
+Each root and child has an independent Auto Review request lifecycle and
+per-turn budget. They share only the persisted reviewer policy and connection.
+The owning session's live YOLO state bypasses reviewer and confirmation for the
+root plus its complete descendant tree; another root/session remains isolated.
+When confirmation is still required, the currently painted agent chat uses its
+session dock, while background sessions/agents and editor views use the global
+owner-correlated modal without switching the user's active view.
 
 ## Design references
 

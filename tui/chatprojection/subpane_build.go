@@ -5,6 +5,7 @@ import (
 
 	"crude/tui/cell"
 	"crude/tui/rendering"
+	"crude/tui/tools"
 	"crude/tui/types"
 	"crude/tui/ui"
 	"crude/workspace"
@@ -133,6 +134,13 @@ func BuildSubPaneToolLines(messages []*types.ChatMessage, width, frame int) ([]S
 			continue
 		}
 		active = active || toolRowFrameSensitive(*msg)
+		if tools.IsStructuredTool(msg.ToolName) {
+			body := renderToolMessageLines(*msg, nil, width-toolBodyGutterWidth, width, width, frame, 12, msg.ToolPreviewPhase, DisclosureCollapsed)
+			for _, line := range body.native {
+				lines = append(lines, NativeLine(padPaintLine(line, width)))
+			}
+			continue
+		}
 		for _, pl := range wrapToolTitle(buildToolTitleLine(*msg, msg.ToolPreviewPhase, frame), width) {
 			lines = append(lines, NativeLine(padPaintLine(pl, width)))
 		}

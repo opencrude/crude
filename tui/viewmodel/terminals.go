@@ -63,11 +63,20 @@ func (m *App) termDockHeightClamped() int {
 	if availableH < termdock.MinRenderableHeight {
 		return 0
 	}
+	if m.workspacePanelMaximized && !m.sessionDeckBlocking() {
+		return max(0, availableH-ui.StripHeight)
+	}
 	h := m.termDockHeight
 	if h <= 0 {
 		h = defaultTermDockHeight
 	}
 	maxH := m.height - m.chromeBottomRows() - minMainAboveDock
+	if m.sessionDeckBlocking() {
+		maxH = min(maxH, availableH-10)
+		if maxH < minTermDockHeight {
+			return 0
+		}
+	}
 	if maxH < termdock.MinRenderableHeight {
 		maxH = termdock.MinRenderableHeight
 	}
@@ -91,10 +100,13 @@ func (m *App) termDockHeightClamped() int {
 }
 
 func (m *App) setTermDockHeight(h int) {
-	m.termDockHeight = h
-	m.termDockHeight = m.termDockHeightClamped()
-	if m.termDockHeight == 0 {
-		m.termDockHeight = defaultTermDockHeight
+	m.termDockHeight = max(minTermDockHeight, h)
+	if m.termDock != nil {
+		if m.workspacePanelHeights == nil {
+			m.workspacePanelHeights = make(map[string]int)
+		}
+		m.workspacePanelHeights[m.termDock.ActivePanel()] = m.termDockHeight
+		m.toolLayoutVersion++
 	}
 }
 

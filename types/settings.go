@@ -5,6 +5,7 @@ import (
 	"reflect"
 
 	"crude/provider"
+	captypes "crude/types/capability"
 )
 
 // AccountChange is one revision-checked application credential mutation.
@@ -45,12 +46,13 @@ type WorkspaceOverrides struct {
 	Memory       json.RawMessage `json:"memory,omitempty"`
 	Safety       json.RawMessage `json:"safety,omitempty"`
 	LocalHistory json.RawMessage `json:"local_history,omitempty"`
+	Capabilities json.RawMessage `json:"capabilities,omitempty"`
 }
 
 // IsEmpty reports that the workspace inherits everything.
 func (o WorkspaceOverrides) IsEmpty() bool {
 	return len(o.Theme) == 0 && len(o.Editor) == 0 && len(o.LSP) == 0 &&
-		len(o.UI) == 0 && len(o.Font) == 0 && len(o.Agents) == 0 && len(o.Memory) == 0 && len(o.Safety) == 0 && len(o.LocalHistory) == 0
+		len(o.UI) == 0 && len(o.Font) == 0 && len(o.Agents) == 0 && len(o.Memory) == 0 && len(o.Safety) == 0 && len(o.LocalHistory) == 0 && len(o.Capabilities) == 0
 }
 
 // LSPLanguage describes a built-in language server the settings UI can
@@ -113,6 +115,7 @@ func ApplyAppDefaults(s *AppSettings) {
 	if s == nil {
 		return
 	}
+	s.Capabilities = captypes.Normalize(s.Capabilities)
 	if s.Theme.Preset == "" {
 		s.Theme.Preset = "dark"
 	}
@@ -292,6 +295,7 @@ func MergeAppWorkspace(app AppSettings, ws WorkspaceOverrides) AppSettings {
 	applySparse(&out.Memory, ws.Memory)
 	applySparse(&out.Safety, ws.Safety)
 	applySparse(&out.LocalHistory, ws.LocalHistory)
+	out.Capabilities = mergeCapabilities(out.Capabilities, ws.Capabilities)
 	return out
 }
 
@@ -312,7 +316,75 @@ func OverridesFromDiff(app, working AppSettings) WorkspaceOverrides {
 	out.Memory = sparseDiff(app.Memory, working.Memory)
 	out.Safety = sparseDiff(app.Safety, working.Safety)
 	out.LocalHistory = sparseDiff(app.LocalHistory, working.LocalHistory)
+	out.Capabilities = capabilityDiff(app.Capabilities, working.Capabilities)
 	return out
+}
+
+func capabilityDiff(base, working captypes.Settings) json.RawMessage {
+	delta := make(map[string]any)
+	if raw := sparseDiff(base, working); len(raw) > 0 {
+		_ = json.Unmarshal(raw, &delta)
+	}
+	baseMap, _ := jsonObject(base)
+	workingMap, _ := jsonObject(working)
+	for _, collection := range []string{"skills", "connections", "sources"} {
+		before, _ := baseMap[collection].(map[string]any)
+		after, _ := workingMap[collection].(map[string]any)
+		changes, _ := delta[collection].(map[string]any)
+		for id := range before {
+			if _, exists := after[id]; !exists {
+				if changes == nil {
+					changes = make(map[string]any)
+				}
+				changes[id] = nil
+			}
+		}
+		if len(changes) > 0 {
+			delta[collection] = changes
+		}
+	}
+	if len(delta) == 0 {
+		return nil
+	}
+	encoded, _ := json.Marshal(delta)
+	return encoded
+}
+
+func mergeCapabilities(base captypes.Settings, overlay json.RawMessage) captypes.Settings {
+	if len(overlay) == 0 {
+		return base
+	}
+	var changes map[string]any
+	if json.Unmarshal(overlay, &changes) != nil {
+		return base
+	}
+	values, _ := jsonObject(base)
+	mergeCapabilityObjects(values, changes)
+	encoded, err := json.Marshal(values)
+	if err != nil {
+		return base
+	}
+	var merged captypes.Settings
+	if json.Unmarshal(encoded, &merged) != nil {
+		return base
+	}
+	return captypes.Normalize(merged)
+}
+
+func mergeCapabilityObjects(values, changes map[string]any) {
+	for key, value := range changes {
+		if value == nil {
+			delete(values, key)
+			continue
+		}
+		before, beforeObject := values[key].(map[string]any)
+		after, afterObject := value.(map[string]any)
+		if beforeObject && afterObject {
+			mergeCapabilityObjects(before, after)
+		} else {
+			values[key] = value
+		}
+	}
 }
 
 // sparseDiff returns a partial JSON object holding only the leaves of
@@ -496,6 +568,8 @@ func (o WorkspaceOverrides) CategoryOverridden(name string) bool {
 		return len(o.Agents) > 0
 	case "memory":
 		return len(o.Memory) > 0
+	case "capabilities", "skills", "mcp", "sources", "acquisition":
+		return len(o.Capabilities) > 0
 	case "safety":
 		return len(o.Safety) > 0
 	}
@@ -522,6 +596,8 @@ func (o *WorkspaceOverrides) ClearCategory(name string) {
 		o.Agents = nil
 	case "memory":
 		o.Memory = nil
+	case "capabilities", "skills", "mcp", "sources", "acquisition":
+		o.Capabilities = nil
 	case "safety":
 		o.Safety = nil
 	case "local_history", "local history", "history":
@@ -531,6 +607,7 @@ func (o *WorkspaceOverrides) ClearCategory(name string) {
 
 func cloneAppSettings(s AppSettings) AppSettings {
 	out := s
+	out.Capabilities = captypes.Clone(s.Capabilities)
 	out.Providers = cloneProviders(s.Providers)
 	out.Accounts = make(map[string]provider.Account, len(s.Accounts))
 	for id, account := range s.Accounts {

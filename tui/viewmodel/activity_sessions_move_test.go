@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/provider"
 	"crude/sessiondb"
 	"crude/tui/screens/statusoverview"
 	"crude/tui/screens/termdock"
@@ -110,6 +111,50 @@ func TestPreviousSessionsResumeDirectlyInsideWorkspace(t *testing.T) {
 				t.Fatal("resuming a saved session discarded the existing agent")
 			}
 		})
+	}
+}
+
+func TestWorkspaceResumeAfterNewSessionPaintsHydratedHistoryImmediately(t *testing.T) {
+	app, ws := newRealShellApp(t)
+	t.Cleanup(ws.Close)
+
+	seedWorkspaceSession(t, app, "saved-session", "Saved work")
+	path, err := workspace.SessionDBPath(app.RootPath, "saved-session")
+	if err != nil {
+		t.Fatal(err)
+	}
+	db, err := sessiondb.OpenAndMigrate(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	message := provider.NewTextMessage("assistant", "hydrated workspace session is visible")
+	if _, err := sessiondb.ReplaceMessagesWithMeta(db, "saved-session", []provider.ChatMessage{message}, []int{1}, []sessiondb.DisplayMeta{{DisplayRole: "assistant", DisplayContent: "hydrated workspace session is visible"}}); err != nil {
+		_ = db.Close()
+		t.Fatal(err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatal(err)
+	}
+
+	if cmd := app.launcherNewSession(); cmd != nil {
+		_ = cmd()
+	}
+	_ = app.View()
+	if text := chatAreaText(app); strings.Contains(text, "hydrated workspace session is visible") {
+		t.Fatalf("precondition: new session already shows saved history: %q", text)
+	}
+
+	app.refreshWorkspaceSessions(true)
+	if cmd := app.resumeWorkspaceSession("saved-session"); cmd != nil {
+		_ = cmd()
+	}
+	_ = app.View()
+
+	if app.ActiveSession == nil || app.ActiveSession.SessionID != "saved-session" {
+		t.Fatalf("saved session was not activated: %+v", app.ActiveSession)
+	}
+	if text := chatAreaText(app); !strings.Contains(text, "hydrated workspace session is visible") {
+		t.Fatalf("first frame after Workspace resume stayed blank; content=%q", text)
 	}
 }
 

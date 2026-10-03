@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	rootprompt "crude/prompt"
 	"crude/tools"
 )
 
@@ -28,14 +29,14 @@ func TestOrchestratorKeepsStandardToolsUsable(t *testing.T) {
 }
 
 func TestHarnessAllowsDirectWorkAndRequiresIndependentBatching(t *testing.T) {
-	orchestrator := BuildSystemPrompt(true)
+	orchestrator := rootprompt.BuildRoot(rootprompt.RootOptions{MultiAgent: true})
 	for _, required := range []string{"Delegation is optional", "when the user asks you to work yourself", "Never spawn an agent merely to access a standard tool", "Respect live multi-agent settings"} {
 		if !strings.Contains(orchestrator, required) {
 			t.Errorf("orchestrator missing %q", required)
 		}
 	}
-	leaf, _ := BuildSubAgentPrompt(SubAgentSpec{Category: CatCrafter}, "")
-	for _, prompt := range []string{orchestrator, BuildSystemPrompt(false), leaf} {
+	leaf, _ := rootprompt.BuildChild(rootprompt.ChildOptions{Category: CatCrafter})
+	for _, prompt := range []string{orchestrator, rootprompt.BuildRoot(rootprompt.RootOptions{}), leaf} {
 		for _, required := range []string{"Use read/search/edit/write tools", "Batch independent tool calls", "including launches, cancellations", "edits and writes to different files", "especially edits to the same file", "one needs another's result", "async_execute_command"} {
 			if !strings.Contains(prompt, required) {
 				t.Errorf("tool contract missing %q", required)
@@ -45,8 +46,28 @@ func TestHarnessAllowsDirectWorkAndRequiresIndependentBatching(t *testing.T) {
 			t.Error("prompt advertises nonexistent command tool")
 		}
 	}
-	researcher, _ := BuildSubAgentPrompt(SubAgentSpec{Category: CatResearcher}, "")
+	researcher, _ := rootprompt.BuildChild(rootprompt.ChildOptions{Category: CatResearcher})
 	if !strings.Contains(researcher, "Do not edit files.") {
 		t.Error("direct tool guidance relaxed researcher permission boundary")
+	}
+}
+
+func TestAgentContractsExposeNoStepBudget(t *testing.T) {
+	for _, value := range []any{Agent{}, SubAgentSpec{}} {
+		if _, ok := reflect.TypeOf(value).FieldByName("MaxSteps"); ok {
+			t.Fatalf("%T still exposes MaxSteps", value)
+		}
+	}
+	for _, definition := range tools.AgentTools {
+		if definition.Function.Name != "run_sub_agent" {
+			continue
+		}
+		schema := string(definition.Function.Parameters)
+		if strings.Contains(schema, "max_steps") {
+			t.Fatal("run_sub_agent schema still advertises max_steps")
+		}
+		if strings.Contains(schema, `"required":["name"`) || !strings.Contains(schema, `"required":["description"`) {
+			t.Fatalf("run_sub_agent name is not optional: %s", schema)
+		}
 	}
 }

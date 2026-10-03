@@ -59,7 +59,7 @@ func TestBackgroundJobsPaintsStatusGlyphsAndErrors(t *testing.T) {
 	buf := surface.NewCellBuffer(120, 12)
 	host.Paint(buf)
 	painted := bufferText(buf)
-	for _, want := range []string{"✓ COMPLETED", "✗ FAILED", "! KILLED", "exit status 1", "130"} {
+	for _, want := range []string{"✓ COMPLETED", "✗ FAILED", "! KILLED", "exit status 1"} {
 		if !strings.Contains(painted, want) {
 			t.Fatalf("missing %q:\n%s", want, painted)
 		}

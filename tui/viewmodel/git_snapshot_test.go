@@ -285,7 +285,7 @@ func TestSilentGitSnapshotStaysSilent(t *testing.T) {
 		t.Fatal("reconcile read did not start")
 	}
 	app.paintShellFrame()
-	if plain := bufferPlain(app.mainSurf.Buffer()); !strings.Contains(plain, "1 changed") {
+	if plain := bufferPlain(app.mainSurf.Buffer()); !strings.Contains(plain, "Changes · 1") || strings.Contains(plain, "Refreshing repository") {
 		t.Fatalf("unrequested read flashed the panel loading state:\n%s", plain)
 	}
 	settled := app.gitRefreshGen.Load()

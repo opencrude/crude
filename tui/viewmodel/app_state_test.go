@@ -613,9 +613,7 @@ func TestHandleCancelConfirmationStopsTurnWithoutDenyingPermission(t *testing.T)
 	state := &workspace.AgentState{}
 	app.AgentMgr.AddOrchestrator("agent", state)
 	projection := app.activeSessionProjection()
-	projection.confirmation.Reset(confirmation.Details{Question: "Continue?"})
-	projection.confirmationAgentID = "agent"
-	app.openSessionConfirmationPanel(projection)
+	openTestAgentPrompt(t, app, projection, agentPromptRequest{question: "Continue?"})
 	projection.deckHost.Resize(80, 12)
 	projection.deckHost.Layout()
 	projection.deckHost.Focus(confirmation.ActionsID)
@@ -681,13 +679,14 @@ func TestLauncherState_HitTest(t *testing.T) {
 	host.Resize(80, 24)
 	host.Layout()
 
-	id := host.HitTest(40, 1)
-	if id != launcher.HeroID {
+	rect, _ := host.ScreenRect(launcher.NewSessionID)
+	id := host.HitTest(rect.X+1, rect.Y)
+	if id != launcher.NewSessionID {
 		t.Fatalf("expected hero card hit at (40,1), got %q", id)
 	}
 
 	// Clicking the hero card should activate it.
-	res := host.Handle(tea.MouseClickMsg{X: 40, Y: 1, Button: tea.MouseLeft})
+	res := host.Handle(tea.MouseClickMsg{X: rect.X + 1, Y: rect.Y, Button: tea.MouseLeft})
 	if res.Cmd == nil {
 		t.Fatal("click on hero card should produce an activation command")
 	}

@@ -3,8 +3,6 @@ package viewmodel
 import (
 	"crude/tui/screens/backgroundjobs"
 	"crude/tui/screens/composer"
-	"crude/tui/screens/confirmation"
-	"crude/tui/screens/question"
 	"crude/tui/screens/sessionsettings"
 	textoverlay "crude/tui/screens/textoverlay"
 	"crude/tui/screens/yolo"
@@ -19,22 +17,16 @@ import (
 // projections are keyed by the stable Session object so switching tabs cannot
 // leak dialog, form, or text-input state between conversations.
 type sessionProjection struct {
-	backgroundJobs      *backgroundjobs.Screen
-	confirmation        *confirmation.Screen
-	confirmationAgentID string
-	confirmationBlockID string
-	question            *question.Screen
-	questionAgentID     string
-	questionBlockID     string
-	yolo                *yolo.Screen
-	yoloAgentID         string
-	textOverlay         *textoverlay.Screen
-	composer            *composer.Screen
-	settings            *sessionsettings.Screen
-	deck                *ui.PanelDeck
-	deckHost            *ui.Host
-	deckFocused         bool
-	deckFocus           ui.ComponentID
+	backgroundJobs *backgroundjobs.Screen
+	yolo           *yolo.Screen
+	yoloAgentID    string
+	textOverlay    *textoverlay.Screen
+	composer       *composer.Screen
+	settings       *sessionsettings.Screen
+	deck           *ui.PanelDeck
+	deckHost       *ui.Host
+	deckFocused    bool
+	deckFocus      ui.ComponentID
 }
 
 type sessionProjectionRegistry struct {
@@ -69,8 +61,6 @@ func (r *sessionProjectionRegistry) Get(session *workspace.Session) *sessionProj
 	deck := ui.NewPanelDeck("session-deck", ui.NewTokenSet(r.theme))
 	projection := &sessionProjection{
 		backgroundJobs: backgroundjobs.New(r.theme),
-		confirmation:   confirmation.New(r.theme),
-		question:       question.New(r.theme),
 		yolo:           yolo.New(r.theme),
 		textOverlay:    textoverlay.New(r.theme),
 		composer:       composer.New(r.theme),
@@ -108,15 +98,6 @@ func (m *App) activeSessionProjection() *sessionProjection {
 		m.sessionProjections = newSessionProjectionRegistry(m.Theme)
 	}
 	return m.sessionProjections.Get(m.ActiveSession)
-}
-
-func (r *sessionProjectionRegistry) projectionForConfirmation(screen *confirmation.Screen) (*workspace.Session, *sessionProjection) {
-	for session, projection := range r.items {
-		if projection != nil && projection.confirmation == screen {
-			return session, projection
-		}
-	}
-	return nil, nil
 }
 
 func (m *App) sessionTextOverlay() *textoverlay.Screen {
@@ -168,9 +149,6 @@ func (r *sessionProjectionRegistry) SetTheme(th *theme.Theme) {
 		if projection.settings != nil {
 			projection.settings.SetTokens(tokens)
 		}
-		if projection.confirmation != nil {
-			projection.confirmation.SetTokens(tokens)
-		}
 		if projection.yolo != nil {
 			projection.yolo.SetTokens(tokens)
 		}
@@ -203,18 +181,6 @@ func (r *sessionProjectionRegistry) projectionForSettings(screen *sessionsetting
 	return nil, nil
 }
 
-func (r *sessionProjectionRegistry) projectionForQuestion(screen *question.Screen) (*workspace.Session, *sessionProjection) {
-	if r == nil || screen == nil {
-		return nil, nil
-	}
-	for session, projection := range r.items {
-		if projection != nil && projection.question == screen {
-			return session, projection
-		}
-	}
-	return nil, nil
-}
-
 func (r *sessionProjectionRegistry) projectionForYolo(screen *yolo.Screen) (*workspace.Session, *sessionProjection) {
 	if r == nil || screen == nil {
 		return nil, nil
@@ -241,6 +207,7 @@ func (m *App) refreshSessionSettingsProjection(session *workspace.Session) {
 	effective, base := sessionSettingsSnapshot(session)
 	projection.settings.ConfigureProviders(m.providerPresets, m.AllProviderConfigs())
 	projection.settings.ConfigureAccounts(m.AllAccounts())
+	projection.settings.SetCapabilities(m.capabilitySnapshot)
 	projection.settings.SetInheritance(effective, base, sessionSettingsOverrides(session))
 	if projection.deck != nil && projection.deck.Activate(sessionSettingsPanelID) {
 		projection.deck.Open(sessionSettingsPanel(projection.settings))

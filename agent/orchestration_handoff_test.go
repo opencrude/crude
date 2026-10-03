@@ -4,12 +4,13 @@ import (
 	"strings"
 	"testing"
 
+	rootprompt "crude/prompt"
 	"crude/tools"
 )
 
 func TestDelegationHasBoundedHandoffAndSingleVerificationOwner(t *testing.T) {
-	main := BuildSystemPrompt(true)
-	child, _ := BuildSubAgentPrompt(SubAgentSpec{Category: CatCrafter}, "")
+	main := rootprompt.BuildRoot(rootprompt.RootOptions{MultiAgent: true})
+	child, _ := rootprompt.BuildChild(rootprompt.ChildOptions{Category: CatCrafter})
 	for _, phrase := range []string{"stopping condition", "parent owns consolidated", "Completion notifications replace routine polling"} {
 		if !strings.Contains(main, phrase) {
 			t.Errorf("main lacks %q", phrase)

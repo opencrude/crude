@@ -5,7 +5,6 @@ import (
 	"time"
 
 	"crude/fileio"
-	"crude/tui/screens/confirmation"
 	"crude/tui/screens/question"
 	"crude/types"
 	"crude/workspace"
@@ -48,14 +47,11 @@ func TestConfirmationAndYoloResultsTargetOwningProjection(t *testing.T) {
 
 	app.ActiveSession = first
 	firstProjection := app.activeSessionProjection()
-	firstProjection.confirmation.Reset(confirmation.Details{Question: "Proceed?", Tool: "bash"})
-	firstProjection.confirmationAgentID = "first-agent"
-	firstProjection.confirmationBlockID = "block-1"
-	app.openSessionConfirmationPanel(firstProjection)
+	prompt := openTestAgentPrompt(t, app, firstProjection, agentPromptRequest{agentID: "first-agent", question: "Proceed?", tool: "bash"})
 
 	app.ActiveSession = second
 	secondProjection := app.activeSessionProjection()
-	app.resolveSessionConfirmation(firstProjection.confirmation, "always")
+	app.resolvePromptConfirmation(prompt.confirmation, "always")
 	if firstProjection.deck.IsOpen() || secondProjection.deck.IsOpen() || app.ActiveSession != second {
 		t.Fatal("inactive confirmation resolution changed the active session")
 	}
@@ -80,20 +76,18 @@ func TestBlockingQuestionPanelCapturesInputAndKeepsSessionOwnership(t *testing.T
 	second := &workspace.Session{SessionID: "second", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
 	app.ActiveSession = first
 	firstProjection := app.activeSessionProjection()
-	firstProjection.question.Reset(`[{"question":"Continue?","options":["yes","no"]}]`)
-	firstProjection.questionAgentID = "first-agent"
-	app.openSessionQuestionPanel(firstProjection)
+	prompt := openTestAgentPrompt(t, app, firstProjection, agentPromptRequest{kind: agentPromptQuestions, agentID: "first-agent", questionsJSON: `[{"question":"Continue?","options":["yes","no"]}]`})
 
 	if !app.sessionDeckBlocking() || !app.sessionDeckCapturesInput() {
 		t.Fatal("blocking question panel did not capture deck input")
 	}
-	if region := app.classifyShellRegion(0, 0, false); region != regionSessionDeck {
+	if region := app.classifyShellRegion(app.width-1, app.height-1, false); region != regionSessionDeck {
 		t.Fatalf("blocking question click classified as %v", region)
 	}
 
 	app.ActiveSession = second
 	secondProjection := app.activeSessionProjection()
-	app.resolveSessionQuestion(firstProjection.question, question.Result{}, true)
+	app.resolveAgentQuestion(prompt.question, question.Result{}, true)
 	if firstProjection.deck.IsOpen() {
 		t.Fatal("inactive question owner retained a resolved panel")
 	}
@@ -197,13 +191,12 @@ func TestBackgroundJobsDoesNotRetainFocusAfterBlockingPanelCloses(t *testing.T) 
 		Handle: "running", Command: "go test ./...", Status: fileio.AsyncRunning, StartedAt: now,
 	}}, now)
 	projection := app.activeSessionProjection()
-	projection.confirmation.Reset(confirmation.Details{Question: "Proceed?", Tool: "bash"})
-	app.openSessionConfirmationPanel(projection)
-	if !projection.deckFocused || projection.deck.Active().ID != sessionConfirmationPanelID {
+	prompt := openTestAgentPrompt(t, app, projection, agentPromptRequest{question: "Proceed?", tool: "bash"})
+	if !projection.deckFocused || projection.deck.Active().ID != prompt.panelID() {
 		t.Fatal("blocking panel did not take deck focus")
 	}
 
-	app.closeProjectionPanel(projection, sessionConfirmationPanelID)
+	app.closeProjectionPanel(projection, prompt.panelID())
 	if projection.deck.Active().ID != sessionBackgroundJobsPanelID || projection.deckFocused {
 		t.Fatal("passive panel retained focus after the blocker closed")
 	}

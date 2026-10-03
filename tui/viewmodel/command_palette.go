@@ -3,6 +3,7 @@ package viewmodel
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -58,6 +59,8 @@ func paletteEntriesFromRegistry(registry *ui.ActionRegistry) []cmdEntry {
 			Icon:     icon,
 		})
 	}
+	order := map[cmdCategory]int{catFile: 0, catEdit: 1, catView: 2, catTabs: 3, catAgent: 4, catTools: 5, catSystem: 6, catHelp: 7, catChat: 8, catApp: 9}
+	sort.SliceStable(entries, func(first, second int) bool { return order[entries[first].Category] < order[entries[second].Category] })
 	return entries
 }
 
@@ -542,7 +545,8 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		m.openSessionPicker()
 
 	case "memory.browse":
-		_, _ = m.toggleMemoryBrowser()
+		_, command := m.toggleMemoryBrowser()
+		return command
 
 	case "help.show":
 		m.openHelp()
@@ -588,8 +592,25 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		m.toggleActivity(activityFiles)
 	case "view.activity.agents":
 		m.toggleActivity(activityAgents)
-	case "view.activity.terminals":
-		m.toggleActivity(activityTerminals)
+	case "terminal.picker":
+		m.openTerminalPicker()
+	case "view.activity.skills":
+		return m.toggleActivity(activitySkills)
+	case "view.activity.mcp":
+		return m.toggleActivity(activityMCP)
+	case "skills.manage":
+		return m.openCapabilityManager(activitySkills, "", "")
+	case "capabilities.pick":
+		m.openCapabilityPicker()
+		return nil
+	case "mcp.manage":
+		return m.openCapabilityManager(activityMCP, "", "")
+	case "board.browse":
+		return m.openBoardBrowser()
+	case "workspace.panel.hide":
+		m.hideWorkspacePanel()
+	case "workspace.panel.maximize":
+		m.toggleWorkspacePanelMaximized()
 	case "view.activity.git":
 		m.toggleActivity(activityGit)
 	case "terminal.new":

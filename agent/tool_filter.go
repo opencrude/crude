@@ -30,6 +30,7 @@ func CategoryToolDefaults(category string) CategoryToolConfig {
 				"write_report", "question",
 				"update_plan", "get_plan",
 				"wait", "reply",
+				"capability_search", "capability_activate", "mcp_read_resource", "mcp_get_prompt", "board_post", "board_read",
 			},
 			DeniedTools: []string{
 				"write_file", "edit_file", "delete_file", "move_file", "copy_file",
@@ -47,6 +48,7 @@ func CategoryToolDefaults(category string) CategoryToolConfig {
 				"read_file", "write_file", "edit_file", "glob_files", "grep_files",
 				"list_directory",
 				"write_report", "reply", "wait",
+				"capability_search", "capability_activate", "mcp_read_resource", "mcp_get_prompt", "board_post", "board_read",
 			},
 			DeniedTools: []string{
 				"delete_file", "move_file", "copy_file",

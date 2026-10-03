@@ -716,6 +716,11 @@ func (m *App) StopAsyncIO() {
 	if m == nil {
 		return
 	}
+	m.resetMemoryBrowser()
+	if m.overlayHost != nil {
+		m.overlayHost.Close(ui.OverlayCapabilityPicker)
+	}
+	m.cancelCapabilityOperations()
 	m.asyncIOStopped.Store(true)
 	state := m.asyncIO.Swap(nil)
 	if state == nil {

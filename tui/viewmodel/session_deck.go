@@ -7,8 +7,6 @@ import (
 
 	"crude/fileio"
 	"crude/tui/screens/backgroundjobs"
-	"crude/tui/screens/confirmation"
-	"crude/tui/screens/question"
 	"crude/tui/screens/sessionsettings"
 	"crude/tui/screens/yolo"
 	"crude/tui/ui"
@@ -19,8 +17,6 @@ import (
 const (
 	sessionBackgroundJobsPanelID = "session-background-jobs"
 	sessionSettingsPanelID       = "session-settings"
-	sessionQuestionPanelID       = "session-question"
-	sessionConfirmationPanelID   = "session-confirmation"
 	sessionYoloPanelID           = "session-yolo"
 )
 
@@ -67,7 +63,7 @@ func (m *App) updateSessionBackgroundJobs(agentID string, commands []fileio.Asyn
 			}
 		}
 		jobs = append(jobs, backgroundjobs.Job{
-			Handle: command.Handle, Command: command.Command, PID: command.PID, Status: string(command.Status),
+			OwnerID: agentID, Handle: command.Handle, Command: command.Command, PID: command.PID, Status: string(command.Status),
 			StartedAt: command.StartedAt, EndedAt: command.EndedAt, Duration: command.Duration,
 			ExitCode: command.ExitCode, Error: command.Error,
 		})
@@ -106,23 +102,6 @@ type sessionSettingsModelsResultMsg struct {
 	err        error
 }
 
-func sessionConfirmationPanel(screen *confirmation.Screen) ui.PanelEntry {
-	return ui.PanelEntry{ID: sessionConfirmationPanelID, Title: "Confirmation", Content: screen, Closable: false, Policy: ui.PanelBlocking, PreferredHeight: 12}
-}
-func (m *App) openSessionConfirmationPanel(projection *sessionProjection) {
-	if projection == nil || projection.confirmation == nil {
-		return
-	}
-	projection.deck.Open(sessionConfirmationPanel(projection.confirmation))
-	if panel := projection.deck.Active(); panel == nil || panel.ID != sessionConfirmationPanelID {
-		projection.deckHost.MarkLayout()
-		return
-	}
-	projection.deckFocused = true
-	projection.deckFocus = confirmation.ActionsID
-	projection.deckHost.MarkLayout()
-}
-
 type sessionSettingsSaveResultMsg struct {
 	target   *sessionsettings.Screen
 	settings types.Settings
@@ -136,13 +115,6 @@ func sessionSettingsPanel(screen *sessionsettings.Screen) ui.PanelEntry {
 		// Wide-readable so the "inherited from workspace" trailing column on
 		// each agent row stays visible without stretching to the deck edge.
 		Width: ui.PanelWideReadable,
-	}
-}
-
-func sessionQuestionPanel(screen *question.Screen) ui.PanelEntry {
-	return ui.PanelEntry{
-		ID: sessionQuestionPanelID, Title: "Questions", Content: screen,
-		Closable: false, Policy: ui.PanelBlocking, PreferredHeight: 12,
 	}
 }
 
@@ -213,20 +185,6 @@ func (m *App) openSessionAccountPicker() tea.Cmd {
 	return cmd
 }
 
-func (m *App) openSessionQuestionPanel(projection *sessionProjection) {
-	if projection == nil || projection.deck == nil || projection.deckHost == nil || projection.question == nil || projection.question.Count() == 0 {
-		return
-	}
-	projection.deck.Open(sessionQuestionPanel(projection.question))
-	if panel := projection.deck.Active(); panel == nil || panel.ID != sessionQuestionPanelID {
-		projection.deckHost.MarkLayout()
-		return
-	}
-	projection.deckFocused = true
-	projection.deckFocus = question.OptionsID
-	projection.deckHost.MarkLayout()
-}
-
 func (m *App) closeSessionPanel(id string) {
 	projection := m.activeSessionDeck()
 	m.closeProjectionPanel(projection, id)
@@ -237,6 +195,9 @@ func (m *App) closeProjectionPanel(projection *sessionProjection, id string) {
 		return
 	}
 	projection.deckHost.MarkLayout()
+	if panel := projection.deck.Active(); panel != nil && panel.BlockingGroup == "agent-prompts" {
+		projection.deckFocused, projection.deckFocus = true, panel.FocusID
+	}
 	m.normalizeSessionDeckFocus(projection)
 }
 
@@ -263,7 +224,19 @@ func (m *App) sessionDeckBlocking() bool {
 }
 
 func (m *App) sessionDeckCapturesInput() bool {
+	if m.sessionDeckAllowsNavigation() && (m.focusTarget() == FocusTree || m.focusTarget() == FocusTabBar) {
+		return false
+	}
 	return m.sessionDeckFocused() || m.sessionDeckBlocking()
+}
+
+func (m *App) sessionDeckAllowsNavigation() bool {
+	if projection := m.activeSessionDeck(); projection != nil {
+		if panel := projection.deck.Active(); panel != nil {
+			return panel.BlockingGroup == "agent-prompts"
+		}
+	}
+	return false
 }
 
 func (m *App) setSessionDeckFocused(focused bool) {
@@ -291,7 +264,7 @@ func (m *App) handleSessionDeckEvent(msg tea.Msg) tea.Cmd {
 	}
 	m.reconcileClosedTerminalPanels(before)
 	m.normalizeSessionDeckFocus(projection)
-	return result.Cmd
+	return tea.Batch(result.Cmd, m.handleHostAction(result.Action))
 }
 
 func (m *App) normalizeSessionDeckFocus(projection *sessionProjection) {
@@ -300,6 +273,10 @@ func (m *App) normalizeSessionDeckFocus(projection *sessionProjection) {
 	}
 	panel := projection.deck.Active()
 	if panel != nil && panel.Policy != ui.PanelPassive {
+		return
+	}
+	if panel != nil && panel.ID == sessionBackgroundJobsPanelID && projection.deckFocused &&
+		projection.backgroundJobs.ActionFocused(projection.deckHost.Focused()) {
 		return
 	}
 	projection.deckFocused = false
@@ -315,69 +292,6 @@ func (m *App) focusSessionDeckAfterLayout() {
 	if projection.deckHost.Focus(projection.deckFocus) {
 		projection.deckFocus = ui.RootID
 	}
-}
-
-func (m *App) resolveSessionQuestion(target *question.Screen, result question.Result, cancelled bool) {
-	_, projection := m.sessionProjections.projectionForQuestion(target)
-	if projection == nil {
-		m.Feedback.NotifyError("Question owner is no longer available")
-		return
-	}
-	agentID := projection.questionAgentID
-	blockID := projection.questionBlockID
-	m.OverlayState.SetBlocking(false)
-	resolved := m.ResolveQuestion(agentID, blockID, result.Answers, result.Questions, cancelled)
-	if resolved {
-		if node := m.AgentMgr.Get(agentID); node != nil && node.State != nil {
-			node.State.Thinking = true
-		}
-	} else {
-		m.Feedback.NotifyError("Question response was not sent: the request is no longer active")
-	}
-	projection.questionBlockID = ""
-	target.Dismiss()
-	m.closeProjectionPanel(projection, sessionQuestionPanelID)
-}
-func (m *App) resolveSessionConfirmation(target *confirmation.Screen, choice string) {
-	_, projection := m.sessionProjections.projectionForConfirmation(target)
-	if projection == nil {
-		return
-	}
-	agentID := projection.confirmationAgentID
-	blockID := projection.confirmationBlockID
-	details := target.Details()
-	m.OverlayState.SetBlocking(false)
-	if m.ResolveConfirmation(agentID, blockID, choice) {
-		if node := m.AgentMgr.Get(agentID); node != nil && node.State != nil {
-			node.State.Running = true
-			node.State.Thinking = true
-		}
-		if m.Logger != nil {
-			m.Logger.Info("BLOCK", "resolved", "response", choice, "operation", details.Operation, "tool", details.Tool)
-		}
-	} else {
-		m.Feedback.NotifyError("Permission response was not sent: the request is no longer active")
-	}
-	projection.confirmationBlockID = ""
-	target.Dismiss()
-	m.closeProjectionPanel(projection, sessionConfirmationPanelID)
-}
-
-func (m *App) cancelSessionConfirmation(target *confirmation.Screen) {
-	_, projection := m.sessionProjections.projectionForConfirmation(target)
-	if projection == nil {
-		return
-	}
-	agentID := projection.confirmationAgentID
-	details := target.Details()
-	projection.confirmationBlockID = ""
-	m.OverlayState.SetBlocking(false)
-	target.Dismiss()
-	m.closeProjectionPanel(projection, sessionConfirmationPanelID)
-	if m.Logger != nil {
-		m.Logger.Info("BLOCK", "turn_cancelled", "operation", details.Operation, "tool", details.Tool)
-	}
-	m.cancelAgentTurn(agentID)
 }
 
 func (m *App) resolveSessionYolo(target *yolo.Screen, enabled bool) {

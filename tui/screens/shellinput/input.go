@@ -6,6 +6,7 @@ import (
 
 	"crude/tui/cell"
 	"crude/tui/input"
+	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -102,11 +103,18 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 	bg := s.tokens.Color(ui.ColorBg)
 	ui.FillRect(buf, ox, oy, b, cell.BlankCell(bg))
 	s.model.PaintShell(buf, ox+b.X, oy+b.Y, b.W, b.H, ctx)
+	label := "+ Capability"
+	if b.W >= 24 {
+		buf.WriteString(ox+b.X+b.W-rendering.VisibleWidth(label)-1, oy+b.Y, label, s.tokens.Color(ui.ColorMuted), bg, 0)
+	}
 }
 
 func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if s.model == nil {
 		return ui.EventResult{}
+	}
+	if evt.Kind == ui.EventMouseClick && ctx.LocalY == 0 && s.width >= 24 && ctx.LocalX >= s.width-rendering.VisibleWidth("+ Capability")-1 {
+		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "capabilities.pick"}}
 	}
 	return s.model.HandleShell(ctx, evt)
 }

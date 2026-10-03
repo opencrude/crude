@@ -1,7 +1,7 @@
 // Package memory implements crude's durable workspace memory system:
-// FTS5/BM25 scored recall with recency/importance/usage/path signals,
-// cross-session history search, session summaries, and an append-only
-// audit journal.
+// FTS5/BM25 scored recall with recency, importance and path signals,
+// evidence-backed knowledge revisions, scoped episodes, history search,
+// exposure and feedback ledgers, and an append-only audit journal.
 //
 // It is a neutral domain library (like sessiondb): it owns schema,
 // storage, and retrieval only. Callers (session, workspace) own LLM
@@ -10,8 +10,7 @@
 // stays auditable in place.
 package memory
 
-// Memory kinds. Kind is advisory: unknown kinds are stored verbatim so a
-// newer schema never rejects an older writer.
+// Memory kinds describe the durable assertion, independently of episodes.
 const (
 	KindFact       = "fact"
 	KindDecision   = "decision"
@@ -56,12 +55,16 @@ const DefaultImportance = 40
 // Record is one durable workspace memory.
 type Record struct {
 	ID              string
+	Revision        int64
 	Kind            string
 	Title           string
 	Content         string
 	Entities        string   // space-joined mechanical entities (paths, symbols, commands)
 	ScopePaths      []string // path/glob scopes that boost recall when active
-	Importance      int      // 0-100
+	AppliesWhen     string
+	Evidence        []Evidence
+	Actor           string
+	Importance      int // 0-100
 	Status          string
 	SupersededBy    string
 	Source          string
@@ -116,6 +119,7 @@ type TurnRecord struct {
 	ToolNames     []string
 	Files         []string
 	CreatedAt     int64
+	Observations  []Observation
 }
 
 // HistoryHit is one history search result.
@@ -150,4 +154,76 @@ type JournalEntry struct {
 	MemoryID  string
 	SessionID string
 	Detail    string
+}
+
+const (
+	OutcomeSucceeded      = "succeeded"
+	OutcomeFailed         = "failed"
+	OutcomeUnmeasured     = "unmeasured"
+	OutcomeCancelled      = "cancelled"
+	EvidenceUser          = "user_statement"
+	EvidenceTool          = "tool_result"
+	EvidenceChange        = "verified_change"
+	EvidenceValidation    = "validation"
+	EvidenceAssistant     = "assistant_claim"
+	FeedbackUseful        = "useful"
+	FeedbackMisleading    = "misleading"
+	FeedbackContradicted  = "contradicted"
+	FeedbackNotApplicable = "not_applicable"
+)
+
+type Evidence struct {
+	SessionID  string `json:"session_id"`
+	MessageID  string `json:"message_id,omitempty"`
+	ToolCallID string `json:"tool_call_id,omitempty"`
+	Kind       string `json:"kind"`
+	Summary    string `json:"summary"`
+	Outcome    string `json:"outcome"`
+}
+
+type Observation struct {
+	Evidence
+	Turn       int      `json:"turn"`
+	Method     string   `json:"method,omitempty"`
+	Conditions string   `json:"conditions,omitempty"`
+	Paths      []string `json:"paths,omitempty"`
+}
+
+type Episode struct {
+	ID         string
+	SessionID  string
+	Turn       int
+	Situation  string
+	Method     string
+	Outcome    string
+	Conditions string
+	Evidence   []Evidence
+	CreatedAt  int64
+}
+
+type Revision struct {
+	Record
+	SessionID string
+	Op        string
+}
+
+type RevisionRef struct {
+	ID       string `json:"id"`
+	Revision int64  `json:"revision"`
+}
+
+type Exposure struct {
+	RevisionRef
+	SessionID string
+	Kind      string
+	At        int64
+}
+
+type Feedback struct {
+	RevisionRef
+	Kind      string     `json:"kind"`
+	Evidence  []Evidence `json:"evidence"`
+	SessionID string     `json:"session_id,omitempty"`
+	Actor     string     `json:"actor,omitempty"`
+	At        int64      `json:"at,omitempty"`
 }

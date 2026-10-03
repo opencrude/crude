@@ -241,9 +241,9 @@ func TestLongToolTitleWrapsWithoutLosingOperand(t *testing.T) {
 func TestSubAgentToolLabelsDistinguishRunningAndFailure(t *testing.T) {
 	waiting := buildToolTitleLine(types.ChatMessage{
 		ToolName: "run_sub_agent", ToolStatus: types.ToolStatusStreaming,
-		ToolPreviewPhase: types.ToolPreviewStreaming, ToolProgressLabel: "Lily — survey",
+		ToolPreviewPhase: types.ToolPreviewStreaming, ToolProgressLabel: "Lily · Researcher — survey",
 	}, types.ToolPreviewStreaming, 0).PlainText()
-	if !strings.Contains(waiting, "Running sub-agent Lily — survey") || strings.Contains(waiting, "Spawning") {
+	if !strings.Contains(waiting, "Running sub-agent Lily · Researcher — survey") || strings.Contains(waiting, "Spawning") {
 		t.Fatalf("running label = %q", waiting)
 	}
 	failed := buildToolTitleLine(types.ChatMessage{
@@ -263,7 +263,7 @@ func TestCompactSubAgentToolKeepsNameAndHandleWithoutJSON(t *testing.T) {
 	for _, line := range lines {
 		text.WriteString(line.PlainText())
 	}
-	if !strings.Contains(text.String(), "Lily sub Dawn (agent-8f21)") || strings.Contains(text.String(), `"handle_id"`) {
+	if !strings.Contains(text.String(), "Lily sub Dawn") || !strings.Contains(text.String(), "Researcher") || !strings.Contains(text.String(), "agent-8f21") || strings.Contains(text.String(), `"handle_id"`) {
 		t.Fatalf("compact child tool label: %q", text.String())
 	}
 }

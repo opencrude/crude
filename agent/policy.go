@@ -2,6 +2,8 @@ package agent
 
 import (
 	"crude/safety"
+	"crude/tools"
+	captypes "crude/types/capability"
 )
 
 func ComposePolicy(parentPolicy safety.Policy, specPolicyName string, category string) safety.Policy {
@@ -63,47 +65,30 @@ func categoryPolicy(category string) safety.Policy {
 }
 
 func PolicyAllows(policy safety.Policy, toolName string) bool {
-	switch toolName {
-	case "read_file", "glob_files", "grep_files", "list_directory",
-		"web_search", "web_fetch", "arxiv_search",
-		"reply", "question", "write_report",
-		"update_plan", "get_plan",
-		"list_sub_agents", "poll_sub_agent", "wait":
-		return policy.IsAllowed(safety.OpRead)
-	case "apply_patch", "write_file", "edit_file", "move_file", "copy_file":
-		return policy.IsAllowed(safety.OpUpdate)
-	case "delete_file":
-		return policy.IsAllowed(safety.OpDelete)
-	case "exec_command", "write_stdin", "execute_command", "async_execute_command", "check_async_command",
-		"kill_async_command", "read_async_output":
-		return policy.IsAllowed(safety.OpExecute) || policy.IsAllowed(safety.OpExecuteReadOnly)
-	case "run_sub_agent":
-		return policy.IsAllowed(safety.OpExecute)
-	default:
-		return true
+	metadata, exists := tools.NativeMetadata(toolName)
+	if !exists {
+		return false
 	}
+	if toolName == "exec_command" || toolName == "write_stdin" || toolName == "execute_command" || toolName == "async_execute_command" {
+		return policy.IsAllowed(safety.OpExecute) || policy.IsAllowed(safety.OpExecuteReadOnly)
+	}
+	return PolicyAllowsMetadata(policy, metadata)
 }
 
-func UpgradePolicyForAllowedTools(policy safety.Policy, allowedTools []string) safety.Policy {
-	if len(allowedTools) == 0 {
-		return policy
+func PolicyAllowsMetadata(policy safety.Policy, metadata tools.ToolMetadata) bool {
+	if metadata.Name == "" || metadata.Scope == "" || metadata.Dynamic && metadata.Fingerprint == "" {
+		return false
 	}
-	if policy.AllowedCapabilities == nil {
-		policy.AllowedCapabilities = make(map[safety.Capability]bool)
+	switch metadata.Effect {
+	case captypes.EffectRead, captypes.EffectCommunication:
+		return policy.IsAllowed(safety.OpRead)
+	case captypes.EffectWrite:
+		return policy.IsAllowed(safety.OpUpdate)
+	case captypes.EffectDelete:
+		return policy.IsAllowed(safety.OpDelete)
+	case captypes.EffectExecute:
+		return policy.IsAllowed(safety.OpExecute)
+	default:
+		return false
 	}
-	for _, tool := range allowedTools {
-		switch tool {
-		case "apply_patch", "write_file", "edit_file", "move_file", "copy_file":
-			policy.AllowedCapabilities[safety.CanUpdate] = true
-		case "delete_file":
-			policy.AllowedCapabilities[safety.CanDelete] = true
-		case "execute_command", "async_execute_command":
-			policy.AllowedCapabilities[safety.CanExecute] = true
-		case "check_async_command", "kill_async_command", "read_async_output":
-			if !policy.AllowedCapabilities[safety.CanExecute] {
-				policy.AllowedCapabilities[safety.CanExecuteReadOnly] = true
-			}
-		}
-	}
-	return policy
 }

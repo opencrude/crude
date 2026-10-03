@@ -18,10 +18,14 @@ func newPrefixHasher(tools []ToolDef) prefixHasher {
 }
 
 func (h *prefixHasher) add(message ChatMessage) {
+	h.addContent(message, message.Content.String())
+}
+
+func (h *prefixHasher) addContent(message ChatMessage, content string) {
 	digest := sha256.New()
 	_, _ = digest.Write(h.state[:])
 	writeHashString(digest, message.Role)
-	writeHashString(digest, message.Content.String())
+	writeHashString(digest, content)
 	writeHashString(digest, message.ReasoningContent)
 	writeHashString(digest, message.Reasoning)
 	writeHashString(digest, message.Refusal)

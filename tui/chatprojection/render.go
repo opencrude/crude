@@ -13,6 +13,11 @@ func renderMarkdown(content string, mdRenderer *glamour.TermRenderer) (string, b
 	if mdRenderer == nil {
 		return "", false
 	}
+	if content != "" && strings.TrimSpace(content) == content && strings.IndexFunc(content, func(character rune) bool {
+		return character != ' ' && (character < 'a' || character > 'z') && (character < 'A' || character > 'Z')
+	}) < 0 {
+		return "", false
+	}
 	r, err := mdRenderer.Render(content)
 	if err != nil {
 		return "", false

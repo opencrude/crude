@@ -1,18 +1,26 @@
 package memory
 
 import (
+	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
+	"time"
+
+	rootprompt "crude/prompt"
 )
 
 // ExtractedMemory is one candidate memory proposed by the extraction model.
 type ExtractedMemory struct {
-	Kind       string   `json:"kind"`
-	Title      string   `json:"title"`
-	Content    string   `json:"content"`
-	Importance int      `json:"importance"`
-	Paths      []string `json:"paths"`
+	Kind        string   `json:"kind"`
+	Title       string   `json:"title"`
+	Content     string   `json:"content"`
+	Importance  int      `json:"importance"`
+	Paths       []string `json:"paths"`
+	AppliesWhen string   `json:"applies_when"`
+	Evidence    []int    `json:"evidence"`
 }
 
 // ExtractedSummary is the rolling session summary proposed by the
@@ -30,52 +38,199 @@ type ExtractionResult struct {
 	Summary  *ExtractedSummary `json:"summary"`
 }
 
-// ExtractionSystemPrompt instructs the background model. The what-NOT-to-save
-// taxonomy matters as much as the positive list: derivable and transient
-// content is what rots memory stores.
-const ExtractionSystemPrompt = `You are the memory curator for a coding IDE agent. You read new conversation turns from one work session and maintain the project's long-term memory.
-
-TASK 1 — extract durable memories (0 to 5; zero is common and correct).
-Save ONLY information that will still be true and useful in future sessions:
-- convention: project-specific commands, workflows, style rules that were actually used or stated ("tests run with X", "commits use format Y")
-- decision: architectural or design decisions with their reasoning
-- fact: verified project facts that are NOT obvious from reading the code (external service quirks, environment constraints, historical context)
-- preference: how the user likes to work or be answered
-- lesson: a mistake or failure AND its verified fix ("X fails when Y; do Z instead") — only after the fix was confirmed to work
-- reference: important external resources (URLs, docs, tickets) that were actually useful
-
-DO NOT save:
-- anything derivable by reading the code, file tree, or git history
-- transient state: current task progress, plans, TODO lists, what is being edited right now
-- unverified guesses, hypotheses, or claims that were not confirmed
-- secrets, API keys, tokens, passwords, or personal data
-- generic programming knowledge the agent already has
-- one-off command output, build logs, timestamps
-- duplicates or trivial rewordings of EXISTING MEMORIES
-
-Each memory: short stable title (dedup key), self-contained content (1-4 sentences), importance 0-100 (most are 30-60; 80+ is rare), paths = repo-relative files/dirs it applies to (empty if project-wide).
-
-TASK 2 — update the rolling session summary: what this session is about, what was accomplished, current outcome (in-progress | completed | blocked), and the key files involved. Merge the PREVIOUS SUMMARY with the NEW TURNS; the result replaces it.
-
-Respond with ONLY this JSON (no markdown fences, no prose):
-{"memories":[{"kind":"...","title":"...","content":"...","importance":40,"paths":["..."]}],"summary":{"title":"...","summary":"2-4 sentences","outcome":"...","key_files":["..."]}}`
-
-// BuildExtractionUser assembles the user message for one extraction call.
-func BuildExtractionUser(previousSummary, existingTitles, transcript string) string {
-	var b strings.Builder
-	if previousSummary != "" {
-		b.WriteString("PREVIOUS SUMMARY:\n")
-		b.WriteString(previousSummary)
-		b.WriteString("\n\n")
+func PrepareExtractionInput(previousSummary, existingTitles, transcript string, observations []Observation) rootprompt.MemoryExtractionInput {
+	input := rootprompt.MemoryExtractionInput{
+		PreviousSummary: TruncateBytes(Redact(previousSummary), 4096),
+		ExistingTitles:  TruncateBytes(Redact(existingTitles), 4096),
+		Transcript:      TruncateBytes(Redact(transcript), 16<<10),
 	}
-	if existingTitles != "" {
-		b.WriteString("EXISTING MEMORIES (titles — do not duplicate):\n")
-		b.WriteString(existingTitles)
-		b.WriteString("\n\n")
+	for _, observation := range observations {
+		payload, err := json.Marshal(observation)
+		if err != nil {
+			continue
+		}
+		input.Observations = append(input.Observations, string(payload))
 	}
-	b.WriteString("NEW TURNS:\n")
-	b.WriteString(transcript)
-	return b.String()
+	return input
+}
+
+func SelectExtractionObservations(observations []Observation) []Observation {
+	var selected []Observation
+	spent := 0
+	for _, observation := range observations {
+		payload, err := json.Marshal(observation)
+		if err != nil || len(selected) >= 48 || spent+len(payload) > 24<<10 {
+			continue
+		}
+		spent += len(payload)
+		selected = append(selected, observation)
+	}
+	return selected
+}
+
+func GroundExtraction(result ExtractionResult, observations []Observation, sessionID, provenance string) []Record {
+	var records []Record
+	for _, candidate := range result.Memories {
+		var evidence []Evidence
+		valid := len(candidate.Evidence) > 0 && len(candidate.Evidence) <= MaxEvidence
+		lastFailure := -1
+		validatedAfterFailure := false
+		changedAfterFailure := false
+		seen := make(map[int]bool)
+		for _, index := range candidate.Evidence {
+			if index < 0 || index >= len(observations) || seen[index] {
+				valid = false
+				break
+			}
+			seen[index] = true
+			observation := observations[index]
+			if observation.SessionID != sessionID || !scopeSupported(candidate.Paths, observation.Paths, observation.Kind) {
+				valid = false
+				break
+			}
+			evidence = append(evidence, observation.Evidence)
+			if observation.Outcome == OutcomeFailed && (observation.Kind == EvidenceValidation || observation.Kind == EvidenceTool) {
+				lastFailure = index
+			}
+		}
+		if candidate.Kind == KindLesson {
+			for _, index := range candidate.Evidence {
+				if index >= 0 && index < len(observations) && index > lastFailure && lastFailure >= 0 {
+					observation := observations[index]
+					failure := observations[lastFailure]
+					if observation.Kind == EvidenceChange && observation.Outcome == OutcomeSucceeded {
+						changedAfterFailure = true
+					}
+					if observation.Kind == EvidenceValidation && observation.Outcome == OutcomeSucceeded &&
+						observation.Method == failure.Method && observation.Conditions == failure.Conditions {
+						for _, changeIndex := range candidate.Evidence {
+							if changeIndex > lastFailure && changeIndex < index && changeIndex >= 0 && changeIndex < len(observations) &&
+								observations[changeIndex].Kind == EvidenceChange && observations[changeIndex].Outcome == OutcomeSucceeded {
+								validatedAfterFailure = true
+							}
+						}
+					}
+				}
+			}
+			valid = valid && changedAfterFailure && validatedAfterFailure && strings.TrimSpace(candidate.AppliesWhen) != ""
+		}
+		if !valid || !supportsKnowledge(candidate.Kind, evidence) {
+			continue
+		}
+		record := Record{Kind: candidate.Kind, Title: candidate.Title, Content: candidate.Content,
+			Importance: candidate.Importance, ScopePaths: candidate.Paths, AppliesWhen: candidate.AppliesWhen,
+			Evidence: evidence, Source: SourceAuto, SourceSessionID: sessionID, Provenance: provenance}
+		if err := validateKindDefaults(&record); err != nil {
+			continue
+		}
+		records = append(records, record)
+	}
+	return records
+}
+
+func scopeSupported(paths, observedPaths []string, kind string) bool {
+	if len(paths) == 0 || kind == EvidenceUser {
+		return true
+	}
+	for _, path := range paths {
+		matched := false
+		for _, observed := range observedPaths {
+			if observed == path || strings.HasPrefix(observed, strings.TrimSuffix(path, "/")+"/") {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
+	}
+	return true
+}
+
+type ExtractionBatch struct {
+	SessionID          string
+	ExpectedWatermark  int
+	ThroughTurn        int
+	ExpectedGeneration int64
+	Records            []Record
+	Summary            *SessionSummary
+}
+
+func (st *Store) KnowledgeGeneration(ctx context.Context) (int64, error) {
+	raw, err := st.GetMeta(ctx, "knowledge_generation")
+	if err != nil || raw == "" {
+		return 0, err
+	}
+	return strconv.ParseInt(raw, 10, 64)
+}
+
+func (st *Store) CommitExtraction(ctx context.Context, batch ExtractionBatch) ([]Record, error) {
+	if batch.SessionID == "" || batch.ThroughTurn <= batch.ExpectedWatermark || len(batch.Records) > 5 {
+		return nil, fmt.Errorf("memory: invalid extraction batch")
+	}
+	tx, err := st.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for key, expected := range map[string]int64{"extract:" + batch.SessionID: int64(batch.ExpectedWatermark), "knowledge_generation": batch.ExpectedGeneration} {
+		var raw string
+		err := tx.QueryRowContext(ctx, `SELECT value FROM memory_meta WHERE key=?`, key).Scan(&raw)
+		if err != nil && err != sql.ErrNoRows {
+			return nil, err
+		}
+		current := int64(0)
+		if raw != "" {
+			current, err = strconv.ParseInt(raw, 10, 64)
+			if err != nil {
+				return nil, err
+			}
+		}
+		if current != expected {
+			return nil, fmt.Errorf("%w: extraction %s changed", ErrRevisionConflict, key)
+		}
+	}
+	var saved []Record
+	for _, record := range batch.Records {
+		if record.Source != SourceAuto || record.SourceSessionID != batch.SessionID {
+			return nil, fmt.Errorf("memory: extraction source mismatch")
+		}
+		if err := validateKindDefaults(&record); err != nil {
+			return nil, err
+		}
+		var conflicts int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM workspace_memories WHERE kind=? AND lower(trim(title))=lower(trim(?))`, record.Kind, record.Title).Scan(&conflicts); err != nil {
+			return nil, err
+		}
+		if conflicts > 0 {
+			if err := journalTx(ctx, tx, ActorAuto, "merge_suggested", "", batch.SessionID, record.Title); err != nil {
+				return nil, err
+			}
+			continue
+		}
+		record, err := rememberTx(ctx, tx, record)
+		if err != nil {
+			return nil, err
+		}
+		saved = append(saved, record)
+	}
+	if batch.Summary != nil {
+		if batch.Summary.SessionID != batch.SessionID {
+			return nil, fmt.Errorf("memory: extraction summary source mismatch")
+		}
+		if err := saveSessionSummaryTx(ctx, tx, *batch.Summary); err != nil {
+			return nil, err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO memory_meta(key, value, updated_at) VALUES (?, ?, ?)
+		ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at`,
+		"extract:"+batch.SessionID, strconv.Itoa(batch.ThroughTurn), time.Now().UnixNano()); err != nil {
+		return nil, err
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, err
+	}
+	return saved, nil
 }
 
 // ParseExtraction parses a (possibly noisy) model response into an

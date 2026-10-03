@@ -225,7 +225,7 @@ func (p *Provider) Client(opts ...ClientOption) (*Client, error) {
 }
 
 // requestExtras merges the protocol-derived extras with provider extras;
-// provider extras win.
+// provider extras win except the explicit retention policy.
 func (p *Provider) requestExtras() map[string]any {
 	proto := p.Protocol()
 	merged := map[string]any{}
@@ -240,6 +240,10 @@ func (p *Provider) requestExtras() map[string]any {
 	}
 	for key, value := range p.extraBody {
 		merged[key] = cloneAnyValue(value)
+	}
+	// Generic extras cannot silently re-enable an explicit Off or ZDR choice.
+	if settings := p.protocolSettings; settings != nil && proto != nil && proto.Info().Options.Store && (settings.Store != nil || settings.ZeroDataRetention) {
+		merged["store"] = settings.ResolveStore(proto.Info().Options.StoreDefault)
 	}
 	if len(merged) == 0 {
 		return nil

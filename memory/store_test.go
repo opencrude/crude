@@ -3,7 +3,9 @@ package memory
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -40,51 +42,61 @@ func TestAttachEnablesFTS5(t *testing.T) {
 	}
 }
 
-func TestLegacyV0SchemaUpgrades(t *testing.T) {
+func TestIncompatibleDevelopmentSchemaIsNotMigrated(t *testing.T) {
 	db := openTestDB(t)
-	// v0 schema as created by the pre-v2 workspace migration.
+	previous := strings.NewReplacer(
+		"    revision          INTEGER NOT NULL CHECK(revision > 0),\n", "",
+		"    applies_when      TEXT NOT NULL DEFAULT '',\n", "",
+		"    evidence          TEXT NOT NULL DEFAULT '[]',\n", "",
+		"    actor             TEXT NOT NULL,\n", "",
+	).Replace(baseSchema)
+	if _, err := db.Exec(previous); err != nil {
+		t.Fatal(err)
+	}
 	_, err := db.Exec(`
-		CREATE TABLE workspace_memories (
-			id                TEXT PRIMARY KEY,
-			kind              TEXT NOT NULL DEFAULT 'fact',
-			title             TEXT NOT NULL,
-			content           TEXT NOT NULL,
-			source_session_id TEXT NOT NULL DEFAULT '',
-			pinned            INTEGER NOT NULL DEFAULT 0,
-			created_at        INTEGER NOT NULL,
-			updated_at        INTEGER NOT NULL
-		);
 		INSERT INTO workspace_memories
 			(id, kind, title, content, source_session_id, pinned, created_at, updated_at)
-		VALUES ('mem-legacy1', 'convention', 'Validation command',
+		VALUES ('mem-legacy1', 'fact', 'Validation command',
 		        'Run go test ./... in moveWordLeft before handoff.', 's1', 1, 100, 100);
 	`)
 	if err != nil {
 		t.Fatalf("create legacy schema: %v", err)
 	}
 
-	st, err := Attach(db)
-	if err != nil {
-		t.Fatalf("Attach over legacy schema: %v", err)
+	if _, err := Attach(db); err == nil {
+		t.Fatal("incompatible development data must not get a compatibility migration")
 	}
-	if !st.FTSEnabled() {
-		t.Fatal("FTS should be enabled after upgrade")
+	var content string
+	if err := db.QueryRow(`SELECT content FROM workspace_memories WHERE id='mem-legacy1'`).Scan(&content); err != nil || content != "Run go test ./... in moveWordLeft before handoff." {
+		t.Fatalf("failed attach modified existing data: %q %v", content, err)
 	}
-	// Attach must be idempotent.
-	if _, err := Attach(db); err != nil {
-		t.Fatalf("second Attach: %v", err)
+	var columns int
+	if err := db.QueryRow(`SELECT count(*) FROM pragma_table_info('workspace_memories') WHERE name IN ('revision', 'applies_when', 'evidence', 'actor')`).Scan(&columns); err != nil || columns != 0 {
+		t.Fatalf("attach silently upgraded outdated data: %d, %v", columns, err)
 	}
+}
 
-	// Legacy row is FTS-searchable, including camelCase identifier parts.
-	results, err := st.Recall(context.Background(), RecallQuery{Text: "word left climb"})
+func TestCurrentSchemaReopenPreservesKnowledge(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	want, err := store.Remember(ctx, Record{ID: "mem-existing", Kind: KindFact, Title: "Project convention", Content: "Keep existing workspace data.",
+		SourceSessionID: "session-1", Pinned: true, ScopePaths: []string{"workspace/"}, Importance: 70, Provenance: "original provenance"})
 	if err != nil {
-		t.Fatalf("Recall: %v", err)
+		t.Fatal(err)
 	}
-	if len(results) != 1 || results[0].ID != "mem-legacy1" {
-		t.Fatalf("legacy recall results = %+v", results)
-	}
-	if results[0].Status != StatusActive {
-		t.Fatalf("legacy row status = %q", results[0].Status)
+	for attempt := 0; attempt < 2; attempt++ {
+		reopened, err := Attach(store.DB())
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := reopened.Get(ctx, want.ID)
+		if err != nil || !reflect.DeepEqual(got, want) {
+			t.Fatalf("reopen changed knowledge: %+v, %v", got, err)
+		}
+		revisions, err := reopened.Revisions(ctx, want.ID)
+		if err != nil || len(revisions) != 1 || !reflect.DeepEqual(revisions[0].Record, want) || revisions[0].Op != "remember" {
+			t.Fatalf("reopen fabricated revision history: %+v, %v", revisions, err)
+		}
 	}
 }
 
@@ -97,6 +109,8 @@ func TestRememberRecallIdentifierSearch(t *testing.T) {
 		Content: "Editor.moveWordLeft in tui/editor/movement.go must keep climbing " +
 			"across whitespace-only lines; a swallowed continue parks the cursor.",
 		SourceSessionID: "s1",
+		Evidence:        lessonEvidence(t, st),
+		AppliesWhen:     "When moving left over whitespace-only lines",
 	}); err != nil {
 		t.Fatalf("Remember: %v", err)
 	}
@@ -130,7 +144,7 @@ func TestSupersedeExcludesFromRecallAndJournals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Remember: %v", err)
 	}
-	if err := st.Supersede(ctx, saved.ID, "", ActorTool, "s1"); err != nil {
+	if err := st.Supersede(ctx, saved.ID, saved.Revision, "", ActorTool, "s1"); err != nil {
 		t.Fatalf("Supersede: %v", err)
 	}
 	results, err := st.Recall(ctx, RecallQuery{Text: "sqlite"})
@@ -156,12 +170,12 @@ func TestSupersedeExcludesFromRecallAndJournals(t *testing.T) {
 		t.Fatalf("journal = %+v", entries)
 	}
 	// Superseding twice errors (already superseded).
-	if err := st.Supersede(ctx, saved.ID, "", ActorTool, "s1"); err == nil {
+	if err := st.Supersede(ctx, saved.ID, saved.Revision+1, "", ActorTool, "s1"); !errors.Is(err, ErrRetired) {
 		t.Fatal("double supersede should error")
 	}
 }
 
-func TestUpdateCreatesSupersedeChain(t *testing.T) {
+func TestUpdatePreservesIdentityAndImmutableRevisions(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()
 	old, err := st.Remember(ctx, Record{
@@ -170,9 +184,10 @@ func TestUpdateCreatesSupersedeChain(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Remember: %v", err)
 	}
-	// Same kind+title: revise in place.
+	// Same kind+title: append an immutable revision.
 	revised, err := st.Update(ctx, old.ID, Record{
-		Content: "Run go test -race ./...",
+		Revision: old.Revision,
+		Content:  "Run go test -race ./...",
 	}, ActorTool, "s2")
 	if err != nil {
 		t.Fatalf("Update in place: %v", err)
@@ -180,22 +195,36 @@ func TestUpdateCreatesSupersedeChain(t *testing.T) {
 	if revised.ID != old.ID {
 		t.Fatalf("in-place update changed ID: %q != %q", revised.ID, old.ID)
 	}
-	// New title: supersede-and-replace.
+	// New title: preserve the stable record identity.
 	replaced, err := st.Update(ctx, old.ID, Record{
-		Title: "Validation gate", Content: "Run go test -race ./... and golangci-lint.",
+		Revision: revised.Revision,
+		Title:    "Validation gate", Content: "Run go test -race ./... and golangci-lint.",
 	}, ActorTool, "s2")
 	if err != nil {
 		t.Fatalf("Update replace: %v", err)
 	}
-	if replaced.ID == old.ID {
-		t.Fatal("replacement should have a new ID")
+	if replaced.ID != old.ID || replaced.Revision != 3 {
+		t.Fatalf("title change must preserve identity and increment revision: %+v", replaced)
 	}
 	oldRec, err := st.Get(ctx, old.ID)
 	if err != nil {
 		t.Fatalf("Get old: %v", err)
 	}
-	if oldRec.Status != StatusSuperseded || oldRec.SupersededBy != replaced.ID {
+	if oldRec.Status != StatusActive || oldRec.Title != "Validation gate" {
 		t.Fatalf("old record = %+v", oldRec)
+	}
+	revisions, err := st.Revisions(ctx, old.ID)
+	if err != nil || len(revisions) != 3 || revisions[0].Content != "Run go test ./..." || revisions[1].Content != "Run go test -race ./..." {
+		t.Fatalf("immutable revision history = %+v, %v", revisions, err)
+	}
+	if _, err := st.Update(ctx, old.ID, Record{Revision: 1, Content: "stale"}, ActorAuto, "s3"); !errors.Is(err, ErrRevisionConflict) {
+		t.Fatalf("stale update accepted: %v", err)
+	}
+	if err := st.Supersede(ctx, old.ID, 1, "", ActorTool, "s3"); !errors.Is(err, ErrRevisionConflict) {
+		t.Fatalf("stale retire accepted: %v", err)
+	}
+	if _, err := st.db.Exec(`UPDATE memory_revisions SET record='{}' WHERE memory_id=? AND revision=1`, old.ID); err == nil {
+		t.Fatal("revision history mutable through SQLite")
 	}
 }
 
@@ -208,7 +237,7 @@ func TestArchiveExcludedFromAutoInjectButExplicitSearchFinds(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Remember: %v", err)
 	}
-	if err := st.Archive(ctx, []string{saved.ID}, ActorConsolidation, "decayed"); err != nil {
+	if err := st.Archive(ctx, []RevisionRef{{ID: saved.ID, Revision: saved.Revision}}, ActorConsolidation, "decayed"); err != nil {
 		t.Fatalf("Archive: %v", err)
 	}
 	autoInject, err := st.Recall(ctx, RecallQuery{Text: "legacy parser"})
@@ -227,7 +256,7 @@ func TestArchiveExcludedFromAutoInjectButExplicitSearchFinds(t *testing.T) {
 	}
 }
 
-func TestTouchReinforcesUsage(t *testing.T) {
+func TestExposureDoesNotReinforceKnowledge(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()
 	saved, err := st.Remember(ctx, Record{
@@ -236,15 +265,19 @@ func TestTouchReinforcesUsage(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Remember: %v", err)
 	}
-	if err := st.Touch(ctx, []string{saved.ID}); err != nil {
-		t.Fatalf("Touch: %v", err)
+	if err := st.Expose(ctx, []RevisionRef{{ID: saved.ID, Revision: saved.Revision}}, "s2", "automatic"); err != nil {
+		t.Fatalf("Expose: %v", err)
 	}
 	got, err := st.Get(ctx, saved.ID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.UseCount != 1 || got.LastUsedAt == 0 {
-		t.Fatalf("usage not reinforced: %+v", got)
+	if got.UseCount != 0 || got.LastUsedAt != 0 || got.UpdatedAt != saved.UpdatedAt || got.Revision != saved.Revision {
+		t.Fatalf("exposure modified knowledge: %+v", got)
+	}
+	exposures, err := st.ExposuresForMemory(ctx, saved.ID, 10)
+	if err != nil || len(exposures) != 1 || exposures[0].Revision != 1 {
+		t.Fatalf("missing revision exposure: %+v %v", exposures, err)
 	}
 }
 
@@ -318,7 +351,7 @@ func TestRecallBudgetPacking(t *testing.T) {
 			t.Fatalf("Remember %d: %v", i, err)
 		}
 	}
-	results, err := st.Recall(ctx, RecallQuery{Text: "scrollbar", BudgetTokens: 300})
+	results, err := st.Recall(ctx, RecallQuery{Text: "scrollbar", BudgetTokens: 350})
 	if err != nil {
 		t.Fatalf("Recall: %v", err)
 	}

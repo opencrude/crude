@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"slices"
 	"strings"
@@ -304,6 +305,7 @@ func settingsToSessionOverrides(settings ttypes.Settings) map[string]sessiondb.A
 			overrides[category] = sessiondb.AgentSettingOverride{
 				AccountID: cfg.AccountID, Model: cfg.Model, ThinkingEffort: cfg.ThinkingEffort,
 				ContextCompactionPercent: cloneIntPtr(cfg.ContextCompactionPercent), Inherit: cfg.Inherit,
+				AllowedTools: slices.Clone(cfg.AllowedTools), DeniedTools: slices.Clone(cfg.DeniedTools), SkillModes: maps.Clone(cfg.SkillModes),
 			}
 		}
 		return overrides
@@ -312,6 +314,7 @@ func settingsToSessionOverrides(settings ttypes.Settings) map[string]sessiondb.A
 		overrides[category] = sessiondb.AgentSettingOverride{
 			AccountID: cfg.AccountID, Model: cfg.Model, ThinkingEffort: cfg.ThinkingEffort,
 			ContextCompactionPercent: cloneIntPtr(cfg.ContextCompactionPercent), Inherit: cfg.Inherit,
+			AllowedTools: slices.Clone(cfg.AllowedTools), DeniedTools: slices.Clone(cfg.DeniedTools), SkillModes: maps.Clone(cfg.SkillModes),
 		}
 	}
 	if _, ok := overrides[CategoryDefault]; !ok {
@@ -356,7 +359,7 @@ func configWithSessionOverrides(base *Config, overrides map[string]sessiondb.Age
 			if override.AccountID != "" {
 				pin = override.AccountID
 			}
-			profile.Categories[category] = CategoryConfig{Inherit: override.Inherit, AccountID: pin}
+			profile.Categories[category] = CategoryConfig{Inherit: override.Inherit, AccountID: pin, AllowedTools: slices.Clone(override.AllowedTools), DeniedTools: slices.Clone(override.DeniedTools), SkillModes: maps.Clone(override.SkillModes)}
 			continue
 		}
 		if override.AccountID != "" {
@@ -372,6 +375,15 @@ func configWithSessionOverrides(base *Config, overrides map[string]sessiondb.Age
 			current.ContextCompactionPercent = cloneIntPtr(override.ContextCompactionPercent)
 		}
 		current.Inherit = ""
+		if override.AllowedTools != nil {
+			current.AllowedTools = slices.Clone(override.AllowedTools)
+		}
+		if override.DeniedTools != nil {
+			current.DeniedTools = slices.Clone(override.DeniedTools)
+		}
+		if override.SkillModes != nil {
+			current.SkillModes = maps.Clone(override.SkillModes)
+		}
 		profile.Categories[category] = current
 	}
 	cfg.Agents.Profiles[profileName] = profile
@@ -445,6 +457,7 @@ func (s *Session) SessionOverridesSnapshot() map[string]ttypes.CategorySettings 
 			ThinkingEffort:           override.ThinkingEffort,
 			Inherit:                  override.Inherit,
 			ContextCompactionPercent: cloneIntPtr(override.ContextCompactionPercent),
+			AllowedTools:             slices.Clone(override.AllowedTools), DeniedTools: slices.Clone(override.DeniedTools), SkillModes: maps.Clone(override.SkillModes),
 		}
 	}
 	return out
@@ -517,6 +530,7 @@ func (s *Session) UpdateWorkspaceDefaults(settings ttypes.AppSettings) {
 	s.refreshProviderCredentialsLocked(settings)
 	ApplyWorkspaceAgentDefaults(s.workspaceCfg, settings.Agents)
 	s.workspaceCfg.Memory = settings.Memory
+	s.workspaceCfg.Capabilities = settings.Capabilities
 	s.workspaceCfg.Safety = settings.Safety
 	s.rebuildEffectiveConfigLocked()
 }
@@ -532,6 +546,7 @@ func (s *Session) AdoptWorkspaceDefaults(settings ttypes.AppSettings) {
 	s.refreshProviderCredentialsLocked(settings)
 	ApplyWorkspaceAgentDefaults(s.workspaceCfg, settings.Agents)
 	s.workspaceCfg.Memory = settings.Memory
+	s.workspaceCfg.Capabilities = settings.Capabilities
 	s.workspaceCfg.Safety = settings.Safety
 	s.rebuildEffectiveConfigLocked()
 }

@@ -31,7 +31,7 @@ func TestSecurityPagesSeparateCommandSafetyFromAutoReviewPolicy(t *testing.T) {
 		host.Layout()
 		buf.Clear()
 		host.Paint(buf)
-		for _, text := range []string{"Review outcomes", "Denied review", "Output token cap"} {
+		for _, text := range []string{"Review outcomes", "Unresolved review", "Thinking effort", "Technical recovery", "Initial output tokens"} {
 			if !bufferContains(buf, text) {
 				t.Errorf("width %d missing Auto Review policy %q", width, text)
 			}

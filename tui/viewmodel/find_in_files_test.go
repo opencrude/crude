@@ -9,7 +9,6 @@ import (
 
 	"crude/fileio"
 	"crude/tui/editor"
-	"crude/tui/screens/confirmation"
 	findinfiles "crude/tui/screens/findinfiles"
 	"crude/tui/ui"
 	"crude/tui/wm"
@@ -192,16 +191,14 @@ func TestClosingFindInFilesPreservesBlockingSessionPanel(t *testing.T) {
 	app.windowManager = wm.NewWindowManager()
 	app.overlayHost = ui.NewOverlayHost(app.windowManager)
 	projection := app.activeSessionProjection()
-	projection.confirmation.Reset(confirmation.Details{Question: "Continue?"})
-	projection.confirmationAgentID = "agent"
-	app.openSessionConfirmationPanel(projection)
+	prompt := openTestAgentPrompt(t, app, projection, agentPromptRequest{question: "Continue?"})
 	app.toggleFindInFiles()
 
 	app.dispatchKeyPress(tea.KeyPressMsg{Code: tea.KeyEsc})
 	if app.windowManager.Window(findInFilesWindowID) != nil || app.findInFiles != nil {
 		t.Fatal("Esc should close and clean up Find in Files")
 	}
-	if !projection.deck.IsOpen() || projection.deck.Active().ID != sessionConfirmationPanelID || !app.sessionDeckBlocking() {
+	if !projection.deck.IsOpen() || projection.deck.Active().ID != prompt.panelID() || !app.sessionDeckBlocking() {
 		t.Fatal("closing floating search changed the underlying blocking session panel")
 	}
 }
@@ -209,17 +206,17 @@ func TestClosingFindInFilesPreservesBlockingSessionPanel(t *testing.T) {
 func TestBlockingSessionPanelWinsOverEditorTreeAndLauncher(t *testing.T) {
 	app := newFullTestApp(t)
 	projection := app.activeSessionProjection()
-	projection.confirmation.Reset(confirmation.Details{Question: "Continue?"})
-	app.openSessionConfirmationPanel(projection)
+	openTestAgentPrompt(t, app, projection, agentPromptRequest{question: "Continue?"})
 	app.FocusStack.Push(FocusTree)
 	app.EditorState.ActiveView = "/tmp/main.go"
 	app.EditorState.Editor = editor.NewPreview(app.Theme, "/tmp/main.go", "package main\n", 1)
 	if !app.sessionDeckCapturesInput() {
-		t.Fatal("blocking session panel did not capture input over editor/tree")
+		t.Fatal("stale focus on an unmounted tree bypassed a blocking session panel")
 	}
 
 	app.EditorState.ActiveView = ""
 	app.EditorState.Editor = nil
+	app.FocusStack.Pop()
 	if !app.sessionDeckCapturesInput() {
 		t.Fatal("blocking session panel did not capture input over launcher")
 	}

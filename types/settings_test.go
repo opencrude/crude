@@ -1,6 +1,7 @@
 package types
 
 import (
+	"reflect"
 	"strings"
 
 	"crude/provider"
@@ -135,31 +136,56 @@ func TestWorkspaceCanOverrideBoolToFalse(t *testing.T) {
 
 func TestAutoPermissionSettingsNormalizedDefaultsAndBounds(t *testing.T) {
 	got := (AutoPermissionSettings{}).Normalized()
-	if got.Enabled != "off" || got.DenyMode != "ask" || got.TimeoutSeconds != 8 ||
-		got.MaxOutputTokens != 96 || got.MaxInputBytes != 4096 || got.MaxReviewsPerTurn != 12 {
+	if got.Enabled != "off" || got.DenyMode != "ask" || got.UnresolvedMode != "ask" || got.ThinkingEffort != "low" ||
+		got.ResponseFormat != AutoPermissionFormatAuto || got.TimeoutSeconds != 15 ||
+		got.MaxOutputTokens != 256 || got.MaxAttempts != 3 || got.RetryTokenGrowth != AutoPermissionGrowth4x ||
+		got.MaxRetryOutputTokens != 1024 || got.MaxInputBytes != 64<<10 {
 		t.Fatalf("normalized defaults = %+v", got)
 	}
 
 	got = (AutoPermissionSettings{
-		Enabled: "yes", DenyMode: "reject", TimeoutSeconds: -4,
-		MaxOutputTokens: 999, MaxInputBytes: 10, MaxReviewsPerTurn: 500,
+		Enabled: "yes", DenyMode: "reject", UnresolvedMode: "allow", ThinkingEffort: "unlimited", ResponseFormat: "xml", TimeoutSeconds: -4,
+		MaxOutputTokens: 99999, MaxAttempts: 99, RetryTokenGrowth: "random", MaxRetryOutputTokens: 10,
+		MaxInputBytes: 10,
 	}).Normalized()
-	if got.Enabled != "off" || got.DenyMode != "ask" || got.TimeoutSeconds != 1 ||
-		got.MaxOutputTokens != 256 || got.MaxInputBytes != 256 || got.MaxReviewsPerTurn != 100 {
+	if got.Enabled != "off" || got.DenyMode != "ask" || got.UnresolvedMode != "ask" || got.TimeoutSeconds != 1 ||
+		got.ThinkingEffort != "low" || got.ResponseFormat != AutoPermissionFormatAuto ||
+		got.MaxOutputTokens != 4096 || got.MaxAttempts != 6 || got.RetryTokenGrowth != AutoPermissionGrowth4x ||
+		got.MaxRetryOutputTokens != 4096 || got.MaxInputBytes != 64<<10 {
 		t.Fatalf("normalized bounds = %+v", got)
 	}
 
-	got = (AutoPermissionSettings{Enabled: "on", DenyMode: "deny", TimeoutSeconds: 30,
-		MaxOutputTokens: 16, MaxInputBytes: 8192, MaxReviewsPerTurn: 1}).Normalized()
-	if got.Enabled != "on" || got.DenyMode != "deny" {
+	got = (AutoPermissionSettings{Enabled: "on", DenyMode: "deny", UnresolvedMode: "deny", ThinkingEffort: "high",
+		ResponseFormat: AutoPermissionFormatPrompt, TimeoutSeconds: 120, MaxOutputTokens: 16,
+		MaxAttempts: 1, RetryTokenGrowth: AutoPermissionGrowthFixed, MaxRetryOutputTokens: 16,
+		MaxInputBytes: 1 << 20}).Normalized()
+	if got.Enabled != "on" || got.DenyMode != "deny" || got.UnresolvedMode != "deny" || got.ThinkingEffort != "high" ||
+		got.ResponseFormat != AutoPermissionFormatPrompt || got.MaxAttempts != 1 {
 		t.Fatalf("valid choices changed = %+v", got)
+	}
+}
+
+func TestAutoPermissionReviewOutputTokensFollowPersistedStrategy(t *testing.T) {
+	settings := AutoPermissionSettings{MaxOutputTokens: 96, MaxAttempts: 3,
+		RetryTokenGrowth: AutoPermissionGrowth4x, MaxRetryOutputTokens: 1024}
+	if got := []int{settings.ReviewOutputTokens(0), settings.ReviewOutputTokens(1), settings.ReviewOutputTokens(2)}; !reflect.DeepEqual(got, []int{96, 384, 1024}) {
+		t.Fatalf("4x budgets = %v", got)
+	}
+	settings.RetryTokenGrowth = AutoPermissionGrowth2x
+	settings.MaxRetryOutputTokens = 300
+	if got := []int{settings.ReviewOutputTokens(0), settings.ReviewOutputTokens(1), settings.ReviewOutputTokens(2)}; !reflect.DeepEqual(got, []int{96, 192, 300}) {
+		t.Fatalf("2x budgets = %v", got)
+	}
+	settings.RetryTokenGrowth = AutoPermissionGrowthFixed
+	if got := settings.ReviewOutputTokens(5); got != 96 {
+		t.Fatalf("fixed budget = %d", got)
 	}
 }
 
 func TestWorkspaceAutoPermissionExplicitOffStaysSparse(t *testing.T) {
 	app := AppSettings{Safety: SafetySettings{AutoPermission: AutoPermissionSettings{
 		Enabled: "on", Provider: "openai", Model: "gpt-review", DenyMode: "ask",
-		TimeoutSeconds: 8, MaxOutputTokens: 96, MaxInputBytes: 4096, MaxReviewsPerTurn: 12,
+		TimeoutSeconds: 8, MaxOutputTokens: 96, MaxInputBytes: 64 << 10,
 	}}}
 	ApplyAppDefaults(&app)
 	working := cloneAppSettings(app)

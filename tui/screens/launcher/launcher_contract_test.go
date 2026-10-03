@@ -195,36 +195,13 @@ func TestLauncherHostKeyboardContractTable(t *testing.T) {
 		}
 	})
 
-	t.Run("d_on_workspace_row_emits_delete_once", func(t *testing.T) {
-		s, h := launcherContractHost(t, 100, 24, []workspace.WorkspaceInfo{
-			{ProjectName: "alpha", ProjectDir: "/projects/alpha", ID: "ws-alpha"},
-			{ProjectName: "beta", ProjectDir: "/projects/beta", ID: "ws-beta"},
-		})
-		h.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
-		h.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
-		if got := s.SelectedItem(); got == nil || got.Workspace == nil || got.Workspace.Name != "alpha" {
-			t.Fatalf("setup: workspace alpha should be selected, got %#v", got)
-		}
-		beforeItems := s.TotalItems()
-		res := h.Handle(tea.KeyPressMsg{Code: 'd', Text: "d"})
-		if !res.Handled || res.Cmd == nil {
-			t.Fatal("d on workspace row must be handled with DeleteMsg cmd")
-		}
-		msg, ok := res.Cmd().(DeleteMsg)
-		if !ok || msg.Kind != ItemWorkspace || msg.WorkspaceID != "ws-alpha" || msg.Screen != s {
-			t.Fatalf("DeleteMsg=%#v", res.Cmd())
-		}
-		if s.TotalItems() != beforeItems-1 {
-			t.Fatalf("delete should remove one in-memory workspace row: before=%d after=%d", beforeItems, s.TotalItems())
-		}
-		if got := s.SelectedItem(); got == nil || got.Workspace == nil || got.Workspace.Name != "beta" {
-			t.Fatalf("selection after delete=%#v want beta workspace", got)
-		}
-		res2 := h.Handle(tea.KeyPressMsg{Code: 'd', Text: "d"})
-		if res2.Cmd != nil {
-			if msg2, ok := res2.Cmd().(DeleteMsg); ok && msg2.WorkspaceID == "ws-alpha" {
-				t.Fatal("second d must not re-emit delete for removed workspace")
-			}
+	t.Run("d_is_not_a_destructive_shortcut", func(t *testing.T) {
+		s, h := launcherContractHost(t, 100, 24, manyWorkspaces(2))
+		h.Handle(tea.KeyPressMsg{Code: tea.KeyEnd})
+		before := s.TotalItems()
+		result := h.Handle(tea.KeyPressMsg{Code: 'd', Text: "d"})
+		if result.Cmd != nil || s.TotalItems() != before {
+			t.Fatal("launcher must never delete workspace history with D")
 		}
 	})
 }

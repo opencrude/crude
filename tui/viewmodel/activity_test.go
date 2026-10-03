@@ -1,7 +1,6 @@
 package viewmodel
 
 import (
-	"runtime"
 	"strings"
 	"testing"
 
@@ -34,10 +33,10 @@ func TestToggleActivityShowsListAndFocusesSidebar(t *testing.T) {
 	app.Tree.Visible = true
 	app.sidebarScreen.SetModel(model)
 
-	app.toggleActivity(activityTerminals)
+	app.toggleActivity(activitySkills)
 	app.paintShellFrame()
-	if app.activityView != activityTerminals {
-		t.Fatalf("activityView=%v want terminals", app.activityView)
+	if app.activityView != activitySkills {
+		t.Fatalf("activityView=%v want skills", app.activityView)
 	}
 	if !app.Tree.Visible {
 		t.Fatal("toggleActivity should reveal sidebar content")
@@ -220,51 +219,21 @@ func TestRailMarkerFollowsSidebarVisibility(t *testing.T) {
 	}
 }
 
-// "New Terminal" is a button, not a resource row. Requiring a double click
-// made it look broken: a single click only highlighted the row.
-func TestNewTerminalRowActivatesOnSingleClick(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("in-app PTYs are unix-only")
-	}
+func TestTerminalPickerDoesNotChangeSidebar(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 40
 	model := filetree.NewFileTreeModel(t.TempDir())
 	app.Tree = NewTreeState(model, 24)
 	app.sidebarScreen.SetModel(model)
-	app.setActivity(activityTerminals, true)
+	app.setActivity(activitySkills, true)
 	app.paintShellFrame()
 
-	mgr := app.termMgr()
-	if mgr == nil {
-		t.Fatal("workspace terminal manager missing")
+	app.openTerminalPicker()
+	if app.activityView != activitySkills || !app.Tree.Visible {
+		t.Fatal("terminal picker replaced the selected sidebar")
 	}
-	t.Cleanup(func() {
-		for _, info := range mgr.List() {
-			mgr.Close(info.ID)
-		}
-	})
-
-	rect, ok := app.rootHost.ScreenRect(activitylist.ScreenID)
-	if !ok {
-		t.Fatal("terminals panel is not mounted")
-	}
-	row := -1
-	for y := 0; y < rect.H; y++ {
-		if item, hit := app.activityList.ItemAtLocalY(y); hit && item.ID == sidebarItemNewTerminal {
-			row = rect.Y + y
-			break
-		}
-	}
-	if row < 0 {
-		t.Fatal("New Terminal row not found in the Terminals panel")
-	}
-
-	_, cmd := app.dispatchMouseClick(tea.MouseClickMsg{X: rect.X + 2, Y: row, Button: tea.MouseLeft})
-	if cmd != nil {
-		cmd()
-	}
-	if len(mgr.List()) != 1 {
-		t.Fatalf("a single click on New Terminal must create a terminal, have %d", len(mgr.List()))
+	if app.overlayHost.Window(ui.OverlayContextMenu) == nil {
+		t.Fatal("terminal picker did not open")
 	}
 }
 

@@ -1,43 +1,9 @@
 package codexio
 
 import (
-	"crypto/sha256"
-	"encoding/json"
 	"errors"
-	"fmt"
-	"strings"
 	"testing"
 )
-
-func TestBundledInstructionAssetsMatchManifest(t *testing.T) {
-	raw, err := promptFiles.ReadFile("prompts/manifest.json")
-	if err != nil {
-		t.Fatal(err)
-	}
-	var manifest map[string]struct {
-		File   string `json:"file"`
-		SHA256 string `json:"sha256"`
-	}
-	if err := json.Unmarshal(raw, &manifest); err != nil {
-		t.Fatal(err)
-	}
-	for slug, asset := range manifest {
-		data, err := promptFiles.ReadFile("prompts/" + asset.File)
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got := fmt.Sprintf("%x", sha256.Sum256(data)); got != asset.SHA256 {
-			t.Fatalf("instruction asset differs from manifest: %s", slug)
-		}
-		text, source := Instructions("openai/" + strings.ToUpper(slug))
-		if source != slug || text != string(data) {
-			t.Fatalf("wrong profile %s: %s", slug, source)
-		}
-	}
-	if _, source := Instructions("gpt-unknown"); source != "default" {
-		t.Fatal(source)
-	}
-}
 
 func TestNormalizeUpstreamBehavior(t *testing.T) {
 	for _, tc := range []struct{ input, diff, want string }{

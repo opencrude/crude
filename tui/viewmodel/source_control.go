@@ -4,16 +4,26 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/screens/gitreview"
 	"crude/tui/screens/sourcecontrol"
 	"crude/tui/ui"
 	"crude/tui/wm"
 	types "crude/types"
 	"crude/workspace"
 )
+
+type gitDiscardPreviewMsg struct {
+	generation uint64
+	sequence   uint64
+	change     workspace.GitChange
+	preview    workspace.GitDiscardPreview
+	err        error
+}
 
 const defaultSourceControlTimeout = 30 * time.Second
 
@@ -111,35 +121,21 @@ func (m *App) handleSourceControlAction(action ui.Action) (tea.Cmd, bool) {
 		if !ok || change.AbsolutePath == "" {
 			return nil, true
 		}
-		cmd, err := m.openEditorTab(change.AbsolutePath)
-		if err != nil {
-			m.Feedback.NotifyError("Open change: " + err.Error())
-			return nil, true
+		return m.openGitReview(gitreview.ModeChanges, &change), true
+	case sourcecontrol.ActionReview:
+		return m.openGitReview(gitreview.ModeChanges, nil), true
+	case sourcecontrol.ActionHistory:
+		return m.openGitReview(gitreview.ModeHistory, nil), true
+	case sourcecontrol.ActionBranches:
+		return m.openGitReview(gitreview.ModeBranches, nil), true
+	case "sourcecontrol.more":
+		items := []ui.ContextMenuItem{
+			{Label: "History", Action: func() { m.startSourceControlMutation(m.openGitReview(gitreview.ModeHistory, nil)) }},
+			{Label: "Branches", Action: func() { m.startSourceControlMutation(m.openGitReview(gitreview.ModeBranches, nil)) }},
+			{Label: "Refresh", Action: func() { m.startSourceControlMutation(m.refreshSourceControl()) }},
 		}
-		return cmd, true
-	case sourcecontrol.ActionCheckoutBranch:
-		branch, ok := action.Payload.(workspace.GitBranchSummary)
-		if !ok || branch.Name == "" || branch.Current {
-			return nil, true
-		}
-		return m.sourceControlMutation(
-			"Switched to "+branch.Name, false,
-			func(ctx context.Context, service *workspace.GitService) error {
-				return service.Checkout(ctx, branch.Name)
-			},
-		), true
-	case sourcecontrol.ActionCommit:
-		message, _ := action.Payload.(string)
-		if message == "" {
-			m.Feedback.NotifyError("Enter a commit message")
-			return nil, true
-		}
-		return m.sourceControlMutation(
-			"Committed changes", true,
-			func(ctx context.Context, service *workspace.GitService) error {
-				return service.Commit(ctx, message)
-			},
-		), true
+		m.openContextMenuState(tea.Mouse{X: m.frameLeftCol() + m.activityChromeWidth(), Y: m.shellTopRow() + 3}, &ui.ContextMenuState{Title: "Source Control", Sections: []ui.ContextMenuSection{{Items: items}}})
+		return nil, true
 	}
 	return nil, false
 }
@@ -183,8 +179,8 @@ func (m *App) applySourceControlResult(msg sourceControlResultMsg) tea.Cmd {
 	m.finishGitOperation(msg.gen, types.OperationSucceeded, "")
 	m.Status.ResolveIssue("git")
 	m.presentGitSnapshot(msg.snapshot)
-	if msg.clearCommit {
-		m.sourceControl.ClearCommitMessage()
+	if msg.clearCommit && m.gitReview != nil {
+		m.gitReview.ClearCommitMessage()
 	}
 	if msg.notice != "" && m.Feedback != nil {
 		m.Feedback.NotifyInfo(msg.notice)
@@ -203,11 +199,18 @@ func (m *App) presentGitSnapshot(snapshot workspace.GitSnapshot) {
 		return
 	}
 	m.sourceControl.SetSnapshot(snapshot)
+	if m.gitReview != nil {
+		m.gitReview.SetSnapshot(snapshot)
+	}
 	if m.EditorState != nil && m.EditorState.Editor != nil && m.EditorState.Editor.IsOpen() {
 		m.markEditorGitStaleNow()
 	}
 	if m.activityBar != nil {
-		m.activityBar.SetBadge(activityGit, len(snapshot.Changes))
+		paths := make(map[string]bool)
+		for _, change := range snapshot.Changes {
+			paths[change.Path] = true
+		}
+		m.activityBar.SetBadge(activityGit, len(paths))
 	}
 }
 
@@ -228,32 +231,13 @@ func (m *App) finishGitOperation(generation uint64, state types.OperationState, 
 	m.Status.FinishOperation(fmt.Sprintf("git:%d", generation), state, errorText)
 }
 
-func (m *App) stageGitChange(change workspace.GitChange) tea.Cmd {
+func (m *App) discardGitChange(preview workspace.GitDiscardPreview) tea.Cmd {
+	owner := m.Workspace
 	return m.sourceControlMutation(
-		"Staged "+filepath.Base(change.Path), false,
-		func(ctx context.Context, service *workspace.GitService) error {
-			return service.Stage(ctx, change.Path)
-		},
-	)
-}
-
-func (m *App) unstageGitChange(change workspace.GitChange) tea.Cmd {
-	return m.sourceControlMutation(
-		"Unstaged "+filepath.Base(change.Path), false,
-		func(ctx context.Context, service *workspace.GitService) error {
-			return service.Unstage(ctx, change.Path)
-		},
-	)
-}
-
-func (m *App) discardGitChange(change workspace.GitChange) tea.Cmd {
-	return m.sourceControlMutation(
-		"Discarded changes in "+filepath.Base(change.Path), false,
-		func(ctx context.Context, service *workspace.GitService) error {
-			if change.Area == workspace.GitAreaUntracked {
-				return fmt.Errorf("untracked files are never deleted by Discard")
-			}
-			return service.Discard(ctx, change.Path)
+		"Discarded "+filepath.Base(preview.Comparison.Path)+" · recover through Local History", false,
+		func(ctx context.Context, _ *workspace.GitService) error {
+			_, err := owner.DiscardGitReviewed(ctx, preview)
+			return err
 		},
 	)
 }
@@ -265,6 +249,15 @@ func (m *App) startDiscardGitChange(change workspace.GitChange) {
 	}
 	copy := change
 	m.GitDiscardPending = &copy
+	m.gitDiscardPreview = nil
+	m.gitDiscardSequence++
+	sequence, generation, owner := m.gitDiscardSequence, m.workspaceSwitchGen.Load(), m.Workspace
+	m.startSourceControlMutation(func() tea.Msg {
+		ctx, cancel := m.sourceControlContext()
+		defer cancel()
+		preview, err := owner.PreviewGitDiscard(ctx, change)
+		return gitDiscardPreviewMsg{generation: generation, sequence: sequence, change: change, preview: preview, err: err}
+	})
 	m.TreeDeletePending = ""
 	m.TreeDeleteChoice = 1 // safe default: Cancel
 	frame := m.buildGitDiscardFrame(copy)
@@ -282,15 +275,26 @@ func (m *App) startDiscardGitChange(change workspace.GitChange) {
 	m.overlayHost.Open(ui.OverlayTreeDelete, fw, ui.ModalDialogPolicy(), func() {
 		m.TreeDeletePending = ""
 		m.GitDiscardPending = nil
+		m.gitDiscardPreview = nil
+		m.gitDiscardSequence++
 	})
 }
 
 func (m *App) buildGitDiscardFrame(change workspace.GitChange) *ui.ComponentWidget {
+	detail := "Preparing an exact disk/index preview. Discard stays disabled until reviewed."
+	if m.gitDiscardPreview != nil {
+		comparison := m.gitDiscardPreview.Comparison
+		detail = fmt.Sprintf("%s\n%s → %s\nReviewed fingerprint: %s\nA mandatory Local History safety snapshot preserves the removed bytes.\nRecover through Local History. Changed file/index/HEAD aborts.", change.Path, comparison.TargetLabel, comparison.BaseLabel, comparison.Fingerprint)
+		before := strings.SplitN(comparison.After, "\n", 4)
+		after := strings.SplitN(comparison.Before, "\n", 4)
+		detail += "\nDisk: " + strings.Join(before[:min(3, len(before))], " / ") + "\nIndex: " + strings.Join(after[:min(3, len(after))], " / ")
+	}
 	return ui.BuildConfirmFrame(m.Theme, ui.ConfirmFrameSpec{
-		Title:    "Discard Changes",
-		Question: fmt.Sprintf("Discard working-tree changes in %q?", filepath.Base(change.Path)),
-		Detail:   change.Path + " · this cannot be undone",
-		Severity: ui.ConfirmPromptDanger,
+		Title:          "Discard Changes",
+		Question:       fmt.Sprintf("Discard working-tree changes in %q?", filepath.Base(change.Path)),
+		Detail:         detail,
+		DetailMaxLines: 10,
+		Severity:       ui.ConfirmPromptDanger,
 		Buttons: []ui.ConfirmButtonSpec{
 			{Label: "Discard", ActionID: ui.ConfirmActionDiscard},
 			{Label: "Cancel", ActionID: ui.ConfirmActionCancel},
@@ -298,22 +302,4 @@ func (m *App) buildGitDiscardFrame(change workspace.GitChange) *ui.ComponentWidg
 		FocusedIndex: m.TreeDeleteChoice,
 		Width:        64,
 	})
-}
-
-func (m *App) stageAllGitChanges() tea.Cmd {
-	return m.sourceControlMutation(
-		"Staged all changes", false,
-		func(ctx context.Context, service *workspace.GitService) error {
-			return service.StageAll(ctx)
-		},
-	)
-}
-
-func (m *App) unstageAllGitChanges() tea.Cmd {
-	return m.sourceControlMutation(
-		"Unstaged all changes", false,
-		func(ctx context.Context, service *workspace.GitService) error {
-			return service.UnstageAll(ctx)
-		},
-	)
 }

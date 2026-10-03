@@ -1,8 +1,32 @@
 # Agent Capabilities, Shared Board, and Evidence-Based Memory Plan
 
-> Status: IN PROGRESS — design proposal only. Skills, MCP acquisition, the shared
-> board, and the memory changes below are proposed; this document does not
-> describe shipped behavior.
+> Status: LANDED — core runtime/product workflows implemented and validated
+> 2026-10-01. Held-out efficacy and native-platform/vendor acceptance remain
+> explicitly separate; the original design is retained as delivery history.
+
+## Implementation record
+
+Product code now includes the standard skill loader, source discovery and pinned
+acquisition, managed MCP client, explicit dynamic effect/scope grants, per-agent
+request snapshots, shared workspace file ownership, durable board admission,
+evidence-based memory revisions, and retained Settings/rail/footer surfaces.
+Manual installation/update uses an exact revision/source/binding preview and
+rechecks it before publication. Resume performs no automatic acquisition or MCP
+startup. The manual browser and source-attributed resource/prompt preview work
+without a model call.
+
+Managed MCP workflow tests exercise real SDK stdio subprocesses, Streamable HTTP
+servers, loopback/headless OAuth, cancellation, credential persistence and
+isolation, stale schemas, and unknown mutating outcomes without replay. Session
+board integration exercises real SQLite context admission before cursor advance.
+The memory suites guard stale extraction, immutable revisions, and independent
+exposure/feedback. Full build/tests, zero-issue lint, docs/design/benchmark gates,
+affected race suites and sequential Linux normal/narrow terminal workflows pass.
+The real task loop acquires a skill, activates MCP, executes an SDK tool and
+resumes without provider/tool replay. Native Windows/macOS runtime and live-vendor
+OAuth were not exercised; no held-out quality or token-saving gain is claimed.
+Supported workflows and precise limits are documented in the
+[capability workflow guide](../guides/capability-workflows.md).
 
 ## Goal and source boundaries
 
@@ -38,9 +62,13 @@ memories supplement the current request and verified workspace state.
 | Memory ranking | [Recall](../../memory/retrieve.go) rewards usage and the latest of update or last-use time; [auto recall](../../session/memory.go) calls `Touch` whenever it shows a record. | Prevent selection from reinforcing itself. Use applicability and evidence when learning whether advice helped. |
 | Memory extraction | The [turn mirror](../../session/memory_pipeline.go) retains user and assistant summaries, tool names, and paths; the extraction prompt does not receive underlying tool results. | Select bounded, relevant observations and link extracted claims to source messages or tool calls. |
 
-The project is pre-alpha: replace affected internal schemas and contracts
-directly, without migration or compatibility paths for old development data.
-Preserve unrelated user data and files during implementation.
+The project is in active development: breaking internal contracts and schemas are
+allowed, and no backward-compatibility path is retained. The 2026-10-01 user
+direction explicitly requires manual alignment of existing local memory/session
+data outside product code, with backups and exact preservation checks. The
+temporary automatic memory upgrade and session capability-column migration were
+removed. Fresh creation, reopen and resume use the current contract only; existing
+knowledge, history, transcripts and role pins must not be lost or fabricated.
 
 ## 1. Shared capability catalog
 
@@ -270,8 +298,8 @@ runtime capability gaps. Revision 2 incorporates the user's direction: no
 Terminals rail entry, calm Git navigation with main-area diffs, workspace Memory
 in the footer, and complete Skills/MCP browsing and manual management in Settings.
 It also recommends separate Skills/MCP rail entries and `/skills`, `/mcp`
-manager commands over one shared catalog. Detailed controls and layouts remain
-proposed; the examples below are only the original surface outline.
+manager commands over one shared catalog. Detailed controls and layouts are
+specified by that contract; the examples below are the original surface outline.
 
 | Owner | Proposed responsibility |
 |---|---|

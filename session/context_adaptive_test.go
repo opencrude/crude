@@ -176,7 +176,7 @@ func TestSessionAdaptiveCompactionInstallsCheckpointAndResumesPassively(t *testi
 			if !bytes.Equal(adaptiveMessageBytes(t, session.msgs), original) || !bytes.Equal(adaptiveMessageBytes(t, history), original) {
 				t.Fatal("compaction changed the original full message archive")
 			}
-			if session.contextGeneration != 8 || session.contextReason != "manual_compaction" || len(session.activeContext) != 3 {
+			if session.contextGeneration != 8 || session.contextReason != "manual_compaction" || len(session.activeContext) != 4 {
 				t.Fatalf("checkpoint not installed: generation=%d reason=%q messages=%d", session.contextGeneration, session.contextReason, len(session.activeContext))
 			}
 			checkpoint := session.activeContext[0]
@@ -200,7 +200,7 @@ func TestSessionAdaptiveCompactionInstallsCheckpointAndResumesPassively(t *testi
 					t.Errorf("%s stage not installed: %q", name, section)
 				}
 			}
-			if !bytes.Equal(adaptiveMessageBytes(t, session.activeContext[1:]), adaptiveMessageBytes(t, []provider.ChatMessage{history[0], history[len(history)-1]})) {
+			if !bytes.Equal(adaptiveMessageBytes(t, session.activeContext[1:3]), adaptiveMessageBytes(t, []provider.ChatMessage{history[0], history[len(history)-1]})) || session.activeContext[3].EffectiveOrigin() != provider.OriginRuntimeContext {
 				t.Fatal("genuine human request and final correction were not retained verbatim")
 			}
 			var archived []byte

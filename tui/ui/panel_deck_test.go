@@ -241,3 +241,27 @@ func TestPanelDeckCloseEmitsEmptyAction(t *testing.T) {
 		t.Fatalf("close result=%#v open=%v", result, deck.IsOpen())
 	}
 }
+
+func TestPanelDeckPeerBlockingTabsDelegateCloseAndNeverExposeOrdinaryPanels(t *testing.T) {
+	deck := NewPanelDeck("deck", NewTokenSet(theme.DefaultDark()))
+	for _, id := range []string{"one", "two"} {
+		deck.Open(PanelEntry{ID: id, Title: id, Content: NewLabel(ComponentID(id), id, theme.DefaultDark()),
+			Policy: PanelBlocking, BlockingGroup: "requests", Closable: true, CloseAction: "request.deny"})
+	}
+	deck.Open(PanelEntry{ID: "settings", Title: "Settings", Content: NewLabel("settings", "Settings", theme.DefaultDark()), Policy: PanelInteractive, Closable: true})
+	if !deck.Activate("two") || deck.Activate("settings") {
+		t.Fatal("peer request selection bypassed the blocking group")
+	}
+	result := deck.HandleAction(EventContext{}, Action{ID: "tabs.close", Payload: "one"})
+	if !result.Handled || result.Action == nil || result.Action.ID != "request.deny" || result.Action.Payload != "one" || deck.Count() != 3 {
+		t.Fatalf("close must await its owner: %+v", result)
+	}
+	deck.Close("two")
+	if deck.Active().ID != "one" {
+		t.Fatal("closing one blocker exposed an ordinary panel ahead of its pending peer")
+	}
+	deck.Close("one")
+	if deck.Active().ID != "settings" {
+		t.Fatal("ordinary retained panel did not return after all requests settled")
+	}
+}

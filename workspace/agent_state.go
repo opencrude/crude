@@ -363,6 +363,16 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 		return a.handleBlockingAuto(evt, target, thinkTarget)
 
 	case "blocking_complete":
+		blockID := ""
+		switch data := evt.Data.(type) {
+		case map[string]string:
+			blockID = data["block_id"]
+		case map[string]any:
+			blockID, _ = data["block_id"].(string)
+		}
+		if blockID != "" && a.PendingBlockID != "" && blockID != a.PendingBlockID {
+			return nil
+		}
 		onConfirmDismiss()
 		a.PendingBlockID = ""
 		a.Running = true

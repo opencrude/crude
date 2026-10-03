@@ -18,6 +18,7 @@ import (
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/types"
+	"crude/types/capability"
 )
 
 // SaveMsg is returned as a tea.Msg on save.
@@ -40,21 +41,28 @@ const (
 	PromptTemplateInUse
 	PromptDiscardEditor
 	PromptDiscardSettings
+	PromptRemoveCapability
 )
 
 type PromptMsg struct {
-	Target         *Model
-	Kind           PromptKind
-	ID             string
-	Label          string
-	RelatedCount   int
-	beforeAccount  *provider.Account
-	beforeTemplate *provider.Template
-	accountEditor  *accountEdit
-	accountDraft   *provider.Account
-	providerEditor *providerEdit
-	providerDraft  *provider.Template
-	preferences    []byte
+	Target           *Model
+	Kind             PromptKind
+	ID               string
+	Label            string
+	RelatedCount     int
+	beforeAccount    *provider.Account
+	beforeTemplate   *provider.Template
+	accountEditor    *accountEdit
+	accountDraft     *provider.Account
+	providerEditor   *providerEdit
+	providerDraft    *provider.Template
+	preferences      []byte
+	agentEditor      *ui.FormModel
+	agentDraft       []byte
+	capabilityEditor *capabilityCatalog
+	capabilityForm   *ui.FormModel
+	capabilityDraft  []byte
+	CapabilityAction *capability.Action
 }
 
 type AccountChangeMsg struct {
@@ -199,9 +207,18 @@ type Model struct {
 	appDefaults     types.AppSettings
 	// agents holds the working AgentsSettings so the main agent form's
 	// Multi-Agent toggle reads and writes the real workspace flag.
-	agents       *types.AgentsSettings
-	memoryAgent  types.CategorySettings
-	autoReviewer types.AutoPermissionSettings
+	agents              *types.AgentsSettings
+	memoryAgent         types.CategorySettings
+	autoReviewer        types.AutoPermissionSettings
+	capabilities        capability.Settings
+	capabilitySnapshot  capability.Snapshot
+	capabilityDiscovery map[capability.Kind][]capability.Entry
+	capabilitySequence  uint64
+	capabilityRequests  map[uint64]capability.Action
+	capabilityPending   *capability.Action
+	capabilityResult    *CapabilityResultMsg
+	capabilityRevision  uint64
+	capabilityDraft     *ui.FormModel
 }
 
 type accountEdit struct {
@@ -232,10 +249,15 @@ const (
 	fieldAutoPermission       = "auto-permission-enabled"
 	fieldAutoPermModel        = "auto-permission-model"
 	fieldAutoPermDenyMode     = "auto-permission-deny-mode"
+	fieldAutoPermUnresolved   = "auto-permission-unresolved-mode"
+	fieldAutoPermThinking     = "auto-permission-thinking-effort"
+	fieldAutoPermFormat       = "auto-permission-response-format"
 	fieldAutoPermTimeout      = "auto-permission-timeout"
 	fieldAutoPermOutputTokens = "auto-permission-output-tokens"
+	fieldAutoPermRetries      = "auto-permission-retries"
+	fieldAutoPermGrowth       = "auto-permission-retry-growth"
+	fieldAutoPermRetryCeiling = "auto-permission-retry-ceiling"
 	fieldAutoPermInputBytes   = "auto-permission-input-bytes"
-	fieldAutoPermReviews      = "auto-permission-reviews"
 	fieldAutoPermInstructions = "auto-permission-instructions"
 	fieldHistoryEnabled       = "history-enabled"
 	fieldHistoryGitIgnore     = "history-gitignore"
@@ -290,9 +312,11 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		th: th, presets: presets, providers: providers, providerID: active, activeProvider: active,
 		accounts: cloneAccounts(current.Accounts), authGeneration: map[string]uint64{}, authErrors: map[string]string{}, fetchGeneration: map[string]uint64{},
 		models: make(map[string][]types.ModelEntry), scope: scope, appDefaults: appDefaults,
-		agents:       &current.Agents,
-		memoryAgent:  current.Memory.MemoryCategory,
-		autoReviewer: current.Safety.AutoPermission.Normalized(),
+		agents:              &current.Agents,
+		memoryAgent:         current.Memory.MemoryCategory,
+		autoReviewer:        current.Safety.AutoPermission.Normalized(),
+		capabilities:        capability.Normalize(current.Capabilities),
+		capabilityDiscovery: make(map[capability.Kind][]capability.Entry),
 	}
 	if _, ok := providers[m.providerID]; !ok {
 		ids := sortedTemplateIDs(providers)
@@ -333,7 +357,7 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		{Name: "Aeron", Group: "AI", Description: "Workspace defaults for mechanical tasks.", Form: m.buildAgentForm(current.Agents.Categories["aeron"], false)},
 		{Name: "Memory", Group: "AI", Description: "Durable workspace memory: recall, extraction, consolidation.", Form: m.buildMemoryForm(current.Memory)},
 		{Name: "Command Safety", Group: "Security", Description: "Command severity, confirmation, and dangerous-action attention.", Form: m.buildSafetyForm(current.Safety)},
-		{Name: "Auto Review Policy", Group: "Security", Description: "Bounded remote review behavior and per-turn limits. Configure the reviewer in Agents.", Form: m.buildAutoReviewPolicyForm(current.Safety.AutoPermission)},
+		{Name: "Auto Review Policy", Group: "Security", Description: "Synchronized view of Auto Review Agent's bounded runtime policy.", Form: m.buildAutoReviewPolicyForm(current.Safety.AutoPermission)},
 		{Name: "Appearance", Group: "IDE", Description: "Theme palette and surface colors.", Form: formModel(appearanceFields...)},
 		{Name: "Editor", Group: "IDE", Description: "Editing, wrapping, syntax, and save behavior.", Form: formModel(
 			ui.SeparatorFieldState("editing", "Editing"),
@@ -367,6 +391,12 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		{Name: "Local History", Group: "IDE", Description: "Automatic project snapshots, retention, and safe restore policy.", Form: m.buildHistoryForm(current.LocalHistory)},
 	}
 	m.categories = append(m.categories, Category{Name: "Agents", Group: "AI", Description: "Built-in roles and reusable named agents.", Form: formModel()})
+	m.categories = append(m.categories,
+		Category{Name: "Skills", Group: "AI", Description: "Installed skills, manual discovery, source-qualified instructions and invocation modes.", Form: formModel()},
+		Category{Name: "MCP", Group: "AI", Description: "Named MCP connections, tools, resources, prompts, access and activity.", Form: formModel()},
+		Category{Name: "Sources", Group: "AI", Description: "Shared local directories, pinned repositories and capability registries.", Form: formModel()},
+		Category{Name: "Acquisition", Group: "AI", Description: "Automatic capability selection, acquisition approval and bounded access budgets.", Form: m.buildAcquisitionForm()},
+	)
 	for index := range m.categories {
 		category := index
 		m.categories[index].Form.OnChanged(func(fieldID string) { m.handleFieldChanged(category, fieldID) })
@@ -382,6 +412,7 @@ func (m *Model) preferenceBytes() []byte {
 	s.Accounts = nil
 	s.Providers = nil // templates are saved as independent entities
 	s.ActiveProvider = ""
+	s.Capabilities.Skills, s.Capabilities.Connections, s.Capabilities.Sources = nil, nil, nil
 	encoded, _ := json.Marshal(s)
 	return encoded
 }
@@ -1274,26 +1305,12 @@ func (m *Model) buildSafetyForm(settings types.SafetySettings) *ui.FormModel {
 }
 
 func (m *Model) buildAutoReviewPolicyForm(settings types.AutoPermissionSettings) *ui.FormModel {
-	auto := settings.Normalized()
-	return formModel(
-		ui.SeparatorFieldState("review-outcomes", "Review outcomes"),
-		ui.CycleFieldState(fieldAutoPermDenyMode, "Denied review", []string{"ask", "deny"}, auto.DenyMode,
-			"Ask you or reject this call. Uncertainty asks; review never creates a permanent grant."),
-		ui.SeparatorFieldState("review-bounds", "Per-request limits"),
-		autoPermissionIntField(fieldAutoPermTimeout, "Timeout (seconds)", auto.TimeoutSeconds, 1, 30,
-			"A timed-out review asks you; it never approves."),
-		autoPermissionIntField(fieldAutoPermOutputTokens, "Output token cap", auto.MaxOutputTokens, 16, 256,
-			"Maximum reviewer response tokens."),
-		autoPermissionIntField(fieldAutoPermInputBytes, "Input byte cap", auto.MaxInputBytes, 256, 8192,
-			"Maximum eligible argument bytes; conversation, environment, and file contents are excluded."),
-		autoPermissionIntField(fieldAutoPermReviews, "Review cap per turn", auto.MaxReviewsPerTurn, 1, 100,
-			"Maximum reviews per root-agent turn; child-agent policies are unchanged."),
-	)
+	return formModel(m.autoReviewPolicyFields(settings)...)
 }
 
 func (m *Model) buildAutoReviewerForm() *ui.FormModel {
 	auto := m.autoReviewer.Normalized()
-	purpose := ui.TextFieldState("agent-description", "Purpose", "Reviews eligible root-agent permission requests", "Fixed safety role; not an agent that executes tools.")
+	purpose := ui.TextFieldState("agent-description", "Purpose", "Reviews eligible root and child permission requests", "Fixed safety role; every agent owns an independent review lifecycle and this agent executes no tools.")
 	purpose.ReadOnly = true
 	instructions := ui.TextAreaFieldState("agent-instructions", "Extra restrictions", auto.Instructions,
 		"May only narrow approvals. Core reviewer safety instructions cannot be changed.")
@@ -1304,18 +1321,152 @@ func (m *Model) buildAutoReviewerForm() *ui.FormModel {
 		}
 		return nil
 	}
-	return formModel(
+	fields := []*ui.FieldState{
 		ui.SelectFieldState(fieldConnection, "Account", auto.AccountID, m.connectionOptions(false), "Explicit reviewer account; never inherits Main Agent."),
 		ui.ModelFieldState(fieldModel, "Model", auto.Model, ui.ModelOptions(m.models[accountModelKey(auto.Provider, auto.AccountID)]),
 			"Explicit reviewer model; never inherits Main Agent."),
 		purpose, instructions,
-	)
+	}
+	fields = append(fields, m.autoReviewPolicyFields(auto)...)
+	return formModel(fields...)
+}
+
+func (m *Model) autoReviewPolicyFields(settings types.AutoPermissionSettings) []*ui.FieldState {
+	auto := settings.Normalized()
+	thinking := ui.SelectFieldState(fieldAutoPermThinking, "Thinking effort", auto.ThinkingEffort, []ui.FormOption{
+		{ID: "low", Label: "Low", Detail: "Recommended"},
+		{ID: "medium", Label: "Medium"},
+		{ID: "high", Label: "High"},
+		{ID: "max", Label: "Maximum"},
+	}, "Low is the reliable default. Higher effort consumes more of the output budget; unsupported values fail closed.")
+	thinking.DescriptionImportant = true
+	format := ui.SelectFieldState(fieldAutoPermFormat, "Response format", auto.ResponseFormat, []ui.FormOption{
+		{ID: types.AutoPermissionFormatAuto, Label: "Auto", Detail: "Recommended"},
+		{ID: types.AutoPermissionFormatJSONSchema, Label: "JSON schema"},
+		{ID: types.AutoPermissionFormatJSONObject, Label: "JSON object"},
+		{ID: types.AutoPermissionFormatPrompt, Label: "Prompt only"},
+	}, "Auto tries a strict schema on OpenAI Chat endpoints, then falls back when a retry is available. Explicit formats fail closed when unsupported.")
+	format.DescriptionImportant = true
+	retries := autoPermissionIntField(fieldAutoPermRetries, "Retries", auto.MaxAttempts-1, 0, 5,
+		"Additional requests after timeout, truncation, transport failure, or invalid output. Valid allow, deny, and ask decisions are never retried.")
+	growth := ui.SelectFieldState(fieldAutoPermGrowth, "Retry token growth", auto.RetryTokenGrowth, []ui.FormOption{
+		{ID: types.AutoPermissionGrowthFixed, Label: "Fixed"},
+		{ID: types.AutoPermissionGrowth2x, Label: "2x"},
+		{ID: types.AutoPermissionGrowth4x, Label: "4x", Detail: "Recommended"},
+	}, "How the output budget increases after each technical failure; the retry ceiling always wins.")
+	ceiling := autoPermissionIntField(fieldAutoPermRetryCeiling, "Retry token ceiling", auto.MaxRetryOutputTokens, 16, 8192,
+		"Hard per-attempt ceiling. Too little headroom can exhaust reasoning before the verdict.")
+	ceiling.DescriptionImportant = true
+	unresolved := ui.CycleFieldState(fieldAutoPermUnresolved, "Unresolved review", []string{"ask", "deny"}, auto.UnresolvedMode,
+		"Ask pauses for a person. Deny rejects structural uncertainty, model ask, or exhausted technical recovery so unattended work can continue safely.")
+	unresolved.DescriptionImportant = true
+	return []*ui.FieldState{
+		ui.SeparatorFieldState("auto-permission-section-outcomes", "Review outcomes"),
+		ui.CycleFieldState(fieldAutoPermDenyMode, "Denied verdict", []string{"ask", "deny"}, auto.DenyMode,
+			"Ask you or reject this call when the model returns deny. Review never creates a permanent grant."),
+		unresolved,
+		thinking,
+		format,
+		ui.SeparatorFieldState("auto-permission-section-recovery", "Technical recovery"),
+		autoPermissionIntField(fieldAutoPermTimeout, "Timeout per attempt", auto.TimeoutSeconds, 1, 120,
+			"Each attempt has this deadline. A fully exhausted review never approves."),
+		autoPermissionIntField(fieldAutoPermOutputTokens, "Initial output tokens", auto.MaxOutputTokens, 16, 4096,
+			"First-attempt response cap, including hidden reasoning on providers that report it as output."),
+		retries,
+		growth,
+		ceiling,
+		ui.SeparatorFieldState("auto-permission-section-bounds", "Review bounds"),
+		autoPermissionIntField(fieldAutoPermInputBytes, "Input byte cap", auto.MaxInputBytes, 64<<10, 1<<20,
+			"Caps the complete serialized review payload for the exact tool arguments and operation metadata; conversation history and the ambient environment are excluded. The safe floor is 64 KiB, the configurable ceiling is 1 MiB, and nothing is truncated."),
+	}
 }
 
 func autoPermissionIntField(id, label string, value, minValue, maxValue int, description string) *ui.FieldState {
 	field := ui.TextFieldState(id, label, strconv.Itoa(value), description)
 	field.Validator = intRangeValidator(minValue, maxValue)
 	return field
+}
+
+func autoPermissionFromForm(current types.AutoPermissionSettings, form *ui.FormModel) types.AutoPermissionSettings {
+	auto := current.Normalized()
+	if form == nil {
+		return auto
+	}
+	value := func(id, fallback string) string {
+		if field := form.Field(id); field != nil {
+			return field.Value.String()
+		}
+		return fallback
+	}
+	auto.DenyMode = value(fieldAutoPermDenyMode, auto.DenyMode)
+	auto.UnresolvedMode = value(fieldAutoPermUnresolved, auto.UnresolvedMode)
+	auto.ThinkingEffort = value(fieldAutoPermThinking, auto.ThinkingEffort)
+	auto.ResponseFormat = value(fieldAutoPermFormat, auto.ResponseFormat)
+	auto.TimeoutSeconds = parseOpt(value(fieldAutoPermTimeout, strconv.Itoa(auto.TimeoutSeconds)), auto.TimeoutSeconds)
+	auto.MaxOutputTokens = parseOpt(value(fieldAutoPermOutputTokens, strconv.Itoa(auto.MaxOutputTokens)), auto.MaxOutputTokens)
+	auto.MaxAttempts = parseOpt(value(fieldAutoPermRetries, strconv.Itoa(auto.MaxAttempts-1)), auto.MaxAttempts-1) + 1
+	auto.RetryTokenGrowth = value(fieldAutoPermGrowth, auto.RetryTokenGrowth)
+	auto.MaxRetryOutputTokens = parseOpt(value(fieldAutoPermRetryCeiling, strconv.Itoa(auto.MaxRetryOutputTokens)), auto.MaxRetryOutputTokens)
+	auto.MaxInputBytes = parseOpt(value(fieldAutoPermInputBytes, strconv.Itoa(auto.MaxInputBytes)), auto.MaxInputBytes)
+	return auto.Normalized()
+}
+
+func validateAutoReviewPolicyForm(form *ui.FormModel) {
+	if form == nil {
+		return
+	}
+	for _, id := range []string{fieldAutoPermFormat, fieldAutoPermTimeout, fieldAutoPermOutputTokens, fieldAutoPermRetries, fieldAutoPermRetryCeiling, fieldAutoPermInputBytes} {
+		if field := form.Field(id); field != nil {
+			field.Validate()
+		}
+	}
+	initial := parseOpt(formFieldValue(form, fieldAutoPermOutputTokens), 256)
+	retries := parseOpt(formFieldValue(form, fieldAutoPermRetries), 2)
+	growth := formFieldValue(form, fieldAutoPermGrowth)
+	ceiling := parseOpt(formFieldValue(form, fieldAutoPermRetryCeiling), 1024)
+	field := form.Field(fieldAutoPermRetryCeiling)
+	if field == nil || field.HasErrors() {
+		return
+	}
+	if ceiling < initial {
+		field.Errors = append(field.Errors, "Retry token ceiling must be at least the initial output tokens.")
+	} else if retries > 0 && growth != types.AutoPermissionGrowthFixed && ceiling == initial {
+		field.Errors = append(field.Errors, "Increasing retries need a ceiling above the initial output tokens.")
+	}
+}
+
+func (m *Model) validateAutoReviewFormat(form *ui.FormModel, accountID string) {
+	if form == nil || accountID == "" {
+		return
+	}
+	format := formFieldValue(form, fieldAutoPermFormat)
+	if format != types.AutoPermissionFormatJSONSchema && format != types.AutoPermissionFormatJSONObject {
+		return
+	}
+	account, ok := m.accounts[accountID]
+	template, templateOK := m.providers[account.ProviderID]
+	standard := ""
+	if ok && templateOK {
+		standard = provider.ResolveTemplate(account.ProviderID, template, account.Overrides).APIStandard
+	}
+	if standard == "" && ok {
+		standard = provider.DefaultStandardID(account.ProviderID)
+	}
+	if standard != "openai" {
+		if field := form.Field(fieldAutoPermFormat); field != nil {
+			field.Errors = append(field.Errors, "Explicit JSON response formats require an OpenAI Chat-compatible account; use Auto or Prompt only.")
+		}
+	}
+}
+
+func formFieldValue(form *ui.FormModel, id string) string {
+	if form == nil {
+		return ""
+	}
+	if field := form.Field(id); field != nil {
+		return field.Value.String()
+	}
+	return ""
 }
 
 func formatCommandRules(rules []types.CommandSeverityRule) string {
@@ -1439,6 +1590,12 @@ func (m *Model) isAgentCategory(index int) bool {
 func (m *Model) handleFieldChanged(category int, fieldID string) {
 	if category == catAppearance && fieldID == "preset" {
 		m.syncAppearanceColors()
+		return
+	}
+	if category == catAutoReviewPolicy {
+		validateAutoReviewPolicyForm(m.categories[catAutoReviewPolicy].Form)
+		m.autoReviewer = autoPermissionFromForm(m.autoReviewer, m.categories[catAutoReviewPolicy].Form)
+		m.validateAutoReviewFormat(m.categories[catAutoReviewPolicy].Form, m.autoReviewer.AccountID)
 		return
 	}
 	if category == catAccounts && m.accountEditor != nil {
@@ -1613,6 +1770,8 @@ func (m *Model) syncAppearanceColors() {
 // the mounted component tree rather than a parallel legacy form event loop.
 func (m *Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	switch msg := msg.(type) {
+	case CapabilityResultMsg:
+		m.applyCapabilityResult(msg)
 	case types.ModelCatalogUpdatedMsg:
 		for accountID, account := range m.accounts {
 			key := accountModelKey(account.ProviderID, accountID)
@@ -1800,7 +1959,9 @@ func (m *Model) SetSearchQuery(query string) {
 		m.searchEd = ui.NewTextEdit()
 	}
 	m.searchEd.SetValue(query)
-	m.ensureVisibleSelection()
+	if !m.editorOpen() {
+		m.ensureVisibleSelection()
+	}
 }
 
 func (m *Model) SetSearchActive(active bool) { m.searchActive = active }
@@ -1901,6 +2062,15 @@ func (m *Model) CategoryItems() []ui.ListItem {
 
 func (m *Model) visibleCategoryIndices() []int {
 	query := strings.ToLower(strings.TrimSpace(m.searchText()))
+	exactCategory := -1
+	if query != "" {
+		for index, category := range m.categories {
+			if strings.EqualFold(category.Name, query) {
+				exactCategory = index
+				break
+			}
+		}
+	}
 	indices := make([]int, 0, len(m.categories))
 	for index, category := range m.categories {
 		if index == catAgents || index == catResearcher || index == catCrafter || index == catAeron {
@@ -1912,10 +2082,23 @@ func (m *Model) visibleCategoryIndices() []int {
 		if (index == catAccounts || index == catProviders) && m.Scope() != types.SettingsScopeApplication {
 			continue
 		}
-		if query == "" || strings.Contains(strings.ToLower(category.Name), query) || strings.Contains(strings.ToLower(category.Group), query) {
+		if exactCategory >= 0 && index != exactCategory {
+			continue
+		}
+		if query == "" || m.categoryMatches(index, category, query) {
 			indices = append(indices, index)
 		}
 	}
+	groupOrder := make(map[string]int)
+	for _, index := range indices {
+		group := m.categories[index].Group
+		if _, exists := groupOrder[group]; !exists {
+			groupOrder[group] = len(groupOrder)
+		}
+	}
+	slices.SortStableFunc(indices, func(left, right int) int {
+		return groupOrder[m.categories[left].Group] - groupOrder[m.categories[right].Group]
+	})
 	return indices
 }
 
@@ -1949,6 +2132,10 @@ const (
 	catFont
 	catHistory
 	catAgents
+	catSkills
+	catMCP
+	catSources
+	catAcquisition
 )
 
 func (m *Model) currentOverrideKey() string {
@@ -1971,6 +2158,8 @@ func (m *Model) currentOverrideKey() string {
 		return "safety"
 	case catHistory:
 		return "local_history"
+	case catSkills, catMCP, catSources, catAcquisition:
+		return "capabilities"
 	default:
 		return "agents"
 	}
@@ -1989,6 +2178,8 @@ func (m *Model) AppSettings() types.AppSettings {
 	m.collectLSP(&settings.LSP)
 	m.collectUI(&settings.UI)
 	m.collectFont(&settings.Font)
+	settings.Capabilities = capability.Clone(m.capabilities)
+	settings.Capabilities.Acquisition = m.acquisitionFromForm()
 	return settings
 }
 
@@ -2033,13 +2224,9 @@ func (m *Model) collectSafety(settings *types.SafetySettings) {
 		CommandRules:        parseCommandRules(m.value(catSafety, fieldSafetyRules)),
 		NotifyDangerous:     onOff(m.value(catSafety, fieldSafetyNotify) == "on"),
 	}
-	auto := m.autoReviewer
-	auto.DenyMode = m.value(catAutoReviewPolicy, fieldAutoPermDenyMode)
-	auto.TimeoutSeconds = parseOpt(m.value(catAutoReviewPolicy, fieldAutoPermTimeout), 8)
-	auto.MaxOutputTokens = parseOpt(m.value(catAutoReviewPolicy, fieldAutoPermOutputTokens), 96)
-	auto.MaxInputBytes = parseOpt(m.value(catAutoReviewPolicy, fieldAutoPermInputBytes), 4096)
-	auto.MaxReviewsPerTurn = parseOpt(m.value(catAutoReviewPolicy, fieldAutoPermReviews), 12)
-	settings.AutoPermission = auto.Normalized()
+	auto := autoPermissionFromForm(m.autoReviewer, m.categories[catAutoReviewPolicy].Form)
+	m.autoReviewer = auto
+	settings.AutoPermission = auto
 }
 
 func onOff(enabled bool) string {

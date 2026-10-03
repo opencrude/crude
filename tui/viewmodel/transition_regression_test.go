@@ -200,3 +200,36 @@ func TestTransition_TabSwitchEditorToAgentRestoresChat(t *testing.T) {
 		t.Fatalf("agent chat black after tab switch back; content=%q", text)
 	}
 }
+
+// TestTransition_EmptySessionToHydratedSessionPaintsFirstFrame covers the
+// real launch flow: New Session first paints an empty chat projection, then a
+// saved session is resumed from Workspace. Both retained renderers begin their
+// local export generation at one, so the shared shell chat must still replace
+// the empty list immediately rather than waiting for resize or another view
+// invalidation.
+func TestTransition_EmptySessionToHydratedSessionPaintsFirstFrame(t *testing.T) {
+	app := newFullTestApp(t)
+	app.width, app.height = 100, 30
+
+	app.AddOrchestrator("new-session")
+	app.paintShellFrame()
+	if text := chatAreaText(app); strings.Contains(text, "resumed history") {
+		t.Fatalf("precondition: empty new session painted resumed content: %q", text)
+	}
+
+	app.AddOrchestrator("resumed-session")
+	app.hydrateActiveMessages([]ttypes.ChatMessage{{
+		InternalID: "history-1",
+		Role:       ttypes.RoleAssistant,
+		Content:    "resumed history paints immediately",
+		Time:       time.Now(),
+	}})
+	app.paintShellFrame()
+
+	if !app.shellSlotActive(shellChatSlot) {
+		t.Fatal("resumed session did not activate the chat slot")
+	}
+	if text := chatAreaText(app); !strings.Contains(text, "resumed history paints immediately") {
+		t.Fatalf("hydrated session stayed blank until another invalidation; content=%q", text)
+	}
+}

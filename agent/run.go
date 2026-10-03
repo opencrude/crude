@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	rand2 "math/rand/v2"
 	"strings"
 	"sync"
@@ -14,15 +15,12 @@ import (
 	"time"
 	"unicode/utf8"
 
+	rootprompt "crude/prompt"
 	"crude/provider"
 	"crude/tools"
 	ttypes "crude/types"
 	"crude/types/reasoning"
 )
-
-const continuePreviousResponse = "Continue the previous response exactly where it stopped. Do not repeat completed content. Continue using tools if the task still requires them."
-
-const recoverPartialToolCall = "The previous provider stream stopped while constructing one or more tool calls. No tool from that response was executed. Re-evaluate the pending step and issue any required tool calls again with complete arguments. Do not assume the partial call or any side effect occurred."
 
 type BtwMessage struct {
 	Message provider.ChatMessage
@@ -79,6 +77,12 @@ func (a *Agent) Run(
 		a.emitError(emit, fmt.Errorf("agent provider is nil"))
 		return append([]provider.ChatMessage(nil), sessionMessages...)
 	}
+	var guidanceErr error
+	systemPrompt, guidanceErr = a.loadProjectGuidance(ctx, systemPrompt)
+	if guidanceErr != nil {
+		a.emitError(emit, fmt.Errorf("cannot start project work before reading complete guidance: %w", guidanceErr))
+		return append([]provider.ChatMessage(nil), sessionMessages...)
+	}
 
 	a.configureModelTools()
 	allTools := toolDefsToProviderDefs(a.FilteredTools)
@@ -114,7 +118,7 @@ func (a *Agent) Run(
 	}
 	returnMessages := func() []provider.ChatMessage {
 		if stopped {
-			boundary := provider.NewTextMessage("user", "The user stopped the previous turn. Completed tool effects remain. Running tools may have partial effects; inspect current state before resuming them. Calls with incomplete streamed arguments were not executed. Follow the user's next instruction; do not automatically repeat completed operations.")
+			boundary := provider.NewTextMessage("user", rootprompt.TurnStoppedBoundary())
 			boundary.Origin, boundary.Visibility = provider.OriginTurnStopped, provider.VisibilityContextOnly
 			boundary.InternalID = stopID
 			appendWire(boundary)
@@ -122,6 +126,14 @@ func (a *Agent) Run(
 		}
 		a.lastActiveContext = append([]provider.ChatMessage(nil), msgs[1:]...)
 		return append([]provider.ChatMessage(nil), archiveMsgs...)
+	}
+	if a.WorkDir != "" || a.AsyncMgr != nil || a.SubAgentMgr != nil || a.ContinuationContext != nil {
+		continuity, err := a.continuityMessage(ctx, false)
+		if err != nil {
+			a.emitError(emit, err)
+			return returnMessages()
+		}
+		appendWire(continuity)
 	}
 
 	var steps []StepRecord
@@ -142,10 +154,29 @@ func (a *Agent) Run(
 	continuations := 0
 	interruptionRecoveries := 0
 	overflowRecoveries := 0
+	continuationWarningSent := false
 	overflowPressure := false
 	providerName := a.providerDisplayName()
 	cacheUsageUnknown := a.Provider.ProtocolID() == "ollama"
 	var admittedBtwIDs []string
+	var bufferedBtw []BtwMessage
+	var acknowledgedBtwMu sync.Mutex
+	acknowledgedBtwIDs := make(map[string]struct{})
+	acknowledgeBtwIDs := func(internalIDs []string) {
+		acknowledgedBtwMu.Lock()
+		var newlyAcknowledged []string
+		for _, internalID := range internalIDs {
+			if _, exists := acknowledgedBtwIDs[internalID]; exists {
+				continue
+			}
+			acknowledgedBtwIDs[internalID] = struct{}{}
+			newlyAcknowledged = append(newlyAcknowledged, internalID)
+		}
+		acknowledgedBtwMu.Unlock()
+		for _, internalID := range newlyAcknowledged {
+			emit(AgentEvent{Type: "btw_consumed", Data: map[string]any{"internal_id": internalID}})
+		}
+	}
 	clearUnsentBtw := func() {
 		if len(admittedBtwIDs) == 0 {
 			return
@@ -177,6 +208,23 @@ func (a *Agent) Run(
 
 		drainBtw := func() int {
 			consumed := 0
+			admit := func(btw BtwMessage) {
+				if btw.Accept != nil && !btw.Accept() {
+					return
+				}
+				btwMsg := btw.Message
+				l.Info("BTW", "user_interruption", "step", step)
+				appendWire(btwMsg)
+				admittedBtwIDs = append(admittedBtwIDs, btwMsg.InternalID)
+				consumed++
+			}
+			if len(bufferedBtw) > 0 {
+				queued := bufferedBtw
+				bufferedBtw = nil
+				for _, btw := range queued {
+					admit(btw)
+				}
+			}
 			for {
 				select {
 				case btw, ok := <-btwInput:
@@ -184,14 +232,7 @@ func (a *Agent) Run(
 						btwInput = nil
 						return consumed
 					}
-					if btw.Accept != nil && !btw.Accept() {
-						continue
-					}
-					btwMsg := btw.Message
-					l.Info("BTW", "user_interruption", "step", step)
-					appendWire(btwMsg)
-					admittedBtwIDs = append(admittedBtwIDs, btwMsg.InternalID)
-					consumed++
+					admit(btw)
 				default:
 					return consumed
 				}
@@ -247,7 +288,8 @@ func (a *Agent) Run(
 				if outcome.AfterTokens >= threshold {
 					clearUnsentRuntimeNotices()
 					compactErr := fmt.Errorf("compacted context remains above threshold (%d >= %d tokens)", outcome.AfterTokens, threshold)
-					data := compactionEventData(requestID, "automatic", outcome.Role, len(compactionStages), len(compactionStages), activeTokens, outcome.AfterTokens, outcome.ContextWindow)
+					stageCount := len(rootprompt.CompactionStages())
+					data := compactionEventData(requestID, "automatic", outcome.Role, stageCount, stageCount, activeTokens, outcome.AfterTokens, outcome.ContextWindow)
 					data["account_id"] = outcome.AccountID
 					data["provider_id"] = outcome.ProviderID
 					data["model_id"] = outcome.ModelID
@@ -257,7 +299,8 @@ func (a *Agent) Run(
 					return returnMessages()
 				}
 				nextMessages := append([]provider.ChatMessage{msgs[0]}, outcome.Messages...)
-				commitData := compactionEventData(requestID, "automatic", outcome.Role, len(compactionStages), len(compactionStages), activeTokens, outcome.AfterTokens, outcome.ContextWindow)
+				stageCount := len(rootprompt.CompactionStages())
+				commitData := compactionEventData(requestID, "automatic", outcome.Role, stageCount, stageCount, activeTokens, outcome.AfterTokens, outcome.ContextWindow)
 				commitData["account_id"] = outcome.AccountID
 				commitData["provider_id"] = outcome.ProviderID
 				commitData["model_id"] = outcome.ModelID
@@ -276,9 +319,7 @@ func (a *Agent) Run(
 					}
 				}
 				msgs = nextMessages
-				for _, internalID := range admittedBtwIDs {
-					emit(AgentEvent{Type: "btw_consumed", Data: map[string]any{"internal_id": internalID}})
-				}
+				acknowledgeBtwIDs(admittedBtwIDs)
 				admittedBtwIDs = nil
 				if len(runtimeNoticeIDs) > 0 && a.RuntimeNoticesAccepted != nil {
 					a.RuntimeNoticesAccepted()
@@ -313,24 +354,44 @@ func (a *Agent) Run(
 		prevPreviewKeys := make(map[string]string)
 		requestBtwIDs := append([]string(nil), admittedBtwIDs...)
 		var btwMu sync.Mutex
-		btwAcknowledged := false
 		requestFinished := false
 		acknowledgeBtw := func() {
 			btwMu.Lock()
-			defer btwMu.Unlock()
-			if btwAcknowledged || requestFinished {
+			if requestFinished {
+				btwMu.Unlock()
 				return
 			}
-			btwAcknowledged = true
-			for _, internalID := range requestBtwIDs {
-				emit(AgentEvent{Type: "btw_consumed", Data: map[string]any{"internal_id": internalID}})
-			}
+			internalIDs := append([]string(nil), requestBtwIDs...)
+			btwMu.Unlock()
+			acknowledgeBtwIDs(internalIDs)
+		}
+		requestCtx, cancelRequest := context.WithCancelCause(ctx)
+		uploadController := newBtwUploadController(cancelRequest)
+		watchBtw := btwInput != nil
+		watchStop := make(chan struct{})
+		watchDone := make(chan bool, 1)
+		if watchBtw {
+			input := btwInput
+			go func() {
+				inputClosed := false
+				defer func() { watchDone <- inputClosed }()
+				for {
+					select {
+					case <-watchStop:
+						return
+					case btw, ok := <-input:
+						if !ok {
+							inputClosed = true
+							return
+						}
+						uploadController.Queue(btw)
+					}
+				}
+			}()
 		}
 		// Upload notifications may arrive on a transport goroutine after the
 		// first streamed output. They must not resurrect a provider-wait row.
-		var progressMu sync.Mutex
-		outputStarted := false
-		beginOutput := func() { progressMu.Lock(); outputStarted = true; progressMu.Unlock() }
+		beginOutput := uploadController.OutputStarted
 		requestEmit := func(event AgentEvent) {
 			if data, ok := event.Data.(map[string]any); ok && strings.HasPrefix(event.Type, "tool_") && data["request_id"] == nil {
 				data["request_id"] = requestID
@@ -339,7 +400,7 @@ func (a *Agent) Run(
 		}
 		toolDelta := a.makeStreamingDeltaCallback(requestEmit, prevPreviewKeys)
 
-		completion, err := a.completeStreamWithOptions(ctx, requestMsgs, allTools,
+		completion, err := a.completeStreamWithOptions(requestCtx, requestMsgs, allTools,
 			func(token string) {
 				beginOutput()
 				emit(AgentEvent{Type: "stream_token", Data: token})
@@ -372,6 +433,7 @@ func (a *Agent) Run(
 				}})
 			},
 			func() {
+				uploadController.Accepted()
 				if err := prefix.accept(requestMsgs); err != nil {
 					l.Error("CACHE", "prefix_accept_failed", "error", err.Error())
 				}
@@ -383,6 +445,7 @@ func (a *Agent) Run(
 				admittedBtwIDs = nil
 			},
 			func(uploaded, total int64) {
+				outputStarted, restarting := uploadController.Progress(uploaded, total)
 				// A positive byte count means the provider transport has started
 				// reading the encoded context. Move the note into the transcript
 				// now, while retaining its ID until the response is accepted so
@@ -390,9 +453,7 @@ func (a *Agent) Run(
 				if uploaded > 0 {
 					acknowledgeBtw()
 				}
-				progressMu.Lock()
-				defer progressMu.Unlock()
-				if outputStarted {
+				if outputStarted || restarting {
 					return
 				}
 				percent := 0
@@ -418,6 +479,33 @@ func (a *Agent) Run(
 		btwMu.Lock()
 		requestFinished = true
 		btwMu.Unlock()
+		if watchBtw {
+			close(watchStop)
+			if <-watchDone {
+				btwInput = nil
+			}
+		}
+		bufferedBtw = append(bufferedBtw, uploadController.TakeQueued()...)
+		restartUpload := uploadController.RestartRequested() &&
+			errors.Is(context.Cause(requestCtx), errBtwUploadRestart)
+		cancelRequest(nil)
+		if restartUpload && ctx.Err() == nil && errors.Is(err, context.Canceled) {
+			if !completion.hasOutput() {
+				clearUnsentRuntimeNotices()
+				queued := drainBtw()
+				l.Info("BTW", "restart_upload", "step", step, "queued", queued,
+					"threshold_percent", btwUploadRestartPercent)
+				continue
+			}
+			// Output won the narrow race with cancellation. Preserve it as an
+			// accepted partial response and continue from that exact prefix;
+			// never replay stochastic output merely to coalesce a BTW note.
+			err = &apiCallError{
+				Message: "stream interrupted after partial response while coalescing BTW messages",
+				Partial: true,
+				Cause:   io.ErrUnexpectedEOF,
+			}
+		}
 		if err != nil {
 			if ctx.Err() == nil && !completion.hasOutput() && provider.IsContextWindowExceeded(err) &&
 				a.ContextCompactionPercent > 0 && overflowRecoveries < compactionStageRecoveries {
@@ -502,10 +590,10 @@ func (a *Agent) Run(
 				ctx.Err() == nil && completion.hasOutput() &&
 				interruptionRecoveries < 3 {
 				interruptionRecoveries++
-				recovery := continuePreviousResponse
+				recovery := rootprompt.ContinuePreviousResponse()
 				reason := "partial_response"
 				if len(completion.ToolCalls) > 0 {
-					recovery = recoverPartialToolCall
+					recovery = rootprompt.RecoverPartialToolCall()
 					reason = "partial_tool_call"
 					for _, call := range completion.ToolCalls {
 						emit(AgentEvent{Type: "tool_result", Data: map[string]any{
@@ -522,7 +610,7 @@ func (a *Agent) Run(
 					"backoff": delay.Seconds(),
 					"reason":  "Connection interrupted; continuing from saved work",
 				}})
-				continuation := provider.NewTextMessage("user", "<runtime_continuation reason=\""+reason+"\">"+recovery+"</runtime_continuation>")
+				continuation := provider.NewTextMessage("user", rootprompt.RuntimeContinuation(reason, recovery))
 				continuation.Origin = provider.OriginContinuation
 				continuation.Visibility = provider.VisibilityContextOnly
 				appendWire(continuation)
@@ -541,6 +629,10 @@ func (a *Agent) Run(
 		}
 		if settled := a.observeReasoningVisibility(&completion); settled != reasoning.Unknown {
 			emit(AgentEvent{Type: "reasoning_classified", Data: settled})
+		}
+		if !continuationWarningSent && (completion.ResponseContinuationReason == "response_not_stored" || completion.ResponseContinuationReason == "response_id_missing") {
+			continuationWarningSent = true
+			emit(AgentEvent{Type: "response_continuation_unavailable", Data: map[string]any{"reason": completion.ResponseContinuationReason}})
 		}
 
 		interruptionRecoveries = 0
@@ -639,13 +731,14 @@ func (a *Agent) Run(
 		if hasToolCalls {
 			assistantMsg.ToolCalls = toolCalls
 		}
+		provider.BindResponseReference(&assistantMsg, completion.ResponseReference)
 		appendWire(assistantMsg)
 
 		if !hasToolCalls {
 			if isAutoContinuableFinishReason(finishReason) && continuations < maxAutoContinuations {
 				continuations++
 				l.Warn("AGENT", "auto_continue", "finish_reason", finishReason, "continuation", continuations)
-				continuation := provider.NewTextMessage("user", "<runtime_continuation>"+continuePreviousResponse+"</runtime_continuation>")
+				continuation := provider.NewTextMessage("user", rootprompt.RuntimeContinuation("", rootprompt.ContinuePreviousResponse()))
 				continuation.Origin = provider.OriginContinuation
 				continuation.Visibility = provider.VisibilityContextOnly
 				appendWire(continuation)
@@ -660,7 +753,7 @@ func (a *Agent) Run(
 			}
 			if a.Depth > 0 && !a.writeReportCalled {
 				a.logger.Warn("SUBAGENT", "write_report_reminder", "agent_id", a.AgentID, "depth", a.Depth, "step", step)
-				reminder := provider.NewTextMessage("user", "<runtime_report_reminder>You must call write_report with a detailed report before ending. The parent cannot consume unreported child chat.</runtime_report_reminder>")
+				reminder := provider.NewTextMessage("user", rootprompt.RuntimeReportReminder())
 				reminder.Origin = provider.OriginContinuation
 				reminder.Visibility = provider.VisibilityContextOnly
 				appendWire(reminder)
@@ -684,15 +777,36 @@ func (a *Agent) Run(
 
 		emit(AgentEvent{Type: "phase", Data: "executing"})
 
-		resultCh := a.executeToolCalls(ctx, toolCalls, requestEmit, blockResolveCh, &lastReply, step)
-
 		results := make([]execResult, len(toolCalls))
 		receivedResults := make([]bool, len(toolCalls))
-		for received := 0; received < len(toolCalls); received++ {
-			r := <-resultCh
-			if r.index >= 0 && r.index < len(results) {
-				results[r.index] = r
-				receivedResults[r.index] = true
+		guidanceChanged := false
+		if a.guidance != nil {
+			guidanceChanged, guidanceErr = a.guidance.loadPaths(ctx, guidanceCallPaths(toolCalls))
+		}
+		if guidanceChanged || guidanceErr != nil {
+			// No member of a batch may mutate a newly governed scope before the
+			// complete instructions have reached a subsequent model request.
+			errorText := ""
+			if guidanceErr != nil {
+				errorText = guidanceErr.Error()
+			}
+			message := rootprompt.GuidanceDeferredResult(errorText)
+			for i, call := range toolCalls {
+				results[i] = execResult{index: i, id: call.ID, name: call.Function.Name, result: tools.ToolResult{Content: message}, toolError: true}
+				receivedResults[i] = true
+				requestEmit(AgentEvent{Type: "tool_result", Data: map[string]any{"tool_id": call.ID, "name": call.Function.Name, "result": message, "error": "true"}})
+			}
+		} else {
+			resultCh := a.executeToolCalls(ctx, toolCalls, requestEmit, blockResolveCh, &lastReply, step)
+			for received := 0; received < len(toolCalls); received++ {
+				r := <-resultCh
+				if r.index >= 0 && r.index < len(results) {
+					results[r.index] = r
+					receivedResults[r.index] = true
+				}
+			}
+			if a.guidance != nil && ctx.Err() == nil {
+				guidanceChanged, guidanceErr = a.guidance.loadPaths(ctx, nil)
 			}
 		}
 		for i := range results {
@@ -729,6 +843,9 @@ func (a *Agent) Run(
 				toolMessage.CacheControl = &provider.CacheControl{Type: "ephemeral"}
 			}
 			appendWire(toolMessage)
+			if a.ToolResultAccepted != nil && !toolError {
+				a.ToolResultAccepted(r.name, r.id, append([]provider.ChatMessage(nil), msgs[1:]...))
+			}
 			lastToolResultIdx = len(msgs) - 1
 			if r.name == "reply" && r.result.Content != "" {
 				data := map[string]any{"tool_id": r.id, "name": r.name, "result": r.result.Content}
@@ -747,6 +864,20 @@ func (a *Agent) Run(
 		}
 		if lastToolResultIdx > 0 && lastToolResultIdx < len(msgs) {
 			l.Debug("CACHE", "breakpoint", "msg_idx", lastToolResultIdx, "role", msgs[lastToolResultIdx].Role)
+		}
+		if guidanceErr != nil {
+			a.emitError(emit, fmt.Errorf("complete project guidance is required: %w", guidanceErr))
+			return returnMessages()
+		}
+		if guidanceChanged {
+			rendered, refreshErr := a.refreshProjectGuidance(ctx, systemPrompt)
+			if refreshErr != nil {
+				a.emitError(emit, fmt.Errorf("prepare updated project guidance: %w", refreshErr))
+				return returnMessages()
+			}
+			guidance := provider.NewTextMessage("user", rootprompt.GuidanceProjectionUpdate(rendered))
+			guidance.Origin, guidance.Visibility = provider.OriginRuntimeContext, provider.VisibilityContextOnly
+			appendWire(guidance)
 		}
 
 		if ctx.Err() != nil {

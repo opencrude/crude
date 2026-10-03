@@ -48,21 +48,7 @@ func (s *OpenAIStandard) EncodeRequest(req *ChatRequest) ([]byte, error) {
 	if len(req.Tools) > 0 {
 		tools := make([]any, 0, len(req.Tools))
 		for _, tool := range req.Tools {
-			if tool.Type == "custom" {
-				// Chat Completions gateways do not accept Responses custom tools.
-				// Carry the freeform input as a required string function argument.
-				description := tool.Function.Description
-				if tool.Function.Name == "apply_patch" {
-					description = "Apply a patch. Pass the complete *** Begin Patch ... *** End Patch text in the input string."
-				}
-				tools = append(tools, openAIChatToolParam{
-					Type: "function", Function: FunctionDef{
-						Name: tool.Function.Name, Description: description,
-						Parameters: json.RawMessage(`{"type":"object","properties":{"input":{"type":"string"}},"required":["input"],"additionalProperties":false}`),
-					},
-				})
-				continue
-			}
+			tool = jsonFunctionTool(tool)
 			toolType := tool.Type
 			if toolType == "" {
 				toolType = "function"
@@ -118,6 +104,20 @@ type openAIChatToolCallParam struct {
 type openAIChatToolParam struct {
 	Type     string      `json:"type"`
 	Function FunctionDef `json:"function"`
+}
+
+// JSON-function protocols carry the same native/freeform input in one required
+// string field. This is a wire projection; the offered canonical tool stays intact.
+func jsonFunctionTool(tool ToolDef) ToolDef {
+	if tool.Type != "custom" {
+		return tool
+	}
+	tool.Type, tool.Format = "function", nil
+	tool.Function.Parameters = json.RawMessage(`{"type":"object","properties":{"input":{"type":"string"}},"required":["input"],"additionalProperties":false}`)
+	if tool.Function.Name == "apply_patch" {
+		tool.Function.Description = "Apply a patch. Pass the complete *** Begin Patch ... *** End Patch text in the input string."
+	}
+	return tool
 }
 
 func encodeOpenAIChatMessages(messages []ChatMessage) ([]any, error) {
@@ -660,17 +660,11 @@ func (s *OpenAIStandard) ContextWindow(modelID string) int {
 	return LookupContextWindow(modelID)
 }
 
-// Chat Completions has no tool namespaces, so encode the runtime namespace in
-// its legal flat name. Responses carries the native namespace field instead.
 func chatFunctionDef(def FunctionDef) FunctionDef {
-	if def.Name == "multi_tool_use.parallel" {
-		def.Name = "multi_tool_use_parallel"
-	}
+	def.Name = wireFunctionName(def.Name)
 	return def
 }
 func chatFunctionCall(call FunctionCall) FunctionCall {
-	if call.Name == "multi_tool_use.parallel" {
-		call.Name = "multi_tool_use_parallel"
-	}
+	call.Name = wireFunctionName(call.Name)
 	return call
 }

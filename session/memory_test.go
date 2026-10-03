@@ -58,13 +58,16 @@ func TestMemoryToolsAndAutomaticRecall(t *testing.T) {
 		t.Fatalf("memory context = %q", contextText)
 	}
 
-	// Injection reinforces usage.
 	got, err := store.Get(context.Background(), saved[0].ID)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
-	if got.UseCount == 0 {
-		t.Fatalf("injected memory was not touched: %+v", got)
+	if got.UseCount != 0 || got.LastUsedAt != 0 || got.UpdatedAt != saved[0].UpdatedAt {
+		t.Fatalf("injection reinforced exposure: %+v", got)
+	}
+	exposures, err := store.ExposuresForMemory(context.Background(), got.ID, 10)
+	if err != nil || len(exposures) != 1 {
+		t.Fatalf("injection exposure was not recorded: %+v %v", exposures, err)
 	}
 }
 
@@ -88,6 +91,7 @@ func TestMemoryToolUpdateAndForget(t *testing.T) {
 
 	updateResult, _, err := s.executeMemoryTool(ctx, "update_memory", map[string]any{
 		"id": savedPayload.ID, "content": "Run go build ./... and go test ./...",
+		"expected_revision": float64(1),
 	})
 	if err != nil {
 		t.Fatalf("update_memory: %v", err)
@@ -104,7 +108,8 @@ func TestMemoryToolUpdateAndForget(t *testing.T) {
 	}
 
 	if _, _, err := s.executeMemoryTool(ctx, "forget_memory", map[string]any{
-		"id": savedPayload.ID,
+		"id":                savedPayload.ID,
+		"expected_revision": float64(2),
 	}); err != nil {
 		t.Fatalf("forget_memory: %v", err)
 	}

@@ -1,6 +1,10 @@
 # Adaptive context handling
 
-> Status: Current — connection-scoped capacity, reasoning-aware extraction, and transactional recovery (2026-09-30).
+> Status: Current - connection-scoped capacity, reasoning-aware extraction, transactional recovery, and owner-authored continuity.
+
+Prompt ownership, guidance budgets and development rules are defined in
+[model prompts and project guidance](prompt-architecture.md). This reference owns
+context admission, extraction and recovery, not a second set of prompt templates.
 
 ## Failure and ownership
 
@@ -22,7 +26,15 @@ default is a planning estimate, not proof of actual provider capacity.
 
 ## Layered policy
 
-1. Admit BTW and runtime child-result notices before measuring pressure.
+1. Admit BTW and runtime child-result notices before measuring pressure. During
+   an ordinary provider upload, a newly queued BTW note cancels and rebuilds
+   only that request while no model output has started and the uploaded body is
+   at most 90 percent complete. The agent drains every ready BTW note, reruns
+   context-pressure admission, and uploads one replacement request; this internal
+   rebase is not a user cancellation or a successful provider request. Once the
+   upload is past 90 percent, accepted, or streaming output, notes retain the
+   normal next-request behavior. A queued note is rechecked if the transport
+   starts another upload attempt with the old body.
 2. Bound the configured percentage by the main model's normal response and
    safety reserves. Extraction plans each request independently against the
    resolved Aeron connection's capacity; a small extraction model uses smaller
@@ -72,6 +84,30 @@ default is a planning estimate, not proof of actual provider capacity.
    targets at most half the projected input, with at most three recoveries before
    a successful normal response. Authorization, malformed schema, cancellation,
    and generic payload-size errors are not misclassified as context overflow.
+9. The installed context ends with a fresh code-authored continuity handoff, not
+   a retained historical prompt. Known durable human-turn state takes precedence
+   when deciding whether the request was answered; the standalone path uses
+   message-order evidence only when that state is unavailable. An answered
+   request is represented by the checkpoint rather than appended as new-looking
+   user input. Pending human input and child assignment remain verbatim when
+   they fit.
+10. Runtime owners are sampled again after extraction. The handoff carries the
+    current plan and session selection plus exact async handle/command/cwd/PID,
+    status, output length and observed cursor, and child identity/status. A
+    running command has no exit code. Snapshotting never advances output,
+    signals or restarts work; model extraction cannot override fresher owner data.
+
+Extraction contracts, stage wording, attributed source-fragment envelopes and
+checkpoint assembly live in `prompt/compaction.go`; `agent/` retains admission,
+chunk/retry execution and validation. `prompt/runtime.go` renders the continuity
+handoff from session/file-owner facts, not model-authored estimates of live work.
+
+Across normal turns, earlier runtime handoffs remain in the accepted prefix and
+fresh owner facts append with explicit supersession. This preserves prompt-cache
+and [Responses delta-upload](prompt-architecture.md#responses-delta-uploads)
+eligibility without making an old snapshot current. Compaction still replaces
+the active context transactionally and starts a fresh transport chain. Context
+admission and reported usage always use full inherited context, not delta bytes.
 
 `ContextCompactionPercent: 0` still disables automatic pressure and overflow
 recovery; manual `/compact` uses the same extractor. Four lifecycle stages stay
@@ -132,7 +168,8 @@ rejections, stage-local retries, reasoning-preserving output-cap recovery,
 checkpoint refinement, typed output-ceiling learning across new sessions and
 catalog reopen, connection/profile isolation, expiry, truncated output,
 cancellation, exact source archival, and passive persisted checkpoint
-restoration. Name-allocation tests
+restoration, answered-request non-replay, live async-state refresh, and bounded
+project-guidance compilation. Name-allocation tests
 also exhaust the full first-name/surname tier without duplicate numeric labels.
 
 This is not a promise of perfect recall: model summaries can omit facts, token
@@ -143,3 +180,10 @@ exhaust a model, unavailable providers, and reductions that cannot converge fail
 closed with the source retained. General model-visible tool-output offload and
 provider-native remote compaction are separate future work, not implied by this
 implementation.
+
+Complete project-guidance intake is a separate pipeline, not conversation
+compaction or permission to load every referenced document. Its 64 MiB source
+ceiling, target-model token budget, model-backed verification limits and
+session-local cache are documented in the
+[prompt architecture contract](prompt-architecture.md#complete-guidance-intake).
+Neither pipeline's per-request context bound is a total cost guarantee.

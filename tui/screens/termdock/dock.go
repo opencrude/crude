@@ -1,11 +1,13 @@
 package termdock
 
 import (
+	"strconv"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/cell"
+	"crude/tui/rendering"
 	"crude/tui/screens/shellterm"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -16,7 +18,8 @@ import (
 const (
 	ScreenID  ui.ComponentID = "termdock"
 	DividerID ui.ComponentID = "termdock/divider"
-	RailID    ui.ComponentID = "termdock/rail"
+	TabsID    ui.ComponentID = "termdock/tabs"
+	HeaderID  ui.ComponentID = "termdock/header"
 )
 
 const (
@@ -24,14 +27,15 @@ const (
 	PanelProblems  = "problems"
 	PanelNotices   = "notices"
 	PanelTerminal  = "terminal"
+	PanelMemory    = "memory"
+	PanelBoard     = "board"
 )
 
 const (
 	dividerH = 1
 
-	// Terminal mode reserves one action row below the divider and still retains
-	// the shared minimum PTY grid.
-	MinRenderableHeight = dividerH + 1 + workspace.MinTerminalRows
+	MinRenderableHeight = dividerH + ui.StripHeight + workspace.MinTerminalRows
+	terminalLabelWidth  = 16
 )
 
 const (
@@ -53,16 +57,19 @@ type panelEntry struct {
 	content ui.Component
 }
 
-// Screen is the workspace bottom panel. Status views are passive retained
-// components; Terminal is an instance view with a vertical terminal rail.
+type headerControl struct {
+	ui.Base
+	owner *Screen
+}
+
 type Screen struct {
 	ui.Base
 	th          *theme.Theme
 	tokens      *ui.TokenSet
 	split       *ui.SplitModel
 	divider     *ui.SplitDivider
-	rail        *ui.List
-	railScroll  *ui.ScrollbarControl
+	tabs        *ui.Tabs
+	header      *headerControl
 	panels      map[string]panelEntry
 	activePanel string
 	open        bool
@@ -73,7 +80,6 @@ type Screen struct {
 	active     string
 	focused    bool
 	renderable bool
-	railW      int
 
 	actions     []headerAction
 	hoverAction int
@@ -92,7 +98,7 @@ func New(th *theme.Theme) *Screen {
 		tokens:      tokens,
 		split:       split,
 		divider:     ui.NewSplitDivider(DividerID, split),
-		rail:        ui.NewList(RailID, tokens),
+		tabs:        ui.NewTabs(TabsID, tokens),
 		panels:      make(map[string]panelEntry),
 		screens:     make(map[string]*shellterm.Screen),
 		attention:   make(map[string]bool),
@@ -102,18 +108,16 @@ func New(th *theme.Theme) *Screen {
 	s.divider.SetColorRole(ui.ColorBorder)
 	s.divider.SetFill(true)
 	s.divider.SetTransparent(true)
-	s.rail.SetActivateAction("terminal.select")
-	s.rail.SetDefaultRowBackground(ui.ColorBg)
-	s.railScroll = ui.NewScrollbarControl(ui.NewID(RailID, "scroll"), s.rail.Scroll(), tokens)
-	s.railScroll.SetSurfaceBackground(ui.ColorBg)
+	s.tabs.SetChrome(ui.TabsShell)
+	s.tabs.SetRuleFullBleed(true)
+	s.header = &headerControl{Base: ui.NewBase(HeaderID), owner: s}
 	return s
 }
 
 func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	s.tokens = tokens
 	s.divider.SetTokens(tokens)
-	s.rail.SetTokens(tokens)
-	s.railScroll.SetTokens(tokens)
+	s.tabs.SetTokens(tokens)
 	for _, panel := range s.panels {
 		if consumer, ok := panel.content.(interface{ SetTokens(*ui.TokenSet) }); ok {
 			consumer.SetTokens(tokens)
@@ -158,7 +162,7 @@ func (s *Screen) ShowPanel(id string) bool {
 	}
 	s.activePanel = id
 	s.open = true
-	s.syncRail()
+	s.syncTabs()
 	return true
 }
 
@@ -191,6 +195,15 @@ func (s *Screen) Contains(id string) bool {
 
 func (s *Screen) ActiveID() string { return s.active }
 
+func (s *Screen) Number(id string) int {
+	for index, existing := range s.order {
+		if existing == id {
+			return index + 1
+		}
+	}
+	return 0
+}
+
 func (s *Screen) Active() *shellterm.Screen {
 	if s.active == "" {
 		return nil
@@ -201,7 +214,7 @@ func (s *Screen) Active() *shellterm.Screen {
 func (s *Screen) SetFocused(v bool) { s.focused = v && s.open }
 
 func (s *Screen) OwnsFocus(id ui.ComponentID) bool {
-	if id == ScreenID || id == RailID || id == DividerID {
+	if id == ScreenID || id == TabsID || id == DividerID {
 		return true
 	}
 	if panel := s.activeContent(); panel != nil && panel.ID() == id {
@@ -212,7 +225,7 @@ func (s *Screen) OwnsFocus(id ui.ComponentID) bool {
 			return true
 		}
 	}
-	return strings.HasPrefix(string(id), "status-overview/")
+	return strings.HasPrefix(string(id), "status-overview/") || strings.HasPrefix(string(id), "memorybrowser") || strings.HasPrefix(string(id), "boardbrowser")
 }
 
 func (s *Screen) PreferredFocus() ui.ComponentID {
@@ -272,7 +285,7 @@ func (s *Screen) Unmount(id string) *shellterm.Screen {
 	if s.Empty() && s.activePanel == PanelTerminal {
 		s.ClosePanel()
 	}
-	s.syncRail()
+	s.syncTabs()
 	return screen
 }
 
@@ -282,7 +295,7 @@ func (s *Screen) SetActive(id string) bool {
 	}
 	s.active = id
 	delete(s.attention, id)
-	s.syncRail()
+	s.syncTabs()
 	return true
 }
 
@@ -295,7 +308,7 @@ func (s *Screen) SetAttention(id string, v bool) {
 	} else {
 		delete(s.attention, id)
 	}
-	s.syncRail()
+	s.syncTabs()
 }
 
 func (s *Screen) HasAttention(id string) bool { return s.attention[id] }
@@ -307,31 +320,22 @@ func (s *Screen) SetTitle(id, title string) {
 	if child := s.screens[id]; child != nil {
 		child.SetWindowTitle(title)
 	}
-	s.syncRail()
+	s.syncTabs()
 }
 
-func (s *Screen) syncRail() {
-	items := make([]ui.ListItem, 0, len(s.order))
-	for _, id := range s.order {
+func (s *Screen) syncTabs() {
+	items := make([]ui.TabItem, 0, len(s.order))
+	for index, id := range s.order {
 		child := s.screens[id]
 		if child == nil {
 			continue
 		}
-		label := child.Title()
-		if s.attention[id] {
-			label = "● " + label
-		}
-		items = append(items, ui.ListItem{ID: id, Label: label})
+		number := strconv.Itoa(index + 1)
+		suffix := " " + number
+		label := rendering.TruncateVisual(child.Title(), max(1, terminalLabelWidth-rendering.VisibleWidth(suffix)), "…") + suffix
+		items = append(items, ui.TabItem{ID: id, Label: label, CompactLabel: "T " + number, Attention: s.attention[id]})
 	}
-	s.rail.SetItemsStable(items)
-	if s.active != "" {
-		for index, item := range s.rail.Items() {
-			if item.ID == s.active {
-				s.rail.SelectIndex(index)
-				break
-			}
-		}
-	}
+	s.tabs.SetItems(items, s.active)
 }
 
 func (s *Screen) activeContent() ui.Component {
@@ -348,16 +352,17 @@ func (s *Screen) Children() []ui.Component {
 	if !s.open || !s.renderable {
 		return nil
 	}
-	out := []ui.Component{s.divider}
+	out := []ui.Component{}
 	if child := s.activeContent(); child != nil {
 		out = append(out, child)
 	}
-	if s.TerminalActive() && len(s.order) > 1 && s.railW > 0 {
-		out = append(out, s.rail)
-		if s.railScroll.Needed() {
-			out = append(out, s.railScroll)
-		}
+	if s.TerminalActive() {
+		out = append(out, s.tabs)
 	}
+	if !s.header.Bounds().Empty() {
+		out = append(out, s.header)
+	}
+	out = append(out, s.divider)
 	return out
 }
 
@@ -371,79 +376,64 @@ func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	if !s.renderable {
 		s.actions = s.actions[:0]
 		s.hoverAction = -1
+		s.header.Layout(ctx, ui.Rect{})
 		return
 	}
 	s.divider.Layout(ctx, ui.Rect{X: 0, Y: 0, W: r.W, H: dividerH})
 	bodyY, bodyH := dividerH, max(0, r.H-dividerH)
-	s.railW = 0
 
 	if s.TerminalActive() {
-		s.actions = s.actions[:0]
-		glyphs := []headerAction{{id: ActionNew, glyph: iconNew}, {id: shellterm.ActionPromote, glyph: iconFloat}, {id: shellterm.ActionClose, glyph: iconClose}}
-		actionsW := 3 * len(glyphs)
-		x := max(0, r.W-actionsW-1)
-		for i := range glyphs {
-			glyphs[i].rect = ui.Rect{X: x + 3*i, Y: bodyY, W: 3, H: 1}
-		}
-		s.actions = append(s.actions, glyphs...)
-		if len(s.order) > 1 && r.W >= 50 {
-			s.railW = min(35, max(8, r.W/4))
-			railH := max(0, bodyH-1)
-			railListW := s.railW
-			showScroll := s.railScroll.NeededForViewport(railH)
-			if showScroll && railListW > 1 {
-				railListW--
-			}
-			s.rail.Layout(ctx, ui.Rect{X: r.W - s.railW, Y: bodyY + 1, W: railListW, H: railH})
-			if showScroll {
-				s.railScroll.Layout(ctx, ui.Rect{X: r.W - 1, Y: bodyY + 1, W: 1, H: railH})
-			} else {
-				s.railScroll.Layout(ctx, ui.Rect{})
-			}
-		}
-		contentW := r.W
-		if s.railW > 0 {
-			contentW -= s.railW + 1
-		}
+		glyphs := []headerAction{{id: "terminal.picker", glyph: "≡"}, {id: ActionNew, glyph: iconNew}, {id: shellterm.ActionPromote, glyph: iconFloat}, {id: shellterm.ActionClose, glyph: iconClose}, {id: "workspace.panel.maximize", glyph: "↕"}, {id: "workspace.panel.hide", glyph: "⌄"}}
+		s.layoutHeader(ctx, r.W, bodyY, glyphs)
+		s.tabs.SetRuleBleed(0, r.W)
+		s.tabs.Layout(ctx, ui.Rect{Y: bodyY, W: max(0, r.W-s.header.Bounds().W-1), H: ui.StripHeight})
 		if child := s.Active(); child != nil {
-			child.Layout(ctx, ui.Rect{X: 0, Y: bodyY + 1, W: max(0, contentW), H: max(0, bodyH-1)})
+			child.Layout(ctx, ui.Rect{Y: bodyY + ui.StripHeight, W: r.W, H: max(0, bodyH-ui.StripHeight)})
 		}
 		return
 	}
 
 	s.actions = s.actions[:0]
-	s.railScroll.Layout(ctx, ui.Rect{})
+	s.header.Layout(ctx, ui.Rect{})
 	if child := s.activeContent(); child != nil {
-		child.Layout(ctx, ui.Rect{X: 0, Y: bodyY, W: r.W, H: bodyH})
+		glyphs := []headerAction{{id: "workspace.panel.more", glyph: "…"}, {id: "workspace.panel.maximize", glyph: "↕"}, {id: "workspace.panel.hide", glyph: "⌄"}}
+		s.layoutHeader(ctx, r.W, bodyY, glyphs)
+		if panel, ok := child.(interface{ SetDockHeaderInset(int) }); ok {
+			panel.SetDockHeaderInset(s.header.Bounds().W)
+		}
+		child.Layout(ctx, ui.Rect{Y: bodyY, W: r.W, H: bodyH})
+	}
+}
+
+func (s *Screen) layoutHeader(ctx ui.LayoutContext, width, top int, glyphs []headerAction) {
+	actionsW := 0
+	for index := range glyphs {
+		glyphs[index].rect = ui.Rect{W: rendering.VisibleWidth(glyphs[index].glyph) + 2, H: 1}
+		actionsW += glyphs[index].rect.W
+	}
+	for len(glyphs) > 0 && actionsW > max(0, width-1) {
+		actionsW -= glyphs[0].rect.W
+		glyphs = glyphs[1:]
+	}
+	left := 0
+	for index := range glyphs {
+		glyphs[index].rect.X = left
+		left += glyphs[index].rect.W
+	}
+	s.actions = append(s.actions[:0], glyphs...)
+	s.header.Layout(ctx, ui.Rect{X: width - actionsW, Y: top, W: actionsW, H: 1})
+	if s.hoverAction >= len(s.actions) {
+		s.hoverAction = -1
 	}
 }
 
 func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	r := s.Bounds()
-	bg, muted, fg, border := cell.NoColor, cell.NoColor, cell.NoColor, cell.NoColor
+	bg := cell.NoColor
 	if s.tokens != nil {
 		bg = s.tokens.Color(ui.ColorBg)
-		muted = s.tokens.Color(ui.ColorMuted)
-		fg = s.tokens.Color(ui.ColorFg)
-		border = s.tokens.Color(ui.ColorBorder)
 	}
 	ui.FillRect(buf, ox, oy, r, cell.BlankCell(bg))
-	if !s.open || !s.renderable || !s.TerminalActive() {
-		return
-	}
-	if s.railW > 0 {
-		x := ox + r.X + r.W - s.railW - 1
-		for y := oy + r.Y + dividerH; y < oy+r.Y+r.H; y++ {
-			buf.Set(x, y, cell.NewCell(ui.FirstRune(s.tokens.Glyphs().BorderV, '│'), border, bg, 0))
-		}
-	}
-	for i, a := range s.actions {
-		color := muted
-		if i == s.hoverAction {
-			color = fg
-		}
-		buf.WriteString(ox+r.X+a.rect.X, oy+r.Y+a.rect.Y, " "+a.glyph+" ", color, bg, 0)
-	}
 }
 
 func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
@@ -454,6 +444,7 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		s.ClosePanel()
 		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "workspace.panel.closed"}, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
 	}
+	ctx = ui.ChildEventContext(ctx, s.header.Bounds())
 	switch evt.Kind {
 	case ui.EventMouseMotion:
 		hover := s.actionAt(ctx.LocalX, ctx.LocalY)
@@ -482,6 +473,8 @@ func (s *Screen) actionAt(lx, ly int) int {
 
 func (s *Screen) runHeaderAction(id string) ui.EventResult {
 	switch id {
+	case "workspace.panel.more", "workspace.panel.maximize", "workspace.panel.hide", "terminal.picker":
+		return ui.EventResult{Handled: true, Action: &ui.Action{ID: id}, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
 	case ActionNew:
 		return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionNew}, Invalidate: ui.InvalidatePaint}
 	case shellterm.ActionPromote, shellterm.ActionClose:
@@ -495,18 +488,47 @@ func (s *Screen) runHeaderAction(id string) ui.EventResult {
 
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
 	switch action.ID {
-	case "terminal.select", "list.activate":
-		item, ok := s.rail.Selected()
-		if ok && s.SetActive(item.ID) {
+	case "tabs.activate":
+		if !s.TerminalActive() {
+			return ui.EventResult{Action: &action}
+		}
+		id, _ := action.Payload.(string)
+		if s.SetActive(id) {
 			if child := s.Active(); child != nil {
 				return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: child.ID()}, Invalidate: ui.InvalidateLayout | ui.InvalidateFocus | ui.InvalidatePaint}
 			}
+		}
+		return ui.EventResult{Handled: true}
+	case "tabs.enter":
+		if !s.TerminalActive() {
+			return ui.EventResult{Action: &action}
+		}
+		if child := s.Active(); child != nil {
+			return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: child.ID()}, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 		}
 		return ui.EventResult{Handled: true}
 	case "workspace.panel.closed":
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidateFocus | ui.InvalidatePaint}
 	}
 	return ui.EventResult{Action: &action}
+}
+
+func (header *headerControl) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
+	owner := header.owner
+	rect := header.Bounds()
+	for index, action := range owner.actions {
+		color := owner.tokens.Color(ui.ColorMuted)
+		if index == owner.hoverAction {
+			color = owner.tokens.Color(ui.ColorFg)
+		}
+		buf.WriteString(ox+rect.X+action.rect.X, oy+rect.Y, " "+action.glyph+" ", color, owner.tokens.Color(ui.ColorBg), 0)
+	}
+}
+
+func (header *headerControl) PointerPolicy() ui.PointerPolicy { return ui.PointerPolicyPassthrough }
+
+func (header *headerControl) Semantics() ui.Semantics {
+	return ui.Semantics{Role: ui.RoleGroup, Label: "Dock actions"}
 }
 
 func (s *Screen) Semantics() ui.Semantics {

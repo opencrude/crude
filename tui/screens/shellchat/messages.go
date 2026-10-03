@@ -9,6 +9,10 @@ import (
 
 // PaintParams carries per-frame compose/selection state for message RowPainter.
 type PaintParams struct {
+	// SourceID scopes Generation to one retained chatprojection.Renderer.
+	// A source switch always rebuilds the shared VirtualList, even when the
+	// incoming renderer has the same local generation and row count.
+	SourceID         uint64
 	Generation       uint64
 	ChangedIndices   []int
 	StructureChanged bool
@@ -45,7 +49,8 @@ func (s *Screen) SetMessages(rows []chatprojection.MessageRow, paint PaintParams
 	s.onPaneScroll = paint.OnPaneScroll
 	s.layout.padLR = paint.Compose.PadLR
 	s.layout.mainSBVisible = paint.Compose.MainSBVisible
-	sameRows := paint.Generation != 0 && s.rowsGeneration == paint.Generation
+	sourceChanged := s.rowsSourceID != paint.SourceID
+	sameRows := !sourceChanged && paint.Generation != 0 && s.rowsGeneration == paint.Generation
 	starts := s.paintState.globalStart
 	if sameRows {
 		hasSel := paint.HasSelection || s.selection.HasActive()
@@ -56,7 +61,7 @@ func (s *Screen) SetMessages(rows []chatprojection.MessageRow, paint PaintParams
 		s.paintState = messagePaintState{compose: paint.Compose, paneLineMap: paint.PaneLineMap, globalStart: starts, hasSel: hasSel, selSL: selSL, selSC: selSC, selEL: selEL, selEC: selEC}
 		return
 	}
-	if paint.Generation != 0 && s.rowsGeneration != 0 && !paint.StructureChanged && oldLen == len(rows) {
+	if !sourceChanged && paint.Generation != 0 && s.rowsGeneration != 0 && !paint.StructureChanged && oldLen == len(rows) {
 		hasSel := paint.HasSelection || s.selection.HasActive()
 		selSL, selSC, selEL, selEC := paint.SelStartLine, paint.SelStartCol, paint.SelEndLine, paint.SelEndCol
 		if hasSel && !paint.HasSelection && s.selection.HasActive() {
@@ -70,6 +75,7 @@ func (s *Screen) SetMessages(rows []chatprojection.MessageRow, paint PaintParams
 			row := rows[i]
 			s.list.UpdateItem(i, ui.VirtItem{ID: row.ID, Height: max(1, len(row.Lines)), Payload: row})
 		}
+		s.rowsSourceID = paint.SourceID
 		s.rowsGeneration = paint.Generation
 		return
 	}
@@ -106,6 +112,7 @@ func (s *Screen) SetMessages(rows []chatprojection.MessageRow, paint PaintParams
 	}
 	s.list.SetRowPainter(s.paintMessageRow)
 	s.list.SetItems(items)
+	s.rowsSourceID = paint.SourceID
 	s.rowsGeneration = paint.Generation
 	if s.list.Scroll().AutoScroll() {
 		s.list.StickToBottom()

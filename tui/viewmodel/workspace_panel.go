@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	tea "charm.land/bubbletea/v2"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -83,6 +84,11 @@ func (m *App) toggleWorkspacePanel(panelID string) {
 		_ = m.openNewTerminal()
 		return
 	}
+	if height := m.workspacePanelHeights[panelID]; height > 0 {
+		m.termDockHeight = height
+	} else {
+		m.termDockHeight = defaultWorkspacePanelHeight(panelID)
+	}
 	opened := m.termDock.TogglePanel(panelID)
 	m.setSessionDeckFocused(false)
 	m.setTermDockFocused(opened)
@@ -97,6 +103,61 @@ func (m *App) toggleWorkspacePanel(panelID string) {
 			m.syncWorkspacePanels()
 		}
 	}
+}
+
+func defaultWorkspacePanelHeight(panelID string) int {
+	if panelID == termdock.PanelMemory || panelID == termdock.PanelBoard {
+		return 20
+	}
+	return defaultTermDockHeight
+}
+
+func (app *App) hideWorkspacePanel() {
+	if app.termDock != nil {
+		app.termDock.ClosePanel()
+	}
+	app.setTermDockFocused(false)
+	app.workspacePanelMaximized = false
+}
+
+func (app *App) toggleWorkspacePanelMaximized() {
+	if app.termDock == nil || !app.termDock.IsOpen() {
+		return
+	}
+	app.workspacePanelMaximized = !app.workspacePanelMaximized
+}
+
+func (app *App) openTerminalPicker() {
+	manager := app.termMgr()
+	if manager == nil {
+		return
+	}
+	items := []ui.ContextMenuItem{{Label: "New Terminal", Action: func() { app.startSourceControlMutation(app.openNewTerminal()) }}}
+	nextNumber := 1
+	if app.termDock != nil {
+		nextNumber += len(app.termDock.IDs())
+	}
+	for _, terminal := range manager.List() {
+		id := terminal.ID
+		title := terminal.Title
+		if title == "" {
+			title = "Terminal"
+		}
+		number := 0
+		if app.termDock != nil {
+			number = app.termDock.Number(id)
+		}
+		if number == 0 {
+			number = nextNumber
+			nextNumber++
+		}
+		placement := "Docked"
+		if terminal.Placement == workspace.TerminalFloating {
+			placement = "Floating"
+		}
+		items = append(items, ui.ContextMenuItem{Label: fmt.Sprintf("%s %d", title, number), Detail: placement, Action: func() { app.focusTerminal(id) }})
+	}
+	app.openContextMenuState(tea.Mouse{X: max(0, app.width-30), Y: max(app.shellTopRow(), app.height-app.chromeBottomRows()-len(items)-3)}, &ui.ContextMenuState{Title: "Terminals", Sections: []ui.ContextMenuSection{{Items: items}}})
 }
 
 func (m *App) problemPanelItems() []statusoverview.Item {

@@ -40,7 +40,7 @@ func TestClickEmitsSelect(t *testing.T) {
 		t.Fatalf("result=%+v", res)
 	}
 	view, ok := res.Action.Payload.(View)
-	if !ok || view != ViewTerminals {
+	if !ok || view != ViewGit {
 		t.Fatalf("payload=%v", res.Action.Payload)
 	}
 }
@@ -52,12 +52,12 @@ func TestEntriesArePaintedAsUniformBands(t *testing.T) {
 	th := theme.DefaultDark()
 	s := New(th)
 	s.SetActive(ViewFiles)
-	s.Layout(ui.LayoutContext{}, ui.Rect{X: 0, Y: 0, W: Width, H: len(views)*RowStride + 2})
+	s.Layout(ui.LayoutContext{}, ui.Rect{X: 0, Y: 0, W: Width, H: (len(views)+1)*RowStride + 2})
 	if RowStride%2 == 0 {
 		t.Fatalf("RowStride=%d must be odd so the glyph has an exact middle row", RowStride)
 	}
 
-	buf := surface.NewCellBuffer(Width, len(views)*RowStride+2)
+	buf := surface.NewCellBuffer(Width, (len(views)+1)*RowStride+2)
 	s.Paint(buf, 0, 0, ui.PaintContext{})
 	for i, v := range views {
 		y := i*RowStride + iconRow
@@ -248,18 +248,27 @@ func TestSettingsHoverBandCoversWholeEntry(t *testing.T) {
 	}
 }
 
-func TestSettingsHiddenWhenRailTooShort(t *testing.T) {
+func TestShortRailKeepsSettingsAndOverflow(t *testing.T) {
 	s := New(theme.DefaultDark())
 	h := len(views) * RowStride
 	s.Layout(ui.LayoutContext{}, ui.Rect{X: 0, Y: 0, W: Width, H: h})
-	if SettingsAt(h-1, h) {
-		t.Fatal("settings gear must hide when it would overlap Git")
+	if !SettingsAt(h-1, h) {
+		t.Fatal("short rail must keep Settings reachable")
 	}
 	res := s.Handle(ui.EventContext{LocalY: h - 1}, ui.Event{
 		Kind:       ui.EventMouseClick,
 		MouseClick: tea.MouseClickMsg{Button: tea.MouseLeft},
 	})
-	if res.Action != nil && res.Action.ID == ActionSettings {
-		t.Fatal("short rail must not treat Git's band as the settings gear")
+	if res.Action == nil || res.Action.ID != ActionSettings {
+		t.Fatal("bottom band must activate Settings")
+	}
+	res = s.Handle(ui.EventContext{LocalY: visibleViewCount(h)*RowStride + iconRow}, ui.Event{Kind: ui.EventMouseClick, MouseClick: tea.MouseClickMsg{Button: tea.MouseLeft}})
+	if res.Action == nil || res.Action.ID != ActionOverflow {
+		t.Fatal("hidden destinations must remain reachable through More")
+	}
+	for _, view := range Views() {
+		if view.Label() == "Terminals" {
+			t.Fatal("terminals must not appear in the rail")
+		}
 	}
 }

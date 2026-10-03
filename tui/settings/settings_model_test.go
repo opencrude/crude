@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"reflect"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -14,6 +15,39 @@ import (
 	"crude/tui/wm"
 	modeltypes "crude/types"
 )
+
+func TestSettingsCategoriesKeepCapabilitiesInOneAIGroup(t *testing.T) {
+	for _, scope := range []types.SettingsScope{types.SettingsScopeApplication, types.SettingsScopeWorkspace} {
+		m := NewScoped(theme.DefaultDark(), types.AppSettings{}, nil, scope, types.AppSettings{}, types.WorkspaceOverrides{})
+		for _, query := range []string{"", "AI"} {
+			m.SetSearchQuery(query)
+			group := ""
+			headers := make(map[string]bool)
+			var ai []string
+			for _, item := range m.CategoryItems() {
+				if item.Header {
+					if headers[item.Label] {
+						t.Fatalf("scope %s query %q repeats category group %q", scope, query, item.Label)
+					}
+					headers[item.Label], group = true, item.Label
+				} else if !item.Spacer && group == "AI" {
+					ai = append(ai, item.Label)
+				}
+			}
+			want := []string{"Agents", "Memory", "Skills", "MCP", "Sources", "Acquisition"}
+			if scope == types.SettingsScopeApplication {
+				want = append([]string{"Providers", "Accounts"}, want...)
+			}
+			if !reflect.DeepEqual(ai, want) {
+				t.Fatalf("scope %s query %q AI category order = %v, want %v", scope, query, ai, want)
+			}
+			m.SelectCategory(catMemory)
+			if !m.MoveCategory(1) || m.SelectedCategory() != catSkills {
+				t.Fatal("keyboard navigation does not follow grouped category order")
+			}
+		}
+	}
+}
 
 func TestAppSettingsPreserveProvidersAndAgentDefaults(t *testing.T) {
 	th := theme.DefaultDark()
@@ -238,18 +272,25 @@ func TestSafetyAutoPermissionDefaultsAndRoundTrip(t *testing.T) {
 	c.draft.SetValue(fieldConnection, ui.StringValue("review"))
 	c.draft.SetValue(fieldModel, ui.StringValue("gpt-review"))
 	c.draft.SetValue("agent-instructions", ui.StringValue(" No deployments. "))
+	c.draft.SetValue(fieldAutoPermDenyMode, ui.StringValue("deny"))
+	c.draft.SetValue(fieldAutoPermUnresolved, ui.StringValue("deny"))
+	c.draft.SetValue(fieldAutoPermThinking, ui.StringValue("high"))
+	c.draft.SetValue(fieldAutoPermFormat, ui.StringValue(modeltypes.AutoPermissionFormatAuto))
+	c.draft.SetValue(fieldAutoPermTimeout, ui.StringValue("13"))
+	c.draft.SetValue(fieldAutoPermOutputTokens, ui.StringValue("72"))
+	c.draft.SetValue(fieldAutoPermRetries, ui.StringValue("2"))
+	c.draft.SetValue(fieldAutoPermGrowth, ui.StringValue(modeltypes.AutoPermissionGrowth2x))
+	c.draft.SetValue(fieldAutoPermRetryCeiling, ui.StringValue("288"))
+	c.draft.SetValue(fieldAutoPermInputBytes, ui.StringValue("131072"))
 	if !c.apply() {
 		t.Fatal("configured Auto Review Agent could not be applied")
 	}
-	m.SetValueForTest(catAutoReviewPolicy, fieldAutoPermDenyMode, "deny")
-	m.SetValueForTest(catAutoReviewPolicy, fieldAutoPermTimeout, "13")
-	m.SetValueForTest(catAutoReviewPolicy, fieldAutoPermOutputTokens, "72")
-	m.SetValueForTest(catAutoReviewPolicy, fieldAutoPermInputBytes, "3072")
-	m.SetValueForTest(catAutoReviewPolicy, fieldAutoPermReviews, "9")
 	auto := m.AppSettings().Safety.AutoPermission
-	if auto.Enabled != "on" || auto.Provider != "openai" || auto.Model != "gpt-review" || auto.DenyMode != "deny" ||
-		auto.TimeoutSeconds != 13 || auto.MaxOutputTokens != 72 || auto.MaxInputBytes != 3072 ||
-		auto.MaxReviewsPerTurn != 9 || auto.Instructions != "No deployments." {
+	if auto.Enabled != "on" || auto.Provider != "openai" || auto.Model != "gpt-review" || auto.DenyMode != "deny" || auto.UnresolvedMode != "deny" ||
+		auto.ThinkingEffort != "high" || auto.ResponseFormat != modeltypes.AutoPermissionFormatAuto ||
+		auto.TimeoutSeconds != 13 || auto.MaxOutputTokens != 72 || auto.MaxAttempts != 3 ||
+		auto.RetryTokenGrowth != modeltypes.AutoPermissionGrowth2x || auto.MaxRetryOutputTokens != 288 ||
+		auto.MaxInputBytes != 131072 || auto.Instructions != "No deployments." {
 		t.Fatalf("auto permission settings = %+v", auto)
 	}
 }

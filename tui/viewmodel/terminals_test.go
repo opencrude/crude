@@ -1,16 +1,131 @@
 package viewmodel
 
 import (
+	"fmt"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/screens/shellterm"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
 	"crude/workspace"
 )
+
+func TestTerminalPickerUsesMatchingSuffixNumbersAndNamedPlacement(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("in-app PTYs are unix-only")
+	}
+	app := newFullTestApp(t)
+	app.width, app.height = 120, 40
+	manager := app.termMgr()
+	t.Cleanup(func() {
+		app.discardTerminalUI()
+		manager.CloseAll()
+	})
+	for range 16 {
+		terminal, err := manager.Create(workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 40, Rows: 8, Title: "Terminal"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		app.dockTerminal(terminal.ID)
+	}
+	app.paintShellFrame()
+	app.openTerminalPicker()
+	items := app.LastContextMenu.Sections[0].Items
+	if len(items) != 17 {
+		t.Fatalf("menu contains %d entries, want new plus sixteen terminals", len(items))
+	}
+	for number, item := range items[1:] {
+		if item.Label != fmt.Sprintf("Terminal %d", number+1) || item.Detail != "Docked" {
+			t.Fatalf("picker item %d=%+v must show a real number and readable placement", number+1, item)
+		}
+	}
+	app.closeContextMenu()
+	ids := app.termDock.IDs()
+	app.promoteTerminal(ids[0])
+	app.openTerminalPicker()
+	items = app.LastContextMenu.Sections[0].Items
+	if items[1].Label != "Terminal 16" || items[1].Detail != "Floating" || items[2].Label != "Terminal 1" {
+		t.Fatalf("floating/docked numbering is inconsistent: %+v", items[:3])
+	}
+}
+
+func TestTerminalTabWheelRoutesThroughShellWithoutChangingPTY(t *testing.T) {
+	app := newFullTestApp(t)
+	app.width, app.height = 100, 30
+	for number := 1; number <= 16; number++ {
+		id := fmt.Sprintf("terminal-fixture-%d", number)
+		terminal := shellterm.New(app.Theme, id, "Terminal")
+		t.Cleanup(terminal.Close)
+		app.termDock.Mount(id, terminal)
+	}
+	app.paintShellFrame()
+	strip, ok := app.rootHost.ScreenRect(termdock.TabsID)
+	if !ok {
+		t.Fatal("terminal tabs not mounted")
+	}
+	for range 20 {
+		app.dispatchMouseWheel(tea.MouseWheelMsg{X: strip.X + 3, Y: strip.Y, Button: tea.MouseWheelLeft})
+	}
+	app.paintShellFrame()
+	row := rowText(app, strip.Y)
+	if !strings.Contains(row, "T 1") || app.termDock.ActiveID() != "terminal-fixture-16" {
+		t.Fatalf("shell wheel did not browse earlier terminal labels: %q", row)
+	}
+	for range 20 {
+		app.dispatchMouseWheel(tea.MouseWheelMsg{X: strip.X + 3, Y: strip.Y, Button: tea.MouseWheelRight})
+	}
+	app.paintShellFrame()
+	if row := rowText(app, strip.Y); !strings.Contains(row, "T 16") || app.termDock.ActiveID() != "terminal-fixture-16" {
+		t.Fatalf("shell wheel did not browse back to the last terminal: %q", row)
+	}
+}
+
+func TestTerminalPickerActionsKeepRealIDsAfterRenumbering(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("in-app PTYs are unix-only")
+	}
+	app := newFullTestApp(t)
+	app.width, app.height = 120, 40
+	manager := app.termMgr()
+	t.Cleanup(func() {
+		app.discardTerminalUI()
+		manager.CloseAll()
+	})
+	var ids []string
+	for range 3 {
+		terminal, err := manager.Create(workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 40, Rows: 8, Title: "Terminal"})
+		if err != nil {
+			t.Fatal(err)
+		}
+		ids = append(ids, terminal.ID)
+		app.dockTerminal(terminal.ID)
+	}
+	app.paintShellFrame()
+	app.openTerminalPicker()
+	items := app.LastContextMenu.Sections[0].Items
+	closedAction, secondAction := items[1].Action, items[2].Action
+	app.closeContextMenu()
+	app.closeTerminal(ids[0])
+	if app.termDock.Number(ids[1]) != 1 {
+		t.Fatal("remaining terminal did not receive the first display number")
+	}
+	secondAction()
+	if app.termDock.ActiveID() != ids[1] {
+		t.Fatal("saved picker action targeted a display position instead of its original PTY")
+	}
+	closedAction()
+	if app.termDock.ActiveID() != ids[1] {
+		t.Fatal("closed terminal's action selected the new occupant of its old display number")
+	}
+	if _, exists := manager.Get(ids[0]); exists {
+		t.Fatal("closed picker action recreated its old terminal")
+	}
+}
 
 func TestDockAndPromoteTerminalUsesWorkspaceDockAndOverlay(t *testing.T) {
 	if runtime.GOOS == "windows" {
@@ -338,10 +453,17 @@ func TestTermDockHeaderIconsFloatAndCloseViaMouse(t *testing.T) {
 	app.paintShellFrame()
 
 	lay := app.computeContentLayout()
-	// Header icons occupy the last cells of the tab row: [+][⇱][✕] at
-	// (dockW-10 .. dockW-2) local, row dockY+1.
 	iconRow := lay.TermDockRect.Y + 1
-	floatX := lay.TermDockRect.X + lay.TermDockRect.W - 10 + 4 // middle of ⇱
+	floatX := -1
+	for column := lay.TermDockRect.X; column < lay.TermDockRect.X+lay.TermDockRect.W; column++ {
+		if app.mainSurf.Buffer().Get(column, iconRow).Char == '⇱' {
+			floatX = column
+			break
+		}
+	}
+	if floatX < 0 {
+		t.Fatal("terminal float control was not painted")
+	}
 	model, _ := app.dispatchMouseClick(tea.MouseClickMsg{X: floatX, Y: iconRow, Button: tea.MouseLeft})
 	app = model.(*App)
 	got, _ := mgr.Get(info.ID)
@@ -360,7 +482,16 @@ func TestTermDockHeaderIconsFloatAndCloseViaMouse(t *testing.T) {
 	app.paintShellFrame()
 	lay = app.computeContentLayout()
 	iconRow = lay.TermDockRect.Y + 1
-	closeX := lay.TermDockRect.X + lay.TermDockRect.W - 10 + 7 // middle of ✕
+	closeX := -1
+	for column := lay.TermDockRect.X; column < lay.TermDockRect.X+lay.TermDockRect.W; column++ {
+		if app.mainSurf.Buffer().Get(column, iconRow).Char == '✕' {
+			closeX = column
+			break
+		}
+	}
+	if closeX < 0 {
+		t.Fatal("terminal close control was not painted")
+	}
 	model, _ = app.dispatchMouseClick(tea.MouseClickMsg{X: closeX, Y: iconRow, Button: tea.MouseLeft})
 	app = model.(*App)
 	if _, ok := mgr.Get(info.ID); ok {

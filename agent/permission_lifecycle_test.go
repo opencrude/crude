@@ -109,6 +109,10 @@ func TestLiveYoloPolicyAppliesToAlreadyConstructedAgent(t *testing.T) {
 	agent := newPermissionLifecycleAgent(t)
 	var yolo atomic.Bool
 	agent.YoloMode = yolo.Load
+	agent.PermissionReviewer = func(context.Context, provider.ToolCall, map[string]any, safety.CommandRisk, func(AgentEvent)) PermissionReview {
+		t.Fatal("live YOLO called the permission reviewer")
+		return PermissionReview{}
+	}
 	toolCalled := false
 	blocking := false
 	agent.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {

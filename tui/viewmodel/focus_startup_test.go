@@ -69,7 +69,7 @@ func TestStartupFocus_LauncherOwnsEnterAndHints(t *testing.T) {
 	if !strings.Contains(help, "Enter") {
 		t.Fatalf("startup status hint should include Enter, got %q", help)
 	}
-	if !strings.Contains(help, "D remove") && !strings.Contains(help, "Ctrl+Alt+P") {
+	if !strings.Contains(help, "Ctrl+Alt+P") {
 		t.Fatalf("startup status hint should include launcher-only chords, got %q", help)
 	}
 

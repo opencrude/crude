@@ -57,7 +57,7 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			}
 			if m.terminalOwnsKeys() {
 				switch match.ID {
-				case "palette.open", "terminal.new", "terminal.toggle":
+				case "palette.open", "terminal.new", "terminal.toggle", "terminal.picker", "workspace.panel.hide":
 				default:
 					match = nil
 				}
@@ -107,8 +107,12 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					return m, m.toggleActivity(activityFiles)
 				case "view.activity.agents":
 					return m, m.toggleActivity(activityAgents)
-				case "view.activity.terminals":
-					return m, m.toggleActivity(activityTerminals)
+				case "terminal.picker":
+					m.openTerminalPicker()
+					return m, nil
+				case "workspace.panel.hide":
+					m.hideWorkspacePanel()
+					return m, nil
 				case "view.activity.git":
 					return m, m.toggleActivity(activityGit)
 				case "terminal.new":
@@ -143,6 +147,11 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.sessionDeckCapturesInput() && (m.windowManager == nil || m.windowManager.Focused() == nil) {
 		return m, m.handleSessionDeckEvent(msg)
+	}
+	if m.isGitReviewActive() && m.focusTarget() != FocusTree && m.focusTarget() != FocusTabBar && m.focusTarget() != FocusFloatingWindow && !m.termDockOwnsKeys() {
+		m.syncRootFocus()
+		result := m.rootHost.Handle(msg)
+		return m, tea.Batch(result.Cmd, m.handleHostAction(result.Action))
 	}
 	if m.termDockOwnsKeys() && (m.windowManager == nil || m.windowManager.Focused() == nil) {
 		return m.dispatchTermDockKey(msg)
@@ -193,11 +202,7 @@ func (m *App) focusLauncherHostControl() bool {
 	if m.launcherScreen == nil || m.rootHost == nil {
 		return false
 	}
-	switch m.rootHost.Focused() {
-	case launcher.ScreenID, launcher.HeroID, launcher.NewWorkspaceID,
-		launcher.SearchID, launcher.WorkspaceListID:
-		// Keep the exact child selected by mouse/focus navigation.
-	default:
+	if !m.launcherScreen.OwnsFocus(m.rootHost.Focused()) {
 		m.rootHost.Focus(launcher.ScreenID)
 	}
 	return true
@@ -227,7 +232,7 @@ func (m *App) focusTreeHostControl() bool {
 			m.rootHost.Focus(shelltree.TreeID)
 		}
 	} else if m.activityView == activityGit && m.sourceControl != nil {
-		if m.rootHost.Focused() != sourcecontrol.CommitID {
+		if m.rootHost.Focused() != sourcecontrol.FilterID {
 			m.rootHost.Focus(sourcecontrol.ListID)
 		}
 	} else if m.activityList != nil {
@@ -401,6 +406,8 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 
 	if fw := m.windowManager.Focused(); fw != nil {
 		switch fw.ID {
+		case string(ui.OverlayWorkspaceDelete):
+			return m, m.forwardEventToWindowContent(fw, msg)
 		case "find-replace":
 			return m, m.handleFindReplaceKey(msg)
 		case "context-menu":
@@ -678,7 +685,12 @@ func (m *App) handleInputEvent(evt any) []tea.Cmd {
 			m.Feedback.NotifyError("Note was not sent: no active agent tab")
 		}
 	case input.SlashCommandEvent:
-		cmds = append(cmds, m.executeSlashCommand(e.Command))
+		command, remainder := parseSlashCommand(e.Command)
+		if command == "/skill" {
+			cmds = append(cmds, m.invokeSkillWithRefs(remainder, e.Command, e.ReferenceIDs))
+		} else {
+			cmds = append(cmds, m.executeSlashCommand(e.Command))
+		}
 	case input.HistoryRecallEvent:
 		cmds = append(cmds, m.recallPrompt(e))
 	case input.SettingsOpenEvent:

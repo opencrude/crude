@@ -269,10 +269,7 @@ func TestChatKeyCtrlShiftCIsPureCopy(t *testing.T) {
 // whole-text Copy/Cut instead of falling through to the message rows behind it.
 func TestDeckQuestionWriteInOffersClipboardMenu(t *testing.T) {
 	app, projection := setupSessionDeckApp(t)
-	projection.question.Reset(`[{"question":"Continue?","options":["yes","no"]}]`)
-	projection.questionAgentID = "agent"
-	projection.questionBlockID = "block-1"
-	app.openSessionQuestionPanel(projection)
+	openTestAgentPrompt(t, app, projection, agentPromptRequest{kind: agentPromptQuestions, questionsJSON: `[{"question":"Continue?","options":["yes","no"]}]`})
 	if !projection.deck.IsOpen() {
 		t.Fatal("question panel did not open")
 	}

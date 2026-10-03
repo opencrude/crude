@@ -32,18 +32,20 @@ func (e *apiCallError) IsCancellation() bool {
 }
 
 type completionResult struct {
-	Content           string
-	ReasoningContent  string
-	ReasoningDuration time.Duration
-	ReasoningDisplay  reasoning.Display
-	FinishReason      string
-	ToolCalls         []provider.ToolCall
-	ProviderItems     []provider.ProviderItem
-	Usage             provider.TokenUsage
-	LastPromptTokens  int
-	ReplayScope       string
-	ReplayPrefixHash  string
-	ReplaySourceModel string
+	Content                    string
+	ReasoningContent           string
+	ReasoningDuration          time.Duration
+	ReasoningDisplay           reasoning.Display
+	FinishReason               string
+	ToolCalls                  []provider.ToolCall
+	ProviderItems              []provider.ProviderItem
+	Usage                      provider.TokenUsage
+	LastPromptTokens           int
+	ReplayScope                string
+	ReplayPrefixHash           string
+	ReplaySourceModel          string
+	ResponseReference          *provider.ResponseReference
+	ResponseContinuationReason string
 }
 
 func (r completionResult) hasOutput() bool {
@@ -122,16 +124,20 @@ func (a *Agent) completeStreamWithOptions(
 	}
 	msgs = provider.FilterReplayMessages(msgs, tools, a.Provider)
 	req := provider.ChatRequest{
-		Model:                a.Model,
-		ReasoningContentKind: a.ReasoningContentKind,
-		Messages:             msgs,
-		Tools:                tools,
-		Stream:               true,
-		StreamOptions:        &provider.StreamOptions{IncludeUsage: true},
+		ResponseContinuationScope: a.Provider.ResponseContinuationScope(a.Model),
+		Model:                     a.Model,
+		ReasoningContentKind:      a.ReasoningContentKind,
+		Messages:                  msgs,
+		Tools:                     tools,
+		Stream:                    true,
+		StreamOptions:             &provider.StreamOptions{IncludeUsage: true},
 	}
 	if requestOptions.toolChoice != nil {
 		req.ToolChoice = requestOptions.toolChoice
 	}
+	continuationPlan := provider.PlanResponseContinuation(&req)
+	a.logger.Debug("RESPONSES", "continuation_plan", "protocol", a.Provider.ProtocolID(), "reason", continuationPlan.Reason,
+		"total_messages", len(req.Messages), "delta_messages", len(req.Messages)-continuationPlan.Start)
 	if a.Provider != nil {
 		sampling := a.Provider.Sampling()
 		req.Temperature = sampling.Temperature
@@ -339,6 +345,13 @@ func (a *Agent) consumeStream(
 		if update.Usage != nil {
 			result.Usage = *update.Usage
 		}
+		if update.ContinuationID != "" && req.ResponseContinuationScope != "" {
+			result.ResponseReference = &provider.ResponseReference{ID: update.ContinuationID, Scope: req.ResponseContinuationScope,
+				InputHash: provider.ResponseInputHash(req.Messages, req.Tools)}
+		}
+		if update.ContinuationReason != "" {
+			result.ResponseContinuationReason = update.ContinuationReason
+		}
 		if update.FinishReason != "" {
 			result.FinishReason = update.FinishReason
 		}
@@ -472,7 +485,8 @@ func (a *Agent) logCompletedTurn(body []byte, result completionResult, streamSta
 	streamDuration := time.Since(streamStart).Milliseconds()
 	a.logger.Info("LLM", "response", "model", a.Model, "tool_calls", len(result.ToolCalls),
 		"prompt_tokens", result.Usage.PromptTokens, "completion_tokens", result.Usage.CompletionTokens,
-		"cached_tokens", result.Usage.PromptTokensCached, "latency_ms", streamDuration)
+		"cached_tokens", result.Usage.PromptTokensCached, "continuation", result.ResponseContinuationReason,
+		"response_id_retained", result.ResponseReference != nil, "latency_ms", streamDuration)
 
 	if a.turn == nil {
 		return

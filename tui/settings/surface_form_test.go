@@ -178,13 +178,16 @@ func TestSettingsCategories_AllFormsPopulateFields(t *testing.T) {
 		host.Layout()
 
 		wantFields := category.Form.Fields()
-		if category.Name == "Accounts" || category.Name == "Providers" || category.Name == "Agents" {
+		if category.Name == "Accounts" || category.Name == "Providers" || category.Name == "Agents" || category.Name == "Skills" || category.Name == "MCP" || category.Name == "Sources" {
 			want := "Add account"
 			if category.Name == "Providers" {
 				want = "Add template"
 			}
 			if category.Name == "Agents" {
 				want = "Main Agent"
+			}
+			if category.Name == "Skills" || category.Name == "MCP" || category.Name == "Sources" {
+				want = "Installed"
 			}
 			if painted := bufferPlain(paintAccountSurface(t, surface, 90, 24)); !strings.Contains(painted, want) {
 				t.Fatalf("%s overview table is not painted", category.Name)

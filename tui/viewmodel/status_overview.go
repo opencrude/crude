@@ -316,6 +316,8 @@ func (m *App) footerStatusSegments() []shellfooter.Segment {
 		{Text: problemText, FillRole: problemRole, Attention: problemAttention, Pill: true, Active: active == termdock.PanelProblems, Action: "problems", Priority: 1},
 		{Text: noticeText, FillRole: ui.ColorAccent, Attention: unread > 0, Pill: true, Active: active == termdock.PanelNotices, Action: "notices", Priority: 1},
 		{Text: terminalText, FillRole: mapBool(terminalCount > 0, ui.ColorSuccess, ui.ColorDiffHunk), Attention: terminalCount > 0, Pill: true, Active: active == termdock.PanelTerminal, Action: "terminals", Priority: 1},
+		{Text: "Board", FillRole: ui.ColorAccent2, Pill: true, Active: active == termdock.PanelBoard, Action: "board", Priority: 0},
+		{Text: "Memory", FillRole: ui.ColorMuted, Pill: true, Active: active == termdock.PanelMemory, Action: "memory", Priority: 0},
 		{Text: "Workspace", FillRole: workspaceHue, Attention: needsInput > 0 || working > 0, Pill: true, Active: active == termdock.PanelWorkspace, Action: "workspace", Priority: 0},
 	}
 }
@@ -792,7 +794,8 @@ func (m *App) handleStatusOverviewNavigate(msg statusoverview.NavigateMsg) tea.C
 	case action == "history:open":
 		return m.openLocalHistory()
 	case action == "memory:open":
-		_, _ = m.toggleMemoryBrowser()
+		_, command := m.toggleMemoryBrowser()
+		return command
 	case action == "lsp:restart":
 		if !m.LSPMgr.RestartServer(msg.Item.Owner.ID) {
 			m.Feedback.NotifyError("Language server is no longer available")

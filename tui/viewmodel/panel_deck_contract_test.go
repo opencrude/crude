@@ -62,9 +62,7 @@ func TestPanelDeckViewmodelContractTable(t *testing.T) {
 
 	t.Run("confirmation_blocking_prevents_chat_and_mouse_leak", func(t *testing.T) {
 		app, projection := setupSessionDeckApp(t)
-		projection.confirmation.Reset(confirmation.Details{Question: "Proceed?", Tool: "bash"})
-		projection.confirmationAgentID = "agent"
-		app.openSessionConfirmationPanel(projection)
+		openTestAgentPrompt(t, app, projection, agentPromptRequest{question: "Proceed?", tool: "bash"})
 		if !app.sessionDeckBlocking() || !app.sessionDeckCapturesInput() {
 			t.Fatal("confirmation must be blocking and capture input")
 		}
@@ -88,9 +86,7 @@ func TestPanelDeckViewmodelContractTable(t *testing.T) {
 			})
 		}
 		app.syncAgentMessages("agent", false)
-		projection.confirmation.Reset(confirmation.Details{Question: "Proceed?", Tool: "bash"})
-		projection.confirmationAgentID = "agent"
-		app.openSessionConfirmationPanel(projection)
+		openTestAgentPrompt(t, app, projection, agentPromptRequest{question: "Proceed?", tool: "bash"})
 		app.paintShellFrame()
 
 		if app.chatRect.Empty() || app.sessionDeckRect.Empty() {
@@ -120,10 +116,7 @@ func TestPanelDeckViewmodelContractTable(t *testing.T) {
 
 	t.Run("confirmation_y_closes_without_input_leak", func(t *testing.T) {
 		app, projection := setupSessionDeckApp(t)
-		projection.confirmation.Reset(confirmation.Details{Question: "Proceed?", Tool: "bash"})
-		projection.confirmationAgentID = "agent"
-		projection.confirmationBlockID = "block-1"
-		app.openSessionConfirmationPanel(projection)
+		openTestAgentPrompt(t, app, projection, agentPromptRequest{question: "Proceed?", tool: "bash"})
 		projection.deckHost.Resize(100, 12)
 		projection.deckHost.Layout()
 		app.focusSessionDeckAfterLayout()
@@ -143,14 +136,15 @@ func TestPanelDeckViewmodelContractTable(t *testing.T) {
 		if app.Input.Value() != "must-not-leak" {
 			t.Fatal("confirmation y leaked key to chat input")
 		}
+		app.handleAgentEvent(types.AgentEventMsg{AgentID: "agent", Type: "blocking_complete"})
+		if got := app.Input.Value(); got != "must-not-leak" {
+			t.Fatalf("confirmation completion discarded the composer draft: %q", got)
+		}
 	})
 
 	t.Run("question_esc_returns_to_rail_then_closes_without_input_leak", func(t *testing.T) {
 		app, projection := setupSessionDeckApp(t)
-		projection.question.Reset(`[{"question":"Continue?","options":["yes","no"]}]`)
-		projection.questionAgentID = "agent"
-		projection.questionBlockID = "block-1"
-		app.openSessionQuestionPanel(projection)
+		openTestAgentPrompt(t, app, projection, agentPromptRequest{kind: agentPromptQuestions, questionsJSON: `[{"question":"Continue?","options":["yes","no"]}]`})
 		if !app.sessionDeckBlocking() {
 			t.Fatal("question panel must block")
 		}
@@ -270,8 +264,7 @@ func TestPanelDeckViewmodelContractTable(t *testing.T) {
 		ed := editor.NewPreview(app.Theme, path, "package main\n", 1)
 		app.EditorState.Editor = ed
 		app.EditorState.ActiveView = path
-		projection.confirmation.Reset(confirmation.Details{Question: "Proceed?"})
-		app.openSessionConfirmationPanel(projection)
+		openTestAgentPrompt(t, app, projection, agentPromptRequest{question: "Proceed?"})
 		if !app.sessionDeckCapturesInput() {
 			t.Fatal("blocking panel must capture over editor")
 		}

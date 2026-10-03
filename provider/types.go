@@ -15,6 +15,7 @@ type UserInput struct {
 	Text         string
 	ReferenceIDs []string
 	Origin       MessageOrigin
+	ContextParts []string
 	// ActivePaths carries IDE context (active editor file, open tabs) so
 	// the memory system can boost recall of memories scoped to those paths.
 	ActivePaths []string
@@ -303,27 +304,28 @@ func (c *MessageContent) UnmarshalJSON(data []byte) error {
 }
 
 type ChatMessage struct {
-	InternalID        string            `json:"internal_id,omitempty"`
-	DisplayContent    string            `json:"display_content,omitempty"`
-	ReferenceLabels   []string          `json:"reference_labels,omitempty"`
-	Role              string            `json:"role"`
-	Origin            MessageOrigin     `json:"origin,omitempty"`
-	Visibility        MessageVisibility `json:"visibility,omitempty"`
-	Content           MessageContent    `json:"content"`
-	ReasoningContent  string            `json:"reasoning_content,omitempty"`
-	Reasoning         string            `json:"reasoning,omitempty"`
-	Refusal           string            `json:"refusal,omitempty"`
-	ToolCalls         []ToolCall        `json:"tool_calls,omitempty"`
-	ToolCallID        string            `json:"tool_call_id,omitempty"`
-	CacheControl      *CacheControl     `json:"cache_control,omitempty"`
-	ReasoningDetails  []json.RawMessage `json:"reasoning_details,omitempty"`
-	ReasoningDuration time.Duration     `json:"reasoning_duration,omitempty"`
-	ReasoningDisplay  reasoning.Display `json:"reasoning_display,omitempty"`
-	ProviderItems     []ProviderItem    `json:"provider_items,omitempty"`
-	ReplayScope       string            `json:"replay_scope,omitempty"`
-	ReplaySourceModel string            `json:"replay_source_model,omitempty"`
-	ReplayPrefixHash  string            `json:"replay_prefix_hash,omitempty"`
-	ToolError         bool              `json:"tool_error,omitempty"`
+	InternalID        string             `json:"internal_id,omitempty"`
+	DisplayContent    string             `json:"display_content,omitempty"`
+	ReferenceLabels   []string           `json:"reference_labels,omitempty"`
+	Role              string             `json:"role"`
+	Origin            MessageOrigin      `json:"origin,omitempty"`
+	Visibility        MessageVisibility  `json:"visibility,omitempty"`
+	Content           MessageContent     `json:"content"`
+	ReasoningContent  string             `json:"reasoning_content,omitempty"`
+	Reasoning         string             `json:"reasoning,omitempty"`
+	Refusal           string             `json:"refusal,omitempty"`
+	ToolCalls         []ToolCall         `json:"tool_calls,omitempty"`
+	ToolCallID        string             `json:"tool_call_id,omitempty"`
+	CacheControl      *CacheControl      `json:"cache_control,omitempty"`
+	ReasoningDetails  []json.RawMessage  `json:"reasoning_details,omitempty"`
+	ReasoningDuration time.Duration      `json:"reasoning_duration,omitempty"`
+	ReasoningDisplay  reasoning.Display  `json:"reasoning_display,omitempty"`
+	ProviderItems     []ProviderItem     `json:"provider_items,omitempty"`
+	ReplayScope       string             `json:"replay_scope,omitempty"`
+	ReplaySourceModel string             `json:"replay_source_model,omitempty"`
+	ReplayPrefixHash  string             `json:"replay_prefix_hash,omitempty"`
+	ResponseReference *ResponseReference `json:"response_reference,omitempty"`
+	ToolError         bool               `json:"tool_error,omitempty"`
 }
 
 func (m ChatMessage) ContentString() string {
@@ -402,9 +404,7 @@ func (t *ToolCall) UnmarshalJSON(data []byte) error {
 		return err
 	}
 	*t = ToolCall(wire.plain)
-	if t.Function.Name == "multi_tool_use_parallel" {
-		t.Function.Name = "multi_tool_use.parallel"
-	}
+	t.Function.Name = canonicalToolName(t.Function.Name)
 	if wire.Custom != nil {
 		t.Type = "custom"
 		t.Function = FunctionCall{Name: wire.Custom.Name, Arguments: wire.Custom.Input}
@@ -415,6 +415,23 @@ func (t *ToolCall) UnmarshalJSON(data []byte) error {
 type FunctionCall struct {
 	Name      string `json:"name"`
 	Arguments string `json:"arguments"`
+}
+
+// The synthetic parallel tool uses a legal flat function name on every wire.
+// Its dotted execution identity is internal, not an OpenAI namespace or an
+// Anthropic function name. Other tool names remain untouched.
+func wireFunctionName(name string) string {
+	if name == "multi_tool_use.parallel" {
+		return "multi_tool_use_parallel"
+	}
+	return name
+}
+
+func canonicalToolName(name string) string {
+	if name == "multi_tool_use_parallel" {
+		return "multi_tool_use.parallel"
+	}
+	return name
 }
 
 // ProviderItem preserves protocol-specific response items that must be sent
@@ -470,13 +487,15 @@ type StreamEvent struct {
 
 // StreamUpdate is the normalized output of one provider stream event.
 type StreamUpdate struct {
-	ContentDelta  string
-	Reasoning     []reasoning.Delta
-	ToolCalls     []ToolCallDelta
-	FinishReason  string
-	Usage         *TokenUsage
-	ProviderItems []ProviderItem
-	Done          bool
+	ContentDelta       string
+	Reasoning          []reasoning.Delta
+	ToolCalls          []ToolCallDelta
+	FinishReason       string
+	Usage              *TokenUsage
+	ProviderItems      []ProviderItem
+	ContinuationID     string
+	ContinuationReason string
+	Done               bool
 }
 
 func (u StreamUpdate) ReasoningText() string {
@@ -504,6 +523,7 @@ type APIError struct {
 	Type    string
 	Code    string
 	Message string
+	Param   string
 }
 
 func (e *APIError) Error() string {
@@ -527,15 +547,16 @@ type StreamOptions struct {
 }
 
 type ChatRequest struct {
-	Model               string         `json:"model"`
-	Messages            []ChatMessage  `json:"messages"`
-	Tools               []ToolDef      `json:"tools,omitempty"`
-	ToolChoice          any            `json:"tool_choice,omitempty"`
-	Stream              bool           `json:"stream"`
-	StreamOptions       *StreamOptions `json:"stream_options,omitempty"`
-	MaxTokens           int            `json:"max_tokens,omitempty"`
-	MaxCompletionTokens int            `json:"max_completion_tokens,omitempty"`
-	MaxOutputTokens     int            `json:"-"`
+	Model                     string         `json:"model"`
+	Messages                  []ChatMessage  `json:"messages"`
+	Tools                     []ToolDef      `json:"tools,omitempty"`
+	ToolChoice                any            `json:"tool_choice,omitempty"`
+	Stream                    bool           `json:"stream"`
+	StreamOptions             *StreamOptions `json:"stream_options,omitempty"`
+	MaxTokens                 int            `json:"max_tokens,omitempty"`
+	MaxCompletionTokens       int            `json:"max_completion_tokens,omitempty"`
+	MaxOutputTokens           int            `json:"-"`
+	ResponseContinuationScope string         `json:"-"`
 	// Temperature and TopP are optional sampling overrides; nil means the
 	// backend default applies. Each protocol maps them to its wire shape.
 	Temperature *float64 `json:"-"`
@@ -547,11 +568,13 @@ type ChatRequest struct {
 }
 
 type ChatResponse struct {
-	ID      string        `json:"id,omitempty"`
-	Model   string        `json:"model,omitempty"`
-	Choices []ChatChoice  `json:"choices"`
-	Usage   *ChatUsage    `json:"usage,omitempty"`
-	Error   *ChatAPIError `json:"error,omitempty"`
+	ContinuationID     string        `json:"-"`
+	ContinuationReason string        `json:"-"`
+	ID                 string        `json:"id,omitempty"`
+	Model              string        `json:"model,omitempty"`
+	Choices            []ChatChoice  `json:"choices"`
+	Usage              *ChatUsage    `json:"usage,omitempty"`
+	Error              *ChatAPIError `json:"error,omitempty"`
 }
 
 type ChatChoice struct {

@@ -1,6 +1,9 @@
 package sessiondb
 
-import "database/sql"
+import (
+	"database/sql"
+	"encoding/json"
+)
 
 // AgentSettingOverride is one role's per-session agent override. A row with
 // Inherit set ("main" or "workspace") is a live reference, not a value copy:
@@ -17,11 +20,14 @@ type AgentSettingOverride struct {
 	Inherit                  string
 	ThinkingEffort           string
 	ContextCompactionPercent *int
+	AllowedTools             []string
+	DeniedTools              []string
+	SkillModes               map[string]string
 }
 
 func LoadAgentSettingOverrides(db *sql.DB, sessionID string) (map[string]AgentSettingOverride, error) {
 	rows, err := db.Query(`
-		SELECT category, provider, account_id, model, api_standard, thinking_effort, context_compaction_percent, inherit_source
+		SELECT category, provider, account_id, model, api_standard, thinking_effort, context_compaction_percent, inherit_source, capability_selection
 		FROM session_agent_settings
 		WHERE session_id = ?
 	`, sessionID)
@@ -35,7 +41,8 @@ func LoadAgentSettingOverrides(db *sql.DB, sessionID string) (map[string]AgentSe
 		var category string
 		var provider, account, model, standard, thinking, inherit sql.NullString
 		var compact sql.NullInt64
-		if err := rows.Scan(&category, &provider, &account, &model, &standard, &thinking, &compact, &inherit); err != nil {
+		var selection string
+		if err := rows.Scan(&category, &provider, &account, &model, &standard, &thinking, &compact, &inherit, &selection); err != nil {
 			return nil, err
 		}
 		override := AgentSettingOverride{
@@ -47,6 +54,15 @@ func LoadAgentSettingOverrides(db *sql.DB, sessionID string) (map[string]AgentSe
 			value := int(compact.Int64)
 			override.ContextCompactionPercent = &value
 		}
+		var capabilities struct {
+			AllowedTools []string
+			DeniedTools  []string
+			SkillModes   map[string]string
+		}
+		if err := json.Unmarshal([]byte(selection), &capabilities); err != nil {
+			return nil, err
+		}
+		override.AllowedTools, override.DeniedTools, override.SkillModes = capabilities.AllowedTools, capabilities.DeniedTools, capabilities.SkillModes
 		overrides[category] = override
 	}
 	return overrides, rows.Err()
@@ -71,14 +87,22 @@ func saveAgentSettingOverrides(tx *sql.Tx, sessionID string, overrides map[strin
 	for category, override := range overrides {
 		if override.Provider == "" && override.AccountID == "" && override.Model == "" &&
 			override.APIStandard == "" && override.ThinkingEffort == "" &&
-			override.ContextCompactionPercent == nil && override.Inherit == "" {
+			override.ContextCompactionPercent == nil && override.Inherit == "" && override.AllowedTools == nil && override.DeniedTools == nil && override.SkillModes == nil {
 			continue
+		}
+		selection, err := json.Marshal(struct {
+			AllowedTools []string
+			DeniedTools  []string
+			SkillModes   map[string]string
+		}{override.AllowedTools, override.DeniedTools, override.SkillModes})
+		if err != nil {
+			return err
 		}
 		if _, err := tx.Exec(`
 			INSERT INTO session_agent_settings
-				(session_id, category, provider, account_id, model, api_standard, thinking_effort, context_compaction_percent, inherit_source)
-			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-		`, sessionID, category, override.Provider, override.AccountID, override.Model, override.APIStandard, override.ThinkingEffort, override.ContextCompactionPercent, override.Inherit); err != nil {
+				(session_id, category, provider, account_id, model, api_standard, thinking_effort, context_compaction_percent, inherit_source, capability_selection)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`, sessionID, category, override.Provider, override.AccountID, override.Model, override.APIStandard, override.ThinkingEffort, override.ContextCompactionPercent, override.Inherit, string(selection)); err != nil {
 			return err
 		}
 	}

@@ -49,19 +49,9 @@ func TestDisclosurePolicyUsesOnlyMeaningfulFamilies(t *testing.T) {
 	r.SetSize(80, 20)
 	r.SetChatAreaBounds(0, 12)
 	version := uint64(1)
-	for _, tool := range []string{"recall_memory"} {
-		msg := types.ChatMessage{InternalID: tool, Role: types.RoleTool, ToolName: tool, ToolStatus: "success", Content: "body"}
-		r.SyncMessages([]types.ChatMessage{msg}, version)
-		version++
-		rows, _, _ := r.ExportMessageRows(80)
-		if len(rows) != 1 {
-			t.Fatalf("%s rows = %+v", tool, rows)
-		}
-		if rows[0].Toggle {
-			t.Fatalf("%s must not advertise expansion", tool)
-		}
-	}
-	for _, tool := range []string{"execute_command", "edit_file", "write_file", "update_plan", "read_file", "grep_files", "web_search", "web_fetch"} {
+	for _, tool := range []string{"execute_command", "edit_file", "write_file", "update_plan", "read_file", "grep_files", "web_search", "web_fetch",
+		"board_post", "board_read", "remember", "recall_memory", "update_memory", "forget_memory", "memory_feedback", "search_history",
+		"capability_search", "capability_activate", "mcp_read_resource", "mcp_get_prompt", "mcp__docs__lookup"} {
 		msg := types.ChatMessage{InternalID: tool, Role: types.RoleTool, ToolName: tool, ToolStatus: "success", Content: "body"}
 		r.SyncMessages([]types.ChatMessage{msg}, version)
 		version++

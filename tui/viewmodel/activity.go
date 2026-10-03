@@ -2,16 +2,14 @@ package viewmodel
 
 import (
 	"fmt"
-	"path/filepath"
-	"sort"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/chatprojection"
-	"crude/tui/filetree"
 	"crude/tui/screens/activitybar"
 	"crude/tui/screens/activitylist"
+	"crude/tui/screens/backgroundjobs"
 	historyscreen "crude/tui/screens/localhistory"
 	"crude/tui/screens/panelchrome"
 	"crude/tui/screens/shelltree"
@@ -22,13 +20,13 @@ import (
 )
 
 const (
-	activityFiles     = activitybar.ViewFiles
-	activityAgents    = activitybar.ViewAgents
-	activityTerminals = activitybar.ViewTerminals
-	activityGit       = activitybar.ViewGit
+	activityFiles  = activitybar.ViewFiles
+	activityAgents = activitybar.ViewAgents
+	activityGit    = activitybar.ViewGit
+	activitySkills = activitybar.ViewSkills
+	activityMCP    = activitybar.ViewMCP
 
-	sidebarItemNewTerminal = "terminal.new"
-	sidebarItemNewAgent    = "agent.new"
+	sidebarItemNewAgent = "agent.new"
 )
 
 func (m *App) activityChromeWidth() int {
@@ -58,6 +56,9 @@ func (m *App) sidebarPanelWidth() int {
 }
 
 func (m *App) setActivity(view activitybar.View, showContent bool) {
+	if view != m.activityView {
+		m.captureToolView()
+	}
 	if m.activityBar != nil {
 		m.activityBar.SetActive(view)
 	}
@@ -68,10 +69,23 @@ func (m *App) setActivity(view activitybar.View, showContent bool) {
 		}
 	}
 	m.refreshActivityList()
+	if state, exists := m.toolLayout.Views[view.ID()]; exists {
+		if state.Width > 0 {
+			m.Tree.Width = state.Width
+		}
+		if m.activityList != nil && (view == activityAgents || view == activitySkills || view == activityMCP) {
+			m.activityList.RestoreViewState(activitylist.ViewState{Filter: state.Filter, Selection: state.Selection, Offset: state.Offset})
+		}
+		if m.sourceControl != nil && view == activityGit {
+			m.sourceControl.RestoreViewState(state.Filter, state.Selection, state.Offset, state.Collapsed)
+		}
+	} else if m.activityList != nil && (view == activityAgents || view == activitySkills || view == activityMCP) {
+		m.activityList.RestoreViewState(activitylist.ViewState{})
+	}
 }
 
 func (m *App) toggleActivity(view activitybar.View) tea.Cmd {
-	if m.activityView == view && m.Tree != nil && m.Tree.Visible {
+	if m.activityView == view && m.Tree != nil && m.Tree.Visible && m.focusTarget() == FocusTree {
 		m.Tree.Visible = false
 		if m.FocusStack != nil && m.FocusStack.Top() == FocusTree {
 			m.FocusStack.Pop()
@@ -85,6 +99,9 @@ func (m *App) toggleActivity(view activitybar.View) tea.Cmd {
 	}
 	if view == activityGit {
 		return m.refreshSourceControl()
+	}
+	if view == activitySkills || view == activityMCP {
+		return m.capabilitySnapshotCmd()
 	}
 	return nil
 }
@@ -104,12 +121,6 @@ func (m *App) refreshActivityList() {
 			// that badge is how a backgrounded agent stays discoverable.
 			m.activityBar.SetBadge(activityAgents, m.AgentMgr.Count())
 		}
-		if mgr := m.termMgr(); mgr != nil {
-			m.activityBar.SetBadge(activityTerminals, len(mgr.List()))
-		}
-		if m.Tree != nil && m.Tree.Model != nil && m.Tree.Model.GitResolver() != nil {
-			m.activityBar.SetBadge(activityGit, len(m.Tree.Model.GitResolver().AllStatuses()))
-		}
 	}
 	nerd := panelchrome.NerdFont(m.Theme)
 	switch m.activityView {
@@ -119,18 +130,14 @@ func (m *App) refreshActivityList() {
 		items := m.agentSidebarItems()
 		m.activityList.SetBadge(sidebarCountBadge(items))
 		m.activityList.SetItems(items)
-	case activityTerminals:
-		m.activityList.SetHeading("Terminals")
-		m.activityList.SetIcon(activitybar.ViewTerminals.Icon(nerd))
-		items := m.terminalSidebarItems()
+	case activitySkills, activityMCP:
+		m.activityList.SetHeading(m.activityView.Label())
+		m.activityList.SetIcon(m.activityView.Icon(nerd))
+		items := m.capabilitySidebarItems(m.activityView)
 		m.activityList.SetBadge(sidebarCountBadge(items))
 		m.activityList.SetItems(items)
 	case activityGit:
-		m.activityList.SetHeading("Source Control")
-		m.activityList.SetIcon(activitybar.ViewGit.Icon(nerd))
-		items := m.gitSidebarItems()
-		m.activityList.SetBadge(sidebarCountBadge(items))
-		m.activityList.SetItems(items)
+		return
 	default:
 		m.activityList.SetHeading("Explorer")
 		m.activityList.SetIcon(activitybar.ViewFiles.Icon(nerd))
@@ -207,44 +214,6 @@ func (m *App) agentSidebarItems() []ui.ListItem {
 	return items
 }
 
-func (m *App) terminalSidebarItems() []ui.ListItem {
-	items := []ui.ListItem{{
-		ID:      sidebarItemNewTerminal,
-		Label:   "New Terminal",
-		Icon:    "+",
-		Command: true,
-	}}
-	mgr := m.termMgr()
-	if mgr == nil {
-		return items
-	}
-	list := mgr.List()
-	if len(list) == 0 {
-		items = append(items, ui.ListItem{ID: "none", Label: "No open terminals", Disabled: true})
-		return items
-	}
-	for _, t := range list {
-		place := "docked"
-		if t.Placement == workspace.TerminalFloating {
-			place = "window"
-		}
-		if !t.Alive {
-			place = "exited"
-		}
-		title := t.Title
-		if title == "" {
-			title = "Terminal"
-		}
-		items = append(items, ui.ListItem{
-			ID:     "term:" + t.ID,
-			Label:  title,
-			Detail: place,
-			Icon:   "›_",
-		})
-	}
-	return items
-}
-
 func sidebarCountBadge(items []ui.ListItem) string {
 	count := 0
 	for _, item := range items {
@@ -258,66 +227,17 @@ func sidebarCountBadge(items []ui.ListItem) string {
 	return fmt.Sprintf("%d", count)
 }
 
-func (m *App) gitSidebarItems() []ui.ListItem {
-	if m.Tree == nil || m.Tree.Model == nil {
-		return []ui.ListItem{{ID: "none", Label: "No repository", Disabled: true}}
-	}
-	resolver := m.Tree.Model.GitResolver()
-	if resolver == nil {
-		return []ui.ListItem{{ID: "none", Label: "No repository", Disabled: true}}
-	}
-	statuses := resolver.AllStatuses()
-	if len(statuses) == 0 {
-		return []ui.ListItem{{ID: "none", Label: "Working tree clean", Disabled: true}}
-	}
-	type row struct {
-		rel    string
-		status filetree.GitStatus
-	}
-	rows := make([]row, 0, len(statuses))
-	for rel, st := range statuses {
-		if st == filetree.GitNone {
-			continue
-		}
-		rows = append(rows, row{rel: rel, status: st})
-	}
-	sort.Slice(rows, func(i, j int) bool { return rows[i].rel < rows[j].rel })
-	if len(rows) == 0 {
-		return []ui.ListItem{{ID: "none", Label: "Working tree clean", Disabled: true}}
-	}
-	repo := resolver.RepoPath()
-	items := make([]ui.ListItem, 0, len(rows))
-	for _, r := range rows {
-		abs := filepath.Join(repo, r.rel)
-		items = append(items, ui.ListItem{
-			ID:     "git:" + abs,
-			Label:  r.rel,
-			Detail: filetree.StatusString(r.status),
-		})
-	}
-	return items
-}
-
 func (m *App) handleSidebarActivate(item ui.ListItem) tea.Cmd {
 	switch {
-	case item.ID == sidebarItemNewTerminal:
-		return m.openNewTerminal()
+	case strings.HasPrefix(item.ID, "capability:"):
+		return m.openCapabilityManager(m.activityView, "", strings.TrimPrefix(item.ID, "capability:"))
+	case item.ID == "capability.manage":
+		return m.openCapabilityManager(m.activityView, "", "")
 	case item.ID == sidebarItemNewAgent:
 		return m.launcherNewSession()
 	case strings.HasPrefix(item.ID, "agent:"):
 		m.restoreAgent(strings.TrimPrefix(item.ID, "agent:"))
 		return nil
-	case strings.HasPrefix(item.ID, "term:"):
-		m.focusTerminal(strings.TrimPrefix(item.ID, "term:"))
-		return nil
-	case strings.HasPrefix(item.ID, "git:"):
-		path := strings.TrimPrefix(item.ID, "git:")
-		cmd, err := m.openEditorTab(path)
-		if err != nil && m.Feedback != nil {
-			m.Feedback.NotifyError(fmt.Sprintf("Cannot open %s", filepath.Base(path)))
-			return nil
-		}
-		return cmd
 	}
 	return nil
 }
@@ -332,7 +252,48 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 	if cmd, handled := m.handleSourceControlAction(*action); handled {
 		return cmd
 	}
+	if cmd, handled := m.handleGitReviewAction(*action); handled {
+		return cmd
+	}
+	if cmd, handled := m.handleBoardAction(*action); handled {
+		return cmd
+	}
+	if cmd, handled := m.handleCapabilityPickerAction(*action); handled {
+		return cmd
+	}
 	switch action.ID {
+	case "agent-prompt.close":
+		id, _ := action.Payload.(string)
+		m.closeAgentPromptTab(id)
+		return nil
+	case backgroundjobs.ActionBlur:
+		m.setSessionDeckFocused(false)
+		return nil
+	case backgroundjobs.ActionTerminate:
+		request, ok := action.Payload.(backgroundjobs.TerminateRequest)
+		if ok {
+			return m.terminateBackgroundJob(request)
+		}
+		return nil
+	case "skills.manage":
+		return m.openCapabilityManager(activitySkills, "", "")
+	case "capabilities.pick":
+		m.openCapabilityPicker()
+		return nil
+	case "mcp.manage":
+		return m.openCapabilityManager(activityMCP, "", "")
+	case "workspace.panel.maximize":
+		m.toggleWorkspacePanelMaximized()
+		return nil
+	case "workspace.panel.hide":
+		m.hideWorkspacePanel()
+		return nil
+	case "workspace.panel.more":
+		m.openFooterMenu()
+		return nil
+	case "terminal.picker":
+		m.openTerminalPicker()
+		return nil
 	case "input.attachment.open":
 		id, _ := action.Payload.(string)
 		return m.openAttachment(id, false)
@@ -368,6 +329,9 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 	case activitybar.ActionSettings:
 		m.openApplicationSettings()
 		return nil
+	case activitybar.ActionOverflow:
+		m.openNavigationMenu()
+		return nil
 	case activitylist.ActionActivate:
 		item, ok := action.Payload.(ui.ListItem)
 		if ok {
@@ -389,6 +353,8 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		}
 		if payload.ID == activitylist.DividerID || payload.ID == shelltree.DividerID || payload.ID == sourcecontrol.DividerID {
 			m.setSidebarWidth(payload.First)
+			m.captureToolView()
+			m.toolLayoutVersion++
 		}
 		if payload.ID == termdock.DividerID {
 			m.setTermDockHeight((m.height - m.chromeBottomRows()) - payload.First)

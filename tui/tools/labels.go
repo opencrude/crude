@@ -58,6 +58,18 @@ var toolVerbs = map[string][3]string{
 	"write_report":            {"Preparing report", "Writing report", "Wrote report"},
 	"multi_tool_use.parallel": {"Preparing", "Running", "Ran"},
 	"auto_allowed":            {"Preparing approval", "Approving", "Auto-allowed"},
+	"board_post":              {"Preparing Board post", "Posting to Board", "Posted to Board"},
+	"board_read":              {"Preparing Board read", "Reading Board", "Read Board"},
+	"remember":                {"Preparing memory", "Saving memory", "Saved memory"},
+	"recall_memory":           {"Preparing memory search", "Recalling memory", "Recalled memory"},
+	"update_memory":           {"Preparing memory correction", "Correcting memory", "Corrected memory"},
+	"forget_memory":           {"Preparing memory retirement", "Retiring memory", "Retired memory"},
+	"memory_feedback":         {"Preparing memory feedback", "Recording memory feedback", "Recorded memory feedback"},
+	"search_history":          {"Preparing history search", "Searching history", "Searched history"},
+	"capability_search":       {"Preparing capability search", "Finding capabilities", "Found capabilities"},
+	"capability_activate":     {"Preparing activation", "Activating capability", "Activated capability"},
+	"mcp_read_resource":       {"Preparing resource read", "Reading MCP resource", "Read MCP resource"},
+	"mcp_get_prompt":          {"Preparing prompt fetch", "Fetching MCP prompt", "Fetched MCP prompt"},
 }
 
 func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
@@ -87,7 +99,7 @@ func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
 	if msg.ToolName == "run_sub_agent" && (msg.ToolStatus == types.ToolStatusSuccess || msg.ToolStatus == types.ToolStatusError || msg.ToolStatus == types.ToolStatusCancelled) {
 		if outcome, ok := subAgentOutcome(msg.Content); ok {
 			if outcome.name != "" || outcome.id != "" {
-				target = subAgentIdentityLabel(outcome.name, outcome.id)
+				target = subAgentIdentityLabel(outcome.name, outcome.id, outcome.category)
 			}
 			duration := ""
 			if msg.ToolDuration > 0 {
@@ -117,20 +129,24 @@ func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
 		outcome, _ := subAgentOutcome(msg.Content)
 		if outcome.id != "" && id != "" && outcome.id != id {
 			outcome.name = "" // a mismatched result cannot label this handle
+			outcome.category = ""
 		}
 		if id == "" {
 			id = outcome.id
 		}
-		target = subAgentIdentityLabel(outcome.name, id)
+		target = subAgentIdentityLabel(outcome.name, id, outcome.category)
 	}
 	if msg.ToolName == "write_report" {
 		if outcome, ok := subAgentOutcome(msg.Content); ok && outcome.status == "report_written" {
 			if outcome.name != "" || outcome.id != "" {
-				target = subAgentIdentityLabel(outcome.name, outcome.id)
+				target = subAgentIdentityLabel(outcome.name, outcome.id, outcome.category)
 			}
 		}
 	}
 	if msg.ToolInput != "" {
+		if IsStructuredTool(msg.ToolName) {
+			target = SummarizeToolArgs(msg.ToolName, msg.ToolInput)
+		}
 		switch msg.ToolName {
 		case "grep_files":
 			target = "\"" + msg.ToolInput + "\""
@@ -139,6 +155,11 @@ func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
 			}
 		case "web_search", "web_fetch", "arxiv_search":
 			target = msg.ToolInput
+		}
+	}
+	if msg.ToolName == "board_post" && msg.ToolStatus == types.ToolStatusSuccess {
+		if operand := BoardPostOperand(msg.Content, msg.ToolInput); operand != "" {
+			target = operand
 		}
 	}
 	target = strings.ReplaceAll(target, "\n", " ")
@@ -184,11 +205,20 @@ func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
 	verbs, known := toolVerbs[msg.ToolName]
 	if !known {
 		name := rendering.PascalCaseTool(msg.ToolName)
+		if strings.HasPrefix(msg.ToolName, "mcp__") {
+			name = CapabilityToolLabel(msg.ToolName)
+		}
 		verbs = [3]string{"Preparing " + strings.ToLower(name), "Running " + name, name}
 	}
 	title := ToolTitle{Action: verbs[stage], Operand: target}
 	if stage == 2 {
 		title.Metadata = duration
+		if IsStructuredTool(msg.ToolName) {
+			summary := BuildStructuredResult(msg.ToolName, msg.Content, msg.ToolInput).Summary
+			if summary != "" {
+				title.Metadata = strings.TrimSpace("— " + summary + " " + duration)
+			}
+		}
 	}
 	if stage == 0 && target != "" {
 		title.Action += " ·"
@@ -232,6 +262,9 @@ func embeddedStructuredLabel(value string) bool {
 
 func errorTitle(tool, target, duration, reason string) ToolTitle {
 	title := ToolTitle{Action: rendering.PascalCaseTool(tool) + " failed", Operand: target, Metadata: duration, Failed: true}
+	if strings.HasPrefix(tool, "mcp__") {
+		title.Action = CapabilityToolLabel(tool) + " failed"
+	}
 	switch tool {
 	case "multi_tool_use.parallel":
 		title.Action = "Tool batch failed"

@@ -18,8 +18,7 @@ func isSummaryOnlyTool(name string) bool {
 	case "read_file", "wait", "kill_async_command",
 		"delete_file", "move_file", "copy_file",
 		"run_sub_agent", "poll_sub_agent", "cancel_sub_agent",
-		"list_sub_agents", "write_report",
-		"remember", "update_memory", "forget_memory":
+		"list_sub_agents", "write_report":
 		return true
 	}
 	return false
@@ -33,18 +32,6 @@ func IsSummaryOnlyTool(name string) bool {
 // ResultSummary returns a compact title-line summary for successful tool output.
 func ResultSummary(tool, content, target, dur string) string {
 	return resultSummary(tool, content, target, dur)
-}
-
-// truncateLineToWidth truncates a line to fit within maxDisplayWidth using
-// rune-width-aware measurement (handles CJK wide chars etc.).
-func truncateLineToWidth(line string, maxDisplayWidth int) string {
-	if maxDisplayWidth <= 0 {
-		return line
-	}
-	if rendering.VisibleWidth(line) <= maxDisplayWidth {
-		return line
-	}
-	return rendering.TruncateVisual(line, maxDisplayWidth, "…")
 }
 
 // TerminalResultHeight caps how many result lines a tool message may occupy in
@@ -122,8 +109,6 @@ func resultSummary(tool, content, target, dur string) string {
 		return subAgentListSummary(content, target, dur)
 	case "write_report":
 		return subAgentWriteReportSummary(content, target, dur)
-	case "remember", "update_memory", "forget_memory", "recall_memory", "search_history":
-		return MemoryResultSummary(tool, content)
 	default:
 		return ""
 	}

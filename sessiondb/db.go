@@ -159,6 +159,7 @@ CREATE TABLE IF NOT EXISTS session_agent_settings (
     thinking_effort TEXT,
     context_compaction_percent INTEGER,
     inherit_source  TEXT,
+    capability_selection TEXT NOT NULL DEFAULT '{}',
     PRIMARY KEY (session_id, category),
     FOREIGN KEY (session_id) REFERENCES sessions(id)
 );
@@ -304,6 +305,9 @@ func Migrate(db *sql.DB) error {
 	_, err := db.Exec(schema)
 	if err != nil {
 		return fmt.Errorf("sessiondb: migrate: %w", err)
+	}
+	if _, err := db.Exec(`SELECT capability_selection FROM session_agent_settings LIMIT 0`); err != nil {
+		return fmt.Errorf("sessiondb: current capability schema required; align local data manually: %w", err)
 	}
 	migrations := []string{
 		"ALTER TABLE messages ADD COLUMN display_meta TEXT",

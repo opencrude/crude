@@ -175,7 +175,8 @@ func TestLiveAndHydratedToolRowsAreIdentical(t *testing.T) {
 			}
 			assertSameRows(t, "collapsed", live[0], hydrated[0])
 			if strings.Contains(c.name, "with nickname") || strings.Contains(c.name, "with identity") {
-				if !strings.Contains(strings.Join(live[0].Lines, "\n"), "Lily sub Dawn (agent-8f21)") && !strings.Contains(c.name, "list") {
+				text := strings.Join(live[0].Lines, "\n")
+				if (!strings.Contains(text, "Lily sub Dawn") || !strings.Contains(text, "agent-8f21")) && !strings.Contains(c.name, "list") {
 					t.Fatalf("known child title omitted nickname or handle: %v", live[0].Lines)
 				}
 			}
@@ -250,9 +251,10 @@ func TestLiveAndHydratedParallelSubAgentIdentitiesAreIdentical(t *testing.T) {
 			if len(left) != 2 || len(right) != 2 {
 				t.Fatalf("width %d: batch rows=%d/%d", width, len(left), len(right))
 			}
-			for i, want := range []string{"Lily sub Dawn (agent-8f21)", "Rose sub Dawn (agent-39bf)"} {
+			for i, want := range []struct{ name, role, id string }{{"Lily sub Dawn", "Researcher", "agent-8f21"}, {"Rose sub Dawn", "Crafter", "agent-39bf"}} {
 				assertSameRows(t, "parallel live/resumed", left[i], right[i])
-				if !strings.Contains(strings.Join(left[i].Lines, "\n"), want) || strings.Contains(strings.Join(left[i].Lines, "\n"), `"handle_id"`) {
+				text := strings.Join(left[i].Lines, "\n")
+				if !strings.Contains(text, want.name) || !strings.Contains(text, want.role) || !strings.Contains(text, want.id) || strings.Contains(text, `"handle_id"`) {
 					t.Fatalf("width %d expanded %v: bad sub-agent label: %v", width, expand, left[i].Lines)
 				}
 			}
@@ -273,13 +275,14 @@ func TestLiveAndHydratedSubAgentOutcomeRows(t *testing.T) {
 		name, content, want string
 		failed              bool
 	}{
-		{"running", `{"name":"Lily sub Dawn","category":"researcher","handle_id":"child-1","status":"running"}`, "Started sub-agent Lily sub Dawn (child-1)", false},
-		{"completed", "## Sub-Agent Result: Lily sub Dawn [researcher]\n**Agent:** child-1\n**Status:** OK\n**Report:** report.md", "Sub-agent completed Lily sub Dawn (child-1)", false},
-		{"failed", "## Sub-Agent Result: Lily sub Dawn [researcher]\n**Agent:** child-1\n**Status:** ERROR — provider failed\n**Report:** report.md", "Sub-agent failed Lily sub Dawn (child-1)", true},
-		{"recorded timeout", "## Sub-Agent Result: Lily sub Dawn [researcher]\n**Agent:** child-1\n**Status:** TIMEOUT\n**Report:** report.md", "Sub-agent timed out Lily sub Dawn (child-1)", true},
+		{"running", `{"name":"Lily sub Dawn","handle_id":"child-1","category":"researcher","status":"running"}`, "Started sub-agent Lily sub Dawn · Researcher (child-1)", false},
+		{"completed", "## Sub-Agent Result: Lily sub Dawn [researcher]\n**Agent:** child-1\n**Status:** OK\n**Report:** report.md", "Sub-agent completed Lily sub Dawn · Researcher (child-1)", false},
+		{"failed", "## Sub-Agent Result: Lily sub Dawn [researcher]\n**Agent:** child-1\n**Status:** ERROR — provider failed\n**Report:** report.md", "Sub-agent failed Lily sub Dawn · Researcher (child-1)", true},
+		{"recorded timeout", "## Sub-Agent Result: Lily sub Dawn [researcher]\n**Agent:** child-1\n**Status:** TIMEOUT\n**Report:** report.md", "Sub-agent timed out Lily sub Dawn · Researcher (child-1)", true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			c := projectionCase{name: tc.name, tool: "run_sub_agent", rawArgs: args, content: tc.content}
+			c := projectionCase{name: tc.name, tool: "run_sub_agent", rawArgs: args, content: tc.content,
+				pathLabel: workspace.SubAgentActivityLabel("Lily sub Dawn", "researcher", "Inspect the renderer and report findings")}
 			live := renderLive(t, "child-call", c, false)[0]
 			hydrated := renderHydrated(t, "child-call", c, false)[0]
 			assertSameRows(t, "collapsed", live, hydrated)

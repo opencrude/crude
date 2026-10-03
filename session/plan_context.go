@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 
 	"crude/plan"
+	rootprompt "crude/prompt"
 )
 
 // activePlanTurnContext reads the canonical revision when a human message is
@@ -52,5 +53,5 @@ func formatActivePlanContext(current plan.Plan) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	return "<active_plan format=\"json\">\n" + string(data) + "\n</active_plan>\nSaved session state for planning tools; compare with the current human request and update the plan when its objective or steps no longer match.", nil
+	return rootprompt.ActivePlan(string(data)), nil
 }

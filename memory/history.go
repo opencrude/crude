@@ -3,6 +3,7 @@ package memory
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -15,16 +16,21 @@ func (st *Store) RecordTurn(ctx context.Context, turn TurnRecord) error {
 	if turn.SessionID == "" || turn.Turn <= 0 {
 		return fmt.Errorf("memory: turn record requires session id and turn number")
 	}
-	userText := TruncateBytes(strings.TrimSpace(turn.UserText), maxTurnTextBytes)
-	assistantText := TruncateBytes(strings.TrimSpace(turn.AssistantText), maxTurnTextBytes)
-	toolNames := strings.Join(turn.ToolNames, " ")
-	files := strings.Join(turn.Files, " ")
+	userText := TruncateBytes(Redact(strings.TrimSpace(turn.UserText)), maxTurnTextBytes)
+	assistantText := TruncateBytes(Redact(strings.TrimSpace(turn.AssistantText)), maxTurnTextBytes)
+	toolNames := TruncateBytes(Redact(strings.Join(turn.ToolNames, " ")), maxTurnTextBytes)
+	files := TruncateBytes(Redact(strings.Join(turn.Files, " ")), maxTurnTextBytes)
 	norm := NormalizeText(userText, assistantText, toolNames, files)
 	createdAt := turn.CreatedAt
 	if createdAt == 0 {
 		createdAt = time.Now().UnixNano()
 	}
-	_, err := st.db.ExecContext(ctx, `
+	tx, err := st.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO memory_history_turns
 			(session_id, turn, user_text, assistant_text, tool_names, files, norm, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -38,7 +44,57 @@ func (st *Store) RecordTurn(ctx context.Context, turn TurnRecord) error {
 	if err != nil {
 		return fmt.Errorf("memory: record turn: %w", err)
 	}
-	return nil
+	for position, observation := range SanitizeObservations(turn.Observations) {
+		if observation.SessionID != turn.SessionID || observation.Turn != turn.Turn {
+			return fmt.Errorf("memory: observation origin does not match turn")
+		}
+		payload, err := json.Marshal(observation)
+		if err != nil {
+			return err
+		}
+		var existing string
+		err = tx.QueryRowContext(ctx, `SELECT observation FROM memory_observations WHERE session_id=? AND turn=? AND position=?`, turn.SessionID, turn.Turn, position).Scan(&existing)
+		if err == nil && existing != string(payload) {
+			return fmt.Errorf("%w: turn observation changed", ErrExists)
+		}
+		if err != nil && err != sql.ErrNoRows {
+			return err
+		}
+		if err == sql.ErrNoRows {
+			if _, err := tx.ExecContext(ctx, `INSERT INTO memory_observations(session_id, turn, position, message_id, tool_call_id, observation) VALUES (?, ?, ?, ?, ?, ?)`,
+				turn.SessionID, turn.Turn, position, observation.MessageID, observation.ToolCallID, string(payload)); err != nil {
+				return err
+			}
+		}
+		if observation.ToolCallID != "" && observation.Method != "" {
+			if err := recordEpisodeTx(ctx, tx, episodeForObservation(userText, observation)); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Commit()
+}
+
+func (st *Store) ObservationsForSession(ctx context.Context, sessionID string, afterTurn, throughTurn int) ([]Observation, error) {
+	rows, err := st.db.QueryContext(ctx, `SELECT observation FROM memory_observations
+		WHERE session_id=? AND turn>? AND turn<=? ORDER BY turn, position LIMIT 288`, sessionID, afterTurn, throughTurn)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+	var observations []Observation
+	for rows.Next() {
+		var payload string
+		if err := rows.Scan(&payload); err != nil {
+			return nil, err
+		}
+		var observation Observation
+		if err := json.Unmarshal([]byte(payload), &observation); err != nil {
+			return nil, err
+		}
+		observations = append(observations, observation)
+	}
+	return observations, rows.Err()
 }
 
 // TurnsForSession returns a session's mirrored turns after afterTurn,
@@ -285,12 +341,30 @@ func scanSummaries(rows *sql.Rows) ([]SessionSummary, error) {
 
 // SaveSessionSummary upserts the durable summary for one session.
 func (st *Store) SaveSessionSummary(ctx context.Context, summary SessionSummary) error {
+	tx, err := st.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := saveSessionSummaryTx(ctx, tx, summary); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func saveSessionSummaryTx(ctx context.Context, tx *sql.Tx, summary SessionSummary) error {
 	if summary.SessionID == "" {
 		return fmt.Errorf("memory: session summary requires a session id")
 	}
-	summary.Title = TruncateBytes(strings.TrimSpace(summary.Title), MaxTitleBytes)
-	summary.Summary = TruncateBytes(strings.TrimSpace(summary.Summary), maxTurnTextBytes)
-	summary.Outcome = TruncateBytes(strings.TrimSpace(summary.Outcome), 1024)
+	summary.Title = TruncateBytes(Redact(strings.TrimSpace(summary.Title)), MaxTitleBytes)
+	summary.Summary = TruncateBytes(Redact(strings.TrimSpace(summary.Summary)), maxTurnTextBytes)
+	summary.Outcome = TruncateBytes(Redact(strings.TrimSpace(summary.Outcome)), 1024)
+	for index, path := range summary.KeyFiles {
+		summary.KeyFiles[index] = TruncateBytes(Redact(path), 512)
+	}
+	if len(summary.KeyFiles) > 16 {
+		summary.KeyFiles = summary.KeyFiles[:16]
+	}
 	if summary.Summary == "" {
 		return fmt.Errorf("memory: session summary text is required")
 	}
@@ -298,7 +372,7 @@ func (st *Store) SaveSessionSummary(ctx context.Context, summary SessionSummary)
 	if summary.CreatedAt == 0 {
 		summary.CreatedAt = now
 	}
-	_, err := st.db.ExecContext(ctx, `
+	_, err := tx.ExecContext(ctx, `
 		INSERT INTO memory_session_summaries
 			(session_id, title, summary, key_files, outcome, turn_count, created_at, updated_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?)
@@ -315,9 +389,7 @@ func (st *Store) SaveSessionSummary(ctx context.Context, summary SessionSummary)
 	if err != nil {
 		return fmt.Errorf("memory: save session summary: %w", err)
 	}
-	st.journal(ctx, ActorAuto, "summary", "", summary.SessionID,
-		TruncateBytes(summary.Title, 120))
-	return nil
+	return journalTx(ctx, tx, ActorAuto, "summary", "", summary.SessionID, TruncateBytes(summary.Title, 120))
 }
 
 // LatestSummaries returns the most recently updated session summaries,

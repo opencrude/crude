@@ -104,7 +104,7 @@ synchronously echoing through `EventBus.Send` would deadlock on `Program.Send`.
 | `workspace.TerminalManager` | PTY lifecycle, I/O, placement snapshot, events |
 | `tui/term` | libghostty-vt bridge painted into `CellBuffer` |
 | `tui/screens/shellterm` | One session: paint + keys/paste/mouse into the PTY + Float/Dock/Close |
-| `tui/screens/termdock` | Workspace bottom-panel host, resize handle, terminal vertical rail, and retained PTY mounting |
+| `tui/screens/termdock` | Workspace bottom-panel host, resize handle, compact numbered terminal tabs, shared header controls, and retained PTY mounting |
 | `tui/viewmodel` | Dock slot, OverlayHost windows, activity list, focus |
 
 `workspace/` must not import `tui`.
@@ -125,8 +125,16 @@ outer emulator matches the Ghostty pin. In-app PTYs always set:
 - **Docked:** Terminal mode in the workspace bottom panel (`tui/screens/termdock`)
   above the footer, independent of AI session `PanelDeck`. Available in launcher,
   editor, and chat. The footer's labeled `Terminals` control toggles this mode.
-  Multiple PTYs use a scrollable vertical instance rail on the right; one PTY gets the full width. The
-  divider plus one terminal-action row still reserve at least two PTY body rows.
+  PTYs use numbered `ui.Tabs` (`Terminal 1`, `Terminal 2`, …) beside
+  picker/new/float/close/maximize/hide controls on the same row. Titles truncate
+  within 16 columns with the number retained; cramped strips use `T 1`, `T 2`, ….
+  Overflow supports horizontal trackpad/wheel, vertical wheel over the strip,
+  and visible `‹`/`›` controls without changing the active PTY. Browsing stays
+  put across repaint/title updates; choosing a tab reveals it. Unseen bells
+  retain the shared attention marker. The picker exposes matching terminal
+  numbers with readable Docked/Floating placement. The baseline and PTY body
+  span the full dock width. The divider plus
+  two-row tab strip still reserve at least two PTY body rows.
   Closing the last docked terminal closes Terminal mode without affecting the
   other workspace panel views. A shell's natural exit removes its instance;
   exited PTYs never remain as stale `process killed` rows requiring manual close.

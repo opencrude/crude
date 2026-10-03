@@ -265,7 +265,8 @@ func newHTTPClient(dial DialConfig) *http.Client {
 
 // Complete performs a non-streaming chat request.
 func (c *Client) Complete(ctx context.Context, req *ChatRequest) (*ChatResponse, error) {
-	req = withStreamFlag(req, false)
+	req = c.withContinuationPolicy(withStreamFlag(req, false))
+	canonicalRequest := req
 	body, err := c.encodeChatRequest(req)
 	if err != nil {
 		return nil, err
@@ -294,6 +295,15 @@ func (c *Client) Complete(ctx context.Context, req *ChatRequest) (*ChatResponse,
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			statusErr := readStatusError(resp, c.dial.MaxResponseBytes)
+			full, replacement, recovered, recoveryErr := c.rebaseContinuation(req, statusErr)
+			if recoveryErr != nil {
+				return nil, recoveryErr
+			}
+			if recovered {
+				req, body = full, replacement
+				attempt--
+				continue
+			}
 			lastErr = statusErr
 			if !statusErr.Retryable() {
 				return nil, statusErr
@@ -330,6 +340,10 @@ func (c *Client) Complete(ctx context.Context, req *ChatRequest) (*ChatResponse,
 			}
 			return nil, err
 		}
+		if decoded.ContinuationID != "" && canonicalRequest.ResponseContinuationScope != "" && len(decoded.Choices) > 0 {
+			BindResponseReference(&decoded.Choices[0].Message, &ResponseReference{ID: decoded.ContinuationID,
+				Scope: canonicalRequest.ResponseContinuationScope, InputHash: ResponseInputHash(canonicalRequest.Messages, canonicalRequest.Tools)})
+		}
 		return decoded, nil
 	}
 	return nil, wrapExhausted(lastErr, c.dial.MaxAttempts)
@@ -340,7 +354,7 @@ func (c *Client) Complete(ctx context.Context, req *ChatRequest) (*ChatResponse,
 // do not commit a stochastic response; content, reasoning, tool calls and opaque
 // provider items do. Next returns io.EOF after the terminal update.
 func (c *Client) Stream(ctx context.Context, req *ChatRequest) (*ChatStream, error) {
-	req = withStreamFlag(req, true)
+	req = c.withContinuationPolicy(withStreamFlag(req, true))
 	body, err := c.encodeChatRequest(req)
 	if err != nil {
 		return nil, err
@@ -351,12 +365,14 @@ func (c *Client) Stream(ctx context.Context, req *ChatRequest) (*ChatStream, err
 		ctx:                  ctx,
 		cancel:               cancel,
 		body:                 body,
+		request:              req,
 		reasoningContentKind: req.ReasoningContentKind,
 	}, nil
 }
 
 // ChatStream is a decoded, ordered view of one streaming response.
 type ChatStream struct {
+	request              *ChatRequest
 	client               *Client
 	reasoningContentKind reasoning.Kind
 	ctx                  context.Context
@@ -418,6 +434,18 @@ func (s *ChatStream) Next() (StreamUpdate, error) {
 		update, err := s.decoder.Decode(event)
 		if err != nil {
 			s.closeResp()
+			if !s.yielded && s.ctx.Err() == nil {
+				full, body, recovered, recoveryErr := s.client.rebaseContinuation(s.request, err)
+				if recoveryErr != nil {
+					s.closed = true
+					return StreamUpdate{}, recoveryErr
+				}
+				if recovered {
+					s.request, s.body = full, body
+					s.attempt--
+					continue
+				}
+			}
 			if s.canRetryStream(err) {
 				if waitErr := s.client.backoff(s.ctx, s.attempt, nil, err); waitErr != nil {
 					s.closed = true
@@ -524,6 +552,15 @@ func (s *ChatStream) establish() error {
 		}
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			statusErr := readStatusError(resp, c.dial.MaxResponseBytes)
+			full, body, recovered, recoveryErr := c.rebaseContinuation(s.request, statusErr)
+			if recoveryErr != nil {
+				return recoveryErr
+			}
+			if recovered {
+				s.request, s.body = full, body
+				s.attempt--
+				continue
+			}
 			if !statusErr.Retryable() {
 				return statusErr
 			}
@@ -649,15 +686,7 @@ func (c *Client) encodeChatRequest(req *ChatRequest) ([]byte, error) {
 	if req == nil {
 		return nil, fmt.Errorf("request is nil")
 	}
-	for _, tool := range req.Tools {
-		if tool.Type == "custom" {
-			switch c.proto.Info().ID {
-			case "openai", "openai-responses", "codex":
-			default:
-				return nil, fmt.Errorf("protocol %s does not support native freeform tools; select an OpenAI custom-tool-capable endpoint for %s", c.proto.Info().ID, tool.Function.Name)
-			}
-		}
-	}
+	req = c.withContinuationPolicy(req)
 	body, err := c.proto.EncodeRequest(req)
 	if err != nil {
 		return nil, fmt.Errorf("encode request: %w", err)
@@ -670,6 +699,49 @@ func (c *Client) encodeChatRequest(req *ChatRequest) ([]byte, error) {
 		c.onRequestEncoded(body)
 	}
 	return body, nil
+}
+
+func (c *Client) withContinuationPolicy(req *ChatRequest) *ChatRequest {
+	if req == nil || req.ResponseContinuationScope == "" {
+		return req
+	}
+	allowed := c.proto.Info().ID == "openai-responses" && c.requestExtras["store"] != false && c.requestExtras["truncation"] != "auto"
+	for _, key := range []string{"input", "instructions", "model", "conversation", "previous_response_id"} {
+		if _, exists := c.requestExtras[key]; exists {
+			allowed = false
+		}
+	}
+	if allowed {
+		return req
+	}
+	copy := *req
+	copy.ResponseContinuationScope = ""
+	return &copy
+}
+
+// A rejected reference is a failed context lookup, not an accepted model
+// generation. Recover once within the same deadline, before any output, using
+// the authoritative full local request. Other errors keep normal retry policy.
+func (c *Client) rebaseContinuation(req *ChatRequest, cause error) (*ChatRequest, []byte, bool, error) {
+	if c.proto.Info().ID != "openai-responses" || req == nil || !continuationUnavailable(cause) {
+		return nil, nil, false, nil
+	}
+	if previous, _ := responseContinuation(req); previous == "" {
+		return nil, nil, false, nil
+	}
+	full := *req
+	full.ResponseContinuationScope = ""
+	body, err := c.encodeChatRequest(&full)
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if c.onRequestEncoded != nil {
+		c.onRequestEncoded(bytes.Clone(body))
+	}
+	if c.onRetry != nil {
+		c.onRetry(1, 0, cause)
+	}
+	return &full, body, true, nil
 }
 
 // mergeJSONExtras shallow-merges extra fields into an encoded JSON body.
@@ -799,6 +871,9 @@ func (e *ExhaustedError) Unwrap() error { return e.Cause }
 
 // StatusError is a non-2xx HTTP response with its parsed message.
 type StatusError struct {
+	Param      string
+	APIType    string
+	APICode    string
 	StatusCode int
 	Message    string
 	RequestID  string
@@ -840,6 +915,7 @@ func readStatusError(resp *http.Response, maxBody int64) *StatusError {
 
 	var envelope struct {
 		Error *struct {
+			Param   string `json:"param"`
 			Type    string `json:"type"`
 			Code    any    `json:"code"`
 			Message string `json:"message"`
@@ -863,10 +939,19 @@ func readStatusError(resp *http.Response, maxBody int64) *StatusError {
 		message = http.StatusText(resp.StatusCode)
 	}
 	code := ""
+	param := ""
+	apiType := ""
+	apiCode := ""
 	if envelope.Error != nil {
 		code = envelope.Error.Type + " " + fmt.Sprint(envelope.Error.Code)
+		param = envelope.Error.Param
+		apiType = envelope.Error.Type
+		apiCode = fmt.Sprint(envelope.Error.Code)
 	}
 	return &StatusError{
+		Param:      param,
+		APIType:    apiType,
+		APICode:    apiCode,
 		StatusCode: resp.StatusCode,
 		Message:    message,
 		RequestID:  firstNonEmptyString(resp.Header.Get("request-id"), resp.Header.Get("x-request-id")),
@@ -996,6 +1081,8 @@ func chatResponseToUpdate(resp *ChatResponse) StreamUpdate {
 	if resp == nil {
 		return update
 	}
+	update.ContinuationID = resp.ContinuationID
+	update.ContinuationReason = resp.ContinuationReason
 	if len(resp.Choices) > 0 {
 		choice := resp.Choices[0]
 		update.FinishReason = choice.FinishReason
@@ -1092,5 +1179,5 @@ func (r *singleJSONEventReader) next() (StreamEvent, error) {
 func isEmptyUpdate(update StreamUpdate) bool {
 	return update.ContentDelta == "" && update.ReasoningText() == "" &&
 		len(update.ToolCalls) == 0 && len(update.ProviderItems) == 0 &&
-		update.FinishReason == "" && update.Usage == nil
+		update.FinishReason == "" && update.Usage == nil && update.ContinuationID == "" && update.ContinuationReason == ""
 }

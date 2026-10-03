@@ -1,4 +1,4 @@
-# Codex tools and GPT profiles
+# Codex tool adapters
 
 > Status: Current — native patch and command interfaces integrated with Crude.
 
@@ -18,18 +18,22 @@ a missing standalone `move_file` does not remove move-with-edit from patches.
 Read-only roles do not gain filesystem writes. All write-capable roles use the
 same engine, not smaller role-specific implementations.
 
-The upstream model instruction templates and patch grammar are embedded without
-editorial changes; their hashes are recorded in `codexio/prompts/manifest.json`.
-Model slugs absent from the pinned catalog use Codex's own default template.
-Environment and child assignment/handoff information are separate. No added
-Codex-versus-Crude identity explanation or competing edit-tool guide is sent.
-Prompt caching includes model identity and is cleared on workspace changes.
+Crude does not embed or select vendor behavioral prompt templates. The root
+`prompt/` package supplies the same canonical policy to GPT, Claude, Gemini,
+routed and local models; escaped user profile instructions are a lower-priority
+overlay. The owner map and development checklist live in
+[model prompts and project guidance](prompt-architecture.md). Do not restore
+`codexio/prompts/`, model-family base-prompt selection, or an `agent/` forwarding
+API to implement a native tool. Codex-specific behavior is limited to the tool
+and wire interfaces in this document. The native patch grammar and tool
+description remain authoritative when `apply_patch` is offered. Prompt caching
+remains workspace-scoped and is cleared when the workspace changes.
 
 ## Patch contract
 
 On Responses and Codex endpoints, `apply_patch` is a custom/freeform tool with
-the upstream name, description, and Lark grammar. Chat Completions endpoints,
-including third-party gateways, instead receive an ordinary `apply_patch`
+the upstream name, description, and Lark grammar. Chat Completions, Anthropic and
+Ollama endpoints, including third-party gateways, receive an ordinary `apply_patch`
 function with a required string `input` parameter; these endpoints reject
 `tools[n].custom`. The Chat adapter wraps patch text in JSON on the wire and
 unwraps it on receipt. Execution and persisted history still use raw patch text,
@@ -78,8 +82,14 @@ removed steps remain cancelled in the audit record. The model does not have to
 invent Crude-specific plan IDs to follow its upstream guide.
 
 `multi_tool_use.parallel` uses the same execution and permission pipeline as
-individual tools. Responses encodes its namespace natively; Chat Completions
-uses a legal flat wire name. Independent reads and read-only commands execute
+individual tools. Chat Completions, Responses, Codex, Anthropic and Ollama all
+encode it as the
+ordinary function `multi_tool_use_parallel`; OpenAI reserves the `multi_tool_use`
+namespace. The adapters map this exact function name to the canonical execution
+identity on receipt, including streaming and replay. No raw JSON rewriting or
+protocol fallback is involved, and switching protocols never rewrites persisted
+calls. Actual application tool namespaces remain supported by Responses.
+Independent reads and read-only commands execute
 concurrently; permission-producing calls serialize their prompts. Batch results
 remain ordered, durable, and disclose child errors rather than claiming success.
 

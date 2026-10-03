@@ -29,6 +29,7 @@ const (
 	shellLauncherSlot
 	shellDeckSlot
 	shellTermDockSlot
+	shellGitReviewSlot
 	shellSlotCount
 )
 
@@ -56,6 +57,8 @@ func (id shellSlotID) String() string {
 		return "shell/deck"
 	case shellTermDockSlot:
 		return "shell/termdock"
+	case shellGitReviewSlot:
+		return "shell/gitreview"
 	}
 	return "shell/none"
 }
@@ -76,17 +79,18 @@ type shellSlot struct {
 // are screen-absolute because the parent origin is (0,0).
 type shellRoot struct {
 	ui.Base
-	header   ui.Component
-	footer   ui.Component
-	tabs     ui.Component
-	activity ui.Component
-	sidebar  ui.Component
-	chat     ui.Component
-	input    ui.Component
-	editor   ui.Component
-	launcher ui.Component
-	deck     *deckMount
-	termDock ui.Component
+	header    ui.Component
+	footer    ui.Component
+	tabs      ui.Component
+	activity  ui.Component
+	sidebar   ui.Component
+	chat      ui.Component
+	input     ui.Component
+	editor    ui.Component
+	launcher  ui.Component
+	deck      *deckMount
+	termDock  ui.Component
+	gitReview ui.Component
 
 	slots [shellSlotCount]shellSlot
 	dirty bool
@@ -157,6 +161,8 @@ func (s *shellRoot) SetScreen(id shellSlotID, c ui.Component) {
 		s.launcher = c
 	case shellTermDockSlot:
 		s.termDock = c
+	case shellGitReviewSlot:
+		s.gitReview = c
 	case shellDeckSlot:
 		// deck mount is fixed; ignored
 		return
@@ -184,6 +190,7 @@ func (s *shellRoot) Children() []ui.Component {
 	appendSlot(shellLauncherSlot, s.launcher)
 	appendSlot(shellDeckSlot, s.deck)
 	appendSlot(shellTermDockSlot, s.termDock)
+	appendSlot(shellGitReviewSlot, s.gitReview)
 	return out
 }
 
@@ -213,6 +220,7 @@ func (s *shellRoot) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	layoutSlot(shellLauncherSlot, s.launcher)
 	layoutSlot(shellDeckSlot, s.deck)
 	layoutSlot(shellTermDockSlot, s.termDock)
+	layoutSlot(shellGitReviewSlot, s.gitReview)
 }
 
 // Paint is a no-op: children are painted by Host.paintNode at their slot
@@ -271,6 +279,7 @@ func (d *deckMount) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext
 	bg := cell.BlankCell(rendering.ThemeColorToCell(d.app.Theme.Colors.Bg))
 	d.surf.Buffer().Fill(bg)
 	proj.deckHost.Resize(b.W, b.H)
+	proj.deckHost.SetFrame(d.app.SpinFrame)
 	proj.deckHost.Layout()
 	d.app.focusSessionDeckAfterLayout()
 	proj.deckHost.Paint(d.surf.Buffer())

@@ -1,9 +1,63 @@
 # Workspace Tools, Capabilities, and TUI Interaction Plan
 
-> Status: IN PROGRESS — design revision 2, 2026-10-01. Incorporates the user's
-> placement and manual-control direction in §1.1. Detailed controls and layouts
-> remain proposed; no product implementation or live visual acceptance is
-> claimed. The source audit records the implementation before these changes.
+> Status: LANDED — revision 2 core product workflows implemented and validated
+> 2026-10-01. The original source audit and sketches remain delivery history;
+> non-delivered refinements and evaluation boundaries are listed explicitly.
+
+## Implementation record
+
+- Rail: Files, Agents, Source Control, Skills, MCP, with three-row targets,
+  overflow, pin/reorder/reset and workspace presentation persistence; Terminals
+  is removed from the rail.
+- Git: calm grouped sidebar and one typed reusable main-area review tab,
+  index/HEAD/disk comparisons, async prepared diffs, unified/side-by-side,
+  explicit stage/unstage, staged-set commit review and retained message drafts.
+- Workspace dock: dedicated Memory footer control, retained Memory/Board,
+  per-panel preferred heights, maximize/restore/hide, footer overflow and terminal
+  picker. Session decisions/settings remain in their own PanelDeck.
+- Settings: Installed/Discover Skills/MCP catalogs and retained details, source
+  and acquisition controls, authored skill operations, exact install/update
+  preview, explicit MCP grants/OAuth/connection actions and resource/prompt
+  preview. `/skills`, `/mcp`, `/skill` and `/memory` route through the same owners.
+- Session capability selection persists role/root-specific skill modes and tool
+  exclusions without widening runtime policy. Workspace-switch generations and
+  composer ownership guard late results.
+
+Normal/narrow Linux terminal workflows, full build/tests, zero-issue lint,
+docs/design/benchmark gates and affected race suites pass. Protocol limitations
+are shown in MCP Overview: no sampling,
+elicitation, task extensions, remote channels or rich MCP apps are advertised;
+resource/prompt composer previews are text-only. No measured quality, latency or
+token-cost improvement is asserted without a baseline. The
+[capability workflow guide](../guides/capability-workflows.md) records actual routes
+and the temporary capture evidence.
+
+## Acceptance Boundaries And Remaining Refinements
+
+- Verified: 80×24, 120×40, 160×40 and 200×50 Linux captures, dark/light and
+  nonzero frame padding; retained Settings deep-links, manual discover/install
+  preview, source reading, MCP connection/resource preview, composer skill
+  staging, session capability controls, typed Git review, Board/Memory and PTY
+  hide without termination. Capture windows/processes are closed.
+- Unit/integration coverage complements captures for exact staged-set commit,
+  stale discard + Local History inverse, OAuth cancellation/retry/identity,
+  pagination/durable agent admission, stale memory correction/extraction and
+  workspace-switch/shutdown generations. Scripted provider workflows do not
+  establish real-model task quality.
+- Later refinements: eligible inspector relocation beyond maximize/hide,
+  native-platform runtime captures, signed/private repository authentication and
+  curated-source presets, richer catalog facets/update comparison, automatic
+  local sandbox enforcement, file-sourced import preview and actionable welcome
+  count filters. Git hover actions remain explicit review/context-menu actions;
+  broad public marketplace adapters are not claimed.
+- First-release boundaries: one reusable Git review (no pinned comparisons),
+  whole-file staging, inspection/search-only human Board, bounded latest feedback/
+  exposure evidence views, text-only resource/prompt composer previews, and no
+  sampling/elicitation/task extensions/rich MCP apps. These are declared limits,
+  not functioning placeholder controls.
+- Held-out quality, prompt/permission interruption rates and provider-token costs
+  require separate measured evaluation. No SOTA parity claim follows from green
+  tests or a larger feature catalog.
 
 ## 1. Purpose and design boundary
 
@@ -23,8 +77,11 @@ decisions remain in their owning deck.
 
 The runtime plan remains authoritative for capability policy, pinned versions,
 passive resume, explicit board reads, and evidence-based memory. The proposed
-locations and defaults below need visual review before implementation. No old
-development schemas or presentation paths require compatibility code.
+locations and defaults below need visual review before implementation. The
+2026-10-01 direction requires existing local memory/session data to be manually
+aligned outside product code, with backups and preservation checks, not automatic
+compatibility upgrades. No legacy runtime or presentation path remains. Skills, MCP,
+Sources and Acquisition share the existing AI group after Memory in both scopes.
 
 ### 1.1 Direction incorporated from user review
 
@@ -166,18 +223,18 @@ The proposed rail order is Files, Agents, Source Control, Skills, MCP, with
 Settings pinned at the bottom. Skills and MCP are separate user concepts:
 instructions/invocation versus service connections/tools. Their discovery,
 versions, acquisition and grants still share one catalog. Do not add a redundant
-Capabilities rail entry above them. Board remains under Agents, Memory lives in
-the footer, and Terminals is removed from the rail entirely.
+Capabilities rail entry above them. Board and Memory live in the footer, and
+Terminals is removed from the rail entirely.
 
 | Entry | Default destination | Selection/detail behavior |
 |---|---|---|
 | Files | Left sidebar | Existing tree and file open behavior. |
-| Agents | Left sidebar | Existing roster plus a Board subview. Selecting an agent keeps existing open/restore behavior; a thread opens its dock inspector. |
+| Agents | Left sidebar | Existing roster only. Selecting an agent keeps existing open/restore behavior. |
 | Source Control | Left sidebar | Branch, filter, grouped changes and explicit review action. Open changes in the main-area Git review view. |
 | Skills | Left sidebar | Available workspace skills, invocation mode and current-session use when relevant; Inspect/Manage opens the exact Settings → Skills item. |
 | MCP | Left sidebar | Named connections and actual state; Inspect/Manage opens Settings → MCP; logs can open the workspace output inspector. |
 | Settings gear | Existing modal | Application Settings; Workspace Settings remains reachable from the gear menu/palette. |
-| Footer controls | Workspace bottom panel | Problems, Notices, Terminals, Memory, Workspace. Memory has its own stable labeled control. |
+| Footer controls | Workspace bottom panel | Problems, Notices, Terminals, Board, Memory, Workspace. Board and Memory have stable labeled controls. |
 
 “Selection” here separates inspection from execution. Arrows/hover do not open
 a manager or start an operation. Enter, double-click, or the visible Inspect
@@ -206,8 +263,8 @@ Git review and Settings can coexist with an open terminal or Memory panel.
   Do not shrink pointer targets just to fit more icons.
 - Badge meaning is explicit: Git counts distinct changed paths, Agents shows
   agent inventory as today, and Skills/MCP show actionable failures/requests
-  rather than catalog size or number installed. Board unread is labeled inside
-  Agents; it does not replace the agent count with a number of a different kind.
+  rather than catalog size or number installed. Board unread belongs inside the
+  Board panel; it does not replace the agent count with a number of a different kind.
   Counts never pulse.
 - A shared view menu offers only supported locations and Reset location. Git
   navigation and change review retain their sidebar/main-area relationship;
@@ -790,7 +847,7 @@ acceptance tests. Their controls must not be drawn as working placeholders.
 
 ## 9. Board, memory, and welcome
 
-Agents' Board subview identifies the collaboration before listing participants
+The footer Board panel identifies the collaboration before listing participants
 and threads. A thread opens in the workspace inspector with sender/recipient,
 type, replies, evidence and availability. Human unread and each agent's accepted
 read cursor are independent. Viewing a thread does not deliver it to an agent.

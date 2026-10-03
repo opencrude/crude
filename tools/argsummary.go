@@ -117,6 +117,9 @@ func SummarizeArgs(tool, argsStr string) string {
 		// The assignment is the useful operand. Raw launch arguments can include
 		// lengthy instructions and policy fields; neither belongs in a chat title.
 		if description := ExtractArg(argsStr, "description"); description != "" {
+			if category := subAgentCategoryLabel(ExtractArg(argsStr, "category")); category != "" {
+				return truncateLabel(category+" · "+description, 80)
+			}
 			return truncateLabel(description, 80)
 		}
 		if name := ExtractArg(argsStr, "name"); name != "" {
@@ -142,6 +145,28 @@ func SummarizeArgs(tool, argsStr string) string {
 		return ExtractArg(argsStr, "title")
 	case "update_memory", "forget_memory":
 		return ExtractArg(argsStr, "id")
+	case "capability_activate":
+		return ExtractArg(argsStr, "id")
+	case "board_post":
+		kind, to := ExtractArg(argsStr, "type"), ExtractArg(argsStr, "to")
+		if kind != "" && to != "" {
+			return kind + " → " + to
+		}
+		return firstOperand(kind, to)
+	case "board_read":
+		if thread := ExtractArg(argsStr, "thread"); thread != "" {
+			return "thread " + thread
+		}
+		if since := ExtractArg(argsStr, "since"); since != "" {
+			return "after #" + since
+		}
+		return ""
+	case "mcp_read_resource":
+		return joinOperands(ExtractArg(argsStr, "connection_id"), ExtractArg(argsStr, "uri"))
+	case "mcp_get_prompt":
+		return joinOperands(ExtractArg(argsStr, "connection_id"), ExtractArg(argsStr, "name"))
+	case "memory_feedback":
+		return ""
 	}
 	if tool == "grep_files" {
 		pattern := ExtractArg(argsStr, "pattern")
@@ -211,6 +236,50 @@ func SummarizeArgs(tool, argsStr string) string {
 		return "" // no structured payload is a safe fallback title
 	}
 	return truncateLabel(argsStr, 60)
+}
+
+func subAgentCategoryLabel(category string) string {
+	category = strings.TrimSpace(category)
+	if category == "" {
+		return ""
+	}
+	words := strings.Fields(strings.NewReplacer("-", " ", "_", " ").Replace(category))
+	for i, word := range words {
+		if word != "" {
+			words[i] = strings.ToUpper(word[:1]) + word[1:]
+		}
+	}
+	return strings.Join(words, " ")
+}
+
+// RetainsStructuredToolInput identifies tools whose result alone omits useful
+// authored content or attribution. Live events, canonical snapshots and batch
+// leaves retain their exact input before deriving a title; rendering never owns
+// or rewrites that audit evidence.
+func RetainsStructuredToolInput(name string) bool {
+	switch name {
+	case "board_post", "board_read", "remember", "recall_memory", "update_memory",
+		"forget_memory", "memory_feedback", "search_history", "capability_search",
+		"capability_activate", "mcp_read_resource", "mcp_get_prompt":
+		return true
+	}
+	return strings.HasPrefix(name, "mcp__")
+}
+
+func firstOperand(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func joinOperands(first, second string) string {
+	if first != "" && second != "" {
+		return first + " · " + second
+	}
+	return firstOperand(first, second)
 }
 
 func structuredArguments(value string) bool {

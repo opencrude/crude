@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -37,15 +38,30 @@ import (
 	settingsui "crude/tui/settings"
 	ttypes "crude/tui/types"
 	"crude/tui/ui"
+	"crude/tui/window"
 	"crude/tui/wm"
 	"crude/types"
 	"crude/workspace"
 )
 
 func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	m.syncMemoryBrowserLifecycle()
+	m.captureToolView()
+	previousView := m.toolLayout.Views[m.activityView.ID()]
 	previousEditor := m.logicalEditorFocus()
 	previousMode := m.editorSettings.AutoSave
 	model, command := m.update(msg)
+	m.syncMemoryBrowserLifecycle()
+	switch msg.(type) {
+	case tea.KeyPressMsg, tea.MouseClickMsg, tea.MouseWheelMsg, tea.MouseReleaseMsg:
+		m.captureToolView()
+		if !reflect.DeepEqual(previousView, m.toolLayout.Views[m.activityView.ID()]) {
+			m.toolLayoutVersion++
+		}
+	}
+	if m.toolLayoutVersion > m.toolLayoutSavedVersion && !m.toolLayoutSaving {
+		command = tea.Batch(command, m.queueToolLayoutSave())
+	}
 	m.updateSettingsWindowTitle()
 	if previousMode == types.AutoSaveEditorFocusChange && m.editorSettings.AutoSave == previousMode && previousEditor != nil &&
 		previousEditor.IsOpen() && previousEditor != m.logicalEditorFocus() && m.DirtyPromptPath == "" {
@@ -83,6 +99,9 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case workspace.StatusCenterHydratedMsg:
 		m.syncWorkspacePanels()
+		return m, nil
+	case agentResultFeedbackMsg:
+		m.handleAgentResultFeedback(msg)
 		return m, nil
 	case statusoverview.NavigateMsg:
 		return m, m.handleStatusOverviewNavigate(msg)
@@ -147,6 +166,12 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toggleWorkspacePanel(termdock.PanelNotices)
 		case "terminals":
 			m.toggleWorkspacePanel(termdock.PanelTerminal)
+		case "board":
+			return m, m.toggleBoardBrowser()
+		case "memory":
+			return m.toggleMemoryBrowser()
+		case "footer-more":
+			m.openFooterMenu()
 		}
 		return m, nil
 	case interactiveFrameMsg:
@@ -359,23 +384,34 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 
 	m.syncLSPStatusIssues()
 	m.syncAgentStatusInventory()
+	var launcherCmd tea.Cmd
+	if m.launcherHostVisible() {
+		launcherCmd = m.launcherCapabilitiesCmd(now)
+	} else if m.launcherCapabilityCancel != nil {
+		m.launcherCapabilityCancel()
+		m.launcherCapabilityCancel = nil
+		m.launcherCapabilitySequence++
+	}
 
 	// Status bar animations and popup reveals need their own content
 	// re-rendered even when main content hasn't changed.
 	if m.wantsFastTick() {
 		perf.SentinelTick()
-		return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, streamingTickCmd())
+		return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, launcherCmd, streamingTickCmd())
 	}
 	perf.SentinelTick()
-	return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, tickCmd())
+	return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, launcherCmd, tickCmd())
 }
 
 // wantsFastTick reports whether the 16 ms streaming tick is justified right
-// now: an agent/sub-pane is actively streaming, or a popup reveal animation
-// is mid-flight. An idle launcher does NOT qualify — it has no 60 Hz
+// now: an agent/sub-pane is actively streaming, a workspace load is pending,
+// or a popup reveal is mid-flight. An idle launcher does NOT qualify — it has no 60 Hz
 // animation, and a permanent 16 ms tick there repaints full 160x40 frames
 // (roughly a quarter CPU on an idle floating terminal).
 func (m *App) wantsFastTick() bool {
+	if m.launcherScreen != nil && m.launcherScreen.Loading() && m.launcherHostVisible() {
+		return true
+	}
 	// Streaming agents and unfinished sub-panes repaint at frame rate.
 	if m.anyActive() {
 		return true
@@ -392,6 +428,12 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	}
 
 	switch msg := msg.(type) {
+	case workspaceDeletePreviewMsg:
+		m.applyWorkspaceDeletePreview(msg)
+	case workspaceDeleteIntent:
+		cmds = append(cmds, m.handleWorkspaceDeleteIntent(msg))
+	case workspaceDeleteResultMsg:
+		m.applyWorkspaceDeleteResult(msg)
 	case sourceControlResultMsg:
 		if cmd := m.applySourceControlResult(msg); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -433,29 +475,25 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 				cmds = append(cmds, cmd)
 			}
 		}
-		if m.launcherScreen != nil {
-			if cmd := m.launcherScreen.HandleSearchDebounced(msg); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-		}
 	case launcher.ActivateMsg:
 		if m.launcherScreen == msg.Screen {
 			cmds = append(cmds, m.handleLauncherActivate(msg))
 		}
-	case launcher.DeleteMsg:
+	case launcher.CommandMsg:
 		if m.launcherScreen == msg.Screen {
-			cmds = append(cmds, m.handleLauncherDelete(msg))
+			cmds = append(cmds, m.handleLauncherCommand(msg))
 		}
 	case launcherWorkspacesMsg:
 		// Async workspace listing. Apply only the newest kick, and only if
 		// the launcher is still mounted (a session may have opened in the
 		// meantime). Applying keeps the user's filter/selection: SetData
 		// rebuilds items without resetting filter state.
-		if msg.Gen != m.launcherLoadGen.Load() || m.launcherScreen == nil {
+		if msg.Gen != m.launcherLoadGen.Load() || m.launcherScreen == nil || msg.Screen != m.launcherScreen {
 			break
 		}
-		m.launcherScreen.SetData(msg.Cwd, msg.Infos)
-		m.launcherScreen.SyncFocus()
+		m.launcherScreen.FinishLoad(msg.Cwd, msg.Infos, msg.Err)
+		m.rootHost.MarkLayout()
+		m.rootHost.Layout()
 	case workspaceTreeReadyMsg:
 		m.applyWorkspaceTreeReady(msg)
 	case workspace.LSPDiagnosticsMsg:
@@ -528,14 +566,20 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		if m.sessionPicker != nil && msg.Target == m.sessionPicker {
 			m.closeSessionPicker()
 		}
-	case memorybrowser.PinMsg:
-		m.handleMemoryBrowserPin(msg)
-	case memorybrowser.ForgetMsg:
-		m.handleMemoryBrowserForget(msg)
+	case memorybrowser.SearchMsg:
+		cmds = append(cmds, m.handleMemoryBrowserSearch(msg))
+	case memoryBrowserSearchResultMsg:
+		m.applyMemoryBrowserSearch(msg)
+	case memorybrowser.DetailMsg:
+		cmds = append(cmds, m.handleMemoryBrowserDetail(msg))
+	case memoryBrowserDetailResultMsg:
+		m.applyMemoryBrowserDetail(msg)
+	case memorybrowser.MutationMsg:
+		cmds = append(cmds, m.handleMemoryBrowserMutation(msg))
+	case memoryBrowserMutationResultMsg:
+		cmds = append(cmds, m.applyMemoryBrowserMutation(msg))
 	case memorybrowser.CancelMsg:
-		if m.memoryBrowser != nil && msg.Target == m.memoryBrowser {
-			m.closeMemoryBrowser()
-		}
+		m.handleMemoryBrowserCancel(msg)
 	case helpscreen.CancelMsg:
 		if m.helpScreen != nil && msg.Target == m.helpScreen {
 			m.closeHelp()
@@ -706,6 +750,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		if msg.Scope == ttypes.SettingsScopeWorkspace {
 			if err := m.SaveWorkspaceSettings(msg.Overrides); err != nil {
 				m.Feedback.NotifyError("Failed to save workspace settings: " + err.Error())
+				break
 			} else {
 				m.applyThemePreset(themePresetFromSettings(m.LoadAppSettings()))
 				m.applyEditorSettings(m.LoadAppSettings().Editor)
@@ -739,6 +784,88 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			}
 			return settingsui.AccountChangeResultMsg{Target: request.Target, Change: request.Change, Settings: settings, Err: err, WorkspaceGeneration: generation}
 		})
+	case capabilitySnapshotMsg:
+		m.applyCapabilitySnapshot(msg)
+	case launcherCapabilitiesMsg:
+		m.applyLauncherCapabilities(msg)
+	case capabilityPickerResultMsg:
+		m.applyCapabilityPickerResult(msg)
+	case toolLayoutMsg:
+		if msg.generation == m.workspaceSwitchGen.Load() && msg.version == m.toolLayoutVersion {
+			m.toolLayout = msg.layout
+			m.workspacePanelHeights = msg.layout.PanelHeights
+			m.activityBar.SetOrder(msg.layout.Rail)
+			m.setActivity(m.activityView, false)
+		}
+	case toolLayoutSaveMsg:
+		if msg.generation == m.workspaceSwitchGen.Load() {
+			m.toolLayoutSaveQueued = false
+			cmds = append(cmds, m.saveToolLayoutCmd())
+		}
+	case toolLayoutSavedMsg:
+		if msg.generation == m.workspaceSwitchGen.Load() {
+			m.toolLayoutSaving = false
+			m.toolLayoutSavedVersion = msg.version
+			if msg.err != nil {
+				m.Feedback.NotifyError("Layout was not saved: " + msg.err.Error())
+			}
+		}
+	case capabilityPollMsg:
+		if msg.generation == m.workspaceSwitchGen.Load() {
+			if _, exists := m.capabilityOperations[msg.sequence]; exists {
+				cmds = append(cmds, m.capabilitySnapshotCmd(), m.capabilityPollCmd(msg.generation, msg.sequence))
+			}
+		}
+	case capabilityContextMsg:
+		accepted := msg.generation == m.workspaceSwitchGen.Load() && msg.owner == m.ActiveSession && msg.agentID == m.activeAgentTabID() && msg.draft == m.Input.Value() && msg.result.Err == nil
+		if accepted {
+			m.Input.InsertReference(msg.reference)
+		} else if msg.result.Err == nil {
+			msg.result.Err = fmt.Errorf("composer ownership or draft changed; context was not attached")
+		}
+		if msg.result.Target == nil && msg.result.Err != nil {
+			m.Feedback.NotifyError(msg.result.Err.Error())
+		}
+		cmds = append(cmds, m.applyCapabilityResult(msg.result))
+	case boardResultMsg:
+		m.applyBoardResult(msg)
+	case gitReviewResultMsg:
+		cmds = append(cmds, m.applyGitReviewResult(msg))
+	case gitDiscardPreviewMsg:
+		if msg.generation != m.workspaceSwitchGen.Load() || msg.sequence != m.gitDiscardSequence || m.GitDiscardPending == nil || m.GitDiscardPending.Path != msg.change.Path || !m.overlayHost.IsOpen(ui.OverlayTreeDelete) {
+			break
+		}
+		if msg.err != nil {
+			m.Feedback.NotifyError(msg.err.Error())
+			m.overlayHost.Close(ui.OverlayTreeDelete)
+			break
+		}
+		m.gitDiscardPreview = &msg.preview
+		if window := m.overlayHost.Window(ui.OverlayTreeDelete); window != nil {
+			frame := m.buildGitDiscardFrame(msg.change)
+			width, height := frame.Measure(m.width, m.height)
+			window.Content = frame
+			window.SetSize(width, height)
+			window.MarkContentDirty()
+		}
+	case skillInvocationMsg:
+		if msg.workspace != m.workspaceSwitchGen.Load() || msg.sequence != m.skillInvocationSequence {
+			break
+		}
+		if msg.err != nil {
+			if m.activeAgentTabID() == msg.agentID && m.Input.Value() == "" {
+				m.Input.SetValuePreserveReferences(msg.draft)
+			}
+			m.Feedback.NotifyError(msg.err.Error())
+			break
+		}
+		cmds = append(cmds, m.recordPrompt(msg.draft, msg.input.ReferenceIDs...), m.submitPreparedInput(msg.agentID, msg.input))
+	case settingsui.CapabilityRequestMsg:
+		cmds = append(cmds, m.capabilityRequestCmd(msg))
+	case settingsui.CapabilityResultMsg:
+		if command := m.applyCapabilityResult(msg); command != nil {
+			cmds = append(cmds, command)
+		}
 	case settingsui.AccountChangeResultMsg:
 		if msg.WorkspaceGeneration != m.workspaceSwitchGen.Load() {
 			break
@@ -993,37 +1120,13 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			projection.deckHost.MarkLayout()
 		}
 	case question.ResultMsg:
-		if m.agentPrompt != nil && m.agentPrompt.question == msg.Target && !m.agentPrompt.inline {
-			m.resolveAgentQuestion(msg.Target, msg.Result, false)
-		} else {
-			m.resolveSessionQuestion(msg.Target, msg.Result, false)
-			if m.agentPrompt != nil && m.agentPrompt.question == msg.Target {
-				m.agentPrompt = nil
-				m.openNextAgentPrompt()
-			}
-		}
+		m.resolveAgentQuestion(msg.Target, msg.Result, false)
 	case question.CancelMsg:
-		if m.agentPrompt != nil && m.agentPrompt.question == msg.Target && !m.agentPrompt.inline {
-			m.resolveAgentQuestion(msg.Target, question.Result{}, true)
-		} else {
-			m.resolveSessionQuestion(msg.Target, question.Result{}, true)
-			if m.agentPrompt != nil && m.agentPrompt.question == msg.Target {
-				m.agentPrompt = nil
-				m.openNextAgentPrompt()
-			}
-		}
+		m.resolveAgentQuestion(msg.Target, question.Result{}, true)
 	case confirmation.ResultMsg:
-		m.resolveSessionConfirmation(msg.Target, msg.Choice)
-		if m.agentPrompt != nil && m.agentPrompt.confirmation == msg.Target {
-			m.agentPrompt = nil
-			m.openNextAgentPrompt()
-		}
+		m.resolvePromptConfirmation(msg.Target, msg.Choice)
 	case confirmation.CancelMsg:
-		m.cancelSessionConfirmation(msg.Target)
-		if m.agentPrompt != nil && m.agentPrompt.confirmation == msg.Target {
-			m.agentPrompt = nil
-			m.openNextAgentPrompt()
-		}
+		m.cancelPromptConfirmation(msg.Target)
 	case yolo.ResultMsg:
 		m.resolveSessionYolo(msg.Target, msg.Enabled)
 	case filetree.FileSelectedMsg:
@@ -1170,6 +1273,14 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 	if !tab.Closable {
 		return nil
 	}
+	if tab.Resource.Kind == window.ResourceGitReview {
+		wasActive := m.Win.ActiveTab() != nil && m.Win.ActiveTab().ID == tab.ID
+		m.Win.CloseTab(index)
+		if wasActive {
+			m.returnFromGitReview()
+		}
+		return nil
+	}
 
 	if m.isAgentTabTitle(tab.Title) {
 		agentID := m.agentIDFromTabTitle(tab.Title)
@@ -1220,6 +1331,7 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 // active would break the renderer's region classification and cause
 // Ctrl+Q to attempt a no-op close instead of quitting.
 func (m *App) handleTabSwitch() {
+	defer m.openNextAgentPrompt()
 	// Always reset before re-deriving. This is the single source of
 	// truth for which view is active.
 	prevEditorPath := m.EditorState.ActiveView
@@ -1230,6 +1342,10 @@ func (m *App) handleTabSwitch() {
 	if activeTab == nil {
 		// Closing the last tab returns to launcher. No editor owns the
 		// view anymore, so a bound popover cannot stay mounted either.
+		m.closeFindReplaceForTab(prevEditorPath, "")
+		return
+	}
+	if activeTab.Resource.Kind == window.ResourceGitReview {
 		m.closeFindReplaceForTab(prevEditorPath, "")
 		return
 	}

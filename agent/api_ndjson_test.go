@@ -66,7 +66,7 @@ func TestConfiguredAgentCompactsWithCurrentModelAtThreshold(t *testing.T) {
 		}
 		bodies = append(bodies, body)
 		w.Header().Set("Content-Type", "application/x-ndjson")
-		if requestCount.Add(1) <= int32(len(compactionStages)) {
+		if requestCount.Add(1) <= int32(len(compactionStagesForTest)) {
 			encoded, _ := json.Marshal("- compact stage: preserved facts")
 			_, _ = fmt.Fprintf(w, `{"model":"llama3","message":{"role":"assistant","content":%s},"done":true,"done_reason":"stop","prompt_eval_count":100000,"eval_count":100}`+"\n", encoded)
 			return
@@ -88,7 +88,7 @@ func TestConfiguredAgentCompactsWithCurrentModelAtThreshold(t *testing.T) {
 	}
 	largeHistory = append(largeHistory, provider.NewTextMessage("user", "current instruction must survive"))
 	archive := a.Run(context.Background(), largeHistory, "system", func(AgentEvent) {}, nil, "", nil)
-	if len(bodies) != len(compactionStages)+1 || len(bodies[0]) < 400000 || !strings.Contains(string(bodies[0]), "compaction") ||
+	if len(bodies) != len(compactionStagesForTest)+1 || len(bodies[0]) < 400000 || !strings.Contains(string(bodies[0]), "compaction") ||
 		!strings.Contains(string(bodies[0]), "request 0") {
 		t.Fatalf("summary request did not retain cached context: requests=%d sizes=%v", len(bodies), []int{len(bodies[0]), len(bodies[1])})
 	}

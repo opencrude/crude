@@ -32,7 +32,8 @@ fill. The shared `ui.FormField` painter owns this rule for every consumer.
 | `PopupButton` / `PopupButtonRow` | same Button + ActionBar |
 | Agent question actions | native `ui.ActionBar` in `tui/screens/question` | same |
 | Tool confirmation / YOLO actions | native PanelDeck `ui.ActionBar` with typed quick keys and Escape actions | same |
-| Footer workspace-panel controls | `tui/screens/shellfooter` | Contiguous theme-derived strip: `Problems`, `Notices`, `Terminals`, `Workspace`, with color boundaries and no gaps. `TokenSet.StatusStripColors` blends each hue into the current shell theme: idle / attention / open-panel weights are 55% / 75% / 90%, with WCAG-contrasting ink and bold active labels. Problems uses error/warning only for real issues; unread notices, live terminals, and background work/input change their controls' color or strength. Previous sessions are actual searchable, date-grouped rows inside Workspace, resumed directly without a picker popup. |
+| Background command termination | One retained `ui.Button` per running row, with exact command identity; compact close label only when constrained. Opens passively; explicit interaction alone retains button focus. | same |
+| Footer workspace-panel controls | `tui/screens/shellfooter` | Contiguous theme-derived strip in order: `Problems`, `Notices`, `Terminals`, `Board`, `Memory`, `Workspace`. Board and Memory are workspace-wide and remain available without an active agent. The selected destination, actionable attention, Board, Memory and Workspace take priority when space is constrained; a reserved `More` target exposes every destination without clipped pills. Previous sessions are searchable date-grouped rows inside Workspace. |
 
 ## Collections
 
@@ -40,16 +41,19 @@ fill. The shared `ui.FormField` painter owns this rule for every consumer.
 |---------|--------|
 | Command palette list | sectioned VirtualList |
 | File tree | `ui.Tree` via `shelltree` |
-| Activity lists (Agents / Terminals / Git) | `ui.List` via `activitylist` |
+| Activity lists (Agents / Skills / MCP) | `ui.List` via `activitylist`; Source Control has its own grouped change list. Terminals live in the workspace dock/picker, never in the activity rail. |
 | Message list | ✅ `chatprojection.Renderer` export; `shellchat` paints message-level `ui.VirtualList`; all rows native `PaintLine` (markdown/thinking bridged at render time via `BridgeAnsiLine`); main `ScrollbarControl` |
 | Context menu | `ui/overlay.ContextMenu` / WindowFrame + List |
-| Tabs | `ui.Tabs` only for actual content/mode tabs — consumers include `shelltabs` (main tab bar) and `ui/panel_deck.go` (session deck). Provider templates use a table and focused editor, not tab pages. Application/Workspace scope is a two-option, background-selected `ui.ToggleButton` switch aligned on the same row as Save/Cancel; one full-width separator sits directly above that footer row. It is not a tab strip. The workspace panel has no duplicate mode strip; terminal instances use a right-side `ui.List` rail. |
+| Tabs | `ui.Tabs` only for actual content/mode tabs — consumers include `shelltabs` (main tab bar), `ui/panel_deck.go` (session deck), and `termdock` (compact numbered terminal instances). Provider templates use a table and focused editor, not tab pages. Application/Workspace scope is a two-option, background-selected `ui.ToggleButton` switch aligned on the same row as Save/Cancel; one full-width separator sits directly above that footer row. It is not a tab strip. The workspace panel has no duplicate destination strip; the footer owns dock switching. |
 | File picker entries | native `ui.List` |
 | Session picker | native `ui.List` section headers + `ScrollbarControl` (`tui/screens/sessionpicker`) |
 | Find in Files results | native `ui.VirtualList` + `ui.ScrollbarControl` |
-| Launcher workspaces | VirtualList + SearchField + ScrollbarControl; shared pane viewport geometry |
+| Launcher workspaces | VirtualList name/path pairs with non-interactive separator rows in the right pane; dedicated-row FilterField, ScrollbarControl and ProgressRule; one shared row stride drives paint, scrolling and context menus |
 | LSP popup lists | List |
 | Agent question choices | native Form select/multi-select collection | List-backed form collection |
+| Skills/MCP catalogs | retained Installed/Discover `ui.Tabs`, `FilterField`, `Table`, detail `Form`/read-only `TextArea`, contained skill `Tree`, and bounded bottom actions; scope stays in the separate Application/Workspace footer switch |
+| Composer capability selection | `capabilitypicker.Screen` in WindowFrame, Skills/Tools/Resources/Prompts tabs, native FilterField/List/Form/TextArea; visible + Capability control and palette, explicit preview before staged context |
+| Memory / Board | retained workspace-panel owners, native knowledge/episodes or threads/participants tabs, search and scrollable copyable evidence detail; tabs/title share their first row with host controls, browse search and local actions share a row, narrow rows expose local actions through a same-row More button and accessible list; no floating memory overlay or session-deck mount |
 
 ### Tab bar contract (one look)
 
@@ -78,6 +82,12 @@ selects only the background the strip sits on (shell `ColorBg` vs popup
   its close glyph. A strip that does not fit shrinks
   toward `tabMinW` (8) and then scrolls to keep the active tab visible; arrows
   wrap (Left from the first tab selects the last).
+- **Overflow browsing** uses wheel/trackpad left/right, wheel up/down over the
+  strip, and visible `‹` / `›` controls. Scrolling browses without selecting a
+  different tab and survives repaint and same-active projection updates. A new
+  selection reveals itself; Home/End select and reveal the first/last tab.
+  A supplied compact label is used before shrinking, and short labels never
+  expand to the eight-column shrink floor.
 - **The baseline row always starts at the strip's own left edge.** The rule is
   the row's spine and so is the active underline: both reach the row start, never
   begin inside the row with empty columns to their left. Inset the strip's
@@ -97,8 +107,12 @@ selects only the background the strip sits on (shell `ColorBg` vs popup
   publishes the row geometry (`SetRuleFullBleed` + `SetRuleBleed`) so the
   baseline still reaches the row edge while labels stay on the content rail.
   The shell tab bar and session deck span their row and need no bleed. Settings
-  scope is not a tab strip. Terminal mode has no horizontal strip; its action glyphs sit
-  above the PTY and its instance list is vertical on the right.
+  scope is not a tab strip. Terminal mode places compact numbered instance tabs
+  beside its action glyphs on one label row, with a full-width baseline and PTY
+  body. Terminal labels use suffix numbers (`Terminal 1`, `Terminal 2`); their
+  title portion truncates within 16 columns while retaining the number. Cramped
+  strips use `T 1`, `T 2`, … before shared overflow scrolling. The picker keeps
+  the same numbers and names Docked/Floating placement instead of raw enum values.
 - **Icons are not painted in tab bars.** Window tab icons live in `window.Tab`
   (disambiguation) and are deliberately not plumbed into the strip — glyph tofu
   risk. Labels are the only tab content.
@@ -110,7 +124,7 @@ selects only the background the strip sits on (shell `ColorBg` vs popup
 | File tree vs main view | `ui.SplitDivider` in `shelltree` / `activitylist` + `split.resize` → `Tree.Width` |
 | Settings rail vs form | `ui.SplitModel` + `SplitDivider` on `WorkspaceSettingsSurface` |
 | Find in Files results vs preview | vertical `ui.SplitModel` + `SplitDivider` |
-| Launcher left vs workspaces | `ui.SplitDivider` replacing the paint-only `vDivider` |
+| Launcher left pane vs recent workspaces | Wide: full-width New Session, then `ui.SplitModel` + `SplitDivider`; New Workspace starts the left pane and Skills/MCP split its remaining height equally after one blank row, while recent workspaces occupies the right. Cramped: actions stack with one blank row, capability pane hides, recent workspaces becomes full width. |
 | Two-child containers | `ui.SplitPane` (owns model + divider, Host capture) |
 
 ## Scrollbars
@@ -219,12 +233,12 @@ API: `HasPointerCapture()`, `CancelPointerCapture()` on each product Host;
 |------------------|-----------|-------|
 | Shell tree keyboard (expand/collapse/Home/End/filter/Esc) | `tui/screens/shelltree/tree_contract_test.go` | Host-level table; filter typing; visible row/selection/expand state |
 | Tree focus + filter routing (viewmodel) | `tui/viewmodel/tree_focus_contract_test.go`, `tree_filter_contract_test.go` | sidebarHost gating, two-step Esc, Ctrl+C not back, hidden tree, open-once |
-| Overlay click-outside (18 product overlays) | `tui/viewmodel/overlay_click_outside_contract_test.go` | Full policy matrix (18) ≠ real-opener integration; matrix via `handlePopupClickOutside`; one `dispatchMouseClick` path per policy group |
+| Overlay click-outside (20 static product overlays) | `tui/viewmodel/overlay_click_outside_contract_test.go` | Full declared policy matrix plus real-opener integration by policy group; includes the modal capability picker. Dynamic terminal owners use separate IDs. |
 | Shell header | `tui/screens/shellheader/header_contract_test.go` | **Display-only** — `Handle` no-op |
 | Shell status hints | `tui/screens/shellstatus/status_contract_test.go` | **Display-only** Screen; chords via ActionRegistry |
 | Status hint chords (save/undo) | `tui/viewmodel/status_keyboard_contract_test.go` | `dispatchEditorKey` + `Text: "ctrl+…"` form |
 | Shell tabs / input | `tui/screens/shelltabs/tabs_contract_test.go`, `shellinput/input_contract_test.go` | Prior pass |
-| Welcome launcher | `tui/screens/launcher/launcher_contract_test.go`, `tui/viewmodel/launcher_keyboard_contract_test.go` | Filter `/` once, Backspace/Esc, nav bounds, PgUp/PgDn/Home/End, workspace scroll, Enter activation, Ctrl+C noop, global Ctrl+B/Ctrl+Alt+P, min-size hidden gate |
+| Welcome launcher | `tui/screens/launcher/composition_test.go`, `tui/screens/launcher/interaction_test.go`, `tui/screens/launcher/capabilities_test.go`, `tui/viewmodel/launcher_lifecycle_test.go` | Wide full-width New Session with New Workspace back in the left pane above an equal-height Skills/MCP split; cramped stacked actions with hidden capabilities and full-width Recent workspaces; bottom-pinned guide, dedicated search, quiet separators, filter/paste/Esc, independent scrolling, owner-safe async loading/error/retry, named live capabilities, context delete/undo |
 | Session PanelDeck (docked) | `tui/viewmodel/panel_deck_contract_test.go`, `tui/viewmodel/session_deck_test.go`, screen `*_test.go` | Blocking capture, settings Esc/Tab, confirmation `y`/Esc, question cancel, YOLO Esc, passive background jobs, session isolation |
 | Help overlay | `tui/screens/help/help_test.go`, `tui/viewmodel/help_test.go` | Modal Ignore; live catalog; F1 toggle; Esc closes; `/help` does not dump into chat |
 | Agent chat list | `tui/screens/shellchat/scroll_contract_test.go`, `host_test.go`, `tui/viewmodel/chat_keyboard_contract_test.go`, `host_capture_test.go`, `mouse_capture_test.go` | PgUp/PgDown/Home/End, wheel disarm/re-arm, scrollbar drag, selection copy once, capture teardown, input-empty routing |

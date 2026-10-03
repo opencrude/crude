@@ -29,12 +29,16 @@ Read that first; this index only organizes the reference material.
 
 ### Reference
 
+- [Model prompts and project guidance](reference/prompt-architecture.md) - the
+  canonical ownership/development contract, direct package APIs, bounded
+  instruction intake, profile overlays, provider adapters, and continuity rules.
 - [Adaptive context handling](reference/adaptive-context.md) — request budgeting,
   complete oversized-source extraction, atomic recovery, and harness comparison.
 - [Agent orchestration](reference/agent-orchestration.md) — bounded delegation,
-  evidence-based handoffs, completion delivery, and external design references.
-- [Codex tools and GPT profiles](reference/codex-tools.md) — native patch,
-  command, prompt, permission, and history contracts.
+  evidence-based handoffs, completion delivery, and links to the canonical prompt
+  architecture contract.
+- [Codex tool adapters](reference/codex-tools.md) — native patch, command,
+  permission, wire, and history contracts under the canonical Crude prompt.
 - [Chat activity projection](reference/chat-activity.md) — grouped, expandable
   tool activity with matching live and recovered transcript behavior.
 - [Terminal display width](reference/terminal-width.md) — canonical Unicode
@@ -48,6 +52,8 @@ Read that first; this index only organizes the reference material.
   their `tui/ui` implementations.
 - [Settings layers](reference/settings.md) — the three-level settings model
   (app → workspace → session) and what each layer owns.
+- [Workspace board library](../board/README.md) — membership, retry deduplication,
+  explicit durable context acceptance, human unread, search and archival.
 - [In-app terminals](reference/in-app-terminals.md) — the embedded terminal
   multiplexer: libghostty-vt PTY engine, pinned Ghostty environment.
 - [Performance baselines](reference/performance-baselines.md) — recorded paint
@@ -66,6 +72,8 @@ Read that first; this index only organizes the reference material.
 
 - [Component authoring](guides/component-authoring.md) — recipes for building
   TUI screens with the native `tui/ui` component system.
+- [Capability workflows](guides/capability-workflows.md) — manual Skills/MCP,
+  composer selection, Board, workspace Memory, Git review and validated limits.
 
 ### Plans (historical — check the status header before acting on them)
 
@@ -82,12 +90,15 @@ Read that first; this index only organizes the reference material.
 - [Memory architecture proposal](plans/memory-architecture-proposal.md) —
   superseded proposal; native workspace memory is implemented.
 - [Agent capabilities, shared board, and evidence-based memory plan](plans/agent-capabilities-board-memory-plan.md)
-  — **IN PROGRESS** proposal for automatic skills and MCP acquisition,
-  agent communication, and memory improvements informed by Kilo and RRSI.
+  — **LANDED** core runtime/product implementation and acceptance for skills,
+  managed MCP, shared communication and evidence memory informed by Kilo and RRSI.
 - [Workspace tools, capabilities, and TUI interaction plan](plans/workspace-tools-capabilities-tui-plan.md)
-  — **IN PROGRESS** revision 2: calmer Git sidebar with main-area review,
+  — **LANDED** revision 2 core: calmer Git sidebar with main-area review,
   Skills/MCP settings catalogs and manual commands, terminal rail removal,
   workspace Memory footer access, dock ownership and interaction acceptance.
+- [Shared board live communication assessment](plans/shared-board-live-assessment.md)
+  — **DONE** two live agents: board-only behavior revision, sibling verification,
+  authority boundaries, timing/overhead, and coordination limitations.
 - [Provider config plan](plans/provider-config-plan.md) — superseded by the
   capability-based provider protocol rework.
 - [Chat projection handoff](plans/chat-projection-handoff.md) — **ACTIVE
@@ -151,6 +162,11 @@ docs-check`). A docs change that breaks them fails the build.
    narrative docs.
 8. **No orphan docs.** Every file under `docs/` must be reachable from this
    index. `docs_check.sh` fails on orphans.
+9. **One current contract per topic.** Link current references from related docs
+   and historical plans instead of copying policy or silently treating old plans
+   as implementation truth. Prompt changes must update
+   [model prompts and project guidance](reference/prompt-architecture.md) and the
+   root agent rules; document tested guarantees and explicit limits separately.
 
 ## Acceptance gate
 
