@@ -51,7 +51,7 @@ func TestCompactOversizedHistoryWithSmallerExtractionModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if calls.Load() <= int32(len(compactionStages)) || result.AfterTokens >= result.BeforeTokens {
+	if calls.Load() <= int32(len(compactionStagesForTest)) || result.AfterTokens >= result.BeforeTokens {
 		t.Fatalf("compaction did not adapt: calls=%d result=%+v", calls.Load(), result)
 	}
 	var sawStart, sawEnd bool
@@ -68,7 +68,7 @@ func TestCompactOversizedHistoryWithSmallerExtractionModel(t *testing.T) {
 	if err != nil || string(unchanged) != string(original) {
 		t.Fatalf("source changed: %v", err)
 	}
-	if len(result.Messages) != 2 || result.Messages[1].ContentString() != history[1].ContentString() {
+	if len(result.Messages) != 3 || result.Messages[1].ContentString() != history[1].ContentString() || result.Messages[2].EffectiveOrigin() != provider.OriginRuntimeContext {
 		t.Fatalf("latest human request was not retained: %+v", result.Messages)
 	}
 }
@@ -337,7 +337,7 @@ func TestCompactSizesHugeHumanInputForContinuationModel(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.AfterTokens >= 20_000 || len(result.Messages) != 1 || !strings.Contains(result.Messages[0].ContentString(), "write_report") {
+	if result.AfterTokens >= 20_000 || len(result.Messages) != 2 || !strings.Contains(result.Messages[0].ContentString(), "write_report") || result.Messages[1].EffectiveOrigin() != provider.OriginRuntimeContext {
 		t.Fatalf("oversized assignment defeated continuation budget: %+v", result)
 	}
 	if assignment.ContentString() == "" || !strings.Contains(assignment.ContentString(), "parent assignment") {
@@ -388,7 +388,7 @@ func TestExtractorLearnsFromReportedUsage(t *testing.T) {
 	agent := newTestAgent(t, connection, connection.Model)
 	extractor := compactionExtractor{
 		agent: agent, ctx: context.Background(), emit: func(AgentEvent) {}, requestID: "calibration", role: "root",
-		stage: compactionStages[0], system: provider.NewTextMessage("system", "system"),
+		stage: compactionStagesForTest[0], system: provider.NewTextMessage("system", "system"),
 		common: provider.NewTextMessage("user", "extract factual source"), inputBudget: 55_000, capacityBudget: 55_000, outputBudget: 2000,
 	}
 	source := []provider.ChatMessage{provider.NewTextMessage("assistant", strings.Repeat("evidence ", 5000))}

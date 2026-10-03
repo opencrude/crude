@@ -148,7 +148,7 @@ func TestParallelSubAgentFailureUsesChildOutcome(t *testing.T) {
 		t.Fatalf("parallel child rows: %+v", rows)
 	}
 	text := strings.Join(rows[0].Lines, "\n")
-	if !strings.Contains(text, "Sub-agent timed out Lily sub Dawn") || strings.Contains(text, "Sub-agent finished") || strings.Contains(text, `"category"`) || strings.Contains(text, "**Status:**") {
+	if !strings.Contains(text, "Sub-agent timed out Lily sub Dawn · Researcher") || strings.Contains(text, "Sub-agent finished") || strings.Contains(text, `"category"`) || strings.Contains(text, "**Status:**") {
 		t.Fatalf("parallel child outcome rendered incorrectly: %q", text)
 	}
 	if !strings.Contains(text, "× ") || activityEligible(r.activityMessages["batch:0"]) {

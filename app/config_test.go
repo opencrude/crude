@@ -229,7 +229,7 @@ func TestSafetySettingsRoundTripThroughFileConfig(t *testing.T) {
 		AutoPermission: typesmodel.AutoPermissionSettings{
 			Enabled: "on", Provider: "openai", Model: "gpt-5-mini", DenyMode: "deny",
 			Instructions: "Never approve deployment commands.", TimeoutSeconds: 11,
-			MaxOutputTokens: 80, MaxInputBytes: 2048, MaxReviewsPerTurn: 7,
+			MaxOutputTokens: 80, MaxInputBytes: 64 << 10,
 		},
 	}}
 	fc := DefaultFileConfig()
@@ -242,7 +242,7 @@ func TestSafetySettingsRoundTripThroughFileConfig(t *testing.T) {
 	auto := got.AutoPermission
 	if auto.Enabled != "on" || auto.Provider != "openai" || auto.Model != "gpt-5-mini" || auto.DenyMode != "deny" ||
 		auto.Instructions != "Never approve deployment commands." || auto.TimeoutSeconds != 11 ||
-		auto.MaxOutputTokens != 80 || auto.MaxInputBytes != 2048 || auto.MaxReviewsPerTurn != 7 {
+		auto.MaxOutputTokens != 80 || auto.MaxInputBytes != 64<<10 {
 		t.Fatalf("auto permission round-trip = %#v", auto)
 	}
 }

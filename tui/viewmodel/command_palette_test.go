@@ -382,7 +382,7 @@ func TestPaletteEntriesSkipDisplayOnly(t *testing.T) {
 		"tabbar.previous", "tabbar.next", "tabbar.select", "tabbar.unfocus",
 		"list.open", "list.navigate", "list.preview.navigate", "list.open.mouse",
 		"overlay.close", "search.regex.toggle",
-		"launcher.filter", "launcher.filter.clear", "launcher.delete",
+		"launcher.filter", "launcher.filter.clear",
 		"input.history", "input.cancel",
 	}
 	byID := make(map[string]bool, len(entries))
@@ -407,8 +407,8 @@ func TestPaletteIncludesNewCommands(t *testing.T) {
 		"search.project.open", "search.project.replace",
 		"edit.undo", "edit.redo", "edit.find", "edit.replace",
 		"view.toggle.sidebar", "view.focus.sidebar", "view.focus.editor", "view.focus.chat",
-		"view.activity.files", "view.activity.agents", "view.activity.terminals", "view.activity.git",
-		"terminal.new", "terminal.toggle",
+		"view.activity.files", "view.activity.agents", "view.activity.skills", "view.activity.mcp", "view.activity.git",
+		"terminal.new", "terminal.toggle", "terminal.picker", "skills.manage", "mcp.manage", "board.browse",
 		"tabs.next", "tabs.previous",
 		"agent.orchestrator.reset",
 		"agent.toggle.multiagent", "agent.cancel", "agent.newSession",
@@ -544,7 +544,7 @@ func TestDisplayOnlyPreservedForFeedback(t *testing.T) {
 		"tabbar.previous", "tabbar.next", "tabbar.select", "tabbar.unfocus",
 		"list.open", "list.navigate", "list.preview.navigate", "list.open.mouse",
 		"overlay.close", "search.regex.toggle",
-		"launcher.filter", "launcher.filter.clear", "launcher.delete",
+		"launcher.filter", "launcher.filter.clear",
 	}
 	for _, id := range required {
 		a := reg.Get(ui.ActionID(id))

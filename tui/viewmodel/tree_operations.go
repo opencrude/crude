@@ -376,9 +376,13 @@ func (m *App) handleTreeDeleteConfirmKey(msg tea.KeyPressMsg) tea.Cmd {
 
 func (m *App) confirmTreeDelete() {
 	if m.GitDiscardPending != nil {
-		change := *m.GitDiscardPending
+		if m.gitDiscardPreview == nil {
+			m.Feedback.NotifyError("Exact discard preview is still loading; no files changed")
+			return
+		}
+		preview := *m.gitDiscardPreview
 		m.overlayHost.Close(ui.OverlayTreeDelete)
-		m.startSourceControlMutation(m.discardGitChange(change))
+		m.startSourceControlMutation(m.discardGitChange(preview))
 		return
 	}
 	path := m.TreeDeletePending

@@ -1,9 +1,45 @@
 package sessiondb
 
 import (
+	"context"
 	"database/sql"
 	"time"
 )
+
+type TurnState struct {
+	AgentID    string `json:"agent_id"`
+	Generation uint64 `json:"generation"`
+	Origin     string `json:"origin"`
+	State      string `json:"state"`
+}
+
+// Each root or child DB owns one session's turns. Orchestrator IDs may change
+// across lifetimes; session identity, not a newly allocated UI ID, scopes this read.
+func LatestTurnStates(ctx context.Context, db *sql.DB, sessionID string) (latest, human *TurnState, err error) {
+	if db == nil {
+		return nil, nil, nil
+	}
+	rows, err := db.QueryContext(ctx, `SELECT agent_id, generation, origin, state FROM agent_turns
+		WHERE session_id=? ORDER BY started_at DESC, generation DESC`, sessionID)
+	if err != nil {
+		return nil, nil, err
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var turn TurnState
+		if err := rows.Scan(&turn.AgentID, &turn.Generation, &turn.Origin, &turn.State); err != nil {
+			return nil, nil, err
+		}
+		if latest == nil {
+			latest = &turn
+		}
+		if turn.Origin == "human" || turn.Origin == "btw" {
+			human = &turn
+			break
+		}
+	}
+	return latest, human, rows.Err()
+}
 
 const (
 	TurnRunning     = "running"

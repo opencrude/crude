@@ -1,6 +1,10 @@
 package workspace
 
-import "crude/session"
+import (
+	"strings"
+
+	"crude/session"
+)
 
 // AgentDisplayLabel returns a human-readable presentation label for an agent
 // node. Internal IDs are never returned — callers must omit the UI parenthetical
@@ -35,4 +39,26 @@ func CategoryDisplayName(category string) string {
 	default:
 		return ""
 	}
+}
+
+// SubAgentActivityLabel is the canonical compact identity stored on the
+// parent's tool row. Persisted display snapshots retain this exact label, so
+// hydrated chat cannot drift from the live projection.
+func SubAgentActivityLabel(name, category, task string) string {
+	label := strings.TrimSpace(name)
+	if role := CategoryDisplayName(category); role != "" {
+		if label != "" {
+			label += " · " + role
+		} else {
+			label = role
+		}
+	}
+	if task = strings.TrimSpace(task); task != "" {
+		if label != "" {
+			label += " — " + task
+		} else {
+			label = task
+		}
+	}
+	return label
 }

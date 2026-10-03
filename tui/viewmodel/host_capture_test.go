@@ -9,6 +9,7 @@ import (
 
 	"crude/tui/chatprojection"
 	"crude/tui/editor"
+	"crude/tui/screens/launcher"
 	"crude/tui/screens/shellchat"
 	ttypes "crude/tui/types"
 )
@@ -100,10 +101,8 @@ func TestRootHostCapture_LauncherHiddenByAgent(t *testing.T) {
 	app.Tree.Visible = false
 	app.paintShellFrame()
 
-	layout := app.computeLayout()
-	localX := layout.InnerW*40/100 + 7
-	localY := 8
-	res := app.rootHost.Handle(tea.MouseClickMsg{X: layout.SidebarW + layout.PadLR + localX, Y: layout.ChatAreaTop + localY, Button: tea.MouseLeft})
+	rect, _ := app.rootHost.ScreenRect(launcher.WorkspaceListID)
+	res := app.rootHost.Handle(tea.MouseClickMsg{X: rect.X + 1, Y: rect.Y, Button: tea.MouseLeft})
 	if !res.Handled || !app.rootHost.HasPointerCapture() {
 		t.Fatal("launcher click should capture pointer")
 	}
@@ -124,13 +123,8 @@ func TestRootHostCapture_LauncherHiddenByMinSize(t *testing.T) {
 	app.Tree = NewTreeState(nil, 30)
 	app.paintShellFrame()
 
-	layout := app.computeLayout()
-	localX := layout.InnerW*40/100 + 3 + 2 + 2
-	if localX >= layout.InnerW {
-		localX = layout.InnerW - 2
-	}
-	localY := 4 + 1 + 2 + 1
-	res := app.rootHost.Handle(tea.MouseClickMsg{X: layout.SidebarW + layout.PadLR + localX, Y: layout.ChatAreaTop + localY, Button: tea.MouseLeft})
+	rect, _ := app.rootHost.ScreenRect(launcher.WorkspaceListID)
+	res := app.rootHost.Handle(tea.MouseClickMsg{X: rect.X + 1, Y: rect.Y, Button: tea.MouseLeft})
 	if !res.Handled || !app.rootHost.HasPointerCapture() {
 		t.Fatal("launcher click should capture pointer")
 	}

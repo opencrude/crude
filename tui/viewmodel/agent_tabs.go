@@ -136,6 +136,14 @@ func (m *App) cleanupAgent(agentID string) {
 
 	// Workspace.CloseAgent needs the tree and session ownership maps intact
 	// to route backend cancellation and persist a recoverable session row.
+	for _, state := range append([]*agentPromptState(nil), m.agentPrompts...) {
+		for _, id := range ids {
+			if state.request.agentID == id {
+				m.removeAgentPrompt(state)
+				break
+			}
+		}
+	}
 	m.CloseAgent(agentID)
 	if m.AgentMgr != nil {
 		m.AgentMgr.Remove(agentID)
@@ -197,6 +205,9 @@ func (m *App) completeSubAgent(agentID string) {
 	n := m.AgentMgr.Get(agentID)
 	if n == nil || n.State == nil {
 		return
+	}
+	for _, id := range agentSubtreeIDs(n) {
+		m.dismissAgentPromptFor(id)
 	}
 	if n.State.Completed {
 		return

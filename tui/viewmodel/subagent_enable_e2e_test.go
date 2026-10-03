@@ -32,11 +32,18 @@ func TestEnableSubAgentsMidSessionSurfacesChildren(t *testing.T) {
 			var releaseOnce sync.Once
 			release := func() { releaseOnce.Do(func() { close(releaseChildren) }) }
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/models") {
+					w.Header().Set("Content-Type", "application/json")
+					_, _ = fmt.Fprint(w, `{"data":[{"id":"parent-model"},{"id":"child-model"}]}`)
+					return
+				}
 				var request struct {
 					Model string `json:"model"`
 				}
 				if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-					t.Error(err)
+					if r.Context().Err() == nil {
+						t.Errorf("%s %s: %v", r.Method, r.URL.Path, err)
+					}
 					return
 				}
 				w.Header().Set("Content-Type", "text/event-stream")

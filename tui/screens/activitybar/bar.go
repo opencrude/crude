@@ -50,6 +50,7 @@ const ScreenID ui.ComponentID = "activitybar"
 const (
 	ActionSelect   = "activity.select"
 	ActionSettings = "activity.settings"
+	ActionOverflow = "activity.overflow"
 )
 
 // View is one activity-bar destination.
@@ -58,18 +59,36 @@ type View int
 const (
 	ViewFiles View = iota
 	ViewAgents
-	ViewTerminals
 	ViewGit
+	ViewSkills
+	ViewMCP
 )
+
+func (view View) ID() string {
+	switch view {
+	case ViewAgents:
+		return "agents"
+	case ViewGit:
+		return "git"
+	case ViewSkills:
+		return "skills"
+	case ViewMCP:
+		return "mcp"
+	default:
+		return "files"
+	}
+}
 
 func (v View) Label() string {
 	switch v {
 	case ViewAgents:
 		return "Agents"
-	case ViewTerminals:
-		return "Terminals"
 	case ViewGit:
 		return "Source Control"
+	case ViewSkills:
+		return "Skills"
+	case ViewMCP:
+		return "MCP"
 	default:
 		return "Explorer"
 	}
@@ -85,10 +104,12 @@ func (v View) Icon(nerdFont bool) string {
 			// nf-fa-android. nf-fa-robot (U+F544) is a down-arrow in Nerd
 			// Fonts 2.x, where that cell is still Material Design Icons.
 			return "\uf17b"
-		case ViewTerminals:
-			return "\uf120" // nf-fa-terminal
 		case ViewGit:
 			return "\uf418" // nf-oct-git_branch
+		case ViewSkills:
+			return "\uf02d"
+		case ViewMCP:
+			return "\uf1e6"
 		default:
 			return "\uf07b" // nf-fa-folder
 		}
@@ -96,10 +117,12 @@ func (v View) Icon(nerdFont bool) string {
 	switch v {
 	case ViewAgents:
 		return "◈"
-	case ViewTerminals:
-		return "▸"
 	case ViewGit:
 		return "⑂"
+	case ViewSkills:
+		return "≡"
+	case ViewMCP:
+		return "⋈"
 	default:
 		return "▤"
 	}
@@ -119,7 +142,7 @@ func SettingsIcon(nerdFont bool) string {
 	return "⚙"
 }
 
-var views = []View{ViewFiles, ViewAgents, ViewTerminals, ViewGit}
+var views = []View{ViewFiles, ViewAgents, ViewGit, ViewSkills, ViewMCP}
 
 // Views returns the rail order.
 func Views() []View { return append([]View(nil), views...) }
@@ -134,6 +157,7 @@ type Screen struct {
 	hover     int
 	nerdFont  bool
 	badges    map[View]int
+	order     []View
 }
 
 func New(th *theme.Theme) *Screen {
@@ -147,6 +171,7 @@ func New(th *theme.Theme) *Screen {
 		hover:     -1,
 		panelOpen: true,
 		badges:    map[View]int{},
+		order:     Views(),
 	}
 	s.applyTheme(th)
 	return s
@@ -155,6 +180,27 @@ func New(th *theme.Theme) *Screen {
 func (s *Screen) Active() View { return s.active }
 
 func (s *Screen) SetActive(v View) { s.active = v }
+
+func (screen *Screen) SetOrder(ids []string) {
+	screen.order = nil
+	for _, id := range ids {
+		for _, view := range Views() {
+			if view.ID() == id {
+				screen.order = append(screen.order, view)
+				break
+			}
+		}
+	}
+	screen.hover = -1
+}
+
+func (screen *Screen) ViewAt(localY int) (View, bool) {
+	index := screen.hitTarget(localY)
+	if index < 0 || index >= len(screen.order) {
+		return ViewFiles, false
+	}
+	return screen.order[index], true
+}
 
 // SetPanelOpen reports whether the sidebar panel for the active view is
 // currently mounted. A collapsed panel drops the accent marker so the rail
@@ -208,15 +254,21 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 	left := ox + r.X
 	top := oy + r.Y
 	bottom := top + r.H
-	for i, v := range views {
+	for i, v := range s.order {
+		if i >= s.visibleCount(r.H) {
+			break
+		}
 		bandTop := top + i*RowStride
 		if bandTop >= bottom {
 			break
 		}
 		bandH := min(RowStride, bottom-bandTop)
 		current := v == s.active
-		hovered := i == s.hover && ctx.Hovered && !current
+		hovered := i == s.hover && ctx.Hovered
 		s.paintBand(buf, left, bandTop, bandH, bottom, v.Icon(s.nerdFont), badgeText(s.badges[v]), current, hovered, bg, fg, accent, muted)
+	}
+	if count := s.visibleCount(r.H); count < len(s.order) && r.H >= RowStride*2 {
+		s.paintBand(buf, left, top+count*RowStride, RowStride, bottom, "…", "", false, s.hover == len(views)+1 && ctx.Hovered, bg, fg, accent, muted)
 	}
 	if localTop := settingsBandTop(r.H); localTop >= 0 {
 		hovered := s.hover == settingsHitIndex() && ctx.Hovered
@@ -291,6 +343,9 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 			return ui.EventResult{}
 		}
 		idx := s.hitTarget(ctx.LocalY)
+		if idx == len(views)+1 {
+			return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionOverflow}, Invalidate: ui.InvalidatePaint}
+		}
 		if idx == settingsHitIndex() {
 			return ui.EventResult{
 				Handled:    true,
@@ -298,12 +353,12 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 				Invalidate: ui.InvalidatePaint,
 			}
 		}
-		if idx < 0 || idx >= len(views) {
+		if idx < 0 || idx >= len(s.order) {
 			return ui.EventResult{Handled: true}
 		}
 		return ui.EventResult{
 			Handled:    true,
-			Action:     &ui.Action{ID: ActionSelect, Payload: views[idx]},
+			Action:     &ui.Action{ID: ActionSelect, Payload: s.order[idx]},
 			Invalidate: ui.InvalidatePaint | ui.InvalidateFocus,
 		}
 	}
@@ -316,7 +371,7 @@ func settingsHitIndex() int { return len(views) }
 // starts. Empty when the rail is too short to keep a full band below Git.
 func settingsBandTop(height int) int {
 	top := height - RowStride
-	if top < len(views)*RowStride {
+	if top < 0 {
 		return -1
 	}
 	return top
@@ -337,23 +392,31 @@ func hitIndex(localY int) int {
 }
 
 func (s *Screen) hitTarget(localY int) int {
-	if idx := hitIndex(localY); idx >= 0 {
-		return idx
-	}
 	if SettingsAt(localY, s.Bounds().H) {
 		return settingsHitIndex()
+	}
+	count := s.visibleCount(s.Bounds().H)
+	if count < len(s.order) && localY >= count*RowStride && localY < (count+1)*RowStride && s.Bounds().H >= RowStride*2 {
+		return len(views) + 1
+	}
+	if idx := localY / RowStride; localY >= 0 && idx < count {
+		return idx
 	}
 	return -1
 }
 
-// ViewAt reports the view under a rail-local row, for hit-test consumers
-// outside the component (context menus).
-func ViewAt(localY int) (View, bool) {
-	idx := hitIndex(localY)
-	if idx < 0 {
-		return ViewFiles, false
+func visibleViewCount(height int) int {
+	return visibleCount(height, len(views))
+}
+
+func (screen *Screen) visibleCount(height int) int { return visibleCount(height, len(screen.order)) }
+
+func visibleCount(height, total int) int {
+	available := max(0, height/RowStride-1)
+	if available >= total {
+		return total
 	}
-	return views[idx], true
+	return max(0, available-1)
 }
 
 // SettingsAt reports whether a rail-local row sits on the bottom manage gear.

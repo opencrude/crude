@@ -80,6 +80,78 @@ Providers, Accounts, and Agents catalogs share a full-width search, single-line
 results, and bottom action area. On narrow terminals actions stack below the
 table instead of shrinking the search field or clipping controls.
 
+### Skills, MCP, Sources, and Acquisition
+
+These entries follow Memory within the existing AI category group, before Security
+and IDE. The category rail, filtering and keyboard navigation use the same grouped
+order in both settings scopes.
+
+Skills and MCP use that same retained catalog grammar. Installed/Discover are
+content tabs, not scope selectors. Inspect replaces only the right pane; Back
+retains query, selection and scroll. Scope remains Application/Workspace in the
+footer. Browsing Installed never starts an external search, process or provider
+request. Source names, field labels/descriptions and stable setting IDs participate
+in Settings search.
+
+Skills offers local Create/Add, instructions and contained file browsing,
+Automatic/Manual only/Disabled modes, and explicit Use in session. Use stages
+`/skill <source-qualified-id>` in the selected root composer without sending it.
+Managed artifacts are immutable; Make local copy creates a distinct authored
+identity before native editor opening. Remove unregisters the selected binding,
+not the authored directory or another workspace's selected artifact.
+
+Install and Update first show the exact source, revision/digest, target scope,
+requirements, requested access and previous binding. Confirm rechecks that
+preimage before publishing. Refresh Discover explicitly before reviewing an
+updated source revision. Downloads share a bounded immutable artifact cache;
+cancellation detaches one requester. Changed metadata/source/binding fails closed
+and requires another preview. An installation is not execution approval.
+
+MCP details include Overview, Connection, Tools, Resources, Prompts, Access and
+Activity. Connect/disconnect, detached Test, refresh, sign-in/out and Save
+connection are explicit operations. Each tool requires a selected effect, scope
+and current schema fingerprint. Unknown/changed operations remain denied; role,
+profile, session and runtime ceilings still apply. A server annotation is not a
+grant, and a scope label is not a local filesystem/network sandbox. Unsandboxed
+local launches require explicit approval. External MCP mutations are not covered
+by native file ownership or undo.
+
+OAuth credentials are application-owned and bound to connection ID and endpoint.
+Sign in presents the authorization URL with an explicit Open browser action;
+headless users may paste the exact loopback return URL. State/issuer mismatch,
+expired credentials, cancellation and reauthentication have recoverable states.
+Secrets and callback payloads are never tool output. Resources and prompt
+templates support explicit text-only fetch/preview and source-attributed composer
+attachments. Changed session, agent or draft rejects a late attachment. Nothing
+is submitted automatically.
+
+The composer's visible **+ Capability** control and **Insert Capability** palette
+action open the same descriptor-backed Skills/Tools/Resources/Prompts picker.
+Skill selection stages a source-qualified invocation. Tool selection inserts a
+selection-only reference chip, not a grant. Resources/prompts require arguments,
+Fetch, exact preview and Stage before a source-attributed attachment appears.
+Changing arguments, selected source, session/agent or composer rejects stale data;
+closing cancels pending fetches. Management remains available through Settings
+when no agent is selected.
+
+Sources supports local directories, commit-pinned repositories and registries.
+Trust/disable and acquisition budgets are independent controls. Automatic
+selection and new acquisition are separate preferences; new acquisition defaults
+to Ask. Resume restores selection/context passively without downloads, updates,
+server startup or tool replay. Unsupported protocol features are declared in MCP
+Overview instead of drawn as working controls.
+
+Preference Save, entity Save and runtime operations have distinct transactions.
+Cancel Settings does not undo a completed install/connect. Capability map removals
+use explicit workspace deletion entries; Reset inherited restores application
+definitions without changing them.
+
+Agents → Tool Access groups built-ins, MCP tools and skill invocation modes.
+`/settings` → Capabilities stages the owning role/root selection and links to the
+manual manager. `capability_selection` in `session_agent_settings` persists
+AllowedTools, DeniedTools and SkillModes; `root/<selected-agent>` overrides remain
+separate. Selection cannot widen a category ceiling or create an execution grant.
+
 Account IDs and template IDs are stable; labels and provider-side OAuth account
 IDs are not local identity. Removal requires confirmation and never reassigns
 sessions. A missing account requires explicit selection, not silent failover.
@@ -100,6 +172,29 @@ protocol overrides, not the template defaults, and its result belongs to the
 requesting session deck and account generation even if another tab becomes
 active. Changing account credentials or template configuration invalidates that
 account's cached models. Templates remain an Application Settings concern.
+
+### Server Storage
+
+Providers -> Edit template -> Protocol options exposes **Server storage** for
+protocols that support storage. On OpenAI Responses, On (including its default)
+requests stored response IDs and exact-prefix delta uploads: the first request
+sends the complete context, then compatible requests upload only new messages
+and tool results. Account protocol overrides use the same policy. This control
+cannot grant a capability the endpoint does not implement. If a gateway returns
+`store:false` or omits every response ID, Crude keeps full local context, uses
+full uploads and reports the reason in both the session log and a transient UI
+notice.
+Changing model/account/protocol or context starts a new chain rather than
+guessing that another server context is equivalent.
+
+Off or **Zero data retention** keeps full uploads and never silently opts into
+retention. Codex requires storage off. Automatic server truncation and custom
+wire-context overrides also disable exact-prefix delta reuse. The endpoint must
+support Responses stored-response continuation; this HTTP mechanism is separate
+from connection-local WebSocket continuation. Prompt-computation caching may
+still operate during full uploads and is not the Store switch. See
+[Responses delta uploads](prompt-architecture.md#responses-delta-uploads) for
+expiry recovery, durable resume and safety boundaries.
 
 ### Connection Timeouts
 
@@ -156,19 +251,30 @@ modalities, sampling, instructions, file ownership, tool limits, account, model,
 and availability; the role supplies unspecified values. Instructions are an
 actual multiline editor, not encoded JSON. Tool access offers role defaults or
 explicit checkboxes; role safety ceilings remain in force, unavailable tools
-are disabled, and child reporting stays required. Memory Agent uses no tools:
+are disabled, and child reporting stays required.
+
+**Instructions extend policy; they do not replace it.** `prompt/` owns the
+canonical model-neutral root/child policy and specialized background-job
+contracts. User profile text is escaped as a lower-priority overlay; changing it
+cannot remove core lifecycle/safety rules, grant tools, or select a vendor base
+prompt. Memory and permission jobs keep their own no-tools contracts rather
+than inheriting the coding-agent prompt. See
+[model prompts and project guidance](prompt-architecture.md).
+
+Memory Agent uses no tools:
 its model, account, instructions, and availability live in Agents; automatic
 recall/extraction cadence remains on the Memory page. Disabling Memory Agent
 stops its automatic jobs and recall without deleting stored memories.
 Auto Review Agent is also a no-tools built-in. Its explicit account, model,
-enable switch, and additional restrictions live in Agents. It cannot inherit
-the Main Agent's connection or change its fixed safety prompt; restrictions
-can only narrow approvals and are limited to 1,024 bytes. Enabling it requires
-an account and model. Its review outcomes and request budgets are configured
-separately under Security → Auto Review Policy. Resetting its agent identity
-does not reset that policy. Hard constraints are stated beside the controls
-they constrain and in this reference; they are not presented as a settings
-page because they cannot be changed there.
+enable switch, additional restrictions, and complete runtime policy live on its
+Model / Instructions / Review tabs in Agents. It cannot inherit the Main
+Agent's connection or change its fixed safety prompt; restrictions can only
+narrow approvals and are limited to 1,024 bytes. Enabling it requires an
+account and model. Security → Auto Review Policy is a synchronized projection
+of the same persisted policy, not a second runtime authority. Resetting the
+agent identity does not reset that policy. Hard constraints are stated beside
+the controls they constrain and in this reference; they are not exposed as
+editable controls.
 Configured restrictions also apply to native model-command aliases and cannot
 be bypassed by a model-supplied delegation allow list.
 
@@ -193,6 +299,14 @@ Agents, Accounts, and Providers return through the normal back/discard policy.
 Session Settings and its role labels navigate to the corresponding level and
 retain staged role edits. Their appearance and the Model / Instructions / Tool
 Access tab layout are unchanged.
+
+The floating Settings window's **×** and footer **Close/Cancel** buttons always
+close the entire window, regardless of page depth. They never navigate Back.
+Breadcrumbs, explicit Back controls and Esc retain their contextual navigation.
+Closing with unsaved preferences or account, template, agent or capability drafts
+opens one stacked discard prompt covering all current drafts. Keep settings open
+preserves the exact page, draft and focus; Discard drafts closes Settings rather
+than returning to a catalog. A changed or replaced draft invalidates the decision.
 
 The `/settings` root form offers **Default agent** for this session: built-in
 roles and enabled named agents (but not background-only Memory Agent). Choosing
@@ -256,10 +370,14 @@ runner on resume for review; this does not enable new launches.
 
 **Auto permissions are an explicit, bounded opt-in.** Settings → Agents →
 Auto Review Agent selects an explicit account and model; blank values never
-silently inherit the main model. Security → Command Safety owns command
-severity and confirmation; Auto Review Policy owns bounded review outcomes and
-budgets. Hard blocks, human-only permanent grants, and uncertainty fallback
-remain enforced independently and are described by the relevant controls.
+silently inherit the main model. Its Review tab owns thinking effort, response
+format, denial handling, per-attempt timeout, initial and retry token budgets,
+retry count/growth, and input bytes. There is no lifetime/per-turn review-count
+cap. Security → Auto
+Review Policy edits the same persisted values. Security → Command Safety still
+owns command severity and confirmation. Hard blocks, human-only permanent
+grants, and uncertainty fallback remain enforced independently and are
+described beside the relevant controls.
 Application/workspace settings propagate live to existing sessions. The root
 agent reviews eligible operations only when
 a permission prompt would otherwise be required and YOLO is off. Children keep
@@ -274,25 +392,49 @@ review request. Shell metacharacters and compound commands are also excluded.
 This filter reduces risk; it is not a guarantee that arbitrary secrets or prompt
 injections can be recognized. Eligible arguments are sent to the chosen provider.
 
-A strict `allow` response grants only this call. `deny` asks the human by default;
-users may choose automatic denial instead. `ask`, malformed/truncated responses,
-provider errors, timeout, exhausted budget, and stale settings always return to
-human confirmation. No reviewer result creates an “Always allow” grant. Hard
-command blocks apply to synchronous and asynchronous execution before review.
+A strict `allow` response grants only this call. A model `deny` asks the human by
+default; users may choose automatic denial instead. **Unresolved review**
+independently controls structural ineligibility, a model `ask`, and exhausted
+technical recovery: `ask` pauses for a person, while `deny` rejects the exact
+operation so an unattended agent can continue without widening authority. Valid
+`allow`, `deny`, and `ask` decisions are never retried. Timeout, truncation,
+transport failure, unsupported
+automatic structured output, and malformed output consume only the configured
+technical retries. Each retry gets a fresh configured timeout and its output
+budget follows the persisted fixed / 2x / 4x strategy up to the persisted
+ceiling. Stale settings and turn cancellation always abandon the result. No
+reviewer result creates an “Always allow” grant, and no unresolved mode can turn
+failure or uncertainty into approval. Hard command blocks apply to synchronous
+and asynchronous execution before review.
 
 System-path classification protects the filesystem root itself and descendants
 of named system directories such as `/etc` and `/usr`. An absolute path under
 `/tmp` or a user's project is not a system path merely because it begins with
 `/`; normal command classification and approval rules still apply.
 
-Defaults: 8-second timeout, 96 output tokens, 4,096 argument bytes, and 12 reviews
-per root turn; each is configurable within enforced bounds. Transport retries
-are disabled and response bodies are capped at 16 KiB. Extra restrictions are
-limited to 1,024 bytes. Usage is recorded as `permission_review`, contributing to
-cost totals without replacing the root's context measurement. Approved/denied
-tool rows carry a persisted reviewer label, distinct from human permission tags.
-Choose a fast, inexpensive instruction-following model; model judgment remains
-fallible, so keep high-impact operations on the human path.
+Defaults: human handling for denied and unresolved reviews, low thinking effort,
+automatic response format, 15 seconds per
+attempt, 256 initial output tokens, three total attempts, 4x retry growth, a
+1,024-token retry ceiling and a 64 KiB complete-argument default (configurable
+from 64 KiB to 1 MiB). Arguments are never truncated. Every exact non-hard-blocked
+operation remains eligible for the whole turn, including unknown, network,
+destructive and shell-composed commands; immutable hard blocks still run first,
+while secret-shaped and oversized payloads stay local and fail closed. Roots and
+children have independent reviewer instances. YOLO
+bypasses review and confirmation for one owning session's complete agent tree;
+another root/session keeps its own policy.
+Each value is persisted and configurable within enforced bounds. Auto response
+format tries strict JSON schema on OpenAI Chat endpoints and falls back to the
+prompt contract when another configured attempt is available; explicit JSON
+formats fail closed on incompatible protocols. Impossible combinations, such as
+a growing retry budget whose ceiling is not above its initial value, stay in the
+editor with a clear error. Response bodies remain capped at 16 KiB. Extra
+restrictions are limited to 1,024 bytes. Usage is recorded per actual attempt as
+`permission_review`, contributing to cost totals without replacing the root's
+context measurement. Approved/denied tool rows carry a persisted reviewer label,
+distinct from human permission tags. Choose a fast, inexpensive
+instruction-following model; model judgment remains fallible, so keep
+high-impact operations on the human path.
 
 **Workspace root is execution truth.** Every workspace-created or resumed
 backend session is bound to that workspace's `RootPath`. Relative file, glob,

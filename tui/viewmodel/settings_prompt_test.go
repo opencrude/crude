@@ -262,12 +262,12 @@ func TestSettingsPromptDirtyCloseXAndParentTeardown(t *testing.T) {
 	}
 }
 
-func TestSettingsPromptDirtyEditorDecisionKeepsParent(t *testing.T) {
+func TestSettingsPromptDirtyEditorBackDecisionKeepsParent(t *testing.T) {
 	for _, tc := range []struct {
-		name, category, editAction, field string
+		name, category, editAction, backAction, field string
 	}{
-		{"account", "Accounts", "settings.account.edit", "account-label"},
-		{"template", "Providers", "settings.template.edit", "template-name"},
+		{"account", "Accounts", "settings.account.edit", "settings.account.cancel-edit", "account-label"},
+		{"template", "Providers", "settings.template.edit", "settings.template.cancel", "template-name"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			app, parent, body := newSettingsPromptApp(t)
@@ -279,17 +279,10 @@ func TestSettingsPromptDirtyEditorDecisionKeepsParent(t *testing.T) {
 			}
 			body.HandleAction(ui.EventContext{}, ui.Action{ID: tc.editAction})
 			body.Model().SetValueForTest(body.Model().SelectedCategory(), tc.field, "Unsaved edit")
-			px, py := parent.Position()
-			pw, _ := parent.Size()
-			_, cmd := app.Update(tea.MouseClickMsg{X: px + pw - 2, Y: py, Button: tea.MouseLeft})
-			if cmd == nil {
-				t.Fatal("dirty editor X returned no decision")
+			prompt := requestSettingsPrompt(t, app, body, tc.backAction)
+			if prompt.Kind != settingsui.PromptDiscardEditor {
+				t.Fatalf("dirty editor Back returned %+v instead of a discard prompt", prompt)
 			}
-			prompt, ok := cmd().(settingsui.PromptMsg)
-			if !ok || prompt.Kind != settingsui.PromptDiscardEditor {
-				t.Fatalf("dirty editor X returned %T instead of a discard prompt", cmd())
-			}
-			_, _ = app.Update(prompt)
 			app.handleSettingsPromptKey(tea.KeyPressMsg{Code: tea.KeyEnter})
 			if app.overlayHost.Window(ui.OverlayWorkspaceSettings) != parent || !body.PromptRelevant(prompt) {
 				t.Fatal("safe default did not keep the editor and selected row")

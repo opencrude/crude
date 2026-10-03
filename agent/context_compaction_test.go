@@ -12,8 +12,11 @@ import (
 	"testing"
 	"time"
 
+	rootprompt "crude/prompt"
 	"crude/provider"
 )
+
+var compactionStagesForTest = rootprompt.CompactionStages()
 
 func TestCompactionThresholdReservesSummaryHeadroom(t *testing.T) {
 	if got := compactionThreshold(1_050_000, 40); got != 420_000 {
@@ -40,11 +43,11 @@ func TestValidateContextCheckpointRequiresRoleContract(t *testing.T) {
 	if _, err := validateContextCheckpoint(malformed, "root", 16_000); err == nil {
 		t.Fatal("model-authored nested XML was accepted")
 	}
-	large := make(map[string]string, len(compactionStages))
-	for _, stage := range compactionStages {
+	large := make(map[string]string, len(compactionStagesForTest))
+	for _, stage := range compactionStagesForTest {
 		large[stage.Name] = strings.Repeat(stage.Name+" evidence ", 2000)
 	}
-	checkpoint, err := buildContextCheckpoint("root", large)
+	checkpoint, err := rootprompt.BuildContextCheckpoint("root", large)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -61,11 +64,11 @@ func TestValidateContextCheckpointRequiresRoleContract(t *testing.T) {
 
 func testContextCheckpoint(t *testing.T, role string) string {
 	t.Helper()
-	sections := make(map[string]string, len(compactionStages))
-	for _, stage := range compactionStages {
+	sections := make(map[string]string, len(compactionStagesForTest))
+	for _, stage := range compactionStagesForTest {
 		sections[stage.Name] = "- " + stage.Name + ": exact <fact> & evidence"
 	}
-	checkpoint, err := buildContextCheckpoint(role, sections)
+	checkpoint, err := rootprompt.BuildContextCheckpoint(role, sections)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +98,7 @@ func TestChildRetentionAlwaysKeepsAssignment(t *testing.T) {
 }
 
 func TestCompactUsesSameConversationAndDisablesTools(t *testing.T) {
-	requests := make(chan provider.ChatRequest, len(compactionStages))
+	requests := make(chan provider.ChatRequest, len(compactionStagesForTest))
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request provider.ChatRequest
@@ -116,7 +119,7 @@ func TestCompactUsesSameConversationAndDisablesTools(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for range compactionStages {
+	for range compactionStagesForTest {
 		request := <-requests
 		if request.ToolChoice != "none" {
 			t.Fatalf("tool choice = %#v, want none", request.ToolChoice)
@@ -126,8 +129,8 @@ func TestCompactUsesSameConversationAndDisablesTools(t *testing.T) {
 			t.Fatalf("compaction request did not preserve the common prefix: messages=%d", len(request.Messages))
 		}
 	}
-	if len(result.Messages) != 2 || result.Messages[0].EffectiveOrigin() != provider.OriginCheckpoint ||
-		result.Messages[1].ContentString() != human.ContentString() {
+	if len(result.Messages) != 3 || result.Messages[0].EffectiveOrigin() != provider.OriginCheckpoint ||
+		result.Messages[1].ContentString() != human.ContentString() || result.Messages[2].EffectiveOrigin() != provider.OriginRuntimeContext {
 		t.Fatalf("compacted messages = %#v", result.Messages)
 	}
 	if !strings.Contains(result.Messages[0].ContentString(), `version="3"`) ||
@@ -140,6 +143,106 @@ func compactionTestHistory(last provider.ChatMessage) []provider.ChatMessage {
 	return []provider.ChatMessage{
 		provider.NewTextMessage("assistant", strings.Repeat("old evidence ", 12_000)),
 		last,
+	}
+}
+
+func TestCompactEndsWithFreshContinuationNotHistoricalUserInput(t *testing.T) {
+	var calls atomic.Int32
+	normalRequests := make(chan provider.ChatRequest, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		call := calls.Add(1)
+		if call > int32(len(compactionStagesForTest)) {
+			var body provider.ChatRequest
+			if err := json.NewDecoder(request.Body).Decode(&body); err != nil {
+				t.Error(err)
+			}
+			normalRequests <- body
+			writeChatSSE(w, "Continued only the unfinished work.", "stop")
+			return
+		}
+		// Deliberately omit runtime facts: they cannot depend on model recall.
+		writeChatSSE(w, "- previous user request: already answered\n- next: inspect the running build", "stop")
+	}))
+	defer server.Close()
+	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p.Model = "continuation-handoff-model"
+	provider.SetModelContext(p.Model, 200_000)
+	a := newTestAgent(t, p, p.Model)
+	a.ContinuationContext = func(context.Context) (rootprompt.SessionContinuityData, error) {
+		status := "running"
+		if calls.Load() >= int32(len(compactionStagesForTest)) {
+			status = "completed"
+		}
+		return rootprompt.SessionContinuityData{Additional: "latest_human_turn: completed\nasync handle=build-owned status=" + status}, nil
+	}
+	history := append(compactionTestHistory(provider.NewTextMessage("user", "What did we do?")),
+		provider.NewTextMessage("assistant", "The requested answer has already been delivered."))
+	result, err := a.Compact(context.Background(), history, "system", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	last := result.Messages[len(result.Messages)-1]
+	if last.IsGenuineUserInput() || last.EffectiveVisibility() != provider.VisibilityContextOnly ||
+		!strings.Contains(last.ContentString(), "not a new user request") {
+		t.Fatalf("compaction replays old input instead of handing off: %+v", last)
+	}
+	if !strings.Contains(last.ContentString(), "latest_human_turn: completed") ||
+		!strings.Contains(last.ContentString(), "handle=build-owned status=completed") ||
+		strings.Contains(last.ContentString(), "handle=build-owned status=running") {
+		t.Fatalf("handoff omitted or guessed current runtime state: %q", last.ContentString())
+	}
+	for _, message := range result.Messages[1:] {
+		if message.IsGenuineUserInput() {
+			t.Fatalf("answered human request was replayed after compaction: %+v", message)
+		}
+	}
+	if history[len(history)-1].ContentString() != "The requested answer has already been delivered." {
+		t.Fatal("compaction changed the original conversation")
+	}
+	a.ContextCompactionPercent = 0
+	a.Run(context.Background(), result.Messages, "system", nil, nil, "", nil)
+	request := <-normalRequests
+	if len(request.Messages) == 0 || !strings.Contains(request.Messages[len(request.Messages)-1].ContentString(), "<runtime_continuity>") {
+		t.Fatalf("post-compaction request has no runtime handoff: %+v", request.Messages)
+	}
+	continuityCount := 0
+	for _, message := range request.Messages[1:] {
+		if strings.Contains(message.ContentString(), "<runtime_continuity>") {
+			continuityCount++
+		}
+		if strings.Contains(message.ContentString(), "What did we do?") {
+			t.Fatalf("post-compaction request presented an answered prompt as new input: %+v", message)
+		}
+	}
+	if continuityCount != 2 {
+		t.Fatalf("post-compaction request retained %d runtime handoffs", continuityCount)
+	}
+	for i, message := range result.Messages {
+		if request.Messages[i+1].ContentString() != message.ContentString() {
+			t.Fatal("new turn rewrote the accepted compaction prefix")
+		}
+	}
+}
+
+func TestCompactUsesDurableCompletedTurnWhenAssistantProjectionIsAbsent(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		writeChatSSE(w, "- request already completed; no pending response", "stop")
+	}))
+	defer server.Close()
+	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p.Model = "durable-turn-compaction"
+	p.SetContextWindow(128_000)
+	a := newTestAgent(t, p, p.Model)
+	a.LatestHumanTurnState = func(context.Context) (string, bool, error) { return "completed", true, nil }
+	human := provider.NewTextMessage("user", "Historical request whose final projection is unavailable\n"+strings.Repeat("resolved detail ", 2000))
+	result, err := a.Compact(context.Background(), []provider.ChatMessage{human}, "system", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, message := range result.Messages[1:] {
+		if message.IsGenuineUserInput() {
+			t.Fatalf("durably completed request was replayed: %+v", result.Messages)
+		}
 	}
 }
 
@@ -166,7 +269,7 @@ func TestCompactRetriesOnlyFailedStage(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if calls.Load() != int32(len(compactionStages)+1) {
+	if calls.Load() != int32(len(compactionStagesForTest)+1) {
 		t.Fatalf("requests = %d, want one failed-stage replay", calls.Load())
 	}
 	if !hasEvent(events, "context_compaction_retrying") {
@@ -239,7 +342,7 @@ func TestProviderBaselineAboveTwoPercentTriggersAutomaticCompaction(t *testing.T
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		call := calls.Add(1)
-		if call <= int32(len(compactionStages)) {
+		if call <= int32(len(compactionStagesForTest)) {
 			writeChatSSE(w, fmt.Sprintf("- stage: %d\n- state: retained", call), "stop")
 			return
 		}
@@ -263,7 +366,7 @@ func TestProviderBaselineAboveTwoPercentTriggersAutomaticCompaction(t *testing.T
 	result := a.Run(context.Background(), messages, "system", func(event AgentEvent) {
 		events = append(events, event)
 	}, nil, "", nil)
-	if calls.Load() != int32(len(compactionStages)+1) {
+	if calls.Load() != int32(len(compactionStagesForTest)+1) {
 		t.Fatalf("provider calls=%d want four compaction stages plus one normal request", calls.Load())
 	}
 	if len(result) == 0 || !strings.Contains(result[len(result)-1].ContentString(), "continued") {
@@ -292,7 +395,7 @@ func TestProviderBaselineAboveTwoPercentTriggersAutomaticCompaction(t *testing.T
 }
 
 func TestChildCompactPreservesAssignmentAndReportContract(t *testing.T) {
-	requests := make(chan provider.ChatRequest, len(compactionStages))
+	requests := make(chan provider.ChatRequest, len(compactionStagesForTest))
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request provider.ChatRequest
 		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
@@ -317,7 +420,7 @@ func TestChildCompactPreservesAssignmentAndReportContract(t *testing.T) {
 	if !strings.Contains(request.Messages[len(request.Messages)-2].ContentString(), "child agent") {
 		t.Fatalf("child compaction prompt = %q", request.Messages[len(request.Messages)-2].ContentString())
 	}
-	if len(result.Messages) != 2 || result.Messages[1].EffectiveOrigin() != provider.OriginAssignment ||
+	if len(result.Messages) != 3 || result.Messages[1].EffectiveOrigin() != provider.OriginAssignment || result.Messages[2].EffectiveOrigin() != provider.OriginRuntimeContext ||
 		!strings.Contains(result.Messages[0].ContentString(), "<continuation>") {
 		t.Fatalf("child compacted messages = %#v", result.Messages)
 	}

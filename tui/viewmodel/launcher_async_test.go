@@ -44,13 +44,13 @@ func TestLauncherAsyncLoad_AppliesLatestGen(t *testing.T) {
 	}
 
 	// A stale generation must be dropped.
-	_, _ = app.Update(launcherWorkspacesMsg{Cwd: ".", Infos: infos, Gen: gen - 1})
+	_, _ = app.Update(launcherWorkspacesMsg{Screen: app.launcherScreen, Cwd: ".", Infos: infos, Gen: gen - 1})
 	if app.launcherScreen.TotalItems() != 2 {
 		t.Fatalf("stale generation applied; items=%d", app.launcherScreen.TotalItems())
 	}
 
 	// The current generation applies.
-	_, _ = app.Update(launcherWorkspacesMsg{Cwd: ".", Infos: infos, Gen: gen})
+	_, _ = app.Update(launcherWorkspacesMsg{Screen: app.launcherScreen, Cwd: ".", Infos: infos, Gen: gen})
 	if app.launcherScreen.TotalItems() != 4 {
 		t.Fatalf("current generation not applied; items=%d", app.launcherScreen.TotalItems())
 	}
@@ -62,11 +62,11 @@ func TestLauncherAsyncLoad_AppliesLatestGen(t *testing.T) {
 	if gen2 == gen {
 		t.Fatal("openLauncher must bump the load generation")
 	}
-	_, _ = app.Update(launcherWorkspacesMsg{Cwd: ".", Infos: infos, Gen: gen})
-	if app.launcherScreen.TotalItems() != 2 {
+	_, _ = app.Update(launcherWorkspacesMsg{Screen: app.launcherScreen, Cwd: ".", Infos: infos, Gen: gen})
+	if app.launcherScreen.TotalItems() != 4 {
 		t.Fatalf("stale generation applied after re-kick; items=%d", app.launcherScreen.TotalItems())
 	}
-	_, _ = app.Update(launcherWorkspacesMsg{Cwd: ".", Infos: infos, Gen: gen2})
+	_, _ = app.Update(launcherWorkspacesMsg{Screen: app.launcherScreen, Cwd: ".", Infos: infos, Gen: gen2})
 	if app.launcherScreen.TotalItems() != 4 {
 		t.Fatalf("latest generation not applied; items=%d", app.launcherScreen.TotalItems())
 	}

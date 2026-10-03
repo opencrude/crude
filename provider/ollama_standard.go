@@ -47,12 +47,13 @@ func (s *OllamaStandard) EncodeRequest(req *ChatRequest) ([]byte, error) {
 	if len(req.Tools) > 0 {
 		tools := make([]openAIChatToolParam, 0, len(req.Tools))
 		for _, tool := range req.Tools {
+			tool = jsonFunctionTool(tool)
 			toolType := tool.Type
 			if toolType == "" {
 				toolType = "function"
 			}
 			tools = append(tools, openAIChatToolParam{
-				Type: toolType, Function: tool.Function,
+				Type: toolType, Function: chatFunctionDef(tool.Function),
 			})
 		}
 		wire["tools"] = tools
@@ -84,6 +85,9 @@ func encodeOllamaMessages(messages []ChatMessage) ([]map[string]any, error) {
 	out := make([]map[string]any, 0, len(messages))
 	for _, m := range messages {
 		wire := map[string]any{"role": m.Role}
+		if m.Role == "developer" {
+			wire["role"] = "system"
+		}
 		if m.Content.IsText() {
 			wire["content"] = m.Content.String()
 		} else {
@@ -118,7 +122,7 @@ func encodeOllamaMessages(messages []ChatMessage) ([]map[string]any, error) {
 				calls = append(calls, ollamaToolCallParam{
 					ID: call.ID, Type: firstNonEmptyOllama(call.Type, "function"),
 				})
-				calls[len(calls)-1].Function.Name = call.Function.Name
+				calls[len(calls)-1].Function.Name = wireFunctionName(call.Function.Name)
 				calls[len(calls)-1].Function.Arguments = ollamaToolCallArgsRaw(call.Function.Arguments)
 				if call.Type == "custom" {
 					calls[len(calls)-1].Type = "function"
@@ -224,7 +228,7 @@ func ollamaToolCallsFromWire(calls []ollamaToolCallParam) []ToolCall {
 			ID:   tc.ID,
 			Type: firstNonEmptyOllama(tc.Type, "function"),
 			Function: FunctionCall{
-				Name:      tc.Function.Name,
+				Name:      canonicalToolName(tc.Function.Name),
 				Arguments: ollamaToolCallArguments(tc.Function.Arguments),
 			},
 		})
@@ -356,7 +360,7 @@ func (d *ollamaStreamDecoder) Decode(event StreamEvent) (StreamUpdate, error) {
 		update.ToolCalls = append(update.ToolCalls, ToolCallDelta{
 			ID:        call.ID,
 			Type:      call.Type,
-			Name:      call.Function.Name,
+			Name:      canonicalToolName(call.Function.Name),
 			Arguments: call.Function.Arguments,
 		})
 	}

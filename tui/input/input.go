@@ -30,7 +30,10 @@ type BtwSubmitEvent struct {
 
 func (BtwSubmitEvent) event() {}
 
-type SlashCommandEvent struct{ Command string }
+type SlashCommandEvent struct {
+	Command      string
+	ReferenceIDs []string
+}
 
 func (SlashCommandEvent) event() {}
 
@@ -57,6 +60,9 @@ var availableCmds = []CmdInfo{
 	{Name: "yolo", Label: "yolo", Desc: "Disable ALL safety checks (DANGEROUS)"},
 	{Name: "sessions", Label: "sessions", Desc: "Browse and resume past sessions"},
 	{Name: "memory", Label: "memory", Desc: "Browse durable workspace memory"},
+	{Name: "skills", Label: "skills", Desc: "Browse and manage skills in Settings"},
+	{Name: "mcp", Label: "mcp", Desc: "Browse and manage MCP connections in Settings"},
+	{Name: "skill", Label: "skill", Desc: "Invoke an exact source-qualified skill with arguments"},
 	{Name: "compact", Label: "compact", Desc: "Summarize older conversation history to free context"},
 	{Name: "help", Label: "help", Desc: "Open help"},
 }

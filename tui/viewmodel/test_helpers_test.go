@@ -13,7 +13,9 @@ import (
 	"crude/tui/input"
 	"crude/tui/screens/activitybar"
 	"crude/tui/screens/activitylist"
+	"crude/tui/screens/confirmation"
 	"crude/tui/screens/launcher"
+	"crude/tui/screens/question"
 	"crude/tui/screens/shellchat"
 	"crude/tui/screens/shelleditor"
 	"crude/tui/screens/shellfooter"
@@ -33,6 +35,34 @@ import (
 )
 
 type noopEventSender struct{}
+
+// openTestAgentPrompt mounts a request-specific screen for component-policy
+// tests. Family routing tests enter through enqueueAgentPrompt instead.
+func openTestAgentPrompt(t testing.TB, app *App, projection *sessionProjection, req agentPromptRequest) *agentPromptState {
+	t.Helper()
+	if req.agentID == "" {
+		req.agentID = "agent"
+	}
+	if req.blockID == "" {
+		req.blockID = "block-1"
+	}
+	if app.AgentMgr.Get(req.agentID) == nil {
+		app.AgentMgr.AddOrchestrator(req.agentID, &workspace.AgentState{})
+	}
+	state := &agentPromptState{request: req, projection: projection}
+	if req.kind == agentPromptQuestions {
+		state.question = question.New(app.Theme)
+		if count, err := state.question.ResetWithError(req.questionsJSON); err != nil || count == 0 {
+			t.Fatalf("invalid question fixture: %v", err)
+		}
+	} else {
+		state.confirmation = confirmation.New(app.Theme)
+		state.confirmation.Reset(confirmation.Details{Question: req.question, Tool: req.tool})
+	}
+	app.agentPrompts = append(app.agentPrompts, state)
+	app.openInlineAgentPrompt(state)
+	return state
+}
 
 func (noopEventSender) SendAgentEvent(typ string, data any)                  {}
 func (noopEventSender) SendAgentEventWithID(typ string, data any, id string) {}

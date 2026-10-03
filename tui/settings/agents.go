@@ -7,9 +7,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/agent"
 	"crude/provider"
-	"crude/tools"
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
@@ -31,6 +29,8 @@ type agentCatalog struct {
 	owner                     *WorkspaceSettingsSurface
 	model                     *Model
 	filter                    *agentCatalogFilter
+	toolFilter                *ui.FilterField
+	capabilitySeen            uint64
 	table                     *ui.Table
 	tabs                      *ui.Tabs
 	form                      *ui.Form
@@ -39,6 +39,7 @@ type agentCatalog struct {
 	stackActions              bool
 	listScroll, formScroll    *ui.ScrollbarControl
 	draft                     *ui.FormModel
+	toolPage                  *ui.FormModel
 	base                      types.CategorySettings
 	profile                   types.AgentProfileSettings
 	roleIndex                 int
@@ -50,6 +51,16 @@ func newAgentCatalog(owner *WorkspaceSettingsSurface) *agentCatalog {
 	c := &agentCatalog{Base: ui.NewBase(agentCatalogID), owner: owner, model: owner.model, roleIndex: -1, page: "model"}
 	c.filter = &agentCatalogFilter{FilterField: ui.NewFilterField("settings/agents/search", t), owner: c}
 	c.filter.SetPlaceholder("Search agents and roles")
+	c.toolFilter = ui.NewFilterField("settings/agents/tool-search", t)
+	c.toolFilter.SetPlaceholder("Search built-in tools, MCP and skills")
+	c.toolFilter.SetPrompt(ui.SearchGlyphEnd(t))
+	c.toolFilter.SetPromptPlacement(ui.PromptEnd)
+	c.toolFilter.SetSubmitAction("agents.tool-search.enter")
+	c.toolFilter.OnChanged(func(string) {
+		if c.draft != nil && c.page == "tools" {
+			c.setPage("tools")
+		}
+	})
 	c.table = ui.NewTable("settings/agents/table", t)
 	c.table.SetActivateAction("agents.edit")
 	c.table.SetShowHeader(true)
@@ -75,10 +86,19 @@ func (c *agentCatalog) syncModel() {
 	if c.model != c.owner.model {
 		c.model = c.owner.model
 		c.draft = nil
+		c.toolPage = nil
 		c.confirm = ""
 		c.refreshRows()
 	}
 	if c.draft != nil {
+		if c.capabilitySeen != c.model.capabilityRevision {
+			c.syncCapabilityFields()
+			c.refreshToolLimits()
+			if c.page == "tools" {
+				c.syncToolPage()
+			}
+			c.capabilitySeen = c.model.capabilityRevision
+		}
 		// Async model results update the draft in place. Refresh retained
 		// controls without rebuilding the page or closing its open dropdown.
 		for _, field := range c.draft.Fields() {
@@ -119,7 +139,7 @@ func (c *agentCatalog) refreshRows() {
 			cfg = c.model.memoryAgent
 		} else if role.key == "auto-review" {
 			auto := c.model.autoReviewer
-			add("role/auto-review", role.label, "Built-in", auto.Model, "Reviews eligible root-agent permission requests", auto.Enabled == "on")
+			add("role/auto-review", role.label, "Built-in", auto.Model, "Reviews eligible root and child permission requests", auto.Enabled == "on")
 			continue
 		}
 		add("role/"+role.key, role.label, "Built-in", cfg.Model, cfg.Description, cfg.Enabled == nil || *cfg.Enabled)
@@ -181,6 +201,7 @@ func (c *agentCatalog) barWidth(buttons []ui.ActionBarButton) int {
 }
 
 func (c *agentCatalog) begin(key string, duplicate bool) {
+	c.toolPage = nil
 	c.roleIndex = -1
 	c.id = ""
 	c.base = types.CategorySettings{}
@@ -198,7 +219,7 @@ func (c *agentCatalog) begin(key string, duplicate bool) {
 				auto := c.model.autoReviewer
 				enabled := auto.Enabled == "on"
 				c.base = types.CategorySettings{Enabled: &enabled, AccountID: auto.AccountID, Provider: auto.Provider, Model: auto.Model,
-					Description: "Reviews eligible root-agent permission requests", Instructions: auto.Instructions}
+					Description: "Reviews eligible root and child permission requests", Instructions: auto.Instructions}
 			}
 			c.profile.Category = role.key
 		}
@@ -211,7 +232,7 @@ func (c *agentCatalog) begin(key string, duplicate bool) {
 			Enabled: p.Enabled, AccountID: p.AccountID, Model: p.Model, Description: p.Description, Instructions: p.Instructions,
 			ThinkingEffort: p.ThinkingEffort, ModelContextWindow: p.ModelContextWindow, ModelMaxOutput: p.ModelMaxOutput,
 			ModelModalities: p.ModelModalities, ModelTemperature: p.ModelTemperature, ModelTopP: p.ModelTopP,
-			AllowedTools: p.AllowedTools, DeniedTools: p.DeniedTools, ContextCompactionPercent: p.ContextCompactionPercent,
+			AllowedTools: p.AllowedTools, DeniedTools: p.DeniedTools, SkillModes: p.SkillModes, ContextCompactionPercent: p.ContextCompactionPercent,
 		}
 	}
 	if duplicate {
@@ -222,6 +243,7 @@ func (c *agentCatalog) begin(key string, duplicate bool) {
 		}
 	}
 	if c.roleIndex == catAutoReviewPolicy {
+		c.model.autoReviewer = autoPermissionFromForm(c.model.autoReviewer, c.model.categories[catAutoReviewPolicy].Form)
 		c.draft = c.model.buildAutoReviewerForm()
 	} else {
 		c.draft = c.model.buildAgentForm(c.base, c.roleIndex == catMain)
@@ -258,15 +280,7 @@ func (c *agentCatalog) begin(key string, duplicate bool) {
 	}
 	if c.roleIndex != catAutoReviewPolicy {
 		c.draft.AddField(ui.SelectFieldState("agent-tool-mode", "Tool access", mode, []ui.FormOption{{ID: "Role defaults", Label: "Inherit role"}, {ID: "Custom selection", Label: "Custom"}}, "Choose the available tools."))
-		allowed := make(map[string]bool)
-		for _, tool := range agent.FilterTools(tools.AgentTools, c.base.AllowedTools, c.base.DeniedTools, c.profile.Category, c.roleIndex != catMain) {
-			allowed[tool.Function.Name] = true
-		}
-		for _, tool := range tools.AgentTools {
-			name := tool.Function.Name
-			field := ui.CheckboxFieldState("agent-tool/"+name, strings.ReplaceAll(name, "_", " "), allowed[name], "")
-			c.draft.AddField(field)
-		}
+		c.syncCapabilityFields()
 	}
 	c.model.categories[catAgents].Form = c.draft
 	c.draft.OnChanged(c.fieldChanged)
@@ -275,6 +289,7 @@ func (c *agentCatalog) begin(key string, duplicate bool) {
 	}
 	c.confirm = ""
 	c.notice = ""
+	c.toolFilter.SetValue("")
 	c.refreshToolLimits()
 	c.setPage("model")
 	c.rebuildBar()
@@ -296,6 +311,9 @@ func (c *agentCatalog) fieldChanged(id string) {
 		c.model.autofillCapabilities(catAgents)
 	}
 	c.model.handleFieldChanged(catAgents, id)
+	if c.roleIndex == catAutoReviewPolicy {
+		validateAutoReviewPolicyForm(c.draft)
+	}
 	if id == "agent-tool-mode" || id == "agent-role" {
 		c.refreshToolLimits()
 	}
@@ -305,57 +323,32 @@ func (c *agentCatalog) refreshToolLimits() {
 	if c.roleIndex == catMemory || c.roleIndex == catAutoReviewPolicy {
 		return // Neither background agent has a tool execution path.
 	}
-	role := c.profile.Category
-	if field := c.draft.Field("agent-role"); field != nil {
-		role = field.Value.String()
-	}
-	allowed := map[string]bool{}
-	var roleAllowed, roleDenied []string
-	if c.roleIndex < 0 {
-		configured := c.model.AppSettings().Agents.Categories[role]
-		roleAllowed, roleDenied = configured.AllowedTools, configured.DeniedTools
-	}
-	for _, tool := range agent.FilterTools(tools.AgentTools, roleAllowed, roleDenied, role, c.roleIndex != catMain) {
-		allowed[tool.Function.Name] = true
-	}
-	if c.roleIndex == catMain {
-		delete(allowed, "write_report")
-	}
-	custom := c.draft.Field("agent-tool-mode").Value.String() == "Custom selection"
-	for _, tool := range tools.AgentTools {
-		name := tool.Function.Name
-		field := c.draft.Field("agent-tool/" + name)
-		required := name == "write_report" && c.roleIndex != catMain
-		field.Disabled = !custom || !allowed[name] || required
-		if !allowed[name] || !custom || required {
-			field.Value = ui.BoolValue(allowed[name])
-		}
-		if !allowed[name] {
-			field.Description = "Unavailable for this role"
-		} else if required {
-			field.Description = "Required reporting"
-		} else {
-			field.Description = ""
-		}
-	}
+	c.refreshCapabilityLimits()
 }
 
 func (c *agentCatalog) setPage(page string) {
 	c.page = page
-	c.tabs.SetItems([]ui.TabItem{{ID: "model", Label: "Model"}, {ID: "instructions", Label: "Instructions"}, {ID: "tools", Label: "Tool Access"}}, page)
-	if page == "tools" && (c.roleIndex == catMemory || c.roleIndex == catAutoReviewPolicy) {
+	thirdLabel := "Tool Access"
+	if c.roleIndex == catAutoReviewPolicy {
+		thirdLabel = "Review"
+	}
+	c.tabs.SetItems([]ui.TabItem{{ID: "model", Label: "Model"}, {ID: "instructions", Label: "Instructions"}, {ID: "tools", Label: thirdLabel}}, page)
+	if page == "tools" && c.roleIndex == catMemory {
 		label, detail := "Background jobs", "No tools; memory completions use the model and instructions."
-		if c.roleIndex == catAutoReviewPolicy {
-			label, detail = "Permission review", "No tools; reviews only eligible root-agent operations. Uncertainty asks a person."
-		}
 		c.form.SetForm(formModel(&ui.FieldState{ID: "agent-no-tools", Label: label, Type: ui.FieldText, Value: ui.StringValue(detail), ReadOnly: true}), "", "")
+		c.form.Scroll().ScrollTo(0)
+		return
+	}
+	if page == "tools" && c.roleIndex != catAutoReviewPolicy {
+		c.syncToolPage()
 		c.form.Scroll().ScrollTo(0)
 		return
 	}
 	var fields []*ui.FieldState
 	for _, field := range c.draft.Fields() {
 		isPrompt := field.ID == "agent-instructions" || field.ID == "agent-description"
-		isTools := strings.HasPrefix(field.ID, "agent-tool") || field.ID == "agent-file-ownership"
+		isReview := c.roleIndex == catAutoReviewPolicy && strings.HasPrefix(field.ID, "auto-permission-")
+		isTools := isReview || strings.HasPrefix(field.ID, "agent-tool") || strings.HasPrefix(field.ID, "agent-skill") || strings.HasPrefix(field.ID, "agent-access") || field.ID == "agent-file-ownership"
 		if page == "instructions" && isPrompt || page == "tools" && isTools || page == "model" && !isPrompt && !isTools {
 			fields = append(fields, field)
 		}
@@ -392,6 +385,7 @@ func (c *agentCatalog) back() ui.EventResult {
 
 func (c *agentCatalog) closeDraft() {
 	c.draft = nil
+	c.toolPage = nil
 	c.confirm = ""
 	c.notice = ""
 	c.model.categories[catAgents].Form = formModel()
@@ -401,11 +395,16 @@ func (c *agentCatalog) closeDraft() {
 
 func (c *agentCatalog) apply() bool {
 	c.draft.ValidateAll()
+	if c.roleIndex == catAutoReviewPolicy {
+		validateAutoReviewPolicyForm(c.draft)
+	}
 	for _, field := range c.draft.Fields() {
 		if field.HasErrors() {
 			page := "model"
 			if field.ID == "agent-instructions" || field.ID == "agent-description" {
 				page = "instructions"
+			} else if c.roleIndex == catAutoReviewPolicy && strings.HasPrefix(field.ID, "auto-permission-") {
+				page = "tools"
 			}
 			c.setPage(page)
 			c.form.FocusField(field.ID)
@@ -428,13 +427,36 @@ func (c *agentCatalog) apply() bool {
 			c.owner.focusID(c.form.ID())
 			return false
 		}
+		format := c.draft.Field(fieldAutoPermFormat).Value.String()
+		if accountID != "" && (format == types.AutoPermissionFormatJSONSchema || format == types.AutoPermissionFormatJSONObject) {
+			account, ok := c.model.accounts[accountID]
+			template, templateOK := c.model.providers[account.ProviderID]
+			standard := ""
+			if ok && templateOK {
+				standard = provider.ResolveTemplate(account.ProviderID, template, account.Overrides).APIStandard
+			}
+			if standard == "" && ok {
+				standard = provider.DefaultStandardID(account.ProviderID)
+			}
+			if standard != "openai" {
+				c.draft.Field(fieldAutoPermFormat).Errors = []string{"Explicit JSON response formats require an OpenAI Chat-compatible account; use Auto or Prompt only."}
+				c.setPage("tools")
+				c.form.FocusField(fieldAutoPermFormat)
+				c.owner.focusID(c.form.ID())
+				return false
+			}
+		}
 		auto := c.model.autoReviewer
 		auto.Enabled = onOff(enabled)
 		auto.AccountID = accountID
 		auto.Provider = c.model.accounts[accountID].ProviderID
 		auto.Model = model
 		auto.Instructions = strings.TrimSpace(c.draft.Field("agent-instructions").Value.String())
+		auto = autoPermissionFromForm(auto, c.draft)
 		c.model.autoReviewer = auto
+		policyForm := c.model.buildAutoReviewPolicyForm(auto)
+		policyForm.OnChanged(func(id string) { c.model.handleFieldChanged(catAutoReviewPolicy, id) })
+		c.model.categories[catAutoReviewPolicy].Form = policyForm
 		c.closeDraft()
 		c.notice = "Auto Review Agent updated. Save settings to persist these changes."
 		return true
@@ -453,14 +475,19 @@ func (c *agentCatalog) apply() bool {
 	} else {
 		cfg.AllowedTools = nil
 		cfg.DeniedTools = nil
-		for _, tool := range tools.AgentTools {
-			if c.draft.Field("agent-tool/" + tool.Function.Name).Value.Bool() {
-				cfg.AllowedTools = append(cfg.AllowedTools, tool.Function.Name)
+		for _, field := range c.draft.Fields() {
+			if !strings.HasPrefix(field.ID, "agent-tool/") {
+				continue
+			}
+			name := strings.TrimPrefix(field.ID, "agent-tool/")
+			if field.Value.Bool() {
+				cfg.AllowedTools = append(cfg.AllowedTools, name)
 			} else {
-				cfg.DeniedTools = append(cfg.DeniedTools, tool.Function.Name)
+				cfg.DeniedTools = append(cfg.DeniedTools, name)
 			}
 		}
 	}
+	cfg.SkillModes = c.selectedSkillModes()
 	if c.roleIndex >= 0 {
 		if c.roleIndex == catMemory {
 			c.model.memoryAgent = cfg
@@ -488,6 +515,7 @@ func (c *agentCatalog) apply() bool {
 		p.Instructions = cfg.Instructions
 		p.AllowedTools = cfg.AllowedTools
 		p.DeniedTools = cfg.DeniedTools
+		p.SkillModes = cfg.SkillModes
 		p.ContextCompactionPercent = cfg.ContextCompactionPercent
 		p.ThinkingEffort = cfg.ThinkingEffort
 		p.ModelContextWindow = cfg.ModelContextWindow
@@ -511,7 +539,7 @@ func (c *agentCatalog) apply() bool {
 }
 
 func (c *agentCatalog) Children() []ui.Component {
-	children := []ui.Component{c.filter, c.table, c.tabs, c.form}
+	children := []ui.Component{c.filter, c.toolFilter, c.table, c.tabs, c.form}
 	if !c.Bounds().Empty() {
 		children = append(children, c.bar)
 		if c.stackActions {
@@ -544,15 +572,22 @@ func (c *agentCatalog) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		c.table.Layout(ctx, ui.Rect{})
 		c.listScroll.Layout(ctx, ui.Rect{})
 		c.tabs.Layout(ctx, ui.Rect{Y: 2, W: w, H: ui.StripHeight})
+		c.toolFilter.Layout(ctx, ui.Rect{})
+		formY := 5
+		if c.page == "tools" && c.roleIndex != catMemory && c.roleIndex != catAutoReviewPolicy {
+			c.toolFilter.Layout(ctx, ui.Rect{Y: 4, W: w, H: 1})
+			formY = 6
+		}
 		c.form.SetHideDescriptions(w < 48)
-		c.form.Layout(ctx, ui.Rect{Y: 5, W: max(1, w-2), H: max(1, h-8)})
-		c.formScroll.Layout(ctx, ui.Rect{X: w - 2, Y: 5, W: 2, H: max(1, h-8)})
+		c.form.Layout(ctx, ui.Rect{Y: formY, W: max(1, w-2), H: max(1, h-formY-3)})
+		c.formScroll.Layout(ctx, ui.Rect{X: w - 2, Y: formY, W: 2, H: max(1, h-formY-3)})
 		if !c.formScroll.Needed() {
 			c.formScroll.Layout(ctx, ui.Rect{})
 		}
 		c.bar.Layout(ctx, ui.Rect{Y: h - 1, W: w, H: 1})
 		c.more.Layout(ctx, ui.Rect{})
 	} else {
+		c.toolFilter.Layout(ctx, ui.Rect{})
 		c.tabs.Layout(ctx, ui.Rect{})
 		c.form.Layout(ctx, ui.Rect{})
 		c.formScroll.Layout(ctx, ui.Rect{})
@@ -609,6 +644,9 @@ func (c *agentCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.Even
 	result := ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
 	row, _ := c.table.Selected()
 	switch action.ID {
+	case "agents.tool-search.enter":
+		c.owner.focusID(c.form.ID())
+		c.form.FocusFirst()
 	case "form.changed":
 	case "agents.add":
 		c.begin("", false)
@@ -626,6 +664,10 @@ func (c *agentCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.Even
 		return c.back()
 	case "agents.discard":
 		c.closeDraft()
+		if next := c.owner.capCatalog.nextOpen; next != nil {
+			c.owner.capCatalog.nextOpen = nil
+			return c.owner.OpenCapabilities(next.kind, next.query, next.id)
+		}
 		if next := c.model.nextScope; next != "" {
 			c.model.nextScope = ""
 			result.Cmd = func() tea.Msg { return ScopeMsg{Scope: next} }
@@ -634,6 +676,7 @@ func (c *agentCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.Even
 		c.confirm = ""
 		c.notice = ""
 		c.model.nextScope = ""
+		c.owner.capCatalog.nextOpen = nil
 		c.rebuildBar()
 		if c.draft != nil {
 			c.owner.focusID(c.form.ID())
@@ -745,6 +788,7 @@ func (c *agentCatalog) Semantics() ui.Semantics {
 
 func (c *agentCatalog) SetTokens(tokens *ui.TokenSet) {
 	c.filter.SetTokens(tokens)
+	c.toolFilter.SetTokens(tokens)
 	c.table.SetTokens(tokens)
 	c.tabs.SetTokens(tokens)
 	c.form.SetTokens(tokens)

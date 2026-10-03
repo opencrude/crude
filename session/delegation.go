@@ -4,12 +4,11 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"html"
 	"slices"
-	"strings"
 	"time"
 
 	"crude/agent"
+	rootprompt "crude/prompt"
 	"crude/provider"
 	"crude/tools"
 )
@@ -59,8 +58,7 @@ func agentProfileCatalog(cfg *Config) string {
 		keys = append(keys, key)
 	}
 	slices.Sort(keys)
-	var out strings.Builder
-	out.WriteString("\n<available_agent_profiles>Use a profile's name in run_sub_agent when its purpose matches a delegated task.\n")
+	var profiles []rootprompt.AgentProfile
 	for _, name := range keys {
 		p := cfg.Agents.AgentProfiles[name]
 		if p.Enabled != nil && !*p.Enabled {
@@ -69,16 +67,13 @@ func agentProfileCatalog(cfg *Config) string {
 		if role := cfg.GetCategoryConfig(p.Category); role.Enabled != nil && !*role.Enabled {
 			continue
 		}
-		fmt.Fprintf(&out, "<profile name=\"%s\" role=\"%s\">%s</profile>\n", html.EscapeString(name), html.EscapeString(p.Category), html.EscapeString(p.Description))
+		profiles = append(profiles, rootprompt.AgentProfile{Name: name, Role: p.Category, Description: p.Description})
 	}
-	out.WriteString("</available_agent_profiles>")
-	return out.String()
+	return rootprompt.AgentProfileCatalog(profiles)
 }
 
-const delegationDisabledNotice = "The user has disabled multi-agent mode in Settings. Do not launch new sub-agents. This is a user settings change, not an agent or execution failure. Continue the task yourself. Already-running children retain their actual status and can still be reviewed or cancelled."
-
 func delegationDisabledResult() tools.ToolResult {
-	content, _ := json.Marshal(map[string]string{"status": "disabled_by_user", "reason": "user_disabled_multi_agent", "message": delegationDisabledNotice})
+	content, _ := json.Marshal(map[string]string{"status": "disabled_by_user", "reason": "user_disabled_multi_agent", "message": rootprompt.DelegationDisabledNotice()})
 	return tools.ToolResult{Content: string(content)}
 }
 
@@ -91,9 +86,9 @@ func (s *Session) recordDelegationChange(before, after bool) {
 	}
 	s.delegationNoticeMu.Lock()
 	defer s.delegationNoticeMu.Unlock()
-	text := delegationDisabledNotice
+	text := rootprompt.DelegationDisabledNotice()
 	if after {
-		text = "The user has enabled multi-agent mode in Settings. Sub-agent launches are available again. This is a user settings change, not recovery from an agent failure."
+		text = rootprompt.DelegationEnabledNotice()
 	}
 	notice := provider.NewTextMessage("user", text)
 	notice.Origin = provider.OriginRuntimeContext

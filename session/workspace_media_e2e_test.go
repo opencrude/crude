@@ -300,7 +300,8 @@ func TestE2EOpenAIReadFileDeliversEveryEnabledModalitySameTurn(t *testing.T) {
 			if !sess.SubmitInput(orchestrator.ID, provider.PlainInput("inspect media")) {
 				t.Fatal("submit rejected")
 			}
-			_ = waitCapturedRequest(t, requests)
+			first := waitCapturedRequest(t, requests)
+			assertMultimodalReadContractOffered(t, first)
 			second := waitCapturedRequest(t, requests)
 			part := findTypedMap(second, testCase.wireType)
 			if part == nil {
@@ -343,6 +344,26 @@ func assertOpenAIToolMediaOrder(t *testing.T, request map[string]any) {
 	if toolIndex < 0 || mediaIndex != toolIndex+1 {
 		t.Fatalf("tool/media order invalid: tool=%d media=%d messages=%#v", toolIndex, mediaIndex, messages)
 	}
+}
+
+func assertMultimodalReadContractOffered(t *testing.T, request map[string]any) {
+	t.Helper()
+	definitions, _ := request["tools"].([]any)
+	for _, raw := range definitions {
+		definition, _ := raw.(map[string]any)
+		function, _ := definition["function"].(map[string]any)
+		if function["name"] != "read_file" {
+			continue
+		}
+		description, _ := function["description"].(string)
+		for _, capability := range []string{"Images/screenshots", "PDF", "audio", "video", "native attachments", "provider protocol", "explicit refusal"} {
+			if !strings.Contains(description, capability) {
+				t.Fatalf("actual read_file schema omits %q: %s", capability, description)
+			}
+		}
+		return
+	}
+	t.Fatal("actual model request did not offer read_file")
 }
 
 func toolMessageContainsImage(t *testing.T, messages []sessiondb.MessageWithMeta) bool {

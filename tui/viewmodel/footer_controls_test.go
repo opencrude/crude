@@ -5,6 +5,8 @@ import (
 	"testing"
 
 	"crude/tui/cell"
+	"crude/tui/rendering"
+	"crude/tui/screens/shellfooter"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
 	ttypes "crude/types"
@@ -16,7 +18,7 @@ func TestFooterControlsContainOnlyPanelToggles(t *testing.T) {
 	app.AddOrchestrator("root")
 
 	segments := app.footerStatusSegments()
-	wantActions := []string{"problems", "notices", "terminals", "workspace"}
+	wantActions := []string{"problems", "notices", "terminals", "board", "memory", "workspace"}
 	if len(segments) != len(wantActions) {
 		t.Fatalf("footer status group has %d segments, want %d: %+v", len(segments), len(wantActions), segments)
 	}
@@ -25,7 +27,7 @@ func TestFooterControlsContainOnlyPanelToggles(t *testing.T) {
 			t.Fatalf("footer control %d=%+v want action %q", index, segment, wantActions[index])
 		}
 	}
-	wantFills := []ui.SemanticColor{ui.ColorAccent2, ui.ColorAccent, ui.ColorDiffHunk, ui.ColorAccent}
+	wantFills := []ui.SemanticColor{ui.ColorAccent2, ui.ColorAccent, ui.ColorDiffHunk, ui.ColorAccent2, ui.ColorMuted, ui.ColorAccent}
 	for index, segment := range segments {
 		if segment.FillRole != wantFills[index] {
 			t.Fatalf("control %s lost its vivid hue: %v", segment.Text, segment.FillRole)
@@ -71,6 +73,7 @@ func TestFooterControlsHavePersistentFillsAndDistinctActiveState(t *testing.T) {
 		if x < 0 {
 			t.Fatalf("missing footer control %q in %q", segment.Text, row)
 		}
+		x = rendering.VisibleWidth(row[:x])
 		fg, bg := tokens.StatusStripColors(segment.FillRole, segment.Active, segment.Attention)
 		painted := buf.Get(x, y)
 		if !painted.BG.Equal(bg) || !painted.FG.Equal(fg) {
@@ -105,12 +108,40 @@ func TestFooterColorsFollowAttentionInsteadOfPermanentAlarms(t *testing.T) {
 		t.Fatal("read notice retained attention fill")
 	}
 	app.Status.SetAgent(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{ID: "background"}, Phase: ttypes.AgentTool})
-	working := app.footerStatusSegments()[3]
+	working := app.footerStatusSegments()[5]
 	if !working.Attention || working.FillRole != ui.ColorAccent2 {
 		t.Fatal("background work did not change Workspace color")
 	}
 	app.Status.SetAgent(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{ID: "background"}, Phase: ttypes.AgentQuestion, NeedsAction: true})
-	if needsInput := app.footerStatusSegments()[3]; !needsInput.Attention || needsInput.FillRole != ui.ColorWarning {
+	if needsInput := app.footerStatusSegments()[5]; !needsInput.Attention || needsInput.FillRole != ui.ColorWarning {
 		t.Fatal("genuine input request did not change Workspace color")
+	}
+}
+
+func TestBoardMovedFromAgentsSidebarToFooter(t *testing.T) {
+	app := newFullTestApp(t)
+	for _, item := range app.agentSidebarItems() {
+		if item.ID == "board.open" || item.Label == "Board" {
+			t.Fatalf("Board remained in Agents sidebar: %#v", item)
+		}
+	}
+
+	var boardFound bool
+	for _, segment := range app.footerStatusSegments() {
+		if segment.Action == "board" {
+			boardFound = segment.Text == "Board" && segment.Pill
+		}
+	}
+	if !boardFound {
+		t.Fatal("footer has no Board panel control")
+	}
+
+	_, command := app.update(shellfooter.ActionMsg{Action: "board"})
+	if command == nil || app.termDock == nil || !app.termDock.IsOpen() || app.termDock.ActivePanel() != termdock.PanelBoard {
+		t.Fatal("footer Board control did not open the retained Board panel")
+	}
+	_, command = app.update(shellfooter.ActionMsg{Action: "board"})
+	if command != nil || app.termDock.IsOpen() {
+		t.Fatal("active footer Board control did not hide the panel")
 	}
 }

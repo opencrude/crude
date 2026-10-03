@@ -2,243 +2,253 @@ package tools
 
 import (
 	"encoding/json"
+	"fmt"
+	"strconv"
 	"strings"
-
-	"crude/tui/rendering"
 )
 
-// flexStringSlice is a tolerant []string that decodes from either a JSON array
-// of strings or a single space-joined string (the backend emits tools/files as
-// space-joined strings on history hits but array-of-strings elsewhere). Without
-// this, a strict []string field fails the whole unmarshal and the projection
-// falls back to showing the raw JSON blob.
-type flexStringSlice []string
-
-func (f *flexStringSlice) UnmarshalJSON(data []byte) error {
-	var arr []string
-	if err := json.Unmarshal(data, &arr); err == nil {
-		*f = arr
-		return nil
+// buildMemoryResult projects the exact tool result and authored input. Mutation
+// acknowledgements do not echo the assertion, so the input supplies that part
+// of the audit trail. Terminal geometry belongs to the caller, not this parser.
+func buildMemoryResult(name, content, input string) StructuredResult {
+	result, ok := memoryObject(content)
+	if !ok {
+		return BuildReadableResult(content)
 	}
-	var s string
-	if err := json.Unmarshal(data, &s); err != nil {
-		return err
-	}
-	if s == "" {
-		*f = nil
-		return nil
-	}
-	*f = strings.Fields(s)
-	return nil
-}
-
-// MemoryRowKind classifies a memory-tool result line for semantic coloring.
-type MemoryRowKind int
-
-const (
-	MemoryRowDefault MemoryRowKind = iota
-	MemoryRowTitle                 // a bold heading (e.g. a memory's title)
-	MemoryRowMeta                  // muted metadata (kind / importance / when)
-	MemoryRowBody                  // the content / summary text
-)
-
-// MemoryLine is one structured memory-tool result row.
-type MemoryLine struct {
-	Text string
-	Kind MemoryRowKind
-}
-
-// IsMemorySearchTool reports whether a tool returns a structured memory JSON
-// payload that should be pretty-projected rather than shown as raw JSON.
-func IsMemorySearchTool(name string) bool {
+	args, _ := memoryObject(input)
 	switch name {
-	case "recall_memory", "search_history":
-		return true
+	case "remember", "update_memory", "forget_memory":
+		return memoryMutationResult(name, result, args, content)
+	case "recall_memory":
+		return memoryRecallResult(result, content)
+	case "memory_feedback":
+		return memoryFeedbackResult(result, args, content)
+	case "search_history":
+		return memoryHistoryResult(result, content)
 	}
-	return false
+	return BuildReadableResult(content)
 }
 
-// MemoryResultSummary returns a compact title-line summary for the memory
-// tool family. It parses the JSON payload and counts entries, so the header
-// reads "Searched memory — 3 memories" instead of dumping raw JSON.
-func MemoryResultSummary(tool, content string) string {
-	switch tool {
-	case "recall_memory":
-		var payload struct {
-			Results []map[string]any `json:"results"`
-			Total   int              `json:"total"`
-		}
-		if err := json.Unmarshal([]byte(content), &payload); err != nil {
-			return ""
-		}
-		if payload.Total == 0 {
-			return "Recalled — no matches"
-		}
-		return "Recalled — " + rendering.FormatCount(payload.Total) + " memories"
-	case "search_history":
-		var payload struct {
-			Turns    []map[string]any `json:"turns"`
-			Sessions []map[string]any `json:"sessions"`
-		}
-		if err := json.Unmarshal([]byte(content), &payload); err != nil {
-			return ""
-		}
-		n := len(payload.Turns) + len(payload.Sessions)
-		if n == 0 {
-			return "Searched history — no matches"
-		}
-		return "Searched history — " + rendering.FormatCount(n) + " results"
-	case "remember":
-		var payload map[string]any
-		if err := json.Unmarshal([]byte(content), &payload); err != nil {
-			return ""
-		}
-		if title, _ := payload["title"].(string); title != "" {
-			return "Remembered — " + rendering.TruncateLine(title, 40)
-		}
-		return "Remembered"
-	case "update_memory":
-		var payload map[string]any
-		if err := json.Unmarshal([]byte(content), &payload); err != nil {
-			return ""
-		}
-		if id, _ := payload["id"].(string); id != "" {
-			return "Updated memory — " + rendering.TruncateLine(id, 40)
-		}
-		return "Updated memory"
-	case "forget_memory":
-		var payload map[string]any
-		if err := json.Unmarshal([]byte(content), &payload); err != nil {
-			return ""
-		}
-		if id, _ := payload["id"].(string); id != "" {
-			return "Forgot memory — " + rendering.TruncateLine(id, 40)
-		}
-		return "Forgot memory"
+type memoryFields map[string]json.RawMessage
+
+func memoryObject(raw string) (memoryFields, bool) {
+	var fields memoryFields
+	if err := json.Unmarshal([]byte(raw), &fields); err != nil || fields == nil {
+		return nil, false
+	}
+	return fields, true
+}
+
+func (f memoryFields) text(key string) string {
+	var value string
+	_ = json.Unmarshal(f[key], &value)
+	return value
+}
+
+func (f memoryFields) number(key string) string {
+	var n json.Number
+	if err := json.Unmarshal(f[key], &n); err == nil {
+		return n.String()
 	}
 	return ""
 }
 
-// BuildMemoryResultRows parses a memory-tool JSON payload into structured
-// rows (let contentWidth be the column width for truncation). Empty or
-// non-JSON input returns nil so the caller falls back to the plain body path.
-// The chatprojection layer maps MemoryLine.Kind to concrete RowSpan roles.
-func BuildMemoryResultRows(tool, content string, contentWidth int) []MemoryLine {
-	switch tool {
-	case "recall_memory":
-		return buildRecallRows(content, contentWidth)
-	case "search_history":
-		return buildHistoryRows(content, contentWidth)
+func (f memoryFields) boolean(key string) string {
+	var value bool
+	if err := json.Unmarshal(f[key], &value); err == nil && len(f[key]) > 0 && string(f[key]) != "null" {
+		return strconv.FormatBool(value)
 	}
-	return nil
+	return ""
 }
 
-func buildRecallRows(content string, contentWidth int) []MemoryLine {
-	var payload struct {
-		Results []struct {
-			ID         string `json:"id"`
-			Kind       string `json:"kind"`
-			Title      string `json:"title"`
-			Content    string `json:"content"`
-			Importance int    `json:"importance"`
-			Pinned     bool   `json:"pinned"`
-			Status     string `json:"status"`
-			Source     string `json:"source"`
-			When       string `json:"last_updated"`
-		} `json:"results"`
+func (f memoryFields) list(key string) string {
+	var values []string
+	if err := json.Unmarshal(f[key], &values); err == nil {
+		return strings.Join(values, ", ")
 	}
-	if err := json.Unmarshal([]byte(content), &payload); err != nil || len(payload.Results) == 0 {
-		return nil
-	}
-	var out []MemoryLine
-	for _, r := range payload.Results {
-		meta := []string{}
-		if r.Kind != "" {
-			meta = append(meta, r.Kind)
-		}
-		if r.Importance > 0 {
-			meta = append(meta, "importance "+rendering.FormatCount(r.Importance))
-		}
-		if r.Pinned {
-			meta = append(meta, "pinned")
-		}
-		if r.When != "" {
-			meta = append(meta, r.When)
-		}
-		if len(meta) > 0 {
-			out = append(out, MemoryLine{Text: truncateLineToWidth(strings.Join(meta, " · "), contentWidth), Kind: MemoryRowMeta})
-		}
-		if r.Title != "" {
-			out = append(out, MemoryLine{Text: truncateLineToWidth(r.Title, contentWidth), Kind: MemoryRowTitle})
-		}
-		if r.Content != "" {
-			out = append(out, MemoryLine{Text: truncateLineToWidth(r.Content, contentWidth), Kind: MemoryRowBody})
-		}
-	}
-	return out
+	// History stores tool/file names as space-joined strings, while session
+	// summaries and authored paths arrive as arrays.
+	return f.text(key)
 }
 
-func buildHistoryRows(content string, contentWidth int) []MemoryLine {
-	var payload struct {
-		Turns []struct {
-			SessionID string          `json:"session_id"`
-			Turn      int             `json:"turn"`
-			When      string          `json:"when"`
-			User      string          `json:"user"`
-			Assistant string          `json:"assistant"`
-			Tools     flexStringSlice `json:"tools"`
-			Files     flexStringSlice `json:"files"`
-		} `json:"turns"`
-		Sessions []struct {
-			SessionID string          `json:"session_id"`
-			Title     string          `json:"title"`
-			Summary   string          `json:"summary"`
-			Outcome   string          `json:"outcome"`
-			KeyFiles  flexStringSlice `json:"key_files"`
-			When      string          `json:"when"`
-		} `json:"sessions"`
+func addMemoryDetail(section *ResultSection, label, value string) {
+	if value != "" {
+		section.Details = append(section.Details, ResultField{Label: label, Value: value})
 	}
-	if err := json.Unmarshal([]byte(content), &payload); err != nil {
-		return nil
+}
+
+func addMemoryEvidence(section *ResultSection, raw json.RawMessage) {
+	var items []memoryFields
+	if err := json.Unmarshal(raw, &items); err != nil {
+		return
 	}
-	var out []MemoryLine
-	for _, s := range payload.Sessions {
-		meta := []string{"session"}
-		if s.When != "" {
-			meta = append(meta, s.When)
+	for i, item := range items {
+		var parts []string
+		for _, field := range []struct{ label, key string }{
+			{"Kind", "kind"}, {"Outcome", "outcome"}, {"Session", "session_id"},
+			{"Message", "message_id"}, {"Tool call", "tool_call_id"}, {"Summary", "summary"},
+		} {
+			if value := item.text(field.key); value != "" {
+				parts = append(parts, field.label+": "+value)
+			}
 		}
-		out = append(out, MemoryLine{Text: truncateLineToWidth(strings.Join(meta, " · "), contentWidth), Kind: MemoryRowMeta})
-		if s.Title != "" {
-			out = append(out, MemoryLine{Text: truncateLineToWidth(s.Title, contentWidth), Kind: MemoryRowTitle})
-		}
-		if s.Summary != "" {
-			out = append(out, MemoryLine{Text: truncateLineToWidth(s.Summary, contentWidth), Kind: MemoryRowBody})
-		}
-		if s.Outcome != "" {
-			out = append(out, MemoryLine{Text: truncateLineToWidth(s.Outcome, contentWidth), Kind: MemoryRowBody})
-		}
-		if len(s.KeyFiles) > 0 {
-			out = append(out, MemoryLine{Text: truncateLineToWidth("Files: "+strings.Join(s.KeyFiles, ", "), contentWidth), Kind: MemoryRowMeta})
+		if len(parts) != 0 {
+			addMemoryDetail(section, fmt.Sprintf("Evidence %d", i+1), strings.Join(parts, "\n"))
 		}
 	}
-	for _, t := range payload.Turns {
-		meta := []string{"turn"}
-		if t.When != "" {
-			meta = append(meta, t.When)
+}
+
+func memoryMutationResult(name string, result, args memoryFields, content string) StructuredResult {
+	status := map[string]string{"remember": "remembered", "update_memory": "updated", "forget_memory": "forgotten"}[name]
+	if result.text("status") != status || result.text("id") == "" {
+		return BuildReadableResult(content)
+	}
+	verb := map[string]string{"remember": "Remembered", "update_memory": "Updated memory", "forget_memory": "Forgot memory"}[name]
+	section := ResultSection{Title: firstMemoryText(args, result, "title"), Body: args.text("content")}
+	if section.Title == "" {
+		section.Title = verb
+	}
+	addMemoryDetail(&section, "ID", result.text("id"))
+	addMemoryDetail(&section, "Revision", result.number("revision"))
+	addMemoryDetail(&section, "Previous revision", result.number("previous_revision"))
+	addMemoryDetail(&section, "Expected revision", args.number("expected_revision"))
+	addMemoryDetail(&section, "Status", result.text("status"))
+	addMemoryDetail(&section, "Kind", firstMemoryText(args, result, "kind"))
+	addMemoryDetail(&section, "Title", args.text("title"))
+	addMemoryDetail(&section, "Importance", args.number("importance"))
+	addMemoryDetail(&section, "Pinned", args.boolean("pinned"))
+	addMemoryDetail(&section, "Applies when", args.text("applies_when"))
+	addMemoryDetail(&section, "Paths", args.list("paths"))
+	addMemoryEvidence(&section, args["evidence"])
+	section.Metadata = firstMemoryText(args, result, "kind")
+	if name == "forget_memory" {
+		section.Body = "Retired from active recall · revision history retained"
+	}
+	summary := "revision " + result.number("revision")
+	if previous := result.number("previous_revision"); previous != "" {
+		summary = "revision " + previous + " → " + result.number("revision")
+	}
+	return StructuredResult{Summary: summary, Unit: "memories", Sections: []ResultSection{section}}
+}
+
+func firstMemoryText(a, b memoryFields, key string) string {
+	if value := a.text(key); value != "" {
+		return value
+	}
+	return b.text(key)
+}
+
+func memoryRecallResult(result memoryFields, content string) StructuredResult {
+	var items []memoryFields
+	if err := json.Unmarshal(result["results"], &items); err != nil || items == nil {
+		return BuildReadableResult(content)
+	}
+	projection := StructuredResult{Summary: resultCount(len(items), "memory", "memories"), Unit: "memories"}
+	if len(items) == 0 {
+		projection.Sections = []ResultSection{{Body: "No matching workspace memories."}}
+	}
+	for _, item := range items {
+		section := ResultSection{Title: item.text("title"), Body: item.text("content")}
+		if section.Title == "" {
+			section.Title = "Memory " + item.text("id")
 		}
-		if len(t.Tools) > 0 {
-			meta = append(meta, "tools: "+strings.Join(t.Tools, ", "))
-		}
-		out = append(out, MemoryLine{Text: truncateLineToWidth(strings.Join(meta, " · "), contentWidth), Kind: MemoryRowMeta})
-		if t.User != "" {
-			out = append(out, MemoryLine{Text: truncateLineToWidth(t.User, contentWidth), Kind: MemoryRowBody})
-		}
-		if t.Assistant != "" {
-			out = append(out, MemoryLine{Text: truncateLineToWidth(t.Assistant, contentWidth), Kind: MemoryRowBody})
-		}
-		if len(t.Files) > 0 {
-			out = append(out, MemoryLine{Text: truncateLineToWidth("Files: "+strings.Join(t.Files, ", "), contentWidth), Kind: MemoryRowMeta})
+		section.Metadata = strings.Join(nonemptyMemoryValues(item.text("kind"), item.text("status"), item.text("last_updated")), " · ")
+		addMemoryDetail(&section, "ID", item.text("id"))
+		addMemoryDetail(&section, "Revision", item.number("revision"))
+		addMemoryDetail(&section, "Importance", item.number("importance"))
+		addMemoryDetail(&section, "Pinned", item.boolean("pinned"))
+		addMemoryDetail(&section, "Source", item.text("source"))
+		addMemoryDetail(&section, "From session", item.text("from_session"))
+		addMemoryDetail(&section, "Applies when", item.text("applies_when"))
+		addMemoryDetail(&section, "Evidence count", item.number("evidence_count"))
+		addMemoryEvidence(&section, item["evidence"])
+		projection.Sections = append(projection.Sections, section)
+	}
+	return projection
+}
+
+func nonemptyMemoryValues(values ...string) []string {
+	var result []string
+	for _, value := range values {
+		if value != "" {
+			result = append(result, value)
 		}
 	}
-	return out
+	return result
+}
+
+func memoryFeedbackResult(result, args memoryFields, content string) StructuredResult {
+	if result.text("status") != "recorded" {
+		return BuildReadableResult(content)
+	}
+	count, _ := strconv.Atoi(result.number("count"))
+	projection := StructuredResult{Summary: resultCount(count, "item", "items"), Unit: "items"}
+	var items []memoryFields
+	if err := json.Unmarshal(args["items"], &items); err == nil {
+		for _, item := range items {
+			section := ResultSection{Title: "Memory " + item.text("id"), Metadata: item.text("kind")}
+			var evidence []memoryFields
+			if json.Unmarshal(item["evidence"], &evidence) == nil {
+				for _, e := range evidence {
+					if summary := e.text("summary"); summary != "" {
+						section.Body += summary + "\n"
+					}
+				}
+				section.Body = strings.TrimSuffix(section.Body, "\n")
+			}
+			addMemoryDetail(&section, "ID", item.text("id"))
+			addMemoryDetail(&section, "Revision", item.number("revision"))
+			addMemoryDetail(&section, "Feedback", item.text("kind"))
+			addMemoryEvidence(&section, item["evidence"])
+			projection.Sections = append(projection.Sections, section)
+		}
+	}
+	if len(projection.Sections) == 0 {
+		projection.Sections = []ResultSection{{Title: "Feedback recorded", Details: []ResultField{{Label: "Count", Value: result.number("count")}}}}
+	}
+	return projection
+}
+
+func memoryHistoryResult(result memoryFields, content string) StructuredResult {
+	var turns, sessions []memoryFields
+	if err := json.Unmarshal(result["turns"], &turns); err != nil || turns == nil {
+		return BuildReadableResult(content)
+	}
+	if err := json.Unmarshal(result["sessions"], &sessions); err != nil || sessions == nil {
+		return BuildReadableResult(content)
+	}
+	projection := StructuredResult{Summary: resultCount(len(sessions), "session", "sessions") + " · " + resultCount(len(turns), "turn", "turns"), Unit: "results"}
+	if len(sessions) == 0 && len(turns) == 0 {
+		projection.Sections = []ResultSection{{Body: "No matching workspace history."}}
+	}
+	for _, item := range sessions {
+		section := ResultSection{Title: item.text("title"), Metadata: "Session · " + item.text("when"), Body: item.text("summary")}
+		if section.Title == "" {
+			section.Title = "Session " + item.text("session_id")
+		}
+		addMemoryDetail(&section, "Session ID", item.text("session_id"))
+		addMemoryDetail(&section, "Outcome", item.text("outcome"))
+		addMemoryDetail(&section, "Key files", item.list("key_files"))
+		projection.Sections = append(projection.Sections, section)
+	}
+	for _, item := range turns {
+		section := ResultSection{Title: "Turn " + item.number("turn"), Metadata: "Session " + item.text("session_id") + " · " + item.text("when"), Body: item.text("user")}
+		if section.Body != "" {
+			section.Body = "User: " + section.Body
+		}
+		if assistant := item.text("assistant"); assistant != "" {
+			if section.Body != "" {
+				section.Body += "\n"
+			}
+			section.Body += "Assistant: " + assistant
+		}
+		addMemoryDetail(&section, "Session ID", item.text("session_id"))
+		addMemoryDetail(&section, "Turn", item.number("turn"))
+		addMemoryDetail(&section, "User", item.text("user"))
+		addMemoryDetail(&section, "Assistant", item.text("assistant"))
+		addMemoryDetail(&section, "Tools", item.list("tools"))
+		addMemoryDetail(&section, "Files", item.list("files"))
+		projection.Sections = append(projection.Sections, section)
+	}
+	return projection
 }

@@ -12,6 +12,7 @@ import (
 
 	"crude/tui/chatprojection"
 	"crude/tui/filetree"
+	"crude/tui/screens/launcher"
 	"crude/tui/screens/shellchat"
 	ttypes "crude/tui/types"
 	"crude/tui/ui"
@@ -407,20 +408,14 @@ func TestDispatchMouseRelease_CapturedLauncherOutsideRegion(t *testing.T) {
 	app.launcherScreen.SetData(".", workspaces)
 	app.paintShellFrame()
 
-	// Establish capture via the root host (same as a handled workspace-row click).
-	layout := app.computeLayout()
-	localX := layout.InnerW*40/100 + 3 + 2 + 2
-	if localX >= layout.InnerW {
-		localX = layout.InnerW - 2
-	}
-	localY := 4 + 1 + 2 + 1 // hero + blank + header/search + first row
-	res := app.rootHost.Handle(tea.MouseClickMsg{X: layout.SidebarW + layout.PadLR + localX, Y: layout.ChatAreaTop + localY, Button: tea.MouseLeft})
+	rect, _ := app.rootHost.ScreenRect(launcher.WorkspaceListID)
+	res := app.rootHost.Handle(tea.MouseClickMsg{X: rect.X + 1, Y: rect.Y, Button: tea.MouseLeft})
 	if !res.Handled || !app.rootHost.HasPointerCapture() {
 		t.Fatal("launcher list click should capture pointer")
 	}
 
-	releaseY := layout.ChatAreaTop + app.ChatAreaHeight + 2
-	clickX := layout.SidebarW + layout.PadLR + localX
+	releaseY := app.height - 1
+	clickX := rect.X + 1
 	_, _ = app.dispatchMouseRelease(tea.MouseReleaseMsg{
 		X: clickX, Y: releaseY, Button: tea.MouseLeft,
 	})

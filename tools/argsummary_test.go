@@ -83,6 +83,7 @@ func TestStructuredToolArgumentsNeverBecomeTitlePayloads(t *testing.T) {
 		{"cancel summary", "cancel_sub_agent", `handle_id: agent-8f21`, "agent-8f21"},
 		{"cancel normalized snapshot", "cancel_sub_agent", "agent-8f21", "agent-8f21"},
 		{"spawn normalized snapshot", "run_sub_agent", "Inspect renderer", "Inspect renderer"},
+		{"spawn category", "run_sub_agent", `{"category":"researcher","description":"Inspect renderer"}`, "Researcher · Inspect renderer"},
 		{"list subagents", "list_sub_agents", `{"include_completed":true}`, ""},
 		{"empty object", "list_sub_agents", `{}`, ""},
 		{"empty plan", "get_plan", `{}`, ""},
@@ -130,6 +131,22 @@ func TestToolDisplayNameRejectsStructuredOrUnboundedNames(t *testing.T) {
 	} {
 		if got := DisplayToolName(tc.name); got != tc.want {
 			t.Fatalf("name %q displays as %q, want %q", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestRelatedToolFamilyTitlesUseWholeSemanticOperands(t *testing.T) {
+	for _, tc := range []struct{ tool, input, want string }{
+		{"board_post", `{"to":"Patrick","type":"ASK","body":"Run the tests"}`, "ASK → Patrick"},
+		{"board_post", `{}`, ""},
+		{"board_read", `{"thread":"board-thread-42"}`, "thread board-thread-42"},
+		{"board_read", `{"since":19}`, "after #19"},
+		{"mcp_read_resource", `{}`, ""},
+		{"mcp_get_prompt", `{"connection_id":"docs","name":"review"}`, "docs · review"},
+		{"capability_search", `{"query":"complete capability search query"}`, "complete capability search query"},
+	} {
+		if got := SummarizeArgs(tc.tool, tc.input); got != tc.want {
+			t.Fatalf("%s title = %q, want %q", tc.tool, got, tc.want)
 		}
 	}
 }

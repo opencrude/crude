@@ -8,6 +8,7 @@ import (
 
 	"crude/provider"
 	"crude/sessiondb"
+	"crude/tools"
 	ttypes "crude/types"
 )
 
@@ -271,6 +272,10 @@ func applyTurnIdentity(snapshot *ttypes.ConversationMessage, meta sessiondb.Disp
 
 func applyCanonicalToolOperands(snapshot *ttypes.ConversationMessage, rawArgs string) {
 	if snapshot == nil || rawArgs == "" {
+		return
+	}
+	if tools.RetainsStructuredToolInput(snapshot.ToolName) {
+		snapshot.ToolInput = rawArgs
 		return
 	}
 	var params map[string]any

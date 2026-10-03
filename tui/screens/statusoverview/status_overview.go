@@ -99,22 +99,23 @@ type statusRow struct {
 
 type Surface struct {
 	ui.Base
-	tokens         *ui.TokenSet
-	views          *ui.Tabs
-	search         *searchControl
-	list           *listControl
-	utilityActions *ui.ActionBar
-	primaryActions *ui.ActionBar
-	listScroll     *ui.ScrollbarControl
-	focus          func(ui.ComponentID)
-	projection     Projection
-	activeView     ViewID
-	query          string
-	items          map[string]Item
-	expanded       map[string]bool
-	listWidth      int
-	docked         bool
-	stats          bool
+	tokens          *ui.TokenSet
+	views           *ui.Tabs
+	search          *searchControl
+	list            *listControl
+	utilityActions  *ui.ActionBar
+	primaryActions  *ui.ActionBar
+	listScroll      *ui.ScrollbarControl
+	focus           func(ui.ComponentID)
+	projection      Projection
+	activeView      ViewID
+	query           string
+	items           map[string]Item
+	expanded        map[string]bool
+	listWidth       int
+	docked          bool
+	stats           bool
+	dockHeaderInset int
 }
 
 func New(th *theme.Theme, projection Projection) *Surface {
@@ -231,6 +232,7 @@ func (s *Surface) SetTokens(tokens *ui.TokenSet) {
 func (s *Surface) SetFocusHandler(fn func(ui.ComponentID)) { s.focus = fn }
 func (s *Surface) FocusSearch()                            { s.focusID(SearchID) }
 func (s *Surface) SetSearchPlaceholder(text string)        { s.search.field.SetPlaceholder(text) }
+func (s *Surface) SetDockHeaderInset(width int)            { s.dockHeaderInset = max(0, width) }
 func (s *Surface) FocusList()                              { s.focusID(ListID) }
 func (s *Surface) FocusUtilityActions()                    { s.focusID(UtilityActionsID) }
 func (s *Surface) FocusPrimaryActions()                    { s.focusID(PrimaryActionsID) }
@@ -463,7 +465,8 @@ func (s *Surface) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 
 func (s *Surface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
-	innerX, innerW := 2, max(1, r.W-4)
+	innerX := min(2, max(0, r.W/2))
+	innerW := max(0, r.W-2*innerX)
 	topY := 0
 	ruleY := r.H
 	if !s.docked && !s.stats {
@@ -478,10 +481,14 @@ func (s *Surface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		utilityW := max(0, primaryX-innerX-2)
 		s.utilityActions.Layout(ctx, ui.Rect{X: innerX, Y: actionY, W: utilityW, H: 1})
 	}
-	contentH := max(1, ruleY-topY)
+	contentH := max(0, ruleY-topY)
 	listOffset := 2
-	listH := max(1, contentH-listOffset)
-	s.search.Layout(ctx, ui.Rect{X: innerX, Y: topY, W: innerW, H: 1})
+	listH := max(0, contentH-listOffset)
+	searchW := innerW
+	if s.docked && s.dockHeaderInset > 0 {
+		searchW = min(innerW, max(0, r.W-s.dockHeaderInset-innerX-1))
+	}
+	s.search.Layout(ctx, ui.Rect{X: innerX, Y: topY, W: searchW, H: min(1, contentH)})
 	listW := innerW
 	showScroll := s.listScroll.NeededForViewport(listH)
 	if showScroll && listW > 2 {
@@ -516,7 +523,7 @@ func (s *Surface) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) 
 		}
 	}
 	y := oy + r.Y + s.search.Bounds().Y + 1
-	for x := ox + r.X + 2; x < ox+r.X+2+s.search.Bounds().W; x++ {
+	for x := ox + r.X + s.search.Bounds().X; x < ox+r.X+r.W-s.search.Bounds().X; x++ {
 		buf.Set(x, y, cell.NewCell(ui.FirstRune(s.tokens.Glyphs().BorderH, '-'), divider, bg, 0))
 	}
 }
@@ -776,6 +783,11 @@ func (s *searchControl) Measure(ctx ui.LayoutContext, cs ui.Constraints) ui.Size
 }
 func (s *searchControl) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
+	prompt := ui.SearchGlyphEnd(s.owner.tokens)
+	if rendering.VisibleWidth(prompt) > r.W {
+		prompt = ""
+	}
+	s.field.SetPrompt(prompt)
 	s.field.Layout(ctx, ui.Rect{W: r.W, H: r.H})
 }
 func (s *searchControl) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {

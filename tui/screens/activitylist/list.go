@@ -124,6 +124,31 @@ func (s *Screen) SetIcon(icon string) { s.icon = icon }
 
 func (s *Screen) SetBadge(badge string) { s.badge = badge }
 
+type ViewState struct {
+	Filter, Selection string
+	Offset            int
+}
+
+func (screen *Screen) ViewState() ViewState {
+	state := ViewState{Filter: screen.filter.Value(), Offset: screen.list.inner.Scroll().Offset()}
+	if selected, ok := screen.list.inner.Selected(); ok {
+		state.Selection = selected.ID
+	}
+	return state
+}
+
+func (screen *Screen) RestoreViewState(state ViewState) {
+	screen.filter.field.SetValue(state.Filter)
+	screen.applyFilter()
+	for index, item := range screen.list.inner.Items() {
+		if item.ID == state.Selection {
+			screen.list.inner.SelectIndex(index)
+			break
+		}
+	}
+	screen.list.inner.Scroll().ScrollTo(state.Offset)
+}
+
 func (s *Screen) headerTitle() panelchrome.Title {
 	return panelchrome.Title{Icon: s.icon, Badge: s.badge}
 }

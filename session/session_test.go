@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"crude/logger"
+	rootprompt "crude/prompt"
 	"crude/provider"
 	"crude/sessiondb"
 	ttypes "crude/types"
@@ -380,7 +381,7 @@ func TestFinalizeTurnPersistsBtwDisplayProjection(t *testing.T) {
 		DisplayContent:  "please include tests",
 		ReferenceLabels: []string{"@notes"},
 		Role:            "user",
-		Content:         provider.TextContent(btwUrgentPrefix + "please include tests"),
+		Content:         provider.TextContent(rootprompt.BTWInterruptionPrefix() + "please include tests"),
 	}
 	s.finalizeTurn([]provider.ChatMessage{btw}, 0, &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}, "", "msg", ttypes.TurnIdentity{})
 	messages := s.MessagesWithMeta()

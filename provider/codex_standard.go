@@ -26,6 +26,12 @@ type CodexStandard struct {
 	OpenAIResponsesStandard
 }
 
+func (s *CodexStandard) RequestExtras(modelID, thinkingEffort string, settings ProtocolSettings) map[string]any {
+	extras := s.OpenAIResponsesStandard.RequestExtras(modelID, thinkingEffort, settings)
+	extras["store"] = false
+	return extras
+}
+
 func (s *CodexStandard) Info() ProtocolInfo {
 	info := s.OpenAIResponsesStandard.Info()
 	info.ID = "codex"
@@ -49,6 +55,11 @@ func (s *CodexStandard) Info() ProtocolInfo {
 //   - a top-level instructions string is required (else 400 "Instructions are
 //     required"); the system/developer message is lifted out of input to it
 func (s *CodexStandard) EncodeRequest(req *ChatRequest) ([]byte, error) {
+	if req != nil && req.ResponseContinuationScope != "" {
+		copy := *req
+		copy.ResponseContinuationScope = ""
+		req = &copy
+	}
 	body, err := s.OpenAIResponsesStandard.EncodeRequest(req)
 	if err != nil {
 		return nil, err

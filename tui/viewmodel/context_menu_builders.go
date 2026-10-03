@@ -1,7 +1,6 @@
 package viewmodel
 
 import (
-	"context"
 	"fmt"
 	"sort"
 	"strings"
@@ -12,6 +11,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/screens/activitybar"
 	"crude/tui/screens/activitylist"
+	"crude/tui/screens/gitreview"
 	"crude/tui/screens/launcher"
 	"crude/tui/screens/shellchat"
 	"crude/tui/screens/shelleditor"
@@ -142,7 +142,7 @@ func (m *App) buildActivityRegionContextMenu(mouse tea.Mouse) *ui.ContextMenuSta
 			return m.buildActivitySettingsContextMenu()
 		}
 		view := m.activityView
-		if hit, hitOK := activitybar.ViewAt(mouse.Y - rect.Y); hitOK {
+		if hit, hitOK := m.activityBar.ViewAt(mouse.Y - rect.Y); hitOK {
 			view = hit
 		}
 		return m.buildActivityRailContextMenu(view)
@@ -150,8 +150,8 @@ func (m *App) buildActivityRegionContextMenu(mouse tea.Mouse) *ui.ContextMenuSta
 	switch m.activityView {
 	case activityAgents:
 		return m.buildAgentSidebarContextMenu(mouse)
-	case activityTerminals:
-		return m.buildTerminalSidebarContextMenu(mouse)
+	case activitySkills, activityMCP:
+		return m.buildActivityRailContextMenu(m.activityView)
 	case activityGit:
 		return m.buildSourceControlContextMenu(mouse)
 	default:
@@ -224,33 +224,26 @@ func (m *App) buildActivityRailContextMenu(view activitybar.View) *ui.ContextMen
 				}},
 			},
 		})
-	case activitybar.ViewTerminals:
-		hasTerminals := m.termMgr() != nil && len(m.termMgr().List()) > 0
+	case activitybar.ViewSkills, activitybar.ViewMCP:
 		st.Sections = append(st.Sections, ui.ContextMenuSection{
-			SectionLabel: "Terminals",
+			SectionLabel: view.Label(),
 			Items: []ui.ContextMenuItem{
-				{Label: "New terminal", Detail: "Ctrl+Shift+`", Action: func() { _ = m.openNewTerminal() }},
-				{Label: "Focus terminal", Detail: "Ctrl+`", Disabled: !hasTerminals, Action: func() { _ = m.toggleTerminalFocus() }},
-				{Label: "Close all terminals", Disabled: !hasTerminals, Action: m.closeAllTerminalsFromMenu},
+				{Label: "Manage " + view.Label(), Action: func() { m.startSourceControlMutation(m.openCapabilityManager(view, "", "")) }},
+				{Label: "Refresh state", Action: func() { m.startSourceControlMutation(m.capabilitySnapshotCmd()) }},
 			},
 		})
 	case activitybar.ViewGit:
-		hasChanges, hasStaged := m.sourceControlCounts()
 		st.Sections = append(st.Sections, ui.ContextMenuSection{
 			SectionLabel: "Repository",
 			Items: []ui.ContextMenuItem{
 				{Label: "Refresh", Detail: "Ctrl+R", Action: func() {
 					m.startSourceControlMutation(m.refreshSourceControl())
 				}},
-				{Label: "Stage all changes", Disabled: !hasChanges, Action: func() {
-					m.startSourceControlMutation(m.stageAllGitChanges())
-				}},
-				{Label: "Unstage all changes", Disabled: !hasStaged, Action: func() {
-					m.startSourceControlMutation(m.unstageAllGitChanges())
-				}},
+				{Label: "Review changes", Action: func() { m.startSourceControlMutation(m.openGitReview(gitreview.ModeChanges, nil)) }},
 			},
 		})
 	}
+	st.Sections = append(st.Sections, m.navigationActions(view))
 	return st
 }
 
@@ -271,13 +264,12 @@ func activityShortcut(view activitybar.View) string {
 	switch view {
 	case activitybar.ViewAgents:
 		return "Ctrl+Shift+A"
-	case activitybar.ViewTerminals:
-		return "Ctrl+Shift+U"
 	case activitybar.ViewGit:
 		return "Ctrl+Shift+G"
-	default:
+	case activitybar.ViewFiles:
 		return "Ctrl+Shift+E"
 	}
+	return ""
 }
 
 func (m *App) activityItemAtMouse(mouse tea.Mouse) (ui.ListItem, bool) {
@@ -303,7 +295,7 @@ func (m *App) buildLauncherContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	if !ok || rect.Empty() || !rect.Contains(mouse.X, mouse.Y) {
 		return nil
 	}
-	ws := m.launcherScreen.WorkspaceItemAt(mouse.Y - rect.Y)
+	ws := m.launcherScreen.WorkspaceItemAt(mouse.X-rect.X, mouse.Y-rect.Y)
 	if ws == nil {
 		return nil
 	}
@@ -314,34 +306,10 @@ func (m *App) buildLauncherContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 		ui.ContextMenuItem{Label: "Open", Action: func() { m.launcherOpenFolder(entry.Path) }},
 		ui.ContextMenuItem{Label: "Copy path", Action: func() { m.copyToClipboard(entry.Path) }},
 	)
-	st.Sections = append(st.Sections, ui.ContextMenuSection{
-		Items: []ui.ContextMenuItem{
-			{Label: "Remove from list", Action: func() { m.removeLauncherWorkspace(entry) }},
-		},
-	})
+	st.Sections = append(st.Sections, ui.ContextMenuSection{Items: []ui.ContextMenuItem{
+		{Label: "Delete workspace…", Action: func() { m.openWorkspaceDelete(entry) }},
+	}})
 	return st
-}
-
-// removeLauncherWorkspace forgets a workspace from the recents list: the
-// persisted workspace record (sessions included) is deleted and the launcher
-// listing rebuilds. The project directory itself is never touched.
-func (m *App) removeLauncherWorkspace(ws launcher.WorkspaceEntry) {
-	target := ws.ID
-	if target == "" {
-		target = ws.Path
-	}
-	if target != "" {
-		if m.Logger != nil {
-			m.Logger.Info("WORKSPACE", "deleted_from_launcher", "id", ws.ID, "path", ws.Path)
-		}
-		_ = workspace.DeleteWorkspace(target)
-	}
-	if m.launcherScreen != nil {
-		m.launcherScreen.RemoveWorkspace(ws.ID, ws.Path)
-	}
-	if m.Feedback != nil {
-		m.Feedback.NotifyInfo("Removed " + ws.Name + " from recent workspaces")
-	}
 }
 
 func (m *App) buildAgentSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
@@ -391,59 +359,6 @@ func (m *App) buildAgentSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState
 	return st
 }
 
-func (m *App) buildTerminalSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
-	item, hit := m.activityItemAtMouse(mouse)
-	id := ""
-	if hit && strings.HasPrefix(item.ID, "term:") {
-		id = strings.TrimPrefix(item.ID, "term:")
-	}
-	info, found := workspace.TerminalInfo{}, false
-	if mgr := m.termMgr(); mgr != nil && id != "" {
-		info, found = mgr.Get(id)
-	}
-	title := "▸ Terminals"
-	if found {
-		title = "▸ " + item.Label
-	}
-	st := &ui.ContextMenuState{Title: title}
-	if found {
-		placementLabel := "Move to panel"
-		placementAction := func() { m.dockTerminal(id) }
-		if info.Placement == workspace.TerminalDocked {
-			placementLabel = "Move to window"
-			placementAction = func() { m.promoteTerminal(id) }
-		}
-		st.Sections = append(st.Sections, ui.ContextMenuSection{
-			SectionLabel: "Terminal",
-			Items: []ui.ContextMenuItem{
-				{Label: "Focus terminal", Action: func() { m.focusTerminal(id) }},
-				{Label: placementLabel, Action: placementAction},
-				{Label: "Copy working directory", Disabled: info.CWD == "", Action: func() { m.copyToClipboard(info.CWD) }},
-				{Label: "Close terminal", Action: func() { m.closeTerminal(id) }},
-			},
-		})
-	}
-	hasTerminals := m.termMgr() != nil && len(m.termMgr().List()) > 0
-	st.Sections = append(st.Sections, ui.ContextMenuSection{
-		SectionLabel: "Panel",
-		Items: []ui.ContextMenuItem{
-			{Label: "New terminal", Detail: "Ctrl+Shift+`", Action: func() { _ = m.openNewTerminal() }},
-			{Label: "Close all terminals", Disabled: !hasTerminals, Action: m.closeAllTerminalsFromMenu},
-		},
-	})
-	return st
-}
-
-func (m *App) closeAllTerminalsFromMenu() {
-	mgr := m.termMgr()
-	if mgr == nil {
-		return
-	}
-	for _, terminal := range mgr.List() {
-		m.closeTerminal(terminal.ID)
-	}
-}
-
 func (m *App) buildSourceControlContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	var item sourcecontrol.Item
 	hit := false
@@ -459,11 +374,10 @@ func (m *App) buildSourceControlContextMenu(mouse tea.Mouse) *ui.ContextMenuStat
 		case sourcecontrol.ItemChange:
 			change := item.Change
 			st.Title = "⑂ " + change.Path
-			stageLabel := "Stage changes"
-			stageAction := func() { m.startSourceControlMutation(m.stageGitChange(change)) }
+			stageLabel := "Review to stage…"
+			stageAction := func() { m.startSourceControlMutation(m.openGitReview(gitreview.ModeChanges, &change)) }
 			if change.Area == workspace.GitAreaStaged {
-				stageLabel = "Unstage changes"
-				stageAction = func() { m.startSourceControlMutation(m.unstageGitChange(change)) }
+				stageLabel = "Review to unstage…"
 			}
 			changeItems := []ui.ContextMenuItem{
 				{Label: "Open file", Disabled: change.AbsolutePath == "", Action: func() {
@@ -489,69 +403,21 @@ func (m *App) buildSourceControlContextMenu(mouse tea.Mouse) *ui.ContextMenuStat
 				SectionLabel: change.Description,
 				Items:        changeItems,
 			})
-		case sourcecontrol.ItemCommit:
-			commit := item.Commit
-			st.Title = "● " + commit.ShortHash
-			st.Sections = append(st.Sections, ui.ContextMenuSection{
-				SectionLabel: "Commit",
-				Items: []ui.ContextMenuItem{
-					{Label: "Copy commit hash", Action: func() { m.copyToClipboard(commit.Hash) }},
-					{Label: "Copy commit message", Action: func() { m.copyToClipboard(commit.Subject) }},
-					{Label: "Copy author", Disabled: commit.Author == "", Action: func() { m.copyToClipboard(commit.Author) }},
-				},
-			})
-		case sourcecontrol.ItemBranch:
-			branch := item.Branch
-			st.Title = "⑂ " + branch.Name
-			st.Sections = append(st.Sections, ui.ContextMenuSection{
-				SectionLabel: "Branch",
-				Items: []ui.ContextMenuItem{
-					{Label: "Checkout branch", Disabled: branch.Current, Action: func() {
-						m.startSourceControlMutation(m.sourceControlMutation(
-							"Switched to "+branch.Name, false,
-							func(ctx context.Context, service *workspace.GitService) error {
-								return service.Checkout(ctx, branch.Name)
-							},
-						))
-					}},
-					{Label: "Copy branch name", Action: func() { m.copyToClipboard(branch.Name) }},
-				},
-			})
 		}
 	}
-	hasChanges, hasStaged := m.sourceControlCounts()
 	st.Sections = append(st.Sections, ui.ContextMenuSection{
 		SectionLabel: "Repository",
 		Items: []ui.ContextMenuItem{
 			{Label: "Refresh", Detail: "Ctrl+R", Action: func() {
 				m.startSourceControlMutation(m.refreshSourceControl())
 			}},
-			{Label: "Stage all changes", Disabled: !hasChanges, Action: func() {
-				m.startSourceControlMutation(m.stageAllGitChanges())
-			}},
-			{Label: "Unstage all changes", Disabled: !hasStaged, Action: func() {
-				m.startSourceControlMutation(m.unstageAllGitChanges())
-			}},
+			{Label: "Review changes", Action: func() { m.startSourceControlMutation(m.openGitReview(gitreview.ModeChanges, nil)) }},
 			{Label: "Copy branch name", Disabled: m.sourceControl == nil || m.sourceControl.Snapshot().Branch == "", Action: func() {
 				m.copyToClipboard(m.sourceControl.Snapshot().Branch)
 			}},
 		},
 	})
 	return st
-}
-
-func (m *App) sourceControlCounts() (hasChanges, hasStaged bool) {
-	if m.sourceControl == nil {
-		return false, false
-	}
-	for _, change := range m.sourceControl.Snapshot().Changes {
-		if change.Area == workspace.GitAreaStaged {
-			hasStaged = true
-		} else {
-			hasChanges = true
-		}
-	}
-	return
 }
 
 // buildSidebarContextMenu creates the menu for right-click on a file

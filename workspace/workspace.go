@@ -10,6 +10,9 @@ import (
 	"sync"
 	"time"
 
+	"crude/agent"
+	"crude/board"
+	"crude/capability"
 	"crude/localhistory"
 	"crude/provider"
 	"crude/session"
@@ -105,7 +108,11 @@ type Workspace struct {
 
 	// Git owns source-control reads and mutations for this workspace.
 	// Frontends consume neutral snapshots and never execute Git directly.
-	Git *GitService
+	Git           *GitService
+	Capabilities  *capability.Service
+	Board         *board.Store
+	FileOwnership *agent.FileOwnership
+	capabilityMu  sync.RWMutex
 	// Documents is the single scheduler and disk-commit authority for editor
 	// buffers in this workspace.
 	Documents *DocumentSaveService
@@ -268,6 +275,7 @@ func NewWorkspace(
 		ProjectSearch:      NewProjectSearchService(),
 		FileOps:            NewFileOpsService(rootPath, nil, lg),
 		Git:                NewGitService(rootPath),
+		FileOwnership:      agent.NewFileOwnership(),
 		Documents:          NewDocumentSaveService(),
 		TermMgr:            NewTerminalManager(rootPath),
 		Status:             NewStatusCenter(workspaceSQLDB(wsDB), lg),
@@ -403,10 +411,15 @@ func (w *Workspace) ReportPath() string {
 // This includes closing the workspace database and stopping LSP connections.
 // Called when the IDE instance is shutting down.
 func (w *Workspace) Close() {
+	w.capabilityMu.Lock()
+	defer w.capabilityMu.Unlock()
 	w.CloseAllSessions()
 	w.CancelProjectSearch()
 	if w.Documents != nil {
 		w.Documents.Close()
+	}
+	if w.Capabilities != nil {
+		w.Capabilities.Close()
 	}
 	if w.TermMgr != nil {
 		w.TermMgr.CloseAll()
@@ -623,7 +636,14 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 	w.CancelProjectSearch()
 
 	// Tear down old project state.
+	w.capabilityMu.Lock()
+	defer w.capabilityMu.Unlock()
 	w.CloseAllSessions()
+	if w.Capabilities != nil {
+		w.Capabilities.Close()
+	}
+	w.Capabilities, w.Board = nil, nil
+	w.FileOwnership = agent.NewFileOwnership()
 	if w.TermMgr != nil {
 		w.TermMgr.SetEventBus(nil)
 		w.TermMgr.CloseAll()

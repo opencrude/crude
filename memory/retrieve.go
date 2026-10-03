@@ -5,20 +5,19 @@ import (
 	"encoding/json"
 	"fmt"
 	"math"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 )
 
-// Retrieval scoring weights. Relevance dominates; recency, importance,
-// usage reinforcement, and IDE-path overlap break ties and keep the
-// injected set fresh (Generative-Agents-style scoring, de-embedded).
+// Retrieval scoring weights exclude exposure and uncalibrated feedback.
+// Relevance dominates; knowledge recency, importance and path overlap follow.
 const (
-	weightRelevance  = 0.45
+	weightRelevance  = 0.50
 	weightRecency    = 0.20
 	weightImportance = 0.15
-	weightUsage      = 0.10
-	weightPath       = 0.10
+	weightPath       = 0.15
 	pinnedBoost      = 0.25
 
 	recencyHalfLifeDays = 14.0
@@ -27,7 +26,7 @@ const (
 )
 
 // Recall returns scored records for a query: FTS5/BM25 candidates fused
-// with recency decay, importance, usage reinforcement, and path overlap,
+// with knowledge recency decay, importance, and path overlap,
 // greedily packed under the query's token budget.
 func (st *Store) Recall(ctx context.Context, q RecallQuery) ([]ScoredRecord, error) {
 	if q.Limit <= 0 || q.Limit > 50 {
@@ -48,9 +47,37 @@ func (st *Store) Recall(ctx context.Context, q RecallQuery) ([]ScoredRecord, err
 
 	scoreCandidates(candidates, q)
 	sort.SliceStable(candidates, func(i, j int) bool {
+		if candidates[i].Score == candidates[j].Score {
+			return candidates[i].ID < candidates[j].ID
+		}
 		return candidates[i].Score > candidates[j].Score
 	})
-	return packBudget(candidates, q.Limit, q.BudgetTokens), nil
+	var applicable []ScoredRecord
+	for _, candidate := range candidates {
+		if q.IncludeArchived || scopeApplicable(candidate.Record, append(append([]string(nil), q.ActivePaths...), q.TouchedPaths...)) {
+			applicable = append(applicable, candidate)
+		}
+	}
+	return packBudget(applicable, q.Limit, q.BudgetTokens), nil
+}
+
+func scopeApplicable(record Record, paths []string) bool {
+	if len(record.ScopePaths) == 0 {
+		return true
+	}
+	for _, scope := range record.ScopePaths {
+		scope = strings.TrimSuffix(filepath.ToSlash(scope), "/")
+		for _, path := range paths {
+			path = filepath.ToSlash(path)
+			if path == scope || strings.HasPrefix(path, scope+"/") {
+				return true
+			}
+			if matched, err := filepath.Match(scope, path); err == nil && matched {
+				return true
+			}
+		}
+	}
+	return len(paths) == 0
 }
 
 // gatherCandidates merges FTS matches (or the scan fallback), pinned
@@ -262,20 +289,26 @@ func prefixedRecordColumns(alias string) string {
 
 func scanRecordWithRank(scanner interface{ Scan(...any) error }) (Record, float64, error) {
 	var record Record
-	var scopeJSON string
+	var scopeJSON, evidenceJSON string
 	var rank float64
 	err := scanner.Scan(
 		&record.ID, &record.Kind, &record.Title, &record.Content,
 		&record.SourceSessionID, &record.Pinned, &record.CreatedAt, &record.UpdatedAt,
 		&record.Entities, &scopeJSON, &record.Importance, &record.Status,
 		&record.SupersededBy, &record.Source, &record.Provenance,
-		&record.UseCount, &record.LastUsedAt, &rank,
+		&record.UseCount, &record.LastUsedAt,
+		&record.Revision, &record.AppliesWhen, &evidenceJSON, &record.Actor, &rank,
 	)
 	if err != nil {
 		return Record{}, 0, err
 	}
 	if scopeJSON != "" && scopeJSON != "[]" {
-		_ = json.Unmarshal([]byte(scopeJSON), &record.ScopePaths)
+		if err := json.Unmarshal([]byte(scopeJSON), &record.ScopePaths); err != nil {
+			return Record{}, 0, err
+		}
+	}
+	if err := json.Unmarshal([]byte(evidenceJSON), &record.Evidence); err != nil {
+		return Record{}, 0, err
 	}
 	return record, rank, nil
 }
@@ -306,21 +339,13 @@ func scoreCandidates(candidates []ScoredRecord, q RecallQuery) {
 			rel = 1.0
 		}
 
-		freshest := c.UpdatedAt
-		if c.LastUsedAt > freshest {
-			freshest = c.LastUsedAt
-		}
-		ageDays := float64(now-freshest) / float64(24*time.Hour)
+		ageDays := float64(now-c.UpdatedAt) / float64(24*time.Hour)
 		if ageDays < 0 {
 			ageDays = 0
 		}
 		recency := math.Exp(-ageDays / recencyHalfLifeDays)
 
 		importance := float64(c.Importance) / 100.0
-		usage := math.Log1p(float64(c.UseCount)) / math.Log(11)
-		if usage > 1 {
-			usage = 1
-		}
 
 		pathScore := 0.0
 		if len(contextPaths) > 0 {
@@ -329,7 +354,7 @@ func scoreCandidates(candidates []ScoredRecord, q RecallQuery) {
 		}
 
 		c.Score = weightRelevance*rel + weightRecency*recency +
-			weightImportance*importance + weightUsage*usage + weightPath*pathScore
+			weightImportance*importance + weightPath*pathScore
 		if c.Pinned {
 			c.Score += pinnedBoost
 		}
@@ -345,7 +370,8 @@ func packBudget(candidates []ScoredRecord, limit, budgetTokens int) []ScoredReco
 		if len(out) >= limit {
 			break
 		}
-		cost := EstimateTokens(c.Title) + EstimateTokens(c.Content) + 8
+		cost := EstimateTokens(c.Title) + EstimateTokens(c.Content) + EstimateTokens(c.AppliesWhen) +
+			EstimateTokens(c.SourceSessionID) + 40 + len(c.Evidence)*12
 		if budgetTokens > 0 && spent+cost > budgetTokens {
 			continue
 		}

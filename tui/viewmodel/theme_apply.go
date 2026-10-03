@@ -177,6 +177,14 @@ func (m *App) themeConsumers() []themeConsumer {
 				if m.sessionProjections != nil {
 					m.sessionProjections.SetTheme(th)
 				}
+				for _, state := range m.agentPrompts {
+					if state.confirmation != nil {
+						state.confirmation.SetTokens(ui.NewTokenSet(th))
+					}
+					if state.question != nil {
+						state.question.SetTokens(ui.NewTokenSet(th))
+					}
+				}
 			},
 			read: func() *theme.Theme {
 				if m.sessionProjections == nil {

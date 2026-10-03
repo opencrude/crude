@@ -185,7 +185,7 @@ func encodeAnthropicMessages(messages []ChatMessage) (system []any, result []ant
 				blocks = append(blocks, map[string]any{
 					"type":  "tool_use",
 					"id":    call.ID,
-					"name":  call.Function.Name,
+					"name":  wireFunctionName(call.Function.Name),
 					"input": input,
 				})
 			}
@@ -334,8 +334,9 @@ func applyCacheControlToLastBlock(blocks []any, cache *CacheControl) {
 func encodeAnthropicTools(tools []ToolDef) []any {
 	result := make([]any, 0, len(tools))
 	for index, tool := range tools {
+		tool = jsonFunctionTool(tool)
 		item := map[string]any{
-			"name":         tool.Function.Name,
+			"name":         wireFunctionName(tool.Function.Name),
 			"description":  tool.Function.Description,
 			"input_schema": tool.Function.Parameters,
 		}
@@ -585,7 +586,7 @@ func (r *anthropicResponse) toChatResponse() (*ChatResponse, error) {
 				ID:    block.ID,
 				Type:  "function",
 				Function: FunctionCall{
-					Name:      block.Name,
+					Name:      canonicalToolName(block.Name),
 					Arguments: args,
 				},
 			})
@@ -750,7 +751,7 @@ func (d *anthropicStreamDecoder) startBlock(index int, raw json.RawMessage) (Str
 			Index:            index,
 			ID:               block.ID,
 			Type:             "function",
-			Name:             block.Name,
+			Name:             canonicalToolName(block.Name),
 			Arguments:        args,
 			ReplaceArguments: args != "",
 		}}}, nil
@@ -854,7 +855,7 @@ func (d *anthropicStreamDecoder) stopBlock(index int) (StreamUpdate, error) {
 			Index:            index,
 			ID:               state.ToolID,
 			Type:             "function",
-			Name:             state.ToolName,
+			Name:             canonicalToolName(state.ToolName),
 			Arguments:        arguments,
 			ReplaceArguments: true,
 		}}

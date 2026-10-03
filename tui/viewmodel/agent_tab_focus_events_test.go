@@ -97,6 +97,9 @@ func TestLateBackgroundAgentInitializationPreservesEditorSelection(t *testing.T)
 func TestBackgroundChildPromptPreservesParentTab(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("root")
+	session := &workspace.Session{SessionID: "root-family"}
+	app.SessionsByAgent = map[string]*workspace.Session{"root": session}
+	app.ActiveSession = session
 	pane := app.PaneMgr.GetOrCreate("child", workspace.PaneAgent, "child")
 	app.AgentMgr.AddSubAgent("child", "root", "Child", "model", "researcher",
 		workspace.NewAgentState("child", pane.Messages, app.Logger))
@@ -105,8 +108,8 @@ func TestBackgroundChildPromptPreservesParentTab(t *testing.T) {
 		"block_id": "child-permission", "question": "Allow child write?", "operation": "write",
 	}})
 	assertSelectedTab(t, app, app.agentTabTitle("root"))
-	if app.AgentMgr.ActiveID() != "root" || app.agentPrompt == nil || app.agentPrompt.inline ||
-		app.agentPrompt.request.agentID != "child" || !app.overlayHost.IsOpen(ui.OverlayAgentPrompt) {
-		t.Fatalf("background child permission stole parent or lost modal: %+v", app.agentPrompt)
+	if app.AgentMgr.ActiveID() != "root" || len(app.agentPrompts) != 1 || !app.agentPrompts[0].inline ||
+		app.agentPrompts[0].request.agentID != "child" || app.overlayHost.IsOpen(ui.OverlayAgentPrompt) {
+		t.Fatalf("child permission stole parent or lost family dock: %+v", app.agentPrompts)
 	}
 }

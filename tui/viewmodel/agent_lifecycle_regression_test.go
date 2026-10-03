@@ -3,11 +3,44 @@ package viewmodel
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"crude/tui/chatprojection"
 	ttypes "crude/tui/types"
 	"crude/workspace"
 )
+
+func TestSubAgentTerminalStatusIsNamedRoleAwareAndForcesCachedFooterFrame(t *testing.T) {
+	for _, tc := range []struct{ status, want string }{
+		{"completed", "✓ Samuel sub Rebecca · Researcher completed"},
+		{"cancelled", "○ Samuel sub Rebecca · Researcher cancelled"},
+		{"crashed", "✕ Samuel sub Rebecca · Researcher crashed"},
+		{"failed_policy", "✕ Samuel sub Rebecca · Researcher blocked by policy"},
+	} {
+		t.Run(tc.status, func(t *testing.T) {
+			app := newFullTestApp(t)
+			app.width, app.height = 120, 30
+			app.AddOrchestrator("root")
+			pane := app.PaneMgr.GetOrCreate("child", workspace.PaneAgent, "child")
+			app.AgentMgr.AddSubAgent("child", "root", "Samuel sub Rebecca", "model", "researcher", workspace.NewAgentState("child", pane.Messages, app.Logger))
+			app.cachedOutput, app.frameGate.deferred, app.frameGate.due = "cached", true, false
+			app.handleSubAgentCompleted(workspace.AgentEvent{Type: "sub_agent_completed", Data: map[string]string{
+				"agent_id": "child", "agent_name": "Samuel sub Rebecca", "category": "researcher", "status": tc.status,
+			}})
+			if app.shouldDeferFrame() {
+				t.Fatal("terminal status remained hidden behind the presentation cache")
+			}
+			notice, ok := app.Status.LatestTransient(time.Now(), 5*time.Second)
+			if !ok || notice.Summary != tc.want || notice.Owner.ID != "child" || notice.Owner.ParentID != "root" {
+				t.Fatalf("terminal notice=%+v, ok=%v", notice, ok)
+			}
+			app.paintShellFrame()
+			if footer := rowText(app, app.height-1); !strings.Contains(footer, tc.want) || strings.Contains(footer, "✓ done") {
+				t.Fatalf("footer did not paint deliberate terminal status: %q", footer)
+			}
+		})
+	}
+}
 
 func TestClosingOrchestratorTabCleansEntireAgentSubtree(t *testing.T) {
 	app := newFullTestApp(t)
@@ -162,8 +195,11 @@ func TestFailedSubAgentParentRowAndReviewPaneRemainAuditable(t *testing.T) {
 		"agent_id": "child", "agent_name": "Lily", "category": "researcher", "task": "Inspect recovery", "parent_id": "root", "parent_tool_id": "spawn-1",
 	}})
 	parent := root.Messages()
-	if len(parent) != 1 || parent[0].SubPaneID != "child" || parent[0].ToolProgressLabel != "Lily — Inspect recovery" {
+	if len(parent) != 1 || parent[0].SubPaneID != "child" || parent[0].ToolProgressLabel != "Lily · Researcher — Inspect recovery" {
 		t.Fatalf("running child identity not in parent row: %+v", parent)
+	}
+	if pane := app.PaneMgr.Get("child"); pane == nil || pane.Title != "Lily · Researcher" {
+		t.Fatalf("running subpane title omitted the agent type: %+v", pane)
 	}
 	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "sub_agent_completed", AgentID: "child", Data: map[string]string{
 		"agent_id": "child", "agent_name": "Lily", "status": "failed_error",

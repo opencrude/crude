@@ -1,0 +1,322 @@
+package capability
+
+import (
+	"context"
+	"encoding/json"
+	"fmt"
+)
+
+type Kind string
+
+const (
+	KindSkill Kind = "skill"
+	KindMCP   Kind = "mcp"
+)
+
+type Scope string
+
+const (
+	ScopeApplication Scope = "application"
+	ScopeWorkspace   Scope = "workspace"
+)
+
+type Effect string
+
+const (
+	EffectRead          Effect = "read"
+	EffectWrite         Effect = "write"
+	EffectDelete        Effect = "delete"
+	EffectExecute       Effect = "execute"
+	EffectCommunication Effect = "communication"
+)
+
+type Settings struct {
+	Skills      map[string]SkillConfig      `json:"skills,omitempty"`
+	Connections map[string]ConnectionConfig `json:"connections,omitempty"`
+	Sources     map[string]SourceConfig     `json:"sources,omitempty"`
+	Acquisition AcquisitionSettings         `json:"acquisition,omitempty"`
+}
+
+type SkillConfig struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Path     string `json:"path"`
+	Source   string `json:"source,omitempty"`
+	Version  string `json:"version,omitempty"`
+	Digest   string `json:"digest,omitempty"`
+	Mode     string `json:"mode,omitempty"`
+	Managed  bool   `json:"managed,omitempty"`
+	Disabled bool   `json:"disabled,omitempty"`
+	Scope    Scope  `json:"scope,omitempty"`
+}
+
+type ToolGrant struct {
+	Effect      Effect `json:"effect"`
+	Scope       string `json:"scope"`
+	Fingerprint string `json:"fingerprint"`
+	Disabled    bool   `json:"disabled,omitempty"`
+}
+
+type ConnectionConfig struct {
+	ID             string               `json:"id"`
+	Name           string               `json:"name"`
+	Transport      string               `json:"transport"`
+	URL            string               `json:"url,omitempty"`
+	Command        string               `json:"command,omitempty"`
+	Args           []string             `json:"args,omitempty"`
+	Directory      string               `json:"directory,omitempty"`
+	Environment    map[string]string    `json:"environment,omitempty"`
+	Headers        map[string]string    `json:"headers,omitempty"`
+	SecretRefs     map[string]string    `json:"secret_refs,omitempty"`
+	Auth           string               `json:"auth,omitempty"`
+	CredentialRef  string               `json:"credential_ref,omitempty"`
+	TimeoutSeconds int                  `json:"timeout_seconds,omitempty"`
+	Disabled       bool                 `json:"disabled,omitempty"`
+	Scope          Scope                `json:"scope,omitempty"`
+	Source         string               `json:"source,omitempty"`
+	Version        string               `json:"version,omitempty"`
+	LaunchApproved bool                 `json:"launch_approved,omitempty"`
+	OAuthClientID  string               `json:"oauth_client_id,omitempty"`
+	OAuthScopes    []string             `json:"oauth_scopes,omitempty"`
+	Grants         map[string]ToolGrant `json:"grants,omitempty"`
+}
+
+type SourceConfig struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Kind     string `json:"kind"`
+	Location string `json:"location"`
+	Revision string `json:"revision,omitempty"`
+	Digest   string `json:"digest,omitempty"`
+	Trusted  bool   `json:"trusted,omitempty"`
+	Disabled bool   `json:"disabled,omitempty"`
+	Scope    Scope  `json:"scope,omitempty"`
+}
+
+type AcquisitionSettings struct {
+	AutomaticSelection string `json:"automatic_selection,omitempty"`
+	Mode               string `json:"mode,omitempty"`
+	TimeoutSeconds     int    `json:"timeout_seconds,omitempty"`
+	MaxDownloadBytes   int64  `json:"max_download_bytes,omitempty"`
+	MaxTools           int    `json:"max_tools,omitempty"`
+	MaxSchemaBytes     int    `json:"max_schema_bytes,omitempty"`
+}
+
+type Entry struct {
+	ID           string
+	Kind         Kind
+	Name         string
+	Description  string
+	Source       string
+	Publisher    string
+	Version      string
+	Digest       string
+	Origin       Scope
+	Mode         string
+	State        string
+	Reason       string
+	Path         string
+	Managed      bool
+	Installed    bool
+	ConnectionID string
+}
+
+type Tool struct {
+	Name         string
+	Description  string
+	InputSchema  json.RawMessage
+	ConnectionID string
+	OriginalName string
+	Fingerprint  string
+	Effect       Effect
+	Scope        string
+	Selected     bool
+	Reason       string
+}
+
+type Resource struct {
+	ConnectionID string
+	URI          string
+	Name         string
+	Description  string
+	MIMEType     string
+}
+
+type PromptArgument struct {
+	Name        string
+	Description string
+	Required    bool
+}
+
+type Prompt struct {
+	ConnectionID string
+	Name         string
+	Description  string
+	Arguments    []PromptArgument
+}
+
+type Content struct {
+	Type     string
+	Text     string
+	Data     string
+	MIMEType string
+	URI      string
+}
+
+type Result struct {
+	Content    []Content
+	Structured json.RawMessage
+	IsError    bool
+	Unknown    bool
+}
+
+type ConnectionState struct {
+	ID          string
+	State       string
+	Error       string
+	Fingerprint string
+	Tools       []Tool
+	Resources   []Resource
+	Prompts     []Prompt
+	Logs        []string
+	Cached      bool
+	AuthURL     string
+	AuthPending bool
+}
+
+type Snapshot struct {
+	Generation  uint64
+	Entries     []Entry
+	Connections []ConnectionState
+	Settings    Settings
+	Error       string
+	Bindings    []AgentBinding
+}
+
+type AgentBinding struct {
+	AgentID string
+	ID      string
+	Kind    Kind
+	Version string
+	Digest  string
+}
+
+type AcquisitionPreview struct {
+	ID              string
+	Kind            Kind
+	Scope           Scope
+	Operation       string
+	Candidate       Entry
+	Existing        *Entry
+	Source          SourceConfig
+	Requirements    []string
+	RequestedAccess []string
+	Token           string
+}
+
+type Action struct {
+	Operation  string
+	Kind       Kind
+	ID         string
+	Scope      Scope
+	Skill      *SkillConfig
+	Connection *ConnectionConfig
+	Source     *SourceConfig
+	Query      string
+	Content    string
+	Arguments  map[string]string
+	Preview    *AcquisitionPreview
+}
+
+type RuntimeActor struct {
+	ID           string
+	ParentID     string
+	SessionID    string
+	AllowedTools []string
+	DeniedTools  []string
+	Effects      []Effect
+	SkillModes   map[string]string
+}
+
+type RuntimeSnapshot struct {
+	Generation uint64
+	Tools      []Tool
+	Notices    []string
+}
+
+type Runtime interface {
+	Prepare(context.Context, RuntimeActor) (RuntimeSnapshot, error)
+	Execute(context.Context, RuntimeActor, RuntimeSnapshot, string, map[string]any) (Result, error)
+}
+
+type ApprovalRequired struct {
+	ID      string
+	Reason  string
+	Preview AcquisitionPreview
+}
+
+func (request *ApprovalRequired) CapabilityApprovalContext(ctx context.Context) context.Context {
+	return context.WithValue(ctx, AcquisitionApprovedKey{}, request.Preview)
+}
+
+func (request *ApprovalRequired) Error() string {
+	return fmt.Sprintf("Acquisition of %s requires approval: %s", request.ID, request.Reason)
+}
+func (request *ApprovalRequired) CapabilityApproval() (string, string) {
+	return request.ID, request.Reason
+}
+
+type AcquisitionApprovedKey struct{}
+
+func Clone(settings Settings) Settings {
+	encoded, err := json.Marshal(settings)
+	if err != nil {
+		return Settings{}
+	}
+	var cloned Settings
+	if json.Unmarshal(encoded, &cloned) != nil {
+		return Settings{}
+	}
+	if cloned.Skills == nil {
+		cloned.Skills = make(map[string]SkillConfig)
+	}
+	if cloned.Connections == nil {
+		cloned.Connections = make(map[string]ConnectionConfig)
+	}
+	if cloned.Sources == nil {
+		cloned.Sources = make(map[string]SourceConfig)
+	}
+	return cloned
+}
+
+func Normalize(settings Settings) Settings {
+	settings = Clone(settings)
+	if settings.Skills == nil {
+		settings.Skills = make(map[string]SkillConfig)
+	}
+	if settings.Connections == nil {
+		settings.Connections = make(map[string]ConnectionConfig)
+	}
+	if settings.Sources == nil {
+		settings.Sources = make(map[string]SourceConfig)
+	}
+	if settings.Acquisition.Mode == "" {
+		settings.Acquisition.Mode = "ask"
+	}
+	if settings.Acquisition.AutomaticSelection == "" {
+		settings.Acquisition.AutomaticSelection = "on"
+	}
+	if settings.Acquisition.TimeoutSeconds <= 0 {
+		settings.Acquisition.TimeoutSeconds = 60
+	}
+	if settings.Acquisition.MaxDownloadBytes <= 0 {
+		settings.Acquisition.MaxDownloadBytes = 32 << 20
+	}
+	if settings.Acquisition.MaxTools <= 0 {
+		settings.Acquisition.MaxTools = 48
+	}
+	if settings.Acquisition.MaxSchemaBytes <= 0 {
+		settings.Acquisition.MaxSchemaBytes = 64 << 10
+	}
+	return settings
+}

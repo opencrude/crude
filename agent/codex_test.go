@@ -7,9 +7,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"crude/codexio"
+	rootprompt "crude/prompt"
 	"crude/provider"
 	"crude/safety"
 	"crude/tools"
@@ -32,20 +34,12 @@ func TestGPTProfilesForEveryRole(t *testing.T) {
 				}
 				var prompt string
 				if role == "" {
-					prompt = BuildSystemPromptForModel(true, t.TempDir(), model)
+					prompt = rootprompt.BuildRoot(rootprompt.RootOptions{MultiAgent: true, WorkDir: t.TempDir(), Model: model})
 				} else {
-					prompt, _ = BuildSubAgentPromptInDir(SubAgentSpec{Model: model, Category: role}, "", t.TempDir())
+					prompt, _ = rootprompt.BuildChild(rootprompt.ChildOptions{Model: model, Category: role, WorkDir: t.TempDir()})
 				}
-				if gpt {
-					base, _ := codexio.Instructions(model)
-					if !strings.HasPrefix(prompt, base) {
-						t.Fatal("upstream prompt rewritten")
-					}
-					for _, forbidden := range []string{"host application is Crude", "Codex model instructions are supplied", "<crude_host_context>", "never call edit_file"} {
-						if strings.Contains(prompt, forbidden) {
-							t.Fatalf("conflicting instruction: %s", forbidden)
-						}
-					}
+				if !strings.Contains(prompt, `<crude_`) || !strings.Contains(prompt, rootprompt.ProjectGuidanceContract) || !strings.Contains(prompt, rootprompt.ToolContract) {
+					t.Fatal("model-specific tools replaced canonical Crude policy")
 				}
 			})
 		}
@@ -132,7 +126,7 @@ func TestGPTNativePatchRealAgentLoop(t *testing.T) {
 		}
 		return tools.ToolResult{Content: "Success."}, nil
 	}
-	history := a.Run(t.Context(), nil, BuildSystemPromptForModel(false, t.TempDir(), p.Model), func(AgentEvent) {}, nil, "", nil)
+	history := a.Run(t.Context(), nil, rootprompt.BuildRoot(rootprompt.RootOptions{WorkDir: t.TempDir(), Model: p.Model}), func(AgentEvent) {}, nil, "", nil)
 	if requests != 2 || calls != 1 || history[len(history)-1].ContentString() != "done" {
 		t.Fatalf("requests %d calls %d history %v", requests, calls, history)
 	}
@@ -214,7 +208,7 @@ func TestGPTPatchThroughChatCompletionsGateway(t *testing.T) {
 		return tools.ToolResult{Content: "Success."}, nil
 	}
 	streamedPatchPath := false
-	history := a.Run(t.Context(), nil, BuildSystemPromptForModel(false, t.TempDir(), p.Model), func(event AgentEvent) {
+	history := a.Run(t.Context(), nil, rootprompt.BuildRoot(rootprompt.RootOptions{WorkDir: t.TempDir(), Model: p.Model}), func(event AgentEvent) {
 		if event.Type == "tool_call_streaming" {
 			data, _ := event.Data.(map[string]any)
 			if data["path"] == "hello.txt" {
@@ -254,5 +248,107 @@ func TestChatPatchPreviewUnwrapsFunctionInput(t *testing.T) {
 	incomplete := ExtractPreview("p1", "apply_patch", string(args[:len(args)-1]), nil)
 	if incomplete.Complete {
 		t.Fatalf("unfinished JSON wrapper accepted as complete: %+v", incomplete)
+	}
+}
+
+func TestParallelBatchSurvivesOpenAIProtocolSwitches(t *testing.T) {
+	const args = `{"tool_uses":[{"recipient_name":"functions.read_file","parameters":{"path":"a.go"}},{"recipient_name":"functions.read_file","parameters":{"path":"b.go"}}]}`
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		var wire struct {
+			Tools []struct {
+				Type, Name string
+				Function   struct{ Name string }
+			} `json:"tools"`
+			Input    []struct{ Type, Name, Namespace, CallID, Arguments string } `json:"input"`
+			Messages []struct {
+				ToolCalls []struct {
+					Function provider.FunctionCall `json:"function"`
+				} `json:"tool_calls"`
+			} `json:"messages"`
+		}
+		if err := json.NewDecoder(r.Body).Decode(&wire); err != nil {
+			t.Error(err)
+			return
+		}
+		found := false
+		for _, tool := range wire.Tools {
+			if tool.Type == "namespace" || tool.Name == "multi_tool_use.parallel" {
+				w.WriteHeader(http.StatusBadRequest)
+				_, _ = fmt.Fprint(w, `{"error":{"message":"multi_tool_use is a reserved namespace"}}`)
+				return
+			}
+			found = found || tool.Name == "multi_tool_use_parallel" || tool.Function.Name == "multi_tool_use_parallel"
+		}
+		if !found {
+			t.Error("parallel execution tool missing from request")
+		}
+		for _, item := range wire.Input {
+			if item.Type == "function_call" && (item.Name != "multi_tool_use_parallel" || item.Namespace != "" || item.Arguments != args) {
+				t.Errorf("invalid Responses batch replay: %+v", item)
+			}
+		}
+		for _, message := range wire.Messages {
+			for _, call := range message.ToolCalls {
+				if call.Function.Name != "multi_tool_use_parallel" || call.Function.Arguments != args {
+					t.Errorf("invalid Chat batch replay: %+v", call)
+				}
+			}
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		if strings.HasSuffix(r.URL.Path, "/responses") {
+			if requests%2 == 1 {
+				_, _ = fmt.Fprintf(w, "data: {\"type\":\"response.output_item.added\",\"output_index\":0,\"item\":{\"type\":\"function_call\",\"name\":\"multi_tool_use_parallel\",\"call_id\":\"p%d\",\"arguments\":\"\",\"status\":\"in_progress\"}}\n\ndata: {\"type\":\"response.function_call_arguments.done\",\"output_index\":0,\"name\":\"multi_tool_use_parallel\",\"arguments\":%q}\n\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"function_call\",\"name\":\"multi_tool_use_parallel\",\"call_id\":\"p%d\",\"arguments\":%q,\"status\":\"completed\"}]}}\n\n", requests, args, requests, args)
+			} else {
+				_, _ = fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\",\"output\":[{\"type\":\"message\",\"role\":\"assistant\",\"content\":[{\"type\":\"output_text\",\"text\":\"done\"}]}]}}\n\n")
+			}
+		} else if requests%2 == 1 {
+			_, _ = fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"p%d\",\"type\":\"function\",\"function\":{\"name\":\"multi_tool_use_parallel\",\"arguments\":%q}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", requests, args)
+		} else {
+			writeChatSSE(w, "done", "stop")
+		}
+	}))
+	defer server.Close()
+	var executed atomic.Int32
+	var history []provider.ChatMessage
+	for _, protocol := range []string{"openai", "openai-responses", "codex", "openai"} {
+		p := provider.FromPreset("openai-chat", "key", server.URL)
+		if err := p.SetProtocolID(protocol); err != nil {
+			t.Fatal(err)
+		}
+		p.Model = "gpt-test"
+		a := newTestAgent(t, p, p.Model)
+		a.FilteredTools = FilterToolsForModel(tools.AgentTools, []string{"read_file"}, nil, "", false, p.Model)
+		a.ToolFn = func(_ context.Context, name string, params map[string]any) (tools.ToolResult, error) {
+			executed.Add(1)
+			if name != "read_file" {
+				t.Errorf("wrong execution identity: %s", name)
+			}
+			return tools.ToolResult{Content: getStr(params, "path")}, nil
+		}
+		before, err := json.Marshal(history)
+		if err != nil {
+			t.Fatal(err)
+		}
+		next := a.Run(t.Context(), history, rootprompt.BuildRoot(rootprompt.RootOptions{}), nil, nil, "", nil)
+		after, err := json.Marshal(history)
+		if err != nil || string(before) != string(after) {
+			t.Fatal("protocol switch rewrote canonical history")
+		}
+		if next[len(next)-1].ContentString() != "done" {
+			t.Fatalf("%s request failed: %+v", protocol, next)
+		}
+		history = next[1:]
+		for _, message := range history {
+			for _, call := range message.ToolCalls {
+				if call.Function.Name != "multi_tool_use.parallel" || call.Function.Arguments != args {
+					t.Fatal("wire name leaked into persisted execution identity")
+				}
+			}
+		}
+	}
+	if requests != 8 || executed.Load() != 8 {
+		t.Fatalf("requests=%d executions=%d", requests, executed.Load())
 	}
 }

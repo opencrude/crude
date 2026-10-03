@@ -3,6 +3,7 @@ package workspace
 import (
 	"time"
 
+	"crude/tools"
 	ttypes "crude/types"
 	"crude/types/reasoning"
 )
@@ -811,6 +812,12 @@ func (c *Conversation) SetToolInput(toolID, internalID, input, scope string) {
 
 func applyToolInput(message *Message, name string, data map[string]any) {
 	if message == nil {
+		return
+	}
+	if tools.RetainsStructuredToolInput(name) {
+		if input := conversationString(data["args"]); input != "" {
+			message.ToolInput = input
+		}
 		return
 	}
 	switch name {

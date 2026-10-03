@@ -12,12 +12,14 @@ import (
 	"crude/agent"
 	"crude/codexio"
 	"crude/memory"
+	rootprompt "crude/prompt"
 	"crude/provider"
+	"crude/tools"
 )
 
 // Background memory job tuning. Everything here runs OFF the turn hotpath:
 // the interactive loop never waits on extraction, summaries, or
-// consolidation.
+// consolidation. The durable turn mirror completes on the finalizer.
 const (
 	defaultExtractEveryTurns = 3
 	extractWindowMaxTurns    = 12
@@ -25,7 +27,7 @@ const (
 	maintenanceTimeout       = 3 * time.Minute
 	maintenanceStartDelay    = 3 * time.Second
 	consolidateLockTTL       = 10 * time.Minute
-	consolidateMinActive     = 20
+	consolidateMinActive     = 8
 	consolidateMinInterval   = 6 * time.Hour
 	memoryActiveCap          = 200
 	memoryDecayUnused        = 45 * 24 * time.Hour
@@ -58,7 +60,8 @@ func (j *memoryJobState) begin() (context.Context, bool) {
 
 // afterTurnMemory runs post-turn memory work: mirror the finished turn into
 // the cross-session history index, then (on cadence) extract durable
-// memories. Called from finalizeTurn; returns immediately.
+// memories. Called from finalizeTurn off the UI thread; the mirror is durable
+// before this function returns, while extraction remains optional work.
 func (s *Session) afterTurnMemory(turn int, turnMsgs []provider.ChatMessage, finalContent string) {
 	store := s.MemoryStore()
 	if store == nil || turn <= 0 || !containsHumanInput(turnMsgs) {
@@ -68,18 +71,14 @@ func (s *Session) afterTurnMemory(turn int, turnMsgs []provider.ChatMessage, fin
 	if _, ok := s.memoryJobs.begin(); !ok {
 		return
 	}
-	go func() {
-		defer s.memoryJobs.wg.Done()
-		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-		defer cancel()
-		if err := store.RecordTurn(ctx, record); err != nil {
-			s.logger.Warn("MEMORY", "turn_mirror_failed", "error", err.Error())
-			return
-		}
-		// Extraction reads from the mirror, so it only starts after the
-		// mirror write landed.
-		s.maybeExtractMemories(turn)
-	}()
+	defer s.memoryJobs.wg.Done()
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := store.RecordTurn(ctx, record); err != nil {
+		s.logger.Warn("MEMORY", "turn_mirror_failed", "error", err.Error())
+		return
+	}
+	s.maybeExtractMemories(turn)
 }
 
 func containsHumanInput(messages []provider.ChatMessage) bool {
@@ -108,7 +107,7 @@ func turnRecordFromMessages(
 	for _, m := range msgs {
 		switch m.Role {
 		case "user":
-			if record.UserText == "" {
+			if record.UserText == "" && m.IsGenuineUserInput() {
 				record.UserText = m.DisplayContent
 				if record.UserText == "" {
 					record.UserText = m.ContentString()
@@ -145,7 +144,178 @@ func turnRecordFromMessages(
 	}
 	record.ToolNames = toolNames
 	record.Files = files
+	record.Observations = observationsFromMessages(sessionID, turn, msgs)
 	return record
+}
+
+func observationsFromMessages(sessionID string, turn int, messages []provider.ChatMessage) []memory.Observation {
+	calls := make(map[string]provider.ToolCall)
+	for _, message := range messages {
+		if message.EffectiveOrigin() == provider.OriginAssistant {
+			for _, call := range message.ToolCalls {
+				calls[call.ID] = call
+			}
+		}
+	}
+	var observations []memory.Observation
+	for _, message := range messages {
+		if message.IsGenuineUserInput() && message.InternalID != "" {
+			observations = append(observations, memory.Observation{Evidence: memory.Evidence{
+				SessionID: sessionID, MessageID: message.InternalID, Kind: memory.EvidenceUser,
+				Summary: message.ContentString(), Outcome: memory.OutcomeUnmeasured}, Turn: turn})
+			continue
+		}
+		if message.EffectiveOrigin() != provider.OriginTool || message.ToolCallID == "" {
+			continue
+		}
+		call, found := calls[message.ToolCallID]
+		if !found || !memoryObservableTool(call.Function.Name) {
+			continue
+		}
+		var arguments map[string]any
+		_ = json.Unmarshal([]byte(call.Function.Arguments), &arguments)
+		method := call.Function.Name
+		operand := tools.SummarizeArgs(call.Function.Name, call.Function.Arguments)
+		if operand != "" {
+			method += " " + operand
+		}
+		kind, outcome := memory.EvidenceTool, memory.OutcomeSucceeded
+		switch call.Function.Name {
+		case "edit_file", "write_file", "apply_patch":
+			kind = memory.EvidenceChange
+		}
+		summary := "Operation completed: " + call.Function.Name
+		if kind == memory.EvidenceChange {
+			change := memoryChangeSummary(call.Function.Name, arguments)
+			if change != "" {
+				summary += ": " + change
+			}
+		}
+		if call.Function.Name == "async_execute_command" || call.Function.Name == "write_stdin" || call.Function.Name == "check_async_command" || call.Function.Name == "read_async_output" {
+			outcome = memory.OutcomeUnmeasured
+		}
+		if call.Function.Name == "execute_command" && strings.HasPrefix(message.ContentString(), "Command still running after ") {
+			outcome = memory.OutcomeUnmeasured
+		}
+		if message.ToolError || agent.IsToolError(message.ContentString()) {
+			outcome = memory.OutcomeFailed
+			summary = message.ContentString()
+			if strings.HasPrefix(strings.TrimSpace(message.ContentString()), "[cancelled]") {
+				outcome = memory.OutcomeCancelled
+			}
+		}
+		if strings.TrimSpace(message.ContentString()) == "Command cancelled." ||
+			strings.HasPrefix(strings.TrimSpace(message.ContentString()), "[cancelled]") {
+			outcome = memory.OutcomeCancelled
+			summary = "Attempt cancelled without a measured result"
+		}
+		command := getStrParam(arguments, "command")
+		if command == "" {
+			command = getStrParam(arguments, "cmd")
+		}
+		if call.Function.Name == "exec_command" {
+			outcome = memory.OutcomeUnmeasured
+			var result struct {
+				ExitCode *int   `json:"exit_code"`
+				Output   string `json:"output"`
+			}
+			if err := json.Unmarshal([]byte(message.ContentString()), &result); err == nil && result.ExitCode != nil {
+				outcome = memory.OutcomeSucceeded
+				if *result.ExitCode != 0 {
+					outcome = memory.OutcomeFailed
+				}
+				summary = result.Output
+			} else if message.ToolError {
+				outcome = memory.OutcomeFailed
+			}
+		}
+		if (call.Function.Name == "execute_command" || call.Function.Name == "exec_command") && memoryValidationCommand(command) {
+			kind = memory.EvidenceValidation
+			if call.Function.Name == "execute_command" {
+				summary = message.ContentString()
+			}
+		}
+		if len(summary) > memory.MaxEvidenceSummaryBytes && outcome == memory.OutcomeSucceeded && kind == memory.EvidenceValidation {
+			outcome = memory.OutcomeUnmeasured
+			summary = "Validation returned an oversized result; inspect the original tool call before claiming success"
+		}
+		if kind == memory.EvidenceValidation && outcome == memory.OutcomeSucceeded && !memoryValidationObserved(command, summary) {
+			outcome = memory.OutcomeUnmeasured
+		}
+		if strings.TrimSpace(summary) == "" {
+			summary = "Observed outcome: " + outcome
+		}
+		conditions := getStrParam(arguments, "cwd")
+		if conditions == "" {
+			conditions = getStrParam(arguments, "workdir")
+		}
+		messageID := message.InternalID
+		if messageID == "" {
+			messageID = call.InternalID
+		}
+		observations = append(observations, memory.Observation{Evidence: memory.Evidence{
+			SessionID: sessionID, MessageID: messageID, ToolCallID: message.ToolCallID,
+			Kind: kind, Summary: summary, Outcome: outcome}, Turn: turn,
+			Method: method, Conditions: conditions, Paths: pathsFromToolArgs(call.Function.Arguments)})
+	}
+	return memory.SanitizeObservations(observations)
+}
+
+func memoryChangeSummary(name string, arguments map[string]any) string {
+	if name == "edit_file" {
+		previous := memory.TruncateBytes(memory.Redact(getStrParam(arguments, "old_string")), 160)
+		next := memory.TruncateBytes(memory.Redact(getStrParam(arguments, "new_string")), 160)
+		if previous != "" && next != "" {
+			return fmt.Sprintf("replaced %q with %q", previous, next)
+		}
+	}
+	return ""
+}
+
+func memoryObservableTool(name string) bool {
+	switch name {
+	case "read_file", "list_directory", "glob_files", "grep_files", "web_search", "web_fetch", "arxiv_search",
+		"edit_file", "write_file", "apply_patch", "delete_file", "move_file", "copy_file",
+		"execute_command", "exec_command", "async_execute_command", "write_stdin", "check_async_command", "read_async_output", "kill_async_command":
+		return true
+	}
+	return false
+}
+
+func memoryValidationObserved(command, output string) bool {
+	if strings.HasPrefix(strings.TrimSpace(command), "go test") {
+		for _, line := range strings.Split(output, "\n") {
+			if line == "PASS" || strings.HasPrefix(line, "ok\t") || strings.HasPrefix(line, "ok ") {
+				return true
+			}
+		}
+		return false
+	}
+	lower := strings.ToLower(output)
+	return strings.Contains(lower, "passed") || strings.Contains(lower, "test result: ok") || strings.Contains(lower, "tests passed") || strings.Contains(lower, "\nok\n")
+}
+
+func memoryValidationCommand(command string) bool {
+	if strings.ContainsAny(command, ";&|`\n<>") || strings.Contains(command, "$(") {
+		return false
+	}
+	parts := strings.Fields(strings.TrimSpace(command))
+	if len(parts) == 0 {
+		return false
+	}
+	if parts[0] == "pytest" {
+		return true
+	}
+	if len(parts) < 2 {
+		return false
+	}
+	switch parts[0] {
+	case "go", "cargo", "zig", "npm", "pnpm", "yarn":
+		return parts[1] == "test"
+	case "python", "python3":
+		return len(parts) >= 3 && parts[1] == "-m" && (parts[2] == "pytest" || parts[2] == "unittest")
+	}
+	return false
 }
 
 // pathsFromToolArgs pulls file-path parameters out of a tool call's JSON
@@ -245,6 +415,16 @@ func (s *Session) runExtraction(parent context.Context, sessionID string, notify
 		return
 	}
 	lastTurn := turns[len(turns)-1].Turn
+	generation, err := store.KnowledgeGeneration(ctx)
+	if err != nil {
+		return
+	}
+	observations, err := store.ObservationsForSession(ctx, sessionID, watermark, lastTurn)
+	if err != nil {
+		s.logger.Warn("MEMORY", "extract_observations_failed", "error", err.Error())
+		return
+	}
+	observations = memory.SelectExtractionObservations(observations)
 
 	previousSummary := ""
 	if summary, found, err := store.GetSessionSummary(ctx, sessionID); err == nil && found {
@@ -257,8 +437,8 @@ func (s *Session) runExtraction(parent context.Context, sessionID string, notify
 		s.logger.Warn("MEMORY", "extract_no_provider", "error", err.Error())
 		return
 	}
-	raw, err := complete(ctx, memory.ExtractionSystemPrompt,
-		memory.BuildExtractionUser(previousSummary, existingTitles, buildTranscript(turns)))
+	raw, err := complete(ctx, rootprompt.MemoryExtractionSystem(),
+		rootprompt.MemoryExtractionUser(memory.PrepareExtractionInput(previousSummary, existingTitles, buildTranscript(turns), observations)))
 	if err != nil {
 		s.logger.Warn("MEMORY", "extract_call_failed", "error", err.Error())
 		return
@@ -269,50 +449,35 @@ func (s *Session) runExtraction(parent context.Context, sessionID string, notify
 		return
 	}
 
-	saved := 0
-	var savedTitles []string
 	provenance := fmt.Sprintf("session:%s turns:%d-%d (auto)", sessionID, watermark+1, lastTurn)
-	for _, m := range result.Memories {
-		record, err := store.Remember(ctx, memory.Record{
-			Kind:            m.Kind,
-			Title:           m.Title,
-			Content:         m.Content,
-			ScopePaths:      m.Paths,
-			Importance:      m.Importance,
-			SourceSessionID: sessionID,
-			Source:          memory.SourceAuto,
-			Provenance:      provenance,
-		})
-		if err != nil {
-			s.logger.Warn("MEMORY", "extract_save_failed", "title", m.Title, "error", err.Error())
-			continue
-		}
-		saved++
-		savedTitles = append(savedTitles, record.Title)
-	}
+	batch := memory.ExtractionBatch{SessionID: sessionID, ExpectedWatermark: watermark,
+		ThroughTurn: lastTurn, ExpectedGeneration: generation,
+		Records: memory.GroundExtraction(result, observations, sessionID, provenance)}
 	if result.Summary != nil {
-		if err := store.SaveSessionSummary(ctx, memory.SessionSummary{
+		batch.Summary = &memory.SessionSummary{
 			SessionID: sessionID,
 			Title:     result.Summary.Title,
 			Summary:   result.Summary.Summary,
 			KeyFiles:  result.Summary.KeyFiles,
 			Outcome:   result.Summary.Outcome,
 			TurnCount: lastTurn,
-		}); err != nil {
-			s.logger.Warn("MEMORY", "summary_save_failed", "error", err.Error())
-		} else {
-			s.refreshMemorySummary(ctx, store)
 		}
 	}
-	if err := store.SetMeta(ctx, extractWatermarkKey(sessionID),
-		fmt.Sprintf("%d", lastTurn)); err != nil {
-		s.logger.Warn("MEMORY", "watermark_save_failed", "error", err.Error())
+	saved, err := store.CommitExtraction(ctx, batch)
+	if err != nil {
+		s.logger.Warn("MEMORY", "extract_commit_failed", "error", err.Error())
+		return
+	}
+	s.refreshMemorySummary(ctx, store)
+	var savedTitles []string
+	for _, record := range saved {
+		savedTitles = append(savedTitles, record.Title)
 	}
 	s.logger.Info("MEMORY", "extract_done",
-		"session", sessionID, "turns", len(turns), "saved", saved)
-	if notify && saved > 0 && s.sender != nil {
+		"session", sessionID, "turns", len(turns), "saved", len(saved))
+	if notify && len(saved) > 0 && s.sender != nil {
 		s.sender.SendAgentEvent("memory_saved", map[string]any{
-			"count":  saved,
+			"count":  len(saved),
 			"titles": savedTitles,
 		})
 	}
@@ -321,13 +486,13 @@ func (s *Session) runExtraction(parent context.Context, sessionID string, notify
 // existingMemoryTitles renders current memory titles for the extraction
 // prompt's dedup list.
 func (s *Session) existingMemoryTitles(ctx context.Context, store *memory.Store) string {
-	records, err := store.List(ctx, memory.ListQuery{Limit: 40})
+	records, err := store.List(ctx, memory.ListQuery{Status: "all", Limit: 40})
 	if err != nil {
 		return ""
 	}
 	var b strings.Builder
 	for _, record := range records {
-		fmt.Fprintf(&b, "- %s (%s)\n", record.Title, record.Kind)
+		fmt.Fprintf(&b, "- %s@%d (%s, %s): %s\n", record.ID, record.Revision, record.Kind, record.Status, record.Title)
 	}
 	return strings.TrimSpace(b.String())
 }
@@ -336,7 +501,7 @@ func (s *Session) existingMemoryTitles(ctx context.Context, store *memory.Store)
 func buildTranscript(turns []memory.HistoryHit) string {
 	var b strings.Builder
 	for _, turn := range turns {
-		fmt.Fprintf(&b, "--- turn %d ---\n", turn.Turn)
+		fmt.Fprintf(&b, "--- session %s turn %d ---\n", turn.SessionID, turn.Turn)
 		if turn.UserText != "" {
 			b.WriteString("USER: ")
 			b.WriteString(memory.TruncateBytes(turn.UserText, 1200))
@@ -352,7 +517,7 @@ func buildTranscript(turns []memory.HistoryHit) string {
 			b.WriteString("\n")
 		}
 		if turn.AssistantText != "" {
-			b.WriteString("ASSISTANT: ")
+			b.WriteString("ASSISTANT CLAIM (not verification): ")
 			b.WriteString(memory.TruncateBytes(turn.AssistantText, 1600))
 			b.WriteString("\n")
 		}
@@ -380,10 +545,7 @@ func (s *Session) memoryCompleter() (func(context.Context, string, string) (stri
 	}
 	model := category.Model
 	return func(ctx context.Context, system, user string) (string, error) {
-		if category.Instructions != "" {
-			system += "\n\nAdditional user-configured Memory Agent instructions:\n" + category.Instructions
-		}
-		return agent.CompleteTextWithMaxOutput(ctx, p, model, system, user, category.ModelMaxOutput)
+		return agent.CompleteTextWithMaxOutput(ctx, p, model, rootprompt.MemoryAgentSystem(system, category.Instructions), user, category.ModelMaxOutput)
 	}, nil
 }
 
@@ -473,10 +635,10 @@ func (s *Session) runMemoryMaintenance(parent context.Context) {
 	}()
 
 	// Deterministic passes are cheap and always safe.
-	if n, err := store.DedupeExact(ctx); err != nil {
+	if groups, err := store.DuplicateSuggestions(ctx); err != nil {
 		s.logger.Warn("MEMORY", "dedupe_failed", "error", err.Error())
-	} else if n > 0 {
-		s.logger.Info("MEMORY", "dedupe_done", "superseded", n)
+	} else if len(groups) > 0 {
+		s.logger.Info("MEMORY", "dedupe_suggested", "groups", len(groups))
 	}
 	if n, err := store.DecayArchive(ctx, memoryDecayUnused); err != nil {
 		s.logger.Warn("MEMORY", "decay_failed", "error", err.Error())
@@ -501,8 +663,8 @@ func (s *Session) runMemoryMaintenance(parent context.Context) {
 	if err != nil {
 		return
 	}
-	raw, err := complete(ctx, memory.ConsolidationSystemPrompt,
-		memory.BuildConsolidationUser(candidates))
+	raw, err := complete(ctx, rootprompt.MemoryConsolidationSystem(),
+		rootprompt.MemoryConsolidationUser(memory.PrepareConsolidationInput(candidates)))
 	if err != nil {
 		s.logger.Warn("MEMORY", "consolidate_call_failed", "error", err.Error())
 		return

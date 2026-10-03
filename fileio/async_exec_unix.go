@@ -7,16 +7,15 @@ import (
 	"syscall"
 )
 
-func killProcessGroup(pid int) {
-	_ = syscall.Kill(-pid, syscall.SIGKILL)
-}
-
 func setCmdSysProcAttr(c *exec.Cmd) {
 	c.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 }
 
 func cancelProcess(c *exec.Cmd) error {
 	if c.Process != nil {
+		if err := c.Process.Signal(syscall.Signal(0)); err != nil {
+			return err
+		}
 		return syscall.Kill(-c.Process.Pid, syscall.SIGKILL)
 	}
 	return nil

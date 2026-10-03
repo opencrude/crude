@@ -1,0 +1,239 @@
+package settings
+
+import (
+	"encoding/json"
+	"fmt"
+	"slices"
+	"strconv"
+	"strings"
+	"sync/atomic"
+
+	tea "charm.land/bubbletea/v2"
+
+	"crude/tui/ui"
+	"crude/types/capability"
+)
+
+type CapabilityRequestMsg struct {
+	Target   *Model
+	Action   capability.Action
+	Sequence uint64
+}
+
+type CapabilityResultMsg struct {
+	Target              *Model
+	Snapshot            capability.Snapshot
+	Entries             []capability.Entry
+	Content             string
+	Action              capability.Action
+	Err                 error
+	Sequence            uint64
+	WorkspaceGeneration uint64
+}
+
+var nextCapabilityRequest atomic.Uint64
+
+func (m *Model) SetCapabilitySnapshot(snapshot capability.Snapshot) {
+	if snapshot.Generation < m.capabilitySnapshot.Generation {
+		return
+	}
+	encoded, err := json.Marshal(snapshot)
+	if err != nil {
+		return
+	}
+	var detached capability.Snapshot
+	if json.Unmarshal(encoded, &detached) != nil {
+		return
+	}
+	m.capabilitySnapshot = detached
+	settings := capability.Normalize(detached.Settings)
+	if m.capabilityScope() == capability.ScopeApplication {
+		for id, skill := range settings.Skills {
+			if skill.Scope == capability.ScopeWorkspace {
+				delete(settings.Skills, id)
+				if inherited, exists := m.appDefaults.Capabilities.Skills[id]; exists {
+					settings.Skills[id] = inherited
+				}
+			}
+		}
+		for id, connection := range settings.Connections {
+			if connection.Scope == capability.ScopeWorkspace {
+				delete(settings.Connections, id)
+				if inherited, exists := m.appDefaults.Capabilities.Connections[id]; exists {
+					settings.Connections[id] = inherited
+				}
+			}
+		}
+		for id, source := range settings.Sources {
+			if source.Scope == capability.ScopeWorkspace {
+				delete(settings.Sources, id)
+				if inherited, exists := m.appDefaults.Capabilities.Sources[id]; exists {
+					settings.Sources[id] = inherited
+				}
+			}
+		}
+	}
+	m.capabilities.Skills = settings.Skills
+	m.capabilities.Connections = settings.Connections
+	m.capabilities.Sources = settings.Sources
+	m.capabilityRevision++
+}
+
+func (m *Model) applyCapabilityResult(result CapabilityResultMsg) {
+	action, exists := m.capabilityRequests[result.Sequence]
+	if result.Target != m || result.Sequence == 0 || !exists {
+		return
+	}
+	delete(m.capabilityRequests, result.Sequence)
+	result.Action = action
+	if result.Snapshot.Generation >= m.capabilitySnapshot.Generation && result.Snapshot.Generation != 0 {
+		m.SetCapabilitySnapshot(result.Snapshot)
+	}
+	if result.Err == nil && (action.Operation == "search" || action.Operation == "discover") {
+		m.capabilityDiscovery[action.Kind] = slices.Clone(result.Entries)
+	}
+	if action.Operation == "snapshot" && result.Sequence != m.capabilitySequence && m.capabilityPending != nil {
+		return
+	}
+	if result.Sequence == m.capabilitySequence {
+		m.capabilityPending = nil
+	}
+	m.capabilityResult = &result
+}
+
+func (m *Model) requestCapability(action capability.Action) (uint64, tea.Cmd) {
+	auxiliary := action.Operation == "snapshot" || action.Operation == "auth-return" || action.Operation == "open-auth-url"
+	if m.capabilityPending != nil && action.Operation != "cancel" && !auxiliary {
+		return 0, nil
+	}
+	encoded, err := json.Marshal(action)
+	if err != nil {
+		return 0, nil
+	}
+	var detached capability.Action
+	if json.Unmarshal(encoded, &detached) != nil {
+		return 0, nil
+	}
+	detached.Scope = m.capabilityScope()
+	sequence := nextCapabilityRequest.Add(1)
+	if m.capabilityRequests == nil {
+		m.capabilityRequests = make(map[uint64]capability.Action)
+	}
+	if action.Operation == "cancel" && m.capabilityPending != nil {
+		detached.ID, detached.Kind = m.capabilityPending.ID, m.capabilityPending.Kind
+		detached.Arguments = map[string]string{"sequence": strconv.FormatUint(m.capabilitySequence, 10)}
+		clear(m.capabilityRequests)
+	}
+	m.capabilityRequests[sequence] = detached
+	if !auxiliary || m.capabilityPending == nil {
+		m.capabilitySequence = sequence
+		m.capabilityPending = &detached
+		m.capabilityResult = nil
+	}
+	return sequence, func() tea.Msg { return CapabilityRequestMsg{Target: m, Action: detached, Sequence: sequence} }
+}
+
+func (m *Model) capabilityScope() capability.Scope {
+	if string(m.Scope()) == string(capability.ScopeWorkspace) {
+		return capability.ScopeWorkspace
+	}
+	return capability.ScopeApplication
+}
+
+func (m *Model) buildAcquisitionForm() *ui.FormModel {
+	settings := m.capabilities.Acquisition
+	selection := ui.SelectFieldState("capability-automatic-selection", "Automatic selection", settings.AutomaticSelection,
+		[]ui.FormOption{{ID: "on", Label: "Relevant available capabilities"}, {ID: "off", Label: "Explicit use only"}}, "Selecting an installed capability is separate from acquiring or approving it.")
+	mode := ui.SelectFieldState("capability-acquisition-mode", "New acquisition", settings.Mode,
+		[]ui.FormOption{{ID: "manual", Label: "Manual only"}, {ID: "ask", Label: "Ask before acquiring"}, {ID: "automatic", Label: "Within approved sources and grants"}}, "Discovery is not a grant. Updates are explicit; unknown effects and changed schemas need access review.")
+	return formModel(
+		ui.SeparatorFieldState("capability-selection", "Selection and approval"), selection, mode,
+		&ui.FieldState{ID: "capability-sources", Label: "Sources and trust", Type: ui.FieldNav, Target: "settings.capability.sources"},
+		ui.SeparatorFieldState("capability-budgets", "Operation and request budgets"),
+		capabilityIntField("capability-timeout", "Timeout (seconds)", int64(settings.TimeoutSeconds), 1, 3600, "A bounded acquisition deadline, not permission to retry a remote mutation."),
+		capabilityIntField("capability-download-bytes", "Maximum download (bytes)", settings.MaxDownloadBytes, 1024, 1<<30, "Downloaded artifacts are verified before becoming usable."),
+		capabilityIntField("capability-max-tools", "Maximum tools per request", int64(settings.MaxTools), 1, 1024, "Selection intent survives exclusion by the producing model's request budget."),
+		capabilityIntField("capability-schema-bytes", "Maximum schemas (bytes)", int64(settings.MaxSchemaBytes), 1024, 16<<20, "Dynamic schemas share this bounded request budget."),
+	)
+}
+
+func capabilityIntField(id, label string, value, minimum, maximum int64, description string) *ui.FieldState {
+	field := ui.TextFieldState(id, label, strconv.FormatInt(value, 10), description)
+	field.Validator = func(value ui.FieldValue) []string {
+		parsed, err := strconv.ParseInt(strings.TrimSpace(value.String()), 10, 64)
+		if err != nil || parsed < minimum || parsed > maximum {
+			return []string{fmt.Sprintf("Enter a whole number from %d to %d.", minimum, maximum)}
+		}
+		return nil
+	}
+	return field
+}
+
+func (m *Model) acquisitionFromForm() capability.AcquisitionSettings {
+	settings := m.capabilities.Acquisition
+	if len(m.categories) <= catAcquisition {
+		return settings
+	}
+	settings.AutomaticSelection = m.value(catAcquisition, "capability-automatic-selection")
+	settings.Mode = m.value(catAcquisition, "capability-acquisition-mode")
+	if value, err := strconv.Atoi(m.value(catAcquisition, "capability-timeout")); err == nil {
+		settings.TimeoutSeconds = value
+	}
+	if value, err := strconv.ParseInt(m.value(catAcquisition, "capability-download-bytes"), 10, 64); err == nil {
+		settings.MaxDownloadBytes = value
+	}
+	if value, err := strconv.Atoi(m.value(catAcquisition, "capability-max-tools")); err == nil {
+		settings.MaxTools = value
+	}
+	if value, err := strconv.Atoi(m.value(catAcquisition, "capability-schema-bytes")); err == nil {
+		settings.MaxSchemaBytes = value
+	}
+	return settings
+}
+
+func (m *Model) editorOpen() bool {
+	return m.accountEditor != nil || m.providerEditor != nil || m.capabilityDraft != nil || len(m.categories) > catAgents && m.categories[catAgents].Form.FieldCount() > 0
+}
+
+func (m *Model) categoryMatches(index int, category Category, query string) bool {
+	if strings.Contains(strings.ToLower(category.Name+" "+category.Group+" "+category.Description), query) {
+		return true
+	}
+	for _, field := range category.Form.Fields() {
+		if strings.Contains(strings.ToLower(field.ID+" "+field.Label+" "+field.Description), query) {
+			return true
+		}
+	}
+	var entries []string
+	switch index {
+	case catSkills:
+		entries = append(entries, "skill-id skill-name skill-path invocation mode instructions files access versions")
+		for id, skill := range m.capabilities.Skills {
+			entries = append(entries, id+" "+skill.Name+" "+skill.Source+" "+skill.Path)
+		}
+	case catMCP:
+		entries = append(entries, "mcp-id mcp-name mcp-url mcp-command transport environment secret references headers authentication timeout tools resources prompts grants logs")
+		for id, connection := range m.capabilities.Connections {
+			entries = append(entries, id+" "+connection.Name+" "+connection.URL+" "+connection.Command+" "+connection.Source)
+		}
+	case catSources:
+		entries = append(entries, "source-id source-name source-kind source-location source-revision source-digest trusted disabled")
+		for id, source := range m.capabilities.Sources {
+			entries = append(entries, id+" "+source.Name+" "+source.Kind+" "+source.Location)
+		}
+	}
+	return strings.Contains(strings.ToLower(strings.Join(entries, " ")), query)
+}
+
+func formDraftBytes(form *ui.FormModel) []byte {
+	values := make(map[string]string)
+	if form != nil {
+		for _, field := range form.Fields() {
+			if !field.ReadOnly && field.Type != ui.FieldSeparator && field.Type != ui.FieldSpacer && field.Type != ui.FieldNav {
+				values[field.ID] = field.Value.String()
+			}
+		}
+	}
+	encoded, _ := json.Marshal(values)
+	return encoded
+}

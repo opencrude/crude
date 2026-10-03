@@ -10,6 +10,7 @@ import (
 	"crude/tui/filetree"
 	"crude/tui/screens/shellchat"
 	"crude/tui/ui"
+	captypes "crude/types/capability"
 	"crude/workspace"
 )
 
@@ -46,6 +47,9 @@ func sameWorkspaceRoot(current, candidate string) bool {
 // domain starts tearing down. The old tree watcher is stopped synchronously,
 // while git and launcher work already in flight becomes stale immediately.
 func (m *App) beginWorkspaceSwitch() workspaceSwitchState {
+	m.overlayHost.Close(ui.OverlayCapabilityPicker)
+	m.cancelCapabilityOperations()
+	m.closeMemoryBrowser()
 	m.invalidateTreePathSearch()
 	state := workspaceSwitchState{
 		workspaceGen: m.workspaceSwitchGen.Load(),
@@ -106,6 +110,10 @@ func (state workspaceSwitchState) restore(m *App) {
 // constructing replacements. Theme, compositor, root Host, action registry,
 // history, and application-global overlays stay alive.
 func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
+	for len(m.agentPrompts) > 0 {
+		m.removeAgentPrompt(m.agentPrompts[0])
+	}
+	m.resetMemoryBrowser()
 	m.discardTerminalUI()
 	m.closeWorkspaceBoundOverlays()
 	m.closeWorkspaceEditors()
@@ -160,20 +168,27 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 
 	if m.sourceControl != nil {
 		m.sourceControl.SetSnapshot(workspace.GitSnapshot{})
-		m.sourceControl.ClearCommitMessage()
 	}
+	m.gitReview = nil
+	m.gitReviewSequence++
+	m.boardBrowser = nil
+	m.capabilitySnapshot = captypes.Snapshot{}
+	m.skillInvocationSequence++
+	m.workspacePanelHeights = nil
+	m.toolLayout = workspace.DefaultToolLayout()
+	m.toolLayoutVersion, m.toolLayoutSavedVersion = 0, 0
+	m.toolLayoutSaving, m.toolLayoutSaveQueued = false, false
+	m.workspacePanelMaximized = false
 	if m.activityBar != nil {
 		m.activityBar.SetBadge(activityAgents, 0)
-		m.activityBar.SetBadge(activityTerminals, 0)
 		m.activityBar.SetBadge(activityGit, 0)
 	}
 	m.syncPendingBtwCount()
 	m.refreshActivityList()
 
 	if m.launcherScreen != nil {
-		m.launcherScreen.SetData(m.RootPath, nil)
-		m.launcherScreen.SyncFocus()
 		m.refreshLauncherAsync(m.RootPath)
+		m.launcherScreen.SyncFocus()
 	}
 	m.cachedOutput = ""
 	m.treeGitRefreshAt = time.Time{}
@@ -185,6 +200,8 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	m.gitSnapshotAt = time.Time{}
 	m.gitReadsInFlight = 0
 	m.requestGitSnapshot(time.Now())
+	m.startSourceControlMutation(m.loadToolLayoutCmd())
+	m.startSourceControlMutation(m.capabilitySnapshotCmd())
 }
 
 func (m *App) beginWorkspaceTreeLoad(rootPath string) {

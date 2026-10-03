@@ -37,6 +37,28 @@ type AsyncCmdInfo struct {
 	Error     string
 }
 
+type AsyncCmdRef struct {
+	Handle    string
+	PID       int
+	StartedAt time.Time
+}
+
+var (
+	ErrAsyncCommandNotFound   = errors.New("async command not found")
+	ErrAsyncCommandNotRunning = errors.New("async command is no longer running")
+	ErrAsyncCommandReplaced   = errors.New("async command identity no longer matches")
+)
+
+func (info AsyncCmdInfo) Ref() AsyncCmdRef {
+	return AsyncCmdRef{Handle: info.Handle, PID: info.PID, StartedAt: info.StartedAt}
+}
+
+type ownedCommandTree struct {
+	wait  func() error
+	kill  func() error
+	close func()
+}
+
 type asyncCmdState struct {
 	cmd              *exec.Cmd
 	output           bytes.Buffer
@@ -49,17 +71,22 @@ type asyncCmdState struct {
 	input            io.WriteCloser
 	interactionLease chan struct{}
 	outputCursor     int
+	readCursor       int
+	tree             *ownedCommandTree
 }
 
 func (st *asyncCmdState) killGroup() {
 	st.mu.Lock()
-	pid := st.info.PID
-	st.mu.Unlock()
-	if pid <= 0 {
+	defer st.mu.Unlock()
+	if st.info.Status != AsyncRunning || st.cmd == nil || st.cmd.Process == nil {
 		return
 	}
-	killProcessGroup(pid)
 	st.cancel()
+	if st.tree != nil {
+		_ = st.tree.kill()
+	} else {
+		_ = cancelProcess(st.cmd)
+	}
 }
 
 func (st *asyncCmdState) Write(data []byte) (int, error) {
@@ -181,6 +208,7 @@ func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds 
 	}
 	c.Stdout = state
 	c.Stderr = state
+	c.Cancel = func() error { state.killGroup(); return nil }
 
 	if err := c.Start(); err != nil {
 		cancel()
@@ -192,7 +220,7 @@ func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds 
 		return nil, fmt.Errorf("failed to start async command %q: %w", handle, err)
 	}
 	state.info.PID = c.Process.Pid
-	treeCleanup, err := ownProcessTree(c)
+	tree, err := ownProcessTree(c)
 	if err != nil {
 		state.killGroup()
 		_ = c.Wait()
@@ -200,11 +228,14 @@ func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds 
 		releaseReservation()
 		return nil, err
 	}
-	state.cleanup = func() { treeCleanup(); cleanup() }
+	state.mu.Lock()
+	state.tree = tree
+	state.mu.Unlock()
+	state.cleanup = func() { tree.close(); cleanup() }
 	if err := resumeOwnedProcess(c); err != nil {
-		state.cleanup()
 		state.killGroup()
 		_ = c.Wait()
+		state.cleanup()
 		releaseReservation()
 		return nil, err
 	}
@@ -221,11 +252,7 @@ func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds 
 	go func() {
 		defer close(state.done)
 		defer state.cleanup()
-		err := c.Wait()
-		// A shell can exit while descendants continue in its process group.
-		// Terminate the group at the ownership boundary before publishing a
-		// terminal status so no hidden writer survives the handle.
-		killProcessGroup(state.info.PID)
+		err := tree.wait()
 		state.mu.Lock()
 		defer state.mu.Unlock()
 		state.info.EndedAt = time.Now()
@@ -288,19 +315,41 @@ func (m *AsyncCommandManager) Check(handle string) (*AsyncCmdInfo, bool) {
 }
 
 func (m *AsyncCommandManager) Kill(handle string) error {
-	m.mu.Lock()
-	state, ok := m.commands[handle]
-	m.mu.Unlock()
+	info, ok := m.Check(handle)
 	if !ok {
-		if m.logger != nil {
-			m.logger.Warn("ASYNC", "kill_not_found", "handle", handle)
-		}
-		return fmt.Errorf("async command handle %q not found", handle)
+		return fmt.Errorf("%w: %q", ErrAsyncCommandNotFound, handle)
+	}
+	if info.Status != AsyncRunning {
+		return nil
+	}
+	return m.KillRef(info.Ref())
+}
+
+func (m *AsyncCommandManager) KillRef(ref AsyncCmdRef) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	state, ok := m.commands[ref.Handle]
+	if !ok {
+		return fmt.Errorf("%w: %q", ErrAsyncCommandNotFound, ref.Handle)
+	}
+	state.mu.Lock()
+	defer state.mu.Unlock()
+	if ref.PID <= 0 || ref.StartedAt.IsZero() || state.info.PID != ref.PID || !state.info.StartedAt.Equal(ref.StartedAt) {
+		return fmt.Errorf("%w: %q", ErrAsyncCommandReplaced, ref.Handle)
+	}
+	if state.info.Status != AsyncRunning || state.tree == nil {
+		return fmt.Errorf("%w: %q", ErrAsyncCommandNotRunning, ref.Handle)
 	}
 	if m.logger != nil {
-		m.logger.Info("ASYNC", "kill", "handle", handle, "pid", state.info.PID)
+		m.logger.Info("ASYNC", "kill", "handle", ref.Handle, "pid", ref.PID)
 	}
-	state.killGroup()
+	state.cancel()
+	if err := state.tree.kill(); err != nil {
+		if errors.Is(err, os.ErrProcessDone) {
+			return fmt.Errorf("%w: %q", ErrAsyncCommandNotRunning, ref.Handle)
+		}
+		return err
+	}
 	return nil
 }
 
@@ -317,6 +366,7 @@ func (m *AsyncCommandManager) ReadOutput(handle string, sinceByte int) (string, 
 	state.outputMu.Lock()
 	total := state.output.Len()
 	if sinceByte >= total {
+		state.readCursor = max(state.readCursor, total)
 		state.outputMu.Unlock()
 		if m.logger != nil {
 			m.logger.Debug("ASYNC", "read_output_no_new", "handle", handle, "since_byte", sinceByte, "total", total)
@@ -324,6 +374,7 @@ func (m *AsyncCommandManager) ReadOutput(handle string, sinceByte int) (string, 
 		return "", total, nil
 	}
 	out := string(state.output.Bytes()[sinceByte:total])
+	state.readCursor = max(state.readCursor, total)
 	state.outputMu.Unlock()
 	out = strings.ReplaceAll(out, "\r\n", "\n")
 	out = strings.ReplaceAll(out, "\r", "")
@@ -439,6 +490,7 @@ func (m *AsyncCommandManager) startUntracked(command, cwd string, timeoutSeconds
 	}
 	c.Stdout = state
 	c.Stderr = state
+	c.Cancel = func() error { state.killGroup(); return nil }
 
 	var outputDone <-chan struct{}
 	start := c.Start
@@ -456,7 +508,7 @@ func (m *AsyncCommandManager) startUntracked(command, cwd string, timeoutSeconds
 		return nil, fmt.Errorf("failed to start command: %w", err)
 	}
 	state.info.PID = c.Process.Pid
-	treeCleanup, err := ownProcessTree(c)
+	tree, err := ownProcessTree(c)
 	if err != nil {
 		state.killGroup()
 		_ = c.Wait()
@@ -469,11 +521,14 @@ func (m *AsyncCommandManager) startUntracked(command, cwd string, timeoutSeconds
 		cleanup()
 		return nil, err
 	}
+	state.mu.Lock()
+	state.tree = tree
+	state.mu.Unlock()
 	state.cleanup = func() {
 		if state.input != nil {
 			_ = state.input.Close()
 		}
-		treeCleanup()
+		tree.close()
 		cleanup()
 	}
 	if err := resumeOwnedProcess(c); err != nil {
@@ -490,7 +545,7 @@ func (m *AsyncCommandManager) startUntracked(command, cwd string, timeoutSeconds
 	go func() {
 		defer close(state.done)
 		defer state.cleanup()
-		err := c.Wait()
+		err := tree.wait()
 		if outputDone != nil {
 			// Closing a PTY after process exit is safe after its final output drains.
 			select {
@@ -500,7 +555,6 @@ func (m *AsyncCommandManager) startUntracked(command, cwd string, timeoutSeconds
 				<-outputDone
 			}
 		}
-		killProcessGroup(state.info.PID)
 		state.mu.Lock()
 		defer state.mu.Unlock()
 		state.info.EndedAt = time.Now()

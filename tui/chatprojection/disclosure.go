@@ -169,7 +169,7 @@ func (r *Renderer) hasDisclosure(msg *types.ChatMessage) bool {
 		return true
 	case msg.Role == types.RoleTool && msg.ToolName == "multi_tool_use.parallel":
 		return msg.ToolInput != "" || msg.Content != ""
-	case msg.Role == types.RoleTool && msg.Content != "":
+	case msg.Role == types.RoleTool && (msg.Content != "" || msg.ToolInput != ""):
 		return toolSupportsDisclosure(msg.ToolName)
 	}
 	return false

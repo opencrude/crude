@@ -2,6 +2,7 @@ package chatprojection
 
 import (
 	"strings"
+	"sync/atomic"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -15,6 +16,8 @@ import (
 	"crude/tui/ui"
 )
 
+var nextRendererSourceID atomic.Uint64
+
 type SubPaneContentFn func(paneID string, width, maxH, spinFrame int, expanded bool) []SubPaneLine
 
 type Renderer struct {
@@ -23,6 +26,7 @@ type Renderer struct {
 	paneScroll *ui.ScrollModel
 	sync       *MessageSync
 	theme      *theme.Theme
+	sourceID   uint64
 
 	chatAreaTop    int
 	chatAreaHeight int
@@ -73,9 +77,13 @@ type Renderer struct {
 }
 
 type MessageRowsSnapshot struct {
-	Rows             []MessageRow
-	PaneLineMap      []PaneLineInfo
-	ContentHeight    int
+	Rows          []MessageRow
+	PaneLineMap   []PaneLineInfo
+	ContentHeight int
+	// SourceID identifies the retained Renderer that produced this snapshot.
+	// Generation is renderer-local, so two session projections can both emit
+	// generation one and still require the shared shell chat to replace rows.
+	SourceID         uint64
 	Generation       uint64
 	ChangedIndices   []int
 	StructureChanged bool
@@ -94,6 +102,7 @@ func (r *Renderer) SetThinkingBodyOnly(v bool) {
 func NewRenderer(t *theme.Theme) *Renderer {
 	r := &Renderer{
 		theme:           t,
+		sourceID:        nextRendererSourceID.Add(1),
 		vl:              *newItemList(),
 		sync:            NewMessageSync(),
 		nativeCache:     make(map[string][]PaintLine),
@@ -909,12 +918,13 @@ func (r *Renderer) RemoveMessage(idx int) {
 }
 
 func (r *Renderer) InvalidateItem(id string) {
-	for _, msg := range r.sync.Messages {
-		if msg.InternalID == id {
-			msg.CachedLines = nil
-			r.vl.InvalidateItem(id)
-			return
-		}
+	msg := r.sync.MsgByID[id]
+	if msg == nil {
+		msg = r.activityMessages[id]
+	}
+	if msg != nil {
+		msg.CachedLines = nil
+		r.vl.InvalidateItem(id)
 	}
 }
 
@@ -969,7 +979,7 @@ func (r *Renderer) ExportMessageRows(width int) ([]MessageRow, []PaneLineInfo, i
 
 func (r *Renderer) ExportMessageRowsSnapshot(width int) MessageRowsSnapshot {
 	if r.chatAreaHeight <= 0 {
-		return MessageRowsSnapshot{}
+		return MessageRowsSnapshot{SourceID: r.sourceID}
 	}
 	scrollbarW := r.ScrollbarWidth()
 	scrollY, viewportH := r.effectiveScrollY(), r.vl.ViewportHeight()
@@ -1045,7 +1055,7 @@ func (r *Renderer) ExportMessageRowsSnapshot(width int) MessageRowsSnapshot {
 	r.exportScrollbarW = r.ScrollbarWidth()
 	r.exportScrollY = r.effectiveScrollY()
 	r.exportViewportH = r.vl.ViewportHeight()
-	r.exportSnapshot = MessageRowsSnapshot{Rows: rows, PaneLineMap: paneMap, ContentHeight: r.vl.TotalHeight(), Generation: r.exportGeneration, ChangedIndices: changedIndices, StructureChanged: structureChanged}
+	r.exportSnapshot = MessageRowsSnapshot{Rows: rows, PaneLineMap: paneMap, ContentHeight: r.vl.TotalHeight(), SourceID: r.sourceID, Generation: r.exportGeneration, ChangedIndices: changedIndices, StructureChanged: structureChanged}
 	if r.lazyWidthReflow {
 		remaining := false
 		for i := 0; i < r.vl.ItemCount(); i++ {

@@ -1,6 +1,8 @@
 package session
 
 import (
+	captypes "crude/types/capability"
+	"maps"
 	"sync"
 
 	"crude/provider"
@@ -227,6 +229,13 @@ func mergeCategoryConfig(base, override CategoryConfig) CategoryConfig {
 	if len(override.DeniedTools) > 0 {
 		merged.DeniedTools = override.DeniedTools
 	}
+	if override.SkillModes != nil {
+		merged.SkillModes = maps.Clone(base.SkillModes)
+		if merged.SkillModes == nil {
+			merged.SkillModes = make(map[string]string)
+		}
+		maps.Copy(merged.SkillModes, override.SkillModes)
+	}
 	if override.ModelContextWindow > 0 {
 		merged.ModelContextWindow = override.ModelContextWindow
 	}
@@ -270,6 +279,7 @@ func copyConfig(src *Config) *Config {
 		Accounts:        src.Accounts,
 		TurnLogsEnabled: src.TurnLogsEnabled,
 		Memory:          src.Memory,
+		Capabilities:    captypes.Clone(src.Capabilities),
 		Safety:          src.Safety,
 	}
 	if src.selectedMainOverride != nil {
@@ -313,6 +323,7 @@ func copyConfig(src *Config) *Config {
 					v.Enabled = cloneBoolPtr(v.Enabled)
 					v.AllowedTools = append([]string(nil), v.AllowedTools...)
 					v.DeniedTools = append([]string(nil), v.DeniedTools...)
+					v.SkillModes = maps.Clone(v.SkillModes)
 					v.ContextCompactionPercent = cloneIntPtr(v.ContextCompactionPercent)
 					v.ModelModalities = append([]string(nil), v.ModelModalities...)
 					v.ModelTemperature = cloneFloatPtr(v.ModelTemperature)

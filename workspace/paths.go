@@ -404,20 +404,3 @@ func readWorkspaceMeta(ctx context.Context, dbPath string) *WorkspaceInfo {
 	info.ProjectName = WorkspaceDisplayName(*info)
 	return info
 }
-
-// DeleteWorkspace removes a workspace folder and all its sessions.
-// projectDirOrID may be an absolute project path (hash is derived) or a
-// workspace hash ID directly.
-func DeleteWorkspace(projectDirOrID string) error {
-	root, err := WorkspaceRoot()
-	if err != nil {
-		return err
-	}
-	id := projectDirOrID
-	// If it looks like a path, hash it.
-	if strings.Contains(projectDirOrID, string(os.PathSeparator)) || strings.HasPrefix(projectDirOrID, "/") {
-		id = workspaceID(projectDirOrID)
-	}
-	dir := filepath.Join(root, id)
-	return os.RemoveAll(dir)
-}

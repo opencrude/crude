@@ -11,6 +11,15 @@ prefix, oversized sources use complete attributed chunk-and-reduce, and extracti
 budgets output against its model's available capacity while retaining the selected
 reasoning effort.
 
+**Prompt ownership follow-up (2026-10-02):**
+[model prompts and project guidance](../reference/prompt-architecture.md) is the
+current contract for root/child and background-job assembly, complete bounded
+guidance intake, and typed runtime handoffs. Templates and checkpoint envelopes
+now belong to the root `prompt/` package; execution and persisted state stay with
+their domain owners. The XML sketches and original implementation choices below
+are historical context, not authority for reintroducing caller-local templates,
+prompt wrappers or vendor behavioral forks.
+
 ## 1. Problem Statement
 
 The 2026-09-11 production session exposed a coupled failure across context
@@ -239,8 +248,10 @@ producer-model compatibility rules.
 
 Compaction never decrypts or summarizes ciphertext. Its extraction stages see
 the provider-neutral visible transcript and tool state. Atomic checkpoint commit
-then replaces active context with the checkpoint plus retained human intent;
-old signed/encrypted items remain only in the immutable full transcript.
+then replaces active context with the checkpoint, only still-pending verbatim
+human/assignment input, and a fresh code-authored runtime-continuity handoff.
+Answered prompts are not appended after the checkpoint. Old signed/encrypted
+items remain only in the immutable full transcript.
 
 The retained checkpoint boundary remains ordinary transcript content for
 interaction. Full-bleed rules and native table rows use the same global chat
@@ -333,9 +344,18 @@ new small cache; no design can retain the removed prefix as the new conversation
 
 The summary accounts for every genuine human message. Active requests,
 corrections, and security constraints remain verbatim. Older resolved requests
-may be concise. A bounded recent genuine-user tail of at most 20K tokens is kept
-beside the checkpoint; unbounded verbatim retention would eventually defeat
+may be concise and stay out of the post-checkpoint user tail: retaining an
+already answered prompt there makes the next invocation answer it again. A
+bounded recent genuine-user tail of at most 20K tokens is kept only while that
+request remains pending; unbounded verbatim retention would eventually defeat
 compaction.
+
+The final message is code-authored `runtime_context`, sampled again after all
+four extraction stages. It declares that compaction is not a new turn and carries
+durable latest-turn state, the canonical active plan, current session selection,
+child identities/statuses, and exact async command handles, command/cwd/PID,
+start time, status, output length, and observed cursor. Running commands have no
+exit code. Sampling is observational and cannot consume output or signal work.
 
 The model compresses language, not evidence: dense fragments and `key: value`
 notation replace narrative prose while exact paths, symbols, commands, errors,
@@ -391,6 +411,15 @@ queued -> included in request -> request accepted -> consumed
 events invalidate the exact row, and tests assert both projection state and
 painted output. A note received during compaction waits for the next ordinary
 request; it cannot mutate an in-flight summary transaction.
+
+During an ordinary request upload, ready BTW notes are coalesced into the current
+model step when the encoded body is no more than 90 percent uploaded and no
+model output has begun. The request-local upload is cancelled, all currently
+ready notes are admitted in order, pressure is measured again, and one rebuilt
+request is uploaded. Past that boundary the current response finishes and the
+notes use the existing follow-up request. The internal rebase does not become a
+turn cancellation, provider retry, duplicate consumption event, or successful
+request accounting record.
 
 ## 13. Persistence And Resume
 

@@ -9,9 +9,14 @@ generic README, tool probing, or assumptions from another project.
 ### First actions
 
 1. Check `git status --short`; preserve unrelated user or agent changes.
-2. Read the relevant sections of this file, then consult `docs/plans/workspace-refactor-plan.md`,
-   `docs/plans/tui-component-system-plan.md`, `docs/reference/terminal-width.md`, and the
-   relevant `docs/tui/*.md` file before changing architecture or terminal UI code.
+2. Read this file completely, then consult only the references relevant to the
+   change. Prompt, model-runtime, or instruction-intake changes require
+   `docs/reference/prompt-architecture.md`, `docs/reference/agent-orchestration.md`,
+   and the relevant sections of `docs/reference/adaptive-context.md`. Application
+   layer changes require `docs/plans/workspace-refactor-plan.md`; terminal UI
+   changes require `docs/plans/tui-component-system-plan.md`,
+   `docs/reference/terminal-width.md`, and the applicable current `docs/reference/`
+   or `docs/guides/` contract. Plans are historical context, not current authority.
 3. Use `Glob` and `Grep` for repository discovery. Do not probe for generic
    screenshot tools when a repository workflow exists.
 
@@ -45,12 +50,24 @@ never sufficient.
 
 ### Choose the right-sized fix
 
-- **Crude is pre-production: do not preserve legacy product paths or persisted
-  development formats.** Prefer the clean, fast, correct, maintainable design
-  even when old local databases, snapshots, configuration shapes, tests, or UI
-  adapters must be deleted or recreated. Add compatibility only when the user
-  explicitly identifies a real external/production consumer; otherwise one
-  authoritative path is mandatory.
+- **Active development: no backward compatibility.** Architecture, internal
+  contracts and persisted formats may change incompatibly; code cleanliness and
+  one authoritative current path take priority. Do not add automatic upgrades,
+  legacy readers, fallback adapters or compatibility branches to accommodate
+  older local data.
+- **Breaking formats does not permit losing existing work.** Back up affected
+  local workspace/session data, manually align it to the current architecture
+  outside product code, and verify content, identity, provenance, history and
+  resume behavior. One-off conversion tooling must not remain in the codebase.
+  Update fixtures and documentation to the current contract rather than keeping
+  an old runtime path. Existing local data is not an exception to this rule.
+- **Git-based development rollbacks that can discard uncommitted work are
+  strictly prohibited during this phase.** Do not use `git checkout --`,
+  `git reset`, `git restore`, `git clean`, or equivalent operations to undo a
+  task by replacing or discarding local changes. Inspect the affected files and
+  manually reverse only the intended edits, preserving all unrelated user and
+  agent work. This restriction is about destructive rollbacks, not normal
+  non-rollback Git operations.
 
 - Perform a cost/benefit check before broad work. Use the smallest correction
   when one owner is clearly wrong and the invariant can be permanently guarded.
@@ -64,9 +81,8 @@ never sufficient.
   consumer, including manually composed and nested variants. Do not leave a
   second legacy interaction, cursor, scrollbar, persistence, or rendering path
   that can drift again.
-- Do not add compatibility code without a concrete persisted or external
-  consumer. When compatibility is required, define its retirement boundary and
-  keep it out of the new product path.
+- A failure caused by an outdated local format requires explicit manual data
+  alignment, not a compatibility layer added to the current product path.
 
 ### End-to-end means end-to-end
 
@@ -176,6 +192,18 @@ close it and verify `xdotool search --class CrudeShot` returns no window.
   — rule and active underline — always starts at the strip's own left edge
   (empty columns to its left read as a broken bar). Contract:
   `docs/reference/control-usage.md` (Tab bar contract).
+- Workspace docks share their first content row with the host's More/Maximize/Hide
+  controls: searchable status panels reserve trailing search space, while Memory
+  and Board reserve it beside their tabs or detail title. Browse search and local
+  actions share a row; constrained widths replace local buttons with More and
+  an accessible action list rather than splitting ordinary dock chrome.
+  Terminal instances use compact numbered `ui.Tabs` beside the terminal controls,
+  with one full-width baseline and a full-width PTY body, never a side instance rail.
+  Numbers follow titles (`Terminal 1`); cramped strips use `T 1`. Shared Tabs
+  overflow is independently browsable by wheel/trackpad and `‹`/`›`, preserving
+  manual position across repaint/same-active projections. Selection alone reveals
+  the active tab. Picker numbers match dock tabs; placement is Docked/Floating,
+  never a raw enum.
 
 ### Validation baseline
 
@@ -325,6 +353,19 @@ the transition it planned completed.
 | `app.go` | App struct, Run(), wireTUI() — TOO BIG, being split |
 | `config.go` | FileConfig, LoadFileConfig, SaveFileConfig — being split |
 
+### `prompt/` — Model-neutral prompt and guidance policy
+| File | Role |
+|---|---|
+| `build.go` | Canonical root/child prompt assembly and escaped profile/identity overlays |
+| `contracts.go` | Shared behavioral, tool, planning, memory, and project-guidance contracts |
+| `compaction.go` | Compaction stages, extraction requests, source fragments, manifests, and checkpoint envelope |
+| `environment.go` | Stable environment projection and XML escaping |
+| `guidance.go` | Complete `AGENTS.md`/`CLAUDE.md`/`SOUL.md` discovery, precedence, hashing, and bounded source representation |
+| `guidance_compile.go` | Oversized-guidance compiler/verifier requests and compiled projection |
+| `memory.go` | Memory extraction/consolidation instructions and prompt data envelopes |
+| `permission.go` | No-tools permission-review policy and narrowing overlay |
+| `runtime.go` | Turn context, continuity, plan, memory recall, delegation, and wake projections |
+
 ---
 
 ## Rendering Architecture (stable — no planned changes)
@@ -413,6 +454,27 @@ Rules:
   (event-bus `Send`, generation-deduped by `App.launcherLoadGen`). The
   ~200ms DB scan must never block the update goroutine (back-to-launcher
   hotpath). Guarded by `launcher_async_test.go`.
+- **Workspace home preserves its original action controls.** On wide grids New
+  Session keeps the full-width four-row outline with the original cycling icon,
+  project path and Enter hint. Beneath it, the folder-icon New Workspace control
+  returns to the left pane; after one blank row, Skills and MCP split all remaining
+  left-pane height equally while Recent workspaces stays in the right pane. On
+  cramped grids the two action controls stack with one blank row, the capability
+  pane hides, and Recent workspaces becomes full width. Do not replace this with
+  a full-width resource grid or add a repeated workspace heading or duplicate
+  Settings/Help/palette/session controls. Search always owns a separate row.
+  Workspace names and paths share a two-row hit target with a non-interactive
+  blank separator between entries. The Recent-workspaces guide is pinned to the
+  pane bottom regardless of resource count. Retry lives beside the heading,
+  never inside the search row.
+  Named Skills distinguish enabled modes from live Loaded bindings; MCP shows
+  actual connected or attention states, never cached discovery as connected.
+  Runtime observation is cancellable and off-UI, with no transport startup or
+  skill-file scan. Loading uses `ui.ProgressRule` ink motion and keeps the last
+  usable listing; settled home stops fast ticks. Delete stays in the workspace
+  context menu, previews saved-data consequences, and moves data to recoverable
+  storage with Undo; project files are untouched. See the workspace-home section
+  of `docs/reference/interaction-matrix.md`.
 - `themeConsumers()` walks `rootHost` (SetTheme propagates tokens to all
   mounted screens via `applyTokenSet`).
 
@@ -579,6 +641,23 @@ frame builders under `tui/widgets/*_frame.go` and native screen packages):
 
 Legacy `tui/widgets/popupchrome.go` is **deleted**.
 
+### Background Command Termination
+
+- The background-jobs session deck opens passively; each running row has a
+  native Terminate button. Explicit button interaction retains keyboard focus;
+  Esc returns it to the composer. Finished rows have no termination target.
+- Termination captures the exact owning backend and the observed
+  `fileio.AsyncCmdRef` (handle, PID, start time), never the active session or a
+  process-name search. Replaced, missing and settled references fail closed.
+  Stopping one command must leave neighboring commands and the session usable.
+- Command-tree lifetime owns all signals. Unix observes exit without reaping,
+  cleans its process group while the leader still pins the identity, then reaps;
+  Windows terminates its retained Job Object, never `taskkill /PID`. Completion,
+  explicit stop and session shutdown cannot signal a settled/recycled identity.
+- Background-job columns are content-sized with terminal-width helpers.
+  Optional PID/exit telemetry yields before handles are shortened; elapsed labels
+  use whole seconds (`2m 05s`, `1h 03m 09s`), never fractional seconds.
+
 ### Agent Tab Close Is Minimize, Not Terminate (since 2026-08-13)
 
 Closing an agent tab **minimizes** it: `AgentNode.Hidden` is set, the window
@@ -647,14 +726,29 @@ next tick finally synced.
   removed. Memory's background jobs are no-tools completions: its account,
   model, instructions and enable flag live in Agents, while job cadence and
   recall limits stay on the Memory page.
-- Auto Review Agent is the bounded, no-tools root permission reviewer. Its
-  enable switch, explicitly pinned account/model and extra restrictions live
-  in Agents, while denial behavior and per-request/turn limits live in the
-  Security > Auto Review Policy form. Security separates that policy from
-  Command Safety. Never add a static settings page or toggles for hard blocks,
-  human-only grants, uncertainty fallback, or mandatory restore safeguards;
-  explain those constraints beside the controls they govern. A rejected
-  reviewer result never becomes an Always allow grant.
+- Auto Review Agent is the bounded, no-tools permission reviewer. Every root and
+  child gets an independent reviewer instance, per-agent-turn budget and audit
+  attribution while sharing the persisted application/workspace policy. The
+  owning session's live YOLO state bypasses review and confirmation for that
+  root's complete descendant tree without affecting another root/session. Its
+  enable switch, explicitly pinned account/model, extra restrictions and
+  complete runtime policy live on the Agents Model / Instructions / Review
+  tabs. Security > Auto Review Policy is a synchronized projection of that
+  same persisted authority, not a second configuration owner. Thinking effort,
+  response format, timeout, initial/retry token budgets, attempt count/growth,
+  input bytes and denial behavior must never become hidden runtime constants.
+  There is no lifetime or per-turn review-count cap: every exact non-hard-blocked
+  operation remains eligible throughout a multi-day turn. Technical retries
+  alone consume the configured attempt/token budget; valid
+  allow/deny/ask decisions are never retried. An unresolved-mode choice may ask
+  a human or deny the exact call so unattended work continues, but can never
+  approve uncertainty, secret/oversized input or exhausted recovery. Unknown,
+  network, destructive and shell-composed operations are reviewer evidence, not
+  structural exclusions; immutable hard blocks still run before review. Security
+  keeps Command Safety separate. Never add toggles for hard blocks, human-only
+  grants, or mandatory restore safeguards; explain those constraints beside the
+  controls they govern. A rejected reviewer result never becomes an Always
+  allow grant.
 - `ui.FormField` paints multiline labels (textarea and key/value grid) on the
   containing surface even on hover/focus. Single-line labels may use the row
   highlight; multiline editor bodies retain their own fill and interaction.
@@ -1016,6 +1110,11 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   `workspace.ReferenceStore.RestorePrompt` imports session-owned media off the UI
   thread. A late result never overwrites a newer draft. Missing media fails
   closed; history eviction must not delete a session's restored attachments.
+- Permission, question and tool-projection lifecycle events never own the chat
+  composer. Opening or completing a blocking deck/overlay may move focus but
+  must preserve the exact draft text, attachment references, cursor, selection,
+  undo state and history position. Only explicit send/clear/cut actions consume
+  those values; `blocking_complete` must never reset the input model.
 - Workspace and Open Tabs collapsed resource rows occupy exactly one line.
   Keep explicit Workspace section headings even for a single group. Click,
   Enter/Space, and Left/Right own disclosure; Open/Resume is an explicit action
@@ -1101,13 +1200,14 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   structured error reasons. Every new tool schema needs live,
   parallel (when applicable), and hydrated tests asserting the same title,
   row geometry, disclosure, and full evidence access across both paths.
-  Sub-agent tool identities include BOTH the allocated nickname and exact handle
-  whenever those facts are available: launch outcomes, polls, cancellations,
-  list entries and authored reports. A call awaiting its result may show the
-  handle alone; never guess the nickname from a requested role/task, or attach
-  a name from a mismatched result. Lists keep a bounded title and expose each
-  name+handle pair in their expanded evidence. Live, batch and hydrated rows
-  share the same title builder and must paint identically.
+  Sub-agent tool identities include allocated nickname, exact category and exact
+  handle whenever those facts are available: running panes, launch outcomes,
+  polls, cancellations, list entries and authored reports. A call awaiting
+  allocation shows requested category + assignment; once allocated it never
+  guesses a nickname from the requested role/task, or attaches a name from a
+  mismatched result. Lists keep a bounded title and expose each name+handle pair
+  in expanded evidence. Live, batch and hydrated rows share the same title/
+  progress snapshot and must paint identically.
   Batch preview names come from closed strings in the original input, never
   JSON-repaired partial names. Unnamed children and empty live envelopes occupy
   no transcript row; named children stream their arguments immediately in the
@@ -1132,6 +1232,10 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   content or invalidate a prior completed turn.
 - The footer is static, low-profile aggregate text. Only required
   user action (`⚠`) and failures (`✕`) receive attention signs.
+- A settled sub-agent publishes one short owner-scoped footer transient with
+  nickname, category and explicit outcome (completed, cancelled, crashed, timed
+  out or failed). It enters through Update and forces the presentation deadline;
+  cached output must never hide it. Anonymous status such as `✓ done` is invalid.
 - Compact editor status retains current-line blame in the active header; full
   blame identity and Copy blame commit stay available in Status Overview and
   the editor context menu. Footer-right carries meaningful workspace-scoped LSP
@@ -1187,6 +1291,29 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   manual compaction, and persistence acceptance tests.
 
 ### Context compaction and runtime continuity
+- Wire/model/account/config switches are ordinary request boundaries. Preserve
+  the canonical transcript and exact tool identities; the destination adapter
+  owns schema-valid projection and only outgoing opaque replay is filtered.
+  Never clear history, force a producing protocol, or add transport-level tool
+  vetoes for forms an adapter can encode. Cold transition requests are expected;
+  unchanged subsequent projections must preserve their warm prefix. Guard every
+  registered protocol pair through resume, real tool loops and compound settings
+  changes, not only empty-session protocol switches.
+- Responses delta uploads use typed completed-response references in the durable
+  active context, bound to exact model/account/endpoint/configuration, input and
+  output. Full local history remains authoritative. Earlier handoffs stay in the
+  accepted prefix; append fresh superseding facts rather than removing them.
+  Never adopt partial responses, guess equivalent context, change storage/ZDR
+  preferences, or retry after accepted output to recover a server reference.
+  A structured rejected-reference lookup may rebase once before output within
+  the existing deadline. Model/protocol/context changes require a fresh chain.
+  Stream identity comes from the official Response objects on created,
+  in-progress and completed events; every observed ID must agree. `store:true`
+  is a request, not proof of endpoint capability. An explicit returned
+  `store:false` or missing response ID keeps full uploads and must surface a
+  typed reason, never a guessed ID. HTTP continuation cannot be guaranteed for
+  a gateway that declines storage; WebSocket store-false continuation and the
+  Conversations resource are distinct APIs, not fallback JSON shapes.
 - Provider-reported request input is the context authority. Project the next
   request from that baseline plus reported completion and semantic local deltas;
   fallback estimation is `ceil(runes/4)` over canonical content, never stream
@@ -1256,6 +1383,23 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   distinguish human/BTW input, runtime context, continuation controls, child
   wakes, assignments, and checkpoints. Runtime or memory data is never
   attributed as human intent.
+- A compacted context ends with one fresh code-authored `runtime_context`
+  handoff. It states that compaction is not a new user turn, carries the latest
+  durable human-turn state, current plan, session/model/account/capability
+  selection, child identities/statuses, and command-owner snapshots. Extraction
+  may describe those facts but never owns them. Refresh the handoff after all
+  extraction stages because commands and children may settle during compaction.
+- Retain a verbatim human tail only for a request that is still pending. If a
+  later terminal assistant answer already completed the latest human request,
+  do not append that request after the checkpoint: doing so makes the next
+  provider invocation answer it again. Older prompts remain immutable in the
+  transcript and are represented by the checkpoint, not replayed as fresh input.
+- Async continuity uses exact owner data: handle, command, cwd, PID, start time,
+  running/terminal status, terminal exit only when known, total output bytes,
+  and the last observed byte cursor. Taking a continuity snapshot must not read
+  output, advance a cursor, signal a process, restart a command, or treat a
+  running command as exit zero. Compaction preserves and observes existing
+  handles; it never relaunches work to rediscover state.
 - New-format resume is passive: restore exact per-agent active context and turn
   state, mark interrupted work, issue zero provider calls, and restart zero
   children. Existing development sessions have no compatibility path.
@@ -1263,11 +1407,116 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   checkpoints preserve assignment, policy, file ownership, evidence, and the
   `write_report` obligation. Compaction requests never enter memory extraction.
 
+### Prompt assembly and project guidance
+- Canonical contract and development checklist:
+  [`docs/reference/prompt-architecture.md`](docs/reference/prompt-architecture.md).
+  Read it before changing model instruction text, request assembly, guidance
+  intake, compaction, or a background completion job. Classify each change by
+  owner; do not put new policy in a caller's arbitrary runtime-context string.
+- `prompt/` is the sole owner of every code-authored model instruction template
+  outside the exact tool schemas/results that define an execution interface:
+  canonical root/child policy, compaction, guidance compilation, memory jobs,
+  permission review, and runtime context/control projections. `agent/`,
+  `session/`, and `memory/` provide typed state, select source data, validate
+  results, persist outcomes, and execute requests; they do not retain prompt
+  constants or forwarding prompt APIs. Tool-specific validation, denial and
+  result text stays with the executing tool contract. `prompt/ownership_test.go`
+  guards top-level production files in `agent/`, `app/`, `session/`, `workspace/`,
+  `memory/`, and `codexio/` for prompt constants and known templates. Extend the
+  guard for new paths; it is not a substitute for reviewing complete request
+  assembly or a loophole for instructions hidden in differently named strings.
+  GPT, Claude, Gemini, routed, and local models receive the same Crude policy.
+  User-editable profile instructions are an escaped lower-priority overlay, not
+  a replacement system prompt. Agent/session code may provide typed dynamic
+  state but must not grow another model-family prompt fork.
+- Provider and model differences belong to the narrowest real adapter: wire
+  encoding/replay in `provider/`, exact offered schemas in `tools/`, and native
+  interfaces such as OpenAI/Codex freeform `apply_patch` in `codexio/`. A native
+  tool does not justify replacing Crude's behavioral prompt. Tool descriptions
+  and schemas are authoritative for every provider.
+- Before the first project request, Crude reads every byte of applicable
+  `SOUL.md`, `CLAUDE.md`, and `AGENTS.md` files in deterministic order (persona,
+  model guidance, repository policy; broader directories before narrower ones).
+  Small sets are injected verbatim. Sets too large for their bounded share of
+  the target context are sent in complete source-hashed chunks to a no-tools
+  instruction compiler, then verified chunk-by-chunk against every source;
+  corrections restart the bounded verification sweep. Normal work starts only
+  after a stable full ledger is available. Never truncate, silently skip, or put
+  an unlimited guidance blob in the ordinary request. Fail closed if complete
+  intake or a fitting ledger
+  cannot be established. This guarantee applies only to accepted sets: the
+  aggregate source ceiling is 64 MiB, and larger sets are rejected, not partially
+  consumed. Small/large refers to estimated rendered tokens within the reserved
+  context budget, not a fixed file size. A task model may receive a compiled
+  ledger rather than raw source; model-backed verification is not mathematical
+  proof of semantic completeness. Cache only by exact source, compiler/version,
+  connection, target model and budget identity; current caches are session-local,
+  not durable across restart. Do not claim a context bound is also a cost bound.
+- README/design/reference files are not automatic instruction cargo. Read only
+  the documents or sections relevant to the current decision, including a
+  reference explicitly required by applicable guidance. Do not recursively load
+  every linked document. Entering a newly discovered directory scope defers the
+  whole tool-call batch before effects, loads/compiles its named guidance, sends
+  a superseding scoped projection, and requires the model to reassess the call.
+- Guidance snapshots have deterministic source order, a format version and
+  content digest, and an intake-complete notice after their bodies/ledger.
+  Supplied content satisfies its own startup-read requirement. Unchanged
+  rereads remain legal, never republish guidance and never rewrite an accepted
+  cache prefix. Recheck known scopes before and after tool batches; changed or
+  deleted sources publish one complete replacement as hidden runtime context.
+  Native patch operands participate in the same guard. Model/protocol changes
+  preserve source identity and use the existing budget/connection-keyed cache;
+  do not add timestamp/counter churn or raw JSON tool-name rewriting.
+- For changes to these contracts, verify actual root/child and background-job
+  request paths, model/profile overlays, complete guidance coverage and bounds,
+  zero task effects on failed intake, new-scope batch deferral, answered-request
+  non-replay, current owner facts, cancellation and passive resume as relevant.
+  Run `go test ./prompt`, complete affected packages, repository build/test/lint
+  gates, relevant race/cross-platform checks, and `make docs-check`. Update the
+  canonical reference with changed behavior and explicit remaining limits.
+
 ### Sidebar list rows: resource vs command
 `ui.ListItem.Command` marks a button-like row (e.g. "New Terminal").
 `activitylist` arms resource rows on the first click and activates on the
 second (matching the pickers), but command rows fire on a single click — a
 button that needs a double click reads as broken.
+
+### Capabilities And Workspace Tools (2026-10-01)
+- Memory and session capability selections require the current schema; there is
+  no automatic compatibility upgrade. Known local data must be manually aligned
+  outside product code with backups and exact preservation checks. Preserve IDs,
+  assertions, provenance, lifecycle, history, transcripts and account/model pins;
+  never fabricate evidence or earlier revisions. Startup and all reads/writes
+  use only the current contract.
+- Skills, MCP, Sources and Acquisition follow Memory in the existing AI settings
+  group. Navigation and painting share the same grouped order; never append a
+  second AI heading after Security or IDE.
+- Rail destinations are Files, Agents, Source Control, Skills and MCP; Terminals
+  has no rail identity. Workspace Memory is a retained footer panel shared with
+  `/memory`/palette, never a second floating overlay or session PanelDeck.
+- Skills/MCP settings deep-links retain the Settings frame and explicitly mark
+  its Host layout. Async capability results target the owning Model directly,
+  not the focused text control, which can consume unrelated custom events.
+- Managed install/update and agent acquisition approval carry an immutable
+  source/revision/binding preimage. A boolean approval must never widen into
+  changed bytes or another source. Dynamic MCP definitions and execution both
+  enforce current effect/scope/fingerprint grants and root/child ceilings.
+- Capability snapshot contexts cancel before workspace teardown. Workspace
+  capability lifetime locking protects persistence/service replacement; a stale
+  read cannot inspect a nil/new WorkspaceDB during Close/SwitchProject.
+- Git comparisons are typed main tabs, prepared off the UI goroutine. Index
+  mutations require reviewed bytes; sidebar context actions open review instead
+  of bypassing it. Discard requires exact preview + mandatory Local History
+  safety recovery and never deletes untracked data.
+- Composer + Capability/palette selection is staging only. Exact source-qualified
+  skill invocation, tool reference and external context must retain the owning
+  session/agent/draft; old arguments or async results cannot attach elsewhere.
+- Board posts are peer data, not approval/scheduling/wakes. Human unread and
+  durable agent context-acceptance cursors are independent. Memory revisions use
+  expected-version correction; exposure never reinforces usefulness.
+
+See `docs/guides/capability-workflows.md` for actual routes, protocol limits,
+manual workflows and acceptance boundaries.
 
 ### File Tree Filter And Guide Geometry
 - `shelltree.FilterField` is the single text owner for clicked input AND

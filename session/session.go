@@ -14,19 +14,21 @@ import (
 	"time"
 
 	"crude/agent"
+	"crude/board"
 	"crude/clipboard"
-	"crude/codexio"
 	"crude/diff"
 	"crude/fileio"
 	"crude/jsonrepair"
 	"crude/logger"
 	"crude/memory"
 	"crude/plan"
+	rootprompt "crude/prompt"
 	"crude/provider"
 	"crude/safety"
 	"crude/search"
 	"crude/sessiondb"
 	ttypes "crude/types"
+	captypes "crude/types/capability"
 )
 
 // WakeChBufSize is the buffer size for the session wake channel.
@@ -59,6 +61,12 @@ type Session struct {
 	permStore       *safety.PermissionStore
 	asyncMgr        *fileio.AsyncCommandManager
 	memoryStore     *memory.Store
+	capabilities    captypes.Runtime
+	fileOwnership   *agent.FileOwnership
+	boardStore      *board.Store
+	boardID         string
+	boardProject    string
+	boardPending    map[string]boardAcceptance
 	memorySummary   atomic.Pointer[memory.SessionSummary]
 
 	// workDir is the workspace root this session executes tools against.
@@ -97,9 +105,11 @@ type Session struct {
 	sessionStart time.Time
 	yolo         atomic.Bool
 
-	usageMu      sync.RWMutex
-	usageRecords map[string]sessiondb.UsageRecord
-	tokens       *TokenTracker
+	usageMu       sync.RWMutex
+	usageRecords  map[string]sessiondb.UsageRecord
+	tokens        *TokenTracker
+	guidanceMu    sync.Mutex
+	guidanceCache map[string]string
 
 	toolCallCount   int
 	toolCallCountMu sync.Mutex
@@ -552,6 +562,9 @@ func (s *Session) SetWorkDir(dir string) {
 	s.systemPromptMu.Lock()
 	s.systemPrompts = nil
 	s.systemPromptMu.Unlock()
+	s.guidanceMu.Lock()
+	s.guidanceCache = nil
+	s.guidanceMu.Unlock()
 	if s.db != nil && dir != "" {
 		if err := sessiondb.UpdateProject(s.db, s.sessionID, dir, filepath.Base(dir)); err != nil && s.logger != nil {
 			s.logger.Warn("SESSION", "project_root_update_failed", "path", dir, "error", err.Error())
@@ -590,7 +603,7 @@ func (s *Session) systemPrompt(multiAgent bool) string {
 
 func (s *Session) systemPromptForModel(multiAgent bool, model string) string {
 	if s == nil {
-		return agent.BuildSystemPrompt(multiAgent)
+		return rootprompt.BuildRoot(rootprompt.RootOptions{MultiAgent: multiAgent})
 	}
 	s.systemPromptMu.Lock()
 	defer s.systemPromptMu.Unlock()
@@ -612,14 +625,8 @@ func (s *Session) systemPromptForModel(multiAgent bool, model string) string {
 	// The prompt must advertise the same working directory tools resolve
 	// against; a stale cwd here misdirects the model after a workspace
 	// switch even when execution itself is correctly re-rooted.
-	prompt := agent.BuildSystemPromptForModel(multiAgent, s.WorkDir(), model)
-	if instructions != "" {
-		prompt += "\n\nAdditional user-configured instructions:\n" + instructions
-	}
-	prompt += catalog
-	if !codexio.IsGPT(model) {
-		prompt += fmt.Sprintf("\n<agent_identity>Your name is %s.</agent_identity>", s.agentName)
-	}
+	prompt := rootprompt.BuildRoot(rootprompt.RootOptions{MultiAgent: multiAgent, WorkDir: s.WorkDir(), Model: model})
+	prompt = rootprompt.ApplyRootOverlays(prompt, instructions, s.agentName, catalog)
 	s.systemPrompts[key] = prompt
 	return prompt
 }

@@ -5,6 +5,8 @@ import (
 	"strings"
 	"time"
 
+	"crude/tools"
+
 	tea "charm.land/bubbletea/v2"
 )
 
@@ -199,6 +201,10 @@ func (a *AgentState) handleToolCall(evt AgentEvent, target *Conversation, onStat
 			target.SetToolInput(toolID, internalID, extractJSONStringValue(args, "query"), "")
 		case "web_fetch":
 			target.SetToolInput(toolID, internalID, extractJSONStringValue(args, "url"), "")
+		default:
+			if tools.RetainsStructuredToolInput(name) {
+				target.SetToolInput(toolID, internalID, args, "")
+			}
 		}
 		if a.PendingPermTag != "" && (a.PendingPermTool == "" || a.PendingPermTool == name) {
 			target.SetToolPermTag(toolID, internalID, a.PendingPermTag)

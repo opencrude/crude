@@ -9,6 +9,29 @@ Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
 Canonical plan: [`docs/plans/tui-component-system-plan.md`](../plans/tui-component-system-plan.md)
 
+## Workspace Home (2026-10-02)
+
+`BenchmarkLauncherDenseFrame` paints and relays out a 160×40 home screen with
+1,000 recent workspaces. With the original outlined controls, right-pane resource
+spacing and aligned edges, three Linux/i7-10750H runs measured 146.8–181.3 µs,
+14,930–14,931 B and 96 allocations per frame. The benchmark also asserts that
+animation/paint frames never rebuild the resource index. Pending listing loads
+use the fast shared clock for the ProgressRule; settled home returns to the
+ordinary 400 ms idle tick. These are screen timings, not complete shell timings.
+
+## Capability Integration And Plain-Text Recovery (2026-10-01)
+
+The complete bench gate passes with the capability/runtime/TUI integration.
+`BenchmarkDenseChatSingleRowChange_500Msgs` was reproduced at 3,218 allocations,
+64 KB and 0.543–0.545 ms. The profile located the work in Markdown rendering,
+not the new catalogs or shell painting. A narrow plain-text fast path recognizes
+only space-separated ASCII letters without leading/trailing whitespace; markup,
+punctuation, newlines, URLs and indented code keep the full Markdown path.
+Three isolated Linux/i7-10750H runs now measure 196 allocations, 24,537–24,538 B
+and 0.377–0.381 ms per changed-row presentation. Rich hierarchy/color tests stay
+unchanged, and the existing 65,000 B / 2,740 allocation ceiling is not loosened.
+Earlier Markdown overages recorded below are historical and now resolved.
+
 ## Oversized Context Extraction (2026-09-29)
 
 `BenchmarkSplitExtractionOversizedToolResult` splits a 2 MB text tool result into

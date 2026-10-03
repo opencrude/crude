@@ -24,6 +24,7 @@ import (
 	"crude/provider"
 	"crude/session"
 	"crude/sessiondb"
+	"crude/tools"
 	ttypes "crude/types"
 )
 
@@ -83,6 +84,10 @@ func (w *Workspace) CreateSession(cfg *session.Config, homeDir string) (*Session
 		bs.StartMemoryMaintenance()
 	}
 	w.bindSessionHistory(bs)
+	if err := w.bindSessionCapabilities(bs); err != nil {
+		bs.Close()
+		return nil, err
+	}
 
 	fs := NewSession(bs.SessionID(), bs.SessionDir(), bs.DB(), w.Logger)
 	fs.attachBackend(bs)
@@ -140,6 +145,10 @@ func (w *Workspace) ResumeSession(sessionID string, cfg *session.Config, homeDir
 		bs.StartMemoryMaintenance()
 	}
 	w.bindSessionHistory(bs)
+	if err := w.bindSessionCapabilities(bs); err != nil {
+		bs.Close()
+		return nil, err
+	}
 
 	fs := NewSession(bs.SessionID(), bs.SessionDir(), bs.DB(), w.Logger)
 	fs.attachBackend(bs)
@@ -996,6 +1005,9 @@ func canonicalizeToolSnapshotForDisplay(snapshot *ChatMessageView) {
 	if snapshot == nil || snapshot.Role != "tool" || snapshot.ToolArgs == "" {
 		return
 	}
+	if tools.RetainsStructuredToolInput(snapshot.ToolName) && snapshot.ToolInput == "" {
+		snapshot.ToolInput = snapshot.ToolArgs
+	}
 	snapshot.ToolArgs = SummarizeToolArgs(snapshot.ToolName, snapshot.ToolArgs)
 }
 
@@ -1180,6 +1192,9 @@ func persistedSubAgentID(content string) string {
 }
 
 func persistedToolInput(toolName, args string) string {
+	if tools.RetainsStructuredToolInput(toolName) {
+		return args
+	}
 	switch toolName {
 	case "multi_tool_use.parallel":
 		return args

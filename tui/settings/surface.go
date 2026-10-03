@@ -78,6 +78,7 @@ type WorkspaceSettingsSurface struct {
 	accountScroll     *ui.ScrollbarControl
 	form              *ui.Form
 	agents            *agentCatalog
+	capCatalog        *capabilityCatalog
 	reset             *ui.ActionBar
 	actions           *ui.ActionBar
 	listScroll        *ui.ScrollbarControl
@@ -129,6 +130,7 @@ func NewSurface(th *theme.Theme, model *Model) *WorkspaceSettingsSurface {
 	s.form.SetFieldGap(1)
 	s.form.SetArrowExitsForm(true)
 	s.agents = newAgentCatalog(s)
+	s.capCatalog = newCapabilityCatalog(s)
 	s.listScroll = ui.NewScrollbarControl(WorkspaceSettingsListScrollID, s.categories.list.Scroll(), tokens)
 	s.listScroll.SetSurfaceBackground(ui.ColorPopupBg)
 	s.formScroll = ui.NewScrollbarControl(WorkspaceSettingsFormScrollID, s.form.Scroll(), tokens)
@@ -187,7 +189,7 @@ func NewSurface(th *theme.Theme, model *Model) *WorkspaceSettingsSurface {
 func (s *WorkspaceSettingsSurface) rebuildActions() {
 	s.actions = ui.NewActionBar(WorkspaceSettingsActionID, s.tokens,
 		ui.ActionBarButton{ID: WorkspaceSettingsSaveID, Label: "Save", Action: "settings.save", Variant: ui.VariantPrimary, Enabled: true},
-		ui.ActionBarButton{ID: WorkspaceSettingsCancelID, Label: "Cancel", Action: "settings.cancel", Variant: ui.VariantSecondary, Enabled: true},
+		ui.ActionBarButton{ID: WorkspaceSettingsCancelID, Label: "Cancel", Action: "settings.close", Variant: ui.VariantSecondary, Enabled: true},
 	)
 	s.actions.SetCancelAction("settings.cancel")
 	s.reset = nil
@@ -218,6 +220,10 @@ func (s *WorkspaceSettingsSurface) providersOpen() bool {
 
 func (s *WorkspaceSettingsSurface) agentsOpen() bool {
 	return s.model != nil && s.model.SelectedCategory() == catAgents
+}
+
+func (s *WorkspaceSettingsSurface) capabilitiesOpen() bool {
+	return s.model != nil && (s.model.SelectedCategory() == catSkills || s.model.SelectedCategory() == catMCP || s.model.SelectedCategory() == catSources)
 }
 
 func (s *WorkspaceSettingsSurface) syncTemplateControls() {
@@ -271,14 +277,14 @@ func (s *WorkspaceSettingsSurface) syncAccountControls() {
 	s.accountEditorBar.SetEnabled("settings.account.commit", !s.model.accountBusy)
 	s.accountEditorBar.SetEnabled("settings.account.cancel-edit", !s.model.accountBusy)
 	s.actions.SetEnabled("settings.save", !s.model.accountBusy)
-	s.actions.SetEnabled("settings.cancel", !s.model.accountBusy)
+	s.actions.SetEnabled("settings.close", !s.model.accountBusy)
 }
 
 func (s *WorkspaceSettingsSurface) Children() []ui.Component {
 	// The form keeps its Host identity even while a table owns the content
 	// area. This lets a category switch focus its first input before the next
 	// frame's layout, without painting or hit-testing an empty form over rows.
-	children := []ui.Component{s.scope, s.search, s.categories, s.form, s.agents}
+	children := []ui.Component{s.scope, s.search, s.categories, s.form, s.agents, s.capCatalog}
 	switch {
 	case s.providersOpen() && s.model.providerEditor != nil:
 		children = append(children, s.templateEditorBar)
@@ -320,6 +326,9 @@ func (s *WorkspaceSettingsSurface) SetTokens(tokens *ui.TokenSet) {
 	s.tokens = tokens
 	if s.agents != nil {
 		s.agents.SetTokens(tokens)
+	}
+	if s.capCatalog != nil {
+		s.capCatalog.SetTokens(tokens)
 	}
 	if s.scope != nil {
 		s.scope.SetTokens(tokens)
@@ -399,6 +408,10 @@ func (s *WorkspaceSettingsSurface) FocusScope()                             { s.
 func (s *WorkspaceSettingsSurface) FocusSearch()                            { s.focusID(WorkspaceSettingsSearchID) }
 func (s *WorkspaceSettingsSurface) FocusCategories()                        { s.focusID(WorkspaceSettingsListID) }
 func (s *WorkspaceSettingsSurface) FocusForm() {
+	if s.capabilitiesOpen() {
+		s.capCatalog.focusContent()
+		return
+	}
 	if s.agentsOpen() {
 		if s.agents.draft != nil {
 			s.focusID(s.agents.form.ID())
@@ -512,6 +525,13 @@ func (s *WorkspaceSettingsSurface) paneTitleParts() []string {
 	if s.model == nil {
 		return nil
 	}
+	if s.capabilitiesOpen() {
+		parts := []string{s.capCatalog.title()}
+		if s.capCatalog.id != "" {
+			parts = append(parts, s.capCatalog.id)
+		}
+		return parts
+	}
 	if s.agentsOpen() {
 		if s.agents.draft == nil {
 			return []string{"Agents"}
@@ -553,11 +573,26 @@ func (s *WorkspaceSettingsSurface) paneTitleParts() []string {
 	return nil
 }
 
-// RequestClose applies the same dirty-editor and preference-draft policy to
-// the window close glyph as to Esc and the footer Close button.
+// RequestClose closes the entire window, never a nested settings page. Back,
+// breadcrumbs and Esc retain their separate navigation/discard policy.
 func (s *WorkspaceSettingsSurface) RequestClose() ui.EventResult {
-	return s.cancelSettings()
+	if s.model == nil || s.model.accountBusy {
+		return ui.EventResult{Handled: true}
+	}
+	// A close request supersedes any pending page or scope navigation.
+	s.model.nextCategory, s.model.nextScope = -1, ""
+	s.capCatalog.nextOpen = nil
+	if s.hasUnsavedDrafts() {
+		return s.requestPrompt(PromptDiscardSettings, "", "", 0)
+	}
+	return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return CancelMsg{} }}
 }
+
+func (s *WorkspaceSettingsSurface) hasUnsavedDrafts() bool {
+	return s.model.hasUnsavedPreferences() || s.model.accountEditorDirty() ||
+		s.model.providerEditorDirty() || s.agents.dirty() || s.capCatalog.dirty()
+}
+
 func (s *WorkspaceSettingsSurface) syncModel() {
 	if s.model == nil {
 		return
@@ -580,7 +615,7 @@ func (s *WorkspaceSettingsSurface) refreshForm() {
 		return
 	}
 	category := s.model.categories[s.model.selected]
-	if s.agentsOpen() {
+	if s.agentsOpen() || s.capabilitiesOpen() {
 		s.form.SetForm(nil, "", "")
 	} else {
 		s.form.SetForm(category.Form, "", "")
@@ -617,14 +652,14 @@ func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	if s.accountsOpen() {
 		if formW < 73 {
 			s.actions.SetLabel("settings.save", "Save")
-			s.actions.SetLabel("settings.cancel", "Close")
+			s.actions.SetLabel("settings.close", "Close")
 		} else {
 			s.actions.SetLabel("settings.save", "Save")
-			s.actions.SetLabel("settings.cancel", "Close")
+			s.actions.SetLabel("settings.close", "Close")
 		}
 	} else {
 		s.actions.SetLabel("settings.save", "Save")
-		s.actions.SetLabel("settings.cancel", "Cancel")
+		s.actions.SetLabel("settings.close", "Cancel")
 	}
 	footerH := 2
 	topPad := s.topPad()
@@ -686,7 +721,20 @@ func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	} else {
 		s.agents.Layout(ctx, ui.Rect{})
 	}
-	if s.agentsOpen() || s.accountsOpen() && s.model.accountEditor == nil || s.providersOpen() && s.model.providerEditor == nil {
+	if s.capabilitiesOpen() {
+		switch s.model.selected {
+		case catSkills:
+			s.capCatalog.switchKind("skill")
+		case catMCP:
+			s.capCatalog.switchKind("mcp")
+		case catSources:
+			s.capCatalog.switchKind("source")
+		}
+		s.capCatalog.Layout(ctx, ui.Rect{X: formX, Y: topPad, W: formW, H: formH})
+	} else {
+		s.capCatalog.Layout(ctx, ui.Rect{})
+	}
+	if s.agentsOpen() || s.capabilitiesOpen() || s.accountsOpen() && s.model.accountEditor == nil || s.providersOpen() && s.model.providerEditor == nil {
 		s.form.Layout(ctx, ui.Rect{})
 	} else {
 		s.form.Layout(ctx, formRect)
@@ -917,6 +965,9 @@ func (s *WorkspaceSettingsSurface) Handle(ctx ui.EventContext, evt ui.Event) ui.
 	key := evt.Key
 	switch key.Code {
 	case tea.KeyUp:
+		if s.capCatalog.dirty() {
+			return ui.EventResult{Handled: true}
+		}
 		if s.accountsOpen() && s.model.accountEditor != nil || s.providersOpen() && s.model.providerEditor != nil {
 			return ui.EventResult{Handled: true}
 		}
@@ -927,6 +978,9 @@ func (s *WorkspaceSettingsSurface) Handle(ctx ui.EventContext, evt ui.Event) ui.
 		}
 		return ui.EventResult{Handled: true}
 	case tea.KeyDown:
+		if s.capCatalog.dirty() {
+			return ui.EventResult{Handled: true}
+		}
 		if s.accountsOpen() && s.model.accountEditor != nil || s.providersOpen() && s.model.providerEditor != nil {
 			return ui.EventResult{Handled: true}
 		}
@@ -953,6 +1007,9 @@ func (s *WorkspaceSettingsSurface) Handle(ctx ui.EventContext, evt ui.Event) ui.
 }
 
 func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
+	if strings.HasPrefix(string(action.ID), "settings.capability.") {
+		return s.capCatalog.HandleAction(ui.EventContext{}, action)
+	}
 	switch action.ID {
 	case "form.changed":
 		fieldID, _ := action.Payload.(string)
@@ -1206,6 +1263,11 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 		s.FocusScope()
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	case "settings.save":
+		if s.model.capabilityDraft != nil {
+			s.capCatalog.message = "Save or discard the capability draft first."
+			s.capCatalog.focusContent()
+			return s.capCatalog.changed()
+		}
 		if s.agents.draft != nil {
 			s.model.SelectCategory(catAgents)
 			s.agents.notice = "Apply or discard the agent draft before saving settings."
@@ -1233,6 +1295,17 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 		if s.model.Scope() == next {
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 		}
+		if s.capCatalog.dirty() {
+			s.model.nextScope = next
+			return s.requestPrompt(PromptDiscardEditor, "", "", 0)
+		}
+		if s.model.capabilityDraft != nil {
+			s.capCatalog.closeEditor()
+		}
+		if s.model.hasUnsavedPreferences() {
+			s.model.nextScope = next
+			return s.requestPrompt(PromptDiscardSettings, "", "", 0)
+		}
 		if s.agents.draft != nil {
 			if s.agents.dirty() {
 				s.model.nextScope = next
@@ -1255,22 +1328,38 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return ScopeMsg{Scope: next} }}
 	case "settings.cancel":
 		return s.cancelSettings()
+	case "settings.close":
+		return s.RequestClose()
 	case "settings.discard.stay":
 		s.model.nextCategory, s.model.nextScope = -1, ""
+		s.capCatalog.nextOpen = nil
 		return ui.EventResult{Handled: true}
 	case "settings.discard.confirm":
 		kind, _ := action.Payload.(PromptKind)
 		if kind == PromptDiscardSettings {
+			if s.model.nextScope != "" {
+				scope := s.model.nextScope
+				s.model.nextCategory, s.model.nextScope = -1, ""
+				return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return ScopeMsg{Scope: scope} }}
+			}
 			s.model.nextCategory, s.model.nextScope = -1, ""
 			return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return CancelMsg{} }}
 		}
 		if kind != PromptDiscardEditor {
 			return ui.EventResult{Handled: true}
 		}
-		if s.model.providerEditor != nil {
+		if s.model.capabilityDraft != nil {
+			s.capCatalog.closeEditor()
+			s.capCatalog.detail = false
+			s.capCatalog.syncRows()
+		} else if s.model.providerEditor != nil {
 			s.model.cancelProviderEdit()
 		} else {
 			s.model.cancelAccountEdit()
+		}
+		if next := s.capCatalog.nextOpen; next != nil {
+			s.capCatalog.nextOpen = nil
+			return s.OpenCapabilities(next.kind, next.query, next.id)
 		}
 		s.refreshForm()
 		if s.model.nextScope != "" {
@@ -1334,7 +1423,17 @@ func (s *WorkspaceSettingsSurface) requestPrompt(kind PromptKind, id, label stri
 	case PromptRemoveTemplate, PromptTemplateInUse:
 		before := provider.CloneTemplate(owner.providers[id])
 		msg.beforeTemplate = &before
-	case PromptDiscardEditor:
+	case PromptDiscardEditor, PromptDiscardSettings:
+		if kind == PromptDiscardSettings {
+			msg.preferences = owner.preferenceBytes()
+			msg.agentEditor = s.agents.draft
+			msg.agentDraft = formDraftBytes(s.agents.draft)
+			msg.capabilityForm = owner.capabilityDraft
+		}
+		if owner.capabilityDraft != nil || kind == PromptDiscardSettings {
+			msg.capabilityEditor = s.capCatalog
+			msg.capabilityDraft = formDraftBytes(owner.capabilityDraft)
+		}
 		if owner.accountEditor != nil {
 			owner.storeAccountForm()
 			msg.accountEditor = owner.accountEditor
@@ -1346,8 +1445,6 @@ func (s *WorkspaceSettingsSurface) requestPrompt(kind PromptKind, id, label stri
 			draft := provider.CloneTemplate(owner.providerEditor.draft)
 			msg.providerDraft = &draft
 		}
-	case PromptDiscardSettings:
-		msg.preferences = owner.preferenceBytes()
 	}
 	return ui.EventResult{Handled: true, Cmd: func() tea.Msg {
 		return msg
@@ -1371,6 +1468,9 @@ func (s *WorkspaceSettingsSurface) PromptRelevant(msg PromptMsg) bool {
 		current, ok := s.model.accounts[msg.ID]
 		return ok && s.accountsOpen() && s.model.accountID == msg.ID && msg.beforeAccount != nil && reflect.DeepEqual(current, *msg.beforeAccount)
 	case PromptDiscardEditor:
+		if s.model.capabilityDraft != nil && msg.capabilityEditor == s.capCatalog {
+			return reflect.DeepEqual(formDraftBytes(s.model.capabilityDraft), msg.capabilityDraft)
+		}
 		if s.accountsOpen() && s.model.accountEditor != nil && s.model.accountEditor == msg.accountEditor && msg.accountDraft != nil {
 			s.model.storeAccountForm()
 			return reflect.DeepEqual(s.model.accountEditor.draft, *msg.accountDraft)
@@ -1381,9 +1481,33 @@ func (s *WorkspaceSettingsSurface) PromptRelevant(msg PromptMsg) bool {
 		}
 		return false
 	case PromptDiscardSettings:
-		return s.model.accountEditor == nil && s.model.providerEditor == nil && s.model.hasUnsavedPreferences() && reflect.DeepEqual(s.model.preferenceBytes(), msg.preferences)
+		return s.hasUnsavedDrafts() && reflect.DeepEqual(s.model.preferenceBytes(), msg.preferences) && s.closeDraftsRelevant(msg)
+	case PromptRemoveCapability:
+		return s.capabilitiesOpen() && msg.capabilityEditor == s.capCatalog && msg.ID == s.capCatalog.id && msg.CapabilityAction != nil && reflect.DeepEqual(msg.capabilityDraft, s.capCatalog.entityBytes()) && s.model.capabilityPending == nil
 	}
 	return false
+}
+
+func (s *WorkspaceSettingsSurface) closeDraftsRelevant(msg PromptMsg) bool {
+	if s.model.accountEditor != msg.accountEditor || s.model.providerEditor != msg.providerEditor ||
+		s.agents.draft != msg.agentEditor || s.model.capabilityDraft != msg.capabilityForm ||
+		s.capCatalog != msg.capabilityEditor {
+		return false
+	}
+	if s.model.accountEditor != nil {
+		s.model.storeAccountForm()
+		if msg.accountDraft == nil || !reflect.DeepEqual(s.model.accountEditor.draft, *msg.accountDraft) {
+			return false
+		}
+	}
+	if s.model.providerEditor != nil {
+		s.model.storeProviderEditorForm()
+		if msg.providerDraft == nil || !reflect.DeepEqual(s.model.providerEditor.draft, *msg.providerDraft) {
+			return false
+		}
+	}
+	return reflect.DeepEqual(formDraftBytes(s.agents.draft), msg.agentDraft) &&
+		reflect.DeepEqual(formDraftBytes(s.model.capabilityDraft), msg.capabilityDraft)
 }
 
 func (s *WorkspaceSettingsSurface) openTemplateEditor(create, clone bool) ui.EventResult {
@@ -1437,6 +1561,9 @@ func (s *WorkspaceSettingsSurface) cancelAccountEdit() ui.EventResult {
 }
 
 func (s *WorkspaceSettingsSurface) cancelSettings() ui.EventResult {
+	if s.capabilitiesOpen() && (s.capCatalog.detail || s.capCatalog.edit != "") {
+		return s.capCatalog.back()
+	}
 	if s.agents.draft != nil {
 		s.model.SelectCategory(catAgents)
 		s.syncModel()
@@ -1619,6 +1746,14 @@ func (s *settingsCategoryList) Handle(ctx ui.EventContext, evt ui.Event) ui.Even
 	}
 	if selected, ok := s.list.Selected(); ok {
 		if index, ok := selected.Payload.(int); ok && index != s.owner.model.SelectedCategory() {
+			if s.owner.capCatalog.dirty() {
+				s.owner.model.nextCategory = index
+				s.syncItems()
+				return s.owner.requestPrompt(PromptDiscardEditor, "", "", 0)
+			}
+			if s.owner.model.capabilityDraft != nil {
+				s.owner.capCatalog.closeEditor()
+			}
 			if s.owner.model.providerEditor != nil || s.owner.model.accountEditor != nil {
 				var change ui.EventResult
 				if s.owner.model.providerEditor != nil {

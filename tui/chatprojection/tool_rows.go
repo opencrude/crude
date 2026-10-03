@@ -70,7 +70,7 @@ func buildToolTitleLine(msg types.ChatMessage, titlePhase string, spinFrame int)
 
 func buildToolTitleLines(msg types.ChatMessage, phase string, frame, width int, disclosure DisclosureState) []PaintLine {
 	header := buildToolTitleLine(msg, phase, frame)
-	if toolSupportsDisclosure(msg.ToolName) && (msg.Content != "" || msg.ToolCommand != "") {
+	if toolSupportsDisclosure(msg.ToolName) && (msg.Content != "" || msg.ToolCommand != "" || msg.ToolInput != "") {
 		glyph := " ▸"
 		if disclosure == DisclosureExpanded {
 			glyph = " ▾"
@@ -106,22 +106,6 @@ func buildToolPlainResultLine(prefix, text string, errorStyle bool) PaintLine {
 	return PaintLine{Spans: spans}
 }
 
-// buildMemoryToolRow renders a structured memory-tool result line with the
-// shared tool gutter ("│   ") and a kind-specific semantic role: titles use
-// accent, metadata uses muted, body uses foreground.
-func buildMemoryToolRow(line tools.MemoryLine) PaintLine {
-	spans := []RowSpan{{Text: "│   ", Role: ui.ColorMuted}}
-	switch line.Kind {
-	case tools.MemoryRowTitle:
-		spans = append(spans, RowSpan{Text: line.Text, Role: ui.ColorAccent2, Attr: cell.AttrBold})
-	case tools.MemoryRowMeta:
-		spans = append(spans, RowSpan{Text: line.Text, Role: ui.ColorMuted})
-	default:
-		spans = append(spans, RowSpan{Text: line.Text, Role: ui.ColorFg})
-	}
-	return PaintLine{Spans: spans}
-}
-
 func buildToolTruncationLine(remaining, width int) PaintLine {
 	msg := fmt.Sprintf("+%s more lines", rendering.FormatCount(remaining))
 	msg = rendering.TruncateLine(msg, max(1, width-toolBodyGutterWidth))
@@ -141,9 +125,6 @@ func buildToolTruncationLine(remaining, width int) PaintLine {
 // summary sentence would become a fake hunk row through the lenient parser.
 func isToolRichBody(msg types.ChatMessage, resultContent string) bool {
 	if tools.IsPlanTool(msg.ToolName) {
-		return true
-	}
-	if tools.IsMemorySearchTool(msg.ToolName) {
 		return true
 	}
 	return tools.IsPatchCardTool(msg.ToolName) && tools.IsDiffContent(resultContent)
@@ -179,6 +160,14 @@ func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth
 	for _, line := range buildToolTitleLines(msg, titlePhase, spinFrame, innerW, disclosure) {
 		out.lines = append(out.lines, line.PlainText())
 		out.native = append(out.native, line)
+	}
+	if tools.IsStructuredTool(msg.ToolName) {
+		if msg.ToolStatus == types.ToolStatusSuccess {
+			out.appendStructuredToolBody(tools.BuildStructuredResult(msg.ToolName, msg.Content, msg.ToolInput), msg.ToolInput, innerW, height, expanded)
+		} else if msg.ToolStatus == types.ToolStatusError || expanded && (msg.ToolStatus == types.ToolStatusCancelled || msg.ToolStatus == "interrupted") {
+			out.appendStructuredToolBody(tools.BuildReadableResult(msg.Content), msg.ToolInput, innerW, height, expanded)
+		}
+		return out
 	}
 	if output, _, _, ok := tools.CommandResult(msg.ToolName, msg.Content); ok {
 		msg.Content = rendering.SanitizeForTerminal(output)
@@ -233,6 +222,9 @@ func renderToolMessageLines(msg types.ChatMessage, th *theme.Theme, contentWidth
 }
 
 func toolSupportsDisclosure(toolName string) bool {
+	if tools.IsStructuredTool(toolName) {
+		return true
+	}
 	switch toolName {
 	case "execute_command", "async_execute_command", "read_async_output", "check_async_command",
 		"exec_command", "write_stdin", "apply_patch", "edit_file", "write_file", "update_plan", "get_plan", "run_sub_agent", "read_file", "grep_files", "glob_files",
@@ -498,34 +490,6 @@ func (ml *messageLines) appendRichToolBody(msg types.ChatMessage, resultContent 
 			ml.lines = append(ml.lines, pl.PlainText())
 			ml.native = append(ml.native, pl)
 		}
-		return
-	}
-	if tools.IsMemorySearchTool(msg.ToolName) {
-		memLines := tools.BuildMemoryResultRows(msg.ToolName, resultContent, contentWidth)
-		if len(memLines) > 0 {
-			if !expanded && len(memLines) > 8 {
-				hidden := len(memLines) - 7
-				memLines = memLines[:7]
-				for _, mline := range memLines {
-					pl := buildMemoryToolRow(mline)
-					ml.lines = append(ml.lines, pl.PlainText())
-					ml.native = append(ml.native, pl)
-				}
-				trunc := buildToolTruncationLine(hidden, contentWidth)
-				ml.lines = append(ml.lines, trunc.PlainText())
-				ml.native = append(ml.native, trunc)
-				return
-			}
-			for _, mline := range memLines {
-				pl := buildMemoryToolRow(mline)
-				ml.lines = append(ml.lines, pl.PlainText())
-				ml.native = append(ml.native, pl)
-			}
-			return
-		}
-		// Non-JSON content (e.g. "No past turns matched...") renders as plain
-		// body, not a diff.
-		ml.appendPlainToolBody(msg.ToolName, resultContent, innerW, height, false, expanded)
 		return
 	}
 	diffRows := BuildBandedDiffRows(resultContent, contentWidth, innerW, expanded)

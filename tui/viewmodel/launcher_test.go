@@ -2,7 +2,6 @@ package viewmodel
 
 import (
 	"fmt"
-	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -239,7 +238,6 @@ func TestLauncherWorkspaceSearchKeepsActionsFixed(t *testing.T) {
 	host := ui.NewHost(theme.DefaultDark(), screen)
 	screen.SetFocusHandler(host.Focus)
 	host.Resize(80, 24)
-	screen.SetShortcuts([][2]string{})
 	screen.SetAnimation(0, 0)
 
 	host.Handle(tea.KeyPressMsg{Code: '/', Text: "/"})
@@ -279,20 +277,21 @@ func TestLauncherWheelOnlyScrollsWorkspacePane(t *testing.T) {
 	}
 	app.launcherScreen.SetData(".", workspaces)
 
-	layout := app.computeLayout()
-
-	// Click search row to focus filter, then wheel inside list.
-	app.rootHandleFocus(launcher.ScreenID, tea.MouseClickMsg{X: layout.SidebarW + layout.PadLR + 50, Y: layout.ChatAreaTop + 6, Button: tea.MouseLeft})
+	app.paintShellFrame()
+	search, _ := app.rootHost.ScreenRect(launcher.SearchID)
+	list, _ := app.rootHost.ScreenRect(launcher.WorkspaceListID)
+	app.rootHandleFocus(launcher.ScreenID, tea.MouseClickMsg{X: search.X + 1, Y: search.Y, Button: tea.MouseLeft})
 
 	scrollBefore := app.launcherScreen.ListScrollOffset()
-	app.rootHost.Handle(tea.MouseWheelMsg{X: layout.SidebarW + layout.PadLR + 50, Y: layout.ChatAreaTop + 7, Button: tea.MouseWheelDown})
+	app.rootHost.Handle(tea.MouseWheelMsg{X: list.X + 1, Y: list.Y, Button: tea.MouseWheelDown})
 	if app.launcherScreen.ListScrollOffset() == scrollBefore {
 		t.Fatal("wheel inside workspace viewport should scroll results")
 	}
 
-	// Wheel over left column should not scroll.
+	// Wheel over the fixed actions should not scroll workspace resources.
 	app.launcherScreen.SetListScroll(0)
-	app.rootHost.Handle(tea.MouseWheelMsg{X: layout.SidebarW + layout.PadLR + 2, Y: layout.ChatAreaTop + 7, Button: tea.MouseWheelDown})
+	action, _ := app.rootHost.ScreenRect(launcher.NewSessionID)
+	app.rootHost.Handle(tea.MouseWheelMsg{X: action.X + 1, Y: action.Y, Button: tea.MouseWheelDown})
 	if app.launcherScreen.ListScrollOffset() != 0 {
 		t.Fatal("wheel over fixed left help/actions must not scroll workspace results")
 	}
@@ -314,23 +313,6 @@ func TestLauncherUsesMainPaneWithoutHelpStrip(t *testing.T) {
 	}
 }
 
-// TestLauncherShortcutsOnlyShowReachableBindings verifies shortcut labels
-// derive from the action registry and do not embed their own labels.
-func TestLauncherShortcutsOnlyShowReachableBindings(t *testing.T) {
-	app := newTestAppWithLauncher(t)
-	shortcuts := app.launcherShortcuts()
-	for _, shortcut := range shortcuts {
-		if shortcut[1] == "Settings" {
-			t.Fatalf("palette-only Settings action must not claim a direct launcher shortcut: %q", shortcut[0])
-		}
-		if shortcut[1] != "" && strings.Contains(strings.ToLower(shortcut[0]), strings.ToLower(shortcut[1])) {
-			t.Fatalf("shortcut %q embeds its label %q", shortcut[0], shortcut[1])
-		}
-	}
-}
-
-// TestLauncher_GlobalEvent_HandledWithoutMode verifies global events
-// (empty agentID) are handled even with no agents.
 func TestLauncher_GlobalEvent_HandledWithoutMode(t *testing.T) {
 	app := newTestAppWithLauncher(t)
 

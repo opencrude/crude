@@ -192,7 +192,7 @@ func TestCollapsedThinkingThenToolIsSingleGap(t *testing.T) {
 	if len(rows[1].Lines) < 2 || rows[1].Lines[0] != "" {
 		t.Fatalf("tool must own the single inter-item gap, got %#v", rows[1].Lines)
 	}
-	if !strings.Contains(rows[1].Lines[1], "Search History") {
+	if !strings.Contains(rows[1].Lines[1], "Searching history") {
 		t.Fatalf("tool content missing after spacer: %q", rows[1].Lines[1])
 	}
 }

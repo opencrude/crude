@@ -191,7 +191,7 @@ func (m *Model) protocolFieldsFor(providerID string, cfg provider.Template, pref
 		if options.StoreDefault {
 			defaultLabel = "On (default)"
 		}
-		add(ui.TriStateFieldState(fieldProtocolStore, "Server-side caching", defaultLabel, protocolStoreValue(settings), "Keep context on the service between requests."))
+		add(ui.TriStateFieldState(fieldProtocolStore, "Server storage", defaultLabel, protocolStoreValue(settings), "Request retained context and delta uploads. The endpoint must support and accept storage."))
 	}
 	if options.ZeroDataRetention {
 		zdr := settings != nil && settings.ZeroDataRetention

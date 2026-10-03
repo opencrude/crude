@@ -49,6 +49,29 @@ func (s *feedbackSink) NotifyInfo(message string) {
 	})
 }
 
+func (s *feedbackSink) NotifyAgentTransient(agentID, message string, severity types.StatusSeverity) {
+	center := s.center()
+	if center == nil || strings.TrimSpace(agentID) == "" || strings.TrimSpace(message) == "" {
+		return
+	}
+	owner := types.ResourceRef{Kind: types.ResourceAgent, ID: agentID}
+	if s.app != nil && s.app.AgentMgr != nil {
+		if root := s.app.AgentMgr.OrchestratorFor(agentID); root != nil {
+			if root.ID != agentID {
+				owner.ParentID = root.ID
+			}
+			if session := s.app.SessionsByAgent[root.ID]; session != nil {
+				owner.SessionID = session.SessionID
+			}
+		}
+	}
+	center.Notify(types.NotificationRecord{
+		DedupKey: "agent-terminal:" + agentID + ":" + message,
+		Owner:    owner, Severity: severity, Source: "agent", Summary: message,
+		Read: true, Transient: true,
+	})
+}
+
 func (s *feedbackSink) NotifyError(message string) {
 	center, owner := s.center(), s.owner()
 	if center == nil || strings.TrimSpace(message) == "" {

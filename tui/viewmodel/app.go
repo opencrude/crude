@@ -19,8 +19,10 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/screens/activitybar"
 	"crude/tui/screens/activitylist"
+	"crude/tui/screens/boardbrowser"
 	filepickerscreen "crude/tui/screens/filepicker"
 	findinfiles "crude/tui/screens/findinfiles"
+	"crude/tui/screens/gitreview"
 	helpscreen "crude/tui/screens/help"
 	"crude/tui/screens/launcher"
 	historyscreen "crude/tui/screens/localhistory"
@@ -44,6 +46,7 @@ import (
 	"crude/tui/ui/popup"
 	"crude/tui/window"
 	"crude/tui/wm"
+	captypes "crude/types/capability"
 	"crude/workspace"
 )
 
@@ -77,6 +80,8 @@ type App struct {
 	TreeDeletePending         string
 	TreeDeleteChoice          int
 	GitDiscardPending         *workspace.GitChange
+	gitDiscardPreview         *workspace.GitDiscardPreview
+	gitDiscardSequence        uint64
 	FilePicker                *filepickerscreen.Screen
 	DiagPopupID               string
 
@@ -88,14 +93,20 @@ type App struct {
 	composerSaving         bool
 	composerDirtySinceSave bool
 	// Failed BTW uploads belong to their session until its composer is active.
-	failedBtwDrafts        map[*workspace.Session][]string
-	DirtyPromptPath        string
-	DirtyPromptChoice      int
-	accountRecoveryChoice  int
-	accountRecoverySession bool
-	settingsPrompt         *settingsPromptState
-	agentPrompt            *agentPromptState
-	agentPromptQueue       []agentPromptRequest
+	failedBtwDrafts            map[*workspace.Session][]string
+	DirtyPromptPath            string
+	DirtyPromptChoice          int
+	accountRecoveryChoice      int
+	accountRecoverySession     bool
+	settingsPrompt             *settingsPromptState
+	capabilityOperations       map[uint64]capabilityOperation
+	capabilityPicker           *capabilityPickerOwner
+	capabilitySnapshotCancel   context.CancelFunc
+	launcherCapabilityCancel   context.CancelFunc
+	launcherCapabilitySequence uint64
+	launcherCapabilityAt       time.Time
+	agentPrompt                *agentPromptState
+	agentPrompts               []*agentPromptState
 	// pendingTabClose holds the tabs still to close after a bulk close
 	// ("Close others" / "Close to the right") stopped at a dirty buffer and
 	// opened the unsaved-changes prompt. Cancel drops it; a confirmed close
@@ -159,46 +170,59 @@ type App struct {
 	sessionProjections *sessionProjectionRegistry
 
 	// App-scoped fields (not on workspace.Workspace)
-	headerScreen           *shellheader.Screen
-	footerScreen           *shellfooter.Screen
-	tabScreen              *shelltabs.Screen
-	sidebarScreen          *shelltree.Screen
-	activityBar            *activitybar.Screen
-	activityList           *activitylist.Screen
-	sourceControl          *sourcecontrol.Screen
-	activityView           activitybar.View
-	termScreens            map[string]*shellterm.Screen
-	termDock               *termdock.Screen
-	termDockHeight         int
-	termDockFocused        bool
-	suppressTermClose      string
-	inputScreen            *shellinput.Screen
-	chatScreen             *shellchat.Screen
-	agentChatScroll        map[string]agentMainChatScrollSnapshot
-	chatScrollAgent        string
-	chatScrollNeedsRestore bool
-	editorScreen           *shelleditor.Screen
-	launcherScreen         *launcher.Screen
-	historyScreen          *historyscreen.Screen
-	sessionPicker          *sessionpicker.Screen
-	helpScreen             *helpscreen.Screen
-	commandPaletteModel    *commandPaletteModel
-	findInFiles            *findinfiles.Screen
-	findInFilesRequest     uint64
-	findInFilesGen         int
-	memoryBrowser          *memorybrowser.Screen
-	providerPresets        []ttypes.ProviderPreset
-	asyncIO                atomic.Pointer[appAsyncIOState]
-	asyncIOStopped         atomic.Bool
-	launcherLoadGen        atomic.Uint64 // generation of the in-flight async launcher load
-	gitRefreshGen          atomic.Uint64
-	editorGitGen           atomic.Uint64
-	editorGitStale         atomic.Bool
-	editorGitEditAt        time.Time // most recent text change awaiting projection refresh
-	editorGitSince         time.Time // start of the current unrefreshed burst (hold cap)
-	editorGitCancel        context.CancelFunc
-	sourceControlTimeout   time.Duration
-	treeGitRefreshAt       time.Time
+	headerScreen            *shellheader.Screen
+	footerScreen            *shellfooter.Screen
+	tabScreen               *shelltabs.Screen
+	sidebarScreen           *shelltree.Screen
+	activityBar             *activitybar.Screen
+	activityList            *activitylist.Screen
+	sourceControl           *sourcecontrol.Screen
+	activityView            activitybar.View
+	termScreens             map[string]*shellterm.Screen
+	termDock                *termdock.Screen
+	termDockHeight          int
+	termDockFocused         bool
+	suppressTermClose       string
+	inputScreen             *shellinput.Screen
+	chatScreen              *shellchat.Screen
+	agentChatScroll         map[string]agentMainChatScrollSnapshot
+	chatScrollAgent         string
+	chatScrollNeedsRestore  bool
+	editorScreen            *shelleditor.Screen
+	launcherScreen          *launcher.Screen
+	historyScreen           *historyscreen.Screen
+	sessionPicker           *sessionpicker.Screen
+	helpScreen              *helpscreen.Screen
+	commandPaletteModel     *commandPaletteModel
+	findInFiles             *findinfiles.Screen
+	findInFilesRequest      uint64
+	findInFilesGen          int
+	memoryBrowser           *memorybrowser.Screen
+	boardBrowser            *boardbrowser.Screen
+	gitReview               *gitreview.Screen
+	gitReviewReturn         window.TabID
+	gitReviewSequence       uint64
+	workspacePanelHeights   map[string]int
+	toolLayout              workspace.ToolLayout
+	toolLayoutVersion       uint64
+	toolLayoutSaveQueued    bool
+	toolLayoutSaving        bool
+	toolLayoutSavedVersion  uint64
+	workspacePanelMaximized bool
+	capabilitySnapshot      captypes.Snapshot
+	skillInvocationSequence uint64
+	providerPresets         []ttypes.ProviderPreset
+	asyncIO                 atomic.Pointer[appAsyncIOState]
+	asyncIOStopped          atomic.Bool
+	launcherLoadGen         atomic.Uint64 // generation of the in-flight async launcher load
+	gitRefreshGen           atomic.Uint64
+	editorGitGen            atomic.Uint64
+	editorGitStale          atomic.Bool
+	editorGitEditAt         time.Time // most recent text change awaiting projection refresh
+	editorGitSince          time.Time // start of the current unrefreshed burst (hold cap)
+	editorGitCancel         context.CancelFunc
+	sourceControlTimeout    time.Duration
+	treeGitRefreshAt        time.Time
 	// Header Git reconciliation (git_snapshot.go): watcher events arm a
 	// debounced, coalesced silent snapshot read so the header identity follows
 	// the repository without the user opening the Source Control panel.
@@ -248,11 +272,11 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	ws.SetEventBus(eb)
 	ws.LSPMgr.SetRuntime(newEditorLSPRuntime())
 
-	// Start on the unified welcome launcher (actions + workspaces + sessions).
+	// Start on workspace home; sessions remain in the Workspace panel.
 	// The workspace listing loads asynchronously (refreshLauncherAsync from
 	// Init) so the first frame never blocks on the workspace DB scan.
 	launcherScreen := launcher.New(th)
-	launcherScreen.SetData(ws.RootPath, nil)
+	launcherScreen.BeginLoad(ws.RootPath)
 
 	// The root tree: one Host mounts the whole shell and paints into one
 	// full-screen surface. The compositor renders this single surface under
@@ -476,7 +500,7 @@ func (m *App) Init() tea.Cmd {
 			return workspace.StatusCenterHydratedMsg{}
 		}
 	}
-	return tea.Batch(tickCmd(), statusCmd, m.refreshSourceControl())
+	return tea.Batch(tickCmd(), statusCmd, m.refreshSourceControl(), m.capabilitySnapshotCmd(), m.loadToolLayoutCmd())
 }
 
 // openTextOverlayWindow opens the text overlay as a floating window.
@@ -625,6 +649,9 @@ func (m *App) openSettingsTo(scope ttypes.SettingsScope, accounts bool) {
 	}
 
 	wsWidget := popup.NewWorkspaceSettingsScoped(m.Theme, working, m.providerPresets, scope, appDefaults, overrides)
+	if body, ok := wsWidget.Component().(*settingsui.WorkspaceSettingsSurface); ok {
+		body.Model().SetCapabilitySnapshot(m.capabilitySnapshot)
+	}
 
 	w, h := fitFloatingSize(m.width, m.height, minInt(124, m.width-8), minInt(28, m.height-4), 60, 18)
 	frame := ui.NewWindowFrameWidget(
@@ -758,6 +785,9 @@ func (m *App) handleQuit() (tea.Model, tea.Cmd) {
 	}
 
 	// If there's an editor open, close it
+	if m.isGitReviewActive() {
+		return m, m.handleAgentTabClose(m.Win.ActiveIndex())
+	}
 	if m.EditorState.ActiveView != "" {
 		m.closeEditorTab()
 		return m, nil
@@ -856,6 +886,7 @@ func (m *App) openSessionSettings() {
 	}
 	p.settings.ConfigureProviders(m.providerPresets, m.AllProviderConfigs())
 	p.settings.ConfigureAccounts(m.AllAccounts())
+	p.settings.SetCapabilities(m.capabilitySnapshot)
 	p.settings.SaveSnapshot()
 	m.openSessionSettingsPanel()
 }

@@ -140,6 +140,7 @@ func (w *Workspace) applyEffectiveSettings() {
 	}
 	if w.sessionCfg != nil {
 		w.sessionCfg.Memory = effective.Memory
+		w.sessionCfg.Capabilities = effective.Capabilities
 		w.sessionCfg.Safety = effective.Safety
 	}
 	if w.HistoryService != nil {
@@ -155,6 +156,7 @@ func (w *Workspace) applyEffectiveSettings() {
 			Providers:      effective.Providers,
 			Accounts:       effective.Accounts,
 			Memory:         effective.Memory,
+			Capabilities:   effective.Capabilities,
 			Safety:         effective.Safety,
 		})
 		if frontendSession.Settings != nil {

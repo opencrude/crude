@@ -2,13 +2,13 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"crude/agent"
-	"crude/codexio"
 	"crude/fileio"
 	"crude/safety"
 )
@@ -60,31 +60,36 @@ func TestNativePatchSessionHistoryAndChildOwnership(t *testing.T) {
 	}
 }
 
-func TestGPTPromptCacheTracksModelWithoutIdentityCommentary(t *testing.T) {
+func TestSystemPromptCacheUsesCanonicalPolicyAcrossModels(t *testing.T) {
 	s, err := NewWithSessionDir("codex-prompts", testConfig(), t.TempDir(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
 	defer s.Close()
-	for _, model := range []string{"gpt-5.5", "gpt-6-astra", "claude-test", "gpt-5.5"} {
+	var canonical string
+	for _, model := range []string{"gpt-5.5", "gpt-6-astra", "claude-test", "gemini-test", "gpt-5.5"} {
 		prompt := s.systemPromptForModel(false, model)
-		if codexio.IsGPT(model) {
-			base, _ := codexio.Instructions(model)
-			if !strings.HasPrefix(prompt, base) {
-				t.Fatal("stale model prompt")
-			}
-			if strings.Contains(prompt, "<agent_identity>") || strings.Contains(prompt, "host application is Crude") {
-				t.Fatal("identity commentary leaked")
-			}
+		if !strings.Contains(prompt, `<crude_agent version="3">`) {
+			t.Fatal("model switch lost canonical root prompt")
+		}
+		if canonical == "" {
+			canonical = prompt
+		} else if prompt != canonical {
+			t.Fatalf("model %q received a divergent behavioral prompt", model)
 		}
 	}
 }
 
-func TestPatchAutoReviewDoesNotApproveUnseenDeleteOrMove(t *testing.T) {
+func TestPatchAutoReviewSendsExactDeleteAndMoveForDecision(t *testing.T) {
 	root := t.TempDir()
 	for _, body := range []string{"*** Delete File: gone", "*** Update File: a\n*** Move to: b\n-a\n+b", "*** Add File: ../outside\n+x"} {
-		if _, ok := permissionReviewPayload(root, "apply_patch", map[string]any{"input": "*** Begin Patch\n" + body + "\n*** End Patch"}, safety.RiskProjectWrite, 4096); ok {
-			t.Fatal("auto-approved operation needing human review")
+		input := "*** Begin Patch\n" + body + "\n*** End Patch"
+		payload, ok := permissionReviewPayload(root, "apply_patch", map[string]any{"input": input}, safety.RiskProjectWrite, 4096)
+		var envelope struct {
+			Arguments map[string]string `json:"arguments"`
+		}
+		if !ok || json.Unmarshal(payload, &envelope) != nil || envelope.Arguments["input"] != input {
+			t.Fatal("reviewer did not receive exact patch operation")
 		}
 	}
 }

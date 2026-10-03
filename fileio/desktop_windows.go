@@ -1,10 +1,18 @@
 package fileio
 
 import (
+	"context"
 	"syscall"
 
 	"golang.org/x/sys/windows"
 )
+
+func platformOpenBrowser(ctx context.Context, rawURL string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	return platformOpenPath(rawURL, false)
+}
 
 func platformOpenPath(path string, reveal bool) error {
 	verb, err := windows.UTF16PtrFromString("open")

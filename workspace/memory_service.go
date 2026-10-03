@@ -2,6 +2,8 @@ package workspace
 
 import (
 	"context"
+	"errors"
+	"strings"
 	"time"
 
 	"crude/memory"
@@ -9,45 +11,101 @@ import (
 
 const memoryServiceTimeout = 5 * time.Second
 
-// MemoryAvailable reports whether the durable memory store is open.
+var ErrMemoryUnavailable = errors.New("workspace memory is unavailable; reopen the workspace to retry")
+
+type MemoryDetail struct {
+	Record    memory.Record
+	Revisions []memory.Revision
+	Feedback  []memory.Feedback
+	Exposures []memory.Exposure
+}
+
 func (w *Workspace) MemoryAvailable() bool {
 	return w != nil && w.WorkspaceDB != nil && w.WorkspaceDB.Memory != nil
 }
 
-// SearchMemories serves the memory browser: empty query lists recent
-// records; otherwise a scored FTS search (archived included so the browser
-// shows the full auditable picture).
-func (w *Workspace) SearchMemories(query string, limit int) []memory.ScoredRecord {
+func (w *Workspace) SearchMemories(ctx context.Context, query memory.ListQuery) ([]memory.ScoredRecord, error) {
 	if !w.MemoryAvailable() {
-		return nil
+		return nil, ErrMemoryUnavailable
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), memoryServiceTimeout)
+	ctx, cancel := context.WithTimeout(ctx, memoryServiceTimeout)
 	defer cancel()
-	records, err := w.WorkspaceDB.Memory.List(ctx, memory.ListQuery{Text: query, Limit: limit})
+	return w.WorkspaceDB.Memory.List(ctx, query)
+}
+
+func (w *Workspace) SearchMemoryEpisodes(ctx context.Context, query string, limit int) ([]memory.Episode, error) {
+	if !w.MemoryAvailable() {
+		return nil, ErrMemoryUnavailable
+	}
+	ctx, cancel := context.WithTimeout(ctx, memoryServiceTimeout)
+	defer cancel()
+	episodes, err := w.WorkspaceDB.Memory.Episodes(ctx, "", limit)
 	if err != nil {
-		w.Logger.Warn("MEMORY", "browser_search_failed", "error", err.Error())
-		return nil
+		return nil, err
 	}
-	return records
+	query = strings.ToLower(strings.TrimSpace(query))
+	if query == "" {
+		return episodes, nil
+	}
+	filtered := make([]memory.Episode, 0, len(episodes))
+	for _, episode := range episodes {
+		text := strings.Join([]string{episode.ID, episode.SessionID, episode.Situation, episode.Method, episode.Outcome, episode.Conditions}, " ")
+		for _, evidence := range episode.Evidence {
+			text += " " + evidence.Summary + " " + evidence.MessageID + " " + evidence.ToolCallID
+		}
+		if strings.Contains(strings.ToLower(text), query) {
+			filtered = append(filtered, episode)
+		}
+	}
+	return filtered, nil
 }
 
-// PinMemory toggles a memory's pinned flag from the browser.
-func (w *Workspace) PinMemory(id string, pinned bool) error {
+func (w *Workspace) InspectMemory(ctx context.Context, id string) (MemoryDetail, error) {
 	if !w.MemoryAvailable() {
-		return nil
+		return MemoryDetail{}, ErrMemoryUnavailable
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), memoryServiceTimeout)
+	ctx, cancel := context.WithTimeout(ctx, memoryServiceTimeout)
 	defer cancel()
-	return w.WorkspaceDB.Memory.SetPinned(ctx, id, pinned, memory.ActorUser)
+	store := w.WorkspaceDB.Memory
+	detail := MemoryDetail{}
+	var err error
+	if detail.Record, err = store.Get(ctx, id); err != nil {
+		return detail, err
+	}
+	if detail.Revisions, err = store.Revisions(ctx, id); err != nil {
+		return detail, err
+	}
+	if detail.Feedback, err = store.FeedbackForMemory(ctx, id, 100); err != nil {
+		return detail, err
+	}
+	detail.Exposures, err = store.ExposuresForMemory(ctx, id, 100)
+	return detail, err
 }
 
-// ForgetMemoryRecord supersedes a memory from the browser (audit-preserving
-// forget).
-func (w *Workspace) ForgetMemoryRecord(id string) error {
+func (w *Workspace) PinMemory(ctx context.Context, id string, expectedRevision int64, pinned bool) error {
 	if !w.MemoryAvailable() {
-		return nil
+		return ErrMemoryUnavailable
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), memoryServiceTimeout)
+	ctx, cancel := context.WithTimeout(ctx, memoryServiceTimeout)
 	defer cancel()
-	return w.WorkspaceDB.Memory.Supersede(ctx, id, "", memory.ActorUser, "")
+	return w.WorkspaceDB.Memory.SetPinned(ctx, id, expectedRevision, pinned, memory.ActorUser)
+}
+
+func (w *Workspace) ForgetMemoryRecord(ctx context.Context, id string, expectedRevision int64) error {
+	if !w.MemoryAvailable() {
+		return ErrMemoryUnavailable
+	}
+	ctx, cancel := context.WithTimeout(ctx, memoryServiceTimeout)
+	defer cancel()
+	return w.WorkspaceDB.Memory.Supersede(ctx, id, expectedRevision, "", memory.ActorUser, "")
+}
+
+func (w *Workspace) CorrectMemory(ctx context.Context, replacement memory.Record) (memory.Record, error) {
+	if !w.MemoryAvailable() {
+		return memory.Record{}, ErrMemoryUnavailable
+	}
+	ctx, cancel := context.WithTimeout(ctx, memoryServiceTimeout)
+	defer cancel()
+	replacement.Source = memory.SourceUser
+	return w.WorkspaceDB.Memory.Update(ctx, replacement.ID, replacement, memory.ActorUser, "")
 }

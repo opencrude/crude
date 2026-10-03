@@ -42,6 +42,9 @@ func parallelMessages(msg *types.ChatMessage) []*types.ChatMessage {
 			child.ToolName = strings.TrimPrefix(use.Name, "functions.")
 			args := string(use.Parameters)
 			child.ToolArgs = toolargs.SummarizeArgs(child.ToolName, args)
+			if toolargs.RetainsStructuredToolInput(child.ToolName) {
+				child.ToolInput = args
+			}
 			switch child.ToolName {
 			case "exec_command":
 				child.ToolCommand = toolargs.ExtractArg(args, "cmd")

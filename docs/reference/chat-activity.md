@@ -13,6 +13,45 @@ The canonical conversation is the audit log. The chat renderer projects it into 
 
 Unknown tools stay visible until intentionally classified. A failed or cancelled call, a child failure reported by an otherwise successful poll, and any required user action remain visible as boundaries. A background command's successful *start* is not evidence that the background job finished; label it as started, not completed. Never imply that all calls passed solely because their tool transport succeeded.
 
+## Capabilities and Peer Data
+
+`capability_search`, `capability_activate`, `board_post`, `board_read`,
+`mcp_read_resource`, `mcp_get_prompt` and `mcp__<connection>__<tool>` calls retain
+their exact identity/arguments/results in disclosure. Semantic titles use the
+query, capability ID, recipient/type, thread, URI, prompt or adapted tool name;
+they never expose a raw JSON argument envelope. Dynamic operations stay visible
+unless explicitly classified. A remote mutation interrupted after dispatch is
+Result unknown, not success, and is never blindly replayed.
+
+Activated skill instructions and MCP resource/prompt attachments retain their
+source attribution; they are not human instructions or permission. Board notices
+contain no peer body and arrive only at a safe request boundary. Explicit reads
+carry attributed peer data; their cursor advances only after durable context
+admission. Human Board inspection and unread acknowledgements are independent,
+and no Board post/HOLD/VETO wakes an agent or grants access.
+
+Board, Memory/History, Capabilities and MCP share one semantic result-section
+contract. Compact rows show useful body text, named participants/resources,
+revision or count facts, and source/lifecycle metadata, not bare JSON or a
+per-field character-budget ellipsis. Preview bodies wrap to the actual cell
+width; large pages show two or three complete entry headings with bounded body
+rows and an explicit remaining-entry/full-text disclosure hint. Expansion keeps
+every retained body and evidence field, exact revisions/IDs, attributed authors,
+Board roster/cursor/pagination and the readable request. Board posts say stored,
+never delivered or read. HOLD/VETO remain peer data, not red failures.
+
+The family includes `remember`, `recall_memory`, `update_memory`, `forget_memory`,
+`memory_feedback` and `search_history`, not only the Board operations. Live
+events, passive SQLite hydration, parallel leaves and compact child panes use
+the same title/body builders. Exact family inputs are retained before title
+derivation so mutation acknowledgements cannot lose authored content. Generic
+MCP objects render labelled nested values; malformed structured envelopes fail
+closed to an unavailable notice. Binary-only MCP results retain type, MIME,
+resource and byte-count evidence instead of appearing empty. Known upstream
+limits still apply: history search and compact memory evidence arrive with
+backend-bounded snippets, and binary content is described, not rendered as a
+document or dumped as base64.
+
 File edits, writes, and patches remain separate and show their full tinted diff
 by default; users can explicitly collapse them. Plan cards keep their own layout.
 Raw and unclassified active thinking keep their stream and pane promotion. Promotion transfers the
@@ -67,13 +106,19 @@ widget by stripping braces: producer, batch projection, main chat, compact pane,
 and resume must share the same source rule. For every tool schema or new argument
 encoding, test identical live and hydrated rows (collapsed and expanded),
 disclosure and result evidence, with no raw API field names in any title.
-Sub-agent titles pair the allocated nickname with the exact handle once both
-are known (`Lily sub Dawn (agent-8f21)`), across spawn, poll, cancel and report
-results. Before identity is available, show the handle or assignment, never an
-invented nickname from the requested profile. A result whose handle conflicts
-with the requested handle cannot label that call. The list title remains bounded;
-expanded list entries include each nickname AND handle. Results carry the same
-immutable identity through live, parallel-child and hydrated projections.
+Sub-agent titles pair the allocated nickname, exact category and exact handle
+once known (`Lily sub Dawn · Researcher (agent-8f21)`), across running panes,
+spawn, poll, cancel and report results. Before allocation, show the requested
+category plus assignment or the handle, never an invented nickname. A result
+whose handle conflicts with the requested handle cannot label that call. The
+list title remains bounded; expanded list entries include each nickname AND
+handle. Category and identity carry through one canonical progress/display
+snapshot so live, parallel-child and hydrated projections paint identically.
+
+Sub-agent terminal events also publish one owner-scoped transient footer status:
+nickname, category and explicit completed/cancelled/crashed/failed outcome. The
+Update path forces the presentation deadline so cached output cannot hide the
+status; the old anonymous `✓ done` text is invalid.
 
 Normal indicators share the title color: active work uses `ui.ActivityDot` on
 the shared frame clock, completed work uses a steady dot, and stopped/not-run

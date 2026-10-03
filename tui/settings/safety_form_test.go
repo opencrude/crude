@@ -39,7 +39,7 @@ func TestSecurityPagesKeepReviewerIdentityAndPolicyIndependent(t *testing.T) {
 		Safety: types.SafetySettings{
 			ConfirmAt: "network", UnknownCommandRisk: "unknown", NotifyDangerous: "on",
 			AutoPermission: modeltypes.AutoPermissionSettings{Enabled: "on", AccountID: "review", Provider: "openai", Model: "review-v1",
-				Instructions: "No deployments", DenyMode: "deny", MaxOutputTokens: 55, MaxInputBytes: 2048, MaxReviewsPerTurn: 7},
+				Instructions: "No deployments", DenyMode: "deny", UnresolvedMode: "deny", MaxOutputTokens: 55, MaxInputBytes: 64 << 10},
 		},
 	}, nil)
 	for _, page := range []int{catSafety, catAutoReviewPolicy} {
@@ -69,13 +69,22 @@ func TestSecurityPagesKeepReviewerIdentityAndPolicyIndependent(t *testing.T) {
 	if detail := policy.Field(fieldAutoPermInputBytes).Description; !strings.Contains(detail, "conversation") {
 		t.Fatalf("input budget omits the remote payload boundary: %q", detail)
 	}
+	if policy.Field(fieldAutoPermThinking) == nil || policy.Field(fieldAutoPermRetries) == nil || policy.Field(fieldAutoPermGrowth) == nil || policy.Field(fieldAutoPermRetryCeiling) == nil {
+		t.Fatal("Auto Review policy omits configurable reasoning or recovery controls")
+	}
 	m.SetValueForTest(catSafety, fieldSafetyConfirmAt, "destructive")
-	m.SetValueForTest(catAutoReviewPolicy, fieldAutoPermReviews, "3")
 	s := NewSurface(theme.DefaultDark(), m)
 	m.SelectCategory(catAgents)
 	s.agents.begin("role/auto-review", false)
 	if s.agents.draft.Field("agent-tool-mode") != nil || s.agents.draft.Field("agent-description") == nil || !s.agents.draft.Field("agent-description").ReadOnly {
 		t.Fatal("Auto Review Agent must show purpose but cannot execute/configure tools")
+	}
+	if s.agents.draft.Field(fieldAutoPermThinking) == nil || s.agents.draft.Field(fieldAutoPermRetries) == nil || s.agents.draft.Field(fieldAutoPermGrowth) == nil {
+		t.Fatal("Auto Review Agent editor does not own its runtime controls")
+	}
+	s.agents.setPage("tools")
+	if s.agents.form.Field(fieldAutoPermThinking) == nil || s.agents.form.Field(fieldAutoPermRetryCeiling) == nil {
+		t.Fatal("Auto Review Review tab did not mount its policy fields")
 	}
 	s.agents.draft.SetValue("agent-instructions", ui.StringValue("Never send builds"))
 	s.agents.draft.SetValue(fieldModel, ui.StringValue("review-v2"))
@@ -83,7 +92,7 @@ func TestSecurityPagesKeepReviewerIdentityAndPolicyIndependent(t *testing.T) {
 		t.Fatal("editing the reviewer identity failed")
 	}
 	got := m.AppSettings().Safety
-	if got.ConfirmAt != "destructive" || got.AutoPermission.Model != "review-v2" || got.AutoPermission.Instructions != "Never send builds" || got.AutoPermission.MaxReviewsPerTurn != 3 || got.AutoPermission.DenyMode != "deny" {
+	if got.ConfirmAt != "destructive" || got.AutoPermission.Model != "review-v2" || got.AutoPermission.Instructions != "Never send builds" || got.AutoPermission.DenyMode != "deny" || got.AutoPermission.UnresolvedMode != "deny" {
 		t.Fatalf("one Security page erased another's draft: %+v", got)
 	}
 	for index, row := range s.agents.table.Rows() {
@@ -94,8 +103,26 @@ func TestSecurityPagesKeepReviewerIdentityAndPolicyIndependent(t *testing.T) {
 	s.agents.HandleAction(ui.EventContext{}, ui.Action{ID: "agents.reset"})
 	s.agents.HandleAction(ui.EventContext{}, ui.Action{ID: "agents.reset-confirm"})
 	reset := m.AppSettings().Safety.AutoPermission
-	if reset.Enabled != "off" || reset.Model != "" || reset.AccountID != "" || reset.Instructions != "" || reset.DenyMode != "deny" || reset.MaxReviewsPerTurn != 3 {
+	if reset.Enabled != "off" || reset.Model != "" || reset.AccountID != "" || reset.Instructions != "" || reset.DenyMode != "deny" || reset.UnresolvedMode != "deny" {
 		t.Fatalf("resetting reviewer identity changed its bounded policy: %+v", reset)
+	}
+}
+
+func TestAutoReviewerRejectsNonsensicalRecoveryBounds(t *testing.T) {
+	m := New(theme.DefaultDark(), types.AppSettings{}, nil)
+	s := NewSurface(theme.DefaultDark(), m)
+	m.SelectCategory(catAgents)
+	c := s.agents
+	c.begin("role/auto-review", false)
+	c.draft.SetValue(fieldAutoPermOutputTokens, ui.StringValue("512"))
+	c.draft.SetValue(fieldAutoPermRetries, ui.StringValue("2"))
+	c.draft.SetValue(fieldAutoPermGrowth, ui.StringValue(modeltypes.AutoPermissionGrowth4x))
+	c.draft.SetValue(fieldAutoPermRetryCeiling, ui.StringValue("128"))
+	if c.apply() {
+		t.Fatal("retry ceiling below the initial output budget was accepted")
+	}
+	if field := c.draft.Field(fieldAutoPermRetryCeiling); field == nil || len(field.Errors) == 0 || !strings.Contains(field.Errors[0], "at least") {
+		t.Fatalf("retry ceiling warning = %+v", field)
 	}
 }
 

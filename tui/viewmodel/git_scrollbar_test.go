@@ -7,7 +7,6 @@ import (
 
 	"crude/tui/screens/activitybar"
 	"crude/tui/screens/sourcecontrol"
-	"crude/tui/ui"
 	"crude/workspace"
 )
 
@@ -53,10 +52,5 @@ func TestGitPanelWheelScrollingSurvivesShellFrame(t *testing.T) {
 
 // gitListScrollOffset returns a reader for the git list scroll offset.
 func gitListScrollOffset(app *App) func() int {
-	for _, c := range app.sourceControl.Children() {
-		if lst, ok := c.(*ui.List); ok {
-			return func() int { return lst.Scroll().Offset() }
-		}
-	}
-	return func() int { return -1 }
+	return func() int { return app.sourceControl.ScrollModel().Offset() }
 }

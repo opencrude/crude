@@ -22,16 +22,21 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 		m.Logger.Info("INPUT", "slash_command", "cmd", cmd)
 	}
 
-	parts := strings.Fields(cmd)
-	if len(parts) == 0 {
+	cmdName, remainder := parseSlashCommand(cmd)
+	if cmdName == "" {
 		return nil
 	}
 
 	var cmds []tea.Cmd
-	cmdName := strings.ToLower(parts[0])
 	agentID := m.AgentMgr.ActiveID()
 
 	switch cmdName {
+	case "/skills":
+		return m.openCapabilityManager(activitySkills, remainder, "")
+	case "/mcp":
+		return m.openCapabilityManager(activityMCP, remainder, "")
+	case "/skill":
+		return m.invokeSkill(remainder, cmd)
 	case "/settings":
 		m.Logger.Info("INPUT", "slash", "command", "settings")
 		m.openSessionSettings()
@@ -135,6 +140,18 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 		return tea.Batch(cmds...)
 	}
 	return nil
+}
+
+func parseSlashCommand(command string) (string, string) {
+	command = strings.TrimLeft(command, " \t\r\n")
+	if command == "" {
+		return "", ""
+	}
+	index := strings.IndexAny(command, " \t\r\n")
+	if index < 0 {
+		return strings.ToLower(command), ""
+	}
+	return strings.ToLower(command[:index]), strings.TrimLeft(command[index:], " \t\r\n")
 }
 
 func (m *App) handleSlashBackendResult(msg slashBackendResultMsg) {

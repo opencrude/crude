@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	rootprompt "crude/prompt"
 )
 
 func TestParseExtractionCleanJSON(t *testing.T) {
@@ -88,7 +90,7 @@ func TestApplyConsolidationValidatesAndJournals(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Remember: %v", err)
 	}
-	second, err := st.Remember(ctx, Record{Kind: KindFact, Title: "Two", Content: "Go is used for the build."})
+	second, err := st.Remember(ctx, Record{Kind: KindFact, Title: "Two", Content: "The build uses Go."})
 	if err != nil {
 		t.Fatalf("Remember: %v", err)
 	}
@@ -99,7 +101,8 @@ func TestApplyConsolidationValidatesAndJournals(t *testing.T) {
 
 	applied, err := st.ApplyConsolidation(ctx, []ConsolidationOp{
 		{Op: "merge", IDs: []string{first.ID, second.ID}, Kind: KindFact,
-			Title: "Build language", Content: "The build is written in Go.", Importance: 50},
+			Title: "Build language", Content: "The build uses Go.", Importance: 50,
+			ExpectedRevisions: map[string]int64{first.ID: first.Revision, second.ID: second.Revision}},
 		{Op: "rewrite", ID: pinned.ID, Content: "should be rejected (pinned)"},
 		{Op: "supersede", ID: "mem-missing", By: first.ID},
 	}, "s9")
@@ -127,28 +130,28 @@ func TestApplyConsolidationValidatesAndJournals(t *testing.T) {
 	}
 }
 
-func TestDedupeExactSupersedesDuplicates(t *testing.T) {
+func TestDuplicateSuggestionsNeverRetireAutomatically(t *testing.T) {
 	st := openTestStore(t)
 	ctx := context.Background()
 	if _, err := st.Remember(ctx, Record{Kind: KindFact, Title: "A", Content: "Use WAL journal mode."}); err != nil {
 		t.Fatalf("Remember: %v", err)
 	}
-	if _, err := st.Remember(ctx, Record{Kind: KindFact, Title: "B", Content: "use wal Journal MODE"}); err != nil {
+	if _, err := st.Remember(ctx, Record{Kind: KindFact, Title: "B", Content: "use wal Journal MODE."}); err != nil {
 		t.Fatalf("Remember: %v", err)
 	}
-	superseded, err := st.DedupeExact(ctx)
+	groups, err := st.DuplicateSuggestions(ctx)
 	if err != nil {
-		t.Fatalf("DedupeExact: %v", err)
+		t.Fatalf("DuplicateSuggestions: %v", err)
 	}
-	if superseded != 1 {
-		t.Fatalf("superseded = %d, want 1", superseded)
+	if len(groups) != 1 || len(groups[0]) != 2 {
+		t.Fatalf("duplicate suggestions = %+v", groups)
 	}
 	active, err := st.CountByStatus(ctx, StatusActive)
 	if err != nil {
 		t.Fatalf("CountByStatus: %v", err)
 	}
-	if active != 1 {
-		t.Fatalf("active = %d, want 1", active)
+	if active != 2 {
+		t.Fatalf("suggestions silently changed records: active = %d", active)
 	}
 }
 
@@ -187,6 +190,7 @@ func TestDecayArchiveOnlyTouchesUnusedAutoRecords(t *testing.T) {
 	stale, err := st.Remember(ctx, Record{
 		Kind: KindFact, Title: "Stale", Content: "Old auto fact.",
 		Source: SourceAuto, CreatedAt: old,
+		Evidence: userEvidence(t, st, "old-session"),
 	})
 	if err != nil {
 		t.Fatalf("Remember: %v", err)
@@ -219,7 +223,7 @@ func TestDecayArchiveOnlyTouchesUnusedAutoRecords(t *testing.T) {
 }
 
 func TestBuildExtractionUserAssemblesSections(t *testing.T) {
-	out := BuildExtractionUser("prior summary", "- Title (fact)", "--- turn 1 ---\nUSER: hi")
+	out := rootprompt.MemoryExtractionUser(PrepareExtractionInput("prior summary", "- Title (fact)", "--- turn 1 ---\nUSER: hi", nil))
 	for _, want := range []string{"PREVIOUS SUMMARY:", "EXISTING MEMORIES", "NEW TURNS:", "turn 1"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("missing %q in:\n%s", want, out)

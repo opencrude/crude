@@ -12,6 +12,7 @@ import (
 	"crude/provider"
 	"crude/session"
 	ttypes "crude/tui/types"
+	captypes "crude/types/capability"
 )
 
 type FileConfig struct {
@@ -28,6 +29,7 @@ type FileConfig struct {
 	Memory          *ttypes.MemorySettings       `json:"memory,omitempty"`
 	Safety          *ttypes.SafetySettings       `json:"safety,omitempty"`
 	LocalHistory    *ttypes.LocalHistorySettings `json:"local_history,omitempty"`
+	Capabilities    *captypes.Settings           `json:"capabilities,omitempty"`
 }
 
 func (c *FileConfig) IsTurnLogsEnabled() bool {
@@ -196,6 +198,9 @@ func FileConfigToAppSettings(fc FileConfig) ttypes.AppSettings {
 	if fc.Memory != nil {
 		s.Memory = *fc.Memory
 	}
+	if fc.Capabilities != nil {
+		s.Capabilities = captypes.Clone(*fc.Capabilities)
+	}
 	if fc.Safety != nil {
 		s.Safety = *fc.Safety
 		s.Safety.CommandRules = append([]ttypes.CommandSeverityRule(nil), fc.Safety.CommandRules...)
@@ -222,6 +227,8 @@ func ApplyAppSettingsToFileConfig(fc *FileConfig, s ttypes.AppSettings) {
 	fc.Memory = &memorySettings
 	fc.Safety = &safetySettings
 	fc.LocalHistory = &historySettings
+	capabilities := captypes.Clone(s.Capabilities)
+	fc.Capabilities = &capabilities
 	fc.ActiveProvider = s.ActiveProvider
 	if s.Accounts != nil {
 		fc.Accounts = cloneAccounts(s.Accounts)
@@ -263,6 +270,9 @@ func FileConfigToSession(fc FileConfig) *session.Config {
 	}
 	if fc.Memory != nil {
 		cfg.Memory = *fc.Memory
+	}
+	if fc.Capabilities != nil {
+		cfg.Capabilities = captypes.Clone(*fc.Capabilities)
 	}
 	if fc.Safety != nil {
 		cfg.Safety = *fc.Safety

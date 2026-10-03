@@ -37,17 +37,44 @@ func (s *Session) newAgent(p *provider.Provider, multiAgent bool, modalities []s
 		a.CommandPolicy = safety.CommandPolicyFromSettings(s.cfg.Safety)
 	}
 
-	a.Yolo = s.YoloEnabled()
-	a.YoloMode = s.YoloEnabled
 	a.AsyncMgr = s.asyncMgr
+	a.WorkDir = s.WorkDir()
+	s.bindContinuity(a, s.db, s.sessionID)
+	s.bindGuidanceCache(a)
 
 	a.FilteredTools = configuredOrchestratorTools(s.cfg, multiAgent, p.Model)
 
 	a.Policy = safety.DefaultPolicy()
 
 	a.ToolFn = s.buildToolFn(multiAgent, p, modalities)
-	a.PermissionReviewer = s.permissionReviewer(a)
+	s.bindAgentPermissionPolicy(a)
 	return a
+}
+
+func (s *Session) bindGuidanceCache(a *agent.Agent) {
+	if s == nil || a == nil {
+		return
+	}
+	a.GuidanceCacheLoad = func(key string) (string, bool) {
+		s.guidanceMu.Lock()
+		defer s.guidanceMu.Unlock()
+		value, ok := s.guidanceCache[key]
+		return value, ok
+	}
+	a.GuidanceCacheStore = func(key, value string) {
+		s.guidanceMu.Lock()
+		if s.guidanceCache == nil {
+			s.guidanceCache = make(map[string]string)
+		}
+		if _, exists := s.guidanceCache[key]; !exists && len(s.guidanceCache) >= 8 {
+			for oldest := range s.guidanceCache {
+				delete(s.guidanceCache, oldest)
+				break
+			}
+		}
+		s.guidanceCache[key] = value
+		s.guidanceMu.Unlock()
+	}
 }
 
 // buildToolFn constructs the actual tool dispatch closure. It reads session

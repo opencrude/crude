@@ -17,6 +17,7 @@
 #   shot[:label]              extra screenshot
 #
 # Env: COLS ROWS PAINT_WAIT STEP_WAIT FONT_SIZE CRUDE_ARGS CRUDE_CWD KEEP_OPEN
+# CRUDE_BIN may select a prebuilt, deterministic visual acceptance test binary.
 set -uo pipefail
 
 OUTDIR="${1:?usage: tuishot.sh <outdir> [step ...]}"
@@ -33,7 +34,7 @@ KEEP_OPEN="${KEEP_OPEN:-0}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 CRUDE_CWD="${CRUDE_CWD:-$REPO}"
 WORK=/tmp/crude-tuishot
-BIN="$WORK/crude"
+BIN="${CRUDE_BIN:-$WORK/crude}"
 LOG="$WORK/crude.log"
 LAUNCH="$WORK/launch.sh"
 mkdir -p "$WORK" "$OUTDIR"
@@ -43,20 +44,27 @@ IMPORT=/home/lenovo/tools/imagemagick-7.1.2-18/bin/import
 export DISPLAY="${DISPLAY:-:0}"
 
 WIN_ID=""
+CAPTURE_PID=""
 cleanup() {
   [ "$KEEP_OPEN" = "1" ] && return 0
   [ -n "$WIN_ID" ] && xdotool windowkill "$WIN_ID" 2>/dev/null
-  pkill -f "$BIN" 2>/dev/null
-  pkill -f 'alacritty --class CrudeShot' 2>/dev/null
+  if [ -n "$CAPTURE_PID" ]; then
+    kill "$CAPTURE_PID" 2>/dev/null || true
+    wait "$CAPTURE_PID" 2>/dev/null || true
+  fi
   return 0
 }
 trap cleanup EXIT
 
+if [ -n "${CRUDE_BIN:-}" ]; then
+  [ -x "$BIN" ] || { echo "CRUDE_BIN is not executable"; exit 1; }
+else
 echo "== building crude =="
 # Embedded terminal needs libghostty-vt (cgo). Source the pin env so
 # CGO_ENABLED=1 even when the parent shell disabled it.
 # shellcheck disable=SC1091
 ( cd "$REPO" && . scripts/libghostty_env.sh && go build -o "$BIN" . ) || { echo "BUILD FAILED"; exit 1; }
+fi
 
 # NO_COLOR is inherited from some parent shells (e.g. Cursor's, which also sets
 # TERM=dumb). Bubble Tea's colorprofile maps NO_COLOR to Ascii and strips every
@@ -90,6 +98,7 @@ alacritty --class CrudeShot,CrudeShot \
   -o "env.COLORTERM=\"truecolor\"" \
   -o "env.NO_COLOR=\"\"" \
   -e "$LAUNCH" >>"$WORK/alacritty.log" 2>&1 &
+CAPTURE_PID=$!
 
 for _ in $(seq 1 100); do
   WIN_ID=$(xdotool search --class "CrudeShot" 2>/dev/null | tail -1 || true)

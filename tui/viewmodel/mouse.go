@@ -34,7 +34,7 @@ const (
 )
 
 func (m *App) classifyShellRegion(x, y int, isWheel bool) shellRegion {
-	if m.sessionDeckBlocking() && !isWheel {
+	if m.sessionDeckBlocking() && !isWheel && !m.agentPromptNavigationHit(x, y) {
 		return regionSessionDeck
 	}
 
@@ -117,7 +117,17 @@ func (m *App) blockingDeckShieldsPointer(x, y int, preserveDeckCapture bool) boo
 			}
 		}
 	}
-	return !m.sessionDeckRect.Contains(x, y)
+	return !m.sessionDeckRect.Contains(x, y) && !m.agentPromptNavigationHit(x, y)
+}
+
+func (m *App) agentPromptNavigationHit(x, y int) bool {
+	if !m.sessionDeckAllowsNavigation() {
+		return false
+	}
+	if x < m.sidebarHitWidth() {
+		return true
+	}
+	return m.tabBarVisible() && y >= m.chromeTopRow()-2 && y < m.chromeTopRow()
 }
 
 // handleShellPointer routes one pointer message through the root Host.
@@ -260,6 +270,7 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 
 	case regionSessionDeck:
 		m.setTermDockFocused(false)
+		m.FocusStack.Clear()
 		m.setSessionDeckFocused(true)
 		return m, m.handleShellPointer(msg)
 

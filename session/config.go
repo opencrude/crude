@@ -4,6 +4,7 @@ import (
 	"crude/provider"
 	"crude/sessiondb"
 	ttypes "crude/types"
+	captypes "crude/types/capability"
 	"fmt"
 	"slices"
 	"strings"
@@ -35,12 +36,13 @@ type CategoryConfig struct {
 	// this session's main agent, "workspace" follows the workspace's main
 	// agent. A category carrying a marker stores no provider/model values;
 	// resolution follows the marker at read time. Empty means explicit.
-	Inherit      string   `json:"inherit,omitempty"`
-	Policy       string   `json:"policy,omitempty"`
-	Description  string   `json:"description,omitempty"`
-	Instructions string   `json:"instructions,omitempty"`
-	AllowedTools []string `json:"allowed_tools,omitempty"`
-	DeniedTools  []string `json:"denied_tools,omitempty"`
+	Inherit      string            `json:"inherit,omitempty"`
+	Policy       string            `json:"policy,omitempty"`
+	Description  string            `json:"description,omitempty"`
+	Instructions string            `json:"instructions,omitempty"`
+	AllowedTools []string          `json:"allowed_tools,omitempty"`
+	DeniedTools  []string          `json:"denied_tools,omitempty"`
+	SkillModes   map[string]string `json:"skill_modes,omitempty"`
 
 	ModelContextWindow int     `json:"model_context_window,omitempty"`
 	ModelInputPrice    float64 `json:"model_input_price,omitempty"`
@@ -113,6 +115,7 @@ type Config struct {
 	TurnLogsEnabled bool
 	Agents          AgentsConfig
 	Memory          ttypes.MemorySettings
+	Capabilities    captypes.Settings
 	Safety          ttypes.SafetySettings
 
 	// workspaceMain is a copy of the workspace baseline's main-agent
@@ -249,6 +252,7 @@ func (c *Config) GetActiveDefaultCategory() CategoryConfig {
 				if cat.AccountID != "" {
 					resolved.AccountID = cat.AccountID
 				}
+				resolved = mergeCategoryConfig(resolved, CategoryConfig{AllowedTools: cat.AllowedTools, DeniedTools: cat.DeniedTools, SkillModes: cat.SkillModes})
 				c.resolveCategoryDefaults(&resolved)
 				return resolved
 			}
@@ -344,11 +348,13 @@ func (c *Config) selectedMainCategory(prof ProfileConfig) (CategoryConfig, error
 		}
 		selected.Instructions = strings.TrimSpace(strings.Join([]string{selected.Instructions, named.Instructions}, "\n\n"))
 		selected.DeniedTools = append(append([]string(nil), selected.DeniedTools...), named.DeniedTools...)
+		selected = mergeCategoryConfig(selected, CategoryConfig{SkillModes: named.SkillModes})
 		if len(named.AllowedTools) > 0 {
 			selected.AllowedTools = append([]string(nil), named.AllowedTools...)
 		}
 	}
 	if over := c.selectedMainOverride; over != nil {
+		selected = mergeCategoryConfig(selected, CategoryConfig{AllowedTools: over.AllowedTools, DeniedTools: over.DeniedTools, SkillModes: over.SkillModes})
 		if over.AccountID != "" {
 			selected.AccountID = over.AccountID
 		}
@@ -401,12 +407,14 @@ func (c *Config) GetCategoryConfig(category string) CategoryConfig {
 				resolved.AccountID = cat.AccountID
 			}
 			c.resolveCategoryDefaults(&resolved)
+			resolved = mergeCategoryConfig(resolved, CategoryConfig{AllowedTools: cat.AllowedTools, DeniedTools: cat.DeniedTools, SkillModes: cat.SkillModes})
 			return resolved
 		case cat.Inherit == InheritMain:
 			main := c.GetActiveDefaultCategory()
 			if cat.AccountID != "" {
 				main.AccountID = cat.AccountID
 			}
+			main = mergeCategoryConfig(main, CategoryConfig{AllowedTools: cat.AllowedTools, DeniedTools: cat.DeniedTools, SkillModes: cat.SkillModes})
 			return main
 		}
 		inheritsAccount := cat.AccountID == ""
@@ -522,6 +530,7 @@ func catConfigToSettings(v CategoryConfig) ttypes.CategorySettings {
 		Enabled:      cloneBoolPtr(v.Enabled),
 		Instructions: v.Instructions,
 		AllowedTools: append([]string(nil), v.AllowedTools...), DeniedTools: append([]string(nil), v.DeniedTools...),
+		SkillModes:               v.SkillModes,
 		AccountID:                v.AccountID,
 		Model:                    v.Model,
 		ThinkingEffort:           v.ThinkingEffort,
@@ -546,6 +555,7 @@ func catSettingsToConfig(v ttypes.CategorySettings) CategoryConfig {
 		Enabled:      cloneBoolPtr(v.Enabled),
 		Instructions: v.Instructions,
 		AllowedTools: append([]string(nil), v.AllowedTools...), DeniedTools: append([]string(nil), v.DeniedTools...),
+		SkillModes:               v.SkillModes,
 		AccountID:                v.AccountID,
 		Model:                    v.Model,
 		ThinkingEffort:           v.ThinkingEffort,
@@ -647,6 +657,7 @@ func ConfigToSettings(cfg *Config) ttypes.Settings {
 		TurnLogsEnabled:  turnLogs,
 		Agents:           agentsSettings,
 		Memory:           cfg.Memory,
+		Capabilities:     captypes.Clone(cfg.Capabilities),
 		Safety:           safetySettings,
 	}
 }

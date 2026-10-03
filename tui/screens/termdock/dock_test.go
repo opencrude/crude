@@ -46,32 +46,33 @@ func TestDockHeaderActionsEmitPanelCommands(t *testing.T) {
 	dock.Mount("t1", a)
 	dock.Layout(ui.LayoutContext{}, ui.Rect{X: 0, Y: 0, W: 80, H: 12})
 
-	if len(dock.actions) != 3 {
-		t.Fatalf("header actions=%d want 3", len(dock.actions))
+	if len(dock.actions) != 6 {
+		t.Fatalf("header actions=%d want 6", len(dock.actions))
 	}
 	click := func(i int) ui.EventResult {
 		r := dock.actions[i].rect
-		return dock.Handle(ui.EventContext{LocalX: r.X + 1, LocalY: r.Y},
-			ui.MouseClickEvent(tea.MouseClickMsg{Button: tea.MouseLeft, X: r.X + 1, Y: r.Y}))
+		header := dock.header.Bounds()
+		return dock.Handle(ui.EventContext{LocalX: header.X + r.X + 1, LocalY: header.Y},
+			ui.MouseClickEvent(tea.MouseClickMsg{Button: tea.MouseLeft, X: header.X + r.X + 1, Y: header.Y}))
 	}
-	res := click(0)
+	res := click(1)
 	if res.Action == nil || res.Action.ID != ActionNew {
 		t.Fatalf("new icon action=%+v want %s", res.Action, ActionNew)
 	}
-	res = click(1)
+	res = click(2)
 	if res.Action == nil || res.Action.ID != shellterm.ActionPromote {
 		t.Fatalf("float icon action=%+v want %s", res.Action, shellterm.ActionPromote)
 	}
 	if id, _ := res.Action.Payload.(string); id != "t1" {
 		t.Fatalf("float payload=%v want t1", res.Action.Payload)
 	}
-	res = click(2)
+	res = click(3)
 	if res.Action == nil || res.Action.ID != shellterm.ActionClose {
 		t.Fatalf("close icon action=%+v want %s", res.Action, shellterm.ActionClose)
 	}
 
-	if got := dock.Active().Bounds().Y; got != dividerH+1 {
-		t.Fatalf("terminal body starts at %d want one action row below divider", got)
+	if got := dock.Active().Bounds().Y; got != dividerH+ui.StripHeight {
+		t.Fatalf("terminal body starts at %d want tab strip below divider", got)
 	}
 }
 

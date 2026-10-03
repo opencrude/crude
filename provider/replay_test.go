@@ -52,6 +52,47 @@ func TestOpaqueReplayLetsProviderDecideModelCompatibility(t *testing.T) {
 	}
 }
 
+func TestNewConnectionReplayWarmsAfterColdTransition(t *testing.T) {
+	tools := []ToolDef{{Type: "function", Function: FunctionDef{Name: "read_file"}}}
+	for _, boundary := range []string{"protocol", "endpoint", "tools", "system"} {
+		t.Run(boundary, func(t *testing.T) {
+			old := &Provider{ID: "provider", BaseURL: "https://old.test/v1", StandardName: "anthropic"}
+			current := Provider{ID: old.ID, BaseURL: old.BaseURL, StandardName: old.StandardName}
+			prefix := []ChatMessage{NewTextMessage("system", "stable"), NewTextMessage("user", "work")}
+			prior := NewTextMessage("assistant", "old result")
+			prior.ProviderItems = StampProviderItems([]ProviderItem{{Standard: "anthropic", Type: "thinking", Data: json.RawMessage(`{"type":"thinking","thinking":"trace","signature":"old-signature"}`)}}, old, "model", RequestPrefixHash(prefix, tools))
+			prior.ReplayScope, prior.ReplayPrefixHash = old.ReplayScope(), RequestPrefixHash(prefix, tools)
+			history := append(prefix, prior, NewTextMessage("user", "next"))
+			currentTools := tools
+			switch boundary {
+			case "protocol":
+				current.StandardName = "openai-responses"
+			case "endpoint":
+				current.BaseURL = "https://new.test/v1"
+			case "tools":
+				currentTools = []ToolDef{{Type: "function", Function: FunctionDef{Name: "read_file", Description: "changed schema"}}}
+			case "system":
+				history[0] = NewTextMessage("system", "new policy")
+			}
+			projected := FilterReplayMessages(history, currentTools, &current)
+			if len(projected[2].ProviderItems) != 0 {
+				t.Fatal("transition retained invalid old replay")
+			}
+			fresh := NewTextMessage("assistant", "new result")
+			fresh.ReplayScope, fresh.ReplayPrefixHash = current.ReplayScope(), RequestPrefixHash(projected, currentTools)
+			fresh.ProviderItems = StampProviderItems([]ProviderItem{{Standard: current.ProtocolID(), Type: "reasoning", Data: json.RawMessage(`{"type":"reasoning","encrypted_content":"new-valid-replay"}`)}}, &current, "model", fresh.ReplayPrefixHash)
+			history = append(history, fresh, NewTextMessage("user", "steady request"))
+			warm := FilterReplayMessages(history, currentTools, &current)
+			if len(warm[4].ProviderItems) != 1 || string(warm[4].ProviderItems[0].Data) != string(fresh.ProviderItems[0].Data) {
+				t.Fatal("stable new connection never warmed its own replay prefix after the transition")
+			}
+			if len(history[2].ProviderItems) != 1 || len(history[4].ProviderItems) != 1 {
+				t.Fatal("projection changed canonical producer records")
+			}
+		})
+	}
+}
+
 func BenchmarkFilterReplayMessagesDense(b *testing.B) {
 	providerConfig := &Provider{ID: "openai", BaseURL: "https://api.openai.com/v1", StandardName: "openai-responses"}
 	tools := []ToolDef{{Type: "function", Function: FunctionDef{Name: "read_file"}}}

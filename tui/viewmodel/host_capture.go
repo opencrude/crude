@@ -14,6 +14,9 @@ func (m *App) chatHostVisible() bool {
 	if m.isEditorActive() {
 		return false
 	}
+	if m.isGitReviewActive() {
+		return false
+	}
 	if m.AgentMgr.VisibleCount() == 0 && m.EditorState.ActiveView == "" {
 		return false
 	}
@@ -39,6 +42,9 @@ func (m *App) sidebarContentVisible() bool {
 // launcherHostVisible matches the shellLauncherSlot condition including
 // minimum inner width and chat-area height.
 func (m *App) launcherHostVisible() bool {
+	if m.isGitReviewActive() {
+		return false
+	}
 	if m.launcherScreen == nil {
 		return false
 	}

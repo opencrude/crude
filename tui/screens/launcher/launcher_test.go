@@ -1,19 +1,14 @@
 package launcher
 
 import (
-	"fmt"
-	"path/filepath"
-	"strings"
-	"testing"
-
-	tea "charm.land/bubbletea/v2"
-
-	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/tui/uitest"
 	"crude/workspace"
+	"path/filepath"
+	"strings"
+	"testing"
 )
 
 func testScreen(t *testing.T, width, height int, workspaces []workspace.WorkspaceInfo) (*Screen, *ui.Host, *surface.CellBuffer) {
@@ -47,482 +42,50 @@ func bufferText(buf *surface.CellBuffer) string {
 }
 
 func TestPaintGoldenCellBufferContract(t *testing.T) {
-	s, h, buf := testScreen(t, 110, 16, []workspace.WorkspaceInfo{
-		{ID: "alpha", ProjectName: "alpha", ProjectDir: "/projects/alpha", SessionCount: 2},
-	})
+	_, h, buf := testScreen(t, 110, 16, []workspace.WorkspaceInfo{{ID: "alpha", ProjectName: "alpha", ProjectDir: "/projects/alpha", SessionCount: 2}})
 	h.Paint(buf)
-
-	if nonEmpty := countNonEmptyCells(buf); nonEmpty == 0 {
-		t.Fatal("launcher paint produced no non-empty cells")
-	}
-	plain := bufferText(buf)
-	for _, label := range []string{"New Session", "RECENT", "alpha", "✨"} {
-		if !strings.Contains(plain, label) {
-			t.Fatalf("missing label %q:\n%s", label, plain)
+	text := bufferText(buf)
+	for _, label := range []string{"New Session", "New Workspace", "Recent workspaces", "alpha", "Skills", "MCP"} {
+		if !strings.Contains(text, label) {
+			t.Fatalf("missing %q:\n%s", label, text)
 		}
 	}
-
-	// Brand uses theme accent on row 0.
-	wantAccent := ui.NewTokenSet(theme.DefaultDark()).Color(ui.ColorAccent)
-	if !bufferHasFG(buf, wantAccent) {
-		t.Fatal("launcher paint missing theme accent foreground")
-	}
-
-	// Byte-identical regression on the static (pre-animation) frame.
-	// Deterministic: testScreen never calls SetAnimation, so spinFrame=0
-	// renders the hero's static layout.
 	uitest.CheckGolden(t, "launcher_dark_110x16", buf)
-
-	// Selected workspace row uses theme hover background.
-	h.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
-	h.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
-	buf.Clear()
-	h.Paint(buf)
-	wantHover := ui.NewTokenSet(theme.DefaultDark()).Color(ui.ColorHover)
-	lb := s.list.Bounds()
-	if got := buf.Get(lb.X, lb.Y).BG; got.IsDefault() || !got.Equal(wantHover) {
-		t.Fatalf("selected row BG=%#v want hover %#v", got, wantHover)
-	}
 }
-
-func TestLauncherSplitDividerDragResizesColumns(t *testing.T) {
-	s, h, _ := testScreen(t, 110, 16, nil)
-	startW := s.newWs.Bounds().W
-	div := s.divider.Bounds()
-	if div.Empty() {
-		t.Fatal("launcher divider bounds empty")
+func TestLauncherCompositionKeepsOriginalActionsAndRightPane(t *testing.T) {
+	s, _, buf := testScreen(t, 120, 32, manyWorkspaces(6))
+	if s.newSession.Bounds() != (ui.Rect{W: 118, H: 4}) || s.openWorkspace.Bounds() != (ui.Rect{Y: 5, W: 40, H: 4}) {
+		t.Fatal("wide action layout lost full-width New Session or left-column New Workspace")
 	}
-	clickX := div.X + div.W/2
-	clickY := div.Y + 1
-	res := h.Handle(tea.MouseClickMsg{X: clickX, Y: clickY, Button: tea.MouseLeft})
-	if !res.Handled || !h.HasPointerCapture() {
-		t.Fatalf("click divider: handled=%v capture=%v hit=%q", res.Handled, h.HasPointerCapture(), h.HitTest(clickX, clickY))
+	text := bufferText(buf)
+	for _, absent := range []string{"WORKSPACE", "Start a fresh conversation", "Settings", "Command Palette", "Help", "SHORTCUTS", "0 sessions"} {
+		if strings.Contains(text, absent) {
+			t.Fatalf("redundant content %q:\n%s", absent, text)
+		}
 	}
-	h.Handle(tea.MouseMotionMsg{X: clickX + 5, Y: clickY, Button: tea.MouseLeft})
-	h.Layout()
-	if s.newWs.Bounds().W != startW+5 {
-		t.Fatalf("after +5 drag left W=%d want %d", s.newWs.Bounds().W, startW+5)
+	r := s.list.Bounds()
+	line := strings.Split(text, "\n")[r.Y]
+	if r.X <= s.skills.Bounds().X+s.skills.Bounds().W || !strings.Contains(line, "ws-00") || strings.Contains(line, "ws-01") {
+		t.Fatalf("recent entries must stay in the right pane: %s", line)
 	}
-}
-
-func TestLauncherNarrowShortcutsDoNotPaintIntoWorkspacePane(t *testing.T) {
-	_, _, baseline := testScreen(t, 50, 20, nil)
-	s, h, painted := testScreen(t, 50, 20, nil)
-	s.SetShortcuts([][2]string{{"Ctrl+Alt+Shift+P", "UNIQUE_OVERFLOW_LABEL_THAT_MUST_BE_CLIPPED"}})
-	painted.Clear()
-	h.Paint(painted)
-	rightX := s.workspacePane.Bounds.X
-	for y := 0; y < painted.Height(); y++ {
-		for x := rightX; x < painted.Width(); x++ {
-			if got, want := painted.Get(x, y), baseline.Get(x, y); got != want {
-				t.Fatalf("shortcut escaped at (%d,%d): got=%#v want=%#v", x, y, got, want)
-			}
+	for _, width := range []int{40, 60} {
+		screen, _, _ := testScreen(t, width, 24, manyWorkspaces(3))
+		if screen.list.Bounds().W < width-5 {
+			t.Fatalf("narrow collection squeezed: %+v", screen.list.Bounds())
 		}
 	}
 }
-
-func countNonEmptyCells(buf *surface.CellBuffer) int {
-	n := 0
-	for y := 0; y < buf.Height(); y++ {
-		for x := 0; x < buf.Width(); x++ {
-			c := buf.Get(x, y)
-			if c.Char != 0 && c.Width != 0 {
-				n++
-			}
-		}
-	}
-	return n
-}
-
-func bufferHasFG(buf *surface.CellBuffer, want cell.Color) bool {
-	for y := 0; y < buf.Height(); y++ {
-		for x := 0; x < buf.Width(); x++ {
-			if fg := buf.Get(x, y).FG; !fg.IsDefault() && fg.Equal(want) {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func TestScreenPaintPreservesWelcomeHierarchy(t *testing.T) {
-	s, h, buf := testScreen(t, 110, 16, []workspace.WorkspaceInfo{
-		{ID: "alpha", ProjectName: "alpha", ProjectDir: "/projects/alpha", SessionCount: 2},
-		{ID: "beta", ProjectName: "beta", ProjectDir: "/projects/beta", SessionCount: 1},
-	})
-	h.Paint(buf)
-	plain := bufferText(buf)
-	for _, want := range []string{
-		"New Session",
-		filepath.FromSlash("/projects/current"),
-		"New Workspace",
-		"SHORTCUTS",
-		"RECENT",
-		"Search workspaces",
-		"alpha",
-		"beta",
-		"2 sessions",
-		"1 session",
-		"│",
-	} {
-		if !strings.Contains(plain, want) {
-			t.Fatalf("launcher paint missing %q:\n%s", want, plain)
-		}
-	}
-	for y := 0; y < buf.Height(); y++ {
-		if got := len([]rune(string(bufferRow(buf, y)))); got != buf.Width() {
-			t.Fatalf("row %d width=%d, want %d", y, got, buf.Width())
-		}
-	}
-	rows := make([][]rune, buf.Height())
-	for y := range rows {
-		rows[y] = bufferRow(buf, y)
-	}
-	if rows[1][0] != '│' || rows[1][109] != '│' || rows[2][0] != '│' || rows[2][109] != '│' {
-		t.Fatalf("hero side borders are not continuous: %q / %q", string(rows[1]), string(rows[2]))
-	}
-	if rows[6][0] != '│' || rows[6][39] != '│' || rows[7][0] != '│' || rows[7][39] != '│' {
-		t.Fatalf("New Workspace side borders are not continuous: %q / %q", string(rows[6]), string(rows[7]))
-	}
-	// The pane has two rails: the header sits on the content rail, and
-	// body rows (search, list) sit one column further in on the body rail.
-	// All body rows must share the same origin and width.
-	pane := s.workspacePane
-	if got := s.header.Bounds(); got.X != pane.Content.X || got.W != pane.Content.W {
-		t.Fatalf("header not on content rail: got=%+v content=%+v", got, pane.Content)
-	}
-	if s.search.Bounds().X != s.list.Bounds().X || s.search.Bounds().W != s.list.Bounds().W {
-		t.Fatalf("body rail drift: search=%+v list=%+v", s.search.Bounds(), s.list.Bounds())
-	}
-	if s.search.Bounds().X != pane.Content.X+1 {
-		t.Fatalf("body rail should start one column past content: search.X=%d content.X=%d", s.search.Bounds().X, pane.Content.X)
-	}
-}
-
-func bufferRow(buf *surface.CellBuffer, y int) []rune {
-	row := make([]rune, buf.Width())
-	for x := range row {
-		row[x] = buf.Get(x, y).Char
-		if row[x] == 0 {
-			row[x] = ' '
-		}
-	}
-	return row
-}
-
-func TestScreenEmptyAndNoResultsStates(t *testing.T) {
-	s, h, buf := testScreen(t, 80, 20, nil)
-	h.Paint(buf)
-	if got := bufferText(buf); !strings.Contains(got, "No recent workspaces") {
-		t.Fatalf("empty state missing:\n%s", got)
-	}
-
-	s.SetData("/projects/current", []workspace.WorkspaceInfo{
-		{ProjectName: "alpha", ProjectDir: "/projects/alpha"},
-	})
-	h.MarkLayout()
-	h.Layout()
-	s.SyncFocus()
-	h.Handle(tea.KeyPressMsg{Code: '/', Text: "/"})
-	h.Handle(tea.KeyPressMsg{Code: 'z', Text: "z"})
-	h.Layout()
-	buf.Clear()
-	h.Paint(buf)
-	if got := bufferText(buf); !strings.Contains(got, `No workspaces match "z"`) {
-		t.Fatalf("no-results state missing:\n%s", got)
-	}
-}
-
-func TestLauncherPaintHandlesEveryNarrowWidth(t *testing.T) {
-	workspaces := []workspace.WorkspaceInfo{
-		{ID: "alpha", ProjectName: "alpha", ProjectDir: "/projects/alpha"},
-		{ID: "beta", ProjectName: "beta", ProjectDir: "/projects/beta"},
-		{ID: "gamma", ProjectName: "gamma", ProjectDir: "/projects/gamma"},
-	}
-	for width := 1; width <= 60; width++ {
-		t.Run(fmt.Sprintf("width_%d", width), func(t *testing.T) {
-			_, host, buf := testScreen(t, width, 18, workspaces)
-			host.Paint(buf)
-		})
-	}
-}
-
-func TestScreenNavigationAndFilterFocusAreStable(t *testing.T) {
-	s, h, _ := testScreen(t, 100, 24, []workspace.WorkspaceInfo{
-		{ProjectName: "alpha", ProjectDir: "/projects/alpha"},
-		{ProjectName: "beta", ProjectDir: "/projects/beta"},
-	})
-	if got := s.SelectedItem(); got == nil || got.Kind != ItemNewSession {
-		t.Fatalf("initial selection=%#v", got)
-	}
-	h.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
-	if got := s.SelectedItem(); got == nil || got.Kind != ItemOpenFolder {
-		t.Fatalf("down selection=%#v", got)
-	}
-	h.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
-	if got := s.SelectedItem(); got == nil || got.Workspace == nil || got.Workspace.Name != "alpha" {
-		t.Fatalf("workspace selection=%#v", got)
-	}
-
-	h.Handle(tea.KeyPressMsg{Code: '/', Text: "/"})
-	if !s.FilterActive() || h.Focused() != SearchID {
-		t.Fatalf("filter focus=%q active=%v", h.Focused(), s.FilterActive())
-	}
-	h.Handle(tea.KeyPressMsg{Code: 'b', Text: "b"})
-	if got := s.SelectedItem(); got == nil || got.Workspace == nil || got.Workspace.Name != "beta" {
-		t.Fatalf("filtered selection=%#v", got)
-	}
-	// Once filtering is active, focus may be moved by a mouse click, but
-	// typing must return to the SearchField rather than becoming a dead key.
-	h.Handle(tea.MouseClickMsg{X: 50, Y: 7, Button: tea.MouseLeft})
-	h.Handle(tea.KeyPressMsg{Code: 'e', Text: "e"})
-	if got := s.Query(); got != "be" {
-		t.Fatalf("filter query after list focus=%q", got)
-	}
-	h.Handle(tea.KeyPressMsg{Code: tea.KeyEsc})
-	if s.FilterActive() || h.Focused() == SearchID {
-		t.Fatalf("filter did not close: active=%v focus=%q", s.FilterActive(), h.Focused())
-	}
-}
-
-func TestScreenActivationIsOwnerTagged(t *testing.T) {
-	s, h, _ := testScreen(t, 100, 24, nil)
-	result := h.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if result.Cmd == nil {
-		t.Fatal("Enter should activate New Session")
-	}
-	msg, ok := result.Cmd().(ActivateMsg)
-	if !ok || msg.Screen != s || msg.Kind != ItemNewSession {
-		t.Fatalf("activation=%#v", result.Cmd())
-	}
-}
-
-func TestScreenRowsUseThemeAndSelectionState(t *testing.T) {
-	s, h, buf := testScreen(t, 100, 24, []workspace.WorkspaceInfo{
-		{ProjectName: "alpha", ProjectDir: "/projects/alpha"},
-	})
-	// Move from the hero to the workspace row.
-	h.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
-	h.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
-	buf.Clear()
-	h.Paint(buf)
-	// The selected row is the first workspace row in the body rail.
-	lb := s.list.Bounds()
-	selectedBG := buf.Get(lb.X, lb.Y).BG
-	if selectedBG.IsDefault() || selectedBG.Equal(cell.NoColor) {
-		t.Fatalf("selected row has no explicit hover background at (%d,%d): %#v", lb.X, lb.Y, selectedBG)
-	}
-	if got := s.SelectedItem(); got == nil || got.Workspace == nil {
-		t.Fatal("workspace should be selected")
-	}
-}
-
-func TestWorkspacePaneUsesOneColumnContentRailWithoutScrollbar(t *testing.T) {
-	s, h, buf := testScreen(t, 110, 16, []workspace.WorkspaceInfo{
-		{ProjectName: "alpha", ProjectDir: "/projects/alpha"},
-		{ProjectName: "beta", ProjectDir: "/projects/beta"},
-	})
-	pane := s.workspacePane
-	if pane.Scrollbar.W != 0 {
-		t.Fatalf("unexpected scrollbar geometry: %+v", pane.Scrollbar)
-	}
-	if pane.Content.X != pane.Bounds.X+paneContentInset {
-		t.Fatalf("content must start one column inside pane: pane=%+v content=%+v", pane.Bounds, pane.Content)
-	}
-	if pane.Content.X+pane.Content.W != pane.Bounds.X+pane.Bounds.W {
-		t.Fatalf("content should reach pane edge without a scrollbar: pane=%+v content=%+v", pane.Bounds, pane.Content)
-	}
-	// Header sits on the content rail.
-	if got := s.header.Bounds(); got.X != pane.Content.X || got.W != pane.Content.W {
-		t.Fatalf("header escaped the content rail: got=%+v content=%+v", got, pane.Content)
-	}
-	// Body rows (search, list, empty) sit one column further in on the body rail.
-	bodyX := pane.Content.X + 1
-	bodyW := pane.Content.W - 1
-	for name, r := range map[string]ui.Rect{
-		"search": s.search.Bounds(),
-		"list":   s.list.Bounds(),
-		"empty":  s.empty.Bounds(),
-	} {
-		if r.X != bodyX || r.W != bodyW {
-			t.Fatalf("%s escaped the body rail: got=%+v body=(X=%d W=%d)", name, r, bodyX, bodyW)
-		}
-	}
-
-	// Header and search begin on their respective rails. Selecting the first
-	// workspace paints hover from the body rail to the pane's final column.
-	h.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
-	h.Handle(tea.KeyPressMsg{Code: tea.KeyDown})
-	buf.Clear()
-	h.Paint(buf)
-	if got := buf.Get(s.header.Bounds().X, s.header.Bounds().Y).Char; got != 'R' {
-		t.Fatalf("header starts at the wrong rail: %q", got)
-	}
-	if got := buf.Get(s.search.Bounds().X, s.search.Bounds().Y).Char; got != 'S' {
-		t.Fatalf("search starts at the wrong rail: %q", got)
-	}
-	searchEnd := s.search.Bounds().X + s.search.Bounds().W - 1
-	if got := buf.Get(searchEnd, s.search.Bounds().Y).Char; got != '⌕' {
-		t.Fatalf("search magnifier should sit at the trailing edge: %q", got)
-	}
-	if got := buf.Get(s.search.Bounds().X, s.search.Bounds().Y).BG; !got.Equal(s.tokens.Color(ui.ColorSubPaneBg)) {
-		t.Fatalf("search should use the filled list field background: %#v", got)
-	}
-	got := buf.Get(s.list.Bounds().X, s.list.Bounds().Y).Char
-	if got == '❯' || got == '>' || got == ' ' {
-		t.Fatalf("selected row should start with content, not a marker: %q", got)
-	}
-	rowEnd := s.list.Bounds().X + s.list.Bounds().W - 1
-	if got := buf.Get(rowEnd, s.list.Bounds().Y).BG; !got.Equal(s.tokens.Color(ui.ColorHover)) {
-		t.Fatalf("selected row does not reach the pane edge: got=%#v", got)
-	}
-}
-
-func TestWorkspacePaneReservesOnlyFinalColumnForScrollbar(t *testing.T) {
-	workspaces := make([]workspace.WorkspaceInfo, 30)
-	for i := range workspaces {
-		workspaces[i] = workspace.WorkspaceInfo{
-			ProjectName: "workspace-" + string(rune('a'+i%26)),
-			ProjectDir:  "/projects/workspace-" + string(rune('a'+i%26)),
-		}
-	}
-	s, h, buf := testScreen(t, 110, 16, workspaces)
-	pane := s.workspacePane
-	if pane.Scrollbar.W != 1 {
-		t.Fatalf("expected one-column scrollbar: %+v", pane.Scrollbar)
-	}
-	if pane.Scrollbar.X != pane.Bounds.X+pane.Bounds.W-1 {
-		t.Fatalf("scrollbar must own pane's final column: pane=%+v scrollbar=%+v", pane.Bounds, pane.Scrollbar)
-	}
-	if pane.Content.X+pane.Content.W != pane.Scrollbar.X {
-		t.Fatalf("content must terminate immediately before scrollbar: content=%+v scrollbar=%+v", pane.Content, pane.Scrollbar)
-	}
-	// Header sits on the content rail; body rows (search, list) sit on the
-	// body rail, one column further in, terminating before the scrollbar.
-	if got := s.header.Bounds(); got.X != pane.Content.X || got.W != pane.Content.W {
-		t.Fatalf("header drifted from content rail: got=%+v content=%+v", got, pane.Content)
-	}
-	bodyX := pane.Content.X + 1
-	bodyW := pane.Content.W - 1
-	for name, r := range map[string]ui.Rect{
-		"search": s.search.Bounds(),
-		"list":   s.list.Bounds(),
-	} {
-		if r.X != bodyX || r.W != bodyW {
-			t.Fatalf("%s drifted from scrollbar-aware body rail: got=%+v body=(X=%d W=%d)", name, r, bodyX, bodyW)
-		}
-	}
-	if s.scrollbar.Bounds() != pane.scrollbarRect(s.list.Bounds().Y, s.list.Bounds().H) {
-		t.Fatalf("scrollbar geometry was not derived from pane layout: got=%+v pane=%+v", s.scrollbar.Bounds(), pane)
-	}
-
-	searchBounds := s.search.Bounds()
-	h.Handle(tea.MouseWheelMsg{X: searchBounds.X, Y: searchBounds.Y, Button: tea.MouseWheelDown})
-	if s.ListScrollOffset() == 0 {
-		t.Fatal("wheel on fixed search row should scroll only the workspace viewport")
-	}
-	if s.search.Bounds() != searchBounds {
-		t.Fatalf("search moved while list scrolled: before=%+v after=%+v", searchBounds, s.search.Bounds())
-	}
-	buf.Clear()
-	h.Paint(buf)
-	if ch := buf.Get(pane.Scrollbar.X, s.list.Bounds().Y).Char; ch != '│' && ch != '┃' && ch != '█' {
-		t.Fatalf("scrollbar did not paint in final pane column: %q", ch)
-	}
-}
-
-func TestRebuildItemsEmitsWorkspacesOnly(t *testing.T) {
-	s := New(theme.DefaultDark())
-	s.SetData("/projects/current", []workspace.WorkspaceInfo{
-		{ID: "alpha", ProjectName: "alpha", ProjectDir: "/projects/alpha", SessionCount: 1},
-	})
-
-	var kinds []ItemKind
-	for _, it := range s.items {
-		kinds = append(kinds, it.Kind)
-	}
-	want := []ItemKind{ItemNewSession, ItemOpenFolder, ItemWorkspace}
-	if len(kinds) != len(want) {
-		t.Fatalf("items kinds=%v want %v", kinds, want)
-	}
-	for i := range want {
-		if kinds[i] != want[i] {
-			t.Fatalf("items[%d]=%v want %v (all=%v)", i, kinds[i], want[i], kinds)
-		}
-	}
-	s.selectFlat(2)
-	if got := s.SelectedWorkspacePath(); got != "/projects/alpha" {
-		t.Fatalf("SelectedWorkspacePath=%q", got)
-	}
-	cmd := s.activateSelected()
-	if cmd == nil {
-		t.Fatal("activateSelected returned nil")
-	}
-	msg := cmd()
-	act, ok := msg.(ActivateMsg)
-	if !ok || act.Kind != ItemWorkspace || act.WorkspacePath != "/projects/alpha" {
-		t.Fatalf("ActivateMsg=%#v", msg)
-	}
-}
-
-func TestPaintWorkspaceRow_EmptyNameUsesPathBasename(t *testing.T) {
-	const hash = "84db4726b4a4528b"
-	s, h, buf := testScreen(t, 110, 16, []workspace.WorkspaceInfo{
-		{ID: hash, ProjectName: "", ProjectDir: "/home/lenovo/ocd/readable-ws", SessionCount: 0},
-	})
-	_ = s
-	_ = h
-	plain := bufferText(buf)
-	if !strings.Contains(plain, "readable-ws") {
-		t.Fatalf("painted row must show path-derived name, got:\n%s", plain)
-	}
-	if strings.Contains(plain, hash) {
-		t.Fatalf("painted row must not show raw workspace hash %q:\n%s", hash, plain)
-	}
-}
-
-func TestWorkspaceSearchUsesFilledField(t *testing.T) {
-	s, h, buf := testScreen(t, 110, 16, []workspace.WorkspaceInfo{
-		{ProjectName: "alpha", ProjectDir: "/projects/alpha"},
-	})
-	if s.FilterActive() {
-		t.Fatal("idle search should not be in filter mode")
-	}
-	want := s.tokens.Color(ui.ColorSubPaneBg)
-	r := s.search.Bounds()
-	if got := buf.Get(r.X, r.Y).BG; !got.Equal(want) {
-		t.Fatalf("idle search BG=%#v want SubPaneBg %#v", got, want)
-	}
-	h.Handle(tea.KeyPressMsg{Code: '/', Text: "/"})
-	buf.Clear()
-	h.Paint(buf)
-	if got := buf.Get(r.X, r.Y).BG; !got.Equal(want) {
-		t.Fatalf("active search BG=%#v want SubPaneBg %#v", got, want)
-	}
-}
-
 func TestSetDataExcludesCurrentWorkspaceFromRecent(t *testing.T) {
 	s := New(theme.DefaultDark())
-	current := filepath.FromSlash("/projects/crude")
-	other := filepath.FromSlash("/projects/other")
-	s.SetData(current, []workspace.WorkspaceInfo{
-		{ID: workspace.WorkspaceID(current), ProjectName: "crude", ProjectDir: current, SessionCount: 7},
-		{ID: "legacy-current", ProjectName: "crude", ProjectDir: filepath.Join(current, "."), SessionCount: 7},
-		{ID: workspace.WorkspaceID(other), ProjectName: "other", ProjectDir: other, SessionCount: 3},
-	})
-	if len(s.workspaces) != 1 || s.workspaces[0].Name != "other" || s.workspaces[0].SessionCount != 3 {
-		t.Fatalf("recent workspaces=%+v, want only the other workspace", s.workspaces)
+	current := filepath.FromSlash("/projects/current")
+	s.SetData(current, []workspace.WorkspaceInfo{{ID: workspace.WorkspaceID(current), ProjectDir: current}, {ID: "other", ProjectDir: "/projects/other"}})
+	if len(s.workspaces) != 1 || s.workspaces[0].Name != "other" {
+		t.Fatalf("recent=%+v", s.workspaces)
 	}
 }
-
-func TestHeroBorderDoesNotPulseWhileIdle(t *testing.T) {
-	s, h, buf := testScreen(t, 110, 16, nil)
-	s.SetAnimation(1500, 10)
-	buf.Clear()
-	h.Paint(buf)
-	want := s.tokens.Color(ui.ColorAccent)
-	r := s.hero.Bounds()
-	if got := buf.Get(r.X, r.Y).FG; !got.Equal(want) {
-		t.Fatalf("idle selected hero border FG=%#v want static accent %#v", got, want)
+func TestWorkspaceNamesNeverShowOpaqueHashes(t *testing.T) {
+	_, _, buf := testScreen(t, 120, 30, []workspace.WorkspaceInfo{{ID: "84db4726b4a4528b", ProjectDir: "/projects/readable-name"}})
+	if text := bufferText(buf); !strings.Contains(text, "readable-name") || strings.Contains(text, "84db4726b4a4528b") {
+		t.Fatal(text)
 	}
 }

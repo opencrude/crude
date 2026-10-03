@@ -75,7 +75,7 @@ func TestOpenAIResponsesRequestEncodesConversationItems(t *testing.T) {
 	}
 }
 
-func TestOpenAIResponsesReconstructedAssistantUsesInputContent(t *testing.T) {
+func TestOpenAIResponsesReconstructedAssistantUsesTextMessage(t *testing.T) {
 	body, err := (&OpenAIResponsesStandard{}).EncodeRequest(&ChatRequest{
 		Model: "gpt-test",
 		Messages: []ChatMessage{
@@ -90,9 +90,11 @@ func TestOpenAIResponsesReconstructedAssistantUsesInputContent(t *testing.T) {
 		t.Fatalf("unmarshal request: %v", err)
 	}
 	item := request["input"].([]any)[0].(map[string]any)
-	content := item["content"].([]any)[0].(map[string]any)
-	if content["type"] != "input_text" {
-		t.Fatalf("assistant content type = %v, want input_text", content["type"])
+	if item["role"] != "assistant" || item["content"] != "previous answer" {
+		t.Fatalf("canonical assistant must use the documented string-content message: %#v", item)
+	}
+	if _, exists := item["id"]; exists {
+		t.Fatal("canonical assistant was assigned an invented provider message ID")
 	}
 }
 

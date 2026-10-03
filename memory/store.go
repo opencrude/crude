@@ -2,10 +2,11 @@ package memory
 
 import (
 	"context"
-	"crypto/sha256"
+	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -23,6 +24,13 @@ const (
 // MetaFTSFault is the memory_meta key recording why FTS5 was disabled.
 const MetaFTSFault = "fts_fault"
 
+var (
+	ErrRevisionConflict = errors.New("memory: revision conflict")
+	ErrRetired          = errors.New("memory: record is retired")
+	ErrExists           = errors.New("memory: record already exists")
+	ErrUnsupported      = errors.New("memory: claim lacks supporting evidence")
+)
+
 // Store provides durable memory operations over an already-open SQLite
 // database (crude wires it to workspace.db). It is safe for concurrent use;
 // the underlying pool is expected to be single-connection (sessiondb.Open
@@ -32,8 +40,8 @@ type Store struct {
 	ftsOK bool
 }
 
-// Attach migrates the memory schema onto db and returns a Store. FTS5
-// availability is probed during migration: when unavailable, the store
+// Attach initializes the current memory schema onto db and returns a Store. FTS5
+// availability is probed during initialization: when unavailable, the store
 // degrades to scan-based retrieval and records the fault in memory_meta —
 // Attach only fails on base-schema errors.
 func Attach(db *sql.DB) (*Store, error) {
@@ -41,7 +49,7 @@ func Attach(db *sql.DB) (*Store, error) {
 		return nil, fmt.Errorf("memory: nil db")
 	}
 	st := &Store{db: db}
-	if err := st.migrate(); err != nil {
+	if err := st.initialize(); err != nil {
 		return nil, err
 	}
 	return st, nil
@@ -57,6 +65,7 @@ func (st *Store) DB() *sql.DB { return st.db }
 const baseSchema = `
 CREATE TABLE IF NOT EXISTS workspace_memories (
     id                TEXT PRIMARY KEY,
+    revision          INTEGER NOT NULL CHECK(revision > 0),
     kind              TEXT NOT NULL DEFAULT 'fact',
     title             TEXT NOT NULL,
     content           TEXT NOT NULL,
@@ -66,6 +75,9 @@ CREATE TABLE IF NOT EXISTS workspace_memories (
     updated_at        INTEGER NOT NULL,
     entities          TEXT NOT NULL DEFAULT '',
     scope_paths       TEXT NOT NULL DEFAULT '[]',
+    applies_when      TEXT NOT NULL DEFAULT '',
+    evidence          TEXT NOT NULL DEFAULT '[]',
+    actor             TEXT NOT NULL,
     importance        INTEGER NOT NULL DEFAULT 40,
     status            TEXT NOT NULL DEFAULT 'active',
     superseded_by     TEXT NOT NULL DEFAULT '',
@@ -77,6 +89,65 @@ CREATE TABLE IF NOT EXISTS workspace_memories (
 );
 CREATE INDEX IF NOT EXISTS idx_workspace_memories_updated
     ON workspace_memories(pinned DESC, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_workspace_memories_status
+    ON workspace_memories(status, updated_at DESC);
+
+CREATE TABLE IF NOT EXISTS memory_revisions (
+    memory_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    record TEXT NOT NULL,
+    session_id TEXT NOT NULL,
+    op TEXT NOT NULL,
+    PRIMARY KEY(memory_id, revision)
+);
+CREATE TRIGGER IF NOT EXISTS memory_revisions_no_update BEFORE UPDATE ON memory_revisions
+    BEGIN SELECT RAISE(ABORT, 'memory revisions are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS memory_revisions_no_delete BEFORE DELETE ON memory_revisions
+    BEGIN SELECT RAISE(ABORT, 'memory revisions are immutable'); END;
+
+CREATE TABLE IF NOT EXISTS memory_observations (
+    session_id TEXT NOT NULL,
+    turn INTEGER NOT NULL,
+    position INTEGER NOT NULL,
+    message_id TEXT NOT NULL,
+    tool_call_id TEXT NOT NULL,
+    observation TEXT NOT NULL,
+    PRIMARY KEY(session_id, turn, position)
+);
+CREATE INDEX IF NOT EXISTS idx_memory_observations_origin
+    ON memory_observations(session_id, tool_call_id, message_id);
+CREATE TABLE IF NOT EXISTS memory_episodes (
+    id TEXT PRIMARY KEY,
+    session_id TEXT NOT NULL,
+    turn INTEGER NOT NULL,
+    episode TEXT NOT NULL,
+    created_at INTEGER NOT NULL
+);
+CREATE TRIGGER IF NOT EXISTS memory_episodes_no_update BEFORE UPDATE ON memory_episodes
+    BEGIN SELECT RAISE(ABORT, 'memory episodes are immutable'); END;
+CREATE TRIGGER IF NOT EXISTS memory_episodes_no_delete BEFORE DELETE ON memory_episodes
+    BEGIN SELECT RAISE(ABORT, 'memory episodes are immutable'); END;
+
+CREATE TABLE IF NOT EXISTS memory_exposures (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    memory_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    session_id TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    FOREIGN KEY(memory_id, revision) REFERENCES memory_revisions(memory_id, revision)
+);
+CREATE TABLE IF NOT EXISTS memory_feedback (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    memory_id TEXT NOT NULL,
+    revision INTEGER NOT NULL,
+    session_id TEXT NOT NULL,
+    actor TEXT NOT NULL,
+    kind TEXT NOT NULL,
+    evidence TEXT NOT NULL,
+    at INTEGER NOT NULL,
+    FOREIGN KEY(memory_id, revision) REFERENCES memory_revisions(memory_id, revision)
+);
 
 CREATE TABLE IF NOT EXISTS memory_history_turns (
     id             INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -123,116 +194,22 @@ CREATE TABLE IF NOT EXISTS memory_meta (
 );
 `
 
-// memoryColumns is the additive column set for workspace_memories. Legacy
-// DBs (v0 schema: id/kind/title/content/source_session_id/pinned/created_at/
-// updated_at) upgrade idempotently via PRAGMA table_info + ALTER TABLE.
-var memoryColumns = []struct {
-	Name string
-	DDL  string
-}{
-	{"entities", "TEXT NOT NULL DEFAULT ''"},
-	{"scope_paths", "TEXT NOT NULL DEFAULT '[]'"},
-	{"importance", "INTEGER NOT NULL DEFAULT 40"},
-	{"status", "TEXT NOT NULL DEFAULT 'active'"},
-	{"superseded_by", "TEXT NOT NULL DEFAULT ''"},
-	{"source", "TEXT NOT NULL DEFAULT 'tool'"},
-	{"provenance", "TEXT NOT NULL DEFAULT ''"},
-	{"use_count", "INTEGER NOT NULL DEFAULT 0"},
-	{"last_used_at", "INTEGER NOT NULL DEFAULT 0"},
-	{"norm", "TEXT NOT NULL DEFAULT ''"},
-}
-
-func (st *Store) migrate() error {
-	if _, err := st.db.Exec(baseSchema); err != nil {
+func (st *Store) initialize() error {
+	tx, err := st.db.Begin()
+	if err != nil {
+		return fmt.Errorf("memory: begin initialization: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(baseSchema); err != nil {
 		return fmt.Errorf("memory: base schema: %w", err)
 	}
-	if err := st.ensureMemoryColumns(); err != nil {
-		return err
+	if _, err := tx.Exec(`SELECT ` + recordSelectColumns + `, norm FROM workspace_memories LIMIT 0`); err != nil {
+		return fmt.Errorf("memory: current schema required; align local data manually: %w", err)
 	}
-	// Index on additive columns must be created after the columns exist
-	// (legacy v0 tables lack them until ensureMemoryColumns runs).
-	if _, err := st.db.Exec(`
-		CREATE INDEX IF NOT EXISTS idx_workspace_memories_status
-			ON workspace_memories(status, updated_at DESC)
-	`); err != nil {
-		return fmt.Errorf("memory: status index: %w", err)
-	}
-	if err := st.backfillNorm(); err != nil {
-		return err
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("memory: commit initialization: %w", err)
 	}
 	st.migrateFTS()
-	return nil
-}
-
-func (st *Store) ensureMemoryColumns() error {
-	existing, err := tableColumns(st.db, "workspace_memories")
-	if err != nil {
-		return fmt.Errorf("memory: inspect columns: %w", err)
-	}
-	for _, col := range memoryColumns {
-		if existing[col.Name] {
-			continue
-		}
-		stmt := fmt.Sprintf("ALTER TABLE workspace_memories ADD COLUMN %s %s", col.Name, col.DDL)
-		if _, err := st.db.Exec(stmt); err != nil {
-			return fmt.Errorf("memory: add column %s: %w", col.Name, err)
-		}
-	}
-	return nil
-}
-
-func tableColumns(db *sql.DB, table string) (map[string]bool, error) {
-	rows, err := db.Query(`PRAGMA table_info(` + table + `)`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-	out := make(map[string]bool)
-	for rows.Next() {
-		var cid, notnull, pk int
-		var name, ctype string
-		var dflt sql.NullString
-		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
-			return nil, err
-		}
-		out[name] = true
-	}
-	return out, rows.Err()
-}
-
-// backfillNorm computes the normalized shadow column for legacy rows
-// written before the norm column existed.
-func (st *Store) backfillNorm() error {
-	rows, err := st.db.Query(`
-		SELECT id, title, content, entities FROM workspace_memories
-		WHERE norm = '' LIMIT 1024
-	`)
-	if err != nil {
-		return fmt.Errorf("memory: norm backfill query: %w", err)
-	}
-	type normRow struct{ id, norm string }
-	var updates []normRow
-	for rows.Next() {
-		var id, title, content, entities string
-		if err := rows.Scan(&id, &title, &content, &entities); err != nil {
-			_ = rows.Close()
-			return fmt.Errorf("memory: norm backfill scan: %w", err)
-		}
-		updates = append(updates, normRow{id: id, norm: NormalizeText(title, content, entities)})
-	}
-	if err := rows.Close(); err != nil {
-		return fmt.Errorf("memory: norm backfill rows: %w", err)
-	}
-	for _, u := range updates {
-		if u.norm == "" {
-			continue
-		}
-		if _, err := st.db.Exec(
-			`UPDATE workspace_memories SET norm = ? WHERE id = ?`, u.norm, u.id,
-		); err != nil {
-			return fmt.Errorf("memory: norm backfill update: %w", err)
-		}
-	}
 	return nil
 }
 
@@ -374,11 +351,12 @@ func (st *Store) tableExists(name string) (bool, error) {
 	return true, nil
 }
 
-// MemoryID derives the stable dedup ID for a kind+title pair (same scheme
-// as the v0 store so legacy IDs remain valid).
-func MemoryID(kind, title string) string {
-	sum := sha256.Sum256([]byte(kind + "\x00" + strings.ToLower(strings.TrimSpace(title))))
-	return "mem-" + hex.EncodeToString(sum[:8])
+func newRecordID() (string, error) {
+	var value [16]byte
+	if _, err := rand.Read(value[:]); err != nil {
+		return "", fmt.Errorf("memory: generate id: %w", err)
+	}
+	return "mem-" + hex.EncodeToString(value[:]), nil
 }
 
 func validateKindDefaults(record *Record) error {
@@ -387,6 +365,11 @@ func validateKindDefaults(record *Record) error {
 	record.Kind = strings.TrimSpace(record.Kind)
 	if record.Kind == "" {
 		record.Kind = KindFact
+	}
+	switch record.Kind {
+	case KindFact, KindDecision, KindConvention, KindPreference, KindLesson, KindReference:
+	default:
+		return fmt.Errorf("memory: unknown knowledge kind %q", record.Kind)
 	}
 	if record.Title == "" || record.Content == "" {
 		return fmt.Errorf("memory title and content are required")
@@ -397,14 +380,35 @@ func validateKindDefaults(record *Record) error {
 	if len(record.Content) > MaxContentBytes {
 		return fmt.Errorf("memory content exceeds %d bytes", MaxContentBytes)
 	}
+	if len(record.AppliesWhen) > 2048 || len(record.ScopePaths) > 32 {
+		return fmt.Errorf("memory: applicability exceeds bounds")
+	}
+	for _, path := range record.ScopePaths {
+		if len(path) > 512 || Redact(path) != path {
+			return fmt.Errorf("memory: scope path exceeds bounds")
+		}
+	}
+	if Redact(record.Title) != record.Title || Redact(record.Content) != record.Content ||
+		Redact(record.AppliesWhen) != record.AppliesWhen || Redact(record.Provenance) != record.Provenance {
+		return fmt.Errorf("memory: secrets are not permitted in knowledge")
+	}
+	if err := validateEvidence(record.Evidence); err != nil {
+		return err
+	}
+	if record.Kind == KindLesson && !SupportsLesson(record.Evidence) {
+		return ErrUnsupported
+	}
+	if record.Kind == KindLesson && strings.TrimSpace(record.AppliesWhen) == "" {
+		return fmt.Errorf("memory: technical lessons require applies_when")
+	}
+	if record.Source == SourceAuto && !supportsKnowledge(record.Kind, record.Evidence) {
+		return ErrUnsupported
+	}
 	if record.Importance <= 0 {
 		record.Importance = DefaultImportance
 	}
 	if record.Importance > 100 {
 		record.Importance = 100
-	}
-	if record.Status == "" {
-		record.Status = StatusActive
 	}
 	if record.Source == "" {
 		record.Source = SourceTool
@@ -412,75 +416,128 @@ func validateKindDefaults(record *Record) error {
 	return nil
 }
 
-// Remember upserts a record (ADD-only semantics: identical kind+title
-// revises the same row and re-activates it; nothing else is touched).
-// Entities and the FTS shadow column are derived mechanically when absent.
 func (st *Store) Remember(ctx context.Context, record Record) (Record, error) {
+	tx, err := st.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Record{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	record, err = rememberTx(ctx, tx, record)
+	if err != nil {
+		return Record{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Record{}, err
+	}
+	return record, nil
+}
+
+func rememberTx(ctx context.Context, tx *sql.Tx, record Record) (Record, error) {
 	if err := validateKindDefaults(&record); err != nil {
 		return Record{}, err
 	}
-	if record.ID == "" {
-		record.ID = MemoryID(record.Kind, record.Title)
+	if record.Revision != 0 {
+		return Record{}, fmt.Errorf("remember: use Update with an expected revision")
 	}
-	if record.Entities == "" {
-		record.Entities = strings.Join(
-			ExtractEntities(record.Title, record.Content, strings.Join(record.ScopePaths, " ")), " ")
+	if record.ID == "" {
+		var err error
+		record.ID, err = newRecordID()
+		if err != nil {
+			return Record{}, err
+		}
+	}
+	var exists int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM workspace_memories WHERE id = ?`, record.ID).Scan(&exists); err != nil {
+		return Record{}, err
+	}
+	if exists != 0 {
+		return Record{}, ErrExists
 	}
 	now := time.Now().UnixNano()
-	if record.CreatedAt == 0 {
-		record.CreatedAt = now
-	}
+	record.CreatedAt = now
 	record.UpdatedAt = now
-	norm := NormalizeText(record.Title, record.Content, record.Entities,
-		strings.Join(record.ScopePaths, " "))
+	record.Revision = 1
+	record.Status = StatusActive
+	record.SupersededBy = ""
+	record.UseCount, record.LastUsedAt = 0, 0
+	record.Actor = actorForSource(record.Source)
+	deriveEntities(&record)
+	if err := writeRecordTx(ctx, tx, record, 0, "remember", record.SourceSessionID); err != nil {
+		return Record{}, err
+	}
+	return record, nil
+}
+
+func deriveEntities(record *Record) {
+	record.Entities = strings.Join(ExtractEntities(record.Title, record.Content,
+		strings.Join(record.ScopePaths, " "), record.AppliesWhen), " ")
+}
+
+func writeRecordTx(ctx context.Context, tx *sql.Tx, record Record, expected int64, op, sessionID string) error {
+	if (op == "remember" || op == "update") && (record.Kind == KindLesson || record.Source == SourceAuto) {
+		observations, err := groundedEvidenceTx(ctx, tx, record.Evidence)
+		if err != nil {
+			return err
+		}
+		if record.Kind == KindLesson && !supportedLessonObservations(observations) {
+			return fmt.Errorf("%w: lesson requires matching failed validation, intervening change and successful validation", ErrUnsupported)
+		}
+	}
 	scopeJSON, err := json.Marshal(record.ScopePaths)
 	if err != nil {
-		return Record{}, fmt.Errorf("memory: marshal scope paths: %w", err)
+		return err
 	}
-
-	var existingID string
-	err = st.db.QueryRowContext(ctx,
-		`SELECT id FROM workspace_memories WHERE id = ?`, record.ID).Scan(&existingID)
-	existed := err == nil
-	if err != nil && err != sql.ErrNoRows {
-		return Record{}, fmt.Errorf("memory: check existing: %w", err)
-	}
-
-	_, err = st.db.ExecContext(ctx, `
-		INSERT INTO workspace_memories
-			(id, kind, title, content, source_session_id, pinned, created_at, updated_at,
-			 entities, scope_paths, importance, status, superseded_by, source, provenance,
-			 use_count, last_used_at, norm)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, '', ?, ?, 0, 0, ?)
-		ON CONFLICT(id) DO UPDATE SET
-			kind = excluded.kind,
-			title = excluded.title,
-			content = excluded.content,
-			source_session_id = excluded.source_session_id,
-			pinned = excluded.pinned,
-			updated_at = excluded.updated_at,
-			entities = excluded.entities,
-			scope_paths = excluded.scope_paths,
-			importance = excluded.importance,
-			status = excluded.status,
-			superseded_by = '',
-			source = excluded.source,
-			provenance = excluded.provenance,
-			norm = excluded.norm
-	`, record.ID, record.Kind, record.Title, record.Content, record.SourceSessionID,
-		record.Pinned, record.CreatedAt, record.UpdatedAt,
-		record.Entities, string(scopeJSON), record.Importance, record.Status,
-		record.Source, record.Provenance, norm)
+	evidenceJSON, err := json.Marshal(record.Evidence)
 	if err != nil {
-		return Record{}, fmt.Errorf("remember workspace memory: %w", err)
+		return err
 	}
-	op := "remember"
-	if existed {
-		op = "revise"
+	norm := NormalizeText(record.Title, record.Content, record.Entities,
+		strings.Join(record.ScopePaths, " "), record.AppliesWhen)
+	values := []any{record.Revision, record.Kind, record.Title, record.Content,
+		record.SourceSessionID, record.Pinned, record.CreatedAt, record.UpdatedAt,
+		record.Entities, string(scopeJSON), record.Importance, record.Status,
+		record.SupersededBy, record.Source, record.Provenance, record.UseCount,
+		record.LastUsedAt, record.AppliesWhen, string(evidenceJSON), record.Actor, norm}
+	if expected == 0 {
+		_, err = tx.ExecContext(ctx, `INSERT INTO workspace_memories
+			(id, revision, kind, title, content, source_session_id, pinned, created_at,
+			updated_at, entities, scope_paths, importance, status, superseded_by,
+			source, provenance, use_count, last_used_at, applies_when, evidence, actor, norm)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			append([]any{record.ID}, values...)...)
+	} else {
+		var result sql.Result
+		result, err = tx.ExecContext(ctx, `UPDATE workspace_memories SET
+			revision=?, kind=?, title=?, content=?, source_session_id=?, pinned=?,
+			created_at=?, updated_at=?, entities=?, scope_paths=?, importance=?,
+			status=?, superseded_by=?, source=?, provenance=?, use_count=?, last_used_at=?,
+			applies_when=?, evidence=?, actor=?, norm=? WHERE id=? AND revision=? AND status != ?`,
+			append(values, record.ID, expected, StatusSuperseded)...)
+		if err == nil {
+			var affected int64
+			affected, err = result.RowsAffected()
+			if err == nil && affected != 1 {
+				return ErrRevisionConflict
+			}
+		}
 	}
-	st.journal(ctx, actorForSource(record.Source), op, record.ID, record.SourceSessionID,
-		TruncateBytes(record.Title, 120))
-	return record, nil
+	if err != nil {
+		return fmt.Errorf("memory: write record: %w", err)
+	}
+	snapshot, err := json.Marshal(record)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO memory_revisions
+		(memory_id, revision, record, session_id, op) VALUES (?, ?, ?, ?, ?)`,
+		record.ID, record.Revision, string(snapshot), sessionID, op); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO memory_meta(key, value, updated_at) VALUES ('knowledge_generation', '1', ?)
+		ON CONFLICT(key) DO UPDATE SET value=CAST(value AS INTEGER)+1, updated_at=excluded.updated_at`, time.Now().UnixNano()); err != nil {
+		return err
+	}
+	return journalTx(ctx, tx, record.Actor, op, record.ID, sessionID, fmt.Sprintf("revision:%d %s", record.Revision, record.Title))
 }
 
 func actorForSource(source string) string {
@@ -499,23 +556,27 @@ func actorForSource(source string) string {
 const recordSelectColumns = `
 	id, kind, title, content, source_session_id, pinned, created_at, updated_at,
 	entities, scope_paths, importance, status, superseded_by, source, provenance,
-	use_count, last_used_at`
+	use_count, last_used_at, revision, applies_when, evidence, actor`
 
 func scanRecord(scanner interface{ Scan(...any) error }) (Record, error) {
 	var record Record
-	var scopeJSON string
+	var scopeJSON, evidenceJSON string
 	err := scanner.Scan(
 		&record.ID, &record.Kind, &record.Title, &record.Content,
 		&record.SourceSessionID, &record.Pinned, &record.CreatedAt, &record.UpdatedAt,
 		&record.Entities, &scopeJSON, &record.Importance, &record.Status,
 		&record.SupersededBy, &record.Source, &record.Provenance,
 		&record.UseCount, &record.LastUsedAt,
+		&record.Revision, &record.AppliesWhen, &evidenceJSON, &record.Actor,
 	)
 	if err != nil {
 		return Record{}, err
 	}
-	if scopeJSON != "" && scopeJSON != "[]" {
-		_ = json.Unmarshal([]byte(scopeJSON), &record.ScopePaths)
+	if err := json.Unmarshal([]byte(scopeJSON), &record.ScopePaths); err != nil {
+		return Record{}, err
+	}
+	if err := json.Unmarshal([]byte(evidenceJSON), &record.Evidence); err != nil {
+		return Record{}, err
 	}
 	return record, nil
 }
@@ -536,33 +597,40 @@ func (st *Store) Get(ctx context.Context, id string) (Record, error) {
 
 // Supersede marks a record superseded (the "forget" operation — nothing is
 // deleted). byID links to the replacement when there is one.
-func (st *Store) Supersede(ctx context.Context, id, byID, actor, sessionID string) error {
-	result, err := st.db.ExecContext(ctx, `
-		UPDATE workspace_memories
-		SET status = ?, superseded_by = ?, updated_at = ?
-		WHERE id = ? AND status != ?
-	`, StatusSuperseded, byID, time.Now().UnixNano(), id, StatusSuperseded)
+func (st *Store) Supersede(ctx context.Context, id string, expectedRevision int64, byID, actor, sessionID string) error {
+	tx, err := st.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("supersede workspace memory: %w", err)
+		return err
 	}
-	affected, err := result.RowsAffected()
+	defer func() { _ = tx.Rollback() }()
+	record, err := getExpectedTx(ctx, tx, id, expectedRevision)
 	if err != nil {
-		return fmt.Errorf("supersede workspace memory result: %w", err)
+		return err
 	}
-	if affected == 0 {
-		return fmt.Errorf("workspace memory %q was not found", id)
+	if byID != "" {
+		if byID == id {
+			return fmt.Errorf("memory: cannot supersede itself")
+		}
+		by, err := scanRecord(tx.QueryRowContext(ctx, `SELECT `+recordSelectColumns+` FROM workspace_memories WHERE id=?`, byID))
+		if err != nil || by.Status == StatusSuperseded {
+			return fmt.Errorf("memory: replacement must exist and not be retired")
+		}
 	}
-	st.journal(ctx, actor, "supersede", id, sessionID, byID)
-	return nil
+	if err := retireTx(ctx, tx, record, byID, actor, sessionID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
-// Update replaces a record's content: when kind+title map to the same ID
-// the row is revised in place; otherwise a new record is created and the
-// old one is superseded with a link to its replacement.
 func (st *Store) Update(
 	ctx context.Context, id string, replacement Record, actor, sessionID string,
 ) (Record, error) {
-	existing, err := st.Get(ctx, id)
+	tx, err := st.db.BeginTx(ctx, nil)
+	if err != nil {
+		return Record{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	existing, err := getExpectedTx(ctx, tx, id, replacement.Revision)
 	if err != nil {
 		return Record{}, err
 	}
@@ -575,82 +643,141 @@ func (st *Store) Update(
 	if replacement.Importance <= 0 {
 		replacement.Importance = existing.Importance
 	}
-	if len(replacement.ScopePaths) == 0 {
+	if replacement.ScopePaths == nil {
 		replacement.ScopePaths = existing.ScopePaths
 	}
-	replacement.Pinned = replacement.Pinned || existing.Pinned
-	replacement.SourceSessionID = sessionID
-	replacement.ID = MemoryID(replacement.Kind, replacement.Title)
-	if replacement.ID == id {
-		replacement.CreatedAt = existing.CreatedAt
+	if replacement.Evidence == nil {
+		replacement.Evidence = existing.Evidence
 	}
-	saved, err := st.Remember(ctx, replacement)
+	if replacement.AppliesWhen == "" {
+		replacement.AppliesWhen = existing.AppliesWhen
+	}
+	if replacement.Source == "" {
+		replacement.Source = existing.Source
+	}
+	replacement.SourceSessionID = sessionID
+	replacement.ID = id
+	replacement.CreatedAt = existing.CreatedAt
+	replacement.Revision = existing.Revision + 1
+	replacement.UpdatedAt = time.Now().UnixNano()
+	replacement.Status = existing.Status
+	replacement.SupersededBy = ""
+	replacement.Actor = actor
+	replacement.UseCount, replacement.LastUsedAt = 0, 0
+	if err := validateKindDefaults(&replacement); err != nil {
+		return Record{}, err
+	}
+	deriveEntities(&replacement)
+	if err := writeRecordTx(ctx, tx, replacement, existing.Revision, "update", sessionID); err != nil {
+		return Record{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return Record{}, err
+	}
+	return replacement, nil
+}
+
+func getExpectedTx(ctx context.Context, tx *sql.Tx, id string, expected int64) (Record, error) {
+	if expected <= 0 {
+		return Record{}, fmt.Errorf("%w: expected_revision is required", ErrRevisionConflict)
+	}
+	record, err := scanRecord(tx.QueryRowContext(ctx, `SELECT `+recordSelectColumns+` FROM workspace_memories WHERE id=?`, id))
 	if err != nil {
 		return Record{}, err
 	}
-	if saved.ID != id {
-		if err := st.Supersede(ctx, id, saved.ID, actor, sessionID); err != nil {
-			return Record{}, err
-		}
+	if record.Revision != expected {
+		return Record{}, fmt.Errorf("%w: %s expected %d current %d", ErrRevisionConflict, id, expected, record.Revision)
 	}
-	return saved, nil
+	if record.Status == StatusSuperseded {
+		return Record{}, ErrRetired
+	}
+	return record, nil
 }
 
-// SetPinned toggles the pinned flag on an active/archived record.
-func (st *Store) SetPinned(ctx context.Context, id string, pinned bool, actor string) error {
-	result, err := st.db.ExecContext(ctx, `
-		UPDATE workspace_memories SET pinned = ?, updated_at = ? WHERE id = ?
-	`, pinned, time.Now().UnixNano(), id)
+func retireTx(ctx context.Context, tx *sql.Tx, record Record, byID, actor, sessionID string) error {
+	expected := record.Revision
+	record.Revision++
+	record.Status, record.SupersededBy, record.Actor = StatusSuperseded, byID, actor
+	record.UpdatedAt = time.Now().UnixNano()
+	return writeRecordTx(ctx, tx, record, expected, "supersede", sessionID)
+}
+
+func (st *Store) SetPinned(ctx context.Context, id string, expectedRevision int64, pinned bool, actor string) error {
+	tx, err := st.db.BeginTx(ctx, nil)
 	if err != nil {
-		return fmt.Errorf("pin workspace memory: %w", err)
+		return err
 	}
-	affected, err := result.RowsAffected()
+	defer func() { _ = tx.Rollback() }()
+	record, err := getExpectedTx(ctx, tx, id, expectedRevision)
 	if err != nil {
-		return fmt.Errorf("pin workspace memory result: %w", err)
+		return err
 	}
-	if affected == 0 {
-		return fmt.Errorf("workspace memory %q was not found", id)
-	}
+	record.Pinned, record.Actor = pinned, actor
+	record.Revision++
 	op := "pin"
 	if !pinned {
 		op = "unpin"
 	}
-	st.journal(ctx, actor, op, id, "", "")
-	return nil
+	if err := writeRecordTx(ctx, tx, record, expectedRevision, op, ""); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // Archive demotes records out of the auto-injection set (decay). Archived
 // records still match explicit searches.
-func (st *Store) Archive(ctx context.Context, ids []string, actor, detail string) error {
-	now := time.Now().UnixNano()
-	for _, id := range ids {
-		if _, err := st.db.ExecContext(ctx, `
-			UPDATE workspace_memories SET status = ?, updated_at = ?
-			WHERE id = ? AND status = ?
-		`, StatusArchived, now, id, StatusActive); err != nil {
-			return fmt.Errorf("archive workspace memory: %w", err)
-		}
-		st.journal(ctx, actor, "archive", id, "", detail)
+func (st *Store) Archive(ctx context.Context, refs []RevisionRef, actor, detail string) error {
+	tx, err := st.db.BeginTx(ctx, nil)
+	if err != nil {
+		return err
 	}
-	return nil
+	defer func() { _ = tx.Rollback() }()
+	for _, ref := range refs {
+		record, err := getExpectedTx(ctx, tx, ref.ID, ref.Revision)
+		if err != nil {
+			return err
+		}
+		if record.Status != StatusActive || record.Pinned {
+			continue
+		}
+		expected := record.Revision
+		record.Revision++
+		record.Status, record.Actor = StatusArchived, actor
+		if err := writeRecordTx(ctx, tx, record, expected, "archive", ""); err != nil {
+			return err
+		}
+		if err := journalTx(ctx, tx, actor, "archive_reason", ref.ID, "", detail); err != nil {
+			return err
+		}
+	}
+	return tx.Commit()
 }
 
-// Touch records usage reinforcement for injected/recalled memories.
-func (st *Store) Touch(ctx context.Context, ids []string) error {
-	if len(ids) == 0 {
-		return nil
+func (st *Store) Revisions(ctx context.Context, id string) ([]Revision, error) {
+	rows, err := st.db.QueryContext(ctx, `SELECT record, session_id, op FROM memory_revisions WHERE memory_id=? ORDER BY revision`, id)
+	if err != nil {
+		return nil, err
 	}
-	now := time.Now().UnixNano()
-	for _, id := range ids {
-		if _, err := st.db.ExecContext(ctx, `
-			UPDATE workspace_memories
-			SET use_count = use_count + 1, last_used_at = ?
-			WHERE id = ?
-		`, now, id); err != nil {
-			return fmt.Errorf("touch workspace memory: %w", err)
+	defer func() { _ = rows.Close() }()
+	var revisions []Revision
+	for rows.Next() {
+		var revision Revision
+		var snapshot string
+		if err := rows.Scan(&snapshot, &revision.SessionID, &revision.Op); err != nil {
+			return nil, err
 		}
+		if err := json.Unmarshal([]byte(snapshot), &revision.Record); err != nil {
+			return nil, err
+		}
+		revisions = append(revisions, revision)
 	}
-	return nil
+	return revisions, rows.Err()
+}
+
+func journalTx(ctx context.Context, tx *sql.Tx, actor, op, memoryID, sessionID, detail string) error {
+	_, err := tx.ExecContext(ctx, `INSERT INTO memory_journal (at, actor, op, memory_id, session_id, detail) VALUES (?, ?, ?, ?, ?, ?)`,
+		time.Now().UnixNano(), actor, op, memoryID, sessionID, TruncateBytes(Redact(detail), 512))
+	return err
 }
 
 // CountByStatus returns the number of records with the given status.
@@ -732,21 +859,15 @@ func (st *Store) SetMeta(ctx context.Context, key, value string) error {
 func (st *Store) TryLock(ctx context.Context, name string, ttl time.Duration) (bool, error) {
 	key := "lock:" + name
 	now := time.Now()
-	var value string
-	var updatedAt int64
-	err := st.db.QueryRowContext(ctx,
-		`SELECT value, updated_at FROM memory_meta WHERE key = ?`, key).Scan(&value, &updatedAt)
-	if err != nil && err != sql.ErrNoRows {
-		return false, fmt.Errorf("memory lock read: %w", err)
-	}
-	if err == nil && value != "" && now.UnixNano()-updatedAt < ttl.Nanoseconds() {
-		return false, nil
-	}
 	holder := fmt.Sprintf("%d:%d", now.UnixNano(), os.Getpid())
-	if err := st.SetMeta(ctx, key, holder); err != nil {
+	result, err := st.db.ExecContext(ctx, `INSERT INTO memory_meta(key, value, updated_at) VALUES (?, ?, ?)
+		ON CONFLICT(key) DO UPDATE SET value=excluded.value, updated_at=excluded.updated_at
+		WHERE memory_meta.value='' OR memory_meta.updated_at<=?`, key, holder, now.UnixNano(), now.Add(-ttl).UnixNano())
+	if err != nil {
 		return false, err
 	}
-	return true, nil
+	affected, err := result.RowsAffected()
+	return affected == 1, err
 }
 
 // Unlock releases a named cooperative lock.

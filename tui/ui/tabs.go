@@ -35,10 +35,11 @@ const (
 // here would be a tofu risk (the legacy shell tab bar deliberately omitted the
 // window tab icon), and every consumer is label-first.
 type TabItem struct {
-	ID        string
-	Label     string
-	Closable  bool
-	Attention bool
+	ID           string
+	Label        string
+	CompactLabel string
+	Closable     bool
+	Attention    bool
 }
 
 type tabRange struct {
@@ -62,22 +63,27 @@ type tabRange struct {
 // ActionBar consumers do with their own rules.
 type Tabs struct {
 	Base
-	items      []TabItem
-	active     int
-	hover      int
-	tokens     *TokenSet
-	ranges     []tabRange
-	chrome     TabsChrome
-	barFocused bool
-	scroll     int // first visible tab index when the strip overflows past min widths
-	ruleBleed  bool
-	bleedX     int
-	bleedW     int
-	labelInset int
+	items         []TabItem
+	active        int
+	hover         int
+	tokens        *TokenSet
+	ranges        []tabRange
+	chrome        TabsChrome
+	barFocused    bool
+	scroll        int // first visible tab index when the strip overflows past min widths
+	ruleBleed     bool
+	bleedX        int
+	bleedW        int
+	labelInset    int
+	manualScroll  bool
+	compact       bool
+	scrollMax     int
+	scrollButtons [2]Rect
+	scrollHover   int
 }
 
 func NewTabs(id ComponentID, tokens *TokenSet) *Tabs {
-	return &Tabs{Base: NewBase(id), active: -1, hover: -1, tokens: tokens}
+	return &Tabs{Base: NewBase(id), active: -1, hover: -1, scrollHover: -1, tokens: tokens}
 }
 
 func (t *Tabs) SetTokens(tokens *TokenSet) { t.tokens = tokens }
@@ -118,7 +124,23 @@ func (t *Tabs) ruleSpan(contentW int) (x, w int) {
 }
 
 // SetScroll sets the first visible tab index (used by tests).
-func (t *Tabs) SetScroll(offset int) { t.scroll = max(0, offset) }
+func (t *Tabs) SetScroll(offset int) {
+	t.scroll = max(0, offset)
+	t.manualScroll = true
+	if rect := t.Bounds(); !rect.Empty() {
+		t.ranges = t.computeRanges(rect.W)
+	}
+}
+
+func (t *Tabs) ScrollBy(delta int) bool {
+	next := min(t.scrollMax, max(0, t.scroll+delta))
+	if next == t.scroll {
+		return false
+	}
+	t.SetScroll(next)
+	t.hover, t.scrollHover = -1, -1
+	return true
+}
 
 // ScrollOffset returns the first visible tab index.
 func (t *Tabs) ScrollOffset() int { return t.scroll }
@@ -151,6 +173,11 @@ func (t *Tabs) CloseLocalX(tabIndex int) int {
 }
 
 func (t *Tabs) SetItems(items []TabItem, activeID string) {
+	previousActive := t.ActiveID()
+	anchor := ""
+	if t.manualScroll && t.scroll < len(t.items) {
+		anchor = t.items[t.scroll].ID
+	}
 	t.items = append(t.items[:0], items...)
 	t.active = -1
 	for i := range t.items {
@@ -161,6 +188,16 @@ func (t *Tabs) SetItems(items []TabItem, activeID string) {
 	}
 	if t.active < 0 && len(t.items) > 0 {
 		t.active = 0
+	}
+	if previousActive != t.ActiveID() {
+		t.manualScroll = false
+	} else if anchor != "" {
+		for index, item := range t.items {
+			if item.ID == anchor {
+				t.scroll = index
+				break
+			}
+		}
 	}
 	if r := t.Bounds(); !r.Empty() {
 		t.ranges = t.computeRanges(r.W)
@@ -202,6 +239,9 @@ func (t *Tabs) idealTabWidth(i int, displayLabel string) int {
 func (t *Tabs) displayLabel(i int) string {
 	item := t.items[i]
 	label := item.Label
+	if t.compact && item.CompactLabel != "" {
+		label = item.CompactLabel
+	}
 	if item.Attention {
 		label = "● " + label
 	}
@@ -211,6 +251,9 @@ func (t *Tabs) displayLabel(i int) string {
 func (t *Tabs) computeRanges(width int) []tabRange {
 	n := len(t.items)
 	ranges := make([]tabRange, n)
+	t.scrollButtons = [2]Rect{}
+	t.scrollMax = 0
+	t.compact = false
 	if n == 0 || width <= 0 {
 		t.scroll = 0
 		return ranges
@@ -233,6 +276,14 @@ func (t *Tabs) computeRanges(width int) []tabRange {
 	}
 	gaps := n - 1
 	total += gaps * tabGap
+	if total > avail {
+		t.compact = true
+		total = gaps * tabGap
+		for index := range t.items {
+			ideal[index] = t.idealTabWidth(index, t.displayLabel(index))
+			total += ideal[index]
+		}
+	}
 
 	widths := append([]int(nil), ideal...)
 	if total > avail {
@@ -248,11 +299,11 @@ func (t *Tabs) computeRanges(width int) []tabRange {
 		assigned := 0
 		for i := range widths {
 			if i == n-1 {
-				widths[i] = max(tabMinW, available-assigned)
+				widths[i] = max(min(tabMinW, ideal[i]), available-assigned)
 			} else {
 				w := available * ideal[i] / sumIdeal
-				if w < tabMinW {
-					w = tabMinW
+				if w < min(tabMinW, ideal[i]) {
+					w = min(tabMinW, ideal[i])
 				}
 				widths[i] = w
 				assigned += w
@@ -265,7 +316,7 @@ func (t *Tabs) computeRanges(width int) []tabRange {
 		}
 		if sum+gaps*tabGap > avail {
 			for i := range widths {
-				widths[i] = tabMinW
+				widths[i] = min(tabMinW, ideal[i])
 			}
 		}
 	}
@@ -275,10 +326,33 @@ func (t *Tabs) computeRanges(width int) []tabRange {
 		sum += w
 	}
 	needScroll := sum+gaps*tabGap > avail
+	contentEnd := width
 	if !needScroll {
 		t.scroll = 0
+		t.manualScroll = false
 	} else {
-		t.ensureActiveVisible(widths, avail)
+		leftWidth, rightWidth := rendering.VisibleWidth(" ‹ "), rendering.VisibleWidth(" › ")
+		controlsWidth := leftWidth + rightWidth
+		if width > controlsWidth {
+			t.scrollButtons = [2]Rect{{X: width - controlsWidth, W: leftWidth, H: 1}, {X: width - rightWidth, W: rightWidth, H: 1}}
+			contentEnd -= controlsWidth
+			inset = min(inset, max(0, contentEnd-1))
+			avail = contentEnd - inset
+		}
+		t.scrollMax = n - 1
+		suffixWidth := widths[n-1]
+		for index := n - 2; index >= 0; index-- {
+			if suffixWidth+tabGap+widths[index] > avail {
+				break
+			}
+			suffixWidth += tabGap + widths[index]
+			t.scrollMax = index
+		}
+		t.scroll = min(t.scrollMax, max(0, t.scroll))
+		if !t.manualScroll {
+			t.ensureActiveVisible(widths, avail)
+			t.scroll = min(t.scrollMax, t.scroll)
+		}
 	}
 
 	x := inset
@@ -288,11 +362,15 @@ func (t *Tabs) computeRanges(width int) []tabRange {
 			continue
 		}
 		w := widths[i]
-		if x >= width {
+		if x >= contentEnd {
 			ranges[i] = tabRange{start: -1, end: -1, closeStart: -1, labelStart: -1}
 			continue
 		}
-		end := min(width, x+w)
+		if t.compact && t.items[i].CompactLabel != "" && x+w > contentEnd && i > t.scroll {
+			ranges[i] = tabRange{start: -1, end: -1, closeStart: -1, labelStart: -1}
+			continue
+		}
+		end := min(contentEnd, x+w)
 		closeStart := end
 		if t.items[i].Closable {
 			closeW := rendering.VisibleWidth(" ×")
@@ -321,32 +399,15 @@ func (t *Tabs) ensureActiveVisible(widths []int, width int) {
 	if t.scroll > t.active {
 		t.scroll = t.active
 	}
-	for {
-		x := 0
-		fits := true
-		activeEnd := -1
-		for i := t.scroll; i < n; i++ {
-			if i > t.scroll {
-				x += tabGap
-			}
-			end := x + widths[i]
-			if i == t.active {
-				activeEnd = end
-			}
-			if end > width {
-				fits = false
-				break
-			}
-			x = end
+	activeEnd := 0
+	for index := t.scroll; index <= t.active; index++ {
+		if index > t.scroll {
+			activeEnd += tabGap
 		}
-		if fits && activeEnd >= 0 && activeEnd <= width {
-			return
-		}
-		if t.scroll >= t.active {
-			// Cannot scroll further toward active; stop.
-			return
-		}
-		// Active is past the right edge — advance scroll.
+		activeEnd += widths[index]
+	}
+	for activeEnd > width && t.scroll < t.active {
+		activeEnd -= widths[t.scroll] + tabGap
 		t.scroll++
 	}
 }
@@ -436,6 +497,23 @@ func (t *Tabs) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 			}
 		}
 	}
+	for index, rect := range t.scrollButtons {
+		if rect.Empty() {
+			continue
+		}
+		color, background := muted, bg
+		enabled := t.scroll > 0
+		label := " ‹ "
+		if index == 1 {
+			enabled, label = t.scroll < t.scrollMax, " › "
+		}
+		if !enabled {
+			color = border
+		} else if t.scrollHover == index {
+			background = hover
+		}
+		buf.WriteString(originX+r.X+rect.X, originY+r.Y, label, color, background, 0)
+	}
 }
 
 func (t *Tabs) Handle(ctx EventContext, evt Event) EventResult {
@@ -450,26 +528,44 @@ func (t *Tabs) Handle(ctx EventContext, evt Event) EventResult {
 			next = (t.active - 1 + len(t.items)) % len(t.items)
 		case evt.Key.Code == tea.KeyRight || evt.Key.String() == "ctrl+]":
 			next = (t.active + 1) % len(t.items)
+		case evt.Key.Code == tea.KeyHome:
+			next = 0
+		case evt.Key.Code == tea.KeyEnd:
+			next = len(t.items) - 1
 		case evt.Key.Code == tea.KeyEnter || evt.Key.Code == tea.KeyDown || evt.Key.Code == tea.KeyTab:
 			return EventResult{Handled: true, Action: &Action{ID: "tabs.enter", Payload: t.ActiveID()}, Invalidate: InvalidateFocus | InvalidatePaint}
 		default:
 			return EventResult{}
 		}
 		t.active = next
+		t.manualScroll = false
 		if r := t.Bounds(); !r.Empty() {
 			t.ranges = t.computeRanges(r.W)
 		}
 		return EventResult{Handled: true, Action: &Action{ID: "tabs.activate", Payload: t.ActiveID()}, Invalidate: InvalidateLayout | InvalidatePaint}
 	case EventMouseMotion:
 		index, _ := t.hit(ctx.LocalX)
-		if index != t.hover {
+		scrollHover := -1
+		for button, rect := range t.scrollButtons {
+			if rect.Contains(ctx.LocalX, ctx.LocalY) {
+				scrollHover = button
+			}
+		}
+		if index != t.hover || scrollHover != t.scrollHover {
 			t.hover = index
+			t.scrollHover = scrollHover
 			return EventResult{Handled: true, Invalidate: InvalidatePaint}
 		}
 		return EventResult{Handled: true}
 	case EventMouseClick:
 		if evt.MouseClick.Button != tea.MouseLeft {
 			return EventResult{}
+		}
+		for index, rect := range t.scrollButtons {
+			if rect.Contains(ctx.LocalX, ctx.LocalY) {
+				t.ScrollBy(2*index - 1)
+				return EventResult{Handled: true, Invalidate: InvalidateLayout | InvalidatePaint}
+			}
 		}
 		index, closeHit := t.hit(ctx.LocalX)
 		if index < 0 {
@@ -479,10 +575,25 @@ func (t *Tabs) Handle(ctx EventContext, evt Event) EventResult {
 			return EventResult{Handled: true, Action: &Action{ID: "tabs.close", Payload: t.items[index].ID}, Invalidate: InvalidateLayout | InvalidatePaint}
 		}
 		t.active = index
+		t.manualScroll = false
 		if r := t.Bounds(); !r.Empty() {
 			t.ranges = t.computeRanges(r.W)
 		}
 		return EventResult{Handled: true, Action: &Action{ID: "tabs.activate", Payload: t.items[index].ID}, Invalidate: InvalidateLayout | InvalidateFocus | InvalidatePaint}
+	case EventMouseWheel:
+		delta := 0
+		switch evt.MouseWheel.Button {
+		case tea.MouseWheelLeft, tea.MouseWheelUp:
+			delta = -1
+		case tea.MouseWheelRight, tea.MouseWheelDown:
+			delta = 1
+		default:
+			return EventResult{}
+		}
+		if t.ScrollBy(delta) {
+			return EventResult{Handled: true, Invalidate: InvalidateLayout | InvalidatePaint}
+		}
+		return EventResult{Handled: true}
 	}
 	return EventResult{}
 }

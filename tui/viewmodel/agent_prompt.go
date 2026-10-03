@@ -39,18 +39,54 @@ type agentPromptState struct {
 	question     *question.Screen
 	confirmation *confirmation.Screen
 	inline       bool
+	projection   *sessionProjection
+}
+
+func (s *agentPromptState) panelID() string {
+	return fmt.Sprintf("agent-prompt/%d/%q/%q", s.request.kind, s.request.agentID, s.request.blockID)
 }
 
 func (m *App) enqueueAgentConfirmation(req agentPromptRequest) {
 	if m.agentYoloEnabled(req.agentID) {
 		return
 	}
-	m.agentPromptQueue = append(m.agentPromptQueue, req)
-	m.openNextAgentPrompt()
+	m.enqueueAgentPrompt(req)
 }
 
 func (m *App) enqueueAgentQuestions(req agentPromptRequest) {
-	m.agentPromptQueue = append(m.agentPromptQueue, req)
+	m.enqueueAgentPrompt(req)
+}
+
+func (m *App) enqueueAgentPrompt(req agentPromptRequest) {
+	if m.AgentMgr == nil || m.AgentMgr.Get(req.agentID) == nil || req.blockID == "" {
+		return
+	}
+	for _, state := range m.agentPrompts {
+		if state.request.agentID == req.agentID && state.request.blockID == req.blockID {
+			return
+		}
+	}
+	state := &agentPromptState{request: req, choice: 2}
+	_, state.projection = m.sessionProjectionForAgent(req.agentID)
+	if req.kind == agentPromptQuestions {
+		state.question = question.New(m.Theme)
+		count, err := state.question.ResetWithError(req.questionsJSON)
+		if err != nil || count == 0 {
+			detail := "question payload could not be rendered"
+			if err != nil {
+				detail = err.Error()
+			}
+			m.RejectQuestion(req.agentID, req.blockID, detail)
+			return
+		}
+	} else {
+		state.confirmation = confirmation.New(m.Theme)
+		state.confirmation.Reset(confirmation.Details{
+			Question: req.question, Operation: req.operation, Tool: req.tool, Target: req.target,
+			Risk: req.risk, Reason: req.reason, Suggestion: req.suggestion,
+		})
+	}
+	m.agentPrompts = append(m.agentPrompts, state)
 	m.openNextAgentPrompt()
 }
 
@@ -62,78 +98,100 @@ func (m *App) agentYoloEnabled(agentID string) bool {
 }
 
 func (m *App) openNextAgentPrompt() {
-	if m.agentPrompt != nil || len(m.agentPromptQueue) == 0 || m.overlayHost == nil {
-		return
+	// Registry order is arrival order. Docked requests stay retained in their
+	// family when the user leaves; only never-docked requests enter the FIFO modal.
+	for _, state := range append([]*agentPromptState(nil), m.agentPrompts...) {
+		if m.AgentMgr.Get(state.request.agentID) == nil {
+			m.removeAgentPrompt(state)
+			continue
+		}
+		if state.request.kind == agentPromptConfirmation && m.agentYoloEnabled(state.request.agentID) {
+			m.ResolveConfirmation(state.request.agentID, state.request.blockID, "allow")
+			m.removeAgentPrompt(state)
+			continue
+		}
+		if !state.inline && state.projection != nil && m.agentPromptInlineEligible(state.request.agentID) {
+			if m.agentPrompt == state {
+				m.overlayHost.Close(ui.OverlayAgentPrompt)
+				m.agentPrompt = nil
+			}
+			m.openInlineAgentPrompt(state)
+		}
 	}
-	if m.overlayHost.IsOpen(ui.OverlayDirtyClose) {
-		return
+	if m.agentPrompt == nil && m.overlayHost != nil && !m.overlayHost.IsOpen(ui.OverlayDirtyClose) {
+		for _, state := range m.agentPrompts {
+			if state.inline {
+				continue
+			}
+			m.agentPrompt = state
+			if state.request.kind == agentPromptQuestions {
+				m.openAgentQuestionPrompt(state)
+			} else {
+				m.openAgentConfirmationPrompt(state)
+			}
+			break
+		}
 	}
-	req := m.agentPromptQueue[0]
-	m.agentPromptQueue = m.agentPromptQueue[1:]
-	if req.kind == agentPromptConfirmation && m.agentYoloEnabled(req.agentID) {
-		m.openNextAgentPrompt()
-		return
-	}
-	state := &agentPromptState{request: req, choice: 2, inline: m.agentPromptInlineEligible(req.agentID)}
-	m.agentPrompt = state
-	if state.inline {
-		m.openInlineAgentPrompt(state)
-		return
-	}
-	if req.kind == agentPromptQuestions {
-		m.openAgentQuestionPrompt(state)
-		return
-	}
-	m.openAgentConfirmationPrompt(state)
+	m.syncAgentPromptBlocking()
 }
 
 func (m *App) agentPromptInlineEligible(agentID string) bool {
-	return agentID != "" && m.activeAgentTabID() == agentID && m.chatHostVisible() &&
-		(m.windowManager == nil || m.windowManager.Focused() == nil)
+	active := m.activeAgentTabID()
+	if active == "" || m.isEditorActive() || m.isGitReviewActive() {
+		return false
+	}
+	owner := m.AgentMgr.OrchestratorFor(agentID)
+	visible := m.AgentMgr.OrchestratorFor(active)
+	return owner != nil && visible != nil && owner.ID == visible.ID
 }
 
 func (m *App) openInlineAgentPrompt(state *agentPromptState) {
-	_, projection := m.sessionProjectionForAgent(state.request.agentID)
+	projection := state.projection
 	if projection == nil {
-		state.inline = false
-		if state.request.kind == agentPromptQuestions {
-			m.openAgentQuestionPrompt(state)
-		} else {
-			m.openAgentConfirmationPrompt(state)
-		}
 		return
 	}
-	if state.request.kind == agentPromptQuestions {
-		n, err := projection.question.ResetWithError(state.request.questionsJSON)
-		if err != nil || n == 0 {
-			detail := "question payload could not be rendered"
-			if err != nil {
-				detail = err.Error()
-			}
-			m.RejectQuestion(state.request.agentID, state.request.blockID, detail)
-			m.finishAgentPrompt()
-			return
-		}
-		projection.questionAgentID = state.request.agentID
-		projection.questionBlockID = state.request.blockID
-		state.question = projection.question
-		m.openSessionQuestionPanel(projection)
-		return
+	state.inline = true
+	var content ui.Component = state.confirmation
+	focus := confirmation.ActionsID
+	label := "Confirmation"
+	if state.question != nil {
+		content, focus, label = state.question, question.OptionsID, "Questions"
 	}
-	req := state.request
-	projection.confirmation.Reset(confirmation.Details{
-		Question: req.question, Operation: req.operation, Tool: req.tool, Target: req.target,
-		Risk: req.risk, Reason: req.reason, Suggestion: req.suggestion,
+	name := state.request.agentID
+	if node := m.AgentMgr.Get(name); node != nil && node.Label != "" {
+		name = node.Label
+	}
+	projection.deck.Open(ui.PanelEntry{
+		ID: state.panelID(), Title: name + ": " + label, OwnerID: state.request.agentID,
+		Content: content, Closable: true, Policy: ui.PanelBlocking, BlockingGroup: "agent-prompts",
+		CloseAction: "agent-prompt.close", PreferredHeight: 12,
+		FocusID: focus,
 	})
-	projection.confirmationAgentID = req.agentID
-	projection.confirmationBlockID = req.blockID
-	state.confirmation = projection.confirmation
-	m.openSessionConfirmationPanel(projection)
+	if projection.deck.Active().ID == state.panelID() {
+		projection.deckFocused, projection.deckFocus = true, focus
+	}
+	projection.deckHost.MarkLayout()
+}
+
+func (m *App) syncAgentPromptBlocking() {
+	if m.OverlayState != nil {
+		m.OverlayState.SetBlocking(m.agentPrompt != nil || (m.agentPromptInlineEligible(m.AgentMgr.ActiveID()) && m.sessionDeckBlocking()))
+	}
+}
+
+func (m *App) promptForScreen(target any) *agentPromptState {
+	for _, state := range m.agentPrompts {
+		if state.confirmation != nil && target == state.confirmation || state.question != nil && target == state.question {
+			return state
+		}
+	}
+	return nil
 }
 
 func (m *App) openAgentConfirmationPrompt(state *agentPromptState) {
 	req := state.request
 	detail := strings.Join(nonemptyPromptParts(
+		promptPart("Agent", m.promptOwnerLabel(state.request.agentID)),
 		promptPart("Operation", req.operation), promptPart("Tool", req.tool), promptPart("Target", req.target),
 		promptPart("Risk", req.risk), promptPart("Reason", req.reason), promptPart("Suggestion", req.suggestion),
 	), "\n")
@@ -155,20 +213,9 @@ func (m *App) openAgentConfirmationPrompt(state *agentPromptState) {
 }
 
 func (m *App) openAgentQuestionPrompt(state *agentPromptState) {
-	screen := question.New(m.Theme)
-	count, err := screen.ResetWithError(state.request.questionsJSON)
-	if err != nil || count == 0 {
-		detail := "question payload could not be rendered"
-		if err != nil {
-			detail = err.Error()
-		}
-		m.RejectQuestion(state.request.agentID, state.request.blockID, detail)
-		m.finishAgentPrompt()
-		return
-	}
-	state.question = screen
+	screen := state.question
 	w, h := fitFloatingSize(m.width, m.height, 96, 24, 48, 12)
-	frame := ui.NewWindowFrameWidget(m.Theme, ui.NewID(ui.RootID, "agent-question-frame"), ui.FrameWindow, "Questions", screen, nil, false, w, h)
+	frame := ui.NewWindowFrameWidget(m.Theme, ui.NewID(ui.RootID, "agent-question-frame"), ui.FrameWindow, "Questions: "+m.promptOwnerLabel(state.request.agentID), screen, nil, false, w, h)
 	if frame.Host() != nil {
 		frame.Host().Focus(question.OptionsID)
 	}
@@ -231,8 +278,33 @@ func (m *App) resolveAgentConfirmationChoice(choice int) {
 	m.finishAgentPrompt()
 }
 
+func (m *App) promptOwnerLabel(agentID string) string {
+	if node := m.AgentMgr.Get(agentID); node != nil && node.Label != "" {
+		return node.Label + " (" + agentID + ")"
+	}
+	return agentID
+}
+
+func (m *App) resolvePromptConfirmation(target *confirmation.Screen, choice string) {
+	state := m.promptForScreen(target)
+	if state == nil {
+		return
+	}
+	m.resolveAgentPromptConfirmation(state.request, choice)
+	m.removeAgentPrompt(state)
+	m.openNextAgentPrompt()
+}
+
+func (m *App) cancelPromptConfirmation(target *confirmation.Screen) {
+	state := m.promptForScreen(target)
+	if state == nil {
+		return
+	}
+	m.cancelAgentTurn(state.request.agentID)
+	m.dismissAgentPromptFor(state.request.agentID)
+}
+
 func (m *App) resolveAgentPromptConfirmation(req agentPromptRequest, choice string) {
-	m.OverlayState.SetBlocking(false)
 	if m.ResolveConfirmation(req.agentID, req.blockID, choice) {
 		if node := m.AgentMgr.Get(req.agentID); node != nil && node.State != nil {
 			node.State.Running, node.State.Thinking = true, true
@@ -243,16 +315,16 @@ func (m *App) resolveAgentPromptConfirmation(req agentPromptRequest, choice stri
 }
 
 func (m *App) resolveAgentQuestion(target *question.Screen, result question.Result, cancelled bool) {
-	state := m.agentPrompt
-	if state == nil || state.question != target {
+	state := m.promptForScreen(target)
+	if state == nil {
 		return
 	}
 	req := state.request
-	m.OverlayState.SetBlocking(false)
 	if !m.ResolveQuestion(req.agentID, req.blockID, result.Answers, result.Questions, cancelled) && m.Feedback != nil {
 		m.Feedback.NotifyError("Question response was not sent: the request is no longer active")
 	}
-	m.finishAgentPrompt()
+	m.removeAgentPrompt(state)
+	m.openNextAgentPrompt()
 }
 
 func (m *App) cancelAgentPrompt() {
@@ -260,63 +332,66 @@ func (m *App) cancelAgentPrompt() {
 	if state == nil {
 		return
 	}
-	m.OverlayState.SetBlocking(false)
 	if state.request.kind == agentPromptQuestions {
 		m.ResolveQuestion(state.request.agentID, state.request.blockID, nil, nil, true)
 	} else {
 		m.cancelAgentTurn(state.request.agentID)
 	}
-	m.finishAgentPrompt()
+	m.removeAgentPrompt(state)
+	m.openNextAgentPrompt()
 }
 
 func (m *App) finishAgentPrompt() {
-	state := m.agentPrompt
-	if state != nil && state.inline {
-		_, projection := m.sessionProjectionForAgent(state.request.agentID)
-		if projection != nil {
-			if state.confirmation != nil {
-				state.confirmation.Dismiss()
-				m.closeProjectionPanel(projection, sessionConfirmationPanelID)
-			}
-			if state.question != nil {
-				state.question.Dismiss()
-				m.closeProjectionPanel(projection, sessionQuestionPanelID)
-			}
-		}
-	} else {
-		m.overlayHost.Close(ui.OverlayAgentPrompt)
-	}
-	m.agentPrompt = nil
+	m.removeAgentPrompt(m.agentPrompt)
 	m.openNextAgentPrompt()
 }
 
-func (m *App) dismissAgentPromptFor(agentID string) {
-	if state := m.agentPrompt; state != nil && state.request.agentID == agentID {
-		if state.inline {
-			_, projection := m.sessionProjectionForAgent(agentID)
-			if projection != nil {
-				if state.confirmation != nil {
-					state.confirmation.Dismiss()
-					m.closeProjectionPanel(projection, sessionConfirmationPanelID)
-				}
-				if state.question != nil {
-					state.question.Dismiss()
-					m.closeProjectionPanel(projection, sessionQuestionPanelID)
-				}
-			}
-		} else {
-			m.overlayHost.Close(ui.OverlayAgentPrompt)
-		}
+func (m *App) removeAgentPrompt(state *agentPromptState) {
+	if state == nil {
+		return
+	}
+	if m.agentPrompt == state {
 		m.agentPrompt = nil
+		m.overlayHost.Close(ui.OverlayAgentPrompt)
 	}
-	filtered := m.agentPromptQueue[:0]
-	for _, req := range m.agentPromptQueue {
-		if req.agentID != agentID {
-			filtered = append(filtered, req)
+	if state.inline && state.projection != nil {
+		m.closeProjectionPanel(state.projection, state.panelID())
+	}
+	for i, candidate := range m.agentPrompts {
+		if candidate == state {
+			copy(m.agentPrompts[i:], m.agentPrompts[i+1:])
+			m.agentPrompts[len(m.agentPrompts)-1] = nil
+			m.agentPrompts = m.agentPrompts[:len(m.agentPrompts)-1]
+			break
 		}
 	}
-	m.agentPromptQueue = filtered
+}
+
+func (m *App) dismissAgentPromptFor(agentID string) {
+	m.dismissAgentPromptBlock(agentID, "")
+}
+
+func (m *App) dismissAgentPromptBlock(agentID, blockID string) {
+	for _, state := range append([]*agentPromptState(nil), m.agentPrompts...) {
+		if state.request.agentID == agentID && (blockID == "" || state.request.blockID == blockID) {
+			m.removeAgentPrompt(state)
+		}
+	}
 	m.openNextAgentPrompt()
+}
+
+func (m *App) closeAgentPromptTab(id string) {
+	for _, state := range m.agentPrompts {
+		if state.panelID() != id {
+			continue
+		}
+		if state.question != nil {
+			m.resolveAgentQuestion(state.question, question.Result{}, true)
+		} else {
+			m.resolvePromptConfirmation(state.confirmation, "deny")
+		}
+		return
+	}
 }
 
 func promptPart(label, value string) string {

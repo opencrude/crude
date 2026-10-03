@@ -34,7 +34,7 @@ func TestCompactionWorkStageRecoversReasoningOutputExhaustion(t *testing.T) {
 		_ = json.Unmarshal(body["max_tokens"], &cap)
 		var effort string
 		_ = json.Unmarshal(body["reasoning_effort"], &effort)
-		work := strings.Contains(messages[len(messages)-1].ContentString(), compactionStages[1].Root)
+		work := strings.Contains(messages[len(messages)-1].ContentString(), compactionStagesForTest[1].Root)
 		if work {
 			limits = append(limits, cap)
 			workInputs = append(workInputs, provider.EstimateMessagesTotal(messages, "cmd/deepseek/deepseek-v4-flash"))
@@ -66,7 +66,7 @@ func TestCompactionWorkStageRecoversReasoningOutputExhaustion(t *testing.T) {
 	if truncated.Load() != 1 || len(limits) < 2 || limits[0] <= 3936 || workInputs[1] >= workInputs[0] {
 		t.Fatalf("work extraction repeated the exhausted source: truncations=%d caps=%v inputs=%v", truncated.Load(), limits, workInputs)
 	}
-	if len(requests) <= len(compactionStages) || connection.ThinkingEffort() != "high" || strings.Contains(result.Messages[0].ContentString(), "UNSAFE_TRUNCATED_CHECKPOINT") {
+	if len(requests) <= len(compactionStagesForTest) || connection.ThinkingEffort() != "high" || strings.Contains(result.Messages[0].ContentString(), "UNSAFE_TRUNCATED_CHECKPOINT") {
 		t.Fatalf("checkpoint recovery changed normal reasoning or installed a truncated extraction: calls=%d effort=%q", len(requests), connection.ThinkingEffort())
 	}
 	for _, request := range requests {
@@ -98,7 +98,7 @@ func TestCompactionPreservesConfiguredModelOutputCap(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(caps) != len(compactionStages) {
+	if len(caps) != len(compactionStagesForTest) {
 		t.Fatalf("requests=%d", len(caps))
 	}
 	for _, cap := range caps {
@@ -130,10 +130,10 @@ func TestCompactionKeepsConfiguredReasoningForExtractionAndOrdinaryRequests(t *t
 	if _, err := agent.completeStream(context.Background(), []provider.ChatMessage{provider.NewTextMessage("user", "normal request")}, nil, nil, nil, nil, nil, nil, nil, nil); err != nil {
 		t.Fatal(err)
 	}
-	if len(bodies) != len(compactionStages)+1 {
+	if len(bodies) != len(compactionStagesForTest)+1 {
 		t.Fatalf("calls=%d", len(bodies))
 	}
-	for _, body := range bodies[:len(compactionStages)] {
+	for _, body := range bodies[:len(compactionStagesForTest)] {
 		if string(body["reasoning_effort"]) != `"high"` || body["thinking"] != nil {
 			t.Fatalf("compaction altered the configured reasoning: effort=%s thinking=%s", body["reasoning_effort"], body["thinking"])
 		}
@@ -166,7 +166,7 @@ func TestCompactionContextTruncationReplansInsteadOfRepeatingTheSameRequest(t *t
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(requests) <= len(compactionStages) || requests[1] >= requests[0] || strings.Contains(result.Messages[0].ContentString(), "UNSAFE_TRUNCATED_CHECKPOINT") {
+	if len(requests) <= len(compactionStagesForTest) || requests[1] >= requests[0] || strings.Contains(result.Messages[0].ContentString(), "UNSAFE_TRUNCATED_CHECKPOINT") {
 		t.Fatalf("truncated input was retried without reduction: request estimates=%v", requests)
 	}
 }
@@ -198,7 +198,7 @@ func TestCompactionWithVeryLargeRealRequestKeepsContextWithinWindow(t *testing.T
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(capacities) != len(compactionStages) || result.AfterTokens >= result.BeforeTokens {
+	if len(capacities) != len(compactionStagesForTest) || result.AfterTokens >= result.BeforeTokens {
 		t.Fatalf("compaction could not use the available large window: requests=%d result=%+v", len(capacities), result)
 	}
 	for _, capacity := range capacities {
@@ -225,7 +225,7 @@ func TestCompactionRefinesOnlyOversizedSuccessfulCheckpointText(t *testing.T) {
 	agent := newTestAgent(t, connection, connection.Model)
 	extractor := compactionExtractor{
 		agent: agent, ctx: context.Background(), emit: func(AgentEvent) {},
-		stage: compactionStages[0], role: "root", system: provider.NewTextMessage("system", "system"),
+		stage: compactionStagesForTest[0], role: "root", system: provider.NewTextMessage("system", "system"),
 		common:      provider.NewTextMessage("user", "preserve exact evidence"),
 		inputBudget: 30_000, capacityBudget: 30_000, outputBudget: 200, responseBudget: 2000,
 	}
@@ -288,7 +288,7 @@ func TestCompactionUsesReportedInputToLeaveRoomForReasoning(t *testing.T) {
 	if _, err := agent.Compact(context.Background(), compactionTestHistory(provider.NewTextMessage("user", "preserve request")), "system", nil); err != nil {
 		t.Fatal(err)
 	}
-	if len(outputs) != len(compactionStages) || outputs[1] >= outputs[0] {
+	if len(outputs) != len(compactionStagesForTest) || outputs[1] >= outputs[0] {
 		t.Fatalf("provider-measured input did not reduce next response allowance: estimates=%v allowances=%v", measuredInputs, outputs)
 	}
 	want := 128_000 - 2*measuredInputs[1] - contextSafetyReserve(128_000)

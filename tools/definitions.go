@@ -50,20 +50,20 @@ var AgentTools = []ToolDef{
 		Type: "function",
 		Function: ToolFuncDef{
 			Name: "read_file",
-			Description: "Read the contents of a file (Read primitive). " +
-				"Use offset and limit to read a specific range of lines in large files. " +
-				"Output includes line numbers. Always read a file before editing it. " +
-				"Set encoded=true for hashline format with line anchors (e.g. '1:a3b7| code') — " +
-				"useful for anchor-based edits that save tokens on large files. " +
-				"Binary files (PDF, DOCX, PPTX, XLSX, etc.) are automatically converted to Markdown — " +
-				"you can read PDFs, Word docs, spreadsheets, and presentations like text files.",
+			Description: "Read a local path for direct inspection (Read primitive). Handles text, documents, images, audio, and video; use this tool directly to inspect screenshots or other supported media, without a separate viewer or integration.\n\n" +
+				"Returns by file type:\n" +
+				"- Text and source files: text with line numbers. offset and limit select a line range; encoded=true adds hashline anchors (e.g. '1:a3b7| code') for precise edits.\n" +
+				"- Office documents, ebooks, and notebooks (DOCX, PPTX, XLSX/XLS, EPUB, IPYNB): extracted Markdown. offset and limit select converted lines.\n" +
+				"- Images/screenshots (PNG, JPEG, GIF, WebP), PDF documents, audio (e.g. WAV, MP3), and video (e.g. MP4, MOV, WebM): whole-file native attachments for the model to inspect, not a text, hex, or base64 dump. Text-range and hashline options do not alter media attachments.\n" +
+				"- Directories: a directory listing. Use list_directory for explicit or recursive directory reads.\n\n" +
+				"Native media requires the active model's enabled input modality and a provider protocol that supports the file's MIME type. Size and filesystem safety checks apply. Unsupported or disabled media returns an explicit refusal; it is not silently converted to text. Always read a file before editing it.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
 					"path":{"type":"string","description":"Path to the file"},
-					"offset":{"type":"integer","description":"First line to return (1-based, optional; default: 1)"},
-					"limit":{"type":"integer","description":"Maximum number of lines to return (optional; default: all)"},
-					"encoded":{"type":"boolean","description":"Return hashline-encoded format with line:hash anchors (optional; default: false)"}
+					"offset":{"type":"integer","description":"First text or converted-document line to return (1-based; default: 1). Does not crop media attachments."},
+					"limit":{"type":"integer","description":"Maximum text or converted-document lines to return (default: all). Does not limit media attachments."},
+					"encoded":{"type":"boolean","description":"Add line:hash anchors to plain-text reads (default: false). Does not encode or change media attachments."}
 				},
 				"required":["path"]
 			}`),
@@ -543,12 +543,14 @@ var AgentTools = []ToolDef{
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
-					"title":{"type":"string","description":"Short stable title used for deduplication."},
+					"title":{"type":"string","description":"Short descriptive title. IDs are stable independently of titles; duplicates do not replace records."},
 					"content":{"type":"string","description":"Self-contained knowledge to retain (1-4 sentences)."},
 					"kind":{"type":"string","enum":["fact","decision","convention","preference","lesson","reference"],"description":"Memory category; default fact."},
 					"importance":{"type":"integer","description":"0-100; most memories are 30-60, 80+ is rare. Default 40."},
 					"paths":{"type":"array","items":{"type":"string"},"description":"Repo-relative files/dirs this memory applies to. Boosts recall when those files are active. Omit for project-wide."},
-					"pinned":{"type":"boolean","description":"Always inject this memory into context. Reserve for critical rules."}
+					"pinned":{"type":"boolean","description":"Always inject this memory into context. Reserve for critical rules."},
+					"applies_when":{"type":"string","description":"Conditions or exceptions that limit this assertion."},
+					"evidence":{"type":"array","maxItems":16,"items":{"type":"object","properties":{"session_id":{"type":"string"},"message_id":{"type":"string"},"tool_call_id":{"type":"string"},"kind":{"type":"string","enum":["user_statement","tool_result","verified_change","validation"]},"summary":{"type":"string","maxLength":1024},"outcome":{"type":"string","enum":["succeeded","failed","unmeasured","cancelled"]}},"required":["session_id","kind","summary"]}}
 				},
 				"required":["title","content"]
 			}`),
@@ -559,7 +561,7 @@ var AgentTools = []ToolDef{
 		Function: ToolFuncDef{
 			Name: "recall_memory",
 			Description: "Search durable workspace memory (facts, decisions, conventions, preferences, lessons) from all prior work in this project. " +
-				"Results are ranked by relevance, recency, importance, and usage. The top memories are already auto-injected each turn; use this for deeper or more specific searches.",
+				"Results include exact revision, applicability and evidence indicators, ranked by relevance and importance. Exposure does not increase rank or knowledge freshness.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
@@ -575,18 +577,22 @@ var AgentTools = []ToolDef{
 		Function: ToolFuncDef{
 			Name: "update_memory",
 			Description: "Replace an existing workspace memory with corrected or refined content. " +
-				"The old version is kept superseded (auditable), linked to the replacement. Use when a remembered fact changed or was wrong.",
+				"Requires the expected current revision and appends an immutable audited revision under the same stable ID. A version conflict preserves the current correction; recall before retrying.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
 					"id":{"type":"string","description":"Memory ID being corrected (from recall_memory or the Workspace Memory context block)."},
+					"expected_revision":{"type":"integer","minimum":1,"description":"Exact revision being corrected; required for compare-and-swap."},
 					"content":{"type":"string","description":"The corrected, self-contained content."},
 					"title":{"type":"string","description":"New title; omit to keep the existing title."},
 					"kind":{"type":"string","enum":["fact","decision","convention","preference","lesson","reference"],"description":"New category; omit to keep."},
 					"importance":{"type":"integer","description":"0-100; omit to keep."},
-					"paths":{"type":"array","items":{"type":"string"},"description":"New scope paths; omit to keep."}
+					"paths":{"type":"array","items":{"type":"string"},"description":"New scope paths; omit to keep."},
+					"pinned":{"type":"boolean","description":"New pin preference; omit to keep."},
+					"applies_when":{"type":"string","description":"New applicability conditions; omit to keep."},
+					"evidence":{"type":"array","maxItems":16,"items":{"type":"object","properties":{"session_id":{"type":"string"},"message_id":{"type":"string"},"tool_call_id":{"type":"string"},"kind":{"type":"string","enum":["user_statement","tool_result","verified_change","validation"]},"summary":{"type":"string","maxLength":1024},"outcome":{"type":"string","enum":["succeeded","failed","unmeasured","cancelled"]}},"required":["session_id","kind","summary"]}}
 				},
-				"required":["id","content"]
+				"required":["id","expected_revision","content"]
 			}`),
 		},
 	},
@@ -599,9 +605,22 @@ var AgentTools = []ToolDef{
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
-					"id":{"type":"string","description":"Memory ID returned by remember or recall_memory."}
+					"id":{"type":"string","description":"Memory ID returned by remember or recall_memory."},
+					"expected_revision":{"type":"integer","minimum":1,"description":"Exact revision to retire; a concurrent correction is never overwritten."}
 				},
-				"required":["id"]
+				"required":["id","expected_revision"]
+			}`),
+		},
+	},
+	{
+		Type: "function",
+		Function: ToolFuncDef{
+			Name:        "memory_feedback",
+			Description: "Record evidence-based useful, misleading, contradicted or not_applicable feedback for exact memory revisions. Mere exposure or successful turns are not usefulness evidence; peer claims are not verification.",
+			Parameters: json.RawMessage(`{
+				"type":"object",
+				"properties":{"items":{"type":"array","minItems":1,"maxItems":32,"items":{"type":"object","properties":{"id":{"type":"string"},"revision":{"type":"integer","minimum":1},"kind":{"type":"string","enum":["useful","misleading","contradicted","not_applicable"]},"evidence":{"type":"array","minItems":1,"maxItems":16,"items":{"type":"object","properties":{"session_id":{"type":"string"},"message_id":{"type":"string"},"tool_call_id":{"type":"string"},"kind":{"type":"string","enum":["user_statement","tool_result","verified_change","validation"]},"summary":{"type":"string","maxLength":1024},"outcome":{"type":"string","enum":["succeeded","failed","unmeasured","cancelled"]}},"required":["session_id","kind","summary"]}}},"required":["id","revision","kind","evidence"]}}},
+				"required":["items"]
 			}`),
 		},
 	},

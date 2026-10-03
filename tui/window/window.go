@@ -35,6 +35,19 @@ const (
 	TabHorizontal TabLayout = iota
 )
 
+type ResourceKind string
+
+const (
+	ResourceDocument  ResourceKind = "document"
+	ResourceAgent     ResourceKind = "agent"
+	ResourceGitReview ResourceKind = "git-review"
+)
+
+type Resource struct {
+	Kind ResourceKind
+	ID   string
+}
+
 type Tab struct {
 	ID           TabID
 	Title        string
@@ -44,6 +57,7 @@ type Tab struct {
 	Closable     bool
 	Pinned       bool
 	Layout       TabLayout
+	Resource     Resource
 }
 
 func newTab(title, icon string, closable bool, layout TabLayout) Tab {
@@ -83,6 +97,20 @@ func New(_ *theme.Theme) *Window {
 
 func (w *Window) OpenTab(title, icon string, closable bool) *Tab {
 	return w.OpenTabWithLayout(title, icon, closable, TabHorizontal)
+}
+
+func (w *Window) OpenResource(resource Resource, title string, closable bool) *Tab {
+	for index := range w.tabs {
+		if w.tabs[index].Resource == resource {
+			w.active = index
+			return &w.tabs[index]
+		}
+	}
+	tab := newTab(title, "", closable, TabHorizontal)
+	tab.Resource = resource
+	w.tabs = append(w.tabs, tab)
+	w.active = len(w.tabs) - 1
+	return &w.tabs[w.active]
 }
 
 func (w *Window) OpenTabInactive(title, icon string, closable bool) *Tab {

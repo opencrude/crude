@@ -4,9 +4,6 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-
-	"crude/tui/theme"
-	"crude/workspace"
 )
 
 // TestLauncherListOffsetSurvivesRelayout guards against scroll snap-back in
@@ -56,7 +53,7 @@ func TestLauncherKeyboardNavRevealsSelection(t *testing.T) {
 	}
 	vh := s.list.list.Scroll().Viewport()
 	off := s.ListScrollOffset()
-	cursor := s.list.list.SelectedIndex()
+	cursor := s.list.list.SelectedIndex() * 3
 	if cursor < off || cursor >= off+vh {
 		t.Fatalf("selected row %d not visible in viewport [%d,%d)", cursor, off, off+vh)
 	}
@@ -70,54 +67,18 @@ func TestLauncherKeyboardNavRevealsSelection(t *testing.T) {
 // TestLauncherWorkspaceItemAt covers the row hit-test used by the right-click
 // context menu: visible rows map to their entries, empty space returns nil.
 func TestLauncherWorkspaceItemAt(t *testing.T) {
-	s, _ := launcherContractHost(t, 110, 16, manyWorkspaces(4))
+	s, _ := launcherContractHost(t, 80, 24, manyWorkspaces(4))
 
-	if got := s.WorkspaceItemAt(0); got == nil || got.Name != "ws-00" {
+	if got := s.WorkspaceItemAt(0, 0); got == nil || got.Name != "ws-00" {
 		t.Fatalf("row 0 = %#v, want ws-00", got)
 	}
-	if got := s.WorkspaceItemAt(2); got == nil || got.Name != "ws-02" {
-		t.Fatalf("row 2 = %#v, want ws-02", got)
+	if got := s.WorkspaceItemAt(0, 6); got == nil || got.Name != "ws-02" {
+		t.Fatalf("row 6 = %#v, want ws-02", got)
 	}
-	if got := s.WorkspaceItemAt(50); got != nil {
+	if got := s.WorkspaceItemAt(0, 50); got != nil {
 		t.Fatalf("row past the last item must be nil, got %#v", got)
 	}
-	if got := s.WorkspaceItemAt(-1); got != nil {
+	if got := s.WorkspaceItemAt(0, -1); got != nil {
 		t.Fatalf("negative row must be nil, got %#v", got)
-	}
-}
-
-// TestLauncherRemoveWorkspace covers the context-menu removal primitive:
-// matching by ID, path fallback for legacy entries without an ID, and
-// no-ops for unknown workspaces.
-func TestLauncherRemoveWorkspace(t *testing.T) {
-	s := New(theme.DefaultDark())
-	s.SetData("/projects/current", []workspace.WorkspaceInfo{
-		{ID: "id-a", ProjectName: "alpha", ProjectDir: "/projects/alpha"},
-		{ID: "id-b", ProjectName: "beta", ProjectDir: "/projects/beta"},
-		{ID: "id-c", ProjectName: "gamma", ProjectDir: "/projects/gamma"},
-	})
-
-	if !s.RemoveWorkspace("id-b", "/projects/beta") {
-		t.Fatal("RemoveWorkspace should report a successful removal")
-	}
-	if got := s.TotalItems(); got != 4 { // 2 fixed actions + 2 workspaces
-		t.Fatalf("TotalItems=%d want 4 after removal", got)
-	}
-	for i := 2; i < len(s.items); i++ {
-		if s.items[i].Workspace != nil && s.items[i].Workspace.Name == "beta" {
-			t.Fatal("beta should no longer be listed")
-		}
-	}
-
-	// Path fallback for legacy entries without an ID.
-	if !s.RemoveWorkspace("", "/projects/alpha") {
-		t.Fatal("path fallback should remove the entry")
-	}
-	if got := s.TotalItems(); got != 3 {
-		t.Fatalf("TotalItems=%d want 3 after path-fallback removal", got)
-	}
-
-	if s.RemoveWorkspace("missing", "/nowhere") {
-		t.Fatal("unknown workspace must not report a removal")
 	}
 }

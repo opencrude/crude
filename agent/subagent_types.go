@@ -32,28 +32,29 @@ const (
 )
 
 type SubAgentSpec struct {
-	ID               AgentID       `json:"id"`
-	Name             string        `json:"name"`
-	Category         string        `json:"category"`
-	Description      string        `json:"description"`
-	Instructions     string        `json:"instructions"`
-	Model            string        `json:"model"`
-	Provider         string        `json:"provider"`
-	AccountID        string        `json:"account_id,omitempty"`
-	ProviderURL      string        `json:"provider_url,omitempty"`
-	APIKey           string        `json:"-"`
-	APIStandard      string        `json:"api_standard,omitempty"`
-	ThinkingEffort   string        `json:"thinking_effort,omitempty"`
-	PolicyName       string        `json:"policy"`
-	Policy           safety.Policy `json:"-"`
-	AllowedTools     []string      `json:"allowed_tools"`
-	DeniedTools      []string      `json:"denied_tools"`
-	Depth            int           `json:"depth"`
-	FileOwnership    []string      `json:"file_ownership"`
-	ParentID         AgentID       `json:"parent_id"`
-	ParentTurn       uint64        `json:"parent_turn"`
-	ParentToolCallID string        `json:"parent_tool_call_id,omitempty"`
-	HistoryMessageID string        `json:"history_message_id,omitempty"`
+	ID               AgentID           `json:"id"`
+	Name             string            `json:"name"`
+	Category         string            `json:"category"`
+	Description      string            `json:"description"`
+	Instructions     string            `json:"instructions"`
+	Model            string            `json:"model"`
+	Provider         string            `json:"provider"`
+	AccountID        string            `json:"account_id,omitempty"`
+	ProviderURL      string            `json:"provider_url,omitempty"`
+	APIKey           string            `json:"-"`
+	APIStandard      string            `json:"api_standard,omitempty"`
+	ThinkingEffort   string            `json:"thinking_effort,omitempty"`
+	PolicyName       string            `json:"policy"`
+	Policy           safety.Policy     `json:"-"`
+	AllowedTools     []string          `json:"allowed_tools"`
+	DeniedTools      []string          `json:"denied_tools"`
+	SkillModes       map[string]string `json:"skill_modes,omitempty"`
+	Depth            int               `json:"depth"`
+	FileOwnership    []string          `json:"file_ownership"`
+	ParentID         AgentID           `json:"parent_id"`
+	ParentTurn       uint64            `json:"parent_turn"`
+	ParentToolCallID string            `json:"parent_tool_call_id,omitempty"`
+	HistoryMessageID string            `json:"history_message_id,omitempty"`
 
 	ModelContextWindow int      `json:"model_context_window,omitempty"`
 	ModelMaxOutput     int      `json:"model_max_output,omitempty"`

@@ -57,6 +57,7 @@ type Screen struct {
 	tokens     *ui.TokenSet
 	projection Projection
 	hits       []segmentHit
+	overflow   []Segment
 }
 
 func New(th *theme.Theme, _ *ui.ActionRegistry) *Screen {
@@ -99,6 +100,35 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 		rightBudget = max(8, innerW/2)
 	}
 	right := fitSegments(s.projection.Right, rightBudget, rightSeparator)
+	s.overflow = nil
+	if hasPills(s.projection.Right) && len(right) < len(s.projection.Right) {
+		more := Segment{Text: "More", FillRole: ui.ColorMuted, Pill: true, Action: "footer-more", Priority: 0}
+		budget := max(0, rightBudget-rendering.VisibleWidth(more.Text)-2)
+		ranked := append([]Segment(nil), s.projection.Right...)
+		for index := range ranked {
+			if ranked[index].Active || ranked[index].Attention {
+				ranked[index].Priority = -2
+			} else if ranked[index].Action == "board" || ranked[index].Action == "memory" || ranked[index].Action == "workspace" {
+				ranked[index].Priority = -1
+			}
+		}
+		right = fitSegments(ranked, budget, rightSeparator)
+		for _, segment := range s.projection.Right {
+			found := false
+			for _, visible := range right {
+				if visible.Action == segment.Action {
+					found = true
+					break
+				}
+			}
+			if !found {
+				s.overflow = append(s.overflow, segment)
+			}
+		}
+		if rightBudget >= rendering.VisibleWidth(more.Text)+1 {
+			right = append(right, more)
+		}
+	}
 	rightW := paintedGroupWidth(right, rightSeparator)
 	left := fitSegments(s.projection.Left, max(0, innerW-rightW-2), " · ")
 	s.paintGroup(buf, ox+r.X+leftRail, oy+r.Y+1, left, " · ", leftRail)
@@ -181,6 +211,8 @@ func (s *Screen) Semantics() ui.Semantics {
 	}
 	return ui.Semantics{Role: ui.RoleGroup, Label: strings.Join(parts, " ")}
 }
+
+func (s *Screen) Overflow() []Segment { return append([]Segment(nil), s.overflow...) }
 
 func fitSegments(segments []Segment, width int, separator string) []Segment {
 	if width <= 0 {

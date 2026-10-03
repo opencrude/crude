@@ -90,8 +90,13 @@ func (m *App) showSettingsPrompt(msg settingsui.PromptMsg) {
 		spec.Buttons = []ui.ConfirmButtonSpec{{Label: "Discard changes", ActionID: ui.ConfirmActionDiscard}, {Label: "Keep editing", ActionID: ui.ConfirmActionCancel}}
 	case settingsui.PromptDiscardSettings:
 		spec.Title, spec.Question = "Discard drafts", "Discard unsaved settings drafts?"
-		spec.Detail = "Unsaved preferences will be lost. Saved settings are unchanged."
+		spec.Detail = "Unsaved preferences and editor drafts will be lost. Saved settings are unchanged."
 		spec.Buttons = []ui.ConfirmButtonSpec{{Label: "Discard drafts", ActionID: ui.ConfirmActionDiscard}, {Label: "Keep settings open", ActionID: ui.ConfirmActionCancel}}
+	case settingsui.PromptRemoveCapability:
+		spec.Title, spec.Question = "Remove capability", "Remove this registration or selected binding?"
+		spec.Detail = "Authored files, other workspaces and completed effects are not deleted. " + msg.Label
+		spec.Severity = ui.ConfirmPromptDanger
+		spec.Buttons = []ui.ConfirmButtonSpec{{Label: "Remove", ActionID: ui.ConfirmActionYes}, {Label: "Keep", ActionID: ui.ConfirmActionCancel}}
 	default:
 		return
 	}
@@ -146,6 +151,10 @@ func (m *App) activateSettingsPrompt(choice int) tea.Cmd {
 		result = body.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.template.confirm-remove", Payload: state.request.ID})
 	case settingsui.PromptDiscardEditor, settingsui.PromptDiscardSettings:
 		result = body.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.discard.confirm", Payload: state.request.Kind})
+	case settingsui.PromptRemoveCapability:
+		if state.request.CapabilityAction != nil {
+			result = body.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.capability.confirm-remove", Payload: *state.request.CapabilityAction})
+		}
 	}
 	if frame, ok := state.parent.Content.(*ui.WindowFrameWidget); ok {
 		frame.Host().MarkLayout()

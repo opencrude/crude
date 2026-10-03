@@ -54,6 +54,7 @@ var overlayOutsideContractMatrix = []overlayOutsideFixture{
 	{id: ui.OverlayTreeDelete, policy: ui.ModalDialogPolicy(), wantSuppress: true},
 	{id: ui.OverlayFilePicker, policy: ui.ModalDialogPolicy(), wantSuppress: true},
 	{id: ui.OverlayWorkspaceSettings, policy: ui.ModalDialogPolicy(), wantSuppress: true},
+	{id: ui.OverlayCapabilityPicker, policy: ui.ModalDialogPolicy(), wantSuppress: true},
 	{id: ui.OverlaySessionPicker, policy: ui.ModalDialogPolicy(), wantSuppress: true},
 	{id: ui.OverlayHelp, policy: ui.ModalDialogPolicy(), wantSuppress: true},
 }
@@ -211,8 +212,8 @@ func TestOverlayClickOutsideInsidePopupDoesNotClose(t *testing.T) {
 
 // TestOverlayOutsideContractMatrixCount guards the documented 17-overlay table.
 func TestOverlayOutsideContractMatrixCount(t *testing.T) {
-	if got := len(overlayOutsideContractMatrix); got != 19 {
-		t.Fatalf("overlayOutsideContractMatrix len=%d want 19", got)
+	if got := len(overlayOutsideContractMatrix); got != 20 {
+		t.Fatalf("overlayOutsideContractMatrix len=%d want 20", got)
 	}
 }
 
@@ -237,11 +238,12 @@ func TestOverlayOutsideContractMatrixMatchesOpeners(t *testing.T) {
 		ui.OverlayTreeDelete:        ui.OutsideIgnoreAndConsume,
 		ui.OverlayFilePicker:        ui.OutsideIgnoreAndConsume,
 		ui.OverlayWorkspaceSettings: ui.OutsideIgnoreAndConsume,
+		ui.OverlayCapabilityPicker:  ui.OutsideIgnoreAndConsume,
 		ui.OverlaySessionPicker:     ui.OutsideIgnoreAndConsume,
 		ui.OverlayHelp:              ui.OutsideIgnoreAndConsume,
 	}
-	if len(expected) != 19 {
-		t.Fatalf("expected opener registry len=%d want 19", len(expected))
+	if len(expected) != 20 {
+		t.Fatalf("expected opener registry len=%d want 20", len(expected))
 	}
 	for _, fx := range overlayOutsideContractMatrix {
 		want, ok := expected[fx.id]
