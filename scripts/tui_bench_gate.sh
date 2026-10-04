@@ -4,9 +4,10 @@
 # Runs the canonical performance benchmarks with -benchmem and fails when a
 # benchmark EXCEEDS its allocation ceiling from scripts/perf_ceilings.txt
 # (the machine-readable twin of docs/reference/performance-baselines.md).
-# Allocations are hardware-independent, so ceilings are enforceable in CI;
-# timing is intentionally NOT gated (CPU frequency variation across runners
-# makes wall-clock thresholds noise).
+# Allocations are hardware-independent but can differ by GOOS/toolchain runtime,
+# so the ceiling file supports narrow GOOS overrides while retaining one generic
+# CI baseline. Timing is intentionally NOT gated (CPU frequency variation across
+# runners makes wall-clock thresholds noise).
 #
 # Usage: scripts/tui_bench_gate.sh
 set -euo pipefail
@@ -14,10 +15,25 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 CEILINGS_FILE="scripts/perf_ceilings.txt"
+BENCH_GOOS="$(go env GOOS)"
 
-# name -> "bytes allocs" ceilings
+# name -> "bytes allocs" ceilings. A four-column "<name> <goos> <bytes>
+# <allocs>" row overrides the generic three-column row for the active GOOS.
 ceiling() {
-  awk -v name="$1" '$1 == name {print $2, $3; found=1; exit} END {if (!found) print ""}' "$CEILINGS_FILE"
+  awk -v name="$1" -v goos="$BENCH_GOOS" '
+    $1 != name { next }
+    NF == 4 && $2 == goos {
+      print $3, $4
+      exact = 1
+      exit
+    }
+    NF == 3 && fallback == "" {
+      fallback = $2 " " $3
+    }
+    END {
+      if (!exact && fallback != "") print fallback
+    }
+  ' "$CEILINGS_FILE"
 }
 
 fail=0
@@ -51,7 +67,7 @@ run_bench() {
   done < <(echo "$out" | grep -E '^Benchmark[A-Za-z0-9_]+-[0-9]+[[:space:]]+[0-9]+')
 }
 
-echo "== TUI bench regression gate =="
+echo "== TUI bench regression gate ($BENCH_GOOS) =="
 run_bench 'Benchmark(DemoGallery|Blit|WriteString|Flatten|FullRender|GenerateANSI)' ./tui/ui ./tui/surface ./tui/compositor
 run_bench 'Benchmark(EditorPaint|EditorScrollRepaint)' ./tui/screens/shelleditor
 run_bench '^BenchmarkBuffer(DirtyCheckLargeFile|SavepointManualRoundTripLargeFile)$' ./tui/editor

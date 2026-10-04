@@ -97,6 +97,14 @@ default is a planning estimate, not proof of actual provider capacity.
     running command has no exit code. Snapshotting never advances output,
     signals or restarts work; model extraction cannot override fresher owner data.
 
+Command output admission is separately bounded before it can create pressure:
+`read_async_output` returns one raw-byte page (32 KiB by default, 64 KiB maximum)
+with `next_byte`, `total_bytes` and `has_more`. Completed synchronous commands
+larger than the inline budget return a head/tail excerpt and a retained handle.
+Agents are given a session-owned cross-platform `CRUDE_TEMP_DIR` for noisy logs
+and intermediate artifacts. Compaction continuity records only owner-observed
+output length and cursor; it never reads the skipped bytes.
+
 Extraction contracts, stage wording, attributed source-fragment envelopes and
 checkpoint assembly live in `prompt/compaction.go`; `agent/` retains admission,
 chunk/retry execution and validation. `prompt/runtime.go` renders the continuity

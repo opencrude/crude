@@ -90,6 +90,11 @@ func Validate(config captypes.ConnectionConfig) error {
 			return errors.New("invalid credential target")
 		}
 	}
+	for _, name := range config.RequiredEnv {
+		if name == "" || strings.ContainsAny(name, "=\r\n\x00") {
+			return errors.New("invalid required environment name")
+		}
+	}
 	return nil
 }
 
@@ -182,6 +187,17 @@ func (manager *Manager) connect(ctx context.Context, id string, interactive bool
 	if err := Validate(config); err != nil {
 		manager.mu.Unlock()
 		return err
+	}
+	var missing []string
+	for _, name := range config.RequiredEnv {
+		if strings.TrimSpace(config.Environment[name]) == "" && strings.TrimSpace(config.SecretRefs[name]) == "" {
+			missing = append(missing, name)
+		}
+	}
+	if len(missing) > 0 {
+		sort.Strings(missing)
+		manager.mu.Unlock()
+		return fmt.Errorf("connection needs required environment configuration: %s", strings.Join(missing, ", "))
 	}
 	if config.Transport == "stdio" && !config.LaunchApproved {
 		manager.mu.Unlock()

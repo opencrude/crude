@@ -2,9 +2,6 @@
 
 > Status: Current. Every user-visible surface must be listed here; migration phases claim completeness only against this catalog.
 
-Status: Phase 0 evidence freeze  
-Canonical plan: [`docs/plans/tui-component-system-plan.md`](../plans/tui-component-system-plan.md)
-
 Every user-visible surface must appear here. Migration phases claim completeness
 only against this catalog.
 

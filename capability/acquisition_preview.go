@@ -28,11 +28,25 @@ func (service *Service) PreviewAcquisition(ctx context.Context, id string, scope
 	if !exists {
 		return captypes.AcquisitionPreview{}, errors.New("refresh Discover and inspect the exact source revision before installing or updating")
 	}
+	resolved, err := resolveSkillDirectoryCandidate(ctx, candidate)
+	if err != nil {
+		return captypes.AcquisitionPreview{}, err
+	}
+	if resolved.ArchiveURL != candidate.ArchiveURL || resolved.Entry.Version != candidate.Entry.Version || resolved.Subpath != candidate.Subpath {
+		service.mu.Lock()
+		if current, currentExists := service.candidates[id]; currentExists &&
+			current.Repository == candidate.Repository && current.SkillID == candidate.SkillID {
+			service.candidates[id] = resolved
+		}
+		service.mu.Unlock()
+		candidate = resolved
+	}
 	source, exists := settings.Sources[candidate.Entry.Source]
 	if !exists || !source.Trusted || source.Disabled {
 		return captypes.AcquisitionPreview{}, errors.New("candidate source is disabled, untrusted or unavailable")
 	}
 	preview := captypes.AcquisitionPreview{ID: id, Kind: candidate.Entry.Kind, Scope: scope, Operation: operation, Candidate: candidate.Entry, Source: source}
+	preview.Requirements = append(preview.Requirements, candidate.Requirements...)
 	var existing any
 	if skill, installed := settings.Skills[id]; installed {
 		existing = skill
@@ -47,7 +61,7 @@ func (service *Service) PreviewAcquisition(ctx context.Context, id string, scope
 	}
 	if candidate.Connection != nil {
 		connection := candidate.Connection
-		preview.Requirements = []string{"Transport: " + connection.Transport}
+		preview.Requirements = append(preview.Requirements, "Transport: "+connection.Transport)
 		if connection.Transport == "stdio" {
 			preview.Requirements = append(preview.Requirements, "Executable: "+connection.Command, "Local launch requires explicit approval; filesystem and network scope are not a sandbox")
 		} else {

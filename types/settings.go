@@ -115,7 +115,7 @@ func ApplyAppDefaults(s *AppSettings) {
 	if s == nil {
 		return
 	}
-	s.Capabilities = captypes.Normalize(s.Capabilities)
+	s.Capabilities = captypes.WithDefaultSources(s.Capabilities)
 	if s.Theme.Preset == "" {
 		s.Theme.Preset = "dark"
 	}

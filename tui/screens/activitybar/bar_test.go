@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -182,6 +183,97 @@ func TestAgentsIconIsRobotNotCogs(t *testing.T) {
 	}
 	if got := SettingsIcon(true); got != "\uf085" {
 		t.Fatalf("nerd-font settings icon=%q want nf-fa-cogs", got)
+	}
+}
+
+func TestCountBadgesAreReadableAndRaisedOrLowered(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		view View
+		n    int
+		want rune
+		y    int
+	}{
+		{"agents raised", ViewAgents, 2, '2', 3},
+		{"git lowered", ViewGit, 6, '6', 8},
+		{"files raised", ViewFiles, 1, '1', 0},
+		{"skills raised", ViewSkills, 8, '8', 9},
+		{"mcp raised", ViewMCP, 9, '9', 12},
+		{"agents overflow raised", ViewAgents, 10, '+', 3},
+		{"git overflow lowered", ViewGit, 10, '+', 8},
+		{"zero absent", ViewAgents, 0, ' ', 3},
+		{"negative absent", ViewGit, -1, ' ', 8},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			s := New(theme.DefaultDark())
+			s.SetBadge(test.view, test.n)
+			s.Layout(ui.LayoutContext{}, ui.Rect{W: Width, H: 24})
+			buf := surface.NewCellBuffer(Width, 24)
+			s.Paint(buf, 0, 0, ui.PaintContext{})
+			if got := buf.Get(5, test.y).Char; got != test.want {
+				t.Fatalf("badge=%q want %q", got, test.want)
+			}
+			y := int(test.view)*3 + 1
+			if got := buf.Get(3, y).Char; got != []rune(test.view.Icon(s.nerdFont))[0] {
+				t.Fatalf("badge replaced the %s icon: %q", test.view.Label(), got)
+			}
+			// No tiny script glyph or baseline duplicate may remain anywhere
+			// in the badge lane. Placement, not font glyph size, sets its level.
+			for row := int(test.view) * 3; row < (int(test.view)+1)*3; row++ {
+				for x := 4; x <= 6; x++ {
+					want := ' '
+					if x == 5 && row == test.y {
+						want = test.want
+					}
+					if got := buf.Get(x, row).Char; got != want {
+						t.Fatalf("badge lane (%d,%d)=%q want %q", x, row, got, want)
+					}
+				}
+			}
+			res := s.Handle(ui.EventContext{LocalX: 5, LocalY: test.y}, ui.Event{
+				Kind:       ui.EventMouseClick,
+				MouseClick: tea.MouseClickMsg{Button: tea.MouseLeft},
+			})
+			if res.Action == nil || res.Action.ID != ActionSelect || res.Action.Payload != test.view {
+				t.Fatalf("badge click must select its own destination: %+v", res)
+			}
+			s.SetBadge(test.view, 0)
+			s.Paint(buf, 0, 0, ui.PaintContext{})
+			if got := buf.Get(5, test.y).Char; got != ' ' {
+				t.Fatalf("cleared count left stale badge %q", got)
+			}
+		})
+	}
+}
+
+func TestCountBadgeNeverOverwritesWideIconOrPanelRule(t *testing.T) {
+	ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{Exact: map[string]int{"\uf418": 2}})
+	t.Cleanup(func() { ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{}) })
+	s := New(theme.DefaultDark())
+	s.nerdFont = true
+	s.SetBadge(ViewGit, 6)
+	for _, width := range []int{4, 5, 6, 7, Width} {
+		s.Layout(ui.LayoutContext{}, ui.Rect{W: width, H: 24})
+		buf := surface.NewCellBuffer(width, 24)
+		s.Paint(buf, 0, 0, ui.PaintContext{})
+		if width >= 5 {
+			if got := buf.Get(3, 7); got.Char != '\uf418' || got.Width != 2 {
+				t.Fatalf("width=%d badge erased the wide icon: %+v", width, got)
+			}
+			if got := buf.Get(4, 7).Width; got != 0 {
+				t.Fatalf("width=%d icon continuation overwritten: width=%d", width, got)
+			}
+		}
+		if width >= 6 && buf.Get(5, 8).Char != '6' {
+			t.Fatalf("width=%d badge must sit below/right of the full icon", width)
+		}
+		if width == Width {
+			for y := 6; y <= 8; y++ {
+				if got := buf.Get(7, y).Char; got == '6' || got == ' ' {
+					t.Fatalf("badge damaged the panel rule at row %d: %q", y, got)
+				}
+			}
+		}
 	}
 }
 

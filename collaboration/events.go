@@ -75,6 +75,9 @@ func (store *Store) publishTx(ctx context.Context, tx *sql.Tx, request PublishRe
 		return PublishResult{}, err
 	}
 	if len(recipients) == 0 {
+		if request.Broadcast {
+			return PublishResult{}, fmt.Errorf("%w: no other agents have active attached runs", ErrUnavailable)
+		}
 		return PublishResult{}, fmt.Errorf("%w: no recipients", ErrInvalid)
 	}
 
@@ -86,7 +89,8 @@ func (store *Store) publishTx(ctx context.Context, tx *sql.Tx, request PublishRe
 	event := Event{
 		ID: eventID, Sequence: last + 1, WorkspaceID: store.workspaceID,
 		SenderID: request.SenderID, SenderName: senderName, Recipients: recipients,
-		Origin: request.Origin, Kind: request.Kind, Body: request.Body,
+		Broadcast: request.Broadcast,
+		Origin:    request.Origin, Kind: request.Kind, Body: request.Body,
 		ReplyTo: request.ReplyTo, ThreadID: eventID, RequestID: request.RequestID,
 		RequestRevision: request.RequestRevision, RunID: request.RunID,
 		Supersedes: request.Supersedes, References: request.References, CreatedAt: now,
@@ -557,6 +561,9 @@ func validatePublishRequest(request PublishRequest) error {
 	if request.Broadcast && len(request.RecipientIDs) > 0 {
 		return fmt.Errorf("%w: broadcast cannot also list recipients", ErrInvalid)
 	}
+	if request.Broadcast && (request.Origin != OriginPeer || request.Kind != EventPeerNote) {
+		return fmt.Errorf("%w: broadcast is only available for peer notes", ErrInvalid)
+	}
 	if !request.Broadcast && len(request.RecipientIDs) == 0 {
 		return fmt.Errorf("%w: recipient required", ErrInvalid)
 	}
@@ -577,8 +584,17 @@ func normalizedRecipients(ids []string) []string {
 func resolveRecipients(ctx context.Context, tx *sql.Tx, senderID string, ids []string, broadcast bool) ([]Recipient, error) {
 	var result []Recipient
 	if broadcast {
-		rows, err := tx.QueryContext(ctx, `SELECT id,name,state,presence FROM collaboration_agents
-			WHERE state!='closed' AND id!=? ORDER BY id`, senderID)
+		rows, err := tx.QueryContext(ctx, `SELECT a.id,a.name,a.state,a.presence
+			FROM collaboration_agents a
+			JOIN collaboration_runs r ON r.id=a.current_run_id
+			WHERE a.id!=?
+			  AND a.state='available'
+			  AND a.presence='attached'
+			  AND a.current_run_id!=''
+			  AND r.agent_id=a.id
+			  AND r.runtime_epoch=a.runtime_epoch
+			  AND r.state NOT IN ('succeeded','failed','cancelled','interrupted')
+			ORDER BY a.id`, senderID)
 		if err != nil {
 			return nil, err
 		}

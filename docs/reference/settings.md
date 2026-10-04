@@ -141,6 +141,13 @@ to Ask. Resume restores selection/context passively without downloads, updates,
 server startup or tool replay. Unsupported protocol features are declared in MCP
 Overview instead of drawn as working controls.
 
+Fresh application settings include **Anthropic Skills (pinned)** and the
+**Official MCP Registry (preview)** as built-in sources. The Anthropic repository
+uses a complete commit identity; the Registry contributes metadata for remote
+Streamable HTTP connections only. Built-ins are discovery presets, not permission:
+they can be edited or disabled but not removed, and every acquisition still uses
+the exact preview/grant flow.
+
 Preference Save, entity Save and runtime operations have distinct transactions.
 Cancel Settings does not undo a completed install/connect. Capability map removals
 use explicit workspace deletion entries; Reset inherited restores application

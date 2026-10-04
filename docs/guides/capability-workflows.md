@@ -42,6 +42,11 @@ Explicit manager changes still publish their committed snapshots immediately.
 4. Discover → Search sources explicitly queries configured sources. A local
    source is a directory of standard skill directories; repository sources pin
    complete commit identities. Source trust is not an execution grant.
+   Fresh application settings include two disableable built-in presets:
+   **Anthropic Skills (pinned)** at commit
+   `8a1541c4a3ffa5a20a5a91de0dcf3f0bab1d1ef4`, and the
+   **Official MCP Registry (preview)** discovery API. Built-ins can be edited or
+   disabled but not deleted; install/update still requires the exact preview.
 5. Install/Update opens an exact source/revision/digest/scope/binding preview.
    Confirm rechecks it before publication. Changed metadata requires another
    review; incomplete acquisitions are never available.
@@ -145,6 +150,10 @@ and remote operations are not presented as working features.
   OAuth loopback/headless return, grant isolation, cancellation/retry and unknown
   mutations without replay. Board tests use real durable context admission;
   memory tests cover evidence/revision/CAS/exposure and retained browser ownership.
+- `TestLiveDefaultCapabilitySources` is an explicit network-gated acceptance
+  (`CRUDE_LIVE_CAPABILITY_SOURCES=1`): it discovers and acquires a real pinned
+  Anthropic skill, discovers current remote Streamable HTTP entries from the
+  official Registry, and materializes a stable MCP connection definition.
 - Linux terminal acceptance uses sequential `scripts/tuishot.sh` sessions, never
   concurrent capture windows. Verified flows include Settings manual discover/
   preview/install, instruction/resource reading, exact skill staging, session

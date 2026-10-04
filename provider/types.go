@@ -30,6 +30,7 @@ type CollaborationAttribution struct {
 	SenderName       string   `json:"sender_name"`
 	RecipientIDs     []string `json:"recipient_ids,omitempty"`
 	RecipientNames   []string `json:"recipient_names,omitempty"`
+	Broadcast        bool     `json:"broadcast,omitempty"`
 	Kind             string   `json:"kind"`
 	RequestID        string   `json:"request_id,omitempty"`
 	RequestRevision  uint64   `json:"request_revision,omitempty"`

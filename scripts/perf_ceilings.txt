@@ -1,7 +1,9 @@
 # TUI bench gate ceilings — the machine-readable source of truth for
-# scripts/tui_bench_gate.sh. One benchmark per line: "<Name> <bytes/op> <allocs/op>".
-# Allocations are hardware-independent, so Ceilings are enforceable in CI;
-# wall-clock is intentionally NOT gated (docs/reference/performance-baselines.md).
+# scripts/tui_bench_gate.sh. Generic rows use
+# "<Name> <bytes/op> <allocs/op>"; narrow platform overrides use
+# "<Name> <goos> <bytes/op> <allocs/op>".
+# Allocations are hardware-independent but not GOOS/toolchain-independent.
+# Wall-clock is intentionally NOT gated (docs/reference/performance-baselines.md).
 #
 # Rules of thumb when updating:
 #   - Tighten when a fix lands (set to measured + ~20% headroom).
@@ -32,11 +34,13 @@ BenchmarkIdleTick_200Msgs 15000 325
 BenchmarkTabRederive_80Msgs 14000 300
 BenchmarkPointerMotionCoalesced 12000 52
 BenchmarkAgentSwitchWarm_80Msgs 15000 315
+BenchmarkAgentSwitchWarm_80Msgs windows 42000 370
 BenchmarkSidebarResizePresentedFrame_500Msgs 26000 315
 BenchmarkSidebarResizeMutation_500Msgs 10200 58
 BenchmarkDenseChatSingleRowChange_500Msgs 65000 2740
 BenchmarkDenseChatWidthCommit_500HeavyMsgs 455000 2180
 BenchmarkLargeDiffPreview 3200000 9000
 BenchmarkOpenIndexedHistory 460000 11000
+BenchmarkOpenIndexedHistory windows 600000 14000
 BenchmarkProjectInsightsCached10kDiagnostics 0 0
 BenchmarkUsageSummaryCached1000Requests 0 0

@@ -33,12 +33,12 @@ whole changing repository. A dependency or unrelated build failure is a reason
 to return a blocked/partial handoff, not repeatedly read files or rerun checks.
 Repeat verification only after a relevant change or new evidence.
 
-`write_report` delivers a concise artifact: outcome, findings or changed paths,
-focused checks, and unresolved blockers. It is not a request to copy source files
-or continue investigating. A generated diagnostic report, file list, or prior
-tool activity does not establish successful completion. Unrecovered stream
-failures without a completed deliverable are failures; cancellation and timeout
-remain distinct from success. The parent still reviews the evidence.
+`publish_report` delivers an immutable, versioned artifact: outcome, findings or
+changed paths, focused checks, and unresolved blockers. It is not a request to
+copy source files or continue investigating. Publication is evidence delivery,
+not proof that the run succeeded or the task quality is sufficient. Unrecovered
+stream failures without a required final deliverable are failures; cancellation
+and timeout remain distinct from success. The parent still reviews the evidence.
 
 Existing runtime timeouts and repeated-identical-tool detection complement these
 prompt rules. There is no arbitrary global step ceiling: a legitimate long task
@@ -47,11 +47,17 @@ unproductive behavior; report actual limitations rather than claiming otherwise.
 
 ## Completion delivery
 
-Sub-agent terminal events update the UI and queue a structured parent wake.
-Delivery must work both while the parent is idle and at a safe model-request
-boundary during an active turn. Results already returned synchronously or by an
-explicit terminal-result lookup are consumed once. Reading an intermediate
-report must not suppress a later failure/completion notification.
+Workspace collaboration events update the UI and enter the exact recipient at a
+safe request boundary. Directed notes, requests, report publications and terminal
+outcomes need no Board polling or acknowledgement tool for transport. Delivery
+works while an agent is idle and during an active turn without replaying accepted
+model output. Reading an interim report never suppresses a later terminal outcome.
+
+`agent_send(broadcast=true)` is the narrow exception for a genuinely urgent note
+needed by every other currently running agent. It snapshots only available,
+attached agents with active nonterminal runs; it excludes idle, suspended,
+offline and finished history. It is never task fan-out, permission, approval or a
+routine progress channel.
 
 Notifications are runtime context, not human instructions. They do not cancel an
 active request, invoke an extra human turn, or change the selected tab. Background

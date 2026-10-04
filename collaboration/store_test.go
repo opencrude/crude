@@ -360,6 +360,104 @@ func TestDeliveryReservationPreventsFalseWithdrawalAndDuplicateAdmission(t *test
 	}
 }
 
+func TestBroadcastTargetsOnlyOtherAgentsWithActiveAttachedRuns(t *testing.T) {
+	store, _ := openTestStore(t)
+	root, running := registerTestAgents(t, store)
+	if _, err := store.StartRun(t.Context(), StartRunRequest{
+		ID: "run-broadcast-root", AgentID: root.ID, RuntimeEpoch: root.RuntimeEpoch, Origin: OriginHuman,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	runningRun, err := store.StartRun(t.Context(), StartRunRequest{
+		ID: "run-broadcast-running", AgentID: running.ID, RuntimeEpoch: running.RuntimeEpoch, Origin: OriginPeer,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	register := func(id string) Agent {
+		t.Helper()
+		registered, registerErr := store.RegisterAgent(t.Context(), AgentRegistration{
+			ID: id, Name: id, SessionID: "session-" + id,
+			Category: "researcher", OwnerInstance: "process-a",
+		})
+		if registerErr != nil {
+			t.Fatal(registerErr)
+		}
+		return registered
+	}
+	_ = register("idle-history")
+	finished := register("finished-history")
+	finishedRun, err := store.StartRun(t.Context(), StartRunRequest{
+		ID: "run-broadcast-finished", AgentID: finished.ID, RuntimeEpoch: finished.RuntimeEpoch, Origin: OriginPeer,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.FinishRun(t.Context(), FinishRunRequest{
+		RunID: finishedRun.ID, AgentID: finished.ID, RuntimeEpoch: finished.RuntimeEpoch,
+		ExpectedVersion: finishedRun.Version, State: RunSucceeded,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	suspended := register("suspended-running")
+	if _, err := store.StartRun(t.Context(), StartRunRequest{
+		ID: "run-broadcast-suspended", AgentID: suspended.ID, RuntimeEpoch: suspended.RuntimeEpoch, Origin: OriginPeer,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.SetAgentState(t.Context(), suspended.ID, suspended.RuntimeEpoch, AgentSuspended); err != nil {
+		t.Fatal(err)
+	}
+	offline := register("offline-running")
+	if _, err := store.StartRun(t.Context(), StartRunRequest{
+		ID: "run-broadcast-offline", AgentID: offline.ID, RuntimeEpoch: offline.RuntimeEpoch, Origin: OriginPeer,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.DetachAgent(t.Context(), offline.ID, offline.OwnerInstance, offline.RuntimeEpoch); err != nil {
+		t.Fatal(err)
+	}
+	for index := range 32 {
+		history := register(fmt.Sprintf("closed-history-%02d", index))
+		if _, err := store.SetAgentState(t.Context(), history.ID, history.RuntimeEpoch, AgentClosed); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	published, err := store.Publish(t.Context(), PublishRequest{
+		SenderID: root.ID, IdempotencyKey: "broadcast-running-only",
+		Broadcast: true, Origin: OriginPeer, Kind: EventPeerNote,
+		Body: "Urgent workspace invariant changed; stop before publishing stale output.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !published.Event.Broadcast || len(published.Event.Recipients) != 1 ||
+		published.Event.Recipients[0].ID != running.ID ||
+		len(published.Deliveries) != 1 || published.Deliveries[0].RecipientID != running.ID {
+		t.Fatalf("broadcast recipients=%+v deliveries=%+v", published.Event.Recipients, published.Deliveries)
+	}
+	if _, err := store.Publish(t.Context(), PublishRequest{
+		SenderID: root.ID, IdempotencyKey: "broadcast-request-invalid",
+		Broadcast: true, Origin: OriginPeer, Kind: EventWorkRequest, Body: "Do work",
+	}); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("broadcast work request was accepted: %v", err)
+	}
+	if _, err := store.FinishRun(t.Context(), FinishRunRequest{
+		RunID: runningRun.ID, AgentID: running.ID, RuntimeEpoch: running.RuntimeEpoch,
+		ExpectedVersion: runningRun.Version, State: RunSucceeded,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.Publish(t.Context(), PublishRequest{
+		SenderID: root.ID, IdempotencyKey: "broadcast-empty",
+		Broadcast: true, Origin: OriginPeer, Kind: EventPeerNote, Body: "No live recipients",
+	}); !errors.Is(err, ErrUnavailable) {
+		t.Fatalf("empty running broadcast = %v", err)
+	}
+}
+
 func TestReportRevisionsAreImmutableAndDeliveryIsOnePublication(t *testing.T) {
 	store, _ := openTestStore(t)
 	root, child := registerTestAgents(t, store)

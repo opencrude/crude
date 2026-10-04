@@ -123,8 +123,12 @@ func collaborationInput(delivery collaboration.PendingDelivery) provider.UserInp
 		Origin: string(event.Origin), EventID: event.ID, ThreadID: event.ThreadID, SenderID: event.SenderID,
 		SenderName: event.SenderName, Kind: string(event.Kind), RequestID: event.RequestID,
 		RequestRevision: event.RequestRevision, RunID: event.RunID, Body: event.Body,
+		Broadcast: event.Broadcast,
 	})
 	display := event.SenderName + " · " + collaborationKindLabel(event.Kind)
+	if event.Broadcast {
+		display = event.SenderName + " · broadcast to running agents"
+	}
 	if event.Body != "" {
 		display += "\n" + event.Body
 	}
@@ -140,6 +144,7 @@ func collaborationAttribution(event collaboration.Event) *provider.Collaboration
 		EventID: event.ID, ThreadID: event.ThreadID, SenderID: event.SenderID,
 		SenderName: event.SenderName, Kind: string(event.Kind),
 		RequestID: event.RequestID, RequestRevision: event.RequestRevision, RunID: event.RunID,
+		Broadcast:      event.Broadcast,
 		RecipientIDs:   collaborationRecipientIDs(event.Recipients),
 		RecipientNames: collaborationRecipientNames(event.Recipients),
 	}
@@ -208,7 +213,7 @@ func (s *Session) humanSteeringMessage(delivery collaboration.PendingDelivery, m
 		Origin: string(event.Origin), EventID: event.ID, ThreadID: event.ThreadID,
 		SenderID: event.SenderID, SenderName: event.SenderName, Kind: string(event.Kind),
 		RequestID: event.RequestID, RequestRevision: event.RequestRevision,
-		RunID: event.RunID, Body: event.Body,
+		RunID: event.RunID, Body: event.Body, Broadcast: event.Broadcast,
 	})
 	if message.Content.IsText() {
 		message.Content = provider.TextContent(steeringText)
@@ -271,9 +276,9 @@ func (s *Session) humanSteeringMessages(
 					return nil
 				}
 				deliveries, err := store.ReservePending(ctx, collaboration.ReserveRequest{
-				RecipientID: agentID, RuntimeEpoch: runtimeEpoch, Limit: 1,
-				OnlyKinds: []collaboration.EventKind{collaboration.EventHumanSteering},
-			})
+					RecipientID: agentID, RuntimeEpoch: runtimeEpoch, Limit: 1,
+					OnlyKinds: []collaboration.EventKind{collaboration.EventHumanSteering},
+				})
 				if errors.Is(err, collaboration.ErrUnavailable) {
 					return nil
 				}

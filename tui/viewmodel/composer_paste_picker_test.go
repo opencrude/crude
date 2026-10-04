@@ -1,10 +1,16 @@
 package viewmodel
 
 import (
+	"bytes"
+	"image"
+	"image/png"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/clipboard"
+	"crude/sessiondb"
 	"crude/workspace"
 )
 
@@ -38,6 +44,190 @@ func TestComposerCtrlVPastesFromSystemClipboard(t *testing.T) {
 	app.ActiveSession = nil
 	if _, cmd := app.dispatchChatKey(tea.KeyPressMsg{Code: 'v', Mod: tea.ModCtrl}, nil); cmd != nil {
 		t.Fatal("ctrl+v without an active session must not enqueue work")
+	}
+}
+
+// Windows Terminal owns Ctrl+V and delivers image-only clipboard contents as
+// an empty bracketed paste, not a KeyPressMsg. Exercise Update through the
+// clipboard read, asynchronous reference persistence, and draft attachment.
+func TestComposerEmptyTerminalPasteAttachesClipboardImage(t *testing.T) {
+	app := newFullTestApp(t)
+	app.launcherScreen = nil
+	app.AgentMgr.AddOrchestrator("terminal-image", &workspace.AgentState{})
+	app.ActiveSession = workspace.NewSession("terminal-image", t.TempDir(), nil, stubLogger{})
+	app.Input.SetReferenceStore(app.ActiveSession.RefStore)
+	app.Input.SetInput("keep my draft ")
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 2, 2))); err != nil {
+		t.Fatal(err)
+	}
+	restore := installAsyncClipboardBackendForTest(app, clipboardAsyncBackend{
+		read: func(format clipboard.Format) []byte {
+			if format != clipboard.FmtImage {
+				t.Error("empty terminal paste must not read unrelated clipboard text")
+				return []byte("unrelated clipboard text")
+			}
+			return encoded.Bytes()
+		},
+		writeText: func(string) error { return nil },
+	})
+	defer restore()
+	t.Cleanup(func() { resetAsyncIOStateForTest(app) })
+
+	_, readCmd := app.Update(tea.PasteMsg{Content: ""})
+	if readCmd == nil {
+		t.Fatal("image-only terminal paste did not request the clipboard image")
+	}
+	_, persistCmd := app.Update(readCmd())
+	if persistCmd == nil {
+		t.Fatal("clipboard image did not start asynchronous attachment persistence")
+	}
+	if refs := app.ActiveSession.RefStore.ListReferences(); len(refs) != 0 {
+		t.Fatal("Update persisted the image synchronously")
+	}
+	_, _ = app.Update(persistCmd())
+	refs := app.ActiveSession.RefStore.ListReferences()
+	if len(refs) != 1 || refs[0].Kind != sessiondb.KindPastedImage || refs[0].Mime != "image/png" {
+		t.Fatalf("references=%+v, want exactly one pasted PNG", refs)
+	}
+	if got := app.Input.Value(); !strings.HasPrefix(got, "keep my draft ") || !strings.Contains(got, refs[0].Label) {
+		t.Fatalf("draft=%q, want preserved text and the image reference", got)
+	}
+	app.paintShellFrame()
+	if !strings.Contains(bufferPlain(app.mainSurf.Buffer()), refs[0].Label) {
+		t.Fatal("attached image is missing from the painted composer")
+	}
+}
+
+func TestComposerEmptyTerminalPasteWithoutImageIsSilent(t *testing.T) {
+	app := newFullTestApp(t)
+	app.launcherScreen = nil
+	app.ActiveSession = workspace.NewSession("empty-paste", t.TempDir(), nil, stubLogger{})
+	app.Input.SetInput("unchanged draft")
+	restore := installAsyncClipboardBackendForTest(app, clipboardAsyncBackend{
+		read: func(format clipboard.Format) []byte {
+			if format != clipboard.FmtImage {
+				t.Error("empty terminal paste must not fall back to clipboard text")
+				return []byte("stale clipboard text")
+			}
+			return nil
+		},
+		writeText: func(string) error { return nil },
+	})
+	defer restore()
+	_, cmd := app.Update(tea.PasteMsg{})
+	if cmd == nil {
+		t.Fatal("empty paste did not check for an image")
+	}
+	result := cmd()
+	if read := result.(clipboardAsyncResultMsg); read.operationErr != nil {
+		t.Fatalf("missing clipboard image produced a spurious error: %v", read.operationErr)
+	}
+	_, persist := app.Update(result)
+	if persist != nil || app.Input.Value() != "unchanged draft" || len(app.ActiveSession.RefStore.ListReferences()) != 0 {
+		t.Fatal("empty terminal paste without an image must not mutate the draft or persist a reference")
+	}
+}
+
+func TestTerminalPasteOnlyComposerCanReadClipboardImage(t *testing.T) {
+	for _, owner := range []string{"text paste", "launcher", "tree", "editor", "tab bar", "popup", "no session"} {
+		t.Run(owner, func(t *testing.T) {
+			var app *App
+			switch owner {
+			case "launcher":
+				app, _ = setupLauncherRoutingApp(t, nil)
+			case "tree":
+				app, _, _ = setupTreeRoutingApp(t)
+			default:
+				app = newFullTestApp(t)
+			}
+			app.ActiveSession = workspace.NewSession("owned-paste", t.TempDir(), nil, stubLogger{})
+			app.Input.SetInput("unchanged draft")
+			message := tea.PasteMsg{}
+			if owner != "launcher" {
+				app.launcherScreen = nil
+			}
+			switch owner {
+			case "text paste":
+				message.Content = "terminal text"
+			case "tree":
+				app.Tree.Visible = true
+				app.setFocusTree()
+			case "editor":
+				app.EditorState.Editor = editableClipboardFixture(t, app, "paste.go")
+				app.EditorState.ActiveView = "paste.go"
+			case "tab bar":
+				app.FocusStack.Push(FocusTabBar)
+			case "popup":
+				app.EditorState.Editor = editableClipboardFixture(t, app, "paste.go")
+				app.EditorState.ActiveView = "paste.go"
+				app.openFindReplace(false)
+			case "no session":
+				app.ActiveSession = nil
+			}
+			state := asyncIOStateFor(app)
+			_, _ = app.Update(message)
+			state.mu.Lock()
+			requests := state.nextClipboard
+			state.mu.Unlock()
+			if requests != 0 {
+				t.Fatalf("%s paste started %d clipboard requests", owner, requests)
+			}
+			want := "unchanged draft"
+			if owner == "text paste" {
+				want += "terminal text"
+			}
+			if got := app.Input.Value(); got != want {
+				t.Fatalf("draft=%q want %q", got, want)
+			}
+		})
+	}
+}
+
+func TestComposerEmptyTerminalPasteKeepsInitiatingSession(t *testing.T) {
+	app := newFullTestApp(t)
+	app.launcherScreen = nil
+	first := workspace.NewSession("first-paste", t.TempDir(), nil, stubLogger{})
+	second := workspace.NewSession("second-paste", t.TempDir(), nil, stubLogger{})
+	app.ActiveSession = first
+	restore := installAsyncClipboardBackendForTest(app, clipboardAsyncBackend{
+		read:      func(clipboard.Format) []byte { return []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR") },
+		writeText: func(string) error { return nil },
+	})
+	defer restore()
+	_, cmd := app.Update(tea.PasteMsg{})
+	if cmd == nil {
+		t.Fatal("empty paste did not capture its session")
+	}
+	result := cmd()
+	app.ActiveSession = second
+	_, persist := app.Update(result)
+	if persist != nil || len(first.RefStore.ListReferences()) != 0 || len(second.RefStore.ListReferences()) != 0 || app.Input.Value() != "" {
+		t.Fatal("late image paste crossed the session-switch boundary")
+	}
+}
+
+func TestBlockingDeckOwnsEmptyTerminalPaste(t *testing.T) {
+	app := newFullTestApp(t)
+	app.ActiveSession = workspace.NewSession("blocked-paste", t.TempDir(), nil, stubLogger{})
+	app.launcherScreen = nil
+	app.Input.SetInput("unchanged draft")
+	projection := app.sessionProjections.Get(app.ActiveSession)
+	openTestAgentPrompt(t, app, projection, agentPromptRequest{
+		kind: agentPromptQuestions, questionsJSON: `[{"question":"Pick one","options":["yes","no"]}]`,
+	})
+	focused := app.rootHost.Focused()
+	state := asyncIOStateFor(app)
+	_, _ = app.Update(tea.PasteMsg{})
+	state.mu.Lock()
+	requests := state.nextClipboard
+	state.mu.Unlock()
+	if requests != 0 || app.Input.Value() != "unchanged draft" {
+		t.Fatal("empty terminal paste escaped the blocking deck into the composer")
+	}
+	// Retained focus remains inside the deck, not the underlying composer.
+	if app.rootHost.Focused() != focused {
+		t.Fatal("empty paste stole focus from the blocking deck")
 	}
 }
 

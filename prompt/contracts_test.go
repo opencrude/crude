@@ -22,6 +22,9 @@ func TestEngineeringContractInEveryExecutionMode(t *testing.T) {
 			if strings.Count(text, EngineeringContract) != 1 {
 				t.Fatal("prompt must include exactly one canonical engineering contract")
 			}
+			if strings.Count(text, RuntimeCapabilities) != 1 {
+				t.Fatal("prompt must include exactly one runtime capability contract")
+			}
 			if !strings.Contains(text, "never call an edit tool with identical old and new content") ||
 				strings.Contains(text, "Prefer incremental edits over whole-file rewrites") {
 				t.Fatal("all agents must skip no-op edits without forcing incremental patches")
@@ -38,6 +41,11 @@ func TestEngineeringContractInEveryExecutionMode(t *testing.T) {
 			for _, required := range []string{"user-visible outcome and acceptance criteria", "authoritative data and state", "not merely the smallest local patch", "reuse a component only when its semantics fit", "independently of the proposed implementation", "what must stay absent", "When corrected or interrupted", "not the investigation superficial", "Batch related reads and coherent edits", "Stay within the requested or delegated scope", "state any unverified behavior"} {
 				if !strings.Contains(rules, required) {
 					t.Errorf("engineering contract missing %q", required)
+				}
+			}
+			for _, required := range []string{"workspace IDE runtime", "Skills and MCP", "delivered automatically", "active attached run", "Never use it for routine progress", "immutable reports"} {
+				if !strings.Contains(text, required) {
+					t.Errorf("runtime capability contract missing %q", required)
 				}
 			}
 		})
@@ -136,5 +144,34 @@ func TestRootPromptEnvironmentIsStableAndModelNeutral(t *testing.T) {
 	claude := BuildRoot(RootOptions{MultiAgent: true, WorkDir: "/workspace", Model: "claude-opus"})
 	if gpt != claude {
 		t.Fatal("model family forked the canonical behavioral prompt")
+	}
+}
+
+func TestPromptAdvertisesExactCrossPlatformTempDirectoryAndBoundedOutputPolicy(t *testing.T) {
+	tempDir := filepath.Join(t.TempDir(), "agent <temp>&logs")
+	root := BuildRoot(RootOptions{WorkDir: t.TempDir(), TempDir: tempDir})
+	child, _ := BuildChild(ChildOptions{Category: "crafter", WorkDir: t.TempDir(), TempDir: tempDir})
+	for name, text := range map[string]string{"root": root, "child": child} {
+		t.Run(name, func(t *testing.T) {
+			if !strings.Contains(text, "<temporary_directory>") ||
+				!strings.Contains(text, "CRUDE_TEMP_DIR") ||
+				!strings.Contains(text, XMLText(tempDir)) ||
+				!strings.Contains(text, "never drain a huge log into context") {
+				t.Fatalf("prompt lacks temp/output contract: %s", text)
+			}
+		})
+	}
+}
+
+func TestCollaborationEventMarksRareRunningAgentBroadcast(t *testing.T) {
+	rendered := CollaborationEvent(CollaborationEventData{
+		Origin: "peer", EventID: "event-1", ThreadID: "thread-1",
+		SenderID: "agent-a", SenderName: "Asha", Kind: "peer_note",
+		Body: "Stop before publishing stale output.", Broadcast: true,
+	})
+	for _, want := range []string{`broadcast="true"`, "active attached runs", "do not rebroadcast"} {
+		if !strings.Contains(rendered, want) {
+			t.Fatalf("broadcast event missing %q: %s", want, rendered)
+		}
 	}
 }

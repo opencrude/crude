@@ -123,10 +123,16 @@ func renderCollaborationMessage(msg types.ChatMessage, ctx renderContext) messag
 	if headerText == "" {
 		headerText = attribution.SenderID
 	}
-	if len(recipients) > 0 {
+	if attribution.Broadcast {
+		headerText += fmt.Sprintf(" → %d running agents", len(recipients))
+	} else if len(recipients) > 0 {
 		headerText += " → " + strings.Join(recipients, ", ")
 	}
-	headerText += " · " + collaborationMessageLabel(attribution.Kind)
+	label := collaborationMessageLabel(attribution.Kind)
+	if attribution.Broadcast {
+		label = "Broadcast"
+	}
+	headerText += " · " + label
 	if label := rendering.FormatTimeLabel(msg.Time); label != "" {
 		headerText += " · " + label
 	}

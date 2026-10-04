@@ -17,7 +17,7 @@ Read that first; this index only organizes the reference material.
 | `architecture/` | How the system is built and why. Durable design documents that change only when the architecture changes. |
 | `reference/` | Durable facts and contracts: catalogs, matrices, baselines, settings model, width rules. |
 | `guides/` | How to do things: authoring components, running the design audit. |
-| `plans/` | Time-stamped work: plans, handoffs, checklists. Read for history and context, not as current truth — every plan is superseded by the code eventually. |
+| `plans/` | Active execution plans, handoffs, and checklists. Remove completed or superseded plans once current architecture/reference documents cover the result. |
 
 ## Index
 
@@ -52,8 +52,9 @@ Read that first; this index only organizes the reference material.
   their `tui/ui` implementations.
 - [Settings layers](reference/settings.md) — the three-level settings model
   (app → workspace → session) and what each layer owns.
-- [Workspace board library](../board/README.md) — membership, retry deduplication,
-  explicit durable context acceptance, human unread, search and archival.
+- [Workspace collaboration runtime](reference/workspace-collaboration.md)
+  — durable agents/runs, automatic directed delivery, report revisions, live-only
+  broadcast, explicit context admission, Board history and recovery.
 - [In-app terminals](reference/in-app-terminals.md) — the embedded terminal
   multiplexer: libghostty-vt PTY engine, pinned Ghostty environment.
 - [Performance baselines](reference/performance-baselines.md) — recorded paint
@@ -77,64 +78,18 @@ Read that first; this index only organizes the reference material.
 - [Windows visual capture](guides/windows-visual-capture.md) — safe native
   Windows Terminal launch, exact-HWND input, NirCmd screenshots, and cleanup.
 
-### Plans (historical — check the status header before acting on them)
+### Plans (active work only)
 
-- [Workspace refactor plan](plans/workspace-refactor-plan.md) — the three-layer
-  `app/` → `workspace/` → `tui/` split. **DONE.**
-- [TUI component system plan](plans/tui-component-system-plan.md) — the
-  component-system and design-language migration. **DONE 2026-08-03.**
-- [Phase 15 checklist](plans/phase15-checklist.md) — stabilization checklist
-  (lint gate, bench gate, race suites). **DONE.**
-- [Terminal integration plan](plans/terminal-integration-plan.md) —
-  libghostty-vt terminal integration. **LANDED.**
-- [Terminal diagnostics handoff](plans/terminal-diagnostics-handoff.md) —
-  terminal defect resolution record. **RESOLVED.**
-- [Memory architecture proposal](plans/memory-architecture-proposal.md) —
-  superseded proposal; native workspace memory is implemented.
-- [Agent capabilities, shared board, and evidence-based memory plan](plans/agent-capabilities-board-memory-plan.md)
-  — **LANDED** core runtime/product implementation and acceptance for skills,
-  managed MCP, shared communication and evidence memory informed by Kilo and RRSI.
-- [Workspace tools, capabilities, and TUI interaction plan](plans/workspace-tools-capabilities-tui-plan.md)
-  — **LANDED** revision 2 core: calmer Git sidebar with main-area review,
-  Skills/MCP settings catalogs and manual commands, terminal rail removal,
-  workspace Memory footer access, dock ownership and interaction acceptance.
-- [Shared board live communication assessment](plans/shared-board-live-assessment.md)
-  — **DONE** two live agents: board-only behavior revision, sibling verification,
-  authority boundaries, timing/overhead, and coordination limitations.
-- [Workspace collaboration runtime](plans/workspace-collaboration-runtime-plan.md)
-  — **IN PROGRESS** single-cutover specification for workspace-wide agents,
-  unified delivery, reports, controls, recovery and exact live/hydration parity.
-- [Provider config plan](plans/provider-config-plan.md) — superseded by the
-  capability-based provider protocol rework.
 - [Chat projection handoff](plans/chat-projection-handoff.md) — **ACTIVE
   HANDOFF** for in-flight chat-projection work.
 - [Shell frame padding review](plans/shell-frame-padding-review.md) — open
   hardening findings for the configurable shell frame padding feature.
-- [Message-scoped undo and local history plan](plans/undo-local-history-plan.md)
-  — **LANDED** JetBrains-quality, cache-safe workspace history and
-  per-user-message restore.
 - [End-to-end reliability and interaction hardening](plans/end-to-end-hardening-plan.md)
   — **ACTIVE** umbrella execution plan for transport liveness, safety,
   projections, shared interaction controls, editor latency, and undo delivery.
-- [Render authority and editor scrolling hardening](plans/render-authority-hardening-plan.md)
-  — **LANDED** single-authority plan for frame coalescing, warm tab
-  transitions, cursor cadence, and document-wide horizontal scrolling.
-- [Editor gutter and non-disruptive autosave](plans/editor-gutter-autosave-plan.md)
-  — **LANDED** exact Git hunks, native gutter inspection, revision-aware
-  asynchronous saves, shared mutation ownership, and opt-in autosave without
-  LSP or watcher interference.
 - [Tree picker and internal Fastwalk plan](plans/tree-picker-fastwalk-plan.md)
   — **IN PROGRESS, APPROVED** design for preserving the current New
   Workspace UI while replacing picker lists with bounded tree/path search.
-- [Status system overhaul](plans/status-system-overhaul-plan.md)
-  — **LANDED**: active-item
-  header, preserved quiet footer, status inspection, scoped accounting, health,
-  operations, notifications, and selective hints.
-- [Context compaction and runtime continuity](plans/context-compaction-runtime-plan.md)
-  — **LANDED**: provider-grounded context accounting, four-stage Aeron
-  extraction with code-authored root and child checkpoints, durable boundary
-  lifecycle, typed runtime messages, memory boundaries, and passive
-  resume for new sessions.
 
 ## Documentation rules
 
@@ -154,22 +109,21 @@ docs-check`). A docs change that breaks them fails the build.
    `IN PROGRESS`.
 4. **Cross-reference by path, not by bare filename.** Links must resolve
    from the file's own location (relative paths) and use the current
-   filename. A link to `PLAN.md` instead of `plans/workspace-refactor-plan.md`
-   is broken documentation.
+   filename. Link the current architecture/reference contract, not a removed
+   migration plan.
 5. **Index everything.** New documents must be added to the index above (or to
    a sub-index) in the same change.
-6. **Plans are append-only history.** Do not delete completed plans — move
-   them to `plans/`, mark them DONE/LANDED/RESOLVED/SUPERSEDED in the status
-   header, and stop treating them as current truth. New work gets a new plan
-   document.
+6. **Keep only actionable plans.** Once implementation lands and current
+   architecture/reference documents describe the result, delete the obsolete
+   execution plan instead of retaining duplicate archaeological truth.
 7. **JSON manifests belong in `reference/`.** Enforcement artifacts consumed
    by scripts (e.g. `bypass-manifest.json`) are reference material, not
    narrative docs.
 8. **No orphan docs.** Every file under `docs/` must be reachable from this
    index. `docs_check.sh` fails on orphans.
 9. **One current contract per topic.** Link current references from related docs
-   and historical plans instead of copying policy or silently treating old plans
-   as implementation truth. Prompt changes must update
+   and active plans instead of copying policy or silently treating a plan as
+   implementation truth. Prompt changes must update
    [model prompts and project guidance](reference/prompt-architecture.md) and the
    root agent rules; document tested guarantees and explicit limits separately.
 

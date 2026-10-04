@@ -591,7 +591,7 @@ func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, 
 	// that paste themselves (GNOME Terminal) deliver bracketed PasteMsg instead
 	// and never send this keypress, so the two paths cannot double-insert.
 	if ui.IsPasteChord(msg) {
-		return m, m.beginInputClipboardPaste()
+		return m, m.beginInputClipboardPaste(clipboardAsyncPasteInputImageFirst)
 	}
 	switch msg.String() {
 	case "ctrl+alt+e":
@@ -781,6 +781,13 @@ func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 	// FocusInput / FocusNone → route to chat input. Other root-host focus
 	// owners return above even when they do not consume the paste, so a paste
 	// can never leak into a hidden chat input.
+	// Windows Terminal consumes Ctrl+V itself. With an image-only clipboard
+	// it emits an empty bracketed paste instead of an application keypress.
+	// Only the chat composer can attach that image; text pastes remain exact,
+	// and an empty paste with no image stays a silent no-op.
+	if msg.Content == "" {
+		return m, m.beginInputClipboardPaste(clipboardAsyncPasteInputImage)
+	}
 	canType := false
 	if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
 		canType = !n.State.Completed && n.State.IsActive()

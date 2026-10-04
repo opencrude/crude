@@ -12,9 +12,10 @@ preserve or intentionally improve.
 | Command palette | Ctrl+Alt+P | Not Ctrl+P; tmux Shift issue |
 | Find in Files | Ctrl+Alt+F | Not Ctrl+Shift+F under tmux 3.4 |
 | Replace in Files | Ctrl+Alt+H | Sibling of Find in Files; not Ctrl+Shift+H under tmux |
-| Toggle sidebar | Ctrl+B | Hides/shows the sidebar body; the 7-col activity rail (outer gutter plus one blank column before the panel left border) stays |
+| Toggle sidebar | Ctrl+B | Hides/shows the sidebar body; the 8-col activity rail (outer gutter plus padding before the panel left border) stays |
 | Files / Agents / Terminals / Source Control | Ctrl+Shift+E / A / U / G | Activity destinations; rail and panel bodies expose destination-aware context menus |
 | Application Settings | activity-bar gear | Bottom rail gear opens Application Settings (VS Code manage control); right-click also offers Workspace Settings |
+| Rail counts | Upper/lower-right of destination icons | Normal-size bold digits keep the script-like placement without tiny Unicode glyphs: Agents and other destinations use the top row of their three-row band; Source Control uses the bottom row. Counts above nine use `+` at the same level. Badges sit diagonally beyond the measured icon, never widen the rail or overwrite the panel rule, and remain inside their destination's whole-band click/hover target. Zero counts disappear. |
 | New terminal | Ctrl+Shift+` | Ghostty-pinned PTY; docks in the workspace terminal dock |
 | Toggle terminal | Ctrl+` | Focus last terminal, or leave it if it already owns keys |
 | Composer | Alt+C | |
@@ -27,7 +28,7 @@ preserve or intentionally improve.
 | Cut | Ctrl+X | Text controls: cuts the selection, or the whole value when nothing is selected (masked fields refuse it) |
 | Copy on release | drag release over a text control | Text areas and inline inputs copy the dragged selection and drop the highlight on release, matching the chat message area and docked terminals |
 | Whole-text Copy/Cut | right-click on a text control | Context menu Copy/Cut act on the entire value; the composer menu (Paste / Copy / Cut / Clear input) acts on the draft. Cut runs through the owning control so composite models stay in sync. |
-| Paste | Bracketed paste primary; Ctrl+V fallback | Routes to the focused control; launcher/tree paste never leaks into hidden chat input |
+| Paste | Bracketed paste primary; Ctrl+V / Ctrl+Shift+V fallback | Routes to the focused control; launcher/tree paste never leaks into hidden chat input. Windows Terminal image-only clipboard pastes arrive as empty bracketed pastes: only the chat composer asynchronously reads and attaches the clipboard image. Non-empty text remains exact; an empty paste without an image is a silent no-op, never a read of unrelated clipboard text. |
 
 ## Chat and Workspace
 

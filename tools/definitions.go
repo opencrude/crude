@@ -437,15 +437,15 @@ var AgentTools = []ToolDef{
 		Type: "function",
 		Function: ToolFuncDef{
 			Name: "read_async_output",
-			Description: "Read accumulated stdout+stderr from a running or completed background command. " +
-				"Track `since_byte` to read incrementally (returns new output since that offset). " +
-				"The returned `next_byte` value is the new cursor — pass it on the next call to get only fresh output. " +
-				"Start with since_byte=0 on first call.",
+			Description: "Read one bounded stdout+stderr page from a running or completed background command. " +
+				"Track `since_byte` to read incrementally; the result reports next_byte, total_bytes, and whether more remains. " +
+				"Do not drain huge logs into model context: redirect high-volume output to CRUDE_TEMP_DIR and inspect relevant ranges/searches instead.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
 					"handle":{"type":"string","description":"Handle of the async command to read output from"},
-					"since_byte":{"type":"integer","description":"Byte offset to read from; 0 for all output, or use previous next_byte for incremental (optional)"}
+					"since_byte":{"type":"integer","description":"Raw byte offset to read from; use the previous next_byte for the next page (optional)"},
+					"max_bytes":{"type":"integer","minimum":1,"maximum":65536,"description":"Maximum raw bytes returned in this page; default 32768"}
 				},
 				"required":["handle"]
 			}`),

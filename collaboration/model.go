@@ -237,6 +237,7 @@ type Event struct {
 	SenderID        string      `json:"sender_id"`
 	SenderName      string      `json:"sender_name"`
 	Recipients      []Recipient `json:"recipients"`
+	Broadcast       bool        `json:"broadcast,omitempty"`
 	Origin          Origin      `json:"origin"`
 	Kind            EventKind   `json:"kind"`
 	Body            string      `json:"body"`

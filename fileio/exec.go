@@ -143,6 +143,7 @@ func (l *LocalExec) Execute(ctx context.Context, cmd string, opts ExecOptions) (
 	if opts.CWD != "" {
 		c.Dir = opts.CWD
 	}
+	setHiddenCmdSysProcAttr(c)
 
 	start := time.Now()
 	var buf bytes.Buffer

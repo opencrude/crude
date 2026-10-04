@@ -81,6 +81,24 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		return nil, fmt.Errorf("resume: logger: %w", err)
 	}
 	exec := fileio.NewLocalExecWithLogger(lg)
+	tempDir, err := prepareSessionTempDir(lg.SessionDir(), meta.ID)
+	if err != nil {
+		_ = lg.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("resume: session temp directory: %w", err)
+	}
+	keepTempDir := false
+	defer func() {
+		if !keepTempDir {
+			_ = os.RemoveAll(tempDir)
+		}
+	}()
+	asyncMgr := fileio.NewAsyncCommandManagerWithLogger(lg)
+	if err := asyncMgr.SetTempDir(tempDir); err != nil {
+		_ = lg.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("resume: command temp directory: %w", err)
+	}
 
 	permStore := safety.NewPermissionStore()
 	permStore.SetLogger(lg)
@@ -226,7 +244,8 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		editor:             editor,
 		logger:             lg,
 		permStore:          permStore,
-		asyncMgr:           fileio.NewAsyncCommandManagerWithLogger(lg),
+		asyncMgr:           asyncMgr,
+		tempDir:            tempDir,
 		sessionID:          meta.ID,
 		sessionStart:       time.Now(),
 		usageRecords:       make(map[string]sessiondb.UsageRecord),
@@ -296,6 +315,7 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 			sess.subAgentSup.Manager().HydrateCompleted(result)
 		}
 	}
+	keepTempDir = true
 	return sess, nil
 }
 

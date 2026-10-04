@@ -13,10 +13,11 @@ generic README, tool probing, or assumptions from another project.
    change. Prompt, model-runtime, or instruction-intake changes require
    `docs/reference/prompt-architecture.md`, `docs/reference/agent-orchestration.md`,
    and the relevant sections of `docs/reference/adaptive-context.md`. Application
-   layer changes require `docs/plans/workspace-refactor-plan.md`; terminal UI
-   changes require `docs/plans/tui-component-system-plan.md`,
-   `docs/reference/terminal-width.md`, and the applicable current `docs/reference/`
-   or `docs/guides/` contract. Plans are historical context, not current authority.
+   layer changes require `docs/reference/settings.md`; terminal UI changes require
+   `docs/guides/component-authoring.md`, `docs/reference/terminal-width.md`,
+   `docs/reference/surface-catalog.md`, `docs/reference/control-usage.md`, and the
+   applicable current `docs/reference/` interaction contract. Only active plans
+   remain under `docs/plans/`.
 3. Use `Glob` and `Grep` for repository discovery. Do not probe for generic
    screenshot tools when a repository workflow exists.
 
@@ -272,12 +273,12 @@ workspace publishes events that the TUI subscribes to.
 
 ### Current State (what is in the code today)
 
-The three-layer split (`app/` → `workspace/` → `tui/`) is **DONE** — see
-`docs/plans/workspace-refactor-plan.md` for that history. The root-host component-system cutover is also
-landed: the viewmodel mounts the shell through one root `ui.Host` and paints
-the persistent shell into one main surface. Later phase entries in
-`docs/plans/tui-component-system-plan.md` are historical status and design context; do
-not assume an older phase description matches the current implementation.
+The three-layer split (`app/` → `workspace/` → `tui/`) and root-host component
+system are current architecture: the viewmodel mounts the shell through one root
+`ui.Host` and paints the persistent shell into one main surface. Current contracts
+live in this file plus `docs/architecture/`, `docs/reference/`, and
+`docs/guides/`; completed migration plans are deleted rather than retained as a
+second source of truth.
 
 | Area | Current state |
 |---|---|
@@ -289,10 +290,9 @@ not assume an older phase description matches the current implementation.
 | `session/` | Session domain library (sessions are workspace-scoped under `~/.crude/workspaces/<hash>/sessions/`); consumed by `workspace/`. |
 | `localhistory/` | Immutable content-defined workspace snapshots, SQLite timeline/message labels, restore plans, verification, retention, and rollback. No TUI imports. |
 
-See `docs/plans/workspace-refactor-plan.md` (architecture + workspace progress) and
-`docs/plans/tui-component-system-plan.md` (component-system phases + §26 execution
-order) for the phase plans. `ARCHITECTURE_TRANSITION.md` was deleted once
-the transition it planned completed.
+See `docs/architecture/compositing-engine.md`,
+`docs/reference/surface-catalog.md`, and `docs/guides/component-authoring.md`
+for the implemented shell/component architecture.
 
 ---
 
@@ -668,6 +668,15 @@ Legacy `tui/widgets/popupchrome.go` is **deleted**.
 - Background-job columns are content-sized with terminal-width helpers.
   Optional PID/exit telemetry yields before handles are shortened; elapsed labels
   use whole seconds (`2m 05s`, `1h 03m 09s`), never fractional seconds.
+- Noninteractive Windows commands use `CREATE_NO_WINDOW` plus `HideWindow`;
+  package managers such as WinGet must never attach to or paint into Crude's host
+  console. Stdout/stderr is visible only through the captured tool/job result.
+- Every session publishes one stable session-owned cross-platform
+  `<temporary_directory>` and exports it as `CRUDE_TEMP_DIR` to commands. Use it
+  for noisy logs and transient artifacts. `read_async_output` returns bounded
+  raw-byte pages (32 KiB default, 64 KiB maximum) with an explicit next/total
+  cursor; large completed synchronous output is a bounded head/tail excerpt plus
+  a retained handle. Never restore an unbounded model-visible output read.
 
 ### Agent Tab Close Is Minimize, Not Terminate (since 2026-08-13)
 
@@ -1300,6 +1309,8 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   off-UI orchestrator goroutine before releasing the turn. Never register a
   flush WaitGroup after observers may already be waiting; that races shutdown,
   manual compaction, and persistence acceptance tests.
+- Async output length and cursors are owner facts, not permission to read the
+  bytes during continuity or compaction. Snapshotting never drains output.
 
 ### Context compaction and runtime continuity
 - Wire/model/account/config switches are ordinary request boundaries. Preserve
@@ -1425,7 +1436,7 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   children. Existing development sessions have no compatibility path.
 - Root checkpoints preserve human intent and child-result ownership; child
   checkpoints preserve assignment, policy, file ownership, evidence, and the
-  `write_report` obligation. Compaction requests never enter memory extraction.
+  `publish_report` obligation. Compaction requests never enter memory extraction.
 
 ### Prompt assembly and project guidance
 - Canonical contract and development checklist:
@@ -1435,8 +1446,9 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   owner; do not put new policy in a caller's arbitrary runtime-context string.
 - `prompt/` is the sole owner of every code-authored model instruction template
   outside the exact tool schemas/results that define an execution interface:
-  canonical root/child policy, compaction, guidance compilation, memory jobs,
-  permission review, and runtime context/control projections. `agent/`,
+  canonical root/child policy, runtime-capability awareness, bounded command/temp
+  policy, compaction, guidance compilation, memory jobs, permission review, and
+  runtime context/control projections. `agent/`,
   `session/`, and `memory/` provide typed state, select source data, validate
   results, persist outcomes, and execute requests; they do not retain prompt
   constants or forwarding prompt APIs. Tool-specific validation, denial and
@@ -1521,6 +1533,11 @@ button that needs a double click reads as broken.
   source/revision/binding preimage. A boolean approval must never widen into
   changed bytes or another source. Dynamic MCP definitions and execution both
   enforce current effect/scope/fingerprint grants and root/child ceilings.
+- Fresh application settings contain two disableable built-ins:
+  `anthropic-skills`, pinned to the complete commit recorded in
+  `types/capability`, and `official-mcp-registry`, using the official preview
+  discovery API. Built-ins can be edited or disabled but not deleted; source
+  trust never bypasses exact acquisition preview or MCP grants.
 - Capability snapshot contexts cancel before workspace teardown. Workspace
   capability lifetime locking protects persistence/service replacement; a stale
   read cannot inspect a nil/new WorkspaceDB during Close/SwitchProject.
@@ -1531,9 +1548,14 @@ button that needs a double click reads as broken.
 - Composer + Capability/palette selection is staging only. Exact source-qualified
   skill invocation, tool reference and external context must retain the owning
   session/agent/draft; old arguments or async results cannot attach elsewhere.
-- Board posts are peer data, not approval/scheduling/wakes. Human unread and
-  durable agent context-acceptance cursors are independent. Memory revisions use
-  expected-version correction; exposure never reinforces usefulness.
+- Directed collaboration events and report/outcome publications are delivered
+  automatically at safe boundaries; Board reads are history/search, not polling
+  transport. Peer data is never approval or permission. `agent_send` broadcast
+  is peer-note-only and snapshots only other available, attached agents with a
+  current nonterminal run; it excludes idle/suspended/offline/finished history
+  and is never routine progress or task fan-out. Human unread and durable agent
+  context admission remain independent. Memory revisions use expected-version
+  correction; exposure never reinforces usefulness.
 
 See `docs/guides/capability-workflows.md` for actual routes, protocol limits,
 manual workflows and acceptance boundaries.
@@ -1592,8 +1614,9 @@ Documentation layout, naming, status headers, and cross-references are
 enforced by `scripts/docs_check.sh` (`make docs-check`, also a CI step) —
 rules and index live in `docs/README.md`. Doc filenames are kebab-case under
 `docs/{architecture,reference,guides,plans}/`; every document carries a
-`> Status:` header; a completed plan moves to `docs/plans/` and gets
-DONE/LANDED/RESOLVED/SUPERSEDED in its header instead of being deleted.
+`> Status:` header. Keep only actionable plans: after implementation lands and
+the current architecture/reference contract is updated, delete the obsolete plan
+rather than retaining duplicate archaeological truth.
 
 ## Lint Gate (fully enabled + full-repo zero 2026-08-01)
 

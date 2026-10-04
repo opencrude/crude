@@ -15,7 +15,9 @@ func TestWidthMethodIsGrapheme(t *testing.T) {
 
 func TestTerminalWidthProbeCoversPresentationSensitiveClasses(t *testing.T) {
 	corpus := TerminalWidthProbeCorpus()
-	for _, cluster := range []string{"⏺", "⎿", "⏺︎", "⏺️", "▶", "▶️", "⚠︎", "⚠️", "#️⃣", "\uf17b"} {
+	for _, cluster := range []string{
+		"⏺", "⎿", "⏺︎", "⏺️", "▶", "▶️", "⚠︎", "⚠️", "#️⃣", "\uf17b",
+	} {
 		if !slices.Contains(corpus, cluster) {
 			t.Errorf("terminal width probe lacks %q", cluster)
 		}
