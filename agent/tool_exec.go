@@ -164,7 +164,7 @@ func isPotentiallyBlocking(name string) bool {
 		return true
 	case "apply_patch", "write_file", "edit_file", "delete_file", "move_file", "copy_file":
 		return true
-	case "reply", "write_report":
+	case "reply", "publish_report":
 		return true
 	case "update_plan", "get_plan":
 		return true
@@ -548,16 +548,16 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			"path":        path,
 			"message":     fmt.Sprintf("Writing %d lines to %s", lines, path),
 		}})
-	case "write_report":
-		report := getStr(params, "report")
+	case "publish_report":
+		report := getStr(params, "body")
 		lines := CountLines(report)
 		emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
 			"internal_id": internalID,
 			"tool_id":     tc.ID,
 			"name":        tc.Function.Name,
-			"phase":       "writing",
+			"phase":       "publishing",
 			"path":        "report",
-			"message":     fmt.Sprintf("Writing report (%d lines)", lines),
+			"message":     fmt.Sprintf("Publishing report (%d lines)", lines),
 		}})
 	case "edit_file":
 		oldStr := getStr(params, "old_string")
@@ -614,7 +614,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		result, toolErr = a.ToolFn(ctx, tc.Function.Name, params)
 		mu.Unlock()
 	} else {
-		if tc.Function.Name == "run_sub_agent" {
+		if tc.Function.Name == "agent_start" {
 			ctx = context.WithValue(ctx, SubAgentToolCallIDKey{}, tc.ID)
 		}
 		result, toolErr = a.ToolFn(ctx, tc.Function.Name, params)
@@ -642,8 +642,8 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		result.Content = fmt.Sprintf("Error: %s", toolErr.Error())
 	}
 	toolFailed := toolErr != nil || IsToolError(result.Content)
-	if tc.Function.Name == "write_report" && !toolFailed {
-		a.writeReportCalled = true
+	if tc.Function.Name == "publish_report" && !toolFailed && getStr(params, "kind") == "final" {
+		a.reportPublished = true
 	}
 	toolDur := time.Since(toolStart).Milliseconds()
 
@@ -671,14 +671,18 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		}})
 	}
 
-	if tc.Function.Name == "write_report" && !toolFailed {
-		reportPath := ""
+	if tc.Function.Name == "publish_report" && !toolFailed {
+		reportID := ""
+		revision := 0
 		if raw := result.Content; raw != "" {
 			var parsed struct {
-				ReportPath string `json:"report_path"`
+				Artifact struct {
+					ID       string `json:"id"`
+					Revision int    `json:"revision"`
+				} `json:"artifact"`
 			}
 			if json.Unmarshal([]byte(raw), &parsed) == nil {
-				reportPath = parsed.ReportPath
+				reportID, revision = parsed.Artifact.ID, parsed.Artifact.Revision
 			}
 		}
 		emit(AgentEvent{Type: "tool_progress", Data: map[string]any{
@@ -686,10 +690,8 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			"tool_id":         tc.ID,
 			"name":            tc.Function.Name,
 			"phase":           "done",
-			"path":            reportPath,
-			"message":         fmt.Sprintf("+%d lines", result.Added),
-			"lines_added":     result.Added,
-			"lines_removed":   0,
+			"path":            reportID,
+			"message":         fmt.Sprintf("Published report revision %d", revision),
 			"tool_dur_ms":     toolDur,
 			"tool_est_tokens": provider.EstimateTokens(tc.Function.Arguments, a.Model),
 		}})
@@ -703,7 +705,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		"tool_dur_ms":     toolDur,
 		"tool_est_tokens": provider.EstimateTokens(tc.Function.Arguments, a.Model),
 	}
-	if tc.Function.Name == "apply_patch" || tc.Function.Name == "write_file" || tc.Function.Name == "edit_file" || tc.Function.Name == "write_report" {
+	if tc.Function.Name == "apply_patch" || tc.Function.Name == "write_file" || tc.Function.Name == "edit_file" {
 		resultData["lines_added"] = result.Added
 		resultData["lines_removed"] = result.Removed
 	}

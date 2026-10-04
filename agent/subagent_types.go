@@ -75,7 +75,8 @@ type SubAgentResult struct {
 	SessionID        string         `json:"session_id"`
 	Status           SubAgentStatus `json:"status"`
 	SummaryGist      string         `json:"summary_gist"`
-	ResultPath       string         `json:"result_path"`
+	ReportID         string         `json:"report_id,omitempty"`
+	ReportRevision   int            `json:"report_revision,omitempty"`
 	LogPath          string         `json:"log_path"`
 	FilesRead        []string       `json:"files_read"`
 	FilesWritten     []string       `json:"files_written"`
@@ -95,6 +96,9 @@ type SubAgentHandle struct {
 	BlockCh           chan ttypes.BlockResponse
 	StartedAt         time.Time
 	SessionID         string
+	RuntimeEpoch      uint64
+	RunID             string
+	RunVersion        uint64
 	DB                *sql.DB
 	StepCount         atomic.Int32
 	Finished          bool
@@ -104,7 +108,8 @@ type SubAgentHandle struct {
 	totalCostUSD      float64
 	errors            []string
 	termReason        string
-	reportPath        string
+	reportID          string
+	reportRevision    int
 	reportDone        bool
 }
 
@@ -145,21 +150,40 @@ func (h *SubAgentHandle) TermReason() string {
 	return h.termReason
 }
 
-func (h *SubAgentHandle) SetReportPath(path string) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	h.reportPath = path
-	h.reportDone = true
-}
-
-func (h *SubAgentHandle) ReportPath() (path string, ok bool) {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.reportPath, h.reportDone
-}
-
 func (h *SubAgentHandle) ReportDone() bool {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return h.reportDone
+}
+
+func (h *SubAgentHandle) SetReportArtifact(id string, revision int) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.reportID = id
+	h.reportRevision = revision
+	h.reportDone = id != "" && revision > 0
+}
+
+func (h *SubAgentHandle) ReportArtifact() (string, int, bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.reportID, h.reportRevision, h.reportDone
+}
+
+func (h *SubAgentHandle) SetRunIdentity(id string, version uint64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.RunID, h.RunVersion = id, version
+}
+
+func (h *SubAgentHandle) RunIdentity() (string, uint64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return h.RunID, h.RunVersion
+}
+
+func (h *SubAgentHandle) SetRunVersion(version uint64) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.RunVersion = version
 }

@@ -44,13 +44,9 @@ func (w *Workspace) AgentActivity(agentID string) types.AgentActivityView {
 			}
 		}
 		if view.Status.Phase == types.AgentThinking {
-			thoughts := node.State.Messages
-			if node.State.ThinkingPaneID != "" && w.PaneMgr != nil {
-				if pane := w.PaneMgr.Get(node.State.ThinkingPaneID); pane != nil {
-					thoughts = pane.Messages
-				}
-			}
-			if thought, ok := thoughts.ActiveThinking(); ok && thought.ThinkingDisplay.Kind.HasCompactPreview() {
+			// A promoted body already has its own live surface. Only inline
+			// thoughts need a compact preview in the fixed activity strip.
+			if thought, ok := node.State.Messages.ActiveThinking(); ok && thought.ThinkingDisplay.Kind.HasCompactPreview() {
 				view.Thinking = thought.Content
 				view.ThinkingID = thought.InternalID
 				view.ThinkingDisplay = thought.ThinkingDisplay

@@ -25,7 +25,7 @@ func TestActivitySingletonRoundsKeepUsefulRecentContext(t *testing.T) {
 	if !strings.Contains(text, "3 hidden") {
 		t.Fatalf("hidden evidence has no count: %s", text)
 	}
-	messages = append(messages, types.ChatMessage{InternalID: "pending", Role: types.RoleUser, PendingBtw: true, Content: "also check tests"})
+	messages = append(messages, types.ChatMessage{InternalID: "pending", Role: types.RoleUser, PendingSteering: true, Content: "also check tests"})
 	r.SyncMessages(messages, 2)
 	rows, _, _ = r.ExportMessageRows(100)
 	if strings.Join(rows[0].Lines, "\n") != text {

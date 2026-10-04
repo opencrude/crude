@@ -57,10 +57,5 @@ func (m *App) cancelAgentTurn(agentID string) {
 		}
 		m.syncAgentMessages(agentID, true)
 	}
-	clearedBtw := m.CancelAgent(agentID)
-	if node := m.AgentMgr.Get(agentID); node != nil && node.State != nil && node.State.Messages != nil {
-		m.restoreFailedBtw(agentID, node.State.Messages.RemovePendingBtwMessages(clearedBtw))
-		m.syncPendingBtwCount()
-		m.syncAgentMessages(agentID, true)
-	}
+	m.CancelAgent(agentID)
 }

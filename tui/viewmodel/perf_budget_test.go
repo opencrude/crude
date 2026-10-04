@@ -159,7 +159,7 @@ func TestIdleTicksStayWithinWorkBudget(t *testing.T) {
 // render lines at frame end: status rows (never cached), the streaming
 // cursor, pending btw notes, and mid-flight rows (live stream).
 func nilCacheExempt(msg *ttypes.ChatMessage, streaming bool, isLast bool) bool {
-	if msg.Role == ttypes.RoleStatus || msg.PendingBtw {
+	if msg.Role == ttypes.RoleStatus || msg.PendingSteering {
 		return true
 	}
 	if isLast && streaming && (msg.Role == ttypes.RoleAssistant || (msg.Role == ttypes.RoleThinking && msg.ThinkingActive)) {

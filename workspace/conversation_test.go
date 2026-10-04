@@ -176,75 +176,75 @@ func TestConversationNewThinkingDoesNotExtendSettledBlock(t *testing.T) {
 	}
 }
 
-func TestTurnStatusStaysLastAcrossBTWAndTransformsInPlace(t *testing.T) {
+func TestTurnStatusStaysLastAcrossSteeringAndTransformsInPlace(t *testing.T) {
 	conversation := NewConversation()
 	conversation.AppendMessage(Message{Role: MessageRoleUser, Content: "start"})
 	conversation.UpdateTurnStatus(TurnStatus{Phase: "preparing", Progress: 25})
 	statusID := conversation.Messages()[1].InternalID
-	conversation.AppendMessage(Message{Role: MessageRoleUser, Content: "BTW: include tests"})
+	conversation.AppendMessage(Message{Role: MessageRoleUser, Content: "human steering: include tests"})
 
 	messages := conversation.Messages()
-	if len(messages) != 3 || messages[1].Content != "BTW: include tests" || messages[2].Role != MessageRoleStatus {
-		t.Fatalf("BTW did not stay before live status: %#v", messages)
+	if len(messages) != 3 || messages[1].Content != "human steering: include tests" || messages[2].Role != MessageRoleStatus {
+		t.Fatalf("human steering did not stay before live status: %#v", messages)
 	}
 	conversation.UpdateToolStreaming("tool-1", "internal-1", "read_file", map[string]any{"target": "main.go"})
 	messages = conversation.Messages()
 	if len(messages) != 3 || messages[2].Role != MessageRoleTool || messages[2].InternalID != statusID || messages[2].ToolID != "tool-1" {
-		t.Fatalf("status did not transform in place after BTW: %#v", messages)
+		t.Fatalf("status did not transform in place after human steering: %#v", messages)
 	}
 }
 
-func TestPendingBtwResolutionPreservesOnlyConsumedCanonicalMessages(t *testing.T) {
+func TestPendingSteeringResolutionPreservesOnlyConsumedCanonicalMessages(t *testing.T) {
 	conversation := NewConversation()
-	consumed := conversation.AppendPendingBtw(Message{Role: MessageRoleUser, Content: "keep me"})
-	cancelled := conversation.AppendPendingBtw(Message{Role: MessageRoleUser, Content: "remove me"})
-	if !conversation.ConsumePendingBtw(consumed) {
-		t.Fatal("consumed BTW was not resolved")
+	consumed := conversation.AppendPendingSteering(Message{Role: MessageRoleUser, Content: "keep me"})
+	cancelled := conversation.AppendPendingSteering(Message{Role: MessageRoleUser, Content: "remove me"})
+	if !conversation.ConsumePendingSteering(consumed) {
+		t.Fatal("consumed human steering was not resolved")
 	}
-	if removed := conversation.RemovePendingBtwIDs([]string{cancelled}); removed != 1 {
+	if removed := conversation.RemovePendingSteeringIDs([]string{cancelled}); removed != 1 {
 		t.Fatalf("removed=%d, want 1", removed)
 	}
 	messages := conversation.Messages()
-	if len(messages) != 1 || messages[0].Content != "keep me" || messages[0].PendingBtw {
+	if len(messages) != 1 || messages[0].Content != "keep me" || messages[0].PendingSteering {
 		t.Fatalf("canonical messages=%#v", messages)
 	}
 }
 
-func TestPendingBtwStaysAfterProviderOutputUntilAcknowledged(t *testing.T) {
+func TestPendingSteeringStaysAfterProviderOutputUntilAcknowledged(t *testing.T) {
 	conversation := NewConversation()
 	conversation.UpdateTurnStatus(TurnStatus{Phase: "waiting_provider"})
-	pendingID := conversation.AppendPendingBtw(Message{Role: MessageRoleUser, Content: "include tests"})
+	pendingID := conversation.AppendPendingSteering(Message{Role: MessageRoleUser, Content: "include tests"})
 	conversation.UpdateToolStreaming("tool-1", "internal-1", "write_file", map[string]any{
 		"target": "main.go", "content_lines_int": 3,
 	})
 
 	messages := conversation.Messages()
-	if len(messages) != 2 || messages[0].Role != MessageRoleTool || !messages[1].PendingBtw || messages[1].InternalID != pendingID {
-		t.Fatalf("pending BTW was not pinned after live output: %#v", messages)
+	if len(messages) != 2 || messages[0].Role != MessageRoleTool || !messages[1].PendingSteering || messages[1].InternalID != pendingID {
+		t.Fatalf("pending human steering was not pinned after live output: %#v", messages)
 	}
-	if !conversation.ConsumePendingBtw(pendingID) {
-		t.Fatal("pending BTW acknowledgement was rejected")
+	if !conversation.ConsumePendingSteering(pendingID) {
+		t.Fatal("pending human steering acknowledgement was rejected")
 	}
 	conversation.AppendMessage(Message{Role: MessageRoleAssistant, Content: "now I saw it"})
 	messages = conversation.Messages()
-	if len(messages) != 3 || messages[1].InternalID != pendingID || messages[1].PendingBtw || messages[2].Role != MessageRoleAssistant {
-		t.Fatalf("acknowledged BTW did not rejoin chronology: %#v", messages)
+	if len(messages) != 3 || messages[1].InternalID != pendingID || messages[1].PendingSteering || messages[2].Role != MessageRoleAssistant {
+		t.Fatalf("acknowledged human steering did not rejoin chronology: %#v", messages)
 	}
 }
 
-func TestBtwUploadHandoffMovesAboveTurnIndicatorAndRejectedNotesReturn(t *testing.T) {
+func TestSteeringAdmissionMovesAboveTurnIndicatorAndRejectedNotesReturn(t *testing.T) {
 	conversation := NewConversation()
 	conversation.UpdateTurnStatus(TurnStatus{Phase: "preparing"})
-	first := conversation.AppendPendingBtw(Message{Role: MessageRoleUser, Content: "first"})
-	second := conversation.AppendPendingBtw(Message{Role: MessageRoleUser, Content: "second"})
-	if !conversation.ConsumePendingBtw(first) {
+	first := conversation.AppendPendingSteering(Message{Role: MessageRoleUser, Content: "first"})
+	second := conversation.AppendPendingSteering(Message{Role: MessageRoleUser, Content: "second"})
+	if !conversation.ConsumePendingSteering(first) {
 		t.Fatal("first upload was not acknowledged")
 	}
 	messages := conversation.Messages()
-	if len(messages) != 3 || messages[0].InternalID != first || messages[0].PendingBtw || messages[1].Role != MessageRoleStatus || messages[2].InternalID != second || !messages[2].PendingBtw {
+	if len(messages) != 3 || messages[0].InternalID != first || messages[0].PendingSteering || messages[1].Role != MessageRoleStatus || messages[2].InternalID != second || !messages[2].PendingSteering {
 		t.Fatalf("upload handoff did not move note above indicator: %+v", messages)
 	}
-	removed := conversation.RemovePendingBtwMessages([]string{first, second})
+	removed := conversation.RemovePendingSteeringMessages([]string{first, second})
 	if len(removed) != 2 || removed[0].Content != "first" || removed[1].Content != "second" || len(conversation.Messages()) != 1 {
 		t.Fatalf("failed upload did not return both notes in order: %+v, remaining %+v", removed, conversation.Messages())
 	}
@@ -252,11 +252,11 @@ func TestBtwUploadHandoffMovesAboveTurnIndicatorAndRejectedNotesReturn(t *testin
 
 func TestAttachSubPanePromotesExistingSubAgentToolWithoutDuplicate(t *testing.T) {
 	conversation := NewConversation()
-	conversation.UpdateToolCall("tool-1", "internal-1", "run_sub_agent", "category: researcher description: survey")
+	conversation.UpdateToolCall("tool-1", "internal-1", "agent_start", "category: researcher description: survey")
 	if !conversation.AttachSubPaneToTool("tool-1", "child-1", "Lily — survey") {
 		t.Fatal("active sub-agent tool row was not promoted")
 	}
-	conversation.UpdateToolResult("tool-1", "internal-1", "run_sub_agent", "completed", false, 0, 0, 0)
+	conversation.UpdateToolResult("tool-1", "internal-1", "agent_start", "completed", false, 0, 0, 0)
 	now := time.Now().Add(time.Second)
 	conversation.AdvanceToolLifecycles(now)
 	conversation.AdvanceToolLifecycles(now.Add(time.Second))
@@ -268,8 +268,8 @@ func TestAttachSubPanePromotesExistingSubAgentToolWithoutDuplicate(t *testing.T)
 
 func TestAttachSubPaneCorrelatesParallelCallsAndRejectsUnmatched(t *testing.T) {
 	conversation := NewConversation()
-	conversation.UpdateToolCall("first", "first-id", "run_sub_agent", "survey")
-	conversation.UpdateToolCall("second", "second-id", "run_sub_agent", "implement")
+	conversation.UpdateToolCall("first", "first-id", "agent_start", "survey")
+	conversation.UpdateToolCall("second", "second-id", "agent_start", "implement")
 	if conversation.AttachSubPaneToTool("missing", "ghost", "ghost") ||
 		!conversation.AttachSubPaneToTool("first", "child-a", "Lily — survey") ||
 		!conversation.AttachSubPaneToTool("second", "child-b", "Jane — implement") ||

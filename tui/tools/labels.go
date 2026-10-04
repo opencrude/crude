@@ -51,15 +51,18 @@ var toolVerbs = map[string][3]string{
 	"kill_async_command":      {"Preparing to stop command", "Stopping command", "Stopped command"},
 	"update_plan":             {"Preparing plan update", "Updating plan", "Updated plan"},
 	"get_plan":                {"Preparing plan read", "Reading plan", "Read plan"},
-	"run_sub_agent":           {"Preparing sub-agent", "Running sub-agent", "Started sub-agent"},
-	"poll_sub_agent":          {"Preparing status check", "Polling", "Polled"},
-	"cancel_sub_agent":        {"Preparing to stop sub-agent", "Stopping sub-agent", "Stopped sub-agent"},
-	"list_sub_agents":         {"Preparing agent list", "Listing sub-agents", "Listed sub-agents"},
-	"write_report":            {"Preparing report", "Writing report", "Wrote report"},
 	"multi_tool_use.parallel": {"Preparing", "Running", "Ran"},
 	"auto_allowed":            {"Preparing approval", "Approving", "Auto-allowed"},
-	"board_post":              {"Preparing Board post", "Posting to Board", "Posted to Board"},
-	"board_read":              {"Preparing Board read", "Reading Board", "Read Board"},
+	"agent_list":              {"Preparing agent search", "Finding workspace agents", "Found workspace agents"},
+	"agent_inspect":           {"Preparing agent inspection", "Inspecting agent", "Inspected agent"},
+	"agent_start":             {"Preparing agent", "Starting agent", "Started agent"},
+	"agent_send":              {"Preparing message", "Sending workspace message", "Sent workspace message"},
+	"agent_respond":           {"Preparing response", "Responding to request", "Responded to request"},
+	"agent_control":           {"Preparing control", "Requesting agent control", "Requested agent control"},
+	"publish_report":          {"Preparing report", "Publishing report", "Published report"},
+	"artifact_read":           {"Preparing evidence read", "Reading evidence", "Read evidence"},
+	"agent_wait":              {"Preparing wait", "Waiting for agent event", "Observed agent event"},
+	"board_read":              {"Preparing workspace history", "Reading workspace history", "Read workspace history"},
 	"remember":                {"Preparing memory", "Saving memory", "Saved memory"},
 	"recall_memory":           {"Preparing memory search", "Recalling memory", "Recalled memory"},
 	"update_memory":           {"Preparing memory correction", "Correcting memory", "Corrected memory"},
@@ -96,8 +99,8 @@ func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
 			target = SummarizeToolArgs(msg.ToolName, target)
 		}
 	}
-	if msg.ToolName == "run_sub_agent" && (msg.ToolStatus == types.ToolStatusSuccess || msg.ToolStatus == types.ToolStatusError || msg.ToolStatus == types.ToolStatusCancelled) {
-		if outcome, ok := subAgentOutcome(msg.Content); ok {
+	if msg.ToolName == "agent_start" && msg.ToolStatus == types.ToolStatusSuccess {
+		if outcome, ok := subAgentOutcome(msg.Content); ok && outcome.status == "running" {
 			if outcome.name != "" || outcome.id != "" {
 				target = subAgentIdentityLabel(outcome.name, outcome.id, outcome.category)
 			}
@@ -105,42 +108,7 @@ func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
 			if msg.ToolDuration > 0 {
 				duration = rendering.FormatDuration(msg.ToolDuration)
 			}
-			switch outcome.status {
-			case "running":
-				return ToolTitle{Action: "Started sub-agent", Operand: target, Metadata: duration}
-			case "completed":
-				return ToolTitle{Action: "Sub-agent completed", Operand: target, Metadata: duration}
-			case "cancelled":
-				return ToolTitle{Action: "Sub-agent cancelled", Operand: target, Metadata: duration}
-			case "failed_timeout":
-				// Also describes recorded results from sessions created before
-				// task deadlines were removed.
-				return ToolTitle{Action: "Sub-agent timed out", Operand: target, Metadata: duration, Failed: true}
-			default:
-				return ToolTitle{Action: "Sub-agent failed", Operand: target, Metadata: duration, Failed: true}
-			}
-		}
-	}
-	if msg.ToolName == "poll_sub_agent" || msg.ToolName == "cancel_sub_agent" {
-		id := SummarizeToolArgs(msg.ToolName, msg.ToolArgs)
-		if id == "" {
-			id = target
-		}
-		outcome, _ := subAgentOutcome(msg.Content)
-		if outcome.id != "" && id != "" && outcome.id != id {
-			outcome.name = "" // a mismatched result cannot label this handle
-			outcome.category = ""
-		}
-		if id == "" {
-			id = outcome.id
-		}
-		target = subAgentIdentityLabel(outcome.name, id, outcome.category)
-	}
-	if msg.ToolName == "write_report" {
-		if outcome, ok := subAgentOutcome(msg.Content); ok && outcome.status == "report_written" {
-			if outcome.name != "" || outcome.id != "" {
-				target = subAgentIdentityLabel(outcome.name, outcome.id, outcome.category)
-			}
+			return ToolTitle{Action: "Started agent", Operand: target, Metadata: duration}
 		}
 	}
 	if msg.ToolInput != "" {
@@ -157,8 +125,8 @@ func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
 			target = msg.ToolInput
 		}
 	}
-	if msg.ToolName == "board_post" && msg.ToolStatus == types.ToolStatusSuccess {
-		if operand := BoardPostOperand(msg.Content, msg.ToolInput); operand != "" {
+	if isCollaborationOperation(msg.ToolName) && msg.ToolStatus == types.ToolStatusSuccess {
+		if operand := CollaborationOperand(msg.ToolName, msg.Content, msg.ToolInput); operand != "" {
 			target = operand
 		}
 	}
@@ -175,6 +143,12 @@ func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
 	}
 	// A renderer's ambient phase is not evidence that this tool failed.
 	failed := msg.ToolStatus == types.ToolStatusError || msg.ToolPreviewPhase == types.ToolPreviewError && msg.ToolStatus != types.ToolStatusSuccess
+	if msg.ToolName == "agent_wait" && msg.ToolStatus == types.ToolStatusSuccess {
+		outcome := parseCollaborationWaitOutcome(msg.Content)
+		if outcome.known && outcome.failed {
+			return ToolTitle{Action: "Agent run failed", Operand: target, Metadata: outcome.summary, Failed: true}
+		}
+	}
 	if _, exit, session, ok := CommandResult(msg.ToolName, msg.Content); ok && (msg.ToolStatus == types.ToolStatusSuccess || failed) {
 		title := ToolTitle{Action: "Ran", Operand: target, Metadata: duration}
 		if msg.ToolName == "write_stdin" {
@@ -237,7 +211,7 @@ func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
 		switch msg.ToolName {
 		case "edit_file", "apply_patch":
 			counts = fmt.Sprintf("-%s +%s", rendering.FormatCount(msg.ToolLivedRemoved), rendering.FormatCount(msg.ToolLivedAdded))
-		case "write_file", "write_report":
+		case "write_file":
 			counts = "+" + rendering.FormatCount(msg.ToolLivedAdded)
 		}
 		if counts != "" {
@@ -249,6 +223,16 @@ func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
 		}
 	}
 	return title
+}
+
+func isCollaborationOperation(name string) bool {
+	switch name {
+	case "agent_list", "agent_inspect", "agent_start", "agent_send", "agent_respond",
+		"agent_control", "publish_report", "artifact_read", "agent_wait", "board_read":
+		return true
+	default:
+		return false
+	}
 }
 
 func structuredToolLabel(value string) bool {
@@ -268,8 +252,8 @@ func errorTitle(tool, target, duration, reason string) ToolTitle {
 	switch tool {
 	case "multi_tool_use.parallel":
 		title.Action = "Tool batch failed"
-	case "run_sub_agent":
-		title.Action = "Failed to spawn sub-agent"
+	case "agent_start":
+		title.Action = "Agent start failed"
 	case "exec_command", "write_stdin", "execute_command", "async_execute_command":
 		title.Action = "Command failed"
 	case "question":

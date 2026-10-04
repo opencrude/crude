@@ -3,6 +3,7 @@ package workspace
 import (
 	"time"
 
+	"crude/provider"
 	"crude/tools"
 	ttypes "crude/types"
 	"crude/types/reasoning"
@@ -126,7 +127,9 @@ func (c *Conversation) AppendMessage(message Message) string {
 		return ""
 	}
 	copy := message
-	if c.brief == "" && message.Role == MessageRoleUser && !message.PendingBtw {
+	if c.brief == "" && message.Role == MessageRoleUser && !message.PendingSteering &&
+		message.Collaboration == nil &&
+		(message.Origin == "" || message.Origin == provider.OriginHuman || message.Origin == provider.OriginHumanSteering) {
 		for _, ch := range message.Content {
 			if ch == '\n' || len(c.brief) >= 240 {
 				break
@@ -143,6 +146,14 @@ func (c *Conversation) AppendMessage(message Message) string {
 	return copy.InternalID
 }
 
+func (c *Conversation) AppendMessageIfAbsent(message Message) bool {
+	if c == nil || message.InternalID == "" || c.byID[message.InternalID] != nil {
+		return false
+	}
+	c.AppendMessage(message)
+	return true
+}
+
 // Brief retains the first accepted human intent without per-frame transcript scans.
 func (c *Conversation) Brief() string {
 	if c == nil {
@@ -151,16 +162,16 @@ func (c *Conversation) Brief() string {
 	return c.brief
 }
 
-// insertMessage keeps unresolved BTW notes at the visual tail. Provider output
+// insertMessage keeps unresolved human steering notes at the visual tail. Provider output
 // and lifecycle rows arriving after admission are inserted before those notes;
 // once a note is acknowledged, normal chronological appends resume after it.
 func (c *Conversation) insertMessage(message *Message) {
-	if message.PendingBtw {
+	if message.PendingSteering {
 		c.messages = append(c.messages, message)
 		return
 	}
 	insertAt := len(c.messages)
-	for insertAt > 0 && c.messages[insertAt-1].PendingBtw {
+	for insertAt > 0 && c.messages[insertAt-1].PendingSteering {
 		insertAt--
 	}
 	if message.Role != MessageRoleStatus && insertAt > 0 &&
@@ -174,7 +185,7 @@ func (c *Conversation) insertMessage(message *Message) {
 
 func (c *Conversation) lastNonPending() *Message {
 	for i := len(c.messages) - 1; i >= 0; i-- {
-		if !c.messages[i].PendingBtw {
+		if !c.messages[i].PendingSteering {
 			return c.messages[i]
 		}
 	}
@@ -217,22 +228,22 @@ func (c *Conversation) SetLatestThinkingKind(kind reasoning.Kind) bool {
 	return false
 }
 
-func (c *Conversation) AppendPendingBtw(message Message) string {
-	message.PendingBtw = true
+func (c *Conversation) AppendPendingSteering(message Message) string {
+	message.PendingSteering = true
 	return c.AppendMessage(message)
 }
 
-// ConsumePendingBtw resolves one backend-confirmed note while retaining its
+// ConsumePendingSteering resolves one backend-confirmed note while retaining its
 // user message.
-func (c *Conversation) ConsumePendingBtw(id string) bool {
+func (c *Conversation) ConsumePendingSteering(id string) bool {
 	if c == nil || id == "" {
 		return false
 	}
 	message := c.byID[id]
-	if message == nil || !message.PendingBtw {
+	if message == nil || !message.PendingSteering {
 		return false
 	}
-	message.PendingBtw = false
+	message.PendingSteering = false
 	// The note is now part of the next request. Keep the live turn indicator
 	// below it even if that indicator existed before the note was submitted.
 	if status := c.activeTurnStatus(""); status != nil {
@@ -242,10 +253,10 @@ func (c *Conversation) ConsumePendingBtw(id string) bool {
 	return true
 }
 
-// RemovePendingBtwMessages returns notes in transcript order for draft recovery.
-// Upload-start acknowledgement may have removed PendingBtw already, so match
+// RemovePendingSteeringMessages returns notes in transcript order for draft recovery.
+// Upload-start acknowledgement may have removed PendingSteering already, so match
 // the exact backend-supplied IDs of user messages, regardless of their flag.
-func (c *Conversation) RemovePendingBtwMessages(ids []string) []Message {
+func (c *Conversation) RemovePendingSteeringMessages(ids []string) []Message {
 	if c == nil || len(ids) == 0 {
 		return nil
 	}
@@ -276,17 +287,17 @@ func (c *Conversation) RemovePendingBtwMessages(ids []string) []Message {
 	return removed
 }
 
-func (c *Conversation) RemovePendingBtwIDs(ids []string) int {
-	return len(c.RemovePendingBtwMessages(ids))
+func (c *Conversation) RemovePendingSteeringIDs(ids []string) int {
+	return len(c.RemovePendingSteeringMessages(ids))
 }
 
-func (c *Conversation) PendingBtwCount() int {
+func (c *Conversation) PendingSteeringCount() int {
 	if c == nil {
 		return 0
 	}
 	count := 0
 	for _, message := range c.messages {
-		if message.PendingBtw {
+		if message.PendingSteering {
 			count++
 		}
 	}
@@ -511,7 +522,7 @@ func (c *Conversation) moveBeforePending(message *Message) {
 	copy(c.messages[current:], c.messages[current+1:])
 	c.messages = c.messages[:len(c.messages)-1]
 	insertAt := len(c.messages)
-	for insertAt > 0 && c.messages[insertAt-1].PendingBtw {
+	for insertAt > 0 && c.messages[insertAt-1].PendingSteering {
 		insertAt--
 	}
 	c.messages = append(c.messages, nil)
@@ -752,7 +763,7 @@ func (c *Conversation) UpdateToolCall(toolID, internalID, name, argsCompact stri
 	c.version++
 }
 
-// AttachSubPaneToTool links a child to the exact parent run_sub_agent call.
+// AttachSubPaneToTool links a child to the exact parent agent_start call.
 // Simultaneous launches may finish or send start events in any order; neither
 // the latest call nor a guessed description is a safe correlation key.
 func (c *Conversation) AttachSubPaneToTool(toolID, paneID, label string) bool {
@@ -760,7 +771,7 @@ func (c *Conversation) AttachSubPaneToTool(toolID, paneID, label string) bool {
 		return false
 	}
 	message := c.findTool("", toolID)
-	if message == nil || message.ToolID != toolID || message.Role != MessageRoleTool || message.ToolName != "run_sub_agent" || message.SubPaneID != "" ||
+	if message == nil || message.ToolID != toolID || message.Role != MessageRoleTool || message.ToolName != "agent_start" || message.SubPaneID != "" ||
 		message.ToolStatus == "error" || message.ToolStatus == "cancelled" {
 		return false
 	}

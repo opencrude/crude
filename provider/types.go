@@ -13,12 +13,30 @@ import (
 type UserInput struct {
 	InternalID   string
 	Text         string
+	DisplayText  string
 	ReferenceIDs []string
 	Origin       MessageOrigin
 	ContextParts []string
 	// ActivePaths carries IDE context (active editor file, open tabs) so
 	// the memory system can boost recall of memories scoped to those paths.
-	ActivePaths []string
+	ActivePaths   []string
+	Collaboration *CollaborationAttribution
+}
+
+type CollaborationAttribution struct {
+	EventID          string   `json:"event_id"`
+	ThreadID         string   `json:"thread_id"`
+	SenderID         string   `json:"sender_id"`
+	SenderName       string   `json:"sender_name"`
+	RecipientIDs     []string `json:"recipient_ids,omitempty"`
+	RecipientNames   []string `json:"recipient_names,omitempty"`
+	Kind             string   `json:"kind"`
+	RequestID        string   `json:"request_id,omitempty"`
+	RequestRevision  uint64   `json:"request_revision,omitempty"`
+	RunID            string   `json:"run_id,omitempty"`
+	HistoryMessageID string   `json:"history_message_id,omitempty"`
+	ArtifactID       string   `json:"artifact_id,omitempty"`
+	ArtifactRevision int      `json:"artifact_revision,omitempty"`
 }
 
 func PlainInput(text string) UserInput {
@@ -44,13 +62,13 @@ type MessageOrigin string
 
 const (
 	OriginHuman             MessageOrigin = "human"
-	OriginBTW               MessageOrigin = "btw"
+	OriginHumanSteering     MessageOrigin = "human_steering"
 	OriginAssistant         MessageOrigin = "assistant"
 	OriginTool              MessageOrigin = "tool"
 	OriginRuntimeContext    MessageOrigin = "runtime_context"
 	OriginTurnStopped       MessageOrigin = "turn_stopped"
 	OriginContinuation      MessageOrigin = "continuation"
-	OriginSubAgentWake      MessageOrigin = "subagent_wake"
+	OriginPeer              MessageOrigin = "peer"
 	OriginAssignment        MessageOrigin = "assignment"
 	OriginCheckpoint        MessageOrigin = "checkpoint"
 	OriginCompactionRequest MessageOrigin = "compaction_request"
@@ -304,28 +322,29 @@ func (c *MessageContent) UnmarshalJSON(data []byte) error {
 }
 
 type ChatMessage struct {
-	InternalID        string             `json:"internal_id,omitempty"`
-	DisplayContent    string             `json:"display_content,omitempty"`
-	ReferenceLabels   []string           `json:"reference_labels,omitempty"`
-	Role              string             `json:"role"`
-	Origin            MessageOrigin      `json:"origin,omitempty"`
-	Visibility        MessageVisibility  `json:"visibility,omitempty"`
-	Content           MessageContent     `json:"content"`
-	ReasoningContent  string             `json:"reasoning_content,omitempty"`
-	Reasoning         string             `json:"reasoning,omitempty"`
-	Refusal           string             `json:"refusal,omitempty"`
-	ToolCalls         []ToolCall         `json:"tool_calls,omitempty"`
-	ToolCallID        string             `json:"tool_call_id,omitempty"`
-	CacheControl      *CacheControl      `json:"cache_control,omitempty"`
-	ReasoningDetails  []json.RawMessage  `json:"reasoning_details,omitempty"`
-	ReasoningDuration time.Duration      `json:"reasoning_duration,omitempty"`
-	ReasoningDisplay  reasoning.Display  `json:"reasoning_display,omitempty"`
-	ProviderItems     []ProviderItem     `json:"provider_items,omitempty"`
-	ReplayScope       string             `json:"replay_scope,omitempty"`
-	ReplaySourceModel string             `json:"replay_source_model,omitempty"`
-	ReplayPrefixHash  string             `json:"replay_prefix_hash,omitempty"`
-	ResponseReference *ResponseReference `json:"response_reference,omitempty"`
-	ToolError         bool               `json:"tool_error,omitempty"`
+	InternalID        string                    `json:"internal_id,omitempty"`
+	DisplayContent    string                    `json:"display_content,omitempty"`
+	ReferenceLabels   []string                  `json:"reference_labels,omitempty"`
+	Role              string                    `json:"role"`
+	Origin            MessageOrigin             `json:"origin,omitempty"`
+	Visibility        MessageVisibility         `json:"visibility,omitempty"`
+	Content           MessageContent            `json:"content"`
+	ReasoningContent  string                    `json:"reasoning_content,omitempty"`
+	Reasoning         string                    `json:"reasoning,omitempty"`
+	Refusal           string                    `json:"refusal,omitempty"`
+	ToolCalls         []ToolCall                `json:"tool_calls,omitempty"`
+	ToolCallID        string                    `json:"tool_call_id,omitempty"`
+	CacheControl      *CacheControl             `json:"cache_control,omitempty"`
+	ReasoningDetails  []json.RawMessage         `json:"reasoning_details,omitempty"`
+	ReasoningDuration time.Duration             `json:"reasoning_duration,omitempty"`
+	ReasoningDisplay  reasoning.Display         `json:"reasoning_display,omitempty"`
+	ProviderItems     []ProviderItem            `json:"provider_items,omitempty"`
+	ReplayScope       string                    `json:"replay_scope,omitempty"`
+	ReplaySourceModel string                    `json:"replay_source_model,omitempty"`
+	ReplayPrefixHash  string                    `json:"replay_prefix_hash,omitempty"`
+	ResponseReference *ResponseReference        `json:"response_reference,omitempty"`
+	ToolError         bool                      `json:"tool_error,omitempty"`
+	Collaboration     *CollaborationAttribution `json:"collaboration,omitempty"`
 }
 
 func (m ChatMessage) ContentString() string {
@@ -361,7 +380,7 @@ func (m ChatMessage) EffectiveVisibility() MessageVisibility {
 }
 
 func (m ChatMessage) IsGenuineUserInput() bool {
-	return m.EffectiveOrigin() == OriginHuman || m.EffectiveOrigin() == OriginBTW
+	return m.EffectiveOrigin() == OriginHuman || m.EffectiveOrigin() == OriginHumanSteering
 }
 
 func defaultMessageOrigin(role string) MessageOrigin {

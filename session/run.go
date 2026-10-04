@@ -3,7 +3,6 @@ package session
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"crude/agent"
+	"crude/collaboration"
 	"crude/docconv"
 	"crude/fileio"
 	"crude/logger"
@@ -30,6 +30,37 @@ func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
 	l := s.logger
 	l.Info("SESSION", "run_start", "orchestrator_id", o.ID)
 	s.sender = sender
+	defer s.detachCollaborator(context.Background(), o.ID)
+	s.reconcileCollaborationAdmissions(s.db, o.ID)
+
+	var collaborationNotifications <-chan struct{}
+	unsubscribeCollaboration := func() {}
+	if store := s.CollaborationStore(); store != nil {
+		collaborationNotifications, unsubscribeCollaboration = store.Subscribe()
+	}
+	defer unsubscribeCollaboration()
+	collaborationPoll := time.NewTicker(500 * time.Millisecond)
+	defer collaborationPoll.Stop()
+	startCollaborationTurn := func() bool {
+		if o.RuntimeEpoch == 0 || o.TurnActive() || o.closing.Load() {
+			return false
+		}
+		deliveries, err := s.reserveCollaboration(context.Background(), o.ID, o.RuntimeEpoch, 1)
+		if err != nil {
+			if !errors.Is(err, collaboration.ErrUnavailable) {
+				l.Warn("COLLAB", "idle_reserve_failed", "agent_id", o.ID, "error", err.Error())
+			}
+			return false
+		}
+		if len(deliveries) == 0 {
+			return false
+		}
+		if !o.SubmitCollaboration(collaborationInput(deliveries[0]), deliveries) {
+			s.releaseCollaborationReservations(o.ID, o.RuntimeEpoch, deliveries, "target was not idle")
+			return false
+		}
+		return true
+	}
 
 	defer func() {
 		if r := recover(); r != nil {
@@ -59,39 +90,7 @@ func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
 		}
 	}()
 
-	var pendingWakes []WakeEvent
-	queueWake := func(wake WakeEvent) bool {
-		if wake.Type == WakeShutdown {
-			l.Info("SLEEP", "wake_shutdown")
-			return false
-		}
-		if wake.Type != WakeSubAgentDone {
-			return true
-		}
-		if s.isHardCancelled() {
-			l.Info("SLEEP", "wake_suppressed_hard_cancel", "source", wake.SourceID)
-			return true
-		}
-		if s.IsAndClearReportConsumed(wake.SourceID) {
-			l.Info("SLEEP", "wake_suppressed_already_consumed", "source", wake.SourceID)
-			return true
-		}
-		l.Info("SLEEP", "wake_sub_agent_done", "source", wake.SourceID)
-		pendingWakes = append(pendingWakes, wake)
-		return true
-	}
-
 	for {
-		if len(pendingWakes) > 0 && !o.TurnActive() {
-			wakeInput := provider.RuntimeInput(provider.OriginSubAgentWake, formatSubAgentWakeBatch(pendingWakes))
-			wakeInput.InternalID = commonWakeHistoryMessage(pendingWakes)
-			if o.SubmitInput(wakeInput) {
-				pendingWakes = pendingWakes[:0]
-				request := <-o.inputCh
-				s.processTurnOrchestrator(request, o, sender, l)
-				continue
-			}
-		}
 		select {
 		case <-o.stopCh:
 			l.Info("SESSION", "run_exit_closed", "orchestrator_id", o.ID)
@@ -103,39 +102,33 @@ func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
 			}
 			if s.isHardCancelled() {
 				s.clearHardCancel()
-				s.drainWakeCh()
 			}
 			s.processTurnOrchestrator(request, o, sender, l)
-
-		case wake := <-s.wakeCh:
-			if o.closing.Load() {
-				return
+		case <-collaborationNotifications:
+			if startCollaborationTurn() {
+				request := <-o.inputCh
+				s.processTurnOrchestrator(request, o, sender, l)
 			}
-			if !queueWake(wake) {
-				return
+		case <-collaborationPoll.C:
+			if startCollaborationTurn() {
+				request := <-o.inputCh
+				s.processTurnOrchestrator(request, o, sender, l)
 			}
 		}
 	}
-}
-
-func formatSubAgentWakeBatch(wakes []WakeEvent) string {
-	entries := make([]rootprompt.SubAgentWakeEntry, 0, len(wakes))
-	for _, wake := range wakes {
-		if result, ok := wake.Data.(agent.SubAgentResult); ok {
-			entries = append(entries, rootprompt.SubAgentWakeEntry{ResultText: formatSubAgentResult(result)})
-			continue
-		}
-		entries = append(entries, rootprompt.SubAgentWakeEntry{UnavailableID: wake.SourceID})
-	}
-	return rootprompt.SubAgentWakeBatch(entries)
 }
 
 func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, sender EventSender, l *logger.Logger) {
 	userInput := request.input
 	ctx := request.ctx
 	turnGeneration := request.generation
+	currentMsgID := newMessageID()
+	if userInput.InternalID != "" {
+		currentMsgID = userInput.InternalID
+	}
 	turnFinished := false
 	turnFinalState := sessiondb.TurnFailed
+	var collaborationRun collaboration.Run
 	finishTurn := func() {
 		if turnFinished {
 			return
@@ -149,9 +142,36 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 				l.Warn("SESSION", "turn_state_finish_failed", "error", err.Error())
 			}
 		}
-		if cleared := o.endTurn(turnGeneration); len(cleared) > 0 {
-			sender.SendAgentEventWithID("btw_cleared", map[string]any{"internal_ids": cleared}, o.ID)
+		if collaborationRun.ID != "" {
+			runState := collaboration.RunFailed
+			outcome := "turn failed"
+			switch turnFinalState {
+			case sessiondb.TurnCompleted:
+				runState, outcome = collaboration.RunSucceeded, "completed"
+			case sessiondb.TurnInterrupted:
+				runState, outcome = collaboration.RunCancelled, "cancelled"
+			}
+			s.mu.Lock()
+			store := s.collaborationStore
+			s.mu.Unlock()
+			if store != nil {
+				_, expectedVersion := o.collaborationRunIdentity()
+				if expectedVersion == 0 {
+					expectedVersion = collaborationRun.Version
+				}
+				finished, err := store.FinishRun(context.Background(), collaboration.FinishRunRequest{
+					RunID: collaborationRun.ID, AgentID: o.ID, RuntimeEpoch: o.RuntimeEpoch,
+					ExpectedVersion: expectedVersion, State: runState,
+					Outcome: outcome, ContextCommitID: currentMsgID,
+				})
+				if err != nil {
+					l.Warn("COLLAB", "run_finish_failed", "run_id", collaborationRun.ID, "error", err.Error())
+				} else {
+					collaborationRun = finished
+				}
+			}
 		}
+		o.endTurn(turnGeneration)
 	}
 	defer finishTurn()
 	if err := s.runBeforeTurn(ctx); err != nil {
@@ -176,6 +196,29 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			return
 		}
 	}
+	if store := s.CollaborationStore(); store != nil && o.RuntimeEpoch > 0 {
+		requestID := ""
+		if len(request.deliveries) > 0 {
+			requestID = request.deliveries[0].Event.RequestID
+		}
+		origin := collaboration.OriginRuntime
+		switch userInput.EffectiveOrigin() {
+		case provider.OriginHuman, provider.OriginHumanSteering:
+			origin = collaboration.OriginHuman
+		case provider.OriginPeer:
+			origin = collaboration.OriginPeer
+		}
+		started, err := store.StartRun(ctx, collaboration.StartRunRequest{
+			AgentID: o.ID, RuntimeEpoch: o.RuntimeEpoch, RequestID: requestID, Origin: origin,
+		})
+		if err != nil {
+			s.releaseCollaborationReservations(o.ID, o.RuntimeEpoch, request.deliveries, "run could not start")
+			sender.SendAgentEventWithID("error", "Workspace agent run could not start: "+err.Error(), o.ID)
+			return
+		}
+		collaborationRun = started
+		o.setCollaborationRun(started)
+	}
 
 	// Use per-orchestrator effective config from runtime profile.
 	activeCfg := effectiveCfg.GetActiveDefaultCategory()
@@ -191,7 +234,6 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	s.toolCallCountMu.Lock()
 	s.toolCallCount = 0
 	s.toolCallCountMu.Unlock()
-	currentMsgID := newMessageID()
 	inputOrigin := userInput.EffectiveOrigin()
 	humanTurn := inputOrigin == provider.OriginHuman
 	historyStart, historyEnd := s.historyHooks()
@@ -221,19 +263,18 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			historyStarted = true
 			historyCtx = withHistoryScope(ctx, s.sessionID, currentMsgID, o.ID)
 		}
-	} else if inputOrigin == provider.OriginSubAgentWake {
+	} else if inputOrigin == provider.OriginPeer && userInput.Collaboration != nil && userInput.Collaboration.HistoryMessageID != "" {
+		historyMessageID := userInput.Collaboration.HistoryMessageID
 		if historyContinue != nil {
-			if err := historyContinue(ctx, s.sessionID, userInput.InternalID); err != nil {
-				l.Error("HISTORY", "continuation_scope_start_failed", "msg_id", userInput.InternalID, "error", err.Error())
+			if err := historyContinue(ctx, s.sessionID, historyMessageID); err != nil {
+				l.Error("HISTORY", "continuation_scope_start_failed", "msg_id", historyMessageID, "error", err.Error())
 				sender.SendAgentEventWithID("error", "File-change tracking could not continue; runtime work was aborted before provider or tool execution: "+err.Error(), o.ID)
 				return
 			}
 			historyContinuationStarted = true
-			historyContinuationID = userInput.InternalID
+			historyContinuationID = historyMessageID
 		}
-		if userInput.InternalID != "" {
-			historyCtx = withHistoryScope(ctx, s.sessionID, userInput.InternalID, o.ID)
-		}
+		historyCtx = withHistoryScope(ctx, s.sessionID, historyMessageID, o.ID)
 	}
 	if historyContinuationStarted && historyContinueEnd != nil {
 		defer func() {
@@ -282,6 +323,9 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	userMsg, referenceLabels := s.buildUserMessageWithDisplay(userInput, activeCfg.Model)
 	userMsg.InternalID = currentMsgID
 	userMsg.DisplayContent = userInput.Text
+	if userInput.DisplayText != "" {
+		userMsg.DisplayContent = userInput.DisplayText
+	}
 	requestContextParts := append([]string(nil), userInput.ContextParts...)
 	if humanTurn {
 		currentPlan, planErr := s.activePlanTurnContext(ctx)
@@ -358,6 +402,20 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	archiveCopy := append([]provider.ChatMessage(nil), s.msgs...)
 	contextMsgs := append([]provider.ChatMessage(nil), s.activeContext...)
 	s.msgsMu.Unlock()
+	if len(request.deliveries) > 0 {
+		if err := s.commitCollaborationAdmissions(
+			s.db, s.sessionID, o.ID, collaborationRun.ID, o.RuntimeEpoch,
+			max(1, s.contextGeneration), contextMsgs, request.deliveries,
+		); err != nil {
+			s.rollbackTurnInput(currentMsgID)
+			s.releaseCollaborationReservations(o.ID, o.RuntimeEpoch, request.deliveries, "context admission failed")
+			sender.SendAgentEventWithID("error", "Workspace message could not be admitted: "+err.Error(), o.ID)
+			return
+		}
+		for _, delivery := range request.deliveries {
+			sender.SendAgentEventWithID("collaboration_message", delivery.Event, o.ID)
+		}
+	}
 	l.Info("CONV", "user_msg", "msg_id", currentMsgID, "len", len(userInput.Text))
 
 	l.Info("AGENT", "loop_start", "msg_id", currentMsgID)
@@ -433,85 +491,51 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		return configuredOrchestratorTools(current, current.IsMultiAgentEnabled(), ag.Model), s.takeDelegationNotices()
 	}
 	s.bindAgentRuntime(ctx, ag, captypes.RuntimeActor{ID: o.ID, SessionID: s.sessionID, AllowedTools: activeCfg.AllowedTools, DeniedTools: activeCfg.DeniedTools, SkillModes: activeCfg.SkillModes}, s.AgentName())
-	s.bindBoardAdmission(ag, s.db, s.sessionID, s.sessionID, func() uint64 { return max(1, s.contextGeneration) })
-	defer s.finishedBoardAgent(context.Background(), o.ID, s.AgentName(), "")
-	var pendingRuntimeWakes []WakeEvent
+	defer s.FileOwnership().Release(agent.AgentID(o.ID))
+	var pendingCollaboration []collaboration.PendingDelivery
+	defer func() {
+		s.releaseCollaborationReservations(o.ID, o.RuntimeEpoch, pendingCollaboration, "turn ended before context admission")
+	}()
 	ag.PrepareRuntimeNotices = func() []provider.ChatMessage {
 		if ctx.Err() != nil || s.isHardCancelled() {
 			return nil
 		}
-		// RunOrchestrator cannot receive wakes while this turn is active. Drain
-		// only here, after tool results have had a chance to mark consumed reports.
-		for {
-			select {
-			case wake := <-s.wakeCh:
-				if wake.Type == WakeShutdown {
-					// Preserve shutdown for the owning outer session loop.
-					s.wakeCh <- wake
-					goto drained
-				}
-				if wake.Type == WakeSubAgentDone {
-					pendingRuntimeWakes = append(pendingRuntimeWakes, wake)
-				}
-			default:
-				goto drained
+		var notices []provider.ChatMessage
+		if len(pendingCollaboration) == 0 {
+			reserved, err := s.reserveCollaboration(ctx, o.ID, o.RuntimeEpoch, 20)
+			if err != nil && !errors.Is(err, collaboration.ErrUnavailable) {
+				l.Warn("COLLAB", "active_reserve_failed", "agent_id", o.ID, "error", err.Error())
+			} else {
+				pendingCollaboration = reserved
 			}
 		}
-	drained:
-		// A synchronous wait, poll or cancellation may have consumed a result
-		// after its wake was queued. Check again at the request boundary.
-		kept := pendingRuntimeWakes[:0]
-		for _, wake := range pendingRuntimeWakes {
-			if !s.IsAndClearReportConsumed(wake.SourceID) {
-				kept = append(kept, wake)
-			}
+		for _, delivery := range pendingCollaboration {
+			notices = append(notices, collaborationMessage(delivery))
 		}
-		pendingRuntimeWakes = kept
-		if len(kept) == 0 {
+		return notices
+	}
+	ag.CommitRuntimeNotices = func(messages []provider.ChatMessage) error {
+		if len(pendingCollaboration) == 0 {
 			return nil
 		}
-		notice := provider.RuntimeInput(provider.OriginSubAgentWake, formatSubAgentWakeBatch(kept))
-		notice.InternalID = newMessageID()
-		message := inputMessage(provider.NewTextMessage("user", notice.Text), notice)
-		message.InternalID = notice.InternalID
-		return []provider.ChatMessage{message}
+		contextMessages := messages
+		if len(contextMessages) > 0 && contextMessages[0].Role == "system" {
+			contextMessages = contextMessages[1:]
+		}
+		if err := s.commitCollaborationAdmissions(
+			s.db, s.sessionID, o.ID, collaborationRun.ID, o.RuntimeEpoch,
+			max(1, s.contextGeneration), contextMessages, pendingCollaboration,
+		); err != nil {
+			s.releaseCollaborationReservations(o.ID, o.RuntimeEpoch, pendingCollaboration, "context admission failed")
+			pendingCollaboration = nil
+			return err
+		}
+		for _, delivery := range pendingCollaboration {
+			sender.SendAgentEventWithID("collaboration_message", delivery.Event, o.ID)
+		}
+		pendingCollaboration = nil
+		return nil
 	}
-	continuationContext := ag.ContinuationContext
-	ag.ContinuationContext = func(ctx context.Context) (rootprompt.SessionContinuityData, error) {
-		dataContext, err := continuationContext(ctx)
-		if err != nil {
-			return rootprompt.SessionContinuityData{}, err
-		}
-		if len(pendingRuntimeWakes) > 0 {
-			var ids []string
-			for _, wake := range pendingRuntimeWakes {
-				ids = append(ids, wake.SourceID)
-			}
-			data, err := json.Marshal(ids)
-			if err != nil {
-				return rootprompt.SessionContinuityData{}, err
-			}
-			dataContext.Additional = "Child result notifications already admitted to this continuation (do not await their completion again): " + string(data)
-		}
-		return dataContext, nil
-	}
-	ag.RuntimeNoticesAccepted = func() { pendingRuntimeWakes = nil }
-	defer func() {
-		// A provider may reject the request before accepting the notification.
-		// Give the idle loop another chance rather than silently losing the wake.
-		if ctx.Err() != nil || s.isHardCancelled() {
-			return
-		}
-		for _, wake := range pendingRuntimeWakes {
-			if !s.IsAndClearReportConsumed(wake.SourceID) {
-				select {
-				case s.wakeCh <- wake:
-				case <-o.stopCh:
-				}
-			}
-		}
-	}()
-
 	ag.SetToolCallSeqStart(s.toolCallSeq)
 	var finalContent string
 	prompt := s.systemPromptForModel(effectiveCfg.IsMultiAgentEnabled(), ag.Model)
@@ -523,36 +547,20 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	ag.Ctx = historyCtx
 	activeCfg = effectiveCfg.GetActiveDefaultCategory()
 
-	btwMsgCh := make(chan agent.BtwMessage, 8)
-	btwForwardDone := make(chan struct{})
-	go func() {
-		defer close(btwForwardDone)
-		defer close(btwMsgCh)
-		for {
-			select {
-			case <-o.stopCh:
-				return
-			case btwInput := <-o.btwCh:
-				btwMsg := s.buildBtwMessage(btwInput, activeCfg.Model)
-				internalID := btwMsg.InternalID
-				select {
-				case btwMsgCh <- agent.BtwMessage{
-					Message: btwMsg,
-					Accept: func() bool {
-						return o.consumeBtw(internalID)
-					},
-				}:
-				case <-ctx.Done():
-					return
-				}
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
+	steeringCtx, stopSteering := context.WithCancel(historyCtx)
+	runtimeMessages, runtimeMessagesDone := s.humanSteeringMessages(
+		steeringCtx, s.db, s.sessionID, o.ID, collaborationRun.ID, o.RuntimeEpoch,
+		func() uint64 {
+			s.msgsMu.Lock()
+			defer s.msgsMu.Unlock()
+			return max(1, s.contextGeneration)
+		},
+		activeCfg.Model, sender,
+	)
 
 	var emitActive atomic.Bool
 	emitActive.Store(true)
+	var terminalDone *agent.AgentEvent
 
 	emit := func(evt agent.AgentEvent) {
 		if evt.Type == "error" && ctx.Err() == nil {
@@ -585,7 +593,13 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		if err := s.persistCompactionEvent(s.db, s.sessionID, agentID, evt); err != nil {
 			s.logger.Warn("COMPACT", "lifecycle_persist_failed", "agent_id", agentID, "error", err.Error())
 		}
-		sender.SendAgentEventWithID(evt.Type, evt.Data, agentID)
+		if evt.Type == "done" {
+			copy := evt
+			copy.AgentID = agentID
+			terminalDone = &copy
+		} else {
+			sender.SendAgentEventWithID(evt.Type, evt.Data, agentID)
+		}
 		s.updateDisplayFromEvent(evt, displayTracker)
 		if evt.Type == "usage" {
 			s.processUsageEvent(evt.Data, activeCfg.Model, agentID, "")
@@ -601,14 +615,24 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		}
 	}
 	ag.Emit = emit
-	agentMsgs := ag.Run(historyCtx, contextMsgs, prompt, emit, o.BlockResolveCh, s.sessionID, btwMsgCh)
-	finishTurn()
-	<-btwForwardDone
+	agentMsgs := ag.Run(historyCtx, contextMsgs, prompt, emit, o.BlockResolveCh, s.sessionID, runtimeMessages)
+	controlMessages := s.takeCollaborationContext(o.ID)
+	if len(controlMessages) > 0 {
+		agentMsgs = append(agentMsgs, controlMessages...)
+	}
+	stopSteering()
+	<-runtimeMessagesDone
 	emitActive.Store(false)
 	s.toolCallSeq = ag.ToolCallSeq()
 
 	l.Info("AGENT", "loop_end", "len", len(finalContent))
-	s.finalizeTurn(agentMsgs, len(archiveCopy), displayTracker, finalContent, currentMsgID, turnIdentity, ag.ActiveContext())
+	activeContext := ag.ActiveContext()
+	activeContext = append(activeContext, controlMessages...)
+	s.finalizeTurn(agentMsgs, len(archiveCopy), displayTracker, finalContent, currentMsgID, turnIdentity, activeContext)
+	finishTurn()
+	if terminalDone != nil {
+		sender.SendAgentEventWithID(terminalDone.Type, terminalDone.Data, terminalDone.AgentID)
+	}
 }
 
 func (o *Orchestrator) handleBlockingEvent(data map[string]string, evt agent.AgentEvent, sender EventSender) bool {
@@ -943,7 +967,6 @@ func (s *Session) finalizeTurn(
 			s.logger.Error("COMPACT", "context_state_persist_failed", "error", err.Error())
 		}
 		s.flushWriteBufSync()
-		s.acceptBoardResults(context.Background(), s.db, "", turnMsgs)
 	}
 
 	s.afterTurnMemory(turnNumber, turnMsgs, finalContent)
@@ -960,6 +983,50 @@ func contextCheckpointContent(messages []provider.ChatMessage) string {
 		}
 	}
 	return ""
+}
+
+func (s *Session) rollbackTurnInput(messageID string) {
+	if s == nil || messageID == "" {
+		return
+	}
+	remove := map[string]bool{messageID: true, messageID + "-context": true}
+	s.msgsMu.Lock()
+	defer s.msgsMu.Unlock()
+	nextMessages := make([]provider.ChatMessage, 0, len(s.msgs))
+	nextTurns := make([]int, 0, len(s.msgTurns))
+	nextMetas := make([]sessiondb.DisplayMeta, 0, len(s.displayMetas))
+	nextCreated := make([]int64, 0, len(s.createdAts))
+	for index, message := range s.msgs {
+		if remove[message.InternalID] {
+			continue
+		}
+		nextMessages = append(nextMessages, message)
+		if index < len(s.msgTurns) {
+			nextTurns = append(nextTurns, s.msgTurns[index])
+		}
+		if index < len(s.displayMetas) {
+			nextMetas = append(nextMetas, s.displayMetas[index])
+		}
+		if index < len(s.createdAts) {
+			nextCreated = append(nextCreated, s.createdAts[index])
+		}
+	}
+	s.msgs, s.msgTurns, s.displayMetas, s.createdAts = nextMessages, nextTurns, nextMetas, nextCreated
+	s.activeContext = removeSessionMessagesByInternalID(s.activeContext, messageID, messageID+"-context")
+}
+
+func removeSessionMessagesByInternalID(messages []provider.ChatMessage, ids ...string) []provider.ChatMessage {
+	remove := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		remove[id] = true
+	}
+	result := messages[:0]
+	for _, message := range messages {
+		if !remove[message.InternalID] {
+			result = append(result, message)
+		}
+	}
+	return result
 }
 
 func persistedToolStatus(message provider.ChatMessage, current string) string {
@@ -1147,39 +1214,16 @@ func (s *Session) buildUserMessageWithDisplay(input provider.UserInput, model st
 
 func inputMessage(message provider.ChatMessage, input provider.UserInput) provider.ChatMessage {
 	message.Origin = input.EffectiveOrigin()
-	if message.Origin == provider.OriginHuman || message.Origin == provider.OriginBTW {
+	if input.Collaboration != nil {
+		attribution := *input.Collaboration
+		attribution.RecipientIDs = append([]string(nil), input.Collaboration.RecipientIDs...)
+		attribution.RecipientNames = append([]string(nil), input.Collaboration.RecipientNames...)
+		message.Collaboration = &attribution
+	}
+	if message.Origin == provider.OriginHuman || message.Origin == provider.OriginHumanSteering || message.Origin == provider.OriginPeer {
 		message.Visibility = provider.VisibilityConversation
 	} else {
 		message.Visibility = provider.VisibilityContextOnly
 	}
 	return message
-}
-
-// buildBtwMessage creates a ChatMessage for a BTW (by-the-way) interruption.
-// It resolves any reference IDs via buildUserMessage and prepends the urgent
-// interruption prefix so the LLM prioritises the message.
-func (s *Session) buildBtwMessage(input provider.UserInput, model string) provider.ChatMessage {
-	msg, referenceLabels := s.buildUserMessageWithDisplay(input, model)
-	if msg.Content.IsText() {
-		return provider.ChatMessage{
-			InternalID:      input.InternalID,
-			DisplayContent:  input.Text,
-			ReferenceLabels: referenceLabels,
-			Role:            "user",
-			Origin:          provider.OriginBTW,
-			Visibility:      provider.VisibilityConversation,
-			Content:         provider.TextContent(rootprompt.BTWInterruptionPrefix() + msg.Content.String()),
-		}
-	}
-	// Multipart: insert the urgent prefix as a text part at the beginning
-	prefixPart := provider.ContentPart{Type: "text", Text: rootprompt.BTWInterruptionPrefix()}
-	parts := []provider.ContentPart{prefixPart}
-	parts = append(parts, msg.Content.Parts()...)
-	result := provider.NewMultiPartMessage("user", parts)
-	result.InternalID = input.InternalID
-	result.DisplayContent = input.Text
-	result.ReferenceLabels = referenceLabels
-	result.Origin = provider.OriginBTW
-	result.Visibility = provider.VisibilityConversation
-	return result
 }

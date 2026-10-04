@@ -190,7 +190,7 @@ func TestFailedSubAgentParentRowAndReviewPaneRemainAuditable(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("root")
 	root := app.AgentMgr.Get("root").State.Messages
-	root.UpdateToolCall("spawn-1", "tool-1", "run_sub_agent", "category: researcher")
+	root.UpdateToolCall("spawn-1", "tool-1", "agent_start", "category: researcher")
 	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "sub_agent_started", AgentID: "child", Data: map[string]string{
 		"agent_id": "child", "agent_name": "Lily", "category": "researcher", "task": "Inspect recovery", "parent_id": "root", "parent_tool_id": "spawn-1",
 	}})
@@ -219,8 +219,8 @@ func TestParallelSubAgentStartsLinkToTheirOwnParentCalls(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("root")
 	parent := app.AgentMgr.Get("root").State.Messages
-	parent.UpdateToolCall("first", "first-msg", "run_sub_agent", "description: inspect")
-	parent.UpdateToolCall("second", "second-msg", "run_sub_agent", "description: test")
+	parent.UpdateToolCall("first", "first-msg", "agent_start", "description: inspect")
+	parent.UpdateToolCall("second", "second-msg", "agent_start", "description: test")
 	for _, start := range []struct{ id, name, call string }{
 		{"child-two", "Jane", "second"}, {"child-one", "Lily", "first"},
 	} {

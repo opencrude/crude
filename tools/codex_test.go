@@ -25,7 +25,7 @@ func TestForModelReplacesOnlyEditorsWithFullNativeTool(t *testing.T) {
 		if counts["apply_patch"] != 1 || counts["write_file"] != 0 || counts["edit_file"] != 0 {
 			t.Fatal(counts)
 		}
-		for _, name := range []string{"move_file", "delete_file", "copy_file", "run_sub_agent"} {
+		for _, name := range []string{"move_file", "delete_file", "copy_file"} {
 			if counts[name] != 1 {
 				t.Fatalf("removed %s", name)
 			}

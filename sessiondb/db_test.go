@@ -50,49 +50,6 @@ func TestSubAgentResultChildIDIsExternalTranscriptLocator(t *testing.T) {
 	}
 }
 
-func TestMigrateRemovesEmbeddedChildStubButKeepsStandaloneChildIdentity(t *testing.T) {
-	db := OpenAndMigrateAt(t.TempDir())
-	if err := CreateSessionRow(db, "parent"); err != nil {
-		t.Fatal(err)
-	}
-	if err := Create(db, SessionMeta{
-		ID: "embedded-child", ProjectPath: "/", ProjectName: "test", CreatedAt: time.Now().UnixNano(),
-		ParentSessionID: sql.NullString{String: "parent", Valid: true},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := Migrate(db); err != nil {
-		t.Fatal(err)
-	}
-	var embedded int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE id = 'embedded-child'`).Scan(&embedded); err != nil {
-		t.Fatal(err)
-	}
-	if embedded != 0 {
-		t.Fatal("legacy child stub survived in parent DB")
-	}
-	_ = db.Close()
-
-	childDB := OpenAndMigrateAt(t.TempDir())
-	if err := Create(childDB, SessionMeta{
-		ID: "standalone-child", ProjectPath: "/", ProjectName: "test", CreatedAt: time.Now().UnixNano(),
-		ParentSessionID: sql.NullString{String: "parent", Valid: true},
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := Migrate(childDB); err != nil {
-		t.Fatal(err)
-	}
-	var standalone int
-	if err := childDB.QueryRow(`SELECT COUNT(*) FROM sessions WHERE id = 'standalone-child'`).Scan(&standalone); err != nil {
-		t.Fatal(err)
-	}
-	if standalone != 1 {
-		t.Fatal("standalone child transcript lost its canonical identity")
-	}
-	_ = childDB.Close()
-}
-
 func (d *DB) Close() error {
 	return d.db.Close()
 }
@@ -749,7 +706,7 @@ func TestCanonicalConversationSnapshotRoundTripsEveryField(t *testing.T) {
 	now := time.Now().Round(0)
 	want := ttypes.ConversationMessage{
 		InternalID: "message-1", Role: "tool", Content: "result", ReferenceLabels: []string{"@one"}, Time: now,
-		ToolName: "run_sub_agent", ToolArgs: "description: inspect", ToolCommand: "go test ./...",
+		ToolName: "agent_start", ToolArgs: "description: inspect", ToolCommand: "go test ./...",
 		ToolInput: "needle", ToolScope: "workspace", ToolID: "call-1", ToolStatus: "success", ToolIndex: 4,
 		ToolProgressPhase: "done", ToolProgressMessage: "complete", ToolProgressLabel: "child",
 		ToolPreviewPhase: "done", ToolEstTokens: 42, ToolLinesAdded: 3, ToolLinesRemoved: 2,

@@ -265,28 +265,18 @@ func TestOrchestratorTurnAdmissionAndCancellation(t *testing.T) {
 	if !orch.SubmitInput(provider.PlainInput("test")) {
 		t.Fatal("initial turn was rejected")
 	}
-	btw := provider.PlainInput("btw")
-	btw.InternalID = "btw-1"
-	if !orch.SubmitBtw(btw) {
-		t.Fatal("BTW was rejected during active turn")
-	}
 	cancelled, cleared := orch.CancelTurn()
 	if !cancelled {
 		t.Fatal("active turn was not cancelled")
 	}
-	if len(cleared) != 1 || cleared[0] != "btw-1" {
-		t.Fatalf("cleared BTW IDs=%v, want [btw-1]", cleared)
+	if len(cleared) != 0 {
+		t.Fatalf("orchestrator unexpectedly owned collaboration deliveries: %v", cleared)
 	}
 	request := <-orch.inputCh
 	select {
 	case <-request.ctx.Done():
 	default:
 		t.Fatal("cancel did not synchronously close the admitted turn context")
-	}
-	late := provider.PlainInput("late")
-	late.InternalID = "btw-late"
-	if orch.SubmitBtw(late) {
-		t.Fatal("BTW was admitted after cancellation")
 	}
 }
 
@@ -351,8 +341,5 @@ func TestCloseOrchestratorStopsAndRejectsNewWork(t *testing.T) {
 
 	if orch.SubmitInput(provider.PlainInput("late input")) {
 		t.Fatal("closed orchestrator admitted input")
-	}
-	if orch.SubmitBtw(provider.PlainInput("late btw")) {
-		t.Fatal("closed orchestrator admitted BTW")
 	}
 }

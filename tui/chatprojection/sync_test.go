@@ -44,21 +44,21 @@ func TestRendererSyncMessagesInvalidatesChangedItem(t *testing.T) {
 	}
 }
 
-func TestRendererSyncMessagesClearsConsumedBTWStatus(t *testing.T) {
+func TestRendererSyncMessagesClearsAdmittedSteeringStatus(t *testing.T) {
 	r := NewRenderer(theme.DefaultDark())
 	r.SetSize(80, 20)
 	r.SetChatAreaBounds(0, 12)
-	message := types.ChatMessage{InternalID: "btw", Role: types.RoleUser, Content: "use edit tool", PendingBtw: true}
+	message := types.ChatMessage{InternalID: "btw", Role: types.RoleUser, Content: "use edit tool", PendingSteering: true}
 	r.SyncMessages([]types.ChatMessage{message}, 1)
 	before, _, _ := r.ExportMessageRows(80)
 	if len(before) != 1 || !strings.Contains(strings.Join(before[0].Lines, "\n"), "Waiting to send") {
 		t.Fatalf("pending row = %#v", before)
 	}
-	message.PendingBtw = false
+	message.PendingSteering = false
 	r.SyncMessages([]types.ChatMessage{message}, 2)
 	after, _, _ := r.ExportMessageRows(80)
 	if len(after) != 1 || strings.Contains(strings.Join(after[0].Lines, "\n"), "Waiting to send") {
-		t.Fatalf("consumed BTW status remained painted: %#v", after)
+		t.Fatalf("consumed human steering status remained painted: %#v", after)
 	}
 }
 

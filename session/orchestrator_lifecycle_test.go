@@ -3,8 +3,6 @@ package session
 import (
 	"context"
 	"fmt"
-	"strings"
-	"sync"
 	"testing"
 
 	"crude/agent"
@@ -32,71 +30,10 @@ func TestImmediateCancellationCannotMissAdmittedTurn(t *testing.T) {
 	}
 }
 
-func TestCancelAndBtwConsumptionHaveSingleOwner(t *testing.T) {
-	orchestrator := NewOrchestrator("agent", nil)
-	for i := 0; i < 250; i++ {
-		if !orchestrator.SubmitInput(provider.PlainInput("turn")) {
-			t.Fatalf("turn %d was not admitted", i)
-		}
-		id := fmt.Sprintf("btw-%d", i)
-		input := provider.PlainInput(id)
-		input.InternalID = id
-		if !orchestrator.SubmitBtw(input) {
-			t.Fatalf("BTW %d was not admitted", i)
-		}
-
-		start := make(chan struct{})
-		var wg sync.WaitGroup
-		var consumed bool
-		var cleared []string
-		wg.Add(2)
-		go func() {
-			defer wg.Done()
-			<-start
-			consumed = orchestrator.consumeBtw(id)
-		}()
-		go func() {
-			defer wg.Done()
-			<-start
-			_, cleared = orchestrator.CancelTurn()
-		}()
-		close(start)
-		wg.Wait()
-
-		wasCleared := len(cleared) == 1 && cleared[0] == id
-		if consumed == wasCleared {
-			t.Fatalf("BTW %d ownership consumed=%v cleared=%v", i, consumed, cleared)
-		}
-		request := <-orchestrator.inputCh
-		orchestrator.endTurn(request.generation)
-	}
-}
-
-func TestCancelReturnsOnlyUnconsumedBtwIDs(t *testing.T) {
-	orchestrator := NewOrchestrator("agent", nil)
-	if !orchestrator.SubmitInput(provider.PlainInput("turn")) {
-		t.Fatal("turn was not admitted")
-	}
-	for _, id := range []string{"consumed", "pending"} {
-		input := provider.PlainInput(id)
-		input.InternalID = id
-		if !orchestrator.SubmitBtw(input) {
-			t.Fatalf("BTW %q was not admitted", id)
-		}
-	}
-	if !orchestrator.consumeBtw("consumed") {
-		t.Fatal("consumed BTW was not owned by the turn")
-	}
-	cancelled, cleared := orchestrator.CancelTurn()
-	if !cancelled || len(cleared) != 1 || cleared[0] != "pending" {
-		t.Fatalf("cancelled=%v cleared=%v", cancelled, cleared)
-	}
-}
-
 func TestTurnFinalizationAndExplicitCancellationHaveDistinctChildOwnership(t *testing.T) {
 	newFixture := func(t *testing.T) (*Orchestrator, context.Context) {
 		t.Helper()
-		s := &Session{consumedReports: make(map[string]bool)}
+		s := &Session{}
 		runner := NewSubAgentRunner(s, 1)
 		t.Cleanup(runner.SessionCancel)
 		childCtx, childCancel := context.WithCancel(context.Background())
@@ -140,7 +77,7 @@ func TestTurnFinalizationAndExplicitCancellationHaveDistinctChildOwnership(t *te
 }
 
 func TestCancellingLaterTurnDoesNotKillEarlierAsyncChild(t *testing.T) {
-	s := &Session{consumedReports: make(map[string]bool)}
+	s := &Session{}
 	runner := NewSubAgentRunner(s, 2)
 	t.Cleanup(runner.SessionCancel)
 	orchestrator := NewOrchestrator("root", s)
@@ -219,19 +156,5 @@ func TestSessionRoutesBlockingResponseToOwningSubAgent(t *testing.T) {
 	}
 	if got := <-handle.BlockCh; got != response {
 		t.Fatalf("child response = %#v, want %#v", got, response)
-	}
-}
-
-func TestSubAgentWakeBatchPreservesTerminalStatus(t *testing.T) {
-	text := formatSubAgentWakeBatch([]WakeEvent{{
-		Type: WakeSubAgentDone,
-		Data: agent.SubAgentResult{
-			AgentID: "child", Name: "investigator", Status: agent.SubAgentCancelled,
-			SummaryGist: "partial work", ResultPath: "/tmp/report.md",
-		},
-		SourceID: "child",
-	}})
-	if !strings.Contains(text, "CANCELLED") || strings.Contains(text, "'child' completed") {
-		t.Fatalf("wake text misreported terminal status: %q", text)
 	}
 }

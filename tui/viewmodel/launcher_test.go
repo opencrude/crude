@@ -136,7 +136,7 @@ func TestSubAgentStarted_SubAgentWithParent(t *testing.T) {
 	// Create the parent orchestrator via AddOrchestrator
 	app.AddOrchestrator("ses_1_orch_1")
 	parent := app.AgentMgr.Get("ses_1_orch_1")
-	parent.State.Messages.UpdateToolCall("tool-1", "internal-1", "run_sub_agent", "category: researcher description: inspect lifecycle")
+	parent.State.Messages.UpdateToolCall("tool-1", "internal-1", "agent_start", "category: researcher description: inspect lifecycle")
 
 	// Create a sub-agent with parent_id
 	subEvt := types.AgentEventMsg{

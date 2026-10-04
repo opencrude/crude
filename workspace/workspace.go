@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"crude/agent"
-	"crude/board"
 	"crude/capability"
+	"crude/collaboration"
 	"crude/localhistory"
 	"crude/provider"
 	"crude/session"
@@ -20,7 +20,7 @@ import (
 )
 
 // NewSessionResult identifies the orchestrator created by a launcher action.
-// Turn input, blocking responses, BTW, and cancellation are routed through
+// Turn input, blocking responses, human steering, and cancellation are routed through
 // generation-bound Workspace methods rather than cross-layer channels.
 type NewSessionResult struct {
 	OrchID       string
@@ -108,11 +108,14 @@ type Workspace struct {
 
 	// Git owns source-control reads and mutations for this workspace.
 	// Frontends consume neutral snapshots and never execute Git directly.
-	Git           *GitService
-	Capabilities  *capability.Service
-	Board         *board.Store
-	FileOwnership *agent.FileOwnership
-	capabilityMu  sync.RWMutex
+	Git              *GitService
+	Capabilities     *capability.Service
+	Collaboration    *collaboration.Store
+	FileOwnership    *agent.FileOwnership
+	capabilityMu     sync.RWMutex
+	collaborationMu  sync.Mutex
+	collaborationErr error
+	instanceID       string
 	// Documents is the single scheduler and disk-commit authority for editor
 	// buffers in this workspace.
 	Documents *DocumentSaveService
@@ -263,6 +266,18 @@ func NewWorkspace(
 		lg.Warn("WORKSPACE", "local_history_open_failed", "error", historyErr.Error())
 	}
 
+	instanceID := collaboration.NewInstanceID()
+	var collaborationStore *collaboration.Store
+	var collaborationErr error
+	if wsDB != nil {
+		collaborationStore, collaborationErr = collaboration.Attach(
+			wsDB.DB, canonicalizePath(rootPath), filepath.Join(wsDir, "collaboration-locks"),
+		)
+		if collaborationErr != nil {
+			lg.Warn("WORKSPACE", "collaboration_open_failed", "error", collaborationErr.Error())
+		}
+	}
+
 	ws := &Workspace{
 		RootPath:           rootPath,
 		WorkspaceDir:       wsDir,
@@ -275,6 +290,9 @@ func NewWorkspace(
 		ProjectSearch:      NewProjectSearchService(),
 		FileOps:            NewFileOpsService(rootPath, nil, lg),
 		Git:                NewGitService(rootPath),
+		Collaboration:      collaborationStore,
+		collaborationErr:   collaborationErr,
+		instanceID:         instanceID,
 		FileOwnership:      agent.NewFileOwnership(),
 		Documents:          NewDocumentSaveService(),
 		TermMgr:            NewTerminalManager(rootPath),
@@ -314,7 +332,22 @@ func (w *Workspace) ensureWorkspacePersistence() error {
 	}
 	w.persistenceMu.Lock()
 	defer w.persistenceMu.Unlock()
+	if w.instanceID == "" {
+		w.instanceID = collaboration.NewInstanceID()
+	}
 	if w.WorkspaceDB != nil && w.WorkspaceDB.Memory != nil {
+		if w.Collaboration != nil {
+			return nil
+		}
+		store, err := collaboration.Attach(
+			w.WorkspaceDB.DB, canonicalizePath(w.RootPath), filepath.Join(w.WorkspaceDir, "collaboration-locks"),
+		)
+		if err != nil {
+			w.collaborationErr = err
+			return fmt.Errorf("attach collaboration runtime: %w", err)
+		}
+		w.Collaboration = store
+		w.collaborationErr = nil
 		return nil
 	}
 
@@ -329,6 +362,17 @@ func (w *Workspace) ensureWorkspacePersistence() error {
 	oldWriter := w.registryCostWriter
 	w.WorkspaceDB = db
 	w.workspaceDBErr = nil
+	collaborationStore, collaborationErr := collaboration.Attach(
+		db.DB, canonicalizePath(w.RootPath), filepath.Join(w.WorkspaceDir, "collaboration-locks"),
+	)
+	if collaborationErr != nil {
+		_ = db.Close()
+		w.WorkspaceDB = oldDB
+		w.workspaceDBErr = previousErr
+		return fmt.Errorf("restore collaboration runtime: %w", collaborationErr)
+	}
+	w.Collaboration = collaborationStore
+	w.collaborationErr = nil
 	for _, frontendSession := range w.Sessions {
 		if frontendSession != nil && frontendSession.backend != nil {
 			frontendSession.backend.SetMemoryStore(db.Memory)
@@ -398,15 +442,6 @@ func (w *Workspace) WorkspaceRoot() string {
 	return w.RootPath
 }
 
-// ReportPath returns the path to the reports directory for the active session.
-// Used by sub-agent report writing.
-func (w *Workspace) ReportPath() string {
-	if w.ActiveSession != nil {
-		return filepath.Join(w.ActiveSession.SessionDir, "reports")
-	}
-	return ""
-}
-
 // Close shuts down the workspace and releases all resources.
 // This includes closing the workspace database and stopping LSP connections.
 // Called when the IDE instance is shutting down.
@@ -436,6 +471,10 @@ func (w *Workspace) Close() {
 		w.registryCostWriter = nil
 	}
 	if w.WorkspaceDB != nil {
+		if w.Collaboration != nil {
+			_ = w.Collaboration.Close()
+			w.Collaboration = nil
+		}
 		_ = w.WorkspaceDB.Close()
 		w.WorkspaceDB = nil
 	}
@@ -642,7 +681,7 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 	if w.Capabilities != nil {
 		w.Capabilities.Close()
 	}
-	w.Capabilities, w.Board = nil, nil
+	w.Capabilities = nil
 	w.FileOwnership = agent.NewFileOwnership()
 	if w.TermMgr != nil {
 		w.TermMgr.SetEventBus(nil)

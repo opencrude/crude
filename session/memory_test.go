@@ -217,7 +217,7 @@ func containsAll(value string, wants ...string) bool {
 
 func TestMemoryExtractionRequiresGenuineHumanInput(t *testing.T) {
 	runtime := provider.NewTextMessage("user", "child completed")
-	runtime.Origin = provider.OriginSubAgentWake
+	runtime.Origin = provider.OriginPeer
 	runtime.Visibility = provider.VisibilityContextOnly
 	if containsHumanInput([]provider.ChatMessage{runtime}) {
 		t.Fatal("runtime wake was attributed as human input")

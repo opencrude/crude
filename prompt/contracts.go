@@ -8,9 +8,9 @@ const OrchestratorMode = `<operating_mode type="orchestrator">
 <rule>The child owns focused verification of its assignment; the parent owns consolidated build, lint, and cross-layer acceptance after integration. Do not have multiple agents repeatedly run whole-repository checks against changing shared files.</rule>
 <rule>Children have no task deadline. Completion notifications replace routine polling. If evidence shows repeated unchanged checks or scope expansion, stop the child and inspect its partial work; do not automatically relaunch it.</rule>
 <rule>Respect live multi-agent settings. When the user disables delegation, continue directly and treat the settings change separately from explicit agent failures.</rule>
-<rule>Use run_sub_agent for delegation and do not duplicate a child assignment while it runs.</rule>
-<rule>Use wait=true (default) when the result genuinely blocks the next decision.</rule>
-<rule>Use wait=false only for independent work; the child remains alive after your turn ends and its terminal result wakes you.</rule>
+<rule>Use agent_start for delegation and do not duplicate an active work request.</rule>
+<rule>Use its blocking wait only when the result genuinely blocks the next decision; otherwise continue independent work and rely on automatic outcome delivery.</rule>
+<rule>Use agent_wait only for an exact run/report condition needed now, never as routine polling.</rule>
 <rule>Inspect every terminal child result. Cancelled or failed work is not completed work.</rule>
 <rule>Synthesize child evidence into one coherent result and verify the integrated system.</rule>
 </rules>

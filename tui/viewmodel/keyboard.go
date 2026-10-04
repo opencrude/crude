@@ -677,10 +677,10 @@ func (m *App) handleInputEvent(evt any) []tea.Cmd {
 		} else if m.Feedback != nil {
 			m.Feedback.NotifyError("Message was not sent: no active agent tab")
 		}
-	case input.BtwSubmitEvent:
+	case input.SteeringSubmitEvent:
 		cmds = append(cmds, m.recordPrompt(e.Text, e.ReferenceIDs...))
 		if agentID := m.activeAgentTabID(); agentID != "" {
-			cmds = append(cmds, m.submitBtw(agentID, e.Text, e.ReferenceIDs))
+			cmds = append(cmds, m.submitSteering(agentID, e.Text, e.ReferenceIDs))
 		} else if m.Feedback != nil {
 			m.Feedback.NotifyError("Note was not sent: no active agent tab")
 		}

@@ -5,6 +5,7 @@ import (
 	captypes "crude/types/capability"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"maps"
 	"os"
@@ -22,6 +23,7 @@ import (
 
 	"crude/agent"
 	"crude/codexio"
+	"crude/collaboration"
 	"crude/fileio"
 	"crude/plan"
 	rootprompt "crude/prompt"
@@ -42,7 +44,6 @@ type SubAgentRunner struct {
 	sender         EventSender
 	parentToolFn   func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error)
 	wg             sync.WaitGroup
-	wakeCh         chan<- WakeEvent
 	sessionCtx     context.Context
 	sessionCancel  context.CancelFunc
 	parentTurn     atomic.Uint64
@@ -59,7 +60,6 @@ func NewSubAgentRunner(s *Session, maxConcurrent int) *SubAgentRunner {
 		mgr:           agent.NewSubAgentManager(maxConcurrent),
 		fileOwnership: s.FileOwnership(),
 		rateLimiter:   agent.NewRateLimiter(),
-		wakeCh:        s.WakeCh(),
 		sessionCtx:    ctx,
 		sessionCancel: cancel,
 		turnCounts:    make(map[uint64]int),
@@ -151,9 +151,10 @@ func (r *SubAgentRunner) cancelActive(matches func(*agent.SubAgentHandle) bool) 
 			ids = append(ids, h.Spec.ID)
 		}
 	}
-	for _, id := range ids {
-		r.mgr.Cancel(id)
-		r.fileOwnership.Release(id)
+	for _, handle := range r.mgr.ActiveHandles() {
+		if matches(handle) {
+			handle.Cancel()
+		}
 	}
 	return ids
 }
@@ -203,8 +204,8 @@ func (r *SubAgentRunner) SetParentToolFn(fn func(ctx context.Context, tool strin
 	r.parentToolFn = fn
 }
 
-func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any) (tools.ToolResult, error) {
-	// Serialize launch admission, not the child's work or wait=true. This also
+func (r *SubAgentRunner) StartAgent(ctx context.Context, params map[string]any) (tools.ToolResult, error) {
+	// Serialize launch admission, not the child's work. This also
 	// makes concurrent first launches share one parent/configuration snapshot.
 	r.session.delegationMu.Lock()
 	locked := true
@@ -233,7 +234,7 @@ func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any)
 	}
 	description := getStrParam(params, "description")
 	if description == "" {
-		return tools.ToolResult{}, fmt.Errorf("run_sub_agent: 'description' is required")
+		return tools.ToolResult{}, fmt.Errorf("agent_start: 'description' is required")
 	}
 
 	category := getStrParam(params, "category")
@@ -312,13 +313,6 @@ func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any)
 		}
 	}
 
-	wait := true
-	if w, ok := params["wait"]; ok {
-		if b, ok := w.(bool); ok {
-			wait = b
-		}
-	}
-
 	handle, err := r.launchSubAgent(ctx, spec, profileInstructions)
 	if err != nil {
 		r.fileOwnership.Release(spec.ID)
@@ -328,37 +322,20 @@ func (r *SubAgentRunner) RunSubAgent(ctx context.Context, params map[string]any)
 	r.session.delegationMu.Unlock()
 	locked = false
 
-	if !wait {
-		go func() {
-			select {
-			case <-r.sessionCtx.Done():
-				r.mgr.Cancel(spec.ID)
-			case <-handle.ResultCh:
-			}
-		}()
-		resultJSON, _ := json.Marshal(map[string]string{
-			"handle_id":  string(spec.ID),
-			"agent_id":   string(spec.ID),
-			"name":       spec.Name,
-			"category":   spec.Category,
-			"status":     "running",
-			"session_id": handle.SessionID,
-		})
-		return tools.ToolResult{Content: string(resultJSON)}, nil
-	}
-
-	select {
-	case result := <-handle.ResultCh:
-		// The agent now has the final result via synchronous wait; mark consumed
-		// so the pending WakeSubAgentDone event is suppressed.
-		r.session.MarkReportConsumed(string(spec.ID))
-		if result.Status != agent.SubAgentCompleted && result.Status != agent.SubAgentCancelled {
-			return tools.ToolResult{Content: formatSubAgentResult(result)}, fmt.Errorf("sub-agent %s: %s", spec.Name, result.Status)
+	go func() {
+		select {
+		case <-r.sessionCtx.Done():
+			handle.Cancel()
+		case <-handle.ResultCh:
 		}
-		return tools.ToolResult{Content: formatSubAgentResult(result)}, nil
-	case <-ctx.Done():
-		return tools.ToolResult{Content: fmt.Sprintf("Sub-agent %q still running (turn ended). Agent ID: %s. Use poll_sub_agent with handle_id=%q to check later.", spec.Name, spec.ID, spec.ID)}, nil
-	}
+	}()
+	runID, runVersion := handle.RunIdentity()
+	resultJSON, _ := json.Marshal(map[string]any{
+		"agent_id": string(spec.ID), "name": spec.Name, "category": spec.Category,
+		"status": "running", "session_id": handle.SessionID,
+		"run_id": runID, "run_version": runVersion,
+	})
+	return tools.ToolResult{Content: string(resultJSON)}, nil
 }
 
 func deriveSubAgentName(category, description string) string {
@@ -385,270 +362,6 @@ func deriveSubAgentName(category, description string) string {
 		name = category + "-agent"
 	}
 	return name
-}
-
-func formatSubAgentResult(result agent.SubAgentResult) string {
-	var sb strings.Builder
-	var icon string
-	switch result.Status {
-	case agent.SubAgentCompleted:
-		icon = "OK"
-	case agent.SubAgentCrashed:
-		icon = "CRASH"
-	case agent.SubAgentFailedQuota:
-		icon = "QUOTA"
-	case agent.SubAgentFailedError:
-		icon = "ERROR"
-	case agent.SubAgentFailedPolicy:
-		icon = "POLICY"
-	case agent.SubAgentCancelled:
-		icon = "CANCELLED"
-	default:
-		icon = string(result.Status)
-	}
-	fmt.Fprintf(&sb, "## Sub-Agent Result: %s [%s]\n", result.Name, result.Category)
-	fmt.Fprintf(&sb, "**Agent:** %s\n", result.AgentID)
-	fmt.Fprintf(&sb, "**Status:** %s", icon)
-	switch icon {
-	case "CRASH":
-		sb.WriteString(" — **the agent process crashed unexpectedly (internal error, NOT a normal failure). Do NOT retry the same sub-agent configuration without investigating the crash errors below.**")
-	case "ERROR":
-		if len(result.Errors) > 0 {
-			err := result.Errors[0]
-			if strings.Contains(err, "400") || strings.Contains(err, "messages must not be empty") {
-				sb.WriteString(" — **the provider rejected the request. Check that the sub-agent prompt includes a user message (not just a system message), or the model may not be available.**")
-			} else if strings.Contains(err, "429") {
-				sb.WriteString(" — **rate limited. Wait before retrying.**")
-			} else if strings.Contains(err, "401") || strings.Contains(err, "403") || strings.Contains(err, "invalid api key") {
-				sb.WriteString(" — **authentication failed. Check your API key.**")
-			} else if strings.Contains(err, "5") && (strings.Contains(err, "5") || strings.Contains(err, "50")) {
-				sb.WriteString(" — **the API server returned an error. This may be transient; retry might work.**")
-			} else {
-				fmt.Fprintf(&sb, " — **the agent failed with an error: %s**", truncateString(err, 80))
-			}
-		}
-	case "QUOTA":
-		sb.WriteString(" — **rate limited or quota exceeded. Wait before retrying.**")
-	case "CANCELLED":
-		sb.WriteString(" — **the agent did not complete. Treat any output as partial and do not report this as a successful result.**")
-	}
-	if result.DurationMs > 0 {
-		dur := time.Duration(result.DurationMs) * time.Millisecond
-		fmt.Fprintf(&sb, " (%s)", dur.Round(time.Second).String())
-	}
-	sb.WriteString("\n")
-	if result.SessionID != "" {
-		fmt.Fprintf(&sb, "**Session:** %s\n", result.SessionID)
-	}
-	if result.ResultPath != "" {
-		fmt.Fprintf(&sb, "\n**Report:** %s (use read_file to read the full report)\n", result.ResultPath)
-	}
-	if len(result.SummaryGist) > 0 {
-		sb.WriteString("\n")
-		sb.WriteString(result.SummaryGist)
-		sb.WriteString("\n")
-	}
-	if len(result.FilesRead) > 0 {
-		fmt.Fprintf(&sb, "\n**Files read:** %d\n", len(result.FilesRead))
-		for _, f := range result.FilesRead {
-			fmt.Fprintf(&sb, "- %s\n", f)
-		}
-	}
-	if len(result.FilesWritten) > 0 {
-		fmt.Fprintf(&sb, "\n**Files written:** %d\n", len(result.FilesWritten))
-		for _, f := range result.FilesWritten {
-			fmt.Fprintf(&sb, "- %s\n", f)
-		}
-	}
-	costInfo := ""
-	if result.PromptTokens > 0 || result.CompTokens > 0 {
-		costInfo += fmt.Sprintf("**Tokens:** %d prompt + %d completion", result.PromptTokens, result.CompTokens)
-	}
-	if result.CostUSD > 0 {
-		if costInfo != "" {
-			costInfo += " | "
-		}
-		costInfo += fmt.Sprintf("**Cost:** $%.4f", result.CostUSD)
-	}
-	if costInfo != "" {
-		sb.WriteString("\n" + costInfo + "\n")
-	}
-	if len(result.Errors) > 0 {
-		fmt.Fprintf(&sb, "\n**Errors:** %d\n", len(result.Errors))
-		for _, e := range result.Errors {
-			if len(e) > 200 {
-				e = e[:200] + "..."
-			}
-			fmt.Fprintf(&sb, "- %s\n", e)
-		}
-	}
-	return strings.TrimSpace(sb.String())
-}
-
-func (r *SubAgentRunner) PollSubAgent(params map[string]any) (tools.ToolResult, error) {
-	handleID := getStrParam(params, "handle_id")
-	if handleID == "" {
-		return tools.ToolResult{}, fmt.Errorf("poll_sub_agent: 'handle_id' is required")
-	}
-
-	handle, ok := r.mgr.GetActive(agent.AgentID(handleID))
-	if ok && handle.ReportDone() {
-		reportPath, _ := handle.ReportPath()
-		result := agent.SubAgentResult{
-			AgentID:      handle.Spec.ID,
-			Name:         handle.Spec.Name,
-			Category:     handle.Spec.Category,
-			SessionID:    handle.SessionID,
-			Status:       agent.SubAgentRunning,
-			ResultPath:   reportPath,
-			FilesRead:    r.fileOwnership.ReadClaimsByAgent(handle.Spec.ID),
-			FilesWritten: r.fileOwnership.WriteClaimsByAgent(handle.Spec.ID),
-			DurationMs:   time.Since(handle.StartedAt).Milliseconds(),
-		}
-		promptTokens, compTokens, costUSD, errs := handle.Usage()
-		result.PromptTokens = promptTokens
-		result.CompTokens = compTokens
-		result.CostUSD = costUSD
-		result.Errors = errs
-		// An intermediate report is not the terminal result. Keep its later
-		// completion notification: the child may still fail or be cancelled.
-		return tools.ToolResult{Content: formatSubAgentResult(result)}, nil
-	}
-
-	if ok {
-		elapsed := time.Since(handle.StartedAt).Round(time.Second)
-		stepsUsed := handle.StepCount.Load()
-		status := fmt.Sprintf("Sub-agent %q [%s] is still running.\nElapsed: %s | Steps: %d | Model: %s",
-			handle.Spec.Name, handle.Spec.Category, elapsed, stepsUsed, handle.Spec.Model)
-
-		return tools.ToolResult{Content: status}, nil
-	}
-
-	if finishedHandle, found := r.mgr.GetFinished(agent.AgentID(handleID)); found {
-		if completedResult, rFound := r.mgr.GetCompleted(agent.AgentID(handleID)); rFound {
-			// Agent already has the completed result; suppress the pending wake.
-			r.session.MarkReportConsumed(handleID)
-			return tools.ToolResult{Content: formatSubAgentResult(completedResult)}, nil
-		}
-		status := agent.SubAgentFailedError
-		if finishedHandle.Agent != nil && finishedHandle.Agent.Ctx != nil &&
-			finishedHandle.Agent.Ctx.Err() == context.Canceled {
-			status = agent.SubAgentCancelled
-		}
-		result := agent.SubAgentResult{
-			AgentID:    finishedHandle.Spec.ID,
-			Name:       finishedHandle.Spec.Name,
-			Category:   finishedHandle.Spec.Category,
-			SessionID:  finishedHandle.SessionID,
-			Status:     status,
-			DurationMs: time.Since(finishedHandle.StartedAt).Milliseconds(),
-		}
-		promptTokens, compTokens, costUSD, errs := finishedHandle.Usage()
-		result.PromptTokens = promptTokens
-		result.CompTokens = compTokens
-		result.CostUSD = costUSD
-		result.Errors = errs
-		if reportPath, done := finishedHandle.ReportPath(); done {
-			result.ResultPath = reportPath
-		}
-		// Agent now has the finished result; suppress the pending wake.
-		r.session.MarkReportConsumed(handleID)
-		return tools.ToolResult{Content: formatSubAgentResult(result)}, nil
-	}
-
-	if completedResult, found := r.mgr.GetCompleted(agent.AgentID(handleID)); found {
-		// Agent already has the completed result; suppress the pending wake.
-		r.session.MarkReportConsumed(handleID)
-		return tools.ToolResult{Content: formatSubAgentResult(completedResult)}, nil
-	}
-	return tools.ToolResult{Content: "Sub-agent not found. It may have never started."}, nil
-}
-
-func (r *SubAgentRunner) CancelSubAgent(params map[string]any) (tools.ToolResult, error) {
-	handleID := getStrParam(params, "handle_id")
-	if handleID == "" {
-		return tools.ToolResult{}, fmt.Errorf("cancel_sub_agent: 'handle_id' is required")
-	}
-
-	result, ok := r.mgr.Cancel(agent.AgentID(handleID))
-	if !ok {
-		return tools.ToolResult{Content: `{"status":"not_found","error":"Handle ID not found or already completed"}`}, nil
-	}
-
-	r.fileOwnership.Release(agent.AgentID(handleID))
-	r.session.MarkReportConsumed(handleID)
-	return tools.ToolResult{Content: formatSubAgentResult(result)}, nil
-}
-
-func (r *SubAgentRunner) ListSubAgents(params map[string]any) (tools.ToolResult, error) {
-	includeCompleted := false
-	if raw, ok := params["include_completed"]; ok {
-		if b, ok := raw.(bool); ok {
-			includeCompleted = b
-		}
-	}
-
-	entries := r.mgr.ListStatus(includeCompleted)
-	if len(entries) == 0 {
-		return tools.ToolResult{Content: "No sub-agents."}, nil
-	}
-	slices.SortFunc(entries, func(a, b agent.SubAgentStatusEntry) int {
-		return strings.Compare(a.HandleID, b.HandleID)
-	})
-
-	var sb strings.Builder
-	for _, e := range entries {
-		status := "running"
-		if e.Status != "" {
-			status = e.Status
-		}
-		fmt.Fprintf(&sb, "- %s (%s) [%s] %s", e.Name, e.HandleID, e.Category, status)
-		if e.ElapsedSeconds > 0 {
-			fmt.Fprintf(&sb, " (%s)", (time.Duration(e.ElapsedSeconds) * time.Second).Round(time.Second))
-		}
-		if e.StepsUsed > 0 {
-			fmt.Fprintf(&sb, " steps=%d", e.StepsUsed)
-		}
-		sb.WriteString("\n")
-	}
-	return tools.ToolResult{Content: strings.TrimSpace(sb.String())}, nil
-}
-
-func (r *SubAgentRunner) WriteReport(agentID agent.AgentID, params map[string]any) (tools.ToolResult, error) {
-	report := getStrParam(params, "report")
-	if report == "" {
-		return tools.ToolResult{Content: "Error: write_report requires a non-empty 'report' parameter. You MUST write a meaningful summary of your work, findings, and results in the 'report' field. Call write_report again with the report content filled in."}, fmt.Errorf("write_report: 'report' parameter is required and cannot be empty — provide a summary of your work and retry")
-	}
-
-	sessionDir := r.session.logger.SessionDir()
-	if sessionDir == "" {
-		return tools.ToolResult{}, fmt.Errorf("write_report: session directory not available")
-	}
-
-	reportsDir := filepath.Join(sessionDir, "reports")
-	if err := os.MkdirAll(reportsDir, 0755); err != nil {
-		return tools.ToolResult{}, fmt.Errorf("write_report: failed to create reports directory: %w", err)
-	}
-
-	reportPath := filepath.Join(reportsDir, fmt.Sprintf("%s-report.md", agentID))
-	if err := os.WriteFile(reportPath, []byte(report), 0644); err != nil {
-		return tools.ToolResult{}, fmt.Errorf("write_report: failed to write report: %w", err)
-	}
-
-	name := ""
-	if handle, ok := r.mgr.GetActive(agentID); ok {
-		handle.SetReportPath(reportPath)
-		name = handle.Spec.Name
-	}
-
-	lines := strings.Count(report, "\n") + 1
-	resultJSON, _ := json.Marshal(map[string]string{
-		"status":      "report_written",
-		"report_path": reportPath,
-		"handle_id":   string(agentID),
-		"name":        name,
-	})
-	return tools.ToolResult{Content: string(resultJSON), Added: lines}, nil
 }
 
 func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgentSpec, profileInstructions string) (*agent.SubAgentHandle, error) {
@@ -785,6 +498,34 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 		SessionID: subSessionID,
 		DB:        subDB,
 	}
+	registered, err := r.session.registerCollaborator(subCtx, string(spec.ID), spec.Name, subSessionID, string(spec.ParentID), spec.Category)
+	if err != nil {
+		r.fileOwnership.Release(spec.ID)
+		if subDB != nil {
+			_ = sessiondb.CloseSession(subDB, subSessionID)
+			_ = subDB.Close()
+		}
+		subCancel()
+		return nil, fmt.Errorf("register workspace child: %w", err)
+	}
+	handle.RuntimeEpoch = registered.RuntimeEpoch
+	if store := r.session.CollaborationStore(); store != nil && handle.RuntimeEpoch > 0 {
+		run, runErr := store.StartRun(ctx, collaboration.StartRunRequest{
+			AgentID: string(spec.ID), RuntimeEpoch: handle.RuntimeEpoch,
+			RequestID: spec.ParentToolCallID, Origin: collaboration.OriginPeer,
+		})
+		if runErr != nil {
+			r.session.detachCollaborator(context.Background(), string(spec.ID))
+			r.fileOwnership.Release(spec.ID)
+			if subDB != nil {
+				_ = sessiondb.CloseSession(subDB, subSessionID)
+				_ = subDB.Close()
+			}
+			subCancel()
+			return nil, fmt.Errorf("start workspace child run: %w", runErr)
+		}
+		handle.SetRunIdentity(run.ID, run.Version)
+	}
 
 	a.ToolFn = r.buildProxiedToolFn(spec, blockCh, handle)
 	a.PrepareStep = func() ([]tools.ToolDef, []provider.ChatMessage) {
@@ -850,6 +591,8 @@ func (r *SubAgentRunner) subAgentDBPath(sessionID string) (string, error) {
 func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubAgentHandle, systemPrompt, userPrompt string) {
 	done := false
 	crashed := false
+	defer r.session.detachCollaborator(context.Background(), string(handle.Spec.ID))
+	r.session.reconcileCollaborationAdmissions(handle.DB, string(handle.Spec.ID))
 
 	// Send agent identity to TUI for tab labeling
 	if r.sender != nil {
@@ -910,7 +653,56 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 	assignment.Origin = provider.OriginAssignment
 	userMsgs := []provider.ChatMessage{assignment}
 	contextGeneration := uint64(1)
-	r.session.bindBoardAdmission(handle.Agent, handle.DB, handle.SessionID, string(handle.Spec.ID), func() uint64 { return contextGeneration })
+	var pendingCollaboration []collaboration.PendingDelivery
+	defer func() {
+		r.session.releaseCollaborationReservations(
+			string(handle.Spec.ID), handle.RuntimeEpoch, pendingCollaboration,
+			"child turn ended before context admission",
+		)
+	}()
+	handle.Agent.PrepareRuntimeNotices = func() []provider.ChatMessage {
+		if len(pendingCollaboration) == 0 {
+			reserved, err := r.session.reserveCollaboration(ctx, string(handle.Spec.ID), handle.RuntimeEpoch, 20)
+			if err != nil && !errors.Is(err, collaboration.ErrUnavailable) {
+				r.session.logger.Warn("COLLAB", "child_reserve_failed", "agent_id", handle.Spec.ID, "error", err.Error())
+			} else {
+				pendingCollaboration = reserved
+			}
+		}
+		messages := make([]provider.ChatMessage, 0, len(pendingCollaboration))
+		for _, delivery := range pendingCollaboration {
+			messages = append(messages, collaborationMessage(delivery))
+		}
+		return messages
+	}
+	handle.Agent.CommitRuntimeNotices = func(messages []provider.ChatMessage) error {
+		if len(pendingCollaboration) == 0 {
+			return nil
+		}
+		contextMessages := messages
+		if len(contextMessages) > 0 && contextMessages[0].Role == "system" {
+			contextMessages = contextMessages[1:]
+		}
+		runID, _ := handle.RunIdentity()
+		if err := r.session.commitCollaborationAdmissions(
+			handle.DB, handle.SessionID, string(handle.Spec.ID), runID,
+			handle.RuntimeEpoch, contextGeneration, contextMessages, pendingCollaboration,
+		); err != nil {
+			r.session.releaseCollaborationReservations(
+				string(handle.Spec.ID), handle.RuntimeEpoch, pendingCollaboration,
+				"child context admission failed",
+			)
+			pendingCollaboration = nil
+			return err
+		}
+		if r.sender != nil {
+			for _, delivery := range pendingCollaboration {
+				r.sender.SendAgentEventWithID("collaboration_message", delivery.Event, string(handle.Spec.ID))
+			}
+		}
+		pendingCollaboration = nil
+		return nil
+	}
 	handle.Agent.PrepareCompaction = func(source agent.CompactionSource) error {
 		data := compactionLifecycleData(source.RequestID, source.Trigger, source.Role, 0, 0, source.BeforeTokens, 0)
 		data["context_window"] = source.ContextWindow
@@ -941,6 +733,13 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 			r.session.logger.Warn("SUBAGENT", "turn_state_begin_failed", "agent_id", handle.Spec.ID, "error", err.Error())
 		}
 	}
+	runID, _ := handle.RunIdentity()
+	steeringCtx, stopSteering := context.WithCancel(ctx)
+	runtimeMessages, runtimeMessagesDone := r.session.humanSteeringMessages(
+		steeringCtx, handle.DB, handle.SessionID, string(handle.Spec.ID), runID,
+		handle.RuntimeEpoch, func() uint64 { return contextGeneration },
+		handle.Spec.Model, r.sender,
+	)
 	agentMsgs := handle.Agent.Run(ctx, userMsgs, systemPrompt, func(evt agent.AgentEvent) {
 		evt.AgentID = string(handle.Spec.ID)
 		if err := r.session.persistCompactionEvent(handle.DB, handle.SessionID, evt.AgentID, evt); err != nil {
@@ -1001,9 +800,16 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 				}
 			}
 		}
-	}, handle.BlockCh, handle.SessionID, nil)
+	}, handle.BlockCh, handle.SessionID, runtimeMessages)
+	stopSteering()
+	<-runtimeMessagesDone
+	controlMessages := r.session.takeCollaborationContext(string(handle.Spec.ID))
+	if len(controlMessages) > 0 {
+		agentMsgs = append(agentMsgs, controlMessages...)
+	}
 	if handle.DB != nil {
 		active := handle.Agent.ActiveContext()
+		active = append(active, controlMessages...)
 		generation := contextGeneration
 		reason := "session_start"
 		if contextCheckpointContent(active) != "" && generation == 1 {
@@ -1026,14 +832,15 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 			"SUBAGENT", "transcript_persist_failed",
 			"agent_id", handle.Spec.ID, "error", err.Error(),
 		)
-	} else {
-		r.session.acceptBoardResults(context.Background(), handle.DB, string(handle.Spec.ID), agentMsgs)
 	}
 	result := r.buildResultFromMessages(handle, agentMsgs)
 
 	if !handle.ReportDone() {
-		r.session.logger.Warn("SUBAGENT", "no_report", "agent_id", handle.Spec.ID, "name", handle.Spec.Name)
-		r.autoGenerateReport(handle, agentMsgs, &result)
+		result.Errors = append(result.Errors, "required final report was not published")
+		if result.Status == agent.SubAgentCompleted {
+			result.Status = agent.SubAgentFailedPolicy
+		}
+		r.session.logger.Warn("SUBAGENT", "missing_final_report", "agent_id", handle.Spec.ID, "name", handle.Spec.Name)
 	}
 
 	done = true
@@ -1047,12 +854,14 @@ func (r *SubAgentRunner) finalizeSubAgent(handle *agent.SubAgentHandle, result a
 	if handle == nil {
 		return
 	}
-	r.session.finishedBoardAgent(context.Background(), string(handle.Spec.ID), handle.Spec.Name, string(handle.Spec.ParentID))
 	if handle.Agent != nil && handle.Agent.AsyncMgr != nil {
 		handle.Agent.AsyncMgr.CloseAndWait()
 	}
 	if result.HistoryMessageID == "" {
 		result.HistoryMessageID = handle.Spec.HistoryMessageID
+	}
+	if reportID, revision, ok := handle.ReportArtifact(); ok {
+		result.ReportID, result.ReportRevision = reportID, revision
 	}
 	if handle.DB != nil {
 		turnState := sessiondb.TurnFailed
@@ -1067,21 +876,61 @@ func (r *SubAgentRunner) finalizeSubAgent(handle *agent.SubAgentHandle, result a
 		}
 	}
 	r.persistResult(handle, result)
+	runID, runVersion := handle.RunIdentity()
+	if store := r.session.CollaborationStore(); store != nil && runID != "" {
+		runState := collaboration.RunFailed
+		outcome := string(result.Status)
+		switch result.Status {
+		case agent.SubAgentCompleted:
+			runState = collaboration.RunSucceeded
+		case agent.SubAgentCancelled:
+			runState = collaboration.RunCancelled
+		case agent.SubAgentCrashed:
+			runState = collaboration.RunInterrupted
+		}
+		finished, err := store.FinishRun(context.Background(), collaboration.FinishRunRequest{
+			RunID: runID, AgentID: string(handle.Spec.ID),
+			RuntimeEpoch: handle.RuntimeEpoch, ExpectedVersion: runVersion,
+			State: runState, Outcome: outcome, ContextCommitID: result.HistoryMessageID,
+		})
+		if err != nil {
+			r.session.logger.Warn("COLLAB", "child_run_finish_failed",
+				"run_id", runID, "error", err.Error())
+		} else {
+			handle.SetRunVersion(finished.Version)
+			if handle.Spec.ParentID != "" {
+				var references []collaboration.Reference
+				if result.HistoryMessageID != "" {
+					references = append(references, collaboration.Reference{Kind: "history_message", ID: result.HistoryMessageID})
+				}
+				_, publishErr := store.Publish(context.Background(), collaboration.PublishRequest{
+					SenderID: string(handle.Spec.ID), SenderName: handle.Spec.Name,
+					IdempotencyKey: "run-outcome:" + runID,
+					RecipientIDs:   []string{string(handle.Spec.ParentID)},
+					Origin:         collaboration.OriginRuntime, Kind: collaboration.EventRunOutcome,
+					Body:  fmt.Sprintf("%s · %s", handle.Spec.Name, outcome),
+					RunID: runID, RequestID: handle.Spec.ParentToolCallID,
+					References: references,
+				})
+				if publishErr != nil {
+					r.session.logger.Warn("COLLAB", "child_outcome_publish_failed",
+						"run_id", runID, "error", publishErr.Error())
+				}
+			}
+		}
+	}
 	if r.sender != nil {
 		r.sender.SendAgentEventWithID("sub_agent_completed", map[string]string{
-			"agent_id":    string(handle.Spec.ID),
-			"agent_name":  handle.Spec.Name,
-			"category":    handle.Spec.Category,
-			"status":      string(result.Status),
-			"result_path": result.ResultPath,
+			"agent_id":        string(handle.Spec.ID),
+			"agent_name":      handle.Spec.Name,
+			"category":        handle.Spec.Category,
+			"status":          string(result.Status),
+			"report_id":       result.ReportID,
+			"report_revision": fmt.Sprint(result.ReportRevision),
 		}, string(handle.Spec.ID))
 	}
 	handle.ResultCh <- result
 
-	// Completion wakes are part of the delivery contract. Backpressure is
-	// preferable to silently losing a result; session cancellation unblocks
-	// shutdown if no orchestrator remains to drain the queue.
-	r.deliverCompletionWake(result)
 	if handle.DB != nil {
 		_ = sessiondb.CloseSession(handle.DB, handle.SessionID)
 		_ = handle.DB.Close()
@@ -1176,20 +1025,6 @@ func persistSubAgentTranscript(
 	return err
 }
 
-func (r *SubAgentRunner) deliverCompletionWake(result agent.SubAgentResult) bool {
-	if r == nil || r.wakeCh == nil {
-		return false
-	}
-	select {
-	case r.wakeCh <- WakeEvent{
-		Type: WakeSubAgentDone, Data: result, SourceID: string(result.AgentID), HistoryMessageID: result.HistoryMessageID,
-	}:
-		return true
-	case <-r.sessionCtx.Done():
-		return false
-	}
-}
-
 func (r *SubAgentRunner) buildResultFromMessages(handle *agent.SubAgentHandle, msgs []provider.ChatMessage) agent.SubAgentResult {
 	status := agent.SubAgentCompleted
 	if ctx := handle.Agent.Ctx; ctx != nil && ctx.Err() != nil {
@@ -1197,59 +1032,19 @@ func (r *SubAgentRunner) buildResultFromMessages(handle *agent.SubAgentHandle, m
 	}
 
 	switch handle.TermReason() {
-	case "stop_condition_met", "context_limit_reached":
+	case "error", "stop_condition_met", "context_limit_reached":
 		if status == agent.SubAgentCompleted {
 			status = agent.SubAgentFailedError
 		}
+	case "cancelled":
+		status = agent.SubAgentCancelled
 	}
-
-	// Check for tool-level errors (quota, auth, etc.)
-	for i := len(msgs) - 1; i >= 0; i-- {
-		m := msgs[i]
-		mc := m.ContentString()
-		if m.Role == "tool" && agent.IsToolError(mc) {
-			if strings.Contains(mc, "429") || strings.Contains(mc, "quota") {
-				status = agent.SubAgentFailedQuota
-				break
-			}
-			if strings.Contains(mc, "401") || strings.Contains(mc, "403") || strings.Contains(mc, "invalid api key") || strings.Contains(mc, "authentication") {
-				status = agent.SubAgentFailedQuota
-				break
-			}
-		}
-		if m.Role == "assistant" {
-			if mc != "" && (strings.Contains(mc, "429") || strings.Contains(mc, "quota")) {
-				status = agent.SubAgentFailedQuota
-				break
-			}
-		}
-	}
-
-	// Calls and read claims are activity, not a deliverable. An unrecovered
-	// stream error can leave both tool calls and a partial assistant message in
-	// the transcript; neither proves the child completed its assignment. A
-	// report written through write_report is authored evidence, unlike the
-	// diagnostic report generated below after this status is decided.
-	authoredReport := handle.ReportDone()
-	finalAnswer := false
-	for i := len(msgs) - 1; i >= 0; i-- {
-		m := msgs[i]
-		if m.Role == "assistant" {
-			finalAnswer = len(m.ToolCalls) == 0 && strings.TrimSpace(m.ContentString()) != ""
-			break
-		}
-	}
-	if status == agent.SubAgentCompleted && !authoredReport &&
-		(handle.TermReason() == "error" || !finalAnswer) {
-		status = agent.SubAgentFailedError
+	if status == agent.SubAgentCompleted && !handle.ReportDone() {
+		status = agent.SubAgentFailedPolicy
 	}
 
 	gist := ""
-	resultPath := ""
 	logPath := handle.SessionID
-	if reportPath, ok := handle.ReportPath(); ok {
-		resultPath = reportPath
-	}
 	if handle.SessionID != "" {
 		sessionsRoot, _ := SessionsRoot()
 		if sessionsRoot != "" {
@@ -1275,7 +1070,6 @@ func (r *SubAgentRunner) buildResultFromMessages(handle *agent.SubAgentHandle, m
 		SessionID:    handle.SessionID,
 		Status:       status,
 		SummaryGist:  gist,
-		ResultPath:   resultPath,
 		LogPath:      logPath,
 		FilesRead:    r.fileOwnership.ReadClaimsByAgent(handle.Spec.ID),
 		FilesWritten: r.fileOwnership.WriteClaimsByAgent(handle.Spec.ID),
@@ -1285,93 +1079,6 @@ func (r *SubAgentRunner) buildResultFromMessages(handle *agent.SubAgentHandle, m
 		CompTokens:   compTokens,
 		CostUSD:      costUSD,
 	}
-}
-
-func (r *SubAgentRunner) autoGenerateReport(handle *agent.SubAgentHandle, msgs []provider.ChatMessage, result *agent.SubAgentResult) {
-	sessionDir := r.session.logger.SessionDir()
-	if sessionDir == "" {
-		return
-	}
-
-	reportsDir := filepath.Join(sessionDir, "reports")
-	if err := os.MkdirAll(reportsDir, 0755); err != nil {
-		return
-	}
-
-	var sb strings.Builder
-	fmt.Fprintf(&sb, "# Sub-Agent Report: %s [%s]\n\n", handle.Spec.Name, handle.Spec.Category)
-	fmt.Fprintf(&sb, "Task: %s\n\n", handle.Spec.Description)
-	fmt.Fprintf(&sb, "Status: %s\n\n", result.Status)
-
-	// Determine if the agent actually ran or failed immediately
-	hadAssistantMsg := false
-	for _, m := range msgs {
-		if m.Role == "assistant" && (m.ContentString() != "" || len(m.ToolCalls) > 0) {
-			hadAssistantMsg = true
-			break
-		}
-	}
-
-	if result.Status == agent.SubAgentCancelled && !hadAssistantMsg {
-		sb.WriteString("## Cancellation Summary\n\n")
-		sb.WriteString("The sub-agent was cancelled before it produced a complete result. No success should be inferred from this report.\n")
-	} else if len(result.Errors) > 0 && !hadAssistantMsg {
-		// Agent never ran — API error on first call.
-		sb.WriteString("## Failure Summary\n\n")
-		sb.WriteString("The sub-agent encountered an error before it could start working. The LLM API call failed, so no assistant messages were generated and no work was performed.\n\n")
-		if len(result.Errors) == 1 {
-			fmt.Fprintf(&sb, "**Error:** %s\n", result.Errors[0])
-		} else {
-			fmt.Fprintf(&sb, "**Errors (%d total):**\n", len(result.Errors))
-			for _, e := range result.Errors {
-				fmt.Fprintf(&sb, "- %s\n", e)
-			}
-		}
-		sb.WriteString("\n**No files were read or written.**\n")
-	} else {
-		for i := len(msgs) - 1; i >= 0; i-- {
-			if msgs[i].Role == "assistant" && msgs[i].ContentString() != "" && len(msgs[i].ToolCalls) == 0 {
-				sb.WriteString("## Summary\n\n")
-				sb.WriteString(msgs[i].ContentString())
-				sb.WriteString("\n")
-				break
-			}
-		}
-
-		filesRead := r.fileOwnership.ReadClaimsByAgent(handle.Spec.ID)
-		filesWritten := r.fileOwnership.WriteClaimsByAgent(handle.Spec.ID)
-		if len(filesRead) > 0 {
-			sb.WriteString("\n## Files Read\n\n")
-			for _, f := range filesRead {
-				fmt.Fprintf(&sb, "- %s\n", f)
-			}
-		}
-		if len(filesWritten) > 0 {
-			sb.WriteString("\n## Files Written\n\n")
-			for _, f := range filesWritten {
-				fmt.Fprintf(&sb, "- %s\n", f)
-			}
-		}
-	}
-
-	if len(result.Errors) > 0 {
-		sb.WriteString("\n## Errors\n\n")
-		for _, e := range result.Errors {
-			if len(e) > 200 {
-				e = e[:200] + "..."
-			}
-			fmt.Fprintf(&sb, "- %s\n", e)
-		}
-	}
-
-	reportPath := filepath.Join(reportsDir, fmt.Sprintf("%s-report.md", handle.Spec.ID))
-	if err := os.WriteFile(reportPath, []byte(sb.String()), 0644); err != nil {
-		return
-	}
-
-	// This fallback is a diagnostic artifact, not an agent-authored report.
-	// Do not set ReportDone: consumers must never mistake it for completion.
-	result.ResultPath = reportPath
 }
 
 func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh chan ttypes.BlockResponse, handle *agent.SubAgentHandle) func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
@@ -1457,14 +1164,6 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 
 		if err := r.rateLimiter.Wait(ctx, spec.AccountID); err != nil {
 			return tools.ToolResult{}, fmt.Errorf("rate limit exceeded for account %q", spec.AccountID)
-		}
-
-		if tool == "write_report" {
-			report := getStrParam(params, "report")
-			if report != "" {
-				return r.WriteReport(spec.ID, params)
-			}
-			return tools.ToolResult{Content: "Error: write_report requires a non-empty 'report' parameter. You MUST write a meaningful summary of your work, findings, and results in the 'report' field. Call write_report again with the report content filled in."}, fmt.Errorf("write_report: 'report' parameter is required and cannot be empty — provide a summary of your work and retry")
 		}
 
 		if parentFn != nil {

@@ -49,7 +49,7 @@ func (b *eventThenErrorBody) Read(dst []byte) (int, error) {
 
 func (b *eventThenErrorBody) Close() error { return nil }
 
-func TestRunDoesNotSpinOnClosedBTWChannel(t *testing.T) {
+func TestRunDoesNotSpinOnClosedRuntimeChannel(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		writeChatSSE(w, "done", "stop")
 	}))
@@ -59,17 +59,17 @@ func TestRunDoesNotSpinOnClosedBTWChannel(t *testing.T) {
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
 
-	btw := make(chan BtwMessage)
-	close(btw)
+	runtimeMessages := make(chan RuntimeMessage)
+	close(runtimeMessages)
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
 	var events []AgentEvent
 	messages := agent.Run(ctx, nil, "system", func(event AgentEvent) {
 		events = append(events, event)
-	}, nil, "", btw)
+	}, nil, "", runtimeMessages)
 	if ctx.Err() != nil {
-		t.Fatal("Run hung while draining a closed BTW channel")
+		t.Fatal("Run hung while draining a closed runtime channel")
 	}
 	if len(messages) < 2 {
 		t.Fatalf("messages = %d", len(messages))
@@ -79,7 +79,7 @@ func TestRunDoesNotSpinOnClosedBTWChannel(t *testing.T) {
 	}
 }
 
-func TestRunRestartsUploadToCoalesceQueuedBTW(t *testing.T) {
+func TestRunRestartsUploadToCoalesceQueuedHumanSteering(t *testing.T) {
 	var requests atomic.Int32
 	firstUploadPaused := make(chan struct{})
 	secondMessages := make(chan []provider.ChatMessage, 1)
@@ -117,14 +117,14 @@ func TestRunRestartsUploadToCoalesceQueuedBTW(t *testing.T) {
 		}, nil
 	})
 
-	p := provider.FromPreset("openai-chat", "key", "https://btw-upload.invalid")
+	p := provider.FromPreset("openai-chat", "key", "https://runtime-upload.invalid")
 	p.SetDialSettings(provider.DialSettings{MaxAttempts: 1})
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
 	agent.testHTTPClient = &http.Client{Transport: transport}
 
-	btw := make(chan BtwMessage, 4)
-	var accepts atomic.Int32
+	runtimeMessages := make(chan RuntimeMessage, 4)
+	var admissions atomic.Int32
 	var events []AgentEvent
 	done := make(chan []provider.ChatMessage, 1)
 	go func() {
@@ -135,7 +135,7 @@ func TestRunRestartsUploadToCoalesceQueuedBTW(t *testing.T) {
 			func(event AgentEvent) { events = append(events, event) },
 			nil,
 			"",
-			btw,
+			runtimeMessages,
 		)
 	}()
 
@@ -145,29 +145,29 @@ func TestRunRestartsUploadToCoalesceQueuedBTW(t *testing.T) {
 		t.Fatal("first upload did not reach the restartable range")
 	}
 	first := provider.NewTextMessage("user", "first queued correction")
-	first.InternalID = "btw-restart-1"
+	first.InternalID = "steering-restart-1"
 	second := provider.NewTextMessage("user", "second queued correction")
-	second.InternalID = "btw-restart-2"
-	btw <- BtwMessage{Message: first, Accept: func() bool {
-		accepts.Add(1)
-		return true
+	second.InternalID = "steering-restart-2"
+	runtimeMessages <- RuntimeMessage{Message: first, Admit: func([]provider.ChatMessage) error {
+		admissions.Add(1)
+		return nil
 	}}
-	btw <- BtwMessage{Message: second, Accept: func() bool {
-		accepts.Add(1)
-		return true
+	runtimeMessages <- RuntimeMessage{Message: second, Admit: func([]provider.ChatMessage) error {
+		admissions.Add(1)
+		return nil
 	}}
 
 	var archive []provider.ChatMessage
 	select {
 	case archive = <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("agent did not finish restarted BTW upload")
+		t.Fatal("agent did not finish restarted human-steering upload")
 	}
 	if requests.Load() != 2 {
 		t.Fatalf("requests = %d, want one interrupted upload and one restarted upload", requests.Load())
 	}
-	if accepts.Load() != 2 {
-		t.Fatalf("BTW accepts = %d, want 2", accepts.Load())
+	if admissions.Load() != 2 {
+		t.Fatalf("human-steering admissions = %d, want 2", admissions.Load())
 	}
 
 	requestMessages := <-secondMessages
@@ -184,7 +184,7 @@ func TestRunRestartsUploadToCoalesceQueuedBTW(t *testing.T) {
 		}
 	}
 	if requestCounts[first.InternalID] != 1 || requestCounts[second.InternalID] != 1 {
-		t.Fatalf("restarted request BTW counts = %#v", requestCounts)
+		t.Fatalf("restarted request steering counts = %#v", requestCounts)
 	}
 
 	archiveCounts := map[string]int{}
@@ -192,19 +192,13 @@ func TestRunRestartsUploadToCoalesceQueuedBTW(t *testing.T) {
 		archiveCounts[message.InternalID]++
 	}
 	if archiveCounts[first.InternalID] != 1 || archiveCounts[second.InternalID] != 1 {
-		t.Fatalf("archive BTW counts = %#v", archiveCounts)
+		t.Fatalf("archive steering counts = %#v", archiveCounts)
 	}
 
-	consumed := map[string]int{}
 	successfulRequests := 0
 	for _, event := range events {
 		switch event.Type {
-		case "btw_consumed":
-			data, _ := event.Data.(map[string]any)
-			if internalID, _ := data["internal_id"].(string); internalID != "" {
-				consumed[internalID]++
-			}
-		case "btw_cleared", "error", "retry":
+		case "error", "retry":
 			t.Fatalf("restart emitted unexpected %s event: %#v", event.Type, event)
 		case "done":
 			data, _ := event.Data.(map[string]any)
@@ -218,15 +212,12 @@ func TestRunRestartsUploadToCoalesceQueuedBTW(t *testing.T) {
 			}
 		}
 	}
-	if consumed[first.InternalID] != 1 || consumed[second.InternalID] != 1 {
-		t.Fatalf("BTW consumed counts = %#v", consumed)
-	}
 	if successfulRequests != 1 {
 		t.Fatalf("successful request accounting = %d, want only the restarted request", successfulRequests)
 	}
 }
 
-func TestRunContinuesWithBTWArrivingDuringFinalCompletion(t *testing.T) {
+func TestRunContinuesWithHumanSteeringArrivingDuringFinalCompletion(t *testing.T) {
 	var requests atomic.Int32
 	firstStarted := make(chan struct{}, 1)
 	releaseFirst := make(chan struct{})
@@ -255,19 +246,23 @@ func TestRunContinuesWithBTWArrivingDuringFinalCompletion(t *testing.T) {
 	p := provider.FromPreset("openai-chat", "key", server.URL)
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
-	btw := make(chan BtwMessage, 1)
+	runtimeMessages := make(chan RuntimeMessage, 1)
+	var admissions atomic.Int32
 	events := make(chan AgentEvent, 32)
 	done := make(chan []provider.ChatMessage, 1)
 	go func() {
 		done <- agent.Run(context.Background(), nil, "system", func(event AgentEvent) {
 			events <- event
-		}, nil, "", btw)
+		}, nil, "", runtimeMessages)
 	}()
 
 	<-firstStarted
-	btwMessage := provider.NewTextMessage("user", "use this in the next turn")
-	btwMessage.InternalID = "btw-1"
-	btw <- BtwMessage{Message: btwMessage, Accept: func() bool { return true }}
+	steeringMessage := provider.NewTextMessage("user", "use this in the next turn")
+	steeringMessage.InternalID = "steering-1"
+	runtimeMessages <- RuntimeMessage{Message: steeringMessage, Admit: func([]provider.ChatMessage) error {
+		admissions.Add(1)
+		return nil
+	}}
 	close(releaseFirst)
 	<-secondStarted
 
@@ -283,8 +278,8 @@ func TestRunContinuesWithBTWArrivingDuringFinalCompletion(t *testing.T) {
 		}
 	}
 	drainEvents()
-	if !hasEvent(observed, "btw_consumed") {
-		t.Fatal("BTW remained pending after its context started uploading")
+	if admissions.Load() != 1 {
+		t.Fatal("human steering was not admitted before the next request")
 	}
 	// The second provider response is still blocked. The handoff belongs to
 	// the upload, independently of the model's first output.
@@ -298,10 +293,10 @@ func TestRunContinuesWithBTWArrivingDuringFinalCompletion(t *testing.T) {
 	select {
 	case <-done:
 	case <-time.After(2 * time.Second):
-		t.Fatal("agent did not finish BTW continuation")
+		t.Fatal("agent did not finish human-steering continuation")
 	}
 	if requests.Load() != 2 {
-		t.Fatalf("requests=%d want BTW to force a second request", requests.Load())
+		t.Fatalf("requests=%d want human steering to force a second request", requests.Load())
 	}
 	drainEvents()
 	successful := map[string]bool{}
@@ -317,23 +312,19 @@ func TestRunContinuesWithBTWArrivingDuringFinalCompletion(t *testing.T) {
 		t.Fatalf("one actor turn made two successful API calls, accounted %+v", successful)
 	}
 	requestMessages := <-secondMessages
-	foundBTW := false
+	foundSteering := false
 	for _, message := range requestMessages {
 		if message.Role == "user" && strings.Contains(message.ContentString(), "use this in the next turn") {
-			foundBTW = true
+			foundSteering = true
 			break
 		}
 	}
-	if !foundBTW {
-		t.Fatalf("second request lacks BTW message: %+v", requestMessages)
-	}
-	drainEvents()
-	if !hasEvent(observed, "btw_consumed") {
-		t.Fatal("BTW consumption was not acknowledged to the UI")
+	if !foundSteering {
+		t.Fatalf("second request lacks human steering: %+v", requestMessages)
 	}
 }
 
-func TestRunClearsBtwWhenProviderRejectsRequest(t *testing.T) {
+func TestRunRetainsAdmittedHumanSteeringWhenProviderRejectsRequest(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		http.Error(w, "invalid request", http.StatusBadRequest)
 	}))
@@ -342,26 +333,38 @@ func TestRunClearsBtwWhenProviderRejectsRequest(t *testing.T) {
 	p := provider.FromPreset("openai-chat", "key", server.URL)
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
-	btwMessage := provider.NewTextMessage("user", "never accepted")
-	btwMessage.InternalID = "btw-rejected"
-	btw := make(chan BtwMessage, 1)
-	btw <- BtwMessage{Message: btwMessage, Accept: func() bool { return true }}
+	steeringMessage := provider.NewTextMessage("user", "persist once admitted")
+	steeringMessage.InternalID = "steering-rejected-request"
+	runtimeMessages := make(chan RuntimeMessage, 1)
+	var admitted, released atomic.Int32
+	runtimeMessages <- RuntimeMessage{
+		Message: steeringMessage,
+		Admit: func([]provider.ChatMessage) error {
+			admitted.Add(1)
+			return nil
+		},
+		Release: func(string) { released.Add(1) },
+	}
 
 	var events []AgentEvent
 	messages := agent.Run(context.Background(), nil, "system", func(event AgentEvent) {
 		events = append(events, event)
-	}, nil, "", btw)
-	if !hasEvent(events, "btw_consumed") || !hasEvent(events, "btw_cleared") {
-		t.Fatalf("rejected BTW must move during upload and clear after rejection: %+v", events)
+	}, nil, "", runtimeMessages)
+	if admitted.Load() != 1 || released.Load() != 0 {
+		t.Fatalf("admission lifecycle = admitted %d released %d", admitted.Load(), released.Load())
 	}
+	found := false
 	for _, message := range messages {
-		if message.InternalID == "btw-rejected" {
-			t.Fatal("provider-rejected BTW leaked into canonical history")
+		if message.InternalID == steeringMessage.InternalID {
+			found = true
 		}
+	}
+	if !found {
+		t.Fatal("durably admitted human steering was erased after provider rejection")
 	}
 }
 
-func TestRunClearsBtwWhenCancelledDuringUpload(t *testing.T) {
+func TestRunRetainsAdmittedHumanSteeringWhenCancelledDuringUpload(t *testing.T) {
 	p := provider.FromPreset("openai-chat", "key", "https://example.invalid/v1")
 	p.Model = "test-model"
 	agent := newTestAgent(t, p, p.Model)
@@ -374,10 +377,18 @@ func TestRunClearsBtwWhenCancelledDuringUpload(t *testing.T) {
 		<-req.Context().Done()
 		return nil, req.Context().Err()
 	})}
-	btwMessage := provider.NewTextMessage("user", "restore if cancelled")
-	btwMessage.InternalID = "btw-cancelled"
-	btw := make(chan BtwMessage, 1)
-	btw <- BtwMessage{Message: btwMessage, Accept: func() bool { return true }}
+	steeringMessage := provider.NewTextMessage("user", "retain if cancelled")
+	steeringMessage.InternalID = "steering-cancelled"
+	runtimeMessages := make(chan RuntimeMessage, 1)
+	var admitted, released atomic.Int32
+	runtimeMessages <- RuntimeMessage{
+		Message: steeringMessage,
+		Admit: func([]provider.ChatMessage) error {
+			admitted.Add(1)
+			return nil
+		},
+		Release: func(string) { released.Add(1) },
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 	var eventsMu sync.Mutex
@@ -388,34 +399,34 @@ func TestRunClearsBtwWhenCancelledDuringUpload(t *testing.T) {
 			eventsMu.Lock()
 			events = append(events, event)
 			eventsMu.Unlock()
-		}, nil, "", btw)
+		}, nil, "", runtimeMessages)
 	}()
 	select {
 	case <-requestUploaded:
 	case <-time.After(2 * time.Second):
 		t.Fatal("request upload did not start")
 	}
-	eventsMu.Lock()
-	if !hasEvent(events, "btw_consumed") {
-		t.Fatal("note did not move when upload started")
+	if admitted.Load() != 1 {
+		t.Fatal("human steering was not admitted before upload")
 	}
-	eventsMu.Unlock()
 	cancel()
 	select {
 	case messages := <-done:
+		found := false
 		for _, message := range messages {
-			if message.InternalID == btwMessage.InternalID {
-				t.Fatal("cancelled note remained in canonical history")
+			if message.InternalID == steeringMessage.InternalID {
+				found = true
 			}
+		}
+		if !found {
+			t.Fatal("cancel erased durably admitted human steering")
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("cancelled request did not stop")
 	}
-	eventsMu.Lock()
-	if !hasEvent(events, "btw_cleared") {
-		t.Fatalf("cancelled upload did not return note to UI: %+v", events)
+	if released.Load() != 0 {
+		t.Fatalf("admitted steering was released on cancel: %d", released.Load())
 	}
-	eventsMu.Unlock()
 }
 
 func TestRunAutomaticallyContinuesTruncatedResponse(t *testing.T) {
@@ -1057,7 +1068,7 @@ func TestFailedWriteReportDoesNotMarkReportComplete(t *testing.T) {
 		context.Background(),
 		provider.ToolCall{
 			ID: "call_1", InternalID: "_tc1",
-			Function: provider.FunctionCall{Name: "write_report", Arguments: `{"report":"details"}`},
+			Function: provider.FunctionCall{Name: "publish_report", Arguments: `{"report":"details"}`},
 		},
 		func(AgentEvent) {},
 		nil,
@@ -1066,9 +1077,51 @@ func TestFailedWriteReportDoesNotMarkReportComplete(t *testing.T) {
 	if !result.toolError {
 		t.Fatalf("tool result was not marked as an error: %+v", result)
 	}
-	if agent.writeReportCalled {
-		t.Fatal("failed write_report suppressed the mandatory report reminder")
+	if agent.reportPublished {
+		t.Fatal("failed publish_report suppressed the mandatory report reminder")
 	}
+}
+
+func TestMissingFinalReportGetsOneBoundedReminder(t *testing.T) {
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests.Add(1)
+		writeChatSSE(w, "report omitted", "stop")
+	}))
+	defer server.Close()
+
+	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p.Model = "test-model"
+	child := newTestAgent(t, p, p.Model)
+	child.Depth = 1
+
+	var events []AgentEvent
+	messages := child.Run(context.Background(), nil, "system", func(event AgentEvent) {
+		events = append(events, event)
+	}, nil, "", nil)
+
+	if got := requests.Load(); got != maxFinalReportReminders+1 {
+		t.Fatalf("requests=%d want %d; missing report retried without a bound", got, maxFinalReportReminders+1)
+	}
+	reminders := 0
+	for _, message := range messages {
+		if strings.Contains(message.ContentString(), "runtime_report_reminder") {
+			reminders++
+		}
+	}
+	if reminders != maxFinalReportReminders {
+		t.Fatalf("report reminders=%d want %d", reminders, maxFinalReportReminders)
+	}
+	for _, event := range events {
+		if event.Type != "done" {
+			continue
+		}
+		data, _ := event.Data.(map[string]any)
+		if data["reason"] == "missing_final_report" {
+			return
+		}
+	}
+	t.Fatalf("terminal events did not report the final-report contract failure: %+v", events)
 }
 
 func TestDefaultToolDefinitionsValidateRequiredParameters(t *testing.T) {

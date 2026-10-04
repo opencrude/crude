@@ -6,18 +6,18 @@ import (
 	"sync"
 )
 
-const btwUploadRestartPercent int64 = 90
+const runtimeUploadRestartPercent int64 = 90
 
-var errBtwUploadRestart = errors.New("restart provider upload with queued BTW messages")
+var errRuntimeUploadRestart = errors.New("restart provider upload with queued human steering")
 
-// btwUploadController owns request-local BTW coalescing while one provider
-// request is being uploaded. It never consumes BTW ownership itself: the agent
-// loop admits queued messages only after the interrupted request has stopped.
-type btwUploadController struct {
+// runtimeUploadController owns request-local human-steering coalescing while one
+// provider request is being uploaded. It never consumes delivery ownership: the
+// agent loop admits queued messages only after the interrupted request stops.
+type runtimeUploadController struct {
 	mu sync.Mutex
 
 	cancel context.CancelCauseFunc
-	queued []BtwMessage
+	queued []RuntimeMessage
 
 	uploaded         int64
 	total            int64
@@ -26,11 +26,11 @@ type btwUploadController struct {
 	restartRequested bool
 }
 
-func newBtwUploadController(cancel context.CancelCauseFunc) *btwUploadController {
-	return &btwUploadController{cancel: cancel}
+func newRuntimeUploadController(cancel context.CancelCauseFunc) *runtimeUploadController {
+	return &runtimeUploadController{cancel: cancel}
 }
 
-func (c *btwUploadController) Queue(message BtwMessage) {
+func (c *runtimeUploadController) Queue(message RuntimeMessage) {
 	if c == nil {
 		return
 	}
@@ -41,7 +41,7 @@ func (c *btwUploadController) Queue(message BtwMessage) {
 	c.cancelForRestart(restart)
 }
 
-func (c *btwUploadController) Progress(uploaded, total int64) (outputStarted, restarting bool) {
+func (c *runtimeUploadController) Progress(uploaded, total int64) (outputStarted, restarting bool) {
 	if c == nil {
 		return false, false
 	}
@@ -59,7 +59,7 @@ func (c *btwUploadController) Progress(uploaded, total int64) (outputStarted, re
 	return outputStarted, restarting
 }
 
-func (c *btwUploadController) Accepted() {
+func (c *runtimeUploadController) Accepted() {
 	if c == nil {
 		return
 	}
@@ -68,7 +68,7 @@ func (c *btwUploadController) Accepted() {
 	c.mu.Unlock()
 }
 
-func (c *btwUploadController) OutputStarted() {
+func (c *runtimeUploadController) OutputStarted() {
 	if c == nil {
 		return
 	}
@@ -77,7 +77,7 @@ func (c *btwUploadController) OutputStarted() {
 	c.mu.Unlock()
 }
 
-func (c *btwUploadController) RestartRequested() bool {
+func (c *runtimeUploadController) RestartRequested() bool {
 	if c == nil {
 		return false
 	}
@@ -86,30 +86,30 @@ func (c *btwUploadController) RestartRequested() bool {
 	return c.restartRequested
 }
 
-func (c *btwUploadController) TakeQueued() []BtwMessage {
+func (c *runtimeUploadController) TakeQueued() []RuntimeMessage {
 	if c == nil {
 		return nil
 	}
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	queued := append([]BtwMessage(nil), c.queued...)
+	queued := append([]RuntimeMessage(nil), c.queued...)
 	c.queued = nil
 	return queued
 }
 
-func (c *btwUploadController) requestRestartLocked() bool {
+func (c *runtimeUploadController) requestRestartLocked() bool {
 	if c.restartRequested || c.accepted || c.outputStarted || len(c.queued) == 0 {
 		return false
 	}
-	if c.total > 0 && c.uploaded*100 > c.total*btwUploadRestartPercent {
+	if c.total > 0 && c.uploaded*100 > c.total*runtimeUploadRestartPercent {
 		return false
 	}
 	c.restartRequested = true
 	return true
 }
 
-func (c *btwUploadController) cancelForRestart(restart bool) {
+func (c *runtimeUploadController) cancelForRestart(restart bool) {
 	if restart && c.cancel != nil {
-		c.cancel(errBtwUploadRestart)
+		c.cancel(errRuntimeUploadRestart)
 	}
 }

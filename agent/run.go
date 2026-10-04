@@ -22,9 +22,10 @@ import (
 	"crude/types/reasoning"
 )
 
-type BtwMessage struct {
+type RuntimeMessage struct {
 	Message provider.ChatMessage
-	Accept  func() bool
+	Admit   func([]provider.ChatMessage) error
+	Release func(string)
 }
 
 func (a *Agent) Run(
@@ -34,7 +35,7 @@ func (a *Agent) Run(
 	emit func(AgentEvent),
 	blockResolveCh <-chan ttypes.BlockResponse,
 	sessionID string,
-	btwCh <-chan BtwMessage,
+	runtimeCh <-chan RuntimeMessage,
 ) []provider.ChatMessage {
 	if ctx == nil {
 		ctx = context.Background()
@@ -43,7 +44,7 @@ func (a *Agent) Run(
 		emit = func(AgentEvent) {}
 	}
 	l := a.logger
-	a.writeReportCalled = false
+	a.reportPublished = false
 	var emitActive atomic.Bool
 	emitActive.Store(true)
 	origEmit := emit
@@ -150,47 +151,26 @@ func (a *Agent) Run(
 		},
 	}
 
-	btwInput := btwCh
+	runtimeInput := runtimeCh
 	continuations := 0
+	finalReportReminders := 0
 	interruptionRecoveries := 0
 	overflowRecoveries := 0
 	continuationWarningSent := false
 	overflowPressure := false
 	providerName := a.providerDisplayName()
 	cacheUsageUnknown := a.Provider.ProtocolID() == "ollama"
-	var admittedBtwIDs []string
-	var bufferedBtw []BtwMessage
-	var acknowledgedBtwMu sync.Mutex
-	acknowledgedBtwIDs := make(map[string]struct{})
-	acknowledgeBtwIDs := func(internalIDs []string) {
-		acknowledgedBtwMu.Lock()
-		var newlyAcknowledged []string
-		for _, internalID := range internalIDs {
-			if _, exists := acknowledgedBtwIDs[internalID]; exists {
-				continue
+	var bufferedRuntime []RuntimeMessage
+	releaseRuntime := func(messages []RuntimeMessage, reason string) {
+		for _, message := range messages {
+			if message.Release != nil {
+				message.Release(reason)
 			}
-			acknowledgedBtwIDs[internalID] = struct{}{}
-			newlyAcknowledged = append(newlyAcknowledged, internalID)
-		}
-		acknowledgedBtwMu.Unlock()
-		for _, internalID := range newlyAcknowledged {
-			emit(AgentEvent{Type: "btw_consumed", Data: map[string]any{"internal_id": internalID}})
 		}
 	}
-	clearUnsentBtw := func() {
-		if len(admittedBtwIDs) == 0 {
-			return
-		}
-		msgs = removeMessagesByInternalID(msgs, admittedBtwIDs)
-		archiveMsgs = removeMessagesByInternalID(archiveMsgs, admittedBtwIDs)
-		emit(AgentEvent{Type: "btw_cleared", Data: map[string]any{
-			"internal_ids": append([]string(nil), admittedBtwIDs...),
-		}})
-		admittedBtwIDs = nil
-	}
+	defer func() { releaseRuntime(bufferedRuntime, "turn ended before context admission") }()
 	for step := 0; ; step++ {
 		if ctx.Err() != nil {
-			clearUnsentBtw()
 			l.Warn("CANCEL", "context_cancelled", "step", step, "reason", ctx.Err().Error())
 			emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
 			return returnMessages()
@@ -206,39 +186,44 @@ func (a *Agent) Run(
 			}
 		}
 
-		drainBtw := func() int {
+		drainRuntime := func() int {
 			consumed := 0
-			admit := func(btw BtwMessage) {
-				if btw.Accept != nil && !btw.Accept() {
-					return
+			admit := func(runtime RuntimeMessage) {
+				prospective := append(append([]provider.ChatMessage(nil), msgs...), runtime.Message)
+				if runtime.Admit != nil {
+					if err := runtime.Admit(prospective); err != nil {
+						if runtime.Release != nil {
+							runtime.Release("context admission failed")
+						}
+						l.Warn("RUNTIME", "message_admission_failed", "step", step, "error", err.Error())
+						return
+					}
 				}
-				btwMsg := btw.Message
-				l.Info("BTW", "user_interruption", "step", step)
-				appendWire(btwMsg)
-				admittedBtwIDs = append(admittedBtwIDs, btwMsg.InternalID)
+				l.Info("RUNTIME", "human_steering_admitted", "step", step, "message_id", runtime.Message.InternalID)
+				appendWire(runtime.Message)
 				consumed++
 			}
-			if len(bufferedBtw) > 0 {
-				queued := bufferedBtw
-				bufferedBtw = nil
-				for _, btw := range queued {
-					admit(btw)
+			if len(bufferedRuntime) > 0 {
+				queued := bufferedRuntime
+				bufferedRuntime = nil
+				for _, runtime := range queued {
+					admit(runtime)
 				}
 			}
 			for {
 				select {
-				case btw, ok := <-btwInput:
+				case runtime, ok := <-runtimeInput:
 					if !ok {
-						btwInput = nil
+						runtimeInput = nil
 						return consumed
 					}
-					admit(btw)
+					admit(runtime)
 				default:
 					return consumed
 				}
 			}
 		}
-		_ = drainBtw()
+		_ = drainRuntime()
 		var runtimeNoticeIDs []string
 		if a.PrepareRuntimeNotices != nil {
 			for _, notice := range a.PrepareRuntimeNotices() {
@@ -254,6 +239,17 @@ func (a *Agent) Run(
 			msgs = removeMessagesByInternalID(msgs, runtimeNoticeIDs)
 			archiveMsgs = removeMessagesByInternalID(archiveMsgs, runtimeNoticeIDs)
 		}
+		if len(runtimeNoticeIDs) > 0 && a.CommitRuntimeNotices != nil {
+			if err := a.CommitRuntimeNotices(append([]provider.ChatMessage(nil), msgs...)); err != nil {
+				clearUnsentRuntimeNotices()
+				a.emitError(emit, fmt.Errorf("runtime notice context admission failed: %w", err))
+				return returnMessages()
+			}
+			runtimeNoticesAccepted = true
+			if a.RuntimeNoticesAccepted != nil {
+				a.RuntimeNoticesAccepted()
+			}
+		}
 		ctxWindow = a.Provider.ContextWindow(a.Model)
 		if a.ContextCompactionPercent > 0 && ctxWindow > 0 {
 			activeTokens := contextUsage.projected(msgs, allTools, a.Model)
@@ -267,7 +263,6 @@ func (a *Agent) Run(
 				}
 				outcome, compactErr := compactor.compactWithModel(ctx, msgs, allTools, requestID, activeTokens, "automatic", emit)
 				if compactErr != nil {
-					clearUnsentBtw()
 					clearUnsentRuntimeNotices()
 					data := compactionEventData(requestID, "automatic", checkpointRole(a.Depth), outcome.StageIndex, outcome.Completed, activeTokens, 0, ctxWindow)
 					data["account_id"] = outcome.AccountID
@@ -319,10 +314,9 @@ func (a *Agent) Run(
 					}
 				}
 				msgs = nextMessages
-				acknowledgeBtwIDs(admittedBtwIDs)
-				admittedBtwIDs = nil
-				if len(runtimeNoticeIDs) > 0 && a.RuntimeNoticesAccepted != nil {
+				if !runtimeNoticesAccepted && len(runtimeNoticeIDs) > 0 && a.RuntimeNoticesAccepted != nil {
 					a.RuntimeNoticesAccepted()
+					runtimeNoticesAccepted = true
 				}
 				overflowPressure = false
 				emit(AgentEvent{Type: "context_compacted", Data: commitData})
@@ -352,26 +346,13 @@ func (a *Agent) Run(
 		}
 
 		prevPreviewKeys := make(map[string]string)
-		requestBtwIDs := append([]string(nil), admittedBtwIDs...)
-		var btwMu sync.Mutex
-		requestFinished := false
-		acknowledgeBtw := func() {
-			btwMu.Lock()
-			if requestFinished {
-				btwMu.Unlock()
-				return
-			}
-			internalIDs := append([]string(nil), requestBtwIDs...)
-			btwMu.Unlock()
-			acknowledgeBtwIDs(internalIDs)
-		}
 		requestCtx, cancelRequest := context.WithCancelCause(ctx)
-		uploadController := newBtwUploadController(cancelRequest)
-		watchBtw := btwInput != nil
+		uploadController := newRuntimeUploadController(cancelRequest)
+		watchRuntime := runtimeInput != nil
 		watchStop := make(chan struct{})
 		watchDone := make(chan bool, 1)
-		if watchBtw {
-			input := btwInput
+		if watchRuntime {
+			input := runtimeInput
 			go func() {
 				inputClosed := false
 				defer func() { watchDone <- inputClosed }()
@@ -379,12 +360,12 @@ func (a *Agent) Run(
 					select {
 					case <-watchStop:
 						return
-					case btw, ok := <-input:
+					case runtime, ok := <-input:
 						if !ok {
 							inputClosed = true
 							return
 						}
-						uploadController.Queue(btw)
+						uploadController.Queue(runtime)
 					}
 				}
 			}()
@@ -437,22 +418,13 @@ func (a *Agent) Run(
 				if err := prefix.accept(requestMsgs); err != nil {
 					l.Error("CACHE", "prefix_accept_failed", "error", err.Error())
 				}
-				runtimeNoticesAccepted = true
-				if len(runtimeNoticeIDs) > 0 && a.RuntimeNoticesAccepted != nil {
+				if !runtimeNoticesAccepted && len(runtimeNoticeIDs) > 0 && a.RuntimeNoticesAccepted != nil {
 					a.RuntimeNoticesAccepted()
+					runtimeNoticesAccepted = true
 				}
-				acknowledgeBtw()
-				admittedBtwIDs = nil
 			},
 			func(uploaded, total int64) {
 				outputStarted, restarting := uploadController.Progress(uploaded, total)
-				// A positive byte count means the provider transport has started
-				// reading the encoded context. Move the note into the transcript
-				// now, while retaining its ID until the response is accepted so
-				// a rejected request can still clear the note.
-				if uploaded > 0 {
-					acknowledgeBtw()
-				}
 				if outputStarted || restarting {
 					return
 				}
@@ -476,32 +448,29 @@ func (a *Agent) Run(
 			},
 			completionRequestOptions{inputTokens: contextUsage.projected(requestMsgs, allTools, a.Model)},
 		)
-		btwMu.Lock()
-		requestFinished = true
-		btwMu.Unlock()
-		if watchBtw {
+		if watchRuntime {
 			close(watchStop)
 			if <-watchDone {
-				btwInput = nil
+				runtimeInput = nil
 			}
 		}
-		bufferedBtw = append(bufferedBtw, uploadController.TakeQueued()...)
+		bufferedRuntime = append(bufferedRuntime, uploadController.TakeQueued()...)
 		restartUpload := uploadController.RestartRequested() &&
-			errors.Is(context.Cause(requestCtx), errBtwUploadRestart)
+			errors.Is(context.Cause(requestCtx), errRuntimeUploadRestart)
 		cancelRequest(nil)
 		if restartUpload && ctx.Err() == nil && errors.Is(err, context.Canceled) {
 			if !completion.hasOutput() {
 				clearUnsentRuntimeNotices()
-				queued := drainBtw()
-				l.Info("BTW", "restart_upload", "step", step, "queued", queued,
-					"threshold_percent", btwUploadRestartPercent)
+				queued := drainRuntime()
+				l.Info("RUNTIME", "restart_upload_for_human_steering", "step", step, "queued", queued,
+					"threshold_percent", runtimeUploadRestartPercent)
 				continue
 			}
 			// Output won the narrow race with cancellation. Preserve it as an
 			// accepted partial response and continue from that exact prefix;
-			// never replay stochastic output merely to coalesce a BTW note.
+			// never replay stochastic output merely to coalesce human steering.
 			err = &apiCallError{
-				Message: "stream interrupted after partial response while coalescing BTW messages",
+				Message: "stream interrupted after partial response while coalescing human steering",
 				Partial: true,
 				Cause:   io.ErrUnexpectedEOF,
 			}
@@ -515,7 +484,8 @@ func (a *Agent) Run(
 				l.Warn("COMPACT", "provider_context_recovery", "attempt", overflowRecoveries, "error", err.Error())
 				continue
 			}
-			clearUnsentBtw()
+			releaseRuntime(bufferedRuntime, "provider request failed before context admission")
+			bufferedRuntime = nil
 			clearUnsentRuntimeNotices()
 			outcome := accounting.Failed
 			if completion.hasOutput() || ctx.Err() != nil {
@@ -744,21 +714,30 @@ func (a *Agent) Run(
 				appendWire(continuation)
 				continue
 			}
-			// A BTW message can arrive while the terminal completion is in
-			// flight. Consume it before emitting done so it becomes the next LLM
+			// Human steering can arrive while the terminal completion is in
+			// flight. Admit it before emitting done so it becomes the next LLM
 			// step instead of being stranded when the turn goroutine shuts down.
-			if drainBtw() > 0 {
+			if drainRuntime() > 0 {
 				continuations = 0
 				continue
 			}
-			if a.Depth > 0 && !a.writeReportCalled {
-				a.logger.Warn("SUBAGENT", "write_report_reminder", "agent_id", a.AgentID, "depth", a.Depth, "step", step)
-				reminder := provider.NewTextMessage("user", rootprompt.RuntimeReportReminder())
-				reminder.Origin = provider.OriginContinuation
-				reminder.Visibility = provider.VisibilityContextOnly
-				appendWire(reminder)
-				_ = drainBtw()
-				continue
+			if a.Depth > 0 && !a.reportPublished {
+				if finalReportReminders < maxFinalReportReminders {
+					finalReportReminders++
+					a.logger.Warn("SUBAGENT", "publish_report_reminder", "agent_id", a.AgentID, "depth", a.Depth, "step", step, "attempt", finalReportReminders)
+					reminder := provider.NewTextMessage("user", rootprompt.RuntimeReportReminder())
+					reminder.Origin = provider.OriginContinuation
+					reminder.Visibility = provider.VisibilityContextOnly
+					appendWire(reminder)
+					_ = drainRuntime()
+					continue
+				}
+				a.logger.Warn("SUBAGENT", "publish_report_contract_failed", "agent_id", a.AgentID, "depth", a.Depth, "step", step)
+				emit(AgentEvent{Type: "done", Data: map[string]any{
+					"content": accumulatedText,
+					"reason":  "missing_final_report",
+				}})
+				return returnMessages()
 			}
 			doneReason := "completed"
 			if finishReason != "" && finishReason != "stop" && finishReason != "end_turn" {
@@ -961,7 +940,9 @@ func (a *Agent) makeStreamingDeltaCallback(emit func(AgentEvent), prevPreviewKey
 		dest := getStr(preview.Params, "destination")
 		pattern := getStr(preview.Params, "pattern")
 		handle := getStr(preview.Params, "handle")
-		handleID := getStr(preview.Params, "handle_id")
+		agentID := getStr(preview.Params, "agent_id")
+		runID := getStr(preview.Params, "run_id")
+		artifactID := getStr(preview.Params, "artifact_id")
 		seconds := getStr(preview.Params, "seconds")
 
 		var offsetVal int
@@ -1006,7 +987,7 @@ func (a *Agent) makeStreamingDeltaCallback(emit func(AgentEvent), prevPreviewKey
 			newLines = CountLines(newStr)
 		}
 
-		if name == "apply_patch" || name == "write_file" || name == "edit_file" || name == "write_report" {
+		if name == "apply_patch" || name == "write_file" || name == "edit_file" || name == "publish_report" {
 			estContent, estOld, estNew := EstimateStreamingLines(name, args)
 			if contentLines == 0 && estContent > 0 {
 				contentLines = estContent
@@ -1019,8 +1000,8 @@ func (a *Agent) makeStreamingDeltaCallback(emit func(AgentEvent), prevPreviewKey
 			}
 		}
 
-		previewKey := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%d|%d|%d|%d|%d",
-			path, command, urlStr, query, source, dest, pattern,
+		previewKey := fmt.Sprintf("%s|%s|%s|%s|%s|%s|%s|%s|%s|%s|%d|%d|%d|%d|%d",
+			path, command, urlStr, query, source, dest, pattern, agentID, runID, artifactID,
 			offsetVal, limitVal, contentLines, oldLines, newLines)
 		if name == "multi_tool_use.parallel" {
 			previewKey = args
@@ -1067,8 +1048,14 @@ func (a *Agent) makeStreamingDeltaCallback(emit func(AgentEvent), prevPreviewKey
 		if handle != "" {
 			data["handle"] = handle
 		}
-		if handleID != "" {
-			data["handle_id"] = handleID
+		if agentID != "" {
+			data["agent_id"] = agentID
+		}
+		if runID != "" {
+			data["run_id"] = runID
+		}
+		if artifactID != "" {
+			data["artifact_id"] = artifactID
 		}
 		if seconds != "" {
 			data["seconds"] = seconds

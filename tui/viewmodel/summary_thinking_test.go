@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"fmt"
 	"reflect"
 	"strings"
 	"testing"
@@ -22,11 +23,15 @@ func TestSummaryThinkingStaysCompactAndPreservesFullTrainOnResume(t *testing.T) 
 			app.width, app.height = width, 40
 			app.AddOrchestrator("summary")
 			state := app.AgentMgr.Get("summary").State
-			for _, delta := range []reasoning.Delta{
-				{Text: "**First approach**\n\n" + strings.Repeat("inspect the ownership and geometry. ", 80), Kind: kind, BlockID: "first"},
-				{Text: "**Revised approach** uses `stable IDs`", Kind: kind, BlockID: "second"},
-				{Text: " and preserves evidence.", Kind: kind, BlockID: "second"},
-			} {
+			deltas := []reasoning.Delta{{Text: "**First approach**\n\nInspect the ownership and geometry.", Kind: kind, BlockID: "first"}}
+			for i := range 20 {
+				deltas = append(deltas, reasoning.Delta{Text: "Another brief update inspects ownership and geometry.", Kind: kind, BlockID: fmt.Sprintf("update-%d", i)})
+			}
+			deltas = append(deltas,
+				reasoning.Delta{Text: "**Revised approach** uses `stable IDs`", Kind: kind, BlockID: "second"},
+				reasoning.Delta{Text: " and preserves evidence.", Kind: kind, BlockID: "second"},
+			)
+			for _, delta := range deltas {
 				app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: "summary", Type: "thinking", Data: delta})
 				app.paintShellFrame()
 				if state.ThinkingPaneID != "" {

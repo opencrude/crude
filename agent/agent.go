@@ -24,9 +24,10 @@ type AgentEvent struct {
 }
 
 const (
-	loopDetectWindow     = 8
-	loopDetectRepeats    = 4
-	maxAutoContinuations = 4
+	loopDetectWindow        = 8
+	loopDetectRepeats       = 4
+	maxAutoContinuations    = 4
+	maxFinalReportReminders = 1
 )
 
 type StepRecord struct {
@@ -69,8 +70,10 @@ type Agent struct {
 	// PrepareStep snapshots live tools and runtime notices between requests,
 	// never while a parallel tool batch is using the previous snapshot.
 	PrepareStep func() ([]tools.ToolDef, []provider.ChatMessage)
-	// Runtime notices are admitted only at a root model-request boundary, not via BTW.
+	// Runtime notices are admitted at model-request boundaries; human steering
+	// uses the separately fenced runtime-message lane.
 	PrepareRuntimeNotices  func() []provider.ChatMessage
+	CommitRuntimeNotices   func([]provider.ChatMessage) error
 	RuntimeNoticesAccepted func()
 	ToolFn                 func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error)
 	ToolMetadata           func(string) (tools.ToolMetadata, bool)
@@ -98,9 +101,9 @@ type Agent struct {
 	compactionRetryDelay func(int) time.Duration
 	contextBaseline      contextMeter
 
-	fileMu            sync.Map
-	writeReportCalled bool
-	guidance          *projectGuidance
+	fileMu          sync.Map
+	reportPublished bool
+	guidance        *projectGuidance
 }
 
 // SeedContextUsage carries the latest provider-reported request baseline across

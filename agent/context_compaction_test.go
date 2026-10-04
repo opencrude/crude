@@ -80,9 +80,9 @@ func TestRetainRecentUserContextExcludesRuntimeData(t *testing.T) {
 	runtime := provider.NewTextMessage("user", "<turn_context>memory</turn_context>")
 	runtime.Origin = provider.OriginRuntimeContext
 	runtime.Visibility = provider.VisibilityContextOnly
-	btw := provider.NewTextMessage("user", "correction")
-	btw.Origin = provider.OriginBTW
-	retained := retainRecentUserContext([]provider.ChatMessage{human, runtime, btw}, "root", 20_000, "model")
+	steering := provider.NewTextMessage("user", "correction")
+	steering.Origin = provider.OriginHumanSteering
+	retained := retainRecentUserContext([]provider.ChatMessage{human, runtime, steering}, "root", 20_000, "model")
 	if len(retained) != 2 || retained[0].ContentString() != "current request" || retained[1].ContentString() != "correction" {
 		t.Fatalf("retained context = %#v", retained)
 	}
@@ -410,7 +410,7 @@ func TestChildCompactPreservesAssignmentAndReportContract(t *testing.T) {
 	provider.SetModelContext(p.Model, 200_000)
 	a := newTestAgent(t, p, p.Model)
 	a.Depth = 1
-	assignment := provider.NewTextMessage("user", "inspect parser and call write_report")
+	assignment := provider.NewTextMessage("user", "inspect parser and call publish_report")
 	assignment.Origin = provider.OriginAssignment
 	result, err := a.Compact(context.Background(), compactionTestHistory(assignment), "<child_system>stable</child_system>", nil)
 	if err != nil {

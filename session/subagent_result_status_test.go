@@ -2,49 +2,12 @@ package session
 
 import (
 	"context"
-	"encoding/json"
-	"os"
-	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
 	"crude/agent"
 	"crude/provider"
 )
-
-// Exercise the terminal transcript/result boundary without treating an earlier
-// tool call as proof of completion.
-func TestSubAgentDiagnosticReportDoesNotBecomeAuthored(t *testing.T) {
-	home := t.TempDir()
-	s, err := NewWithSessionDir("parent", testConfig(), home, filepath.Join(home, "sessions"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(s.Close)
-	runner := NewSubAgentRunner(s, 1)
-	t.Cleanup(runner.SessionCancel)
-	handle := &agent.SubAgentHandle{Spec: agent.SubAgentSpec{ID: "failed-child", Name: "failed child", Description: "read source"}, Agent: &agent.Agent{Ctx: context.Background()}, StartedAt: time.Now()}
-	handle.SetTermReason("error")
-	handle.AddError("terminal provider stream failure")
-	messages := []provider.ChatMessage{
-		provider.NewTextMessage("system", "instructions"), provider.NewTextMessage("user", "read source"),
-		{Role: "assistant", ToolCalls: []provider.ToolCall{{ID: "read-1", Function: provider.FunctionCall{Name: "read_file"}}}},
-		provider.NewTextMessage("tool", "read completed"),
-	}
-	result := runner.buildResultFromMessages(handle, messages)
-	runner.autoGenerateReport(handle, messages, &result)
-	if result.Status != agent.SubAgentFailedError || result.ResultPath == "" || handle.ReportDone() {
-		t.Fatalf("diagnostic changed terminal completion semantics: result=%+v reportDone=%v", result, handle.ReportDone())
-	}
-	content, err := os.ReadFile(result.ResultPath)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(string(content), "Status: failed_error") {
-		t.Fatalf("diagnostic report lost failure status: %s", content)
-	}
-}
 
 func TestSubAgentTerminalResultNeedsDeliverable(t *testing.T) {
 	cases := []struct {
@@ -55,7 +18,7 @@ func TestSubAgentTerminalResultNeedsDeliverable(t *testing.T) {
 		cancelled    bool
 		want         agent.SubAgentStatus
 	}{
-		{name: "only assignment", want: agent.SubAgentFailedError},
+		{name: "only assignment", want: agent.SubAgentFailedPolicy},
 		{name: "tool calls then terminal stream error", reason: "error", errors: true,
 			messages: []provider.ChatMessage{
 				{Role: "assistant", ToolCalls: []provider.ToolCall{{ID: "read-1", Function: provider.FunctionCall{Name: "read_file"}}}},
@@ -65,19 +28,19 @@ func TestSubAgentTerminalResultNeedsDeliverable(t *testing.T) {
 		{name: "no report and no final answer despite tool success", messages: []provider.ChatMessage{
 			{Role: "assistant", ToolCalls: []provider.ToolCall{{ID: "read-1", Function: provider.FunctionCall{Name: "read_file"}}}},
 			provider.NewTextMessage("tool", "file contents"),
-		}, want: agent.SubAgentFailedError},
+		}, want: agent.SubAgentFailedPolicy},
 		{name: "earlier answer does not cover later dangling call", messages: []provider.ChatMessage{
 			provider.NewTextMessage("assistant", "earlier progress"),
 			{Role: "assistant", ToolCalls: []provider.ToolCall{{ID: "read-1", Function: provider.FunctionCall{Name: "read_file"}}}},
-		}, want: agent.SubAgentFailedError},
+		}, want: agent.SubAgentFailedPolicy},
 		{name: "recovered error with authored report", reason: "completed", errors: true, authored: true, want: agent.SubAgentCompleted},
-		{name: "recovered error with final answer", reason: "completed", errors: true,
-			messages: []provider.ChatMessage{provider.NewTextMessage("assistant", "Final findings and outcome.")}, want: agent.SubAgentCompleted},
+		{name: "recovered error with final answer but no report", reason: "completed", errors: true,
+			messages: []provider.ChatMessage{provider.NewTextMessage("assistant", "Final findings and outcome.")}, want: agent.SubAgentFailedPolicy},
 		{name: "final answer without report", reason: "completed",
-			messages: []provider.ChatMessage{provider.NewTextMessage("assistant", "Final findings and outcome.")}, want: agent.SubAgentCompleted},
+			messages: []provider.ChatMessage{provider.NewTextMessage("assistant", "Final findings and outcome.")}, want: agent.SubAgentFailedPolicy},
 		{name: "authored report with no final answer", reason: "completed", authored: true, want: agent.SubAgentCompleted},
 		{name: "cancelled dominates missing deliverable", cancelled: true, want: agent.SubAgentCancelled},
-		{name: "quota dominates missing deliverable", messages: []provider.ChatMessage{provider.NewTextMessage("tool", "Error: 429 quota exceeded")}, want: agent.SubAgentFailedQuota},
+		{name: "quoted quota text does not invent terminal cause", messages: []provider.ChatMessage{provider.NewTextMessage("tool", "Error: 429 quota exceeded")}, want: agent.SubAgentFailedPolicy},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -96,7 +59,7 @@ func TestSubAgentTerminalResultNeedsDeliverable(t *testing.T) {
 				handle.AddError("provider stream failed")
 			}
 			if tc.authored {
-				handle.SetReportPath(filepath.Join(t.TempDir(), "authored.md"))
+				handle.SetReportArtifact("report-1", 1)
 			}
 			messages := append([]provider.ChatMessage{provider.NewTextMessage("system", "instructions"), provider.NewTextMessage("user", "assignment")}, tc.messages...)
 			result := runner.buildResultFromMessages(handle, messages)
@@ -107,50 +70,5 @@ func TestSubAgentTerminalResultNeedsDeliverable(t *testing.T) {
 				t.Fatal("diagnostic report existed before completion")
 			}
 		})
-	}
-}
-
-func TestSubAgentListShowsNameAndHandleTogether(t *testing.T) {
-	runner := NewSubAgentRunner(&Session{}, 1)
-	t.Cleanup(runner.SessionCancel)
-	handle := &agent.SubAgentHandle{Spec: agent.SubAgentSpec{ID: "agent-8f21", Name: "Lily sub Dawn", Category: agent.CatResearcher}, StartedAt: time.Now()}
-	if err := runner.mgr.Register(handle); err != nil {
-		t.Fatal(err)
-	}
-	result, err := runner.ListSubAgents(map[string]any{"include_completed": true})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.Contains(result.Content, "Lily sub Dawn (agent-8f21)") {
-		t.Fatalf("list lost identity: %s", result.Content)
-	}
-	if !strings.HasPrefix(result.Content, "- Lily sub Dawn (agent-8f21)") {
-		t.Fatalf("list identity not readable at start: %s", result.Content)
-	}
-}
-
-func TestSubAgentReportResultCarriesNameAndHandleTogether(t *testing.T) {
-	home := t.TempDir()
-	s, err := NewWithSessionDir("parent", testConfig(), home, filepath.Join(home, "sessions"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(s.Close)
-	runner := NewSubAgentRunner(s, 1)
-	t.Cleanup(runner.SessionCancel)
-	handle := &agent.SubAgentHandle{Spec: agent.SubAgentSpec{ID: "agent-8f21", Name: "Lily sub Dawn", Category: agent.CatResearcher}, StartedAt: time.Now()}
-	if err := runner.mgr.Register(handle); err != nil {
-		t.Fatal(err)
-	}
-	result, err := runner.WriteReport("agent-8f21", map[string]any{"report": "The renderer is stable."})
-	if err != nil {
-		t.Fatal(err)
-	}
-	var parsed map[string]string
-	if err := json.Unmarshal([]byte(result.Content), &parsed); err != nil {
-		t.Fatal(err)
-	}
-	if parsed["name"] != "Lily sub Dawn" || parsed["handle_id"] != "agent-8f21" || parsed["status"] != "report_written" {
-		t.Fatalf("report result lost identity: %q", result.Content)
 	}
 }

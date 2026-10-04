@@ -59,15 +59,15 @@ func TestAgentContractsExposeNoStepBudget(t *testing.T) {
 		}
 	}
 	for _, definition := range tools.AgentTools {
-		if definition.Function.Name != "run_sub_agent" {
+		if definition.Function.Name != "agent_start" {
 			continue
 		}
 		schema := string(definition.Function.Parameters)
 		if strings.Contains(schema, "max_steps") {
-			t.Fatal("run_sub_agent schema still advertises max_steps")
+			t.Fatal("agent_start schema still advertises max_steps")
 		}
 		if strings.Contains(schema, `"required":["name"`) || !strings.Contains(schema, `"required":["description"`) {
-			t.Fatalf("run_sub_agent name is not optional: %s", schema)
+			t.Fatalf("agent_start name is not optional: %s", schema)
 		}
 	}
 }

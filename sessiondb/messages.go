@@ -42,6 +42,8 @@ type MessageRow struct {
 	Role             string
 	Origin           string
 	Visibility       string
+	InternalID       sql.NullString
+	Collaboration    sql.NullString
 	Content          sql.NullString
 	ContentType      sql.NullString
 	ReasoningContent sql.NullString
@@ -104,11 +106,11 @@ func ReplaceMessagesWithMeta(db *sql.DB, sessionID string, msgs []provider.ChatM
 
 	stmt, err := tx.Prepare(`
 		INSERT INTO messages (
-			role, origin, visibility, content, content_type, reasoning_content, reasoning,
+			role, origin, visibility, internal_id, collaboration_json, content, content_type, reasoning_content, reasoning,
 			tool_calls, tool_name, tool_result, tool_call_id,
 			tool_error, provider_items, cache_control, token_count, sequence_num, turn_number,
 			agent_id, created_at, display_meta
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`)
 	if err != nil {
 		return 0, fmt.Errorf("sessiondb: replace messages prepare: %w", err)
@@ -138,6 +140,13 @@ func ReplaceMessagesWithMeta(db *sql.DB, sessionID string, msgs []provider.ChatM
 			providerItemsJSON, err = json.Marshal(m.ProviderItems)
 			if err != nil {
 				return 0, fmt.Errorf("sessiondb: marshal provider items seq=%d: %w", i, err)
+			}
+		}
+		var collaborationJSON []byte
+		if m.Collaboration != nil {
+			collaborationJSON, err = json.Marshal(m.Collaboration)
+			if err != nil {
+				return 0, fmt.Errorf("sessiondb: marshal collaboration seq=%d: %w", i, err)
 			}
 		}
 
@@ -174,6 +183,8 @@ func ReplaceMessagesWithMeta(db *sql.DB, sessionID string, msgs []provider.ChatM
 			m.Role,
 			m.EffectiveOrigin(),
 			m.EffectiveVisibility(),
+			nullString(m.InternalID),
+			nullBytes(collaborationJSON),
 			nullString(dbContent),
 			nullString(contentType),
 			nullString(m.ReasoningContent),
@@ -222,7 +233,7 @@ func AppendMessageWithMeta(db *sql.DB, sessionID string, m provider.ChatMessage,
 	if err := tx.QueryRow(`SELECT COALESCE(MAX(sequence_num),-1)+1 FROM messages`).Scan(&seq); err != nil {
 		return err
 	}
-	var toolCallsJSON, cacheJSON, providerJSON []byte
+	var toolCallsJSON, cacheJSON, providerJSON, collaborationJSON []byte
 	if len(m.ToolCalls) > 0 {
 		toolCallsJSON, err = json.Marshal(m.ToolCalls)
 		if err != nil {
@@ -237,6 +248,12 @@ func AppendMessageWithMeta(db *sql.DB, sessionID string, m provider.ChatMessage,
 	}
 	if len(m.ProviderItems) > 0 {
 		providerJSON, err = json.Marshal(m.ProviderItems)
+		if err != nil {
+			return err
+		}
+	}
+	if m.Collaboration != nil {
+		collaborationJSON, err = json.Marshal(m.Collaboration)
 		if err != nil {
 			return err
 		}
@@ -256,7 +273,7 @@ func AppendMessageWithMeta(db *sql.DB, sessionID string, m provider.ChatMessage,
 	if raw, marshalErr := json.Marshal(meta); marshalErr == nil && len(raw) > 2 {
 		metaJSON = sql.NullString{String: string(raw), Valid: true}
 	}
-	_, err = tx.Exec(`INSERT INTO messages(role,origin,visibility,content,content_type,reasoning_content,reasoning,tool_calls,tool_name,tool_result,tool_call_id,tool_error,provider_items,cache_control,token_count,sequence_num,turn_number,agent_id,created_at,display_meta) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, m.Role, m.EffectiveOrigin(), m.EffectiveVisibility(), nullString(content), nullString(contentType), nullString(m.ReasoningContent), nullString(m.Reasoning), nullBytes(toolCallsJSON), nullString(""), nullString(toolResult), nullString(m.ToolCallID), m.ToolError, nullBytes(providerJSON), nullBytes(cacheJSON), provider.EstimateMessageTokens(m, ""), seq, turn, nil, time.Now().UnixNano(), metaJSON)
+	_, err = tx.Exec(`INSERT INTO messages(role,origin,visibility,internal_id,collaboration_json,content,content_type,reasoning_content,reasoning,tool_calls,tool_name,tool_result,tool_call_id,tool_error,provider_items,cache_control,token_count,sequence_num,turn_number,agent_id,created_at,display_meta) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, m.Role, m.EffectiveOrigin(), m.EffectiveVisibility(), nullString(m.InternalID), nullBytes(collaborationJSON), nullString(content), nullString(contentType), nullString(m.ReasoningContent), nullString(m.Reasoning), nullBytes(toolCallsJSON), nullString(""), nullString(toolResult), nullString(m.ToolCallID), m.ToolError, nullBytes(providerJSON), nullBytes(cacheJSON), provider.EstimateMessageTokens(m, ""), seq, turn, nil, time.Now().UnixNano(), metaJSON)
 	if err != nil {
 		return err
 	}
@@ -269,7 +286,7 @@ func AppendMessageWithMeta(db *sql.DB, sessionID string, m provider.ChatMessage,
 
 func LoadMessages(db *sql.DB) ([]provider.ChatMessage, []int, error) {
 	rows, err := db.Query(`
-		SELECT role, origin, visibility, content, content_type, reasoning_content, reasoning,
+		SELECT role, origin, visibility, internal_id, collaboration_json, content, content_type, reasoning_content, reasoning,
 		       tool_calls, tool_name, tool_result, tool_call_id,
 		       tool_error, provider_items, cache_control, token_count, sequence_num, turn_number,
 		       agent_id, created_at, display_meta
@@ -285,7 +302,8 @@ func LoadMessages(db *sql.DB) ([]provider.ChatMessage, []int, error) {
 	for rows.Next() {
 		var r MessageRow
 		err := rows.Scan(
-			&r.Role, &r.Origin, &r.Visibility, &r.Content, &r.ContentType, &r.ReasoningContent, &r.Reasoning,
+			&r.Role, &r.Origin, &r.Visibility, &r.InternalID, &r.Collaboration,
+			&r.Content, &r.ContentType, &r.ReasoningContent, &r.Reasoning,
 			&r.ToolCalls, &r.ToolName, &r.ToolResult, &r.ToolCallID,
 			&r.ToolError, &r.ProviderItems, &r.CacheControl, &r.TokenCount, &r.SequenceNum, &r.TurnNumber,
 			&r.AgentID, &r.CreatedAt, &r.DisplayMeta,
@@ -295,9 +313,16 @@ func LoadMessages(db *sql.DB) ([]provider.ChatMessage, []int, error) {
 		}
 
 		m := provider.ChatMessage{
+			InternalID: r.InternalID.String,
 			Role:       r.Role,
 			Origin:     provider.MessageOrigin(r.Origin),
 			Visibility: provider.MessageVisibility(r.Visibility),
+		}
+		if r.Collaboration.Valid && r.Collaboration.String != "" {
+			var attribution provider.CollaborationAttribution
+			if json.Unmarshal([]byte(r.Collaboration.String), &attribution) == nil {
+				m.Collaboration = &attribution
+			}
 		}
 		m.Content = parseMessageContent(r.Content.String, r.ContentType.String)
 
@@ -339,7 +364,7 @@ func LoadMessages(db *sql.DB) ([]provider.ChatMessage, []int, error) {
 
 func LoadMessagesWithMeta(db *sql.DB) ([]MessageWithMeta, error) {
 	rows, err := db.Query(`
-		SELECT role, origin, visibility, content, content_type, reasoning_content, reasoning,
+		SELECT role, origin, visibility, internal_id, collaboration_json, content, content_type, reasoning_content, reasoning,
 		       tool_calls, tool_name, tool_result, tool_call_id,
 		       tool_error, provider_items, cache_control, token_count, sequence_num, turn_number,
 		       agent_id, created_at, display_meta
@@ -354,7 +379,8 @@ func LoadMessagesWithMeta(db *sql.DB) ([]MessageWithMeta, error) {
 	for rows.Next() {
 		var r MessageRow
 		err := rows.Scan(
-			&r.Role, &r.Origin, &r.Visibility, &r.Content, &r.ContentType, &r.ReasoningContent, &r.Reasoning,
+			&r.Role, &r.Origin, &r.Visibility, &r.InternalID, &r.Collaboration,
+			&r.Content, &r.ContentType, &r.ReasoningContent, &r.Reasoning,
 			&r.ToolCalls, &r.ToolName, &r.ToolResult, &r.ToolCallID,
 			&r.ToolError, &r.ProviderItems, &r.CacheControl, &r.TokenCount, &r.SequenceNum, &r.TurnNumber,
 			&r.AgentID, &r.CreatedAt, &r.DisplayMeta,
@@ -364,9 +390,16 @@ func LoadMessagesWithMeta(db *sql.DB) ([]MessageWithMeta, error) {
 		}
 
 		m := provider.ChatMessage{
+			InternalID: r.InternalID.String,
 			Role:       r.Role,
 			Origin:     provider.MessageOrigin(r.Origin),
 			Visibility: provider.MessageVisibility(r.Visibility),
+		}
+		if r.Collaboration.Valid && r.Collaboration.String != "" {
+			var attribution provider.CollaborationAttribution
+			if json.Unmarshal([]byte(r.Collaboration.String), &attribution) == nil {
+				m.Collaboration = &attribution
+			}
 		}
 		m.Content = parseMessageContent(r.Content.String, r.ContentType.String)
 

@@ -239,7 +239,7 @@ func TestActivityProjectionActiveThinkingAndEditWriteKeepOriginalRows(t *testing
 
 func TestActivityProjectionUnknownAndChildFailureStayVisible(t *testing.T) {
 	for _, c := range []struct{ name, content string }{
-		{name: "poll_sub_agent", content: `{"status":"failed_error","name":"Lily"}`},
+		{name: "agent_wait", content: `{"id":"run-failed","agent_id":"agent-1","state":"failed","version":2}`},
 		{name: "check_async_command", content: `{"status":"failed","exit_code":1}`},
 		{name: "execute_command", content: "Command failed: exit 1"},
 		{name: "unexpected_tool", content: "ok"},
@@ -264,8 +264,8 @@ func TestActivityProjectionRealAsyncResultsClassifiedHonestly(t *testing.T) {
 		{"check_async_command", "Handle: job\nPID: 1\nStatus: completed\nExit code: 0\nDuration: 1s", true},
 		{"check_async_command", "Handle: job\nPID: 1\nStatus: failed\nExit code: 1\nDuration: 1s", false},
 		{"read_async_output", "[job output from byte 0]\nPASS\n[next_byte=4]", true},
-		{"poll_sub_agent", "## Sub-Agent Result: Lily [researcher]\n**Agent:** agent-1\n**Status:** OK", true},
-		{"poll_sub_agent", "## Sub-Agent Result: Lily [researcher]\n**Agent:** agent-1\n**Status:** ERROR", false},
+		{"agent_wait", `{"id":"run-ok","agent_id":"agent-1","state":"succeeded","version":2,"outcome":"completed"}`, true},
+		{"agent_wait", `{"id":"run-failed","agent_id":"agent-1","state":"failed","version":2,"outcome":"provider failed"}`, false},
 	} {
 		r := newActivityRenderer()
 		r.SyncMessages([]types.ChatMessage{

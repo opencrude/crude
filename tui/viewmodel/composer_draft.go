@@ -65,7 +65,7 @@ func (m *App) maybeHydrateComposerDraft() {
 		m.Input.SetReferenceStore(m.RefStore())
 	}
 	if m.ActiveSession != nil && m.ActiveSession.DB == nil {
-		m.applyFailedBtwDrafts()
+		m.applyRejectedSteeringDrafts()
 	}
 	sess := m.ActiveSession
 	if sess == nil || sess.DB == nil {
@@ -115,12 +115,12 @@ func (m *App) applyComposerDraft(msg composerDraftLoadedMsg) {
 	// A note may be restored while this asynchronous DB read is in flight.
 	// Preserve the newer local edit instead of replacing it with the old draft.
 	if m.Input.Value() != "" && m.Input.Value() != msg.text {
-		m.applyFailedBtwDrafts()
+		m.applyRejectedSteeringDrafts()
 		return
 	}
 	store := m.RefStore()
 	if store == nil {
-		m.applyFailedBtwDrafts()
+		m.applyRejectedSteeringDrafts()
 		return
 	}
 	runes := []rune(msg.text)
@@ -155,16 +155,16 @@ func (m *App) applyComposerDraft(msg composerDraftLoadedMsg) {
 		cursor = n
 	}
 	m.Input.SetCursorFlat(cursor)
-	m.applyFailedBtwDrafts()
+	m.applyRejectedSteeringDrafts()
 }
 
-func (m *App) applyFailedBtwDrafts() {
-	texts := m.failedBtwDrafts[m.ActiveSession]
+func (m *App) applyRejectedSteeringDrafts() {
+	texts := m.rejectedSteeringDrafts[m.ActiveSession]
 	if len(texts) == 0 {
 		return
 	}
-	delete(m.failedBtwDrafts, m.ActiveSession)
-	m.Input.SetInput(joinFailedBtwDrafts(texts, m.Input.Value()))
+	delete(m.rejectedSteeringDrafts, m.ActiveSession)
+	m.Input.SetInput(joinRejectedSteeringDrafts(texts, m.Input.Value()))
 	m.persistComposerDraftIfChanged()
 }
 

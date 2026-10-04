@@ -1,18 +1,9 @@
 package agent
 
 import (
-	"encoding/json"
-
 	"crude/codexio"
 	"crude/tools"
 )
-
-var SubAgentManagementTools = []string{
-	"run_sub_agent",
-	"poll_sub_agent",
-	"cancel_sub_agent",
-	"list_sub_agents",
-}
 
 type CategoryToolConfig struct {
 	AllowedTools []string
@@ -27,10 +18,12 @@ func CategoryToolDefaults(category string) CategoryToolConfig {
 				"read_file", "glob_files", "grep_files", "list_directory",
 				"web_search", "web_fetch", "arxiv_search",
 				"execute_command",
-				"write_report", "question",
+				"publish_report", "question",
 				"update_plan", "get_plan",
 				"wait", "reply",
-				"capability_search", "capability_activate", "mcp_read_resource", "mcp_get_prompt", "board_post", "board_read",
+				"capability_search", "capability_activate", "mcp_read_resource", "mcp_get_prompt",
+				"agent_list", "agent_inspect", "agent_send", "agent_respond",
+				"artifact_read", "agent_wait", "board_read",
 			},
 			DeniedTools: []string{
 				"write_file", "edit_file", "delete_file", "move_file", "copy_file",
@@ -47,8 +40,10 @@ func CategoryToolDefaults(category string) CategoryToolConfig {
 			AllowedTools: []string{
 				"read_file", "write_file", "edit_file", "glob_files", "grep_files",
 				"list_directory",
-				"write_report", "reply", "wait",
-				"capability_search", "capability_activate", "mcp_read_resource", "mcp_get_prompt", "board_post", "board_read",
+				"publish_report", "reply", "wait",
+				"capability_search", "capability_activate", "mcp_read_resource", "mcp_get_prompt",
+				"agent_list", "agent_inspect", "agent_send", "agent_respond",
+				"artifact_read", "agent_wait", "board_read",
 			},
 			DeniedTools: []string{
 				"delete_file", "move_file", "copy_file",
@@ -122,61 +117,11 @@ func filterToolsWithCategory(allTools []tools.ToolDef, specAllowed, specDenied [
 		})
 	}
 
-	if isSubAgent {
-		filtered = denyTools(filtered, SubAgentManagementTools)
-		filtered = ensureToolExists(filtered, "write_report")
-	}
-
 	return filtered
 }
 
 func ApplyOrchestratorOverrides(filtered []tools.ToolDef) []tools.ToolDef {
-	descs := orchestratorToolDescriptions()
-	result := make([]tools.ToolDef, len(filtered))
-	for i, t := range filtered {
-		if desc, ok := descs[t.Function.Name]; ok {
-			result[i] = t
-			result[i].Function.Description = desc
-		} else {
-			result[i] = t
-		}
-	}
-	return result
-}
-
-func orchestratorToolDescriptions() map[string]string {
-	return map[string]string{
-		"run_sub_agent": "Optionally delegate a well-defined subtask when useful; direct tool use is equally supported. " +
-			"Context handoff: pass the file paths of any previous agent reports (.md) in the `instructions` parameter so the new agent has context. " +
-			"wait=true (default) returns the terminal result in this call; use it for a blocking dependency. " +
-			"wait=false returns a handle immediately; continue independent work or end your turn and completion will notify you. " +
-			"Assign exclusive owned paths, acceptance criteria, and a stopping condition. Agree shared interfaces before parallel edits. " +
-			"Children run focused checks; the parent owns final integrated tests and lint. If sibling work blocks a child, it must report partial progress and stop, not repeatedly check changing files. " +
-			"Batch independent launches together when parallel tool calls are available. " +
-			"Do not actively wait or poll for routine results. " +
-			"Required: description. " +
-			"Optional: name (task/profile hint; personal identity is allocated automatically), category, instructions, policy, allowed_tools, denied_tools, file_ownership, wait. " +
-			"Model and provider are resolved automatically from your configuration; do not specify them.",
-
-		"poll_sub_agent": "Check a child status or recover a result when it is needed for a decision or user request. " +
-			"Check a sub-agent that appears genuinely stalled, unresponsive, or broken. " +
-			"The system auto-wakes you when sub-agents complete, so routine polling is unnecessary. " +
-			"Avoid repeated polling while waiting for normal completion.",
-
-		"list_sub_agents": "List active children (and completed children when requested) for user visibility, coordination, or troubleshooting. " +
-			"Diagnose stalled, unresponsive, or conflicting sub-agents. " +
-			"Completion notifications make repetitive status polling unnecessary.",
-
-		"cancel_sub_agent": "Cancel a child at the user's request or when work is unwanted, misrouted, stale, or unresponsive. " +
-			"Batch independent cancellations in one parallel call. Cancellation is not successful completion.",
-	}
-}
-
-func denyTools(toolList []tools.ToolDef, names []string) []tools.ToolDef {
-	denied := makeStringSet(names)
-	return filterToolSlice(toolList, func(t tools.ToolDef) bool {
-		return !denied[t.Function.Name]
-	})
+	return append([]tools.ToolDef(nil), filtered...)
 }
 
 func makeStringSet(items []string) map[string]bool {
@@ -195,21 +140,4 @@ func filterToolSlice(tds []tools.ToolDef, pred func(tools.ToolDef) bool) []tools
 		}
 	}
 	return result
-}
-
-func ensureToolExists(toolList []tools.ToolDef, name string) []tools.ToolDef {
-	for _, t := range toolList {
-		if t.Function.Name == name {
-			return toolList
-		}
-	}
-	toolList = append(toolList, tools.ToolDef{
-		Type: "function",
-		Function: tools.ToolFuncDef{
-			Name:        name,
-			Description: "Auto-included tool for sub-agents.",
-			Parameters:  json.RawMessage(`{"type":"object","properties":{}}`),
-		},
-	})
-	return toolList
 }

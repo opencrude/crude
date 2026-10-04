@@ -113,31 +113,6 @@ func (m *SubAgentManager) GetFinished(id AgentID) (*SubAgentHandle, bool) {
 	return h, ok
 }
 
-func (m *SubAgentManager) Cancel(id AgentID) (SubAgentResult, bool) {
-	m.mu.Lock()
-	handle, ok := m.active[id]
-	if !ok {
-		m.mu.Unlock()
-		return SubAgentResult{}, false
-	}
-	delete(m.active, id)
-	handle.Finished = true
-	m.finished[id] = handle
-	result := SubAgentResult{
-		AgentID:   id,
-		Name:      handle.Spec.Name,
-		Category:  handle.Spec.Category,
-		Status:    SubAgentCancelled,
-		SessionID: handle.SessionID,
-	}
-	m.completed = append(m.completed, result)
-	m.completedMap[id] = result
-	m.mu.Unlock()
-
-	handle.Cancel()
-	return result, true
-}
-
 func (m *SubAgentManager) GetActive(id AgentID) (*SubAgentHandle, bool) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -175,7 +150,7 @@ func (m *SubAgentManager) ListStatus(includeCompleted bool) []SubAgentStatusEntr
 	var entries []SubAgentStatusEntry
 	for id, h := range m.active {
 		entries = append(entries, SubAgentStatusEntry{
-			HandleID:       string(id),
+			AgentID:        id,
 			Name:           h.Spec.Name,
 			Category:       h.Spec.Category,
 			Status:         string(SubAgentRunning),
@@ -188,15 +163,17 @@ func (m *SubAgentManager) ListStatus(includeCompleted bool) []SubAgentStatusEntr
 	if includeCompleted {
 		for id, h := range m.finished {
 			status := "unknown"
-			resultPath := ""
 			summaryGist := ""
+			reportID := ""
+			reportRevision := 0
 			if r, ok := m.completedMap[id]; ok {
 				status = string(r.Status)
-				resultPath = r.ResultPath
 				summaryGist = r.SummaryGist
+				reportID = r.ReportID
+				reportRevision = r.ReportRevision
 			}
 			entries = append(entries, SubAgentStatusEntry{
-				HandleID:       string(id),
+				AgentID:        id,
 				Name:           h.Spec.Name,
 				Category:       h.Spec.Category,
 				Status:         status,
@@ -204,7 +181,8 @@ func (m *SubAgentManager) ListStatus(includeCompleted bool) []SubAgentStatusEntr
 				StepsUsed:      int(h.StepCount.Load()),
 				Model:          h.Spec.Model,
 				FilesClaimed:   h.Spec.FileOwnership,
-				ResultPath:     resultPath,
+				ReportID:       reportID,
+				ReportRevision: reportRevision,
 				SummaryGist:    summaryGist,
 			})
 		}
@@ -213,7 +191,7 @@ func (m *SubAgentManager) ListStatus(includeCompleted bool) []SubAgentStatusEntr
 }
 
 type SubAgentStatusEntry struct {
-	HandleID       string   `json:"handle_id"`
+	AgentID        AgentID  `json:"agent_id"`
 	Name           string   `json:"name"`
 	Category       string   `json:"category"`
 	Status         string   `json:"status"`
@@ -221,6 +199,7 @@ type SubAgentStatusEntry struct {
 	StepsUsed      int      `json:"steps_used"`
 	Model          string   `json:"model"`
 	FilesClaimed   []string `json:"files_claimed"`
-	ResultPath     string   `json:"result_path,omitempty"`
+	ReportID       string   `json:"report_id,omitempty"`
+	ReportRevision int      `json:"report_revision,omitempty"`
 	SummaryGist    string   `json:"summary_gist,omitempty"`
 }

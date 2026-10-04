@@ -113,7 +113,7 @@ func SummarizeArgs(tool, argsStr string) string {
 	if tool == "update_plan" || tool == "get_plan" {
 		return ExtractArg(argsStr, "plan_id")
 	}
-	if tool == "run_sub_agent" {
+	if tool == "agent_start" {
 		// The assignment is the useful operand. Raw launch arguments can include
 		// lengthy instructions and policy fields; neither belongs in a chat title.
 		if description := ExtractArg(argsStr, "description"); description != "" {
@@ -131,15 +131,7 @@ func SummarizeArgs(tool, argsStr string) string {
 		return ""
 	}
 	switch tool {
-	case "poll_sub_agent", "cancel_sub_agent":
-		if id := ExtractArg(argsStr, "handle_id"); id != "" && !structuredArguments(id) {
-			return id
-		}
-		if !structuredArguments(argsStr) && !strings.Contains(argsStr, ":") {
-			return argsStr // already summarized handle in a canonical snapshot
-		}
-		return ""
-	case "list_sub_agents", "write_report", "question", "reply":
+	case "question", "reply":
 		return "" // these calls have no useful operand in their argument envelope
 	case "remember":
 		return ExtractArg(argsStr, "title")
@@ -147,15 +139,35 @@ func SummarizeArgs(tool, argsStr string) string {
 		return ExtractArg(argsStr, "id")
 	case "capability_activate":
 		return ExtractArg(argsStr, "id")
-	case "board_post":
-		kind, to := ExtractArg(argsStr, "type"), ExtractArg(argsStr, "to")
-		if kind != "" && to != "" {
-			return kind + " → " + to
+	case "agent_list":
+		return firstOperand(ExtractArg(argsStr, "query"), ExtractArg(argsStr, "session_id"))
+	case "agent_inspect":
+		return ExtractArg(argsStr, "agent_id")
+	case "agent_send":
+		kind := ExtractArg(argsStr, "kind")
+		return firstOperand(kind, ExtractArg(argsStr, "request_id"))
+	case "agent_respond":
+		return joinOperands(ExtractArg(argsStr, "disposition"), ExtractArg(argsStr, "request_id"))
+	case "agent_control":
+		return joinOperands(ExtractArg(argsStr, "operation"), ExtractArg(argsStr, "agent_id"))
+	case "publish_report":
+		return firstOperand(ExtractArg(argsStr, "summary"), ExtractArg(argsStr, "artifact_id"))
+	case "artifact_read":
+		return ExtractArg(argsStr, "artifact_id")
+	case "agent_wait":
+		for _, key := range []string{"run_id", "agent_id", "artifact_id"} {
+			value := ExtractArg(argsStr, key)
+			if value != "" && !structuredArguments(value) && !strings.Contains(value, `{"`) {
+				return value
+			}
 		}
-		return firstOperand(kind, to)
+		return ""
 	case "board_read":
-		if thread := ExtractArg(argsStr, "thread"); thread != "" {
+		if thread := ExtractArg(argsStr, "thread_id"); thread != "" {
 			return "thread " + thread
+		}
+		if query := ExtractArg(argsStr, "search"); query != "" {
+			return query
 		}
 		if since := ExtractArg(argsStr, "since"); since != "" {
 			return "after #" + since
@@ -258,7 +270,9 @@ func subAgentCategoryLabel(category string) string {
 // or rewrites that audit evidence.
 func RetainsStructuredToolInput(name string) bool {
 	switch name {
-	case "board_post", "board_read", "remember", "recall_memory", "update_memory",
+	case "agent_list", "agent_inspect", "agent_start", "agent_send", "agent_respond", "agent_control",
+		"publish_report", "artifact_read", "agent_wait", "board_read",
+		"remember", "recall_memory", "update_memory",
 		"forget_memory", "memory_feedback", "search_history", "capability_search",
 		"capability_activate", "mcp_read_resource", "mcp_get_prompt":
 		return true

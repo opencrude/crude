@@ -33,11 +33,18 @@ func TestParallelUsesSameTreeAsIndividualTools(t *testing.T) {
 
 func TestParallelAgentHandlesStaySemanticThroughPreviewAndResult(t *testing.T) {
 	r := newActivityRenderer()
-	input := `{"tool_uses":[{"recipient_name":"poll_sub_agent","parameters":{"handle_id":"agent-8f21"}},{"recipient_name":"cancel_sub_agent","parameters":{"handle_id":"agent-39bf"}}]}`
+	input := `{"tool_uses":[{"recipient_name":"agent_wait","parameters":{"agent_id":"agent-8f21"}},{"recipient_name":"agent_control","parameters":{"agent_id":"agent-39bf","operation":"cancel"}}]}`
 	message := types.ChatMessage{InternalID: "batch", Role: types.RoleTool, ToolName: "multi_tool_use.parallel",
 		ToolInput: input, ToolStatus: types.ToolStatusStreaming, ToolPreviewPhase: types.ToolPreviewPreparing}
-	for i, body := range []string{"", `{"results":[{"recipient_name":"poll_sub_agent","phase":"running"},null]}`,
-		`{"results":[{"recipient_name":"poll_sub_agent","result":"done"},{"recipient_name":"cancel_sub_agent","result":"cancelled"}]}`} {
+	settled, err := json.Marshal(map[string]any{"results": []map[string]any{
+		{"recipient_name": "agent_wait", "result": `{"id":"agent-8f21","name":"Lily","category":"researcher","state":"available","presence":"attached","runtime_epoch":1}`},
+		{"recipient_name": "agent_control", "result": "control requested"},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i, body := range []string{"", `{"results":[{"recipient_name":"agent_wait","phase":"running"},null]}`,
+		string(settled)} {
 		message.Content = body
 		if i == 2 {
 			message.ToolStatus, message.ToolPreviewPhase = types.ToolStatusSuccess, types.ToolPreviewDone
@@ -49,7 +56,7 @@ func TestParallelAgentHandlesStaySemanticThroughPreviewAndResult(t *testing.T) {
 		}
 		for j, want := range []string{"agent-8f21", "agent-39bf"} {
 			text := strings.Join(rows[j].Lines, "\n")
-			if !strings.Contains(text, want) || strings.Contains(text, `"handle_id"`) || strings.Contains(text, "{\\") {
+			if !strings.Contains(text, want) || strings.Contains(text, `"agent_id"`) || strings.Contains(text, "{\\") {
 				t.Fatalf("preview %d child %d leaked arguments: %q", i, j, text)
 			}
 		}
@@ -134,10 +141,10 @@ func TestParallelEmptyEnvelopeHidesOnlyLivePreparation(t *testing.T) {
 	}
 }
 
-func TestParallelSubAgentFailureUsesChildOutcome(t *testing.T) {
-	input := `{"tool_uses":[{"recipient_name":"run_sub_agent","parameters":{"category":"researcher","description":"Inspect renderer and report","wait":true}}]}`
-	result := "## Sub-Agent Result: Lily sub Dawn [researcher]\n**Agent:** child-1\n**Status:** TIMEOUT\n**Report:** report.md"
-	body, err := json.Marshal(map[string]any{"results": []map[string]any{{"recipient_name": "run_sub_agent", "result": result, "error": false}}})
+func TestParallelAgentWaitFailureUsesTypedRunOutcome(t *testing.T) {
+	input := `{"tool_uses":[{"recipient_name":"agent_wait","parameters":{"run_id":"run-failed"}}]}`
+	result := `{"id":"run-failed","agent_id":"agent-1","state":"failed","version":3,"outcome":"provider failed"}`
+	body, err := json.Marshal(map[string]any{"results": []map[string]any{{"recipient_name": "agent_wait", "result": result, "error": false}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,10 +155,10 @@ func TestParallelSubAgentFailureUsesChildOutcome(t *testing.T) {
 		t.Fatalf("parallel child rows: %+v", rows)
 	}
 	text := strings.Join(rows[0].Lines, "\n")
-	if !strings.Contains(text, "Sub-agent timed out Lily sub Dawn · Researcher") || strings.Contains(text, "Sub-agent finished") || strings.Contains(text, `"category"`) || strings.Contains(text, "**Status:**") {
-		t.Fatalf("parallel child outcome rendered incorrectly: %q", text)
+	if !strings.Contains(text, "Agent run failed run-failed") || !strings.Contains(text, "Run failed") || strings.Contains(text, `"state"`) {
+		t.Fatalf("parallel run outcome rendered incorrectly: %q", text)
 	}
 	if !strings.Contains(text, "× ") || activityEligible(r.activityMessages["batch:0"]) {
-		t.Fatalf("parallel child failure was grouped as successful work: %q", text)
+		t.Fatalf("parallel run failure was grouped as successful work: %q", text)
 	}
 }

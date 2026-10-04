@@ -27,13 +27,16 @@ func TestUnknownAndChangedDynamicToolsFailClosed(t *testing.T) {
 	}
 }
 
-func TestNativeEffectMetadataCoversToolsAndBoardCommunication(t *testing.T) {
-	for _, tool := range append(append(append([]tools.ToolDef(nil), tools.AgentTools...), tools.CapabilityTools...), tools.BoardTools...) {
+func TestNativeEffectMetadataCoversCapabilitiesAndCollaboration(t *testing.T) {
+	for _, tool := range append(append(append([]tools.ToolDef(nil), tools.AgentTools...), tools.CapabilityTools...), tools.CollaborationTools...) {
 		if _, exists := tools.NativeMetadata(tool.Function.Name); !exists {
 			t.Errorf("missing metadata %s", tool.Function.Name)
 		}
 	}
-	if !PolicyAllows(safety.ReadOnlyPolicy(), "board_post") {
+	if !PolicyAllows(safety.ReadOnlyPolicy(), "agent_send") {
 		t.Fatal("communication incorrectly required file writes")
+	}
+	if PolicyAllows(safety.ReadOnlyPolicy(), "agent_start") {
+		t.Fatal("read-only policy gained agent execution authority")
 	}
 }

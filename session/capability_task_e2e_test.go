@@ -103,7 +103,7 @@ func TestTaskAcquiresSkillActivatesMCPUsesToolAndResumesPassively(test *testing.
 	}
 	defer owner.Close()
 	owner.SetWorkDir(root)
-	owner.SetCapabilities(runtime, agent.NewFileOwnership(), nil, "", root)
+	owner.SetCapabilities(runtime, agent.NewFileOwnership())
 	owner.SetYolo(true)
 	sender := newMockEventSender()
 	orchestrator, err := owner.NewOrchestrator(sender)

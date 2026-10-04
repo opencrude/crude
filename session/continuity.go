@@ -38,7 +38,7 @@ func (s *Session) bindContinuity(live *agent.Agent, db *sql.DB, sessionID string
 			AllowedTools    []string             `json:"allowed_tools,omitempty"`
 			DeniedTools     []string             `json:"denied_tools,omitempty"`
 			SkillModes      map[string]string    `json:"skill_modes,omitempty"`
-			BoardID         string               `json:"collaboration_id,omitempty"`
+			WorkspaceID     string               `json:"workspace_id,omitempty"`
 		}{SessionID: sessionID, LatestTurn: latest, LatestHumanTurn: human}
 		if current != nil {
 			category := current.GetActiveDefaultCategory()
@@ -50,9 +50,9 @@ func (s *Session) bindContinuity(live *agent.Agent, db *sql.DB, sessionID string
 		if live.Provider != nil {
 			state.AccountID = live.Provider.AccountID
 		}
-		s.mu.Lock()
-		state.BoardID = s.boardID
-		s.mu.Unlock()
+		if store := s.CollaborationStore(); store != nil {
+			state.WorkspaceID = store.WorkspaceID()
+		}
 		data, err := json.Marshal(state)
 		if err != nil {
 			return rootprompt.SessionContinuityData{}, err

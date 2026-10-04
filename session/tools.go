@@ -181,37 +181,6 @@ func (s *Session) buildToolFn(multiAgent bool, turnProvider *provider.Provider, 
 		case "execute_command":
 			return s.executeCommandAutoPromote(ctx, params)
 
-		case "run_sub_agent":
-			owner, _ := ctx.Value(delegationOwnerKey{}).(delegationOwner)
-			enabled := multiAgent
-			if s.runtimeProfile != nil {
-				enabled = s.runtimeProfile.GetEffectiveConfig(owner.id).IsMultiAgentEnabled()
-			}
-			if !enabled {
-				return delegationDisabledResult(), nil
-			}
-			if !s.initSubAgentRunner() {
-				return delegationDisabledResult(), nil
-			}
-			return s.SubAgentRunner().RunSubAgent(ctx, params)
-
-		case "poll_sub_agent", "cancel_sub_agent", "list_sub_agents":
-			runner := s.SubAgentRunner()
-			if runner == nil {
-				return tools.ToolResult{Content: "No sub-agents have been launched in this session."}, nil
-			}
-			switch tool {
-			case "poll_sub_agent":
-				return runner.PollSubAgent(params)
-			case "cancel_sub_agent":
-				return runner.CancelSubAgent(params)
-			default:
-				return runner.ListSubAgents(params)
-			}
-
-		case "write_report":
-			return tools.ToolResult{Content: "write_report is for sub-agents only. Your response is already shown to the user."}, nil
-
 		default:
 			opts := toolOptionsForProvider(turnProvider, modalities, params)
 			if opts == nil {

@@ -66,7 +66,7 @@ func TestCurrentWorkspaceReopensWithSessionsMemoryAndCapabilities(t *testing.T) 
 	if _, err := ws.CapabilitySnapshot(ctx); err != nil {
 		t.Fatalf("capability settings unavailable after recovery: %v", err)
 	}
-	if _, err := ws.BoardSnapshot(ctx, "", "", "", 0); err != nil {
+	if _, err := ws.BoardSnapshot(ctx, "", "", 0, 0); err != nil {
 		t.Fatalf("board unavailable after recovery: %v", err)
 	}
 	cfg := &session.Config{ActiveProvider: "openai", Agents: session.DefaultAgentsConfig(),

@@ -472,69 +472,6 @@ var AgentTools = []ToolDef{
 	{
 		Type: "function",
 		Function: ToolFuncDef{
-			Name:        "run_sub_agent",
-			Description: "Spawn a specialized leaf agent to handle a well-defined subtask. The sub-agent gets its own context window, tool set, permission policy, session, and TUI tab. It runs to completion and returns a structured result. USE when a task is: self-contained (fully describable in 1-2 sentences), non-trivial (3+ tool calls), and benefits from a separate context window or cheaper model. Do NOT use for tasks requiring context from the current conversation or trivial 1-2 call operations. Sub-agents are leaf agents and cannot spawn further sub-agents — the hierarchy is strictly 2 levels.",
-			Parameters: json.RawMessage(`{
-				"type":"object",
-				"properties":{
-					"name":{"type":"string","description":"Optional task/profile hint. Crude allocates a unique personal first name and parent label independently of this hint."},
-					"category":{"type":"string","description":"Capability tier: 'researcher' (read-only, cheap, fast), 'crafter' (implementation, write-capable, mid-cost), or 'aeron' (grunt work, ultra-cheap, restricted). Default: 'crafter'.","enum":["researcher","crafter","aeron"]},
-					"description":{"type":"string","description":"Bounded outcome, owned paths, acceptance criteria, and stopping condition. Keep shared integration with the parent."},
-					"instructions":{"type":"string","description":"Custom instructions appended to the sub-agent's system prompt. Use to specialize behavior."},
-					"policy":{"type":"string","description":"Permission policy: 'default', 'read-only', 'no-delete', or 'no-execute'. Default: inherited from category.","enum":["default","read-only","no-delete","no-execute"]},
-					"allowed_tools":{"type":"array","items":{"type":"string"},"description":"Explicit tool whitelist. If provided, only these tools are available (intersected with category defaults)."},
-					"denied_tools":{"type":"array","items":{"type":"string"},"description":"Explicit tool blacklist. These tools are removed (unioned with category defaults)."},
-					"file_ownership":{"type":"array","items":{"type":"string"},"description":"Optional pre-declared paths this sub-agent claims exclusive write access to."},
-					"wait":{"type":"boolean","description":"If true (default), block until the sub-agent completes. If false, return immediately; completion automatically notifies the parent. Do not poll routinely."}
-				},
-				"required":["description"]
-			}`),
-		},
-	},
-	{
-		Type: "function",
-		Function: ToolFuncDef{
-			Name:        "poll_sub_agent",
-			Description: "Recover a result needed for a decision or diagnose a genuinely stalled child. Completion is delivered automatically; do not repeatedly poll to wait for normal work.",
-			Parameters: json.RawMessage(`{
-				"type":"object",
-				"properties":{
-					"handle_id":{"type":"string","description":"The handle ID returned by run_sub_agent(wait=false)."}
-				},
-				"required":["handle_id"]
-			}`),
-		},
-	},
-	{
-		Type: "function",
-		Function: ToolFuncDef{
-			Name:        "cancel_sub_agent",
-			Description: "Cancel a running sub-agent. The sub-agent's context is cancelled, it returns a SubAgentResult with status 'cancelled', and all its file ownership claims are released.",
-			Parameters: json.RawMessage(`{
-				"type":"object",
-				"properties":{
-					"handle_id":{"type":"string","description":"The handle ID of the sub-agent to cancel."}
-				},
-				"required":["handle_id"]
-			}`),
-		},
-	},
-	{
-		Type: "function",
-		Function: ToolFuncDef{
-			Name:        "list_sub_agents",
-			Description: "List all active and recently completed sub-agents. Shows status, category, model, elapsed time, and steps used.",
-			Parameters: json.RawMessage(`{
-				"type":"object",
-				"properties":{
-					"include_completed":{"type":"boolean","description":"If true, also include completed/cancelled/failed agents from this session. Default: false (active only)."}
-				}
-			}`),
-		},
-	},
-	{
-		Type: "function",
-		Function: ToolFuncDef{
 			Name: "remember",
 			Description: "Save a durable workspace memory for future turns and sessions. " +
 				"Use for stable project conventions, user preferences, verified architectural decisions/facts, " +
@@ -637,20 +574,6 @@ var AgentTools = []ToolDef{
 					"limit":{"type":"integer","description":"Maximum results per category; default 10, maximum 50."}
 				},
 				"required":["query"]
-			}`),
-		},
-	},
-	{
-		Type: "function",
-		Function: ToolFuncDef{
-			Name:        "write_report",
-			Description: "Deliver the bounded assignment to the parent, then stop. Report the outcome (complete, partial, or blocked), changes or findings with exact paths, focused verification, and remaining blockers. Include only decision-relevant evidence, not copied source files, raw logs, or repeated analysis. Write once when finished or blocked; do not keep checking sibling work after handoff.",
-			Parameters: json.RawMessage(`{
-				"type":"object",
-				"properties":{
-					"report":{"type":"string","description":"Concise, self-contained handoff: outcome, findings or changed paths, verification performed, blockers, and any parent integration actions. Never include credentials."}
-				},
-				"required":["report"]
 			}`),
 		},
 	},

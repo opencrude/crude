@@ -29,7 +29,9 @@ func (a *AgentState) handleToolCallStreaming(evt AgentEvent, target *Conversatio
 	dest, _ := origData["destination"].(string)
 	pattern, _ := origData["pattern"].(string)
 	handle, _ := origData["handle"].(string)
-	handleID, _ := origData["handle_id"].(string)
+	agentID, _ := origData["agent_id"].(string)
+	runID, _ := origData["run_id"].(string)
+	artifactID, _ := origData["artifact_id"].(string)
 	seconds, _ := origData["seconds"].(string)
 
 	var tgt string
@@ -64,8 +66,14 @@ func (a *AgentState) handleToolCallStreaming(evt AgentEvent, target *Conversatio
 				tgt = handle
 			}
 		}
-		if tgt == "" && handleID != "" {
-			tgt = handleID
+		if tgt == "" && runID != "" {
+			tgt = runID
+		}
+		if tgt == "" && agentID != "" {
+			tgt = agentID
+		}
+		if tgt == "" && artifactID != "" {
+			tgt = artifactID
 		}
 		if tgt == "" && seconds != "" {
 			tgt = seconds + "s"
@@ -76,9 +84,9 @@ func (a *AgentState) handleToolCallStreaming(evt AgentEvent, target *Conversatio
 	oldLines := toInt(origData["old_lines"])
 	newLines := toInt(origData["new_lines"])
 
-	if contentLines == 0 && name == "write_report" {
+	if contentLines == 0 && name == "publish_report" {
 		if rawArgs, _ := origData["args"].(string); rawArgs != "" {
-			if r := extractJSONStringValue(rawArgs, "report"); r != "" {
+			if r := extractJSONStringValue(rawArgs, "body"); r != "" {
 				contentLines = strings.Count(r, "\n") + 1
 			}
 		}
@@ -119,18 +127,10 @@ func (a *AgentState) handleToolCallStreaming(evt AgentEvent, target *Conversatio
 				if p := extractJSONStringValue(rawArgs, "pattern"); p != "" {
 					tgt = fmt.Sprintf("\"%s\"", p)
 				}
-			case "write_report":
-				if r := extractJSONStringValue(rawArgs, "report"); r != "" {
-					tgt = "report"
-				}
-			case "poll_sub_agent", "cancel_sub_agent":
-				if hid := extractJSONStringValue(rawArgs, "handle_id"); hid != "" {
-					if len(hid) > 12 {
-						tgt = hid[:12] + "…"
-					} else {
-						tgt = hid
-					}
-				}
+			case "publish_report":
+				tgt = extractJSONStringValue(rawArgs, "summary")
+			case "agent_control":
+				tgt = extractJSONStringValue(rawArgs, "agent_id")
 			}
 		}
 	}

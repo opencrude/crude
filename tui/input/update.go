@@ -81,7 +81,7 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Eve
 				return m, nil, SlashCommandEvent{Command: text, ReferenceIDs: refIDs}
 			}
 			if m.thinking && !m.blocking {
-				return m, nil, BtwSubmitEvent{Text: text, ReferenceIDs: refIDs}
+				return m, nil, SteeringSubmitEvent{Text: text, ReferenceIDs: refIDs}
 			}
 			return m, nil, SubmitEvent{Text: text, ReferenceIDs: refIDs}
 

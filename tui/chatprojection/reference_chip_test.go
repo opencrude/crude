@@ -33,16 +33,16 @@ func TestRenderUserMessageInfersLegacyReferenceLabel(t *testing.T) {
 	assertReferenceChipSpans(t, rendered.native[0], label)
 }
 
-func TestRenderPendingBtwUsesCanonicalActivityDot(t *testing.T) {
-	message := types.ChatMessage{Role: types.RoleUser, Content: "include tests", PendingBtw: true}
+func TestRenderPendingSteeringUsesCanonicalActivityDot(t *testing.T) {
+	message := types.ChatMessage{Role: types.RoleUser, Content: "include tests", PendingSteering: true}
 	for _, spinFrame := range []int{0, 400} {
 		rendered := renderUserMessage(message, renderContext{contentWidth: 80, spinFrame: spinFrame}, true)
 		if len(rendered.native) != 2 {
-			t.Fatalf("pending BTW rows = %+v", rendered.native)
+			t.Fatalf("pending human steering rows = %+v", rendered.native)
 		}
 		status := rendered.native[1]
 		if !strings.Contains(status.PlainText(), ui.ActivityDot(spinFrame)) || !strings.Contains(status.PlainText(), "Waiting to send") {
-			t.Fatalf("pending BTW status = %q", status.PlainText())
+			t.Fatalf("pending human steering status = %q", status.PlainText())
 		}
 	}
 }

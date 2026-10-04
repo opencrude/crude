@@ -95,9 +95,9 @@ func TestPersistedToolStatusDoesNotMislabelValidationErrorAsCancelled(t *testing
 
 func TestCanonicalToolSnapshotCarriesLiveLifecycleAndSubPaneLink(t *testing.T) {
 	tracker := &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}
-	tracker.updateToolCall("call-1", "run_sub_agent", "description: inspect wait: true")
+	tracker.updateToolCall("call-1", "agent_start", "description: inspect wait: true")
 	result := `{"session_id":"child-session","agent_id":"child-1","status":"completed"}`
-	tracker.updateToolResult("call-1", "run_sub_agent", result, "success", 1500, 42, 3, 1)
+	tracker.updateToolResult("call-1", "agent_start", result, "success", 1500, 42, 3, 1)
 	message := provider.NewTextMessage("tool", result)
 	message.ToolCallID = "call-1"
 	tracked := tracker.get("call-1")
@@ -109,19 +109,12 @@ func TestCanonicalToolSnapshotCarriesLiveLifecycleAndSubPaneLink(t *testing.T) {
 		t.Fatalf("canonical metadata = %#v", meta)
 	}
 	snapshot := meta.Snapshots[0]
-	if snapshot.ToolName != "run_sub_agent" || snapshot.ToolStatus != "success" ||
+	if snapshot.ToolName != "agent_start" || snapshot.ToolStatus != "success" ||
 		snapshot.ToolPreviewPhase != "done" || snapshot.SubPaneID != "child-1" ||
 		snapshot.ToolDuration != 1500*time.Millisecond || snapshot.ToolEstTokens != 42 ||
 		snapshot.ToolLinesAdded != 3 || snapshot.ToolLinesRemoved != 1 ||
 		snapshot.TurnGeneration != 4 || snapshot.ProviderID != "ollama-cloud" || snapshot.ModelID != "kimi-k3" {
 		t.Fatalf("canonical tool snapshot = %#v", snapshot)
-	}
-	toolText := "## Sub-Agent Result: Lily [researcher]\n**Agent:** agent-7\n**Status:** OK\n**Session:** session-7"
-	tracker.updateToolResult("call-1", "run_sub_agent", toolText, "success", 1500, 42, 3, 1)
-	message.Content = provider.TextContent(toolText)
-	meta = canonicalizeDisplayMeta(message, tracker.get("call-1"), `{"description":"inspect","wait":true}`, 3, time.Now())
-	if meta.Snapshots[0].SubPaneID != "agent-7" {
-		t.Fatalf("synchronous child link was not the agent ID: %+v", meta.Snapshots)
 	}
 }
 
@@ -374,20 +367,20 @@ func TestHardCancelSignalsEveryOrchestrator(t *testing.T) {
 	}
 }
 
-func TestFinalizeTurnPersistsBtwDisplayProjection(t *testing.T) {
+func TestFinalizeTurnPersistsHumanSteeringDisplayProjection(t *testing.T) {
 	s := &Session{}
-	btw := provider.ChatMessage{
-		InternalID:      "btw-1",
+	steering := provider.ChatMessage{
+		InternalID:      "steering-1",
 		DisplayContent:  "please include tests",
 		ReferenceLabels: []string{"@notes"},
 		Role:            "user",
-		Content:         provider.TextContent(rootprompt.BTWInterruptionPrefix() + "please include tests"),
+		Content:         provider.TextContent(rootprompt.HumanSteeringPrefix() + "please include tests"),
 	}
-	s.finalizeTurn([]provider.ChatMessage{btw}, 0, &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}, "", "msg", ttypes.TurnIdentity{})
+	s.finalizeTurn([]provider.ChatMessage{steering}, 0, &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}, "", "msg", ttypes.TurnIdentity{})
 	messages := s.MessagesWithMeta()
 	if len(messages) != 1 || messages[0].Meta.DisplayContent != "please include tests" ||
 		len(messages[0].Meta.ReferenceLabels) != 1 || messages[0].Meta.ReferenceLabels[0] != "@notes" {
-		t.Fatalf("persisted BTW display projection=%#v", messages)
+		t.Fatalf("persisted human steering display projection=%#v", messages)
 	}
 }
 

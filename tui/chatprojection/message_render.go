@@ -96,7 +96,7 @@ func renderUserMessage(msg types.ChatMessage, ctx renderContext, suppressHeader 
 			ml.native = append(ml.native, pl)
 		}
 	}
-	if msg.PendingBtw {
+	if msg.PendingSteering {
 		ml.frameSensitive = true
 		line := PaintLine{Spans: []RowSpan{
 			{Text: "│ ", Role: ui.ColorMuted},
@@ -107,6 +107,71 @@ func renderUserMessage(msg types.ChatMessage, ctx renderContext, suppressHeader 
 		ml.native = append(ml.native, line)
 	}
 	return ml
+}
+
+func renderCollaborationMessage(msg types.ChatMessage, ctx renderContext) messageLines {
+	var ml messageLines
+	attribution := msg.Collaboration
+	if attribution == nil {
+		return renderUserMessage(msg, ctx, false)
+	}
+	recipients := attribution.RecipientNames
+	if len(recipients) == 0 {
+		recipients = attribution.RecipientIDs
+	}
+	headerText := attribution.SenderName
+	if headerText == "" {
+		headerText = attribution.SenderID
+	}
+	if len(recipients) > 0 {
+		headerText += " → " + strings.Join(recipients, ", ")
+	}
+	headerText += " · " + collaborationMessageLabel(attribution.Kind)
+	if label := rendering.FormatTimeLabel(msg.Time); label != "" {
+		headerText += " · " + label
+	}
+	headerText = rendering.TruncateVisual(headerText, ctx.innerW, "")
+	header := PaintLine{Spans: []RowSpan{{Text: headerText, Role: ui.ColorAccent, Attr: cell.AttrBold}}}
+	ml.lines = append(ml.lines, header.PlainText())
+	ml.native = append(ml.native, header)
+
+	rendered, isMarkdown := renderMarkdown(msg.Content, ctx.mdRenderer)
+	var body []PaintLine
+	if isMarkdown {
+		body = BridgeAnsiLines(strings.Split(rendered, "\n"), ctx.tokens)
+	} else {
+		body = buildPlainBodyLines(rendering.WrapText(msg.Content, max(1, ctx.contentWidth-2)))
+	}
+	for _, line := range body {
+		withRail := PaintLine{Spans: []RowSpan{{Text: "│ ", Role: ui.ColorMuted}}}
+		withRail.Spans = append(withRail.Spans, line.Spans...)
+		ml.lines = append(ml.lines, withRail.PlainText())
+		ml.native = append(ml.native, withRail)
+	}
+	return ml
+}
+
+func collaborationMessageLabel(kind string) string {
+	switch kind {
+	case "work_request":
+		return "Work request"
+	case "work_revision":
+		return "Work revision"
+	case "request_disposition":
+		return "Request response"
+	case "report_published":
+		return "Report"
+	case "run_outcome":
+		return "Run outcome"
+	case "lifecycle_control":
+		return "Control"
+	case "control_outcome":
+		return "Control outcome"
+	case "peer_reply":
+		return "Reply"
+	default:
+		return "Message"
+	}
 }
 
 func renderAssignmentMessage(msg types.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {
@@ -300,7 +365,7 @@ func renderThinkingSummary(msg types.ChatMessage, ctx renderContext) messageLine
 		chevron = " ▾ "
 	}
 	header := PaintLine{Spans: []RowSpan{{Text: label + chevron, Role: ui.ColorMuted}}}
-	if msg.ThinkingActive && ctx.disclosure != DisclosureExpanded {
+	if msg.ThinkingActive && ctx.disclosure != DisclosureExpanded && !ctx.thinkingBodyOnly {
 		// The live preview belongs to the fixed strip. Keep one transcript
 		// disclosure affordance, not a duplicate animated copy of the thought.
 		header.Spans[0].Text = strings.TrimRight(header.Spans[0].Text, " ")
@@ -312,7 +377,7 @@ func renderThinkingSummary(msg types.ChatMessage, ctx renderContext) messageLine
 		// Compose at the shared readable minimum, then bound native spans below.
 		md = rendering.MakeMdRenderer(40, ctx.th)
 	}
-	if ctx.disclosure != DisclosureExpanded {
+	if ctx.disclosure != DisclosureExpanded && !ctx.thinkingBodyOnly {
 		preview := ThinkingPreviewLine(msg.Content, msg.ThinkingDisplay, md, ctx.tokens)
 		header.Spans = append(header.Spans, preview.Spans...)
 		if header.VisibleWidth() > ctx.contentWidth {
@@ -329,7 +394,10 @@ func renderThinkingSummary(msg types.ChatMessage, ctx renderContext) messageLine
 	for _, pl := range BridgeAnsiLines(strings.Split(rendered, "\n"), ctx.tokens) {
 		rows = append(rows, wrapPaintLine(pl, ctx.contentWidth)...)
 	}
-	native := append([]PaintLine{header}, rows...)
+	native := rows
+	if !ctx.thinkingBodyOnly {
+		native = append([]PaintLine{header}, rows...)
+	}
 	lines := make([]string, len(native))
 	for i, line := range native {
 		lines[i] = line.PlainText()
@@ -734,6 +802,9 @@ func compactionProgressBar(completed, total int, current bool) string {
 func renderMessageContent(msg types.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {
 	switch msg.Role {
 	case types.RoleUser:
+		if msg.Collaboration != nil {
+			return renderCollaborationMessage(msg, ctx)
+		}
 		return renderUserMessage(msg, ctx, suppressHeader)
 	case types.RoleAssistant:
 		return renderAssistantMessage(msg, ctx, suppressHeader)

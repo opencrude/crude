@@ -478,44 +478,44 @@ func TestSubmitInputUsesWorkspaceTurnAdmission(t *testing.T) {
 	}
 }
 
-func TestSubmitBtw_NonexistentAgent(t *testing.T) {
+func TestSubmitSteering_NonexistentAgent(t *testing.T) {
 	app := newTestApp(t)
-	cmd := app.submitBtw("nonexistent", "hello", nil)
+	cmd := app.submitSteering("nonexistent", "hello", nil)
 	if cmd != nil {
 		t.Fatal("expected nil cmd for nonexistent agent")
 	}
 }
 
-func TestBtwConsumedClearsPendingStatus(t *testing.T) {
+func TestCollaborationDeliverySettlementClearsPendingStatus(t *testing.T) {
 	app := newFullTestApp(t)
 	conversation := workspace.NewConversation()
-	first := conversation.AppendPendingBtw(workspace.Message{Role: workspace.MessageRoleUser, Content: "first"})
-	second := conversation.AppendPendingBtw(workspace.Message{Role: workspace.MessageRoleUser, Content: "second"})
+	first := conversation.AppendPendingSteering(workspace.Message{Role: workspace.MessageRoleUser, Content: "first"})
+	second := conversation.AppendPendingSteering(workspace.Message{Role: workspace.MessageRoleUser, Content: "second"})
 	app.AgentMgr.AddOrchestrator("agent", workspace.NewAgentState("agent", conversation, nil))
-	app.syncPendingBtwCount()
-	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "btw_consumed", AgentID: "agent", Data: map[string]any{"internal_id": first}})
-	if got := testBtwCount(app); got != 1 {
-		t.Fatalf("pending BTW count=%d want 1", got)
+	app.syncPendingSteeringCount()
+	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "collaboration_delivery_admitted", AgentID: "agent", Data: map[string]any{"history_message_id": first}})
+	if got := testSteeringCount(app); got != 1 {
+		t.Fatalf("pending human steering count=%d want 1", got)
 	}
-	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "btw_cleared", AgentID: "agent", Data: map[string]any{"internal_ids": []string{second}}})
-	if got := testBtwCount(app); got != 0 {
-		t.Fatalf("pending BTW count=%d want 0", got)
+	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "collaboration_delivery_rejected", AgentID: "agent", Data: map[string]any{"history_message_id": second}})
+	if got := testSteeringCount(app); got != 0 {
+		t.Fatalf("pending human steering count=%d want 0", got)
 	}
 }
 
-func TestFailedBtwReturnsToOwningComposerWithoutLosingNewDraft(t *testing.T) {
+func TestRejectedSteeringReturnsToOwningComposerWithoutLosingNewDraft(t *testing.T) {
 	app := newFullTestApp(t)
 	owner := workspace.NewSession("owner", t.TempDir(), nil, nil)
 	other := workspace.NewSession("other", t.TempDir(), nil, nil)
 	app.ActiveSession = owner
 	app.SessionsByAgent = map[string]*workspace.Session{"agent": owner}
 	conversation := workspace.NewConversation()
-	first := conversation.AppendPendingBtw(workspace.Message{Role: workspace.MessageRoleUser, Content: "first note"})
-	second := conversation.AppendPendingBtw(workspace.Message{Role: workspace.MessageRoleUser, Content: "second note"})
+	first := conversation.AppendPendingSteering(workspace.Message{Role: workspace.MessageRoleUser, Content: "first note"})
+	second := conversation.AppendPendingSteering(workspace.Message{Role: workspace.MessageRoleUser, Content: "second note"})
 	app.AgentMgr.AddOrchestrator("agent", workspace.NewAgentState("agent", conversation, nil))
 	app.Input.SetInput("newer draft")
-	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "btw_consumed", AgentID: "agent", Data: map[string]any{"internal_id": first}})
-	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "btw_cleared", AgentID: "agent", Data: map[string]any{"internal_ids": []string{first, second}}})
+	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "collaboration_delivery_rejected", AgentID: "agent", Data: map[string]any{"history_message_id": first}})
+	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "collaboration_delivery_rejected", AgentID: "agent", Data: map[string]any{"history_message_id": second}})
 	if got := app.Input.Value(); got != "first note\n\nsecond note\n\nnewer draft" {
 		t.Fatalf("restored composer = %q", got)
 	}
@@ -523,10 +523,10 @@ func TestFailedBtwReturnsToOwningComposerWithoutLosingNewDraft(t *testing.T) {
 		t.Fatalf("failed notes remained in transcript: %+v", conversation.Messages())
 	}
 
-	third := conversation.AppendPendingBtw(workspace.Message{Role: workspace.MessageRoleUser, Content: "background note"})
+	third := conversation.AppendPendingSteering(workspace.Message{Role: workspace.MessageRoleUser, Content: "background note"})
 	app.ActiveSession = other
 	app.Input.SetInput("other session draft")
-	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "btw_cleared", AgentID: "agent", Data: map[string]any{"internal_ids": []string{third}}})
+	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "collaboration_delivery_rejected", AgentID: "agent", Data: map[string]any{"history_message_id": third}})
 	if got := app.Input.Value(); got != "other session draft" {
 		t.Fatalf("failed note leaked into wrong session: %q", got)
 	}
@@ -537,22 +537,22 @@ func TestFailedBtwReturnsToOwningComposerWithoutLosingNewDraft(t *testing.T) {
 	}
 }
 
-func TestCancelledPendingBtwReturnsToComposerAndIsIdempotent(t *testing.T) {
+func TestCancelledPendingSteeringReturnsToComposerAndIsIdempotent(t *testing.T) {
 	app := newFullTestApp(t)
 	owner := workspace.NewSession("owner", t.TempDir(), nil, nil)
 	app.ActiveSession = owner
 	app.SessionsByAgent = map[string]*workspace.Session{"agent": owner}
 	conversation := workspace.NewConversation()
-	id := conversation.AppendPendingBtw(workspace.Message{Role: workspace.MessageRoleUser, Content: "cancel me"})
+	id := conversation.AppendPendingSteering(workspace.Message{Role: workspace.MessageRoleUser, Content: "cancel me"})
 	app.AgentMgr.AddOrchestrator("agent", workspace.NewAgentState("agent", conversation, nil))
 	app.Input.SetInput("typed while waiting")
-	clear := workspace.AgentEvent{Type: "btw_cleared", AgentID: "agent", Data: map[string]any{"internal_ids": []string{id}}}
+	clear := workspace.AgentEvent{Type: "collaboration_delivery_rejected", AgentID: "agent", Data: map[string]any{"history_message_id": id}}
 	app.handleAgentDomainEvent(clear)
 	app.handleAgentDomainEvent(clear)
 	if got := app.Input.Value(); got != "cancel me\n\ntyped while waiting" {
 		t.Fatalf("cancel recovery duplicated or discarded draft: %q", got)
 	}
-	if got := conversation.PendingBtwCount(); got != 0 {
+	if got := conversation.PendingSteeringCount(); got != 0 {
 		t.Fatalf("cancel left %d blinking notes", got)
 	}
 }
@@ -755,14 +755,14 @@ func TestHandleInputEvent_SubmitEmptyAgentView(t *testing.T) {
 	// No guessed fallback target is appended.
 }
 
-func TestHandleInputEvent_BtwSubmit(t *testing.T) {
+func TestHandleInputEvent_SteeringSubmit(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 80
 	app.height = 24
 
 	app.AddOrchestrator("ses_1_orch_1")
 
-	cmds := app.handleInputEvent(input.BtwSubmitEvent{Text: "btw text"})
+	cmds := app.handleInputEvent(input.SteeringSubmitEvent{Text: "btw text"})
 	if len(cmds) != 2 {
 		t.Fatalf("expected 2 cmds (history record + btw submit), got %d", len(cmds))
 	}

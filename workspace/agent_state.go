@@ -7,6 +7,8 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/collaboration"
+	"crude/provider"
 	ttypes "crude/types"
 	"crude/types/reasoning"
 )
@@ -152,11 +154,37 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 	// Events already queued before a cancel request must not reactivate the
 	// turn while its terminal done/error event catches up through the UI pump.
 	if a.Cancelling && evt.Type != "done" && evt.Type != "error" && evt.Type != "usage" &&
-		evt.Type != "context_compaction_cancelled" && evt.Type != "context_compaction_failed" && evt.Type != "context_compacted" {
+		evt.Type != "context_compaction_cancelled" && evt.Type != "context_compaction_failed" &&
+		evt.Type != "context_compacted" && evt.Type != "collaboration_message" {
 		return nil
 	}
 
 	switch evt.Type {
+	case "collaboration_message":
+		event, ok := evt.Data.(collaboration.Event)
+		if !ok || event.ID == "" {
+			return nil
+		}
+		attribution := &provider.CollaborationAttribution{
+			EventID: event.ID, ThreadID: event.ThreadID, SenderID: event.SenderID,
+			SenderName: event.SenderName, Kind: string(event.Kind), RequestID: event.RequestID,
+			RequestRevision: event.RequestRevision, RunID: event.RunID,
+		}
+		for _, recipient := range event.Recipients {
+			attribution.RecipientIDs = append(attribution.RecipientIDs, recipient.ID)
+			attribution.RecipientNames = append(attribution.RecipientNames, recipient.Name)
+		}
+		for _, reference := range event.References {
+			if reference.Kind == "report" {
+				attribution.ArtifactID, attribution.ArtifactRevision = reference.ID, reference.Revision
+				break
+			}
+		}
+		target.AppendMessageIfAbsent(ttypes.ConversationMessage{
+			InternalID: event.ID, Role: MessageRoleUser, Origin: provider.OriginPeer,
+			Content: event.Body, Collaboration: attribution, Time: event.CreatedAt,
+		})
+
 	case "context_compaction_started":
 		status := parseCompactionStatus("compaction_preparing", evt.Data)
 		a.ActiveCompaction = status
