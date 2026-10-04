@@ -184,12 +184,17 @@ func (workspace *Workspace) CapabilityAction(ctx context.Context, action captype
 			err = errors.New("source needs an identity and location")
 		} else {
 			value := *action.Source
+			if existing, exists := working.Capabilities.Sources[value.ID]; exists && existing.Builtin {
+				value.Builtin = true
+			}
 			value.Scope = action.Scope
 			working.Capabilities.Sources[value.ID], persist = value, true
 		}
 	case "remove-source":
-		if _, exists := working.Capabilities.Sources[action.ID]; !exists {
+		if source, exists := working.Capabilities.Sources[action.ID]; !exists {
 			err = errors.New("source is unavailable")
+		} else if source.Builtin {
+			err = errors.New("built-in capability sources can be disabled but not removed")
 		} else {
 			delete(working.Capabilities.Sources, action.ID)
 			persist = true
@@ -298,7 +303,11 @@ func (workspace *Workspace) CapabilityAction(ctx context.Context, action captype
 			if !exists {
 				err = errors.New("source is unavailable")
 			} else if action.Operation == "remove" {
-				delete(working.Capabilities.Sources, action.ID)
+				if value.Builtin {
+					err = errors.New("built-in capability sources can be disabled but not removed")
+				} else {
+					delete(working.Capabilities.Sources, action.ID)
+				}
 			} else {
 				value.Disabled = action.Operation == "disable"
 				working.Capabilities.Sources[action.ID] = value

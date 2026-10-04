@@ -1,8 +1,8 @@
 // Package ui is the Crude TUI component host and design-system foundation.
 //
-// Phase 2 of ../../docs/plans/tui-component-system-plan.md. Product screens migrate onto this
-// package in later phases. Until then, legacy widgets remain the runtime path
-// and may only be bridged through explicit adapters.
+// Product screens compose this package directly. Current authoring and surface
+// contracts live in ../../docs/guides/component-authoring.md and
+// ../../docs/reference/surface-catalog.md.
 //
 // Invariants:
 //   - Paint is side-effect free with respect to domain state.

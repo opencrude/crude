@@ -76,3 +76,36 @@ func TestCapabilityManualManagerOperationsAndInheritedRemoval(t *testing.T) {
 		t.Fatal("local removal deleted user directory")
 	}
 }
+
+func TestBuiltInCapabilitySourceCanDisableButNotDisappear(t *testing.T) {
+	setTestHome(t)
+	owner := &Workspace{
+		RootPath: t.TempDir(), WorkspaceDir: t.TempDir(),
+		WorkspaceDB: openTestWorkspaceDB(t), Logger: testLogger{},
+	}
+	defaults := types.AppSettings{Capabilities: captypes.WithDefaultSources(captypes.Settings{})}
+	owner.SetAppDefaults(defaults)
+	t.Cleanup(func() {
+		if owner.Capabilities != nil {
+			owner.Capabilities.Close()
+		}
+	})
+
+	_, _, _, err := owner.CapabilityAction(t.Context(), captypes.Action{
+		Operation: "remove-source", Kind: "source",
+		ID: captypes.OfficialMCPRegistrySourceID, Scope: captypes.ScopeApplication,
+	})
+	if err == nil {
+		t.Fatal("built-in source was removed instead of requiring disable")
+	}
+	if _, _, _, err := owner.CapabilityAction(t.Context(), captypes.Action{
+		Operation: "disable", Kind: "source",
+		ID: captypes.OfficialMCPRegistrySourceID, Scope: captypes.ScopeApplication,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	source := owner.LoadAppSettings().Capabilities.Sources[captypes.OfficialMCPRegistrySourceID]
+	if !source.Builtin || !source.Disabled {
+		t.Fatalf("disabled built-in source=%+v", source)
+	}
+}

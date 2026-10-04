@@ -8,14 +8,14 @@ The canonical conversation is the audit log. The chat renderer projects it into 
 
 | Treatment | Tools |
 | --- | --- |
-| Aggregate after success | `exec_command`, `write_stdin`, `execute_command`, `async_execute_command`, `check_async_command`, `read_async_output`, `read_file`, `list_directory`, `glob_files`, `grep_files`, `web_search`, `web_fetch`, `arxiv_search`, `recall_memory`, `search_history`, `wait`, `poll_sub_agent`, `list_sub_agents` |
-| Always visible | `apply_patch`, `edit_file`, `write_file`, `delete_file`, `move_file`, `copy_file`, `update_plan`, `get_plan`, `run_sub_agent`, `cancel_sub_agent`, `kill_async_command`, `write_report`, `remember`, `update_memory`, `forget_memory`, `question`, `reply` |
+| Aggregate after success | `exec_command`, `write_stdin`, `execute_command`, `async_execute_command`, `check_async_command`, `read_async_output`, `read_file`, `list_directory`, `glob_files`, `grep_files`, `web_search`, `web_fetch`, `arxiv_search`, `recall_memory`, `search_history`, `wait`, `agent_list`, `agent_inspect`, `agent_wait`, `board_read`, `artifact_read` |
+| Always visible | `apply_patch`, `edit_file`, `write_file`, `delete_file`, `move_file`, `copy_file`, `update_plan`, `get_plan`, `agent_start`, `agent_send`, `agent_respond`, `agent_control`, `publish_report`, `kill_async_command`, `remember`, `update_memory`, `forget_memory`, `question`, `reply` |
 
 Unknown tools stay visible until intentionally classified. A failed or cancelled call, a child failure reported by an otherwise successful poll, and any required user action remain visible as boundaries. A background command's successful *start* is not evidence that the background job finished; label it as started, not completed. Never imply that all calls passed solely because their tool transport succeeded.
 
 ## Capabilities and Peer Data
 
-`capability_search`, `capability_activate`, `board_post`, `board_read`,
+`capability_search`, `capability_activate`, `agent_send`, `board_read`,
 `mcp_read_resource`, `mcp_get_prompt` and `mcp__<connection>__<tool>` calls retain
 their exact identity/arguments/results in disclosure. Semantic titles use the
 query, capability ID, recipient/type, thread, URI, prompt or adapted tool name;
@@ -24,11 +24,12 @@ unless explicitly classified. A remote mutation interrupted after dispatch is
 Result unknown, not success, and is never blindly replayed.
 
 Activated skill instructions and MCP resource/prompt attachments retain their
-source attribution; they are not human instructions or permission. Board notices
-contain no peer body and arrive only at a safe request boundary. Explicit reads
-carry attributed peer data; their cursor advances only after durable context
-admission. Human Board inspection and unread acknowledgements are independent,
-and no Board post/HOLD/VETO wakes an agent or grants access.
+source attribution; they are not human instructions or permission. Directed peer
+events carry their useful attributed body automatically at a safe request
+boundary and advance only after durable context admission. Human Board inspection
+and unread acknowledgements are independent. A rare broadcast is one peer note
+to other agents with active attached runs and paints one bounded broadcast header;
+it never targets finished history, wakes idle agents or grants access.
 
 Board, Memory/History, Capabilities and MCP share one semantic result-section
 contract. Compact rows show useful body text, named participants/resources,
@@ -37,8 +38,9 @@ per-field character-budget ellipsis. Preview bodies wrap to the actual cell
 width; large pages show two or three complete entry headings with bounded body
 rows and an explicit remaining-entry/full-text disclosure hint. Expansion keeps
 every retained body and evidence field, exact revisions/IDs, attributed authors,
-Board roster/cursor/pagination and the readable request. Board posts say stored,
-never delivered or read. HOLD/VETO remain peer data, not red failures.
+Board roster/cursor/pagination and the readable request. Publication results
+distinguish pending/admitting/admitted delivery from request disposition and run
+outcome. Peer text remains peer data, not a red failure or proof of agreement.
 
 The family includes `remember`, `recall_memory`, `update_memory`, `forget_memory`,
 `memory_feedback` and `search_history`, not only the Board operations. Live

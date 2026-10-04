@@ -23,6 +23,13 @@ const (
 	AsyncCompleted AsyncStatus = "completed"
 	AsyncFailed    AsyncStatus = "failed"
 	AsyncKilled    AsyncStatus = "killed"
+
+	// DefaultOutputChunkBytes bounds one model-visible async output read.
+	// Commands retain their complete captured output; callers page explicitly.
+	DefaultOutputChunkBytes = 32 << 10
+	// MaxOutputChunkBytes prevents a single caller override from flooding the
+	// provider context even when the command produced substantially more output.
+	MaxOutputChunkBytes = 64 << 10
 )
 
 type AsyncCmdInfo struct {
@@ -111,6 +118,7 @@ type AsyncCommandManager struct {
 	reserved    map[string]bool
 	autoCounter int
 	closing     bool
+	tempDir     string
 	startWg     sync.WaitGroup
 	logger      *logger.Logger
 }
@@ -134,9 +142,58 @@ func (m *AsyncCommandManager) SetLogger(lg *logger.Logger) {
 	m.logger = lg
 }
 
-func buildCommand(ctx context.Context, command string, cwd string) (*exec.Cmd, func(), error) {
+// SetTempDir configures the cross-platform transient directory advertised to
+// agents and inherited by their commands as CRUDE_TEMP_DIR.
+func (m *AsyncCommandManager) SetTempDir(dir string) error {
+	if strings.TrimSpace(dir) == "" {
+		return errors.New("command temp directory is empty")
+	}
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return fmt.Errorf("create command temp directory: %w", err)
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.commands) > 0 || len(m.reserved) > 0 {
+		return errors.New("cannot change command temp directory after commands started")
+	}
+	m.tempDir = dir
+	return nil
+}
+
+func (m *AsyncCommandManager) TempDir() string {
+	if m == nil {
+		return ""
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.tempDir
+}
+
+func commandEnvironmentWithTemp(existing []string, tempDir string) []string {
+	if strings.TrimSpace(tempDir) == "" {
+		return existing
+	}
+	environment := existing
+	if environment == nil {
+		environment = os.Environ()
+	} else {
+		environment = append([]string(nil), environment...)
+	}
+	const key = "CRUDE_TEMP_DIR"
+	replacement := key + "=" + tempDir
+	for index, entry := range environment {
+		name, _, _ := strings.Cut(entry, "=")
+		if strings.EqualFold(name, key) {
+			environment[index] = replacement
+			return environment
+		}
+	}
+	return append(environment, replacement)
+}
+
+func buildCommand(ctx context.Context, command string, cwd string, tempDir string) (*exec.Cmd, func(), error) {
 	if runtime.GOOS == "windows" {
-		tmp, err := os.CreateTemp("", "crude_*.cmd")
+		tmp, err := os.CreateTemp(tempDir, "crude_*.cmd")
 		if err != nil {
 			return nil, nil, fmt.Errorf("prepare windows command: %w", err)
 		}
@@ -151,6 +208,7 @@ func buildCommand(ctx context.Context, command string, cwd string) (*exec.Cmd, f
 		if cwd != "" {
 			c.Dir = cwd
 		}
+		c.Env = commandEnvironmentWithTemp(c.Env, tempDir)
 		return c, func() { _ = os.Remove(batPath) }, nil
 	}
 
@@ -159,6 +217,7 @@ func buildCommand(ctx context.Context, command string, cwd string) (*exec.Cmd, f
 	if cwd != "" {
 		c.Dir = cwd
 	}
+	c.Env = commandEnvironmentWithTemp(c.Env, tempDir)
 	return c, func() {}, nil
 }
 
@@ -174,6 +233,7 @@ func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds 
 	}
 	m.reserved[handle] = true
 	m.startWg.Add(1)
+	tempDir := m.tempDir
 	m.mu.Unlock()
 	defer m.startWg.Done()
 	releaseReservation := func() {
@@ -187,7 +247,7 @@ func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds 
 		ctx, cancel = context.WithTimeout(ctx, time.Duration(timeoutSeconds)*time.Second)
 	}
 
-	c, cleanup, err := buildCommand(ctx, command, cwd)
+	c, cleanup, err := buildCommand(ctx, command, cwd, tempDir)
 	if err != nil {
 		cancel()
 		releaseReservation()
@@ -353,7 +413,21 @@ func (m *AsyncCommandManager) KillRef(ref AsyncCmdRef) error {
 	return nil
 }
 
-func (m *AsyncCommandManager) ReadOutput(handle string, sinceByte int) (string, int, error) {
+func normalizeOutputLimit(maxBytes int) int {
+	if maxBytes <= 0 {
+		return DefaultOutputChunkBytes
+	}
+	return min(maxBytes, MaxOutputChunkBytes)
+}
+
+func normalizeCommandOutput(out string) string {
+	out = strings.ReplaceAll(out, "\r\n", "\n")
+	return strings.ReplaceAll(out, "\r", "")
+}
+
+// ReadOutput reads one bounded output page. nextByte advances only through the
+// returned raw byte range; totalBytes reports the complete captured size.
+func (m *AsyncCommandManager) ReadOutputLimit(handle string, sinceByte, maxBytes int) (out string, nextByte, totalBytes int, err error) {
 	m.mu.Lock()
 	state, ok := m.commands[handle]
 	m.mu.Unlock()
@@ -361,8 +435,12 @@ func (m *AsyncCommandManager) ReadOutput(handle string, sinceByte int) (string, 
 		if m.logger != nil {
 			m.logger.Warn("ASYNC", "read_output_not_found", "handle", handle)
 		}
-		return "", 0, fmt.Errorf("async command handle %q not found", handle)
+		return "", 0, 0, fmt.Errorf("async command handle %q not found", handle)
 	}
+	if sinceByte < 0 {
+		return "", 0, 0, errors.New("async output cursor cannot be negative")
+	}
+	maxBytes = normalizeOutputLimit(maxBytes)
 	state.outputMu.Lock()
 	total := state.output.Len()
 	if sinceByte >= total {
@@ -371,17 +449,22 @@ func (m *AsyncCommandManager) ReadOutput(handle string, sinceByte int) (string, 
 		if m.logger != nil {
 			m.logger.Debug("ASYNC", "read_output_no_new", "handle", handle, "since_byte", sinceByte, "total", total)
 		}
-		return "", total, nil
+		return "", total, total, nil
 	}
-	out := string(state.output.Bytes()[sinceByte:total])
-	state.readCursor = max(state.readCursor, total)
+	end := min(total, sinceByte+maxBytes)
+	out = string(state.output.Bytes()[sinceByte:end])
+	state.readCursor = max(state.readCursor, end)
 	state.outputMu.Unlock()
-	out = strings.ReplaceAll(out, "\r\n", "\n")
-	out = strings.ReplaceAll(out, "\r", "")
+	out = normalizeCommandOutput(out)
 	if m.logger != nil {
-		m.logger.Debug("ASYNC", "read_output", "handle", handle, "bytes", len(out), "since_byte", sinceByte, "total", total, "next_byte", total)
+		m.logger.Debug("ASYNC", "read_output", "handle", handle, "bytes", len(out), "since_byte", sinceByte, "total", total, "next_byte", end)
 	}
-	return out, total, nil
+	return out, end, total, nil
+}
+
+func (m *AsyncCommandManager) ReadOutput(handle string, sinceByte int) (string, int, error) {
+	out, next, _, err := m.ReadOutputLimit(handle, sinceByte, DefaultOutputChunkBytes)
+	return out, next, err
 }
 
 func (m *AsyncCommandManager) OutputTail(handle string, maxBytes int) string {
@@ -401,10 +484,7 @@ func (m *AsyncCommandManager) OutputTail(handle string, maxBytes int) string {
 		maxBytes = 250
 	}
 	start := n - min(n, maxBytes)
-	out := string(state.output.Bytes()[start:n])
-	out = strings.ReplaceAll(out, "\r\n", "\n")
-	out = strings.ReplaceAll(out, "\r", "")
-	return out
+	return normalizeCommandOutput(string(state.output.Bytes()[start:n]))
 }
 
 func (m *AsyncCommandManager) List() []AsyncCmdInfo {
@@ -457,6 +537,7 @@ func (m *AsyncCommandManager) startUntracked(command, cwd string, timeoutSeconds
 		return nil, errors.New("async command manager is closing")
 	}
 	m.startWg.Add(1)
+	tempDir := m.tempDir
 	m.mu.Unlock()
 	defer m.startWg.Done()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -468,9 +549,9 @@ func (m *AsyncCommandManager) startUntracked(command, cwd string, timeoutSeconds
 	var cleanup func()
 	var err error
 	if interactive == nil {
-		c, cleanup, err = buildCommand(ctx, command, cwd)
+		c, cleanup, err = buildCommand(ctx, command, cwd, tempDir)
 	} else {
-		c, cleanup, err = buildInteractiveCommand(ctx, *interactive)
+		c, cleanup, err = buildInteractiveCommand(ctx, *interactive, tempDir)
 	}
 	if err != nil {
 		cancel()
@@ -599,18 +680,26 @@ func (uc *UntrackedCmd) Kill() {
 
 func (uc *UntrackedCmd) Done() <-chan struct{} { return uc.state.done }
 
-func (uc *UntrackedCmd) ReadOutput(sinceByte int) (string, int) {
+func (uc *UntrackedCmd) ReadOutputLimit(sinceByte, maxBytes int) (out string, nextByte, totalBytes int) {
+	if sinceByte < 0 {
+		sinceByte = 0
+	}
+	maxBytes = normalizeOutputLimit(maxBytes)
 	uc.state.outputMu.Lock()
 	total := uc.state.output.Len()
 	if sinceByte >= total {
 		uc.state.outputMu.Unlock()
-		return "", total
+		return "", total, total
 	}
-	out := string(uc.state.output.Bytes()[sinceByte:total])
+	end := min(total, sinceByte+maxBytes)
+	out = string(uc.state.output.Bytes()[sinceByte:end])
 	uc.state.outputMu.Unlock()
-	out = strings.ReplaceAll(out, "\r\n", "\n")
-	out = strings.ReplaceAll(out, "\r", "")
-	return out, total
+	return normalizeCommandOutput(out), end, total
+}
+
+func (uc *UntrackedCmd) ReadOutput(sinceByte int) (string, int) {
+	out, next, _ := uc.ReadOutputLimit(sinceByte, DefaultOutputChunkBytes)
+	return out, next
 }
 
 func (uc *UntrackedCmd) Info() AsyncCmdInfo {

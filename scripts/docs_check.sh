@@ -97,7 +97,7 @@ fi
 
 # ---------------------------------------------------------------------------
 # 5) Orphans: every file under docs/ must be linked from docs/README.md
-# (index links are written relative to docs/, e.g. (plans/phase15-checklist.md))
+# (index links are written relative to docs/, e.g. (plans/end-to-end-hardening-plan.md))
 # ---------------------------------------------------------------------------
 for f in $(find docs -type f \( -name '*.md' -o -name '*.json' \) ! -path 'docs/README.md' | sort); do
   rel="${f#docs/}"

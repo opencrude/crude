@@ -8,6 +8,7 @@ import (
 type RootOptions struct {
 	MultiAgent bool
 	WorkDir    string
+	TempDir    string
 	Model      string
 }
 
@@ -24,10 +25,11 @@ func BuildRoot(options RootOptions) string {
 		ActivityCommunication,
 		EngineeringContract,
 		ToolContract,
+		RuntimeCapabilities,
 		ProjectGuidanceContract,
 		PlanningContract,
 		MemoryContract,
-		stableEnvironment(options.WorkDir),
+		stableEnvironment(options.WorkDir, options.TempDir),
 		`</crude_agent>`,
 	}, "\n")
 }
@@ -81,6 +83,7 @@ type ChildOptions struct {
 	FileOwnership       []string
 	ProfileInstructions string
 	WorkDir             string
+	TempDir             string
 	Model               string
 }
 
@@ -111,13 +114,14 @@ func BuildChild(options ChildOptions) (systemPrompt, assignment string) {
 		EngineeringContract,
 		`<bounded_execution><rule>Apply the engineering contract within your assigned scope, not to the whole repository. The parent owns integration and final repository-wide verification.</rule><rule>Inspect the affected flow, make one coherent change, run focused checks, fix failures caused by your change, then hand off. Repeat a check only after a relevant change or new evidence; unchanged checks are not progress.</rule><rule>If a sibling's unfinished interface, unrelated failure, or ownership boundary blocks you, write a partial or blocked report immediately and stop. Do not wait, sleep, poll, repeatedly reread changing files, or rerun builds to watch another agent finish.</rule><rule>Stop when acceptance criteria are met or the assignment budget is reached. Report unresolved risks rather than expanding into another audit. A successful tool call, file list, or generated diagnostic report is not evidence that the assignment succeeded.</rule></bounded_execution>`,
 		ToolContract,
+		RuntimeCapabilities,
 		ProjectGuidanceContract,
 		fmt.Sprintf(`<tool_permissions><allowed>%s</allowed><denied>%s</denied><rule>Stay within the permitted tool and policy boundary.</rule></tool_permissions>`, XMLText(strings.Join(options.AllowedTools, ", ")), XMLText(strings.Join(options.DeniedTools, ", "))),
 		fmt.Sprintf(`<file_ownership>%s</file_ownership>`, XMLText(strings.Join(options.FileOwnership, ", "))),
 		fmt.Sprintf(`<report_contract required="true"><rule>Call publish_report with kind="final" exactly once before ending and address it to parent %s.</rule><rule>Include findings, changes, tests, unresolved risks, exact paths, and immediate parent actions.</rule><rule>A chat response or interim report is not the required final report.</rule></report_contract>`, XMLText(options.ParentID)),
 		planning,
 		fmt.Sprintf(`<profile_instructions>%s</profile_instructions>`, XMLText(options.ProfileInstructions)),
-		stableEnvironment(options.WorkDir),
+		stableEnvironment(options.WorkDir, options.TempDir),
 		`</crude_sub_agent>`,
 	}, "\n")
 	assignment = fmt.Sprintf(`<delegated_assignment id="%s" parent_id="%s" parent_turn="%d">

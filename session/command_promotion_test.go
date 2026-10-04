@@ -33,6 +33,9 @@ func TestCommandPromotionHelperProcess(t *testing.T) {
 	case "fail":
 		fmt.Fprintln(os.Stderr, "helper exploded")
 		os.Exit(7)
+	case "large":
+		fmt.Print(strings.Repeat("A", fileio.DefaultOutputChunkBytes*4))
+		fmt.Print("TAIL_MARKER")
 	}
 }
 
@@ -133,6 +136,35 @@ func TestAwaitCommandReturnsFastCommandInline(t *testing.T) {
 	}
 	if list := mgr.List(); len(list) != 0 {
 		t.Fatalf("fast command left async handles behind: %+v", list)
+	}
+}
+
+func TestAwaitCommandBoundsLargeCompletedOutputAndRetainsHandle(t *testing.T) {
+	setPromotionThreshold(t, 5*time.Second)
+	mgr, lg := promotionTestManager(t)
+
+	uc, err := mgr.StartUntracked(promotionHelperCommand("large"), t.TempDir(), 0)
+	if err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	result, err := awaitCommandWithPromotion(context.Background(), mgr, uc, lg, "")
+	if err != nil {
+		t.Fatalf("await: %v", err)
+	}
+	if len(result.Content) > fileio.DefaultOutputChunkBytes+4096 {
+		t.Fatalf("large command flooded inline context: %d bytes", len(result.Content))
+	}
+	if !strings.Contains(result.Content, "TAIL_MARKER") ||
+		!strings.Contains(result.Content, "Full output retained as async handle") {
+		t.Fatalf("bounded result lost tail or retained handle: %q", result.Content)
+	}
+	handle := promotedHandle(t, result.Content)
+	page, next, total, err := mgr.ReadOutputLimit(handle, 0, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page) != 1024 || next != 1024 || total <= fileio.DefaultOutputChunkBytes {
+		t.Fatalf("retained output page len=%d next=%d total=%d", len(page), next, total)
 	}
 }
 

@@ -27,23 +27,22 @@ func (catalog *capabilityCatalog) viewKey() string {
 func (catalog *capabilityCatalog) saveListState() {
 	state := catalog.views[catalog.viewKey()]
 	state.query = catalog.filter.Value()
-	table := catalog.activeTable()
-	if row, ok := table.Selected(); ok {
-		state.selected = row.ID
+	if catalog.detail {
+		if row, ok := catalog.browse.Selected(); ok {
+			state.selected = row.ID
+		}
+		state.offset = catalog.browse.Scroll().Offset()
+	} else {
+		if entry, ok := catalog.selectedStoreEntry(); ok {
+			state.selected = entry.ID
+		}
+		state.offset = catalog.store.Scroll().Offset()
 	}
-	state.offset = table.Scroll().Offset()
 	catalog.views[catalog.viewKey()] = state
 }
 
 func (catalog *capabilityCatalog) restoreFilter() {
 	catalog.filter.SetValue(catalog.views[catalog.viewKey()].query)
-}
-
-func (catalog *capabilityCatalog) activeTable() *ui.Table {
-	if catalog.detail {
-		return catalog.browse
-	}
-	return catalog.table
 }
 
 func (catalog *capabilityCatalog) switchKind(kind captypes.Kind) {
@@ -321,8 +320,8 @@ func (catalog *capabilityCatalog) inheritedAvailable() bool {
 	}
 	id := catalog.id
 	if !catalog.detail {
-		if row, ok := catalog.table.Selected(); ok {
-			id = row.ID
+		if entry, ok := catalog.selectedStoreEntry(); ok {
+			id = entry.ID
 		}
 	}
 	switch catalog.kind {

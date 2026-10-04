@@ -163,4 +163,11 @@ and `Ctrl+Alt+P` (command palette).
 - Terminals activity list: **New Terminal**
 - New terminals always dock when the dock can be shown.
 
-Windows does not start PTYs yet (`terminal_pty_windows.go`).
+Windows uses native ConPTY (`CreatePseudoConsole` + `STARTUPINFOEX`) and assigns
+the suspended shell to the same kill-on-close Job Object authority used by
+background commands before resuming it. Resize, async input, exact process-tree
+termination and manager CloseAll have native Windows tests. The UTF-16 child
+environment block is explicitly double-null terminated. Noninteractive agent
+commands are separate from the PTY path and use `CREATE_NO_WINDOW`/`HideWindow`,
+so tools such as WinGet cannot paint directly into Crude's host terminal; their
+stdout/stderr appears only in the captured tool/background-job channel.

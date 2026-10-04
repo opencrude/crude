@@ -45,3 +45,30 @@ func TestAsyncContextSnapshotPreservesIdentityStatusAndObservedCursor(t *testing
 		t.Fatalf("settled command state was not refreshed: %+v", command)
 	}
 }
+
+func TestAsyncOutputReadsAreBoundedAndPageByRawByteCursor(t *testing.T) {
+	manager := NewAsyncCommandManager()
+	state := &asyncCmdState{
+		output: *bytes.NewBuffer(bytes.Repeat([]byte("x"), DefaultOutputChunkBytes*3)),
+		info:   AsyncCmdInfo{Handle: "noisy", Status: AsyncRunning, StartedAt: time.Now()},
+	}
+	manager.commands[state.info.Handle] = state
+
+	first, next, total, err := manager.ReadOutputLimit(state.info.Handle, 0, 1024)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(first) != 1024 || next != 1024 || total != DefaultOutputChunkBytes*3 {
+		t.Fatalf("first page len=%d next=%d total=%d", len(first), next, total)
+	}
+	second, next, total, err := manager.ReadOutputLimit(state.info.Handle, next, 2048)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(second) != 2048 || next != 3072 || total != DefaultOutputChunkBytes*3 {
+		t.Fatalf("second page len=%d next=%d total=%d", len(second), next, total)
+	}
+	if state.readCursor != next {
+		t.Fatalf("observed cursor=%d want %d", state.readCursor, next)
+	}
+}

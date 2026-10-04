@@ -213,13 +213,24 @@ func skillArchive(t *testing.T, entries ...archiveFixtureEntry) []byte {
 	return buffer.Bytes()
 }
 
-func TestCapabilityArchiveRejectsUnsafeUnselectedPaths(t *testing.T) {
-	for _, entry := range []archiveFixtureEntry{{name: "repo/elsewhere/../../escape"}, {name: "repo/other/link", kind: tar.TypeSymlink}, {name: "/absolute"}, {name: "repo/other\\escape"}} {
+func TestCapabilityArchiveRejectsUnsafePathsAndIgnoresUnselectedLinks(t *testing.T) {
+	for _, entry := range []archiveFixtureEntry{{name: "repo/elsewhere/../../escape"}, {name: "/absolute"}, {name: "repo/other\\escape"}} {
 		t.Run(entry.name, func(t *testing.T) {
 			if err := extractSkill(context.Background(), skillArchive(t, entry), "skills/review", t.TempDir(), 1024); err == nil {
 				t.Fatal("unsafe unselected entry escaped validation")
 			}
 		})
+	}
+	if err := extractSkill(context.Background(), skillArchive(t,
+		archiveFixtureEntry{name: "repo/other/link", kind: tar.TypeSymlink},
+		archiveFixtureEntry{name: "repo/skills/review/SKILL.md", body: "---\nname: review\ndescription: Review evidence\n---\nUse exact versions.\n"},
+	), "skills/review", t.TempDir(), 1024); err != nil {
+		t.Fatalf("safe unselected link blocked the selected skill: %v", err)
+	}
+	if err := extractSkill(context.Background(), skillArchive(t,
+		archiveFixtureEntry{name: "repo/skills/review/link", kind: tar.TypeSymlink},
+	), "skills/review", t.TempDir(), 1024); err == nil {
+		t.Fatal("selected skill link was accepted")
 	}
 	if err := extractSkill(context.Background(), skillArchive(t), "../bad", t.TempDir(), 1024); err == nil {
 		t.Fatal("unsafe subtree accepted")
@@ -264,7 +275,22 @@ func TestCapabilityConcurrentAcquireDetachesCancellation(t *testing.T) {
 func TestCapabilityRegistryAcquisitionProducesValidStableConnection(t *testing.T) {
 	service, settings, _ := capabilityFixture(t)
 	endpoint := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
-		_ = json.NewEncoder(writer).Encode(map[string]any{"servers": []any{map[string]any{"server": map[string]any{"name": "vendor/service", "version": "1", "remotes": []any{map[string]any{"type": "streamable-http", "url": "https://example.test/mcp"}}}}}})
+		if request.URL.Query().Get("cursor") == "" {
+			_ = json.NewEncoder(writer).Encode(map[string]any{
+				"servers": []any{
+					map[string]any{"server": map[string]any{"name": "vendor/service", "version": "1", "remotes": []any{map[string]any{"type": "streamable-http", "url": "https://example.test/mcp"}}}, "_meta": map[string]any{"io.modelcontextprotocol.registry/official": map[string]any{"status": "active", "isLatest": false}}},
+					map[string]any{"server": map[string]any{"name": "vendor/local-only", "version": "1"}},
+				},
+				"metadata": map[string]any{"nextCursor": "next-page"},
+			})
+			return
+		}
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"servers": []any{map[string]any{
+				"server": map[string]any{"name": "vendor/service", "title": "Vendor Service", "description": "Read vendor data", "version": "2", "remotes": []any{map[string]any{"type": "streamable-http", "url": "https://example.test/mcp"}}},
+				"_meta":  map[string]any{"io.modelcontextprotocol.registry/official": map[string]any{"status": "active", "isLatest": true}},
+			}},
+		})
 	}))
 	defer endpoint.Close()
 	settings.Sources = map[string]captypes.SourceConfig{"registry": {ID: "registry", Name: "Registry", Kind: "registry", Location: endpoint.URL, Trusted: true}}
@@ -272,11 +298,141 @@ func TestCapabilityRegistryAcquisitionProducesValidStableConnection(t *testing.T
 		t.Fatal(err)
 	}
 	entries, err := service.Search(context.Background(), "", captypes.KindMCP, 10, true)
-	if err != nil || len(entries) != 1 {
+	if err != nil || len(entries) != 1 || entries[0].Name != "Vendor Service" || entries[0].Version != "2" {
 		t.Fatalf("registry: %#v %v", entries, err)
 	}
 	acquired, err := service.Acquire(context.Background(), entries[0].ID, captypes.ScopeWorkspace)
 	if err != nil || acquired.Connections[entries[0].ID].ID != entries[0].ID {
 		t.Fatalf("unusable installed identity: %#v %v", acquired.Connections, err)
+	}
+}
+
+func TestCapabilityRegistryFindsPinnedPackageServersThatNeedSetup(t *testing.T) {
+	service, settings, _ := capabilityFixture(t)
+	endpoint := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Query().Get("search") != "ghidra" {
+			t.Errorf("search query=%q", request.URL.Query().Get("search"))
+		}
+		_ = json.NewEncoder(writer).Encode(map[string]any{
+			"servers": []any{map[string]any{
+				"server": map[string]any{
+					"name": "io.github.example/ghidra-retro-mcp", "title": "Ghidra Retro MCP",
+					"description": "Headless reverse engineering", "version": "1.0.0",
+					"repository": map[string]any{"url": "https://github.com/example/ghidra-retro-mcp", "source": "github"},
+					"packages": []any{map[string]any{
+						"registryType": "pypi", "identifier": "ghidra-retro-mcp", "version": "1.0.0",
+						"transport": map[string]any{"type": "stdio"},
+						"environmentVariables": []any{map[string]any{
+							"name": "GHIDRA_INSTALL_DIR", "isRequired": true, "description": "Ghidra installation",
+						}},
+					}},
+				},
+				"_meta": map[string]any{"io.modelcontextprotocol.registry/official": map[string]any{"status": "active", "isLatest": true}},
+			}},
+		})
+	}))
+	defer endpoint.Close()
+	settings.Sources = map[string]captypes.SourceConfig{"registry": {
+		ID: "registry", Name: "Registry", Kind: "registry", Location: endpoint.URL, Trusted: true,
+	}}
+	if err := service.Configure(t.Context(), settings); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := service.Discover(t.Context(), "ghidra", captypes.KindMCP, 10)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("package discovery: %#v %v", entries, err)
+	}
+	entry := entries[0]
+	if entry.Name != "Ghidra Retro MCP" || entry.Transport != "local package" ||
+		entry.PackageType != "pypi" || entry.State != "setup required" {
+		t.Fatalf("package entry=%+v", entry)
+	}
+	preview, err := service.PreviewAcquisition(t.Context(), entry.ID, captypes.ScopeWorkspace, "install")
+	if err != nil || !strings.Contains(strings.Join(preview.Requirements, "\n"), "GHIDRA_INSTALL_DIR") {
+		t.Fatalf("package preview=%+v %v", preview, err)
+	}
+	acquired, err := service.AcquireReviewed(t.Context(), preview)
+	if err != nil {
+		t.Fatal(err)
+	}
+	connection := acquired.Connections[entry.ID]
+	if connection.Command != "uvx" || len(connection.Args) != 1 ||
+		connection.Args[0] != "ghidra-retro-mcp==1.0.0" ||
+		len(connection.RequiredEnv) != 1 || connection.RequiredEnv[0] != "GHIDRA_INSTALL_DIR" ||
+		connection.LaunchApproved {
+		t.Fatalf("package connection=%+v", connection)
+	}
+}
+
+func TestSkillsDirectoryAddsBroadRankedGitHubResults(t *testing.T) {
+	service, settings, _ := capabilityFixture(t)
+	endpoint := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, request *http.Request) {
+		if request.URL.Query().Get("q") != "ghidra" {
+			t.Errorf("query=%q", request.URL.Query().Get("q"))
+		}
+		_ = json.NewEncoder(writer).Encode(map[string]any{"skills": []any{
+			map[string]any{
+				"id": "trailofbits/skills-curated/ghidra-headless", "source": "trailofbits/skills-curated",
+				"skillId": "ghidra-headless", "name": "ghidra-headless", "installs": 419,
+			},
+			map[string]any{"id": "not-a-github-source/skill", "source": "skills.example", "skillId": "skill", "name": "skill"},
+		}})
+	}))
+	defer endpoint.Close()
+	settings.Sources = map[string]captypes.SourceConfig{"directory": {
+		ID: "directory", Name: "Skills Directory", Kind: "skill-registry", Location: endpoint.URL, Trusted: true,
+	}}
+	if err := service.Configure(t.Context(), settings); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := service.Discover(t.Context(), "ghidra", captypes.KindSkill, 10)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("skill directory: %#v %v", entries, err)
+	}
+	if entries[0].Name != "ghidra-headless" || entries[0].Popularity != 419 ||
+		entries[0].Repository != "https://github.com/trailofbits/skills-curated" {
+		t.Fatalf("skill directory entry=%+v", entries[0])
+	}
+}
+
+func TestFindSkillSubpathPrefersTheShallowExactDirectory(t *testing.T) {
+	entries := []struct {
+		Path string `json:"path"`
+		Type string `json:"type"`
+	}{
+		{Path: "examples/ghidra/SKILL.md", Type: "blob"},
+		{Path: "skills/security/ghidra/SKILL.md", Type: "blob"},
+		{Path: "skills/other/SKILL.md", Type: "blob"},
+	}
+	path, err := findSkillSubpath(entries, "ghidra")
+	if err != nil || path != "examples/ghidra" {
+		t.Fatalf("path=%q err=%v", path, err)
+	}
+}
+
+func TestLiveDefaultCapabilitySources(t *testing.T) {
+	if os.Getenv("CRUDE_LIVE_CAPABILITY_SOURCES") != "1" {
+		t.Skip("set CRUDE_LIVE_CAPABILITY_SOURCES=1 for pinned public source acceptance")
+	}
+	service, _, _ := capabilityFixture(t)
+	settings := captypes.WithDefaultSources(captypes.Settings{})
+	if err := service.Configure(t.Context(), settings); err != nil {
+		t.Fatal(err)
+	}
+	skills, err := service.Discover(t.Context(), "pdf", captypes.KindSkill, 10)
+	if err != nil || len(skills) == 0 || skills[0].Source != captypes.AnthropicSkillsSourceID {
+		t.Fatalf("Anthropic source: %#v %v", skills, err)
+	}
+	acquiredSkills, err := service.Acquire(t.Context(), skills[0].ID, captypes.ScopeWorkspace)
+	if err != nil || acquiredSkills.Skills[skills[0].ID].Digest == "" {
+		t.Fatalf("Anthropic skill acquisition: %#v %v", acquiredSkills.Skills, err)
+	}
+	servers, err := service.Discover(t.Context(), "docs", captypes.KindMCP, 10)
+	if err != nil || len(servers) == 0 || servers[0].Source != captypes.OfficialMCPRegistrySourceID {
+		t.Fatalf("MCP Registry source: %#v %v", servers, err)
+	}
+	acquired, err := service.Acquire(t.Context(), servers[0].ID, captypes.ScopeWorkspace)
+	if err != nil || acquired.Connections[servers[0].ID].URL == "" {
+		t.Fatalf("MCP Registry acquisition: %#v %v", acquired.Connections, err)
 	}
 }

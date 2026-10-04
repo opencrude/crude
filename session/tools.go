@@ -155,14 +155,18 @@ func (s *Session) buildToolFn(multiAgent bool, turnProvider *provider.Provider, 
 				return tools.ToolResult{}, fmt.Errorf("read_async_output: missing 'handle'")
 			}
 			sinceByte := tools.GetIntArgAny(params, "since_byte", 0)
-			out, nextByte, err := s.asyncMgr.ReadOutput(handle, sinceByte)
+			maxBytes := tools.GetIntArgAny(params, "max_bytes", fileio.DefaultOutputChunkBytes)
+			out, nextByte, totalBytes, err := s.asyncMgr.ReadOutputLimit(handle, sinceByte, maxBytes)
 			if err != nil {
 				return tools.ToolResult{}, fmt.Errorf("read_async_output: %w", err)
 			}
 			if out == "" {
-				return tools.ToolResult{Content: fmt.Sprintf("[%s] next_byte=%d (no new output since byte %d)", handle, nextByte, sinceByte)}, nil
+				return tools.ToolResult{Content: fmt.Sprintf("[%s] next_byte=%d total_bytes=%d (no new output since byte %d)", handle, nextByte, totalBytes, sinceByte)}, nil
 			}
-			return tools.ToolResult{Content: fmt.Sprintf("[%s output from byte %d]\n%s\n[next_byte=%d]", handle, sinceByte, out, nextByte)}, nil
+			return tools.ToolResult{Content: fmt.Sprintf(
+				"[%s output bytes %d..%d of %d]\n%s\n[next_byte=%d total_bytes=%d has_more=%t]",
+				handle, sinceByte, nextByte, totalBytes, out, nextByte, totalBytes, nextByte < totalBytes,
+			)}, nil
 
 		case "wait":
 			seconds := tools.GetFloatArgAny(params, "seconds", 0)
@@ -316,9 +320,34 @@ func (s *Session) executeCommandAutoPromote(ctx context.Context, params map[stri
 
 // commandOutcome renders the terminal state of an untracked command as a tool
 // result, preserving partial output on failure.
-func commandOutcome(uc *fileio.UntrackedCmd) (tools.ToolResult, error) {
-	out, _ := uc.ReadOutput(0)
+func commandOutcome(mgr *fileio.AsyncCommandManager, uc *fileio.UntrackedCmd) (tools.ToolResult, error) {
+	const excerptBytes = fileio.DefaultOutputChunkBytes / 2
+	head, _, total := uc.ReadOutputLimit(0, excerptBytes)
 	info := uc.Info()
+	out := head
+	if total > excerptBytes {
+		tailStart := excerptBytes
+		if total > excerptBytes*2 {
+			tailStart = total - excerptBytes
+		}
+		tail, _, _ := uc.ReadOutputLimit(tailStart, excerptBytes)
+		if omitted := tailStart - excerptBytes; omitted > 0 {
+			out += fmt.Sprintf("\n\n... %d output bytes omitted ...\n\n", omitted)
+		}
+		out += tail
+		if total > excerptBytes*2 {
+			retainedHandle := mgr.NextAutoHandle()
+			if _, err := mgr.Promote(uc, retainedHandle); err != nil {
+				out += "\n\n[Full output could not be retained as a command handle: " + err.Error() + "]"
+			} else {
+				out += fmt.Sprintf(
+					"\n\nFull output retained as async handle [%s]: total_bytes=%d. "+
+						"Use read_async_output with a relevant since_byte/max_bytes page; do not drain a huge log into context.",
+					retainedHandle, total,
+				)
+			}
+		}
+	}
 	if info.Status == fileio.AsyncCompleted {
 		if out == "" {
 			return tools.ToolResult{Content: "(command completed with no output)"}, nil
@@ -354,7 +383,7 @@ func awaitCommandWithPromotion(
 		<-uc.Done()
 		return tools.ToolResult{Content: "Command cancelled."}, nil
 	case <-uc.Done():
-		return commandOutcome(uc)
+		return commandOutcome(mgr, uc)
 	case <-time.After(asyncPromotionThreshold):
 	}
 
@@ -389,6 +418,6 @@ func awaitCommandWithPromotion(
 		<-uc.Done()
 		return tools.ToolResult{Content: "Command cancelled."}, nil
 	case <-uc.Done():
-		return commandOutcome(uc)
+		return commandOutcome(mgr, uc)
 	}
 }

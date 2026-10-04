@@ -4,6 +4,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/cell"
+	"crude/tui/rendering"
 	"crude/tui/screens/panelchrome"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -16,9 +17,9 @@ import (
 //	col 1  active marker
 //	col 2  gap
 //	col 3  view icon
-//	col 4  badge digit
-//	col 5  padding after the icon
-//	col 6  extra hover column so left/right pads around the icon match
+//	col 4  icon breathing room / wide-icon continuation
+//	col 5  count on the band's top/bottom row (moves right for a wider icon)
+//	col 6  trailing padding
 //	col 7  vertical rule separating the rail from the panel
 const Width = 8
 
@@ -26,7 +27,7 @@ const (
 	outerGutterCol = 0
 	markerCol      = 1
 	iconCol        = 3
-	badgeCol       = 4
+	badgeCol       = 5
 	panelPadCol    = 5
 	afterIconCol   = 6
 	ruleCol        = 7
@@ -42,7 +43,8 @@ const (
 // hanging below a top-aligned glyph.
 const RowStride = 3
 
-// iconRow is the band-local row carrying the glyph and badge.
+// iconRow is the band-local row carrying the icon. Badges use the row above
+// or below it, keeping their raised/lowered position without tiny script glyphs.
 const iconRow = RowStride / 2
 
 const ScreenID ui.ComponentID = "activitybar"
@@ -265,14 +267,14 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 		bandH := min(RowStride, bottom-bandTop)
 		current := v == s.active
 		hovered := i == s.hover && ctx.Hovered
-		s.paintBand(buf, left, bandTop, bandH, bottom, v.Icon(s.nerdFont), badgeText(s.badges[v]), current, hovered, bg, fg, accent, muted)
+		s.paintBand(buf, left, bandTop, bandH, bottom, v.Icon(s.nerdFont), badgeFor(v, s.badges[v]), current, hovered, bg, fg, accent, muted)
 	}
 	if count := s.visibleCount(r.H); count < len(s.order) && r.H >= RowStride*2 {
-		s.paintBand(buf, left, top+count*RowStride, RowStride, bottom, "…", "", false, s.hover == len(views)+1 && ctx.Hovered, bg, fg, accent, muted)
+		s.paintBand(buf, left, top+count*RowStride, RowStride, bottom, "…", countBadge{}, false, s.hover == len(views)+1 && ctx.Hovered, bg, fg, accent, muted)
 	}
 	if localTop := settingsBandTop(r.H); localTop >= 0 {
 		hovered := s.hover == settingsHitIndex() && ctx.Hovered
-		s.paintBand(buf, left, top+localTop, RowStride, bottom, SettingsIcon(s.nerdFont), "", false, hovered, bg, fg, accent, muted)
+		s.paintBand(buf, left, top+localTop, RowStride, bottom, SettingsIcon(s.nerdFont), countBadge{}, false, hovered, bg, fg, accent, muted)
 	}
 
 	if r.W > ruleCol {
@@ -280,7 +282,7 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 	}
 }
 
-func (s *Screen) paintBand(buf *surface.CellBuffer, left, bandTop, bandH, bottom int, icon, badge string, current, hovered bool, bg, fg, accent, muted cell.Color) {
+func (s *Screen) paintBand(buf *surface.CellBuffer, left, bandTop, bandH, bottom int, icon string, badge countBadge, current, hovered bool, bg, fg, accent, muted cell.Color) {
 	r := s.Bounds()
 	rowBG := bg
 	iconFG := muted
@@ -289,10 +291,8 @@ func (s *Screen) paintBand(buf *surface.CellBuffer, left, bandTop, bandH, bottom
 	}
 	if hovered {
 		rowBG = s.tokens.Color(ui.ColorHover)
-		// Hover fills from the marker through afterIconCol so the pad
-		// before the icon (marker + gap) matches the pad after it
-		// (badge + two pad columns). The outer gutter stays inset
-		// from the terminal edge; the rule keeps its own background.
+		// Hover includes the entire icon and badge band. The outer gutter
+		// stays inset from the terminal edge; the rule keeps its background.
 		ui.FillRect(buf, 0, 0, ui.Rect{
 			X: left + markerCol, Y: bandTop, W: ruleCol - markerCol, H: bandH,
 		}, cell.BlankCell(rowBG))
@@ -309,24 +309,43 @@ func (s *Screen) paintBand(buf *surface.CellBuffer, left, bandTop, bandH, bottom
 	if y >= bottom {
 		return
 	}
+	iconEnd := left + iconCol
 	if r.W > iconCol {
-		buf.WriteString(left+iconCol, y, icon, iconFG, rowBG, 0)
+		iconEnd = buf.WriteString(left+iconCol, y, icon, iconFG, rowBG, 0)
 	}
-	if r.W > badgeCol && badge != "" {
-		buf.WriteString(left+badgeCol, y, badge, accent, rowBG, cell.AttrBold)
+	// Put the count diagonally beyond the full measured icon. Separate rows
+	// provide the raised/lowered look at the terminal's normal, readable size.
+	// Reuse WriteString's end so calibration also moves wider icons' badges.
+	badgeX := max(badgeCol, iconEnd-left)
+	badgeY := bandTop + badge.row
+	if badge.text == "" || badge.row >= bandH || badgeY >= bottom {
+		return
+	}
+	_, badgeWidth := rendering.FirstGrapheme(badge.text)
+	if badgeX+badgeWidth <= min(r.W, ruleCol) {
+		buf.WriteString(left+badgeX, badgeY, badge.text, accent, rowBG, cell.AttrBold)
 	}
 }
 
-// badgeText renders a pending count into the single badge column.
-func badgeText(n int) string {
-	switch {
-	case n <= 0:
-		return ""
-	case n > 9:
-		return "+"
-	default:
-		return string(rune('0' + n))
+type countBadge struct {
+	text string
+	row  int // band-local; always inside the destination's existing hit target
+}
+
+// badgeFor uses ordinary digits, with placement supplying the script-like look.
+// Git sits lower-right; the other destinations sit upper-right.
+func badgeFor(v View, n int) countBadge {
+	if n <= 0 {
+		return countBadge{}
 	}
+	badge := countBadge{text: "+"}
+	if n <= 9 {
+		badge.text = string(rune('0' + n))
+	}
+	if v == ViewGit {
+		badge.row = RowStride - 1
+	}
+	return badge
 }
 
 func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {

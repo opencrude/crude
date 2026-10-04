@@ -79,6 +79,11 @@ type ConnectionConfig struct {
 	OAuthClientID  string               `json:"oauth_client_id,omitempty"`
 	OAuthScopes    []string             `json:"oauth_scopes,omitempty"`
 	Grants         map[string]ToolGrant `json:"grants,omitempty"`
+	PackageType    string               `json:"package_type,omitempty"`
+	PackageID      string               `json:"package_id,omitempty"`
+	RequiredEnv    []string             `json:"required_environment,omitempty"`
+	RepositoryURL  string               `json:"repository_url,omitempty"`
+	WebsiteURL     string               `json:"website_url,omitempty"`
 }
 
 type SourceConfig struct {
@@ -90,6 +95,7 @@ type SourceConfig struct {
 	Digest   string `json:"digest,omitempty"`
 	Trusted  bool   `json:"trusted,omitempty"`
 	Disabled bool   `json:"disabled,omitempty"`
+	Builtin  bool   `json:"builtin,omitempty"`
 	Scope    Scope  `json:"scope,omitempty"`
 }
 
@@ -119,6 +125,11 @@ type Entry struct {
 	Managed      bool
 	Installed    bool
 	ConnectionID string
+	Transport    string
+	PackageType  string
+	Repository   string
+	Website      string
+	Popularity   int64
 }
 
 type Tool struct {
@@ -317,6 +328,50 @@ func Normalize(settings Settings) Settings {
 	}
 	if settings.Acquisition.MaxSchemaBytes <= 0 {
 		settings.Acquisition.MaxSchemaBytes = 64 << 10
+	}
+	return settings
+}
+
+const (
+	AnthropicSkillsSourceID       = "anthropic-skills"
+	OfficialMCPRegistrySourceID   = "official-mcp-registry"
+	SkillsDirectorySourceID       = "skills-directory"
+	AnthropicSkillsPinnedRevision = "8a1541c4a3ffa5a20a5a91de0dcf3f0bab1d1ef4"
+)
+
+// DefaultSources returns the curated discovery sources shipped with Crude.
+// They are discovery inputs, not permission grants. Repository bytes remain
+// commit-pinned and every install/update still requires its exact preview.
+func DefaultSources() map[string]SourceConfig {
+	return map[string]SourceConfig{
+		AnthropicSkillsSourceID: {
+			ID: AnthropicSkillsSourceID, Name: "Anthropic Skills (pinned)",
+			Kind: "repository", Location: "https://github.com/anthropics/skills",
+			Revision: AnthropicSkillsPinnedRevision, Trusted: true, Builtin: true,
+			Scope: ScopeApplication,
+		},
+		OfficialMCPRegistrySourceID: {
+			ID: OfficialMCPRegistrySourceID, Name: "Official MCP Registry (preview)",
+			Kind: "registry", Location: "https://registry.modelcontextprotocol.io/v0/servers",
+			Trusted: true, Builtin: true, Scope: ScopeApplication,
+		},
+		SkillsDirectorySourceID: {
+			ID: SkillsDirectorySourceID, Name: "Skills Directory",
+			Kind: "skill-registry", Location: "https://skills.sh/api/search",
+			Trusted: true, Builtin: true, Scope: ScopeApplication,
+		},
+	}
+}
+
+// WithDefaultSources adds missing curated presets while preserving explicit
+// edits and disable choices on existing entries. Built-ins may be disabled but
+// are not silently deleted and recreated with changed trust.
+func WithDefaultSources(settings Settings) Settings {
+	settings = Normalize(settings)
+	for id, source := range DefaultSources() {
+		if _, exists := settings.Sources[id]; !exists {
+			settings.Sources[id] = source
+		}
 	}
 	return settings
 }

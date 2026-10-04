@@ -70,6 +70,9 @@ type Session struct {
 	// Relative tool paths and commands without an explicit cwd resolve
 	// against it. Empty means the process working directory (tests).
 	workDir string
+	// tempDir is the stable session-owned cross-platform directory advertised
+	// to models for transient files and inherited by command processes.
+	tempDir string
 
 	// touchedFiles accumulates files touched by tools this session; they
 	// boost recall of memories scoped to the same paths.
@@ -343,6 +346,22 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 	}
 	exec := fileio.NewLocalExecWithLogger(lg)
 	sessionID := lg.SessionID()
+	tempDir, err := prepareSessionTempDir(lg.SessionDir(), sessionID)
+	if err != nil {
+		_ = lg.Close()
+		return nil, fmt.Errorf("session temp directory: %w", err)
+	}
+	keepTempDir := false
+	defer func() {
+		if !keepTempDir {
+			_ = os.RemoveAll(tempDir)
+		}
+	}()
+	asyncMgr := fileio.NewAsyncCommandManagerWithLogger(lg)
+	if err := asyncMgr.SetTempDir(tempDir); err != nil {
+		_ = lg.Close()
+		return nil, fmt.Errorf("command temp directory: %w", err)
+	}
 	// When callers pass an empty id (workspace CreateSession), reuse the
 	// logger-generated sessionID that already keys the session directory
 	// and SQLite file. This keeps Session.ID aligned with on-disk identity
@@ -434,7 +453,8 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 		editor:               editor,
 		logger:               lg,
 		permStore:            permStore,
-		asyncMgr:             fileio.NewAsyncCommandManagerWithLogger(lg),
+		asyncMgr:             asyncMgr,
+		tempDir:              tempDir,
 		subAgentSup:          nil,
 		sessionID:            sessionID,
 		sessionStart:         time.Now(),
@@ -455,6 +475,7 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 		_ = os.MkdirAll(filepath.Join(dir, "reports"), 0755)
 	}
 
+	keepTempDir = true
 	return sess, nil
 }
 
@@ -513,6 +534,9 @@ func (s *Session) Close() {
 		}
 	}
 
+	if s.tempDir != "" {
+		_ = os.RemoveAll(s.tempDir)
+	}
 	s.logger.Close()
 	if !hasMsgs {
 		_ = s.logger.Remove()
@@ -524,6 +548,29 @@ func (s *Session) Close() {
 
 func (s *Session) SessionDir() string {
 	return s.logger.SessionDir()
+}
+
+func prepareSessionTempDir(sessionDir, sessionID string) (string, error) {
+	base := ""
+	if sessionDir != "" {
+		base = filepath.Join(sessionDir, "tmp")
+	} else {
+		base = filepath.Join(os.TempDir(), "crude", "sessions", filepath.Base(sessionID))
+	}
+	dir := filepath.Join(base, "agent")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+func (s *Session) TempDir() string {
+	if s == nil {
+		return ""
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.tempDir
 }
 
 // WorkDir returns the workspace root this session resolves relative paths
@@ -617,7 +664,9 @@ func (s *Session) systemPromptForModel(multiAgent bool, model string) string {
 	// The prompt must advertise the same working directory tools resolve
 	// against; a stale cwd here misdirects the model after a workspace
 	// switch even when execution itself is correctly re-rooted.
-	prompt := rootprompt.BuildRoot(rootprompt.RootOptions{MultiAgent: multiAgent, WorkDir: s.WorkDir(), Model: model})
+	prompt := rootprompt.BuildRoot(rootprompt.RootOptions{
+		MultiAgent: multiAgent, WorkDir: s.WorkDir(), TempDir: s.TempDir(), Model: model,
+	})
 	prompt = rootprompt.ApplyRootOverlays(prompt, instructions, s.agentName, catalog)
 	s.systemPrompts[key] = prompt
 	return prompt

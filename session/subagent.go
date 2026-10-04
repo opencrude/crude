@@ -475,7 +475,15 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	a.ParentID = spec.ParentID
 	a.Policy = spec.Policy
 	r.session.bindAgentPermissionPolicy(a)
+	childTempDir := filepath.Join(r.session.TempDir(), "agents", string(spec.ID))
 	a.AsyncMgr = fileio.NewAsyncCommandManagerWithLogger(r.session.logger)
+	if err := a.AsyncMgr.SetTempDir(childTempDir); err != nil {
+		if subDB != nil {
+			_ = sessiondb.CloseSession(subDB, subSessionID)
+			_ = subDB.Close()
+		}
+		return nil, fmt.Errorf("create child temp directory: %w", err)
+	}
 	a.FilteredTools = tools.ForModel(filteredTools, p.Model)
 
 	baseCtx := r.sessionCtx
@@ -537,7 +545,8 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 		Category: spec.Category, Name: spec.Name, ID: string(spec.ID), ParentID: string(spec.ParentID), ParentTurn: spec.ParentTurn,
 		Description: spec.Description, Instructions: spec.Instructions, PolicyName: spec.PolicyName,
 		AllowedTools: spec.AllowedTools, DeniedTools: spec.DeniedTools, FileOwnership: spec.FileOwnership,
-		ProfileInstructions: profileInstructions, WorkDir: r.session.WorkDir(), Model: spec.Model,
+		ProfileInstructions: profileInstructions, WorkDir: r.session.WorkDir(),
+		TempDir: childTempDir, Model: spec.Model,
 	})
 
 	if err := ctx.Err(); err != nil {
@@ -834,7 +843,7 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 			"agent_id", handle.Spec.ID, "error", err.Error(),
 		)
 	}
-	result := r.buildResultFromMessages(handle, agentMsgs)
+	result := r.buildSubAgentResult(handle, agentMsgs)
 
 	if !handle.ReportDone() {
 		result.Errors = append(result.Errors, "required final report was not published")
@@ -1026,7 +1035,7 @@ func persistSubAgentTranscript(
 	return err
 }
 
-func (r *SubAgentRunner) buildResultFromMessages(handle *agent.SubAgentHandle, msgs []provider.ChatMessage) agent.SubAgentResult {
+func (r *SubAgentRunner) buildSubAgentResult(handle *agent.SubAgentHandle, msgs []provider.ChatMessage) agent.SubAgentResult {
 	status := agent.SubAgentCompleted
 	if ctx := handle.Agent.Ctx; ctx != nil && ctx.Err() != nil {
 		status = agent.SubAgentCancelled
@@ -1535,14 +1544,18 @@ func (r *SubAgentRunner) executeSubAgentAsyncCommand(handle *agent.SubAgentHandl
 			return tools.ToolResult{}, fmt.Errorf("read_async_output: missing 'handle'")
 		}
 		sinceByte := tools.GetIntArgAny(params, "since_byte", 0)
-		out, nextByte, err := mgr.ReadOutput(handleName, sinceByte)
+		maxBytes := tools.GetIntArgAny(params, "max_bytes", fileio.DefaultOutputChunkBytes)
+		out, nextByte, totalBytes, err := mgr.ReadOutputLimit(handleName, sinceByte, maxBytes)
 		if err != nil {
 			return tools.ToolResult{}, fmt.Errorf("read_async_output: %w", err)
 		}
 		if out == "" {
-			return tools.ToolResult{Content: fmt.Sprintf("[%s] next_byte=%d (no new output since byte %d)", handleName, nextByte, sinceByte)}, nil
+			return tools.ToolResult{Content: fmt.Sprintf("[%s] next_byte=%d total_bytes=%d (no new output since byte %d)", handleName, nextByte, totalBytes, sinceByte)}, nil
 		}
-		return tools.ToolResult{Content: fmt.Sprintf("[%s output from byte %d]\n%s\n[next_byte=%d]", handleName, sinceByte, out, nextByte)}, nil
+		return tools.ToolResult{Content: fmt.Sprintf(
+			"[%s output bytes %d..%d of %d]\n%s\n[next_byte=%d total_bytes=%d has_more=%t]",
+			handleName, sinceByte, nextByte, totalBytes, out, nextByte, totalBytes, nextByte < totalBytes,
+		)}, nil
 
 	default:
 		return tools.ToolResult{}, fmt.Errorf("unknown async command tool: %s", tool)

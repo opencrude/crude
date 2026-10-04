@@ -28,10 +28,13 @@ import (
 )
 
 type Candidate struct {
-	Entry      captypes.Entry
-	ArchiveURL string
-	Subpath    string
-	Connection *captypes.ConnectionConfig
+	Entry        captypes.Entry
+	ArchiveURL   string
+	Subpath      string
+	Connection   *captypes.ConnectionConfig
+	Repository   string
+	SkillID      string
+	Requirements []string
 }
 
 type acquisition struct {
@@ -139,51 +142,23 @@ func (service *Service) discoverRemote(ctx context.Context, source captypes.Sour
 			}
 		}
 	case "registry":
-		endpoint, err := url.Parse(source.Location)
+		if kind == captypes.KindSkill {
+			break
+		}
+		var err error
+		candidates, err = discoverMCPRegistry(ctx, source, query, limit)
 		if err != nil {
 			return nil, err
 		}
-		values := endpoint.Query()
-		values.Set("search", query)
-		values.Set("limit", fmt.Sprint(limit))
-		endpoint.RawQuery = values.Encode()
-		data, err := boundedFetch(ctx, endpoint.String(), 4<<20)
+	case "skill-registry":
+		if kind == captypes.KindMCP {
+			break
+		}
+		var err error
+		candidates, err = discoverSkillDirectory(ctx, source, query, limit)
 		if err != nil {
 			return nil, err
 		}
-		var catalog struct {
-			Servers []struct {
-				Server struct {
-					Name        string `json:"name"`
-					Description string `json:"description"`
-					Version     string `json:"version"`
-					Remotes     []struct {
-						Type string `json:"type"`
-						URL  string `json:"url"`
-					} `json:"remotes"`
-				} `json:"server"`
-			} `json:"servers"`
-			Entries []Candidate `json:"entries"`
-		}
-		if err := json.Unmarshal(data, &catalog); err != nil {
-			return nil, err
-		}
-		for _, server := range catalog.Servers {
-			if kind == captypes.KindSkill {
-				continue
-			}
-			for _, remote := range server.Server.Remotes {
-				if remote.Type != "streamable-http" {
-					continue
-				}
-				digest := sha256.Sum256([]byte(source.ID + "\n" + server.Server.Name + "\n" + remote.URL))
-				id := "registry_" + hex.EncodeToString(digest[:])[:20]
-				config := captypes.ConnectionConfig{ID: id, Name: server.Server.Name, Transport: "http", URL: remote.URL, Source: source.ID, Version: server.Server.Version, Scope: source.Scope}
-				entry := captypes.Entry{ID: config.ID, Kind: captypes.KindMCP, Name: config.Name, Description: server.Server.Description, Source: source.ID, Version: config.Version, Origin: source.Scope, State: "not acquired"}
-				candidates = append(candidates, Candidate{Entry: entry, Connection: &config})
-			}
-		}
-		candidates = append(candidates, catalog.Entries...)
 	default:
 		return nil, fmt.Errorf("unsupported capability source kind %q", source.Kind)
 	}
@@ -279,8 +254,12 @@ func (service *Service) installArtifact(ctx context.Context, key string, candida
 		return "", "", fmt.Errorf("artifact lock: %w", err)
 	}
 	defer func() { _ = lock.Unlock() }()
-	destination := filepath.Join(service.cache, key, candidate.Entry.Name)
-	if candidate.Entry.Name == "" || !filepath.IsLocal(candidate.Entry.Name) || strings.ContainsAny(candidate.Entry.Name, "/\\") {
+	directoryName := candidate.Entry.Name
+	if candidate.SkillID != "" {
+		directoryName = candidate.SkillID
+	}
+	destination := filepath.Join(service.cache, key, directoryName)
+	if directoryName == "" || !filepath.IsLocal(directoryName) || strings.ContainsAny(directoryName, "/\\") {
 		return "", "", errors.New("artifact name is not a contained directory identity")
 	}
 	if skill, err := skills.LoadContext(ctx, destination); err == nil {
@@ -321,13 +300,17 @@ func (service *Service) installArtifact(ctx context.Context, key string, candida
 		return "", "", err
 	}
 	defer func() { _ = os.RemoveAll(staging) }()
-	root := filepath.Join(staging, candidate.Entry.Name)
+	root := filepath.Join(staging, directoryName)
 	if err := extractSkill(ctx, data, candidate.Subpath, root, limit); err != nil {
 		return "", "", err
 	}
 	skill, err := skills.LoadContext(ctx, root)
 	if err != nil {
 		return "", "", err
+	}
+	if candidate.SkillID != "" && !strings.EqualFold(skill.Name, candidate.SkillID) &&
+		!strings.EqualFold(skill.Name, candidate.Entry.Name) {
+		return "", "", errors.New("acquired skill identity differs from the reviewed directory result")
 	}
 	if err := os.Rename(staging, filepath.Join(service.cache, key)); err != nil {
 		return "", "", err
@@ -358,13 +341,8 @@ func extractSkill(ctx context.Context, data []byte, subpath, root string, limit 
 		if err != nil {
 			return err
 		}
-		if !filepath.IsLocal(header.Name) || strings.Contains(header.Name, "\\") || path.Clean(header.Name) != strings.TrimSuffix(header.Name, "/") || header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeDir {
-			return errors.New("artifact contains an unsafe path or unsupported link")
-		}
-		bytesWritten += header.Size
-		files++
-		if header.Size < 0 || bytesWritten > limit || files > 4096 {
-			return errors.New("expanded artifact exceeded its file or byte budget")
+		if !filepath.IsLocal(header.Name) || strings.Contains(header.Name, "\\") || path.Clean(header.Name) != strings.TrimSuffix(header.Name, "/") {
+			return errors.New("artifact contains an unsafe path")
 		}
 		name := strings.TrimPrefix(header.Name, strings.SplitN(header.Name, "/", 2)[0]+"/")
 		prefix := strings.Trim(subpath, "/")
@@ -380,6 +358,11 @@ func extractSkill(ctx context.Context, data []byte, subpath, root string, limit 
 		}
 		if !filepath.IsLocal(relative) || strings.Contains(relative, "\\") || header.Typeflag != tar.TypeReg && header.Typeflag != tar.TypeDir {
 			return errors.New("artifact contains an unsafe path or unsupported link")
+		}
+		bytesWritten += header.Size
+		files++
+		if header.Size < 0 || bytesWritten > limit || files > 4096 {
+			return errors.New("expanded artifact exceeded its file or byte budget")
 		}
 		target := filepath.Join(root, filepath.FromSlash(relative))
 		if header.Typeflag == tar.TypeDir {

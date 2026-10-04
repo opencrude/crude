@@ -163,6 +163,9 @@ func collaborationEventSection(event collaboration.Event) ResultSection {
 		sender = event.SenderID
 	}
 	metadata := []string{"Attributed " + string(event.Origin)}
+	if event.Broadcast {
+		metadata = append(metadata, "running-agent broadcast")
+	}
 	if event.ReplyTo != "" {
 		metadata = append(metadata, "reply")
 	}

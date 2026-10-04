@@ -11,6 +11,22 @@ import (
 	"golang.org/x/sys/windows"
 )
 
+func TestBuildWindowsEnvBlockIsDoubleNullTerminated(t *testing.T) {
+	block, err := buildWindowsEnvBlock([]string{"A=1", "B=2"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := unsafe.Slice(block, 9)
+	want := []uint16{'A', '=', '1', 0, 'B', '=', '2', 0, 0}
+	if !bytes.Equal(uint16Bytes(got), uint16Bytes(want)) {
+		t.Fatalf("environment block=%v want %v", got, want)
+	}
+}
+
+func uint16Bytes(values []uint16) []byte {
+	return unsafe.Slice((*byte)(unsafe.Pointer(&values[0])), len(values)*2)
+}
+
 // TestConPTYCreateWriteClose verifies a ConPTY session can be created, written
 // to, and closed cleanly. This is the Windows counterpart of
 // TestTerminalManagerCreateWriteClose.
@@ -165,6 +181,3 @@ func processAlive(t *testing.T, pid uint32) bool {
 	}
 	return code == stillActive
 }
-
-// Ensure unsafe is referenced (used in the ConPTY implementation).
-var _ = unsafe.Sizeof(0)

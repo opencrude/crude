@@ -89,3 +89,34 @@ func TestCollaborationMessageLiveSQLiteHydrationParity(t *testing.T) {
 		}
 	}
 }
+
+func TestRunningAgentBroadcastRendersAsRareBroadcastInsteadOfRecipientDump(t *testing.T) {
+	message := types.ConversationMessage{
+		InternalID: "event-broadcast", Role: types.RoleUser, Origin: provider.OriginPeer,
+		Content: "Stop before publishing stale generated files.",
+		Collaboration: &provider.CollaborationAttribution{
+			EventID: "event-broadcast", ThreadID: "event-broadcast",
+			SenderID: "asha", SenderName: "Asha",
+			RecipientIDs:   []string{"b", "c", "d"},
+			RecipientNames: []string{"Blake", "Casey", "Drew"},
+			Kind:           "peer_note", Broadcast: true,
+		},
+	}
+	renderer := chatprojection.NewRenderer(theme.DefaultDark())
+	renderer.SetSize(80, 24)
+	renderer.SetChatAreaBounds(0, 20)
+	renderer.SyncMessages(ChatMessagesFromViews([]workspace.ChatMessageView{message}), 1)
+	rows := renderer.ExportMessageRowsSnapshot(80).Rows
+	if len(rows) != 1 {
+		t.Fatalf("rows=%d", len(rows))
+	}
+	text := strings.Join(rows[0].Lines, "\n")
+	for _, want := range []string{"Asha → 3 running agents · Broadcast", "Stop before publishing"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("broadcast projection missing %q:\n%s", want, text)
+		}
+	}
+	if strings.Contains(text, "Blake, Casey, Drew") {
+		t.Fatalf("broadcast header dumped the full recipient roster:\n%s", text)
+	}
+}

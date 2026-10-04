@@ -149,6 +149,27 @@ Parameters may be passed directly or supplied through environment variables:
 
 Crude stderr is retained at `%TEMP%\crude-tuishot\crude.log`.
 
+## Clipboard-image acceptance
+
+Windows Terminal normally owns Ctrl+V and Ctrl+Shift+V as terminal paste
+actions. An image-only clipboard produces an empty bracketed paste
+(`ESC[200~ ESC[201~`), not necessarily an application Ctrl+V keypress.
+Crude's chat composer handles that event by reading the system clipboard image
+on its existing asynchronous worker and persisting an ordinary attachment.
+Changing the terminal's paste bindings is not required.
+
+For a native check, save the original clipboard, put a small synthetic bitmap
+on it, open a new session without submitting a prompt, and send `key:ctrl+v`.
+Wait for the attachment chip and verify the existing draft stays intact. Repeat
+with `key:ctrl+shift+v`, then restore the original clipboard. Never use private
+clipboard contents as a test fixture.
+
+Separately test ordinary text paste: it must insert the terminal-delivered text
+once, without importing an image or re-reading unrelated clipboard text. Empty
+pastes in the launcher, file tree, editor, popup fields or blocking decks must
+not attach an image to a hidden composer. Session changes while an image read
+is in flight must reject the stale result.
+
 ## Limits
 
 - The physical desktop must be available and unlocked.

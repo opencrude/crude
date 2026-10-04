@@ -62,7 +62,7 @@ func TestSubAgentTerminalResultNeedsDeliverable(t *testing.T) {
 				handle.SetReportArtifact("report-1", 1)
 			}
 			messages := append([]provider.ChatMessage{provider.NewTextMessage("system", "instructions"), provider.NewTextMessage("user", "assignment")}, tc.messages...)
-			result := runner.buildResultFromMessages(handle, messages)
+			result := runner.buildSubAgentResult(handle, messages)
 			if result.Status != tc.want {
 				t.Fatalf("status = %q, want %q (reason %q, report %v)", result.Status, tc.want, tc.reason, tc.authored)
 			}

@@ -67,6 +67,8 @@ CREATE INDEX IF NOT EXISTS idx_collaboration_agents_session
 	ON collaboration_agents(session_id, state, updated_at DESC);
 CREATE INDEX IF NOT EXISTS idx_collaboration_agents_parent
 	ON collaboration_agents(parent_id, state, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_collaboration_agents_live_run
+	ON collaboration_agents(state, presence, current_run_id);
 CREATE TABLE IF NOT EXISTS collaboration_runs (
 	id TEXT PRIMARY KEY,
 	workspace_id TEXT NOT NULL,

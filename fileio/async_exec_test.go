@@ -136,3 +136,40 @@ func TestPromoteRegistersRunningCommandUnderNewHandle(t *testing.T) {
 	}
 	manager.CloseAndWait()
 }
+
+func TestAgentCommandInheritsConfiguredCrossPlatformTempDirectory(t *testing.T) {
+	manager := NewAsyncCommandManager()
+	tempDir := filepath.Join(t.TempDir(), "agent-temp")
+	if err := manager.SetTempDir(tempDir); err != nil {
+		t.Fatal(err)
+	}
+	command := `printf "%s" "$CRUDE_TEMP_DIR"`
+	if runtime.GOOS == "windows" {
+		command = `echo %CRUDE_TEMP_DIR%`
+	}
+	if _, err := manager.Start("temp-env", command, t.TempDir(), 10); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for {
+		info, ok := manager.Check("temp-env")
+		if !ok {
+			t.Fatal("command disappeared")
+		}
+		if info.Status != AsyncRunning {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("command did not finish")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	output, _, _, err := manager.ReadOutputLimit("temp-env", 0, DefaultOutputChunkBytes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.TrimSpace(output) != tempDir {
+		t.Fatalf("CRUDE_TEMP_DIR=%q want %q", strings.TrimSpace(output), tempDir)
+	}
+	manager.CloseAndWait()
+}

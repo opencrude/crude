@@ -28,6 +28,7 @@ const (
 	clipboardAsyncPasteEditor
 	clipboardAsyncPasteInputText
 	clipboardAsyncPasteInputImageFirst
+	clipboardAsyncPasteInputImage
 	clipboardAsyncPasteFindReplace
 	clipboardAsyncPasteNative
 )
@@ -172,7 +173,7 @@ func (r clipboardAsyncRequestMsg) key() clipboardAsyncKey {
 		return clipboardAsyncKey{
 			lane: clipboardAsyncPasteFindReplace, findReplace: r.findReplace, textEdit: r.textEdit,
 		}
-	case clipboardAsyncPasteInputText, clipboardAsyncPasteInputImageFirst:
+	case clipboardAsyncPasteInputText, clipboardAsyncPasteInputImageFirst, clipboardAsyncPasteInputImage:
 		return clipboardAsyncKey{lane: clipboardAsyncPasteInputText, session: r.session}
 	case clipboardAsyncPasteNative:
 		return clipboardAsyncKey{lane: clipboardAsyncPasteNative}
@@ -257,9 +258,14 @@ func executeClipboardAsyncRequest(
 		} else {
 			result.content = string(data)
 		}
-	case clipboardAsyncPasteInputImageFirst:
+	case clipboardAsyncPasteInputImageFirst, clipboardAsyncPasteInputImage:
 		data := backend.read(clipboard.FmtImage)
 		if len(data) == 0 {
+			// An empty terminal paste is evidence of an image-only gesture,
+			// not permission to insert unrelated system-clipboard text.
+			if request.operation == clipboardAsyncPasteInputImage {
+				break
+			}
 			data = backend.read(clipboard.FmtText)
 			if len(data) == 0 {
 				result.operationErr = errors.New("clipboard is empty or unavailable")
@@ -335,7 +341,7 @@ func (m *App) applyClipboardAsyncResult(result clipboardAsyncResultMsg) tea.Cmd 
 			return nil
 		}
 		request.nativePaste.PasteText(result.content)
-	case clipboardAsyncPasteInputText, clipboardAsyncPasteInputImageFirst:
+	case clipboardAsyncPasteInputText, clipboardAsyncPasteInputImageFirst, clipboardAsyncPasteInputImage:
 		// The chat input is a shared projection of ActiveSession. If the
 		// session changed while the OS clipboard call was in flight, there is
 		// no safe inactive draft to mutate, so discard the stale result.
@@ -344,6 +350,9 @@ func (m *App) applyClipboardAsyncResult(result clipboardAsyncResultMsg) tea.Cmd 
 		}
 		if result.operationErr != nil {
 			m.setClipboardAsyncError(result.operationErr.Error())
+			return nil
+		}
+		if request.operation == clipboardAsyncPasteInputImage && !result.image {
 			return nil
 		}
 		if request.session != nil && request.session.RefStore != nil {
@@ -368,12 +377,12 @@ func (m *App) applyClipboardAsyncResult(result clipboardAsyncResultMsg) tea.Cmd 
 	return nil
 }
 
-func (m *App) beginInputClipboardPaste() tea.Cmd {
+func (m *App) beginInputClipboardPaste(operation clipboardAsyncOperation) tea.Cmd {
 	if m.ActiveSession == nil || m.ActiveSession.RefStore == nil {
 		return nil
 	}
 	request := m.prepareClipboardAsyncRequest(clipboardAsyncRequestMsg{
-		operation: clipboardAsyncPasteInputImageFirst,
+		operation: operation,
 		session:   m.ActiveSession,
 	})
 	return m.clipboardAsyncCommand(request)

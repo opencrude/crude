@@ -28,7 +28,7 @@ type InteractiveResult struct {
 	Output             string  `json:"output"`
 }
 
-func buildInteractiveCommand(ctx context.Context, opts InteractiveOptions) (*exec.Cmd, func(), error) {
+func buildInteractiveCommand(ctx context.Context, opts InteractiveOptions, tempDir string) (*exec.Cmd, func(), error) {
 	shell := opts.Shell
 	if shell == "" {
 		shell = os.Getenv("SHELL")
@@ -58,6 +58,7 @@ func buildInteractiveCommand(ctx context.Context, opts InteractiveOptions) (*exe
 	}
 	cmd := setProcessGroupCmd(ctx, shell, args...)
 	cmd.Dir = opts.CWD
+	cmd.Env = commandEnvironmentWithTemp(cmd.Env, tempDir)
 	return cmd, func() {}, nil
 }
 

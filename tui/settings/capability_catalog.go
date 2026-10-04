@@ -20,7 +20,7 @@ import (
 
 const capabilityCatalogID ui.ComponentID = "settings/capabilities"
 const capabilityFilterID ui.ComponentID = "settings/capabilities/filter"
-const capabilityTableID ui.ComponentID = "settings/capabilities/table"
+const capabilityStoreID ui.ComponentID = "settings/capabilities/store"
 const capabilityFormID ui.ComponentID = "settings/capabilities/form"
 const capabilityTabsID ui.ComponentID = "settings/capabilities/tabs"
 
@@ -30,14 +30,15 @@ type capabilityCatalog struct {
 	tokens        *ui.TokenSet
 	tabs          *ui.Tabs
 	filter        *ui.FilterField
-	table         *ui.Table
+	store         *ui.VirtualList
+	storeFilters  *ui.ActionBar
 	browse        *ui.Table
 	tree          *ui.Tree
 	form          *ui.Form
 	reader        *ui.TextArea
 	bar           *ui.ActionBar
 	more          *ui.ActionBar
-	scroll        *ui.ScrollbarControl
+	storeScroll   *ui.ScrollbarControl
 	formScroll    *ui.ScrollbarControl
 	browseScroll  *ui.ScrollbarControl
 	treeScroll    *ui.ScrollbarControl
@@ -64,11 +65,17 @@ type capabilityCatalog struct {
 	draftOriginal captypes.Action
 	nextOpen      *capabilityNavigation
 	acquisition   *captypes.AcquisitionPreview
+	storeSources  []string
+	storeTypes    []string
 }
 
 type capabilityListState struct {
 	query, selected string
 	offset          int
+	source          string
+	show            string
+	entryType       string
+	sort            string
 }
 type capabilityViewRequest struct {
 	key    string
@@ -90,7 +97,7 @@ func newCapabilityCatalog(owner *WorkspaceSettingsSurface) *capabilityCatalog {
 	catalog.filter = ui.NewFilterField(capabilityFilterID, owner.tokens)
 	catalog.filter.SetPrompt(ui.SearchGlyphEnd(owner.tokens))
 	catalog.filter.SetPromptPlacement(ui.PromptEnd)
-	catalog.filter.SetSubmitAction("settings.capability.focus-table")
+	catalog.filter.SetSubmitAction("settings.capability.search")
 	catalog.filter.OnChanged(func(query string) {
 		state := catalog.views[catalog.viewKey()]
 		state.query = query
@@ -101,10 +108,13 @@ func newCapabilityCatalog(owner *WorkspaceSettingsSurface) *capabilityCatalog {
 			catalog.syncRows()
 		}
 	})
-	catalog.table = ui.NewTable(capabilityTableID, owner.tokens)
-	catalog.table.SetShowHeader(true)
-	catalog.table.SetActivateAction("settings.capability.inspect")
-	catalog.table.SetColumnGap(2)
+	catalog.store = ui.NewVirtualList(capabilityStoreID, owner.tokens)
+	catalog.store.SetActivateAction("settings.capability.inspect")
+	catalog.store.SetRowPainter(catalog.paintStoreRow)
+	catalog.storeFilters = ui.NewActionBar("settings/capabilities/store-filters", owner.tokens)
+	catalog.storeFilters.SetAlignEnd(false)
+	catalog.storeFilters.SetShowRule(false)
+	catalog.storeFilters.SetCancelAction("settings.capability.back")
 	catalog.browse = ui.NewTable("settings/capabilities/browse", owner.tokens)
 	catalog.browse.SetShowHeader(true)
 	catalog.browse.SetColumnGap(2)
@@ -116,7 +126,7 @@ func newCapabilityCatalog(owner *WorkspaceSettingsSurface) *capabilityCatalog {
 	catalog.form.SetFieldGap(0)
 	catalog.reader = ui.NewTextArea("settings/capabilities/reader", owner.tokens, true)
 	catalog.reader.SetReadOnly(true)
-	catalog.scroll = ui.NewScrollbarControl("settings/capabilities/scroll", catalog.table.Scroll(), owner.tokens)
+	catalog.storeScroll = ui.NewScrollbarControl("settings/capabilities/store-scroll", catalog.store.Scroll(), owner.tokens)
 	catalog.formScroll = ui.NewScrollbarControl("settings/capabilities/form-scroll", catalog.form.Scroll(), owner.tokens)
 	catalog.browseScroll = ui.NewScrollbarControl("settings/capabilities/browse-scroll", catalog.browse.Scroll(), owner.tokens)
 	catalog.treeScroll = ui.NewScrollbarControl("settings/capabilities/tree-scroll", catalog.tree.Scroll(), owner.tokens)
@@ -136,14 +146,15 @@ func (catalog *capabilityCatalog) SetTokens(tokens *ui.TokenSet) {
 	catalog.tokens = tokens
 	catalog.tabs.SetTokens(tokens)
 	catalog.filter.SetTokens(tokens)
-	catalog.table.SetTokens(tokens)
+	catalog.store.SetTokens(tokens)
+	catalog.storeFilters.SetTokens(tokens)
 	catalog.browse.SetTokens(tokens)
 	catalog.tree.SetTokens(tokens)
 	catalog.form.SetTokens(tokens)
 	catalog.reader.SetTokens(tokens)
 	catalog.bar.SetTokens(tokens)
 	catalog.more.SetTokens(tokens)
-	catalog.scroll.SetTokens(tokens)
+	catalog.storeScroll.SetTokens(tokens)
 	catalog.formScroll.SetTokens(tokens)
 	catalog.browseScroll.SetTokens(tokens)
 	catalog.treeScroll.SetTokens(tokens)
@@ -153,11 +164,11 @@ func (catalog *capabilityCatalog) SetTokens(tokens *ui.TokenSet) {
 }
 
 func (catalog *capabilityCatalog) Children() []ui.Component {
-	children := []ui.Component{catalog.tabs, catalog.filter, catalog.table, catalog.browse, catalog.tree, catalog.form, catalog.reader}
+	children := []ui.Component{catalog.tabs, catalog.filter, catalog.storeFilters, catalog.store, catalog.browse, catalog.tree, catalog.form, catalog.reader}
 	if catalog.Bounds().Empty() {
 		return children
 	}
-	children = append(children, catalog.scroll, catalog.formScroll, catalog.browseScroll, catalog.treeScroll, catalog.bar, catalog.more)
+	children = append(children, catalog.storeScroll, catalog.formScroll, catalog.browseScroll, catalog.treeScroll, catalog.bar, catalog.more)
 	for _, bar := range catalog.extraBars {
 		if !bar.Bounds().Empty() {
 			children = append(children, bar)
@@ -177,7 +188,11 @@ func (catalog *capabilityCatalog) syncRows() {
 		entries = model.capabilityDiscovery[catalog.kind]
 	} else if catalog.kind == "source" {
 		for id, source := range model.capabilities.Sources {
-			entries = append(entries, captypes.Entry{ID: id, Name: source.Name, Source: source.Kind, Path: source.Location, State: mapState(source.Disabled, "disabled", "configured"), Origin: source.Scope})
+			mode := ""
+			if source.Builtin {
+				mode = "Built-in"
+			}
+			entries = append(entries, captypes.Entry{ID: id, Kind: catalog.kind, Name: source.Name, Description: source.Location, Source: source.Kind, Path: source.Location, Mode: mode, State: mapState(source.Disabled, "disabled", "configured"), Origin: source.Scope, Installed: true, Transport: source.Kind})
 		}
 	} else {
 		for _, entry := range model.capabilitySnapshot.Entries {
@@ -191,39 +206,35 @@ func (catalog *capabilityCatalog) syncRows() {
 		if len(entries) == 0 {
 			if catalog.kind == captypes.KindSkill {
 				for id, skill := range model.capabilities.Skills {
-					entries = append(entries, captypes.Entry{ID: id, Name: skill.Name, Kind: catalog.kind, Source: skill.Source, State: mapState(skill.Disabled, "disabled", "installed"), Mode: skill.Mode, Origin: skill.Scope, Path: skill.Path})
+					entries = append(entries, captypes.Entry{ID: id, Name: skill.Name, Kind: catalog.kind, Source: skill.Source, State: mapState(skill.Disabled, "disabled", "installed"), Mode: skill.Mode, Origin: skill.Scope, Path: skill.Path, Managed: skill.Managed, Installed: true})
 				}
 			}
 			if catalog.kind == captypes.KindMCP {
 				for id, connection := range model.capabilities.Connections {
-					entries = append(entries, captypes.Entry{ID: id, Name: connection.Name, Kind: catalog.kind, Source: connection.Transport, State: mapState(connection.Disabled, "disabled", "not started"), Origin: connection.Scope})
+					entries = append(entries, captypes.Entry{ID: id, Name: connection.Name, Kind: catalog.kind, Source: connection.Source, State: mapState(connection.Disabled, "disabled", "not started"), Origin: connection.Scope, Installed: true, Transport: connection.Transport, PackageType: connection.PackageType, Repository: connection.RepositoryURL, Website: connection.WebsiteURL})
 				}
 			}
 		}
 	}
-	sort.Slice(entries, func(first, second int) bool { return entries[first].Name < entries[second].Name })
-	rows := make([]ui.TableRow, 0, len(entries))
-	query := strings.ToLower(state.query)
+	entries, state = catalog.filteredStoreEntries(entries, state)
+	catalog.views[catalog.viewKey()] = state
+	items := make([]ui.VirtItem, 0, len(entries))
 	for _, entry := range entries {
-		if !strings.Contains(strings.ToLower(entry.Name+" "+entry.ID+" "+entry.Source+" "+entry.Description+" "+entry.State), query) {
-			continue
-		}
-		origin := string(entry.Origin)
-		rows = append(rows, ui.TableRow{ID: entry.ID, Payload: entry, Cells: []ui.TableCell{{Text: entry.Name}, {Text: entry.Source, Role: ui.ColorMuted}, {Text: origin, Role: ui.ColorMuted}, {Text: strings.TrimSpace(entry.Mode + " " + entry.State), Role: ui.ColorMuted}}})
+		items = append(items, ui.VirtItem{ID: entry.ID, Height: 2, Label: entry.Name, Detail: entry.Description, Payload: entry})
 	}
-	oldOffset := catalog.table.Scroll().Offset()
-	catalog.table.SetColumns([]ui.TableColumn{{ID: "name", Label: "Name", Track: ui.FractionGridTrack(3)}, {ID: "source", Label: "Source", Track: ui.FractionGridTrack(2)}, {ID: "origin", Label: "Scope", Track: ui.FractionGridTrack(2)}, {ID: "state", Label: "Use / state", Track: ui.FractionGridTrack(3)}})
-	catalog.table.SetRows(rows)
-	for index, row := range rows {
-		if row.ID == state.selected {
-			catalog.table.SelectIndex(index)
+	oldOffset := catalog.store.Scroll().Offset()
+	catalog.store.SetItems(items)
+	for index, item := range items {
+		if item.ID == state.selected {
+			catalog.store.SelectIndex(index)
 			break
 		}
 	}
 	if state.selected != "" {
 		oldOffset = state.offset
 	}
-	catalog.table.Scroll().ScrollTo(oldOffset)
+	catalog.store.Scroll().ScrollTo(oldOffset)
+	catalog.syncStoreFilters(entries, state)
 	catalog.seen = model.capabilityRevision
 	catalog.actions()
 }
@@ -258,11 +269,11 @@ func (catalog *capabilityCatalog) actions() {
 	} else if catalog.detail {
 		primary, secondary = catalog.detailActions(button)
 	} else if catalog.page == "discover" {
-		primary = []ui.ActionBarButton{button("Search sources", "discover"), button("Inspect", "inspect"), button("Install", "install")}
+		primary = []ui.ActionBarButton{button("Inspect", "inspect"), button("Install", "install")}
 	} else {
 		if catalog.kind == captypes.KindSkill {
 			primary = []ui.ActionBarButton{button("Create", "create-skill"), button("Add local", "add-local"), button("Inspect", "inspect")}
-			if selected, ok := catalog.table.Selected(); ok {
+			if selected, ok := catalog.selectedStoreEntry(); ok {
 				skill := catalog.owner.model.capabilities.Skills[selected.ID]
 				secondary = append(secondary, button(mapState(skill.Disabled || skill.Mode == "disabled", "Enable", "Disable"), mapState(skill.Disabled || skill.Mode == "disabled", "enable", "disable")), button("Remove", "remove"))
 				if skill.Source != "" {
@@ -274,7 +285,15 @@ func (catalog *capabilityCatalog) actions() {
 			primary = []ui.ActionBarButton{button("Add", "add"), button("Import", "import"), button("Inspect", "inspect")}
 		}
 		if catalog.kind == "source" {
-			primary = []ui.ActionBarButton{button("Add source", "add"), button("Edit", "edit"), button("Remove", "remove-source")}
+			primary = []ui.ActionBarButton{button("Add source", "add"), button("Edit", "edit")}
+			if selected, ok := catalog.selectedStoreEntry(); ok {
+				source := catalog.owner.model.capabilities.Sources[selected.ID]
+				if source.Builtin {
+					primary = append(primary, button(mapState(source.Disabled, "Enable", "Disable"), mapState(source.Disabled, "enable", "disable")))
+				} else {
+					primary = append(primary, button("Remove", "remove-source"))
+				}
+			}
 		}
 		secondary = append(secondary, button("Sources", "sources"), button("Acquisition", "acquisition"), button("Refresh", "snapshot"))
 		if catalog.kind == "source" {
@@ -286,7 +305,7 @@ func (catalog *capabilityCatalog) actions() {
 	}
 	selected := catalog.id != ""
 	if !catalog.detail && catalog.edit == "" {
-		_, selected = catalog.table.Selected()
+		_, selected = catalog.selectedStoreEntry()
 	}
 	for index := range primary {
 		operation := strings.TrimPrefix(primary[index].Action, "settings.capability.")
@@ -318,7 +337,7 @@ func (catalog *capabilityCatalog) Layout(ctx ui.LayoutContext, rect ui.Rect) {
 	catalog.SetBounds(rect)
 	catalog.syncModel()
 	if rect.Empty() {
-		for _, child := range []ui.Component{catalog.tabs, catalog.filter, catalog.table, catalog.browse, catalog.tree, catalog.form, catalog.reader, catalog.scroll, catalog.formScroll, catalog.browseScroll, catalog.treeScroll, catalog.bar, catalog.more} {
+		for _, child := range []ui.Component{catalog.tabs, catalog.filter, catalog.storeFilters, catalog.store, catalog.browse, catalog.tree, catalog.form, catalog.reader, catalog.storeScroll, catalog.formScroll, catalog.browseScroll, catalog.treeScroll, catalog.bar, catalog.more} {
 			child.Layout(ctx, ui.Rect{})
 		}
 		for _, bar := range catalog.extraBars {
@@ -344,8 +363,9 @@ func (catalog *capabilityCatalog) Layout(ctx ui.LayoutContext, rect ui.Rect) {
 		catalog.filter.Layout(ctx, ui.Rect{})
 	}
 	if catalog.edit != "" || catalog.detail {
-		catalog.table.Layout(ctx, ui.Rect{})
-		catalog.scroll.Layout(ctx, ui.Rect{})
+		catalog.store.Layout(ctx, ui.Rect{})
+		catalog.storeFilters.Layout(ctx, ui.Rect{})
+		catalog.storeScroll.Layout(ctx, ui.Rect{})
 	}
 	if catalog.edit != "" || !catalog.detail || !catalog.detailCollection() {
 		catalog.browse.Layout(ctx, ui.Rect{})
@@ -386,7 +406,8 @@ func (catalog *capabilityCatalog) Layout(ctx ui.LayoutContext, rect ui.Rect) {
 	} else {
 		catalog.filter.Layout(ctx, ui.Rect{Y: contentY, W: rect.W, H: min(1, height)})
 		catalog.filter.SetPlaceholder("Search " + catalog.title())
-		catalog.layoutTable(ctx, catalog.table, catalog.scroll, ui.Rect{Y: contentY + 2, W: rect.W, H: max(0, height-2)})
+		catalog.storeFilters.Layout(ctx, ui.Rect{Y: contentY + 1, W: rect.W, H: min(1, max(0, height-1))})
+		catalog.layoutStore(ctx, ui.Rect{Y: contentY + 2, W: rect.W, H: max(0, height-2)})
 	}
 }
 
@@ -412,8 +433,12 @@ func (catalog *capabilityCatalog) Paint(buffer *surface.CellBuffer, originX, ori
 	if catalog.owner.model.capabilityPending != nil {
 		message = catalog.owner.model.capabilityPending.Operation + " running — Cancel stops this operation"
 	}
-	if catalog.edit == "" && !catalog.detail && len(catalog.table.Rows()) == 0 && message == "" {
-		message = "No matches. Discover searches configured sources only on request."
+	if catalog.edit == "" && !catalog.detail && len(catalog.store.Items()) == 0 && message == "" {
+		if catalog.page == "discover" && strings.TrimSpace(catalog.filter.Value()) == "" {
+			message = "Type a search, then press Enter. Discover queries every enabled source."
+		} else {
+			message = "No matches for the current search and filters."
+		}
 	}
 	buffer.WriteString(originX+rect.X, originY+rect.Y+catalog.statusY, rendering.TruncateVisual(strings.ReplaceAll(message, "\n", " "), rect.W, "…"), catalog.tokens.Color(ui.ColorMuted), catalog.tokens.Color(ui.ColorPopupBg), 0)
 }
@@ -498,7 +523,7 @@ func (catalog *capabilityCatalog) HandleAction(_ ui.EventContext, action ui.Acti
 		return catalog.changed()
 	}
 	model := catalog.owner.model
-	selected, hasSelected := catalog.table.Selected()
+	selected, hasSelected := catalog.selectedStoreEntry()
 	if hasSelected && !catalog.detail && catalog.edit == "" {
 		catalog.id = selected.ID
 	}
@@ -620,8 +645,25 @@ func (catalog *capabilityCatalog) HandleAction(_ ui.EventContext, action ui.Acti
 				return catalog.submit(captypes.Action{Operation: "save-skill", Kind: catalog.kind, ID: catalog.id, Skill: &skill})
 			}
 		}
-	case "focus-table":
-		catalog.owner.focusID(catalog.activeTable().ID())
+	case "search":
+		if catalog.detail {
+			catalog.owner.focusID(catalog.browse.ID())
+			return catalog.changed()
+		}
+		if catalog.page == "discover" {
+			if strings.TrimSpace(catalog.filter.Value()) == "" {
+				catalog.message = "Enter a search before querying external sources."
+				return catalog.changed()
+			}
+			catalog.saveListState()
+			return catalog.submit(captypes.Action{Operation: "discover", Kind: catalog.kind, ID: catalog.id, Query: catalog.filter.Value()})
+		}
+		catalog.owner.focusID(catalog.store.ID())
+		return catalog.changed()
+	case "filter-source", "filter-show", "filter-type", "filter-sort":
+		catalog.cycleStoreFilter(operation)
+		catalog.syncRows()
+		catalog.owner.focusID(catalog.storeFilters.ID())
 		return catalog.changed()
 	case "inspect-item":
 		catalog.inspectItem()
@@ -667,7 +709,7 @@ func (catalog *capabilityCatalog) back() ui.EventResult {
 	catalog.setTabs()
 	catalog.restoreFilter()
 	catalog.syncRows()
-	catalog.owner.focusID(catalog.table.ID())
+	catalog.owner.focusID(catalog.store.ID())
 	return catalog.changed()
 }
 
@@ -689,7 +731,7 @@ func (catalog *capabilityCatalog) editForm() {
 	} else if catalog.kind == "source" {
 		value := model.capabilities.Sources[catalog.id]
 		catalog.draftOriginal = captypes.Action{Kind: catalog.kind, ID: catalog.id, Source: &value}
-		fields = []*ui.FieldState{ui.TextFieldState("id", "Identity", value.ID, ""), ui.TextFieldState("name", "Name", value.Name, ""), ui.CycleFieldState("kind", "Source", []string{"local", "repository", "registry"}, mapDefault(value.Kind, "local"), ""), ui.TextFieldState("location", "Location", value.Location, "HTTPS registry, pinned repository, or local directory"), ui.TextFieldState("revision", "Pinned revision", value.Revision, "Repositories require a full commit digest"), ui.TextFieldState("digest", "Artifact digest", value.Digest, "Exact SHA-256 when the source requires artifact verification."), ui.BoolFieldState("trusted", "Approved acquisition", value.Trusted, "Publisher provenance is not a code safety certificate"), ui.BoolFieldState("disabled", "Disabled", value.Disabled, "Do not search or acquire from this source.")}
+		fields = []*ui.FieldState{ui.TextFieldState("id", "Identity", value.ID, ""), ui.TextFieldState("name", "Name", value.Name, ""), ui.CycleFieldState("kind", "Source", []string{"local", "repository", "registry", "skill-registry"}, mapDefault(value.Kind, "local"), ""), ui.TextFieldState("location", "Location", value.Location, "HTTPS MCP/skill registry, pinned repository, or local directory"), ui.TextFieldState("revision", "Pinned revision", value.Revision, "Repositories require a full commit digest"), ui.TextFieldState("digest", "Artifact digest", value.Digest, "Exact SHA-256 when the source requires artifact verification."), ui.BoolFieldState("trusted", "Approved acquisition", value.Trusted, "Publisher provenance is not a code safety certificate"), ui.BoolFieldState("disabled", "Disabled", value.Disabled, "Do not search or acquire from this source.")}
 	} else {
 		value := captypes.Clone(model.capabilities).Connections[catalog.id]
 		catalog.draftOriginal = captypes.Action{Kind: catalog.kind, ID: catalog.id, Connection: &value}
@@ -697,7 +739,11 @@ func (catalog *capabilityCatalog) editForm() {
 		environment, _ := json.Marshal(value.Environment)
 		headers, _ := json.Marshal(value.Headers)
 		secrets, _ := json.Marshal(value.SecretRefs)
-		fields = []*ui.FieldState{ui.TextFieldState("id", "Identity", value.ID, "Stable connection identity"), ui.TextFieldState("name", "Name", value.Name, ""), ui.CycleFieldState("transport", "Transport", []string{"http", "stdio"}, mapDefault(value.Transport, "http"), "Streamable HTTP or a managed local process"), ui.TextFieldState("url", "Endpoint", value.URL, "Credentials are endpoint-bound"), ui.TextFieldState("command", "Executable", value.Command, "No shell interpolation"), ui.TextAreaFieldState("args", "Arguments", string(args), "JSON array, exact argument boundaries"), ui.TextFieldState("directory", "Working directory", value.Directory, ""), ui.TextAreaFieldState("environment", "Environment", string(environment), "Explicit non-secret values only"), ui.TextAreaFieldState("headers", "Headers", string(headers), "Non-secret headers"), ui.TextAreaFieldState("secrets", "Secret references", string(secrets), "Map header/env name to env:VARIABLE; credentials remain application-owned"), ui.CycleFieldState("auth", "Authentication", []string{"none", "oauth"}, mapDefault(value.Auth, "none"), "Sign in is explicit"), ui.TextFieldState("oauth-client", "OAuth client", value.OAuthClientID, "Blank uses dynamic registration"), ui.BoolFieldState("launch", "Approve local launch", value.LaunchApproved, "Unsandboxed launch exposes this executable to your user privileges; automatic acquisition cannot start it")}
+		environmentDescription := "Explicit non-secret values only"
+		if len(value.RequiredEnv) > 0 {
+			environmentDescription += ". Required by this package: " + strings.Join(value.RequiredEnv, ", ")
+		}
+		fields = []*ui.FieldState{ui.TextFieldState("id", "Identity", value.ID, "Stable connection identity"), ui.TextFieldState("name", "Name", value.Name, ""), ui.CycleFieldState("transport", "Transport", []string{"http", "stdio"}, mapDefault(value.Transport, "http"), "Streamable HTTP or a managed local process"), ui.TextFieldState("url", "Endpoint", value.URL, "Credentials are endpoint-bound"), ui.TextFieldState("command", "Executable", value.Command, "No shell interpolation"), ui.TextAreaFieldState("args", "Arguments", string(args), "JSON array, exact argument boundaries"), ui.TextFieldState("directory", "Working directory", value.Directory, ""), ui.TextAreaFieldState("environment", "Environment", string(environment), environmentDescription), ui.TextAreaFieldState("headers", "Headers", string(headers), "Non-secret headers"), ui.TextAreaFieldState("secrets", "Secret references", string(secrets), "Map header/env name to env:VARIABLE; credentials remain application-owned"), ui.CycleFieldState("auth", "Authentication", []string{"none", "oauth"}, mapDefault(value.Auth, "none"), "Sign in is explicit"), ui.TextFieldState("oauth-client", "OAuth client", value.OAuthClientID, "Blank uses dynamic registration"), ui.BoolFieldState("launch", "Approve local launch", value.LaunchApproved, "Unsandboxed launch exposes this executable to your user privileges; automatic acquisition cannot start it")}
 		fields = append(fields, capabilityIntField("timeout", "Timeout (seconds)", int64(max(1, value.TimeoutSeconds)), 1, 3600, "Bounded operations. Unknown remote mutations are never retried automatically."), ui.TextAreaFieldState("oauth-scopes", "OAuth scopes", strings.Join(value.OAuthScopes, "\n"), "One scope per line; signing in stays application-owned."))
 	}
 	if catalog.id != "" && catalog.edit == "edit" {
@@ -792,7 +838,11 @@ func (catalog *capabilityCatalog) draftAction() (captypes.Action, error) {
 		request.Skill, request.Content = &skill, value("description")
 	case "source":
 		request.Operation = "save-source"
-		request.Source = &captypes.SourceConfig{ID: value("id"), Name: value("name"), Kind: value("kind"), Location: value("location"), Revision: value("revision"), Digest: value("digest"), Trusted: ui.BoolFieldValue(form.Field("trusted")), Disabled: ui.BoolFieldValue(form.Field("disabled"))}
+		source := catalog.owner.model.capabilities.Sources[catalog.id]
+		source.ID, source.Name, source.Kind, source.Location = value("id"), value("name"), value("kind"), value("location")
+		source.Revision, source.Digest = value("revision"), value("digest")
+		source.Trusted, source.Disabled = ui.BoolFieldValue(form.Field("trusted")), ui.BoolFieldValue(form.Field("disabled"))
+		request.Source = &source
 	default:
 		connection := captypes.Clone(catalog.owner.model.capabilities).Connections[catalog.id]
 		if catalog.draftOriginal.Connection != nil {

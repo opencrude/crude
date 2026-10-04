@@ -7,8 +7,6 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
-Canonical plan: [`docs/plans/tui-component-system-plan.md`](../plans/tui-component-system-plan.md)
-
 ## Workspace Home (2026-10-02)
 
 `BenchmarkLauncherDenseFrame` paints and relays out a 160×40 home screen with
@@ -303,6 +301,25 @@ GOMAXPROCS: 12
 CPU frequency scaling was enabled during capture; ranges below include normal
 scheduler and frequency variation.
 
+### Windows allocation calibration (2026-10-04)
+
+The allocation gate keeps the Linux reference rows as its generic CI baseline
+and applies a narrow `windows` override only where the same Go benchmark has a
+different runtime allocation shape. On `windows/amd64`, Go 1.25.8, three
+repeated clean-HEAD runs measured:
+
+| Benchmark | Observed time range (ns) | Bytes/op | Allocs/op |
+|-----------|--------------------------|----------|-----------|
+| `BenchmarkAgentSwitchWarm_80Msgs` | 153,795-157,145 | 34,170-34,174 | 303 |
+| `BenchmarkOpenIndexedHistory` | 17,106,233-17,214,597 | 493,349-497,866 | 11,628-11,629 |
+
+The unchanged `HEAD` archive and the edited worktree produced the same agent
+switch allocation result. The Windows profile includes UTF-16 environment
+lookups and Windows-specific SQLite/runtime paths, so allocations are
+hardware-independent but not OS/runtime-independent. The Windows ceilings in
+`scripts/perf_ceilings.txt` retain approximately 20% headroom; the generic Linux
+ceilings are unchanged.
+
 ## Reproduction
 
 ```bash
@@ -431,8 +448,8 @@ when measured time moves materially:
 
 ## Interpretation Rules
 
-1. Compare like-for-like benchmark names, terminal sizes, Go versions, and CPU
-   power modes.
+1. Compare like-for-like benchmark names, terminal sizes, GOOS/GOARCH, Go
+   versions, and CPU power modes.
 2. Treat allocation growth as a regression unless the change documents why.
    The ceilings live in `scripts/perf_ceilings.txt`; there is no second list
    in this file to drift out of sync.

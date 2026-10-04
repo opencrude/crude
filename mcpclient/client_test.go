@@ -159,3 +159,18 @@ func TestEndpointCredentialsDoNotCrossRedirects(t *testing.T) {
 		t.Log("request correctly bounded by context")
 	}
 }
+
+func TestPackageConnectionRequiresDeclaredEnvironmentBeforeLaunch(t *testing.T) {
+	manager := New(t.TempDir())
+	defer manager.Close()
+	config := captypes.ConnectionConfig{
+		ID: "ghidra", Name: "Ghidra", Transport: "stdio", Command: "uvx",
+		Args: []string{"ghidra-retro-mcp==1.0.0"}, LaunchApproved: true,
+		RequiredEnv: []string{"GHIDRA_INSTALL_DIR"},
+	}
+	manager.Configure(map[string]captypes.ConnectionConfig{config.ID: config})
+	err := manager.Connect(t.Context(), config.ID)
+	if err == nil || !strings.Contains(err.Error(), "GHIDRA_INSTALL_DIR") {
+		t.Fatalf("missing package setup was not reported: %v", err)
+	}
+}

@@ -15,14 +15,13 @@ acceptance boundaries.
 Canonical supporting documents remain authoritative for their areas:
 
 - [Chat projection and planning overhaul](chat-projection-handoff.md)
-- [Message-scoped undo and local history](undo-local-history-plan.md)
 - [Component authoring](../guides/component-authoring.md)
 - [Control usage](../reference/control-usage.md)
 - [Interaction matrix](../reference/interaction-matrix.md)
 - [Performance baselines](../reference/performance-baselines.md)
 - [Terminal width](../reference/terminal-width.md)
 - [Settings inheritance](../reference/settings.md)
-- [Context compaction and runtime continuity](context-compaction-runtime-plan.md)
+- [Adaptive context handling](../reference/adaptive-context.md)
 
 ## 2. Progress
 
@@ -41,7 +40,7 @@ Canonical supporting documents remain authoritative for their areas:
 | Editor latency/backpressure | LANDED | Single presentation authority coalesces pointer/stream/PTY bursts at 16 ms without delaying mutations; sidebar drag defers chat reflow to release; warm tab switches retain caches; interaction benchmarks/gates pass |
 | Sidebar width and tab/prompt routing | LANDED, monitor | Shared configured width and window-authoritative active tab/prompt target |
 | Horizontal editor scrollbar | LANDED, hardened | Whole-document retained width index, O(1) ordinary line updates, stable viewport-independent extent, native SGR horizontal wheel plus Shift-wheel fallback |
-| Message-scoped local-history undo | LANDED | Full system in `undo-local-history-plan.md` |
+| Message-scoped local-history undo | LANDED | Current contract is in root `AGENTS.md` and the Local History implementation/tests |
 
 ## 3. Program Invariants
 
@@ -302,7 +301,7 @@ Acceptance:
 
 ### Phase 7: Message-scoped local-history undo
 
-Execute [undo-local-history-plan.md](undo-local-history-plan.md) in its phases:
+The current Local History implementation provides:
 
 - content-addressed immutable local history
 - generated-content exclusions

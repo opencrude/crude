@@ -17,7 +17,7 @@ Callers import it directly; do not recreate forwarding APIs in `agent/`,
 
 | Owner | Responsibility |
 |---|---|
-| `prompt/build.go`, `contracts.go` | Root/child policy, role contracts, escaped profile and identity overlays |
+| `prompt/build.go`, `contracts.go` | Root/child policy, role contracts, runtime-capability awareness, bounded command-output/temp policy, escaped profile and identity overlays |
 | `prompt/compaction.go` | Four extraction stages, source attribution, manifests, checkpoint envelope |
 | `prompt/guidance.go`, `guidance_compile.go` | Named-file discovery, hashes, verbatim representation, compiler/verifier wording, compiled ledger envelope |
 | `prompt/memory.go` | No-tools memory extraction/consolidation policy and input envelopes |
@@ -33,6 +33,19 @@ jobs use their specialized `prompt/` builders; a memory curator or permission
 reviewer must not inherit the whole coding-agent prompt or acquire its tools.
 Domain packages may redact, bound and serialize source data before rendering;
 validation and state mutation do not move into a prompt builder.
+
+The stable environment projection includes the exact session-owned
+`temporary_directory`, also exported to command processes as `CRUDE_TEMP_DIR`.
+The canonical tool contract tells agents to redirect noisy transient output there
+and inspect bounded ranges rather than injecting whole logs into model context.
+`read_async_output` enforces 32 KiB default / 64 KiB maximum pages with raw byte
+cursors; a fast synchronous command that completes with larger output returns a
+bounded head/tail excerpt and retains the full capture under an async handle.
+
+`RuntimeCapabilities` gives every root and child a concise, model-neutral map of
+Crude's collaboration, memory/history, capability and evidence surfaces. It does
+not duplicate schemas or grant tools. Directed peer delivery is automatic;
+live-running broadcast is rare and peer-note-only.
 
 Exact tool schemas, descriptions, validation/denial messages and result payloads
 stay with the executing interface. They are not competing system prompts. External

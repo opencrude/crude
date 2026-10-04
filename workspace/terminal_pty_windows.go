@@ -373,10 +373,8 @@ func buildWindowsEnvBlock(env []string) (*uint16, error) {
 		// separator and drop any extra.
 		block = append(block, chars...)
 	}
-	// Ensure the block ends with a double null (UTF16FromString already
-	// added one per entry; add the final one if not already present).
-	if len(block) == 0 || block[len(block)-1] != 0 {
-		block = append(block, 0)
-	}
+	// UTF16FromString contributes the separator null for the final entry.
+	// CreateProcess requires one additional null to terminate the block.
+	block = append(block, 0)
 	return &block[0], nil
 }

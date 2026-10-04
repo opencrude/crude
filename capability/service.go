@@ -131,9 +131,18 @@ func (service *Service) Configure(ctx context.Context, settings captypes.Setting
 		entries[id] = entry
 	}
 	for id, config := range settings.Connections {
-		entry := captypes.Entry{ID: id, Kind: captypes.KindMCP, Name: config.Name, Source: config.Source, Version: config.Version, Origin: config.Scope, ConnectionID: id, Installed: true, State: "not started"}
+		entry := captypes.Entry{
+			ID: id, Kind: captypes.KindMCP, Name: config.Name, Source: config.Source,
+			Version: config.Version, Origin: config.Scope, ConnectionID: id,
+			Installed: true, State: "not started", Transport: config.Transport,
+			PackageType: config.PackageType, Repository: config.RepositoryURL, Website: config.WebsiteURL,
+		}
 		if config.Disabled {
 			entry.State = "disabled"
+		} else if missing := missingConnectionEnvironment(config); len(missing) > 0 {
+			entry.State, entry.Reason = "setup required", "Set required environment: "+strings.Join(missing, ", ")
+		} else if config.Transport == "stdio" && !config.LaunchApproved {
+			entry.State, entry.Reason = "approval required", "Review and approve the local package launch before connecting"
 		}
 		if err := mcpclient.Validate(config); err != nil {
 			entry.State, entry.Reason = "unavailable", err.Error()
@@ -161,7 +170,7 @@ func (service *Service) Snapshot() captypes.Snapshot {
 		states[state.ID] = state
 	}
 	for id, entry := range service.entries {
-		if entry.Kind == captypes.KindMCP && entry.State != "unavailable" {
+		if entry.Kind == captypes.KindMCP && entry.State == "not started" {
 			if state, exists := states[id]; exists {
 				entry.State, entry.Reason = state.State, state.Error
 			}
@@ -181,6 +190,17 @@ func (service *Service) Snapshot() captypes.Snapshot {
 	})
 	sort.Slice(snapshot.Entries, func(first, second int) bool { return snapshot.Entries[first].ID < snapshot.Entries[second].ID })
 	return snapshot
+}
+
+func missingConnectionEnvironment(config captypes.ConnectionConfig) []string {
+	var missing []string
+	for _, name := range config.RequiredEnv {
+		if strings.TrimSpace(config.Environment[name]) == "" && strings.TrimSpace(config.SecretRefs[name]) == "" {
+			missing = append(missing, name)
+		}
+	}
+	sort.Strings(missing)
+	return missing
 }
 
 func (service *Service) Prepare(ctx context.Context, actor captypes.RuntimeActor) (captypes.RuntimeSnapshot, error) {
@@ -511,10 +531,30 @@ func (service *Service) Search(ctx context.Context, query string, kind captypes.
 			return entries, nil
 		}
 	}
-	if len(entries) > 0 || !external {
+	if !external || len(entries) >= limit {
 		return entries, nil
 	}
-	return service.discover(ctx, snapshot.Settings.Sources, query, kind, limit)
+	discovered, err := service.discover(ctx, snapshot.Settings.Sources, query, kind, limit-len(entries))
+	if err != nil {
+		if len(entries) > 0 {
+			return entries, nil
+		}
+		return nil, err
+	}
+	seen := make(map[string]struct{}, len(entries))
+	for _, entry := range entries {
+		seen[entry.ID] = struct{}{}
+	}
+	for _, entry := range discovered {
+		if _, exists := seen[entry.ID]; exists {
+			continue
+		}
+		entries = append(entries, entry)
+		if len(entries) >= limit {
+			break
+		}
+	}
+	return entries, nil
 }
 
 func (service *Service) Discover(ctx context.Context, query string, kind captypes.Kind, limit int) ([]captypes.Entry, error) {
@@ -526,6 +566,7 @@ func (service *Service) Discover(ctx context.Context, query string, kind captype
 
 func (service *Service) discover(ctx context.Context, sources map[string]captypes.SourceConfig, query string, kind captypes.Kind, limit int) ([]captypes.Entry, error) {
 	var entries []captypes.Entry
+	var sourceErrors []error
 	ids := make([]string, 0, len(sources))
 	for id := range sources {
 		ids = append(ids, id)
@@ -536,12 +577,20 @@ func (service *Service) discover(ctx context.Context, sources map[string]captype
 		if source.Disabled {
 			continue
 		}
+		if kind == captypes.KindMCP && (source.Kind == "repository" || source.Kind == "skill-registry") ||
+			kind == captypes.KindSkill && source.Kind == "registry" {
+			continue
+		}
 		if source.Kind != "local" {
 			remote, err := service.discoverRemote(ctx, source, query, kind, limit-len(entries))
 			if err != nil {
-				return entries, err
+				sourceErrors = append(sourceErrors, fmt.Errorf("source %q: %w", source.Name, err))
+				continue
 			}
 			entries = append(entries, remote...)
+			if len(entries) >= limit {
+				return entries, nil
+			}
 			continue
 		}
 		if kind == captypes.KindMCP {
@@ -553,7 +602,8 @@ func (service *Service) discover(ctx context.Context, sources map[string]captype
 		}
 		children, err := os.ReadDir(location)
 		if err != nil {
-			return entries, fmt.Errorf("source %q: %w", source.Name, err)
+			sourceErrors = append(sourceErrors, fmt.Errorf("source %q: %w", source.Name, err))
+			continue
 		}
 		for _, child := range children {
 			if err := ctx.Err(); err != nil {
@@ -581,6 +631,9 @@ func (service *Service) discover(ctx context.Context, sources map[string]captype
 				return entries, nil
 			}
 		}
+	}
+	if len(entries) == 0 && len(sourceErrors) > 0 {
+		return nil, errors.Join(sourceErrors...)
 	}
 	return entries, nil
 }

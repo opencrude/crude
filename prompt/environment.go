@@ -10,9 +10,12 @@ import (
 	"strings"
 )
 
-func stableEnvironment(workDir string) string {
+func stableEnvironment(workDir, tempDir string) string {
 	if workDir == "" {
 		workDir, _ = os.Getwd()
+	}
+	if tempDir == "" {
+		tempDir = os.TempDir()
 	}
 	shell := "unknown"
 	for _, key := range []string{"SHELL", "COMSPEC"} {
@@ -49,9 +52,11 @@ func stableEnvironment(workDir string) string {
 <host>%s</host>
 <home>%s</home>
 <working_directory>%s</working_directory>
+ <temporary_directory>%s</temporary_directory>
+ <temporary_directory_variable>CRUDE_TEMP_DIR</temporary_directory_variable>
 <platform_guidance>%s</platform_guidance>
 </environment>`, XMLText(fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)), XMLText(shell), XMLText(username),
-		XMLText(hostname), XMLText(home), XMLText(workDir), XMLText(platform))
+		XMLText(hostname), XMLText(home), XMLText(workDir), XMLText(tempDir), XMLText(platform))
 }
 
 func XMLText(value string) string {
