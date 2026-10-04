@@ -32,8 +32,8 @@ func (d *portableDirent) Depth() int {
 }
 
 func (d *portableDirent) Stat() (fs.FileInfo, error) {
-	if d.DirEntry.Type()&os.ModeSymlink == 0 {
-		return d.DirEntry.Info()
+	if d.Type()&os.ModeSymlink == 0 {
+		return d.Info()
 	}
 	stat := loadFileInfo(&d.stat)
 	stat.once.Do(func() {

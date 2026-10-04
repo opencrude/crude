@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"crude/provider"
 )
@@ -21,8 +22,11 @@ func TestCompleteStreamRecordsReasoningDuration(t *testing.T) {
 				"event: content_block_delta\n"+
 				"data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"thinking_delta\",\"thinking\":\"reason\"}}\n\n"+
 				"event: content_block_stop\n"+
-				"data: {\"type\":\"content_block_stop\",\"index\":0}\n\n"+
-				"event: content_block_start\n"+
+				"data: {\"type\":\"content_block_stop\",\"index\":0}\n\n")
+		w.(http.Flusher).Flush()
+		time.Sleep(20 * time.Millisecond)
+		_, _ = fmt.Fprint(w,
+			"event: content_block_start\n"+
 				"data: {\"type\":\"content_block_start\",\"index\":1,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"+
 				"event: content_block_delta\n"+
 				"data: {\"type\":\"content_block_delta\",\"index\":1,\"delta\":{\"type\":\"text_delta\",\"text\":\"answer\"}}\n\n"+

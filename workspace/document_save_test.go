@@ -18,6 +18,10 @@ func TestDocumentSaveServiceCommitsExpectedSnapshot(t *testing.T) {
 	if err := os.WriteFile(path, before, 0o640); err != nil {
 		t.Fatal(err)
 	}
+	beforeInfo, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
 	service := NewDocumentSaveService()
 	result := service.Save(context.Background(), DocumentSaveRequest{
 		BufferID: "buffer", Path: path, Data: []byte("after\n"), Revision: 7,
@@ -37,8 +41,8 @@ func TestDocumentSaveServiceCommitsExpectedSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0o640 {
-		t.Fatalf("mode=%#o want 0640", info.Mode().Perm())
+	if info.Mode().Perm() != beforeInfo.Mode().Perm() {
+		t.Fatalf("mode=%#o want %#o", info.Mode().Perm(), beforeInfo.Mode().Perm())
 	}
 }
 

@@ -152,6 +152,7 @@ func summarizeUsage(records []sessiondb.UsageRecord, agentID string, scope ttype
 	anyEstimated, anyPartial, anyUpper, anyCostEstimated := false, false, false, false
 	costSource := ""
 	var latest int64
+	var latestID string
 	for _, record := range records {
 		if record.Outcome == accounting.Succeeded {
 			summary.Turns++
@@ -184,8 +185,10 @@ func summarizeUsage(records []sessiondb.UsageRecord, agentID string, scope ttype
 		}
 		// Context is the selected agent's latest report, not whichever child
 		// happened to finish last in a session/subtree aggregate.
-		if record.AgentID == agentID && record.RequestKind != "compaction" && record.RequestKind != "permission_review" && record.ContextUsed > 0 && record.UpdatedAt > latest {
+		if record.AgentID == agentID && record.RequestKind != "compaction" && record.RequestKind != "permission_review" && record.ContextUsed > 0 &&
+			(record.UpdatedAt > latest || record.UpdatedAt == latest && record.RequestID > latestID) {
 			latest = record.UpdatedAt
+			latestID = record.RequestID
 			summary.ContextUsed = knownUsage(int64(record.ContextUsed), record.ContextUsed > 0, record.Estimated)
 			summary.ContextLimit = knownUsage(int64(record.ContextWindow), record.ContextWindow > 0, false)
 			summary.ModelID, summary.ProviderID = record.ModelID, record.ProviderID

@@ -119,10 +119,7 @@ func TestConPTYManagerCloseAllReapsChildren(t *testing.T) {
 	}
 	deadline := time.Now().Add(3 * time.Second)
 	for _, pid := range pids {
-		for {
-			if !processAlive(t, pid) {
-				break
-			}
+		for processAlive(t, pid) {
 			if !time.Now().Before(deadline) {
 				t.Fatalf("pid %d still alive after CloseAll", pid)
 			}

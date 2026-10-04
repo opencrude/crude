@@ -4,6 +4,8 @@ import (
 	"reflect"
 	"testing"
 
+	"crude/tui/screens/activitybar"
+	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/tui/wm"
@@ -113,6 +115,33 @@ func TestApplyThemePreset_ConfigHotReloadPath(t *testing.T) {
 	}
 	if theme.PresetName(app.renderCtx.Theme) != "warm" {
 		t.Fatalf("hot-reload did not update renderCtx: %q", theme.PresetName(app.renderCtx.Theme))
+	}
+}
+
+func TestApplyThemePreset_PreservesExplicitNerdFontPreference(t *testing.T) {
+	app := newFullTestApp(t)
+	settings := app.AppDefaults()
+	settings.UI.UseNerdFont = true
+	app.SetAppDefaults(settings)
+
+	app.ApplyThemePreset("dark")
+
+	if app.Theme.Tree.Config.UseNerdFont == nil || !*app.Theme.Tree.Config.UseNerdFont {
+		t.Fatal("explicit Nerd Font preference was lost while rebuilding the theme")
+	}
+	if got := app.rootHost.Theme().Tree.Config.UseNerdFont; got == nil || !*got {
+		t.Fatal("root host did not receive the explicit Nerd Font preference")
+	}
+
+	const height = 40
+	app.activityBar.Layout(ui.LayoutContext{}, ui.Rect{W: activitybar.Width, H: height})
+	buf := surface.NewCellBuffer(activitybar.Width, height)
+	app.activityBar.Paint(buf, 0, 0, ui.PaintContext{})
+	if !bufferContainsPlain(buf, activitybar.ViewAgents.Icon(true)) {
+		t.Fatal("Agents rail entry did not paint its Nerd Font icon")
+	}
+	if !bufferContainsPlain(buf, activitybar.SettingsIcon(true)) {
+		t.Fatal("Settings rail entry did not paint its Nerd Font icon")
 	}
 }
 

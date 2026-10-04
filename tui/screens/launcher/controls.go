@@ -184,7 +184,7 @@ func (l *workspaceList) paintEntry(buf *surface.CellBuffer, x, y, width, row, in
 	ui.FillRect(buf, 0, 0, ui.Rect{X: x, Y: y, W: width, H: 1}, cell.BlankCell(bg))
 	icons := filetree.NewIconResolver()
 	if th := tokens.Theme(); th != nil {
-		icons.ApplyTheme(&th.Colors.Tree)
+		icons.ApplyTheme(th)
 	}
 	icon := icons.ResolveIcon(ws.Name, true, false, false)
 	prefix := icon.Icon + " "

@@ -10,6 +10,15 @@ import (
 	"crude/workspace"
 )
 
+func TestThinkingPaneIDsAreNotReusedAfterRemoval(t *testing.T) {
+	app := newFullTestApp(t)
+	first := app.nextThinkingPaneID("same-agent")
+	second := app.nextThinkingPaneID("same-agent")
+	if first == second {
+		t.Fatalf("unmounted pane identity was reused: %q", first)
+	}
+}
+
 // thinkingLines returns `n` lines of wordy text that wrap to `n` rows at
 // chatprojection width (60 chars/line fits well under the ~64 content width).
 func thinkingLines(n int) string {
@@ -312,6 +321,7 @@ func TestThinkingPaneDemotesToSummary(t *testing.T) {
 	}
 	paneID := agent.ThinkingPaneID
 	// Thinking finishes: streaming begins.
+	time.Sleep(20 * time.Millisecond)
 	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "stream_token", AgentID: "promote-done", Data: "hello"})
 
 	if app.PaneMgr.Has(paneID) || app.subPaneProjections.Has(paneID) {

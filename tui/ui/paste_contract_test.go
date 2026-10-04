@@ -132,3 +132,24 @@ func TestBracketedPasteContractTable(t *testing.T) {
 		})
 	}
 }
+
+func TestPasteChordAcceptsWindowsControlKeyShapes(t *testing.T) {
+	for _, test := range []struct {
+		name string
+		key  tea.KeyPressMsg
+		want bool
+	}{
+		{"ctrl", tea.KeyPressMsg{Code: 'v', Mod: tea.ModCtrl}, true},
+		{"ctrl shift uppercase", tea.KeyPressMsg{Code: 'V', Mod: tea.ModCtrl | tea.ModShift}, true},
+		{"super", tea.KeyPressMsg{Code: 'v', Mod: tea.ModSuper}, true},
+		{"ctrl alt reserved", tea.KeyPressMsg{Code: 'v', Mod: tea.ModCtrl | tea.ModAlt}, false},
+		{"unmodified", tea.KeyPressMsg{Code: 'v'}, false},
+		{"other key", tea.KeyPressMsg{Code: 'x', Mod: tea.ModCtrl}, false},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			if got := IsPasteChord(test.key); got != test.want {
+				t.Fatalf("IsPasteChord(%s) = %v, want %v", test.key.String(), got, test.want)
+			}
+		})
+	}
+}

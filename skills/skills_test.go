@@ -509,7 +509,7 @@ func TestMakeLocalCopyPreservesContainedSymlinks(t *testing.T) {
 	if copied.Digest != original.Digest {
 		t.Fatal("contained symlink was not pinned in the copy")
 	}
-	if link, err := os.Readlink(filepath.Join(target, "guide")); err != nil || link != "references/guide.md" {
+	if link, err := os.Readlink(filepath.Join(target, "guide")); err != nil || filepath.ToSlash(link) != "references/guide.md" {
 		t.Fatalf("symlink not preserved: %q, %v", link, err)
 	}
 	if data, err := skills.ReadFile(copied, "guide", 1024); err != nil || string(data) != "reference" {

@@ -16,6 +16,7 @@ func TestWorkspaceLocalHistoryCapturePreviewApply(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = store.Close() })
 	bus := NewEventBus()
 	ws := &Workspace{RootPath: project, LocalHistory: store, eventBus: bus}
 	path := filepath.Join(project, "a.txt")

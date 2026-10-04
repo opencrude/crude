@@ -2,6 +2,7 @@ package provider
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -25,6 +26,26 @@ func continuationFixture(t *testing.T, endpoint string) (*Provider, ChatRequest)
 	BindResponseReference(&message, &ResponseReference{ID: "response-1", Scope: req.ResponseContinuationScope, InputHash: ResponseInputHash(req.Messages, req.Tools)})
 	req.Messages = append(req.Messages, message, ChatMessage{Role: "tool", ToolCallID: "patch", Content: TextContent("written")})
 	return p, req
+}
+
+func inlineMediaContinuationFixture(t *testing.T, endpoint string) (*Provider, ChatRequest) {
+	t.Helper()
+	p, req := continuationFixture(t, endpoint)
+	req.Messages[1] = NewMultiPartMessage("user", []ContentPart{
+		{Type: "text", Text: "inspect"},
+		{Type: "image_url", ImageURL: &ImageURL{URL: testPNGDataURL()}},
+	})
+	BindResponseReference(&req.Messages[2], &ResponseReference{
+		ID: "response-1", Scope: req.ResponseContinuationScope,
+		InputHash: ResponseInputHash(req.Messages[:2], req.Tools),
+	})
+	req.MediaReplayRecovery = p.MediaReplayRecoveryEnabled()
+	return p, req
+}
+
+func testPNGDataURL() string {
+	header := []byte{0x89, 'P', 'N', 'G', 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0, 'I', 'H', 'D', 'R'}
+	return "data:image/png;base64," + base64.StdEncoding.EncodeToString(header)
 }
 
 func TestResponsesContinuationSendsOnlyDeltaWithoutChangingHistory(t *testing.T) {
@@ -62,6 +83,23 @@ func TestResponsesContinuationSendsOnlyDeltaWithoutChangingHistory(t *testing.T)
 	after, err := json.Marshal(req.Messages)
 	if err != nil || string(before) != string(after) {
 		t.Fatal("delta encoding mutated canonical history")
+	}
+}
+
+func TestResponsesContinuationMediaReplayLearningIsAdaptive(t *testing.T) {
+	_, req := inlineMediaContinuationFixture(t, "https://media-replay-learning.invalid/v1")
+	if plan := PlanResponseContinuation(&req); plan.PreviousResponseID != "response-1" || plan.Reason != "delta" {
+		t.Fatalf("unproven connection did not use documented continuation: %+v", plan)
+	}
+	if err := RecordResponseMediaReplayLimitation(req.ResponseContinuationScope); err != nil {
+		t.Fatal(err)
+	}
+	if plan := PlanResponseContinuation(&req); plan.PreviousResponseID != "" || plan.Start != 0 || plan.Reason != "media_replay_limitation_learned" {
+		t.Fatalf("learned media limitation was ignored: %+v", plan)
+	}
+	req.MediaReplayRecovery = false
+	if plan := PlanResponseContinuation(&req); plan.PreviousResponseID != "response-1" || plan.Reason != "delta" {
+		t.Fatalf("disabled safeguard still changed continuation: %+v", plan)
 	}
 }
 
@@ -257,6 +295,184 @@ func TestResponsesContinuationRecoversMissingReferenceOnce(t *testing.T) {
 				t.Fatal("recovery did not stay bounded and request-owned")
 			}
 		})
+	}
+}
+
+func TestResponsesContinuationRecoversInlineMediaReplayAndLearns(t *testing.T) {
+	for _, streaming := range []bool{false, true} {
+		t.Run(fmt.Sprint(streaming), func(t *testing.T) {
+			requests := 0
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				requests++
+				var wire struct {
+					Previous string            `json:"previous_response_id"`
+					Input    []json.RawMessage `json:"input"`
+				}
+				if err := json.NewDecoder(r.Body).Decode(&wire); err != nil {
+					t.Error(err)
+					return
+				}
+				if requests == 1 {
+					if wire.Previous != "response-1" || len(wire.Input) != 1 {
+						t.Errorf("first request was not the documented delta: previous=%q input=%d", wire.Previous, len(wire.Input))
+					}
+					w.WriteHeader(http.StatusBadRequest)
+					_, _ = fmt.Fprint(w, `{"error":{"type":"invalid_request_error","message":"Invalid 'input[1].content[1].image_url'. Expected a base64-encoded data URL with an image MIME type, but got an invalid base64-encoded value."}}`)
+					return
+				}
+				if wire.Previous != "" || len(wire.Input) != 4 {
+					t.Errorf("recovery was not a full upload: previous=%q input=%d", wire.Previous, len(wire.Input))
+				}
+				var user struct {
+					Content []struct {
+						Type     string `json:"type"`
+						ImageURL string `json:"image_url"`
+					} `json:"content"`
+				}
+				if err := json.Unmarshal(wire.Input[1], &user); err != nil {
+					t.Error(err)
+					return
+				}
+				if len(user.Content) != 2 || user.Content[1].Type != "input_image" ||
+					user.Content[1].ImageURL != testPNGDataURL() {
+					t.Errorf("authoritative retry lost image: %#v", user.Content)
+				}
+				w.Header().Set("Content-Type", "application/json")
+				_, _ = fmt.Fprint(w, `{"id":"response-2","status":"completed","store":true,"output":[{"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]}]}`)
+			}))
+			defer server.Close()
+
+			p, req := inlineMediaContinuationFixture(t, server.URL)
+			client, err := p.Client(WithMaxAttempts(1))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if streaming {
+				stream, err := client.Stream(t.Context(), &req)
+				if err != nil {
+					t.Fatal(err)
+				}
+				defer stream.Close()
+				update, err := stream.Next()
+				if err != nil || update.ContentDelta != "done" {
+					t.Fatalf("stream recovery = %+v err=%v", update, err)
+				}
+			} else {
+				response, err := client.Complete(t.Context(), &req)
+				if err != nil || response.Choices[0].Message.ContentString() != "done" {
+					t.Fatalf("complete recovery = %+v err=%v", response, err)
+				}
+			}
+			if requests != 2 {
+				t.Fatalf("adaptive recovery requests=%d want=2", requests)
+			}
+			if plan := PlanResponseContinuation(&req); plan.Reason != "media_replay_limitation_learned" || plan.PreviousResponseID != "" {
+				t.Fatalf("connection limitation was not learned: %+v", plan)
+			}
+		})
+	}
+}
+
+func TestResponsesContinuationMediaReplayRecoveryCanBeDisabled(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = fmt.Fprint(w, `{"error":{"type":"invalid_request_error","message":"Invalid 'input[1].content[1].image_url'. Expected a base64-encoded data URL, but got an invalid base64-encoded value."}}`)
+	}))
+	defer server.Close()
+
+	p, req := inlineMediaContinuationFixture(t, server.URL)
+	off := false
+	p.SetProtocolSettings(&ProtocolSettings{MediaReplayRecovery: &off})
+	client, err := p.Client(WithMaxAttempts(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := client.Complete(t.Context(), &req); err == nil {
+		t.Fatal("disabled recovery accepted the gateway error")
+	}
+	if requests != 1 {
+		t.Fatalf("disabled recovery requests=%d want=1", requests)
+	}
+}
+
+func TestContinuationMediaReplayRecoveryRequiresExactEvidence(t *testing.T) {
+	_, req := inlineMediaContinuationFixture(t, "https://media-replay-evidence.invalid/v1")
+	plan := planResponseContinuation(&req, false)
+	exact := &StatusError{
+		StatusCode: http.StatusBadRequest,
+		Message:    "Invalid 'input[1].content[1].image_url'. Expected a base64-encoded data URL, but got an invalid base64-encoded value.",
+	}
+	for name, failure := range map[string]error{
+		"exact":          exact,
+		"wrong status":   &StatusError{StatusCode: http.StatusTooManyRequests, Message: exact.Message},
+		"unrelated":      &StatusError{StatusCode: http.StatusBadRequest, Message: "invalid model"},
+		"unstructured":   &StatusError{StatusCode: http.StatusBadRequest, Message: "base64 failed"},
+		"wrong API type": &APIError{Type: "permission_error", Message: exact.Message},
+	} {
+		want := name == "exact"
+		if got := continuationMediaReplayRejected(&req, plan, failure); got != want {
+			t.Errorf("%s recovery evidence=%v want=%v", name, got, want)
+		}
+	}
+
+	remote := req
+	remote.Messages = append([]ChatMessage(nil), req.Messages...)
+	remote.Messages[1] = NewMultiPartMessage("user", []ContentPart{{
+		Type: "image_url", ImageURL: &ImageURL{URL: "https://example.com/image.png"},
+	}})
+	BindResponseReference(&remote.Messages[2], &ResponseReference{
+		ID: "response-1", Scope: remote.ResponseContinuationScope,
+		InputHash: ResponseInputHash(remote.Messages[:2], remote.Tools),
+	})
+	if continuationMediaReplayRejected(&remote, planResponseContinuation(&remote, false), exact) {
+		t.Fatal("remote image URL triggered inline media recovery")
+	}
+
+	invalid := req
+	invalid.Messages = append([]ChatMessage(nil), req.Messages...)
+	invalid.Messages[1] = NewMultiPartMessage("user", []ContentPart{{
+		Type: "image_url", ImageURL: &ImageURL{URL: "data:image/png;base64,not-base64"},
+	}})
+	BindResponseReference(&invalid.Messages[2], &ResponseReference{
+		ID: "response-1", Scope: invalid.ResponseContinuationScope,
+		InputHash: ResponseInputHash(invalid.Messages[:2], invalid.Tools),
+	})
+	if continuationMediaReplayRejected(&invalid, planResponseContinuation(&invalid, false), exact) {
+		t.Fatal("malformed local image triggered provider replay recovery")
+	}
+}
+
+func TestMediaReplayRecoveryNeverReplaysAcceptedOutput(t *testing.T) {
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		requests++
+		w.Header().Set("Content-Type", "text/event-stream")
+		_, _ = fmt.Fprint(w, "data: {\"type\":\"response.output_text.delta\",\"delta\":\"partial\"}\n\n")
+		_, _ = fmt.Fprint(w, "data: {\"type\":\"error\",\"error\":{\"type\":\"invalid_request_error\",\"message\":\"Invalid 'input[1].content[1].image_url'. Expected a base64-encoded data URL, but got an invalid base64-encoded value.\"}}\n\n")
+	}))
+	defer server.Close()
+
+	p, req := inlineMediaContinuationFixture(t, server.URL)
+	client, err := p.Client(WithMaxAttempts(1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	stream, err := client.Stream(t.Context(), &req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer stream.Close()
+	first, err := stream.Next()
+	if err != nil || first.ContentDelta != "partial" {
+		t.Fatalf("first update=%+v err=%v", first, err)
+	}
+	if _, err := stream.Next(); err == nil {
+		t.Fatal("media replay error after output was hidden")
+	}
+	if requests != 1 {
+		t.Fatalf("accepted output was replayed: requests=%d", requests)
 	}
 }
 

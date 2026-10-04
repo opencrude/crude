@@ -39,13 +39,22 @@ CREATE TABLE IF NOT EXISTS agent_output_limits (
  account_id TEXT NOT NULL, model_id TEXT NOT NULL,
  max_output_tokens INTEGER NOT NULL, updated_at INTEGER NOT NULL,
  PRIMARY KEY(agent_profile, provider_scope, account_id, model_id)
+ );
+ CREATE TABLE IF NOT EXISTS response_media_replay_limitations (
+  provider_scope TEXT PRIMARY KEY, updated_at INTEGER NOT NULL
 );`
 
 const modelCatalogRefreshInterval = 6 * time.Hour
 const modelCatalogMaxBytes = 32 << 20
 const learnedOutputLimitLifetime = 7 * 24 * time.Hour
+const learnedResponseMediaReplayLifetime = 7 * 24 * time.Hour
 
 var activeModelCatalog atomic.Pointer[ModelCatalog]
+
+var transientResponseMediaReplay = struct {
+	sync.Mutex
+	entries map[string]time.Time
+}{entries: make(map[string]time.Time)}
 
 // UseModelCatalog installs the app-owned catalog. All readers use its immutable
 // memory snapshot; no model lookup performs database or network I/O.
@@ -85,6 +94,55 @@ func RecordOutputLimit(agentProfile string, connection *Provider, model string, 
 	return err
 }
 
+// LearnedResponseMediaReplayLimitation reports whether this exact
+// endpoint/account/model/request scope has proven unable to reconstruct a
+// locally valid inline image through previous_response_id.
+func LearnedResponseMediaReplayLimitation(scope string) bool {
+	if scope == "" {
+		return false
+	}
+	if catalog := activeModelCatalog.Load(); catalog != nil {
+		return catalog.hasResponseMediaReplayLimitation(scope)
+	}
+	transientResponseMediaReplay.Lock()
+	defer transientResponseMediaReplay.Unlock()
+	cutoff := time.Now().Add(-learnedResponseMediaReplayLifetime)
+	observed, ok := transientResponseMediaReplay.entries[scope]
+	if ok && observed.Before(cutoff) {
+		delete(transientResponseMediaReplay.entries, scope)
+		return false
+	}
+	return ok
+}
+
+// RecordResponseMediaReplayLimitation retains exact provider evidence for seven
+// days. When the app-owned catalog is unavailable (library tests or embedding),
+// a small process-local cache preserves adaptive behavior without disk I/O.
+func RecordResponseMediaReplayLimitation(scope string) error {
+	if scope == "" {
+		return nil
+	}
+	now := time.Now()
+	if catalog := activeModelCatalog.Load(); catalog != nil {
+		return catalog.recordResponseMediaReplayLimitation(scope, now)
+	}
+	transientResponseMediaReplay.Lock()
+	defer transientResponseMediaReplay.Unlock()
+	if len(transientResponseMediaReplay.entries) >= 256 {
+		cutoff := now.Add(-learnedResponseMediaReplayLifetime)
+		for key, observed := range transientResponseMediaReplay.entries {
+			if observed.Before(cutoff) || len(transientResponseMediaReplay.entries) >= 256 {
+				delete(transientResponseMediaReplay.entries, key)
+			}
+			if len(transientResponseMediaReplay.entries) < 256 {
+				break
+			}
+		}
+	}
+	transientResponseMediaReplay.entries[scope] = now
+	return nil
+}
+
 type catalogSnapshot struct {
 	models     map[string]ModelMeta
 	aliases    map[string]string
@@ -103,6 +161,8 @@ type ModelCatalog struct {
 	start     sync.Once
 	close     sync.Once
 	refreshMu sync.Mutex
+	mediaMu   sync.RWMutex
+	media     map[string]time.Time
 	closeErr  error
 }
 
@@ -124,13 +184,79 @@ func OpenModelCatalog(path string, sources []ModelSource) (*ModelCatalog, error)
 		return nil, err
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	c := &ModelCatalog{db: db, sources: slices.Clone(sources), client: &http.Client{Timeout: 20 * time.Second}, updates: make(chan uint64, 1), ctx: ctx, cancel: cancel, done: make(chan struct{})}
+	c := &ModelCatalog{
+		db: db, sources: slices.Clone(sources), client: &http.Client{Timeout: 20 * time.Second},
+		updates: make(chan uint64, 1), ctx: ctx, cancel: cancel, done: make(chan struct{}),
+		media: make(map[string]time.Time),
+	}
+	if err := c.loadResponseMediaReplayLimitations(ctx); err != nil {
+		cancel()
+		_ = db.Close()
+		return nil, err
+	}
 	if err := c.reload(ctx); err != nil {
 		cancel()
 		_ = db.Close()
 		return nil, err
 	}
 	return c, nil
+}
+
+func (c *ModelCatalog) loadResponseMediaReplayLimitations(ctx context.Context) error {
+	cutoff := time.Now().Add(-learnedResponseMediaReplayLifetime).Unix()
+	rows, err := c.db.QueryContext(ctx, `SELECT provider_scope,updated_at FROM response_media_replay_limitations WHERE updated_at>=?`, cutoff)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	loaded := make(map[string]time.Time)
+	for rows.Next() {
+		var scope string
+		var updated int64
+		if err := rows.Scan(&scope, &updated); err != nil {
+			return err
+		}
+		if scope != "" {
+			loaded[scope] = time.Unix(updated, 0)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	c.mediaMu.Lock()
+	c.media = loaded
+	c.mediaMu.Unlock()
+	return nil
+}
+
+func (c *ModelCatalog) hasResponseMediaReplayLimitation(scope string) bool {
+	cutoff := time.Now().Add(-learnedResponseMediaReplayLifetime)
+	c.mediaMu.RLock()
+	observed, ok := c.media[scope]
+	c.mediaMu.RUnlock()
+	if !ok || !observed.Before(cutoff) {
+		return ok
+	}
+	c.mediaMu.Lock()
+	if current, exists := c.media[scope]; exists && current.Before(cutoff) {
+		delete(c.media, scope)
+	}
+	c.mediaMu.Unlock()
+	return false
+}
+
+func (c *ModelCatalog) recordResponseMediaReplayLimitation(scope string, now time.Time) error {
+	c.mediaMu.Lock()
+	c.media[scope] = now
+	c.mediaMu.Unlock()
+	_, err := c.db.Exec(`INSERT INTO response_media_replay_limitations(provider_scope,updated_at) VALUES(?,?)
+ ON CONFLICT(provider_scope) DO UPDATE SET updated_at=excluded.updated_at`, scope, now.Unix())
+	if err != nil {
+		return err
+	}
+	_, err = c.db.Exec(`DELETE FROM response_media_replay_limitations WHERE updated_at<?`,
+		now.Add(-learnedResponseMediaReplayLifetime).Unix())
+	return err
 }
 
 func (c *ModelCatalog) Updates() <-chan uint64 { return c.updates }

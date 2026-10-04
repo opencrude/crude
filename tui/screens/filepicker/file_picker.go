@@ -245,7 +245,7 @@ func New(th *theme.Theme) *Screen {
 		icons:  filetree.NewIconResolver(),
 		hover:  -1,
 	}
-	s.breadcrumb.icons.ApplyTheme(&th.Tree.Colors)
+	s.breadcrumb.icons.ApplyTheme(th)
 	s.actions = ui.NewActionBar(ActionsID, tokens)
 	s.rebuildTree()
 	s.rebuildActions()
@@ -548,6 +548,9 @@ func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 		return
 	}
 	s.tokens = tokens
+	if th := tokens.Theme(); th != nil {
+		s.th = th
+	}
 	s.filter.SetTokens(tokens)
 	s.breadcrumb.SetTokens(tokens)
 	s.tree.SetTokens(tokens)
@@ -768,7 +771,7 @@ func (s *Screen) rebuildTree() {
 		icons = filetree.NewIconResolver()
 	}
 	if s.th != nil {
-		icons.ApplyTheme(&s.th.Tree.Colors)
+		icons.ApplyTheme(s.th)
 	}
 	s.tree.tree.SetTokens(s.tokens)
 	s.tree.tree.SetSurfaceBackground(ui.ColorPopupBg)
@@ -1154,7 +1157,9 @@ func pickerMouseMessage(evt ui.Event, y int) tea.Msg {
 func (b *pickerBreadcrumb) SetTokens(tokens *ui.TokenSet) {
 	b.tokens = tokens
 	if b.icons != nil && tokens != nil {
-		b.icons.ApplyTheme(&theme.DefaultDark().Tree.Colors)
+		if th := tokens.Theme(); th != nil {
+			b.icons.ApplyTheme(th)
+		}
 	}
 }
 

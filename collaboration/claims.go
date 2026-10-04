@@ -119,7 +119,7 @@ func (store *Store) ReleaseClaims(ctx context.Context, request ReleaseClaimsRequ
 				return err
 			}
 			expected := request.ExpectedVersions[id]
-			if current.AgentID != request.AgentID || current.ReleasedAt.IsZero() == false ||
+			if current.AgentID != request.AgentID || !current.ReleasedAt.IsZero() ||
 				expected == 0 || current.Version != expected {
 				return ErrStale
 			}

@@ -25,7 +25,7 @@ func dumpChatRows(app *App, t *testing.T) {
 				ch = c.Char
 			}
 			if ch != ' ' {
-				b.WriteString(fmt.Sprintf("[%d:%c]", x, ch))
+				fmt.Fprintf(&b, "[%d:%c]", x, ch)
 			}
 		}
 		t.Logf("row %02d: %s", y, b.String())

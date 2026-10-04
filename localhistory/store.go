@@ -450,7 +450,10 @@ func (s *Store) storeBytes(ctx context.Context, data []byte, mode os.FileMode) (
 }
 
 func storedMode(mode os.FileMode) uint32 {
-	return uint32(mode & (os.ModePerm | os.ModeSetuid | os.ModeSetgid | os.ModeSticky))
+	if mode.IsDir() {
+		return uint32(fileio.MutationDirectoryMode(mode))
+	}
+	return uint32(fileio.MutationFileMode(mode))
 }
 
 func writeBytesAtomic(path string, data []byte, mode os.FileMode) error {

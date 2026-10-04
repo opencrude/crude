@@ -318,6 +318,9 @@ func (m *App) handleFindReplaceKey(msg tea.KeyPressMsg) tea.Cmd {
 	}
 
 	// Toggle shortcuts.
+	if ui.IsPasteChord(msg) {
+		return m.pasteIntoFindReplace(fr)
+	}
 	switch msg.String() {
 	case "alt+c":
 		fr.CaseSensitive = !fr.CaseSensitive
@@ -414,8 +417,6 @@ func (m *App) handleFindReplaceKey(msg tea.KeyPressMsg) tea.Cmd {
 		}
 		m.syncFindReplaceFrameFromState()
 		return nil
-	case "ctrl+v":
-		return m.pasteIntoFindReplace(fr)
 	}
 
 	// All other keys: delegate to the focused field's TextEdit,

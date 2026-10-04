@@ -15,6 +15,7 @@ import (
 const (
 	ScreenID           = "launcher"
 	NewSessionID       = "launcher/new-session"
+	ActionErrorID      = "launcher/action-error"
 	NewWorkspaceID     = "launcher/open-workspace"
 	WorkspacesHeaderID = "launcher/workspaces-header"
 	SearchID           = "launcher/search"
@@ -71,6 +72,7 @@ type Screen struct {
 	loadError                 string
 	frame                     int
 	newSession, openWorkspace *launcherAction
+	actionError               *ui.Label
 	divider                   *ui.SplitDivider
 	split                     *ui.SplitModel
 	skills, mcp               *capabilityPanel
@@ -91,6 +93,8 @@ func New(th *theme.Theme) *Screen {
 	s := &Screen{Base: ui.NewBase(ScreenID), tokens: ui.NewTokenSet(th), registry: ui.DefaultRegistry()}
 	s.home, _ = os.UserHomeDir()
 	s.newSession = newLauncherAction(s, NewSessionID, ItemNewSession, " New Session", "")
+	s.actionError = ui.NewLabel(ActionErrorID, "", th)
+	s.actionError.SetColorRole(ui.ColorError)
 	s.openWorkspace = newLauncherAction(s, NewWorkspaceID, ItemOpenFolder, "📁 New Workspace", "Open a folder as a workspace")
 	s.split = ui.NewSplitModel(ui.Horizontal)
 	s.split.SetDividerSize(3)
@@ -124,6 +128,7 @@ func New(th *theme.Theme) *Screen {
 func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	s.tokens = tokens
 	s.newSession.SetTokens(tokens)
+	s.actionError.SetTokens(tokens)
 	s.openWorkspace.SetTokens(tokens)
 	s.search.SetTokens(tokens)
 	s.list.list.SetTokens(tokens)
@@ -143,6 +148,11 @@ func (s *Screen) SetRegistry(registry *ui.ActionRegistry) {
 	s.hints.SetRegistry(registry)
 }
 func (s *Screen) SetFocusHandler(fn func(ui.ComponentID) bool) { s.focus = fn; s.syncFocus() }
+
+// SetActionError keeps an explicit startup failure beside the initiating action.
+// The owning app retains the complete error in Notices for inspection and copy.
+func (s *Screen) SetActionError(message string) { s.actionError.SetText(message) }
+
 func (s *Screen) focusID(id ui.ComponentID) {
 	s.focused = id
 	if s.focus != nil {

@@ -52,7 +52,9 @@ func TestWindowsAsyncTreeHelper(t *testing.T) {
 }
 
 func windowsAsyncHelperCommand(mode, marker string) string {
-	return fmt.Sprintf(`set "CRUDE_WINDOWS_ASYNC_HELPER=%s"&&set "CRUDE_WINDOWS_ASYNC_MARKER=%s"&&"%s" -test.run=^TestWindowsAsyncTreeHelper$`, mode, marker, os.Args[0])
+	// The race runtime's exit grace must not keep the parent alive long enough
+	// for the child marker to fire before the owning process actually exits.
+	return fmt.Sprintf(`set "GORACE=%s atexit_sleep_ms=0"&&set "CRUDE_WINDOWS_ASYNC_HELPER=%s"&&set "CRUDE_WINDOWS_ASYNC_MARKER=%s"&&"%s" -test.run=^TestWindowsAsyncTreeHelper$`, os.Getenv("GORACE"), mode, marker, os.Args[0])
 }
 
 func windowsOwnedProcessHandle(t *testing.T, pid int) windows.Handle {

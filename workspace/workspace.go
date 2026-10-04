@@ -113,7 +113,6 @@ type Workspace struct {
 	Collaboration    *collaboration.Store
 	FileOwnership    *agent.FileOwnership
 	capabilityMu     sync.RWMutex
-	collaborationMu  sync.Mutex
 	collaborationErr error
 	instanceID       string
 	// Documents is the single scheduler and disk-commit authority for editor

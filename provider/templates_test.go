@@ -39,27 +39,35 @@ func TestEmbeddedTemplatesSupplyPresetAdaptersAndProtocolDefaults(t *testing.T) 
 
 func TestTemplateAndAccountOverrideClonesAreDetached(t *testing.T) {
 	template := Template{
-		Headers:   map[string]string{"X-Header": "template"},
-		Dialer:    &DialSettings{MaxAttempts: 3},
-		Protocol:  &ProtocolSettings{Store: boolPointer(false)},
+		Headers: map[string]string{"X-Header": "template"},
+		Dialer:  &DialSettings{MaxAttempts: 3},
+		Protocol: &ProtocolSettings{
+			Store: boolPointer(false), MediaReplayRecovery: boolPointer(true),
+		},
 		ExtraBody: map[string]any{"nested": map[string]any{"value": "template"}},
 	}
 	clone := CloneTemplate(template)
 	clone.Headers["X-Header"] = "changed"
 	clone.Dialer.MaxAttempts = 8
 	*clone.Protocol.Store = true
+	*clone.Protocol.MediaReplayRecovery = false
 	clone.ExtraBody["nested"].(map[string]any)["value"] = "changed"
 	if template.Headers["X-Header"] != "template" || template.Dialer.MaxAttempts != 3 || *template.Protocol.Store ||
+		!*template.Protocol.MediaReplayRecovery ||
 		template.ExtraBody["nested"].(map[string]any)["value"] != "template" {
 		t.Fatal("template clone shares mutable data")
 	}
 
 	extra := map[string]any{"flag": true}
-	account := Account{ID: "work", ProviderID: "openrouter", APIKey: "secret", Overrides: TemplateOverrides{ExtraBody: &extra}}
+	recovery := false
+	account := Account{ID: "work", ProviderID: "openrouter", APIKey: "secret", Overrides: TemplateOverrides{
+		ExtraBody: &extra, Protocol: &ProtocolSettings{MediaReplayRecovery: &recovery},
+	}}
 	accountClone := CloneAccount(account)
 	(*accountClone.Overrides.ExtraBody)["flag"] = false
+	*accountClone.Overrides.Protocol.MediaReplayRecovery = true
 	accountClone.APIKey = "changed"
-	if (*account.Overrides.ExtraBody)["flag"] != true || account.APIKey != "secret" {
+	if (*account.Overrides.ExtraBody)["flag"] != true || *account.Overrides.Protocol.MediaReplayRecovery || account.APIKey != "secret" {
 		t.Fatal("account clone shares credential or override data")
 	}
 }

@@ -235,7 +235,7 @@ func gitReviewPath(root, rel, absolute string) (string, error) {
 		}
 	}
 	rel = filepath.ToSlash(rel)
-	if rel == "" || rel == "." || filepath.IsAbs(rel) || path.Clean(rel) != rel {
+	if rel == "" || rel == "." || !filepath.IsLocal(filepath.FromSlash(rel)) || path.Clean(rel) != rel {
 		return "", errors.New("comparison requires an exact repository-relative file path")
 	}
 	for _, segment := range strings.Split(rel, "/") {

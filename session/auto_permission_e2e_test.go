@@ -47,6 +47,7 @@ func TestAutoPermissionRealTurnWritesAndPersistsReviewProvenance(t *testing.T) {
 	}
 	defer s.Close()
 	s.SetWorkDir(root)
+	attachDelegationTestCollaboration(t, s)
 	sender := newMockEventSender()
 	orch, err := s.NewOrchestrator(sender)
 	if err != nil {
@@ -65,6 +66,11 @@ func TestAutoPermissionRealTurnWritesAndPersistsReviewProvenance(t *testing.T) {
 			}
 			if evt.typ == "error" {
 				t.Fatalf("turn error: %v", evt.data)
+			}
+			if evt.typ == "tool_result" {
+				if result, ok := evt.data.(map[string]any); ok && result["error"] == "true" {
+					t.Fatalf("reviewed tool failed: %v", result["result"])
+				}
 			}
 			done = evt.typ == "done"
 		case <-deadline:

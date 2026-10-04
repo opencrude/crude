@@ -125,6 +125,7 @@ func (a *Agent) completeStreamWithOptions(
 	msgs = provider.FilterReplayMessages(msgs, tools, a.Provider)
 	req := provider.ChatRequest{
 		ResponseContinuationScope: a.Provider.ResponseContinuationScope(a.Model),
+		MediaReplayRecovery:       a.Provider.MediaReplayRecoveryEnabled(),
 		Model:                     a.Model,
 		ReasoningContentKind:      a.ReasoningContentKind,
 		Messages:                  msgs,

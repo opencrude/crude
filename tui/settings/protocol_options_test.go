@@ -30,14 +30,18 @@ func TestProvidersFormRendersProtocolRowsByCapability(t *testing.T) {
 	m := newTestModel(t, types.AppSettings{ActiveProvider: "openai"})
 	form := m.categories[catProviders].Form
 
-	// Responses protocol: store, ZDR, summaries, truncation, tier all exist.
-	for _, id := range []string{fieldProtocolStore, fieldProtocolZDR, fieldProtocolSummaries, fieldProtocolTruncate, fieldProtocolTier} {
+	// Responses protocol: storage, adaptive media recovery, ZDR, summaries,
+	// truncation, and tier all exist.
+	for _, id := range []string{fieldProtocolStore, fieldProtocolMediaReplay, fieldProtocolZDR, fieldProtocolSummaries, fieldProtocolTruncate, fieldProtocolTier} {
 		if form.Field(id) == nil {
 			t.Errorf("Responses protocol missing field %q", id)
 		}
 	}
 	if got := form.Field(fieldProtocolStore).Value.String(); got != "default" {
 		t.Errorf("store row = %q, want default", got)
+	}
+	if got := form.Field(fieldProtocolMediaReplay).Value.String(); got != "default" {
+		t.Errorf("media replay recovery row = %q, want default-on inheritance", got)
 	}
 	if got := form.Field(fieldProtocolTier).Value.String(); got != "" {
 		t.Errorf("service tier row = %q, want empty (inherit)", got)
@@ -71,6 +75,7 @@ func TestProtocolSettingsRoundTripDefaultsToNil(t *testing.T) {
 func TestProtocolSettingsRoundTripCapturesOverrides(t *testing.T) {
 	m := newTestModel(t, types.AppSettings{ActiveProvider: "openai"})
 	m.SetValueForTest(catProviders, fieldProtocolStore, "off")
+	m.SetValueForTest(catProviders, fieldProtocolMediaReplay, "off")
 	m.SetValueForTest(catProviders, fieldProtocolZDR, "yes")
 	m.SetValueForTest(catProviders, fieldProtocolSummaries, "off")
 	m.SetValueForTest(catProviders, fieldProtocolTruncate, "truncate")
@@ -83,6 +88,9 @@ func TestProtocolSettingsRoundTripCapturesOverrides(t *testing.T) {
 	}
 	if cfg.Protocol.Store == nil || *cfg.Protocol.Store {
 		t.Errorf("Store = %v, want false", cfg.Protocol.Store)
+	}
+	if cfg.Protocol.MediaReplayRecovery == nil || *cfg.Protocol.MediaReplayRecovery {
+		t.Errorf("MediaReplayRecovery = %v, want false", cfg.Protocol.MediaReplayRecovery)
 	}
 	if !cfg.Protocol.ZeroDataRetention {
 		t.Error("ZeroDataRetention = false, want true")

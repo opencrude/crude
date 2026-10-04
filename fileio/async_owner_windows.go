@@ -12,7 +12,16 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-func ownProcessTree(cmd *exec.Cmd) (*ownedCommandTree, error) {
+// WindowsProcessTree owns one kill-on-close Job Object, never a PID lookup.
+type WindowsProcessTree struct {
+	mu      sync.Mutex
+	job     windows.Handle
+	stopped bool
+}
+
+// OwnWindowsProcessTree assigns a retained, suspended process to its lifetime.
+// The caller retains responsibility for resuming and closing the process handle.
+func OwnWindowsProcessTree(process windows.Handle) (*WindowsProcessTree, error) {
 	job, err := windows.CreateJobObject(nil, nil)
 	if err != nil {
 		return nil, fmt.Errorf("create process job: %w", err)
@@ -24,54 +33,68 @@ func ownProcessTree(cmd *exec.Cmd) (*ownedCommandTree, error) {
 		closeJob()
 		return nil, fmt.Errorf("set process job limits: %w", err)
 	}
-	process, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE|windows.SYNCHRONIZE, false, uint32(cmd.Process.Pid))
-	if err != nil {
-		closeJob()
-		return nil, fmt.Errorf("open child process: %w", err)
-	}
 	if err := windows.AssignProcessToJobObject(job, process); err != nil {
-		_ = windows.CloseHandle(process)
 		closeJob()
 		return nil, fmt.Errorf("assign process job: %w", err)
 	}
-	var mutex sync.Mutex
-	closed, stopped := false, false
-	kill := func() error {
-		mutex.Lock()
-		defer mutex.Unlock()
-		if closed {
-			return os.ErrProcessDone
-		}
-		if stopped {
-			return nil
-		}
-		if err := windows.TerminateJobObject(job, 1); err != nil {
-			return err
-		}
-		stopped = true
+	return &WindowsProcessTree{job: job}, nil
+}
+
+func (tree *WindowsProcessTree) Terminate() error {
+	tree.mu.Lock()
+	defer tree.mu.Unlock()
+	if tree.job == 0 {
+		return os.ErrProcessDone
+	}
+	if tree.stopped {
 		return nil
 	}
+	if err := windows.TerminateJobObject(tree.job, 1); err != nil {
+		return err
+	}
+	tree.stopped = true
+	return nil
+}
+
+func (tree *WindowsProcessTree) Close() error {
+	tree.mu.Lock()
+	defer tree.mu.Unlock()
+	if tree.job == 0 {
+		return nil
+	}
+	if err := windows.CloseHandle(tree.job); err != nil {
+		return err
+	}
+	tree.job = 0
+	return nil
+}
+
+func ownProcessTree(cmd *exec.Cmd) (*ownedCommandTree, error) {
+	process, err := windows.OpenProcess(windows.PROCESS_SET_QUOTA|windows.PROCESS_TERMINATE|windows.SYNCHRONIZE, false, uint32(cmd.Process.Pid))
+	if err != nil {
+		return nil, fmt.Errorf("open child process: %w", err)
+	}
+	tree, err := OwnWindowsProcessTree(process)
+	if err != nil {
+		_ = windows.CloseHandle(process)
+		return nil, err
+	}
 	return &ownedCommandTree{
-		kill: kill,
+		kill: tree.Terminate,
 		wait: func() error {
 			status, err := windows.WaitForSingleObject(process, windows.INFINITE)
 			if err != nil || status != windows.WAIT_OBJECT_0 {
-				_ = kill()
+				_ = tree.Terminate()
 				_ = cmd.Wait()
 				return fmt.Errorf("wait for owned command: status %d: %v", status, err)
 			}
-			_ = kill()
+			_ = tree.Terminate()
 			return cmd.Wait()
 		},
-		close: func() {
-			mutex.Lock()
-			defer mutex.Unlock()
-			if !closed {
-				closed = true
-				_ = windows.CloseHandle(process)
-				closeJob()
-			}
-		},
+		close: sync.OnceFunc(func() {
+			_ = windows.CloseHandle(process)
+			_ = tree.Close()
+		}),
 	}, nil
 }
 
@@ -81,7 +104,7 @@ func resumeOwnedProcess(cmd *exec.Cmd) error {
 	if err != nil {
 		return fmt.Errorf("open suspended process: %w", err)
 	}
-	defer windows.CloseHandle(process)
+	defer func() { _ = windows.CloseHandle(process) }()
 	resume := windows.NewLazySystemDLL("ntdll.dll").NewProc("NtResumeProcess")
 	status, _, callErr := resume.Call(uintptr(process))
 	if status != 0 {

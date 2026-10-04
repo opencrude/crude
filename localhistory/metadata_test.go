@@ -11,6 +11,36 @@ import (
 	"time"
 )
 
+func TestOperationStateMatchesNativeFilesystemMode(t *testing.T) {
+	store, root := newTestStore(t)
+	for _, mode := range []os.FileMode{0o600, 0o640, 0o755, 0o444} {
+		t.Run(fmt.Sprintf("%o", mode), func(t *testing.T) {
+			for _, kind := range []EntryType{EntryFile, EntryDirectory} {
+				path := filepath.Join(root, fmt.Sprintf("%s-%o", kind, mode))
+				if kind == EntryDirectory {
+					if err := os.Mkdir(path, mode); err != nil {
+						t.Fatal(err)
+					}
+				} else if err := os.WriteFile(path, []byte("exact bytes"), mode); err != nil {
+					t.Fatal(err)
+				}
+				if err := os.Chmod(path, mode); err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = os.Chmod(path, 0o755) })
+				intended, err := store.storeOperationState(t.Context(), &OperationState{Type: kind, Mode: uint32(mode), Data: []byte("exact bytes")})
+				if err != nil {
+					t.Fatal(err)
+				}
+				actual, err := store.currentEntry(filepath.Base(path))
+				if err != nil || !entryPointersEqual(actual, intended) {
+					t.Fatalf("receipt differs from native postimage: actual=%+v intended=%+v err=%v", actual, intended, err)
+				}
+			}
+		})
+	}
+}
+
 func recordAgentFileOperation(t *testing.T, store *Store, sessionID, messageID, agentID, source, path string, before, after []byte) {
 	t.Helper()
 	err := store.RecordAgentOperation(context.Background(), AgentOperation{

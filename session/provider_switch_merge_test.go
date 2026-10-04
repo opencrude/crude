@@ -65,3 +65,33 @@ func TestAccountOverrideWinsWithoutChangingAgentModel(t *testing.T) {
 		t.Fatal("account override leaked into another account using the same template")
 	}
 }
+
+func TestAccountOverrideCanDisableResponsesMediaReplayRecovery(t *testing.T) {
+	disabled := false
+	cfg := &Config{
+		Providers: provider.DefaultTemplates(),
+		Accounts: map[string]provider.Account{
+			"guarded": {
+				ID: "guarded", ProviderID: "openai", APIKey: "guarded-secret",
+				Overrides: provider.TemplateOverrides{
+					Protocol: &provider.ProtocolSettings{MediaReplayRecovery: &disabled},
+				},
+			},
+			"default": {ID: "default", ProviderID: "openai", APIKey: "default-secret"},
+		},
+	}
+	guarded, err := cfg.providerForCategory(CategoryConfig{AccountID: "guarded", Model: "gpt-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if guarded.MediaReplayRecoveryEnabled() {
+		t.Fatal("account override did not disable adaptive media replay recovery")
+	}
+	inherited, err := cfg.providerForCategory(CategoryConfig{AccountID: "default", Model: "gpt-test"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !inherited.MediaReplayRecoveryEnabled() {
+		t.Fatal("account override leaked into the template default")
+	}
+}

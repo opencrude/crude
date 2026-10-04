@@ -576,6 +576,9 @@ type ChatRequest struct {
 	MaxCompletionTokens       int            `json:"max_completion_tokens,omitempty"`
 	MaxOutputTokens           int            `json:"-"`
 	ResponseContinuationScope string         `json:"-"`
+	// MediaReplayRecovery enables evidence-based recovery and learned
+	// full-upload routing for stored inline-image replay failures.
+	MediaReplayRecovery bool `json:"-"`
 	// Temperature and TopP are optional sampling overrides; nil means the
 	// backend default applies. Each protocol maps them to its wire shape.
 	Temperature *float64 `json:"-"`

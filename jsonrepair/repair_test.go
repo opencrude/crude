@@ -1375,7 +1375,7 @@ func TestLargeInputs(t *testing.T) {
 			if i > 0 {
 				sb.WriteRune(',')
 			}
-			sb.WriteString(fmt.Sprintf("%d", i))
+			fmt.Fprintf(&sb, "%d", i)
 		}
 		sb.WriteRune(']')
 		result, err := Repair(sb.String())
@@ -1391,7 +1391,7 @@ func TestLargeInputs(t *testing.T) {
 			if i > 0 {
 				sb.WriteRune(',')
 			}
-			sb.WriteString(fmt.Sprintf(`"k%d":"v%d"`, i, i))
+			fmt.Fprintf(&sb, `"k%d":"v%d"`, i, i)
 		}
 		sb.WriteRune('}')
 		result, err := Repair(sb.String())
@@ -1408,9 +1408,9 @@ func TestLargeInputs(t *testing.T) {
 				sb.WriteRune(',')
 			}
 			if i%2 == 0 {
-				sb.WriteString(fmt.Sprintf(`"item%d"`, i))
+				fmt.Fprintf(&sb, `"item%d"`, i)
 			} else {
-				sb.WriteString(fmt.Sprintf(`unquoted_item_%d`, i))
+				fmt.Fprintf(&sb, `unquoted_item_%d`, i)
 			}
 		}
 		sb.WriteRune(']')
@@ -2625,7 +2625,7 @@ func BenchmarkRepairPathological(b *testing.B) {
 				var sb strings.Builder
 				sb.WriteString("[")
 				for i := 0; i < 500; i++ {
-					sb.WriteString(fmt.Sprintf("/* comment %d */", i))
+					fmt.Fprintf(&sb, "/* comment %d */", i)
 				}
 				sb.WriteString("1,2,3]")
 				return sb.String()
@@ -2637,7 +2637,7 @@ func BenchmarkRepairPathological(b *testing.B) {
 				var sb strings.Builder
 				sb.WriteString(`"`)
 				for i := 0; i < 1000; i++ {
-					sb.WriteString(fmt.Sprintf("\\u%04X", 0x2600+i%100))
+					fmt.Fprintf(&sb, "\\u%04X", 0x2600+i%100)
 				}
 				sb.WriteString(`"`)
 				return sb.String()

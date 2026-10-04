@@ -95,9 +95,10 @@ func runOracleMode(ctx context.Context, bin string, files map[string]string, pat
 	case err == nil:
 	case !errors.As(err, &exit) || ctx.Err() != nil:
 		return oracleResult{}, fmt.Errorf("running %s: %w", bin, err)
-	case exit.ExitCode() != 1:
+	case exit.ExitCode() != 1 || strings.TrimSpace(stderr.String()) == "":
 		// Codex exits with 1 when it rejects a patch; anything else, such as
 		// a panic (101) or a signal, is a crash and not a result to record.
+		// Windows process termination also returns 1, but no rejection text.
 		return oracleResult{}, fmt.Errorf("%s crashed: %w: %s", bin, err, stderr.String())
 	case strings.HasPrefix(stderr.String(), "Error:"):
 		// Codex also exits with 1 when it cannot start, for example without

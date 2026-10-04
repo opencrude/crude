@@ -15,6 +15,9 @@ func TestResponsesExtrasDefaultsRequestStorageExplicitly(t *testing.T) {
 	if got := extras["reasoning"].(map[string]any)["summary"]; got != "auto" {
 		t.Fatalf("summary = %v, want auto", got)
 	}
+	if !(&Provider{StandardName: "openai-responses"}).MediaReplayRecoveryEnabled() {
+		t.Fatal("Responses media replay recovery should default on")
+	}
 }
 
 func TestResponsesExtrasStoreOffAndZDR(t *testing.T) {
@@ -41,6 +44,26 @@ func TestResponsesExtrasStoreOffAndZDR(t *testing.T) {
 	override := (&OpenAIResponsesStandard{}).RequestExtras("gpt-5.6", "", ProtocolSettings{Store: &storeOn, ZeroDataRetention: true})
 	if got := override["store"]; got != false {
 		t.Fatalf("zdr overrides store=true: %v", got)
+	}
+}
+
+func TestResponsesMediaReplayRecoverySetting(t *testing.T) {
+	p := &Provider{StandardName: "openai-responses"}
+	if !p.MediaReplayRecoveryEnabled() {
+		t.Fatal("default recovery is off")
+	}
+	off := false
+	p.SetProtocolSettings(&ProtocolSettings{MediaReplayRecovery: &off})
+	if p.MediaReplayRecoveryEnabled() {
+		t.Fatal("explicit recovery off was ignored")
+	}
+	on := true
+	p.SetProtocolSettings(&ProtocolSettings{MediaReplayRecovery: &on})
+	if !p.MediaReplayRecoveryEnabled() {
+		t.Fatal("explicit recovery on was ignored")
+	}
+	if (&Provider{StandardName: "anthropic"}).MediaReplayRecoveryEnabled() {
+		t.Fatal("unsupported protocol enabled Responses media recovery")
 	}
 }
 
@@ -96,7 +119,7 @@ func TestChatExtrasStoreOptInAndTier(t *testing.T) {
 
 func TestProtocolOptionsMatchImplementations(t *testing.T) {
 	responses := (&OpenAIResponsesStandard{}).Info().Options
-	if !responses.Store || !responses.StoreDefault || !responses.ZeroDataRetention ||
+	if !responses.Store || !responses.StoreDefault || !responses.MediaReplayRecovery || !responses.ZeroDataRetention ||
 		!responses.ReasoningSummaries || !responses.Truncation || len(responses.ServiceTiers) == 0 {
 		t.Fatalf("responses options = %+v", responses)
 	}

@@ -1,6 +1,7 @@
 package filepicker
 
 import (
+	"os"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -20,7 +21,7 @@ func TestFilePickerKeyboardFilterPasteAndTypedResults(t *testing.T) {
 		t.Fatalf("filter result=%#v visible=%d", result, screen.VisibleCount())
 	}
 	result = host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if result.Cmd != nil || len(screen.SelectedPaths()) != 1 || screen.SelectedPaths()[0] != "/root/b.txt" {
+	if result.Cmd != nil || len(screen.SelectedPaths()) != 1 || screen.SelectedPaths()[0] != pickerPath("b.txt") {
 		t.Fatalf("file activation result=%#v selected=%v", result, screen.SelectedPaths())
 	}
 
@@ -66,7 +67,7 @@ func TestFilePickerDirectoryNavigationAndDoubleClick(t *testing.T) {
 	}
 	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
 	load := commandMessage[LoadMsg](t, result)
-	if load.Target != screen || load.Path != "/root/src" {
+	if load.Target != screen || load.Path != pickerPath("src") {
 		t.Fatalf("keyboard load=%#v", load)
 	}
 
@@ -76,12 +77,12 @@ func TestFilePickerDirectoryNavigationAndDoubleClick(t *testing.T) {
 	}
 	first := host.Handle(tea.MouseClickMsg{X: 2, Y: 7, Button: tea.MouseLeft})
 	load = commandMessage[LoadMsg](t, first)
-	if load.Path != "/root/src" {
+	if load.Path != pickerPath("src") {
 		t.Fatalf("first click load=%#v", load)
 	}
 	second := host.Handle(tea.MouseClickMsg{X: 2, Y: 7, Button: tea.MouseLeft})
 	navigate := commandMessage[NavigateMsg](t, second)
-	if navigate.Path != "/root/src" {
+	if navigate.Path != pickerPath("src") {
 		t.Fatalf("double-click navigate=%#v", navigate)
 	}
 }
@@ -96,7 +97,7 @@ func TestFolderPickerFiltersFilesAndSelectsCurrentDirectory(t *testing.T) {
 	}
 	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
 	message := commandMessage[SelectMsg](t, result)
-	if message.Path != filepath.FromSlash("/root") || !message.Folder {
+	if message.Path != pickerPath("") || !message.Folder {
 		t.Fatalf("folder select=%#v", message)
 	}
 }
@@ -148,7 +149,7 @@ func TestFilePickerPrimaryActionTracksSelectedFile(t *testing.T) {
 		t.Fatal("could not refocus actions")
 	}
 	message := commandMessage[SelectMsg](t, host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}))
-	if message.Target != screen || message.Path != "/root/a.txt" || len(message.Paths) != 1 {
+	if message.Target != screen || message.Path != pickerPath("a.txt") || len(message.Paths) != 1 {
 		t.Fatalf("attach result=%#v", message)
 	}
 }
@@ -157,7 +158,7 @@ func TestFilePickerPaintsNativeControlsAcrossThemesAndSizes(t *testing.T) {
 	for _, th := range []*theme.Theme{theme.DefaultDark(), theme.DefaultLight()} {
 		for _, size := range []ui.Size{{W: 60, H: 18}, {W: 100, H: 28}} {
 			screen := New(th)
-			screen.Open("/root", ModeFile, pickerEntries())
+			screen.Open(pickerPath(""), ModeFile, pickerEntries())
 			component := ui.NewComponentWidget(th, screen, size.W, size.H)
 			screen.SetFocusHandler(component.Focus)
 			screen.FocusFilter()
@@ -178,7 +179,7 @@ func TestFilePickerPaintsNativeControlsAcrossThemesAndSizes(t *testing.T) {
 
 func TestFilePickerBreadcrumbSegmentEmitsNavigation(t *testing.T) {
 	screen := New(theme.DefaultDark())
-	screen.Open(filepath.FromSlash("/root/src/nested"), ModeFolder, []Entry{})
+	screen.Open(pickerPath("src/nested"), ModeFolder, []Entry{})
 	component := ui.NewComponentWidget(theme.DefaultDark(), screen, 100, 28)
 	screen.SetFocusHandler(component.Focus)
 	host := component.Host()
@@ -206,7 +207,7 @@ func TestFilePickerBreadcrumbSegmentEmitsNavigation(t *testing.T) {
 }
 
 func TestFilePickerChildExpansionUsesLoadMessage(t *testing.T) {
-	root := filepath.FromSlash("/root")
+	root := pickerPath("")
 	screen, host := pickerHost(t, ModeFile)
 	screen.Open(root, ModeFile, []Entry{{Name: "src", Path: filepath.Join(root, "src"), IsDir: true}})
 	host.Resize(80, 14)
@@ -229,7 +230,7 @@ func TestFilePickerChildExpansionUsesLoadMessage(t *testing.T) {
 }
 
 func TestFilePickerTreeUsesPopupSurfaceAndInitialScrollbarGeometry(t *testing.T) {
-	root := filepath.FromSlash("/root")
+	root := pickerPath("")
 	entries := make([]Entry, 0, 32)
 	for i := 0; i < 32; i++ {
 		name := "folder-" + strconv.Itoa(i)
@@ -257,7 +258,7 @@ func pickerHost(t *testing.T, mode Mode) (*Screen, *ui.Host) {
 	t.Helper()
 	th := theme.DefaultDark()
 	screen := New(th)
-	screen.Open("/root", mode, pickerEntries())
+	screen.Open(pickerPath(""), mode, pickerEntries())
 	component := ui.NewComponentWidget(th, screen, 80, 14)
 	screen.SetFocusHandler(component.Focus)
 	screen.FocusFilter()
@@ -269,11 +270,15 @@ func pickerHost(t *testing.T, mode Mode) (*Screen, *ui.Host) {
 
 func pickerEntries() []Entry {
 	return []Entry{
-		{Name: "b.txt", Path: "/root/b.txt"},
-		{Name: "src", Path: "/root/src", IsDir: true},
-		{Name: "a.txt", Path: "/root/a.txt"},
-		{Name: ".hidden", Path: "/root/.hidden"},
+		{Name: "b.txt", Path: pickerPath("b.txt")},
+		{Name: "src", Path: pickerPath("src"), IsDir: true},
+		{Name: "a.txt", Path: pickerPath("a.txt")},
+		{Name: ".hidden", Path: pickerPath(".hidden")},
 	}
+}
+
+func pickerPath(relative string) string {
+	return filepath.Join(filepath.VolumeName(os.TempDir())+string(filepath.Separator), "root", filepath.FromSlash(relative))
 }
 
 func commandMessage[T any](t *testing.T, result ui.EventResult) T {

@@ -328,6 +328,7 @@ func openRegular(root *os.Root, relative string, limit int64) (*os.File, os.File
 		if err != nil {
 			return nil, nil, fileRecord{}, err
 		}
+		record.target = filepath.ToSlash(record.target)
 		if filepath.IsAbs(record.target) || strings.ContainsAny(record.target, "\\:\x00") {
 			return nil, nil, fileRecord{}, fmt.Errorf("%w: symlink must have a contained relative target", ErrUnsafePath)
 		}
@@ -414,7 +415,7 @@ func consumeFile(ctx context.Context, root *os.Root, relative string, limit int6
 	}
 	if record.kind == "symlink" {
 		target, err := root.Readlink(relative)
-		if err != nil || target != record.target {
+		if err != nil || filepath.ToSlash(target) != record.target {
 			return 0, fileRecord{}, errors.Join(ErrChanged, err)
 		}
 	}

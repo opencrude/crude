@@ -4,9 +4,14 @@ package workspace
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"unsafe"
+
+	"crude/fileio"
 
 	"golang.org/x/sys/windows"
 )
@@ -17,10 +22,14 @@ type conpty struct {
 	hpc        windows.Handle
 	procInfo   windows.ProcessInformation
 	procHandle windows.Handle
-	readPipe   windows.Handle // ptyOutRead — ConPTY output (we read)
-	writePipe  windows.Handle // ptyInWrite — ConPTY input  (we write)
+	readPipe   *os.File
+	writePipe  *os.File
+	tree       *fileio.WindowsProcessTree
 	wait       chan waitResult
-	closed     bool
+	waitDone   chan struct{}
+	closed     atomic.Bool
+	closeOnce  sync.Once
+	resizeMu   sync.Mutex
 }
 
 type waitResult struct {
@@ -152,7 +161,7 @@ func startTerminalIO(command string, args []string, cwd string, cols, rows int) 
 		return nil, fmt.Errorf("conpty: build env block: %w", err)
 	}
 
-	creationFlags := uint32(windows.CREATE_UNICODE_ENVIRONMENT | windows.EXTENDED_STARTUPINFO_PRESENT)
+	creationFlags := uint32(windows.CREATE_UNICODE_ENVIRONMENT | windows.EXTENDED_STARTUPINFO_PRESENT | windows.CREATE_SUSPENDED)
 	if err := windows.CreateProcess(
 		nil,        // appName — let CreateProcess parse the command line
 		cmdLinePtr, // commandLine — must be mutable UTF-16
@@ -169,6 +178,23 @@ func startTerminalIO(command string, args []string, cwd string, cols, rows int) 
 		_ = windows.CloseHandle(ptyOutRead)
 		return nil, fmt.Errorf("conpty: CreateProcess: %w", err)
 	}
+	tree, err := fileio.OwnWindowsProcessTree(procInfo.Process)
+	if err == nil {
+		_, err = windows.ResumeThread(procInfo.Thread)
+	}
+	if err != nil {
+		_ = windows.TerminateProcess(procInfo.Process, 1)
+		_, _ = windows.WaitForSingleObject(procInfo.Process, windows.INFINITE)
+		_ = windows.CloseHandle(procInfo.Thread)
+		_ = windows.CloseHandle(procInfo.Process)
+		if tree != nil {
+			_ = tree.Close()
+		}
+		windows.ClosePseudoConsole(hpc)
+		_ = windows.CloseHandle(ptyInWrite)
+		_ = windows.CloseHandle(ptyOutRead)
+		return nil, fmt.Errorf("conpty: own and resume process: %w", err)
+	}
 
 	// We only need the process handle for wait/terminate; the thread handle
 	// is not useful after the process starts.
@@ -178,53 +204,50 @@ func startTerminalIO(command string, args []string, cwd string, cols, rows int) 
 		hpc:        hpc,
 		procInfo:   procInfo,
 		procHandle: procInfo.Process,
-		readPipe:   ptyOutRead,
-		writePipe:  ptyInWrite,
+		readPipe:   os.NewFile(uintptr(ptyOutRead), "conpty-output"),
+		writePipe:  os.NewFile(uintptr(ptyInWrite), "conpty-input"),
+		tree:       tree,
 		wait:       make(chan waitResult, 1),
+		waitDone:   make(chan struct{}),
 	}
 	go c.waitLoop()
 	return c, nil
 }
 
 func (c *conpty) waitLoop() {
+	defer close(c.waitDone)
 	_, err := windows.WaitForSingleObject(c.procHandle, windows.INFINITE)
 	var code uint32
 	if err == nil {
 		err = windows.GetExitCodeProcess(c.procHandle, &code)
 	}
+	_ = c.tree.Terminate()
+	_ = c.tree.Close()
 	c.wait <- waitResult{code: int(code), err: err}
 }
 
 func (c *conpty) Read(b []byte) (int, error) {
-	if c == nil || c.closed || c.readPipe == 0 {
+	if c == nil || c.closed.Load() {
 		return 0, fmt.Errorf("conpty: read handle closed")
 	}
-	var done uint32
-	err := windows.ReadFile(c.readPipe, b, &done, nil)
-	if err != nil {
-		return int(done), err
-	}
-	if done == 0 {
-		return 0, fmt.Errorf("conpty: end of stream")
-	}
-	return int(done), nil
+	return c.readPipe.Read(b)
 }
 
 func (c *conpty) Write(b []byte) (int, error) {
-	if c == nil || c.closed || c.writePipe == 0 {
+	if c == nil || c.closed.Load() {
 		return 0, fmt.Errorf("conpty: write handle closed")
 	}
-	var done uint32
-	err := windows.WriteFile(c.writePipe, b, &done, nil)
-	if err != nil {
-		return int(done), err
-	}
-	return int(done), nil
+	return c.writePipe.Write(b)
 }
 
 func (c *conpty) SetSize(cols, rows int) error {
-	if c == nil || c.hpc == 0 {
+	if c == nil {
 		return fmt.Errorf("conpty: not initialized")
+	}
+	c.resizeMu.Lock()
+	defer c.resizeMu.Unlock()
+	if c.closed.Load() {
+		return fmt.Errorf("conpty: closed")
 	}
 	size := windows.Coord{
 		X: int16(cols),
@@ -234,36 +257,23 @@ func (c *conpty) SetSize(cols, rows int) error {
 }
 
 func (c *conpty) Close() error {
-	if c == nil || c.closed {
+	if c == nil {
 		return nil
 	}
-	c.closed = true
-
-	// Close the pseudo console first. This signals the child that the
-	// terminal is gone and typically causes it to exit. Then close our
-	// pipe handles and wait briefly for the process.
-	if c.hpc != 0 {
+	c.closeOnce.Do(func() {
+		c.closed.Store(true)
+		_ = c.tree.Terminate()
+		_ = c.tree.Close()
+		// os.File coordinates closing with in-flight reads/writes, so a
+		// recycled raw handle can never become another I/O target.
+		_ = c.writePipe.Close()
+		_ = c.readPipe.Close()
+		c.resizeMu.Lock()
 		windows.ClosePseudoConsole(c.hpc)
-		c.hpc = 0
-	}
-	if c.writePipe != 0 {
-		_ = windows.CloseHandle(c.writePipe)
-		c.writePipe = 0
-	}
-	if c.readPipe != 0 {
-		_ = windows.CloseHandle(c.readPipe)
-		c.readPipe = 0
-	}
-
-	// Give the child a brief grace period, then force-kill.
-	if c.procHandle != 0 {
-		result, _ := windows.WaitForSingleObject(c.procHandle, 2000)
-		if result != uint32(windows.WAIT_OBJECT_0) {
-			_ = windows.TerminateProcess(c.procHandle, 1)
-		}
+		c.resizeMu.Unlock()
+		<-c.waitDone
 		_ = windows.CloseHandle(c.procHandle)
-		c.procHandle = 0
-	}
+	})
 	return nil
 }
 
@@ -276,7 +286,7 @@ func (c *conpty) Wait() (int, error) {
 }
 
 func (c *conpty) Pid() int {
-	if c == nil || c.procHandle == 0 {
+	if c == nil || c.closed.Load() {
 		return 0
 	}
 	return int(c.procInfo.ProcessId)

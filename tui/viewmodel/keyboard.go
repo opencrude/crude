@@ -265,7 +265,7 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
-	if msg.String() == "ctrl+v" {
+	if ui.IsPasteChord(msg) {
 		// Editor.HandleEvent's standalone Ctrl+V support intentionally returns
 		// a generic PasteMsg. At the viewmodel boundary capture the initiating
 		// editor instead, so a delayed clipboard read cannot follow focus.
@@ -590,9 +590,10 @@ func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, 
 	// relying on terminal bracketed paste, which can carry text only. Terminals
 	// that paste themselves (GNOME Terminal) deliver bracketed PasteMsg instead
 	// and never send this keypress, so the two paths cannot double-insert.
-	switch msg.String() {
-	case "ctrl+v", "ctrl+shift+v":
+	if ui.IsPasteChord(msg) {
 		return m, m.beginInputClipboardPaste()
+	}
+	switch msg.String() {
 	case "ctrl+alt+e":
 		if ml := m.activeMessageList(); ml != nil {
 			ml.ToggleLastDisclosure()

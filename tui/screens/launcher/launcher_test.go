@@ -7,6 +7,7 @@ import (
 	"crude/tui/uitest"
 	"crude/workspace"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -14,7 +15,11 @@ import (
 func testScreen(t *testing.T, width, height int, workspaces []workspace.WorkspaceInfo) (*Screen, *ui.Host, *surface.CellBuffer) {
 	t.Helper()
 	s := New(theme.DefaultDark())
-	s.SetData("/projects/current", workspaces)
+	current := "/projects/current"
+	if runtime.GOOS == "windows" {
+		current = `C:\projects\current`
+	}
+	s.SetData(current, workspaces)
 	h := ui.NewHost(theme.DefaultDark(), s)
 	s.SetFocusHandler(h.Focus)
 	h.Resize(width, height)
@@ -50,6 +55,7 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 			t.Fatalf("missing %q:\n%s", label, text)
 		}
 	}
+	t.Logf("launcher cell projection:\n%s", text)
 	uitest.CheckGolden(t, "launcher_dark_110x16", buf)
 }
 func TestLauncherCompositionKeepsOriginalActionsAndRightPane(t *testing.T) {

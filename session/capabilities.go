@@ -121,7 +121,7 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 		return tools.ToolMetadata{}, false
 	}
 	live.ToolFn = func(callCtx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
-		if slices.Contains(actor.DeniedTools, tool) || len(actor.AllowedTools) > 0 && !slices.Contains(actor.AllowedTools, tool) && !(tool == "publish_report" && actor.ParentID != "") {
+		if slices.Contains(actor.DeniedTools, tool) || len(actor.AllowedTools) > 0 && !slices.Contains(actor.AllowedTools, tool) && (tool != "publish_report" || actor.ParentID == "") {
 			return tools.ToolResult{}, fmt.Errorf("tool %q is excluded by the effective agent selection", tool)
 		}
 		if result, handled, err := session.executeCollaborationTool(callCtx, actor.ID, tool, params); handled {

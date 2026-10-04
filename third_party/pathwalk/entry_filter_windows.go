@@ -39,7 +39,7 @@ func (e *EntryFilter) Entry(path string, _ fs.DirEntry) bool {
 
 	var d syscall.ByHandleFileInformation
 	err = syscall.GetFileInformationByHandle(h, &d)
-	syscall.CloseHandle(h)
+	_ = syscall.CloseHandle(h)
 	if err != nil {
 		return false
 	}

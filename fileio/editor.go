@@ -674,7 +674,7 @@ func finishPreparedMutation(result *error, complete MutationComplete, operationI
 func absentState() MutationState { return MutationState{Kind: MutationAbsent} }
 
 func regularState(data []byte, mode os.FileMode) MutationState {
-	return MutationState{Kind: MutationRegular, Bytes: append([]byte(nil), data...), Mode: normalizedMutationMode(mode)}
+	return MutationState{Kind: MutationRegular, Bytes: append([]byte(nil), data...), Mode: MutationFileMode(mode)}
 }
 
 func snapshotMutationState(path string) (MutationState, error) {
@@ -686,7 +686,7 @@ func snapshotMutationState(path string) (MutationState, error) {
 		return MutationState{}, err
 	}
 	if fi.IsDir() {
-		return MutationState{Kind: MutationDirectory, Mode: normalizedMutationDirMode(fi.Mode())}, nil
+		return MutationState{Kind: MutationDirectory, Mode: MutationDirectoryMode(fi.Mode())}, nil
 	}
 	if !fi.Mode().IsRegular() {
 		return MutationState{}, fmt.Errorf("unsupported path type: %s", path)
@@ -722,7 +722,7 @@ func missingParentMutationPaths(path string) ([]MutationPathState, error) {
 	}
 	paths := make([]MutationPathState, 0, len(missing))
 	for index := len(missing) - 1; index >= 0; index-- {
-		paths = append(paths, MutationPathState{Path: missing[index], Before: absentState(), After: MutationState{Kind: MutationDirectory, Mode: normalizedMutationDirMode(0o755)}})
+		paths = append(paths, MutationPathState{Path: missing[index], Before: absentState(), After: MutationState{Kind: MutationDirectory, Mode: MutationDirectoryMode(0o755)}})
 	}
 	return paths, nil
 }

@@ -86,7 +86,7 @@ func New(th *theme.Theme) *Screen {
 		collapsed: make(map[string]bool),
 		icons:     filetree.NewIconResolver(),
 	}
-	s.icons.ApplyTheme(&th.Colors.Tree)
+	s.icons.ApplyTheme(th)
 	field := ui.NewFilterField(FilterID, tokens)
 	field.SetPrompt(ui.SearchGlyphEnd(tokens))
 	field.SetPromptPlacement(ui.PromptEnd)
@@ -222,7 +222,7 @@ func (s *Screen) SetTheme(th *theme.Theme) {
 	}
 	s.th = th
 	if s.icons != nil {
-		s.icons.ApplyTheme(&th.Colors.Tree)
+		s.icons.ApplyTheme(th)
 	}
 	s.SetTokens(ui.NewTokenSet(th))
 	s.rebuild()

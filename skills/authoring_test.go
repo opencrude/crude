@@ -5,6 +5,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -55,15 +56,29 @@ func TestPublicationRejectsRenamedParent(t *testing.T) {
 	}
 	destination := filepath.Join(container, "test-skill")
 	moved := filepath.Join(parent, "moved-container")
+	var renameErr error
 	_, err := publishSkill(context.Background(), destination, "test-skill", func(root *os.Root) error {
 		if err := writeNewFile(context.Background(), root, "SKILL.md", []byte("---\nname: test-skill\ndescription: Good.\n---\nBody\n"), 0644); err != nil {
 			return err
 		}
 		if err := os.Rename(container, moved); err != nil {
+			renameErr = err
 			return err
 		}
 		return os.Mkdir(container, 0755)
 	})
+	if runtime.GOOS == "windows" && renameErr != nil {
+		// OpenRoot pins the parent against rename on Windows. The OS already
+		// prevented replacement; publication must fail and remove its staging.
+		if !errors.Is(err, renameErr) {
+			t.Fatalf("blocked rename was not propagated: %v", err)
+		}
+		assertStagingRemoved(t, container)
+		if _, err := os.Stat(moved); !errors.Is(err, os.ErrNotExist) {
+			t.Fatalf("pinned parent moved: %v", err)
+		}
+		return
+	}
 	if !errors.Is(err, ErrChanged) {
 		t.Fatalf("renamed parent = %v", err)
 	}

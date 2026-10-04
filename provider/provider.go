@@ -199,6 +199,10 @@ func cloneProtocolSettings(settings *ProtocolSettings) *ProtocolSettings {
 		store := *settings.Store
 		cloned.Store = &store
 	}
+	if settings.MediaReplayRecovery != nil {
+		recovery := *settings.MediaReplayRecovery
+		cloned.MediaReplayRecovery = &recovery
+	}
 	if settings.ReasoningSummaries != nil {
 		summaries := *settings.ReasoningSummaries
 		cloned.ReasoningSummaries = &summaries
@@ -210,6 +214,19 @@ func cloneProtocolSettings(settings *ProtocolSettings) *ProtocolSettings {
 	return &cloned
 }
 
+// MediaReplayRecoveryEnabled reports whether this exact configured connection
+// may adapt after a gateway proves that stored inline-image replay is broken.
+func (p *Provider) MediaReplayRecoveryEnabled() bool {
+	if p == nil || p.Protocol() == nil || !p.Protocol().Info().Options.MediaReplayRecovery {
+		return false
+	}
+	var settings ProtocolSettings
+	if p.protocolSettings != nil {
+		settings = *p.protocolSettings
+	}
+	return settings.ResolveMediaReplayRecovery(true)
+}
+
 // Client builds a transport client whose headers resolve the current bound
 // account at every attempt, including refresh and reconnect checks.
 func (p *Provider) Client(opts ...ClientOption) (*Client, error) {
@@ -219,6 +236,7 @@ func (p *Provider) Client(opts ...ClientOption) (*Client, error) {
 	}
 	all := append([]ClientOption{
 		WithRequestExtras(p.requestExtras()),
+		WithMediaReplayRecovery(p.MediaReplayRecoveryEnabled()),
 		WithHeaderSource(p.headerSource(proto)),
 	}, opts...)
 	return NewClient(proto, p.BaseURL, "", p.dial.resolve(), all...)

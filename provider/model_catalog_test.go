@@ -192,6 +192,47 @@ func TestAgentOutputLimitPersistsAndIsolatesConnectionAndProfile(t *testing.T) {
 	}
 }
 
+func TestResponseMediaReplayLimitationPersistsAndExpires(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "model-catalog.db")
+	catalog, err := OpenModelCatalog(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	UseModelCatalog(catalog)
+	t.Cleanup(func() { _ = catalog.Close() })
+	const scope = "exact-responses-connection-scope"
+	if LearnedResponseMediaReplayLimitation(scope) {
+		t.Fatal("unobserved connection started limited")
+	}
+	if err := RecordResponseMediaReplayLimitation(scope); err != nil {
+		t.Fatal(err)
+	}
+	if !LearnedResponseMediaReplayLimitation(scope) || LearnedResponseMediaReplayLimitation("other-scope") {
+		t.Fatal("media replay evidence was not exact-scope")
+	}
+	if err := catalog.Close(); err != nil {
+		t.Fatal(err)
+	}
+	catalog, err = OpenModelCatalog(path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	UseModelCatalog(catalog)
+	if !LearnedResponseMediaReplayLimitation(scope) {
+		t.Fatal("media replay limitation did not survive app restart")
+	}
+	stale := time.Now().Add(-learnedResponseMediaReplayLifetime - time.Hour)
+	catalog.mediaMu.Lock()
+	catalog.media[scope] = stale
+	catalog.mediaMu.Unlock()
+	if _, err := catalog.db.Exec(`UPDATE response_media_replay_limitations SET updated_at=? WHERE provider_scope=?`, stale.Unix(), scope); err != nil {
+		t.Fatal(err)
+	}
+	if LearnedResponseMediaReplayLimitation(scope) {
+		t.Fatal("stale media replay evidence should be re-probed")
+	}
+}
+
 func TestCatalogFailedRefreshPreservesLastGoodDatabaseAndSnapshot(t *testing.T) {
 	var body atomic.Value
 	body.Store(catalogRouterFixture)

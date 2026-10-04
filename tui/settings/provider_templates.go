@@ -193,6 +193,15 @@ func (m *Model) protocolFieldsFor(providerID string, cfg provider.Template, pref
 		}
 		add(ui.TriStateFieldState(fieldProtocolStore, "Server storage", defaultLabel, protocolStoreValue(settings), "Request retained context and delta uploads. The endpoint must support and accept storage."))
 	}
+	if options.MediaReplayRecovery {
+		add(ui.TriStateFieldState(
+			fieldProtocolMediaReplay,
+			"Inline image replay recovery",
+			"On (default)",
+			protocolMediaReplayValue(settings),
+			"On exact stored-image Base64 rejection, retry once with full local context and remember the connection limitation for seven days.",
+		))
+	}
 	if options.ZeroDataRetention {
 		zdr := settings != nil && settings.ZeroDataRetention
 		add(ui.ToggleFieldState(fieldProtocolZDR, "Zero data retention", zdr, "Do not retain conversation data after a response."))
@@ -584,11 +593,12 @@ func (m *Model) storeAccountEditorForm() {
 
 func (m *Model) protocolSettingsWithPrefix(category int, prefix string) *provider.ProtocolSettings {
 	settings := provider.ProtocolSettings{
-		Store:              m.triStateAt(category, prefix+fieldProtocolStore),
-		ZeroDataRetention:  m.toggleAt(category, prefix+fieldProtocolZDR),
-		ReasoningSummaries: m.triStateAt(category, prefix+fieldProtocolSummaries),
-		Truncation:         m.truncationAt(category, prefix+fieldProtocolTruncate),
-		ServiceTier:        m.value(category, prefix+fieldProtocolTier),
+		Store:               m.triStateAt(category, prefix+fieldProtocolStore),
+		MediaReplayRecovery: m.triStateAt(category, prefix+fieldProtocolMediaReplay),
+		ZeroDataRetention:   m.toggleAt(category, prefix+fieldProtocolZDR),
+		ReasoningSummaries:  m.triStateAt(category, prefix+fieldProtocolSummaries),
+		Truncation:          m.truncationAt(category, prefix+fieldProtocolTruncate),
+		ServiceTier:         m.value(category, prefix+fieldProtocolTier),
 	}
 	if settings == (provider.ProtocolSettings{}) {
 		return nil

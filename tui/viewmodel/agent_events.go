@@ -521,7 +521,7 @@ func (m *App) promoteThinkingToPane(agent *workspace.AgentState) {
 	if agent == nil || agent.Messages == nil {
 		return
 	}
-	paneID := m.nextThinkingPaneID(agent.ID, time.Now())
+	paneID := m.nextThinkingPaneID(agent.ID)
 	thought, ok := agent.Messages.PromoteThinking(paneID)
 	if !ok {
 		return
@@ -541,13 +541,14 @@ func (m *App) promoteThinkingToPane(agent *workspace.AgentState) {
 	m.syncPaneMessages(paneID, false)
 }
 
-func (m *App) nextThinkingPaneID(agentID string, now time.Time) string {
-	base := "thinking-" + agentID + "-" + now.Format("150405.000000000")
-	paneID := base
-	for suffix := 2; m.PaneMgr.Has(paneID) || m.subPaneProjections.Has(paneID); suffix++ {
-		paneID = fmt.Sprintf("%s-%d", base, suffix)
+func (m *App) nextThinkingPaneID(agentID string) string {
+	for {
+		m.thinkingPaneSequence++
+		paneID := fmt.Sprintf("thinking-%s-%d", agentID, m.thinkingPaneSequence)
+		if !m.PaneMgr.Has(paneID) && !m.subPaneProjections.Has(paneID) {
+			return paneID
+		}
 	}
-	return paneID
 }
 
 func (m *App) handleSubPaneCompletion(agentID string) {

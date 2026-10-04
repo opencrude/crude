@@ -548,7 +548,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	activeCfg = effectiveCfg.GetActiveDefaultCategory()
 
 	steeringCtx, stopSteering := context.WithCancel(historyCtx)
-	runtimeMessages, runtimeMessagesDone := s.humanSteeringMessages(
+	runtimeMessages, runtimeMessagesDone, flushRuntime := s.humanSteeringMessages(
 		steeringCtx, s.db, s.sessionID, o.ID, collaborationRun.ID, o.RuntimeEpoch,
 		func() uint64 {
 			s.msgsMu.Lock()
@@ -557,6 +557,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		},
 		activeCfg.Model, sender,
 	)
+	ag.FlushRuntimeMessages = flushRuntime
 
 	var emitActive atomic.Bool
 	emitActive.Store(true)

@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
@@ -795,7 +796,8 @@ func (manager *Manager) Disconnect(id string) error {
 	if session != nil {
 		err := session.Close()
 		var exitError *exec.ExitError
-		if transport == "stdio" && errors.As(err, &exitError) && exitError.ExitCode() == -1 {
+		if cancel != nil && transport == "stdio" && errors.As(err, &exitError) &&
+			(exitError.ExitCode() == -1 || runtime.GOOS == "windows" && exitError.ExitCode() == 1) {
 			return nil
 		}
 		return err

@@ -735,11 +735,12 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 	}
 	runID, _ := handle.RunIdentity()
 	steeringCtx, stopSteering := context.WithCancel(ctx)
-	runtimeMessages, runtimeMessagesDone := r.session.humanSteeringMessages(
+	runtimeMessages, runtimeMessagesDone, flushRuntime := r.session.humanSteeringMessages(
 		steeringCtx, handle.DB, handle.SessionID, string(handle.Spec.ID), runID,
 		handle.RuntimeEpoch, func() uint64 { return contextGeneration },
 		handle.Spec.Model, r.sender,
 	)
+	handle.Agent.FlushRuntimeMessages = flushRuntime
 	agentMsgs := handle.Agent.Run(ctx, userMsgs, systemPrompt, func(evt agent.AgentEvent) {
 		evt.AgentID = string(handle.Spec.ID)
 		if err := r.session.persistCompactionEvent(handle.DB, handle.SessionID, evt.AgentID, evt); err != nil {
@@ -1599,13 +1600,6 @@ func generateShortID() string {
 		panic(fmt.Sprintf("session: generate agent ID: %v", err))
 	}
 	return hex.EncodeToString(b[:])
-}
-
-func truncateString(s string, maxLen int) string {
-	if len(s) <= maxLen {
-		return s
-	}
-	return s[:maxLen] + "…"
 }
 
 func toStringSlice(val any) []string {

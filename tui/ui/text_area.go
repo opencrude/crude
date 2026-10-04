@@ -835,8 +835,7 @@ func (t *TextArea) handleKey(m tea.KeyPressMsg) EventResult {
 	if t.readOnly && !t.readOnlyKeyAllowed(m) {
 		return EventResult{Handled: true}
 	}
-	primary := m.Mod.Contains(tea.ModCtrl) || m.Mod.Contains(tea.ModSuper)
-	if primary && m.Code == 'v' {
+	if IsPasteChord(m) {
 		if t.readOnly {
 			return EventResult{Handled: true}
 		}
