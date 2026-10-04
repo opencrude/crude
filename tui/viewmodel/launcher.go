@@ -74,6 +74,9 @@ func (m *App) handleLauncherCommand(msg launcher.CommandMsg) tea.Cmd {
 
 // launcherNewSession creates a new session from the launcher.
 func (m *App) launcherNewSession() tea.Cmd {
+	if m.launcherScreen != nil {
+		m.launcherScreen.SetActionError("")
+	}
 	m.startLSPForWorkspace()
 	if m.Logger != nil {
 		m.Logger.Info("SESSION", "new_session_from_launcher")
@@ -86,6 +89,11 @@ func (m *App) launcherNewSession() tea.Cmd {
 		}
 		if m.Feedback != nil {
 			m.Feedback.NotifyError(result.Error)
+		}
+		if m.launcherScreen != nil {
+			m.launcherScreen.SetActionError("Session could not be created. Open Notices for the exact error.")
+			m.rootHost.MarkLayout()
+			m.forceFrame()
 		}
 		return nil
 	}
@@ -150,6 +158,11 @@ func (m *App) launcherResumeSession(sessionID string, sessionMeta *sessiondb.Ses
 			} else {
 				m.Feedback.NotifyError(result.Error)
 			}
+		}
+		if m.launcherScreen != nil {
+			m.launcherScreen.SetActionError("Session could not be resumed. Open Notices for the exact error.")
+			m.rootHost.MarkLayout()
+			m.forceFrame()
 		}
 		return nil
 	}

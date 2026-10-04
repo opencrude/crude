@@ -59,20 +59,31 @@ type themeConsumer struct {
 	read  func() *theme.Theme
 }
 
-// applyThemeFrame overlays the persisted shell frame paddings onto a freshly
+// applyThemeFrame overlays persisted presentation preferences onto a freshly
 // built preset theme. Called wherever a preset is applied to the live shell so
-// the user's frame survives every theme rebuild (startup, settings save,
-// cancel-to-saved, and config.json hot reload).
+// the user's frame and explicit Nerd Font choice survive every theme rebuild
+// (startup, settings save, cancel-to-saved, and config.json hot reload).
 func (m *App) applyThemeFrame(th *theme.Theme) {
 	if m == nil || th == nil || m.Workspace == nil {
 		return
 	}
-	cfg := m.Workspace.LoadAppSettings().Theme
+	applyThemePreferences(th, m.LoadAppSettings())
+}
+
+func applyThemePreferences(th *theme.Theme, settings ttypes.AppSettings) {
+	if th == nil {
+		return
+	}
+	cfg := settings.Theme
 	th.Spacing.Frame = ui.Insets{
 		Top:    clampFramePad(cfg.PadTopOrDefault()),
 		Right:  clampFramePad(cfg.PadRightOrDefault()),
 		Bottom: clampFramePad(cfg.PadBottomOrDefault()),
 		Left:   clampFramePad(cfg.PadLeftOrDefault()),
+	}
+	if settings.UI.UseNerdFont {
+		enabled := true
+		th.Tree.Config.UseNerdFont = &enabled
 	}
 }
 
@@ -95,13 +106,7 @@ func applyWorkspaceFrame(th **theme.Theme, ws *workspace.Workspace) {
 	if th == nil || *th == nil || ws == nil {
 		return
 	}
-	cfg := ws.LoadAppSettings().Theme
-	(*th).Spacing.Frame = ui.Insets{
-		Top:    clampFramePad(cfg.PadTopOrDefault()),
-		Right:  clampFramePad(cfg.PadRightOrDefault()),
-		Bottom: clampFramePad(cfg.PadBottomOrDefault()),
-		Left:   clampFramePad(cfg.PadLeftOrDefault()),
-	}
+	applyThemePreferences(*th, ws.LoadAppSettings())
 }
 
 // applyThemePreset replaces the live theme from a named preset and refreshes

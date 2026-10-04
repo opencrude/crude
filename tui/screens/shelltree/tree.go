@@ -302,7 +302,7 @@ func (s *Screen) applyConfig() {
 	if s.model != nil {
 		s.icons = s.model.IconResolver()
 		if s.icons != nil {
-			s.icons.ApplyTheme(&s.th.Tree.Colors)
+			s.icons.ApplyTheme(s.th)
 			s.icons.SetGlyphs(s.th.Glyphs)
 		}
 	}

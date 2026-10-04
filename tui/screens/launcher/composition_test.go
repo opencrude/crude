@@ -131,7 +131,7 @@ func TestLauncherWideRestoresFullWidthSessionAndLeftWorkspace(t *testing.T) {
 	if newSession != (ui.Rect{W: 118, H: 4}) || openWorkspace != (ui.Rect{Y: 5, W: 40, H: 4}) {
 		t.Fatalf("wide action geometry changed: new=%+v workspace=%+v", newSession, openWorkspace)
 	}
-	for _, label := range []string{"New Session", "/projects/current", "📁", "New Workspace", "Open a folder as a workspace", "enter ↵"} {
+	for _, label := range []string{"New Session", s.cwd, "📁", "New Workspace", "Open a folder as a workspace", "enter ↵"} {
 		if !strings.Contains(bufferText(buf), label) {
 			t.Fatalf("original action content missing %q:\n%s", label, bufferText(buf))
 		}

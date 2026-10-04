@@ -274,10 +274,10 @@ durable active context. The next
 request uses `previous_response_id` and uploads only subsequent input when the
 model, account, endpoint, request configuration, tool definitions, complete input
 prefix and accepted output still match. Multipart hashes include actual media
-bytes, not attachment labels. Ordinary and native custom-tool results retain
-their exact call IDs and output kinds even when their calls are omitted from the
-upload. The full local conversation remains authoritative and is never replaced
-with a server ID.
+bytes, not attachment labels. Inline images remain eligible for the documented
+delta path. Ordinary and native custom-tool results retain their exact call IDs
+and output kinds even when their calls are omitted from the upload. The full
+local conversation remains authoritative and is never replaced with a server ID.
 
 The first request, a changed prefix/configuration, compaction, or a partial or
 unreferenced assistant response requires a complete upload. A model/account/
@@ -290,6 +290,19 @@ rebase before any model output, within the same overall deadline. Generic errors
 authorization failures, cancellation and accepted partial output never trigger
 that recovery. A rejected reference lookup is separate from transient retry
 attempts; a second reference error after rebasing is final.
+
+**Inline image replay recovery** is a separate, configurable safeguard, enabled
+by default on Responses templates and account overrides. Crude still attempts the
+documented `previous_response_id` request first. Only an exact pre-output 400/422
+that identifies an invalid Base64 `image_url`, while the inherited local data URL
+passes Crude's own validation, permits one full-context retry. Successful
+evidence records an exact endpoint/account/model/request-scope limitation in the
+app model catalog for seven days; later matching prefixes use full uploads
+without repeating the known-bad request. Different connections continue probing
+the standard path. Disabling the setting bypasses both recovery and learned
+routing, so the provider error is returned unchanged. Generic schema errors,
+remote image URLs, malformed local images, cancellation and accepted output
+never trigger this recovery.
 
 Crude's stream decoder follows the official typed lifecycle: every
 `response.created`, `response.in_progress` and terminal `response.completed`

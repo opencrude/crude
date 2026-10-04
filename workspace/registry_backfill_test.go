@@ -416,11 +416,7 @@ func TestNewWorkspaceRunsBackfill(t *testing.T) {
 	_ = sdb.Close()
 
 	ws := NewWorkspace(project, "model", "user", ttypes.Settings{}, nopLogger{})
-	t.Cleanup(func() {
-		if ws.WorkspaceDB != nil {
-			_ = ws.WorkspaceDB.Close()
-		}
-	})
+	t.Cleanup(ws.Close)
 	listed := ws.ListSessions()
 	if len(listed) != 1 || listed[0].ID != sid {
 		t.Fatalf("ListSessions after NewWorkspace: %+v", listed)

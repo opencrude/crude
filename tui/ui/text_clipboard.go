@@ -89,6 +89,17 @@ func IsCopyChord(m tea.KeyPressMsg) bool {
 	return false
 }
 
+// IsPasteChord reports the shared system-clipboard fallback chord. Shift is
+// accepted because Windows and terminal key protocols can retain it when the
+// same physical paste gesture is decoded as an application key event.
+func IsPasteChord(m tea.KeyPressMsg) bool {
+	if (!m.Mod.Contains(tea.ModCtrl) && !m.Mod.Contains(tea.ModSuper)) ||
+		m.Mod.Contains(tea.ModAlt) {
+		return false
+	}
+	return m.Code == 'v' || m.Code == 'V'
+}
+
 // textClipboardChord applies the shared text-selection/clipboard contract:
 //
 //	Ctrl+C, Ctrl+Shift+C  copy the selection (never mutates the text)

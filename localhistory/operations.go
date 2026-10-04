@@ -160,10 +160,9 @@ func (s *Store) storeOperationState(ctx context.Context, state *OperationState) 
 		if err != nil {
 			return nil, err
 		}
-		entry.Mode = state.Mode
 		return &entry, nil
 	case EntryDirectory:
-		entry := Entry{Type: EntryDirectory, Mode: state.Mode}
+		entry := Entry{Type: EntryDirectory, Mode: storedMode(os.FileMode(state.Mode) | os.ModeDir)}
 		return &entry, nil
 	default:
 		return nil, fmt.Errorf("unsupported operation state type %q", state.Type)

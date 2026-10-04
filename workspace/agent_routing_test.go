@@ -105,6 +105,7 @@ func TestRecordAgentUsageUpdatesOwningSession(t *testing.T) {
 
 	got, ok := ws.RecordAgentUsage("first", map[string]any{
 		"request_id":       "first-request",
+		"reported_at":      int64(1),
 		"prompt":           float64(10),
 		"completion":       float64(4),
 		"prompt_cached":    float64(2),
@@ -123,8 +124,9 @@ func TestRecordAgentUsageUpdatesOwningSession(t *testing.T) {
 		t.Fatalf("unexpected usage snapshot: %#v", got)
 	}
 	got, ok = ws.RecordAgentUsage("first", map[string]any{
-		"request_id": "second-request",
-		"prompt":     float64(20), "completion": float64(6), "prompt_cached": float64(3), "cache_read_known": true,
+		"request_id":  "second-request",
+		"reported_at": int64(1),
+		"prompt":      float64(20), "completion": float64(6), "prompt_cached": float64(3), "cache_read_known": true,
 		"cost": float64(0.30), "cost_known": true, "context_window": float64(100), "context_prompt": float64(50),
 	})
 	if !ok || got.InputTotal.Value != 30 || got.Output.Value != 10 || got.CacheRead.Value != 5 || got.Cost.USD != 0.55 || got.ContextUsed.Value != 50 {

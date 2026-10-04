@@ -3,16 +3,126 @@ package collaboration
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"os"
+	"os/exec"
 	"path/filepath"
 	"sync"
 	"testing"
+	"time"
 
 	_ "modernc.org/sqlite"
 )
 
 const testWorkspace = "/workspace/project"
+
+func TestRuntimeOwnershipAcrossProcessExit(t *testing.T) {
+	for _, abrupt := range []bool{false, true} {
+		t.Run(fmt.Sprintf("abrupt=%t", abrupt), func(t *testing.T) {
+			root := t.TempDir()
+			db, err := sql.Open("sqlite", filepath.Join(root, "workspace.db")+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer db.Close()
+			store, err := Attach(db, testWorkspace, filepath.Join(root, "locks"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer store.Close()
+			ctx, cancel := context.WithTimeout(t.Context(), 20*time.Second)
+			defer cancel()
+			command := exec.CommandContext(ctx, os.Args[0], "-test.run=^TestCollaborationRuntimeOwnerProcess$")
+			command.Env = append(os.Environ(), "CRUDE_COLLAB_OWNER_PROCESS=1", "CRUDE_COLLAB_ROOT="+root)
+			stdout, err := command.StdoutPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			stdin, err := command.StdinPipe()
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer stdin.Close()
+			if err := command.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if command.ProcessState == nil {
+					_ = command.Process.Kill()
+					_ = command.Wait()
+				}
+			}()
+			var original Agent
+			if err := json.NewDecoder(stdout).Decode(&original); err != nil {
+				t.Fatalf("runtime owner did not become ready: %v", err)
+			}
+			if _, err := db.Exec(`UPDATE collaboration_agents SET heartbeat_at=1 WHERE id=?`, original.ID); err != nil {
+				t.Fatal(err)
+			}
+			registration := AgentRegistration{ID: original.ID, Name: original.Name, SessionID: original.SessionID, Category: original.Category, OwnerInstance: "replacement"}
+			if _, err := store.RegisterAgent(ctx, registration); !errors.Is(err, ErrConflict) {
+				t.Fatalf("old heartbeat allowed another process to steal the runtime: %v", err)
+			}
+			live, err := store.Agent(ctx, original.ID)
+			if err != nil || live.OwnerInstance != original.OwnerInstance || live.RuntimeEpoch != original.RuntimeEpoch {
+				t.Fatalf("live process ownership changed: %+v err=%v", live, err)
+			}
+			if abrupt {
+				if err := command.Process.Kill(); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := stdin.Close(); err != nil {
+				t.Fatal(err)
+			}
+			waitErr := command.Wait()
+			if abrupt {
+				var exit *exec.ExitError
+				if !errors.As(waitErr, &exit) {
+					t.Fatalf("terminated fixture did not exit: %v", waitErr)
+				}
+			} else if waitErr != nil {
+				t.Fatal(waitErr)
+			}
+			replacement, err := store.RegisterAgent(ctx, registration)
+			if err != nil || replacement.RuntimeEpoch != original.RuntimeEpoch+1 || replacement.OwnerInstance != "replacement" {
+				t.Fatalf("runtime did not recover after process exit: %+v err=%v", replacement, err)
+			}
+			if err := store.Heartbeat(ctx, original.ID, original.OwnerInstance, original.RuntimeEpoch); !errors.Is(err, ErrStale) {
+				t.Fatalf("old process epoch remained authoritative: %v", err)
+			}
+		})
+	}
+}
+
+func TestCollaborationRuntimeOwnerProcess(t *testing.T) {
+	if os.Getenv("CRUDE_COLLAB_OWNER_PROCESS") != "1" {
+		return
+	}
+	root := os.Getenv("CRUDE_COLLAB_ROOT")
+	db, err := sql.Open("sqlite", filepath.Join(root, "workspace.db")+"?_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	store, err := Attach(db, testWorkspace, filepath.Join(root, "locks"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+	owner, err := store.RegisterAgent(t.Context(), AgentRegistration{ID: "process-owned", Name: "Jeff", SessionID: "session", Category: "crafter", OwnerInstance: "original"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := json.NewEncoder(os.Stdout).Encode(owner); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := io.Copy(io.Discard, os.Stdin); err != nil {
+		t.Fatal(err)
+	}
+}
 
 func openTestStore(t *testing.T) (*Store, *sql.DB) {
 	t.Helper()
@@ -424,8 +534,10 @@ func TestConcurrentPublicationDeduplicatesAcrossConnections(t *testing.T) {
 	}
 	first, firstDB := open()
 	defer firstDB.Close()
+	defer first.Close()
 	second, secondDB := open()
 	defer secondDB.Close()
+	defer second.Close()
 	root, child := registerTestAgents(t, first)
 	const workers = 20
 	start := make(chan struct{})

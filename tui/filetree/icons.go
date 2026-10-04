@@ -98,12 +98,14 @@ func (r *IconResolver) expandedGlyph(expanded bool) string {
 	return g.TreeCollapsed
 }
 
-// ApplyTheme applies theme colors to the IconResolver.
-// Non-nil icon colors from the theme override the current resolver colors.
-func (r *IconResolver) ApplyTheme(colors *theme.TreeColors) {
-	if colors == nil {
+// ApplyTheme applies the active theme's icon colors and Nerd Font preference.
+// An explicit preference wins; otherwise terminal auto-detection remains the
+// authority so one workspace setting does not invent platform-specific policy.
+func (r *IconResolver) ApplyTheme(th *theme.Theme) {
+	if th == nil {
 		return
 	}
+	colors := &th.Tree.Colors
 	if colors.IconDir != nil {
 		r.DirColor = colors.IconDir
 	}
@@ -112,6 +114,11 @@ func (r *IconResolver) ApplyTheme(colors *theme.TreeColors) {
 	}
 	if colors.IconSymlink != nil {
 		r.SymlinkColor = colors.IconSymlink
+	}
+	if th.Tree.Config.UseNerdFont != nil {
+		r.UseNerdFont = *th.Tree.Config.UseNerdFont
+	} else {
+		r.UseNerdFont = DetectNerdFont()
 	}
 }
 

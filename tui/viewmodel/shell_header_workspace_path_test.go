@@ -13,6 +13,7 @@ import (
 func TestShortWorkspacePathCollapsesHome(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	outside := filepath.Join(filepath.Dir(home), "elsewhere")
 	cases := []struct {
 		name string
@@ -22,7 +23,7 @@ func TestShortWorkspacePathCollapsesHome(t *testing.T) {
 		{"home itself", home, "~"},
 		{"workspace under home", filepath.Join(home, "ocd", "crude"), "~" + string(filepath.Separator) + filepath.Join("ocd", "crude")},
 		{"sibling of home", outside, outside},
-		{"outside home", "/opt/projects/alpha", "/opt/projects/alpha"},
+		{"outside home", filepath.FromSlash("/opt/projects/alpha"), filepath.FromSlash("/opt/projects/alpha")},
 		{"unresolved root", ".", ""},
 		{"blank root", "   ", ""},
 		{"filesystem root", string(filepath.Separator), ""},
@@ -39,6 +40,7 @@ func TestShortWorkspacePathCollapsesHome(t *testing.T) {
 func TestHeaderShowsWorkspacePathWhenFolderMatchesAppName(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 28
 	app.RootPath = filepath.Join(home, "ocd", "crude")

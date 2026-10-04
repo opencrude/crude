@@ -803,17 +803,18 @@ func (m *Model) SignInRequest() (string, uint64) {
 
 // Field IDs for the protocol option, capability, and sampling rows.
 const (
-	fieldProtocolStore     = "protocol-store"
-	fieldProtocolZDR       = "protocol-zdr"
-	fieldProtocolSummaries = "protocol-summaries"
-	fieldProtocolTruncate  = "protocol-truncation"
-	fieldProtocolTier      = "protocol-tier"
-	fieldExtraBody         = "extra-body"
-	fieldCtxWindow         = "model-context-window"
-	fieldMaxOutput         = "model-max-output"
-	fieldModalityPrefix    = "modality-"
-	fieldTemperature       = "model-temperature"
-	fieldTopP              = "model-top-p"
+	fieldProtocolStore       = "protocol-store"
+	fieldProtocolMediaReplay = "protocol-media-replay-recovery"
+	fieldProtocolZDR         = "protocol-zdr"
+	fieldProtocolSummaries   = "protocol-summaries"
+	fieldProtocolTruncate    = "protocol-truncation"
+	fieldProtocolTier        = "protocol-tier"
+	fieldExtraBody           = "extra-body"
+	fieldCtxWindow           = "model-context-window"
+	fieldMaxOutput           = "model-max-output"
+	fieldModalityPrefix      = "modality-"
+	fieldTemperature         = "model-temperature"
+	fieldTopP                = "model-top-p"
 )
 
 // serviceTierOptions turns the protocol's declared tiers into select options.
@@ -851,6 +852,13 @@ func protocolStoreValue(settings *provider.ProtocolSettings) *bool {
 		return nil
 	}
 	return settings.Store
+}
+
+func protocolMediaReplayValue(settings *provider.ProtocolSettings) *bool {
+	if settings == nil {
+		return nil
+	}
+	return settings.MediaReplayRecovery
 }
 
 func protocolSummariesValue(settings *provider.ProtocolSettings) *bool {
@@ -2257,11 +2265,12 @@ func (m *Model) storeAccountForm() { m.storeAccountEditorForm() }
 // so their form lookups read empty and stay unset.
 func (m *Model) protocolSettingsFromForm(category int) *provider.ProtocolSettings {
 	settings := provider.ProtocolSettings{
-		Store:              m.triStateAt(category, fieldProtocolStore),
-		ZeroDataRetention:  m.toggleAt(category, fieldProtocolZDR),
-		ReasoningSummaries: m.triStateAt(category, fieldProtocolSummaries),
-		Truncation:         m.truncationAt(category, fieldProtocolTruncate),
-		ServiceTier:        m.value(category, fieldProtocolTier),
+		Store:               m.triStateAt(category, fieldProtocolStore),
+		MediaReplayRecovery: m.triStateAt(category, fieldProtocolMediaReplay),
+		ZeroDataRetention:   m.toggleAt(category, fieldProtocolZDR),
+		ReasoningSummaries:  m.triStateAt(category, fieldProtocolSummaries),
+		Truncation:          m.truncationAt(category, fieldProtocolTruncate),
+		ServiceTier:         m.value(category, fieldProtocolTier),
 	}
 	if settings == (provider.ProtocolSettings{}) {
 		return nil

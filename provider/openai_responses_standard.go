@@ -27,12 +27,13 @@ func (s *OpenAIResponsesStandard) Info() ProtocolInfo {
 		ModelsPath:  "models",
 		Streaming:   FramingSSE,
 		Options: ProtocolOptions{
-			Store:              true,
-			StoreDefault:       true,
-			ZeroDataRetention:  true,
-			ReasoningSummaries: true,
-			Truncation:         true,
-			ServiceTiers:       []string{"auto", "default", "flex", "priority", "fast"},
+			Store:               true,
+			StoreDefault:        true,
+			MediaReplayRecovery: true,
+			ZeroDataRetention:   true,
+			ReasoningSummaries:  true,
+			Truncation:          true,
+			ServiceTiers:        []string{"auto", "default", "flex", "priority", "fast"},
 		},
 	}
 }

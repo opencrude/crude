@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -761,7 +762,11 @@ func TestE2EWorkspaceSwitchReRootsToolExecution(t *testing.T) {
 	sessA.SetWorkDir(dirA)
 
 	toolFnA := captureToolFn(sessA)
-	result, err := toolFnA(nil, "execute_command", map[string]any{"command": "pwd"})
+	command := "pwd"
+	if runtime.GOOS == "windows" {
+		command = "cd"
+	}
+	result, err := toolFnA(nil, "execute_command", map[string]any{"command": command})
 	if err != nil {
 		t.Fatalf("execute_command in workspace A: %v", err)
 	}
@@ -780,7 +785,7 @@ func TestE2EWorkspaceSwitchReRootsToolExecution(t *testing.T) {
 	sessB.SetWorkDir(dirB)
 
 	toolFnB := captureToolFn(sessB)
-	resultB, err := toolFnB(nil, "execute_command", map[string]any{"command": "pwd"})
+	resultB, err := toolFnB(nil, "execute_command", map[string]any{"command": command})
 	if err != nil {
 		t.Fatalf("execute_command in workspace B: %v", err)
 	}

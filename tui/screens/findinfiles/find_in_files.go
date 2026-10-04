@@ -135,7 +135,7 @@ func New(th *theme.Theme) *Screen {
 		collapsed: make(map[string]bool),
 		icons:     filetree.NewIconResolver(),
 	}
-	s.icons.ApplyTheme(&th.Colors.Tree)
+	s.icons.ApplyTheme(th)
 
 	field := ui.NewSearchField(QueryID, tokens)
 	field.SetPrompt(ui.SearchGlyph(tokens))
@@ -572,6 +572,10 @@ func (s *Screen) Children() []ui.Component {
 
 func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	s.tokens = tokens
+	if th := tokens.Theme(); th != nil {
+		s.th = th
+		s.icons.ApplyTheme(th)
+	}
 	s.queryField.SetTokens(tokens)
 	if s.replaceField != nil {
 		s.replaceField.SetTokens(tokens)

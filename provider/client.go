@@ -50,6 +50,11 @@ type Client struct {
 	// requestExtras are merged into every chat request body.
 	requestExtras map[string]any
 
+	// mediaReplayRecovery permits evidence-based full-context recovery when a
+	// gateway proves it cannot reconstruct valid inline images from a stored
+	// Responses prefix.
+	mediaReplayRecovery bool
+
 	// sessionID is a stable identifier for protocols that require
 	// per-conversation headers (see SessionScope).
 	sessionID string
@@ -89,6 +94,11 @@ func WithResponseLimit(bytes int64) ClientOption {
 // overwrite what the protocol encoded (shallow merge).
 func WithRequestExtras(extra map[string]any) ClientOption {
 	return func(c *Client) { c.requestExtras = extra }
+}
+
+// WithMediaReplayRecovery controls adaptive stored inline-image recovery.
+func WithMediaReplayRecovery(enabled bool) ClientOption {
+	return func(c *Client) { c.mediaReplayRecovery = enabled }
 }
 
 // OnRequestEncoded registers a callback receiving the fully encoded request
@@ -157,12 +167,13 @@ func NewClient(proto Protocol, baseURL, apiKey string, dial DialConfig, opts ...
 		return nil, fmt.Errorf("provider: %w", err)
 	}
 	c := &Client{
-		proto:     proto,
-		base:      base,
-		hc:        newHTTPClient(dial),
-		dial:      dial,
-		sessionID: newSessionUUID(),
-		stall:     stall,
+		proto:               proto,
+		base:                base,
+		hc:                  newHTTPClient(dial),
+		dial:                dial,
+		sessionID:           newSessionUUID(),
+		stall:               stall,
+		mediaReplayRecovery: info.Options.MediaReplayRecovery,
 	}
 	if apiKey != "" {
 		c.headerSource = staticHeaderSource(proto, apiKey)
@@ -702,20 +713,26 @@ func (c *Client) encodeChatRequest(req *ChatRequest) ([]byte, error) {
 }
 
 func (c *Client) withContinuationPolicy(req *ChatRequest) *ChatRequest {
-	if req == nil || req.ResponseContinuationScope == "" {
+	if req == nil {
 		return req
 	}
-	allowed := c.proto.Info().ID == "openai-responses" && c.requestExtras["store"] != false && c.requestExtras["truncation"] != "auto"
+	allowed := req.ResponseContinuationScope != "" &&
+		c.proto.Info().ID == "openai-responses" &&
+		c.requestExtras["store"] != false &&
+		c.requestExtras["truncation"] != "auto"
 	for _, key := range []string{"input", "instructions", "model", "conversation", "previous_response_id"} {
 		if _, exists := c.requestExtras[key]; exists {
 			allowed = false
 		}
 	}
-	if allowed {
+	if allowed && req.MediaReplayRecovery == c.mediaReplayRecovery {
 		return req
 	}
 	copy := *req
-	copy.ResponseContinuationScope = ""
+	if !allowed {
+		copy.ResponseContinuationScope = ""
+	}
+	copy.MediaReplayRecovery = c.mediaReplayRecovery
 	return &copy
 }
 
@@ -723,10 +740,16 @@ func (c *Client) withContinuationPolicy(req *ChatRequest) *ChatRequest {
 // generation. Recover once within the same deadline, before any output, using
 // the authoritative full local request. Other errors keep normal retry policy.
 func (c *Client) rebaseContinuation(req *ChatRequest, cause error) (*ChatRequest, []byte, bool, error) {
-	if c.proto.Info().ID != "openai-responses" || req == nil || !continuationUnavailable(cause) {
+	if c.proto.Info().ID != "openai-responses" || req == nil {
 		return nil, nil, false, nil
 	}
-	if previous, _ := responseContinuation(req); previous == "" {
+	plan := planResponseContinuation(req, false)
+	if plan.PreviousResponseID == "" {
+		return nil, nil, false, nil
+	}
+	rejectedReference := continuationUnavailable(cause)
+	rejectedMediaReplay := c.mediaReplayRecovery && continuationMediaReplayRejected(req, plan, cause)
+	if !rejectedReference && !rejectedMediaReplay {
 		return nil, nil, false, nil
 	}
 	full := *req
@@ -734,6 +757,20 @@ func (c *Client) rebaseContinuation(req *ChatRequest, cause error) (*ChatRequest
 	body, err := c.encodeChatRequest(&full)
 	if err != nil {
 		return nil, nil, false, err
+	}
+	if rejectedMediaReplay {
+		if err := RecordResponseMediaReplayLimitation(req.ResponseContinuationScope); err != nil {
+			logIf(func(lg *logger.Logger) {
+				lg.Warn("RESPONSES", "media_replay_limitation_save_failed", "error", err.Error())
+			})
+		}
+		logIf(func(lg *logger.Logger) {
+			scope := req.ResponseContinuationScope
+			if len(scope) > 12 {
+				scope = scope[:12]
+			}
+			lg.Warn("RESPONSES", "media_replay_recovered", "scope", scope)
+		})
 	}
 	if c.onRequestEncoded != nil {
 		c.onRequestEncoded(bytes.Clone(body))

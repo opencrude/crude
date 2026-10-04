@@ -74,6 +74,8 @@ Read that first; this index only organizes the reference material.
   TUI screens with the native `tui/ui` component system.
 - [Capability workflows](guides/capability-workflows.md) — manual Skills/MCP,
   composer selection, Board, workspace Memory, Git review and validated limits.
+- [Windows visual capture](guides/windows-visual-capture.md) — safe native
+  Windows Terminal launch, exact-HWND input, NirCmd screenshots, and cleanup.
 
 ### Plans (historical — check the status header before acting on them)
 

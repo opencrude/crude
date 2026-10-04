@@ -64,6 +64,10 @@ type ProtocolOptions struct {
 	// StoreDefault is the wire default for Store when the user has not
 	// chosen (Responses stores by default, Chat Completions does not).
 	StoreDefault bool
+	// MediaReplayRecovery: stored-response continuation can adapt when a
+	// gateway rejects locally valid inline image data while reconstructing an
+	// inherited prefix.
+	MediaReplayRecovery bool
 	// ZeroDataRetention: the protocol can enforce no-server-retention
 	// per request (Responses store:false + encrypted reasoning
 	// passthrough).
@@ -87,6 +91,10 @@ type ProtocolSettings struct {
 	// conversation so subsequent requests don't re-upload it. When nil the
 	// protocol default applies.
 	Store *bool
+	// MediaReplayRecovery permits one exact, pre-output full-context recovery
+	// when stored-response replay corrupts a locally valid inline image. Nil
+	// uses the protocol default.
+	MediaReplayRecovery *bool
 	// ZeroDataRetention requests that the backend neither stores the
 	// conversation nor retains it after the response (OpenAI Responses
 	// "store:false" plus encrypted reasoning passthrough). It overrides
@@ -211,6 +219,15 @@ func (s ProtocolSettings) ResolveStore(dflt bool) bool {
 	}
 	if s.Store != nil {
 		return *s.Store
+	}
+	return dflt
+}
+
+// ResolveMediaReplayRecovery reports whether evidence-based inline-media
+// continuation recovery is enabled.
+func (s ProtocolSettings) ResolveMediaReplayRecovery(dflt bool) bool {
+	if s.MediaReplayRecovery != nil {
+		return *s.MediaReplayRecovery
 	}
 	return dflt
 }

@@ -31,6 +31,7 @@ func attachDelegationTestCollaboration(t *testing.T, sess *Session) *collaborati
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = store.Close() })
 	sess.SetCollaboration(store, collaboration.NewInstanceID())
 	return store
 }

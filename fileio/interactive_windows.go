@@ -48,12 +48,12 @@ func startInteractiveProcess(cmd *exec.Cmd, tty bool, output io.Writer) (io.Writ
 	if err := windows.CreatePipe(&inRead, &inWrite, nil, 0); err != nil {
 		return nil, nil, err
 	}
-	defer windows.CloseHandle(inRead)
+	defer func() { _ = windows.CloseHandle(inRead) }()
 	if err := windows.CreatePipe(&outRead, &outWrite, nil, 0); err != nil {
 		_ = windows.CloseHandle(inWrite)
 		return nil, nil, err
 	}
-	defer windows.CloseHandle(outWrite)
+	defer func() { _ = windows.CloseHandle(outWrite) }()
 	var hpc windows.Handle
 	if err := windows.CreatePseudoConsole(windows.Coord{X: 120, Y: 40}, inRead, outWrite, 0, &hpc); err != nil {
 		_ = windows.CloseHandle(inWrite)
@@ -77,7 +77,11 @@ func startInteractiveProcess(cmd *exec.Cmd, tty bool, output io.Writer) (io.Writ
 	for i, arg := range cmd.Args {
 		args[i] = syscall.EscapeArg(arg)
 	}
-	line, err := windows.UTF16PtrFromString(strings.Join(args, " "))
+	commandLine := strings.Join(args, " ")
+	if cmd.SysProcAttr != nil && cmd.SysProcAttr.CmdLine != "" {
+		commandLine = cmd.SysProcAttr.CmdLine
+	}
+	line, err := windows.UTF16PtrFromString(commandLine)
 	if err != nil {
 		return fail(err)
 	}
@@ -97,8 +101,8 @@ func startInteractiveProcess(cmd *exec.Cmd, tty bool, output io.Writer) (io.Writ
 	if err := windows.CreateProcess(app, line, nil, nil, false, flags, nil, cwd, &startup.StartupInfo, &process); err != nil {
 		return fail(fmt.Errorf("start ConPTY: %w", err))
 	}
-	defer windows.CloseHandle(process.Thread)
-	defer windows.CloseHandle(process.Process)
+	defer func() { _ = windows.CloseHandle(process.Thread) }()
+	defer func() { _ = windows.CloseHandle(process.Process) }()
 	cmd.Process, err = os.FindProcess(int(process.ProcessId))
 	if err != nil {
 		_ = windows.TerminateProcess(process.Process, 1)

@@ -102,8 +102,16 @@ func (d *TerminalReader) serializeWin32InputRecords(records []xwindows.InputReco
 					d.utf16Half[kd] = true
 					d.utf16Buf[kd][0] = kevent.Char
 				} else if kevent.KeyDown {
-					// Just a regular key press character encoded in VT.
-					buf.WriteRune(kevent.Char)
+					if shouldEncodeWin32ControlChord(kevent) {
+						// Windows can report Ctrl shortcuts with a zero or
+						// already-translated UnicodeChar. Preserve the virtual
+						// key and modifier state so Ctrl+V reaches the app
+						// instead of becoming NUL, literal "v", or no-op.
+						writeWin32InputKeyEvent(buf, kevent)
+					} else {
+						// Just a regular key press character encoded in VT.
+						buf.WriteRune(kevent.Char)
+					}
 				}
 			} else {
 				// We encode the key to Win32 Input Mode if it is a known key.
@@ -111,14 +119,7 @@ func (d *TerminalReader) serializeWin32InputRecords(records []xwindows.InputReco
 					d.eventScanner.storeGraphemeRune(kd, kevent.Char)
 				} else {
 					buf.Write(d.eventScanner.encodeGraphemeBufs())
-					fmt.Fprintf(buf,
-						"\x1b[%d;%d;%d;%d;%d;%d_",
-						kevent.VirtualKeyCode,
-						kevent.VirtualScanCode,
-						kevent.Char,
-						kd,
-						kevent.ControlKeyState,
-						kevent.RepeatCount)
+					writeWin32InputKeyEvent(buf, kevent)
 				}
 			}
 
@@ -201,6 +202,37 @@ func (d *TerminalReader) serializeWin32InputRecords(records []xwindows.InputReco
 
 	// Flush any remaining grapheme buffers.
 	buf.Write(d.eventScanner.encodeGraphemeBufs())
+}
+
+func shouldEncodeWin32ControlChord(event xwindows.KeyEventRecord) bool {
+	const altGr = xwindows.LEFT_CTRL_PRESSED | xwindows.RIGHT_ALT_PRESSED
+	if event.ControlKeyState&(xwindows.LEFT_CTRL_PRESSED|xwindows.RIGHT_CTRL_PRESSED) == 0 ||
+		event.ControlKeyState&altGr == altGr ||
+		event.VirtualKeyCode == 0 {
+		return false
+	}
+	switch event.VirtualKeyCode {
+	case xwindows.VK_CONTROL, xwindows.VK_LCONTROL, xwindows.VK_RCONTROL,
+		xwindows.VK_SHIFT, xwindows.VK_LSHIFT, xwindows.VK_RSHIFT,
+		xwindows.VK_MENU, xwindows.VK_LMENU, xwindows.VK_RMENU:
+		return false
+	}
+	return true
+}
+
+func writeWin32InputKeyEvent(buf *bytes.Buffer, event xwindows.KeyEventRecord) {
+	keyDown := 0
+	if event.KeyDown {
+		keyDown = 1
+	}
+	fmt.Fprintf(buf,
+		"\x1b[%d;%d;%d;%d;%d;%d_",
+		event.VirtualKeyCode,
+		event.VirtualScanCode,
+		event.Char,
+		keyDown,
+		event.ControlKeyState,
+		event.RepeatCount)
 }
 
 func mouseEventButton(p, s uint32) (MouseButton, bool) {

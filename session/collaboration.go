@@ -83,16 +83,6 @@ func (s *Session) registerCollaborator(ctx context.Context, id, name, sessionID,
 	return registered, nil
 }
 
-func (s *Session) collaborator(id string) (collaboration.Agent, bool) {
-	if s == nil || id == "" {
-		return collaboration.Agent{}, false
-	}
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	agent, ok := s.collaborationAgents[id]
-	return agent, ok
-}
-
 func (s *Session) detachCollaborator(ctx context.Context, id string) {
 	if s == nil || id == "" {
 		return
@@ -248,31 +238,51 @@ func (s *Session) humanSteeringMessages(
 	generation func() uint64,
 	model string,
 	sender EventSender,
-) (<-chan agent.RuntimeMessage, <-chan struct{}) {
-	messages := make(chan agent.RuntimeMessage)
+) (<-chan agent.RuntimeMessage, <-chan struct{}, func(context.Context) error) {
+	messages := make(chan agent.RuntimeMessage, 32)
 	done := make(chan struct{})
+	flushRequests := make(chan chan error)
 	store := s.CollaborationStore()
 	if store == nil || db == nil || agentID == "" || runID == "" || runtimeEpoch == 0 {
 		close(messages)
 		close(done)
-		return messages, done
+		return messages, done, nil
 	}
 	notifications, unsubscribe := store.Subscribe()
 	go func() {
 		defer close(done)
-		defer close(messages)
+		defer func() {
+			for {
+				select {
+				case runtime := <-messages:
+					runtime.Release("target run ended before admission")
+				default:
+					close(messages)
+					return
+				}
+			}
+		}()
 		defer unsubscribe()
 		ticker := time.NewTicker(100 * time.Millisecond)
 		defer ticker.Stop()
-		for {
-			deliveries, err := store.ReservePending(ctx, collaboration.ReserveRequest{
+		process := func() error {
+			for range cap(messages) {
+				if len(messages) == cap(messages) {
+					return nil
+				}
+				deliveries, err := store.ReservePending(ctx, collaboration.ReserveRequest{
 				RecipientID: agentID, RuntimeEpoch: runtimeEpoch, Limit: 1,
 				OnlyKinds: []collaboration.EventKind{collaboration.EventHumanSteering},
 			})
-			if err != nil && !errors.Is(err, collaboration.ErrUnavailable) && ctx.Err() == nil && s.logger != nil {
-				s.logger.Warn("COLLAB", "human_steering_reserve_failed", "agent_id", agentID, "error", err.Error())
-			}
-			if len(deliveries) > 0 {
+				if errors.Is(err, collaboration.ErrUnavailable) {
+					return nil
+				}
+				if err != nil {
+					return err
+				}
+				if len(deliveries) == 0 {
+					return nil
+				}
 				delivery := deliveries[0]
 				runtime := s.newHumanSteeringRuntimeMessage(
 					store, db, sessionID, agentID, runID, runtimeEpoch,
@@ -287,18 +297,44 @@ func (s *Session) humanSteeringMessages(
 					continue
 				case <-ctx.Done():
 					runtime.Release("target run ended before admission")
-					return
+					return ctx.Err()
 				}
+			}
+			return nil
+		}
+		for {
+			if err := process(); err != nil && ctx.Err() == nil && s.logger != nil {
+				s.logger.Warn("COLLAB", "human_steering_reserve_failed", "agent_id", agentID, "error", err.Error())
 			}
 			select {
 			case <-ctx.Done():
 				return
 			case <-notifications:
 			case <-ticker.C:
+			case reply := <-flushRequests:
+				reply <- process()
 			}
 		}
 	}()
-	return messages, done
+	flush := func(flushCtx context.Context) error {
+		reply := make(chan error, 1)
+		select {
+		case flushRequests <- reply:
+		case <-flushCtx.Done():
+			return flushCtx.Err()
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+		select {
+		case err := <-reply:
+			return err
+		case <-flushCtx.Done():
+			return flushCtx.Err()
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	return messages, done, flush
 }
 
 func (s *Session) newHumanSteeringRuntimeMessage(

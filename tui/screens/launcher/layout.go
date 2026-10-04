@@ -10,6 +10,9 @@ const (
 
 func (s *Screen) Children() []ui.Component {
 	children := []ui.Component{s.newSession, s.openWorkspace, s.skills, s.mcp, s.divider, s.header, s.search, s.rule, s.hints}
+	if s.actionError.Text() != "" {
+		children = append(children, s.actionError)
+	}
 	if s.loadError != "" {
 		children = append(children, s.retry)
 	}
@@ -26,6 +29,7 @@ func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
 	w, h := max(0, r.W), max(0, r.H)
+	s.actionError.Layout(ctx, ui.Rect{Y: actionHeight, W: w, H: min(1, max(0, h-actionHeight))})
 	if w < launcherCrampedWidth {
 		// Constrained terminals keep only the primary actions and workspace
 		// collection. Capability state remains available from its normal manager;

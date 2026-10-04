@@ -2,6 +2,7 @@ package app
 
 import (
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -26,7 +27,11 @@ func TestAccountsRoundTripAndDetachedConversions(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if info.Mode().Perm() != 0600 {
+	wantMode := os.FileMode(0600)
+	if runtime.GOOS == "windows" {
+		wantMode = 0666 // Windows permissions inherit the directory's ACL.
+	}
+	if info.Mode().Perm() != wantMode {
 		t.Fatalf("config permissions: %v", info.Mode())
 	}
 	raw, err := os.ReadFile(ConfigPath())

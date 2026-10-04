@@ -186,7 +186,12 @@ func (a *Agent) Run(
 			}
 		}
 
-		drainRuntime := func() int {
+		drainRuntime := func() (int, error) {
+			if a.FlushRuntimeMessages != nil {
+				if err := a.FlushRuntimeMessages(ctx); err != nil {
+					return 0, fmt.Errorf("flush runtime inbox: %w", err)
+				}
+			}
 			consumed := 0
 			admit := func(runtime RuntimeMessage) {
 				prospective := append(append([]provider.ChatMessage(nil), msgs...), runtime.Message)
@@ -215,15 +220,18 @@ func (a *Agent) Run(
 				case runtime, ok := <-runtimeInput:
 					if !ok {
 						runtimeInput = nil
-						return consumed
+						return consumed, nil
 					}
 					admit(runtime)
 				default:
-					return consumed
+					return consumed, nil
 				}
 			}
 		}
-		_ = drainRuntime()
+		if _, err := drainRuntime(); err != nil {
+			a.emitError(emit, err)
+			return returnMessages()
+		}
 		var runtimeNoticeIDs []string
 		if a.PrepareRuntimeNotices != nil {
 			for _, notice := range a.PrepareRuntimeNotices() {
@@ -461,7 +469,11 @@ func (a *Agent) Run(
 		if restartUpload && ctx.Err() == nil && errors.Is(err, context.Canceled) {
 			if !completion.hasOutput() {
 				clearUnsentRuntimeNotices()
-				queued := drainRuntime()
+				queued, drainErr := drainRuntime()
+				if drainErr != nil {
+					a.emitError(emit, drainErr)
+					return returnMessages()
+				}
 				l.Info("RUNTIME", "restart_upload_for_human_steering", "step", step, "queued", queued,
 					"threshold_percent", runtimeUploadRestartPercent)
 				continue
@@ -717,7 +729,12 @@ func (a *Agent) Run(
 			// Human steering can arrive while the terminal completion is in
 			// flight. Admit it before emitting done so it becomes the next LLM
 			// step instead of being stranded when the turn goroutine shuts down.
-			if drainRuntime() > 0 {
+			queued, drainErr := drainRuntime()
+			if drainErr != nil {
+				a.emitError(emit, drainErr)
+				return returnMessages()
+			}
+			if queued > 0 {
 				continuations = 0
 				continue
 			}
@@ -729,7 +746,6 @@ func (a *Agent) Run(
 					reminder.Origin = provider.OriginContinuation
 					reminder.Visibility = provider.VisibilityContextOnly
 					appendWire(reminder)
-					_ = drainRuntime()
 					continue
 				}
 				a.logger.Warn("SUBAGENT", "publish_report_contract_failed", "agent_id", a.AgentID, "depth", a.Depth, "step", step)

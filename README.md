@@ -68,3 +68,66 @@ and rules:
 ./install.sh        # Linux/macOS
 install.bat         # Windows
 ```
+
+## Windows terminal setup
+
+Crude uses patched Nerd Font glyphs for its activity rail, file tree, source
+control, Skills, MCP, and Settings icons. On Windows, install JetBrainsMono Nerd
+Font system-wide and configure the terminal that launches Crude.
+
+### 1. Install the font
+
+Run PowerShell as Administrator:
+
+```powershell
+winget install --id DEVCOM.JetBrainsMonoNerdFont --exact `
+  --accept-source-agreements --accept-package-agreements
+```
+
+### 2. Configure Windows Terminal
+
+Open **Windows Terminal → Settings → Defaults → Appearance** and set:
+
+```text
+Font face: JetBrainsMono NF
+Font size: 12
+```
+
+Alternatively, add this under `profiles.defaults` in Windows Terminal's
+`settings.json`:
+
+```json
+{
+  "profiles": {
+    "defaults": {
+      "font": {
+        "face": "JetBrainsMono NF",
+        "size": 12
+      }
+    }
+  }
+}
+```
+
+Use **`JetBrainsMono NF`**, not **`JetBrainsMono NFM`**. Both variants have the
+same text metrics, but `NFM` compresses patched icons into a single text-cell
+ink box, making navigation and sidebar icons look like tiny dots. `NF` preserves
+their intended outlines.
+
+If you do not want to change every Windows Terminal profile, apply the same
+font settings only to the profile used to launch Crude.
+
+### 3. Enable icons in Crude
+
+Open **Tools → Settings → IDE → Interface** and enable:
+
+- **Show file icons**
+- **Nerd font**
+
+Close every Windows Terminal window and reopen Crude after installing or
+changing the font. Color emoji are rendered by Windows Terminal's system emoji
+fallback and may still look different from Kitty or Alacritty on Linux; Crude's
+patched interface icons should remain clear and consistently sized.
+
+For native Windows visual testing, see
+[`docs/guides/windows-visual-capture.md`](docs/guides/windows-visual-capture.md).

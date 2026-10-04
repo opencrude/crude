@@ -52,7 +52,9 @@ func TestFileConfigRoundTrip(t *testing.T) {
 					MaxAttempts: 3, RequestTimeoutSeconds: 600, ConnectTimeoutSeconds: 60, MaxBackoffSeconds: 60,
 					ProgressStartupTimeoutSeconds: 120, ProgressTimeoutFloorSeconds: 60, ProgressTimeoutCeilingSeconds: 600,
 				},
-				Protocol:  &provider.ProtocolSettings{Store: boolPtr(false)},
+				Protocol: &provider.ProtocolSettings{
+					Store: boolPtr(false), MediaReplayRecovery: boolPtr(false),
+				},
 				ExtraBody: map[string]any{"include_reasoning": true},
 			},
 		},

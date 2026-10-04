@@ -152,32 +152,43 @@ never sufficient.
 
 ### Visual capture workflow
 
-On Linux use the repository workflow: `scripts/tuishot.sh`. On Windows use
-native Windows Terminal/conhost and NirCmd (`nircmd savescreenshotwin <path>`
-captures the active window), never WSL to inspect a Windows product failure.
-Use a dedicated capture window, activate that exact window before injecting
-input, and track/close its process after capture. Never capture or send input to
-an unrelated user window. For discussion-sized Linux captures use a readable
-full-width terminal, for example:
+On Linux use `scripts/tuishot.sh`. On Windows use
+`pwsh scripts/tuishot.ps1`; it launches native Windows Terminal, tracks the
+dedicated top-level HWND rather than the shared `WindowsTerminal.exe` process,
+activates and verifies that exact window before input/NirCmd capture, and closes
+only what it created. Never use WSL to inspect a Windows product failure and
+never capture or send input to an unrelated user window. See
+`docs/guides/windows-visual-capture.md`.
 
-**Never run two `scripts/tuishot.sh` captures concurrently.** Alacritty window
-matching, geometry, focus, and input injection are process-global; concurrent
-captures can target the wrong window and invalidate both results. Finish and
-close one capture before starting the next.
+Never run two visual captures concurrently on either platform. Alacritty and
+Windows desktop input/focus are process-global; concurrent runs can target the
+wrong window and invalidate both results.
+
+For discussion-sized Linux captures use a readable full-width terminal, for
+example:
 
 ```bash
 COLS=160 ROWS=40 FONT_SIZE=11 scripts/tuishot.sh /tmp/crude-screenshots \
   key:ctrl+alt+p type:settings key:Down key:Return
 ```
 
+The equivalent native Windows capture is:
+
+```powershell
+pwsh scripts/tuishot.ps1 -Cols 160 -Rows 40 .\tmp\crude-screenshots `
+  'key:ctrl+alt+p' 'type:settings' 'key:Down' 'key:Return'
+```
+
 `Ctrl+Alt+P` opens the Command Palette. From the launcher, filter with
 `type:settings`, press `Down` to select the Tools > Settings entry, then press
 `Return`.
 
-After every capture, close the Alacritty/Crude window before finishing. Do not
-leave a `CrudeShot` window or capture process running. Keep `KEEP_OPEN=0` for
-normal captures; if `KEEP_OPEN=1` is used for an explicit interactive review,
-close it and verify `xdotool search --class CrudeShot` returns no window.
+After every capture, close the dedicated Crude window before finishing. Do not
+leave a `CrudeShot`/`CrudeShot-*` window or capture process running. Keep
+`KEEP_OPEN=0` for normal captures. If `KEEP_OPEN=1` is used for an explicit
+interactive review, close it and verify no matching window remains
+(`xdotool search --class CrudeShot` on Linux; `tasklist /v | findstr
+/i CrudeShot` on Windows).
 
 ### Compact chrome language
 - Prefer established, theme-aware symbols over spelled-out words in constrained
@@ -1314,6 +1325,15 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   typed reason, never a guessed ID. HTTP continuation cannot be guaranteed for
   a gateway that declines storage; WebSocket store-false continuation and the
   Conversations resource are distinct APIs, not fallback JSON shapes.
+- Responses inline images remain eligible for normal `previous_response_id`
+  deltas. The default-on, provider/account-configurable media replay safeguard
+  may rebase once before output only when a 400/422 identifies invalid Base64
+  `image_url` replay and the inherited local image validates. Record that exact
+  connection-scope limitation in `model-catalog.db` for seven days; matching
+  media prefixes then use full uploads, while other connections keep probing the
+  standard path. Turning the safeguard off disables recovery and learned routing.
+  Generic errors, malformed local media, cancellation and accepted output never
+  trigger it.
 - Provider-reported request input is the context authority. Project the next
   request from that baseline plus reported completion and semantic local deltas;
   fallback estimation is `ceil(runes/4)` over canonical content, never stream

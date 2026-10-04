@@ -15,6 +15,7 @@ func sentinelWithFile(tb testing.TB) string {
 	if err != nil {
 		tb.Fatal(err)
 	}
+	previous := sentinelFile
 	sentinelFile = f
 	EnableProbe()
 	Reset()
@@ -24,6 +25,8 @@ func sentinelWithFile(tb testing.TB) string {
 	tb.Cleanup(func() {
 		DisableProbe()
 		ResetSentinelState()
+		sentinelFile = previous
+		_ = f.Close()
 	})
 	return targetPath(f)
 }

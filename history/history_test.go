@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -148,8 +149,12 @@ func TestSaveLoadRoundTripV1(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Stat: %v", err)
 	}
-	if fi.Mode().Perm() != 0600 {
-		t.Fatalf("perms = %v, want 0600", fi.Mode().Perm())
+	wantMode := os.FileMode(0600)
+	if runtime.GOOS == "windows" {
+		wantMode = 0666 // Windows permissions inherit the directory's ACL.
+	}
+	if fi.Mode().Perm() != wantMode {
+		t.Fatalf("perms = %v, want %v", fi.Mode().Perm(), wantMode)
 	}
 	loaded, err := LoadFile(path)
 	if err != nil {

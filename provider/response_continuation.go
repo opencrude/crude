@@ -2,10 +2,12 @@ package provider
 
 import (
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"net/http"
+	"strings"
 )
 
 // ResponseReference belongs to one completed assistant message. Local history
@@ -74,6 +76,10 @@ func BindResponseReference(message *ChatMessage, reference *ResponseReference) {
 }
 
 func PlanResponseContinuation(req *ChatRequest) ResponseContinuationPlan {
+	return planResponseContinuation(req, true)
+}
+
+func planResponseContinuation(req *ChatRequest, applyLearnedLimitations bool) ResponseContinuationPlan {
 	if req.ResponseContinuationScope == "" {
 		return ResponseContinuationPlan{Reason: "disabled"}
 	}
@@ -101,7 +107,114 @@ func PlanResponseContinuation(req *ChatRequest) ResponseContinuationPlan {
 	if ref.OutputHash != ResponseInputHash([]ChatMessage{message}, nil) {
 		return ResponseContinuationPlan{Reason: "accepted_output_changed"}
 	}
+	if applyLearnedLimitations &&
+		req.MediaReplayRecovery &&
+		LearnedResponseMediaReplayLimitation(req.ResponseContinuationScope) &&
+		responsePrefixHasInlineImage(req.Messages[:last]) {
+		return ResponseContinuationPlan{Reason: "media_replay_limitation_learned"}
+	}
 	return ResponseContinuationPlan{PreviousResponseID: ref.ID, Start: last + 1, Reason: "delta"}
+}
+
+func responsePrefixHasInlineImage(messages []ChatMessage) bool {
+	for _, message := range messages {
+		for _, part := range message.Content.Parts() {
+			if part.Type != "image_url" {
+				continue
+			}
+			if len(part.Data) > 0 {
+				return true
+			}
+			if part.ImageURL != nil {
+				value := strings.TrimSpace(part.ImageURL.URL)
+				if len(value) >= len("data:") && strings.EqualFold(value[:len("data:")], "data:") {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+func responsePrefixHasValidInlineImage(messages []ChatMessage) bool {
+	for _, message := range messages {
+		for _, part := range message.Content.Parts() {
+			if part.Type != "image_url" {
+				continue
+			}
+			if len(part.Data) > 0 {
+				if inlineImageBytesMatchMIME(part.MimeType, part.Data) {
+					return true
+				}
+				continue
+			}
+			if part.ImageURL == nil {
+				continue
+			}
+			value := strings.TrimSpace(part.ImageURL.URL)
+			if len(value) >= len("data:") &&
+				strings.EqualFold(value[:len("data:")], "data:") &&
+				validInlineImageDataURL(value) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func validInlineImageDataURL(value string) bool {
+	if validateOpenAIImageURL(value) != nil {
+		return false
+	}
+	metadata, payload, ok := strings.Cut(value[len("data:"):], ",")
+	if !ok {
+		return false
+	}
+	mediaType, _, _ := strings.Cut(metadata, ";")
+	data, err := base64.StdEncoding.DecodeString(payload)
+	if err != nil {
+		data, err = base64.RawStdEncoding.DecodeString(payload)
+	}
+	return err == nil && inlineImageBytesMatchMIME(mediaType, data)
+}
+
+func inlineImageBytesMatchMIME(mediaType string, data []byte) bool {
+	switch mediaType {
+	case "image/jpeg", "image/png", "image/gif", "image/webp":
+	default:
+		return false
+	}
+	sniffed := strings.SplitN(http.DetectContentType(data), ";", 2)[0]
+	return sniffed == mediaType
+}
+
+func continuationMediaReplayRejected(req *ChatRequest, plan ResponseContinuationPlan, cause error) bool {
+	if req == nil || !req.MediaReplayRecovery {
+		return false
+	}
+	if plan.PreviousResponseID == "" || plan.Start < 1 ||
+		!responsePrefixHasValidInlineImage(req.Messages[:plan.Start-1]) {
+		return false
+	}
+	message := ""
+	var status *StatusError
+	if errors.As(cause, &status) {
+		if status.StatusCode != http.StatusBadRequest && status.StatusCode != http.StatusUnprocessableEntity {
+			return false
+		}
+		message = status.Message
+	} else {
+		var api *APIError
+		if !errors.As(cause, &api) ||
+			(api.Type != "" && api.Type != "invalid_request_error") {
+			return false
+		}
+		message = api.Message
+	}
+	message = strings.ToLower(message)
+	return strings.Contains(message, "image_url") &&
+		strings.Contains(message, "base64") &&
+		(strings.Contains(message, "invalid") || strings.Contains(message, "expected"))
 }
 
 func responseContinuation(req *ChatRequest) (string, int) {

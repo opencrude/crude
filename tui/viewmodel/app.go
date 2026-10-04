@@ -186,6 +186,7 @@ type App struct {
 	inputScreen             *shellinput.Screen
 	chatScreen              *shellchat.Screen
 	agentChatScroll         map[string]agentMainChatScrollSnapshot
+	thinkingPaneSequence    uint64
 	chatScrollAgent         string
 	chatScrollNeedsRestore  bool
 	editorScreen            *shelleditor.Screen

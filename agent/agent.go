@@ -70,6 +70,9 @@ type Agent struct {
 	// PrepareStep snapshots live tools and runtime notices between requests,
 	// never while a parallel tool batch is using the previous snapshot.
 	PrepareStep func() ([]tools.ToolDef, []provider.ChatMessage)
+	// FlushRuntimeMessages fences the durable inbox before an empty lane can
+	// end a turn. Async delivery alone cannot prove there is no pending input.
+	FlushRuntimeMessages func(context.Context) error
 	// Runtime notices are admitted at model-request boundaries; human steering
 	// uses the separately fenced runtime-message lane.
 	PrepareRuntimeNotices  func() []provider.ChatMessage

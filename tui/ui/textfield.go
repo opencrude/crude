@@ -541,13 +541,14 @@ func (t *TextField) handleKey(m tea.KeyPressMsg) EventResult {
 	if ClipboardChordFor(m) != ClipboardChordNone {
 		return EventResult{}
 	}
+	if IsPasteChord(m) {
+		if t.readOnly {
+			return EventResult{Handled: true}
+		}
+		return EventResult{Handled: true, Action: &Action{ID: ActionTextPaste, Payload: ClipboardPasteTarget(t)}}
+	}
 	if primary {
 		switch m.Code {
-		case 'v':
-			if t.readOnly {
-				return EventResult{Handled: true}
-			}
-			return EventResult{Handled: true, Action: &Action{ID: ActionTextPaste, Payload: ClipboardPasteTarget(t)}}
 		case 'z':
 			if t.readOnly {
 				return EventResult{Handled: true}

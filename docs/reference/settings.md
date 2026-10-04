@@ -187,6 +187,16 @@ notice.
 Changing model/account/protocol or context starts a new chain rather than
 guessing that another server context is equivalent.
 
+Responses protocol options also expose **Inline image replay recovery**. It is
+On by default and can be overridden per account. Crude first uses the documented
+stored-response delta. If the endpoint returns an exact pre-output invalid
+Base64 `image_url` rejection while Crude's inherited local image is valid, the
+safeguard retries once with the complete authoritative context. That exact
+endpoint/account/model/request scope is remembered in `model-catalog.db` for
+seven days, so later inline-image continuations avoid a request already proven
+broken. Other connections still use deltas normally. Off disables both the
+recovery and the learned full-upload route; it does not alter Server storage.
+
 Off or **Zero data retention** keeps full uploads and never silently opts into
 retention. Codex requires storage off. Automatic server truncation and custom
 wire-context overrides also disable exact-prefix delta reuse. The endpoint must

@@ -159,6 +159,9 @@ func newTestApp(t testing.TB) *App {
 			}
 		}
 		resetAsyncIOStateForTest(app)
+		if app.Workspace != nil {
+			app.Close()
+		}
 	})
 	return app
 }
@@ -197,7 +200,10 @@ func addBackendTestOrchestrator(t *testing.T, app *App) string {
 	if previousActive != nil {
 		app.ActiveSession = previousActive
 	}
-	t.Cleanup(func() { app.CloseAgent(orchestrator.ID) })
+	t.Cleanup(func() {
+		app.CloseAgent(orchestrator.ID)
+		app.Close()
+	})
 	return orchestrator.ID
 }
 

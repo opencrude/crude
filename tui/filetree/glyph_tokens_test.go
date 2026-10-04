@@ -29,6 +29,22 @@ func TestIconResolverDirGlyphsConsumeGlyphTokens(t *testing.T) {
 	}
 }
 
+func TestIconResolverApplyThemeUsesExplicitNerdFontPreference(t *testing.T) {
+	r := NewIconResolver()
+	th := theme.DefaultDark()
+	enabled := true
+	th.Tree.Config.UseNerdFont = &enabled
+
+	r.ApplyTheme(th)
+
+	if !r.UseNerdFont {
+		t.Fatal("explicit theme Nerd Font preference was ignored")
+	}
+	if got := r.ResolveIcon("main.go", false, false, false).Icon; got == fallbackFileIcon {
+		t.Fatalf("explicit Nerd Font preference still produced fallback icon %q", got)
+	}
+}
+
 // TestTreeRowIndicatorConsumesExpandGlyphs verifies the native tree-row
 // painter (icons disabled) paints the TreeCollapsed/TreeExpanded tokens for
 // directory rows instead of hard-coded runes.

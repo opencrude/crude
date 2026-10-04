@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -51,6 +52,11 @@ func TestLauncher_NewSession_NoBackendConfig(t *testing.T) {
 	}
 	if cmd != nil {
 		t.Fatal("expected nil cmd from launcherNewSession")
+	}
+	app.width, app.height = 100, 28
+	app.paintShellFrame()
+	if text := bufferPlain(app.mainSurf.Buffer()); !strings.Contains(text, "Session could not be created") {
+		t.Fatalf("startup failure was hidden from the launcher:\n%s", text)
 	}
 }
 

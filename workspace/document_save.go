@@ -289,7 +289,7 @@ func (s *DocumentSaveService) Save(ctx context.Context, request DocumentSaveRequ
 func readDocument(path string) ([]byte, os.FileMode, bool, error) {
 	info, err := os.Lstat(path)
 	if errors.Is(err, os.ErrNotExist) {
-		return nil, 0o644, false, nil
+		return nil, fileio.MutationFileMode(0o644), false, nil
 	}
 	if err != nil {
 		return nil, 0, false, fmt.Errorf("save document: stat: %w", err)

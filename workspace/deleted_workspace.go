@@ -200,7 +200,13 @@ func workspaceDeletionStamp(ctx context.Context, root string) ([32]byte, error) 
 		if err != nil {
 			return err
 		}
-		fmt.Fprintf(hash, "%s\x00%d\x00%d\x00%d\n", rel, info.Size(), info.Mode(), info.ModTime().UnixNano())
+		size, modified := info.Size(), info.ModTime().UnixNano()
+		if info.IsDir() {
+			// Directory timestamps may settle after a read-only SQLite/WAL
+			// inspection on Windows. Membership is already stamped by the walk.
+			size, modified = 0, 0
+		}
+		fmt.Fprintf(hash, "%s\x00%d\x00%d\x00%d\n", rel, size, info.Mode(), modified)
 		return nil
 	})
 	var stamp [32]byte
