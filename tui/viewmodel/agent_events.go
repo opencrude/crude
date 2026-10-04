@@ -66,14 +66,14 @@ func (m *App) submitPreparedInput(sessionID string, input provider.UserInput) te
 	return nil
 }
 
-func (m *App) submitBtw(sessionID, text string, refIDs []string) tea.Cmd {
+func (m *App) submitSteering(sessionID, text string, refIDs []string) tea.Cmd {
 	n := m.AgentMgr.Get(sessionID)
 	if n == nil || n.State == nil {
 		return nil
 	}
 	agent := n.State
 	referenceLabels := m.referenceLabels(refIDs)
-	messageID := agent.Messages.AppendPendingBtw(workspace.Message{
+	messageID := agent.Messages.AppendPendingSteering(workspace.Message{
 		Role:            ttypes.RoleUser,
 		Content:         text,
 		ReferenceLabels: referenceLabels,
@@ -81,15 +81,15 @@ func (m *App) submitBtw(sessionID, text string, refIDs []string) tea.Cmd {
 	})
 	input := provider.InputWithRefs(text, refIDs)
 	input.InternalID = messageID
-	if m.Workspace == nil || !m.SubmitAgentBtw(sessionID, input) {
-		agent.Messages.RemovePendingBtwIDs([]string{messageID})
-		m.restoreFailedBtw(sessionID, []workspace.Message{{Content: text}})
+	if m.Workspace == nil || !m.SteerAgent(sessionID, input) {
+		agent.Messages.RemovePendingSteeringIDs([]string{messageID})
+		m.restoreRejectedSteering(sessionID, []workspace.Message{{Content: text}})
 		if m.Feedback != nil {
-			m.Feedback.NotifyError("BTW was not queued: this turn is no longer accepting notes")
+			m.Feedback.NotifyError("human steering was not queued: this turn is no longer accepting notes")
 		}
 		return nil
 	}
-	m.syncPendingBtwCount()
+	m.syncPendingSteeringCount()
 	m.syncAgentMessages(sessionID, true)
 	return nil
 }
@@ -142,24 +142,26 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 		}
 		return nil
 	}
-	if evt.Type == "btw_consumed" {
+	if evt.Type == "collaboration_delivery_admitted" {
 		if node := m.AgentMgr.Get(evt.AgentID); node != nil && node.State != nil && node.State.Messages != nil {
 			data, _ := evt.Data.(map[string]any)
-			internalID, _ := data["internal_id"].(string)
-			node.State.Messages.ConsumePendingBtw(internalID)
+			internalID, _ := data["history_message_id"].(string)
+			node.State.Messages.ConsumePendingSteering(internalID)
 			m.syncAgentMessages(evt.AgentID, false)
 		}
-		m.syncPendingBtwCount()
+		m.syncPendingSteeringCount()
 		m.syncAgentWindowTabs()
 		return nil
 	}
-	if evt.Type == "btw_cleared" {
+	if evt.Type == "collaboration_delivery_rejected" {
 		if node := m.AgentMgr.Get(evt.AgentID); node != nil && node.State != nil && node.State.Messages != nil {
-			ids := agentEventStringSlice(evt.Data, "internal_ids")
-			m.restoreFailedBtw(evt.AgentID, node.State.Messages.RemovePendingBtwMessages(ids))
+			data, _ := evt.Data.(map[string]any)
+			id, _ := data["history_message_id"].(string)
+			ids := []string{id}
+			m.restoreRejectedSteering(evt.AgentID, node.State.Messages.RemovePendingSteeringMessages(ids))
 			m.syncAgentMessages(evt.AgentID, true)
 		}
-		m.syncPendingBtwCount()
+		m.syncPendingSteeringCount()
 		return nil
 	}
 	if evt.Type == "memory_saved" {
@@ -396,9 +398,9 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 	return m.processAgentResults(agentID, cmd)
 }
 
-// restoreFailedBtw puts transport-rejected/cancelled notes back in the owning
+// restoreRejectedSteering puts transport-rejected/cancelled notes back in the owning
 // session's composer. Keep anything the user has typed since the submission.
-func (m *App) restoreFailedBtw(agentID string, messages []workspace.Message) {
+func (m *App) restoreRejectedSteering(agentID string, messages []workspace.Message) {
 	if len(messages) == 0 || m.Workspace == nil {
 		return
 	}
@@ -416,17 +418,39 @@ func (m *App) restoreFailedBtw(agentID string, messages []workspace.Message) {
 		return
 	}
 	if owner != m.ActiveSession || (owner.DB != nil && m.composerHydratedFor != owner) {
-		if m.failedBtwDrafts == nil {
-			m.failedBtwDrafts = make(map[*workspace.Session][]string)
+		if m.rejectedSteeringDrafts == nil {
+			m.rejectedSteeringDrafts = make(map[*workspace.Session][]string)
 		}
-		m.failedBtwDrafts[owner] = append(m.failedBtwDrafts[owner], texts...)
+		m.rejectedSteeringDrafts[owner] = append(m.rejectedSteeringDrafts[owner], texts...)
 		return
 	}
-	m.Input.SetInput(joinFailedBtwDrafts(texts, m.Input.Value()))
+	if m.rejectedSteeringDrafts == nil {
+		m.rejectedSteeringDrafts = make(map[*workspace.Session][]string)
+	}
+	previous := m.rejectedSteeringDrafts[owner]
+	current := m.Input.Value()
+	if len(previous) > 0 {
+		prefix := strings.Join(previous, "\n\n")
+		switch {
+		case current == prefix:
+			current = ""
+		case strings.HasPrefix(current, prefix+"\n\n"):
+			current = strings.TrimPrefix(current, prefix+"\n\n")
+		default:
+			previous = nil
+		}
+	}
+	previous = append(previous, texts...)
+	m.rejectedSteeringDrafts[owner] = previous
+	m.Input.SetInput(joinRejectedSteeringDrafts(previous, current))
+	if node := m.AgentMgr.Get(agentID); node != nil && node.State != nil &&
+		node.State.Messages != nil && node.State.Messages.PendingSteeringCount() == 0 {
+		delete(m.rejectedSteeringDrafts, owner)
+	}
 	m.persistComposerDraftIfChanged()
 }
 
-func joinFailedBtwDrafts(failed []string, current string) string {
+func joinRejectedSteeringDrafts(failed []string, current string) string {
 	if len(failed) == 0 {
 		return current
 	}
@@ -437,32 +461,14 @@ func joinFailedBtwDrafts(failed []string, current string) string {
 	return text
 }
 
-func agentEventStringSlice(data any, key string) []string {
-	values, _ := data.(map[string]any)
-	switch raw := values[key].(type) {
-	case []string:
-		return raw
-	case []any:
-		result := make([]string, 0, len(raw))
-		for _, value := range raw {
-			if text, ok := value.(string); ok && text != "" {
-				result = append(result, text)
-			}
-		}
-		return result
-	default:
-		return nil
-	}
-}
-
-func (m *App) syncPendingBtwCount() {
+func (m *App) syncPendingSteeringCount() {
 	if m.Feedback == nil || m.AgentMgr == nil {
 		return
 	}
 	count := 0
 	for _, node := range m.AgentMgr.AllNodes() {
 		if node != nil && node.State != nil && node.State.Messages != nil {
-			count += node.State.Messages.PendingBtwCount()
+			count += node.State.Messages.PendingSteeringCount()
 		}
 	}
 }

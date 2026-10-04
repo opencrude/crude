@@ -38,8 +38,9 @@ func resultCount(count int, singular, plural string) string {
 
 func BuildStructuredResult(name, content, input string) StructuredResult {
 	switch name {
-	case "board_post", "board_read":
-		return buildBoardResult(name, content, input)
+	case "agent_list", "agent_inspect", "agent_start", "agent_send", "agent_respond", "agent_control",
+		"publish_report", "artifact_read", "agent_wait", "board_read":
+		return buildCollaborationResult(name, content, input)
 	case "remember", "recall_memory", "update_memory", "forget_memory", "memory_feedback", "search_history":
 		return buildMemoryResult(name, content, input)
 	default:

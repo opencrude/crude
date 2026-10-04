@@ -99,6 +99,9 @@ Read that first; this index only organizes the reference material.
 - [Shared board live communication assessment](plans/shared-board-live-assessment.md)
   — **DONE** two live agents: board-only behavior revision, sibling verification,
   authority boundaries, timing/overhead, and coordination limitations.
+- [Workspace collaboration runtime](plans/workspace-collaboration-runtime-plan.md)
+  — **IN PROGRESS** single-cutover specification for workspace-wide agents,
+  unified delivery, reports, controls, recovery and exact live/hydration parity.
 - [Provider config plan](plans/provider-config-plan.md) — superseded by the
   capability-based provider protocol rework.
 - [Chat projection handoff](plans/chat-projection-handoff.md) — **ACTIVE

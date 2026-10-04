@@ -6,7 +6,7 @@ import (
 	"testing"
 )
 
-func TestBtwUploadControllerRestartsAtOrBelowThreshold(t *testing.T) {
+func TestRuntimeUploadControllerRestartsHumanSteeringAtOrBelowThreshold(t *testing.T) {
 	tests := map[string]int64{
 		"before upload":      0,
 		"exactly 90 percent": 90,
@@ -14,28 +14,28 @@ func TestBtwUploadControllerRestartsAtOrBelowThreshold(t *testing.T) {
 	for name, uploaded := range tests {
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithCancelCause(context.Background())
-			controller := newBtwUploadController(cancel)
+			controller := newRuntimeUploadController(cancel)
 			controller.Progress(uploaded, 100)
-			controller.Queue(BtwMessage{})
+			controller.Queue(RuntimeMessage{})
 
 			select {
 			case <-ctx.Done():
 			default:
 				t.Fatalf("upload at %d%% was not restarted", uploaded)
 			}
-			if !errors.Is(context.Cause(ctx), errBtwUploadRestart) {
-				t.Fatalf("cause = %v, want BTW upload restart", context.Cause(ctx))
+			if !errors.Is(context.Cause(ctx), errRuntimeUploadRestart) {
+				t.Fatalf("cause = %v, want runtime upload restart", context.Cause(ctx))
 			}
 		})
 	}
 }
 
-func TestBtwUploadControllerKeepsLateMessageForNextRequest(t *testing.T) {
+func TestRuntimeUploadControllerKeepsLateMessageForNextRequest(t *testing.T) {
 	ctx, cancel := context.WithCancelCause(context.Background())
 	defer cancel(nil)
-	controller := newBtwUploadController(cancel)
+	controller := newRuntimeUploadController(cancel)
 	controller.Progress(91, 100)
-	controller.Queue(BtwMessage{})
+	controller.Queue(RuntimeMessage{})
 
 	select {
 	case <-ctx.Done():
@@ -43,18 +43,18 @@ func TestBtwUploadControllerKeepsLateMessageForNextRequest(t *testing.T) {
 	default:
 	}
 	if controller.RestartRequested() {
-		t.Fatal("late BTW marked the request for restart")
+		t.Fatal("late human steering marked the request for restart")
 	}
 	if queued := controller.TakeQueued(); len(queued) != 1 {
 		t.Fatalf("queued messages = %d, want 1", len(queued))
 	}
 }
 
-func TestBtwUploadControllerRechecksQueuedMessageOnTransportRetry(t *testing.T) {
+func TestRuntimeUploadControllerRechecksQueuedMessageOnTransportRetry(t *testing.T) {
 	ctx, cancel := context.WithCancelCause(context.Background())
-	controller := newBtwUploadController(cancel)
+	controller := newRuntimeUploadController(cancel)
 	controller.Progress(100, 100)
-	controller.Queue(BtwMessage{})
+	controller.Queue(RuntimeMessage{})
 
 	select {
 	case <-ctx.Done():
@@ -66,19 +66,19 @@ func TestBtwUploadControllerRechecksQueuedMessageOnTransportRetry(t *testing.T) 
 	select {
 	case <-ctx.Done():
 	default:
-		t.Fatal("queued BTW did not restart the next stale upload attempt")
+		t.Fatal("queued human steering did not restart the next stale upload attempt")
 	}
-	if !errors.Is(context.Cause(ctx), errBtwUploadRestart) {
-		t.Fatalf("cause = %v, want BTW upload restart", context.Cause(ctx))
+	if !errors.Is(context.Cause(ctx), errRuntimeUploadRestart) {
+		t.Fatalf("cause = %v, want runtime upload restart", context.Cause(ctx))
 	}
 }
 
-func TestBtwUploadControllerDoesNotRestartAcceptedOrStreamingRequest(t *testing.T) {
-	tests := map[string]func(*btwUploadController){
-		"accepted": func(controller *btwUploadController) {
+func TestRuntimeUploadControllerDoesNotRestartAcceptedOrStreamingRequest(t *testing.T) {
+	tests := map[string]func(*runtimeUploadController){
+		"accepted": func(controller *runtimeUploadController) {
 			controller.Accepted()
 		},
-		"output": func(controller *btwUploadController) {
+		"output": func(controller *runtimeUploadController) {
 			controller.OutputStarted()
 		},
 	}
@@ -86,10 +86,10 @@ func TestBtwUploadControllerDoesNotRestartAcceptedOrStreamingRequest(t *testing.
 		t.Run(name, func(t *testing.T) {
 			ctx, cancel := context.WithCancelCause(context.Background())
 			defer cancel(nil)
-			controller := newBtwUploadController(cancel)
+			controller := newRuntimeUploadController(cancel)
 			controller.Progress(50, 100)
 			prepare(controller)
-			controller.Queue(BtwMessage{})
+			controller.Queue(RuntimeMessage{})
 
 			select {
 			case <-ctx.Done():

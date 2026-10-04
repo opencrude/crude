@@ -66,7 +66,7 @@ func newLiveOllamaSubAgentRunner(t *testing.T) (*Session, *SubAgentRunner, *live
 		AccountID:          "account",
 		Model:              liveOllamaSubAgentModel,
 		Policy:             "read-only",
-		AllowedTools:       []string{"write_report"},
+		AllowedTools:       []string{"publish_report"},
 		ModelSupportsTools: true,
 	}
 	profile.Categories[CategoryDefault] = liveCategory
@@ -101,23 +101,22 @@ func newLiveOllamaSubAgentRunner(t *testing.T) (*Session, *SubAgentRunner, *live
 	return s, runner, sender
 }
 
-func TestLiveOllamaSubAgentWaitTrueReturnsTerminalResult(t *testing.T) {
+func TestLiveOllamaAgentStartPublishesTerminalResult(t *testing.T) {
 	s, runner, sender := newLiveOllamaSubAgentRunner(t)
 	ctx, cancel := context.WithTimeout(t.Context(), 120*time.Second)
 	defer cancel()
-	result, err := runner.RunSubAgent(ctx, map[string]any{
+	result, err := runner.StartAgent(ctx, map[string]any{
 		"name":          "live-wait",
 		"category":      agent.CatResearcher,
 		"description":   "Verify the synchronous child lifecycle without reading or changing files.",
-		"instructions":  `Immediately call write_report with the exact report text "live wait lifecycle ok". Do not call any other tool.`,
-		"allowed_tools": []string{"write_report"},
-		"wait":          true,
+		"instructions":  `Immediately call publish_report with kind "final", summary "live wait lifecycle ok", body "live wait lifecycle ok", and recipient_ids containing the exact parent_id from your assignment. Do not call any other tool.`,
+		"allowed_tools": []string{"publish_report"},
 	})
 	if err != nil {
-		t.Fatalf("RunSubAgent(wait=true): %v", err)
+		t.Fatalf("StartAgent: %v", err)
 	}
-	if !strings.Contains(result.Content, "**Status:** OK") || !strings.Contains(result.Content, "Report:") {
-		t.Fatalf("synchronous result = %s", result.Content)
+	if !strings.Contains(result.Content, `"status":"running"`) || !strings.Contains(result.Content, `"run_id"`) {
+		t.Fatalf("start result = %s", result.Content)
 	}
 	runner.Wait()
 	completed := runner.Manager().CompletedResults()
@@ -136,40 +135,27 @@ func TestLiveOllamaSubAgentWaitTrueReturnsTerminalResult(t *testing.T) {
 	if err != nil || len(rows) != 1 {
 		t.Fatalf("durable parent result rows = %+v err=%v", rows, err)
 	}
-	if !s.IsAndClearReportConsumed(string(completed[0].AgentID)) {
-		t.Fatal("wait=true result was not marked consumed")
-	}
 	if !sender.has("sub_agent_started") || !sender.has("sub_agent_completed") {
 		t.Fatalf("terminal event contract missing: %+v", sender.events)
 	}
 	started := sender.firstData("sub_agent_started")
-	if !strings.Contains(started["prompt"], `Immediately call write_report`) || strings.Contains(started["prompt"], "max_steps") {
+	if !strings.Contains(started["prompt"], `Immediately call publish_report`) || strings.Contains(started["prompt"], "max_steps") {
 		t.Fatalf("sub-agent assignment event = %#v", started)
-	}
-	select {
-	case wake := <-s.wakeCh:
-		wakeResult, ok := wake.Data.(agent.SubAgentResult)
-		if !ok || wakeResult.Status != agent.SubAgentCompleted {
-			t.Fatalf("completion wake = %#v", wake)
-		}
-	default:
-		t.Fatal("wait=true completion wake was not delivered")
 	}
 }
 
 func TestLiveOllamaAsyncSubAgentSurvivesParentContextEnd(t *testing.T) {
 	_, runner, _ := newLiveOllamaSubAgentRunner(t)
 	parentCtx, cancelParent := context.WithCancel(t.Context())
-	result, err := runner.RunSubAgent(parentCtx, map[string]any{
+	result, err := runner.StartAgent(parentCtx, map[string]any{
 		"name":          "live-async",
 		"category":      agent.CatResearcher,
 		"description":   "Verify the asynchronous child lifecycle without reading or changing files.",
-		"instructions":  `Immediately call write_report with the exact report text "live async lifecycle ok". Do not call any other tool.`,
-		"allowed_tools": []string{"write_report"},
-		"wait":          false,
+		"instructions":  `Immediately call publish_report with kind "final", summary "live async lifecycle ok", body "live async lifecycle ok", and recipient_ids containing the exact parent_id from your assignment. Do not call any other tool.`,
+		"allowed_tools": []string{"publish_report"},
 	})
 	if err != nil {
-		t.Fatalf("RunSubAgent(wait=false): %v", err)
+		t.Fatalf("StartAgent: %v", err)
 	}
 	if !strings.Contains(result.Content, `"status":"running"`) {
 		t.Fatalf("async launch result = %s", result.Content)

@@ -24,13 +24,8 @@ func withDelegationOwner(ctx context.Context, id string, generation uint64) cont
 }
 
 func orchestratorTools(enabled bool) []tools.ToolDef {
-	denied := []string{"write_report"}
-	if !enabled {
-		denied = append(denied, "run_sub_agent")
-	}
-	// Management stays available while disabled: existing children still need
-	// cancellation/review and must not become inaccessible when a switch flips.
-	return agent.ApplyOrchestratorOverrides(agent.FilterTools(tools.AgentTools, nil, denied, "", false))
+	_ = enabled
+	return agent.ApplyOrchestratorOverrides(agent.FilterTools(tools.AgentTools, nil, nil, "", false))
 }
 
 func configuredOrchestratorTools(cfg *Config, enabled bool, model string) []tools.ToolDef {
@@ -41,7 +36,8 @@ func configuredOrchestratorTools(cfg *Config, enabled bool, model string) []tool
 func constrainConfiguredTools(spec *agent.SubAgentSpec, allowed, denied []string) {
 	spec.DeniedTools = append(spec.DeniedTools, denied...)
 	if len(allowed) > 0 {
-		for _, tool := range tools.AgentTools {
+		definitions := append(append([]tools.ToolDef(nil), tools.AgentTools...), tools.CollaborationTools...)
+		for _, tool := range definitions {
 			if !slices.Contains(allowed, tool.Function.Name) {
 				spec.DeniedTools = append(spec.DeniedTools, tool.Function.Name)
 			}

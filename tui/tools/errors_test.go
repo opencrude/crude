@@ -144,13 +144,13 @@ func TestToolTitleDoesNotInferRolesOrFailureFromOperandText(t *testing.T) {
 	}
 }
 
-func TestSubAgentLaunchFailureKeepsItsDiagnostic(t *testing.T) {
+func TestAgentStartFailureKeepsItsDiagnostic(t *testing.T) {
 	msg := types.ChatMessage{
-		ToolName: "run_sub_agent", ToolArgs: "Inspect renderer", ToolStatus: types.ToolStatusError,
-		Content: "Error launching sub-agent: account unavailable",
+		ToolName: "agent_start", ToolArgs: "Inspect renderer", ToolStatus: types.ToolStatusError,
+		Content: "Error starting agent: account unavailable",
 	}
 	title := BuildToolTitle(msg, types.ToolPreviewError)
-	if !title.Failed || title.Action != "Failed to spawn sub-agent" || title.Operand != "Inspect renderer" {
+	if !title.Failed || title.Action != "Agent start failed" || title.Operand != "Inspect renderer" {
 		t.Fatalf("launch failure title = %+v", title)
 	}
 }
@@ -159,9 +159,9 @@ func TestToolTitlesNeverPrintRawArgumentEnvelopes(t *testing.T) {
 	for _, tc := range []struct {
 		name, tool, args, progress, want string
 	}{
-		{"poll raw args", "poll_sub_agent", `{"handle_id":"agent-8f21"}`, "", "agent-8f21"},
-		{"cancel raw args", "cancel_sub_agent", `{"handle_id":"agent-8f21"}`, "", "agent-8f21"},
-		{"raw progress over good args", "poll_sub_agent", `handle_id: agent-8f21`, `{"handle_id":"agent-8f21"}`, "agent-8f21"},
+		{"wait raw args", "agent_wait", `{"run_id":"run-8f21"}`, "", "run-8f21"},
+		{"control raw args", "agent_control", `{"operation":"cancel","agent_id":"agent-8f21"}`, "", "cancel · agent-8f21"},
+		{"raw progress over good args", "agent_wait", `{"run_id":"run-8f21"}`, `{"run_id":"run-8f21"}`, "run-8f21"},
 		{"raw progress without args", "plugin_tool", "", `{"unknown":{"secret":1}}`, ""},
 		{"unknown raw args", "plugin_tool", `{"unknown":{"secret":1}}`, "", ""},
 	} {
@@ -169,7 +169,7 @@ func TestToolTitlesNeverPrintRawArgumentEnvelopes(t *testing.T) {
 			for _, status := range []string{types.ToolStatusStreaming, types.ToolStatusSuccess, types.ToolStatusError, types.ToolStatusCancelled} {
 				msg := types.ChatMessage{ToolName: tc.tool, ToolArgs: tc.args, ToolProgressLabel: tc.progress, ToolStatus: status}
 				title := BuildToolTitle(msg, types.ToolPreviewPreparing)
-				if title.Operand != tc.want || strings.Contains(title.Text(), `"handle_id"`) || strings.Contains(title.Text(), `"secret"`) {
+				if title.Operand != tc.want || strings.Contains(title.Text(), `"agent_id"`) || strings.Contains(title.Text(), `"secret"`) {
 					t.Fatalf("status=%s title=%+v, want operand %q", status, title, tc.want)
 				}
 			}
@@ -177,20 +177,13 @@ func TestToolTitlesNeverPrintRawArgumentEnvelopes(t *testing.T) {
 	}
 }
 
-func TestSubAgentToolTitlesKeepNicknameBesideHandle(t *testing.T) {
+func TestCollaborationToolTitlesKeepExactAgentAndReportIdentity(t *testing.T) {
 	for _, tc := range []struct {
 		name, tool, args, content, status, action, want string
 	}{
-		{"async spawn", "run_sub_agent", `{"description":"Inspect renderer"}`, `{"name":"Lily sub Dawn","handle_id":"agent-8f21","status":"running"}`, types.ToolStatusSuccess, "Started sub-agent", "Lily sub Dawn (agent-8f21)"},
-		{"completed spawn", "run_sub_agent", `{"description":"Inspect renderer"}`, "## Sub-Agent Result: Lily sub Dawn [researcher]\n**Agent:** agent-8f21\n**Status:** OK\n**Report:** report.md", types.ToolStatusSuccess, "Sub-agent completed", "Lily sub Dawn · Researcher (agent-8f21)"},
-		{"failed child", "run_sub_agent", `{"description":"Inspect renderer"}`, "## Sub-Agent Result: Lily sub Dawn [researcher]\n**Agent:** agent-8f21\n**Status:** ERROR — provider failed", types.ToolStatusError, "Sub-agent failed", "Lily sub Dawn · Researcher (agent-8f21)"},
-		{"poll still running", "poll_sub_agent", `{"handle_id":"agent-8f21"}`, "Sub-agent \"Lily sub Dawn\" [researcher] is still running.\nElapsed: 2s | Steps: 4", types.ToolStatusSuccess, "Polled", "Lily sub Dawn (agent-8f21)"},
-		{"poll completed", "poll_sub_agent", `{"handle_id":"agent-8f21"}`, "## Sub-Agent Result: Lily sub Dawn [researcher]\n**Agent:** agent-8f21\n**Status:** OK", types.ToolStatusSuccess, "Polled", "Lily sub Dawn · Researcher (agent-8f21)"},
-		{"cancelled child", "cancel_sub_agent", `{"handle_id":"agent-8f21"}`, "## Sub-Agent Result: Lily sub Dawn [researcher]\n**Agent:** agent-8f21\n**Status:** CANCELLED", types.ToolStatusSuccess, "Stopped sub-agent", "Lily sub Dawn · Researcher (agent-8f21)"},
-		{"unknown handle", "cancel_sub_agent", `{"handle_id":"agent-8f21"}`, `{"status":"not_found"}`, types.ToolStatusSuccess, "Stopped sub-agent", "agent-8f21"},
-		{"mismatched result", "poll_sub_agent", `{"handle_id":"agent-8f21"}`, "## Sub-Agent Result: Rose sub Dawn [researcher]\n**Agent:** agent-39bf\n**Status:** OK", types.ToolStatusSuccess, "Polled", "agent-8f21"},
-		{"structured result name", "run_sub_agent", `{"description":"Inspect renderer"}`, `{"name":"{\"private\":\"nested\"}","handle_id":"agent-8f21","status":"running"}`, types.ToolStatusSuccess, "Started sub-agent", "agent-8f21"},
-		{"authored report", "write_report", `{"report":"Outcome"}`, `{"status":"report_written","report_path":"/tmp/agent-8f21-report.md","handle_id":"agent-8f21","name":"Lily sub Dawn"}`, types.ToolStatusSuccess, "Wrote report", "Lily sub Dawn (agent-8f21)"},
+		{"start", "agent_start", `{"description":"Inspect renderer"}`, `{"name":"Lily sub Dawn","agent_id":"agent-8f21","category":"researcher","status":"running","run_id":"run-1","run_version":1}`, types.ToolStatusSuccess, "Started agent", "Lily sub Dawn · Researcher (agent-8f21)"},
+		{"wait completed", "agent_wait", `{"run_id":"run-1"}`, `{"id":"run-1","agent_id":"agent-8f21","runtime_epoch":1,"origin":"peer","state":"succeeded","version":2,"outcome":"completed","started_at":"0001-01-01T00:00:00Z","updated_at":"0001-01-01T00:00:00Z"}`, types.ToolStatusSuccess, "Observed agent event", "run-1"},
+		{"published report", "publish_report", `{"summary":"Renderer review","body":"Outcome"}`, `{"artifact":{"id":"report-1","revision":2,"workspace_id":"/project","author_id":"agent-8f21","kind":"final","summary":"Renderer review","body":"Outcome","digest":"digest","created_at":"0001-01-01T00:00:00Z"},"publish":{"event":{"id":"event-1","kind":"report_published"},"deliveries":[]}}`, types.ToolStatusSuccess, "Published report", "Renderer review · revision 2"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			msg := types.ChatMessage{ToolName: tc.tool, ToolArgs: SummarizeToolArgs(tc.tool, tc.args), ToolStatus: tc.status, Content: tc.content}
@@ -214,9 +207,9 @@ func TestToolFailureReasonDoesNotAppendNestedJSONPayload(t *testing.T) {
 }
 
 func TestToolTitleDoesNotPrintStructuredToolName(t *testing.T) {
-	msg := types.ChatMessage{ToolName: `{"name":"poll_sub_agent","handle_id":"agent-8f21"}`, ToolStatus: types.ToolStatusError}
+	msg := types.ChatMessage{ToolName: `{"name":"agent_wait","run_id":"run-8f21"}`, ToolStatus: types.ToolStatusError}
 	title := BuildToolTitle(msg, types.ToolPreviewError)
-	if strings.Contains(title.Text(), `"handle_id"`) || !title.Failed || title.Action != "Tool failed" {
+	if strings.Contains(title.Text(), `"run_id"`) || !title.Failed || title.Action != "Tool failed" {
 		t.Fatalf("tool name became structured title text: %+v", title)
 	}
 }

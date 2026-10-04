@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"crude/provider"
 	ttypes "crude/tui/types"
 	"crude/workspace"
 )
@@ -19,7 +20,9 @@ func chatMessageFromCanonical(view workspace.ChatMessageView) ttypes.ChatMessage
 	return ttypes.ChatMessage{
 		InternalID:             view.InternalID,
 		Role:                   view.Role,
+		Origin:                 view.Origin,
 		Content:                view.Content,
+		Collaboration:          cloneCollaboration(view.Collaboration),
 		ReferenceLabels:        append([]string(nil), view.ReferenceLabels...),
 		Time:                   view.Time,
 		TurnGeneration:         view.TurnGeneration,
@@ -72,7 +75,7 @@ func chatMessageFromCanonical(view workspace.ChatMessageView) ttypes.ChatMessage
 		IncompleteReason:       view.IncompleteReason,
 		SubPaneID:              view.SubPaneID,
 		PermTag:                view.PermTag,
-		PendingBtw:             view.PendingBtw,
+		PendingSteering:        view.PendingSteering,
 	}
 }
 
@@ -92,7 +95,9 @@ func workspaceMessageFromChat(message ttypes.ChatMessage) workspace.Message {
 	return workspace.Message{
 		InternalID:             message.InternalID,
 		Role:                   message.Role,
+		Origin:                 message.Origin,
 		Content:                message.Content,
+		Collaboration:          cloneCollaboration(message.Collaboration),
 		ReferenceLabels:        append([]string(nil), message.ReferenceLabels...),
 		Time:                   message.Time,
 		TurnGeneration:         message.TurnGeneration,
@@ -145,8 +150,18 @@ func workspaceMessageFromChat(message ttypes.ChatMessage) workspace.Message {
 		IncompleteReason:       message.IncompleteReason,
 		SubPaneID:              message.SubPaneID,
 		PermTag:                message.PermTag,
-		PendingBtw:             message.PendingBtw,
+		PendingSteering:        message.PendingSteering,
 	}
+}
+
+func cloneCollaboration(input *provider.CollaborationAttribution) *provider.CollaborationAttribution {
+	if input == nil {
+		return nil
+	}
+	result := *input
+	result.RecipientIDs = append([]string(nil), input.RecipientIDs...)
+	result.RecipientNames = append([]string(nil), input.RecipientNames...)
+	return &result
 }
 
 func (m *App) syncAgentMessages(agentID string, scroll bool) {

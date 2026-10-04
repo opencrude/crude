@@ -20,7 +20,13 @@ import (
 
 func TestRelatedToolFamilySnapshotsKeepExactAuthoredInput(t *testing.T) {
 	input := `{"content":"Full authored body with escaped \"quotes\" and a retained ending","references":[{"kind":"file","id":"report.md"}]}`
-	for _, name := range []string{"board_post", "board_read", "remember", "update_memory", "forget_memory", "recall_memory", "memory_feedback", "search_history", "capability_search", "capability_activate", "mcp_read_resource", "mcp_get_prompt", "mcp__docs__lookup"} {
+	for _, name := range []string{
+		"agent_list", "agent_inspect", "agent_start", "agent_send", "agent_respond",
+		"agent_control", "publish_report", "artifact_read", "agent_wait", "board_read",
+		"remember", "update_memory", "forget_memory", "recall_memory", "memory_feedback",
+		"search_history", "capability_search", "capability_activate", "mcp_read_resource",
+		"mcp_get_prompt", "mcp__docs__lookup",
+	} {
 		result := provider.NewTextMessage("tool", "result")
 		result.ToolCallID = "call"
 		meta := canonicalizeDisplayMeta(result, sessiondb.DisplayMeta{ToolName: name, ToolArgs: "abbreviated"}, input, 0, time.Unix(100, 0))
@@ -50,7 +56,7 @@ func TestMCPBinaryAndUnknownEvidenceReachToolResults(t *testing.T) {
 	owner.SetCapabilities(structuredResultRuntime{result: captypes.Result{
 		Content:    []captypes.Content{{Type: "resource", MIMEType: "application/pdf", URI: "docs://document", Data: base64.StdEncoding.EncodeToString([]byte("bytes"))}},
 		Structured: json.RawMessage(`{"status":"pending"}`), Unknown: true,
-	}}, agent.NewFileOwnership(), nil, "", "project")
+	}}, agent.NewFileOwnership())
 	live := &agent.Agent{AgentID: "owner", Policy: safety.ReadOnlyPolicy(), ToolFn: func(context.Context, string, map[string]any) (tools.ToolResult, error) {
 		return tools.ToolResult{}, errors.New("unexpected native tool")
 	}}

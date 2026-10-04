@@ -68,7 +68,7 @@ func TestRenderDeclaredFrameDependenciesAnimateWithoutStaticInvalidation(t *test
 	r := NewRenderer(theme.DefaultDark())
 	r.SetChatAreaBounds(0, 30)
 	r.SetSize(80, 30)
-	messages := []types.ChatMessage{{InternalID: "static", Role: types.RoleAssistant, Content: "static"}, {InternalID: "status", Role: types.RoleStatus, LifecyclePhase: "preparing"}, {InternalID: "thinking", Role: types.RoleThinking, Content: "thinking", ThinkingActive: true}, {InternalID: "tool", Role: types.RoleTool, ToolName: "read_file", ToolStatus: "streaming", ToolPreviewPhase: types.ToolPreviewStreaming}, {InternalID: "btw", Role: types.RoleUser, Content: "later", PendingBtw: true}}
+	messages := []types.ChatMessage{{InternalID: "static", Role: types.RoleAssistant, Content: "static"}, {InternalID: "status", Role: types.RoleStatus, LifecyclePhase: "preparing"}, {InternalID: "thinking", Role: types.RoleThinking, Content: "thinking", ThinkingActive: true}, {InternalID: "tool", Role: types.RoleTool, ToolName: "read_file", ToolStatus: "streaming", ToolPreviewPhase: types.ToolPreviewStreaming}, {InternalID: "btw", Role: types.RoleUser, Content: "later", PendingSteering: true}}
 	r.SetSpinFrame(0)
 	r.SyncMessages(messages, 1)
 	first := r.ExportMessageRowsSnapshot(76)

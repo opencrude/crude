@@ -216,7 +216,7 @@ func TestInvalidateWidthProfileDropsCompletedMessageCache(t *testing.T) {
 func TestLongToolTitleWrapsWithoutLosingOperand(t *testing.T) {
 	path := "/home/lenovo/.crude/workspaces/hash/sessions/id/reports/smoke-blocking-aeron-report.md"
 	lines := buildToolTitleLines(types.ChatMessage{
-		ToolName: "write_report", ToolStatus: types.ToolStatusSuccess,
+		ToolName: "publish_report", ToolStatus: types.ToolStatusSuccess,
 		ToolPreviewPhase: types.ToolPreviewDone,
 		ToolArgs:         path,
 		ToolLivedAdded:   21, ToolDuration: 50 * time.Millisecond,
@@ -240,30 +240,32 @@ func TestLongToolTitleWrapsWithoutLosingOperand(t *testing.T) {
 
 func TestSubAgentToolLabelsDistinguishRunningAndFailure(t *testing.T) {
 	waiting := buildToolTitleLine(types.ChatMessage{
-		ToolName: "run_sub_agent", ToolStatus: types.ToolStatusStreaming,
+		ToolName: "agent_start", ToolStatus: types.ToolStatusStreaming,
 		ToolPreviewPhase: types.ToolPreviewStreaming, ToolProgressLabel: "Lily · Researcher — survey",
 	}, types.ToolPreviewStreaming, 0).PlainText()
-	if !strings.Contains(waiting, "Running sub-agent Lily · Researcher — survey") || strings.Contains(waiting, "Spawning") {
+	if !strings.Contains(waiting, "Starting agent Lily · Researcher — survey") {
 		t.Fatalf("running label = %q", waiting)
 	}
 	failed := buildToolTitleLine(types.ChatMessage{
-		ToolName: "run_sub_agent", ToolStatus: types.ToolStatusError,
+		ToolName: "agent_start", ToolStatus: types.ToolStatusError,
 		ToolPreviewPhase: types.ToolPreviewError,
 	}, types.ToolPreviewError, 0).PlainText()
-	if !strings.Contains(failed, "Failed to spawn sub-agent") || strings.Contains(failed, "Spawned") {
+	if !strings.Contains(failed, "Agent start failed") {
 		t.Fatalf("failed label = %q", failed)
 	}
 }
 
-func TestCompactSubAgentToolKeepsNameAndHandleWithoutJSON(t *testing.T) {
-	msg := &types.ChatMessage{Role: types.RoleTool, ToolName: "poll_sub_agent", ToolArgs: `{"handle_id":"agent-8f21"}`,
-		Content: "## Sub-Agent Result: Lily sub Dawn [researcher]\n**Agent:** agent-8f21\n**Status:** OK", ToolStatus: types.ToolStatusSuccess, ToolPreviewPhase: types.ToolPreviewDone}
+func TestCompactAgentWaitKeepsNameAndIdentityWithoutJSON(t *testing.T) {
+	msg := &types.ChatMessage{Role: types.RoleTool, ToolName: "agent_wait", ToolArgs: "agent-8f21",
+		ToolInput:  `{"agent_id":"agent-8f21"}`,
+		Content:    `{"id":"agent-8f21","name":"Lily sub Dawn","category":"researcher","state":"available","presence":"attached","runtime_epoch":1}`,
+		ToolStatus: types.ToolStatusSuccess, ToolPreviewPhase: types.ToolPreviewDone}
 	lines, _ := BuildSubPaneToolLines([]*types.ChatMessage{msg}, 42, 0)
 	var text strings.Builder
 	for _, line := range lines {
 		text.WriteString(line.PlainText())
 	}
-	if !strings.Contains(text.String(), "Lily sub Dawn") || !strings.Contains(text.String(), "Researcher") || !strings.Contains(text.String(), "agent-8f21") || strings.Contains(text.String(), `"handle_id"`) {
-		t.Fatalf("compact child tool label: %q", text.String())
+	if !strings.Contains(text.String(), "Lily sub Dawn") || !strings.Contains(text.String(), "Researcher") || !strings.Contains(text.String(), "agent-8f21") || strings.Contains(text.String(), `"agent_id"`) {
+		t.Fatalf("compact agent wait label: %q", text.String())
 	}
 }

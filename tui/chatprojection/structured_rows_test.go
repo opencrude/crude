@@ -34,7 +34,7 @@ func TestStructuredPreviewIsUsefulAndFullDisclosureRetainsLongUnicodeText(t *tes
 }
 
 func TestStructuredCancelledAndMalformedEvidenceIsReadableWithoutSuccess(t *testing.T) {
-	for _, name := range []string{"board_post", "board_read", "remember", "capability_search", "mcp__docs__write"} {
+	for _, name := range []string{"agent_send", "board_read", "remember", "capability_search", "mcp__docs__write"} {
 		msg := types.ChatMessage{Role: types.RoleTool, ToolName: name, ToolStatus: types.ToolStatusCancelled, Content: `{"message":"Interrupted before receiving exact result"}`}
 		full := renderToolMessageLines(msg, theme.DefaultDark(), 80, 80, 80, 0, 20, "done", DisclosureExpanded)
 		text := strings.Join(full.lines, "\n")

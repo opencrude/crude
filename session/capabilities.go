@@ -2,9 +2,7 @@ package session
 
 import (
 	"context"
-	"database/sql"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"slices"
@@ -12,26 +10,17 @@ import (
 	"sync"
 
 	"crude/agent"
-	"crude/board"
+	"crude/collaboration"
 	"crude/provider"
 	"crude/safety"
-	"crude/sessiondb"
 	"crude/tools"
 	captypes "crude/types/capability"
 )
 
-type boardAcceptance struct {
-	Actor   string
-	Through int64
-	BoardID string
-	Store   *board.Store
-}
-
-func (session *Session) SetCapabilities(runtime captypes.Runtime, ownership *agent.FileOwnership, store *board.Store, boardID, projectID string) {
+func (session *Session) SetCapabilities(runtime captypes.Runtime, ownership *agent.FileOwnership) {
 	session.mu.Lock()
 	defer session.mu.Unlock()
-	session.capabilities, session.boardStore = runtime, store
-	session.boardID, session.boardProject = boardID, projectID
+	session.capabilities = runtime
 	if ownership != nil {
 		session.fileOwnership = ownership
 	}
@@ -65,15 +54,9 @@ func effectsForPolicy(policy safety.Policy) []captypes.Effect {
 
 func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent, actor captypes.RuntimeActor, name string) {
 	session.mu.Lock()
-	runtime, store, boardID, projectID := session.capabilities, session.boardStore, session.boardID, session.boardProject
+	runtime := session.capabilities
 	session.mu.Unlock()
 	actor.Effects = effectsForPolicy(live.Policy)
-	if store != nil {
-		if err := store.Join(ctx, boardID, board.Member{ID: actor.ID, Name: name, ParentID: actor.ParentID, Availability: board.AvailabilityActive}); err != nil {
-			session.logger.Warn("BOARD", "join_failed", "error", err.Error())
-			store = nil
-		}
-	}
 	previousPrepare := live.PrepareStep
 	previousFn := live.ToolFn
 	var mu sync.RWMutex
@@ -110,14 +93,11 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 				}
 			}
 		}
-		if store != nil {
-			for _, definition := range tools.BoardTools {
-				if runtimeToolSelected(actor, definition.Function.Name) {
-					definitions = appendUniqueDefinition(definitions, definition)
-				}
-			}
-			if notice, err := store.PendingNotice(ctx, boardID, actor.ID); err == nil && notice != "" {
-				notices = append(notices, runtimeMessage(notice))
+		for _, definition := range session.collaborationDefinitions(actor.ID) {
+			effect := collaborationEffect(definition.Function.Name)
+			selected := actorToolSelected(actor, definition.Function.Name) || definition.Function.Name == "publish_report" && actor.ParentID != ""
+			if selected && slices.Contains(actor.Effects, effect) {
+				definitions = appendUniqueDefinition(definitions, definition)
 			}
 		}
 		return definitions, notices
@@ -125,6 +105,11 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 	live.ToolMetadata = func(name string) (tools.ToolMetadata, bool) {
 		if metadata, native := tools.NativeMetadata(name); native {
 			return metadata, true
+		}
+		for _, definition := range tools.CollaborationTools {
+			if definition.Function.Name == name {
+				return tools.ToolMetadata{Name: name, Effect: collaborationEffect(name), Scope: "workspace"}, true
+			}
 		}
 		mu.RLock()
 		defer mu.RUnlock()
@@ -136,44 +121,11 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 		return tools.ToolMetadata{}, false
 	}
 	live.ToolFn = func(callCtx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
-		if slices.Contains(actor.DeniedTools, tool) || len(actor.AllowedTools) > 0 && !slices.Contains(actor.AllowedTools, tool) && tool != "write_report" {
+		if slices.Contains(actor.DeniedTools, tool) || len(actor.AllowedTools) > 0 && !slices.Contains(actor.AllowedTools, tool) && !(tool == "publish_report" && actor.ParentID != "") {
 			return tools.ToolResult{}, fmt.Errorf("tool %q is excluded by the effective agent selection", tool)
 		}
-		if tool == "board_read" || tool == "board_post" {
-			if store == nil || !runtimeToolSelected(actor, tool) {
-				return tools.ToolResult{}, errors.New("this agent has no collaboration-board grant")
-			}
-			identity, _ := callCtx.Value(tools.ExecutionIdentityKey{}).(tools.ExecutionIdentity)
-			if identity.ToolCallID == "" {
-				return tools.ToolResult{}, errors.New("board operation needs an originating tool-call identity")
-			}
-			if tool == "board_post" {
-				var references []board.Reference
-				if raw, err := json.Marshal(params["references"]); err == nil {
-					_ = json.Unmarshal(raw, &references)
-				}
-				result, err := store.Post(callCtx, board.PostRequest{BoardID: boardID, ProjectID: projectID, SenderID: actor.ID, ProviderMessageID: firstString(identity.MessageID, identity.ToolCallID), ToolCallID: identity.ToolCallID, To: getStrParam(params, "to"), Type: getStrParam(params, "type"), Body: getStrParam(params, "body"), ReplyTo: getStrParam(params, "reply_to"), References: references})
-				if err != nil {
-					return tools.ToolResult{}, err
-				}
-				encoded, _ := json.Marshal(result)
-				return tools.ToolResult{Content: string(encoded)}, err
-			}
-			page, err := store.Read(callCtx, board.ReadRequest{BoardID: boardID, ProjectID: projectID, AgentID: actor.ID, Since: int64(getIntParam(params, "since")), Thread: getStrParam(params, "thread"), Limit: getIntParam(params, "limit")})
-			if err != nil {
-				return tools.ToolResult{}, err
-			}
-			encoded, err := json.Marshal(page)
-			if err != nil {
-				return tools.ToolResult{}, err
-			}
-			session.mu.Lock()
-			if session.boardPending == nil {
-				session.boardPending = make(map[string]boardAcceptance)
-			}
-			session.boardPending[identity.ToolCallID] = boardAcceptance{Actor: actor.ID, Through: page.AcceptThrough, BoardID: boardID, Store: store}
-			session.mu.Unlock()
-			return tools.ToolResult{Content: string(encoded)}, nil
+		if result, handled, err := session.executeCollaborationTool(callCtx, actor.ID, tool, params); handled {
+			return result, err
 		}
 		if runtime != nil && (strings.HasPrefix(tool, "mcp__") || strings.HasPrefix(tool, "capability_") || tool == "mcp_read_resource" || tool == "mcp_get_prompt") {
 			if !strings.HasPrefix(tool, "mcp__") && !runtimeToolSelected(actor, tool) {
@@ -217,43 +169,34 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 			return tools.ToolResult{}, fmt.Errorf("tool %q is denied by the agent policy", tool)
 		}
 		session.resolveRelativeParams(tool, params)
-		if actor.ParentID == "" {
-			ownership := session.FileOwnership()
-			if tool == "read_file" {
-				ownership.RecordRead(agent.AgentID(actor.ID), getStrParam(params, "path"))
+		ownership := session.FileOwnership()
+		if tool == "read_file" {
+			ownership.RecordRead(agent.AgentID(actor.ID), getStrParam(params, "path"))
+		}
+		if isWriteTool(tool) {
+			store := session.CollaborationStore()
+			if store == nil {
+				return tools.ToolResult{}, errors.New("workspace collaboration runtime is unavailable")
 			}
-			if isWriteTool(tool) {
-				for _, target := range writeToolTargets(tool, params) {
-					if err := ownership.CheckOrClaim(agent.AgentID(actor.ID), name, target, true); err != nil {
-						return tools.ToolResult{}, err
-					}
-				}
+			participant, err := store.Agent(callCtx, actor.ID)
+			if err != nil {
+				return tools.ToolResult{}, err
+			}
+			if participant.CurrentRunID == "" {
+				return tools.ToolResult{}, collaboration.ErrUnavailable
+			}
+			identity, _ := callCtx.Value(tools.ExecutionIdentityKey{}).(tools.ExecutionIdentity)
+			if identity.ToolCallID == "" {
+				return tools.ToolResult{}, errors.New("filesystem mutation requires an originating tool-call identity")
+			}
+			if _, err := store.AcquireClaims(callCtx, collaboration.AcquireClaimsRequest{
+				AgentID: actor.ID, RunID: participant.CurrentRunID,
+				RequestID: identity.ToolCallID, Paths: writeToolTargets(tool, params),
+			}); err != nil {
+				return tools.ToolResult{}, err
 			}
 		}
 		return previousFn(callCtx, tool, params)
-	}
-}
-
-func (session *Session) bindBoardAdmission(live *agent.Agent, db *sql.DB, sessionID, contextID string, generation func() uint64) {
-	live.ToolResultAccepted = func(name, id string, messages []provider.ChatMessage) {
-		if name != "board_read" || db == nil {
-			return
-		}
-		session.mu.Lock()
-		pending, exists := session.boardPending[id]
-		session.mu.Unlock()
-		if !exists || pending.Through == 0 {
-			return
-		}
-		if err := sessiondb.SaveContextState(db, sessionID, contextID, sessiondb.ContextState{AgentID: contextID, Generation: generation(), Reason: "tool_admission", Messages: messages}); err != nil {
-			session.logger.Warn("BOARD", "context_admission_failed", "error", err.Error())
-			return
-		}
-		if err := pending.Store.AcceptRead(context.Background(), pending.BoardID, pending.Actor, pending.Through); err == nil {
-			session.mu.Lock()
-			delete(session.boardPending, id)
-			session.mu.Unlock()
-		}
 	}
 }
 
@@ -280,50 +223,4 @@ func runtimeMessage(text string) provider.ChatMessage {
 	message.Visibility = provider.VisibilityContextOnly
 	message.InternalID = newMessageID()
 	return message
-}
-
-func firstString(primary, fallback string) string {
-	if primary != "" {
-		return primary
-	}
-	return fallback
-}
-
-func (session *Session) acceptBoardResults(ctx context.Context, db *sql.DB, agentID string, messages []provider.ChatMessage) {
-	if db == nil {
-		return
-	}
-	for _, message := range messages {
-		if message.Role != "tool" || message.ToolError {
-			continue
-		}
-		session.mu.Lock()
-		pending, exists := session.boardPending[message.ToolCallID]
-		session.mu.Unlock()
-		if !exists || agentID != "" && pending.Actor != agentID || pending.Through == 0 {
-			continue
-		}
-		var saved int
-		if db.QueryRowContext(ctx, `SELECT count(*) FROM messages WHERE tool_call_id = ? AND tool_error = 0`, message.ToolCallID).Scan(&saved) != nil || saved == 0 {
-			continue
-		}
-		if pending.Store == nil {
-			continue
-		}
-		if err := pending.Store.AcceptRead(ctx, pending.BoardID, pending.Actor, pending.Through); err == nil {
-			session.mu.Lock()
-			delete(session.boardPending, message.ToolCallID)
-			session.mu.Unlock()
-		}
-	}
-}
-
-func (session *Session) finishedBoardAgent(ctx context.Context, id, name, parent string) {
-	session.mu.Lock()
-	store, boardID := session.boardStore, session.boardID
-	session.mu.Unlock()
-	if store != nil {
-		_ = store.Join(ctx, boardID, board.Member{ID: id, Name: name, ParentID: parent, Availability: board.AvailabilityFinished})
-	}
-	session.FileOwnership().Release(agent.AgentID(id))
 }

@@ -13,15 +13,17 @@ import (
 // a lifecycle field here automatically includes it in JSON persistence; TUI
 // rendering caches and selection state deliberately live elsewhere.
 type ConversationMessage struct {
-	InternalID      string    `json:"internal_id,omitempty"`
-	Role            string    `json:"role"`
-	Content         string    `json:"content,omitempty"`
-	ReferenceLabels []string  `json:"reference_labels,omitempty"`
-	Time            time.Time `json:"time,omitempty"`
-	TurnGeneration  uint64    `json:"turn_generation,omitempty"`
-	ProviderID      string    `json:"provider_id,omitempty"`
-	AccountID       string    `json:"account_id,omitempty"`
-	ModelID         string    `json:"model_id,omitempty"`
+	InternalID      string                             `json:"internal_id,omitempty"`
+	Role            string                             `json:"role"`
+	Origin          provider.MessageOrigin             `json:"origin,omitempty"`
+	Content         string                             `json:"content,omitempty"`
+	ReferenceLabels []string                           `json:"reference_labels,omitempty"`
+	Time            time.Time                          `json:"time,omitempty"`
+	TurnGeneration  uint64                             `json:"turn_generation,omitempty"`
+	ProviderID      string                             `json:"provider_id,omitempty"`
+	AccountID       string                             `json:"account_id,omitempty"`
+	ModelID         string                             `json:"model_id,omitempty"`
+	Collaboration   *provider.CollaborationAttribution `json:"collaboration,omitempty"`
 
 	ToolName            string        `json:"tool_name,omitempty"`
 	ToolArgs            string        `json:"tool_args,omitempty"`
@@ -70,7 +72,7 @@ type ConversationMessage struct {
 	IncompleteReason       string            `json:"incomplete_reason,omitempty"`
 	SubPaneID              string            `json:"sub_pane_id,omitempty"`
 	PermTag                string            `json:"perm_tag,omitempty"`
-	PendingBtw             bool              `json:"-"`
+	PendingSteering        bool              `json:"-"`
 }
 
 // TurnIdentity is the immutable backend identity resolved when one turn
@@ -220,7 +222,7 @@ func DefaultAgentRoleCategories() map[string]CategorySettings {
 		"default": {},
 		"researcher": {
 			Policy: "read-only", Description: "Gatherer - explores codebase, searches web, runs experiments",
-			AllowedTools: []string{"read_file", "glob_files", "grep_files", "list_directory", "web_search", "web_fetch", "arxiv_search", "write_report", "question"},
+			AllowedTools: []string{"read_file", "glob_files", "grep_files", "list_directory", "web_search", "web_fetch", "arxiv_search", "publish_report", "question"},
 			DeniedTools:  []string{"write_file", "edit_file", "delete_file", "move_file", "copy_file", "execute_command", "async_execute_command"},
 		},
 		"crafter": {Policy: "no-delete", Description: "Implementer - writes code, edits files, runs tests", DeniedTools: []string{"delete_file"}},
@@ -793,7 +795,9 @@ type CompactResultMsg struct {
 type ChatMessage struct {
 	InternalID      string
 	Role            string
+	Origin          provider.MessageOrigin
 	Content         string
+	Collaboration   *provider.CollaborationAttribution
 	ReferenceLabels []string
 	Time            time.Time
 	TurnGeneration  uint64
@@ -851,8 +855,8 @@ type ChatMessage struct {
 
 	SubPaneID string
 
-	PermTag    string
-	PendingBtw bool
+	PermTag         string
+	PendingSteering bool
 
 	CachedLines          []string
 	CursorLine           int

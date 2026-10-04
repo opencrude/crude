@@ -33,9 +33,11 @@ CREATE TABLE IF NOT EXISTS sessions (
 
 CREATE TABLE IF NOT EXISTS messages (
       id                INTEGER PRIMARY KEY AUTOINCREMENT,
+      internal_id       TEXT,
       role              TEXT NOT NULL,
       origin            TEXT NOT NULL,
       visibility        TEXT NOT NULL,
+      collaboration_json TEXT,
       content           TEXT,
       content_type      TEXT NOT NULL DEFAULT 'text',
       reasoning_content TEXT,
@@ -102,7 +104,8 @@ CREATE TABLE IF NOT EXISTS sub_agent_results (
     agent_category    TEXT NOT NULL,
     status            TEXT NOT NULL,
     summary_gist      TEXT,
-    result_path       TEXT,
+    report_id         TEXT,
+    report_revision   INTEGER NOT NULL DEFAULT 0,
     session_log_path  TEXT,
     files_read        TEXT,
     files_written     TEXT,
@@ -192,6 +195,23 @@ CREATE TABLE IF NOT EXISTS agent_context_generations (
     PRIMARY KEY (session_id, agent_id, generation),
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
+
+CREATE TABLE IF NOT EXISTS collaboration_admissions (
+    delivery_id       TEXT PRIMARY KEY,
+    event_id          TEXT NOT NULL,
+    session_id        TEXT NOT NULL,
+    agent_id          TEXT NOT NULL,
+    runtime_epoch     INTEGER NOT NULL,
+    delivery_version  INTEGER NOT NULL,
+    context_commit_id TEXT NOT NULL,
+    run_id            TEXT NOT NULL DEFAULT '',
+    published_at      INTEGER NOT NULL DEFAULT 0,
+    admitted_at       INTEGER NOT NULL,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_collaboration_admissions_pending
+    ON collaboration_admissions(agent_id, published_at, admitted_at);
 
 CREATE TABLE IF NOT EXISTS context_compactions (
     operation_id     TEXT PRIMARY KEY,
@@ -309,6 +329,9 @@ func Migrate(db *sql.DB) error {
 	if _, err := db.Exec(`SELECT capability_selection FROM session_agent_settings LIMIT 0`); err != nil {
 		return fmt.Errorf("sessiondb: current capability schema required; align local data manually: %w", err)
 	}
+	if _, err := db.Exec(`SELECT internal_id,collaboration_json FROM messages LIMIT 0`); err != nil {
+		return fmt.Errorf("sessiondb: current message provenance schema required; align local data manually: %w", err)
+	}
 	migrations := []string{
 		"ALTER TABLE messages ADD COLUMN display_meta TEXT",
 		"ALTER TABLE messages ADD COLUMN content_type TEXT NOT NULL DEFAULT 'text'",
@@ -340,87 +363,10 @@ func Migrate(db *sql.DB) error {
 		ON usage_requests(session_id, agent_id, request_kind, updated_at DESC)`); err != nil {
 		return fmt.Errorf("sessiondb: context baseline index: %w", err)
 	}
-	return migrateSubAgentResultOwnership(db)
-}
-
-func migrateSubAgentResultOwnership(db *sql.DB) error {
-	var ddl string
-	if err := db.QueryRow(`SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sub_agent_results'`).Scan(&ddl); err != nil {
-		return err
+	if _, err := db.Exec(`SELECT report_id,report_revision FROM sub_agent_results LIMIT 0`); err != nil {
+		return fmt.Errorf("sessiondb: current sub-agent result schema required; align local data manually: %w", err)
 	}
-	if !strings.Contains(strings.ToLower(ddl), "foreign key (child_session_id)") {
-		return removeEmbeddedChildSessionRows(db)
-	}
-	if _, err := db.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
-		return err
-	}
-	defer func() { _, _ = db.Exec(`PRAGMA foreign_keys = ON`) }()
-	tx, err := db.Begin()
-	if err != nil {
-		return err
-	}
-	statements := []string{
-		`CREATE TABLE sub_agent_results_v2 (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			parent_session_id TEXT NOT NULL,
-			child_session_id TEXT NOT NULL,
-			agent_id TEXT NOT NULL,
-			agent_name TEXT NOT NULL,
-			agent_category TEXT NOT NULL,
-			status TEXT NOT NULL,
-			summary_gist TEXT,
-			result_path TEXT,
-			session_log_path TEXT,
-			files_read TEXT,
-			files_written TEXT,
-			errors TEXT,
-			prompt_tokens INTEGER DEFAULT 0,
-			completion_tokens INTEGER DEFAULT 0,
-			cost_usd REAL DEFAULT 0.0,
-			duration_ms INTEGER DEFAULT 0,
-			created_at INTEGER NOT NULL,
-			FOREIGN KEY (parent_session_id) REFERENCES sessions(id)
-		)`,
-		`INSERT INTO sub_agent_results_v2 (
-			id, parent_session_id, child_session_id, agent_id, agent_name,
-			agent_category, status, summary_gist, result_path, session_log_path,
-			files_read, files_written, errors, prompt_tokens, completion_tokens,
-			cost_usd, duration_ms, created_at
-		) SELECT
-			id, parent_session_id, child_session_id, agent_id, agent_name,
-			agent_category, status, summary_gist, result_path, session_log_path,
-			files_read, files_written, errors, prompt_tokens, completion_tokens,
-			cost_usd, duration_ms, created_at
-		  FROM sub_agent_results`,
-		`DROP TABLE sub_agent_results`,
-		`ALTER TABLE sub_agent_results_v2 RENAME TO sub_agent_results`,
-		`CREATE INDEX idx_sub_results_parent ON sub_agent_results(parent_session_id)`,
-		`CREATE INDEX idx_sub_results_child ON sub_agent_results(child_session_id)`,
-	}
-	for _, statement := range statements {
-		if _, err := tx.Exec(statement); err != nil {
-			_ = tx.Rollback()
-			return fmt.Errorf("sessiondb: migrate sub-agent ownership: %w", err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("sessiondb: commit sub-agent ownership migration: %w", err)
-	}
-	return removeEmbeddedChildSessionRows(db)
-}
-
-func removeEmbeddedChildSessionRows(db *sql.DB) error {
-	var roots int
-	if err := db.QueryRow(`SELECT COUNT(*) FROM sessions WHERE parent_session_id IS NULL OR parent_session_id = ''`).Scan(&roots); err != nil {
-		return err
-	}
-	if roots == 0 {
-		// This is a standalone child transcript DB; its sole child identity is
-		// canonical and must remain.
-		return nil
-	}
-	_, err := db.Exec(`DELETE FROM sessions WHERE parent_session_id IS NOT NULL AND parent_session_id != ''`)
-	return err
+	return nil
 }
 
 func OpenAndMigrate(dbPath string) (*sql.DB, error) {

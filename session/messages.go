@@ -3,7 +3,6 @@ package session
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"crude/provider"
@@ -23,22 +22,6 @@ func childAgentIDFromResult(text string) string {
 	if json.Unmarshal([]byte(text), &payload) == nil {
 		if value, _ := payload["agent_id"].(string); value != "" {
 			return value
-		}
-		if value, _ := payload["handle_id"].(string); value != "" {
-			return value
-		}
-	}
-	for _, line := range strings.Split(text, "\n") {
-		if strings.HasPrefix(line, "**Agent:** ") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "**Agent:** "))
-		}
-	}
-	// A synchronous wait can outlive its parent turn; the returned handle
-	// still identifies the child even when there is no terminal report yet.
-	if index := strings.Index(text, `handle_id="`); index >= 0 {
-		id := text[index+len(`handle_id="`):]
-		if end := strings.IndexByte(id, '"'); end >= 0 {
-			return id[:end]
 		}
 	}
 	return ""
@@ -104,7 +87,7 @@ func (t *displayMetaTracker) updateToolResult(toolID, name, result, status strin
 	snapshot.ToolEstTokens = estTokens
 	snapshot.ToolLinesAdded = linesAdded
 	snapshot.ToolLinesRemoved = linesRemoved
-	if snapshot.ToolName == "run_sub_agent" {
+	if snapshot.ToolName == "agent_start" {
 		snapshot.SubPaneID = childAgentIDFromResult(result)
 	}
 }
@@ -210,7 +193,7 @@ func canonicalizeDisplayMeta(message provider.ChatMessage, meta sessiondb.Displa
 			snapshot.ToolArgs = meta.ToolArgs
 		}
 		applyCanonicalToolOperands(snapshot, rawToolArgs)
-		if snapshot.ToolName == "run_sub_agent" {
+		if snapshot.ToolName == "agent_start" {
 			snapshot.SubPaneID = childAgentIDFromResult(snapshot.Content)
 		}
 		meta.Snapshots = []ttypes.ConversationMessage{*snapshot}
@@ -250,6 +233,7 @@ func canonicalizeDisplayMeta(message provider.ChatMessage, meta sessiondb.Displa
 		}
 		meta.Snapshots = []ttypes.ConversationMessage{{
 			InternalID: internalID, Role: role, Content: content,
+			Origin: message.EffectiveOrigin(), Collaboration: cloneCollaborationAttribution(message.Collaboration),
 			ReferenceLabels: append([]string(nil), meta.ReferenceLabels...), Time: now,
 		}}
 	default:
@@ -258,6 +242,16 @@ func canonicalizeDisplayMeta(message provider.ChatMessage, meta sessiondb.Displa
 		}}
 	}
 	return meta
+}
+
+func cloneCollaborationAttribution(input *provider.CollaborationAttribution) *provider.CollaborationAttribution {
+	if input == nil {
+		return nil
+	}
+	result := *input
+	result.RecipientIDs = append([]string(nil), input.RecipientIDs...)
+	result.RecipientNames = append([]string(nil), input.RecipientNames...)
+	return &result
 }
 
 func applyTurnIdentity(snapshot *ttypes.ConversationMessage, meta sessiondb.DisplayMeta) {

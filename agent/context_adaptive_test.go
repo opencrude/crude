@@ -210,7 +210,7 @@ func TestRunIncludesRuntimeNoticeInCompactionPressure(t *testing.T) {
 	connection.SetContextWindow(100_000)
 	agent := newTestAgent(t, connection, connection.Model)
 	notice := provider.NewTextMessage("user", strings.Repeat("child result ", 36_000))
-	notice.Origin, notice.InternalID = provider.OriginSubAgentWake, "large-child-wake"
+	notice.Origin, notice.InternalID = provider.OriginPeer, "large-child-wake"
 	consumed := false
 	agent.PrepareRuntimeNotices = func() []provider.ChatMessage {
 		if consumed {
@@ -321,7 +321,7 @@ func TestChunkedCompactionCancellationPreservesSource(t *testing.T) {
 
 func TestCompactSizesHugeHumanInputForContinuationModel(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(writer http.ResponseWriter, _ *http.Request) {
-		writeChatSSE(writer, "- assignment: preserve ownership, parser.go and write_report obligation", "stop")
+		writeChatSSE(writer, "- assignment: preserve ownership, parser.go and publish_report obligation", "stop")
 	}))
 	defer server.Close()
 	connection := provider.FromPreset("openai-chat", "key", server.URL)
@@ -331,13 +331,13 @@ func TestCompactSizesHugeHumanInputForContinuationModel(t *testing.T) {
 	agent.CompactionTargetWindow = 32_000
 	agent.CompactionTargetTokens = 20_000
 	agent.Depth = 1
-	assignment := provider.NewTextMessage("user", "parent assignment\n"+strings.Repeat("inspect parser and preserve evidence ", 10_000)+"\ncall write_report")
+	assignment := provider.NewTextMessage("user", "parent assignment\n"+strings.Repeat("inspect parser and preserve evidence ", 10_000)+"\ncall publish_report")
 	assignment.Origin = provider.OriginAssignment
 	result, err := agent.Compact(context.Background(), []provider.ChatMessage{assignment, provider.NewTextMessage("assistant", "work underway")}, "child system", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if result.AfterTokens >= 20_000 || len(result.Messages) != 2 || !strings.Contains(result.Messages[0].ContentString(), "write_report") || result.Messages[1].EffectiveOrigin() != provider.OriginRuntimeContext {
+	if result.AfterTokens >= 20_000 || len(result.Messages) != 2 || !strings.Contains(result.Messages[0].ContentString(), "publish_report") || result.Messages[1].EffectiveOrigin() != provider.OriginRuntimeContext {
 		t.Fatalf("oversized assignment defeated continuation budget: %+v", result)
 	}
 	if assignment.ContentString() == "" || !strings.Contains(assignment.ContentString(), "parent assignment") {

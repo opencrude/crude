@@ -6,11 +6,9 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"crude/agent"
-	"crude/board"
 	"crude/buildinfo"
 	"crude/capability"
 	"crude/fileio"
@@ -55,27 +53,25 @@ func (workspace *Workspace) ensureCapabilities(ctx context.Context) error {
 		service.Close()
 		return err
 	}
-	store, err := board.Attach(workspace.WorkspaceDB.DB, workspace.RootPath)
-	if err != nil {
-		service.Close()
-		return err
-	}
-	workspace.Capabilities, workspace.Board = service, store
+	workspace.Capabilities = service
 	if workspace.FileOwnership == nil {
 		workspace.FileOwnership = agent.NewFileOwnership()
 	}
 	return nil
 }
 
-func (workspace *Workspace) bindSessionCapabilities(backend *session.Session) error {
+func (workspace *Workspace) bindSessionRuntime(backend *session.Session) error {
+	if err := workspace.ensureWorkspacePersistence(); err != nil {
+		return err
+	}
 	if err := workspace.ensureCapabilities(context.Background()); err != nil {
 		return err
 	}
-	boardID := "session:" + backend.SessionID()
-	if err := workspace.Board.Create(context.Background(), boardID, backend.ID+"_orch_1"); err != nil {
-		return err
+	if workspace.Collaboration == nil {
+		return errors.New("workspace collaboration runtime is unavailable")
 	}
-	backend.SetCapabilities(workspace.Capabilities, workspace.FileOwnership, workspace.Board, boardID, workspace.RootPath)
+	backend.SetCollaboration(workspace.Collaboration, workspace.instanceID)
+	backend.SetCapabilities(workspace.Capabilities, workspace.FileOwnership)
 	return nil
 }
 
@@ -386,39 +382,6 @@ func (workspace *Workspace) CapabilityAction(ctx context.Context, action captype
 		}
 	}
 	return service.Snapshot(), entries, content, err
-}
-
-func (workspace *Workspace) JoinCollaboration(ctx context.Context, boardID string, agentIDs []string, coordinator string) error {
-	if err := workspace.ensureCapabilities(ctx); err != nil {
-		return err
-	}
-	if strings.TrimSpace(boardID) == "" || len(agentIDs) < 1 {
-		return errors.New("collaboration needs an identity and participating root agents")
-	}
-	if !slices.Contains(agentIDs, coordinator) {
-		return errors.New("coordinator must be one of the participating roots")
-	}
-	for _, id := range agentIDs {
-		frontend := workspace.SessionsByAgent[id]
-		if frontend == nil || frontend.backend == nil || !strings.Contains(id, "_orch_") {
-			return fmt.Errorf("root agent %q is not available", id)
-		}
-	}
-	if err := workspace.Board.Create(ctx, boardID, coordinator); err != nil {
-		return err
-	}
-	for _, id := range agentIDs {
-		frontend := workspace.SessionsByAgent[id]
-		if frontend == nil || frontend.backend == nil {
-			return fmt.Errorf("root agent %q is not available", id)
-		}
-		name := frontend.backend.AgentName()
-		if err := workspace.Board.Join(ctx, boardID, board.Member{ID: id, Name: name, Availability: board.AvailabilityUnknown}); err != nil {
-			return err
-		}
-		frontend.backend.SetCapabilities(workspace.Capabilities, workspace.FileOwnership, workspace.Board, boardID, workspace.RootPath)
-	}
-	return nil
 }
 
 func (workspace *Workspace) PrepareSkillInput(ctx context.Context, agentID, id, arguments string) (provider.UserInput, error) {

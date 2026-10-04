@@ -94,12 +94,12 @@ func TestWholeProjectGuidanceContractInEveryExecutionMode(t *testing.T) {
 
 func TestPlanningAndOperatingModeContracts(t *testing.T) {
 	orchestrator := BuildRoot(RootOptions{MultiAgent: true, WorkDir: "/tmp/workspace"})
-	for _, required := range []string{"update_plan", "get_plan", "omit unchanged objective/status/steps", "revision conflict", "not a notepad", "Statuses are declarative, not execution gates", "cancel, reopen, retry, or reorder", "On every new human message", "After compaction", "wait=true (default)", "wait=false"} {
+	for _, required := range []string{"update_plan", "get_plan", "omit unchanged objective/status/steps", "revision conflict", "not a notepad", "Statuses are declarative, not execution gates", "cancel, reopen, retry, or reorder", "On every new human message", "After compaction", "agent_start", "agent_wait", "never as routine polling"} {
 		if !strings.Contains(orchestrator, required) {
 			t.Fatalf("orchestrator prompt missing %q", required)
 		}
 	}
-	for _, removed := range []string{"mark_step_complete", "mark_step_doing", "report_blocker", "max_steps"} {
+	for _, removed := range []string{"mark_step_complete", "mark_step_doing", "report_blocker", "max_steps", "wait=true", "wait=false"} {
 		if strings.Contains(orchestrator, removed) {
 			t.Fatalf("orchestrator prompt still carries %q", removed)
 		}

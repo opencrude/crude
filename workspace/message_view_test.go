@@ -33,7 +33,7 @@ func TestTakeHydratedDataIsOneShot(t *testing.T) {
 func TestConvertMessagesForDisplayUsesCanonicalSnapshotWithoutReconstruction(t *testing.T) {
 	want := types.ConversationMessage{
 		InternalID: "canonical", Role: "tool", Content: "result", Time: time.Now().Round(0),
-		ToolName: "run_sub_agent", ToolArgs: "description: inspect", ToolID: "call",
+		ToolName: "agent_start", ToolArgs: "description: inspect", ToolID: "call",
 		ToolStatus: "success", ToolProgressPhase: "done", ToolProgressLabel: "child",
 		ToolPreviewPhase: "done", ToolEstTokens: 20, ToolLinesAdded: 2,
 		ToolDuration: time.Second, SubPaneID: "child-1", PermTag: "always",
@@ -42,17 +42,18 @@ func TestConvertMessagesForDisplayUsesCanonicalSnapshotWithoutReconstruction(t *
 		Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []types.ConversationMessage{want}},
 	}})
 	want.ToolArgs = "inspect"
+	want.ToolInput = "description: inspect"
 	if len(views) != 1 || !reflect.DeepEqual(types.ConversationMessage(views[0]), want) {
 		t.Fatalf("canonical conversion\n got: %#v\nwant: %#v", views, want)
 	}
 }
 
-func TestConvertMessagesForDisplayUsesAgentIDNotSessionIDForChildLink(t *testing.T) {
-	message := provider.NewTextMessage("tool", "## Sub-Agent Result: Lily [researcher]\n**Agent:** child-1\n**Status:** OK\n**Session:** session-1")
+func TestConvertMessagesForDisplayUsesAgentIDForChildLink(t *testing.T) {
+	message := provider.NewTextMessage("tool", `{"agent_id":"child-1","session_id":"session-1","status":"running"}`)
 	message.ToolCallID = "call"
 	views := ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{
 		Msg:  message,
-		Meta: sessiondb.DisplayMeta{DisplayRole: "tool", ToolName: "run_sub_agent", ToolStatus: "success"},
+		Meta: sessiondb.DisplayMeta{DisplayRole: "tool", ToolName: "agent_start", ToolStatus: "success"},
 	}})
 	if len(views) != 1 || views[0].SubPaneID != "child-1" {
 		t.Fatalf("sub-agent link = %#v", views)

@@ -12,6 +12,7 @@ package workspace
 // session internals directly.
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"fmt"
@@ -21,6 +22,8 @@ import (
 	"strings"
 	"time"
 
+	"crude/agent"
+	"crude/collaboration"
 	"crude/provider"
 	"crude/session"
 	"crude/sessiondb"
@@ -84,7 +87,7 @@ func (w *Workspace) CreateSession(cfg *session.Config, homeDir string) (*Session
 		bs.StartMemoryMaintenance()
 	}
 	w.bindSessionHistory(bs)
-	if err := w.bindSessionCapabilities(bs); err != nil {
+	if err := w.bindSessionRuntime(bs); err != nil {
 		bs.Close()
 		return nil, err
 	}
@@ -145,7 +148,7 @@ func (w *Workspace) ResumeSession(sessionID string, cfg *session.Config, homeDir
 		bs.StartMemoryMaintenance()
 	}
 	w.bindSessionHistory(bs)
-	if err := w.bindSessionCapabilities(bs); err != nil {
+	if err := w.bindSessionRuntime(bs); err != nil {
 		bs.Close()
 		return nil, err
 	}
@@ -264,13 +267,13 @@ func (w *Workspace) HydrateCompletedSubAgents(parentID string) []string {
 		for _, view := range paneViews {
 			pane.Messages.AppendMessage(messageFromView(view))
 		}
-		if len(pane.Messages.Messages()) == 0 && (result.SummaryGist != "" || result.ResultPath != "") {
+		if len(pane.Messages.Messages()) == 0 && (result.SummaryGist != "" || result.ReportID != "") {
 			content := result.SummaryGist
-			if result.ResultPath != "" {
+			if result.ReportID != "" {
 				if content != "" {
 					content += "\n\n"
 				}
-				content += "Report: " + result.ResultPath
+				content += fmt.Sprintf("Report: %s · revision %d", result.ReportID, result.ReportRevision)
 			}
 			pane.Messages.AppendMessage(Message{Role: MessageRoleAssistant, Content: content, Time: time.Now()})
 		}
@@ -497,62 +500,94 @@ func (w *Workspace) CancelSubAgent(agentID string) {
 	}
 	runner := sess.backend.SubAgentRunner()
 	if runner != nil {
-		_, _ = runner.CancelSubAgent(map[string]any{"handle_id": agentID})
+		if handle, ok := runner.Manager().GetActive(agent.AgentID(agentID)); ok {
+			handle.Cancel()
+		}
 	}
 }
 
-// CancelAgent routes cancellation to the orchestrator or sub-agent that owns
-// agentID, independent of which session is currently visible.
-func (w *Workspace) CancelAgent(agentID string) []string {
-	node := w.AgentMgr.Get(agentID)
-	if node == nil {
-		return nil
+// CancelAgent requests cancellation for one exact runtime generation. Submission
+// is not proof the control applied; the owner publishes the authoritative outcome.
+func (w *Workspace) CancelAgent(agentID string) {
+	if w == nil || w.Collaboration == nil || agentID == "" {
+		return
 	}
-	if node.Parent != nil {
-		w.CancelSubAgent(agentID)
-		return nil
+	participant, err := w.Collaboration.Agent(context.Background(), agentID)
+	if err != nil || participant.CurrentRunID == "" {
+		return
 	}
-	if sess := w.sessionForAgent(agentID); sess != nil && sess.backend != nil {
-		if sess.backend.CancelCompaction(agentID) {
-			return nil
-		}
-		_, cleared := sess.backend.CancelOrchestrator(agentID)
-		return cleared
+	run, err := w.Collaboration.Run(context.Background(), participant.CurrentRunID)
+	if err != nil || run.AgentID != agentID || run.State.Terminal() {
+		return
 	}
-	return nil
+	_, _ = w.Collaboration.Publish(context.Background(), collaboration.PublishRequest{
+		SenderID:       "human",
+		SenderName:     "Human",
+		IdempotencyKey: fmt.Sprintf("human-control:%s:cancel:%d", run.ID, run.Version),
+		RecipientIDs:   []string{agentID},
+		Origin:         collaboration.OriginHuman,
+		Kind:           collaboration.EventLifecycleControl,
+		Body:           "Cancel requested by the user.",
+		RunID:          run.ID,
+		References: []collaboration.Reference{{
+			Kind: "control", ID: "cancel", Revision: int(run.Version),
+		}},
+	})
 }
 
 // SubmitAgentInput registers a cancellable turn with the owning backend before
 // the TUI projects the optimistic user message.
 func (w *Workspace) SubmitAgentInput(agentID string, input provider.UserInput) bool {
-	if w == nil || w.AgentMgr == nil {
+	if w == nil || w.Collaboration == nil || agentID == "" {
 		return false
 	}
-	root := w.AgentMgr.OrchestratorFor(agentID)
-	if root == nil || root.ID != agentID {
+	participant, err := w.Collaboration.Agent(context.Background(), agentID)
+	if err != nil || participant.ParentID != "" || participant.CurrentRunID != "" ||
+		participant.State != collaboration.AgentAvailable ||
+		participant.Presence != collaboration.RuntimeAttached {
 		return false
 	}
-	if sess := w.sessionForAgent(root.ID); sess != nil && sess.backend != nil {
-		return sess.backend.SubmitInput(root.ID, input)
+	if sess := w.SessionsByID[participant.SessionID]; sess != nil && sess.backend != nil {
+		return sess.backend.SubmitInput(agentID, input)
 	}
 	return false
 }
 
-// SubmitAgentBtw admits a note to the exact active turn that owns agentID.
-// Admission and cancellation share the backend orchestrator's turn lock, so a
-// note can neither be silently dropped nor leak across a turn boundary.
-func (w *Workspace) SubmitAgentBtw(agentID string, input provider.UserInput) bool {
-	if w == nil || w.AgentMgr == nil {
+// SteerAgent publishes genuine human steering to one exact active run. Durable
+// delivery, epoch fencing and context admission are owned by Collaboration.
+func (w *Workspace) SteerAgent(agentID string, input provider.UserInput) bool {
+	if w == nil || w.Collaboration == nil || agentID == "" || input.InternalID == "" {
 		return false
 	}
-	root := w.AgentMgr.OrchestratorFor(agentID)
-	if root == nil || root.ID != agentID {
+	participant, err := w.Collaboration.Agent(context.Background(), agentID)
+	if err != nil || participant.State != collaboration.AgentAvailable ||
+		participant.Presence != collaboration.RuntimeAttached ||
+		participant.CurrentRunID == "" {
 		return false
 	}
-	if sess := w.sessionForAgent(root.ID); sess != nil && sess.backend != nil {
-		return sess.backend.SubmitBtw(root.ID, input)
+	run, err := w.Collaboration.Run(context.Background(), participant.CurrentRunID)
+	if err != nil || run.AgentID != agentID || run.RuntimeEpoch != participant.RuntimeEpoch || run.State.Terminal() {
+		return false
 	}
-	return false
+	references := []collaboration.Reference{{Kind: "history_message", ID: input.InternalID}}
+	for _, id := range input.ReferenceIDs {
+		if id != "" {
+			references = append(references, collaboration.Reference{Kind: "prompt_reference", ID: id})
+		}
+	}
+	_, err = w.Collaboration.Publish(context.Background(), collaboration.PublishRequest{
+		SenderID:       "human",
+		SenderName:     "Human",
+		IdempotencyKey: "human-steering:" + agentID + ":" + input.InternalID,
+		RecipientIDs:   []string{agentID},
+		Origin:         collaboration.OriginHuman,
+		Kind:           collaboration.EventHumanSteering,
+		Body:           input.Text,
+		RequestID:      participant.CurrentRequestID,
+		RunID:          participant.CurrentRunID,
+		References:     references,
+	})
+	return err == nil
 }
 
 // MinimizeAgent dismisses an agent from the tab bar without stopping any
@@ -1148,7 +1183,7 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 			}
 			if mm.Meta.SubPaneID != "" {
 				chatMsg.SubPaneID = mm.Meta.SubPaneID
-			} else if toolName == "run_sub_agent" {
+			} else if toolName == "agent_start" {
 				chatMsg.SubPaneID = persistedSubAgentID(content)
 			}
 
@@ -1171,21 +1206,8 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 func persistedSubAgentID(content string) string {
 	var payload map[string]any
 	if json.Unmarshal([]byte(content), &payload) == nil {
-		for _, key := range []string{"agent_id", "handle_id"} {
-			if value, _ := payload[key].(string); value != "" {
-				return value
-			}
-		}
-	}
-	for _, line := range strings.Split(content, "\n") {
-		if strings.HasPrefix(line, "**Agent:** ") {
-			return strings.TrimSpace(strings.TrimPrefix(line, "**Agent:** "))
-		}
-	}
-	if index := strings.Index(content, `handle_id="`); index >= 0 {
-		id := content[index+len(`handle_id="`):]
-		if end := strings.IndexByte(id, '"'); end >= 0 {
-			return id[:end]
+		if value, _ := payload["agent_id"].(string); value != "" {
+			return value
 		}
 	}
 	return ""

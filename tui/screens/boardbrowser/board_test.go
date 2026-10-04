@@ -53,7 +53,7 @@ func TestDockLayoutAndInteraction(t *testing.T) {
 	host.Resize(100, 18)
 	host.MarkLayout()
 	host.Layout()
-	if filter, actions := screen.filter.Bounds(), screen.bar.Bounds(); filter.Y != ui.StripHeight+2 || filter.Y != actions.Y || filter.X+filter.W+2 > actions.X || screen.table.Bounds().W < 90 {
+	if filter, actions := screen.filter.Bounds(), screen.bar.Bounds(); filter.Y != ui.StripHeight || filter.Y != actions.Y || filter.X+filter.W+2 > actions.X || screen.table.Bounds().W < 90 {
 		t.Fatalf("filter=%#v actions=%#v body=%#v", filter, actions, screen.table.Bounds())
 	}
 	buffer := surface.NewCellBuffer(100, 18)
@@ -92,9 +92,8 @@ func TestDockLayoutAndInteraction(t *testing.T) {
 	if screen.actionsMenu || host.Focused() != screen.filter.ID() || screen.filter.Value() != "q" {
 		t.Fatal("closing More did not restore board search and query")
 	}
-	screen.HandleAction(ui.EventContext{}, ui.Action{ID: "board.new"})
-	host.Layout()
-	if screen.rootForm.Bounds().Y != 1 || screen.rootForm.Bounds().W != 24 {
-		t.Fatalf("join form = %#v", screen.rootForm.Bounds())
+	screen.HandleAction(ui.EventContext{}, ui.Action{ID: "tabs.activate", Payload: "agents"})
+	if screen.page != "agents" {
+		t.Fatal("workspace agent tab did not activate")
 	}
 }

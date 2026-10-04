@@ -1,7 +1,6 @@
 package chatprojection
 
 import (
-	"encoding/json"
 	"fmt"
 	"strings"
 	"time"
@@ -71,11 +70,11 @@ func activityEligible(msg *types.ChatMessage) bool {
 			return false
 		}
 	}
-	// A successful transport may still report a failed/killed background job or
-	// child; unknown result shapes stay visible rather than asserting success.
+	// A successful transport may still report a failed/killed background job;
+	// unknown result shapes stay visible rather than asserting success.
 	if msg.ToolStatus == types.ToolStatusSuccess {
 		switch msg.ToolName {
-		case "poll_sub_agent", "check_async_command", "read_async_output":
+		case "check_async_command", "read_async_output", "agent_wait":
 			if !activitySuccessfulResult(msg) {
 				return false
 			}
@@ -84,7 +83,8 @@ func activityEligible(msg *types.ChatMessage) bool {
 	switch msg.ToolName {
 	case "exec_command", "write_stdin", "execute_command", "async_execute_command", "check_async_command", "read_async_output",
 		"read_file", "list_directory", "glob_files", "grep_files", "web_search", "web_fetch",
-		"arxiv_search", "recall_memory", "search_history", "wait", "poll_sub_agent", "list_sub_agents":
+		"arxiv_search", "recall_memory", "search_history", "wait",
+		"agent_list", "agent_inspect", "agent_wait", "board_read", "artifact_read":
 		return true
 	}
 	return false
@@ -97,15 +97,9 @@ func activitySuccessfulResult(msg *types.ChatMessage) bool {
 	if msg.ToolName == "check_async_command" {
 		return strings.Contains(msg.Content, "\nStatus: completed\n") && strings.Contains(msg.Content, "\nExit code: 0\n")
 	}
-	if msg.ToolName == "poll_sub_agent" {
-		var payload struct {
-			Status string `json:"status"`
-		}
-		if json.Unmarshal([]byte(msg.Content), &payload) == nil {
-			return payload.Status == "completed" || payload.Status == "running"
-		}
-		return strings.Contains(msg.Content, "**Status:** OK") || strings.Contains(msg.Content, "**Status:** running") ||
-			strings.Contains(msg.Content, "is still running.")
+	if msg.ToolName == "agent_wait" {
+		known, success := tools.CollaborationResultSucceeded(msg.ToolName, msg.Content)
+		return known && success
 	}
 	return false
 }
@@ -161,10 +155,16 @@ func activityLabel(name string, count int) string {
 			return "Waited"
 		}
 		return "Waited " + plural("time", "times")
-	case "poll_sub_agent":
-		return "Checked sub-agent " + plural("time", "times")
-	case "list_sub_agents":
-		return "Listed sub-agents " + plural("time", "times")
+	case "agent_list":
+		return "Listed workspace agents " + plural("time", "times")
+	case "agent_inspect":
+		return "Inspected agents " + plural("time", "times")
+	case "agent_wait":
+		return "Observed agent work " + plural("time", "times")
+	case "board_read":
+		return "Read workspace communication " + plural("time", "times")
+	case "artifact_read":
+		return "Read reports " + plural("time", "times")
 	case "check_async_command":
 		return "Checked background job " + plural("time", "times")
 	case "read_async_output":
@@ -271,7 +271,7 @@ func (r *Renderer) syncActivityItems(changedIDs []string) {
 	recentTools := 0
 	for i := len(messages) - 1; i >= 0; i-- {
 		msg := messages[i]
-		if msg.Role == types.RoleUser && !msg.PendingBtw {
+		if msg.Role == types.RoleUser && !msg.PendingSteering {
 			break
 		}
 		if msg.Role != types.RoleTool || !activityEligible(msg) {

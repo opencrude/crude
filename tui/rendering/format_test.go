@@ -50,7 +50,7 @@ func TestFormatBytes(t *testing.T) {
 }
 
 func TestPascalCaseToolDoesNotFormatStructuredPayload(t *testing.T) {
-	if got := PascalCaseTool(`{"handle_id":"agent-8f21"}`); got != "Tool" {
+	if got := PascalCaseTool(`{"private_id":"agent-8f21"}`); got != "Tool" {
 		t.Fatalf("tool name exposed structured payload: %q", got)
 	}
 }

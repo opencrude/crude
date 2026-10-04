@@ -127,11 +127,9 @@ func (catalog *agentCatalog) refreshCapabilityLimits() {
 		roleAllowed, roleDenied = configured.AllowedTools, configured.DeniedTools
 	}
 	native := make(map[string]bool)
-	for _, tool := range agent.FilterTools(tools.AgentTools, roleAllowed, roleDenied, role, catalog.roleIndex != catMain) {
+	definitions := append(append([]tools.ToolDef(nil), tools.AgentTools...), tools.CollaborationTools...)
+	for _, tool := range agent.FilterTools(definitions, roleAllowed, roleDenied, role, catalog.roleIndex != catMain) {
 		native[tool.Function.Name] = true
-	}
-	if catalog.roleIndex == catMain {
-		delete(native, "write_report")
 	}
 	policy := agent.ComposePolicy(safety.DefaultPolicy(), catalog.base.Policy, role)
 	dynamic := make(map[string]captypes.Tool)
@@ -174,7 +172,7 @@ func (catalog *agentCatalog) refreshCapabilityLimits() {
 			} else if _, exists := tools.NativeMetadata(name); !exists {
 				reason = "Unavailable source; selection intent is retained"
 			}
-			required := name == "write_report" && catalog.roleIndex != catMain
+			required := name == "publish_report" && catalog.roleIndex != catMain
 			field.Disabled = !custom || !allowed || required
 			if _, dynamicTool := dynamic[name]; !dynamicTool && !strings.HasPrefix(name, "mcp__") && !allowed && !slices.Contains(catalog.base.AllowedTools, name) {
 				field.Value = ui.BoolValue(false)

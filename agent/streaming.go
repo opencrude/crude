@@ -253,7 +253,7 @@ var toolPreviewKeys = map[string][]string{
 	"exec_command":          {"cmd", "workdir"},
 	"write_stdin":           {"session_id", "chars"},
 	"write_file":            {"path", "content"},
-	"write_report":          {"report"},
+	"publish_report":        {"summary", "body", "artifact_id", "recipient_ids"},
 	"edit_file":             {"path", "old_string", "new_string", "new_text"},
 	"read_file":             {"path", "offset", "limit", "encoded"},
 	"execute_command":       {"command", "cwd", "timeout_seconds"},
@@ -274,8 +274,8 @@ var toolPreviewKeys = map[string][]string{
 	"kill_async_command":    {"handle"},
 	"read_async_output":     {"handle", "since_byte"},
 	"wait":                  {"seconds"},
-	"poll_sub_agent":        {"handle_id"},
-	"cancel_sub_agent":      {"handle_id"},
+	"agent_control":         {"operation", "agent_id", "run_id"},
+	"agent_wait":            {"run_id", "agent_id", "artifact_id"},
 }
 
 func fallbackKVScan(jsonStr string) map[string]any {
@@ -493,8 +493,8 @@ func EstimateStreamingLines(name, rawArgs string) (contentLines, oldLines, newLi
 		_, newLines, oldLines = codexio.Preview(patchPreviewInput(rawArgs))
 	case "write_file":
 		contentLines = countNewlinesInJSONValue(rawArgs, "content")
-	case "write_report":
-		contentLines = countNewlinesInJSONValue(rawArgs, "report")
+	case "publish_report":
+		contentLines = countNewlinesInJSONValue(rawArgs, "body")
 	case "edit_file":
 		oldLines = countNewlinesInJSONValue(rawArgs, "old_string")
 		newLines = countNewlinesInJSONValue(rawArgs, "new_string")

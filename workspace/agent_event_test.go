@@ -20,9 +20,9 @@ func TestSummarizeToolArgsUsesCanonicalJSONOperands(t *testing.T) {
 
 func TestToolEventsNeverPublishStructuredArgumentsAsStatusOrOperand(t *testing.T) {
 	for _, tc := range []struct{ tool, args, want string }{
-		{"poll_sub_agent", `{"handle_id":"agent-8f21"}`, "agent-8f21"},
-		{"cancel_sub_agent", `{"handle_id":"agent-8f21"}`, "agent-8f21"},
-		{"list_sub_agents", `{"include_completed":true}`, ""},
+		{"agent_wait", `{"run_id":"run-8f21"}`, "run-8f21"},
+		{"agent_control", `{"operation":"cancel","agent_id":"agent-8f21"}`, "cancel · agent-8f21"},
+		{"agent_list", `{"query":"renderer"}`, "renderer"},
 		{"plugin_tool", `{"unrecognized":{"private":"detail"}}`, ""},
 	} {
 		t.Run(tc.tool, func(t *testing.T) {
@@ -42,12 +42,12 @@ func TestToolEventsNeverPublishStructuredArgumentsAsStatusOrOperand(t *testing.T
 }
 
 func TestToolStatusRejectsStructuredToolNames(t *testing.T) {
-	got := ToolLabel(`{"name":"poll_sub_agent","handle_id":"agent-8f21"}`, "")
+	got := ToolLabel(`{"name":"agent_wait","private_id":"agent-8f21"}`, "")
 	if got != "Tool" {
 		t.Fatalf("structured name leaked into status: %q", got)
 	}
 	for _, phase := range []string{"preparing", "failed", "done"} {
-		status := toolOperationStatus(`{"handle_id":"agent-8f21"}`, phase)
+		status := toolOperationStatus(`{"private_id":"agent-8f21"}`, phase)
 		if strings.Contains(status, "{") || strings.Contains(status, "\"") {
 			t.Fatalf("%s status leaked structured tool name: %q", phase, status)
 		}

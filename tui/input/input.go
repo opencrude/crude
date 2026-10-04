@@ -23,12 +23,12 @@ type SubmitEvent struct {
 
 func (SubmitEvent) event() {}
 
-type BtwSubmitEvent struct {
+type SteeringSubmitEvent struct {
 	Text         string
 	ReferenceIDs []string
 }
 
-func (BtwSubmitEvent) event() {}
+func (SteeringSubmitEvent) event() {}
 
 type SlashCommandEvent struct {
 	Command      string

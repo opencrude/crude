@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"crude/agent"
-	"crude/board"
 	"crude/clipboard"
+	"crude/collaboration"
 	"crude/diff"
 	"crude/fileio"
 	"crude/jsonrepair"
@@ -30,11 +30,6 @@ import (
 	ttypes "crude/types"
 	captypes "crude/types/capability"
 )
-
-// WakeChBufSize is the buffer size for the session wake channel.
-// Must be large enough to handle bursts of concurrent sub-agent completions
-// without dropping wake events.
-const WakeChBufSize = 32
 
 var ErrHistoryDisabled = errors.New("local history disabled")
 
@@ -54,20 +49,22 @@ type Session struct {
 	provider *provider.Provider
 	// An older transcript without a connection pin stays disconnected until
 	// the user explicitly saves a session connection.
-	accountUnpinned bool
-	exec            fileio.Executer
-	editor          *fileio.Editor
-	logger          *logger.Logger
-	permStore       *safety.PermissionStore
-	asyncMgr        *fileio.AsyncCommandManager
-	memoryStore     *memory.Store
-	capabilities    captypes.Runtime
-	fileOwnership   *agent.FileOwnership
-	boardStore      *board.Store
-	boardID         string
-	boardProject    string
-	boardPending    map[string]boardAcceptance
-	memorySummary   atomic.Pointer[memory.SessionSummary]
+	accountUnpinned       bool
+	exec                  fileio.Executer
+	editor                *fileio.Editor
+	logger                *logger.Logger
+	permStore             *safety.PermissionStore
+	asyncMgr              *fileio.AsyncCommandManager
+	memoryStore           *memory.Store
+	capabilities          captypes.Runtime
+	fileOwnership         *agent.FileOwnership
+	collaborationStore    *collaboration.Store
+	collaborationInstance string
+	collaborationAgents   map[string]collaboration.Agent
+	collaborationCancel   context.CancelFunc
+	collaborationWg       sync.WaitGroup
+	collaborationContext  map[string][]provider.ChatMessage
+	memorySummary         atomic.Pointer[memory.SessionSummary]
 
 	// workDir is the workspace root this session executes tools against.
 	// Relative tool paths and commands without an explicit cwd resolve
@@ -131,7 +128,6 @@ type Session struct {
 	compactionAgent          string
 	compactionStarted        bool
 	compactionWg             sync.WaitGroup
-	wakeCh                   chan WakeEvent
 	sender                   EventSender
 	subAgentSup              *SubAgentRunner
 	subAgentMu               sync.Mutex
@@ -143,13 +139,6 @@ type Session struct {
 	orchMu                   sync.Mutex
 	orchWg                   sync.WaitGroup
 	orchNextID               atomic.Int64
-
-	// consumedReports tracks sub-agent IDs whose results the main agent has already
-	// consumed during an active turn (typically via poll_sub_agent). When a WakeSubAgentDone
-	// event later arrives for a consumed sub-agent, the wake is suppressed to prevent a
-	// redundant turn where the agent would see the same report/notification again.
-	consumedReports   map[string]bool
-	consumedReportsMu sync.Mutex
 
 	// runtimeProfile holds ephemeral per-orchestrator config overrides
 	// that never persist to disk.
@@ -438,28 +427,28 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 
 	sess := &Session{
 		agentName: name, nameHome: homeDir,
-		ID:               id,
-		cfg:              cfg,
-		provider:         p,
-		exec:             exec,
-		editor:           editor,
-		logger:           lg,
-		permStore:        permStore,
-		asyncMgr:         fileio.NewAsyncCommandManagerWithLogger(lg),
-		subAgentSup:      nil,
-		sessionID:        sessionID,
-		sessionStart:     time.Now(),
-		wakeCh:           make(chan WakeEvent, WakeChBufSize),
-		usageRecords:     make(map[string]sessiondb.UsageRecord),
-		tokens:           NewTokenTracker(lg),
-		db:               db,
-		dbPath:           dbPath,
-		writeBuf:         make([]taggedMessage, 0, 64),
-		consumedReports:  make(map[string]bool),
-		orchestrators:    make(map[string]*Orchestrator),
-		runtimeProfile:   NewRuntimeProfile(cfg),
-		workspaceCfg:     workspaceCfg,
-		sessionOverrides: pinnedAccountOverrides(cfg),
+		ID:                   id,
+		cfg:                  cfg,
+		provider:             p,
+		exec:                 exec,
+		editor:               editor,
+		logger:               lg,
+		permStore:            permStore,
+		asyncMgr:             fileio.NewAsyncCommandManagerWithLogger(lg),
+		subAgentSup:          nil,
+		sessionID:            sessionID,
+		sessionStart:         time.Now(),
+		usageRecords:         make(map[string]sessiondb.UsageRecord),
+		tokens:               NewTokenTracker(lg),
+		db:                   db,
+		dbPath:               dbPath,
+		writeBuf:             make([]taggedMessage, 0, 64),
+		collaborationAgents:  make(map[string]collaboration.Agent),
+		collaborationContext: make(map[string][]provider.ChatMessage),
+		orchestrators:        make(map[string]*Orchestrator),
+		runtimeProfile:       NewRuntimeProfile(cfg),
+		workspaceCfg:         workspaceCfg,
+		sessionOverrides:     pinnedAccountOverrides(cfg),
 	}
 
 	if dir := lg.SessionDir(); dir != "" {
@@ -474,6 +463,14 @@ func (s *Session) Close() {
 	s.logger.Info("SESSION", "close", "has_messages", s.HasMessages())
 	s.stopCompactionForClose()
 	s.compactionWg.Wait()
+	s.mu.Lock()
+	collaborationCancel := s.collaborationCancel
+	s.collaborationCancel = nil
+	s.mu.Unlock()
+	if collaborationCancel != nil {
+		collaborationCancel()
+		s.collaborationWg.Wait()
+	}
 	s.orchMu.Lock()
 	orchIDs := make([]string, 0, len(s.orchestrators))
 	for id := range s.orchestrators {
@@ -490,8 +487,7 @@ func (s *Session) Close() {
 	if s.subAgentSup != nil {
 		s.subAgentSup.SessionCancel()
 		for _, h := range s.subAgentSup.Manager().ActiveHandles() {
-			s.subAgentSup.Manager().Cancel(h.Spec.ID)
-			s.subAgentSup.FileOwnership().Release(h.Spec.ID)
+			h.Cancel()
 		}
 		s.subAgentSup.Wait()
 	}
@@ -524,10 +520,6 @@ func (s *Session) Close() {
 			_ = os.Remove(s.dbPath)
 		}
 	}
-}
-
-func (s *Session) WakeCh() chan<- WakeEvent {
-	return s.wakeCh
 }
 
 func (s *Session) SessionDir() string {
@@ -808,37 +800,6 @@ func loadSubAgentSnapshotDB(dbPath, agentID string) (sessiondb.SessionMeta, []se
 	return meta, messages, compactions, err
 }
 
-// MarkReportConsumed records that the main agent has already consumed a sub-agent's
-// result during an active turn (e.g. via poll_sub_agent). The corresponding
-// WakeSubAgentDone event will be suppressed to prevent a redundant wake-up turn
-// where the agent would re-read the same report it already processed.
-//
-// This handles the edge case where the agent polls a completed sub-agent during
-// an active turn (against the "don't poll" instruction, which LLMs sometimes
-// ignore), reads the report, and then gets woken up again by the queued wake
-// event when the turn ends — resulting in a wasteful duplicate turn.
-func (s *Session) MarkReportConsumed(agentID string) {
-	s.consumedReportsMu.Lock()
-	if s.consumedReports == nil {
-		s.consumedReports = make(map[string]bool)
-	}
-	s.consumedReports[agentID] = true
-	s.consumedReportsMu.Unlock()
-}
-
-// IsAndClearReportConsumed checks whether a sub-agent's result was already consumed
-// by the main agent during an earlier turn. If so, it removes the entry (each
-// sub-agent completes at most once, so the entry is no longer needed) and returns
-// true, indicating the wake event should be suppressed. Returns false if the
-// sub-agent was not previously consumed, meaning the wake should be processed.
-func (s *Session) IsAndClearReportConsumed(agentID string) bool {
-	s.consumedReportsMu.Lock()
-	consumed := s.consumedReports[agentID]
-	delete(s.consumedReports, agentID)
-	s.consumedReportsMu.Unlock()
-	return consumed
-}
-
 func (s *Session) HardCancel() {
 	atomic.StoreInt32(&s.hardCancelled, 1)
 	s.CancelCompaction("")
@@ -874,17 +835,6 @@ func (s *Session) CancelOrchestrator(id string) (bool, []string) {
 		return false, nil
 	}
 	return orchestrator.CancelTurn()
-}
-
-// SubmitBtw atomically admits a note to id's current turn.
-func (s *Session) SubmitBtw(id string, input provider.UserInput) bool {
-	if s == nil || id == "" {
-		return false
-	}
-	s.orchMu.Lock()
-	orchestrator := s.orchestrators[id]
-	s.orchMu.Unlock()
-	return orchestrator != nil && orchestrator.SubmitBtw(input)
 }
 
 // SubmitInput registers a cancellable turn before handing it to the session
@@ -955,17 +905,6 @@ func (s *Session) clearHardCancel() {
 	atomic.StoreInt32(&s.hardCancelled, 0)
 }
 
-func (s *Session) drainWakeCh() {
-	for {
-		select {
-		case <-s.wakeCh:
-			s.logger.Debug("SLEEP", "drained_stale_wake")
-		default:
-			return
-		}
-	}
-}
-
 func (s *Session) NewOrchestrator(sender EventSender) (*Orchestrator, error) {
 	s.orchMu.Lock()
 	if atomic.LoadInt32(&s.closing) == 1 {
@@ -997,6 +936,13 @@ func (s *Session) NewOrchestrator(sender EventSender) (*Orchestrator, error) {
 		s.runtimeProfile.RemoveOverride(o.ID)
 		return nil, fmt.Errorf("session is closing")
 	}
+	registered, err := s.registerCollaborator(context.Background(), o.ID, s.AgentName(), s.sessionID, "", CategoryDefault)
+	if err != nil {
+		s.orchMu.Unlock()
+		s.runtimeProfile.RemoveOverride(o.ID)
+		return nil, fmt.Errorf("register workspace agent: %w", err)
+	}
+	o.RuntimeEpoch = registered.RuntimeEpoch
 	if s.orchestrators == nil {
 		s.orchestrators = make(map[string]*Orchestrator)
 	}
@@ -1020,9 +966,7 @@ func (s *Session) CloseOrchestrator(id string) {
 	if ok && o.closing.CompareAndSwap(false, true) {
 		o.CancelTurn()
 		if runner := o.subAgentRunner(); runner != nil {
-			for _, childID := range runner.CancelAllActive() {
-				s.MarkReportConsumed(string(childID))
-			}
+			runner.CancelAllActive()
 		}
 		close(o.stopCh)
 		o.turnMu.Lock()

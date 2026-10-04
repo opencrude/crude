@@ -64,7 +64,7 @@ func newBackendPromptFamilyApp(t *testing.T) (*App, string, string, map[string]c
 			if request.Stream {
 				w.Header().Set("Content-Type", "text/event-stream")
 				if first {
-					_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"tool_calls\":[{\"index\":0,\"id\":\"fixture\",\"type\":\"function\",\"function\":{\"name\":\"run_sub_agent\",\"arguments\":\"{\\\"description\\\":\\\"fixture\\\",\\\"category\\\":\\\"invalid-fixture\\\"}\"}}]}}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n")
+					_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"tool_calls\":[{\"index\":0,\"id\":\"fixture\",\"type\":\"function\",\"function\":{\"name\":\"agent_start\",\"arguments\":\"{\\\"description\\\":\\\"fixture\\\",\\\"category\\\":\\\"invalid-fixture\\\"}\"}}]}}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n")
 				} else {
 					_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"role\":\"assistant\",\"content\":\"Ready\"}}]}\n\ndata: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
 				}
@@ -74,7 +74,7 @@ func newBackendPromptFamilyApp(t *testing.T) (*App, string, string, map[string]c
 			if first {
 				// Invalid launch arguments initialize the real delegation owner
 				// through tool dispatch, but start no child or external request.
-				_, _ = fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"fixture","type":"function","function":{"name":"run_sub_agent","arguments":"{\"description\":\"fixture\",\"category\":\"invalid-fixture\"}"}}]},"finish_reason":"tool_calls"}]}`)
+				_, _ = fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"","tool_calls":[{"id":"fixture","type":"function","function":{"name":"agent_start","arguments":"{\"description\":\"fixture\",\"category\":\"invalid-fixture\"}"}}]},"finish_reason":"tool_calls"}]}`)
 				return
 			}
 			_, _ = fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"Ready"},"finish_reason":"stop"}]}`)

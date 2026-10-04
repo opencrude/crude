@@ -168,7 +168,7 @@ func (m *App) cleanupAgent(agentID string) {
 			}
 		}
 	}
-	m.syncPendingBtwCount()
+	m.syncPendingSteeringCount()
 }
 
 func agentSubtreeIDs(root *workspace.AgentNode) []string {

@@ -25,12 +25,12 @@ func (a *Agent) continuityMessage(ctx context.Context, compacted bool) (provider
 		WorkDir             string                       `json:"working_directory"`
 		AsyncCommands       []fileio.AsyncCommandContext `json:"async_commands"`
 		Children            []SubAgentStatusEntry        `json:"children"`
-		ChildReportRequired bool                         `json:"child_report_required"`
+		FinalReportRequired bool                         `json:"final_report_required"`
 	}{
 		AsOfMS: time.Now().UnixMilli(), AgentID: a.AgentID, ParentID: a.ParentID,
 		TurnGeneration: a.TurnGeneration, WorkDir: a.WorkDir,
 		AsyncCommands: []fileio.AsyncCommandContext{}, Children: []SubAgentStatusEntry{},
-		ChildReportRequired: a.Depth > 0 && !a.writeReportCalled,
+		FinalReportRequired: a.Depth > 0 && !a.reportPublished,
 	}
 	if a.AsyncMgr != nil {
 		state.AsyncCommands = a.AsyncMgr.ContextSnapshot()
@@ -38,7 +38,9 @@ func (a *Agent) continuityMessage(ctx context.Context, compacted bool) (provider
 	}
 	if a.SubAgentMgr != nil {
 		state.Children = a.SubAgentMgr.ListStatus(true)
-		slices.SortFunc(state.Children, func(left, right SubAgentStatusEntry) int { return strings.Compare(left.HandleID, right.HandleID) })
+		slices.SortFunc(state.Children, func(left, right SubAgentStatusEntry) int {
+			return strings.Compare(string(left.AgentID), string(right.AgentID))
+		})
 	}
 	data, err := json.Marshal(state)
 	if err != nil {

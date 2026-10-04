@@ -2,18 +2,38 @@ package session
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
 	"time"
 
 	"crude/agent"
+	"crude/collaboration"
 	"crude/provider"
+	captypes "crude/types/capability"
 )
+
+func attachDelegationTestCollaboration(t *testing.T, sess *Session) *collaboration.Store {
+	t.Helper()
+	database, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "workspace.db")+
+		"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)&_pragma=journal_mode(WAL)")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = database.Close() })
+	store, err := collaboration.Attach(database, t.TempDir(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	sess.SetCollaboration(store, collaboration.NewInstanceID())
+	return store
+}
 
 func TestLiveDelegationToggleAtRequestAndExecutionBoundaries(t *testing.T) {
 	requests := make(chan provider.ChatRequest, 8)
@@ -37,7 +57,7 @@ func TestLiveDelegationToggleAtRequestAndExecutionBoundaries(t *testing.T) {
 		case 1:
 			// This was advertised when the request started, but the user disabled
 			// delegation while the model was generating the call.
-			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"spawn-stale\",\"type\":\"function\",\"function\":{\"name\":\"run_sub_agent\",\"arguments\":\"{\\\"description\\\":\\\"must not launch\\\",\\\"wait\\\":false}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n")
+			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"spawn-stale\",\"type\":\"function\",\"function\":{\"name\":\"agent_start\",\"arguments\":\"{\\\"description\\\":\\\"must not launch\\\",\\\"category\\\":\\\"crafter\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n")
 		case 2:
 			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"plan-check\",\"type\":\"function\",\"function\":{\"name\":\"get_plan\",\"arguments\":\"{}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n")
 		default:
@@ -53,6 +73,7 @@ func TestLiveDelegationToggleAtRequestAndExecutionBoundaries(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer sess.Close()
+	attachDelegationTestCollaboration(t, sess)
 	sess.SetYolo(true)
 	sender := newMockEventSender()
 	orch, err := sess.NewOrchestrator(sender)
@@ -84,7 +105,7 @@ func TestLiveDelegationToggleAtRequestAndExecutionBoundaries(t *testing.T) {
 		return false
 	}
 	first := nextRequest()
-	if !hasTool(first, "run_sub_agent") {
+	if !hasTool(first, "agent_start") {
 		t.Fatal("enabled request missing launch tool")
 	}
 	setEnabled := func(enabled bool) {
@@ -99,10 +120,10 @@ func TestLiveDelegationToggleAtRequestAndExecutionBoundaries(t *testing.T) {
 	setEnabled(false)
 	releases <- struct{}{}
 	second := nextRequest()
-	if hasTool(second, "run_sub_agent") {
+	if hasTool(second, "agent_start") {
 		t.Fatal("disabled request still advertises launches")
 	}
-	for _, name := range []string{"list_sub_agents", "poll_sub_agent", "cancel_sub_agent", "edit_file"} {
+	for _, name := range []string{"agent_list", "agent_wait", "agent_control", "edit_file"} {
 		if !hasTool(second, name) {
 			t.Errorf("disabled request removed %s", name)
 		}
@@ -125,7 +146,7 @@ func TestLiveDelegationToggleAtRequestAndExecutionBoundaries(t *testing.T) {
 	setEnabled(true)
 	releases <- struct{}{}
 	third := nextRequest()
-	if !hasTool(third, "run_sub_agent") {
+	if !hasTool(third, "agent_start") {
 		t.Fatal("re-enabled active turn did not regain launch tool")
 	}
 	enabledNotice := false
@@ -158,6 +179,7 @@ func TestConcurrentLazyRunnerAndDisableKeepsChildControl(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer sess.Close()
+	store := attachDelegationTestCollaboration(t, sess)
 	sender := &liveSubAgentSender{}
 	orch, err := sess.NewOrchestrator(sender)
 	if err != nil {
@@ -194,6 +216,12 @@ func TestConcurrentLazyRunnerAndDisableKeepsChildControl(t *testing.T) {
 	if err := runner.Manager().Register(handle); err != nil {
 		t.Fatal(err)
 	}
+	if _, err := store.RegisterAgent(t.Context(), collaboration.AgentRegistration{
+		ID: string(handle.Spec.ID), Name: handle.Spec.Name, SessionID: string(handle.Spec.ID),
+		ParentID: orch.ID, Category: handle.Spec.Category, OwnerInstance: sess.collaborationInstance,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	settings := sess.SettingsSnapshot()
 	off := false
 	settings.SessionMultiAgent = &off
@@ -203,12 +231,17 @@ func TestConcurrentLazyRunnerAndDisableKeepsChildControl(t *testing.T) {
 	if childCtx.Err() != nil || sess.SubAgentRunner() != runner {
 		t.Fatal("disable destroyed a running child or its control path")
 	}
-	toolFn := sess.newToolFn(true) // stale enabled closure must consult live policy
-	result, err := toolFn(t.Context(), "run_sub_agent", map[string]any{"description": "not allowed"})
+	live := sess.newAgent(sess.provider, true, nil)
+	live.AgentID = agent.AgentID(orch.ID)
+	sess.bindAgentRuntime(t.Context(), live, captypes.RuntimeActor{
+		ID: orch.ID, SessionID: sess.SessionID(),
+	}, sess.AgentName())
+	toolFn := live.ToolFn // stale enabled closure must consult live policy
+	result, err := toolFn(t.Context(), "agent_start", map[string]any{"description": "not allowed"})
 	if err != nil || agent.IsToolError(result.Content) || !strings.Contains(result.Content, "disabled_by_user") {
 		t.Fatalf("disabled launch misreported as failure: %+v %v", result, err)
 	}
-	result, err = toolFn(t.Context(), "list_sub_agents", nil)
+	result, err = toolFn(t.Context(), "agent_list", nil)
 	if err != nil || !strings.Contains(result.Content, "active-child") {
 		t.Fatal("disable hid active children")
 	}

@@ -33,7 +33,7 @@ func LatestTurnStates(ctx context.Context, db *sql.DB, sessionID string) (latest
 		if latest == nil {
 			latest = &turn
 		}
-		if turn.Origin == "human" || turn.Origin == "btw" {
+		if turn.Origin == "human" || turn.Origin == "human_steering" {
 			human = &turn
 			break
 		}

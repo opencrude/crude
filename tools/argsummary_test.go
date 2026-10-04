@@ -75,24 +75,20 @@ func TestSummarizeArgsPreservesKnownOperands(t *testing.T) {
 
 func TestStructuredToolArgumentsNeverBecomeTitlePayloads(t *testing.T) {
 	for _, tc := range []struct{ name, tool, args, want string }{
-		{"poll JSON", "poll_sub_agent", `{"handle_id":"agent-8f21","extra":{"state":"running"}}`, "agent-8f21"},
-		{"poll nested JSON string is not a handle", "poll_sub_agent", `{"handle_id":"{\"private\":\"not a handle\"}"}`, ""},
-		{"poll summary", "poll_sub_agent", `handle_id: agent-8f21`, "agent-8f21"},
-		{"poll normalized snapshot", "poll_sub_agent", "agent-8f21", "agent-8f21"},
-		{"cancel JSON", "cancel_sub_agent", `{"handle_id":"agent-8f21"}`, "agent-8f21"},
-		{"cancel summary", "cancel_sub_agent", `handle_id: agent-8f21`, "agent-8f21"},
-		{"cancel normalized snapshot", "cancel_sub_agent", "agent-8f21", "agent-8f21"},
-		{"spawn normalized snapshot", "run_sub_agent", "Inspect renderer", "Inspect renderer"},
-		{"spawn category", "run_sub_agent", `{"category":"researcher","description":"Inspect renderer"}`, "Researcher · Inspect renderer"},
-		{"list subagents", "list_sub_agents", `{"include_completed":true}`, ""},
-		{"empty object", "list_sub_agents", `{}`, ""},
+		{"wait JSON", "agent_wait", `{"run_id":"run-8f21","extra":{"state":"running"}}`, "run-8f21"},
+		{"wait nested JSON string is not an identity", "agent_wait", `{"run_id":"{\"private\":\"not a run\"}"}`, ""},
+		{"control JSON", "agent_control", `{"operation":"cancel","agent_id":"agent-8f21"}`, "cancel · agent-8f21"},
+		{"spawn normalized snapshot", "agent_start", "Inspect renderer", "Inspect renderer"},
+		{"spawn category", "agent_start", `{"category":"researcher","description":"Inspect renderer"}`, "Researcher · Inspect renderer"},
+		{"list agents", "agent_list", `{"query":"renderer"}`, "renderer"},
+		{"empty object", "agent_list", `{}`, ""},
 		{"empty plan", "get_plan", `{}`, ""},
 		{"plan missing id", "update_plan", `{"objective":"Do work","steps":[{"description":"Inspect"}]}`, ""},
 		{"question", "question", `{"questions":[{"prompt":"Choose"}]}`, ""},
 		{"memory title", "remember", `{"title":"Preferred layout","content":"Keep narrow screens readable"}`, "Preferred layout"},
 		{"memory update", "update_memory", `{"id":"memory-1","content":"updated"}`, "memory-1"},
 		{"memory forget", "forget_memory", `{"id":"memory-2"}`, "memory-2"},
-		{"report", "write_report", `{"report":"Large JSON report body"}`, ""},
+		{"report", "publish_report", `{"summary":"Renderer review","body":"Large JSON report body"}`, "Renderer review"},
 		{"patch wrapper", "apply_patch", `{"input":"not a patch"}`, ""},
 		{"unknown object", "plugin_tool", `{"mystery":{"secret":"do not paint"}}`, ""},
 		{"unknown array", "plugin_tool", `[{"secret":"do not paint"}]`, ""},
@@ -123,9 +119,9 @@ func TestExtractArgNeverFindsAFieldInsideUnrelatedJSONText(t *testing.T) {
 
 func TestToolDisplayNameRejectsStructuredOrUnboundedNames(t *testing.T) {
 	for _, tc := range []struct{ name, want string }{
-		{"poll_sub_agent", "poll_sub_agent"},
+		{"agent_wait", "agent_wait"},
 		{"functions.read_file", "functions.read_file"},
-		{`{"handle_id":"agent-8f21"}`, "tool"},
+		{`{"private_id":"agent-8f21"}`, "tool"},
 		{"read_file\n{\"secret\":1}", "tool"},
 		{"", "tool"},
 	} {
@@ -137,9 +133,11 @@ func TestToolDisplayNameRejectsStructuredOrUnboundedNames(t *testing.T) {
 
 func TestRelatedToolFamilyTitlesUseWholeSemanticOperands(t *testing.T) {
 	for _, tc := range []struct{ tool, input, want string }{
-		{"board_post", `{"to":"Patrick","type":"ASK","body":"Run the tests"}`, "ASK → Patrick"},
-		{"board_post", `{}`, ""},
-		{"board_read", `{"thread":"board-thread-42"}`, "thread board-thread-42"},
+		{"agent_send", `{"recipient_ids":["Patrick"],"kind":"request","request_id":"review-42","body":"Run the tests"}`, "request"},
+		{"agent_respond", `{"disposition":"deferred","request_id":"review-42"}`, "deferred · review-42"},
+		{"agent_control", `{"operation":"cancel","agent_id":"agent-8f21"}`, "cancel · agent-8f21"},
+		{"publish_report", `{"summary":"Complete parser review","body":"Evidence"}`, "Complete parser review"},
+		{"board_read", `{"thread_id":"board-thread-42"}`, "thread board-thread-42"},
 		{"board_read", `{"since":19}`, "after #19"},
 		{"mcp_read_resource", `{}`, ""},
 		{"mcp_get_prompt", `{"connection_id":"docs","name":"review"}`, "docs · review"},

@@ -1,7 +1,6 @@
 package session
 
 import (
-	"context"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -12,39 +11,6 @@ import (
 	"crude/sessiondb"
 	"crude/tools"
 )
-
-func TestSubAgentCompletionWakeWaitsForQueueCapacity(t *testing.T) {
-	wakeCh := make(chan WakeEvent, 1)
-	wakeCh <- WakeEvent{Type: WakeSubAgentDone, SourceID: "existing"}
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
-	runner := &SubAgentRunner{wakeCh: wakeCh, sessionCtx: ctx}
-	delivered := make(chan bool, 1)
-	go func() {
-		delivered <- runner.deliverCompletionWake(agent.SubAgentResult{
-			AgentID: "new-result", Status: agent.SubAgentCompleted,
-		})
-	}()
-
-	select {
-	case <-delivered:
-		t.Fatal("completion wake was dropped instead of applying backpressure")
-	case <-time.After(20 * time.Millisecond):
-	}
-	<-wakeCh
-	select {
-	case ok := <-delivered:
-		if !ok {
-			t.Fatal("completion wake was not delivered")
-		}
-	case <-time.After(time.Second):
-		t.Fatal("completion wake did not unblock after queue capacity became available")
-	}
-	event := <-wakeCh
-	if event.SourceID != "new-result" {
-		t.Fatalf("wake event = %+v", event)
-	}
-}
 
 func TestSubAgentTranscriptIsReplayable(t *testing.T) {
 	db, err := sessiondb.OpenAndMigrate(filepath.Join(t.TempDir(), "child.db"))
@@ -98,11 +64,8 @@ func TestSubAgentTranscriptIsReplayable(t *testing.T) {
 	}
 }
 
-func TestEverySubAgentTerminalPathPublishesEventResultAndWake(t *testing.T) {
-	s := &Session{
-		wakeCh:          make(chan WakeEvent, 1),
-		consumedReports: make(map[string]bool),
-	}
+func TestEverySubAgentTerminalPathPublishesOneEventAndResult(t *testing.T) {
+	s := &Session{}
 	runner := NewSubAgentRunner(s, 1)
 	t.Cleanup(runner.SessionCancel)
 	sender := newMockEventSender()
@@ -131,35 +94,21 @@ func TestEverySubAgentTerminalPathPublishesEventResultAndWake(t *testing.T) {
 	if event.typ != "sub_agent_completed" || event.agentID != string(handle.Spec.ID) {
 		t.Fatalf("terminal event = %#v", event)
 	}
-	wake := <-s.wakeCh
-	got, ok := wake.Data.(agent.SubAgentResult)
-	if wake.Type != WakeSubAgentDone || !ok || got.Status != agent.SubAgentCrashed {
-		t.Fatalf("terminal wake = %#v", wake)
-	}
 	if _, ok := runner.Manager().GetActive(handle.Spec.ID); ok {
 		t.Fatal("terminal child remained active")
 	}
 }
 
-func TestCancelledSubAgentResultCannotReadAsSuccess(t *testing.T) {
-	formatted := formatSubAgentResult(agent.SubAgentResult{
-		Name: "child", Category: agent.CatResearcher, Status: agent.SubAgentCancelled,
-	})
-	if !strings.Contains(formatted, "CANCELLED") || !strings.Contains(formatted, "did not complete") || strings.Contains(formatted, "Status:** OK") {
-		t.Fatalf("cancelled result = %q", formatted)
-	}
-}
-
 func TestSubAgentToolHasNoRuntimeDeadline(t *testing.T) {
-	for _, tool := range tools.AgentTools {
-		if tool.Function.Name == "run_sub_agent" {
+	for _, tool := range tools.CollaborationTools {
+		if tool.Function.Name == "agent_start" {
 			if strings.Contains(string(tool.Function.Parameters), "timeout_seconds") {
 				t.Fatal("sub-agent launch still exposes a runtime deadline")
 			}
 			return
 		}
 	}
-	t.Fatal("run_sub_agent missing")
+	t.Fatal("agent_start missing")
 }
 
 func TestSubAgentDatabaseIsScopedUnderParentSession(t *testing.T) {

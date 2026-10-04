@@ -39,7 +39,7 @@ func TestSubAgentClassifiesItsOwnFlattenedReasoningDuringToolLoop(t *testing.T) 
 		case 1, 2:
 			delta["tool_calls"] = []any{map[string]any{"index": 0, "id": fmt.Sprintf("read-%d", step), "type": "function", "function": map[string]string{"name": "list_directory", "arguments": `{"path":"."}`}}}
 		case 3:
-			delta["tool_calls"] = []any{map[string]any{"index": 0, "id": "report", "type": "function", "function": map[string]string{"name": "write_report", "arguments": `{"report":"Findings recorded"}`}}}
+			delta["tool_calls"] = []any{map[string]any{"index": 0, "id": "report", "type": "function", "function": map[string]string{"name": "publish_report", "arguments": `{"report":"Findings recorded"}`}}}
 		case 4:
 			delta["content"] = "Finished."
 			finish = "stop"

@@ -738,7 +738,14 @@ func (r *Renderer) ActiveThinkingLineCount(contentWidth int) int {
 	for _, msg := range r.sync.Messages {
 		if msg.Role == types.RoleThinking && msg.ThinkingActive {
 			if msg.ThinkingDisplay.Kind.HasCompactPreview() {
-				return 1
+				if !msg.ThinkingDisplay.Kind.IsSummary() {
+					return 1 // provisional streams still wait for source evidence
+				}
+				// A summary is a wire kind, not a size guarantee. Gate on the
+				// current semantic block so many short updates stay compact,
+				// while gateways forwarding a long trace get a readable pane.
+				start := min(max(0, msg.ThinkingDisplay.Start), len(msg.Content))
+				return len(rendering.WrapText(msg.Content[start:], contentWidth)) + 1
 			}
 			if msg.CachedLines != nil {
 				return len(msg.CachedLines) + 1
@@ -801,7 +808,7 @@ func (r *Renderer) SetStreaming(s bool) {
 	}
 	for i := len(r.sync.Messages) - 1; i >= 0; i-- {
 		message := r.sync.Messages[i]
-		if message.PendingBtw {
+		if message.PendingSteering {
 			continue
 		}
 		if message.Role == types.RoleAssistant {
@@ -1163,7 +1170,7 @@ func (r *Renderer) prepareRender(width int) {
 func (r *Renderer) streamingCursorOwnerID() string {
 	for i := len(r.sync.Messages) - 1; i >= 0; i-- {
 		message := r.sync.Messages[i]
-		if message.PendingBtw {
+		if message.PendingSteering {
 			continue
 		}
 		if r.isStreamingCursor(message) {
@@ -1346,7 +1353,7 @@ func (r *Renderer) renderItem(idx int, item *renderItem, width int) []string {
 
 	isStreamingCursor := r.isStreamingCursor(msg)
 
-	if r.sync.MsgByID[msg.InternalID] == msg && msg.CachedLines != nil && !isStreamingCursor && !msg.PendingBtw {
+	if r.sync.MsgByID[msg.InternalID] == msg && msg.CachedLines != nil && !isStreamingCursor && !msg.PendingSteering {
 		result := make([]string, 0, len(msg.CachedLines)+1)
 		native := make([]PaintLine, 0, len(msg.CachedLines)+1)
 		result = append(result, "")
@@ -1500,7 +1507,7 @@ func (r *Renderer) renderSingleMessage(msg *types.ChatMessage) ([]string, []Pain
 		switch {
 		case msg.Role == types.RoleAssistant && r.streaming:
 			cursorIdx = len(ml.lines) - 1
-		case msg.Role == types.RoleThinking && msg.ThinkingActive && !msg.ThinkingDisplay.Kind.HasCompactPreview():
+		case msg.Role == types.RoleThinking && msg.ThinkingActive && (ctx.thinkingBodyOnly || !msg.ThinkingDisplay.Kind.HasCompactPreview()):
 			cursorIdx = len(ml.lines) - 1
 		}
 	}
@@ -1530,9 +1537,9 @@ func (r *Renderer) renderSingleMessage(msg *types.ChatMessage) ([]string, []Pain
 	// Persist the render cache on the retained message (r.sync.Messages), not
 	// the sanitized copy: the copy is discarded on return, and writing to it
 	// left every message permanently cache-less, so itemList.EnsureHeights
-	// re-rendered the whole session every frame. Role/PendingBtw are identical
+	// re-rendered the whole session every frame. Role/PendingSteering are identical
 	// on both, so only the write target changes.
-	if r.sync.MsgByID[origMsg.InternalID] == origMsg && !isStreamingCursor && origMsg.Role != types.RoleStatus && !origMsg.PendingBtw {
+	if r.sync.MsgByID[origMsg.InternalID] == origMsg && !isStreamingCursor && origMsg.Role != types.RoleStatus && !origMsg.PendingSteering {
 		origMsg.CachedLines = make([]string, len(ml.lines))
 		copy(origMsg.CachedLines, ml.lines)
 		r.nativeCache[origMsg.InternalID] = append([]PaintLine(nil), ml.native...)
@@ -1553,7 +1560,7 @@ func (r *Renderer) isLastMessage(msg *types.ChatMessage) bool {
 	}
 	for i := len(r.sync.Messages) - 1; i >= 0; i-- {
 		candidate := r.sync.Messages[i]
-		if candidate.PendingBtw {
+		if candidate.PendingSteering {
 			continue
 		}
 		return candidate == msg

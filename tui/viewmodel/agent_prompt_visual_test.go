@@ -49,7 +49,7 @@ func (m *promptFamilyVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if pane := m.PaneMgr.Get("child-a"); pane != nil {
 				pane.Title = workspace.SubAgentActivityLabel("Samuel sub Rebecca", "researcher", "")
 			}
-			root.State.Messages.UpdateToolCall("visual-spawn", "visual-tool", "run_sub_agent", "Researcher · Inspect renderer and report")
+			root.State.Messages.UpdateToolCall("visual-spawn", "visual-tool", "agent_start", "Researcher · Inspect renderer and report")
 			root.State.Messages.AttachSubPaneToTool("visual-spawn", "child-a", workspace.SubAgentActivityLabel("Samuel sub Rebecca", "researcher", "Inspect renderer and report"))
 			m.syncAgentMessages(m.alpha, false)
 			return m, nil

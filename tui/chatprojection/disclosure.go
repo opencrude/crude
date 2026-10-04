@@ -46,6 +46,9 @@ func (r *Renderer) disclosureState(msg *types.ChatMessage) DisclosureState {
 func (r *Renderer) defaultDisclosure(msg *types.ChatMessage) DisclosureState {
 	switch {
 	case msg.Role == types.RoleThinking:
+		if r.thinkingBodyOnly {
+			return DisclosureExpanded // the enclosing pane owns disclosure
+		}
 		if msg.ThinkingDisplay.Kind.HasCompactPreview() {
 			return DisclosureCollapsed
 		}

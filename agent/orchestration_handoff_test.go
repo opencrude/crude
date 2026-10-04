@@ -22,7 +22,7 @@ func TestDelegationHasBoundedHandoffAndSingleVerificationOwner(t *testing.T) {
 		}
 	}
 	for _, tool := range tools.AgentTools {
-		if tool.Function.Name != "write_report" {
+		if tool.Function.Name != "publish_report" {
 			continue
 		}
 		text := tool.Function.Description + string(tool.Function.Parameters)

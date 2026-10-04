@@ -51,12 +51,12 @@ func testStatusText(app *App) string {
 	return ""
 }
 
-func testBtwCount(app *App) int {
+func testSteeringCount(app *App) int {
 	if app == nil {
 		return 0
 	}
 	if node := app.AgentMgr.Get(app.AgentMgr.ActiveID()); node != nil && node.State != nil && node.State.Messages != nil {
-		return node.State.Messages.PendingBtwCount()
+		return node.State.Messages.PendingSteeringCount()
 	}
 	return 0
 }

@@ -116,7 +116,7 @@ func (a *Agent) contextCompactor(targetWindow int) *Agent {
 	compactor.guidance = a.guidance
 	compactor.GuidanceCacheLoad = a.GuidanceCacheLoad
 	compactor.GuidanceCacheStore = a.GuidanceCacheStore
-	compactor.writeReportCalled = a.writeReportCalled
+	compactor.reportPublished = a.reportPublished
 	compactor.MaxRetries = a.MaxRetries
 	compactor.FilteredTools = a.FilteredTools
 	compactor.PrepareCompaction = a.PrepareCompaction

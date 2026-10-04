@@ -28,11 +28,6 @@ func (app *App) openBoardBrowser() tea.Cmd {
 		app.boardBrowser = boardbrowser.New(app.Theme)
 		app.termDock.SetPanel(termdock.PanelBoard, app.boardBrowser)
 	}
-	options := make([]ui.FormOption, 0)
-	for _, root := range app.AgentMgr.Orchestrators() {
-		options = append(options, ui.FormOption{ID: root.ID, Label: workspace.AgentDisplayLabel(root)})
-	}
-	app.boardBrowser.SetRoots(options)
 	app.termDockHeight = defaultWorkspacePanelHeight(termdock.PanelBoard)
 	if height := app.workspacePanelHeights[termdock.PanelBoard]; height > 0 {
 		app.termDockHeight = height
@@ -53,25 +48,17 @@ func (app *App) toggleBoardBrowser() tea.Cmd {
 }
 
 func (app *App) boardRequestCmd(request boardbrowser.Request) tea.Cmd {
-	owner, generation := &workspace.Workspace{RootPath: app.RootPath, WorkspaceDir: app.WorkspaceDir, WorkspaceDB: app.WorkspaceDB, Capabilities: app.Capabilities, Board: app.Board}, app.workspaceSwitchGen.Load()
-	workspaceOwner := app.Workspace
+	owner, generation := app.Workspace, app.workspaceSwitchGen.Load()
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		var err error
-		if request.Operation == "join" {
-			coordinator := ""
-			if len(request.Roots) > 0 {
-				coordinator = request.Roots[0]
-			}
-			err = workspaceOwner.JoinCollaboration(ctx, request.BoardID, request.Roots, coordinator)
-		}
 		if request.Operation == "mark-read" {
-			err = owner.MarkBoardRead(ctx, request.BoardID, request.Through)
+			err = owner.MarkBoardRead(ctx, request.Through)
 		}
 		var snapshot workspace.BoardSnapshot
 		if err == nil {
-			snapshot, err = owner.BoardSnapshot(ctx, request.BoardID, request.Query, request.Thread, request.Since)
+			snapshot, err = owner.BoardSnapshot(ctx, request.Query, request.Thread, request.Since, request.Snapshot)
 		}
 		return boardResultMsg{generation: generation, request: request, snapshot: snapshot, err: err}
 	}

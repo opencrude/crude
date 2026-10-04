@@ -114,7 +114,7 @@ func BuildChild(options ChildOptions) (systemPrompt, assignment string) {
 		ProjectGuidanceContract,
 		fmt.Sprintf(`<tool_permissions><allowed>%s</allowed><denied>%s</denied><rule>Stay within the permitted tool and policy boundary.</rule></tool_permissions>`, XMLText(strings.Join(options.AllowedTools, ", ")), XMLText(strings.Join(options.DeniedTools, ", "))),
 		fmt.Sprintf(`<file_ownership>%s</file_ownership>`, XMLText(strings.Join(options.FileOwnership, ", "))),
-		`<report_contract required="true"><rule>Call write_report exactly once before ending.</rule><rule>Include findings, changes, tests, unresolved risks, exact paths, and immediate parent actions.</rule><rule>A chat response is not a report.</rule></report_contract>`,
+		fmt.Sprintf(`<report_contract required="true"><rule>Call publish_report with kind="final" exactly once before ending and address it to parent %s.</rule><rule>Include findings, changes, tests, unresolved risks, exact paths, and immediate parent actions.</rule><rule>A chat response or interim report is not the required final report.</rule></report_contract>`, XMLText(options.ParentID)),
 		planning,
 		fmt.Sprintf(`<profile_instructions>%s</profile_instructions>`, XMLText(options.ProfileInstructions)),
 		stableEnvironment(options.WorkDir),

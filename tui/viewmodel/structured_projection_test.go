@@ -9,7 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/board"
+	"crude/collaboration"
 	"crude/provider"
 	"crude/sessiondb"
 	"crude/tui/chatprojection"
@@ -35,14 +35,15 @@ func structuredProjectionCases(t *testing.T) []structuredProjectionCase {
 		}
 		return string(encoded)
 	}
-	message := board.Message{ID: "message-1", BoardID: "review", ProjectID: "/project", Sequence: 1,
-		SenderName: "Patrick", SenderID: "patrick", Type: "RESULT", To: "main", RecipientID: "olivia",
-		Recipients: []board.Recipient{{ID: "olivia", Name: "Olivia", Availability: "active"}},
+	message := collaboration.Event{ID: "message-1", WorkspaceID: "/project", Sequence: 1,
+		SenderName: "Patrick", SenderID: "patrick", Origin: collaboration.OriginPeer, Kind: collaboration.EventWorkRequest,
+		Recipients: []collaboration.Recipient{{ID: "olivia", Name: "Olivia", State: collaboration.AgentAvailable, Presence: collaboration.RuntimeAttached}},
 		Body:       "The full regression suite passed; all Board previews preserve peer attribution.",
-		ThreadID:   "message-1", References: []board.Reference{{Kind: "file", ID: "board_test.go"}}}
+		ThreadID:   "message-1", RequestID: "review-1", RequestRevision: 2,
+		References: []collaboration.Reference{{Kind: "file", ID: "board_test.go"}}}
 	return []structuredProjectionCase{
-		{"board_post", `{"to":"main","type":"RESULT","body":"The full regression suite passed; all Board previews preserve peer attribution."}`, encode(board.PostResult{Message: message}), "regression suite passed", "board_test.go"},
-		{"board_read", `{"since":0}`, encode(board.Page{BoardID: "review", Messages: []board.Message{message}, Roster: []board.Member{{ID: "patrick", Name: "Patrick", Availability: "active"}}, Cursor: 1, LatestSequence: 2, HasMore: true}), "Patrick → Olivia", "Context accepted through"},
+		{"agent_send", `{"recipient_ids":["olivia"],"kind":"request","body":"The full regression suite passed; all Board previews preserve peer attribution."}`, encode(collaboration.PublishResult{Event: message, Deliveries: []collaboration.Delivery{{ID: "delivery-1", RecipientID: "olivia", State: collaboration.DeliveryPending, Version: 1}}}), "regression suite passed", "board_test.go"},
+		{"board_read", `{"since":0}`, encode(collaboration.Page{Events: []collaboration.Event{message}, Cursor: 1, Snapshot: 2, LatestSequence: 2, HasMore: true}), "Patrick → Olivia", "Request revision"},
 		{"remember", `{"title":"Keep exact provenance","kind":"lesson","content":"Keep complete assertions with exact validation provenance.","evidence":[{"kind":"validation","session_id":"s1","tool_call_id":"validated-99","outcome":"succeeded","summary":"Suite passed"}]}`, `{"id":"memory-1","revision":1,"kind":"lesson","title":"Keep exact provenance","status":"remembered"}`, "complete assertions", "validated-99"},
 		{"recall_memory", `{"query":"provenance"}`, `{"total":1,"results":[{"id":"memory-1","revision":2,"title":"Keep exact provenance","kind":"lesson","content":"Retain exact source and outcome evidence in memory.","evidence_count":1,"evidence":[{"kind":"validation","session_id":"s1","tool_call_id":"validated-99","outcome":"succeeded","summary":"Suite passed"}]}]}`, "exact source and outcome", "validated-99"},
 		{"update_memory", `{"id":"memory-1","expected_revision":2,"content":"The corrected assertion keeps full validation evidence."}`, `{"id":"memory-1","revision":3,"previous_revision":2,"status":"updated"}`, "corrected assertion", "Previous revision"},

@@ -183,7 +183,7 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 		m.activityBar.SetBadge(activityAgents, 0)
 		m.activityBar.SetBadge(activityGit, 0)
 	}
-	m.syncPendingBtwCount()
+	m.syncPendingSteeringCount()
 	m.refreshActivityList()
 
 	if m.launcherScreen != nil {
