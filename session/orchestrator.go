@@ -20,6 +20,7 @@ type Orchestrator struct {
 	RuntimeEpoch   uint64
 	RunID          string
 	RunVersion     uint64
+	passiveThrough int64
 
 	turnMu         sync.Mutex
 	turnGeneration uint64
@@ -143,6 +144,23 @@ func (o *Orchestrator) CancelTurn() (bool, []string) {
 	return true, nil
 }
 
+func (o *Orchestrator) cancelCollaborationRun(runID string, expectedVersion, appliedVersion uint64) error {
+	o.turnMu.Lock()
+	if o.RunID != runID || o.RunVersion != expectedVersion || o.turnCancel == nil {
+		o.turnMu.Unlock()
+		return collaboration.ErrStale
+	}
+	o.RunVersion = appliedVersion
+	o.turnCancelling = true
+	cancel, generation := o.turnCancel, o.turnGeneration
+	o.turnMu.Unlock()
+	cancel()
+	if runner := o.subAgentRunner(); runner != nil {
+		runner.CancelActiveForTurn(generation)
+	}
+	return nil
+}
+
 func (o *Orchestrator) ResolveBlock(response ttypes.BlockResponse) bool {
 	if o == nil || response.RequestID == "" || o.closing.Load() {
 		return false
@@ -174,12 +192,6 @@ func (o *Orchestrator) collaborationRunIdentity() (string, uint64) {
 	o.turnMu.Lock()
 	defer o.turnMu.Unlock()
 	return o.RunID, o.RunVersion
-}
-
-func (o *Orchestrator) setCollaborationRunVersion(version uint64) {
-	o.turnMu.Lock()
-	o.RunVersion = version
-	o.turnMu.Unlock()
 }
 
 // AgentTurnGeneration includes interrupted and unbilled turns and is restored from

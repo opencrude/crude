@@ -527,8 +527,8 @@ func (s *WorkspaceSettingsSurface) paneTitleParts() []string {
 	}
 	if s.capabilitiesOpen() {
 		parts := []string{s.capCatalog.title()}
-		if s.capCatalog.id != "" {
-			parts = append(parts, s.capCatalog.id)
+		if s.capCatalog.id != "" && (s.capCatalog.detail || s.capCatalog.edit != "") {
+			parts = append(parts, mapDefault(s.capCatalog.entry().Name, s.capCatalog.id))
 		}
 		return parts
 	}

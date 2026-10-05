@@ -91,6 +91,12 @@ func (store *Store) PublishReport(ctx context.Context, request PublishReportRequ
 		if err != nil {
 			return fmt.Errorf("collaboration: report author: %w", err)
 		}
+		// New publications must come from the current runtime. The dedupe check
+		// above intentionally precedes this guard so an accepted call remains
+		// replayable after its run finishes or its owner detaches.
+		if author.State != AgentAvailable || author.Presence != RuntimeAttached {
+			return fmt.Errorf("%w: report author is not attached and available", ErrUnavailable)
+		}
 		if request.RunID != "" {
 			run, err := loadRun(ctx, tx, request.RunID)
 			if err != nil {
@@ -98,6 +104,17 @@ func (store *Store) PublishReport(ctx context.Context, request PublishReportRequ
 			}
 			if run.AgentID != request.AuthorID {
 				return fmt.Errorf("%w: report run belongs to another agent", ErrConflict)
+			}
+			if run.RuntimeEpoch != author.RuntimeEpoch || author.CurrentRunID != run.ID || run.State.Terminal() {
+				return fmt.Errorf("%w: report run is not current", ErrStale)
+			}
+		}
+		if request.Kind == ReportFinal && author.ParentID != "" {
+			if request.RunID == "" {
+				return fmt.Errorf("%w: child final report requires an active owned run", ErrInvalid)
+			}
+			if !slices.Contains(request.RecipientIDs, author.ParentID) {
+				return fmt.Errorf("%w: child final report must address its parent", ErrInvalid)
 			}
 		}
 		var latest sql.NullInt64
@@ -108,12 +125,39 @@ func (store *Store) PublishReport(ctx context.Context, request PublishReportRequ
 			if request.SupersedesRevision != int(latest.Int64) {
 				return fmt.Errorf("%w: report revision %d is current", ErrStale, latest.Int64)
 			}
+			previous, err := loadArtifact(ctx, tx, request.ArtifactID, int(latest.Int64))
+			if err != nil {
+				return err
+			}
+			if previous.WorkspaceID != store.workspaceID || previous.AuthorID != request.AuthorID ||
+				previous.RunID != request.RunID || previous.RequestID != request.RequestID {
+				return fmt.Errorf("%w: report provenance cannot change", ErrConflict)
+			}
+			if previous.Kind == ReportFinal && request.Kind != ReportFinal {
+				return fmt.Errorf("%w: final report cannot be downgraded", ErrConflict)
+			}
 			revision = int(latest.Int64) + 1
 		} else {
 			if request.SupersedesRevision != 0 {
 				return fmt.Errorf("%w: report has no previous revision", ErrStale)
 			}
 			revision = 1
+		}
+		if err := validateReportRequest(ctx, tx, author, request.RunID, request.RequestID); err != nil {
+			return err
+		}
+		if request.Kind == ReportFinal && author.ParentID != "" {
+			var otherID string
+			err := tx.QueryRowContext(ctx, `SELECT id FROM collaboration_artifacts
+				WHERE workspace_id=? AND run_id=? AND author_id=? AND kind=?
+				AND id<>? LIMIT 1`,
+				store.workspaceID, request.RunID, request.AuthorID, ReportFinal, request.ArtifactID).Scan(&otherID)
+			if err == nil {
+				return fmt.Errorf("%w: child run already has final report %s", ErrConflict, otherID)
+			}
+			if !errors.Is(err, sql.ErrNoRows) {
+				return err
+			}
 		}
 		referencesJSON, err := json.Marshal(request.References)
 		if err != nil {

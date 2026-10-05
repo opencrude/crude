@@ -1,6 +1,6 @@
 # Workspace Collaboration Runtime
 
-> Status: Current reference (2026-10-04) — durable workspace-wide agent
+> Status: Current reference (2026-10-05) — durable workspace-wide agent
 > communication, delivery, reports, controls, claims, and recovery.
 
 ## Scope and ownership
@@ -44,13 +44,20 @@ Each attached runtime holds an OS advisory lock. SQLite epochs reject a stale
 process after takeover. Heartbeats indicate liveness but never authorize stealing
 an agent while the process lock remains held.
 
+A newly acquired owner lock advances the epoch even when the owner label is
+reused. Attachment preserves suspended/closed choices; it does not silently make
+an unavailable agent available. Child execution is bounded and leaf-only: roots
+may launch children, while children may communicate with existing peers or ask
+their parent for independent work. A finished child is a retained review surface,
+not a runnable process waiting to be reopened.
+
 ## Model operation surface
 
 | Tool | Contract |
 |---|---|
 | `agent_list` | Bounded workspace directory query with exact IDs and live facts |
 | `agent_inspect` | Exact agent/run/reports/claims without secrets or raw private context |
-| `agent_start` | Start a bounded child under effective policy and resource limits |
+| `agent_start` | Start a bounded leaf; optional `profile` selects an exact enabled reusable profile whose category matches |
 | `agent_send` | Directed note/reply/request/revision or rare running-agent broadcast |
 | `agent_respond` | Accept, defer, or decline an exact request revision |
 | `agent_control` | Request pause/resume/cancel/reopen for an exact agent/run version |
@@ -61,6 +68,32 @@ an agent while the process lock remains held.
 
 Directed delivery is automatic. Models do not call `board_read`, `agent_wait`, or
 sleep merely to notice an ordinary message, report, or terminal outcome.
+
+Choose direct work when simpler. Inspect an existing peer's exact identity,
+availability and ownership before reuse; otherwise delegate one independent,
+explicitly owned assignment. Answer substantive requests, not every note or
+outcome. Gratuitous acknowledgements create message loops rather than progress.
+
+`agent_wait` checks **all** supplied run/report conditions and rejects mismatched
+agent, run and artifact identities. A requested run returns its typed terminal
+outcome; report-only waits return the artifact. A report becoming available is
+never interpreted as execution success. Human/lifecycle cancellation still
+interrupts the wait.
+
+## Work requests
+
+The immutable journal is the single request authority, not another scheduler.
+An initial request starts at revision 1 and gets a stable tool-call-derived ID
+when the caller omits it. Only its author may issue the exact next revision;
+original recipients cannot be replaced or widened. Optional `supersedes` must
+identify the latest request event, and revisions remain in the same thread.
+
+Only an addressed participant may accept/defer/decline the latest revision,
+addressing its owner. Disposition is a typed reference, never inferred from
+free-form prose. Identical originating-call retries are idempotent; duplicate
+acknowledgements are rejected. A declined request needs an author-issued revision
+before reconsideration. Older accepted bytes remain historical evidence, not a
+current agreement. A disposition never grants tools, files or human approval.
 
 ## Delivery and context admission
 
@@ -80,6 +113,15 @@ For each recipient:
 A failed context commit admits nothing. A crash after the local commit replays
 only the receipt. Edit/withdraw can win only while every obligation is still
 pending; an admitting or admitted delivery cannot be falsely retracted.
+
+Attachment loads local admission evidence **before** taking over. In one
+workspace transaction it validates exact delivery/event/recipient/epoch/version/
+commit identities, admits committed receipts, requeues only uncommitted
+reservations, interrupts orphaned runs, releases their claims and frees the
+active run slot. Old-epoch mutation and admission attempts fail closed.
+Recovery inspects reservations and explicit receipts, not all admitted history.
+Root collaboration commits use the same session-owned active-context row as
+normal turns and compaction; receipts retain the exact runtime agent identity.
 
 Human steering targets an exact active run and retains genuine human origin.
 Peer/runtime content is never wrapped as a human interruption.
@@ -115,6 +157,20 @@ summary, complete body, digest, references, metadata, and supersession. Any
 eligible root or child may publish one. Publication is evidence delivery, not
 proof of task success.
 
+Revisions cannot change author, producing run or request identity, or downgrade
+a final report. New publications require the attached author and any supplied
+run to be current. A child final must address its exact parent and its active
+owned run; a child run has one final artifact, with explicit same-artifact
+corrections allowed while active. A nonempty request identity must be an actual
+work request in which the author participates or the child's exact launch
+assignment. Accepted originating-call retries still return the original evidence
+after completion or detach.
+
+Automatic notifications carry the bounded summary and exact artifact ID/revision,
+not the complete potentially large body. Use `artifact_read` on that revision
+before relying on the evidence. Interim publication never satisfies the final
+deliverable flag, and a missing-final terminal reason cannot be marked completed.
+
 Run terminal state comes from typed execution state, not words such as “quota,”
 “cancelled,” or “success” in prose. Reading an interim report never consumes or
 suppresses the later terminal outcome. Corrections append a new report revision;
@@ -134,6 +190,25 @@ preview preconditions, or undo receipts.
 Opaque shell commands and external MCP writers are not made safe merely by a
 claim. Unknown or unfenced effects remain explicitly limited.
 
+Declared child ownership is reserved before model execution, across sessions.
+Native writes conflict with another active owner; repeated writes reuse the
+run's claim. Failed launches release their exact runtime and claims rather than
+leaving invisible running agents.
+
+## Lifecycle controls
+
+Pause/cancel require exact run ID and version. Application checks that identity
+again transactionally; another run starting at version 1 cannot inherit the
+earlier control. Finalization tolerates concurrent version changes only for
+that same owned run. Pause cancels current execution and suspends admission.
+Resume/reopen require an exact runtime epoch and no active run, restoring
+availability—not a frozen execution stack or an automatic child relaunch.
+Controls for unattached history fail explicitly.
+
+Control submission and its authoritative applied/rejected outcome are separate
+durable events. Human-origin outcomes are audit-only Board facts, not fake
+deliveries to a “human” agent and not fresh model turns.
+
 Peer claims and reports are attributed evidence. They do not become verified
 memory merely through delivery, repetition, or exposure.
 
@@ -149,7 +224,10 @@ consume attachment state, reset undo, or break pointer capture.
 
 Resume is passive: it restores participants, contexts, pending deliveries,
 artifacts, and run facts without provider calls, command replay, or implicit
-child launch. Workspace switch/shutdown joins local workers, releases exact
+child launch. Already-published evidence is admitted passively through a stable
+startup sequence boundary; genuinely new peer input can subsequently wake an idle
+root. Recovered children have their own receipts/runs settled without restarting.
+Workspace switch/shutdown joins local workers, releases exact
 runtime locks, and does not stop another process's agents.
 
 There is one current collaboration schema and no compatibility board, legacy
@@ -161,17 +239,28 @@ Current acceptance includes:
 
 - Cross-process runtime-lock and epoch takeover tests on Windows.
 - Idempotent publication, reservation/admission, withdrawal races, pagination,
-  report revision, claim conflict, and recovery coverage.
+  report provenance, typed request/disposition fencing, claim conflict, and
+  before/after-local-commit recovery coverage.
+- Regression coverage for old controls against replacement runs, interim reports
+  masquerading as finals, exact pause/resume, cancellation during finalization,
+  profile selection, combined waits, and passive restart with zero provider replay.
 - Live/SQLite/hydration projection parity at narrow and wide widths.
 - Broadcast tests with large closed history proving only active attached runs
   receive the event.
 - `TestWorkspaceAgentsCollaborateToRepairAndVerifyProject`: two independent root
   sessions perform a real tool loop where one requests a code repair, the peer
-  edits the Go project and publishes a report, and the coordinator receives it
-  automatically before running the authoritative test.
+  accepts the exact request, edits and checks the Go project, and publishes a
+  report. The coordinator receives its exact reference automatically, reads the
+  complete artifact, and runs the authoritative test.
 - Live workspace coordination in which directed notes and report publication
   arrived automatically between independently running roots.
 
 These establish engineering operation, not a universal productivity claim.
+The deterministic integration provider is scripted; it does not establish that
+every real model will independently choose this workflow. Local ownership and
+durable event/receipt principles are informed by
+[Temporal's execution/run distinction](https://docs.temporal.io/workflow-execution)
+and [Codex subagent guidance](https://developers.openai.com/codex/subagents), not a
+claim of deterministic replay or a multi-machine Temporal-style service.
 Held-out real-model with/without comparisons are still required before claiming
 general task-quality, token, latency, or cost improvement.

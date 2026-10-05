@@ -35,17 +35,24 @@ Explicit manager changes still publish their committed snapshots immediately.
 
 1. Open **Manage Skills**, the Skills rail, or `/skills [query]`. These routes use
    the same Settings manager, defaulting to workspace scope.
-2. Installed lists current registrations. Inspect opens Overview, Instructions,
+2. The catalog combines search results and current registrations without duplicate
+   identities. **Installed only** restricts it to registrations without networking.
+   Cards expose Install/Manage directly. Inspect opens Overview, Instructions,
    Files and Access & use; versioned managed packages also expose Versions.
 3. Read instructions/List files are explicit bounded reads. Authored files can
    open in the native editor; managed artifacts require Make local copy first.
-4. Discover → Search sources explicitly queries configured sources. A local
+4. Enter a query and press Enter or Search to query enabled sources. Source and
+   Sort open explicit choice lists. A selected Source is queried directly; an
+   all-source search interleaves source-ranked results and retains partial results
+   if another source fails. A local
    source is a directory of standard skill directories; repository sources pin
    complete commit identities. Source trust is not an execution grant.
-   Fresh application settings include two disableable built-in presets:
+   Application settings include three disableable built-in presets:
    **Anthropic Skills (pinned)** at commit
    `8a1541c4a3ffa5a20a5a91de0dcf3f0bab1d1ef4`, and the
-   **Official MCP Registry (preview)** discovery API. Built-ins can be edited or
+   **Skills Directory** community search at skills.sh, and the
+   **Official MCP Registry (preview)** discovery API. Directory skills resolve
+   to a reviewed exact GitHub commit. Built-ins can be edited or
    disabled but not deleted; install/update still requires the exact preview.
 5. Install/Update opens an exact source/revision/digest/scope/binding preview.
    Confirm rechecks it before publication. Changed metadata requires another
@@ -61,8 +68,12 @@ does not prevent user-managed install or browsing.
 
 ## MCP
 
-Manage MCP or `/mcp [query]` opens Installed/Discover in the retained Settings
-window. Add/Edit exposes the HTTP endpoint or stdio executable/arguments,
+Manage MCP or `/mcp [query]` opens the same searchable store in the retained Settings
+window. Installed only is an explicit local-only filter. The official Registry
+includes remote HTTP and exact-version npm/PyPI packages; required setup is shown,
+and unsupported variants remain inspectable with reasons. Search is bounded to 100
+results and eight Registry cursor pages, not a claim of exhaustive marketplace
+coverage. Add/Edit exposes the HTTP endpoint or stdio executable/arguments,
 directory, environment, headers/secret references, authentication and timeout.
 Import accepts supported `servers`/`mcpServers` JSON and rejects unknown fields
 instead of silently executing unrelated extensions.

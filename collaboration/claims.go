@@ -47,7 +47,8 @@ func (store *Store) AcquireClaims(ctx context.Context, request AcquireClaimsRequ
 			if err != nil {
 				return err
 			}
-			if run.AgentID != request.AgentID || run.State.Terminal() {
+			if run.AgentID != request.AgentID || run.State.Terminal() ||
+				run.RuntimeEpoch != agent.RuntimeEpoch || agent.CurrentRunID != run.ID || agent.Presence != RuntimeAttached {
 				return fmt.Errorf("%w: inactive or foreign claim run", ErrConflict)
 			}
 		}
@@ -61,8 +62,7 @@ func (store *Store) AcquireClaims(ctx context.Context, request AcquireClaimsRequ
 				if !pathsOverlap(path, existing.Path) {
 					continue
 				}
-				if existing.AgentID == request.AgentID && existing.RunID == request.RunID &&
-					existing.RequestID == request.RequestID && existing.Path == path {
+				if existing.AgentID == request.AgentID && existing.RunID == request.RunID && existing.Path == path {
 					result = append(result, existing)
 					reused = true
 					break

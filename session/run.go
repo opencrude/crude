@@ -32,6 +32,10 @@ func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
 	s.sender = sender
 	defer s.detachCollaborator(context.Background(), o.ID)
 	s.reconcileCollaborationAdmissions(s.db, o.ID)
+	if err := s.admitPassiveCollaboration(o, sender); err != nil {
+		sender.SendAgentEventWithID("error", "Could not recover pending collaboration: "+err.Error(), o.ID)
+		return
+	}
 
 	var collaborationNotifications <-chan struct{}
 	unsubscribeCollaboration := func() {}
@@ -159,7 +163,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 				if expectedVersion == 0 {
 					expectedVersion = collaborationRun.Version
 				}
-				finished, err := store.FinishRun(context.Background(), collaboration.FinishRunRequest{
+				finished, err := finishCollaborationRun(store, collaboration.FinishRunRequest{
 					RunID: collaborationRun.ID, AgentID: o.ID, RuntimeEpoch: o.RuntimeEpoch,
 					ExpectedVersion: expectedVersion, State: runState,
 					Outcome: outcome, ContextCommitID: currentMsgID,

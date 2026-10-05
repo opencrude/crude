@@ -235,7 +235,6 @@ func TestPaneSelectionDoesNotIncludeGutter(t *testing.T) {
 		NestingLevel: 1,
 		PaneLineMap:  paneMap,
 		PaneGutters:  gutters,
-		HasPaneBg:    func(string) bool { return true },
 	}, 1)
 
 	clickX := padLR + 3

@@ -51,7 +51,7 @@ fill. The shared `ui.FormField` painter owns this rule for every consumer.
 | Launcher workspaces | VirtualList name/path pairs with non-interactive separator rows in the right pane; dedicated-row FilterField, ScrollbarControl and ProgressRule; one shared row stride drives paint, scrolling and context menus |
 | LSP popup lists | List |
 | Agent question choices | native Form select/multi-select collection | List-backed form collection |
-| Skills/MCP catalogs | retained Installed/Discover `ui.Tabs`, `FilterField`, `Table`, detail `Form`/read-only `TextArea`, contained skill `Tree`, and bounded bottom actions; scope stays in the separate Application/Workspace footer switch |
+| Skills/MCP catalogs | store-style retained `VirtualList` cards with native inline Install/Manage buttons, `FilterField` search, explicit Installed-only `ToggleButton` and Source/Sort choice lists; detail `ui.Tabs`/`Form`/read-only `TextArea`, contained skill `Tree`, and bounded bottom actions; scope stays in the separate Application/Workspace footer switch |
 | Composer capability selection | `capabilitypicker.Screen` in WindowFrame, Skills/Tools/Resources/Prompts tabs, native FilterField/List/Form/TextArea; visible + Capability control and palette, explicit preview before staged context |
 | Memory / Board | retained workspace-panel owners, native knowledge/episodes or threads/participants tabs, search and scrollable copyable evidence detail; tabs/title share their first row with host controls, browse search and local actions share a row, narrow rows expose local actions through a same-row More button and accessible list; no floating memory overlay or session-deck mount |
 

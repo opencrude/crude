@@ -186,11 +186,14 @@ func TestSettingsCategories_AllFormsPopulateFields(t *testing.T) {
 			if category.Name == "Agents" {
 				want = "Main Agent"
 			}
-			if category.Name == "Skills" || category.Name == "MCP" || category.Name == "Sources" {
-				want = "Installed"
+			if category.Name == "Skills" || category.Name == "MCP" {
+				want = "Installed only"
+			}
+			if category.Name == "Sources" {
+				want = "Add source"
 			}
 			if painted := bufferPlain(paintAccountSurface(t, surface, 90, 24)); !strings.Contains(painted, want) {
-				t.Fatalf("%s overview table is not painted", category.Name)
+				t.Fatalf("%s overview controls are not painted", category.Name)
 			}
 			continue
 		}

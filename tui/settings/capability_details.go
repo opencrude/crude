@@ -21,7 +21,7 @@ func (catalog *capabilityCatalog) viewKey() string {
 	if catalog.detail {
 		return string(catalog.kind) + "/" + catalog.id + "/" + catalog.detailPage
 	}
-	return string(catalog.kind) + "/" + catalog.page
+	return string(catalog.kind) + "/catalog"
 }
 
 func (catalog *capabilityCatalog) saveListState() {
@@ -50,10 +50,9 @@ func (catalog *capabilityCatalog) switchKind(kind captypes.Kind) {
 		return
 	}
 	catalog.saveListState()
-	catalog.pages[catalog.kind] = catalog.page
 	catalog.closeEditor()
 	catalog.kind, catalog.id, catalog.edit, catalog.detail = kind, "", "", false
-	catalog.page = mapDefault(catalog.pages[kind], "installed")
+	catalog.choosing, catalog.message = "", ""
 	catalog.setTabs()
 	catalog.restoreFilter()
 	catalog.syncRows()
@@ -79,12 +78,8 @@ func (catalog *capabilityCatalog) syncModel() {
 }
 
 func (catalog *capabilityCatalog) setTabs() {
-	items := []ui.TabItem{{ID: "installed", Label: "Installed"}, {ID: "discover", Label: "Discover"}}
-	if catalog.kind == "source" {
-		items = items[:1]
-		catalog.page = "installed"
-	}
-	active := catalog.page
+	var items []ui.TabItem
+	active := ""
 	if catalog.detail {
 		active = catalog.detailPage
 		if catalog.kind == captypes.KindSkill {
@@ -367,6 +362,9 @@ func (catalog *capabilityCatalog) detailActions(button func(string, string) ui.A
 	}
 	var secondary []ui.ActionBarButton
 	entry := catalog.entry()
+	if !entry.Installed && entry.State == "unsupported" {
+		return primary, nil
+	}
 	model := catalog.owner.model
 	if catalog.kind == captypes.KindSkill {
 		skill, installed := model.capabilities.Skills[catalog.id]
@@ -738,9 +736,19 @@ func (catalog *capabilityCatalog) consumeResult() {
 	}()
 	if result.Err != nil {
 		catalog.message = result.Err.Error()
+		if (request.action.Operation == "discover" || request.action.Operation == "search") && len(result.Entries) > 0 {
+			catalog.syncRows()
+		}
 		return
 	}
 	catalog.message = request.action.Operation + " completed"
+	if request.action.Operation == "discover" || request.action.Operation == "search" {
+		catalog.syncRows()
+		catalog.message = ""
+		if !catalog.detail && catalog.choosing == "" && catalog.discoveryCurrent(catalog.views[catalog.viewKey()]) {
+			catalog.owner.focusID(catalog.store.ID())
+		}
+	}
 	if strings.HasPrefix(request.action.Operation, "preview-") {
 		var preview captypes.AcquisitionPreview
 		if json.Unmarshal([]byte(result.Content), &preview) != nil || preview.Token == "" || preview.ID != request.action.ID || catalog.id != preview.ID || preview.Scope != catalog.owner.model.capabilityScope() {
@@ -758,7 +766,16 @@ func (catalog *capabilityCatalog) consumeResult() {
 	}
 	if request.action.Operation == "install" || request.action.Operation == "update" {
 		catalog.acquisition = nil
-		catalog.detailForm("overview")
+		if catalog.acquisitionReturnToStore {
+			catalog.detail, catalog.id = false, ""
+			catalog.setTabs()
+			catalog.restoreFilter()
+			catalog.syncRows()
+			catalog.owner.focusID(catalog.store.ID())
+			catalog.message = "Installed. Manage opens its settings; nothing was executed."
+		} else {
+			catalog.detailForm("overview")
+		}
 	}
 	if request.action.Operation == "test" {
 		if request.form != catalog.owner.model.capabilityDraft || !reflect.DeepEqual(request.draft, formDraftBytes(catalog.owner.model.capabilityDraft)) {

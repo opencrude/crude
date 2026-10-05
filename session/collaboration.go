@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -60,7 +61,7 @@ func (s *Session) CollaborationStore() *collaboration.Store {
 	return s.collaborationStore
 }
 
-func (s *Session) registerCollaborator(ctx context.Context, id, name, sessionID, parentID, category string) (collaboration.Agent, error) {
+func (s *Session) registerCollaborator(ctx context.Context, id, name, sessionID, parentID, category string, db *sql.DB) (collaboration.Agent, error) {
 	if s == nil {
 		return collaboration.Agent{}, fmt.Errorf("session is nil")
 	}
@@ -70,12 +71,25 @@ func (s *Session) registerCollaborator(ctx context.Context, id, name, sessionID,
 	if store == nil {
 		return collaboration.Agent{}, nil
 	}
+	if db == nil {
+		return collaboration.Agent{}, errors.New("workspace agent attachment requires durable session evidence")
+	}
+	pending, receipts, err := collaborationAdmissionReceipts(db, sessionID, id)
+	if err != nil {
+		return collaboration.Agent{}, err
+	}
 	registered, err := store.RegisterAgent(ctx, collaboration.AgentRegistration{
 		ID: id, Name: name, SessionID: sessionID, ParentID: parentID,
 		Category: category, State: collaboration.AgentAvailable, OwnerInstance: instanceID,
+		Admissions: receipts,
 	})
 	if err != nil {
 		return collaboration.Agent{}, err
+	}
+	for _, admission := range pending {
+		if err := sessiondb.MarkCollaborationAdmissionPublished(db, admission.DeliveryID, admission.ContextCommitID); err != nil && s.logger != nil {
+			s.logger.Warn("COLLAB", "recovered_receipt_mark_failed", "delivery_id", admission.DeliveryID, "error", err.Error())
+		}
 	}
 	s.mu.Lock()
 	s.collaborationAgents[id] = registered
@@ -119,11 +133,18 @@ func (s *Session) reserveCollaboration(ctx context.Context, agentID string, runt
 
 func collaborationInput(delivery collaboration.PendingDelivery) provider.UserInput {
 	event := delivery.Event
+	references := make([]rootprompt.CollaborationReference, 0, len(event.References))
+	for _, reference := range event.References {
+		references = append(references, rootprompt.CollaborationReference{
+			Kind: reference.Kind, ID: reference.ID, Revision: reference.Revision,
+		})
+	}
 	text := rootprompt.CollaborationEvent(rootprompt.CollaborationEventData{
 		Origin: string(event.Origin), EventID: event.ID, ThreadID: event.ThreadID, SenderID: event.SenderID,
 		SenderName: event.SenderName, Kind: string(event.Kind), RequestID: event.RequestID,
 		RequestRevision: event.RequestRevision, RunID: event.RunID, Body: event.Body,
-		Broadcast: event.Broadcast,
+		Broadcast:  event.Broadcast,
+		References: references, Disposition: string(collaboration.EventDisposition(event)),
 	})
 	display := event.SenderName + " · " + collaborationKindLabel(event.Kind)
 	if event.Broadcast {
@@ -476,8 +497,14 @@ func (s *Session) commitCollaborationAdmissions(
 			RunID: runID,
 		})
 	}
-	if err := sessiondb.SaveContextStateWithAdmissions(db, sessionID, agentID, sessiondb.ContextState{
-		AgentID: agentID, Generation: max(1, generation),
+	contextOwnerID := agentID
+	if sessionID == s.sessionID {
+		// A session owns exactly one root context; normal turns, compaction,
+		// resume and collaboration must commit the same authoritative row.
+		contextOwnerID = sessionID
+	}
+	if err := sessiondb.SaveContextStateWithAdmissions(db, sessionID, contextOwnerID, agentID, sessiondb.ContextState{
+		AgentID: contextOwnerID, Generation: max(1, generation),
 		Reason: "collaboration_admission", Messages: messages,
 	}, admissions); err != nil {
 		return err
@@ -524,7 +551,7 @@ func (s *Session) reconcileCollaborationAdmissions(db *sql.DB, agentID string) {
 			DeliveryID: admission.DeliveryID, RecipientID: admission.AgentID,
 			RuntimeEpoch: admission.RuntimeEpoch, ExpectedVersion: admission.DeliveryVersion,
 			ContextCommitID: admission.ContextCommitID,
-		}); err != nil && !errors.Is(err, collaboration.ErrStale) {
+		}); err != nil {
 			if s.logger != nil {
 				s.logger.Warn("COLLAB", "receipt_recovery_failed",
 					"delivery_id", admission.DeliveryID, "error", err.Error())
@@ -680,8 +707,8 @@ func (s *Session) applyCollaborationControl(
 			[]collaboration.PendingDelivery{delivery}, "runtime owner is unavailable")
 		return
 	}
-	operation, expectedVersion := collaborationControlOperation(delivery.Event)
-	if operation == "" {
+	operation, expectedVersion, expectedEpoch, identityErr := collaboration.ControlIdentity(delivery.Event)
+	if identityErr != nil {
 		_, _ = store.ReleaseReservation(ctx, collaboration.ReleaseRequest{
 			DeliveryID: delivery.Delivery.ID, RecipientID: registered.ID,
 			RuntimeEpoch: registered.RuntimeEpoch, ExpectedVersion: delivery.Delivery.Version,
@@ -703,34 +730,38 @@ func (s *Session) applyCollaborationControl(
 	if s.sender != nil {
 		s.sender.SendAgentEventWithID("collaboration_message", delivery.Event, target.agentID)
 	}
-	outcome, applyErr := s.applyRuntimeControl(ctx, store, target, operation, expectedVersion)
+	if operation == "cancel" || operation == "pause" {
+		// The event's run is authoritative; a replacement with the same
+		// version number must never inherit the old operation.
+		if target.runID != delivery.Event.RunID {
+			expectedVersion = 0
+		}
+		expectedEpoch = target.runtimeEpoch
+	}
+	outcome, applyErr := s.applyRuntimeControl(ctx, store, target, operation, expectedVersion, expectedEpoch)
 	if applyErr != nil {
 		outcome = "rejected: " + applyErr.Error()
 	}
 	if delivery.Event.SenderID == "" {
 		return
 	}
+	recipients := []string{delivery.Event.SenderID}
+	auditOnly := delivery.Event.Origin == collaboration.OriginHuman
+	if auditOnly {
+		recipients = nil
+	}
 	_, err := store.Publish(context.Background(), collaboration.PublishRequest{
 		SenderID: target.agentID, SenderName: registered.Name,
 		IdempotencyKey: "control-outcome:" + delivery.Event.ID,
-		RecipientIDs:   []string{delivery.Event.SenderID},
-		Origin:         collaboration.OriginRuntime, Kind: collaboration.EventControlOutcome,
+		RecipientIDs:   recipients, AuditOnly: auditOnly,
+		Origin: collaboration.OriginRuntime, Kind: collaboration.EventControlOutcome,
 		Body:    strings.ToUpper(operation[:1]) + operation[1:] + " " + outcome,
-		ReplyTo: delivery.Event.ID, RunID: target.runID,
+		ReplyTo: delivery.Event.ID, RunID: delivery.Event.RunID,
 	})
 	if err != nil && s.logger != nil {
 		s.logger.Warn("COLLAB", "control_outcome_publish_failed",
 			"event_id", delivery.Event.ID, "error", err.Error())
 	}
-}
-
-func collaborationControlOperation(event collaboration.Event) (string, uint64) {
-	for _, reference := range event.References {
-		if reference.Kind == "control" {
-			return reference.ID, uint64(max(0, reference.Revision))
-		}
-	}
-	return "", 0
 }
 
 func (s *Session) applyRuntimeControl(
@@ -739,76 +770,26 @@ func (s *Session) applyRuntimeControl(
 	target collaborationControlTarget,
 	operation string,
 	expectedVersion uint64,
+	expectedEpoch uint64,
 ) (string, error) {
-	if target.runID != "" {
-		current, err := store.Run(ctx, target.runID)
-		if err != nil {
-			return "", err
-		}
-		if expectedVersion > 0 && current.Version != expectedVersion {
-			return "", collaboration.ErrStale
-		}
-		target.runVersion = current.Version
+	updated, err := store.ApplyControl(ctx, collaboration.ControlRequest{
+		AgentID: target.agentID, RuntimeEpoch: expectedEpoch,
+		RunID: target.runID, ExpectedVersion: expectedVersion, Operation: operation,
+	})
+	if err != nil {
+		return "", err
 	}
-	transition := func(state collaboration.RunState) error {
-		if target.runID == "" {
-			return nil
-		}
-		updated, err := store.TransitionRun(ctx, target.runID, target.agentID,
-			target.runtimeEpoch, target.runVersion, state)
-		if err != nil {
-			return err
-		}
-		target.runVersion = updated.Version
+	if updated != nil {
 		if target.root != nil {
-			target.root.setCollaborationRunVersion(updated.Version)
-		}
-		if target.child != nil {
+			if err := target.root.cancelCollaborationRun(updated.ID, expectedVersion, updated.Version); err != nil {
+				return "", err
+			}
+		} else if target.child != nil {
 			target.child.SetRunVersion(updated.Version)
-		}
-		return nil
-	}
-	switch operation {
-	case "cancel":
-		if target.runID == "" {
-			return "already settled", nil
-		}
-		if err := transition(collaboration.RunStopping); err != nil {
-			return "", err
-		}
-		if target.root != nil {
-			target.root.CancelTurn()
-		} else {
 			target.child.Cancel()
 		}
-		return "applied", nil
-	case "pause":
-		if target.runID == "" {
-			return "already settled", nil
-		}
-		if err := transition(collaboration.RunPausing); err != nil {
-			return "", err
-		}
-		if _, err := store.SetAgentState(ctx, target.agentID, target.runtimeEpoch, collaboration.AgentSuspended); err != nil {
-			return "", err
-		}
-		if target.root != nil {
-			target.root.CancelTurn()
-		} else {
-			target.child.Cancel()
-		}
-		return "applied", nil
-	case "resume", "reopen":
-		if target.runID != "" {
-			return "", fmt.Errorf("agent still owns active run %s", target.runID)
-		}
-		if _, err := store.SetAgentState(ctx, target.agentID, target.runtimeEpoch, collaboration.AgentAvailable); err != nil {
-			return "", err
-		}
-		return "applied", nil
-	default:
-		return "", fmt.Errorf("unsupported control %q", operation)
 	}
+	return "applied", nil
 }
 
 func (s *Session) recordCollaborationContext(agentID string, message provider.ChatMessage) {
@@ -833,7 +814,9 @@ func (s *Session) collaborationDefinitions(actorID string) []tools.ToolDef {
 		return nil
 	}
 	definitions := append([]tools.ToolDef(nil), tools.CollaborationTools...)
-	if s.runtimeProfile != nil && !s.runtimeProfile.GetEffectiveConfig(actorID).IsMultiAgentEnabled() {
+	participant, err := store.Agent(context.Background(), actorID)
+	leaf := err == nil && participant.ParentID != ""
+	if leaf || s.runtimeProfile != nil && !s.runtimeProfile.GetEffectiveConfig(actorID).IsMultiAgentEnabled() {
 		filtered := definitions[:0]
 		for _, definition := range definitions {
 			if definition.Function.Name != "agent_start" {
@@ -859,6 +842,11 @@ func (s *Session) executeCollaborationTool(ctx context.Context, actorID, name st
 	}
 	switch name {
 	case "agent_start":
+		if participant, err := store.Agent(ctx, actorID); err != nil {
+			return tools.ToolResult{}, true, err
+		} else if participant.ParentID != "" {
+			return tools.ToolResult{}, true, fmt.Errorf("bounded leaf agents cannot launch children; request independent work from the parent or an existing peer")
+		}
 		if s.runtimeProfile != nil && !s.runtimeProfile.GetEffectiveConfig(actorID).IsMultiAgentEnabled() {
 			return delegationDisabledResult(), true, nil
 		}
@@ -949,6 +937,7 @@ func (s *Session) executeCollaborationTool(ctx context.Context, actorID, name st
 			Body: body, ReplyTo: getStrParam(params, "reply_to"),
 			RequestID:       getStrParam(params, "request_id"),
 			RequestRevision: uint64(max(0, getIntParam(params, "request_revision"))),
+			References:      []collaboration.Reference{{Kind: "disposition", ID: disposition}},
 		})
 		return collaborationResult(published, err), true, err
 	case "agent_control":
@@ -960,25 +949,50 @@ func (s *Session) executeCollaborationTool(ctx context.Context, actorID, name st
 		if !canControlAgent(ctx, store, actorID, target) {
 			return tools.ToolResult{}, true, fmt.Errorf("agent %q cannot control unrelated agent %q", actorID, target)
 		}
+		participant, err := store.Agent(ctx, target)
+		if err != nil {
+			return tools.ToolResult{}, true, err
+		}
+		if participant.Presence != collaboration.RuntimeAttached {
+			return tools.ToolResult{}, true, fmt.Errorf("%w: agent has no attached execution owner; retained evidence is inspectable, but finished children need a new bounded assignment", collaboration.ErrUnavailable)
+		}
 		operation := getStrParam(params, "operation")
 		switch operation {
 		case "pause", "resume", "cancel", "reopen":
 		default:
 			return tools.ToolResult{}, true, fmt.Errorf("invalid agent control operation %q", operation)
 		}
+		runID := getStrParam(params, "run_id")
+		version := getIntParam(params, "expected_version")
+		epoch := getIntParam(params, "runtime_epoch")
+		switch operation {
+		case "cancel", "pause":
+			if runID == "" || version <= 0 {
+				return tools.ToolResult{}, true, fmt.Errorf("pause/cancel require exact run_id and expected_version from agent_inspect")
+			}
+		case "resume", "reopen":
+			if runID != "" || epoch <= 0 {
+				return tools.ToolResult{}, true, fmt.Errorf("resume/reopen require exact runtime_epoch and no run_id; they restore availability, not execution")
+			}
+		}
 		reason := strings.TrimSpace(getStrParam(params, "reason"))
 		body := strings.ToUpper(operation[:1]) + operation[1:] + " requested"
 		if reason != "" {
 			body += ": " + reason
 		}
+		references := []collaboration.Reference{{
+			Kind: "control", ID: operation, Revision: max(0, version),
+		}}
+		if epoch > 0 {
+			references = append(references, collaboration.Reference{
+				Kind: "runtime_epoch", ID: strconv.Itoa(epoch),
+			})
+		}
 		published, err := store.Publish(ctx, collaboration.PublishRequest{
 			SenderID: actorID, IdempotencyKey: identity.ToolCallID,
 			RecipientIDs: []string{target}, Origin: collaboration.OriginPeer,
 			Kind: collaboration.EventLifecycleControl, Body: body,
-			RunID: getStrParam(params, "run_id"), References: []collaboration.Reference{{
-				Kind: "control", ID: operation,
-				Revision: max(0, getIntParam(params, "expected_version")),
-			}},
+			RunID: runID, References: references,
 		})
 		return collaborationResult(published, err), true, err
 	case "publish_report":
@@ -1007,10 +1021,13 @@ func (s *Session) executeCollaborationTool(ctx context.Context, actorID, name st
 			SupersedesRevision: getIntParam(params, "supersedes_revision"),
 			References:         references, Metadata: metadata,
 		})
-		if err == nil {
+		if err == nil && published.Artifact.Kind == collaboration.ReportFinal {
 			if runner := s.SubAgentRunner(); runner != nil {
 				if handle, ok := runner.Manager().GetActive(agent.AgentID(actorID)); ok {
-					handle.SetReportArtifact(published.Artifact.ID, published.Artifact.Revision)
+					runID, _ := handle.RunIdentity()
+					if published.Artifact.RunID == runID && published.Artifact.AuthorID == actorID {
+						handle.SetReportArtifact(published.Artifact.ID, published.Artifact.Revision)
+					}
 				}
 			}
 		}
@@ -1076,19 +1093,35 @@ func (s *Session) waitForCollaboration(ctx context.Context, store *collaboration
 	ticker := time.NewTicker(250 * time.Millisecond)
 	defer ticker.Stop()
 	for {
+		ready := true
+		var result any
+		var observedRun collaboration.Run
 		if runID != "" {
 			run, err := store.Run(waitCtx, runID)
 			if err != nil {
 				return nil, err
 			}
-			if run.State.Terminal() {
-				return run, nil
+			if agentID != "" && run.AgentID != agentID {
+				return nil, fmt.Errorf("agent_wait run belongs to another agent")
 			}
+			ready = ready && run.State.Terminal()
+			observedRun, result = run, run
 		}
 		if artifactID != "" {
 			artifact, err := store.Artifact(waitCtx, artifactID, 0)
-			if err == nil && artifact.Revision > afterRevision {
-				return artifact, nil
+			if err == nil {
+				if agentID != "" && artifact.AuthorID != agentID || runID != "" && artifact.RunID != runID {
+					return nil, fmt.Errorf("agent_wait artifact belongs to another agent or run")
+				}
+				ready = ready && artifact.Revision > afterRevision
+				result = artifact
+				if runID != "" {
+					// The run outcome remains authoritative when a caller also
+					// requires report readiness. Full evidence is artifact_read.
+					result = observedRun
+				}
+			} else {
+				ready = false
 			}
 			if err != nil && !errors.Is(err, collaboration.ErrNotFound) {
 				return nil, err
@@ -1102,6 +1135,10 @@ func (s *Session) waitForCollaboration(ctx context.Context, store *collaboration
 			if agentState.CurrentRunID == "" || agentState.State != collaboration.AgentAvailable {
 				return agentState, nil
 			}
+			ready = false
+		}
+		if ready {
+			return result, nil
 		}
 		select {
 		case <-waitCtx.Done():

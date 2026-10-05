@@ -207,18 +207,19 @@ type Model struct {
 	appDefaults     types.AppSettings
 	// agents holds the working AgentsSettings so the main agent form's
 	// Multi-Agent toggle reads and writes the real workspace flag.
-	agents              *types.AgentsSettings
-	memoryAgent         types.CategorySettings
-	autoReviewer        types.AutoPermissionSettings
-	capabilities        capability.Settings
-	capabilitySnapshot  capability.Snapshot
-	capabilityDiscovery map[capability.Kind][]capability.Entry
-	capabilitySequence  uint64
-	capabilityRequests  map[uint64]capability.Action
-	capabilityPending   *capability.Action
-	capabilityResult    *CapabilityResultMsg
-	capabilityRevision  uint64
-	capabilityDraft     *ui.FormModel
+	agents                   *types.AgentsSettings
+	memoryAgent              types.CategorySettings
+	autoReviewer             types.AutoPermissionSettings
+	capabilities             capability.Settings
+	capabilitySnapshot       capability.Snapshot
+	capabilityDiscovery      map[capability.Kind][]capability.Entry
+	capabilityDiscoveryQuery map[capability.Kind]capability.Action
+	capabilitySequence       uint64
+	capabilityRequests       map[uint64]capability.Action
+	capabilityPending        *capability.Action
+	capabilityResult         *CapabilityResultMsg
+	capabilityRevision       uint64
+	capabilityDraft          *ui.FormModel
 }
 
 type accountEdit struct {

@@ -535,12 +535,6 @@ func (service *Service) Search(ctx context.Context, query string, kind captypes.
 		return entries, nil
 	}
 	discovered, err := service.discover(ctx, snapshot.Settings.Sources, query, kind, limit-len(entries))
-	if err != nil {
-		if len(entries) > 0 {
-			return entries, nil
-		}
-		return nil, err
-	}
 	seen := make(map[string]struct{}, len(entries))
 	for _, entry := range entries {
 		seen[entry.ID] = struct{}{}
@@ -554,7 +548,7 @@ func (service *Service) Search(ctx context.Context, query string, kind captypes.
 			break
 		}
 	}
-	return entries, nil
+	return entries, err
 }
 
 func (service *Service) Discover(ctx context.Context, query string, kind captypes.Kind, limit int) ([]captypes.Entry, error) {
@@ -564,8 +558,28 @@ func (service *Service) Discover(ctx context.Context, query string, kind captype
 	return service.discover(ctx, service.Snapshot().Settings.Sources, strings.ToLower(strings.TrimSpace(query)), kind, limit)
 }
 
+// DiscoverSource searches exactly one enabled source, without an all-source
+// result budget hiding matches from the selected catalog.
+func (service *Service) DiscoverSource(ctx context.Context, query string, kind captypes.Kind, limit int, sourceID string) ([]captypes.Entry, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 20
+	}
+	source, exists := service.Snapshot().Settings.Sources[sourceID]
+	if !exists {
+		return nil, fmt.Errorf("capability source %q is unknown", sourceID)
+	}
+	if source.Disabled {
+		return nil, fmt.Errorf("capability source %q is disabled", sourceID)
+	}
+	if kind == captypes.KindMCP && (source.Kind == "repository" || source.Kind == "skill-registry") ||
+		kind == captypes.KindSkill && source.Kind == "registry" {
+		return nil, fmt.Errorf("capability source %q does not provide %s entries", sourceID, kind)
+	}
+	return service.discover(ctx, map[string]captypes.SourceConfig{sourceID: source}, strings.ToLower(strings.TrimSpace(query)), kind, limit)
+}
+
 func (service *Service) discover(ctx context.Context, sources map[string]captypes.SourceConfig, query string, kind captypes.Kind, limit int) ([]captypes.Entry, error) {
-	var entries []captypes.Entry
+	var groups [][]captypes.Entry
 	var sourceErrors []error
 	ids := make([]string, 0, len(sources))
 	for id := range sources {
@@ -573,6 +587,9 @@ func (service *Service) discover(ctx context.Context, sources map[string]captype
 	}
 	sort.Strings(ids)
 	for _, sourceID := range ids {
+		if err := ctx.Err(); err != nil {
+			return interleaveDiscovery(groups, limit), err
+		}
 		source := sources[sourceID]
 		if source.Disabled {
 			continue
@@ -582,14 +599,12 @@ func (service *Service) discover(ctx context.Context, sources map[string]captype
 			continue
 		}
 		if source.Kind != "local" {
-			remote, err := service.discoverRemote(ctx, source, query, kind, limit-len(entries))
+			remote, err := service.discoverRemote(ctx, source, query, kind, limit)
 			if err != nil {
 				sourceErrors = append(sourceErrors, fmt.Errorf("source %q: %w", source.Name, err))
-				continue
 			}
-			entries = append(entries, remote...)
-			if len(entries) >= limit {
-				return entries, nil
+			if len(remote) > 0 {
+				groups = append(groups, remote)
 			}
 			continue
 		}
@@ -605,9 +620,10 @@ func (service *Service) discover(ctx context.Context, sources map[string]captype
 			sourceErrors = append(sourceErrors, fmt.Errorf("source %q: %w", source.Name, err))
 			continue
 		}
+		var local []captypes.Entry
 		for _, child := range children {
 			if err := ctx.Err(); err != nil {
-				return entries, err
+				return interleaveDiscovery(append(groups, local), limit), err
 			}
 			if !child.IsDir() {
 				continue
@@ -626,16 +642,44 @@ func (service *Service) discover(ctx context.Context, sources map[string]captype
 			}
 			service.candidates[entry.ID] = Candidate{Entry: entry}
 			service.mu.Unlock()
-			entries = append(entries, entry)
-			if len(entries) >= limit {
-				return entries, nil
+			local = append(local, entry)
+			if len(local) >= limit {
+				break
 			}
 		}
+		if len(local) > 0 {
+			groups = append(groups, local)
+		}
 	}
-	if len(entries) == 0 && len(sourceErrors) > 0 {
-		return nil, errors.Join(sourceErrors...)
+	return interleaveDiscovery(groups, limit), errors.Join(sourceErrors...)
+}
+
+// Interleave source-ranked results so the first enabled source cannot exhaust
+// the entire result budget before later sources contribute.
+func interleaveDiscovery(groups [][]captypes.Entry, limit int) []captypes.Entry {
+	var entries []captypes.Entry
+	seen := make(map[string]bool)
+	for offset := 0; len(entries) < limit; offset++ {
+		available := false
+		for _, group := range groups {
+			if offset >= len(group) {
+				continue
+			}
+			available = true
+			entry := group[offset]
+			if !seen[entry.ID] {
+				entries = append(entries, entry)
+				seen[entry.ID] = true
+			}
+			if len(entries) >= limit {
+				break
+			}
+		}
+		if !available {
+			break
+		}
 	}
-	return entries, nil
+	return entries
 }
 
 func (service *Service) Close() {

@@ -234,6 +234,7 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		contextReason = state.Reason
 	}
 	sess := &Session{
+		resumed:   true,
 		agentName: meta.AgentName.String, nameHome: homeDir,
 		ID:                 meta.ID,
 		cfg:                cfg,

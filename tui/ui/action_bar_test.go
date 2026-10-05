@@ -67,6 +67,7 @@ func TestActionBarUpReturnsToForm(t *testing.T) {
 		ActionBarButton{ID: "save", Label: "Save", Action: "save", Enabled: true},
 		ActionBarButton{ID: "cancel", Label: "Cancel", Action: "cancel", Enabled: true},
 	)
+	bar.Layout(LayoutContext{}, Rect{W: 40, H: 1})
 	res := bar.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyUp}))
 	if res.Action == nil || res.Action.ID != "actionbar.exit.backward" {
 		t.Fatalf("Up on action bar result=%#v", res)
@@ -74,6 +75,28 @@ func TestActionBarUpReturnsToForm(t *testing.T) {
 	res = bar.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyDown}))
 	if res.Action == nil || res.Action.ID != "actionbar.exit.forward" {
 		t.Fatalf("Down on action bar result=%#v", res)
+	}
+}
+
+func TestHiddenActionBarDoesNotPaintOrActivateRetainedButtons(t *testing.T) {
+	bar := NewActionBar("actions", NewTokenSet(theme.DefaultDark()),
+		ActionBarButton{Label: "Source: All", Action: "source", Enabled: true})
+	bar.Layout(LayoutContext{}, Rect{X: 4, Y: 3, W: 30, H: 1})
+	bar.Layout(LayoutContext{}, Rect{})
+	buffer := surface.NewCellBuffer(40, 8)
+	bar.Paint(buffer, 0, 0, PaintContext{})
+	for y := 0; y < buffer.Height(); y++ {
+		for x := 0; x < buffer.Width(); x++ {
+			if char := buffer.Get(x, y).Char; char != 0 && char != ' ' {
+				t.Fatalf("hidden button painted %q at %d,%d", char, x, y)
+			}
+		}
+	}
+	if result := bar.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: tea.KeyEnter})); result.Handled || result.Action != nil {
+		t.Fatal("hidden bar activated a retained button")
+	}
+	if bounds, _ := bar.ButtonBounds("source"); !bounds.Empty() {
+		t.Fatal("hidden button retained hit geometry")
 	}
 }
 

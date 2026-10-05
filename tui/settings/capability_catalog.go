@@ -25,47 +25,52 @@ const capabilityTabsID ui.ComponentID = "settings/capabilities/tabs"
 
 type capabilityCatalog struct {
 	ui.Base
-	owner         *WorkspaceSettingsSurface
-	tokens        *ui.TokenSet
-	tabs          *ui.Tabs
-	filter        *ui.FilterField
-	store         *ui.VirtualList
-	storeFilters  *ui.ActionBar
-	browse        *ui.Table
-	tree          *ui.Tree
-	form          *ui.Form
-	reader        *ui.TextArea
-	bar           *ui.ActionBar
-	more          *ui.ActionBar
-	storeScroll   *ui.ScrollbarControl
-	formScroll    *ui.ScrollbarControl
-	browseScroll  *ui.ScrollbarControl
-	treeScroll    *ui.ScrollbarControl
-	kind          captypes.Kind
-	page          string
-	id            string
-	detail        bool
-	edit          string
-	baseline      []byte
-	seen          uint64
-	message       string
-	detailPage    string
-	forms         map[string]*ui.FormModel
-	inputForms    map[string]*ui.FormModel
-	views         map[string]capabilityListState
-	pages         map[captypes.Kind]string
-	requests      map[uint64]capabilityViewRequest
-	preview       map[string]CapabilityResultMsg
-	files         map[string][]string
-	extraBars     []*ui.ActionBar
-	statusY       int
-	resultSeen    uint64
-	model         *Model
-	draftOriginal captypes.Action
-	nextOpen      *capabilityNavigation
-	acquisition   *captypes.AcquisitionPreview
-	storeSources  []string
-	storeTypes    []string
+	owner                    *WorkspaceSettingsSurface
+	tokens                   *ui.TokenSet
+	tabs                     *ui.Tabs
+	filter                   *ui.FilterField
+	store                    *capabilityStoreView
+	storeFilters             *ui.ActionBar
+	installed                *capabilityInstalledFilter
+	searchButton             *ui.ActionBar
+	choices                  *ui.List
+	choiceScroll             *ui.ScrollbarControl
+	choosing                 string
+	storeButtons             map[string]*ui.Button
+	browse                   *ui.Table
+	tree                     *ui.Tree
+	form                     *ui.Form
+	reader                   *ui.TextArea
+	bar                      *ui.ActionBar
+	more                     *ui.ActionBar
+	storeScroll              *ui.ScrollbarControl
+	formScroll               *ui.ScrollbarControl
+	browseScroll             *ui.ScrollbarControl
+	treeScroll               *ui.ScrollbarControl
+	kind                     captypes.Kind
+	id                       string
+	detail                   bool
+	edit                     string
+	baseline                 []byte
+	seen                     uint64
+	message                  string
+	detailPage               string
+	forms                    map[string]*ui.FormModel
+	inputForms               map[string]*ui.FormModel
+	views                    map[string]capabilityListState
+	requests                 map[uint64]capabilityViewRequest
+	preview                  map[string]CapabilityResultMsg
+	files                    map[string][]string
+	extraBars                []*ui.ActionBar
+	statusY                  int
+	resultSeen               uint64
+	model                    *Model
+	draftOriginal            captypes.Action
+	nextOpen                 *capabilityNavigation
+	acquisition              *captypes.AcquisitionPreview
+	acquisitionReturnToStore bool
+	storeSources             []string
+	storeTypes               []string
 }
 
 type capabilityListState struct {
@@ -89,10 +94,9 @@ type capabilityNavigation struct {
 }
 
 func newCapabilityCatalog(owner *WorkspaceSettingsSurface) *capabilityCatalog {
-	catalog := &capabilityCatalog{Base: ui.NewBase(capabilityCatalogID), owner: owner, model: owner.model, tokens: owner.tokens, kind: captypes.KindSkill, page: "installed", forms: make(map[string]*ui.FormModel), inputForms: make(map[string]*ui.FormModel), views: make(map[string]capabilityListState), pages: make(map[captypes.Kind]string), requests: make(map[uint64]capabilityViewRequest), preview: make(map[string]CapabilityResultMsg), files: make(map[string][]string)}
+	catalog := &capabilityCatalog{Base: ui.NewBase(capabilityCatalogID), owner: owner, model: owner.model, tokens: owner.tokens, kind: captypes.KindSkill, forms: make(map[string]*ui.FormModel), inputForms: make(map[string]*ui.FormModel), views: make(map[string]capabilityListState), requests: make(map[uint64]capabilityViewRequest), preview: make(map[string]CapabilityResultMsg), files: make(map[string][]string), storeButtons: make(map[string]*ui.Button)}
 	catalog.tabs = ui.NewTabs(capabilityTabsID, owner.tokens)
 	catalog.tabs.SetChrome(ui.TabsPopup)
-	catalog.tabs.SetItems([]ui.TabItem{{ID: "installed", Label: "Installed"}, {ID: "discover", Label: "Discover"}}, "installed")
 	catalog.filter = ui.NewFilterField(capabilityFilterID, owner.tokens)
 	catalog.filter.SetPrompt(ui.SearchGlyphEnd(owner.tokens))
 	catalog.filter.SetPromptPlacement(ui.PromptEnd)
@@ -100,20 +104,35 @@ func newCapabilityCatalog(owner *WorkspaceSettingsSurface) *capabilityCatalog {
 	catalog.filter.OnChanged(func(query string) {
 		state := catalog.views[catalog.viewKey()]
 		state.query = query
+		state.offset, state.selected = 0, ""
+		catalog.message = ""
 		catalog.views[catalog.viewKey()] = state
+		catalog.store.Scroll().ScrollTo(0)
 		if catalog.detail {
 			catalog.syncDetailRows()
 		} else {
 			catalog.syncRows()
 		}
 	})
-	catalog.store = ui.NewVirtualList(capabilityStoreID, owner.tokens)
+	catalog.store = &capabilityStoreView{VirtualList: ui.NewVirtualList(capabilityStoreID, owner.tokens), owner: catalog}
+	catalog.store.SetSelectionAnchorsScroll(false)
+	catalog.store.SetOpaqueRowFill(false)
 	catalog.store.SetActivateAction("settings.capability.inspect")
 	catalog.store.SetRowPainter(catalog.paintStoreRow)
 	catalog.storeFilters = ui.NewActionBar("settings/capabilities/store-filters", owner.tokens)
 	catalog.storeFilters.SetAlignEnd(false)
 	catalog.storeFilters.SetShowRule(false)
 	catalog.storeFilters.SetCancelAction("settings.capability.back")
+	catalog.storeFilters.SetExitActions("settings.capability.filters-next", "settings.capability.filters-prev")
+	catalog.installed = &capabilityInstalledFilter{ToggleButton: ui.NewToggleButton("settings/capabilities/installed", "Installed only", "settings.capability.installed-only", owner.tokens), owner: catalog}
+	catalog.installed.SetCancelAction("settings.capability.back")
+	catalog.searchButton = ui.NewActionBar("settings/capabilities/search", owner.tokens, ui.ActionBarButton{Label: "Search", Action: "settings.capability.search", Enabled: true})
+	catalog.searchButton.SetAlignEnd(false)
+	catalog.searchButton.SetCancelAction("settings.capability.back")
+	catalog.searchButton.SetExitActions("settings.capability.search-next", "settings.capability.search-prev")
+	catalog.choices = ui.NewList("settings/capabilities/choices", owner.tokens)
+	catalog.choices.SetActivateAction("settings.capability.choose")
+	catalog.choiceScroll = ui.NewScrollbarControl("settings/capabilities/choice-scroll", catalog.choices.Scroll(), owner.tokens)
 	catalog.browse = ui.NewTable("settings/capabilities/browse", owner.tokens)
 	catalog.browse.SetShowHeader(true)
 	catalog.browse.SetColumnGap(2)
@@ -126,6 +145,7 @@ func newCapabilityCatalog(owner *WorkspaceSettingsSurface) *capabilityCatalog {
 	catalog.reader = ui.NewTextArea("settings/capabilities/reader", owner.tokens, true)
 	catalog.reader.SetReadOnly(true)
 	catalog.storeScroll = ui.NewScrollbarControl("settings/capabilities/store-scroll", catalog.store.Scroll(), owner.tokens)
+	catalog.storeScroll.OnScroll(func(int, int) { catalog.saveListState() })
 	catalog.formScroll = ui.NewScrollbarControl("settings/capabilities/form-scroll", catalog.form.Scroll(), owner.tokens)
 	catalog.browseScroll = ui.NewScrollbarControl("settings/capabilities/browse-scroll", catalog.browse.Scroll(), owner.tokens)
 	catalog.treeScroll = ui.NewScrollbarControl("settings/capabilities/tree-scroll", catalog.tree.Scroll(), owner.tokens)
@@ -147,6 +167,13 @@ func (catalog *capabilityCatalog) SetTokens(tokens *ui.TokenSet) {
 	catalog.filter.SetTokens(tokens)
 	catalog.store.SetTokens(tokens)
 	catalog.storeFilters.SetTokens(tokens)
+	catalog.installed.SetTokens(tokens)
+	catalog.searchButton.SetTokens(tokens)
+	catalog.choices.SetTokens(tokens)
+	catalog.choiceScroll.SetTokens(tokens)
+	for _, button := range catalog.storeButtons {
+		button.SetTokens(tokens)
+	}
 	catalog.browse.SetTokens(tokens)
 	catalog.tree.SetTokens(tokens)
 	catalog.form.SetTokens(tokens)
@@ -163,7 +190,7 @@ func (catalog *capabilityCatalog) SetTokens(tokens *ui.TokenSet) {
 }
 
 func (catalog *capabilityCatalog) Children() []ui.Component {
-	children := []ui.Component{catalog.tabs, catalog.filter, catalog.storeFilters, catalog.store, catalog.browse, catalog.tree, catalog.form, catalog.reader}
+	children := []ui.Component{catalog.tabs, catalog.filter, catalog.storeFilters, catalog.installed, catalog.searchButton, catalog.choices, catalog.choiceScroll, catalog.store, catalog.browse, catalog.tree, catalog.form, catalog.reader}
 	if catalog.Bounds().Empty() {
 		return children
 	}
@@ -183,16 +210,17 @@ func (catalog *capabilityCatalog) syncRows() {
 	}
 	state := catalog.views[catalog.viewKey()]
 	var entries []captypes.Entry
-	if catalog.page == "discover" {
-		entries = model.capabilityDiscovery[catalog.kind]
-	} else if catalog.kind == "source" {
+	if catalog.kind == "source" {
 		for id, source := range model.capabilities.Sources {
 			mode := ""
 			if source.Builtin {
 				mode = "Built-in"
 			}
-			entries = append(entries, captypes.Entry{ID: id, Kind: catalog.kind, Name: source.Name, Description: source.Location, Source: source.Kind, Path: source.Location, Mode: mode, State: mapState(source.Disabled, "disabled", "configured"), Origin: source.Scope, Installed: true, Transport: source.Kind})
+			entries = append(entries, captypes.Entry{ID: id, Kind: catalog.kind, Name: source.Name, Description: source.Location, Source: id, Path: source.Location, Mode: mode, State: mapState(source.Disabled, "disabled", "enabled"), Origin: source.Scope, Installed: true, Transport: source.Kind, Version: source.Revision})
 		}
+		slices.SortFunc(entries, func(a, b captypes.Entry) int {
+			return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+		})
 	} else {
 		for _, entry := range model.capabilitySnapshot.Entries {
 			if entry.Kind == catalog.kind {
@@ -214,12 +242,16 @@ func (catalog *capabilityCatalog) syncRows() {
 				}
 			}
 		}
+		slices.SortFunc(entries, func(a, b captypes.Entry) int {
+			return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+		})
+		entries = catalog.mergeStoreDiscovery(entries, state)
 	}
 	entries, state = catalog.filteredStoreEntries(entries, state)
 	catalog.views[catalog.viewKey()] = state
 	items := make([]ui.VirtItem, 0, len(entries))
 	for _, entry := range entries {
-		items = append(items, ui.VirtItem{ID: entry.ID, Height: 2, Label: entry.Name, Detail: entry.Description, Payload: entry})
+		items = append(items, ui.VirtItem{ID: entry.ID, Height: 5, Label: entry.Name, Detail: entry.Description, Payload: entry})
 	}
 	oldOffset := catalog.store.Scroll().Offset()
 	catalog.store.SetItems(items)
@@ -234,6 +266,7 @@ func (catalog *capabilityCatalog) syncRows() {
 	}
 	catalog.store.Scroll().ScrollTo(oldOffset)
 	catalog.syncStoreFilters(entries, state)
+	catalog.syncStoreButtons(entries)
 	catalog.seen = model.capabilityRevision
 	catalog.actions()
 }
@@ -267,24 +300,17 @@ func (catalog *capabilityCatalog) actions() {
 		}
 	} else if catalog.detail {
 		primary, secondary = catalog.detailActions(button)
-	} else if catalog.page == "discover" {
-		primary = []ui.ActionBarButton{button("Inspect", "inspect"), button("Install", "install")}
+	} else if catalog.choosing != "" {
+		primary = []ui.ActionBarButton{button("Back", "close-filter")}
 	} else {
 		if catalog.kind == captypes.KindSkill {
-			primary = []ui.ActionBarButton{button("Create", "create-skill"), button("Add local", "add-local"), button("Inspect", "inspect")}
-			if selected, ok := catalog.selectedStoreEntry(); ok {
-				skill := catalog.owner.model.capabilities.Skills[selected.ID]
-				secondary = append(secondary, button(mapState(skill.Disabled || skill.Mode == "disabled", "Enable", "Disable"), mapState(skill.Disabled || skill.Mode == "disabled", "enable", "disable")), button("Remove", "remove"))
-				if skill.Source != "" {
-					secondary = append(secondary, button("Update", "update"))
-				}
-			}
+			primary = []ui.ActionBarButton{button("Create skill", "create-skill"), button("Add local", "add-local")}
 		}
 		if catalog.kind == captypes.KindMCP {
-			primary = []ui.ActionBarButton{button("Add", "add"), button("Import", "import"), button("Inspect", "inspect")}
+			primary = []ui.ActionBarButton{button("Add connection", "add"), button("Import", "import")}
 		}
 		if catalog.kind == "source" {
-			primary = []ui.ActionBarButton{button("Add source", "add"), button("Edit", "edit")}
+			primary = []ui.ActionBarButton{button("Add source", "add")}
 			if selected, ok := catalog.selectedStoreEntry(); ok {
 				source := catalog.owner.model.capabilities.Sources[selected.ID]
 				if source.Builtin {
@@ -294,7 +320,7 @@ func (catalog *capabilityCatalog) actions() {
 				}
 			}
 		}
-		secondary = append(secondary, button("Sources", "sources"), button("Acquisition", "acquisition"), button("Refresh", "snapshot"))
+		secondary = append(secondary, button("Refresh", "snapshot"))
 		if catalog.kind == "source" {
 			secondary = []ui.ActionBarButton{button("Reset inherited", "reset-inherited"), button("Refresh", "snapshot")}
 		}
@@ -336,7 +362,7 @@ func (catalog *capabilityCatalog) Layout(ctx ui.LayoutContext, rect ui.Rect) {
 	catalog.SetBounds(rect)
 	catalog.syncModel()
 	if rect.Empty() {
-		for _, child := range []ui.Component{catalog.tabs, catalog.filter, catalog.storeFilters, catalog.store, catalog.browse, catalog.tree, catalog.form, catalog.reader, catalog.storeScroll, catalog.formScroll, catalog.browseScroll, catalog.treeScroll, catalog.bar, catalog.more} {
+		for _, child := range []ui.Component{catalog.tabs, catalog.filter, catalog.storeFilters, catalog.installed, catalog.searchButton, catalog.choices, catalog.choiceScroll, catalog.store, catalog.browse, catalog.tree, catalog.form, catalog.reader, catalog.storeScroll, catalog.formScroll, catalog.browseScroll, catalog.treeScroll, catalog.bar, catalog.more} {
 			child.Layout(ctx, ui.Rect{})
 		}
 		for _, bar := range catalog.extraBars {
@@ -355,7 +381,7 @@ func (catalog *capabilityCatalog) Layout(ctx ui.LayoutContext, rect ui.Rect) {
 		catalog.seen = catalog.owner.model.capabilityRevision
 	}
 	catalog.actions()
-	if catalog.edit != "" {
+	if catalog.edit != "" || !catalog.detail {
 		catalog.tabs.Layout(ctx, ui.Rect{})
 	}
 	if catalog.edit != "" || catalog.detail && !catalog.detailCollection() {
@@ -365,7 +391,11 @@ func (catalog *capabilityCatalog) Layout(ctx ui.LayoutContext, rect ui.Rect) {
 		catalog.store.Layout(ctx, ui.Rect{})
 		catalog.storeFilters.Layout(ctx, ui.Rect{})
 		catalog.storeScroll.Layout(ctx, ui.Rect{})
+		catalog.installed.Layout(ctx, ui.Rect{})
+		catalog.searchButton.Layout(ctx, ui.Rect{})
 	}
+	catalog.choices.Layout(ctx, ui.Rect{})
+	catalog.choiceScroll.Layout(ctx, ui.Rect{})
 	if catalog.edit != "" || !catalog.detail || !catalog.detailCollection() {
 		catalog.browse.Layout(ctx, ui.Rect{})
 		catalog.browseScroll.Layout(ctx, ui.Rect{})
@@ -393,7 +423,7 @@ func (catalog *capabilityCatalog) Layout(ctx ui.LayoutContext, rect ui.Rect) {
 		}
 	}
 	contentY := 2
-	if catalog.edit == "" {
+	if catalog.edit == "" && catalog.detail {
 		catalog.tabs.Layout(ctx, ui.Rect{Y: 1, W: rect.W, H: min(ui.StripHeight, max(0, catalog.statusY-1))})
 		contentY = 1 + ui.StripHeight
 	}
@@ -403,10 +433,7 @@ func (catalog *capabilityCatalog) Layout(ctx ui.LayoutContext, rect ui.Rect) {
 	} else if catalog.detail {
 		catalog.layoutDetail(ctx, contentY, height)
 	} else {
-		catalog.filter.Layout(ctx, ui.Rect{Y: contentY, W: rect.W, H: min(1, height)})
-		catalog.filter.SetPlaceholder("Search " + catalog.title())
-		catalog.storeFilters.Layout(ctx, ui.Rect{Y: contentY + 1, W: rect.W, H: min(1, max(0, height-1))})
-		catalog.layoutStore(ctx, ui.Rect{Y: contentY + 2, W: rect.W, H: max(0, height-2)})
+		catalog.layoutStoreBrowse(ctx, contentY, height)
 	}
 }
 
@@ -432,11 +459,11 @@ func (catalog *capabilityCatalog) Paint(buffer *surface.CellBuffer, originX, ori
 	if catalog.owner.model.capabilityPending != nil {
 		message = catalog.owner.model.capabilityPending.Operation + " running — Cancel stops this operation"
 	}
-	if catalog.edit == "" && !catalog.detail && len(catalog.store.Items()) == 0 && message == "" {
-		if catalog.page == "discover" && strings.TrimSpace(catalog.filter.Value()) == "" {
-			message = "Type a search, then press Enter. Discover queries every enabled source."
-		} else {
-			message = "No matches for the current search and filters."
+	if catalog.edit == "" && !catalog.detail {
+		catalog.paintStoreHeading(buffer, originX+rect.X, originY+rect.Y, rect.W)
+		catalog.paintStoreEmpty(buffer, originX+rect.X, originY+rect.Y)
+		if message == "" {
+			message = catalog.storeStatus()
 		}
 	}
 	buffer.WriteString(originX+rect.X, originY+rect.Y+catalog.statusY, rendering.TruncateVisual(strings.ReplaceAll(message, "\n", " "), rect.W, "…"), catalog.tokens.Color(ui.ColorMuted), catalog.tokens.Color(ui.ColorPopupBg), 0)
@@ -456,7 +483,7 @@ func (catalog *capabilityCatalog) Handle(ctx ui.EventContext, event ui.Event) ui
 		return catalog.back()
 	}
 	if event.IsKey() && event.Key.Code == tea.KeyTab {
-		catalog.owner.focusID(catalog.bar.ID())
+		catalog.moveBrowseFocus(event.Key.Mod.Contains(tea.ModShift))
 		return catalog.changed()
 	}
 	return ui.EventResult{}
@@ -466,22 +493,12 @@ func (catalog *capabilityCatalog) HandleAction(_ ui.EventContext, action ui.Acti
 	catalog.consumeResult()
 	if action.ID == "tabs.activate" || action.ID == "tabs.enter" {
 		id, _ := action.Payload.(string)
-		if id != "" {
-			if catalog.kind == "source" && id == "discover" {
-				return catalog.changed()
-			}
+		if id != "" && catalog.detail {
 			if catalog.edit != "" {
 				return catalog.changed()
 			}
 			catalog.saveListState()
-			if catalog.detail {
-				catalog.detailForm(id)
-			} else {
-				catalog.page = id
-				catalog.setTabs()
-				catalog.restoreFilter()
-				catalog.syncRows()
-			}
+			catalog.detailForm(id)
 			if action.ID == "tabs.enter" {
 				catalog.focusContent()
 			}
@@ -531,7 +548,12 @@ func (catalog *capabilityCatalog) HandleAction(_ ui.EventContext, action ui.Acti
 		if catalog.id == "" {
 			return catalog.changed()
 		}
+		if operation == "install" && (catalog.entry().Installed || catalog.entry().State == "unsupported") {
+			catalog.message = mapDefault(catalog.entry().Reason, "This item is already installed. Open its details to manage it.")
+			return catalog.changed()
+		}
 		catalog.acquisition = nil
+		catalog.acquisitionReturnToStore = !catalog.detail
 		return catalog.submit(captypes.Action{Operation: "preview-" + operation, Kind: catalog.kind, ID: catalog.id})
 	case "confirm-acquisition":
 		preview := catalog.acquisition
@@ -649,20 +671,30 @@ func (catalog *capabilityCatalog) HandleAction(_ ui.EventContext, action ui.Acti
 			catalog.owner.focusID(catalog.browse.ID())
 			return catalog.changed()
 		}
-		if catalog.page == "discover" {
-			if strings.TrimSpace(catalog.filter.Value()) == "" {
-				catalog.message = "Enter a search before querying external sources."
-				return catalog.changed()
-			}
-			catalog.saveListState()
-			return catalog.submit(captypes.Action{Operation: "discover", Kind: catalog.kind, ID: catalog.id, Query: catalog.filter.Value()})
-		}
+		return catalog.searchStore()
+	case "installed-only":
+		state := catalog.views[catalog.viewKey()]
+		state.show = mapState(state.show == "installed", "all", "installed")
+		state.selected, state.offset = "", 0
+		catalog.views[catalog.viewKey()] = state
+		catalog.syncRows()
+		return catalog.changed()
+	case "filter-source", "filter-type", "filter-sort":
+		return catalog.openStoreFilter(operation)
+	case "choose":
+		return catalog.chooseStoreFilter()
+	case "close-filter":
+		catalog.choosing = ""
+		catalog.owner.focusID(catalog.storeFilters.ID())
+		return catalog.changed()
+	case "filters-next", "search-next":
 		catalog.owner.focusID(catalog.store.ID())
 		return catalog.changed()
-	case "filter-source", "filter-show", "filter-type", "filter-sort":
-		catalog.cycleStoreFilter(operation)
-		catalog.syncRows()
-		catalog.owner.focusID(catalog.storeFilters.ID())
+	case "filters-prev":
+		catalog.owner.focusID(catalog.installed.ID())
+		return catalog.changed()
+	case "search-prev":
+		catalog.owner.focusID(catalog.filter.ID())
 		return catalog.changed()
 	case "inspect-item":
 		catalog.inspectItem()
@@ -675,11 +707,6 @@ func (catalog *capabilityCatalog) HandleAction(_ ui.EventContext, action ui.Acti
 	case "read-file", "list-files", "resource", "prompt", "stage-context", "open-file", "auth-return", "save-mode":
 		return catalog.detailOperation(operation)
 	}
-	if operation == "discover" {
-		catalog.saveListState()
-		catalog.page = "discover"
-		catalog.setTabs()
-	}
 	return catalog.submit(captypes.Action{Operation: operation, Kind: catalog.kind, ID: catalog.id, Query: catalog.filter.Value()})
 }
 
@@ -690,6 +717,11 @@ func (catalog *capabilityCatalog) dirty() bool {
 	return catalog.owner.model.capabilityDraft != nil && !reflect.DeepEqual(catalog.baseline, formDraftBytes(catalog.owner.model.capabilityDraft))
 }
 func (catalog *capabilityCatalog) back() ui.EventResult {
+	if catalog.choosing != "" {
+		catalog.choosing = ""
+		catalog.owner.focusID(catalog.storeFilters.ID())
+		return catalog.changed()
+	}
 	if catalog.edit == "" && !catalog.detail {
 		return catalog.owner.cancelSettings()
 	}

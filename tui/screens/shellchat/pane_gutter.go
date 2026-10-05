@@ -91,17 +91,13 @@ func (s *Screen) isNestedGutterHit(localX int) bool {
 	return gx >= 0 && localX >= gx-(3-ui.ScrollbarWidth) && localX <= gx
 }
 
-func (s *Screen) paintNestedGutter(buf *surface.CellBuffer, x, y int, paneInfo chatprojection.PaneLineInfo) {
+func (s *Screen) paintNestedGutter(buf *surface.CellBuffer, x, y int, paneInfo chatprojection.PaneLineInfo, bg cell.Color) {
 	if buf == nil || paneInfo.PaneID == "" {
 		return
 	}
 	st, ok := s.paneGutterState(paneInfo.PaneID)
 	if !ok {
 		return
-	}
-	bg := cell.NoColor
-	if s.paintState.compose.HasPaneBg != nil && s.paintState.compose.HasPaneBg(paneInfo.PaneID) && s.tokens != nil {
-		bg = s.tokens.Color(ui.ColorSubPaneBg)
 	}
 	trackRow := paneInfo.LineIdx
 	if trackRow < 0 {

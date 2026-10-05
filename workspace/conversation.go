@@ -575,14 +575,29 @@ func (c *Conversation) MarkStreamingToolsCancelled() {
 	}
 	changed := false
 	for _, message := range c.messages {
-		if message.ToolStatus == "streaming" || message.ToolStatus == "calling" {
-			message.ToolStatus = "cancelled"
-			message.ToolPreviewPhase = "done"
-			message.ToolProgressPhase = ""
-			message.ToolProgressMessage = ""
+		// Dwell is presentation-only: a result already received before stop is
+		// authoritative even if its terminal phase is still behind queued frames.
+		// Do not let an old queued streaming frame reactivate a stopped turn.
+		timeline := c.toolTimelines[message]
+		terminal := toolTransition{}
+		if timeline != nil {
+			for _, transition := range timeline.queue {
+				if transition.preview == "done" || transition.preview == "error" {
+					terminal = transition
+				}
+			}
 			delete(c.toolTimelines, message)
-			changed = true
 		}
+		if terminal.preview != "" {
+			message.ToolStatus, message.ToolPreviewPhase = terminal.status, terminal.preview
+		} else if message.ToolStatus == "streaming" || message.ToolStatus == "calling" {
+			message.ToolStatus, message.ToolPreviewPhase = "cancelled", "done"
+		} else if timeline == nil {
+			continue
+		}
+		message.ToolProgressPhase = ""
+		message.ToolProgressMessage = ""
+		changed = true
 	}
 	c.bumpIf(changed)
 }

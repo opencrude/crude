@@ -410,6 +410,18 @@ func (a *Agent) accumulateToolCall(
 	onToolCallDelta func(string, string, string, string),
 ) {
 	index := delta.Index
+	// Positions are stream-local, not execution identities. Responses terminal
+	// snapshots may repeat a call at a different position (for example when a
+	// gateway omits a reasoning item). Bind the exact provider call ID back to
+	// its first accumulator before considering index collisions.
+	if delta.ID != "" {
+		for existingIndex, existing := range toolCalls {
+			if existing.call.ID == delta.ID {
+				index = existingIndex
+				break
+			}
+		}
+	}
 	if existing := toolCalls[index]; existing != nil && delta.ID != "" &&
 		existing.call.ID != "" && existing.call.ID != delta.ID {
 		for index = 0; toolCalls[index] != nil; index++ {

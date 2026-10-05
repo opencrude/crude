@@ -33,6 +33,15 @@ whole changing repository. A dependency or unrelated build failure is a reason
 to return a blocked/partial handoff, not repeatedly read files or rerun checks.
 Repeat verification only after a relevant change or new evidence.
 
+Roots may reuse suitable attached workspace peers after checking exact identity,
+availability and ownership, or launch bounded leaf children with an optional exact
+configured `profile`. Children may coordinate with peers but cannot recursively
+launch more children. Accept/defer/decline substantive exact requests; do not
+acknowledge every note/outcome. Request revisions are journal-fenced and cannot
+widen permission. Read the exact referenced report revision before integration.
+See [workspace collaboration](workspace-collaboration.md) for enforced request,
+control, report, claim and crash-recovery contracts.
+
 `publish_report` delivers an immutable, versioned artifact: outcome, findings or
 changed paths, focused checks, and unresolved blockers. It is not a request to
 copy source files or continue investigating. Publication is evidence delivery,
@@ -52,6 +61,14 @@ safe request boundary. Directed notes, requests, report publications and termina
 outcomes need no Board polling or acknowledgement tool for transport. Delivery
 works while an agent is idle and during an active turn without replaying accepted
 model output. Reading an interim report never suppresses a later terminal outcome.
+
+An interim report also never satisfies the mandatory final deliverable. The final
+artifact must belong to the child and its actual run and address the exact parent;
+one child run cannot publish multiple distinct final artifacts. Submission of a
+control is not application: old run IDs are rejected against replacement runs
+even when their versions match. Pause cancels execution and suspends admission;
+resume restores availability, not an execution stack. Startup settles orphaned
+runs and admission receipts passively before processing genuinely new peer input.
 
 `agent_send(broadcast=true)` is the narrow exception for a genuinely urgent note
 needed by every other currently running agent. It snapshots only available,

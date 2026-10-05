@@ -298,7 +298,7 @@ func TestCapabilityRegistryAcquisitionProducesValidStableConnection(t *testing.T
 		t.Fatal(err)
 	}
 	entries, err := service.Search(context.Background(), "", captypes.KindMCP, 10, true)
-	if err != nil || len(entries) != 1 || entries[0].Name != "Vendor Service" || entries[0].Version != "2" {
+	if err != nil || len(entries) != 2 || entries[0].Name != "Vendor Service" || entries[0].Version != "2" || entries[1].State != "unsupported" || entries[1].Reason == "" {
 		t.Fatalf("registry: %#v %v", entries, err)
 	}
 	acquired, err := service.Acquire(context.Background(), entries[0].ID, captypes.ScopeWorkspace)

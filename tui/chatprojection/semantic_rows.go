@@ -272,5 +272,6 @@ func appendBlockCursor(pl PaintLine, frame int, activeTyping bool) PaintLine {
 	} else {
 		spans = append(spans, RowSpan{Text: " ", Role: ui.ColorFg})
 	}
-	return PaintLine{Spans: spans}
+	pl.Spans = spans
+	return pl
 }

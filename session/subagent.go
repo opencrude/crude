@@ -241,10 +241,23 @@ func (r *SubAgentRunner) StartAgent(ctx context.Context, params map[string]any) 
 	if category == "" {
 		category = agent.CatCrafter
 	}
-	name := getStrParam(params, "name")
-	if name == "" {
-		name = deriveSubAgentName(category, description)
+	profileName := getStrParam(params, "profile")
+	if profileName != "" {
+		active := r.effectiveCfg
+		if active == nil {
+			r.session.mu.Lock()
+			active = copyConfig(r.session.cfg)
+			r.session.mu.Unlock()
+		}
+		profile, ok := active.Agents.AgentProfiles[profileName]
+		if !ok || profile.Enabled != nil && !*profile.Enabled {
+			return tools.ToolResult{}, fmt.Errorf("agent profile %q is unknown or disabled", profileName)
+		}
+		if profile.Category != category {
+			return tools.ToolResult{}, fmt.Errorf("agent profile %q requires category %q, not %q", profileName, profile.Category, category)
+		}
 	}
+	name := deriveSubAgentName(category, description)
 
 	spec := agent.SubAgentSpec{
 		ID:           agent.AgentID("agent-" + generateShortID()),
@@ -276,7 +289,12 @@ func (r *SubAgentRunner) StartAgent(ctx context.Context, params map[string]any) 
 		}
 	}
 
-	profileInstructions := r.resolveProfile(name, category, &spec)
+	profileInstructions := r.resolveProfile(profileName, category, &spec)
+	for index, path := range spec.FileOwnership {
+		if path != "" && !filepath.IsAbs(path) {
+			spec.FileOwnership[index] = filepath.Join(r.session.WorkDir(), path)
+		}
+	}
 	activeConfig := r.effectiveCfg
 	if activeConfig == nil {
 		r.session.mu.Lock()
@@ -285,9 +303,6 @@ func (r *SubAgentRunner) StartAgent(ctx context.Context, params map[string]any) 
 	}
 	if categoryCfg := activeConfig.GetCategoryConfig(spec.Category); categoryCfg.Enabled != nil && !*categoryCfg.Enabled {
 		return tools.ToolResult{Content: "Agent role is disabled in settings."}, fmt.Errorf("%s role is disabled", spec.Category)
-	}
-	if profile, exists := activeConfig.Agents.AgentProfiles[name]; exists && profile.Enabled != nil && !*profile.Enabled {
-		return tools.ToolResult{Content: "Agent is disabled in settings."}, fmt.Errorf("%s agent is disabled", name)
 	}
 	identity, err := allocateAgentName(r.session.nameHome)
 	if err != nil {
@@ -506,7 +521,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 		SessionID: subSessionID,
 		DB:        subDB,
 	}
-	registered, err := r.session.registerCollaborator(subCtx, string(spec.ID), spec.Name, subSessionID, string(spec.ParentID), spec.Category)
+	registered, err := r.session.registerCollaborator(subCtx, string(spec.ID), spec.Name, subSessionID, string(spec.ParentID), spec.Category, subDB)
 	if err != nil {
 		r.fileOwnership.Release(spec.ID)
 		if subDB != nil {
@@ -517,6 +532,23 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 		return nil, fmt.Errorf("register workspace child: %w", err)
 	}
 	handle.RuntimeEpoch = registered.RuntimeEpoch
+	launched := false
+	defer func() {
+		if launched {
+			return
+		}
+		subCancel()
+		a.AsyncMgr.CloseAndWait()
+		if store := r.session.CollaborationStore(); store != nil {
+			if runID, runVersion := handle.RunIdentity(); runID != "" {
+				_, _ = store.FinishRun(context.Background(), collaboration.FinishRunRequest{
+					RunID: runID, AgentID: string(spec.ID), RuntimeEpoch: handle.RuntimeEpoch,
+					ExpectedVersion: runVersion, State: collaboration.RunCancelled, Outcome: "launch aborted",
+				})
+			}
+		}
+		r.session.detachCollaborator(context.Background(), string(spec.ID))
+	}()
 	if store := r.session.CollaborationStore(); store != nil && handle.RuntimeEpoch > 0 {
 		run, runErr := store.StartRun(ctx, collaboration.StartRunRequest{
 			AgentID: string(spec.ID), RuntimeEpoch: handle.RuntimeEpoch,
@@ -533,6 +565,17 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 			return nil, fmt.Errorf("start workspace child run: %w", runErr)
 		}
 		handle.SetRunIdentity(run.ID, run.Version)
+		if len(spec.FileOwnership) > 0 {
+			if _, err := store.AcquireClaims(ctx, collaboration.AcquireClaimsRequest{
+				AgentID: string(spec.ID), RunID: run.ID, RequestID: spec.ParentToolCallID, Paths: spec.FileOwnership,
+			}); err != nil {
+				r.fileOwnership.Release(spec.ID)
+				if subDB != nil {
+					_ = subDB.Close()
+				}
+				return nil, fmt.Errorf("reserve workspace child ownership: %w", err)
+			}
+		}
 	}
 
 	a.ToolFn = r.buildProxiedToolFn(spec, blockCh, handle)
@@ -578,7 +621,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 		defer r.finishTurnChild(spec.ParentTurn)
 		r.runSubAgentLoop(subCtx, handle, systemPrompt, userPrompt)
 	}()
-
+	launched = true
 	return handle, nil
 }
 
@@ -898,7 +941,7 @@ func (r *SubAgentRunner) finalizeSubAgent(handle *agent.SubAgentHandle, result a
 		case agent.SubAgentCrashed:
 			runState = collaboration.RunInterrupted
 		}
-		finished, err := store.FinishRun(context.Background(), collaboration.FinishRunRequest{
+		finished, err := finishCollaborationRun(store, collaboration.FinishRunRequest{
 			RunID: runID, AgentID: string(handle.Spec.ID),
 			RuntimeEpoch: handle.RuntimeEpoch, ExpectedVersion: runVersion,
 			State: runState, Outcome: outcome, ContextCommitID: result.HistoryMessageID,
@@ -912,6 +955,9 @@ func (r *SubAgentRunner) finalizeSubAgent(handle *agent.SubAgentHandle, result a
 				var references []collaboration.Reference
 				if result.HistoryMessageID != "" {
 					references = append(references, collaboration.Reference{Kind: "history_message", ID: result.HistoryMessageID})
+				}
+				if result.ReportID != "" {
+					references = append(references, collaboration.Reference{Kind: "report", ID: result.ReportID, Revision: result.ReportRevision})
 				}
 				_, publishErr := store.Publish(context.Background(), collaboration.PublishRequest{
 					SenderID: string(handle.Spec.ID), SenderName: handle.Spec.Name,
@@ -1048,6 +1094,10 @@ func (r *SubAgentRunner) buildSubAgentResult(handle *agent.SubAgentHandle, msgs 
 		}
 	case "cancelled":
 		status = agent.SubAgentCancelled
+	case "missing_final_report":
+		if status == agent.SubAgentCompleted {
+			status = agent.SubAgentFailedPolicy
+		}
 	}
 	if status == agent.SubAgentCompleted && !handle.ReportDone() {
 		status = agent.SubAgentFailedPolicy
@@ -1374,7 +1424,7 @@ func (r *SubAgentRunner) resolveProfile(name string, category string, spec *agen
 				maps.Copy(spec.SkillModes, ap.SkillModes)
 			}
 			if len(spec.FileOwnership) == 0 && len(ap.FileOwnership) > 0 {
-				spec.FileOwnership = ap.FileOwnership
+				spec.FileOwnership = slices.Clone(ap.FileOwnership)
 			}
 			if ap.ContextCompactionPercent != nil {
 				spec.ContextCompactionPercent = cloneIntPtr(ap.ContextCompactionPercent)

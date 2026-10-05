@@ -76,9 +76,15 @@ func HumanSteeringPrefix() string {
 }
 
 type CollaborationEventData struct {
-	Origin, EventID, ThreadID, SenderID, SenderName, Kind, RequestID, RunID, Body string
-	RequestRevision                                                               uint64
-	Broadcast                                                                     bool
+	Origin, EventID, ThreadID, SenderID, SenderName, Kind, RequestID, RunID, Body, Disposition string
+	RequestRevision                                                                            uint64
+	References                                                                                 []CollaborationReference
+	Broadcast                                                                                  bool
+}
+
+type CollaborationReference struct {
+	Kind, ID string
+	Revision int
 }
 
 func CollaborationEvent(data CollaborationEventData) string {
@@ -109,8 +115,15 @@ func CollaborationEvent(data CollaborationEventData) string {
 		text.WriteString(`" run_id="`)
 		text.WriteString(XMLText(data.RunID))
 	}
+	if data.Disposition != "" {
+		text.WriteString(`" disposition="`)
+		text.WriteString(XMLText(data.Disposition))
+	}
 	text.WriteString(`">`)
 	text.WriteString(XMLText(data.Body))
+	for _, ref := range data.References {
+		fmt.Fprintf(&text, `<reference kind="%s" id="%s" revision="%d"/>`, XMLText(ref.Kind), XMLText(ref.ID), ref.Revision)
+	}
 	text.WriteString("</workspace_event>")
 	if origin == "human" {
 		text.WriteString("\nThis is genuine human steering for the exact addressed run. Preserve its event and run identities in any follow-up; admission is not proof the requested outcome completed.")
@@ -160,7 +173,7 @@ func AgentProfileCatalog(profiles []AgentProfile) string {
 		return ""
 	}
 	var text strings.Builder
-	text.WriteString("<available_agent_profiles>Use a profile's name in agent_start when its purpose matches delegated work.\n")
+	text.WriteString("<available_agent_profiles>Use an exact enabled profile name in agent_start.profile when its purpose and category match delegated work; profile is not an agent nickname.\n")
 	for _, profile := range profiles {
 		fmt.Fprintf(&text, "<profile name=\"%s\" role=\"%s\">%s</profile>\n", XMLText(profile.Name), XMLText(profile.Role), XMLText(profile.Description))
 	}

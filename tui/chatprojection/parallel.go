@@ -33,6 +33,8 @@ func parallelMessages(msg *types.ChatMessage) []*types.ChatMessage {
 	_ = json.Unmarshal([]byte(msg.Content), &output)
 	count := max(len(input.Uses), len(output.Results))
 	roundID := activityRoundID(msg)
+	stopped := msg.ToolStatus == types.ToolStatusSuccess || msg.ToolStatus == types.ToolStatusError ||
+		msg.ToolStatus == types.ToolStatusCancelled || msg.ToolStatus == "interrupted"
 	children := make([]*types.ChatMessage, 0, count)
 	for i := 0; i < count; i++ {
 		child := &types.ChatMessage{InternalID: fmt.Sprintf("%s:%d", msg.InternalID, i), ToolID: fmt.Sprintf("%s:%d", msg.ToolID, i), ToolRoundID: roundID, Role: types.RoleTool, Time: msg.Time, ToolStatus: "streaming", ToolPreviewPhase: types.ToolPreviewPreparing}
@@ -66,14 +68,18 @@ func parallelMessages(msg *types.ChatMessage) []*types.ChatMessage {
 			child.ToolStatus, child.ToolPreviewPhase = "success", types.ToolPreviewDone
 			if result.Phase == "running" {
 				child.ToolStatus, child.ToolPreviewPhase = "calling", types.ToolPreviewStreaming
-				if msg.ToolStatus == types.ToolStatusSuccess || msg.ToolStatus == types.ToolStatusError || msg.ToolStatus == types.ToolStatusCancelled {
-					child.ToolStatus, child.ToolPreviewPhase, child.Content = types.ToolStatusCancelled, types.ToolPreviewDone, "Stopped before a result was returned"
+				if stopped {
+					child.ToolStatus, child.ToolPreviewPhase = types.ToolStatusCancelled, types.ToolPreviewDone
+					child.Content = "Stopped before a result was returned"
+					if result.Result != "" {
+						child.Content += "\n" + result.Result
+					}
 				}
 			}
 			if result.Error {
 				child.ToolStatus, child.ToolPreviewPhase = "error", types.ToolPreviewError
 			}
-		} else if msg.ToolStatus == "success" || msg.ToolStatus == "error" || msg.ToolStatus == types.ToolStatusCancelled {
+		} else if stopped {
 			child.ToolStatus, child.ToolPreviewPhase, child.Content = types.ToolStatusCancelled, types.ToolPreviewDone, "No result returned"
 		}
 		if strings.TrimSpace(child.ToolName) == "" {

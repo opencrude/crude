@@ -113,6 +113,8 @@ CREATE INDEX IF NOT EXISTS idx_collaboration_events_thread
 	ON collaboration_events(thread_id, sequence);
 CREATE INDEX IF NOT EXISTS idx_collaboration_events_kind
 	ON collaboration_events(kind, sequence);
+CREATE INDEX IF NOT EXISTS idx_collaboration_events_request
+	ON collaboration_events(request_id, request_revision, kind, sequence);
 CREATE TABLE IF NOT EXISTS collaboration_deliveries (
 	id TEXT PRIMARY KEY,
 	event_id TEXT NOT NULL,

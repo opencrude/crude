@@ -1533,10 +1533,14 @@ button that needs a double click reads as broken.
   source/revision/binding preimage. A boolean approval must never widen into
   changed bytes or another source. Dynamic MCP definitions and execution both
   enforce current effect/scope/fingerprint grants and root/child ceilings.
-- Fresh application settings contain two disableable built-ins:
+- Application settings contain three disableable built-ins:
   `anthropic-skills`, pinned to the complete commit recorded in
-  `types/capability`, and `official-mcp-registry`, using the official preview
-  discovery API. Built-ins can be edited or disabled but not deleted; source
+  `types/capability`, `skills-directory` community search, and
+  `official-mcp-registry`, including remote HTTP and pinned npm/PyPI packages.
+  Skills/MCP use readable store cards with inline Install/Manage, an explicit
+  Installed-only filter and Source/Sort choice lists, not administration tables.
+  All-source search interleaves ranked results; unsupported variants and partial
+  source failures stay visible. Built-ins can be edited or disabled but not deleted; source
   trust never bypasses exact acquisition preview or MCP grants.
 - Capability snapshot contexts cancel before workspace teardown. Workspace
   capability lifetime locking protects persistence/service replacement; a stale
@@ -1556,6 +1560,27 @@ button that needs a double click reads as broken.
   and is never routine progress or task fan-out. Human unread and durable agent
   context admission remain independent. Memory revisions use expected-version
   correction; exposure never reinforces usefulness.
+- Collaboration work requests are journal-owned: initial revision 1, exact next
+  author-issued revision with unchanged recipients, and typed latest-revision
+  accept/defer/decline. Never infer agreement from prose or allow duplicate
+  acknowledgement loops. Roots select reusable children with `agent_start.profile`;
+  bounded leaves coordinate with peers but cannot recursively delegate.
+- Controls fence exact run ID/version or availability epoch; a replacement run
+  never inherits an earlier cancel. Pause cancels execution and suspends admission;
+  resume restores availability, not a stack. Human outcomes are durable audit
+  facts, not fake model deliveries. Publication is never proof of application.
+- Report author/run/request provenance is immutable across revisions. Only an
+  actual child-owned final addressed to its parent satisfies the deliverable;
+  interim reports and missing-final terminal reasons cannot become completed
+  work. Notifications expose exact artifact references; read the referenced
+  revision before relying on its summary.
+- Runtime takeover first loads local context receipts, then atomically reconciles
+  admissions, requeues only uncommitted reservations, interrupts orphaned runs and
+  releases their claims under the exact process lock/epoch. Root admission,
+  compaction and normal turns share one authoritative active context. Resume
+  admits old evidence passively with zero provider/tool/child replay; genuinely
+  new peer input may wake the attached idle root. See
+  `docs/reference/workspace-collaboration.md`.
 
 See `docs/guides/capability-workflows.md` for actual routes, protocol limits,
 manual workflows and acceptance boundaries.

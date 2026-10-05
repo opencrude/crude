@@ -22,7 +22,6 @@ func TestComposeGeometryStaysWithinNarrowRows(t *testing.T) {
 					Theme:         theme.DefaultDark(),
 					NestingLevel:  nesting,
 					MainSBVisible: mainScrollbar,
-					HasPaneBg:     func(string) bool { return true },
 				}
 				pane := chatprojection.PaneLineInfo{}
 				if nesting > 0 {

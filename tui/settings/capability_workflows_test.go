@@ -374,20 +374,21 @@ func TestCapabilityCatalogInstalledDiscoverOperationsAndScroll(t *testing.T) {
 	model.capabilityRevision++
 	host.MarkLayout()
 	host.Layout()
-	catalog.table.SelectIndex(30)
-	catalog.table.Scroll().ScrollTo(20)
-	row, _ := catalog.table.Selected()
-	offset := catalog.table.Scroll().Offset()
+	catalog.store.SelectIndex(30)
+	catalog.store.Scroll().ScrollTo(20)
+	row, _ := catalog.store.Selected()
+	offset := catalog.store.Scroll().Offset()
 	capabilityAction(catalog, "inspect")
 	catalog.back()
 	host.MarkLayout()
 	host.Layout()
-	selected, _ := catalog.table.Selected()
-	if selected.ID != row.ID || catalog.table.Scroll().Offset() != offset {
-		t.Fatal("detail navigation or layout clamped retained table scroll")
+	selected, _ := catalog.store.Selected()
+	if selected.ID != row.ID || catalog.store.Scroll().Offset() != offset {
+		t.Fatal("detail navigation or layout clamped retained store scroll")
 	}
-	catalog.HandleAction(ui.EventContext{}, ui.Action{ID: "tabs.activate", Payload: "discover"})
-	request := capabilityRequest(t, capabilityAction(catalog, "discover"))
+	catalog.filter.SetValue("new")
+	catalog.views[catalog.viewKey()] = capabilityListState{query: "new"}
+	request := capabilityRequest(t, capabilityAction(catalog, "search"))
 	model.applyCapabilityResult(CapabilityResultMsg{Target: model, Sequence: request.Sequence, Entries: []captypes.Entry{{ID: "vendor:new", Kind: captypes.KindSkill, Name: "New guide", Version: "pinned", Source: "vendor"}}})
 	catalog.consumeResult()
 	catalog.syncRows()
