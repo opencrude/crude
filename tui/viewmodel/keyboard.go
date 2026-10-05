@@ -21,6 +21,7 @@ import (
 	"crude/tui/screens/sourcecontrol"
 	"crude/tui/ui"
 	wm "crude/tui/wm"
+	"crude/types/recovery"
 	"crude/workspace"
 )
 
@@ -645,6 +646,22 @@ func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, 
 		return m, nil
 	}
 
+	if msg.Code == tea.KeyEnter && !msg.Mod.Contains(tea.ModAlt) && !m.LSPPopup.RenameArmed {
+		if node := m.AgentMgr.ActiveNode(); node != nil && node.State != nil {
+			status := node.State.RecoveryStatus()
+			parked := status.State == recovery.Interrupted ||
+				status.State == recovery.NeedsAttention && !m.AgentTurnActive(node.ID)
+			text := strings.TrimSpace(m.Input.Value())
+			if parked && text != "" && !strings.HasPrefix(text, "/") {
+				// Refuse admission before the text control consumes its draft:
+				// keep exact cursor, references, selection, undo and history.
+				if m.Feedback != nil {
+					m.Feedback.NotifyInfo("Recovery is still pending. Use Retry now or Stop before sending; your draft is kept.")
+				}
+				return m, nil
+			}
+		}
+	}
 	canType := false
 	if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
 		canType = !n.State.Completed && n.State.IsActive()

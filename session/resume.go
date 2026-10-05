@@ -282,6 +282,21 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		return nil, fmt.Errorf("restore recoveries: %w", err)
 	}
 	for _, checkpoint := range openRecoveries {
+		if checkpoint.ContextOwnerID == meta.ID {
+			checkpoint.Archive = reconcileInterruptedTools(checkpoint.Archive)
+			checkpoint.ActiveContext = reconcileInterruptedTools(checkpoint.ActiveContext)
+			if err := sess.restoreRecoveryTranscript(&checkpoint); err != nil {
+				_ = lg.Close()
+				_ = db.Close()
+				return nil, fmt.Errorf("restore accepted recovery transcript: %w", err)
+			}
+			if err := sessiondb.SaveRecoveryCheckpoint(db, meta.ID, checkpoint); err != nil {
+				_ = lg.Close()
+				_ = db.Close()
+				return nil, fmt.Errorf("restore safe recovery context: %w", err)
+			}
+			sess.activeContext = append([]provider.ChatMessage(nil), checkpoint.ActiveContext...)
+		}
 		sess.pendingRecoveries[checkpoint.Status.AgentID] = checkpoint
 	}
 	if records, err := sessiondb.ListUsageRecords(db); err != nil {

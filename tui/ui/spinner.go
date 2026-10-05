@@ -37,7 +37,7 @@ func BlockCursorSolid(clr color.Color) string {
 	return lipgloss.NewStyle().Foreground(clr).Render("█")
 }
 
-// ActivityDot is the only animated product status glyph. Every active dot uses
+// ActivityDot is the ordinary animated activity glyph. Every active dot uses
 // the same wall-clock phase: 400ms filled, then 400ms hollow. Callers own color.
 func ActivityDot(frame int) string {
 	glyph := "○"
@@ -52,6 +52,15 @@ func ActivityDot(frame int) string {
 	)
 	width := ansi.GraphemeWidth.StringWidth(glyph)
 	return glyph + strings.Repeat(" ", max(0, target-width))
+}
+
+// RecoverySquare shares the activity clock but denotes failed-attempt recovery,
+// not ordinary work. Reserve the square's measured width during its off phase.
+func RecoverySquare(frame int) string {
+	if BlinkOn(frame) {
+		return "■"
+	}
+	return strings.Repeat(" ", ansi.GraphemeWidth.StringWidth("■"))
 }
 
 type Phase string

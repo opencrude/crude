@@ -27,6 +27,9 @@ type RowSpan struct {
 	// BGColor, when BGSet is true, overrides BgRole at paint time.
 	BGColor cell.Color
 	BGSet   bool
+	// Action is an optional inline action. Shellchat activates it only on a
+	// no-drag click; the same text remains selectable and copyable.
+	Action *ui.Action
 }
 
 // PaintLine is a single terminal row of semantic spans with optional subpane

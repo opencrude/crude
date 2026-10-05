@@ -71,6 +71,7 @@ var toolVerbs = map[string][3]string{
 	"search_history":          {"Preparing history search", "Searching history", "Searched history"},
 	"capability_search":       {"Preparing capability search", "Finding capabilities", "Found capabilities"},
 	"capability_activate":     {"Preparing activation", "Activating capability", "Activated capability"},
+	"mcp_request_access":      {"Preparing MCP access", "Requesting MCP access", "Reviewed MCP access"},
 	"mcp_read_resource":       {"Preparing resource read", "Reading MCP resource", "Read MCP resource"},
 	"mcp_get_prompt":          {"Preparing prompt fetch", "Fetching MCP prompt", "Fetched MCP prompt"},
 }

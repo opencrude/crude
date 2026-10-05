@@ -49,6 +49,25 @@ func TestRecoveryJourneyPreservesDraftAndCanonicalHydration(t *testing.T) {
 	}
 }
 
+func TestSendingWhilePassivelyInterruptedKeepsExactComposerDraft(t *testing.T) {
+	app := newFullTestApp(t)
+	app.AddOrchestrator("owner")
+	app.maybeHydrateComposerDraft()
+	const draft = "My exact new instruction.\nKeep it until the pending run is resolved."
+	app.Input.SetInput(draft)
+	app.Input.SetCursorFlat(7)
+	_ = app.handleAgentEvent(types.AgentEventMsg{Type: "recovery", AgentID: "owner", Data: recovery.Status{
+		ID: "pending", AgentID: "owner", Generation: 1, State: recovery.Interrupted,
+	}})
+	_, _ = app.dispatchKeyPress(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if app.Input.Value() != draft || app.Input.CursorFlat() != 7 {
+		t.Fatal("rejected pending-run submission consumed or reset the draft")
+	}
+	if got := app.AgentMgr.Get("owner").State.Messages.Messages(); len(got) != 1 || got[0].Recovery == nil {
+		t.Fatalf("rejected input fabricated a sent human message: %+v", got)
+	}
+}
+
 func TestRecoveryCancelAcknowledgementPassesShieldButLateRetryCannotReactivate(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("owner")

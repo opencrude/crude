@@ -98,7 +98,7 @@ func (b *Button) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintC
 		attr = cell.AttrBold
 	}
 	FillRect(buf, originX, originY, r, cell.BlankCell(bg))
-	text := "[ " + b.label + " ]"
+	text := "[ " + rendering.TruncateVisual(b.label, max(0, r.W-4), "…") + " ]"
 	buf.WriteString(originX+r.X, originY+r.Y, rendering.TruncateVisual(text, r.W, ""), fg, bg, attr)
 }
 

@@ -49,6 +49,7 @@ func (workspace *Workspace) ensureCapabilities(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	service.SetRegistrationStore(newCapabilityRegistrationStore(workspace))
 	if err := service.Configure(ctx, workspace.LoadAppSettings().Capabilities); err != nil {
 		service.Close()
 		return err
@@ -384,11 +385,6 @@ func (workspace *Workspace) CapabilityAction(ctx context.Context, action captype
 			err = workspace.SaveAppSettings(working)
 		} else {
 			err = workspace.SaveWorkspaceSettings(types.OverridesFromDiff(workspace.AppDefaults(), working))
-		}
-		if err == nil {
-			if action.Operation == "remove" || action.Operation == "reset-inherited" {
-				err = service.ForgetInstalled(ctx, action.ID)
-			}
 		}
 		if err == nil {
 			err = service.Configure(ctx, workspace.LoadAppSettings().Capabilities)

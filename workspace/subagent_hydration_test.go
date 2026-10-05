@@ -2,18 +2,21 @@ package workspace
 
 import (
 	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
+	"crude/agent"
 	"crude/provider"
 	"crude/session"
 	"crude/sessiondb"
 	"crude/types"
+	"crude/types/recovery"
 )
 
-func TestHydrateCompletedSubAgentsRestoresReadOnlyReviewTree(t *testing.T) {
+func TestHydrateSubAgentsRestoresCompletedAndPendingReviewTree(t *testing.T) {
 	setTestHome(t)
 	root := t.TempDir()
 	sessionsRoot := filepath.Join(t.TempDir(), "sessions")
@@ -41,6 +44,24 @@ func TestHydrateCompletedSubAgentsRestoresReadOnlyReviewTree(t *testing.T) {
 		if err := sessiondb.UpsertUsageRecord(parentDB, record); err != nil {
 			t.Fatal(err)
 		}
+	}
+	owner, err := json.Marshal(map[string]any{"spec": agent.SubAgentSpec{
+		ID: "pending-child", Name: "Kept Child", Category: "crafter", ParentID: "root",
+		ParentTurn: 1, Depth: 1, Model: "child-model", AccountID: "test-account",
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pending := sessiondb.RecoveryCheckpoint{
+		Status: recovery.Status{ID: "pending-incident", AgentID: "pending-child", Generation: 1,
+			State: recovery.Recovering, StartedAt: time.Now(), UpdatedAt: time.Now()},
+		InputAdmitted: true, ContextGeneration: 1, OwnerData: owner,
+		Archive: []provider.ChatMessage{provider.NewTextMessage("user", "original child assignment"),
+			provider.NewTextMessage("assistant", "accepted child work")},
+	}
+	pending.ActiveContext = pending.Archive
+	if err := sessiondb.SaveRecoveryCheckpoint(parentDB, "parent", pending); err != nil {
+		t.Fatal(err)
 	}
 	if err := parentDB.Close(); err != nil {
 		t.Fatal(err)
@@ -102,8 +123,8 @@ func TestHydrateCompletedSubAgentsRestoresReadOnlyReviewTree(t *testing.T) {
 		t.Fatalf("hydrated request usage = %#v ok=%v", usage, ok)
 	}
 
-	ids := ws.HydrateCompletedSubAgents("root")
-	if len(ids) != 1 || ids[0] != "child" {
+	ids := ws.HydrateSubAgents("root")
+	if len(ids) != 2 || ids[0] != "child" || ids[1] != "pending-child" {
 		t.Fatalf("hydrated IDs = %v", ids)
 	}
 	child := manager.Get("child")
@@ -114,5 +135,21 @@ func TestHydrateCompletedSubAgentsRestoresReadOnlyReviewTree(t *testing.T) {
 	views := pane.Messages.Messages()
 	if len(views) != 2 || views[0].Role != MessageRoleAssignment || views[0].Content != "# Assignment\n- Description: preserve me" {
 		t.Fatalf("hydrated child transcript = %+v", views)
+	}
+	pendingNode := manager.Get("pending-child")
+	if pendingNode == nil || pendingNode.State.Completed || pendingNode.State.RecoveryStatus().ID != pending.Status.ID {
+		t.Fatalf("pending child disappeared or became completed: %+v", pendingNode)
+	}
+	if ws.PrepareAgentRecovery("pending-child", pending.Status.ID, 1) == nil {
+		t.Fatal("restored child has no exact-owner retry route")
+	}
+	pendingViews := pendingNode.State.Messages.Messages()
+	if len(pendingViews) != 3 || pendingViews[1].Content != "accepted child work" || pendingViews[2].Recovery == nil {
+		t.Fatalf("pending child lost accepted transcript or recovery row: %+v", pendingViews)
+	}
+	for _, view := range frontend.hydratedMessages {
+		if view.Recovery != nil && view.Recovery.AgentID == "pending-child" {
+			t.Fatal("child incident was incorrectly attributed to root chat")
+		}
 	}
 }

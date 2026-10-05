@@ -277,11 +277,10 @@ func (ab *ActionBar) Children() []Component {
 	return nil
 }
 
-func (ab *ActionBar) Measure(ctx LayoutContext, cs Constraints) Size {
+func (ab *ActionBar) Measure(_ LayoutContext, cs Constraints) Size {
 	totalW := 0
 	for i := range ab.buttons {
-		s := ab.buttons[i].button.Measure(ctx, Loose(cs.MaxW, 1))
-		totalW += s.W
+		totalW += rendering.VisibleWidth(ab.buttons[i].label) + 4
 		if i < len(ab.buttons)-1 {
 			totalW += ab.gap
 		}
@@ -300,11 +299,60 @@ func (ab *ActionBar) Layout(ctx LayoutContext, r Rect) {
 	totalW := 0
 	widths := make([]int, len(ab.buttons))
 	for i := range ab.buttons {
-		bw := rendering.VisibleWidth(ab.buttons[i].button.label) + 4
+		ab.buttons[i].button.SetLabel(ab.buttons[i].label)
+		bw := rendering.VisibleWidth(ab.buttons[i].label) + 4
 		widths[i] = bw
 		totalW += bw
 		if i < len(ab.buttons)-1 {
 			totalW += ab.gap
+		}
+	}
+	// Shortcut hints yield before any decision disappears. Keep the complete
+	// labels as source state so widening restores them and key routing remains
+	// unchanged. Remaining overflow is shared across the widest buttons.
+	if totalW > r.W {
+		totalW = max(0, len(widths)-1) * ab.gap
+		for i := range ab.buttons {
+			label := ab.buttons[i].label
+			if shortcut := ab.buttons[i].shortcut; shortcut != "" {
+				label = strings.TrimSuffix(label, " ("+shortcut+")")
+			}
+			ab.buttons[i].button.SetLabel(label)
+			widths[i] = rendering.VisibleWidth(label) + 4
+			totalW += widths[i]
+		}
+	}
+	gap := ab.gap
+	if totalW > r.W {
+		if len(widths) > 1 {
+			gap = min(gap, max(0, (r.W-len(widths))/(len(widths)-1)))
+		}
+		available := max(0, r.W-max(0, len(widths)-1)*gap)
+		lo, hi := 0, available
+		for lo < hi {
+			capWidth := lo + (hi-lo+1)/2
+			sum := 0
+			for _, width := range widths {
+				sum += min(width, capWidth)
+			}
+			if sum <= available {
+				lo = capWidth
+			} else {
+				hi = capWidth - 1
+			}
+		}
+		remaining := available
+		for _, width := range widths {
+			remaining -= min(width, lo)
+		}
+		totalW = max(0, len(widths)-1) * gap
+		for i, width := range widths {
+			widths[i] = min(width, lo)
+			if width > lo && remaining > 0 {
+				widths[i]++
+				remaining--
+			}
+			totalW += widths[i]
 		}
 	}
 	x := 0
@@ -317,7 +365,7 @@ func (ab *ActionBar) Layout(ctx LayoutContext, r Rect) {
 	}
 	for i := range ab.buttons {
 		ab.buttons[i].button.Layout(ctx, Rect{X: x, Y: y, W: widths[i], H: 1})
-		x += widths[i] + ab.gap
+		x += widths[i] + gap
 	}
 }
 

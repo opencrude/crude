@@ -7,6 +7,18 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Recovery Disclosure Clock (2026-10-05)
+
+The compact recovery row caches expanded diagnostic evidence separately from
+its clock-driven header. `BenchmarkExpandedRecoveryClockShort` and
+`BenchmarkExpandedRecoveryClockDense` exercise real renderer export with one
+versus 2,000 diagnostic paragraphs, keeping a live countdown and Retry now
+target. Three Windows/i7-9850H runs measured 3.75–3.90 µs per clock update:
+2,467 B / 23 allocations for the short case and 2,066–2,068 B / 24 allocations
+for the dense case. Work does not grow with the diagnostic's retained rows.
+These are projection/export measurements, not full-shell paint timings.
+The existing repository allocation ceilings remain unchanged.
+
 ## Workspace Home (2026-10-02)
 
 `BenchmarkLauncherDenseFrame` paints and relays out a 160×40 home screen with
@@ -237,8 +249,9 @@ review gate instead (see "Timing review guidance").
 
 Two by-design carve-outs keep the budgets honest:
 
-- **Turn-status rows re-render every tick on purpose** (they are never
-  cached). They are counted separately via `StatusRenders` and never counted
+- **Transient turn-status rows re-render every tick on purpose**. Retained
+  recovery evidence is cached; only its compact clock header changes.
+  Status work is counted separately via `StatusRenders` and never counted
   in the item/line budgets. The seed keeps status-row count FIXED across
   session sizes so the scaling guard measures only real work. Note that
   `workspace.Conversation.insertMessage` keeps the last turn-status row pinned

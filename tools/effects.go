@@ -21,7 +21,7 @@ type ExecutionIdentityKey struct{}
 func NativeMetadata(name string) (ToolMetadata, bool) {
 	metadata := ToolMetadata{Name: name, Scope: "workspace"}
 	switch name {
-	case "read_file", "glob_files", "grep_files", "list_directory", "web_search", "web_fetch", "arxiv_search", "recall_memory", "search_history", "get_plan", "check_async_command", "read_async_output", "wait", "capability_search", "capability_activate", "mcp_read_resource", "mcp_get_prompt", "agent_list", "agent_inspect", "artifact_read", "agent_wait", "board_read":
+	case "read_file", "glob_files", "grep_files", "list_directory", "web_search", "web_fetch", "arxiv_search", "recall_memory", "search_history", "get_plan", "check_async_command", "read_async_output", "wait", "capability_search", "capability_activate", "mcp_request_access", "mcp_read_resource", "mcp_get_prompt", "agent_list", "agent_inspect", "artifact_read", "agent_wait", "board_read":
 		metadata.Effect = captypes.EffectRead
 	case "reply", "question", "update_plan", "remember", "update_memory", "forget_memory", "memory_feedback", "agent_send", "agent_respond", "publish_report":
 		metadata.Effect = captypes.EffectCommunication

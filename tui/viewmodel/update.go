@@ -385,7 +385,7 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	m.syncLSPStatusIssues()
 	m.syncAgentStatusInventory()
 	var launcherCmd tea.Cmd
-	if m.launcherHostVisible() {
+	if m.capabilityObservationVisible() {
 		launcherCmd = m.launcherCapabilitiesCmd(now)
 	} else if m.launcherCapabilityCancel != nil {
 		m.launcherCapabilityCancel()

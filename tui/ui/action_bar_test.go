@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -110,6 +111,59 @@ func TestDockedActionBarPacksFromLeftWithRule(t *testing.T) {
 	bar.Layout(LayoutContext{}, Rect{W: 40, H: 2})
 	if bar.buttons[0].button.Bounds().X != 0 || bar.buttons[0].button.Bounds().Y != 1 {
 		t.Fatalf("docked button bounds=%v, want x=0 y=1", bar.buttons[0].button.Bounds())
+	}
+}
+
+func TestActionBarConstrainedWidthKeepsEveryDecisionInsideRow(t *testing.T) {
+	bar := NewDockedActionBar("actions", NewTokenSet(theme.DefaultDark()),
+		ActionBarButton{Label: "Allow", Action: "allow", Shortcut: "y", Enabled: true},
+		ActionBarButton{Label: "Always allow", Action: "always", Shortcut: "a", Enabled: true},
+		ActionBarButton{Label: "Deny", Action: "deny", Shortcut: "n", Enabled: true},
+	)
+	host := NewHost(theme.DefaultDark(), bar)
+	for width := 1; width <= 60; width++ {
+		host.Resize(width, 2)
+		host.Layout()
+		buffer := surface.NewCellBuffer(width+10, 2)
+		host.Paint(buffer)
+		for _, action := range []string{"allow", "always", "deny"} {
+			bounds, _ := bar.ButtonBounds(action)
+			if bounds.X < 0 || bounds.X+bounds.W > width {
+				t.Errorf("width %d: %s escaped the action row: %+v", width, action, bounds)
+			}
+			if !bounds.Empty() {
+				result := host.Handle(tea.MouseClickMsg{X: bounds.X, Y: bounds.Y, Button: tea.MouseLeft})
+				if result.Action == nil || result.Action.ID != action {
+					t.Errorf("width %d: painted %s cannot be clicked: %+v", width, action, result)
+				}
+				host.Handle(tea.MouseReleaseMsg{X: bounds.X, Y: bounds.Y, Button: tea.MouseLeft})
+			}
+		}
+		for x := width; x < buffer.Width(); x++ {
+			if char := buffer.Get(x, 1).Char; char != 0 && char != ' ' {
+				t.Errorf("width %d: button painted outside parent at %d", width, x)
+			}
+		}
+		if width == 37 {
+			var row strings.Builder
+			for x := 0; x < width; x++ {
+				row.WriteRune(buffer.Get(x, 1).Char)
+			}
+			for _, label := range []string{"Allow", "Always allow", "Deny"} {
+				if !strings.Contains(row.String(), label) {
+					t.Errorf("constrained row lost %s: %q", label, row.String())
+				}
+			}
+		}
+	}
+	host.Resize(60, 2)
+	host.Layout()
+	if bar.buttons[1].button.label != "Always allow (a)" {
+		t.Fatal("widening did not restore the shortcut label")
+	}
+	host.Focus(bar.ID())
+	if result := host.Handle(tea.KeyPressMsg{Code: 'n', Text: "n"}); result.Action == nil || result.Action.ID != "deny" {
+		t.Fatal("compact presentation discarded the denial shortcut")
 	}
 }
 

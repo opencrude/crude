@@ -342,8 +342,12 @@ retained and all later IDs must match. This also tolerates a compatible gateway
 that omits the redundant ID from its terminal event, without parsing text or
 inventing an identity. A completed response that explicitly reports
 `store:false`, or a stream that returns no ID, cannot become an HTTP continuation
-anchor. The session log records the exact decision and the TUI reports the
-endpoint limitation instead of silently presenting full uploads as deltas.
+anchor. When the request enabled continuation, the session log records the exact
+decision and the TUI reports the endpoint limitation instead of silently
+presenting full uploads as deltas. When request policy disabled continuation,
+the completion logs `disabled` and neither retains a new response reference nor
+emits an endpoint-limitation notice; an expected `store:false` response is not a
+capability observation.
 
 Tool execution identity is the exact provider call ID, never an output position.
 Streamed calls and terminal snapshots bind to one accumulator even when a gateway

@@ -19,7 +19,18 @@ func finishCollaborationRun(store *collaboration.Store, request collaboration.Fi
 		if readErr != nil {
 			return collaboration.Run{}, readErr
 		}
-		if current.AgentID != request.AgentID || current.RuntimeEpoch != request.RuntimeEpoch || current.State.Terminal() {
+		if current.AgentID != request.AgentID || current.RuntimeEpoch != request.RuntimeEpoch {
+			return collaboration.Run{}, err
+		}
+		if current.State.Terminal() {
+			// Finalization spans the session and workspace stores. A retry
+			// may observe its exact lifecycle commit after a later write
+			// failed. A matching immutable terminal result is an ack, never
+			// permission to settle another run or overwrite an explicit stop.
+			if current.State == request.State && current.Outcome == request.Outcome &&
+				current.ContextCommitID == request.ContextCommitID {
+				return current, nil
+			}
 			return collaboration.Run{}, err
 		}
 		request.ExpectedVersion = current.Version

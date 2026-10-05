@@ -316,6 +316,12 @@ func (a *Agent) consumeStream(
 	}
 	defer stream.Close()
 
+	// A request that disabled continuation cannot discover an endpoint
+	// limitation: store:false or a missing ID is expected, not a refusal.
+	if req.ResponseContinuationScope == "" {
+		result.ResponseContinuationReason = "disabled"
+	}
+
 	firstTokenLogged := false
 	finish := func() {
 		result.Content = content.String()
@@ -367,12 +373,14 @@ func (a *Agent) consumeStream(
 		if update.Usage != nil {
 			result.Usage = *update.Usage
 		}
-		if update.ContinuationID != "" && req.ResponseContinuationScope != "" {
-			result.ResponseReference = &provider.ResponseReference{ID: update.ContinuationID, Scope: req.ResponseContinuationScope,
-				InputHash: provider.ResponseInputHash(req.Messages, req.Tools)}
-		}
-		if update.ContinuationReason != "" {
-			result.ResponseContinuationReason = update.ContinuationReason
+		if req.ResponseContinuationScope != "" {
+			if update.ContinuationID != "" {
+				result.ResponseReference = &provider.ResponseReference{ID: update.ContinuationID, Scope: req.ResponseContinuationScope,
+					InputHash: provider.ResponseInputHash(req.Messages, req.Tools)}
+			}
+			if update.ContinuationReason != "" {
+				result.ResponseContinuationReason = update.ContinuationReason
+			}
 		}
 		if update.FinishReason != "" {
 			result.FinishReason = update.FinishReason

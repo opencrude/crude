@@ -150,7 +150,7 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 		if result, handled, err := session.executeCollaborationTool(callCtx, actor.ID, tool, params); handled {
 			return result, err
 		}
-		if runtime != nil && (strings.HasPrefix(tool, "mcp__") || strings.HasPrefix(tool, "capability_") || tool == "mcp_read_resource" || tool == "mcp_get_prompt") {
+		if runtime != nil && (strings.HasPrefix(tool, "mcp__") || strings.HasPrefix(tool, "capability_") || tool == "mcp_read_resource" || tool == "mcp_get_prompt" || tool == "mcp_request_access") {
 			if !strings.HasPrefix(tool, "mcp__") && !runtimeToolSelected(actor, tool) {
 				return tools.ToolResult{}, fmt.Errorf("capability operation %q is excluded by this agent", tool)
 			}

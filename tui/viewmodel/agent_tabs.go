@@ -45,7 +45,7 @@ func (m *App) AddOrchestrator(orchID string) {
 		node.Label = m.AgentNameFor(orchID)
 		sp.Title = node.Label
 	}
-	for _, childID := range m.HydrateCompletedSubAgents(orchID) {
+	for _, childID := range m.HydrateSubAgents(orchID) {
 		child := m.AgentMgr.Get(childID)
 		pane := m.PaneMgr.Get(childID)
 		if child == nil || pane == nil {

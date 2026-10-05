@@ -181,6 +181,20 @@ func (s *Session) persistPendingRecovery(
 	return sessiondb.SaveRecoveryCheckpoint(db, sessionID, state.checkpoint(supervisor.CheckpointStatus()))
 }
 
+// Retry the same accepted boundary, not the stochastic provider request or tool
+// round that produced it. This runs only on the owning off-UI execution thread.
+func persistRecoveryBoundary(ctx context.Context, supervisor *agent.Supervisor) error {
+	for {
+		if err := supervisor.Persist(supervisor.CheckpointStatus()); err != nil {
+			if !supervisor.Await(ctx, agent.AttentionRecovery(agent.RecoveryFailureStorage, err)) {
+				return ctx.Err()
+			}
+			continue
+		}
+		return nil
+	}
+}
+
 func (s *Session) finishRecovery(agentID, incidentID string, generation uint64) {
 	if s == nil {
 		return
@@ -320,7 +334,7 @@ func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint6
 		orchestrator := s.orchestrators[agentID]
 		s.orchMu.Unlock()
 		if orchestrator != nil {
-			cancelled, _ := orchestrator.CancelTurn()
+			cancelled, _ := orchestrator.cancelTurnForGeneration(generation)
 			return cancelled
 		}
 		if runner := s.SubAgentRunner(); runner != nil {

@@ -904,8 +904,13 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
   lifecycle may settle work. Preserve safe canonical boundaries; never replay
   accepted stochastic output, historical tool effects or existing commands.
 - `sessiondb` retains exact pending input, owner/generation, archive and active
-  context through one durable recovery checkpoint. Persistence must succeed
-  before acknowledging natural completion. Resume remains passive; explicit
+  context through one durable recovery checkpoint. Transcript, turn ledger and
+  collaboration settlement must succeed before acknowledging natural completion.
+  Finished parallel leaves checkpoint while siblings run, including native batches;
+  missing crash outcomes are unknown, never fabricated user cancellations.
+  Preflight-blocked inputs keep their DB even without transcript rows. Pending
+  children restore as actionable review surfaces, not completed or invisible work.
+  Resume remains passive; explicit
   Continue run or `/retry` fences the exact incident/generation and must not
   consume drafts, switch another tab or restart old effects. Stop must also work
   for parked/interrupted work without an active collaboration run.
@@ -914,8 +919,11 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
   per-wait maximum**, including Retry-After and millisecond/date hints. A server's
   24-hour hint must never cause an hours-long local retry sleep. Request/job
   attempt budgets and successful maintenance cadence remain separate.
-- Recovery uses one retained incident row: static severity title, full neutral
-  diagnostic and muted action guidance, with concise strip countdown/attention.
+- Recovery uses one compact, expandable incident row. Automatic transport/DNS
+  recovery needs no `/retry`; a real countdown and exact-owner `(Retry now)`
+  action can shorten its cooldown. A red square blinks on the shared activity
+  clock only during recovery, with stable measured width. Expansion shows the
+  full neutral diagnostic and muted guidance without rewrapping on clock ticks.
   Waiting for attention never animates fake work. Live and hydrated projection,
   copy/selection, timestamps and explicit cancellation must agree.
 - `network/` owns the shared outbound HTTP transport for providers, OAuth,
@@ -1367,9 +1375,12 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   the existing deadline. Model/protocol/context changes require a fresh chain.
   Stream identity comes from the official Response objects on created,
   in-progress and completed events; every observed ID must agree. `store:true`
-  is a request, not proof of endpoint capability. An explicit returned
-  `store:false` or missing response ID keeps full uploads and must surface a
-  typed reason, never a guessed ID. HTTP continuation cannot be guaranteed for
+  is a request, not proof of endpoint capability. When continuation was enabled,
+  an explicit returned `store:false` or missing response ID keeps full uploads
+  and must surface a typed reason, never a guessed ID. Disabled continuation
+  logs `disabled`, retains no new reference and emits no endpoint-limitation
+  notice: expected non-storage is not capability evidence.
+  HTTP continuation cannot be guaranteed for
   a gateway that declines storage; WebSocket store-false continuation and the
   Conversations resource are distinct APIs, not fallback JSON shapes.
 - Responses inline images remain eligible for normal `previous_response_id`
@@ -1569,6 +1580,16 @@ button that needs a double click reads as broken.
   source/revision/binding preimage. A boolean approval must never widen into
   changed bytes or another source. Dynamic MCP definitions and execution both
   enforce current effect/scope/fingerprint grants and root/child ceilings.
+- Agent acquisitions and exact MCP access changes publish through the workspace's
+  normal sparse settings registration maps, never a second shadow install table.
+  Preserve neighboring installs/preferences and fence the exact source, policy,
+  selected preimage and workspace lifetime. MCP activation exposes observed
+  fingerprints separately from usable tools; separate `mcp_request_access` grants require
+  immutable explicit approval, never source annotations or generic Always-read
+  permission. Skill activation includes its installed path. Passive restart
+  reconnects/downloads/replays nothing; explicit activation rechecks tool schemas.
+  Live capability observation refreshes Settings/sidebar/home without configuring
+  transports or inspecting skill files on Update.
 - Application settings contain three disableable built-ins:
   `anthropic-skills`, pinned to the complete commit recorded in
   `types/capability`, `skills-directory` community search, and

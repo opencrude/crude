@@ -45,6 +45,8 @@ func (r *Renderer) disclosureState(msg *types.ChatMessage) DisclosureState {
 //   - completed tools keep a budgeted preview body (full only on toggle).
 func (r *Renderer) defaultDisclosure(msg *types.ChatMessage) DisclosureState {
 	switch {
+	case msg.Recovery != nil:
+		return DisclosureCollapsed
 	case msg.Role == types.RoleThinking:
 		if r.thinkingBodyOnly {
 			return DisclosureExpanded // the enclosing pane owns disclosure
@@ -164,6 +166,8 @@ func (r *Renderer) hasDisclosure(msg *types.ChatMessage) bool {
 		return false
 	}
 	switch {
+	case msg.Recovery != nil:
+		return true
 	case msg.Role == types.RoleThinking:
 		return msg.Content != "" && (msg.ThinkingDisplay.Kind.HasCompactPreview() || !msg.ThinkingActive && !msg.ThinkingInterrupted)
 	case msg.SubPaneID != "":

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -68,16 +69,31 @@ func (app *App) applyCapabilitySnapshot(message capabilitySnapshotMsg) {
 	if message.generation != app.workspaceSwitchGen.Load() {
 		return
 	}
-	// A completed configuration read supersedes observations already in flight.
+	// An explicit refresh supersedes periodic observations already in flight.
 	if app.launcherCapabilityCancel != nil {
 		app.launcherCapabilityCancel()
 		app.launcherCapabilityCancel = nil
 	}
 	app.launcherCapabilitySequence++
-	app.capabilitySnapshot = message.snapshot
-	if message.err != nil {
-		app.capabilitySnapshot.Error = message.err.Error()
+	app.applyObservedCapabilitySnapshot(message.snapshot, message.err, true)
+}
+
+func (app *App) applyObservedCapabilitySnapshot(snapshot captypes.Snapshot, err error, projectLauncher bool) {
+	if err != nil {
+		if snapshot.Generation == 0 {
+			snapshot = app.capabilitySnapshot
+		}
+		snapshot.Error = err.Error()
+	} else if snapshot.Generation == 0 {
+		return
 	}
+	if snapshot.Generation < app.capabilitySnapshot.Generation {
+		return
+	}
+	if reflect.DeepEqual(snapshot, app.capabilitySnapshot) {
+		return
+	}
+	app.capabilitySnapshot = snapshot
 	app.refreshActivityList()
 	if app.activityBar != nil {
 		for _, kind := range []captypes.Kind{captypes.KindSkill, captypes.KindMCP} {
@@ -94,12 +110,15 @@ func (app *App) applyCapabilitySnapshot(message capabilitySnapshotMsg) {
 			app.activityBar.SetBadge(view, count)
 		}
 	}
-	if app.launcherScreen != nil {
+	if projectLauncher && app.launcherScreen != nil {
 		app.projectLauncherCapabilities(app.capabilitySnapshot)
 	}
 	if window := app.overlayHost.Window(ui.OverlayWorkspaceSettings); window != nil {
 		if body := app.settingsSurface(window); body != nil {
 			body.Model().SetCapabilitySnapshot(app.capabilitySnapshot)
+			if frame, ok := window.Content.(*ui.WindowFrameWidget); ok {
+				frame.Host().MarkLayout()
+			}
 			window.MarkContentDirty()
 		}
 	}
@@ -142,21 +161,23 @@ func (app *App) launcherCapabilitiesCmd(now time.Time) tea.Cmd {
 		return launcherCapabilitiesMsg{screen: screen, workspace: generation, sequence: sequence, snapshot: snapshot, err: err}
 	}
 }
+
+func (app *App) capabilityObservationVisible() bool {
+	if app.launcherHostVisible() || app.overlayHost.Window(ui.OverlayWorkspaceSettings) != nil {
+		return true
+	}
+	return app.Tree != nil && app.Tree.Visible && (app.activityView == activitySkills || app.activityView == activityMCP)
+}
+
 func (app *App) applyLauncherCapabilities(msg launcherCapabilitiesMsg) {
 	if msg.workspace != app.workspaceSwitchGen.Load() || msg.sequence != app.launcherCapabilitySequence {
 		return
 	}
 	app.launcherCapabilityCancel = nil
-	if msg.screen != app.launcherScreen {
-		return
-	}
-	if msg.err != nil {
-		msg.snapshot.Error = msg.err.Error()
-	}
 	if msg.snapshot.Generation == 0 && msg.err == nil {
 		return
 	}
-	app.projectLauncherCapabilities(msg.snapshot)
+	app.applyObservedCapabilitySnapshot(msg.snapshot, msg.err, msg.screen == app.launcherScreen)
 }
 
 func (app *App) capabilitySidebarItems(view activitybar.View) []ui.ListItem {

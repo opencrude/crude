@@ -16,7 +16,7 @@ Unknown tools stay visible until intentionally classified. A failed or cancelled
 ## Capabilities and Peer Data
 
 `capability_search`, `capability_activate`, `agent_send`, `board_read`,
-`mcp_read_resource`, `mcp_get_prompt` and `mcp__<connection>__<tool>` calls retain
+`mcp_request_access`, `mcp_read_resource`, `mcp_get_prompt` and `mcp__<connection>__<tool>` calls retain
 their exact identity/arguments/results in disclosure. Semantic titles use the
 query, capability ID, recipient/type, thread, URI, prompt or adapted tool name;
 they never expose a raw JSON argument envelope. Dynamic operations stay visible
@@ -328,9 +328,15 @@ existing aggregate totals.
 
 Unnatural attempt failures enter the [run recovery supervisor](run-recovery.md),
 not task death. One retained incident row uses a static severity-colored heading,
-full neutrally colored word/grapheme-wrapped diagnostic and muted action guidance.
-Recovering, Needs attention, Recovered and Interrupted share native notice geometry.
-The fixed strip carries concise recovery/countdown or explicit `/retry` guidance,
+and defaults to a single compact content line, not the old ruled notice card.
+Automatic recovery shows a red square blinking on the shared activity clock,
+real countdown, `(Retry now)` and the ordinary disclosure chevron. A no-drag click
+on Retry now wakes only that exact incident; header/keyboard disclosure reveals
+the complete neutral diagnostic and muted guidance. Dragging selects/copies
+instead of activating either action. Expanded reason rows stay cached on clock
+changes. Settled incidents remove retry targets; attention/interrupted states are
+static. Transport and DNS task recovery do not require typing `/retry`.
+The fixed strip carries concise recovery/countdown or explicit recovery guidance,
 never the raw diagnostic. Waiting for attention is static. Repeated failures update
 one incident instead of spamming red rows; owner-scoped Notices expose action.
 
@@ -344,8 +350,11 @@ The transport owns retries only before model output has been accepted. It must
 never replay a stochastic request and compare the new response to an old prefix.
 Connection resets, premature EOF, stalled progress, transient gateway stream
 termination, rate limits, and overloaded providers can recover. Invalid requests,
-authentication/permission failures, exhausted billing/quota, invalid certificates,
-and nonexistent DNS names are not transient. Respect `x-should-retry: false`.
+authentication/permission failures, exhausted billing/quota and invalid certificates
+remain nonretryable request failures. The task supervisor separately rechecks DNS
+lookup failures with capped cooldowns, because a temporarily missing provider
+record or disconnected resolver should not require human polling. Respect
+`x-should-retry: false` for provider responses.
 
 Defaults are six total request attempts with jittered exponential backoff capped
 locally at 30 seconds. Server `Retry-After` or `retry-after-ms` advice may extend

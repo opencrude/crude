@@ -169,17 +169,16 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	turnFinalState := sessiondb.TurnFailed
 	recoveryParked := false
 	var collaborationRun collaboration.Run
-	finishTurn := func() {
+	finishTurn := func() error {
 		if turnFinished {
-			return
+			return nil
 		}
-		turnFinished = true
 		if ctx.Err() != nil {
 			turnFinalState = sessiondb.TurnInterrupted
 		}
 		if s.db != nil {
 			if err := sessiondb.FinishAgentTurn(s.db, s.sessionID, o.ID, turnGeneration, turnFinalState); err != nil {
-				l.Warn("SESSION", "turn_state_finish_failed", "error", err.Error())
+				return err
 			}
 		}
 		if collaborationRun.ID != "" {
@@ -190,6 +189,9 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 				runState, outcome = collaboration.RunSucceeded, "completed"
 			case sessiondb.TurnInterrupted:
 				runState, outcome = collaboration.RunCancelled, "cancelled"
+				if recoveryParked && ctx.Err() == nil {
+					runState, outcome = collaboration.RunInterrupted, "recovery pending"
+				}
 			}
 			s.mu.Lock()
 			store := s.collaborationStore
@@ -205,27 +207,33 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 					Outcome: outcome, ContextCommitID: currentMsgID,
 				})
 				if err != nil {
-					l.Warn("COLLAB", "run_finish_failed", "run_id", collaborationRun.ID, "error", err.Error())
+					return err
 				} else {
 					collaborationRun = finished
 				}
 			}
 		}
-		o.endTurn(turnGeneration)
+		turnFinished = true
+		return nil
 	}
 	defer func() {
 		if recovered := recover(); recovered != nil {
 			panicErr := fmt.Errorf("session turn panic: %v", recovered)
 			l.Error("SESSION", "turn_panic", "agent_id", o.ID, "error", panicErr.Error())
 			turnFinalState = sessiondb.TurnInterrupted
-			finishTurn()
+			recoveryParked = true
+			if err := finishTurn(); err != nil {
+				l.Warn("SESSION", "turn_state_finish_failed", "error", err.Error())
+			}
 			s.finishRecovery(o.ID, supervisor.IncidentID(), turnGeneration)
 			status := supervisor.Park(agent.AttentionRecovery(agent.RecoveryFailurePanic, panicErr))
 			checkpoint := recoveryState.checkpoint(status)
 			s.parkRecovery(checkpoint)
-			recoveryParked = true
 		}
-		finishTurn()
+		if err := finishTurn(); err != nil {
+			l.Warn("SESSION", "turn_state_finish_failed", "error", err.Error())
+		}
+		o.endTurn(turnGeneration)
 		if !recoveryParked {
 			s.finishRecovery(o.ID, supervisor.IncidentID(), turnGeneration)
 		}
@@ -611,7 +619,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		s.msgsMu.Lock()
 		recoveryState.setContext(s.sessionID, s.contextGeneration, s.contextReason)
 		s.msgsMu.Unlock()
-		return s.persistPendingRecovery(s.db, s.sessionID, supervisor, recoveryState)
+		return persistRecoveryBoundary(ctx, supervisor)
 	}
 	if activeCfg.ContextCompactionPercent != nil {
 		ag.ContextCompactionPercent = *activeCfg.ContextCompactionPercent
@@ -844,6 +852,11 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	if terminalDone != nil {
 		cancelled = terminalReasonFromEvent(*terminalDone) == "cancelled"
 	}
+	// Do not discard the recovery envelope or acknowledge success while the
+	// durable turn/collaboration lifecycle still says running.
+	if !recoverStep(agent.RecoveryFailureStorage, finishTurn) {
+		return
+	}
 	if cancelled {
 		if err := supervisor.Cancel(); err != nil {
 			status := supervisor.Park(agent.AttentionRecovery(agent.RecoveryFailureStorage, err))
@@ -870,7 +883,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			}
 		}
 	}
-	finishTurn()
+	o.endTurn(turnGeneration)
 	if terminalDone != nil {
 		sender.SendAgentEventWithID(terminalDone.Type, terminalDone.Data, terminalDone.AgentID)
 	}
@@ -892,7 +905,9 @@ func (o *Orchestrator) handleBlockingEvent(data map[string]string, evt agent.Age
 		if tool == "apply_patch" {
 			allowed = s.patchAlwaysAllowed(data["patch_input"])
 		}
-		if allowed {
+		// Capability publication carries its own immutable preimage. A generic
+		// Read/Always permission cannot approve another install or changed grant.
+		if allowed && tool != "capability_activate" && tool != "mcp_request_access" {
 			s.logger.Debug("PERM", "auto_allowed", "operation", op, "tool", tool, "target", target)
 			o.ResolveBlock(ttypes.BlockResponse{RequestID: data["block_id"], Outcome: ttypes.BlockAnswered, Value: "allow"})
 			agentID := evt.AgentID

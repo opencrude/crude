@@ -69,6 +69,16 @@ func TestBlinkOnTimeMatchesFrame(t *testing.T) {
 	}
 }
 
+func TestRecoverySquareUsesSharedClockAndStableMeasuredWidth(t *testing.T) {
+	ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{Exact: map[string]int{"■": 2}})
+	t.Cleanup(func() { ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{}) })
+	on, off := RecoverySquare(0), RecoverySquare(ActivityBlinkPhaseMillis)
+	if on != "■" || strings.TrimSpace(off) != "" ||
+		ansi.GraphemeWidth.StringWidth(on) != ansi.GraphemeWidth.StringWidth(off) {
+		t.Fatalf("recovery square moved its label or ignored phase: %q / %q", on, off)
+	}
+}
+
 func stripAnsiSpinnerTest(s string) string {
 	var b strings.Builder
 	inEsc := false

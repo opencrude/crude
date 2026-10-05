@@ -307,8 +307,15 @@ func (m *App) cancelPromptConfirmation(target *confirmation.Screen) {
 func (m *App) resolveAgentPromptConfirmation(req agentPromptRequest, choice string) {
 	if m.ResolveConfirmation(req.agentID, req.blockID, choice) {
 		if node := m.AgentMgr.Get(req.agentID); node != nil && node.State != nil {
+			// Delivery has accepted this exact decision. Release its local
+			// attention state in the same frame as the prompt, not on a later
+			// backend event; a newer request must never inherit this response.
+			if node.State.PendingBlockID == req.blockID {
+				node.State.PendingBlockID = ""
+			}
 			node.State.Running, node.State.Thinking = true, true
 		}
+		m.syncAgentStatusInventory()
 	} else if m.Feedback != nil {
 		m.Feedback.NotifyError("Permission response was not sent: the request is no longer active")
 	}

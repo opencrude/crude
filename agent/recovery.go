@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	"net"
 	"strings"
 	"time"
 
@@ -217,7 +218,30 @@ func (s *Supervisor) Await(ctx context.Context, failure RecoveryFailure) bool {
 		if wait == nil {
 			wait = retry.Wait
 		}
-		return wait(ctx, delay) == nil
+		waitCtx, cancel := context.WithCancel(ctx)
+		defer cancel()
+		waited := make(chan error, 1)
+		go func() { waited <- wait(waitCtx, delay) }()
+		select {
+		case <-ctx.Done():
+			return false
+		case <-s.Wake:
+			// An exact Retry now/settings wake may shorten this cooldown.
+		case err := <-waited:
+			if err != nil {
+				return false
+			}
+		}
+		if ctx.Err() != nil {
+			return false
+		}
+		status = s.ensureStatus()
+		status.RetryAt = time.Time{}
+		status.Summary = "Retrying unfinished run"
+		if !s.transition(*status) {
+			return s.awaitAttention(ctx, s.ensureStatus(), false)
+		}
+		return true
 	}
 	status.State = recoverytypes.NeedsAttention
 	return s.awaitAttention(ctx, status, true)
@@ -427,6 +451,13 @@ func classifyRecoveryError(err error) RecoveryFailure {
 		retryErr = exhausted.Cause
 	}
 	if provider.Retryable(retryErr) || errors.Is(retryErr, context.DeadlineExceeded) {
+		return TransientRecovery(err)
+	}
+	var dns *net.DNSError
+	if errors.As(retryErr, &dns) {
+		// A resolver's "not found" can reflect loss of connectivity or a
+		// temporarily missing provider record. Request retries remain bounded;
+		// the owned task rechecks without requiring a human /retry.
 		return TransientRecovery(err)
 	}
 	var unknownAuthority x509.UnknownAuthorityError

@@ -884,7 +884,7 @@ func TestRunBalancesToolCallsWhenCancelledDuringExecution(t *testing.T) {
 	}
 }
 
-func TestRunRecoversToolPanicsAndContinues(t *testing.T) {
+func TestRunContainsToolPanicAndReturnsForSupervisedInspection(t *testing.T) {
 	var requests atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if requests.Add(1) == 1 {
@@ -905,8 +905,8 @@ func TestRunRecoversToolPanicsAndContinues(t *testing.T) {
 		panic("boom")
 	}
 	messages := agent.Run(context.Background(), nil, "system", func(AgentEvent) {}, nil, "", nil)
-	if requests.Load() != 2 {
-		t.Fatalf("requests = %d, want 2", requests.Load())
+	if requests.Load() != 1 || agent.RunFailureKind() != RecoveryFailurePanic {
+		t.Fatalf("requests = %d, failure=%s; want one request and a parked panic", requests.Load(), agent.RunFailureKind())
 	}
 	var panicResult *provider.ChatMessage
 	for i := range messages {

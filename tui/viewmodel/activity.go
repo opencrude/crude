@@ -337,6 +337,20 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		if ok {
 			return m.handleSidebarActivate(item)
 		}
+	case chatprojection.ChatRecoveryRetryActionID:
+		payload, ok := action.Payload.(chatprojection.ChatRecoveryRetryPayload)
+		if !ok || m.AgentMgr == nil {
+			return nil
+		}
+		node := m.AgentMgr.Get(payload.AgentID)
+		if node == nil || node.State == nil {
+			return nil
+		}
+		status := node.State.RecoveryStatus()
+		if status.ID != payload.IncidentID || status.Generation != payload.Generation {
+			return nil
+		}
+		return m.retryAgentRecovery(payload.AgentID)
 	case chatprojection.ChatToggleActionID:
 		payload, ok := action.Payload.(chatprojection.ChatTogglePayload)
 		if !ok {

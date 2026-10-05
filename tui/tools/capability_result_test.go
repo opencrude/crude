@@ -40,9 +40,14 @@ func TestCapabilityActivationAttributionAndInstructions(t *testing.T) {
 	if result := buildCapabilityResult("capability_activate", content, `{"id":"skill:other"}`); result.Summary != "Skill instructions unavailable" {
 		t.Fatalf("mismatched attribution accepted: %+v", result)
 	}
-	mcp := buildCapabilityResult("capability_activate", "MCP connection activated. Only explicitly granted operations within this agent's ceiling will be sent in the next request.", `{"id":"mcp:a"}`)
-	if mcp.Summary != "MCP connection activated" || !strings.Contains(readableEvidence(mcp), "next request") {
+	data, _ := json.Marshal(captypes.ActivationResult{ConnectionID: "mcp:a", State: "connected", Next: "Request exact fingerprint grants", Tools: []captypes.Tool{{OriginalName: "lookup", Fingerprint: "observed", Reason: "Needs explicit effect and scope grant"}}})
+	mcp := buildCapabilityResult("capability_activate", string(data), `{"id":"mcp:a"}`)
+	if mcp.Summary != "MCP connected · 0 usable tools" || !strings.Contains(readableEvidence(mcp), "observed") || !strings.Contains(readableEvidence(mcp), "Request exact") {
 		t.Fatalf("mcp activation: %+v", mcp)
+	}
+	access := buildCapabilityResult("mcp_request_access", string(data), `{"connection_id":"mcp:a","grants":[{"tool":"lookup","fingerprint":"observed","effect":"read","scope":"public"}]}`)
+	if access.Summary != mcp.Summary || !strings.Contains(readableEvidence(access), "observed") {
+		t.Fatal("MCP access review lost its connection identity or exact evidence")
 	}
 }
 

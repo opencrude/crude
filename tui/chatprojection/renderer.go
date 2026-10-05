@@ -825,14 +825,21 @@ func (r *Renderer) EndStreamingCursor() {
 }
 
 func (r *Renderer) SetSpinFrame(f int) {
-	if ui.ActivityDot(r.spinFrame) == ui.ActivityDot(f) {
+	phaseChanged := ui.ActivityDot(r.spinFrame) != ui.ActivityDot(f)
+	if !phaseChanged && r.spinFrame/1000 == f/1000 {
 		r.spinFrame = f
 		return
 	}
 	r.spinFrame = f
 	for id := range r.frameSensitive {
-		if message := r.sync.MsgByID[id]; message != nil {
-			message.CachedLines = nil
+		message := r.sync.MsgByID[id]
+		if !phaseChanged && (message == nil || message.Recovery == nil) {
+			continue
+		}
+		if message != nil {
+			if message.Recovery == nil {
+				message.CachedLines = nil
+			}
 		}
 		r.vl.InvalidateItem(id)
 	}
@@ -1355,6 +1362,17 @@ func (r *Renderer) renderItem(idx int, item *renderItem, width int) []string {
 
 	isStreamingCursor := r.isStreamingCursor(msg)
 
+	if msg.Recovery != nil && msg.CachedLines != nil && len(item.Rendered) == len(msg.CachedLines)+1 &&
+		len(item.Native) == len(item.Rendered) && len(item.Native) > 1 {
+		// Row snapshots are borrowed owner data. Update just the header;
+		// do not allocate/copy an expanded diagnostic's entire row array on
+		// every blink/countdown phase.
+		header := recoveryHeader(*msg, r.buildRenderContext(msg, false))
+		item.Native[1] = header
+		item.Rendered[1] = header.PlainText()
+		return item.Rendered
+	}
+
 	if r.sync.MsgByID[msg.InternalID] == msg && msg.CachedLines != nil && !isStreamingCursor && !msg.PendingSteering {
 		result := make([]string, 0, len(msg.CachedLines)+1)
 		native := make([]PaintLine, 0, len(msg.CachedLines)+1)
@@ -1364,6 +1382,12 @@ func (r *Renderer) renderItem(idx int, item *renderItem, width int) []string {
 		cachedNative := r.nativeCache[msg.InternalID]
 		if len(cachedNative) == len(msg.CachedLines) {
 			native = append(native, cachedNative...)
+			if msg.Recovery != nil && len(native) > 1 {
+				// Only the compact header changes on clock phases. Expanded
+				// evidence stays cached; no diagnostic wrapping on ticks.
+				native[1] = recoveryHeader(*msg, r.buildRenderContext(msg, false))
+				result[1] = native[1].PlainText()
+			}
 		} else {
 			// Cached text without its exact parallel native rows is not a valid
 			// cache entry. Drop both halves and rebuild through the normal styled
@@ -1541,7 +1565,8 @@ func (r *Renderer) renderSingleMessage(msg *types.ChatMessage) ([]string, []Pain
 	// left every message permanently cache-less, so itemList.EnsureHeights
 	// re-rendered the whole session every frame. Role/PendingSteering are identical
 	// on both, so only the write target changes.
-	if r.sync.MsgByID[origMsg.InternalID] == origMsg && !isStreamingCursor && origMsg.Role != types.RoleStatus && !origMsg.PendingSteering {
+	if r.sync.MsgByID[origMsg.InternalID] == origMsg && !isStreamingCursor &&
+		(origMsg.Role != types.RoleStatus || origMsg.Recovery != nil) && !origMsg.PendingSteering {
 		origMsg.CachedLines = make([]string, len(ml.lines))
 		copy(origMsg.CachedLines, ml.lines)
 		r.nativeCache[origMsg.InternalID] = append([]PaintLine(nil), ml.native...)

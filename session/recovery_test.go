@@ -136,6 +136,30 @@ func TestFlushWriteBufferRetainsExactSnapshotUntilCommit(t *testing.T) {
 	}
 }
 
+func TestRecoveryCancellationCannotHitAReplacementContext(t *testing.T) {
+	replacement, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	orch := NewOrchestrator("root", nil)
+	orch.turnGeneration, orch.turnCancel = 2, cancel
+	s := &Session{
+		recoverySlots: map[string]*recoverySlot{"root": {id: "old-incident", generation: 1}},
+		orchestrators: map[string]*Orchestrator{"root": orch},
+	}
+	if s.CancelRecoveryFor("root", "old-incident", 1) || replacement.Err() != nil {
+		t.Fatal("old slot cancellation reached the replacement turn context")
+	}
+}
+
+func TestNewInputCannotOverwriteParkedRecoveryOwnership(t *testing.T) {
+	s := &Session{pendingRecoveries: map[string]sessiondb.RecoveryCheckpoint{
+		"root": {Status: recoverytypes.Status{ID: "pending", AgentID: "root", Generation: 1}},
+	}}
+	orch := NewOrchestrator("root", s)
+	if orch.SubmitInput(provider.PlainInput("new instruction")) || orch.TurnActive() {
+		t.Fatal("fresh input silently replaced a parked task instead of preserving its draft/ownership")
+	}
+}
+
 func TestRootTurnPanicParksTaskAndInputServiceAcceptsExactRetry(t *testing.T) {
 	home := t.TempDir()
 	session, err := NewWithSessionDir("panic-recovery", testConfig(), home, filepath.Join(home, "sessions"))

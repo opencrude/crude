@@ -213,13 +213,15 @@ func TestEnvironmentProxyIsSnapshotted(t *testing.T) {
 	}))
 	defer proxy.Close()
 
-	t.Setenv("HTTP_PROXY", proxy.URL)
 	t.Setenv("http_proxy", "")
 	t.Setenv("HTTPS_PROXY", "")
 	t.Setenv("https_proxy", "")
 	t.Setenv("NO_PROXY", "")
 	t.Setenv("no_proxy", "")
 	t.Setenv("REQUEST_METHOD", "")
+	// Windows environment names are case-insensitive: set the desired value
+	// after clearing both spellings, rather than erasing it via http_proxy.
+	t.Setenv("HTTP_PROXY", proxy.URL)
 
 	settings := DefaultSettings()
 	settings.ProxyMode = ProxyModeEnvironment
