@@ -11,6 +11,7 @@ import (
 	"crude/provider"
 	ttypes "crude/types"
 	"crude/types/reasoning"
+	"crude/types/recovery"
 )
 
 const IdleTickInterval = 400 * time.Millisecond
@@ -64,6 +65,7 @@ type AgentState struct {
 	Running          bool
 	Cancelling       bool
 	ActiveCompaction TurnStatus
+	Recovery         recovery.Status
 	TokenBuf         string
 	LastTokenTime    time.Time
 	SpinFrame        int
@@ -153,9 +155,13 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 	}
 	// Events already queued before a cancel request must not reactivate the
 	// turn while its terminal done/error event catches up through the UI pump.
+	cancelledRecovery := false
+	if status, ok := evt.Data.(recovery.Status); ok && evt.Type == "recovery" {
+		cancelledRecovery = status.State == recovery.Cancelled
+	}
 	if a.Cancelling && evt.Type != "done" && evt.Type != "error" && evt.Type != "usage" &&
 		evt.Type != "context_compaction_cancelled" && evt.Type != "context_compaction_failed" &&
-		evt.Type != "context_compacted" && evt.Type != "collaboration_message" {
+		evt.Type != "context_compacted" && evt.Type != "collaboration_message" && !cancelledRecovery {
 		return nil
 	}
 
@@ -289,6 +295,32 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 			target.UpdateTurnStatus(TurnStatus{Phase: "retrying", Detail: reason, RetryAttempt: int(phaseInt64(data["attempt"])) + 1, RetryLimit: int(phaseInt64(data["limit"])), RetryAt: time.Now().Add(time.Duration(backoff * float64(time.Second)))})
 			onStatusLine("Recovering provider connection")
 		}
+	case "recovery":
+		status, ok := evt.Data.(recovery.Status)
+		if !ok || status.ID == "" || status.AgentID != "" && status.AgentID != a.ID ||
+			status.Generation > 0 && status.Generation < a.TurnIdentity.Generation {
+			return nil
+		}
+		if a.TokenBuf != "" {
+			target.AppendToken(a.TokenBuf)
+			a.TokenBuf = ""
+		}
+		target.MarkAllThinkingInterrupted()
+		target.MarkStreamingToolsCancelled()
+		if thinkTarget != target {
+			thinkTarget.MarkAllThinkingInterrupted()
+			thinkTarget.MarkStreamingToolsCancelled()
+		}
+		target.ClearTurnStatus()
+		target.UpdateRecovery(status)
+		a.Recovery = status
+		a.ActiveCompaction = TurnStatus{}
+		a.Thinking, a.Streaming = false, false
+		// Waiting for configuration is still an owned, unfinished turn.
+		a.Running = status.State != recovery.Interrupted && status.State != recovery.Cancelled
+		a.Cancelling, a.Completed = false, false
+		onStatusLine(status.Summary)
+		onThinking(a.Running, false, false)
 	case "thinking":
 		if delta, ok := evt.Data.(reasoning.Delta); ok && delta.Text != "" && delta.Kind != reasoning.Encrypted {
 			a.logIfInvalidUTF8("thinking", delta.Text)

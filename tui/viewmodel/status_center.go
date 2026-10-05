@@ -7,6 +7,7 @@ import (
 	"crude/tools"
 	"crude/tui/types"
 	ttypes "crude/types"
+	"crude/types/recovery"
 	"crude/workspace"
 )
 
@@ -149,6 +150,44 @@ func (m *App) syncAgentStatusEvent(evt types.AgentEventMsg) {
 			backoff, _ := values["backoff"].(float64)
 			snapshot.RetryAt = time.Now().Add(time.Duration(backoff * float64(time.Second)))
 			snapshot.RequestID, _ = values["request_id"].(string)
+		}
+	case "recovery":
+		status, ok := evt.Data.(recovery.Status)
+		if !ok || status.ID == "" || status.Generation > 0 && status.Generation < snapshot.TurnGeneration {
+			return
+		}
+		snapshot.Detail, snapshot.RetryAt = status.Summary, status.RetryAt
+		snapshot.ReadOnly = false
+		snapshot.NeedsAction = status.State == recovery.NeedsAttention || status.State == recovery.Interrupted
+		switch status.State {
+		case recovery.Recovering:
+			snapshot.Phase = ttypes.AgentRecovering
+		case recovery.NeedsAttention:
+			snapshot.Phase = ttypes.AgentNeedsAttention
+		case recovery.Interrupted:
+			snapshot.Phase = ttypes.AgentInterrupted
+		case recovery.Recovered:
+			snapshot.Phase = ttypes.AgentPreparing
+			center.ResolveIssue("agent:" + evt.AgentID)
+		case recovery.Cancelled:
+			snapshot.Phase = ttypes.AgentCancelled
+			center.ResolveIssue("agent:" + evt.AgentID)
+		}
+		if snapshot.NeedsAction {
+			actions := []ttypes.StatusAction{
+				{ID: "agent.retry", Label: "Continue run", Enabled: true},
+				{ID: "status.switch", Label: "Inspect agent", Enabled: true},
+			}
+			center.SetIssue(ttypes.IssueSnapshot{
+				ID: "agent:" + evt.AgentID, Owner: snapshot.Ref, Severity: ttypes.SeverityWarning,
+				Summary: snapshot.Label + " needs attention", Detail: status.Detail, Actions: actions,
+			})
+			center.Notify(ttypes.NotificationRecord{
+				DedupKey: "agent-recovery:" + status.ID, Owner: snapshot.Ref,
+				Severity: ttypes.SeverityWarning, Source: "recovery",
+				Summary: snapshot.Label + " needs attention", Detail: status.Detail + "\n" + status.Action,
+				Actions: actions,
+			})
 		}
 	case "context_compaction_started", "context_compaction_stage", "context_compaction_retrying", "context_compaction_committing":
 		snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = ttypes.AgentCompacting, "Compacting context", false
@@ -299,6 +338,7 @@ func (m *App) syncAgentStatusInventory() {
 		question := blocked && status.Phase == ttypes.AgentQuestion
 		approval := blocked && !question && !m.agentYoloEnabled(node.ID)
 		status.NeedsAction = question || approval
+		recoveryStatus := node.State.RecoveryStatus()
 		switch {
 		case node.State.Cancelling:
 			status.Phase, status.Detail = ttypes.AgentCancelling, "Stopping"
@@ -307,6 +347,12 @@ func (m *App) syncAgentStatusInventory() {
 			status.Phase, status.Detail = ttypes.AgentQuestion, "Needs answer"
 		case approval:
 			status.Phase, status.Detail = ttypes.AgentApproval, "Needs approval"
+		case recoveryStatus.State == recovery.NeedsAttention:
+			status.Phase, status.Detail, status.NeedsAction = ttypes.AgentNeedsAttention, recoveryStatus.Summary, true
+		case recoveryStatus.State == recovery.Interrupted:
+			status.Phase, status.Detail, status.NeedsAction = ttypes.AgentInterrupted, recoveryStatus.Summary, true
+		case recoveryStatus.State == recovery.Recovering:
+			status.Phase, status.Detail, status.RetryAt = ttypes.AgentRecovering, recoveryStatus.Summary, recoveryStatus.RetryAt
 		case node.State.Completed && status.Phase != ttypes.AgentCancelled && status.Phase != ttypes.AgentFailed:
 			status.Phase, status.Detail = ttypes.AgentCompleted, "Completed"
 		case !node.State.IsActive() && status.Phase != ttypes.AgentCompleted && status.Phase != ttypes.AgentCancelled && status.Phase != ttypes.AgentFailed && status.Phase != ttypes.AgentCompactionResult:

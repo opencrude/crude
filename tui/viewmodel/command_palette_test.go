@@ -473,21 +473,26 @@ func TestPaletteGroupOrderIsStable(t *testing.T) {
 	}
 }
 
-// TestDistinctIconsPerCommand makes sure no two real commands share
-// the same icon glyph. The palette uses icons to scan visually and
-// the original code reused "☰" for sidebar/sessions and "⌕" for
-// palette/find. Distinct icons are a real, testable contract.
+// Unrelated commands must not collide, but a shared semantic operation keeps
+// its established glyph instead of introducing a one-off icon dialect.
 func TestDistinctIconsPerCommand(t *testing.T) {
 	reg := ui.DefaultRegistry()
 	entries := paletteEntriesFromRegistry(reg)
 	seen := make(map[string]string, len(entries))
+	sameOperation := map[string]map[string]bool{
+		"⚙": {"settings.open": true, "settings.network": true},
+		"↻": {"lsp.restart": true, "agent.retry": true},
+	}
 	for _, e := range entries {
 		// Only consider non-empty icons; blank " " placeholders are fine to repeat.
 		if e.Icon == "" || e.Icon == " " {
 			continue
 		}
 		if prev, ok := seen[e.Icon]; ok {
-			t.Errorf("icon %q reused by %q and %q", e.Icon, prev, e.ID)
+			family := sameOperation[e.Icon]
+			if !family[prev] || !family[e.ID] {
+				t.Errorf("icon %q reused by unrelated %q and %q", e.Icon, prev, e.ID)
+			}
 		}
 		seen[e.Icon] = e.ID
 	}

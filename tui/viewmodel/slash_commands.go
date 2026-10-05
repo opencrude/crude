@@ -31,6 +31,8 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 	agentID := m.AgentMgr.ActiveID()
 
 	switch cmdName {
+	case "/retry":
+		return m.retryAgentRecovery(agentID)
 	case "/skills":
 		return m.openCapabilityManager(activitySkills, remainder, "")
 	case "/mcp":

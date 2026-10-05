@@ -15,6 +15,12 @@ func (w *Workspace) AgentActivity(agentID string) types.AgentActivityView {
 	}
 	view.Status.Ref.Kind, view.Status.Ref.ID = types.ResourceAgent, agentID
 	if node.State != nil {
+		view.Recovery = node.State.RecoveryStatus()
+		switch view.Recovery.State {
+		case "recovering", "needs_attention", "interrupted":
+			view.Status.Phase, view.Status.NeedsAction = recoveryPhase(view.Recovery)
+			view.Status.Detail, view.Status.RetryAt = view.Recovery.Summary, view.Recovery.RetryAt
+		}
 		view.Active = node.State.IsActive()
 		if node.State.ActiveCompaction.OperationID != "" {
 			view.CompactionPhase = node.State.ActiveCompaction.Phase

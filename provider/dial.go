@@ -2,11 +2,12 @@ package provider
 
 import (
 	"context"
-	"math/rand"
+	"fmt"
 	"net/http"
-	"strconv"
-	"strings"
 	"time"
+
+	"crude/network"
+	"crude/retry"
 )
 
 // DialSettings is the user-tunable transport configuration for one provider.
@@ -30,7 +31,7 @@ type DialSettings struct {
 	// first. 0 means the default (6).
 	MaxAttempts int `json:"max_attempts,omitempty"`
 	// MaxBackoffSeconds caps the exponential retry delay. 0 means the
-	// default (30s). Server Retry-After minimums are respected independently.
+	// default (30s). Every cooldown, including server advice, is at most 5m.
 	MaxBackoffSeconds int `json:"max_backoff_seconds,omitempty"`
 }
 
@@ -39,6 +40,7 @@ type DialSettings struct {
 type DialConfig struct {
 	RequestTimeout         time.Duration
 	ConnectTimeout         time.Duration
+	TLSHandshakeTimeout    time.Duration
 	ProgressStartupTimeout time.Duration
 	ProgressTimeoutFloor   time.Duration
 	ProgressTimeoutCeiling time.Duration
@@ -61,16 +63,17 @@ const (
 	DefaultBaseBackoff            = 500 * time.Millisecond
 	DefaultRequestTimeout         = 0 // streaming turns may legitimately run for minutes
 	DefaultMaxResponseBytes       = 64 << 20
-	maxServerRetryDelay           = 2 * time.Minute
 	listingRequestTimeout         = 30 * time.Second
 	defaultHTTPClientTimeout      = 0 // overall timeout is enforced via context, not transport
 )
 
 // DefaultDialConfig returns the built-in transport configuration.
 func DefaultDialConfig() DialConfig {
+	networkDefaults := network.DefaultSettings()
 	return DialConfig{
 		RequestTimeout:         DefaultRequestTimeout,
 		ConnectTimeout:         DefaultConnectTimeout,
+		TLSHandshakeTimeout:    time.Duration(networkDefaults.TLSHandshakeTimeoutSeconds) * time.Second,
 		ProgressStartupTimeout: DefaultProgressStartupTimeout,
 		ProgressTimeoutFloor:   DefaultProgressTimeoutFloor,
 		ProgressTimeoutCeiling: DefaultProgressTimeoutCeiling,
@@ -85,11 +88,15 @@ func DefaultDialConfig() DialConfig {
 // back to the default; MaxAttempts is clamped to at least 1.
 func (s DialSettings) resolve() DialConfig {
 	cfg := DefaultDialConfig()
+	defaults := network.Current()
+	cfg.ConnectTimeout = time.Duration(defaults.ConnectTimeoutSeconds) * time.Second
+	cfg.TLSHandshakeTimeout = time.Duration(defaults.TLSHandshakeTimeoutSeconds) * time.Second
 	if s.RequestTimeoutSeconds > 0 {
 		cfg.RequestTimeout = time.Duration(s.RequestTimeoutSeconds) * time.Second
 	}
 	if s.ConnectTimeoutSeconds > 0 {
 		cfg.ConnectTimeout = time.Duration(s.ConnectTimeoutSeconds) * time.Second
+		cfg.TLSHandshakeTimeout = cfg.ConnectTimeout
 	}
 	if s.ProgressStartupTimeoutSeconds > 0 {
 		cfg.ProgressStartupTimeout = time.Duration(s.ProgressStartupTimeoutSeconds) * time.Second
@@ -104,7 +111,7 @@ func (s DialSettings) resolve() DialConfig {
 		cfg.MaxAttempts = s.MaxAttempts
 	}
 	if s.MaxBackoffSeconds > 0 {
-		cfg.MaxBackoff = time.Duration(s.MaxBackoffSeconds) * time.Second
+		cfg.MaxBackoff = time.Duration(min(s.MaxBackoffSeconds, int(retry.MaxCooldown/time.Second))) * time.Second
 	}
 	return cfg
 }
@@ -112,6 +119,12 @@ func (s DialSettings) resolve() DialConfig {
 // Validate rejects conflicting watchdog limits rather than silently clamping
 // a configured timeout to a different value.
 func (s DialSettings) Validate() error {
+	if s.ConnectTimeoutSeconds < 0 || s.ConnectTimeoutSeconds > 300 {
+		return fmt.Errorf("connect timeout override must be 1-300 seconds (0 inherits separate Network budgets)")
+	}
+	if s.MaxBackoffSeconds < 0 || s.MaxBackoffSeconds > int(retry.MaxCooldown/time.Second) {
+		return fmt.Errorf("maximum retry cooldown must be between 1 and 300 seconds (0 uses the default)")
+	}
 	return s.resolve().progressTimeouts().validate()
 }
 
@@ -129,50 +142,17 @@ func isRetryableStatus(code int) bool {
 // (1-based). Retry waits start at the configured base and double up to the
 // configured ceiling, with jitter to avoid synchronized retries.
 func backoffDelay(attempt int, cfg DialConfig) time.Duration {
-	base := min(cfg.BaseBackoff*time.Duration(1<<min(max(0, attempt-1), 16)), cfg.MaxBackoff)
-	return base*3/4 + time.Duration(rand.Int63n(max(1, int64(base/4))))
+	return retry.Jitter(attempt, cfg.BaseBackoff, cfg.MaxBackoff)
 }
 
 // serverHintedDelay returns the delay the server asked for via
 // Retry-After / retry-after-ms, falling back to the computed backoff.
-// A negative result stops automatic recovery rather than violating an excessive
-// server minimum or waiting indefinitely.
+// All hints obey the same absolute ceiling as every other automatic retry.
 func serverHintedDelay(resp *http.Response, attempt int, cfg DialConfig) time.Duration {
-	if resp != nil {
-		if value := strings.TrimSpace(resp.Header.Get("retry-after-ms")); value != "" {
-			if milliseconds, err := strconv.ParseFloat(value, 64); err == nil && milliseconds >= 0 {
-				if milliseconds <= float64(maxServerRetryDelay/time.Millisecond) {
-					return time.Duration(milliseconds * float64(time.Millisecond))
-				}
-				return -1
-			}
-		}
-		if value := strings.TrimSpace(resp.Header.Get("Retry-After")); value != "" {
-			if seconds, err := strconv.ParseFloat(value, 64); err == nil && seconds >= 0 {
-				if seconds <= maxServerRetryDelay.Seconds() {
-					return time.Duration(seconds * float64(time.Second))
-				}
-				return -1
-			}
-			if when, err := http.ParseTime(value); err == nil {
-				if delay := max(0, time.Until(when)); delay <= maxServerRetryDelay {
-					return delay
-				}
-				return -1
-			}
-		}
-	}
-	return backoffDelay(attempt, cfg)
+	return retry.ServerDelay(resp, backoffDelay(attempt, cfg), time.Now())
 }
 
 // waitForRetry blocks for delay or until ctx is cancelled.
 func waitForRetry(ctx context.Context, delay time.Duration) error {
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-		return nil
-	case <-ctx.Done():
-		return ctx.Err()
-	}
+	return retry.Wait(ctx, delay)
 }

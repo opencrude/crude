@@ -626,6 +626,9 @@ func (c *agentCatalog) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintCont
 	}
 }
 func (c *agentCatalog) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+	if c.owner != nil && c.owner.model != nil && c.owner.model.Saving() {
+		return ui.EventResult{Handled: true}
+	}
 	if c.draft != nil && evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft && ctx.LocalY == 0 {
 		if ui.BreadcrumbIndex(c.owner.paneTitleParts(), c.owner.breadcrumbSeparator(), ctx.LocalX, c.Bounds().W) == 0 {
 			return c.back()
@@ -641,6 +644,9 @@ func (c *agentCatalog) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult 
 	return ui.EventResult{}
 }
 func (c *agentCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
+	if c.owner != nil && c.owner.model != nil && c.owner.model.Saving() {
+		return ui.EventResult{Handled: true}
+	}
 	result := ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
 	row, _ := c.table.Selected()
 	switch action.ID {

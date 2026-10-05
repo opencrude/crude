@@ -3,6 +3,7 @@ package viewmodel
 import (
 	"crude/provider"
 	ttypes "crude/tui/types"
+	"crude/types/recovery"
 	"crude/workspace"
 )
 
@@ -23,6 +24,7 @@ func chatMessageFromCanonical(view workspace.ChatMessageView) ttypes.ChatMessage
 		Origin:                 view.Origin,
 		Content:                view.Content,
 		Collaboration:          cloneCollaboration(view.Collaboration),
+		Recovery:               cloneRecovery(view.Recovery),
 		ReferenceLabels:        append([]string(nil), view.ReferenceLabels...),
 		Time:                   view.Time,
 		TurnGeneration:         view.TurnGeneration,
@@ -98,6 +100,7 @@ func workspaceMessageFromChat(message ttypes.ChatMessage) workspace.Message {
 		Origin:                 message.Origin,
 		Content:                message.Content,
 		Collaboration:          cloneCollaboration(message.Collaboration),
+		Recovery:               cloneRecovery(message.Recovery),
 		ReferenceLabels:        append([]string(nil), message.ReferenceLabels...),
 		Time:                   message.Time,
 		TurnGeneration:         message.TurnGeneration,
@@ -162,6 +165,14 @@ func cloneCollaboration(input *provider.CollaborationAttribution) *provider.Coll
 	result.RecipientIDs = append([]string(nil), input.RecipientIDs...)
 	result.RecipientNames = append([]string(nil), input.RecipientNames...)
 	return &result
+}
+
+func cloneRecovery(status *recovery.Status) *recovery.Status {
+	if status == nil {
+		return nil
+	}
+	copy := *status
+	return &copy
 }
 
 func (m *App) syncAgentMessages(agentID string, scroll bool) {

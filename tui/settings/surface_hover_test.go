@@ -28,6 +28,9 @@ func TestSettingsFormMouseHoverKeepsKeyboardTarget(t *testing.T) {
 		if item.Label != "Editor" {
 			continue
 		}
+		body.categories.list.SelectIndex(i)
+		host.MarkLayout()
+		host.Layout()
 		rail, ok := host.ScreenRect(WorkspaceSettingsListID)
 		if !ok {
 			t.Fatal("no rail hit bounds")

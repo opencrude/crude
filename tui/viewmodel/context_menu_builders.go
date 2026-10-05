@@ -335,10 +335,13 @@ func (m *App) buildAgentSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState
 				{Label: "Open agent", Action: func() {
 					m.restoreAgent(node.ID)
 				}},
+				{Label: "Continue run", Disabled: !m.canRetryAgentRecovery(node.ID), Detail: "from saved work", Action: func() {
+					m.runDetachedAsyncCmd(m.retryAgentRecovery(node.ID))
+				}},
 				{Label: "Minimize agent", Disabled: node.IsHidden(), Detail: "keeps running", Action: func() {
 					m.minimizeAgent(node.ID)
 				}},
-				{Label: "Cancel agent", Disabled: !node.IsActive(), Action: func() {
+				{Label: "Cancel agent", Disabled: !node.IsActive() && !m.canRetryAgentRecovery(node.ID), Action: func() {
 					m.cancelAgentTurn(node.ID)
 				}},
 				{Label: "Terminate agent", Detail: "stops work", Action: func() {
@@ -608,6 +611,9 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 				{Label: "Minimize", Detail: "keeps running", Action: func() {
 					_ = m.handleAgentTabClose(hit.TabIndex)
 				}},
+				{Label: "Continue run", Disabled: !m.canRetryAgentRecovery(agentID), Detail: "from saved work", Action: func() {
+					m.runDetachedAsyncCmd(m.retryAgentRecovery(agentID))
+				}},
 				{Label: "Cancel agent", Action: func() {
 					m.cancelAgentTurn(agentID)
 				}},
@@ -797,6 +803,18 @@ func (m *App) replaceRefSpans(spans []input.RefRange, newLabel string) {
 // message list. (For now: clipboard + a copy-all option.)
 func (m *App) buildChatContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	st := &ui.ContextMenuState{Title: "Chat"}
+	agentID := m.AgentMgr.ActiveID()
+	if m.canRetryAgentRecovery(agentID) {
+		status := m.AgentMgr.Get(agentID).State.RecoveryStatus()
+		st.Sections = append(st.Sections, ui.ContextMenuSection{
+			SectionLabel: "Run recovery",
+			Items: []ui.ContextMenuItem{
+				{Label: "Continue run", Detail: "from saved work", Action: func() { m.runDetachedAsyncCmd(m.retryAgentRecovery(agentID)) }},
+				{Label: "Copy diagnostic", Action: func() { m.copyToClipboard(status.Detail) }},
+				{Label: "Network settings", Action: m.openNetworkSettings},
+			},
+		})
+	}
 	st.Sections = append(st.Sections, ui.ContextMenuSection{
 		Items: []ui.ContextMenuItem{
 			{Label: "Copy selection", Action: func() {

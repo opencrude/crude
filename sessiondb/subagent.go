@@ -30,17 +30,31 @@ type SubAgentResultRow struct {
 }
 
 func InsertSubAgentResult(db *sql.DB, r SubAgentResultRow) error {
+	if db == nil {
+		return fmt.Errorf("sessiondb: nil sub-agent result database")
+	}
 	filesRead, _ := json.Marshal(r.FilesRead)
 	filesWritten, _ := json.Marshal(r.FilesWritten)
 	errors, _ := json.Marshal(r.Errors)
-	_, err := db.Exec(`
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("sessiondb: begin sub_agent_result: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`
+		DELETE FROM sub_agent_results
+		WHERE parent_session_id=? AND agent_id=?
+	`, r.ParentSessionID, r.AgentID); err != nil {
+		return fmt.Errorf("sessiondb: replace sub_agent_result: %w", err)
+	}
+	_, err = tx.Exec(`
 		INSERT INTO sub_agent_results (parent_session_id, child_session_id, agent_id, agent_name, agent_category, status, summary_gist, report_id, report_revision, session_log_path, files_read, files_written, errors, prompt_tokens, completion_tokens, cost_usd, duration_ms, created_at)
 		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	`, r.ParentSessionID, r.ChildSessionID, r.AgentID, r.AgentName, r.AgentCategory, r.Status, r.SummaryGist, r.ReportID, r.ReportRevision, r.SessionLogPath, string(filesRead), string(filesWritten), string(errors), r.PromptTokens, r.CompletionTokens, r.CostUSD, r.DurationMs, r.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("sessiondb: insert sub_agent_result: %w", err)
 	}
-	return nil
+	return tx.Commit()
 }
 
 func ListSubAgentResults(db *sql.DB, parentSessionID string) ([]SubAgentResultRow, error) {

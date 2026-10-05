@@ -23,6 +23,7 @@ Callers import it directly; do not recreate forwarding APIs in `agent/`,
 | `prompt/memory.go` | No-tools memory extraction/consolidation policy and input envelopes |
 | `prompt/permission.go` | Fixed no-tools review policy and narrowing restrictions |
 | `prompt/runtime.go` | Continuity, turn context, plans, memory recall, delegation, wakes, and interruptions |
+| `prompt/recovery.go` | Typed, code-authored continuations for preserved unfinished work; never new human input |
 | `agent/` | Model requests, admission budgets, guidance compilation/verification execution, tool-batch deferral, checkpoint validation |
 | `session/`, `memory/`, `workspace/`, `fileio/` | Configuration and source selection, typed live facts, evidence validation, domain lifecycle and persistence |
 | `provider/`, `tools/`, `codexio/` | Wire encoding/replay, exact offered schemas, native execution interfaces |
@@ -250,6 +251,12 @@ running process. Earlier handoffs remain in the immutable accepted prefix;
 new turns append current facts that explicitly supersede earlier snapshots.
 Full admission, transaction and resume contracts live in
 [adaptive context handling](adaptive-context.md).
+
+Unnatural attempt failures use the [run recovery supervisor](run-recovery.md).
+Recovery continuation wording belongs to `prompt/recovery.go`; pending input,
+safe checkpoints, retry classification, lifecycle settlement and exact wake
+fences remain domain-owned. A timer never grants permission or turns uncertain
+tool effects into safe replay.
 
 ## Protocol Transitions
 

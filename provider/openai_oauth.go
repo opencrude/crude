@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"crude/logger"
+	"crude/network"
 )
 
 // OAuthCredentials holds tokens from an OAuth sign-in flow. Currently this is
@@ -194,7 +195,8 @@ func postTokenRequest(ctx context.Context, form url.Values) (*OAuthCredentials, 
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	req.Header.Set("Accept", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := network.NewClient(30 * time.Second)
+	defer client.CloseIdleConnections()
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("token request failed: %w", err)

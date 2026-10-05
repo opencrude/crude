@@ -4,8 +4,10 @@ import (
 	captypes "crude/types/capability"
 	"time"
 
+	"crude/network"
 	"crude/provider"
 	"crude/types/reasoning"
+	"crude/types/recovery"
 )
 
 // ConversationMessage is the presentation-neutral canonical message shared by
@@ -73,6 +75,7 @@ type ConversationMessage struct {
 	SubPaneID              string            `json:"sub_pane_id,omitempty"`
 	PermTag                string            `json:"perm_tag,omitempty"`
 	PendingSteering        bool              `json:"-"`
+	Recovery               *recovery.Status  `json:"recovery,omitempty"`
 }
 
 // TurnIdentity is the immutable backend identity resolved when one turn
@@ -322,6 +325,9 @@ type AppSettings struct {
 	Capabilities   captypes.Settings           `json:"capabilities,omitempty"`
 	Safety         SafetySettings              `json:"safety,omitempty"`
 	LocalHistory   LocalHistorySettings        `json:"local_history,omitempty"`
+	// Network is application-owned: trust, proxy credentials and client
+	// identities must never be promoted by a project's settings overlay.
+	Network network.Settings `json:"network,omitempty"`
 }
 
 type CommandSeverityRule struct {
@@ -798,6 +804,7 @@ type ChatMessage struct {
 	Origin          provider.MessageOrigin
 	Content         string
 	Collaboration   *provider.CollaborationAttribution
+	Recovery        *recovery.Status
 	ReferenceLabels []string
 	Time            time.Time
 	TurnGeneration  uint64

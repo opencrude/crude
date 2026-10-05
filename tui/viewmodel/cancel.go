@@ -23,7 +23,7 @@ func (m *App) handleCancel() tea.Cmd {
 		return nil
 	}
 
-	if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil && !n.State.Completed && n.State.IsActive() {
+	if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil && !n.State.Completed && (n.State.IsActive() || m.canRetryAgentRecovery(n.ID)) {
 		m.cancelAgentTurn(n.ID)
 		return nil
 	}
@@ -47,6 +47,18 @@ func (m *App) cancelAgentTurn(agentID string) {
 	}
 	if node := m.AgentMgr.Get(agentID); node != nil && node.State != nil {
 		state := node.State
+		status := state.RecoveryStatus()
+		if m.canRetryAgentRecovery(agentID) {
+			if cancel := m.PrepareCancelAgentRecovery(agentID, status.ID, status.Generation); cancel != nil {
+				state.BeginCancellation()
+				m.syncAgentMessages(agentID, true)
+				generation := m.workspaceSwitchGen.Load()
+				m.runDetachedAsyncCmd(func() tea.Msg {
+					return recoveryCancelResultMsg{agentID: agentID, incidentID: status.ID, generation: generation, accepted: cancel()}
+				})
+				return
+			}
+		}
 		state.BeginCancellation()
 		if state.ThinkingPaneID != "" {
 			if pane := m.PaneMgr.Get(state.ThinkingPaneID); pane != nil && pane.Messages != nil {

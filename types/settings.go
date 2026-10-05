@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"reflect"
 
+	"crude/network"
 	"crude/provider"
 	captypes "crude/types/capability"
 )
@@ -116,6 +117,7 @@ func ApplyAppDefaults(s *AppSettings) {
 		return
 	}
 	s.Capabilities = captypes.WithDefaultSources(s.Capabilities)
+	s.Network = network.Normalize(s.Network)
 	if s.Theme.Preset == "" {
 		s.Theme.Preset = "dark"
 	}

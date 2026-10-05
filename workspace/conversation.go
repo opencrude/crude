@@ -7,6 +7,7 @@ import (
 	"crude/tools"
 	ttypes "crude/types"
 	"crude/types/reasoning"
+	"crude/types/recovery"
 )
 
 const (
@@ -57,6 +58,7 @@ type Conversation struct {
 	nextID        uint64
 	version       uint64
 	turnIdentity  ttypes.TurnIdentity
+	lastRecovery  recovery.Status
 }
 
 const toolPhaseMinDwell = 120 * time.Millisecond
@@ -127,6 +129,9 @@ func (c *Conversation) AppendMessage(message Message) string {
 		return ""
 	}
 	copy := message
+	if message.Recovery != nil && (c.lastRecovery.ID == "" || !message.Recovery.UpdatedAt.Before(c.lastRecovery.UpdatedAt)) {
+		c.lastRecovery = *message.Recovery
+	}
 	if c.brief == "" && message.Role == MessageRoleUser && !message.PendingSteering &&
 		message.Collaboration == nil &&
 		(message.Origin == "" || message.Origin == provider.OriginHuman || message.Origin == provider.OriginHumanSteering) {

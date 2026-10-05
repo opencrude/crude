@@ -24,6 +24,7 @@ import (
 	"crude/tools"
 	ttypes "crude/types"
 	captypes "crude/types/capability"
+	recoverytypes "crude/types/recovery"
 )
 
 func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
@@ -33,8 +34,7 @@ func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
 	defer s.detachCollaborator(context.Background(), o.ID)
 	s.reconcileCollaborationAdmissions(s.db, o.ID)
 	if err := s.admitPassiveCollaboration(o, sender); err != nil {
-		sender.SendAgentEventWithID("error", "Could not recover pending collaboration: "+err.Error(), o.ID)
-		return
+		l.Warn("COLLAB", "passive_recovery_deferred", "agent_id", o.ID, "error", err.Error())
 	}
 
 	var collaborationNotifications <-chan struct{}
@@ -66,13 +66,6 @@ func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
 		return true
 	}
 
-	defer func() {
-		if r := recover(); r != nil {
-			l.Error("SESSION", "panic", "error", fmt.Sprintf("%v", r))
-			sender.SendAgentEventWithID("error", fmt.Sprintf("Internal error: %v", r), o.ID)
-		}
-	}()
-
 	asyncPollingStop := make(chan struct{})
 	defer close(asyncPollingStop)
 	go func() {
@@ -95,29 +88,46 @@ func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
 	}()
 
 	for {
-		select {
-		case <-o.stopCh:
-			l.Info("SESSION", "run_exit_closed", "orchestrator_id", o.ID)
+		restart := func() (restart bool) {
+			defer func() {
+				if recovered := recover(); recovered != nil {
+					restart = true
+					l.Error("SESSION", "input_service_panic", "orchestrator_id", o.ID, "error", fmt.Sprintf("%v", recovered))
+				}
+			}()
+			for {
+				select {
+				case <-o.stopCh:
+					l.Info("SESSION", "run_exit_closed", "orchestrator_id", o.ID)
+					return false
+				case request := <-o.inputCh:
+					if o.closing.Load() {
+						l.Info("SESSION", "run_exit_closing", "orchestrator_id", o.ID)
+						return false
+					}
+					if s.isHardCancelled() {
+						s.clearHardCancel()
+					}
+					s.processTurnOrchestrator(request, o, sender, l)
+				case <-collaborationNotifications:
+					if startCollaborationTurn() {
+						request := <-o.inputCh
+						s.processTurnOrchestrator(request, o, sender, l)
+					}
+				case <-collaborationPoll.C:
+					if startCollaborationTurn() {
+						request := <-o.inputCh
+						s.processTurnOrchestrator(request, o, sender, l)
+					}
+				}
+			}
+		}()
+		if !restart {
 			return
-		case request := <-o.inputCh:
-			if o.closing.Load() {
-				l.Info("SESSION", "run_exit_closing", "orchestrator_id", o.ID)
-				return
-			}
-			if s.isHardCancelled() {
-				s.clearHardCancel()
-			}
-			s.processTurnOrchestrator(request, o, sender, l)
-		case <-collaborationNotifications:
-			if startCollaborationTurn() {
-				request := <-o.inputCh
-				s.processTurnOrchestrator(request, o, sender, l)
-			}
-		case <-collaborationPoll.C:
-			if startCollaborationTurn() {
-				request := <-o.inputCh
-				s.processTurnOrchestrator(request, o, sender, l)
-			}
+		}
+		if o.closing.Load() {
+			l.Info("SESSION", "run_exit_closing", "orchestrator_id", o.ID)
+			return
 		}
 	}
 }
@@ -126,12 +136,38 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	userInput := request.input
 	ctx := request.ctx
 	turnGeneration := request.generation
+	recoveryState := newRecoveryRunState(userInput, request.recovery)
+	recoveryState.contextOwnerID = s.sessionID
+	recoveryState.contextGeneration = max(1, s.contextGeneration)
+	recoveryState.contextReason = "run_recovery"
+	if request.recovery == nil {
+		s.msgsMu.Lock()
+		recoveryState.archive = append([]provider.ChatMessage(nil), s.msgs...)
+		recoveryState.active = append([]provider.ChatMessage(nil), s.activeContext...)
+		s.msgsMu.Unlock()
+	}
+	var initialRecovery *recoverytypes.Status
+	if request.recovery != nil {
+		status := request.recovery.Status
+		initialRecovery = &status
+	}
+	supervisor, supervisorErr := s.newRecoverySupervisor(
+		s.db, s.sessionID, o.ID, turnGeneration, recoveryState, initialRecovery, sender,
+	)
+	if supervisorErr != nil {
+		l.Warn("RECOVERY", "supervisor_unavailable", "agent_id", o.ID, "error", supervisorErr.Error())
+		o.endTurn(turnGeneration)
+		return
+	}
 	currentMsgID := newMessageID()
 	if userInput.InternalID != "" {
 		currentMsgID = userInput.InternalID
 	}
+	userInput.InternalID = currentMsgID
+	recoveryState.setPending(userInput)
 	turnFinished := false
 	turnFinalState := sessiondb.TurnFailed
+	recoveryParked := false
 	var collaborationRun collaboration.Run
 	finishTurn := func() {
 		if turnFinished {
@@ -177,28 +213,90 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		}
 		o.endTurn(turnGeneration)
 	}
-	defer finishTurn()
-	if err := s.runBeforeTurn(ctx); err != nil {
-		l.Error("SESSION", "before_turn_failed", "error", err.Error())
-		sender.SendAgentEventWithID("error", "Pending workspace state could not be reconciled before the turn: "+err.Error(), o.ID)
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			panicErr := fmt.Errorf("session turn panic: %v", recovered)
+			l.Error("SESSION", "turn_panic", "agent_id", o.ID, "error", panicErr.Error())
+			turnFinalState = sessiondb.TurnInterrupted
+			finishTurn()
+			s.finishRecovery(o.ID, supervisor.IncidentID(), turnGeneration)
+			status := supervisor.Park(agent.AttentionRecovery(agent.RecoveryFailurePanic, panicErr))
+			checkpoint := recoveryState.checkpoint(status)
+			s.parkRecovery(checkpoint)
+			recoveryParked = true
+		}
+		finishTurn()
+		if !recoveryParked {
+			s.finishRecovery(o.ID, supervisor.IncidentID(), turnGeneration)
+		}
+	}()
+	recoverStep := func(kind agent.RecoveryFailureKind, operation func() error) bool {
+		for {
+			if err := operation(); err != nil {
+				l.Warn("RECOVERY", "preflight_blocked", "agent_id", o.ID, "kind", kind, "error", err.Error())
+				if !supervisor.Await(ctx, agent.AttentionRecovery(kind, err)) {
+					if cancelErr := supervisor.Cancel(); cancelErr != nil {
+						status := supervisor.Park(agent.AttentionRecovery(agent.RecoveryFailureStorage, cancelErr))
+						s.parkRecovery(recoveryState.checkpoint(status))
+						recoveryParked = true
+						return false
+					}
+					turnFinalState = sessiondb.TurnInterrupted
+					sender.SendAgentEventWithID("done", map[string]any{
+						"content": "Cancelled.", "reason": "cancelled",
+					}, o.ID)
+					return false
+				}
+				continue
+			}
+			return true
+		}
+	}
+	if request.recovery != nil {
+		if err := supervisor.BeginRetry(); err != nil &&
+			!recoverStep(agent.RecoveryFailureStorage, func() error { return supervisor.BeginRetry() }) {
+			return
+		}
+		recoveryState.appendContinuation(rootprompt.RecoveryInterrupted)
+		request.recovery.Archive, request.recovery.ActiveContext = recoveryState.contexts()
+	}
+	if !recoverStep(agent.RecoveryFailureStorage, func() error {
+		return s.persistPendingRecovery(s.db, s.sessionID, supervisor, recoveryState)
+	}) {
+		return
+	}
+	if !recoverStep(agent.RecoveryFailureStorage, func() error { return s.runBeforeTurn(ctx) }) {
 		return
 	}
 	// A disabled or removed selected agent must not silently turn into Main Agent.
-	effectiveCfg := s.runtimeProfile.GetEffectiveConfig(o.ID)
-	if err := effectiveCfg.ValidateSelectedAgent(); err != nil {
-		sender.SendAgentEventWithID("error", "Selected session agent is unavailable: "+err.Error(), o.ID)
-		return
-	}
-	if s.accountUnpinned {
-		sender.SendAgentEventWithID("error", "Select an account for this session before sending a request.", o.ID)
-		return
-	}
-	if s.db != nil {
-		if err := sessiondb.BeginAgentTurn(s.db, s.sessionID, o.ID, turnGeneration, string(userInput.EffectiveOrigin())); err != nil {
-			l.Error("SESSION", "turn_state_begin_failed", "error", err.Error())
-			sender.SendAgentEventWithID("error", "Failed to persist turn state: "+err.Error(), o.ID)
-			return
+	var effectiveCfg *Config
+	if !recoverStep(agent.RecoveryFailureConfiguration, func() error {
+		effectiveCfg = s.runtimeProfile.GetEffectiveConfig(o.ID)
+		if effectiveCfg == nil {
+			return errors.New("session configuration is unavailable")
 		}
+		return effectiveCfg.ValidateSelectedAgent()
+	}) {
+		return
+	}
+	if !recoverStep(agent.RecoveryFailureConfiguration, func() error {
+		s.mu.Lock()
+		unpinned := s.accountUnpinned
+		s.mu.Unlock()
+		if unpinned {
+			return ErrAccountRequired
+		}
+		return nil
+	}) {
+		return
+	}
+	if !recoverStep(agent.RecoveryFailureStorage, func() error {
+		if s.db == nil {
+			return errors.New("session database is unavailable")
+		}
+		return sessiondb.BeginAgentTurn(s.db, s.sessionID, o.ID, turnGeneration, string(userInput.EffectiveOrigin()))
+	}) {
+		return
 	}
 	if store := s.CollaborationStore(); store != nil && o.RuntimeEpoch > 0 {
 		requestID := ""
@@ -212,12 +310,15 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		case provider.OriginPeer:
 			origin = collaboration.OriginPeer
 		}
-		started, err := store.StartRun(ctx, collaboration.StartRunRequest{
-			AgentID: o.ID, RuntimeEpoch: o.RuntimeEpoch, RequestID: requestID, Origin: origin,
-		})
-		if err != nil {
+		var started collaboration.Run
+		if !recoverStep(agent.RecoveryFailureStorage, func() error {
+			var err error
+			started, err = store.StartRun(ctx, collaboration.StartRunRequest{
+				AgentID: o.ID, RuntimeEpoch: o.RuntimeEpoch, RequestID: requestID, Origin: origin,
+			})
+			return err
+		}) {
 			s.releaseCollaborationReservations(o.ID, o.RuntimeEpoch, request.deliveries, "run could not start")
-			sender.SendAgentEventWithID("error", "Workspace agent run could not start: "+err.Error(), o.ID)
 			return
 		}
 		collaborationRun = started
@@ -251,17 +352,22 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			if errors.Is(err, ErrHistoryDisabled) {
 				l.Debug("HISTORY", "message_scope_disabled", "msg_id", currentMsgID)
 				if historyContinue != nil {
-					if continueErr := historyContinue(ctx, s.sessionID, currentMsgID); continueErr != nil {
-						sender.SendAgentEventWithID("error", "Workspace mutation gating could not start: "+continueErr.Error(), o.ID)
+					if !recoverStep(agent.RecoveryFailureStorage, func() error {
+						return historyContinue(ctx, s.sessionID, currentMsgID)
+					}) {
 						return
 					}
 					historyContinuationStarted = true
 					historyContinuationID = currentMsgID
 				}
 			} else {
-				l.Error("HISTORY", "message_scope_start_failed", "msg_id", currentMsgID, "error", err.Error())
-				sender.SendAgentEventWithID("error", "File-change tracking could not start; the turn was aborted before provider or tool execution: "+err.Error(), o.ID)
-				return
+				if !recoverStep(agent.RecoveryFailureStorage, func() error {
+					return historyStart(ctx, s.sessionID, currentMsgID)
+				}) {
+					return
+				}
+				historyStarted = true
+				historyCtx = withHistoryScope(ctx, s.sessionID, currentMsgID, o.ID)
 			}
 		} else {
 			historyStarted = true
@@ -270,9 +376,9 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	} else if inputOrigin == provider.OriginPeer && userInput.Collaboration != nil && userInput.Collaboration.HistoryMessageID != "" {
 		historyMessageID := userInput.Collaboration.HistoryMessageID
 		if historyContinue != nil {
-			if err := historyContinue(ctx, s.sessionID, historyMessageID); err != nil {
-				l.Error("HISTORY", "continuation_scope_start_failed", "msg_id", historyMessageID, "error", err.Error())
-				sender.SendAgentEventWithID("error", "File-change tracking could not continue; runtime work was aborted before provider or tool execution: "+err.Error(), o.ID)
+			if !recoverStep(agent.RecoveryFailureStorage, func() error {
+				return historyContinue(ctx, s.sessionID, historyMessageID)
+			}) {
 				return
 			}
 			historyContinuationStarted = true
@@ -324,96 +430,123 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 	l.Info("INPUT", "received", "len", len(userInput.Text), "refs", len(userInput.ReferenceIDs), "msg_id", currentMsgID, "turn", s.turnNumber)
 
-	userMsg, referenceLabels := s.buildUserMessageWithDisplay(userInput, activeCfg.Model)
-	userMsg.InternalID = currentMsgID
-	userMsg.DisplayContent = userInput.Text
-	if userInput.DisplayText != "" {
-		userMsg.DisplayContent = userInput.DisplayText
-	}
-	requestContextParts := append([]string(nil), userInput.ContextParts...)
-	if humanTurn {
-		currentPlan, planErr := s.activePlanTurnContext(ctx)
-		if planErr != nil {
-			l.Error("PLAN", "turn_context_load_failed", "error", planErr.Error())
-			sender.SendAgentEventWithID("error", "Cannot read the active plan before starting this turn: "+planErr.Error(), o.ID)
-			return
+	var archiveCopy, contextMsgs, frozenPrefix []provider.ChatMessage
+	persistedPrefixLen := 0
+	resumingAdmitted := request.recovery != nil && request.recovery.InputAdmitted
+	if resumingAdmitted {
+		archiveCopy = recoveryArchiveMessages(request.recovery.Archive)
+		contextMsgs = append([]provider.ChatMessage(nil), request.recovery.ActiveContext...)
+		frozenPrefix = append([]provider.ChatMessage(nil), contextMsgs...)
+		s.msgsMu.Lock()
+		persistedPrefixLen = len(s.msgs)
+		s.activeContext = append([]provider.ChatMessage(nil), contextMsgs...)
+		s.contextGeneration = max(s.contextGeneration, request.recovery.ContextGeneration)
+		s.contextReason = request.recovery.ContextReason
+		s.msgsMu.Unlock()
+		recoveryState.snapshot(archiveCopy, contextMsgs)
+	} else {
+		userMsg, referenceLabels := s.buildUserMessageWithDisplay(userInput, activeCfg.Model)
+		userMsg.InternalID = currentMsgID
+		userMsg.DisplayContent = userInput.Text
+		if userInput.DisplayText != "" {
+			userMsg.DisplayContent = userInput.DisplayText
 		}
-		if currentPlan != "" {
-			requestContextParts = append(requestContextParts, currentPlan)
-		}
-		if memoryContext := s.recallMemoryContext(ctx, userInput.Text, userInput.ActivePaths); memoryContext != "" {
-			requestContextParts = append(requestContextParts, memoryContext)
-		}
-		if s.prevContextInjected.CompareAndSwap(false, true) {
-			if prevContext := s.previousSessionContext(ctx); prevContext != "" {
-				requestContextParts = append(requestContextParts, prevContext)
+		requestContextParts := append([]string(nil), userInput.ContextParts...)
+		if humanTurn {
+			var currentPlan string
+			if !recoverStep(agent.RecoveryFailureStorage, func() error {
+				var err error
+				currentPlan, err = s.activePlanTurnContext(ctx)
+				return err
+			}) {
+				return
+			}
+			if currentPlan != "" {
+				requestContextParts = append(requestContextParts, currentPlan)
+			}
+			if memoryContext := s.recallMemoryContext(ctx, userInput.Text, userInput.ActivePaths); memoryContext != "" {
+				requestContextParts = append(requestContextParts, memoryContext)
+			}
+			if s.prevContextInjected.CompareAndSwap(false, true) {
+				if prevContext := s.previousSessionContext(ctx); prevContext != "" {
+					requestContextParts = append(requestContextParts, prevContext)
+				}
 			}
 		}
-	}
-	var runtimeParts []string
-	if status := agent.BuildAsyncCommandStatus(s.asyncMgr); status != "" {
-		runtimeParts = append(runtimeParts, status)
-	}
-	if runner := o.subAgentRunner(); runner != nil {
-		if status := agent.BuildSubAgentStatus(runner.Manager()); status != "" {
+		var runtimeParts []string
+		if status := agent.BuildAsyncCommandStatus(s.asyncMgr); status != "" {
 			runtimeParts = append(runtimeParts, status)
 		}
-	}
-	if len(runtimeParts) > 0 {
-		requestContextParts = append(requestContextParts, "## Runtime Status\n\n"+strings.Join(runtimeParts, "\n\n"))
-	}
-	var runtimeContext *provider.ChatMessage
-	if content := strings.TrimSpace(strings.Join(requestContextParts, "\n\n")); content != "" {
-		message := provider.NewTextMessage("user", rootprompt.TurnContext(content))
-		message.InternalID = currentMsgID + "-context"
-		message.Origin = provider.OriginRuntimeContext
-		message.Visibility = provider.VisibilityContextOnly
-		runtimeContext = &message
-	}
+		if runner := o.subAgentRunner(); runner != nil {
+			if status := agent.BuildSubAgentStatus(runner.Manager()); status != "" {
+				runtimeParts = append(runtimeParts, status)
+			}
+		}
+		if len(runtimeParts) > 0 {
+			requestContextParts = append(requestContextParts, "## Runtime Status\n\n"+strings.Join(runtimeParts, "\n\n"))
+		}
+		var runtimeContext *provider.ChatMessage
+		if content := strings.TrimSpace(strings.Join(requestContextParts, "\n\n")); content != "" {
+			message := provider.NewTextMessage("user", rootprompt.TurnContext(content))
+			message.InternalID = currentMsgID + "-context"
+			message.Origin = provider.OriginRuntimeContext
+			message.Visibility = provider.VisibilityContextOnly
+			runtimeContext = &message
+		}
 
-	if s.db != nil && humanTurn {
-		_ = sessiondb.UpdateFirstPrompt(s.db, s.sessionID, userInput.Text)
-		_ = sessiondb.UpdateLastPrompt(s.db, s.sessionID, userInput.Text)
-	}
+		if s.db != nil && humanTurn {
+			_ = sessiondb.UpdateFirstPrompt(s.db, s.sessionID, userInput.Text)
+			_ = sessiondb.UpdateLastPrompt(s.db, s.sessionID, userInput.Text)
+		}
 
-	s.msgsMu.Lock()
-	if s.activeContext == nil {
-		s.activeContext = append([]provider.ChatMessage(nil), s.msgs...)
-	}
-	frozenPrefix := append([]provider.ChatMessage(nil), s.activeContext...)
-	if runtimeContext != nil {
-		s.msgs = append(s.msgs, *runtimeContext)
-		s.activeContext = append(s.activeContext, *runtimeContext)
+		s.msgsMu.Lock()
+		if s.activeContext == nil {
+			s.activeContext = append([]provider.ChatMessage(nil), s.msgs...)
+		}
+		frozenPrefix = append([]provider.ChatMessage(nil), s.activeContext...)
+		if runtimeContext != nil {
+			s.msgs = append(s.msgs, *runtimeContext)
+			s.activeContext = append(s.activeContext, *runtimeContext)
+			s.msgTurns = append(s.msgTurns, s.turnNumber)
+			s.displayMetas = append(s.displayMetas, sessiondb.DisplayMeta{
+				DisplayRole: "hidden_runtime_context", ContextOnly: true,
+			})
+		}
+		s.msgs = append(s.msgs, userMsg)
+		s.activeContext = append(s.activeContext, userMsg)
 		s.msgTurns = append(s.msgTurns, s.turnNumber)
-		s.displayMetas = append(s.displayMetas, sessiondb.DisplayMeta{
-			DisplayRole: "hidden_runtime_context", ContextOnly: true,
-		})
+		userMeta := sessiondb.DisplayMeta{
+			DisplayRole:     "user",
+			DisplayContent:  userInput.Text,
+			ReferenceLabels: referenceLabels,
+		}
+		if userMsg.EffectiveVisibility() != provider.VisibilityConversation {
+			userMeta.DisplayRole = "hidden_runtime_context"
+			userMeta.ContextOnly = true
+		}
+		userMeta = canonicalizeDisplayMeta(userMsg, userMeta, "", len(s.msgs)-1, time.Now())
+		s.displayMetas = append(s.displayMetas, userMeta)
+		archiveCopy = append([]provider.ChatMessage(nil), s.msgs...)
+		contextMsgs = append([]provider.ChatMessage(nil), s.activeContext...)
+		persistedPrefixLen = len(archiveCopy)
+		s.msgsMu.Unlock()
+		recoveryState.setInputAdmitted(true)
+		recoveryState.snapshot(archiveCopy, contextMsgs)
+		if !recoverStep(agent.RecoveryFailureStorage, func() error {
+			return s.persistPendingRecovery(s.db, s.sessionID, supervisor, recoveryState)
+		}) {
+			return
+		}
 	}
-	s.msgs = append(s.msgs, userMsg)
-	s.activeContext = append(s.activeContext, userMsg)
-	s.msgTurns = append(s.msgTurns, s.turnNumber)
-	userMeta := sessiondb.DisplayMeta{
-		DisplayRole:     "user",
-		DisplayContent:  userInput.Text,
-		ReferenceLabels: referenceLabels,
-	}
-	if userMsg.EffectiveVisibility() != provider.VisibilityConversation {
-		userMeta.DisplayRole = "hidden_runtime_context"
-		userMeta.ContextOnly = true
-	}
-	userMeta = canonicalizeDisplayMeta(userMsg, userMeta, "", len(s.msgs)-1, time.Now())
-	s.displayMetas = append(s.displayMetas, userMeta)
-	archiveCopy := append([]provider.ChatMessage(nil), s.msgs...)
-	contextMsgs := append([]provider.ChatMessage(nil), s.activeContext...)
-	s.msgsMu.Unlock()
 	if len(request.deliveries) > 0 {
-		if err := s.commitCollaborationAdmissions(
-			s.db, s.sessionID, o.ID, collaborationRun.ID, o.RuntimeEpoch,
-			max(1, s.contextGeneration), contextMsgs, request.deliveries,
-		); err != nil {
+		if !recoverStep(agent.RecoveryFailureStorage, func() error {
+			return s.commitCollaborationAdmissions(
+				s.db, s.sessionID, o.ID, collaborationRun.ID, o.RuntimeEpoch,
+				max(1, s.contextGeneration), contextMsgs, request.deliveries,
+			)
+		}) {
 			s.rollbackTurnInput(currentMsgID)
 			s.releaseCollaborationReservations(o.ID, o.RuntimeEpoch, request.deliveries, "context admission failed")
-			sender.SendAgentEventWithID("error", "Workspace message could not be admitted: "+err.Error(), o.ID)
 			return
 		}
 		for _, delivery := range request.deliveries {
@@ -428,17 +561,26 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		s.editor = s.editor.WithMessage(currentMsgID)
 	}
 
-	turnProvider, err := effectiveCfg.providerForCategory(activeCfg)
-	if err != nil {
-		l.Error("AGENT", "provider_config_error", "error", err.Error())
-		sender.SendAgentEventWithID("error", "Invalid provider communication standard: "+err.Error(), o.ID)
-		return
-	}
-	compactionCfg := effectiveCfg.GetCategoryConfig(CategoryAeron)
-	compactionProvider, err := effectiveCfg.providerForCategory(compactionCfg)
-	if err != nil {
-		l.Error("AGENT", "compaction_provider_config_error", "error", err.Error())
-		sender.SendAgentEventWithID("error", "Invalid Aeron compaction provider: "+err.Error(), o.ID)
+	var turnProvider, compactionProvider *provider.Provider
+	var compactionCfg CategoryConfig
+	if !recoverStep(agent.RecoveryFailureConfiguration, func() error {
+		effectiveCfg = s.runtimeProfile.GetEffectiveConfig(o.ID)
+		if effectiveCfg == nil {
+			return errors.New("session configuration is unavailable")
+		}
+		if err := effectiveCfg.ValidateSelectedAgent(); err != nil {
+			return err
+		}
+		activeCfg = effectiveCfg.GetActiveDefaultCategory()
+		var err error
+		turnProvider, err = effectiveCfg.providerForCategory(activeCfg)
+		if err != nil {
+			return err
+		}
+		compactionCfg = effectiveCfg.GetCategoryConfig(CategoryAeron)
+		compactionProvider, err = effectiveCfg.providerForCategory(compactionCfg)
+		return err
+	}) {
 		return
 	}
 	turnIdentity := ttypes.TurnIdentity{
@@ -463,6 +605,13 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 	ag.CommitCompaction = func(commit agent.CompactionCommit) error {
 		return s.commitRootCompaction(o.ID, commit)
+	}
+	ag.Checkpoint = func(archive, active []provider.ChatMessage) error {
+		recoveryState.snapshot(archive, active)
+		s.msgsMu.Lock()
+		recoveryState.setContext(s.sessionID, s.contextGeneration, s.contextReason)
+		s.msgsMu.Unlock()
+		return s.persistPendingRecovery(s.db, s.sessionID, supervisor, recoveryState)
 	}
 	if activeCfg.ContextCompactionPercent != nil {
 		ag.ContextCompactionPercent = *activeCfg.ContextCompactionPercent
@@ -620,7 +769,47 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		}
 	}
 	ag.Emit = emit
-	agentMsgs := ag.Run(historyCtx, contextMsgs, prompt, emit, o.BlockResolveCh, s.sessionID, runtimeMessages)
+	prepareAttempt := func() (string, error) {
+		current := s.runtimeProfile.GetEffectiveConfig(o.ID)
+		if current == nil {
+			return "", errors.New("session configuration is unavailable")
+		}
+		if err := current.ValidateSelectedAgent(); err != nil {
+			return "", err
+		}
+		category := current.GetActiveDefaultCategory()
+		currentProvider, err := current.providerForCategory(category)
+		if err != nil {
+			return "", err
+		}
+		currentCompactionCfg := current.GetCategoryConfig(CategoryAeron)
+		currentCompactionProvider, err := current.providerForCategory(currentCompactionCfg)
+		if err != nil {
+			return "", err
+		}
+		activeCfg = category
+		ag.Provider, ag.Model = currentProvider, currentProvider.Model
+		ag.MaxOutputTokens = category.ModelMaxOutput
+		ag.CompactionProvider = currentCompactionProvider
+		ag.CompactionMaxOutput = currentCompactionCfg.ModelMaxOutput
+		if category.ContextCompactionPercent != nil {
+			ag.ContextCompactionPercent = *category.ContextCompactionPercent
+		}
+		turnIdentity = ttypes.TurnIdentity{
+			Generation: turnGeneration, ProviderID: currentProvider.ID,
+			AccountID: currentProvider.AccountID, ModelID: currentProvider.Model,
+		}
+		return s.systemPromptForModel(current.IsMultiAgentEnabled(), ag.Model), nil
+	}
+	agentMsgs := ag.RunSupervised(
+		historyCtx, contextMsgs, prompt, emit, o.BlockResolveCh, s.sessionID, runtimeMessages,
+		agent.SupervisedRunOptions{
+			Supervisor:      supervisor,
+			Prepare:         prepareAttempt,
+			Snapshot:        recoveryState.snapshot,
+			DeferSettlement: true,
+		},
+	)
 	controlMessages := s.takeCollaborationContext(o.ID)
 	if len(controlMessages) > 0 {
 		agentMsgs = append(agentMsgs, controlMessages...)
@@ -633,11 +822,64 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	l.Info("AGENT", "loop_end", "len", len(finalContent))
 	activeContext := ag.ActiveContext()
 	activeContext = append(activeContext, controlMessages...)
-	s.finalizeTurn(agentMsgs, len(archiveCopy), displayTracker, finalContent, currentMsgID, turnIdentity, activeContext)
+	recoveryState.snapshot(agentMsgs, activeContext)
+	finalizeErr := s.finalizeTurn(agentMsgs, persistedPrefixLen, displayTracker, finalContent, currentMsgID, turnIdentity, activeContext)
+	for finalizeErr != nil {
+		if !supervisor.Await(ctx, agent.AttentionRecovery(agent.RecoveryFailureStorage, finalizeErr)) {
+			if cancelErr := supervisor.Cancel(); cancelErr != nil {
+				status := supervisor.Park(agent.AttentionRecovery(agent.RecoveryFailureStorage, cancelErr))
+				s.parkRecovery(recoveryState.checkpoint(status))
+				recoveryParked = true
+				return
+			}
+			turnFinalState = sessiondb.TurnInterrupted
+			sender.SendAgentEventWithID("done", map[string]any{
+				"content": "Cancelled.", "reason": "cancelled",
+			}, o.ID)
+			return
+		}
+		finalizeErr = s.persistFinalizedTurn()
+	}
+	cancelled := false
+	if terminalDone != nil {
+		cancelled = terminalReasonFromEvent(*terminalDone) == "cancelled"
+	}
+	if cancelled {
+		if err := supervisor.Cancel(); err != nil {
+			status := supervisor.Park(agent.AttentionRecovery(agent.RecoveryFailureStorage, err))
+			s.parkRecovery(recoveryState.checkpoint(status))
+			recoveryParked = true
+			return
+		}
+	} else {
+		for {
+			if err := supervisor.Resolve(); err == nil {
+				break
+			} else if !supervisor.Await(ctx, agent.AttentionRecovery(agent.RecoveryFailureStorage, err)) {
+				if cancelErr := supervisor.Cancel(); cancelErr != nil {
+					status := supervisor.Park(agent.AttentionRecovery(agent.RecoveryFailureStorage, cancelErr))
+					s.parkRecovery(recoveryState.checkpoint(status))
+					recoveryParked = true
+					return
+				}
+				turnFinalState = sessiondb.TurnInterrupted
+				sender.SendAgentEventWithID("done", map[string]any{
+					"content": "Cancelled.", "reason": "cancelled",
+				}, o.ID)
+				return
+			}
+		}
+	}
 	finishTurn()
 	if terminalDone != nil {
 		sender.SendAgentEventWithID(terminalDone.Type, terminalDone.Data, terminalDone.AgentID)
 	}
+}
+
+func terminalReasonFromEvent(event agent.AgentEvent) string {
+	data, _ := event.Data.(map[string]any)
+	reason, _ := data["reason"].(string)
+	return reason
 }
 
 func (o *Orchestrator) handleBlockingEvent(data map[string]string, evt agent.AgentEvent, sender EventSender) bool {
@@ -844,7 +1086,7 @@ func (s *Session) finalizeTurn(
 	msgID string,
 	turnIdentity ttypes.TurnIdentity,
 	activeContext ...[]provider.ChatMessage,
-) {
+) error {
 	s.msgsMu.Lock()
 	returned := append([]provider.ChatMessage(nil), agentMsgs...)
 	if len(returned) > 0 && returned[0].Role == "system" {
@@ -970,8 +1212,13 @@ func (s *Session) finalizeTurn(
 	if s.db != nil {
 		if err := sessiondb.SaveContextState(s.db, s.sessionID, s.sessionID, contextState); err != nil {
 			s.logger.Error("COMPACT", "context_state_persist_failed", "error", err.Error())
+			return err
 		}
-		s.flushWriteBufSync()
+		if err := s.flushWriteBufSync(); err != nil {
+			return err
+		}
+	} else if len(s.msgs) > 0 {
+		return errors.New("session database is unavailable")
 	}
 
 	s.afterTurnMemory(turnNumber, turnMsgs, finalContent)
@@ -979,6 +1226,23 @@ func (s *Session) finalizeTurn(
 	if finalContent != "" {
 		s.logger.Info("CONV", "assistant_msg", "msg_id", msgID, "len", len(finalContent))
 	}
+	return nil
+}
+
+func (s *Session) persistFinalizedTurn() error {
+	if s == nil || s.db == nil {
+		return errors.New("session database is unavailable")
+	}
+	s.msgsMu.Lock()
+	state := sessiondb.ContextState{
+		Generation: s.contextGeneration, Reason: s.contextReason,
+		Messages: append([]provider.ChatMessage(nil), s.activeContext...),
+	}
+	s.msgsMu.Unlock()
+	if err := sessiondb.SaveContextState(s.db, s.sessionID, s.sessionID, state); err != nil {
+		return err
+	}
+	return s.flushWriteBufSync()
 }
 
 func contextCheckpointContent(messages []provider.ChatMessage) string {

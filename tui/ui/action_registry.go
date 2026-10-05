@@ -596,6 +596,13 @@ var defaultActions = []*ActionDef{
 		Category:    "Agent",
 	},
 	{
+		ID:          "agent.retry",
+		Label:       "Continue Agent Run",
+		Description: "retry a pending recovery from saved work",
+		Icon:        "↻",
+		Category:    "Agent",
+	},
+	{
 		ID:          "agent.newSession",
 		Label:       "New Session",
 		Description: "start a fresh session",
@@ -625,6 +632,13 @@ var defaultActions = []*ActionDef{
 		Label:       "Workspace Settings",
 		Description: "project overrides on top of application settings",
 		Icon:        "⬡",
+		Category:    "Tools",
+	},
+	{
+		ID:          "settings.network",
+		Label:       "Network Settings",
+		Description: "configure connections, proxies, and certificate trust",
+		Icon:        "⚙",
 		Category:    "Tools",
 	},
 	{

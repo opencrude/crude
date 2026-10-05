@@ -489,6 +489,9 @@ func renderNoticeMessage(msg types.ChatMessage, ctx renderContext, title string,
 }
 
 func renderLifecycleMessage(msg types.ChatMessage, ctx renderContext) messageLines {
+	if msg.Recovery != nil {
+		return renderRecoveryMessage(msg, ctx)
+	}
 	switch msg.LifecyclePhase {
 	case "yolo_enabled":
 		return renderNoticeMessage(msg, ctx, "YOLO enabled", ui.ColorWarning)

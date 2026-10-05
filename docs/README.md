@@ -37,6 +37,10 @@ Read that first; this index only organizes the reference material.
 - [Agent orchestration](reference/agent-orchestration.md) — bounded delegation,
   evidence-based handoffs, completion delivery, and links to the canonical prompt
   architecture contract.
+- [Unfinished run recovery](reference/run-recovery.md) — supervised root/child
+  attempts, durable pending work, actionable pauses and the five-minute retry ceiling.
+- [Network transport](reference/network.md) — application-owned connection,
+  proxy, TLS trust and exact-host client identity.
 - [Codex tool adapters](reference/codex-tools.md) — native patch, command,
   permission, wire, and history contracts under the canonical Crude prompt.
 - [Chat activity projection](reference/chat-activity.md) — grouped, expandable

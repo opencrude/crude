@@ -23,6 +23,7 @@ import (
 
 // SaveMsg is returned as a tea.Msg on save.
 type SaveMsg struct {
+	Target      *Model
 	Scope       types.SettingsScope
 	AppSettings types.AppSettings
 	Overrides   types.WorkspaceOverrides
@@ -185,6 +186,9 @@ type Model struct {
 	accounts        map[string]provider.Account
 	accountID       string // account being browsed, never an active connection
 	activeProvider  string
+	saving          bool
+	saveError       string
+	saveDisabled    map[*ui.FieldState]bool
 	authGeneration  map[string]uint64
 	authErrors      map[string]string
 	authWaitingID   string
@@ -357,6 +361,9 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		{Name: "Crafter", Group: "AI", Description: "Workspace defaults for implementation work.", Form: m.buildAgentForm(current.Agents.Categories["crafter"], false)},
 		{Name: "Aeron", Group: "AI", Description: "Workspace defaults for mechanical tasks.", Form: m.buildAgentForm(current.Agents.Categories["aeron"], false)},
 		{Name: "Memory", Group: "AI", Description: "Durable workspace memory: recall, extraction, consolidation.", Form: m.buildMemoryForm(current.Memory)},
+		{Name: "Connection", Group: "Network", Description: "Application-wide connection timeouts, pooling, keep-alive, and HTTP protocol behavior.", Form: m.buildNetworkConnectionForm(current.Network)},
+		{Name: "Proxy", Group: "Network", Description: "Environment, direct, or custom HTTP and SOCKS proxy routing with explicit DNS behavior.", Form: m.buildNetworkProxyForm(current.Network)},
+		{Name: "Certificates", Group: "Network", Description: "System trust, custom certificate authorities, exact-host certificate exceptions, and mTLS identity.", Form: m.buildNetworkCertificatesForm(current.Network)},
 		{Name: "Command Safety", Group: "Security", Description: "Command severity, confirmation, and dangerous-action attention.", Form: m.buildSafetyForm(current.Safety)},
 		{Name: "Auto Review Policy", Group: "Security", Description: "Synchronized view of Auto Review Agent's bounded runtime policy.", Form: m.buildAutoReviewPolicyForm(current.Safety.AutoPermission)},
 		{Name: "Appearance", Group: "IDE", Description: "Theme palette and surface colors.", Form: formModel(appearanceFields...)},
@@ -420,6 +427,64 @@ func (m *Model) preferenceBytes() []byte {
 
 func (m *Model) hasUnsavedPreferences() bool {
 	return !bytes.Equal(m.preferencesBase, m.preferenceBytes())
+}
+
+// BeginSave claims the retained settings draft for one asynchronous
+// persistence attempt. It freezes every ordinary preference field so a result
+// can be correlated with the exact values carried by SaveMsg.
+func (m *Model) BeginSave() bool {
+	if m == nil || m.saving || m.accountBusy {
+		return false
+	}
+	m.saving = true
+	m.saveError = ""
+	m.saveDisabled = make(map[*ui.FieldState]bool)
+	for _, category := range m.categories {
+		if category.Form == nil {
+			continue
+		}
+		for _, field := range category.Form.Fields() {
+			m.saveDisabled[field] = field.Disabled
+			field.Disabled = true
+		}
+	}
+	return true
+}
+
+// FinishSave releases an exact pending save. A failed save leaves all values
+// and dirty state intact for retry; a successful save advances only the
+// preference baseline.
+func (m *Model) FinishSave(err error) {
+	if m == nil || !m.saving {
+		return
+	}
+	for field, disabled := range m.saveDisabled {
+		field.Disabled = disabled
+	}
+	m.saveDisabled = nil
+	m.saving = false
+	if err != nil {
+		m.saveError = err.Error()
+		return
+	}
+	m.saveError = ""
+	for _, category := range m.categories {
+		if category.Form != nil {
+			category.Form.Commit()
+		}
+	}
+	m.preferencesBase = m.preferenceBytes()
+}
+
+func (m *Model) Saving() bool {
+	return m != nil && m.saving
+}
+
+func (m *Model) SaveError() string {
+	if m == nil {
+		return ""
+	}
+	return m.saveError
 }
 
 func (m *Model) accountEditorDirty() bool {
@@ -915,7 +980,7 @@ const (
 
 var (
 	dialTimeoutLadder  = []int{30, 60, 120, 300, 600} // default: unlimited (0)
-	dialConnectLadder  = []int{5, 10, 60}             // default: 30s
+	dialConnectLadder  = []int{5, 10, 30, 60}         // default: inherit Network
 	dialAttemptsLadder = []int{1, 2, 3, 5, 10}        // default: 6
 	dialBackoffLadder  = []int{15, 30, 60, 300}       // default: 30s
 	dialProgressLadder = []int{15, 30, 45, 60, 120, 300, 600, 900, 1800}
@@ -935,6 +1000,19 @@ func dialerFields(dialer *provider.DialSettings) []*ui.FieldState {
 	ceiling := dialSecondsField(fieldDialProgressCeiling, "Max progress timeout", d.ProgressTimeoutCeilingSeconds,
 		int(provider.DefaultProgressTimeoutCeiling.Seconds()), dialProgressLadder,
 		"Maximum adaptive silence budget; must be at least the initial timeout.")
+	backoff := dialSecondsField(fieldDialBackoff, "Max backoff", d.MaxBackoffSeconds,
+		int(provider.DefaultMaxBackoff.Seconds()), dialBackoffLadder,
+		"Local exponential delay cap (1-300 seconds). Retry-After may extend it; every cooldown is at most 300 seconds.")
+	backoff.Validator = func(value ui.FieldValue) []string {
+		if backoff.ReadOnly {
+			return nil
+		}
+		seconds, err := strconv.Atoi(strings.TrimSpace(value.String()))
+		if err != nil || seconds < 1 || seconds > 300 {
+			return []string{"Enter a retry delay from 1 to 300 seconds."}
+		}
+		return nil
+	}
 	validateProgress := func(_ ui.FieldValue) []string {
 		if startup.ReadOnly {
 			return nil
@@ -954,16 +1032,30 @@ func dialerFields(dialer *provider.DialSettings) []*ui.FieldState {
 		ui.SeparatorFieldState("dialer", "Connection tuning"),
 		dialSecondsField(fieldDialTimeout, "Request timeout", d.RequestTimeoutSeconds, 0, dialTimeoutLadder,
 			"Overall cap including upload, streaming, retries and retry waits. Unlimited does not disable progress timeouts."),
-		dialSecondsField(fieldDialConnect, "Connect timeout", d.ConnectTimeoutSeconds,
-			int(provider.DefaultConnectTimeout.Seconds()), dialConnectLadder,
-			"Budget for each TCP connection and TLS handshake, not waiting for model output."),
+		dialConnectField(d.ConnectTimeoutSeconds),
 		startup, floor, ceiling,
 		dialCountField(fieldDialAttempts, "Max attempts", d.MaxAttempts, provider.DefaultMaxAttempts, dialAttemptsLadder,
 			"Tries per request; failures retry with exponential backoff."),
-		dialSecondsField(fieldDialBackoff, "Max backoff", d.MaxBackoffSeconds,
-			int(provider.DefaultMaxBackoff.Seconds()), dialBackoffLadder,
-			"Upper bound on the exponential retry delay."),
+		backoff,
 	}
+}
+
+func dialConnectField(seconds int) *ui.FieldState {
+	field := ui.CycleFieldState(fieldDialConnect, "Connect timeout", nil, strconv.Itoa(seconds),
+		"Network defaults inherit separate TCP/TLS budgets. An explicit value overrides both, not model response waiting.")
+	field.Options = []ui.FormOption{{ID: "0", Label: "Network defaults"}}
+	field.Options = append(field.Options, dialFieldOptions(seconds, 0, dialConnectLadder, "s")[1:]...)
+	field.Validator = func(value ui.FieldValue) []string {
+		if field.ReadOnly {
+			return nil
+		}
+		seconds, err := strconv.Atoi(value.String())
+		if err != nil || seconds < 0 || seconds > 300 {
+			return []string{"Use Network defaults or 1-300 seconds."}
+		}
+		return nil
+	}
+	return field
 }
 
 // dialSecondsField renders one timeout row.
@@ -1057,7 +1149,7 @@ func dialAttemptsFromChoice(choice string) int {
 func dialerFromForm(timeout, connect, attempts, backoff, startup, floor, ceiling string) *provider.DialSettings {
 	dialer := provider.DialSettings{
 		RequestTimeoutSeconds:         dialSecondsFromChoice(timeout, 0),
-		ConnectTimeoutSeconds:         dialSecondsFromChoice(connect, int(provider.DefaultConnectTimeout.Seconds())),
+		ConnectTimeoutSeconds:         dialSecondsFromChoice(connect, 0),
 		MaxAttempts:                   dialAttemptsFromChoice(attempts),
 		MaxBackoffSeconds:             dialSecondsFromChoice(backoff, int(provider.DefaultMaxBackoff.Seconds())),
 		ProgressStartupTimeoutSeconds: dialSecondsFromChoice(startup, int(provider.DefaultProgressStartupTimeout.Seconds())),
@@ -1576,7 +1668,7 @@ func (m *Model) ValueForTest(category int, fieldID string) string {
 // SetValueForTest sets a form field value, firing the same onChanged path a
 // user edit would.
 func (m *Model) SetValueForTest(category int, fieldID, value string) {
-	if category < 0 || category >= len(m.categories) || m.categories[category].Form == nil {
+	if m.Saving() || category < 0 || category >= len(m.categories) || m.categories[category].Form == nil {
 		return
 	}
 	m.categories[category].Form.SetValue(fieldID, ui.StringValue(value))
@@ -1996,6 +2088,9 @@ func (m *Model) SetScope(scope types.SettingsScope) {
 		m.rebuildProvidersForm()
 		m.rebuildAccountsForm()
 	}
+	if len(m.categories) > catNetworkCertificates {
+		m.rebuildNetworkForms()
+	}
 }
 func (m *Model) Overrides() types.WorkspaceOverrides {
 	if m.Scope() != types.SettingsScopeWorkspace {
@@ -2132,6 +2227,9 @@ const (
 	catCrafter
 	catAeron
 	catMemory
+	catNetworkConnection
+	catNetworkProxy
+	catNetworkCertificates
 	catSafety
 	catAutoReviewPolicy
 	catAppearance
@@ -2163,6 +2261,8 @@ func (m *Model) currentOverrideKey() string {
 		return "providers"
 	case catMemory:
 		return "memory"
+	case catNetworkConnection, catNetworkProxy, catNetworkCertificates:
+		return ""
 	case catSafety, catAutoReviewPolicy:
 		return "safety"
 	case catHistory:
@@ -2180,6 +2280,7 @@ func (m *Model) AppSettings() types.AppSettings {
 	m.collectProviders(&settings)
 	m.collectAgents(&settings.Agents)
 	m.collectMemory(&settings.Memory)
+	m.collectNetwork(&settings.Network)
 	m.collectSafety(&settings.Safety)
 	m.collectHistory(&settings.LocalHistory)
 	m.collectAppearance(&settings.Theme)

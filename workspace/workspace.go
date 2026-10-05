@@ -171,7 +171,7 @@ type Workspace struct {
 
 	// OnAppSettingsSave persists application-layer settings to config.json.
 	// Workspace overrides are stored separately in workspace.db.
-	OnAppSettingsSave func(s ttypes.AppSettings) error
+	OnAppSettingsSave func(s ttypes.AppSettings) (ttypes.AppSettings, error)
 	// OnAppAccountChange persists one application account without writing other
 	// settings drafts. The app layer owns the config file and account manager.
 	OnAppAccountChange func(change ttypes.AccountChange) error

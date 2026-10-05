@@ -360,7 +360,7 @@ func (m *App) backgroundAgentCounts() (working, needsAction int) {
 			needsAction++
 		}
 		switch status.Phase {
-		case ttypes.AgentPreparing, ttypes.AgentUploading, ttypes.AgentWaiting, ttypes.AgentCompacting, ttypes.AgentThinking, ttypes.AgentResponding, ttypes.AgentTool, ttypes.AgentChildren, ttypes.AgentRetrying, ttypes.AgentCancelling:
+		case ttypes.AgentPreparing, ttypes.AgentUploading, ttypes.AgentWaiting, ttypes.AgentCompacting, ttypes.AgentThinking, ttypes.AgentResponding, ttypes.AgentTool, ttypes.AgentChildren, ttypes.AgentRetrying, ttypes.AgentRecovering, ttypes.AgentCancelling:
 			working++
 		}
 	}
@@ -749,6 +749,7 @@ func (m *App) statusNotificationItems() []statusoverview.Item {
 			},
 			PrimaryAction: ownerNavigation(notice.Owner), PrimaryLabel: ownerNavigationLabel(notice.Owner), PrimaryEnabled: notice.Owner.ID != "",
 			DisabledReason: "The originating resource is no longer open",
+			Actions:        append([]ttypes.StatusAction(nil), notice.Actions...),
 		})
 	}
 	return items
@@ -757,6 +758,11 @@ func (m *App) statusNotificationItems() []statusoverview.Item {
 func (m *App) handleStatusOverviewNavigate(msg statusoverview.NavigateMsg) tea.Cmd {
 	action := msg.Action
 	switch {
+	case action == "agent.retry":
+		return m.retryAgentRecovery(msg.Item.Owner.ID)
+	case action == "status.switch":
+		m.restoreAgent(msg.Item.Owner.ID)
+		return nil
 	case strings.HasPrefix(action, "prompt:attachment:"):
 		return m.openHistoricalAttachment(strings.TrimPrefix(action, "prompt:attachment:"))
 	case strings.HasPrefix(action, "prompt:restore:"):

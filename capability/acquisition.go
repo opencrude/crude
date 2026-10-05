@@ -23,6 +23,7 @@ import (
 	"github.com/gofrs/flock"
 
 	"crude/mcpclient"
+	"crude/network"
 	"crude/skills"
 	captypes "crude/types/capability"
 )
@@ -59,12 +60,14 @@ func boundedFetch(ctx context.Context, endpoint string, limit int64) ([]byte, er
 		return nil, err
 	}
 	request.Header.Set("Accept", "application/json")
-	client := &http.Client{Timeout: 45 * time.Second, CheckRedirect: func(request *http.Request, previous []*http.Request) error {
+	client := network.NewClient(45 * time.Second)
+	defer client.CloseIdleConnections()
+	client.CheckRedirect = func(request *http.Request, previous []*http.Request) error {
 		if len(previous) >= 5 || request.URL.Scheme != "https" && request.URL.Host != parsed.Host {
 			return errors.New("unsafe source redirect")
 		}
 		return nil
-	}}
+	}
 	response, err := client.Do(request)
 	if err != nil {
 		return nil, err

@@ -4,6 +4,8 @@ import (
 	"context"
 	"sync"
 	"time"
+
+	"crude/retry"
 )
 
 type RateLimiter struct {
@@ -60,10 +62,8 @@ func (rl *RateLimiter) Wait(ctx context.Context, provider string) error {
 		}
 		rl.mu.Unlock()
 
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case <-time.After(500 * time.Millisecond):
+		if err := retry.Wait(ctx, 500*time.Millisecond); err != nil {
+			return err
 		}
 	}
 }

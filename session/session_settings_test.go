@@ -2,6 +2,7 @@ package session
 
 import (
 	"database/sql"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -11,6 +12,7 @@ import (
 	"crude/provider"
 	"crude/sessiondb"
 	ttypes "crude/tui/types"
+	recoverytypes "crude/types/recovery"
 )
 
 func TestConfigWithSessionOverridesUsesWorkspaceThenSession(t *testing.T) {
@@ -306,11 +308,39 @@ func TestResumeHydratesCompletedSubAgents(t *testing.T) {
 		t.Fatalf("InsertSubAgentResult: %v", err)
 	}
 	if err := sessiondb.InsertSubAgentResult(db, sessiondb.SubAgentResultRow{
-		ParentSessionID: "parent", ChildSessionID: "running-child",
+		ParentSessionID: "parent", ChildSessionID: "running-1",
 		AgentID: "running-1", AgentName: "Interrupted", AgentCategory: "crafter",
 		Status: "running", CreatedAt: time.Now().UnixNano(),
 	}); err != nil {
 		t.Fatalf("Insert running SubAgentResult: %v", err)
+	}
+	owner, err := json.Marshal(childRecoveryOwner{Spec: agent.SubAgentSpec{
+		ID: "running-1", Name: "Interrupted", Category: agent.CatCrafter,
+		Description: "finish pending child work", Model: "test-model",
+		AccountID: "account", ParentID: "parent-orchestrator", ParentTurn: 1, Depth: 1,
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assignment := provider.NewTextMessage("user", "finish pending child work")
+	assignment.Origin = provider.OriginAssignment
+	parentRecovery := sessiondb.RecoveryCheckpoint{
+		Status: recoverytypes.Status{
+			ID: "recovery-running-1", AgentID: "running-1", Generation: 1,
+			State: recoverytypes.Recovering, Attempt: 1,
+			StartedAt: time.Now(), UpdatedAt: time.Now(),
+			Summary: "Provider connection is recovering", Action: "Stop to cancel",
+		},
+		PendingInput: provider.UserInput{
+			InternalID: "assignment-running-1", Text: "finish pending child work",
+			Origin: provider.OriginAssignment,
+		},
+		InputAdmitted: true, Archive: []provider.ChatMessage{assignment},
+		ActiveContext: []provider.ChatMessage{assignment}, ContextGeneration: 1,
+		ContextReason: "child_assignment", OwnerData: owner,
+	}
+	if err := sessiondb.SaveRecoveryCheckpoint(db, "parent", parentRecovery); err != nil {
+		t.Fatal(err)
 	}
 	if err := db.Close(); err != nil {
 		t.Fatalf("close seed DB: %v", err)
@@ -341,6 +371,27 @@ func TestResumeHydratesCompletedSubAgents(t *testing.T) {
 	if err := childDB.Close(); err != nil {
 		t.Fatal(err)
 	}
+	runningDB, err := sessiondb.OpenAndMigrate(filepath.Join(childDir, "running-1.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := sessiondb.Create(runningDB, sessiondb.SessionMeta{
+		ID: "running-1", ProjectPath: root, ProjectName: "project", Model: "test-model",
+		AccountID: "account", CreatedAt: time.Now().UnixNano(),
+		ParentSessionID: sql.NullString{String: "parent", Valid: true},
+		AgentCategory:   sql.NullString{String: agent.CatCrafter, Valid: true},
+		AgentName:       sql.NullString{String: "Interrupted", Valid: true}, Depth: 1,
+	}); err != nil {
+		t.Fatal(err)
+	}
+	childRecovery := parentRecovery
+	childRecovery.ContextOwnerID = "running-1"
+	if err := sessiondb.SaveRecoveryCheckpoint(runningDB, "running-1", childRecovery); err != nil {
+		t.Fatal(err)
+	}
+	if err := runningDB.Close(); err != nil {
+		t.Fatal(err)
+	}
 
 	resumed, err := ResumeSessionWithDir(dbPath, testConfig(), root, root)
 	if err != nil {
@@ -355,12 +406,15 @@ func TestResumeHydratesCompletedSubAgents(t *testing.T) {
 		result.SessionID != "child" {
 		t.Fatalf("hydrated result = %+v, ok=%v", result, ok)
 	}
-	interrupted, ok := resumed.SubAgentRunner().Manager().GetCompleted("running-1")
-	if !ok || interrupted.Status != agent.SubAgentCancelled || len(interrupted.Errors) != 1 {
-		t.Fatalf("interrupted child = %+v, ok=%v", interrupted, ok)
+	if interrupted, ok := resumed.SubAgentRunner().Manager().GetCompleted("running-1"); ok {
+		t.Fatalf("unfinished child was terminalized: %+v", interrupted)
+	}
+	recoveries, err := sessiondb.LoadRecoveryRecords(resumed.DB(), resumed.SessionID())
+	if err != nil || len(recoveries) != 1 || recoveries[0].State != recoverytypes.Interrupted {
+		t.Fatalf("passive child recovery = %+v, err=%v", recoveries, err)
 	}
 	snapshots := resumed.CompletedSubAgentSnapshots()
-	if len(snapshots) != 2 || snapshots[0].Model != "child-model" || len(snapshots[0].Messages) != 2 ||
+	if len(snapshots) != 1 || snapshots[0].Model != "child-model" || len(snapshots[0].Messages) != 2 ||
 		snapshots[0].Messages[0].Meta.DisplayRole != "assignment" {
 		t.Fatalf("completed child snapshot = %+v", snapshots)
 	}

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"crude/logger"
+	"crude/network"
 )
 
 const arxivAPIURL = "https://export.arxiv.org/api/query"
@@ -76,7 +77,8 @@ func ArxivSearch(query string, maxResults int) (string, error) {
 
 	reqURL := arxivAPIURL + "?" + params.Encode()
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := network.NewClient(15 * time.Second)
+	defer client.CloseIdleConnections()
 	req, err := http.NewRequest("GET", reqURL, nil)
 	if err != nil {
 		return "", err

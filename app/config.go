@@ -9,6 +9,7 @@ import (
 	"github.com/gofrs/flock"
 
 	"crude/buildinfo"
+	"crude/network"
 	"crude/provider"
 	"crude/session"
 	ttypes "crude/tui/types"
@@ -30,6 +31,7 @@ type FileConfig struct {
 	Safety          *ttypes.SafetySettings       `json:"safety,omitempty"`
 	LocalHistory    *ttypes.LocalHistorySettings `json:"local_history,omitempty"`
 	Capabilities    *captypes.Settings           `json:"capabilities,omitempty"`
+	Network         *network.Settings            `json:"network,omitempty"`
 }
 
 func (c *FileConfig) IsTurnLogsEnabled() bool {
@@ -198,6 +200,9 @@ func FileConfigToAppSettings(fc FileConfig) ttypes.AppSettings {
 	if fc.Memory != nil {
 		s.Memory = *fc.Memory
 	}
+	if fc.Network != nil {
+		s.Network = *fc.Network
+	}
 	if fc.Capabilities != nil {
 		s.Capabilities = captypes.Clone(*fc.Capabilities)
 	}
@@ -227,6 +232,8 @@ func ApplyAppSettingsToFileConfig(fc *FileConfig, s ttypes.AppSettings) {
 	fc.Memory = &memorySettings
 	fc.Safety = &safetySettings
 	fc.LocalHistory = &historySettings
+	networkSettings := network.Normalize(s.Network)
+	fc.Network = &networkSettings
 	capabilities := captypes.Clone(s.Capabilities)
 	fc.Capabilities = &capabilities
 	fc.ActiveProvider = s.ActiveProvider

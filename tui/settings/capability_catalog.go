@@ -474,6 +474,9 @@ func (catalog *capabilityCatalog) Semantics() ui.Semantics {
 }
 
 func (catalog *capabilityCatalog) Handle(ctx ui.EventContext, event ui.Event) ui.EventResult {
+	if catalog.owner != nil && catalog.owner.model != nil && catalog.owner.model.Saving() {
+		return ui.EventResult{Handled: true}
+	}
 	if event.Kind == ui.EventMouseClick && event.MouseClick.Button == tea.MouseLeft && ctx.LocalY == 0 && (catalog.detail || catalog.edit != "") {
 		if ui.BreadcrumbIndex(catalog.owner.paneTitleParts(), catalog.owner.breadcrumbSeparator(), ctx.LocalX, catalog.Bounds().W) == 0 {
 			return catalog.back()
@@ -490,6 +493,9 @@ func (catalog *capabilityCatalog) Handle(ctx ui.EventContext, event ui.Event) ui
 }
 
 func (catalog *capabilityCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
+	if catalog.owner != nil && catalog.owner.model != nil && catalog.owner.model.Saving() {
+		return ui.EventResult{Handled: true}
+	}
 	catalog.consumeResult()
 	if action.ID == "tabs.activate" || action.ID == "tabs.enter" {
 		id, _ := action.Payload.(string)

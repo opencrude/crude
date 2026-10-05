@@ -13,6 +13,7 @@ import (
 
 	rootprompt "crude/prompt"
 	"crude/provider"
+	"crude/retry"
 )
 
 const (
@@ -460,23 +461,13 @@ func addTokenUsage(a, b provider.TokenUsage) provider.TokenUsage {
 
 func (a *Agent) compactionRecoveryDelay(attempt int) time.Duration {
 	if a != nil && a.compactionRetryDelay != nil {
-		return a.compactionRetryDelay(attempt)
+		return retry.Clamp(a.compactionRetryDelay(attempt))
 	}
-	return time.Duration(1<<max(0, attempt-1)) * time.Second
+	return retry.Exponential(attempt, time.Second, retry.MaxCooldown)
 }
 
 func waitCompactionRetry(ctx context.Context, delay time.Duration) error {
-	if delay <= 0 {
-		return ctx.Err()
-	}
-	timer := time.NewTimer(delay)
-	defer timer.Stop()
-	select {
-	case <-ctx.Done():
-		return ctx.Err()
-	case <-timer.C:
-		return nil
-	}
+	return retry.Wait(ctx, delay)
 }
 
 func isRetryableCompactionError(err error) bool {

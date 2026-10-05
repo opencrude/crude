@@ -745,33 +745,13 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		}
 	case settingsui.SaveMsg:
 		m.Logger.Info("CONFIG", "settings_save", "scope", string(msg.Scope))
-		m.clearFramePreview()
-		appSets := msg.AppSettings
-		if msg.Scope == ttypes.SettingsScopeWorkspace {
-			if err := m.SaveWorkspaceSettings(msg.Overrides); err != nil {
-				m.Feedback.NotifyError("Failed to save workspace settings: " + err.Error())
-				break
-			} else {
-				m.applyThemePreset(themePresetFromSettings(m.LoadAppSettings()))
-				m.applyEditorSettings(m.LoadAppSettings().Editor)
-				m.refreshAllSessionSettingsProjections()
-				m.Feedback.NotifyInfo("Workspace settings saved")
-			}
-		} else {
-			if m.Logger != nil {
-				m.Logger.Info("WORKSPACE", "save_app_settings", "theme_preset", appSets.Theme.Preset, "provider", appSets.ActiveProvider)
-			}
-			if err := m.SaveAppSettings(appSets); err != nil {
-				m.Feedback.NotifyError("Failed to save application settings: " + err.Error())
-				break // Keep the form and staged account edits available for retry.
-			} else {
-				m.applyThemePreset(themePresetFromSettings(appSets))
-				m.applyEditorSettings(m.LoadAppSettings().Editor)
-				m.refreshAllSessionSettingsProjections()
-				m.Feedback.NotifyInfo("Application settings saved")
-			}
-		}
-		m.overlayHost.Close(ui.OverlayWorkspaceSettings)
+		cmds = append(cmds, m.savePreferences(msg))
+	case preferencesSavedMsg:
+		m.applyPreferencesSaved(msg)
+	case recoveryRetryResultMsg:
+		m.applyRecoveryRetryResult(msg)
+	case recoveryCancelResultMsg:
+		m.applyRecoveryCancelResult(msg)
 	case settingsui.AccountChangeMsg:
 		request := msg
 		owner := m.Workspace

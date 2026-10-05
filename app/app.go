@@ -28,6 +28,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/history"
+	"crude/network"
 	"crude/provider"
 	"crude/session"
 	"crude/sessiondb"
@@ -78,6 +79,9 @@ type Opts struct {
 // New creates the IDE shell. Resolves paths and stores config.
 // Does NOT create sessions or start the TUI — that happens in Run().
 func New(opts Opts) (*App, error) {
+	if err := network.ConfigureDefault(FileConfigToAppSettings(opts.FC).Network); err != nil {
+		return nil, fmt.Errorf("invalid Network settings: %w", err)
+	}
 	home := opts.Home
 	if home == "" {
 		home, _ = os.UserHomeDir()
@@ -256,13 +260,23 @@ func (a *App) configureWorkspace(ws *workspace.Workspace) {
 	sessCfg.AccountManager = a.accounts
 	ws.SetBackendConfig(sessCfg, a.home)
 
-	ws.OnAppSettingsSave = func(s ttypes.AppSettings) error {
+	ws.OnAppSettingsSave = func(s ttypes.AppSettings) (ttypes.AppSettings, error) {
+		if err := s.Network.Validate(); err != nil {
+			return ttypes.AppSettings{}, fmt.Errorf("network settings were not saved: %w", err)
+		}
 		// Lock order is manager -> app config -> interprocess file lock, the
 		// same order as refresh persistence. Installation is atomic with disk.
 		var updated FileConfig
 		err := a.accounts.Commit(func(live map[string]provider.Account) (map[string]provider.Account, error) {
 			a.configMu.Lock()
 			defer a.configMu.Unlock()
+			// Certificate reads belong to the off-UI preferences command, and
+			// only to an actual network edit, not an unrelated theme save.
+			if network.Normalize(s.Network) != FileConfigToAppSettings(a.fc).Network {
+				if err := s.Network.ValidateFiles(); err != nil {
+					return nil, fmt.Errorf("network settings were not saved: %w", err)
+				}
+			}
 			var saveErr error
 			updated, saveErr = updateFileConfig(func(current *FileConfig) error {
 				// Account and provider-template writes have explicit owners. A
@@ -282,10 +296,14 @@ func (a *App) configureWorkspace(ws *workspace.Workspace) {
 			return updated.Accounts, nil
 		})
 		if err != nil {
-			return err
+			return ttypes.AppSettings{}, err
 		}
-		ws.SetAppDefaults(FileConfigToAppSettings(updated))
-		return nil
+		if err := network.ConfigureDefault(FileConfigToAppSettings(updated).Network); err != nil {
+			return ttypes.AppSettings{}, err
+		}
+		// Persistence returns a snapshot. The workspace/UI owner publishes it
+		// only after its generation-bound command result arrives.
+		return FileConfigToAppSettings(updated), nil
 	}
 	ws.OnAppAccountChange = func(change ttypes.AccountChange) error {
 		var updated FileConfig

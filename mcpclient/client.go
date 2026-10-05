@@ -22,6 +22,7 @@ import (
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
+	"crude/network"
 	captypes "crude/types/capability"
 )
 
@@ -437,10 +438,9 @@ func (manager *Manager) transport(config captypes.ConnectionConfig, lifetime con
 	}
 	manager.mu.Unlock()
 	endpoint, _ := url.Parse(config.URL)
-	client := &http.Client{
-		Transport:     headerTransport{base: http.DefaultTransport, headers: headers, endpoint: endpoint, lifetime: lifetime},
-		CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse },
-	}
+	client := network.NewClient(0)
+	client.Transport = headerTransport{base: client.Transport, headers: headers, endpoint: endpoint, lifetime: lifetime}
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	transport := &mcp.StreamableClientTransport{Endpoint: config.URL, HTTPClient: client, MaxRetries: -1, MaxEventSize: maxResultBytes}
 	if config.Auth == "oauth" {
 		handler, closeAuth, err := manager.oauthHandler(config, lifetime, epoch, interactive)

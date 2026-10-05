@@ -295,6 +295,7 @@ func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 		l.Info("CONFIG", "model_change", "from", oldModel, "to", mainCat.Model)
 	}
 	l.Info("CONFIG", "save_complete", "template", newTemplate, "account", mainCat.AccountID, "model", mainCat.Model, "turn_logs", s.cfg.TurnLogsEnabled)
+	s.wakeAllRecoveries()
 	return nil
 }
 
@@ -510,6 +511,7 @@ func (s *Session) ResetSessionSettings() error {
 		s.runtimeProfile.UpdateBase(s.cfg)
 	}
 	s.provider = configuredProvider
+	s.wakeAllRecoveries()
 	return nil
 }
 
@@ -533,6 +535,7 @@ func (s *Session) UpdateWorkspaceDefaults(settings ttypes.AppSettings) {
 	s.workspaceCfg.Capabilities = settings.Capabilities
 	s.workspaceCfg.Safety = settings.Safety
 	s.rebuildEffectiveConfigLocked()
+	s.wakeAllRecoveries()
 }
 
 // AdoptWorkspaceDefaults re-inherits the whole workspace baseline including
@@ -549,6 +552,7 @@ func (s *Session) AdoptWorkspaceDefaults(settings ttypes.AppSettings) {
 	s.workspaceCfg.Capabilities = settings.Capabilities
 	s.workspaceCfg.Safety = settings.Safety
 	s.rebuildEffectiveConfigLocked()
+	s.wakeAllRecoveries()
 }
 
 // refreshProviderCredentialsLocked updates how the session reaches a

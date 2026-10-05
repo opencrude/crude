@@ -44,6 +44,10 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		_ = db.Close()
 		return nil, fmt.Errorf("resume: interrupt running turns: %w", err)
 	}
+	if err := sessiondb.InterruptActiveRecoveries(db, meta.ID); err != nil {
+		_ = db.Close()
+		return nil, fmt.Errorf("resume: interrupt active recoveries: %w", err)
+	}
 	if err := sessiondb.InterruptRunningCompactions(db, meta.ID); err != nil {
 		_ = db.Close()
 		return nil, fmt.Errorf("resume: interrupt running compactions: %w", err)
@@ -261,6 +265,8 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		createdAts:         createdAts,
 		writeBuf:           make([]taggedMessage, 0, 64),
 		orchestrators:      make(map[string]*Orchestrator),
+		recoverySlots:      make(map[string]*recoverySlot),
+		pendingRecoveries:  make(map[string]sessiondb.RecoveryCheckpoint),
 		runtimeProfile:     NewRuntimeProfile(cfg),
 		workspaceCfg:       workspaceCfg,
 		sessionOverrides:   overrides,
@@ -268,6 +274,15 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		activeContext:      activeContext,
 		contextGeneration:  contextGeneration,
 		contextReason:      contextReason,
+	}
+	openRecoveries, err := sessiondb.LoadOpenRecoveryCheckpoints(db, meta.ID)
+	if err != nil {
+		_ = lg.Close()
+		_ = db.Close()
+		return nil, fmt.Errorf("restore recoveries: %w", err)
+	}
+	for _, checkpoint := range openRecoveries {
+		sess.pendingRecoveries[checkpoint.Status.AgentID] = checkpoint
 	}
 	if records, err := sessiondb.ListUsageRecords(db); err != nil {
 		return nil, fmt.Errorf("restore request usage: %w", err)
@@ -300,17 +315,24 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	for _, row := range rows {
 		result := subAgentResultFromRow(row)
 		if result.Status == agent.SubAgentRunning {
-			result.Status = agent.SubAgentCancelled
-			result.Errors = append(result.Errors, "Interrupted by process shutdown; child was not restarted.")
-			if persistErr := sessiondb.InsertSubAgentResult(db, subAgentResultRow(meta.ID, result)); persistErr != nil {
-				_ = lg.Close()
-				_ = db.Close()
-				return nil, fmt.Errorf("resume: persist interrupted child: %w", persistErr)
+			if checkpoint, pending := sess.pendingRecoveries[string(result.AgentID)]; pending &&
+				len(checkpoint.OwnerData) > 0 {
+				continue
 			}
+			_ = lg.Close()
+			_ = db.Close()
+			return nil, fmt.Errorf("resume: running child %s has no durable recovery envelope", result.AgentID)
 		}
 		results = append(results, result)
 	}
-	if len(results) > 0 {
+	hasChildRecovery := false
+	for _, checkpoint := range sess.pendingRecoveries {
+		if checkpoint.ContextOwnerID == "" && len(checkpoint.OwnerData) > 0 {
+			hasChildRecovery = true
+			break
+		}
+	}
+	if len(results) > 0 || hasChildRecovery {
 		sess.subAgentSup = NewSubAgentRunner(sess, cfg.Agents.MaxConcurrent)
 		for _, result := range results {
 			sess.subAgentSup.Manager().HydrateCompleted(result)

@@ -143,6 +143,9 @@ type Session struct {
 	orchMu                   sync.Mutex
 	orchWg                   sync.WaitGroup
 	orchNextID               atomic.Int64
+	recoveryMu               sync.Mutex
+	recoverySlots            map[string]*recoverySlot
+	pendingRecoveries        map[string]sessiondb.RecoveryCheckpoint
 
 	// runtimeProfile holds ephemeral per-orchestrator config overrides
 	// that never persist to disk.
@@ -467,6 +470,8 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 		collaborationAgents:  make(map[string]collaboration.Agent),
 		collaborationContext: make(map[string][]provider.ChatMessage),
 		orchestrators:        make(map[string]*Orchestrator),
+		recoverySlots:        make(map[string]*recoverySlot),
+		pendingRecoveries:    make(map[string]sessiondb.RecoveryCheckpoint),
 		runtimeProfile:       NewRuntimeProfile(cfg),
 		workspaceCfg:         workspaceCfg,
 		sessionOverrides:     pinnedAccountOverrides(cfg),
@@ -515,7 +520,7 @@ func (s *Session) Close() {
 	}
 	s.historyWg.Wait()
 
-	s.flushWriteBufSync()
+	_ = s.flushWriteBufSync()
 
 	// Join memory workers before their workspace DB is closed. Optional
 	// provider work resumes from durable watermarks on the next open.
@@ -994,6 +999,25 @@ func (s *Session) NewOrchestrator(sender EventSender) (*Orchestrator, error) {
 	}
 	o.RuntimeEpoch = registered.RuntimeEpoch
 	if s.resumed {
+		s.recoveryMu.Lock()
+		for previousID, checkpoint := range s.pendingRecoveries {
+			if checkpoint.ContextOwnerID != s.sessionID {
+				continue
+			}
+			delete(s.pendingRecoveries, previousID)
+			checkpoint.Status.AgentID = o.ID
+			s.pendingRecoveries[o.ID] = checkpoint
+			o.turnGeneration = max(o.turnGeneration, checkpoint.Status.Generation)
+			if err := sessiondb.RebindRecoveryAgent(s.db, s.sessionID, previousID, o.ID); err != nil {
+				s.recoveryMu.Unlock()
+				s.orchMu.Unlock()
+				s.detachCollaborator(context.Background(), o.ID)
+				s.runtimeProfile.RemoveOverride(o.ID)
+				return nil, fmt.Errorf("rebind passive recovery: %w", err)
+			}
+			break
+		}
+		s.recoveryMu.Unlock()
 		if err := s.recoverChildCollaborators(context.Background(), o.ID); err != nil {
 			s.orchMu.Unlock()
 			s.detachCollaborator(context.Background(), o.ID)

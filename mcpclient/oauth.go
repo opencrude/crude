@@ -19,6 +19,7 @@ import (
 	"github.com/modelcontextprotocol/go-sdk/oauthex"
 	"golang.org/x/oauth2"
 
+	"crude/network"
 	captypes "crude/types/capability"
 )
 
@@ -45,6 +46,30 @@ type durableTokenSource struct {
 	err        error
 }
 
+type tokenRefreshError struct{ cause error }
+
+func (err *tokenRefreshError) Error() string {
+	return "MCP token refresh is temporarily unavailable; the connection remains recoverable"
+}
+
+func (err *tokenRefreshError) Unwrap() error { return err.cause }
+
+func permanentTokenFailure(err error) bool {
+	var rejected *oauth2.RetrieveError
+	if !errors.As(err, &rejected) {
+		return false
+	}
+	if rejected.Response != nil && (rejected.Response.StatusCode == http.StatusUnauthorized || rejected.Response.StatusCode == http.StatusForbidden) {
+		return true
+	}
+	switch rejected.ErrorCode {
+	case "invalid_grant", "invalid_client", "unauthorized_client", "access_denied":
+		return true
+	default:
+		return false
+	}
+}
+
 func (source *durableTokenSource) Token() (*oauth2.Token, error) {
 	source.mu.Lock()
 	defer source.mu.Unlock()
@@ -53,8 +78,13 @@ func (source *durableTokenSource) Token() (*oauth2.Token, error) {
 	}
 	token, err := source.source.Token()
 	if err != nil {
-		source.err = errors.New("MCP authentication expired; sign in again")
-		return nil, source.err
+		if permanentTokenFailure(err) {
+			source.err = errNeedsSignIn
+			return nil, source.err
+		}
+		// A timeout/outage must not poison the retained credential source.
+		// Do not expose token endpoint response bodies or retry a remote write.
+		return nil, &tokenRefreshError{cause: err}
 	}
 	source.credential.Token = *token
 	if err := source.manager.saveCredential(source.credential); err != nil {
@@ -127,7 +157,10 @@ func (manager *Manager) loadCredential(config captypes.ConnectionConfig) (oauth2
 	return &durableTokenSource{source: saved.Config.TokenSource(refreshContext, &saved.Token), manager: manager, credential: saved}, nil
 }
 
-type publicOAuthTransport struct{ clientID string }
+type publicOAuthTransport struct {
+	clientID string
+	base     http.RoundTripper
+}
 
 func (transport publicOAuthTransport) RoundTrip(request *http.Request) (*http.Response, error) {
 	clientID, secret, basic := request.BasicAuth()
@@ -149,11 +182,14 @@ func (transport publicOAuthTransport) RoundTrip(request *http.Request) (*http.Re
 		request.ContentLength = int64(len(body))
 		request.GetBody = func() (io.ReadCloser, error) { return io.NopCloser(strings.NewReader(body)), nil }
 	}
-	return http.DefaultTransport.RoundTrip(request)
+	return transport.base.RoundTrip(request)
 }
 
 func oauthHTTPClient(clientID string) *http.Client {
-	return &http.Client{Transport: publicOAuthTransport{clientID: clientID}, Timeout: 30 * time.Second, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}
+	client := network.NewClient(30 * time.Second)
+	client.Transport = publicOAuthTransport{clientID: clientID, base: client.Transport}
+	client.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+	return client
 }
 
 type passiveOAuth struct{ source oauth2.TokenSource }
