@@ -23,7 +23,7 @@ type CollaborationAdmission struct {
 
 func SaveContextStateWithAdmissions(
 	db *sql.DB,
-	sessionID, agentID string,
+	sessionID, contextOwnerID, agentID string,
 	state ContextState,
 	admissions []CollaborationAdmission,
 ) error {
@@ -48,7 +48,7 @@ func SaveContextStateWithAdmissions(
 			reason = excluded.reason,
 			messages_json = excluded.messages_json,
 			updated_at = excluded.updated_at
-	`, sessionID, agentID, state.Generation, state.Reason, payload, now); err != nil {
+	`, sessionID, contextOwnerID, state.Generation, state.Reason, payload, now); err != nil {
 		return fmt.Errorf("sessiondb: persist admitted context: %w", err)
 	}
 	for _, admission := range admissions {

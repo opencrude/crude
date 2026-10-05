@@ -28,6 +28,9 @@ func (service *Service) PreviewAcquisition(ctx context.Context, id string, scope
 	if !exists {
 		return captypes.AcquisitionPreview{}, errors.New("refresh Discover and inspect the exact source revision before installing or updating")
 	}
+	if candidate.Entry.State == "unsupported" {
+		return captypes.AcquisitionPreview{}, fmt.Errorf("unsupported catalog entry: %s", candidate.Entry.Reason)
+	}
 	resolved, err := resolveSkillDirectoryCandidate(ctx, candidate)
 	if err != nil {
 		return captypes.AcquisitionPreview{}, err

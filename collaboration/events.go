@@ -31,6 +31,15 @@ func (store *Store) Publish(ctx context.Context, request PublishRequest) (Publis
 }
 
 func (store *Store) publishTx(ctx context.Context, tx *sql.Tx, request PublishRequest) (PublishResult, error) {
+	if request.Kind == EventWorkRequest {
+		if request.RequestID == "" {
+			identity, _ := json.Marshal([]string{store.workspaceID, request.SenderID, request.IdempotencyKey})
+			request.RequestID = "request_" + hashBytes(identity)
+		}
+		if request.RequestRevision == 0 {
+			request.RequestRevision = 1
+		}
+	}
 	fingerprint, _, err := hashJSON(request)
 	if err != nil {
 		return PublishResult{}, err
@@ -74,7 +83,7 @@ func (store *Store) publishTx(ctx context.Context, tx *sql.Tx, request PublishRe
 	if err != nil {
 		return PublishResult{}, err
 	}
-	if len(recipients) == 0 {
+	if len(recipients) == 0 && !request.AuditOnly {
 		if request.Broadcast {
 			return PublishResult{}, fmt.Errorf("%w: no other agents have active attached runs", ErrUnavailable)
 		}
@@ -115,6 +124,9 @@ func (store *Store) publishTx(ctx context.Context, tx *sql.Tx, request PublishRe
 			event.ThreadID = previous.ThreadID
 		}
 	}
+	if err := prepareRequestEvent(ctx, tx, request, &event); err != nil {
+		return PublishResult{}, err
+	}
 	encoded, err := json.Marshal(event)
 	if err != nil {
 		return PublishResult{}, err
@@ -150,11 +162,11 @@ func (store *Store) publishTx(ctx context.Context, tx *sql.Tx, request PublishRe
 	if _, err := tx.ExecContext(ctx, `UPDATE collaboration_state SET last_sequence=? WHERE singleton=1`, event.Sequence); err != nil {
 		return PublishResult{}, err
 	}
-	if request.Supersedes != "" {
+	if event.Supersedes != "" {
 		if _, err := tx.ExecContext(ctx, `UPDATE collaboration_deliveries SET
 			state='superseded',version=version+1,reason=?,updated_at=?
 			WHERE event_id=? AND state='pending'`,
-			"superseded by "+event.ID, now.UnixNano(), request.Supersedes); err != nil {
+			"superseded by "+event.ID, now.UnixNano(), event.Supersedes); err != nil {
 			return PublishResult{}, err
 		}
 	}
@@ -167,6 +179,9 @@ func (store *Store) ReservePending(ctx context.Context, request ReserveRequest) 
 	}
 	if request.RuntimeEpoch == 0 {
 		return nil, fmt.Errorf("%w: runtime epoch", ErrInvalid)
+	}
+	if request.ThroughSequence < 0 {
+		return nil, fmt.Errorf("%w: negative admission sequence", ErrInvalid)
 	}
 	if request.Limit <= 0 {
 		request.Limit = 20
@@ -204,6 +219,10 @@ func (store *Store) ReservePending(ctx context.Context, request ReserveRequest) 
 			WHERE d.recipient_id=? AND d.state='pending'
 		`
 		arguments := []any{request.RecipientID}
+		if request.ThroughSequence > 0 {
+			statement += ` AND e.sequence<=?`
+			arguments = append(arguments, request.ThroughSequence)
+		}
 		if len(request.OnlyKinds) > 0 {
 			statement += ` AND e.kind IN (` + strings.TrimRight(strings.Repeat("?,", len(request.OnlyKinds)), ",") + `)`
 			for _, kind := range request.OnlyKinds {
@@ -270,6 +289,16 @@ func (store *Store) ReservePending(ctx context.Context, request ReserveRequest) 
 	return result, err
 }
 
+func (store *Store) HasUnsettledAdmission(ctx context.Context, recipientID string) (bool, error) {
+	var found bool
+	err := store.readTransaction(ctx, func(tx *sql.Tx) error {
+		return tx.QueryRowContext(ctx, `SELECT EXISTS (
+			SELECT 1 FROM collaboration_deliveries WHERE recipient_id=? AND state='admitting'
+		)`, recipientID).Scan(&found)
+	})
+	return found, err
+}
+
 func normalizedEventKinds(kinds []EventKind) []EventKind {
 	result := append([]EventKind(nil), kinds...)
 	slices.Sort(result)
@@ -291,6 +320,23 @@ func (store *Store) Admit(ctx context.Context, request AdmitRequest) (Delivery, 
 	}
 	var result Delivery
 	err := store.transaction(ctx, func(tx *sql.Tx) error {
+		recipient, err := loadAgent(ctx, tx, request.RecipientID)
+		if err != nil {
+			return err
+		}
+		if recipient.RuntimeEpoch != request.RuntimeEpoch || recipient.Presence != RuntimeAttached {
+			return ErrStale
+		}
+		current, err := loadDelivery(ctx, tx, request.DeliveryID)
+		if err != nil {
+			return err
+		}
+		if current.RecipientID == request.RecipientID && current.State == DeliveryAdmitted &&
+			current.ReservedEpoch == request.RuntimeEpoch && current.Version == request.ExpectedVersion+1 &&
+			current.ContextCommitID == request.ContextCommitID {
+			result = current
+			return nil
+		}
 		now := time.Now().UTC()
 		update, err := tx.ExecContext(ctx, `UPDATE collaboration_deliveries SET
 			state='admitted',version=version+1,context_commit_id=?,updated_at=?,admitted_at=?
@@ -327,6 +373,13 @@ func (store *Store) ReleaseReservation(ctx context.Context, request ReleaseReque
 	}
 	var result Delivery
 	err := store.transaction(ctx, func(tx *sql.Tx) error {
+		recipient, err := loadAgent(ctx, tx, request.RecipientID)
+		if err != nil {
+			return err
+		}
+		if recipient.RuntimeEpoch != request.RuntimeEpoch || recipient.Presence != RuntimeAttached {
+			return ErrStale
+		}
 		now := time.Now().UTC()
 		update, err := tx.ExecContext(ctx, `UPDATE collaboration_deliveries SET
 			state=?,version=version+1,reserved_epoch=?,reason=?,updated_at=?
@@ -564,8 +617,16 @@ func validatePublishRequest(request PublishRequest) error {
 	if request.Broadcast && (request.Origin != OriginPeer || request.Kind != EventPeerNote) {
 		return fmt.Errorf("%w: broadcast is only available for peer notes", ErrInvalid)
 	}
-	if !request.Broadcast && len(request.RecipientIDs) == 0 {
+	if request.AuditOnly && (request.Origin != OriginRuntime || request.Kind != EventControlOutcome ||
+		request.Broadcast || len(request.RecipientIDs) != 0) {
+		return fmt.Errorf("%w: audit-only publication is reserved for runtime control outcomes", ErrInvalid)
+	}
+	if !request.Broadcast && len(request.RecipientIDs) == 0 && !request.AuditOnly {
 		return fmt.Errorf("%w: recipient required", ErrInvalid)
+	}
+	if (request.Kind == EventWorkRevision || request.Kind == EventRequestDisposition) &&
+		(request.RequestID == "" || request.RequestRevision == 0) {
+		return fmt.Errorf("%w: exact request_id and request_revision required", ErrInvalid)
 	}
 	for _, recipient := range request.RecipientIDs {
 		if err := validateIdentity("recipient_id", recipient, 256); err != nil {

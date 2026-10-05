@@ -7,6 +7,8 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -279,6 +281,24 @@ func TestWorkspaceAgentsCollaborateToRepairAndVerifyProject(t *testing.T) {
 					!strings.Contains(text, "Sum implementation complete") {
 					t.Errorf("coordinator did not receive the report automatically at its next safe boundary:\n%s", text)
 				}
+				reference := regexp.MustCompile(`<reference kind="report" id="([^"]+)" revision="([0-9]+)"/>`).FindStringSubmatch(text)
+				if len(reference) != 3 {
+					t.Errorf("automatic report has no exact readable artifact reference")
+					writeText(writer, "missing report reference")
+					return
+				}
+				revision, err := strconv.Atoi(reference[2])
+				if err != nil {
+					t.Error(err)
+					return
+				}
+				writeTool(writer, "read-peer-evidence", "artifact_read", map[string]any{
+					"artifact_id": reference[1], "revision": revision,
+				})
+			case 4:
+				if !strings.Contains(text, "Implemented the accumulator in sum.go.") {
+					t.Errorf("coordinator did not read the complete peer report before verification")
+				}
 				writeTool(writer, "verify-project", "execute_command", map[string]any{
 					"command": "go test ./...", "cwd": project,
 				})
@@ -291,12 +311,19 @@ func TestWorkspaceAgentsCollaborateToRepairAndVerifyProject(t *testing.T) {
 		case strings.Contains(text, "Implement Sum in sum.go so the existing test passes."):
 			switch implementerRequests.Add(1) {
 			case 1:
+				writeTool(writer, "accept-sum", "agent_respond", map[string]any{
+					"recipient_id": coordinatorID.Load().(string), "request_id": "repair-sum",
+					"request_revision": 1, "disposition": "accepted", "body": "Implementing the exact requested repair.",
+				})
+			case 2:
 				writeTool(writer, "edit-sum", "edit_file", map[string]any{
 					"path":       filepath.Join(project, "sum.go"),
 					"old_string": "\treturn 0",
 					"new_string": "\ttotal := 0\n\tfor _, value := range values {\n\t\ttotal += value\n\t}\n\treturn total",
 				})
-			case 2:
+			case 3:
+				writeTool(writer, "check-sum", "execute_command", map[string]any{"command": "go test ./...", "cwd": project})
+			case 4:
 				writeTool(writer, "report-sum", "publish_report", map[string]any{
 					"recipient_ids": []string{coordinatorID.Load().(string)},
 					"kind":          "final",
@@ -362,7 +389,7 @@ func TestWorkspaceAgentsCollaborateToRepairAndVerifyProject(t *testing.T) {
 	if !strings.Contains(string(data), "total += value") {
 		t.Fatalf("peer edit did not land:\n%s", data)
 	}
-	if coordinatorRequests.Load() < 4 || implementerRequests.Load() < 3 {
+	if coordinatorRequests.Load() < 5 || implementerRequests.Load() < 5 {
 		t.Fatalf("request counts coordinator=%d implementer=%d", coordinatorRequests.Load(), implementerRequests.Load())
 	}
 	page, err := owner.Collaboration.Page(t.Context(), collaboration.PageQuery{Search: "Sum", Limit: 20})

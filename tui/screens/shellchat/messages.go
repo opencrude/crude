@@ -180,14 +180,19 @@ func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item 
 		chatprojection.PaintLineAtBackground(buf, lineX, y, layout.ContentMax, pl, tokens, selStart, selEnd, bg)
 		return
 	}
-	chatprojection.PaintLineAt(buf, lineX, y, layout.ContentMax, pl, tokens, selStart, selEnd, layout.HasPaneBg)
+	bg := cell.NoColor
+	if pl.PaneBackground {
+		bg = tokens.Color(ui.ColorSubPaneBg)
+		ui.FillRect(buf, 0, 0, ui.Rect{X: x, Y: y, W: width, H: 1}, cell.BlankCell(bg))
+	}
+	chatprojection.PaintLineAtBackground(buf, lineX, y, layout.ContentMax, pl, tokens, selStart, selEnd, bg)
 	drawn := pl.VisibleWidth()
 	if drawn > layout.ContentMax {
 		drawn = layout.ContentMax
 	}
 	col := drawn
 	padX := lineX + drawn
-	paintNativeSpaces(buf, padX, y, layout.PadRight, tokens, selStart, selEnd, layout.HasPaneBg, col)
+	paintNativeSpaces(buf, padX, y, layout.PadRight, tokens, selStart, selEnd, pl.PaneBackground, col)
 	if pl.HeaderRule {
 		// Only the margins are outside PaintLineAt's selection columns. The
 		// label, faint rule, and timestamp inside the content use native spans.
@@ -204,12 +209,12 @@ func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item 
 
 	gx := NestedGutterX(s.paintState.compose, width)
 	if gx >= 0 && paneInfo.PaneID != "" {
-		s.paintNestedGutter(buf, x+gx, y, paneInfo)
+		s.paintNestedGutter(buf, x+gx, y, paneInfo, bg)
 	}
 	if gx >= 0 && layout.GutterCols > ui.ScrollbarWidth {
-		// The separator belongs to the main chat, not the pane. In particular,
-		// a compact subagent's background ends at its own scrollbar.
-		paintNativeSpaces(buf, x+gx+ui.ScrollbarWidth, y, layout.GutterCols-ui.ScrollbarWidth, tokens, 0, 0, false, 0)
+		// The separator remains blank and routes input to the outer chat, but
+		// shares the row's background so the pane band is full width.
+		paintNativeSpaces(buf, x+gx+ui.ScrollbarWidth, y, layout.GutterCols-ui.ScrollbarWidth, tokens, 0, 0, pl.PaneBackground, 0)
 	}
 }
 

@@ -161,6 +161,17 @@ type AgentRegistration struct {
 	Category      string
 	State         AgentState
 	OwnerInstance string
+	// Admissions are immutable local context-commit receipts recovered by the
+	// execution owner before attaching. They are never supplied by a model.
+	Admissions []AdmissionReceipt
+}
+
+type AdmissionReceipt struct {
+	DeliveryID      string
+	EventID         string
+	RuntimeEpoch    uint64
+	DeliveryVersion uint64
+	ContextCommitID string
 }
 
 type AgentQuery struct {
@@ -228,6 +239,9 @@ type PublishRequest struct {
 	RunID           string
 	Supersedes      string
 	References      []Reference
+	// AuditOnly is reserved for runtime outcomes addressed to the human UI;
+	// it journals an event without pretending that "human" is a model runtime.
+	AuditOnly bool
 }
 
 type Event struct {
@@ -283,6 +297,9 @@ type ReserveRequest struct {
 	Limit        int
 	OnlyKinds    []EventKind
 	ExcludeKinds []EventKind
+	// ThroughSequence bounds passive startup admission to already-published
+	// evidence. Zero means the current unbounded pending tail.
+	ThroughSequence int64
 }
 
 type AdmitRequest struct {

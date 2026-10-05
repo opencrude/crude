@@ -24,7 +24,7 @@ func TestManualAcquisitionWorkflowRequiresExactPreviewAndPersistsSelection(test 
 	owner := &Workspace{RootPath: root, WorkspaceDir: test.TempDir(), WorkspaceDB: openTestWorkspaceDB(test), Logger: testLogger{}}
 	owner.SetAppDefaults(types.AppSettings{Capabilities: captypes.Settings{Sources: map[string]captypes.SourceConfig{"local": {ID: "local", Name: "Local", Kind: "local", Location: filepath.Dir(directory), Trusted: true}}, Acquisition: captypes.AcquisitionSettings{Mode: "manual"}}})
 	test.Cleanup(func() { owner.Capabilities.Close() })
-	_, entries, _, err := owner.CapabilityAction(test.Context(), captypes.Action{Operation: "discover", Kind: captypes.KindSkill, Scope: captypes.ScopeWorkspace, Query: "review"})
+	_, entries, _, err := owner.CapabilityAction(test.Context(), captypes.Action{Operation: "discover", Kind: captypes.KindSkill, Scope: captypes.ScopeWorkspace, Query: "review", Arguments: map[string]string{"source_id": "local"}})
 	if err != nil || len(entries) != 1 {
 		test.Fatalf("manual Discover: %+v %v", entries, err)
 	}

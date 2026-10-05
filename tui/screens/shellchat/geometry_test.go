@@ -142,7 +142,6 @@ func TestComposeRowNoANSIPaneGutter(t *testing.T) {
 		PaneGutters: map[string]PaneGutterState{
 			"pane-a": {Scroll: scroll, TrackH: 2, Visible: true},
 		},
-		HasPaneBg: func(string) bool { return true },
 	}, 1, 2, "pane content", paneMap[2])
 	plain := stripANSI(line)
 	if strings.Contains(plain, "█") || strings.Contains(plain, "░") {
@@ -240,7 +239,8 @@ func TestNestedPaneBackgroundDoesNotChangeScrollbarGeometry(t *testing.T) {
 		name  string
 		hasBG bool
 	}{
-		{name: "thinking", hasBG: false},
+		{name: "plain", hasBG: false},
+		{name: "thinking", hasBG: true},
 		{name: "subagent", hasBG: true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -251,6 +251,10 @@ func TestNestedPaneBackgroundDoesNotChangeScrollbarGeometry(t *testing.T) {
 			s, host := newShellChatHost(t, []chatprojection.MessageRow{{
 				ID:    "pane-row",
 				Lines: []string{"pane content"},
+				Native: []chatprojection.PaintLine{{
+					Spans:          []chatprojection.RowSpan{{Text: "pane content", Role: ui.ColorFg}},
+					PaneBackground: tc.hasBG,
+				}},
 			}}, ComposeParams{
 				InnerW:        40,
 				PadLR:         padLR,
@@ -261,7 +265,6 @@ func TestNestedPaneBackgroundDoesNotChangeScrollbarGeometry(t *testing.T) {
 				PaneGutters: map[string]PaneGutterState{
 					"pane": {Scroll: paneScroll, TrackH: 1, Visible: true},
 				},
-				HasPaneBg: func(string) bool { return tc.hasBG },
 			}, 1)
 
 			buf := surfaceFromHost(t, host)
@@ -272,13 +275,13 @@ func TestNestedPaneBackgroundDoesNotChangeScrollbarGeometry(t *testing.T) {
 			}
 			contentBG := buf.Get(padLR, 0).BG
 			if tc.hasBG && contentBG != subPaneBG {
-				t.Fatalf("subagent content bg=%v want %v", contentBG, subPaneBG)
+				t.Fatalf("pane content bg=%v want %v", contentBG, subPaneBG)
 			}
 			if !tc.hasBG && contentBG == subPaneBG {
-				t.Fatalf("thinking content unexpectedly uses subagent background %v", subPaneBG)
+				t.Fatalf("plain content unexpectedly uses pane background %v", subPaneBG)
 			}
-			if gapBG := buf.Get(gx+1, 0).BG; gapBG == subPaneBG {
-				t.Fatalf("separator gap inherited subagent background %v", gapBG)
+			if gapBG := buf.Get(gx+1, 0).BG; (gapBG == subPaneBG) != tc.hasBG {
+				t.Fatalf("separator gap bg=%v, want pane background=%v", gapBG, tc.hasBG)
 			}
 		})
 	}

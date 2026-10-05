@@ -57,6 +57,9 @@ func agentProfileCatalog(cfg *Config) string {
 	var profiles []rootprompt.AgentProfile
 	for _, name := range keys {
 		p := cfg.Agents.AgentProfiles[name]
+		if p.Category != CategoryResearcher && p.Category != CategoryCrafter && p.Category != CategoryAeron {
+			continue // Root/background profiles are not child-launch choices.
+		}
 		if p.Enabled != nil && !*p.Enabled {
 			continue
 		}

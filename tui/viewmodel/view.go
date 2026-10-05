@@ -698,10 +698,6 @@ func (m *App) configureChatScreenWithLayout(layout contentLayout) {
 		MainSBVisible: mainSBVisible,
 		PaneLineMap:   paneLineMap,
 		PaneGutters:   paneGutters,
-		HasPaneBg: func(paneID string) bool {
-			sp := m.PaneMgr.Get(paneID)
-			return sp != nil && sp.Type == workspace.PaneAgent
-		},
 	}
 
 	paint := shellchat.PaintParams{SourceID: snapshot.SourceID, Generation: snapshot.Generation, ChangedIndices: snapshot.ChangedIndices, StructureChanged: snapshot.StructureChanged, Compose: composeParams, PaneLineMap: paneLineMap, OnPaneScroll: func(paneID string) { m.subPaneProjections.InvalidateSubPane(activeAgentID, paneID) }}

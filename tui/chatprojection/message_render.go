@@ -11,6 +11,7 @@ import (
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/theme"
+	"crude/tui/tools"
 	"crude/tui/types"
 	"crude/tui/ui"
 	"crude/types/reasoning"
@@ -806,29 +807,41 @@ func compactionProgressBar(completed, total int, current bool) string {
 }
 
 func renderMessageContent(msg types.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {
+	var ml messageLines
 	switch msg.Role {
 	case types.RoleUser:
 		if msg.Collaboration != nil {
-			return renderCollaborationMessage(msg, ctx)
+			ml = renderCollaborationMessage(msg, ctx)
+		} else {
+			ml = renderUserMessage(msg, ctx, suppressHeader)
 		}
-		return renderUserMessage(msg, ctx, suppressHeader)
 	case types.RoleAssistant:
-		return renderAssistantMessage(msg, ctx, suppressHeader)
+		ml = renderAssistantMessage(msg, ctx, suppressHeader)
 	case types.RoleThinking:
-		return renderThinkingMessage(msg, ctx, suppressHeader)
+		ml = renderThinkingMessage(msg, ctx, suppressHeader)
 	case types.RoleTool:
 		if ctx.planSuperseded && ctx.disclosure != DisclosureExpanded {
 			msg.Content = ""
 		}
-		ml := renderToolMessageLines(msg, ctx.th, ctx.contentWidth, ctx.innerW, ctx.width, ctx.spinFrame, ctx.chatHeight, ctx.phase, ctx.disclosure)
-		return ml
+		ml = renderToolMessageLines(msg, ctx.th, ctx.contentWidth, ctx.innerW, ctx.width, ctx.spinFrame, ctx.chatHeight, ctx.phase, ctx.disclosure)
 	case types.RoleError:
-		return renderErrorMessage(msg, ctx)
+		ml = renderErrorMessage(msg, ctx)
 	case types.RoleStatus:
-		return renderLifecycleMessage(msg, ctx)
+		ml = renderLifecycleMessage(msg, ctx)
 	case types.RoleAssignment:
-		return renderAssignmentMessage(msg, ctx, suppressHeader)
+		ml = renderAssignmentMessage(msg, ctx, suppressHeader)
 	default:
-		return messageLines{lines: []string{""}, native: []PaintLine{buildPlainBodyLine("")}}
+		ml = messageLines{lines: []string{""}, native: []PaintLine{buildPlainBodyLine("")}}
 	}
+	if messageHasPaneBackground(&msg) {
+		for i := range ml.native {
+			ml.native[i].PaneBackground = true
+		}
+	}
+	return ml
+}
+
+func messageHasPaneBackground(msg *types.ChatMessage) bool {
+	return msg.Role == types.RoleThinking || msg.Collaboration != nil ||
+		msg.Role == types.RoleTool && tools.IsCollaborationTool(msg.ToolName)
 }

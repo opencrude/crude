@@ -64,6 +64,7 @@ type Session struct {
 	collaborationCancel   context.CancelFunc
 	collaborationWg       sync.WaitGroup
 	collaborationContext  map[string][]provider.ChatMessage
+	resumed               bool
 	memorySummary         atomic.Pointer[memory.SessionSummary]
 
 	// workDir is the workspace root this session executes tools against.
@@ -985,13 +986,29 @@ func (s *Session) NewOrchestrator(sender EventSender) (*Orchestrator, error) {
 		s.runtimeProfile.RemoveOverride(o.ID)
 		return nil, fmt.Errorf("session is closing")
 	}
-	registered, err := s.registerCollaborator(context.Background(), o.ID, s.AgentName(), s.sessionID, "", CategoryDefault)
+	registered, err := s.registerCollaborator(context.Background(), o.ID, s.AgentName(), s.sessionID, "", CategoryDefault, s.db)
 	if err != nil {
 		s.orchMu.Unlock()
 		s.runtimeProfile.RemoveOverride(o.ID)
 		return nil, fmt.Errorf("register workspace agent: %w", err)
 	}
 	o.RuntimeEpoch = registered.RuntimeEpoch
+	if s.resumed {
+		if err := s.recoverChildCollaborators(context.Background(), o.ID); err != nil {
+			s.orchMu.Unlock()
+			s.detachCollaborator(context.Background(), o.ID)
+			return nil, fmt.Errorf("recover workspace children: %w", err)
+		}
+		if store := s.CollaborationStore(); store != nil {
+			page, err := store.Page(context.Background(), collaboration.PageQuery{Limit: 1})
+			if err != nil {
+				s.orchMu.Unlock()
+				s.detachCollaborator(context.Background(), o.ID)
+				return nil, fmt.Errorf("capture passive resume boundary: %w", err)
+			}
+			o.passiveThrough = page.Snapshot
+		}
+	}
 	if s.orchestrators == nil {
 		s.orchestrators = make(map[string]*Orchestrator)
 	}

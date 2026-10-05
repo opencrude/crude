@@ -89,8 +89,13 @@ func (m *Model) applyCapabilityResult(result CapabilityResultMsg) {
 	if result.Snapshot.Generation >= m.capabilitySnapshot.Generation && result.Snapshot.Generation != 0 {
 		m.SetCapabilitySnapshot(result.Snapshot)
 	}
-	if result.Err == nil && (action.Operation == "search" || action.Operation == "discover") {
+	if (result.Err == nil || len(result.Entries) > 0) && (action.Operation == "search" || action.Operation == "discover") {
 		m.capabilityDiscovery[action.Kind] = slices.Clone(result.Entries)
+		if m.capabilityDiscoveryQuery == nil {
+			m.capabilityDiscoveryQuery = make(map[capability.Kind]capability.Action)
+		}
+		m.capabilityDiscoveryQuery[action.Kind] = action
+		m.capabilityRevision++
 	}
 	if action.Operation == "snapshot" && result.Sequence != m.capabilitySequence && m.capabilityPending != nil {
 		return

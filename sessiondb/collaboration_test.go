@@ -21,7 +21,7 @@ func TestContextAndCollaborationAdmissionsCommitAtomically(t *testing.T) {
 		AgentID: "agent", RuntimeEpoch: 3, DeliveryVersion: 2,
 		ContextCommitID: "commit", RunID: "run",
 	}
-	if err := SaveContextStateWithAdmissions(db, "session", "agent", state, []CollaborationAdmission{admission}); err != nil {
+	if err := SaveContextStateWithAdmissions(db, "session", "agent", "agent", state, []CollaborationAdmission{admission}); err != nil {
 		t.Fatal(err)
 	}
 	loaded, ok, err := LoadContextState(db, "session", "agent")
@@ -55,7 +55,7 @@ func TestCollaborationAdmissionConflictRollsBackContext(t *testing.T) {
 		DeliveryID: "delivery", EventID: "event", SessionID: "session",
 		AgentID: "agent", RuntimeEpoch: 1, DeliveryVersion: 2, ContextCommitID: "commit",
 	}
-	if err := SaveContextStateWithAdmissions(db, "session", "agent", first, []CollaborationAdmission{admission}); err != nil {
+	if err := SaveContextStateWithAdmissions(db, "session", "agent", "agent", first, []CollaborationAdmission{admission}); err != nil {
 		t.Fatal(err)
 	}
 	second := ContextState{
@@ -64,7 +64,7 @@ func TestCollaborationAdmissionConflictRollsBackContext(t *testing.T) {
 	}
 	changed := admission
 	changed.EventID = "different"
-	if err := SaveContextStateWithAdmissions(db, "session", "agent", second, []CollaborationAdmission{changed}); err == nil {
+	if err := SaveContextStateWithAdmissions(db, "session", "agent", "agent", second, []CollaborationAdmission{changed}); err == nil {
 		t.Fatal("changed admission identity succeeded")
 	}
 	loaded, ok, err := LoadContextState(db, "session", "agent")

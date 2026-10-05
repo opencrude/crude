@@ -90,6 +90,18 @@ one leading spacer per item, including groups and panes. Subpanes return content
 only, never a trailing separator; spacing must not depend on the previous frame's
 pane height or the unprojected canonical neighbor. Tree leaves are contiguous.
 
+Thinking blocks and panes, attributed peer messages, agent/Board operations and
+sub-agent panes share the theme's `ColorSubPaneBg` as an edge-to-edge transcript
+band. The fill includes the row's left/right padding, nested scrollbar and blank
+separator; the outer chat scrollbar remains its own neutral rail. Leading
+transcript spacers and ordinary conversation/tool rows retain `ColorBg`. Mixed
+activity trees shade only their special leaves; a summary containing exclusively
+special elements keeps the same band. `PaintLine.PaneBackground` carries this
+source-derived treatment through wrapping, animation, disclosure, parallel
+projection and hydration. Compose owns geometry only, never a second background
+classifier. Markdown/code styling and text selection paint over the band without
+changing content or interaction targets.
+
 Every visible leaf uses a structured shared title, with separate action, operand,
 and metadata spans. `ColorToolTitle` follows the theme's function accent;
 `ColorToolOperand` is a quieter blend of its string and muted colors. Counts,
@@ -158,6 +170,14 @@ not rescanned over a dense transcript on animation ticks. The batch projection
 cache is keyed by canonical source changes; geometry and theme remain renderer
 responsibilities. Upload progress cannot recreate a provider-wait row after
 output has begun.
+
+Stopping settles every pending tool display stage at the canonical conversation
+boundary. Already received success/error results remain those outcomes even if
+their terminal phase was still waiting behind presentation dwell; transient
+queued phases cannot animate after stop. Cancelled and resumed-interrupted batch
+parents settle unreturned children while preserving completed children and any
+retained partial output. Both live and hydrated projections must remain static
+across activity-dot phases.
 
 ## Reasoning Presentation
 

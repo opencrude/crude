@@ -139,7 +139,11 @@ func (workspace *Workspace) CapabilityAction(ctx context.Context, action captype
 			content, err = string(encoded), encodeErr
 		}
 	case "discover":
-		entries, err = service.Discover(ctx, action.Query, action.Kind, 100)
+		if sourceID := action.Arguments["source_id"]; sourceID != "" {
+			entries, err = service.DiscoverSource(ctx, action.Query, action.Kind, 100, sourceID)
+		} else {
+			entries, err = service.Discover(ctx, action.Query, action.Kind, 100)
+		}
 	case "search":
 		entries, err = service.Search(ctx, action.Query, action.Kind, 100, false)
 	case "connect":

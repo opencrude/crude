@@ -291,6 +291,12 @@ func (ab *ActionBar) Measure(ctx LayoutContext, cs Constraints) Size {
 
 func (ab *ActionBar) Layout(ctx LayoutContext, r Rect) {
 	ab.SetBounds(r)
+	if r.Empty() {
+		for i := range ab.buttons {
+			ab.buttons[i].button.Layout(ctx, Rect{})
+		}
+		return
+	}
 	totalW := 0
 	widths := make([]int, len(ab.buttons))
 	for i := range ab.buttons {
@@ -317,6 +323,9 @@ func (ab *ActionBar) Layout(ctx LayoutContext, r Rect) {
 
 func (ab *ActionBar) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintContext) {
 	r := ab.Bounds()
+	if r.Empty() {
+		return
+	}
 	if ab.showRule && ab.tokens != nil && r.W > 0 {
 		bg := ab.tokens.Color(ColorPopupBg)
 		if ab.surfaceSet {
@@ -340,6 +349,9 @@ func (ab *ActionBar) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 }
 
 func (ab *ActionBar) Handle(ctx EventContext, evt Event) EventResult {
+	if ab.Bounds().Empty() {
+		return EventResult{}
+	}
 	if evt.IsKey() {
 		key := evt.Key
 		if key.Code == tea.KeyEsc && ab.cancelAction != "" {

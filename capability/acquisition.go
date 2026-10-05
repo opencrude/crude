@@ -148,7 +148,7 @@ func (service *Service) discoverRemote(ctx context.Context, source captypes.Sour
 		var err error
 		candidates, err = discoverMCPRegistry(ctx, source, query, limit)
 		if err != nil {
-			return nil, err
+			return service.cacheDiscoveredCandidates(source, kind, candidates, limit), err
 		}
 	case "skill-registry":
 		if kind == captypes.KindMCP {
@@ -162,6 +162,10 @@ func (service *Service) discoverRemote(ctx context.Context, source captypes.Sour
 	default:
 		return nil, fmt.Errorf("unsupported capability source kind %q", source.Kind)
 	}
+	return service.cacheDiscoveredCandidates(source, kind, candidates, limit), nil
+}
+
+func (service *Service) cacheDiscoveredCandidates(source captypes.SourceConfig, kind captypes.Kind, candidates []Candidate, limit int) []captypes.Entry {
 	entries := make([]captypes.Entry, 0, min(limit, len(candidates)))
 	service.mu.Lock()
 	defer service.mu.Unlock()
@@ -179,7 +183,7 @@ func (service *Service) discoverRemote(ctx context.Context, source captypes.Sour
 		service.candidates[candidate.Entry.ID] = candidate
 		entries = append(entries, candidate.Entry)
 	}
-	return entries, nil
+	return entries
 }
 
 func (service *Service) Acquire(ctx context.Context, id string, scope captypes.Scope) (captypes.Settings, error) {
@@ -189,6 +193,9 @@ func (service *Service) Acquire(ctx context.Context, id string, scope captypes.S
 	service.mu.RUnlock()
 	if !exists {
 		return settings, errors.New("candidate is unavailable; run discovery and inspect the exact revision")
+	}
+	if candidate.Entry.State == "unsupported" {
+		return settings, fmt.Errorf("unsupported catalog entry: %s", candidate.Entry.Reason)
 	}
 	source, trusted := settings.Sources[candidate.Entry.Source]
 	if !trusted || !source.Trusted || source.Disabled {

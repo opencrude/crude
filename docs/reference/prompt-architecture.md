@@ -47,6 +47,17 @@ Crude's collaboration, memory/history, capability and evidence surfaces. It does
 not duplicate schemas or grant tools. Directed peer delivery is automatic;
 live-running broadcast is rare and peer-note-only.
 
+`CollaborationWorkflow` supplies the practical decision path in every root/child
+mode: direct work versus an existing suitable peer versus a bounded leaf,
+exact request revisions/dispositions, no acknowledgement loops, exact artifact
+reads, and report/control/lifecycle separation. Actual tool availability remains
+authoritative; leaves cannot recursively delegate. Named child selection uses the
+offered `agent_start.profile` field, not a nonexistent nickname argument.
+Runtime event envelopes include escaped exact evidence references and typed
+dispositions. Summaries are notifications, not substitutes for reading evidence.
+Enforcement and passive recovery live in the
+[workspace collaboration runtime](workspace-collaboration.md), not prompt prose.
+
 Exact tool schemas, descriptions, validation/denial messages and result payloads
 stay with the executing interface. They are not competing system prompts. External
 MCP prompt templates are source-attributed capability data, not shipped Crude
@@ -326,6 +337,13 @@ inventing an identity. A completed response that explicitly reports
 `store:false`, or a stream that returns no ID, cannot become an HTTP continuation
 anchor. The session log records the exact decision and the TUI reports the
 endpoint limitation instead of silently presenting full uploads as deltas.
+
+Tool execution identity is the exact provider call ID, never an output position.
+Streamed calls and terminal snapshots bind to one accumulator even when a gateway
+changes their output indices; repeated snapshots must produce one execution,
+one display identity and one provider result. Distinct IDs with identical arguments
+remain distinct operations. This is request-scoped identity handling, not a
+semantic deduplication policy or a retry of accepted model output.
 
 Storage off, endpoint-declined storage, ZDR, Codex's mandatory `store:false`,
 automatic server truncation and caller-overridden wire context use full uploads.

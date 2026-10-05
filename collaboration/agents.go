@@ -36,6 +36,14 @@ func (store *Store) RegisterAgent(ctx context.Context, registration AgentRegistr
 	if !validateAgentState(registration.State) {
 		return Agent{}, fmt.Errorf("%w: invalid agent state %q", ErrInvalid, registration.State)
 	}
+	if registration.OwnerInstance == "" && len(registration.Admissions) != 0 {
+		return Agent{}, fmt.Errorf("%w: admission receipts require runtime owner", ErrInvalid)
+	}
+	for _, receipt := range registration.Admissions {
+		if err := validateAdmissionReceipt(receipt); err != nil {
+			return Agent{}, err
+		}
+	}
 	freshLock, err := store.acquireRuntimeLock(registration.ID, registration.OwnerInstance)
 	if err != nil {
 		return Agent{}, err
@@ -48,6 +56,7 @@ func (store *Store) RegisterAgent(ctx context.Context, registration AgentRegistr
 	}()
 
 	var result Agent
+	var recovered bool
 	err = store.transaction(ctx, func(tx *sql.Tx) error {
 		if registration.ParentID != "" {
 			parent, err := loadAgent(ctx, tx, registration.ParentID)
@@ -62,6 +71,9 @@ func (store *Store) RegisterAgent(ctx context.Context, registration AgentRegistr
 		existing, err := loadAgent(ctx, tx, registration.ID)
 		now := time.Now().UTC()
 		if errors.Is(err, ErrNotFound) {
+			if len(registration.Admissions) != 0 {
+				return fmt.Errorf("%w: receipts for unknown agent", ErrConflict)
+			}
 			presence := RuntimeOffline
 			epoch := uint64(0)
 			heartbeat := int64(0)
@@ -98,18 +110,27 @@ func (store *Store) RegisterAgent(ctx context.Context, registration AgentRegistr
 		presence := existing.Presence
 		owner := existing.OwnerInstance
 		heartbeat := existing.HeartbeatAt.UnixNano()
+		newAttachment := registration.OwnerInstance != "" && freshLock
 		if registration.OwnerInstance != "" {
 			presence = RuntimeAttached
 			owner = registration.OwnerInstance
-			if existing.OwnerInstance != registration.OwnerInstance || existing.Presence != RuntimeAttached {
+			if newAttachment {
 				epoch++
 			}
 			heartbeat = now.UnixNano()
 		}
+		if newAttachment {
+			if err := store.recoverRuntime(ctx, tx, existing, registration.Admissions, now); err != nil {
+				return err
+			}
+			recovered = true
+		} else if len(registration.Admissions) != 0 {
+			return fmt.Errorf("%w: receipts require a new attachment", ErrConflict)
+		}
 		if _, err := tx.ExecContext(ctx, `UPDATE collaboration_agents SET
 			name=?,category=?,state=?,presence=?,runtime_epoch=?,owner_instance=?,updated_at=?,heartbeat_at=?
 			WHERE id=?`,
-			registration.Name, registration.Category, registration.State, presence,
+			registration.Name, registration.Category, existing.State, presence,
 			epoch, owner, now.UnixNano(), heartbeat, registration.ID); err != nil {
 			return err
 		}
@@ -118,6 +139,9 @@ func (store *Store) RegisterAgent(ctx context.Context, registration AgentRegistr
 	})
 	if err == nil && registration.OwnerInstance != "" {
 		keepLock = true
+	}
+	if err == nil && recovered {
+		store.signal()
 	}
 	return result, err
 }
@@ -401,6 +425,13 @@ func (store *Store) updateRun(ctx context.Context, request FinishRunRequest) (Ru
 		}
 		if current.AgentID != request.AgentID || current.RuntimeEpoch != request.RuntimeEpoch ||
 			current.Version != request.ExpectedVersion || current.State.Terminal() {
+			return ErrStale
+		}
+		agent, err := loadAgent(ctx, tx, request.AgentID)
+		if err != nil {
+			return err
+		}
+		if agent.RuntimeEpoch != request.RuntimeEpoch || agent.Presence != RuntimeAttached {
 			return ErrStale
 		}
 		now := time.Now().UTC()

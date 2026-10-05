@@ -86,12 +86,17 @@ These entries follow Memory within the existing AI category group, before Securi
 and IDE. The category rail, filtering and keyboard navigation use the same grouped
 order in both settings scopes.
 
-Skills and MCP use that same retained catalog grammar. Installed/Discover are
-content tabs, not scope selectors. Inspect replaces only the right pane; Back
-retains query, selection and scroll. Scope remains Application/Workspace in the
-footer. Browsing Installed never starts an external search, process or provider
-request. Source names, field labels/descriptions and stable setting IDs participate
-in Settings search.
+Skills and MCP use a single store-style catalog, not administration tables or
+separate Installed/Discover modes. Cards show names, publisher/source, descriptions,
+setup state and a native Install/Manage action. **Installed only** is an explicit
+checkbox: local filtering never starts an external search, process or provider
+request. Enter or Search queries enabled sources; Source and Sort open explicit
+choice lists, not hidden cycles. Source selection queries that exact source rather
+than filtering an already capped all-source page. Inspect replaces only the right
+pane; Back retains query, selection and scroll. Scope remains
+Application/Workspace in the footer. Source names, field labels/descriptions and
+stable setting IDs participate in Settings search. Hidden catalog controls have
+empty geometry and cannot paint or activate on other Settings pages.
 
 Skills offers local Create/Add, instructions and contained file browsing,
 Automatic/Manual only/Disabled modes, and explicit Use in session. Use stages
@@ -102,7 +107,7 @@ not the authored directory or another workspace's selected artifact.
 
 Install and Update first show the exact source, revision/digest, target scope,
 requirements, requested access and previous binding. Confirm rechecks that
-preimage before publishing. Refresh Discover explicitly before reviewing an
+preimage before publishing. Search sources again explicitly before reviewing an
 updated source revision. Downloads share a bounded immutable artifact cache;
 cancellation detaches one requester. Changed metadata/source/binding fails closed
 and requires another preview. An installation is not execution approval.
@@ -141,10 +146,17 @@ to Ask. Resume restores selection/context passively without downloads, updates,
 server startup or tool replay. Unsupported protocol features are declared in MCP
 Overview instead of drawn as working controls.
 
-Fresh application settings include **Anthropic Skills (pinned)** and the
-**Official MCP Registry (preview)** as built-in sources. The Anthropic repository
-uses a complete commit identity; the Registry contributes metadata for remote
-Streamable HTTP connections only. Built-ins are discovery presets, not permission:
+Application settings include **Anthropic Skills (pinned)**, **Skills Directory**
+(skills.sh community search), and **Official MCP Registry (preview)**. Community
+skill review resolves GitHub HEAD to an exact commit before acquisition. The
+Registry includes remote Streamable HTTP and version-pinned npm/PyPI stdio packages;
+local packages stay unlaunched until their explicit setup and launch approval.
+Unsupported transports/package requirements remain visible with a reason rather
+than disappearing from search. All-source discovery interleaves source-ranked
+results, preserves fuzzy API matches and displays usable results alongside partial
+source failures. Results are bounded at 100 per search; the Registry reads up to
+eight cursor pages. These sources do not cover every published skill or MCP server.
+Built-ins are discovery presets, not permission:
 they can be edited or disabled but not removed, and every acquisition still uses
 the exact preview/grant flow.
 
@@ -301,6 +313,12 @@ requires an explicit choice before discarding a changed draft. Named profiles
 round-trip through `types.AgentProfileSettings` and session configuration; the
 orchestrator advertises their names/purposes, and delegation resolves their
 role, model/account, instructions and restrictions.
+
+The launch tool exposes `profile` as the exact reusable child-profile selector,
+separate from the allocated personal name. Unknown/disabled profiles and category
+mismatches fail explicitly before launch; root-only/background profiles are not
+advertised as child choices. Profile-owned path lists are copied and rooted to
+the workspace without mutating the settings catalog.
 
 The existing Model dropdown remains the selector. Discovery refreshes both its
 retained items and open-list geometry, so the first response paints every visible

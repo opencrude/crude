@@ -59,6 +59,16 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 	actor.Effects = effectsForPolicy(live.Policy)
 	previousPrepare := live.PrepareStep
 	previousFn := live.ToolFn
+	var boundEpoch uint64
+	var boundRunID string
+	if store := session.CollaborationStore(); store != nil {
+		session.mu.Lock()
+		boundEpoch = session.collaborationAgents[actor.ID].RuntimeEpoch
+		session.mu.Unlock()
+		if participant, err := store.Agent(ctx, actor.ID); err == nil {
+			boundRunID = participant.CurrentRunID
+		}
+	}
 	var mu sync.RWMutex
 	snapshot := captypes.RuntimeSnapshot{}
 	live.PrepareStep = func() ([]tools.ToolDef, []provider.ChatMessage) {
@@ -121,6 +131,19 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 		return tools.ToolMetadata{}, false
 	}
 	live.ToolFn = func(callCtx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
+		if err := callCtx.Err(); err != nil {
+			return tools.ToolResult{}, err
+		}
+		if boundEpoch != 0 {
+			participant, err := session.CollaborationStore().Agent(callCtx, actor.ID)
+			if err != nil {
+				return tools.ToolResult{}, err
+			}
+			if participant.RuntimeEpoch != boundEpoch || participant.CurrentRunID != boundRunID ||
+				participant.Presence != collaboration.RuntimeAttached {
+				return tools.ToolResult{}, collaboration.ErrStale
+			}
+		}
 		if slices.Contains(actor.DeniedTools, tool) || len(actor.AllowedTools) > 0 && !slices.Contains(actor.AllowedTools, tool) && (tool != "publish_report" || actor.ParentID == "") {
 			return tools.ToolResult{}, fmt.Errorf("tool %q is excluded by the effective agent selection", tool)
 		}
@@ -188,6 +211,11 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 			identity, _ := callCtx.Value(tools.ExecutionIdentityKey{}).(tools.ExecutionIdentity)
 			if identity.ToolCallID == "" {
 				return tools.ToolResult{}, errors.New("filesystem mutation requires an originating tool-call identity")
+			}
+			for _, path := range writeToolTargets(tool, params) {
+				if err := ownership.CheckOrClaim(agent.AgentID(actor.ID), name, path, true); err != nil {
+					return tools.ToolResult{}, err
+				}
 			}
 			if _, err := store.AcquireClaims(callCtx, collaboration.AcquireClaimsRequest{
 				AgentID: actor.ID, RunID: participant.CurrentRunID,

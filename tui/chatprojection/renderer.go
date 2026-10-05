@@ -1334,16 +1334,18 @@ func (r *Renderer) renderItem(idx int, item *renderItem, width int) []string {
 		for _, sl := range paneLines {
 			frameSensitive = frameSensitive || sl.FrameSensitive
 			item.PaneRows++
+			var pl PaintLine
 			if sl.Native != nil {
 				result = append(result, sl.PlainText())
-				native = append(native, *sl.Native)
+				pl = *sl.Native
 			} else {
 				// SubPaneLine with only Text: bridge to native so no row ever
 				// takes the ANSI paint path. Plain text becomes a ColorFg span.
-				pl := BridgeAnsiLine(sl.Text, r.Tokens())
+				pl = BridgeAnsiLine(sl.Text, r.Tokens())
 				result = append(result, pl.PlainText())
-				native = append(native, pl)
 			}
+			pl.PaneBackground = true
+			native = append(native, pl)
 		}
 		item.Native = native
 		r.setFrameSensitive(msg.InternalID, frameSensitive)

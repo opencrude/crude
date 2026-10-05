@@ -25,6 +25,9 @@ func TestEngineeringContractInEveryExecutionMode(t *testing.T) {
 			if strings.Count(text, RuntimeCapabilities) != 1 {
 				t.Fatal("prompt must include exactly one runtime capability contract")
 			}
+			if strings.Count(text, CollaborationWorkflow) != 1 {
+				t.Fatal("prompt must include exactly one collaboration workflow")
+			}
 			if !strings.Contains(text, "never call an edit tool with identical old and new content") ||
 				strings.Contains(text, "Prefer incremental edits over whole-file rewrites") {
 				t.Fatal("all agents must skip no-op edits without forcing incremental patches")

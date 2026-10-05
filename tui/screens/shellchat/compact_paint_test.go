@@ -43,7 +43,6 @@ func TestCompactNativeRowPaintGutterAlignment(t *testing.T) {
 		PaneGutters: map[string]shellchat.PaneGutterState{
 			"agent-1": {Scroll: ui.NewScrollModel(), TrackH: 1, Visible: true},
 		},
-		HasPaneBg: func(id string) bool { return id == "agent-1" },
 	}
 
 	screen.SetMessages(rows, shellchat.PaintParams{Compose: compose, PaneLineMap: paneMap})

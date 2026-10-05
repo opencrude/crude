@@ -29,6 +29,18 @@ func IsStructuredTool(name string) bool {
 	return toolcontract.RetainsStructuredToolInput(name)
 }
 
+// IsCollaborationTool identifies the shared agent/Board result family. These
+// attributed operations use the same distinct chat surface as agent panes.
+func IsCollaborationTool(name string) bool {
+	switch name {
+	case "agent_list", "agent_inspect", "agent_start", "agent_send", "agent_respond", "agent_control",
+		"publish_report", "artifact_read", "agent_wait", "board_read":
+		return true
+	default:
+		return false
+	}
+}
+
 func resultCount(count int, singular, plural string) string {
 	if count == 1 {
 		return "1 " + singular
@@ -37,10 +49,10 @@ func resultCount(count int, singular, plural string) string {
 }
 
 func BuildStructuredResult(name, content, input string) StructuredResult {
-	switch name {
-	case "agent_list", "agent_inspect", "agent_start", "agent_send", "agent_respond", "agent_control",
-		"publish_report", "artifact_read", "agent_wait", "board_read":
+	if IsCollaborationTool(name) {
 		return buildCollaborationResult(name, content, input)
+	}
+	switch name {
 	case "remember", "recall_memory", "update_memory", "forget_memory", "memory_feedback", "search_history":
 		return buildMemoryResult(name, content, input)
 	default:

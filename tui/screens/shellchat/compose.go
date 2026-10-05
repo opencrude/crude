@@ -30,8 +30,6 @@ type ComposeParams struct {
 	MainSBVisible bool // reserve external main gutter column (contentH > viewportH)
 	PaneLineMap   []chatprojection.PaneLineInfo
 	PaneGutters   map[string]PaneGutterState
-	// HasPaneBg reports whether paneID should receive SubPaneBg (PaneAgent).
-	HasPaneBg func(paneID string) bool
 }
 
 type composeCtx struct {
@@ -104,18 +102,12 @@ type RowLayout struct {
 	ContentMax int
 	PadRight   int
 	GutterCols int // pane scrollbar followed by one blank separator column
-	HasPaneBg  bool
 }
 
 // LayoutRow mirrors ComposeRow width math without building ANSI strings.
-func LayoutRow(p ComposeParams, contentVisW int, paneInfo chatprojection.PaneLineInfo) RowLayout {
+func LayoutRow(p ComposeParams, contentVisW int, _ chatprojection.PaneLineInfo) RowLayout {
 	ctx := buildComposeCtx(p)
 	geometry := layoutComposeRow(ctx, contentVisW)
-
-	hasBg := false
-	if paneInfo.PaneID != "" && p.HasPaneBg != nil {
-		hasBg = p.HasPaneBg(paneInfo.PaneID)
-	}
 
 	return RowLayout{
 		PadLeft:    ctx.padW,
@@ -123,7 +115,6 @@ func LayoutRow(p ComposeParams, contentVisW int, paneInfo chatprojection.PaneLin
 		ContentMax: geometry.contentMax,
 		PadRight:   geometry.padRight,
 		GutterCols: geometry.gutter,
-		HasPaneBg:  hasBg,
 	}
 }
 
@@ -135,25 +126,12 @@ func ComposeRow(p ComposeParams, vpRow int, globalLine int, rawLine string, pane
 		return ""
 	}
 	ctx := buildComposeCtx(p)
-	return composeOneRow(ctx, p, vpRow, globalLine, rawLine, paneInfo)
+	return composeOneRow(ctx, rawLine)
 }
 
-func composeOneRow(ctx composeCtx, p ComposeParams, _ int, _ int, line string, paneInfo chatprojection.PaneLineInfo) string {
-	isPaneLine := paneInfo.PaneID != ""
-	hasBg := false
-	if isPaneLine && p.HasPaneBg != nil {
-		hasBg = p.HasPaneBg(paneInfo.PaneID)
-	}
-
-	var trimmed string
-	var visW int
-	if hasBg {
-		trimmed = line
-		visW = rendering.VisibleWidth(trimmed)
-	} else {
-		trimmed = rendering.TrimRightAnsiSpaces(line)
-		visW = rendering.VisibleWidth(trimmed)
-	}
+func composeOneRow(ctx composeCtx, line string) string {
+	trimmed := rendering.TrimRightAnsiSpaces(line)
+	visW := rendering.VisibleWidth(trimmed)
 	geometry := layoutComposeRow(ctx, visW)
 	if visW > geometry.contentMax {
 		if geometry.contentMax == 0 {
@@ -171,8 +149,9 @@ func composeOneRow(ctx composeCtx, p ComposeParams, _ int, _ int, line string, p
 	return ctx.pad + inner + ctx.pad
 }
 
-// Compose builds full-width chat rows with scrollbar gutters and subpane
-// backgrounds. Output rows are consumed by tests; production uses
+// Compose builds full-width chat row geometry with scrollbar gutters.
+// Backgrounds are native PaintLine metadata, not composed text. Tests consume
+// these rows; production uses
 // message-level VirtItems via Screen.SetMessages and PaintLineAt at paint time.
 func Compose(p ComposeParams) []string {
 	if len(p.RawLines) == 0 {
@@ -181,11 +160,7 @@ func Compose(p ComposeParams) []string {
 	ctx := buildComposeCtx(p)
 	out := make([]string, len(p.RawLines))
 	for i, line := range p.RawLines {
-		var paneInfo chatprojection.PaneLineInfo
-		if i < len(p.PaneLineMap) {
-			paneInfo = p.PaneLineMap[i]
-		}
-		out[i] = composeOneRow(ctx, p, i, i, line, paneInfo)
+		out[i] = composeOneRow(ctx, line)
 	}
 	return out
 }

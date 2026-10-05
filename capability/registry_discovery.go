@@ -90,7 +90,20 @@ func discoverMCPRegistry(ctx context.Context, source captypes.SourceConfig, quer
 		positions[candidate.Entry.ID] = len(candidates)
 		candidates = append(candidates, candidate)
 	}
-	for page := 0; page < 4 && len(candidates) < limit; page++ {
+	supportedCount := func() int {
+		count := 0
+		for _, candidate := range candidates {
+			if candidate.Entry.State != "unsupported" {
+				count++
+			}
+		}
+		return count
+	}
+	seenCursors := map[string]bool{"": true}
+	for page := 0; page < 8 && supportedCount() < limit; page++ {
+		if err := ctx.Err(); err != nil {
+			return candidates, err
+		}
 		endpoint := *baseEndpoint
 		values := endpoint.Query()
 		values.Set("search", query)
@@ -101,11 +114,11 @@ func discoverMCPRegistry(ctx context.Context, source captypes.SourceConfig, quer
 		endpoint.RawQuery = values.Encode()
 		data, fetchErr := boundedFetch(ctx, endpoint.String(), 4<<20)
 		if fetchErr != nil {
-			return nil, fetchErr
+			return candidates, fetchErr
 		}
 		var catalog registryCatalog
 		if err := json.Unmarshal(data, &catalog); err != nil {
-			return nil, err
+			return candidates, err
 		}
 		for _, envelope := range catalog.Servers {
 			if envelope.Meta.Official.Status != "" && envelope.Meta.Official.Status != "active" ||
@@ -114,23 +127,34 @@ func discoverMCPRegistry(ctx context.Context, source captypes.SourceConfig, quer
 			}
 			for _, candidate := range registryServerCandidates(source, envelope.Server) {
 				add(candidate)
-				if len(candidates) >= limit {
-					break
-				}
 			}
 		}
 		for _, candidate := range catalog.Entries {
 			add(candidate)
 		}
-		if catalog.Metadata.NextCursor == "" || catalog.Metadata.NextCursor == cursor {
+		if seenCursors[catalog.Metadata.NextCursor] {
 			break
 		}
 		cursor = catalog.Metadata.NextCursor
+		seenCursors[cursor] = true
 	}
-	if len(candidates) > limit {
-		candidates = candidates[:limit]
+	// Preserve registry relevance within usable and unavailable groups, but do
+	// not let an unsupported first page conceal a usable next-page result.
+	var ranked []Candidate
+	for _, candidate := range candidates {
+		if candidate.Entry.State != "unsupported" {
+			ranked = append(ranked, candidate)
+		}
 	}
-	return candidates, nil
+	for _, candidate := range candidates {
+		if candidate.Entry.State == "unsupported" {
+			ranked = append(ranked, candidate)
+		}
+	}
+	if len(ranked) > limit {
+		ranked = ranked[:limit]
+	}
+	return ranked, nil
 }
 
 func registryServerCandidates(source captypes.SourceConfig, server registryServer) []Candidate {
@@ -153,6 +177,11 @@ func registryServerCandidates(source captypes.SourceConfig, server registryServe
 	var candidates []Candidate
 	for _, remote := range server.Remotes {
 		if remote.Type != "streamable-http" {
+			entry := baseEntry
+			entry.ID = registryConnectionID(source.ID, server.Name, "remote:"+remote.Type, remote.URL)
+			entry.Transport, entry.State = "remote", "unsupported"
+			entry.Reason = "unsupported registry remote transport " + fmt.Sprintf("%q", remote.Type)
+			candidates = append(candidates, Candidate{Entry: entry})
 			continue
 		}
 		id := registryConnectionID(source.ID, server.Name, "remote", remote.URL)
@@ -168,14 +197,30 @@ func registryServerCandidates(source captypes.SourceConfig, server registryServe
 	for _, packageSpec := range server.Packages {
 		config, requirements, err := registryPackageConnection(source, server, packageSpec, name)
 		if err != nil {
+			entry := baseEntry
+			version := packageSpec.Version
+			if version == "" {
+				version = server.Version
+			}
+			entry.ID = registryConnectionID(source.ID, server.Name, packageSpec.RegistryType, packageSpec.Identifier+"@"+version)
+			entry.Transport, entry.PackageType = "local package", packageSpec.RegistryType
+			entry.State, entry.Reason = "unsupported", err.Error()
+			candidates = append(candidates, Candidate{Entry: entry})
 			continue
 		}
 		entry := baseEntry
 		entry.ID, entry.Transport, entry.PackageType, entry.ConnectionID = config.ID, "local package", config.PackageType, config.ID
 		if len(config.RequiredEnv) > 0 {
 			entry.State = "setup required"
+			entry.Reason = "Required environment: " + strings.Join(config.RequiredEnv, ", ")
 		}
 		candidates = append(candidates, Candidate{Entry: entry, Connection: &config, Requirements: requirements})
+	}
+	if len(candidates) == 0 {
+		entry := baseEntry
+		entry.ID = registryConnectionID(source.ID, server.Name, "unavailable", server.Version)
+		entry.State, entry.Reason = "unsupported", "registry server has no remote endpoint or package to install"
+		candidates = append(candidates, Candidate{Entry: entry})
 	}
 	return candidates
 }

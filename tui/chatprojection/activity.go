@@ -14,12 +14,13 @@ import (
 // activityGroup is a presentation-only view over adjacent canonical messages.
 // Never mutate the messages: their IDs and complete bodies remain the audit log.
 type activityGroup struct {
-	id       string
-	messages []*types.ChatMessage
-	active   bool
-	leafRows map[int]string
-	label    string
-	visible  []*types.ChatMessage
+	id             string
+	messages       []*types.ChatMessage
+	active         bool
+	leafRows       map[int]string
+	label          string
+	visible        []*types.ChatMessage
+	paneBackground bool
 }
 
 // Empty assistant envelopes separate provider calls but contain no visible
@@ -109,8 +110,11 @@ func activityRunning(msg *types.ChatMessage) bool {
 }
 
 func newActivityGroup(messages []*types.ChatMessage) *activityGroup {
-	group := &activityGroup{id: "activity:" + messages[0].InternalID, messages: messages}
+	group := &activityGroup{id: "activity:" + messages[0].InternalID, messages: messages, paneBackground: true}
 	for _, msg := range messages {
+		if !messageHasPaneBackground(msg) {
+			group.paneBackground = false
+		}
 		if activityRunning(msg) {
 			group.active = true
 		}
@@ -440,7 +444,7 @@ func (r *Renderer) renderActivity(group *activityGroup) ([]string, []PaintLine) 
 		if i == 0 {
 			prefix = []RowSpan{{Text: "│ ", Role: ui.ColorMuted}, {Text: marker, Role: ui.ColorAccent2}}
 		}
-		pl := PaintLine{Spans: append(prefix, RowSpan{Text: text, Role: ui.ColorMuted})}
+		pl := PaintLine{Spans: append(prefix, RowSpan{Text: text, Role: ui.ColorMuted}), PaneBackground: group.paneBackground}
 		lines = append(lines, pl.PlainText())
 		native = append(native, pl)
 	}
@@ -470,7 +474,8 @@ func (r *Renderer) renderActivity(group *activityGroup) ([]string, []PaintLine) 
 			} else {
 				spans = append([]RowSpan{{Text: branch, Role: ui.ColorMuted}}, spans...)
 			}
-			pl := PaintLine{Spans: spans}
+			pl := row
+			pl.Spans = spans
 			if r.hasDisclosure(msg) {
 				group.leafRows[len(lines)] = msg.InternalID
 			}

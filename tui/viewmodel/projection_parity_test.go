@@ -543,6 +543,9 @@ func assertSameRows(t *testing.T, label string, live, hydrated chatprojection.Me
 		t.Fatalf("%s native line counts differ: %d vs %d", label, len(live.Native), len(hydrated.Native))
 	}
 	for i := range live.Native {
+		if live.Native[i].PaneBackground != hydrated.Native[i].PaneBackground {
+			t.Fatalf("%s row %d background differs after hydration", label, i)
+		}
 		want, got := live.Native[i].Spans, hydrated.Native[i].Spans
 		if len(want) != len(got) {
 			t.Fatalf("%s row %d span counts differ: %d vs %d", label, i, len(want), len(got))
