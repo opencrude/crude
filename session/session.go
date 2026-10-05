@@ -29,6 +29,7 @@ import (
 	"crude/sessiondb"
 	ttypes "crude/types"
 	captypes "crude/types/capability"
+	recoverytypes "crude/types/recovery"
 )
 
 var ErrHistoryDisabled = errors.New("local history disabled")
@@ -486,7 +487,9 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 }
 
 func (s *Session) Close() {
-	atomic.StoreInt32(&s.closing, 1)
+	if !atomic.CompareAndSwapInt32(&s.closing, 0, 1) {
+		return
+	}
 	s.logger.Info("SESSION", "close", "has_messages", s.HasMessages())
 	s.stopCompactionForClose()
 	s.compactionWg.Wait()
@@ -530,6 +533,17 @@ func (s *Session) Close() {
 		s.editor.Close()
 	}
 	hasMsgs := s.HasMessages()
+	// A preflight-blocked turn may own an exact pending input without a
+	// transcript yet. Never prune its recovery DB as an empty session.
+	if s.db != nil && !hasMsgs {
+		checkpoints, err := sessiondb.LoadOpenRecoveryCheckpoints(s.db, s.sessionID)
+		if err != nil {
+			s.logger.Error("RECOVERY", "close_pending_read_failed", "error", err.Error())
+			hasMsgs = true // Preserve data when emptiness cannot be proven.
+		} else {
+			hasMsgs = len(checkpoints) > 0
+		}
+	}
 
 	if s.db != nil {
 		if err := sessiondb.CloseSession(s.db, s.sessionID); err != nil {
@@ -782,6 +796,7 @@ type SubAgentSnapshot struct {
 	Model       string
 	Messages    []sessiondb.MessageWithMeta
 	Compactions []sessiondb.CompactionRecord
+	Recovery    *recoverytypes.Status
 }
 
 func (s *Session) CompletedSubAgentSnapshots() []SubAgentSnapshot {

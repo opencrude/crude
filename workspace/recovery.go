@@ -93,7 +93,7 @@ func (w *Workspace) hydrateRecoveryViews(views []ChatMessageView, owner *Session
 	if owner == nil || owner.DB == nil {
 		return views
 	}
-	records, err := sessiondb.LoadRecoveryRecords(owner.DB, owner.SessionID)
+	records, err := sessiondb.LoadRecoveryRecordsForOwner(owner.DB, owner.SessionID, owner.SessionID)
 	if err != nil {
 		w.Logger.Warn("RECOVERY", "hydrate_failed", "error", err.Error())
 		return views

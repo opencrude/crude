@@ -50,7 +50,8 @@ func (m *App) applyRecoveryRetryResult(result recoveryRetryResultMsg) {
 	if result.generation != m.workspaceSwitchGen.Load() || m.AgentMgr == nil || m.Feedback == nil {
 		return
 	}
-	if node := m.AgentMgr.Get(result.agentID); node == nil || node.State == nil {
+	if node := m.AgentMgr.Get(result.agentID); node == nil || node.State == nil ||
+		node.State.RecoveryStatus().ID != result.incidentID {
 		return
 	}
 	if !result.accepted {

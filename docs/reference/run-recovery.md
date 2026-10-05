@@ -30,6 +30,7 @@ new human message or a replacement for permission policy.
 | Failure | Response |
 |---|---|
 | Retryable network/provider outage or exhausted request-attempt budget | Automatic continuation with a capped cooldown while unfinished work remains owned |
+| DNS lookup failure, including “not found” | The task supervisor rechecks automatically with capped pacing; the bounded request-attempt policy remains separate |
 | Request deadline, with the owning turn still live | Recover the attempt; never label it “stopped by you” |
 | Accepted partial response | Preserve it and append a semantic continuation, never replay the stochastic request |
 | Truncated/unfinished tool arguments | Execute none of that response's calls; retain visible text and ask for complete calls |
@@ -72,6 +73,22 @@ uses that same current context owner as normal turns and compaction. Accepted
 assistant/tool boundaries are retained; transcript/context persistence must succeed
 before a natural completion is acknowledged.
 
+Finished parallel siblings are checkpointed while other calls are still running,
+including children of the native parallel wrapper. Interrupted wrapper snapshots
+retain real leaf results and mark their overall outcome unknown. Tool panics
+pause for inspection, including inside parallel batches; not-yet-started serial
+siblings do not execute after an uncertain failure. Per-path locks release even
+when the tool panics.
+
+Natural completion also waits for the durable turn and collaboration ledgers.
+Retrying finalization acknowledges only an already-committed identical terminal
+outcome for the exact run/owner/epoch/context; a different stop/outcome fails closed.
+Persistence retries do not request another stochastic answer.
+An old recovery cancellation fences the owning turn context itself, not merely
+the earlier incident lookup. New human/peer turn admission cannot overwrite a
+parked task. The composer refuses an ordinary send before consuming that draft;
+Retry now/Stop and slash remediation remain available.
+
 No supervisor automatically reruns a historical tool call, relaunches an existing
 command, advances an async output cursor, or treats a running process as exit zero.
 Already accepted results remain evidence. Opaque commands/MCP effects that may
@@ -84,12 +101,32 @@ launch. **Continue run** explicitly requests a checked replacement attempt.
 Collaboration `RunID`/version/epoch facts remain immutable attempt identities;
 an interrupted attempt does not prove its unfinished task was completed.
 
+The accepted checkpoint tail is restored into the ordinary root transcript before
+resume is exposed. Missing tool outcomes are explicitly unknown, never reported as
+“cancelled by user.” A newer finalized transcript is not replaced with an older
+checkpoint, and a mismatching accepted prefix fails closed. Pending inputs retain
+their session DB even before input admission. Pending child work returns to Agents
+with its accepted transcript and own incident; child mirror incidents do not
+appear in the root chat. A prior attempt's final report remains evidence and cannot
+satisfy a replacement collaboration run's deliverable.
+
 ## Presentation and interaction
 
 One ID-keyed incident row is updated through Recovering, Needs attention,
-Recovered, Interrupted and explicitly Cancelled. Repeated failures do not add a wall of identical red
-errors. The title carries severity; wrapped diagnostics use normal foreground
-ink, and recovery guidance uses muted ink. Credential-shaped diagnostics are
+Recovered, Interrupted and explicitly Cancelled. It defaults to one compact
+content row, without the old full-width notice rule or exposed error paragraphs.
+Recovering shows a shared-clock blinking red square, a real countdown, a
+clickable **(Retry now)** and ordinary disclosure chevron. Retry now shortens the
+exact owner's current cooldown; timers continue automatically without `/retry`.
+During the next active attempt the row says “retrying” and clears the old deadline.
+Needs attention and interrupted incidents remain static and expose Retry now.
+Recovered/cancelled incidents remove the retry target.
+
+Clicking the header/chevron or the existing disclosure shortcut expands the
+actual full reason and remediation; dragging uses ordinary selection/copy and
+never activates Retry now. Expanded diagnostics use normal foreground ink and
+guidance uses muted ink. Header clock changes reuse cached evidence and do not
+change row height or rewrap the reason. Credential-shaped diagnostics are
 redacted rather than disclosed. The entire remaining diagnostic is available for
 selection/copy; it is not arbitrarily cut at 140/240 characters.
 
@@ -104,6 +141,12 @@ fenced to exact backend owner, incident ID, turn generation and workspace bounda
 it cannot wake another incident or consume a new draft. Stop remains available
 while waiting/recovering. Configuration changes can wake an active waiting owner;
 they do not silently restart passively recovered history.
+
+Exact per-message timestamps/producing connection facts are retained when already
+present in display snapshots. A crash checkpoint that contains only a canonical
+tail can supply its boundary timestamp, not reconstruct unrecorded per-token times
+or invent missing producing-account metadata. No terminal blink attribute, new
+private timer, or optimistic lifecycle state is used for the row.
 
 See [network transport](network.md) for secure remediation of routing/TLS issues,
 [chat activity](chat-activity.md) for transcript contracts, and

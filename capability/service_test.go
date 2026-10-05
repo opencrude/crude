@@ -48,6 +48,7 @@ func capabilityFixture(t *testing.T) (*Service, captypes.Settings, string) {
 	if err := service.Configure(context.Background(), settings); err != nil {
 		t.Fatal(err)
 	}
+	service.SetRegistrationStore(newTestRegistrationStore(t, db, settings))
 	return service, settings, skill.Path
 }
 
@@ -73,7 +74,8 @@ func TestCapabilityApprovalLocalAcquisitionAndPassiveResume(t *testing.T) {
 	if !installed.Managed || installed.Path == source || installed.Digest != entries[0].Digest {
 		t.Fatalf("not an immutable selected copy: %#v", installed)
 	}
-	if err := service.Configure(ctx, settings); err != nil {
+	store := service.store.(*testRegistrationStore)
+	if err := service.Configure(ctx, store.load(t)); err != nil {
 		t.Fatal(err)
 	}
 	if len(service.Snapshot().Entries) != 1 {
@@ -89,9 +91,6 @@ func TestCapabilityApprovalLocalAcquisitionAndPassiveResume(t *testing.T) {
 	}
 	if _, err := service.Activate(ctx, actor, entries[0].ID, true); err == nil {
 		t.Fatal("altered managed bytes activated")
-	}
-	if err := service.ForgetInstalled(ctx, entries[0].ID); err != nil {
-		t.Fatal(err)
 	}
 	if err := service.Configure(ctx, settings); err != nil || len(service.Snapshot().Entries) != 0 {
 		t.Fatalf("removed selection resurfaced: %v", err)

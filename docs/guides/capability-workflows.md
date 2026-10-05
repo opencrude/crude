@@ -106,6 +106,33 @@ are text-only. Sampling, elicitation, task extensions, remote channels and rich
 MCP apps are unsupported and not advertised. Resume starts no connection,
 download, update or tool replay.
 
+## Agent Discovery, Acquisition, And Durable Use
+
+1. `capability_search` honors the requested result limit and returns matching
+   installed entries before querying external sources. A source failure preserves
+   usable discovery results with an attributed warning rather than discarding them.
+2. `capability_activate` acquires an exact discovered identity under the configured
+   source/acquisition policy. Successful acquisition publishes into normal
+   **Workspace Settings**. It is not promoted into Application Settings.
+3. Skill activation returns the installed absolute path, revision, digest and
+   source instructions. Bundled relative files resolve from that path; they are
+   not files in the project's current directory. Their execution still uses normal
+   tool permissions.
+4. MCP activation connects and returns observed tools and their fingerprints,
+   separately from the actually usable tools. If access is missing, the agent can
+   request `mcp_request_access` with `connection_id` and `grants`: original tool name, fingerprint,
+   effect and resource scope. The user reviews that exact durable access change.
+   The agent never infers a grant from server annotations or a successful connection.
+5. Approved registrations/grants survive a complete workspace close and reopen.
+   Reopen is passive: no downloads, connections, model calls or tool replay.
+   A later explicit activation reconnects and rechecks current tool fingerprints.
+   Disable/remove operates on the same authoritative registration, with no hidden
+   install record that can resurrect it.
+
+Existing development shadow-install data must be manually backed up and aligned
+to workspace settings before using the new current runtime. There is no product
+compatibility reader or automatic conversion.
+
 ## Board And Memory
 
 **Agent Board** in the footer or palette opens the workspace panel.
@@ -157,6 +184,16 @@ and remote operations are not presented as working features.
 - `session/capability_task_e2e_test.go` drives the real agent loop against a
   scripted provider: installed-first search → immutable skill acquisition → MCP
   activation → real SDK tool result → passive SQLite resume.
+- `capability/access_test.go` verifies exact access approval, usable dynamic tools,
+  real SDK calls, passive reopen, and rejection of altered scope/fingerprint or
+  agent ceilings. `workspace/capability_registration_test.go` exercises normal
+  settings persistence, fresh service reopen, disable/remove and stale-owner checks;
+  `tui/viewmodel/capability_visibility_test.go` asserts retained painted catalogs.
+- `app/live_capability_workflow_test.go` is opt-in real-model acceptance
+  (`CRUDE_LIVE_CAPABILITY_WORKFLOW=1`) using an isolated project/home, a local
+  standard skill source and a real SDK HTTP MCP fixture. Optional
+  `CRUDE_CAPABILITY_PROOF_DIR` retains a new proof directory. It does not claim
+  that every public package, OAuth vendor or source works.
 - `mcpclient/workflow_test.go` exercises real stdio subprocesses, Streamable HTTP,
   OAuth loopback/headless return, grant isolation, cancellation/retry and unknown
   mutations without replay. Board tests use real durable context admission;

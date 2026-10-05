@@ -48,7 +48,11 @@ func (a *Agent) Run(
 	a.runFailure = nil
 	a.runFailureKind = ""
 	a.runRecoveryKind = ""
-	a.lastArchive = nil
+	a.lastActiveContext = append([]provider.ChatMessage(nil), sessionMessages...)
+	a.lastArchive = append([]provider.ChatMessage(nil), a.ContextArchive...)
+	if a.ContextArchive == nil {
+		a.lastArchive = append([]provider.ChatMessage(nil), sessionMessages...)
+	}
 	if !a.preserveReportState {
 		a.reportPublished = false
 	}
@@ -84,14 +88,14 @@ func (a *Agent) Run(
 	if a.Provider == nil {
 		a.setRunFailure(fmt.Errorf("agent provider is nil"), rootprompt.RecoveryInterrupted, RecoveryFailureConfiguration)
 		a.emitError(emit, fmt.Errorf("agent provider is nil"))
-		return append([]provider.ChatMessage(nil), sessionMessages...)
+		return a.ArchiveContext()
 	}
 	var guidanceErr error
 	systemPrompt, guidanceErr = a.loadProjectGuidance(ctx, systemPrompt)
 	if guidanceErr != nil {
 		a.setRunFailure(guidanceErr, rootprompt.RecoveryInterrupted, RecoveryFailureGuidance)
 		a.emitError(emit, fmt.Errorf("cannot start project work before reading complete guidance: %w", guidanceErr))
-		return append([]provider.ChatMessage(nil), sessionMessages...)
+		return a.ArchiveContext()
 	}
 
 	a.configureModelTools()
@@ -837,6 +841,26 @@ func (a *Agent) Run(
 
 		results := make([]execResult, len(toolCalls))
 		receivedResults := make([]bool, len(toolCalls))
+		partialResults := make(map[int]execResult)
+		checkpointResults := func() {
+			if a.Checkpoint == nil {
+				return
+			}
+			partial := make([]provider.ChatMessage, 0, len(results))
+			for i, done := range receivedResults {
+				if done {
+					partial = append(partial, toolResultMessage(results[i], len(results)))
+				} else if progress, ok := partialResults[i]; ok {
+					partial = append(partial, toolResultMessage(progress, len(results)))
+				}
+			}
+			a.lastArchive = append(append([]provider.ChatMessage(nil), archiveMsgs...), partial...)
+			a.lastActiveContext = append(append([]provider.ChatMessage(nil), msgs[1:]...), partial...)
+			if checkpointErr == nil {
+				checkpointErr = a.Checkpoint(a.ArchiveContext(), a.ActiveContext())
+			}
+		}
+		var uncertain error
 		guidanceChanged := false
 		if a.guidance != nil {
 			guidanceChanged, guidanceErr = a.guidance.loadPaths(ctx, guidanceCallPaths(toolCalls))
@@ -855,12 +879,61 @@ func (a *Agent) Run(
 				requestEmit(AgentEvent{Type: "tool_result", Data: map[string]any{"tool_id": call.ID, "name": call.Function.Name, "result": message, "error": "true"}})
 			}
 		} else {
-			resultCh := a.executeToolCalls(ctx, toolCalls, requestEmit, blockResolveCh, &lastReply, step)
-			for received := 0; received < len(toolCalls); received++ {
-				r := <-resultCh
+			// A native parallel wrapper is one canonical call. Its completed
+			// children must survive while another leaf runs, too. Tool workers
+			// enqueue typed snapshots; only this collector writes checkpoints.
+			progressCh := make(chan execResult, 32)
+			batchIndices := make(map[string]int)
+			for i, call := range toolCalls {
+				if call.Function.Name == "multi_tool_use.parallel" {
+					batchIndices[call.ID] = i
+				}
+			}
+			batchEmit := func(event AgentEvent) {
+				if event.Type == "tool_call_streaming" && a.Checkpoint != nil {
+					data, _ := event.Data.(map[string]any)
+					id, _ := data["tool_id"].(string)
+					content, _ := data["content"].(string)
+					if index, ok := batchIndices[id]; ok && content != "" {
+						var payload map[string]json.RawMessage
+						if json.Unmarshal([]byte(content), &payload) == nil {
+							payload["outcome_unknown"] = json.RawMessage("true")
+							encoded, encodeErr := json.Marshal(payload)
+							if encodeErr == nil {
+								select {
+								case progressCh <- execResult{index: index, id: id, name: "multi_tool_use.parallel",
+									result: tools.ToolResult{Content: string(encoded)}, toolError: true}:
+								case <-ctx.Done():
+								}
+							}
+						}
+					}
+				}
+				requestEmit(event)
+			}
+			resultCh := a.executeToolCalls(ctx, toolCalls, batchEmit, blockResolveCh, &lastReply, step)
+			for received := 0; received < len(toolCalls); {
+				var r execResult
+				select {
+				case progress := <-progressCh:
+					if !receivedResults[progress.index] {
+						partialResults[progress.index] = progress
+						checkpointResults()
+					}
+					continue
+				case r = <-resultCh:
+					received++
+				}
 				if r.index >= 0 && r.index < len(results) {
 					results[r.index] = r
 					receivedResults[r.index] = true
+					if r.failure != nil {
+						uncertain = r.failure
+					}
+					// Retain each finished sibling before waiting for the rest.
+					// Partial snapshots stay call-ordered and never invent outcomes
+					// for tools that are still running.
+					checkpointResults()
 				}
 			}
 			if a.guidance != nil && ctx.Err() == nil {
@@ -885,21 +958,7 @@ func (a *Agent) Run(
 		var lastToolResultIdx int
 		for _, r := range results {
 			toolError := r.toolError || IsToolError(r.result.Content)
-			content := provider.TextContent(r.result.Content)
-			if len(r.result.Attachments) > 0 {
-				parts := []provider.ContentPart{{Type: "text", Text: r.result.Content}}
-				parts = append(parts, r.result.Attachments...)
-				content = provider.PartsContent(parts)
-			}
-			toolMessage := provider.ChatMessage{
-				Role:       "tool",
-				ToolCallID: r.id,
-				Content:    content,
-				ToolError:  toolError,
-			}
-			if r.index == len(results)-1 {
-				toolMessage.CacheControl = &provider.CacheControl{Type: "ephemeral"}
-			}
+			toolMessage := toolResultMessage(r, len(results))
 			appendWire(toolMessage)
 			if a.ToolResultAccepted != nil && !toolError {
 				a.ToolResultAccepted(r.name, r.id, append([]provider.ChatMessage(nil), msgs[1:]...))
@@ -923,6 +982,11 @@ func (a *Agent) Run(
 		if checkpointErr != nil {
 			a.setRunFailure(checkpointErr, rootprompt.RecoveryUncertain, RecoveryFailureStorage)
 			a.emitError(emit, fmt.Errorf("persist completed tool boundary: %w", checkpointErr))
+			return returnMessages()
+		}
+		if uncertain != nil {
+			a.setRunFailure(uncertain, rootprompt.RecoveryUncertain, RecoveryFailurePanic)
+			a.emitError(emit, uncertain)
 			return returnMessages()
 		}
 		if lastToolResultIdx > 0 && lastToolResultIdx < len(msgs) {
@@ -971,6 +1035,20 @@ func (a *Agent) Run(
 			return returnMessages()
 		}
 	}
+}
+
+func toolResultMessage(result execResult, count int) provider.ChatMessage {
+	content := provider.TextContent(result.result.Content)
+	if len(result.result.Attachments) > 0 {
+		parts := []provider.ContentPart{{Type: "text", Text: result.result.Content}}
+		content = provider.PartsContent(append(parts, result.result.Attachments...))
+	}
+	message := provider.ChatMessage{Role: "tool", ToolCallID: result.id, Content: content,
+		ToolError: result.toolError || IsToolError(result.result.Content)}
+	if result.index == count-1 {
+		message.CacheControl = &provider.CacheControl{Type: "ephemeral"}
+	}
+	return message
 }
 
 func (a *Agent) observeReasoningVisibility(completion *completionResult) reasoning.Kind {

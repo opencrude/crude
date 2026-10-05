@@ -51,7 +51,7 @@ func TestSupervisorUsesBoundedServerCooldownAndStableIncident(t *testing.T) {
 	if waited != retry.MaxCooldown {
 		t.Fatalf("wait=%s want=%s", waited, retry.MaxCooldown)
 	}
-	if len(persisted) != 1 || len(emitted) != 1 {
+	if len(persisted) != 2 || len(emitted) != 2 {
 		t.Fatalf("transitions persisted=%d emitted=%d", len(persisted), len(emitted))
 	}
 	recovering := emitted[0]
@@ -65,9 +65,12 @@ func TestSupervisorUsesBoundedServerCooldownAndStableIncident(t *testing.T) {
 	if err := supervisor.Resolve(); err != nil {
 		t.Fatal(err)
 	}
-	if len(emitted) != 2 || emitted[1].ID != recovering.ID ||
-		emitted[1].State != recoverytypes.Recovered ||
-		emitted[1].Summary != "Run recovered" {
+	if !emitted[1].RetryAt.IsZero() {
+		t.Fatal("elapsed cooldown still advertised a future retry")
+	}
+	if len(emitted) != 3 || emitted[2].ID != recovering.ID ||
+		emitted[2].State != recoverytypes.Recovered ||
+		emitted[2].Summary != "Run recovered" {
 		t.Fatalf("recovered status = %+v", emitted)
 	}
 }
@@ -160,9 +163,10 @@ func TestRunSupervisedRetriesTransientExhaustionWithoutTerminalError(t *testing.
 			t.Fatalf("recoverable attempt leaked terminal error: %#v", event)
 		}
 	}
-	if len(statuses) != 2 || statuses[0].State != recoverytypes.Recovering ||
-		statuses[1].State != recoverytypes.Recovered ||
-		statuses[0].ID != statuses[1].ID {
+	if len(statuses) != 3 || statuses[0].State != recoverytypes.Recovering ||
+		statuses[1].State != recoverytypes.Recovering || !statuses[1].RetryAt.IsZero() ||
+		statuses[2].State != recoverytypes.Recovered ||
+		statuses[0].ID != statuses[2].ID {
 		t.Fatalf("recovery statuses = %+v", statuses)
 	}
 	found := 0

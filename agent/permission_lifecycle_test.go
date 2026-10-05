@@ -105,6 +105,72 @@ func TestExplicitPermissionDenialHasDistinctLifecycleEvent(t *testing.T) {
 	}
 }
 
+func TestHumanPermissionResponsesAlwaysReleaseExactBlock(t *testing.T) {
+	calls := []provider.ToolCall{editPermissionCall(), commandPermissionCall("bash scripts/check.sh")}
+	for _, operation := range []struct{ name, args string }{
+		{"async_execute_command", `{"command":"bash scripts/check.sh","handle":"permission-test"}`},
+		{"exec_command", `{"cmd":"bash scripts/check.sh"}`},
+		{"write_file", `{"path":"main.go","content":"new"}`},
+		{"delete_file", `{"path":"main.go"}`},
+		{"move_file", `{"source":"main.go","destination":"other.go"}`},
+		{"copy_file", `{"source":"main.go","destination":"other.go"}`},
+		{"apply_patch", `{"input":"*** Begin Patch\n*** Add File: main.go\n+new\n*** End Patch\n"}`},
+	} {
+		calls = append(calls, provider.ToolCall{ID: "tool-1", InternalID: "internal-1",
+			Function: provider.FunctionCall{Name: operation.name, Arguments: operation.args}})
+	}
+	for _, call := range calls {
+		for _, choice := range []string{"allow", "always", "deny", "cancel"} {
+			t.Run(call.Function.Name+"/"+choice, func(t *testing.T) {
+				a := newPermissionLifecycleAgent(t)
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				responses := make(chan ttypes.BlockResponse, 1)
+				completed, called, decided := 0, false, false
+				a.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
+					called = true
+					if completed != 1 {
+						t.Error("tool ran before its approval block was released")
+					}
+					return tools.ToolResult{Content: "ok"}, nil
+				}
+				result := a.executeOneToolCall(ctx, call, func(evt AgentEvent) {
+					switch evt.Type {
+					case "blocking":
+						if choice == "cancel" {
+							cancel()
+						} else {
+							responses <- ttypes.BlockResponse{RequestID: call.InternalID, Outcome: ttypes.BlockAnswered, Value: choice}
+						}
+					case "permission_resolved":
+						decided = true
+					case "blocking_complete":
+						completed++
+						data, _ := evt.Data.(map[string]string)
+						if data["block_id"] != call.InternalID {
+							t.Errorf("released another request: %+v", data)
+						}
+					case "tool_result":
+						if completed != 1 {
+							t.Error("tool settled while approval remained pending")
+						}
+					}
+				}, responses, new(string))
+				if completed != 1 {
+					t.Errorf("%s left %d completion events, want exactly one", choice, completed)
+				}
+				wantExecution := choice == "allow" || choice == "always"
+				if called != wantExecution || decided != (choice != "cancel") {
+					t.Errorf("called=%v decided=%v for %s", called, decided, choice)
+				}
+				if choice == "deny" && !strings.Contains(result.result.Content, "user denied") {
+					t.Errorf("lost explicit rejection: %q", result.result.Content)
+				}
+			})
+		}
+	}
+}
+
 func TestLiveYoloPolicyAppliesToAlreadyConstructedAgent(t *testing.T) {
 	agent := newPermissionLifecycleAgent(t)
 	var yolo atomic.Bool

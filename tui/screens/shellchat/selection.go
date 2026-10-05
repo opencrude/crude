@@ -215,7 +215,9 @@ func (s *Screen) handleSelectionRelease(ctx ui.EventContext, msg tea.MouseReleas
 	clickNoDrag := s.selection.selAnchorLine == s.selection.selEndLine &&
 		s.selection.selAnchorCol == s.selection.selEndCol
 	toggleMsgID := ""
+	var inlineAction *ui.Action
 	if clickNoDrag && ok {
+		inlineAction = s.inlineActionAt(lineIdx, s.selection.selEndCol)
 		toggleMsgID = s.disclosureRowAt(lineIdx)
 	}
 	s.selection.selecting = false
@@ -227,6 +229,9 @@ func (s *Screen) handleSelectionRelease(ctx ui.EventContext, msg tea.MouseReleas
 	s.selection.selAnchorCol = 0
 	s.selection.selEndLine = 0
 	s.selection.selEndCol = 0
+	if inlineAction != nil {
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint, Action: inlineAction}
+	}
 	if toggleMsgID != "" {
 		return ui.EventResult{
 			Handled:    true,
@@ -242,6 +247,28 @@ func (s *Screen) handleSelectionRelease(ctx ui.EventContext, msg tea.MouseReleas
 		cmd = rendering.CopyToClipboardCmd(text)
 	}
 	return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidatePaint}
+}
+
+func (s *Screen) inlineActionAt(globalLine, col int) *ui.Action {
+	for _, row := range s.rows {
+		if globalLine >= max(1, len(row.Lines)) {
+			globalLine -= max(1, len(row.Lines))
+			continue
+		}
+		if globalLine < 0 || globalLine >= len(row.Native) {
+			return nil
+		}
+		x := 0
+		for _, span := range row.Native[globalLine].Spans {
+			width := rendering.VisibleWidth(span.Text)
+			if col >= x && col < x+width {
+				return span.Action
+			}
+			x += width
+		}
+		return nil
+	}
+	return nil
 }
 
 // disclosureRowAt returns the message ID whose toggle row occupies the global

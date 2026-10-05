@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	"encoding/json"
 
 	"crude/types"
@@ -25,14 +26,13 @@ func (w *Workspace) PreparePreferencesSave(scope types.SettingsScope, settings t
 		result := PreferencesSaveResult{Scope: scope, AppSettings: defaults}
 		if scope == types.SettingsScopeWorkspace {
 			if database != nil {
-				encoded, err := json.Marshal(overrides)
-				if err == nil {
-					err = database.SetSetting(workspaceSettingsKey, string(encoded))
-				}
+				effective, err := saveWorkspacePreferences(database, defaults, overrides)
 				if err != nil {
 					result.Err = err
 					return result
 				}
+				result.Effective = effective
+				return result
 			}
 			result.Effective = types.MergeAppWorkspace(defaults, overrides)
 			return result
@@ -56,6 +56,40 @@ func (w *Workspace) PreparePreferencesSave(scope types.SettingsScope, settings t
 		result.Effective = types.MergeAppWorkspace(result.AppSettings, workspaceOverrides)
 		return result
 	}
+}
+
+// Capability cards have independent entity commits. A preference draft opened
+// before an agent install must not replace those authoritative registration maps.
+func saveWorkspacePreferences(database *WorkspaceDB, defaults types.AppSettings, overrides types.WorkspaceOverrides) (types.AppSettings, error) {
+	ctx := context.Background()
+	tx, err := database.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return types.AppSettings{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+	currentOverrides, err := loadWorkspaceOverridesTx(ctx, tx, defaults)
+	if err != nil {
+		return types.AppSettings{}, err
+	}
+	current := types.MergeAppWorkspace(defaults, currentOverrides)
+	desired := types.MergeAppWorkspace(defaults, overrides)
+	desired.Capabilities.Skills = current.Capabilities.Skills
+	desired.Capabilities.Connections = current.Capabilities.Connections
+	desired.Capabilities.Sources = current.Capabilities.Sources
+	encoded, err := json.Marshal(types.OverridesFromDiff(defaults, desired))
+	if err != nil {
+		return types.AppSettings{}, err
+	}
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO workspace_metadata(key,value,updated_at) VALUES(?,?,unixepoch()*1000000000)
+		ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at
+	`, workspaceSettingsKey, string(encoded)); err != nil {
+		return types.AppSettings{}, err
+	}
+	if err := tx.Commit(); err != nil {
+		return types.AppSettings{}, err
+	}
+	return desired, nil
 }
 
 // ApplyPreferencesSave publishes a successful command snapshot, with no file or

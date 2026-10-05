@@ -16,7 +16,7 @@ import (
 
 // Sequential scripts/tuishot.sh fixture: no provider calls or real user data.
 // F2 attention, F3 recovered, F4 Network Connection, F5 Proxy, F6 Certificates,
-// F7 theme switch, F8 return to chat, F9 quit.
+// F1 disclosure, F7 theme switch, F8 return to chat, F9 quit.
 func TestRunRecoveryVisualAcceptance(t *testing.T) {
 	if os.Getenv("CRUDE_VISUAL_RECOVERY") != "1" {
 		t.Skip("requires the repository's dedicated terminal capture workflow")
@@ -48,7 +48,7 @@ type runRecoveryVisualModel struct {
 	light  bool
 }
 
-func (model *runRecoveryVisualModel) Init() tea.Cmd { return nil }
+func (model *runRecoveryVisualModel) Init() tea.Cmd { return tickCmd() }
 
 func (model *runRecoveryVisualModel) setRecovery(state recovery.State) {
 	model.status.State, model.status.UpdatedAt = state, time.Now()
@@ -94,6 +94,11 @@ func (model *runRecoveryVisualModel) selectNetworkPage(label string) {
 func (model *runRecoveryVisualModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := message.(tea.KeyPressMsg); ok {
 		switch key.Code {
+		case tea.KeyF1:
+			if renderer := model.activeMessageList(); renderer != nil {
+				renderer.ToggleDisclosure(model.status.ID)
+			}
+			return model, nil
 		case tea.KeyF2:
 			model.setRecovery(recovery.NeedsAttention)
 			return model, nil

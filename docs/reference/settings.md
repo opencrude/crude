@@ -112,6 +112,15 @@ updated source revision. Downloads share a bounded immutable artifact cache;
 cancellation detaches one requester. Changed metadata/source/binding fails closed
 and requires another preview. An installation is not execution approval.
 
+Agent acquisitions publish through the same sparse `workspace_settings`
+registration maps as manual Workspace Settings installs. The workspace commits
+only the selected identity against its reviewed preimage, preserving unrelated
+preferences and neighboring installs. There is no second runtime installation
+registry. Workspace registrations appear in Workspace Settings, not Application
+Settings; application registrations are inherited normally. Live agent changes
+refresh retained catalogs/sidebar/home through bounded passive observation without
+reconfiguring transports or reading skill files on the UI thread.
+
 MCP details include Overview, Connection, Tools, Resources, Prompts, Access and
 Activity. Connect/disconnect, detached Test, refresh, sign-in/out and Save
 connection are explicit operations. Each tool requires a selected effect, scope
@@ -120,6 +129,18 @@ profile, session and runtime ceilings still apply. A server annotation is not a
 grant, and a scope label is not a local filesystem/network sandbox. Unsandboxed
 local launches require explicit approval. External MCP mutations are not covered
 by native file ownership or undo.
+
+Agent `capability_activate` returns observed MCP tool fingerprints and the actual
+usable tool set. A connected server with zero usable tools is not reported as
+ready for tool execution. A separate `mcp_request_access` operation requests exact
+`grants` (original tool name, observed fingerprint, intended effect and resource
+scope). Activation itself accepts only the capability identity, so providers that
+require every schema property cannot confuse skill activation with MCP access.
+New/changed grants require an immutable, explicit approval and become
+workspace-scoped registrations; source trust, automatic acquisition, generic
+Always-read permission and agent selection cannot authorize them. Grants persist
+after restart, but restart itself never reconnects or replays tools. Explicit
+activation verifies current schemas before offering dynamic tools again.
 
 OAuth credentials are application-owned and bound to connection ID and endpoint.
 Sign in presents the authorization URL with an explicit Open browser action;
@@ -217,7 +238,11 @@ broken. Other connections still use deltas normally. Off disables both the
 recovery and the learned full-upload route; it does not alter Server storage.
 
 Off or **Zero data retention** keeps full uploads and never silently opts into
-retention. Codex requires storage off. Automatic server truncation and custom
+retention. Disabled continuation logs `disabled`, does not retain new response
+references, and never treats `store:false` or a missing response ID as evidence
+that the endpoint lacks delta support. The endpoint-limitation notice is emitted
+only when the request enabled continuation. Codex requires storage off.
+Automatic server truncation and custom
 wire-context overrides also disable exact-prefix delta reuse. The endpoint must
 support Responses stored-response continuation; this HTTP mechanism is separate
 from connection-local WebSocket continuation. Prompt-computation caching may

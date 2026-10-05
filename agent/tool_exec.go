@@ -22,7 +22,12 @@ type execResult struct {
 	name      string
 	result    tools.ToolResult
 	toolError bool
+	failure   error
 }
+
+type toolPanicError struct{ message string }
+
+func (e *toolPanicError) Error() string { return e.message }
 
 type toolParamSchema struct {
 	Required []string `json:"required"`
@@ -86,7 +91,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []provider.ToolC
 	var nonBlocking, blocking []indexedToolCall
 	for index, tc := range toolCalls {
 		indexed := indexedToolCall{index: index, call: tc}
-		if (isPotentiallyBlocking(tc.Function.Name) || strings.HasPrefix(tc.Function.Name, "mcp__") || tc.Function.Name == "capability_activate") && !a.parallelCommandAllowed(tc) {
+		if (isPotentiallyBlocking(tc.Function.Name) || strings.HasPrefix(tc.Function.Name, "mcp__") || tc.Function.Name == "capability_activate" || tc.Function.Name == "mcp_request_access") && !a.parallelCommandAllowed(tc) {
 			blocking = append(blocking, indexed)
 		} else {
 			nonBlocking = append(nonBlocking, indexed)
@@ -108,10 +113,17 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []provider.ToolC
 
 	if len(blocking) > 0 {
 		go func() {
+			var uncertain error
 			for _, indexed := range blocking {
+				if uncertain != nil {
+					send(execResult{index: indexed.index, id: indexed.call.ID, name: indexed.call.Function.Name,
+						result: tools.ToolResult{Content: "Not executed: an earlier tool failed with uncertain effects."}, toolError: true})
+					continue
+				}
 				a.logger.Debug("AGENT", "blocking_start", "tool", indexed.call.Function.Name, "step", step)
 				result := a.executeOneToolCallSafely(ctx, indexed.call, emit, blockResolveCh, lastReply)
 				result.index = indexed.index
+				uncertain = result.failure
 				send(result)
 			}
 		}()
@@ -150,6 +162,7 @@ func (a *Agent) executeOneToolCallSafely(
 			result = execResult{
 				id: tc.ID, name: tc.Function.Name,
 				result: tools.ToolResult{Content: message}, toolError: true,
+				failure: &toolPanicError{message: message},
 			}
 		}
 	}()
@@ -385,6 +398,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			}
 			resp := response.Value
 			emitPermissionDecision(emit, tc, resp)
+			emit(AgentEvent{Type: "blocking_complete", Data: map[string]string{"block_id": blockID}})
 			if resp == "deny" {
 				errMsg := fmt.Sprintf("[SAFETY BLOCK] The user denied this command. DO NOT retry it or any variant.\nRisk level: %s\nDeny reason: %s\nSuggestion: %s\nRaw command: %s\n\nThis is NOT a command error — the user explicitly rejected this operation. Move on to a different approach. Tell the user what you'll do instead.", sr.Risk.String(), sr.Reason, sr.Suggestion, cmd)
 				a.logger.Warn("SAFETY", "denied", "command", cmd, "risk", sr.Risk.String())
@@ -404,7 +418,6 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 				return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errMsg}, toolError: true}
 			}
 			a.logger.Info("BLOCK", "resolved", "response", resp, "operation", sr.Risk.String(), "tool", "execute_command")
-			emit(AgentEvent{Type: "blocking_complete", Data: map[string]string{"block_id": blockID}})
 			if resp == "always" {
 				emit(AgentEvent{Type: "confirmation_always", Data: map[string]string{
 					"operation": sr.Risk.String(),
@@ -490,6 +503,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		}
 		resp := response.Value
 		emitPermissionDecision(emit, tc, resp)
+		emit(AgentEvent{Type: "blocking_complete", Data: map[string]string{"block_id": blockID}})
 		if resp == "deny" {
 			errMsg := fmt.Sprintf("[SAFETY BLOCK] The user denied this %s operation. DO NOT retry it or any variant.\nTool: %s\nTarget: %s\n\nThis is NOT a tool error — the user explicitly rejected this operation. Move on to a different approach. Tell the user what you'll do instead.", fileOp, tc.Function.Name, fileTarget)
 			a.logger.Warn("SAFETY", "denied", "tool", tc.Function.Name, "target", fileTarget, "op", fileOp)
@@ -509,7 +523,6 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			return execResult{id: tc.ID, name: tc.Function.Name, result: tools.ToolResult{Content: errMsg}, toolError: true}
 		}
 		a.logger.Info("BLOCK", "resolved", "response", resp, "operation", fileOp, "tool", tc.Function.Name)
-		emit(AgentEvent{Type: "blocking_complete", Data: map[string]string{"block_id": blockID}})
 		if resp == "always" && tc.Function.Name == "apply_patch" {
 			emit(AgentEvent{Type: "confirmation_always", Data: map[string]string{"operation": fileOp, "tool": tc.Function.Name, "patch_input": getStr(params, "input")}})
 		} else if resp == "always" {
@@ -610,9 +623,11 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		result, toolErr = a.executeParallel(ctx, tc, params, emit, blockResolveCh, lastReply)
 	} else if fileCheck && filePath != "" {
 		mu := a.fileMutex(filePath)
-		mu.Lock()
-		result, toolErr = a.ToolFn(ctx, tc.Function.Name, params)
-		mu.Unlock()
+		func() {
+			mu.Lock()
+			defer mu.Unlock()
+			result, toolErr = a.ToolFn(ctx, tc.Function.Name, params)
+		}()
 	} else {
 		if tc.Function.Name == "agent_start" {
 			ctx = context.WithValue(ctx, SubAgentToolCallIDKey{}, tc.ID)
@@ -623,10 +638,10 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		CapabilityApproval() (string, string)
 		CapabilityApprovalContext(context.Context) context.Context
 	}
-	if tc.Function.Name == "capability_activate" && errors.As(toolErr, &approval) {
+	if (tc.Function.Name == "capability_activate" || tc.Function.Name == "mcp_request_access") && errors.As(toolErr, &approval) {
 		id, reason := approval.CapabilityApproval()
 		drainStaleBlockResponses(blockResolveCh)
-		emit(AgentEvent{Type: "blocking", Data: map[string]string{"block_id": blockID, "operation": "Read", "tool": tc.Function.Name, "target": id, "question": "Acquire and activate this exact capability?", "reason": reason}})
+		emit(AgentEvent{Type: "blocking", Data: map[string]string{"block_id": blockID, "operation": "Read", "tool": tc.Function.Name, "target": id, "question": "Approve this exact capability change?", "reason": reason}})
 		response, answered := waitForBlockResponse(ctx, blockResolveCh, blockID)
 		emit(AgentEvent{Type: "blocking_complete", Data: map[string]string{"block_id": blockID}})
 		if answered && (response.Value == "allow" || response.Value == "always") {
@@ -634,8 +649,8 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			approvedContext := approval.CapabilityApprovalContext(ctx)
 			result, toolErr = a.ToolFn(approvedContext, tc.Function.Name, params)
 		} else {
-			result = tools.ToolResult{Content: "Capability acquisition was denied or cancelled. Do not retry or expand permissions; use an available adequate method."}
-			toolErr = errors.New("acquisition not approved")
+			result = tools.ToolResult{Content: "Capability change was denied or cancelled. Do not retry or expand permissions; use an available adequate method."}
+			toolErr = errors.New("capability change not approved")
 		}
 	}
 	if toolErr != nil && result.Content == "" {
@@ -720,7 +735,12 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 	}
 	emit(AgentEvent{Type: "tool_result", Data: resultData})
 
-	return execResult{id: tc.ID, params: params, name: tc.Function.Name, result: result, toolError: toolFailed}
+	var panicErr *toolPanicError
+	var failure error
+	if errors.As(toolErr, &panicErr) {
+		failure = panicErr
+	}
+	return execResult{id: tc.ID, params: params, name: tc.Function.Name, result: result, toolError: toolFailed, failure: failure}
 }
 
 func emitPermissionDecision(emit func(AgentEvent), tc provider.ToolCall, response string) {

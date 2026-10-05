@@ -52,6 +52,7 @@ func structuredProjectionCases(t *testing.T) []structuredProjectionCase {
 		{"search_history", `{"query":"projection"}`, `{"sessions":[{"session_id":"s1","title":"Projection work","summary":"Kept Board evidence readable.","key_files":["projection.go"],"outcome":"completed"}],"turns":[{"session_id":"s1","turn":2,"user":"Improve shared Board chat","assistant":"Delivered the shared result renderer","tools":["board_read"],"files":["board.go"]}]}`, "Board evidence readable", "Delivered the shared result renderer"},
 		{"capability_search", `{"query":"source review"}`, encode([]captypes.Entry{{ID: "review-skill", Name: "Source Review", Kind: captypes.KindSkill, Description: "Review exact source evidence before proposing changes.", Installed: true, Version: "revision-abc", Source: "local", State: "ready"}}), "exact source evidence", "revision-abc"},
 		{"capability_activate", `{"id":"review-skill"}`, "<skill source=\"review-skill\" revision=\"revision-abc\" digest=\"digest-99\">\nReview source evidence before proposing changes.\n</skill>", "Review source evidence", "digest-99"},
+		{"mcp_request_access", `{"connection_id":"docs","grants":[{"tool":"lookup","fingerprint":"observed-schema-99","effect":"read","scope":"public documentation"}]}`, encode(captypes.ActivationResult{ConnectionID: "docs", State: "connected", Next: "No usable tools until exact access is approved.", Tools: []captypes.Tool{{Name: "mcp__docs__lookup", OriginalName: "lookup", Fingerprint: "observed-schema-99", Description: "Read exact documentation", Reason: "Needs explicit effect and scope grant"}}}), "No usable tools", "observed-schema-99"},
 		{"mcp_read_resource", `{"connection_id":"docs","uri":"docs://guide"}`, "The guide keeps external attribution and full document text.", "external attribution", "docs://guide"},
 		{"mcp_get_prompt", `{"connection_id":"docs","name":"review","arguments":{"topic":"Board"}}`, "assistant: Review the Board evidence, not claimed permissions.", "Board evidence", "topic"},
 		{"mcp__docs__lookup", `{"query":"Board"}`, `{"answer":"Read all attributed Board findings","items":[{"path":"guide.md","revision":7}]}`, "attributed Board findings", "guide.md"},
@@ -76,9 +77,9 @@ func TestStructuredToolFamilyLiveSQLiteHydrationParity(t *testing.T) {
 				if err := sessiondb.CreateSessionRow(database, state.ID); err != nil {
 					t.Fatal(err)
 				}
-				for _, c := range structuredProjectionCases(t) {
+				for caseIndex, c := range structuredProjectionCases(t) {
 					t.Run(c.name, func(t *testing.T) {
-						id := "call-" + c.name
+						id := fmt.Sprintf("call-%s-%d", c.name, caseIndex)
 						for _, evt := range []ctypes.AgentEventMsg{
 							{AgentID: state.ID, Type: "tool_call", Data: map[string]any{"tool_id": id, "internal_id": id, "name": c.name, "args": c.input}},
 							{AgentID: state.ID, Type: "tool_result", Data: map[string]any{"tool_id": id, "internal_id": id, "name": c.name, "result": c.result}},

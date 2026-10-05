@@ -114,6 +114,17 @@ func (o *Orchestrator) submitTurn(input provider.UserInput, deliveries []collabo
 		cancel()
 		return false
 	}
+	if o.session != nil {
+		o.session.recoveryMu.Lock()
+		_, unfinished := o.session.pendingRecoveries[o.ID]
+		o.session.recoveryMu.Unlock()
+		if unfinished {
+			// New human/peer admission must not overwrite a parked task's
+			// context. Continue/Stop owns its exact pending generation.
+			cancel()
+			return false
+		}
+	}
 	o.turnGeneration++
 	o.turnCancel = cancel
 	o.turnCancelling = false
@@ -152,11 +163,17 @@ func (o *Orchestrator) endTurn(generation uint64) []string {
 // CancelTurn synchronously marks the current generation as cancelling before
 // invoking its context cancel function. A later turn can never observe it.
 func (o *Orchestrator) CancelTurn() (bool, []string) {
+	return o.cancelTurnForGeneration(0)
+}
+
+// Zero selects the current turn for an ordinary immediate Stop. Recovery
+// actions supply their captured generation so a replaced context is never hit.
+func (o *Orchestrator) cancelTurnForGeneration(expected uint64) (bool, []string) {
 	if o == nil {
 		return false, nil
 	}
 	o.turnMu.Lock()
-	if o.turnCancel == nil {
+	if o.turnCancel == nil || expected != 0 && o.turnGeneration != expected {
 		o.turnMu.Unlock()
 		return false, nil
 	}

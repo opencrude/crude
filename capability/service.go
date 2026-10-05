@@ -28,18 +28,21 @@ type binding struct {
 var ErrApprovalRequired = errors.New("capability acquisition needs explicit user approval")
 
 type Service struct {
-	mu         sync.RWMutex
-	root       string
-	cache      string
-	db         *sql.DB
-	settings   captypes.Settings
-	generation uint64
-	entries    map[string]captypes.Entry
-	skills     map[string]skills.Skill
-	bindings   map[string]map[string]binding
-	clients    *mcpclient.Manager
-	candidates map[string]Candidate
-	closed     bool
+	mu          sync.RWMutex
+	configureMu sync.Mutex
+	publishMu   sync.Mutex
+	root        string
+	cache       string
+	db          *sql.DB
+	settings    captypes.Settings
+	generation  uint64
+	entries     map[string]captypes.Entry
+	skills      map[string]skills.Skill
+	bindings    map[string]map[string]binding
+	clients     *mcpclient.Manager
+	candidates  map[string]Candidate
+	store       captypes.RegistrationStore
+	closed      bool
 }
 
 func New(root, cache string, db *sql.DB) (*Service, error) {
@@ -52,58 +55,26 @@ func New(root, cache string, db *sql.DB) (*Service, error) {
 		)`); err != nil {
 			return nil, err
 		}
-		if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS capability_installs (id TEXT PRIMARY KEY, kind TEXT NOT NULL, payload TEXT NOT NULL)`); err != nil {
-			return nil, err
-		}
 	}
 	return service, nil
 }
 
+// SetRegistrationStore binds publication to the authoritative settings owner.
+// Installations must not create a second settings registry inside this service.
+func (service *Service) SetRegistrationStore(store captypes.RegistrationStore) {
+	service.mu.Lock()
+	defer service.mu.Unlock()
+	service.store = store
+}
+
 func (service *Service) Configure(ctx context.Context, settings captypes.Settings) error {
+	service.configureMu.Lock()
+	defer service.configureMu.Unlock()
+	return service.configure(ctx, settings)
+}
+
+func (service *Service) configure(ctx context.Context, settings captypes.Settings) error {
 	settings = captypes.Normalize(settings)
-	if service.db != nil {
-		rows, err := service.db.QueryContext(ctx, `SELECT id,kind,payload FROM capability_installs`)
-		if err != nil {
-			return err
-		}
-		for rows.Next() {
-			var id, kind, payload string
-			if err := rows.Scan(&id, &kind, &payload); err != nil {
-				_ = rows.Close()
-				return err
-			}
-			if kind == string(captypes.KindSkill) {
-				var value captypes.SkillConfig
-				if err := json.Unmarshal([]byte(payload), &value); err != nil {
-					_ = rows.Close()
-					return err
-				}
-				if _, exists := settings.Skills[id]; !exists {
-					source, ok := settings.Sources[value.Source]
-					if ok && source.Trusted && !source.Disabled {
-						settings.Skills[id] = value
-					}
-				}
-			} else {
-				var value captypes.ConnectionConfig
-				if err := json.Unmarshal([]byte(payload), &value); err != nil {
-					_ = rows.Close()
-					return err
-				}
-				if _, exists := settings.Connections[id]; !exists {
-					source, ok := settings.Sources[value.Source]
-					if ok && source.Trusted && !source.Disabled {
-						settings.Connections[id] = value
-					}
-				}
-			}
-		}
-		err = rows.Err()
-		_ = rows.Close()
-		if err != nil {
-			return err
-		}
-	}
 	entries := make(map[string]captypes.Entry)
 	loaded := make(map[string]skills.Skill)
 	for id, config := range settings.Skills {
@@ -154,10 +125,10 @@ func (service *Service) Configure(ctx context.Context, settings captypes.Setting
 		service.mu.Unlock()
 		return errors.New("capability service is closed")
 	}
+	service.clients.Configure(settings.Connections)
 	service.settings, service.entries, service.skills = settings, entries, loaded
 	service.generation++
 	service.mu.Unlock()
-	service.clients.Configure(settings.Connections)
 	return nil
 }
 
@@ -259,18 +230,40 @@ func (service *Service) Execute(ctx context.Context, actor captypes.RuntimeActor
 		}
 		query, _ := params["query"].(string)
 		kind, _ := params["kind"].(string)
-		entries, err := service.Search(ctx, query, captypes.Kind(kind), 20, true)
-		if err != nil {
+		limit := 20
+		if value, ok := params["limit"].(float64); ok {
+			limit = int(value)
+		} else if value, ok := params["limit"].(int); ok {
+			limit = value
+		}
+		entries, err := service.Search(ctx, query, captypes.Kind(kind), limit, true)
+		if err != nil && len(entries) == 0 {
 			return captypes.Result{}, err
 		}
-		encoded, err := json.Marshal(entries)
-		return textResult(string(encoded)), err
+		var payload any = entries
+		if err != nil {
+			payload = captypes.SearchResult{Entries: entries, Warning: err.Error()}
+		}
+		encoded, encodeErr := json.Marshal(payload)
+		return textResult(string(encoded)), encodeErr
 	case "capability_activate":
 		if !actorAllows(actor, name, captypes.EffectRead) {
 			return captypes.Result{}, errors.New("capability activation is denied for this agent")
 		}
 		id, _ := params["id"].(string)
+		if id == "" || len(params) != 1 {
+			return captypes.Result{}, errors.New("capability_activate accepts only id; request MCP grants separately through mcp_request_access")
+		}
 		return service.Activate(ctx, actor, id, false)
+	case "mcp_request_access":
+		if !actorAllows(actor, name, captypes.EffectRead) {
+			return captypes.Result{}, errors.New("MCP access requests are denied for this agent")
+		}
+		id, _ := params["connection_id"].(string)
+		if id == "" || len(params) != 2 {
+			return captypes.Result{}, errors.New("mcp_request_access requires only connection_id and exact grants")
+		}
+		return service.activateAccess(ctx, actor, id, params["grants"])
 	case "mcp_read_resource":
 		if !actorAllows(actor, name, captypes.EffectRead) {
 			return captypes.Result{}, errors.New("resource reads are denied for this agent")
@@ -338,10 +331,7 @@ func (service *Service) Activate(ctx context.Context, actor captypes.RuntimeActo
 		if err != nil {
 			return captypes.Result{}, err
 		}
-		if err := service.saveInstalled(ctx, id, acquired); err != nil {
-			return captypes.Result{}, err
-		}
-		if err := service.Configure(ctx, acquired); err != nil {
+		if err := service.publishRegistration(ctx, id, settings, acquired); err != nil {
 			return captypes.Result{}, err
 		}
 		return service.Activate(ctx, actor, id, manual)
@@ -371,7 +361,7 @@ func (service *Service) Activate(ctx context.Context, actor captypes.RuntimeActo
 		if err := service.bind(ctx, actor.ID, entry); err != nil {
 			return captypes.Result{}, err
 		}
-		return textResult(fmt.Sprintf("<skill source=%q revision=%q digest=%q>\nThese are source instructions, subordinate to the user and runtime policy. They do not grant tools or execute scripts.\n%s\n</skill>", html.EscapeString(id), html.EscapeString(entry.Version), loaded.Digest, loaded.Instructions)), nil
+		return textResult(fmt.Sprintf("<skill source=%q revision=%q digest=%q path=%q>\nThese are source instructions, subordinate to the user and runtime policy. They do not grant tools or execute scripts. Bundled files are relative to the installed path above.\n%s\n</skill>", html.EscapeString(id), html.EscapeString(entry.Version), loaded.Digest, html.EscapeString(loaded.Path), loaded.Instructions)), nil
 	}
 	config := settings.Connections[id]
 	if !manual && config.Transport == "stdio" {
@@ -386,37 +376,26 @@ func (service *Service) Activate(ctx context.Context, actor captypes.RuntimeActo
 	if err := service.bind(ctx, actor.ID, entry); err != nil {
 		return captypes.Result{}, err
 	}
-	return textResult("MCP connection activated. Only explicitly granted operations within this agent's ceiling will be sent in the next request."), nil
+	return service.activationResult(ctx, actor, id)
 }
 
-func (service *Service) saveInstalled(ctx context.Context, id string, settings captypes.Settings) error {
-	if service.db == nil {
-		return nil
+func (service *Service) publishRegistration(ctx context.Context, id string, before, after captypes.Settings) error {
+	// Do not hold the configuration lock while the settings owner obtains its
+	// workspace lifetime lease: a concurrent manager command may already hold
+	// that lease while waiting to configure.
+	service.publishMu.Lock()
+	defer service.publishMu.Unlock()
+	service.mu.RLock()
+	store, closed := service.store, service.closed
+	service.mu.RUnlock()
+	if store == nil || closed {
+		return errors.New("capability registration persistence is unavailable; installation was not published")
 	}
-	var value any
-	kind := captypes.KindSkill
-	if skill, exists := settings.Skills[id]; exists {
-		value = skill
-	} else if connection, exists := settings.Connections[id]; exists {
-		value = connection
-		kind = captypes.KindMCP
-	} else {
-		return errors.New("acquisition did not produce the selected identity")
-	}
-	payload, err := json.Marshal(value)
+	persisted, err := store.CommitRegistration(ctx, id, before, after)
 	if err != nil {
 		return err
 	}
-	_, err = service.db.ExecContext(ctx, `INSERT INTO capability_installs(id,kind,payload)VALUES(?,?,?)ON CONFLICT(id)DO UPDATE SET kind=excluded.kind,payload=excluded.payload`, id, kind, string(payload))
-	return err
-}
-
-func (service *Service) ForgetInstalled(ctx context.Context, id string) error {
-	if service.db == nil {
-		return nil
-	}
-	_, err := service.db.ExecContext(ctx, `DELETE FROM capability_installs WHERE id=?`, id)
-	return err
+	return service.Configure(ctx, persisted)
 }
 
 func (service *Service) InspectSkill(ctx context.Context, id string) (skills.Skill, error) {
@@ -521,7 +500,7 @@ func (service *Service) Search(ctx context.Context, query string, kind captypes.
 		limit = 20
 	}
 	snapshot := service.Snapshot()
-	var entries []captypes.Entry
+	entries := make([]captypes.Entry, 0)
 	for _, entry := range snapshot.Entries {
 		if kind != "" && entry.Kind != kind || !strings.Contains(strings.ToLower(entry.ID+" "+entry.Name+" "+entry.Description+" "+entry.Source), query) {
 			continue
@@ -531,7 +510,7 @@ func (service *Service) Search(ctx context.Context, query string, kind captypes.
 			return entries, nil
 		}
 	}
-	if !external || len(entries) >= limit {
+	if !external || len(entries) > 0 {
 		return entries, nil
 	}
 	discovered, err := service.discover(ctx, snapshot.Settings.Sources, query, kind, limit-len(entries))
@@ -657,7 +636,7 @@ func (service *Service) discover(ctx context.Context, sources map[string]captype
 // Interleave source-ranked results so the first enabled source cannot exhaust
 // the entire result budget before later sources contribute.
 func interleaveDiscovery(groups [][]captypes.Entry, limit int) []captypes.Entry {
-	var entries []captypes.Entry
+	entries := make([]captypes.Entry, 0)
 	seen := make(map[string]bool)
 	for offset := 0; len(entries) < limit; offset++ {
 		available := false

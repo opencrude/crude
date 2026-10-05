@@ -26,7 +26,7 @@ func buildCapabilityResult(name, content, input string) StructuredResult {
 	switch name {
 	case "capability_search":
 		return buildCapabilitySearch(content)
-	case "capability_activate":
+	case "capability_activate", "mcp_request_access":
 		return buildCapabilityActivation(content, input)
 	case "mcp_read_resource", "mcp_get_prompt":
 		return buildMCPContent(name, content, input)
@@ -37,7 +37,14 @@ func buildCapabilityResult(name, content, input string) StructuredResult {
 
 func buildCapabilitySearch(content string) StructuredResult {
 	var entries []captypes.Entry
-	if err := json.Unmarshal([]byte(content), &entries); err != nil || entries == nil {
+	var warning string
+	if json.Unmarshal([]byte(content), &entries) != nil {
+		var partial captypes.SearchResult
+		if json.Unmarshal([]byte(content), &partial) == nil {
+			entries, warning = partial.Entries, partial.Warning
+		}
+	}
+	if entries == nil {
 		result := BuildReadableResult(content)
 		result.Summary = "Capability search result unavailable"
 		return result
@@ -78,6 +85,9 @@ func buildCapabilitySearch(content string) StructuredResult {
 		}
 		result.Sections = append(result.Sections, section)
 	}
+	if warning != "" {
+		result.Sections = append(result.Sections, ResultSection{Title: "Partial discovery", Body: warning})
+	}
 	return result
 }
 
@@ -103,6 +113,9 @@ func resultInputField(input, key string) string {
 
 func buildCapabilityActivation(content, input string) StructuredResult {
 	id := resultInputField(input, "id")
+	if id == "" {
+		id = resultInputField(input, "connection_id")
+	}
 	if strings.HasPrefix(strings.TrimSpace(content), "<skill ") {
 		// Only the opening tag is XML: the service embeds the instruction
 		// document verbatim, which may contain unescaped XML/Markdown itself.
@@ -113,20 +126,42 @@ func buildCapabilityActivation(content, input string) StructuredResult {
 				Source   string   `xml:"source,attr"`
 				Revision string   `xml:"revision,attr"`
 				Digest   string   `xml:"digest,attr"`
+				Path     string   `xml:"path,attr"`
 			}
 			if xml.Unmarshal([]byte(content[:open+1]+"</skill>"), &tag) == nil && tag.Source != "" && (id == "" || id == tag.Source) {
 				body := strings.TrimPrefix(content[open+1:strings.LastIndex(content, "</skill>")], "\n")
 				body = strings.TrimSuffix(body, "\n")
-				return StructuredResult{Summary: "Skill instructions loaded", Unit: "skill", Sections: []ResultSection{{Title: tag.Source, Metadata: "Source instructions · not an access grant", Body: body, Details: []ResultField{{"Source", tag.Source}, {"Revision", tag.Revision}, {"Digest", tag.Digest}}}}}
+				details := []ResultField{{"Source", tag.Source}, {"Revision", tag.Revision}, {"Digest", tag.Digest}}
+				if tag.Path != "" {
+					details = append(details, ResultField{"Installed path", tag.Path})
+				}
+				return StructuredResult{Summary: "Skill instructions loaded", Unit: "skill", Sections: []ResultSection{{Title: tag.Source, Metadata: "Source instructions · not an access grant", Body: body, Details: details}}}
 			}
 		}
 		return StructuredResult{Summary: "Skill instructions unavailable", Sections: []ResultSection{{Body: "Skill attribution could not be verified."}}}
 	}
+	var activation captypes.ActivationResult
+	if json.Unmarshal([]byte(content), &activation) == nil && activation.ConnectionID != "" &&
+		(id == "" || id == activation.ConnectionID) {
+		result := StructuredResult{Summary: fmt.Sprintf("MCP %s · %d usable tools", activation.State, len(activation.UsableTools)), Unit: "tools"}
+		result.Sections = append(result.Sections, ResultSection{Title: activation.ConnectionID, Body: activation.Next})
+		for _, tool := range activation.Tools {
+			status := tool.Reason
+			if tool.Selected {
+				status = "Granted · agent selection and request budgets still apply"
+			}
+			result.Sections = append(result.Sections, ResultSection{
+				Title: tool.OriginalName, Metadata: status, Body: tool.Description,
+				Details: []ResultField{{"Name", tool.Name}, {"Fingerprint", tool.Fingerprint}, {"Effect", string(tool.Effect)}, {"Scope", tool.Scope}},
+			})
+		}
+		for _, notice := range activation.Notices {
+			result.Sections = append(result.Sections, ResultSection{Title: "Request limit", Body: notice})
+		}
+		return result
+	}
 	result := BuildReadableResult(content)
 	result.Summary = "Activation result"
-	if content == "MCP connection activated. Only explicitly granted operations within this agent's ceiling will be sent in the next request." {
-		result.Summary = "MCP connection activated"
-	}
 	if id != "" {
 		result.Sections = append([]ResultSection{{Title: id, Metadata: "Requested capability"}}, result.Sections...)
 	}

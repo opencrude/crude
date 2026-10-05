@@ -95,8 +95,12 @@ func (a *Agent) executeParallel(ctx context.Context, tc provider.ToolCall, param
 	results := a.executeToolCalls(ctx, calls, childEmit, responses, lastReply, 0)
 	attachments := make([][]provider.ContentPart, len(calls))
 	result := tools.ToolResult{}
+	var uncertain error
 	for range calls {
 		r := <-results
+		if r.failure != nil {
+			uncertain = r.failure
+		}
 		progressMu.Lock()
 		ordered[r.index] = map[string]any{"recipient_name": r.name, "result": r.result.Content, "error": r.toolError, "added": r.result.Added, "removed": r.result.Removed}
 		publish()
@@ -110,6 +114,9 @@ func (a *Agent) executeParallel(ctx context.Context, tc provider.ToolCall, param
 	}
 	body, err := json.Marshal(map[string]any{"results": ordered})
 	result.Content = string(body)
+	if uncertain != nil {
+		return result, uncertain
+	}
 	if err == nil {
 		for _, item := range ordered {
 			if failed, _ := item["error"].(bool); failed {

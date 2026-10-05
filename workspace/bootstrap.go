@@ -232,10 +232,9 @@ func (w *Workspace) Hydrate() {
 	}
 }
 
-// HydrateCompletedSubAgents rebuilds durable child review surfaces under an
-// already-created root orchestrator. Completed children remain hidden until
-// the user opens them from Agents; hydration never revives execution.
-func (w *Workspace) HydrateCompletedSubAgents(parentID string) []string {
+// HydrateSubAgents rebuilds completed review and unfinished recovery surfaces
+// under the root. Hydration never revives execution.
+func (w *Workspace) HydrateSubAgents(parentID string) []string {
 	if w == nil || w.AgentMgr == nil || w.PaneMgr == nil || w.AgentMgr.Get(parentID) == nil {
 		return nil
 	}
@@ -244,7 +243,9 @@ func (w *Workspace) HydrateCompletedSubAgents(parentID string) []string {
 		return nil
 	}
 	var hydrated []string
-	for _, snapshot := range frontendSession.backend.CompletedSubAgentSnapshots() {
+	snapshots := frontendSession.backend.CompletedSubAgentSnapshots()
+	snapshots = append(snapshots, frontendSession.backend.PendingSubAgentSnapshots()...)
+	for _, snapshot := range snapshots {
 		result := snapshot.Result
 		id := string(result.AgentID)
 		if id == "" || w.AgentMgr.Get(id) != nil {
@@ -290,6 +291,13 @@ func (w *Workspace) HydrateCompletedSubAgents(parentID string) []string {
 		state.Status = string(result.Status)
 		if state.Status == "" {
 			state.Status = "completed"
+		}
+		if snapshot.Recovery != nil {
+			state.Completed = false
+			state.Recovery = *snapshot.Recovery
+			state.Status = string(snapshot.Recovery.State)
+			pane.Status = state.Status
+			pane.Messages.UpdateRecovery(*snapshot.Recovery)
 		}
 		model := snapshot.Model
 		if model == "" {

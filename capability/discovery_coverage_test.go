@@ -56,6 +56,12 @@ func TestDiscoverInterleavesSourcesBeyondFirstSourceLimit(t *testing.T) {
 	if len(entries) != 5 || err == nil || !strings.Contains(err.Error(), "source") {
 		t.Fatalf("partial source failure entries=%+v err=%v", entries, err)
 	}
+	result, err := service.Execute(t.Context(), captypes.RuntimeActor{Effects: []captypes.Effect{captypes.EffectRead}},
+		captypes.RuntimeSnapshot{}, "capability_search", map[string]any{"kind": "skill", "query": "skill", "limit": 3})
+	var partial captypes.SearchResult
+	if err != nil || json.Unmarshal([]byte(result.Content[0].Text), &partial) != nil || len(partial.Entries) != 3 || partial.Warning == "" {
+		t.Fatalf("agent-facing search discarded partial results: %+v %v", result, err)
+	}
 }
 
 func TestRegistryPaginationFuzzyResultsMetadataAndUnsupported(t *testing.T) {

@@ -27,7 +27,7 @@ fill. The shared `ui.FormField` painter owns this rule for every consumer.
 
 | Current | Target |
 |---------|--------|
-| Confirm / dirty / tree-delete ActionBar | `ui.ActionBar` / `ui.Button` via `BuildConfirmFrame` and friends. Floating bars right-align (`alignEnd`); `NewDockedActionBar` packs from the left with a top rule. Idle buttons use variant-colored `[ Label ]` on the surface; hover/focus invert — variant color becomes the fill, `cell.ContrastColor` picks a readable fg. Up/Down leave the bar (`actionbar.exit.*`) so forms and buttons cycle together; Left/Right wrap among buttons. |
+| Confirm / dirty / tree-delete ActionBar | `ui.ActionBar` / `ui.Button` via `BuildConfirmFrame` and friends. Floating bars right-align (`alignEnd`); `NewDockedActionBar` packs from the left with a top rule. Constrained rows first omit displayed shortcut hints, then shrink the widest buttons within the supplied width; no trailing decision may escape the parent's paint/hit bounds. Button labels elide inside their brackets; widening restores hints and shortcuts remain active throughout. Idle buttons use variant-colored `[ Label ]` on the surface; hover/focus invert — variant color becomes the fill, `cell.ContrastColor` picks a readable fg. Up/Down leave the bar (`actionbar.exit.*`) so forms and buttons cycle together; Left/Right wrap among buttons. |
 | Find in Files / Replace in Files | native `ui.ActionBar` (Open/Close; Replace/All on the replace row), right-aligned |
 | `PopupButton` / `PopupButtonRow` | same Button + ActionBar |
 | Agent question actions | native `ui.ActionBar` in `tui/screens/question` | same |

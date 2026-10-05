@@ -5,6 +5,13 @@ package chatprojection
 // renderer's ToggleDisclosure.
 const ChatToggleActionID = "chat.toggle-details"
 
+const ChatRecoveryRetryActionID = "chat.retry-recovery"
+
+type ChatRecoveryRetryPayload struct {
+	AgentID, IncidentID string
+	Generation          uint64
+}
+
 // ChatTogglePayload carries the message whose disclosure row was clicked.
 type ChatTogglePayload struct {
 	MessageID string

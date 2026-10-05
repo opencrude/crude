@@ -25,7 +25,7 @@ func TestRelatedToolFamilySnapshotsKeepExactAuthoredInput(t *testing.T) {
 		"agent_control", "publish_report", "artifact_read", "agent_wait", "board_read",
 		"remember", "update_memory", "forget_memory", "recall_memory", "memory_feedback",
 		"search_history", "capability_search", "capability_activate", "mcp_read_resource",
-		"mcp_get_prompt", "mcp__docs__lookup",
+		"mcp_request_access", "mcp_get_prompt", "mcp__docs__lookup",
 	} {
 		result := provider.NewTextMessage("tool", "result")
 		result.ToolCallID = "call"

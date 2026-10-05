@@ -141,6 +141,7 @@ func TestRelatedToolFamilyTitlesUseWholeSemanticOperands(t *testing.T) {
 		{"board_read", `{"since":19}`, "after #19"},
 		{"mcp_read_resource", `{}`, ""},
 		{"mcp_get_prompt", `{"connection_id":"docs","name":"review"}`, "docs · review"},
+		{"mcp_request_access", `{"connection_id":"docs","grants":[{"tool":"lookup","fingerprint":"exact","effect":"read","scope":"public"}]}`, "docs"},
 		{"capability_search", `{"query":"complete capability search query"}`, "complete capability search query"},
 	} {
 		if got := SummarizeArgs(tc.tool, tc.input); got != tc.want {

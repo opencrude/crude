@@ -52,7 +52,7 @@ func TestDisclosurePolicyUsesOnlyMeaningfulFamilies(t *testing.T) {
 	for _, tool := range []string{"execute_command", "edit_file", "write_file", "update_plan", "read_file", "grep_files", "web_search", "web_fetch",
 		"agent_list", "agent_inspect", "agent_start", "agent_send", "agent_respond", "agent_control", "publish_report", "artifact_read", "agent_wait", "board_read",
 		"remember", "recall_memory", "update_memory", "forget_memory", "memory_feedback", "search_history",
-		"capability_search", "capability_activate", "mcp_read_resource", "mcp_get_prompt", "mcp__docs__lookup"} {
+		"capability_search", "capability_activate", "mcp_request_access", "mcp_read_resource", "mcp_get_prompt", "mcp__docs__lookup"} {
 		msg := types.ChatMessage{InternalID: tool, Role: types.RoleTool, ToolName: tool, ToolStatus: "success", Content: "body"}
 		r.SyncMessages([]types.ChatMessage{msg}, version)
 		version++

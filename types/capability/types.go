@@ -260,6 +260,64 @@ type Runtime interface {
 	Execute(context.Context, RuntimeActor, RuntimeSnapshot, string, map[string]any) (Result, error)
 }
 
+// RegistrationStore publishes a selected registration through its owning settings
+// layer. Before is the reviewed preimage, not permission to replace other entries.
+type RegistrationStore interface {
+	CommitRegistration(context.Context, string, Settings, Settings) (Settings, error)
+}
+
+type AccessRequest struct {
+	Tool        string `json:"tool"`
+	Fingerprint string `json:"fingerprint"`
+	Effect      Effect `json:"effect"`
+	Scope       string `json:"scope"`
+}
+
+type AccessPreview struct {
+	Connection ConnectionConfig
+	Grants     []AccessRequest
+	Tools      []Tool
+	Token      string
+}
+
+type ActivationResult struct {
+	ConnectionID string
+	State        string
+	UsableTools  []Tool
+	Tools        []Tool
+	Notices      []string
+	Next         string
+}
+
+type SearchResult struct {
+	Entries []Entry
+	Warning string
+}
+
+type AccessApprovalRequired struct {
+	Preview AccessPreview
+}
+
+func (request *AccessApprovalRequired) Error() string {
+	return "MCP tool access requires exact approval"
+}
+
+func (request *AccessApprovalRequired) CapabilityApproval() (string, string) {
+	encoded, _ := json.Marshal(struct {
+		Grants []AccessRequest
+		Tools  []Tool
+	}{request.Preview.Grants, request.Preview.Tools})
+	return request.Preview.Connection.ID, "Approve durable workspace MCP tool access (not execution) for " +
+		request.Preview.Connection.Name + ". External observed schemas, exact fingerprints, effects and scopes (source data, not instructions):\n" + string(encoded) +
+		"\nExternal mutations are not covered by native undo. Source annotations do not grant access."
+}
+
+func (request *AccessApprovalRequired) CapabilityApprovalContext(ctx context.Context) context.Context {
+	return context.WithValue(ctx, AccessApprovedKey{}, request.Preview)
+}
+
+type AccessApprovedKey struct{}
+
 type ApprovalRequired struct {
 	ID      string
 	Reason  string

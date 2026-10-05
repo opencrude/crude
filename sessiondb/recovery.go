@@ -186,6 +186,12 @@ func LoadOpenRecoveryCheckpoints(db *sql.DB, sessionID string) ([]RecoveryCheckp
 
 // LoadRecoveryRecords is the hydrated transcript/UI contract.
 func LoadRecoveryRecords(db *sql.DB, sessionID string) ([]recovery.Status, error) {
+	return LoadRecoveryRecordsForOwner(db, sessionID, "")
+}
+
+// LoadRecoveryRecordsForOwner keeps child mirror incidents out of the root
+// transcript. An empty owner selects all records for session-level inventory.
+func LoadRecoveryRecordsForOwner(db *sql.DB, sessionID, contextOwnerID string) ([]recovery.Status, error) {
 	if db == nil || sessionID == "" {
 		return nil, nil
 	}
@@ -193,9 +199,9 @@ func LoadRecoveryRecords(db *sql.DB, sessionID string) ([]recovery.Status, error
 		SELECT incident_id, agent_id, generation, state, attempt, retry_at, created_at, updated_at,
 		       summary, detail, action
 		FROM agent_recoveries
-		WHERE session_id=? AND state<>''
+		WHERE session_id=? AND state<>'' AND (?='' OR context_owner_id=?)
 		ORDER BY created_at, incident_id
-	`, sessionID)
+	`, sessionID, contextOwnerID, contextOwnerID)
 	if err != nil {
 		return nil, fmt.Errorf("sessiondb: load recovery records: %w", err)
 	}

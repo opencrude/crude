@@ -16,6 +16,7 @@ import (
 	"crude/capability"
 	"crude/provider"
 	"crude/skills"
+	ttypes "crude/types"
 	captypes "crude/types/capability"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -51,15 +52,11 @@ func TestTaskAcquiresSkillActivatesMCPUsesToolAndResumesPassively(test *testing.
 	if err := runtime.Configure(test.Context(), settings); err != nil {
 		test.Fatal(err)
 	}
+	runtime.SetRegistrationStore(&capabilityTaskRegistration{settings: &settings})
 	if err := runtime.Connect(test.Context(), "task"); err != nil {
 		test.Fatal(err)
 	}
 	tool := runtime.Snapshot().Connections[0].Tools[0]
-	connection.Grants = map[string]captypes.ToolGrant{"lookup": {Effect: captypes.EffectRead, Scope: "workspace", Fingerprint: tool.Fingerprint}}
-	settings.Connections["task"] = connection
-	if err := runtime.Configure(test.Context(), settings); err != nil {
-		test.Fatal(err)
-	}
 	if err := runtime.Disconnect("task"); err != nil {
 		test.Fatal(err)
 	}
@@ -85,6 +82,10 @@ func TestTaskAcquiresSkillActivatesMCPUsesToolAndResumesPassively(test *testing.
 		case 3:
 			name, arguments = "capability_activate", map[string]any{"id": "task"}
 		case 4:
+			name, arguments = "mcp_request_access", map[string]any{"connection_id": "task", "grants": []captypes.AccessRequest{
+				{Tool: "lookup", Effect: captypes.EffectRead, Scope: "workspace", Fingerprint: tool.Fingerprint},
+			}}
+		case 5:
 			name = tool.Name
 		default:
 			_, _ = fmt.Fprint(writer, "data: {\"choices\":[{\"delta\":{\"content\":\"Task used source instructions and exact SDK evidence.\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
@@ -110,16 +111,40 @@ func TestTaskAcquiresSkillActivatesMCPUsesToolAndResumesPassively(test *testing.
 	if err != nil {
 		test.Fatal(err)
 	}
+	approvalCtx, stopApproval := context.WithCancel(test.Context())
+	defer stopApproval()
+	var approvedRequests atomic.Int32
+	go func() {
+		for {
+			select {
+			case <-approvalCtx.Done():
+				return
+			case event := <-sender.ch:
+				if event.typ != "blocking" {
+					continue
+				}
+				data, _ := event.data.(map[string]string)
+				answer := "deny"
+				if data["tool"] == "mcp_request_access" && data["target"] == "task" &&
+					strings.Contains(data["reason"], `"effect":"read"`) && strings.Contains(data["reason"], `"scope":"workspace"`) {
+					answer = "allow"
+					approvedRequests.Add(1)
+				}
+				orchestrator.ResolveBlock(ttypes.BlockResponse{RequestID: data["block_id"], Outcome: ttypes.BlockAnswered, Value: answer})
+				return
+			}
+		}
+	}()
 	if !orchestrator.SubmitInput(provider.PlainInput("Use review-task to inspect exact fixture evidence")) {
 		test.Fatal("task was not admitted")
 	}
 	var activationContext, dynamicDefinition, actualResult bool
-	for requestIndex := 0; requestIndex < 5; requestIndex++ {
+	for requestIndex := 0; requestIndex < 6; requestIndex++ {
 		body := waitCapturedRequest(test, requests)
 		encoded, _ := json.Marshal(body)
 		activationContext = activationContext || strings.Contains(string(encoded), "source instructions, subordinate")
 		actualResult = actualResult || strings.Contains(string(encoded), "real SDK tool evidence")
-		if requestIndex >= 3 {
+		if requestIndex >= 4 {
 			for _, raw := range body["tools"].([]any) {
 				definition, _ := raw.(map[string]any)
 				function, _ := definition["function"].(map[string]any)
@@ -129,7 +154,7 @@ func TestTaskAcquiresSkillActivatesMCPUsesToolAndResumesPassively(test *testing.
 	}
 	waitTurnDone(test, sender, orchestrator.ID)
 	waitAssistantCount(test, owner, 1)
-	if !activationContext || !dynamicDefinition || !actualResult || mutations.Load() != 1 {
+	if !activationContext || !dynamicDefinition || !actualResult || mutations.Load() != 1 || approvedRequests.Load() != 1 {
 		test.Fatalf("task workflow: skill=%t definition=%t result=%t SDK calls=%d", activationContext, dynamicDefinition, actualResult, mutations.Load())
 	}
 	if !runtime.Snapshot().Settings.Skills["local:"+skill.Name].Managed {
@@ -142,7 +167,16 @@ func TestTaskAcquiresSkillActivatesMCPUsesToolAndResumesPassively(test *testing.
 		test.Fatal(err)
 	}
 	defer resumed.Close()
-	if requestCount.Load() != 5 || mutations.Load() != 1 {
+	if requestCount.Load() != 6 || mutations.Load() != 1 {
 		test.Fatal("resume started a provider request or replayed a tool")
 	}
+}
+
+// The session-level fixture does not own workspace persistence. Workspace
+// acceptance exercises the real sparse-settings owner through a full reopen.
+type capabilityTaskRegistration struct{ settings *captypes.Settings }
+
+func (store *capabilityTaskRegistration) CommitRegistration(_ context.Context, _ string, _, after captypes.Settings) (captypes.Settings, error) {
+	*store.settings = captypes.Clone(after)
+	return captypes.Clone(after), nil
 }

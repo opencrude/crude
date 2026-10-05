@@ -310,6 +310,10 @@ Rules:
   the animation; changing both shape and color reads as flicker.
 - Active chat lifecycle, thinking, tool, sub-agent, and live-session rows blink.
   Completed, idle, cancelled, and failed rows are static.
+- Failed-attempt recovery is the square-shaped exception: `ui.RecoverySquare`
+  shares the same clock and reserves its calibrated width while off. It uses
+  `ColorError`; attention/interrupted/settled recovery is static. Expanded
+  diagnostic rows stay cached, and only the compact header changes on ticks.
 - The bottom status bar never blinks. Healthy aggregate agent/LSP reporting is
   quiet text; `⚠` is reserved for required user action and `✕` for failures.
 - Editor, input, and terminal cursors are not activity dots. Their independent

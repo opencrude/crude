@@ -175,6 +175,8 @@ func SummarizeArgs(tool, argsStr string) string {
 		return ""
 	case "mcp_read_resource":
 		return joinOperands(ExtractArg(argsStr, "connection_id"), ExtractArg(argsStr, "uri"))
+	case "mcp_request_access":
+		return ExtractArg(argsStr, "connection_id")
 	case "mcp_get_prompt":
 		return joinOperands(ExtractArg(argsStr, "connection_id"), ExtractArg(argsStr, "name"))
 	case "memory_feedback":
@@ -274,7 +276,7 @@ func RetainsStructuredToolInput(name string) bool {
 		"publish_report", "artifact_read", "agent_wait", "board_read",
 		"remember", "recall_memory", "update_memory",
 		"forget_memory", "memory_feedback", "search_history", "capability_search",
-		"capability_activate", "mcp_read_resource", "mcp_get_prompt":
+		"capability_activate", "mcp_request_access", "mcp_read_resource", "mcp_get_prompt":
 		return true
 	}
 	return strings.HasPrefix(name, "mcp__")

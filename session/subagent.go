@@ -764,6 +764,8 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 	}
 	childCheckpoint.Status.AgentID = string(spec.ID)
 	childCheckpoint.ContextOwnerID = string(spec.ID)
+	childCheckpoint.Archive = reconcileInterruptedTools(childCheckpoint.Archive)
+	childCheckpoint.ActiveContext = reconcileInterruptedTools(childCheckpoint.ActiveContext)
 	recoveryState := newRecoveryRunState(parentCheckpoint.PendingInput, &childCheckpoint)
 	supervisor, err := r.session.newRecoverySupervisor(
 		subDB, string(spec.ID), string(spec.ID), parentCheckpoint.Status.Generation,
@@ -862,7 +864,6 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 	if handle.StartedAt.IsZero() {
 		handle.StartedAt = time.Now()
 	}
-	restoreChildReportArtifact(handle, recoveryState.archive)
 	registered, err := r.session.registerCollaborator(
 		subCtx, string(spec.ID), spec.Name, handle.SessionID,
 		string(spec.ParentID), spec.Category, subDB,
@@ -895,6 +896,7 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 			}
 		}
 	}
+	restoreChildReportArtifact(handle, recoveryState.archive)
 	r.SetParentToolFn(r.session.buildToolFn(false, p, spec.ModelModalities))
 	live.ToolFn = r.buildProxiedToolFn(spec, blockCh, handle)
 	live.PrepareStep = func() ([]tools.ToolDef, []provider.ChatMessage) {
@@ -973,6 +975,10 @@ func restoreChildReportArtifact(handle *agent.SubAgentHandle, messages []provide
 			published.Artifact.Kind != collaboration.ReportFinal ||
 			published.Artifact.AuthorID != string(handle.Spec.ID) {
 			continue
+		}
+		runID, _ := handle.RunIdentity()
+		if runID == "" || published.Artifact.RunID != runID {
+			continue // A previous attempt's final remains evidence, not this run's deliverable.
 		}
 		handle.SetReportArtifact(published.Artifact.ID, published.Artifact.Revision)
 		handle.Agent.RestorePublishedReport()
@@ -1225,7 +1231,7 @@ func (r *SubAgentRunner) runSubAgentLoop(
 	handle.Agent.Checkpoint = func(archive, active []provider.ChatMessage) error {
 		recoveryState.snapshot(archive, active)
 		recoveryState.setContext(handle.SessionID, contextGeneration, "run_checkpoint")
-		return supervisor.Persist(supervisor.CheckpointStatus())
+		return persistRecoveryBoundary(ctx, supervisor)
 	}
 	childEmit := func(evt agent.AgentEvent) {
 		evt.AgentID = string(handle.Spec.ID)

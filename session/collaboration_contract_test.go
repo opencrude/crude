@@ -51,6 +51,33 @@ func collaborationContractFixture(t *testing.T) (*Session, *collaboration.Store,
 	return s, store, parent, child
 }
 
+func TestOwnedFinalizationRetryAcknowledgesOnlyExactTerminalOutcome(t *testing.T) {
+	_, store, parent, _ := collaborationContractFixture(t)
+	run, err := store.StartRun(t.Context(), collaboration.StartRunRequest{
+		ID: "finalization-retry", AgentID: parent.ID, RuntimeEpoch: parent.RuntimeEpoch, Origin: collaboration.OriginHuman,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	request := collaboration.FinishRunRequest{
+		RunID: run.ID, AgentID: parent.ID, RuntimeEpoch: parent.RuntimeEpoch,
+		ExpectedVersion: run.Version, State: collaboration.RunSucceeded,
+		Outcome: "completed", ContextCommitID: "accepted-context",
+	}
+	first, err := finishCollaborationRun(store, request)
+	if err != nil {
+		t.Fatal(err)
+	}
+	again, err := finishCollaborationRun(store, request)
+	if err != nil || again.ID != first.ID || again.Version != first.Version {
+		t.Fatalf("exact finalization retry lost its ack: %+v err=%v", again, err)
+	}
+	request.State, request.Outcome = collaboration.RunCancelled, "cancelled"
+	if _, err := finishCollaborationRun(store, request); !errors.Is(err, collaboration.ErrStale) {
+		t.Fatalf("different terminal outcome was accepted: %v", err)
+	}
+}
+
 func TestCollaborationControlCannotCancelAReplacementRun(t *testing.T) {
 	s, store, parent, target := collaborationContractFixture(t)
 	old, err := store.StartRun(t.Context(), collaboration.StartRunRequest{
