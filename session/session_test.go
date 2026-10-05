@@ -212,7 +212,9 @@ func TestFinalizeTurnPersistsActiveContextSeparatelyFromFullArchive(t *testing.T
 		provider.NewTextMessage("assistant", "answer"),
 	}
 	agentMessages := append([]provider.ChatMessage{provider.NewTextMessage("system", "base")}, active...)
-	s.finalizeTurn(agentMessages, 2, &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}, "answer", "msg", ttypes.TurnIdentity{}, active)
+	if err := s.finalizeTurn(agentMessages, 2, &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}, "answer", "msg", ttypes.TurnIdentity{}, active); err != nil {
+		t.Fatal(err)
+	}
 	state, ok, err := sessiondb.LoadContextState(db, "session", "session")
 	if err != nil || !ok || state.Generation < 3 || len(state.Messages) != 3 || !strings.Contains(state.Messages[0].Content.String(), "checkpoint") {
 		t.Fatalf("context state=%#v ok=%v err=%v", state, ok, err)
@@ -327,7 +329,7 @@ func TestFinalizeTurnKeepsDurableHistoryOutsideCompactedContext(t *testing.T) {
 		context[1],
 		provider.NewTextMessage("assistant", "new answer"),
 	}
-	s.finalizeTurn(
+	_ = s.finalizeTurn(
 		agentMessages, len(context),
 		&displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)},
 		"new answer", "msg-2", ttypes.TurnIdentity{},
@@ -376,7 +378,7 @@ func TestFinalizeTurnPersistsHumanSteeringDisplayProjection(t *testing.T) {
 		Role:            "user",
 		Content:         provider.TextContent(rootprompt.HumanSteeringPrefix() + "please include tests"),
 	}
-	s.finalizeTurn([]provider.ChatMessage{steering}, 0, &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}, "", "msg", ttypes.TurnIdentity{})
+	_ = s.finalizeTurn([]provider.ChatMessage{steering}, 0, &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}, "", "msg", ttypes.TurnIdentity{})
 	messages := s.MessagesWithMeta()
 	if len(messages) != 1 || messages[0].Meta.DisplayContent != "please include tests" ||
 		len(messages[0].Meta.ReferenceLabels) != 1 || messages[0].Meta.ReferenceLabels[0] != "@notes" {

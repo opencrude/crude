@@ -1,20 +1,9 @@
 package provider
 
 import (
-	"context"
 	"fmt"
 	"io"
-	"net"
-	"time"
 )
-
-// dialContext returns a dial function bound to the connect timeout.
-func dialContext(connectTimeout time.Duration) func(ctx context.Context, network, addr string) (net.Conn, error) {
-	return (&net.Dialer{
-		Timeout:   connectTimeout,
-		KeepAlive: 30 * time.Second,
-	}).DialContext
-}
 
 // uploadProgressReader reports upload progress as the request body streams
 // to the transport, deduplicated by integer percent.

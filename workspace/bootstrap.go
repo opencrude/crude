@@ -202,6 +202,7 @@ func (w *Workspace) Hydrate() {
 	}
 	msgs := w.ActiveSession.backend.MessagesWithMeta()
 	views := ConvertMessagesForDisplay(msgs)
+	views = w.hydrateRecoveryViews(views, w.ActiveSession)
 	for _, record := range w.ActiveSession.backend.CompactionRecords("") {
 		views = append(views, compactionRecordView(record))
 	}

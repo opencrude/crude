@@ -31,6 +31,14 @@ func (e *apiCallError) IsCancellation() bool {
 	return errors.Is(e, context.Canceled)
 }
 
+// streamPanicError is a local decoder/observer fault, not permission to replay
+// a request whose output has already been accepted.
+type streamPanicError struct{ value any }
+
+func (e *streamPanicError) Error() string {
+	return fmt.Sprintf("internal stream failure: %v", e.value)
+}
+
 type completionResult struct {
 	Content                    string
 	ReasoningContent           string
@@ -282,19 +290,32 @@ func (a *Agent) consumeStream(
 	emitThinking func(reasoning.Delta),
 	onToolCallStart func(string, string, string),
 	onToolCallDelta func(string, string, string, string),
-) (completionResult, error) {
+) (result completionResult, err error) {
+	var content strings.Builder
+	var trace string
+	var reasoningStarted time.Time
+	var reasoningEnded time.Time
+	toolCalls := make(map[int]*toolCallAccumulator)
+	// The builder owns already accepted semantic output. Recover at this
+	// boundary so an internal panic cannot strand its bytes in an unwound
+	// stack while the supervisor still has only the previous request prefix.
+	defer func() {
+		if failed := recover(); failed != nil {
+			result.Content, result.ReasoningContent = content.String(), trace
+			result.ToolCalls = finalizeToolCalls(toolCalls)
+			result.ProviderItems, result.ResponseReference = nil, nil
+			if !reasoningStarted.IsZero() {
+				result.ReasoningDuration = time.Since(reasoningStarted)
+			}
+			err = &streamPanicError{value: failed}
+		}
+	}()
 	stream, err := client.Stream(ctx, req)
 	if err != nil {
 		return completionResult{}, err
 	}
 	defer stream.Close()
 
-	var content strings.Builder
-	var trace string
-	var reasoningStarted time.Time
-	var reasoningEnded time.Time
-	result := completionResult{}
-	toolCalls := make(map[int]*toolCallAccumulator)
 	firstTokenLogged := false
 	finish := func() {
 		result.Content = content.String()
@@ -538,6 +559,7 @@ func (a *Agent) emitError(emit func(AgentEvent), err error) {
 		emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
 		return
 	}
+	a.setRunFailure(err, "")
 
 	display := err.Error()
 	var apiErr *apiCallError
@@ -549,7 +571,7 @@ func (a *Agent) emitError(emit func(AgentEvent), err error) {
 			if errors.As(apiErr.Cause, &status) && !status.Retryable() {
 				display += ". Check this account's quota or billing before continuing."
 			} else {
-				display += ". Automatic recovery stopped; your work is kept. Send a message to retry when the provider is available."
+				display += ". The unfinished run remains recoverable."
 			}
 		case http.StatusUnauthorized:
 			if a.Provider != nil && a.Provider.OAuth() != nil {
@@ -573,7 +595,7 @@ func (a *Agent) emitError(emit func(AgentEvent), err error) {
 			case 404:
 				display += ". Check the configured model and endpoint in Settings."
 			default:
-				display += ". Automatic recovery stopped; completed work is kept. Send a message to continue."
+				display += ". The unfinished run remains recoverable."
 			}
 		}
 	}

@@ -32,6 +32,7 @@ import (
 	"crude/sessiondb"
 	"crude/tools"
 	ttypes "crude/types"
+	recoverytypes "crude/types/recovery"
 )
 
 type SubAgentRunner struct {
@@ -42,6 +43,7 @@ type SubAgentRunner struct {
 	fileOwnership  *agent.FileOwnership
 	rateLimiter    *agent.RateLimiter
 	sender         EventSender
+	parentToolMu   sync.RWMutex
 	parentToolFn   func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error)
 	wg             sync.WaitGroup
 	sessionCtx     context.Context
@@ -51,6 +53,11 @@ type SubAgentRunner struct {
 	turnMu         sync.Mutex
 	turnCounts     map[uint64]int
 	turnDone       map[uint64]chan struct{}
+}
+
+type childRecoveryOwner struct {
+	Spec                agent.SubAgentSpec `json:"spec"`
+	ProfileInstructions string             `json:"profile_instructions,omitempty"`
 }
 
 func NewSubAgentRunner(s *Session, maxConcurrent int) *SubAgentRunner {
@@ -201,7 +208,9 @@ func (r *SubAgentRunner) SetEffectiveConfig(cfg *Config) {
 }
 
 func (r *SubAgentRunner) SetParentToolFn(fn func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error)) {
+	r.parentToolMu.Lock()
 	r.parentToolFn = fn
+	r.parentToolMu.Unlock()
 }
 
 func (r *SubAgentRunner) StartAgent(ctx context.Context, params map[string]any) (tools.ToolResult, error) {
@@ -227,7 +236,7 @@ func (r *SubAgentRunner) StartAgent(ctx context.Context, params map[string]any) 
 		if err != nil {
 			return tools.ToolResult{}, fmt.Errorf("sub-agent parent provider: %w", err)
 		}
-		r.parentToolFn = r.session.buildToolFn(false, parentProvider, cat.ModelModalities)
+		r.SetParentToolFn(r.session.buildToolFn(false, parentProvider, cat.ModelModalities))
 	}
 	if err := ctx.Err(); err != nil {
 		return tools.ToolResult{Content: "Turn cancelled before sub-agent launch."}, err
@@ -419,19 +428,19 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 
 	var subDB *sql.DB
 	if dbPath, pathErr := r.subAgentDBPath(subSessionID); pathErr != nil {
-		r.session.logger.Warn("SUBAGENT", "db_path_error", "error", pathErr.Error())
+		return nil, fmt.Errorf("sub-agent database path: %w", pathErr)
 	} else if dbPath != "" {
 		var err error
 		subDB, err = sessiondb.OpenAndMigrate(dbPath)
 		if err != nil {
-			r.session.logger.Warn("SUBAGENT", "db_open_error", "error", err.Error())
+			return nil, fmt.Errorf("open sub-agent database: %w", err)
 		} else {
 			wd, _ := filepath.Abs(".")
 			projectName := "unknown"
 			if wd != "" {
 				projectName = filepath.Base(wd)
 			}
-			_ = sessiondb.Create(subDB, sessiondb.SessionMeta{
+			if err := sessiondb.Create(subDB, sessiondb.SessionMeta{
 				ID:              subSessionID,
 				ProjectPath:     wd,
 				ProjectName:     projectName,
@@ -443,8 +452,18 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 				AgentCategory:   toNullString(spec.Category),
 				AgentName:       toNullString(spec.Name),
 				Depth:           spec.Depth,
-			})
+			}); err != nil {
+				_ = subDB.Close()
+				return nil, fmt.Errorf("create sub-agent session: %w", err)
+			}
 		}
+	}
+	if subDB == nil {
+		return nil, errors.New("sub-agent database is unavailable")
+	}
+	if r.session.db == nil {
+		_ = subDB.Close()
+		return nil, errors.New("parent session database is unavailable")
 	}
 
 	r.session.logger.Info("SUBAGENT", "launch", "agent_id", spec.ID, "category", spec.Category, "template", p.ID, "account", spec.AccountID, "model", resolvedModelName)
@@ -521,8 +540,76 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 		SessionID: subSessionID,
 		DB:        subDB,
 	}
+	systemPrompt, userPrompt := rootprompt.BuildChild(rootprompt.ChildOptions{
+		Category: spec.Category, Name: spec.Name, ID: string(spec.ID), ParentID: string(spec.ParentID), ParentTurn: spec.ParentTurn,
+		Description: spec.Description, Instructions: spec.Instructions, PolicyName: spec.PolicyName,
+		AllowedTools: spec.AllowedTools, DeniedTools: spec.DeniedTools, FileOwnership: spec.FileOwnership,
+		ProfileInstructions: profileInstructions, WorkDir: r.session.WorkDir(),
+		TempDir: childTempDir, Model: spec.Model,
+	})
+	ownerData, err := json.Marshal(childRecoveryOwner{Spec: spec, ProfileInstructions: profileInstructions})
+	if err != nil {
+		_ = subDB.Close()
+		subCancel()
+		return nil, fmt.Errorf("encode child recovery owner: %w", err)
+	}
+	assignmentInput := provider.UserInput{
+		InternalID:  "assignment-" + string(spec.ID),
+		Text:        userPrompt,
+		DisplayText: userPrompt,
+		Origin:      provider.OriginAssignment,
+	}
+	assignment := provider.NewTextMessage("user", userPrompt)
+	assignment.InternalID = assignmentInput.InternalID
+	assignment.Origin = provider.OriginAssignment
+	recoveryState := newRecoveryRunState(assignmentInput, nil)
+	recoveryState.inputAdmitted = true
+	recoveryState.archive = []provider.ChatMessage{assignment}
+	recoveryState.active = []provider.ChatMessage{assignment}
+	recoveryState.contextOwnerID = subSessionID
+	recoveryState.contextGeneration = 1
+	recoveryState.contextReason = "child_assignment"
+	recoveryState.ownerData = ownerData
+	supervisor, err := r.session.newRecoverySupervisor(
+		subDB, subSessionID, string(spec.ID), 1, recoveryState, nil, r.sender,
+	)
+	if err != nil {
+		_ = subDB.Close()
+		subCancel()
+		return nil, fmt.Errorf("create child recovery supervisor: %w", err)
+	}
+	childPersist := supervisor.Persist
+	childDiscard := supervisor.Discard
+	supervisor.Persist = func(status recoverytypes.Status) error {
+		if err := childPersist(status); err != nil {
+			return err
+		}
+		parentCheckpoint := recoveryState.checkpoint(status)
+		parentCheckpoint.ContextOwnerID = ""
+		if err := sessiondb.SaveRecoveryCheckpoint(r.session.db, r.session.sessionID, parentCheckpoint); err != nil {
+			return err
+		}
+		return nil
+	}
+	supervisor.Discard = func(id string) error {
+		childErr := childDiscard(id)
+		parentErr := sessiondb.DeleteRecoveryCheckpoint(r.session.db, id)
+		if childErr != nil {
+			return childErr
+		}
+		return parentErr
+	}
+	if err := supervisor.Persist(supervisor.CheckpointStatus()); err != nil {
+		_ = supervisor.Cancel()
+		r.session.finishRecovery(string(spec.ID), supervisor.IncidentID(), 1)
+		_ = subDB.Close()
+		subCancel()
+		return nil, fmt.Errorf("persist child assignment: %w", err)
+	}
 	registered, err := r.session.registerCollaborator(subCtx, string(spec.ID), spec.Name, subSessionID, string(spec.ParentID), spec.Category, subDB)
 	if err != nil {
+		_ = supervisor.Cancel()
+		r.session.finishRecovery(string(spec.ID), supervisor.IncidentID(), 1)
 		r.fileOwnership.Release(spec.ID)
 		if subDB != nil {
 			_ = sessiondb.CloseSession(subDB, subSessionID)
@@ -537,6 +624,8 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 		if launched {
 			return
 		}
+		_ = supervisor.Cancel()
+		r.session.finishRecovery(string(spec.ID), supervisor.IncidentID(), 1)
 		subCancel()
 		a.AsyncMgr.CloseAndWait()
 		if store := r.session.CollaborationStore(); store != nil {
@@ -584,14 +673,6 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	}
 	r.session.bindAgentRuntime(subCtx, a, captypes.RuntimeActor{ID: string(spec.ID), ParentID: string(spec.ParentID), SessionID: subSessionID, AllowedTools: spec.AllowedTools, DeniedTools: spec.DeniedTools, SkillModes: spec.SkillModes}, spec.Name)
 
-	systemPrompt, userPrompt := rootprompt.BuildChild(rootprompt.ChildOptions{
-		Category: spec.Category, Name: spec.Name, ID: string(spec.ID), ParentID: string(spec.ParentID), ParentTurn: spec.ParentTurn,
-		Description: spec.Description, Instructions: spec.Instructions, PolicyName: spec.PolicyName,
-		AllowedTools: spec.AllowedTools, DeniedTools: spec.DeniedTools, FileOwnership: spec.FileOwnership,
-		ProfileInstructions: profileInstructions, WorkDir: r.session.WorkDir(),
-		TempDir: childTempDir, Model: spec.Model,
-	})
-
 	if err := ctx.Err(); err != nil {
 		r.fileOwnership.Release(spec.ID)
 		if subDB != nil {
@@ -609,17 +690,20 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 		}
 		return nil, fmt.Errorf("register: %w", err)
 	}
-	r.persistResult(handle, agent.SubAgentResult{
+	if err := r.persistResult(handle, agent.SubAgentResult{
 		AgentID: spec.ID, SessionID: subSessionID, Name: spec.Name,
 		Category: spec.Category, Status: agent.SubAgentRunning,
-	})
+	}); err != nil {
+		r.mgr.MarkInterrupted(spec.ID)
+		return nil, fmt.Errorf("persist running child: %w", err)
+	}
 
 	r.wg.Add(1)
 	r.beginTurnChild(spec.ParentTurn)
 	go func() {
 		defer r.wg.Done()
 		defer r.finishTurnChild(spec.ParentTurn)
-		r.runSubAgentLoop(subCtx, handle, systemPrompt, userPrompt)
+		r.runSubAgentLoop(subCtx, handle, systemPrompt, userPrompt, supervisor, recoveryState, false)
 	}()
 	launched = true
 	return handle, nil
@@ -640,9 +724,272 @@ func (r *SubAgentRunner) subAgentDBPath(sessionID string) (string, error) {
 	return filepath.Join(dir, filepath.Base(sessionID)+".db"), nil
 }
 
-func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubAgentHandle, systemPrompt, userPrompt string) {
+// ResumeRecovery creates a fresh volatile attempt for one durable child task.
+// It is called only by the exact incident/generation-fenced session API.
+func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheckpoint) bool {
+	if r == nil || r.session == nil || len(parentCheckpoint.OwnerData) == 0 {
+		return false
+	}
+	var owner childRecoveryOwner
+	if err := json.Unmarshal(parentCheckpoint.OwnerData, &owner); err != nil ||
+		string(owner.Spec.ID) != parentCheckpoint.Status.AgentID {
+		return false
+	}
+	spec := owner.Spec
+	spec.Policy = agent.ComposePolicy(safety.DefaultPolicy(), spec.PolicyName, spec.Category)
+	// Child session identity is the stable agent ID in the current format.
+	dbPath, err := r.subAgentDBPath(string(spec.ID))
+	if err != nil || dbPath == "" {
+		return false
+	}
+	subDB, err := sessiondb.OpenAndMigrate(dbPath)
+	if err != nil {
+		return false
+	}
+	var recoveryAsync *fileio.AsyncCommandManager
+	fail := func() bool {
+		if recoveryAsync != nil {
+			recoveryAsync.CloseAndWait()
+		}
+		_ = subDB.Close()
+		return false
+	}
+	if err := sessiondb.InterruptActiveRecoveries(subDB, string(spec.ID)); err != nil {
+		return fail()
+	}
+	childCheckpoint, ok, err := sessiondb.LoadRecoveryCheckpoint(subDB, string(spec.ID), string(spec.ID))
+	if err != nil || !ok || childCheckpoint.Status.ID != parentCheckpoint.Status.ID ||
+		childCheckpoint.Status.Generation != parentCheckpoint.Status.Generation {
+		return fail()
+	}
+	childCheckpoint.Status.AgentID = string(spec.ID)
+	childCheckpoint.ContextOwnerID = string(spec.ID)
+	recoveryState := newRecoveryRunState(parentCheckpoint.PendingInput, &childCheckpoint)
+	supervisor, err := r.session.newRecoverySupervisor(
+		subDB, string(spec.ID), string(spec.ID), parentCheckpoint.Status.Generation,
+		recoveryState, &parentCheckpoint.Status, r.sender,
+	)
+	if err != nil {
+		return fail()
+	}
+	childPersist, childDiscard := supervisor.Persist, supervisor.Discard
+	supervisor.Persist = func(status recoverytypes.Status) error {
+		if err := childPersist(status); err != nil {
+			return err
+		}
+		parent := recoveryState.checkpoint(status)
+		parent.ContextOwnerID = ""
+		return sessiondb.SaveRecoveryCheckpoint(r.session.db, r.session.sessionID, parent)
+	}
+	supervisor.Discard = func(id string) error {
+		childErr := childDiscard(id)
+		parentErr := sessiondb.DeleteRecoveryCheckpoint(r.session.db, id)
+		if childErr != nil {
+			return childErr
+		}
+		return parentErr
+	}
+	parkResume := func(kind agent.RecoveryFailureKind, cause error) bool {
+		r.session.finishRecovery(string(spec.ID), supervisor.IncidentID(), parentCheckpoint.Status.Generation)
+		status := supervisor.Park(agent.AttentionRecovery(kind, cause))
+		parent := recoveryState.checkpoint(status)
+		parent.ContextOwnerID = ""
+		r.session.parkRecovery(parent)
+		return fail()
+	}
+
+	var cfg *Config
+	if r.session.runtimeProfile != nil {
+		cfg = r.session.runtimeProfile.GetEffectiveConfig(r.orchestratorID)
+	}
+	if cfg == nil {
+		cfg = r.effectiveCfg
+	}
+	if cfg == nil {
+		r.session.mu.Lock()
+		cfg = copyConfig(r.session.cfg)
+		r.session.mu.Unlock()
+	}
+	if cfg == nil {
+		return parkResume(agent.RecoveryFailureConfiguration, errors.New("child session configuration is unavailable"))
+	}
+	p, err := cfg.ProviderForAccount(spec.AccountID, spec.Model)
+	if err != nil {
+		return parkResume(agent.RecoveryFailureConfiguration, err)
+	}
+	spec.Provider, spec.ProviderURL, spec.APIStandard = p.ID, p.BaseURL, p.StandardID()
+	filteredTools := agent.FilterToolsForModel(tools.AgentTools, spec.AllowedTools, spec.DeniedTools, spec.Category, true, p.Model)
+	live := agent.NewAgent(p, p.Model, r.session.logger)
+	live.WorkDir = r.session.WorkDir()
+	live.GuidancePaths = append([]string(nil), spec.FileOwnership...)
+	r.session.bindContinuity(live, subDB, string(spec.ID))
+	r.session.bindGuidanceCache(live)
+	live.MaxOutputTokens = spec.ModelMaxOutput
+	if compactionCfg := cfg.GetCategoryConfig(CategoryAeron); compactionCfg.Model != "" {
+		compactionProvider, compactionErr := cfg.providerForCategory(compactionCfg)
+		if compactionErr != nil {
+			return parkResume(agent.RecoveryFailureConfiguration, compactionErr)
+		}
+		live.CompactionProvider = compactionProvider
+		live.CompactionMaxOutput = compactionCfg.ModelMaxOutput
+	}
+	live.CommandPolicy = safety.CommandPolicyFromSettings(cfg.Safety)
+	if spec.ContextCompactionPercent != nil {
+		live.ContextCompactionPercent = *spec.ContextCompactionPercent
+	}
+	live.AgentID, live.TurnGeneration = spec.ID, parentCheckpoint.Status.Generation
+	live.Depth, live.ParentID, live.Policy = spec.Depth, spec.ParentID, spec.Policy
+	r.session.bindAgentPermissionPolicy(live)
+	childTempDir := filepath.Join(r.session.TempDir(), "agents", string(spec.ID))
+	live.AsyncMgr = fileio.NewAsyncCommandManagerWithLogger(r.session.logger)
+	recoveryAsync = live.AsyncMgr
+	if err := live.AsyncMgr.SetTempDir(childTempDir); err != nil {
+		return parkResume(agent.RecoveryFailureStorage, err)
+	}
+	live.FilteredTools = tools.ForModel(filteredTools, p.Model)
+	baseCtx := r.sessionCtx
+	if spec.HistoryMessageID != "" {
+		baseCtx = withHistoryScope(baseCtx, r.session.sessionID, spec.HistoryMessageID, string(spec.ID))
+	}
+	subCtx, subCancel := context.WithCancel(baseCtx)
+	live.Ctx = subCtx
+	blockCh := make(chan ttypes.BlockResponse, 8)
+	handle := &agent.SubAgentHandle{
+		Spec: spec, Agent: live, Cancel: subCancel, ResultCh: make(chan agent.SubAgentResult, 1),
+		BlockCh: blockCh, StartedAt: parentCheckpoint.Status.StartedAt,
+		SessionID: string(spec.ID), DB: subDB,
+	}
+	if handle.StartedAt.IsZero() {
+		handle.StartedAt = time.Now()
+	}
+	restoreChildReportArtifact(handle, recoveryState.archive)
+	registered, err := r.session.registerCollaborator(
+		subCtx, string(spec.ID), spec.Name, handle.SessionID,
+		string(spec.ParentID), spec.Category, subDB,
+	)
+	if err != nil {
+		subCancel()
+		return parkResume(agent.RecoveryFailureStorage, err)
+	}
+	handle.RuntimeEpoch = registered.RuntimeEpoch
+	if store := r.session.CollaborationStore(); store != nil && handle.RuntimeEpoch > 0 {
+		run, runErr := store.StartRun(context.Background(), collaboration.StartRunRequest{
+			AgentID: string(spec.ID), RuntimeEpoch: handle.RuntimeEpoch,
+			RequestID: spec.ParentToolCallID, Origin: collaboration.OriginPeer,
+		})
+		if runErr != nil {
+			r.session.detachCollaborator(context.Background(), string(spec.ID))
+			subCancel()
+			return parkResume(agent.RecoveryFailureStorage, runErr)
+		}
+		handle.SetRunIdentity(run.ID, run.Version)
+		if len(spec.FileOwnership) > 0 {
+			if _, err := store.AcquireClaims(context.Background(), collaboration.AcquireClaimsRequest{
+				AgentID: string(spec.ID), RunID: run.ID,
+				RequestID: spec.ParentToolCallID, Paths: spec.FileOwnership,
+			}); err != nil {
+				r.session.detachCollaborator(context.Background(), string(spec.ID))
+				subCancel()
+				r.interruptSubAgentAttempt(handle)
+				return parkResume(agent.RecoveryFailureStorage, err)
+			}
+		}
+	}
+	r.SetParentToolFn(r.session.buildToolFn(false, p, spec.ModelModalities))
+	live.ToolFn = r.buildProxiedToolFn(spec, blockCh, handle)
+	live.PrepareStep = func() ([]tools.ToolDef, []provider.ChatMessage) {
+		return tools.ForModel(filteredTools, live.Model), nil
+	}
+	r.session.bindAgentRuntime(subCtx, live, captypes.RuntimeActor{
+		ID: string(spec.ID), ParentID: string(spec.ParentID), SessionID: handle.SessionID,
+		AllowedTools: spec.AllowedTools, DeniedTools: spec.DeniedTools, SkillModes: spec.SkillModes,
+	}, spec.Name)
+	systemPrompt, userPrompt := rootprompt.BuildChild(rootprompt.ChildOptions{
+		Category: spec.Category, Name: spec.Name, ID: string(spec.ID), ParentID: string(spec.ParentID), ParentTurn: spec.ParentTurn,
+		Description: spec.Description, Instructions: spec.Instructions, PolicyName: spec.PolicyName,
+		AllowedTools: spec.AllowedTools, DeniedTools: spec.DeniedTools, FileOwnership: spec.FileOwnership,
+		ProfileInstructions: owner.ProfileInstructions, WorkDir: r.session.WorkDir(),
+		TempDir: childTempDir, Model: spec.Model,
+	})
+	if err := r.mgr.Register(handle); err != nil {
+		r.session.finishRecovery(string(spec.ID), supervisor.IncidentID(), parentCheckpoint.Status.Generation)
+		status := supervisor.Park(agent.AttentionRecovery(agent.RecoveryFailureConfiguration, err))
+		parent := recoveryState.checkpoint(status)
+		parent.ContextOwnerID = ""
+		r.session.parkRecovery(parent)
+		r.interruptSubAgentAttempt(handle)
+		r.session.detachCollaborator(context.Background(), string(spec.ID))
+		subCancel()
+		return fail()
+	}
+	if err := r.persistResult(handle, agent.SubAgentResult{
+		AgentID: spec.ID, SessionID: handle.SessionID, Name: spec.Name,
+		Category: spec.Category, Status: agent.SubAgentRunning,
+	}); err != nil {
+		r.mgr.MarkInterrupted(spec.ID)
+		r.session.finishRecovery(string(spec.ID), supervisor.IncidentID(), parentCheckpoint.Status.Generation)
+		status := supervisor.Park(agent.AttentionRecovery(agent.RecoveryFailureStorage, err))
+		parent := recoveryState.checkpoint(status)
+		parent.ContextOwnerID = ""
+		r.session.parkRecovery(parent)
+		r.interruptSubAgentAttempt(handle)
+		r.session.detachCollaborator(context.Background(), string(spec.ID))
+		subCancel()
+		return fail()
+	}
+	r.wg.Add(1)
+	r.beginTurnChild(spec.ParentTurn)
+	go func() {
+		defer r.wg.Done()
+		defer r.finishTurnChild(spec.ParentTurn)
+		r.runSubAgentLoop(subCtx, handle, systemPrompt, userPrompt, supervisor, recoveryState, true)
+	}()
+	go func() {
+		select {
+		case <-r.sessionCtx.Done():
+			handle.Cancel()
+		case <-handle.ResultCh:
+		}
+	}()
+	return true
+}
+
+func restoreChildReportArtifact(handle *agent.SubAgentHandle, messages []provider.ChatMessage) {
+	if handle == nil || handle.Agent == nil {
+		return
+	}
+	reportCalls := make(map[string]bool)
+	for _, message := range messages {
+		for _, call := range message.ToolCalls {
+			if call.Function.Name == "publish_report" {
+				reportCalls[call.ID] = true
+			}
+		}
+		if message.Role != "tool" || message.ToolError || !reportCalls[message.ToolCallID] {
+			continue
+		}
+		var published collaboration.PublishReportResult
+		if json.Unmarshal([]byte(message.ContentString()), &published) != nil ||
+			published.Artifact.Kind != collaboration.ReportFinal ||
+			published.Artifact.AuthorID != string(handle.Spec.ID) {
+			continue
+		}
+		handle.SetReportArtifact(published.Artifact.ID, published.Artifact.Revision)
+		handle.Agent.RestorePublishedReport()
+		return
+	}
+}
+
+func (r *SubAgentRunner) runSubAgentLoop(
+	ctx context.Context,
+	handle *agent.SubAgentHandle,
+	systemPrompt, userPrompt string,
+	supervisor *agent.Supervisor,
+	recoveryState *recoveryRunState,
+	resumed bool,
+) {
 	done := false
-	crashed := false
+	var terminalDone *agent.AgentEvent
 	defer r.session.detachCollaborator(context.Background(), string(handle.Spec.ID))
 	r.session.reconcileCollaborationAdmissions(handle.DB, string(handle.Spec.ID))
 
@@ -671,40 +1018,112 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 		r.fileOwnership.Release(handle.Spec.ID)
 
 		if rec := recover(); rec != nil {
-			crashed = true
 			stack := debug.Stack()
 			r.session.logger.Error("SUBAGENT", "crash", "agent_id", handle.Spec.ID, "error", fmt.Sprintf("%v", rec))
-			result := agent.SubAgentResult{
-				AgentID:   handle.Spec.ID,
-				Name:      handle.Spec.Name,
-				Category:  handle.Spec.Category,
-				SessionID: handle.SessionID,
-				Status:    agent.SubAgentCrashed,
-				Errors:    []string{fmt.Sprintf("CRASH: %v\n\nStack trace:\n%s", rec, stack)},
+			r.session.finishRecovery(string(handle.Spec.ID), supervisor.IncidentID(), supervisor.CheckpointStatus().Generation)
+			status := supervisor.Park(agent.AttentionRecovery(
+				agent.RecoveryFailurePanic,
+				fmt.Errorf("child panic: %v\n\n%s", rec, stack),
+			))
+			checkpoint := recoveryState.checkpoint(status)
+			checkpoint.ContextOwnerID = ""
+			r.session.parkRecovery(checkpoint)
+			r.interruptSubAgentAttempt(handle)
+			r.mgr.MarkInterrupted(handle.Spec.ID)
+			if handle.Agent != nil && handle.Agent.AsyncMgr != nil {
+				handle.Agent.AsyncMgr.CloseAndWait()
 			}
-			r.finalizeSubAgent(handle, result)
+			if handle.DB != nil {
+				_ = handle.DB.Close()
+			}
 			return
 		}
 
-		if !done && !crashed {
-			r.session.logger.Error("SUBAGENT", "unexpected_exit", "agent_id", handle.Spec.ID)
-			result := agent.SubAgentResult{
-				AgentID:   handle.Spec.ID,
-				Name:      handle.Spec.Name,
-				Category:  handle.Spec.Category,
-				SessionID: handle.SessionID,
-				Status:    agent.SubAgentCrashed,
-				Errors:    []string{"Agent exited unexpectedly without completing or panicking — this is an internal system bug"},
+		if !done && ctx.Err() != nil {
+			if err := supervisor.Cancel(); err != nil {
+				r.session.finishRecovery(string(handle.Spec.ID), supervisor.IncidentID(), supervisor.CheckpointStatus().Generation)
+				status := supervisor.Park(agent.AttentionRecovery(agent.RecoveryFailureStorage, err))
+				checkpoint := recoveryState.checkpoint(status)
+				checkpoint.ContextOwnerID = ""
+				r.session.parkRecovery(checkpoint)
+				r.interruptSubAgentAttempt(handle)
+				r.mgr.MarkInterrupted(handle.Spec.ID)
+				if handle.Agent != nil && handle.Agent.AsyncMgr != nil {
+					handle.Agent.AsyncMgr.CloseAndWait()
+				}
+				if handle.DB != nil {
+					_ = handle.DB.Close()
+				}
+				return
 			}
-			r.finalizeSubAgent(handle, result)
+			r.finalizeSubAgent(handle, agent.SubAgentResult{
+				AgentID: handle.Spec.ID, Name: handle.Spec.Name, Category: handle.Spec.Category,
+				SessionID: handle.SessionID, Status: agent.SubAgentCancelled,
+				Errors: []string{ctx.Err().Error()},
+			})
+			if r.sender != nil {
+				if terminalDone != nil {
+					r.sender.SendAgentEventWithID(terminalDone.Type, terminalDone.Data, terminalDone.AgentID)
+				} else {
+					r.sender.SendAgentEventWithID("done", map[string]any{
+						"content": "Cancelled.", "reason": "cancelled",
+					}, string(handle.Spec.ID))
+				}
+			}
+			done = true
+			return
+		}
+		if !done {
+			r.session.logger.Error("SUBAGENT", "unexpected_exit", "agent_id", handle.Spec.ID)
+			r.session.finishRecovery(string(handle.Spec.ID), supervisor.IncidentID(), supervisor.CheckpointStatus().Generation)
+			status := supervisor.Park(agent.AttentionRecovery(
+				agent.RecoveryFailurePanic,
+				errors.New("child exited unexpectedly before a natural finish"),
+			))
+			checkpoint := recoveryState.checkpoint(status)
+			checkpoint.ContextOwnerID = ""
+			r.session.parkRecovery(checkpoint)
+			r.interruptSubAgentAttempt(handle)
+			r.mgr.MarkInterrupted(handle.Spec.ID)
+			if handle.Agent != nil && handle.Agent.AsyncMgr != nil {
+				handle.Agent.AsyncMgr.CloseAndWait()
+			}
+			if handle.DB != nil {
+				_ = handle.DB.Close()
+			}
 			return
 		}
 	}()
 
-	assignment := provider.NewTextMessage("user", userPrompt)
-	assignment.Origin = provider.OriginAssignment
-	userMsgs := []provider.ChatMessage{assignment}
-	contextGeneration := uint64(1)
+	userMsgs := append([]provider.ChatMessage(nil), recoveryState.active...)
+	if len(userMsgs) == 0 {
+		assignment := provider.NewTextMessage("user", userPrompt)
+		assignment.Origin = provider.OriginAssignment
+		userMsgs = []provider.ChatMessage{assignment}
+	}
+	handle.Agent.ContextArchive = recoveryArchiveMessages(recoveryState.archive)
+	handle.Agent.FrozenPrefix = append([]provider.ChatMessage(nil), userMsgs...)
+	contextGeneration := max(uint64(1), recoveryState.contextGeneration)
+	turnGeneration := max(uint64(1), handle.Agent.TurnGeneration)
+	if resumed {
+		if err := supervisor.BeginRetry(); err != nil &&
+			!supervisor.Await(ctx, agent.AttentionRecovery(agent.RecoveryFailureStorage, err)) {
+			_ = supervisor.Cancel()
+			return
+		}
+		recoveryState.appendContinuation(rootprompt.RecoveryInterrupted)
+		archive, active := recoveryState.contexts()
+		userMsgs = active
+		handle.Agent.ContextArchive = recoveryArchiveMessages(archive)
+		handle.Agent.FrozenPrefix = append([]provider.ChatMessage(nil), userMsgs...)
+		for {
+			if err := supervisor.Persist(supervisor.CheckpointStatus()); err == nil {
+				break
+			} else if !supervisor.Await(ctx, agent.AttentionRecovery(agent.RecoveryFailureStorage, err)) {
+				return
+			}
+		}
+	}
 	var pendingCollaboration []collaboration.PendingDelivery
 	defer func() {
 		r.session.releaseCollaborationReservations(
@@ -780,10 +1199,20 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 			Messages: append([]provider.ChatMessage(nil), commit.Messages...),
 		}, record)
 	}
-	if handle.DB != nil {
-		if err := sessiondb.BeginAgentTurn(handle.DB, handle.SessionID, string(handle.Spec.ID), 1, string(provider.OriginAssignment)); err != nil {
-			r.session.logger.Warn("SUBAGENT", "turn_state_begin_failed", "agent_id", handle.Spec.ID, "error", err.Error())
+	for {
+		if handle.DB == nil {
+			if !supervisor.Await(ctx, agent.AttentionRecovery(agent.RecoveryFailureStorage, errors.New("child database is unavailable"))) {
+				return
+			}
+			continue
 		}
+		if err := sessiondb.BeginAgentTurn(handle.DB, handle.SessionID, string(handle.Spec.ID), turnGeneration, string(provider.OriginAssignment)); err != nil {
+			if !supervisor.Await(ctx, agent.AttentionRecovery(agent.RecoveryFailureStorage, err)) {
+				return
+			}
+			continue
+		}
+		break
 	}
 	runID, _ := handle.RunIdentity()
 	steeringCtx, stopSteering := context.WithCancel(ctx)
@@ -793,12 +1222,20 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 		handle.Spec.Model, r.sender,
 	)
 	handle.Agent.FlushRuntimeMessages = flushRuntime
-	agentMsgs := handle.Agent.Run(ctx, userMsgs, systemPrompt, func(evt agent.AgentEvent) {
+	handle.Agent.Checkpoint = func(archive, active []provider.ChatMessage) error {
+		recoveryState.snapshot(archive, active)
+		recoveryState.setContext(handle.SessionID, contextGeneration, "run_checkpoint")
+		return supervisor.Persist(supervisor.CheckpointStatus())
+	}
+	childEmit := func(evt agent.AgentEvent) {
 		evt.AgentID = string(handle.Spec.ID)
 		if err := r.session.persistCompactionEvent(handle.DB, handle.SessionID, evt.AgentID, evt); err != nil {
 			r.session.logger.Warn("COMPACT", "child_lifecycle_persist_failed", "agent_id", evt.AgentID, "error", err.Error())
 		}
-		if r.sender != nil {
+		if evt.Type == "done" {
+			copy := evt
+			terminalDone = &copy
+		} else if r.sender != nil {
 			r.sender.SendAgentEventWithID(evt.Type, evt.Data, evt.AgentID)
 		}
 		if evt.Type == "usage" {
@@ -838,14 +1275,6 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 				}
 			}
 		}
-		if evt.Type == "error" {
-			if msg, ok := evt.Data.(string); ok && msg != "" {
-				handle.AddError(msg)
-			}
-			// Agent.Run emits no done event after an unrecovered API/stream error.
-			// A later done event supersedes this marker if the run recovered.
-			handle.SetTermReason("error")
-		}
 		if evt.Type == "done" {
 			if data, ok := evt.Data.(map[string]any); ok {
 				if reason, ok := data["reason"].(string); ok {
@@ -853,42 +1282,90 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 				}
 			}
 		}
-	}, handle.BlockCh, handle.SessionID, runtimeMessages)
+	}
+	prepareAttempt := func() (string, error) {
+		var cfg *Config
+		if r.session.runtimeProfile != nil {
+			cfg = r.session.runtimeProfile.GetEffectiveConfig(r.orchestratorID)
+		}
+		if cfg == nil {
+			cfg = r.effectiveCfg
+		}
+		if cfg == nil {
+			r.session.mu.Lock()
+			cfg = copyConfig(r.session.cfg)
+			r.session.mu.Unlock()
+		}
+		if cfg == nil {
+			return "", errors.New("child session configuration is unavailable")
+		}
+		currentProvider, err := cfg.ProviderForAccount(handle.Spec.AccountID, handle.Spec.Model)
+		if err != nil {
+			return "", err
+		}
+		handle.Agent.Provider, handle.Agent.Model = currentProvider, currentProvider.Model
+		handle.Spec.Provider = currentProvider.ID
+		if compactionCfg := cfg.GetCategoryConfig(CategoryAeron); compactionCfg.Model != "" {
+			compactionProvider, compactionErr := cfg.providerForCategory(compactionCfg)
+			if compactionErr != nil {
+				return "", compactionErr
+			}
+			handle.Agent.CompactionProvider = compactionProvider
+			handle.Agent.CompactionMaxOutput = compactionCfg.ModelMaxOutput
+		}
+		return systemPrompt, nil
+	}
+	agentMsgs := handle.Agent.RunSupervised(
+		ctx, userMsgs, systemPrompt, childEmit, handle.BlockCh, handle.SessionID, runtimeMessages,
+		agent.SupervisedRunOptions{
+			Supervisor:      supervisor,
+			Prepare:         prepareAttempt,
+			Snapshot:        recoveryState.snapshot,
+			DeferSettlement: true,
+		},
+	)
 	stopSteering()
 	<-runtimeMessagesDone
 	controlMessages := r.session.takeCollaborationContext(string(handle.Spec.ID))
 	if len(controlMessages) > 0 {
 		agentMsgs = append(agentMsgs, controlMessages...)
 	}
-	if handle.DB != nil {
-		active := handle.Agent.ActiveContext()
-		active = append(active, controlMessages...)
-		generation := contextGeneration
-		reason := "session_start"
-		if contextCheckpointContent(active) != "" && generation == 1 {
-			generation = 2
-			contextGeneration = generation
-		}
-		if contextCheckpointContent(active) != "" {
-			reason = "automatic_compaction"
-		}
-		if err := sessiondb.SaveContextState(handle.DB, handle.SessionID, string(handle.Spec.ID), sessiondb.ContextState{
+	active := handle.Agent.ActiveContext()
+	active = append(active, controlMessages...)
+	recoveryState.snapshot(agentMsgs, active)
+	generation := contextGeneration
+	reason := "session_start"
+	if contextCheckpointContent(active) != "" && generation == 1 {
+		generation = 2
+		contextGeneration = generation
+	}
+	if contextCheckpointContent(active) != "" {
+		reason = "automatic_compaction"
+	}
+	for {
+		err := sessiondb.SaveContextState(handle.DB, handle.SessionID, string(handle.Spec.ID), sessiondb.ContextState{
 			AgentID: string(handle.Spec.ID), Generation: generation, Reason: reason, Messages: active,
-		}); err != nil {
-			r.session.logger.Warn("SUBAGENT", "context_state_save_failed", "agent_id", handle.Spec.ID, "error", err.Error())
+		})
+		if err == nil {
+			break
+		}
+		if !supervisor.Await(ctx, agent.AttentionRecovery(agent.RecoveryFailureStorage, err)) {
+			return
 		}
 	}
 
-	if err := persistSubAgentTranscript(handle, agentMsgs); err != nil {
-		handle.AddError("persist transcript: " + err.Error())
-		r.session.logger.Warn(
-			"SUBAGENT", "transcript_persist_failed",
-			"agent_id", handle.Spec.ID, "error", err.Error(),
-		)
+	for {
+		err := persistSubAgentTranscript(handle, agentMsgs)
+		if err == nil {
+			break
+		}
+		if !supervisor.Await(ctx, agent.AttentionRecovery(agent.RecoveryFailureStorage, err)) {
+			return
+		}
 	}
 	result := r.buildSubAgentResult(handle, agentMsgs)
 
-	if !handle.ReportDone() {
+	if result.Status != agent.SubAgentCancelled && !handle.ReportDone() {
 		result.Errors = append(result.Errors, "required final report was not published")
 		if result.Status == agent.SubAgentCompleted {
 			result.Status = agent.SubAgentFailedPolicy
@@ -896,16 +1373,63 @@ func (r *SubAgentRunner) runSubAgentLoop(ctx context.Context, handle *agent.SubA
 		r.session.logger.Warn("SUBAGENT", "missing_final_report", "agent_id", handle.Spec.ID, "name", handle.Spec.Name)
 	}
 
-	done = true
-	r.finalizeSubAgent(handle, result)
+	settle := func() error {
+		if result.Status == agent.SubAgentCancelled {
+			return supervisor.Cancel()
+		}
+		return supervisor.Resolve()
+	}
+	for {
+		err := r.finalizeSubAgentWithSettlement(handle, result, settle)
+		if err == nil {
+			done = true
+			r.session.finishRecovery(string(handle.Spec.ID), supervisor.IncidentID(), supervisor.CheckpointStatus().Generation)
+			if terminalDone != nil && r.sender != nil {
+				r.sender.SendAgentEventWithID(terminalDone.Type, terminalDone.Data, terminalDone.AgentID)
+			}
+			return
+		}
+		if !supervisor.Await(ctx, agent.AttentionRecovery(agent.RecoveryFailureStorage, err)) {
+			return
+		}
+	}
+}
+
+func (r *SubAgentRunner) interruptSubAgentAttempt(handle *agent.SubAgentHandle) {
+	if r == nil || r.session == nil || handle == nil {
+		return
+	}
+	runID, runVersion := handle.RunIdentity()
+	store := r.session.CollaborationStore()
+	if store == nil || runID == "" {
+		return
+	}
+	finished, err := finishCollaborationRun(store, collaboration.FinishRunRequest{
+		RunID: runID, AgentID: string(handle.Spec.ID), RuntimeEpoch: handle.RuntimeEpoch,
+		ExpectedVersion: runVersion, State: collaboration.RunInterrupted,
+		Outcome: "recovery pending", ContextCommitID: handle.Spec.HistoryMessageID,
+	})
+	if err != nil {
+		r.session.logger.Warn("COLLAB", "child_recovery_interrupt_failed", "run_id", runID, "error", err.Error())
+		return
+	}
+	handle.SetRunVersion(finished.Version)
 }
 
 // finalizeSubAgent is the sole terminal delivery path for successful, failed,
 // cancelled, panicked, and unexpected child exits. Persistence alone is not a
 // completion signal: both the UI event and parent wake are mandatory.
 func (r *SubAgentRunner) finalizeSubAgent(handle *agent.SubAgentHandle, result agent.SubAgentResult) {
+	_ = r.finalizeSubAgentWithSettlement(handle, result, nil)
+}
+
+func (r *SubAgentRunner) finalizeSubAgentWithSettlement(
+	handle *agent.SubAgentHandle,
+	result agent.SubAgentResult,
+	settle func() error,
+) error {
 	if handle == nil {
-		return
+		return nil
 	}
 	if handle.Agent != nil && handle.Agent.AsyncMgr != nil {
 		handle.Agent.AsyncMgr.CloseAndWait()
@@ -924,11 +1448,20 @@ func (r *SubAgentRunner) finalizeSubAgent(handle *agent.SubAgentHandle, result a
 		case agent.SubAgentCancelled:
 			turnState = sessiondb.TurnInterrupted
 		}
-		if err := sessiondb.FinishAgentTurn(handle.DB, handle.SessionID, string(handle.Spec.ID), 1, turnState); err != nil {
+		generation := uint64(1)
+		if handle.Agent != nil {
+			generation = max(uint64(1), handle.Agent.TurnGeneration)
+		}
+		if err := sessiondb.FinishAgentTurn(handle.DB, handle.SessionID, string(handle.Spec.ID), generation, turnState); err != nil {
 			r.session.logger.Warn("SUBAGENT", "turn_state_finish_failed", "agent_id", handle.Spec.ID, "error", err.Error())
+			if settle != nil {
+				return err
+			}
 		}
 	}
-	r.persistResult(handle, result)
+	if err := r.persistResult(handle, result); err != nil && settle != nil {
+		return err
+	}
 	runID, runVersion := handle.RunIdentity()
 	if store := r.session.CollaborationStore(); store != nil && runID != "" {
 		runState := collaboration.RunFailed
@@ -949,6 +1482,9 @@ func (r *SubAgentRunner) finalizeSubAgent(handle *agent.SubAgentHandle, result a
 		if err != nil {
 			r.session.logger.Warn("COLLAB", "child_run_finish_failed",
 				"run_id", runID, "error", err.Error())
+			if settle != nil {
+				return err
+			}
 		} else {
 			handle.SetRunVersion(finished.Version)
 			if handle.Spec.ParentID != "" {
@@ -971,8 +1507,26 @@ func (r *SubAgentRunner) finalizeSubAgent(handle *agent.SubAgentHandle, result a
 				if publishErr != nil {
 					r.session.logger.Warn("COLLAB", "child_outcome_publish_failed",
 						"run_id", runID, "error", publishErr.Error())
+					if settle != nil {
+						return publishErr
+					}
 				}
 			}
+		}
+	}
+	if handle.DB != nil {
+		if err := sessiondb.CloseSession(handle.DB, handle.SessionID); err != nil && settle != nil {
+			return err
+		}
+	}
+	if settle != nil {
+		if err := settle(); err != nil {
+			return err
+		}
+	}
+	if handle.DB != nil {
+		if err := handle.DB.Close(); err != nil && settle != nil {
+			return err
 		}
 	}
 	if r.sender != nil {
@@ -986,12 +1540,8 @@ func (r *SubAgentRunner) finalizeSubAgent(handle *agent.SubAgentHandle, result a
 		}, string(handle.Spec.ID))
 	}
 	handle.ResultCh <- result
-
-	if handle.DB != nil {
-		_ = sessiondb.CloseSession(handle.DB, handle.SessionID)
-		_ = handle.DB.Close()
-	}
 	r.mgr.MarkFinished(handle.Spec.ID, result)
+	return nil
 }
 
 func persistSubAgentTranscript(
@@ -1142,7 +1692,9 @@ func (r *SubAgentRunner) buildSubAgentResult(handle *agent.SubAgentHandle, msgs 
 }
 
 func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh chan ttypes.BlockResponse, handle *agent.SubAgentHandle) func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
+	r.parentToolMu.RLock()
 	parentFn := r.parentToolFn
+	r.parentToolMu.RUnlock()
 	return func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
 		if !agent.PolicyAllows(spec.Policy, tool) {
 			return tools.ToolResult{}, fmt.Errorf("[POLICY BLOCK] Tool %q is not allowed for this agent. Your policy is %q", tool, spec.PolicyName)
@@ -1304,13 +1856,15 @@ func summarizeSubAgentQuestions(params map[string]any) string {
 	return strings.Join(lines, "\n")
 }
 
-func (r *SubAgentRunner) persistResult(_ *agent.SubAgentHandle, result agent.SubAgentResult) {
+func (r *SubAgentRunner) persistResult(_ *agent.SubAgentHandle, result agent.SubAgentResult) error {
 	if r.session.db == nil {
-		return
+		return errors.New("parent session database is unavailable")
 	}
 	if err := sessiondb.InsertSubAgentResult(r.session.db, subAgentResultRow(r.session.sessionID, result)); err != nil {
 		r.session.logger.Error("SUBAGENT", "persist_result_failed", "agent_id", result.AgentID, "error", err.Error())
+		return err
 	}
+	return nil
 }
 
 func (r *SubAgentRunner) resolveProfile(name string, category string, spec *agent.SubAgentSpec) string {

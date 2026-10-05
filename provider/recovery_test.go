@@ -93,8 +93,8 @@ func TestRecoveryClassificationIsSpecific(t *testing.T) {
 		}
 	}
 	cfg := DefaultDialConfig()
-	if got := serverHintedDelay(&http.Response{Header: http.Header{"Retry-After": []string{"900"}}}, 1, cfg); got >= 0 {
-		t.Fatalf("long server cooldown shortened to %s instead of stopping", got)
+	if got := serverHintedDelay(&http.Response{Header: http.Header{"Retry-After": []string{"86400"}}}, 1, cfg); got != 5*time.Minute {
+		t.Fatalf("long server cooldown=%s, want absolute five-minute ceiling", got)
 	}
 	if got := backoffDelay(1, DialConfig{BaseBackoff: time.Millisecond, MaxBackoff: time.Millisecond}); got > time.Millisecond {
 		t.Fatalf("backoff ignored its configured ceiling: %s", got)

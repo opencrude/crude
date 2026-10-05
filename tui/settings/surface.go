@@ -226,16 +226,21 @@ func (s *WorkspaceSettingsSurface) capabilitiesOpen() bool {
 	return s.model != nil && (s.model.SelectedCategory() == catSkills || s.model.SelectedCategory() == catMCP || s.model.SelectedCategory() == catSources)
 }
 
+func (s *WorkspaceSettingsSurface) showReset() bool {
+	return s.reset != nil && s.model != nil && !s.model.isNetworkCategory(s.model.SelectedCategory())
+}
+
 func (s *WorkspaceSettingsSurface) syncTemplateControls() {
 	if s.model == nil {
 		return
 	}
+	busy := s.model.accountBusy || s.model.Saving()
 	_, selected := s.model.providers[s.model.providerID]
-	s.templateAdd.SetEnabled("settings.template.add", !s.model.accountBusy)
+	s.templateAdd.SetEnabled("settings.template.add", !busy)
 	for _, action := range []string{"settings.template.edit", "settings.template.clone"} {
-		s.templateBar.SetEnabled(action, selected && !s.model.accountBusy)
+		s.templateBar.SetEnabled(action, selected && !busy)
 	}
-	s.templateMoreBar.SetEnabled("settings.template.remove", selected && !s.model.accountBusy)
+	s.templateMoreBar.SetEnabled("settings.template.remove", selected && !busy)
 	if s.model.providerEditor != nil {
 		label := "Save template"
 		if s.model.providerEditor.isNew {
@@ -243,20 +248,21 @@ func (s *WorkspaceSettingsSurface) syncTemplateControls() {
 		}
 		s.templateEditorBar.SetLabel("settings.template.commit", label)
 	}
-	s.templateEditorBar.SetEnabled("settings.template.commit", !s.model.accountBusy)
-	s.templateEditorBar.SetEnabled("settings.template.cancel", !s.model.accountBusy)
+	s.templateEditorBar.SetEnabled("settings.template.commit", !busy)
+	s.templateEditorBar.SetEnabled("settings.template.cancel", !busy)
 }
 
 func (s *WorkspaceSettingsSurface) syncAccountControls() {
 	if s.model == nil {
 		return
 	}
+	busy := s.model.accountBusy || s.model.Saving()
 	_, ok := s.model.accounts[s.model.accountID]
 	for _, action := range []string{"settings.account.edit", "settings.account.add-another"} {
-		s.accountBar.SetEnabled(action, ok && !s.model.accountBusy)
+		s.accountBar.SetEnabled(action, ok && !busy)
 	}
-	s.accountMoreBar.SetEnabled("settings.account.remove", ok && !s.model.accountBusy)
-	s.accountAdd.SetEnabled("settings.account.begin-add", !s.model.accountBusy)
+	s.accountMoreBar.SetEnabled("settings.account.remove", ok && !busy)
+	s.accountAdd.SetEnabled("settings.account.begin-add", !busy)
 	if s.model.accountEditor != nil {
 		label := "Save changes"
 		if s.model.accountEditor.isNew {
@@ -270,14 +276,17 @@ func (s *WorkspaceSettingsSurface) syncAccountControls() {
 				signIn = "Reconnect"
 			}
 			s.accountAuthBar.SetLabel("settings.chatgpt.signin", signIn)
-			s.accountAuthBar.SetEnabled("settings.chatgpt.signout", a.OAuth != nil && !s.model.accountBusy)
+			s.accountAuthBar.SetEnabled("settings.chatgpt.signout", a.OAuth != nil && !busy)
 		}
 	}
-	s.accountAuthBar.SetEnabled("settings.chatgpt.signin", !s.model.accountBusy && (s.model.accountEditor == nil || s.model.authWaitingID != s.model.accountEditor.draft.ID))
-	s.accountEditorBar.SetEnabled("settings.account.commit", !s.model.accountBusy)
-	s.accountEditorBar.SetEnabled("settings.account.cancel-edit", !s.model.accountBusy)
-	s.actions.SetEnabled("settings.save", !s.model.accountBusy)
-	s.actions.SetEnabled("settings.close", !s.model.accountBusy)
+	s.accountAuthBar.SetEnabled("settings.chatgpt.signin", !busy && (s.model.accountEditor == nil || s.model.authWaitingID != s.model.accountEditor.draft.ID))
+	s.accountEditorBar.SetEnabled("settings.account.commit", !busy)
+	s.accountEditorBar.SetEnabled("settings.account.cancel-edit", !busy)
+	s.actions.SetEnabled("settings.save", !busy)
+	s.actions.SetEnabled("settings.close", !busy)
+	if s.reset != nil {
+		s.reset.SetEnabled("settings.reset", !busy)
+	}
 }
 
 func (s *WorkspaceSettingsSurface) Children() []ui.Component {
@@ -305,7 +314,7 @@ func (s *WorkspaceSettingsSurface) Children() []ui.Component {
 		}
 	default:
 	}
-	if s.reset != nil {
+	if s.showReset() {
 		children = append(children, s.reset)
 	}
 	if (!s.accountsOpen() || s.model.accountEditor == nil) && (!s.providersOpen() || s.model.providerEditor == nil) && (s.agents.draft == nil) {
@@ -474,7 +483,7 @@ func (s *WorkspaceSettingsSurface) ShowMainAgent() {
 	s.agents.begin("role/default", false)
 }
 func (s *WorkspaceSettingsSurface) FocusReset() {
-	if s.reset != nil {
+	if s.showReset() {
 		s.focusID(WorkspaceSettingsResetBarID)
 		return
 	}
@@ -494,6 +503,21 @@ func (s *WorkspaceSettingsSurface) SetModel(model *Model) {
 }
 
 func (s *WorkspaceSettingsSurface) Model() *Model { return s.model }
+
+// FinishSave applies an asynchronous persistence result only to the exact
+// retained model that emitted the request. Failures keep the draft mounted and
+// editable for retry.
+func (s *WorkspaceSettingsSurface) FinishSave(target *Model, err error) bool {
+	if s == nil || s.model == nil || target == nil || s.model != target || !target.Saving() {
+		return false
+	}
+	s.model.FinishSave(err)
+	s.syncModel()
+	if !s.Bounds().Empty() {
+		s.Layout(ui.LayoutContext{}, s.Bounds())
+	}
+	return true
+}
 
 // WindowTitle is the frame title of the floating settings window. It names the
 // window's scope and nothing else: navigation inside the window is reported by
@@ -576,7 +600,7 @@ func (s *WorkspaceSettingsSurface) paneTitleParts() []string {
 // RequestClose closes the entire window, never a nested settings page. Back,
 // breadcrumbs and Esc retain their separate navigation/discard policy.
 func (s *WorkspaceSettingsSurface) RequestClose() ui.EventResult {
-	if s.model == nil || s.model.accountBusy {
+	if s.model == nil || s.model.accountBusy || s.model.Saving() {
 		return ui.EventResult{Handled: true}
 	}
 	// A close request supersedes any pending page or scope navigation.
@@ -757,9 +781,11 @@ func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		s.scope.Layout(ctx, ui.Rect{X: railX, Y: footerY, W: leftW, H: 1})
 	}
 	resetW := 0
-	if s.reset != nil {
+	if s.showReset() {
 		resetW = s.reset.Measure(ctx, ui.Loose(formW, 1)).W
 		s.reset.Layout(ctx, ui.Rect{X: formX, Y: footerY, W: max(1, resetW), H: 1})
+	} else if s.reset != nil {
+		s.reset.Layout(ctx, ui.Rect{})
 	}
 	actionsX, actionsW := formX, formW
 	if resetW > 0 {
@@ -939,6 +965,9 @@ func (s *WorkspaceSettingsSurface) Handle(ctx ui.EventContext, evt ui.Event) ui.
 	if s.model == nil {
 		return ui.EventResult{}
 	}
+	if s.model.Saving() {
+		return ui.EventResult{Handled: true}
+	}
 	if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft && ctx.LocalY == s.topPad() {
 		parts := s.paneTitleParts()
 		if len(parts) > 1 && ui.BreadcrumbIndex(parts, s.breadcrumbSeparator(), ctx.LocalX-s.contentRect.X, s.contentRect.W) == 0 {
@@ -1007,6 +1036,9 @@ func (s *WorkspaceSettingsSurface) Handle(ctx ui.EventContext, evt ui.Event) ui.
 }
 
 func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
+	if s.model != nil && s.model.Saving() {
+		return ui.EventResult{Handled: true}
+	}
 	if strings.HasPrefix(string(action.ID), "settings.capability.") {
 		return s.capCatalog.HandleAction(ui.EventContext{}, action)
 	}
@@ -1252,7 +1284,7 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 			s.focusID(WorkspaceSettingsTemplateBarID)
 		} else if s.accountsOpen() {
 			s.focusID(WorkspaceSettingsAccountMoreID)
-		} else if s.reset != nil {
+		} else if s.showReset() {
 			s.FocusReset()
 		} else {
 			s.form.FocusLast()
@@ -1278,10 +1310,31 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 		if s.model.accountBusy || s.model.accountEditor != nil || s.model.providerEditor != nil {
 			return ui.EventResult{Handled: true}
 		}
+		if category, fieldID, valid := s.model.validateNetworkSettings(); !valid {
+			s.model.SelectCategory(category)
+			s.model.EnterForm()
+			s.categories.syncItems()
+			s.refreshForm()
+			s.form.FocusField(fieldID)
+			s.FocusForm()
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
+		}
+		if !s.model.BeginSave() {
+			return ui.EventResult{Handled: true}
+		}
+		s.syncAccountControls()
+		s.syncTemplateControls()
+		target := s.model
+		scope := target.Scope()
+		appSettings := target.AppSettings()
+		overrides := target.Overrides()
 		return ui.EventResult{Handled: true, Cmd: func() tea.Msg {
-			return SaveMsg{Scope: s.model.Scope(), AppSettings: s.model.AppSettings(), Overrides: s.model.Overrides()}
-		}}
+			return SaveMsg{Target: target, Scope: scope, AppSettings: appSettings, Overrides: overrides}
+		}, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
 	case "settings.reset":
+		if !s.showReset() {
+			return ui.EventResult{Handled: true}
+		}
 		if s.agents.draft != nil {
 			return s.agents.back()
 		}
@@ -1454,7 +1507,7 @@ func (s *WorkspaceSettingsSurface) requestPrompt(kind PromptKind, id, label stri
 // PromptRelevant rejects queued actions from a closed, replaced, or switched
 // settings page before opening another modal window above it.
 func (s *WorkspaceSettingsSurface) PromptRelevant(msg PromptMsg) bool {
-	if s.model == nil || s.model != msg.Target || s.model.accountBusy {
+	if s.model == nil || s.model != msg.Target || s.model.accountBusy || s.model.Saving() {
 		return false
 	}
 	switch msg.Kind {
@@ -1561,6 +1614,9 @@ func (s *WorkspaceSettingsSurface) cancelAccountEdit() ui.EventResult {
 }
 
 func (s *WorkspaceSettingsSurface) cancelSettings() ui.EventResult {
+	if s.model != nil && s.model.Saving() {
+		return ui.EventResult{Handled: true}
+	}
 	if s.capabilitiesOpen() && (s.capCatalog.detail || s.capCatalog.edit != "") {
 		return s.capCatalog.back()
 	}
@@ -1608,6 +1664,9 @@ func (s *settingsSearchField) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.
 func (s *settingsSearchField) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if s.owner == nil || s.owner.model == nil {
 		return s.field.Handle(ctx, evt)
+	}
+	if s.owner.model.Saving() {
+		return ui.EventResult{Handled: true}
 	}
 	result := s.field.Handle(ctx, evt)
 	if evt.Kind == ui.EventMouseClick && s.owner.form.CloseOpenSelects() {
@@ -1687,6 +1746,9 @@ func (s *settingsTableFilter) Handle(ctx ui.EventContext, evt ui.Event) ui.Event
 	if s.owner == nil || s.owner.model == nil {
 		return s.field.Handle(ctx, evt)
 	}
+	if s.owner.model.Saving() {
+		return ui.EventResult{Handled: true}
+	}
 	if evt.IsKey() {
 		switch evt.Key.Code {
 		case tea.KeyTab:
@@ -1737,6 +1799,9 @@ func (s *settingsCategoryList) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui
 	s.list.Paint(buf, ox+s.Bounds().X, oy+s.Bounds().Y, ctx)
 }
 func (s *settingsCategoryList) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+	if s.owner != nil && s.owner.model != nil && s.owner.model.Saving() {
+		return ui.EventResult{Handled: true}
+	}
 	result := s.list.Handle(ctx, evt)
 	if s.owner == nil || s.owner.model == nil {
 		return result
@@ -1860,7 +1925,7 @@ func (s *settingsTemplateTable) Paint(buf *surface.CellBuffer, ox, oy int, ctx u
 	s.table.Paint(buf, ox+s.Bounds().X, oy+s.Bounds().Y, ctx)
 }
 func (s *settingsTemplateTable) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
-	if s.owner == nil || s.owner.model == nil || s.owner.model.accountBusy {
+	if s.owner == nil || s.owner.model == nil || s.owner.model.accountBusy || s.owner.model.Saving() {
 		return ui.EventResult{Handled: true}
 	}
 	previous := s.owner.model.providerID
@@ -1978,7 +2043,7 @@ func (s *settingsAccountTable) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui
 	s.table.Paint(buf, ox+s.Bounds().X, oy+s.Bounds().Y, ctx)
 }
 func (s *settingsAccountTable) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
-	if s.owner != nil && s.owner.model != nil && s.owner.model.accountBusy {
+	if s.owner != nil && s.owner.model != nil && (s.owner.model.accountBusy || s.owner.model.Saving()) {
 		return ui.EventResult{Handled: true}
 	}
 	previous := s.owner.model.accountID
@@ -2141,6 +2206,9 @@ func (s *settingsScopeStrip) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.P
 func (s *settingsScopeStrip) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if s.owner == nil {
 		return ui.EventResult{}
+	}
+	if s.owner.model != nil && s.owner.model.Saving() {
+		return ui.EventResult{Handled: true}
 	}
 	if evt.Kind == ui.EventMouseMotion {
 		s.hover = 0

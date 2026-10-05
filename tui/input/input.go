@@ -64,6 +64,7 @@ var availableCmds = []CmdInfo{
 	{Name: "mcp", Label: "mcp", Desc: "Browse and manage MCP connections in Settings"},
 	{Name: "skill", Label: "skill", Desc: "Invoke an exact source-qualified skill with arguments"},
 	{Name: "compact", Label: "compact", Desc: "Summarize older conversation history to free context"},
+	{Name: "retry", Label: "retry", Desc: "Continue this agent's pending recovery without replaying completed work"},
 	{Name: "help", Label: "help", Desc: "Open help"},
 }
 

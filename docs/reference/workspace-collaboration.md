@@ -177,8 +177,9 @@ suppresses the later terminal outcome. Corrections append a new report revision;
 already accepted bytes remain readable.
 
 Children must publish the required final report exactly once before ending.
-Missing that deliverable is a policy failure; Crude does not fabricate a success
-report from the final chat text.
+Missing that deliverable is not success; the [run supervisor](run-recovery.md)
+performs bounded corrective continuation or retains an actionable unfinished
+task. Crude does not fabricate a success report from the final chat text.
 
 ## Claims and authority boundaries
 
@@ -227,6 +228,10 @@ artifacts, and run facts without provider calls, command replay, or implicit
 child launch. Already-published evidence is admitted passively through a stable
 startup sequence boundary; genuinely new peer input can subsequently wake an idle
 root. Recovered children have their own receipts/runs settled without restarting.
+Interrupted attempt facts do not settle their durable unfinished task. Explicit
+**Continue run** uses the owning session's safe recovery checkpoint and starts a
+checked replacement attempt; it is separate from availability-only resume/reopen
+controls and never relaunches old tool effects.
 Workspace switch/shutdown joins local workers, releases exact
 runtime locks, and does not stop another process's agents.
 

@@ -891,7 +891,43 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
   non-streaming requests honor the overall deadline across retries, even when
   the caller already has a longer deadline; close/completion/error releases the
   stream timer. Unlimited overall duration does not disable progress detection.
-  The connect setting also owns TLS handshake timeouts, not header waiting.
+  An explicit provider/account connect setting also owns its TLS handshake
+  budget; unset values inherit the separate Network TCP/TLS defaults. Neither
+  is a competing response-header timeout.
+
+### Unfinished run recovery and network transport
+- `agent.Supervisor` is the one root/child unfinished-run lifecycle. Request
+  exhaustion, deadlines, truncation, loop guards, missing reports and panics are
+  not natural completion or permission to kill a task. Recover transient outages;
+  park configuration, guidance, storage and uncertain-effect failures with an
+  actionable Needs attention state. Only natural finish or explicit user/parent
+  lifecycle may settle work. Preserve safe canonical boundaries; never replay
+  accepted stochastic output, historical tool effects or existing commands.
+- `sessiondb` retains exact pending input, owner/generation, archive and active
+  context through one durable recovery checkpoint. Persistence must succeed
+  before acknowledging natural completion. Resume remains passive; explicit
+  Continue run or `/retry` fences the exact incident/generation and must not
+  consume drafts, switch another tab or restart old effects. Stop must also work
+  for parked/interrupted work without an active collaboration run.
+- `retry/` owns every Crude-managed automatic cooldown. Exponential math
+  saturates safely and cancellation is prompt; **five minutes is the absolute
+  per-wait maximum**, including Retry-After and millisecond/date hints. A server's
+  24-hour hint must never cause an hours-long local retry sleep. Request/job
+  attempt budgets and successful maintenance cadence remain separate.
+- Recovery uses one retained incident row: static severity title, full neutral
+  diagnostic and muted action guidance, with concise strip countdown/attention.
+  Waiting for attention never animates fake work. Live and hydrated projection,
+  copy/selection, timestamps and explicit cancellation must agree.
+- `network/` owns the shared outbound HTTP transport for providers, OAuth,
+  catalogs, web tools, capability downloads and MCP HTTP/OAuth. Network settings
+  are application-only Connection / Proxy / Certificates pages; workspaces
+  cannot grant trust or client credentials. Secure system trust, exact-host leaf
+  exceptions and exact-host mTLS stay isolated from proxies/unrelated origins.
+  Proxy failure never falls back direct, and invalid material fails closed.
+  Certificate reads and preference persistence run off Update with retained
+  form/workspace ownership; an unchanged request keeps its captured policy.
+  See `docs/reference/run-recovery.md` and `docs/reference/network.md` for the
+  authoritative contracts, coverage and explicit limits.
 
 ### Editor motion
 - **`Editor.moveWordLeft` must keep climbing across blank lines**: word-left

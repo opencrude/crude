@@ -360,6 +360,7 @@ func (s *Session) MessagesWithMeta() []sessiondb.MessageWithMeta {
 func (s *Session) appendToWriteBuf(msgs []provider.ChatMessage, turns []int, metas []sessiondb.DisplayMeta) {
 	s.writeMu.Lock()
 	defer s.writeMu.Unlock()
+	s.writeBuf = s.writeBuf[:0]
 	for i, m := range msgs {
 		turn := 0
 		if i < len(turns) {
@@ -373,14 +374,16 @@ func (s *Session) appendToWriteBuf(msgs []provider.ChatMessage, turns []int, met
 	}
 }
 
-func (s *Session) flushWriteBufSync() {
+func (s *Session) flushWriteBufSync() error {
 	s.writeMu.Lock()
-	buf := s.writeBuf
-	s.writeBuf = s.writeBuf[:0]
+	buf := append([]taggedMessage(nil), s.writeBuf...)
 	s.writeMu.Unlock()
 
 	if len(buf) == 0 || s.db == nil {
-		return
+		if s.db == nil && len(buf) > 0 {
+			return fmt.Errorf("session database is unavailable")
+		}
+		return nil
 	}
 
 	msgs := make([]provider.ChatMessage, len(buf))
@@ -394,12 +397,20 @@ func (s *Session) flushWriteBufSync() {
 
 	newSeq, err := sessiondb.ReplaceMessagesWithMeta(s.db, s.sessionID, msgs, turns, metas)
 	if err != nil {
-		s.logger.Error("SESSIONDB", "sync_flush_error", "error", err.Error())
-		return
+		if s.logger != nil {
+			s.logger.Error("SESSIONDB", "sync_flush_error", "error", err.Error())
+		}
+		return err
 	}
+	s.writeMu.Lock()
+	if len(s.writeBuf) == len(buf) {
+		s.writeBuf = s.writeBuf[:0]
+	}
+	s.writeMu.Unlock()
 	s.msgsMu.Lock()
 	s.seqNum = newSeq
 	s.msgsMu.Unlock()
+	return nil
 }
 
 func sanitizeMessages(msgs []provider.ChatMessage) []provider.ChatMessage {

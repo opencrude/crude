@@ -326,11 +326,13 @@ existing aggregate totals.
 
 ## Recovery And Stop
 
-Turn failures use one static notice heading with severity-colored ink and the
-full, neutrally colored, word/grapheme-wrapped diagnostic beneath it. The fixed
-strip says that the turn failed and points to the transcript; it never repeats
-a truncated filesystem/provider diagnostic. One owner-scoped failure Notice
-retains the exact details, without an asynchronous foreground-feedback echo.
+Unnatural attempt failures enter the [run recovery supervisor](run-recovery.md),
+not task death. One retained incident row uses a static severity-colored heading,
+full neutrally colored word/grapheme-wrapped diagnostic and muted action guidance.
+Recovering, Needs attention, Recovered and Interrupted share native notice geometry.
+The fixed strip carries concise recovery/countdown or explicit `/retry` guidance,
+never the raw diagnostic. Waiting for attention is static. Repeated failures update
+one incident instead of spamming red rows; owner-scoped Notices expose action.
 
 YOLO enable and disable use that same notice-row layout as system status, never
 assistant speech. Slash and palette toggles share one policy path, and the
@@ -345,10 +347,11 @@ termination, rate limits, and overloaded providers can recover. Invalid requests
 authentication/permission failures, exhausted billing/quota, invalid certificates,
 and nonexistent DNS names are not transient. Respect `x-should-retry: false`.
 
-Defaults are six total attempts with jittered exponential backoff capped at 30
-seconds. An explicit `Retry-After` or `retry-after-ms` is a minimum, not shortened
-by that cap. Delays over two minutes stop automatic recovery rather than sending
-too early. A single progress watchdog owns response-header waiting; the TCP/TLS
+Defaults are six total request attempts with jittered exponential backoff capped
+locally at 30 seconds. Server `Retry-After` or `retry-after-ms` advice may extend
+that wait, but all automatic cooldowns have an absolute five-minute ceiling.
+Zero/past advice cannot remove local pacing. Exhaustion yields to the task
+supervisor rather than permanently ending work. A single progress watchdog owns response-header waiting; the TCP/TLS
 connection timeout is not a competing header deadline. Per-provider settings can
 override attempt/backoff budgets and initial/minimum/maximum progress timeouts;
 accounts can override the template's complete connection-tuning set. Defaults are
@@ -358,8 +361,8 @@ waits; a caller's earlier deadline still wins. Unlimited overall duration never
 disables progress detection. See [connection timeouts](settings.md#connection-timeouts).
 
 After accepted output, preserve the canonical partial response and issue a hidden
-continuation, at most three consecutive times with 1/2/4-second cooldowns. A clean
-completed response resets that interruption budget. If tool construction was
+continuation. Bounded local interruption recovery yields to the same supervising
+task when exhausted; it never replays accepted stochastic output. If tool construction was
 interrupted, execute none of that response's calls, discard unfinished protocol
 fragments, and ask for complete calls. These are `Not run`, not failed operations.
 Retry feedback starts on the first retry, occupies the fixed activity strip, states the

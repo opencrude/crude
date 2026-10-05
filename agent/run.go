@@ -17,6 +17,7 @@ import (
 
 	rootprompt "crude/prompt"
 	"crude/provider"
+	"crude/retry"
 	"crude/tools"
 	ttypes "crude/types"
 	"crude/types/reasoning"
@@ -44,7 +45,13 @@ func (a *Agent) Run(
 		emit = func(AgentEvent) {}
 	}
 	l := a.logger
-	a.reportPublished = false
+	a.runFailure = nil
+	a.runFailureKind = ""
+	a.runRecoveryKind = ""
+	a.lastArchive = nil
+	if !a.preserveReportState {
+		a.reportPublished = false
+	}
 	var emitActive atomic.Bool
 	emitActive.Store(true)
 	origEmit := emit
@@ -75,12 +82,14 @@ func (a *Agent) Run(
 		origEmit(evt)
 	}
 	if a.Provider == nil {
+		a.setRunFailure(fmt.Errorf("agent provider is nil"), rootprompt.RecoveryInterrupted, RecoveryFailureConfiguration)
 		a.emitError(emit, fmt.Errorf("agent provider is nil"))
 		return append([]provider.ChatMessage(nil), sessionMessages...)
 	}
 	var guidanceErr error
 	systemPrompt, guidanceErr = a.loadProjectGuidance(ctx, systemPrompt)
 	if guidanceErr != nil {
+		a.setRunFailure(guidanceErr, rootprompt.RecoveryInterrupted, RecoveryFailureGuidance)
 		a.emitError(emit, fmt.Errorf("cannot start project work before reading complete guidance: %w", guidanceErr))
 		return append([]provider.ChatMessage(nil), sessionMessages...)
 	}
@@ -113,9 +122,18 @@ func (a *Agent) Run(
 	} else {
 		archiveMsgs = append(archiveMsgs, sessionMessages...)
 	}
+	var checkpointErr error
 	appendWire := func(messages ...provider.ChatMessage) {
 		msgs = append(msgs, messages...)
 		archiveMsgs = append(archiveMsgs, messages...)
+		a.lastActiveContext = append([]provider.ChatMessage(nil), msgs[1:]...)
+		a.lastArchive = append([]provider.ChatMessage(nil), archiveMsgs...)
+		if checkpointErr == nil && a.Checkpoint != nil {
+			checkpointErr = a.Checkpoint(
+				append([]provider.ChatMessage(nil), archiveMsgs...),
+				append([]provider.ChatMessage(nil), msgs[1:]...),
+			)
+		}
 	}
 	returnMessages := func() []provider.ChatMessage {
 		if stopped {
@@ -126,11 +144,13 @@ func (a *Agent) Run(
 			stopped = false
 		}
 		a.lastActiveContext = append([]provider.ChatMessage(nil), msgs[1:]...)
+		a.lastArchive = append([]provider.ChatMessage(nil), archiveMsgs...)
 		return append([]provider.ChatMessage(nil), archiveMsgs...)
 	}
 	if a.WorkDir != "" || a.AsyncMgr != nil || a.SubAgentMgr != nil || a.ContinuationContext != nil {
 		continuity, err := a.continuityMessage(ctx, false)
 		if err != nil {
+			a.setRunFailure(err, rootprompt.RecoveryInterrupted, RecoveryFailureStorage)
 			a.emitError(emit, err)
 			return returnMessages()
 		}
@@ -173,6 +193,11 @@ func (a *Agent) Run(
 		if ctx.Err() != nil {
 			l.Warn("CANCEL", "context_cancelled", "step", step, "reason", ctx.Err().Error())
 			emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
+			return returnMessages()
+		}
+		if checkpointErr != nil {
+			a.setRunFailure(checkpointErr, rootprompt.RecoveryInterrupted, RecoveryFailureStorage)
+			a.emitError(emit, fmt.Errorf("persist safe run checkpoint: %w", checkpointErr))
 			return returnMessages()
 		}
 
@@ -229,6 +254,7 @@ func (a *Agent) Run(
 			}
 		}
 		if _, err := drainRuntime(); err != nil {
+			a.setRunFailure(err, rootprompt.RecoveryInterrupted, RecoveryFailureStorage)
 			a.emitError(emit, err)
 			return returnMessages()
 		}
@@ -250,6 +276,7 @@ func (a *Agent) Run(
 		if len(runtimeNoticeIDs) > 0 && a.CommitRuntimeNotices != nil {
 			if err := a.CommitRuntimeNotices(append([]provider.ChatMessage(nil), msgs...)); err != nil {
 				clearUnsentRuntimeNotices()
+				a.setRunFailure(err, rootprompt.RecoveryInterrupted, RecoveryFailureStorage)
 				a.emitError(emit, fmt.Errorf("runtime notice context admission failed: %w", err))
 				return returnMessages()
 			}
@@ -284,6 +311,7 @@ func (a *Agent) Run(
 						emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
 					} else {
 						emit(AgentEvent{Type: "context_compaction_failed", Data: data})
+						a.setRunFailure(compactErr, rootprompt.RecoveryInterrupted)
 						a.emitError(emit, fmt.Errorf("context compaction failed; original context retained: %w", compactErr))
 					}
 					return returnMessages()
@@ -298,6 +326,7 @@ func (a *Agent) Run(
 					data["model_id"] = outcome.ModelID
 					data["error"] = compactErrorText(compactErr)
 					emit(AgentEvent{Type: "context_compaction_failed", Data: data})
+					a.setRunFailure(compactErr, rootprompt.RecoveryInterrupted)
 					a.emitError(emit, fmt.Errorf("context compaction failed; original context retained: %w", compactErr))
 					return returnMessages()
 				}
@@ -317,6 +346,7 @@ func (a *Agent) Run(
 						clearUnsentRuntimeNotices()
 						commitData["error"] = compactErrorText(err)
 						emit(AgentEvent{Type: "context_compaction_failed", Data: commitData})
+						a.setRunFailure(err, rootprompt.RecoveryInterrupted, RecoveryFailureStorage)
 						a.emitError(emit, fmt.Errorf("context compaction commit failed; original context retained: %w", err))
 						return returnMessages()
 					}
@@ -349,6 +379,7 @@ func (a *Agent) Run(
 		requestMsgs := msgs
 		if err := prefix.check(requestMsgs); err != nil {
 			clearUnsentRuntimeNotices()
+			a.setRunFailure(err, rootprompt.RecoveryUncertain, RecoveryFailureUnknown)
 			a.emitError(emit, fmt.Errorf("refusing mutated context before provider request: %w", err))
 			return returnMessages()
 		}
@@ -585,8 +616,9 @@ func (a *Agent) Run(
 						}})
 					}
 				}
+				a.setRunFailure(err, rootprompt.RecoveryKind(reason), RecoveryFailureTransport)
 				l.Warn("AGENT", "auto_continue_interrupted_stream", "continuation", interruptionRecoveries, "reason", reason, "error", err.Error())
-				delay := time.Second * time.Duration(1<<min(interruptionRecoveries-1, 2))
+				delay := retry.Exponential(interruptionRecoveries, time.Second, retry.MaxCooldown)
 				emit(AgentEvent{Type: "retry", Data: map[string]any{
 					"attempt": interruptionRecoveries, "limit": 4,
 					"backoff": delay.Seconds(),
@@ -596,15 +628,23 @@ func (a *Agent) Run(
 				continuation.Origin = provider.OriginContinuation
 				continuation.Visibility = provider.VisibilityContextOnly
 				appendWire(continuation)
-				timer := time.NewTimer(delay)
-				select {
-				case <-timer.C:
-				case <-ctx.Done():
-					timer.Stop()
+				if waitErr := retry.Wait(ctx, delay); waitErr != nil {
 					emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
 					return returnMessages()
 				}
 				continue
+			}
+			kind := rootprompt.RecoveryTransport
+			if completion.hasOutput() {
+				kind = rootprompt.RecoveryPartialResponse
+				if len(completion.ToolCalls) > 0 {
+					kind = rootprompt.RecoveryPartialTool
+				}
+			}
+			a.setRunFailure(err, kind)
+			var streamFailure *streamPanicError
+			if errors.As(err, &streamFailure) {
+				a.setRunFailure(err, rootprompt.RecoveryUncertain, RecoveryFailurePanic)
 			}
 			a.emitError(emit, err)
 			return returnMessages()
@@ -691,10 +731,28 @@ func (a *Agent) Run(
 			l.Debug("AGENT", "branch_text_only", "text_len", len(accumulatedText), "step", step)
 		}
 		if hasToolCalls && isTruncatedFinishReason(finishReason) {
-			a.emitError(emit, fmt.Errorf(
+			truncatedErr := fmt.Errorf(
 				"provider truncated a tool call response (%s); tools were not executed",
 				finishReason,
-			))
+			)
+			partialMessage := provider.ChatMessage{
+				Role:              "assistant",
+				Content:           provider.TextContent(accumulatedText),
+				ReasoningDuration: completion.ReasoningDuration,
+				ReasoningDisplay:  completion.ReasoningDisplay,
+			}
+			if partialMessage.ContentString() != "" {
+				appendWire(partialMessage)
+			}
+			for _, call := range toolCalls {
+				emit(AgentEvent{Type: "tool_result", Data: map[string]any{
+					"tool_id": call.ID, "internal_id": call.InternalID,
+					"name": call.Function.Name, "error": "true", "interrupted": true,
+					"result": "Provider output ended before execution; this incomplete call was discarded.",
+				}})
+			}
+			a.setRunFailure(truncatedErr, rootprompt.RecoveryPartialTool, RecoveryFailureTruncated)
+			a.emitError(emit, truncatedErr)
 			return returnMessages()
 		}
 
@@ -715,6 +773,11 @@ func (a *Agent) Run(
 		}
 		provider.BindResponseReference(&assistantMsg, completion.ResponseReference)
 		appendWire(assistantMsg)
+		if checkpointErr != nil {
+			a.setRunFailure(checkpointErr, rootprompt.RecoveryInterrupted, RecoveryFailureStorage)
+			a.emitError(emit, fmt.Errorf("persist assistant boundary before tools: %w", checkpointErr))
+			return returnMessages()
+		}
 
 		if !hasToolCalls {
 			if isAutoContinuableFinishReason(finishReason) && continuations < maxAutoContinuations {
@@ -857,16 +920,23 @@ func (a *Agent) Run(
 				FinishReason: finishReason,
 			})
 		}
+		if checkpointErr != nil {
+			a.setRunFailure(checkpointErr, rootprompt.RecoveryUncertain, RecoveryFailureStorage)
+			a.emitError(emit, fmt.Errorf("persist completed tool boundary: %w", checkpointErr))
+			return returnMessages()
+		}
 		if lastToolResultIdx > 0 && lastToolResultIdx < len(msgs) {
 			l.Debug("CACHE", "breakpoint", "msg_idx", lastToolResultIdx, "role", msgs[lastToolResultIdx].Role)
 		}
 		if guidanceErr != nil {
+			a.setRunFailure(guidanceErr, rootprompt.RecoveryInterrupted, RecoveryFailureGuidance)
 			a.emitError(emit, fmt.Errorf("complete project guidance is required: %w", guidanceErr))
 			return returnMessages()
 		}
 		if guidanceChanged {
 			rendered, refreshErr := a.refreshProjectGuidance(ctx, systemPrompt)
 			if refreshErr != nil {
+				a.setRunFailure(refreshErr, rootprompt.RecoveryInterrupted, RecoveryFailureGuidance)
 				a.emitError(emit, fmt.Errorf("prepare updated project guidance: %w", refreshErr))
 				return returnMessages()
 			}

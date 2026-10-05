@@ -320,6 +320,7 @@ func (s *Session) humanSteeringMessages(
 				}
 				select {
 				case messages <- runtime:
+					s.wakeRecovery(agentID)
 					continue
 				case <-ctx.Done():
 					runtime.Release("target run ended before admission")

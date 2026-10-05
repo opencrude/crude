@@ -3,6 +3,7 @@ package types
 import (
 	"crude/types/activity"
 	"crude/types/reasoning"
+	"crude/types/recovery"
 	"time"
 )
 
@@ -125,6 +126,7 @@ type AgentActivityView struct {
 	RetryAttempt, RetryLimit int
 	RetryReason              string
 	Plan                     *activity.Plan
+	Recovery                 recovery.Status
 }
 
 type AgentPhase string
@@ -144,6 +146,9 @@ const (
 	AgentApproval         AgentPhase = "approval"
 	AgentQuestion         AgentPhase = "question"
 	AgentRetrying         AgentPhase = "retrying"
+	AgentRecovering       AgentPhase = "recovering"
+	AgentNeedsAttention   AgentPhase = "needs_attention"
+	AgentInterrupted      AgentPhase = "interrupted"
 	AgentCancelling       AgentPhase = "cancelling"
 	AgentCompleted        AgentPhase = "completed"
 	AgentCancelled        AgentPhase = "cancelled"

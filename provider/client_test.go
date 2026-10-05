@@ -717,7 +717,7 @@ func TestClientConnectTimeoutAlsoControlsTLSHandshake(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if got := client.hc.Transport.(*http.Transport).TLSHandshakeTimeout; got != 45*time.Second {
+	if got := client.dial.TLSHandshakeTimeout; got != 45*time.Second {
 		t.Fatalf("TLS retained a hidden timeout: %s", got)
 	}
 }

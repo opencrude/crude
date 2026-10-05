@@ -105,16 +105,15 @@ func (w *Workspace) SaveWorkspaceSettings(overrides ttypes.WorkspaceOverrides) e
 func (w *Workspace) SaveAppSettings(s ttypes.AppSettings) error {
 	ttypes.ApplyAppDefaults(&s)
 	if w.OnAppSettingsSave != nil {
-		if err := w.OnAppSettingsSave(s); err != nil {
+		persisted, err := w.OnAppSettingsSave(s)
+		if err != nil {
 			w.Logger.Warn("WORKSPACE", "save_app_settings_failed", "error", err.Error())
 			return err
 		}
 		// Account and provider-template operations commit independently of
 		// preference drafts. Keep the complete live provider snapshot published
 		// by the app owner, rather than re-installing stale templates/defaults.
-		persisted := w.AppDefaults()
-		s.Accounts = persisted.Accounts
-		s.Providers = persisted.Providers
+		s = persisted
 	}
 	w.appDefaults = s
 	if w.sessionCfg != nil && w.sessionCfg.AccountManager != nil {
@@ -131,6 +130,10 @@ func (w *Workspace) SaveAppSettings(s ttypes.AppSettings) error {
 
 func (w *Workspace) applyEffectiveSettings() {
 	effective := w.EffectiveAppSettings()
+	w.applySettingsProjection(effective)
+}
+
+func (w *Workspace) applySettingsProjection(effective ttypes.AppSettings) {
 	w.applyProviderSettings(effective)
 	if w.LSPMgr != nil {
 		w.LSPMgr.SetSettings(effective.LSP)

@@ -17,6 +17,7 @@ import (
 	"crude/provider"
 	"crude/session"
 	ttypes "crude/types"
+	"crude/types/recovery"
 )
 
 type historyE2EEvent struct {
@@ -284,7 +285,7 @@ func TestAgentUndoProductionPathGuardsPostToolExternalOverwrite(t *testing.T) {
 	}
 }
 
-func TestHistoryStartFailureAbortsBeforeProviderExecution(t *testing.T) {
+func TestHistoryStartFailurePausesBeforeProviderExecution(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
@@ -316,14 +317,25 @@ func TestHistoryStartFailureAbortsBeforeProviderExecution(t *testing.T) {
 	for {
 		select {
 		case event := <-sender.events:
-			if event.typ == "error" {
+			if event.typ == "recovery" {
+				status, ok := event.data.(recovery.Status)
+				if !ok || status.State != recovery.NeedsAttention {
+					continue
+				}
 				if requests.Load() != 0 {
 					t.Fatalf("provider requests=%d", requests.Load())
 				}
+				if !frontend.backend.IsTurnActive() || !frontend.backend.CancelRecoveryFor(orchestrator.ID, status.ID, status.Generation) {
+					t.Fatal("blocked history task was killed or cannot be explicitly stopped")
+				}
+				waitHistoryAgentDone(t, sender, orchestrator.ID)
 				return
 			}
+			if event.typ == "error" || event.typ == "done" {
+				t.Fatalf("history failure permanently ended unfinished work: %s %v", event.typ, event.data)
+			}
 		case <-deadline:
-			t.Fatal("history failure did not terminate the turn")
+			t.Fatal("history failure did not pause the turn")
 		}
 	}
 }
@@ -363,11 +375,22 @@ func TestEnabledHistoryStoreOpenFailureBlocksProviderAndTools(t *testing.T) {
 	for {
 		select {
 		case event := <-sender.events:
-			if event.typ == "error" {
+			if event.typ == "recovery" {
+				status, ok := event.data.(recovery.Status)
+				if !ok || status.State != recovery.NeedsAttention {
+					continue
+				}
 				if requests.Load() != 0 {
 					t.Fatalf("provider requests=%d", requests.Load())
 				}
+				if !frontend.backend.IsTurnActive() || !frontend.backend.CancelRecoveryFor(orchestrator.ID, status.ID, status.Generation) {
+					t.Fatal("unavailable history task was killed or cannot be explicitly stopped")
+				}
+				waitHistoryAgentDone(t, sender, orchestrator.ID)
 				return
+			}
+			if event.typ == "error" || event.typ == "done" {
+				t.Fatalf("unavailable history permanently ended unfinished work: %s %v", event.typ, event.data)
 			}
 		case <-deadline:
 			t.Fatal("unavailable enabled history did not block the turn")

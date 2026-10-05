@@ -41,7 +41,7 @@ func TestDialerFromFormAllDefaultYieldsNil(t *testing.T) {
 	// The form's initial selection is the built-in default of each row.
 	defaults := dialerFromForm(
 		dialChoiceID(0, 0),
-		dialChoiceID(0, int(provider.DefaultConnectTimeout.Seconds())),
+		"0",
 		dialChoiceID(0, provider.DefaultMaxAttempts),
 		dialChoiceID(0, int(provider.DefaultMaxBackoff.Seconds())),
 		dialChoiceID(0, int(provider.DefaultProgressStartupTimeout.Seconds())),
@@ -73,7 +73,7 @@ func TestDialerFromFormPersistsBuiltInDefaultAsUnset(t *testing.T) {
 	// A row explicitly moved to the built-in default must not freeze that
 	// number into the config — it persists as unset so a future change to the
 	// built-in default is honored.
-	dialer := dialerFromForm("0", "30", strconv.Itoa(provider.DefaultMaxAttempts), strconv.Itoa(int(provider.DefaultMaxBackoff.Seconds())), "60", "45", "300")
+	dialer := dialerFromForm("0", "0", strconv.Itoa(provider.DefaultMaxAttempts), strconv.Itoa(int(provider.DefaultMaxBackoff.Seconds())), "60", "45", "300")
 	if dialer != nil {
 		t.Fatalf("built-in-default selections = %+v, want nil", dialer)
 	}
@@ -100,9 +100,8 @@ func TestDialerFieldsRenderCurrentValues(t *testing.T) {
 		t.Errorf("max attempts field = %q, want 5", byID[fieldDialAttempts])
 	}
 	// Unset rows select the built-in default option ID.
-	if got := byID[fieldDialConnect]; got != "30" {
-		t.Errorf("connect timeout field = %q, want %q (built-in default)", got,
-			dialChoiceID(0, int(provider.DefaultConnectTimeout.Seconds())))
+	if got := byID[fieldDialConnect]; got != "0" {
+		t.Errorf("connect timeout field = %q, want Network inheritance", got)
 	}
 	if got := byID[fieldDialBackoff]; got != strconv.Itoa(int(provider.DefaultMaxBackoff.Seconds())) {
 		t.Errorf("max backoff field = %q, want %q (built-in default)", got,
@@ -114,6 +113,16 @@ func TestDialerFieldsRenderCurrentValues(t *testing.T) {
 		if got := byID[id]; got != want {
 			t.Errorf("%s = %q, want default %s", id, got, want)
 		}
+	}
+}
+
+func TestExplicitConnectBudgetIsDistinctFromNetworkInheritance(t *testing.T) {
+	if field := dialConnectField(0); field.Value.String() != "0" || field.Options[0].Label != "Network defaults" {
+		t.Fatalf("inheritance is falsely labelled as a hard-coded timeout: %+v", field)
+	}
+	explicit := dialerFromForm("0", "30", "6", "30", "60", "45", "300")
+	if explicit == nil || explicit.ConnectTimeoutSeconds != 30 {
+		t.Fatal("explicit 30s must override both budgets, not silently become Network inheritance")
 	}
 }
 
@@ -208,6 +217,14 @@ func TestConnectionTuningSettingsEditors(t *testing.T) {
 			} else {
 				m.SelectCategory(category)
 				s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.template.edit"})
+			}
+			backoff := m.categories[category].Form.Field(prefix + fieldDialBackoff)
+			if backoff == nil || !strings.Contains(backoff.Description, "Retry-After") || !strings.Contains(backoff.Description, "1-300") {
+				t.Fatalf("max-backoff help does not state the shared Retry-After 1-300 second cap: %+v", backoff)
+			}
+			m.SetValueForTest(category, prefix+fieldDialBackoff, "301")
+			if result := s.HandleAction(ui.EventContext{}, ui.Action{ID: save}); result.Cmd != nil || !backoff.HasErrors() {
+				t.Fatal("max backoff above the five-minute cap was not blocked and highlighted")
 			}
 			for id, value := range map[string]string{
 				fieldDialTimeout: "300", fieldDialConnect: "10", fieldDialAttempts: "3", fieldDialBackoff: "60",

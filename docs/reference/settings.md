@@ -225,6 +225,17 @@ still operate during full uploads and is not the Store switch. See
 [Responses delta uploads](prompt-architecture.md#responses-delta-uploads) for
 expiry recovery, durable resume and safety boundaries.
 
+### Network
+
+Application Settings has a dedicated **Network** group between AI and Security:
+**Connection**, **Proxy**, and **Certificates**. Workspace scope displays these
+application-owned values read-only, never a project-controlled trust or credential
+override. Connection reuse and HTTP/2, HTTP(S)/SOCKS routing, custom roots,
+exact-host leaf-certificate exceptions and mTLS identities share one transport.
+Certificate validation and preferences persistence run off the UI thread; failed
+saves retain the exact busy/draft owner. See [network transport](network.md) for
+defaults, supported protocols, security boundaries and explicit limitations.
+
 ### Connection Timeouts
 
 Application Settings -> Providers -> Edit template exposes **Connection tuning**.
@@ -236,12 +247,12 @@ values into an independent account override; turning it off restores inheritance
 | Control | Default | Enforced scope |
 |---------|---------|----------------|
 | Request timeout | Unlimited | Entire chat request, including upload, streaming, retries and retry waits |
-| Connect timeout | 30 seconds | Each TCP connection and TLS handshake, not waiting for model output |
+| Connect timeout | Network defaults | An explicit provider value bounds its TCP connection and TLS handshake; unset inherits separate Network budgets |
 | Initial progress timeout | 60 seconds | Silence before positive byte progress in each upload/header/download phase |
 | Min progress timeout | 45 seconds | Lower bound on adaptive silence after bytes start moving |
 | Max progress timeout | 300 seconds | Upper bound on adaptive silence after bytes start moving |
 | Max attempts | 6 | Total tries, including the first, before accepted model output |
-| Max backoff | 30 seconds | Exponential retry delay cap; explicit server Retry-After minimums still take precedence |
+| Max backoff | 30 seconds | Local exponential retry cap; all cooldowns including server hints have an absolute five-minute ceiling |
 
 Progress limits must satisfy **minimum <= initial <= maximum**. Invalid
 combinations stay in the editor with field errors and cannot be saved. The
@@ -257,6 +268,10 @@ caller has a deadline; the earlier deadline always wins. Model discovery honors
 a configured Request timeout and uses a 30-second fallback when it is Unlimited.
 Saved transport edits reach later turns and new auxiliary clients; requests
 already in flight retain the values captured when their client was constructed.
+Request-attempt exhaustion does not permanently end an unfinished agent task;
+the [run supervisor](run-recovery.md) recovers transient conditions or waits for
+actionable configuration repair. The retry ceiling is separate from the progress
+watchdog and from reviewer/background-job attempt budgets.
 The fields persist under the template's `dialer` or the account's
 `overrides.dialer` in `config.json`: `request_timeout_seconds`,
 `connect_timeout_seconds`, `progress_startup_timeout_seconds`,

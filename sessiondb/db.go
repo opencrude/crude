@@ -254,6 +254,36 @@ CREATE TABLE IF NOT EXISTS agent_turns (
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS agent_recoveries (
+    incident_id        TEXT PRIMARY KEY,
+    session_id         TEXT NOT NULL,
+    agent_id           TEXT NOT NULL,
+    generation         INTEGER NOT NULL,
+    state              TEXT NOT NULL,
+    attempt            INTEGER NOT NULL DEFAULT 0,
+    retry_at           INTEGER NOT NULL DEFAULT 0,
+    summary            TEXT NOT NULL DEFAULT '',
+    detail             TEXT NOT NULL DEFAULT '',
+    action             TEXT NOT NULL DEFAULT '',
+    pending_input_json BLOB NOT NULL,
+    input_admitted     INTEGER NOT NULL DEFAULT 0,
+    archive_json       BLOB NOT NULL,
+    active_context_json BLOB NOT NULL,
+    context_owner_id   TEXT NOT NULL DEFAULT '',
+    context_generation INTEGER NOT NULL DEFAULT 1,
+    context_reason     TEXT NOT NULL DEFAULT 'recovery',
+    owner_data         BLOB,
+    created_at         INTEGER NOT NULL,
+    updated_at         INTEGER NOT NULL,
+    ended_at           INTEGER,
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
+CREATE INDEX IF NOT EXISTS idx_agent_recoveries_session
+    ON agent_recoveries(session_id, updated_at);
+CREATE INDEX IF NOT EXISTS idx_agent_recoveries_agent
+    ON agent_recoveries(session_id, agent_id, generation, updated_at);
+
 CREATE TABLE IF NOT EXISTS session_runtime_state (
     key        TEXT PRIMARY KEY,
     value      BLOB NOT NULL,

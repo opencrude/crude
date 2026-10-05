@@ -230,6 +230,9 @@ func (p *Provider) MediaReplayRecoveryEnabled() bool {
 // Client builds a transport client whose headers resolve the current bound
 // account at every attempt, including refresh and reconnect checks.
 func (p *Provider) Client(opts ...ClientOption) (*Client, error) {
+	if err := p.dial.Validate(); err != nil {
+		return nil, fmt.Errorf("provider %s connection settings: %w", p.ID, err)
+	}
 	proto := p.Protocol()
 	if proto == nil {
 		return nil, fmt.Errorf("provider %s: no protocol registered", p.ID)

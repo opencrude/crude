@@ -109,9 +109,19 @@ func (s *ActivityStrip) Update(source types.AgentActivityView, width int, th *th
 	if status.Phase == types.AgentCancelled {
 		label = "Stopped"
 	}
-	if status.NeedsAction || status.Phase == types.AgentFailed || status.Phase == types.AgentRetrying || status.Phase == types.AgentCancelling {
-		if status.Phase == types.AgentRetrying {
+	if status.Phase == types.AgentNeedsAttention {
+		label, role = "Needs attention · work kept · /retry to continue", ui.ColorWarning
+	}
+	if status.Phase == types.AgentInterrupted {
+		label, role = "Interrupted · work kept · /retry to continue", ui.ColorWarning
+	}
+	if status.NeedsAction || status.Phase == types.AgentFailed || status.Phase == types.AgentRetrying || status.Phase == types.AgentRecovering || status.Phase == types.AgentCancelling {
+		if status.Phase == types.AgentRetrying || status.Phase == types.AgentRecovering {
 			label = "Retrying request"
+			if status.Phase == types.AgentRecovering {
+				label = "Recovering"
+				source.RetryAttempt, source.RetryLimit, source.RetryReason = source.Recovery.Attempt, 0, source.Recovery.Summary
+			}
 			if source.RetryAttempt > 0 {
 				label += fmt.Sprintf(" · attempt %d", source.RetryAttempt)
 			}
@@ -307,7 +317,7 @@ func (s *ActivityStrip) animating() bool {
 		return s.source.Active
 	}
 	switch s.source.Status.Phase {
-	case types.AgentIdle, types.AgentCancelling, types.AgentCancelled, types.AgentCompleted, types.AgentFailed, types.AgentCompactionResult:
+	case types.AgentIdle, types.AgentCancelling, types.AgentCancelled, types.AgentCompleted, types.AgentFailed, types.AgentCompactionResult, types.AgentNeedsAttention, types.AgentInterrupted:
 		return false
 	default:
 		return s.source.Active

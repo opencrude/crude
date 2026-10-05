@@ -7,6 +7,7 @@ import (
 
 	"crude/collaboration"
 	"crude/provider"
+	"crude/sessiondb"
 	ttypes "crude/types"
 )
 
@@ -34,6 +35,36 @@ type turnRequest struct {
 	ctx        context.Context
 	generation uint64
 	deliveries []collaboration.PendingDelivery
+	recovery   *sessiondb.RecoveryCheckpoint
+}
+
+func (o *Orchestrator) submitRecovery(checkpoint sessiondb.RecoveryCheckpoint) bool {
+	if o == nil || o.closing.Load() || checkpoint.Status.Generation == 0 {
+		return false
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	o.turnMu.Lock()
+	defer o.turnMu.Unlock()
+	if o.closing.Load() || o.turnCancel != nil || checkpoint.Status.Generation < o.turnGeneration {
+		cancel()
+		return false
+	}
+	o.turnGeneration = checkpoint.Status.Generation
+	o.turnCancel = cancel
+	o.turnCancelling = false
+	copy := checkpoint
+	request := turnRequest{
+		input: cloneUserInput(checkpoint.PendingInput), ctx: ctx,
+		generation: checkpoint.Status.Generation, recovery: &copy,
+	}
+	select {
+	case o.inputCh <- request:
+		return true
+	default:
+		o.turnCancel = nil
+		cancel()
+		return false
+	}
 }
 
 func NewOrchestrator(id string, s *Session) *Orchestrator {

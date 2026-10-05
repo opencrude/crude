@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,6 +17,9 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"crude/network"
+	"crude/retry"
 
 	_ "modernc.org/sqlite"
 )
@@ -152,7 +156,6 @@ type catalogSnapshot struct {
 type ModelCatalog struct {
 	db        *sql.DB
 	sources   []ModelSource
-	client    *http.Client
 	snapshot  atomic.Pointer[catalogSnapshot]
 	updates   chan uint64
 	ctx       context.Context
@@ -185,7 +188,7 @@ func OpenModelCatalog(path string, sources []ModelSource) (*ModelCatalog, error)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	c := &ModelCatalog{
-		db: db, sources: slices.Clone(sources), client: &http.Client{Timeout: 20 * time.Second},
+		db: db, sources: slices.Clone(sources),
 		updates: make(chan uint64, 1), ctx: ctx, cancel: cancel, done: make(chan struct{}),
 		media: make(map[string]time.Time),
 	}
@@ -320,8 +323,7 @@ func (c *ModelCatalog) run() {
 			// Sources update sequentially: bounded CPU, one HTTP request and one
 			// writer, and each good dataset becomes usable before the next fetch.
 			if err := c.refresh(c.ctx, source); err != nil && c.ctx.Err() == nil {
-				c.recordFailure(source, err)
-				wait = min(wait, 15*time.Minute)
+				wait = min(wait, c.recordFailure(source, err))
 			}
 		}
 		timer := time.NewTimer(max(time.Second, wait))
@@ -334,13 +336,21 @@ func (c *ModelCatalog) run() {
 	}
 }
 
-func (c *ModelCatalog) recordFailure(source ModelSource, failure error) {
+func (c *ModelCatalog) recordFailure(source ModelSource, failure error) time.Duration {
 	// Cache maintenance never emits a product notification, status operation,
 	// sound, or chat event. Error evidence remains in the catalog database.
+	var failures int
+	_ = c.db.QueryRowContext(c.ctx, `SELECT failures FROM sources WHERE id=?`, source.ID).Scan(&failures)
+	delay := retry.Exponential(failures+1, 30*time.Second, retry.MaxCooldown)
+	var status *StatusError
+	if errors.As(failure, &status) {
+		delay = max(delay, retry.Clamp(status.RetryAfter))
+	}
 	_, _ = c.db.ExecContext(c.ctx, `INSERT INTO sources(id,url,format,checked_at,next_refresh,failures,last_error)
  VALUES(?,?,?,?,?,1,?) ON CONFLICT(id) DO UPDATE SET checked_at=excluded.checked_at,
  next_refresh=excluded.next_refresh, failures=sources.failures+1, last_error=excluded.last_error`,
-		source.ID, source.URL, source.Format, time.Now().Unix(), time.Now().Add(15*time.Minute).Unix(), failure.Error())
+		source.ID, source.URL, source.Format, time.Now().Unix(), time.Now().Add(delay).Unix(), failure.Error())
+	return delay
 }
 
 func (c *ModelCatalog) refresh(ctx context.Context, source ModelSource) error {
@@ -368,7 +378,11 @@ func (c *ModelCatalog) refresh(ctx context.Context, source ModelSource) error {
 			req.Header.Set("If-Modified-Since", modified)
 		}
 	}
-	resp, err := c.client.Do(req)
+	// Capture current application transport policy for this refresh, not once
+	// at catalog startup. In-flight requests keep their own immutable settings.
+	client := network.NewClient(20 * time.Second)
+	defer client.CloseIdleConnections()
+	resp, err := client.Do(req)
 	if err != nil {
 		return err
 	}
@@ -382,7 +396,7 @@ func (c *ModelCatalog) refresh(ctx context.Context, source ModelSource) error {
 		return err
 	}
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s returned HTTP %d", source.ID, resp.StatusCode)
+		return readStatusError(resp, 1<<20)
 	}
 	body, err := io.ReadAll(io.LimitReader(resp.Body, modelCatalogMaxBytes+1))
 	if err != nil {

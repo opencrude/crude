@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"crude/logger"
+	"crude/network"
+	"crude/retry"
 	"crude/types/reasoning"
 )
 
@@ -166,10 +168,14 @@ func NewClient(proto Protocol, baseURL, apiKey string, dial DialConfig, opts ...
 	if err := stall.validate(); err != nil {
 		return nil, fmt.Errorf("provider: %w", err)
 	}
+	hc, err := newHTTPClient(dial)
+	if err != nil {
+		return nil, fmt.Errorf("provider network configuration: %w", err)
+	}
 	c := &Client{
 		proto:               proto,
 		base:                base,
-		hc:                  newHTTPClient(dial),
+		hc:                  hc,
 		dial:                dial,
 		sessionID:           newSessionUUID(),
 		stall:               stall,
@@ -257,19 +263,17 @@ func staticHeaderSource(proto Protocol, apiKey string) func(context.Context) (ht
 // newHTTPClient builds the transport used for all API traffic. No overall
 // client timeout is set: streaming turns may legitimately run for minutes,
 // so deadlines are enforced per request via context instead.
-func newHTTPClient(dial DialConfig) *http.Client {
-	return &http.Client{
-		Transport: &http.Transport{
-			DialContext:         dialContext(dial.ConnectTimeout),
-			MaxIdleConns:        10,
-			MaxIdleConnsPerHost: 10,
-			IdleConnTimeout:     90 * time.Second,
-			TLSHandshakeTimeout: dial.ConnectTimeout,
-			// The per-attempt progress watchdog owns header waiting. A TCP
-			// connect timeout must not also cut off a queued gateway response.
-			ResponseHeaderTimeout: 0,
-		},
+func newHTTPClient(dial DialConfig) (*http.Client, error) {
+	settings := network.Current()
+	if dial.TLSHandshakeTimeout > 0 {
+		settings.TLSHandshakeTimeoutSeconds = max(1, int(dial.TLSHandshakeTimeout/time.Second))
 	}
+	transport, err := network.NewTransport(settings, dial.ConnectTimeout)
+	if err != nil {
+		return nil, err
+	}
+	// Only the provider's progress watchdog owns response-header waiting.
+	return &http.Client{Transport: transport}, nil
 }
 
 // --- chat ---
@@ -882,9 +886,6 @@ func (c *Client) backoff(ctx context.Context, attempt int, resp *http.Response, 
 		return err
 	}
 	delay := serverHintedDelay(resp, attempt, c.dial)
-	if delay < 0 {
-		return fmt.Errorf("provider requested a retry delay longer than %s; try again later: %w", maxServerRetryDelay, cause)
-	}
 	logIf(func(lg *logger.Logger) {
 		lg.Warn("RETRY", "attempt", "protocol", c.proto.Info().ID, "attempt", attempt,
 			"backoff_ms", delay.Milliseconds(), "error", cause.Error())
@@ -916,6 +917,9 @@ type StatusError struct {
 	RequestID  string
 	Code       string
 	RetryHint  string
+	// RetryAfter is a bounded server-advised cooldown, retained when a request
+	// attempt budget is exhausted so the supervising task can pace recovery.
+	RetryAfter time.Duration
 }
 
 func (e *StatusError) Error() string {
@@ -994,6 +998,7 @@ func readStatusError(resp *http.Response, maxBody int64) *StatusError {
 		RequestID:  firstNonEmptyString(resp.Header.Get("request-id"), resp.Header.Get("x-request-id")),
 		Code:       code,
 		RetryHint:  strings.ToLower(strings.TrimSpace(resp.Header.Get("x-should-retry"))),
+		RetryAfter: retry.ServerDelay(resp, 0, time.Now()),
 	}
 }
 

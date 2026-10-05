@@ -177,6 +177,7 @@ func sameMessageData(current, incoming *types.ChatMessage) bool {
 		current.LifecycleRetryAt.Equal(incoming.LifecycleRetryAt) &&
 		current.LifecycleRetryLimit == incoming.LifecycleRetryLimit &&
 		current.LifecycleContextWindow == incoming.LifecycleContextWindow &&
+		recoveryEqual(current.Recovery, incoming.Recovery) &&
 		current.PendingSteering == incoming.PendingSteering &&
 		current.Incomplete == incoming.Incomplete &&
 		current.IncompleteReason == incoming.IncompleteReason &&

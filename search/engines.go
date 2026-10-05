@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"crude/logger"
+	"crude/network"
 
 	"github.com/PuerkitoBio/goquery"
 )
@@ -216,7 +217,8 @@ func searchBrave(query string, limit int) ([]SearchResult, error) {
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := network.NewClient(15 * time.Second)
+	defer client.CloseIdleConnections()
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -277,7 +279,8 @@ func searchDuckDuckGo(query string, limit int) ([]SearchResult, error) {
 
 	req.Header.Set("User-Agent", "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/112.0.0.0 Safari/537.36")
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := network.NewClient(15 * time.Second)
+	defer client.CloseIdleConnections()
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -349,7 +352,8 @@ func searchStartpage(query string, limit int) ([]SearchResult, error) {
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := network.NewClient(15 * time.Second)
+	defer client.CloseIdleConnections()
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err
@@ -483,7 +487,8 @@ func searchExa(query string, limit int) ([]SearchResult, error) {
 	req.Header.Set("accept", "application/json, text/event-stream")
 	req.Header.Set("content-type", "application/json")
 
-	client := &http.Client{Timeout: 30 * time.Second}
+	client := network.NewClient(30 * time.Second)
+	defer client.CloseIdleConnections()
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, err

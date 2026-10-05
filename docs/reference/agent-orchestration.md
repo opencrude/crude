@@ -45,14 +45,20 @@ control, report, claim and crash-recovery contracts.
 `publish_report` delivers an immutable, versioned artifact: outcome, findings or
 changed paths, focused checks, and unresolved blockers. It is not a request to
 copy source files or continue investigating. Publication is evidence delivery,
-not proof that the run succeeded or the task quality is sufficient. Unrecovered
-stream failures without a required final deliverable are failures; cancellation
-and timeout remain distinct from success. The parent still reviews the evidence.
+not proof that the run succeeded or the task quality is sufficient. An unsuccessful
+attempt without a required final deliverable is not success; unfinished root/child
+work remains supervised or waits for attention. Cancellation remains distinct
+from success. The parent still reviews the evidence.
 
-Existing runtime timeouts and repeated-identical-tool detection complement these
-prompt rules. There is no arbitrary global step ceiling: a legitimate long task
+Request/job timeouts and repeated-identical-tool detection complement these prompt
+rules without permanently settling unfinished work. Children have no arbitrary
+task deadline. There is no arbitrary global step ceiling: a legitimate long task
 is not the same as a loop. Prompt guidance is not a guarantee against every
 unproductive behavior; report actual limitations rather than claiming otherwise.
+
+The authoritative [run recovery contract](run-recovery.md) separates bounded
+request attempts from owned unfinished tasks, defines actionable attention states,
+safe continuation/checkpoint/resume and the shared five-minute cooldown ceiling.
 
 ## Completion delivery
 

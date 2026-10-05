@@ -72,6 +72,14 @@ func (m *SubAgentManager) MarkFinished(id AgentID, result SubAgentResult) {
 	m.completedMap[id] = result
 }
 
+// MarkInterrupted releases a volatile handle without inventing a terminal
+// result. Its durable recovery task remains owned by sessiondb.
+func (m *SubAgentManager) MarkInterrupted(id AgentID) {
+	m.mu.Lock()
+	delete(m.active, id)
+	m.mu.Unlock()
+}
+
 // HydrateCompleted restores a durable result after process restart. Hydrated
 // handles are intentionally non-runnable; they exist so poll/list status keeps
 // the same semantics across resume.

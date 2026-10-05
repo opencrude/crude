@@ -745,6 +745,10 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		if id := m.AgentMgr.ActiveID(); id != "" {
 			m.cancelAgentTurn(id)
 		}
+	case "agent.retry":
+		return m.retryAgentRecovery(m.AgentMgr.ActiveID())
+	case "settings.network":
+		m.openNetworkSettings()
 
 	case "agent.newSession":
 		return m.launcherNewSession()

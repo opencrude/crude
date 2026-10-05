@@ -10,6 +10,7 @@ import (
 
 	"crude/docconv"
 	"crude/logger"
+	"crude/network"
 
 	"github.com/PuerkitoBio/goquery"
 )
@@ -196,9 +197,8 @@ func fetchWebContent(fetchURL string, offset, limit int) (*WebPage, error) {
 	req.Header.Set("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5")
 	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
 
-	client := &http.Client{
-		Timeout: 30 * time.Second,
-	}
+	client := network.NewClient(30 * time.Second)
+	defer client.CloseIdleConnections()
 
 	resp, err := client.Do(req)
 	if err != nil {

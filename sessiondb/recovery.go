@@ -1,0 +1,319 @@
+package sessiondb
+
+import (
+	"database/sql"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"time"
+
+	"crude/provider"
+	"crude/types/recovery"
+)
+
+// RecoveryCheckpoint is the durable, replay-safe state of one unfinished run.
+// Archive and ActiveContext are snapshots, not instructions to restart work.
+type RecoveryCheckpoint struct {
+	Status            recovery.Status
+	PendingInput      provider.UserInput
+	InputAdmitted     bool
+	Archive           []provider.ChatMessage
+	ActiveContext     []provider.ChatMessage
+	ContextOwnerID    string
+	ContextGeneration uint64
+	ContextReason     string
+	OwnerData         []byte
+}
+
+// SaveRecoveryCheckpoint atomically persists the exact incident status,
+// original input, archive, active context, and the context owner's live state.
+func SaveRecoveryCheckpoint(db *sql.DB, sessionID string, checkpoint RecoveryCheckpoint) error {
+	if db == nil {
+		return errors.New("sessiondb: nil recovery database")
+	}
+	if sessionID == "" || checkpoint.Status.ID == "" || checkpoint.Status.AgentID == "" ||
+		checkpoint.Status.Generation == 0 {
+		return errors.New("sessiondb: invalid recovery identity")
+	}
+	pending, err := json.Marshal(checkpoint.PendingInput)
+	if err != nil {
+		return fmt.Errorf("sessiondb: encode recovery input: %w", err)
+	}
+	archive, err := json.Marshal(checkpoint.Archive)
+	if err != nil {
+		return fmt.Errorf("sessiondb: encode recovery archive: %w", err)
+	}
+	active, err := json.Marshal(checkpoint.ActiveContext)
+	if err != nil {
+		return fmt.Errorf("sessiondb: encode recovery context: %w", err)
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("sessiondb: begin recovery checkpoint: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	nowTime := time.Now()
+	if checkpoint.Status.StartedAt.IsZero() {
+		checkpoint.Status.StartedAt = nowTime
+	}
+	if checkpoint.Status.UpdatedAt.IsZero() {
+		checkpoint.Status.UpdatedAt = nowTime
+	}
+	startedAt := checkpoint.Status.StartedAt.UnixNano()
+	updatedAt := checkpoint.Status.UpdatedAt.UnixNano()
+	retryAt := int64(0)
+	if !checkpoint.Status.RetryAt.IsZero() {
+		retryAt = checkpoint.Status.RetryAt.UnixNano()
+	}
+	var endedAt any
+	if checkpoint.Status.State == recovery.Recovered || checkpoint.Status.State == recovery.Cancelled {
+		endedAt = updatedAt
+	}
+	if checkpoint.ContextGeneration == 0 {
+		checkpoint.ContextGeneration = 1
+	}
+	if checkpoint.ContextReason == "" {
+		checkpoint.ContextReason = "recovery"
+	}
+	_, err = tx.Exec(`
+		INSERT INTO agent_recoveries (
+			incident_id, session_id, agent_id, generation, state, attempt, retry_at,
+			summary, detail, action, pending_input_json, input_admitted,
+			archive_json, active_context_json, context_owner_id,
+			context_generation, context_reason, owner_data, created_at, updated_at, ended_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(incident_id) DO UPDATE SET
+			agent_id=excluded.agent_id,
+			generation=excluded.generation,
+			state=excluded.state,
+			attempt=excluded.attempt,
+			retry_at=excluded.retry_at,
+			summary=excluded.summary,
+			detail=excluded.detail,
+			action=excluded.action,
+			pending_input_json=excluded.pending_input_json,
+			input_admitted=excluded.input_admitted,
+			archive_json=excluded.archive_json,
+			active_context_json=excluded.active_context_json,
+			context_owner_id=excluded.context_owner_id,
+			context_generation=excluded.context_generation,
+			context_reason=excluded.context_reason,
+			owner_data=excluded.owner_data,
+			updated_at=excluded.updated_at,
+			ended_at=excluded.ended_at
+	`, checkpoint.Status.ID, sessionID, checkpoint.Status.AgentID, checkpoint.Status.Generation,
+		string(checkpoint.Status.State), checkpoint.Status.Attempt, retryAt,
+		checkpoint.Status.Summary, checkpoint.Status.Detail, checkpoint.Status.Action,
+		pending, recoveryBoolInt(checkpoint.InputAdmitted), archive, active,
+		checkpoint.ContextOwnerID, checkpoint.ContextGeneration, checkpoint.ContextReason,
+		nullBytes(checkpoint.OwnerData), startedAt, updatedAt, endedAt)
+	if err != nil {
+		return fmt.Errorf("sessiondb: save recovery checkpoint: %w", err)
+	}
+	if checkpoint.ContextOwnerID != "" {
+		if _, err := tx.Exec(`
+			INSERT INTO agent_context_state (session_id, agent_id, generation, reason, messages_json, updated_at)
+			VALUES (?, ?, ?, ?, ?, ?)
+			ON CONFLICT(session_id, agent_id) DO UPDATE SET
+				generation=excluded.generation,
+				reason=excluded.reason,
+				messages_json=excluded.messages_json,
+				updated_at=excluded.updated_at
+		`, sessionID, checkpoint.ContextOwnerID, checkpoint.ContextGeneration,
+			checkpoint.ContextReason, active, updatedAt); err != nil {
+			return fmt.Errorf("sessiondb: save recovery active context: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("sessiondb: commit recovery checkpoint: %w", err)
+	}
+	return nil
+}
+
+// LoadRecoveryCheckpoint returns the latest unfinished incident for an agent.
+func LoadRecoveryCheckpoint(db *sql.DB, sessionID, agentID string) (RecoveryCheckpoint, bool, error) {
+	if db == nil || sessionID == "" || agentID == "" {
+		return RecoveryCheckpoint{}, false, nil
+	}
+	row := db.QueryRow(`
+		SELECT incident_id, agent_id, generation, state, attempt, retry_at, created_at, updated_at,
+		       summary, detail, action, pending_input_json, input_admitted,
+		       archive_json, active_context_json, context_owner_id,
+		       context_generation, context_reason, owner_data
+		FROM agent_recoveries
+		WHERE session_id=? AND agent_id=? AND state NOT IN (?, ?)
+		ORDER BY updated_at DESC LIMIT 1
+	`, sessionID, agentID, string(recovery.Recovered), string(recovery.Cancelled))
+	checkpoint, err := scanRecoveryCheckpoint(row)
+	if errors.Is(err, sql.ErrNoRows) {
+		return RecoveryCheckpoint{}, false, nil
+	}
+	if err != nil {
+		return RecoveryCheckpoint{}, false, err
+	}
+	return checkpoint, true, nil
+}
+
+// LoadOpenRecoveryCheckpoints returns every unfinished incident for passive
+// startup hydration. It never starts provider, tool, command, or child work.
+func LoadOpenRecoveryCheckpoints(db *sql.DB, sessionID string) ([]RecoveryCheckpoint, error) {
+	if db == nil || sessionID == "" {
+		return nil, nil
+	}
+	rows, err := db.Query(`
+		SELECT incident_id, agent_id, generation, state, attempt, retry_at, created_at, updated_at,
+		       summary, detail, action, pending_input_json, input_admitted,
+		       archive_json, active_context_json, context_owner_id,
+		       context_generation, context_reason, owner_data
+		FROM agent_recoveries
+		WHERE session_id=? AND state NOT IN (?, ?)
+		ORDER BY updated_at, incident_id
+	`, sessionID, string(recovery.Recovered), string(recovery.Cancelled))
+	if err != nil {
+		return nil, fmt.Errorf("sessiondb: load open recoveries: %w", err)
+	}
+	defer rows.Close()
+	var result []RecoveryCheckpoint
+	for rows.Next() {
+		checkpoint, err := scanRecoveryCheckpoint(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, checkpoint)
+	}
+	return result, rows.Err()
+}
+
+// LoadRecoveryRecords is the hydrated transcript/UI contract.
+func LoadRecoveryRecords(db *sql.DB, sessionID string) ([]recovery.Status, error) {
+	if db == nil || sessionID == "" {
+		return nil, nil
+	}
+	rows, err := db.Query(`
+		SELECT incident_id, agent_id, generation, state, attempt, retry_at, created_at, updated_at,
+		       summary, detail, action
+		FROM agent_recoveries
+		WHERE session_id=? AND state<>''
+		ORDER BY created_at, incident_id
+	`, sessionID)
+	if err != nil {
+		return nil, fmt.Errorf("sessiondb: load recovery records: %w", err)
+	}
+	defer rows.Close()
+	var result []recovery.Status
+	for rows.Next() {
+		status, err := scanRecoveryStatus(rows)
+		if err != nil {
+			return nil, err
+		}
+		result = append(result, status)
+	}
+	return result, rows.Err()
+}
+
+// InterruptActiveRecoveries truthfully converts only in-process automatic
+// recovery into passive startup state. Attention incidents remain parked.
+func InterruptActiveRecoveries(db *sql.DB, sessionID string) error {
+	if db == nil || sessionID == "" {
+		return nil
+	}
+	now := time.Now().UnixNano()
+	_, err := db.Exec(`
+		UPDATE agent_recoveries
+		SET state=?, retry_at=0,
+		    summary='Recovery interrupted by restart',
+		    action='Continue to resume this unfinished run',
+		    updated_at=?
+		WHERE session_id=? AND (state='' OR state=?)
+	`, string(recovery.Interrupted), now, sessionID, string(recovery.Recovering))
+	if err != nil {
+		return fmt.Errorf("sessiondb: interrupt active recoveries: %w", err)
+	}
+	return nil
+}
+
+// RebindRecoveryAgent moves a passive root incident to its newly allocated
+// orchestrator identity without changing the incident or generation.
+func RebindRecoveryAgent(db *sql.DB, sessionID, fromAgentID, toAgentID string) error {
+	if db == nil || sessionID == "" || fromAgentID == "" || toAgentID == "" || fromAgentID == toAgentID {
+		return nil
+	}
+	_, err := db.Exec(`
+		UPDATE agent_recoveries SET agent_id=?, updated_at=?
+		WHERE session_id=? AND agent_id=? AND state NOT IN (?, ?)
+	`, toAgentID, time.Now().UnixNano(), sessionID, fromAgentID,
+		string(recovery.Recovered), string(recovery.Cancelled))
+	return err
+}
+
+func DeleteRecoveryCheckpoint(db *sql.DB, incidentID string) error {
+	if db == nil || incidentID == "" {
+		return nil
+	}
+	_, err := db.Exec(`DELETE FROM agent_recoveries WHERE incident_id=?`, incidentID)
+	return err
+}
+
+type recoveryScanner interface {
+	Scan(dest ...any) error
+}
+
+func scanRecoveryCheckpoint(scanner recoveryScanner) (RecoveryCheckpoint, error) {
+	var checkpoint RecoveryCheckpoint
+	var state string
+	var retryAt int64
+	var inputAdmitted int
+	var startedAt, updatedAt int64
+	var pending, archive, active []byte
+	if err := scanner.Scan(
+		&checkpoint.Status.ID, &checkpoint.Status.AgentID, &checkpoint.Status.Generation,
+		&state, &checkpoint.Status.Attempt, &retryAt, &startedAt, &updatedAt,
+		&checkpoint.Status.Summary, &checkpoint.Status.Detail, &checkpoint.Status.Action,
+		&pending, &inputAdmitted, &archive, &active, &checkpoint.ContextOwnerID,
+		&checkpoint.ContextGeneration, &checkpoint.ContextReason, &checkpoint.OwnerData,
+	); err != nil {
+		return RecoveryCheckpoint{}, err
+	}
+	checkpoint.Status.State = recovery.State(state)
+	if retryAt > 0 {
+		checkpoint.Status.RetryAt = time.Unix(0, retryAt)
+	}
+	checkpoint.Status.StartedAt = time.Unix(0, startedAt)
+	checkpoint.Status.UpdatedAt = time.Unix(0, updatedAt)
+	checkpoint.InputAdmitted = inputAdmitted != 0
+	if err := json.Unmarshal(pending, &checkpoint.PendingInput); err != nil {
+		return RecoveryCheckpoint{}, fmt.Errorf("sessiondb: decode recovery input: %w", err)
+	}
+	if err := json.Unmarshal(archive, &checkpoint.Archive); err != nil {
+		return RecoveryCheckpoint{}, fmt.Errorf("sessiondb: decode recovery archive: %w", err)
+	}
+	if err := json.Unmarshal(active, &checkpoint.ActiveContext); err != nil {
+		return RecoveryCheckpoint{}, fmt.Errorf("sessiondb: decode recovery context: %w", err)
+	}
+	return checkpoint, nil
+}
+
+func scanRecoveryStatus(scanner recoveryScanner) (recovery.Status, error) {
+	var status recovery.Status
+	var state string
+	var retryAt, startedAt, updatedAt int64
+	if err := scanner.Scan(&status.ID, &status.AgentID, &status.Generation, &state,
+		&status.Attempt, &retryAt, &startedAt, &updatedAt,
+		&status.Summary, &status.Detail, &status.Action); err != nil {
+		return recovery.Status{}, err
+	}
+	status.State = recovery.State(state)
+	if retryAt > 0 {
+		status.RetryAt = time.Unix(0, retryAt)
+	}
+	status.StartedAt = time.Unix(0, startedAt)
+	status.UpdatedAt = time.Unix(0, updatedAt)
+	return status, nil
+}
+
+func recoveryBoolInt(value bool) int {
+	if value {
+		return 1
+	}
+	return 0
+}

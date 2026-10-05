@@ -86,6 +86,7 @@ type Agent struct {
 	Emit                   func(AgentEvent)
 	PrepareCompaction      func(CompactionSource) error
 	CommitCompaction       func(CompactionCommit) error
+	Checkpoint             func(archive, active []provider.ChatMessage) error
 	ContinuationContext    func(context.Context) (rootprompt.SessionContinuityData, error)
 	LatestHumanTurnState   func(context.Context) (string, bool, error)
 	GuidanceCacheLoad      func(string) (string, bool)
@@ -104,9 +105,15 @@ type Agent struct {
 	compactionRetryDelay func(int) time.Duration
 	contextBaseline      contextMeter
 
-	fileMu          sync.Map
-	reportPublished bool
-	guidance        *projectGuidance
+	fileMu              sync.Map
+	reportPublished     bool
+	preserveReportState bool
+	guidance            *projectGuidance
+
+	runFailure      error
+	runFailureKind  RecoveryFailureKind
+	runRecoveryKind rootprompt.RecoveryKind
+	lastArchive     []provider.ChatMessage
 }
 
 // SeedContextUsage carries the latest provider-reported request baseline across
@@ -124,6 +131,53 @@ func (a *Agent) ActiveContext() []provider.ChatMessage {
 		return nil
 	}
 	return append([]provider.ChatMessage(nil), a.lastActiveContext...)
+}
+
+func (a *Agent) ArchiveContext() []provider.ChatMessage {
+	if a == nil {
+		return nil
+	}
+	return append([]provider.ChatMessage(nil), a.lastArchive...)
+}
+
+func (a *Agent) RunFailure() error {
+	if a == nil {
+		return nil
+	}
+	return a.runFailure
+}
+
+func (a *Agent) RunRecoveryKind() rootprompt.RecoveryKind {
+	if a == nil {
+		return ""
+	}
+	return a.runRecoveryKind
+}
+
+func (a *Agent) RunFailureKind() RecoveryFailureKind {
+	if a == nil {
+		return ""
+	}
+	return a.runFailureKind
+}
+
+func (a *Agent) setRunFailure(err error, kind rootprompt.RecoveryKind, failureKind ...RecoveryFailureKind) {
+	if a == nil || err == nil {
+		return
+	}
+	a.runFailure = err
+	if len(failureKind) > 0 && failureKind[0] != "" {
+		a.runFailureKind = failureKind[0]
+	}
+	if kind != "" {
+		a.runRecoveryKind = kind
+	}
+}
+
+func (a *Agent) RestorePublishedReport() {
+	if a != nil {
+		a.reportPublished = true
+	}
 }
 
 func (a *Agent) yoloEnabled() bool {
