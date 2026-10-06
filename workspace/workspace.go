@@ -14,7 +14,6 @@ import (
 	"crude/capability"
 	"crude/collaboration"
 	"crude/localhistory"
-	"crude/provider"
 	"crude/session"
 	ttypes "crude/types"
 )
@@ -175,9 +174,6 @@ type Workspace struct {
 	// OnAppAccountChange persists one application account without writing other
 	// settings drafts. The app layer owns the config file and account manager.
 	OnAppAccountChange func(change ttypes.AccountChange) error
-	// OnAppTemplateChange persists one application provider template without
-	// writing settings drafts. The app layer owns config.json and account state.
-	OnAppTemplateChange func(change provider.TemplateChange) error
 
 	// ── Shared state (references, not owned)
 	//
@@ -207,6 +203,7 @@ type Workspace struct {
 	registryErr    error
 	persistenceMu  sync.Mutex
 	workspaceDBErr error
+	startupIssues  []ttypes.OperationIssue
 }
 
 // SetEventBus connects workspace services to the workspace-to-frontend event path.
@@ -317,6 +314,7 @@ func NewWorkspace(
 	// deliberately read-only and time-bounded). Typical session counts are
 	// small; each DB is opened read-only and corrupt files are skipped.
 	_ = ws.BackfillSessionRegistry()
+	ws.queuePersistenceStartupIssues()
 
 	return ws
 }
@@ -469,11 +467,11 @@ func (w *Workspace) Close() {
 		w.registryCostWriter.Close()
 		w.registryCostWriter = nil
 	}
+	if w.Collaboration != nil {
+		_ = w.Collaboration.Close()
+		w.Collaboration = nil
+	}
 	if w.WorkspaceDB != nil {
-		if w.Collaboration != nil {
-			_ = w.Collaboration.Close()
-			w.Collaboration = nil
-		}
 		_ = w.WorkspaceDB.Close()
 		w.WorkspaceDB = nil
 	}
@@ -536,9 +534,7 @@ func (w *Workspace) persistSessionRegistry(fs *Session) {
 	model, provider := "", ""
 	if fs.backend != nil {
 		model = fs.backend.ModelName()
-		if cfg := fs.backend.Config(); cfg != nil {
-			provider = cfg.EffectiveProviderID()
-		}
+		provider = fs.backend.SettingsSnapshot().ProviderID
 	}
 	projectName := filepath.Base(w.RootPath)
 	if err := w.WorkspaceDB.RegisterSession(fs.SessionID, w.RootPath, projectName, model, provider); err != nil {
@@ -655,14 +651,26 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 		}
 		return fmt.Errorf("switch project: prepare workspace database for %q: %w", abs, err)
 	}
+	collaborationStore, err := collaboration.Attach(
+		wsDB.DB, canonicalizePath(abs), filepath.Join(wsDir, "collaboration-locks"),
+	)
+	if err != nil {
+		_ = wsDB.Close()
+		return fmt.Errorf("switch project: prepare collaboration runtime for %q: %w", abs, err)
+	}
 	historyStore, err := openLocalHistory(abs, wsDir)
 	if err != nil {
+		_ = collaborationStore.Close()
 		_ = wsDB.Close()
 		return fmt.Errorf("switch project: prepare local history for %q: %w", abs, err)
 	}
 	dbTransferred := false
 	defer func() {
 		if !dbTransferred {
+			if historyStore != nil {
+				_ = historyStore.Close()
+			}
+			_ = collaborationStore.Close()
 			_ = wsDB.Close()
 		}
 	}()
@@ -698,6 +706,13 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 		w.registryCostWriter.Close()
 		w.registryCostWriter = nil
 	}
+	// Sessions must detach while their collaboration database is still open.
+	// Release the old service before closing its borrowed SQL handle; never
+	// carry it into the replacement project's sessions.
+	if w.Collaboration != nil {
+		_ = w.Collaboration.Close()
+		w.Collaboration = nil
+	}
 	if w.WorkspaceDB != nil {
 		_ = w.WorkspaceDB.Close()
 		w.WorkspaceDB = nil
@@ -715,6 +730,9 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 	w.RootPath = abs
 	w.WorkspaceDir = wsDir
 	w.WorkspaceDB = wsDB
+	w.workspaceDBErr = nil
+	w.Collaboration = collaborationStore
+	w.collaborationErr = nil
 	w.LocalHistory = historyStore
 	w.HistoryService = NewLocalHistoryService(abs, historyStore, w.Logger)
 	w.localHistoryErr = nil
@@ -824,18 +842,19 @@ func (w *Workspace) NewSessionFromLauncher() *NewSessionResult {
 		w.Logger.Warn("WORKSPACE", "no_session_config")
 		return &NewSessionResult{Error: "Session configuration is unavailable"}
 	}
+	if w.sender == nil {
+		return &NewSessionResult{Error: "Session event transport is unavailable"}
+	}
+	previous := w.ActiveSession
 	_, err := w.CreateSession(w.sessionCfg, w.homeDir)
 	if err != nil {
 		w.Logger.Warn("WORKSPACE", "new_session_failed", "error", err.Error())
 		return &NewSessionResult{Error: "Failed to create session: " + err.Error(), NeedsAccount: errors.Is(err, session.ErrAccountRequired)}
 	}
-	if w.sender == nil {
-		w.Logger.Warn("WORKSPACE", "no_event_sender")
-		return &NewSessionResult{Error: "Session event transport is unavailable"}
-	}
 	orch, err := w.StartOrchestrator(w.sender)
 	if err != nil {
 		w.Logger.Warn("WORKSPACE", "start_orchestrator_failed", "error", err.Error())
+		w.abandonUnstartedSession(w.ActiveSession, previous)
 		return &NewSessionResult{Error: "Failed to start session: " + err.Error()}
 	}
 	return &NewSessionResult{
@@ -852,6 +871,11 @@ func (w *Workspace) ResumeSessionFromLauncher(sessionID string) *NewSessionResul
 		w.Logger.Warn("WORKSPACE", "no_session_config")
 		return &NewSessionResult{Error: "Session configuration is unavailable"}
 	}
+	if w.sender == nil {
+		return &NewSessionResult{Error: "Session event transport is unavailable"}
+	}
+	previous := w.ActiveSession
+	created := false
 
 	// Already open: activate its existing orchestrator when it still has one.
 	if existing, ok := w.SessionsByID[sessionID]; ok && existing != nil {
@@ -867,15 +891,16 @@ func (w *Workspace) ResumeSessionFromLauncher(sessionID string) *NewSessionResul
 			w.Logger.Warn("WORKSPACE", "resume_failed", "id", sessionID, "error", err.Error())
 			return &NewSessionResult{Error: "Failed to resume session: " + err.Error(), NeedsAccount: errors.Is(err, session.ErrAccountRequired)}
 		}
-	}
-
-	if w.sender == nil {
-		w.Logger.Warn("WORKSPACE", "no_event_sender")
-		return &NewSessionResult{Error: "Session event transport is unavailable"}
+		created = true
 	}
 	orch, err := w.StartOrchestrator(w.sender)
 	if err != nil {
 		w.Logger.Warn("WORKSPACE", "start_orchestrator_failed", "error", err.Error())
+		if created {
+			w.abandonUnstartedSession(w.ActiveSession, previous)
+		} else {
+			w.ActiveSession = previous
+		}
 		return &NewSessionResult{Error: "Failed to start session: " + err.Error()}
 	}
 

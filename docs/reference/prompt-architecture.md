@@ -329,7 +329,7 @@ that recovery. A rejected reference lookup is separate from transient retry
 attempts; a second reference error after rebasing is final.
 
 **Inline image replay recovery** is a separate, configurable safeguard, enabled
-by default on Responses templates and account overrides. Crude still attempts the
+by default on Responses account connections. Crude still attempts the
 documented `previous_response_id` request first. Only an exact pre-output 400/422
 that identifies an invalid Base64 `image_url`, while the inherited local data URL
 passes Crude's own validation, permits one full-context retry. Successful

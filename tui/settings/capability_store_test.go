@@ -158,7 +158,7 @@ func TestCapabilityStoreFiltersOfferChoicesAndSearchExactSelectedSource(t *testi
 func TestCapabilityStoreChromeIsBoundedAndAbsentOnOtherSettingsPages(t *testing.T) {
 	model, root, host := capabilityFixture(t, captypes.KindSkill)
 	for _, width := range []int{72, 80, 100, 130, 160} {
-		for _, category := range []int{catSkills, catMCP, catSources, catProviders, catAccounts, catAgents, catAppearance} {
+		for _, category := range []int{catSkills, catMCP, catSources, catAccounts, catAgents, catAppearance} {
 			model.SelectCategory(category)
 			buffer := paintCapabilityStore(host, width, 24)
 			plain := bufferPlain(buffer)

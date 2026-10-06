@@ -22,18 +22,17 @@ func TestLiveCommandCodeToolResultImageSemantics(t *testing.T) {
 		t.Skip("CRUDE_LIVE_MEDIA=1 not set")
 	}
 	fileConfig := LoadFileConfig()
-	providerConfig, ok := fileConfig.Providers["commandcode"]
 	accountID := ""
 	if fileConfig.Agents != nil {
 		profile := fileConfig.Agents.Profiles[fileConfig.Agents.ActiveProfile]
 		accountID = profile.Categories["default"].AccountID
 	}
 	account, accountOK := fileConfig.Accounts[accountID]
-	if !ok || !accountOK || account.ProviderID != "commandcode" || account.APIKey == "" {
+	if !accountOK || account.ProviderID != "commandcode" || account.APIKey == "" {
 		t.Skip("Command Code credential is not configured")
 	}
 	model := os.Getenv("CRUDE_LIVE_MEDIA_MODEL")
-	standard := providerConfig.APIStandard
+	standard := account.Connection.APIStandard
 	if fileConfig.Agents != nil {
 		profile := fileConfig.Agents.Profiles[fileConfig.Agents.ActiveProfile]
 		category := profile.Categories["default"]
@@ -48,7 +47,7 @@ func TestLiveCommandCodeToolResultImageSemantics(t *testing.T) {
 		standard = "openai"
 	}
 
-	template := provider.ResolveTemplate("commandcode", providerConfig, account.Overrides)
+	template := account.Connection
 	p := provider.FromPreset("commandcode", account.APIKey, template.ProviderURL)
 	if err := template.Apply(p); err != nil {
 		t.Fatal(err)

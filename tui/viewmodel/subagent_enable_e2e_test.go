@@ -82,7 +82,7 @@ func TestEnableSubAgentsMidSessionSurfacesChildren(t *testing.T) {
 		t.Setenv("USERPROFILE", home)
 		off := false
 		cfg := &session.Config{
-			ActiveProvider: "openai", Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", Label: "Test", APIKey: "test"}}, Providers: map[string]session.ProviderConfig{"openai": {Name: "OpenAI", ProviderURL: server.URL, APIStandard: "openai", AuthType: provider.AuthProtocol}},
+			Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", Label: "Test", APIKey: "test", Connection: provider.Template{Name: "OpenAI", ProviderURL: server.URL, APIStandard: "openai", AuthType: provider.AuthProtocol}}},
 			Agents: session.AgentsConfig{Enabled: false, MaxConcurrent: 2, ActiveProfile: "default", Profiles: map[string]session.ProfileConfig{"default": {MultiAgent: &off, Categories: map[string]session.CategoryConfig{
 				session.CategoryDefault:    {AccountID: "test", Model: "parent-model", ModelSupportsTools: true},
 				session.CategoryResearcher: {AccountID: "test", Model: "child-model", ModelSupportsTools: true},

@@ -65,6 +65,41 @@ func TestAccountBindingIndependentHeadersAndSnapshots(t *testing.T) {
 	}
 }
 
+func TestAccountConnectionReplacementCannotLendOldCredentials(t *testing.T) {
+	account := Account{ID: "work", ProviderID: "custom", Label: "Work", APIKey: "private", Connection: Template{Name: "Gateway", ProviderURL: "https://one.example/v1", APIStandard: "openai", AuthType: AuthBearer}}
+	m := NewAccountManager(map[string]Account{account.ID: account}, nil)
+	p := &Provider{ID: account.ProviderID}
+	if err := account.Connection.Apply(p); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Bind(p, account.ID); err != nil {
+		t.Fatal(err)
+	}
+	updated := CloneAccount(account)
+	updated.Connection.ProviderURL = "https://two.example/v1"
+	m.Replace(map[string]Account{updated.ID: updated})
+	if _, err := p.RequestHeaders(context.Background()); err == nil {
+		t.Fatal("replaced endpoint kept an old credential binding")
+	}
+	stale := &Provider{ID: account.ProviderID}
+	if err := account.Connection.Apply(stale); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Bind(stale, account.ID); err == nil {
+		t.Fatal("current credentials lent to stale endpoint")
+	}
+	next := &Provider{ID: updated.ProviderID}
+	if err := updated.Connection.Apply(next); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.Bind(next, account.ID); err != nil {
+		t.Fatal(err)
+	}
+	if headers, err := next.RequestHeaders(context.Background()); err != nil || headers.Get("Authorization") != "Bearer private" {
+		t.Fatal("current account connection failed to bind")
+	}
+}
+
 func TestAccountRefreshSerializedDurableAndRevoked(t *testing.T) {
 	var calls atomic.Int32
 	started := make(chan struct{}, 1)

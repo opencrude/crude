@@ -73,11 +73,9 @@ func newLiveOllamaSubAgentRunner(t *testing.T) (*Session, *SubAgentRunner, *live
 	profile.Categories[CategoryResearcher] = liveCategory
 	agents.Profiles[agents.ActiveProfile] = profile
 	cfg := &Config{
-		ActiveProvider: "ollama-cloud",
-		Accounts:       map[string]provider.Account{"account": {ID: "account", ProviderID: "ollama-cloud", APIKey: key}},
-		Providers: map[string]ProviderConfig{
-			"ollama-cloud": provider.DefaultTemplates()["ollama-cloud"],
-		},
+
+		Accounts: map[string]provider.Account{"account": {ID: "account", ProviderID: "ollama-cloud", APIKey: key,
+			Connection: provider.DefaultTemplates()["ollama-cloud"]}},
 		TurnLogsEnabled: true,
 		Agents:          agents,
 	}

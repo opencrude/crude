@@ -14,9 +14,8 @@ func TestProviderForCategoryBindsOAuthAccount(t *testing.T) {
 	profile := agents.Profiles[agents.ActiveProfile]
 	profile.Categories[CategoryDefault] = CategoryConfig{AccountID: "work"}
 	agents.Profiles[agents.ActiveProfile] = profile
-	cfg := &Config{ActiveProvider: "chatgpt", Providers: map[string]ProviderConfig{"chatgpt": provider.DefaultTemplates()["chatgpt"]},
-		Accounts: map[string]provider.Account{"work": {ID: "work", ProviderID: "chatgpt", OAuth: &provider.OAuthCredentials{AccessToken: "AT-oauth", AccountID: "acct_1"}}},
-		Agents:   agents}
+	cfg := &Config{Accounts: map[string]provider.Account{"work": {ID: "work", ProviderID: "chatgpt", OAuth: &provider.OAuthCredentials{AccessToken: "AT-oauth", AccountID: "acct_1"}, Connection: provider.DefaultTemplates()["chatgpt"]}},
+		Agents: agents}
 	p, err := cfg.providerForCategory(cfg.GetActiveDefaultCategory())
 	if err != nil {
 		t.Fatal(err)
@@ -30,8 +29,9 @@ func TestProviderForCategoryBindsOAuthAccount(t *testing.T) {
 }
 
 func TestAccountSelectionDoesNotCrossSameProviderIdentities(t *testing.T) {
-	cfg := &Config{ActiveProvider: "openrouter", Providers: map[string]ProviderConfig{"openrouter": provider.DefaultTemplates()["openrouter"]},
-		Accounts: map[string]provider.Account{"work": {ID: "work", ProviderID: "openrouter", APIKey: "work-key"}, "personal": {ID: "personal", ProviderID: "openrouter", APIKey: "personal-key"}}}
+	cfg := &Config{Accounts: map[string]provider.Account{
+		"work":     {ID: "work", ProviderID: "openrouter", APIKey: "work-key", Connection: provider.DefaultTemplates()["openrouter"]},
+		"personal": {ID: "personal", ProviderID: "openrouter", APIKey: "personal-key", Connection: provider.DefaultTemplates()["openrouter"]}}}
 	for _, tc := range []struct{ id, key string }{{"work", "work-key"}, {"personal", "personal-key"}} {
 		p, err := cfg.providerForCategory(CategoryConfig{AccountID: tc.id})
 		if err != nil {

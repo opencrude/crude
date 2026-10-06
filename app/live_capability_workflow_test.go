@@ -69,12 +69,12 @@ func TestLiveCapabilityWorkflow(t *testing.T) {
 			t.Fatal("CRUDE_LIVE_CAPABILITY_STORE must be a boolean")
 		}
 		account := provider.CloneAccount(fileConfig.Accounts[main.AccountID])
-		template := provider.ResolveTemplate(account.ProviderID, fileConfig.Providers[account.ProviderID], account.Overrides)
+		template := account.Connection
 		if template.Protocol == nil {
 			template.Protocol = &provider.ProtocolSettings{}
 		}
 		template.Protocol.Store = &store
-		account.Overrides.Protocol = template.Protocol
+		account.Connection.Protocol = template.Protocol
 		fileConfig.Accounts[main.AccountID] = account
 	}
 	t.Logf("live capability model=%s account=%s thinking=%s", main.Model, main.AccountID, main.ThinkingEffort)

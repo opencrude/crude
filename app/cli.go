@@ -3,6 +3,7 @@ package app
 import (
 	"flag"
 	"fmt"
+	"maps"
 	"os"
 
 	"crude/provider"
@@ -56,12 +57,51 @@ func ParseFlags() CLIFlags {
 
 // ResolveConfig loads FileConfig and applies invocation-local CLI selectors.
 func ResolveConfig(flags CLIFlags) (FileConfig, error) {
-	fc := LoadFileConfig()
-	if fc.Providers == nil {
-		fc.Providers = make(map[string]session.ProviderConfig)
+	return resolveConfigFrom(LoadFileConfig(), flags)
+}
+
+func resolveConfigFrom(fc FileConfig, flags CLIFlags) (FileConfig, error) {
+	// Stage the exact invocation selection before validation. An unavailable
+	// --account must not leave another saved account selected in the usable shell.
+	fc.Accounts = cloneAccounts(fc.Accounts)
+	if fc.Agents != nil {
+		agents := *fc.Agents
+		agents.Profiles = maps.Clone(agents.Profiles)
+		for name, profile := range agents.Profiles {
+			profile.Categories = maps.Clone(profile.Categories)
+			agents.Profiles[name] = profile
+		}
+		fc.Agents = &agents
+	}
+	if flags.Model != "" || flags.Account != "" || flags.Provider != "" {
+		if fc.Agents == nil {
+			agents := session.DefaultAgentsConfig()
+			fc.Agents = &agents
+		}
+		ap := fc.Agents.ActiveProfile
+		if ap == "" {
+			ap = "default"
+			fc.Agents.ActiveProfile = ap
+		}
+		if fc.Agents.Profiles == nil {
+			fc.Agents.Profiles = make(map[string]session.ProfileConfig)
+		}
+		prof := fc.Agents.Profiles[ap]
+		if prof.Categories == nil {
+			prof.Categories = make(map[string]session.CategoryConfig)
+		}
+		main := prof.Categories[session.CategoryDefault]
+		if flags.Model != "" {
+			main.Model = flags.Model
+		}
+		if flags.Account != "" {
+			main.AccountID = flags.Account
+		}
+		prof.Categories[session.CategoryDefault] = main
+		fc.Agents.Profiles[ap] = prof
 	}
 	if flags.APIKey != "" && flags.Account == "" {
-		return FileConfig{}, fmt.Errorf("--key requires an explicit --account")
+		return fc, fmt.Errorf("--key requires an explicit --account")
 	}
 
 	profileName := "default"
@@ -78,27 +118,6 @@ func ResolveConfig(flags CLIFlags) (FileConfig, error) {
 		}
 	}
 
-	// --resume uses the session database's account pin, even if that account is
-	// no longer available in the current application config.
-	providerID := flags.Provider
-	if providerID == "" {
-		if mainCat.AccountID != "" {
-			if account, exists := fc.Accounts[mainCat.AccountID]; exists {
-				providerID = account.ProviderID
-			}
-		}
-		if providerID == "" {
-			providerID = fc.ActiveProvider
-		}
-		if providerID == "" {
-			providerID = "openrouter"
-		}
-	}
-	configuredTemplate, configured := fc.Providers[providerID]
-	if !configured && provider.GetPreset(providerID) == nil {
-		return FileConfig{}, fmt.Errorf("provider template %q not found; choose a configured template with --provider", providerID)
-	}
-
 	accountID := flags.Account
 	if accountID == "" && flags.Resume == "" {
 		accountID = mainCat.AccountID
@@ -109,13 +128,17 @@ func ResolveConfig(flags CLIFlags) (FileConfig, error) {
 		selectedAccount, exists = fc.Accounts[accountID]
 		if !exists {
 			if flags.Account == "" || flags.APIKey == "" {
-				return FileConfig{}, fmt.Errorf("account %q not found; select or create it in Application Settings → Accounts (or use --account %s with --key)", accountID, accountID)
+				return fc, fmt.Errorf("account %q not found; select or create it in Application Settings → Accounts (or use --account %s with --key)", accountID, accountID)
 			}
-			selectedAccount = provider.Account{ID: accountID, ProviderID: providerID, Label: accountID}
+			seed, ok := provider.DefaultTemplates()[flags.Provider]
+			if !ok {
+				return fc, fmt.Errorf("a new CLI account requires --provider naming a known preset")
+			}
+			selectedAccount = provider.Account{ID: accountID, ProviderID: flags.Provider, Label: accountID, Connection: seed}
 		} else if selectedAccount.ID != accountID {
-			return FileConfig{}, fmt.Errorf("account %q is invalid; select an account in Application Settings → Accounts", accountID)
-		} else if selectedAccount.ProviderID != providerID {
-			return FileConfig{}, fmt.Errorf("account %q uses template %q, not selected template %q", accountID, selectedAccount.ProviderID, providerID)
+			return fc, fmt.Errorf("account %q is invalid; select an account in Application Settings → Accounts", accountID)
+		} else if flags.Provider != "" && selectedAccount.ProviderID != flags.Provider {
+			return fc, fmt.Errorf("account %q uses connection %q, not requested %q", accountID, selectedAccount.ProviderID, flags.Provider)
 		}
 		if flags.APIKey != "" {
 			selectedAccount.APIKey = flags.APIKey
@@ -125,44 +148,16 @@ func ResolveConfig(flags CLIFlags) (FileConfig, error) {
 			}
 			fc.Accounts[accountID] = selectedAccount
 		}
-		template := provider.ResolveTemplate(providerID, configuredTemplate, selectedAccount.Overrides)
+		template := selectedAccount.Connection
+		if err := template.Validate(); err != nil {
+			return fc, fmt.Errorf("account %q connection is invalid: %w", accountID, err)
+		}
 		if template.AuthType != provider.AuthNone && selectedAccount.APIKey == "" &&
 			(selectedAccount.OAuth == nil || (selectedAccount.OAuth.AccessToken == "" && selectedAccount.OAuth.RefreshToken == "")) {
-			return FileConfig{}, fmt.Errorf("account %q has no credentials for template %q; configure it in Application Settings → Accounts or pass --key with --account", accountID, providerID)
+			return fc, fmt.Errorf("account %q has no credentials; configure it in Application Settings → Accounts or pass --key with --account", accountID)
 		}
 	} else if flags.Resume == "" && (flags.Provider != "" || flags.Account != "" || flags.Model != "") {
-		return FileConfig{}, fmt.Errorf("provider template %q needs an explicitly selected account; use --account <id> or configure one in Application Settings → Accounts", providerID)
-	}
-
-	// CLI selectors update only this invocation's main-agent session spec.
-	if flags.Model != "" || flags.Account != "" || flags.Provider != "" {
-		if fc.Agents == nil {
-			agents := session.DefaultAgentsConfig()
-			fc.Agents = &agents
-		}
-		ap := fc.Agents.ActiveProfile
-		if ap == "" {
-			ap = "default"
-		}
-		if fc.Agents.Profiles == nil {
-			fc.Agents.Profiles = make(map[string]session.ProfileConfig)
-		}
-		prof := fc.Agents.Profiles[ap]
-		if prof.Categories == nil {
-			prof.Categories = make(map[string]session.CategoryConfig)
-		}
-		currentMain, ok := prof.Categories[session.CategoryDefault]
-		if !ok {
-			currentMain = prof.Categories["main"]
-		}
-		if flags.Model != "" {
-			currentMain.Model = flags.Model
-		}
-		if flags.Account != "" {
-			currentMain.AccountID = accountID
-		}
-		prof.Categories[session.CategoryDefault] = currentMain
-		fc.Agents.Profiles[ap] = prof
+		return fc, fmt.Errorf("select an explicit account with --account or configure one in Application Settings → Accounts")
 	}
 
 	return fc, nil
@@ -207,34 +202,28 @@ func Main() int {
 		return 0
 	}
 
-	resumeID, err := ResolveResume(flags)
-	if err != nil {
-		fmt.Fprintln(os.Stderr, err.Error())
-		return 1
-	}
-
-	fc, err := ResolveConfig(flags)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "%v\n", err)
-		return 1
-	}
+	prepared := PrepareStartup(flags)
 
 	home, _ := os.UserHomeDir()
 	projectDir, _ := os.Getwd()
 	sessionsRoot, _ := session.SessionsRoot()
 
 	application, err := New(Opts{
-		FC:           fc,
-		Home:         home,
-		SessionsRoot: sessionsRoot,
-		ProjectDir:   projectDir,
-		ResumeID:     resumeID,
+		FC:            prepared.Config,
+		Home:          home,
+		SessionsRoot:  sessionsRoot,
+		ProjectDir:    projectDir,
+		ResumeID:      prepared.ResumeID,
+		StartupIssues: prepared.Issues,
 	})
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		return 1
 	}
 
-	application.Run()
+	if err := application.Run(); err != nil {
+		fmt.Fprintf(os.Stderr, "%v\n", err)
+		return 1
+	}
 	return 0
 }

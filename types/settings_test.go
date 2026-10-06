@@ -10,17 +10,16 @@ import (
 
 func TestMergeAppWorkspaceInheritsNilOverrides(t *testing.T) {
 	app := AppSettings{
-		Theme:          ThemeSettings{Preset: "dark"},
-		Editor:         EditorSettings{TabSize: 4, WordWrap: true},
-		ActiveProvider: "openrouter",
-		Providers:      map[string]ProviderConfig{"openrouter": {Name: "OpenRouter", ProviderURL: "https://openrouter.ai/api/v1", APIStandard: "openai"}},
+		Theme:    ThemeSettings{Preset: "dark"},
+		Editor:   EditorSettings{TabSize: 4, WordWrap: true},
+		Accounts: map[string]provider.Account{"work": {ID: "work", Connection: provider.DefaultTemplates()["openrouter"]}},
 	}
 	got := MergeAppWorkspace(app, WorkspaceOverrides{})
 	if got.Theme.Preset != "dark" || got.Editor.TabSize != 4 || !got.Editor.WordWrap {
 		t.Fatalf("inherited app values lost: %#v", got)
 	}
-	if got.Providers["openrouter"].ProviderURL != "https://openrouter.ai/api/v1" {
-		t.Fatalf("provider templates must stay application-level: %#v", got.Providers)
+	if got.Accounts["work"].Connection.ProviderURL != "https://openrouter.ai/api/v1" {
+		t.Fatalf("account connections must stay application-level: %#v", got.Accounts)
 	}
 }
 
@@ -46,23 +45,18 @@ func TestMergeAppWorkspaceOverridesSelectedCategories(t *testing.T) {
 
 func TestOverridesFromDiffRecordsOnlyChangedCategories(t *testing.T) {
 	app := AppSettings{
-		Theme:          ThemeSettings{Preset: "dark"},
-		Editor:         EditorSettings{TabSize: 4},
-		ActiveProvider: "openrouter",
+		Theme:  ThemeSettings{Preset: "dark"},
+		Editor: EditorSettings{TabSize: 4},
 	}
 	ApplyAppDefaults(&app)
 	working := cloneAppSettings(app)
 	working.Editor.TabSize = 2
-	working.ActiveProvider = "openai"
 	got := OverridesFromDiff(app, working)
 	if len(got.Theme) != 0 {
 		t.Fatalf("unchanged theme must inherit, got %s", got.Theme)
 	}
 	if string(got.Editor) != `{"tab_size":2}` {
 		t.Fatalf("editor override should carry only the changed leaf, got %s", got.Editor)
-	}
-	if merged := MergeAppWorkspace(app, got); merged.ActiveProvider != "openrouter" {
-		t.Fatalf("workspace changed application template selection: %q", merged.ActiveProvider)
 	}
 }
 
@@ -302,8 +296,7 @@ func TestLSPSeverityAtLeast(t *testing.T) {
 }
 
 func TestWorkspaceOverridesFromDiffNeverIncludesAccounts(t *testing.T) {
-	app := AppSettings{ActiveProvider: "openrouter", Providers: map[string]ProviderConfig{"openrouter": {Name: "OpenRouter", ProviderURL: "https://openrouter.ai/api/v1", APIStandard: "openai"}},
-		Accounts: map[string]provider.Account{"account": {ID: "account", ProviderID: "openrouter", APIKey: "app-key"}}}
+	app := AppSettings{Accounts: map[string]provider.Account{"account": {ID: "account", ProviderID: "openrouter", APIKey: "app-key", Connection: provider.DefaultTemplates()["openrouter"]}}}
 	ApplyAppDefaults(&app)
 	working := cloneAppSettings(app)
 	working.Accounts["account"] = provider.Account{ID: "account", ProviderID: "openrouter", APIKey: "workspace-key"}
@@ -311,23 +304,21 @@ func TestWorkspaceOverridesFromDiffNeverIncludesAccounts(t *testing.T) {
 	if !got.IsEmpty() {
 		t.Fatalf("credential edit became workspace override: %+v", got)
 	}
-	cfg := working.Providers["openrouter"]
-	cfg.ProviderURL = "https://workspace.invalid/v1"
-	working.Providers["openrouter"] = cfg
+	cfg := working.Accounts["account"]
+	cfg.Connection.ProviderURL = "https://workspace.invalid/v1"
+	working.Accounts["account"] = cfg
 	got = WorkspaceOverridesFromDiff(app, working)
 	if !got.IsEmpty() {
 		t.Fatalf("workspace must not own templates or accounts: %+v", got)
 	}
 	merged := MergeAppWorkspace(app, got)
-	if merged.Accounts["account"].APIKey != "app-key" || merged.Providers["openrouter"].ProviderURL != "https://openrouter.ai/api/v1" {
+	if merged.Accounts["account"].APIKey != "app-key" || merged.Accounts["account"].Connection.ProviderURL != "https://openrouter.ai/api/v1" {
 		t.Fatal("workspace changed application template or account credentials")
 	}
 }
 
 func TestWorkspaceOverridesFromDiffOmitsAgentAPIKeys(t *testing.T) {
 	app := AppSettings{
-		ActiveProvider: "opencode-go",
-		Providers:      map[string]ProviderConfig{"opencode-go": provider.DefaultTemplates()["opencode-go"]},
 		Agents: AgentsSettings{Categories: map[string]CategorySettings{
 			"default": {Provider: "opencode-go", APIKey: "app-key", Model: "app-model"},
 		}},
@@ -346,21 +337,15 @@ func TestWorkspaceOverridesFromDiffOmitsAgentAPIKeys(t *testing.T) {
 	}
 }
 
-func TestProviderTemplatesAndAccountOverridesCannotBeWorkspaceOverrides(t *testing.T) {
+func TestAccountConnectionsCannotBeWorkspaceOverrides(t *testing.T) {
 	app := AppSettings{
-		ActiveProvider: "openai",
-		Providers: map[string]ProviderConfig{
-			"openai": {Name: "OpenAI", ProviderURL: "https://api.openai.com/v1", APIStandard: "openai-responses", Headers: map[string]string{"X-Trace": "app"}},
-		},
-		Accounts: map[string]provider.Account{"work": {ID: "work", ProviderID: "openai", APIKey: "app-key"}},
+		Accounts: map[string]provider.Account{"work": {ID: "work", ProviderID: "openai", APIKey: "app-key", Connection: provider.Template{Name: "OpenAI", ProviderURL: "https://api.openai.com/v1", APIStandard: "openai-responses", Headers: map[string]string{"X-Trace": "app"}}}},
 	}
 	ApplyAppDefaults(&app)
 	working := cloneAppSettings(app)
-	modified := working.Providers["openai"]
-	modified.APIStandard = "openai"
-	modified.Headers["X-Trace"] = "workspace"
-	working.Providers["openai"] = modified
 	account := working.Accounts["work"]
+	account.Connection.APIStandard = "openai"
+	account.Connection.Headers["X-Trace"] = "workspace"
 	account.APIKey = "workspace-key"
 	working.Accounts["work"] = account
 	overlay := OverridesFromDiff(app, working)
@@ -368,10 +353,10 @@ func TestProviderTemplatesAndAccountOverridesCannotBeWorkspaceOverrides(t *testi
 		t.Fatalf("workspace persisted template/account data: %+v", overlay)
 	}
 	got := MergeAppWorkspace(app, overlay)
-	if got.Providers["openai"].APIStandard != "openai-responses" || got.Providers["openai"].Headers["X-Trace"] != "app" || got.Accounts["work"].APIKey != "app-key" {
+	if got.Accounts["work"].Connection.APIStandard != "openai-responses" || got.Accounts["work"].Connection.Headers["X-Trace"] != "app" || got.Accounts["work"].APIKey != "app-key" {
 		t.Fatal("workspace changed an app-owned template or account")
 	}
-	if app.Providers["openai"].Headers["X-Trace"] != "app" {
+	if app.Accounts["work"].Connection.Headers["X-Trace"] != "app" {
 		t.Fatal("cloned template headers alias application settings")
 	}
 }

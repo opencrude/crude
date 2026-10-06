@@ -349,6 +349,20 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 	if err != nil {
 		return nil, fmt.Errorf("logger: %w", err)
 	}
+	resourcesTransferred := false
+	var editor *fileio.Editor
+	var db *sql.DB
+	defer func() {
+		if !resourcesTransferred {
+			if editor != nil {
+				editor.Close()
+			}
+			if db != nil {
+				_ = db.Close()
+			}
+			_ = lg.Close()
+		}
+	}()
 	exec := fileio.NewLocalExecWithLogger(lg)
 	sessionID := lg.SessionID()
 	tempDir, err := prepareSessionTempDir(lg.SessionDir(), sessionID)
@@ -388,7 +402,6 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 	diff.SetLogger(lg)
 	fileio.SetSafetyLogger(lg)
 
-	var editor *fileio.Editor
 	if sessionDir != "" {
 		if ed, edErr := fileio.NewEditorWithSessionDir(sessionID, sessionDir, lg); edErr != nil {
 			lg.Warn("SESSION", "editor_init_error", "error", fmt.Sprintf("%v", edErr))
@@ -413,7 +426,6 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 		_ = lg.Close()
 		return nil, fmt.Errorf("allocate agent name: %w", nameErr)
 	}
-	var db *sql.DB
 	var dbPath string
 	if sessionDir != "" {
 		dbPath = filepath.Join(sessionDir, sessionID+".db")
@@ -483,6 +495,7 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 	}
 
 	keepTempDir = true
+	resourcesTransferred = true
 	return sess, nil
 }
 

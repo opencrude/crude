@@ -266,5 +266,5 @@ func testAccountConfig() *session.Config {
 	main.AccountID, main.Model = "test", "test-model"
 	profile.Categories[session.CategoryDefault] = main
 	agents.Profiles[agents.ActiveProfile] = profile
-	return &session.Config{ActiveProvider: "openai", Providers: map[string]session.ProviderConfig{"openai": {Name: "OpenAI", ProviderURL: "http://127.0.0.1:1", APIStandard: "openai", AuthType: provider.AuthProtocol}}, Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", Label: "Test", APIKey: "test"}}, Agents: agents}
+	return &session.Config{Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", Label: "Test", APIKey: "test", Connection: provider.Template{Name: "OpenAI", ProviderURL: "http://127.0.0.1:1", APIStandard: "openai", AuthType: provider.AuthProtocol}}}, Agents: agents}
 }

@@ -6,15 +6,17 @@ import (
 	"sync"
 )
 
-// Account is an application-global credential identity. Its ID is stable even
-// when its label changes; OAuth.AccountID is the provider's separate identity.
+// Account is an application-global connection and credential identity. It owns
+// its complete request configuration; presets only seed new accounts and are
+// never a live inheritance source. ProviderID is attribution, not a reference
+// to another saved configuration. OAuth.AccountID is the remote identity.
 type Account struct {
 	ID         string            `json:"id"`
 	ProviderID string            `json:"provider_id"`
 	Label      string            `json:"label"`
 	APIKey     string            `json:"api_key,omitempty"`
 	OAuth      *OAuthCredentials `json:"oauth,omitempty"`
-	Overrides  TemplateOverrides `json:"overrides,omitempty"`
+	Connection Template          `json:"connection"`
 }
 
 // NewAccountID produces an unpredictable stable identity for a new account.
@@ -104,7 +106,7 @@ func (m *AccountManager) replaceLocked(accounts map[string]Account) {
 		}
 		account := cloneAccount(input)
 		if old := m.accounts[id]; old != nil && sameAccountCredentials(old.account, account) {
-			old.account.Label = account.Label
+			old.account = account
 			next[id] = old
 		} else {
 			next[id] = &accountSlot{account: account}
@@ -114,7 +116,7 @@ func (m *AccountManager) replaceLocked(accounts map[string]Account) {
 }
 
 func sameAccountCredentials(a, b Account) bool {
-	if a.ProviderID != b.ProviderID || a.APIKey != b.APIKey || (a.OAuth == nil) != (b.OAuth == nil) {
+	if a.ProviderID != b.ProviderID || a.APIKey != b.APIKey || (a.OAuth == nil) != (b.OAuth == nil) || a.Connection.ProviderURL != b.Connection.ProviderURL || a.Connection.AuthType != b.Connection.AuthType || a.Connection.AuthHeader != b.Connection.AuthHeader || a.Connection.APIStandard != b.Connection.APIStandard {
 		return false
 	}
 	return a.OAuth == nil || *a.OAuth == *b.OAuth
@@ -142,6 +144,13 @@ func (m *AccountManager) Bind(p *Provider, accountID string) error {
 	if slot.account.ProviderID != p.ID {
 		m.mu.RUnlock()
 		return fmt.Errorf("account %q belongs to provider %q, not %q", accountID, slot.account.ProviderID, p.ID)
+	}
+	// Never lend credentials to a provider constructed for another endpoint or
+	// authentication contract after the account connection changed.
+	protocol, _ := canonicalProtocolID(slot.account.Connection.APIStandard)
+	if slot.account.Connection.ProviderURL != "" && (p.BaseURL != slot.account.Connection.ProviderURL || p.authType != slot.account.Connection.AuthType || p.authHeader != slot.account.Connection.AuthHeader || p.ProtocolID() != protocol) {
+		m.mu.RUnlock()
+		return fmt.Errorf("account %q connection changed while binding; retry with the current connection", accountID)
 	}
 	p.authMu.Lock()
 	p.binding = &accountBinding{manager: m, id: accountID, slot: slot}
@@ -192,6 +201,7 @@ func (b *accountBinding) auth(ctx context.Context) (AuthContext, error) {
 		}
 		// Label edits can occur while refresh is in flight; preserve them.
 		rotated.Label = b.slot.account.Label
+		rotated.Connection = CloneTemplate(b.slot.account.Connection)
 		if err := m.persist(cloneAccount(rotated)); err != nil {
 			m.mu.Unlock()
 			return AuthContext{}, fmt.Errorf("persist refreshed account %q: %w", b.id, err)

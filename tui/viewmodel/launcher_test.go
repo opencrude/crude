@@ -54,9 +54,13 @@ func TestLauncher_NewSession_NoBackendConfig(t *testing.T) {
 		t.Fatal("expected nil cmd from launcherNewSession")
 	}
 	app.width, app.height = 100, 28
+	app.showNextOperationIssue()
 	app.paintShellFrame()
-	if text := bufferPlain(app.mainSurf.Buffer()); !strings.Contains(text, "Session could not be created") {
-		t.Fatalf("startup failure was hidden from the launcher:\n%s", text)
+	if text := bufferPlain(app.mainSurf.Buffer()); strings.Contains(text, "Session could not be created") || strings.Contains(text, "Open Notices") {
+		t.Fatalf("failure text was painted under the launcher action:\n%s", text)
+	}
+	if !app.overlayHost.IsOpen(ui.OverlayOperationIssue) {
+		t.Fatal("startup failure did not open a recovery dialog")
 	}
 }
 

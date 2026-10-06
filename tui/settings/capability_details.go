@@ -207,20 +207,25 @@ func (catalog *capabilityCatalog) moveActionFocus(index int, forward bool) {
 
 func (catalog *capabilityCatalog) layoutTable(ctx ui.LayoutContext, table *ui.Table, scrollbar *ui.ScrollbarControl, rect ui.Rect) {
 	barWidth := 0
+	stroke := 0
 	if scrollbar.NeededForViewport(max(0, rect.H-1)) {
-		barWidth = min(ui.ScrollbarWidth, rect.W)
+		barWidth = min(ui.ScrollbarWidth+1, rect.W)
+		stroke = min(ui.ScrollbarWidth, barWidth)
 	}
 	table.Layout(ctx, ui.Rect{X: rect.X, Y: rect.Y, W: max(0, rect.W-barWidth), H: rect.H})
-	scrollbar.Layout(ctx, ui.Rect{X: rect.X + rect.W - barWidth, Y: rect.Y, W: barWidth, H: rect.H})
+	// Only the painted stroke registers; the reserved gutter column stays
+	// inert so clicks over the content never reach the scrollbar.
+	scrollbar.Layout(ctx, ui.Rect{X: rect.X + rect.W - stroke, Y: rect.Y, W: stroke, H: rect.H})
 }
 
 func (catalog *capabilityCatalog) layoutForm(ctx ui.LayoutContext, rect ui.Rect) {
 	catalog.form.SetHideDescriptions(rect.W < 55)
 	catalog.form.Layout(ctx, rect)
 	if catalog.formScroll.Needed() {
-		barWidth := min(ui.ScrollbarWidth, rect.W)
+		barWidth := min(ui.ScrollbarWidth+1, rect.W)
+		stroke := min(ui.ScrollbarWidth, barWidth)
 		catalog.form.Layout(ctx, ui.Rect{X: rect.X, Y: rect.Y, W: max(0, rect.W-barWidth), H: rect.H})
-		catalog.formScroll.Layout(ctx, ui.Rect{X: rect.X + rect.W - barWidth, Y: rect.Y, W: barWidth, H: rect.H})
+		catalog.formScroll.Layout(ctx, ui.Rect{X: rect.X + rect.W - stroke, Y: rect.Y, W: stroke, H: rect.H})
 	}
 }
 
@@ -273,12 +278,13 @@ func (catalog *capabilityCatalog) layoutDetail(ctx ui.LayoutContext, top, height
 		catalog.layoutDetailBody(ctx, ui.Rect{Y: top + 2 + tableHeight, W: width, H: max(0, height-2-tableHeight)})
 	} else if catalog.kind == captypes.KindSkill && catalog.detailPage == "files" {
 		treeHeight := min(6, max(0, height/3))
-		barWidth := 0
+		barWidth, stroke := 0, 0
 		if catalog.treeScroll.NeededForViewport(treeHeight) {
-			barWidth = min(ui.ScrollbarWidth, width)
+			barWidth = min(ui.ScrollbarWidth+1, width)
+			stroke = min(ui.ScrollbarWidth, barWidth)
 		}
 		catalog.tree.Layout(ctx, ui.Rect{Y: top, W: max(0, width-barWidth), H: treeHeight})
-		catalog.treeScroll.Layout(ctx, ui.Rect{X: width - barWidth, Y: top, W: barWidth, H: treeHeight})
+		catalog.treeScroll.Layout(ctx, ui.Rect{X: width - stroke, Y: top, W: stroke, H: treeHeight})
 		catalog.layoutDetailBody(ctx, ui.Rect{Y: top + treeHeight, W: width, H: max(0, height-treeHeight)})
 	} else {
 		catalog.layoutDetailBody(ctx, ui.Rect{Y: top, W: width, H: height})

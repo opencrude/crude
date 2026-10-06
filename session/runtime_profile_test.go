@@ -1,6 +1,7 @@
 package session
 
 import (
+	"crude/provider"
 	"testing"
 )
 
@@ -82,9 +83,8 @@ func TestGetEffectiveConfigNoOverrides(t *testing.T) {
 	if cfg == nil {
 		t.Fatal("expected non-nil config")
 	}
-	// Should match base config structure.
-	if cfg.ActiveProvider != base.ActiveProvider {
-		t.Errorf("expected provider %q, got %q", base.ActiveProvider, cfg.ActiveProvider)
+	if cfg.providerIDForAccount("account") != base.providerIDForAccount("account") {
+		t.Errorf("expected account provider attribution to be preserved")
 	}
 }
 
@@ -223,24 +223,15 @@ func TestClearCategoryOverride(t *testing.T) {
 
 func TestCopyConfigDeepCopy(t *testing.T) {
 	base := DefaultConfig()
-	base.Providers = map[string]ProviderConfig{
-		"openrouter": {Name: "OpenRouter", ProviderURL: "https://openrouter.ai", APIStandard: "openai"},
-	}
+	base.Accounts = map[string]provider.Account{"account": {ID: "account", ProviderID: "openrouter", Connection: provider.Template{Name: "OpenRouter", ProviderURL: "https://openrouter.ai", APIStandard: "openai"}}}
 
 	copied := copyConfig(base)
-	if copied.ActiveProvider != base.ActiveProvider {
-		t.Error("ActiveProvider not copied")
-	}
-
 	// Verify deep copy: modifying copy should not affect original.
-	copied.ActiveProvider = "modified"
-	if base.ActiveProvider == "modified" {
-		t.Error("copy was not deep: modifying copy affected original")
-	}
-
-	copied.Providers["openrouter"] = ProviderConfig{Name: "Modified"}
-	if base.Providers["openrouter"].Name == "Modified" {
-		t.Error("providers map was not deep-copied")
+	account := copied.Accounts["account"]
+	account.Connection.Name = "Modified"
+	copied.Accounts["account"] = account
+	if base.Accounts["account"].Connection.Name == "Modified" {
+		t.Error("account connection was not deep-copied")
 	}
 }
 
@@ -284,8 +275,7 @@ func DefaultConfig() *Config {
 	profile.Categories[CategoryDefault] = main
 	agents.Profiles[agents.ActiveProfile] = profile
 	return &Config{
-		ActiveProvider:  "openrouter",
-		Providers:       map[string]ProviderConfig{"openrouter": {}},
+		Accounts:        map[string]provider.Account{"account": {ID: "account", ProviderID: "openrouter", Connection: provider.DefaultTemplates()["openrouter"]}},
 		TurnLogsEnabled: true,
 		Agents:          agents,
 	}

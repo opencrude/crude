@@ -21,13 +21,13 @@ func TestAccountSelectionSurvivesMainAgentSwitchAndResume(t *testing.T) {
 	w := NewWorkspace(root, "test-model", "tester", types.Settings{}, &testLogger{})
 	t.Cleanup(w.Close)
 	accounts := map[string]provider.Account{
-		"personal": {ID: "personal", ProviderID: "openai", Label: "Personal", APIKey: "personal-key"},
-		"work":     {ID: "work", ProviderID: "openai", Label: "Work", APIKey: "work-key"},
+		"personal": {ID: "personal", ProviderID: "openai", Label: "Personal", APIKey: "personal-key", Connection: provider.DefaultTemplates()["openai"]},
+		"work":     {ID: "work", ProviderID: "openai", Label: "Work", APIKey: "work-key", Connection: provider.DefaultTemplates()["openai"]},
 	}
-	cfg := &session.Config{ActiveProvider: "openai", Accounts: accounts,
+	cfg := &session.Config{Accounts: accounts,
 		AccountManager: provider.NewAccountManager(accounts, nil),
-		Providers:      map[string]session.ProviderConfig{"openai": {Name: "OpenAI", APIStandard: "openai", ProviderURL: "http://127.0.0.1:1"}},
-		Agents:         session.DefaultAgentsConfig(),
+
+		Agents: session.DefaultAgentsConfig(),
 	}
 	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
 	main := profile.Categories[session.CategoryDefault]
@@ -35,7 +35,7 @@ func TestAccountSelectionSurvivesMainAgentSwitchAndResume(t *testing.T) {
 	profile.Categories[session.CategoryDefault] = main
 	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile
 	w.SetBackendConfig(cfg, home)
-	w.SetAppDefaults(types.AppSettings{ActiveProvider: "openai", Accounts: accounts, Providers: w.AllProviderConfigs(), LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+	w.SetAppDefaults(types.AppSettings{Accounts: accounts, LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
 	first, err := w.CreateSession(cfg, home)
 	if err != nil {
 		t.Fatal(err)
@@ -100,10 +100,14 @@ func TestTwoConcurrentSessionsUseIndependentAccounts(t *testing.T) {
 	defer server.Close()
 	defer close(release)
 	accounts := map[string]provider.Account{
-		"personal": {ID: "personal", ProviderID: "openai", Label: "Personal", APIKey: "personal-key"},
-		"work":     {ID: "work", ProviderID: "openai", Label: "Work", APIKey: "work-key"},
+		"personal": {ID: "personal", ProviderID: "openai", Label: "Personal", APIKey: "personal-key", Connection: provider.DefaultTemplates()["openai"]},
+		"work":     {ID: "work", ProviderID: "openai", Label: "Work", APIKey: "work-key", Connection: provider.DefaultTemplates()["openai"]},
 	}
 	cfg := historyE2EConfig(server.URL)
+	for id, account := range accounts {
+		account.Connection.ProviderURL = server.URL
+		accounts[id] = account
+	}
 	cfg.Accounts = accounts
 	cfg.AccountManager = provider.NewAccountManager(accounts, nil)
 	w := NewWorkspace(root, "history-model", "tester", types.Settings{}, &testLogger{})

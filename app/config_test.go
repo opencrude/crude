@@ -39,35 +39,24 @@ func TestFileConfigRoundTrip(t *testing.T) {
 	defer restore()
 
 	// Build a FileConfig with all extended settings.
-	providerHeaders := map[string]string{"X-Tenant": "alpha"}
 	accountHeaders := map[string]string{"X-Tenant": "work"}
 	accountEndpoint := "https://gateway.example/v1"
 	fc := FileConfig{
-		ActiveProvider: "openrouter",
-		Providers: map[string]provider.Template{
-			"openrouter": {
-				Name: "OpenRouter", ProviderURL: "https://openrouter.ai/api/v1", APIStandard: "openai",
-				AuthType: provider.AuthProtocol, Headers: providerHeaders,
-				Dialer: &provider.DialSettings{
-					MaxAttempts: 3, RequestTimeoutSeconds: 600, ConnectTimeoutSeconds: 60, MaxBackoffSeconds: 60,
-					ProgressStartupTimeoutSeconds: 120, ProgressTimeoutFloorSeconds: 60, ProgressTimeoutCeilingSeconds: 600,
-				},
-				Protocol: &provider.ProtocolSettings{
-					Store: boolPtr(false), MediaReplayRecovery: boolPtr(false),
-				},
-				ExtraBody: map[string]any{"include_reasoning": true},
-			},
-		},
+
 		Accounts: map[string]provider.Account{
 			"work": {
 				ID: "work", ProviderID: "openrouter", APIKey: "sk-test",
-				Overrides: provider.TemplateOverrides{
-					ProviderURL: &accountEndpoint, Headers: &accountHeaders,
-					ExtraBody: &map[string]any{},
+				Connection: provider.Template{
+					Name: "OpenRouter", ProviderURL: accountEndpoint, APIStandard: "openai",
+					AuthType: provider.AuthProtocol, Headers: accountHeaders,
 					Dialer: &provider.DialSettings{
-						RequestTimeoutSeconds: 300, ConnectTimeoutSeconds: 10, MaxAttempts: 2, MaxBackoffSeconds: 15,
-						ProgressStartupTimeoutSeconds: 90, ProgressTimeoutFloorSeconds: 60, ProgressTimeoutCeilingSeconds: 900,
+						MaxAttempts: 3, RequestTimeoutSeconds: 600, ConnectTimeoutSeconds: 60, MaxBackoffSeconds: 60,
+						ProgressStartupTimeoutSeconds: 120, ProgressTimeoutFloorSeconds: 60, ProgressTimeoutCeilingSeconds: 600,
 					},
+					Protocol: &provider.ProtocolSettings{
+						Store: boolPtr(false), MediaReplayRecovery: boolPtr(false),
+					},
+					ExtraBody: map[string]any{"include_reasoning": true},
 				},
 			},
 		},
@@ -116,20 +105,11 @@ func TestFileConfigRoundTrip(t *testing.T) {
 	loaded := LoadFileConfig()
 
 	// Verify loaded values match saved values.
-	if loaded.ActiveProvider != fc.ActiveProvider {
-		t.Errorf("ActiveProvider: expected %q, got %q", fc.ActiveProvider, loaded.ActiveProvider)
-	}
 	if loaded.Accounts["work"].APIKey != fc.Accounts["work"].APIKey {
 		t.Errorf("account mismatch")
 	}
-	if !reflect.DeepEqual(loaded.Providers["openrouter"], fc.Providers["openrouter"]) {
-		t.Fatalf("provider template mismatch: got %#v, want %#v", loaded.Providers["openrouter"], fc.Providers["openrouter"])
-	}
-	overrides := loaded.Accounts["work"].Overrides
-	if overrides.ProviderURL == nil || *overrides.ProviderURL != accountEndpoint || overrides.Headers == nil ||
-		!reflect.DeepEqual(*overrides.Headers, accountHeaders) || overrides.ExtraBody == nil || len(*overrides.ExtraBody) != 0 ||
-		!reflect.DeepEqual(overrides.Dialer, fc.Accounts["work"].Overrides.Dialer) {
-		t.Fatalf("account sparse overrides mismatch: %#v", overrides)
+	if !reflect.DeepEqual(loaded.Accounts["work"].Connection, fc.Accounts["work"].Connection) {
+		t.Fatalf("account connection mismatch")
 	}
 
 	// Verify Theme settings.
@@ -184,8 +164,8 @@ func TestFileConfigRoundTrip(t *testing.T) {
 
 func TestDefaultFileConfigHasNoExtendedSettings(t *testing.T) {
 	fc := DefaultFileConfig()
-	if len(fc.Providers) == 0 || fc.Providers["openrouter"].Name != "OpenRouter" {
-		t.Fatalf("default config is missing seeded provider templates: %#v", fc.Providers)
+	if len(fc.Accounts) != 0 {
+		t.Fatal("default config invented an account")
 	}
 	if fc.Theme != nil {
 		t.Error("Default FileConfig should have nil Theme")
@@ -201,10 +181,6 @@ func TestDefaultFileConfigHasNoExtendedSettings(t *testing.T) {
 	}
 	if fc.Font != nil {
 		t.Error("Default FileConfig should have nil Font")
-	}
-	fc.Providers["openrouter"] = provider.Template{}
-	if DefaultFileConfig().Providers["openrouter"].Name != "OpenRouter" {
-		t.Fatal("default provider templates share mutable state")
 	}
 }
 
@@ -262,8 +238,8 @@ func TestFileConfigLoadsMissingFileGracefully(t *testing.T) {
 
 	// Loading a missing config should return defaults.
 	fc := LoadFileConfig()
-	if fc.ActiveProvider != "openrouter" {
-		t.Errorf("expected default provider 'openrouter', got %q", fc.ActiveProvider)
+	if len(fc.Accounts) != 0 {
+		t.Fatal("missing config invented an account")
 	}
 }
 
@@ -273,14 +249,14 @@ func TestSessionToFileConfigPreservesNewSettings(t *testing.T) {
 	defer restore()
 
 	sc := &session.Config{
-		ActiveProvider:  "openai",
+
 		TurnLogsEnabled: true,
 		Agents:          session.DefaultAgentsConfig(),
 	}
 
 	fc := SessionToFileConfig(sc)
-	if fc.ActiveProvider != "openai" {
-		t.Errorf("expected 'openai', got %q", fc.ActiveProvider)
+	if len(fc.Accounts) != 0 {
+		t.Fatal("conversion invented account configuration")
 	}
 	if fc.Theme != nil {
 		t.Error("SessionToFileConfig should not invent Theme when none on disk")
@@ -295,11 +271,8 @@ func TestSaveFileConfigOmitsAgentProfileAPIKeys(t *testing.T) {
 	defer restore()
 
 	fc := FileConfig{
-		ActiveProvider: "opencode-go",
-		Providers: map[string]provider.Template{
-			"opencode-go": {Name: "OpenCode Go", ProviderURL: "https://opencode.ai/zen/go/v1", APIStandard: "openai", AuthType: provider.AuthProtocol},
-		},
-		Accounts: map[string]provider.Account{"go-account": {ID: "go-account", ProviderID: "opencode-go", APIKey: "provider-key"}},
+
+		Accounts: map[string]provider.Account{"go-account": {ID: "go-account", ProviderID: "opencode-go", APIKey: "provider-key", Connection: provider.Template{Name: "OpenCode Go", ProviderURL: "https://opencode.ai/zen/go/v1", APIStandard: "openai", AuthType: provider.AuthProtocol}}},
 		Agents: &session.AgentsConfig{
 			ActiveProfile: "test",
 			Profiles: map[string]session.ProfileConfig{
@@ -327,22 +300,22 @@ func TestSaveFileConfigOmitsAgentProfileAPIKeys(t *testing.T) {
 	}
 }
 
-func TestRemovedSeedTemplateStaysRemovedAfterReload(t *testing.T) {
+func TestPresetConnectionsAreNotPersistedInNewConfig(t *testing.T) {
 	defer setTestHome(t, t.TempDir())()
 	cfg := DefaultFileConfig()
-	if _, exists := cfg.Providers["chatgpt"]; !exists {
-		t.Fatal("Codex seed missing from a new config")
-	}
-	delete(cfg.Providers, "chatgpt")
 	if err := SaveFileConfig(cfg); err != nil {
 		t.Fatal(err)
 	}
-	if _, exists := LoadFileConfig().Providers["chatgpt"]; exists {
-		t.Fatal("deleted built-in template was reseeded over saved user configuration")
+	bytes, err := os.ReadFile(ConfigPath())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(bytes), "providers") || strings.Contains(string(bytes), "chatgpt") {
+		t.Fatal("presets appeared as user-owned configuration")
 	}
 }
 
-func TestLoadFileConfigIgnoresAgentProfileAPIKeys(t *testing.T) {
+func TestLoadFileConfigRejectsRemovedProviderFormatWithoutWriting(t *testing.T) {
 	tmpDir := t.TempDir()
 	restore := setTestHome(t, tmpDir)
 	defer restore()
@@ -372,16 +345,13 @@ func TestLoadFileConfigIgnoresAgentProfileAPIKeys(t *testing.T) {
 	if err := os.WriteFile(ConfigPath(), []byte(raw), 0600); err != nil {
 		t.Fatal(err)
 	}
-	loaded := LoadFileConfig()
-	if len(loaded.Accounts) != 0 {
-		t.Fatal("legacy provider credential must not be imported automatically")
+	prepared := PrepareStartup(CLIFlags{})
+	if len(prepared.Issues) == 0 || prepared.Issues[0].Target != typesmodel.RepairConfigFile {
+		t.Fatal("removed format was silently accepted")
 	}
-	cat := loaded.Agents.Profiles["test"].Categories["default"]
-	if cat.AccountID != "" || cat.Model != "deepseek-v4-flash" {
-		t.Fatalf("agent profile reference lost: %#v", cat)
-	}
-	if sess := FileConfigToSession(loaded); len(sess.Accounts) != 0 || sess.GetActiveDefaultCategory().AccountID != "" {
-		t.Fatal("legacy credential entered session configuration")
+	after, err := os.ReadFile(ConfigPath())
+	if err != nil || string(after) != raw {
+		t.Fatal("format rejection changed original data")
 	}
 }
 

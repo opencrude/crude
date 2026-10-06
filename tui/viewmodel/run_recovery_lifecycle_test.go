@@ -199,13 +199,18 @@ func TestRecoveryRealComposerRetryClickAndAutomaticContinuation(t *testing.T) {
 			app.SessionsByAgent = make(map[string]*workspace.Session)
 			app.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
 			cfg := testAccountConfig()
-			template := cfg.Providers["openai"]
+			account := cfg.Accounts["test"]
+			template := account.Connection
 			template.ProviderURL, template.Dialer = server.URL, &provider.DialSettings{MaxAttempts: 1}
-			cfg.Providers["openai"] = template
+			account.Connection = template
+			cfg.Accounts["test"] = account
 			cfg.Agents.Enabled = false
 			if _, err := app.CreateSession(cfg, t.TempDir()); err != nil {
 				t.Fatal(err)
 			}
+			// CloseAgent releases the orchestrator, not its session's log/database.
+			// Join the backend before TempDir's Windows cleanup removes those files.
+			defer app.CloseAllSessions()
 			sender := &recoveryJourneySender{events: make(chan types.AgentMsg, 512)}
 			orch, err := app.StartOrchestrator(sender)
 			if err != nil {

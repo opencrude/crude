@@ -98,9 +98,11 @@ func TestUsageAccountingAllProtocolsAcrossResume(t *testing.T) {
 			}))
 			defer server.Close()
 			cfg := modelAttributionConfig(server.URL, "accounting-model")
-			pc := cfg.Providers["openrouter"]
+			pc := cfg.Accounts["account"].Connection
 			pc.APIStandard = protocol
-			cfg.Providers["openrouter"] = pc
+			account := cfg.Accounts["account"]
+			account.Connection = pc
+			cfg.Accounts["account"] = account
 			home, directory := t.TempDir(), filepath.Join(t.TempDir(), "sessions")
 			s, err := NewWithSessionDir("protocol-usage", cfg, home, directory)
 			if err != nil {

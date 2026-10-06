@@ -65,26 +65,13 @@ func (m *App) showSettingsPrompt(msg settingsui.PromptMsg) {
 		FocusedIndex: 1,
 	}
 	switch msg.Kind {
-	case settingsui.PromptTemplateInUse:
-		spec.Title, spec.Question = "Accounts use this template", "This template cannot be removed"
-		plural := "s"
-		if msg.RelatedCount == 1 {
-			plural = ""
-		}
-		spec.Detail = fmt.Sprintf("%q is used by %d account%s. Review linked accounts before removing it.", msg.Label, msg.RelatedCount, plural)
-		spec.Buttons = []ui.ConfirmButtonSpec{{Label: "Open Accounts", ActionID: ui.ConfirmActionYes}, {Label: "Not now", ActionID: ui.ConfirmActionCancel}}
 	case settingsui.PromptRemoveAccount:
 		spec.Title, spec.Question = "Remove account", "Remove this account?"
 		spec.Detail = fmt.Sprintf("Account %q will be removed. Existing sessions will not be reassigned.", msg.Label)
 		spec.Severity = ui.ConfirmPromptDanger
 		spec.Buttons = []ui.ConfirmButtonSpec{{Label: "Remove account", ActionID: ui.ConfirmActionYes}, {Label: "Keep account", ActionID: ui.ConfirmActionCancel}}
-	case settingsui.PromptRemoveTemplate:
-		spec.Title, spec.Question = "Remove template", "Remove this provider template?"
-		spec.Detail = fmt.Sprintf("Template %q will be removed. This cannot be undone.", msg.Label)
-		spec.Severity = ui.ConfirmPromptDanger
-		spec.Buttons = []ui.ConfirmButtonSpec{{Label: "Remove template", ActionID: ui.ConfirmActionYes}, {Label: "Keep template", ActionID: ui.ConfirmActionCancel}}
 	case settingsui.PromptDiscardEditor:
-		spec.Title, spec.Question = "Discard changes", "Discard unsaved account or template changes?"
+		spec.Title, spec.Question = "Discard changes", "Discard unsaved account changes?"
 		spec.Detail = "The current editor draft will be lost. Saved settings are unchanged."
 		spec.Severity = ui.ConfirmPromptDanger
 		spec.Buttons = []ui.ConfirmButtonSpec{{Label: "Discard changes", ActionID: ui.ConfirmActionDiscard}, {Label: "Keep editing", ActionID: ui.ConfirmActionCancel}}
@@ -143,12 +130,8 @@ func (m *App) activateSettingsPrompt(choice int) tea.Cmd {
 	}
 	var result ui.EventResult
 	switch state.request.Kind {
-	case settingsui.PromptTemplateInUse:
-		body.ShowAccountsUsingTemplate(state.request.ID)
 	case settingsui.PromptRemoveAccount:
 		result = body.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.confirm-remove", Payload: state.request.ID})
-	case settingsui.PromptRemoveTemplate:
-		result = body.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.template.confirm-remove", Payload: state.request.ID})
 	case settingsui.PromptDiscardEditor, settingsui.PromptDiscardSettings:
 		result = body.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.discard.confirm", Payload: state.request.Kind})
 	case settingsui.PromptRemoveCapability:
@@ -158,12 +141,6 @@ func (m *App) activateSettingsPrompt(choice int) tea.Cmd {
 	}
 	if frame, ok := state.parent.Content.(*ui.WindowFrameWidget); ok {
 		frame.Host().MarkLayout()
-		if state.request.Kind == settingsui.PromptTemplateInUse {
-			// The Accounts table was not mounted while Providers was active.
-			// Mount it before restoring keyboard focus from the modal.
-			frame.Host().Layout()
-			body.FocusAccountList()
-		}
 	}
 	state.parent.MarkContentDirty()
 	return result.Cmd

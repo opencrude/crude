@@ -80,9 +80,11 @@ func newBackendPromptFamilyApp(t *testing.T) (*App, string, string, map[string]c
 			_, _ = fmt.Fprint(w, `{"choices":[{"message":{"role":"assistant","content":"Ready"},"finish_reason":"stop"}]}`)
 		}))
 		t.Cleanup(server.Close)
-		template := cfg.Providers["openai"]
+		account := cfg.Accounts["test"]
+		template := account.Connection
 		template.ProviderURL = server.URL
-		cfg.Providers["openai"] = template
+		account.Connection = template
+		cfg.Accounts["test"] = account
 		sess, err := app.CreateSession(cfg, t.TempDir())
 		if err != nil {
 			t.Fatal(err)

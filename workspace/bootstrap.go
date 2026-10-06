@@ -109,7 +109,7 @@ func (w *Workspace) CreateSession(cfg *session.Config, homeDir string) (*Session
 			w.noteRegistryErr("agent_name_register_failed", err)
 		}
 		model := bs.ModelName()
-		providerID := cfg.EffectiveProviderID()
+		providerID := bs.SettingsSnapshot().ProviderID
 		projectName := filepath.Base(w.RootPath)
 		if err := w.WorkspaceDB.RegisterSession(fs.SessionID, w.RootPath, projectName, model, providerID); err != nil {
 			// Non-fatal: session DB exists; registry failure must not block create.
@@ -168,7 +168,7 @@ func (w *Workspace) ResumeSession(sessionID string, cfg *session.Config, homeDir
 	// Ensure the workspace-scoped session is registered in the local registry.
 	if w.WorkspaceDB != nil {
 		model := bs.ModelName()
-		providerID := cfg.EffectiveProviderID()
+		providerID := bs.SettingsSnapshot().ProviderID
 		projectName := filepath.Base(w.RootPath)
 		if err := w.WorkspaceDB.RegisterSession(fs.SessionID, w.RootPath, projectName, model, providerID); err != nil {
 			// Non-fatal: resume still succeeds; surface via LastRegistryError.
@@ -365,28 +365,11 @@ func (w *Workspace) WorkspaceAgentDefaults() ttypes.AgentsSettings {
 	return session.ConfigToSettings(w.sessionCfg).Agents
 }
 
-// AllProviderConfigs returns a copy of the provider map from the live session config.
-func (w *Workspace) AllProviderConfigs() map[string]ttypes.ProviderConfig {
-	if w.sessionCfg == nil || w.sessionCfg.Providers == nil {
-		return nil
-	}
-	out := make(map[string]ttypes.ProviderConfig, len(w.sessionCfg.Providers))
-	for k, v := range w.sessionCfg.Providers {
-		out[k] = provider.CloneTemplate(v)
-	}
-	return out
-}
-
 // applyProviderSettings installs provider connection defaults without changing any
 // existing session's selected account. Persistence belongs to SaveAppSettings.
 func (w *Workspace) applyProviderSettings(settings ttypes.AppSettings) {
 	if w.sessionCfg == nil {
 		return
-	}
-	w.sessionCfg.ActiveProvider = settings.ActiveProvider
-	w.sessionCfg.Providers = make(map[string]session.ProviderConfig, len(settings.Providers))
-	for id, pc := range settings.Providers {
-		w.sessionCfg.Providers[id] = provider.CloneTemplate(pc)
 	}
 	w.sessionCfg.Accounts = cloneAccounts(settings.Accounts)
 }
@@ -785,10 +768,8 @@ func (w *Workspace) adoptCurrentDefaults(b *session.Session) {
 	}
 	effective := w.EffectiveAppSettings()
 	b.AdoptWorkspaceDefaults(ttypes.AppSettings{
-		Agents:         effective.Agents,
-		ActiveProvider: effective.ActiveProvider,
-		Providers:      effective.Providers,
-		Accounts:       effective.Accounts,
+		Agents:   effective.Agents,
+		Accounts: effective.Accounts,
 	})
 }
 
@@ -871,24 +852,6 @@ func (w *Workspace) CostSnapshot() session.CostSnapshot {
 		return b.CostSnapshot()
 	}
 	return session.CostSnapshot{}
-}
-
-// ProviderConfig returns the config for a given provider from the live
-// session config (or active backend session).
-func (w *Workspace) ProviderConfig(providerID string) ttypes.ProviderConfig {
-	if w.sessionCfg != nil {
-		if cfg, ok := w.sessionCfg.Providers[providerID]; ok {
-			return provider.CloneTemplate(cfg)
-		}
-	}
-	b := w.BackendSession()
-	if b == nil {
-		return ttypes.ProviderConfig{}
-	}
-	if cfg, ok := b.Config().Providers[providerID]; ok {
-		return provider.CloneTemplate(cfg)
-	}
-	return ttypes.ProviderConfig{}
 }
 
 // ── Session List / Delete (workspace-scoped)

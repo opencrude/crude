@@ -112,9 +112,11 @@ func TestResponsesDeltaSessionToolsTurnsAndPassiveResume(t *testing.T) {
 	}))
 	defer server.Close()
 	cfg := modelAttributionConfig(server.URL, model)
-	pc := cfg.Providers["openrouter"]
+	pc := cfg.Accounts["account"].Connection
 	pc.APIStandard = "openai-responses"
-	cfg.Providers["openrouter"] = pc
+	a := cfg.Accounts["account"]
+	a.Connection = pc
+	cfg.Accounts["account"] = a
 	s, err := NewWithSessionDir("delta-session", cfg, home, sessions)
 	if err != nil {
 		t.Fatal(err)

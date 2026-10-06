@@ -7,7 +7,7 @@ import (
 )
 
 func TestGetMemoryCategoryInheritsMainByDefault(t *testing.T) {
-	cfg := &Config{ActiveProvider: "openrouter", Agents: AgentsConfig{
+	cfg := &Config{Agents: AgentsConfig{
 		Profiles: map[string]ProfileConfig{"default": {Categories: map[string]CategoryConfig{
 			CategoryDefault: {AccountID: "openai-account", Model: "gpt-5.6"},
 		}}},
@@ -19,7 +19,7 @@ func TestGetMemoryCategoryInheritsMainByDefault(t *testing.T) {
 }
 
 func TestGetMemoryCategoryUsesProfileOverride(t *testing.T) {
-	cfg := &Config{ActiveProvider: "openrouter", Agents: AgentsConfig{
+	cfg := &Config{Agents: AgentsConfig{
 		Profiles: map[string]ProfileConfig{"default": {Categories: map[string]CategoryConfig{
 			CategoryDefault: {AccountID: "openai-account", Model: "gpt-5.6"},
 			CategoryMemory:  {AccountID: "anthropic-account", Model: "claude-sonnet-4"},
@@ -32,7 +32,7 @@ func TestGetMemoryCategoryUsesProfileOverride(t *testing.T) {
 }
 
 func TestGetMemoryCategoryFoldsLegacyModel(t *testing.T) {
-	cfg := &Config{ActiveProvider: "openrouter", Agents: AgentsConfig{
+	cfg := &Config{Agents: AgentsConfig{
 		Profiles: map[string]ProfileConfig{"default": {Categories: map[string]CategoryConfig{
 			CategoryDefault: {AccountID: "openai-account", Model: "gpt-5.6"},
 		}}},

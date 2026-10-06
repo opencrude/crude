@@ -55,9 +55,11 @@ func TestAllWireTransitionsResumeAndContinueTheToolLoop(t *testing.T) {
 				}))
 				defer server.Close()
 				cfg := modelAttributionConfig(server.URL, model)
-				pc := cfg.Providers["openrouter"]
+				pc := cfg.Accounts["account"].Connection
 				pc.APIStandard = protocol
-				cfg.Providers["openrouter"] = pc
+				a := cfg.Accounts["account"]
+				a.Connection = pc
+				cfg.Accounts["account"] = a
 				s, err := NewWithSessionDir("protocol-transition", cfg, home, sessionDir)
 				if err != nil {
 					t.Fatal(err)
@@ -102,7 +104,10 @@ func TestAllWireTransitionsResumeAndContinueTheToolLoop(t *testing.T) {
 					t.Fatal("resume made a provider request")
 				}
 				pc.APIStandard = target.Info().ID
-				resumed.UpdateWorkspaceDefaults(ttypes.AppSettings{Accounts: cfg.Accounts, Providers: map[string]provider.Template{"openrouter": pc}})
+				account := cfg.Accounts["account"]
+				account.Connection = pc
+				cfg.Accounts["account"] = account
+				resumed.UpdateWorkspaceDefaults(ttypes.AppSettings{Accounts: cfg.Accounts})
 				sender = newMockEventSender()
 				orch, err = resumed.NewOrchestrator(sender)
 				if err != nil {
@@ -119,11 +124,11 @@ func TestAllWireTransitionsResumeAndContinueTheToolLoop(t *testing.T) {
 				// is another ordinary request boundary, not a transcript rewrite.
 				const changedModel = "configured-model-transition-test"
 				provider.SetModelContext(changedModel, 1_000_000)
-				account := cfg.Accounts["account"]
+				account = cfg.Accounts["account"]
 				account.ID, account.APIKey = "other-account", "other-test-key"
 				accounts := provider.CloneAccounts(cfg.Accounts)
 				accounts[account.ID] = account
-				resumed.UpdateWorkspaceDefaults(ttypes.AppSettings{Accounts: accounts, Providers: map[string]provider.Template{"openrouter": pc}})
+				resumed.UpdateWorkspaceDefaults(ttypes.AppSettings{Accounts: accounts})
 				settings := resumed.SettingsSnapshot()
 				settings.SessionOverrides = map[string]ttypes.CategorySettings{CategoryDefault: {AccountID: account.ID, Model: changedModel, ThinkingEffort: "none"}}
 				if err := resumed.HandleSettingsSave(settings); err != nil {

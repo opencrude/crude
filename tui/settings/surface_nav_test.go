@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/provider"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/types"
@@ -18,6 +19,7 @@ func TestSettingsNavigation_UpDownFromSearchMovesCategories(t *testing.T) {
 	surfaceRoot := NewSurface(th, model)
 	frame := ui.NewWindowFrameWidget(th, "settings-frame", ui.FrameWindow, "Settings", surfaceRoot, nil, true, 80, 22)
 	surfaceRoot.SetFocusHandler(frame.Focus)
+	surfaceRoot.ShowAccounts()
 	surfaceRoot.FocusSearch()
 	host := frame.Host()
 	host.Resize(80, 22)
@@ -43,10 +45,11 @@ func TestSettingsNavigation_UpDownFromSearchMovesCategories(t *testing.T) {
 
 func TestSettingsNavigation_TabOrderFromEveryRegion(t *testing.T) {
 	th := theme.DefaultDark()
-	model := New(th, types.AppSettings{Theme: types.ThemeSettings{Preset: "dark"}}, nil)
+	model := New(th, types.AppSettings{Theme: types.ThemeSettings{Preset: "dark"}, Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", Label: "Test", APIKey: "key", Connection: provider.DefaultTemplates()["openai"]}}}, nil)
 	surfaceRoot := NewSurface(th, model)
 	frame := ui.NewWindowFrameWidget(th, "settings-frame", ui.FrameWindow, "Settings", surfaceRoot, nil, true, 80, 22)
 	surfaceRoot.SetFocusHandler(frame.Focus)
+	surfaceRoot.ShowAccounts()
 	host := frame.Host()
 	host.Resize(80, 22)
 	host.Layout()
@@ -54,10 +57,11 @@ func TestSettingsNavigation_TabOrderFromEveryRegion(t *testing.T) {
 	order := []ui.ComponentID{
 		WorkspaceSettingsSearchID,
 		WorkspaceSettingsListID,
-		WorkspaceSettingsTemplatesID,
-		WorkspaceSettingsTemplateAddID,
-		WorkspaceSettingsTemplateBarID,
-		WorkspaceSettingsTemplateMoreID,
+		WorkspaceSettingsAccountFilterID,
+		WorkspaceSettingsAddID,
+		WorkspaceSettingsAccountsID,
+		WorkspaceSettingsAccountBarID,
+		WorkspaceSettingsAccountMoreID,
 		WorkspaceSettingsActionID,
 		WorkspaceSettingsScopeID,
 	}
@@ -102,14 +106,14 @@ func TestSettingsNavigation_TabOrderFromEveryRegion(t *testing.T) {
 
 	frame.Focus(WorkspaceSettingsActionID)
 	host.Layout()
-	for i := 0; i < 6 && host.Focused() != WorkspaceSettingsTemplateBarID; i++ {
+	for i := 0; i < 6 && host.Focused() != WorkspaceSettingsAccountBarID; i++ {
 		res := host.Handle(tea.KeyPressMsg{Code: tea.KeyTab, Mod: tea.ModShift})
 		if res.Action != nil {
 			_ = surfaceRoot.HandleAction(ui.EventContext{Theme: th}, *res.Action)
 		}
 	}
-	if host.Focused() != WorkspaceSettingsTemplateBarID {
-		t.Fatalf("Shift+Tab from actions focus=%q want template actions", host.Focused())
+	if host.Focused() != WorkspaceSettingsAccountBarID {
+		t.Fatalf("Shift+Tab from actions focus=%q want account actions", host.Focused())
 	}
 }
 

@@ -47,6 +47,9 @@ type Transport struct {
 // NewTransport builds a transport from an immutable settings snapshot.
 // connectTimeout overrides Settings.ConnectTimeoutSeconds when positive.
 func NewTransport(settings Settings, connectTimeout time.Duration) (http.RoundTripper, error) {
+	if err := currentStartupFailure(); err != nil {
+		return nil, err
+	}
 	settings = Normalize(settings)
 	if err := settings.Validate(); err != nil {
 		return nil, err

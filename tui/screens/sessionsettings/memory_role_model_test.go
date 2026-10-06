@@ -16,11 +16,7 @@ import (
 func memoryAgentCfg() *session.Config {
 	comp := 85
 	return &session.Config{
-		ActiveProvider: "commandcode",
-		Providers: map[string]session.ProviderConfig{
-			"commandcode":  {ProviderURL: "https://cc"},
-			"ollama-cloud": {ProviderURL: "https://oc"},
-		},
+
 		Agents: session.AgentsConfig{
 			Enabled:       true,
 			ActiveProfile: "test",
@@ -89,7 +85,7 @@ func applyOverrides(base *session.Config, overrides map[string]types.CategorySet
 func openSettingsDeck(t *testing.T, st types.Settings) *Screen {
 	t.Helper()
 	screen := New(theme.DefaultDark(), cloneSettings(st), st, nil)
-	screen.ConfigureAccounts(map[string]provider.Account{"main": {ID: "main", ProviderID: "commandcode", Label: "Main"}, "memory": {ID: "memory", ProviderID: "ollama-cloud", Label: "Memory"}})
+	screen.ConfigureAccounts(map[string]provider.Account{"main": {ID: "main", ProviderID: "commandcode", Label: "Main"}, "memory": {ID: "memory", ProviderID: "ollama-cloud", Label: "Memory", Connection: provider.DefaultTemplates()["ollama-cloud"]}})
 	deck := ui.NewPanelDeck("deck", ui.NewTokenSet(theme.DefaultDark()))
 	deck.Open(ui.PanelEntry{ID: "settings", Title: "Session Settings", Content: screen, Closable: true, Policy: ui.PanelInteractive, PreferredHeight: 14})
 	host := ui.NewHost(theme.DefaultDark(), deck)
@@ -113,7 +109,7 @@ func TestMemoryAgentRoleShowsItsOwnModel(t *testing.T) {
 	}
 
 	screen := openSettingsDeck(t, st)
-	screen.ConfigureAccounts(map[string]provider.Account{"main": {ID: "main", ProviderID: "commandcode", Label: "Main"}, "memory": {ID: "memory", ProviderID: "ollama-cloud", Label: "Memory"}})
+	screen.ConfigureAccounts(map[string]provider.Account{"main": {ID: "main", ProviderID: "commandcode", Label: "Main"}, "memory": {ID: "memory", ProviderID: "ollama-cloud", Label: "Memory", Connection: provider.DefaultTemplates()["ollama-cloud"]}})
 	screen.openRoot()
 	row := screen.formModel.Field(memoryRole)
 	if row == nil {
@@ -140,7 +136,7 @@ func TestMemoryAgentRoleApplyPreservesModel(t *testing.T) {
 	st := session.ConfigToSettings(cfg)
 
 	screen := openSettingsDeck(t, st)
-	screen.ConfigureAccounts(map[string]provider.Account{"main": {ID: "main", ProviderID: "commandcode", Label: "Main"}, "memory": {ID: "memory", ProviderID: "ollama-cloud", Label: "Memory"}})
+	screen.ConfigureAccounts(map[string]provider.Account{"main": {ID: "main", ProviderID: "commandcode", Label: "Main"}, "memory": {ID: "memory", ProviderID: "ollama-cloud", Label: "Memory", Connection: provider.DefaultTemplates()["ollama-cloud"]}})
 	screen.openRole(memoryRole)
 	screen.formModel.Field(fieldThinking).Value = ui.StringValue("medium")
 	screen.applyRoleForm()
@@ -164,7 +160,7 @@ func TestMemoryAgentRoleExplicitModelOverrides(t *testing.T) {
 	st := session.ConfigToSettings(cfg)
 
 	screen := openSettingsDeck(t, st)
-	screen.ConfigureAccounts(map[string]provider.Account{"main": {ID: "main", ProviderID: "commandcode", Label: "Main"}, "memory": {ID: "memory", ProviderID: "ollama-cloud", Label: "Memory"}})
+	screen.ConfigureAccounts(map[string]provider.Account{"main": {ID: "main", ProviderID: "commandcode", Label: "Main"}, "memory": {ID: "memory", ProviderID: "ollama-cloud", Label: "Memory", Connection: provider.DefaultTemplates()["ollama-cloud"]}})
 	screen.openRole(memoryRole)
 	screen.formModel.Field(fieldModel).Value = ui.StringValue("chosen-memory-model")
 	screen.applyRoleForm()
@@ -197,7 +193,7 @@ func TestMemoryAgentRoleResetRestoresWorkspaceSetting(t *testing.T) {
 			cfg := memoryAgentCfg()
 			st := session.ConfigToSettings(cfg)
 			screen := openSettingsDeck(t, st)
-			screen.ConfigureAccounts(map[string]provider.Account{"main": {ID: "main", ProviderID: "commandcode", Label: "Main"}, "memory": {ID: "memory", ProviderID: "ollama-cloud", Label: "Memory"}})
+			screen.ConfigureAccounts(map[string]provider.Account{"main": {ID: "main", ProviderID: "commandcode", Label: "Main"}, "memory": {ID: "memory", ProviderID: "ollama-cloud", Label: "Memory", Connection: provider.DefaultTemplates()["ollama-cloud"]}})
 			tc.act(screen)
 
 			out := screen.ToSettings()
@@ -222,7 +218,7 @@ func TestMemoryAgentRoleInheritMainStillWorks(t *testing.T) {
 	st := session.ConfigToSettings(cfg)
 
 	screen := openSettingsDeck(t, st)
-	screen.ConfigureAccounts(map[string]provider.Account{"main": {ID: "main", ProviderID: "commandcode", Label: "Main"}, "memory": {ID: "memory", ProviderID: "ollama-cloud", Label: "Memory"}})
+	screen.ConfigureAccounts(map[string]provider.Account{"main": {ID: "main", ProviderID: "commandcode", Label: "Main"}, "memory": {ID: "memory", ProviderID: "ollama-cloud", Label: "Memory", Connection: provider.DefaultTemplates()["ollama-cloud"]}})
 	screen.inheritMain(memoryRole)
 	out := screen.ToSettings()
 	if got := out.SessionOverrides[memoryRole].Inherit; got != InheritMainMarker {

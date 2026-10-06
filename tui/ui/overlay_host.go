@@ -17,7 +17,7 @@ const (
 	OverlayContextMenu       OverlayID = "context-menu"
 	OverlayFindReplace       OverlayID = "find-replace"
 	OverlayDirtyClose        OverlayID = "dirty-close-prompt"
-	OverlayAccountRecovery   OverlayID = "account-recovery"
+	OverlayOperationIssue    OverlayID = "operation-issue"
 	OverlayAgentPrompt       OverlayID = "agent-prompt"
 	OverlayTabStats          OverlayID = "tab-stats"
 	OverlayPromptHistory     OverlayID = "prompt-history"

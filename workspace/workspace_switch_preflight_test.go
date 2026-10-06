@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"crude/collaboration"
 	"crude/fileio"
 	ttypes "crude/types"
 )
@@ -21,6 +22,7 @@ type switchPreflightSnapshot struct {
 	root          string
 	workspaceDir  string
 	workspaceDB   *WorkspaceDB
+	collaboration *collaboration.Store
 	agentMgr      *AgentManager
 	paneMgr       *PaneManager
 	lspMgr        *LSPManager
@@ -52,6 +54,7 @@ func newSwitchPreflightWorkspace(t *testing.T) (*Workspace, switchPreflightSnaps
 		root:          ws.RootPath,
 		workspaceDir:  ws.WorkspaceDir,
 		workspaceDB:   ws.WorkspaceDB,
+		collaboration: ws.Collaboration,
 		agentMgr:      ws.AgentMgr,
 		paneMgr:       ws.PaneMgr,
 		lspMgr:        ws.LSPMgr,
@@ -72,6 +75,12 @@ func assertSwitchPreflightStateIntact(t *testing.T, ws *Workspace, before switch
 	}
 	if ws.WorkspaceDir != before.workspaceDir || ws.WorkspaceDB != before.workspaceDB {
 		t.Fatal("workspace persistence changed after rejected switch")
+	}
+	if ws.Collaboration != before.collaboration {
+		t.Fatal("collaboration runtime changed after rejected switch")
+	}
+	if _, err := ws.Collaboration.Page(t.Context(), collaboration.PageQuery{Limit: 1}); err != nil {
+		t.Fatalf("old collaboration runtime is unusable after rejected switch: %v", err)
 	}
 	if ws.AgentMgr != before.agentMgr ||
 		ws.PaneMgr != before.paneMgr ||
@@ -159,6 +168,32 @@ func TestSwitchProjectPersistenceFailureLeavesOldWorkspaceIntact(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "prepare workspace directory") {
 		t.Fatalf("SwitchProject error = %q, want persistence preparation context", err)
+	}
+	assertSwitchPreflightStateIntact(t, ws, before)
+}
+
+func TestSwitchProjectCollaborationFailureLeavesOldWorkspaceIntact(t *testing.T) {
+	ws, before := newSwitchPreflightWorkspace(t)
+	target := t.TempDir()
+	targetWorkspace := NewWorkspace(target, "model", "user", ttypes.Settings{}, switchPreflightLogger{})
+	if targetWorkspace.Collaboration == nil {
+		targetWorkspace.Close()
+		t.Fatal("target collaboration runtime did not initialize")
+	}
+	_, err := targetWorkspace.WorkspaceDB.DB.Exec(
+		`UPDATE collaboration_workspace SET schema_version = ?`, collaboration.SchemaVersion+1,
+	)
+	targetWorkspace.Close()
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	err = ws.SwitchProject(target)
+	if err == nil {
+		t.Fatal("switch succeeded with an unusable target collaboration runtime")
+	}
+	if !strings.Contains(err.Error(), "prepare collaboration") {
+		t.Fatalf("switch error = %q, want collaboration preparation context", err)
 	}
 	assertSwitchPreflightStateIntact(t, ws, before)
 }

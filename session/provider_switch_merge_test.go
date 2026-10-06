@@ -15,17 +15,16 @@ func TestAgentAccountSwitchUsesNewTemplateWithoutStaleTransport(t *testing.T) {
 	override := CategoryConfig{AccountID: "codex", Model: "gpt-5.6-luna"}
 	merged := mergeCategoryConfig(base, override)
 	cfg := &Config{
-		Providers: provider.DefaultTemplates(),
 		Accounts: map[string]provider.Account{
-			"opencode": {ID: "opencode", ProviderID: "opencode-go", APIKey: "opencode-secret"},
-			"codex":    {ID: "codex", ProviderID: "chatgpt", OAuth: &provider.OAuthCredentials{AccessToken: "codex-secret"}},
+			"opencode": {ID: "opencode", ProviderID: "opencode-go", APIKey: "opencode-secret", Connection: provider.DefaultTemplates()["opencode-go"]},
+			"codex":    {ID: "codex", ProviderID: "chatgpt", OAuth: &provider.OAuthCredentials{AccessToken: "codex-secret"}, Connection: provider.DefaultTemplates()["chatgpt"]},
 		},
 	}
 	p, err := cfg.providerForCategory(merged)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if merged.AccountID != "codex" || merged.Model != "gpt-5.6-luna" || p.AccountID != "codex" || p.StandardName != "codex" || p.BaseURL != cfg.Providers["chatgpt"].ProviderURL {
+	if merged.AccountID != "codex" || merged.Model != "gpt-5.6-luna" || p.AccountID != "codex" || p.StandardName != "codex" || p.BaseURL != cfg.Accounts["codex"].Connection.ProviderURL {
 		t.Fatalf("agent account switch retained prior transport: merged=%+v provider=%+v", merged, p)
 	}
 }
@@ -38,12 +37,12 @@ func TestAccountOverrideWinsWithoutChangingAgentModel(t *testing.T) {
 	headers := map[string]string{"X-Trace": "work"}
 	extra := map[string]any{"work": true}
 	disabled := false
-	cfg := &Config{Providers: provider.DefaultTemplates(), Accounts: map[string]provider.Account{
-		"work": {ID: "work", ProviderID: "openrouter", APIKey: "work-secret", Overrides: provider.TemplateOverrides{
-			ProviderURL: &endpoint, APIStandard: &protocol, AuthType: &auth, AuthHeader: &header, Headers: &headers,
-			Dialer: &provider.DialSettings{MaxAttempts: 2}, Protocol: &provider.ProtocolSettings{Store: &disabled}, ExtraBody: &extra,
+	cfg := &Config{Accounts: map[string]provider.Account{
+		"work": {ID: "work", ProviderID: "openrouter", APIKey: "work-secret", Connection: provider.Template{
+			Name: "Work", ProviderURL: endpoint, APIStandard: protocol, AuthType: auth, AuthHeader: header, Headers: headers,
+			Dialer: &provider.DialSettings{MaxAttempts: 2}, Protocol: &provider.ProtocolSettings{Store: &disabled}, ExtraBody: extra,
 		}},
-		"personal": {ID: "personal", ProviderID: "openrouter", APIKey: "personal-secret"},
+		"personal": {ID: "personal", ProviderID: "openrouter", APIKey: "personal-secret", Connection: provider.DefaultTemplates()["openrouter"]},
 	}}
 	cat := CategoryConfig{AccountID: "work", Model: "one-model"}
 	p, err := cfg.providerForCategory(cat)
@@ -69,15 +68,19 @@ func TestAccountOverrideWinsWithoutChangingAgentModel(t *testing.T) {
 func TestAccountOverrideCanDisableResponsesMediaReplayRecovery(t *testing.T) {
 	disabled := false
 	cfg := &Config{
-		Providers: provider.DefaultTemplates(),
 		Accounts: map[string]provider.Account{
 			"guarded": {
 				ID: "guarded", ProviderID: "openai", APIKey: "guarded-secret",
-				Overrides: provider.TemplateOverrides{
-					Protocol: &provider.ProtocolSettings{MediaReplayRecovery: &disabled},
-				},
+				Connection: func() provider.Template {
+					v := provider.DefaultTemplates()["openai"]
+					if v.Protocol == nil {
+						v.Protocol = &provider.ProtocolSettings{}
+					}
+					v.Protocol.MediaReplayRecovery = &disabled
+					return v
+				}(),
 			},
-			"default": {ID: "default", ProviderID: "openai", APIKey: "default-secret"},
+			"default": {ID: "default", ProviderID: "openai", APIKey: "default-secret", Connection: provider.DefaultTemplates()["openai"]},
 		},
 	}
 	guarded, err := cfg.providerForCategory(CategoryConfig{AccountID: "guarded", Model: "gpt-test"})

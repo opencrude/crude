@@ -25,6 +25,14 @@ Permissions, model/account selection, plans, filesystem commits, Local History,
 accounting, memory truth, and UI focus remain with their existing authorities.
 Peer communication never widens them.
 
+Collaboration borrows the current workspace's SQL handle; its lifetime must end
+before that handle closes. A project switch validates and attaches the target
+collaboration store before tearing down the current workspace. Old sessions detach
+while their store is still usable, then its runtime locks are released and the old
+database closes. The replacement store is published with the target database, so
+new and resumed launcher sessions never register through the previous project.
+A target attachment failure leaves the current workspace and sessions intact.
+
 ## Identity and lifecycle
 
 Names are labels, never routing identities. All operations use exact stable IDs:
@@ -249,6 +257,12 @@ Current acceptance includes:
 - Regression coverage for old controls against replacement runs, interim reports
   masquerading as finals, exact pause/resume, cancellation during finalization,
   profile selection, combined waits, and passive restart with zero provider replay.
+- `TestWorkspaceSwitchLauncherStartsAndResumesSessions`: repeated project switches
+  start actual launcher agents, retain explicitly submitted conversations and
+  resume their exact sessions without provider replay. Old SQL handles close and
+  replacement sessions use the target memory/collaboration services. Target
+  collaboration preparation failure is covered separately and preserves the
+  current workspace.
 - Live/SQLite/hydration projection parity at narrow and wide widths.
 - Broadcast tests with large closed history proving only active attached runs
   receive the event.

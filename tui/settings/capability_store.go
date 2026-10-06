@@ -183,12 +183,13 @@ func (catalog *capabilityCatalog) sourceFilterLabel(sourceID string) string {
 }
 
 func (catalog *capabilityCatalog) layoutStore(ctx ui.LayoutContext, rect ui.Rect) {
-	barWidth := 0
+	barWidth, stroke := 0, 0
 	if catalog.storeScroll.NeededForViewport(rect.H) {
-		barWidth = min(ui.ScrollbarWidth, rect.W)
+		barWidth = min(ui.ScrollbarWidth+1, rect.W)
+		stroke = min(ui.ScrollbarWidth, barWidth)
 	}
 	catalog.store.Layout(ctx, ui.Rect{X: rect.X, Y: rect.Y, W: max(0, rect.W-barWidth), H: rect.H})
-	catalog.storeScroll.Layout(ctx, ui.Rect{X: rect.X + rect.W - barWidth, Y: rect.Y, W: barWidth, H: rect.H})
+	catalog.storeScroll.Layout(ctx, ui.Rect{X: rect.X + rect.W - stroke, Y: rect.Y, W: stroke, H: rect.H})
 }
 
 func (catalog *capabilityCatalog) paintStoreRow(buffer *surface.CellBuffer, x, y, width int, item ui.VirtItem, localRow int, state ui.ControlState, _ ui.PaintContext, tokens *ui.TokenSet) {
@@ -518,12 +519,13 @@ func (catalog *capabilityCatalog) layoutStoreBrowse(ctx ui.LayoutContext, top, h
 		for _, component := range []ui.Component{catalog.filter, catalog.installed, catalog.searchButton, catalog.storeFilters, catalog.store, catalog.storeScroll} {
 			component.Layout(ctx, ui.Rect{})
 		}
-		barWidth := 0
+		barWidth, stroke := 0, 0
 		if catalog.choiceScroll.NeededForViewport(height) {
-			barWidth = min(ui.ScrollbarWidth, width)
+			barWidth = min(ui.ScrollbarWidth+1, width)
+			stroke = min(ui.ScrollbarWidth, barWidth)
 		}
 		catalog.choices.Layout(ctx, ui.Rect{Y: top, W: width - barWidth, H: height})
-		catalog.choiceScroll.Layout(ctx, ui.Rect{X: width - barWidth, Y: top, W: barWidth, H: height})
+		catalog.choiceScroll.Layout(ctx, ui.Rect{X: width - stroke, Y: top, W: stroke, H: height})
 		return
 	}
 	searchWidth := 0

@@ -1,8 +1,10 @@
 package app
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 
@@ -17,8 +19,6 @@ import (
 )
 
 type FileConfig struct {
-	ActiveProvider  string                       `json:"active_provider"`
-	Providers       map[string]provider.Template `json:"providers"`
 	Accounts        map[string]provider.Account  `json:"accounts,omitempty"`
 	TurnLogsEnabled *bool                        `json:"turn_logs_enabled,omitempty"`
 	Agents          *session.AgentsConfig        `json:"agents,omitempty"`
@@ -42,10 +42,7 @@ func (c *FileConfig) IsTurnLogsEnabled() bool {
 }
 
 func DefaultFileConfig() FileConfig {
-	return FileConfig{
-		ActiveProvider: "openrouter",
-		Providers:      provider.DefaultTemplates(),
-	}
+	return FileConfig{}
 }
 
 func ConfigPath() string {
@@ -62,12 +59,14 @@ func loadFileConfigFrom(path string) (FileConfig, error) {
 		return FileConfig{}, err
 	}
 	cfg := DefaultFileConfig()
-	// Once a config exists, its template map is authoritative. Seed templates
-	// belong to a new config only; otherwise deleting a built-in template would
-	// recreate it on the next read.
-	cfg.Providers = make(map[string]session.ProviderConfig)
-	if err := json.Unmarshal(data, &cfg); err != nil {
+	decoder := json.NewDecoder(bytes.NewReader(data))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&cfg); err != nil {
 		return FileConfig{}, err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		return FileConfig{}, fmt.Errorf("configuration must contain exactly one JSON object")
 	}
 	return cfg, nil
 }
@@ -152,6 +151,7 @@ func persistRotatedAccount(account provider.Account, expected provider.Account) 
 			return fmt.Errorf("account %q was removed or reconnected", account.ID)
 		}
 		account.Label = current.Label
+		account.Connection = provider.CloneTemplate(current.Connection)
 		cfg.Accounts[account.ID] = cloneAccount(account)
 		return nil
 	})
@@ -159,7 +159,7 @@ func persistRotatedAccount(account provider.Account, expected provider.Account) 
 }
 
 func sameAccountCredentials(a, b provider.Account) bool {
-	if a.ProviderID != b.ProviderID || a.APIKey != b.APIKey || (a.OAuth == nil) != (b.OAuth == nil) {
+	if a.ProviderID != b.ProviderID || a.APIKey != b.APIKey || (a.OAuth == nil) != (b.OAuth == nil) || a.Connection.ProviderURL != b.Connection.ProviderURL || a.Connection.AuthType != b.Connection.AuthType || a.Connection.AuthHeader != b.Connection.AuthHeader || a.Connection.APIStandard != b.Connection.APIStandard {
 		return false
 	}
 	return a.OAuth == nil || *a.OAuth == *b.OAuth
@@ -175,9 +175,7 @@ func cloneAccounts(accounts map[string]provider.Account) map[string]provider.Acc
 
 func FileConfigToAppSettings(fc FileConfig) ttypes.AppSettings {
 	s := ttypes.AppSettings{
-		ActiveProvider: fc.ActiveProvider,
-		Providers:      cloneProviderConfigs(fc.Providers),
-		Accounts:       cloneAccounts(fc.Accounts),
+		Accounts: cloneAccounts(fc.Accounts),
 	}
 	if fc.Theme != nil {
 		s.Theme = *fc.Theme
@@ -236,7 +234,6 @@ func ApplyAppSettingsToFileConfig(fc *FileConfig, s ttypes.AppSettings) {
 	fc.Network = &networkSettings
 	capabilities := captypes.Clone(s.Capabilities)
 	fc.Capabilities = &capabilities
-	fc.ActiveProvider = s.ActiveProvider
 	if s.Accounts != nil {
 		fc.Accounts = cloneAccounts(s.Accounts)
 	}
@@ -253,19 +250,10 @@ func ApplyAppSettingsToFileConfig(fc *FileConfig, s ttypes.AppSettings) {
 		session.ApplyWorkspaceAgentDefaults(agentCfg, s.Agents)
 		fc.Agents = &agentCfg.Agents
 	}
-	if s.Providers != nil {
-		fc.Providers = cloneProviderConfigs(s.Providers)
-	}
-}
-
-func cloneProviderConfigs(src map[string]provider.Template) map[string]provider.Template {
-	return provider.CloneTemplates(src)
 }
 
 func FileConfigToSession(fc FileConfig) *session.Config {
 	cfg := &session.Config{
-		ActiveProvider:  fc.ActiveProvider,
-		Providers:       cloneProviderConfigs(fc.Providers),
 		Accounts:        cloneAccounts(fc.Accounts),
 		TurnLogsEnabled: fc.IsTurnLogsEnabled(),
 	}
@@ -293,8 +281,6 @@ func SessionToFileConfig(sc *session.Config) FileConfig {
 	// Start from existing file config so visual prefs are preserved.
 	fc := LoadFileConfig()
 	tl := sc.TurnLogsEnabled
-	fc.ActiveProvider = sc.ActiveProvider
-	fc.Providers = cloneProviderConfigs(sc.Providers)
 	fc.Accounts = cloneAccounts(sc.Accounts)
 	fc.TurnLogsEnabled = &tl
 	fc.Agents = &sc.Agents

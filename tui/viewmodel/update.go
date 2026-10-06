@@ -24,6 +24,7 @@ import (
 	"crude/tui/screens/launcher"
 	historyscreen "crude/tui/screens/localhistory"
 	memorybrowser "crude/tui/screens/memorybrowser"
+	"crude/tui/screens/operationissue"
 	"crude/tui/screens/question"
 	sessionpicker "crude/tui/screens/sessionpicker"
 	"crude/tui/screens/sessionsettings"
@@ -62,6 +63,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		command = tea.Batch(command, m.queueToolLayoutSave())
 	}
 	m.updateSettingsWindowTitle()
+	m.showNextOperationIssue()
 	if previousMode == types.AutoSaveEditorFocusChange && m.editorSettings.AutoSave == previousMode && previousEditor != nil &&
 		previousEditor.IsOpen() && previousEditor != m.logicalEditorFocus() && m.DirtyPromptPath == "" {
 		command = tea.Batch(command, m.requestEditorSave(previousEditor, workspace.DocumentSaveFocusOut, false))
@@ -93,6 +95,15 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// the complete shell, with expensive leaf work retained by source version.
 
 	switch msg := msg.(type) {
+	case types.OperationIssueMsg:
+		m.presentOperationIssue(msg.Issue)
+		return m, nil
+	case types.ResumeStartupMsg:
+		return m, m.launcherResumeSession(msg.SessionID, nil)
+	case operationissue.ActionMsg:
+		return m, m.handleOperationIssueAction(msg)
+	case repairConfigLoadedMsg:
+		return m, m.applyRepairConfigLoaded(msg)
 	case pastedTextStoredMsg:
 		m.applyPastedText(msg)
 	case referenceContentLoadedMsg:
@@ -194,7 +205,12 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if initialSize && m.ActiveSession != nil {
 			if err := m.ActiveSessionConnectionIssue(); err != nil {
-				m.showAccountRecovery(true)
+				m.showAccountRecovery(true, err.Error())
+			}
+		}
+		if initialSize {
+			for _, issue := range m.TakeStartupIssues() {
+				m.presentOperationIssue(issue)
 			}
 		}
 		// The shell surface is resized on the next View() frame by
@@ -860,38 +876,6 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		} else {
 			m.refreshAllSessionSettingsProjections()
 			m.Feedback.NotifyInfo("Account change saved")
-		}
-		if fw := m.windowManager.Window(string(ui.OverlayWorkspaceSettings)); fw != nil {
-			if w, ok := fw.Content.(*ui.WindowFrameWidget); ok {
-				if body, ok := w.Body().(*settingsui.WorkspaceSettingsSurface); ok && body.Model() == msg.Target {
-					if cmd := m.forwardEventToWindowContent(fw, msg); cmd != nil {
-						cmds = append(cmds, cmd)
-					}
-					w.Host().MarkLayout()
-				}
-			}
-		}
-	case settingsui.TemplateChangeMsg:
-		request := msg
-		owner := m.Workspace
-		generation := m.workspaceSwitchGen.Load()
-		cmds = append(cmds, func() tea.Msg {
-			err := owner.SaveTemplateChange(request.Change)
-			var settings ttypes.AppSettings
-			if err == nil {
-				settings = owner.AppDefaults()
-			}
-			return settingsui.TemplateChangeResultMsg{Target: request.Target, Change: request.Change, Settings: settings, Err: err, WorkspaceGeneration: generation}
-		})
-	case settingsui.TemplateChangeResultMsg:
-		if msg.WorkspaceGeneration != m.workspaceSwitchGen.Load() {
-			break
-		}
-		if msg.Err != nil {
-			m.Feedback.NotifyError("Provider template not saved: " + msg.Err.Error())
-		} else {
-			m.refreshAllSessionSettingsProjections()
-			m.Feedback.NotifyInfo("Provider template saved")
 		}
 		if fw := m.windowManager.Window(string(ui.OverlayWorkspaceSettings)); fw != nil {
 			if w, ok := fw.Content.(*ui.WindowFrameWidget); ok {

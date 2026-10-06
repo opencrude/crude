@@ -121,9 +121,9 @@ func newAdaptiveCompactionSession(t *testing.T, serverURL string, capacity int, 
 		AccountID: "account", Model: "adaptive-aeron-model", ModelContextWindow: capacity, ModelMaxOutput: 2_048,
 	}
 	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile
-	template := cfg.Providers[cfg.ActiveProvider]
+	template := cfg.Accounts["account"].Connection
 	template.ProviderURL = serverURL
-	cfg.Providers[cfg.ActiveProvider] = template
+	cfg.Accounts["account"] = func(a provider.Account) provider.Account { a.Connection = template; return a }(cfg.Accounts["account"])
 	main, err := cfg.providerForCategory(cfg.GetActiveDefaultCategory())
 	if err != nil {
 		t.Fatal(err)

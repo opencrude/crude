@@ -4,7 +4,8 @@
 
 ## Product surface and authority
 
-Application Settings has one **Network** group, between AI and Security:
+Application Settings has one **Network** group, ordered last in the rail after
+the AI, Security, and IDE groups:
 
 | Page | Controls |
 |---|---|
@@ -21,7 +22,7 @@ inside that file. Certificate/private-key bytes are never persisted in settings;
 only their paths and exact destination hostname are stored.
 
 `network/` owns the transport and scalar settings. `app/` owns persistence and
-publishes its validated immutable default snapshot. Providers retain their own
+publishes its validated immutable default snapshot. Account connections retain their own
 request/progress/attempt budgets; they do not implement another proxy/TLS stack.
 New clients capture current policy. In-flight clients keep their snapshot, so a
 save cannot change TLS or routing halfway through a request. A retained MCP
@@ -31,6 +32,11 @@ Preferences Save runs certificate validation and persistence off the UI thread.
 Its exact retained form is busy until the owning workspace/overlay result arrives.
 Failure keeps the same draft open. A late result cannot close a replacement
 Settings window or redirect a workspace save into another project's database.
+
+Invalid saved policy does not stop the IDE shell. Startup shows a recovery dialog
+and blocks new outbound clients locally until a valid explicit repair. Malformed
+application configuration also blocks outbound activity rather than silently
+using defaults. No direct fallback, reset, or trust widening occurs.
 
 ## Connection policy
 

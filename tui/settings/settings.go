@@ -38,8 +38,6 @@ type PromptKind uint8
 
 const (
 	PromptRemoveAccount PromptKind = iota + 1
-	PromptRemoveTemplate
-	PromptTemplateInUse
 	PromptDiscardEditor
 	PromptDiscardSettings
 	PromptRemoveCapability
@@ -52,11 +50,8 @@ type PromptMsg struct {
 	Label            string
 	RelatedCount     int
 	beforeAccount    *provider.Account
-	beforeTemplate   *provider.Template
 	accountEditor    *accountEdit
 	accountDraft     *provider.Account
-	providerEditor   *providerEdit
-	providerDraft    *provider.Template
 	preferences      []byte
 	agentEditor      *ui.FormModel
 	agentDraft       []byte
@@ -74,19 +69,6 @@ type AccountChangeMsg struct {
 type AccountChangeResultMsg struct {
 	Target              *Model
 	Change              types.AccountChange
-	Settings            types.AppSettings
-	Err                 error
-	WorkspaceGeneration uint64
-}
-
-type TemplateChangeMsg struct {
-	Target *Model
-	Change provider.TemplateChange
-}
-
-type TemplateChangeResultMsg struct {
-	Target              *Model
-	Change              provider.TemplateChange
 	Settings            types.AppSettings
 	Err                 error
 	WorkspaceGeneration uint64
@@ -164,14 +146,11 @@ type Category struct {
 type categorySnapshot struct{ values map[string]ui.FieldValue }
 
 type modelSnapshot struct {
-	categories     []categorySnapshot
-	selected       int
-	pane           int
-	providerID     string
-	accountID      string
-	activeProvider string
-	providers      map[string]types.ProviderConfig
-	accounts       map[string]provider.Account
+	categories []categorySnapshot
+	selected   int
+	pane       int
+	accountID  string
+	accounts   map[string]provider.Account
 }
 
 // Model is the workspace settings screen state.
@@ -182,10 +161,8 @@ type Model struct {
 	pane            int // 0: category rail, 1: form
 	snapshot        *modelSnapshot
 	presets         []types.ProviderPreset
-	providers       map[string]types.ProviderConfig
 	accounts        map[string]provider.Account
 	accountID       string // account being browsed, never an active connection
-	activeProvider  string
 	saving          bool
 	saveError       string
 	saveDisabled    map[*ui.FieldState]bool
@@ -196,17 +173,13 @@ type Model struct {
 	accountEditor   *accountEdit
 	accountBusy     bool
 	accountError    string
-	providerEditor  *providerEdit
-	providerError   string
 	nextCategory    int
 	nextScope       types.SettingsScope
 	preferencesBase []byte
-	providerID      string
 	models          map[string][]types.ModelEntry
 	searchEd        *ui.TextEdit
 	searchActive    bool
 	accountQuery    string
-	templateQuery   string
 	scope           types.SettingsScope
 	appDefaults     types.AppSettings
 	// agents holds the working AgentsSettings so the main agent form's
@@ -227,10 +200,10 @@ type Model struct {
 }
 
 type accountEdit struct {
-	original        *provider.Account
-	draft           provider.Account
-	initialProvider string
-	isNew           bool
+	original *provider.Account
+	draft    provider.Account
+	seedID   string
+	isNew    bool
 }
 
 const (
@@ -305,16 +278,8 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 			})
 		}
 	}
-	providers := make(map[string]types.ProviderConfig, len(current.Providers))
-	for id, cfg := range current.Providers {
-		providers[id] = provider.CloneTemplate(cfg)
-	}
-	active := current.ActiveProvider
-	if active == "" {
-		active = "openrouter"
-	}
 	m := &Model{
-		th: th, presets: presets, providers: providers, providerID: active, activeProvider: active,
+		th: th, presets: presets,
 		accounts: cloneAccounts(current.Accounts), authGeneration: map[string]uint64{}, authErrors: map[string]string{}, fetchGeneration: map[string]uint64{},
 		models: make(map[string][]types.ModelEntry), scope: scope, appDefaults: appDefaults,
 		agents:              &current.Agents,
@@ -322,12 +287,6 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		autoReviewer:        current.Safety.AutoPermission.Normalized(),
 		capabilities:        capability.Normalize(current.Capabilities),
 		capabilityDiscovery: make(map[capability.Kind][]capability.Entry),
-	}
-	if _, ok := providers[m.providerID]; !ok {
-		ids := sortedTemplateIDs(providers)
-		if len(ids) > 0 {
-			m.providerID = ids[0]
-		}
 	}
 	accountIDs := make([]string, 0, len(m.accounts))
 	for id := range m.accounts {
@@ -354,8 +313,7 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		liveFramePadField("frame-right", "Right padding", appearance.PadRightOrDefault(), "Blank columns reserved right of the content."),
 	)
 	m.categories = []Category{
-		{Name: "Providers", Group: "AI", Description: "Reusable provider templates for endpoint, authentication, protocol, and request options.", Form: m.buildProvidersForm()},
-		{Name: "Accounts", Group: "AI", Description: "Named account credentials with optional template overrides.", Form: m.buildAccountsForm()},
+		{Name: "Accounts", Group: "AI", Description: "Named account credentials and complete connection settings.", Form: m.buildAccountsForm()},
 		{Name: "Main Agent", Group: "AI", Description: "Workspace defaults for planning and delegation.", Form: m.buildAgentForm(current.Agents.Categories["default"], true)},
 		{Name: "Researcher", Group: "AI", Description: "Workspace defaults for research and context gathering.", Form: m.buildAgentForm(current.Agents.Categories["researcher"], false)},
 		{Name: "Crafter", Group: "AI", Description: "Workspace defaults for implementation work.", Form: m.buildAgentForm(current.Agents.Categories["crafter"], false)},
@@ -418,8 +376,6 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 func (m *Model) preferenceBytes() []byte {
 	s := m.AppSettings()
 	s.Accounts = nil
-	s.Providers = nil // templates are saved as independent entities
-	s.ActiveProvider = ""
 	s.Capabilities.Skills, s.Capabilities.Connections, s.Capabilities.Sources = nil, nil, nil
 	encoded, _ := json.Marshal(s)
 	return encoded
@@ -494,7 +450,7 @@ func (m *Model) accountEditorDirty() bool {
 	m.storeAccountForm()
 	edit := m.accountEditor
 	if edit.isNew {
-		return edit.draft.Label != "" || edit.draft.APIKey != "" || edit.draft.OAuth != nil || edit.draft.ProviderID != edit.initialProvider || edit.draft.Overrides != (provider.TemplateOverrides{})
+		return m.categories[catAccounts].Form.AnyDirty() || edit.draft.Label != "" || edit.draft.APIKey != "" || edit.draft.OAuth != nil
 	}
 	return edit.original != nil && !reflect.DeepEqual(*edit.original, edit.draft)
 }
@@ -583,10 +539,6 @@ func readOnlyColorField(id, label, hex string) *ui.FieldState {
 	}
 }
 
-func (m *Model) buildProvidersForm() *ui.FormModel {
-	return m.buildProviderEditorForm()
-}
-
 func (m *Model) buildAccountsForm() *ui.FormModel {
 	return m.buildAccountEditorForm()
 }
@@ -604,14 +556,14 @@ func (m *Model) accountRows() []ui.TableRow {
 	for id := range m.accounts {
 		a := m.accounts[id]
 		query := strings.ToLower(strings.TrimSpace(m.accountQuery))
-		if query != "" && !strings.Contains(strings.ToLower(m.providerLabel(a.ProviderID)+" "+a.Label), query) {
+		if query != "" && !strings.Contains(strings.ToLower(accountConnectionLabel(a)+" "+a.Label+" "+a.Connection.ProviderURL+" "+a.Connection.APIStandard), query) {
 			continue
 		}
 		ids = append(ids, id)
 	}
 	slices.SortFunc(ids, func(a, b string) int {
 		left, right := m.accounts[a], m.accounts[b]
-		if c := strings.Compare(m.providerLabel(left.ProviderID), m.providerLabel(right.ProviderID)); c != 0 {
+		if c := strings.Compare(accountConnectionLabel(left), accountConnectionLabel(right)); c != 0 {
 			return c
 		}
 		if c := strings.Compare(left.Label, right.Label); c != 0 {
@@ -624,13 +576,15 @@ func (m *Model) accountRows() []ui.TableRow {
 		a := m.accounts[id]
 		status := "No credentials"
 		switch {
+		case a.Connection.AuthType == provider.AuthNone:
+			status = "Not required"
 		case a.OAuth != nil && a.OAuth.AccessToken != "":
 			status = "Sign-in stored"
 		case a.APIKey != "":
 			status = "API key configured"
 		}
 		rows = append(rows, ui.TableRow{ID: id, Cells: []ui.TableCell{
-			{Text: m.providerLabel(a.ProviderID)}, {Text: a.Label}, {Text: status},
+			{Text: accountConnectionLabel(a)}, {Text: a.Label}, {Text: status},
 		}})
 	}
 	return rows
@@ -668,21 +622,11 @@ func (m *Model) connectionOptions(includeBlank bool) []ui.FormOption {
 	}
 	return out
 }
-func (m *Model) providerLabel(id string) string {
-	if configured, ok := m.providers[id]; ok {
-		if configured.Name != "" {
-			return configured.Name
-		}
-		if resolved := provider.ResolveTemplate(id, configured, provider.TemplateOverrides{}); resolved.Name != "" {
-			return resolved.Name
-		}
+func accountConnectionLabel(account provider.Account) string {
+	if account.Connection.Name != "" {
+		return account.Connection.Name
 	}
-	for _, p := range m.presets {
-		if p.ID == id {
-			return p.Name
-		}
-	}
-	return id
+	return account.ProviderID
 }
 func (m *Model) beginAccountEdit(create bool, providerID string) error {
 	if m.accountBusy {
@@ -694,17 +638,12 @@ func (m *Model) beginAccountEdit(create bool, providerID string) error {
 		if err != nil {
 			return err
 		}
-		if _, ok := m.providers[providerID]; !ok {
-			providerID = m.providerID
+		if providerID == "" && len(provider.PresetIDs()) > 0 {
+			providerID = provider.PresetIDs()[0]
 		}
-		if _, ok := m.providers[providerID]; !ok {
-			providerIDs := sortedTemplateIDs(m.providers)
-			if len(providerIDs) > 0 {
-				providerID = providerIDs[0]
-			}
-		}
-		edit.draft = provider.Account{ID: id, ProviderID: providerID}
-		edit.initialProvider = providerID
+		seed := provider.DefaultTemplates()[providerID]
+		edit.draft = provider.Account{ID: id, ProviderID: providerID, Connection: provider.CloneTemplate(seed)}
+		edit.seedID = providerID
 	} else {
 		a, ok := m.accounts[m.accountID]
 		if !ok {
@@ -715,6 +654,32 @@ func (m *Model) beginAccountEdit(create bool, providerID string) error {
 		edit.draft = provider.CloneAccount(a)
 	}
 	m.accountEditor = edit
+	m.accountError = ""
+	m.rebuildAccountsForm()
+	return nil
+}
+
+func (m *Model) beginAccountClone() error {
+	if m.accountBusy {
+		return nil
+	}
+	source, ok := m.accounts[m.accountID]
+	if !ok {
+		return fmt.Errorf("select an account to clone")
+	}
+	id, err := provider.NewAccountID()
+	if err != nil {
+		return err
+	}
+	m.accountEditor = &accountEdit{
+		isNew:  true,
+		seedID: source.ProviderID,
+		draft: provider.Account{
+			ID:         id,
+			ProviderID: source.ProviderID,
+			Connection: provider.CloneTemplate(source.Connection),
+		},
+	}
 	m.accountError = ""
 	m.rebuildAccountsForm()
 	return nil
@@ -749,14 +714,9 @@ func (m *Model) accountEditChange() (types.AccountChange, error) {
 	edit := m.accountEditor
 	a := edit.draft
 	if a.ProviderID == "" || a.ID == "" {
-		return types.AccountChange{}, fmt.Errorf("choose a provider template")
+		return types.AccountChange{}, fmt.Errorf("choose a starting connection")
 	}
-	template, ok := m.providers[a.ProviderID]
-	if !ok {
-		return types.AccountChange{}, fmt.Errorf("the selected provider template is no longer available")
-	}
-	effective := provider.ResolveTemplate(a.ProviderID, template, a.Overrides)
-	if err := effective.Validate(); err != nil {
+	if err := a.Connection.Validate(); err != nil {
 		return types.AccountChange{}, err
 	}
 	for id, existing := range m.accounts {
@@ -767,11 +727,11 @@ func (m *Model) accountEditChange() (types.AccountChange, error) {
 			return types.AccountChange{}, fmt.Errorf("choose a distinct account name")
 		}
 	}
-	if effective.AuthType == provider.AuthChatGPT {
+	if a.Connection.AuthType == provider.AuthChatGPT {
 		if a.OAuth == nil || a.OAuth.AccessToken == "" && a.OAuth.RefreshToken == "" {
 			return types.AccountChange{}, fmt.Errorf("sign in with ChatGPT before adding this account")
 		}
-	} else if effective.AuthType != provider.AuthNone && a.APIKey == "" {
+	} else if a.Connection.AuthType != provider.AuthNone && a.APIKey == "" {
 		if field := form.Field(fieldAPIKey); field != nil {
 			field.Errors = []string{"Enter an API key for this account."}
 		}
@@ -936,7 +896,7 @@ func protocolSummariesValue(settings *provider.ProtocolSettings) *bool {
 
 // extraBodyField builds the raw-JSON power-user field: a multi-line editor
 // (JSON blobs do not fit one row) validating that the input is a JSON object.
-func (m *Model) extraBodyField(cfg types.ProviderConfig) *ui.FieldState {
+func (m *Model) extraBodyField(cfg provider.Template) *ui.FieldState {
 	f := ui.TextAreaFieldState(fieldExtraBody, "Extra JSON body", formatExtraBody(cfg.ExtraBody),
 		"Raw JSON object merged into every request body sent.")
 	f.Validator = func(value ui.FieldValue) []string {
@@ -1180,15 +1140,6 @@ func (m *Model) chatgptAuthFields(account provider.Account) []*ui.FieldState {
 	}
 	fields := []*ui.FieldState{statusField}
 	return fields
-}
-
-// Rebuild after a provider or protocol switch: the protocol's option rows
-// depend on its capabilities. The surface rebinds the retained form widget.
-func (m *Model) rebuildProvidersForm() {
-	form := m.buildProvidersForm()
-	m.categories[catProviders].Form = form
-	category := catProviders
-	form.OnChanged(func(fieldID string) { m.handleFieldChanged(category, fieldID) })
 }
 
 func (m *Model) rebuildAccountsForm() {
@@ -1545,10 +1496,9 @@ func (m *Model) validateAutoReviewFormat(form *ui.FormModel, accountID string) {
 		return
 	}
 	account, ok := m.accounts[accountID]
-	template, templateOK := m.providers[account.ProviderID]
 	standard := ""
-	if ok && templateOK {
-		standard = provider.ResolveTemplate(account.ProviderID, template, account.Overrides).APIStandard
+	if ok {
+		standard = account.Connection.APIStandard
 	}
 	if standard == "" && ok {
 		standard = provider.DefaultStandardID(account.ProviderID)
@@ -1625,7 +1575,7 @@ func standardOptions(def *standardDefault) []ui.FormOption {
 	return options
 }
 
-func providerStandard(providerID string, cfg types.ProviderConfig) string {
+func providerStandard(providerID string, cfg provider.Template) string {
 	if cfg.APIStandard != "" {
 		return cfg.APIStandard
 	}
@@ -1674,14 +1624,6 @@ func (m *Model) SetValueForTest(category int, fieldID, value string) {
 	m.categories[category].Form.SetValue(fieldID, ui.StringValue(value))
 }
 
-// ProviderIDForTest exposes the current provider selection for tests.
-func (m *Model) ProviderIDForTest() string {
-	if m == nil {
-		return ""
-	}
-	return m.providerID
-}
-
 func (m *Model) SelectAccountForTest(id string) { m.selectAccount(id) }
 
 func (m *Model) isAgentCategory(index int) bool {
@@ -1700,44 +1642,18 @@ func (m *Model) handleFieldChanged(category int, fieldID string) {
 		return
 	}
 	if category == catAccounts && m.accountEditor != nil {
-		if fieldID == fieldProvider {
-			templateID := m.value(catAccounts, fieldProvider)
-			if templateID != m.accountEditor.draft.ProviderID {
-				m.accountEditor.draft.ProviderID = templateID
-				m.accountEditor.draft.APIKey = ""
-				m.accountEditor.draft.OAuth = nil
-				m.accountEditor.draft.Overrides = provider.TemplateOverrides{}
-				m.rebuildAccountsForm()
-			}
+		if fieldID == accountFieldSeed && m.accountEditor.isNew {
+			id := m.value(catAccounts, accountFieldSeed)
+			m.accountEditor.seedID = id
+			m.accountEditor.draft.ProviderID = id
+			m.accountEditor.draft.Connection = provider.CloneTemplate(provider.DefaultTemplates()[id])
+			m.accountEditor.draft.APIKey, m.accountEditor.draft.OAuth = "", nil
+			m.rebuildAccountsForm()
 			return
 		}
 		m.storeAccountForm()
-		if strings.HasPrefix(fieldID, "account-override-") && strings.HasSuffix(fieldID, "-enabled") {
+		if fieldID == accountFieldAuthType || fieldID == accountFieldProtocol {
 			m.rebuildAccountsForm()
-		}
-		return
-	}
-	if category == catProviders && m.providerEditor != nil {
-		if fieldID == templateFieldSeed && m.providerEditor.isNew {
-			id := m.value(catProviders, templateFieldSeed)
-			m.providerEditor.seedID = id
-			if id == "" {
-				m.providerEditor.draft = provider.Template{AuthType: provider.AuthProtocol, APIStandard: "openai"}
-			} else {
-				m.providerEditor.draft = provider.CloneTemplate(provider.DefaultTemplates()[id])
-				for templateID, existing := range m.providers {
-					if strings.EqualFold(provider.ResolveTemplate(templateID, existing, provider.TemplateOverrides{}).Name, m.providerEditor.draft.Name) {
-						m.providerEditor.draft.Name += " copy"
-						break
-					}
-				}
-			}
-			m.rebuildProvidersForm()
-			return
-		}
-		m.storeProviderForm(m.providerID)
-		if fieldID == templateFieldAuthType || fieldID == templateFieldProtocol {
-			m.rebuildProvidersForm()
 		}
 		return
 	}
@@ -1898,10 +1814,6 @@ func (m *Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 				m.autofillCapabilities(category)
 			}
 		}
-	case TemplateChangeResultMsg:
-		if msg.Target == m {
-			m.applyTemplateChange(msg)
-		}
 	case AccountChangeResultMsg:
 		if msg.Target == m {
 			m.applyAccountChange(msg)
@@ -1915,7 +1827,7 @@ func (m *Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			m.setModelsErrorForAccount(msg.ProviderID, msg.AccountID, msg.Error)
 		}
 	case ChatGPTSignInResultMsg:
-		if m.accountEditor != nil && m.accountEditor.draft.ID == msg.AccountID && m.accountEditor.draft.ProviderID == "chatgpt" && msg.Generation > 0 && m.authGeneration[msg.AccountID] == msg.Generation {
+		if m.accountEditor != nil && m.accountEditor.draft.ID == msg.AccountID && m.accountEditor.draft.Connection.AuthType == provider.AuthChatGPT && msg.Generation > 0 && m.authGeneration[msg.AccountID] == msg.Generation {
 			m.authWaitingID = ""
 			if msg.Err == nil && msg.Creds != nil {
 				m.setChatGPTAuth(msg.AccountID, msg.Creds, "")
@@ -1929,7 +1841,7 @@ func (m *Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 			}
 		}
 	case ChatGPTSignOutMsg:
-		if m.accountEditor != nil && m.accountEditor.draft.ID == msg.AccountID && m.accountEditor.draft.ProviderID == "chatgpt" && msg.Generation > 0 && m.authGeneration[msg.AccountID] == msg.Generation {
+		if m.accountEditor != nil && m.accountEditor.draft.ID == msg.AccountID && m.accountEditor.draft.Connection.AuthType == provider.AuthChatGPT && msg.Generation > 0 && m.authGeneration[msg.AccountID] == msg.Generation {
 			m.authWaitingID = ""
 			m.authGeneration[msg.AccountID] = nextAccountRequest.Add(1)
 			m.setChatGPTAuth(msg.AccountID, nil, "")
@@ -2002,11 +1914,7 @@ func (m *Model) fetchModelsForAccountCmd(providerID, accountID string) tea.Cmd {
 	if !ok || account.ProviderID != providerID {
 		return nil
 	}
-	cfg, exists := m.providers[providerID]
-	if !exists {
-		return nil
-	}
-	effective := provider.ResolveTemplate(providerID, cfg, account.Overrides)
+	effective := account.Connection
 	key := accountModelKey(providerID, accountID)
 	m.fetchGeneration[key] = nextAccountRequest.Add(1)
 	generation := m.fetchGeneration[key]
@@ -2078,14 +1986,12 @@ func (m *Model) SetScope(scope types.SettingsScope) {
 	if m.scope == scope {
 		return
 	}
-	m.storeProviderForm(m.providerID)
 	m.storeAccountForm()
 	m.scope = scope
-	if scope == types.SettingsScopeWorkspace && (m.selected == catAccounts || m.selected == catProviders) {
+	if scope == types.SettingsScopeWorkspace && m.selected == catAccounts {
 		m.SelectCategory(catMain)
 	}
-	if len(m.categories) > catProviders {
-		m.rebuildProvidersForm()
+	if len(m.categories) > catAccounts {
 		m.rebuildAccountsForm()
 	}
 	if len(m.categories) > catNetworkCertificates {
@@ -2100,7 +2006,7 @@ func (m *Model) Overrides() types.WorkspaceOverrides {
 }
 
 func (m *Model) SelectCategory(index int) {
-	if index >= 0 && index < len(m.categories) && ((index != catAccounts && index != catProviders) || m.Scope() == types.SettingsScopeApplication) {
+	if index >= 0 && index < len(m.categories) && (index != catAccounts || m.Scope() == types.SettingsScopeApplication) {
 		m.selected, m.pane = index, 0
 	}
 }
@@ -2148,7 +2054,7 @@ func (m *Model) CategoryItems() []ui.ListItem {
 	items := make([]ui.ListItem, 0, len(visible)*2)
 	lastGroup := ""
 	for _, index := range visible {
-		if (index == catAccounts || index == catProviders) && m.Scope() != types.SettingsScopeApplication {
+		if index == catAccounts && m.Scope() != types.SettingsScopeApplication {
 			continue
 		}
 		category := m.categories[index]
@@ -2183,7 +2089,7 @@ func (m *Model) visibleCategoryIndices() []int {
 		if index == catMain {
 			index, category = catAgents, m.categories[catAgents]
 		}
-		if (index == catAccounts || index == catProviders) && m.Scope() != types.SettingsScopeApplication {
+		if index == catAccounts && m.Scope() != types.SettingsScopeApplication {
 			continue
 		}
 		if exactCategory >= 0 && index != exactCategory {
@@ -2200,8 +2106,21 @@ func (m *Model) visibleCategoryIndices() []int {
 			groupOrder[group] = len(groupOrder)
 		}
 	}
+	// Network is application-owned transport policy: it stays last in the
+	// rail, after the everyday IDE/Security/AI sections, instead of being
+	// interleaved between AI and Security.
 	slices.SortStableFunc(indices, func(left, right int) int {
-		return groupOrder[m.categories[left].Group] - groupOrder[m.categories[right].Group]
+		leftGroup, rightGroup := m.categories[left].Group, m.categories[right].Group
+		if leftGroup == rightGroup {
+			return 0
+		}
+		if leftGroup == networkGroupName {
+			return 1
+		}
+		if rightGroup == networkGroupName {
+			return -1
+		}
+		return groupOrder[leftGroup] - groupOrder[rightGroup]
 	})
 	return indices
 }
@@ -2219,9 +2138,12 @@ func (m *Model) ensureVisibleSelection() {
 	m.selected = visible[0]
 }
 
+// networkGroupName is the rail group for application-owned transport policy.
+// It is always ordered last; see visibleCategoryIndices.
+const networkGroupName = "Network"
+
 const (
-	catProviders = iota
-	catAccounts
+	catAccounts = iota
 	catMain
 	catResearcher
 	catCrafter
@@ -2257,8 +2179,6 @@ func (m *Model) currentOverrideKey() string {
 		return "interface"
 	case catFont:
 		return "font"
-	case catProviders:
-		return "providers"
 	case catMemory:
 		return "memory"
 	case catNetworkConnection, catNetworkProxy, catNetworkCertificates:
@@ -2277,7 +2197,7 @@ func (m *Model) currentOverrideKey() string {
 // AppSettings returns the values held by the shared form models.
 func (m *Model) AppSettings() types.AppSettings {
 	var settings types.AppSettings
-	m.collectProviders(&settings)
+	m.collectAccounts(&settings)
 	m.collectAgents(&settings.Agents)
 	m.collectMemory(&settings.Memory)
 	m.collectNetwork(&settings.Network)
@@ -2346,18 +2266,10 @@ func onOff(enabled bool) string {
 	return "off"
 }
 
-func (m *Model) collectProviders(settings *types.AppSettings) {
-	m.storeProviderForm(m.providerID)
+func (m *Model) collectAccounts(settings *types.AppSettings) {
 	m.storeAccountForm()
-	settings.ActiveProvider = m.activeProvider
 	settings.Accounts = cloneAccounts(m.accounts)
-	settings.Providers = make(map[string]types.ProviderConfig, len(m.providers))
-	for id, cfg := range m.providers {
-		settings.Providers[id] = provider.CloneTemplate(cfg)
-	}
 }
-
-func (m *Model) storeProviderForm(string) { m.storeProviderEditorForm() }
 
 func (m *Model) storeAccountForm() { m.storeAccountEditorForm() }
 
@@ -2695,8 +2607,7 @@ func (m *Model) Snapshot() {
 	snapshot := &modelSnapshot{
 		categories: make([]categorySnapshot, len(m.categories)),
 		selected:   m.selected, pane: m.pane,
-		providerID: m.providerID, accountID: m.accountID, activeProvider: m.activeProvider,
-		providers: provider.CloneTemplates(m.providers), accounts: cloneAccounts(m.accounts),
+		accountID: m.accountID, accounts: cloneAccounts(m.accounts),
 	}
 	for index, category := range m.categories {
 		values := make(map[string]ui.FieldValue, category.Form.FieldCount())
@@ -2725,11 +2636,8 @@ func (m *Model) Restore() {
 		}
 	}
 	m.selected, m.pane = m.snapshot.selected, m.snapshot.pane
-	m.providerID, m.activeProvider = m.snapshot.providerID, m.snapshot.activeProvider
-	m.providers = provider.CloneTemplates(m.snapshot.providers)
 	m.accountID, m.accounts = m.snapshot.accountID, cloneAccounts(m.snapshot.accounts)
-	m.providerEditor, m.accountEditor = nil, nil
-	m.providerError, m.accountError = "", ""
-	m.rebuildProvidersForm()
+	m.accountEditor = nil
+	m.accountError = ""
 	m.rebuildAccountsForm()
 }

@@ -212,7 +212,7 @@ func TestAgentDiscoveryPreservesSavedAndPendingCapabilities(t *testing.T) {
 			cfg.ModelContextWindow, cfg.ModelModalities = 0, nil
 		}
 		m := New(theme.DefaultDark(), types.AppSettings{
-			Accounts: map[string]provider.Account{"work": {ID: "work", ProviderID: "openai"}},
+			Accounts: map[string]provider.Account{"work": {ID: "work", ProviderID: "openai", Connection: provider.DefaultTemplates()["openai"]}},
 			Agents:   types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": cfg}},
 		}, nil)
 		s := NewSurface(theme.DefaultDark(), m)
@@ -329,9 +329,9 @@ func TestBuiltinInstructionsEditThroughHostAndScrollbarMatchesPopup(t *testing.T
 }
 
 func TestSettingsBreadcrumbReturnsToCatalogWithoutDiscardingEdits(t *testing.T) {
-	for _, page := range []string{"agents", "accounts", "providers"} {
+	for _, page := range []string{"agents", "accounts"} {
 		for _, dirty := range []bool{false, true} {
-			m := New(theme.DefaultDark(), types.AppSettings{Providers: map[string]types.ProviderConfig{"openai": provider.DefaultTemplates()["openai"]}}, nil)
+			m := New(theme.DefaultDark(), accountSettingsFixture(), nil)
 			s := NewSurface(theme.DefaultDark(), m)
 			host := ui.NewHost(theme.DefaultDark(), s)
 			s.SetFocusHandler(func(id ui.ComponentID) { host.Focus(id) })
@@ -346,15 +346,10 @@ func TestSettingsBreadcrumbReturnsToCatalogWithoutDiscardingEdits(t *testing.T) 
 				}
 			case "accounts":
 				m.SelectCategory(catAccounts)
-				s.openAccountEditor(true, "openai")
+				m.selectAccount("work")
+				s.openAccountEditor(false, "")
 				if dirty {
 					m.currentForm().SetValue(fieldAccountLabel, ui.StringValue("Keep this draft"))
-				}
-			case "providers":
-				m.SelectCategory(catProviders)
-				s.openTemplateEditor(true, false)
-				if dirty {
-					m.currentForm().SetValue(templateFieldName, ui.StringValue("Keep this draft"))
 				}
 			}
 			host.MarkLayout()
@@ -363,7 +358,7 @@ func TestSettingsBreadcrumbReturnsToCatalogWithoutDiscardingEdits(t *testing.T) 
 			if !result.Handled {
 				t.Fatalf("%s breadcrumb did not handle its visible parent segment", page)
 			}
-			open := s.agents.draft != nil || m.accountEditor != nil || m.providerEditor != nil
+			open := s.agents.draft != nil || m.accountEditor != nil
 			if open != dirty {
 				t.Fatalf("%s breadcrumb open=%v, dirty=%v", page, open, dirty)
 			}

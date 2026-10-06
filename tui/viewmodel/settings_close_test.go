@@ -29,7 +29,7 @@ func selectSettingsCategory(t *testing.T, body *settingsui.WorkspaceSettingsSurf
 
 func TestSettingsCloseXFromDeepPages(t *testing.T) {
 	for _, size := range []ui.Size{{W: 160, H: 40}, {W: 70, H: 18}} {
-		for _, page := range []string{"preferences", "account", "new account", "template", "new template", "agent", "skill detail", "MCP detail", "MCP editor", "source editor"} {
+		for _, page := range []string{"preferences", "account", "new account", "agent", "skill detail", "MCP detail", "MCP editor", "source editor"} {
 			t.Run(fmt.Sprintf("%dx%d/%s", size.W, size.H, page), func(t *testing.T) {
 				app, _, _ := newSettingsPromptApp(t)
 				app.width, app.height = size.W, size.H
@@ -44,13 +44,6 @@ func TestSettingsCloseXFromDeepPages(t *testing.T) {
 					action := "settings.account.edit"
 					if page == "new account" {
 						action = "settings.account.begin-add"
-					}
-					body.HandleAction(ui.EventContext{}, ui.Action{ID: action})
-				case "template", "new template":
-					selectSettingsCategory(t, body, "Providers")
-					action := "settings.template.edit"
-					if page == "new template" {
-						action = "settings.template.add"
 					}
 					body.HandleAction(ui.EventContext{}, ui.Action{ID: action})
 				case "agent":
@@ -165,7 +158,7 @@ func TestSettingsBreadcrumbStillReturnsToParent(t *testing.T) {
 }
 
 func TestSettingsCloseXDiscardsAllDraftsAndCloses(t *testing.T) {
-	for _, page := range []string{"account", "template", "agent"} {
+	for _, page := range []string{"account", "agent"} {
 		t.Run(page, func(t *testing.T) {
 			app, parent, body := newSettingsPromptApp(t)
 			selectSettingsCategory(t, body, "Appearance")
@@ -175,10 +168,6 @@ func TestSettingsCloseXDiscardsAllDraftsAndCloses(t *testing.T) {
 				body.ShowAccounts()
 				body.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.edit"})
 				body.Model().SetValueForTest(body.Model().SelectedCategory(), "account-label", "Unsaved edit")
-			case "template":
-				selectSettingsCategory(t, body, "Providers")
-				body.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.template.edit"})
-				body.Model().SetValueForTest(body.Model().SelectedCategory(), "template-name", "Unsaved edit")
 			case "agent":
 				body.ShowMainAgent()
 				body.Model().SetValueForTest(body.Model().SelectedCategory(), "agent-instructions", "Unsaved edit")
@@ -217,7 +206,7 @@ func TestSettingsCloseXDiscardsAllDraftsAndCloses(t *testing.T) {
 			}
 			app.openApplicationSettings()
 			reopened := app.settingsSurface(app.overlayHost.Window(ui.OverlayWorkspaceSettings)).Model().AppSettings()
-			if reopened.Theme.Preset == "light" || reopened.Accounts["work"].Label == "Unsaved edit" || reopened.Providers["openrouter"].Name == "Unsaved edit" || reopened.Agents.Categories["default"].Instructions == "Unsaved edit" {
+			if reopened.Theme.Preset == "light" || reopened.Accounts["work"].Label == "Unsaved edit" || reopened.Agents.Categories["default"].Instructions == "Unsaved edit" {
 				t.Fatal("closing Settings persisted unsaved drafts")
 			}
 		})

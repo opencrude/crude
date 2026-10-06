@@ -122,7 +122,11 @@ func TestSettingsFooterHasNoBlankRowBetweenScopeAndActions(t *testing.T) {
 			t.Fatalf("scope=%s footer rule row carries text: %q", scope, rule)
 		}
 		actions := settingsRow(buf, labelsRow, 104)
-		if !strings.Contains(actions, "[ Save ]") || !strings.Contains(actions, "[ Cancel ]") {
+		closeLabel := "[ Close ]"
+		if scope == types.SettingsScopeWorkspace {
+			closeLabel = "[ Cancel ]"
+		}
+		if !strings.Contains(actions, "[ Save ]") || !strings.Contains(actions, closeLabel) {
 			t.Fatalf("scope=%s command row=%q", scope, actions)
 		}
 		appX, workX := bufferIndexOnRow(buf, labelsRow, "Application"), bufferIndexOnRow(buf, labelsRow, "Workspace")

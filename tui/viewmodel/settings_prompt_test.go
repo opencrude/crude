@@ -21,10 +21,10 @@ func newSettingsPromptApp(t *testing.T) (*App, *wm.FloatingWindow, *settingsui.W
 	app.width, app.height = 160, 40
 	app.registerOverlayHandlers()
 	app.SetAppDefaults(types.AppSettings{
-		Providers: map[string]types.ProviderConfig{"openrouter": provider.DefaultTemplates()["openrouter"]},
+
 		Accounts: map[string]provider.Account{
-			"work": {ID: "work", ProviderID: "openrouter", Label: "Work"},
-			"home": {ID: "home", ProviderID: "openrouter", Label: "Home"},
+			"work": {ID: "work", ProviderID: "openrouter", Label: "Work", Connection: provider.DefaultTemplates()["openrouter"]},
+			"home": {ID: "home", ProviderID: "openrouter", Label: "Home", Connection: provider.DefaultTemplates()["openrouter"]},
 		},
 	})
 	app.openApplicationSettings()
@@ -133,48 +133,6 @@ func TestSettingsPromptMouseAcceptAndConflictFailClosed(t *testing.T) {
 	}
 }
 
-func TestSettingsPromptUsedTemplateNavigatesRetainedAccounts(t *testing.T) {
-	app, parent, body := newSettingsPromptApp(t)
-	for _, item := range body.Model().CategoryItems() {
-		if item.Label == "Providers" {
-			body.Model().SelectCategory(item.Payload.(int))
-			break
-		}
-	}
-	msg := requestSettingsPrompt(t, app, body, "settings.template.remove")
-	if msg.Kind != settingsui.PromptTemplateInUse || msg.RelatedCount != 2 {
-		t.Fatalf("expected linked-account warning, got %+v", msg)
-	}
-	app.handleSettingsPromptKey(tea.KeyPressMsg{Code: tea.KeyLeft})
-	if cmd := app.handleSettingsPromptKey(tea.KeyPressMsg{Code: tea.KeyEnter}); cmd != nil {
-		t.Fatal("navigation must not write settings")
-	}
-	if app.overlayHost.IsOpen(ui.OverlaySettingsPrompt) || app.overlayHost.Window(ui.OverlayWorkspaceSettings) != parent || app.settingsSurface(parent) != body {
-		t.Fatal("navigation replaced the settings window")
-	}
-	selected := body.Model().SelectedCategory()
-	found := false
-	for _, item := range body.Model().CategoryItems() {
-		if item.Label == "Accounts" && item.Payload == selected {
-			found = true
-		}
-	}
-	if !found {
-		t.Fatal("Open Accounts did not navigate to the linked account list")
-	}
-	if focused := parent.Content.(*ui.WindowFrameWidget).Host().Focused(); focused != settingsui.WorkspaceSettingsAccountsID {
-		t.Fatalf("linked account list did not receive keyboard focus: %q", focused)
-	}
-	selectedAccount := body.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.remove"})
-	if selectedAccount.Cmd == nil {
-		t.Fatal("linked account is not selected on the Accounts page")
-	}
-	accountPrompt, ok := selectedAccount.Cmd().(settingsui.PromptMsg)
-	if !ok || body.Model().AppSettings().Accounts[accountPrompt.ID].ProviderID != msg.ID {
-		t.Fatal("Open Accounts did not highlight an account linked to the template")
-	}
-}
-
 func TestSettingsPromptRejectsChangedSelectionOnAccept(t *testing.T) {
 	app, parent, body := newSettingsPromptApp(t)
 	body.ShowAccounts()
@@ -267,7 +225,6 @@ func TestSettingsPromptDirtyEditorBackDecisionKeepsParent(t *testing.T) {
 		name, category, editAction, backAction, field string
 	}{
 		{"account", "Accounts", "settings.account.edit", "settings.account.cancel-edit", "account-label"},
-		{"template", "Providers", "settings.template.edit", "settings.template.cancel", "template-name"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			app, parent, body := newSettingsPromptApp(t)

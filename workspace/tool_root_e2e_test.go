@@ -19,7 +19,7 @@ func TestWorkspaceSwitchRebindsBackendToolRoot(t *testing.T) {
 	ws := NewWorkspace(rootA, "root-model", "tester", ttypes.Settings{}, &testLogger{})
 	t.Cleanup(ws.Close)
 	ws.SetBackendConfig(cfg, home)
-	ws.SetAppDefaults(ttypes.AppSettings{ActiveProvider: "openai", Providers: ws.AllProviderConfigs(), Accounts: ws.AllAccounts()})
+	ws.SetAppDefaults(ttypes.AppSettings{Accounts: ws.AllAccounts()})
 
 	first, err := ws.CreateSession(cfg, home)
 	if err != nil {
@@ -52,13 +52,11 @@ func workspaceToolRootConfig() *session.Config {
 	profile.Categories[session.CategoryDefault] = main
 	agents.Profiles[agents.ActiveProfile] = profile
 	return &session.Config{
-		ActiveProvider: "openai",
-		Accounts:       map[string]provider.Account{"test-account": {ID: "test-account", ProviderID: "openai", Label: "Test", APIKey: "test"}},
-		Providers: map[string]session.ProviderConfig{
-			"openai": {
-				Name: "OpenAI", ProviderURL: "http://127.0.0.1", APIStandard: "openai",
-			},
-		},
+
+		Accounts: map[string]provider.Account{"test-account": {ID: "test-account", ProviderID: "openai", Label: "Test", APIKey: "test", Connection: provider.Template{
+			Name: "OpenAI", ProviderURL: "http://127.0.0.1", APIStandard: "openai", AuthType: provider.AuthProtocol,
+		}}},
+
 		Agents: agents,
 	}
 }

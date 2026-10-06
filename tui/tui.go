@@ -15,6 +15,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/types"
 	"crude/tui/viewmodel"
+	roottypes "crude/types"
 	"crude/types/reasoning"
 	"crude/workspace"
 )
@@ -276,6 +277,9 @@ func Start(ws *workspace.Workspace, presets []ProviderPreset, prompts *history.S
 	t.Program = program
 	t.outbound = newProgramMessagePump(program.Send)
 	a.SetProgram(program)
+	// Bind the event transport before the first interactive frame. A user must
+	// never race shell startup into a falsely unavailable session transport.
+	ws.SetEventSender(t)
 
 	go func() {
 		if _, err := program.Run(); err != nil {
@@ -330,6 +334,14 @@ func (t *TUI) SendAgentEventWithID(typ string, data any, agentID string) {
 func (t *TUI) SetError(err string) {
 	t.send(types.ErrorMsg(err))
 }
+
+// ShowOperationIssue sends recovery context through the same FIFO owner path
+// as other application events; callers never mutate frontend/workspace queues.
+func (t *TUI) ShowOperationIssue(issue roottypes.OperationIssue) {
+	t.send(roottypes.OperationIssueMsg{Issue: issue})
+}
+
+func (t *TUI) ResumeStartupSession(id string) { t.send(roottypes.ResumeStartupMsg{SessionID: id}) }
 
 func (t *TUI) UpdateModelName(name string) {
 	t.send(types.UpdateModelMsg(name))

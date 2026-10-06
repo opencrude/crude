@@ -583,9 +583,9 @@ func (a *Agent) emitError(emit func(AgentEvent), err error) {
 			}
 		case http.StatusUnauthorized:
 			if a.Provider != nil && a.Provider.OAuth() != nil {
-				display = "Authentication failed — re-sign in with ChatGPT in Settings → Providers"
+				display = "Authentication failed — re-sign in with ChatGPT in Settings → Accounts"
 			} else {
-				display = "Authentication failed — check the provider API key in Settings → Providers"
+				display = "Authentication failed — check this account's API key in Settings → Accounts"
 			}
 		case http.StatusForbidden:
 			display = "Provider access denied. Check this account's permissions for the configured endpoint and model."

@@ -74,9 +74,6 @@ func (m *App) handleLauncherCommand(msg launcher.CommandMsg) tea.Cmd {
 
 // launcherNewSession creates a new session from the launcher.
 func (m *App) launcherNewSession() tea.Cmd {
-	if m.launcherScreen != nil {
-		m.launcherScreen.SetActionError("")
-	}
 	m.startLSPForWorkspace()
 	if m.Logger != nil {
 		m.Logger.Info("SESSION", "new_session_from_launcher")
@@ -84,17 +81,10 @@ func (m *App) launcherNewSession() tea.Cmd {
 	result := m.NewSessionFromLauncher()
 	if result != nil && result.Error != "" {
 		if result.NeedsAccount {
-			m.showAccountRecovery(false)
+			m.showAccountRecovery(false, result.Error)
 			return nil
 		}
-		if m.Feedback != nil {
-			m.Feedback.NotifyError(result.Error)
-		}
-		if m.launcherScreen != nil {
-			m.launcherScreen.SetActionError("Session could not be created. Open Notices for the exact error.")
-			m.rootHost.MarkLayout()
-			m.forceFrame()
-		}
+		m.showOperationFailure("Session could not be created", result.Error)
 		return nil
 	}
 	if result != nil {
@@ -112,9 +102,7 @@ func (m *App) launcherOpenFolder(projectDir string) tea.Cmd {
 		m.Logger.Info("WORKSPACE", "open_from_launcher", "path", projectDir)
 	}
 	if err := m.SwitchProject(projectDir); err != nil {
-		if m.Feedback != nil {
-			m.Feedback.NotifyError("Failed to open workspace: " + err.Error())
-		}
+		m.showOperationFailure("Workspace could not be opened", err.Error())
 		return nil
 	}
 	// SwitchProject already starts the generation-owned async listing. Never
@@ -136,9 +124,7 @@ func (m *App) launcherResumeSession(sessionID string, sessionMeta *sessiondb.Ses
 		cur, _ := filepath.Abs(m.RootPath)
 		if abs != "" && abs != cur {
 			if err := m.SwitchProject(abs); err != nil {
-				if m.Feedback != nil {
-					m.Feedback.NotifyError("Failed to open session project: " + err.Error())
-				}
+				m.showOperationFailure("Session workspace could not be opened", err.Error())
 				return nil
 			}
 		}
@@ -149,21 +135,14 @@ func (m *App) launcherResumeSession(sessionID string, sessionMeta *sessiondb.Ses
 	result := m.ResumeSessionFromLauncher(sessionID)
 	if result == nil || result.Error != "" {
 		if result != nil && result.NeedsAccount {
-			m.showAccountRecovery(true)
+			m.showAccountRecovery(true, result.Error)
 			return nil
 		}
-		if m.Feedback != nil {
-			if result == nil {
-				m.Feedback.NotifyError("Failed to resume session")
-			} else {
-				m.Feedback.NotifyError(result.Error)
-			}
+		detail := "Session startup returned no result."
+		if result != nil {
+			detail = result.Error
 		}
-		if m.launcherScreen != nil {
-			m.launcherScreen.SetActionError("Session could not be resumed. Open Notices for the exact error.")
-			m.rootHost.MarkLayout()
-			m.forceFrame()
-		}
+		m.showOperationFailure("Session could not be resumed", detail)
 		return nil
 	}
 	m.startLSPForWorkspace()
@@ -180,7 +159,7 @@ func (m *App) launcherResumeSession(sessionID string, sessionMeta *sessiondb.Ses
 		}
 	}
 	if err := m.ActiveSessionConnectionIssue(); err != nil {
-		m.showAccountRecovery(true)
+		m.showAccountRecovery(true, err.Error())
 	}
 	return nil
 }

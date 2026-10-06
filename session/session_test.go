@@ -274,9 +274,11 @@ func TestManualCompactRebuildsActiveContextWithoutDeletingArchive(t *testing.T) 
 		activeContext: append([]provider.ChatMessage(nil), history...), contextGeneration: 1,
 		cfg: cfg, sessionID: "compact", db: db,
 	}
-	providerConfig := s.cfg.Providers[s.cfg.ActiveProvider]
+	account := s.cfg.Accounts["account"]
+	providerConfig := account.Connection
 	providerConfig.ProviderURL = server.URL
-	s.cfg.Providers[s.cfg.ActiveProvider] = providerConfig
+	account.Connection = providerConfig
+	s.cfg.Accounts["account"] = account
 	result := s.HandleCompact()
 	if result.Error != "" || calls != 4 || len(s.msgs) != len(history) || len(s.activeContext) >= len(history) || s.contextGeneration <= 1 {
 		t.Fatalf("compact result=%+v archive=%d active=%d generation=%d", result, len(s.msgs), len(s.activeContext), s.contextGeneration)

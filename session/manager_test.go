@@ -36,14 +36,13 @@ func testConfig() *Config {
 	profile.Categories[CategoryDefault] = main
 	agents.Profiles[agents.ActiveProfile] = profile
 	return &Config{
-		ActiveProvider: "openrouter",
-		Providers: map[string]ProviderConfig{
-			"openrouter": {
+		Accounts: map[string]provider.Account{"account": {
+			ID: "account", ProviderID: "openrouter", APIKey: "test-key",
+			Connection: provider.Template{
 				Name: "OpenRouter", ProviderURL: "https://openrouter.ai/api/v1", APIStandard: "openai", AuthType: provider.AuthProtocol,
 			},
-		},
-		Accounts: map[string]provider.Account{"account": {ID: "account", ProviderID: "openrouter", APIKey: "test-key"}},
-		Agents:   agents,
+		}},
+		Agents: agents,
 	}
 }
 

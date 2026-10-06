@@ -64,9 +64,11 @@ func (s *ScrollbarControl) SetPointerTargetSize(size int) { s.pointerTargetSize 
 // actually changes.
 func (s *ScrollbarControl) OnScroll(fn func(oldOffset, newOffset int)) { s.onScroll = fn }
 
-// PointerHitBounds gives a one-cell scrollbar a practical three-cell target
-// toward its content without changing paint or layout geometry. Scrollbars sit
-// on the right/bottom edge, so expansion is left/up and remains parent-clipped.
+// PointerHitBounds gives the one-cell stroke a practical target toward its
+// content without changing paint or layout geometry. Expansion is left/up
+// (toward content); a host that reserves fewer blank columns before the track
+// lowers the target with SetPointerTargetSize so a neighbouring control's
+// click cannot land on the bar. Remains parent-clipped.
 func (s *ScrollbarControl) PointerHitBounds(r Rect) Rect {
 	target := max(1, s.pointerTargetSize)
 	if s.direction == Horizontal {

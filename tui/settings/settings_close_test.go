@@ -11,14 +11,14 @@ import (
 )
 
 func TestSettingsCloseCoversEveryEditorDraft(t *testing.T) {
-	for _, page := range []string{"account", "template", "agent", "skill", "MCP", "source", "grant"} {
+	for _, page := range []string{"account", "agent", "skill", "MCP", "source", "grant"} {
 		t.Run(page, func(t *testing.T) {
 			var m *Model
 			var s *WorkspaceSettingsSurface
 			var change func(string)
 			th := theme.DefaultDark()
 			switch page {
-			case "account", "template", "agent":
+			case "account", "agent":
 				m = New(th, accountSettingsFixture(), nil)
 				s = NewSurface(th, m)
 				switch page {
@@ -26,9 +26,6 @@ func TestSettingsCloseCoversEveryEditorDraft(t *testing.T) {
 					s.ShowAccounts()
 					s.openAccountEditor(false, "")
 					change = func(value string) { m.SetValueForTest(catAccounts, fieldAccountLabel, value) }
-				case "template":
-					s.openTemplateEditor(false, false)
-					change = func(value string) { m.SetValueForTest(catProviders, templateFieldName, value) }
 				case "agent":
 					s.ShowMainAgent()
 					change = func(value string) { s.agents.draft.SetValue("agent-instructions", ui.StringValue(value)) }

@@ -37,7 +37,7 @@ func TestResumeUnpinnedHistoryNeedsExplicitConnectionEvenAfterWorkspaceUpdate(t 
 	if err := resumed.HandleSettingsSave(resumed.SettingsSnapshot()); !errors.Is(err, ErrAccountRequired) {
 		t.Fatalf("ordinary save silently adopted current default: %v", err)
 	}
-	settings := types.AppSettings{Providers: cfg.Providers, Accounts: cfg.Accounts, Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{CategoryDefault: {AccountID: "personal", Model: "m"}}}}
+	settings := types.AppSettings{Accounts: cfg.Accounts, Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{CategoryDefault: {AccountID: "personal", Model: "m"}}}}
 	resumed.UpdateWorkspaceDefaults(settings)
 	if resumed.provider != nil || !errors.Is(resumed.ConnectionIssue(), ErrAccountRequired) || resumed.SettingsSnapshot().AccountID != "" {
 		t.Fatalf("workspace account update rebound old session: provider=%v issue=%v settings=%+v", resumed.provider, resumed.ConnectionIssue(), resumed.SettingsSnapshot())
@@ -70,9 +70,11 @@ func TestResumeRemovedAccountRetainsHistoryAndRecoversByExplicitSelection(t *tes
 	original.Close()
 
 	// Changing the workspace Main Agent account never rebinds a resumed agent.
-	cfg.Accounts["other"] = provider.Account{ID: "other", ProviderID: "anthropic", APIKey: "other-key"}
+	cfg.Accounts["other"] = provider.Account{ID: "other", ProviderID: "anthropic", APIKey: "other-key", Connection: provider.DefaultTemplates()["anthropic"]}
 	cfg.AccountManager.Replace(map[string]provider.Account{"personal": cfg.Accounts["personal"], "other": cfg.Accounts["other"]})
-	cfg.Providers["anthropic"] = provider.DefaultTemplates()["anthropic"]
+	a := cfg.Accounts["other"]
+	a.Connection = provider.CloneTemplate(provider.DefaultTemplates()["anthropic"])
+	cfg.Accounts["other"] = a
 	profile := cfg.Agents.Profiles["default"]
 	profile.Categories[CategoryDefault] = CategoryConfig{AccountID: "other", Model: "m"}
 	cfg.Agents.Profiles["default"] = profile
@@ -143,8 +145,10 @@ func TestResumeIgnoresWorkspaceMainAgentAccountChange(t *testing.T) {
 		t.Fatal(err)
 	}
 	original.Close()
-	cfg.Accounts["other"] = provider.Account{ID: "other", ProviderID: "anthropic", APIKey: "other-key"}
-	cfg.Providers["anthropic"] = provider.DefaultTemplates()["anthropic"]
+	cfg.Accounts["other"] = provider.Account{ID: "other", ProviderID: "anthropic", APIKey: "other-key", Connection: provider.DefaultTemplates()["anthropic"]}
+	a := cfg.Accounts["other"]
+	a.Connection = provider.CloneTemplate(provider.DefaultTemplates()["anthropic"])
+	cfg.Accounts["other"] = a
 	profile := cfg.Agents.Profiles["default"]
 	profile.Categories[CategoryDefault] = CategoryConfig{AccountID: "other", Model: "m"}
 	cfg.Agents.Profiles["default"] = profile

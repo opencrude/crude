@@ -25,9 +25,8 @@ func TestChatGPTSignInResultUpdatesOpenSettingsWindow(t *testing.T) {
 	app.Logger = noopLogger{}
 	// Seed an account so the Application Accounts page shows OAuth status.
 	app.SetAppDefaults(ttypes.AppSettings{
-		ActiveProvider: "chatgpt",
-		Providers:      map[string]ttypes.ProviderConfig{"chatgpt": provider.DefaultTemplates()["chatgpt"]},
-		Accounts:       map[string]provider.Account{"personal": {ID: "personal", ProviderID: "chatgpt", Label: "Personal"}},
+
+		Accounts: map[string]provider.Account{"personal": {ID: "personal", ProviderID: "chatgpt", Label: "Personal", Connection: provider.DefaultTemplates()["chatgpt"]}},
 	})
 	app.openSettings(ttypes.SettingsScopeApplication)
 
@@ -42,7 +41,7 @@ func TestChatGPTSignInResultUpdatesOpenSettingsWindow(t *testing.T) {
 	surfaceRoot.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.edit"})
 
 	// The settings model starts signed out.
-	if status := model.ValueForTest(1, "chatgpt-status"); status != "Not signed in" {
+	if status := model.ValueForTest(model.SelectedCategory(), "chatgpt-status"); status != "Not signed in" {
 		t.Fatalf("initial status = %q, want 'Not signed in'", status)
 	}
 
@@ -58,7 +57,7 @@ func TestChatGPTSignInResultUpdatesOpenSettingsWindow(t *testing.T) {
 
 	// The open window's model must now show signed in — this is the reported
 	// bug: it stayed "Not signed in" until the window was reopened.
-	if status := model.ValueForTest(1, "chatgpt-status"); status != "Sign-in stored" {
+	if status := model.ValueForTest(model.SelectedCategory(), "chatgpt-status"); status != "Sign-in stored" {
 		t.Errorf("status after sign-in = %q, want stored sign-in", status)
 	}
 
@@ -89,14 +88,10 @@ func TestSignInThenSwitchBackDoesNotCorruptConfig(t *testing.T) {
 	app := newTestApp(t)
 	app.Logger = noopLogger{}
 	app.SetAppDefaults(ttypes.AppSettings{
-		ActiveProvider: "opencode-go",
-		Providers: map[string]ttypes.ProviderConfig{
-			"opencode-go": provider.DefaultTemplates()["opencode-go"],
-			"chatgpt":     provider.DefaultTemplates()["chatgpt"],
-		},
+
 		Accounts: map[string]provider.Account{
-			"opencode": {ID: "opencode", ProviderID: "opencode-go", Label: "Work", APIKey: "sk-opencode"},
-			"personal": {ID: "personal", ProviderID: "chatgpt", Label: "Personal"},
+			"opencode": {ID: "opencode", ProviderID: "opencode-go", Label: "Work", APIKey: "sk-opencode", Connection: provider.DefaultTemplates()["opencode-go"]},
+			"personal": {ID: "personal", ProviderID: "chatgpt", Label: "Personal", Connection: provider.DefaultTemplates()["chatgpt"]},
 		},
 	})
 	app.openSettings(ttypes.SettingsScopeApplication)
@@ -107,10 +102,6 @@ func TestSignInThenSwitchBackDoesNotCorruptConfig(t *testing.T) {
 	}
 	ws := settingsWidgetForTest(t, fw)
 	model := ws.ModelForTest()
-	// An OAuth edit must not switch the selected provider template.
-	if model.ProviderIDForTest() != "opencode-go" {
-		t.Fatalf("selected template = %q, want opencode-go", model.ProviderIDForTest())
-	}
 	model.SelectAccountForTest("personal")
 	model.SelectAccounts()
 	surfaceRoot := ws.Component().(*settingsui.WorkspaceSettingsSurface)
@@ -134,11 +125,6 @@ func TestSignInThenSwitchBackDoesNotCorruptConfig(t *testing.T) {
 	_, save := app.Update(change)
 	_, _ = app.Update(save())
 
-	// Browsing and signing into a separate account never reselects the template.
-	if got := ws.ModelForTest().ProviderIDForTest(); got != "opencode-go" {
-		t.Fatalf("providerID after switch back = %q, want opencode-go", got)
-	}
-
 	// Save via the app Update (the same path the Save button uses).
 	_, cmd = app.Update(settingsui.SaveMsg{
 		Scope:       ttypes.SettingsScopeApplication,
@@ -150,15 +136,12 @@ func TestSignInThenSwitchBackDoesNotCorruptConfig(t *testing.T) {
 
 	// The persisted opencode-go provider must keep its own URL/standard.
 	saved := app.LoadAppSettings()
-	ocg := saved.Providers["opencode-go"]
+	ocg := saved.Accounts["opencode"].Connection
 	if ocg.ProviderURL != provider.DefaultTemplates()["opencode-go"].ProviderURL {
 		t.Errorf("opencode-go ProviderURL changed after Codex sign-in: %q", ocg.ProviderURL)
 	}
 	if ocg.APIStandard != provider.DefaultTemplates()["opencode-go"].APIStandard {
 		t.Errorf("opencode-go wire protocol changed after Codex sign-in: %q", ocg.APIStandard)
-	}
-	if saved.ActiveProvider != "opencode-go" {
-		t.Errorf("ActiveProvider = %q, want opencode-go", saved.ActiveProvider)
 	}
 	// chatgpt OAuth must survive the save.
 	if saved.Accounts["personal"].OAuth == nil || saved.Accounts["personal"].OAuth.Email != "u@example.com" {
@@ -194,7 +177,7 @@ func TestAccountEditorStaysWithinUnmovedSettingsWindow(t *testing.T) {
 	app := newTestApp(t)
 	app.Logger = noopLogger{}
 	app.width, app.height = 160, 40
-	app.SetAppDefaults(ttypes.AppSettings{Providers: provider.DefaultTemplates()})
+	app.SetAppDefaults(ttypes.AppSettings{})
 	app.openApplicationSettings()
 	fw := app.windowManager.Window(string(ui.OverlayWorkspaceSettings))
 	if fw == nil {
@@ -234,7 +217,7 @@ func TestAccountEditorStaysWithinUnmovedSettingsWindow(t *testing.T) {
 func TestAccountSaveFailureKeepsOpenFormAndPersistedState(t *testing.T) {
 	app := newTestApp(t)
 	app.Logger = noopLogger{}
-	app.SetAppDefaults(ttypes.AppSettings{ActiveProvider: "chatgpt", Providers: map[string]ttypes.ProviderConfig{"chatgpt": provider.DefaultTemplates()["chatgpt"]}, Accounts: map[string]provider.Account{"personal": {ID: "personal", ProviderID: "chatgpt", Label: "Personal"}}})
+	app.SetAppDefaults(ttypes.AppSettings{Accounts: map[string]provider.Account{"personal": {ID: "personal", ProviderID: "chatgpt", Label: "Personal", Connection: provider.DefaultTemplates()["chatgpt"]}}})
 	app.openSettings(ttypes.SettingsScopeApplication)
 	fw := app.windowManager.Window("workspace-settings")
 	model := settingsWidgetForTest(t, fw).ModelForTest()
@@ -253,7 +236,7 @@ func TestAccountSaveFailureKeepsOpenFormAndPersistedState(t *testing.T) {
 	if app.LoadAppSettings().Accounts[id].OAuth != nil {
 		t.Fatal("failed save changed persisted account state")
 	}
-	if model.ValueForTest(1, "chatgpt-status") != "Sign-in stored" {
+	if model.ValueForTest(model.SelectedCategory(), "chatgpt-status") != "Sign-in stored" {
 		t.Fatal("failed save discarded staged credentials")
 	}
 }
