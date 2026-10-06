@@ -46,13 +46,11 @@ func TestLiveOllamaWaitLatency(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stored struct {
-		Providers map[string]session.ProviderConfig `json:"providers"`
-		Accounts  map[string]provider.Account       `json:"accounts"`
+		Accounts map[string]provider.Account `json:"accounts"`
 	}
 	if err := json.Unmarshal(data, &stored); err != nil {
 		t.Fatal("invalid provider config")
 	}
-	pc, ok := stored.Providers["ollama-cloud"]
 	accountID := ""
 	for id, account := range stored.Accounts {
 		if account.ProviderID == "ollama-cloud" && account.APIKey != "" {
@@ -60,7 +58,7 @@ func TestLiveOllamaWaitLatency(t *testing.T) {
 			break
 		}
 	}
-	if !ok || accountID == "" {
+	if accountID == "" {
 		t.Fatal("Ollama Cloud credentials unavailable")
 	}
 	off := false
@@ -72,7 +70,7 @@ func TestLiveOllamaWaitLatency(t *testing.T) {
 		AccountID: accountID, Model: "glm-5.3", Policy: "read-only", AllowedTools: []string{"read_file"},
 	}
 	agents.Profiles[agents.ActiveProfile] = profile
-	cfg := &session.Config{ActiveProvider: "ollama-cloud", Accounts: stored.Accounts, Providers: map[string]session.ProviderConfig{"ollama-cloud": pc}, Agents: agents}
+	cfg := &session.Config{Accounts: stored.Accounts, Agents: agents}
 	t.Setenv("HOME", t.TempDir())
 	app := newFullTestApp(t)
 	app.RootPath, app.WorkspaceDir = t.TempDir(), t.TempDir()

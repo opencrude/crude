@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"fmt"
 
-	"crude/provider"
 	"crude/session"
 	ttypes "crude/types"
 )
@@ -16,15 +15,6 @@ func (w *Workspace) SaveAccountChange(change ttypes.AccountChange) error {
 		return fmt.Errorf("application account persistence is unavailable")
 	}
 	return w.OnAppAccountChange(change)
-}
-
-// SaveTemplateChange writes one explicit provider-template operation through
-// the app's atomic config owner.
-func (w *Workspace) SaveTemplateChange(change provider.TemplateChange) error {
-	if w.OnAppTemplateChange == nil {
-		return fmt.Errorf("application provider-template persistence is unavailable")
-	}
-	return w.OnAppTemplateChange(change)
 }
 
 const (
@@ -154,13 +144,11 @@ func (w *Workspace) applySettingsProjection(effective ttypes.AppSettings) {
 			continue
 		}
 		frontendSession.backend.UpdateWorkspaceDefaults(ttypes.AppSettings{
-			Agents:         effective.Agents,
-			ActiveProvider: effective.ActiveProvider,
-			Providers:      effective.Providers,
-			Accounts:       effective.Accounts,
-			Memory:         effective.Memory,
-			Capabilities:   effective.Capabilities,
-			Safety:         effective.Safety,
+			Agents:       effective.Agents,
+			Accounts:     effective.Accounts,
+			Memory:       effective.Memory,
+			Capabilities: effective.Capabilities,
+			Safety:       effective.Safety,
 		})
 		if frontendSession.Settings != nil {
 			frontendSession.Settings.SetInheritance(

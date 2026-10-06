@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"reflect"
-	"strings"
 	"testing"
 )
 
@@ -37,7 +36,7 @@ func TestEmbeddedTemplatesSupplyPresetAdaptersAndProtocolDefaults(t *testing.T) 
 	}
 }
 
-func TestTemplateAndAccountOverrideClonesAreDetached(t *testing.T) {
+func TestTemplateAndAccountConnectionClonesAreDetached(t *testing.T) {
 	template := Template{
 		Headers: map[string]string{"X-Header": "template"},
 		Dialer:  &DialSettings{MaxAttempts: 3},
@@ -60,31 +59,27 @@ func TestTemplateAndAccountOverrideClonesAreDetached(t *testing.T) {
 
 	extra := map[string]any{"flag": true}
 	recovery := false
-	account := Account{ID: "work", ProviderID: "openrouter", APIKey: "secret", Overrides: TemplateOverrides{
-		ExtraBody: &extra, Protocol: &ProtocolSettings{MediaReplayRecovery: &recovery},
+	account := Account{ID: "work", ProviderID: "openrouter", APIKey: "secret", Connection: Template{
+		ExtraBody: extra, Protocol: &ProtocolSettings{MediaReplayRecovery: &recovery},
 	}}
 	accountClone := CloneAccount(account)
-	(*accountClone.Overrides.ExtraBody)["flag"] = false
-	*accountClone.Overrides.Protocol.MediaReplayRecovery = true
+	accountClone.Connection.ExtraBody["flag"] = false
+	*accountClone.Connection.Protocol.MediaReplayRecovery = true
 	accountClone.APIKey = "changed"
-	if (*account.Overrides.ExtraBody)["flag"] != true || *account.Overrides.Protocol.MediaReplayRecovery || account.APIKey != "secret" {
+	if account.Connection.ExtraBody["flag"] != true || *account.Connection.Protocol.MediaReplayRecovery || account.APIKey != "secret" {
 		t.Fatal("account clone shares credential or override data")
 	}
 }
 
-func TestResolveTemplateHonorsExplicitEmptyAccountOverrides(t *testing.T) {
-	base := DefaultTemplates()["openrouter"]
-	emptyHeaders := map[string]string{}
-	emptyExtra := map[string]any{}
-	emptyEndpoint := ""
-	resolved := ResolveTemplate("openrouter", base, TemplateOverrides{
-		ProviderURL: &emptyEndpoint,
-		Headers:     &emptyHeaders,
-		ExtraBody:   &emptyExtra,
-	})
-	if resolved.ProviderURL != "" || resolved.Headers == nil || len(resolved.Headers) != 0 ||
-		resolved.ExtraBody == nil || len(resolved.ExtraBody) != 0 {
-		t.Fatalf("explicit empty overrides inherited template values: %#v", resolved)
+func TestAccountConnectionNeverInheritsPresetChanges(t *testing.T) {
+	a := Account{ID: "work", ProviderID: "openrouter", Connection: DefaultTemplates()["openrouter"]}
+	a.Connection.ProviderURL = "https://account.example/v1"
+	a.Connection.Headers = map[string]string{}
+	if a.Connection.ProviderURL != "https://account.example/v1" || len(a.Connection.Headers) != 0 {
+		t.Fatal("account connection inherited a preset")
+	}
+	if DefaultTemplates()["openrouter"].ProviderURL == a.Connection.ProviderURL {
+		t.Fatal("editing an account changed preset data")
 	}
 }
 
@@ -158,47 +153,13 @@ func TestTemplateValidationRejectsUnsafeOrIncompatibleSettings(t *testing.T) {
 	}
 }
 
-func TestValidateTemplateChangeCreateEditDelete(t *testing.T) {
-	created := Template{Name: "Acme", ProviderURL: "https://api.acme.test/v1", APIStandard: "openai", AuthType: AuthBearer}
-	if err := ValidateTemplateChange(TemplateChange{ID: "acme", After: &created}, nil, nil); err != nil {
-		t.Fatalf("create validation: %v", err)
-	}
-	if err := ValidateTemplateChange(TemplateChange{ID: "Bad ID", After: &created}, nil, nil); err == nil {
-		t.Fatal("invalid template ID accepted")
-	}
-
-	current := map[string]Template{"acme": CloneTemplate(created)}
-	before := CloneTemplate(created)
-	edited := CloneTemplate(created)
-	edited.Name = "Acme Work"
-	change := TemplateChange{ID: "acme", Before: &before, After: &edited}
-	if err := ValidateTemplateChange(change, current, nil); err != nil {
-		t.Fatalf("edit validation: %v", err)
-	}
-	stale := CloneTemplate(before)
-	stale.Name = "Stale"
-	change.Before = &stale
-	if err := ValidateTemplateChange(change, current, nil); err == nil || !strings.Contains(err.Error(), "changed") {
-		t.Fatalf("stale edit error = %v", err)
-	}
-	change.Before = &before
-	change.After = nil
-	if err := ValidateTemplateChange(change, current, nil); err != nil {
-		t.Fatalf("delete validation: %v", err)
-	}
-	accounts := map[string]Account{"work": {ID: "work", ProviderID: "acme"}}
-	if err := ValidateTemplateChange(change, current, accounts); err == nil || !strings.Contains(err.Error(), "still used") {
-		t.Fatalf("in-use delete error = %v", err)
-	}
-}
-
-func TestTemplateAndAccountOverrideJSONRoundTrip(t *testing.T) {
+func TestAccountConnectionJSONRoundTrip(t *testing.T) {
 	endpoint := "https://account.example/v1"
 	headers := map[string]string{}
 	extra := map[string]any{"enabled": false}
 	account := Account{
 		ID: "team", ProviderID: "openrouter", APIKey: "secret",
-		Overrides: TemplateOverrides{ProviderURL: &endpoint, Headers: &headers, ExtraBody: &extra},
+		Connection: Template{ProviderURL: endpoint, Headers: headers, ExtraBody: extra},
 	}
 	encoded, err := json.Marshal(account)
 	if err != nil {
@@ -208,10 +169,8 @@ func TestTemplateAndAccountOverrideJSONRoundTrip(t *testing.T) {
 	if err := json.Unmarshal(encoded, &decoded); err != nil {
 		t.Fatal(err)
 	}
-	if decoded.Overrides.ProviderURL == nil || *decoded.Overrides.ProviderURL != endpoint ||
-		decoded.Overrides.Headers == nil || len(*decoded.Overrides.Headers) != 0 ||
-		decoded.Overrides.ExtraBody == nil || (*decoded.Overrides.ExtraBody)["enabled"] != false {
-		t.Fatalf("sparse override JSON round trip = %#v", decoded.Overrides)
+	if decoded.Connection.ProviderURL != endpoint || decoded.Connection.ExtraBody["enabled"] != false {
+		t.Fatalf("complete connection JSON round trip = %#v", decoded.Connection)
 	}
 	if !reflect.DeepEqual(DefaultTemplates()["openrouter"].ExtraBody, map[string]any{"include_reasoning": true}) {
 		t.Fatal("embedded request options were not loaded")

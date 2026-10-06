@@ -415,8 +415,8 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 			return m, m.handleContextMenuKey(msg)
 		case "dirty-close-prompt":
 			return m, m.handleDirtyPromptKey(msg)
-		case string(ui.OverlayAccountRecovery):
-			return m, m.handleAccountRecoveryKey(msg)
+		case string(ui.OverlayOperationIssue):
+			return m, m.forwardEventToWindowContent(fw, msg)
 		case string(ui.OverlaySettingsPrompt):
 			return m, m.handleSettingsPromptKey(msg)
 		case "agent-prompt":

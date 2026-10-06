@@ -75,7 +75,7 @@ func (s *Session) PrepareCompaction(agentID string) (PreparedCompaction, ttypes.
 			effectiveCfg = s.runtimeProfile.GetEffectiveConfig(agentID)
 		}
 		compactionCfg := effectiveCfg.GetCategoryConfig(CategoryAeron)
-		prepared.ProviderID = effectiveCfg.templateIDForAccount(compactionCfg.AccountID)
+		prepared.ProviderID = effectiveCfg.providerIDForAccount(compactionCfg.AccountID)
 		prepared.AccountID = compactionCfg.AccountID
 		prepared.ModelID = compactionCfg.Model
 	}

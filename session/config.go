@@ -106,17 +106,13 @@ func DefaultAgentsConfig() AgentsConfig {
 type Config struct {
 	SelectedAgent        string // session-only root agent choice; never a workspace default
 	selectedMainOverride *sessiondb.AgentSettingOverride
-	// ActiveProvider is retained only as an app-settings projection. Runtime
-	// routing never reads it; each agent must select an account ID.
-	ActiveProvider  string
-	Providers       map[string]ProviderConfig
-	Accounts        map[string]provider.Account
-	AccountManager  *provider.AccountManager
-	TurnLogsEnabled bool
-	Agents          AgentsConfig
-	Memory          ttypes.MemorySettings
-	Capabilities    captypes.Settings
-	Safety          ttypes.SafetySettings
+	Accounts             map[string]provider.Account
+	AccountManager       *provider.AccountManager
+	TurnLogsEnabled      bool
+	Agents               AgentsConfig
+	Memory               ttypes.MemorySettings
+	Capabilities         captypes.Settings
+	Safety               ttypes.SafetySettings
 
 	// workspaceMain is a copy of the workspace baseline's main-agent
 	// category. Categories carrying Inherit="workspace" resolve through it
@@ -126,22 +122,17 @@ type Config struct {
 	workspaceMain *CategoryConfig
 }
 
-type ProviderConfig = provider.Template
-
-// providerForCategory resolves all transport behavior from the selected
-// account's template and account overrides, then binds that account's auth.
+// providerForCategory clones all transport behavior from the selected account's
+// authoritative connection, then binds that exact account's credentials.
 func (c *Config) providerForCategory(category CategoryConfig) (*provider.Provider, error) {
 	account, err := c.resolveAccount(category.AccountID)
 	if err != nil {
 		return nil, err
 	}
-	template, err := c.templateForAccount(account)
-	if err != nil {
-		return nil, err
-	}
+	template := provider.CloneTemplate(account.Connection)
 	p := &provider.Provider{ID: account.ProviderID, Name: template.Name}
 	if err := template.Apply(p); err != nil {
-		return nil, fmt.Errorf("account %q template %q: %w", account.ID, account.ProviderID, err)
+		return nil, fmt.Errorf("account %q connection: %w", account.ID, err)
 	}
 	p.Model = category.Model
 	p.SetContextWindow(category.ModelContextWindow)
@@ -151,30 +142,6 @@ func (c *Config) providerForCategory(category CategoryConfig) (*provider.Provide
 		return nil, err
 	}
 	return p, nil
-}
-
-func (c *Config) GetActiveProviderConfig() ProviderConfig {
-	if c.Providers == nil {
-		return ProviderConfig{}
-	}
-	if cfg, ok := c.Providers[c.EffectiveProviderID()]; ok {
-		return cfg
-	}
-	return ProviderConfig{}
-}
-
-func (c *Config) SetActiveProviderConfig(templateID string, cfg ProviderConfig) {
-	if c.Providers == nil {
-		c.Providers = make(map[string]ProviderConfig)
-	}
-	c.Providers[templateID] = provider.CloneTemplate(cfg)
-}
-
-func (c *Config) EffectiveProviderID() string {
-	if c == nil {
-		return ""
-	}
-	return c.templateIDForAccount(c.GetActiveDefaultCategory().AccountID)
 }
 
 func (c *Config) IsMultiAgentEnabled() bool {
@@ -585,9 +552,9 @@ func cloneIntPtr(src *int) *int {
 
 func ConfigToSettings(cfg *Config) ttypes.Settings {
 	mainCat := cfg.GetActiveDefaultCategory()
-	mainProviderID := cfg.templateIDForAccount(mainCat.AccountID)
+	mainProviderID := cfg.providerIDForAccount(mainCat.AccountID)
 	var mainTemplate provider.Template
-	if resolved, err := cfg.templateForAccountID(mainCat.AccountID); err == nil {
+	if resolved, err := cfg.connectionForAccountID(mainCat.AccountID); err == nil {
 		mainTemplate = resolved
 	}
 
@@ -666,8 +633,8 @@ func ConfigToSettings(cfg *Config) ttypes.Settings {
 // explicitly selected account; they are never read back as routing authority.
 func categoryToSettings(cfg *Config, category CategoryConfig) ttypes.CategorySettings {
 	settings := catConfigToSettings(category)
-	settings.Provider = cfg.templateIDForAccount(category.AccountID)
-	if template, err := cfg.templateForAccountID(category.AccountID); err == nil {
+	settings.Provider = cfg.providerIDForAccount(category.AccountID)
+	if template, err := cfg.connectionForAccountID(category.AccountID); err == nil {
 		settings.ProviderURL = template.ProviderURL
 		settings.APIStandard = template.APIStandard
 	}

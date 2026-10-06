@@ -183,9 +183,11 @@ func TestCollaborationResumeReconcilesLocalCommitWithoutProviderReplay(t *testin
 	defer server.Close()
 	home, project := t.TempDir(), t.TempDir()
 	cfg := testConfig()
-	template := cfg.Providers["openrouter"]
+	template := cfg.Accounts["account"].Connection
 	template.ProviderURL = server.URL + "/v1"
-	cfg.Providers["openrouter"] = template
+	a := cfg.Accounts["account"]
+	a.Connection = template
+	cfg.Accounts["account"] = a
 	before, err := NewWithSessionDir("", cfg, home, home)
 	if err != nil {
 		t.Fatal(err)
@@ -321,9 +323,11 @@ func TestAgentStartSelectsExactConfiguredProfileAndRejectsInvalidSelections(t *t
 	defer server.Close()
 	home := t.TempDir()
 	cfg := testConfig()
-	template := cfg.Providers["openrouter"]
+	template := cfg.Accounts["account"].Connection
 	template.ProviderURL = server.URL + "/v1"
-	cfg.Providers["openrouter"] = template
+	a := cfg.Accounts["account"]
+	a.Connection = template
+	cfg.Accounts["account"] = a
 	cfg.Agents.AgentProfiles["configured"] = AgentProfileConfig{Category: "crafter", Model: "profile-model", AccountID: "account", Instructions: "Use exact profile evidence."}
 	off := false
 	cfg.Agents.AgentProfiles["disabled"] = AgentProfileConfig{Category: "crafter", Enabled: &off}

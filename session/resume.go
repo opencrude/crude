@@ -84,6 +84,17 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		db.Close()
 		return nil, fmt.Errorf("resume: logger: %w", err)
 	}
+	resourcesTransferred := false
+	var editor *fileio.Editor
+	defer func() {
+		if !resourcesTransferred {
+			if editor != nil {
+				editor.Close()
+			}
+			_ = lg.Close()
+			_ = db.Close()
+		}
+	}()
 	exec := fileio.NewLocalExecWithLogger(lg)
 	tempDir, err := prepareSessionTempDir(lg.SessionDir(), meta.ID)
 	if err != nil {
@@ -114,7 +125,6 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	diff.SetLogger(lg)
 	fileio.SetSafetyLogger(lg)
 
-	var editor *fileio.Editor
 	if sessionDir != "" {
 		if ed, edErr := fileio.NewEditorWithSessionDir(meta.ID, sessionDir, lg); edErr != nil {
 			lg.Warn("SESSION", "editor_init_error", "error", fmt.Sprintf("%v", edErr))
@@ -160,7 +170,7 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		prof.Categories = make(map[string]CategoryConfig)
 	}
 	main := prof.Categories[CategoryDefault]
-	// The account ID is the connection identity. Its current template supplies
+	// The account ID is the connection identity. Its current connection supplies
 	// transport settings; the old provider column is retained only as history.
 	main.Inherit = ""
 	main.AccountID = meta.AccountID
@@ -178,7 +188,7 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		if err != nil {
 			_ = lg.Close()
 			_ = db.Close()
-			return nil, fmt.Errorf("resume: account template: %w", err)
+			return nil, fmt.Errorf("resume: account connection: %w", err)
 		}
 	}
 
@@ -354,6 +364,7 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		}
 	}
 	keepTempDir = true
+	resourcesTransferred = true
 	return sess, nil
 }
 

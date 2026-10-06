@@ -34,31 +34,20 @@ func (c *Config) resolveAccount(accountID string) (provider.Account, error) {
 		return provider.Account{}, fmt.Errorf("%w: account %q is unavailable", ErrAccountRequired, accountID)
 	}
 	if account.ProviderID == "" {
-		return provider.Account{}, fmt.Errorf("%w: account %q has no template selected", ErrAccountRequired, accountID)
+		return provider.Account{}, fmt.Errorf("%w: account %q has no provider attribution", ErrAccountRequired, accountID)
 	}
 	return account, nil
 }
 
-func (c *Config) templateForAccount(account provider.Account) (provider.Template, error) {
-	if account.ProviderID == "" {
-		return provider.Template{}, fmt.Errorf("%w: account %q has no template selected", ErrAccountRequired, account.ID)
-	}
-	configured, exists := c.Providers[account.ProviderID]
-	if !exists && provider.GetPreset(account.ProviderID) == nil {
-		return provider.Template{}, fmt.Errorf("account %q template %q is not configured", account.ID, account.ProviderID)
-	}
-	return provider.ResolveTemplate(account.ProviderID, configured, account.Overrides), nil
-}
-
-func (c *Config) templateForAccountID(accountID string) (provider.Template, error) {
+func (c *Config) connectionForAccountID(accountID string) (provider.Template, error) {
 	account, err := c.resolveAccount(accountID)
 	if err != nil {
 		return provider.Template{}, err
 	}
-	return c.templateForAccount(account)
+	return provider.CloneTemplate(account.Connection), nil
 }
 
-func (c *Config) templateIDForAccount(accountID string) string {
+func (c *Config) providerIDForAccount(accountID string) string {
 	account, ok := c.account(accountID)
 	if !ok {
 		return ""
@@ -73,7 +62,7 @@ func (c *Config) bindAccount(p *provider.Provider, accountID string) error {
 		return err
 	}
 	if p == nil || p.ID != account.ProviderID {
-		return fmt.Errorf("account %q template changed while configuring provider", accountID)
+		return fmt.Errorf("account %q provider attribution changed while configuring connection", accountID)
 	}
 	manager := c.AccountManager
 	if manager == nil {

@@ -14,7 +14,7 @@ import (
 
 func TestWorkspaceSettingsPaintMainAgentOnFirstFrame(t *testing.T) {
 	th := theme.DefaultDark()
-	app := types.AppSettings{Providers: map[string]types.ProviderConfig{"openrouter": {Name: "OpenRouter", ProviderURL: "https://openrouter.ai/api/v1", APIStandard: "openai"}},
+	app := types.AppSettings{
 		Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {AccountID: "work", Model: "selected-model"}}}}
 	model := NewScoped(th, app, nil, types.SettingsScopeWorkspace, app, types.WorkspaceOverrides{})
 	if model.SelectedCategory() != catAgents {
@@ -35,10 +35,10 @@ func TestWorkspaceSettingsPaintMainAgentOnFirstFrame(t *testing.T) {
 func TestWorkspaceScopeSaveEmitsOverridesWithoutAPIKeys(t *testing.T) {
 	th := theme.DefaultDark()
 	app := types.AppSettings{
-		Theme:          types.ThemeSettings{Preset: "dark"},
-		Editor:         types.EditorSettings{TabSize: 4},
-		ActiveProvider: "openrouter",
-		Agents:         types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {Model: "app-model"}}},
+		Theme:  types.ThemeSettings{Preset: "dark"},
+		Editor: types.EditorSettings{TabSize: 4},
+
+		Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {Model: "app-model"}}},
 	}
 	working := app
 	working.Editor.TabSize = 8
@@ -52,8 +52,8 @@ func TestWorkspaceScopeSaveEmitsOverridesWithoutAPIKeys(t *testing.T) {
 		t.Fatalf("workspace Main Agent model overlay missing: %s", got.Agents)
 	}
 	for _, item := range model.CategoryItems() {
-		if item.Label == "Providers" || item.Label == "Accounts" {
-			t.Fatal("workspace settings exposed application templates or secrets")
+		if item.Label == "Accounts" {
+			t.Fatal("workspace settings exposed application accounts or secrets")
 		}
 	}
 }
@@ -92,7 +92,7 @@ func TestSettingsFramedWindowKeepsFooterActions(t *testing.T) {
 	host.Layout()
 	buf := surface.NewCellBuffer(104, 28)
 	host.Paint(buf)
-	if !bufferContains(buf, "Save") || !bufferContains(buf, "Cancel") {
+	if !bufferContains(buf, "Save") || !bufferContains(buf, "Close") {
 		t.Fatalf("framed settings lost footer actions:\n%s", bufferPlain(buf))
 	}
 
@@ -101,7 +101,7 @@ func TestSettingsFramedWindowKeepsFooterActions(t *testing.T) {
 	surfaceRoot.SetModel(model)
 	buf = surface.NewCellBuffer(104, 28)
 	host.Paint(buf)
-	if !bufferContains(buf, "Save") || !bufferContains(buf, "Cancel") {
+	if !bufferContains(buf, "Save") || !bufferContains(buf, "Close") {
 		t.Fatalf("SetModel without relayout dropped Save/Cancel:\n%s", bufferPlain(buf))
 	}
 
@@ -127,7 +127,7 @@ func TestSettingsFormAlignsWithSearch(t *testing.T) {
 	host.Layout()
 	buf := surface.NewCellBuffer(90, 24)
 	host.Paint(buf)
-	searchY, sectionY := bufferRow(buf, "Search settings"), bufferRow(buf, "Provider templates")
+	searchY, sectionY := bufferRow(buf, "Search settings"), bufferRow(buf, "Accounts")
 	if searchY < 0 || sectionY < 0 {
 		t.Fatalf("searchY=%d sectionY=%d", searchY, sectionY)
 	}
@@ -198,7 +198,7 @@ func TestSettingsScrollbarsAppearOnlyOnOverflow(t *testing.T) {
 	}
 	bar := surfaceRoot.formScroll.Bounds()
 	form := surfaceRoot.form.Bounds()
-	if bar.W != ui.ScrollbarWidth+1 || form.X+form.W > bar.X {
+	if bar.W != ui.ScrollbarWidth || form.X+form.W != bar.X-ui.ScrollbarWidth {
 		t.Fatalf("settings scrollbar has no leading empty column: form=%+v bar=%+v", form, bar)
 	}
 

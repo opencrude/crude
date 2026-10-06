@@ -15,10 +15,9 @@ import (
 func TestAccountsRoundTripAndDetachedConversions(t *testing.T) {
 	defer setTestHome(t, t.TempDir())()
 	fc := DefaultFileConfig()
-	fc.Providers["openrouter"] = provider.DefaultTemplates()["openrouter"]
 	fc.Accounts = map[string]provider.Account{
-		"work": {ID: "work", ProviderID: "openrouter", Label: "Work", APIKey: "work-key"},
-		"home": {ID: "home", ProviderID: "openrouter", Label: "Home", OAuth: &provider.OAuthCredentials{AccessToken: "home-token", RefreshToken: "refresh"}},
+		"work": {ID: "work", ProviderID: "openrouter", Label: "Work", APIKey: "work-key", Connection: provider.DefaultTemplates()["openrouter"]},
+		"home": {ID: "home", ProviderID: "openrouter", Label: "Home", OAuth: &provider.OAuthCredentials{AccessToken: "home-token", RefreshToken: "refresh"}, Connection: provider.DefaultTemplates()["openrouter"]},
 	}
 	if err := SaveFileConfig(fc); err != nil {
 		t.Fatal(err)
@@ -70,8 +69,8 @@ func TestRotatedAccountPersistenceAndRemoval(t *testing.T) {
 	defer setTestHome(t, t.TempDir())()
 	fc := DefaultFileConfig()
 	fc.Accounts = map[string]provider.Account{
-		"one": {ID: "one", ProviderID: "chatgpt", OAuth: &provider.OAuthCredentials{AccessToken: "old", RefreshToken: "refresh-old"}},
-		"two": {ID: "two", ProviderID: "chatgpt", APIKey: "other"},
+		"one": {ID: "one", ProviderID: "chatgpt", OAuth: &provider.OAuthCredentials{AccessToken: "old", RefreshToken: "refresh-old"}, Connection: provider.DefaultTemplates()["chatgpt"]},
+		"two": {ID: "two", ProviderID: "chatgpt", APIKey: "other", Connection: provider.DefaultTemplates()["chatgpt"]},
 	}
 	fc.Theme = nil
 	if err := SaveFileConfig(fc); err != nil {
@@ -109,8 +108,8 @@ func TestAppSettingsSaveAfterRotationAndReconnect(t *testing.T) {
 	defer setTestHome(t, t.TempDir())()
 	fc := DefaultFileConfig()
 	fc.Accounts = map[string]provider.Account{
-		"one": {ID: "one", ProviderID: "chatgpt", Label: "Work", OAuth: &provider.OAuthCredentials{AccessToken: "old", RefreshToken: "refresh-old"}},
-		"two": {ID: "two", ProviderID: "chatgpt", APIKey: "other"},
+		"one": {ID: "one", ProviderID: "chatgpt", Label: "Work", OAuth: &provider.OAuthCredentials{AccessToken: "old", RefreshToken: "refresh-old"}, Connection: provider.DefaultTemplates()["chatgpt"]},
+		"two": {ID: "two", ProviderID: "chatgpt", APIKey: "other", Connection: provider.DefaultTemplates()["chatgpt"]},
 	}
 	if err := SaveFileConfig(fc); err != nil {
 		t.Fatal(err)
@@ -194,8 +193,7 @@ func TestAppSettingsSaveAfterRotationAndReconnect(t *testing.T) {
 func TestConfirmedAccountWritesDoNotSaveStalePreferenceDrafts(t *testing.T) {
 	defer setTestHome(t, t.TempDir())()
 	fc := DefaultFileConfig()
-	fc.Providers["openrouter"] = provider.DefaultTemplates()["openrouter"]
-	fc.Accounts = map[string]provider.Account{"personal": {ID: "personal", ProviderID: "openrouter", Label: "Personal", APIKey: "personal-secret"}}
+	fc.Accounts = map[string]provider.Account{"personal": {ID: "personal", ProviderID: "openrouter", Label: "Personal", APIKey: "personal-secret", Connection: provider.DefaultTemplates()["openrouter"]}}
 	if err := SaveFileConfig(fc); err != nil {
 		t.Fatal(err)
 	}
@@ -206,7 +204,7 @@ func TestConfirmedAccountWritesDoNotSaveStalePreferenceDrafts(t *testing.T) {
 	ws := &workspace.Workspace{Logger: &appLogger{}}
 	a.configureWorkspace(ws)
 	stale := ws.AppDefaults()
-	team := provider.Account{ID: "team", ProviderID: "openrouter", Label: "Team", APIKey: "team-secret"}
+	team := provider.Account{ID: "team", ProviderID: "openrouter", Label: "Team", APIKey: "team-secret", Connection: provider.DefaultTemplates()["openrouter"]}
 	if err := ws.SaveAccountChange(ttypes.AccountChange{ID: "team", ProviderID: "openrouter", After: &team}); err != nil {
 		t.Fatalf("add second provider account: %v", err)
 	}
@@ -214,19 +212,18 @@ func TestConfirmedAccountWritesDoNotSaveStalePreferenceDrafts(t *testing.T) {
 		t.Fatal("second account replaced first account")
 	}
 	stale.Editor.TabSize = 3
-	stale.Providers["openrouter"] = ttypes.ProviderConfig{Name: "Stale template", ProviderURL: "https://stale.invalid/v1"}
 	stale.Accounts = map[string]provider.Account{"personal": fc.Accounts["personal"]}
 	if err := ws.SaveAppSettings(stale); err != nil {
 		t.Fatal(err)
 	}
-	if saved := LoadFileConfig(); len(saved.Accounts) != 2 || saved.Accounts["team"].APIKey != "team-secret" || saved.Providers["openrouter"].Name == "Stale template" || saved.Editor.TabSize != 3 {
+	if saved := LoadFileConfig(); len(saved.Accounts) != 2 || saved.Accounts["team"].APIKey != "team-secret" || saved.Editor.TabSize != 3 {
 		t.Fatal("preferences save replayed stale account/template data or lost editor edit")
 	}
 	before, err := os.ReadFile(ConfigPath())
 	if err != nil {
 		t.Fatal(err)
 	}
-	duplicate := provider.Account{ID: "duplicate", ProviderID: "openrouter", Label: "team", APIKey: "different"}
+	duplicate := provider.Account{ID: "duplicate", ProviderID: "openrouter", Label: "team", APIKey: "different", Connection: provider.DefaultTemplates()["openrouter"]}
 	if err := ws.SaveAccountChange(ttypes.AccountChange{ID: duplicate.ID, ProviderID: duplicate.ProviderID, After: &duplicate}); err == nil {
 		t.Fatal("duplicate account name was accepted")
 	}
@@ -245,8 +242,7 @@ func TestConfirmedAccountWritesDoNotSaveStalePreferenceDrafts(t *testing.T) {
 func TestExplicitCLIAccountAndProviderScope(t *testing.T) {
 	defer setTestHome(t, t.TempDir())()
 	fc := DefaultFileConfig()
-	fc.Providers["openrouter"] = provider.DefaultTemplates()["openrouter"]
-	fc.Accounts = map[string]provider.Account{"work": {ID: "work", ProviderID: "openrouter", APIKey: "original"}}
+	fc.Accounts = map[string]provider.Account{"work": {ID: "work", ProviderID: "openrouter", APIKey: "original", Connection: provider.DefaultTemplates()["openrouter"]}}
 	agents := session.DefaultAgentsConfig()
 	fc.Agents = &agents
 	profile := fc.Agents.Profiles[fc.Agents.ActiveProfile]
@@ -282,7 +278,6 @@ func TestExplicitCLIAccountAndProviderScope(t *testing.T) {
 func TestLauncherStartupWithoutMainAgentAccountDoesNotExit(t *testing.T) {
 	defer setTestHome(t, t.TempDir())()
 	fc := DefaultFileConfig()
-	fc.Providers["openrouter"] = provider.DefaultTemplates()["openrouter"]
 	if err := SaveFileConfig(fc); err != nil {
 		t.Fatal(err)
 	}

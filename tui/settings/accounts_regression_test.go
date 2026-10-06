@@ -18,9 +18,9 @@ func TestAccountCatalogFilterAndScrollbarWithThousandAccounts(t *testing.T) {
 	accounts := make(map[string]provider.Account, 1000)
 	for i := 0; i < 1000; i++ {
 		id := fmt.Sprintf("account-%04d", i)
-		accounts[id] = provider.Account{ID: id, ProviderID: "openrouter", Label: id, APIKey: "not-for-display"}
+		accounts[id] = provider.Account{ID: id, ProviderID: "openrouter", Label: id, APIKey: "not-for-display", Connection: provider.DefaultTemplates()["openrouter"]}
 	}
-	m := New(th, types.AppSettings{Providers: map[string]types.ProviderConfig{"openrouter": provider.DefaultTemplates()["openrouter"]}, Accounts: accounts}, nil)
+	m := New(th, types.AppSettings{Accounts: accounts}, nil)
 	s := NewSurface(th, m)
 	s.ShowAccounts()
 	host := ui.NewHost(th, s)
@@ -104,14 +104,12 @@ func TestCatalogActionsShareBottomAnchorAndMeasuredGaps(t *testing.T) {
 	for _, size := range []ui.Size{{W: 124, H: 28}, {W: 88, H: 24}, {W: 70, H: 18}} {
 		host.Resize(size.W, size.H)
 		lastRow := size.H - 3 // one rule and the shared settings footer
-		for _, catalog := range []string{"agents", "accounts", "providers"} {
+		for _, catalog := range []string{"agents", "accounts"} {
 			switch catalog {
 			case "agents":
 				m.SelectCategory(catAgents)
 			case "accounts":
 				m.SelectCategory(catAccounts)
-			case "providers":
-				m.SelectCategory(catProviders)
 			}
 			s.refreshForm()
 			host.MarkLayout()
@@ -125,11 +123,6 @@ func TestCatalogActionsShareBottomAnchorAndMeasuredGaps(t *testing.T) {
 			if catalog == "accounts" {
 				groups = []*ui.ActionBar{s.accountAdd, s.accountBar, s.accountMoreBar}
 				table = s.accounts.Bounds()
-				xOffset, yOffset = 0, 0
-			}
-			if catalog == "providers" {
-				groups = []*ui.ActionBar{s.templateAdd, s.templateBar, s.templateMoreBar}
-				table = s.templates.Bounds()
 				xOffset, yOffset = 0, 0
 			}
 			if groups[len(groups)-1].Bounds().Y+yOffset != lastRow || groups[0].Bounds().X+xOffset != s.contentRect.X {
@@ -152,7 +145,7 @@ func TestCatalogActionsShareBottomAnchorAndMeasuredGaps(t *testing.T) {
 			}
 			buf := surface.NewCellBuffer(size.W, size.H)
 			host.Paint(buf)
-			for _, label := range map[string][]string{"agents": {"Add", "Edit", "Clone", "Reset", "Remove"}, "accounts": {"Add account", "Edit", "Add another", "Remove"}, "providers": {"Add template", "Edit", "Clone", "Remove"}}[catalog] {
+			for _, label := range map[string][]string{"agents": {"Add", "Edit", "Clone", "Reset", "Remove"}, "accounts": {"Add account", "Edit", "Clone", "Remove"}}[catalog] {
 				if !strings.Contains(bufferPlain(buf), label) {
 					t.Fatalf("%s at %+v: %q is clipped or missing", catalog, size, label)
 				}
@@ -163,23 +156,21 @@ func TestCatalogActionsShareBottomAnchorAndMeasuredGaps(t *testing.T) {
 
 func accountSettingsFixture() types.AppSettings {
 	return types.AppSettings{
-		ActiveProvider: "openrouter",
-		Providers:      map[string]types.ProviderConfig{"openrouter": provider.DefaultTemplates()["openrouter"]},
+
 		Accounts: map[string]provider.Account{
-			"home": {ID: "home", ProviderID: "openrouter", Label: "Home", APIKey: "home-secret"},
-			"work": {ID: "work", ProviderID: "openrouter", Label: "Work", APIKey: "work-secret"},
+			"home": {ID: "home", ProviderID: "openrouter", Label: "Home", APIKey: "home-secret", Connection: provider.DefaultTemplates()["openrouter"]},
+			"work": {ID: "work", ProviderID: "openrouter", Label: "Work", APIKey: "work-secret", Connection: provider.DefaultTemplates()["openrouter"]},
 		},
 		Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {Provider: "openrouter", AccountID: "home", Model: "home-model"}}},
 	}
 }
 
-func TestAccountTableShowsEveryProviderAndKeepsButtonsStable(t *testing.T) {
+func TestAccountTableShowsEveryConnectionAndKeepsButtonsStable(t *testing.T) {
 	th := theme.DefaultDark()
 	settings := accountSettingsFixture()
 	for i := 0; i < 6; i++ {
 		id, service := fmt.Sprintf("account-%d", i), fmt.Sprintf("service-%d", i)
-		settings.Accounts[id] = provider.Account{ID: id, ProviderID: service, Label: fmt.Sprintf("Account %d", i), APIKey: fmt.Sprintf("private-%d", i)}
-		settings.Providers[service] = types.ProviderConfig{Name: fmt.Sprintf("Service %d", i), ProviderURL: "https://example.invalid/v1", APIStandard: "openai", AuthType: provider.AuthProtocol}
+		settings.Accounts[id] = provider.Account{ID: id, ProviderID: service, Label: fmt.Sprintf("Account %d", i), APIKey: fmt.Sprintf("private-%d", i), Connection: provider.Template{Name: fmt.Sprintf("Service %d", i), ProviderURL: "https://example.invalid/v1", APIStandard: "openai", AuthType: provider.AuthProtocol}}
 	}
 	m := New(th, settings, []types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}})
 	s := NewSurface(th, m)
@@ -196,7 +187,7 @@ func TestAccountTableShowsEveryProviderAndKeepsButtonsStable(t *testing.T) {
 	}
 	for frame := 0; frame < 20; frame++ {
 		out := paint(124, 24)
-		for _, want := range []string{"Template", "Account", "Credentials", "OpenRouter", "Home", "Work", "Add account", "Add another", "Remove"} {
+		for _, want := range []string{"Connection", "Account", "Credentials", "OpenRouter", "Home", "Work", "Add account", "Clone", "Remove"} {
 			if !strings.Contains(out, want) {
 				t.Fatalf("frame %d missing %q:\n%s", frame, want, out)
 			}
@@ -208,20 +199,20 @@ func TestAccountTableShowsEveryProviderAndKeepsButtonsStable(t *testing.T) {
 		}
 		s.SetModel(m)
 	}
-	if out := paint(64, 24); !strings.Contains(out, "Account") || !strings.Contains(out, "Template") || !strings.Contains(out, "Add account") || !strings.Contains(out, "Account 5") {
+	if out := paint(64, 24); !strings.Contains(out, "Account") || !strings.Contains(out, "Connection") || !strings.Contains(out, "Add account") || !strings.Contains(out, "Account 5") {
 		t.Fatalf("narrow account table lost header, add control, or rows:\n%s", out)
 	}
 }
 
-func TestAccountAddAnotherRequiresCompleteEditorBeforeRowExists(t *testing.T) {
+func TestAccountCloneRequiresCompleteEditorBeforeRowExists(t *testing.T) {
 	m := New(theme.DefaultDark(), accountSettingsFixture(), []types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}})
 	s := NewSurface(theme.DefaultDark(), m)
 	m.SelectCategory(catAccounts)
 	s.refreshForm()
 	m.selectAccount("work")
-	s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.add-another"})
-	if m.accountEditor == nil || m.accountEditor.draft.ProviderID != "openrouter" || m.accountEditor.draft.APIKey != "" || len(m.accounts) != 2 {
-		t.Fatal("Add another did not open an empty editor for the selected provider")
+	s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.clone"})
+	if m.accountEditor == nil || m.accountEditor.draft.ID == "work" || m.accountEditor.draft.ProviderID != "openrouter" || m.accountEditor.draft.APIKey != "" || m.accountEditor.draft.OAuth != nil || m.accountEditor.draft.Connection.ProviderURL != m.accounts["work"].Connection.ProviderURL || len(m.accounts) != 2 {
+		t.Fatal("Clone did not open a detached connection copy without credentials")
 	}
 	if result := s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.commit"}); result.Cmd != nil || len(m.accounts) != 2 {
 		t.Fatal("incomplete account entered the table")
@@ -245,7 +236,7 @@ func TestAccountAddAnotherRequiresCompleteEditorBeforeRowExists(t *testing.T) {
 	if len(m.accounts) != 3 || m.accounts[request.Change.ID].Label != "Team" || m.AppSettings().Agents.Categories["default"].AccountID != "home" || m.accountEditor != nil {
 		t.Fatal("acknowledged account changed the Main Agent")
 	}
-	s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.begin-add"})
+	s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.clone"})
 	s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.cancel-edit"})
 	if len(m.accounts) != 3 || m.accountEditor != nil {
 		t.Fatal("cancel created an account")
@@ -302,7 +293,7 @@ func paintAccountSurface(t *testing.T, s *WorkspaceSettingsSurface, w, h int) *s
 }
 
 func TestAccountEditorOAuthResultsAreDraftScoped(t *testing.T) {
-	m := New(theme.DefaultDark(), types.AppSettings{ActiveProvider: "chatgpt", Providers: map[string]types.ProviderConfig{"chatgpt": provider.DefaultTemplates()["chatgpt"]}, Accounts: map[string]provider.Account{"personal": {ID: "personal", ProviderID: "chatgpt", Label: "Personal", OAuth: &provider.OAuthCredentials{AccessToken: "valid"}}}}, []types.ProviderPreset{chatgptPreset()})
+	m := New(theme.DefaultDark(), types.AppSettings{Accounts: map[string]provider.Account{"personal": {ID: "personal", ProviderID: "chatgpt", Label: "Personal", OAuth: &provider.OAuthCredentials{AccessToken: "valid"}, Connection: provider.DefaultTemplates()["chatgpt"]}}}, []types.ProviderPreset{chatgptPreset()})
 	if err := m.beginAccountEdit(false, ""); err != nil {
 		t.Fatal(err)
 	}
@@ -323,7 +314,7 @@ func TestAccountEditorOAuthResultsAreDraftScoped(t *testing.T) {
 }
 
 func TestAccountModelFetchUsesEditedUnsavedKey(t *testing.T) {
-	m := New(theme.DefaultDark(), types.AppSettings{ActiveProvider: "custom", Providers: map[string]types.ProviderConfig{"custom": {}, "openrouter": {ProviderURL: "https://openrouter.ai/api/v1", APIStandard: "openai"}}, Accounts: map[string]provider.Account{"router": {ID: "router", ProviderID: "openrouter", Label: "Work", APIKey: "original"}}}, []types.ProviderPreset{{ID: "custom", Name: "Custom"}, {ID: "openrouter", Name: "OpenRouter"}})
+	m := New(theme.DefaultDark(), types.AppSettings{Accounts: map[string]provider.Account{"router": {ID: "router", ProviderID: "openrouter", Label: "Work", APIKey: "original", Connection: provider.Template{ProviderURL: "https://openrouter.ai/api/v1", APIStandard: "openai"}}}}, []types.ProviderPreset{{ID: "custom", Name: "Custom"}, {ID: "openrouter", Name: "OpenRouter"}})
 	m.selectAccount("router")
 	if err := m.beginAccountEdit(false, ""); err != nil {
 		t.Fatal(err)
@@ -340,8 +331,8 @@ func TestAccountsUnavailableInWorkspaceScope(t *testing.T) {
 	m.SelectCategory(catAccounts)
 	m.SetScope(types.SettingsScopeWorkspace)
 	for _, item := range m.CategoryItems() {
-		if item.Label == "Accounts" || item.Label == "Providers" {
-			t.Fatal("workspace settings exposed application templates or credentials")
+		if item.Label == "Accounts" {
+			t.Fatal("workspace settings exposed application accounts or credentials")
 		}
 	}
 }

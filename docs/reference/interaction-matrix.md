@@ -45,7 +45,7 @@ preserve or intentionally improve.
 | Session account / model | `/settings` or `/model` | Account labels only, no template groups. Model discovery uses that account's resolved connection and cannot update another session's deck. |
 | Continue unfinished run | Automatic transport/DNS cooldown; inline **(Retry now)**; retained `/retry`, palette **Continue Agent Run**, context **Continue run** | Transient failures continue without human polling. Retry now shortens the exact incident/generation's cooldown; no draft consumption, silent tab switch or historical tool replay. Needs attention is an owned pause, not completion. Passive restart remains explicit. |
 | Recovery disclosure | Compact header/chevron or ordinary chat disclosure shortcut | Expands the actual full reason/remediation; clock updates change only the red square/countdown header. Drag selection/copy takes precedence over disclosure and Retry now. Settled incidents have no retry target. |
-| Network controls | Application Settings > Network; palette **Network Settings** | Connection / Proxy / Certificates share application authority. Workspace values are read-only. Save validates material off Update, keeps the busy form mounted and retains the draft on error. |
+| Network controls | Application Settings > Network (rail's last group); palette **Network Settings** | Connection / Proxy / Certificates share application authority. Workspace values are read-only. Save validates material off Update, keeps the busy form mounted and retains the draft on error. |
 | Session default agent | `/settings` > Default agent | Pick Main Agent, a built-in role, or an enabled named agent for future root turns. Its account stays pinned to this session, switching choices retains the other root settings, and disabled/removed selections fail closed. |
 | Auto Review Agent | Application/Workspace Settings > Agents | Select an explicit reviewer account/model, edit bounded extra restrictions, and configure thinking, response format, timeout, retries, token growth/ceiling, denied/unresolved behavior, and request/recovery bounds on the Review tab. There is no review-count cap. Every exact non-hard-blocked call, including unknown commands, can be reviewed. Each root and child has an independent reviewer lifecycle. YOLO bypasses the owning session tree only. Unresolved can ask or safely deny for unattended continuation, never approve. Security > Auto Review Policy is a synchronized view of the same persisted policy. |
 | Permission completion | Allow / Deny / Always / cancel | An accepted decision clears that exact owner's pending approval in the same frame as the deck/modal closes. Deny rejects the operation, not the turn; command and file paths publish correlated completion before their rejected tool result, so subsequent frames/tab switches cannot revive “Needs approval”. A late completion cannot clear a newer request. Esc stops without fabricating denial. Completion never clears or rewrites composer text, attachment references, selection, undo state, or history position; only explicit send/clear actions consume a draft. |
@@ -180,6 +180,12 @@ tab attention until the panel is activated or closed.
 | Launcher | Up/Down | viewport | yes outside the search editor | clamp | open exact resource; Tab/Shift+Tab visit original action controls, Skills, MCP, search, resources and Retry; hover never redirects keyboard activation |
 
 ### Workspace home
+
+- Failed New Session/Resume opens a native recovery modal with exact reason,
+  useful repair guidance, and explicit Settings/account repair action. Notices
+  are independently registered but optional; error text under New Session or a
+  “go check Notices” instruction is prohibited. Close/Esc keeps the launcher and
+  never automatically retries, resets, or selects another account.
 
 - On wide grids, the original four-row New Session control (cycling sparkle,
   project path and Enter hint) spans the complete top section. Beneath it, the

@@ -69,9 +69,8 @@ func TestCurrentWorkspaceReopensWithSessionsMemoryAndCapabilities(t *testing.T) 
 	if _, err := ws.BoardSnapshot(ctx, "", "", 0, 0); err != nil {
 		t.Fatalf("board unavailable after recovery: %v", err)
 	}
-	cfg := &session.Config{ActiveProvider: "openai", Agents: session.DefaultAgentsConfig(),
-		Accounts:  map[string]provider.Account{"work": {ID: "work", ProviderID: "openai", APIKey: "test"}},
-		Providers: map[string]session.ProviderConfig{"openai": {Name: "OpenAI", ProviderURL: "http://127.0.0.1:1", APIStandard: "openai"}},
+	cfg := &session.Config{Agents: session.DefaultAgentsConfig(),
+		Accounts: map[string]provider.Account{"work": {ID: "work", ProviderID: "openai", APIKey: "test", Connection: provider.Template{Name: "OpenAI", ProviderURL: "http://127.0.0.1:1", APIStandard: "openai", AuthType: provider.AuthProtocol}}},
 	}
 	frontend, err := ws.ResumeSession(id, cfg, home)
 	if err != nil {
@@ -107,11 +106,9 @@ func TestCreateSessionRecoversWorkspaceMemoryAfterInitialDBFailure(t *testing.T)
 	profile.Categories[session.CategoryDefault] = main
 	agents.Profiles[agents.ActiveProfile] = profile
 	cfg := &session.Config{
-		ActiveProvider: "openai",
-		Accounts:       map[string]provider.Account{"test-account": {ID: "test-account", ProviderID: "openai", Label: "Test", APIKey: "test"}},
-		Providers: map[string]session.ProviderConfig{
-			"openai": {Name: "OpenAI", ProviderURL: "http://127.0.0.1", APIStandard: "openai-chat"},
-		},
+
+		Accounts: map[string]provider.Account{"test-account": {ID: "test-account", ProviderID: "openai", Label: "Test", APIKey: "test", Connection: provider.Template{Name: "OpenAI", ProviderURL: "http://127.0.0.1", APIStandard: "openai-chat", AuthType: provider.AuthProtocol}}},
+
 		Agents: agents,
 	}
 	frontend, err := ws.CreateSession(cfg, t.TempDir())

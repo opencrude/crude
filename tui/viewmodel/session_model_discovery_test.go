@@ -21,15 +21,13 @@ func TestSessionModelsUseAccountEndpointAndOriginatingDeck(t *testing.T) {
 	app := newFullTestApp(t)
 	accounts := map[string]provider.Account{"work": {
 		ID: "work", ProviderID: "custom", Label: "Work", APIKey: "test",
-		Overrides: provider.TemplateOverrides{ProviderURL: &server.URL},
+		Connection: provider.Template{Name: "Custom", ProviderURL: server.URL, APIStandard: "openai", AuthType: provider.AuthBearer},
 	}}
-	templates := map[string]provider.Template{"custom": {Name: "Custom", ProviderURL: "http://127.0.0.1:1", APIStandard: "openai", AuthType: provider.AuthBearer}}
-	app.SetBackendConfig(&session.Config{Accounts: accounts, Providers: templates}, t.TempDir())
+	app.SetBackendConfig(&session.Config{Accounts: accounts}, t.TempDir())
 	settings := types.Settings{AccountID: "work", ProviderID: "custom"}
 	app.ActiveSession = &workspace.Session{SessionID: "first", Settings: workspace.NewSessionSettingsState(settings, settings, nil)}
 	app.openSessionSettings()
 	screen := app.sessionSettings()
-	screen.ConfigureProviders(nil, templates)
 	screen.ConfigureAccounts(accounts)
 	request := screen.OpenModelPicker("default")().(sessionsettings.FetchModelsMsg)
 	app.ActiveSession = &workspace.Session{SessionID: "second", Settings: workspace.NewSessionSettingsState(settings, settings, nil)}

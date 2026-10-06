@@ -210,6 +210,7 @@ func (s Settings) ValidateFiles() error {
 }
 
 var currentSettings atomic.Pointer[Settings]
+var startupFailure atomic.Pointer[error]
 
 func init() {
 	defaults := DefaultSettings()
@@ -225,7 +226,42 @@ func ConfigureDefault(s Settings) error {
 	}
 	snapshot := s
 	currentSettings.Store(&snapshot)
+	startupFailure.Store(nil)
 	return nil
+}
+
+// ConfigureStartupDefault publishes the saved policy only when its scalar and
+// certificate material are usable. On failure it installs a process-wide
+// closed policy: every subsequently constructed outbound transport fails until
+// a valid settings save calls ConfigureDefault. The rejected settings remain
+// with their caller for repair and are never replaced with defaults here.
+func ConfigureStartupDefault(s Settings) error {
+	s = Normalize(s)
+	if err := s.ValidateFiles(); err != nil {
+		failure := fmt.Errorf("saved Network settings are invalid: %w", err)
+		startupFailure.Store(&failure)
+		return failure
+	}
+	return ConfigureDefault(s)
+}
+
+func currentStartupFailure() error {
+	if failure := startupFailure.Load(); failure != nil {
+		return *failure
+	}
+	return nil
+}
+
+// StartupPolicyError reports why newly constructed outbound requests are blocked.
+func StartupPolicyError() error { return currentStartupFailure() }
+
+// BlockStartupDefault keeps network activity closed when configuration cannot
+// be interpreted. It preserves all saved bytes and never substitutes direct I/O.
+func BlockStartupDefault(reason error) {
+	if reason == nil {
+		return
+	}
+	startupFailure.Store(&reason)
 }
 
 // Current returns a copy of the currently configured scalar snapshot.

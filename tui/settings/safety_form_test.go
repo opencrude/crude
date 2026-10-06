@@ -35,7 +35,7 @@ func TestCommandRuleValidationRejectsMalformedSeverity(t *testing.T) {
 
 func TestSecurityPagesKeepReviewerIdentityAndPolicyIndependent(t *testing.T) {
 	m := New(theme.DefaultDark(), types.AppSettings{
-		Accounts: map[string]provider.Account{"review": {ID: "review", ProviderID: "openai", Label: "Review"}},
+		Accounts: map[string]provider.Account{"review": {ID: "review", ProviderID: "openai", Label: "Review", Connection: provider.DefaultTemplates()["openai"]}},
 		Safety: types.SafetySettings{
 			ConfirmAt: "network", UnknownCommandRisk: "unknown", NotifyDangerous: "on",
 			AutoPermission: modeltypes.AutoPermissionSettings{Enabled: "on", AccountID: "review", Provider: "openai", Model: "review-v1",

@@ -57,9 +57,11 @@ func TestBackgroundJobMouseTerminationKeepsOtherJobsAndSessionAlive(t *testing.T
 	app.RootPath, app.WorkspaceDir = t.TempDir(), t.TempDir()
 	app.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
 	config := testAccountConfig()
-	template := config.Providers["openai"]
+	account := config.Accounts["test"]
+	template := account.Connection
 	template.ProviderURL = server.URL
-	config.Providers["openai"] = template
+	account.Connection = template
+	config.Accounts["test"] = account
 	profile := config.Agents.Profiles[config.Agents.ActiveProfile]
 	main := profile.Categories[session.CategoryDefault]
 	main.ModelSupportsTools = true

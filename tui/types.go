@@ -7,7 +7,6 @@ import (
 type (
 	Settings       = ttypes.Settings
 	ModelEntry     = ttypes.ModelEntry
-	ProviderConfig = ttypes.ProviderConfig
 	ProviderPreset = ttypes.ProviderPreset
 	ConfirmResult  = ttypes.ConfirmResult
 	UndoResultMsg  = ttypes.UndoResultMsg

@@ -134,6 +134,7 @@ func newCapabilityCatalog(owner *WorkspaceSettingsSurface) *capabilityCatalog {
 	catalog.choices = ui.NewList("settings/capabilities/choices", owner.tokens)
 	catalog.choices.SetActivateAction("settings.capability.choose")
 	catalog.choiceScroll = ui.NewScrollbarControl("settings/capabilities/choice-scroll", catalog.choices.Scroll(), owner.tokens)
+	catalog.choiceScroll.SetPointerTargetSize(1)
 	catalog.browse = ui.NewTable("settings/capabilities/browse", owner.tokens)
 	catalog.browse.SetShowHeader(true)
 	catalog.browse.SetColumnGap(2)
@@ -146,10 +147,14 @@ func newCapabilityCatalog(owner *WorkspaceSettingsSurface) *capabilityCatalog {
 	catalog.reader = ui.NewTextArea("settings/capabilities/reader", owner.tokens, true)
 	catalog.reader.SetReadOnly(true)
 	catalog.storeScroll = ui.NewScrollbarControl("settings/capabilities/store-scroll", catalog.store.Scroll(), owner.tokens)
+	catalog.storeScroll.SetPointerTargetSize(1)
 	catalog.storeScroll.OnScroll(func(int, int) { catalog.saveListState() })
 	catalog.formScroll = ui.NewScrollbarControl("settings/capabilities/form-scroll", catalog.form.Scroll(), owner.tokens)
+	catalog.formScroll.SetPointerTargetSize(1)
 	catalog.browseScroll = ui.NewScrollbarControl("settings/capabilities/browse-scroll", catalog.browse.Scroll(), owner.tokens)
+	catalog.browseScroll.SetPointerTargetSize(1)
 	catalog.treeScroll = ui.NewScrollbarControl("settings/capabilities/tree-scroll", catalog.tree.Scroll(), owner.tokens)
+	catalog.treeScroll.SetPointerTargetSize(1)
 	catalog.bar = ui.NewActionBar("settings/capabilities/actions", owner.tokens)
 	catalog.more = ui.NewActionBar("settings/capabilities/more", owner.tokens)
 	catalog.bar.SetAlignEnd(false)
@@ -923,7 +928,7 @@ func (catalog *capabilityCatalog) detailForm(page string) {
 }
 
 func (surface *WorkspaceSettingsSurface) OpenCapabilities(kind captypes.Kind, query, id string) ui.EventResult {
-	if surface.model.accountEditorDirty() || surface.model.providerEditorDirty() || surface.capCatalog.dirty() {
+	if surface.model.accountEditorDirty() || surface.capCatalog.dirty() {
 		surface.capCatalog.nextOpen = &capabilityNavigation{kind: kind, query: query, id: id}
 		return surface.requestPrompt(PromptDiscardEditor, "", "", 0)
 	}
@@ -936,9 +941,6 @@ func (surface *WorkspaceSettingsSurface) OpenCapabilities(kind captypes.Kind, qu
 	}
 	if surface.model.accountEditor != nil {
 		surface.model.cancelAccountEdit()
-	}
-	if surface.model.providerEditor != nil {
-		surface.model.cancelProviderEdit()
 	}
 	index := catSkills
 	if kind == captypes.KindMCP {

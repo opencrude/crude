@@ -16,12 +16,8 @@ func TestMemoryFormKeepsRecallAndAddsAgentBehavior(t *testing.T) {
 	th := theme.DefaultDark()
 	disabled := 0
 	current := types.AppSettings{
-		ActiveProvider: "openrouter",
-		Providers: map[string]types.ProviderConfig{
-			"openrouter": provider.DefaultTemplates()["openrouter"],
-			"openai":     provider.DefaultTemplates()["openai"],
-		},
-		Accounts: map[string]provider.Account{"router": {ID: "router", ProviderID: "openrouter", Label: "Personal"}, "work": {ID: "work", ProviderID: "openai", Label: "Work"}},
+
+		Accounts: map[string]provider.Account{"router": {ID: "router", ProviderID: "openrouter", Label: "Personal", Connection: provider.DefaultTemplates()["openrouter"]}, "work": {ID: "work", ProviderID: "openai", Label: "Work", Connection: provider.DefaultTemplates()["openai"]}},
 		Memory: types.MemorySettings{
 			AutoRecall:         "off",
 			AutoExtract:        "off",

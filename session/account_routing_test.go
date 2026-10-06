@@ -14,9 +14,10 @@ import (
 
 func accountRoutingConfig() *Config {
 	cfg := modelAttributionConfig("https://example.invalid/v1", "m")
+	connection := cfg.Accounts["account"].Connection
 	cfg.Accounts = map[string]provider.Account{
-		"work":     {ID: "work", ProviderID: "openrouter", APIKey: "secret-work"},
-		"personal": {ID: "personal", ProviderID: "openrouter", APIKey: "secret-personal"},
+		"work":     {ID: "work", ProviderID: "openrouter", APIKey: "secret-work", Connection: provider.CloneTemplate(connection)},
+		"personal": {ID: "personal", ProviderID: "openrouter", APIKey: "secret-personal", Connection: provider.CloneTemplate(connection)},
 	}
 	profile := cfg.Agents.Profiles["default"]
 	main := profile.Categories[CategoryDefault]
@@ -40,7 +41,7 @@ func TestAccountPinnedAcrossDefaultChangeAndResume(t *testing.T) {
 	main.AccountID = "personal"
 	profile.Categories[CategoryDefault] = main
 	cfg.Agents.Profiles["default"] = profile
-	s.UpdateWorkspaceDefaults(types.AppSettings{Accounts: cfg.Accounts, Providers: cfg.Providers, Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{CategoryDefault: {AccountID: "personal", Model: "m"}}}})
+	s.UpdateWorkspaceDefaults(types.AppSettings{Accounts: cfg.Accounts, Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{CategoryDefault: {AccountID: "personal", Model: "m"}}}})
 	if got := s.cfg.GetActiveDefaultCategory().AccountID; got != "work" {
 		t.Fatalf("live session redirected to %q", got)
 	}
@@ -186,26 +187,30 @@ func TestTransportSettingsFollowTemplateAndAccountEditsAndResume(t *testing.T) {
 	})
 	previous := s.provider
 	previousDial := previous.DialSettings()
-	template := cfg.Providers["openrouter"]
+	template := cfg.Accounts["work"].Connection
 	template.Dialer = &provider.DialSettings{
 		RequestTimeoutSeconds: 300, ConnectTimeoutSeconds: 60, MaxAttempts: 3, MaxBackoffSeconds: 60,
 		ProgressStartupTimeoutSeconds: 120, ProgressTimeoutFloorSeconds: 60, ProgressTimeoutCeilingSeconds: 600,
 	}
-	cfg.Providers["openrouter"] = template
+	for _, id := range []string{"work", "personal"} {
+		a := cfg.Accounts[id]
+		a.Connection = provider.CloneTemplate(template)
+		cfg.Accounts[id] = a
+	}
 	override := provider.DialSettings{
 		RequestTimeoutSeconds: 600, ConnectTimeoutSeconds: 10, MaxAttempts: 2, MaxBackoffSeconds: 15,
 		ProgressStartupTimeoutSeconds: 300, ProgressTimeoutFloorSeconds: 120, ProgressTimeoutCeilingSeconds: 900,
 	}
 	for _, useOverride := range []bool{false, true, false} {
 		account := cfg.Accounts["work"]
-		account.Overrides.Dialer = nil
+		account.Connection = provider.CloneTemplate(template)
 		want := *template.Dialer
 		if useOverride {
-			account.Overrides.Dialer = &override
+			account.Connection.Dialer = &override
 			want = override
 		}
 		cfg.Accounts["work"] = account
-		s.UpdateWorkspaceDefaults(types.AppSettings{Accounts: cfg.Accounts, Providers: cfg.Providers, Agents: ConfigToSettings(cfg).Agents})
+		s.UpdateWorkspaceDefaults(types.AppSettings{Accounts: cfg.Accounts, Agents: ConfigToSettings(cfg).Agents})
 		if s.provider == nil || s.provider.DialSettings() != want {
 			t.Fatalf("live account override=%t was not applied to requests: %+v", useOverride, s.provider)
 		}

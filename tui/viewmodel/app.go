@@ -46,6 +46,7 @@ import (
 	"crude/tui/ui/popup"
 	"crude/tui/window"
 	"crude/tui/wm"
+	roottypes "crude/types"
 	captypes "crude/types/capability"
 	"crude/workspace"
 )
@@ -98,8 +99,8 @@ type App struct {
 	rejectedSteeringDrafts     map[*workspace.Session][]string
 	DirtyPromptPath            string
 	DirtyPromptChoice          int
-	accountRecoveryChoice      int
-	accountRecoverySession     bool
+	operationIssue             *operationIssueOwner
+	pendingOperationIssues     []roottypes.OperationIssue
 	settingsPrompt             *settingsPromptState
 	capabilityOperations       map[uint64]capabilityOperation
 	capabilityPicker           *capabilityPickerOwner
@@ -639,23 +640,6 @@ func (m *App) openSettingsTo(scope ttypes.SettingsScope, accounts bool) {
 	if len(working.Agents.Categories) == 0 {
 		working.Agents = m.WorkspaceAgentDefaults()
 	}
-	if providers := m.AllProviderConfigs(); len(providers) > 0 {
-		if working.Providers == nil {
-			working.Providers = map[string]ttypes.ProviderConfig{}
-		}
-		for id, cfg := range providers {
-			if _, ok := working.Providers[id]; !ok {
-				working.Providers[id] = cfg
-			}
-		}
-	}
-	if working.ActiveProvider == "" {
-		working.ActiveProvider = m.LastSettings.ProviderID
-	}
-	if working.ActiveProvider == "" {
-		working.ActiveProvider = "openrouter"
-	}
-
 	wsWidget := popup.NewWorkspaceSettingsScoped(m.Theme, working, m.providerPresets, scope, appDefaults, overrides)
 	if body, ok := wsWidget.Component().(*settingsui.WorkspaceSettingsSurface); ok {
 		body.Model().SetCapabilitySnapshot(m.capabilitySnapshot)
@@ -892,7 +876,6 @@ func (m *App) openSessionSettings() {
 	if p == nil || p.settings == nil {
 		return
 	}
-	p.settings.ConfigureProviders(m.providerPresets, m.AllProviderConfigs())
 	p.settings.ConfigureAccounts(m.AllAccounts())
 	p.settings.SetCapabilities(m.capabilitySnapshot)
 	p.settings.SaveSnapshot()
@@ -962,21 +945,12 @@ func (m *App) registerOverlayHandlers() {
 	oh.RegisterHoverHandler(ui.OverlayDirtyClose, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
 		m.hoverDirtyPrompt(localX, localY)
 	})
-	oh.RegisterContentHandler(ui.OverlayAccountRecovery, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
-		choice := confirmFrameButtonAt(fw, localX, localY)
-		if choice >= 0 {
-			return m.activateAccountRecovery(choice)
-		}
-		return nil
+	oh.RegisterContentHandler(ui.OverlayOperationIssue, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
+		return m.forwardEventToWindowContent(fw, msg)
 	})
-	oh.RegisterHoverHandler(ui.OverlayAccountRecovery, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
-		choice := confirmFrameButtonAt(fw, localX, localY)
-		if choice >= 0 && choice != m.accountRecoveryChoice {
-			m.accountRecoveryChoice = choice
-			if cw, ok := fw.Content.(*ui.ComponentWidget); ok {
-				ui.SetConfirmHover(cw, choice)
-			}
-		}
+	oh.RegisterHoverHandler(ui.OverlayOperationIssue, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, button tea.MouseButton) {
+		x, y := fw.Position()
+		m.forwardEventToWindowContent(fw, tea.MouseMotionMsg{X: x + localX, Y: y + localY, Button: button})
 	})
 	oh.RegisterContentHandler(ui.OverlaySettingsPrompt, func(host *ui.OverlayHost, fw *wm.FloatingWindow, localX, localY int, msg tea.Msg) tea.Cmd {
 		if choice := confirmFrameButtonAt(fw, localX, localY); choice >= 0 {

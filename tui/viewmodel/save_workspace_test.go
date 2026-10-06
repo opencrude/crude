@@ -25,7 +25,7 @@ func TestSaveAsWorkspacePromotesAgentSettings(t *testing.T) {
 	t.Cleanup(func() { _ = wdb.Close() })
 	app.WorkspaceDB = wdb
 	app.SetAppDefaults(ttypes.AppSettings{
-		ActiveProvider: "openrouter",
+
 		Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
 			"default": {Provider: "openrouter", Model: "old-model"},
 		}},

@@ -11,24 +11,25 @@ import (
 
 func newTestModel(t *testing.T, current types.AppSettings) *Model {
 	t.Helper()
-	if current.Providers == nil {
-		current.Providers = provider.DefaultTemplates()
+	if len(current.Accounts) == 0 {
+		seed := provider.DefaultTemplates()["openai"]
+		seed.APIStandard = "openai-responses"
+		current.Accounts = map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", Label: "Test", APIKey: "key", Connection: seed}}
 	}
 	m := New(theme.DefaultDark(), current, []types.ProviderPreset{
 		{ID: "openai", Name: "OpenAI", StandardID: "openai-responses"},
 		{ID: "anthropic", Name: "Anthropic", StandardID: "anthropic"},
 	})
-	if _, ok := m.providers[m.providerID]; ok {
-		if err := m.beginProviderEdit(false, false); err != nil {
-			t.Fatal(err)
-		}
+	m.SelectAccounts()
+	if err := m.beginAccountEdit(false, ""); err != nil {
+		t.Fatal(err)
 	}
 	return m
 }
 
 func TestProvidersFormRendersProtocolRowsByCapability(t *testing.T) {
-	m := newTestModel(t, types.AppSettings{ActiveProvider: "openai"})
-	form := m.categories[catProviders].Form
+	m := newTestModel(t, types.AppSettings{})
+	form := m.categories[catAccounts].Form
 
 	// Responses protocol: storage, adaptive media recovery, ZDR, summaries,
 	// truncation, and tier all exist.
@@ -54,8 +55,8 @@ func TestProvidersFormRendersProtocolRowsByCapability(t *testing.T) {
 	}
 
 	// Anthropic declares only a service tier.
-	m = newTestModel(t, types.AppSettings{ActiveProvider: "anthropic"})
-	form = m.categories[catProviders].Form
+	m = newTestModel(t, types.AppSettings{Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "anthropic", Label: "Test", APIKey: "key", Connection: provider.DefaultTemplates()["anthropic"]}}})
+	form = m.categories[catAccounts].Form
 	if form.Field(fieldProtocolStore) != nil {
 		t.Error("Anthropic protocol must not expose a store row")
 	}
@@ -65,24 +66,24 @@ func TestProvidersFormRendersProtocolRowsByCapability(t *testing.T) {
 }
 
 func TestProtocolSettingsRoundTripDefaultsToNil(t *testing.T) {
-	m := newTestModel(t, types.AppSettings{ActiveProvider: "openai"})
-	m.storeProviderForm("openai")
-	if cfg := m.providerEditor.draft; cfg.Protocol != nil {
+	m := newTestModel(t, types.AppSettings{})
+	m.storeAccountEditorForm()
+	if cfg := m.accountEditor.draft.Connection; cfg.Protocol != nil {
 		t.Fatalf("all-default protocol rows = %+v, want nil", cfg.Protocol)
 	}
 }
 
 func TestProtocolSettingsRoundTripCapturesOverrides(t *testing.T) {
-	m := newTestModel(t, types.AppSettings{ActiveProvider: "openai"})
-	m.SetValueForTest(catProviders, fieldProtocolStore, "off")
-	m.SetValueForTest(catProviders, fieldProtocolMediaReplay, "off")
-	m.SetValueForTest(catProviders, fieldProtocolZDR, "yes")
-	m.SetValueForTest(catProviders, fieldProtocolSummaries, "off")
-	m.SetValueForTest(catProviders, fieldProtocolTruncate, "truncate")
-	m.SetValueForTest(catProviders, fieldProtocolTier, "flex")
-	m.storeProviderForm("openai")
+	m := newTestModel(t, types.AppSettings{})
+	m.SetValueForTest(catAccounts, fieldProtocolStore, "off")
+	m.SetValueForTest(catAccounts, fieldProtocolMediaReplay, "off")
+	m.SetValueForTest(catAccounts, fieldProtocolZDR, "yes")
+	m.SetValueForTest(catAccounts, fieldProtocolSummaries, "off")
+	m.SetValueForTest(catAccounts, fieldProtocolTruncate, "truncate")
+	m.SetValueForTest(catAccounts, fieldProtocolTier, "flex")
+	m.storeAccountEditorForm()
 
-	cfg := m.providerEditor.draft
+	cfg := m.accountEditor.draft.Connection
 	if cfg.Protocol == nil {
 		t.Fatal("overrides were not persisted")
 	}
@@ -107,8 +108,8 @@ func TestProtocolSettingsRoundTripCapturesOverrides(t *testing.T) {
 }
 
 func TestExtraBodyFieldValidatesJSON(t *testing.T) {
-	m := newTestModel(t, types.AppSettings{ActiveProvider: "openai"})
-	field := m.categories[catProviders].Form.Field(fieldExtraBody)
+	m := newTestModel(t, types.AppSettings{})
+	field := m.categories[catAccounts].Form.Field(fieldExtraBody)
 	if field == nil {
 		t.Fatal("extra body field missing")
 	}
@@ -235,7 +236,7 @@ func TestCollectAgentsReadsCapabilityAndSamplingFields(t *testing.T) {
 
 func TestAutofillCapabilitiesFromModelEntry(t *testing.T) {
 	m := newTestModel(t, types.AppSettings{})
-	m.accounts["work"] = provider.Account{ID: "work", ProviderID: "openai", Label: "Work"}
+	m.accounts["work"] = provider.Account{ID: "work", ProviderID: "openai", Label: "Work", Connection: provider.DefaultTemplates()["openai"]}
 	m.setModelsForAccount("openai", "work", []types.ModelEntry{{
 		ID: "gpt-test", Name: "GPT Test", ContextWindow: 128000, MaxOutput: 4096,
 		Modalities: []string{provider.ModalityImage},

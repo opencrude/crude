@@ -104,13 +104,7 @@ func (w *Workspace) PrepareDraftAccountModels(account provider.Account, baseURL,
 		}
 	}
 	draftCfg := &session.Config{
-		Accounts:  map[string]provider.Account{account.ID: provider.CloneAccount(account)},
-		Providers: make(map[string]session.ProviderConfig),
-	}
-	if w.sessionCfg != nil {
-		for id, template := range w.sessionCfg.Providers {
-			draftCfg.Providers[id] = provider.CloneTemplate(template)
-		}
+		Accounts: map[string]provider.Account{account.ID: provider.CloneAccount(account)},
 	}
 	p, err := draftCfg.ProviderForAccount(account.ID, "")
 	if err != nil {

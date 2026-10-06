@@ -14,8 +14,8 @@ import (
 func TestRoleAccountPickerListsOnlyAccountsAndPinsSelection(t *testing.T) {
 	st := types.Settings{ProviderID: "openrouter", AccountID: "home", Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {Provider: "openrouter", AccountID: "home", Model: "home-model"}}}}
 	screen := New(theme.DefaultDark(), st, st, nil)
-	screen.ConfigureProviders([]types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}, {ID: "openai", Name: "OpenAI"}}, map[string]types.ProviderConfig{"openrouter": provider.DefaultTemplates()["openrouter"], "openai": provider.DefaultTemplates()["openai"]})
-	screen.ConfigureAccounts(map[string]provider.Account{"home": {ID: "home", ProviderID: "openrouter", Label: "Home", APIKey: "h"}, "work": {ID: "work", ProviderID: "openrouter", Label: "Work", APIKey: "w"}, "other": {ID: "other", ProviderID: "openai", Label: "Team", APIKey: "o"}})
+
+	screen.ConfigureAccounts(map[string]provider.Account{"home": {ID: "home", ProviderID: "openrouter", Label: "Home", APIKey: "h", Connection: provider.DefaultTemplates()["openrouter"]}, "work": {ID: "work", ProviderID: "openrouter", Label: "Work", APIKey: "w", Connection: provider.DefaultTemplates()["openrouter"]}, "other": {ID: "other", ProviderID: "openai", Label: "Team", APIKey: "o", Connection: provider.DefaultTemplates()["openai"]}})
 	screen.openRole("default")
 	screen.openProviderPicker()
 	buf := surface.NewCellBuffer(95, 22)
@@ -55,8 +55,8 @@ func TestRoleAccountPickerListsOnlyAccountsAndPinsSelection(t *testing.T) {
 func TestRoleModelsIgnoreStaleAccountAndMissingAccountFailsClosed(t *testing.T) {
 	st := types.Settings{ProviderID: "openrouter", AccountID: "a", Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {Provider: "openrouter", AccountID: "a"}}}}
 	screen := New(theme.DefaultDark(), st, st, nil)
-	screen.ConfigureProviders([]types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}}, map[string]types.ProviderConfig{"openrouter": {}})
-	screen.ConfigureAccounts(map[string]provider.Account{"a": {ID: "a", ProviderID: "openrouter", Label: "A"}, "b": {ID: "b", ProviderID: "openrouter", Label: "B"}})
+
+	screen.ConfigureAccounts(map[string]provider.Account{"a": {ID: "a", ProviderID: "openrouter", Label: "A", Connection: provider.DefaultTemplates()["openrouter"]}, "b": {ID: "b", ProviderID: "openrouter", Label: "B", Connection: provider.DefaultTemplates()["openrouter"]}})
 	cmd := screen.OpenModelPicker("default")
 	request := cmd().(FetchModelsMsg)
 	screen.applyProviderToEffective("b")
@@ -66,7 +66,7 @@ func TestRoleModelsIgnoreStaleAccountAndMissingAccountFailsClosed(t *testing.T) 
 	if len(screen.models[sessionModelKey("openrouter", "b")]) != 0 {
 		t.Fatal("models from A entered B")
 	}
-	screen.ConfigureAccounts(map[string]provider.Account{"a": {ID: "a", ProviderID: "openrouter", Label: "A"}})
+	screen.ConfigureAccounts(map[string]provider.Account{"a": {ID: "a", ProviderID: "openrouter", Label: "A", Connection: provider.DefaultTemplates()["openrouter"]}})
 	screen.openRole("default")
 	if got := screen.formModel.Field(fieldProvider).Description; !strings.Contains(got, "Missing account: b") {
 		t.Fatalf("missing explicit account redirected: %q", got)

@@ -14,7 +14,7 @@ func TestAutoPermissionSettingsReachExistingAndFutureSessions(t *testing.T) {
 	w := NewWorkspace(root, "model", "tester", types.Settings{}, &testLogger{})
 	t.Cleanup(w.Close)
 	w.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
-	cfg := &session.Config{ActiveProvider: "openai", Accounts: map[string]provider.Account{"test-account": {ID: "test-account", ProviderID: "openai", Label: "Test", APIKey: "test"}}, Providers: map[string]session.ProviderConfig{"openai": provider.DefaultTemplates()["openai"]}, Agents: session.DefaultAgentsConfig()}
+	cfg := &session.Config{Accounts: map[string]provider.Account{"test-account": {ID: "test-account", ProviderID: "openai", Label: "Test", APIKey: "test", Connection: provider.DefaultTemplates()["openai"]}}, Agents: session.DefaultAgentsConfig()}
 	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
 	main := profile.Categories[session.CategoryDefault]
 	main.AccountID, main.Model = "test-account", "model"

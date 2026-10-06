@@ -430,10 +430,9 @@ func (c *agentCatalog) apply() bool {
 		format := c.draft.Field(fieldAutoPermFormat).Value.String()
 		if accountID != "" && (format == types.AutoPermissionFormatJSONSchema || format == types.AutoPermissionFormatJSONObject) {
 			account, ok := c.model.accounts[accountID]
-			template, templateOK := c.model.providers[account.ProviderID]
 			standard := ""
-			if ok && templateOK {
-				standard = provider.ResolveTemplate(account.ProviderID, template, account.Overrides).APIStandard
+			if ok {
+				standard = account.Connection.APIStandard
 			}
 			if standard == "" && ok {
 				standard = provider.DefaultStandardID(account.ProviderID)
@@ -580,7 +579,9 @@ func (c *agentCatalog) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		}
 		c.form.SetHideDescriptions(w < 48)
 		c.form.Layout(ctx, ui.Rect{Y: formY, W: max(1, w-2), H: max(1, h-formY-3)})
-		c.formScroll.Layout(ctx, ui.Rect{X: w - 2, Y: formY, W: 2, H: max(1, h-formY-3)})
+		// Register only the painted stroke so the reserved gutter column
+		// between the form and the bar stays inert for pointer input.
+		c.formScroll.Layout(ctx, ui.Rect{X: w - ui.ScrollbarWidth, Y: formY, W: ui.ScrollbarWidth, H: max(1, h-formY-3)})
 		if !c.formScroll.Needed() {
 			c.formScroll.Layout(ctx, ui.Rect{})
 		}
@@ -598,7 +599,7 @@ func (c *agentCatalog) Layout(ctx ui.LayoutContext, r ui.Rect) {
 			firstAction--
 		}
 		c.table.Layout(ctx, ui.Rect{Y: 3, W: max(1, w-2), H: max(1, firstAction-5)})
-		c.listScroll.Layout(ctx, ui.Rect{X: w - 2, Y: 4, W: 2, H: max(1, firstAction-6)})
+		c.listScroll.Layout(ctx, ui.Rect{X: w - ui.ScrollbarWidth, Y: 4, W: ui.ScrollbarWidth, H: max(1, firstAction-6)})
 		if !c.listScroll.Needed() {
 			c.listScroll.Layout(ctx, ui.Rect{})
 		}

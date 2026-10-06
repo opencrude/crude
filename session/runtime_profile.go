@@ -274,7 +274,6 @@ func mergeCategoryConfig(base, override CategoryConfig) CategoryConfig {
 func copyConfig(src *Config) *Config {
 	dst := &Config{
 		SelectedAgent:   src.SelectedAgent,
-		ActiveProvider:  src.ActiveProvider,
 		AccountManager:  src.AccountManager,
 		Accounts:        src.Accounts,
 		TurnLogsEnabled: src.TurnLogsEnabled,
@@ -300,13 +299,6 @@ func copyConfig(src *Config) *Config {
 		m := *src.workspaceMain
 		m.ContextCompactionPercent = cloneIntPtr(src.workspaceMain.ContextCompactionPercent)
 		dst.workspaceMain = &m
-	}
-
-	if src.Providers != nil {
-		dst.Providers = make(map[string]ProviderConfig, len(src.Providers))
-		for k, v := range src.Providers {
-			dst.Providers[k] = provider.CloneTemplate(v)
-		}
 	}
 
 	agents := src.Agents

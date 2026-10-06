@@ -113,7 +113,7 @@ func TestSelectedRootAgentPersistsAndFollowsProfileWithoutLosingAccountPin(t *te
 	}
 	profile.Enabled = new(bool)
 	cfg.Agents.AgentProfiles["reviewer"] = profile
-	resumed.UpdateWorkspaceDefaults(types.AppSettings{Agents: ConfigToSettings(cfg).Agents, Accounts: cfg.Accounts, Providers: cfg.Providers})
+	resumed.UpdateWorkspaceDefaults(types.AppSettings{Agents: ConfigToSettings(cfg).Agents, Accounts: cfg.Accounts})
 	if err := resumed.RuntimeProfile().GetEffectiveConfig("root").ValidateSelectedAgent(); err == nil {
 		t.Fatal("disabled selected agent silently fell back to Main Agent")
 	}
@@ -147,9 +147,11 @@ func TestMemoryAgentUsesEditedInstructionsAndOutputLimit(t *testing.T) {
 	}))
 	defer server.Close()
 	cfg := testConfig()
-	template := cfg.Providers["openrouter"]
+	template := cfg.Accounts["account"].Connection
 	template.ProviderURL = server.URL + "/v1"
-	cfg.Providers["openrouter"] = template
+	a := cfg.Accounts["account"]
+	a.Connection = template
+	cfg.Accounts["account"] = a
 	cfg.Memory.MemoryCategory = types.CategorySettings{Model: "memory-model", AccountID: "account", Instructions: "Use factual summaries", ModelMaxOutput: 56}
 	sess := &Session{cfg: cfg}
 	complete, err := sess.memoryCompleter()

@@ -55,7 +55,6 @@ type (
 	UISettings            = model.UISettings
 	FontSettings          = model.FontSettings
 	ModelEntry            = model.ModelEntry
-	ProviderConfig        = model.ProviderConfig
 	ProviderPreset        = model.ProviderPreset
 	ConfirmResult         = model.ConfirmResult
 	QuestionResult        = model.QuestionResult

@@ -19,9 +19,8 @@ import (
 func TestOAuthResultReachesModelThroughFrameDispatch(t *testing.T) {
 	th := theme.DefaultDark()
 	model := New(th, types.AppSettings{
-		ActiveProvider: "chatgpt",
-		Providers:      map[string]types.ProviderConfig{"chatgpt": provider.DefaultTemplates()["chatgpt"]},
-		Accounts:       map[string]provider.Account{"cg": {ID: "cg", ProviderID: "chatgpt", Label: "Personal"}},
+
+		Accounts: map[string]provider.Account{"cg": {ID: "cg", ProviderID: "chatgpt", Label: "Personal", Connection: provider.DefaultTemplates()["chatgpt"]}},
 	}, []types.ProviderPreset{chatgptPreset()})
 	if err := model.beginAccountEdit(false, ""); err != nil {
 		t.Fatal(err)
@@ -60,27 +59,19 @@ func TestOAuthResultReachesModelThroughFrameDispatch(t *testing.T) {
 	}
 }
 
-// TestFetchModelsAfterSwitchFromOpenCodeGo simulates the reported bug: the
-// user's active provider was opencode-go, they switched to chatgpt, signed in,
-// and then fetched models — which reportedly used the opencode-go provider.
+// TestFetchModelsAfterSwitchFromOpenCodeGo simulates the reported bug: another
+// connection used OpenCode Go, but fetching from the selected ChatGPT account
+// must use that account's own transport.
 func TestFetchModelsAfterSwitchFromOpenCodeGo(t *testing.T) {
 	th := theme.DefaultDark()
 	model := New(th, types.AppSettings{
-		ActiveProvider: "opencode-go",
-		Providers: map[string]types.ProviderConfig{
-			"opencode-go": provider.DefaultTemplates()["opencode-go"],
-			"chatgpt":     provider.DefaultTemplates()["chatgpt"],
-		},
-		Accounts: map[string]provider.Account{"cg": {ID: "cg", ProviderID: "chatgpt", Label: "Personal"}},
+
+		Accounts: map[string]provider.Account{"cg": {ID: "cg", ProviderID: "chatgpt", Label: "Personal", Connection: provider.DefaultTemplates()["chatgpt"]}},
 	}, []types.ProviderPreset{
 		{ID: "opencode-go", Name: "OpenCode Go", StandardID: "openai"},
 		chatgptPreset(),
 	})
 
-	// Browsing template settings is independent of the selected account.
-	if model.providerID != "opencode-go" {
-		t.Fatal("fixture selected wrong template")
-	}
 	model.selectAccount("cg")
 	if err := model.beginAccountEdit(false, ""); err != nil {
 		t.Fatal(err)

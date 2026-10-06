@@ -193,135 +193,82 @@ func TestDialFieldOptionsDoNotDuplicateDefaults(t *testing.T) {
 }
 
 func TestConnectionTuningSettingsEditors(t *testing.T) {
-	for _, account := range []bool{false, true} {
-		name := "provider"
-		if account {
-			name = "account"
-		}
-		t.Run(name, func(t *testing.T) {
-			th := theme.DefaultDark()
-			m := New(th, accountSettingsFixture(), nil)
-			s := NewSurface(th, m)
-			category, prefix, save := catProviders, "", "settings.template.commit"
-			if account {
-				category, prefix, save = catAccounts, accountOverrideDialer+"-", "settings.account.commit"
-				m.SelectCategory(category)
-				m.selectAccount("work")
-				s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.edit"})
-				for _, id := range []string{fieldDialProgressStartup, fieldDialProgressFloor, fieldDialProgressCeiling} {
-					if f := m.categories[category].Form.Field(prefix + id); f == nil || !f.ReadOnly {
-						t.Fatalf("inherited account control %s is missing or editable", id)
-					}
-				}
-				m.SetValueForTest(category, accountOverrideDialer+"-enabled", "yes")
-			} else {
-				m.SelectCategory(category)
-				s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.template.edit"})
-			}
-			backoff := m.categories[category].Form.Field(prefix + fieldDialBackoff)
-			if backoff == nil || !strings.Contains(backoff.Description, "Retry-After") || !strings.Contains(backoff.Description, "1-300") {
-				t.Fatalf("max-backoff help does not state the shared Retry-After 1-300 second cap: %+v", backoff)
-			}
-			m.SetValueForTest(category, prefix+fieldDialBackoff, "301")
-			if result := s.HandleAction(ui.EventContext{}, ui.Action{ID: save}); result.Cmd != nil || !backoff.HasErrors() {
-				t.Fatal("max backoff above the five-minute cap was not blocked and highlighted")
-			}
-			for id, value := range map[string]string{
-				fieldDialTimeout: "300", fieldDialConnect: "10", fieldDialAttempts: "3", fieldDialBackoff: "60",
-				fieldDialProgressStartup: "120", fieldDialProgressFloor: "60", fieldDialProgressCeiling: "600",
-			} {
-				m.SetValueForTest(category, prefix+id, value)
-			}
-			m.SetValueForTest(category, prefix+fieldDialProgressStartup, "900")
-			if result := s.HandleAction(ui.EventContext{}, ui.Action{ID: save}); result.Cmd != nil ||
-				!m.categories[category].Form.Field(prefix+fieldDialProgressStartup).HasErrors() {
-				t.Fatal("conflicting timeouts were not blocked and highlighted")
-			}
-			m.SetValueForTest(category, prefix+fieldDialProgressStartup, "120")
-			result := s.HandleAction(ui.EventContext{}, ui.Action{ID: save})
-			if result.Cmd == nil {
-				t.Fatalf("valid connection tuning was rejected: provider=%s account=%s", m.providerError, m.accountError)
-			}
-			var got *provider.DialSettings
-			if account {
-				got = result.Cmd().(AccountChangeMsg).Change.After.Overrides.Dialer
-			} else {
-				got = result.Cmd().(TemplateChangeMsg).Change.After.Dialer
-			}
-			want := provider.DialSettings{
-				RequestTimeoutSeconds: 300, ConnectTimeoutSeconds: 10, MaxAttempts: 3, MaxBackoffSeconds: 60,
-				ProgressStartupTimeoutSeconds: 120, ProgressTimeoutFloorSeconds: 60, ProgressTimeoutCeilingSeconds: 600,
-			}
-			if got == nil || *got != want {
-				t.Fatalf("settings save lost transport fields: got=%+v want=%+v", got, want)
-			}
-		})
+	th := theme.DefaultDark()
+	m := New(th, accountSettingsFixture(), nil)
+	s := NewSurface(th, m)
+	m.SelectAccounts()
+	m.selectAccount("work")
+	s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.edit"})
+	category := catAccounts
+	backoff := m.categories[category].Form.Field(fieldDialBackoff)
+	if backoff == nil || !strings.Contains(backoff.Description, "Retry-After") || !strings.Contains(backoff.Description, "1-300") {
+		t.Fatal("missing retry cap guidance")
+	}
+	m.SetValueForTest(category, fieldDialBackoff, "301")
+	if result := s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.commit"}); result.Cmd != nil || !backoff.HasErrors() {
+		t.Fatal("five-minute cap was not enforced")
+	}
+	for id, value := range map[string]string{fieldDialTimeout: "300", fieldDialConnect: "10", fieldDialAttempts: "3", fieldDialBackoff: "60", fieldDialProgressStartup: "120", fieldDialProgressFloor: "60", fieldDialProgressCeiling: "600"} {
+		m.SetValueForTest(category, id, value)
+	}
+	m.SetValueForTest(category, fieldDialProgressStartup, "900")
+	if result := s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.commit"}); result.Cmd != nil || !m.categories[category].Form.Field(fieldDialProgressStartup).HasErrors() {
+		t.Fatal("conflicting progress timeouts accepted")
+	}
+	m.SetValueForTest(category, fieldDialProgressStartup, "120")
+	result := s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.commit"})
+	if result.Cmd == nil {
+		t.Fatalf("valid transport rejected: %s", m.accountError)
+	}
+	got := result.Cmd().(AccountChangeMsg).Change.After.Connection.Dialer
+	want := provider.DialSettings{RequestTimeoutSeconds: 300, ConnectTimeoutSeconds: 10, MaxAttempts: 3, MaxBackoffSeconds: 60, ProgressStartupTimeoutSeconds: 120, ProgressTimeoutFloorSeconds: 60, ProgressTimeoutCeilingSeconds: 600}
+	if got == nil || *got != want {
+		t.Fatalf("account transport=%+v want %+v", got, want)
 	}
 }
 
-func TestAccountProgressTimeoutOverrideRestoresInheritance(t *testing.T) {
+func TestAccountProgressTimeoutsAreEditableAndIndependent(t *testing.T) {
 	settings := accountSettingsFixture()
-	template := settings.Providers["openrouter"]
-	template.Dialer = &provider.DialSettings{
-		ProgressStartupTimeoutSeconds: 120, ProgressTimeoutFloorSeconds: 60, ProgressTimeoutCeilingSeconds: 600,
-	}
-	settings.Providers["openrouter"] = template
+	account := settings.Accounts["work"]
+	account.Connection.Dialer = &provider.DialSettings{ProgressStartupTimeoutSeconds: 120, ProgressTimeoutFloorSeconds: 60, ProgressTimeoutCeilingSeconds: 600}
+	settings.Accounts["work"] = account
 	m := New(theme.DefaultDark(), settings, nil)
-	m.SelectCategory(catAccounts)
+	m.SelectAccounts()
 	m.selectAccount("work")
 	if err := m.beginAccountEdit(false, ""); err != nil {
 		t.Fatal(err)
 	}
-	prefix := accountOverrideDialer + "-"
-	if got := m.value(catAccounts, prefix+fieldDialProgressStartup); got != "120" {
-		t.Fatalf("account did not show template timeout: %q", got)
+	if field := m.categories[catAccounts].Form.Field(fieldDialProgressStartup); field.ReadOnly || field.Value.String() != "120" {
+		t.Fatal("owned transport remained inherited/read-only")
 	}
-	m.SetValueForTest(catAccounts, prefix+"enabled", "yes")
-	if got := m.accountEditor.draft.Overrides.Dialer; got == nil || *got != *template.Dialer {
-		t.Fatalf("enabling override did not copy inherited progress limits: %+v", got)
-	}
-	m.SetValueForTest(catAccounts, prefix+fieldDialProgressCeiling, "900")
-	m.SetValueForTest(catAccounts, prefix+"enabled", "no")
-	if m.accountEditor.draft.Overrides.Dialer != nil {
-		t.Fatal("disabling override retained an account timeout")
-	}
-	if f := m.categories[catAccounts].Form.Field(prefix + fieldDialProgressCeiling); f.Value.String() != "600" || !f.ReadOnly {
-		t.Fatalf("template inheritance not restored: %+v", f)
+	m.SetValueForTest(catAccounts, fieldDialProgressCeiling, "900")
+	m.storeAccountEditorForm()
+	if m.accountEditor.draft.Connection.Dialer.ProgressTimeoutCeilingSeconds != 900 || m.accounts["home"].Connection.Dialer != nil {
+		t.Fatal("draft transport changed another account")
 	}
 }
 
 func TestProgressTimeoutControlsPaintAtDesktopAndNarrowSizes(t *testing.T) {
-	for _, account := range []bool{false, true} {
-		th := theme.DefaultDark()
-		m := New(th, accountSettingsFixture(), nil)
-		s := NewSurface(th, m)
-		prefix := ""
-		if account {
-			m.SelectCategory(catAccounts)
-			m.selectAccount("work")
-			s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.edit"})
-			prefix = accountOverrideDialer + "-"
-		} else {
-			m.SelectCategory(catProviders)
-			s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.template.edit"})
-		}
-		host := ui.NewHost(th, s)
-		for _, size := range []ui.Size{{W: 124, H: 28}, {W: 70, H: 18}} {
-			host.Resize(size.W, size.H)
+	th := theme.DefaultDark()
+	m := New(th, accountSettingsFixture(), nil)
+	s := NewSurface(th, m)
+	m.SelectAccounts()
+	m.selectAccount("work")
+	s.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.edit"})
+	host := ui.NewHost(th, s)
+	for _, size := range []ui.Size{{W: 124, H: 28}, {W: 70, H: 18}} {
+		host.Resize(size.W, size.H)
+		host.Layout()
+		for id, label := range map[string]string{fieldDialProgressStartup: "Initial progress", fieldDialProgressFloor: "Min progress", fieldDialProgressCeiling: "Max progress"} {
+			if !s.form.FocusField(id) {
+				t.Fatalf("cannot focus %s", id)
+			}
+			host.MarkLayout()
 			host.Layout()
-			for id, label := range map[string]string{
-				fieldDialProgressStartup: "Initial progress", fieldDialProgressFloor: "Min progress", fieldDialProgressCeiling: "Max progress",
-			} {
-				if !s.form.FocusField(prefix + id) {
-					t.Fatalf("cannot focus progress field %s", id)
-				}
-				host.MarkLayout()
-				host.Layout()
-				buf := surface.NewCellBuffer(size.W, size.H)
-				host.Paint(buf)
-				if out := bufferPlain(buf); !strings.Contains(out, label) || !strings.Contains(out, "Save") {
-					t.Fatalf("account=%t size=%+v control or actions clipped:\n%s", account, size, out)
-				}
+			buf := surface.NewCellBuffer(size.W, size.H)
+			host.Paint(buf)
+			if out := bufferPlain(buf); !strings.Contains(out, label) || !strings.Contains(out, "Save") {
+				t.Fatalf("size=%+v missing transport/action:\n%s", size, out)
 			}
 		}
 	}

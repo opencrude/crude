@@ -16,9 +16,8 @@ func chatgptPreset() types.ProviderPreset {
 
 func TestChatGPTFormShowsSignInWhenNoOAuth(t *testing.T) {
 	m := New(theme.DefaultDark(), types.AppSettings{
-		ActiveProvider: "chatgpt",
-		Providers:      map[string]types.ProviderConfig{"chatgpt": provider.DefaultTemplates()["chatgpt"]},
-		Accounts:       map[string]provider.Account{"cg": {ID: "cg", ProviderID: "chatgpt", Label: "Personal"}},
+
+		Accounts: map[string]provider.Account{"cg": {ID: "cg", ProviderID: "chatgpt", Label: "Personal", Connection: provider.DefaultTemplates()["chatgpt"]}},
 	}, []types.ProviderPreset{chatgptPreset()})
 	if err := m.beginAccountEdit(false, ""); err != nil {
 		t.Fatal(err)
@@ -40,11 +39,8 @@ func TestChatGPTFormShowsSignInWhenNoOAuth(t *testing.T) {
 
 func TestChatGPTFormShowsSignOutWhenSignedIn(t *testing.T) {
 	m := New(theme.DefaultDark(), types.AppSettings{
-		ActiveProvider: "chatgpt",
-		Providers: map[string]types.ProviderConfig{
-			"chatgpt": provider.DefaultTemplates()["chatgpt"],
-		},
-		Accounts: map[string]provider.Account{"cg": {ID: "cg", ProviderID: "chatgpt", Label: "Personal", OAuth: &provider.OAuthCredentials{AccessToken: "AT", Email: "u@example.com"}}},
+
+		Accounts: map[string]provider.Account{"cg": {ID: "cg", ProviderID: "chatgpt", Label: "Personal", OAuth: &provider.OAuthCredentials{AccessToken: "AT", Email: "u@example.com"}, Connection: provider.DefaultTemplates()["chatgpt"]}},
 	}, []types.ProviderPreset{chatgptPreset()})
 	if err := m.beginAccountEdit(false, ""); err != nil {
 		t.Fatal(err)
@@ -62,21 +58,14 @@ func TestChatGPTFormShowsSignOutWhenSignedIn(t *testing.T) {
 
 func TestSwitchToChatGPTRebuildsFormWithAuthRows(t *testing.T) {
 	m := New(theme.DefaultDark(), types.AppSettings{
-		ActiveProvider: "openrouter",
-		Providers: map[string]types.ProviderConfig{
-			"openrouter": provider.DefaultTemplates()["openrouter"],
-			"chatgpt":    provider.DefaultTemplates()["chatgpt"],
-		},
-		Accounts: map[string]provider.Account{"router": {ID: "router", ProviderID: "openrouter", Label: "Work"}, "cg": {ID: "cg", ProviderID: "chatgpt", Label: "Personal", OAuth: &provider.OAuthCredentials{AccessToken: "AT", AccountID: "acct_1"}}},
+
+		Accounts: map[string]provider.Account{"router": {ID: "router", ProviderID: "openrouter", Label: "Work", Connection: provider.DefaultTemplates()["openrouter"]}, "cg": {ID: "cg", ProviderID: "chatgpt", Label: "Personal", OAuth: &provider.OAuthCredentials{AccessToken: "AT", AccountID: "acct_1"}, Connection: provider.DefaultTemplates()["chatgpt"]}},
 	}, []types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}, chatgptPreset()})
 
-	// Selecting a connection leaves the separate provider-configuration page alone.
+	// Selecting a connection opens that account's own authentication rows.
 	m.selectAccount("cg")
 	if err := m.beginAccountEdit(false, ""); err != nil {
 		t.Fatal(err)
-	}
-	if m.providerID != "openrouter" {
-		t.Fatalf("account browsing changed provider configuration: %q", m.providerID)
 	}
 	if f := m.categories[catAccounts].Form.Field(fieldAPIKey); f != nil {
 		t.Errorf("chatgpt form must not show an API-key field after switch")
@@ -91,9 +80,8 @@ func TestSwitchToChatGPTRebuildsFormWithAuthRows(t *testing.T) {
 
 func TestSetChatGPTAuthSwapsRowsAndPreservesOAuthOnCollect(t *testing.T) {
 	m := New(theme.DefaultDark(), types.AppSettings{
-		ActiveProvider: "chatgpt",
-		Providers:      map[string]types.ProviderConfig{"chatgpt": provider.DefaultTemplates()["chatgpt"]},
-		Accounts:       map[string]provider.Account{"cg": {ID: "cg", ProviderID: "chatgpt", Label: "Personal"}},
+
+		Accounts: map[string]provider.Account{"cg": {ID: "cg", ProviderID: "chatgpt", Label: "Personal", Connection: provider.DefaultTemplates()["chatgpt"]}},
 	}, []types.ProviderPreset{chatgptPreset()})
 	if err := m.beginAccountEdit(false, ""); err != nil {
 		t.Fatal(err)
@@ -135,9 +123,8 @@ func TestSetChatGPTAuthSwapsRowsAndPreservesOAuthOnCollect(t *testing.T) {
 
 func TestChatGPTSignInErrorShownOnStatusRow(t *testing.T) {
 	m := New(theme.DefaultDark(), types.AppSettings{
-		ActiveProvider: "chatgpt",
-		Providers:      map[string]types.ProviderConfig{"chatgpt": provider.DefaultTemplates()["chatgpt"]},
-		Accounts:       map[string]provider.Account{"cg": {ID: "cg", ProviderID: "chatgpt", Label: "Personal"}},
+
+		Accounts: map[string]provider.Account{"cg": {ID: "cg", ProviderID: "chatgpt", Label: "Personal", Connection: provider.DefaultTemplates()["chatgpt"]}},
 	}, []types.ProviderPreset{chatgptPreset()})
 	if err := m.beginAccountEdit(false, ""); err != nil {
 		t.Fatal(err)
@@ -158,9 +145,8 @@ func TestChatGPTSignInErrorShownOnStatusRow(t *testing.T) {
 func TestChatGPTSignInActionIsPaintedButton(t *testing.T) {
 	th := theme.DefaultDark()
 	model := New(th, types.AppSettings{
-		ActiveProvider: "chatgpt",
-		Providers:      map[string]types.ProviderConfig{"chatgpt": provider.DefaultTemplates()["chatgpt"]},
-		Accounts:       map[string]provider.Account{"cg": {ID: "cg", ProviderID: "chatgpt", Label: "Personal"}},
+
+		Accounts: map[string]provider.Account{"cg": {ID: "cg", ProviderID: "chatgpt", Label: "Personal", Connection: provider.DefaultTemplates()["chatgpt"]}},
 	}, []types.ProviderPreset{chatgptPreset()})
 	if err := model.beginAccountEdit(false, ""); err != nil {
 		t.Fatal(err)

@@ -197,7 +197,7 @@ func (m *Model) acquisitionFromForm() capability.AcquisitionSettings {
 }
 
 func (m *Model) editorOpen() bool {
-	return m.accountEditor != nil || m.providerEditor != nil || m.capabilityDraft != nil || len(m.categories) > catAgents && m.categories[catAgents].Form.FieldCount() > 0
+	return m.accountEditor != nil || m.capabilityDraft != nil || len(m.categories) > catAgents && m.categories[catAgents].Form.FieldCount() > 0
 }
 
 func (m *Model) categoryMatches(index int, category Category, query string) bool {

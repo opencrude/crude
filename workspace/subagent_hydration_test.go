@@ -93,10 +93,10 @@ func TestHydrateSubAgentsRestoresCompletedAndPendingReviewTree(t *testing.T) {
 	}
 
 	agents := session.DefaultAgentsConfig()
-	cfg := &session.Config{ActiveProvider: "openai", Accounts: map[string]provider.Account{"test-account": {ID: "test-account", ProviderID: "openai", Label: "Test", APIKey: "test"}}, Agents: agents}
-	cfg.Providers = map[string]session.ProviderConfig{
-		"openai": {Name: "OpenAI", ProviderURL: "http://127.0.0.1", APIStandard: "openai-chat"},
-	}
+	cfg := &session.Config{Accounts: map[string]provider.Account{"test-account": {ID: "test-account", ProviderID: "openai", Label: "Test", APIKey: "test", Connection: provider.DefaultTemplates()["openai"]}}, Agents: agents}
+	account := cfg.Accounts["test-account"]
+	account.Connection = provider.Template{Name: "OpenAI", ProviderURL: "http://127.0.0.1", APIStandard: "openai-chat", AuthType: provider.AuthProtocol}
+	cfg.Accounts[account.ID] = account
 	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
 	main := profile.Categories[session.CategoryDefault]
 	main.AccountID = "test-account"

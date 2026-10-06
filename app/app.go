@@ -65,22 +65,32 @@ type App struct {
 
 	// resumeID is an optional session ID from --resume.
 	resumeID string
+
+	startupIssues []ttypes.OperationIssue
 }
 
 // Opts configures the App. Passed to New() during initialization.
 type Opts struct {
-	FC           FileConfig
-	Home         string
-	SessionsRoot string
-	ProjectDir   string // project directory (defaults to cwd)
-	ResumeID     string // optional session to resume at startup
+	FC            FileConfig
+	Home          string
+	SessionsRoot  string
+	ProjectDir    string // project directory (defaults to cwd)
+	ResumeID      string // optional session to resume at startup
+	StartupIssues []ttypes.OperationIssue
 }
 
 // New creates the IDE shell. Resolves paths and stores config.
 // Does NOT create sessions or start the TUI — that happens in Run().
 func New(opts Opts) (*App, error) {
-	if err := network.ConfigureDefault(FileConfigToAppSettings(opts.FC).Network); err != nil {
-		return nil, fmt.Errorf("invalid Network settings: %w", err)
+	issues := append([]ttypes.OperationIssue(nil), opts.StartupIssues...)
+	if err := network.ConfigureStartupDefault(FileConfigToAppSettings(opts.FC).Network); err != nil {
+		issues = append(issues, networkStartupIssue(err))
+	}
+	for _, issue := range issues {
+		if issue.Target == ttypes.RepairConfigFile {
+			network.BlockStartupDefault(fmt.Errorf("saved configuration needs repair: %s", issue.Detail))
+			break
+		}
 	}
 	home := opts.Home
 	if home == "" {
@@ -95,6 +105,7 @@ func New(opts Opts) (*App, error) {
 		projectDir:           opts.ProjectDir,
 		sessionsRoot:         opts.SessionsRoot,
 		resumeID:             opts.ResumeID,
+		startupIssues:        issues,
 	}, nil
 }
 
@@ -105,7 +116,7 @@ func New(opts Opts) (*App, error) {
 //  4. Enters the main event loop
 //
 // When the TUI exits, Run() returns.
-func (a *App) Run() {
+func (a *App) Run() error {
 	lg := &appLogger{}
 	// The cache is application-wide and independent of configured accounts.
 	catalog, catalogErr := provider.OpenModelCatalog(filepath.Join(a.home, ".crude", "model-catalog.db"), provider.DefaultModelSources())
@@ -132,21 +143,12 @@ func (a *App) Run() {
 		a.initialSettings(),
 		lg,
 	)
+	for _, issue := range a.startupIssues {
+		ws.QueueStartupIssue(issue)
+	}
 
 	// 2. One shared credential manager survives copied session configs.
 	a.configureWorkspace(ws)
-	sessCfg := FileConfigToSession(a.fc)
-	sessCfg.AccountManager = a.accounts
-
-	// 3. Optional --resume: bootstrap that session now (launcher still available
-	//  for multi-session after the TUI starts).
-	if a.resumeID != "" {
-		if _, err := ws.Bootstrap(sessCfg, a.home, a.resumeID); err != nil {
-			fmt.Fprintf(os.Stderr, "Failed to resume session: %v\n", err)
-			os.Exit(1)
-		}
-	}
-
 	// 4. Start the TUI with provider presets for app settings.
 	prompts, err := history.LoadFile(history.DefaultPath())
 	if err != nil {
@@ -156,8 +158,9 @@ func (a *App) Run() {
 	presets := providerPresets()
 	t, err := tui.Start(ws, presets, prompts, lg)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "Failed to start TUI: %v\n", err)
-		os.Exit(1)
+		ws.CloseAllSessions()
+		ws.Close()
+		return fmt.Errorf("start terminal UI: %w", err)
 	}
 	if catalog != nil {
 		stop, joined := make(chan struct{}), make(chan struct{})
@@ -198,26 +201,10 @@ func (a *App) Run() {
 		t.ApplyThemePreset(a.fc.Theme.Preset)
 	}
 
-	// 5. Store the EventSender on the workspace for orchestrator creation.
-	if g := tui.GetGlobal(); g != nil {
-		ws.SetEventSender(g)
-	}
-
-	// 6. If --resume, start orchestrator + hydrate into TUI.
-	if a.resumeID != "" && ws.ActiveSession != nil {
-		if g := tui.GetGlobal(); g != nil {
-			orch, orchErr := ws.StartOrchestrator(g)
-			if orchErr == nil && orch != nil {
-				t.AddOrchestrator(orch.ID)
-			}
-		}
-		ws.Hydrate()
-		if msgs := ws.ActiveSession.TakeHydratedMessages(); len(msgs) > 0 {
-			t.HydrateMessages(msgs)
-		}
-		if refs := ws.ActiveSession.TakeHydratedRefs(); len(refs) > 0 {
-			t.SetReferences(refs)
-		}
+	// Resume uses the same owner-thread launcher path as explicit user resume;
+	// the app never races first paint by mutating sessions after tui.Start.
+	if a.resumeID != "" {
+		t.ResumeStartupSession(a.resumeID)
 	}
 
 	// 7. Wait for exit.
@@ -231,6 +218,7 @@ func (a *App) Run() {
 	}
 	ws.CloseAllSessions()
 	ws.Close()
+	return nil
 }
 
 // persistAccountRotation runs under the manager commit lock so account saves
@@ -272,7 +260,7 @@ func (a *App) configureWorkspace(ws *workspace.Workspace) {
 			defer a.configMu.Unlock()
 			// Certificate reads belong to the off-UI preferences command, and
 			// only to an actual network edit, not an unrelated theme save.
-			if network.Normalize(s.Network) != FileConfigToAppSettings(a.fc).Network {
+			if network.Normalize(s.Network) != FileConfigToAppSettings(a.fc).Network || network.StartupPolicyError() != nil {
 				if err := s.Network.ValidateFiles(); err != nil {
 					return nil, fmt.Errorf("network settings were not saved: %w", err)
 				}
@@ -283,7 +271,7 @@ func (a *App) configureWorkspace(ws *workspace.Workspace) {
 				// preferences save must never replay either from a stale settings
 				// snapshot, including provider defaults.
 				s.Accounts = nil
-				s.Providers = nil
+
 				ApplyAppSettingsToFileConfig(current, s)
 				return nil
 			})
@@ -315,7 +303,7 @@ func (a *App) configureWorkspace(ws *workspace.Workspace) {
 				if change.ID == "" || change.ProviderID == "" {
 					return fmt.Errorf("invalid account identity")
 				}
-				if change.Before != nil && (change.Before.ID != change.ID || change.Before.ProviderID != change.ProviderID) {
+				if change.Before != nil && change.Before.ID != change.ID {
 					return fmt.Errorf("invalid account precondition")
 				}
 				before, exists := current.Accounts[change.ID]
@@ -323,7 +311,7 @@ func (a *App) configureWorkspace(ws *workspace.Workspace) {
 					if exists {
 						return fmt.Errorf("account was created while settings were open; reopen Accounts")
 					}
-				} else if !exists || !reflect.DeepEqual(before, *change.Before) || before.ProviderID != change.ProviderID {
+				} else if !exists || !reflect.DeepEqual(before, *change.Before) {
 					return fmt.Errorf("account changed while settings were open; reopen Accounts")
 				}
 				if change.After == nil {
@@ -335,20 +323,16 @@ func (a *App) configureWorkspace(ws *workspace.Workspace) {
 					if change.After.ID != change.ID || change.After.ProviderID != change.ProviderID || strings.TrimSpace(change.After.Label) == "" {
 						return fmt.Errorf("invalid account identity or name")
 					}
-					configured, exists := current.Providers[change.ProviderID]
-					if !exists {
-						return fmt.Errorf("provider template %q is unavailable", change.ProviderID)
-					}
-					resolved := provider.ResolveTemplate(change.ProviderID, configured, change.After.Overrides)
+					resolved := change.After.Connection
 					if err := resolved.Validate(); err != nil {
-						return fmt.Errorf("invalid account overrides: %w", err)
+						return fmt.Errorf("invalid account connection: %w", err)
 					}
 					if resolved.AuthType != provider.AuthNone && change.After.APIKey == "" && (change.After.OAuth == nil || change.After.OAuth.AccessToken == "" && change.After.OAuth.RefreshToken == "") {
 						return fmt.Errorf("configure authentication for account %q", change.After.Label)
 					}
 					for id, other := range current.Accounts {
-						if id != change.ID && other.ProviderID == change.ProviderID && strings.EqualFold(strings.TrimSpace(other.Label), strings.TrimSpace(change.After.Label)) {
-							return fmt.Errorf("this provider already has an account with that name")
+						if id != change.ID && strings.EqualFold(strings.TrimSpace(other.Label), strings.TrimSpace(change.After.Label)) {
+							return fmt.Errorf("an account with that name already exists")
 						}
 					}
 					if current.Accounts == nil {
@@ -372,62 +356,6 @@ func (a *App) configureWorkspace(ws *workspace.Workspace) {
 		ws.SetAppDefaults(FileConfigToAppSettings(updated))
 		return nil
 	}
-	ws.OnAppTemplateChange = func(change provider.TemplateChange) error {
-		var updated FileConfig
-		err := a.accounts.Commit(func(_ map[string]provider.Account) (map[string]provider.Account, error) {
-			a.configMu.Lock()
-			defer a.configMu.Unlock()
-			var saveErr error
-			updated, saveErr = updateFileConfig(func(current *FileConfig) error {
-				if change.ID == "" || strings.TrimSpace(change.ID) != change.ID {
-					return fmt.Errorf("invalid provider template ID")
-				}
-				before, exists := current.Providers[change.ID]
-				if change.Before == nil {
-					if exists {
-						return fmt.Errorf("provider template %q was created while settings were open; reopen Providers", change.ID)
-					}
-				} else if !exists || !reflect.DeepEqual(before, *change.Before) {
-					return fmt.Errorf("provider template %q changed while settings were open; reopen Providers", change.ID)
-				}
-				if change.After == nil {
-					if change.Before == nil {
-						return fmt.Errorf("cannot remove a missing provider template")
-					}
-					for _, account := range current.Accounts {
-						if account.ProviderID == change.ID {
-							return fmt.Errorf("provider template %q is used by account %q", change.ID, account.ID)
-						}
-					}
-					delete(current.Providers, change.ID)
-					if current.ActiveProvider == change.ID {
-						current.ActiveProvider = ""
-					}
-					return nil
-				}
-				if err := provider.ResolveTemplate(change.ID, *change.After, provider.TemplateOverrides{}).Validate(); err != nil {
-					return fmt.Errorf("invalid provider template %q: %w", change.ID, err)
-				}
-				if current.Providers == nil {
-					current.Providers = make(map[string]session.ProviderConfig)
-				}
-				current.Providers[change.ID] = provider.CloneTemplate(*change.After)
-				return nil
-			})
-			if saveErr != nil {
-				return nil, saveErr
-			}
-			a.fc = updated
-			a.persistedAccounts = cloneAccounts(updated.Accounts)
-			return updated.Accounts, nil
-		})
-		if err != nil {
-			return err
-		}
-		ws.SetAppDefaults(FileConfigToAppSettings(updated))
-		return nil
-	}
-
 	ws.SetAppDefaults(FileConfigToAppSettings(a.fc))
 }
 
@@ -445,7 +373,7 @@ func providerPresets() []tui.ProviderPreset {
 // initialSettings builds the initial settings snapshot from the app config.
 func (a *App) initialSettings() tui.Settings {
 	settings := tui.Settings{
-		ProviderID:      a.fc.ActiveProvider,
+
 		TurnLogsEnabled: boolStr(a.fc.IsTurnLogsEnabled()),
 	}
 	main := FileConfigToSession(a.fc).GetActiveDefaultCategory()
@@ -453,7 +381,7 @@ func (a *App) initialSettings() tui.Settings {
 	if account, ok := a.fc.Accounts[main.AccountID]; ok {
 		settings.ProviderID = account.ProviderID
 		settings.APIKey, settings.ProviderAPIKey = account.APIKey, account.APIKey
-		template := provider.ResolveTemplate(account.ProviderID, a.fc.Providers[account.ProviderID], account.Overrides)
+		template := account.Connection
 		settings.ProviderURL, settings.APIStandard = template.ProviderURL, template.APIStandard
 	}
 	return settings

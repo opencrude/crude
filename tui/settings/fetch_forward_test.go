@@ -18,9 +18,9 @@ func TestAgentModelFirstFetchPaintsChoicesAndCapabilities(t *testing.T) {
 		t.Run("current="+currentModel, func(t *testing.T) {
 			th := theme.DefaultDark()
 			m := New(th, types.AppSettings{
-				Providers: map[string]types.ProviderConfig{"openai": {ProviderURL: "https://example.test/v1", APIStandard: "openai"}},
-				Accounts:  map[string]provider.Account{"work": {ID: "work", ProviderID: "openai", Label: "Work", APIKey: "test"}},
-				Agents:    types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {AccountID: "work", Model: currentModel}}},
+
+				Accounts: map[string]provider.Account{"work": {ID: "work", ProviderID: "openai", Label: "Work", APIKey: "test", Connection: provider.Template{ProviderURL: "https://example.test/v1", APIStandard: "openai"}}},
+				Agents:   types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {AccountID: "work", Model: currentModel}}},
 			}, nil)
 			s := NewSurface(th, m)
 			bridge := &popupBridge{m: m, surf: s}
@@ -78,14 +78,11 @@ func TestAgentModelFirstFetchPaintsChoicesAndCapabilities(t *testing.T) {
 func TestModelFetchResultClearsLoadingViaFrameForwarding(t *testing.T) {
 	th := theme.DefaultDark()
 	m := New(th, types.AppSettings{
-		ActiveProvider: "openai",
-		Providers: map[string]types.ProviderConfig{
-			"openai": {Name: "OpenAI", ProviderURL: "https://api.example/v1", APIStandard: "openai-responses", AuthType: provider.AuthProtocol},
-		},
+
 		Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
 			"default": {Provider: "openai", AccountID: "work"},
 		}},
-		Accounts: map[string]provider.Account{"work": {ID: "work", ProviderID: "openai", Label: "Work", APIKey: "secret"}},
+		Accounts: map[string]provider.Account{"work": {ID: "work", ProviderID: "openai", Label: "Work", APIKey: "secret", Connection: provider.Template{Name: "OpenAI", ProviderURL: "https://api.example/v1", APIStandard: "openai-responses", AuthType: provider.AuthProtocol}}},
 	}, []types.ProviderPreset{{ID: "openai", Name: "OpenAI"}})
 
 	// Build the real surface + popup bridge.
@@ -140,14 +137,11 @@ func TestModelFetchResultClearsLoadingViaFrameForwarding(t *testing.T) {
 func TestModelFetchErrorClearsLoadingViaFrameForwarding(t *testing.T) {
 	th := theme.DefaultDark()
 	m := New(th, types.AppSettings{
-		ActiveProvider: "openai",
-		Providers: map[string]types.ProviderConfig{
-			"openai": {Name: "OpenAI", ProviderURL: "https://api.example/v1", APIStandard: "openai-responses", AuthType: provider.AuthProtocol},
-		},
+
 		Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
 			"default": {Provider: "openai", AccountID: "work"},
 		}},
-		Accounts: map[string]provider.Account{"work": {ID: "work", ProviderID: "openai", Label: "Work", APIKey: "secret"}},
+		Accounts: map[string]provider.Account{"work": {ID: "work", ProviderID: "openai", Label: "Work", APIKey: "secret", Connection: provider.Template{Name: "OpenAI", ProviderURL: "https://api.example/v1", APIStandard: "openai-responses", AuthType: provider.AuthProtocol}}},
 	}, []types.ProviderPreset{{ID: "openai", Name: "OpenAI"}})
 
 	surf := NewSurface(th, m)

@@ -37,48 +37,59 @@ ten, and explicit `false` is a real override rather than an absent key
 **Sessions snapshot.** A session captures the selected account ID, model, and
 thinking effort when it starts. There is no provider/account default and no
 silent account choice. Agent profiles and session overrides store account IDs,
-not credentials. The account's template identifies its provider configuration;
+not credentials. The account owns its complete connection configuration;
 model selection remains on the agent. `AdoptWorkspaceDefaults` is the deliberate
 re-inherit action; normal settings edits affect later turns only.
 
-**Provider templates and accounts.** Application Settings → Providers lists
-editable named request templates. Built-in presets are initial configuration
-data, not special provider implementations. Display names are concise (the
-ChatGPT subscription endpoint is named `Codex`; its stable internal ID is not
-shown). A template contains its name,
-endpoint, authentication mode, authentication header, additional headers, wire
-protocol, protocol options, transport settings, and extra request fields. It
-does not contain a model, credential, or account default. Clone creates an
-independent named template; custom endpoints use the same model. Go owns actual
-wire-protocol encoders and authentication mechanisms, not provider-specific
-endpoint/name entries.
+**Accounts own complete connections.** Application Settings → Accounts is the
+single catalog for credentials and request configuration. There is no separate
+Providers page, saved provider map, live template link, or override switch. Each
+account has a stable ID, display name, complete `connection`, and its API key or
+OAuth credentials. Provider attribution is retained for produced requests and
+history; it does not resolve another configuration owner.
 
-Additional request headers are edited as a **key/value table**
-(`ui.KeyValuesFieldState`), never as a free-text `Name: value` blob: one row per
-header, `Name` and `Value` column captions, an `Add header` row that appends the
-next pair, and a trailing remove affordance that uses the shared `Close` glyph.
-Arrows move between rows and cells, Enter advances Name → Value → next row,
-Backspace/Delete removes the focused row, and typing on a row starts a fresh
-edit of that cell. Row states reuse the shared list language (focused accent,
-selected, hovered) so the table reads like every other table in the app. The
-stored value keeps the `Name: value` line protocol, so persistence and injection
-validation are unchanged. An account that has not enabled `Override headers`
-renders the inherited set read-only and without the add row.
+New account offers **Start from** to copy an immutable embedded preset into the
+draft. The copy is independent immediately. Existing account edits expose endpoint,
+authentication/key header, additional headers, wire protocol and options,
+connection tuning, and extra JSON request fields together. Models and capability
+limits stay on Agents. **Clone** copies the selected connection into a fresh ID,
+never copying API-key or OAuth credentials. Every account save is an exact
+preimage-checked entity transaction; unrelated preferences never replay a stale
+account map. Accounts remain application-only.
 
-Application Settings → Accounts lists every account across templates. An
-account selects one template, has its own distinct name and secret, and may
-override every template request parameter. Unchanged fields inherit; an
-explicit override can differ independently for this account. Adding another
-account for a template starts with inherited settings and empty credentials; it
-never copies another account's secret. Account Add and Save changes persist only
-that entity. A preferences save never replays stale account or template data.
-Workspace Settings never exposes credentials. Agents select an Account by name;
-there is no combined provider/account "connection" picker. The agent keeps its
-own model and model capabilities.
+Additional request headers use a native **key/value table**
+(`ui.KeyValuesFieldState`): Name/Value captions, Add header, row removal, and normal
+editing/navigation. There is no inherited read-only header view. Secret fields
+stay masked and refuse clipboard commands.
 
-Providers, Accounts, and Agents catalogs share a full-width search, single-line
-results, and bottom action area. On narrow terminals actions stack below the
-table instead of shrinking the search field or clipping controls.
+Accounts and Agents catalogs share full-width search, single-line results, and
+bottom-anchored actions; narrow screens stack actions below results. The retained
+Settings frame never resizes or moves because an editor opened. Back/Esc handles
+navigation and exact discard decisions; × and Close close the whole window.
+
+### Durable startup and operational recovery
+
+Invalid or missing selected accounts, invalid connections or credentials,
+unreadable/malformed configuration, invalid network policy/certificate files, and
+failed session resume/startup do not lock users out of the IDE. Crude opens its
+usable shell and shows a native, movable/resizable **recovery dialog** with the
+reason, helpful repair guidance, and an explicit Accounts/Main Agent/Network or
+Edit config file action. Close/Esc dismisses without a retry, fallback account,
+reset, or data loss. Long details remain complete, copyable and scrollable.
+
+The same evidence is recorded independently in Notices; opening Notices is
+optional. Failed New Session/Resume never annotates the launcher button or tells
+users to inspect Notices to find the reason. The launcher remains intact beneath
+the modal. Failed registration releases unstarted backend workers and leaves
+saved conversations/pending inputs with their session owner.
+
+Configuration loading accepts only the current structure; removed fields are a
+repair issue, not a migration trigger. Malformed files remain byte-exact and can
+be opened in the native editor; repairing JSON requires save and restart. Invalid
+or unknown network policy blocks outbound requests until an explicitly validated
+repair; keeping the UI accessible never bypasses a proxy or trust policy. Genuine
+terminal initialization failure is distinct: a dialog cannot be painted when no
+terminal is available.
 
 ### Skills, MCP, Sources, and Acquisition
 
@@ -196,7 +207,7 @@ manual manager. `capability_selection` in `session_agent_settings` persists
 AllowedTools, DeniedTools and SkillModes; `root/<selected-agent>` overrides remain
 separate. Selection cannot widen a category ceiling or create an execution grant.
 
-Account IDs and template IDs are stable; labels and provider-side OAuth account
+Account IDs are stable; labels and provider-side OAuth account
 IDs are not local identity. Removal requires confirmation and never reassigns
 sessions. A missing account requires explicit selection, not silent failover.
 OAuth refreshes are serialized per account and rotated tokens are persisted
@@ -212,18 +223,18 @@ re-entered.
 The `/settings` session deck shows only configured account labels, without
 provider-template groups or template names. Changing accounts clears the old
 model choice. Model discovery resolves the selected account's endpoint and
-protocol overrides, not the template defaults, and its result belongs to the
+protocol configuration, and its result belongs to the
 requesting session deck and account generation even if another tab becomes
-active. Changing account credentials or template configuration invalidates that
-account's cached models. Templates remain an Application Settings concern.
+active. Changing account credentials or connection configuration invalidates that
+account's cached models. Connection configuration remains application-owned.
 
 ### Server Storage
 
-Providers -> Edit template -> Protocol options exposes **Server storage** for
+Accounts -> Edit account -> Protocol options exposes **Server storage** for
 protocols that support storage. On OpenAI Responses, On (including its default)
 requests stored response IDs and exact-prefix delta uploads: the first request
 sends the complete context, then compatible requests upload only new messages
-and tool results. Account protocol overrides use the same policy. This control
+and tool results. Each account owns its protocol policy directly. This control
 cannot grant a capability the endpoint does not implement. If a gateway returns
 `store:false` or omits every response ID, Crude keeps full local context, uses
 full uploads and reports the reason in both the session log and a transient UI
@@ -232,7 +243,7 @@ Changing model/account/protocol or context starts a new chain rather than
 guessing that another server context is equivalent.
 
 Responses protocol options also expose **Inline image replay recovery**. It is
-On by default and can be overridden per account. Crude first uses the documented
+On by default and configurable on each account. Crude first uses the documented
 stored-response delta. If the endpoint returns an exact pre-output invalid
 Base64 `image_url` rejection while Crude's inherited local image is valid, the
 safeguard retries once with the complete authoritative context. That exact
@@ -256,7 +267,8 @@ expiry recovery, durable resume and safety boundaries.
 
 ### Network
 
-Application Settings has a dedicated **Network** group between AI and Security:
+Application Settings has a dedicated **Network** group ordered last in the rail
+after AI, Security, and IDE:
 **Connection**, **Proxy**, and **Certificates**. Workspace scope displays these
 application-owned values read-only, never a project-controlled trust or credential
 override. Connection reuse and HTTP/2, HTTP(S)/SOCKS routing, custom roots,
@@ -267,11 +279,9 @@ defaults, supported protocols, security boundaries and explicit limitations.
 
 ### Connection Timeouts
 
-Application Settings -> Providers -> Edit template exposes **Connection tuning**.
-Application Settings -> Accounts -> Edit exposes the same controls; turn on
-**Override dialer** to use account-specific values. With that switch off, every
-connection setting inherits the template. Turning it on copies the effective
-values into an independent account override; turning it off restores inheritance.
+Application Settings -> Accounts -> Edit exposes **Connection tuning** directly.
+There is no template inheritance or Override dialer switch. Unset values use the
+shared transport defaults; explicit values belong only to that account.
 
 | Control | Default | Enforced scope |
 |---------|---------|----------------|
@@ -301,8 +311,7 @@ Request-attempt exhaustion does not permanently end an unfinished agent task;
 the [run supervisor](run-recovery.md) recovers transient conditions or waits for
 actionable configuration repair. The retry ceiling is separate from the progress
 watchdog and from reviewer/background-job attempt budgets.
-The fields persist under the template's `dialer` or the account's
-`overrides.dialer` in `config.json`: `request_timeout_seconds`,
+The fields persist under the account's `connection.dialer` in `config.json`: `request_timeout_seconds`,
 `connect_timeout_seconds`, `progress_startup_timeout_seconds`,
 `progress_timeout_floor_seconds`, `progress_timeout_ceiling_seconds`,
 `max_attempts`, and `max_backoff_seconds`. An omitted/zero field uses its built-in
@@ -374,7 +383,7 @@ toggle. The Instructions tab accepts native multiline edits for every built-in
 role, including Memory.
 
 Breadcrumb labels are individual navigation targets; separators are not.
-Agents, Accounts, and Providers return through the normal back/discard policy.
+Agents and Accounts return through the normal back/discard policy.
 Session Settings and its role labels navigate to the corresponding level and
 retain staged role edits. Their appearance and the Model / Instructions / Tool
 Access tab layout are unchanged.
@@ -382,7 +391,7 @@ Access tab layout are unchanged.
 The floating Settings window's **×** and footer **Close/Cancel** buttons always
 close the entire window, regardless of page depth. They never navigate Back.
 Breadcrumbs, explicit Back controls and Esc retain their contextual navigation.
-Closing with unsaved preferences or account, template, agent or capability drafts
+Closing with unsaved preferences or account, agent or capability drafts
 opens one stacked discard prompt covering all current drafts. Keep settings open
 preserves the exact page, draft and focus; Discard drafts closes Settings rather
 than returning to a catalog. A changed or replaced draft invalidates the decision.
@@ -528,20 +537,11 @@ snapshot cannot say which of its values the user meant, so migration keeps
 whatever still differs; **Reset section** in the workspace scope is how a
 category goes back to full inheritance.
 
-The selected account resolves its request template fields independently:
-
-```
-account field override
-    ↓
-provider template field
-    ↓
-protocol implementation registry
-```
-
-Models are not template fields. The agent selects an Account and separately
-selects its Model; the account's effective template supplies endpoint,
-authentication, headers, wire protocol, and request behavior. Built-in template
-records are seed data, while protocol implementations remain registered code.
+The selected account's `connection` supplies endpoint, authentication mode,
+wire protocol, headers, request options and transport budgets directly. Embedded
+presets only seed new drafts; editing them is not a runtime inheritance path.
+The agent selects its Account and Model separately. There is no global active
+provider selector, persisted Providers catalog, or compatibility reader.
 
 `workspace.LoadAppSettings()` returns the **effective** snapshot (app +
 workspace). Application defaults alone are `AppDefaults()`.
@@ -664,47 +664,16 @@ Visual contracts for this window:
   false while content fits)
 - Form paint clips to the panel viewport. Scrolled fields must not overwrite
   the footer separator or Save/Cancel row
-- Providers and Accounts are searchable compact tables. Providers has stable
-  Add/Edit/Clone/Remove controls; Accounts has Add/Edit/Add another/Remove.
-  Table errors and progress use the reserved row directly above these actions,
-  never their button row, including after a resize.
-  Each editor replaces only the right-hand table pane, keeps the left settings
-  navigation visible, and offers an explicit Back. **The window frame title is
-  fixed**: it names the scope only (`Application Settings` / `Workspace
-  Settings`) and never changes while the user navigates. The page hierarchy
-  lives in the right pane's own heading, painted in the accent title row
-  (`Accounts 3`, `Providers ▸ Add account`, `Providers ▸ Edit template`),
-  joined with the theme `BreadcrumbSep` glyph.
-  The window never resizes or moves because an editor opened. Table scroll and
-  selection survive returning from an editor; resize and thumb drag commit the
-  latest painted row, not a selected-row snapback.
-- Account/template removal, dirty editor Back/Esc, dirty preferences close,
-  and navigation from a template still used by accounts open separate **stacked
-  modal `WindowFrame` prompts** above the retained Settings window. They do not
-  replace its table, editor, header, or action row with an inline confirmation.
-  The in-use prompt can take the user to Accounts in the same Settings window
-  with a linked account selected; it never removes a referenced template.
-  Cancel/stay keeps the exact draft and focus context. A requested category or
-  scope switch happens only after explicit discard; closing with dirty edits
-  never silently drops them. Confirmation carries the selected entity's ID and
-  current preimage, and persistence starts only after the decision, with no
-  optimistic account or template removal before acknowledgement.
-- Validation errors stay attached to editor fields. Persistence errors/progress
-  use the reserved table status row or the editor's field/status area, not a
-  navigation prompt or the table action row. The stacked prompt is modal:
-  focus remains in its decision controls, clicking outside cannot activate the
-  retained Settings window, and dismissing restores focus safely to Settings.
-- Provider templates edit name, endpoint, auth mode/header, request headers,
-  wire protocol, transport, protocol options, and extra request fields. They
-  contain no model or credential. Clone creates a separately named template.
-- Account editors select a template and keep credentials private to that
-  account. Every template field can remain inherited or be explicitly
-  overridden. Multiple accounts may share one template without sharing secrets.
-- Agent settings select an Account directly and keep model/capability settings
-  on the agent; there is no provider-default account or combined Connection
-  selector.
-- Model choices show context size, per-million-token pricing, and
-  vision/tools/file capability badges when models.dev metadata is available.
+- Accounts is one searchable compact table with Add account/Edit/Clone/Remove.
+  Errors/progress occupy its reserved status row, not the action row. Its editor
+  replaces only the right pane; the frame title remains Application Settings or
+  Workspace Settings, and the pane owns `Accounts ▸ Add account/Edit account`.
+- Remove, dirty editor Back/Esc, and dirty Settings close use separate stacked
+  modal WindowFrames. They retain the exact parent/draft and immutable selected
+  preimage; no optimistic removal or persistence before acknowledgement.
+- Account authentication, connection and credentials are one entity transaction.
+  Clone has no copied credentials. Changing authentication clears incompatible
+  credential state; OAuth/model results remain account/generation-owned.
 
 ## LSP
 
@@ -735,7 +704,7 @@ Layer coverage lives next to the code:
 - `tui/ui/form_select_test.go` — overlay height and paint/hit-testing
 - `tui/ui/scrollbar_paint_test.go` — on-demand scrollbar
 - `tui/settings/settings_scope_test.go` — workspace save payload and overflow scrollbars
-- `tui/settings/provider_switch_test.go` — template/account protocol isolation
+- `tui/settings/account_connections_test.go` — unified account connection, presets, clone and protocol isolation
 - `tui/settings/dialer_test.go`, `provider/client_test.go`, and
   `provider/stall_test.go` cover shared provider/account controls, invalid limits,
   real HTTP header/body stalls, streaming request deadlines, and timer cleanup.

@@ -24,10 +24,8 @@ func TestScreenUsesNativeNestedRoleForm(t *testing.T) {
 	screen := New(theme.DefaultDark(), effective, base, map[string]types.CategorySettings{
 		"default": {Provider: "openai", Model: "session-main", ThinkingEffort: "high"},
 	})
-	screen.ConfigureAccounts(map[string]provider.Account{"router": {ID: "router", ProviderID: "openrouter", Label: "Personal", APIKey: "secret"}})
-	screen.ConfigureProviders([]types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}, {ID: "openai", Name: "OpenAI"}}, map[string]types.ProviderConfig{
-		"openrouter": provider.DefaultTemplates()["openrouter"], "openai": provider.DefaultTemplates()["openai"],
-	})
+	screen.ConfigureAccounts(map[string]provider.Account{"router": {ID: "router", ProviderID: "openrouter", Label: "Personal", APIKey: "secret", Connection: provider.DefaultTemplates()["openrouter"]}})
+
 	deck := ui.NewPanelDeck("deck", ui.NewTokenSet(theme.DefaultDark()))
 	deck.Open(ui.PanelEntry{ID: "settings", Title: "Session Settings", Content: screen, Closable: true, Policy: ui.PanelInteractive, PreferredHeight: 12})
 	host := ui.NewHost(theme.DefaultDark(), deck)
@@ -291,10 +289,8 @@ func TestModelSelectEmitsFetchAndAppliesAsyncResult(t *testing.T) {
 		"default": {Provider: "openrouter", AccountID: "router"},
 	}}}
 	screen := New(theme.DefaultDark(), settings, settings, nil)
-	screen.ConfigureAccounts(map[string]provider.Account{"router": {ID: "router", ProviderID: "openrouter", Label: "Personal", APIKey: "secret"}})
-	screen.ConfigureProviders([]types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}}, map[string]types.ProviderConfig{
-		"openrouter": {Name: "OpenRouter", ProviderURL: "https://router", APIStandard: "openai", AuthType: provider.AuthProtocol},
-	})
+	screen.ConfigureAccounts(map[string]provider.Account{"router": {ID: "router", ProviderID: "openrouter", Label: "Personal", APIKey: "secret", Connection: provider.DefaultTemplates()["openrouter"]}})
+
 	result := screen.HandleAction(ui.EventContext{}, ui.Action{ID: "session-settings.model.open"})
 	if result.Cmd == nil {
 		t.Fatal("model picker did not request models")
@@ -317,10 +313,8 @@ func TestModelPickerEnterCommitsToRolePage(t *testing.T) {
 		"default": {Provider: "openrouter", AccountID: "router", Model: "workspace-main"},
 	}}}
 	screen := New(theme.DefaultDark(), settings, settings, nil)
-	screen.ConfigureAccounts(map[string]provider.Account{"router": {ID: "router", ProviderID: "openrouter", Label: "Personal", APIKey: "secret"}})
-	screen.ConfigureProviders([]types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}}, map[string]types.ProviderConfig{
-		"openrouter": provider.DefaultTemplates()["openrouter"],
-	})
+	screen.ConfigureAccounts(map[string]provider.Account{"router": {ID: "router", ProviderID: "openrouter", Label: "Personal", APIKey: "secret", Connection: provider.DefaultTemplates()["openrouter"]}})
+
 	screen.openRole("default")
 	screen.OpenModelPicker("default")
 	screen.ApplyModelsForAccount("openrouter", "router", screen.fetchGeneration[sessionModelKey("openrouter", "router")], []types.ModelEntry{{ID: "model-b", Name: "Model B"}})
@@ -347,10 +341,8 @@ func TestModelPickerClickCommitsToRolePage(t *testing.T) {
 		"default": {Provider: "openrouter", AccountID: "router", Model: "workspace-main"},
 	}}}
 	screen := New(theme.DefaultDark(), settings, settings, nil)
-	screen.ConfigureAccounts(map[string]provider.Account{"router": {ID: "router", ProviderID: "openrouter", Label: "Personal", APIKey: "secret"}})
-	screen.ConfigureProviders([]types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}}, map[string]types.ProviderConfig{
-		"openrouter": provider.DefaultTemplates()["openrouter"],
-	})
+	screen.ConfigureAccounts(map[string]provider.Account{"router": {ID: "router", ProviderID: "openrouter", Label: "Personal", APIKey: "secret", Connection: provider.DefaultTemplates()["openrouter"]}})
+
 	screen.openRole("default")
 	screen.OpenModelPicker("default")
 	screen.ApplyModelsForAccount("openrouter", "router", screen.fetchGeneration[sessionModelKey("openrouter", "router")], []types.ModelEntry{{ID: "model-c", Name: "Model C"}})
@@ -419,7 +411,7 @@ func TestNavRowsPaintChevronNotPrompt(t *testing.T) {
 		"default": {Provider: "openrouter", AccountID: "router", Model: "workspace-main"},
 	}}}
 	screen := New(theme.DefaultDark(), settings, settings, nil)
-	screen.ConfigureAccounts(map[string]provider.Account{"router": {ID: "router", ProviderID: "openrouter", Label: "Personal"}})
+	screen.ConfigureAccounts(map[string]provider.Account{"router": {ID: "router", ProviderID: "openrouter", Label: "Personal", Connection: provider.DefaultTemplates()["openrouter"]}})
 	screen.Layout(ui.LayoutContext{}, ui.Rect{W: 72, H: 16})
 	buf := surface.NewCellBuffer(72, 16)
 	screen.form.Paint(buf, 0, 0, ui.PaintContext{Focused: true})
@@ -446,7 +438,7 @@ func TestRootPaintsAlignedModelThenProvider(t *testing.T) {
 		"aeron":      {Provider: "opencode-go", AccountID: "work", Model: "deepseek-v4-flash"},
 	}}}
 	screen := New(theme.DefaultDark(), settings, settings, nil)
-	screen.ConfigureAccounts(map[string]provider.Account{"work": {ID: "work", ProviderID: "opencode-go", Label: "Work"}, "craft": {ID: "craft", ProviderID: "crof", Label: "Craft"}})
+	screen.ConfigureAccounts(map[string]provider.Account{"work": {ID: "work", ProviderID: "opencode-go", Label: "Work", Connection: provider.DefaultTemplates()["opencode-go"]}, "craft": {ID: "craft", ProviderID: "crof", Label: "Craft"}})
 	screen.Layout(ui.LayoutContext{}, ui.Rect{W: 80, H: 14})
 	buf := surface.NewCellBuffer(80, 14)
 	screen.form.Paint(buf, 0, 0, ui.PaintContext{})
@@ -491,10 +483,8 @@ func TestRolePageUsesBreadcrumbAndAlignedValues(t *testing.T) {
 		"default": {Provider: "opencode-go", AccountID: "work", Model: "deepseek-v4-flash"},
 	}}}
 	screen := New(theme.DefaultDark(), settings, settings, nil)
-	screen.ConfigureProviders([]types.ProviderPreset{{ID: "opencode-go", Name: "OpenCode Go"}}, map[string]types.ProviderConfig{
-		"opencode-go": provider.DefaultTemplates()["opencode-go"],
-	})
-	screen.ConfigureAccounts(map[string]provider.Account{"work": {ID: "work", ProviderID: "opencode-go", Label: "Work"}})
+
+	screen.ConfigureAccounts(map[string]provider.Account{"work": {ID: "work", ProviderID: "opencode-go", Label: "Work", Connection: provider.DefaultTemplates()["opencode-go"]}})
 	screen.openRole("default")
 	screen.Layout(ui.LayoutContext{}, ui.Rect{W: 72, H: 12})
 	buf := surface.NewCellBuffer(72, 12)
@@ -554,10 +544,8 @@ func TestRolePageTextEditorJoinsValueColumn(t *testing.T) {
 		"default": {Provider: "opencode-go", AccountID: "work", Model: "deepseek-v4-flash"},
 	}}}
 	screen := New(theme.DefaultDark(), settings, settings, nil)
-	screen.ConfigureProviders([]types.ProviderPreset{{ID: "opencode-go", Name: "OpenCode Go"}}, map[string]types.ProviderConfig{
-		"opencode-go": provider.DefaultTemplates()["opencode-go"],
-	})
-	screen.ConfigureAccounts(map[string]provider.Account{"work": {ID: "work", ProviderID: "opencode-go", Label: "Work"}})
+
+	screen.ConfigureAccounts(map[string]provider.Account{"work": {ID: "work", ProviderID: "opencode-go", Label: "Work", Connection: provider.DefaultTemplates()["opencode-go"]}})
 	screen.openRole("default")
 	screen.Layout(ui.LayoutContext{}, ui.Rect{W: 72, H: 12})
 	buf := surface.NewCellBuffer(72, 12)
@@ -587,11 +575,8 @@ func TestProviderPickerHasOwnPage(t *testing.T) {
 		"default": {Provider: "openrouter", AccountID: "router"},
 	}}}
 	screen := New(theme.DefaultDark(), settings, settings, nil)
-	screen.ConfigureProviders([]types.ProviderPreset{
-		{ID: "openrouter", Name: "OpenRouter"},
-		{ID: "openai", Name: "OpenAI"},
-	}, map[string]types.ProviderConfig{"openrouter": provider.DefaultTemplates()["openrouter"], "openai": provider.DefaultTemplates()["openai"]})
-	screen.ConfigureAccounts(map[string]provider.Account{"router": {ID: "router", ProviderID: "openrouter", Label: "Personal"}, "openai-account": {ID: "openai-account", ProviderID: "openai", Label: "Work"}})
+
+	screen.ConfigureAccounts(map[string]provider.Account{"router": {ID: "router", ProviderID: "openrouter", Label: "Personal", Connection: provider.DefaultTemplates()["openrouter"]}, "openai-account": {ID: "openai-account", ProviderID: "openai", Label: "Work", Connection: provider.DefaultTemplates()["openai"]}})
 	result := screen.HandleAction(ui.EventContext{}, ui.Action{ID: "session-settings.provider.open"})
 	if screen.page != providerPage {
 		t.Fatalf("page=%d, want provider picker", screen.page)
@@ -644,7 +629,7 @@ func TestInheritedAccountChangeRefreshesModelPicker(t *testing.T) {
 
 func TestAccountPickerHasNoTemplateRows(t *testing.T) {
 	screen := New(theme.DefaultDark(), types.Settings{}, types.Settings{}, nil)
-	screen.ConfigureProviders([]types.ProviderPreset{{ID: "custom", Name: "Template noise"}}, nil)
+
 	screen.ConfigureAccounts(map[string]provider.Account{"work": {ID: "work", ProviderID: "custom", Label: "Work"}})
 	screen.OpenAccountPicker("default")
 	rows := screen.modelList.Items()

@@ -739,7 +739,7 @@ next tick finally synced.
 
 ### Agent Settings and Session Root Selection
 
-- Providers, Accounts, and Agents catalogs share a full-width search and
+- Accounts and Agents catalogs share a full-width search and
   bottom-anchored actions; narrow screens stack action rows below results.
   Main Agent remains available as a fallback. Built-in roles, Memory Agent,
   and Auto Review Agent
@@ -747,6 +747,20 @@ next tick finally synced.
   removed. Memory's background jobs are no-tools completions: its account,
   model, instructions and enable flag live in Agents, while job cadence and
   recall limits stay on the Memory page.
+- **Accounts own complete connections.** There is no Providers page or persisted
+  provider-template map. `provider.Account.Connection` owns endpoint, auth,
+  headers, wire protocol/options, dialer and extra body directly. Start from
+  copies an embedded preset into a new draft only; Clone creates a new ID with
+  detached connection bytes and no credentials. Never reintroduce override
+  toggles or live template inheritance. Account IDs, model pins and provenance
+  survive explicit development-data alignment outside product code.
+- **Operational startup failures never lock out repair.** Missing/invalid account,
+  config, network or session startup opens a usable shell plus a native recovery
+  dialog with exact reason, guidance and explicit repair. Invalid network policy
+  stays fail-closed; no default account/direct connection/reset is inferred.
+  Notices are independently recorded but optional. Failed New Session/Resume
+  must not paint error text under the launcher action or instruct users to check
+  Notices for the reason. Close/Esc dismisses without replay or draft loss.
 - Auto Review Agent is the bounded, no-tools permission reviewer. Every root and
   child gets an independent reviewer instance, per-agent-turn budget and audit
   attribution while sharing the persisted application/workspace policy. The
@@ -862,6 +876,12 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
   the root tree plus recursive watcher asynchronously with generation checks.
   Terminal IDs are process-wide monotonic so queued old-manager messages cannot
   target a replacement PTY.
+- **Collaboration shares the current workspace database lifetime.** Prepare the
+  target collaboration attachment before switch teardown. Detach old sessions and
+  release their store's runtime locks before closing its borrowed SQL handle;
+  publish the new store with the target DB. Never carry a non-nil old store through
+  `SwitchProject`. Verify launcher agent registration and passive resume, not just
+  backend session construction.
 - **The header Git identity reconciles itself from watcher events.** The
   branch, changed-file count, and tracking on the header segment come from the
   Source Control snapshot, so that snapshot must not depend on the user opening
@@ -884,10 +904,10 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
   complete payload or returns `ErrTerminalBackpressure`; never silently drop
   bytes. `NormalizeTerminalSize` is the shared emulator/PTY 8×2 floor, and a
   failed PTY resize must not commit the emulator grid.
-- **Provider timeouts are one shared transport policy.** Providers and Accounts
+- **Account timeouts are one shared transport policy.** Accounts
   expose Request/Connect timeout, initial/minimum/maximum progress timeout, and
-  attempt/backoff budgets in Connection tuning. Account Override dialer replaces
-  that whole set; disabling it restores template inheritance. Progress defaults
+  attempt/backoff budgets directly in Connection tuning. There is no template
+  inheritance or Override dialer switch. Progress defaults
   are 60/45/300 seconds and require minimum <= initial <= maximum. Streaming and
   non-streaming requests honor the overall deadline across retries, even when
   the caller already has a longer deadline; close/completion/error releases the
@@ -1061,10 +1081,13 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
 - `ui.ScrollbarControl` is the only click/drag/wheel interaction math. Nested
   chat panes and terminal scrollback adapt their models to it; never duplicate
   thumb mapping or track-click formulas.
-- Keep the painted stroke one cell. `PointerHitBounds` expands inward to a
-  configurable 2-3 cell target, and explicit hit bounds outrank deeper content
-  descendants in `Host.HitTest`. Adjacent scrollbars must cap expansion so
-  their targets never overlap.
+- Keep the painted stroke one cell. `PointerHitBounds` expands inward toward the
+  content, capped by the configured target, and explicit hit bounds outrank
+  deeper content descendants in `Host.HitTest`. Adjacent scrollbars must cap
+  expansion so their targets never overlap. Settings scrollbars set a 1-column
+  target (`SetPointerTargetSize(1)`) and reserve a blank gutter column
+  (`ui.ScrollbarWidth+1`), so a click aimed at the field, filter, or list row
+  beside the bar cannot land on the scrollbar.
 - A changed offset invalidates layout AND paint: retained forms encode scroll
   in child bounds while lists consume it during paint. Offset-only tests are
   insufficient; assert that painted content moves.

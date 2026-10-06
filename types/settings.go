@@ -145,12 +145,6 @@ func ApplyAppDefaults(s *AppSettings) {
 	if s.Font.Size == 0 {
 		s.Font.Size = 12
 	}
-	if s.ActiveProvider == "" {
-		s.ActiveProvider = "openrouter"
-	}
-	if s.Providers == nil {
-		s.Providers = map[string]ProviderConfig{s.ActiveProvider: {}}
-	}
 	if s.Accounts == nil {
 		s.Accounts = make(map[string]provider.Account)
 	}
@@ -610,15 +604,7 @@ func (o *WorkspaceOverrides) ClearCategory(name string) {
 func cloneAppSettings(s AppSettings) AppSettings {
 	out := s
 	out.Capabilities = captypes.Clone(s.Capabilities)
-	out.Providers = cloneProviders(s.Providers)
-	out.Accounts = make(map[string]provider.Account, len(s.Accounts))
-	for id, account := range s.Accounts {
-		if account.OAuth != nil {
-			copy := *account.OAuth
-			account.OAuth = &copy
-		}
-		out.Accounts[id] = account
-	}
+	out.Accounts = provider.CloneAccounts(s.Accounts)
 	out.Agents = cloneAgents(s.Agents)
 	out.Memory.MemoryCategory.ContextCompactionPercent = cloneIntSetting(s.Memory.MemoryCategory.ContextCompactionPercent)
 	out.Safety.CommandRules = append([]CommandSeverityRule(nil), s.Safety.CommandRules...)
@@ -626,17 +612,6 @@ func cloneAppSettings(s AppSettings) AppSettings {
 	out.LSP.Languages = cloneLanguages(s.LSP.Languages)
 	out.LSP.Servers = cloneStringMap(s.LSP.Servers)
 	out.LSP.ServerArgs = cloneStringSliceMap(s.LSP.ServerArgs)
-	return out
-}
-
-func cloneProviders(src map[string]ProviderConfig) map[string]ProviderConfig {
-	if src == nil {
-		return nil
-	}
-	out := make(map[string]ProviderConfig, len(src))
-	for k, v := range src {
-		out[k] = provider.CloneTemplate(v)
-	}
 	return out
 }
 

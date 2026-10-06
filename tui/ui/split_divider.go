@@ -18,6 +18,8 @@ type SplitDivider struct {
 	fgOverride   cell.Color
 	fill         bool
 	transparent  bool
+	surfaceRole  SemanticColor
+	surfaceSet   bool
 	currentFirst int // last laid-out first-pane size; drag deltas start here
 }
 
@@ -50,6 +52,16 @@ func (d *SplitDivider) SetFill(fill bool) { d.fill = fill }
 // SetTransparent uses a default (inherit) background so the handle sits on
 // the parent fill.
 func (d *SplitDivider) SetTransparent(v bool) { d.transparent = v }
+
+// SetSurfaceBackground selects the token role that fills the handle's cells,
+// mirroring ScrollbarControl. Use it when the divider sits on a floating
+// window body: its rule then carries the popup fill explicitly instead of
+// relying on inherited-cell transparency, which a direct paint path may not
+// resolve. NoColor falls back to the popup fill when tokens are present.
+func (d *SplitDivider) SetSurfaceBackground(role SemanticColor) {
+	d.surfaceRole = role
+	d.surfaceSet = true
+}
 
 // SetCurrentFirst records the first-pane size that Layout assigned this
 // frame. BeginDrag snapshots it so the handle can live in a parent that is
@@ -123,7 +135,9 @@ func (d *SplitDivider) Paint(buf *surface.CellBuffer, originX, originY int, ctx 
 func (d *SplitDivider) paintColors(ctx PaintContext) (fg, bg cell.Color) {
 	hovered := ctx.Hovered || (d.model != nil && d.model.Dragging())
 	if d.tokens != nil {
-		if !d.transparent {
+		if d.surfaceSet {
+			bg = d.tokens.Color(d.surfaceRole)
+		} else if !d.transparent {
 			bg = d.tokens.Color(ColorBg)
 		}
 		if hovered {

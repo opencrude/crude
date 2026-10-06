@@ -26,7 +26,7 @@ func newTransitionApp(t *testing.T) *App {
 	}
 	ws := workspace.NewWorkspace(dir, "openrouter", "test", ttypes.Settings{}, regressionLogger{})
 	ws.SetBackendConfig(testAccountConfig(), home)
-	ws.SetAppDefaults(ttypes.AppSettings{ActiveProvider: "openai", Providers: ws.AllProviderConfigs(), Accounts: ws.AllAccounts()})
+	ws.SetAppDefaults(ttypes.AppSettings{Accounts: ws.AllAccounts()})
 	ws.SetEventSender(noopEventSender{})
 	t.Setenv("MODELS_DEV_URL", "http://127.0.0.1:9/models-dev-unreachable")
 	app := NewApp(ws, nil)

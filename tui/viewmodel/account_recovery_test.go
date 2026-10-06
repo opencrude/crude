@@ -11,6 +11,7 @@ import (
 
 	"crude/session"
 	"crude/sessiondb"
+	"crude/tui/screens/operationissue"
 	"crude/tui/surface"
 	"crude/tui/ui"
 	ttypes "crude/types"
@@ -25,6 +26,7 @@ func TestNewSessionWithoutAccountShowsPaintedRecoveryAndOpensAccounts(t *testing
 	cfg := testAccountConfig()
 	cfg.Accounts = nil
 	app.SetBackendConfig(cfg, t.TempDir())
+	app.SetEventSender(noopEventSender{})
 
 	priorSession := app.ActiveSession
 	result := app.NewSessionFromLauncher()
@@ -38,11 +40,11 @@ func TestNewSessionWithoutAccountShowsPaintedRecoveryAndOpensAccounts(t *testing
 	if cmd := app.launcherNewSession(); cmd != nil {
 		t.Fatal("failed creation should not enqueue an agent")
 	}
-	if app.AgentMgr.Count() != 0 || len(app.Sessions) != 0 || len(app.SessionsByID) != 0 || app.ActiveSession != priorSession || app.launcherScreen == nil || !app.overlayHost.IsOpen(ui.OverlayAccountRecovery) {
+	if app.AgentMgr.Count() != 0 || len(app.Sessions) != 0 || len(app.SessionsByID) != 0 || app.ActiveSession != priorSession || app.launcherScreen == nil || !app.overlayHost.IsOpen(ui.OverlayOperationIssue) {
 		t.Fatal("failed creation must leave launcher intact and open recovery")
 	}
-	fw := app.windowManager.Window(string(ui.OverlayAccountRecovery))
-	cw, ok := fw.Content.(*ui.ComponentWidget)
+	fw := app.windowManager.Window(string(ui.OverlayOperationIssue))
+	cw, ok := fw.Content.(*ui.WindowFrameWidget)
 	if !ok {
 		t.Fatal("warning has no retained component frame")
 	}
@@ -52,25 +54,25 @@ func TestNewSessionWithoutAccountShowsPaintedRecoveryAndOpensAccounts(t *testing
 	buf := surface.NewCellBuffer(w, h)
 	cw.Host().Paint(buf)
 	painted := bufferPlain(buf)
-	for _, want := range []string{"Account required", "Add account", "Not now"} {
+	for _, want := range []string{"Account required", "Add account", "Close"} {
 		if !strings.Contains(painted, want) {
 			t.Fatalf("missing painted warning %q:\n%s", want, painted)
 		}
 	}
-	if strings.Contains(painted, "Failed to create session") || strings.Contains(painted, `account ""`) {
-		t.Fatalf("recovery dialog exposed backend error text instead of user guidance:\n%s", painted)
+	if !strings.Contains(painted, "is unavailable") || !strings.Contains(painted, "Add an account") {
+		t.Fatalf("recovery dialog omitted the exact account failure:\n%s", painted)
 	}
-	if app.accountRecoveryChoice != 1 {
+	if app.operationIssue == nil {
 		t.Fatal("safe dismissal is not the default action")
 	}
-	app.handleAccountRecoveryKey(tea.KeyPressMsg{Code: tea.KeyEnter})
-	if app.overlayHost.IsOpen(ui.OverlayAccountRecovery) || app.AgentMgr.Count() != 0 || app.launcherScreen == nil {
+	drainLauncherCommands(app, app.forwardEventToWindowContent(app.windowManager.Window(string(ui.OverlayOperationIssue)), tea.KeyPressMsg{Code: tea.KeyEnter}))
+	if app.overlayHost.IsOpen(ui.OverlayOperationIssue) || app.AgentMgr.Count() != 0 || app.launcherScreen == nil {
 		t.Fatal("dismissing warning must not create a session or lose launcher")
 	}
 
 	app.launcherNewSession()
-	app.handleAccountRecoveryKey(tea.KeyPressMsg{Code: tea.KeyLeft})
-	app.handleAccountRecoveryKey(tea.KeyPressMsg{Code: tea.KeyEnter})
+	drainLauncherCommands(app, app.forwardEventToWindowContent(app.windowManager.Window(string(ui.OverlayOperationIssue)), tea.KeyPressMsg{Code: tea.KeyLeft}))
+	drainLauncherCommands(app, app.forwardEventToWindowContent(app.windowManager.Window(string(ui.OverlayOperationIssue)), tea.KeyPressMsg{Code: tea.KeyEnter}))
 	if !app.overlayHost.IsOpen(ui.OverlayWorkspaceSettings) {
 		t.Fatal("account action did not open application settings")
 	}
@@ -97,14 +99,15 @@ func TestNewSessionWithSavedAccountsOpensMainAgentSelection(t *testing.T) {
 	profile.Categories[session.CategoryDefault] = main
 	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile
 	app.SetBackendConfig(cfg, t.TempDir())
-	app.SetAppDefaults(ttypes.AppSettings{Providers: cfg.Providers, Accounts: cfg.Accounts,
+	app.SetEventSender(noopEventSender{})
+	app.SetAppDefaults(ttypes.AppSettings{Accounts: cfg.Accounts,
 		Agents: ttypes.AgentsSettings{Categories: map[string]ttypes.CategorySettings{session.CategoryDefault: {Model: "test-model"}}}})
 	app.launcherNewSession()
-	if app.AgentMgr.Count() != 0 || !app.overlayHost.IsOpen(ui.OverlayAccountRecovery) {
+	if app.AgentMgr.Count() != 0 || !app.overlayHost.IsOpen(ui.OverlayOperationIssue) {
 		t.Fatal("missing Main Agent account did not keep launcher and show recovery")
 	}
-	if fw := app.windowManager.Window(string(ui.OverlayAccountRecovery)); fw != nil {
-		cw := fw.Content.(*ui.ComponentWidget)
+	if fw := app.windowManager.Window(string(ui.OverlayOperationIssue)); fw != nil {
+		cw := fw.Content.(*ui.WindowFrameWidget)
 		w, h := fw.Size()
 		cw.Host().Resize(w, h)
 		cw.Host().Layout()
@@ -114,7 +117,7 @@ func TestNewSessionWithSavedAccountsOpensMainAgentSelection(t *testing.T) {
 			t.Fatal("existing saved accounts were treated as missing accounts")
 		}
 	}
-	app.activateAccountRecovery(0)
+	app.handleOperationIssueAction(operationissue.ActionMsg{Screen: app.operationIssue.screen, Action: "repair"})
 	fw := app.windowManager.Window(string(ui.OverlayWorkspaceSettings))
 	if fw == nil {
 		t.Fatal("Main Agent account action did not open settings")
@@ -165,25 +168,25 @@ func TestResumeUnpinnedSessionKeepsHistoryAndOpensConnectionPicker(t *testing.T)
 	if app.ActiveSession == nil || !errors.Is(app.ActiveSessionConnectionIssue(), session.ErrAccountRequired) {
 		t.Fatal("old transcript silently adopted today's account or failed to open")
 	}
-	if !app.overlayHost.IsOpen(ui.OverlayAccountRecovery) || !app.accountRecoverySession {
+	if !app.overlayHost.IsOpen(ui.OverlayOperationIssue) || app.operationIssue.screen.Issue().Target != ttypes.RepairSessionAccount {
 		t.Fatal("resumed history did not show connection recovery")
 	}
 	if _, err := os.Stat(filepath.Join(sessionDir, id+".db")); err != nil {
 		t.Fatal("recovery discarded existing transcript", err)
 	}
-	app.activateAccountRecovery(0)
+	app.handleOperationIssueAction(operationissue.ActionMsg{Screen: app.operationIssue.screen, Action: "repair"})
 	projection := app.activeSessionDeck()
 	if projection == nil || projection.deck.Active() == nil || projection.deck.Active().ID != sessionSettingsPanelID {
 		t.Fatal("choose connection did not open the session settings panel")
 	}
-	if app.overlayHost.IsOpen(ui.OverlayAccountRecovery) {
+	if app.overlayHost.IsOpen(ui.OverlayOperationIssue) {
 		t.Fatal("recovery dialog still blocks the session picker")
 	}
 	// Startup --resume already has an active backend before the TUI receives
 	// its first measured terminal size; that route must show the same warning.
 	app.width, app.height = 0, 0
 	_, _ = app.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
-	if !app.overlayHost.IsOpen(ui.OverlayAccountRecovery) {
+	if !app.overlayHost.IsOpen(ui.OverlayOperationIssue) {
 		t.Fatal("startup resume did not present connection recovery")
 	}
 	app.CloseAllSessions()

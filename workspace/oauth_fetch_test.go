@@ -41,7 +41,7 @@ func TestHandleFetchModelsAttachesOAuth(t *testing.T) {
 					OAuth: &provider.OAuthCredentials{
 						AccessToken: "AT-oauth",
 						AccountID:   "acct_123",
-					},
+					}, Connection: provider.DefaultTemplates()["chatgpt"],
 				},
 			}, nil),
 		},
@@ -106,7 +106,7 @@ func TestHandleFetchModelsPreservesPerModelContext(t *testing.T) {
 		sessionCfg: &session.Config{
 			AccountManager: provider.NewAccountManager(map[string]provider.Account{
 				"personal": {ID: "personal", ProviderID: "chatgpt", Label: "Personal",
-					OAuth: &provider.OAuthCredentials{AccessToken: "AT-oauth", AccountID: "acct_1"},
+					OAuth: &provider.OAuthCredentials{AccessToken: "AT-oauth", AccountID: "acct_1"}, Connection: provider.DefaultTemplates()["chatgpt"],
 				},
 			}, nil),
 		},
@@ -153,12 +153,11 @@ func TestAccountModelDiscoveryIsolation(t *testing.T) {
 	}))
 	defer srv.Close()
 	accounts := map[string]provider.Account{
-		"personal": {ID: "personal", ProviderID: "openai", Label: "Personal", APIKey: "personal-key"},
-		"work":     {ID: "work", ProviderID: "openai", Label: "Work", APIKey: "work-key"},
+		"personal": {ID: "personal", ProviderID: "openai", Label: "Personal", APIKey: "personal-key", Connection: provider.DefaultTemplates()["openai"]},
+		"work":     {ID: "work", ProviderID: "openai", Label: "Work", APIKey: "work-key", Connection: provider.DefaultTemplates()["openai"]},
 	}
 	ws := &Workspace{sessionCfg: &session.Config{
 		Accounts: accounts, AccountManager: provider.NewAccountManager(accounts, nil),
-		Providers: map[string]session.ProviderConfig{"openai": provider.DefaultTemplates()["openai"]},
 	}}
 	var group sync.WaitGroup
 	for _, id := range []string{"personal", "work"} {
@@ -193,7 +192,7 @@ func TestDraftAccountCanFetchBeforeSaveWithoutChangingLiveCredentials(t *testing
 		_, _ = w.Write([]byte(`{"data":[{"id":"draft-model"}]}`))
 	}))
 	defer server.Close()
-	accounts := map[string]provider.Account{"work": {ID: "work", ProviderID: "openai", Label: "Work", APIKey: "saved"}}
+	accounts := map[string]provider.Account{"work": {ID: "work", ProviderID: "openai", Label: "Work", APIKey: "saved", Connection: provider.DefaultTemplates()["openai"]}}
 	ws := &Workspace{sessionCfg: &session.Config{Accounts: accounts, AccountManager: provider.NewAccountManager(accounts, nil)}}
 	draft := accounts["work"]
 	draft.APIKey = "draft"

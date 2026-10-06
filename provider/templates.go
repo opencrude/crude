@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"reflect"
 	"sort"
 	"strings"
 )
@@ -15,7 +14,7 @@ import (
 var templateSeedFS embed.FS
 
 // Template describes request transport, not an account, model, or agent.
-// Application configuration stores editable templates keyed by stable ID.
+// Each account owns one complete connection; embedded templates only seed new accounts.
 type Template struct {
 	Name        string            `json:"name,omitempty"`
 	HelpText    string            `json:"help_text,omitempty"`
@@ -36,28 +35,6 @@ const (
 	AuthNone         = "none"
 	AuthChatGPT      = "chatgpt"
 )
-
-// TemplateOverrides uses explicit presence. Empty strings, empty maps, and
-// zero-valued settings intentionally replace the template value; nil inherits.
-type TemplateOverrides struct {
-	Name        *string            `json:"name,omitempty"`
-	ProviderURL *string            `json:"provider_url,omitempty"`
-	APIStandard *string            `json:"api_standard,omitempty"`
-	AuthType    *string            `json:"auth_type,omitempty"`
-	AuthHeader  *string            `json:"auth_header,omitempty"`
-	Headers     *map[string]string `json:"headers,omitempty"`
-	Dialer      *DialSettings      `json:"dialer,omitempty"`
-	Protocol    *ProtocolSettings  `json:"protocol,omitempty"`
-	ExtraBody   *map[string]any    `json:"extra_body,omitempty"`
-}
-
-// TemplateChange is a revision-checked create, edit, or delete request shared
-// by the provider foundation and its application integration.
-type TemplateChange struct {
-	ID     string
-	Before *Template
-	After  *Template
-}
 
 type templateSeed struct {
 	ID       string   `json:"id"`
@@ -90,7 +67,7 @@ func loadBuiltinTemplates() (map[string]Template, []string) {
 	return templates, order
 }
 
-// DefaultTemplates returns detached copies of the editable built-in template
+// DefaultTemplates returns detached copies of the immutable built-in template
 // seed data. It does not read or write user configuration.
 func DefaultTemplates() map[string]Template {
 	return CloneTemplates(builtinTemplates)
@@ -126,58 +103,13 @@ func CloneTemplate(template Template) Template {
 	return template
 }
 
-// CloneTemplateOverrides deep-copies account-level sparse overrides.
-func CloneTemplateOverrides(overrides TemplateOverrides) TemplateOverrides {
-	if overrides.Name != nil {
-		value := *overrides.Name
-		overrides.Name = &value
-	}
-	if overrides.ProviderURL != nil {
-		value := *overrides.ProviderURL
-		overrides.ProviderURL = &value
-	}
-	if overrides.APIStandard != nil {
-		value := *overrides.APIStandard
-		overrides.APIStandard = &value
-	}
-	if overrides.AuthType != nil {
-		value := *overrides.AuthType
-		overrides.AuthType = &value
-	}
-	if overrides.AuthHeader != nil {
-		value := *overrides.AuthHeader
-		overrides.AuthHeader = &value
-	}
-	if overrides.Headers != nil {
-		headers := *overrides.Headers
-		if headers != nil {
-			copy := make(map[string]string, len(headers))
-			for key, value := range headers {
-				copy[key] = value
-			}
-			headers = copy
-		}
-		overrides.Headers = &headers
-	}
-	if overrides.Dialer != nil {
-		dialer := *overrides.Dialer
-		overrides.Dialer = &dialer
-	}
-	overrides.Protocol = cloneProtocolSettings(overrides.Protocol)
-	if overrides.ExtraBody != nil {
-		extra := cloneAnyMap(*overrides.ExtraBody)
-		overrides.ExtraBody = &extra
-	}
-	return overrides
-}
-
-// CloneAccount returns a detached account and detached template overrides.
+// CloneAccount returns a detached account and complete connection configuration.
 func CloneAccount(account Account) Account {
 	if account.OAuth != nil {
 		oauth := *account.OAuth
 		account.OAuth = &oauth
 	}
-	account.Overrides = CloneTemplateOverrides(account.Overrides)
+	account.Connection = CloneTemplate(account.Connection)
 	return account
 }
 
@@ -191,81 +123,6 @@ func CloneAccounts(src map[string]Account) map[string]Account {
 		out[id] = CloneAccount(account)
 	}
 	return out
-}
-
-// ResolveTemplate layers account overrides over the configured template and
-// uses embedded seed values only when a keyed definition is absent or partial.
-func ResolveTemplate(id string, configured Template, overrides TemplateOverrides) Template {
-	template := CloneTemplate(configured)
-	if seeded, ok := builtinTemplates[id]; ok {
-		if template.Name == "" {
-			template.Name = seeded.Name
-		}
-		if template.HelpText == "" {
-			template.HelpText = seeded.HelpText
-		}
-		if template.ProviderURL == "" {
-			template.ProviderURL = seeded.ProviderURL
-		}
-		if template.APIStandard == "" {
-			template.APIStandard = seeded.APIStandard
-		}
-		if template.AuthType == "" {
-			template.AuthType = seeded.AuthType
-		}
-		if template.AuthHeader == "" {
-			template.AuthHeader = seeded.AuthHeader
-		}
-		if template.Headers == nil {
-			template.Headers = seeded.Headers
-		}
-		if template.Dialer == nil {
-			template.Dialer = seeded.Dialer
-		}
-		if template.Protocol == nil {
-			template.Protocol = seeded.Protocol
-		}
-		if template.ExtraBody == nil {
-			template.ExtraBody = seeded.ExtraBody
-		}
-	}
-	if template.Name == "" {
-		template.Name = id
-	}
-	if template.APIStandard == "" {
-		template.APIStandard = "openai"
-	}
-	if template.AuthType == "" {
-		template.AuthType = AuthProtocol
-	}
-	if overrides.Name != nil {
-		template.Name = *overrides.Name
-	}
-	if overrides.ProviderURL != nil {
-		template.ProviderURL = *overrides.ProviderURL
-	}
-	if overrides.APIStandard != nil {
-		template.APIStandard = *overrides.APIStandard
-	}
-	if overrides.AuthType != nil {
-		template.AuthType = *overrides.AuthType
-	}
-	if overrides.AuthHeader != nil {
-		template.AuthHeader = *overrides.AuthHeader
-	}
-	if overrides.Headers != nil {
-		template.Headers = *overrides.Headers
-	}
-	if overrides.Dialer != nil {
-		template.Dialer = overrides.Dialer
-	}
-	if overrides.Protocol != nil {
-		template.Protocol = overrides.Protocol
-	}
-	if overrides.ExtraBody != nil {
-		template.ExtraBody = *overrides.ExtraBody
-	}
-	return CloneTemplate(template)
 }
 
 func (template Template) StandardForModel(_ string, providerID string) string {
@@ -347,37 +204,6 @@ func (template Template) apply(provider *Provider) error {
 	}
 	provider.SetProtocolSettings(template.Protocol)
 	provider.SetExtraBody(template.ExtraBody)
-	return nil
-}
-
-// ValidateTemplateChange validates create/edit/delete intent against the
-// current keyed definitions. Deletes fail while any account still references
-// the template; stale Before snapshots fail closed.
-func ValidateTemplateChange(change TemplateChange, templates map[string]Template, accounts map[string]Account) error {
-	if !validTemplateID(change.ID) {
-		return fmt.Errorf("template ID must contain only lowercase letters, digits, hyphens, and underscores")
-	}
-	current, exists := templates[change.ID]
-	if exists != (change.Before != nil) {
-		return fmt.Errorf("template %q changed; reload templates before saving", change.ID)
-	}
-	if change.Before != nil && !reflect.DeepEqual(current, *change.Before) {
-		return fmt.Errorf("template %q changed; reload templates before saving", change.ID)
-	}
-	if change.After == nil {
-		if !exists {
-			return fmt.Errorf("template %q does not exist", change.ID)
-		}
-		for _, account := range accounts {
-			if account.ProviderID == change.ID {
-				return fmt.Errorf("template %q is still used by account %q", change.ID, account.ID)
-			}
-		}
-		return nil
-	}
-	if err := change.After.Validate(); err != nil {
-		return fmt.Errorf("template %q: %w", change.ID, err)
-	}
 	return nil
 }
 

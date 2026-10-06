@@ -214,7 +214,7 @@ func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 	oldDelegation := s.cfg.IsMultiAgentEnabled()
 	defer func() { s.recordDelegationChange(oldDelegation, s.cfg.IsMultiAgentEnabled()) }()
 	oldMain := s.cfg.GetActiveDefaultCategory()
-	oldTemplate := s.cfg.templateIDForAccount(oldMain.AccountID)
+	oldTemplate := s.cfg.providerIDForAccount(oldMain.AccountID)
 	oldModel := oldMain.Model
 	l.Info("CONFIG", "save_begin", "old_template", oldTemplate, "old_account", oldMain.AccountID, "old_model", oldModel, "turn_logs", tuiSettings.TurnLogsEnabled)
 
@@ -251,7 +251,7 @@ func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 		}
 	}
 
-	newTemplate := newCfg.templateIDForAccount(mainCat.AccountID)
+	newTemplate := newCfg.providerIDForAccount(mainCat.AccountID)
 	connectionChanged := oldMain.AccountID != mainCat.AccountID
 	modelChanged := mainCat.Model != oldModel
 	if s.db != nil {
@@ -499,7 +499,7 @@ func (s *Session) ResetSessionSettings() error {
 		return err
 	}
 	if s.db != nil {
-		if err := sessiondb.SaveSessionSettings(s.db, s.sessionID, newCfg.templateIDForAccount(main.AccountID), main.AccountID, pins, sessiondb.SessionFlags{}); err != nil {
+		if err := sessiondb.SaveSessionSettings(s.db, s.sessionID, newCfg.providerIDForAccount(main.AccountID), main.AccountID, pins, sessiondb.SessionFlags{}); err != nil {
 			return err
 		}
 	}
@@ -556,17 +556,13 @@ func (s *Session) AdoptWorkspaceDefaults(settings ttypes.AppSettings) {
 }
 
 // refreshProviderCredentialsLocked updates how the session reaches a
-// provider without touching which model a role picks. A provider the
-// snapshot has never seen is adopted whole; there is nothing to keep stable.
+// provider without touching which model a role picks. Each account carries
+// its complete authoritative connection configuration.
 func (s *Session) refreshProviderCredentialsLocked(settings ttypes.AppSettings) {
 	if s.workspaceCfg == nil {
 		s.workspaceCfg = &Config{}
 	}
 	s.workspaceCfg.Accounts = provider.CloneAccounts(settings.Accounts)
-	s.workspaceCfg.Providers = make(map[string]ProviderConfig, len(settings.Providers))
-	for id, template := range settings.Providers {
-		s.workspaceCfg.Providers[id] = provider.CloneTemplate(template)
-	}
 }
 
 func (s *Session) rebuildEffectiveConfigLocked() {
@@ -639,7 +635,7 @@ func listBoundProviderModels(p *provider.Provider) ([]provider.ModelInfo, error)
 	if err != nil {
 		switch {
 		case errors.Is(err, provider.ErrUnauthorized):
-			return nil, fmt.Errorf("%s account %q authentication failed — reconnect it in Settings → Providers", p.Name, p.AccountID)
+			return nil, fmt.Errorf("%s account %q authentication failed — reconnect it in Settings → Accounts", p.Name, p.AccountID)
 		case errors.Is(err, provider.ErrModelsUnsupported):
 			return nil, fmt.Errorf("models endpoint not supported by %s", p.Name)
 		}

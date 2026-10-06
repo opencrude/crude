@@ -20,73 +20,59 @@ import (
 )
 
 const (
-	WorkspaceSettingsSurfaceID        ui.ComponentID = "workspace-settings"
-	WorkspaceSettingsScopeID          ui.ComponentID = "workspace-settings/scope"
-	WorkspaceSettingsSearchID         ui.ComponentID = "workspace-settings/search"
-	WorkspaceSettingsListID           ui.ComponentID = "workspace-settings/categories"
-	WorkspaceSettingsFormID           ui.ComponentID = "workspace-settings/form"
-	WorkspaceSettingsActionID         ui.ComponentID = "workspace-settings/actions"
-	WorkspaceSettingsResetBarID       ui.ComponentID = "workspace-settings/reset-bar"
-	WorkspaceSettingsSaveID           ui.ComponentID = "workspace-settings/save"
-	WorkspaceSettingsCancelID         ui.ComponentID = "workspace-settings/cancel"
-	WorkspaceSettingsResetID          ui.ComponentID = "workspace-settings/reset"
-	WorkspaceSettingsListScrollID     ui.ComponentID = "workspace-settings/list-scroll"
-	WorkspaceSettingsFormScrollID     ui.ComponentID = "workspace-settings/form-scroll"
-	WorkspaceSettingsDividerID        ui.ComponentID = "workspace-settings/divider"
-	WorkspaceSettingsAccountsID       ui.ComponentID = "workspace-settings/accounts"
-	WorkspaceSettingsAddID            ui.ComponentID = "workspace-settings/account-add"
-	WorkspaceSettingsAccountBarID     ui.ComponentID = "workspace-settings/account-actions"
-	WorkspaceSettingsAccountScrollID  ui.ComponentID = "workspace-settings/account-scroll"
-	WorkspaceSettingsEditorBarID      ui.ComponentID = "workspace-settings/account-editor-actions"
-	WorkspaceSettingsAuthBarID        ui.ComponentID = "workspace-settings/account-auth-actions"
-	WorkspaceSettingsAccountMoreID    ui.ComponentID = "workspace-settings/account-more-actions"
-	WorkspaceSettingsTemplatesID      ui.ComponentID = "workspace-settings/templates"
-	WorkspaceSettingsTemplateAddID    ui.ComponentID = "workspace-settings/template-add"
-	WorkspaceSettingsTemplateBarID    ui.ComponentID = "workspace-settings/template-actions"
-	WorkspaceSettingsTemplateMoreID   ui.ComponentID = "workspace-settings/template-more-actions"
-	WorkspaceSettingsTemplateEditID   ui.ComponentID = "workspace-settings/template-editor-actions"
-	WorkspaceSettingsTemplateScrollID ui.ComponentID = "workspace-settings/template-scroll"
-	WorkspaceSettingsAccountFilterID  ui.ComponentID = "workspace-settings/account-filter"
-	WorkspaceSettingsTemplateFilterID ui.ComponentID = "workspace-settings/template-filter"
-	workspaceSettingsInset                           = 2
-	workspaceSettingsGap                             = 3
+	WorkspaceSettingsSurfaceID       ui.ComponentID = "workspace-settings"
+	WorkspaceSettingsScopeID         ui.ComponentID = "workspace-settings/scope"
+	WorkspaceSettingsSearchID        ui.ComponentID = "workspace-settings/search"
+	WorkspaceSettingsListID          ui.ComponentID = "workspace-settings/categories"
+	WorkspaceSettingsFormID          ui.ComponentID = "workspace-settings/form"
+	WorkspaceSettingsActionID        ui.ComponentID = "workspace-settings/actions"
+	WorkspaceSettingsResetBarID      ui.ComponentID = "workspace-settings/reset-bar"
+	WorkspaceSettingsSaveID          ui.ComponentID = "workspace-settings/save"
+	WorkspaceSettingsCancelID        ui.ComponentID = "workspace-settings/cancel"
+	WorkspaceSettingsResetID         ui.ComponentID = "workspace-settings/reset"
+	WorkspaceSettingsListScrollID    ui.ComponentID = "workspace-settings/list-scroll"
+	WorkspaceSettingsFormScrollID    ui.ComponentID = "workspace-settings/form-scroll"
+	WorkspaceSettingsDividerID       ui.ComponentID = "workspace-settings/divider"
+	WorkspaceSettingsAccountsID      ui.ComponentID = "workspace-settings/accounts"
+	WorkspaceSettingsAddID           ui.ComponentID = "workspace-settings/account-add"
+	WorkspaceSettingsAccountBarID    ui.ComponentID = "workspace-settings/account-actions"
+	WorkspaceSettingsAccountScrollID ui.ComponentID = "workspace-settings/account-scroll"
+	WorkspaceSettingsEditorBarID     ui.ComponentID = "workspace-settings/account-editor-actions"
+	WorkspaceSettingsAuthBarID       ui.ComponentID = "workspace-settings/account-auth-actions"
+	WorkspaceSettingsAccountMoreID   ui.ComponentID = "workspace-settings/account-more-actions"
+	WorkspaceSettingsAccountFilterID ui.ComponentID = "workspace-settings/account-filter"
+	workspaceSettingsInset                          = 2
+	workspaceSettingsGap                            = 3
 )
 
 // WorkspaceSettingsSurface composes native category navigation, the shared
 // FormModel/Form controls, and the shared ActionBar without a legacy bridge.
 type WorkspaceSettingsSurface struct {
 	ui.Base
-	model             *Model
-	tokens            *ui.TokenSet
-	scope             *settingsScopeStrip
-	search            *settingsSearchField
-	categories        *settingsCategoryList
-	accounts          *settingsAccountTable
-	accountFilter     *settingsTableFilter
-	templates         *settingsTemplateTable
-	templateFilter    *settingsTableFilter
-	templateAdd       *ui.ActionBar
-	templateBar       *ui.ActionBar
-	templateMoreBar   *ui.ActionBar
-	templateEditorBar *ui.ActionBar
-	templateScroll    *ui.ScrollbarControl
-	accountAdd        *ui.ActionBar
-	accountBar        *ui.ActionBar
-	accountMoreBar    *ui.ActionBar
-	accountEditorBar  *ui.ActionBar
-	accountAuthBar    *ui.ActionBar
-	accountScroll     *ui.ScrollbarControl
-	form              *ui.Form
-	agents            *agentCatalog
-	capCatalog        *capabilityCatalog
-	reset             *ui.ActionBar
-	actions           *ui.ActionBar
-	listScroll        *ui.ScrollbarControl
-	formScroll        *ui.ScrollbarControl
-	split             *ui.SplitModel
-	divider           *ui.SplitDivider
-	contentRect       ui.Rect
-	focus             func(ui.ComponentID)
+	model            *Model
+	tokens           *ui.TokenSet
+	scope            *settingsScopeStrip
+	search           *settingsSearchField
+	categories       *settingsCategoryList
+	accounts         *settingsAccountTable
+	accountFilter    *settingsTableFilter
+	accountAdd       *ui.ActionBar
+	accountBar       *ui.ActionBar
+	accountMoreBar   *ui.ActionBar
+	accountEditorBar *ui.ActionBar
+	accountAuthBar   *ui.ActionBar
+	accountScroll    *ui.ScrollbarControl
+	form             *ui.Form
+	agents           *agentCatalog
+	capCatalog       *capabilityCatalog
+	reset            *ui.ActionBar
+	actions          *ui.ActionBar
+	listScroll       *ui.ScrollbarControl
+	formScroll       *ui.ScrollbarControl
+	split            *ui.SplitModel
+	divider          *ui.SplitDivider
+	contentRect      ui.Rect
+	focus            func(ui.ComponentID)
 }
 
 func NewSurface(th *theme.Theme, model *Model) *WorkspaceSettingsSurface {
@@ -114,18 +100,9 @@ func NewSurface(th *theme.Theme, model *Model) *WorkspaceSettingsSurface {
 	s.accountFilter.field.SetPlaceholder("Search accounts")
 	s.accountFilter.field.SetPrompt(ui.SearchGlyphEnd(tokens))
 	s.accountFilter.field.SetPromptPlacement(ui.PromptEnd)
-	s.templates = &settingsTemplateTable{Base: ui.NewBase(WorkspaceSettingsTemplatesID), table: ui.NewTable(WorkspaceSettingsTemplatesID, tokens), owner: s}
-	s.templates.table.SetActivateAction("settings.template.edit")
-	s.templates.table.SetShowHeader(true)
-	s.templates.table.SetColumnGap(2)
-	s.templateFilter = &settingsTableFilter{Base: ui.NewBase(WorkspaceSettingsTemplateFilterID), field: ui.NewFilterField(WorkspaceSettingsTemplateFilterID, tokens), owner: s, templates: true}
-	s.templateFilter.field.SetPlaceholder("Search templates")
-	s.templateFilter.field.SetPrompt(ui.SearchGlyphEnd(tokens))
-	s.templateFilter.field.SetPromptPlacement(ui.PromptEnd)
-	s.templateScroll = ui.NewScrollbarControl(WorkspaceSettingsTemplateScrollID, s.templates.table.Scroll(), tokens)
-	s.templateScroll.SetSurfaceBackground(ui.ColorPopupBg)
 	s.accountScroll = ui.NewScrollbarControl(WorkspaceSettingsAccountScrollID, s.accounts.table.Scroll(), tokens)
 	s.accountScroll.SetSurfaceBackground(ui.ColorPopupBg)
+	s.accountScroll.SetPointerTargetSize(1)
 	s.form = ui.NewForm(WorkspaceSettingsFormID, nil, "", "", tokens)
 	s.form.SetFieldGap(1)
 	s.form.SetArrowExitsForm(true)
@@ -133,45 +110,33 @@ func NewSurface(th *theme.Theme, model *Model) *WorkspaceSettingsSurface {
 	s.capCatalog = newCapabilityCatalog(s)
 	s.listScroll = ui.NewScrollbarControl(WorkspaceSettingsListScrollID, s.categories.list.Scroll(), tokens)
 	s.listScroll.SetSurfaceBackground(ui.ColorPopupBg)
+	s.listScroll.SetPointerTargetSize(1)
 	s.formScroll = ui.NewScrollbarControl(WorkspaceSettingsFormScrollID, s.form.Scroll(), tokens)
 	s.formScroll.SetSurfaceBackground(ui.ColorPopupBg)
+	s.formScroll.SetPointerTargetSize(1)
 	s.split = ui.NewSplitModel(ui.Horizontal)
 	s.split.SetDividerSize(workspaceSettingsGap)
 	s.split.SetMinSizes(12, 20)
 	s.divider = ui.NewSplitDivider(WorkspaceSettingsDividerID, s.split)
 	s.divider.SetTokens(tokens)
 	s.divider.SetColorRole(ui.ColorPopupDivider)
-	s.divider.SetTransparent(true)
+	// The rail/content rule must carry the popup fill explicitly: the settings
+	// body is a floating window, and a transparent (inherit) rule reads as a
+	// background-less strip inside it.
+	s.divider.SetSurfaceBackground(ui.ColorPopupBg)
 	s.accountAdd = ui.NewActionBar(WorkspaceSettingsAddID, tokens,
 		ui.ActionBarButton{Label: "Add account", Action: "settings.account.begin-add", Variant: ui.VariantPrimary, Enabled: true})
 	s.accountAdd.SetAlignEnd(false)
+	s.accountAdd.SetExitActions("accounts.add.forward", "accounts.add.backward")
 	s.accountBar = ui.NewActionBar(WorkspaceSettingsAccountBarID, tokens,
 		ui.ActionBarButton{Label: "Edit", Action: "settings.account.edit", Enabled: false},
-		ui.ActionBarButton{Label: "Add another", Action: "settings.account.add-another", Enabled: false})
+		ui.ActionBarButton{Label: "Clone", Action: "settings.account.clone", Enabled: false})
 	s.accountBar.SetAlignEnd(false)
 	s.accountBar.SetExitActions("accounts.actions.forward", "accounts.actions.backward")
 	s.accountMoreBar = ui.NewActionBar(WorkspaceSettingsAccountMoreID, tokens,
 		ui.ActionBarButton{Label: "Remove", Action: "settings.account.remove", Variant: ui.VariantDanger, Enabled: false})
 	s.accountMoreBar.SetAlignEnd(false)
 	s.accountMoreBar.SetExitActions("accounts.more.forward", "accounts.more.backward")
-	s.templateAdd = ui.NewActionBar(WorkspaceSettingsTemplateAddID, tokens,
-		ui.ActionBarButton{Label: "Add template", Action: "settings.template.add", Variant: ui.VariantPrimary, Enabled: true})
-	s.templateAdd.SetAlignEnd(false)
-	s.templateAdd.SetExitActions("templates.add.forward", "templates.add.backward")
-	s.templateBar = ui.NewActionBar(WorkspaceSettingsTemplateBarID, tokens,
-		ui.ActionBarButton{Label: "Edit", Action: "settings.template.edit", Enabled: false},
-		ui.ActionBarButton{Label: "Clone", Action: "settings.template.clone", Enabled: false})
-	s.templateBar.SetAlignEnd(false)
-	s.templateBar.SetExitActions("templates.actions.forward", "templates.actions.backward")
-	s.templateMoreBar = ui.NewActionBar(WorkspaceSettingsTemplateMoreID, tokens,
-		ui.ActionBarButton{Label: "Remove", Action: "settings.template.remove", Variant: ui.VariantDanger, Enabled: false})
-	s.templateMoreBar.SetAlignEnd(false)
-	s.templateMoreBar.SetExitActions("templates.more.forward", "templates.more.backward")
-	s.templateEditorBar = ui.NewActionBar(WorkspaceSettingsTemplateEditID, tokens,
-		ui.ActionBarButton{Label: "Save template", Action: "settings.template.commit", Variant: ui.VariantPrimary, Enabled: true},
-		ui.ActionBarButton{Label: "Back", Action: "settings.template.cancel", Enabled: true})
-	s.templateEditorBar.SetCancelAction("settings.cancel")
-	s.templateEditorBar.SetExitActions("templates.editor.forward", "templates.editor.backward")
 	s.accountEditorBar = ui.NewActionBar(WorkspaceSettingsEditorBarID, tokens,
 		ui.ActionBarButton{Label: "Add account", Action: "settings.account.commit", Variant: ui.VariantPrimary, Enabled: true},
 		ui.ActionBarButton{Label: "Back", Action: "settings.account.cancel-edit", Enabled: true})
@@ -201,7 +166,6 @@ func (s *WorkspaceSettingsSurface) rebuildActions() {
 		s.reset.SetExitActions("resetbar.exit.forward", "resetbar.exit.backward")
 	}
 	s.syncAccountControls()
-	s.syncTemplateControls()
 	// Replacing the bars drops button bounds. Re-layout into the current
 	// surface rect so the next paint still shows Save/Cancel without waiting
 	// for a host size-change (SetModel used to hit this on overlay ticks).
@@ -212,10 +176,6 @@ func (s *WorkspaceSettingsSurface) rebuildActions() {
 
 func (s *WorkspaceSettingsSurface) accountsOpen() bool {
 	return s.model != nil && s.model.Scope() == types.SettingsScopeApplication && s.model.SelectedCategory() == catAccounts
-}
-
-func (s *WorkspaceSettingsSurface) providersOpen() bool {
-	return s.model != nil && s.model.Scope() == types.SettingsScopeApplication && s.model.SelectedCategory() == catProviders
 }
 
 func (s *WorkspaceSettingsSurface) agentsOpen() bool {
@@ -230,35 +190,13 @@ func (s *WorkspaceSettingsSurface) showReset() bool {
 	return s.reset != nil && s.model != nil && !s.model.isNetworkCategory(s.model.SelectedCategory())
 }
 
-func (s *WorkspaceSettingsSurface) syncTemplateControls() {
-	if s.model == nil {
-		return
-	}
-	busy := s.model.accountBusy || s.model.Saving()
-	_, selected := s.model.providers[s.model.providerID]
-	s.templateAdd.SetEnabled("settings.template.add", !busy)
-	for _, action := range []string{"settings.template.edit", "settings.template.clone"} {
-		s.templateBar.SetEnabled(action, selected && !busy)
-	}
-	s.templateMoreBar.SetEnabled("settings.template.remove", selected && !busy)
-	if s.model.providerEditor != nil {
-		label := "Save template"
-		if s.model.providerEditor.isNew {
-			label = "Add template"
-		}
-		s.templateEditorBar.SetLabel("settings.template.commit", label)
-	}
-	s.templateEditorBar.SetEnabled("settings.template.commit", !busy)
-	s.templateEditorBar.SetEnabled("settings.template.cancel", !busy)
-}
-
 func (s *WorkspaceSettingsSurface) syncAccountControls() {
 	if s.model == nil {
 		return
 	}
 	busy := s.model.accountBusy || s.model.Saving()
 	_, ok := s.model.accounts[s.model.accountID]
-	for _, action := range []string{"settings.account.edit", "settings.account.add-another"} {
+	for _, action := range []string{"settings.account.edit", "settings.account.clone"} {
 		s.accountBar.SetEnabled(action, ok && !busy)
 	}
 	s.accountMoreBar.SetEnabled("settings.account.remove", ok && !busy)
@@ -270,7 +208,7 @@ func (s *WorkspaceSettingsSurface) syncAccountControls() {
 		}
 		s.accountEditorBar.SetLabel("settings.account.commit", label)
 		a := s.model.accountEditor.draft
-		if a.ProviderID == "chatgpt" {
+		if a.Connection.AuthType == provider.AuthChatGPT {
 			signIn := "Sign in"
 			if a.OAuth != nil && a.OAuth.AccessToken != "" {
 				signIn = "Reconnect"
@@ -295,16 +233,9 @@ func (s *WorkspaceSettingsSurface) Children() []ui.Component {
 	// frame's layout, without painting or hit-testing an empty form over rows.
 	children := []ui.Component{s.scope, s.search, s.categories, s.form, s.agents, s.capCatalog}
 	switch {
-	case s.providersOpen() && s.model.providerEditor != nil:
-		children = append(children, s.templateEditorBar)
-	case s.providersOpen():
-		children = append(children, s.templates, s.templateFilter, s.templateAdd, s.templateBar, s.templateMoreBar)
-		if s.templateScroll.Needed() {
-			children = append(children, s.templateScroll)
-		}
 	case s.accountsOpen() && s.model.accountEditor != nil:
 		children = append(children, s.accountEditorBar)
-		if s.model.accountEditor.draft.ProviderID == "chatgpt" {
+		if s.model.accountEditor.draft.Connection.AuthType == provider.AuthChatGPT {
 			children = append(children, s.accountAuthBar)
 		}
 	case s.accountsOpen():
@@ -317,13 +248,13 @@ func (s *WorkspaceSettingsSurface) Children() []ui.Component {
 	if s.showReset() {
 		children = append(children, s.reset)
 	}
-	if (!s.accountsOpen() || s.model.accountEditor == nil) && (!s.providersOpen() || s.model.providerEditor == nil) && (s.agents.draft == nil) {
+	if (!s.accountsOpen() || s.model.accountEditor == nil) && s.agents.draft == nil {
 		children = append(children, s.actions)
 	}
 	if s.listScroll != nil && s.listScroll.Needed() {
 		children = append(children, s.listScroll)
 	}
-	if s.formScroll != nil && s.formScroll.Needed() && !s.agentsOpen() && (!s.accountsOpen() || s.model.accountEditor != nil) && (!s.providersOpen() || s.model.providerEditor != nil) {
+	if s.formScroll != nil && s.formScroll.Needed() && !s.agentsOpen() && (!s.accountsOpen() || s.model.accountEditor != nil) {
 		children = append(children, s.formScroll)
 	}
 	if s.divider != nil {
@@ -355,20 +286,6 @@ func (s *WorkspaceSettingsSurface) SetTokens(tokens *ui.TokenSet) {
 	}
 	if s.accountFilter != nil {
 		s.accountFilter.SetTokens(tokens)
-	}
-	if s.templateFilter != nil {
-		s.templateFilter.SetTokens(tokens)
-	}
-	if s.templates != nil {
-		s.templates.SetTokens(tokens)
-	}
-	if s.templateScroll != nil {
-		s.templateScroll.SetTokens(tokens)
-	}
-	for _, bar := range []*ui.ActionBar{s.templateAdd, s.templateBar, s.templateMoreBar, s.templateEditorBar} {
-		if bar != nil {
-			bar.SetTokens(tokens)
-		}
 	}
 	if s.accountScroll != nil {
 		s.accountScroll.SetTokens(tokens)
@@ -433,11 +350,7 @@ func (s *WorkspaceSettingsSurface) FocusForm() {
 }
 func (s *WorkspaceSettingsSurface) FocusAccountList()   { s.focusID(WorkspaceSettingsAccountsID) }
 func (s *WorkspaceSettingsSurface) FocusAccountFilter() { s.focusID(WorkspaceSettingsAccountFilterID) }
-func (s *WorkspaceSettingsSurface) FocusTemplates()     { s.focusID(WorkspaceSettingsTemplatesID) }
-func (s *WorkspaceSettingsSurface) FocusTemplateFilter() {
-	s.focusID(WorkspaceSettingsTemplateFilterID)
-}
-func (s *WorkspaceSettingsSurface) FocusAccountAdd() { s.focusID(WorkspaceSettingsAddID) }
+func (s *WorkspaceSettingsSurface) FocusAccountAdd()    { s.focusID(WorkspaceSettingsAddID) }
 
 func (s *WorkspaceSettingsSurface) ShowAccounts() {
 	s.model.SelectAccounts()
@@ -447,28 +360,6 @@ func (s *WorkspaceSettingsSurface) ShowAccounts() {
 	} else {
 		s.FocusAccountFilter()
 	}
-}
-
-// ShowAccountsUsingTemplate opens the retained Accounts page and selects a
-// linked account. It never removes or reassigns an account as a side effect.
-func (s *WorkspaceSettingsSurface) ShowAccountsUsingTemplate(templateID string) {
-	if s.model == nil || s.model.Scope() != types.SettingsScopeApplication {
-		return
-	}
-	if _, exists := s.model.providers[templateID]; !exists {
-		return
-	}
-	s.model.accountQuery = ""
-	s.model.SetSearchQuery("") // the Accounts category must be visible in the rail
-	s.model.SelectAccounts()
-	for _, row := range s.model.accountRows() {
-		if s.model.accounts[row.ID].ProviderID == templateID {
-			s.model.accountID = row.ID
-			break
-		}
-	}
-	s.syncModel()
-	s.FocusAccountList()
 }
 
 func (s *WorkspaceSettingsSurface) ShowAccountSetup() {
@@ -481,6 +372,14 @@ func (s *WorkspaceSettingsSurface) ShowMainAgent() {
 	s.model.SelectCategory(catAgents)
 	s.syncModel()
 	s.agents.begin("role/default", false)
+}
+
+// ShowNetworkConnection reconciles the retained form and category list together;
+// selecting the model alone leaves the old surface mounted until another input.
+func (s *WorkspaceSettingsSurface) ShowNetworkConnection() {
+	s.model.SelectCategory(catNetworkConnection)
+	s.syncModel()
+	s.FocusForm()
 }
 func (s *WorkspaceSettingsSurface) FocusReset() {
 	if s.showReset() {
@@ -578,21 +477,11 @@ func (s *WorkspaceSettingsSurface) paneTitleParts() []string {
 		}
 		return []string{"Accounts", action}
 	}
-	if s.model.providerEditor != nil {
-		action := "Edit template"
-		if s.model.providerEditor.isNew {
-			action = "Add template"
-		}
-		return []string{"Providers", action}
-	}
 	if s.accountsOpen() {
 		if len(s.model.accounts) > 0 {
 			return []string{"Accounts  " + strconv.Itoa(len(s.model.accounts))}
 		}
 		return []string{"Accounts"}
-	}
-	if s.providersOpen() {
-		return []string{"Provider templates  " + strconv.Itoa(len(s.model.providers))}
 	}
 	return nil
 }
@@ -613,8 +502,7 @@ func (s *WorkspaceSettingsSurface) RequestClose() ui.EventResult {
 }
 
 func (s *WorkspaceSettingsSurface) hasUnsavedDrafts() bool {
-	return s.model.hasUnsavedPreferences() || s.model.accountEditorDirty() ||
-		s.model.providerEditorDirty() || s.agents.dirty() || s.capCatalog.dirty()
+	return s.model.hasUnsavedPreferences() || s.model.accountEditorDirty() || s.agents.dirty() || s.capCatalog.dirty()
 }
 
 func (s *WorkspaceSettingsSurface) syncModel() {
@@ -625,8 +513,6 @@ func (s *WorkspaceSettingsSurface) syncModel() {
 	s.search.field.SetValue(s.model.searchText())
 	s.categories.syncItems()
 	s.accounts.syncRows()
-	s.templates.syncRows()
-	s.syncTemplateControls()
 	s.syncAccountControls()
 	if s.scope != nil {
 		s.scope.sync()
@@ -648,11 +534,6 @@ func (s *WorkspaceSettingsSurface) refreshForm() {
 		s.accounts.syncRows()
 		s.syncAccountControls()
 		s.accountFilter.field.SetValue(s.model.accountQuery)
-	}
-	if s.providersOpen() {
-		s.templates.syncRows()
-		s.syncTemplateControls()
-		s.templateFilter.field.SetValue(s.model.templateQuery)
 	}
 }
 
@@ -699,7 +580,7 @@ func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		s.accountEditorBar.Layout(ctx, ui.Rect{X: formX, Y: footerY, W: formW, H: 1})
 		if s.model.accountEditor != nil {
 			formRect = ui.Rect{X: formX, Y: topPad + 2, W: formW, H: max(1, formH-3)}
-			if s.model.accountEditor.draft.ProviderID == "chatgpt" {
+			if s.model.accountEditor.draft.Connection.AuthType == provider.AuthChatGPT {
 				s.accountAuthBar.Layout(ctx, ui.Rect{X: formX, Y: min(topPad+formH-2, topPad+4+s.form.PreferredHeight(formH-4)), W: formW, H: 1})
 			}
 		} else {
@@ -711,30 +592,14 @@ func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 			if s.accountScroll.NeededForViewport(max(1, tableH-1)) {
 				list := s.accounts.Bounds()
 				barW := min(ui.ScrollbarWidth+1, list.W)
+				stroke := min(ui.ScrollbarWidth, barW)
 				s.accounts.Layout(ctx, ui.Rect{X: list.X, Y: list.Y, W: max(1, list.W-barW), H: list.H})
-				s.accountScroll.Layout(ctx, ui.Rect{X: list.X + list.W - barW, Y: list.Y, W: barW, H: list.H})
+				// The gutter column stays between the table and the bar: the
+				// scrollbar registers only its painted stroke, so a click in
+				// the blank column can never resolve to the scrollbar.
+				s.accountScroll.Layout(ctx, ui.Rect{X: list.X + list.W - stroke, Y: list.Y, W: stroke, H: list.H})
 			} else {
 				s.accountScroll.Layout(ctx, ui.Rect{})
-			}
-		}
-	}
-	if s.providersOpen() {
-		s.templateEditorBar.Layout(ctx, ui.Rect{X: formX, Y: footerY, W: formW, H: 1})
-		if s.model.providerEditor != nil {
-			formRect = ui.Rect{X: formX, Y: topPad + 2, W: formW, H: max(1, formH-3)}
-		} else {
-			s.templateFilter.Layout(ctx, ui.Rect{X: formX, Y: topPad + 1, W: formW, H: 1})
-			actionY := s.layoutCatalogActions(ctx, formX, formW, topPad+formH-1, s.templateAdd, s.templateBar, s.templateMoreBar)
-			// Keep one row between the table and actions for errors/progress.
-			tableH := max(1, actionY-(topPad+3)-2)
-			s.templates.Layout(ctx, ui.Rect{X: formX, Y: topPad + 3, W: formW, H: tableH})
-			if s.templateScroll.NeededForViewport(max(1, tableH-1)) {
-				r := s.templates.Bounds()
-				barW := min(ui.ScrollbarWidth+1, r.W)
-				s.templates.Layout(ctx, ui.Rect{X: r.X, Y: r.Y, W: max(1, r.W-barW), H: r.H})
-				s.templateScroll.Layout(ctx, ui.Rect{X: r.X + r.W - barW, Y: r.Y, W: barW, H: r.H})
-			} else {
-				s.templateScroll.Layout(ctx, ui.Rect{})
 			}
 		}
 	}
@@ -758,22 +623,24 @@ func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	} else {
 		s.capCatalog.Layout(ctx, ui.Rect{})
 	}
-	if s.agentsOpen() || s.capabilitiesOpen() || s.accountsOpen() && s.model.accountEditor == nil || s.providersOpen() && s.model.providerEditor == nil {
+	if s.agentsOpen() || s.capabilitiesOpen() || s.accountsOpen() && s.model.accountEditor == nil {
 		s.form.Layout(ctx, ui.Rect{})
 	} else {
 		s.form.Layout(ctx, formRect)
 	}
 	if s.listScroll != nil && s.listScroll.Needed() {
 		barW := min(ui.ScrollbarWidth+1, leftW)
+		stroke := min(ui.ScrollbarWidth, barW)
 		s.categories.Layout(ctx, ui.Rect{X: railX, Y: catY, W: max(1, leftW-barW), H: catH})
-		s.listScroll.Layout(ctx, ui.Rect{X: railX + leftW - barW, Y: catY, W: barW, H: catH})
+		s.listScroll.Layout(ctx, ui.Rect{X: railX + leftW - stroke, Y: catY, W: stroke, H: catH})
 	} else if s.listScroll != nil {
 		s.listScroll.Layout(ctx, ui.Rect{})
 	}
-	if !s.agentsOpen() && s.formScroll != nil && (!s.accountsOpen() || s.model.accountEditor != nil) && (!s.providersOpen() || s.model.providerEditor != nil) && s.formScroll.Needed() {
+	if !s.agentsOpen() && s.formScroll != nil && (!s.accountsOpen() || s.model.accountEditor != nil) && s.formScroll.Needed() {
 		barW := min(ui.ScrollbarWidth+1, formRect.W)
+		stroke := min(ui.ScrollbarWidth, barW)
 		s.form.Layout(ctx, ui.Rect{X: formRect.X, Y: formRect.Y, W: max(1, formRect.W-barW), H: formRect.H})
-		s.formScroll.Layout(ctx, ui.Rect{X: formRect.X + formRect.W - barW, Y: formRect.Y, W: barW, H: formRect.H})
+		s.formScroll.Layout(ctx, ui.Rect{X: formRect.X + formRect.W - stroke, Y: formRect.Y, W: stroke, H: formRect.H})
 	} else if s.formScroll != nil {
 		s.formScroll.Layout(ctx, ui.Rect{})
 	}
@@ -922,27 +789,6 @@ func (s *WorkspaceSettingsSurface) Paint(buf *surface.CellBuffer, originX, origi
 			buf.WriteString(ox+contentX, oy+noticeY, "Saving account...", s.tokens.Color(ui.ColorMuted), bg, 0)
 		}
 	}
-	if s.providersOpen() {
-		accent := s.tokens.Color(ui.ColorAccent)
-		contentX, contentW := s.contentRect.X, s.contentRect.W
-		buf.WriteString(ox+contentX, oy+s.topPad(), rendering.TruncateVisual(s.PaneTitle(), contentW, ""), accent, bg, cell.AttrBold)
-		if s.model.providerEditor == nil && len(s.model.providers) == 0 {
-			buf.WriteString(ox+contentX, oy+s.topPad()+4, "No templates yet. Add one to configure a provider.", s.tokens.Color(ui.ColorMuted), bg, 0)
-		} else if s.model.providerEditor == nil && len(s.model.providerRows()) == 0 {
-			buf.WriteString(ox+contentX, oy+s.topPad()+4, "No matching templates.", s.tokens.Color(ui.ColorMuted), bg, 0)
-		}
-		noticeY := s.templateBar.Bounds().Y - 1
-		if s.model.providerEditor != nil {
-			noticeY = s.templateEditorBar.Bounds().Y - 2
-		} else if s.templateAdd.Bounds().Y < s.templateBar.Bounds().Y {
-			noticeY = s.templateAdd.Bounds().Y - 1
-		}
-		if s.model.providerError != "" && s.model.providerEditor == nil {
-			buf.WriteString(ox+contentX, oy+noticeY, rendering.TruncateVisual(s.model.providerError, contentW, ""), s.tokens.Color(ui.ColorError), bg, 0)
-		} else if s.model.accountBusy {
-			buf.WriteString(ox+contentX, oy+noticeY, "Saving template...", s.tokens.Color(ui.ColorMuted), bg, 0)
-		}
-	}
 	// This separator is above the entire footer, not a tab baseline.
 	for x := 0; x < r.W; x++ {
 		buf.Set(ox+x, oy+r.H-2, cell.NewCell(ui.FirstRune(s.tokens.Glyphs().BorderH, '-'), divider, bg, 0))
@@ -974,9 +820,6 @@ func (s *WorkspaceSettingsSurface) Handle(ctx ui.EventContext, evt ui.Event) ui.
 			if s.accountsOpen() && s.model.accountEditor != nil {
 				return s.cancelAccountEdit()
 			}
-			if s.providersOpen() && s.model.providerEditor != nil {
-				return s.cancelTemplateEditor()
-			}
 		}
 	}
 	// Custom events (paste, file drops) belong to the focused text control.
@@ -997,7 +840,7 @@ func (s *WorkspaceSettingsSurface) Handle(ctx ui.EventContext, evt ui.Event) ui.
 		if s.capCatalog.dirty() {
 			return ui.EventResult{Handled: true}
 		}
-		if s.accountsOpen() && s.model.accountEditor != nil || s.providersOpen() && s.model.providerEditor != nil {
+		if s.accountsOpen() && s.model.accountEditor != nil {
 			return ui.EventResult{Handled: true}
 		}
 		if s.model.MoveCategory(-1) {
@@ -1010,7 +853,7 @@ func (s *WorkspaceSettingsSurface) Handle(ctx ui.EventContext, evt ui.Event) ui.
 		if s.capCatalog.dirty() {
 			return ui.EventResult{Handled: true}
 		}
-		if s.accountsOpen() && s.model.accountEditor != nil || s.providersOpen() && s.model.providerEditor != nil {
+		if s.accountsOpen() && s.model.accountEditor != nil {
 			return ui.EventResult{Handled: true}
 		}
 		if s.model.MoveCategory(1) {
@@ -1058,73 +901,17 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 				Cmd:     func() tea.Msg { return FramePreviewMsg(frame) },
 			}
 		}
-		// Provider, account and protocol changes rebuild their FormModel;
+		// Account connection changes rebuild their FormModel;
 		// rebind the widget to paint the correct rows immediately.
-		if s.model != nil && ((s.providersOpen() && (fieldID == templateFieldSeed || fieldID == templateFieldAuthType || fieldID == templateFieldProtocol)) || (s.accountsOpen() && fieldID == fieldProvider)) {
+		if s.model != nil && s.accountsOpen() && (fieldID == accountFieldSeed || fieldID == accountFieldAuthType || fieldID == accountFieldProtocol) {
 			s.refreshForm()
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
 		}
 		return ui.EventResult{Handled: true}
-	case "settings.template.add":
-		return s.openTemplateEditor(true, false)
-	case "settings.template.clone":
-		return s.openTemplateEditor(true, true)
-	case "settings.template.edit":
-		return s.openTemplateEditor(false, false)
-	case "settings.template.cancel":
-		return s.cancelTemplateEditor()
-	case "settings.template.commit":
-		if s.model.accountBusy {
-			return ui.EventResult{Handled: true}
-		}
-		change, err := s.model.providerEditorChange()
-		if err != nil {
-			s.model.providerError = err.Error()
-			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
-		}
-		return s.submitTemplateChange(change)
-	case "settings.template.remove":
-		if s.model.accountBusy {
-			return ui.EventResult{Handled: true}
-		}
-		id := s.model.providerID
-		if _, ok := s.model.providers[id]; !ok {
-			return ui.EventResult{Handled: true}
-		}
-		count := 0
-		for _, account := range s.model.accounts {
-			if account.ProviderID == id {
-				count++
-			}
-		}
-		if count > 0 {
-			return s.requestPrompt(PromptTemplateInUse, id, s.model.providerLabel(id), count)
-		}
-		return s.requestPrompt(PromptRemoveTemplate, id, s.model.providerLabel(id), 0)
-	case "settings.template.confirm-remove":
-		id, _ := action.Payload.(string)
-		if s.model.accountBusy || id == "" || id != s.model.providerID {
-			return ui.EventResult{Handled: true}
-		}
-		count := 0
-		for _, account := range s.model.accounts {
-			if account.ProviderID == id {
-				count++
-			}
-		}
-		if count > 0 {
-			return s.requestPrompt(PromptTemplateInUse, id, s.model.providerLabel(id), count)
-		}
-		change, err := s.model.deleteProviderTemplate(id)
-		if err != nil {
-			s.model.providerError = err.Error()
-			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
-		}
-		return s.submitTemplateChange(change)
 	case "settings.account.begin-add":
 		return s.openAccountEditor(true, "")
-	case "settings.account.add-another":
-		return s.openAccountEditor(true, s.model.accounts[s.model.accountID].ProviderID)
+	case "settings.account.clone":
+		return s.openAccountClone()
 	case "settings.account.edit":
 		return s.openAccountEditor(false, "")
 	case "settings.account.cancel-edit":
@@ -1159,7 +946,7 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 		}
 		return s.submitAccountChange(change)
 	case "settings.chatgpt.signin":
-		if s.model.Scope() != types.SettingsScopeApplication || s.model.accountEditor == nil || s.model.accountBusy || s.model.accountEditor.draft.ProviderID != "chatgpt" || s.model.authWaitingID == s.model.accountEditor.draft.ID {
+		if s.model.Scope() != types.SettingsScopeApplication || s.model.accountEditor == nil || s.model.accountBusy || s.model.accountEditor.draft.Connection.AuthType != provider.AuthChatGPT || s.model.authWaitingID == s.model.accountEditor.draft.ID {
 			return ui.EventResult{Handled: true}
 		}
 		accountID, generation := s.model.SignInRequest()
@@ -1173,7 +960,7 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 			return ChatGPTSignInResultMsg{AccountID: accountID, Generation: generation, Creds: creds, Err: err}
 		}}
 	case "settings.chatgpt.signout":
-		if s.model.accountEditor == nil || s.model.accountEditor.draft.ProviderID != "chatgpt" || s.model.accountBusy {
+		if s.model.accountEditor == nil || s.model.accountEditor.draft.Connection.AuthType != provider.AuthChatGPT || s.model.accountBusy {
 			return ui.EventResult{Handled: true}
 		}
 		accountID := s.model.accountEditor.draft.ID
@@ -1185,8 +972,6 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint, Cmd: s.model.OpenSelect(fieldID)}
 	case "form.cancel":
 		if s.accountsOpen() {
-			return s.cancelSettings()
-		} else if s.providersOpen() {
 			return s.cancelSettings()
 		} else {
 			s.FocusCategories()
@@ -1200,17 +985,12 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 			} else {
 				s.FocusAccountList()
 			}
-		} else if s.providersOpen() {
-			s.templateEditorBar.FocusLast()
-			s.focusID(WorkspaceSettingsTemplateEditID)
 		} else {
 			s.FocusCategories()
 		}
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	case "form.exit.forward":
-		if s.providersOpen() {
-			s.focusID(WorkspaceSettingsTemplateEditID)
-		} else if s.accountsOpen() {
+		if s.accountsOpen() {
 			if s.model.accountEditor != nil {
 				s.focusID(WorkspaceSettingsEditorBarID)
 			} else {
@@ -1246,32 +1026,6 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 		s.form.FocusLast()
 		s.FocusForm()
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
-	case "templates.add.forward":
-		s.FocusTemplates()
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
-	case "templates.add.backward":
-		s.FocusTemplateFilter()
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
-	case "templates.actions.forward":
-		s.focusID(WorkspaceSettingsTemplateMoreID)
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
-	case "templates.actions.backward":
-		s.FocusTemplates()
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
-	case "templates.more.forward":
-		s.FocusActions()
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
-	case "templates.more.backward":
-		s.focusID(WorkspaceSettingsTemplateBarID)
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
-	case "templates.editor.forward":
-		s.form.FocusFirst()
-		s.FocusForm()
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
-	case "templates.editor.backward":
-		s.form.FocusLast()
-		s.FocusForm()
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	case "resetbar.exit.backward":
 		s.form.FocusLast()
 		s.FocusForm()
@@ -1280,9 +1034,7 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 		s.FocusActions()
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	case "actionbar.exit.backward":
-		if s.providersOpen() {
-			s.focusID(WorkspaceSettingsTemplateBarID)
-		} else if s.accountsOpen() {
+		if s.accountsOpen() {
 			s.focusID(WorkspaceSettingsAccountMoreID)
 		} else if s.showReset() {
 			s.FocusReset()
@@ -1307,7 +1059,7 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 			s.FocusForm()
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
 		}
-		if s.model.accountBusy || s.model.accountEditor != nil || s.model.providerEditor != nil {
+		if s.model.accountBusy || s.model.accountEditor != nil {
 			return ui.EventResult{Handled: true}
 		}
 		if category, fieldID, valid := s.model.validateNetworkSettings(); !valid {
@@ -1323,7 +1075,6 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 			return ui.EventResult{Handled: true}
 		}
 		s.syncAccountControls()
-		s.syncTemplateControls()
 		target := s.model
 		scope := target.Scope()
 		appSettings := target.AppSettings()
@@ -1366,13 +1117,8 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 			}
 			s.agents.closeDraft()
 		}
-		if s.model.providerEditor != nil || s.model.accountEditor != nil {
-			var result ui.EventResult
-			if s.model.providerEditor != nil {
-				result = s.cancelTemplateEditor()
-			} else {
-				result = s.cancelAccountEdit()
-			}
+		if s.model.accountEditor != nil {
+			result := s.cancelAccountEdit()
 			if result.Cmd != nil {
 				s.model.nextScope = next
 				return result
@@ -1405,8 +1151,6 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 			s.capCatalog.closeEditor()
 			s.capCatalog.detail = false
 			s.capCatalog.syncRows()
-		} else if s.model.providerEditor != nil {
-			s.model.cancelProviderEdit()
 		} else {
 			s.model.cancelAccountEdit()
 		}
@@ -1425,9 +1169,7 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 			s.model.nextCategory = -1
 			s.refreshForm()
 		}
-		if s.providersOpen() {
-			s.FocusTemplates()
-		} else if s.accountsOpen() {
+		if s.accountsOpen() {
 			s.FocusAccountList()
 		} else {
 			s.form.FocusFirst()
@@ -1445,6 +1187,20 @@ func (s *WorkspaceSettingsSurface) openAccountEditor(create bool, providerID str
 		return ui.EventResult{Handled: true}
 	}
 	if err := s.model.beginAccountEdit(create, providerID); err != nil {
+		s.model.accountError = err.Error()
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+	}
+	s.refreshForm()
+	s.form.FocusFirst()
+	s.FocusForm()
+	return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
+}
+
+func (s *WorkspaceSettingsSurface) openAccountClone() ui.EventResult {
+	if !s.accountsOpen() || s.model.accountBusy {
+		return ui.EventResult{Handled: true}
+	}
+	if err := s.model.beginAccountClone(); err != nil {
 		s.model.accountError = err.Error()
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 	}
@@ -1473,9 +1229,6 @@ func (s *WorkspaceSettingsSurface) requestPrompt(kind PromptKind, id, label stri
 	case PromptRemoveAccount:
 		before := provider.CloneAccount(owner.accounts[id])
 		msg.beforeAccount = &before
-	case PromptRemoveTemplate, PromptTemplateInUse:
-		before := provider.CloneTemplate(owner.providers[id])
-		msg.beforeTemplate = &before
 	case PromptDiscardEditor, PromptDiscardSettings:
 		if kind == PromptDiscardSettings {
 			msg.preferences = owner.preferenceBytes()
@@ -1492,11 +1245,6 @@ func (s *WorkspaceSettingsSurface) requestPrompt(kind PromptKind, id, label stri
 			msg.accountEditor = owner.accountEditor
 			draft := provider.CloneAccount(owner.accountEditor.draft)
 			msg.accountDraft = &draft
-		} else if owner.providerEditor != nil {
-			owner.storeProviderEditorForm()
-			msg.providerEditor = owner.providerEditor
-			draft := provider.CloneTemplate(owner.providerEditor.draft)
-			msg.providerDraft = &draft
 		}
 	}
 	return ui.EventResult{Handled: true, Cmd: func() tea.Msg {
@@ -1511,12 +1259,6 @@ func (s *WorkspaceSettingsSurface) PromptRelevant(msg PromptMsg) bool {
 		return false
 	}
 	switch msg.Kind {
-	case PromptRemoveTemplate, PromptTemplateInUse:
-		current, ok := s.model.providers[msg.ID]
-		if !ok || !s.providersOpen() || s.model.providerID != msg.ID || msg.beforeTemplate == nil || !reflect.DeepEqual(current, *msg.beforeTemplate) {
-			return false
-		}
-		return msg.Kind != PromptTemplateInUse || s.model.templateInUse(msg.ID)
 	case PromptRemoveAccount:
 		current, ok := s.model.accounts[msg.ID]
 		return ok && s.accountsOpen() && s.model.accountID == msg.ID && msg.beforeAccount != nil && reflect.DeepEqual(current, *msg.beforeAccount)
@@ -1528,10 +1270,6 @@ func (s *WorkspaceSettingsSurface) PromptRelevant(msg PromptMsg) bool {
 			s.model.storeAccountForm()
 			return reflect.DeepEqual(s.model.accountEditor.draft, *msg.accountDraft)
 		}
-		if s.providersOpen() && s.model.providerEditor != nil && s.model.providerEditor == msg.providerEditor && msg.providerDraft != nil {
-			s.model.storeProviderEditorForm()
-			return reflect.DeepEqual(s.model.providerEditor.draft, *msg.providerDraft)
-		}
 		return false
 	case PromptDiscardSettings:
 		return s.hasUnsavedDrafts() && reflect.DeepEqual(s.model.preferenceBytes(), msg.preferences) && s.closeDraftsRelevant(msg)
@@ -1542,8 +1280,7 @@ func (s *WorkspaceSettingsSurface) PromptRelevant(msg PromptMsg) bool {
 }
 
 func (s *WorkspaceSettingsSurface) closeDraftsRelevant(msg PromptMsg) bool {
-	if s.model.accountEditor != msg.accountEditor || s.model.providerEditor != msg.providerEditor ||
-		s.agents.draft != msg.agentEditor || s.model.capabilityDraft != msg.capabilityForm ||
+	if s.model.accountEditor != msg.accountEditor || s.agents.draft != msg.agentEditor || s.model.capabilityDraft != msg.capabilityForm ||
 		s.capCatalog != msg.capabilityEditor {
 		return false
 	}
@@ -1553,51 +1290,8 @@ func (s *WorkspaceSettingsSurface) closeDraftsRelevant(msg PromptMsg) bool {
 			return false
 		}
 	}
-	if s.model.providerEditor != nil {
-		s.model.storeProviderEditorForm()
-		if msg.providerDraft == nil || !reflect.DeepEqual(s.model.providerEditor.draft, *msg.providerDraft) {
-			return false
-		}
-	}
 	return reflect.DeepEqual(formDraftBytes(s.agents.draft), msg.agentDraft) &&
 		reflect.DeepEqual(formDraftBytes(s.model.capabilityDraft), msg.capabilityDraft)
-}
-
-func (s *WorkspaceSettingsSurface) openTemplateEditor(create, clone bool) ui.EventResult {
-	if !s.providersOpen() || s.model.accountBusy {
-		return ui.EventResult{Handled: true}
-	}
-	if err := s.model.beginProviderEdit(create, clone); err != nil {
-		s.model.providerError = err.Error()
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
-	}
-	s.refreshForm()
-	s.form.FocusFirst()
-	s.FocusForm()
-	return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
-}
-
-func (s *WorkspaceSettingsSurface) submitTemplateChange(change provider.TemplateChange) ui.EventResult {
-	s.model.accountBusy = true
-	s.model.providerError = ""
-	s.model.rebuildProvidersForm()
-	s.refreshForm()
-	s.syncTemplateControls()
-	owner := s.model
-	return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint, Cmd: func() tea.Msg { return TemplateChangeMsg{Target: owner, Change: change} }}
-}
-
-func (s *WorkspaceSettingsSurface) cancelTemplateEditor() ui.EventResult {
-	if s.model.accountBusy {
-		return ui.EventResult{Handled: true}
-	}
-	if s.model.providerEditorDirty() {
-		return s.requestPrompt(PromptDiscardEditor, "", "", 0)
-	}
-	s.model.cancelProviderEdit()
-	s.refreshForm()
-	s.FocusTemplates()
-	return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
 }
 
 func (s *WorkspaceSettingsSurface) cancelAccountEdit() ui.EventResult {
@@ -1632,9 +1326,6 @@ func (s *WorkspaceSettingsSurface) cancelSettings() ui.EventResult {
 		if s.model.accountEditor != nil {
 			return s.cancelAccountEdit()
 		}
-	}
-	if s.providersOpen() && s.model.providerEditor != nil {
-		return s.cancelTemplateEditor()
 	}
 	if s.model.hasUnsavedPreferences() {
 		return s.requestPrompt(PromptDiscardSettings, "", "", 0)
@@ -1683,8 +1374,6 @@ func (s *settingsSearchField) Handle(ctx ui.EventContext, evt ui.Event) ui.Event
 			s.owner.refreshForm()
 			if s.owner.accountsOpen() {
 				s.owner.FocusAccountFilter()
-			} else if s.owner.providersOpen() {
-				s.owner.FocusTemplateFilter()
 			} else {
 				s.owner.form.FocusFirst()
 				s.owner.FocusForm()
@@ -1723,13 +1412,12 @@ type settingsCategoryList struct {
 	owner *WorkspaceSettingsSurface
 }
 
-// settingsTableFilter is the retained search field for one app-wide table.
-// Its query changes the table projection, never the saved accounts/templates.
+// settingsTableFilter is the retained search field for the application account table.
+// Its query changes the table projection, never the saved accounts.
 type settingsTableFilter struct {
 	ui.Base
-	field     *ui.FilterField
-	owner     *WorkspaceSettingsSurface
-	templates bool
+	field *ui.FilterField
+	owner *WorkspaceSettingsSurface
 }
 
 func (s *settingsTableFilter) Measure(ctx ui.LayoutContext, cs ui.Constraints) ui.Size {
@@ -1754,30 +1442,17 @@ func (s *settingsTableFilter) Handle(ctx ui.EventContext, evt ui.Event) ui.Event
 		case tea.KeyTab:
 			if evt.Key.Mod.Contains(tea.ModShift) {
 				s.owner.FocusCategories()
-			} else if s.templates {
-				s.owner.focusID(WorkspaceSettingsTemplateAddID)
 			} else {
 				s.owner.focusID(WorkspaceSettingsAddID)
 			}
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 		case tea.KeyDown, tea.KeyEnter:
-			if s.templates {
-				s.owner.FocusTemplates()
-			} else {
-				s.owner.FocusAccountList()
-			}
+			s.owner.FocusAccountList()
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 		}
 	}
 	result := s.field.Handle(ctx, evt)
-	if s.templates {
-		if s.owner.model.templateQuery != s.field.Value() {
-			s.owner.model.templateQuery = s.field.Value()
-			s.owner.templates.syncRows()
-			s.owner.syncTemplateControls()
-			result.Invalidate |= ui.InvalidateLayout | ui.InvalidatePaint
-		}
-	} else if s.owner.model.accountQuery != s.field.Value() {
+	if s.owner.model.accountQuery != s.field.Value() {
 		s.owner.model.accountQuery = s.field.Value()
 		s.owner.accounts.syncRows()
 		s.owner.syncAccountControls()
@@ -1819,13 +1494,8 @@ func (s *settingsCategoryList) Handle(ctx ui.EventContext, evt ui.Event) ui.Even
 			if s.owner.model.capabilityDraft != nil {
 				s.owner.capCatalog.closeEditor()
 			}
-			if s.owner.model.providerEditor != nil || s.owner.model.accountEditor != nil {
-				var change ui.EventResult
-				if s.owner.model.providerEditor != nil {
-					change = s.owner.cancelTemplateEditor()
-				} else {
-					change = s.owner.cancelAccountEdit()
-				}
+			if s.owner.model.accountEditor != nil {
+				change := s.owner.cancelAccountEdit()
 				if change.Cmd != nil {
 					s.owner.model.nextCategory = index
 					s.syncItems()
@@ -1849,8 +1519,6 @@ func (s *settingsCategoryList) Handle(ctx ui.EventContext, evt ui.Event) ui.Even
 			s.owner.refreshForm()
 			if s.owner.accountsOpen() {
 				s.owner.FocusAccountFilter()
-			} else if s.owner.providersOpen() {
-				s.owner.FocusTemplateFilter()
 			} else {
 				s.owner.form.FocusFirst()
 				s.owner.FocusForm()
@@ -1861,8 +1529,6 @@ func (s *settingsCategoryList) Handle(ctx ui.EventContext, evt ui.Event) ui.Even
 			s.owner.refreshForm()
 			if s.owner.accountsOpen() {
 				s.owner.FocusAccountFilter()
-			} else if s.owner.providersOpen() {
-				s.owner.FocusTemplateFilter()
 			} else {
 				s.owner.form.FocusFirst()
 				s.owner.FocusForm()
@@ -1895,133 +1561,6 @@ type settingsAccountTable struct {
 	table   *ui.Table
 	owner   *WorkspaceSettingsSurface
 	columns int
-}
-
-type settingsTemplateTable struct {
-	ui.Base
-	table   *ui.Table
-	owner   *WorkspaceSettingsSurface
-	columns int
-}
-
-func (s *settingsTemplateTable) Measure(ctx ui.LayoutContext, cs ui.Constraints) ui.Size {
-	return s.table.Measure(ctx, cs)
-}
-func (s *settingsTemplateTable) Layout(ctx ui.LayoutContext, r ui.Rect) {
-	s.SetBounds(r)
-	cols := 2
-	if r.W >= 85 {
-		cols = 4
-	} else if r.W >= 54 {
-		cols = 3
-	}
-	if cols != s.columns {
-		s.columns = cols
-		s.syncRows()
-	}
-	s.table.Layout(ctx, ui.Rect{W: r.W, H: r.H})
-}
-func (s *settingsTemplateTable) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
-	s.table.Paint(buf, ox+s.Bounds().X, oy+s.Bounds().Y, ctx)
-}
-func (s *settingsTemplateTable) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
-	if s.owner == nil || s.owner.model == nil || s.owner.model.accountBusy || s.owner.model.Saving() {
-		return ui.EventResult{Handled: true}
-	}
-	previous := s.owner.model.providerID
-	result := s.table.Handle(ctx, evt)
-	if row, ok := s.table.Selected(); ok && row.ID != previous {
-		s.owner.model.providerID = row.ID
-		s.owner.syncTemplateControls()
-		result.Invalidate |= ui.InvalidatePaint
-		if evt.Kind == ui.EventMouseClick {
-			result.Action = nil
-		}
-	}
-	if evt.IsKey() {
-		switch evt.Key.Code {
-		case tea.KeyTab:
-			if evt.Key.Mod.Contains(tea.ModShift) {
-				s.owner.focusID(WorkspaceSettingsTemplateAddID)
-			} else {
-				s.owner.focusID(WorkspaceSettingsTemplateBarID)
-			}
-			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
-		}
-	}
-	return result
-}
-func (s *settingsTemplateTable) Semantics() ui.Semantics       { return s.table.Semantics() }
-func (s *settingsTemplateTable) SetTokens(tokens *ui.TokenSet) { s.table.SetTokens(tokens) }
-func (s *settingsTemplateTable) syncRows() {
-	if s.owner == nil || s.owner.model == nil {
-		return
-	}
-	var columns []ui.TableColumn
-	switch s.columns {
-	case 4:
-		columns = []ui.TableColumn{{ID: "name", Label: "Template", Track: ui.FractionGridTrack(2)}, {ID: "endpoint", Label: "Endpoint", Track: ui.FractionGridTrack(3)}, {ID: "protocol", Label: "Wire", Track: ui.FractionGridTrack(2)}, {ID: "auth", Label: "Auth", Track: ui.FractionGridTrack(2)}}
-	case 3:
-		columns = []ui.TableColumn{{ID: "name", Label: "Template", Track: ui.FractionGridTrack(2)}, {ID: "protocol", Label: "Wire", Track: ui.FractionGridTrack(2)}, {ID: "auth", Label: "Auth", Track: ui.FractionGridTrack(2)}}
-	default:
-		columns = []ui.TableColumn{{ID: "name", Label: "Template", Track: ui.FractionGridTrack(2)}, {ID: "protocol", Label: "Wire / auth", Track: ui.FractionGridTrack(3)}}
-	}
-	if len(s.table.Columns()) != len(columns) {
-		s.table.SetColumns(columns)
-	}
-	base := s.owner.model.providerRows()
-	rows := make([]ui.TableRow, 0, len(base))
-	for _, row := range base {
-		cells := row.Cells
-		switch s.columns {
-		case 3:
-			cells = []ui.TableCell{cells[0], cells[2], cells[3]}
-		case 2:
-			wire, auth := cells[2].Text, cells[3].Text
-			if wire == "Chat Completions" {
-				wire = "Chat"
-			}
-			if auth == "Codex login" {
-				auth = "OAuth"
-			}
-			cells = []ui.TableCell{cells[0], {Text: wire + " · " + auth}}
-		}
-		rows = append(rows, ui.TableRow{ID: row.ID, Cells: cells})
-	}
-	old := s.table.Rows()
-	changed := len(old) != len(rows)
-	if !changed {
-		for i := range rows {
-			if old[i].ID != rows[i].ID || len(old[i].Cells) != len(rows[i].Cells) {
-				changed = true
-				break
-			}
-			for j := range rows[i].Cells {
-				if old[i].Cells[j].Text != rows[i].Cells[j].Text {
-					changed = true
-					break
-				}
-			}
-		}
-	}
-	if changed {
-		s.table.SetRows(rows)
-	}
-	for i, row := range rows {
-		if row.ID == s.owner.model.providerID {
-			if s.table.SelectedIndex() != i {
-				s.table.SelectIndex(i)
-			}
-			return
-		}
-	}
-	if len(rows) != 0 {
-		s.owner.model.providerID = rows[0].ID
-		s.table.SelectIndex(0)
-	} else {
-		s.owner.model.providerID = ""
-	}
-	s.owner.syncTemplateControls()
 }
 
 func (s *settingsAccountTable) Measure(ctx ui.LayoutContext, cs ui.Constraints) ui.Size {
@@ -2081,9 +1620,9 @@ func (s *settingsAccountTable) syncRows() {
 	var cols []ui.TableColumn
 	switch s.columns {
 	case 3:
-		cols = []ui.TableColumn{{ID: "template", Label: "Template", Track: ui.FractionGridTrack(2)}, {ID: "name", Label: "Account", Track: ui.FractionGridTrack(2)}, {ID: "status", Label: "Credentials", Track: ui.FractionGridTrack(3)}}
+		cols = []ui.TableColumn{{ID: "connection", Label: "Connection", Track: ui.FractionGridTrack(2)}, {ID: "name", Label: "Account", Track: ui.FractionGridTrack(2)}, {ID: "status", Label: "Credentials", Track: ui.FractionGridTrack(3)}}
 	default:
-		cols = []ui.TableColumn{{ID: "name", Label: "Account", Track: ui.FractionGridTrack(3)}, {ID: "template", Label: "Template", Track: ui.FractionGridTrack(2)}}
+		cols = []ui.TableColumn{{ID: "name", Label: "Account", Track: ui.FractionGridTrack(3)}, {ID: "connection", Label: "Connection", Track: ui.FractionGridTrack(2)}}
 	}
 	if len(s.table.Columns()) != len(cols) {
 		s.table.SetColumns(cols)

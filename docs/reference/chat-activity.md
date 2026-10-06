@@ -361,9 +361,8 @@ locally at 30 seconds. Server `Retry-After` or `retry-after-ms` advice may exten
 that wait, but all automatic cooldowns have an absolute five-minute ceiling.
 Zero/past advice cannot remove local pacing. Exhaustion yields to the task
 supervisor rather than permanently ending work. A single progress watchdog owns response-header waiting; the TCP/TLS
-connection timeout is not a competing header deadline. Per-provider settings can
-override attempt/backoff budgets and initial/minimum/maximum progress timeouts;
-accounts can override the template's complete connection-tuning set. Defaults are
+connection timeout is not a competing header deadline. Account connections own
+attempt/backoff budgets and initial/minimum/maximum progress timeouts directly. Defaults are
 60 seconds initially, a 45-second adaptive floor, and a 300-second ceiling.
 Configured overall request deadlines cover upload, streaming, retries and retry
 waits; a caller's earlier deadline still wins. Unlimited overall duration never

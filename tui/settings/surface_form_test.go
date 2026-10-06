@@ -16,8 +16,8 @@ import (
 
 func TestSettingsScrollbarReachesBottomAcrossResize(t *testing.T) {
 	th := theme.DefaultDark()
-	model := New(th, types.AppSettings{ActiveProvider: "custom", Providers: map[string]types.ProviderConfig{"custom": provider.DefaultTemplates()["custom"]}}, nil)
-	if err := model.beginProviderEdit(false, false); err != nil {
+	model := New(th, types.AppSettings{}, nil)
+	if err := model.beginAccountEdit(true, "openai"); err != nil {
 		t.Fatal(err)
 	}
 	s := NewSurface(th, model)
@@ -61,11 +61,8 @@ func TestSettingsScrollbarReachesBottomAcrossResize(t *testing.T) {
 func TestSettingsPasteIntoAPIKey_UpdatesFieldAndScrollsToCursor(t *testing.T) {
 	th := theme.DefaultDark()
 	model := New(th, types.AppSettings{
-		ActiveProvider: "openrouter",
-		Providers: map[string]types.ProviderConfig{
-			"openrouter": provider.DefaultTemplates()["openrouter"],
-		},
-		Accounts: map[string]provider.Account{"personal": {ID: "personal", ProviderID: "openrouter", Label: "Personal"}},
+
+		Accounts: map[string]provider.Account{"personal": {ID: "personal", ProviderID: "openrouter", Label: "Personal", Connection: provider.DefaultTemplates()["openrouter"]}},
 	}, []types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}})
 	if err := model.beginAccountEdit(false, ""); err != nil {
 		t.Fatal(err)
@@ -110,11 +107,8 @@ func TestSettingsPasteIntoAPIKey_UpdatesFieldAndScrollsToCursor(t *testing.T) {
 func TestSettingsPasteIntoAPIKey_MovesCursorIntoView(t *testing.T) {
 	th := theme.DefaultDark()
 	model := New(th, types.AppSettings{
-		ActiveProvider: "openrouter",
-		Providers: map[string]types.ProviderConfig{
-			"openrouter": provider.DefaultTemplates()["openrouter"],
-		},
-		Accounts: map[string]provider.Account{"personal": {ID: "personal", ProviderID: "openrouter", Label: "Personal"}},
+
+		Accounts: map[string]provider.Account{"personal": {ID: "personal", ProviderID: "openrouter", Label: "Personal", Connection: provider.DefaultTemplates()["openrouter"]}},
 	}, []types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}})
 	if err := model.beginAccountEdit(false, ""); err != nil {
 		t.Fatal(err)
@@ -178,11 +172,8 @@ func TestSettingsCategories_AllFormsPopulateFields(t *testing.T) {
 		host.Layout()
 
 		wantFields := category.Form.Fields()
-		if category.Name == "Accounts" || category.Name == "Providers" || category.Name == "Agents" || category.Name == "Skills" || category.Name == "MCP" || category.Name == "Sources" {
+		if category.Name == "Accounts" || category.Name == "Agents" || category.Name == "Skills" || category.Name == "MCP" || category.Name == "Sources" {
 			want := "Add account"
-			if category.Name == "Providers" {
-				want = "Add template"
-			}
 			if category.Name == "Agents" {
 				want = "Main Agent"
 			}

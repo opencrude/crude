@@ -18,16 +18,12 @@ import (
 func TestConfigWithSessionOverridesUsesWorkspaceThenSession(t *testing.T) {
 	compact := 2
 	base := &Config{
-		ActiveProvider: "openrouter",
+
 		Accounts: map[string]provider.Account{
-			"router-account": {ID: "router-account", ProviderID: "openrouter", APIKey: "router-secret"},
-			"openai-account": {ID: "openai-account", ProviderID: "openai", APIKey: "openai-secret"},
-		},
-		Providers: map[string]ProviderConfig{
-			"openrouter": provider.DefaultTemplates()["openrouter"],
-			"openai": {
+			"router-account": {ID: "router-account", ProviderID: "openrouter", APIKey: "router-secret", Connection: provider.DefaultTemplates()["openrouter"]},
+			"openai-account": {ID: "openai-account", ProviderID: "openai", APIKey: "openai-secret", Connection: provider.Template{
 				Name: "OpenAI", ProviderURL: "https://api.openai.com/v1", APIStandard: "openai-responses", AuthType: provider.AuthProtocol,
-			},
+			}},
 		},
 		Agents: AgentsConfig{
 			ActiveProfile: "default",
@@ -48,7 +44,7 @@ func TestConfigWithSessionOverridesUsesWorkspaceThenSession(t *testing.T) {
 	if crafter.AccountID != "openai-account" || crafter.Model != "gpt-5" || crafter.ThinkingEffort != "high" {
 		t.Fatalf("crafter override not applied: %#v", crafter)
 	}
-	if effective.templateIDForAccount(crafter.AccountID) != "openai" {
+	if effective.providerIDForAccount(crafter.AccountID) != "openai" {
 		t.Fatalf("crafter account did not resolve its template: %#v", crafter)
 	}
 	if crafter.ContextCompactionPercent == nil || *crafter.ContextCompactionPercent != 2 {
@@ -83,10 +79,8 @@ func TestCategoryModelKeepsVendorPrefix(t *testing.T) {
 	}
 
 	base := &Config{
-		ActiveProvider: "commandcode",
-		Providers: map[string]ProviderConfig{
-			"commandcode": provider.DefaultTemplates()["commandcode"],
-		},
+
+		Accounts: map[string]provider.Account{"command-account": {ID: "command-account", ProviderID: "commandcode", Connection: provider.DefaultTemplates()["commandcode"]}},
 		Agents: AgentsConfig{
 			ActiveProfile: "default",
 			Profiles: map[string]ProfileConfig{
@@ -102,8 +96,7 @@ func TestCategoryModelKeepsVendorPrefix(t *testing.T) {
 }
 
 func TestCategoryAccountRequiresMainAgentSelection(t *testing.T) {
-	cfg := &Config{ActiveProvider: "opencode-go", Providers: map[string]ProviderConfig{"opencode-go": provider.DefaultTemplates()["opencode-go"]},
-		Agents: DefaultAgentsConfig()}
+	cfg := &Config{Agents: DefaultAgentsConfig()}
 	got := cfg.GetActiveDefaultCategory()
 	if got.AccountID != "" {
 		t.Fatalf("category selected an account implicitly: %q", got.AccountID)
@@ -115,7 +108,7 @@ func TestCategoryAccountRequiresMainAgentSelection(t *testing.T) {
 }
 
 func TestWorkspaceAgentDefaultStoresAccountNotSecret(t *testing.T) {
-	cfg := &Config{ActiveProvider: "opencode-go", Providers: map[string]ProviderConfig{"opencode-go": provider.DefaultTemplates()["opencode-go"]}, Agents: DefaultAgentsConfig()}
+	cfg := &Config{Agents: DefaultAgentsConfig()}
 	ApplyWorkspaceAgentDefaults(cfg, ttypes.AgentsSettings{Categories: map[string]ttypes.CategorySettings{
 		CategoryDefault: {Provider: "opencode-go", AccountID: "account", APIKey: "discarded", Model: "m"},
 	}})

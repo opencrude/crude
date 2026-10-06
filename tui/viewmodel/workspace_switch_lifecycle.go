@@ -172,6 +172,7 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	m.gitReview = nil
 	m.gitReviewSequence++
 	m.boardBrowser = nil
+	m.pendingOperationIssues = nil
 	m.capabilitySnapshot = captypes.Snapshot{}
 	m.skillInvocationSequence++
 	m.workspacePanelHeights = nil

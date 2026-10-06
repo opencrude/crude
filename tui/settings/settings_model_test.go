@@ -36,7 +36,7 @@ func TestSettingsCategoriesKeepCapabilitiesInOneAIGroup(t *testing.T) {
 			}
 			want := []string{"Agents", "Memory", "Skills", "MCP", "Sources", "Acquisition"}
 			if scope == types.SettingsScopeApplication {
-				want = append([]string{"Providers", "Accounts"}, want...)
+				want = append([]string{"Accounts"}, want...)
 			}
 			if !reflect.DeepEqual(ai, want) {
 				t.Fatalf("scope %s query %q AI category order = %v, want %v", scope, query, ai, want)
@@ -49,15 +49,11 @@ func TestSettingsCategoriesKeepCapabilitiesInOneAIGroup(t *testing.T) {
 	}
 }
 
-func TestAppSettingsPreserveProvidersAndAgentDefaults(t *testing.T) {
+func TestAppSettingsPreserveAccountConnectionsAndAgentDefaults(t *testing.T) {
 	th := theme.DefaultDark()
 	current := types.AppSettings{
-		ActiveProvider: "openrouter",
-		Providers: map[string]types.ProviderConfig{
-			"openrouter": provider.DefaultTemplates()["openrouter"],
-			"openai":     provider.DefaultTemplates()["openai"],
-		},
-		Accounts: map[string]provider.Account{"router": {ID: "router", ProviderID: "openrouter", Label: "Personal"}, "work": {ID: "work", ProviderID: "openai", Label: "Work"}},
+
+		Accounts: map[string]provider.Account{"router": {ID: "router", ProviderID: "openrouter", Label: "Personal", Connection: provider.DefaultTemplates()["openrouter"]}, "work": {ID: "work", ProviderID: "openai", Label: "Work", Connection: provider.DefaultTemplates()["openai"]}},
 		Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
 			"default": {AccountID: "router", Model: "main-model", ThinkingEffort: "medium"},
 			"crafter": {AccountID: "work", Model: "craft-model", ThinkingEffort: "high"},
@@ -69,8 +65,8 @@ func TestAppSettingsPreserveProvidersAndAgentDefaults(t *testing.T) {
 	})
 
 	got := m.AppSettings()
-	if got.Providers["openrouter"].ProviderURL != current.Providers["openrouter"].ProviderURL || got.Providers["openai"].APIStandard != current.Providers["openai"].APIStandard {
-		t.Fatalf("provider templates were lost: %#v", got.Providers)
+	if got.Accounts["router"].Connection.ProviderURL != current.Accounts["router"].Connection.ProviderURL || got.Accounts["work"].Connection.APIStandard != current.Accounts["work"].Connection.APIStandard {
+		t.Fatalf("account connections were lost: %#v", got.Accounts)
 	}
 	if got.Agents.Categories["default"].Model != "main-model" || got.Agents.Categories["crafter"].Model != "craft-model" {
 		t.Fatalf("agent defaults were lost: %#v", got.Agents.Categories)
@@ -87,14 +83,19 @@ func TestSettingsSurfacePaintAndNavigation(t *testing.T) {
 	surf := surface.NewSurface("settings-test", 90, 28, cell.TransparentBlank())
 	cw.Render(surf, &wm.RenderContext{Theme: th})
 
-	for _, text := range []string{"Search settings", "Application", "AI", "IDE", "Save", "Cancel"} {
+	for _, text := range []string{"Search settings", "Application", "AI", "IDE", "Save", "Close"} {
 		if !bufferContains(surf.Buffer(), text) {
 			t.Fatalf("settings surface is missing %q", text)
 		}
 	}
 
 	// Roles live in the Agents catalog instead of four separate rail pages.
-	cw.Host().Handle(tea.MouseClickMsg{X: 2, Y: 6, Button: tea.MouseLeft})
+	agentsY := bufferRow(surf.Buffer(), "Agents")
+	agentsX := bufferIndexOnRow(surf.Buffer(), agentsY, "Agents")
+	if agentsX < 0 || agentsY < 0 {
+		t.Fatal("Agents category is not painted")
+	}
+	cw.Host().Handle(tea.MouseClickMsg{X: agentsX, Y: agentsY, Button: tea.MouseLeft})
 	if m.SelectedCategory() != catAgents || m.Pane() != 0 {
 		t.Fatalf("category click selected=%d pane=%d, want %d/0", m.SelectedCategory(), m.Pane(), catAgents)
 	}
@@ -125,7 +126,7 @@ func TestSettingsSearchFiltersGroupedNavigation(t *testing.T) {
 
 	surf := surface.NewSurface("settings-search-test", 80, 24, cell.TransparentBlank())
 	cw.Render(surf, &wm.RenderContext{Theme: th})
-	if !bufferContains(surf.Buffer(), "Font") || bufferContains(surf.Buffer(), "Providers") {
+	if !bufferContains(surf.Buffer(), "Font") || bufferContains(surf.Buffer(), "Accounts") {
 		t.Fatal("filtered settings categories were not rendered")
 	}
 }
@@ -234,18 +235,16 @@ func TestSettingsSurfaceNativeFormPersistsTextAndCategoryChanges(t *testing.T) {
 	}
 }
 
-func TestSettingsSurfaceTemplateBrowsingDoesNotSwitchMainAgentAccount(t *testing.T) {
+func TestSettingsSurfaceAccountBrowsingDoesNotSwitchMainAgentAccount(t *testing.T) {
 	th := theme.DefaultDark()
-	m := New(th, types.AppSettings{ActiveProvider: "openrouter", Providers: map[string]types.ProviderConfig{"openrouter": provider.DefaultTemplates()["openrouter"], "openai": provider.DefaultTemplates()["openai"]}, Accounts: map[string]provider.Account{"personal": {ID: "personal", ProviderID: "openrouter", Label: "Personal"}, "work": {ID: "work", ProviderID: "openai", Label: "Work"}}, Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {AccountID: "personal", Model: "m"}}}}, []types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}, {ID: "openai", Name: "OpenAI"}})
+	m := New(th, types.AppSettings{Accounts: map[string]provider.Account{"personal": {ID: "personal", ProviderID: "openrouter", Label: "Personal", Connection: provider.DefaultTemplates()["openrouter"]}, "work": {ID: "work", ProviderID: "openai", Label: "Work", Connection: provider.DefaultTemplates()["openai"]}}, Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {AccountID: "personal", Model: "m"}}}}, []types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}, {ID: "openai", Name: "OpenAI"}})
 	surf := NewSurface(th, m)
 	host := ui.NewHost(th, surf)
 	host.Resize(90, 28)
 	host.Layout()
-	m.providerID = "openai"
-	surf.templates.syncRows()
-	if m.providerID != "openai" {
-		t.Fatalf("browsing provider = %q", m.providerID)
-	}
+	surf.ShowAccounts()
+	m.selectAccount("work")
+	surf.accounts.syncRows()
 	if saved := m.AppSettings(); saved.Agents.Categories["default"].AccountID != "personal" {
 		t.Fatalf("browsing changed the Main Agent account: %+v", saved.Agents.Categories["default"])
 	}
@@ -253,7 +252,7 @@ func TestSettingsSurfaceTemplateBrowsingDoesNotSwitchMainAgentAccount(t *testing
 
 func TestSafetyAutoPermissionDefaultsAndRoundTrip(t *testing.T) {
 	th := theme.DefaultDark()
-	m := New(th, types.AppSettings{Accounts: map[string]provider.Account{"review": {ID: "review", ProviderID: "openai", Label: "Review"}}}, []types.ProviderPreset{{ID: "openai", Name: "OpenAI"}})
+	m := New(th, types.AppSettings{Accounts: map[string]provider.Account{"review": {ID: "review", ProviderID: "openai", Label: "Review", Connection: provider.DefaultTemplates()["openai"]}}}, []types.ProviderPreset{{ID: "openai", Name: "OpenAI"}})
 	root := NewSurface(th, m)
 	m.SelectCategory(catAgents)
 	c := root.agents
@@ -298,12 +297,8 @@ func TestSafetyAutoPermissionDefaultsAndRoundTrip(t *testing.T) {
 func TestSafetyAutoPermissionProviderAndModelPickerAreExplicit(t *testing.T) {
 	th := theme.DefaultDark()
 	m := New(th, types.AppSettings{
-		ActiveProvider: "openrouter",
-		Providers: map[string]types.ProviderConfig{
-			"openrouter": provider.DefaultTemplates()["openrouter"],
-			"openai":     {Name: "OpenAI", ProviderURL: "https://api.example/v1", APIStandard: "openai-responses", AuthType: provider.AuthProtocol},
-		},
-		Accounts: map[string]provider.Account{"review": {ID: "review", ProviderID: "openai", Label: "Review", APIKey: "secret"}},
+
+		Accounts: map[string]provider.Account{"review": {ID: "review", ProviderID: "openai", Label: "Review", APIKey: "secret", Connection: provider.Template{Name: "OpenAI", ProviderURL: "https://api.example/v1", APIStandard: "openai-responses", AuthType: provider.AuthProtocol}}},
 		Safety:   types.SafetySettings{AutoPermission: modeltypes.AutoPermissionSettings{Provider: "openrouter", Model: "reviewer-old"}},
 	}, []types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}, {ID: "openai", Name: "OpenAI"}})
 
@@ -343,11 +338,8 @@ func TestSafetyAutoPermissionProviderAndModelPickerAreExplicit(t *testing.T) {
 func TestSettingsModelSelectFetchStaysOpenWhenModelsArrive(t *testing.T) {
 	th := theme.DefaultDark()
 	m := New(th, types.AppSettings{
-		ActiveProvider: "openai",
-		Providers: map[string]types.ProviderConfig{
-			"openai": {Name: "OpenAI", ProviderURL: "https://api.example/v1", APIStandard: "openai-responses", AuthType: provider.AuthProtocol},
-		},
-		Accounts: map[string]provider.Account{"review": {ID: "review", ProviderID: "openai", Label: "Review", APIKey: "secret"}},
+
+		Accounts: map[string]provider.Account{"review": {ID: "review", ProviderID: "openai", Label: "Review", APIKey: "secret", Connection: provider.Template{Name: "OpenAI", ProviderURL: "https://api.example/v1", APIStandard: "openai-responses", AuthType: provider.AuthProtocol}}},
 		Agents:   types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {Provider: "openai", AccountID: "review"}}},
 	}, []types.ProviderPreset{{ID: "openai", Name: "OpenAI"}})
 	surfaceRoot := NewSurface(th, m)

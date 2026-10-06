@@ -97,7 +97,6 @@ type Screen struct {
 	base            types.Settings
 	effective       types.Settings
 	overrides       map[string]types.CategorySettings
-	providers       map[string]types.ProviderConfig
 	accounts        map[string]provider.Account
 	fetchGeneration map[string]uint64
 	models          map[string][]types.ModelEntry
@@ -122,7 +121,7 @@ func New(th *theme.Theme, effective, base types.Settings, overrides map[string]t
 	s := &Screen{
 		Base: ui.NewBase(ScreenID), tokens: ui.NewTokenSet(th),
 		base: cloneSettings(base), effective: cloneSettings(effective),
-		overrides: copyCategoryMap(overrides), providers: make(map[string]types.ProviderConfig), accounts: make(map[string]provider.Account), fetchGeneration: make(map[string]uint64),
+		overrides: copyCategoryMap(overrides), accounts: make(map[string]provider.Account), fetchGeneration: make(map[string]uint64),
 		models: make(map[string][]types.ModelEntry),
 	}
 	s.form = ui.NewDockedForm(FormID, nil, "", "", s.tokens)
@@ -136,26 +135,6 @@ func New(th *theme.Theme, effective, base types.Settings, overrides map[string]t
 	s.modelList.SetDefaultRowBackground(ui.ColorBg)
 	s.openRoot()
 	return s
-}
-
-func (s *Screen) ConfigureProviders(_ []types.ProviderPreset, providers map[string]types.ProviderConfig) {
-	for id, account := range s.accounts {
-		if !reflect.DeepEqual(s.providers[account.ProviderID], providers[account.ProviderID]) {
-			key := sessionModelKey(account.ProviderID, id)
-			delete(s.models, key)
-			s.fetchGeneration[key]++
-		}
-	}
-	s.providers = make(map[string]types.ProviderConfig, len(providers))
-	for id, cfg := range providers {
-		s.providers[id] = provider.CloneTemplate(cfg)
-	}
-	switch s.page {
-	case rolePage:
-		s.openRole(s.role)
-	case modelPage, providerPage, agentPage:
-		s.syncPickerList()
-	}
 }
 
 // ConfigureAccounts projects application-owned credentials into this session picker.
@@ -1264,8 +1243,9 @@ func (s *Screen) ToSettings() types.Settings {
 	main := categoryFor(settings, s.base, "default")
 	settings.ProviderID, settings.AccountID, settings.Model = main.Provider, main.AccountID, main.Model
 	settings.APIStandard, settings.ThinkingEffort = main.APIStandard, main.ThinkingEffort
-	if providerCfg, ok := s.providers[main.Provider]; ok {
-		settings.ProviderURL = providerCfg.ProviderURL
+	if account, ok := s.accounts[main.AccountID]; ok {
+		settings.ProviderURL = account.Connection.ProviderURL
+		settings.APIStandard = account.Connection.APIStandard
 	}
 	settings.APIKey, settings.ProviderAPIKey = "", ""
 	return settings

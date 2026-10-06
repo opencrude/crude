@@ -118,9 +118,11 @@ func TestPastedTextSendsCompleteContentButKeepsChatCompact(t *testing.T) {
 	app.SessionsByID, app.SessionsByAgent = make(map[string]*workspace.Session), make(map[string]*workspace.Session)
 	app.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
 	cfg := testAccountConfig()
-	template := cfg.Providers["openai"]
+	account := cfg.Accounts["test"]
+	template := account.Connection
 	template.ProviderURL = server.URL
-	cfg.Providers["openai"] = template
+	account.Connection = template
+	cfg.Accounts["test"] = account
 	cfg.Agents.Enabled = false
 	if _, err := app.CreateSession(cfg, home); err != nil {
 		t.Fatal(err)

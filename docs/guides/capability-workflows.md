@@ -6,7 +6,7 @@
 
 Settings lists Skills, MCP, Sources and Acquisition immediately after Memory in
 one AI group, before Security and IDE. Application and Workspace scope share this
-order; Providers and Accounts remain application-only.
+order; Accounts and their complete connections remain application-only.
 
 The activity rail contains Files, Agents, Source Control, Skills and MCP. Settings
 stays at its foot. Right-click a destination to pin/unpin, reorder or reset its

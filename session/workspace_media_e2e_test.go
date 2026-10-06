@@ -142,13 +142,12 @@ func flattenParts(body map[string]any) []map[string]any {
 func mediaAttributionConfig(baseURL, model, standard string, modalities ...string) *Config {
 	off := false
 	return &Config{
-		ActiveProvider: "custom",
-		Accounts:       map[string]provider.Account{"account": {ID: "account", ProviderID: "custom", APIKey: "test-key"}},
-		Providers: map[string]ProviderConfig{
-			"custom": {
+
+		Accounts: map[string]provider.Account{"account": {ID: "account", ProviderID: "custom", APIKey: "test-key",
+			Connection: provider.Template{
 				Name: "Custom", ProviderURL: baseURL, APIStandard: standard, AuthType: provider.AuthProtocol,
 			},
-		},
+		}},
 		Agents: AgentsConfig{
 			Enabled: false, ActiveProfile: "default",
 			Profiles: map[string]ProfileConfig{

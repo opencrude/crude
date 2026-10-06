@@ -101,13 +101,12 @@ func TestModelSwitchAppliesToNextRequestWithoutRelabelingActiveTurn(t *testing.T
 func modelAttributionConfig(baseURL, model string) *Config {
 	off := false
 	return &Config{
-		ActiveProvider: "openrouter",
-		Accounts:       map[string]provider.Account{"account": {ID: "account", ProviderID: "openrouter", APIKey: "test-key"}},
-		Providers: map[string]ProviderConfig{
-			"openrouter": {
+
+		Accounts: map[string]provider.Account{"account": {ID: "account", ProviderID: "openrouter", APIKey: "test-key",
+			Connection: provider.Template{
 				Name: "OpenRouter", ProviderURL: baseURL, APIStandard: "openai", AuthType: provider.AuthProtocol,
 			},
-		},
+		}},
 		Agents: AgentsConfig{
 			Enabled: false, ActiveProfile: "default",
 			Profiles: map[string]ProfileConfig{
