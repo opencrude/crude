@@ -79,7 +79,6 @@ func (m *Model) buildAccountEditorForm() *ui.FormModel {
 	}
 	fields = append(fields, headers, ui.SeparatorFieldState("account-protocol", "Wire protocol"), ui.SelectFieldState(accountFieldProtocol, "Protocol", providerStandard(account.ProviderID, connection), standardOptions(nil), "Request and response wire format."))
 	fields = append(fields, m.protocolFieldsFor(account.ProviderID, connection, "")...)
-	fields = append(fields, ui.SeparatorFieldState("account-transport", "Connection tuning"))
 	fields = append(fields, dialerFields(connection.Dialer)...)
 	fields = append(fields, ui.SeparatorFieldState("account-request-options", "Request options"))
 	request := m.extraBodyField(connection)
