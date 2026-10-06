@@ -227,6 +227,26 @@ func TestConnectionTuningSettingsEditors(t *testing.T) {
 	}
 }
 
+func TestAccountEditorHasSingleConnectionTuningHeader(t *testing.T) {
+	// The transport rows own their section header (dialerFields); the account
+	// editor must not prepend a second "Connection tuning" separator.
+	m := New(theme.DefaultDark(), accountSettingsFixture(), nil)
+	m.SelectAccounts()
+	m.selectAccount("work")
+	if err := m.beginAccountEdit(false, ""); err != nil {
+		t.Fatal(err)
+	}
+	headers := 0
+	for _, field := range m.categories[catAccounts].Form.Fields() {
+		if field.Type == ui.FieldSeparator && field.Label == "Connection tuning" {
+			headers++
+		}
+	}
+	if headers != 1 {
+		t.Fatalf("account editor renders %d Connection tuning headers, want 1", headers)
+	}
+}
+
 func TestAccountProgressTimeoutsAreEditableAndIndependent(t *testing.T) {
 	settings := accountSettingsFixture()
 	account := settings.Accounts["work"]
