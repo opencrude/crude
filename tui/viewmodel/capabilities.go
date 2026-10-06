@@ -147,7 +147,10 @@ type launcherCapabilitiesMsg struct {
 }
 
 func (app *App) launcherCapabilitiesCmd(now time.Time) tea.Cmd {
-	if app.launcherScreen == nil || app.Workspace == nil || app.launcherCapabilityCancel != nil || now.Sub(app.launcherCapabilityAt) < 2*time.Second {
+	// Settings and capability sidebars also observe this workspace. An active
+	// agent removes the launcher screen; only its optional projection depends
+	// on that screen, never scheduling the shared runtime observation.
+	if app.Workspace == nil || app.launcherCapabilityCancel != nil || now.Sub(app.launcherCapabilityAt) < 2*time.Second {
 		return nil
 	}
 	app.launcherCapabilityAt = now

@@ -250,7 +250,7 @@ func TestFilePickerKeepsComposerMounted(t *testing.T) {
 	}
 
 	app.OverlayState.Set(workspace.ModeTextOverlay)
-	if lay := app.computeContentLayout(); lay.ShowMainInput {
-		t.Fatal("text overlay mode must keep owning the frame (input hidden)")
+	if lay := app.computeContentLayout(); !lay.ShowMainInput {
+		t.Fatal("attachment viewer must preserve the composer under its floating frame")
 	}
 }

@@ -439,9 +439,10 @@ Rules:
   transcript remains attached to the input prompt. Guarded by
   `TestAgentView_ShortChatAnchorsToBottom`.
 - **Input shell is clamped to the footer:** `computeContentLayout`
-  clamps `InputLineCount` to `height - 2 - 3 - deck - tabs - 1` (status +
-  top + deck + tab bar, one chat row minimum). The old layer surfaces masked
-  oversized inputs with the status surface's higher z-order; the root host
+  caps the full composer at one third of its available column, with the text
+  viewport growing from one to at most six rows. The remaining footer/deck/tab
+  clamp still applies on tiny grids (one chat row minimum). The old layer
+  surfaces masked oversized inputs with the status surface's higher z-order; the root host
   paints status FIRST in tree order, so an unclamped shell painted its rows
   over the status separator/content. The textarea scrolls internally within
   the clamped height. Guarded by
@@ -926,6 +927,13 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
   full neutral diagnostic and muted guidance without rewrapping on clock ticks.
   Waiting for attention never animates fake work. Live and hydrated projection,
   copy/selection, timestamps and explicit cancellation must agree.
+- A deadline-free recovering acknowledgement is an active replacement attempt,
+  not another cooldown. Its retained incident must never overwrite subsequent
+  upload/wait/thinking/response phases during inventory or activity projection.
+  Paint it as a static, muted Run resumed boundary, not a blinking red Recovering
+  row above tools already executing; keep its unfinished checkpoint and evidence.
+  Resolve the live attention issue on acknowledgement, retain Notices history,
+  remove duplicate Continue actions, and let explicit Stop outrank the incident.
 - `network/` owns the shared outbound HTTP transport for providers, OAuth,
   catalogs, web tools, capability downloads and MCP HTTP/OAuth. Network settings
   are application-only Connection / Proxy / Certificates pages; workspaces
@@ -1163,6 +1171,24 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   inverse from the row context menu; never render it through `ActivityDot`.
 
 ### Shared text input
+- Composer height is a viewport, never the draft's total row count: grow from
+  one to six text rows, apply the host's tighter one-third-column budget on short
+  grids, and scroll internally without trimming text. Paint a quiet visible-row
+  range when clipped. Unchanged layout must not reset wheel scroll; cursor
+  navigation/edits and real geometry changes alone reveal the caret.
+- Composer pastes attach at 4 KiB, or eight logical lines with at least 512 bytes
+  of trimmed payload, or ten wrapped rows with at least 1 KiB of trimmed payload.
+  Wrapped checks use the actual text column with a 40-column evaluation floor so
+  a tiny terminal cannot promote a little text. Short prose and small lists stay
+  literal; typing/resizing/restoring a draft never promotes it automatically.
+  Bracketed paste and image-first Ctrl+V share this policy.
+  Persist large pastes off Update, preserve gesture order, block Send until
+  persistence completes, and fence results to session/agent/workspace/draft.
+  A failed or unbound store never falls back to dumping the wall into the input.
+  Inline and file-backed pasted text share Pasted Text labels and native
+  click-to-view/edit; keep the composer mounted underneath. Reference loads and
+  saves are off-UI, complete within the 64 MiB read bound, epoch/preimage-checked,
+  and keep edits visible on failure. Projection locks never cover attachment I/O.
 - Attachment paint and hit testing share `ReferenceChips` geometry. Filename
   bodies open; separate three-cell remove targets only detach the draft.
   External opens run off the UI thread through `fileio.OpenDesktopPath` (native
@@ -1188,6 +1214,10 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   Ctrl/Super shortcuts, copy/cut, bracketed paste, owner-keyed async Ctrl+V,
   multi-click selection, and captured outside drag with autoscroll. Add behavior
   there, never to one popup.
+- TextArea cursor geometry and paint share one logical-to-wrapped-segment mapping.
+  A cursor inside continuation whitespace omitted by WordWrap maps to the next
+  segment's column zero without changing the draft or cursor offset; never slice
+  from a visible segment start past a logical cursor in that omitted gap.
 - `Form` is a composite pointer owner because its retained fields are not Host
   children. Once an inner input starts a drag, `Form.pointerField` must route
   every captured motion/release to that same field before hover-focusing.
@@ -1589,7 +1619,15 @@ button that needs a double click reads as broken.
   permission. Skill activation includes its installed path. Passive restart
   reconnects/downloads/replays nothing; explicit activation rechecks tool schemas.
   Live capability observation refreshes Settings/sidebar/home without configuring
-  transports or inspecting skill files on Update.
+  transports or inspecting skill files on Update. It must keep running with
+  Settings/sidebar visible after an agent removes the launcher screen. Inspected
+  MCP details retain their exact tool identity and refresh schema/grant evidence
+  without replacing filters or editable drafts; removed tools clear old claims.
+  Local/installed/pinned-repository discovery ranks normalized keywords before
+  applying limits. Agent guidance uses concise queries and exact returned IDs,
+  not catalog paths as a substitute for durable installation. Live acceptance
+  submits through the actual composer and keeps chat visible; screenshot-driver
+  exit alone is not proof that the model/persistence test completed.
 - Application settings contain three disableable built-ins:
   `anthropic-skills`, pinned to the complete commit recorded in
   `types/capability`, `skills-directory` community search, and
@@ -1678,9 +1716,18 @@ manual workflows and acceptance boundaries.
 ---
 
 ## Pre-existing Test Failures (NOT caused by our work)
-None — all previously-failing cross-platform tests (LSP path separators,
-safety system-path detection on Windows, app config `HOME` vs
-`USERPROFILE`) have been fixed.
+Verified against unmodified `e69447e` sources through a read-only Go overlay
+on 2026-10-05:
+- `tui/screens/shelltree/TestPaintGoldenCellBufferContract` has a dark 40×8
+  golden mismatch.
+- `tui/screens/shelltree/TestScreenDirIconConsumesTreeGlyphs` expects a
+  `TreeCollapsed` glyph absent from the current top-level directory row.
+- The allocation gate for `BenchmarkAgentSwitchWarm_80Msgs` fails at about
+  31.8 KB/op against its 15 KB/op ceiling (282 allocations remains within 315).
+
+Do not update goldens or loosen that ceiling without a separate verified fix.
+The earlier cross-platform LSP paths, Windows safety paths, and app config
+`HOME`/`USERPROFILE` failures remain fixed.
 
 ## Test Commands
 ```bash

@@ -7,11 +7,77 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
+	"crude/skills"
 	captypes "crude/types/capability"
 )
+
+func TestCapabilitySearchFindsKeywordsAcrossNameAndDescriptionAndReusesInstalled(t *testing.T) {
+	service, _, sourcePath := capabilityFixture(t)
+	query := "review procedure evidence verification"
+	actor := captypes.RuntimeActor{ID: "root", Effects: []captypes.Effect{captypes.EffectRead}}
+	result, err := service.Execute(t.Context(), actor, captypes.RuntimeSnapshot{}, "capability_search",
+		map[string]any{"query": query, "kind": "skill", "limit": 1})
+	var entries []captypes.Entry
+	if err != nil || len(result.Content) != 1 || json.Unmarshal([]byte(result.Content[0].Text), &entries) != nil ||
+		len(entries) != 1 || entries[0].ID != "team:review" {
+		t.Fatalf("natural keyword discovery lost the relevant skill: %+v %v", result, err)
+	}
+	_, err = service.Activate(t.Context(), actor, entries[0].ID, false)
+	var approval *captypes.ApprovalRequired
+	if !errors.As(err, &approval) {
+		t.Fatalf("search unexpectedly installed or granted the skill: %v", err)
+	}
+	if _, err := service.Activate(approval.CapabilityApprovalContext(t.Context()), actor, entries[0].ID, false); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.RemoveAll(filepath.Dir(sourcePath)); err != nil {
+		t.Fatal(err)
+	}
+	installed, err := service.Search(t.Context(), query, captypes.KindSkill, 1, true)
+	if err != nil || len(installed) != 1 || installed[0].ID != "team:review" || !installed[0].Installed {
+		t.Fatalf("installed-first keyword search touched the removed acquisition source: %+v %v", installed, err)
+	}
+	empty, err := service.Search(t.Context(), "zznonexistent987", captypes.KindSkill, 1, false)
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("unrelated query returned an installed capability: %+v %v", empty, err)
+	}
+}
+
+func TestCapabilityKeywordSearchRanksBeforeApplyingLimit(t *testing.T) {
+	service, settings, sourcePath := capabilityFixture(t)
+	exact, err := skills.Create(filepath.Join(filepath.Dir(sourcePath), "review-evidence"), "review-evidence", "Receipt audit")
+	if err != nil {
+		t.Fatal(err)
+	}
+	settings.Skills = map[string]captypes.SkillConfig{
+		"a:partial": {ID: "a:partial", Name: "review", Path: sourcePath, Mode: "automatic"},
+		"z:exact":   {ID: "z:exact", Name: exact.Name, Path: exact.Path, Mode: "automatic"},
+	}
+	if err := service.Configure(t.Context(), settings); err != nil {
+		t.Fatal(err)
+	}
+	entries, err := service.Search(t.Context(), "review evidence", captypes.KindSkill, 1, false)
+	if err != nil || len(entries) != 1 || entries[0].ID != "z:exact" {
+		t.Fatalf("early lexical limit hid the exact normalized name: %+v %v", entries, err)
+	}
+}
+
+func TestCapabilityActivationRejectsGuessedNameWithExactIdentityGuidance(t *testing.T) {
+	service, _, _ := capabilityFixture(t)
+	if _, err := service.Search(t.Context(), "review", captypes.KindSkill, 10, true); err != nil {
+		t.Fatal(err)
+	}
+	actor := captypes.RuntimeActor{ID: "root", Effects: []captypes.Effect{captypes.EffectRead}}
+	_, err := service.Execute(t.Context(), actor, captypes.RuntimeSnapshot{}, "capability_activate", map[string]any{"id": "review"})
+	if err == nil || !strings.Contains(err.Error(), "returned ID unchanged") || len(service.Snapshot().Entries) != 0 {
+		t.Fatalf("a guessed display name was installed or lacked exact-identity recovery: %v", err)
+	}
+}
 
 func TestDiscoverInterleavesSourcesBeyondFirstSourceLimit(t *testing.T) {
 	service, settings, _ := capabilityFixture(t)

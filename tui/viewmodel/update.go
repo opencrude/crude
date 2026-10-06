@@ -9,7 +9,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/fileio"
 	"crude/provider"
 	"crude/sessiondb"
 	"crude/tui/editor"
@@ -94,6 +93,12 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// the complete shell, with expensive leaf work retained by source version.
 
 	switch msg := msg.(type) {
+	case pastedTextStoredMsg:
+		m.applyPastedText(msg)
+	case referenceContentLoadedMsg:
+		m.applyReferenceContent(msg)
+	case referenceContentSavedMsg:
+		m.applyReferenceSave(msg)
 	case statusHydrateErrMsg:
 		m.notifyStatus(types.SeverityWarning, "status", "Notification history unavailable", msg.Err.Error(), types.ResourceRef{Kind: types.ResourceWorkspace, ID: m.RootPath})
 		return m, nil
@@ -601,11 +606,11 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			m.overlayHost.Close(ui.OverlayComposer)
 		}
 	case textoverlay.SaveMsg:
-		if overlay := m.sessionTextOverlay(); overlay != nil && msg.Target == overlay {
-			m.saveReferenceFromOverlay()
+		if overlay := m.sessionTextOverlay(); overlay != nil && msg.Target == overlay && msg.RefID == overlay.RefID() && msg.Epoch == overlay.OpenEpoch() {
+			cmds = append(cmds, m.saveReferenceFromOverlay(msg))
 		}
 	case textoverlay.CancelMsg:
-		if overlay := m.sessionTextOverlay(); overlay != nil && msg.Target == overlay {
+		if overlay := m.sessionTextOverlay(); overlay != nil && msg.Target == overlay && msg.Epoch == overlay.OpenEpoch() {
 			m.setMode(ModeChat)
 		}
 	case lspDefinitionResultMsg:
@@ -1372,58 +1377,6 @@ func (m *App) handleTabSwitch() {
 	// No tab recognized (e.g. launcher): the find/replace popover has no
 	// owning editor view anymore, so it cannot stay open.
 	m.closeFindReplaceForTab(prevEditorPath, "")
-}
-
-func (m *App) openReferenceOverlay(refID string) {
-	if m.RefStore() == nil {
-		return
-	}
-	ref, ok := m.RefStore().GetReference(refID)
-	if !ok || !ref.Active() {
-		return
-	}
-	title := ref.DisplayName()
-	if title == "" {
-		title = ref.ID
-	}
-	overlay := m.sessionTextOverlay()
-	if overlay == nil {
-		return
-	}
-	content := ref.Content
-	if content == "" && ref.FilePath != "" {
-		// File-backed attachment: nothing was ever stored inline. Load a
-		// bounded preview from disk instead of showing an empty dialog, and
-		// open read-only — the file on disk stays the source of truth.
-		prev, err := fileio.InspectFile(ref.FilePath, fileio.DefaultPreviewBytes, fileio.DefaultHexHeadBytes)
-		if err != nil {
-			if m.Feedback != nil {
-				m.Feedback.NotifyError("preview failed: " + err.Error())
-			}
-			return
-		}
-		content = prev.ReadableText()
-		title = "Preview: " + title
-		overlay.OpenReadOnly(refID, title, content)
-		m.setMode(ModeTextOverlay)
-		return
-	}
-	overlay.Open(refID, title, content)
-	m.setMode(ModeTextOverlay)
-}
-
-func (m *App) saveReferenceFromOverlay() {
-	overlay := m.sessionTextOverlay()
-	if overlay == nil {
-		return
-	}
-	refID := overlay.RefID()
-	content := overlay.Value()
-	overlay.Close()
-	if m.RefStore() != nil && refID != "" {
-		_ = m.RefStore().UpdateReferenceContent(refID, content)
-	}
-	m.setMode(ModeChat)
 }
 
 func (m *App) openFilePicker() {

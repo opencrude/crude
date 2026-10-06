@@ -5,7 +5,6 @@ import (
 
 	"crude/tui/ui"
 	"crude/types"
-	"crude/types/recovery"
 )
 
 type recoveryRetryResultMsg struct {
@@ -21,11 +20,11 @@ func (m *App) canRetryAgentRecovery(agentID string) bool {
 		return false
 	}
 	node := m.AgentMgr.Get(agentID)
-	if node == nil || node.State == nil {
+	if node == nil || node.State == nil || node.State.Cancelling || node.State.Completed {
 		return false
 	}
 	status := node.State.RecoveryStatus()
-	return status.ID != "" && (status.State == recovery.NeedsAttention || status.State == recovery.Interrupted || status.State == recovery.Recovering)
+	return status.CanRetry()
 }
 
 func (m *App) retryAgentRecovery(agentID string) tea.Cmd {

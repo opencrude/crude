@@ -552,8 +552,7 @@ func (m *App) dispatchTabBarKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *App) handleTextOverlayKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, tea.Cmd) {
-	// Copy with a selection: copy. Without a selection, the copy chord
-	// is the cancel shortcut (handled by the native screen).
+	// Copy never closes the attachment editor. Esc owns dismissal.
 	overlay := m.sessionTextOverlay()
 	if overlay == nil {
 		return m, nil
@@ -715,6 +714,10 @@ func (m *App) handleInputEvent(evt any) []tea.Cmd {
 		m.openSessionSettings()
 	case input.RefOpenEvent:
 		m.openReferenceOverlay(e.ID)
+	case input.PasteAttachmentEvent:
+		cmds = append(cmds, m.storePastedText(e))
+	case input.PastePendingEvent:
+		m.Feedback.NotifyInfo("Pasted text is still being attached; your draft is kept")
 	case input.AttachFilesEvent:
 		m.openFilePicker()
 	}
@@ -805,6 +808,7 @@ func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 	if msg.Content == "" {
 		return m, m.beginInputClipboardPaste(clipboardAsyncPasteInputImage)
 	}
+	m.Input.SetReferenceStore(m.RefStore())
 	canType := false
 	if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
 		canType = !n.State.Completed && n.State.IsActive()

@@ -10,8 +10,6 @@ import (
 )
 
 type ReferenceStore interface {
-	CreateReference(sessiondb.CreateRequest) (sessiondb.Reference, error)
-	UpdateReferenceContent(id, content string) error
 	DeleteReference(id string) error
 	GetReference(id string) (sessiondb.Reference, bool)
 	ListReferences() []sessiondb.Reference
@@ -33,6 +31,7 @@ func (RefSelectEvent) event() {}
 
 func (m *Model) SetReferenceStore(store ReferenceStore) {
 	if m.refStore != store {
+		m.invalidatePendingPastes()
 		m.promptReferenceIDs = nil
 	}
 	m.refStore = store
@@ -99,6 +98,7 @@ func (m Model) ReferencedIDs() []string {
 }
 
 func (m *Model) SetValuePreserveReferences(text string) {
+	m.invalidatePendingPastes()
 	m.historyGeneration++
 	m.historyLoading = false
 	m.input.SetValue(text)

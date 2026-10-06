@@ -56,13 +56,12 @@ func TestTextOverlayEscClearsSelectionThenCancels(t *testing.T) {
 	_ = commandMessage[CancelMsg](t, result)
 }
 
-func TestTextOverlayCtrlCWithoutSelectionCancels(t *testing.T) {
+func TestTextOverlayCtrlCWithoutSelectionDoesNotCancel(t *testing.T) {
 	screen, host := overlayHost(t)
 	screen.Open("id", "Title", "text")
 	result := host.Handle(tea.KeyPressMsg{Text: "ctrl+c", Mod: tea.ModCtrl, Code: 'c'})
-	cancel := commandMessage[CancelMsg](t, result)
-	if cancel.Target != screen {
-		t.Fatalf("ctrl+c cancel=%#v", cancel)
+	if result.Cmd != nil || !screen.IsOpen() || screen.Value() != "text" {
+		t.Fatalf("ctrl+c closed or changed editor: %#v", result)
 	}
 }
 

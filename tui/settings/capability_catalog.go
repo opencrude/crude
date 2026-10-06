@@ -75,6 +75,7 @@ type capabilityCatalog struct {
 
 type capabilityListState struct {
 	query, selected string
+	inspected       string
 	offset          int
 	source          string
 	show            string

@@ -439,6 +439,8 @@ func (t *TextArea) Measure(_ LayoutContext, cs Constraints) Size {
 // not the prompt glyph. This matches the legacy components.TextInput
 // which deducted padLR*2 + 2 from the available width.
 func (t *TextArea) Layout(_ LayoutContext, r Rect) {
+	previousWidth := max(1, t.Bounds().W-t.promptPrefixWidth())
+	previousHeight := t.viewH
 	t.SetBounds(r)
 	prefW := t.promptPrefixWidth()
 	tw := r.W - prefW
@@ -449,7 +451,11 @@ func (t *TextArea) Layout(_ LayoutContext, r Rect) {
 	t.viewH = r.H
 	t.edit.SetTextWidth(tw)
 	t.clampScroll()
-	t.EnsureCursorVisible()
+	// Explicit wheel browsing owns the offset until a cursor/edit action or a
+	// real viewport change. An unchanged per-frame layout must not undo it.
+	if tw != previousWidth || r.H != previousHeight {
+		t.EnsureCursorVisible()
+	}
 }
 
 func (t *TextArea) clampScroll() {
@@ -669,6 +675,13 @@ func (t *TextArea) paintSegment(buf *surface.CellBuffer, x, y, width int, line [
 			col += clusterW
 		}
 		pos += clusterLen
+	}
+	// WordWrap omits whitespace at the start of continuation rows. A cursor
+	// inside that omitted run belongs at column zero of the following visible
+	// segment even though its flat offset precedes start. Paint after the text
+	// so the block preserves and reverses the first visible grapheme.
+	if cursorVisible && focused && isCursorSeg && cursorPos < flatOffset+start {
+		PaintBlockCursor(buf, x, y, cursorFG, bg)
 	}
 	// End-of-line block cursor (after the last char on the cursor segment)
 	if cursorVisible && focused && isCursorSeg && cursorPos == flatOffset+end {
@@ -962,19 +975,38 @@ func (t *TextArea) Update(msg tea.Msg, disabled bool) tea.Cmd {
 }
 
 func segmentIdxFor(curLine, curCol int, buf [][]rune, textW int) int {
-	if curLine >= len(buf) {
-		return 0
+	segment, _ := cursorSegmentInfo(curLine, curCol, buf, textW)
+	return segment
+}
+
+// cursorSegmentInfo maps a logical rune cursor to the visible segment and cell
+// column produced by WordWrap. WordWrap intentionally discards whitespace at
+// the start of continuation rows, so logical cursor offsets can fall between a
+// segment's visible end and the next segment's rune start. Those offsets map to
+// column zero of the following segment instead of being sliced as though they
+// were part of its visible text.
+func cursorSegmentInfo(curLine, curCol int, buf [][]rune, textW int) (segment, visualCol int) {
+	if curLine < 0 || curLine >= len(buf) {
+		return 0, 0
 	}
 	runes := buf[curLine]
+	curCol = min(max(0, curCol), len(runes))
 	segs := rendering.WordWrap(string(runes), textW)
 	for si := range segs {
 		segStart := rendering.FindSegmentStart(runes, textW, si)
+		if curCol < segStart {
+			return si, 0
+		}
 		segEnd := segStart + len([]rune(segs[si]))
 		if curCol <= segEnd || si == len(segs)-1 {
-			return si
+			cursorInSegment := min(curCol, segEnd)
+			return si, rendering.RuneIdxToCol(
+				runes[segStart:cursorInSegment],
+				cursorInSegment-segStart,
+			)
 		}
 	}
-	return 0
+	return 0, 0
 }
 
 var _ Component = (*TextArea)(nil)
@@ -1872,19 +1904,8 @@ func (e *textAreaEngine) cursorVisualInfo() (visualLine, visualCol int) {
 		segs := rendering.WordWrap(string(lines[li]), e.textWidth)
 		vis += len(segs)
 	}
-	segs := rendering.WordWrap(string(lines[e.curLine]), e.textWidth)
-	for si := range segs {
-		segStart := rendering.FindSegmentStart(lines[e.curLine], e.textWidth, si)
-		segEnd := segStart + len([]rune(segs[si]))
-		if e.curCol <= segEnd || si == len(segs)-1 {
-			colW := rendering.RuneIdxToCol(lines[e.curLine][segStart:e.curCol], e.curCol-segStart)
-			return vis + si, colW
-		}
-	}
-	last := len(segs) - 1
-	segStart := rendering.FindSegmentStart(lines[e.curLine], e.textWidth, last)
-	colW := rendering.RuneIdxToCol(lines[e.curLine][segStart:], len(lines[e.curLine])-segStart)
-	return vis + last, colW
+	segment, col := cursorSegmentInfo(e.curLine, e.curCol, lines, e.textWidth)
+	return vis + segment, col
 }
 
 func (e *textAreaEngine) cursorUpVisual() {

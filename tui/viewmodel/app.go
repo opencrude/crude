@@ -92,6 +92,8 @@ type App struct {
 	composerSavedDraft     string
 	composerSaving         bool
 	composerDirtySinceSave bool
+	referenceOverlay       *referenceOverlayState
+	pastedTextRequests     []pastedTextStoredMsg
 	// Failed human steering uploads belong to their session until its composer is active.
 	rejectedSteeringDrafts     map[*workspace.Session][]string
 	DirtyPromptPath            string
@@ -516,7 +518,7 @@ func (m *App) openTextOverlayWindow() {
 	if title == "" {
 		title = "Edit"
 	}
-	w, h := 72, 30
+	w, h := fitFloatingSize(m.width, m.height, 96, 30, 32, 8)
 	frame := ui.NewWindowFrameWidget(
 		m.Theme,
 		ui.NewID(ui.RootID, "textoverlay-frame"),
@@ -533,11 +535,16 @@ func (m *App) openTextOverlayWindow() {
 
 	win := wm.NewFloatingWindow(string(ui.OverlayTextOverlay), title, frame,
 		w, h,
-		wm.WithMinSize(32, 8),
+		wm.WithDecoration(true),
+		wm.WithMovable(true),
+		wm.WithResizable(true),
+		wm.WithClosable(true),
+		wm.WithMinSize(min(32, w), min(8, h)),
 		wm.WithClickOutside(wm.ClickOutsideKeepRoute),
 	)
 	wm.CenterOnScreen(win, m.width, m.height)
 	m.overlayHost.Open(ui.OverlayTextOverlay, win, ui.DefaultOverlayPolicy(), func() {
+		m.referenceOverlay = nil
 		p.textOverlay.Close()
 		m.setMode(ModeChat)
 	})

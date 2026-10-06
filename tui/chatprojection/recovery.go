@@ -24,7 +24,7 @@ func renderRecoveryMessage(message types.ChatMessage, ctx renderContext) message
 	status := message.Recovery
 	header := recoveryHeader(message, ctx)
 	rows := messageLines{lines: []string{header.PlainText()}, native: []PaintLine{header},
-		frameSensitive: status.State == recovery.Recovering}
+		frameSensitive: status.State == recovery.Recovering && !status.RetryAt.IsZero()}
 	if ctx.disclosure != DisclosureExpanded || ctx.innerW <= 0 {
 		return rows
 	}
@@ -65,12 +65,15 @@ func recoveryHeader(message types.ChatMessage, ctx renderContext) PaintLine {
 		label, role = "Recovery stopped", ui.ColorMuted
 	}
 	if status.State == recovery.Recovering {
-		marker = ui.RecoverySquare(ctx.spinFrame)
 		if !status.RetryAt.IsZero() {
+			marker = ui.RecoverySquare(ctx.spinFrame)
 			seconds := max(0, int(status.RetryAt.Sub(time.UnixMilli(int64(ctx.spinFrame))).Seconds()+0.999))
 			label += fmt.Sprintf(" · retry in %ds", seconds)
 		} else {
-			label += " · retrying"
+			// The owner has resumed the attempt. Retain the incident and its
+			// evidence, but never animate a stale failure above ongoing work.
+			// This is not a successful task finish; the checkpoint stays open.
+			label, role, marker = "Run resumed", ui.ColorMuted, "○"
 		}
 	}
 	chevron := ctx.tokens.Glyphs().TreeCollapsed
@@ -78,8 +81,7 @@ func recoveryHeader(message types.ChatMessage, ctx renderContext) PaintLine {
 		chevron = ctx.tokens.Glyphs().TreeExpanded
 	}
 	prefix := "│ " + marker + " "
-	actionable := status.State == recovery.Recovering && !status.RetryAt.IsZero() ||
-		status.State == recovery.NeedsAttention || status.State == recovery.Interrupted
+	actionable := status.CanRetry()
 	actionText := " (Retry now)"
 	suffix := " " + chevron
 	if actionable {

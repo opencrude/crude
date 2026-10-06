@@ -20,11 +20,13 @@ type SaveMsg struct {
 	Target *Screen
 	RefID  string
 	Text   string
+	Epoch  uint64
 }
 
 // CancelMsg is emitted when the overlay is dismissed without saving.
 type CancelMsg struct {
 	Target *Screen
+	Epoch  uint64
 }
 
 // Screen is the retained native text/reference editor body: TextArea +
@@ -38,6 +40,8 @@ type Screen struct {
 	title    string
 	refID    string
 	readOnly bool
+	busy     bool
+	epoch    uint64
 	focus    func(ui.ComponentID)
 }
 
@@ -67,16 +71,28 @@ func (s *Screen) OpenReadOnly(refID, title, content string) {
 }
 
 func (s *Screen) open(refID, title, content string, readOnly bool) {
+	s.epoch++
 	s.refID = refID
 	s.title = title
 	s.readOnly = readOnly
+	s.busy = false
+	s.input.area.SetReadOnly(readOnly)
 	s.input.area.SetValue(content)
+	s.input.area.SetCursorFlat(0)
 	s.rebuildActions()
 }
 
-func (s *Screen) ReadOnly() bool { return s.readOnly }
+func (s *Screen) ReadOnly() bool    { return s.readOnly }
+func (s *Screen) OpenEpoch() uint64 { return s.epoch }
+
+func (s *Screen) SetBusy(busy bool) {
+	s.busy = busy
+	s.input.area.SetReadOnly(s.readOnly || busy)
+	s.rebuildActions()
+}
 
 func (s *Screen) Close() {
+	s.epoch++
 	s.refID = ""
 	s.title = ""
 	s.input.area.Clear()
@@ -121,7 +137,7 @@ func (s *Screen) rebuildActions() {
 	s.actions = ui.NewActionBar(ActionsID, s.tokens,
 		ui.ActionBarButton{
 			ID: ui.NewID(ActionsID, "save"), Label: "Save", Action: "textoverlay.save",
-			Shortcut: "ctrl+s", Variant: ui.VariantPrimary, Enabled: true,
+			Shortcut: "ctrl+s", Variant: ui.VariantPrimary, Enabled: !s.busy,
 		},
 		ui.ActionBarButton{
 			ID: ui.NewID(ActionsID, "cancel"), Label: "Cancel", Action: "textoverlay.cancel",
@@ -183,18 +199,21 @@ func (s *Screen) Semantics() ui.Semantics {
 }
 
 func (s *Screen) save() ui.EventResult {
+	if s.busy {
+		return ui.EventResult{Handled: true}
+	}
+	msg := SaveMsg{Target: s, RefID: s.refID, Text: s.Value(), Epoch: s.epoch}
 	return ui.EventResult{
 		Handled: true,
-		Cmd: func() tea.Msg {
-			return SaveMsg{Target: s, RefID: s.refID, Text: s.Value()}
-		},
+		Cmd:     func() tea.Msg { return msg },
 	}
 }
 
 func (s *Screen) cancel() ui.EventResult {
+	msg := CancelMsg{Target: s, Epoch: s.epoch}
 	return ui.EventResult{
 		Handled: true,
-		Cmd:     func() tea.Msg { return CancelMsg{Target: s} },
+		Cmd:     func() tea.Msg { return msg },
 	}
 }
 
@@ -238,12 +257,9 @@ func (o *overlayInput) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult 
 				return ui.EventResult{Handled: true}
 			}
 			return o.owner.save()
-		case key.String() == "ctrl+c":
-			if o.area.HasActiveSelection() {
-				// Viewmodel owns clipboard copy.
-				return ui.EventResult{}
-			}
-			return o.owner.cancel()
+		case ui.IsCopyChord(key):
+			// Copy never navigates or closes an attachment editor.
+			return o.area.Handle(ctx, evt)
 		case key.Code == tea.KeyTab:
 			o.owner.focusID(ActionsID)
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}

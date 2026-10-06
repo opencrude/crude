@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -10,13 +11,16 @@ import (
 
 	"crude/tui/ui"
 	"crude/types"
+	"crude/types/reasoning"
 	"crude/types/recovery"
 	"crude/workspace"
 )
 
 // Sequential scripts/tuishot.sh fixture: no provider calls or real user data.
 // F2 attention, F3 recovered, F4 Network Connection, F5 Proxy, F6 Certificates,
-// F1 disclosure, F7 theme switch, F8 return to chat, F9 quit.
+// F1 disclosure, F7 theme switch, F8 return to chat, F9 quit,
+// F10 acknowledged retry/wait, Shift+F11 resumed reasoning/tool, F12 wrapped-gap
+// draft. Bare F11 belongs to Alacritty fullscreen and must not be used to drive it.
 func TestRunRecoveryVisualAcceptance(t *testing.T) {
 	if os.Getenv("CRUDE_VISUAL_RECOVERY") != "1" {
 		t.Skip("requires the repository's dedicated terminal capture workflow")
@@ -127,6 +131,28 @@ func (model *runRecoveryVisualModel) Update(message tea.Msg) (tea.Model, tea.Cmd
 			return model, nil
 		case tea.KeyF9:
 			return model, tea.Quit
+		case tea.KeyF10:
+			model.status.State = recovery.Recovering
+			model.status.RetryAt = time.Time{}
+			model.status.Summary, model.status.UpdatedAt = "Retrying unfinished run", time.Now()
+			_ = model.handleAgentEvent(types.AgentEventMsg{Type: "recovery", AgentID: model.status.AgentID, Data: model.status})
+			_ = model.handleAgentEvent(types.AgentEventMsg{Type: "phase", AgentID: model.status.AgentID, Data: map[string]any{
+				"name": "waiting_provider", "provider": "Test Provider", "request_id": "resumed-request",
+			}})
+			return model, nil
+		case tea.KeyF11:
+			_ = model.handleAgentEvent(types.AgentEventMsg{Type: "thinking", AgentID: model.status.AgentID, Data: reasoning.Delta{
+				Text: "Checking the resumed work without replaying accepted changes", Kind: reasoning.Summary, BlockID: "resumed-thought",
+			}})
+			_ = model.handleAgentEvent(types.AgentEventMsg{Type: "tool_call", AgentID: model.status.AgentID, Data: map[string]any{
+				"name": "read_async_output", "tool_id": "resumed-read", "args": `{"handle":"recovery_repo_tests"}`,
+			}})
+			return model, nil
+		case tea.KeyF12:
+			width := max(1, model.inputRect.W-2*model.Theme.Spacing.PadLR)
+			model.Input.SetInput(strings.Repeat("a", width) + " x")
+			model.Input.SetCursorFlat(width)
+			return model, nil
 		}
 	}
 	_, command := model.App.Update(message)

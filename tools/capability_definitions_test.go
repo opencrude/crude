@@ -2,8 +2,31 @@ package tools
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 )
+
+func TestCapabilityToolGuidanceExplainsDiscoveryAndDurableUse(t *testing.T) {
+	expected := map[string][]string{
+		"capability_search":   {"short name or distinctive keywords", "Omit kind", "descriptors, not loaded instructions", "exact ID unchanged", "Discovery is not an access grant"},
+		"capability_activate": {"not a display name or directory path", "durable Workspace Settings", "bundled files resolve from that path", "explicitly activate the saved MCP connection", "resume itself is passive", "mcp_request_access"},
+	}
+	for _, tool := range CapabilityTools {
+		phrases, exists := expected[tool.Function.Name]
+		if !exists {
+			continue
+		}
+		for _, phrase := range phrases {
+			if !strings.Contains(tool.Function.Description, phrase) {
+				t.Errorf("%s lacks lifecycle guidance %q", tool.Function.Name, phrase)
+			}
+		}
+		delete(expected, tool.Function.Name)
+	}
+	if len(expected) != 0 {
+		t.Fatalf("missing capability definitions: %v", expected)
+	}
+}
 
 func TestCapabilityActivationAndAccessHaveDisjointRequiredSchemas(t *testing.T) {
 	found := make(map[string]bool)

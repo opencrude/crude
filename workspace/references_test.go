@@ -110,8 +110,8 @@ func TestReferenceStore_CreateReference_TextFile(t *testing.T) {
 	if ref.ID == "" {
 		t.Error("ref should have ID")
 	}
-	if ref.Label != "[Pasted Text File1]" {
-		t.Errorf("Label: got %q, want [Pasted Text File1]", ref.Label)
+	if ref.Label != "[Pasted Text1]" {
+		t.Errorf("Label: got %q, want [Pasted Text1]", ref.Label)
 	}
 	// KindPastedTextFile writes content to disk and clears Content
 	if ref.Content != "" {
@@ -191,8 +191,8 @@ func TestReferenceStore_CreateReference_LabelCollision(t *testing.T) {
 	if ref2.Label == ref1.Label {
 		t.Errorf("labels should not collide: both %q", ref1.Label)
 	}
-	if ref2.Label != "[Pasted Text File2]" {
-		t.Errorf("expected [Pasted Text File2], got %q", ref2.Label)
+	if ref2.Label != "[Pasted Text2]" {
+		t.Errorf("expected [Pasted Text2], got %q", ref2.Label)
 	}
 }
 
@@ -421,7 +421,7 @@ func TestDefaultReferenceLabel(t *testing.T) {
 		want string
 	}{
 		{sessiondb.KindPastedText, 1, "[Pasted Text1]"},
-		{sessiondb.KindPastedTextFile, 2, "[Pasted Text File2]"},
+		{sessiondb.KindPastedTextFile, 2, "[Pasted Text2]"},
 		{sessiondb.KindPastedImage, 3, "[Pasted IMG3]"},
 		{sessiondb.KindSelectedFile, 4, "[File4]"},
 		{sessiondb.Kind("unknown"), 5, "[Reference5]"},

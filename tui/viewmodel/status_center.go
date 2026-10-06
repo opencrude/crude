@@ -153,7 +153,7 @@ func (m *App) syncAgentStatusEvent(evt types.AgentEventMsg) {
 		}
 	case "recovery":
 		status, ok := evt.Data.(recovery.Status)
-		if !ok || status.ID == "" || status.Generation > 0 && status.Generation < snapshot.TurnGeneration {
+		if !ok || status.ID == "" || node.State == nil || node.State.RecoveryStatus() != status {
 			return
 		}
 		snapshot.Detail, snapshot.RetryAt = status.Summary, status.RetryAt
@@ -161,7 +161,12 @@ func (m *App) syncAgentStatusEvent(evt types.AgentEventMsg) {
 		snapshot.NeedsAction = status.State == recovery.NeedsAttention || status.State == recovery.Interrupted
 		switch status.State {
 		case recovery.Recovering:
-			snapshot.Phase = ttypes.AgentRecovering
+			if status.RetryAt.IsZero() {
+				snapshot.Phase, snapshot.Detail = ttypes.AgentPreparing, "Resuming run"
+			} else {
+				snapshot.Phase = ttypes.AgentRecovering
+			}
+			center.ResolveIssue("agent:" + evt.AgentID)
 		case recovery.NeedsAttention:
 			snapshot.Phase = ttypes.AgentNeedsAttention
 		case recovery.Interrupted:
@@ -351,7 +356,7 @@ func (m *App) syncAgentStatusInventory() {
 			status.Phase, status.Detail, status.NeedsAction = ttypes.AgentNeedsAttention, recoveryStatus.Summary, true
 		case recoveryStatus.State == recovery.Interrupted:
 			status.Phase, status.Detail, status.NeedsAction = ttypes.AgentInterrupted, recoveryStatus.Summary, true
-		case recoveryStatus.State == recovery.Recovering:
+		case recoveryStatus.State == recovery.Recovering && recoveryStatus.CanRetry():
 			status.Phase, status.Detail, status.RetryAt = ttypes.AgentRecovering, recoveryStatus.Summary, recoveryStatus.RetryAt
 		case node.State.Completed && status.Phase != ttypes.AgentCancelled && status.Phase != ttypes.AgentFailed:
 			status.Phase, status.Detail = ttypes.AgentCompleted, "Completed"

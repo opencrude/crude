@@ -24,6 +24,9 @@ func TestExpandedRecoveryKeepsDiagnosticsReadableAndHydrationIdentical(t *testin
 					Detail:  strings.Repeat("Check the configured account and endpoint. ", 20) + "Diagnostic-tail-保持-👨‍👩‍👧‍👦",
 					Action:  "Update Accounts, then use Continue run or /retry.",
 				}
+				if state == recovery.Recovering {
+					status.RetryAt = time.UnixMilli(30000)
+				}
 				if width == 1 {
 					// A two-column grapheme cannot be shown atomically in one
 					// physical column; its complete evidence remains copyable.
@@ -63,6 +66,61 @@ func TestExpandedRecoveryKeepsDiagnosticsReadableAndHydrationIdentical(t *testin
 				}
 			}
 		}
+	}
+}
+
+func TestRecoveryAcknowledgedAttemptIsStaticBoundary(t *testing.T) {
+	status := recovery.Status{
+		ID: "incident", AgentID: "owner", Generation: 1, State: recovery.Recovering,
+		Summary: "Retrying unfinished run", Detail: "Original connection diagnostic",
+	}
+	renderer := NewRenderer(theme.DefaultDark())
+	renderer.SetSize(100, 30)
+	renderer.SetChatAreaBounds(0, 30)
+	status.RetryAt = time.UnixMilli(30000)
+	renderer.SyncMessages([]types.ChatMessage{{InternalID: status.ID, Role: types.RoleStatus, Recovery: &status}}, 1)
+	renderer.ToggleDisclosure(status.ID)
+	renderer.SetSpinFrame(800)
+	before := renderer.ExportMessageRowsSnapshot(100)
+	if !strings.Contains(before.Rows[0].Lines[1], "Recovering") {
+		t.Fatal("fixture did not begin with a recovering cooldown")
+	}
+	resumed := status
+	resumed.RetryAt = time.Time{}
+	renderer.SyncMessages([]types.ChatMessage{{InternalID: status.ID, Role: types.RoleStatus, Recovery: &resumed}}, 2)
+	first := renderer.ExportMessageRowsSnapshot(100)
+	if len(first.Rows) != 1 || !strings.Contains(first.Rows[0].Lines[1], "Run resumed") {
+		t.Fatalf("acknowledged attempt still claims recovery: %+v", first.Rows)
+	}
+	for _, frame := range []int{1200, 1600, 9000} {
+		renderer.SetSpinFrame(frame)
+		later := renderer.ExportMessageRowsSnapshot(100)
+		if later.Generation != first.Generation || !reflect.DeepEqual(later.Rows[0].Native, first.Rows[0].Native) {
+			t.Fatal("resumed incident still blinks or invalidates transcript on ticks")
+		}
+	}
+	for _, line := range first.Rows[0].Native {
+		for _, span := range line.Spans {
+			if span.Action != nil || span.Role == ui.ColorError {
+				t.Fatalf("resumed boundary kept recovery action/red indicator: %+v", span)
+			}
+		}
+	}
+	if !strings.Contains(strings.Join(first.Rows[0].Lines, "\n"), status.Detail) {
+		t.Fatal("resuming lost the retained diagnostic")
+	}
+	data, err := json.Marshal(types.ChatMessage{InternalID: resumed.ID, Role: types.RoleStatus, Recovery: &resumed})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var hydrated types.ChatMessage
+	if err := json.Unmarshal(data, &hydrated); err != nil {
+		t.Fatal(err)
+	}
+	ctx := renderContext{th: theme.DefaultDark(), tokens: ui.NewTokenSet(theme.DefaultDark()), innerW: 100, disclosure: DisclosureExpanded}
+	projection := renderRecoveryMessage(hydrated, ctx)
+	if projection.frameSensitive || strings.Contains(projection.lines[0], "Recovering") || !strings.Contains(projection.lines[0], "Run resumed") {
+		t.Fatalf("persisted acknowledged incident drifted: %+v", projection)
 	}
 }
 

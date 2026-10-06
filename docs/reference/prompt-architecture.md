@@ -47,6 +47,12 @@ bounded head/tail excerpt and retains the full capture under an async handle.
 Crude's collaboration, memory/history, capability and evidence surfaces. It does
 not duplicate schemas or grant tools. Directed peer delivery is automatic;
 live-running broadcast is rare and peer-note-only.
+Capability guidance asks for concise name/keyword discovery and exact returned
+identity activation; reading catalog files is not a durable installation. The
+tool descriptions own installed-path resolution, workspace persistence, explicit
+post-restart MCP activation and the separate exact-access review workflow. The
+goal-only live acceptance is documented in
+[capability workflows](../guides/capability-workflows.md).
 
 `CollaborationWorkflow` supplies the practical decision path in every root/child
 mode: direct work versus an existing suitable peer versus a bounded leaf,
