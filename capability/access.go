@@ -45,7 +45,7 @@ func (service *Service) activationResult(ctx context.Context, actor captypes.Run
 		}
 	}
 	if len(result.UsableTools) > 0 {
-		result.Next = "Use the exact UsableTools names offered at the next request boundary. Installation and grants remain durable in Workspace Settings."
+		result.Next = "Use the exact UsableTools names offered at the next request boundary. Installation and grants remain durable at their configured binding."
 	} else {
 		result.Next = "Connected does not mean tool access. Request exact observed tools using mcp_request_access connection_id plus grants [{tool: original name, fingerprint: observed fingerprint, effect: intended effect, scope: resource scope}]. New or changed grants require explicit approval; agent ceilings and schema budgets still apply."
 	}
@@ -148,7 +148,10 @@ func (service *Service) activateAccess(ctx context.Context, actor captypes.Runti
 	if !installed {
 		return captypes.Result{}, errors.New("install and activate the MCP connection first to observe its exact tool fingerprints")
 	}
-	if _, err := service.Activate(ctx, actor, id, false); err != nil {
+	service.mu.RLock()
+	boundScope := service.settings.Connections[id].Scope
+	service.mu.RUnlock()
+	if _, err := service.ActivateScoped(ctx, actor, id, false, boundScope); err != nil {
 		return captypes.Result{}, err
 	}
 	preview, before, changed, err := service.accessPreview(actor, id, requests)
@@ -167,7 +170,13 @@ func (service *Service) activateAccess(ctx context.Context, actor captypes.Runti
 	}
 	after := captypes.Clone(before)
 	connection := after.Connections[id]
-	connection.Scope = captypes.ScopeWorkspace
+	// Grants belong to the connection's own binding. Rewriting the scope here
+	// used to silently move an application-bound connection into the workspace,
+	// so a first tool grant made it disappear from Application Settings and
+	// destroyed it with the project.
+	if connection.Scope != captypes.ScopeWorkspace {
+		connection.Scope = captypes.ScopeApplication
+	}
 	if connection.Grants == nil {
 		connection.Grants = make(map[string]captypes.ToolGrant)
 	}

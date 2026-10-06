@@ -1127,7 +1127,7 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 				ToolName:          toolName,
 				ToolID:            mm.Msg.ToolCallID,
 				ToolArgs:          argsCompact,
-				ToolCommand:       extractJSONStringValue(toolArgs, "command"),
+				ToolCommand:       ExtractArg(toolArgs, "command"),
 				ToolInput:         persistedToolInput(toolName, toolArgs),
 				ToolScope:         persistedToolScope(toolName, toolArgs),
 				ToolStatus:        toolStatus,
@@ -1193,18 +1193,18 @@ func persistedToolInput(toolName, args string) string {
 	case "multi_tool_use.parallel":
 		return args
 	case "grep_files":
-		return extractJSONStringValue(args, "pattern")
+		return ExtractArg(args, "pattern")
 	case "web_search", "arxiv_search":
-		return extractJSONStringValue(args, "query")
+		return ExtractArg(args, "query")
 	case "web_fetch":
-		return extractJSONStringValue(args, "url")
+		return ExtractArg(args, "url")
 	}
 	return ""
 }
 
 func persistedToolScope(toolName, args string) string {
 	if toolName == "grep_files" {
-		return extractJSONStringValue(args, "path")
+		return ExtractArg(args, "path")
 	}
 	return ""
 }

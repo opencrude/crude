@@ -403,41 +403,20 @@ func findStrEnd(s string, start int) (int, bool) {
 	return len(s), false
 }
 
+// unesc decodes one JSON string body. It delegates to the shared JSON unescaper
+// instead of re-implementing the escape table: a local switch that handled
+// \" \\ \/ \n \t \r but not \uXXXX left a raw "u0026" where the stream carried a
+// shell "&&". Text that is not yet decodable — a stream truncated mid-escape —
+// stays raw and is replaced once the payload completes.
 func unesc(s string) string {
 	if !strings.ContainsRune(s, '\\') {
 		return s
 	}
-	var b strings.Builder
-	b.Grow(len(s))
-	for i := 0; i < len(s); i++ {
-		if s[i] == '\\' && i+1 < len(s) {
-			switch s[i+1] {
-			case '"':
-				b.WriteByte('"')
-				i++
-			case '\\':
-				b.WriteByte('\\')
-				i++
-			case '/':
-				b.WriteByte('/')
-				i++
-			case 'n':
-				b.WriteByte('\n')
-				i++
-			case 't':
-				b.WriteByte('\t')
-				i++
-			case 'r':
-				b.WriteByte('\r')
-				i++
-			default:
-				b.WriteByte(s[i])
-			}
-		} else {
-			b.WriteByte(s[i])
-		}
+	decoded, err := jsonparser.Unescape([]byte(s), nil)
+	if err != nil {
+		return s
 	}
-	return b.String()
+	return string(decoded)
 }
 
 func findMatch(s string, start int, open, close byte) int {

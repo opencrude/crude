@@ -251,10 +251,22 @@ func (service *Service) Execute(ctx context.Context, actor captypes.RuntimeActor
 			return captypes.Result{}, errors.New("capability activation is denied for this agent")
 		}
 		id, _ := params["id"].(string)
-		if id == "" || len(params) != 1 {
-			return captypes.Result{}, errors.New("capability_activate accepts only id; request MCP grants separately through mcp_request_access")
+		scope := captypes.ScopeApplication
+		if value, ok := params["scope"].(string); ok && value != "" {
+			scope = captypes.Scope(value)
 		}
-		return service.Activate(ctx, actor, id, false)
+		for key := range params {
+			if key != "id" && key != "scope" {
+				return captypes.Result{}, fmt.Errorf("capability_activate accepts only id and an optional scope; %q is not recognized, and MCP grants belong to mcp_request_access", key)
+			}
+		}
+		if id == "" {
+			return captypes.Result{}, errors.New("capability_activate needs an exact capability id")
+		}
+		if scope != captypes.ScopeApplication && scope != captypes.ScopeWorkspace {
+			return captypes.Result{}, errors.New("capability_activate scope must be application or workspace")
+		}
+		return service.ActivateScoped(ctx, actor, id, false, scope)
 	case "mcp_request_access":
 		if !actorAllows(actor, name, captypes.EffectRead) {
 			return captypes.Result{}, errors.New("MCP access requests are denied for this agent")
@@ -297,12 +309,23 @@ func (service *Service) Execute(ctx context.Context, actor captypes.RuntimeActor
 	return captypes.Result{}, errors.New("dynamic tool was not part of this request snapshot")
 }
 
+// Activate binds a newly acquired capability to the application layer. That is
+// the product default: an installation belongs to the user, not to one project,
+// so deleting a workspace can never destroy it. Callers that genuinely want a
+// workspace-owned binding use ActivateScoped with ScopeWorkspace.
 func (service *Service) Activate(ctx context.Context, actor captypes.RuntimeActor, id string, manual bool) (captypes.Result, error) {
+	return service.ActivateScoped(ctx, actor, id, manual, captypes.ScopeApplication)
+}
+
+func (service *Service) ActivateScoped(ctx context.Context, actor captypes.RuntimeActor, id string, manual bool, scope captypes.Scope) (captypes.Result, error) {
 	if err := ctx.Err(); err != nil {
 		return captypes.Result{}, err
 	}
 	if !actorAllows(actor, "capability_activate", captypes.EffectRead) {
 		return captypes.Result{}, errors.New("capability activation is denied for this agent")
+	}
+	if scope != captypes.ScopeApplication && scope != captypes.ScopeWorkspace {
+		return captypes.Result{}, errors.New("capability binding must be application or workspace")
 	}
 	service.mu.RLock()
 	entry, exists := service.entries[id]
@@ -320,7 +343,7 @@ func (service *Service) Activate(ctx context.Context, actor captypes.RuntimeActo
 		if !manual && settings.Acquisition.Mode == "manual" {
 			return captypes.Result{}, fmt.Errorf("%w: automatic acquisition is disabled; install explicitly in Settings", ErrApprovalRequired)
 		}
-		preview, err := service.PreviewAcquisition(ctx, id, captypes.ScopeWorkspace, "install")
+		preview, err := service.PreviewAcquisition(ctx, id, scope, "install")
 		if err != nil {
 			return captypes.Result{}, err
 		}
@@ -328,8 +351,8 @@ func (service *Service) Activate(ctx context.Context, actor captypes.RuntimeActo
 			return captypes.Result{}, &captypes.ApprovalRequired{ID: id, Preview: preview, Reason: fmt.Sprintf("Source %s · revision %s · digest %s · scope %s. Source instructions do not expand tool authority.", preview.Source.Name, preview.Candidate.Version, preview.Candidate.Digest, preview.Scope)}
 		}
 		if hasApproval {
-			if approved.ID != id || approved.Scope != captypes.ScopeWorkspace || approved.Token != preview.Token {
-				return captypes.Result{}, errors.New("approved capability revision or source changed; request a fresh exact approval")
+			if approved.ID != id || approved.Scope != scope || approved.Token != preview.Token {
+				return captypes.Result{}, errors.New("approved capability revision, source or binding changed; request a fresh exact approval")
 			}
 			preview = approved
 		}
@@ -340,7 +363,7 @@ func (service *Service) Activate(ctx context.Context, actor captypes.RuntimeActo
 		if err := service.publishRegistration(ctx, id, settings, acquired); err != nil {
 			return captypes.Result{}, err
 		}
-		return service.Activate(ctx, actor, id, manual)
+		return service.ActivateScoped(ctx, actor, id, manual, scope)
 	}
 	if entry.State == "disabled" || entry.State == "unavailable" {
 		return captypes.Result{}, fmt.Errorf("capability %q is %s: %s", id, entry.State, entry.Reason)

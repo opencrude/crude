@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"reflect"
 	"sync"
 	"time"
 
@@ -66,9 +65,9 @@ func (store *capabilityRegistrationStore) CommitRegistration(
 	if err != nil {
 		return captypes.Settings{}, err
 	}
-	if kind == captypes.KindSkill && skill.Scope != captypes.ScopeWorkspace ||
-		kind == captypes.KindMCP && connection.Scope != captypes.ScopeWorkspace {
-		return captypes.Settings{}, errors.New("service-initiated capability registration must target workspace scope")
+	change := captypes.RegistrationChange{ID: id, Kind: kind, Before: before, Skill: skill, Connection: connection}
+	if change.RegistrationScope() == captypes.ScopeApplication {
+		return store.commitApplication(ctx, change)
 	}
 
 	tx, err := store.db.DB.BeginTx(ctx, nil)
@@ -83,15 +82,11 @@ func (store *capabilityRegistrationStore) CommitRegistration(
 	}
 	current := ttypes.MergeAppWorkspace(defaults, overrides)
 	current.Capabilities = captypes.Normalize(current.Capabilities)
-	if err := validateRegistrationPreimage(id, kind, before, current.Capabilities, skill.Source, connection.Source); err != nil {
+	updatedCapabilities, err := captypes.ApplyRegistration(current.Capabilities, change, current.Capabilities)
+	if err != nil {
 		return captypes.Settings{}, err
 	}
-
-	if kind == captypes.KindSkill {
-		current.Capabilities.Skills[id] = skill
-	} else {
-		current.Capabilities.Connections[id] = connection
-	}
+	current.Capabilities = updatedCapabilities
 	merged := captypes.Clone(current.Capabilities)
 	updated := ttypes.OverridesFromDiff(defaults, current)
 	encoded, err := json.Marshal(updated)
@@ -109,6 +104,34 @@ func (store *capabilityRegistrationStore) CommitRegistration(
 		return captypes.Settings{}, fmt.Errorf("commit capability registration: %w", err)
 	}
 	return merged, nil
+}
+
+// commitApplication publishes one application-bound registration through the
+// app config owner. Application installs are the product default and are not
+// owned by this project, so the write is delegated to the app layer, which
+// applies the same shared registration owner under its own config lock.
+func (store *capabilityRegistrationStore) commitApplication(ctx context.Context, change captypes.RegistrationChange) (captypes.Settings, error) {
+	if err := ctx.Err(); err != nil {
+		return captypes.Settings{}, err
+	}
+	persist := store.workspace.OnAppCapabilityRegistration
+	if persist == nil {
+		return captypes.Settings{}, errors.New("application capability persistence is unavailable")
+	}
+	published, err := persist(change)
+	if err != nil {
+		return captypes.Settings{}, err
+	}
+	if _, exists := published.Skills[change.ID]; change.Kind == captypes.KindSkill && !exists {
+		return captypes.Settings{}, errors.New("application capability registration was not published")
+	}
+	if _, exists := published.Connections[change.ID]; change.Kind == captypes.KindMCP && !exists {
+		return captypes.Settings{}, errors.New("application capability registration was not published")
+	}
+	// The runtime is configured with the effective layer, so a workspace's own
+	// overlay must not disappear just because this install was application-wide.
+	effective := ttypes.MergeAppWorkspace(store.workspace.AppDefaults(), store.workspace.LoadWorkspaceOverrides())
+	return captypes.Normalize(effective.Capabilities), nil
 }
 
 // Close holds the lifetime write lease while cancelling and joining sessions.
@@ -148,52 +171,6 @@ func selectedRegistration(id string, settings captypes.Settings) (captypes.Kind,
 		return "", captypes.SkillConfig{}, captypes.ConnectionConfig{}, errors.New("acquired connection identity does not match its selected ID")
 	}
 	return captypes.KindMCP, captypes.SkillConfig{}, connection, nil
-}
-
-func validateRegistrationPreimage(
-	id string,
-	kind captypes.Kind,
-	before captypes.Settings,
-	current captypes.Settings,
-	skillSource string,
-	connectionSource string,
-) error {
-	if !reflect.DeepEqual(current.Acquisition, before.Acquisition) {
-		return errors.New("capability acquisition policy changed; request a fresh acquisition")
-	}
-	sourceID := connectionSource
-	selectedExisted := false
-	if kind == captypes.KindSkill {
-		sourceID = skillSource
-		beforeValue, beforeExists := before.Skills[id]
-		currentValue, currentExists := current.Skills[id]
-		if beforeExists != currentExists || !reflect.DeepEqual(beforeValue, currentValue) {
-			return errors.New("selected capability registration changed; request a fresh acquisition")
-		}
-		selectedExisted = beforeExists
-	} else {
-		beforeValue, beforeExists := before.Connections[id]
-		currentValue, currentExists := current.Connections[id]
-		if beforeExists != currentExists || !reflect.DeepEqual(beforeValue, currentValue) {
-			return errors.New("selected capability registration changed; request a fresh acquisition")
-		}
-		selectedExisted = beforeExists
-	}
-	// Authored/custom connections have no catalog source. Their already
-	// registered identity is the preimage for a grant-only update; a brand-new
-	// acquisition still must name the reviewed source that supplied it.
-	if sourceID == "" {
-		if selectedExisted {
-			return nil
-		}
-		return errors.New("new capability registration has no reviewed source")
-	}
-	beforeSource, beforeExists := before.Sources[sourceID]
-	currentSource, currentExists := current.Sources[sourceID]
-	if beforeExists != currentExists || !reflect.DeepEqual(beforeSource, currentSource) {
-		return errors.New("capability source changed; request a fresh acquisition")
-	}
-	return nil
 }
 
 func loadWorkspaceOverridesTx(ctx context.Context, tx *sql.Tx, defaults ttypes.AppSettings) (ttypes.WorkspaceOverrides, error) {

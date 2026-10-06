@@ -1633,8 +1633,18 @@ button that needs a double click reads as broken.
   source/revision/binding preimage. A boolean approval must never widen into
   changed bytes or another source. Dynamic MCP definitions and execution both
   enforce current effect/scope/fingerprint grants and root/child ceilings.
-- Agent acquisitions and exact MCP access changes publish through the workspace's
-  normal sparse settings registration maps, never a second shadow install table.
+- **Skills and MCP are application-bound by default; workspace binding is an
+  explicit choice.** `capability_activate` publishes user-owned registrations into
+  config.json unless the task or user asks for `scope: "workspace"`, so deleting a
+  workspace never destroys an install. `mcp_request_access` grants inherit the
+  connection's own binding and must never rewrite it. Downloaded/verified artifacts
+  and MCP credentials live under the app data directory, outside the workspace
+  store; a workspace registration is only an overlay row pointing at that
+  app-global path. `types/capability.ApplyRegistration` is the single publication
+  owner shared by the workspace overlay store and the app config owner.
+- Agent acquisitions and exact MCP access changes publish through the normal
+  settings registration maps (config.json for application scope, the sparse
+  workspace overlay for workspace scope), never a second shadow install table.
   Preserve neighboring installs/preferences and fence the exact source, policy,
   selected preimage and workspace lifetime. MCP activation exposes observed
   fingerprints separately from usable tools; separate `mcp_request_access` grants require

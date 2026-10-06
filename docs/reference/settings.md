@@ -123,18 +123,21 @@ updated source revision. Downloads share a bounded immutable artifact cache;
 cancellation detaches one requester. Changed metadata/source/binding fails closed
 and requires another preview. An installation is not execution approval.
 
-Agent acquisitions publish through the same sparse `workspace_settings`
-registration maps as manual Workspace Settings installs. The workspace commits
-only the selected identity against its reviewed preimage, preserving unrelated
-preferences and neighboring installs. There is no second runtime installation
-registry. Workspace registrations appear in Workspace Settings, not Application
-Settings; application registrations are inherited normally. Live agent changes
-refresh retained catalogs/sidebar/home through bounded passive observation without
-reconfiguring transports or reading skill files on the UI thread. Observation does
-not depend on a launcher screen: an active agent may remove that screen while
-Settings or a capability sidebar remains visible. Open inspected MCP tool details
-refresh their exact schema/grant in place, or clear obsolete evidence when a tool
-disappears, without replacing focused filters or editable drafts.
+Agent acquisitions publish through the same sparse registration maps as manual
+installs, but the binding follows the target scope: **Application Settings** by
+default (an install belongs to the user, not the project), or Workspace Settings
+when `capability_activate` is called with `scope: "workspace"`. The writing layer
+commits only the selected identity against its reviewed preimage, preserving
+unrelated preferences and neighboring installs. There is no second runtime
+installation registry. Application registrations are inherited by every
+workspace; workspace registrations appear only in Workspace Settings. Live agent
+changes refresh retained catalogs/sidebar/home through bounded passive
+observation without reconfiguring transports or reading skill files on the UI
+thread. Observation does not depend on a launcher screen: an active agent may
+remove that screen while Settings or a capability sidebar remains visible. Open
+inspected MCP tool details refresh their exact schema/grant in place, or clear
+obsolete evidence when a tool disappears, without replacing focused filters or
+editable drafts.
 
 MCP details include Overview, Connection, Tools, Resources, Prompts, Access and
 Activity. Connect/disconnect, detached Test, refresh, sign-in/out and Save
@@ -149,13 +152,14 @@ Agent `capability_activate` returns observed MCP tool fingerprints and the actua
 usable tool set. A connected server with zero usable tools is not reported as
 ready for tool execution. A separate `mcp_request_access` operation requests exact
 `grants` (original tool name, observed fingerprint, intended effect and resource
-scope). Activation itself accepts only the capability identity, so providers that
-require every schema property cannot confuse skill activation with MCP access.
-New/changed grants require an immutable, explicit approval and become
-workspace-scoped registrations; source trust, automatic acquisition, generic
-Always-read permission and agent selection cannot authorize them. Grants persist
-after restart, but restart itself never reconnects or replays tools. Explicit
-activation verifies current schemas before offering dynamic tools again.
+scope). Activation itself accepts only the capability identity plus an optional
+`scope`, so providers that require every schema property cannot confuse skill
+activation with MCP access. New/changed grants require an immutable, explicit
+approval and are written at the connection's own binding; source trust, automatic
+acquisition, generic Always-read permission and agent selection cannot authorize
+them. Grants persist after restart, but restart itself never reconnects or
+replays tools. Explicit activation verifies current schemas before offering
+dynamic tools again.
 
 OAuth credentials are application-owned and bound to connection ID and endpoint.
 Sign in presents the authorization URL with an explicit Open browser action;

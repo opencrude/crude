@@ -1976,6 +1976,10 @@ func (m *Model) SetSearchQuery(query string) {
 func (m *Model) SetSearchActive(active bool) { m.searchActive = active }
 func (m *Model) SelectedCategory() int       { return m.selected }
 func (m *Model) Pane() int                   { return m.pane }
+
+// Categories exposes the settings pages for tests that assert painted rail
+// content after navigation.
+func (m *Model) Categories() []Category { return m.categories }
 func (m *Model) Scope() types.SettingsScope {
 	if m == nil || m.scope == "" {
 		return types.SettingsScopeApplication

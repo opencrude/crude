@@ -189,8 +189,11 @@ func TestResponsesVerboseSummaryPromotesForRootAndChildWithoutReclassification(t
 					}
 					app.handleAgentEvent(types.AgentEventMsg{AgentID: owner, Type: "turn_started", Data: types.TurnIdentity{Generation: 2, ProviderID: "another-wire", AccountID: "new-account", ModelID: "new-model"}})
 					app.handleAgentEvent(types.AgentEventMsg{AgentID: owner, Type: "thinking", Data: reasoning.Delta{Text: "Short next block", Kind: reasoning.Summary, BlockID: "new-block"}})
-					if state.ThinkingPaneID != "" || app.AgentActivity(owner).Thinking != "Short next block" {
-						t.Fatal("old long thought forced the new connection's short thought into a pane")
+					// The session stays latched after it promoted one block, so a
+					// later short thought opens in its own pane instead of restarting
+					// inline. Only a settings change clears that choice.
+					if state.ThinkingPaneID == "" {
+						t.Fatal("session latch did not carry into the next turn")
 					}
 				})
 			}
@@ -212,14 +215,10 @@ func TestChildMeasuredRawReasoningPromotesAfterUsageArrives(t *testing.T) {
 		Text: strings.Repeat("unlabelled child trace.\n", 25), Kind: reasoning.Provisional,
 	}})
 	child := app.AgentMgr.Get("child")
-	if child == nil || child.State.ThinkingPaneID != "" {
-		t.Fatal("unclassified trace was promoted before provider evidence")
-	}
-	app.handleAgentEvent(types.AgentEventMsg{AgentID: "child", Type: "reasoning_classified", Data: reasoning.InferredRaw})
-	if child.State.ThinkingPaneID == "" {
-		t.Fatal("measured raw trace was left in the status strip")
+	if child == nil || child.State.ThinkingPaneID == "" {
+		t.Fatal("child trace did not promote through the shared overflow rule")
 	}
 	if pane := app.PaneMgr.Get(child.State.ThinkingPaneID); pane == nil || !strings.Contains(pane.Messages.Messages()[0].Content, "unlabelled child trace") {
-		t.Fatal("measured child trace was lost during promotion")
+		t.Fatal("child trace was lost during promotion")
 	}
 }

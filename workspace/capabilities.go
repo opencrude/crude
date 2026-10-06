@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -41,10 +42,21 @@ func (workspace *Workspace) ensureCapabilities(ctx context.Context) error {
 	if workspace.WorkspaceDB == nil {
 		return errors.New("workspace persistence is unavailable")
 	}
-	cache := filepath.Join(workspace.homeDir, buildinfo.DataDir(), "capabilities", "artifacts")
-	if workspace.homeDir == "" {
-		cache = filepath.Join(workspace.WorkspaceDir, "artifacts")
+	// Downloaded/verified artifacts and MCP credentials are application-owned:
+	// they live under the app data directory so that deleting a workspace, which
+	// moves ~/.crude/workspaces/<hash> to recovery storage, can never destroy a
+	// capability the user installed. A workspace-scoped registration is only an
+	// overlay row pointing at this app-global path. The project root stays the
+	// service root because it remains the correct base for relative authored
+	// paths and the default stdio working directory.
+	home := workspace.homeDir
+	if home == "" {
+		home, _ = os.UserHomeDir()
 	}
+	if home == "" {
+		return errors.New("application capability storage is unavailable")
+	}
+	cache := filepath.Join(home, buildinfo.DataDir(), "capabilities", "artifacts")
 	service, err := capability.New(workspace.RootPath, cache, workspace.WorkspaceDB.DB)
 	if err != nil {
 		return err

@@ -9,7 +9,7 @@ import (
 func TestCapabilityToolGuidanceExplainsDiscoveryAndDurableUse(t *testing.T) {
 	expected := map[string][]string{
 		"capability_search":   {"short name or distinctive keywords", "Omit kind", "descriptors, not loaded instructions", "exact ID unchanged", "Discovery is not an access grant"},
-		"capability_activate": {"not a display name or directory path", "durable Workspace Settings", "bundled files resolve from that path", "explicitly activate the saved MCP connection", "resume itself is passive", "mcp_request_access"},
+		"capability_activate": {"not a display name or directory path", "owned by the user (application scope) by default", "scope \"workspace\"", "deleting that workspace then removes the binding", "bundled files resolve from that path", "explicitly activate the saved MCP connection", "resume itself is passive", "mcp_request_access"},
 	}
 	for _, tool := range CapabilityTools {
 		phrases, exists := expected[tool.Function.Name]
@@ -44,7 +44,10 @@ func TestCapabilityActivationAndAccessHaveDisjointRequiredSchemas(t *testing.T) 
 		}
 		found[name] = true
 		if name == "capability_activate" {
-			if len(schema.Properties) != 1 || schema.Properties["id"] == nil ||
+			// The binding is an optional explicit choice; a provider requiring
+			// all properties must not be able to force a workspace binding or
+			// MCP grant data into skill activation.
+			if len(schema.Properties) != 2 || schema.Properties["id"] == nil || schema.Properties["scope"] == nil ||
 				len(schema.Required) != 1 || schema.Required[0] != "id" {
 				t.Fatal("a provider requiring all properties could force MCP grant data into skill activation")
 			}

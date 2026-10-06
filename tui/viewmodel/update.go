@@ -1045,6 +1045,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 				}
 			}
 			m.closeProjectionPanel(projection, sessionSettingsPanelID)
+			m.clearThinkingOverflowLatch(session)
 			m.Feedback.NotifyInfo("settings saved")
 		}
 	case sessionsettings.CancelMsg:
@@ -1062,6 +1063,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			m.Feedback.NotifyError("Failed to reset session settings: " + err.Error())
 		} else {
 			m.refreshSessionSettingsProjection(session)
+			m.clearThinkingOverflowLatch(session)
 			m.Feedback.NotifyInfo("Session settings now inherit workspace defaults")
 		}
 		m.closeProjectionPanel(projection, sessionSettingsPanelID)

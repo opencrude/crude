@@ -734,23 +734,13 @@ func (r *Renderer) RemoveActiveThinking() string {
 	return content
 }
 
+// ActiveThinkingLineCount reports the wrapped rows of the active reasoning
+// block's inline form, reusing the same body projection promotion measures.
 func (r *Renderer) ActiveThinkingLineCount(contentWidth int) int {
 	for _, msg := range r.sync.Messages {
 		if msg.Role == types.RoleThinking && msg.ThinkingActive {
-			if msg.ThinkingDisplay.Kind.HasCompactPreview() {
-				if !msg.ThinkingDisplay.Kind.IsSummary() {
-					return 1 // provisional streams still wait for source evidence
-				}
-				// A summary is a wire kind, not a size guarantee. Gate on the
-				// current semantic block so many short updates stay compact,
-				// while gateways forwarding a long trace get a readable pane.
-				start := min(max(0, msg.ThinkingDisplay.Start), len(msg.Content))
-				return len(rendering.WrapText(msg.Content[start:], contentWidth)) + 1
-			}
-			if msg.CachedLines != nil {
-				return len(msg.CachedLines) + 1
-			}
-			return len(rendering.WrapText(msg.Content, contentWidth)) + 1
+			body := InlineThinkingBody(msg.Content, msg.ThinkingDisplay.Start, msg.ThinkingDisplay.Kind.HasCompactPreview())
+			return len(rendering.WrapText(body, max(1, contentWidth)))
 		}
 	}
 	return 0

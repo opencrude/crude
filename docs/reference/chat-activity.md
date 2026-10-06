@@ -196,7 +196,7 @@ geometry change depends on guessing the kind while the request is streaming.
 When reported usage arrives, a strong visible-to-billed reasoning-token gap
 can settle the exact request as `summary_inferred`. Insufficient evidence
 preserves `provisional`; measured near-parity settles that request as
-`raw_inferred` and promotes a long active trace into its own pane. Explicit
+`raw_inferred`. Explicit
 wire-labelled raw/summary events always win. Two independent confirmed groups
 from the same agent/account/provider/model may calibrate later requests on that
 serving connection for either raw or summary. An exceptional single condensed
@@ -207,15 +207,29 @@ derivation is off-UI, scoped to the producing connection, and uses existing
 persisted messages and request records on resume. It is never a model-name
 catalogue, current-request guess, or per-frame transcript scan.
 
+**Promotion to a nested pane is one presentation rule, independent of the wire
+kind.** An active thought opens in its own pane once it has outgrown the inline
+transcript form: the block already exceeds the inline body budget, or its
+observed rows-per-second (measured from its first token, so provider first-token
+latency is excluded) projects past that budget within a bounded horizon. A cold
+or slow start therefore stays inline; a burst — or a trace long enough to
+overflow — gets its pane promptly. `chatprojection.ThinkingOverflowsInline`
+owns the decision and measures the same inline body and width the renderer
+paints, so disclosure and promotion cannot disagree. Once a session has promoted
+one block, every later thought in that session opens in a pane; the latch is
+per session, shared by the main agent and its sub-agents, and a settings change
+clears it. There is no per-role classifier and no size threshold tied to viewport
+height. Wire kind still selects the strip's preview and the tide direction
+(`Reasoning` vs `Thinking`), which does not affect promotion.
+
 Live summaries default to one Markdown-styled line in the fixed activity strip,
 showing the latest semantic block (or its latest paragraph), not the latest
 network packet. While active and collapsed, no empty `Thinking` header occupies
 a transcript row. The strip's chevron/click target and the usual disclosure
 shortcut expand the canonical message in place; collapsing hides it again.
 Earlier text remains in that message, and live/resumed expansion shows the
-complete train. Summary blocks never promote to nested panes. Completed
-summaries join the ordinary activity tree and stop animating. Explicit raw
-reasoning continues to use its pane.
+complete train. Completed
+summaries join the ordinary activity tree and stop animating.
 
 `ui.TextTide` is a paint-only light sweep for *every active strip page*,
 including upload, provider wait, plan progress, provisional thinking and

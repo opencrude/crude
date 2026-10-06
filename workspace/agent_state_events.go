@@ -86,7 +86,7 @@ func (a *AgentState) handleToolCallStreaming(evt AgentEvent, target *Conversatio
 
 	if contentLines == 0 && name == "publish_report" {
 		if rawArgs, _ := origData["args"].(string); rawArgs != "" {
-			if r := extractJSONStringValue(rawArgs, "body"); r != "" {
+			if r := ExtractArg(rawArgs, "body"); r != "" {
 				contentLines = strings.Count(r, "\n") + 1
 			}
 		}
@@ -96,41 +96,41 @@ func (a *AgentState) handleToolCallStreaming(evt AgentEvent, target *Conversatio
 		if rawArgs, _ := origData["args"].(string); rawArgs != "" {
 			switch name {
 			case "write_file", "edit_file", "read_file", "delete_file", "list_directory":
-				if p := extractJSONStringValue(rawArgs, "path"); p != "" {
+				if p := ExtractArg(rawArgs, "path"); p != "" {
 					tgt = p
 				}
 			case "move_file", "copy_file":
-				s := extractJSONStringValue(rawArgs, "source")
-				d := extractJSONStringValue(rawArgs, "destination")
+				s := ExtractArg(rawArgs, "source")
+				d := ExtractArg(rawArgs, "destination")
 				if s != "" && d != "" {
 					tgt = s + " → " + d
 				} else if s != "" {
 					tgt = s
 				}
 			case "exec_command":
-				if c := extractJSONStringValue(rawArgs, "cmd"); c != "" {
+				if c := ExtractArg(rawArgs, "cmd"); c != "" {
 					tgt = c
 				}
 			case "execute_command", "async_execute_command":
-				if c := extractJSONStringValue(rawArgs, "command"); c != "" {
+				if c := ExtractArg(rawArgs, "command"); c != "" {
 					tgt = c
 				}
 			case "web_search", "arxiv_search":
-				if q := extractJSONStringValue(rawArgs, "query"); q != "" {
+				if q := ExtractArg(rawArgs, "query"); q != "" {
 					tgt = fmt.Sprintf("\"%s\"", q)
 				}
 			case "web_fetch":
-				if u := extractJSONStringValue(rawArgs, "url"); u != "" {
+				if u := ExtractArg(rawArgs, "url"); u != "" {
 					tgt = u
 				}
 			case "grep_files":
-				if p := extractJSONStringValue(rawArgs, "pattern"); p != "" {
+				if p := ExtractArg(rawArgs, "pattern"); p != "" {
 					tgt = fmt.Sprintf("\"%s\"", p)
 				}
 			case "publish_report":
-				tgt = extractJSONStringValue(rawArgs, "summary")
+				tgt = ExtractArg(rawArgs, "summary")
 			case "agent_control":
-				tgt = extractJSONStringValue(rawArgs, "agent_id")
+				tgt = ExtractArg(rawArgs, "agent_id")
 			}
 		}
 	}
@@ -187,20 +187,20 @@ func (a *AgentState) handleToolCall(evt AgentEvent, target *Conversation, onStat
 			target.SetToolRound(toolID, internalID, round)
 		}
 		if name == "execute_command" || name == "async_execute_command" {
-			target.SetToolCommand(toolID, internalID, extractJSONStringValue(args, "command"))
+			target.SetToolCommand(toolID, internalID, ExtractArg(args, "command"))
 		}
 		if name == "exec_command" {
-			target.SetToolCommand(toolID, internalID, extractJSONStringValue(args, "cmd"))
+			target.SetToolCommand(toolID, internalID, ExtractArg(args, "cmd"))
 		}
 		switch name {
 		case "multi_tool_use.parallel":
 			target.SetToolInput(toolID, internalID, args, "")
 		case "grep_files":
-			target.SetToolInput(toolID, internalID, extractJSONStringValue(args, "pattern"), extractJSONStringValue(args, "path"))
+			target.SetToolInput(toolID, internalID, ExtractArg(args, "pattern"), ExtractArg(args, "path"))
 		case "web_search", "arxiv_search":
-			target.SetToolInput(toolID, internalID, extractJSONStringValue(args, "query"), "")
+			target.SetToolInput(toolID, internalID, ExtractArg(args, "query"), "")
 		case "web_fetch":
-			target.SetToolInput(toolID, internalID, extractJSONStringValue(args, "url"), "")
+			target.SetToolInput(toolID, internalID, ExtractArg(args, "url"), "")
 		default:
 			if tools.RetainsStructuredToolInput(name) {
 				target.SetToolInput(toolID, internalID, args, "")
@@ -483,56 +483,4 @@ func toInt(v any) int {
 		return int(n)
 	}
 	return 0
-}
-
-func extractJSONStringValue(raw, key string) string {
-	needle := `"` + key + `"`
-	idx := strings.Index(raw, needle)
-	if idx < 0 {
-		return ""
-	}
-	pos := idx + len(needle)
-	for pos < len(raw) && raw[pos] != ':' {
-		if raw[pos] == ',' || raw[pos] == '}' {
-			return ""
-		}
-		pos++
-	}
-	if pos >= len(raw) || raw[pos] != ':' {
-		return ""
-	}
-	pos++
-	for pos < len(raw) && (raw[pos] == ' ' || raw[pos] == '\t') {
-		pos++
-	}
-	if pos >= len(raw) || raw[pos] != '"' {
-		return ""
-	}
-	pos++
-	var b strings.Builder
-	for pos < len(raw) {
-		ch := raw[pos]
-		if ch == '\\' && pos+1 < len(raw) {
-			switch raw[pos+1] {
-			case '"':
-				b.WriteByte('"')
-			case '\\':
-				b.WriteByte('\\')
-			case 'n':
-				b.WriteByte('\n')
-			case 't':
-				b.WriteByte('\t')
-			default:
-				b.WriteByte(raw[pos+1])
-			}
-			pos += 2
-			continue
-		}
-		if ch == '"' {
-			break
-		}
-		b.WriteByte(ch)
-		pos++
-	}
-	return b.String()
 }
