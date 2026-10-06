@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -10,6 +11,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -17,7 +19,6 @@ import (
 
 	"crude/provider"
 	"crude/session"
-	"crude/skills"
 	ttypes "crude/types"
 	captypes "crude/types/capability"
 	"crude/workspace"
@@ -31,7 +32,7 @@ const (
 )
 
 // TestLiveCapabilityWorkflow is deliberately opt-in: it uses the configured
-// main model and proves the complete model-driven skill/MCP workflow rather
+// selected model and proves the complete model-driven skill/MCP workflow rather
 // than substituting a scripted provider.
 func TestLiveCapabilityWorkflow(t *testing.T) {
 	if os.Getenv("CRUDE_LIVE_CAPABILITY_WORKFLOW") != "1" {
@@ -41,6 +42,16 @@ func TestLiveCapabilityWorkflow(t *testing.T) {
 	// Credentials must be loaded from the real user config before the process
 	// home is isolated. They remain in memory and are never copied to evidence.
 	fileConfig := LoadFileConfig()
+	if category := strings.TrimSpace(os.Getenv("CRUDE_LIVE_CAPABILITY_CATEGORY")); category != "" {
+		configured := FileConfigToSession(fileConfig)
+		profile := configured.Agents.Profiles[configured.Agents.ActiveProfile]
+		if _, exists := profile.Categories[category]; !exists {
+			t.Fatalf("live capability category %q is not configured", category)
+		}
+		profile.Categories[session.CategoryDefault] = configured.GetCategoryConfig(category)
+		configured.Agents.Profiles[configured.Agents.ActiveProfile] = profile
+		fileConfig.Agents = &configured.Agents
+	}
 	cfg := FileConfigToSession(fileConfig)
 	main := cfg.GetActiveDefaultCategory()
 	if main.AccountID == "" || main.Model == "" {
@@ -49,6 +60,24 @@ func TestLiveCapabilityWorkflow(t *testing.T) {
 	if _, err := cfg.ProviderForAccount(main.AccountID, main.Model); err != nil {
 		t.Skipf("configured main agent is unavailable: %v", err)
 	}
+	// Explicit test transport selection, never an automatic gateway fallback
+	// or a mutation of the user's account. Some compatible endpoints accept
+	// response IDs but fail the separate stored-context acceptance test.
+	if value := strings.TrimSpace(os.Getenv("CRUDE_LIVE_CAPABILITY_STORE")); value != "" {
+		store, err := strconv.ParseBool(value)
+		if err != nil {
+			t.Fatal("CRUDE_LIVE_CAPABILITY_STORE must be a boolean")
+		}
+		account := provider.CloneAccount(fileConfig.Accounts[main.AccountID])
+		template := provider.ResolveTemplate(account.ProviderID, fileConfig.Providers[account.ProviderID], account.Overrides)
+		if template.Protocol == nil {
+			template.Protocol = &provider.ProtocolSettings{}
+		}
+		template.Protocol.Store = &store
+		account.Overrides.Protocol = template.Protocol
+		fileConfig.Accounts[main.AccountID] = account
+	}
+	t.Logf("live capability model=%s account=%s thinking=%s", main.Model, main.AccountID, main.ThinkingEffort)
 
 	proofDir := liveCapabilityProofDir(t)
 	home := filepath.Join(proofDir, "home")
@@ -62,23 +91,64 @@ func TestLiveCapabilityWorkflow(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 
-	skillDir := filepath.Join(catalog, "live-evidence")
-	if _, err := skills.Create(skillDir, "live-evidence",
-		"Read the bundled file evidence.txt with the native read_file tool. Report its exact marker; do not infer or invent it."); err != nil {
+	nonce := make([]byte, 12)
+	if _, err := rand.Read(nonce); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(skillDir, "evidence.txt"), []byte(liveSkillMarker+"\n"), 0600); err != nil {
+	recordID := "audit-" + hex.EncodeToString(nonce)
+	skillEvidence := liveSkillMarker + "_" + hex.EncodeToString(nonce)
+	mcpEvidence := liveMCPMarker + "_" + hex.EncodeToString(nonce)
+	skillDir := filepath.Join(catalog, "live-evidence")
+	if err := os.MkdirAll(skillDir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	// A real procedure, not Create's unfinished authoring template. Neither
+	// the receipt's identifier nor its verification codes appear in the task.
+	definition := `---
+name: live-evidence
+description: Audit live evidence by checking a bundled receipt and independently served verification data.
+---
+# Live evidence audit
+
+Read the bundled evidence.txt from this procedure's installed directory.
+It contains the record_id and the local verification code. Relative bundled
+paths belong to the installed directory, not the project.
+
+Obtain independent verification for that record from the Live evidence MCP
+integration. Perform a fresh remote lookup for each audit. Report both exact
+verification codes; never invent a record identifier or reuse an old remote code.
+`
+	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte(definition), 0600); err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := json.Marshal(map[string]string{"record_id": recordID, "verification": skillEvidence})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(skillDir, "evidence.txt"), receipt, 0600); err != nil {
 		t.Fatal(err)
 	}
 
 	var sdkCalls, mcpRequests, registryRequests atomic.Int32
+	var remoteRevision atomic.Int32
+	remoteRevision.Store(1)
 	mcpServer := mcp.NewServer(&mcp.Implementation{Name: "Crude live capability fixture", Version: "1"}, nil)
 	mcpServer.AddTool(&mcp.Tool{
-		Name: "lookup", Description: "Read the exact public fixture evidence",
-		InputSchema: map[string]any{"type": "object", "additionalProperties": false},
-	}, func(context.Context, *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		Name: "lookup", Description: "Read current independently served verification for the exact record_id from an audit receipt",
+		InputSchema: map[string]any{
+			"type": "object", "additionalProperties": false,
+			"properties": map[string]any{"record_id": map[string]any{"type": "string"}},
+			"required":   []string{"record_id"},
+		},
+	}, func(_ context.Context, request *mcp.CallToolRequest) (*mcp.CallToolResult, error) {
+		var parameters struct {
+			RecordID string `json:"record_id"`
+		}
+		if json.Unmarshal(request.Params.Arguments, &parameters) != nil || parameters.RecordID != recordID {
+			return &mcp.CallToolResult{IsError: true, Content: []mcp.Content{&mcp.TextContent{Text: "Unknown record: read the exact audit receipt first."}}}, nil
+		}
 		sdkCalls.Add(1)
-		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: liveMCPMarker}}}, nil
+		return &mcp.CallToolResult{Content: []mcp.Content{&mcp.TextContent{Text: fmt.Sprintf("%s_%d", mcpEvidence, remoteRevision.Load())}}}, nil
 	})
 	mcpHandler := mcp.NewStreamableHTTPHandler(
 		func(*http.Request) *mcp.Server { return mcpServer },
@@ -98,7 +168,7 @@ func TestLiveCapabilityWorkflow(t *testing.T) {
 			"servers": []any{map[string]any{
 				"server": map[string]any{
 					"name": registryServerName, "title": "Live evidence MCP", "version": "1.0.0",
-					"description": "Exact local read-only live acceptance fixture",
+					"description": "Read current independently served verification for live evidence audit receipts",
 					"remotes":     []any{map[string]any{"type": "streamable-http", "url": mcpEndpoint.URL}},
 				},
 				"_meta": map[string]any{"io.modelcontextprotocol.registry/official": map[string]any{
@@ -158,8 +228,11 @@ func TestLiveCapabilityWorkflow(t *testing.T) {
 		ws.Close()
 		t.Fatal(err)
 	}
-	ws.AgentMgr.AddOrchestrator(firstOrchestrator.ID,
-		workspace.NewAgentState(firstOrchestrator.ID, workspace.NewConversation(), &appLogger{}))
+	visual := startLiveCapabilityVisual(t, ws, firstOrchestrator.ID, firstSender)
+	if visual == nil {
+		ws.AgentMgr.AddOrchestrator(firstOrchestrator.ID,
+			workspace.NewAgentState(firstOrchestrator.ID, workspace.NewConversation(), &appLogger{}))
+	}
 	if !ws.SetYoloForAgent(firstOrchestrator.ID, true) {
 		ws.Close()
 		t.Fatal("failed to enable isolated read-only YOLO policy")
@@ -167,21 +240,16 @@ func TestLiveCapabilityWorkflow(t *testing.T) {
 
 	expectedSkillID := "live-skill:live-evidence"
 	expectedMCPID := liveRegistryConnectionID(registrySourceID, registryServerName, "remote", mcpEndpoint.URL)
-	firstPrompt := `Complete this exact local acceptance workflow without delegating and without commands or writes:
-1. capability_search kind=skill for "live-evidence", choose the exact matching discovered entry, then capability_activate that returned identity. If approval is requested, wait for it. Follow the activated skill and read its bundled evidence.txt with native read_file.
-2. capability_search kind=mcp for "live evidence", then capability_activate the matching "Live evidence MCP" entry. If activation reports observed tools but no usable tools, call mcp_request_access for that same connection_id with grants [{tool:"lookup", fingerprint:<the exact observed fingerprint>, effect:"read", scope:"fixture evidence only"}], and wait for exact approval.
-3. Call the newly usable MCP lookup tool.
-4. Finish only after reporting both exact markers. Do not use shell, write, edit, acquisition sources other than these fixtures, or any unrelated tool.`
-	if !ws.SubmitAgentInput(firstOrchestrator.ID, provider.PlainInput(firstPrompt)) {
-		ws.Close()
-		t.Fatal("first live capability task was not admitted")
-	}
+	// This is the user's outcome, not a tool-use recipe: no function names,
+	// entry IDs, fingerprints, paths, record identifier or expected codes.
+	firstPrompt := `Audit the live evidence available to this workspace using the live-evidence procedure: obtain its bundled receipt verification and the current independently served verification for the same record. Report both codes exactly, not guesses or placeholders. Leave the required procedure and integration registered for later agents in this workspace. Work read-only, without commands, writes, edits or delegation. Any installation or new access is subject to review.`
+	submitLiveCapabilityInput(t, ws, firstOrchestrator.ID, firstPrompt, visual)
 	firstObserved := waitLiveCapabilityTurn(t, ws, firstOrchestrator.ID, firstSender.events, expectedSkillID, expectedMCPID, true)
-	firstCanonical := liveCanonicalText(ws.BackendSession())
-	if !strings.Contains(firstCanonical, liveSkillMarker) || !strings.Contains(firstCanonical, liveMCPMarker) {
+	firstCanonical := liveLastAnswer(ws.BackendSession())
+	if !strings.Contains(firstCanonical, skillEvidence) || !strings.Contains(firstCanonical, mcpEvidence+"_1") {
 		ws.Close()
 		t.Fatalf("first canonical transcript omitted evidence markers: skill=%t mcp=%t",
-			strings.Contains(firstCanonical, liveSkillMarker), strings.Contains(firstCanonical, liveMCPMarker))
+			strings.Contains(firstCanonical, skillEvidence), strings.Contains(firstCanonical, mcpEvidence+"_1"))
 	}
 	if !firstObserved.skillApproval || !firstObserved.mcpAcquisitionApproval || !firstObserved.mcpAccessApproval {
 		ws.Close()
@@ -196,6 +264,29 @@ func TestLiveCapabilityWorkflow(t *testing.T) {
 		t.Fatal("model did not execute the real MCP SDK lookup tool")
 	}
 	firstSessionID := firstSession.SessionID
+
+	// Remove the acquisition source before later rounds: only the installed,
+	// immutable copy may satisfy the procedure now.
+	if err := os.RemoveAll(catalog); err != nil {
+		t.Fatal(err)
+	}
+	repeatPrompt := `Repeat that audit now. Recheck the receipt and obtain fresh independently served evidence; report both current verification codes. Keep it read-only.`
+	beforeRepeat := sdkCalls.Load()
+	remoteRevision.Store(2)
+	submitLiveCapabilityInput(t, ws, firstOrchestrator.ID, repeatPrompt, visual)
+	repeatObserved := waitLiveCapabilityTurn(t, ws, firstOrchestrator.ID, firstSender.events, expectedSkillID, expectedMCPID, false)
+	requireLiveCapabilityAnswer(t, ws, skillEvidence, mcpEvidence+"_2")
+	if sdkCalls.Load() <= beforeRepeat {
+		t.Fatal("same-agent follow-up reused old remote evidence")
+	}
+	if visual != nil {
+		if err := os.WriteFile(filepath.Join(proofDir, "visual-chat-ready"), []byte("Both composer-submitted rounds completed.\n"), 0600); err != nil {
+			t.Fatal(err)
+		}
+		// Keep the completed, still-owned workspace available for inspection.
+		// The terminal operator closes it with the normal Quit control.
+		visual.Wait()
+	}
 	ws.Close()
 
 	// Reopen the complete workspace and database. Merely taking a snapshot must
@@ -215,7 +306,7 @@ func TestLiveCapabilityWorkflow(t *testing.T) {
 	connectionRegistration, mcpOK := snapshot.Settings.Connections[expectedMCPID]
 	grant, grantOK := connectionRegistration.Grants["lookup"]
 	if !skillOK || !skillRegistration.Managed || !mcpOK || !grantOK ||
-		grant.Effect != captypes.EffectRead || grant.Scope != "fixture evidence only" || grant.Fingerprint == "" {
+		grant.Effect != captypes.EffectRead || grant.Scope != firstObserved.accessScope || grant.Fingerprint == "" {
 		reopened.Close()
 		t.Fatalf("passive reopen lost durable registrations/grant: skill=%+v connection=%+v", skillRegistration, connectionRegistration)
 	}
@@ -224,10 +315,33 @@ func TestLiveCapabilityWorkflow(t *testing.T) {
 		t.Fatal("passive workspace snapshot restarted MCP or replayed a tool")
 	}
 
+	// Resume the original session passively, then explicitly continue it. The
+	// source is gone, so a replay/reacquisition cannot hide lost durability.
 	registryBeforeSecond := registryRequests.Load()
-	if err := os.RemoveAll(catalog); err != nil {
-		reopened.Close()
+	if _, err := reopened.Bootstrap(cfg, home, firstSessionID); err != nil {
 		t.Fatal(err)
+	}
+	if sdkCalls.Load() != passiveSDK || mcpRequests.Load() != passiveHTTP {
+		t.Fatal("passive session resume reconnected MCP or replayed a tool")
+	}
+	resumedSender := &liveCapabilitySender{events: make(chan liveCapabilityEvent, 256)}
+	resumedOrchestrator, err := reopened.StartOrchestrator(resumedSender)
+	if err != nil {
+		t.Fatal(err)
+	}
+	reopened.AgentMgr.AddOrchestrator(resumedOrchestrator.ID,
+		workspace.NewAgentState(resumedOrchestrator.ID, workspace.NewConversation(), &appLogger{}))
+	if !reopened.SetYoloForAgent(resumedOrchestrator.ID, true) {
+		t.Fatal("failed to enable resumed read-only policy")
+	}
+	remoteRevision.Store(3)
+	if !reopened.SubmitAgentInput(resumedOrchestrator.ID, provider.PlainInput(repeatPrompt)) {
+		t.Fatal("explicit resumed follow-up was not admitted")
+	}
+	resumedObserved := waitLiveCapabilityTurn(t, reopened, resumedOrchestrator.ID, resumedSender.events, expectedSkillID, expectedMCPID, false)
+	requireLiveCapabilityAnswer(t, reopened, skillEvidence, mcpEvidence+"_3")
+	if sdkCalls.Load() <= passiveSDK {
+		t.Fatal("resumed agent did not use fresh remote evidence")
 	}
 	secondSession, err := reopened.Bootstrap(cfg, home, "")
 	if err != nil {
@@ -246,23 +360,19 @@ func TestLiveCapabilityWorkflow(t *testing.T) {
 		reopened.Close()
 		t.Fatal("failed to enable second isolated read-only YOLO policy")
 	}
-	secondPrompt := fmt.Sprintf(`Use the already installed durable capabilities only; do not search or reacquire.
-Activate skill %q, read its installed bundled evidence.txt with native read_file, activate MCP connection %q using its existing durable grant, call its usable lookup tool, and report both exact markers. Do not delegate, run commands, write, or edit.`, expectedSkillID, expectedMCPID)
-	if !reopened.SubmitAgentInput(secondOrchestrator.ID, provider.PlainInput(secondPrompt)) {
+	remoteRevision.Store(4)
+	beforeNewAgent := sdkCalls.Load()
+	if !reopened.SubmitAgentInput(secondOrchestrator.ID, provider.PlainInput(firstPrompt)) {
 		reopened.Close()
 		t.Fatal("second durable capability task was not admitted")
 	}
-	waitLiveCapabilityTurn(t, reopened, secondOrchestrator.ID, secondSender.events, expectedSkillID, expectedMCPID, false)
-	secondCanonical := liveCanonicalText(reopened.BackendSession())
-	if !strings.Contains(secondCanonical, liveSkillMarker) || !strings.Contains(secondCanonical, liveMCPMarker) {
-		reopened.Close()
-		t.Fatal("second agent did not use both durable capabilities")
-	}
+	secondObserved := waitLiveCapabilityTurn(t, reopened, secondOrchestrator.ID, secondSender.events, expectedSkillID, expectedMCPID, false)
+	requireLiveCapabilityAnswer(t, reopened, skillEvidence, mcpEvidence+"_4")
 	if registryRequests.Load() != registryBeforeSecond {
 		reopened.Close()
 		t.Fatal("second task reacquired or rediscovered the MCP registry entry")
 	}
-	if sdkCalls.Load() < 2 {
+	if sdkCalls.Load() <= beforeNewAgent {
 		reopened.Close()
 		t.Fatalf("second task did not call the durable MCP tool: calls=%d", sdkCalls.Load())
 	}
@@ -270,11 +380,15 @@ Activate skill %q, read its installed bundled evidence.txt with native read_file
 	reopened.Close()
 
 	summary := map[string]any{
-		"first_session_id": firstSessionID, "second_session_id": secondSessionID,
+		"model": main.Model, "thinking": main.ThinkingEffort,
+		"response_store_override": os.Getenv("CRUDE_LIVE_CAPABILITY_STORE"),
+		"first_session_id":        firstSessionID, "second_session_id": secondSessionID,
 		"skill_id": expectedSkillID, "mcp_connection_id": expectedMCPID,
 		"skill_marker_observed": true, "mcp_marker_observed": true,
 		"durable_skill": true, "durable_read_grant": true,
-		"sdk_lookup_calls": sdkCalls.Load(),
+		"sdk_lookup_calls":     sdkCalls.Load(),
+		"same_agent_follow_up": true, "passive_resume": true, "resumed_follow_up": true,
+		"first_turn": firstObserved, "same_agent_turn": repeatObserved, "resumed_turn": resumedObserved, "new_agent_turn": secondObserved,
 	}
 	encoded, err := json.MarshalIndent(summary, "", "  ")
 	if err != nil {
@@ -294,15 +408,22 @@ type liveCapabilityEvent struct {
 }
 
 type liveCapabilitySender struct {
-	events chan liveCapabilityEvent
+	events  chan liveCapabilityEvent
+	forward session.EventSender
 }
 
 func (s *liveCapabilitySender) SendAgentEvent(typ string, data any) {
 	s.events <- liveCapabilityEvent{typ: typ, data: data}
+	if s.forward != nil {
+		s.forward.SendAgentEvent(typ, data)
+	}
 }
 
 func (s *liveCapabilitySender) SendAgentEventWithID(typ string, data any, agentID string) {
 	s.events <- liveCapabilityEvent{typ: typ, data: data, agentID: agentID}
+	if s.forward != nil {
+		s.forward.SendAgentEventWithID(typ, data, agentID)
+	}
 }
 
 type liveCapabilityObserved struct {
@@ -312,6 +433,10 @@ type liveCapabilityObserved struct {
 	skillSearch            bool
 	mcpSearch              bool
 	nativeSkillRead        bool
+	accessScope            string
+	Tools                  []string
+	ToolErrors             []string
+	Duration               time.Duration
 }
 
 func waitLiveCapabilityTurn(t *testing.T, ws *workspace.Workspace, agentID string, events <-chan liveCapabilityEvent, skillID, mcpID string, approve bool) liveCapabilityObserved {
@@ -319,6 +444,8 @@ func waitLiveCapabilityTurn(t *testing.T, ws *workspace.Workspace, agentID strin
 	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
 	defer cancel()
 	var observed liveCapabilityObserved
+	started := time.Now()
+	var requestedGrants []captypes.AccessRequest
 	for {
 		select {
 		case <-ctx.Done():
@@ -332,21 +459,42 @@ func waitLiveCapabilityTurn(t *testing.T, ws *workspace.Workspace, agentID strin
 				data, _ := event.data.(map[string]any)
 				name, _ := data["name"].(string)
 				args, _ := data["args"].(string)
-				if name == "capability_search" {
+				t.Logf("live capability tool: %s", name)
+				observed.Tools = append(observed.Tools, name)
+				if name == "mcp_request_access" {
 					var parameters struct {
-						Kind string `json:"kind"`
+						ConnectionID string                   `json:"connection_id"`
+						Grants       []captypes.AccessRequest `json:"grants"`
 					}
-					if json.Unmarshal([]byte(args), &parameters) == nil {
-						observed.skillSearch = observed.skillSearch || parameters.Kind == string(captypes.KindSkill)
-						observed.mcpSearch = observed.mcpSearch || parameters.Kind == string(captypes.KindMCP)
+					if json.Unmarshal([]byte(args), &parameters) == nil && parameters.ConnectionID == mcpID {
+						requestedGrants = parameters.Grants
 					}
 				}
 			case "tool_result":
 				data, _ := event.data.(map[string]any)
 				name, _ := data["name"].(string)
 				result, _ := data["result"].(string)
+				if name == "capability_search" {
+					// kind is optional: a legitimate untyped discovery can
+					// return both kinds. Assert the delivered identities.
+					var entries []captypes.Entry
+					if json.Unmarshal([]byte(result), &entries) != nil {
+						var partial captypes.SearchResult
+						if json.Unmarshal([]byte(result), &partial) == nil {
+							entries = partial.Entries
+						}
+					}
+					for _, entry := range entries {
+						observed.skillSearch = observed.skillSearch || entry.ID == skillID && entry.Kind == captypes.KindSkill
+						observed.mcpSearch = observed.mcpSearch || entry.ID == mcpID && entry.Kind == captypes.KindMCP
+					}
+				}
 				observed.nativeSkillRead = observed.nativeSkillRead ||
 					name == "read_file" && strings.Contains(result, liveSkillMarker)
+				if data["error"] == "true" {
+					observed.ToolErrors = append(observed.ToolErrors, name+": "+result)
+					t.Logf("live capability tool error: %s: %.400s", name, result)
+				}
 			case "blocking":
 				data, ok := event.data.(map[string]string)
 				if !ok {
@@ -359,19 +507,34 @@ func waitLiveCapabilityTurn(t *testing.T, ws *workspace.Workspace, agentID strin
 					observed.skillApproval, allowed = true, true
 				case target == mcpID && strings.Contains(reason, "Source Live local MCP registry fixture"):
 					observed.mcpAcquisitionApproval, allowed = true, true
-				case target == mcpID && strings.Contains(reason, `"tool":"lookup"`) &&
-					strings.Contains(reason, `"effect":"read"`) &&
-					strings.Contains(reason, `"scope":"fixture evidence only"`):
+				case target == mcpID && data["tool"] == "mcp_request_access" &&
+					len(requestedGrants) == 1 && requestedGrants[0].Tool == "lookup" &&
+					requestedGrants[0].Effect == captypes.EffectRead &&
+					requestedGrants[0].Fingerprint != "" && requestedGrants[0].Scope != "":
+					// This fixture exposes exactly one read-only record. Review
+					// the exact immutable operation, not a coached scope label.
 					observed.mcpAccessApproval, allowed = true, true
+					observed.accessScope = requestedGrants[0].Scope
 				}
 				if !approve || !allowed {
 					_ = ws.ResolveConfirmation(agentID, blockID, "deny")
 					t.Fatalf("refused unexpected capability approval: target=%q reason=%q", target, reason)
 				}
+				if os.Getenv("CRUDE_VISUAL_CAPABILITIES") == "1" {
+					// Give the dedicated capture workflow time to inspect the
+					// real owner-scoped approval surface before resolving it.
+					select {
+					case <-ctx.Done():
+						t.Fatal(ctx.Err())
+					case <-time.After(3 * time.Second):
+					}
+				}
 				if !ws.ResolveConfirmation(agentID, blockID, "allow") {
 					t.Fatalf("could not resolve approved capability request %q", blockID)
 				}
+				t.Logf("approved exact capability request: %s", target)
 			case "done":
+				observed.Duration = time.Since(started)
 				return observed
 			case "error":
 				t.Fatalf("live capability agent error: %v", event.data)
@@ -399,16 +562,25 @@ func disableLiveMultiAgent(cfg *session.Config) {
 	cfg.Memory.Consolidation = "off"
 }
 
-func liveCanonicalText(backend *session.Session) string {
+func liveLastAnswer(backend *session.Session) string {
 	if backend == nil {
 		return ""
 	}
-	var text strings.Builder
+	var text string
 	for _, message := range backend.MessagesWithMeta() {
-		text.WriteString(message.Msg.Content.String())
-		text.WriteByte('\n')
+		if message.Msg.Role == "assistant" && len(message.Msg.ToolCalls) == 0 && message.Msg.Content.String() != "" {
+			text = message.Msg.Content.String()
+		}
 	}
-	return text.String()
+	return text
+}
+
+func requireLiveCapabilityAnswer(t *testing.T, ws *workspace.Workspace, skillEvidence, mcpEvidence string) {
+	t.Helper()
+	answer := liveLastAnswer(ws.BackendSession())
+	if !strings.Contains(answer, skillEvidence) || !strings.Contains(answer, mcpEvidence) {
+		t.Fatalf("terminal answer did not report both current verification codes: %s", answer)
+	}
 }
 
 func liveRegistryConnectionID(sourceID, serverName, variant, identity string) string {

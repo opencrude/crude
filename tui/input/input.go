@@ -6,7 +6,6 @@ import (
 
 	"crude/history"
 	"crude/sessiondb"
-	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -94,6 +93,9 @@ type Model struct {
 	histDraft, histPrefix string
 	historyGeneration     uint64
 	historyLoading        bool
+	draftEpoch            uint64
+	pasteSequence         uint64
+	pendingPastes         map[uint64]bool
 	attachmentOffset      int
 	promptReferenceIDs    map[string]bool
 	histDraftReferenceIDs []string
@@ -292,10 +294,7 @@ func (m *Model) SetState(thinking, blocking bool) {
 
 func (m *Model) SetWidth(w int) {
 	m.width = w
-	m.textWidth = w - m.theme.Spacing.PadLR*2 - 2
-	if m.textWidth < 1 {
-		m.textWidth = 1
-	}
+	m.textWidth = m.textWidthFor(w)
 	m.input.SetTextWidth(m.textWidth)
 }
 
@@ -318,6 +317,7 @@ func (m *Model) SetInput(s string) {
 }
 
 func (m *Model) ClearInput() {
+	m.invalidatePendingPastes()
 	m.promptReferenceIDs = nil
 	m.historyGeneration++
 	m.historyLoading = false
@@ -341,11 +341,7 @@ func (m Model) Height() int {
 }
 
 func (m Model) InputTextWidth() int {
-	w := m.width - m.theme.Spacing.PadLR*2 - 2
-	if w < 1 {
-		w = 1
-	}
-	return w
+	return m.textWidthFor(m.width)
 }
 
 // textAreaY returns the shell-local Y of the TextArea's first text row:
@@ -369,44 +365,11 @@ func (m Model) MouseToInputPos(mouseX, mouseY int) (runeIdx int, ok bool) {
 		return -1, false
 	}
 
-	textW := m.textWidth
-	if textW < 1 {
-		textW = m.width - 5
-		if textW < 1 {
-			textW = 1
-		}
+	if bounds := m.input.Bounds(); bounds.H > 0 && relY >= bounds.H {
+		return -1, false
 	}
-
-	lines := m.input.Lines()
-	visIdx := 0
-	for li, logLine := range lines {
-		segments := rendering.WordWrap(string(logLine), textW)
-		for si, seg := range segments {
-			if visIdx == relY {
-				// Text starts after theme PadLR plus any configured
-				// TextArea prompt prefix (chat input has none).
-				col := mouseX - m.theme.Spacing.PadLR - m.input.PromptPrefixWidth()
-				if col < 0 {
-					col = 0
-				}
-				segW := rendering.VisibleWidth(seg)
-				if col > segW {
-					col = segW
-				}
-
-				pos := 0
-				for i := 0; i < li; i++ {
-					pos += len(lines[i]) + 1
-				}
-				segRunes := []rune(seg)
-				segRuneIdx := rendering.ColToRuneIdx(segRunes, col)
-				pos += rendering.FindSegmentStart(logLine, textW, si) + segRuneIdx
-				return pos, true
-			}
-			visIdx++
-		}
-	}
-	return -1, false
+	pad, _ := m.inputGeometry(m.width)
+	return m.input.MouseToFlatPos(mouseX-pad, relY), true
 }
 
 // InputSelecting reports a drag or selection in progress: true while the
@@ -514,16 +477,35 @@ func (m Model) ShellHeight(width int) int {
 	return h
 }
 
+// MaxComposerTextRows is a viewport limit, not a content limit. Typed, restored,
+// and small pasted drafts remain complete while growing from one to six rows.
+const MaxComposerTextRows = 6
+
+func (m Model) inputGeometry(width int) (pad, areaWidth int) {
+	width = max(0, width)
+	pad = min(max(0, m.theme.Spacing.PadLR), width/2)
+	return pad, width - 2*pad
+}
+
+func (m Model) textWidthFor(width int) int {
+	_, areaWidth := m.inputGeometry(width)
+	return max(1, areaWidth-m.input.PromptPrefixWidth())
+}
+
 func (m Model) inputVisualHeight(width int) int {
-	tw := width - m.theme.Spacing.PadLR*2 - 2
-	if tw < 1 {
-		tw = 1
+	return min(MaxComposerTextRows, max(1, m.input.VisualLineCount(m.textWidthFor(width))))
+}
+
+// ComposerViewport exposes the visible draft rows for quiet scroll chrome.
+// Geometry and offset remain owned by the same TextArea that paints and hits.
+func (m Model) ComposerViewport() (first, last, total int) {
+	height := m.input.Bounds().H
+	total = m.input.TotalVisualLines()
+	if height <= 0 {
+		return 0, 0, total
 	}
-	h := m.input.VisualLineCount(tw)
-	if h < 1 {
-		h = 1
-	}
-	return h
+	first = m.input.ScrollOffset() + 1
+	return first, min(total, first+height-1), total
 }
 
 func (m Model) showSlashPopup() bool {
@@ -542,26 +524,16 @@ func (m Model) activePromptRefs() []sessiondb.Reference {
 func (m *Model) LayoutShell(width, height int) {
 	m.width = width
 	m.SetWidth(width)
-	pad := m.theme.Spacing.PadLR
-	innerW := width - pad*2
-	if innerW < 1 {
-		innerW = 1
-	}
+	pad, innerW := m.inputGeometry(width)
 	y := 1 // after separator
 	if len(m.activePromptRefs()) > 0 {
 		y++
 	}
-	inputH := m.inputVisualHeight(width)
-	if inputH > height-y {
-		inputH = max(1, height-y)
-	}
+	inputH := min(m.inputVisualHeight(width), max(0, height-y))
 	m.input.Layout(ui.LayoutContext{}, ui.Rect{X: pad, Y: y, W: innerW, H: inputH})
 	if m.showSlashPopup() {
 		slashY := y + inputH
-		slashH := height - slashY
-		if slashH < 1 {
-			slashH = 1
-		}
+		slashH := max(0, height-slashY)
 		if slashH > slashPageSize {
 			slashH = slashPageSize
 		}
@@ -576,7 +548,7 @@ func (m Model) PaintShell(buf *surface.CellBuffer, ox, oy, width, height int, ct
 	}
 	bg := m.tokens.Color(ui.ColorBg)
 	border := m.tokens.Color(ui.ColorBorder)
-	pad := m.theme.Spacing.PadLR
+	pad, innerW := m.inputGeometry(width)
 
 	// Separator row
 	sep := strings.Repeat("─", max(0, width))
@@ -595,10 +567,6 @@ func (m Model) PaintShell(buf *surface.CellBuffer, ox, oy, width, height int, ct
 	remain := height - y
 	if inputH > remain {
 		inputH = remain
-	}
-	innerW := width - pad*2
-	if innerW < 1 {
-		innerW = 1
 	}
 	m.input.Layout(ui.LayoutContext{}, ui.Rect{X: pad, Y: y, W: innerW, H: inputH})
 	m.input.Paint(buf, ox, oy, ui.PaintContext{Focused: ctx.Focused, Frame: m.spinFrame})

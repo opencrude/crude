@@ -415,6 +415,24 @@ highlight.
   right-click; Cut is dispatched through the owning component so models stay in
   sync.
 - Masked controls report `TextSecret()` and refuse every clipboard command.
+- Large composer pastes emit a `PasteAttachmentEvent`; the viewmodel captures
+  its session/agent/draft and stores it in a command. Do not call reference
+  persistence from a text control or silently fall back to raw insertion.
+  Pasted text uses the existing chip geometry and native text-overlay shell;
+  file-backed storage is not a reason to route its click to an external app.
+- Composer growth and paste promotion are independent. `input.Model` requests
+  at most `MaxComposerTextRows` text rows; the shell additionally caps its full
+  height at one third of available content. Measure/paint/mouse mapping share
+  the exact text column and TextArea's scroll offset, not a duplicate wrapper.
+  Ordinary short prose and small lists remain inline; promotion uses the
+  substantial-overflow policy in the interaction matrix. Unchanged TextArea
+  layout preserves explicit scrolling; edits/navigation or viewport changes
+  alone bring the caret back into view.
+- `TextArea` keeps logical rune offsets separate from wrapped display geometry.
+  `WordWrap` omits continuation-leading spaces; a cursor inside that omitted run
+  maps to the next visible segment's column zero, not an invalid source slice.
+  Cursor visibility, wrapped navigation and paint share `cursorSegmentInfo`.
+  Never trim the draft or move the logical cursor to repair this display gap.
 
 ---
 

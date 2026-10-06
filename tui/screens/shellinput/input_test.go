@@ -141,6 +141,26 @@ func TestShellInputSlashPopupIncreasesHeight(t *testing.T) {
 	}
 }
 
+func TestShellInputClippedDraftShowsScrollRangeWithoutReplacingActions(t *testing.T) {
+	model := input.NewModel(theme.DefaultDark())
+	model.SetInput(strings.Repeat("draft line\n", 24) + "LAST-LINE")
+	screen := New(theme.DefaultDark())
+	screen.Bind(&model)
+	buf := screen.PaintTestBuffer(80, 7)
+	header := PlainRow(buf, 0, 80)
+	if !strings.Contains(header, "↑↓ 20–25/25") || !strings.Contains(header, "+ Capability") {
+		t.Fatalf("clipped input lacks quiet scroll/action chrome: %q", header)
+	}
+	if !strings.Contains(bufferPlain(buf), "LAST-LINE") {
+		t.Fatal("clipped input did not paint the caret row")
+	}
+	model.SetInput("short")
+	buf = screen.PaintTestBuffer(80, 2)
+	if strings.Contains(PlainRow(buf, 0, 80), "↑↓") {
+		t.Fatal("short draft kept unnecessary overflow chrome")
+	}
+}
+
 func TestShellInputSlashListUsesShellBackground(t *testing.T) {
 	th := theme.DefaultDark()
 	tokens := ui.NewTokenSet(th)

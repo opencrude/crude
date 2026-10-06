@@ -119,7 +119,11 @@ preferences and neighboring installs. There is no second runtime installation
 registry. Workspace registrations appear in Workspace Settings, not Application
 Settings; application registrations are inherited normally. Live agent changes
 refresh retained catalogs/sidebar/home through bounded passive observation without
-reconfiguring transports or reading skill files on the UI thread.
+reconfiguring transports or reading skill files on the UI thread. Observation does
+not depend on a launcher screen: an active agent may remove that screen while
+Settings or a capability sidebar remains visible. Open inspected MCP tool details
+refresh their exact schema/grant in place, or clear obsolete evidence when a tool
+disappears, without replacing focused filters or editable drafts.
 
 MCP details include Overview, Connection, Tools, Resources, Prompts, Access and
 Activity. Connect/disconnect, detached Test, refresh, sign-in/out and Save

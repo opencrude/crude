@@ -130,19 +130,19 @@ func (service *Service) discoverRemote(ctx context.Context, source captypes.Sour
 		if tree.Truncated {
 			return nil, errors.New("repository tree is incomplete; select a smaller source")
 		}
+		var entries []captypes.Entry
+		byID := make(map[string]Candidate)
 		for _, file := range tree.Entries {
 			if file.Type != "blob" || !strings.HasSuffix(file.Path, "/SKILL.md") || kind == captypes.KindMCP {
 				continue
 			}
 			name := path.Base(path.Dir(file.Path))
-			if query != "" && !strings.Contains(strings.ToLower(file.Path), query) {
-				continue
-			}
 			entry := captypes.Entry{ID: source.ID + ":" + path.Dir(file.Path), Kind: captypes.KindSkill, Name: name, Source: source.ID, Publisher: owner, Version: revision, Origin: source.Scope, Managed: true, State: "not acquired"}
-			candidates = append(candidates, Candidate{Entry: entry, ArchiveURL: "https://codeload.github.com/" + owner + "/" + repository + "/tar.gz/" + revision, Subpath: path.Dir(file.Path)})
-			if len(candidates) >= limit {
-				break
-			}
+			entries = append(entries, entry)
+			byID[entry.ID] = Candidate{Entry: entry, ArchiveURL: "https://codeload.github.com/" + owner + "/" + repository + "/tar.gz/" + revision, Subpath: path.Dir(file.Path)}
+		}
+		for _, entry := range rankCapabilityEntries(entries, newCapabilityQuery(query), limit) {
+			candidates = append(candidates, byID[entry.ID])
 		}
 	case "registry":
 		if kind == captypes.KindSkill {

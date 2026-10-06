@@ -16,8 +16,7 @@ func (w *Workspace) AgentActivity(agentID string) types.AgentActivityView {
 	view.Status.Ref.Kind, view.Status.Ref.ID = types.ResourceAgent, agentID
 	if node.State != nil {
 		view.Recovery = node.State.RecoveryStatus()
-		switch view.Recovery.State {
-		case "recovering", "needs_attention", "interrupted":
+		if !node.State.Cancelling && view.Recovery.CanRetry() {
 			view.Status.Phase, view.Status.NeedsAction = recoveryPhase(view.Recovery)
 			view.Status.Detail, view.Status.RetryAt = view.Recovery.Summary, view.Recovery.RetryAt
 		}

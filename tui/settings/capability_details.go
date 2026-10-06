@@ -592,6 +592,35 @@ func (catalog *capabilityCatalog) syncDetailRows() {
 		}
 	}
 	catalog.browse.Scroll().ScrollTo(stored.offset)
+	if (catalog.detailPage == "tools" || catalog.detailPage == "access") && stored.inspected != "" {
+		form := catalog.forms[catalog.viewKey()]
+		if form == nil || form.Field("schema") == nil {
+			return
+		}
+		body := fmt.Sprintf("Tool %s is no longer observed on this connection. Refresh live discovery before reviewing access; an earlier schema or grant is not current evidence.", stored.inspected)
+		for _, tool := range state.Tools {
+			if tool.Name == stored.inspected {
+				body = capabilityToolDetail(tool)
+				break
+			}
+		}
+		// This is a read-only projection, not a user edit. FormModel.SetValue
+		// deliberately refuses read-only fields.
+		form.Field("schema").Value = ui.StringValue(body)
+		if control := catalog.form.Field("schema"); control != nil {
+			control.Sync()
+		}
+	}
+}
+
+func capabilityToolDetail(tool captypes.Tool) string {
+	var schema any
+	text := string(tool.InputSchema)
+	if json.Unmarshal(tool.InputSchema, &schema) == nil {
+		encoded, _ := json.MarshalIndent(schema, "", "  ")
+		text = string(encoded)
+	}
+	return fmt.Sprintf("Stable name: %s\nOriginal: %s\nDescription: %s\nEffect: %s\nScope: %s\nFingerprint: %s\nEffective: %s\n\n%s", tool.Name, tool.OriginalName, tool.Description, tool.Effect, tool.Scope, tool.Fingerprint, mapDefault(tool.Reason, "Granted; agent role and selection still apply"), text)
 }
 
 func (catalog *capabilityCatalog) inspectItem() {
@@ -603,14 +632,10 @@ func (catalog *capabilityCatalog) inspectItem() {
 	form := catalog.forms[catalog.viewKey()]
 	switch value := row.Payload.(type) {
 	case captypes.Tool:
-		var schema any
-		text := string(value.InputSchema)
-		if json.Unmarshal(value.InputSchema, &schema) == nil {
-			encoded, _ := json.MarshalIndent(schema, "", "  ")
-			text = string(encoded)
-		}
-		body := fmt.Sprintf("Stable name: %s\nOriginal: %s\nDescription: %s\nEffect: %s\nScope: %s\nFingerprint: %s\nEffective: %s\n\n%s", value.Name, value.OriginalName, value.Description, value.Effect, value.Scope, value.Fingerprint, mapDefault(value.Reason, "Granted; agent role and selection still apply"), text)
-		form = formModel(capabilityReadOnly("schema", "Schema and effective access", body, "Annotations do not grant authority. Changed fingerprints require review."))
+		stored := catalog.views[catalog.viewKey()]
+		stored.inspected = value.Name
+		catalog.views[catalog.viewKey()] = stored
+		form = formModel(capabilityReadOnly("schema", "Schema and effective access", capabilityToolDetail(value), "Annotations do not grant authority. Changed fingerprints require review."))
 	case captypes.Resource:
 		form.SetValue("uri", ui.StringValue(value.URI))
 	case captypes.Prompt:

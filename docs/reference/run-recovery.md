@@ -118,7 +118,19 @@ content row, without the old full-width notice rule or exposed error paragraphs.
 Recovering shows a shared-clock blinking red square, a real countdown, a
 clickable **(Retry now)** and ordinary disclosure chevron. Retry now shortens the
 exact owner's current cooldown; timers continue automatically without `/retry`.
-During the next active attempt the row says “retrying” and clears the old deadline.
+The owner's acknowledged replacement attempt clears the old deadline and changes
+the retained row to a quiet, static **Run resumed** boundary. It keeps the complete
+diagnostic behind disclosure without a red square, blink or retry target.
+That deadline-free owner acknowledgement releases the live activity phase:
+subsequent upload, provider wait, reasoning and response events remain authoritative
+through ticks and tab changes. The retained incident must not overwrite them with
+“Recovering”. The previous live attention issue resolves on acknowledgement;
+its notification remains in Notices. Only a cooldown/attention/interruption exposes
+Continue/Retry now, never an already-running replacement attempt. Explicit Stop
+outranks a pending incident while cancellation is acknowledged.
+Resumed is not a successful task finish: its durable checkpoint stays open until
+the supervisor commits completion/cancellation, so passive crash recovery still
+keeps the unfinished work. A subsequent failure updates the same incident.
 Needs attention and interrupted incidents remain static and expose Retry now.
 Recovered/cancelled incidents remove the retry target.
 

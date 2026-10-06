@@ -310,6 +310,12 @@ func (service *Service) Activate(ctx context.Context, actor captypes.RuntimeActo
 	settings := captypes.Clone(service.settings)
 	service.mu.RUnlock()
 	if !exists {
+		service.mu.RLock()
+		_, discovered := service.candidates[id]
+		service.mu.RUnlock()
+		if !discovered {
+			return captypes.Result{}, fmt.Errorf("capability %q is not an installed or discovered exact ID; use capability_search and pass the returned ID unchanged, not its name or path", id)
+		}
 		approved, hasApproval := ctx.Value(captypes.AcquisitionApprovedKey{}).(captypes.AcquisitionPreview)
 		if !manual && settings.Acquisition.Mode == "manual" {
 			return captypes.Result{}, fmt.Errorf("%w: automatic acquisition is disabled; install explicitly in Settings", ErrApprovalRequired)
@@ -502,14 +508,12 @@ func (service *Service) Search(ctx context.Context, query string, kind captypes.
 	snapshot := service.Snapshot()
 	entries := make([]captypes.Entry, 0)
 	for _, entry := range snapshot.Entries {
-		if kind != "" && entry.Kind != kind || !strings.Contains(strings.ToLower(entry.ID+" "+entry.Name+" "+entry.Description+" "+entry.Source), query) {
+		if kind != "" && entry.Kind != kind {
 			continue
 		}
 		entries = append(entries, entry)
-		if len(entries) >= limit {
-			return entries, nil
-		}
 	}
+	entries = rankCapabilityEntries(entries, newCapabilityQuery(query), limit)
 	if !external || len(entries) > 0 {
 		return entries, nil
 	}
@@ -558,6 +562,7 @@ func (service *Service) DiscoverSource(ctx context.Context, query string, kind c
 }
 
 func (service *Service) discover(ctx context.Context, sources map[string]captypes.SourceConfig, query string, kind captypes.Kind, limit int) ([]captypes.Entry, error) {
+	matcher := newCapabilityQuery(query)
 	var groups [][]captypes.Entry
 	var sourceErrors []error
 	ids := make([]string, 0, len(sources))
@@ -611,22 +616,19 @@ func (service *Service) discover(ctx context.Context, sources map[string]captype
 			if err != nil {
 				continue
 			}
-			if !strings.Contains(strings.ToLower(skill.Name+" "+skill.Description), query) {
-				continue
-			}
 			entry := captypes.Entry{ID: sourceID + ":" + skill.Name, Kind: captypes.KindSkill, Name: skill.Name, Description: skill.Description, Source: sourceID, Version: source.Revision, Digest: skill.Digest, Path: skill.Path, Origin: source.Scope, State: "not acquired"}
+			local = append(local, entry)
+		}
+		local = rankCapabilityEntries(local, matcher, limit)
+		if len(local) > 0 {
 			service.mu.Lock()
 			if service.candidates == nil {
 				service.candidates = make(map[string]Candidate)
 			}
-			service.candidates[entry.ID] = Candidate{Entry: entry}
-			service.mu.Unlock()
-			local = append(local, entry)
-			if len(local) >= limit {
-				break
+			for _, entry := range local {
+				service.candidates[entry.ID] = Candidate{Entry: entry}
 			}
-		}
-		if len(local) > 0 {
+			service.mu.Unlock()
 			groups = append(groups, local)
 		}
 	}

@@ -490,6 +490,106 @@ func TestTextArea_SetTextWidthUpdatesWrappedNavigation(t *testing.T) {
 	}
 }
 
+func TestTextArea_UpdateSpaceInsideDiscardedWrapWhitespace(t *testing.T) {
+	ta := NewTextArea("test/area", NewTokenSet(theme.DefaultDark()), true)
+	ta.Layout(LayoutContext{}, Rect{W: 4, H: 2})
+	ta.SetValue("abcd x")
+	ta.SetCursorFlat(4)
+
+	ta.Update(tea.KeyPressMsg{Code: ' ', Text: " "}, false)
+
+	if got := ta.Value(); got != "abcd  x" {
+		t.Fatalf("value=%q want %q", got, "abcd  x")
+	}
+	if got := ta.CursorFlat(); got != 5 {
+		t.Fatalf("cursor=%d want 5", got)
+	}
+	if got := ta.CursorVisualLine(); got != 1 {
+		t.Fatalf("cursor visual line=%d want 1", got)
+	}
+
+	buf := surface.NewCellBuffer(4, 2)
+	ta.cursor.MarkActivity()
+	ta.Paint(buf, 0, 0, PaintContext{Theme: theme.DefaultDark(), Focused: true})
+	if cursor := buf.Get(0, 1); !cursor.Attr.Has(cell.AttrReverse) {
+		t.Fatalf("continuation cursor=%+v want reverse block at row start", cursor)
+	}
+
+	ta.Layout(LayoutContext{}, Rect{W: 6, H: 2})
+	if got := ta.CursorVisualLine(); got != 0 {
+		t.Fatalf("cursor visual line after widen=%d want 0", got)
+	}
+	ta.Layout(LayoutContext{}, Rect{W: 4, H: 2})
+	if got := ta.CursorVisualLine(); got != 1 {
+		t.Fatalf("cursor visual line after shrink=%d want 1", got)
+	}
+
+	ta.Update(tea.KeyPressMsg{Code: tea.KeyBackspace}, false)
+	if got := ta.Value(); got != "abcd x" {
+		t.Fatalf("backspace value=%q want %q", got, "abcd x")
+	}
+	if got := ta.CursorFlat(); got != 4 {
+		t.Fatalf("backspace cursor=%d want 4", got)
+	}
+	if got := ta.CursorVisualLine(); got != 0 {
+		t.Fatalf("backspace cursor visual line=%d want 0", got)
+	}
+
+	ta.Update(tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl}, false)
+	if got := ta.Value(); got != "abcd  x" {
+		t.Fatalf("undo value=%q want %q", got, "abcd  x")
+	}
+	if got := ta.CursorFlat(); got != 5 {
+		t.Fatalf("undo cursor=%d want 5", got)
+	}
+}
+
+func TestTextArea_HandleUnicodeSpaceInsideDiscardedWrapWhitespace(t *testing.T) {
+	ta := NewTextArea("test/area", NewTokenSet(theme.DefaultDark()), true)
+	ta.Layout(LayoutContext{}, Rect{W: 4, H: 2})
+	ta.SetValue("界界 x")
+	ta.SetCursorFlat(2)
+
+	res := ta.Handle(EventContext{Focused: true}, KeyEvent(tea.KeyPressMsg{Code: ' ', Text: " "}))
+
+	if !res.Handled {
+		t.Fatal("space was not handled")
+	}
+	if got := ta.Value(); got != "界界  x" {
+		t.Fatalf("value=%q want %q", got, "界界  x")
+	}
+	if got := ta.CursorFlat(); got != 3 {
+		t.Fatalf("cursor=%d want 3", got)
+	}
+	if got := ta.CursorVisualLine(); got != 1 {
+		t.Fatalf("cursor visual line=%d want 1", got)
+	}
+	buf := surface.NewCellBuffer(4, 2)
+	ta.cursor.MarkActivity()
+	ta.Paint(buf, 0, 0, PaintContext{Theme: theme.DefaultDark(), Focused: true})
+	if cursor := buf.Get(0, 1); !cursor.Attr.Has(cell.AttrReverse) {
+		t.Fatalf("unicode continuation cursor=%+v want reverse block at row start", cursor)
+	}
+}
+
+func TestTextArea_TrailingDiscardedWrapWhitespaceKeepsCursorBounded(t *testing.T) {
+	ta := NewTextArea("test/area", nil, true)
+	ta.Layout(LayoutContext{}, Rect{W: 4, H: 1})
+	ta.SetValue("abcd ")
+
+	ta.Update(tea.KeyPressMsg{Code: ' ', Text: " "}, false)
+
+	if got := ta.Value(); got != "abcd  " {
+		t.Fatalf("value=%q want %q", got, "abcd  ")
+	}
+	if got := ta.CursorFlat(); got != 6 {
+		t.Fatalf("cursor=%d want 6", got)
+	}
+	if got := ta.CursorVisualLine(); got != 0 {
+		t.Fatalf("cursor visual line=%d want 0", got)
+	}
+}
+
 func TestTextArea_LayoutKeepsEndCursorVisible(t *testing.T) {
 	ta := NewTextArea("test/area", NewTokenSet(theme.DefaultDark()), true)
 	ta.SetValue("one\ntwo\nthree")

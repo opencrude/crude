@@ -310,6 +310,7 @@ func TestInputMouseClickUsesHostLocalCoords(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			app := setupChatInputApp(t, tc.w, tc.h, tc.sidebar)
 			app.Input.SetInput("hello world")
+			app.paintShellFrame()
 			r, ok := app.rootHost.ScreenRect(shellinput.ScreenID)
 			if !ok || r.Empty() {
 				t.Fatalf("input screen not mounted: ok=%v rect=%+v", ok, r)
@@ -332,6 +333,7 @@ func TestInputMouseClickUsesHostLocalCoords(t *testing.T) {
 func TestInputMouseDragUsesHostLocalCoords(t *testing.T) {
 	app := setupChatInputApp(t, 80, 24, false)
 	app.Input.SetInput("hello\nworld")
+	app.paintShellFrame()
 	r, ok := app.rootHost.ScreenRect(shellinput.ScreenID)
 	if !ok || r.Empty() {
 		t.Fatalf("input screen not mounted: ok=%v rect=%+v", ok, r)

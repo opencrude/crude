@@ -34,16 +34,19 @@ const (
 )
 
 type clipboardAsyncRequestMsg struct {
-	operation   clipboardAsyncOperation
-	generation  uint64
-	result      <-chan clipboardAsyncResultMsg
-	text        string
-	editor      *editor.Editor
-	session     *workspace.Session
-	findReplace *popup.FindReplaceState
-	textEdit    *ui.TextEdit
-	nativePaste ui.ClipboardPasteTarget
-	overlayID   string
+	operation           clipboardAsyncOperation
+	generation          uint64
+	result              <-chan clipboardAsyncResultMsg
+	text                string
+	editor              *editor.Editor
+	session             *workspace.Session
+	inputEpoch          uint64
+	overlayEpoch        uint64
+	workspaceGeneration uint64
+	findReplace         *popup.FindReplaceState
+	textEdit            *ui.TextEdit
+	nativePaste         ui.ClipboardPasteTarget
+	overlayID           string
 }
 
 type clipboardAsyncResultMsg struct {
@@ -80,6 +83,8 @@ type clipboardAsyncImageStoredMsg struct {
 	ref        sessiondb.Reference
 	imageBytes int
 	err        error
+	inputEpoch uint64
+	generation uint64
 }
 
 type directoryAsyncResultMsg struct {
@@ -183,6 +188,15 @@ func (r clipboardAsyncRequestMsg) key() clipboardAsyncKey {
 }
 
 func (m *App) prepareClipboardAsyncRequest(request clipboardAsyncRequestMsg) clipboardAsyncRequestMsg {
+	request.workspaceGeneration = m.workspaceSwitchGen.Load()
+	if request.session != nil {
+		request.inputEpoch = m.Input.DraftEpoch()
+	}
+	if request.overlayID == string(ui.OverlayTextOverlay) {
+		if screen := m.sessionTextOverlay(); screen != nil {
+			request.overlayEpoch = screen.OpenEpoch()
+		}
+	}
 	state := asyncIOStateFor(m)
 	result := make(chan clipboardAsyncResultMsg, 1)
 	state.mu.Lock()
@@ -336,6 +350,11 @@ func (m *App) applyClipboardAsyncResult(result clipboardAsyncResultMsg) tea.Cmd 
 				return nil
 			}
 		}
+		if request.overlayID == string(ui.OverlayTextOverlay) {
+			if screen := m.sessionTextOverlay(); screen == nil || screen.OpenEpoch() != request.overlayEpoch {
+				return nil
+			}
+		}
 		if result.operationErr != nil {
 			m.setClipboardAsyncError(result.operationErr.Error())
 			return nil
@@ -345,7 +364,7 @@ func (m *App) applyClipboardAsyncResult(result clipboardAsyncResultMsg) tea.Cmd 
 		// The chat input is a shared projection of ActiveSession. If the
 		// session changed while the OS clipboard call was in flight, there is
 		// no safe inactive draft to mutate, so discard the stale result.
-		if m.ActiveSession != request.session {
+		if m.ActiveSession != request.session || m.Input.DraftEpoch() != request.inputEpoch || request.workspaceGeneration != m.workspaceSwitchGen.Load() {
 			return nil
 		}
 		if result.operationErr != nil {
@@ -364,15 +383,20 @@ func (m *App) applyClipboardAsyncResult(result clipboardAsyncResultMsg) tea.Cmd 
 			return m.persistClipboardAsyncImageCmd(request.session, result)
 		}
 		blocking := m.OverlayState != nil && m.OverlayState.IsBlocking()
-		updated, _, _ := m.Input.Update(
+		updated, command, event := m.Input.Update(
 			tea.PasteMsg{Content: result.content},
 			!blocking,
 			blocking,
 		)
 		m.Input = updated
-		if m.Feedback != nil {
+		m.persistComposerDraftIfChanged()
+		if event != nil {
+			return tea.Batch(append([]tea.Cmd{command}, m.handleInputEvent(event)...)...)
+		}
+		if m.Feedback != nil && command == nil {
 			m.Feedback.NotifyInfo("Pasted " + strconv.Itoa(len(result.content)) + " chars into input")
 		}
+		return command
 	}
 	return nil
 }
@@ -446,6 +470,7 @@ func (m *App) persistClipboardAsyncImageCmd(
 		return nil
 	}
 	store := session.RefStore
+	inputEpoch, generation := m.Input.DraftEpoch(), m.workspaceSwitchGen.Load()
 	return func() tea.Msg {
 		ref, err := store.CreateReference(sessiondb.CreateRequest{
 			Kind:    sessiondb.KindPastedImage,
@@ -459,6 +484,8 @@ func (m *App) persistClipboardAsyncImageCmd(
 			ref:        ref,
 			imageBytes: result.imageBytes,
 			err:        err,
+			inputEpoch: inputEpoch,
+			generation: generation,
 		}
 	}
 }
@@ -469,12 +496,16 @@ func (m *App) applyClipboardAsyncImageStored(result clipboardAsyncImageStoredMsg
 		result.session.RefStore != result.store {
 		return
 	}
+	if result.inputEpoch != m.Input.DraftEpoch() || result.generation != m.workspaceSwitchGen.Load() {
+		return
+	}
 	if result.err != nil {
 		m.setClipboardAsyncError("image paste failed: " + result.err.Error())
 		return
 	}
 	m.Input.SetReferenceStore(result.store)
 	m.Input.InsertReference(result.ref)
+	m.persistComposerDraftIfChanged()
 	if m.Feedback != nil {
 		kilobytes := (result.imageBytes + 1023) / 1024
 		m.Feedback.NotifyInfo("Attached clipboard image (" + strconv.Itoa(kilobytes) + " KB)")

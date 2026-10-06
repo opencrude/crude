@@ -17,12 +17,14 @@ import (
 )
 
 type ReferenceStore struct {
-	mu         sync.RWMutex
-	refs       map[string]sessiondb.Reference
-	counter    map[sessiondb.Kind]int
-	sessionID  string
-	sessionDir string
-	db         *sql.DB
+	mu             sync.RWMutex
+	creationMu     sync.Mutex
+	reservedLabels map[string]bool
+	refs           map[string]sessiondb.Reference
+	counter        map[sessiondb.Kind]int
+	sessionID      string
+	sessionDir     string
+	db             *sql.DB
 }
 
 func NewReferenceStore(sessionID, sessionDir string, db *sql.DB) *ReferenceStore {
@@ -36,8 +38,11 @@ func NewReferenceStore(sessionID, sessionDir string, db *sql.DB) *ReferenceStore
 }
 
 func (s *ReferenceStore) CreateReference(req sessiondb.CreateRequest) (sessiondb.Reference, error) {
+	// Serialize label allocation/publication without holding the projection
+	// lock across disk or SQLite. Get/List must stay usable while a paste stores.
+	s.creationMu.Lock()
+	defer s.creationMu.Unlock()
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	if req.Kind == "" {
 		req.Kind = sessiondb.KindPastedText
 	}
@@ -78,6 +83,16 @@ func (s *ReferenceStore) CreateReference(req sessiondb.CreateRequest) (sessiondb
 		Inline:    req.Inline,
 		CreatedAt: time.Now().UnixNano(),
 	}
+	if s.reservedLabels == nil {
+		s.reservedLabels = make(map[string]bool)
+	}
+	s.reservedLabels[label] = true
+	s.mu.Unlock()
+	defer func() {
+		s.mu.Lock()
+		delete(s.reservedLabels, label)
+		s.mu.Unlock()
+	}()
 
 	if ref.Kind == sessiondb.KindPastedTextFile && ref.FilePath == "" {
 		path, err := s.writeReferenceFile(ref.Label, []byte(req.Content), ".txt")
@@ -108,7 +123,9 @@ func (s *ReferenceStore) CreateReference(req sessiondb.CreateRequest) (sessiondb
 			return sessiondb.Reference{}, err
 		}
 	}
+	s.mu.Lock()
 	s.refs[ref.ID] = ref
+	s.mu.Unlock()
 	return ref, nil
 }
 
@@ -200,21 +217,6 @@ func (s *ReferenceStore) ImportReference(old sessiondb.Reference) (sessiondb.Ref
 	return s.CreateReference(sessiondb.CreateRequest{Kind: old.Kind, Title: old.Title, Mime: old.Mime, Content: old.Content, FilePath: path, Inline: old.Inline})
 }
 
-func (s *ReferenceStore) UpdateReferenceContent(id, content string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	ref, ok := s.refs[id]
-	if !ok {
-		return nil
-	}
-	ref.Content = content
-	s.refs[id] = ref
-	if s.db != nil {
-		return sessiondb.UpdatePromptReferenceContent(s.db, id, content)
-	}
-	return nil
-}
-
 func (s *ReferenceStore) DeleteReference(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -242,7 +244,7 @@ func (s *ReferenceStore) RenameReference(id, label string) (string, bool) {
 		return "", false
 	}
 	label = normalizeReferenceLabel(label)
-	if label == "" {
+	if label == "" || s.reservedLabels[label] {
 		return "", false
 	}
 	for otherID, other := range s.refs {
@@ -260,7 +262,7 @@ func (s *ReferenceStore) RenameReference(id, label string) (string, bool) {
 					break
 				}
 			}
-			if !conflict {
+			if !conflict && !s.reservedLabels[candidate] {
 				label = candidate
 				break
 			}
@@ -377,10 +379,8 @@ func defaultReferenceLabel(kind sessiondb.Kind, idx int) string {
 		return fmt.Sprintf("[Tool%d]", idx)
 	case sessiondb.KindMCPContext:
 		return fmt.Sprintf("[MCP Context%d]", idx)
-	case sessiondb.KindPastedText:
+	case sessiondb.KindPastedText, sessiondb.KindPastedTextFile:
 		return fmt.Sprintf("[Pasted Text%d]", idx)
-	case sessiondb.KindPastedTextFile:
-		return fmt.Sprintf("[Pasted Text File%d]", idx)
 	case sessiondb.KindPastedImage:
 		return fmt.Sprintf("[Pasted IMG%d]", idx)
 	case sessiondb.KindSelectedFile:
@@ -392,6 +392,9 @@ func defaultReferenceLabel(kind sessiondb.Kind, idx int) string {
 
 // labelExists checks if any active reference already has this label.
 func (s *ReferenceStore) labelExists(label string) bool {
+	if s.reservedLabels[label] {
+		return true
+	}
 	for _, ref := range s.refs {
 		if ref.Active() && ref.Label == label {
 			return true

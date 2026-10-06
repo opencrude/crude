@@ -109,11 +109,18 @@ download, update or tool replay.
 ## Agent Discovery, Acquisition, And Durable Use
 
 1. `capability_search` honors the requested result limit and returns matching
-   installed entries before querying external sources. A source failure preserves
-   usable discovery results with an attributed warning rather than discarding them.
+   installed entries before querying external sources. Local, installed and pinned
+   repository descriptors use case/punctuation-normalized keyword ranking, with
+   exact names ranked before partial keyword coverage and limits applied afterward.
+   Registry APIs retain their own ranking and fuzzy matches. Use concise names or
+   distinctive keywords, and shorten/rephrase an empty query rather than scanning
+   system directories. A source failure preserves usable discovery results with an
+   attributed warning rather than discarding them.
 2. `capability_activate` acquires an exact discovered identity under the configured
    source/acquisition policy. Successful acquisition publishes into normal
    **Workspace Settings**. It is not promoted into Application Settings.
+   Pass the returned ID unchanged, not a display name or directory path. Reading
+   source files alone does not install a durable registration.
 3. Skill activation returns the installed absolute path, revision, digest and
    source instructions. Bundled relative files resolve from that path; they are
    not files in the project's current directory. Their execution still uses normal
@@ -128,6 +135,13 @@ download, update or tool replay.
    A later explicit activation reconnects and rechecks current tool fingerprints.
    Disable/remove operates on the same authoritative registration, with no hidden
    install record that can resurrect it.
+
+The shared passive observer runs while Settings or a capability sidebar is open,
+even after an active agent removes the launcher screen. It updates the retained
+Settings frame without Refresh/reopen or transport reconfiguration. An inspected
+MCP tool tracks its exact identity separately from table selection; schema/grant
+changes update that same read-only detail, and removal clears obsolete claims.
+Focused filters and editable prompt/grant drafts remain owned by their controls.
 
 Existing development shadow-install data must be manually backed up and aligned
 to workspace settings before using the new current runtime. There is no product
@@ -191,9 +205,30 @@ and remote operations are not presented as working features.
   `tui/viewmodel/capability_visibility_test.go` asserts retained painted catalogs.
 - `app/live_capability_workflow_test.go` is opt-in real-model acceptance
   (`CRUDE_LIVE_CAPABILITY_WORKFLOW=1`) using an isolated project/home, a local
-  standard skill source and a real SDK HTTP MCP fixture. Optional
-  `CRUDE_CAPABILITY_PROOF_DIR` retains a new proof directory. It does not claim
-  that every public package, OAuth vendor or source works.
+  standard skill source and a real SDK HTTP MCP fixture. The task states the
+  desired audit and future reuse, not tool-call steps/IDs/paths/fingerprints.
+  Unpredictable receipt codes and a changed remote code prove actual asset reads
+  and fresh SDK calls. The source is deleted after acquisition; follow-up, passive
+  workspace/session reopen, resumed use and a new agent must reuse the installation
+  and grant without new acquisition approvals or registry requests. Optional
+  `CRUDE_LIVE_CAPABILITY_CATEGORY` selects an explicitly configured model category;
+  `CRUDE_CAPABILITY_PROOF_DIR` retains a new directory under `CRUDE_TEMP_DIR`.
+  Credentials stay in memory.
+- `CRUDE_VISUAL_CAPABILITIES=1` adds the production TUI/message pump to that same
+  live test. The frontend creates the root pane/renderer, and tasks enter through
+  the real composer paste/send path. Chat remains visible; `/skills` and `/mcp`
+  inspect Workspace Settings briefly and Esc restores it. Session `/settings`
+  is not a capability-manager route. A `visual-chat-ready` file marks completed
+  composer rounds. Quit is hierarchical: one Ctrl+Q minimizes the agent, the
+  next exits from home. Captures must finish the test and check its proof summary,
+  not infer success from the screenshot driver's exit code.
+- Explicit `CRUDE_LIVE_CAPABILITY_STORE=false` requests full-history uploads for
+  a connection whose stored Responses continuation fails the separate
+  `TestLiveResponsesStoredContinuation` acceptance. It is an isolated test choice,
+  not an automatic fallback or an edit to the user's account. The tested gateway
+  accepted response IDs but lost inherited context; a goal-only DeepSeek v4.1
+  Flash run then passed with full uploads. This does not establish that gateway
+  continuation works, or that every public package, OAuth vendor or source works.
 - `mcpclient/workflow_test.go` exercises real stdio subprocesses, Streamable HTTP,
   OAuth loopback/headless return, grant isolation, cancellation/retry and unknown
   mutations without replay. Board tests use real durable context admission;

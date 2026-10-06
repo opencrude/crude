@@ -2,18 +2,11 @@ package input
 
 import (
 	"strings"
-	"unicode/utf8"
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/sessiondb"
 	"crude/tui/rendering"
 	"crude/tui/ui"
-)
-
-const (
-	pasteReferenceThreshold = 4 * 1024
-	pasteInlineThreshold    = 16 * 1024
 )
 
 func (m Model) Update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Event) {
@@ -40,15 +33,18 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Eve
 			return updated, cmd, nil
 		}
 	}
+	if paste, ok := msg.(tea.PasteMsg); ok {
+		return m.handlePaste(paste.Content)
+	}
+	if key, ok := msg.(tea.KeyPressMsg); ok && key.Code == tea.KeyEnter && !key.Mod.Contains(tea.ModAlt) && len(m.pendingPastes) > 0 {
+		return m, nil, PastePendingEvent{}
+	}
 
 	if m.slashActive {
 		return m.updateSlash(msg)
 	}
 
 	switch msg := msg.(type) {
-	case tea.PasteMsg:
-		return m.handlePaste(msg.Content)
-
 	case tea.KeyPressMsg:
 		if msg.String() == "ctrl+o" {
 			return m, nil, AttachFilesEvent{}
@@ -73,6 +69,7 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Eve
 			}
 			refIDs := m.ReferencedIDs()
 			m.input.Clear()
+			m.invalidatePendingPastes()
 			m.slashActive = false
 			m.histIdx = -1
 			m.histDraft = ""
@@ -145,34 +142,18 @@ func (m Model) handlePaste(content string) (Model, tea.Cmd, Event) {
 		return m, nil, nil
 	}
 
-	if m.refStore == nil || utf8.RuneCountInString(content) < pasteReferenceThreshold {
+	if !m.promotePastedText(content) {
 		m.input.InsertString(content)
 		m.syncSlashState()
 		return m, nil, nil
 	}
 
-	inline := len(content) <= pasteInlineThreshold
-	kind := sessiondb.KindPastedText
-	title := "Pasted text"
-	if !inline {
-		kind = sessiondb.KindPastedTextFile
-		title = "Pasted text file"
+	m.pasteSequence++
+	if m.pendingPastes == nil {
+		m.pendingPastes = make(map[uint64]bool)
 	}
-	ref, err := m.refStore.CreateReference(sessiondb.CreateRequest{
-		Kind:    kind,
-		Title:   title,
-		Mime:    "text/plain; charset=utf-8",
-		Content: content,
-		Inline:  inline,
-	})
-	if err != nil {
-		m.input.InsertString(content)
-		m.syncSlashState()
-		return m, nil, nil
-	}
-	m.InsertReference(ref)
-	m.syncSlashState()
-	return m, nil, RefSelectEvent{ID: ref.ID}
+	m.pendingPastes[m.pasteSequence] = true
+	return m, nil, PasteAttachmentEvent{ID: m.pasteSequence, Epoch: m.draftEpoch, Content: content}
 }
 
 func (m *Model) deleteReferenceAtCursor(backspace bool) (string, bool) {
@@ -251,6 +232,7 @@ func (m Model) updateSlash(msg tea.Msg) (Model, tea.Cmd, Event) {
 
 	case tea.KeyTab:
 		if item, ok := m.slashList.Selected(); ok {
+			m.invalidatePendingPastes()
 			m.input.SetValue("/" + item.ID + " ")
 		}
 		m.slashActive = false
@@ -263,6 +245,7 @@ func (m Model) updateSlash(msg tea.Msg) (Model, tea.Cmd, Event) {
 			if item, ok := m.slashList.Selected(); ok {
 				cmd := "/" + item.ID
 				m.input.Clear()
+				m.invalidatePendingPastes()
 				m.slashActive = false
 				m.histIdx = -1
 				m.histDraft = ""
@@ -273,6 +256,7 @@ func (m Model) updateSlash(msg tea.Msg) (Model, tea.Cmd, Event) {
 		text := strings.TrimSpace(m.input.Value())
 		if text != "" && strings.HasPrefix(text, "/") {
 			m.input.Clear()
+			m.invalidatePendingPastes()
 			m.slashActive = false
 			m.histIdx = -1
 			m.histDraft = ""
@@ -362,6 +346,9 @@ func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd, Event) {
 // It reports whether the key was consumed.
 func (m Model) applyClipboardChord(key tea.KeyPressMsg) (Model, tea.Cmd, bool) {
 	if res, handled := m.input.HandleClipboardKey(key); handled {
+		if ui.ClipboardChordFor(key) == ui.ClipboardChordCut && m.input.Value() == "" {
+			m.invalidatePendingPastes()
+		}
 		// Cut and clear can rewrite the draft, so chips and the slash popup
 		// are resynced exactly like every other key path.
 		m.applyReferenceRanges()

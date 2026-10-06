@@ -2,6 +2,7 @@
 package shellinput
 
 import (
+	"fmt"
 	"strings"
 
 	"crude/tui/cell"
@@ -104,6 +105,17 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 	ui.FillRect(buf, ox, oy, b, cell.BlankCell(bg))
 	s.model.PaintShell(buf, ox+b.X, oy+b.Y, b.W, b.H, ctx)
 	label := "+ Capability"
+	if first, last, total := s.model.ComposerViewport(); first > 0 && last-first+1 < total {
+		hint := fmt.Sprintf("↑↓ %d–%d/%d", first, last, total)
+		pad := min(s.tokens.PadLR(), b.W/2)
+		available := b.W - 2*pad
+		if b.W >= 24 {
+			available -= rendering.VisibleWidth(label) + 4
+		}
+		if rendering.VisibleWidth(hint) <= available {
+			buf.WriteString(ox+b.X+pad, oy+b.Y, hint, s.tokens.Color(ui.ColorMuted), bg, 0)
+		}
+	}
 	if b.W >= 24 {
 		buf.WriteString(ox+b.X+b.W-rendering.VisibleWidth(label)-1, oy+b.Y, label, s.tokens.Color(ui.ColorMuted), bg, 0)
 	}

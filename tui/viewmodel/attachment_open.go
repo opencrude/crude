@@ -3,6 +3,7 @@ package viewmodel
 import (
 	tea "charm.land/bubbletea/v2"
 	"crude/fileio"
+	"crude/sessiondb"
 	"crude/workspace"
 	"strconv"
 	"strings"
@@ -53,7 +54,7 @@ func (m *App) openAttachment(id string, reveal bool) tea.Cmd {
 	if !ok || !ref.Active() {
 		return nil
 	}
-	if ref.FilePath == "" {
+	if !reveal && (ref.FilePath == "" || ref.Kind == sessiondb.KindPastedTextFile) {
 		m.openReferenceOverlay(id)
 		return nil
 	}

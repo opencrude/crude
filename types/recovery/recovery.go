@@ -28,3 +28,15 @@ type Status struct {
 	Detail     string    `json:"detail"`
 	Action     string    `json:"action"`
 }
+
+// CanRetry reports whether the incident is awaiting an owner action or cooldown.
+// Recovering without a deadline is an acknowledged, active replacement attempt:
+// retain its incident row, but let ordinary request events own live activity.
+// Only the owner's acknowledgement, not the local clock, clears the deadline.
+func (s Status) CanRetry() bool {
+	if s.ID == "" {
+		return false
+	}
+	return s.State == NeedsAttention || s.State == Interrupted ||
+		s.State == Recovering && !s.RetryAt.IsZero()
+}

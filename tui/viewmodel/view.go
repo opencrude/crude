@@ -148,10 +148,9 @@ func (m *App) computeContentLayout() contentLayout {
 	isEditorActive := m.EditorState.ActiveView != "" && m.EditorState.Editor.IsOpen()
 	isReviewActive := m.isGitReviewActive()
 	isLauncherActive := !isReviewActive && m.AgentMgr.VisibleCount() == 0 && m.EditorState.ActiveView == "" && m.launcherScreen != nil
-	// The file picker is a FloatingWindow over the chat, not an input-replacing
-	// mode: hiding the composer while it is open made Ctrl+O look like the
-	// prompt area vanished. Every other overlay mode still owns the full frame.
-	overlayHidesInput := m.OverlayState.IsOverlay() && !m.OverlayState.Is(workspace.ModeFilePicker)
+	// Attachment viewers and file pickers float above the retained draft.
+	// Inspecting an attachment must not make its composer disappear underneath.
+	overlayHidesInput := m.OverlayState.IsOverlay() && !m.OverlayState.Is(workspace.ModeFilePicker) && !m.OverlayState.Is(workspace.ModeTextOverlay)
 	reviewingCompletedAgent := false
 	if node := m.AgentMgr.ActiveNode(); node != nil && node.State != nil {
 		reviewingCompletedAgent = node.State.Completed
@@ -170,6 +169,13 @@ func (m *App) computeContentLayout() contentLayout {
 	agentTabBarVisible := m.tabBarVisible()
 	dockH := m.termDockHeightClamped()
 	bottomChrome := m.chromeBottomRows() + dockH
+	if lay.ShowMainInput {
+		// Composer growth may never take over the conversation. The input
+		// already caps its text at six rows; short grids additionally cap the
+		// whole composer (rule/chips/menus included) to one third of the column.
+		available := max(0, m.height-bottomChrome-m.chromeTopRow())
+		lay.InputLineCount = min(lay.InputLineCount, max(2, available/3))
+	}
 
 	baseNonChat := m.shellTopRow() + lay.InputLineCount
 	if agentTabBarVisible {
