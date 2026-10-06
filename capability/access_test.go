@@ -149,6 +149,37 @@ func TestMCPAccessRejectsChangedFingerprintScopeAndCeilings(t *testing.T) {
 	}
 }
 
+// TestMCPAccessGrantPreservesConnectionBinding is the regression for the grant
+// scope rewrite: approving tool access must not silently move an
+// application-bound connection into the workspace, which used to make it
+// disappear from Application Settings and die with the project.
+func TestMCPAccessGrantPreservesConnectionBinding(t *testing.T) {
+	service, actor, _, _ := accessFixture(t)
+	settings := service.Snapshot().Settings
+	connection := settings.Connections["docs"]
+	connection.Scope = captypes.ScopeApplication
+	settings.Connections["docs"] = connection
+	if err := service.Configure(t.Context(), settings); err != nil {
+		t.Fatal(err)
+	}
+	params := observedAccess(t, service, actor)
+	_, err := service.Execute(t.Context(), actor, captypes.RuntimeSnapshot{}, "mcp_request_access", params)
+	var approval *captypes.AccessApprovalRequired
+	if !errors.As(err, &approval) {
+		t.Fatalf("access was not gated by exact approval: %v", err)
+	}
+	if _, err := service.Execute(approval.CapabilityApprovalContext(t.Context()), actor, captypes.RuntimeSnapshot{}, "mcp_request_access", params); err != nil {
+		t.Fatal(err)
+	}
+	granted := service.Snapshot().Settings.Connections["docs"]
+	if granted.Scope != captypes.ScopeApplication {
+		t.Fatalf("grant rewrote the connection binding to %q", granted.Scope)
+	}
+	if len(granted.Grants) != 1 {
+		t.Fatalf("grant was not persisted: %+v", granted.Grants)
+	}
+}
+
 func TestInstalledSearchUsesLocalStateAndHonorsLimit(t *testing.T) {
 	service, settings, source := capabilityFixture(t)
 	settings.Skills["installed"] = captypes.SkillConfig{ID: "installed", Path: source, Name: "review"}

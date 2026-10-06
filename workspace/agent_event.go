@@ -129,7 +129,10 @@ func SummarizeToolArgs(tool, argsStr string) string {
 }
 
 // ExtractArg reads one argument out of a tool-call payload (JSON object or the
-// presentation-neutral "key: value" summary).
+// presentation-neutral "key: value" summary). It is the sole operand reader for
+// both a live tool event and a hydrated snapshot; do not add a second JSON
+// scanner beside it. A hand-rolled string reader that decoded \" \n \t but not
+// \uXXXX printed "u0026u0026" for a shell "&&" in live command titles.
 func ExtractArg(str, key string) string {
 	return tools.ExtractArg(str, key)
 }

@@ -195,6 +195,33 @@ func TestCollaborationToolTitlesKeepExactAgentAndReportIdentity(t *testing.T) {
 	}
 }
 
+// The painted row is the user-visible acceptance point for the escape leak: a
+// command title must show the operators the user typed. Payloads carry Go's JSON
+// HTML-escaping (\u0026 for &, \u003e for >); a hand-written operand scanner that
+// omitted \uXXXX painted a literal "u0026u0026" where the shell ran "&&".
+func TestCommandTitlesNeverPaintJSONEscapes(t *testing.T) {
+	raw := `{"command":"cd /home/lenovo/ocd/crude \u0026\u0026 golangci-lint run ./x 2\u003e\u00261 | tail -20","timeout_seconds":600}`
+	want := "cd /home/lenovo/ocd/crude && golangci-lint run ./x 2>&1 | tail -20"
+
+	for _, status := range []string{types.ToolStatusStreaming, types.ToolStatusSuccess} {
+		msg := types.ChatMessage{
+			ToolName:    "execute_command",
+			ToolCommand: want,
+			ToolArgs:    SummarizeToolArgs("execute_command", raw),
+			ToolStatus:  status,
+		}
+		title := BuildToolTitle(msg, types.ToolPreviewDone)
+		if title.Operand != want {
+			t.Fatalf("status=%s operand = %q, want %q", status, title.Operand, want)
+		}
+		for _, leak := range []string{"u0026", "u003e", "u003c", `\u00`} {
+			if strings.Contains(title.Text(), leak) {
+				t.Fatalf("status=%s title leaked JSON escape %q: %q", status, leak, title.Text())
+			}
+		}
+	}
+}
+
 func TestToolFailureReasonDoesNotAppendNestedJSONPayload(t *testing.T) {
 	for _, reason := range []string{`{"private":"nested evidence"}`, `Error: {"private":"nested evidence"}`} {
 		msg := types.ChatMessage{ToolName: "update_plan", ToolStatus: types.ToolStatusError,

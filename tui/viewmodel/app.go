@@ -173,23 +173,27 @@ type App struct {
 	sessionProjections *sessionProjectionRegistry
 
 	// App-scoped fields (not on workspace.Workspace)
-	headerScreen            *shellheader.Screen
-	footerScreen            *shellfooter.Screen
-	tabScreen               *shelltabs.Screen
-	sidebarScreen           *shelltree.Screen
-	activityBar             *activitybar.Screen
-	activityList            *activitylist.Screen
-	sourceControl           *sourcecontrol.Screen
-	activityView            activitybar.View
-	termScreens             map[string]*shellterm.Screen
-	termDock                *termdock.Screen
-	termDockHeight          int
-	termDockFocused         bool
-	suppressTermClose       string
-	inputScreen             *shellinput.Screen
-	chatScreen              *shellchat.Screen
-	agentChatScroll         map[string]agentMainChatScrollSnapshot
-	thinkingPaneSequence    uint64
+	headerScreen         *shellheader.Screen
+	footerScreen         *shellfooter.Screen
+	tabScreen            *shelltabs.Screen
+	sidebarScreen        *shelltree.Screen
+	activityBar          *activitybar.Screen
+	activityList         *activitylist.Screen
+	sourceControl        *sourcecontrol.Screen
+	activityView         activitybar.View
+	termScreens          map[string]*shellterm.Screen
+	termDock             *termdock.Screen
+	termDockHeight       int
+	termDockFocused      bool
+	suppressTermClose    string
+	inputScreen          *shellinput.Screen
+	chatScreen           *shellchat.Screen
+	agentChatScroll      map[string]agentMainChatScrollSnapshot
+	thinkingPaneSequence uint64
+	// thinkingLatch records sessions that have already promoted a reasoning
+	// block. Once latched, every later thinking block in that session opens in
+	// its own pane instead of restarting inline. A settings change clears it.
+	thinkingLatch           map[*workspace.Session]bool
 	chatScrollAgent         string
 	chatScrollNeedsRestore  bool
 	editorScreen            *shelleditor.Screen

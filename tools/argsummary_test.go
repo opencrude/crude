@@ -30,6 +30,50 @@ func TestExtractArgReadsBothArgumentEncodings(t *testing.T) {
 	}
 }
 
+// A tool-call payload arrives with Go's JSON HTML-escaping applied, so a shell
+// "&&" is written "\u0026\u0026". Every operand reader must decode escapes through
+// the shared JSON decoder; a hand-written scanner that only knew \" \n \t printed
+// the literal "u0026u0026" in live command titles.
+func TestExtractArgDecodesJSONEscapesAndUnicode(t *testing.T) {
+	cases := []struct {
+		name string
+		args string
+		key  string
+		want string
+	}{
+		{"shell operators", `{"command":"cd /a \u0026\u0026 go test \u003e out.txt","timeout_seconds":60}`, "command", "cd /a && go test > out.txt"},
+		{"redirect and pipe", `{"command":"go build ./... 2\u003e\u00261 | tail -20"}`, "command", "go build ./... 2>&1 | tail -20"},
+		{"multibyte unicode", `{"query":"caf\u00e9 \u2013 na\u00efve"}`, "query", "café – naïve"},
+		{"surrogate pair", `{"query":"\ud83d\ude00 emoji"}`, "query", "😀 emoji"},
+		{"angle brackets", `{"command":"diff \u003c a \u003e b"}`, "command", "diff < a > b"},
+		{"quote and backslash inside value", `{"command":"echo \"hi\" \\ there"}`, "command", `echo "hi" \ there`},
+		{"plain operators stay intact", `{"command":"a && b"}`, "command", "a && b"},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := ExtractArg(c.args, c.key); got != c.want {
+				t.Fatalf("ExtractArg(%q, %q) = %q, want %q", c.args, c.key, got, c.want)
+			}
+		})
+	}
+}
+
+// A stream is observed while its envelope is still open. An unfinished envelope
+// is not a key/value summary, so the operand stays empty rather than being
+// guessed from a partial payload; the completed envelope supplies it. This is the
+// pre-existing contract — the escape fix must not change it.
+func TestExtractArgLeavesAnUnfinishedEnvelopeUnlabelled(t *testing.T) {
+	for _, args := range []string{
+		`{"command":"cd /a \u0026\u0026 go test`,
+		`{"path":"tui/ui/list`,
+		`{"command":"cd /a \u0026\u0026 b 2\u003e\u00261`,
+	} {
+		if got := ExtractArg(args, "command"); got != "" {
+			t.Fatalf("ExtractArg(%q, %q) = %q, want empty for an unfinished envelope", args, "command", got)
+		}
+	}
+}
+
 func TestSummarizeArgsLabelsOperands(t *testing.T) {
 	cases := []struct {
 		name string

@@ -9,6 +9,7 @@ import (
 
 	"crude/fileio"
 	"crude/provider"
+	"crude/tui/chatprojection"
 	ttypes "crude/tui/types"
 	coretypes "crude/types"
 	"crude/workspace"
@@ -362,11 +363,11 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 	m.syncAgentMessages(agentID, evt.Type == "done" || evt.Type == "error")
 	m.syncConversationMessages(thinkingTarget, evt.Type == "done" || evt.Type == "error")
 
-	// Provider usage may settle an unlabelled stream as raw after the last
-	// thinking delta. Give that same active block a pane before tool execution
-	// moves on; promotion itself is a no-op once it already has a pane.
-	if evt.Type == "thinking" || evt.Type == "reasoning_classified" {
-		m.checkThinkingPromotion(agent)
+	// The block's own content, first-token time and the chat width decide
+	// promotion; a later wire classification no longer changes the decision.
+	// Main and sub-agent blocks both enter through this one call.
+	if evt.Type == "thinking" {
+		m.checkThinkingPromotion(agent, thinkingTarget)
 	}
 
 	if hasThinking && agent.ThinkingPaneID != "" {
@@ -494,27 +495,75 @@ func (m *App) getThinkingTarget(agentID string, agent *workspace.AgentState) *wo
 	return sp.Messages
 }
 
-func (m *App) checkThinkingPromotion(agent *workspace.AgentState) {
+// ThinkingOverflowInnerW is the inner width of the chat area the reasoning body
+// is painted in. The renderer paints at this width and ThinkingOverflowsInline
+// measures at the same width, so a promoted block has already overflowed the
+// form it left. computeContentLayout is the one shell-geometry owner; deriving
+// the width there keeps promotion correct even before the first frame is
+// painted. Zero means no readable column exists yet.
+func (m *App) ThinkingOverflowInnerW() int {
+	if m == nil {
+		return 0
+	}
+	return max(0, m.computeContentLayout().InnerW)
+}
+
+// thinkingOverflowLatched reports the session-wide latch: once a session has
+// promoted a reasoning block, every later block in that session opens in its own
+// pane instead of restarting inline. The latch is per session, so main and
+// sub-agent blocks share one policy. It is cleared by a settings change.
+func (m *App) thinkingOverflowLatched() bool {
+	if m == nil || m.ActiveSession == nil {
+		return false
+	}
+	return m.thinkingLatch[m.ActiveSession]
+}
+
+func (m *App) setThinkingOverflowLatched() {
+	if m == nil || m.ActiveSession == nil {
+		return
+	}
+	if m.thinkingLatch == nil {
+		m.thinkingLatch = make(map[*workspace.Session]bool)
+	}
+	m.thinkingLatch[m.ActiveSession] = true
+}
+
+// clearThinkingOverflowLatch resets the burst promotion latch for one session
+// after a settings change, so the next thinking block starts inline again.
+func (m *App) clearThinkingOverflowLatch(session *workspace.Session) {
+	if m == nil || session == nil {
+		return
+	}
+	delete(m.thinkingLatch, session)
+}
+
+// checkThinkingPromotion promotes an active, un-promoted reasoning block when it
+// has outgrown the inline transcript form. Main and sub-agent blocks run through
+// this same function: the owner only selects which chat is the inline target.
+func (m *App) checkThinkingPromotion(agent *workspace.AgentState, target *workspace.Conversation) {
 	if agent == nil || !agent.Thinking || agent.ThinkingPaneID != "" {
 		return
 	}
-
-	chatH := m.ChatAreaHeight
-	threshold := max(chatH/3, 5)
-
-	contentWidth := max(m.width-16, 10)
-	pane := m.PaneMgr.Get(agent.ID)
-	if pane == nil {
+	if target == nil {
 		return
 	}
-	if !m.subPaneProjections.Has(agent.ID) {
+	thought, ok := target.ActiveThinking()
+	if !ok {
 		return
 	}
-	lineCount := m.subPaneProjections.ActiveThinkingLineCount(agent.ID, contentWidth)
-
-	if lineCount > threshold {
-		m.promoteThinkingToPane(agent)
+	innerW := m.ThinkingOverflowInnerW()
+	if innerW <= 0 {
+		return
 	}
+	if !m.thinkingOverflowLatched() && !chatprojection.ThinkingOverflowsInline(
+		thought.Content, thought.ThinkingDisplay.Start, thought.ThinkingDisplay.Kind.HasCompactPreview(),
+		thought.Time, chatprojection.ThinkingOverflowWidth(innerW),
+	) {
+		return
+	}
+	m.promoteThinkingToPane(agent)
+	m.setThinkingOverflowLatched()
 }
 
 func (m *App) promoteThinkingToPane(agent *workspace.AgentState) {

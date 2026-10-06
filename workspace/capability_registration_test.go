@@ -236,12 +236,16 @@ func TestAgentCapabilityActivationPersistsInWorkspaceSettingsWithoutShadowInstal
 		t.Fatalf("search result=%+v", search)
 	}
 	id := "local:review"
-	if _, err := owner.Capabilities.Execute(t.Context(), actor, captypes.RuntimeSnapshot{}, "capability_activate", map[string]any{"id": id}); err != nil {
+	// Explicit workspace binding: the task asked for a project-owned capability.
+	if _, err := owner.Capabilities.Execute(t.Context(), actor, captypes.RuntimeSnapshot{}, "capability_activate", map[string]any{"id": id, "scope": "workspace"}); err != nil {
 		t.Fatal(err)
 	}
 	installed := owner.LoadAppSettings().Capabilities.Skills[id]
 	if installed.ID != id || !installed.Managed || installed.Digest == "" {
 		t.Fatalf("workspace settings missing acquired registration: %+v", installed)
+	}
+	if installed.Scope != captypes.ScopeWorkspace {
+		t.Fatalf("explicit workspace binding lost its scope: %q", installed.Scope)
 	}
 	var shadowTable string
 	err = owner.WorkspaceDB.DB.QueryRow(`SELECT name FROM sqlite_master WHERE type='table' AND name='capability_installs'`).Scan(&shadowTable)
@@ -261,14 +265,14 @@ func TestAgentCapabilityActivationPersistsInWorkspaceSettingsWithoutShadowInstal
 	if _, exists := snapshot.Settings.Skills[id]; !exists {
 		t.Fatal("fresh service did not reopen the workspace registration from settings")
 	}
-	if _, err := owner.Capabilities.Execute(t.Context(), captypes.RuntimeActor{ID: "agent-2", Effects: []captypes.Effect{captypes.EffectRead}}, captypes.RuntimeSnapshot{}, "capability_activate", map[string]any{"id": id}); err != nil {
+	if _, err := owner.Capabilities.Execute(t.Context(), captypes.RuntimeActor{ID: "agent-2", Effects: []captypes.Effect{captypes.EffectRead}}, captypes.RuntimeSnapshot{}, "capability_activate", map[string]any{"id": id, "scope": "workspace"}); err != nil {
 		t.Fatalf("fresh service tried to reacquire removed source bytes: %v", err)
 	}
 
 	if _, _, _, err := owner.CapabilityAction(t.Context(), captypes.Action{Operation: "disable", Kind: captypes.KindSkill, ID: id, Scope: captypes.ScopeWorkspace}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := owner.Capabilities.Execute(t.Context(), actor, captypes.RuntimeSnapshot{}, "capability_activate", map[string]any{"id": id}); err == nil {
+	if _, err := owner.Capabilities.Execute(t.Context(), actor, captypes.RuntimeSnapshot{}, "capability_activate", map[string]any{"id": id, "scope": "workspace"}); err == nil {
 		t.Fatal("disabled registration remained activatable")
 	}
 	if _, _, _, err := owner.CapabilityAction(t.Context(), captypes.Action{Operation: "remove", Kind: captypes.KindSkill, ID: id, Scope: captypes.ScopeWorkspace}); err != nil {

@@ -16,6 +16,7 @@ import (
 	"crude/localhistory"
 	"crude/session"
 	ttypes "crude/types"
+	captypes "crude/types/capability"
 )
 
 // NewSessionResult identifies the orchestrator created by a launcher action.
@@ -174,6 +175,11 @@ type Workspace struct {
 	// OnAppAccountChange persists one application account without writing other
 	// settings drafts. The app layer owns the config file and account manager.
 	OnAppAccountChange func(change ttypes.AccountChange) error
+	// OnAppCapabilityRegistration persists one service-initiated application
+	// capability registration. The app layer owns config.json, so it applies the
+	// shared registration owner under its config lock rather than replacing
+	// sibling registrations with a stale snapshot.
+	OnAppCapabilityRegistration func(change captypes.RegistrationChange) (captypes.Settings, error)
 
 	// ── Shared state (references, not owned)
 	//

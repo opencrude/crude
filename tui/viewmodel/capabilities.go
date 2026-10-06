@@ -208,11 +208,11 @@ func (app *App) openCapabilityManager(view activitybar.View, query, id string) t
 	}
 	window := app.overlayHost.Window(ui.OverlayWorkspaceSettings)
 	if window == nil {
-		scope := types.SettingsScopeWorkspace
-		if app.RootPath == "" {
-			scope = types.SettingsScopeApplication
-		}
-		app.openSettings(scope)
+		// Capabilities are application-owned by default: an install belongs to
+		// the user, not to one project, so removing a workspace cannot destroy
+		// it. The Application/Workspace footer toggle remains the explicit way
+		// to bind an installation to the current workspace.
+		app.openSettings(types.SettingsScopeApplication)
 		window = app.overlayHost.Window(ui.OverlayWorkspaceSettings)
 	}
 	body := app.settingsSurface(window)

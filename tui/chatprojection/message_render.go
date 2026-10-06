@@ -272,6 +272,75 @@ func renderAssistantMessage(msg types.ChatMessage, ctx renderContext, suppressHe
 	return ml
 }
 
+// Inline thinking promotion constants. The inline transcript form is the
+// "Thinking <elapsed>" header plus one wrapped body; once that body would
+// exceed its budget the form overflows and the block belongs in its own pane.
+const (
+	inlineThinkingBodyRows = 5
+	// inlineThinkingWarmUp is the streaming time after the first token before an
+	// extrapolated rate is trusted. It keeps a cold provider start out of the
+	// rate without needing any per-stream state.
+	inlineThinkingWarmUp = 300 * time.Millisecond
+	// inlineThinkingHorizonCap bounds how far the observed rate is projected
+	// ahead, so a slow-but-endless trace is promoted on its own evidence instead
+	// of waiting for a rate that a slow provider will never reach.
+	inlineThinkingHorizonCap = 2 * time.Second
+)
+
+// InlineThinkingBody is the text the inline transcript form renders for a
+// reasoning block: a compact-preview block shows only its latest semantic block,
+// while a full-body block shows the whole trace. Promotion and measurement share
+// this one projection, so the decision always matches what the reader sees.
+func InlineThinkingBody(content string, start int, compactPreview bool) string {
+	if !compactPreview || start <= 0 {
+		return content
+	}
+	if start >= len(content) {
+		return ""
+	}
+	return content[start:]
+}
+
+// ThinkingOverflowsInline reports whether an active reasoning block has
+// outgrown the inline transcript form. It uses only presentation facts — the
+// body the inline form actually renders, its first-token time and the render
+// width — so the main chat and every sub-agent pane share one rule and therefore
+// one promotion policy. It is measured in the renderer's own wrapped rows, so
+// disclosure and promotion can never disagree about what "overflow" means.
+//
+// A block that already exceeds the budget promotes immediately, which covers a
+// trace delivered in one large delta. Otherwise the observed rows/second
+// (measured from the first token, so provider first-token latency is excluded)
+// is projected a bounded horizon ahead: a burst that will overflow within that
+// horizon promotes now, while a slow trace that would take much longer stays
+// inline.
+func ThinkingOverflowsInline(content string, start int, compactPreview bool, started time.Time, contentWidth int) bool {
+	body := InlineThinkingBody(content, start, compactPreview)
+	if strings.TrimSpace(body) == "" {
+		return false
+	}
+	rows := len(rendering.WrapText(body, max(1, contentWidth)))
+	if rows > inlineThinkingBodyRows {
+		return true
+	}
+	if started.IsZero() {
+		return false
+	}
+	span := time.Since(started)
+	if span < inlineThinkingWarmUp {
+		return false
+	}
+	rate := float64(rows) / span.Seconds()
+	return float64(rows)+rate*min(span, inlineThinkingHorizonCap).Seconds() > inlineThinkingBodyRows
+}
+
+// ThinkingOverflowWidth is the inline reasoning body width for a chat inner
+// width. The promoter and the renderer both derive from this one helper, so the
+// width the decision is made at is the width the body is painted at.
+func ThinkingOverflowWidth(innerW int) int {
+	return max(1, innerW-messageBodyChromeWidth)
+}
+
 func renderThinkingMessage(msg types.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {
 	if msg.ThinkingDisplay.Kind.HasCompactPreview() {
 		return renderThinkingSummary(msg, ctx)

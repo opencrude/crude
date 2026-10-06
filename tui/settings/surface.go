@@ -403,6 +403,12 @@ func (s *WorkspaceSettingsSurface) SetModel(model *Model) {
 
 func (s *WorkspaceSettingsSurface) Model() *Model { return s.model }
 
+// RailScrollForTest exposes the category rail's viewport so tests can assert
+// the reader's scroll position across pointer resyncs.
+func (s *WorkspaceSettingsSurface) RailScrollForTest() *ui.ScrollModel {
+	return s.categories.list.Scroll()
+}
+
 // FinishSave applies an asynchronous persistence result only to the exact
 // retained model that emitted the request. Failures keep the draft mounted and
 // editable for retry.
@@ -1540,15 +1546,38 @@ func (s *settingsCategoryList) Handle(ctx ui.EventContext, evt ui.Event) ui.Even
 }
 func (s *settingsCategoryList) Semantics() ui.Semantics       { return s.list.Semantics() }
 func (s *settingsCategoryList) SetTokens(tokens *ui.TokenSet) { s.list.SetTokens(tokens) }
+
+// syncItems reconciles the rail rows with the model. It re-anchors the
+// viewport only when the selected category actually moved — keyboard
+// navigation, a deep link, or a filtered row disappearing.
+//
+// The popup forwards every pointer event its children do not consume through
+// HandleEvent → SetModel → syncModel, so this runs several times while the
+// mouse merely crosses the window. Re-anchoring unconditionally snapped a
+// wheel-scrolled rail back onto the selected category (the reported "sidebar
+// jumps when I scroll then move the mouse or click"). A pointer resync keeps
+// the same selection, so it must leave the reader's viewport alone.
 func (s *settingsCategoryList) syncItems() {
 	if s.owner == nil || s.owner.model == nil {
 		return
 	}
+	previous := -1
+	if current, ok := s.list.Selected(); ok {
+		if index, ok := current.Payload.(int); ok {
+			previous = index
+		}
+	}
 	items := s.owner.model.CategoryItems()
-	s.list.SetItems(items)
+	s.list.SetItemsStable(items)
+	target := s.owner.model.SelectedCategory()
 	for index, item := range items {
-		if selected, ok := item.Payload.(int); ok && selected == s.owner.model.SelectedCategory() {
-			s.list.SelectIndex(index)
+		if selected, ok := item.Payload.(int); ok && selected == target {
+			// Select directly: List.SelectIndex would also re-anchor the
+			// viewport, and choosing a page is not itself a scroll request.
+			s.list.Selection().SetIndex(index)
+			if previous != target {
+				s.list.Scroll().EnsureVisible(index)
+			}
 			break
 		}
 	}

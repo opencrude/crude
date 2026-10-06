@@ -20,6 +20,12 @@ import (
 // "key: value" summary AgentFormatToolArgs produces for events and snapshots.
 // Values in the summary form are quoted when they contain spaces, so a pattern
 // like `func main` survives instead of collapsing to its first token.
+//
+// The JSON branch delegates to encoding/json, which is the only correct decoder
+// for the payload's escape table. A local scanner that handled \" \n \t but not
+// \uXXXX turned a shell "&&" into "u0026u0026" in live command titles, because
+// Go's json.Marshal writes HTML-escaping (\u0026 for &, \u003e for >) into every
+// tool-call payload.
 func ExtractArg(str, key string) string {
 	var object map[string]any
 	if json.Unmarshal([]byte(str), &object) == nil {

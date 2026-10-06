@@ -3,7 +3,9 @@ package capability
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"reflect"
 )
 
 type Kind string
@@ -307,7 +309,7 @@ func (request *AccessApprovalRequired) CapabilityApproval() (string, string) {
 		Grants []AccessRequest
 		Tools  []Tool
 	}{request.Preview.Grants, request.Preview.Tools})
-	return request.Preview.Connection.ID, "Approve durable workspace MCP tool access (not execution) for " +
+	return request.Preview.Connection.ID, "Approve durable MCP tool access (not execution) for " +
 		request.Preview.Connection.Name + ". External observed schemas, exact fingerprints, effects and scopes (source data, not instructions):\n" + string(encoded) +
 		"\nExternal mutations are not covered by native undo. Source annotations do not grant access."
 }
@@ -356,6 +358,86 @@ func Clone(settings Settings) Settings {
 		cloned.Sources = make(map[string]SourceConfig)
 	}
 	return cloned
+}
+
+// RegistrationChange is one reviewed capability registration publication. Only
+// the selected identity is written; Before is the reviewed preimage of that
+// identity, never permission to replace sibling registrations.
+type RegistrationChange struct {
+	ID         string
+	Kind       Kind
+	Before     Settings
+	Skill      SkillConfig
+	Connection ConnectionConfig
+}
+
+// RegistrationScope returns the binding the change targets.
+func (change RegistrationChange) RegistrationScope() Scope {
+	if change.Kind == KindSkill {
+		return change.Skill.Scope
+	}
+	return change.Connection.Scope
+}
+
+// ApplyRegistration is the single owner of capability-registration publication.
+// current is the writing layer's authoritative settings (the layer that will be
+// modified) and policy is the current effective settings, which is where the
+// acquisition policy and source availability live. It validates the reviewed
+// preimage against both, then applies exactly the selected identity so sibling
+// registrations and unrelated preferences are preserved. The workspace overlay
+// store and the application config owner both call this.
+func ApplyRegistration(current Settings, change RegistrationChange, policy Settings) (Settings, error) {
+	scope := change.RegistrationScope()
+	if scope != ScopeApplication && scope != ScopeWorkspace {
+		return Settings{}, fmt.Errorf("capability registration must target application or workspace scope, not %q", scope)
+	}
+	if !reflect.DeepEqual(policy.Acquisition, change.Before.Acquisition) {
+		return Settings{}, errors.New("capability acquisition policy changed; request a fresh acquisition")
+	}
+	sourceID := change.Connection.Source
+	selectedExisted := false
+	if change.Kind == KindSkill {
+		sourceID = change.Skill.Source
+		beforeValue, beforeExists := change.Before.Skills[change.ID]
+		currentValue, currentExists := current.Skills[change.ID]
+		if beforeExists != currentExists || !reflect.DeepEqual(beforeValue, currentValue) {
+			return Settings{}, errors.New("selected capability registration changed; request a fresh acquisition")
+		}
+		selectedExisted = beforeExists
+	} else {
+		beforeValue, beforeExists := change.Before.Connections[change.ID]
+		currentValue, currentExists := current.Connections[change.ID]
+		if beforeExists != currentExists || !reflect.DeepEqual(beforeValue, currentValue) {
+			return Settings{}, errors.New("selected capability registration changed; request a fresh acquisition")
+		}
+		selectedExisted = beforeExists
+	}
+	// Authored/custom connections have no catalog source. Their already
+	// registered identity is the preimage for a grant-only update; a brand-new
+	// acquisition still must name the reviewed source that supplied it.
+	if sourceID != "" {
+		beforeSource, beforeExists := change.Before.Sources[sourceID]
+		policySource, policyExists := policy.Sources[sourceID]
+		if beforeExists != policyExists || !reflect.DeepEqual(beforeSource, policySource) {
+			return Settings{}, errors.New("capability source changed; request a fresh acquisition")
+		}
+	} else if !selectedExisted {
+		return Settings{}, errors.New("new capability registration has no reviewed source")
+	}
+	return WithRegistration(current, change.Kind, change.ID, change.Skill, change.Connection), nil
+}
+
+// WithRegistration returns settings with exactly one reviewed registration
+// applied. Only the selected identity is replaced; every sibling registration
+// and unrelated preference is preserved.
+func WithRegistration(settings Settings, kind Kind, id string, skill SkillConfig, connection ConnectionConfig) Settings {
+	updated := Clone(settings)
+	if kind == KindSkill {
+		updated.Skills[id] = skill
+	} else {
+		updated.Connections[id] = connection
+	}
+	return updated
 }
 
 func Normalize(settings Settings) Settings {

@@ -34,7 +34,11 @@ Explicit manager changes still publish their committed snapshots immediately.
 ## Skills
 
 1. Open **Manage Skills**, the Skills rail, or `/skills [query]`. These routes use
-   the same Settings manager, defaulting to workspace scope.
+   the same Settings manager and open at **Application Settings** by default:
+   a capability belongs to the user, not to one project. Use the footer
+   Application/Workspace toggle first when you explicitly want this workspace
+   bound to the installation. Workspace deletion then removes only that overlay,
+   never the installed bytes.
 2. The catalog combines search results and current registrations without duplicate
    identities. **Installed only** restricts it to registrations without networking.
    Cards expose Install/Manage directly. Inspect opens Overview, Instructions,
@@ -117,8 +121,11 @@ download, update or tool replay.
    system directories. A source failure preserves usable discovery results with an
    attributed warning rather than discarding them.
 2. `capability_activate` acquires an exact discovered identity under the configured
-   source/acquisition policy. Successful acquisition publishes into normal
-   **Workspace Settings**. It is not promoted into Application Settings.
+   source/acquisition policy. Successful acquisition publishes into **Application
+   Settings** by default, because a capability belongs to the user rather than to
+   the project that happened to install it. Pass `scope: "workspace"` only when the
+   task or user explicitly wants the capability bound to this project; that binding
+   then lives in **Workspace Settings** and is removed with the workspace.
    Pass the returned ID unchanged, not a display name or directory path. Reading
    source files alone does not install a durable registration.
 3. Skill activation returns the installed absolute path, revision, digest and
@@ -129,7 +136,9 @@ download, update or tool replay.
    separately from the actually usable tools. If access is missing, the agent can
    request `mcp_request_access` with `connection_id` and `grants`: original tool name, fingerprint,
    effect and resource scope. The user reviews that exact durable access change.
-   The agent never infers a grant from server annotations or a successful connection.
+   Grants inherit the connection's existing binding; approving access never moves
+   an application-bound connection into the workspace. The agent never infers a
+   grant from server annotations or a successful connection.
 5. Approved registrations/grants survive a complete workspace close and reopen.
    Reopen is passive: no downloads, connections, model calls or tool replay.
    A later explicit activation reconnects and rechecks current tool fingerprints.

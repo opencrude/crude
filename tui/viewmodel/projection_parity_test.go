@@ -557,3 +557,55 @@ func assertSameRows(t *testing.T, label string, live, hydrated chatprojection.Me
 		}
 	}
 }
+
+// The escape leak reached the painted transcript through the real agent-event
+// ingress: a provider tool call arrives with Go's JSON HTML-escaping applied
+// (\u0026 for &, \u003e for >), and AgentState.handleToolCall read the command
+// operand with a hand-written scanner that knew \" \n \t but not \uXXXX. The
+// painted row then showed "u0026u0026" where the shell ran "&&".
+//
+// This drives that exact ingress — it does not call the Conversation setters
+// directly, which is why the other parity cases could not observe the defect —
+// and asserts on the painted row text the user actually reads.
+func TestPaintedCommandRowShowsRealOperators(t *testing.T) {
+	const want = "cd /home/lenovo/ocd/crude && golangci-lint run ./x 2>&1 | tail -20"
+
+	// Build the payload the way it actually arrives. Go's json.Marshal applies
+	// HTML-escaping by default, so the "&&" and ">" reach the event as
+	// \u0026\u0026 and \u003e — the exact input that used to leak.
+	payload, err := json.Marshal(map[string]any{"command": want, "timeout_seconds": 600})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(payload), `\u0026\u0026`) {
+		t.Fatalf("fixture is not the HTML-escaped form the provider sends: %s", payload)
+	}
+
+	conv := workspace.NewConversation()
+	state := workspace.NewAgentState("agent", conv, nil)
+	state.HandleEvent(workspace.AgentEvent{Type: "tool_call", Data: map[string]any{
+		"internal_id": "internal-1", "tool_id": "call-1", "name": "execute_command",
+		"args": string(payload),
+	}}, nil, func(string) {}, func(bool, bool, bool) {}, func() {},
+		func(string, string, string, string, string, string, string) {}, func(string) {}, func() {})
+
+	messages, _ := chatMessagesFromConversation(conv)
+	if len(messages) != 1 {
+		t.Fatalf("live messages = %d, want 1", len(messages))
+	}
+	r := newParityRenderer()
+	r.SyncMessages(messages, 1)
+	rows, _, _ := r.ExportMessageRows(200)
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	painted := strings.Join(rows[0].Lines, "\n")
+	if !strings.Contains(painted, want) {
+		t.Fatalf("painted command row is missing %q:\n%s", want, painted)
+	}
+	for _, leak := range []string{"u0026", "u003e", "u003c", `\u00`} {
+		if strings.Contains(painted, leak) {
+			t.Fatalf("painted command row leaked JSON escape %q:\n%s", leak, painted)
+		}
+	}
+}

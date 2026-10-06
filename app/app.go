@@ -34,6 +34,7 @@ import (
 	"crude/sessiondb"
 	"crude/tui"
 	ttypes "crude/types"
+	captypes "crude/types/capability"
 	"crude/workspace"
 )
 
@@ -357,6 +358,51 @@ func (a *App) configureWorkspace(ws *workspace.Workspace) {
 		return nil
 	}
 	ws.SetAppDefaults(FileConfigToAppSettings(a.fc))
+	ws.OnAppCapabilityRegistration = func(change captypes.RegistrationChange) (captypes.Settings, error) {
+		var updated FileConfig
+		// Capture the effective acquisition policy before taking the config
+		// lock: it is a workspace DB read and must not nest under configMu.
+		effective := ws.LoadAppSettings().Capabilities
+		err := a.accounts.Commit(func(_ map[string]provider.Account) (map[string]provider.Account, error) {
+			a.configMu.Lock()
+			defer a.configMu.Unlock()
+			var saveErr error
+			updated, saveErr = updateFileConfig(func(current *FileConfig) error {
+				return mergeCapabilityRegistration(current, change, effective)
+			})
+			if saveErr != nil {
+				return nil, saveErr
+			}
+			a.fc = updated
+			a.persistedAccounts = cloneAccounts(updated.Accounts)
+			return updated.Accounts, nil
+		})
+		if err != nil {
+			return captypes.Settings{}, err
+		}
+		ws.SetAppDefaults(FileConfigToAppSettings(updated))
+		if updated.Capabilities == nil {
+			return captypes.Settings{}, nil
+		}
+		return captypes.Clone(*updated.Capabilities), nil
+	}
+}
+
+// mergeCapabilityRegistration applies one reviewed application capability
+// acquisition to the durable config through the shared registration owner.
+// Only the selected identity is written; unrelated preferences and sibling
+// registrations are preserved, and a stale preimage, source or acquisition
+// policy fails closed.
+func mergeCapabilityRegistration(current *FileConfig, change captypes.RegistrationChange, policy captypes.Settings) error {
+	if current.Capabilities == nil {
+		current.Capabilities = &captypes.Settings{}
+	}
+	merged, err := captypes.ApplyRegistration(captypes.Normalize(*current.Capabilities), change, policy)
+	if err != nil {
+		return err
+	}
+	current.Capabilities = &merged
+	return nil
 }
 
 func providerPresets() []tui.ProviderPreset {
