@@ -43,6 +43,7 @@ func TestRecoveryCheckpointRoundTripAndStartupInterruption(t *testing.T) {
 	if err := SaveRecoveryCheckpoint(db, "session", checkpoint); err != nil {
 		t.Fatal(err)
 	}
+	checkpoint.ContextRevision = 1
 	if records, err := LoadRecoveryRecords(db, "session"); err != nil || len(records) != 0 {
 		t.Fatalf("internal pending envelope leaked into recovery transcript: %+v, %v", records, err)
 	}

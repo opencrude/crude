@@ -9,7 +9,6 @@ import (
 
 	"crude/agent"
 	"crude/fileio"
-	"crude/logger"
 	"crude/provider"
 	"crude/safety"
 	"crude/tools"
@@ -121,7 +120,7 @@ func (s *Session) buildToolFn(multiAgent bool, turnProvider *provider.Provider, 
 			if err != nil {
 				return tools.ToolResult{}, fmt.Errorf("async_execute_command: %w", err)
 			}
-			return tools.ToolResult{Content: fmt.Sprintf("Started async command [%s]: PID %d, status=%s, command=%q", handle, info.PID, info.Status, command)}, nil
+			return tools.ToolResult{Content: FormatCommandStart(*info)}, nil
 
 		case "check_async_command":
 			handle := getStrParam(params, "handle")
@@ -132,12 +131,7 @@ func (s *Session) buildToolFn(multiAgent bool, turnProvider *provider.Provider, 
 			if !ok {
 				return tools.ToolResult{Content: fmt.Sprintf("Async command [%s] not found — it may have already been cleaned up or never started.", handle)}, nil
 			}
-			dur := info.Duration.Truncate(time.Second).String()
-			status := fmt.Sprintf("Handle: %s\nPID: %d\nStatus: %s\nExit code: %d\nDuration: %s", info.Handle, info.PID, info.Status, info.ExitCode, dur)
-			if info.Error != "" {
-				status += "\nError: " + info.Error
-			}
-			return tools.ToolResult{Content: status}, nil
+			return tools.ToolResult{Content: FormatCommandStatus(*info)}, nil
 
 		case "kill_async_command":
 			handle := getStrParam(params, "handle")
@@ -156,17 +150,11 @@ func (s *Session) buildToolFn(multiAgent bool, turnProvider *provider.Provider, 
 			}
 			sinceByte := tools.GetIntArgAny(params, "since_byte", 0)
 			maxBytes := tools.GetIntArgAny(params, "max_bytes", fileio.DefaultOutputChunkBytes)
-			out, nextByte, totalBytes, err := s.asyncMgr.ReadOutputLimit(handle, sinceByte, maxBytes)
+			page, err := s.asyncMgr.ReadOutputPage(handle, sinceByte, maxBytes)
 			if err != nil {
 				return tools.ToolResult{}, fmt.Errorf("read_async_output: %w", err)
 			}
-			if out == "" {
-				return tools.ToolResult{Content: fmt.Sprintf("[%s] next_byte=%d total_bytes=%d (no new output since byte %d)", handle, nextByte, totalBytes, sinceByte)}, nil
-			}
-			return tools.ToolResult{Content: fmt.Sprintf(
-				"[%s output bytes %d..%d of %d]\n%s\n[next_byte=%d total_bytes=%d has_more=%t]",
-				handle, sinceByte, nextByte, totalBytes, out, nextByte, totalBytes, nextByte < totalBytes,
-			)}, nil
+			return tools.ToolResult{Content: FormatCommandPage(page)}, nil
 
 		case "wait":
 			seconds := tools.GetFloatArgAny(params, "seconds", 0)
@@ -316,108 +304,4 @@ func (s *Session) executeCommandAutoPromote(ctx context.Context, params map[stri
 	}
 	s.logger.Info("EXEC", "auto_start", "pid", uc.PID(), "cmd", cmd)
 	return awaitCommandWithPromotion(ctx, s.asyncMgr, uc, s.logger, "")
-}
-
-// commandOutcome renders the terminal state of an untracked command as a tool
-// result, preserving partial output on failure.
-func commandOutcome(mgr *fileio.AsyncCommandManager, uc *fileio.UntrackedCmd) (tools.ToolResult, error) {
-	const excerptBytes = fileio.DefaultOutputChunkBytes / 2
-	head, _, total := uc.ReadOutputLimit(0, excerptBytes)
-	info := uc.Info()
-	out := head
-	if total > excerptBytes {
-		tailStart := excerptBytes
-		if total > excerptBytes*2 {
-			tailStart = total - excerptBytes
-		}
-		tail, _, _ := uc.ReadOutputLimit(tailStart, excerptBytes)
-		if omitted := tailStart - excerptBytes; omitted > 0 {
-			out += fmt.Sprintf("\n\n... %d output bytes omitted ...\n\n", omitted)
-		}
-		out += tail
-		if total > excerptBytes*2 {
-			retainedHandle := mgr.NextAutoHandle()
-			if _, err := mgr.Promote(uc, retainedHandle); err != nil {
-				out += "\n\n[Full output could not be retained as a command handle: " + err.Error() + "]"
-			} else {
-				out += fmt.Sprintf(
-					"\n\nFull output retained as async handle [%s]: total_bytes=%d. "+
-						"Use read_async_output with a relevant since_byte/max_bytes page; do not drain a huge log into context.",
-					retainedHandle, total,
-				)
-			}
-		}
-	}
-	if info.Status == fileio.AsyncCompleted {
-		if out == "" {
-			return tools.ToolResult{Content: "(command completed with no output)"}, nil
-		}
-		return tools.ToolResult{Content: out}, nil
-	}
-	errMsg := info.Error
-	if errMsg == "" {
-		errMsg = fmt.Sprintf("exit code %d", info.ExitCode)
-	}
-	content := fmt.Sprintf("Command failed: %s", errMsg)
-	if out != "" {
-		content += "\n\n" + out
-	}
-	return tools.ToolResult{Content: content}, fmt.Errorf("%s", content)
-}
-
-// awaitCommandWithPromotion waits for a command started via StartUntracked.
-// A command still running after asyncPromotionThreshold is registered with mgr
-// under a fresh auto handle so the turn can continue instead of blocking; the
-// result then tells the model how to check, read, or kill it. agentID is only
-// used for log attribution and is empty for session-level commands.
-func awaitCommandWithPromotion(
-	ctx context.Context,
-	mgr *fileio.AsyncCommandManager,
-	uc *fileio.UntrackedCmd,
-	lg *logger.Logger,
-	agentID string,
-) (tools.ToolResult, error) {
-	select {
-	case <-ctx.Done():
-		uc.Kill()
-		<-uc.Done()
-		return tools.ToolResult{Content: "Command cancelled."}, nil
-	case <-uc.Done():
-		return commandOutcome(mgr, uc)
-	case <-time.After(asyncPromotionThreshold):
-	}
-
-	if uc.Status() == fileio.AsyncRunning {
-		handle := mgr.NextAutoHandle()
-		if _, err := mgr.Promote(uc, handle); err == nil {
-			if lg != nil {
-				fields := []any{"handle", handle, "pid", uc.PID(), "threshold", asyncPromotionThreshold.String()}
-				if agentID != "" {
-					fields = append(fields, "agent_id", agentID)
-				}
-				lg.Info("ASYNC", "auto_promote", fields...)
-			}
-			return tools.ToolResult{Content: fmt.Sprintf(
-				"Command still running after %s — promoted to async command [%s] (PID %d).\n"+
-					"It keeps running while you continue. Manage it with:\n"+
-					"- check_async_command(handle=%q) — status and exit code\n"+
-					"- read_async_output(handle=%q, since_byte=0) — output so far\n"+
-					"- kill_async_command(handle=%q) — stop it",
-				asyncPromotionThreshold, handle, uc.PID(), handle, handle, handle,
-			)}, nil
-		} else if lg != nil {
-			lg.Error("ASYNC", "auto_promote_failed", "handle", handle, "error", err.Error())
-		}
-	}
-
-	// The command finished inside the promotion window, or promotion failed:
-	// fall back to the blocking path rather than losing the command.
-	select {
-	case <-ctx.Done():
-		uc.Kill()
-		<-uc.Done()
-		return tools.ToolResult{Content: "Command cancelled."}, nil
-	case <-uc.Done():
-		return commandOutcome(mgr, uc)
-	}
 }

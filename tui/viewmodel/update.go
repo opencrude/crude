@@ -9,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/agent"
 	"crude/provider"
 	"crude/sessiondb"
 	"crude/tui/editor"
@@ -76,7 +77,7 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	coalescePresentation := false
 	switch msg.(type) {
 	case tea.MouseMotionMsg, interactiveFrameMsg:
-	case ttypes.AgentMsg, workspace.TerminalOutputMsg:
+	case ttypes.AgentMsg, agent.AgentEvent, workspace.TerminalOutputMsg:
 		coalescePresentation = true
 	default:
 		m.forceFrame()
@@ -98,6 +99,8 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case types.OperationIssueMsg:
 		m.presentOperationIssue(msg.Issue)
 		return m, nil
+	case agent.AgentEvent:
+		return m, m.handleAgentEnvelope(msg)
 	case types.ResumeStartupMsg:
 		return m, m.launcherResumeSession(msg.SessionID, nil)
 	case operationissue.ActionMsg:
@@ -449,6 +452,8 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	}
 
 	switch msg := msg.(type) {
+	case inputAdmissionMsg:
+		cmds = append(cmds, m.applyInputAdmission(msg))
 	case workspaceDeletePreviewMsg:
 		m.applyWorkspaceDeletePreview(msg)
 	case workspaceDeleteIntent:
@@ -487,7 +492,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			}
 		}
 	case composerDraftSavedMsg:
-		m.onComposerDraftSaved()
+		m.onComposerDraftSaved(msg)
 	case directoryAsyncResultMsg:
 		m.applyDirectoryAsyncResult(msg)
 	case ui.SearchDebouncedMsg:
@@ -613,9 +618,8 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		if composerScreen := m.sessionComposer(); composerScreen == nil || msg.Target != composerScreen {
 			break
 		}
-		m.overlayHost.Close(ui.OverlayComposer)
 		if agentID := m.activeAgentTabID(); msg.Text != "" && agentID != "" {
-			cmds = append(cmds, m.submitInput(agentID, msg.Text, nil))
+			cmds = append(cmds, m.submitComposerInput(agentID, msg.Text))
 		}
 	case composer.CancelMsg:
 		if composerScreen := m.sessionComposer(); composerScreen != nil && msg.Target == composerScreen {
@@ -860,7 +864,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			m.Feedback.NotifyError(msg.err.Error())
 			break
 		}
-		cmds = append(cmds, m.recordPrompt(msg.draft, msg.input.ReferenceIDs...), m.submitPreparedInput(msg.agentID, msg.input))
+		cmds = append(cmds, m.submitPreparedInput(msg.agentID, msg.input, msg.draftRevision))
 	case settingsui.CapabilityRequestMsg:
 		cmds = append(cmds, m.capabilityRequestCmd(msg))
 	case settingsui.CapabilityResultMsg:

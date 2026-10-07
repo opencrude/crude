@@ -9,7 +9,6 @@ import (
 
 	"crude/history"
 	"crude/sessiondb"
-	"crude/tui/input"
 	"crude/workspace"
 )
 
@@ -17,16 +16,20 @@ import (
 // save chain: submitting a prompt folds it into the global store, refreshes
 // composer recall, and the returned command writes the file to disk.
 func TestRecordPromptPersistsGlobalHistory(t *testing.T) {
-	app := newTestApp(t)
+	app := newFullTestApp(t)
 	store := history.New()
 	app.SetPromptHistory(store)
 	path := filepath.Join(t.TempDir(), "history.json")
 	app.promptHistoryPath = path
+	agentID := addBackendTestOrchestrator(t, app)
+	app.ActiveSession = app.SessionsByAgent[agentID]
+	app.Input.SetInput("check the async deck now")
 
-	cmds := app.handleInputEvent(input.SubmitEvent{Text: "check the async deck now"})
-	if len(cmds) == 0 || cmds[0] == nil {
+	_, command := app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if command == nil {
 		t.Fatal("expected a persistence cmd from submit")
 	}
+	runAppCommand(t, app, command)
 	if got := app.Prompts.Recall(); len(got) != 1 || got[0] != "check the async deck now" {
 		t.Fatalf("recall after submit = %v", got)
 	}
@@ -34,10 +37,6 @@ func TestRecordPromptPersistsGlobalHistory(t *testing.T) {
 		t.Fatalf("input recall = %v", app.Input.History())
 	}
 
-	// Run the persistence command like bubbletea would.
-	if msg := cmds[0]().(promptHistorySavedMsg); msg.err != nil {
-		t.Fatalf("persistence failed: %v", msg.err)
-	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatalf("history file not written: %v", err)
@@ -85,7 +84,8 @@ func TestPromptHistoryRecallsAttachmentsAcrossSessionsAndRestoresDraft(t *testin
 	app := newFullTestApp(t)
 	app.SetPromptHistory(history.New())
 	app.promptHistoryPath = filepath.Join(t.TempDir(), "history.json")
-	app.ActiveSession = workspace.NewSession("first", t.TempDir(), nil, stubLogger{})
+	agentID := addBackendTestOrchestrator(t, app)
+	app.ActiveSession = app.SessionsByAgent[agentID]
 	app.Input.SetReferenceStore(app.RefStore())
 	path := filepath.Join(t.TempDir(), "image.png")
 	if err := os.WriteFile(path, []byte("retained image"), 0600); err != nil {
@@ -96,19 +96,20 @@ func TestPromptHistoryRecallsAttachmentsAcrossSessionsAndRestoresDraft(t *testin
 		t.Fatal(err)
 	}
 	app.Input.SetInput("inspect " + ref.DisplayName())
-	updated, _, event := app.Input.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, false, false)
-	app.Input = updated
-	commands := app.handleInputEvent(event)
-	_, _ = app.Update(commands[0]())
+	_, command := app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if command == nil {
+		t.Fatal("attachment submit did not schedule admission")
+	}
+	runAppCommand(t, app, command)
 	if err := os.Remove(path); err != nil {
 		t.Fatal(err)
 	}
 	app.ActiveSession = workspace.NewSession("second", t.TempDir(), nil, stubLogger{})
 	app.Input.SetReferenceStore(app.RefStore())
 	app.Input.SetInput("inspect")
-	updated, _, event = app.Input.Update(tea.KeyPressMsg{Code: tea.KeyUp}, false, false)
+	updated, _, event := app.Input.Update(tea.KeyPressMsg{Code: tea.KeyUp}, false, false)
 	app.Input = updated
-	commands = app.handleInputEvent(event)
+	commands := app.handleInputEvent(event)
 	if len(commands) != 1 || commands[0] == nil {
 		t.Fatal("multimodal recall must run outside Update")
 	}

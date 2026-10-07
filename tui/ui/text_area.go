@@ -222,6 +222,10 @@ func (t *TextArea) CursorVisualLine() int { return t.edit.CursorVisualLine() }
 func (t *TextArea) TotalVisualLines() int { return t.edit.TotalVisualLines() }
 
 func (t *TextArea) ScrollOffset() int { return t.scroll }
+func (t *TextArea) SetScrollOffset(offset int) {
+	t.scroll = offset
+	t.clampScroll()
+}
 
 // VisualLineCount returns the visual row count for a given wrap width.
 func (t *TextArea) VisualLineCount(textW int) int { return t.edit.VisualLineCount(textW) }

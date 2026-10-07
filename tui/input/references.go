@@ -71,6 +71,7 @@ func (m *Model) UseReferenceIDs(ids []string) {
 		m.promptReferenceIDs[id] = true
 	}
 	m.applyReferenceRanges()
+	m.draftRevision++
 }
 
 func (m Model) ActiveReferenceID() string {
@@ -103,6 +104,7 @@ func (m *Model) SetValuePreserveReferences(text string) {
 	m.historyLoading = false
 	m.input.SetValue(text)
 	m.applyReferenceRanges()
+	m.draftRevision++
 }
 
 func (m *Model) applyReferenceRanges() {

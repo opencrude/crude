@@ -1,6 +1,7 @@
 package session
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -484,10 +485,15 @@ func TestCollaborationWaitRequiresAllExactConditions(t *testing.T) {
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Millisecond)
 	defer cancel()
-	if _, err := s.waitForCollaboration(ctx, store, map[string]any{
+	result, err := s.waitForCollaboration(ctx, store, map[string]any{
 		"agent_id": parent.ID, "run_id": run.ID, "artifact_id": report.Artifact.ID, "after_revision": 1,
-	}); !errors.Is(err, context.DeadlineExceeded) {
-		t.Fatalf("terminal run incorrectly satisfied a still-pending report condition: %v", err)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, _ := json.Marshal(result)
+	if !bytes.Contains(encoded, []byte(`"status":"caller_interrupted"`)) || !bytes.Contains(encoded, []byte(`"artifact_revision"`)) {
+		t.Fatalf("terminal run incorrectly satisfied or lost the pending condition: %s", encoded)
 	}
 	if _, err := s.waitForCollaboration(t.Context(), store, map[string]any{"agent_id": child.ID, "run_id": run.ID}); err == nil {
 		t.Fatal("wait returned another agent's run")

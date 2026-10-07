@@ -140,14 +140,33 @@ func TestPastedTextSendsCompleteContentButKeepsChatCompact(t *testing.T) {
 		t.Fatal("paste did not promote")
 	}
 	_, _ = app.Update(command())
-	_, _ = app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
-	select {
-	case text := <-requests:
-		if !strings.Contains(text, content) {
-			t.Fatal("provider request omitted or truncated the pasted attachment")
+	_, submit := app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	if submit == nil {
+		t.Fatal("Enter did not schedule admission")
+	}
+	runAppCommand(t, app, submit)
+	requestTimer := time.NewTimer(5 * time.Second)
+	defer requestTimer.Stop()
+	for waiting := true; waiting; {
+		select {
+		case text := <-requests:
+			if !strings.Contains(text, content) {
+				t.Fatal("provider request omitted or truncated the pasted attachment")
+			}
+			waiting = false
+		case event := <-sender.events:
+			_, _ = app.Update(event)
+			if event.Type == "error" || event.Type == "done" {
+				t.Fatalf("turn settled before provider request: type=%s data=%+v", event.Type, event.Data)
+			}
+		case <-requestTimer.C:
+			node := app.AgentMgr.Get(orch.ID)
+			var messages []workspace.Message
+			if node != nil && node.State != nil && node.State.Messages != nil {
+				messages = node.State.Messages.Messages()
+			}
+			t.Fatalf("composer did not submit its pasted-text attachment: input=%q refs=%v messages=%+v", app.Input.Value(), app.Input.ReferencedIDs(), messages)
 		}
-	case <-time.After(5 * time.Second):
-		t.Fatal("composer did not submit its pasted-text attachment")
 	}
 	timeout := time.NewTimer(5 * time.Second)
 	defer timeout.Stop()
@@ -181,7 +200,9 @@ func TestPastedTextReferencesStayOrderedAndRestoreTheSavedDraft(t *testing.T) {
 		t.Fatal(err)
 	}
 	app.ActiveSession = workspace.NewSession("owner", t.TempDir(), db, stubLogger{})
-	app.composerSaving = true // this round-trip writes its immutable snapshot below
+	app.composerHydratedFor = app.ActiveSession
+	app.composerDraftEpoch = 1
+	app.draftOwner(app.ActiveSession).epoch = 1
 	app.Input.SetReferenceStore(app.RefStore())
 	first := strings.Repeat("first payload with its complete diagnostic context\n", 25)
 	second := strings.Repeat("second payload with its complete diagnostic context\n", 25)
@@ -210,9 +231,11 @@ func TestPastedTextReferencesStayOrderedAndRestoreTheSavedDraft(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = app.saveComposerDraftMsg(db, raw)
+	_ = app.saveComposerDraftMsg(app.ActiveSession, db, app.composerDraftEpoch, raw)
 	app.Input.ClearInput()
-	_, _ = app.Update(app.loadComposerDraftMsg(app.ActiveSession))
+	app.draftOwner(app.ActiveSession).loadRevision = app.Input.DraftRevision()
+	requestRevision := app.Input.DraftRevision()
+	_, _ = app.Update(app.loadComposerDraftMsg(app.ActiveSession, app.composerDraftEpoch, requestRevision))
 	if len(app.Input.ReferencedIDs()) != 2 || app.Input.Value() != ref1.Label+ref2.Label {
 		t.Fatal("draft resume lost pasted-text attachment identities")
 	}

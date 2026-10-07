@@ -118,18 +118,15 @@ func (s *Session) admitPassiveCollaboration(o *Orchestrator, sender EventSender)
 		}
 		s.msgsMu.Lock()
 		messages := append([]provider.ChatMessage(nil), s.activeContext...)
-		generation := s.contextGeneration
+		revision := s.contextRevision
 		s.msgsMu.Unlock()
 		for _, delivery := range deliveries {
 			messages = append(messages, collaborationMessage(delivery))
 		}
-		if err := s.commitCollaborationAdmissions(s.db, s.sessionID, o.ID, "", o.RuntimeEpoch, generation, messages, deliveries); err != nil {
+		if err := s.commitCollaborationAdmissions(s.db, s.sessionID, s.sessionID, o.ID, "", o.RuntimeEpoch, revision, collaborationDeltas(deliveries, messages, o.ID), deliveries); err != nil {
 			s.releaseCollaborationReservations(o.ID, o.RuntimeEpoch, deliveries, "passive resume admission failed")
 			return err
 		}
-		s.msgsMu.Lock()
-		s.activeContext = messages
-		s.msgsMu.Unlock()
 		for _, delivery := range deliveries {
 			sender.SendAgentEventWithID("collaboration_message", delivery.Event, o.ID)
 		}

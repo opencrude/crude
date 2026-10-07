@@ -501,7 +501,16 @@ func (w *Workspace) CancelSubAgent(agentID string) {
 // CancelAgent requests cancellation for one exact runtime generation. Submission
 // is not proof the control applied; the owner publishes the authoritative outcome.
 func (w *Workspace) CancelAgent(agentID string) {
-	if w == nil || w.Collaboration == nil || agentID == "" {
+	if w == nil || agentID == "" {
+		return
+	}
+	// The backend generation is authoritative for execution, including the
+	// prepared-before-collaboration window. Stop it first; collaboration records
+	// the attributed control when a run already exists.
+	if frontend := w.SessionsByAgent[agentID]; frontend != nil && frontend.backend != nil {
+		frontend.backend.CancelOrchestrator(agentID)
+	}
+	if w.Collaboration == nil {
 		return
 	}
 	participant, err := w.Collaboration.Agent(context.Background(), agentID)
@@ -543,6 +552,46 @@ func (w *Workspace) SubmitAgentInput(agentID string, input provider.UserInput) b
 		return sess.backend.SubmitInput(agentID, input)
 	}
 	return false
+}
+
+type InputAdmissionStatus = session.InputAdmissionStatus
+type InputAdmissionErrorKind = session.InputAdmissionErrorKind
+type InputAdmissionIntent = session.InputAdmissionIntent
+type InputAdmissionReceipt = session.InputAdmissionReceipt
+type InputAdmissionResult = session.InputAdmissionResult
+
+const (
+	InputAdmissionAccepted            = session.InputAdmissionAccepted
+	InputAdmissionRejected            = session.InputAdmissionRejected
+	InputAdmissionPreservationPending = session.InputAdmissionPreservationPending
+)
+
+// PrepareAgentInputAdmission reserves an exact owner/generation without I/O.
+// Frontends call it while handling the submit gesture, then run the matching
+// commit in a command before projecting or clearing the accepted draft.
+func (w *Workspace) PrepareAgentInputAdmission(agentID string, input provider.UserInput, draftRevision uint64) (*InputAdmissionIntent, error) {
+	if w == nil || agentID == "" {
+		return nil, fmt.Errorf("input owner is unavailable")
+	}
+	frontend := w.SessionsByAgent[agentID]
+	if frontend == nil || frontend.backend == nil {
+		return nil, fmt.Errorf("input owner is unavailable")
+	}
+	return frontend.backend.PrepareInputAdmission(agentID, input, draftRevision)
+}
+
+// CommitAgentInputAdmission performs the durable publication off the UI thread.
+func (w *Workspace) CommitAgentInputAdmission(ctx context.Context, intent *InputAdmissionIntent) InputAdmissionResult {
+	if w == nil || intent == nil {
+		return InputAdmissionResult{Status: InputAdmissionRejected, ErrorKind: session.InputAdmissionPreLocalRejection,
+			Err: fmt.Errorf("input admission intent is unavailable")}
+	}
+	frontend := w.SessionsByAgent[intent.AgentID]
+	if frontend == nil || frontend.backend == nil {
+		return InputAdmissionResult{Status: InputAdmissionRejected, ErrorKind: session.InputAdmissionPreLocalRejection,
+			Err: fmt.Errorf("input owner is unavailable")}
+	}
+	return frontend.backend.CommitInputAdmission(ctx, intent)
 }
 
 // SteerAgent publishes genuine human steering to one exact active run. Durable

@@ -36,6 +36,28 @@ func TestComposerHintIsStatusOnly(t *testing.T) {
 	}
 }
 
+func TestSubmitPreservesExactDraftUntilReceiptAndRevisionFencesClear(t *testing.T) {
+	m := NewModel(theme.DefaultDark())
+	m.SetInput("  exact text  \n")
+	revision := m.DraftRevision()
+	updated, _, event := m.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, false, false)
+	submit, ok := event.(SubmitEvent)
+	if !ok {
+		t.Fatalf("event=%T", event)
+	}
+	if submit.Text != "  exact text  \n" || updated.Value() != submit.Text || submit.DraftRevision != revision {
+		t.Fatalf("submit=%+v draft=%q revision=%d", submit, updated.Value(), updated.DraftRevision())
+	}
+	updated.SetInput("newer")
+	if updated.ClearInputAtRevision(submit.DraftRevision) || updated.Value() != "newer" {
+		t.Fatalf("late receipt cleared newer draft: %q", updated.Value())
+	}
+	current := updated.DraftRevision()
+	if !updated.ClearInputAtRevision(current) || updated.Value() != "" {
+		t.Fatalf("current receipt did not consume exact draft: %q", updated.Value())
+	}
+}
+
 func TestComposerThinkingHintIsStatusOnly(t *testing.T) {
 	m := NewModel(theme.DefaultDark())
 	m.SetState(true, false)

@@ -1,8 +1,11 @@
 package viewmodel
 
 import (
+	"fmt"
 	"testing"
 	"time"
+
+	tea "charm.land/bubbletea/v2"
 
 	"crude/provider"
 	"crude/session"
@@ -33,6 +36,40 @@ import (
 	"crude/tui/wm"
 	"crude/workspace"
 )
+
+// runAppCommand drives a command through the same message/update loop used by
+// Bubble Tea. It deliberately understands only Bubble Tea's native BatchMsg;
+// product-result messages must be handled by App.Update rather than injected or
+// decoded by a test-specific acknowledgement path.
+func runAppCommand(t *testing.T, app *App, command tea.Cmd) {
+	t.Helper()
+	queue := []tea.Cmd{command}
+	for steps := 0; len(queue) > 0; steps++ {
+		if steps >= 64 {
+			t.Fatal("app command journey did not settle")
+		}
+		cmd := queue[0]
+		queue = queue[1:]
+		if cmd == nil {
+			continue
+		}
+		message := cmd()
+		if message == nil {
+			continue
+		}
+		if batch, ok := message.(tea.BatchMsg); ok {
+			queue = append(queue, batch...)
+			continue
+		}
+		model, next := app.Update(message)
+		if model != app {
+			t.Fatal(fmt.Sprintf("command replaced App with %T", model))
+		}
+		if next != nil {
+			queue = append(queue, next)
+		}
+	}
+}
 
 type noopEventSender struct{}
 

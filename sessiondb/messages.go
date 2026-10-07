@@ -4,10 +4,12 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"time"
 
 	"crude/provider"
 	ttypes "crude/types"
+	"crude/types/reasoning"
 )
 
 const ConversationSnapshotVersion = 1
@@ -68,6 +70,14 @@ type MessageWithMeta struct {
 	Meta      DisplayMeta
 	Turn      int
 	CreatedAt int64
+}
+
+type persistedMessage struct {
+	Message   provider.ChatMessage
+	Meta      DisplayMeta
+	Turn      int
+	CreatedAt int64
+	AgentID   string
 }
 
 func ReplaceMessages(db *sql.DB, sessionID string, msgs []provider.ChatMessage, turnNumbers []int) (int, error) {
@@ -229,12 +239,25 @@ func AppendMessageWithMeta(db *sql.DB, sessionID string, m provider.ChatMessage,
 		return err
 	}
 	defer func() { _ = tx.Rollback() }()
+	if err = appendPersistedMessageTx(tx, sessionID, persistedMessage{Message: m, Meta: meta, Turn: turn, CreatedAt: time.Now().UnixNano()}); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func appendMessageWithMetaTx(tx *sql.Tx, sessionID string, delta ContextMessageDelta) error {
+	return appendPersistedMessageTx(tx, sessionID, persistedMessage{Message: delta.Message, Meta: delta.Meta, Turn: delta.Turn, CreatedAt: delta.CreatedAt, AgentID: delta.AgentID})
+}
+
+func appendPersistedMessageTx(tx *sql.Tx, sessionID string, value persistedMessage) error {
 	var seq int
 	if err := tx.QueryRow(`SELECT COALESCE(MAX(sequence_num),-1)+1 FROM messages`).Scan(&seq); err != nil {
 		return err
 	}
+	m := value.Message
 	var toolCallsJSON, cacheJSON, providerJSON, collaborationJSON []byte
-	if len(m.ToolCalls) > 0 {
+	var err error
+	if len(m.ToolCalls) != 0 {
 		toolCallsJSON, err = json.Marshal(m.ToolCalls)
 		if err != nil {
 			return err
@@ -246,7 +269,7 @@ func AppendMessageWithMeta(db *sql.DB, sessionID string, m provider.ChatMessage,
 			return err
 		}
 	}
-	if len(m.ProviderItems) > 0 {
+	if len(m.ProviderItems) != 0 {
 		providerJSON, err = json.Marshal(m.ProviderItems)
 		if err != nil {
 			return err
@@ -258,30 +281,128 @@ func AppendMessageWithMeta(db *sql.DB, sessionID string, m provider.ChatMessage,
 			return err
 		}
 	}
-	content := m.Content.String()
-	toolResult := ""
+	content, toolResult := m.Content.String(), ""
 	if m.Role == "tool" {
-		toolResult = content
-		content = ""
+		toolResult, content = content, ""
 	}
 	contentType := "text"
 	if !m.Content.IsText() {
-		content = m.Content.MultipartJSON()
-		contentType = "multipart"
+		content, contentType = m.Content.MultipartJSON(), "multipart"
 	}
-	var metaJSON sql.NullString
-	if raw, marshalErr := json.Marshal(meta); marshalErr == nil && len(raw) > 2 {
-		metaJSON = sql.NullString{String: string(raw), Valid: true}
-	}
-	_, err = tx.Exec(`INSERT INTO messages(role,origin,visibility,internal_id,collaboration_json,content,content_type,reasoning_content,reasoning,tool_calls,tool_name,tool_result,tool_call_id,tool_error,provider_items,cache_control,token_count,sequence_num,turn_number,agent_id,created_at,display_meta) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, m.Role, m.EffectiveOrigin(), m.EffectiveVisibility(), nullString(m.InternalID), nullBytes(collaborationJSON), nullString(content), nullString(contentType), nullString(m.ReasoningContent), nullString(m.Reasoning), nullBytes(toolCallsJSON), nullString(""), nullString(toolResult), nullString(m.ToolCallID), m.ToolError, nullBytes(providerJSON), nullBytes(cacheJSON), provider.EstimateMessageTokens(m, ""), seq, turn, nil, time.Now().UnixNano(), metaJSON)
+	metaJSON, err := json.Marshal(value.Meta)
 	if err != nil {
 		return err
 	}
-	_, err = tx.Exec(`UPDATE sessions SET message_count=(SELECT COUNT(*) FROM messages),turn_count=MAX(turn_count,?) WHERE id=?`, turn, sessionID)
+	_, err = tx.Exec(`INSERT INTO messages(role,origin,visibility,internal_id,collaboration_json,content,content_type,reasoning_content,reasoning,tool_calls,tool_name,tool_result,tool_call_id,tool_error,provider_items,cache_control,token_count,sequence_num,turn_number,agent_id,created_at,display_meta) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, m.Role, m.EffectiveOrigin(), m.EffectiveVisibility(), m.InternalID, nullBytes(collaborationJSON), nullString(content), contentType, nullString(m.ReasoningContent), nullString(m.Reasoning), nullBytes(toolCallsJSON), nil, nullString(toolResult), nullString(m.ToolCallID), m.ToolError, nullBytes(providerJSON), nullBytes(cacheJSON), provider.EstimateMessageTokens(m, ""), seq, value.Turn, nullString(value.AgentID), value.CreatedAt, nullBytes(metaJSON))
 	if err != nil {
 		return err
 	}
-	return tx.Commit()
+	result, err := tx.Exec(`UPDATE sessions SET message_count=(SELECT COUNT(*) FROM messages),turn_count=MAX(turn_count,?) WHERE id=?`, value.Turn, sessionID)
+	if err != nil {
+		return err
+	}
+	if _, err := result.RowsAffected(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func loadPersistedMessageByInternalIDTx(tx *sql.Tx, internalID string) (persistedMessage, bool, error) {
+	rows, err := tx.Query(`SELECT role,origin,visibility,internal_id,collaboration_json,content,content_type,reasoning_content,reasoning,tool_calls,tool_name,tool_result,tool_call_id,tool_error,provider_items,cache_control,token_count,sequence_num,turn_number,agent_id,created_at,display_meta FROM messages WHERE internal_id=? ORDER BY sequence_num LIMIT 2`, internalID)
+	if err != nil {
+		return persistedMessage{}, false, err
+	}
+	defer rows.Close()
+	var values []persistedMessage
+	for rows.Next() {
+		var row MessageRow
+		if err := rows.Scan(&row.Role, &row.Origin, &row.Visibility, &row.InternalID, &row.Collaboration, &row.Content, &row.ContentType, &row.ReasoningContent, &row.Reasoning, &row.ToolCalls, &row.ToolName, &row.ToolResult, &row.ToolCallID, &row.ToolError, &row.ProviderItems, &row.CacheControl, &row.TokenCount, &row.SequenceNum, &row.TurnNumber, &row.AgentID, &row.CreatedAt, &row.DisplayMeta); err != nil {
+			return persistedMessage{}, false, err
+		}
+		value, err := decodePersistedMessage(row)
+		if err != nil {
+			return persistedMessage{}, false, err
+		}
+		values = append(values, value)
+	}
+	if err := rows.Err(); err != nil {
+		return persistedMessage{}, false, err
+	}
+	if len(values) == 0 {
+		return persistedMessage{}, false, nil
+	}
+	if len(values) != 1 {
+		return persistedMessage{}, false, fmt.Errorf("sessiondb: duplicate immutable transcript id %q", internalID)
+	}
+	return values[0], true, nil
+}
+
+func decodePersistedMessage(r MessageRow) (persistedMessage, error) {
+	m := provider.ChatMessage{InternalID: r.InternalID.String, Role: r.Role, Origin: provider.MessageOrigin(r.Origin), Visibility: provider.MessageVisibility(r.Visibility)}
+	if r.Collaboration.Valid && r.Collaboration.String != "" {
+		var value provider.CollaborationAttribution
+		if err := json.Unmarshal([]byte(r.Collaboration.String), &value); err != nil {
+			return persistedMessage{}, err
+		}
+		m.Collaboration = &value
+	}
+	m.Content = parseMessageContent(r.Content.String, r.ContentType.String)
+	m.ReasoningContent, m.Reasoning, m.ToolCallID = r.ReasoningContent.String, r.Reasoning.String, r.ToolCallID.String
+	if r.ToolCalls.Valid && r.ToolCalls.String != "" {
+		if err := json.Unmarshal([]byte(r.ToolCalls.String), &m.ToolCalls); err != nil {
+			return persistedMessage{}, err
+		}
+	}
+	m.ToolError = r.ToolError != 0
+	if r.ProviderItems.Valid && r.ProviderItems.String != "" {
+		if err := json.Unmarshal([]byte(r.ProviderItems.String), &m.ProviderItems); err != nil {
+			return persistedMessage{}, err
+		}
+	}
+	if r.CacheControl.Valid && r.CacheControl.String != "" {
+		var value provider.CacheControl
+		if err := json.Unmarshal([]byte(r.CacheControl.String), &value); err != nil {
+			return persistedMessage{}, err
+		}
+		m.CacheControl = &value
+	}
+	if m.Role == "tool" && r.ToolResult.Valid && r.ContentType.String != "multipart" {
+		m.Content = provider.TextContent(r.ToolResult.String)
+	}
+	var meta DisplayMeta
+	if r.DisplayMeta.Valid && r.DisplayMeta.String != "" {
+		if err := json.Unmarshal([]byte(r.DisplayMeta.String), &meta); err != nil {
+			return persistedMessage{}, err
+		}
+	}
+	return persistedMessage{Message: m, Meta: meta, Turn: r.TurnNumber, CreatedAt: r.CreatedAt, AgentID: r.AgentID.String}, nil
+}
+
+func persistedMessageEqual(a, b persistedMessage) bool { return reflect.DeepEqual(a, b) }
+
+// transcriptPersistedProjection limits transcript equality to the fields the
+// messages table owns. Full immutable ChatMessage identity is verified by
+// immutable_message_identities before this projection is compared.
+func transcriptPersistedProjection(value persistedMessage) persistedMessage {
+	m := value.Message
+	m.DisplayContent = ""
+	m.ReferenceLabels = nil
+	m.Refusal = ""
+	m.ReasoningDetails = nil
+	m.ReasoningDuration = 0
+	m.ReasoningDisplay = reasoning.Display{}
+	m.ReplayScope = ""
+	m.ReplaySourceModel = ""
+	m.ReplayPrefixHash = ""
+	m.ResponseReference = nil
+	value.Message = m
+	return value
+}
+
+func canonicalPersistedMessage(value persistedMessage) persistedMessage {
+	value.Message.Origin = value.Message.EffectiveOrigin()
+	value.Message.Visibility = value.Message.EffectiveVisibility()
+	return value
 }
 
 func LoadMessages(db *sql.DB) ([]provider.ChatMessage, []int, error) {

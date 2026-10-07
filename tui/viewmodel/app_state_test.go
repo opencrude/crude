@@ -5,6 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/provider"
 	"crude/tui/chatprojection"
 	"crude/tui/input"
 	"crude/tui/screens/confirmation"
@@ -469,12 +470,54 @@ func TestSubmitInputUsesWorkspaceTurnAdmission(t *testing.T) {
 	app.height = 24
 	agentID := addBackendTestOrchestrator(t, app)
 
-	if cmd := app.submitInput(agentID, "hello", nil); cmd != nil {
-		t.Fatal("direct turn admission should not return a channel command")
+	cmd := app.submitInput(agentID, "hello", nil)
+	if cmd == nil {
+		t.Fatal("durable turn admission must run off Update")
 	}
+	msg, ok := cmd().(inputAdmissionMsg)
+	if !ok {
+		t.Fatalf("admission returned %T", cmd())
+	}
+	_ = app.applyInputAdmission(msg)
 	messages := app.AgentMgr.Get(agentID).State.Messages.Messages()
 	if len(messages) != 2 || messages[0].Content != "hello" || messages[1].Role != workspace.MessageRoleStatus {
 		t.Fatalf("admitted conversation=%+v", messages)
+	}
+}
+
+func TestPreparedInputStopCommitsOnceWithoutClearingNewDraft(t *testing.T) {
+	app := newFullTestApp(t)
+	app.width, app.height = 80, 24
+	agentID := addBackendTestOrchestrator(t, app)
+	app.ActiveSession = app.SessionsByAgent[agentID]
+	app.Input.SetInput("original input")
+	draftRevision := app.Input.DraftRevision()
+
+	command := app.submitPreparedInput(agentID, provider.PlainInput("original input"), draftRevision)
+	if command == nil {
+		t.Fatal("prepare did not return an off-UI commit command")
+	}
+	app.Input.SetInput("newer draft")
+	app.CancelAgent(agentID)
+	message, ok := command().(inputAdmissionMsg)
+	if !ok {
+		t.Fatalf("commit returned %T", command())
+	}
+	if message.result.Status != workspace.InputAdmissionPreservationPending {
+		t.Fatalf("status=%q err=%v", message.result.Status, message.result.Err)
+	}
+	_ = app.applyInputAdmission(message)
+	if app.Input.Value() != "newer draft" {
+		t.Fatalf("late receipt cleared newer draft: %q", app.Input.Value())
+	}
+	messages := app.AgentMgr.Get(agentID).State.Messages.Messages()
+	if len(messages) != 1 || messages[0].InternalID != message.result.Receipt.InputID || messages[0].Content != "original input" {
+		t.Fatalf("saved input projection=%+v receipt=%+v", messages, message.result.Receipt)
+	}
+	_ = app.applyInputAdmission(message)
+	messages = app.AgentMgr.Get(agentID).State.Messages.Messages()
+	if len(messages) != 1 {
+		t.Fatalf("duplicate receipt appended another user row: %+v", messages)
 	}
 }
 
@@ -503,7 +546,7 @@ func TestCollaborationDeliverySettlementClearsPendingStatus(t *testing.T) {
 	}
 }
 
-func TestRejectedSteeringReturnsToOwningComposerWithoutLosingNewDraft(t *testing.T) {
+func TestStoppedSteeringSettlesInChatWithoutTouchingNewDraft(t *testing.T) {
 	app := newFullTestApp(t)
 	owner := workspace.NewSession("owner", t.TempDir(), nil, nil)
 	other := workspace.NewSession("other", t.TempDir(), nil, nil)
@@ -516,11 +559,11 @@ func TestRejectedSteeringReturnsToOwningComposerWithoutLosingNewDraft(t *testing
 	app.Input.SetInput("newer draft")
 	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "collaboration_delivery_rejected", AgentID: "agent", Data: map[string]any{"history_message_id": first}})
 	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "collaboration_delivery_rejected", AgentID: "agent", Data: map[string]any{"history_message_id": second}})
-	if got := app.Input.Value(); got != "first note\n\nsecond note\n\nnewer draft" {
-		t.Fatalf("restored composer = %q", got)
+	if got := app.Input.Value(); got != "newer draft" {
+		t.Fatalf("stopped delivery changed newer draft = %q", got)
 	}
-	if len(conversation.Messages()) != 0 {
-		t.Fatalf("failed notes remained in transcript: %+v", conversation.Messages())
+	if messages := conversation.Messages(); len(messages) != 2 || messages[0].Content != "first note" || messages[1].Content != "second note" || messages[0].PendingSteering || messages[1].PendingSteering {
+		t.Fatalf("stopped notes not retained as settled context: %+v", messages)
 	}
 
 	third := conversation.AppendPendingSteering(workspace.Message{Role: workspace.MessageRoleUser, Content: "background note"})
@@ -532,12 +575,12 @@ func TestRejectedSteeringReturnsToOwningComposerWithoutLosingNewDraft(t *testing
 	}
 	app.ActiveSession = owner
 	app.maybeHydrateComposerDraft()
-	if got := app.Input.Value(); got != "background note" {
-		t.Fatalf("background failed note not restored on session switch: %q", got)
+	if got := app.Input.Value(); got != "" {
+		t.Fatalf("session switch restored submitted context into composer: %q", got)
 	}
 }
 
-func TestCancelledPendingSteeringReturnsToComposerAndIsIdempotent(t *testing.T) {
+func TestCancelledPendingSteeringSettlesInPlaceAndIsIdempotent(t *testing.T) {
 	app := newFullTestApp(t)
 	owner := workspace.NewSession("owner", t.TempDir(), nil, nil)
 	app.ActiveSession = owner
@@ -549,8 +592,8 @@ func TestCancelledPendingSteeringReturnsToComposerAndIsIdempotent(t *testing.T) 
 	clear := workspace.AgentEvent{Type: "collaboration_delivery_rejected", AgentID: "agent", Data: map[string]any{"history_message_id": id}}
 	app.handleAgentDomainEvent(clear)
 	app.handleAgentDomainEvent(clear)
-	if got := app.Input.Value(); got != "cancel me\n\ntyped while waiting" {
-		t.Fatalf("cancel recovery duplicated or discarded draft: %q", got)
+	if got := app.Input.Value(); got != "typed while waiting" {
+		t.Fatalf("cancel settlement changed draft: %q", got)
 	}
 	if got := conversation.PendingSteeringCount(); got != 0 {
 		t.Fatalf("cancel left %d blinking notes", got)
@@ -738,8 +781,8 @@ func TestHandleInputEvent_SubmitWithActiveAgentView(t *testing.T) {
 	app.AddOrchestrator("ses_1_orch_1")
 
 	cmds := app.handleInputEvent(input.SubmitEvent{Text: "hello"})
-	if len(cmds) != 2 {
-		t.Fatalf("expected history recording plus active-tab submit, got %d cmds", len(cmds))
+	if len(cmds) != 1 {
+		t.Fatalf("expected one durable admission command, got %d cmds", len(cmds))
 	}
 }
 
@@ -749,8 +792,8 @@ func TestHandleInputEvent_SubmitEmptyAgentView(t *testing.T) {
 	app.height = 24
 
 	cmds := app.handleInputEvent(input.SubmitEvent{Text: "hello"})
-	if len(cmds) != 1 {
-		t.Fatalf("expected only history recording with no active agent tab, got %d cmds", len(cmds))
+	if len(cmds) != 0 {
+		t.Fatalf("rejected pre-local send must not queue work, got %d cmds", len(cmds))
 	}
 	// No guessed fallback target is appended.
 }

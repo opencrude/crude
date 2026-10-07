@@ -1,6 +1,7 @@
 package input
 
 import (
+	"fmt"
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
@@ -10,6 +11,23 @@ import (
 )
 
 func (m Model) Update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Event) {
+	before := m.draftStateKey()
+	updated, cmd, event := m.update(msg, thinking, blocking)
+	if updated.draftStateKey() != before {
+		updated.draftRevision++
+	}
+	switch value := event.(type) {
+	case SubmitEvent:
+		value.DraftRevision = updated.draftRevision
+		event = value
+	case SteeringSubmitEvent:
+		value.DraftRevision = updated.draftRevision
+		event = value
+	}
+	return updated, cmd, event
+}
+
+func (m Model) update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Event) {
 	m.thinking = thinking
 	m.blocking = blocking
 	if key, ok := msg.(tea.KeyPressMsg); ok && key.Code == tea.KeyEnter && m.historyLoading {
@@ -63,24 +81,18 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Eve
 				cmd := m.input.Update(msg, false)
 				return m, cmd, nil
 			}
-			text := strings.TrimSpace(m.input.Value())
-			if text == "" {
+			text := m.input.Value()
+			if strings.TrimSpace(text) == "" {
 				return m, nil, nil
 			}
 			refIDs := m.ReferencedIDs()
-			m.input.Clear()
-			m.invalidatePendingPastes()
-			m.slashActive = false
-			m.histIdx = -1
-			m.histDraft = ""
-			m.histPrefix = ""
 			if strings.HasPrefix(text, "/") {
 				return m, nil, SlashCommandEvent{Command: text, ReferenceIDs: refIDs}
 			}
 			if m.thinking && !m.blocking {
-				return m, nil, SteeringSubmitEvent{Text: text, ReferenceIDs: refIDs}
+				return m, nil, SteeringSubmitEvent{Text: text, ReferenceIDs: refIDs, DraftRevision: m.draftRevision}
 			}
-			return m, nil, SubmitEvent{Text: text, ReferenceIDs: refIDs}
+			return m, nil, SubmitEvent{Text: text, ReferenceIDs: refIDs, DraftRevision: m.draftRevision}
 
 		case tea.KeyUp:
 			if m.input.CursorVisualLine() == 0 {
@@ -134,6 +146,11 @@ func (m Model) Update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Eve
 	}
 
 	return m, nil, nil
+}
+
+func (m Model) draftStateKey() string {
+	start, end := m.input.SelectionRange()
+	return fmt.Sprintf("%s\x00%d\x00%d\x00%d\x00%d\x00%d\x00%v", m.input.Value(), m.input.CursorFlat(), start, end, m.input.ScrollOffset(), m.draftEpoch, m.ReferencedIDs())
 }
 
 func (m Model) handlePaste(content string) (Model, tea.Cmd, Event) {

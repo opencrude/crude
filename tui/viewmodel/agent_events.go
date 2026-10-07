@@ -1,16 +1,18 @@
 package viewmodel
 
 import (
+	"context"
 	"fmt"
-	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/agent"
 	"crude/fileio"
 	"crude/provider"
 	"crude/tui/chatprojection"
 	ttypes "crude/tui/types"
+	"crude/tui/ui"
 	coretypes "crude/types"
 	"crude/workspace"
 )
@@ -39,31 +41,95 @@ func (m *App) memoryContextPaths() []string {
 }
 
 func (m *App) submitInput(sessionID, text string, refIDs []string) tea.Cmd {
-	return m.submitPreparedInput(sessionID, provider.InputWithRefs(text, refIDs))
+	return m.submitPreparedInput(sessionID, provider.InputWithRefs(text, refIDs), m.Input.DraftRevision())
 }
 
-func (m *App) submitPreparedInput(sessionID string, input provider.UserInput) tea.Cmd {
+type inputAdmissionMsg struct {
+	workspace       *workspace.Workspace
+	session         *workspace.Session
+	agentID         string
+	draftRevision   uint64
+	input           provider.UserInput
+	referenceLabels []string
+	result          workspace.InputAdmissionResult
+	closeComposer   bool
+}
+
+func (m *App) submitPreparedInput(sessionID string, input provider.UserInput, draftRevision uint64) tea.Cmd {
 	n := m.AgentMgr.Get(sessionID)
 	if n == nil || n.State == nil {
 		return nil
 	}
 	input.ActivePaths = m.memoryContextPaths()
-	if m.Workspace == nil || !m.SubmitAgentInput(sessionID, input) {
+	owner := m.Workspace
+	if owner == nil {
 		if m.Feedback != nil {
-			m.Feedback.NotifyError("Message was not sent: this agent already has an active turn")
+			m.Feedback.NotifyError("Message was not sent; your draft is kept")
 		}
 		return nil
 	}
-	agent := n.State
-	referenceLabels := m.referenceLabels(input.ReferenceIDs)
-	agent.Messages.AppendMessage(workspace.Message{
-		Role:            ttypes.RoleUser,
-		Content:         input.Text,
-		ReferenceLabels: referenceLabels,
-		Time:            time.Now(),
-	})
-	agent.SubmitInput(input.Text)
-	m.syncAgentMessages(sessionID, true)
+	intent, err := owner.PrepareAgentInputAdmission(sessionID, input, draftRevision)
+	if err != nil {
+		if m.Feedback != nil {
+			m.Feedback.NotifyError("Message was not sent; your draft is kept")
+		}
+		return nil
+	}
+	frontend := owner.SessionsByAgent[sessionID]
+	labels := m.referenceLabels(input.ReferenceIDs)
+	return func() tea.Msg {
+		result := owner.CommitAgentInputAdmission(context.Background(), intent)
+		return inputAdmissionMsg{workspace: owner, session: frontend, agentID: sessionID, draftRevision: intent.DraftRevision,
+			input: input, referenceLabels: labels, result: result}
+	}
+}
+
+func (m *App) submitComposerInput(sessionID, text string) tea.Cmd {
+	command := m.submitPreparedInput(sessionID, provider.PlainInput(text), m.Input.DraftRevision())
+	if command == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		message := command()
+		if admission, ok := message.(inputAdmissionMsg); ok {
+			admission.closeComposer = true
+			return admission
+		}
+		return message
+	}
+}
+
+func (m *App) applyInputAdmission(msg inputAdmissionMsg) tea.Cmd {
+	if msg.workspace == nil || msg.workspace != m.Workspace || msg.session == nil || m.SessionsByAgent[msg.agentID] != msg.session {
+		return nil
+	}
+	switch msg.result.Status {
+	case workspace.InputAdmissionAccepted, workspace.InputAdmissionPreservationPending:
+		node := m.AgentMgr.Get(msg.agentID)
+		if node != nil && node.State != nil && node.State.Messages != nil {
+			appended := node.State.Messages.AppendMessageIfAbsent(workspace.Message{InternalID: msg.result.Receipt.InputID, Role: ttypes.RoleUser,
+				Content: msg.input.Text, ReferenceLabels: msg.referenceLabels, Time: msg.result.Receipt.AcceptedAt})
+			if appended && msg.result.Status == workspace.InputAdmissionAccepted {
+				node.State.SubmitInput(msg.input.Text)
+			}
+			m.syncAgentMessages(msg.agentID, true)
+		}
+		if m.ActiveSession == msg.session && m.Input.ClearInputAtRevision(msg.draftRevision) {
+			m.persistComposerDraftIfChanged()
+		}
+		if msg.closeComposer {
+			m.overlayHost.Close(ui.OverlayComposer)
+		}
+		historyCmd := m.recordPrompt(msg.input.Text, msg.input.ReferenceIDs...)
+		if msg.result.Status == workspace.InputAdmissionPreservationPending && m.Feedback != nil {
+			m.Feedback.NotifyInfo("Message saved to context; execution is not available")
+		}
+		return historyCmd
+	case workspace.InputAdmissionRejected:
+		if m.Feedback != nil {
+			m.Feedback.NotifyError("Message was not sent; your draft is kept")
+		}
+	}
 	return nil
 }
 
@@ -83,13 +149,14 @@ func (m *App) submitSteering(sessionID, text string, refIDs []string) tea.Cmd {
 	input := provider.InputWithRefs(text, refIDs)
 	input.InternalID = messageID
 	if m.Workspace == nil || !m.SteerAgent(sessionID, input) {
-		agent.Messages.RemovePendingSteeringIDs([]string{messageID})
-		m.restoreRejectedSteering(sessionID, []workspace.Message{{Content: text}})
+		agent.Messages.SettlePendingSteeringIDs([]string{messageID})
 		if m.Feedback != nil {
 			m.Feedback.NotifyError("human steering was not queued: this turn is no longer accepting notes")
 		}
 		return nil
 	}
+	m.Input.ClearInputAtRevision(m.Input.DraftRevision())
+	m.persistComposerDraftIfChanged()
 	m.syncPendingSteeringCount()
 	m.syncAgentMessages(sessionID, true)
 	return nil
@@ -130,6 +197,30 @@ func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
 	return cmd
 }
 
+func (m *App) handleAgentEnvelope(evt agent.AgentEvent) tea.Cmd {
+	domain := workspace.AgentEvent{Type: evt.Type, Data: evt.Data, AgentID: evt.AgentID, Identity: evt.Identity}
+	if !m.acceptRuntimeEventIdentity(domain) || m.StaleAgentUpload(domain) {
+		return nil
+	}
+	cmd := m.handleAgentDomainEvent(domain)
+	m.syncAgentStatusEvent(ttypes.AgentEventMsg{Type: evt.Type, Data: evt.Data, AgentID: evt.AgentID})
+	return cmd
+}
+
+func (m *App) acceptRuntimeEventIdentity(evt workspace.AgentEvent) bool {
+	id := evt.Identity
+	if !id.Valid() || id.AgentID != evt.AgentID {
+		return false
+	}
+	node := m.AgentMgr.Get(evt.AgentID)
+	if node == nil || node.State == nil {
+		// Structural start events create the owner below; their backend identity is
+		// still exact and must not be rewritten from payload data.
+		return evt.Type == "sub_agent_started" || evt.Type == "start"
+	}
+	return node.State.AcceptRuntimeEvent(id)
+}
+
 func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 	if evt.Type == "response_continuation_unavailable" {
 		data, _ := evt.Data.(map[string]any)
@@ -159,7 +250,7 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 			data, _ := evt.Data.(map[string]any)
 			id, _ := data["history_message_id"].(string)
 			ids := []string{id}
-			m.restoreRejectedSteering(evt.AgentID, node.State.Messages.RemovePendingSteeringMessages(ids))
+			node.State.Messages.SettlePendingSteeringMessages(ids)
 			m.syncAgentMessages(evt.AgentID, true)
 		}
 		m.syncPendingSteeringCount()
@@ -397,69 +488,6 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 	m.syncAgentWindowTabs()
 
 	return m.processAgentResults(agentID, cmd)
-}
-
-// restoreRejectedSteering puts transport-rejected/cancelled notes back in the owning
-// session's composer. Keep anything the user has typed since the submission.
-func (m *App) restoreRejectedSteering(agentID string, messages []workspace.Message) {
-	if len(messages) == 0 || m.Workspace == nil {
-		return
-	}
-	owner := m.SessionsByAgent[agentID]
-	if owner == nil {
-		return
-	}
-	texts := make([]string, 0, len(messages))
-	for _, message := range messages {
-		if message.Content != "" {
-			texts = append(texts, message.Content)
-		}
-	}
-	if len(texts) == 0 {
-		return
-	}
-	if owner != m.ActiveSession || (owner.DB != nil && m.composerHydratedFor != owner) {
-		if m.rejectedSteeringDrafts == nil {
-			m.rejectedSteeringDrafts = make(map[*workspace.Session][]string)
-		}
-		m.rejectedSteeringDrafts[owner] = append(m.rejectedSteeringDrafts[owner], texts...)
-		return
-	}
-	if m.rejectedSteeringDrafts == nil {
-		m.rejectedSteeringDrafts = make(map[*workspace.Session][]string)
-	}
-	previous := m.rejectedSteeringDrafts[owner]
-	current := m.Input.Value()
-	if len(previous) > 0 {
-		prefix := strings.Join(previous, "\n\n")
-		switch {
-		case current == prefix:
-			current = ""
-		case strings.HasPrefix(current, prefix+"\n\n"):
-			current = strings.TrimPrefix(current, prefix+"\n\n")
-		default:
-			previous = nil
-		}
-	}
-	previous = append(previous, texts...)
-	m.rejectedSteeringDrafts[owner] = previous
-	m.Input.SetInput(joinRejectedSteeringDrafts(previous, current))
-	if node := m.AgentMgr.Get(agentID); node != nil && node.State != nil &&
-		node.State.Messages != nil && node.State.Messages.PendingSteeringCount() == 0 {
-		delete(m.rejectedSteeringDrafts, owner)
-	}
-	m.persistComposerDraftIfChanged()
-}
-
-func joinRejectedSteeringDrafts(failed []string, current string) string {
-	if len(failed) == 0 {
-		return current
-	}
-	text := strings.Join(failed, "\n\n")
-	if current != "" {
-		text += "\n\n" + current
-	}
-	return text
 }
 
 func (m *App) syncPendingSteeringCount() {

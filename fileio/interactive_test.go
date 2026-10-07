@@ -47,3 +47,34 @@ func TestInteractiveExecCancellationAndShutdown(t *testing.T) {
 		t.Fatal("closed manager launched a process")
 	}
 }
+
+func TestInteractiveExecRetainsTruncatedOutputWithExactRetrieval(t *testing.T) {
+	mgr := NewAsyncCommandManager()
+	defer mgr.CloseAndWait()
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Second)
+	defer cancel()
+	result, err := mgr.StartInteractive(ctx, InteractiveOptions{
+		Command: "printf '%05000d' 0",
+		Shell:   "/bin/sh",
+	}, time.Second, 100)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.ExitCode == nil || *result.ExitCode != 0 || result.OriginalTokenCount == 0 {
+		t.Fatalf("terminal result=%+v", result)
+	}
+	d := result.OutputDescriptor
+	if d.Handle == "" || d.Status != AsyncCompleted || d.TotalBytes != 5000 || d.OmittedBytes <= 0 || len(d.ShownRanges) != 2 {
+		t.Fatalf("descriptor=%+v", d)
+	}
+	if !strings.Contains(result.Retrieval, `read_async_output(handle="`+d.Handle+`"`) || !strings.Contains(result.Retrieval, "do not rerun") {
+		t.Fatalf("retrieval=%q", result.Retrieval)
+	}
+	page, err := mgr.ReadOutputPage(d.Handle, d.ShownRanges[0].EndByte, 128)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(page.Output) != 128 || page.NextByte != d.ShownRanges[0].EndByte+128 || page.Descriptor.Status != AsyncCompleted {
+		t.Fatalf("page=%+v", page)
+	}
+}

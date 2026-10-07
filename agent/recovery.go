@@ -32,6 +32,32 @@ const (
 	RecoveryFailureUnknown       RecoveryFailureKind = "unknown"
 )
 
+type AttentionDisposition string
+
+const (
+	AttentionWait        AttentionDisposition = "wait"
+	AttentionParkAttempt AttentionDisposition = "park_attempt"
+)
+
+type SupervisedRunState string
+
+const (
+	SupervisedRunCompleted SupervisedRunState = "completed"
+	SupervisedRunCancelled SupervisedRunState = "cancelled"
+	SupervisedRunParked    SupervisedRunState = "parked"
+)
+
+// SupervisedRunResult is the single terminal snapshot of one supervised
+// attempt. A parked attempt leaves the durable task open for explicit repair;
+// it is neither completion nor cancellation.
+type SupervisedRunResult struct {
+	Archive  []provider.ChatMessage
+	Active   []provider.ChatMessage
+	State    SupervisedRunState
+	Failure  RecoveryFailure
+	Incident recoverytypes.Status
+}
+
 // RecoveryFailure describes how the supervisor may safely continue one
 // unfinished run. AutomaticLimit < 0 means retry indefinitely; zero means park.
 type RecoveryFailure struct {
@@ -500,6 +526,10 @@ type SupervisedRunOptions struct {
 	Supervisor *Supervisor
 	Prepare    func() (string, error)
 	Snapshot   func(archive, active []provider.ChatMessage)
+	// OnAttention lets the domain owner end only the current attempt for a
+	// structural, non-automatic blocker. Nil preserves the root wait/repair
+	// behavior. Transient and bounded corrective recovery do not consult it.
+	OnAttention func(RecoveryFailure) AttentionDisposition
 	// DeferSettlement lets the session commit transcript/context before the
 	// recovery task is resolved or discarded.
 	DeferSettlement bool
@@ -517,12 +547,14 @@ func (a *Agent) RunSupervised(
 	sessionID string,
 	runtimeCh <-chan RuntimeMessage,
 	options SupervisedRunOptions,
-) []provider.ChatMessage {
+) SupervisedRunResult {
 	if options.Supervisor == nil {
 		if emit != nil {
 			emit(AgentEvent{Type: "error", Data: "Recovery supervisor is unavailable; the pending run was not started."})
 		}
-		return append([]provider.ChatMessage(nil), sessionMessages...)
+		messages := append([]provider.ChatMessage(nil), sessionMessages...)
+		return SupervisedRunResult{Archive: messages, Active: messages, State: SupervisedRunParked,
+			Failure: AttentionRecovery(RecoveryFailureConfiguration, errors.New("recovery supervisor is unavailable"))}
 	}
 	if emit == nil {
 		emit = func(AgentEvent) {}
@@ -535,35 +567,64 @@ func (a *Agent) RunSupervised(
 	if len(archive) == 0 {
 		archive = append([]provider.ChatMessage(nil), sessionMessages...)
 	}
+	a.lastActiveContext = append([]provider.ChatMessage(nil), active...)
+	a.lastArchive = append([]provider.ChatMessage(nil), archive...)
 	first := true
+	snapshot := func() {
+		a.lastActiveContext = append([]provider.ChatMessage(nil), active...)
+		a.lastArchive = append([]provider.ChatMessage(nil), archive...)
+		if options.Snapshot != nil {
+			options.Snapshot(archive, active)
+		}
+	}
+	result := func(state SupervisedRunState, failure RecoveryFailure) SupervisedRunResult {
+		snapshot()
+		incident, _ := options.Supervisor.Current()
+		return SupervisedRunResult{
+			Archive: append([]provider.ChatMessage(nil), archive...),
+			Active:  append([]provider.ChatMessage(nil), active...),
+			State:   state, Failure: failure, Incident: incident,
+		}
+	}
+	parkAttention := func(failure RecoveryFailure) (SupervisedRunResult, bool) {
+		if failure.AutomaticLimit != 0 || options.OnAttention == nil ||
+			options.OnAttention(failure) != AttentionParkAttempt {
+			return SupervisedRunResult{}, false
+		}
+		status := options.Supervisor.Park(failure)
+		snapshot()
+		return SupervisedRunResult{
+			Archive: append([]provider.ChatMessage(nil), archive...),
+			Active:  append([]provider.ChatMessage(nil), active...),
+			State:   SupervisedRunParked, Failure: failure, Incident: status,
+		}, true
+	}
 	for {
 		if err := ctx.Err(); err != nil {
 			archive, active = appendStoppedBoundary(archive, active)
-			if options.Snapshot != nil {
-				options.Snapshot(archive, active)
-			}
+			snapshot()
 			if !options.DeferSettlement {
 				_ = options.Supervisor.Cancel()
 			}
 			emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
-			return archive
+			return result(SupervisedRunCancelled, RecoveryFailure{})
 		}
 		if options.Prepare != nil {
 			prepared, err := options.Prepare()
 			if err != nil {
-				if options.Snapshot != nil {
-					options.Snapshot(archive, active)
+				snapshot()
+				failure := AttentionRecovery(RecoveryFailureConfiguration, err)
+				if parked, ok := parkAttention(failure); ok {
+					return parked
 				}
-				if !options.Supervisor.Await(ctx, AttentionRecovery(RecoveryFailureConfiguration, err)) {
+				if !options.Supervisor.Await(ctx, failure) {
 					archive, active = appendStoppedBoundary(archive, active)
-					if options.Snapshot != nil {
-						options.Snapshot(archive, active)
-					}
+					snapshot()
 					if !options.DeferSettlement {
 						_ = options.Supervisor.Cancel()
 					}
 					emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
-					return archive
+					return result(SupervisedRunCancelled, failure)
 				}
 				active, archive = appendRecoveryContinuation(active, archive, rootprompt.RecoveryInterrupted)
 				continue
@@ -600,9 +661,7 @@ func (a *Agent) RunSupervised(
 				active = latest
 			}
 		}
-		if options.Snapshot != nil {
-			options.Snapshot(archive, active)
-		}
+		snapshot()
 
 		reason := terminalReason(terminal)
 		if panicked == nil && terminal != nil && terminal.Type == "done" &&
@@ -612,7 +671,7 @@ func (a *Agent) RunSupervised(
 					_ = options.Supervisor.Cancel()
 				}
 				emit(*terminal)
-				return archive
+				return result(SupervisedRunCancelled, RecoveryFailure{})
 			}
 			if !options.DeferSettlement {
 				for {
@@ -620,17 +679,15 @@ func (a *Agent) RunSupervised(
 						break
 					} else if !options.Supervisor.Await(ctx, AttentionRecovery(RecoveryFailureStorage, err)) {
 						archive, active = appendStoppedBoundary(archive, active)
-						if options.Snapshot != nil {
-							options.Snapshot(archive, active)
-						}
+						snapshot()
 						_ = options.Supervisor.Cancel()
 						emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
-						return archive
+						return result(SupervisedRunCancelled, AttentionRecovery(RecoveryFailureStorage, errors.New("recovery settlement was cancelled")))
 					}
 				}
 			}
 			emit(*terminal)
-			return archive
+			return result(SupervisedRunCompleted, RecoveryFailure{})
 		}
 
 		var failure RecoveryFailure
@@ -650,21 +707,20 @@ func (a *Agent) RunSupervised(
 				failure.Continuation = kind
 			}
 		}
+		if parked, ok := parkAttention(failure); ok {
+			return parked
+		}
 		if !options.Supervisor.Await(ctx, failure) {
 			archive, active = appendStoppedBoundary(archive, active)
-			if options.Snapshot != nil {
-				options.Snapshot(archive, active)
-			}
+			snapshot()
 			if !options.DeferSettlement {
 				_ = options.Supervisor.Cancel()
 			}
 			emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
-			return archive
+			return result(SupervisedRunCancelled, failure)
 		}
 		active, archive = appendRecoveryContinuation(active, archive, failure.Continuation)
-		if options.Snapshot != nil {
-			options.Snapshot(archive, active)
-		}
+		snapshot()
 	}
 }
 

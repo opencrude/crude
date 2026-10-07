@@ -383,7 +383,7 @@ var AgentTools = []ToolDef{
 			Name: "async_execute_command",
 			Description: "Start a shell command in the BACKGROUND. Does NOT block the agent loop. " +
 				"Assign a unique 'handle' name to track this command. " +
-				"Use check_async_command to poll status, read_async_output to read partial output, kill_async_command to stop it. " +
+				"Use check_async_command only for lifecycle status, read_async_output for retained content pages, and kill_async_command to stop it. " +
 				"Best for: dev servers, watchers, long builds, any command you want to run while doing other work. " +
 				"Each handle must be unique — kill or wait for completion before reusing. " +
 				"RELIABILITY: chain a visible completion signal like '&& echo DONE' or '&& echo SUCCESS' " +
@@ -405,9 +405,9 @@ var AgentTools = []ToolDef{
 		Type: "function",
 		Function: ToolFuncDef{
 			Name: "check_async_command",
-			Description: "Check the status of a background command started via async_execute_command. " +
-				"Returns: handle, PID, status (running/completed/failed/killed), exit code, and error if any. " +
-				"Use this to poll whether a command finished before acting on its output.",
+			Description: "Check lifecycle status for a background command started via async_execute_command. " +
+				"Returns handle, PID, status, retained output byte count, and terminal exit/error only when known. " +
+				"This does not read or advance output; use read_async_output for content rather than repeating status checks.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
@@ -438,7 +438,8 @@ var AgentTools = []ToolDef{
 		Function: ToolFuncDef{
 			Name: "read_async_output",
 			Description: "Read one bounded stdout+stderr page from a running or completed background command. " +
-				"Track `since_byte` to read incrementally; the result reports next_byte, total_bytes, and whether more remains. " +
+				"Track `since_byte` to read incrementally; the result reports the exact byte range, next_byte, total_bytes, status, and whether more remains. " +
+				"If a completed synchronous/native command retained a real handle, read that handle instead of rerunning the command or polling status for content. " +
 				"Do not drain huge logs into model context: redirect high-volume output to CRUDE_TEMP_DIR and inspect relevant ranges/searches instead.",
 			Parameters: json.RawMessage(`{
 				"type":"object",

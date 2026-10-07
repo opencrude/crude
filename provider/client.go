@@ -430,7 +430,11 @@ func (s *ChatStream) Next() (StreamUpdate, error) {
 					// The connection closed before a terminal event. If
 					// nothing was yielded, this is retryable transport
 					// trouble; otherwise the partial result stands.
-					err = fmt.Errorf("%w: provider stream ended without terminal event", io.ErrUnexpectedEOF)
+					err = &StreamInterruptionError{
+						Protocol: s.client.proto.Info().ID,
+						Kind:     StreamInterruptionMissingTerminal,
+						Cause:    fmt.Errorf("%w: provider stream ended without terminal event", io.ErrUnexpectedEOF),
+					}
 				} else {
 					s.done()
 					return StreamUpdate{}, io.EOF

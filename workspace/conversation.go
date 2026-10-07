@@ -258,10 +258,9 @@ func (c *Conversation) ConsumePendingSteering(id string) bool {
 	return true
 }
 
-// RemovePendingSteeringMessages returns notes in transcript order for draft recovery.
-// Upload-start acknowledgement may have removed PendingSteering already, so match
-// the exact backend-supplied IDs of user messages, regardless of their flag.
-func (c *Conversation) RemovePendingSteeringMessages(ids []string) []Message {
+// SettlePendingSteeringMessages settles matching notes in place. A locally
+// accepted send belongs to conversation context even when its execution ends.
+func (c *Conversation) SettlePendingSteeringMessages(ids []string) []Message {
 	if c == nil || len(ids) == 0 {
 		return nil
 	}
@@ -274,26 +273,22 @@ func (c *Conversation) RemovePendingSteeringMessages(ids []string) []Message {
 	if len(wanted) == 0 {
 		return nil
 	}
-	kept := c.messages[:0]
-	var removed []Message
+	var settled []Message
 	for _, message := range c.messages {
 		_, selected := wanted[message.InternalID]
 		if selected && message.Role == MessageRoleUser {
-			delete(c.byID, message.InternalID)
-			removed = append(removed, *message)
-			continue
+			message.PendingSteering = false
+			settled = append(settled, *message)
 		}
-		kept = append(kept, message)
 	}
-	if len(removed) > 0 {
-		c.messages = kept
+	if len(settled) > 0 {
 		c.version++
 	}
-	return removed
+	return settled
 }
 
-func (c *Conversation) RemovePendingSteeringIDs(ids []string) int {
-	return len(c.RemovePendingSteeringMessages(ids))
+func (c *Conversation) SettlePendingSteeringIDs(ids []string) int {
+	return len(c.SettlePendingSteeringMessages(ids))
 }
 
 func (c *Conversation) PendingSteeringCount() int {
@@ -901,7 +896,25 @@ func (c *Conversation) UpdateToolProgress(toolID, internalID, name, phase, detai
 
 func (c *Conversation) UpdateToolResult(toolID, internalID, name, result string, isError bool, estTokens, linesAdded, linesRemoved int) {
 	message := c.findTool(internalID, toolID)
-	if message == nil || (message.ToolStatus != "calling" && message.ToolStatus != "streaming") {
+	if message == nil {
+		return
+	}
+	// Stop settles unfinished calls as cancelled for immediate presentation, but
+	// a real backend result that was already in flight remains authoritative
+	// evidence. Admit it without recreating the dwell timeline or active state.
+	if message.ToolStatus == "cancelled" {
+		if isError {
+			message.ToolStatus, message.ToolPreviewPhase = "error", "error"
+		} else {
+			message.ToolStatus, message.ToolPreviewPhase = "success", "done"
+		}
+		message.ToolProgressPhase, message.ToolProgressMessage = "", ""
+		message.ToolDuration = elapsed(message.ToolStartTime)
+		if result != "" {
+			message.Content = result
+		}
+		delete(c.toolTimelines, message)
+		c.version++
 		return
 	}
 	if isError {
@@ -1158,6 +1171,10 @@ func (c *Conversation) findTool(internalID, toolID string) *Message {
 		return c.byID[toolID]
 	}
 	return nil
+}
+
+func (c *Conversation) HasToolMessage(toolID, internalID string) bool {
+	return c != nil && c.findTool(internalID, toolID) != nil
 }
 
 func (c *Conversation) bindToolID(message *Message, toolID string) {

@@ -18,9 +18,10 @@ import (
 )
 
 type AgentEvent struct {
-	Type    string
-	Data    any
-	AgentID string
+	Type     string
+	Data     any
+	AgentID  string
+	Identity ttypes.RuntimeEventIdentity
 }
 
 const (

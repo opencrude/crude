@@ -319,12 +319,13 @@ func (app *App) cancelCapabilityOperations() {
 }
 
 type skillInvocationMsg struct {
-	workspace uint64
-	agentID   string
-	draft     string
-	sequence  uint64
-	input     provider.UserInput
-	err       error
+	workspace     uint64
+	agentID       string
+	draft         string
+	draftRevision uint64
+	sequence      uint64
+	input         provider.UserInput
+	err           error
 }
 
 func (app *App) invokeSkill(remainder, draft string) tea.Cmd {
@@ -348,13 +349,14 @@ func (app *App) invokeSkillWithRefs(remainder, draft string, refIDs []string) te
 	owner, generation := app.Workspace, app.workspaceSwitchGen.Load()
 	app.skillInvocationSequence++
 	sequence := app.skillInvocationSequence
+	draftRevision := app.Input.DraftRevision()
 	references := append([]string(nil), refIDs...)
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		defer cancel()
 		input, err := owner.PrepareSkillInput(ctx, agentID, id, arguments)
 		input.ReferenceIDs = references
-		return skillInvocationMsg{workspace: generation, agentID: agentID, draft: draft, sequence: sequence, input: input, err: err}
+		return skillInvocationMsg{workspace: generation, agentID: agentID, draft: draft, draftRevision: draftRevision, sequence: sequence, input: input, err: err}
 	}
 }
 

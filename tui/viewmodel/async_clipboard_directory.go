@@ -756,6 +756,7 @@ func (m *App) StopAsyncIO() {
 	if m == nil {
 		return
 	}
+	m.flushComposerDraft()
 	m.resetMemoryBrowser()
 	if m.overlayHost != nil {
 		m.overlayHost.Close(ui.OverlayCapabilityPicker)

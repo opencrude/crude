@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -89,14 +90,14 @@ type App struct {
 	// Composer draft persistence (hydration). The active-session pointer is
 	// compared every frame; on change the composer clears immediately and the
 	// incoming session's persisted draft loads asynchronously.
-	composerHydratedFor    *workspace.Session
-	composerSavedDraft     string
-	composerSaving         bool
-	composerDirtySinceSave bool
-	referenceOverlay       *referenceOverlayState
-	pastedTextRequests     []pastedTextStoredMsg
-	// Failed human steering uploads belong to their session until its composer is active.
-	rejectedSteeringDrafts     map[*workspace.Session][]string
+	composerHydratedFor        *workspace.Session
+	composerDraftEpoch         uint64
+	composerDraftErr           error
+	composerDraftOwners        map[*workspace.Session]*composerDraftOwner
+	composerDraftWrites        sync.WaitGroup
+	composerDraftStopping      atomic.Bool
+	referenceOverlay           *referenceOverlayState
+	pastedTextRequests         []pastedTextStoredMsg
 	DirtyPromptPath            string
 	DirtyPromptChoice          int
 	operationIssue             *operationIssueOwner
@@ -315,47 +316,48 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	comp.Root().AddChild(mainSurf)
 
 	app := &App{
-		Workspace:          ws,
-		Theme:              th,
-		Input:              im,
-		Win:                window.New(th),
-		BufferMgr:          bufferMgr,
-		Tree:               tree,
-		FilePicker:         filepickerscreen.New(th),
-		LastSettings:       ws.InitialSettings,
-		EditorState:        edState,
-		OverlayState:       NewOverlayState(),
-		LSPPopup:           NewLSPPopupState(),
-		editorSettings:     ws.LoadAppSettings().Editor,
-		editorSaves:        make(map[string]*editorSaveState),
-		headerScreen:       headerScreen,
-		footerScreen:       footerScreen,
-		tabScreen:          tabScreen,
-		sidebarScreen:      sidebarScreen,
-		activityBar:        activityBar,
-		activityList:       activityList,
-		sourceControl:      sourceControl,
-		termScreens:        make(map[string]*shellterm.Screen),
-		termDock:           termDock,
-		termDockHeight:     12,
-		inputScreen:        inputScreen,
-		chatScreen:         chatScreen,
-		editorScreen:       editorScreen,
-		launcherScreen:     launcherScreen,
-		shell:              shell,
-		rootHost:           rootHost,
-		mainSurf:           mainSurf,
-		providerPresets:    presets,
-		compositor:         comp,
-		windowManager:      wmgr,
-		eventBus:           eb,
-		renderCtx:          rctx,
-		lastCancelTime:     time.Now(),
-		actionRegistry:     registry,
-		overlayHost:        overlay,
-		subPaneProjections: subPaneProjections,
-		sessionProjections: sessionProjections,
-		agentChatScroll:    make(map[string]agentMainChatScrollSnapshot),
+		Workspace:           ws,
+		composerDraftOwners: make(map[*workspace.Session]*composerDraftOwner),
+		Theme:               th,
+		Input:               im,
+		Win:                 window.New(th),
+		BufferMgr:           bufferMgr,
+		Tree:                tree,
+		FilePicker:          filepickerscreen.New(th),
+		LastSettings:        ws.InitialSettings,
+		EditorState:         edState,
+		OverlayState:        NewOverlayState(),
+		LSPPopup:            NewLSPPopupState(),
+		editorSettings:      ws.LoadAppSettings().Editor,
+		editorSaves:         make(map[string]*editorSaveState),
+		headerScreen:        headerScreen,
+		footerScreen:        footerScreen,
+		tabScreen:           tabScreen,
+		sidebarScreen:       sidebarScreen,
+		activityBar:         activityBar,
+		activityList:        activityList,
+		sourceControl:       sourceControl,
+		termScreens:         make(map[string]*shellterm.Screen),
+		termDock:            termDock,
+		termDockHeight:      12,
+		inputScreen:         inputScreen,
+		chatScreen:          chatScreen,
+		editorScreen:        editorScreen,
+		launcherScreen:      launcherScreen,
+		shell:               shell,
+		rootHost:            rootHost,
+		mainSurf:            mainSurf,
+		providerPresets:     presets,
+		compositor:          comp,
+		windowManager:       wmgr,
+		eventBus:            eb,
+		renderCtx:           rctx,
+		lastCancelTime:      time.Now(),
+		actionRegistry:      registry,
+		overlayHost:         overlay,
+		subPaneProjections:  subPaneProjections,
+		sessionProjections:  sessionProjections,
+		agentChatScroll:     make(map[string]agentMainChatScrollSnapshot),
 	}
 	deck.app = app
 	app.Feedback = newFeedbackSink(app)
@@ -386,6 +388,10 @@ func (m *App) SwitchProject(projectDir string) error {
 				return fmt.Errorf("save or discard changes in %s before switching workspaces", tab.Editor.BaseTitle())
 			}
 		}
+	}
+	m.flushComposerDraft()
+	if m.composerDraftErr != nil {
+		return fmt.Errorf("save composer draft before switching workspace: %w", m.composerDraftErr)
 	}
 	state := m.beginWorkspaceSwitch()
 	if err := m.Workspace.SwitchProject(projectDir); err != nil {
@@ -476,6 +482,7 @@ func (m *App) SetProgram(p *tea.Program) {
 }
 
 func (m *App) Init() tea.Cmd {
+	draftCmd := m.hydrateComposerDraftCmd()
 	// Wire diagnostics before starting workspace LSP so fast servers cannot
 	// populate LSPManager's cache without notifying the tree/status update path.
 	m.wireLSPDiagnostics()
@@ -508,7 +515,7 @@ func (m *App) Init() tea.Cmd {
 			return workspace.StatusCenterHydratedMsg{}
 		}
 	}
-	return tea.Batch(tickCmd(), statusCmd, m.refreshSourceControl(), m.capabilitySnapshotCmd(), m.loadToolLayoutCmd())
+	return tea.Batch(draftCmd, tickCmd(), statusCmd, m.refreshSourceControl(), m.capabilitySnapshotCmd(), m.loadToolLayoutCmd())
 }
 
 // openTextOverlayWindow opens the text overlay as a floating window.

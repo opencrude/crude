@@ -20,6 +20,7 @@ type RecoveryCheckpoint struct {
 	Archive           []provider.ChatMessage
 	ActiveContext     []provider.ChatMessage
 	ContextOwnerID    string
+	ContextRevision   uint64
 	ContextGeneration uint64
 	ContextReason     string
 	OwnerData         []byte
@@ -35,6 +36,40 @@ func SaveRecoveryCheckpoint(db *sql.DB, sessionID string, checkpoint RecoveryChe
 		checkpoint.Status.Generation == 0 {
 		return errors.New("sessiondb: invalid recovery identity")
 	}
+	if checkpoint.ContextOwnerID != "" {
+		_, err := PublishContext(db, ContextPublication{SessionID: sessionID, AgentID: checkpoint.ContextOwnerID, RuntimeAgentID: checkpoint.Status.AgentID,
+			ExpectedRevision: checkpoint.ContextRevision, Mutation: ContextMutation{Replace: &ContextReplacement{
+				Generation: checkpoint.ContextGeneration, Reason: checkpoint.ContextReason, Messages: checkpoint.ActiveContext}},
+			Recovery: &checkpoint})
+		return err
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("sessiondb: begin recovery checkpoint: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	if err := saveRecoveryCheckpointTx(tx, sessionID, checkpoint); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("sessiondb: commit recovery checkpoint: %w", err)
+	}
+	return nil
+}
+
+func saveRecoveryCheckpointTx(tx *sql.Tx, sessionID string, checkpoint RecoveryCheckpoint) error {
+	if sessionID == "" || checkpoint.Status.ID == "" || checkpoint.Status.AgentID == "" || checkpoint.Status.Generation == 0 {
+		return errors.New("sessiondb: invalid recovery identity")
+	}
+	var existingSession, existingAgent string
+	var existingGeneration uint64
+	err := tx.QueryRow(`SELECT session_id,agent_id,generation FROM agent_recoveries WHERE incident_id=?`, checkpoint.Status.ID).Scan(&existingSession, &existingAgent, &existingGeneration)
+	if err == nil && (existingSession != sessionID || existingAgent != checkpoint.Status.AgentID || existingGeneration != checkpoint.Status.Generation) {
+		return errors.New("sessiondb: recovery identity conflict")
+	}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return err
+	}
 	pending, err := json.Marshal(checkpoint.PendingInput)
 	if err != nil {
 		return fmt.Errorf("sessiondb: encode recovery input: %w", err)
@@ -47,11 +82,6 @@ func SaveRecoveryCheckpoint(db *sql.DB, sessionID string, checkpoint RecoveryChe
 	if err != nil {
 		return fmt.Errorf("sessiondb: encode recovery context: %w", err)
 	}
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("sessiondb: begin recovery checkpoint: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
 	nowTime := time.Now()
 	if checkpoint.Status.StartedAt.IsZero() {
 		checkpoint.Status.StartedAt = nowTime
@@ -59,8 +89,7 @@ func SaveRecoveryCheckpoint(db *sql.DB, sessionID string, checkpoint RecoveryChe
 	if checkpoint.Status.UpdatedAt.IsZero() {
 		checkpoint.Status.UpdatedAt = nowTime
 	}
-	startedAt := checkpoint.Status.StartedAt.UnixNano()
-	updatedAt := checkpoint.Status.UpdatedAt.UnixNano()
+	startedAt, updatedAt := checkpoint.Status.StartedAt.UnixNano(), checkpoint.Status.UpdatedAt.UnixNano()
 	retryAt := int64(0)
 	if !checkpoint.Status.RetryAt.IsZero() {
 		retryAt = checkpoint.Status.RetryAt.UnixNano()
@@ -79,9 +108,9 @@ func SaveRecoveryCheckpoint(db *sql.DB, sessionID string, checkpoint RecoveryChe
 		INSERT INTO agent_recoveries (
 			incident_id, session_id, agent_id, generation, state, attempt, retry_at,
 			summary, detail, action, pending_input_json, input_admitted,
-			archive_json, active_context_json, context_owner_id,
+			archive_json, active_context_json, context_owner_id, context_revision,
 			context_generation, context_reason, owner_data, created_at, updated_at, ended_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(incident_id) DO UPDATE SET
 			agent_id=excluded.agent_id,
 			generation=excluded.generation,
@@ -96,6 +125,7 @@ func SaveRecoveryCheckpoint(db *sql.DB, sessionID string, checkpoint RecoveryChe
 			archive_json=excluded.archive_json,
 			active_context_json=excluded.active_context_json,
 			context_owner_id=excluded.context_owner_id,
+			context_revision=excluded.context_revision,
 			context_generation=excluded.context_generation,
 			context_reason=excluded.context_reason,
 			owner_data=excluded.owner_data,
@@ -105,27 +135,10 @@ func SaveRecoveryCheckpoint(db *sql.DB, sessionID string, checkpoint RecoveryChe
 		string(checkpoint.Status.State), checkpoint.Status.Attempt, retryAt,
 		checkpoint.Status.Summary, checkpoint.Status.Detail, checkpoint.Status.Action,
 		pending, recoveryBoolInt(checkpoint.InputAdmitted), archive, active,
-		checkpoint.ContextOwnerID, checkpoint.ContextGeneration, checkpoint.ContextReason,
+		checkpoint.ContextOwnerID, checkpoint.ContextRevision, checkpoint.ContextGeneration, checkpoint.ContextReason,
 		nullBytes(checkpoint.OwnerData), startedAt, updatedAt, endedAt)
 	if err != nil {
 		return fmt.Errorf("sessiondb: save recovery checkpoint: %w", err)
-	}
-	if checkpoint.ContextOwnerID != "" {
-		if _, err := tx.Exec(`
-			INSERT INTO agent_context_state (session_id, agent_id, generation, reason, messages_json, updated_at)
-			VALUES (?, ?, ?, ?, ?, ?)
-			ON CONFLICT(session_id, agent_id) DO UPDATE SET
-				generation=excluded.generation,
-				reason=excluded.reason,
-				messages_json=excluded.messages_json,
-				updated_at=excluded.updated_at
-		`, sessionID, checkpoint.ContextOwnerID, checkpoint.ContextGeneration,
-			checkpoint.ContextReason, active, updatedAt); err != nil {
-			return fmt.Errorf("sessiondb: save recovery active context: %w", err)
-		}
-	}
-	if err := tx.Commit(); err != nil {
-		return fmt.Errorf("sessiondb: commit recovery checkpoint: %w", err)
 	}
 	return nil
 }
@@ -138,7 +151,7 @@ func LoadRecoveryCheckpoint(db *sql.DB, sessionID, agentID string) (RecoveryChec
 	row := db.QueryRow(`
 		SELECT incident_id, agent_id, generation, state, attempt, retry_at, created_at, updated_at,
 		       summary, detail, action, pending_input_json, input_admitted,
-		       archive_json, active_context_json, context_owner_id,
+		       archive_json, active_context_json, context_owner_id, context_revision,
 		       context_generation, context_reason, owner_data
 		FROM agent_recoveries
 		WHERE session_id=? AND agent_id=? AND state NOT IN (?, ?)
@@ -163,7 +176,7 @@ func LoadOpenRecoveryCheckpoints(db *sql.DB, sessionID string) ([]RecoveryCheckp
 	rows, err := db.Query(`
 		SELECT incident_id, agent_id, generation, state, attempt, retry_at, created_at, updated_at,
 		       summary, detail, action, pending_input_json, input_admitted,
-		       archive_json, active_context_json, context_owner_id,
+		       archive_json, active_context_json, context_owner_id, context_revision,
 		       context_generation, context_reason, owner_data
 		FROM agent_recoveries
 		WHERE session_id=? AND state NOT IN (?, ?)
@@ -275,7 +288,7 @@ func scanRecoveryCheckpoint(scanner recoveryScanner) (RecoveryCheckpoint, error)
 		&checkpoint.Status.ID, &checkpoint.Status.AgentID, &checkpoint.Status.Generation,
 		&state, &checkpoint.Status.Attempt, &retryAt, &startedAt, &updatedAt,
 		&checkpoint.Status.Summary, &checkpoint.Status.Detail, &checkpoint.Status.Action,
-		&pending, &inputAdmitted, &archive, &active, &checkpoint.ContextOwnerID,
+		&pending, &inputAdmitted, &archive, &active, &checkpoint.ContextOwnerID, &checkpoint.ContextRevision,
 		&checkpoint.ContextGeneration, &checkpoint.ContextReason, &checkpoint.OwnerData,
 	); err != nil {
 		return RecoveryCheckpoint{}, err

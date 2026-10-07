@@ -61,10 +61,27 @@ func TestRetryAndCancelRecoveryUseExactIncidentFence(t *testing.T) {
 		ActiveContext:     []provider.ChatMessage{provider.NewTextMessage("user", "pending exact task")},
 		ContextOwnerID:    "session",
 		ContextGeneration: 1,
+		ContextReason:     "recovery_seed",
 	}
+	seed := checkpoint.ActiveContext[0]
+	seed.InternalID = "pending-exact-task"
+	checkpoint.Archive[0], checkpoint.ActiveContext[0] = seed, seed
+	state, err := sessiondb.PublishContext(db, sessiondb.ContextPublication{SessionID: "session", AgentID: "session", Mutation: sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: 1, Reason: "recovery_seed", Messages: checkpoint.ActiveContext}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint.ContextRevision = state.Revision
 	if err := sessiondb.SaveRecoveryCheckpoint(db, "session", checkpoint); err != nil {
 		t.Fatal(err)
 	}
+	checkpoint, _, err = sessiondb.LoadRecoveryCheckpoint(db, "session", "root")
+	if err != nil {
+		t.Fatal(err)
+	}
+	session.contextRevision = checkpoint.ContextRevision
+	session.contextGeneration = checkpoint.ContextGeneration
+	session.contextReason = checkpoint.ContextReason
+	session.activeContext = append([]provider.ChatMessage(nil), checkpoint.ActiveContext...)
 	session.pendingRecoveries["root"] = checkpoint
 	if session.CancelRecoveryFor("root", checkpoint.Status.ID, 7) {
 		t.Fatal("stale cancellation settled the passive task")

@@ -10,6 +10,7 @@ import (
 
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 
+	"crude/provider"
 	"crude/tui/editor"
 	"crude/tui/input"
 	"crude/tui/rendering"
@@ -688,9 +689,8 @@ func (m *App) handleInputEvent(evt any) []tea.Cmd {
 			cmds = append(cmds, m.submitRename(e.Text))
 			return cmds
 		}
-		cmds = append(cmds, m.recordPrompt(e.Text, e.ReferenceIDs...))
 		if agentID := m.activeAgentTabID(); agentID != "" {
-			cmds = append(cmds, m.submitInput(agentID, e.Text, e.ReferenceIDs))
+			cmds = append(cmds, m.submitPreparedInput(agentID, provider.InputWithRefs(e.Text, e.ReferenceIDs), e.DraftRevision))
 		} else if m.Feedback != nil {
 			m.Feedback.NotifyError("Message was not sent: no active agent tab")
 		}

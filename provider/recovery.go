@@ -11,6 +11,50 @@ import (
 	"syscall"
 )
 
+// StreamInterruptionKind identifies typed evidence that an accepted streaming
+// response ended before its protocol terminal event. It classifies recovery;
+// the stream owner still decides whether replay is safe from accepted output.
+type StreamInterruptionKind string
+
+const (
+	StreamInterruptionMissingTerminal StreamInterruptionKind = "missing_terminal_event"
+	StreamInterruptionProtocolError   StreamInterruptionKind = "protocol_disconnect_event"
+)
+
+// StreamInterruptionError preserves protocol/transport evidence for a stream
+// that did not reach its terminal event. Cause remains available to errors.Is
+// and errors.As (for example io.ErrUnexpectedEOF or a structured APIError).
+type StreamInterruptionError struct {
+	Protocol string
+	Event    string
+	Kind     StreamInterruptionKind
+	Cause    error
+}
+
+func (e *StreamInterruptionError) Error() string {
+	if e == nil {
+		return ""
+	}
+	prefix := "provider stream interrupted"
+	if e.Protocol != "" {
+		prefix = e.Protocol + " stream interrupted"
+	}
+	if e.Event != "" {
+		prefix += " at " + e.Event
+	}
+	if e.Cause != nil {
+		return prefix + ": " + e.Cause.Error()
+	}
+	return prefix
+}
+
+func (e *StreamInterruptionError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
+
 func permanentAPIError(code string) bool {
 	code = strings.ToLower(code)
 	for _, kind := range []string{"insufficient_quota", "billing", "credit_balance", "invalid_api_key", "authentication_error", "permission_denied", "invalid_request", "context_length_exceeded", "model_not_found"} {
@@ -26,6 +70,10 @@ func permanentAPIError(code string) bool {
 func Retryable(err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) {
 		return false
+	}
+	var interrupted *StreamInterruptionError
+	if errors.As(err, &interrupted) {
+		return true
 	}
 	var exhausted *ExhaustedError
 	if errors.As(err, &exhausted) {
@@ -109,6 +157,10 @@ func ErrorSummary(err error) string {
 				return "Provider is temporarily unavailable"
 			}
 		}
+	}
+	var interrupted *StreamInterruptionError
+	if errors.As(err, &interrupted) {
+		return "Connection to the provider was interrupted"
 	}
 	var api *APIError
 	if errors.As(err, &api) {

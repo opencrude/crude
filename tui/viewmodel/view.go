@@ -34,8 +34,6 @@ func (m *App) View() tea.View {
 	if m.shouldDeferFrame() {
 		return m.newTerminalView(m.cachedOutput)
 	}
-	m.maybeHydrateComposerDraft()
-
 	m.compositor.BeginFrame()
 	// Fill the root with the active theme background so uncovered cells
 	// (padding rows, transparent blits) follow the preset instead of the

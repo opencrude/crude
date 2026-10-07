@@ -91,6 +91,8 @@ type AgentState struct {
 	PendingPermTool string
 	PendingBlockID  string
 	TurnIdentity    ttypes.TurnIdentity
+	runtimeIdentity ttypes.RuntimeEventIdentity
+	runtimeEventIDs map[string]struct{}
 }
 
 func NewAgentState(id string, messages *Conversation, lg Logger) *AgentState {
@@ -98,10 +100,40 @@ func NewAgentState(id string, messages *Conversation, lg Logger) *AgentState {
 		messages = NewConversation()
 	}
 	return &AgentState{
-		ID:       id,
-		Messages: messages,
-		Logger:   lg,
+		ID:              id,
+		Messages:        messages,
+		Logger:          lg,
+		runtimeEventIDs: make(map[string]struct{}),
 	}
+}
+
+// AcceptRuntimeEvent admits one exact backend envelope. Same-run semantic
+// evidence remains admissible after terminal UI state, while duplicates,
+// replaced runs, wrong owners and non-monotonic sequences fail closed.
+func (a *AgentState) AcceptRuntimeEvent(id ttypes.RuntimeEventIdentity) bool {
+	if a == nil || !id.Valid() || id.AgentID != a.ID || id.OwnerID == "" {
+		return false
+	}
+	if _, duplicate := a.runtimeEventIDs[id.EventID]; duplicate {
+		return false
+	}
+	current := a.runtimeIdentity
+	if current.Valid() {
+		if id.OwnerID != current.OwnerID || id.RuntimeEpoch < current.RuntimeEpoch || id.Generation < current.Generation {
+			return false
+		}
+		if id.RuntimeEpoch == current.RuntimeEpoch && id.Generation == current.Generation {
+			if id.RunID != current.RunID || id.Sequence <= current.Sequence {
+				return false
+			}
+		}
+	}
+	a.runtimeIdentity = id
+	if len(a.runtimeEventIDs) >= 256 {
+		a.runtimeEventIDs = make(map[string]struct{})
+	}
+	a.runtimeEventIDs[id.EventID] = struct{}{}
+	return true
 }
 
 func (a *AgentState) Tick(spinFrame int) tea.Cmd {
@@ -160,6 +192,7 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 		cancelledRecovery = status.State == recovery.Cancelled
 	}
 	if a.Cancelling && evt.Type != "done" && evt.Type != "error" && evt.Type != "usage" &&
+		evt.Type != "stream_token" && evt.Type != "thinking" && evt.Type != "tool_result" &&
 		evt.Type != "context_compaction_cancelled" && evt.Type != "context_compaction_failed" &&
 		evt.Type != "context_compacted" && evt.Type != "collaboration_message" && !cancelledRecovery {
 		return nil
@@ -333,8 +366,9 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 			if delta.Kind.IsSummary() || delta.Kind.IsRaw() {
 				a.ReasoningMode = delta.Kind
 			}
-			a.Running = true
-			a.Thinking = true
+			if !a.Cancelling {
+				a.Running, a.Thinking = true, true
+			}
 			a.LastTokenTime = time.Now()
 			onStatusLine("Thinking")
 			onThinking(true, false, false)
@@ -358,8 +392,9 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 				}
 			}
 			a.TokenBuf += s
-			a.Running = true
-			a.Streaming = true
+			if !a.Cancelling {
+				a.Running, a.Streaming = true, true
+			}
 			onStatusLine("Receiving response")
 			onThinking(true, true, false)
 			target.EnsureAssistant()
@@ -401,10 +436,13 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 		return a.handleToolProgress(evt, target, onStatusLine)
 
 	case "tool_result":
-		a.Running = true
-		a.Thinking = true
+		if !a.Cancelling {
+			a.Running, a.Thinking = true, true
+		}
 		finishThinkingBlocks(target, thinkTarget)
-		onThinking(true, false, false)
+		if !a.Cancelling {
+			onThinking(true, false, false)
+		}
 		return a.handleToolResult(evt, target, onStatusLine)
 
 	case "permission_resolved":
