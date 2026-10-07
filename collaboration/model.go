@@ -408,3 +408,33 @@ type ReleaseClaimsRequest struct {
 	ClaimIDs         []string
 	ExpectedVersions map[string]uint64
 }
+
+type UpdateClaimsRequest struct {
+	ParentID           string
+	AgentID            string
+	RuntimeEpoch       uint64
+	TerminalRunID      string
+	ExpectedRunVersion uint64
+	ExpectedVersions   map[string]uint64
+	Paths              []string
+}
+
+type UpdateClaimsResult struct {
+	Released []Claim `json:"released"`
+	Claims   []Claim `json:"claims"`
+	Audit    Event   `json:"audit"`
+}
+
+type NarrowActiveClaimsRequest struct {
+	AgentID            string
+	RuntimeEpoch       uint64
+	RunID              string
+	ExpectedRunVersion uint64
+	ExpectedVersions   map[string]uint64
+	Paths              []string
+}
+
+type NarrowActiveClaimsResult struct {
+	Released []Claim `json:"released"`
+	Claims   []Claim `json:"claims"`
+}

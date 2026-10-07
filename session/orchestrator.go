@@ -36,6 +36,54 @@ type turnRequest struct {
 	generation uint64
 	deliveries []collaboration.PendingDelivery
 	recovery   *sessiondb.RecoveryCheckpoint
+	retry      bool
+}
+
+func (o *Orchestrator) reserveTurn(input provider.UserInput, deliveries []collaboration.PendingDelivery, recovery *sessiondb.RecoveryCheckpoint) (turnRequest, bool) {
+	if o == nil || o.closing.Load() {
+		return turnRequest{}, false
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	o.turnMu.Lock()
+	defer o.turnMu.Unlock()
+	if o.closing.Load() || o.turnCancel != nil {
+		cancel()
+		return turnRequest{}, false
+	}
+	if o.session != nil {
+		o.session.recoveryMu.Lock()
+		_, unfinished := o.session.pendingRecoveries[o.ID]
+		o.session.recoveryMu.Unlock()
+		if unfinished || o.session.compactionActive(o.ID) {
+			cancel()
+			return turnRequest{}, false
+		}
+	}
+	o.turnGeneration++
+	o.turnCancel, o.turnCancelling = cancel, false
+	return turnRequest{input: input, ctx: ctx, generation: o.turnGeneration, deliveries: append([]collaboration.PendingDelivery(nil), deliveries...), recovery: recovery}, true
+}
+
+func (o *Orchestrator) enqueueReserved(request turnRequest) bool {
+	o.turnMu.Lock()
+	if o.turnGeneration != request.generation || o.turnCancel == nil || o.turnCancelling || request.ctx.Err() != nil {
+		o.turnMu.Unlock()
+		return false
+	}
+	o.turnMu.Unlock()
+	select {
+	case o.inputCh <- request:
+		return true
+	default:
+		return false
+	}
+}
+
+func (o *Orchestrator) submitAdmittedInput(input provider.UserInput, archive, active []provider.ChatMessage, revision, generation uint64, reason string) bool {
+	checkpoint := sessiondb.RecoveryCheckpoint{PendingInput: cloneUserInput(input), InputAdmitted: true,
+		Archive: append([]provider.ChatMessage(nil), archive...), ActiveContext: append([]provider.ChatMessage(nil), active...),
+		ContextOwnerID: o.session.sessionID, ContextRevision: revision, ContextGeneration: generation, ContextReason: reason}
+	return o.submitTurn(input, nil, &checkpoint)
 }
 
 func (o *Orchestrator) submitRecovery(checkpoint sessiondb.RecoveryCheckpoint) bool {
@@ -55,7 +103,7 @@ func (o *Orchestrator) submitRecovery(checkpoint sessiondb.RecoveryCheckpoint) b
 	copy := checkpoint
 	request := turnRequest{
 		input: cloneUserInput(checkpoint.PendingInput), ctx: ctx,
-		generation: checkpoint.Status.Generation, recovery: &copy,
+		generation: checkpoint.Status.Generation, recovery: &copy, retry: true,
 	}
 	select {
 	case o.inputCh <- request:
@@ -93,53 +141,26 @@ func NewOrchestrator(id string, s *Session) *Orchestrator {
 // the session loop. Cancellation is therefore reliable even in the tiny
 // admission-to-receive window that channel-only signalling could not cover.
 func (o *Orchestrator) SubmitInput(input provider.UserInput) bool {
-	return o.submitTurn(input, nil)
+	return o.submitTurn(input, nil, nil)
 }
 
 func (o *Orchestrator) SubmitCollaboration(input provider.UserInput, deliveries []collaboration.PendingDelivery) bool {
 	if len(deliveries) == 0 {
 		return false
 	}
-	return o.submitTurn(input, deliveries)
+	return o.submitTurn(input, deliveries, nil)
 }
 
-func (o *Orchestrator) submitTurn(input provider.UserInput, deliveries []collaboration.PendingDelivery) bool {
-	if o == nil || o.closing.Load() {
+func (o *Orchestrator) submitTurn(input provider.UserInput, deliveries []collaboration.PendingDelivery, recovery *sessiondb.RecoveryCheckpoint) bool {
+	request, ok := o.reserveTurn(input, deliveries, recovery)
+	if !ok {
 		return false
 	}
-	ctx, cancel := context.WithCancel(context.Background())
-	o.turnMu.Lock()
-	defer o.turnMu.Unlock()
-	if o.closing.Load() || o.turnCancel != nil {
-		cancel()
-		return false
-	}
-	if o.session != nil {
-		o.session.recoveryMu.Lock()
-		_, unfinished := o.session.pendingRecoveries[o.ID]
-		o.session.recoveryMu.Unlock()
-		if unfinished {
-			// New human/peer admission must not overwrite a parked task's
-			// context. Continue/Stop owns its exact pending generation.
-			cancel()
-			return false
-		}
-	}
-	o.turnGeneration++
-	o.turnCancel = cancel
-	o.turnCancelling = false
-	request := turnRequest{
-		input: input, ctx: ctx, generation: o.turnGeneration,
-		deliveries: append([]collaboration.PendingDelivery(nil), deliveries...),
-	}
-	select {
-	case o.inputCh <- request:
+	if o.enqueueReserved(request) {
 		return true
-	default:
-		o.turnCancel = nil
-		cancel()
-		return false
 	}
+	o.endTurn(request.generation)
+	return false
 }
 
 func (o *Orchestrator) endTurn(generation uint64) []string {

@@ -30,7 +30,7 @@ func TestCommitContextCompactionArchivesPreviousGenerationAtomically(t *testing.
 	}
 	checkpoint := provider.NewTextMessage("user", "<context_checkpoint/>")
 	if err := CommitContextCompaction(db, "session", "root", ContextState{
-		AgentID: "root", Generation: 4, Reason: "manual_compaction", Messages: []provider.ChatMessage{checkpoint},
+		AgentID: "root", Revision: 1, Generation: 4, Reason: "manual_compaction", Messages: []provider.ChatMessage{checkpoint},
 	}, CompactionRecord{
 		OperationID: "compact-1", SessionID: "session", AgentID: "root", Trigger: "manual", Role: "root",
 		State: CompactionCompleted, StageIndex: 4, CompletedStages: 4, BeforeTokens: 155955, AfterTokens: 10476,

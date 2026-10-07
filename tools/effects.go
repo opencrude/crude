@@ -1,6 +1,49 @@
 package tools
 
-import captypes "crude/types/capability"
+import (
+	"fmt"
+
+	captypes "crude/types/capability"
+)
+
+type StructuralFailureKind string
+
+const (
+	StructuralFailureOwnershipScope    StructuralFailureKind = "ownership_scope"
+	StructuralFailureOwnershipConflict StructuralFailureKind = "ownership_conflict"
+)
+
+// StructuralFailureError identifies a tool failure that cannot be repaired by
+// retrying the same attempt. The normal tool result remains the user-visible
+// evidence; supervisors use this typed cause to park only the blocked attempt.
+type StructuralFailureError struct {
+	Kind           StructuralFailureKind
+	Tool           string
+	Target         string
+	OwnerAgentID   string
+	OwnerAgentName string
+	Cause          error
+}
+
+func (e *StructuralFailureError) Error() string {
+	if e == nil {
+		return "structural tool failure"
+	}
+	if e.Cause != nil {
+		return e.Cause.Error()
+	}
+	if e.Target != "" {
+		return fmt.Sprintf("%s: %s", e.Kind, e.Target)
+	}
+	return string(e.Kind)
+}
+
+func (e *StructuralFailureError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Cause
+}
 
 type ToolMetadata struct {
 	Name        string
@@ -29,7 +72,7 @@ func NativeMetadata(name string) (ToolMetadata, bool) {
 		metadata.Effect = captypes.EffectWrite
 	case "delete_file":
 		metadata.Effect = captypes.EffectDelete
-	case "exec_command", "write_stdin", "execute_command", "async_execute_command", "kill_async_command", "multi_tool_use.parallel", "agent_start", "agent_control":
+	case "exec_command", "write_stdin", "execute_command", "async_execute_command", "kill_async_command", "multi_tool_use.parallel", "agent_start", "agent_control", "agent_update_claims":
 		metadata.Effect = captypes.EffectExecute
 	default:
 		return ToolMetadata{}, false

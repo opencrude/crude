@@ -21,6 +21,12 @@ Read that first; this index only organizes the reference material.
 
 ## Index
 
+### Immediate action required
+
+- [Runtime integrity action report](../IMMEDIATE-ACTION-REQUIRED.md) — portable,
+  self-contained root handoff for unfinished runtime integrity; implementation
+  and verification first, backed-up manual existing-database alignment last.
+
 ### Architecture
 
 - [Compositing engine](architecture/compositing-engine.md) — the multi-window
@@ -84,6 +90,10 @@ Read that first; this index only organizes the reference material.
 
 ### Plans (active work only)
 
+- [Input admission and runtime integrity acceptance ledger](plans/input-admission-integrity-audit.md)
+  — authoritative active checklist for Stop/context preservation, guidance
+  preflight, child settlement, claims, retained output, collaboration waits,
+  accepted-stream recovery and release proof; implementation remains incomplete.
 - [Chat projection handoff](plans/chat-projection-handoff.md) — **ACTIVE
   HANDOFF** for in-flight chat-projection work.
 - [Shell frame padding review](plans/shell-frame-padding-review.md) — open

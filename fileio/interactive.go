@@ -2,6 +2,7 @@ package fileio
 
 import (
 	"context"
+	"encoding/base64"
 	"fmt"
 	"os"
 	"os/exec"
@@ -21,11 +22,64 @@ type InteractiveOptions struct {
 }
 
 type InteractiveResult struct {
-	WallTimeSeconds    float64 `json:"wall_time_seconds"`
-	ExitCode           *int    `json:"exit_code,omitempty"`
-	SessionID          int     `json:"session_id,omitempty"`
-	OriginalTokenCount int     `json:"original_token_count,omitempty"`
-	Output             string  `json:"output"`
+	WallTimeSeconds    float64          `json:"wall_time_seconds"`
+	ExitCode           *int             `json:"exit_code,omitempty"`
+	SessionID          int              `json:"session_id,omitempty"`
+	OriginalTokenCount int              `json:"original_token_count,omitempty"`
+	OutputDescriptor   OutputDescriptor `json:"output_descriptor"`
+	Retrieval          string           `json:"retrieval"`
+	OutputEncoding     string           `json:"output_encoding,omitempty"`
+	Output             string           `json:"output"`
+}
+
+func utf8PrefixBoundary(raw string, limit int) int {
+	if limit >= len(raw) {
+		return len(raw)
+	}
+	if limit <= 0 {
+		return 0
+	}
+	for limit > 0 && !utf8.RuneStart(raw[limit]) {
+		limit--
+	}
+	return limit
+}
+
+func utf8SuffixBoundary(raw string, start int) int {
+	if start <= 0 {
+		return 0
+	}
+	if start >= len(raw) {
+		return len(raw)
+	}
+	for start < len(raw) && !utf8.RuneStart(raw[start]) {
+		start++
+	}
+	return start
+}
+
+func interactiveRetrieval(descriptor OutputDescriptor, info AsyncCmdInfo, firstOmitted int) string {
+	header := fmt.Sprintf("Command output: handle=%s status=%s total_bytes=%d", descriptor.Handle, descriptor.Status, descriptor.TotalBytes)
+	if descriptor.Status == AsyncRunning {
+		header += "; exit unknown while running"
+	} else if descriptor.Status == AsyncKilled {
+		header += "; exit unavailable (command was killed)"
+	} else {
+		header += fmt.Sprintf("; exit_code=%d", info.ExitCode)
+	}
+	if info.Error != "" {
+		header += fmt.Sprintf("; error=%q", info.Error)
+	}
+	if descriptor.OmittedBytes > 0 {
+		header += fmt.Sprintf(". Visible output is a bounded excerpt; %d bytes are omitted. Read the first omitted bytes with read_async_output(handle=%q, since_byte=%d, max_bytes=%d); do not rerun the command or repeat status checks for content.", descriptor.OmittedBytes, descriptor.Handle, firstOmitted, DefaultOutputChunkBytes)
+	} else if descriptor.Status == AsyncRunning && descriptor.TotalBytes == 0 {
+		header += ". No new bytes yet; wait for natural command progress before one later read instead of looping on status."
+	} else if descriptor.TotalBytes == 0 {
+		header += ". Output is complete and empty; no output read is needed."
+	} else {
+		header += ". All newly captured bytes are shown below; retained output remains addressable by this handle without rerunning the command."
+	}
+	return header
 }
 
 func buildInteractiveCommand(ctx context.Context, opts InteractiveOptions, tempDir string) (*exec.Cmd, func(), error) {
@@ -100,11 +154,14 @@ func (m *AsyncCommandManager) interact(ctx context.Context, id int, state *async
 	case state.interactionLease <- struct{}{}:
 		defer func() { <-state.interactionLease }()
 	case <-ctx.Done():
-		return InteractiveResult{}, ctx.Err()
+		state.killGroup()
+		<-state.done
+		return interactiveResultSnapshot(id, state, start, maxTokens), ctx.Err()
 	}
 	if err := ctx.Err(); err != nil {
 		state.killGroup()
-		return InteractiveResult{}, err
+		<-state.done
+		return interactiveResultSnapshot(id, state, start, maxTokens), err
 	}
 	if chars != "" {
 		written := make(chan error, 1)
@@ -118,7 +175,8 @@ func (m *AsyncCommandManager) interact(ctx context.Context, id int, state *async
 			state.killGroup()
 			_ = state.input.Close()
 			<-written
-			return InteractiveResult{}, ctx.Err()
+			<-state.done
+			return interactiveResultSnapshot(id, state, start, maxTokens), ctx.Err()
 		}
 	}
 	timer := time.NewTimer(yield)
@@ -128,32 +186,65 @@ func (m *AsyncCommandManager) interact(ctx context.Context, id int, state *async
 	case <-timer.C:
 	case <-ctx.Done():
 		state.killGroup()
-		return InteractiveResult{}, ctx.Err()
+		<-state.done
+		return interactiveResultSnapshot(id, state, start, maxTokens), ctx.Err()
 	}
+	return interactiveResultSnapshot(id, state, start, maxTokens), nil
+}
+
+func interactiveResultSnapshot(id int, state *asyncCmdState, start time.Time, maxTokens int) InteractiveResult {
 	state.outputMu.Lock()
-	output := string(state.output.Bytes()[state.outputCursor:])
+	outputStart := state.outputCursor
+	outputEnd := state.output.Len()
+	output := string(state.output.Bytes()[outputStart:outputEnd])
 	state.outputCursor = state.output.Len()
 	state.outputMu.Unlock()
-	result := InteractiveResult{WallTimeSeconds: time.Since(start).Seconds(), Output: output}
-	tokens := (utf8.RuneCountInString(output) + 3) / 4
-	if maxTokens > 0 && tokens > maxTokens {
-		runes := []rune(output)
-		budget := maxTokens * 4
-		half := budget / 2
-		result.Output = string(runes[:half]) + "\n... output truncated ...\n" + string(runes[len(runes)-(budget-half):])
-		result.OriginalTokenCount = tokens
-	}
 	state.mu.Lock()
 	info := state.info
 	state.mu.Unlock()
+	descriptor := OutputDescriptor{
+		Handle:     fmt.Sprintf("auto-%d", id),
+		Status:     info.Status,
+		TotalBytes: outputEnd,
+	}
+	if outputEnd > outputStart {
+		descriptor.ShownRanges = []OutputRange{{StartByte: outputStart, EndByte: outputEnd}}
+	}
+	result := InteractiveResult{WallTimeSeconds: time.Since(start).Seconds(), Output: output, OutputDescriptor: descriptor}
+	tokens := (utf8.RuneCountInString(output) + 3) / 4
+	firstOmitted := outputEnd
+	byteBudget := maxTokens * 4
+	if !utf8.ValidString(output) {
+		shownEnd := len(output)
+		if maxTokens > 0 {
+			shownEnd = min(shownEnd, byteBudget)
+		}
+		result.Output = base64.StdEncoding.EncodeToString([]byte(output[:shownEnd]))
+		result.OutputEncoding = "base64"
+		result.OutputDescriptor.ShownRanges = []OutputRange{{StartByte: outputStart, EndByte: outputStart + shownEnd}}
+		result.OutputDescriptor.OmittedBytes = len(output) - shownEnd
+		firstOmitted = outputStart + shownEnd
+	} else if maxTokens > 0 && len(output) > byteBudget {
+		headEnd := utf8PrefixBoundary(output, byteBudget/2)
+		tailStart := utf8SuffixBoundary(output, len(output)-(byteBudget-headEnd))
+		result.Output = output[:headEnd] + "\n... output truncated ...\n" + output[tailStart:]
+		result.OriginalTokenCount = tokens
+		result.OutputDescriptor.ShownRanges = []OutputRange{
+			{StartByte: outputStart, EndByte: outputStart + headEnd},
+			{StartByte: outputStart + tailStart, EndByte: outputEnd},
+		}
+		result.OutputDescriptor.OmittedBytes = max(0, tailStart-headEnd)
+		firstOmitted = outputStart + headEnd
+	}
 	if info.Status == AsyncRunning {
 		result.SessionID = id
-	} else {
+	} else if info.Status != AsyncKilled {
 		code := info.ExitCode
-		if info.Status == AsyncKilled {
-			code = -1
-		}
 		result.ExitCode = &code
 	}
-	return result, nil
+	result.Retrieval = interactiveRetrieval(result.OutputDescriptor, info, firstOmitted)
+	if result.OutputEncoding == "base64" {
+		result.Retrieval += " The output field uses output_encoding=base64; decode only the returned field to recover its exact raw shown range."
+	}
+	return result
 }

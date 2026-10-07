@@ -39,6 +39,13 @@ type EventSender interface {
 	SendAgentEventWithID(typ string, data any, agentID string)
 }
 
+// IdentityEventSender is the neutral exact-run seam. Legacy senders remain
+// usable while presentation migrates; runtime sources must preserve a supplied
+// identity rather than regenerating it on duplicate delivery.
+type IdentityEventSender interface {
+	SendAgentEventEnvelope(event agent.AgentEvent)
+}
+
 type Session struct {
 	plans     atomic.Pointer[plan.Store]
 	agentName string
@@ -97,6 +104,7 @@ type Session struct {
 	systemPromptMu    sync.Mutex
 	systemPrompts     map[string]string
 	activeContext     []provider.ChatMessage
+	contextRevision   uint64
 	contextGeneration uint64
 	contextReason     string
 
@@ -147,6 +155,9 @@ type Session struct {
 	recoveryMu               sync.Mutex
 	recoverySlots            map[string]*recoverySlot
 	pendingRecoveries        map[string]sessiondb.RecoveryCheckpoint
+	admissionMu              sync.Mutex
+	pendingAdmissions        map[*InputAdmissionIntent]struct{}
+	lifecycleMu              sync.Mutex
 
 	// runtimeProfile holds ephemeral per-orchestrator config overrides
 	// that never persist to disk.
@@ -506,6 +517,18 @@ func (s *Session) Close() {
 	s.logger.Info("SESSION", "close", "has_messages", s.HasMessages())
 	s.stopCompactionForClose()
 	s.compactionWg.Wait()
+	s.admissionMu.Lock()
+	pendingAdmissions := make([]*InputAdmissionIntent, 0, len(s.pendingAdmissions))
+	for intent := range s.pendingAdmissions {
+		pendingAdmissions = append(pendingAdmissions, intent)
+	}
+	s.admissionMu.Unlock()
+	for _, intent := range pendingAdmissions {
+		result := s.CommitInputAdmission(context.Background(), intent)
+		if result.Status == InputAdmissionRejected && s.logger != nil {
+			s.logger.Error("INPUT", "close_admission_preserve_failed", "input_id", intent.InputID, "error", result.Err)
+		}
+	}
 	s.mu.Lock()
 	collaborationCancel := s.collaborationCancel
 	s.collaborationCancel = nil

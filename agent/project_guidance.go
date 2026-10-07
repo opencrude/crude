@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"unicode/utf8"
 
@@ -22,6 +23,10 @@ type projectGuidance struct {
 	basePrompt    string
 	initialPrompt string
 }
+
+type guidanceOperandError struct{ message string }
+
+func (e *guidanceOperandError) Error() string { return e.message }
 
 func (a *Agent) loadProjectGuidance(ctx context.Context, systemPrompt string) (string, error) {
 	if a.WorkDir == "" {
@@ -269,13 +274,31 @@ func (a *Agent) refreshProjectGuidance(ctx context.Context, systemPrompt string)
 	return rendered, nil
 }
 
-func guidanceCallPaths(calls []provider.ToolCall) []string {
+func guidanceCallPaths(calls []provider.ToolCall) ([]string, error) {
 	var paths []string
+	appendConcrete := func(tool, key, path string) error {
+		if path == "" || strings.Contains(path, "://") {
+			return nil
+		}
+		if strings.ContainsAny(path, "*?") {
+			return &guidanceOperandError{message: fmt.Sprintf("invalid %s %s %q: wildcard syntax is unsupported in a literal path; pass a concrete path (glob_files uses pattern plus an optional concrete base_dir)", tool, key, path)}
+		}
+		if _, err := filepath.Abs(path); err != nil {
+			return &guidanceOperandError{message: fmt.Sprintf("invalid %s %s %q: %v", tool, key, path, err)}
+		}
+		paths = append(paths, path)
+		return nil
+	}
 	for _, call := range calls {
 		if call.Function.Name == "apply_patch" && call.Type == "custom" {
 			if patch, err := codexio.Parse(call.Function.Arguments); err == nil {
 				for _, operation := range patch.Operations {
-					paths = append(paths, operation.Path, operation.MoveTo)
+					if err := appendConcrete(call.Function.Name, "path", operation.Path); err != nil {
+						return nil, err
+					}
+					if err := appendConcrete(call.Function.Name, "move_to", operation.MoveTo); err != nil {
+						return nil, err
+					}
 				}
 			}
 			continue
@@ -299,22 +322,39 @@ func guidanceCallPaths(calls []provider.ToolCall) []string {
 					name, _ := child["recipient_name"].(string)
 					children = append(children, provider.ToolCall{Function: provider.FunctionCall{Name: strings.TrimPrefix(name, "functions."), Arguments: string(data)}})
 				}
-				paths = append(paths, guidanceCallPaths(children)...)
+				childPaths, err := guidanceCallPaths(children)
+				if err != nil {
+					return nil, err
+				}
+				paths = append(paths, childPaths...)
 			}
 		}
-		for _, key := range []string{"path", "file_path", "source", "destination", "cwd", "workdir"} {
-			if path, ok := params[key].(string); ok && path != "" && !strings.Contains(path, "://") {
-				paths = append(paths, path)
+		keys := []string{"path", "file_path", "source", "destination", "cwd", "workdir"}
+		if call.Function.Name == "glob_files" {
+			// The glob pattern is not a filesystem scope. Only its concrete
+			// search anchor participates in guidance discovery.
+			keys = []string{"base_dir"}
+		}
+		for _, key := range keys {
+			if path, ok := params[key].(string); ok {
+				if err := appendConcrete(call.Function.Name, key, path); err != nil {
+					return nil, err
+				}
 			}
 		}
 		if call.Function.Name == "apply_patch" {
 			input, _ := params["input"].(string)
 			if patch, err := codexio.Parse(input); err == nil {
 				for _, operation := range patch.Operations {
-					paths = append(paths, operation.Path, operation.MoveTo)
+					if err := appendConcrete(call.Function.Name, "path", operation.Path); err != nil {
+						return nil, err
+					}
+					if err := appendConcrete(call.Function.Name, "move_to", operation.MoveTo); err != nil {
+						return nil, err
+					}
 				}
 			}
 		}
 	}
-	return paths
+	return paths, nil
 }

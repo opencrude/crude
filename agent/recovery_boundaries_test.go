@@ -49,7 +49,7 @@ func TestToolPanicParksSupervisedRunBeforeAnotherRequest(t *testing.T) {
 			supervisor.Emit = func(event AgentEvent) { statuses <- event.Data.(recoverytypes.Status) }
 			ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 			defer cancel()
-			done := make(chan []provider.ChatMessage, 1)
+			done := make(chan SupervisedRunResult, 1)
 			go func() {
 				done <- a.RunSupervised(ctx, []provider.ChatMessage{provider.NewTextMessage("user", "task")},
 					"system", nil, nil, "session", nil, SupervisedRunOptions{Supervisor: supervisor})
@@ -69,9 +69,9 @@ func TestToolPanicParksSupervisedRunBeforeAnotherRequest(t *testing.T) {
 			}
 			wake <- struct{}{}
 			select {
-			case history := <-done:
+			case result := <-done:
 				var results int
-				for _, message := range history {
+				for _, message := range result.Archive {
 					if message.Role == "tool" {
 						results++
 					}

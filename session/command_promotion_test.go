@@ -60,6 +60,16 @@ func promotionTestManager(t *testing.T) (*fileio.AsyncCommandManager, *logger.Lo
 
 func promotedHandle(t *testing.T, content string) string {
 	t.Helper()
+	if marker := "retained_handle="; strings.Contains(content, marker) {
+		start := strings.Index(content, marker) + len(marker)
+		end := start
+		for end < len(content) && content[end] != ' ' && content[end] != '\n' && content[end] != '.' {
+			end++
+		}
+		if end > start {
+			return content[start:end]
+		}
+	}
 	start := strings.Index(content, "[")
 	end := strings.Index(content, "]")
 	if start < 0 || end < start {
@@ -155,7 +165,8 @@ func TestAwaitCommandBoundsLargeCompletedOutputAndRetainsHandle(t *testing.T) {
 		t.Fatalf("large command flooded inline context: %d bytes", len(result.Content))
 	}
 	if !strings.Contains(result.Content, "TAIL_MARKER") ||
-		!strings.Contains(result.Content, "Full output retained as async handle") {
+		!strings.Contains(result.Content, "retained_handle=auto-") ||
+		!strings.Contains(result.Content, "First omitted cursor: read_async_output") {
 		t.Fatalf("bounded result lost tail or retained handle: %q", result.Content)
 	}
 	handle := promotedHandle(t, result.Content)

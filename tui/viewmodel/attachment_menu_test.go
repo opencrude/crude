@@ -124,7 +124,7 @@ func TestSubmitInputCarriesReferenceLabelsIntoLiveConversation(t *testing.T) {
 	app, ref := newAttachmentTestApp(t)
 	agentID := addBackendTestOrchestrator(t, app)
 
-	_ = app.submitInput(agentID, ref.DisplayName()+" review this", []string{ref.ID})
+	runAppCommand(t, app, app.submitInput(agentID, ref.DisplayName()+" review this", []string{ref.ID}))
 
 	node := app.AgentMgr.Get(agentID)
 	if node == nil || node.State == nil {

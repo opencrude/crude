@@ -291,11 +291,11 @@ func (r *SubAgentRunner) StartAgent(ctx context.Context, params map[string]any) 
 	}
 	if raw, ok := params["file_ownership"]; ok {
 		spec.FileOwnership = toStringSlice(raw)
-		for index, path := range spec.FileOwnership {
-			if path != "" && !filepath.IsAbs(path) {
-				spec.FileOwnership[index] = filepath.Join(r.session.WorkDir(), path)
-			}
+		validated, validateErr := validateOwnershipPaths(r.session.WorkDir(), spec.FileOwnership)
+		if validateErr != nil {
+			return tools.ToolResult{Content: "Error: " + validateErr.Error()}, validateErr
 		}
+		spec.FileOwnership = validated
 	}
 
 	profileInstructions := r.resolveProfile(profileName, category, &spec)
@@ -360,6 +360,28 @@ func (r *SubAgentRunner) StartAgent(ctx context.Context, params map[string]any) 
 		"run_id": runID, "run_version": runVersion,
 	})
 	return tools.ToolResult{Content: string(resultJSON)}, nil
+}
+
+func validateOwnershipPaths(workDir string, paths []string) ([]string, error) {
+	validated := make([]string, 0, len(paths))
+	for _, raw := range paths {
+		path := strings.TrimSpace(raw)
+		if path == "" {
+			return nil, errors.New("file_ownership entries must be concrete non-empty files or directories")
+		}
+		if strings.ContainsAny(path, "*?") {
+			return nil, fmt.Errorf("file_ownership path %q contains wildcard syntax; globs are unsupported, pass concrete files or directories", raw)
+		}
+		if !filepath.IsAbs(path) {
+			path = filepath.Join(workDir, path)
+		}
+		absolute, err := filepath.Abs(path)
+		if err != nil {
+			return nil, fmt.Errorf("resolve file_ownership path %q: %w", raw, err)
+		}
+		validated = append(validated, filepath.Clean(absolute))
+	}
+	return validated, nil
 }
 
 func deriveSubAgentName(category, description string) string {
@@ -766,6 +788,31 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 	childCheckpoint.ContextOwnerID = string(spec.ID)
 	childCheckpoint.Archive = reconcileInterruptedTools(childCheckpoint.Archive)
 	childCheckpoint.ActiveContext = reconcileInterruptedTools(childCheckpoint.ActiveContext)
+	if store := r.session.CollaborationStore(); store != nil {
+		claims, claimErr := store.Claims(context.Background(), string(spec.ID), true)
+		if claimErr != nil {
+			return fail()
+		}
+		if len(claims) > 0 {
+			spec.FileOwnership = spec.FileOwnership[:0]
+			for _, claim := range claims {
+				if claim.RunID == "" {
+					spec.FileOwnership = append(spec.FileOwnership, claim.Path)
+				}
+			}
+			if len(spec.FileOwnership) == 0 {
+				return fail()
+			}
+		}
+	}
+	if err := r.fileOwnership.ReplaceClaims(spec.ID, spec.Name, spec.FileOwnership); err != nil {
+		return fail()
+	}
+	updatedOwnerData, err := json.Marshal(childRecoveryOwner{Spec: spec, ProfileInstructions: owner.ProfileInstructions})
+	if err != nil {
+		return fail()
+	}
+	childCheckpoint.OwnerData = updatedOwnerData
 	recoveryState := newRecoveryRunState(parentCheckpoint.PendingInput, &childCheckpoint)
 	supervisor, err := r.session.newRecoverySupervisor(
 		subDB, string(spec.ID), string(spec.ID), parentCheckpoint.Status.Generation,
@@ -1069,7 +1116,7 @@ func (r *SubAgentRunner) runSubAgentLoop(
 			})
 			if r.sender != nil {
 				if terminalDone != nil {
-					r.sender.SendAgentEventWithID(terminalDone.Type, terminalDone.Data, terminalDone.AgentID)
+					sendRuntimeEvent(r.sender, *terminalDone)
 				} else {
 					r.sender.SendAgentEventWithID("done", map[string]any{
 						"content": "Cancelled.", "reason": "cancelled",
@@ -1162,8 +1209,9 @@ func (r *SubAgentRunner) runSubAgentLoop(
 		}
 		runID, _ := handle.RunIdentity()
 		if err := r.session.commitCollaborationAdmissions(
-			handle.DB, handle.SessionID, string(handle.Spec.ID), runID,
-			handle.RuntimeEpoch, contextGeneration, contextMessages, pendingCollaboration,
+			handle.DB, handle.SessionID, string(handle.Spec.ID), string(handle.Spec.ID), runID,
+			handle.RuntimeEpoch, recoveryState.contextRevision,
+			collaborationDeltas(pendingCollaboration, contextMessages, string(handle.Spec.ID)), pendingCollaboration,
 		); err != nil {
 			r.session.releaseCollaborationReservations(
 				string(handle.Spec.ID), handle.RuntimeEpoch, pendingCollaboration,
@@ -1187,10 +1235,14 @@ func (r *SubAgentRunner) runSubAgentLoop(
 		data["account_id"] = source.AccountID
 		data["model_id"] = source.ModelID
 		record := compactionRecordFromData(handle.SessionID, string(handle.Spec.ID), sessiondb.CompactionPreparing, data)
-		return sessiondb.BeginContextCompaction(handle.DB, handle.SessionID, string(handle.Spec.ID), sessiondb.ContextState{
-			AgentID: string(handle.Spec.ID), Generation: contextGeneration, Reason: "compaction_source",
-			Messages: append([]provider.ChatMessage(nil), source.Messages...),
-		}, record)
+		state, err := sessiondb.PublishContext(handle.DB, sessiondb.ContextPublication{
+			SessionID: handle.SessionID, AgentID: string(handle.Spec.ID), RuntimeAgentID: string(handle.Spec.ID), ExpectedRevision: recoveryState.contextRevision,
+			Mutation: sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: contextGeneration, Reason: "compaction_source", Messages: append([]provider.ChatMessage(nil), source.Messages...)}}, Compaction: &record,
+		})
+		if err == nil {
+			recoveryState.contextRevision = state.Revision
+		}
+		return err
 	}
 	handle.Agent.CommitCompaction = func(commit agent.CompactionCommit) error {
 		contextGeneration++
@@ -1200,10 +1252,14 @@ func (r *SubAgentRunner) runSubAgentLoop(
 		data["account_id"] = commit.AccountID
 		data["model_id"] = commit.ModelID
 		record := compactionRecordFromData(handle.SessionID, string(handle.Spec.ID), sessiondb.CompactionCompleted, data)
-		return sessiondb.CommitContextCompaction(handle.DB, handle.SessionID, string(handle.Spec.ID), sessiondb.ContextState{
-			AgentID: string(handle.Spec.ID), Generation: contextGeneration, Reason: "automatic_compaction",
-			Messages: append([]provider.ChatMessage(nil), commit.Messages...),
-		}, record)
+		state, err := sessiondb.PublishContext(handle.DB, sessiondb.ContextPublication{
+			SessionID: handle.SessionID, AgentID: string(handle.Spec.ID), RuntimeAgentID: string(handle.Spec.ID), ExpectedRevision: recoveryState.contextRevision,
+			Mutation: sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: contextGeneration, Reason: "automatic_compaction", Messages: append([]provider.ChatMessage(nil), commit.Messages...)}}, Compaction: &record, ArchivePrevious: true,
+		})
+		if err == nil {
+			recoveryState.contextRevision = state.Revision
+		}
+		return err
 	}
 	for {
 		if handle.DB == nil {
@@ -1230,11 +1286,13 @@ func (r *SubAgentRunner) runSubAgentLoop(
 	handle.Agent.FlushRuntimeMessages = flushRuntime
 	handle.Agent.Checkpoint = func(archive, active []provider.ChatMessage) error {
 		recoveryState.snapshot(archive, active)
-		recoveryState.setContext(handle.SessionID, contextGeneration, "run_checkpoint")
+		recoveryState.setContext(handle.SessionID, recoveryState.contextRevision, contextGeneration, "run_checkpoint")
 		return persistRecoveryBoundary(ctx, supervisor)
 	}
+	childRunID, _ := handle.RunIdentity()
+	eventSource := &runtimeEventSource{ownerID: handle.SessionID, agentID: string(handle.Spec.ID), runID: childRunID, runtimeEpoch: handle.RuntimeEpoch, generation: turnGeneration}
 	childEmit := func(evt agent.AgentEvent) {
-		evt.AgentID = string(handle.Spec.ID)
+		evt = eventSource.bind(evt)
 		if err := r.session.persistCompactionEvent(handle.DB, handle.SessionID, evt.AgentID, evt); err != nil {
 			r.session.logger.Warn("COMPACT", "child_lifecycle_persist_failed", "agent_id", evt.AgentID, "error", err.Error())
 		}
@@ -1242,7 +1300,7 @@ func (r *SubAgentRunner) runSubAgentLoop(
 			copy := evt
 			terminalDone = &copy
 		} else if r.sender != nil {
-			r.sender.SendAgentEventWithID(evt.Type, evt.Data, evt.AgentID)
+			sendRuntimeEvent(r.sender, evt)
 		}
 		if evt.Type == "usage" {
 			r.session.processUsageEvent(evt.Data, handle.Spec.Model, evt.AgentID, string(handle.Spec.ParentID))
@@ -1321,23 +1379,43 @@ func (r *SubAgentRunner) runSubAgentLoop(
 		}
 		return systemPrompt, nil
 	}
-	agentMsgs := handle.Agent.RunSupervised(
+	runResult := handle.Agent.RunSupervised(
 		ctx, userMsgs, systemPrompt, childEmit, handle.BlockCh, handle.SessionID, runtimeMessages,
 		agent.SupervisedRunOptions{
-			Supervisor:      supervisor,
-			Prepare:         prepareAttempt,
-			Snapshot:        recoveryState.snapshot,
+			Supervisor: supervisor,
+			Prepare:    prepareAttempt,
+			Snapshot:   recoveryState.snapshot,
+			OnAttention: func(failure agent.RecoveryFailure) agent.AttentionDisposition {
+				switch failure.Kind {
+				case agent.RecoveryFailureConfiguration, agent.RecoveryFailureGuidance:
+					return agent.AttentionParkAttempt
+				default:
+					return agent.AttentionWait
+				}
+			},
 			DeferSettlement: true,
 		},
 	)
+	agentMsgs := runResult.Archive
 	stopSteering()
 	<-runtimeMessagesDone
 	controlMessages := r.session.takeCollaborationContext(string(handle.Spec.ID))
 	if len(controlMessages) > 0 {
 		agentMsgs = append(agentMsgs, controlMessages...)
 	}
-	active := handle.Agent.ActiveContext()
+	active := runResult.Active
 	active = append(active, controlMessages...)
+	var transcriptAppend []sessiondb.ContextMessageDelta
+	for {
+		var publicationErr error
+		agentMsgs, active, transcriptAppend, publicationErr = childTerminalPublication(handle, agentMsgs, active, time.Now())
+		if publicationErr == nil {
+			break
+		}
+		if !supervisor.Await(ctx, agent.AttentionRecovery(agent.RecoveryFailureStorage, publicationErr)) {
+			return
+		}
+	}
 	recoveryState.snapshot(agentMsgs, active)
 	generation := contextGeneration
 	reason := "session_start"
@@ -1348,26 +1426,43 @@ func (r *SubAgentRunner) runSubAgentLoop(
 	if contextCheckpointContent(active) != "" {
 		reason = "automatic_compaction"
 	}
+	terminalStatus := supervisor.CheckpointStatus()
+	if runResult.State == agent.SupervisedRunParked {
+		terminalStatus = runResult.Incident
+	}
+	terminalCheckpoint := recoveryState.checkpoint(terminalStatus)
 	for {
-		err := sessiondb.SaveContextState(handle.DB, handle.SessionID, string(handle.Spec.ID), sessiondb.ContextState{
-			AgentID: string(handle.Spec.ID), Generation: generation, Reason: reason, Messages: active,
+		state, err := sessiondb.PublishContext(handle.DB, sessiondb.ContextPublication{
+			SessionID: handle.SessionID, AgentID: string(handle.Spec.ID), RuntimeAgentID: string(handle.Spec.ID), ExpectedRevision: recoveryState.contextRevision,
+			Mutation:         sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: generation, Reason: reason, Messages: active}},
+			TranscriptAppend: transcriptAppend, Recovery: &terminalCheckpoint,
 		})
 		if err == nil {
+			recoveryState.contextRevision = state.Revision
 			break
 		}
 		if !supervisor.Await(ctx, agent.AttentionRecovery(agent.RecoveryFailureStorage, err)) {
 			return
 		}
 	}
-
-	for {
-		err := persistSubAgentTranscript(handle, agentMsgs)
-		if err == nil {
-			break
+	if runResult.State == agent.SupervisedRunParked {
+		committedCheckpoint := terminalCheckpoint
+		committedCheckpoint.ContextOwnerID = handle.SessionID
+		committedCheckpoint.ContextRevision = recoveryState.contextRevision
+		committedCheckpoint.ContextGeneration = generation
+		committedCheckpoint.ContextReason = reason
+		committedCheckpoint.ActiveContext = append([]provider.ChatMessage(nil), active...)
+		r.session.parkRecovery(committedCheckpoint)
+		if handle.Agent != nil && handle.Agent.AsyncMgr != nil {
+			handle.Agent.AsyncMgr.CloseAndWait()
 		}
-		if !supervisor.Await(ctx, agent.AttentionRecovery(agent.RecoveryFailureStorage, err)) {
-			return
+		r.interruptSubAgentAttempt(handle)
+		r.mgr.MarkInterrupted(handle.Spec.ID)
+		done = true
+		if handle.DB != nil {
+			_ = handle.DB.Close()
 		}
+		return
 	}
 	result := r.buildSubAgentResult(handle, agentMsgs)
 
@@ -1391,7 +1486,7 @@ func (r *SubAgentRunner) runSubAgentLoop(
 			done = true
 			r.session.finishRecovery(string(handle.Spec.ID), supervisor.IncidentID(), supervisor.CheckpointStatus().Generation)
 			if terminalDone != nil && r.sender != nil {
-				r.sender.SendAgentEventWithID(terminalDone.Type, terminalDone.Data, terminalDone.AgentID)
+				sendRuntimeEvent(r.sender, *terminalDone)
 			}
 			return
 		}
@@ -1399,6 +1494,111 @@ func (r *SubAgentRunner) runSubAgentLoop(
 			return
 		}
 	}
+}
+
+func childTerminalPublication(
+	handle *agent.SubAgentHandle,
+	archive, active []provider.ChatMessage,
+	createdAt time.Time,
+) ([]provider.ChatMessage, []provider.ChatMessage, []sessiondb.ContextMessageDelta, error) {
+	archive = append([]provider.ChatMessage(nil), archive...)
+	active = append([]provider.ChatMessage(nil), active...)
+	existing := make(map[string]sessiondb.MessageWithMeta)
+	if handle != nil && handle.DB != nil {
+		rows, err := sessiondb.LoadMessagesWithMeta(handle.DB)
+		if err != nil {
+			return nil, nil, nil, err
+		}
+		for _, row := range rows {
+			if row.Msg.InternalID != "" {
+				existing[row.Msg.InternalID] = row
+			}
+		}
+	}
+	originalKeys := make(map[string][]int)
+	for index, message := range archive {
+		if message.InternalID == "" {
+			encoded, _ := json.Marshal(message)
+			originalKeys[string(encoded)] = append(originalKeys[string(encoded)], index)
+		}
+	}
+	for index := range archive {
+		if archive[index].InternalID == "" {
+			archive[index].InternalID = newMessageID()
+		}
+	}
+	for activeIndex := range active {
+		if active[activeIndex].InternalID != "" {
+			continue
+		}
+		encoded, _ := json.Marshal(active[activeIndex])
+		key := string(encoded)
+		matches := originalKeys[key]
+		if len(matches) > 0 {
+			archiveIndex := matches[0]
+			originalKeys[key] = matches[1:]
+			active[activeIndex].InternalID = archive[archiveIndex].InternalID
+		}
+		if active[activeIndex].InternalID == "" {
+			active[activeIndex].InternalID = newMessageID()
+		}
+	}
+
+	rawToolArgs := toolCallArgsIndex(archive)
+	toolNames := make(map[string]string)
+	toolArgs := make(map[string]string)
+	for _, message := range archive {
+		for _, call := range message.ToolCalls {
+			toolNames[call.ID] = call.Function.Name
+			if params, err := provider.ToolCallParams(call); err == nil {
+				toolArgs[call.ID] = agent.FormatToolArgs(params)
+			}
+		}
+	}
+	turnIdentity := ttypes.TurnIdentity{Generation: 1}
+	agentID := ""
+	if handle != nil {
+		agentID = string(handle.Spec.ID)
+		turnIdentity.ProviderID = handle.Spec.Provider
+		turnIdentity.AccountID = handle.Spec.AccountID
+		turnIdentity.ModelID = handle.Spec.Model
+	}
+	assignmentSeen := len(existing) > 0
+	baseSystemSkipped := false
+	deltas := make([]sessiondb.ContextMessageDelta, 0, len(archive))
+	for index, message := range archive {
+		if message.Role == "system" && !baseSystemSkipped {
+			baseSystemSkipped = true
+			continue
+		}
+		if message.Role == "system" || isProviderControlMessage(message) {
+			continue
+		}
+		if _, ok := existing[message.InternalID]; ok {
+			continue
+		}
+		displayRole := message.Role
+		if message.Role == "user" && !assignmentSeen {
+			displayRole, assignmentSeen = "assignment", true
+		}
+		meta := sessiondb.DisplayMeta{DisplayRole: displayRole}
+		if message.Role == "tool" {
+			meta.ToolName, meta.ToolArgs = toolNames[message.ToolCallID], toolArgs[message.ToolCallID]
+			if message.ToolError {
+				meta.ToolStatus = "error"
+			} else {
+				meta.ToolStatus = "success"
+			}
+		}
+		if message.Role == "assistant" || message.Role == "tool" {
+			meta.TurnGeneration = turnIdentity.Generation
+			meta.ProviderID, meta.AccountID, meta.ModelID = turnIdentity.ProviderID, turnIdentity.AccountID, turnIdentity.ModelID
+		}
+		stamp := createdAt.Add(time.Duration(index) * time.Nanosecond)
+		meta = canonicalizeDisplayMeta(message, meta, rawToolArgs[message.ToolCallID], index, stamp)
+		deltas = append(deltas, contextDelta(message, meta, 1, stamp, agentID))
+	}
+	return archive, active, deltas, nil
 }
 
 func (r *SubAgentRunner) interruptSubAgentAttempt(handle *agent.SubAgentHandle) {
@@ -1752,8 +1952,18 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 
 		if isWriteTool(tool) {
 			for _, target := range writeToolTargets(tool, params) {
+				if !ownershipScopeAllows(spec.FileOwnership, target) {
+					cause := fmt.Errorf("file %q is outside this agent's committed ownership scope", target)
+					return tools.ToolResult{}, &tools.StructuralFailureError{
+						Kind: tools.StructuralFailureOwnershipScope, Tool: tool, Target: target,
+						OwnerAgentID: string(spec.ID), OwnerAgentName: spec.Name, Cause: cause,
+					}
+				}
 				if err := r.fileOwnership.CheckOrClaim(spec.ID, spec.Name, target, true); err != nil {
-					return tools.ToolResult{}, err
+					return tools.ToolResult{}, &tools.StructuralFailureError{
+						Kind: tools.StructuralFailureOwnershipConflict, Tool: tool, Target: target,
+						OwnerAgentID: string(spec.ID), OwnerAgentName: spec.Name, Cause: err,
+					}
 				}
 				if r.sender != nil {
 					r.sender.SendAgentEventWithID("file_claim", map[string]string{
@@ -1807,6 +2017,29 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 		}
 		return result, nil
 	}
+}
+
+func ownershipScopeAllows(scope []string, target string) bool {
+	if len(scope) == 0 {
+		return true
+	}
+	target = normalizeOwnershipTarget(target)
+	for _, root := range scope {
+		root = normalizeOwnershipTarget(root)
+		relative, err := filepath.Rel(root, target)
+		if err == nil && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
+
+func normalizeOwnershipTarget(path string) string {
+	path = strings.TrimSpace(path)
+	if absolute, err := filepath.Abs(path); err == nil {
+		path = absolute
+	}
+	return filepath.Clean(path)
 }
 
 func writeToolTargets(tool string, params map[string]any) []string {
@@ -2120,7 +2353,7 @@ func (r *SubAgentRunner) executeSubAgentAsyncCommand(handle *agent.SubAgentHandl
 		if err != nil {
 			return tools.ToolResult{Content: fmt.Sprintf("Error: %s", err)}, fmt.Errorf("async_execute_command: %w", err)
 		}
-		return tools.ToolResult{Content: fmt.Sprintf("Started async command [%s]: PID %d, status=%s, command=%q", info.Handle, info.PID, info.Status, command)}, nil
+		return tools.ToolResult{Content: FormatCommandStart(*info)}, nil
 
 	case "check_async_command":
 		handleName := getStrParam(params, "handle")
@@ -2131,12 +2364,7 @@ func (r *SubAgentRunner) executeSubAgentAsyncCommand(handle *agent.SubAgentHandl
 		if !ok {
 			return tools.ToolResult{Content: fmt.Sprintf("Async command [%s] not found — it may have already been cleaned up or never started.", handleName)}, nil
 		}
-		dur := info.Duration.Truncate(time.Second).String()
-		status := fmt.Sprintf("Handle: %s\nPID: %d\nStatus: %s\nExit code: %d\nDuration: %s", info.Handle, info.PID, info.Status, info.ExitCode, dur)
-		if info.Error != "" {
-			status += "\nError: " + info.Error
-		}
-		return tools.ToolResult{Content: status}, nil
+		return tools.ToolResult{Content: FormatCommandStatus(*info)}, nil
 
 	case "kill_async_command":
 		handleName := getStrParam(params, "handle")
@@ -2155,17 +2383,11 @@ func (r *SubAgentRunner) executeSubAgentAsyncCommand(handle *agent.SubAgentHandl
 		}
 		sinceByte := tools.GetIntArgAny(params, "since_byte", 0)
 		maxBytes := tools.GetIntArgAny(params, "max_bytes", fileio.DefaultOutputChunkBytes)
-		out, nextByte, totalBytes, err := mgr.ReadOutputLimit(handleName, sinceByte, maxBytes)
+		page, err := mgr.ReadOutputPage(handleName, sinceByte, maxBytes)
 		if err != nil {
 			return tools.ToolResult{}, fmt.Errorf("read_async_output: %w", err)
 		}
-		if out == "" {
-			return tools.ToolResult{Content: fmt.Sprintf("[%s] next_byte=%d total_bytes=%d (no new output since byte %d)", handleName, nextByte, totalBytes, sinceByte)}, nil
-		}
-		return tools.ToolResult{Content: fmt.Sprintf(
-			"[%s output bytes %d..%d of %d]\n%s\n[next_byte=%d total_bytes=%d has_more=%t]",
-			handleName, sinceByte, nextByte, totalBytes, out, nextByte, totalBytes, nextByte < totalBytes,
-		)}, nil
+		return tools.ToolResult{Content: FormatCommandPage(page)}, nil
 
 	default:
 		return tools.ToolResult{}, fmt.Errorf("unknown async command tool: %s", tool)

@@ -2,6 +2,7 @@ package input
 
 import (
 	tea "charm.land/bubbletea/v2"
+	"sort"
 	"strings"
 
 	"crude/history"
@@ -16,15 +17,17 @@ const slashPageSize = 8
 type Event interface{ event() }
 
 type SubmitEvent struct {
-	Text         string
-	ReferenceIDs []string
+	Text          string
+	ReferenceIDs  []string
+	DraftRevision uint64
 }
 
 func (SubmitEvent) event() {}
 
 type SteeringSubmitEvent struct {
-	Text         string
-	ReferenceIDs []string
+	Text          string
+	ReferenceIDs  []string
+	DraftRevision uint64
 }
 
 func (SteeringSubmitEvent) event() {}
@@ -94,6 +97,7 @@ type Model struct {
 	historyGeneration     uint64
 	historyLoading        bool
 	draftEpoch            uint64
+	draftRevision         uint64
 	pasteSequence         uint64
 	pendingPastes         map[uint64]bool
 	attachmentOffset      int
@@ -326,6 +330,7 @@ func (m *Model) ClearInput() {
 	m.histDraft = ""
 	m.histPrefix = ""
 	m.slashActive = false
+	m.draftRevision++
 }
 
 func (m *Model) SetPrompt(p string) {
@@ -401,11 +406,42 @@ func (m *Model) CancelPointerCapture() { m.input.CancelPointerCapture() }
 // the draft text is rewritten.
 func (m Model) CursorFlat() int { return m.input.CursorFlat() }
 
+func (m Model) ScrollOffset() int             { return m.input.ScrollOffset() }
+func (m *Model) SetScrollOffset(offset int)   { m.input.SetScrollOffset(offset) }
+func (m *Model) SetSelection(anchor, end int) { m.input.SetSelection(anchor, end) }
+
+// DraftRevision is a monotonic identity for the complete editable draft. It
+// prevents a late admission result from clearing an edited or ABA-replaced
+// composer value.
+func (m Model) DraftRevision() uint64             { return m.draftRevision }
+func (m *Model) SetDraftRevision(revision uint64) { m.draftRevision = revision }
+
+// ClearInputAtRevision consumes only the exact draft submitted by an earlier
+// command. A newer edit, selection/cursor change, or replacement is retained.
+func (m *Model) ClearInputAtRevision(revision uint64) bool {
+	if revision == 0 || m.draftRevision != revision {
+		return false
+	}
+	m.ClearInput()
+	return true
+}
+
 // SetCursorFlat moves the text cursor to a flat rune index.
 func (m *Model) SetCursorFlat(pos int) { m.input.SetCursorFlat(pos) }
 
 func (m Model) Value() string {
 	return m.input.Value()
+}
+
+// SnapshotReferenceIDs returns the exact identities pinned to this draft,
+// including currently unresolved attachments whose backing object is missing.
+func (m Model) SnapshotReferenceIDs() []string {
+	ids := make([]string, 0, len(m.promptReferenceIDs))
+	for id := range m.promptReferenceIDs {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 func (m Model) DisplayValue() string {

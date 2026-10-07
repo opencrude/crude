@@ -59,6 +59,7 @@ CREATE TABLE IF NOT EXISTS messages (
 
 CREATE INDEX IF NOT EXISTS idx_messages_seq ON messages(sequence_num);
 CREATE INDEX IF NOT EXISTS idx_messages_turn ON messages(turn_number, sequence_num);
+CREATE INDEX IF NOT EXISTS idx_messages_internal_id ON messages(internal_id);
 
 CREATE TABLE IF NOT EXISTS usage_requests (
     request_id          TEXT PRIMARY KEY,
@@ -177,6 +178,7 @@ CREATE TABLE IF NOT EXISTS session_flags (
 CREATE TABLE IF NOT EXISTS agent_context_state (
     session_id     TEXT NOT NULL,
     agent_id       TEXT NOT NULL,
+    revision       INTEGER NOT NULL,
     generation     INTEGER NOT NULL DEFAULT 1,
     reason         TEXT NOT NULL DEFAULT 'session_start',
     messages_json  BLOB NOT NULL,
@@ -193,6 +195,15 @@ CREATE TABLE IF NOT EXISTS agent_context_generations (
     messages_json  BLOB NOT NULL,
     created_at     INTEGER NOT NULL,
     PRIMARY KEY (session_id, agent_id, generation),
+    FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS immutable_message_identities (
+    internal_id     TEXT PRIMARY KEY,
+    session_id      TEXT NOT NULL,
+    agent_id        TEXT NOT NULL,
+    message_json    BLOB NOT NULL,
+    created_at      INTEGER NOT NULL,
     FOREIGN KEY (session_id) REFERENCES sessions(id) ON DELETE CASCADE
 );
 
@@ -270,6 +281,7 @@ CREATE TABLE IF NOT EXISTS agent_recoveries (
     archive_json       BLOB NOT NULL,
     active_context_json BLOB NOT NULL,
     context_owner_id   TEXT NOT NULL DEFAULT '',
+      context_revision   INTEGER NOT NULL DEFAULT 0,
     context_generation INTEGER NOT NULL DEFAULT 1,
     context_reason     TEXT NOT NULL DEFAULT 'recovery',
     owner_data         BLOB,
@@ -352,6 +364,16 @@ func Open(dbPath string) (*sql.DB, error) {
 }
 
 func Migrate(db *sql.DB) error {
+	var hasSessions, hasMessageIdentities bool
+	if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='sessions')`).Scan(&hasSessions); err != nil {
+		return fmt.Errorf("sessiondb: inspect schema: %w", err)
+	}
+	if err := db.QueryRow(`SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='immutable_message_identities')`).Scan(&hasMessageIdentities); err != nil {
+		return fmt.Errorf("sessiondb: inspect immutable message identity schema: %w", err)
+	}
+	if hasSessions && !hasMessageIdentities {
+		return fmt.Errorf("sessiondb: current immutable message identity schema required; align local data manually")
+	}
 	_, err := db.Exec(schema)
 	if err != nil {
 		return fmt.Errorf("sessiondb: migrate: %w", err)
@@ -361,6 +383,9 @@ func Migrate(db *sql.DB) error {
 	}
 	if _, err := db.Exec(`SELECT internal_id,collaboration_json FROM messages LIMIT 0`); err != nil {
 		return fmt.Errorf("sessiondb: current message provenance schema required; align local data manually: %w", err)
+	}
+	if _, err := db.Exec(`SELECT internal_id,session_id,agent_id,message_json FROM immutable_message_identities LIMIT 0`); err != nil {
+		return fmt.Errorf("sessiondb: current immutable message identity schema required; align local data manually: %w", err)
 	}
 	migrations := []string{
 		"ALTER TABLE messages ADD COLUMN display_meta TEXT",

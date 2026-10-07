@@ -2,7 +2,6 @@ package sessiondb
 
 import (
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"time"
@@ -27,33 +26,17 @@ func SaveContextStateWithAdmissions(
 	state ContextState,
 	admissions []CollaborationAdmission,
 ) error {
-	if db == nil {
-		return errors.New("sessiondb: nil database")
-	}
-	payload, err := json.Marshal(state.Messages)
-	if err != nil {
-		return err
-	}
-	tx, err := db.Begin()
-	if err != nil {
-		return fmt.Errorf("sessiondb: begin collaboration admission: %w", err)
-	}
-	defer func() { _ = tx.Rollback() }()
+	_, err := PublishContext(db, ContextPublication{SessionID: sessionID, AgentID: contextOwnerID, RuntimeAgentID: agentID,
+		ExpectedRevision: state.Revision, Mutation: ContextMutation{Replace: &ContextReplacement{Generation: state.Generation,
+			Reason: state.Reason, Messages: state.Messages}}, Admissions: admissions})
+	return err
+}
+
+func saveAdmissionsTx(tx *sql.Tx, sessionID, runtimeAgentID string, admissions []CollaborationAdmission) error {
 	now := time.Now().UnixNano()
-	if _, err := tx.Exec(`
-		INSERT INTO agent_context_state (session_id, agent_id, generation, reason, messages_json, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?)
-		ON CONFLICT(session_id, agent_id) DO UPDATE SET
-			generation = excluded.generation,
-			reason = excluded.reason,
-			messages_json = excluded.messages_json,
-			updated_at = excluded.updated_at
-	`, sessionID, contextOwnerID, state.Generation, state.Reason, payload, now); err != nil {
-		return fmt.Errorf("sessiondb: persist admitted context: %w", err)
-	}
 	for _, admission := range admissions {
 		if admission.DeliveryID == "" || admission.EventID == "" || admission.ContextCommitID == "" ||
-			admission.AgentID != agentID || admission.SessionID != sessionID ||
+			admission.AgentID != runtimeAgentID || admission.SessionID != sessionID ||
 			admission.RuntimeEpoch == 0 || admission.DeliveryVersion == 0 {
 			return errors.New("sessiondb: invalid collaboration admission")
 		}
@@ -90,7 +73,7 @@ func SaveContextStateWithAdmissions(
 			return fmt.Errorf("sessiondb: insert collaboration admission: %w", err)
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 func PendingCollaborationAdmissions(db *sql.DB, agentID string) ([]CollaborationAdmission, error) {

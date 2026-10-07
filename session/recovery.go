@@ -4,10 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
+	"reflect"
+	"strings"
 	"sync"
 	"time"
 
 	"crude/agent"
+	"crude/collaboration"
 	rootprompt "crude/prompt"
 	"crude/provider"
 	"crude/sessiondb"
@@ -28,9 +32,12 @@ type recoveryRunState struct {
 	archive           []provider.ChatMessage
 	active            []provider.ChatMessage
 	contextOwnerID    string
+	contextRevision   uint64
 	contextGeneration uint64
 	contextReason     string
 	ownerData         []byte
+	sourceRevision    uint64
+	publishedRevision uint64
 }
 
 func newRecoveryRunState(input provider.UserInput, checkpoint *sessiondb.RecoveryCheckpoint) *recoveryRunState {
@@ -43,17 +50,52 @@ func newRecoveryRunState(input provider.UserInput, checkpoint *sessiondb.Recover
 	state.archive = append([]provider.ChatMessage(nil), checkpoint.Archive...)
 	state.active = append([]provider.ChatMessage(nil), checkpoint.ActiveContext...)
 	state.contextOwnerID = checkpoint.ContextOwnerID
+	state.contextRevision = checkpoint.ContextRevision
 	state.contextGeneration = checkpoint.ContextGeneration
 	state.contextReason = checkpoint.ContextReason
 	state.ownerData = append([]byte(nil), checkpoint.OwnerData...)
+	state.sourceRevision = 1
+	state.publishedRevision = 1
 	return state
 }
 
 func (s *recoveryRunState) snapshot(archive, active []provider.ChatMessage) {
 	s.mu.Lock()
+	// The recovery state's existing archive is the canonical accepted source for
+	// every stable message identity already observed. Provider request projection
+	// may omit local display/reference/provenance fields from those prefix messages;
+	// never let that lossy wire copy replace the exact transcript-compatible bytes.
+	canonicalArchive := make(map[string]provider.ChatMessage, len(s.archive))
+	for _, message := range s.archive {
+		if message.InternalID != "" {
+			canonicalArchive[message.InternalID] = message
+		}
+	}
+	canonicalActive := make(map[string]provider.ChatMessage, len(s.active))
+	for _, message := range s.active {
+		if message.InternalID != "" {
+			canonicalActive[message.InternalID] = message
+		}
+	}
+	archive = retainCanonicalMessages(archive, canonicalArchive)
+	active = retainCanonicalMessages(active, canonicalActive)
+	changed := !reflect.DeepEqual(s.archive, archive) || !reflect.DeepEqual(s.active, active)
 	s.archive = append([]provider.ChatMessage(nil), archive...)
 	s.active = append([]provider.ChatMessage(nil), active...)
+	if changed {
+		s.sourceRevision++
+	}
 	s.mu.Unlock()
+}
+
+func retainCanonicalMessages(messages []provider.ChatMessage, canonical map[string]provider.ChatMessage) []provider.ChatMessage {
+	result := append([]provider.ChatMessage(nil), messages...)
+	for i, message := range result {
+		if source, ok := canonical[message.InternalID]; ok {
+			result[i] = source
+		}
+	}
+	return result
 }
 
 func (s *recoveryRunState) setInputAdmitted(admitted bool) {
@@ -68,23 +110,30 @@ func (s *recoveryRunState) setPending(input provider.UserInput) {
 	s.mu.Unlock()
 }
 
-func (s *recoveryRunState) setContext(owner string, generation uint64, reason string) {
+func (s *recoveryRunState) setContext(owner string, revision, generation uint64, reason string) {
 	s.mu.Lock()
 	s.contextOwnerID = owner
+	s.contextRevision = revision
 	s.contextGeneration = max(uint64(1), generation)
 	if reason != "" {
 		s.contextReason = reason
 	}
+	// The caller obtained this context identity by publishing the snapshot now
+	// held by this state. Mark that exact source revision acknowledged; later
+	// snapshots/continuations increment sourceRevision and require replacement.
+	s.publishedRevision = s.sourceRevision
 	s.mu.Unlock()
 }
 
 func (s *recoveryRunState) appendContinuation(kind rootprompt.RecoveryKind) {
 	message := provider.NewTextMessage("user", rootprompt.RecoveryContinuation(kind))
+	message.InternalID = newMessageID()
 	message.Origin = provider.OriginContinuation
 	message.Visibility = provider.VisibilityContextOnly
 	s.mu.Lock()
 	s.archive = append(s.archive, message)
 	s.active = append(s.active, message)
+	s.sourceRevision++
 	s.mu.Unlock()
 }
 
@@ -95,6 +144,18 @@ func (s *recoveryRunState) contexts() (archive, active []provider.ChatMessage) {
 		append([]provider.ChatMessage(nil), s.active...)
 }
 
+func (s *recoveryRunState) contextState() (revision, generation uint64, reason string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.contextRevision, s.contextGeneration, s.contextReason
+}
+
+func (s *recoveryRunState) contextRevisionValue() uint64 {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.contextRevision
+}
+
 func (s *recoveryRunState) checkpoint(status recoverytypes.Status) sessiondb.RecoveryCheckpoint {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -102,9 +163,53 @@ func (s *recoveryRunState) checkpoint(status recoverytypes.Status) sessiondb.Rec
 		Status: status, PendingInput: cloneUserInput(s.pending), InputAdmitted: s.inputAdmitted,
 		Archive:        append([]provider.ChatMessage(nil), s.archive...),
 		ActiveContext:  append([]provider.ChatMessage(nil), s.active...),
-		ContextOwnerID: s.contextOwnerID, ContextGeneration: s.contextGeneration,
+		ContextOwnerID: s.contextOwnerID, ContextRevision: s.contextRevision, ContextGeneration: s.contextGeneration,
 		ContextReason: s.contextReason, OwnerData: append([]byte(nil), s.ownerData...),
 	}
+}
+
+func (s *recoveryRunState) publish(db *sql.DB, sessionID string, status recoverytypes.Status) error {
+	s.mu.Lock()
+	checkpoint := sessiondb.RecoveryCheckpoint{
+		Status: status, PendingInput: cloneUserInput(s.pending), InputAdmitted: s.inputAdmitted,
+		Archive: append([]provider.ChatMessage(nil), s.archive...), ActiveContext: append([]provider.ChatMessage(nil), s.active...),
+		ContextOwnerID: s.contextOwnerID, ContextRevision: s.contextRevision, ContextGeneration: s.contextGeneration,
+		ContextReason: s.contextReason, OwnerData: append([]byte(nil), s.ownerData...),
+	}
+	owner, revision := s.contextOwnerID, s.contextRevision
+	sourceRevision := s.sourceRevision
+	dirty := sourceRevision != s.publishedRevision
+	s.mu.Unlock()
+	if owner == "" {
+		return sessiondb.SaveRecoveryCheckpoint(db, sessionID, checkpoint)
+	}
+	publication := sessiondb.ContextPublication{SessionID: sessionID, AgentID: owner, RuntimeAgentID: status.AgentID, ExpectedRevision: revision, Recovery: &checkpoint}
+	if dirty {
+		// The active context snapshot is the canonical semantic source. Do not
+		// manufacture display metadata or timestamps for its tail: agent checkpoint
+		// publication may already have committed those messages to the immutable
+		// transcript with their real provenance. A revision-fenced replacement
+		// validates their stable IDs/bytes against that transcript and only advances
+		// the current-context owner plus recovery checkpoint atomically.
+		publication.Mutation.Replace = &sessiondb.ContextReplacement{
+			Generation: max(uint64(1), checkpoint.ContextGeneration), Reason: checkpoint.ContextReason, Messages: checkpoint.ActiveContext,
+		}
+		if publication.Mutation.Replace.Reason == "" {
+			publication.Mutation.Replace.Reason = "run_recovery"
+		}
+	}
+	state, err := sessiondb.PublishContext(db, publication)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	s.contextRevision, s.contextGeneration, s.contextReason = state.Revision, state.Generation, state.Reason
+	s.active = append([]provider.ChatMessage(nil), state.Messages...)
+	if s.sourceRevision == sourceRevision {
+		s.publishedRevision = sourceRevision
+	}
+	s.mu.Unlock()
+	return nil
 }
 
 func cloneUserInput(input provider.UserInput) provider.UserInput {
@@ -145,7 +250,7 @@ func (s *Session) newRecoverySupervisor(
 		}
 	}
 	supervisor.Persist = func(status recoverytypes.Status) error {
-		return sessiondb.SaveRecoveryCheckpoint(db, sessionID, state.checkpoint(status))
+		return state.publish(db, sessionID, status)
 	}
 	supervisor.Discard = func(id string) error {
 		return sessiondb.DeleteRecoveryCheckpoint(db, id)
@@ -178,7 +283,7 @@ func (s *Session) persistPendingRecovery(
 	if supervisor == nil {
 		return nil
 	}
-	return sessiondb.SaveRecoveryCheckpoint(db, sessionID, state.checkpoint(supervisor.CheckpointStatus()))
+	return state.publish(db, sessionID, supervisor.CheckpointStatus())
 }
 
 // Retry the same accepted boundary, not the stochastic provider request or tool
@@ -222,6 +327,40 @@ func (s *Session) parkRecovery(checkpoint sessiondb.RecoveryCheckpoint) {
 	delete(s.recoverySlots, checkpoint.Status.AgentID)
 	s.pendingRecoveries[checkpoint.Status.AgentID] = checkpoint
 	s.recoveryMu.Unlock()
+	if checkpoint.Status.State == recoverytypes.NeedsAttention {
+		s.publishChildNeedsAttention(checkpoint)
+	}
+}
+
+func (s *Session) publishChildNeedsAttention(checkpoint sessiondb.RecoveryCheckpoint) {
+	if s == nil || len(checkpoint.OwnerData) == 0 {
+		return
+	}
+	var owner childRecoveryOwner
+	if json.Unmarshal(checkpoint.OwnerData, &owner) != nil || owner.Spec.ParentID == "" {
+		return
+	}
+	store := s.CollaborationStore()
+	if store == nil {
+		return
+	}
+	status := checkpoint.Status
+	remedy := status.Action
+	if remedy == "" {
+		remedy = "Inspect the child incident, repair its configuration/guidance/storage cause, then explicitly retry or Stop the exact incident."
+	}
+	body := fmt.Sprintf("%s (%s, %s) needs attention; incident %s generation %d. %s Remedy: %s",
+		owner.Spec.Name, owner.Spec.Category, owner.Spec.ID, status.ID, status.Generation, status.Detail, remedy)
+	_, err := store.Publish(context.Background(), collaboration.PublishRequest{
+		SenderID: string(owner.Spec.ID), SenderName: owner.Spec.Name,
+		IdempotencyKey: fmt.Sprintf("needs-attention:%s:%d:%d", status.ID, status.Generation, status.UpdatedAt.UnixNano()),
+		RecipientIDs:   []string{string(owner.Spec.ParentID)}, Origin: collaboration.OriginRuntime,
+		Kind: collaboration.EventPeerNote, Body: body, RunID: "",
+		References: []collaboration.Reference{{Kind: "recovery_incident", ID: status.ID, Revision: int(status.Generation)}},
+	})
+	if err != nil && s.logger != nil {
+		s.logger.Warn("COLLAB", "child_attention_publish_failed", "agent_id", status.AgentID, "error", err.Error())
+	}
 }
 
 func (s *Session) wakeRecovery(agentID string) bool {
@@ -284,6 +423,8 @@ func (s *Session) RetryRecoveryFor(agentID, recoveryID string, generation uint64
 	if s == nil || agentID == "" || recoveryID == "" || generation == 0 {
 		return false
 	}
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
 	s.recoveryMu.Lock()
 	if slot := s.recoverySlots[agentID]; slot != nil {
 		if slot.id != recoveryID || slot.generation != generation {
@@ -400,16 +541,19 @@ func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint6
 		}
 		err = persistSubAgentTranscript(handle, archive)
 		if err == nil {
-			err = sessiondb.SaveContextState(childDB, agentID, agentID, sessiondb.ContextState{
-				AgentID: agentID, Generation: max(uint64(1), checkpoint.ContextGeneration),
-				Reason: "explicit_recovery_cancel", Messages: active,
-			})
+			state, found, loadErr := sessiondb.LoadContextState(childDB, agentID, agentID)
+			if loadErr != nil {
+				err = loadErr
+			} else {
+				checkpoint.ContextRevision = loadContextRevision(state, found)
+				_, err = sessiondb.PublishContext(childDB, sessiondb.ContextPublication{
+					SessionID: agentID, AgentID: agentID, RuntimeAgentID: checkpoint.Status.AgentID, ExpectedRevision: checkpoint.ContextRevision,
+					Mutation: sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: max(uint64(1), checkpoint.ContextGeneration), Reason: "explicit_recovery_cancel", Messages: active}}, Recovery: &checkpoint,
+				})
+			}
 		}
 		if err == nil {
 			err = sessiondb.FinishAgentTurn(childDB, agentID, agentID, generation, sessiondb.TurnInterrupted)
-		}
-		if err == nil {
-			err = sessiondb.SaveRecoveryCheckpoint(childDB, agentID, checkpoint)
 		}
 		closeErr := childDB.Close()
 		if err != nil || closeErr != nil {
@@ -421,6 +565,20 @@ func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint6
 		cancelledChild = &result
 	} else {
 		archive, active := stoppedRecoveryContext(checkpoint)
+		current, found, loadErr := sessiondb.LoadContextState(s.db, s.sessionID, s.sessionID)
+		if loadErr != nil {
+			return false
+		}
+		if found {
+			active = append([]provider.ChatMessage(nil), current.Messages...)
+			if len(active) == 0 || active[len(active)-1].EffectiveOrigin() != provider.OriginTurnStopped {
+				boundary := provider.NewTextMessage("user", rootprompt.TurnStoppedBoundary())
+				boundary.InternalID = "turn-stopped:" + checkpoint.Status.ID
+				boundary.Origin, boundary.Visibility = provider.OriginTurnStopped, provider.VisibilityContextOnly
+				active = append(active, boundary)
+			}
+			checkpoint.ContextRevision = current.Revision
+		}
 		checkpoint.Archive, checkpoint.ActiveContext = archive, active
 		checkpoint.Status = cancelledStatus
 		checkpoint.ContextOwnerID = s.sessionID
@@ -443,7 +601,18 @@ func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint6
 	if len(parentCheckpoint.OwnerData) > 0 {
 		parentCheckpoint.ContextOwnerID = ""
 	}
-	if err := sessiondb.SaveRecoveryCheckpoint(s.db, s.sessionID, parentCheckpoint); err != nil {
+	if cancelledChild == nil {
+		s.msgsMu.Lock()
+		revision := s.contextRevision
+		s.msgsMu.Unlock()
+		state, err := sessiondb.PublishContext(s.db, sessiondb.ContextPublication{SessionID: s.sessionID, AgentID: s.sessionID, RuntimeAgentID: parentCheckpoint.Status.AgentID, ExpectedRevision: revision, Recovery: &parentCheckpoint})
+		if err != nil {
+			return false
+		}
+		s.msgsMu.Lock()
+		s.contextRevision = state.Revision
+		s.msgsMu.Unlock()
+	} else if err := sessiondb.SaveRecoveryCheckpoint(s.db, s.sessionID, parentCheckpoint); err != nil {
 		return false
 	}
 	s.recoveryMu.Lock()
@@ -477,6 +646,12 @@ func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint6
 func stoppedRecoveryContext(checkpoint sessiondb.RecoveryCheckpoint) ([]provider.ChatMessage, []provider.ChatMessage) {
 	archive := append([]provider.ChatMessage(nil), checkpoint.Archive...)
 	active := append([]provider.ChatMessage(nil), checkpoint.ActiveContext...)
+	if strings.TrimSpace(checkpoint.PendingInput.Text) != "" {
+		pending := inputMessage(provider.NewTextMessage("user", checkpoint.PendingInput.Text), checkpoint.PendingInput)
+		pending.InternalID = checkpoint.PendingInput.InternalID
+		archive = append(archive, pending)
+		active = append(active, pending)
+	}
 	if len(active) > 0 && active[len(active)-1].EffectiveOrigin() == provider.OriginTurnStopped {
 		return archive, active
 	}

@@ -46,9 +46,20 @@ func TestPassiveRecoveryRestoresAcceptedTranscriptAndClosesUnknownToolExchange(t
 		Status:        recoverytypes.Status{ID: "crash-incident", AgentID: "old-root", Generation: 4, StartedAt: time.Now()},
 		PendingInput:  provider.UserInput{InternalID: human.InternalID, Text: human.ContentString()},
 		InputAdmitted: true, Archive: archive, ActiveContext: archive,
-		ContextOwnerID: sessionID, ContextGeneration: 2,
+		ContextOwnerID: sessionID, ContextGeneration: 2, ContextReason: "accepted_crash_boundary",
 	}
+	state, err := sessiondb.PublishContext(original.db, sessiondb.ContextPublication{SessionID: sessionID, AgentID: sessionID, Mutation: sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: 2, Reason: checkpoint.ContextReason, Messages: checkpoint.ActiveContext}}})
+	if err != nil {
+		original.Close()
+		t.Fatal(err)
+	}
+	checkpoint.ContextRevision = state.Revision
 	if err := sessiondb.SaveRecoveryCheckpoint(original.db, sessionID, checkpoint); err != nil {
+		original.Close()
+		t.Fatal(err)
+	}
+	checkpoint, _, err = sessiondb.LoadRecoveryCheckpoint(original.db, sessionID, "old-root")
+	if err != nil {
 		original.Close()
 		t.Fatal(err)
 	}
@@ -81,7 +92,28 @@ func TestPassiveRecoveryRestoresAcceptedTranscriptAndClosesUnknownToolExchange(t
 	if !resumed.RetryRecoveryFor(orch.ID, status.ID, status.Generation) {
 		t.Fatal("explicit continuation was rejected")
 	}
-	waitTurnDone(t, sender, orch.ID)
+	deadline := time.After(5 * time.Second)
+	waiting := true
+	for waiting {
+		select {
+		case event := <-sender.ch:
+			if event.agentID != orch.ID {
+				continue
+			}
+			if event.typ == "done" {
+				waiting = false
+				continue
+			}
+			if event.typ == "recovery" {
+				status := event.data.(recoverytypes.Status)
+				if status.State == recoverytypes.NeedsAttention {
+					t.Fatalf("explicit continuation parked: %+v", status)
+				}
+			}
+		case <-deadline:
+			t.Fatal("turn did not complete")
+		}
+	}
 	views = resumed.MessagesWithMeta()
 	humans, partials := 0, 0
 	for _, view := range views {

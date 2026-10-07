@@ -266,6 +266,12 @@ func (a *AgentState) handleToolResult(evt AgentEvent, target *Conversation, onSt
 			}
 			return nil
 		}
+		if !target.HasToolMessage(toolID, internalID) && result != "" {
+			target.AppendMessage(Message{InternalID: "tool-result:" + internalID, Role: MessageRoleTool,
+				ToolID: toolID, ToolName: name, Content: SanitizeForTerminal(result), Time: time.Now(),
+				TurnGeneration: target.turnIdentity.Generation, AccountID: target.turnIdentity.AccountID,
+				ProviderID: target.turnIdentity.ProviderID, ModelID: target.turnIdentity.ModelID})
+		}
 		estTokens := toInt(data["tool_est_tokens"])
 		linesAdded := toInt(data["lines_added"])
 		linesRemoved := toInt(data["lines_removed"])

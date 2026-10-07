@@ -114,7 +114,7 @@ func TestSubmitProjectsLifecycleIntoChatNotBottomStatus(t *testing.T) {
 	app.Logger = stubLogger{}
 	agentID := addBackendTestOrchestrator(t, app)
 
-	_ = app.submitInput(agentID, "inspect lifecycle", nil)
+	runAppCommand(t, app, app.submitInput(agentID, "inspect lifecycle", nil))
 	messages := app.AgentMgr.Get(agentID).State.Messages.Messages()
 	if len(messages) != 2 || messages[1].Role != types.RoleStatus || messages[1].LifecyclePhase != "preparing" {
 		t.Fatalf("submitted conversation = %#v", messages)

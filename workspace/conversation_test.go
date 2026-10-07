@@ -194,18 +194,18 @@ func TestTurnStatusStaysLastAcrossSteeringAndTransformsInPlace(t *testing.T) {
 	}
 }
 
-func TestPendingSteeringResolutionPreservesOnlyConsumedCanonicalMessages(t *testing.T) {
+func TestPendingSteeringSettlementRetainsEveryLocallyAcceptedMessage(t *testing.T) {
 	conversation := NewConversation()
 	consumed := conversation.AppendPendingSteering(Message{Role: MessageRoleUser, Content: "keep me"})
-	cancelled := conversation.AppendPendingSteering(Message{Role: MessageRoleUser, Content: "remove me"})
+	cancelled := conversation.AppendPendingSteering(Message{Role: MessageRoleUser, Content: "keep stopped note"})
 	if !conversation.ConsumePendingSteering(consumed) {
 		t.Fatal("consumed human steering was not resolved")
 	}
-	if removed := conversation.RemovePendingSteeringIDs([]string{cancelled}); removed != 1 {
-		t.Fatalf("removed=%d, want 1", removed)
+	if settled := conversation.SettlePendingSteeringIDs([]string{cancelled}); settled != 1 {
+		t.Fatalf("settled=%d, want 1", settled)
 	}
 	messages := conversation.Messages()
-	if len(messages) != 1 || messages[0].Content != "keep me" || messages[0].PendingSteering {
+	if len(messages) != 2 || messages[0].Content != "keep me" || messages[1].Content != "keep stopped note" || messages[0].PendingSteering || messages[1].PendingSteering {
 		t.Fatalf("canonical messages=%#v", messages)
 	}
 }
@@ -244,9 +244,9 @@ func TestSteeringAdmissionMovesAboveTurnIndicatorAndRejectedNotesReturn(t *testi
 	if len(messages) != 3 || messages[0].InternalID != first || messages[0].PendingSteering || messages[1].Role != MessageRoleStatus || messages[2].InternalID != second || !messages[2].PendingSteering {
 		t.Fatalf("upload handoff did not move note above indicator: %+v", messages)
 	}
-	removed := conversation.RemovePendingSteeringMessages([]string{first, second})
-	if len(removed) != 2 || removed[0].Content != "first" || removed[1].Content != "second" || len(conversation.Messages()) != 1 {
-		t.Fatalf("failed upload did not return both notes in order: %+v, remaining %+v", removed, conversation.Messages())
+	settled := conversation.SettlePendingSteeringMessages([]string{first, second})
+	if len(settled) != 2 || settled[0].Content != "first" || settled[1].Content != "second" || len(conversation.Messages()) != 3 {
+		t.Fatalf("stopped upload did not retain both notes in order: %+v, remaining %+v", settled, conversation.Messages())
 	}
 }
 

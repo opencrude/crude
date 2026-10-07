@@ -49,7 +49,11 @@ func TestCancelSettlesQueuedToolResultsWithoutReplayingAnimation(t *testing.T) {
 		"tool_id": "build", "internal_id": "build", "name": "execute_command", "result": "late result",
 	}}, nil, ignoreStatus, ignoreThinking, func() {}, ignoreConfirm, func(string) {}, func() {})
 	state.HandleEvent(AgentEvent{Type: "done", Data: map[string]any{"reason": "cancelled"}}, nil, ignoreStatus, ignoreThinking, func() {}, ignoreConfirm, func(string) {}, func() {})
+	want["build"] = struct{ status, preview, result string }{"success", "done", "late result"}
 	assert()
+	if state.IsActive() || c.HasPendingToolLifecycles() {
+		t.Fatal("late semantic evidence reactivated the stopped turn")
+	}
 	if !c.BeginTurn(ttypes.TurnIdentity{Generation: 2, ModelID: "next-model"}) {
 		t.Fatal("next turn rejected")
 	}

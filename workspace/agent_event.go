@@ -4,15 +4,17 @@ import (
 	"unicode/utf8"
 
 	"crude/tools"
+	ttypes "crude/types"
 )
 
 // AgentEvent is the workspace-owned domain event produced by the backend
 // orchestrator. The TUI converts ttypes.AgentEventMsg to this type at the
 // boundary so workspace code never imports tui/types.
 type AgentEvent struct {
-	Type    string
-	Data    any
-	AgentID string
+	Type     string
+	Data     any
+	AgentID  string
+	Identity ttypes.RuntimeEventIdentity
 }
 
 // StaleAgentUpload identifies late upload callbacks after a request has begun

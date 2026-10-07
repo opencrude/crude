@@ -751,6 +751,7 @@ func TestContextStateRoundTripsIndependentlyFromDisplayHistory(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, ok, err := LoadContextState(db, "session", "root")
+	want.Revision = 1
 	if err != nil || !ok || !reflect.DeepEqual(got, want) {
 		t.Fatalf("context state round-trip got=%#v ok=%v err=%v want=%#v", got, ok, err, want)
 	}

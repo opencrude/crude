@@ -3,6 +3,7 @@ package fileio
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"crude/logger"
 )
@@ -42,6 +44,42 @@ type AsyncCmdInfo struct {
 	Duration  time.Duration
 	ExitCode  int
 	Error     string
+	// OutputBytes is the complete number of raw stdout+stderr bytes retained
+	// under Handle at the instant this snapshot was taken.
+	OutputBytes int
+}
+
+// OutputRange identifies one half-open raw byte range included in a bounded
+// command result. Multiple ranges mean the middle was omitted from the model-
+// visible excerpt; the complete bytes remain addressable through Handle.
+type OutputRange struct {
+	StartByte int `json:"start_byte"`
+	EndByte   int `json:"end_byte"`
+}
+
+// OutputDescriptor is the shared, presentation-neutral contract describing a
+// bounded command result and the retained bytes behind it.
+type OutputDescriptor struct {
+	Handle         string        `json:"handle,omitempty"`
+	Status         AsyncStatus   `json:"status"`
+	TotalBytes     int           `json:"total_bytes"`
+	ShownRanges    []OutputRange `json:"shown_ranges,omitempty"`
+	OmittedBytes   int           `json:"omitted_bytes,omitempty"`
+	RetentionError string        `json:"retention_error,omitempty"`
+}
+
+// OutputPage is one contiguous bounded read from retained command output.
+type OutputPage struct {
+	Descriptor OutputDescriptor `json:"descriptor"`
+	SinceByte  int              `json:"since_byte"`
+	NextByte   int              `json:"next_byte"`
+	HasMore    bool             `json:"has_more"`
+	// OutputEncoding is omitted for ordinary UTF-8 text. A base64 value means
+	// Output encodes the exact raw ShownRanges bytes because the requested byte
+	// interval was not independently valid UTF-8 (for example, a mid-rune cursor
+	// or binary command output).
+	OutputEncoding string `json:"output_encoding,omitempty"`
+	Output         string `json:"output"`
 }
 
 type AsyncCmdRef struct {
@@ -367,6 +405,9 @@ func (m *AsyncCommandManager) Check(handle string) (*AsyncCmdInfo, bool) {
 	state.mu.Lock()
 	info := state.info
 	state.mu.Unlock()
+	state.outputMu.Lock()
+	info.OutputBytes = state.output.Len()
+	state.outputMu.Unlock()
 	info.computeDuration()
 	if m.logger != nil {
 		m.logger.Debug("ASYNC", "check", "handle", handle, "status", info.Status, "pid", info.PID)
@@ -427,7 +468,7 @@ func normalizeCommandOutput(out string) string {
 
 // ReadOutput reads one bounded output page. nextByte advances only through the
 // returned raw byte range; totalBytes reports the complete captured size.
-func (m *AsyncCommandManager) ReadOutputLimit(handle string, sinceByte, maxBytes int) (out string, nextByte, totalBytes int, err error) {
+func (m *AsyncCommandManager) ReadOutputPage(handle string, sinceByte, maxBytes int) (OutputPage, error) {
 	m.mu.Lock()
 	state, ok := m.commands[handle]
 	m.mu.Unlock()
@@ -435,31 +476,54 @@ func (m *AsyncCommandManager) ReadOutputLimit(handle string, sinceByte, maxBytes
 		if m.logger != nil {
 			m.logger.Warn("ASYNC", "read_output_not_found", "handle", handle)
 		}
-		return "", 0, 0, fmt.Errorf("async command handle %q not found", handle)
+		return OutputPage{}, fmt.Errorf("async command handle %q not found", handle)
 	}
 	if sinceByte < 0 {
-		return "", 0, 0, errors.New("async output cursor cannot be negative")
+		return OutputPage{}, errors.New("async output cursor cannot be negative")
 	}
 	maxBytes = normalizeOutputLimit(maxBytes)
 	state.outputMu.Lock()
 	total := state.output.Len()
+	end := min(total, sinceByte+maxBytes)
+	if sinceByte > total {
+		end = total
+	}
+	var raw []byte
 	if sinceByte >= total {
 		state.readCursor = max(state.readCursor, total)
-		state.outputMu.Unlock()
-		if m.logger != nil {
-			m.logger.Debug("ASYNC", "read_output_no_new", "handle", handle, "since_byte", sinceByte, "total", total)
-		}
-		return "", total, total, nil
+	} else {
+		raw = append([]byte(nil), state.output.Bytes()[sinceByte:end]...)
+		state.readCursor = max(state.readCursor, end)
 	}
-	end := min(total, sinceByte+maxBytes)
-	out = string(state.output.Bytes()[sinceByte:end])
-	state.readCursor = max(state.readCursor, end)
 	state.outputMu.Unlock()
-	out = normalizeCommandOutput(out)
-	if m.logger != nil {
-		m.logger.Debug("ASYNC", "read_output", "handle", handle, "bytes", len(out), "since_byte", sinceByte, "total", total, "next_byte", end)
+	var out, encoding string
+	if utf8.Valid(raw) {
+		out = normalizeCommandOutput(string(raw))
+	} else {
+		out = base64.StdEncoding.EncodeToString(raw)
+		encoding = "base64"
 	}
-	return out, end, total, nil
+	state.mu.Lock()
+	status := state.info.Status
+	state.mu.Unlock()
+	descriptor := OutputDescriptor{Handle: handle, Status: status, TotalBytes: total}
+	if end > sinceByte && sinceByte < total {
+		descriptor.ShownRanges = []OutputRange{{StartByte: sinceByte, EndByte: end}}
+	}
+	page := OutputPage{Descriptor: descriptor, SinceByte: sinceByte, NextByte: end, HasMore: end < total, OutputEncoding: encoding, Output: out}
+	if m.logger != nil {
+		m.logger.Debug("ASYNC", "read_output", "handle", handle, "bytes", len(out), "since_byte", sinceByte, "total", total, "next_byte", end, "status", status)
+	}
+	return page, nil
+
+}
+
+func (m *AsyncCommandManager) ReadOutputLimit(handle string, sinceByte, maxBytes int) (out string, nextByte, totalBytes int, err error) {
+	page, err := m.ReadOutputPage(handle, sinceByte, maxBytes)
+	if err != nil {
+		return "", 0, 0, err
+	}
+	return page.Output, page.NextByte, page.Descriptor.TotalBytes, nil
 }
 
 func (m *AsyncCommandManager) ReadOutput(handle string, sinceByte int) (string, int, error) {
@@ -495,6 +559,9 @@ func (m *AsyncCommandManager) List() []AsyncCmdInfo {
 		state.mu.Lock()
 		info := state.info
 		state.mu.Unlock()
+		state.outputMu.Lock()
+		info.OutputBytes = state.output.Len()
+		state.outputMu.Unlock()
 		info.computeDuration()
 		list = append(list, info)
 	}
@@ -706,6 +773,9 @@ func (uc *UntrackedCmd) Info() AsyncCmdInfo {
 	uc.state.mu.Lock()
 	info := uc.state.info
 	uc.state.mu.Unlock()
+	uc.state.outputMu.Lock()
+	info.OutputBytes = uc.state.output.Len()
+	uc.state.outputMu.Unlock()
 	info.computeDuration()
 	return info
 }
@@ -754,6 +824,9 @@ func (m *AsyncCommandManager) Promote(uc *UntrackedCmd, handle string) (*AsyncCm
 	uc.state.mu.Lock()
 	info := uc.state.info
 	uc.state.mu.Unlock()
+	uc.state.outputMu.Lock()
+	info.OutputBytes = uc.state.output.Len()
+	uc.state.outputMu.Unlock()
 	info.computeDuration()
 	return &info, nil
 }

@@ -52,20 +52,46 @@ func (fo *FileOwnership) CheckOrClaim(agentID AgentID, agentName string, path st
 }
 
 func (fo *FileOwnership) PreClaim(agentID AgentID, agentName string, paths []string) error {
+	return fo.ReplaceClaims(agentID, agentName, paths)
+}
+
+// ReplaceClaims atomically publishes one agent's complete current write scope.
+// Validation happens before the previous projection is removed, so a failed
+// repair cannot create a release gap or retain a partially replaced scope.
+func (fo *FileOwnership) ReplaceClaims(agentID AgentID, agentName string, paths []string) error {
 	fo.mu.Lock()
 	defer fo.mu.Unlock()
+	return fo.replaceClaimsLocked(agentID, agentName, paths)
+}
 
-	for _, path := range paths {
-		path = normalizeClaimPath(path)
-		for claimedPath, entry := range fo.claims {
-			if claimPathsOverlap(path, claimedPath) {
-				if entry.AgentID != agentID {
-					return fmt.Errorf("pre-claim conflict: file %q is owned by agent %q", path, entry.AgentName)
-				}
-			}
-		}
+// CommitReplaceClaims holds the ownership projection gate while durable claim
+// replacement commits, then publishes the exact committed scope locally. This
+// prevents file effects from observing a release gap or racing a durable repair.
+func (fo *FileOwnership) CommitReplaceClaims(agentID AgentID, agentName string, paths []string, commit func() error) error {
+	fo.mu.Lock()
+	defer fo.mu.Unlock()
+	if err := fo.validateReplacementLocked(agentID, paths); err != nil {
+		return err
+	}
+	if commit == nil {
+		return fmt.Errorf("claim replacement commit is unavailable")
+	}
+	if err := commit(); err != nil {
+		return err
+	}
+	return fo.replaceClaimsLocked(agentID, agentName, paths)
+}
+
+func (fo *FileOwnership) replaceClaimsLocked(agentID AgentID, agentName string, paths []string) error {
+	if err := fo.validateReplacementLocked(agentID, paths); err != nil {
+		return err
 	}
 
+	for path, entry := range fo.claims {
+		if entry.AgentID == agentID {
+			delete(fo.claims, path)
+		}
+	}
 	now := time.Now()
 	for _, path := range paths {
 		path = normalizeClaimPath(path)
@@ -74,6 +100,20 @@ func (fo *FileOwnership) PreClaim(agentID AgentID, agentName string, paths []str
 			AgentName: agentName,
 			ClaimedAt: now,
 			IsWrite:   true,
+		}
+	}
+	return nil
+}
+
+func (fo *FileOwnership) validateReplacementLocked(agentID AgentID, paths []string) error {
+	for _, path := range paths {
+		path = normalizeClaimPath(path)
+		for claimedPath, entry := range fo.claims {
+			if claimPathsOverlap(path, claimedPath) {
+				if entry.AgentID != agentID {
+					return fmt.Errorf("pre-claim conflict: file %q is owned by agent %q", path, entry.AgentName)
+				}
+			}
 		}
 	}
 	return nil

@@ -55,9 +55,11 @@ func (s *Session) AppendWorkspaceHistoryEventWithID(eventID, content string, sta
 			}
 			s.msgsMu.Unlock()
 			if s.db != nil {
-				if err := sessiondb.SaveContextState(s.db, s.sessionID, s.sessionID, sessiondb.ContextState{Generation: generation, Reason: "workspace_restore", Messages: active}); err != nil {
+				state, err := sessiondb.PublishContext(s.db, sessiondb.ContextPublication{SessionID: s.sessionID, AgentID: s.sessionID, ExpectedRevision: s.contextRevision, Mutation: sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: generation, Reason: "workspace_restore", Messages: active}}, ArchivePrevious: true})
+				if err != nil {
 					return err
 				}
+				s.contextRevision = state.Revision
 			}
 			s.msgsMu.Lock()
 			s.activeContext = active
@@ -78,12 +80,11 @@ func (s *Session) AppendWorkspaceHistoryEventWithID(eventID, content string, sta
 	}
 	s.msgsMu.Unlock()
 	if s.db != nil {
-		if err := sessiondb.AppendMessageWithMeta(s.db, s.sessionID, message, s.turnNumber, meta); err != nil {
+		state, err := sessiondb.PublishContext(s.db, sessiondb.ContextPublication{SessionID: s.sessionID, AgentID: s.sessionID, ExpectedRevision: s.contextRevision, Mutation: sessiondb.ContextMutation{Append: []sessiondb.ContextMessageDelta{contextDelta(message, meta, s.turnNumber, createdAt, s.sessionID)}}})
+		if err != nil {
 			return err
 		}
-		if err := sessiondb.SaveContextState(s.db, s.sessionID, s.sessionID, sessiondb.ContextState{Generation: generation, Reason: "workspace_restore", Messages: active}); err != nil {
-			return err
-		}
+		s.contextRevision = state.Revision
 	}
 	s.msgsMu.Lock()
 	s.msgs = msgs

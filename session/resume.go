@@ -235,6 +235,7 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	}
 	activeContext := append([]provider.ChatMessage(nil), msgs...)
 	contextGeneration := uint64(1)
+	contextRevision := uint64(0)
 	contextReason := "resume_full_history"
 	state, ok, contextErr := sessiondb.LoadContextState(db, meta.ID, meta.ID)
 	if contextErr != nil {
@@ -244,6 +245,7 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	}
 	if ok {
 		activeContext = state.Messages
+		contextRevision = state.Revision
 		contextGeneration = state.Generation
 		contextReason = state.Reason
 	}
@@ -282,6 +284,7 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		sessionOverrides:   overrides,
 		multiAgentOverride: cloneBoolPtr(flags.MultiAgent),
 		activeContext:      activeContext,
+		contextRevision:    contextRevision,
 		contextGeneration:  contextGeneration,
 		contextReason:      contextReason,
 	}

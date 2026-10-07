@@ -1,10 +1,10 @@
 package viewmodel
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
-	"sort"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -24,10 +24,14 @@ const composerDraftIOTimeout = 2 * time.Second
 // on restore, only spans whose backing reference is gone are removed, so
 // user-typed bracketed prose (e.g. array[0]) is never touched.
 type composerDraftSnapshot struct {
-	Text   string                 `json:"text"`
-	RefIDs []string               `json:"ref_ids"`
-	Cursor int                    `json:"cursor"`
-	Spans  []composerDraftRefSpan `json:"spans,omitempty"`
+	Text          string                 `json:"text"`
+	RefIDs        []string               `json:"ref_ids"`
+	Cursor        int                    `json:"cursor"`
+	SelectionFrom int                    `json:"selection_from,omitempty"`
+	SelectionTo   int                    `json:"selection_to,omitempty"`
+	Scroll        int                    `json:"scroll,omitempty"`
+	Revision      uint64                 `json:"revision"`
+	Spans         []composerDraftRefSpan `json:"spans,omitempty"`
 }
 
 type composerDraftRefSpan struct {
@@ -36,49 +40,86 @@ type composerDraftRefSpan struct {
 	End   int    `json:"end"`
 }
 
+type composerDraftOwner struct {
+	epoch        uint64
+	loadRevision uint64
+	persisted    []byte
+	inFlight     []byte
+	queued       []byte
+}
+
 // composerDraftLoadedMsg carries a hydrated draft back to Update.
 type composerDraftLoadedMsg struct {
-	session *workspace.Session
-	text    string
-	cursor  int
-	refIDs  []string
-	spans   []composerDraftRefSpan
+	session         *workspace.Session
+	epoch           uint64
+	err             error
+	text            string
+	cursor          int
+	selectionFrom   int
+	selectionTo     int
+	scroll          int
+	revision        uint64
+	requestRevision uint64
+	refIDs          []string
+	spans           []composerDraftRefSpan
 }
 
 // composerDraftSavedMsg closes one in-flight save; a coalesced dirty flag
 // re-arms the next save from Update (single-writer, ordered).
-type composerDraftSavedMsg struct{}
+type composerDraftSavedMsg struct {
+	session  *workspace.Session
+	epoch    uint64
+	revision uint64
+	err      error
+	raw      []byte
+}
 
-// maybeHydrateComposerDraft runs once per frame from View(). When the active
+// maybeHydrateComposerDraft runs from Update/Init lifecycle boundaries. When the active
 // session pointer changed, the composer clears immediately (no cross-session
 // draft leakage) and the incoming session's persisted draft loads
 // asynchronously. The outgoing session's draft was already saved continuously.
 func (m *App) maybeHydrateComposerDraft() {
+	m.runDetachedAsyncCmd(m.hydrateComposerDraftCmd())
+}
+
+func (m *App) hydrateComposerDraftCmd() tea.Cmd {
 	if m.ActiveSession == m.composerHydratedFor {
-		return
+		return nil
 	}
+	m.composerDraftEpoch++
+	epoch := m.composerDraftEpoch
 	m.composerHydratedFor = m.ActiveSession
-	m.composerSavedDraft = ""
 	m.Input.ClearInput()
 	m.Input.ClearInputSelection()
 	if m.RefStore() != nil {
 		m.Input.SetReferenceStore(m.RefStore())
 	}
-	if m.ActiveSession != nil && m.ActiveSession.DB == nil {
-		m.applyRejectedSteeringDrafts()
-	}
 	sess := m.ActiveSession
 	if sess == nil || sess.DB == nil {
-		return
+		return nil
 	}
-	m.runDetachedAsyncCmd(func() tea.Msg {
-		return m.loadComposerDraftMsg(sess)
-	})
+	owner := m.draftOwner(sess)
+	owner.epoch = epoch
+	owner.loadRevision = m.Input.DraftRevision()
+	requestRevision := owner.loadRevision
+	return func() tea.Msg { return m.loadComposerDraftMsg(sess, epoch, requestRevision) }
+}
+
+func (m *App) draftOwner(sess *workspace.Session) *composerDraftOwner {
+	if m.composerDraftOwners == nil {
+		m.composerDraftOwners = make(map[*workspace.Session]*composerDraftOwner)
+	}
+	owner := m.composerDraftOwners[sess]
+	if owner == nil {
+		owner = &composerDraftOwner{}
+		m.composerDraftOwners[sess] = owner
+	}
+	return owner
 }
 
 // loadComposerDraftMsg reads one session's persisted draft. Split from the
 // async wrapper so tests can exercise the DB round-trip synchronously.
-func (m *App) loadComposerDraftMsg(sess *workspace.Session) tea.Msg {
+func (m *App) loadComposerDraftMsg(sess *workspace.Session, epoch, requestRevision uint64) tea.Msg {
 	if sess == nil || sess.DB == nil {
 		return nil
 	}
@@ -86,21 +127,27 @@ func (m *App) loadComposerDraftMsg(sess *workspace.Session) tea.Msg {
 	defer cancel()
 	raw, err := sessiondb.LoadRuntimeState(ctx, sess.DB, composerDraftStateKey)
 	if err != nil {
-		return composerDraftLoadedMsg{session: sess}
+		return composerDraftLoadedMsg{session: sess, epoch: epoch, requestRevision: requestRevision, err: err}
 	}
 	if len(raw) == 0 {
-		return composerDraftLoadedMsg{session: sess}
+		return composerDraftLoadedMsg{session: sess, epoch: epoch, requestRevision: requestRevision}
 	}
 	var snap composerDraftSnapshot
 	if err := json.Unmarshal(raw, &snap); err != nil {
-		return composerDraftLoadedMsg{session: sess}
+		return composerDraftLoadedMsg{session: sess, epoch: epoch, err: err}
 	}
 	return composerDraftLoadedMsg{
-		session: sess,
-		text:    snap.Text,
-		cursor:  snap.Cursor,
-		refIDs:  snap.RefIDs,
-		spans:   snap.Spans,
+		session:         sess,
+		epoch:           epoch,
+		text:            snap.Text,
+		cursor:          snap.Cursor,
+		selectionFrom:   snap.SelectionFrom,
+		selectionTo:     snap.SelectionTo,
+		scroll:          snap.Scroll,
+		revision:        snap.Revision,
+		refIDs:          snap.RefIDs,
+		spans:           snap.Spans,
+		requestRevision: requestRevision,
 	}
 }
 
@@ -109,45 +156,22 @@ func (m *App) loadComposerDraftMsg(sess *workspace.Session) tea.Msg {
 // text (highest offset first); surviving tokens re-resolve against the live
 // reference store, and the caret clamps into the restored text.
 func (m *App) applyComposerDraft(msg composerDraftLoadedMsg) {
-	if msg.session == nil || m.ActiveSession != msg.session {
+	if msg.session == nil || m.ActiveSession != msg.session || msg.epoch != m.composerDraftEpoch {
 		return
 	}
-	// A note may be restored while this asynchronous DB read is in flight.
-	// Preserve the newer local edit instead of replacing it with the old draft.
-	if m.Input.Value() != "" && m.Input.Value() != msg.text {
-		m.applyRejectedSteeringDrafts()
+	owner := m.draftOwner(msg.session)
+	if owner.epoch != msg.epoch || owner.loadRevision != msg.requestRevision || m.Input.DraftRevision() != msg.requestRevision {
+		return
+	}
+	if msg.err != nil {
+		m.composerDraftErr = msg.err
 		return
 	}
 	store := m.RefStore()
-	if store == nil {
-		m.applyRejectedSteeringDrafts()
-		return
+	text := msg.text
+	if store != nil {
+		m.Input.SetReferenceStore(store)
 	}
-	runes := []rune(msg.text)
-	var dead []input.RefRange
-	for _, sp := range msg.spans {
-		if ref, ok := store.GetReference(sp.ID); !ok || !ref.Active() {
-			dead = append(dead, input.RefRange{ID: sp.ID, Start: sp.Start, End: sp.End})
-		}
-	}
-	sort.Slice(dead, func(i, j int) bool { return dead[i].Start > dead[j].Start })
-	for _, rr := range dead {
-		n := len(runes)
-		if rr.Start < 0 || rr.End > n || rr.Start >= rr.End {
-			continue
-		}
-		// Also consume one neighboring space so words don't glue together.
-		cutStart, cutEnd := rr.Start, rr.End
-		if n > 0 && cutEnd < n && runes[cutEnd] == ' ' {
-			cutEnd++
-		} else if cutStart > 0 && runes[cutStart-1] == ' ' {
-			cutStart--
-		}
-		runes = append(runes[:cutStart], runes[cutEnd:]...)
-	}
-	text := string(runes)
-	m.composerSavedDraft = text
-	m.Input.SetReferenceStore(store)
 	m.Input.SetValuePreserveReferences(text)
 	m.Input.UseReferenceIDs(msg.refIDs)
 	cursor := msg.cursor
@@ -155,17 +179,11 @@ func (m *App) applyComposerDraft(msg composerDraftLoadedMsg) {
 		cursor = n
 	}
 	m.Input.SetCursorFlat(cursor)
-	m.applyRejectedSteeringDrafts()
-}
-
-func (m *App) applyRejectedSteeringDrafts() {
-	texts := m.rejectedSteeringDrafts[m.ActiveSession]
-	if len(texts) == 0 {
-		return
+	m.Input.SetSelection(msg.selectionFrom, msg.selectionTo)
+	m.Input.SetScrollOffset(msg.scroll)
+	if raw, err := json.Marshal(composerDraftSnapshot{Text: msg.text, RefIDs: msg.refIDs, Cursor: msg.cursor, SelectionFrom: msg.selectionFrom, SelectionTo: msg.selectionTo, Scroll: msg.scroll, Revision: msg.revision, Spans: msg.spans}); err == nil {
+		owner.persisted = raw
 	}
-	delete(m.rejectedSteeringDrafts, m.ActiveSession)
-	m.Input.SetInput(joinRejectedSteeringDrafts(texts, m.Input.Value()))
-	m.persistComposerDraftIfChanged()
 }
 
 // persistComposerDraftIfChanged saves the draft asynchronously whenever the
@@ -177,49 +195,107 @@ func (m *App) persistComposerDraftIfChanged() {
 	if sess == nil || sess.DB == nil {
 		return
 	}
-	text := m.Input.Value()
-	if m.composerSaving {
-		if text != m.composerSavedDraft {
-			m.composerDirtySinceSave = true
-		}
-		return
-	}
-	if text == m.composerSavedDraft {
-		return
-	}
-	m.composerSavedDraft = text
+	selectionFrom, selectionTo := m.Input.InputSelectionRange()
+	revision := m.Input.DraftRevision()
 	snap, err := json.Marshal(composerDraftSnapshot{
-		Text:   text,
-		RefIDs: m.Input.ReferencedIDs(),
-		Cursor: m.Input.CursorFlat(),
-		Spans:  composerDraftRefSpans(m.Input.RefRanges()),
+		Text:          m.Input.Value(),
+		RefIDs:        m.Input.SnapshotReferenceIDs(),
+		Cursor:        m.Input.CursorFlat(),
+		SelectionFrom: selectionFrom,
+		SelectionTo:   selectionTo,
+		Scroll:        m.Input.ScrollOffset(),
+		Revision:      revision,
+		Spans:         composerDraftRefSpans(m.Input.RefRanges()),
 	})
 	if err != nil {
+		m.composerDraftErr = err
 		return
 	}
-	db := sess.DB
-	m.composerSaving = true
+	owner := m.draftOwner(sess)
+	if bytes.Equal(snap, owner.persisted) || bytes.Equal(snap, owner.inFlight) {
+		return
+	}
+	if len(owner.inFlight) != 0 {
+		owner.queued = snap
+		return
+	}
+	if bytes.Equal(snap, owner.queued) {
+		owner.queued = nil
+	}
+	m.startComposerDraftSave(sess, owner, snap)
+}
+
+func (m *App) startComposerDraftSave(sess *workspace.Session, owner *composerDraftOwner, snap []byte) {
+	if m.composerDraftStopping.Load() {
+		owner.queued = append([]byte(nil), snap...)
+		return
+	}
+	owner.inFlight = append([]byte(nil), snap...)
+	db, epoch := sess.DB, owner.epoch
+	m.composerDraftWrites.Add(1)
 	m.runDetachedAsyncCmd(func() tea.Msg {
-		return m.saveComposerDraftMsg(db, snap)
+		defer m.composerDraftWrites.Done()
+		return m.saveComposerDraftMsg(sess, db, epoch, snap)
 	})
 }
 
 // saveComposerDraftMsg writes one draft snapshot. Split from the async
 // wrapper so tests can exercise the write synchronously.
-func (m *App) saveComposerDraftMsg(db *sql.DB, snap []byte) tea.Msg {
+func (m *App) saveComposerDraftMsg(sess *workspace.Session, db *sql.DB, epoch uint64, snap []byte) tea.Msg {
 	ctx, cancel := context.WithTimeout(context.Background(), composerDraftIOTimeout)
 	defer cancel()
-	_ = sessiondb.SaveRuntimeState(ctx, db, composerDraftStateKey, snap)
-	return composerDraftSavedMsg{}
+	err := sessiondb.SaveRuntimeState(ctx, db, composerDraftStateKey, snap)
+	return composerDraftSavedMsg{session: sess, epoch: epoch, raw: snap, err: err}
 }
 
-func (m *App) onComposerDraftSaved() {
-	m.composerSaving = false
-	if !m.composerDirtySinceSave {
+func (m *App) onComposerDraftSaved(msg composerDraftSavedMsg) {
+	owner := m.composerDraftOwners[msg.session]
+	if owner == nil || owner.epoch != msg.epoch || !bytes.Equal(owner.inFlight, msg.raw) {
 		return
 	}
-	m.composerDirtySinceSave = false
-	m.persistComposerDraftIfChanged()
+	owner.inFlight = nil
+	m.composerDraftErr = msg.err
+	if msg.err != nil {
+		owner.queued = append([]byte(nil), msg.raw...)
+		return
+	}
+	owner.persisted = append(owner.persisted[:0], msg.raw...)
+	next := owner.queued
+	owner.queued = nil
+	if len(next) != 0 && !bytes.Equal(next, owner.persisted) {
+		m.startComposerDraftSave(msg.session, owner, next)
+	}
+}
+
+// flushComposerDraft is the teardown barrier. It waits for ordered async
+// writes, then commits the latest full editor snapshot before the DB closes.
+func (m *App) flushComposerDraft() {
+	sess := m.ActiveSession
+	if sess == nil || sess.DB == nil {
+		return
+	}
+	m.composerDraftStopping.Store(true)
+	defer m.composerDraftStopping.Store(false)
+	m.composerDraftWrites.Wait()
+	selectionFrom, selectionTo := m.Input.InputSelectionRange()
+	snap, err := json.Marshal(composerDraftSnapshot{Text: m.Input.Value(), RefIDs: m.Input.SnapshotReferenceIDs(), Cursor: m.Input.CursorFlat(), SelectionFrom: selectionFrom, SelectionTo: selectionTo, Scroll: m.Input.ScrollOffset(), Revision: m.Input.DraftRevision(), Spans: composerDraftRefSpans(m.Input.RefRanges())})
+	if err != nil {
+		m.composerDraftErr = err
+		return
+	}
+	owner := m.draftOwner(sess)
+	if bytes.Equal(snap, owner.persisted) {
+		return
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), composerDraftIOTimeout)
+	defer cancel()
+	if err := sessiondb.SaveRuntimeState(ctx, sess.DB, composerDraftStateKey, snap); err != nil {
+		m.composerDraftErr = err
+		return
+	}
+	owner.persisted = append(owner.persisted[:0], snap...)
+	owner.inFlight, owner.queued = nil, nil
+	m.composerDraftErr = nil
 }
 
 // composerDraftRefSpans converts live chip ranges into persisted spans.

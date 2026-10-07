@@ -148,7 +148,7 @@ func TestRunSupervisedRetriesTransientExhaustionWithoutTerminalError(t *testing.
 		mu.Unlock()
 	}
 	var events []AgentEvent
-	history := a.RunSupervised(
+	result := a.RunSupervised(
 		t.Context(),
 		[]provider.ChatMessage{provider.NewTextMessage("user", "finish the task")},
 		"system", func(event AgentEvent) { events = append(events, event) },
@@ -170,13 +170,13 @@ func TestRunSupervisedRetriesTransientExhaustionWithoutTerminalError(t *testing.
 		t.Fatalf("recovery statuses = %+v", statuses)
 	}
 	found := 0
-	for _, message := range history {
+	for _, message := range result.Archive {
 		if message.Role == "assistant" && message.ContentString() == "finished after recovery" {
 			found++
 		}
 	}
 	if found != 1 {
-		t.Fatalf("canonical recovered output count=%d history=%+v", found, history)
+		t.Fatalf("canonical recovered output count=%d history=%+v", found, result.Archive)
 	}
 }
 
@@ -213,7 +213,7 @@ func TestRunSupervisedDiscardsTruncatedToolArgumentsAndContinues(t *testing.T) {
 	supervisor := NewSupervisor("child", 1, nil)
 	supervisor.RetryBase = 0
 	supervisor.Persist = func(recoverytypes.Status) error { return nil }
-	history := a.RunSupervised(
+	result := a.RunSupervised(
 		t.Context(), []provider.ChatMessage{provider.NewTextMessage("user", "work")},
 		"system", func(AgentEvent) {}, nil, "child", nil,
 		SupervisedRunOptions{Supervisor: supervisor},
@@ -221,7 +221,7 @@ func TestRunSupervisedDiscardsTruncatedToolArgumentsAndContinues(t *testing.T) {
 	if requests.Load() != 2 || executions.Load() != 0 {
 		t.Fatalf("requests=%d executions=%d", requests.Load(), executions.Load())
 	}
-	for _, message := range history {
+	for _, message := range result.Archive {
 		if len(message.ToolCalls) > 0 {
 			t.Fatalf("incomplete tool call entered canonical history: %+v", message.ToolCalls)
 		}
@@ -237,10 +237,10 @@ func TestRunSupervisedWithoutOwnerDoesNotStartProvider(t *testing.T) {
 	a := newTestAgent(t, provider.FromPreset("openai-chat", "key", server.URL), "model")
 	var events []AgentEvent
 	input := []provider.ChatMessage{provider.NewTextMessage("user", "pending")}
-	history := a.RunSupervised(t.Context(), input, "system", func(event AgentEvent) {
+	result := a.RunSupervised(t.Context(), input, "system", func(event AgentEvent) {
 		events = append(events, event)
 	}, nil, "session", nil, SupervisedRunOptions{})
-	if requests.Load() != 0 || len(history) != 1 || len(events) != 1 || events[0].Type != "error" {
-		t.Fatalf("unowned run executed: requests=%d history=%+v events=%+v", requests.Load(), history, events)
+	if requests.Load() != 0 || len(result.Archive) != 1 || result.State != SupervisedRunParked || len(events) != 1 || events[0].Type != "error" {
+		t.Fatalf("unowned run executed: requests=%d result=%+v events=%+v", requests.Load(), result, events)
 	}
 }

@@ -9,6 +9,27 @@ import (
 	"crude/types/reasoning"
 )
 
+func TestAgentStateRuntimeEventIdentityRejectsDuplicateAndWrongRun(t *testing.T) {
+	state := NewAgentState("agent", nil, nil)
+	base := ttypes.RuntimeEventIdentity{EventID: "one", OwnerID: "session", AgentID: "agent", RunID: "run", RuntimeEpoch: 2, Generation: 3, Sequence: 1}
+	if !state.AcceptRuntimeEvent(base) {
+		t.Fatal("first exact envelope was rejected")
+	}
+	if state.AcceptRuntimeEvent(base) {
+		t.Fatal("duplicate envelope was accepted")
+	}
+	wrongRun := base
+	wrongRun.EventID, wrongRun.RunID, wrongRun.Sequence = "two", "replacement", 2
+	if state.AcceptRuntimeEvent(wrongRun) {
+		t.Fatal("same-generation event from another run was accepted")
+	}
+	next := base
+	next.EventID, next.Sequence = "three", 2
+	if !state.AcceptRuntimeEvent(next) {
+		t.Fatal("monotonic same-run semantic event was rejected")
+	}
+}
+
 func TestSummarizeToolArgsUsesCanonicalJSONOperands(t *testing.T) {
 	if got := SummarizeToolArgs("update_plan", `{"plan_id":"plan-123","objective":"O"}`); got != "plan-123" {
 		t.Fatalf("update_plan summary = %q", got)

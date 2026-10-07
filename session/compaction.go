@@ -44,9 +44,25 @@ func (s *Session) PrepareCompaction(agentID string) (PreparedCompaction, ttypes.
 
 	s.msgsMu.Lock()
 	active := append([]provider.ChatMessage(nil), s.activeContext...)
+	revision := s.contextRevision
 	generation := s.contextGeneration
 	beforeMessages := len(active)
 	s.msgsMu.Unlock()
+	if s.db != nil {
+		state, found, err := sessiondb.LoadContextState(s.db, s.sessionID, s.sessionID)
+		if err != nil {
+			s.turnGate.Unlock()
+			return PreparedCompaction{}, ttypes.CompactResultMsg{Error: "Load current context: " + err.Error()}
+		}
+		if found {
+			revision, generation = state.Revision, state.Generation
+			active, beforeMessages = append([]provider.ChatMessage(nil), state.Messages...), len(state.Messages)
+			s.msgsMu.Lock()
+			s.contextRevision, s.contextGeneration, s.contextReason = state.Revision, state.Generation, state.Reason
+			s.activeContext = append([]provider.ChatMessage(nil), state.Messages...)
+			s.msgsMu.Unlock()
+		}
+	}
 	if len(active) == 0 {
 		s.turnGate.Unlock()
 		return PreparedCompaction{}, ttypes.CompactResultMsg{Desc: "Nothing to compact yet."}
@@ -100,7 +116,7 @@ func (s *Session) PrepareCompaction(agentID string) (PreparedCompaction, ttypes.
 			s.compactionWg.Done()
 			s.turnGate.Unlock()
 		}()
-		return s.runPreparedCompaction(ctx, operationID, agentID, prepared.ProviderID, prepared.ModelID, active, generation, beforeMessages)
+		return s.runPreparedCompaction(ctx, operationID, agentID, prepared.ProviderID, prepared.ModelID, active, revision, generation, beforeMessages)
 	}
 	return prepared, ttypes.CompactResultMsg{}
 }
@@ -129,6 +145,7 @@ func (s *Session) runPreparedCompaction(
 	ctx context.Context,
 	operationID, agentID, providerID, modelID string,
 	active []provider.ChatMessage,
+	revision uint64,
 	generation uint64,
 	beforeMessages int,
 ) ttypes.CompactResultMsg {
@@ -200,18 +217,21 @@ func (s *Session) runPreparedCompaction(
 		return s.finishManualCompactionError(ctx, emit, operationID, result, errors.New("active context changed before commit"))
 	}
 	record := compactionRecordFromData(s.sessionID, agentID, sessiondb.CompactionCompleted, commitData)
-	state := sessiondb.ContextState{
-		AgentID: s.sessionID, Generation: nextGeneration, Reason: "manual_compaction",
-		Messages: append([]provider.ChatMessage(nil), result.Messages...),
-	}
-	if err := sessiondb.CommitContextCompaction(s.db, s.sessionID, s.sessionID, state, record); err != nil {
+	s.msgsMu.Lock()
+	revision = s.contextRevision
+	s.msgsMu.Unlock()
+	state, err := sessiondb.PublishContext(s.db, sessiondb.ContextPublication{
+		SessionID: s.sessionID, AgentID: s.sessionID, RuntimeAgentID: agentID, ExpectedRevision: revision,
+		Mutation:   sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: nextGeneration, Reason: "manual_compaction", Messages: append([]provider.ChatMessage(nil), result.Messages...)}},
+		Compaction: &record, ArchivePrevious: true,
+	})
+	if err != nil {
 		return s.finishManualCompactionError(ctx, emit, operationID, result, fmt.Errorf("persist compacted context: %w", err))
 	}
 
 	s.msgsMu.Lock()
-	s.activeContext = append([]provider.ChatMessage(nil), result.Messages...)
-	s.contextGeneration = nextGeneration
-	s.contextReason = "manual_compaction"
+	s.activeContext = append([]provider.ChatMessage(nil), state.Messages...)
+	s.contextRevision, s.contextGeneration, s.contextReason = state.Revision, state.Generation, state.Reason
 	s.msgsMu.Unlock()
 
 	emit(agent.AgentEvent{Type: "context_compacted", Data: commitData})
@@ -366,6 +386,7 @@ func compactionEventInt(data map[string]any, key string) int {
 
 func (s *Session) commitRootCompaction(agentID string, commit agent.CompactionCommit) error {
 	s.msgsMu.Lock()
+	revision := s.contextRevision
 	generation := s.contextGeneration
 	if generation == 0 {
 		generation = 1
@@ -378,23 +399,24 @@ func (s *Session) commitRootCompaction(agentID string, commit agent.CompactionCo
 	data["account_id"] = commit.AccountID
 	data["model_id"] = commit.ModelID
 	record := compactionRecordFromData(s.sessionID, agentID, sessiondb.CompactionCompleted, data)
-	state := sessiondb.ContextState{
-		AgentID: s.sessionID, Generation: nextGeneration, Reason: "automatic_compaction",
-		Messages: append([]provider.ChatMessage(nil), commit.Messages...),
-	}
-	if err := sessiondb.CommitContextCompaction(s.db, s.sessionID, s.sessionID, state, record); err != nil {
+	state, err := sessiondb.PublishContext(s.db, sessiondb.ContextPublication{
+		SessionID: s.sessionID, AgentID: s.sessionID, RuntimeAgentID: agentID, ExpectedRevision: revision,
+		Mutation:   sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: nextGeneration, Reason: "automatic_compaction", Messages: append([]provider.ChatMessage(nil), commit.Messages...)}},
+		Compaction: &record, ArchivePrevious: true,
+	})
+	if err != nil {
 		return err
 	}
 	s.msgsMu.Lock()
-	s.activeContext = append([]provider.ChatMessage(nil), commit.Messages...)
-	s.contextGeneration = nextGeneration
-	s.contextReason = "automatic_compaction"
+	s.activeContext = append([]provider.ChatMessage(nil), state.Messages...)
+	s.contextRevision, s.contextGeneration, s.contextReason = state.Revision, state.Generation, state.Reason
 	s.msgsMu.Unlock()
 	return nil
 }
 
 func (s *Session) beginRootCompaction(agentID string, source agent.CompactionSource) error {
 	s.msgsMu.Lock()
+	revision := s.contextRevision
 	generation := s.contextGeneration
 	if generation == 0 {
 		generation = 1
@@ -406,17 +428,17 @@ func (s *Session) beginRootCompaction(agentID string, source agent.CompactionSou
 	data["account_id"] = source.AccountID
 	data["model_id"] = source.ModelID
 	record := compactionRecordFromData(s.sessionID, agentID, sessiondb.CompactionPreparing, data)
-	state := sessiondb.ContextState{
-		AgentID: s.sessionID, Generation: generation, Reason: "compaction_source",
-		Messages: append([]provider.ChatMessage(nil), source.Messages...),
-	}
-	if err := sessiondb.BeginContextCompaction(s.db, s.sessionID, s.sessionID, state, record); err != nil {
+	state, err := sessiondb.PublishContext(s.db, sessiondb.ContextPublication{
+		SessionID: s.sessionID, AgentID: s.sessionID, RuntimeAgentID: agentID, ExpectedRevision: revision,
+		Mutation:   sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: generation, Reason: "compaction_source", Messages: append([]provider.ChatMessage(nil), source.Messages...)}},
+		Compaction: &record,
+	})
+	if err != nil {
 		return err
 	}
 	s.msgsMu.Lock()
-	s.activeContext = append([]provider.ChatMessage(nil), source.Messages...)
-	s.contextGeneration = generation
-	s.contextReason = "compaction_source"
+	s.activeContext = append([]provider.ChatMessage(nil), state.Messages...)
+	s.contextRevision, s.contextGeneration, s.contextReason = state.Revision, state.Generation, state.Reason
 	s.msgsMu.Unlock()
 	return nil
 }

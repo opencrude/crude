@@ -739,6 +739,11 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 	var failure error
 	if errors.As(toolErr, &panicErr) {
 		failure = panicErr
+	} else {
+		var structural *tools.StructuralFailureError
+		if errors.As(toolErr, &structural) {
+			failure = structural
+		}
 	}
 	return execResult{id: tc.ID, params: params, name: tc.Function.Name, result: result, toolError: toolFailed, failure: failure}
 }

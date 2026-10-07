@@ -680,13 +680,41 @@ func (d *openAIResponsesStreamDecoder) Decode(event StreamEvent) (StreamUpdate, 
 		return StreamUpdate{}, &APIError{Type: "response_cancelled", Message: "OpenAI response was cancelled"}
 	case "error":
 		if envelope.Error != nil {
-			return StreamUpdate{}, &APIError{Type: envelope.Error.Type, Code: envelope.Error.Code, Message: envelope.Error.Message, Param: envelope.Error.Param}
+			apiErr := &APIError{Type: envelope.Error.Type, Code: envelope.Error.Code, Message: envelope.Error.Message, Param: envelope.Error.Param}
+			if responsesDisconnectError(apiErr) {
+				return StreamUpdate{}, &StreamInterruptionError{
+					Protocol: "openai-responses",
+					Event:    typ,
+					Kind:     StreamInterruptionProtocolError,
+					Cause:    apiErr,
+				}
+			}
+			return StreamUpdate{}, apiErr
 		}
 		return StreamUpdate{}, &APIError{Type: "stream_error", Code: envelope.Code, Message: envelope.Message}
 	default:
 		// Unknown semantic events are ignored for forward compatibility.
 		return StreamUpdate{}, nil
 	}
+}
+
+// responsesDisconnectError recognizes the Responses stream's structured error
+// event for a gateway/upstream disconnect. The narrow adapter evidence (official
+// event plus provider type/code/diagnostic) must not make ordinary invalid
+// request errors retryable throughout the provider package.
+func responsesDisconnectError(err *APIError) bool {
+	if err == nil || err.Param != "" {
+		return false
+	}
+	if err.Code == "stream_error" || err.Type == "gateway_stream_terminated" {
+		return true
+	}
+	if err.Type != "invalid_request_error" {
+		return false
+	}
+	diagnostic := strings.ToLower(strings.TrimSpace(err.Message))
+	return strings.HasPrefix(diagnostic, "stream error: stream disconnected before completion:") &&
+		strings.Contains(diagnostic, "response.completed")
 }
 
 func (d *openAIResponsesStreamDecoder) decodeOutputItem(index int, raw json.RawMessage, done bool) (StreamUpdate, error) {

@@ -73,7 +73,7 @@ func TestStreamPanicPreservesAcceptedOutputAndRequiresExplicitContinuation(t *te
 			attention <- status
 		}
 	}
-	done := make(chan []provider.ChatMessage, 1)
+	done := make(chan SupervisedRunResult, 1)
 	go func() {
 		done <- agent.RunSupervised(ctx, []provider.ChatMessage{provider.NewTextMessage("user", "finish safely")},
 			"system", func(AgentEvent) {}, nil, "session", nil, SupervisedRunOptions{Supervisor: supervisor})
@@ -88,9 +88,9 @@ func TestStreamPanicPreservesAcceptedOutputAndRequiresExplicitContinuation(t *te
 	}
 	wake <- struct{}{}
 	select {
-	case history := <-done:
+	case result := <-done:
 		accepted := 0
-		for _, message := range history {
+		for _, message := range result.Archive {
 			if message.ContentString() == "Accepted before panic." {
 				accepted++
 			}

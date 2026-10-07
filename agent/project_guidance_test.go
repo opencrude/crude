@@ -462,9 +462,155 @@ func TestGuidanceCallPathsIncludeNativeAndParallelPatches(t *testing.T) {
 		{Type: "custom", Function: provider.FunctionCall{Name: "apply_patch", Arguments: patch}},
 		{Type: "function", Function: provider.FunctionCall{Name: "multi_tool_use.parallel", Arguments: string(args)}},
 	} {
-		paths := guidanceCallPaths([]provider.ToolCall{call})
+		paths, pathErr := guidanceCallPaths([]provider.ToolCall{call})
+		if pathErr != nil {
+			t.Fatal(pathErr)
+		}
 		if strings.Join(paths, ",") != "nested/AGENTS.md,nested/CLAUDE.md" {
 			t.Fatalf("patch operands missing from guidance preflight: %v", paths)
+		}
+	}
+}
+
+func TestGuidanceCallPathsRejectsWildcardLiteralWithoutPoisoningSet(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("root rule"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	set, err := rootprompt.DiscoverGuidance(t.Context(), dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	before := set.Digest()
+	calls := []provider.ToolCall{{Function: provider.FunctionCall{Name: "grep_files", Arguments: `{"pattern":"needle","path":"tui/ui/text*"}`}}}
+	paths, err := guidanceCallPaths(calls)
+	if err == nil || !strings.Contains(err.Error(), "wildcard syntax") {
+		t.Fatalf("expected actionable wildcard error, got paths=%v err=%v", paths, err)
+	}
+	if set.Digest() != before {
+		t.Fatal("invalid operand mutated the accepted guidance snapshot")
+	}
+	changed, err := set.AddPaths(t.Context(), []string{filepath.Join(dir, "name[1].go")})
+	if err != nil || changed {
+		t.Fatalf("ordinary bracket path rejected or changed guidance: changed=%t err=%v", changed, err)
+	}
+}
+
+func TestGuidanceCallPathsTreatsGlobPatternSeparatelyFromConcreteBase(t *testing.T) {
+	paths, err := guidanceCallPaths([]provider.ToolCall{{Function: provider.FunctionCall{Name: "glob_files", Arguments: `{"pattern":"**/*.go","base_dir":"tui/ui"}`}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(paths, ",") != "tui/ui" {
+		t.Fatalf("glob pattern leaked into guidance scopes: %v", paths)
+	}
+}
+
+func TestWildcardLiteralToolPathReturnsLocalErrorWithoutExecution(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("root rule"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	a := &Agent{WorkDir: dir}
+	set, err := rootprompt.DiscoverGuidance(t.Context(), dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	a.guidance = &projectGuidance{set: set, digest: set.Digest()}
+	executed := false
+	a.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
+		executed = true
+		return tools.ToolResult{Content: "unexpected"}, nil
+	}
+	call := provider.ToolCall{ID: "bad-path", InternalID: "bad-path", Type: "function", Function: provider.FunctionCall{
+		Name: "grep_files", Arguments: `{"pattern":"needle","path":"tui/ui/text*"}`,
+	}}
+	paths, pathErr := guidanceCallPaths([]provider.ToolCall{call})
+	if pathErr == nil || len(paths) != 0 {
+		t.Fatalf("expected rejected local operand, got paths=%v err=%v", paths, pathErr)
+	}
+	before := a.guidance.set.Digest()
+	if _, err := a.guidance.loadPaths(t.Context(), paths); err != nil {
+		t.Fatalf("empty valid preflight unexpectedly failed: %v", err)
+	}
+	if executed || a.guidance.set.Digest() != before {
+		t.Fatalf("invalid path executed=%t or changed snapshot", executed)
+	}
+}
+
+func TestRunWildcardLiteralPathIsOrdinaryToolErrorAndContinues(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "AGENTS.md"), []byte("root rule"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var requests atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		call := requests.Add(1)
+		if call == 1 {
+			_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"bad-path\",\"type\":\"function\",\"function\":{\"name\":\"grep_files\",\"arguments\":\"{\\\"pattern\\\":\\\"needle\\\",\\\"path\\\":\\\"tui/ui/text*\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n")
+			return
+		}
+		var request provider.ChatRequest
+		if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
+			t.Error(err)
+		}
+		joined := ""
+		for _, message := range request.Messages {
+			joined += message.ContentString()
+		}
+		if !strings.Contains(joined, "wildcard syntax is unsupported") {
+			t.Errorf("second request lacked local operand result: %s", joined)
+		}
+		writeChatSSE(w, "Recovered without parking.", "stop")
+	}))
+	defer server.Close()
+	p := provider.FromPreset("openai-chat", "key", server.URL)
+	p.Model = "guidance-path-model"
+	a := newTestAgent(t, p, p.Model)
+	a.WorkDir = dir
+	expectedSet, err := rootprompt.DiscoverGuidance(t.Context(), dir, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	expectedDigest := expectedSet.Digest()
+	executed := atomic.Bool{}
+	a.ToolFn = func(context.Context, string, map[string]any) (tools.ToolResult, error) {
+		executed.Store(true)
+		return tools.ToolResult{Content: "unexpected"}, nil
+	}
+	events := make([]AgentEvent, 0)
+	history := a.Run(t.Context(), []provider.ChatMessage{provider.NewTextMessage("user", "search")}, rootprompt.BuildRoot(rootprompt.RootOptions{WorkDir: dir}), func(event AgentEvent) {
+		events = append(events, event)
+	}, nil, "", nil)
+	if requests.Load() != 2 || executed.Load() || a.RunFailure() != nil {
+		t.Fatalf("requests=%d executed=%t failure=%v history=%v", requests.Load(), executed.Load(), a.RunFailure(), history)
+	}
+	for _, event := range events {
+		if event.Type == "recovery" {
+			t.Fatalf("invalid operand parked the agent: %+v", event)
+		}
+	}
+	if a.guidance == nil || a.guidance.digest != expectedDigest {
+		t.Fatal("invalid operand changed accepted guidance snapshot")
+	}
+}
+
+func TestGuidanceCallPathsRejectsNativeAndParallelWildcardOperands(t *testing.T) {
+	patch := "*** Begin Patch\n*** Update File: tui/ui/text*\n@@\n-old\n+new\n*** End Patch"
+	parallel, err := json.Marshal(map[string]any{"tool_uses": []any{
+		map[string]any{"recipient_name": "functions.read_file", "parameters": map[string]any{"path": "valid.go"}},
+		map[string]any{"recipient_name": "functions.grep_files", "parameters": map[string]any{"pattern": "x", "path": "tui/ui/text*"}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, call := range []provider.ToolCall{
+		{Type: "custom", Function: provider.FunctionCall{Name: "apply_patch", Arguments: patch}},
+		{Type: "function", Function: provider.FunctionCall{Name: "multi_tool_use.parallel", Arguments: string(parallel)}},
+	} {
+		paths, err := guidanceCallPaths([]provider.ToolCall{call})
+		if err == nil || len(paths) != 0 || !strings.Contains(err.Error(), "wildcard syntax") {
+			t.Fatalf("call=%+v paths=%v err=%v", call, paths, err)
 		}
 	}
 }

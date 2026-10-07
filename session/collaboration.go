@@ -204,6 +204,32 @@ func collaborationMessage(delivery collaboration.PendingDelivery) provider.ChatM
 	return message
 }
 
+func collaborationDeltas(deliveries []collaboration.PendingDelivery, messages []provider.ChatMessage, agentID string) []sessiondb.ContextMessageDelta {
+	byID := make(map[string]provider.ChatMessage, len(messages))
+	for _, message := range messages {
+		if message.InternalID != "" {
+			byID[message.InternalID] = message
+		}
+	}
+	deltas := make([]sessiondb.ContextMessageDelta, 0, len(deliveries))
+	for _, delivery := range deliveries {
+		message, ok := byID[collaborationHistoryMessageID(delivery.Event)]
+		if !ok {
+			message = collaborationMessage(delivery)
+		}
+		meta := sessiondb.DisplayMeta{DisplayRole: "hidden_runtime_context", ContextOnly: true}
+		if message.EffectiveVisibility() == provider.VisibilityConversation {
+			// Current-context messages intentionally exclude display-only fields.
+			// Re-derive the immutable user-facing label from the journal event so a
+			// receipt publication is byte-identical to the earlier local admission.
+			meta.DisplayRole, meta.DisplayContent = "user", collaborationInput(delivery).DisplayText
+		}
+		meta = canonicalizeDisplayMeta(message, meta, "", 0, delivery.Event.CreatedAt)
+		deltas = append(deltas, contextDelta(message, meta, 0, delivery.Event.CreatedAt, agentID))
+	}
+	return deltas
+}
+
 func collaborationHistoryMessageID(event collaboration.Event) string {
 	for _, reference := range event.References {
 		if reference.Kind == "history_message" && reference.ID != "" {
@@ -396,15 +422,31 @@ func (s *Session) newHumanSteeringRuntimeMessage(
 		}
 		settled = true
 		mu.Unlock()
-		if _, err := store.ReleaseReservation(context.Background(), collaboration.ReleaseRequest{
-			DeliveryID: delivery.Delivery.ID, RecipientID: agentID,
-			RuntimeEpoch: runtimeEpoch, ExpectedVersion: delivery.Delivery.Version,
-			Reason: reason, Reject: true,
-		}); err != nil && !errors.Is(err, collaboration.ErrStale) && s.logger != nil {
-			s.logger.Warn("COLLAB", "human_steering_release_failed",
-				"delivery_id", delivery.Delivery.ID, "error", err.Error())
+		contextOwnerID := func() string {
+			if sessionID == s.sessionID {
+				return sessionID
+			}
+			return agentID
+		}()
+		state, found, err := sessiondb.LoadContextState(db, sessionID, contextOwnerID)
+		message := s.humanSteeringMessage(delivery, model)
+		meta := canonicalizeDisplayMeta(message, sessiondb.DisplayMeta{DisplayRole: "user", DisplayContent: delivery.Event.Body}, "", len(state.Messages), delivery.Event.CreatedAt)
+		if err == nil {
+			err = s.commitCollaborationAdmissions(db, sessionID, contextOwnerID, agentID, runID, runtimeEpoch,
+				loadContextRevision(state, found), []sessiondb.ContextMessageDelta{
+					contextDelta(message, meta, 0, delivery.Event.CreatedAt, agentID),
+				}, []collaboration.PendingDelivery{delivery})
 		}
-		notify("collaboration_delivery_rejected", reason)
+		if err != nil {
+			mu.Lock()
+			settled = false
+			mu.Unlock()
+			if s.logger != nil {
+				s.logger.Warn("COLLAB", "human_steering_preserve_failed", "delivery_id", delivery.Delivery.ID, "error", err.Error())
+			}
+			return
+		}
+		notify("collaboration_delivery_admitted", reason)
 	}
 	return agent.RuntimeMessage{
 		Message: s.humanSteeringMessage(delivery, model),
@@ -426,13 +468,20 @@ func (s *Session) newHumanSteeringRuntimeMessage(
 			if len(contextMessages) > 0 && contextMessages[0].Role == "system" {
 				contextMessages = contextMessages[1:]
 			}
-			currentGeneration := uint64(1)
-			if generation != nil {
-				currentGeneration = max(1, generation())
+			contextOwnerID := agentID
+			if sessionID == s.sessionID {
+				contextOwnerID = sessionID
 			}
+			state, found, loadErr := sessiondb.LoadContextState(db, sessionID, contextOwnerID)
+			if loadErr != nil {
+				mu.Unlock()
+				return loadErr
+			}
+			message := s.humanSteeringMessage(delivery, model)
+			meta := canonicalizeDisplayMeta(message, sessiondb.DisplayMeta{DisplayRole: "user", DisplayContent: delivery.Event.Body}, "", len(contextMessages)-1, delivery.Event.CreatedAt)
 			err = s.commitCollaborationAdmissions(
-				db, sessionID, agentID, runID, runtimeEpoch, currentGeneration,
-				contextMessages, []collaboration.PendingDelivery{delivery},
+				db, sessionID, contextOwnerID, agentID, runID, runtimeEpoch, loadContextRevision(state, found),
+				[]sessiondb.ContextMessageDelta{contextDelta(message, meta, 0, delivery.Event.CreatedAt, agentID)}, []collaboration.PendingDelivery{delivery},
 			)
 			if err == nil {
 				settled = true
@@ -471,9 +520,9 @@ func collaborationKindLabel(kind collaboration.EventKind) string {
 
 func (s *Session) commitCollaborationAdmissions(
 	db *sql.DB,
-	sessionID, agentID, runID string,
-	runtimeEpoch, generation uint64,
-	messages []provider.ChatMessage,
+	sessionID, contextOwnerID, agentID, runID string,
+	runtimeEpoch, expectedRevision uint64,
+	deltas []sessiondb.ContextMessageDelta,
 	deliveries []collaboration.PendingDelivery,
 ) error {
 	if len(deliveries) == 0 {
@@ -498,17 +547,18 @@ func (s *Session) commitCollaborationAdmissions(
 			RunID: runID,
 		})
 	}
-	contextOwnerID := agentID
-	if sessionID == s.sessionID {
-		// A session owns exactly one root context; normal turns, compaction,
-		// resume and collaboration must commit the same authoritative row.
-		contextOwnerID = sessionID
-	}
-	if err := sessiondb.SaveContextStateWithAdmissions(db, sessionID, contextOwnerID, agentID, sessiondb.ContextState{
-		AgentID: contextOwnerID, Generation: max(1, generation),
-		Reason: "collaboration_admission", Messages: messages,
-	}, admissions); err != nil {
+	state, err := sessiondb.PublishContext(db, sessiondb.ContextPublication{
+		SessionID: sessionID, AgentID: contextOwnerID, RuntimeAgentID: agentID, ExpectedRevision: expectedRevision,
+		Mutation: sessiondb.ContextMutation{Append: deltas}, Admissions: admissions,
+	})
+	if err != nil {
 		return err
+	}
+	if sessionID == s.sessionID && contextOwnerID == s.sessionID {
+		s.msgsMu.Lock()
+		s.contextRevision, s.contextGeneration, s.contextReason = state.Revision, state.Generation, state.Reason
+		s.activeContext = append([]provider.ChatMessage(nil), state.Messages...)
+		s.msgsMu.Unlock()
 	}
 	for _, admission := range admissions {
 		if _, err := store.Admit(context.Background(), collaboration.AdmitRequest{
@@ -656,7 +706,7 @@ type collaborationControlTarget struct {
 	runtimeEpoch uint64
 	runID        string
 	runVersion   uint64
-	generation   uint64
+	revision     uint64
 	messages     []provider.ChatMessage
 	root         *Orchestrator
 	child        *agent.SubAgentHandle
@@ -669,13 +719,13 @@ func (s *Session) controlTarget(agentID string) (collaborationControlTarget, boo
 	if root != nil {
 		s.msgsMu.Lock()
 		messages := append([]provider.ChatMessage(nil), s.activeContext...)
-		generation := max(1, s.contextGeneration)
+		revision := s.contextRevision
 		s.msgsMu.Unlock()
 		runID, runVersion := root.collaborationRunIdentity()
 		return collaborationControlTarget{
 			db: s.db, sessionID: s.sessionID, agentID: agentID,
 			runtimeEpoch: root.RuntimeEpoch, runID: runID, runVersion: runVersion,
-			generation: generation, messages: messages, root: root,
+			revision: revision, messages: messages, root: root,
 		}, true
 	}
 	runner := s.SubAgentRunner()
@@ -687,12 +737,18 @@ func (s *Session) controlTarget(agentID string) (collaborationControlTarget, boo
 		return collaborationControlTarget{}, false
 	}
 	runID, runVersion := handle.RunIdentity()
+	messages := append([]provider.ChatMessage(nil), handle.Agent.ActiveContext()...)
+	revision := uint64(0)
+	if state, found, err := sessiondb.LoadContextState(handle.DB, handle.SessionID, agentID); err == nil && found {
+		messages = state.Messages
+		revision = state.Revision
+	}
 	return collaborationControlTarget{
 		db: handle.DB, sessionID: handle.SessionID, agentID: agentID,
 		runtimeEpoch: handle.RuntimeEpoch, runID: runID, runVersion: runVersion,
-		generation: max(1, handle.Agent.TurnGeneration),
-		messages:   append([]provider.ChatMessage(nil), handle.Agent.ActiveContext()...),
-		child:      handle,
+		revision: revision,
+		messages: messages,
+		child:    handle,
 	}, true
 }
 
@@ -718,10 +774,16 @@ func (s *Session) applyCollaborationControl(
 		return
 	}
 	controlMessage := collaborationMessage(delivery)
-	contextMessages := append(append([]provider.ChatMessage(nil), target.messages...), controlMessage)
+	createdAt := delivery.Event.CreatedAt
+	meta := canonicalizeDisplayMeta(controlMessage, sessiondb.DisplayMeta{DisplayRole: "hidden_runtime_context", ContextOnly: true}, "", len(target.messages), createdAt)
 	if err := s.commitCollaborationAdmissions(
-		target.db, target.sessionID, target.agentID, target.runID, target.runtimeEpoch,
-		target.generation, contextMessages, []collaboration.PendingDelivery{delivery},
+		target.db, target.sessionID, func() string {
+			if target.sessionID == s.sessionID {
+				return s.sessionID
+			}
+			return target.agentID
+		}(), target.agentID, target.runID, target.runtimeEpoch,
+		target.revision, []sessiondb.ContextMessageDelta{contextDelta(controlMessage, meta, 0, createdAt, target.agentID)}, []collaboration.PendingDelivery{delivery},
 	); err != nil {
 		s.releaseCollaborationReservations(registered.ID, registered.RuntimeEpoch,
 			[]collaboration.PendingDelivery{delivery}, "control context admission failed")
@@ -996,6 +1058,42 @@ func (s *Session) executeCollaborationTool(ctx context.Context, actorID, name st
 			RunID: runID, References: references,
 		})
 		return collaborationResult(published, err), true, err
+	case "agent_update_claims":
+		s.lifecycleMu.Lock()
+		defer s.lifecycleMu.Unlock()
+		_, err := collaborationExecutionIdentity(ctx)
+		if err != nil {
+			return tools.ToolResult{}, true, err
+		}
+		target := getStrParam(params, "agent_id")
+		if !canControlAgent(ctx, store, actorID, target) {
+			return tools.ToolResult{}, true, fmt.Errorf("agent %q cannot repair unrelated agent %q", actorID, target)
+		}
+		pathsRaw, _ := params["paths"].([]any)
+		paths := make([]string, 0, len(pathsRaw))
+		for _, raw := range pathsRaw {
+			if value, ok := raw.(string); ok {
+				paths = append(paths, value)
+			}
+		}
+		validated, validateErr := validateOwnershipPaths(s.WorkDir(), paths)
+		if validateErr != nil {
+			return tools.ToolResult{}, true, validateErr
+		}
+		versions := make(map[string]uint64)
+		if raw, ok := params["expected_versions"].(map[string]any); ok {
+			for id, value := range raw {
+				if number, ok := value.(float64); ok && number > 0 {
+					versions[id] = uint64(number)
+				}
+			}
+		}
+		result, err := store.UpdateClaims(ctx, collaboration.UpdateClaimsRequest{
+			ParentID: actorID, AgentID: target, RuntimeEpoch: uint64(getIntParam(params, "runtime_epoch")),
+			TerminalRunID: getStrParam(params, "terminal_run_id"), ExpectedRunVersion: uint64(getIntParam(params, "expected_run_version")),
+			ExpectedVersions: versions, Paths: validated,
+		})
+		return collaborationResult(result, err), true, err
 	case "publish_report":
 		identity, err := collaborationExecutionIdentity(ctx)
 		if err != nil {
@@ -1075,81 +1173,6 @@ func canControlAgent(ctx context.Context, store *collaboration.Store, actorID, t
 	return false
 }
 
-func (s *Session) waitForCollaboration(ctx context.Context, store *collaboration.Store, params map[string]any) (any, error) {
-	agentID := getStrParam(params, "agent_id")
-	runID := getStrParam(params, "run_id")
-	artifactID := getStrParam(params, "artifact_id")
-	afterRevision := getIntParam(params, "after_revision")
-	if agentID == "" && runID == "" && artifactID == "" {
-		return nil, fmt.Errorf("agent_wait requires agent_id, run_id, or artifact_id")
-	}
-	timeout := getIntParam(params, "timeout_seconds")
-	if timeout <= 0 {
-		timeout = 60
-	}
-	waitCtx, cancel := context.WithTimeout(ctx, time.Duration(timeout)*time.Second)
-	defer cancel()
-	notifications, unsubscribe := store.Subscribe()
-	defer unsubscribe()
-	ticker := time.NewTicker(250 * time.Millisecond)
-	defer ticker.Stop()
-	for {
-		ready := true
-		var result any
-		var observedRun collaboration.Run
-		if runID != "" {
-			run, err := store.Run(waitCtx, runID)
-			if err != nil {
-				return nil, err
-			}
-			if agentID != "" && run.AgentID != agentID {
-				return nil, fmt.Errorf("agent_wait run belongs to another agent")
-			}
-			ready = ready && run.State.Terminal()
-			observedRun, result = run, run
-		}
-		if artifactID != "" {
-			artifact, err := store.Artifact(waitCtx, artifactID, 0)
-			if err == nil {
-				if agentID != "" && artifact.AuthorID != agentID || runID != "" && artifact.RunID != runID {
-					return nil, fmt.Errorf("agent_wait artifact belongs to another agent or run")
-				}
-				ready = ready && artifact.Revision > afterRevision
-				result = artifact
-				if runID != "" {
-					// The run outcome remains authoritative when a caller also
-					// requires report readiness. Full evidence is artifact_read.
-					result = observedRun
-				}
-			} else {
-				ready = false
-			}
-			if err != nil && !errors.Is(err, collaboration.ErrNotFound) {
-				return nil, err
-			}
-		}
-		if agentID != "" && runID == "" && artifactID == "" {
-			agentState, err := store.Agent(waitCtx, agentID)
-			if err != nil {
-				return nil, err
-			}
-			if agentState.CurrentRunID == "" || agentState.State != collaboration.AgentAvailable {
-				return agentState, nil
-			}
-			ready = false
-		}
-		if ready {
-			return result, nil
-		}
-		select {
-		case <-waitCtx.Done():
-			return nil, waitCtx.Err()
-		case <-notifications:
-		case <-ticker.C:
-		}
-	}
-}
-
 func collaborationExecutionIdentity(ctx context.Context) (tools.ExecutionIdentity, error) {
 	identity, _ := ctx.Value(tools.ExecutionIdentityKey{}).(tools.ExecutionIdentity)
 	if identity.ToolCallID == "" {
@@ -1203,7 +1226,7 @@ func collaborationEffect(name string) captypes.Effect {
 	switch name {
 	case "agent_list", "agent_inspect", "artifact_read", "agent_wait", "board_read":
 		return captypes.EffectRead
-	case "agent_start", "agent_control":
+	case "agent_start", "agent_control", "agent_update_claims":
 		return captypes.EffectExecute
 	default:
 		return captypes.EffectCommunication

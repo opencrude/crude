@@ -6,6 +6,8 @@ import (
 	"sync"
 	"time"
 
+	"crude/agent"
+
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
@@ -329,6 +331,13 @@ func (t *TUI) SendAgentEvent(typ string, data any) {
 
 func (t *TUI) SendAgentEventWithID(typ string, data any, agentID string) {
 	t.send(types.AgentMsg(AgentEventMsg{Type: typ, Data: data, AgentID: agentID}))
+}
+
+// SendAgentEventEnvelope preserves the backend's exact owner/run/epoch/
+// generation/sequence identity through the FIFO. The viewmodel never infers
+// semantic ownership from payload maps or the currently selected tab.
+func (t *TUI) SendAgentEventEnvelope(event agent.AgentEvent) {
+	t.send(event)
 }
 
 func (t *TUI) SetError(err string) {

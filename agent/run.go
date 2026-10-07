@@ -53,6 +53,31 @@ func (a *Agent) Run(
 	if a.ContextArchive == nil {
 		a.lastArchive = append([]provider.ChatMessage(nil), sessionMessages...)
 	}
+	if ctx.Err() != nil && runtimeCh != nil {
+		for {
+			select {
+			case runtime, ok := <-runtimeCh:
+				if !ok {
+					runtimeCh = nil
+					continue
+				}
+				prospective := append(append([]provider.ChatMessage(nil), sessionMessages...), runtime.Message)
+				if runtime.Admit != nil {
+					if err := runtime.Admit(prospective); err != nil {
+						if runtime.Release != nil {
+							runtime.Release("context admission failed")
+						}
+						continue
+					}
+				}
+				sessionMessages = append(sessionMessages, runtime.Message)
+				a.lastActiveContext = append([]provider.ChatMessage(nil), sessionMessages...)
+				a.lastArchive = append(a.lastArchive, runtime.Message)
+			default:
+				return append([]provider.ChatMessage(nil), a.lastArchive...)
+			}
+		}
+	}
 	if !a.preserveReportState {
 		a.reportPublished = false
 	}
@@ -185,14 +210,22 @@ func (a *Agent) Run(
 	providerName := a.providerDisplayName()
 	cacheUsageUnknown := a.Provider.ProtocolID() == "ollama"
 	var bufferedRuntime []RuntimeMessage
-	releaseRuntime := func(messages []RuntimeMessage, reason string) {
-		for _, message := range messages {
-			if message.Release != nil {
-				message.Release(reason)
+	admitBufferedRuntime := func() {
+		for _, runtime := range bufferedRuntime {
+			prospective := append(append([]provider.ChatMessage(nil), msgs...), runtime.Message)
+			if runtime.Admit != nil {
+				if err := runtime.Admit(prospective); err != nil {
+					if runtime.Release != nil {
+						runtime.Release("context admission failed")
+					}
+					continue
+				}
 			}
+			appendWire(runtime.Message)
 		}
+		bufferedRuntime = nil
 	}
-	defer func() { releaseRuntime(bufferedRuntime, "turn ended before context admission") }()
+	defer admitBufferedRuntime()
 	for step := 0; ; step++ {
 		if ctx.Err() != nil {
 			l.Warn("CANCEL", "context_cancelled", "step", step, "reason", ctx.Err().Error())
@@ -531,8 +564,7 @@ func (a *Agent) Run(
 				l.Warn("COMPACT", "provider_context_recovery", "attempt", overflowRecoveries, "error", err.Error())
 				continue
 			}
-			releaseRuntime(bufferedRuntime, "provider request failed before context admission")
-			bufferedRuntime = nil
+			admitBufferedRuntime()
 			clearUnsentRuntimeNotices()
 			outcome := accounting.Failed
 			if completion.hasOutput() || ctx.Err() != nil {
@@ -590,9 +622,8 @@ func (a *Agent) Run(
 					// A stalled tool-call frame has no valid replay contract. No tool
 					// has executed yet, so preserve only ordinary visible content and
 					// let the next request re-evaluate the operation from scratch.
-					partialMessage.ReasoningContent = ""
-					partialMessage.Reasoning = ""
 					partialMessage.ProviderItems = nil
+					partialMessage.ToolCalls = nil
 				}
 				if partialMessage.ContentString() != "" || partialMessage.ReasoningContent != "" || len(partialMessage.ProviderItems) > 0 {
 					appendWire(partialMessage)
@@ -603,7 +634,7 @@ func (a *Agent) Run(
 				emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
 				return returnMessages()
 			}
-			if apiErr != nil && apiErr.Partial && provider.Retryable(err) &&
+			if !a.preserveReportState && apiErr != nil && apiErr.Partial && provider.Retryable(err) &&
 				ctx.Err() == nil && completion.hasOutput() &&
 				interruptionRecoveries < 3 {
 				interruptionRecoveries++
@@ -862,8 +893,16 @@ func (a *Agent) Run(
 		}
 		var uncertain error
 		guidanceChanged := false
+		var guidanceOperandErr *guidanceOperandError
 		if a.guidance != nil {
-			guidanceChanged, guidanceErr = a.guidance.loadPaths(ctx, guidanceCallPaths(toolCalls))
+			var guidancePaths []string
+			guidancePaths, guidanceErr = guidanceCallPaths(toolCalls)
+			if guidanceErr == nil {
+				guidanceChanged, guidanceErr = a.guidance.loadPaths(ctx, guidancePaths)
+			} else if errors.As(guidanceErr, &guidanceOperandErr) {
+				// Invalid literal operands are ordinary local tool errors. They do
+				// not mutate the accepted scope set or park the agent for guidance.
+			}
 		}
 		if guidanceChanged || guidanceErr != nil {
 			// No member of a batch may mutate a newly governed scope before the
@@ -873,6 +912,9 @@ func (a *Agent) Run(
 				errorText = guidanceErr.Error()
 			}
 			message := rootprompt.GuidanceDeferredResult(errorText)
+			if guidanceOperandErr != nil {
+				message = "Error: " + guidanceOperandErr.Error()
+			}
 			for i, call := range toolCalls {
 				results[i] = execResult{index: i, id: call.ID, name: call.Function.Name, result: tools.ToolResult{Content: message}, toolError: true}
 				receivedResults[i] = true
@@ -992,7 +1034,7 @@ func (a *Agent) Run(
 		if lastToolResultIdx > 0 && lastToolResultIdx < len(msgs) {
 			l.Debug("CACHE", "breakpoint", "msg_idx", lastToolResultIdx, "role", msgs[lastToolResultIdx].Role)
 		}
-		if guidanceErr != nil {
+		if guidanceErr != nil && guidanceOperandErr == nil {
 			a.setRunFailure(guidanceErr, rootprompt.RecoveryInterrupted, RecoveryFailureGuidance)
 			a.emitError(emit, fmt.Errorf("complete project guidance is required: %w", guidanceErr))
 			return returnMessages()

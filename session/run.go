@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"reflect"
 	"slices"
 	"strings"
 	"sync/atomic"
@@ -98,10 +99,18 @@ func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
 			for {
 				select {
 				case <-o.stopCh:
-					l.Info("SESSION", "run_exit_closed", "orchestrator_id", o.ID)
-					return false
+					for {
+						select {
+						case request := <-o.inputCh:
+							s.preserveUnstartedInput(request, o)
+						default:
+							l.Info("SESSION", "run_exit_closed", "orchestrator_id", o.ID)
+							return false
+						}
+					}
 				case request := <-o.inputCh:
 					if o.closing.Load() {
+						s.preserveUnstartedInput(request, o)
 						l.Info("SESSION", "run_exit_closing", "orchestrator_id", o.ID)
 						return false
 					}
@@ -137,17 +146,18 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	ctx := request.ctx
 	turnGeneration := request.generation
 	recoveryState := newRecoveryRunState(userInput, request.recovery)
-	recoveryState.contextOwnerID = s.sessionID
-	recoveryState.contextGeneration = max(1, s.contextGeneration)
-	recoveryState.contextReason = "run_recovery"
 	if request.recovery == nil {
 		s.msgsMu.Lock()
+		recoveryState.contextOwnerID = s.sessionID
+		recoveryState.contextRevision = s.contextRevision
+		recoveryState.contextGeneration = max(1, s.contextGeneration)
+		recoveryState.contextReason = "run_recovery"
 		recoveryState.archive = append([]provider.ChatMessage(nil), s.msgs...)
 		recoveryState.active = append([]provider.ChatMessage(nil), s.activeContext...)
 		s.msgsMu.Unlock()
 	}
 	var initialRecovery *recoverytypes.Status
-	if request.recovery != nil {
+	if request.retry && request.recovery != nil {
 		status := request.recovery.Status
 		initialRecovery = &status
 	}
@@ -165,6 +175,55 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 	userInput.InternalID = currentMsgID
 	recoveryState.setPending(userInput)
+	locallyAdmitted := request.recovery != nil && request.recovery.InputAdmitted
+	if !locallyAdmitted {
+		userMsg, referenceLabels := s.buildUserMessageWithDisplay(userInput, "")
+		userMsg.InternalID = currentMsgID
+		userMsg.DisplayContent = userInput.Text
+		if userInput.DisplayText != "" {
+			userMsg.DisplayContent = userInput.DisplayText
+		}
+		createdAt := time.Now()
+		meta := canonicalizeDisplayMeta(userMsg, sessiondb.DisplayMeta{DisplayRole: "user", DisplayContent: userInput.Text, ReferenceLabels: referenceLabels}, "", len(s.msgs), createdAt)
+		if len(request.deliveries) > 0 {
+			// The collaboration event owns the canonical message identity, payload and
+			// timestamp. The later admission transaction reuses this exact delta while
+			// committing the receipt, so it is idempotent rather than a conflicting
+			// second transcript author.
+			userMsg = collaborationMessage(request.deliveries[0])
+			currentMsgID = userMsg.InternalID
+			userInput.InternalID = currentMsgID
+			createdAt = request.deliveries[0].Event.CreatedAt
+			meta = canonicalizeDisplayMeta(userMsg, sessiondb.DisplayMeta{DisplayRole: "hidden_runtime_context", ContextOnly: true}, "", len(s.msgs), createdAt)
+			if userMsg.EffectiveVisibility() == provider.VisibilityConversation {
+				meta.DisplayRole, meta.DisplayContent, meta.ContextOnly = "user", userMsg.DisplayContent, false
+			}
+		}
+		s.msgsMu.Lock()
+		state, err := s.publishRootContext(sessiondb.ContextPublication{
+			Mutation: sessiondb.ContextMutation{Append: []sessiondb.ContextMessageDelta{
+				contextDelta(userMsg, meta, s.turnNumber, createdAt, o.ID),
+			}},
+		})
+		if err == nil {
+			s.msgs = append(s.msgs, userMsg)
+			s.msgTurns = append(s.msgTurns, s.turnNumber)
+			s.displayMetas = append(s.displayMetas, meta)
+			s.createdAts = append(s.createdAts, createdAt.UnixNano())
+		}
+		archive := append([]provider.ChatMessage(nil), s.msgs...)
+		active := append([]provider.ChatMessage(nil), state.Messages...)
+		s.msgsMu.Unlock()
+		if err != nil {
+			l.Warn("INPUT", "local_admission_failed", "agent_id", o.ID)
+			o.endTurn(turnGeneration)
+			return
+		}
+		recoveryState.setInputAdmitted(true)
+		recoveryState.snapshot(archive, active)
+		recoveryState.setContext(s.sessionID, s.contextRevision, s.contextGeneration, s.contextReason)
+		locallyAdmitted = true
+	}
 	turnFinished := false
 	turnFinalState := sessiondb.TurnFailed
 	recoveryParked := false
@@ -260,12 +319,26 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			return true
 		}
 	}
-	if request.recovery != nil {
+	if request.retry {
+		current, found, err := sessiondb.LoadContextState(s.db, s.sessionID, request.recovery.ContextOwnerID)
+		if err != nil {
+			if !recoverStep(agent.RecoveryFailureStorage, func() error { return err }) {
+				return
+			}
+		}
+		if found {
+			recoveryState.setContext(request.recovery.ContextOwnerID, current.Revision, current.Generation, current.Reason)
+		}
 		if err := supervisor.BeginRetry(); err != nil &&
 			!recoverStep(agent.RecoveryFailureStorage, func() error { return supervisor.BeginRetry() }) {
 			return
 		}
 		recoveryState.appendContinuation(rootprompt.RecoveryInterrupted)
+		if !recoverStep(agent.RecoveryFailureStorage, func() error {
+			return recoveryState.publish(s.db, s.sessionID, supervisor.CheckpointStatus())
+		}) {
+			return
+		}
 		request.recovery.Archive, request.recovery.ActiveContext = recoveryState.contexts()
 	}
 	if !recoverStep(agent.RecoveryFailureStorage, func() error {
@@ -273,6 +346,9 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}) {
 		return
 	}
+	s.msgsMu.Lock()
+	s.contextRevision, s.contextGeneration, s.contextReason = recoveryState.contextState()
+	s.msgsMu.Unlock()
 	if !recoverStep(agent.RecoveryFailureStorage, func() error { return s.runBeforeTurn(ctx) }) {
 		return
 	}
@@ -440,16 +516,19 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 
 	var archiveCopy, contextMsgs, frozenPrefix []provider.ChatMessage
 	persistedPrefixLen := 0
-	resumingAdmitted := request.recovery != nil && request.recovery.InputAdmitted
+	resumingAdmitted := locallyAdmitted
 	if resumingAdmitted {
-		archiveCopy = recoveryArchiveMessages(request.recovery.Archive)
-		contextMsgs = append([]provider.ChatMessage(nil), request.recovery.ActiveContext...)
+		admittedArchive, admittedActive := recoveryState.contexts()
+		archiveCopy = recoveryArchiveMessages(admittedArchive)
+		contextMsgs = append([]provider.ChatMessage(nil), admittedActive...)
 		frozenPrefix = append([]provider.ChatMessage(nil), contextMsgs...)
 		s.msgsMu.Lock()
 		persistedPrefixLen = len(s.msgs)
 		s.activeContext = append([]provider.ChatMessage(nil), contextMsgs...)
-		s.contextGeneration = max(s.contextGeneration, request.recovery.ContextGeneration)
-		s.contextReason = request.recovery.ContextReason
+		if request.recovery != nil {
+			s.contextGeneration = max(s.contextGeneration, request.recovery.ContextGeneration)
+			s.contextReason = request.recovery.ContextReason
+		}
 		s.msgsMu.Unlock()
 		recoveryState.snapshot(archiveCopy, contextMsgs)
 	} else {
@@ -545,18 +624,31 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		}) {
 			return
 		}
+		s.msgsMu.Lock()
+		s.contextRevision, s.contextGeneration, s.contextReason = recoveryState.contextState()
+		s.msgsMu.Unlock()
 	}
 	if len(request.deliveries) > 0 {
 		if !recoverStep(agent.RecoveryFailureStorage, func() error {
+			deltas := collaborationDeltas(request.deliveries, contextMsgs, o.ID)
+			// The event message was already admitted through the exact same
+			// revision-owned context source above. This transaction now publishes
+			// only the durable delivery receipt; re-appending through a separately
+			// reconstructed display delta creates a second metadata authority.
+			deltas = nil
 			return s.commitCollaborationAdmissions(
-				s.db, s.sessionID, o.ID, collaborationRun.ID, o.RuntimeEpoch,
-				max(1, s.contextGeneration), contextMsgs, request.deliveries,
+				s.db, s.sessionID, s.sessionID, o.ID, collaborationRun.ID, o.RuntimeEpoch,
+				recoveryState.contextRevisionValue(), deltas, request.deliveries,
 			)
 		}) {
 			s.rollbackTurnInput(currentMsgID)
 			s.releaseCollaborationReservations(o.ID, o.RuntimeEpoch, request.deliveries, "context admission failed")
 			return
 		}
+		s.msgsMu.Lock()
+		recoveryState.snapshot(append([]provider.ChatMessage(nil), s.msgs...), s.activeContext)
+		recoveryState.setContext(s.sessionID, s.contextRevision, s.contextGeneration, s.contextReason)
+		s.msgsMu.Unlock()
 		for _, delivery := range request.deliveries {
 			sender.SendAgentEventWithID("collaboration_message", delivery.Event, o.ID)
 		}
@@ -597,7 +689,8 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		AccountID:  turnProvider.AccountID,
 		ModelID:    turnProvider.Model,
 	}
-	sender.SendAgentEventWithID("turn_started", turnIdentity, o.ID)
+	eventSource := &runtimeEventSource{ownerID: s.sessionID, agentID: o.ID, runID: collaborationRun.ID, runtimeEpoch: o.RuntimeEpoch, generation: turnGeneration}
+	sendRuntimeEvent(sender, eventSource.bind(agent.AgentEvent{Type: "turn_started", Data: turnIdentity}))
 	ag := s.newAgent(turnProvider, effectiveCfg.IsMultiAgentEnabled(), activeCfg.ModelModalities)
 	ag.GuidancePaths = append([]string(nil), userInput.ActivePaths...)
 	ag.MaxOutputTokens = activeCfg.ModelMaxOutput
@@ -616,10 +709,22 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 	ag.Checkpoint = func(archive, active []provider.ChatMessage) error {
 		recoveryState.snapshot(archive, active)
+		// Runtime steering can publish the exact active context through the same
+		// session owner between provider requests. Acknowledge that revision only
+		// when the checkpoint's complete active bytes equal the committed source;
+		// never attach a latest revision to an older/different snapshot.
 		s.msgsMu.Lock()
-		recoveryState.setContext(s.sessionID, s.contextGeneration, s.contextReason)
+		if reflect.DeepEqual(active, s.activeContext) {
+			recoveryState.setContext(s.sessionID, s.contextRevision, s.contextGeneration, s.contextReason)
+		}
 		s.msgsMu.Unlock()
-		return persistRecoveryBoundary(ctx, supervisor)
+		if err := persistRecoveryBoundary(ctx, supervisor); err != nil {
+			return err
+		}
+		s.msgsMu.Lock()
+		s.contextRevision, s.contextGeneration, s.contextReason = recoveryState.contextState()
+		s.msgsMu.Unlock()
+		return nil
 	}
 	if activeCfg.ContextCompactionPercent != nil {
 		ag.ContextCompactionPercent = *activeCfg.ContextCompactionPercent
@@ -684,8 +789,8 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			contextMessages = contextMessages[1:]
 		}
 		if err := s.commitCollaborationAdmissions(
-			s.db, s.sessionID, o.ID, collaborationRun.ID, o.RuntimeEpoch,
-			max(1, s.contextGeneration), contextMessages, pendingCollaboration,
+			s.db, s.sessionID, s.sessionID, o.ID, collaborationRun.ID, o.RuntimeEpoch,
+			s.contextRevision, collaborationDeltas(pendingCollaboration, contextMessages, o.ID), pendingCollaboration,
 		); err != nil {
 			s.releaseCollaborationReservations(o.ID, o.RuntimeEpoch, pendingCollaboration, "context admission failed")
 			pendingCollaboration = nil
@@ -723,8 +828,8 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	var emitActive atomic.Bool
 	emitActive.Store(true)
 	var terminalDone *agent.AgentEvent
-
 	emit := func(evt agent.AgentEvent) {
+		evt = eventSource.bind(evt)
 		if evt.Type == "error" && ctx.Err() == nil {
 			turnFinalState = sessiondb.TurnFailed
 		}
@@ -760,7 +865,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			copy.AgentID = agentID
 			terminalDone = &copy
 		} else {
-			sender.SendAgentEventWithID(evt.Type, evt.Data, agentID)
+			sendRuntimeEvent(sender, evt)
 		}
 		s.updateDisplayFromEvent(evt, displayTracker)
 		if evt.Type == "usage" {
@@ -809,7 +914,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		}
 		return s.systemPromptForModel(current.IsMultiAgentEnabled(), ag.Model), nil
 	}
-	agentMsgs := ag.RunSupervised(
+	runResult := ag.RunSupervised(
 		historyCtx, contextMsgs, prompt, emit, o.BlockResolveCh, s.sessionID, runtimeMessages,
 		agent.SupervisedRunOptions{
 			Supervisor:      supervisor,
@@ -818,6 +923,10 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			DeferSettlement: true,
 		},
 	)
+	agentMsgs := runResult.Archive
+	s.msgsMu.Lock()
+	s.contextRevision, s.contextGeneration, s.contextReason = recoveryState.contextState()
+	s.msgsMu.Unlock()
 	controlMessages := s.takeCollaborationContext(o.ID)
 	if len(controlMessages) > 0 {
 		agentMsgs = append(agentMsgs, controlMessages...)
@@ -828,7 +937,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	s.toolCallSeq = ag.ToolCallSeq()
 
 	l.Info("AGENT", "loop_end", "len", len(finalContent))
-	activeContext := ag.ActiveContext()
+	activeContext := runResult.Active
 	activeContext = append(activeContext, controlMessages...)
 	recoveryState.snapshot(agentMsgs, activeContext)
 	finalizeErr := s.finalizeTurn(agentMsgs, persistedPrefixLen, displayTracker, finalContent, currentMsgID, turnIdentity, activeContext)
@@ -846,8 +955,12 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			}, o.ID)
 			return
 		}
-		finalizeErr = s.persistFinalizedTurn()
+		finalizeErr = s.finalizeTurn(agentMsgs, persistedPrefixLen, displayTracker, finalContent, currentMsgID, turnIdentity, activeContext)
 	}
+	s.msgsMu.Lock()
+	recoveryState.snapshot(agentMsgs, s.activeContext)
+	recoveryState.setContext(s.sessionID, s.contextRevision, s.contextGeneration, s.contextReason)
+	s.msgsMu.Unlock()
 	cancelled := false
 	if terminalDone != nil {
 		cancelled = terminalReasonFromEvent(*terminalDone) == "cancelled"
@@ -885,7 +998,38 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 	o.endTurn(turnGeneration)
 	if terminalDone != nil {
-		sender.SendAgentEventWithID(terminalDone.Type, terminalDone.Data, terminalDone.AgentID)
+		sendRuntimeEvent(sender, *terminalDone)
+	}
+}
+
+func (s *Session) preserveUnstartedInput(request turnRequest, o *Orchestrator) {
+	if s == nil || s.db == nil || o == nil || strings.TrimSpace(request.input.Text) == "" {
+		return
+	}
+	input := cloneUserInput(request.input)
+	if input.InternalID == "" {
+		input.InternalID = newMessageID()
+	}
+	message, labels := s.buildUserMessageWithDisplay(input, "")
+	message.InternalID = input.InternalID
+	message.DisplayContent = input.Text
+	meta := canonicalizeDisplayMeta(message, sessiondb.DisplayMeta{
+		DisplayRole: "user", DisplayContent: input.Text, ReferenceLabels: labels,
+	}, "", 0, time.Now())
+	createdAt := time.Now()
+	s.msgsMu.Lock()
+	_, err := s.publishRootContext(sessiondb.ContextPublication{Mutation: sessiondb.ContextMutation{Append: []sessiondb.ContextMessageDelta{
+		contextDelta(message, meta, s.turnNumber, createdAt, o.ID),
+	}}})
+	if err == nil {
+		s.msgs = append(s.msgs, message)
+		s.msgTurns = append(s.msgTurns, s.turnNumber)
+		s.displayMetas = append(s.displayMetas, meta)
+		s.createdAts = append(s.createdAts, createdAt.UnixNano())
+	}
+	s.msgsMu.Unlock()
+	if err != nil && s.logger != nil {
+		s.logger.Error("INPUT", "preserve_unstarted_failed", "agent_id", o.ID, "error", err.Error())
 	}
 }
 
@@ -914,7 +1058,8 @@ func (o *Orchestrator) handleBlockingEvent(data map[string]string, evt agent.Age
 			if agentID == "" {
 				agentID = o.ID
 			}
-			sender.SendAgentEventWithID("blocking_auto", evt.Data, agentID)
+			evt.Type, evt.AgentID = "blocking_auto", agentID
+			sendRuntimeEvent(sender, evt)
 			return true
 		}
 	}
@@ -933,7 +1078,8 @@ func (o *Orchestrator) handleBlockingEvent(data map[string]string, evt agent.Age
 					if agentID == "" {
 						agentID = o.ID
 					}
-					sender.SendAgentEventWithID("blocking_auto", evt.Data, agentID)
+					evt.Type, evt.AgentID = "blocking_auto", agentID
+					sendRuntimeEvent(sender, evt)
 					return true
 				}
 				break
@@ -945,7 +1091,8 @@ func (o *Orchestrator) handleBlockingEvent(data map[string]string, evt agent.Age
 	if agentID == "" {
 		agentID = o.ID
 	}
-	sender.SendAgentEventWithID(evt.Type, evt.Data, agentID)
+	evt.AgentID = agentID
+	sendRuntimeEvent(sender, evt)
 	return true
 }
 
@@ -1101,8 +1248,27 @@ func (s *Session) finalizeTurn(
 	msgID string,
 	turnIdentity ttypes.TurnIdentity,
 	activeContext ...[]provider.ChatMessage,
-) error {
+) (resultErr error) {
 	s.msgsMu.Lock()
+	previousMessages := append([]provider.ChatMessage(nil), s.msgs...)
+	previousTurns := append([]int(nil), s.msgTurns...)
+	previousMetas := append([]sessiondb.DisplayMeta(nil), s.displayMetas...)
+	previousCreated := append([]int64(nil), s.createdAts...)
+	previousActive := append([]provider.ChatMessage(nil), s.activeContext...)
+	previousRevision, previousGeneration, previousReason := s.contextRevision, s.contextGeneration, s.contextReason
+	defer func() {
+		if resultErr == nil || s.db == nil {
+			return
+		}
+		s.msgsMu.Lock()
+		s.msgs = previousMessages
+		s.msgTurns = previousTurns
+		s.displayMetas = previousMetas
+		s.createdAts = previousCreated
+		s.activeContext = previousActive
+		s.contextRevision, s.contextGeneration, s.contextReason = previousRevision, previousGeneration, previousReason
+		s.msgsMu.Unlock()
+	}()
 	returned := append([]provider.ChatMessage(nil), agentMsgs...)
 	if len(returned) > 0 && returned[0].Role == "system" {
 		returned = returned[1:]
@@ -1126,7 +1292,13 @@ func (s *Session) finalizeTurn(
 
 	additionTurns := make([]int, 0, len(additions))
 	additionMetas := make([]sessiondb.DisplayMeta, 0, len(additions))
+	additionCreated := make([]time.Time, 0, len(additions))
 	for i, m := range additions {
+		createdAt := time.Now()
+		if m.InternalID == "" {
+			m.InternalID = newMessageID()
+			additions[i].InternalID = m.InternalID
+		}
 		additionTurns = append(additionTurns, s.turnNumber)
 		var dm sessiondb.DisplayMeta
 		if isProviderControlMessage(m) {
@@ -1136,6 +1308,7 @@ func (s *Session) finalizeTurn(
 				ContextOnly:     true,
 			}
 			additionMetas = append(additionMetas, dm)
+			additionCreated = append(additionCreated, createdAt)
 			continue
 		}
 		switch m.Role {
@@ -1169,9 +1342,10 @@ func (s *Session) finalizeTurn(
 			dm.ModelID = turnIdentity.ModelID
 		}
 		if m.Role != "system" {
-			dm = canonicalizeDisplayMeta(m, dm, rawToolArgs[m.ToolCallID], len(s.msgs)+i, time.Now())
+			dm = canonicalizeDisplayMeta(m, dm, rawToolArgs[m.ToolCallID], len(s.msgs)+i, createdAt)
 		}
 		additionMetas = append(additionMetas, dm)
+		additionCreated = append(additionCreated, createdAt)
 	}
 
 	if len(additions) > 0 {
@@ -1179,15 +1353,19 @@ func (s *Session) finalizeTurn(
 		s.msgTurns = append(s.msgTurns, additionTurns...)
 		s.displayMetas = append(s.displayMetas, additionMetas...)
 	} else if finalContent != "" {
-		message := provider.ChatMessage{Role: "assistant", Content: provider.TextContent(finalContent)}
+		message := provider.ChatMessage{InternalID: newMessageID(), Role: "assistant", Content: provider.TextContent(finalContent)}
+		createdAt := time.Now()
 		s.msgs = append(s.msgs, message)
+		additions = append(additions, message)
 		returned = append(returned, message)
 		s.msgTurns = append(s.msgTurns, s.turnNumber)
-		s.displayMetas = append(s.displayMetas, canonicalizeDisplayMeta(message,
+		meta := canonicalizeDisplayMeta(message,
 			sessiondb.DisplayMeta{
 				DisplayRole: "assistant", TurnGeneration: turnIdentity.Generation,
 				ProviderID: turnIdentity.ProviderID, AccountID: turnIdentity.AccountID, ModelID: turnIdentity.ModelID,
-			}, "", len(s.msgs)-1, time.Now()))
+			}, "", len(s.msgs)-1, createdAt)
+		s.displayMetas = append(s.displayMetas, meta)
+		additionTurns, additionMetas, additionCreated = append(additionTurns, s.turnNumber), append(additionMetas, meta), append(additionCreated, createdAt)
 	}
 	nextContext := returned
 	if len(activeContext) > 0 && activeContext[0] != nil {
@@ -1203,20 +1381,21 @@ func (s *Session) finalizeTurn(
 		s.contextReason = "session_start"
 	}
 	nextCheckpoint := contextCheckpointContent(nextContext)
+	expectedAppendContext := append(append([]provider.ChatMessage(nil), s.activeContext...), additions...)
+	nextContext = inheritContextMessageIDs(nextContext, expectedAppendContext)
+	contextChanged := !reflect.DeepEqual(nextContext, expectedAppendContext)
 	if nextCheckpoint != "" {
 		if contextCheckpointContent(s.activeContext) != nextCheckpoint {
 			s.contextGeneration++
 			s.contextReason = "automatic_compaction"
+			contextChanged = true
 		}
 	}
 	s.activeContext = append([]provider.ChatMessage(nil), nextContext...)
-	contextState := sessiondb.ContextState{
-		Generation: s.contextGeneration, Reason: s.contextReason,
-		Messages: append([]provider.ChatMessage(nil), s.activeContext...),
-	}
-
-	if s.db != nil && len(s.msgs) > 0 {
-		s.appendToWriteBuf(s.msgs, s.msgTurns, s.displayMetas)
+	contextRevision := s.contextRevision
+	deltas := make([]sessiondb.ContextMessageDelta, 0, len(additions))
+	for i, message := range additions {
+		deltas = append(deltas, contextDelta(message, additionMetas[i], additionTurns[i], additionCreated[i], s.sessionID))
 	}
 
 	turnMsgs := s.messagesForTurnLocked(s.turnNumber)
@@ -1225,13 +1404,26 @@ func (s *Session) finalizeTurn(
 	s.msgsMu.Unlock()
 
 	if s.db != nil {
-		if err := sessiondb.SaveContextState(s.db, s.sessionID, s.sessionID, contextState); err != nil {
+		publication := sessiondb.ContextPublication{SessionID: s.sessionID, AgentID: s.sessionID, ExpectedRevision: contextRevision}
+		if contextChanged {
+			for i, delta := range deltas {
+				if !additionMetas[i].ContextOnly {
+					publication.TranscriptAppend = append(publication.TranscriptAppend, delta)
+				}
+			}
+			publication.Mutation.Replace = &sessiondb.ContextReplacement{Generation: s.contextGeneration, Reason: s.contextReason, Messages: append([]provider.ChatMessage(nil), nextContext...)}
+			publication.ArchivePrevious = nextCheckpoint != ""
+		} else {
+			publication.Mutation.Append = deltas
+		}
+		state, err := sessiondb.PublishContext(s.db, publication)
+		if err != nil {
 			s.logger.Error("COMPACT", "context_state_persist_failed", "error", err.Error())
 			return err
 		}
-		if err := s.flushWriteBufSync(); err != nil {
-			return err
-		}
+		s.msgsMu.Lock()
+		s.contextRevision = state.Revision
+		s.msgsMu.Unlock()
 	} else if len(s.msgs) > 0 {
 		return errors.New("session database is unavailable")
 	}
@@ -1244,19 +1436,43 @@ func (s *Session) finalizeTurn(
 	return nil
 }
 
+// Agent request projection may copy canonical messages before locally assigned
+// transcript IDs are attached. When the returned active context is otherwise
+// byte-for-byte the expected append, retain those authoritative IDs so ordinary
+// finalization stays an append rather than falsely replacing immutable history.
+func inheritContextMessageIDs(actual, expected []provider.ChatMessage) []provider.ChatMessage {
+	if len(actual) != len(expected) {
+		return actual
+	}
+	result := append([]provider.ChatMessage(nil), actual...)
+	for i := range result {
+		if result[i].InternalID != "" || expected[i].InternalID == "" {
+			continue
+		}
+		candidate := result[i]
+		candidate.InternalID = expected[i].InternalID
+		if reflect.DeepEqual(candidate, expected[i]) {
+			result[i].InternalID = expected[i].InternalID
+		}
+	}
+	return result
+}
+
 func (s *Session) persistFinalizedTurn() error {
 	if s == nil || s.db == nil {
 		return errors.New("session database is unavailable")
 	}
 	s.msgsMu.Lock()
-	state := sessiondb.ContextState{
-		Generation: s.contextGeneration, Reason: s.contextReason,
-		Messages: append([]provider.ChatMessage(nil), s.activeContext...),
-	}
+	revision := s.contextRevision
+	replacement := sessiondb.ContextReplacement{Generation: s.contextGeneration, Reason: s.contextReason, Messages: append([]provider.ChatMessage(nil), s.activeContext...)}
 	s.msgsMu.Unlock()
-	if err := sessiondb.SaveContextState(s.db, s.sessionID, s.sessionID, state); err != nil {
+	state, err := sessiondb.PublishContext(s.db, sessiondb.ContextPublication{SessionID: s.sessionID, AgentID: s.sessionID, ExpectedRevision: revision, Mutation: sessiondb.ContextMutation{Replace: &replacement}})
+	if err != nil {
 		return err
 	}
+	s.msgsMu.Lock()
+	s.contextRevision = state.Revision
+	s.msgsMu.Unlock()
 	return s.flushWriteBufSync()
 }
 
