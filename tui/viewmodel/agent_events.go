@@ -557,8 +557,7 @@ func (m *App) checkThinkingPromotion(agent *workspace.AgentState, target *worksp
 		return
 	}
 	if !m.thinkingOverflowLatched() && !chatprojection.ThinkingOverflowsInline(
-		thought.Content, thought.ThinkingDisplay.Start, thought.ThinkingDisplay.Kind.HasCompactPreview(),
-		thought.Time, chatprojection.ThinkingOverflowWidth(innerW),
+		thought.Content, thought.ThinkingDisplay.Start, thought.Time, chatprojection.ThinkingOverflowWidth(innerW),
 	) {
 		return
 	}

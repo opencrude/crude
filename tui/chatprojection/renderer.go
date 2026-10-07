@@ -735,12 +735,12 @@ func (r *Renderer) RemoveActiveThinking() string {
 }
 
 // ActiveThinkingLineCount reports the wrapped rows of the active reasoning
-// block's inline form, reusing the same body projection promotion measures.
+// block's current semantic block, the same measurement promotion uses.
 func (r *Renderer) ActiveThinkingLineCount(contentWidth int) int {
 	for _, msg := range r.sync.Messages {
 		if msg.Role == types.RoleThinking && msg.ThinkingActive {
-			body := InlineThinkingBody(msg.Content, msg.ThinkingDisplay.Start, msg.ThinkingDisplay.Kind.HasCompactPreview())
-			return len(rendering.WrapText(body, max(1, contentWidth)))
+			block := InlineThinkingBlock(msg.Content, msg.ThinkingDisplay.Start)
+			return len(rendering.WrapText(block, max(1, contentWidth)))
 		}
 	}
 	return 0

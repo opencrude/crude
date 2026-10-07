@@ -272,66 +272,75 @@ func renderAssistantMessage(msg types.ChatMessage, ctx renderContext, suppressHe
 	return ml
 }
 
-// Inline thinking promotion constants. The inline transcript form is the
-// "Thinking <elapsed>" header plus one wrapped body; once that body would
-// exceed its budget the form overflows and the block belongs in its own pane.
+// Inline thinking promotion constants. Promotion is decided only from what the
+// UI can observe: how many wrapped rows the reasoning block occupies and how fast
+// those rows arrive. No provider field, declared reasoning kind or reasoning
+// token count participates, because none of them reliably describe the block.
 const (
+	// inlineThinkingBodyRows is the inline body budget in wrapped rows. Past it
+	// the inline transcript form is no longer a readable live one-liner.
 	inlineThinkingBodyRows = 5
-	// inlineThinkingWarmUp is the streaming time after the first token before an
-	// extrapolated rate is trusted. It keeps a cold provider start out of the
-	// rate without needing any per-stream state.
-	inlineThinkingWarmUp = 300 * time.Millisecond
-	// inlineThinkingHorizonCap bounds how far the observed rate is projected
-	// ahead, so a slow-but-endless trace is promoted on its own evidence instead
-	// of waiting for a rate that a slow provider will never reach.
-	inlineThinkingHorizonCap = 2 * time.Second
+	// inlineThinkingBurstRowsPerSecond is the arrival rate that separates a model
+	// emitting a thinking burst from a condensed gateway dripping occasional
+	// summary headers. Real reasoning streams measure ~15 rows/s; a gateway
+	// emitting a header every few seconds measures ~0.3 rows/s.
+	inlineThinkingBurstRowsPerSecond = 2.0
 )
 
-// InlineThinkingBody is the text the inline transcript form renders for a
-// reasoning block: a compact-preview block shows only its latest semantic block,
-// while a full-body block shows the whole trace. Promotion and measurement share
-// this one projection, so the decision always matches what the reader sees.
-func InlineThinkingBody(content string, start int, compactPreview bool) string {
-	if !compactPreview || start <= 0 {
-		return content
+// InlineThinkingBlock returns the reasoning text the inline transcript form is
+// currently showing: content from the latest semantic block boundary. Promotion
+// and the row measurement shared with the renderer both use it, so they cannot
+// disagree about what the reader sees.
+//
+// A gateway that sends one unlabelled field records no block boundary, so Start
+// stays zero and this is the whole trace; a decoder that does tag semantic blocks
+// (the OpenAI Responses and OpenRouter contracts) lets each block be measured on
+// its own.
+func InlineThinkingBlock(content string, start int) string {
+	if start < 0 {
+		start = 0
 	}
-	if start >= len(content) {
-		return ""
+	if start > len(content) {
+		start = len(content)
 	}
 	return content[start:]
 }
 
-// ThinkingOverflowsInline reports whether an active reasoning block has
-// outgrown the inline transcript form. It uses only presentation facts — the
-// body the inline form actually renders, its first-token time and the render
-// width — so the main chat and every sub-agent pane share one rule and therefore
-// one promotion policy. It is measured in the renderer's own wrapped rows, so
-// disclosure and promotion can never disagree about what "overflow" means.
+// ThinkingOverflowsInline reports whether an active reasoning block has outgrown
+// the inline transcript form. It is the one promotion rule for the main chat and
+// for every sub-agent, and it is decided purely at the UI level.
 //
-// A block that already exceeds the budget promotes immediately, which covers a
-// trace delivered in one large delta. Otherwise the observed rows/second
-// (measured from the first token, so provider first-token latency is excluded)
-// is projected a bounded horizon ahead: a burst that will overflow within that
-// horizon promotes now, while a slow trace that would take much longer stays
-// inline.
-func ThinkingOverflowsInline(content string, start int, compactPreview bool, started time.Time, contentWidth int) bool {
-	body := InlineThinkingBody(content, start, compactPreview)
-	if strings.TrimSpace(body) == "" {
+// A block must both read as long (its current semantic block is past
+// inlineThinkingBodyRows wrapped rows) and have arrived fast (at or above
+// inlineThinkingBurstRowsPerSecond over the time that block took to arrive).
+// Neither half alone is enough:
+//
+//   - Length alone eventually ejects every condensed gateway, because its many
+//     short summary headers also add up over a long turn.
+//   - Rate alone opens a pane for a couple of rows the inline form already
+//     renders comfortably.
+//
+// No provider field name, declared reasoning kind or reported reasoning-token
+// count participates: none of them reliably describe the block. Content with no
+// measurable elapsed time — a synchronous or already-inflated delta — counts as
+// a burst, since it was never observed trickling in.
+func ThinkingOverflowsInline(content string, start int, started time.Time, contentWidth int) bool {
+	block := InlineThinkingBlock(content, start)
+	if strings.TrimSpace(block) == "" {
 		return false
 	}
-	rows := len(rendering.WrapText(body, max(1, contentWidth)))
-	if rows > inlineThinkingBodyRows {
-		return true
+	rows := float64(len(rendering.WrapText(block, max(1, contentWidth))))
+	if rows <= inlineThinkingBodyRows {
+		return false
 	}
 	if started.IsZero() {
-		return false
+		return true
 	}
 	span := time.Since(started)
-	if span < inlineThinkingWarmUp {
-		return false
+	if span <= 0 {
+		return true
 	}
-	rate := float64(rows) / span.Seconds()
-	return float64(rows)+rate*min(span, inlineThinkingHorizonCap).Seconds() > inlineThinkingBodyRows
+	return rows/span.Seconds() >= inlineThinkingBurstRowsPerSecond
 }
 
 // ThinkingOverflowWidth is the inline reasoning body width for a chat inner

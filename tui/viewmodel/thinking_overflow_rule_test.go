@@ -1,9 +1,10 @@
 package viewmodel
 
 import (
+	"time"
+
 	"strings"
 	"testing"
-	"time"
 
 	"crude/tui/chatprojection"
 	types "crude/types"
@@ -84,14 +85,31 @@ func TestThinkingOverflowLatchClearsOnSettingsChange(t *testing.T) {
 	}
 }
 
-// TestThinkingOverflowRuleIsWidthSensitive verifies the same trace promotes only
-// when it genuinely overflows at the width the chat renders at.
-func TestThinkingOverflowRuleIsWidthSensitive(t *testing.T) {
-	trace := strings.Repeat("word ", 40)
-	if !chatprojection.ThinkingOverflowsInline(trace, 0, false, time.Now(), 20) {
-		t.Fatal("a narrow chat did not promote an overflowing trace")
+// TestThinkingOverflowRuleIsKindIndependent pins the UI-level requirement: the
+// rule reads only the current block's wrapped rows and the render width, so a
+// provider's reasoning field name or declared kind cannot influence promotion.
+func TestThinkingOverflowRuleIsKindIndependent(t *testing.T) {
+	width := 70
+	long := strings.Repeat("a line of reasoning\n", 8)
+	if !chatprojection.ThinkingOverflowsInline(long, 0, time.Now(), width) {
+		t.Fatal("a long reasoning block did not promote")
 	}
-	if chatprojection.ThinkingOverflowsInline("short thought", 0, false, time.Now(), 200) {
-		t.Fatal("a wide chat promoted a short trace")
+	// The same accumulated text stays inline while a short current block is the
+	// one the reader sees, which is how a condensed gateway keeps its strip: each
+	// header is its own semantic block, so Start points at the latest one.
+	content := strings.Repeat("**Earlier header**\n\n", 40) + "**Clarifying burst and rate**"
+	if chatprojection.ThinkingOverflowsInline(content, len(content)-len("**Clarifying burst and rate**"), time.Now(), width) {
+		t.Fatal("a condensed gateway header promoted")
+	}
+	// A short trace that accumulated slowly must also stay, because it never
+	// arrived as a burst.
+	if chatprojection.ThinkingOverflowsInline(strings.Repeat("a line of reasoning\n", 8), 0, time.Now().Add(-60*time.Second), width) {
+		t.Fatal("a slow long block promoted on length alone")
+	}
+	if !chatprojection.ThinkingOverflowsInline(strings.Repeat("word ", 40), 0, time.Now(), 20) {
+		t.Fatal("a narrow chat did not promote an overflowing block")
+	}
+	if chatprojection.ThinkingOverflowsInline("short thought", 0, time.Now(), 200) {
+		t.Fatal("a wide chat promoted a short block")
 	}
 }
