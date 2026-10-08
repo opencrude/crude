@@ -130,7 +130,7 @@ func TestChildCommittedContextAdoptionPreservesAcceptedOutputAndOrder(t *testing
 		ContextOwnerID: "child", ContextRevision: 2, ContextGeneration: 1, ContextReason: "run_checkpoint",
 	})
 	committed := sessiondb.ContextState{AgentID: "child", Revision: 3, Generation: 1, Reason: "run_checkpoint", Messages: []provider.ChatMessage{first, note, anchor, late}}
-	if err := reconcileChildRecoveryContext(run, committed); err != nil {
+	if err := reconcileCommittedRecoveryContext(run, committed); err != nil {
 		t.Fatal(err)
 	}
 	archive, active := run.contexts()
@@ -143,7 +143,7 @@ func TestChildCommittedContextAdoptionPreservesAcceptedOutputAndOrder(t *testing
 	// A receipt-only publication advances the exact revision without dirtying
 	// identical source bytes; immediate compaction must use that new revision.
 	committed.Revision, committed.Messages = 4, active
-	if err := reconcileChildRecoveryContext(run, committed); err != nil {
+	if err := reconcileCommittedRecoveryContext(run, committed); err != nil {
 		t.Fatal(err)
 	}
 	if run.contextRevisionValue() != 4 || run.sourceRevision != run.publishedRevision {
@@ -170,7 +170,7 @@ func TestChildCommittedContextAdoptionRejectsChangedOrReorderedSource(t *testing
 			case "generation":
 				source.Generation = 2
 			}
-			if err := reconcileChildRecoveryContext(run, source); err == nil {
+			if err := reconcileCommittedRecoveryContext(run, source); err == nil {
 				t.Fatal("child reconciliation approved an ambiguous committed source")
 			}
 			if !reflect.DeepEqual(before, run.checkpoint(recoverytypes.Status{})) {

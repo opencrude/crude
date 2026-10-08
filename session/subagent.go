@@ -10,7 +10,6 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
-	"reflect"
 	"runtime/debug"
 	"sync"
 	"sync/atomic"
@@ -1227,7 +1226,7 @@ func (r *SubAgentRunner) runSubAgentLoop(
 			pendingCollaboration = nil
 			return err
 		}
-		if err := reconcileChildRecoveryContext(recoveryState, committed); err != nil {
+		if err := reconcileCommittedRecoveryContext(recoveryState, committed); err != nil {
 			return err
 		}
 		contextGeneration = committed.Generation
@@ -1254,7 +1253,7 @@ func (r *SubAgentRunner) runSubAgentLoop(
 			Mutation: sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: contextGeneration, Reason: "compaction_source", Messages: active}}, Compaction: &record,
 		})
 		if err == nil {
-			err = reconcileChildRecoveryContext(recoveryState, state)
+			err = reconcileCommittedRecoveryContext(recoveryState, state)
 		}
 		return err
 	}
@@ -1431,12 +1430,7 @@ func (r *SubAgentRunner) runSubAgentLoop(
 	agentMsgs := runResult.Archive
 	stopSteering()
 	<-runtimeMessagesDone
-	controlMessages := r.session.takeCollaborationContext(string(handle.Spec.ID))
-	if len(controlMessages) > 0 {
-		agentMsgs = append(agentMsgs, controlMessages...)
-	}
 	active := runResult.Active
-	active = append(active, controlMessages...)
 	terminalStatus := supervisor.CheckpointStatus()
 	if runResult.State == agent.SupervisedRunParked {
 		terminalStatus = runResult.Incident
@@ -1451,7 +1445,7 @@ func (r *SubAgentRunner) runSubAgentLoop(
 			err = fmt.Errorf("child terminal context is unavailable")
 		}
 		if err == nil {
-			err = reconcileChildRecoveryContext(recoveryState, current)
+			err = reconcileCommittedRecoveryContext(recoveryState, current)
 		}
 		var transcriptAppend []sessiondb.ContextMessageDelta
 		if err == nil {
@@ -1585,7 +1579,7 @@ func publishChildTerminalStop(handle *agent.SubAgentHandle, run *recoveryRunStat
 	if !found {
 		return errors.New("child terminal source is unavailable")
 	}
-	if err := reconcileChildRecoveryContext(run, current); err != nil {
+	if err := reconcileCommittedRecoveryContext(run, current); err != nil {
 		return err
 	}
 	archive, active := run.contexts()
@@ -1611,110 +1605,6 @@ func publishChildTerminalStop(handle *agent.SubAgentHandle, run *recoveryRunStat
 	}
 	run.setContext(handle.SessionID, state.Revision, state.Generation, state.Reason)
 	return supervisor.Persist(supervisor.CheckpointStatus())
-}
-
-// Committed messages are immutable order anchors. Preserve accepted local output
-// while inserting late committed facts before the next shared anchor or at EOF.
-func reconcileChildRecoveryContext(run *recoveryRunState, committed sessiondb.ContextState) error {
-	run.mu.Lock()
-	defer run.mu.Unlock()
-	if committed.AgentID != run.contextOwnerID || committed.Revision < run.contextRevision || committed.Generation != run.contextGeneration {
-		return fmt.Errorf("child committed context owner, revision or generation changed")
-	}
-	source := canonicalContextMessages(committed.Messages)
-	merge := func(snapshot []provider.ChatMessage) ([]provider.ChatMessage, error) {
-		key := func(message provider.ChatMessage) (string, error) {
-			if message.InternalID != "" {
-				return "id:" + message.InternalID, nil
-			}
-			encoded, err := json.Marshal(canonicalContextMessage(message))
-			return "anonymous:" + string(encoded), err
-		}
-		indices := make(map[string][]int, len(source))
-		matched := make([]bool, len(source))
-		for i, message := range source {
-			identity, err := key(message)
-			if err != nil {
-				return nil, err
-			}
-			indices[identity] = append(indices[identity], i)
-			if message.InternalID != "" {
-				message.InternalID = ""
-				identity, err = key(message)
-				if err != nil {
-					return nil, err
-				}
-				indices[identity] = append(indices[identity], i)
-			}
-		}
-		merged := make([]provider.ChatMessage, 0, len(snapshot)+len(source))
-		cursor := 0
-		for _, message := range snapshot {
-			identity, err := key(message)
-			if err != nil {
-				return nil, err
-			}
-			matches, known := indices[identity]
-			if known && len(matches) == 0 && message.InternalID != "" {
-				return nil, &sessiondb.ContextMessageConflictError{InternalID: message.InternalID, Location: "duplicate child committed snapshot"}
-			}
-			if !known && message.InternalID != "" {
-				anonymous := message
-				anonymous.InternalID = ""
-				identity, err = key(anonymous)
-				if err != nil {
-					return nil, err
-				}
-				matches = indices[identity]
-				for len(matches) > 0 && (source[matches[0]].InternalID != "" || matched[matches[0]]) {
-					matches = matches[1:]
-				}
-			} else if message.InternalID == "" {
-				for len(matches) > 0 && matched[matches[0]] {
-					matches = matches[1:]
-				}
-			}
-			if len(matches) == 0 {
-				merged = append(merged, message)
-				continue
-			}
-			index := matches[0]
-			comparison := canonicalContextMessage(message)
-			if message.InternalID == "" || source[index].InternalID == "" {
-				comparison.InternalID = source[index].InternalID
-			}
-			if index < cursor || !reflect.DeepEqual(comparison, source[index]) {
-				return nil, &sessiondb.ContextMessageConflictError{InternalID: message.InternalID, Location: "child committed snapshot order or bytes"}
-			}
-			merged = append(merged, source[cursor:index]...)
-			if message.InternalID == "" {
-				message.InternalID = source[index].InternalID
-			}
-			merged = append(merged, message)
-			cursor = index + 1
-			matched[index] = true
-			indices[identity] = matches[1:]
-		}
-		return append(merged, source[cursor:]...), nil
-	}
-	active, err := merge(run.active)
-	if err != nil {
-		return err
-	}
-	archive, err := merge(run.archive)
-	if err != nil {
-		return err
-	}
-	active = canonicalContextMessages(active)
-	if !reflect.DeepEqual(run.active, active) || !reflect.DeepEqual(run.archive, archive) {
-		run.sourceRevision++
-	}
-	run.active, run.archive = active, archive
-	run.contextRevision, run.contextGeneration, run.contextReason = committed.Revision, committed.Generation, committed.Reason
-	if reflect.DeepEqual(active, source) {
-		run.publishedRevision = run.sourceRevision
-	}
-	return nil
 }
 
 func childTerminalPublication(

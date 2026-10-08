@@ -71,7 +71,6 @@ type Session struct {
 	collaborationAgents   map[string]collaboration.Agent
 	collaborationCancel   context.CancelFunc
 	collaborationWg       sync.WaitGroup
-	collaborationContext  map[string][]provider.ChatMessage
 	resumed               bool
 	memorySummary         atomic.Pointer[memory.SessionSummary]
 
@@ -458,30 +457,29 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 
 	sess := &Session{
 		agentName: name, nameHome: homeDir,
-		ID:                   id,
-		cfg:                  cfg,
-		provider:             p,
-		exec:                 exec,
-		editor:               editor,
-		logger:               lg,
-		permStore:            permStore,
-		asyncMgr:             asyncMgr,
-		tempDir:              tempDir,
-		subAgentSup:          nil,
-		sessionID:            sessionID,
-		sessionStart:         time.Now(),
-		usageRecords:         make(map[string]sessiondb.UsageRecord),
-		tokens:               NewTokenTracker(lg),
-		db:                   db,
-		dbPath:               dbPath,
-		collaborationAgents:  make(map[string]collaboration.Agent),
-		collaborationContext: make(map[string][]provider.ChatMessage),
-		orchestrators:        make(map[string]*Orchestrator),
-		recoverySlots:        make(map[string]*recoverySlot),
-		pendingRecoveries:    make(map[string]sessiondb.RecoveryCheckpoint),
-		runtimeProfile:       NewRuntimeProfile(cfg),
-		workspaceCfg:         workspaceCfg,
-		sessionOverrides:     pinnedAccountOverrides(cfg),
+		ID:                  id,
+		cfg:                 cfg,
+		provider:            p,
+		exec:                exec,
+		editor:              editor,
+		logger:              lg,
+		permStore:           permStore,
+		asyncMgr:            asyncMgr,
+		tempDir:             tempDir,
+		subAgentSup:         nil,
+		sessionID:           sessionID,
+		sessionStart:        time.Now(),
+		usageRecords:        make(map[string]sessiondb.UsageRecord),
+		tokens:              NewTokenTracker(lg),
+		db:                  db,
+		dbPath:              dbPath,
+		collaborationAgents: make(map[string]collaboration.Agent),
+		orchestrators:       make(map[string]*Orchestrator),
+		recoverySlots:       make(map[string]*recoverySlot),
+		pendingRecoveries:   make(map[string]sessiondb.RecoveryCheckpoint),
+		runtimeProfile:      NewRuntimeProfile(cfg),
+		workspaceCfg:        workspaceCfg,
+		sessionOverrides:    pinnedAccountOverrides(cfg),
 	}
 
 	if dir := lg.SessionDir(); dir != "" {

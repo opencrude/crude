@@ -701,7 +701,7 @@ func publishStoppedChildRecovery(handle *agent.SubAgentHandle, checkpoint sessio
 	// evidence, including accepted output awaiting its first transcript identity.
 	run := newRecoveryRunState(checkpoint.PendingInput, &checkpoint)
 	run.active = append([]provider.ChatMessage(nil), current.Messages...)
-	if err := reconcileChildRecoveryContext(run, current); err != nil {
+	if err := reconcileCommittedRecoveryContext(run, current); err != nil {
 		return checkpoint, err
 	}
 	archive, active := run.contexts()

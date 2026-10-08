@@ -964,10 +964,6 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		},
 	)
 	agentMsgs := runResult.Archive
-	controlMessages := s.takeCollaborationContext(o.ID)
-	if len(controlMessages) > 0 {
-		agentMsgs = append(agentMsgs, controlMessages...)
-	}
 	stopSteering()
 	<-runtimeMessagesDone
 	emitActive.Store(false)
@@ -975,7 +971,6 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 
 	l.Info("AGENT", "loop_end", "len", len(finalContent))
 	activeContext := runResult.Active
-	activeContext = append(activeContext, controlMessages...)
 	s.msgsMu.Lock()
 	committed := append([]provider.ChatMessage(nil), s.activeContext...)
 	if retainsContextSource(committed, activeContext) {
@@ -988,8 +983,17 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 	s.msgsMu.Unlock()
 	recoveryState.snapshot(agentMsgs, activeContext)
-	agentMsgs, activeContext = recoveryState.contexts()
-	finalizeErr := s.finalizeTurn(agentMsgs, persistedPrefixLen, displayTracker, finalContent, currentMsgID, turnIdentity, activeContext)
+	finalize := func() error {
+		s.msgsMu.Lock()
+		err := s.reconcileRootRecoveryLocked(recoveryState)
+		if err != nil {
+			s.msgsMu.Unlock()
+			return err
+		}
+		agentMsgs, activeContext = recoveryState.contexts()
+		return s.finalizeTurnLocked(agentMsgs, persistedPrefixLen, displayTracker, finalContent, currentMsgID, turnIdentity, activeContext)
+	}
+	finalizeErr := finalize()
 	for finalizeErr != nil {
 		if !supervisor.Await(ctx, agent.AttentionRecovery(agent.RecoveryFailureStorage, finalizeErr)) {
 			if cancelErr := supervisor.Cancel(); cancelErr != nil {
@@ -1004,12 +1008,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			}, o.ID)
 			return
 		}
-		s.msgsMu.Lock()
-		if retainsContextSource(s.activeContext, activeContext) {
-			activeContext = append([]provider.ChatMessage(nil), s.activeContext...)
-		}
-		s.msgsMu.Unlock()
-		finalizeErr = s.finalizeTurn(agentMsgs, persistedPrefixLen, displayTracker, finalContent, currentMsgID, turnIdentity, activeContext)
+		finalizeErr = finalize()
 	}
 	s.msgsMu.Lock()
 	recoveryState.snapshot(agentMsgs, s.activeContext)
@@ -1307,6 +1306,21 @@ func (s *Session) finalizeTurn(
 	activeContext ...[]provider.ChatMessage,
 ) (resultErr error) {
 	s.msgsMu.Lock()
+	return s.finalizeTurnLocked(agentMsgs, contextPrefixLen, tracker, finalContent, msgID, turnIdentity, activeContext...)
+}
+
+// finalizeTurnLocked owns release of msgsMu, including before the off-UI memory
+// mirror. Root reconciliation and this publication must share one lock boundary:
+// a control admitted between them would otherwise strand an already stopped run.
+func (s *Session) finalizeTurnLocked(
+	agentMsgs []provider.ChatMessage,
+	contextPrefixLen int,
+	tracker *displayMetaTracker,
+	finalContent string,
+	msgID string,
+	turnIdentity ttypes.TurnIdentity,
+	activeContext ...[]provider.ChatMessage,
+) (resultErr error) {
 	previousMessages := append([]provider.ChatMessage(nil), s.msgs...)
 	previousTurns := append([]int(nil), s.msgTurns...)
 	previousMetas := append([]sessiondb.DisplayMeta(nil), s.displayMetas...)
