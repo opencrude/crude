@@ -37,9 +37,7 @@ func newWorkspaceSwitchLifecycleApp(t *testing.T, root string) *App {
 	app.width = 100
 	app.height = 32
 	t.Cleanup(func() {
-		if app.Tree != nil && app.Tree.Model != nil {
-			app.Tree.Model.StopWatcher()
-		}
+		app.StopAsyncIO()
 		if app.overlayHost != nil {
 			app.overlayHost.CloseAll()
 		}
@@ -329,7 +327,7 @@ func TestWorkspaceSwitchClosesEditorsAndClearsProjectProjections(t *testing.T) {
 	}
 
 	oldGitGen := app.gitRefreshGen.Add(1)
-	app.sourceControl.SetSnapshot(workspace.GitSnapshot{
+	app.gitPanel.SetSnapshot(workspace.GitSnapshot{
 		RepositoryRoot: oldRoot,
 		Branch:         "old-branch",
 	})
@@ -400,7 +398,7 @@ func TestWorkspaceSwitchClosesEditorsAndClearsProjectProjections(t *testing.T) {
 			Branch:         "stale-branch",
 		},
 	})
-	if snapshot := app.sourceControl.Snapshot(); snapshot.RepositoryRoot != "" || snapshot.Branch != "" {
+	if snapshot := app.gitPanel.Snapshot(); snapshot.RepositoryRoot != "" || snapshot.Branch != "" {
 		t.Fatalf("stale git result mutated replacement projection: %+v", snapshot)
 	}
 }

@@ -29,6 +29,7 @@ const (
 	PanelTerminal  = "terminal"
 	PanelMemory    = "memory"
 	PanelBoard     = "board"
+	PanelGit       = "git"
 )
 
 const (
@@ -225,7 +226,12 @@ func (s *Screen) OwnsFocus(id ui.ComponentID) bool {
 			return true
 		}
 	}
-	return strings.HasPrefix(string(id), "status-overview/") || strings.HasPrefix(string(id), "memorybrowser") || strings.HasPrefix(string(id), "boardbrowser")
+	for _, prefix := range []string{"status-overview/", "memorybrowser", "boardbrowser", "gitpanel"} {
+		if strings.HasPrefix(string(id), prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func (s *Screen) PreferredFocus() ui.ComponentID {
@@ -235,6 +241,9 @@ func (s *Screen) PreferredFocus() ui.ComponentID {
 		}
 	}
 	if panel := s.activeContent(); panel != nil {
+		if preferred, ok := panel.(interface{ PreferredFocus() ui.ComponentID }); ok {
+			return preferred.PreferredFocus()
+		}
 		return panel.ID()
 	}
 	return ScreenID

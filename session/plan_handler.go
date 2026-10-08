@@ -143,6 +143,7 @@ func mustJSON(value any) string {
 func decodeUpdateRequest(params map[string]any) (plan.UpdateRequest, error) {
 	var req plan.UpdateRequest
 	req.PlanID = getStrParam(params, "plan_id")
+	req.Replace, _ = params["replace"].(bool)
 	req.Objective = firstStrParam(params, "objective", "goal", "title")
 	req.Explanation = firstStrParam(params, "explanation", "note", "notes")
 	req.Revision = uint64(getIntParam(params, "revision"))

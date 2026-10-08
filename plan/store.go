@@ -70,6 +70,14 @@ func (s *Store) Update(ctx context.Context, req UpdateRequest) (updated Plan, ch
 	if err != nil {
 		return Plan{}, ChangeSet{}, err
 	}
+	if req.Replace {
+		if strings.TrimSpace(req.Objective) == "" || len(req.Steps) == 0 {
+			return existing, ChangeSet{}, fmt.Errorf("plan replacement requires objective and a complete nonempty steps snapshot")
+		}
+		if req.Status == "" {
+			req.Status = StatusActive
+		}
+	}
 	req = mergeExistingPlanFields(existing, req)
 	return s.updateExisting(ctx, req, existing)
 }
@@ -160,13 +168,21 @@ func (s *Store) updateExisting(ctx context.Context, req UpdateRequest, existing 
 	}
 
 	now := time.Now().UTC()
+	steps := updateSteps(existing, req.Steps, now)
+	if req.Replace {
+		fresh := make([]PlanStep, len(req.Steps))
+		for i, step := range req.Steps {
+			fresh[i] = PlanStep{ID: step.ID, Description: step.Description, Status: step.Status, DependsOn: step.DependsOn, Reason: step.Reason}
+		}
+		steps = normalizeSteps(fresh, now, true)
+	}
 	planRow := Plan{
 		ID:          existing.ID,
 		Revision:    existing.Revision + 1,
 		Objective:   strings.TrimSpace(req.Objective),
 		Status:      req.Status,
 		Explanation: req.Explanation,
-		Steps:       applyPlanLifecycle(req.Status, req.Explanation, updateSteps(existing, req.Steps, now), now),
+		Steps:       applyPlanLifecycle(req.Status, req.Explanation, steps, now),
 		CreatedAt:   existing.CreatedAt,
 		UpdatedAt:   now,
 		ClosedAt:    existing.ClosedAt,
@@ -200,7 +216,11 @@ func (s *Store) updateExisting(ctx context.Context, req UpdateRequest, existing 
 	if err := replaceSteps(ctx, tx, planRow.ID, planRow.Steps); err != nil {
 		return Plan{}, ChangeSet{}, err
 	}
-	if err := writeEvent(ctx, tx, planRow.ID, planRow.Revision, planEventType(existing, planRow), planRow); err != nil {
+	eventType := planEventType(existing, planRow)
+	if req.Replace {
+		eventType = "plan_replaced"
+	}
+	if err := writeEvent(ctx, tx, planRow.ID, planRow.Revision, eventType, planRow); err != nil {
 		return Plan{}, ChangeSet{}, err
 	}
 	if err := tx.Commit(); err != nil {

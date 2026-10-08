@@ -333,11 +333,12 @@ var AgentTools = []ToolDef{
 		Type: "function",
 		Function: ToolFuncDef{
 			Name:        "update_plan",
-			Description: "Create or update the session plan the user sees as a compact banner. Creation requires plan_id, objective, and a complete ordered steps snapshot. On an existing plan omit objective/status/steps to preserve them and send the latest revision; when steps are supplied they are the complete desired ordered snapshot — reorder by array order and retain every prior step (mark it cancelled rather than dropping it). Step statuses are declarative reporting, not execution gates: update any step in any order, including cancelling dependencies or reopening prior work. The banner is not a notebook: keep each step concise and never paste logs, code, or running narration into a plan.",
+			Description: "Create or update the session plan the user sees as a compact banner. Creation requires plan_id, objective, and a complete ordered steps snapshot. On an existing plan omit objective/status/steps to preserve them and send the latest revision; when steps are supplied they are the complete desired ordered snapshot — reorder by array order and omit obsolete steps. Prior snapshots remain in revision history, not the current banner. For a materially new goal use replace=true with objective and steps to atomically supersede the old goal. Review latest intent, update at each milestone before starting the next stage, and honestly complete or cancel before the final answer. Step statuses are declarative reporting, not execution gates: update any step in any order, including cancelling dependencies or reopening prior work. The banner is not a notebook: keep each step concise and never paste logs, code, or running narration into a plan.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{
 					"plan_id":{"type":"string","description":"Stable plan identifier. Reuse the same id across updates."},
+					"replace":{"type":"boolean","description":"Atomically replace the current goal and reset step provenance; requires objective and complete nonempty steps. Prior revisions remain in history. Default false."},
 					"revision":{"type":"integer","description":"Last known revision. Omit or 0 to create a new plan. A mismatch returns the current plan."},
 					"objective":{"type":"string","description":"Required on creation. One short line naming the outcome the user asked for. Omit or leave empty on update to preserve the current objective."},
 					"status":{"type":"string","enum":["active","paused","completed","cancelled"],"description":"Desired plan status. Omit on update to preserve current status."},

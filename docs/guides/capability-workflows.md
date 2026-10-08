@@ -8,10 +8,11 @@ Settings lists Skills, MCP, Sources and Acquisition immediately after Memory in
 one AI group, before Security and IDE. Application and Workspace scope share this
 order; Accounts and their complete connections remain application-only.
 
-The activity rail contains Files, Agents, Source Control, Skills and MCP. Settings
+The activity rail contains Files, Agents, Skills and MCP. Settings
 stays at its foot. Right-click a destination to pin/unpin, reorder or reset its
-shortcut. This affects presentation, not workspace data. Terminals are available
-through the footer, palette and named picker; they have no rail entry.
+shortcut. This affects presentation, not workspace data. Terminals and Git are
+available through the footer, palette and named picker/shortcut; they have no
+rail entry.
 
 The footer selects Problems, Notices, Terminals, Board, Memory or Workspace. More retains
 access when labels do not fit. Each workspace panel retains its own normal
@@ -188,26 +189,57 @@ mandatory, but is not a reason to add backward compatibility. New and corrected
 claims still require the current evidence rules; pinning, archiving or retiring
 an existing assertion does not manufacture new claims.
 
-## Git Review
+## Git
 
-The Source Control sidebar has calm Conflicts/Staged/Changes groups and a filter.
-Selecting a file does not stage/discard. Explicit activation opens one typed
-main-area Git Changes tab with complete path and compared versions. Unstaged uses
-index→disk; staged uses HEAD→index. Unified/side-by-side, search/hunk navigation,
-copy/full-path and horizontal access preserve exact content at narrow sizes.
-The shared diff reader aligns source lines, retains syntax with themed change
-bands, and uses a draggable divider plus synchronized vertical scroll. Local
-Compare With Disk / Compare With Saved Version use the same reader in independent
-movable main tabs, without staging, saving or mutating the live source buffer.
+Every action that is a button is painted as `[ Label ]` (or `[+]` for a
+one-glyph row action) so it reads as clickable.
 
-Stage/Unstage acts on reviewed bytes and rejects changed HEAD/index/disk; unsaved
-editor text must be explicitly saved and reviewed. Review commit keeps a multiline
-draft and the exact staged set; changed membership requires another review.
-Discard prepares an exact preimage, defaults to Cancel, captures mandatory Local
-History recovery and aborts when the file/index/HEAD changes. Untracked data is
-never deleted. Unsupported rename/symlink/deletion discard routes to explicit
-Local History instead of guessing. Hunk staging, conflict resolution, worktrees
-and remote operations are not presented as working features.
+Git is a bottom-dock destination (footer **Git** pill, `Ctrl+Alt+G`, palette
+"Git"), not a sidebar. Its **Changes** tab is a two-pane workbench: on the left a
+branch/tracking line, a commit message box with `[ Commit ]` and
+`[ Generate ]` (Aeron streams a message drafted from exactly what Commit would
+record, with an animated progress rule; `[ Stop ]` restores your draft),
+and the change list grouped Merge Conflicts / Staged / Changes; on the right a
+live hunk preview of the selected file, separated by a draggable divider. Rows show the status letter, name and
+muted folder; hover or selection reveals inline `+` stage, `−` unstage, `↶`
+discard and `✓` mark-resolved. Section headers carry **Stage all** /
+**Unstage all**. Keys: arrows move, Space stages/unstages, Enter opens the full
+review, `o` opens the file at its first change, `d` discards, `a`/`-` stage or
+unstage everything, `c` focuses the message, Tab walks the regions, Ctrl+R
+refreshes. Staging moves the cursor to the next change, never back to the top.
+**History** lists recent commits with a read-only diff of the selected commit;
+Enter opens it in the main area. **Branches** lists local/remote branches and
+switches only after a confirmation that re-checks HEAD.
+
+`[ Review all ]` opens the all-changes review tab; Enter or a double-click on
+a file opens that file's own tab; History Enter opens a commit tab. Each is a
+separate main tab, so several can be open and split side by side. A review is
+one scrolling document of its files with sticky file headers, hunks
+with three context lines, folded unchanged runs (click to expand), per-file
+`+N −M`, Stage/Unstage/Discard/Open header actions, Stage hunk / Unstage hunk /
+Discard hunk on every hunk header (`+`, `-`, `x`), and a file navigator that
+follows the reading position. Drag to select and copy (copies on release),
+Shift+arrows extend whole lines, Ctrl+A selects the current file, Ctrl+F finds
+across all shown lines. Unified or Split (two aligned columns from 100
+columns up) toggle with `v` or the header link; `]`/`[` move by file, `n`/`p` by
+hunk, `z`/`Z` fold, double-click a line to open the file at that line. History
+commits open in the same review read-only. The Explorer and editor context menus
+offer **View Changes** for a file or folder (the review is then scoped to that
+path, Esc or **Show all** clears the scope) plus Stage/Unstage/Discard.
+
+Unstaged compares index→disk; staged compares HEAD→index. Stage/Unstage from a
+painted diff records exactly those bytes (`StageReviewed`) and rejects a changed
+HEAD/index/disk; a file with unsaved editor text is refused until saved. Commit
+runs Git itself (hooks, signing and templates apply) after verifying the staged
+path set equals the set shown; "Commit all N" stages exactly the listed paths
+first. A different set fails closed with nothing committed; conflicts disable
+Commit. Discard prepares an exact preimage, defaults to Cancel, captures
+mandatory Local History recovery and aborts when the file/index/HEAD changes.
+Hunk stage/unstage writes only that hunk's lines to the index under the same
+exact-bytes check; hunk discard confirms, snapshots Local History and fails
+closed on any newer change. Untracked data is never deleted. Worktrees and
+remote operations are not presented as working features. Local Compare With Disk / Compare With
+Saved Version keep the separate full-file reader in movable main tabs.
 
 ## Validation Evidence
 

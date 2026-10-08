@@ -1626,6 +1626,9 @@ func (r *Renderer) shouldSuppressHeader(msgIdx int) bool {
 	}
 	for i := msgIdx - 1; i >= 0; i-- {
 		previous := r.sync.Messages[i]
+		if redundantStopNotice(previous) {
+			continue
+		}
 		if current.Role == types.RoleAssistant {
 			switch previous.Role {
 			case types.RoleThinking, types.RoleStatus:

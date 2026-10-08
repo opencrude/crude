@@ -7,7 +7,7 @@ import (
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
-	"crude/tui/screens/gitreview"
+	"crude/tui/screens/gitdiff"
 	"crude/tui/screens/localdiff"
 	"crude/tui/ui"
 	"crude/tui/window"
@@ -162,9 +162,9 @@ func TestGitReviewAndLocalDiffPaintInIndependentGroups(t *testing.T) {
 	left := app.Win.ActiveGroup()
 	right := app.Win.SplitGroup(left, ui.Horizontal, false)
 	app.focusMainGroup(right)
-	app.openGitReview(gitreview.ModeChanges, nil) // no background Git work needed for this projection fixture
-	app.gitReview.SetComparison(gitreview.PrepareComparison(app.Theme, workspace.GitComparison{Path: "git.txt", BaseLabel: "HEAD", TargetLabel: "Index", Before: "old git content\n", After: "new git content\n", Fingerprint: "fixture"}))
-	app.gitReview.SetPresentation(gitreview.SideBySide)
+	app.openGitReview("", "") // no background Git work needed for this projection fixture
+	app.activeGitReview().screen.ShowChanges(gitdiff.PrepareComparisons([]workspace.GitComparison{{Path: "git.txt", BaseLabel: "HEAD", TargetLabel: "Index", Before: "old git content\n", After: "new git content\n", Fingerprint: "fixture", BeforePresent: true, AfterPresent: true}}), "main")
+	app.activeGitReview().screen.SetPresentation(gitdiff.Split)
 	_ = app.View()
 	paneJourneyRequireText(t, app, left, "local distinct content")
 	paneJourneyRequireText(t, app, right, "new git content")

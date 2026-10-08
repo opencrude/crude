@@ -33,7 +33,7 @@ func TestNativePlanUpdatesUseCanonicalStore(t *testing.T) {
 	if err := json.Unmarshal([]byte(result.Content), &last); err != nil {
 		t.Fatal(err)
 	}
-	if last.ID != first.ID || last.Revision != 2 || last.Status != plan.StatusCompleted || last.Steps[0].ID != first.Steps[0].ID || last.Steps[2].Status != plan.StepCancelled {
+	if last.ID != first.ID || last.Revision != 2 || last.Status != plan.StatusCompleted || last.Steps[0].ID != first.Steps[0].ID || len(last.Steps) != 2 {
 		t.Fatalf("plan %+v", last)
 	}
 }

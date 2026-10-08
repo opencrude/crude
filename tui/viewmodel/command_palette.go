@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"crude/tui/screens/gitpanel"
 	"fmt"
 	"path/filepath"
 	"sort"
@@ -617,7 +618,11 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 	case "workspace.panel.maximize":
 		m.toggleWorkspacePanelMaximized()
 	case "view.activity.git":
-		m.toggleActivity(activityGit)
+		return m.toggleGitPanel()
+	case "git.review":
+		return m.openGitReview("", "")
+	case "git.history":
+		return m.openGitPanel(gitpanel.ModeHistory)
 	case "terminal.new":
 		return m.openNewTerminal()
 	case "terminal.toggle":

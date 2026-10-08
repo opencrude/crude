@@ -170,7 +170,7 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case "help":
 			m.openHelp()
 		case "git":
-			return m, m.toggleActivity(activityGit)
+			return m, m.toggleGitPanel()
 		case "git-branch":
 			return m, m.openBranchSwitcher()
 		}
@@ -187,6 +187,8 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.toggleWorkspacePanel(termdock.PanelNotices)
 		case "terminals":
 			m.toggleWorkspacePanel(termdock.PanelTerminal)
+		case "git":
+			return m, m.toggleGitPanel()
 		case "board":
 			return m, m.toggleBoardBrowser()
 		case "memory":
@@ -350,7 +352,7 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	}
 	// Header Git identity: the file and repository-metadata watchers arm a
 	// debounced reconciliation read here, so the branch and change counts follow
-	// the repository without the user opening the Source Control panel.
+	// the repository without the user opening the Git panel.
 	var headerGitCmd tea.Cmd
 	if m.gitSnapshotReady(now) {
 		headerGitCmd = m.startGitSnapshotRead()
@@ -440,6 +442,10 @@ func (m *App) wantsFastTick() bool {
 	}
 	// Streaming agents and unfinished sub-panes repaint at frame rate.
 	if m.anyActive() {
+		return true
+	}
+	// Aeron drafting a commit message animates its progress rule.
+	if m.gitPanel != nil && m.gitPanel.Writing() && m.gitPanelOpen() {
 		return true
 	}
 	// Popup reveal animations need the fast tick to render the slide-in.
@@ -854,8 +860,14 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		cmds = append(cmds, m.applyCapabilityResult(msg.result))
 	case boardResultMsg:
 		m.applyBoardResult(msg)
-	case gitReviewResultMsg:
-		cmds = append(cmds, m.applyGitReviewResult(msg))
+	case gitChangesPreparedMsg:
+		cmds = append(cmds, m.applyGitChangesPrepared(msg))
+	case gitEvidenceMsg:
+		m.applyGitEvidence(msg)
+	case gitCommitDeltaMsg:
+		m.applyCommitMessageDelta(msg)
+	case gitCommitWrittenMsg:
+		m.applyCommitMessageWritten(msg)
 	case gitDiscardPreviewMsg:
 		if msg.generation != m.workspaceSwitchGen.Load() || msg.sequence != m.gitDiscardSequence || m.GitDiscardPending == nil || m.GitDiscardPending.Path != msg.change.Path || !m.overlayHost.IsOpen(ui.OverlayTreeDelete) {
 			break
@@ -1277,11 +1289,7 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 		return nil
 	}
 	if tab.Resource.Kind == window.ResourceGitReview {
-		wasActive := m.Win.ActiveTab() != nil && m.Win.ActiveTab().ID == tab.ID
-		m.Win.CloseTab(index)
-		if wasActive {
-			m.returnFromGitReview()
-		}
+		m.closeGitReview(tab.ID)
 		return nil
 	}
 

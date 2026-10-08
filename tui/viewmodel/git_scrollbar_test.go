@@ -1,56 +1,42 @@
 package viewmodel
 
 import (
+	"fmt"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/tui/screens/activitybar"
-	"crude/tui/screens/sourcecontrol"
+	"crude/tui/screens/gitpanel"
+	"crude/tui/screens/termdock"
 	"crude/workspace"
 )
 
 // TestGitPanelWheelScrollingSurvivesShellFrame guards against scroll
-// snap-back through the full shell: a wheel gesture on the git list must move
-// the offset and a subsequent shell frame must not reset it to the selection.
+// snap-back through the full shell: a wheel gesture on the docked change list
+// must move the offset and a subsequent shell frame must not reset it.
 func TestGitPanelWheelScrollingSurvivesShellFrame(t *testing.T) {
 	app := newFullTestApp(t)
-	app.Tree = NewTreeState(nil, 30)
-	app.Tree.Visible = true
-	app.width = 100
-	app.height = 30
-	app.setActivity(activitybar.ViewGit, true)
-
+	app.width, app.height = 140, 44
 	changes := make([]workspace.GitChange, 0, 60)
 	for i := 0; i < 60; i++ {
-		changes = append(changes, workspace.GitChange{Path: "f.go", Area: workspace.GitAreaWorking, Code: "M"})
+		changes = append(changes, workspace.GitChange{Path: fmt.Sprintf("f%02d.go", i), Area: workspace.GitAreaWorking, Code: "M"})
 	}
-	app.sourceControl.SetSnapshot(workspace.GitSnapshot{Branch: "main", Changes: changes})
-
+	app.gitPanel.SetSnapshot(workspace.GitSnapshot{Branch: "main", Changes: changes})
+	app.toggleWorkspacePanel(termdock.PanelGit)
 	app.paintShellFrame()
 
-	listRect, ok := app.rootHost.ScreenRect(sourcecontrol.ListID)
-	if !ok {
-		t.Fatal("git list not registered in root host")
+	listRect, ok := app.rootHost.ScreenRect(gitpanel.ListID)
+	if !ok || listRect.Empty() {
+		t.Fatal("docked git change list not registered in root host")
 	}
-	offset := gitListScrollOffset(app)
-
-	before := offset()
+	before := app.gitPanel.ChangeListOffset()
 	app.rootHost.Handle(tea.MouseWheelMsg{X: listRect.X + 1, Y: listRect.Y + 1, Button: tea.MouseWheelDown})
-	afterWheel := offset()
+	afterWheel := app.gitPanel.ChangeListOffset()
 	if afterWheel <= before {
 		t.Fatalf("wheel did not scroll: offset before=%d after=%d", before, afterWheel)
 	}
-
-	// A fresh shell frame must keep the user's offset.
 	app.paintShellFrame()
-	afterFrame := offset()
-	if afterFrame != afterWheel {
+	if afterFrame := app.gitPanel.ChangeListOffset(); afterFrame != afterWheel {
 		t.Fatalf("SNAP-BACK: offset %d after wheel became %d after shell frame", afterWheel, afterFrame)
 	}
-}
-
-// gitListScrollOffset returns a reader for the git list scroll offset.
-func gitListScrollOffset(app *App) func() int {
-	return func() int { return app.sourceControl.ScrollModel().Offset() }
 }

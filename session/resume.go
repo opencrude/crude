@@ -324,6 +324,9 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	results := make([]agent.SubAgentResult, 0, len(rows))
 	for _, row := range rows {
 		result := subAgentResultFromRow(row)
+		if err := sess.restoreChildPlanActivity(string(result.AgentID), result.SessionID); err != nil {
+			return nil, fmt.Errorf("restore child %s plan: %w", result.AgentID, err)
+		}
 		if result.Status == agent.SubAgentRunning {
 			if checkpoint, pending := sess.pendingRecoveries[string(result.AgentID)]; pending &&
 				len(checkpoint.OwnerData) > 0 {
@@ -339,7 +342,11 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	for _, checkpoint := range sess.pendingRecoveries {
 		if checkpoint.ContextOwnerID == "" && len(checkpoint.OwnerData) > 0 {
 			hasChildRecovery = true
-			break
+			if _, restored := sess.childPlans.Load(checkpoint.Status.AgentID); !restored {
+				if err := sess.restoreChildPlanActivity(checkpoint.Status.AgentID, checkpoint.Status.AgentID); err != nil {
+					return nil, fmt.Errorf("restore pending child plan: %w", err)
+				}
+			}
 		}
 	}
 	if len(results) > 0 || hasChildRecovery {

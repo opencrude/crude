@@ -749,13 +749,17 @@ func (m *App) runDetachedAsyncCmd(cmd tea.Cmd) {
 	}()
 }
 
-// StopAsyncIO releases app-owned background workers after the Bubble Tea
-// program exits. Pending clipboard jobs are drained in FIFO order so commands
+// StopAsyncIO releases app-owned background workers and editor/tree watchers
+// after the Bubble Tea program exits. It is idempotent. Pending clipboard jobs are drained in FIFO order so commands
 // already waiting for their result can finish without a goroutine leak.
 func (m *App) StopAsyncIO() {
 	if m == nil {
 		return
 	}
+	m.asyncIOStopOnce.Do(m.stopAsyncIO)
+}
+
+func (m *App) stopAsyncIO() {
 	m.flushComposerDraft()
 	m.resetMemoryBrowser()
 	if m.overlayHost != nil {
@@ -763,7 +767,20 @@ func (m *App) StopAsyncIO() {
 	}
 	m.cancelCapabilityOperations()
 	m.cancelLocalDiffs()
+	// The UI, not Workspace, owns editor and tree watcher lifetimes. Closing
+	// only the domain leaves fsnotify handles alive across another shell/test.
+	// Reject new starts before joining accepted recursive watcher construction.
+	m.treeWatcherLifeMu.Lock()
 	m.asyncIOStopped.Store(true)
+	m.workspaceSwitchGen.Add(1)
+	m.treeWatcherLifeMu.Unlock()
+	m.treeWatcherStarts.Wait()
+	if m.Tree != nil && m.Tree.Model != nil {
+		m.Tree.Model.SetOnFileChanged(nil)
+		m.Tree.Model.SetOnGitChanged(nil)
+		m.Tree.Model.StopWatcher()
+	}
+	m.closeWorkspaceEditors()
 	state := m.asyncIO.Swap(nil)
 	if state == nil {
 		return

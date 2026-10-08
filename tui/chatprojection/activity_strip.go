@@ -11,6 +11,7 @@ import (
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/types"
+	"crude/types/activity"
 	"crude/types/reasoning"
 )
 
@@ -107,7 +108,8 @@ func (s *ActivityStrip) Update(source types.AgentActivityView, width int, th *th
 		s.tide = ui.TextTideMotion{}
 	}
 	if status.Phase == types.AgentCancelled {
-		label = "Stopped"
+		s.add(PaintLine{Spans: []RowSpan{{Text: "Stopped", Role: ui.ColorActivityText}}})
+		return
 	}
 	if status.Phase == types.AgentNeedsAttention {
 		label, role = "Needs attention · work kept · /retry to continue", ui.ColorWarning
@@ -115,7 +117,7 @@ func (s *ActivityStrip) Update(source types.AgentActivityView, width int, th *th
 	if status.Phase == types.AgentInterrupted {
 		label, role = "Interrupted · work kept · /retry to continue", ui.ColorWarning
 	}
-	if status.NeedsAction || status.Phase == types.AgentFailed || status.Phase == types.AgentRetrying || status.Phase == types.AgentRecovering || status.Phase == types.AgentCancelling {
+	if status.NeedsAction || status.Phase == types.AgentNeedsAttention || status.Phase == types.AgentInterrupted || status.Phase == types.AgentFailed || status.Phase == types.AgentRetrying || status.Phase == types.AgentRecovering || status.Phase == types.AgentCancelling {
 		if status.Phase == types.AgentRetrying || status.Phase == types.AgentRecovering {
 			label = "Retrying request"
 			if status.Phase == types.AgentRecovering {
@@ -184,64 +186,43 @@ func (s *ActivityStrip) Update(source types.AgentActivityView, width int, th *th
 			line.Spans = append(line.Spans, span)
 		}
 		s.add(line)
+	} else if source.Active && source.Plan != nil {
+		s.add(compactPlanLine(source.Plan))
+		return
 	} else {
 		s.add(PaintLine{Spans: []RowSpan{{Text: label, Role: role}}})
 	}
-	if p := source.Plan; p != nil {
-		progress := fmt.Sprintf("Plan %d/%d done", p.Completed, p.Total)
-		if p.Status == "paused" {
-			progress = "Plan paused · " + fmt.Sprintf("%d/%d done", p.Completed, p.Total)
-		}
-		if p.Skipped > 0 {
-			progress += fmt.Sprintf(" · %d skipped", p.Skipped)
-		}
-		if p.Cancelled > 0 {
-			progress += fmt.Sprintf(" · %d cancelled", p.Cancelled)
-		}
-		if len(p.Current) == 0 {
-			progress += " · " + stripText(p.Objective)
-		}
-		for i, step := range p.Current {
-			prefix := fmt.Sprintf("Step %d/%d", step.Number, p.Total)
-			if i == 0 {
-				prefix = progress + " · " + prefix
-			}
-			if step.Status == "blocked" || step.Status == "failed" {
-				prefix += " " + step.Status
-			}
-			text := stripText(step.Text)
-			if step.Reason != "" {
-				text += " · " + stripText(step.Reason)
-			}
-			s.add(PaintLine{Spans: []RowSpan{{Text: prefix + ": ", Role: ui.ColorActivityText}, {Text: text, Role: ui.ColorActivityText}}})
-		}
-		if len(p.Current) == 0 {
-			s.add(PaintLine{Spans: []RowSpan{{Text: progress, Role: ui.ColorActivityText}}})
-		}
-		if p.Objective != "" && len(p.Current) > 0 {
-			s.add(PaintLine{Spans: []RowSpan{{Text: "Goal · " + stripText(p.Objective), Role: ui.ColorActivityText}}})
-		}
-		if step := p.Next; step != nil {
-			s.add(PaintLine{Spans: []RowSpan{{Text: fmt.Sprintf("Next %d/%d · %s", step.Number, p.Total, stripText(step.Text)), Role: ui.ColorActivityText}}})
+	if source.Active && source.Plan != nil {
+		s.add(compactPlanLine(source.Plan))
+	}
+}
+
+// compactPlanLine keeps full plan detail out of the fixed status band.
+func compactPlanLine(p *activity.Plan) PaintLine {
+	var step *activity.Step
+	for i := range p.Current {
+		if p.Current[i].Status == "in_progress" || p.Current[i].Status == "" {
+			step = &p.Current[i]
+			break
 		}
 	}
-	// Counts never consume a page or displace useful activity. They occupy only
-	// spare trailing space on the last eligible page.
-	if source.SuccessfulCalls > 0 && len(s.pages) > 0 {
-		count := fmt.Sprint(source.SuccessfulCalls)
-		if !source.CallsKnown {
-			count += "+"
-		}
-		label := " turns"
-		if source.CallsKnown && source.SuccessfulCalls == 1 {
-			label = " turn"
-		}
-		suffix := " · " + count + label
-		last := &s.pages[len(s.pages)-1]
-		if last.VisibleWidth()+rendering.VisibleWidth(suffix) <= width {
-			last.Spans = append(last.Spans, RowSpan{Text: suffix, Role: ui.ColorActivityText})
+	if step == nil {
+		step = p.Next
+	}
+	label := "Plan ready"
+	if step != nil {
+		label = fmt.Sprintf("%d/%d %s", step.Number, p.Total, stripText(step.Text))
+	} else {
+		switch p.Status {
+		case "paused":
+			label = "Plan paused"
+		case "completed":
+			label = "Plan completed"
+		case "cancelled":
+			label = "Plan cancelled"
 		}
 	}
+	return PaintLine{Spans: []RowSpan{{Text: label, Role: ui.ColorActivityText}}}
 }
 
 // add packs complete facts when space permits; otherwise it creates a bounded

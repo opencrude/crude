@@ -12,7 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/rendering"
-	"crude/tui/screens/activitybar"
+	"crude/tui/screens/gitdiff"
 	"crude/tui/screens/panelchrome"
 	"crude/tui/screens/shellfooter"
 	"crude/tui/screens/shellheader"
@@ -37,10 +37,10 @@ func (m *App) statusHeaderLeftSegments() []shellheader.Segment {
 	if workspacePath := shortWorkspacePath(m.RootPath); workspacePath != "" {
 		segments = append(segments, shellheader.Segment{Text: workspacePath, Role: ui.ColorMuted, Priority: 1})
 	}
-	if m.sourceControl != nil {
-		snapshot := m.sourceControl.Snapshot()
+	if m.gitPanel != nil {
+		snapshot := m.gitPanel.Snapshot()
 		if branch := snapshot.Branch; branch != "" {
-			branchIcon := activitybar.ViewGit.Icon(panelchrome.NerdFont(m.Theme))
+			branchIcon := gitdiff.BranchIcon(panelchrome.NerdFont(m.Theme))
 			segments = append(segments, shellheader.Segment{Text: headerGitIdentity(branchIcon, gitChangesIcon(), snapshot), Role: ui.ColorMuted, Action: "git-branch", Priority: 2})
 		}
 	}
@@ -321,6 +321,7 @@ func (m *App) footerStatusSegments() []shellfooter.Segment {
 		{Text: problemText, FillRole: problemRole, Attention: problemAttention, Pill: true, Active: active == termdock.PanelProblems, Action: "problems", Priority: 1},
 		{Text: noticeText, FillRole: ui.ColorAccent, Attention: unread > 0, Pill: true, Active: active == termdock.PanelNotices, Action: "notices", Priority: 1},
 		{Text: terminalText, FillRole: mapBool(terminalCount > 0, ui.ColorSuccess, ui.ColorDiffHunk), Attention: terminalCount > 0, Pill: true, Active: active == termdock.PanelTerminal, Action: "terminals", Priority: 1},
+		{Text: "Git", FillRole: ui.ColorDiffFile, Pill: true, Active: active == termdock.PanelGit, Action: "git", Priority: 1},
 		{Text: "Board", FillRole: ui.ColorAccent2, Pill: true, Active: active == termdock.PanelBoard, Action: "board", Priority: 0},
 		{Text: "Memory", FillRole: ui.ColorMuted, Pill: true, Active: active == termdock.PanelMemory, Action: "memory", Priority: 0},
 		{Text: "Workspace", FillRole: workspaceHue, Attention: needsInput > 0 || working > 0, Pill: true, Active: active == termdock.PanelWorkspace, Action: "workspace", Priority: 0},
@@ -397,6 +398,12 @@ func (m *App) compactContextHelpSegments() []ui.HintSegment {
 	}
 	if m.sessionDeckFocused() {
 		return []ui.HintSegment{ui.ActionSeg("panel.previous"), ui.ActionSeg("panel.next")}
+	}
+	if m.gitPanelOpen() && m.termDockFocused {
+		return []ui.HintSegment{ui.ChordSeg("Space", "stage"), ui.ChordSeg("Enter", "review"), ui.ChordSeg("C", "commit message"), ui.ChordSeg("Tab", "next area")}
+	}
+	if m.isGitReviewActive() && m.focusTarget() == FocusInput {
+		return []ui.HintSegment{ui.ChordSeg("]/[", "file"), ui.ChordSeg("n/p", "hunk"), ui.ChordSeg("V", "split"), ui.ChordSeg("Esc", "back")}
 	}
 	if m.isComparisonActive() && m.focusTarget() == FocusInput {
 		return []ui.HintSegment{ui.ChordSeg("Ctrl+F", "find"), ui.ChordSeg("Alt+↑/↓", "change"), ui.ChordSeg("Ctrl+W", "close review")}
@@ -804,7 +811,7 @@ func (m *App) handleStatusOverviewNavigate(msg statusoverview.NavigateMsg) tea.C
 		m.openWorkspaceSettings()
 		return nil
 	case action == "git:open":
-		return m.toggleActivity(activityGit)
+		return m.toggleGitPanel()
 	case action == "history:open":
 		return m.openLocalHistory()
 	case action == "memory:open":

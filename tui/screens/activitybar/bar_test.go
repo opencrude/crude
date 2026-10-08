@@ -41,7 +41,7 @@ func TestClickEmitsSelect(t *testing.T) {
 		t.Fatalf("result=%+v", res)
 	}
 	view, ok := res.Action.Payload.(View)
-	if !ok || view != ViewGit {
+	if !ok || view != ViewSkills {
 		t.Fatalf("payload=%v", res.Action.Payload)
 	}
 }
@@ -186,7 +186,7 @@ func TestAgentsIconIsRobotNotCogs(t *testing.T) {
 	}
 }
 
-func TestCountBadgesAreReadableAndRaisedOrLowered(t *testing.T) {
+func TestCountBadgesAreReadableAndRaised(t *testing.T) {
 	for _, test := range []struct {
 		name string
 		view View
@@ -195,14 +195,12 @@ func TestCountBadgesAreReadableAndRaisedOrLowered(t *testing.T) {
 		y    int
 	}{
 		{"agents raised", ViewAgents, 2, '2', 3},
-		{"git lowered", ViewGit, 6, '6', 8},
 		{"files raised", ViewFiles, 1, '1', 0},
-		{"skills raised", ViewSkills, 8, '8', 9},
-		{"mcp raised", ViewMCP, 9, '9', 12},
+		{"skills raised", ViewSkills, 8, '8', 6},
+		{"mcp raised", ViewMCP, 9, '9', 9},
 		{"agents overflow raised", ViewAgents, 10, '+', 3},
-		{"git overflow lowered", ViewGit, 10, '+', 8},
 		{"zero absent", ViewAgents, 0, ' ', 3},
-		{"negative absent", ViewGit, -1, ' ', 8},
+		{"negative absent", ViewSkills, -1, ' ', 6},
 	} {
 		t.Run(test.name, func(t *testing.T) {
 			s := New(theme.DefaultDark())
@@ -247,28 +245,28 @@ func TestCountBadgesAreReadableAndRaisedOrLowered(t *testing.T) {
 }
 
 func TestCountBadgeNeverOverwritesWideIconOrPanelRule(t *testing.T) {
-	ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{Exact: map[string]int{"\uf418": 2}})
+	ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{Exact: map[string]int{"\uf17b": 2}})
 	t.Cleanup(func() { ansi.SetTerminalWidthProfile(ansi.TerminalWidthProfile{}) })
 	s := New(theme.DefaultDark())
 	s.nerdFont = true
-	s.SetBadge(ViewGit, 6)
+	s.SetBadge(ViewAgents, 6)
 	for _, width := range []int{4, 5, 6, 7, Width} {
 		s.Layout(ui.LayoutContext{}, ui.Rect{W: width, H: 24})
 		buf := surface.NewCellBuffer(width, 24)
 		s.Paint(buf, 0, 0, ui.PaintContext{})
 		if width >= 5 {
-			if got := buf.Get(3, 7); got.Char != '\uf418' || got.Width != 2 {
+			if got := buf.Get(3, 4); got.Char != '\uf17b' || got.Width != 2 {
 				t.Fatalf("width=%d badge erased the wide icon: %+v", width, got)
 			}
-			if got := buf.Get(4, 7).Width; got != 0 {
+			if got := buf.Get(4, 4).Width; got != 0 {
 				t.Fatalf("width=%d icon continuation overwritten: width=%d", width, got)
 			}
 		}
-		if width >= 6 && buf.Get(5, 8).Char != '6' {
-			t.Fatalf("width=%d badge must sit below/right of the full icon", width)
+		if width >= 6 && buf.Get(5, 3).Char != '6' {
+			t.Fatalf("width=%d badge must sit above/right of the full icon", width)
 		}
 		if width == Width {
-			for y := 6; y <= 8; y++ {
+			for y := 3; y <= 5; y++ {
 				if got := buf.Get(7, y).Char; got == '6' || got == ' ' {
 					t.Fatalf("badge damaged the panel rule at row %d: %q", y, got)
 				}

@@ -17,7 +17,6 @@ import (
 	"crude/tui/screens/shellchat"
 	"crude/tui/screens/shellheader"
 	"crude/tui/screens/shelltree"
-	"crude/tui/screens/sourcecontrol"
 	"crude/tui/ui"
 	"crude/workspace"
 )
@@ -51,6 +50,7 @@ func (m *App) View() tea.View {
 	m.configureShell()
 	m.renderShellToSurface()
 	m.paintPaneDropPreview()
+	m.syncPlanHover()
 
 	m.windowManager.Render(m.compositor.Root(), m.renderCtx)
 	m.windowManager.ClearNeedsRender()
@@ -195,9 +195,7 @@ func (m *App) configureShell() {
 	m.shell.setSlot(shellSidebarSlot, sidebarActive, ui.Rect{
 		X: frame.Left + activityW, Y: m.shellTopRow(), W: sidebarW, H: sidebarH,
 	})
-	if m.activityView == activityGit && m.sourceControl != nil {
-		m.shell.SetScreen(shellSidebarSlot, m.sourceControl)
-	} else if m.activityView != activityFiles && m.activityList != nil {
+	if m.activityView != activityFiles && m.activityList != nil {
 		m.shell.SetScreen(shellSidebarSlot, m.activityList)
 	} else if m.sidebarScreen != nil {
 		m.shell.SetScreen(shellSidebarSlot, m.sidebarScreen)
@@ -282,11 +280,6 @@ func (m *App) syncRootFocus() {
 			if current := m.rootHost.Focused(); current == shelltree.FilterID || current == shelltree.TreeID {
 				id = current
 			}
-		} else if m.activityView == activityGit && m.sourceControl != nil {
-			id = sourcecontrol.ListID
-			if current := m.rootHost.Focused(); current == sourcecontrol.FilterID || current == sourcecontrol.ListID || current == sourcecontrol.ActionsID {
-				id = current
-			}
 		} else {
 			id = activitylist.ListID
 			if current := m.rootHost.Focused(); current == activitylist.FilterID || current == activitylist.ListID {
@@ -308,9 +301,9 @@ func (m *App) syncRootFocus() {
 	case FocusInput:
 		if m.emptyPaneActive() {
 			id = m.ensureMainPanes().group(m.Win.ActiveGroup()).empty.ID()
-		} else if m.isGitReviewActive() {
-			id = m.gitReview.DocumentID()
-			if current := m.rootHost.Focused(); strings.HasPrefix(string(current), "gitreview") {
+		} else if view := m.activeGitReview(); view != nil {
+			id = view.screen.DocumentID()
+			if current := m.rootHost.Focused(); strings.HasPrefix(string(current), string(view.screen.ID())+"/") {
 				id = current
 			}
 		} else if view := m.activeLocalDiff(); view != nil {
@@ -414,13 +407,6 @@ func (m *App) configureSidebarScreen() {
 			maxW = 12
 		}
 		m.activityList.SetSplitMaxFirst(maxW)
-	}
-	if m.sourceControl != nil {
-		maxW := m.width / 2
-		if maxW < 12 {
-			maxW = 12
-		}
-		m.sourceControl.SetSplitMaxFirst(maxW)
 	}
 }
 

@@ -120,9 +120,10 @@ existing floating dialogs and terminals retain their own contracts.
 
 ## Git and local comparisons
 
-Git Changes and local comparison tabs move/split through the same main groups
-as documents and agents. Git keeps its exact reviewed-byte stage/unstage/commit
-policy. Local **Compare With Disk** now opens a complete main-tab comparison,
+The Git **Changes** review (every changed file, or one commit, stacked in one
+`gitdiff.Document`) and local comparison tabs move/split through the same main
+groups as documents and agents. Git keeps its exact reviewed-byte stage/unstage
+policy and its shown-set commit check. Local **Compare With Disk** now opens a complete main-tab comparison,
 not the floating one-hunk inspector. **Compare With Saved Version** compares the
 accepted buffer savepoint against unsaved text. Both are available in the editor
 context menu and palette; the small HEAD-relative gutter inspector remains a

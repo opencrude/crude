@@ -424,6 +424,7 @@ func (s *ChatStream) Next() (StreamUpdate, error) {
 		}
 		event, err := s.reader.next()
 		if err != nil {
+			retryVeto := s.resp != nil && strings.EqualFold(strings.TrimSpace(s.resp.Header.Get("x-should-retry")), "false")
 			s.closeResp()
 			if errors.Is(err, io.EOF) {
 				if !s.sawDone {
@@ -440,6 +441,9 @@ func (s *ChatStream) Next() (StreamUpdate, error) {
 					return StreamUpdate{}, io.EOF
 				}
 			}
+			if retryVeto {
+				err = &streamRetryVetoError{cause: err}
+			}
 			if s.canRetryStream(err) {
 				if waitErr := s.client.backoff(s.ctx, s.attempt, nil, err); waitErr != nil {
 					s.closed = true
@@ -452,6 +456,9 @@ func (s *ChatStream) Next() (StreamUpdate, error) {
 		}
 		update, err := s.decoder.Decode(event)
 		if err != nil {
+			if strings.EqualFold(strings.TrimSpace(s.resp.Header.Get("x-should-retry")), "false") {
+				err = &streamRetryVetoError{cause: err}
+			}
 			s.closeResp()
 			if !s.yielded && s.ctx.Err() == nil {
 				full, body, recovered, recoveryErr := s.client.rebaseContinuation(s.request, err)

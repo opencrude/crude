@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"crude/tui/screens/gitdiff"
 	"fmt"
 	"sort"
 	"strings"
@@ -11,10 +12,8 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/screens/activitybar"
 	"crude/tui/screens/activitylist"
-	"crude/tui/screens/gitreview"
 	"crude/tui/screens/launcher"
 	"crude/tui/screens/shelltree"
-	"crude/tui/screens/sourcecontrol"
 	"crude/tui/ui"
 	"crude/tui/window"
 	"crude/workspace"
@@ -94,9 +93,17 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	blameHash := blame.Hash
 	line := ed.CursorLine()
 	_, _, hasHunk := ed.GitHunkAtLine(line)
+	fileScope, fileChanges, _ := m.gitChangesUnder(ed.FilePath())
+	fileChanged, fileReveal := ed.FilePath() != "" && len(fileChanges) > 0, ""
+	if fileChanged {
+		fileReveal = gitdiff.ChangeKey(fileChanges[0])
+	}
 	st.Sections = append(st.Sections, ui.ContextMenuSection{
 		SectionLabel: "Git",
 		Items: []ui.ContextMenuItem{
+			{Label: "View Git changes", Disabled: !fileChanged, Action: func() {
+				m.startSourceControlMutation(m.openGitReview(fileScope, fileReveal))
+			}},
 			{Label: "Inspect change", Disabled: !hasHunk, Action: func() { m.inspectEditorChange(ed, line) }},
 			{Label: "Compare with disk", Action: func() { m.startSourceControlMutation(m.compareEditorWithDisk(ed)) }},
 			{Label: "Compare with saved version", Action: func() { m.runDetachedAsyncCmd(m.openLocalDiff(ed, localDiffSaved)) }},
@@ -130,7 +137,7 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 
 // buildActivityRegionContextMenu dispatches the left rail and sidebar body to
 // the destination that actually owns the clicked cells. The activity region
-// is not synonymous with the file tree: Agents, Terminals, and Source Control
+// is not synonymous with the file tree: Agents and Terminals
 // each expose their own item-aware actions.
 func (m *App) buildActivityRegionContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	if m.rootHost == nil {
@@ -151,8 +158,6 @@ func (m *App) buildActivityRegionContextMenu(mouse tea.Mouse) *ui.ContextMenuSta
 		return m.buildAgentSidebarContextMenu(mouse)
 	case activitySkills, activityMCP:
 		return m.buildActivityRailContextMenu(m.activityView)
-	case activityGit:
-		return m.buildSourceControlContextMenu(mouse)
 	default:
 		return m.buildSidebarContextMenu(mouse)
 	}
@@ -231,16 +236,6 @@ func (m *App) buildActivityRailContextMenu(view activitybar.View) *ui.ContextMen
 				{Label: "Refresh state", Action: func() { m.startSourceControlMutation(m.capabilitySnapshotCmd()) }},
 			},
 		})
-	case activitybar.ViewGit:
-		st.Sections = append(st.Sections, ui.ContextMenuSection{
-			SectionLabel: "Repository",
-			Items: []ui.ContextMenuItem{
-				{Label: "Refresh", Detail: "Ctrl+R", Action: func() {
-					m.startSourceControlMutation(m.refreshSourceControl())
-				}},
-				{Label: "Review changes", Action: func() { m.startSourceControlMutation(m.openGitReview(gitreview.ModeChanges, nil)) }},
-			},
-		})
 	}
 	st.Sections = append(st.Sections, m.navigationActions(view))
 	return st
@@ -263,8 +258,6 @@ func activityShortcut(view activitybar.View) string {
 	switch view {
 	case activitybar.ViewAgents:
 		return "Ctrl+Shift+A"
-	case activitybar.ViewGit:
-		return "Ctrl+Shift+G"
 	case activitybar.ViewFiles:
 		return "Ctrl+Shift+E"
 	}
@@ -356,67 +349,6 @@ func (m *App) buildAgentSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState
 		Items: []ui.ContextMenuItem{
 			{Label: "New session", Action: func() { m.startSourceControlMutation(m.launcherNewSession()) }},
 			{Label: "Manage sessions…", Action: m.openSessionPicker},
-		},
-	})
-	return st
-}
-
-func (m *App) buildSourceControlContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
-	var item sourcecontrol.Item
-	hit := false
-	if m.sourceControl != nil && m.rootHost != nil {
-		if rect, ok := m.rootHost.ScreenRect(sourcecontrol.ScreenID); ok && rect.Contains(mouse.X, mouse.Y) {
-			item, hit = m.sourceControl.ItemAtLocalY(mouse.Y - rect.Y)
-		}
-	}
-	title := "⑂ Source Control"
-	st := &ui.ContextMenuState{Title: title}
-	if hit {
-		switch item.Kind {
-		case sourcecontrol.ItemChange:
-			change := item.Change
-			st.Title = "⑂ " + change.Path
-			stageLabel := "Review to stage…"
-			stageAction := func() { m.startSourceControlMutation(m.openGitReview(gitreview.ModeChanges, &change)) }
-			if change.Area == workspace.GitAreaStaged {
-				stageLabel = "Review to unstage…"
-			}
-			changeItems := []ui.ContextMenuItem{
-				{Label: "Open file", Disabled: change.AbsolutePath == "", Action: func() {
-					if change.AbsolutePath != "" {
-						_, _ = m.openEditorTab(change.AbsolutePath)
-					}
-				}},
-				{Label: stageLabel, Action: stageAction},
-				{Label: "Reveal in Explorer", Disabled: change.AbsolutePath == "", Action: func() {
-					m.setActivity(activityFiles, true)
-					if m.Tree != nil && m.Tree.Model != nil {
-						m.Tree.Model.ExpandToPath(change.AbsolutePath)
-					}
-				}},
-				{Label: "Copy relative path", Action: func() { m.copyToClipboard(change.Path) }},
-			}
-			if change.Area == workspace.GitAreaWorking {
-				changeItems = append(changeItems, ui.ContextMenuItem{
-					Label: "Discard changes…", Action: func() { m.startDiscardGitChange(change) },
-				})
-			}
-			st.Sections = append(st.Sections, ui.ContextMenuSection{
-				SectionLabel: change.Description,
-				Items:        changeItems,
-			})
-		}
-	}
-	st.Sections = append(st.Sections, ui.ContextMenuSection{
-		SectionLabel: "Repository",
-		Items: []ui.ContextMenuItem{
-			{Label: "Refresh", Detail: "Ctrl+R", Action: func() {
-				m.startSourceControlMutation(m.refreshSourceControl())
-			}},
-			{Label: "Review changes", Action: func() { m.startSourceControlMutation(m.openGitReview(gitreview.ModeChanges, nil)) }},
-			{Label: "Copy branch name", Disabled: m.sourceControl == nil || m.sourceControl.Snapshot().Branch == "", Action: func() {
-				m.copyToClipboard(m.sourceControl.Snapshot().Branch)
-			}},
 		},
 	})
 	return st
@@ -515,6 +447,9 @@ func (m *App) buildSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 				}},
 			},
 		})
+	}
+	if section, ok := m.explorerGitSection(path, isDir); ok {
+		st.Sections = append(st.Sections, section)
 	}
 	if path != "" && m.HistoryService != nil {
 		target := path

@@ -14,6 +14,7 @@ import (
 	"crude/tui/types"
 	"crude/tui/ui"
 	ctypes "crude/types"
+	"crude/types/activity"
 )
 
 const (
@@ -37,6 +38,7 @@ type Screen struct {
 	tokens         *ui.TokenSet
 	list           *ui.VirtualList
 	scrollbar      *ui.ScrollbarControl
+	jumpLatest     *latestButton
 	selection      textSelection
 	wheel          ui.WheelAccelState
 	paneWheel      ui.WheelAccelState
@@ -59,6 +61,17 @@ type Screen struct {
 func (s *Screen) SetActivity(activity ctypes.AgentActivityView) {
 	s.activity = activity
 	s.activitySet = true
+}
+
+// ActivityPlan returns the retained immutable plan without storage access.
+func (s *Screen) ActivityPlan() *activity.Plan { return s.activity.Plan }
+
+// ActivityBounds is the final activity line in screen-local coordinates.
+func (s *Screen) ActivityBounds() ui.Rect {
+	if !s.activitySet || ActivityRows(s.height) == 0 || s.width <= 0 {
+		return ui.Rect{}
+	}
+	return ui.Rect{Y: s.height - 1, W: s.width, H: 1}
 }
 
 // ActivityRows preserves one readable transcript row in extremely short grids.
@@ -88,6 +101,10 @@ func NewWithID(th *theme.Theme, id ui.ComponentID) *Screen {
 		tokens: tokens,
 		list:   list,
 	}
+	s.jumpLatest = &latestButton{Button: ui.NewButton(ui.NewID(id, "latest"), "↓ Latest", "shellchat.latest"), screen: s}
+	s.jumpLatest.SetVariant(ui.VariantSecondary)
+	s.jumpLatest.SetTokens(tokens)
+	s.jumpLatest.SetSurfaceBackground(tokens.Color(ui.ColorBg))
 	list.SetRowPainter(s.paintMessageRow)
 	s.scrollbar = ui.NewScrollbarControl(ui.NewID(id, "scrollbar"), list.Scroll(), tokens)
 	// The nested pane gutter sits two columns left of the main track. Claim the
@@ -105,6 +122,8 @@ func (s *Screen) SetTheme(th *theme.Theme) {
 	s.th = th
 	s.tokens = ui.NewTokenSet(th)
 	s.list.SetTokens(s.tokens)
+	s.jumpLatest.SetTokens(s.tokens)
+	s.jumpLatest.SetSurfaceBackground(s.tokens.Color(ui.ColorBg))
 	if s.scrollbar != nil {
 		s.scrollbar.SetTokens(s.tokens)
 	}
@@ -114,6 +133,8 @@ func (s *Screen) SetTheme(th *theme.Theme) {
 func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	s.tokens = tokens
 	s.list.SetTokens(tokens)
+	s.jumpLatest.SetTokens(tokens)
+	s.jumpLatest.SetSurfaceBackground(tokens.Color(ui.ColorBg))
 	if s.scrollbar != nil {
 		s.scrollbar.SetTokens(tokens)
 	}
@@ -199,10 +220,19 @@ func (s *Screen) ViewportPaneLineMap() []chatprojection.PaneLineInfo {
 }
 
 func (s *Screen) Children() []ui.Component {
+	children := []ui.Component{s.list}
 	if s.mainScrollbarVisible() {
-		return []ui.Component{s.list, s.scrollbar}
+		children = append(children, s.scrollbar)
 	}
-	return []ui.Component{s.list}
+	if s.latestVisible() {
+		children = append(children, s.jumpLatest)
+	}
+	return children
+}
+
+func (s *Screen) latestVisible() bool {
+	return s.activitySet && ActivityRows(s.height) == ActivityHeight && s.width >= 5 &&
+		s.list.Scroll().Content() > s.list.Scroll().Viewport() && !s.list.Scroll().NearBottom(0)
 }
 
 // ContentSurfaceWidth is the chat surface width for compose InnerW and PadLR.
@@ -280,6 +310,16 @@ func (s *Screen) Layout(_ ui.LayoutContext, r ui.Rect) {
 		s.scrollbar.SetScroll(s.list.Scroll())
 		s.scrollbar.Layout(ui.LayoutContext{}, s.scrollbarLayoutRect(local))
 	}
+	if s.latestVisible() {
+		s.jumpLatest.SetLabel("↓ Latest")
+		if r.W < 12 {
+			s.jumpLatest.SetLabel("↓")
+		}
+		size := s.jumpLatest.Measure(ui.LayoutContext{}, ui.Constraints{MaxW: r.W, MaxH: 1})
+		s.jumpLatest.Layout(ui.LayoutContext{}, ui.Rect{X: (r.W - size.W) / 2, Y: r.H - 2, W: size.W, H: 1})
+	} else {
+		s.jumpLatest.Layout(ui.LayoutContext{}, ui.Rect{})
+	}
 	if s.activitySet {
 		s.activityStrip.Update(s.activity, max(0, r.W-2*s.layout.padLR), s.th, s.tokens)
 	}
@@ -354,7 +394,7 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	}
 
 	if s.handleScrollInput(evt) {
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
 	}
 	return ui.EventResult{}
 }

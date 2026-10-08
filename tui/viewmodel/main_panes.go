@@ -310,9 +310,10 @@ func (p *mainPaneLayout) configure() {
 			g.editor = g.body
 		case m.isAgentTabTitle(tab.Title):
 			p.configureAgent(g, tab, body)
-		case tab.Resource.Kind == window.ResourceGitReview && m.gitReview != nil:
-			m.gitReview.SetSidebarAvailable(m.sidebarHostVisible() && m.activityView == activityGit)
-			g.add(m.gitReview, body)
+		case tab.Resource.Kind == window.ResourceGitReview:
+			if view := m.gitReviews[tab.ID]; view != nil {
+				g.add(view.screen, body)
+			}
 		case tab.Resource.Kind == window.ResourceLocalDiff:
 			if view := m.localDiffs[tab.ID]; view != nil {
 				g.add(view.screen, body)

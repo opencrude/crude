@@ -40,6 +40,7 @@ var overlayOutsideContractMatrix = []overlayOutsideFixture{
 	{id: ui.OverlayCompletion, policy: ui.PopoverPolicy(true), wantClose: true},
 	{id: ui.OverlayOutline, policy: ui.PopoverPolicy(true), wantClose: true},
 	{id: ui.OverlayDiagContext, policy: ui.PopoverPolicy(true), wantClose: true},
+	{id: ui.OverlayPlanHover, policy: ui.PopoverPolicy(true), wantClose: true},
 
 	{id: ui.OverlayFindReplace, policy: ui.DefaultOverlayPolicy()},
 	{id: ui.OverlayCommandPalette, policy: ui.DefaultOverlayPolicy()},
@@ -211,10 +212,10 @@ func TestOverlayClickOutsideInsidePopupDoesNotClose(t *testing.T) {
 	}
 }
 
-// TestOverlayOutsideContractMatrixCount guards the documented 17-overlay table.
+// TestOverlayOutsideContractMatrixCount guards the static overlay policy table.
 func TestOverlayOutsideContractMatrixCount(t *testing.T) {
-	if got := len(overlayOutsideContractMatrix); got != 21 {
-		t.Fatalf("overlayOutsideContractMatrix len=%d want 21", got)
+	if got := len(overlayOutsideContractMatrix); got != 22 {
+		t.Fatalf("overlayOutsideContractMatrix len=%d want 22", got)
 	}
 }
 
@@ -227,6 +228,7 @@ func TestOverlayOutsideContractMatrixMatchesOpeners(t *testing.T) {
 		ui.OverlayCompletion:        ui.OutsideCloseAndRoute,
 		ui.OverlayOutline:           ui.OutsideCloseAndRoute,
 		ui.OverlayDiagContext:       ui.OutsideCloseAndRoute,
+		ui.OverlayPlanHover:         ui.OutsideCloseAndRoute,
 		ui.OverlayFindReplace:       ui.OutsideKeepAndRoute,
 		ui.OverlayCommandPalette:    ui.OutsideKeepAndRoute,
 		ui.OverlayComposer:          ui.OutsideKeepAndRoute,
@@ -244,8 +246,8 @@ func TestOverlayOutsideContractMatrixMatchesOpeners(t *testing.T) {
 		ui.OverlaySessionPicker:     ui.OutsideIgnoreAndConsume,
 		ui.OverlayHelp:              ui.OutsideIgnoreAndConsume,
 	}
-	if len(expected) != 21 {
-		t.Fatalf("expected opener registry len=%d want 21", len(expected))
+	if len(expected) != 22 {
+		t.Fatalf("expected opener registry len=%d want 22", len(expected))
 	}
 	for _, fx := range overlayOutsideContractMatrix {
 		want, ok := expected[fx.id]

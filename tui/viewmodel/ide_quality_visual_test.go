@@ -10,7 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
-	"crude/tui/screens/gitreview"
+	"crude/tui/screens/gitdiff"
 	"crude/workspace"
 )
 
@@ -58,10 +58,9 @@ func (m *ideQualityVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.FocusStack.Clear()
 			return m, nil
 		case tea.KeyF6:
-			m.openGitReview(gitreview.ModeChanges, nil)
-			m.gitReview.SetSidebarAvailable(true)
-			m.gitReview.SetComparison(gitreview.PrepareComparison(m.Theme, workspace.GitComparison{Path: "sample.go", BaseLabel: "HEAD", TargetLabel: "Index", Before: m.before, After: "package sample\n\n// Reviewed source version\nfunc Greet() string {\n\treturn \"git_target\"\n}\n", Fingerprint: "visual-read-only", Historical: true}))
-			m.gitReview.SetPresentation(gitreview.SideBySide)
+			m.openGitReview("", "")
+			m.activeGitReview().screen.ShowChanges(gitdiff.PrepareComparisons([]workspace.GitComparison{{Path: "sample.go", BaseLabel: "HEAD", TargetLabel: "Index", Before: m.before, After: "package sample\n\n// Reviewed source version\nfunc Greet() string {\n\treturn \"git_target\"\n}\n", Fingerprint: "visual-read-only", Historical: true, BeforePresent: true, AfterPresent: true}}), "main")
+			m.activeGitReview().screen.SetPresentation(gitdiff.Split)
 			return m, nil
 		case tea.KeyF7:
 			m.light = !m.light

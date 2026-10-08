@@ -37,6 +37,10 @@ func newRealShellApp(t *testing.T) (*App, *workspace.Workspace) {
 	ws.SetEventSender(noopEventSender{})
 	t.Setenv("MODELS_DEV_URL", "http://127.0.0.1:9/models-dev-unreachable")
 	app := NewApp(ws, nil)
+	t.Cleanup(func() {
+		app.StopAsyncIO()
+		ws.Close()
+	})
 	// These tests exercise the tab-close/launcher flow, not LSP. A real
 	// language server subprocess would inherit the workspace DB handle on
 	// Windows and wedge the temp-dir cleanup; NewApp installs the editor

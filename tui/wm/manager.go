@@ -49,11 +49,17 @@ func NewWindowManager() *WindowManager {
 // AddWindow adds a floating window to the manager.
 // The window is placed at the top of the z-order and receives focus.
 func (wm *WindowManager) AddWindow(fw *FloatingWindow) {
-	wm.windows = append(wm.windows, fw)
-	wm.zOrder = append(wm.zOrder, fw)
+	wm.AddWindowPassive(fw)
 	if fw.focusable {
 		wm.FocusWindow(fw.ID)
 	}
+}
+
+// AddWindowPassive mounts a hover surface without taking keyboard focus. It can
+// still receive normal pointer input and gain focus on an explicit click.
+func (wm *WindowManager) AddWindowPassive(fw *FloatingWindow) {
+	wm.windows = append(wm.windows, fw)
+	wm.zOrder = append(wm.zOrder, fw)
 }
 
 // RemoveWindow removes a floating window by ID.

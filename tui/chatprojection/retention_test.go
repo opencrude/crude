@@ -120,11 +120,11 @@ func TestActivityRetainsTwoRequestRoundsUntilThirdArrives(t *testing.T) {
 	}
 }
 
-func TestStoppedBoundaryIsTextNotCompactionTable(t *testing.T) {
+func TestStoppedBoundaryHasNoTranscriptGeometry(t *testing.T) {
 	r := newActivityRenderer()
 	r.SyncMessages([]types.ChatMessage{{InternalID: "stop", Role: types.RoleStatus, LifecyclePhase: "stopped", LifecycleOperationID: "stop"}}, 1)
-	rows, _, _ := r.ExportMessageRows(100)
-	if len(rows) != 1 || rows[0].ContextBoundary || !strings.Contains(strings.Join(rows[0].Lines, "\n"), "Stopped by you") {
-		t.Fatalf("stop notice misclassified as compaction chrome: %+v", rows)
+	snapshot := r.ExportMessageRowsSnapshot(100)
+	if len(snapshot.Rows) != 0 || snapshot.ContentHeight != 0 || r.vl.ItemCount() != 0 {
+		t.Fatalf("redundant stop notice reserved transcript geometry: %+v", snapshot)
 	}
 }

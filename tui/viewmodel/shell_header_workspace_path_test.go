@@ -44,7 +44,7 @@ func TestHeaderShowsWorkspacePathWhenFolderMatchesAppName(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 28
 	app.RootPath = filepath.Join(home, "ocd", "crude")
-	app.sourceControl.SetSnapshot(workspace.GitSnapshot{Branch: "feature/x"})
+	app.gitPanel.SetSnapshot(workspace.GitSnapshot{Branch: "feature/x"})
 	app.paintShellFrame()
 
 	wantPath := "~" + string(filepath.Separator) + filepath.Join("ocd", "crude")
@@ -71,7 +71,7 @@ func TestHeaderShowsWorkspacePathWhenFolderMatchesAppName(t *testing.T) {
 func TestHeaderOmitsUnresolvedWorkspacePath(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 28
-	app.sourceControl.SetSnapshot(workspace.GitSnapshot{Branch: "main"})
+	app.gitPanel.SetSnapshot(workspace.GitSnapshot{Branch: "main"})
 	app.paintShellFrame()
 
 	segments := app.statusHeaderLeftSegments()

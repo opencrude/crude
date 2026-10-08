@@ -65,11 +65,13 @@ func (w *Workspace) AgentActivity(agentID string) types.AgentActivityView {
 		view.CallsKnown = true
 	}
 	if owner := w.sessionForAgent(agentID); owner != nil && owner.backend != nil {
-		view.Plan = owner.backend.PlanActivity()
 		if node.Parent == nil {
+			view.Plan = owner.backend.PlanActivity()
 			if summary := owner.backend.SummaryTitle(); summary != "" {
 				view.Summary = summary
 			}
+		} else {
+			view.Plan = owner.backend.ChildPlanActivity(agentID)
 		}
 	}
 	return view

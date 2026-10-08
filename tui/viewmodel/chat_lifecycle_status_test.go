@@ -68,11 +68,11 @@ func TestManualCompactionShowsOperationStatusInsteadOfIdlePlan(t *testing.T) {
 		if strings.Contains(got, "Context compacted") {
 			t.Fatalf("old compaction displaced new turn: %q", got)
 		}
-		planVisible = planVisible || strings.Contains(got, "Plan 3/4")
+		planVisible = planVisible || strings.Contains(got, "4/4 Run build")
 		app.SpinFrame += 6000
 	}
 	if !planVisible {
-		t.Fatal("new turn did not restore the plan's rotating activity")
+		t.Fatal("new turn did not restore the compact current task")
 	}
 }
 

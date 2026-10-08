@@ -9,6 +9,7 @@ import (
 	"crude/tui/tools"
 	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types/recovery"
 )
 
 // activityGroup is a presentation-only view over adjacent canonical messages.
@@ -23,10 +24,27 @@ type activityGroup struct {
 	paneBackground bool
 }
 
+// redundantStopNotice belongs only to the fixed Stopped strip. Keep the
+// canonical boundary/incident for history and context, but reserve no transcript
+// item, spacer or grouping boundary. Recovery state outranks a generic phase;
+// actionable and resumed incidents must retain their evidence and disclosure.
+func redundantStopNotice(msg *types.ChatMessage) bool {
+	if msg.Role != types.RoleStatus {
+		return false
+	}
+	if msg.Recovery != nil {
+		return msg.Recovery.State == recovery.Cancelled
+	}
+	return msg.LifecyclePhase == "stopped"
+}
+
 // Empty assistant envelopes separate provider calls but contain no visible
 // communication. They must neither consume a row nor split adjacent activity.
 // Keep the live streaming placeholder until it is replaced by real content.
 func (r *Renderer) activityInvisible(msg *types.ChatMessage) bool {
+	if redundantStopNotice(msg) {
+		return true
+	}
 	if msg.ToolName == "multi_tool_use.parallel" && msg.ToolStatus == types.ToolStatusStreaming && msg.Content == "" {
 		return true // the empty argument-streaming envelope belongs to the fixed strip
 	}

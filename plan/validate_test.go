@@ -138,7 +138,7 @@ func TestValidateAcceptsReopenRetryAndCancelledPlanResumeWithoutReasons(t *testi
 	}
 }
 
-func TestValidateExistingSnapshotStillRequiresRevisionAndRetainedSteps(t *testing.T) {
+func TestValidateExistingSnapshotRequiresRevisionButAllowsRemovedSteps(t *testing.T) {
 	existing := &Plan{
 		ID: "plan-123", Revision: 4, Objective: "x", Status: StatusActive,
 		Steps: []PlanStep{{ID: "a", Description: "A", Status: StepCompleted}, {ID: "b", Description: "B", Status: StepPending}},
@@ -150,8 +150,8 @@ func TestValidateExistingSnapshotStillRequiresRevisionAndRetainedSteps(t *testin
 	}
 	req.Revision = 4
 	req.Steps = []PlanStep{{ID: "a", Description: "A", Status: StepCompleted}}
-	if err := Validate(existing, req); err == nil {
-		t.Fatal("expected omitted step rejection")
+	if err := Validate(existing, req); err != nil {
+		t.Fatalf("clean desired snapshot rejected: %v", err)
 	}
 }
 

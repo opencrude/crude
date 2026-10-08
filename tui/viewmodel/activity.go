@@ -13,7 +13,6 @@ import (
 	historyscreen "crude/tui/screens/localhistory"
 	"crude/tui/screens/panelchrome"
 	"crude/tui/screens/shelltree"
-	"crude/tui/screens/sourcecontrol"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
 	"crude/workspace"
@@ -22,7 +21,6 @@ import (
 const (
 	activityFiles  = activitybar.ViewFiles
 	activityAgents = activitybar.ViewAgents
-	activityGit    = activitybar.ViewGit
 	activitySkills = activitybar.ViewSkills
 	activityMCP    = activitybar.ViewMCP
 
@@ -76,9 +74,6 @@ func (m *App) setActivity(view activitybar.View, showContent bool) {
 		if m.activityList != nil && (view == activityAgents || view == activitySkills || view == activityMCP) {
 			m.activityList.RestoreViewState(activitylist.ViewState{Filter: state.Filter, Selection: state.Selection, Offset: state.Offset})
 		}
-		if m.sourceControl != nil && view == activityGit {
-			m.sourceControl.RestoreViewState(state.Filter, state.Selection, state.Offset, state.Collapsed)
-		}
 	} else if m.activityList != nil && (view == activityAgents || view == activitySkills || view == activityMCP) {
 		m.activityList.RestoreViewState(activitylist.ViewState{})
 	}
@@ -96,9 +91,6 @@ func (m *App) toggleActivity(view activitybar.View) tea.Cmd {
 	if m.FocusStack != nil {
 		m.FocusStack.Clear()
 		m.FocusStack.Push(FocusTree)
-	}
-	if view == activityGit {
-		return m.refreshSourceControl()
 	}
 	if view == activitySkills || view == activityMCP {
 		return m.capabilitySnapshotCmd()
@@ -136,8 +128,6 @@ func (m *App) refreshActivityList() {
 		items := m.capabilitySidebarItems(m.activityView)
 		m.activityList.SetBadge(sidebarCountBadge(items))
 		m.activityList.SetItems(items)
-	case activityGit:
-		return
 	default:
 		m.activityList.SetHeading("Explorer")
 		m.activityList.SetIcon(activitybar.ViewFiles.Icon(nerd))
@@ -252,10 +242,7 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 	if m.handleTerminalAction(*action) {
 		return nil
 	}
-	if cmd, handled := m.handleSourceControlAction(*action); handled {
-		return cmd
-	}
-	if cmd, handled := m.handleGitReviewAction(*action); handled {
+	if cmd, handled := m.handleGitPanelAction(*action); handled {
 		return cmd
 	}
 	if cmd, handled := m.handleLocalDiffAction(*action); handled {
@@ -371,7 +358,7 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		if !ok {
 			return nil
 		}
-		if payload.ID == activitylist.DividerID || payload.ID == shelltree.DividerID || payload.ID == sourcecontrol.DividerID {
+		if payload.ID == activitylist.DividerID || payload.ID == shelltree.DividerID {
 			m.setSidebarWidth(payload.First)
 			m.captureToolView()
 			m.toolLayoutVersion++

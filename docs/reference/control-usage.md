@@ -33,7 +33,8 @@ fill. The shared `ui.FormField` painter owns this rule for every consumer.
 | Agent question actions | native `ui.ActionBar` in `tui/screens/question` | same |
 | Tool confirmation / YOLO actions | native PanelDeck `ui.ActionBar` with typed quick keys and Escape actions | same |
 | Background command termination | One retained `ui.Button` per running row, with exact command identity; compact close label only when constrained. Opens passively; explicit interaction alone retains button focus. | same |
-| Footer workspace-panel controls | `tui/screens/shellfooter` | Contiguous theme-derived strip in order: `Problems`, `Notices`, `Terminals`, `Board`, `Memory`, `Workspace`. Board and Memory are workspace-wide and remain available without an active agent. The selected destination, actionable attention, Board, Memory and Workspace take priority when space is constrained; a reserved `More` target exposes every destination without clipped pills. Previous sessions are searchable date-grouped rows inside Workspace. |
+| Chat Latest | Exact-screen native `ui.Button` centered in the existing activity gap when scrolled up; materializes the tail and re-arms follow, without extra transcript height. | same |
+| Footer workspace-panel controls | `tui/screens/shellfooter` | Contiguous theme-derived strip in order: `Problems`, `Notices`, `Terminals`, `Git`, `Board`, `Memory`, `Workspace`. The Git pill carries no count; the changed-file count stays in the header Git identity. Board and Memory are workspace-wide and remain available without an active agent. The selected destination, actionable attention, Board, Memory and Workspace take priority when space is constrained; a reserved `More` target exposes every destination without clipped pills. Previous sessions are searchable date-grouped rows inside Workspace. |
 
 ## Collections
 
@@ -41,7 +42,8 @@ fill. The shared `ui.FormField` painter owns this rule for every consumer.
 |---------|--------|
 | Command palette list | sectioned VirtualList |
 | File tree | `ui.Tree` via `shelltree` |
-| Activity lists (Agents / Skills / MCP) | `ui.List` via `activitylist`; Source Control has its own grouped change list. Terminals live in the workspace dock/picker, never in the activity rail. |
+| Activity lists (Agents / Skills / MCP) | `ui.List` via `activitylist`. Terminals and Git live in the workspace dock, never in the activity rail. |
+| Git change list | `gitpanel` grouped list (Merge Conflicts / Staged / Changes) with section bulk actions and hover/selection inline row actions; `gitdiff.Document` for the preview and the main-area multi-file review (sticky headers, folded gaps, unified/split) |
 | Message list | ✅ `chatprojection.Renderer` export; `shellchat` paints message-level `ui.VirtualList`; all rows native `PaintLine` (markdown/thinking bridged at render time via `BridgeAnsiLine`); main `ScrollbarControl` |
 | Context menu | `ui/overlay.ContextMenu` / WindowFrame + List |
 | Tabs | `ui.Tabs` only for actual content/mode tabs — consumers include `shelltabs` (main tab bar), `ui/panel_deck.go` (session deck), and `termdock` (compact numbered terminal instances). Provider templates use a table and focused editor, not tab pages. Application/Workspace scope is a two-option, background-selected `ui.ToggleButton` switch aligned on the same row as Save/Cancel; one full-width separator sits directly above that footer row. It is not a tab strip. The workspace panel has no duplicate destination strip; the footer owns dock switching. |
@@ -50,6 +52,7 @@ fill. The shared `ui.FormField` painter owns this rule for every consumer.
 | Find in Files results | native `ui.VirtualList` + `ui.ScrollbarControl` |
 | Launcher workspaces | VirtualList name/path pairs with non-interactive separator rows in the right pane; dedicated-row FilterField, ScrollbarControl and ProgressRule; one shared row stride drives paint, scrolling and context menus |
 | LSP popup lists | List |
+| Current plan hover reader | Passive WindowFrame with VirtualList and ScrollbarControl over the plan owner's complete immutable step projection; no tool-JSON parsing or storage reads on paint | same |
 | Agent question choices | native Form select/multi-select collection | List-backed form collection |
 | Skills/MCP catalogs | store-style retained `VirtualList` cards with native inline Install/Manage buttons, `FilterField` search, explicit Installed-only `ToggleButton` and Source/Sort choice lists; detail `ui.Tabs`/`Form`/read-only `TextArea`, contained skill `Tree`, and bounded bottom actions; scope stays in the separate Application/Workspace footer switch |
 | Composer capability selection | `capabilitypicker.Screen` in WindowFrame, Skills/Tools/Resources/Prompts tabs, native FilterField/List/Form/TextArea; visible + Capability control and palette, explicit preview before staged context |
@@ -297,4 +300,4 @@ Source-control snapshots and mutations also run as `tea.Cmd`, with one
 30-second context deadline covering the mutation and its follow-up snapshot.
 A wedged Git subprocess therefore resolves back into the normal error state
 instead of leaving the panel loading indefinitely
-(`TestSourceControlMutationHasDeadline`).
+(`TestSourceControlMutationHasDeadline`, `git_panel_mutation_test.go`).

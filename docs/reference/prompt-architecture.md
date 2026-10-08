@@ -245,6 +245,30 @@ guard and its batch-deferral tests, not merely mention scope checking in a promp
 
 ## Compaction Continuity
 
+### Current plan lifecycle
+
+The shared root/child planning contract asks for plans only for three or more
+substantive outcomes, review against latest human intent, milestone updates before
+the next stage, and honest closure before the final answer. A supplied step array
+is the exact desired ordered snapshot: obsolete steps are omitted, not accumulated
+as cancelled entries. Immutable revision events retain prior snapshots.
+
+Both generic and native Codex `update_plan` expose `replace=true`: supply a new
+objective and complete nonempty steps (`steps` generically, `plan` natively) to
+atomically supersede the goal within the same plan ID. Replacement resets step
+provenance and records `plan_replaced`; validation, revision, storage or commit
+failure leaves the old goal, history and activity view unchanged. Generic updates
+require the current revision; native updates may omit it to use the current owner
+revision but reject any supplied stale revision. Native plans expose explicit
+active/paused/completed/cancelled lifecycle states and all generic step statuses.
+An empty native snapshot cancels existing work by default; it never implies
+success. Fully completed native step snapshots retain their declarative completion
+behavior. No runtime heuristic infers a new user goal or successful work.
+
+The plan store publishes full ordered immutable activity steps in addition to its
+existing current/next projections. Presentation and resumed context consume the
+committed current snapshot, never the historical cancelled-step graveyard.
+
 `prompt/` owns extraction wording and the checkpoint envelope; it does not own
 turn completion, plans, child execution or command lifetime. Session/file owners
 publish typed facts for the final code-authored handoff, refreshed after

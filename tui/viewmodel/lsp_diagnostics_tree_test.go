@@ -151,9 +151,7 @@ func newDiagnosticsTreeApp(t *testing.T, dir string) *App {
 	ws := workspace.NewWorkspace(dir, "test", "test", ttypes.Settings{}, stubLogger{})
 	app := NewApp(ws, nil)
 	t.Cleanup(func() {
-		if app.Tree != nil && app.Tree.Model != nil {
-			app.Tree.Model.StopWatcher()
-		}
+		app.StopAsyncIO()
 		app.StopLSP()
 		ws.Close()
 	})

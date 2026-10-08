@@ -170,13 +170,18 @@ func TestRecoveryRealComposerRetryClickAndAutomaticContinuation(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	for _, failure := range []int{http.StatusUnauthorized, http.StatusServiceUnavailable, http.StatusRequestTimeout} {
+	for _, failure := range []int{http.StatusUnauthorized, http.StatusServiceUnavailable, http.StatusRequestTimeout, http.StatusOK} {
 		t.Run(http.StatusText(failure), func(t *testing.T) {
 			var requests atomic.Int32
 			finish := make(chan struct{})
 			defer close(finish)
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				if requests.Add(1) == 1 {
+					if failure == http.StatusOK {
+						w.Header().Set("Content-Type", "text/event-stream")
+						_, _ = fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"Accepted original fragment\"}}]}\n\ndata: {\"error\":{\"type\":\"invalid_request_error\",\"message\":\"stream error: stream disconnected before completion: stream closed before response.completed\"}}\n\n")
+						return
+					}
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(failure)
 					if failure == http.StatusRequestTimeout {

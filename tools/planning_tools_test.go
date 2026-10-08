@@ -28,7 +28,8 @@ func TestPlanningToolSurfaceIsCanonicalOnly(t *testing.T) {
 
 func TestUpdatePlanSchemaRequiresOnlyPlanIDAtTransportBoundary(t *testing.T) {
 	var schema struct {
-		Required []string `json:"required"`
+		Required   []string                   `json:"required"`
+		Properties map[string]json.RawMessage `json:"properties"`
 	}
 	for _, tool := range AgentTools {
 		if tool.Function.Name != "update_plan" {
@@ -39,6 +40,9 @@ func TestUpdatePlanSchemaRequiresOnlyPlanIDAtTransportBoundary(t *testing.T) {
 		}
 		if len(schema.Required) != 1 || schema.Required[0] != "plan_id" {
 			t.Fatalf("update_plan transport required fields = %v", schema.Required)
+		}
+		if !strings.Contains(string(schema.Properties["replace"]), `"boolean"`) || strings.Contains(tool.Function.Description, "retain every prior step") || !strings.Contains(tool.Function.Description, "omit obsolete steps") {
+			t.Fatal("replacement/clean snapshot interface missing")
 		}
 		return
 	}

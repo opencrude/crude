@@ -109,6 +109,9 @@ func defaultWorkspacePanelHeight(panelID string) int {
 	if panelID == termdock.PanelMemory || panelID == termdock.PanelBoard {
 		return 20
 	}
+	if panelID == termdock.PanelGit {
+		return defaultGitPanelHeight
+	}
 	return defaultTermDockHeight
 }
 

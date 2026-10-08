@@ -26,6 +26,10 @@ type CodexStandard struct {
 	OpenAIResponsesStandard
 }
 
+func (s *CodexStandard) NewStreamDecoder() StreamDecoder {
+	return &streamErrorDecoder{protocol: s.Info().ID, inner: &openAIResponsesStreamDecoder{seenProviderItems: make(map[string]struct{})}}
+}
+
 func (s *CodexStandard) RequestExtras(modelID, thinkingEffort string, settings ProtocolSettings) map[string]any {
 	extras := s.OpenAIResponsesStandard.RequestExtras(modelID, thinkingEffort, settings)
 	extras["store"] = false

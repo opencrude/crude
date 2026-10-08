@@ -226,8 +226,8 @@ func (m *App) themeConsumers() []themeConsumer {
 				if m.activityList != nil {
 					m.activityList.SetTheme(th)
 				}
-				if m.sourceControl != nil {
-					m.sourceControl.SetTheme(th)
+				if m.gitPanel != nil {
+					m.gitPanel.SetTheme(th)
 				}
 				for _, s := range m.termScreens {
 					if s != nil {
@@ -360,8 +360,8 @@ func (m *App) themeConsumers() []themeConsumer {
 		{
 			id: themeConsumerComparisons,
 			apply: func(th *theme.Theme) {
-				if m.gitReview != nil {
-					m.gitReview.SetTokens(ui.NewTokenSet(th))
+				for _, view := range m.gitReviews {
+					view.screen.SetTheme(th)
 				}
 				for _, view := range m.localDiffs {
 					view.screen.SetTheme(th)

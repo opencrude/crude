@@ -19,7 +19,7 @@ func TestSourceControlMutationHasDeadline(t *testing.T) {
 	started := time.Now()
 	cmd := app.sourceControlMutation(
 		"unreachable",
-		false,
+		nil,
 		func(ctx context.Context, _ *workspace.GitService) error {
 			<-ctx.Done()
 			return ctx.Err()
