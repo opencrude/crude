@@ -40,7 +40,6 @@ func TestThinkingPaneShowsScrollbarOnFirstFrame(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 80
 	app.height = 24
-	app.agentChatScroll = make(map[string]agentMainChatScrollSnapshot)
 	app.AddOrchestrator(
 		"probe-agent")
 
@@ -77,7 +76,6 @@ func TestRepeatedThinkingBlocksEachKeepTheirScrollbar(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 80
 	app.height = 24
-	app.agentChatScroll = make(map[string]agentMainChatScrollSnapshot)
 	app.AddOrchestrator(
 		"repeat-agent")
 
@@ -102,7 +100,7 @@ func TestRepeatedThinkingBlocksEachKeepTheirScrollbar(t *testing.T) {
 
 		app.paintShellFrame()
 		sp := app.PaneMgr.Get(paneID)
-		gutter := app.subPaneProjections.PaneGutterState(paneID, sp)
+		gutter := app.subPaneProjections.ForOwner(app.AgentMgr.ActiveID()).PaneGutterState(paneID, sp)
 		if !gutter.Visible || gutter.Scroll == nil || gutter.Scroll.MaxOffset() <= 0 {
 			t.Fatalf("cycle %d pane %q lacks an overflowing scrollbar: %+v", cycle, paneID, gutter)
 		}
@@ -140,7 +138,6 @@ func TestThinkingScrollbarPaintsOnFirstFrameAfterReturningToActivePane(t *testin
 	app := newFullTestApp(t)
 	app.width = 80
 	app.height = 24
-	app.agentChatScroll = make(map[string]agentMainChatScrollSnapshot)
 	app.AddOrchestrator(
 		"scrolled-agent")
 

@@ -762,6 +762,7 @@ func (m *App) StopAsyncIO() {
 		m.overlayHost.Close(ui.OverlayCapabilityPicker)
 	}
 	m.cancelCapabilityOperations()
+	m.cancelLocalDiffs()
 	m.asyncIOStopped.Store(true)
 	state := m.asyncIO.Swap(nil)
 	if state == nil {

@@ -514,6 +514,9 @@ func (m *App) cycleNextThemePreset() {
 }
 
 func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
+	if cmd, handled := m.handleMainPaneCommand(cmdID); handled {
+		return cmd
+	}
 	var cmds []tea.Cmd
 
 	switch cmdID {
@@ -641,8 +644,11 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		if ed := m.EditorState.Editor; ed != nil {
 			m.inspectEditorChange(ed, ed.CursorLine())
 		}
-	case "editor.compareDisk":
+	case "editor.compareDisk", "editor.compareSaved":
 		if ed := m.EditorState.Editor; ed != nil && ed.IsOpen() {
+			if cmdID == "editor.compareSaved" {
+				return m.openLocalDiff(ed, localDiffSaved)
+			}
 			return m.compareEditorWithDisk(ed)
 		}
 	case "editor.change.next":
@@ -653,6 +659,9 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		m.setWorkspaceAutosave(cmdID == "editor.autosave.enable")
 
 	case "file.close":
+		if m.isComparisonActive() {
+			return m.handleAgentTabClose(m.Win.ActiveIndex())
+		}
 		m.closeEditorTab()
 
 	case "file.revealInTree":

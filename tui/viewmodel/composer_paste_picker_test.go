@@ -14,6 +14,17 @@ import (
 	"crude/workspace"
 )
 
+// activatePasteSession gives paste journeys a real selected agent/window tab.
+func activatePasteSession(app *App, sess *workspace.Session) {
+	if app.SessionsByAgent == nil {
+		app.SessionsByAgent = make(map[string]*workspace.Session)
+	}
+	app.SessionsByAgent[sess.SessionID] = sess
+	app.ActiveSession = sess
+	app.AddOrchestrator(sess.SessionID)
+	app.Input.SetReferenceStore(sess.RefStore)
+}
+
 // TestComposerCtrlVPastesFromSystemClipboard guards the composer paste fix:
 // Ctrl+V and Ctrl+Shift+V must enqueue an image-first system-clipboard read.
 // Bracketed paste cannot carry images (terminals only wrap text), which is why
@@ -21,6 +32,7 @@ import (
 func TestComposerCtrlVPastesFromSystemClipboard(t *testing.T) {
 	app := newFullTestApp(t)
 	app.ActiveSession = workspace.NewSession("paste-session", t.TempDir(), nil, stubLogger{})
+	activatePasteSession(app, app.ActiveSession)
 	app.Input.SetReferenceStore(app.ActiveSession.RefStore)
 
 	for _, key := range []string{"ctrl+v", "ctrl+shift+v"} {
@@ -53,8 +65,8 @@ func TestComposerCtrlVPastesFromSystemClipboard(t *testing.T) {
 func TestComposerEmptyTerminalPasteAttachesClipboardImage(t *testing.T) {
 	app := newFullTestApp(t)
 	app.launcherScreen = nil
-	app.AgentMgr.AddOrchestrator("terminal-image", &workspace.AgentState{})
 	app.ActiveSession = workspace.NewSession("terminal-image", t.TempDir(), nil, stubLogger{})
+	activatePasteSession(app, app.ActiveSession)
 	app.Input.SetReferenceStore(app.ActiveSession.RefStore)
 	app.Input.SetInput("keep my draft ")
 	var encoded bytes.Buffer
@@ -103,6 +115,7 @@ func TestComposerEmptyTerminalPasteWithoutImageIsSilent(t *testing.T) {
 	app := newFullTestApp(t)
 	app.launcherScreen = nil
 	app.ActiveSession = workspace.NewSession("empty-paste", t.TempDir(), nil, stubLogger{})
+	activatePasteSession(app, app.ActiveSession)
 	app.Input.SetInput("unchanged draft")
 	restore := installAsyncClipboardBackendForTest(app, clipboardAsyncBackend{
 		read: func(format clipboard.Format) []byte {
@@ -142,6 +155,9 @@ func TestTerminalPasteOnlyComposerCanReadClipboardImage(t *testing.T) {
 				app = newFullTestApp(t)
 			}
 			app.ActiveSession = workspace.NewSession("owned-paste", t.TempDir(), nil, stubLogger{})
+			if owner != "launcher" {
+				activatePasteSession(app, app.ActiveSession)
+			}
 			app.Input.SetInput("unchanged draft")
 			message := tea.PasteMsg{}
 			if owner != "launcher" {
@@ -154,13 +170,11 @@ func TestTerminalPasteOnlyComposerCanReadClipboardImage(t *testing.T) {
 				app.Tree.Visible = true
 				app.setFocusTree()
 			case "editor":
-				app.EditorState.Editor = editableClipboardFixture(t, app, "paste.go")
-				app.EditorState.ActiveView = "paste.go"
+				openTestEditor(t, app)
 			case "tab bar":
 				app.FocusStack.Push(FocusTabBar)
 			case "popup":
-				app.EditorState.Editor = editableClipboardFixture(t, app, "paste.go")
-				app.EditorState.ActiveView = "paste.go"
+				openTestEditor(t, app)
 				app.openFindReplace(false)
 			case "no session":
 				app.ActiveSession = nil
@@ -189,7 +203,7 @@ func TestComposerEmptyTerminalPasteKeepsInitiatingSession(t *testing.T) {
 	app.launcherScreen = nil
 	first := workspace.NewSession("first-paste", t.TempDir(), nil, stubLogger{})
 	second := workspace.NewSession("second-paste", t.TempDir(), nil, stubLogger{})
-	app.ActiveSession = first
+	activatePasteSession(app, first)
 	restore := installAsyncClipboardBackendForTest(app, clipboardAsyncBackend{
 		read:      func(clipboard.Format) []byte { return []byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR") },
 		writeText: func(string) error { return nil },
@@ -210,6 +224,7 @@ func TestComposerEmptyTerminalPasteKeepsInitiatingSession(t *testing.T) {
 func TestBlockingDeckOwnsEmptyTerminalPaste(t *testing.T) {
 	app := newFullTestApp(t)
 	app.ActiveSession = workspace.NewSession("blocked-paste", t.TempDir(), nil, stubLogger{})
+	activatePasteSession(app, app.ActiveSession)
 	app.launcherScreen = nil
 	app.Input.SetInput("unchanged draft")
 	projection := app.sessionProjections.Get(app.ActiveSession)
@@ -239,7 +254,7 @@ func TestFilePickerKeepsComposerMounted(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 100
 	app.height = 30
-	app.launcherScreen = nil
+	activatePasteSession(app, workspace.NewSession("picker-session", t.TempDir(), nil, stubLogger{}))
 
 	app.OverlayState.Set(workspace.ModeFilePicker)
 	if lay := app.computeContentLayout(); !lay.ShowMainInput {

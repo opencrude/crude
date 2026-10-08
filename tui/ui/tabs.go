@@ -42,6 +42,13 @@ type TabItem struct {
 	Attention    bool
 }
 
+// TabDrag identifies a dragged tab and the current screen-coordinate pointer.
+// Tabs emits tabs.drag and tabs.drop without changing tab order or ownership.
+type TabDrag struct {
+	ID   string
+	X, Y int
+}
+
 type tabRange struct {
 	// start/end bound the tab's cell: hover fill, hit area, and active
 	// underline. labelStart is where the label content is drawn, which is the
@@ -63,23 +70,27 @@ type tabRange struct {
 // ActionBar consumers do with their own rules.
 type Tabs struct {
 	Base
-	items         []TabItem
-	active        int
-	hover         int
-	tokens        *TokenSet
-	ranges        []tabRange
-	chrome        TabsChrome
-	barFocused    bool
-	scroll        int // first visible tab index when the strip overflows past min widths
-	ruleBleed     bool
-	bleedX        int
-	bleedW        int
-	labelInset    int
-	manualScroll  bool
-	compact       bool
-	scrollMax     int
-	scrollButtons [2]Rect
-	scrollHover   int
+	items          []TabItem
+	active         int
+	hover          int
+	tokens         *TokenSet
+	ranges         []tabRange
+	chrome         TabsChrome
+	barFocused     bool
+	scroll         int // first visible tab index when the strip overflows past min widths
+	ruleBleed      bool
+	bleedX         int
+	bleedW         int
+	labelInset     int
+	manualScroll   bool
+	compact        bool
+	scrollMax      int
+	scrollButtons  [2]Rect
+	scrollHover    int
+	draggable      bool
+	pressID        string
+	pressX, pressY int
+	dragging       bool
 }
 
 func NewTabs(id ComponentID, tokens *TokenSet) *Tabs {
@@ -87,6 +98,40 @@ func NewTabs(id ComponentID, tokens *TokenSet) *Tabs {
 }
 
 func (t *Tabs) SetTokens(tokens *TokenSet) { t.tokens = tokens }
+
+// SetDraggable opts into pointer drag actions. Other consumers remain click-only.
+func (t *Tabs) SetDraggable(v bool) {
+	t.draggable = v
+	if !v {
+		t.CancelPointerCapture()
+	}
+}
+
+// Dragging reports whether the pressed tab has crossed the drag threshold.
+func (t *Tabs) Dragging() bool { return t.dragging }
+
+// CancelPointerCapture clears the gesture without changing selection or order.
+func (t *Tabs) CancelPointerCapture() {
+	t.pressID, t.dragging = "", false
+}
+
+// LabelRowEnd returns the end of painted labels and overflow controls, in local
+// columns. A host can place a trailing action here when there is room.
+func (t *Tabs) LabelRowEnd() int {
+	if t.scrollMax > 0 {
+		return max(0, t.Bounds().W)
+	}
+	end := 0
+	for _, r := range t.ranges {
+		end = max(end, r.end)
+	}
+	for _, r := range t.scrollButtons {
+		if !r.Empty() {
+			end = max(end, r.X+r.W)
+		}
+	}
+	return end
+}
 
 // SetChrome selects the strip's background palette (shell or popup).
 func (t *Tabs) SetChrome(chrome TabsChrome) { t.chrome = chrome }
@@ -179,6 +224,18 @@ func (t *Tabs) SetItems(items []TabItem, activeID string) {
 		anchor = t.items[t.scroll].ID
 	}
 	t.items = append(t.items[:0], items...)
+	if t.pressID != "" {
+		found := false
+		for _, item := range t.items {
+			if item.ID == t.pressID {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.CancelPointerCapture()
+		}
+	}
 	t.active = -1
 	for i := range t.items {
 		if t.items[i].ID == activeID {
@@ -418,7 +475,7 @@ func (t *Tabs) focused(ctx PaintContext) bool { return t.barFocused || ctx.Focus
 
 func (t *Tabs) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintContext) {
 	r := t.Bounds()
-	if r.Empty() {
+	if r.H <= 0 || (r.W <= 0 && (!t.ruleBleed || t.bleedW <= 0)) {
 		return
 	}
 	bg := t.color(ColorBg)
@@ -469,7 +526,7 @@ func (t *Tabs) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 			close = " ×"
 		}
 		closeW := rendering.VisibleWidth(close)
-		label = rendering.TruncateVisual(label, max(1, hit.end-hit.labelStart-closeW), "…")
+		label = rendering.TruncateVisual(label, max(0, hit.end-hit.labelStart-closeW), "…")
 		labelW := rendering.VisibleWidth(label)
 
 		FillRect(buf, 0, 0, Rect{X: originX + r.X + hit.start, Y: originY + r.Y, W: w, H: 1}, cell.BlankCell(itemBG))
@@ -478,16 +535,9 @@ func (t *Tabs) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCon
 		// while its label keeps the bar's leading inset.
 		x := originX + r.X + hit.labelStart
 		y := originY + r.Y
-		buf.WriteString(x, y, label, itemFG, itemBG, attr)
-		x += labelW
-		pad := (originX + r.X + hit.end) - x - closeW
-		if pad > 0 {
-			buf.WriteString(x, y, strings.Repeat(" ", pad), itemFG, itemBG, attr)
-			x += pad
-		}
-		if close != "" {
-			buf.WriteString(x, y, close, itemFG, itemBG, attr)
-		}
+		pad := max(0, hit.end-hit.labelStart-labelW-closeW)
+		text := label + strings.Repeat(" ", pad) + close
+		buf.WriteString(x, y, rendering.TruncateVisual(text, hit.end-hit.labelStart, ""), itemFG, itemBG, attr)
 		// The active tab owns its slice of the baseline: same slot as the
 		// rule, accent ink, so the selected mode is unambiguous even when the
 		// strip itself is unfocused.
@@ -544,7 +594,17 @@ func (t *Tabs) Handle(ctx EventContext, evt Event) EventResult {
 		}
 		return EventResult{Handled: true, Action: &Action{ID: "tabs.activate", Payload: t.ActiveID()}, Invalidate: InvalidateLayout | InvalidatePaint}
 	case EventMouseMotion:
+		if t.pressID != "" {
+			dx, dy := ctx.ScreenX-t.pressX, ctx.ScreenY-t.pressY
+			if t.dragging || dx >= 2 || dx <= -2 || dy >= 1 || dy <= -1 {
+				t.dragging = true
+				return EventResult{Handled: true, Action: &Action{ID: "tabs.drag", Payload: TabDrag{ID: t.pressID, X: ctx.ScreenX, Y: ctx.ScreenY}}, Invalidate: InvalidatePaint}
+			}
+		}
 		index, _ := t.hit(ctx.LocalX)
+		if ctx.LocalY != 0 {
+			index = -1
+		}
 		scrollHover := -1
 		for button, rect := range t.scrollButtons {
 			if rect.Contains(ctx.LocalX, ctx.LocalY) {
@@ -561,6 +621,7 @@ func (t *Tabs) Handle(ctx EventContext, evt Event) EventResult {
 		if evt.MouseClick.Button != tea.MouseLeft {
 			return EventResult{}
 		}
+		t.CancelPointerCapture()
 		for index, rect := range t.scrollButtons {
 			if rect.Contains(ctx.LocalX, ctx.LocalY) {
 				t.ScrollBy(2*index - 1)
@@ -574,12 +635,24 @@ func (t *Tabs) Handle(ctx EventContext, evt Event) EventResult {
 		if closeHit {
 			return EventResult{Handled: true, Action: &Action{ID: "tabs.close", Payload: t.items[index].ID}, Invalidate: InvalidateLayout | InvalidatePaint}
 		}
+		if t.draggable && ctx.LocalY == 0 {
+			t.pressID, t.pressX, t.pressY = t.items[index].ID, ctx.ScreenX, ctx.ScreenY
+		}
 		t.active = index
 		t.manualScroll = false
 		if r := t.Bounds(); !r.Empty() {
 			t.ranges = t.computeRanges(r.W)
 		}
 		return EventResult{Handled: true, Action: &Action{ID: "tabs.activate", Payload: t.items[index].ID}, Invalidate: InvalidateLayout | InvalidateFocus | InvalidatePaint}
+	case EventMouseRelease:
+		if evt.MouseRelease.Button == tea.MouseLeft && t.pressID != "" {
+			id, dragged := t.pressID, t.dragging
+			t.CancelPointerCapture()
+			if dragged {
+				return EventResult{Handled: true, Action: &Action{ID: "tabs.drop", Payload: TabDrag{ID: id, X: ctx.ScreenX, Y: ctx.ScreenY}}, Invalidate: InvalidatePaint}
+			}
+			return EventResult{Handled: true}
+		}
 	case EventMouseWheel:
 		delta := 0
 		switch evt.MouseWheel.Button {

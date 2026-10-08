@@ -342,8 +342,8 @@ func TestTextArea_PaintSelectionAndAtomicChipStyles(t *testing.T) {
 	if !buf.Get(chipStart, 0).Attr.Has(cell.AttrBold) {
 		t.Fatalf("chip attr=%v missing bold", buf.Get(chipStart, 0).Attr)
 	}
-	if !buf.Get(chipStart, 0).BG.Equal(tokens.Color(ColorSelection)) {
-		t.Fatalf("selected chip bg=%v want %v", buf.Get(chipStart, 0).BG, tokens.Color(ColorSelection))
+	if !buf.Get(chipStart, 0).BG.Equal(tokens.Color(ColorTextSelection)) {
+		t.Fatalf("selected chip bg=%v want %v", buf.Get(chipStart, 0).BG, tokens.Color(ColorTextSelection))
 	}
 	// The whole token paints as a filled pill (selection overlap or not);
 	// plain text AFTER the chip must stay on the default background.

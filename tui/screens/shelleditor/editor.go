@@ -39,11 +39,16 @@ type Screen struct {
 
 // New creates a DocumentEditor shell screen.
 func New(th *theme.Theme) *Screen {
+	return NewWithID(th, ScreenID)
+}
+
+// NewWithID gives a retained document viewport its own shell identity.
+func NewWithID(th *theme.Theme, id ui.ComponentID) *Screen {
 	if th == nil {
 		th = theme.DefaultDark()
 	}
 	return &Screen{
-		Base:   ui.NewBase(ScreenID),
+		Base:   ui.NewBase(id),
 		th:     th,
 		tokens: ui.NewTokenSet(th),
 	}

@@ -8,7 +8,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/cell"
-	"crude/tui/screens/shelltabs"
 	"crude/tui/screens/shelltree"
 	"crude/tui/ui"
 	"crude/workspace"
@@ -105,7 +104,7 @@ func TestTabHoverDoesNotMoveKeyboardFocus(t *testing.T) {
 	openEditorTabs(t, app, "main.go", "notes.txt")
 	_ = app.View()
 	before := app.rootHost.Focused()
-	rect, ok := app.rootHost.ScreenRect(shelltabs.TabsID)
+	rect, ok := app.rootHost.ScreenRect(app.tabScreen.TabsControl().ID())
 	if !ok {
 		t.Fatal("tab strip is not mounted")
 	}
@@ -126,7 +125,7 @@ func TestKeyboardTabNavigationRetainsFocusUntilCommitted(t *testing.T) {
 	for _, key := range []rune{tea.KeyLeft, tea.KeyRight, tea.KeyHome, tea.KeyEnd} {
 		_, _ = app.Update(tea.KeyPressMsg{Code: key})
 		_ = app.View()
-		if app.focusTarget() != FocusTabBar || app.rootHost.Focused() != shelltabs.TabsID {
+		if app.focusTarget() != FocusTabBar || app.rootHost.Focused() != app.tabScreen.TabsControl().ID() {
 			t.Fatal("keyboard browsing lost deliberate tab-strip focus")
 		}
 		assertMainTabBaseline(t, app, true)
@@ -163,7 +162,7 @@ func TestTabContextCloseReleasesStripFocus(t *testing.T) {
 			}
 			app.setFocusTabBar()
 			_ = app.View()
-			rect, _ := app.rootHost.ScreenRect(shelltabs.TabsID)
+			rect, _ := app.rootHost.ScreenRect(app.tabScreen.TabsControl().ID())
 			index := app.Win.IndexOf(app.Win.TabByTitle(target).ID)
 			x := -1
 			for local := 0; local < rect.W; local++ {
@@ -228,7 +227,7 @@ func TestTabOverflowBrowsingDoesNotRetainStripFocus(t *testing.T) {
 	}
 	_ = app.View()
 	selected := app.Win.ActiveTab().ID
-	rect, _ := app.rootHost.ScreenRect(shelltabs.TabsID)
+	rect, _ := app.rootHost.ScreenRect(app.tabScreen.TabsControl().ID())
 	left := -1
 	for column := rect.X; column < rect.X+rect.W; column++ {
 		if app.mainSurf.Buffer().Get(column, rect.Y).Char == '‹' {
@@ -279,7 +278,7 @@ func TestBackgroundTabChangesPreserveExplicitFocus(t *testing.T) {
 			if app.focusTarget() != focus {
 				t.Fatal("background tab lifecycle stole explicitly chosen focus")
 			}
-			want := shelltabs.TabsID
+			want := app.tabScreen.TabsControl().ID()
 			if focus == FocusTree {
 				want = shelltree.TreeID
 			}
@@ -346,7 +345,7 @@ func clickMainTab(t *testing.T, app *App, title string, closeTab bool) {
 	t.Helper()
 	app.forceFrame()
 	_ = app.View()
-	rect, ok := app.rootHost.ScreenRect(shelltabs.TabsID)
+	rect, ok := app.rootHost.ScreenRect(app.tabScreen.TabsControl().ID())
 	if !ok {
 		t.Fatal("tab strip is not mounted")
 	}
@@ -368,7 +367,7 @@ func clickMainTab(t *testing.T, app *App, title string, closeTab bool) {
 	_, _ = app.Update(tea.MouseClickMsg{X: x, Y: rect.Y, Button: tea.MouseLeft})
 	// The immediate frame and pointer release must not revive strip focus.
 	_ = app.View()
-	if app.FocusStack.Top() == FocusTabBar || app.rootHost.Focused() == shelltabs.TabsID {
+	if app.FocusStack.Top() == FocusTabBar || app.rootHost.Focused() == app.tabScreen.TabsControl().ID() {
 		t.Fatal("the immediate tab-action frame retained strip focus")
 	}
 	if app.tabBarVisible() {
@@ -388,7 +387,7 @@ func assertMainTabContentFocus(t *testing.T, app *App, want FocusTarget) {
 	for frame := 0; frame < 2; frame++ {
 		app.forceFrame()
 		_ = app.View()
-		if app.rootHost.Focused() == shelltabs.TabsID {
+		if app.rootHost.Focused() == app.tabScreen.TabsControl().ID() {
 			t.Fatal("tab operation retained Host strip focus")
 		}
 		got := app.rootHost.Focused()
@@ -406,7 +405,7 @@ func assertMainTabContentFocus(t *testing.T, app *App, want FocusTarget) {
 
 func assertMainTabBaseline(t *testing.T, app *App, focused bool) {
 	t.Helper()
-	rect, ok := app.rootHost.ScreenRect(shelltabs.TabsID)
+	rect, ok := app.rootHost.ScreenRect(app.tabScreen.ID())
 	if !ok || rect.H < ui.StripHeight {
 		t.Fatal("tab baseline is not mounted")
 	}

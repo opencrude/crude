@@ -65,3 +65,27 @@ func TestSearchProjectHonorsCancellation(t *testing.T) {
 		t.Fatal("expected cancellation error")
 	}
 }
+
+func TestSearchProjectRejectsAccidentalSubsequence(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "main.txt"), []byte("nobody is ever expected to deliver a lovely example"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	matches, err := SearchProject(context.Background(), root, "needle", ProjectSearchOptions{})
+	if err != nil || len(matches) != 0 {
+		t.Fatalf("junk query matches=%+v err=%v", matches, err)
+	}
+}
+
+func TestSearchRelevanceRetainsUsefulAbbreviations(t *testing.T) {
+	for _, tc := range []struct{ text, query string }{{"HandleWorkspaceEvent", "hwe"}, {"workspace_registry.md", "wsreg"}, {"tui/editor/render.go", "ter"}, {"needle here", "needle"}, {"界文件.go", "界文件"}} {
+		if _, _, ok := fuzzyRuneMatch(tc.text, tc.query, false); !ok {
+			t.Fatalf("useful abbreviation rejected: %q / %q", tc.text, tc.query)
+		}
+	}
+	for _, tc := range []struct{ text, query string }{{"nobody is ever expected to deliver a lovely example", "needle"}, {"abcdefghijklmnopqrstuvwxyzz", "acegkqz"}} {
+		if _, _, ok := fuzzyRuneMatch(tc.text, tc.query, false); ok {
+			t.Fatalf("junk subsequence accepted: %q / %q", tc.text, tc.query)
+		}
+	}
+}

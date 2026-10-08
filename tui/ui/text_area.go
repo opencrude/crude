@@ -579,7 +579,7 @@ func (t *TextArea) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pain
 	}
 	selBG := bg
 	if t.tokens != nil {
-		selBG = t.tokens.Color(ColorSelection)
+		selBG = t.tokens.Color(ColorTextSelection)
 	}
 
 	lines := t.edit.Lines()
@@ -685,6 +685,9 @@ func (t *TextArea) paintSegment(buf *surface.CellBuffer, x, y, width int, line [
 		cellFG, cellBG := fg, bg
 		if inSel {
 			cellBG = selBG
+			if t.tokens != nil {
+				cellFG, cellBG = t.tokens.TextSelectionColors(cellFG)
+			}
 		}
 		attr := cell.Attrs(0)
 		if cursorVisible && focused && isCursorSeg && cursorPos >= flatPos && cursorPos < flatPos+clusterLen {
@@ -745,6 +748,9 @@ func (t *TextArea) paintAtomicChip(buf *surface.CellBuffer, x, y int, label stri
 		if selStart >= 0 && selStart != selEnd &&
 			ar.Start+pos < selEnd && ar.Start+pos+clusterLen > selStart {
 			cellBG = selBG
+			if t.tokens != nil {
+				cellFG, cellBG = t.tokens.TextSelectionColors(cellFG)
+			}
 		}
 		attr := cell.AttrBold
 		if cursorVisible && cursorInChip &&

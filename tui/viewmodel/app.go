@@ -150,9 +150,12 @@ type App struct {
 	// surfaces are deleted; the per-session PanelDeck Hosts survive inside
 	// shellRoot's deckMount adapter. Terminals use a workspace termDock slot,
 	// not the session PanelDeck.
-	mainSurf *surface.Surface // full-screen shell surface (replaces all layer surfaces)
-	shell    *shellRoot
-	rootHost *ui.Host
+	mainSurf        *surface.Surface // full-screen shell surface (replaces all layer surfaces)
+	shell           *shellRoot
+	rootHost        *ui.Host
+	mainPanes       *mainPaneLayout
+	paneFilePicker  *paneFilePickerOwner
+	paneFileOpenSeq uint64
 	// Rectangles computed by computeContentLayout each frame; they drive
 	// shell slot geometry AND viewmodel policy (mouse region classification
 	// for editor/divider/status and focus-stack updates).
@@ -189,14 +192,11 @@ type App struct {
 	suppressTermClose    string
 	inputScreen          *shellinput.Screen
 	chatScreen           *shellchat.Screen
-	agentChatScroll      map[string]agentMainChatScrollSnapshot
 	thinkingPaneSequence uint64
 	// thinkingLatch records sessions that have already promoted a reasoning
 	// block. Once latched, every later thinking block in that session opens in
 	// its own pane instead of restarting inline. A settings change clears it.
 	thinkingLatch           map[*workspace.Session]bool
-	chatScrollAgent         string
-	chatScrollNeedsRestore  bool
 	editorScreen            *shelleditor.Screen
 	launcherScreen          *launcher.Screen
 	historyScreen           *historyscreen.Screen
@@ -211,6 +211,7 @@ type App struct {
 	gitReview               *gitreview.Screen
 	gitReviewReturn         window.TabID
 	gitReviewSequence       uint64
+	localDiffs              map[window.TabID]*localDiffView
 	workspacePanelHeights   map[string]int
 	toolLayout              workspace.ToolLayout
 	toolLayoutVersion       uint64
@@ -290,8 +291,7 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	// The root tree: one Host mounts the whole shell and paints into one
 	// full-screen surface. The compositor renders this single surface under
 	// the floating windows (see View()).
-	deck := newDeckMount(nil)
-	shell := newShellRoot(headerScreen, footerScreen, tabScreen, activityBar, sidebarScreen, chatScreen, inputScreen, editorScreen, launcherScreen, deck, termDock)
+	shell := newShellRoot(headerScreen, footerScreen, activityBar, sidebarScreen, termDock)
 	rootHost := ui.NewHost(th, shell)
 	launcherScreen.SetFocusHandler(rootHost.Focus)
 	sourceControl.SetFocusHandler(rootHost.Focus)
@@ -357,9 +357,7 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 		overlayHost:         overlay,
 		subPaneProjections:  subPaneProjections,
 		sessionProjections:  sessionProjections,
-		agentChatScroll:     make(map[string]agentMainChatScrollSnapshot),
 	}
-	deck.app = app
 	app.Feedback = newFeedbackSink(app)
 	app.initWorkspacePanels()
 	if app.sidebarScreen != nil {
@@ -597,6 +595,7 @@ func (m *App) openFilePickerWindow() {
 	)
 	wm.CenterOnScreen(win, m.width, m.height)
 	m.overlayHost.Open(ui.OverlayFilePicker, win, ui.ModalDialogPolicy(), func() {
+		m.paneFilePicker = nil
 		m.invalidatePathSearch(m.FilePicker)
 		m.invalidateDirectoryAsyncLoad(m.FilePicker)
 		m.FilePicker.Close()

@@ -4,6 +4,8 @@ package shelltabs
 import (
 	"fmt"
 
+	"crude/tui/cell"
+	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -38,25 +40,35 @@ type TabProjection struct {
 // underline, and the baseline all start on the same rail column.
 type Screen struct {
 	ui.Base
-	th     *theme.Theme
-	tokens *ui.TokenSet
-	tabs   *ui.Tabs
-	width  int
+	th         *theme.Theme
+	tokens     *ui.TokenSet
+	tabs       *ui.Tabs
+	width      int
+	newButton  *newSessionButton
+	newEnabled bool
+	barFocused bool
 }
 
 // New creates a shell tab bar screen.
 func New(th *theme.Theme) *Screen {
+	return NewWithID(th, ScreenID)
+}
+
+// NewWithID creates an independently mounted main tab strip.
+func NewWithID(th *theme.Theme, id ui.ComponentID) *Screen {
 	if th == nil {
 		th = theme.DefaultDark()
 	}
 	tokens := ui.NewTokenSet(th)
-	t := ui.NewTabs(TabsID, tokens)
+	t := ui.NewTabs(ui.NewID(id, "tabs"), tokens)
 	t.SetChrome(ui.TabsShell)
+	b := &newSessionButton{Button: ui.NewButton(ui.NewID(id, "new"), "+", "tabs.new"), tokens: tokens}
 	return &Screen{
-		Base:   ui.NewBase(ScreenID),
-		th:     th,
-		tokens: tokens,
-		tabs:   t,
+		Base:      ui.NewBase(id),
+		th:        th,
+		tokens:    tokens,
+		tabs:      t,
+		newButton: b,
 	}
 }
 
@@ -64,6 +76,7 @@ func New(th *theme.Theme) *Screen {
 func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	s.tokens = tokens
 	s.tabs.SetTokens(tokens)
+	s.newButton.SetTokens(tokens)
 }
 
 // SetTheme replaces the theme used for spacing and colors.
@@ -72,16 +85,30 @@ func (s *Screen) SetTheme(th *theme.Theme) {
 		return
 	}
 	s.th = th
-	s.tokens = ui.NewTokenSet(th)
-	s.tabs.SetTokens(s.tokens)
+	s.SetTokens(ui.NewTokenSet(th))
 	s.tabs.SetChrome(ui.TabsShell)
 }
 
 // TabsControl returns the underlying Tabs component.
 func (s *Screen) TabsControl() *ui.Tabs { return s.tabs }
 
+// SetDraggable opts this main strip into shared drag/drop gesture actions.
+func (s *Screen) SetDraggable(v bool) { s.tabs.SetDraggable(v) }
+
+// SetNewButton opts into the retained trailing New session control.
+func (s *Screen) SetNewButton(v bool) { s.newEnabled = v }
+
+// NewButtonBounds returns screen-local geometry, empty when not enabled.
+func (s *Screen) NewButtonBounds() ui.Rect {
+	if !s.newEnabled {
+		return ui.Rect{}
+	}
+	return s.newButton.Bounds()
+}
+
 // SetProjection updates tab items for the next paint.
 func (s *Screen) SetProjection(items []TabProjection, activeID string, hoverIndex int, barFocused bool) {
+	s.barFocused = barFocused
 	tabItems := make([]ui.TabItem, len(items))
 	for i, item := range items {
 		tabItems[i] = ui.TabItem{
@@ -94,6 +121,19 @@ func (s *Screen) SetProjection(items []TabProjection, activeID string, hoverInde
 	s.tabs.SetItems(tabItems, activeID)
 	s.tabs.SyncHover(hoverIndex)
 	s.tabs.SetBarFocused(barFocused)
+}
+
+// SetProjectionFromTabs projects a main-view group's independently selected tabs.
+func (s *Screen) SetProjectionFromTabs(tabs []window.Tab, active window.TabID, focused bool) {
+	items := make([]TabProjection, len(tabs))
+	for i, tab := range tabs {
+		label := tab.DisplayTitle
+		if label == "" {
+			label = tab.Title
+		}
+		items[i] = TabProjection{ID: TabIDString(tab.ID), Label: label, Closable: tab.Closable, Attention: tabAttention(tab)}
+	}
+	s.SetProjection(items, TabIDString(active), s.tabs.HoverIndex(), focused)
 }
 
 // SetProjectionFromWindow builds projections from window tab state.
@@ -138,7 +178,12 @@ func tabAttention(tab window.Tab) bool {
 	}
 }
 
-func (s *Screen) Children() []ui.Component { return []ui.Component{s.tabs} }
+func (s *Screen) Children() []ui.Component {
+	if s.newEnabled {
+		return []ui.Component{s.tabs, s.newButton}
+	}
+	return []ui.Component{s.tabs}
+}
 
 func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 	h := ui.StripHeight
@@ -150,22 +195,44 @@ func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 
 func (s *Screen) Layout(_ ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
-	if r.W > 0 {
-		s.width = r.W
-	}
+	s.width = max(0, r.W)
 	// The strip spans the whole content column so its baseline runs from the
 	// navigation rail to the right edge; only the labels take RailInset, which
 	// gives the first tab breathing room without moving the rule.
 	s.tabs.SetLabelInset(RailInset)
+	buttonW := 0
+	if s.newEnabled {
+		buttonW = min(s.width, rendering.VisibleWidth("  +  "))
+	}
+	tabW := s.width - buttonW
+	s.tabs.SetRuleFullBleed(s.newEnabled)
+	s.tabs.SetRuleBleed(0, s.width)
 	s.tabs.Layout(ui.LayoutContext{}, ui.Rect{
 		X: 0,
 		Y: 0,
-		W: max(0, r.W),
-		H: min(ui.StripHeight, max(1, r.H)),
+		W: tabW,
+		H: min(ui.StripHeight, max(0, r.H)),
 	})
+	// Content-sized tabs leave their action immediately after the last tab;
+	// overflowing tabs consume tabW, pinning the action to the trailing edge.
+	x := min(tabW, s.tabs.LabelRowEnd())
+	if s.newEnabled {
+		// Do not leave a tab hit target underneath a content-adjacent button.
+		bounds := s.tabs.Bounds()
+		bounds.W = x
+		s.tabs.Layout(ui.LayoutContext{}, bounds)
+	}
+	// Match the tabs' label band. The second row belongs exclusively to the
+	// strip baseline; filling it makes the action hang below the other tabs.
+	s.newButton.Layout(ui.LayoutContext{}, ui.Rect{X: x, W: buttonW, H: min(1, max(0, r.H))})
 }
 
-func (s *Screen) Handle(_ ui.EventContext, _ ui.Event) ui.EventResult { return ui.EventResult{} }
+func (s *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
+	if s.newEnabled && s.barFocused && evt.Kind == ui.EventKey && (evt.Key.String() == "+" || evt.Key.String() == "n") {
+		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "tabs.new"}}
+	}
+	return ui.EventResult{}
+}
 
 // Paint is intentionally empty: the strip control paints its own labels and
 // baseline (bleeding into the parent-published rule row), so the screen has no
@@ -174,10 +241,46 @@ func (s *Screen) Paint(*surface.CellBuffer, int, int, ui.PaintContext) {}
 
 func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
 	switch action.ID {
-	case "tabs.activate", "tabs.close", "tabs.enter":
+	case "tabs.activate", "tabs.close", "tabs.enter", "tabs.drag", "tabs.drop", "tabs.new":
 		return ui.EventResult{Handled: true, Action: &action}
 	}
 	return ui.EventResult{Action: &action}
+}
+
+// newSessionButton uses native Button activation and Host focus/hover, with
+// compact glyph-only chrome so even a one-column strip retains the action.
+type newSessionButton struct {
+	*ui.Button
+	tokens *ui.TokenSet
+}
+
+func (b *newSessionButton) SetTokens(tokens *ui.TokenSet) {
+	b.tokens = tokens
+	b.Button.SetTokens(tokens)
+}
+
+func (b *newSessionButton) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
+	r := b.Bounds()
+	if r.Empty() || b.tokens == nil {
+		return
+	}
+	// Pointer hover gets no treatment of its own: the strip is two rows of
+	// cells, so any fill either stops short of the bar's bottom rule or hangs
+	// past it. The glyph alone carries the action; keyboard focus still needs
+	// its accent chip to be locatable without a pointer.
+	fg, bg := b.tokens.Color(ui.ColorAccent), b.tokens.Color(ui.ColorBg)
+	if ctx.Focused {
+		bg = b.tokens.Color(ui.ColorAccent)
+		fg = cell.ContrastInk(bg)
+	}
+	// Fill only this action's label-row bounds. ui.Tabs is the sole owner of
+	// every baseline cell, including the rule beneath the action.
+	ui.FillRect(buf, ox, oy, r, cell.BlankCell(bg))
+	buf.WriteString(ox+r.X+(r.W-1)/2, oy+r.Y, "+", fg, bg, cell.AttrBold)
+}
+
+func (b *newSessionButton) Semantics() ui.Semantics {
+	return ui.Semantics{Role: ui.RoleButton, Label: "New session"}
 }
 
 // HitTest resolves screen-local X against the tabs control, translating

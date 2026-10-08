@@ -418,3 +418,93 @@ func subPanePlainContains(lines []chatprojection.SubPaneLine, sub string) bool {
 	}
 	return false
 }
+
+func TestSubPaneEmbeddingOwnersRetainIndependentPresentation(t *testing.T) {
+	app := newTestApp(t)
+	root := app.subPaneProjections
+	sp := app.PaneMgr.GetOrCreate("shared-child", workspace.PaneAgent, "child")
+	for i := 0; i < 8; i++ {
+		sp.Messages.AppendMessage(workspace.Message{
+			Role: ttypes.RoleTool, ToolName: "read_file", ToolArgs: string(rune('a'+i)) + ".go",
+			ToolStatus: "success", ToolPreviewPhase: "done",
+		})
+	}
+	canonical := root.Get(sp.ID, sp.Type)
+	left, right := root.ForOwner("left"), root.ForOwner("right")
+	if root.ForOwner("left") != left {
+		t.Fatal("embedding registry was not retained")
+	}
+	left.Render(sp.ID, sp, 30, 3, 0, true)
+	leftScroll := left.ScrollModel(sp.ID)
+	leftScroll.SetAutoScroll(false)
+	leftScroll.ScrollTo(0)
+	before := left.Render(sp.ID, sp, 30, 3, 0, true)
+	right.Render(sp.ID, sp, 70, 6, 0, true)
+	if left.ScrollModel(sp.ID) == right.ScrollModel(sp.ID) || left.GetExisting(sp.ID).renderer == canonical.renderer {
+		t.Fatal("embedding projection shares canonical or other owner's presentation")
+	}
+	if leftScroll.Viewport() != 2 || leftScroll.Offset() != 0 || left.GetExisting(sp.ID).compactCacheWidth != 30 {
+		t.Fatal("other owner overwrote left geometry, offset or cache")
+	}
+	if !subPanePlainContains(before, "Read a.go") || subPanePlainContains(before, "Read h.go") {
+		t.Fatalf("left scroll window incorrect: %+v", before)
+	}
+	if !subPanePlainContains(right.Render(sp.ID, sp, 70, 6, 0, true), "Read h.go") {
+		t.Fatal("right did not retain independent bottom window")
+	}
+	version := left.GetExisting(sp.ID).renderer.Version()
+	left.Render(sp.ID, sp, 30, 3, 0, true)
+	if left.GetExisting(sp.ID).renderer.Version() != version {
+		t.Fatal("unchanged source caused projection republish")
+	}
+	sp.Messages.AppendMessage(workspace.Message{Role: ttypes.RoleTool, ToolName: "read_file", ToolArgs: "new.go", ToolStatus: "success", ToolPreviewPhase: "done"})
+	if !subPanePlainContains(right.Render(sp.ID, sp, 70, 6, 0, true), "Read new.go") {
+		t.Fatal("canonical source append missing from embedding")
+	}
+	left.Render(sp.ID, sp, 30, 3, 0, true)
+	if leftScroll.Offset() != 0 || leftScroll.AutoScroll() {
+		t.Fatal("source append reset disarmed embedding scroll")
+	}
+	sp.Collapse()
+	right.Render(sp.ID, sp, 70, 6, 0, false)
+	if right.PaneGutterState(sp.ID, sp).Visible || !left.PaneGutterState(sp.ID, sp).Visible {
+		t.Fatal("one owner's disclosure changed another owner's gutter")
+	}
+	root.SetStreaming(sp.ID, true)
+	root.SetActiveTyping(sp.ID, true)
+	root.SetTheme(app.Theme)
+	root.TickAll(400)
+	root.InvalidateWidthProfile()
+	root.InvalidateAllMessages(sp.ID)
+	root.Remove(sp.ID)
+	if left.Has(sp.ID) || right.Has(sp.ID) || root.Has(sp.ID) {
+		t.Fatal("source removal retained embedding projection")
+	}
+}
+
+func TestThinkingEmbeddingOwnersSyncAndScrollIndependently(t *testing.T) {
+	app := newTestApp(t)
+	sp := app.PaneMgr.GetOrCreate("shared-thought", workspace.PaneThinking, "Thinking")
+	sp.Messages.AppendMessage(workspace.Message{Role: ttypes.RoleThinking, Content: "first\nsecond\nthird\nfourth\nfifth\nsixth"})
+	left, right := app.subPaneProjections.ForOwner("left"), app.subPaneProjections.ForOwner("right")
+	left.Render(sp.ID, sp, 30, 3, 0, true)
+	left.ScrollModel(sp.ID).SetAutoScroll(false)
+	left.ScrollModel(sp.ID).ScrollTo(0)
+	before := left.Render(sp.ID, sp, 30, 3, 0, true)
+	right.Render(sp.ID, sp, 60, 8, 0, true)
+	after := left.Render(sp.ID, sp, 30, 3, 0, true)
+	if len(before) != len(after) {
+		t.Fatal("other embedding changed thinking viewport")
+	}
+	for i := range before {
+		if before[i].PlainText() != after[i].PlainText() {
+			t.Fatal("other embedding moved thinking rows")
+		}
+	}
+	// Replacement conversations may have the same version, but not the same source.
+	sp.Messages = workspace.NewConversation()
+	sp.Messages.AppendMessage(workspace.Message{Role: ttypes.RoleThinking, Content: "replacement thought"})
+	if !subPanePlainContains(left.Render(sp.ID, sp, 30, 8, 0, true), "replacement thought") {
+		t.Fatal("same-version replacement retained stale source")
+	}
+}

@@ -268,14 +268,43 @@ func fuzzyRuneMatch(text, query string, caseSensitive bool) ([]int, int, bool) {
 
 	positions := make([]int, 0, len(cmpQuery))
 	qi := 0
+	// Prefer identifier/path initials before a greedy compact abbreviation:
+	// HWE must land on HandleWorkspaceEvent, not the e inside Handle.
 	for i, r := range cmpText {
-		if qi < len(cmpQuery) && r == cmpQuery[qi] {
+		if qi < len(cmpQuery) && r == cmpQuery[qi] && searchRuneBoundary(textRunes, i) {
 			positions = append(positions, i)
 			qi++
 		}
 	}
 	if qi != len(cmpQuery) {
+		positions = positions[:0]
+		qi = 0
+		for i, r := range cmpText {
+			if qi < len(cmpQuery) && r == cmpQuery[qi] {
+				positions = append(positions, i)
+				qi++
+			}
+		}
+	}
+	if qi != len(cmpQuery) {
 		return nil, 0, false
+	}
+	// Scattered letters alone are not useful search evidence. Keep identifier
+	// initials and path segments, plus compact abbreviations, but reject long
+	// accidental subsequences through prose or unrelated filenames.
+	compact := positions[len(positions)-1]-positions[0]+1 <= len(cmpQuery)*2+4
+	for i, pos := range positions {
+		if i == 0 {
+			if pos > 0 && !searchRuneBoundary(textRunes, pos) {
+				return nil, 0, false
+			}
+			continue
+		}
+		gap := pos - positions[i-1] - 1
+		boundary := searchRuneBoundary(textRunes, pos) && !unicode.IsSpace(textRunes[pos-1])
+		if gap > 0 && !boundary && (!compact || gap > 3) {
+			return nil, 0, false
+		}
 	}
 
 	score := 3000 - len(cmpText)
@@ -303,4 +332,9 @@ func fuzzyRuneMatch(text, query string, caseSensitive bool) ([]int, int, bool) {
 
 func isSearchBoundary(r rune) bool {
 	return r == '/' || r == '\\' || r == '_' || r == '-' || r == '.' || unicode.IsSpace(r)
+}
+
+func searchRuneBoundary(runes []rune, pos int) bool {
+	return pos == 0 || isSearchBoundary(runes[pos-1]) ||
+		(unicode.IsUpper(runes[pos]) && unicode.IsLower(runes[pos-1]))
 }

@@ -39,7 +39,7 @@ without this database: child rc scripts break (`tput colors` returns empty).
 | Paste | `EncodePaste` — bracketed-paste wrapping + unsafe-control sanitization per DEC 2004 |
 | Mouse reporting | Ghostty mouse encoder when the child enables tracking (X10/normal/button/any, SGR/URXVT/UTF-8) |
 | Shift override | Shift+click/drag bypasses tracking for selection (standard escape hatch) |
-| Selection | Ghostty selection gestures: click anchor, drag, double-click word, triple-click line; painted via render-state row ranges (reverse video) |
+| Selection | Ghostty selection gestures: click anchor, drag, double-click word, triple-click line; render-state ranges use theme TextSelection/TextSelectionFg, including atomic wide glyphs; native child reverse/faint cannot hide selection |
 | Copy | Copy-on-select + `Ctrl+Shift+C`; `Ctrl+Shift+A` selects all; text formatted with Ghostty clipboard semantics (unwrap + trim) |
 | OSC 52 clipboard | Child clipboard writes land on the system clipboard via an async command (decoded MIME, text/plain preferred); reads are always ignored and the helper subprocess is time-bounded |
 | Scrollback | Wheel scrolls viewport; `Shift+PgUp/PgDn/Home/End` on the primary screen; typing/paste snaps to bottom; right-edge scrollbar overlay while scrolled |

@@ -45,7 +45,6 @@ func setupChatRoutingApp(t *testing.T, viewportH int, rows []chatprojection.Mess
 	}
 
 	app.chatScreen = screen
-	app.shell.SetScreen(shellChatSlot, screen)
 
 	app.AddOrchestrator(
 		"agent")

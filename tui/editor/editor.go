@@ -52,8 +52,11 @@ type Editor struct {
 	goalCol int
 	goalSet bool
 
-	viewW int
-	viewH int
+	viewW           int
+	viewH           int
+	pendingReveal   bool
+	landing         *SearchMatch
+	landingRevision uint64
 	// scrollModel + sbCtrl are the shared scrollbar chrome (paint + mouse drag).
 	// Kept in sync with scrollY via syncScrollChrome.
 	scrollModel       *ui.ScrollModel
@@ -859,14 +862,41 @@ func (e *Editor) SetCursorPosition(line, col int) {
 		col = maxCol
 	}
 	e.cursor.Col = col
+	e.ClearSelection()
+	e.landing = &SearchMatch{Start: e.cursor, End: Position{Line: line, Col: col + 1}}
+	e.landingRevision = e.Revision()
 	e.invalidateEditorCaches()
 }
 
 // ScrollToCursor adjusts the scroll offsets so the cursor is visible. After
 // a SetCursorPosition this brings the line into view.
 func (e *Editor) ScrollToCursor() {
-	e.ensureCursorVisible()
+	e.pendingReveal = true
+	if e.viewW > 0 && e.viewH > 0 {
+		e.revealJump()
+	}
 	e.invalidateEditorCaches()
+}
+
+// SetLandingRange marks a navigation target without creating an editable
+// selection. The cue disappears on the next explicit input or document edit.
+func (e *Editor) SetLandingRange(line, startCol, endCol int) {
+	e.landing = &SearchMatch{Start: Position{Line: line, Col: startCol}, End: Position{Line: line, Col: max(startCol+1, endCol)}}
+	e.landingRevision = e.Revision()
+}
+
+func (e *Editor) revealJump() {
+	e.pendingReveal = false
+	h := e.bodyHeight()
+	if e.cursor.Line < e.scrollY || e.cursor.Line >= e.scrollY+h {
+		e.scrollY = max(0, e.cursor.Line-h/3)
+	}
+	e.scrollY = min(e.scrollY, max(0, e.LineCount()-h))
+	w := max(1, e.viewW-e.gutterWidth()-e.scrollbarColWidth())
+	if e.cursor.Col < e.scrollX || e.cursor.Col >= e.scrollX+w {
+		e.scrollX = max(0, e.cursor.Col-w/3)
+	}
+	e.syncScrollChrome(h)
 }
 
 // LineTextFromPath returns the trimmed content of the file at the given path.

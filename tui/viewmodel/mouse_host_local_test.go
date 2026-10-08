@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -9,16 +10,21 @@ import (
 
 	"crude/tui/editor"
 	"crude/tui/filetree"
-	"crude/tui/screens/shelleditor"
-	"crude/tui/screens/shellinput"
 )
 
 // openMultiLineEditor mounts a multi-line document in the app's editor.
 func openMultiLineEditor(t *testing.T, app *App, content string) string {
 	t.Helper()
+	if app.BufferMgr == nil {
+		app.BufferMgr = editor.NewBufferManager()
+	}
 	path := filepath.Join(t.TempDir(), "doc.go")
-	app.EditorState.Editor = editor.NewPreview(app.Theme, path, content, 0)
-	app.EditorState.ActiveView = path
+	if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := app.openEditorTab(path); err != nil {
+		t.Fatal(err)
+	}
 	return path
 }
 
@@ -82,7 +88,7 @@ func TestEditorMouseClickUsesHostLocalCoords(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			app := setupEditorMouseApp(t, tc.w, tc.h, tc.sidebar)
-			r, ok := app.rootHost.ScreenRect(shelleditor.ScreenID)
+			r, ok := app.rootHost.ScreenRect(app.editorScreen.ID())
 			if !ok || r.Empty() {
 				t.Fatalf("editor screen not mounted: ok=%v rect=%+v", ok, r)
 			}
@@ -107,7 +113,7 @@ func TestEditorMouseClickUsesHostLocalCoords(t *testing.T) {
 // selects the exact line/col span derived from the Host-local coordinates.
 func TestEditorMouseDragUsesHostLocalCoords(t *testing.T) {
 	app := setupEditorMouseApp(t, 80, 24, false)
-	r, ok := app.rootHost.ScreenRect(shelleditor.ScreenID)
+	r, ok := app.rootHost.ScreenRect(app.editorScreen.ID())
 	if !ok || r.Empty() {
 		t.Fatalf("editor screen not mounted: ok=%v rect=%+v", ok, r)
 	}
@@ -140,7 +146,7 @@ func TestEditorMouseWheelUsesHostLocalCoords(t *testing.T) {
 	app := setupEditorMouseApp(t, 80, 24, false)
 	openMultiLineEditor(t, app, lines)
 	app.paintShellFrame()
-	r, ok := app.rootHost.ScreenRect(shelleditor.ScreenID)
+	r, ok := app.rootHost.ScreenRect(app.editorScreen.ID())
 	if !ok || r.Empty() {
 		t.Fatalf("editor screen not mounted: ok=%v rect=%+v", ok, r)
 	}
@@ -176,7 +182,7 @@ func TestEditorHorizontalWheelPaintsThroughApp(t *testing.T) {
 			openMultiLineEditor(t, app, strings.Repeat(line+"\n", 100))
 			_, _ = app.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})
 			_ = app.View()
-			r, ok := app.rootHost.ScreenRect(shelleditor.ScreenID)
+			r, ok := app.rootHost.ScreenRect(app.editorScreen.ID())
 			if !ok || r.Empty() {
 				t.Fatal("editor is not mounted")
 			}
@@ -216,7 +222,7 @@ func TestEditorScrollbarDragUsesRootCaptureOutsideEditor(t *testing.T) {
 	app := setupEditorMouseApp(t, 80, 24, false)
 	openMultiLineEditor(t, app, content.String())
 	app.paintShellFrame()
-	r, ok := app.rootHost.ScreenRect(shelleditor.ScreenID)
+	r, ok := app.rootHost.ScreenRect(app.editorScreen.ID())
 	if !ok || r.Empty() {
 		t.Fatalf("editor screen not mounted: ok=%v rect=%+v", ok, r)
 	}
@@ -231,7 +237,7 @@ func TestEditorScrollbarDragUsesRootCaptureOutsideEditor(t *testing.T) {
 
 	_, _ = app.dispatchMouseClick(tea.MouseClickMsg{X: trackX, Y: thumbY, Button: tea.MouseLeft})
 	owner, _, captured := app.rootHost.CapturedPointer()
-	if !captured || owner != shelleditor.ScreenID || !ed.IsScrollbarDragging() {
+	if !captured || owner != app.editorScreen.ID() || !ed.IsScrollbarDragging() {
 		t.Fatalf("editor scrollbar capture owner=%q captured=%v dragging=%v", owner, captured, ed.IsScrollbarDragging())
 	}
 
@@ -251,7 +257,7 @@ func TestEditorGutterLineSelectionUsesRootCaptureOutsideEditor(t *testing.T) {
 	app := setupEditorMouseApp(t, 100, 30, false)
 	openMultiLineEditor(t, app, "one\ntwo\nthree\nfour\nfive\n")
 	app.paintShellFrame()
-	r, ok := app.rootHost.ScreenRect(shelleditor.ScreenID)
+	r, ok := app.rootHost.ScreenRect(app.editorScreen.ID())
 	if !ok {
 		t.Fatal("editor screen missing")
 	}
@@ -285,7 +291,7 @@ func TestEditorMouseDegenerateSizesNoPanic(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			app := setupEditorMouseApp(t, tc.w, tc.h, false)
 			_, _ = app.dispatchMouseClick(tea.MouseClickMsg{X: 0, Y: 0, Button: tea.MouseLeft})
-			if r, ok := app.rootHost.ScreenRect(shelleditor.ScreenID); ok && !r.Empty() {
+			if r, ok := app.rootHost.ScreenRect(app.editorScreen.ID()); ok && !r.Empty() {
 				_, _ = app.dispatchMouseClick(tea.MouseClickMsg{X: r.X, Y: r.Y, Button: tea.MouseLeft})
 				_, _ = app.dispatchMouseMotion(tea.MouseMotionMsg{X: r.X, Y: r.Y, Button: tea.MouseLeft})
 			}
@@ -311,7 +317,7 @@ func TestInputMouseClickUsesHostLocalCoords(t *testing.T) {
 			app := setupChatInputApp(t, tc.w, tc.h, tc.sidebar)
 			app.Input.SetInput("hello world")
 			app.paintShellFrame()
-			r, ok := app.rootHost.ScreenRect(shellinput.ScreenID)
+			r, ok := app.rootHost.ScreenRect(app.inputScreen.ID())
 			if !ok || r.Empty() {
 				t.Fatalf("input screen not mounted: ok=%v rect=%+v", ok, r)
 			}
@@ -334,7 +340,7 @@ func TestInputMouseDragUsesHostLocalCoords(t *testing.T) {
 	app := setupChatInputApp(t, 80, 24, false)
 	app.Input.SetInput("hello\nworld")
 	app.paintShellFrame()
-	r, ok := app.rootHost.ScreenRect(shellinput.ScreenID)
+	r, ok := app.rootHost.ScreenRect(app.inputScreen.ID())
 	if !ok || r.Empty() {
 		t.Fatalf("input screen not mounted: ok=%v rect=%+v", ok, r)
 	}
@@ -368,7 +374,7 @@ func TestInputMouseClickAwayClearsSelection(t *testing.T) {
 		t.Fatal("setup: shift+home should select the input prefix")
 	}
 
-	r, ok := app.rootHost.ScreenRect(shellinput.ScreenID)
+	r, ok := app.rootHost.ScreenRect(app.inputScreen.ID())
 	if !ok || r.Empty() {
 		t.Fatalf("input screen not mounted: ok=%v rect=%+v", ok, r)
 	}

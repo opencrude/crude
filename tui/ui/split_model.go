@@ -38,6 +38,17 @@ func NewSplitModel(dir Direction) *SplitModel {
 	}
 }
 
+// Clone retains layout preferences without sharing pointer-drag state. It is
+// used to resolve a non-mutating prospective pane layout before a tab drop.
+func (m *SplitModel) Clone() *SplitModel {
+	if m == nil {
+		return nil
+	}
+	copy := *m
+	copy.CancelDrag()
+	return &copy
+}
+
 // Dir reports the split axis.
 func (m *SplitModel) Dir() Direction {
 	if m == nil {

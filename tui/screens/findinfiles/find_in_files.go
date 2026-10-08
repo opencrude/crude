@@ -13,7 +13,6 @@ import (
 	"crude/tui/cell"
 	"crude/tui/editor"
 	"crude/tui/filetree"
-	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -61,8 +60,9 @@ type SearchCancelMsg struct {
 }
 
 type OpenMsg struct {
-	Screen *Screen
-	Match  fileio.ProjectSearchMatch
+	Screen     *Screen
+	Generation int
+	Match      fileio.ProjectSearchMatch
 }
 
 type CloseMsg struct {
@@ -318,6 +318,10 @@ func (s *Screen) queryChanged() tea.Cmd {
 	s.notice = ""
 	s.loading = strings.TrimSpace(s.Query()) != ""
 	s.errText = ""
+	// Rows belong to the query that produced them. Never activate or replace
+	// an old result while a new query is still being debounced/searched.
+	s.setResults(nil)
+	s.sync()
 	if strings.TrimSpace(s.Query()) == "" {
 		s.setResults(nil)
 		s.loading = false
@@ -350,15 +354,20 @@ func (s *Screen) rebuildPreview() {
 		return
 	}
 	result := s.results[s.selected]
+	if result.Context == "" {
+		s.previewSrc = nil
+		return
+	}
 	preview := editor.NewPreview(s.th, result.Path, result.Context, result.ContextStart)
 	localLine := result.Line - result.ContextStart
 	if localLine < 0 {
 		localLine = 0
 	}
-	lineRunes := []rune(result.LineText)
-	startCol := rendering.RuneIdxToCol(lineRunes, result.Column)
-	endCol := rendering.RuneIdxToCol(lineRunes, max(result.EndColumn, result.Column+1))
-	preview.SetSelection(localLine, startCol, localLine, max(endCol, startCol+1))
+	startCol := editor.RuneIndexToVisualColumn(result.LineText, result.Column)
+	endCol := editor.RuneIndexToVisualColumn(result.LineText, max(result.EndColumn, result.Column+1))
+	preview.SetCursorPosition(localLine, startCol)
+	preview.SetLandingRange(localLine, startCol, endCol)
+	preview.ScrollToCursor()
 	s.applyPreviewMatches(preview, result)
 	s.previewSrc = preview
 }
@@ -366,7 +375,7 @@ func (s *Screen) rebuildPreview() {
 // applyPreviewMatches highlights EVERY match of the same file that falls
 // inside the preview excerpt through the editor's search-highlight path, so
 // the pane shows all hits on the previewed lines rather than only the
-// selected one. The selected match stays strongest via SetSelection.
+// selected one. The selected match stays strongest via the landing cue.
 func (s *Screen) applyPreviewMatches(preview *editor.Editor, selected fileio.ProjectSearchMatch) {
 	lineCount := strings.Count(selected.Context, "\n") + 1
 	st := preview.Search()
@@ -380,9 +389,8 @@ func (s *Screen) applyPreviewMatches(preview *editor.Editor, selected fileio.Pro
 		if local < 0 || local >= lineCount {
 			continue
 		}
-		runes := []rune(r.LineText)
-		sc := rendering.RuneIdxToCol(runes, r.Column)
-		ec := rendering.RuneIdxToCol(runes, max(r.EndColumn, r.Column+1))
+		sc := editor.RuneIndexToVisualColumn(r.LineText, r.Column)
+		ec := editor.RuneIndexToVisualColumn(r.LineText, max(r.EndColumn, r.Column+1))
 		if ec <= sc {
 			ec = sc + 1
 		}
@@ -465,7 +473,17 @@ func (s *Screen) syncStatus() {
 			replaceable++
 		}
 	}
-	text := fmt.Sprintf("%d matches in %d files", len(s.results), len(files))
+	matchLabel, fileLabel := "matches", "files"
+	if len(s.results) == 1 {
+		matchLabel = "match"
+	}
+	if len(files) == 1 {
+		fileLabel = "file"
+	}
+	text := fmt.Sprintf("%d %s in %d %s", len(s.results), matchLabel, len(files), fileLabel)
+	if len(s.results) == 0 {
+		text = "No matches · try a shorter name or an exact phrase"
+	}
 	if s.mode == ModeReplace {
 		text = fmt.Sprintf("%d matches · %d replaceable · %d files", len(s.results), replaceable, len(files))
 	}
@@ -527,7 +545,9 @@ func (s *Screen) openSelected() tea.Cmd {
 		return nil
 	}
 	queryHistory.Add(s.Query())
-	return func() tea.Msg { return OpenMsg{Screen: s, Match: s.results[s.selected]} }
+	match := s.results[s.selected]
+	generation := s.generation
+	return func() tea.Msg { return OpenMsg{Screen: s, Generation: generation, Match: match} }
 }
 
 func (s *Screen) replaceSelected() tea.Cmd {
@@ -575,6 +595,9 @@ func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	if th := tokens.Theme(); th != nil {
 		s.th = th
 		s.icons.ApplyTheme(th)
+		if s.previewSrc != nil && s.previewSrc.Theme() != th {
+			s.previewSrc.SetTheme(th)
+		}
 	}
 	s.queryField.SetTokens(tokens)
 	if s.replaceField != nil {
@@ -782,7 +805,7 @@ func (q *findQuery) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 			return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return CloseMsg{Screen: q.owner} }}
 		case tea.KeyEnter:
 			return ui.EventResult{Handled: true, Cmd: q.owner.openSelected()}
-		case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd:
+		case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown:
 			q.owner.focusID(ListID)
 			result := q.owner.list.Handle(ui.EventContext{Focused: true}, evt)
 			result.Invalidate |= ui.InvalidateFocus | ui.InvalidatePaint
@@ -798,6 +821,8 @@ func (q *findQuery) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 			}
 			if len(q.owner.results) > 0 {
 				q.owner.focusID(ListID)
+			} else {
+				q.owner.focusID(ActionsID)
 			}
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 		}
@@ -850,7 +875,7 @@ func (q *replaceQuery) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult 
 			return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return CloseMsg{Screen: q.owner} }}
 		case tea.KeyEnter:
 			return q.owner.HandleAction(ctx, ui.Action{ID: "find.replace.one"})
-		case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd:
+		case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown:
 			q.owner.focusID(ListID)
 			result := q.owner.list.Handle(ui.EventContext{Focused: true}, evt)
 			result.Invalidate |= ui.InvalidateFocus | ui.InvalidatePaint
@@ -924,7 +949,7 @@ func (l *findList) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 					l.owner.focusID(QueryID)
 				}
 			} else {
-				l.owner.focusID(ActionsID)
+				l.owner.focusID(PreviewID)
 			}
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 		case tea.KeyUp, tea.KeyDown, tea.KeyPgUp, tea.KeyPgDown, tea.KeyHome, tea.KeyEnd:
@@ -1003,8 +1028,8 @@ func (p *previewPane) Paint(buf *surface.CellBuffer, originX, originY int, _ ui.
 	if ed == nil {
 		return
 	}
-	w, h := max(10, r.W), max(4, r.H)
-	if p.owner.previewSurf == nil || p.owner.previewSurf.Width() < w || p.owner.previewSurf.Height() < h {
+	w, h := r.W, r.H
+	if p.owner.previewSurf == nil || p.owner.previewSurf.Width() != w || p.owner.previewSurf.Height() != h {
 		p.owner.previewSurf = surface.NewSurface("fif-preview", w, h, cell.TransparentBlank())
 	}
 	p.owner.previewSurf.Buffer().Clear()
@@ -1012,7 +1037,53 @@ func (p *previewPane) Paint(buf *surface.CellBuffer, originX, originY int, _ ui.
 	ed.Render(p.owner.previewSurf, wctx)
 	surface.BlitOpaque(buf, originX+r.X, originY+r.Y, p.owner.previewSurf.Buffer())
 }
-func (p *previewPane) Handle(_ ui.EventContext, _ ui.Event) ui.EventResult { return ui.EventResult{} }
+func (p *previewPane) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+	ed := p.owner.previewSrc
+	if ed == nil {
+		return ui.EventResult{}
+	}
+	var msg tea.Msg
+	switch evt.Kind {
+	case ui.EventKey:
+		if evt.Key.Code == tea.KeyTab {
+			if evt.Key.Mod.Contains(tea.ModShift) {
+				p.owner.focusID(ListID)
+			} else {
+				p.owner.focusID(ActionsID)
+			}
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
+		}
+		if evt.Key.Code == tea.KeyEsc {
+			return p.owner.HandleAction(ctx, ui.Action{ID: "find.close"})
+		}
+		msg = evt.Key
+	case ui.EventMouseClick:
+		m := evt.MouseClick
+		m.X, m.Y = ctx.LocalX, ctx.LocalY
+		msg = m
+	case ui.EventMouseMotion:
+		m := evt.MouseMotion
+		m.X, m.Y = ctx.LocalX, ctx.LocalY
+		msg = m
+	case ui.EventMouseRelease:
+		m := evt.MouseRelease
+		m.X, m.Y = ctx.LocalX, ctx.LocalY
+		msg = m
+	case ui.EventMouseWheel:
+		m := evt.MouseWheel
+		m.X, m.Y = ctx.LocalX, ctx.LocalY
+		msg = m
+	default:
+		return ui.EventResult{}
+	}
+	return ui.EventResult{Handled: true, Cmd: ed.HandleEvent(msg), Invalidate: ui.InvalidatePaint}
+}
+
+func (p *previewPane) CancelPointerCapture() {
+	if p.owner.previewSrc != nil {
+		p.owner.previewSrc.CancelPointerCapture()
+	}
+}
 func (p *previewPane) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleGroup, Label: "Preview"}
 }

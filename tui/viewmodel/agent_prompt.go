@@ -136,13 +136,24 @@ func (m *App) openNextAgentPrompt() {
 }
 
 func (m *App) agentPromptInlineEligible(agentID string) bool {
-	active := m.activeAgentTabID()
-	if active == "" || m.isEditorActive() || m.isGitReviewActive() {
+	owner := m.AgentMgr.OrchestratorFor(agentID)
+	if owner == nil || m.Win == nil {
 		return false
 	}
-	owner := m.AgentMgr.OrchestratorFor(agentID)
-	visible := m.AgentMgr.OrchestratorFor(active)
-	return owner != nil && visible != nil && owner.ID == visible.ID
+	for _, group := range m.Win.GroupIDs() {
+		if m.mainPanes != nil && m.mainPanes.compact && group != m.Win.ActiveGroup() {
+			continue
+		}
+		tab := m.Win.GroupActiveTab(group)
+		if tab == nil || !m.isAgentTabTitle(tab.Title) {
+			continue
+		}
+		visible := m.AgentMgr.OrchestratorFor(m.agentIDFromTabTitle(tab.Title))
+		if visible != nil && owner.ID == visible.ID {
+			return true
+		}
+	}
+	return false
 }
 
 func (m *App) openInlineAgentPrompt(state *agentPromptState) {

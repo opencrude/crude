@@ -17,11 +17,17 @@ import (
 
 func TestPaintGoldenCellBufferContract(t *testing.T) {
 	screen, host := searchHost(t)
+	// A golden fixes font preference explicitly, rather than encoding an OS
+	// heuristic as different expected product geometry.
+	th := theme.DefaultDark()
+	nerd := true
+	th.Tree.Config.UseNerdFont = &nerd
+	host.SetTheme(th)
 	screen.SetQuery("needle")
 	screen.ScheduleSearch()
 	screen.ApplySearchResults(screen.generation, []fileio.ProjectSearchMatch{
-		{Path: "/root/a.go", RelativePath: "a.go", Line: 1, LineText: "needle alpha", NameOnly: false},
-		{Path: "/root/b.go", RelativePath: "b.go", Line: 2, LineText: "needle beta", NameOnly: false},
+		{Path: "/root/a.go", RelativePath: "a.go", Line: 1, EndColumn: 6, LineText: "needle alpha", Context: "needle alpha", ContextStart: 1},
+		{Path: "/root/b.go", RelativePath: "b.go", Line: 2, EndColumn: 6, LineText: "needle beta", Context: "first line\nneedle beta", ContextStart: 1},
 	}, nil, 5*time.Millisecond)
 	host.Layout()
 	buf := surface.NewCellBuffer(80, 24)
@@ -44,6 +50,74 @@ func TestPaintGoldenCellBufferContract(t *testing.T) {
 	// never rendered — only query, result paths, and status.
 	t.Logf("find in files cell projection:\n%s", painted)
 	uitest.CheckGolden(t, "findinfiles_dark_80x24", buf)
+}
+
+func TestResultActivationCapturesExactMatchAndQueryInvalidatesRows(t *testing.T) {
+	s, _ := searchHost(t)
+	s.SetQuery("alpha")
+	s.ScheduleSearch()
+	s.ApplySearchResults(s.generation, []fileio.ProjectSearchMatch{{Path: "a", Line: 1, LineText: "alpha", Context: "alpha", ContextStart: 1, EndColumn: 5}}, nil, 0)
+	cmd := s.openSelected()
+	s.SetQuery("beta")
+	s.ScheduleSearch()
+	if got := cmd().(OpenMsg).Match.Path; got != "a" {
+		t.Fatalf("activation lost exact identity: %q", got)
+	}
+	if s.openSelected() != nil || s.previewSrc != nil || len(s.results) != 0 {
+		t.Fatal("stale result remains actionable")
+	}
+}
+
+func TestPreviewRuntimeThemePreservesExactSourceAndLanding(t *testing.T) {
+	s, h := searchHost(t)
+	s.SetQuery("target")
+	s.ScheduleSearch()
+	s.ApplySearchResults(s.generation, []fileio.ProjectSearchMatch{{Path: "a.go", Line: 1, Column: 1, EndColumn: 7, LineText: "\"target\"", Context: "\"target\"", ContextStart: 1}}, nil, 0)
+	preview := s.previewSrc
+	h.SetTheme(theme.DefaultLight())
+	h.Layout()
+	h.Paint(surface.NewCellBuffer(80, 24))
+	if s.previewSrc != preview || preview.Value() != "\"target\"" || preview.Theme() != s.tokens.Theme() || preview.HasSelection() {
+		t.Fatal("runtime theme replaced source/landing or retained obsolete preview palette")
+	}
+}
+
+func TestPreviewScrollSelectionAndResizeAreInteractive(t *testing.T) {
+	s, host := searchHost(t)
+	s.SetQuery("target")
+	s.ScheduleSearch()
+	context := strings.Repeat("source line\n", 8) + "target\n" + strings.Repeat("tail\n", 8)
+	s.ApplySearchResults(s.generation, []fileio.ProjectSearchMatch{{Path: "a", Line: 9, LineText: "target", EndColumn: 6, Context: context, ContextStart: 1}}, nil, 0)
+	host.Layout()
+	buf := surface.NewCellBuffer(80, 24)
+	host.Paint(buf)
+	if s.previewSrc.HasSelection() {
+		t.Fatal("preview landing was destructive selection")
+	}
+	before := bufferText(buf)
+	res := s.preview.Handle(ui.EventContext{LocalX: 12, LocalY: 2}, ui.Event{Kind: ui.EventMouseWheel, MouseWheel: tea.MouseWheelMsg{Button: tea.MouseWheelDown}})
+	if !res.Handled {
+		t.Fatal("preview wheel unhandled")
+	}
+	host.Paint(buf)
+	if bufferText(buf) == before {
+		t.Fatal("preview wheel did not move painted content")
+	}
+	s.preview.Handle(ui.EventContext{LocalX: 10, LocalY: 1}, ui.Event{Kind: ui.EventMouseClick, MouseClick: tea.MouseClickMsg{Button: tea.MouseLeft}})
+	s.preview.Handle(ui.EventContext{LocalX: 16, LocalY: 1}, ui.Event{Kind: ui.EventMouseMotion, MouseMotion: tea.MouseMotionMsg{Button: tea.MouseLeft}})
+	if !s.previewSrc.HasSelection() {
+		t.Fatal("preview drag did not select text")
+	}
+	res = s.preview.Handle(ui.EventContext{LocalX: 16, LocalY: 1}, ui.Event{Kind: ui.EventMouseRelease, MouseRelease: tea.MouseReleaseMsg{Button: tea.MouseLeft}})
+	if res.Cmd == nil || s.previewSrc.HasSelection() {
+		t.Fatal("preview release did not copy and clear")
+	}
+	host.Resize(60, 16)
+	host.Layout()
+	host.Paint(surface.NewCellBuffer(60, 16))
+	if s.previewSurf.Width() != s.preview.Bounds().W || s.previewSurf.Height() != s.preview.Bounds().H {
+		t.Fatal("preview retained stale larger paint geometry")
+	}
 }
 
 func countNonEmptyCells(buf *surface.CellBuffer) int {

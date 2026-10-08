@@ -395,15 +395,13 @@ rootHost
 └── shellRoot ("shell")
     ├── header     shellheader.Screen   — always; rect (0, 1, W, 2)
     ├── footer     shellfooter.Screen   — always; rect (0, H-2, W, 2)
-    ├── tabs       shelltabs.Screen     — active when tabBarVisible()
     ├── sidebar    shelltree.Screen     — active when Tree.Visible
-    ├── chat       shellchat.Screen     — active when chat visible
-    ├── input      shellinput.Screen    — active when input visible
-    ├── editor     shelleditor.Screen   — active when editor open
-    ├── launcher   launcher.Screen      — active when launcher visible
-    └── deck       deckMount            — wraps the ACTIVE session's
-                                          retained deckHost (per-session
-                                          PanelDeck, Phase 12 design)
+    ├── termDock   retained workspace bottom panel
+    └── mainPanes  recursive Window-owned tab groups + SplitDividers
+        └── group  own shelltabs strip + selected retained view
+            ├── editor / chat / git review / empty pane / workspace home
+            ├── input  exact session-family composer (one mounted owner)
+            └── deck   exact session-family deckMount → retained deckHost
 ```
 
 Rules:
@@ -421,8 +419,7 @@ Rules:
   background (this fixed the editor→launcher gutter artifacts).
 - Mouse targeting is `rootHost.Handle` with raw screen coordinates; the
   Host computes `LocalX/LocalY` from layout geometry. `classifyShellRegion`
-  remains only for viewmodel POLICY (focus-stack pushes, editor legacy
-  routing via `routeEditorMouse`, sidebar-divider drag, status row,
+  remains only for viewmodel POLICY (focus-stack pushes, status row,
   context menus). Host pointer capture is the ONE capture service — hidden
   slots cancel capture via `Host.Layout` `validatePointerCapture`.
 - **Main-tab actions return keyboard focus to content.** Pointer selection,
@@ -431,9 +428,22 @@ Rules:
   Release a close action before a dirty-close modal captures return focus,
   never at a late save acknowledgement. Background tab sync/completion must
   preserve explicit focus. Guarded by `tab_action_focus_test.go`.
-- The editor screen stays input-no-op: editor keys/mouse route through
-  viewmodel → `Editor.HandleEvent`. Deck panels keep their per-session
+- Editor keys route through viewmodel; pointers enter retained
+  `shelleditor.Screen` with Host-local coordinates and capture. Deck panels keep their per-session
   `deckHost`; `deckMount` adapts paint (blit) and input (local coords).
+- **Main panes have one selection/topology authority:** `window.Window` owns
+  the recursive split tree, tab membership and selected tab per group. Moving
+  tabs never clones resources. `mainPaneLayout` retains geometry/screens, not
+  another active-view model. Every view has unique mounted component identity;
+  focused-screen aliases are only consumers. Per-main-agent inline embedding
+  registries isolate nested geometry/scroll. A family shares exactly one draft
+  and deck; rebind all visible composers before pointer dispatch, never activate
+  another session from Paint. Main tabs opt into shared drag/drop + reserved +;
+  previews are theme-colored, non-mutating until release. Small grids retain the
+  tree and show the focused group, with keyboard/header-menu navigation. Layout
+  is process-local and resets on workspace switch, not persisted on resume.
+  See `docs/reference/main-view-panes.md`; floating main-view pop-outs remain
+  separate future work, not an excuse to bypass modal settings/decision policy.
 - **Parent-local child rects:** `Host.paintNode` paints a child at (parent
   origin + child bounds) — child bounds are PARENT-LOCAL by contract. A
   shell screen that passes its absolute slot rect to a child's `Layout`
@@ -615,7 +625,7 @@ so an editor repaint is a cell fill plus a cached-color walk:
   `docs/reference/performance-baselines.md`) and cache at the editor level.
 - `computeContentLayout()` may be called every frame; it only computes
   shell geometry (slot rects, chat/editor/input/deck rects) — no ANSI and NO
-  renderer/model setters. `configureChatScreenWithLayout` is the sole writer of
+  chat renderer setters or conversation export. `configurePaneChat` is the sole writer of
   chat renderer geometry; duplicate width writers caused dense-chat resize to
   invalidate every message twice per frame.
 - `chatprojection.Renderer` owns the generation-keyed `MessageRowsSnapshot`.
@@ -703,9 +713,10 @@ ownership are all retained. A stray click must never destroy work in flight.
 - `AgentTabViews()` filters effectively hidden nodes, so `syncAgentWindowTabs` cannot
   resurrect a minimized tab, and `purgeStaleAgentTabs` closes one that
   lingers.
-- Tabs for each session put its main agent before visible descendants.
-  Background tab sync repairs that order inside agent slots without moving
-  editor tabs or changing the selected tab. Resumed completed children are
+- Initial tabs for each session put its main agent before visible descendants.
+  Background sync preserves deliberate user order and group selections; new
+  children belong with their parent rather than another focused empty pane.
+  Resumed completed children are
   retained in the Agents panel as closed review surfaces, never mass-opened.
 - **`AgentMgr.Count()` vs `VisibleCount()`**: shell gates choosing between
   launcher / chat / editor must use `VisibleCount()`, otherwise a workspace
@@ -1302,6 +1313,15 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   shifts its background into the description row.
 - Source-code projections expand tabs at tab stops before width, wrapping,
   syntax coloring, and paint. Raw tab cells have no stable terminal geometry.
+- Editor and comparison syntax share `rendering.SourceStyle`; never add a second
+  token-to-theme map. Git/local diffs use one `screens/diffview` reader with
+  source-aligned rows, native draggable split, one vertical scroll owner and
+  exact source copy. Local comparisons are immutable, generation-fenced main
+  tabs; Refresh is explicit and closing never consumes the source draft.
+- Text drag selection uses theme `TextSelection`/`TextSelectionFg`, distinct from
+  list/chip Selection. Apply readable ink across input/chat/editor/diff/terminal
+  consumers. Programmatic editor jumps reveal only when necessary after actual
+  viewport geometry; landing highlights are not destructive edit selections.
 
 ### Activity-dot animation
 - `ui.ActivityDot(spinFrame)` is the only product activity-dot animation:

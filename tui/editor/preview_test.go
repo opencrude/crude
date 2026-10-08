@@ -1,6 +1,7 @@
 package editor
 
 import (
+	tea "charm.land/bubbletea/v2"
 	"strings"
 	"testing"
 
@@ -13,6 +14,21 @@ import (
 	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 )
+
+func TestReadonlyPreviewRejectsMutatingArrowChords(t *testing.T) {
+	ed := NewPreview(theme.DefaultDark(), "readonly.go", "first\nsecond\nthird", 1)
+	ed.SetCursorPosition(1, 0)
+	for _, key := range []tea.KeyPressMsg{{Code: tea.KeyUp, Mod: tea.ModAlt}, {Code: tea.KeyDown, Mod: tea.ModAlt}} {
+		ed.HandleEvent(key)
+	}
+	if ed.Value() != "first\nsecond\nthird" || ed.Modified() {
+		t.Fatal("preview navigation mutated source")
+	}
+	ed.HandleEvent(tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
+	if ed.SelectedText() != "first\nsecond\nthird" {
+		t.Fatal("preview select-all did not preserve source")
+	}
+}
 
 func TestPreviewUsesSourceLineNumbersAndChroma(t *testing.T) {
 	ed := NewPreview(theme.DefaultDark(), "/tmp/main.go", "func main() {\n\treturn\n}", 40)

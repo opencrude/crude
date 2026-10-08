@@ -8,9 +8,45 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/cell"
+	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
 )
+
+func TestScreenSelectionThemeSwitchPreservesChildInk(t *testing.T) {
+	s, _ := newTestScreen(t)
+	s.Feed([]byte("\x1b[?25l\x1b[2;7;38;2;200;10;20;48;2;30;40;50mabc"))
+	buf := surface.NewCellBuffer(40, 11)
+	s.Paint(buf, 0, 0, ui.PaintContext{})
+	original := buf.Get(2, 0)
+	host := ui.NewHost(theme.DefaultDark(), s)
+	host.Resize(40, 11)
+	host.Layout()
+	host.Handle(tea.MouseClickMsg{X: 0, Y: 0, Button: tea.MouseLeft})
+	host.Handle(tea.MouseMotionMsg{X: 1, Y: 0, Button: tea.MouseLeft})
+	host.Handle(tea.MouseReleaseMsg{X: 1, Y: 0, Button: tea.MouseLeft})
+	for _, th := range []*theme.Theme{theme.DefaultDark(), theme.DefaultLight(), theme.DefaultHighContrast(), theme.DefaultWarm(), theme.DefaultMidnight()} {
+		host.SetTheme(th)
+		host.Paint(buf)
+		tokens := ui.NewTokenSet(th)
+		c := buf.Get(0, 0)
+		if c.FG != tokens.Color(ui.ColorTextSelectionFg) || c.BG != tokens.Color(ui.ColorTextSelection) || c.Attr&(cell.AttrReverse|cell.AttrDim) != 0 {
+			t.Fatalf("theme selection=%+v", c)
+		}
+		if got := buf.Get(2, 0); got != original {
+			t.Fatalf("theme changed explicit child ink: got=%+v want=%+v", got, original)
+		}
+		if got := s.vt.SelectionText(); got != "ab" {
+			t.Fatalf("theme changed selection text=%q", got)
+		}
+	}
+	s.vt.ClearSelection()
+	host.Paint(buf)
+	if c := buf.Get(0, 0); c.FG != original.FG || c.BG != original.BG || c.Attr != original.Attr {
+		t.Fatalf("clearing selection did not restore child ink: %+v", c)
+	}
+}
 
 func newTestScreen(t *testing.T) (*Screen, *[][]byte) {
 	t.Helper()

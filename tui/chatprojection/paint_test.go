@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"crude/tui/cell"
 	"crude/tui/chatprojection"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -13,6 +14,32 @@ import (
 	"crude/tui/ui"
 	"crude/workspace"
 )
+
+func TestNativeSelectionReadablePreservesGraphemesAndReadableSyntax(t *testing.T) {
+	for _, th := range []*theme.Theme{theme.DefaultDark(), theme.DefaultLight(), theme.DefaultMidnight(), theme.DefaultWarm(), theme.DefaultHighContrast()} {
+		tokens := ui.NewTokenSet(th)
+		bg := tokens.Color(ui.ColorTextSelection)
+		if cell.ContrastRatio(bg, tokens.Color(ui.ColorBg)) < 3 || cell.ContrastRatio(bg, tokens.Color(ui.ColorPopupBg)) < 3 || cell.ContrastRatio(bg, tokens.Color(ui.ColorSubPaneBg)) < 3 {
+			t.Fatalf("%s: fill lacks contrast against text surfaces", th.Name)
+		}
+		readable := tokens.Color(ui.ColorTextSelectionFg)
+		pl := chatprojection.PaintLine{Spans: []chatprojection.RowSpan{
+			{Text: "界", FGSet: true, FGColor: readable},
+			{Text: "e\u0301", FGSet: true, FGColor: bg, Attr: cell.AttrDim | cell.AttrReverse | cell.AttrBold},
+		}}
+		buf := surface.NewCellBuffer(6, 1)
+		chatprojection.PaintLineAt(buf, 0, 0, 6, pl, tokens, 1, 5, true)
+		if c := buf.Get(0, 0); c.Content != "界" || c.Width != 2 || c.FG != readable || c.BG != bg {
+			t.Fatalf("%s: partial wide selection lost readable ink or grapheme: %+v", th.Name, c)
+		}
+		if c := buf.Get(2, 0); c.Content != "e\u0301" || c.FG != readable || c.BG != bg || c.Attr != cell.AttrBold {
+			t.Fatalf("%s: unreadable syntax not corrected: %+v", th.Name, c)
+		}
+		if buf.Get(4, 0).BG != bg || buf.Get(5, 0).BG != tokens.Color(ui.ColorSubPaneBg) {
+			t.Fatalf("%s: selected padding leaks outside range", th.Name)
+		}
+	}
+}
 
 func TestBuildSubPaneHeaderThinkingNative(t *testing.T) {
 	header := workspace.SubPaneHeaderView{
@@ -103,7 +130,7 @@ func TestPaintLineSelectionAndBackground(t *testing.T) {
 	}}
 	buf := surface.NewCellBuffer(20, 1)
 	chatprojection.PaintLineAt(buf, 0, 0, 20, pl, tokens, 3, 7, true)
-	selBG := tokens.Color(ui.ColorSelection)
+	selBG := tokens.Color(ui.ColorTextSelection)
 	accentBG := tokens.Color(ui.ColorAccent)
 	subBG := tokens.Color(ui.ColorSubPaneBg)
 	if c := buf.Get(3, 0); c.BG != selBG {
@@ -124,7 +151,7 @@ func TestPaintLineSelectionAndBackground(t *testing.T) {
 func TestPaintLineSelectionNeverUsesAccent(t *testing.T) {
 	th := theme.DefaultDark()
 	tokens := ui.NewTokenSet(th)
-	selBG := tokens.Color(ui.ColorSelection)
+	selBG := tokens.Color(ui.ColorTextSelection)
 	accentBG := tokens.Color(ui.ColorAccent)
 	if selBG.Equal(accentBG) {
 		t.Fatal("theme Selection and Accent are identical — cannot assert distinction")

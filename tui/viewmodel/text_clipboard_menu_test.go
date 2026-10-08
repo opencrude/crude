@@ -7,7 +7,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/clipboard"
-	"crude/tui/screens/shellinput"
 	"crude/tui/ui"
 	wm "crude/tui/wm"
 )
@@ -69,7 +68,7 @@ func activateMenuItem(t *testing.T, st *ui.ContextMenuState, label string) {
 func TestComposerDragReleaseThroughHostCopiesAndClears(t *testing.T) {
 	app := setupChatInputApp(t, 80, 24, false)
 	app.Input.SetInput("hello world")
-	rect, ok := app.rootHost.ScreenRect(shellinput.ScreenID)
+	rect, ok := app.rootHost.ScreenRect(app.inputScreen.ID())
 	if !ok || rect.Empty() {
 		t.Fatalf("input screen not mounted: ok=%v rect=%+v", ok, rect)
 	}
@@ -110,7 +109,7 @@ func TestInputContextMenuOffersWholeDraftCopyCut(t *testing.T) {
 	app := newFullTestApp(t)
 	t.Cleanup(func() { resetAsyncIOStateForTest(app) })
 	nextWrite := recordingClipboard(t, app)
-	app.launcherScreen = nil
+	app.AddOrchestrator("agent")
 	app.Input.SetInput("hello draft")
 	app.paintShellFrame()
 
@@ -155,7 +154,7 @@ func TestInputContextMenuOffersWholeDraftCopyCut(t *testing.T) {
 func TestRightClickOnInputOpensWholeDraftMenu(t *testing.T) {
 	app := newFullTestApp(t)
 	t.Cleanup(func() { resetAsyncIOStateForTest(app) })
-	app.launcherScreen = nil
+	app.AddOrchestrator("agent")
 	app.Input.SetInput("draft")
 	app.paintShellFrame()
 

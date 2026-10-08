@@ -57,6 +57,20 @@ fill. The shared `ui.FormField` painter owns this rule for every consumer.
 
 ### Tab bar contract (one look)
 
+Main-view groups each retain their own `shelltabs.Screen` + `ui.Tabs` and
+independently selected tab. Topology and resource identity belong to `Window`,
+not the strip. See [Main View Panes](main-view-panes.md) for the current
+workspace-scoped, process-only layout and focus/ownership contract.
+Main strips opt into the shared drag gesture; body edge preview is theme
+`ColorHover` and commits only on release, while center/strip drops move/reorder
+the same identity. Esc/outside release cancels. The native New session **+**
+is content-adjacent when labels fit, pinned at the trailing edge on overflow;
+the strip's parent-published baseline includes its action columns. Ctrl+T then
+N/+ and Ctrl+Alt+N expose the same action without pointer input.
+The action uses a bold accent + and a five-column, one-label-row native hit band;
+hover and focus fill that band only. The separator is neither highlighted nor
+actionable and remains owned entirely by `ui.Tabs`.
+
 Every actual tab bar in the app is the same control with the same look — the Status
 Overview mode strip is the reference. `ui.Tabs` owns the structure; `TabsChrome`
 selects only the background the strip sits on (shell `ColorBg` vs popup
@@ -130,6 +144,13 @@ selects only the background the strip sits on (shell `ColorBg` vs popup
 | Find in Files results vs preview | vertical `ui.SplitModel` + `SplitDivider` |
 | Launcher left pane vs recent workspaces | Wide: full-width New Session, then `ui.SplitModel` + `SplitDivider`; New Workspace starts the left pane and Skills/MCP split its remaining height equally after one blank row, while recent workspaces occupies the right. Cramped: actions stack with one blank row, capability pane hides, recent workspaces becomes full width. |
 | Two-child containers | `ui.SplitPane` (owns model + divider, Host capture) |
+| Recursive main tab groups | `window.PaneNode` topology; shared `ui.SplitModel` + mounted `ui.SplitDivider` per branch under root Host capture. Nested width/height splits preserve per-leaf selection. Too-small geometry presents only the focused group without discarding the tree; group cycling still works. |
+| Git / local comparison | `screens/diffview` owns an aligned immutable projection, shared SplitModel/Divider, one vertical ScrollModel/ScrollbarControl and independent horizontal controls. Unified fallback preserves preferred split/ratio; source copy excludes alignment blanks and gutters. |
+
+Empty main groups use retained native `ui.Button` controls for New Session and
+Open File. N/O activate directly, Tab/Shift+Tab chooses and Enter/Space activates.
+Ctrl+W removes only an empty group; resource closing keeps its existing safety
+and agent-minimize semantics. Palette operations use the shared ActionRegistry.
 
 ## Scrollbars
 
@@ -156,8 +177,9 @@ selects only the background the strip sits on (shell `ColorBg` vs popup
 
 ## Host pointer routing
 
-Product screens mount under `ui.Host` instances owned by viewmodel (`chatHost`,
-`launcherHost`, `sidebarHost`, `editorHost`, …). Host hit-tests pointer messages,
+Persistent shell screens, including recursive main groups, mount under the
+viewmodel's root `ui.Host`; retained session decks and floating bodies use their
+own adapted Hosts. Host hit-tests pointer messages,
 updates hover, and dispatches to the resolved target.
 
 ### PointerPolicyPassthrough
@@ -192,25 +214,19 @@ target (post-passthrough). While captured:
 Without capture, `MouseReleaseMsg` uses the current coordinates and hit-test
 (not stale hover).
 
-Viewmodel routes motion/release to any **visible active** product Host
-(`chatHost`, `sidebarHost`, `launcherHost`) before popup hover and normal region
-classification whenever that Host reports pointer capture, so shellchat text
-selection, sidebar scrollbar drags, and launcher list clicks stay owned when the
-pointer leaves the surface rect or crosses other regions (chat, input, status,
-sidebar, popups). Coordinates are translated per Host (chat rect origin, sidebar
-`Tree.YOffset`, launcher main-pane origin) including points outside the Host
-bounds.
+Viewmodel routes captured motion/release through the root Host before normal
+region routing, so shellchat selection, tab drags, main/sidebar divider drags
+and scrollbar manipulation remain owned outside their original bounds. Main
+groups use parent-local child bounds; the Host derives local pointer coordinates
+from screen geometry, including captured points outside the owning component.
 
-When a product Host becomes hidden (editor/launcher takeover, no active message
-list, sidebar hidden, launcher min-size gate, host replacement), `Update` calls
-`syncPersistentHostCapture()` which invokes `Host.CancelPointerCapture()`. That
-clears Host capture IDs and runs optional `PointerCaptureCanceller` hooks on the
-captured component (shellchat selection/autoscroll, scrollbar thumb drag) so
-stale drag state cannot resurface after the surface returns. Duplicate captures
-across Hosts are reduced to one winner (chat → sidebar → launcher).
+When a component unmounts, Host layout validates capture and cancels stale
+ownership. `Host.CancelPointerCapture()` runs optional
+`PointerCaptureCanceller` hooks (selection/autoscroll, scrollbar/tab/divider
+drag), so stale gestures cannot resurface after a component returns.
 
 Keyboard dismiss during chat text selection and `setMode` switches call the same
-teardown: cancel `chatHost` pointer capture when armed, then
+teardown: cancel root Host pointer capture when armed, then
 `shellchat.Screen.ClearSelection()` for any remaining range. In-progress
 selection or scrollbar drag cancels capture without swallowing unrelated keys; a
 non-empty `HasActiveSelection` range still consumes the dismissing keypress.
@@ -224,8 +240,9 @@ Precedence for motion/release (after global WM drag/resize):
 2. Popup hover pre-selection (focusable floating windows)
 3. Normal region routing (sidebar, editor, chat, input, …)
 
-Editor mouse is **not** routed through `editorHost`; it uses the editor package
-path directly. Floating overlay content Hosts use the window-manager forward path,
+Editor pointer ownership enters through its mounted `shelleditor.Screen`, which
+adapts the editor engine and shared scrollbars. Floating overlay content Hosts
+use the window-manager forward path,
 not this persistent-Host elevation.
 
 API: `HasPointerCapture()`, `CancelPointerCapture()` on each product Host;
@@ -247,6 +264,18 @@ API: `HasPointerCapture()`, `CancelPointerCapture()` on each product Host;
 | Help overlay | `tui/screens/help/help_test.go`, `tui/viewmodel/help_test.go` | Modal Ignore; live catalog; F1 toggle; Esc closes; `/help` does not dump into chat |
 | Agent chat list | `tui/screens/shellchat/scroll_contract_test.go`, `host_test.go`, `tui/viewmodel/chat_keyboard_contract_test.go`, `host_capture_test.go`, `mouse_capture_test.go` | PgUp/PgDown/Home/End, wheel disarm/re-arm, scrollbar drag, selection copy once, capture teardown, input-empty routing |
 | Text selection & clipboard chords | `tui/ui/text_area_clipboard_test.go`, `tui/ui/textfield_clipboard_test.go`, `tui/input/clipboard_test.go`, `tui/viewmodel/text_clipboard_menu_test.go` | Ctrl+C / Ctrl+Shift+C copy, Ctrl+X cut (selection → whole value), Esc selection-first ladder, copy-on-release, masked fields refuse the clipboard, whole-text Copy/Cut menus (composer + popup forms) |
+
+## Text selection visibility
+
+Text selection uses `ColorTextSelection` / `ColorTextSelectionFg`, not the quiet
+list/chip `ColorSelection`. The theme owns both colors. Shared text controls,
+chat, document editors, comparisons and embedded terminals use visible selected
+fills; syntax ink is retained only when readable. Runtime theme changes preserve
+selection state. Search/navigation cues use contrast-checked ink, never reverse
+video over coincident syntax and highlight colors.
+The default dark theme uses a neutral gray text-selection fill with readable
+light ink; colored preset identities and semantic search/diff accents remain
+separate from drag-selection coloring.
 
 ## Async I/O boundaries
 

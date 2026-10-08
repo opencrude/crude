@@ -35,31 +35,25 @@ func (m *App) openEditorTab(path string) (tea.Cmd, error) {
 		return nil, err
 	}
 	path = filepath.Clean(absPath)
-	tabTitle := m.editorTabTitle(path)
-
-	// If the tab is already open, just activate it. Crucially, do NOT
-	// reload the file — switching tabs must preserve cursor, scroll,
-	// undo, and unsaved edits.
-	if tab, ok := m.EditorState.Tabs[path]; ok && tab.Editor.IsOpen() {
-		if m.Win.TabByTitle(tabTitle) == nil {
-			// Tab exists in our map but the window tab was lost
-			// (e.g. window tabs were reset). Re-create it.
-			m.Win.OpenTab(tabTitle, "✎", true)
-		}
-		if winTab := m.Win.TabByTitle(tabTitle); winTab != nil {
-			m.Win.SwitchTo(m.Win.IndexOf(winTab.ID))
-			m.handleTabSwitch()
-		}
+	if tab := m.EditorState.Tabs[path]; tab != nil && tab.Editor.IsOpen() {
+		m.activateEditorTab(path)
 		return nil, nil
 	}
-
-	// Get or create the shared buffer via BufferManager. Multiple tabs
-	// viewing the same file share one Buffer (PieceTable + dirty flag +
-	// diagnostics). The Editor wraps this buffer with view-specific state
-	// (cursor, scroll, selection, undo history).
 	buf, err := m.BufferMgr.OpenFile(path)
 	if err != nil {
 		return nil, err
+	}
+	m.installEditorBuffer(buf)
+	m.activateEditorTab(path)
+	return m.refreshEditorGitCmd(), nil
+}
+
+// installEditorBuffer installs a prepared live buffer without changing selection.
+// Existing views retain their cursor, undo, selection and unsaved text.
+func (m *App) installEditorBuffer(buf *editor.Buffer) {
+	path := buf.Path
+	if tab := m.EditorState.Tabs[path]; tab != nil && tab.Editor.IsOpen() {
+		return
 	}
 
 	// Create a fresh Editor for this tab and open the shared buffer.
@@ -85,25 +79,19 @@ func (m *App) openEditorTab(path string) (tea.Cmd, error) {
 		}
 	}
 
-	// The label is the plain base name: the strip's attention marker carries the
-	// unsaved state, so no marker is ever appended to the filename.
-	displayTitle := ed.BaseTitle()
-
-	// Store the tab and point m.EditorState.Editor at it.
 	m.EditorState.Tabs[path] = NewEditorTab(path, ed)
-	m.EditorState.Editor = ed
-	m.EditorState.ActiveView = path
+}
 
+func (m *App) activateEditorTab(path string) {
+	tabTitle := m.editorTabTitle(path)
 	if m.Win.TabByTitle(tabTitle) == nil {
 		m.Win.OpenTab(tabTitle, "✎", true)
 	}
 	if winTab := m.Win.TabByTitle(tabTitle); winTab != nil {
-		m.Win.SetTabDisplayTitleByIndex(m.Win.IndexOf(winTab.ID), displayTitle)
+		m.Win.SetTabDisplayTitleByIndex(m.Win.IndexOf(winTab.ID), m.EditorState.Tabs[path].Editor.BaseTitle())
 		m.Win.SwitchTo(m.Win.IndexOf(winTab.ID))
 		m.handleTabSwitch()
 	}
-
-	return m.refreshEditorGitCmd(), nil
 }
 
 // jumpToDiagnostic opens the file containing the given diagnostic

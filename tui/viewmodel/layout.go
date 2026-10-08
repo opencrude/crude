@@ -142,6 +142,13 @@ func (m *App) computeLayout() LayoutInfo {
 	}
 
 	chatAreaTop := m.chromeTopRow()
+	// Editor popovers/cursor navigation use the focused pane, not the whole
+	// shell content column. Sidebar hit policy has its own geometry owner.
+	if m.isEditorActive() && !m.editorRect.Empty() {
+		r := m.editorRect
+		padLR, innerW = boundedContentGeometry(r.W, m.Theme.Spacing.PadLR)
+		return LayoutInfo{SidebarW: r.X, ContentW: r.W, InnerW: innerW, EditorW: innerW, ChatAreaTop: r.Y, ChatH: r.H, PadLR: padLR}
+	}
 
 	return LayoutInfo{
 		SidebarW:    sidebarW,

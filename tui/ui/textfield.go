@@ -316,7 +316,7 @@ func (t *TextField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pai
 	selA, selB := t.edit.SelectionRange()
 	selBG := bg
 	if t.tokens != nil {
-		selBG = t.tokens.Color(ColorSelection)
+		selBG = t.tokens.Color(ColorTextSelection)
 	}
 	col := 0
 	pos := t.viewStart
@@ -330,6 +330,9 @@ func (t *TextField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pai
 		inSel := pos < selB && pos+clusterLen > selA && selA != selB
 		if inSel {
 			cellBG = selBG
+			if t.tokens != nil {
+				cellFG, cellBG = t.tokens.TextSelectionColors(cellFG)
+			}
 		}
 		buf.WriteString(x+col, y, cluster, cellFG, cellBG, 0)
 		col += width

@@ -29,6 +29,11 @@ import (
 
 func (m *App) statusHeaderLeftSegments() []shellheader.Segment {
 	segments := []shellheader.Segment{{Text: "Crude", Role: ui.ColorAccent, Priority: 0}}
+	if m.Win != nil {
+		if label := m.mainPaneSummary(); label != "" {
+			segments = append(segments, shellheader.Segment{Text: label, Role: ui.ColorMuted, Action: "panes", Priority: 1})
+		}
+	}
 	if workspacePath := shortWorkspacePath(m.RootPath); workspacePath != "" {
 		segments = append(segments, shellheader.Segment{Text: workspacePath, Role: ui.ColorMuted, Priority: 1})
 	}
@@ -392,6 +397,9 @@ func (m *App) compactContextHelpSegments() []ui.HintSegment {
 	}
 	if m.sessionDeckFocused() {
 		return []ui.HintSegment{ui.ActionSeg("panel.previous"), ui.ActionSeg("panel.next")}
+	}
+	if m.isComparisonActive() && m.focusTarget() == FocusInput {
+		return []ui.HintSegment{ui.ChordSeg("Ctrl+F", "find"), ui.ChordSeg("Alt+↑/↓", "change"), ui.ChordSeg("Ctrl+W", "close review")}
 	}
 	switch m.focusTarget() {
 	case FocusTree:

@@ -19,10 +19,11 @@ func TestDeckFormPaintsThroughRootHost(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 100, 30
 	app.launcherScreen = nil
-	app.ActiveSession = &workspace.Session{
+	session := &workspace.Session{
 		SessionID: "session",
 		Settings:  workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil),
 	}
+	selectDeckSession(t, app, session, "agent")
 	app.openSessionSettings()
 	if !app.sessionDeckFocused() {
 		t.Fatal("precondition: session settings deck open + focused")

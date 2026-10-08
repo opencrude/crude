@@ -3,17 +3,48 @@ package viewmodel
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 
 	"crude/fileio"
+	"crude/tui/cell"
 	"crude/tui/editor"
 	findinfiles "crude/tui/screens/findinfiles"
+	"crude/tui/surface"
 	"crude/tui/ui"
 	"crude/tui/wm"
 	"crude/workspace"
 )
+
+func TestFindInFilesResultLandingBeforeFirstPaint(t *testing.T) {
+	app := newFullTestApp(t)
+	app.BufferMgr = editor.NewBufferManager()
+	app.width, app.height = 120, 36
+	path := filepath.Join(t.TempDir(), "small.txt")
+	if err := os.WriteFile(path, []byte("first\n\t界 target\nlast"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	command := app.openFindInFilesResult(fileio.ProjectSearchMatch{Path: path, RelativePath: "small.txt", Line: 2, Column: 3, EndColumn: 9, LineText: "\t界 target"})
+	if command == nil || len(app.EditorState.Tabs) != 0 {
+		t.Fatal("result open read/published a file before the command")
+	}
+	app.applyPaneFilesOpened(command().(paneFilesOpenedMsg))
+	ed := app.EditorState.Editor
+	if ed.CursorLine() != 1 || ed.CursorCol() != 7 || ed.HasSelection() {
+		t.Fatalf("landing line=%d col=%d selected=%v", ed.CursorLine(), ed.CursorCol(), ed.HasSelection())
+	}
+	surf := surface.NewSurface("result", 80, 15, cell.TransparentBlank())
+	ed.Render(surf, ui.PaintContext{})
+	var row string
+	for x := 0; x < 80; x++ {
+		row += string(surf.Buffer().Get(x, 0).Char)
+	}
+	if !strings.Contains(row, "first") {
+		t.Fatalf("short file scrolled before first paint: %q", row)
+	}
+}
 
 func TestFindInFilesShortcutRoutesTypingAndPaste(t *testing.T) {
 	app := newFullTestApp(t)
@@ -185,6 +216,7 @@ func TestFindInFilesIgnoresStaleOwnerMessages(t *testing.T) {
 
 func TestClosingFindInFilesPreservesBlockingSessionPanel(t *testing.T) {
 	app := newFullTestApp(t)
+	selectDeckSession(t, app, app.ActiveSession, "agent")
 	app.width = 120
 	app.height = 36
 	app.RootPath = t.TempDir()
@@ -205,6 +237,7 @@ func TestClosingFindInFilesPreservesBlockingSessionPanel(t *testing.T) {
 
 func TestBlockingSessionPanelWinsOverEditorTreeAndLauncher(t *testing.T) {
 	app := newFullTestApp(t)
+	selectDeckSession(t, app, app.ActiveSession, "agent")
 	projection := app.activeSessionProjection()
 	openTestAgentPrompt(t, app, projection, agentPromptRequest{question: "Continue?"})
 	app.FocusStack.Push(FocusTree)
@@ -239,13 +272,61 @@ func TestFindInFilesActivationOpensAndPositionsEditor(t *testing.T) {
 	cmd := app.openFindInFilesResult(fileio.ProjectSearchMatch{
 		Path: path, RelativePath: "main.go", Line: 3, Column: 5, LineText: "func target() {}",
 	})
+	if cmd == nil || app.EditorState.ActiveView != "" {
+		t.Fatal("search activation must prepare file off Update")
+	}
+	app.applyPaneFilesOpened(cmd().(paneFilesOpenedMsg))
 	if app.EditorState.ActiveView != path || app.EditorState.Editor == nil {
-		t.Fatal("search activation should open editor tab immediately")
+		t.Fatal("accepted search preparation should open editor tab")
 	}
 	if app.EditorState.Editor.CursorLine() != 2 || app.EditorState.Editor.CursorCol() != 5 {
 		t.Fatalf("cursor=%d:%d", app.EditorState.Editor.CursorLine(), app.EditorState.Editor.CursorCol())
 	}
-	if cmd == nil {
-		t.Fatal("open should return asynchronous blink/LSP command")
+}
+
+func TestFindInFilesRejectsOldQueryActivationAndChangedEditorTarget(t *testing.T) {
+	app, ws := newRealShellApp(t)
+	defer ws.Close()
+	paneJourneySize(app, 160, 40)
+	paths := openEditorTabs(t, app, "changed-result.txt")
+	ed := app.EditorState.Editor
+	line := ed.LineText(0)
+	app.toggleFindInFiles()
+	screen := app.findInFiles
+	screen.SetQuery("old")
+	screen.ScheduleSearch()
+	activation := findinfiles.OpenMsg{Screen: screen, Generation: screen.Generation(), Match: fileio.ProjectSearchMatch{Path: paths[0], Line: 1, LineText: line}}
+	screen.SetQuery("new")
+	screen.ScheduleSearch()
+	app.handleAppMessages(activation)
+	if app.findInFiles != screen {
+		t.Fatal("an old query activation closed the current search")
+	}
+	ed.ReplaceDocument("newer editor text\n")
+	ed.SetCursorPosition(0, 3)
+	command := app.openFindInFilesResult(fileio.ProjectSearchMatch{Path: paths[0], Line: 1, LineText: line, Column: 0, EndColumn: 4})
+	app.applyPaneFilesOpened(command().(paneFilesOpenedMsg))
+	if ed.Value() != "newer editor text\n" || ed.CursorCol() != 3 || !ed.Modified() {
+		t.Fatal("stale search relocated or replaced newer live editor content")
+	}
+}
+
+func TestFindInFilesLandsOnSurvivingUnsavedMatchWithoutReordering(t *testing.T) {
+	app, ws := newRealShellApp(t)
+	defer ws.Close()
+	paneJourneySize(app, 160, 40)
+	paths := openEditorTabs(t, app, "unsaved.go", "other.go")
+	ed := app.EditorState.Tabs[paths[0]].Editor
+	ed.ReplaceDocument("prefix target refined\n")
+	before := app.Win.Tabs()
+	command := app.openFindInFilesResult(fileio.ProjectSearchMatch{Path: paths[0], Line: 1, Column: 7, EndColumn: 13, LineText: "prefix target"})
+	app.applyPaneFilesOpened(command().(paneFilesOpenedMsg))
+	if ed.CursorCol() != 7 || ed.HasSelection() || !ed.Modified() || ed.Value() != "prefix target refined\n" {
+		t.Fatal("surviving unsaved target was not safely highlighted")
+	}
+	for index, tab := range app.Win.Tabs() {
+		if tab.ID != before[index].ID {
+			t.Fatal("search activation reordered the existing tab")
+		}
 	}
 }

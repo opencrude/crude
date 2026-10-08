@@ -29,6 +29,12 @@ func (m *App) applyTerminalWidthProfile(msg tea.TerminalWidthProfileMsg) {
 	}
 	m.subPaneProjections.InvalidateWidthProfile()
 	m.sessionProjections.InvalidateWidthProfile()
+	if m.gitReview != nil {
+		m.gitReview.InvalidateWidthProfile()
+	}
+	for _, view := range m.localDiffs {
+		view.screen.InvalidateWidthProfile()
+	}
 
 	seenEditors := make(map[*editor.Editor]struct{}, len(m.EditorState.Tabs)+1)
 	if m.EditorState.Editor != nil {

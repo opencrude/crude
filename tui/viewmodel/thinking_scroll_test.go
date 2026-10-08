@@ -60,7 +60,6 @@ func TestThinkingScrollbarGeometry(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 80
 	app.height = 24
-	app.agentChatScroll = make(map[string]agentMainChatScrollSnapshot)
 	setupReproAgent(t, app, "repro-agent")
 	node := app.AgentMgr.Get("repro-agent")
 	agent := node.State
@@ -107,7 +106,7 @@ func TestThinkingScrollbarGeometry(t *testing.T) {
 
 	// Wheel over pane content: pane scroll must move, main chat must not.
 	paneID := agent.ThinkingPaneID
-	scroll := app.subPaneProjections.ScrollModel(paneID)
+	scroll := app.subPaneProjections.ForOwner(app.AgentMgr.ActiveID()).ScrollModel(paneID)
 	if scroll == nil {
 		t.Fatal("pane scroll model missing")
 	}
@@ -160,7 +159,6 @@ func TestThinkingScrolledWindowStable(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 80
 	app.height = 24
-	app.agentChatScroll = make(map[string]agentMainChatScrollSnapshot)
 	setupReproAgent(t, app, "scro-agent")
 	node := app.AgentMgr.Get("scro-agent")
 	agent := node.State
@@ -181,7 +179,7 @@ func TestThinkingScrolledWindowStable(t *testing.T) {
 	app.paintShellFrame()
 
 	paneID := agent.ThinkingPaneID
-	scroll := app.subPaneProjections.ScrollModel(paneID)
+	scroll := app.subPaneProjections.ForOwner(app.AgentMgr.ActiveID()).ScrollModel(paneID)
 	if scroll == nil {
 		t.Fatal("pane scroll model missing")
 	}
@@ -197,7 +195,6 @@ func TestCompletedExpandedThoughtScrollsWithTranscript(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 80
 	app.height = 24
-	app.agentChatScroll = make(map[string]agentMainChatScrollSnapshot)
 	setupReproAgent(t, app, "done-scroll")
 	node := app.AgentMgr.Get("done-scroll")
 	state := node.State

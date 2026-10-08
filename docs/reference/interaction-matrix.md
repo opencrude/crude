@@ -20,9 +20,9 @@ preserve or intentionally improve.
 | Toggle terminal | Ctrl+` | Focus last terminal, or leave it if it already owns keys |
 | Composer | Alt+C | |
 | Quit application | Ctrl+Q | |
-| Close active editor tab | Ctrl+W | Uses the dirty-close Save / Don't Save / Cancel prompt; terminal focus keeps the key as PTY input |
+| Close active editor tab / empty pane | Ctrl+W | Editor uses the dirty-close Save / Don't Save / Cancel prompt; an empty focused group alone is removed without closing neighboring resources; terminal focus keeps the key as PTY input |
 | Cancel/back | Esc | Never Ctrl+C for back; in editor focus, Back closes the tab after transient editor UI is dismissed. On a tool permission dock, Esc stops the turn without denying permission; Deny / `n` is the explicit rejection path. In a text control Esc first drops the selection; the chat composer's ladder is selection → draft → cancel the turn. |
-| Previous / next tab | Ctrl+[ / Ctrl+] | Global outside terminal key ownership, including editor focus |
+| Previous / next tab | Ctrl+[ / Ctrl+] | Within the focused main group, outside terminal key ownership, including editor focus |
 | Main tab actions and focus | Click tab / ×; tab context menu; close shortcut | Pointer selection and close return keys to the selected editor/chat, or workspace home when the last tab closes. Hover and overflow browsing never pin keyboard focus to the strip. Deliberate Ctrl+T + arrow/Home/End navigation retains strip focus until Enter/Down/Tab/Esc commits or leaves it; closing ends that navigation. Dirty-close Save / Don't Save / Cancel keeps its safe modal and never restores stale strip focus. Background tab updates preserve the current focus. |
 | Attach file / choose current folder | Ctrl+O | Opens Attach File from non-terminal shell views; a focused Open Workspace folder picker owns the same key locally and selects its current folder |
 | Copy | Ctrl+C / Ctrl+Shift+C | Copies the selection of the chat input, chat messages, editor, overlay editors, terminals, and every inline text control. Ctrl+Shift+C is the explicit copy chord (terminals already used it); unhandled Ctrl+C clears the chat draft, and Ctrl+C never navigates back. |
@@ -31,6 +31,36 @@ preserve or intentionally improve.
 | Whole-text Copy/Cut | right-click on a text control | Context menu Copy/Cut act on the entire value; the composer menu (Paste / Copy / Cut / Clear input) acts on the draft. Cut runs through the owning control so composite models stay in sync. |
 | Paste | Bracketed paste primary; Ctrl+V / Ctrl+Shift+V fallback | Routes to the focused control; launcher/tree paste never leaks into hidden chat input. Windows Terminal image-only clipboard pastes arrive as empty bracketed pastes: only the chat composer asynchronously reads and attaches the clipboard image. Non-empty text remains exact; an empty paste without an image is a silent no-op, never a read of unrelated clipboard text. |
 | Large text paste | Substantial overflow, not a line count alone | Attach at 4 KiB; also at eight logical lines with at least 512 bytes of trimmed payload, or ten wrapped rows with at least 1 KiB of trimmed payload. Wrapped evaluation uses the real text column with a 40-column floor. Short prose/small lists stay literal even on a tiny grid. Terminal and image-first clipboard routes share the policy; the full Pasted text attachment loads off Update. Pending storage preserves paste order and blocks Send; owner/draft changes invalidate late insertion and failures never dump the payload. |
+
+## Main view panes
+
+Current ownership, lifecycle and limits: [Main View Panes](main-view-panes.md).
+Groups are recursive side-by-side/stacked leaves with independently selected
+tabs. One resource identity moves, never duplicates. Layout is workspace-scoped
+in memory for the current process only, not restored after restart; switching
+workspace resets it. Header telemetry follows the focused group.
+
+| Action | Binding / control | Notes |
+|--------|-------------------|-------|
+| Split right / down | Ctrl+Alt+L / Ctrl+Alt+D | Creates a focused empty group; Ctrl+Alt+Right/Down aliases may be intercepted by the OS |
+| Previous / next pane | Alt+[ / Alt+] | Visual leaf order; remains available in compact presentation |
+| Grow / shrink pane | Ctrl+Alt+= / Ctrl+Alt+- | Shared split sizing with minimum bounds |
+| New Session in Pane | Group +; Ctrl+Alt+N; Ctrl+T then N/+ | + sits after content-sized tabs, pinned at the trailing edge during overflow |
+| Populate empty pane | New Session / Open File; N / O | Tab/Shift+Tab chooses and Enter/Space activates; Ctrl+W closes only that empty group |
+| Move / reorder tab | Drag tab to body center or group strip | Existing identity moves; strip drop inserts before hit tab or appends; empty source collapses |
+| Edge split preview | Drag to left/right/top/bottom body edge | Theme ColorHover preview only until release; Esc or release outside a valid target cancels; floating windows are not drop targets |
+| Divider resize | Drag shared SplitDivider | Root Host capture retains motion/release outside divider |
+| Split/move/merge/open/new/resize/focus/close | Command palette; tab context menu for split/move/merge | Registry-backed operations retain modal and terminal input ownership |
+| Too-small terminal | Automatic compact layout | Preserves the recursive tree and selection; shows focused group only, restores all groups on enlargement |
+| Close agent tab | Tab × / close action | Minimizes, never terminates; explicit Terminate is separate |
+
+Main chats retain independent projections, including per-main-agent inline
+subpane embedding. A session family has one composer/deck owner even with root
+and child visible together. Focus aliases are bindings to the authoritative
+group, not shadow state. Settings outside-click Ignore policy remains unchanged.
+Main-resource floating pop-out/composition remains deferred. Git and local
+read-only comparisons participate in the main groups; their aligned split reader
+and immutable snapshot lifetime are documented in Main View Panes.
 
 ## Chat and Workspace
 
@@ -135,6 +165,17 @@ window derive from current bytes, not replayed change guesses.
 | Git line edits / blame | (gutter + header + inspector) | `+` added / `~` modified in the gutter; branch and compact current-line blame are in the header; full blame and Copy blame commit remain in editor detail/context actions |
 | Horizontal scroll | Two-finger horizontal / wheel-left/right; Shift+vertical wheel fallback | Scrollbar extent is the widest line in the whole document and does not change with vertical viewport |
 | Text cursor | Shared 400 ms phase after 800 ms activity hold | Muted reverse-video block; idle shell remains at 2.5 FPS so blink never freezes |
+| Compare with disk / saved version | Editor context menu or palette | Complete read-only main tab, native split divider, synchronized old/new vertical scroll, unified fallback, find/hunk navigation. Refresh replaces only the exact snapshot; Close never consumes source edits. |
+| Go to / search result landing | LSP navigation, Find in Files Open | A target already visible does not shift the viewport. Pre-render jumps wait for actual geometry; short files stay at the top. A visible, non-editing landing range clears on input/edit; typing never replaces the destination as a selection. |
+
+Find in Files retains query Home/End, routes Tab through result/preview/actions,
+and supports preview scroll, selection and copy. File preparation runs off Update
+and preserves the selected pane/resource and newer buffers. Old-query activations
+are rejected; an edited target is used only if the exact range survives or has
+one unambiguous occurrence on the same line. File-only matches preserve an
+already-open document's cursor. Fuzzy results retain useful identifier/path
+abbreviations but reject loose accidental subsequences; no good match shows an
+explicit empty result instead of unrelated suggestions.
 
 ## File tree context
 

@@ -246,6 +246,9 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 	if action == nil {
 		return nil
 	}
+	if cmd, handled := m.handleMainPaneAction(action); handled {
+		return cmd
+	}
 	if m.handleTerminalAction(*action) {
 		return nil
 	}
@@ -253,6 +256,9 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		return cmd
 	}
 	if cmd, handled := m.handleGitReviewAction(*action); handled {
+		return cmd
+	}
+	if cmd, handled := m.handleLocalDiffAction(*action); handled {
 		return cmd
 	}
 	if cmd, handled := m.handleBoardAction(*action); handled {

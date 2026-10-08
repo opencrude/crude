@@ -347,23 +347,66 @@ func TestEmulatorSelectionDoubleClickSelectsWord(t *testing.T) {
 	}
 }
 
-func TestEmulatorSelectionPaintsReverse(t *testing.T) {
+func TestEmulatorSelectionPaintsColors(t *testing.T) {
 	e := requireEmulator(t)
-	e.Feed([]byte("abc"))
+	// Child inverse/dim ink must not invert or mute the range fill.
+	e.Feed([]byte("\x1b[?25l\x1b[1;2;3;4;7;38;2;200;10;20;48;2;30;40;50mabc"))
+	original := paintGrid(t, e).Get(1, 0)
 	e.SelectionPress(0, 0, 1)
 	e.SelectionDrag(2, 0)
-	buf := paintGrid(t, e)
-	c := buf.Get(1, 0)
-	if c.Attr&cell.AttrReverse == 0 {
-		t.Fatalf("selected cell attrs=%v want AttrReverse", c.Attr)
-	}
-	if !c.FG.Equal(cell.White) || !c.BG.Equal(cell.Black) {
-		t.Fatalf("selection pre-swapped colors: fg=%v bg=%v", c.FG, c.BG)
+	for _, colors := range [][2]cell.Color{
+		{cell.White, cell.Blue},
+		{cell.Black, cell.NewTrueColor(120, 180, 240)},
+	} {
+		e.SetSelectionColors(colors[0], colors[1])
+		c := paintGrid(t, e).Get(1, 0)
+		if c.FG != colors[0] || c.BG != colors[1] || c.Attr != original.Attr&^(cell.AttrReverse|cell.AttrDim) {
+			t.Fatalf("selected cell=%+v colors=%v original=%+v", c, colors, original)
+		}
+		if got := e.SelectionText(); got != "abc" {
+			t.Fatalf("selection text=%q", got)
+		}
 	}
 	e.ClearSelection()
-	buf = paintGrid(t, e)
-	if c := buf.Get(1, 0); c.Attr&cell.AttrReverse != 0 {
-		t.Fatal("selection highlight survived ClearSelection")
+	if got := paintGrid(t, e).Get(1, 0); got != original {
+		t.Fatalf("clear changed child ink: got=%+v want=%+v", got, original)
+	}
+}
+
+func TestEmulatorSelectionWideGlyphAndCursor(t *testing.T) {
+	for _, end := range []int{1, 2} {
+		t.Run(string(rune('0'+end)), func(t *testing.T) {
+			e := requireEmulator(t)
+			e.Feed([]byte("\x1b[?25la界b"))
+			e.SetSelectionColors(cell.Black, cell.Cyan)
+			e.SelectionPress(0, 0, 1)
+			e.SelectionDrag(end, 0)
+			buf := paintGrid(t, e)
+			for x := 1; x <= 2; x++ {
+				c := buf.Get(x, 0)
+				if c.FG != cell.Black || c.BG != cell.Cyan || c.Attr != 0 {
+					t.Fatalf("wide selected column %d=%+v", x, c)
+				}
+			}
+			if buf.Get(1, 0).Content != "界" || buf.Get(1, 0).Width != 2 || buf.Get(2, 0).Width != 0 {
+				t.Fatal("selection damaged wide glyph")
+			}
+			if c := buf.Get(3, 0); c.BG != cell.Black {
+				t.Fatalf("unselected neighbor=%+v", c)
+			}
+			if got := e.SelectionText(); got != "a界" {
+				t.Fatalf("native text=%q", got)
+			}
+			e.Feed([]byte("\x1b[?25h\x1b[1;2H"))
+			e.SetCursorState(true, true)
+			buf = paintGrid(t, e)
+			for x := 1; x <= 2; x++ {
+				c := buf.Get(x, 0)
+				if c.BG != cell.Cyan || c.Attr&cell.AttrReverse == 0 || c.Attr&cell.AttrDim != 0 {
+					t.Fatalf("selected block cursor column %d=%+v", x, c)
+				}
+			}
+		})
 	}
 }
 

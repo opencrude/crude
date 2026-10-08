@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -21,6 +22,17 @@ type frameGate struct {
 	wakePending   bool
 	generation    uint64
 	presented     uint64
+}
+
+func (m *App) mainViewResizeActive() bool {
+	if m.sidebarResizeActive() {
+		return true
+	}
+	if m.rootHost == nil {
+		return false
+	}
+	id, _, ok := m.rootHost.CapturedPointer()
+	return ok && strings.HasPrefix(string(id), "main-panes/divider-")
 }
 
 func (m *App) requestCoalescedFrame(now time.Time) tea.Cmd {

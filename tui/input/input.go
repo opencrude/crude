@@ -404,6 +404,9 @@ func (m Model) MouseToInputPos(mouseX, mouseY int) (runeIdx int, ok bool) {
 // pointer owns the composer (IsSelecting) and true for a live selection.
 func (m Model) InputSelecting() bool { return m.input.HasActiveSelection() || m.input.IsSelecting() }
 
+// InputDragging distinguishes pointer capture from a retained keyboard range.
+func (m Model) InputDragging() bool { return m.input.IsSelecting() }
+
 // HasInputSelection reports an active non-empty text selection, ignoring an
 // in-flight pointer drag (InputSelecting covers that).
 func (m Model) HasInputSelection() bool { return m.input.HasActiveSelection() }

@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -17,8 +18,15 @@ import (
 func openTestEditor(t *testing.T, app *App) string {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "foo.go")
-	app.EditorState.Editor = editor.NewPreview(app.Theme, path, "package main\n", 1)
-	app.EditorState.ActiveView = path
+	if err := os.WriteFile(path, []byte("package main\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if app.BufferMgr == nil {
+		app.BufferMgr = editor.NewBufferManager()
+	}
+	if _, err := app.openEditorTab(path); err != nil {
+		t.Fatal(err)
+	}
 	return path
 }
 
@@ -43,8 +51,7 @@ func TestRootHostCapture_ChatHiddenByEditor(t *testing.T) {
 		t.Fatal("chat selection should cancel when editor is active")
 	}
 
-	app.EditorState.ActiveView = ""
-	app.EditorState.Editor.Close()
+	app.closeEditorTab()
 	app.paintShellFrame()
 
 	if host.HasPointerCapture() {
@@ -72,8 +79,7 @@ func TestRootHostCapture_ChatReleaseElsewhereAfterEditor(t *testing.T) {
 		t.Fatal("release while chat hidden should not leave latent chat capture")
 	}
 
-	app.EditorState.ActiveView = ""
-	app.EditorState.Editor.Close()
+	app.closeEditorTab()
 	app.paintShellFrame()
 	if host.HasPointerCapture() || screen.IsSelecting() {
 		t.Fatal("return to chat after hidden release must stay clean")

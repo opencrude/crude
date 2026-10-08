@@ -40,6 +40,8 @@ type subPaneProjection struct {
 	// expanded mirrors the parent chat block's disclosure state so completed
 	// panes retain their scrollbar when reopened.
 	expanded bool
+
+	source *workspace.Conversation
 }
 
 // subPaneProjectionRegistry owns the per-pane projections and the
@@ -47,6 +49,10 @@ type subPaneProjection struct {
 type subPaneProjectionRegistry struct {
 	projections map[string]*subPaneProjection
 	theme       *theme.Theme
+	// owners retain independent inline presentation; root projections remain main renderers.
+	owners   map[string]*subPaneProjectionRegistry
+	embedded bool
+	username string
 }
 
 func newSubPaneProjectionRegistry(th *theme.Theme) *subPaneProjectionRegistry {
@@ -54,6 +60,22 @@ func newSubPaneProjectionRegistry(th *theme.Theme) *subPaneProjectionRegistry {
 		projections: make(map[string]*subPaneProjection),
 		theme:       th,
 	}
+}
+
+// ForOwner returns retained inline presentation state for one embedding main agent.
+// It never replaces the root registry's canonical main-chat projection.
+func (reg *subPaneProjectionRegistry) ForOwner(owner string) *subPaneProjectionRegistry {
+	if reg.owners == nil {
+		reg.owners = make(map[string]*subPaneProjectionRegistry)
+	}
+	if child := reg.owners[owner]; child != nil {
+		return child
+	}
+	child := newSubPaneProjectionRegistry(reg.theme)
+	child.embedded = true
+	child.username = reg.username
+	reg.owners[owner] = child
+	return child
 }
 
 func (reg *subPaneProjectionRegistry) Theme() *theme.Theme { return reg.theme }
@@ -65,6 +87,9 @@ func (reg *subPaneProjectionRegistry) SetTheme(th *theme.Theme) {
 		return
 	}
 	reg.theme = th
+	for _, child := range reg.owners {
+		child.SetTheme(th)
+	}
 	for _, p := range reg.projections {
 		if p != nil && p.renderer != nil {
 			p.renderer.SetTheme(th)
@@ -93,6 +118,7 @@ func (reg *subPaneProjectionRegistry) Get(paneID string, paneType workspace.Pane
 	if paneType == workspace.PaneThinking {
 		p.renderer.SetThinkingBodyOnly(true)
 	}
+	p.renderer.SetUsername(reg.username)
 	p.scroll.SetAutoScroll(true)
 	p.renderer.BindPaneScroll(p.scroll)
 	reg.projections[paneID] = p
@@ -113,28 +139,27 @@ func (reg *subPaneProjectionRegistry) Has(paneID string) bool {
 // Remove deletes the projection for paneID. Safe to call when missing.
 func (reg *subPaneProjectionRegistry) Remove(paneID string) {
 	delete(reg.projections, paneID)
+	for _, child := range reg.owners {
+		child.Remove(paneID)
+	}
+	delete(reg.owners, paneID)
 }
 
 // SetUsername propagates the username to every projection's MessageList.
 func (reg *subPaneProjectionRegistry) SetUsername(name string) {
+	reg.username = name
+	for _, child := range reg.owners {
+		child.SetUsername(name)
+	}
 	for _, p := range reg.projections {
 		p.renderer.SetUsername(name)
 	}
 }
 
-// SetSize resizes every projection's MessageList. The max-height per pane
-// matches the prior PaneManager.SetSize behavior (h/3 with a 5-row floor).
-func (reg *subPaneProjectionRegistry) SetSize(w, h int) {
-	maxH := h / 3
-	if maxH < 5 {
-		maxH = 5
-	}
-	for _, p := range reg.projections {
-		p.renderer.SetSize(w, maxH)
-	}
-}
-
 func (reg *subPaneProjectionRegistry) InvalidateWidthProfile() {
+	for _, child := range reg.owners {
+		child.InvalidateWidthProfile()
+	}
 	for _, projection := range reg.projections {
 		if projection != nil && projection.renderer != nil {
 			projection.renderer.InvalidateWidthProfile()
@@ -145,6 +170,9 @@ func (reg *subPaneProjectionRegistry) InvalidateWidthProfile() {
 // TickAll publishes the shared frame clock. Animated rows are deliberately
 // uncached; static message caches remain source-version owned across ticks.
 func (reg *subPaneProjectionRegistry) TickAll(spinFrame int) {
+	for _, child := range reg.owners {
+		child.TickAll(spinFrame)
+	}
 	for _, p := range reg.projections {
 		p.renderer.SetSpinFrame(spinFrame)
 	}
@@ -182,6 +210,9 @@ func (reg *subPaneProjectionRegistry) ScrollbarNestingLevel(done map[string]bool
 
 // InvalidateSubPane forwards to the owning projection's MessageList.
 func (reg *subPaneProjectionRegistry) InvalidateSubPane(parentPaneID, subPaneID string) {
+	for _, child := range reg.owners {
+		child.InvalidateSubPane(parentPaneID, subPaneID)
+	}
 	if p, ok := reg.projections[parentPaneID]; ok {
 		p.renderer.InvalidateSubPane(subPaneID)
 	}
@@ -189,6 +220,9 @@ func (reg *subPaneProjectionRegistry) InvalidateSubPane(parentPaneID, subPaneID 
 
 // InvalidateAllMessages forwards to the projection's MessageList.
 func (reg *subPaneProjectionRegistry) InvalidateAllMessages(paneID string) {
+	for _, child := range reg.owners {
+		child.InvalidateAllMessages(paneID)
+	}
 	if p, ok := reg.projections[paneID]; ok {
 		p.renderer.InvalidateAllMessages()
 	}
@@ -206,11 +240,15 @@ func (reg *subPaneProjectionRegistry) SyncFromWorkspace(paneID string, conversat
 	if conversation == nil {
 		return
 	}
-	if p.renderer.SourceVersion() == conversation.Version() {
+	if p.source == conversation && p.renderer.SourceVersion() == conversation.Version() {
 		return
 	}
 	messages, version := chatMessagesFromConversation(conversation)
+	if p.source != conversation && p.renderer.SourceVersion() == version {
+		p.renderer.SyncMessages(nil, 0)
+	}
 	p.renderer.SyncMessages(messages, version)
+	p.source = conversation
 	if scroll {
 		p.renderer.ScrollToBottom()
 	}
@@ -226,6 +264,9 @@ func (reg *subPaneProjectionRegistry) ActiveThinkingLineCount(paneID string, con
 
 // SetStreaming forwards to the projection's MessageList.
 func (reg *subPaneProjectionRegistry) SetStreaming(paneID string, v bool) {
+	for _, child := range reg.owners {
+		child.SetStreaming(paneID, v)
+	}
 	if p, ok := reg.projections[paneID]; ok {
 		p.renderer.SetStreaming(v)
 	}
@@ -233,6 +274,9 @@ func (reg *subPaneProjectionRegistry) SetStreaming(paneID string, v bool) {
 
 // SetActiveTyping forwards to the projection's MessageList.
 func (reg *subPaneProjectionRegistry) SetActiveTyping(paneID string, v bool) {
+	for _, child := range reg.owners {
+		child.SetActiveTyping(paneID, v)
+	}
 	if p, ok := reg.projections[paneID]; ok {
 		p.renderer.SetActiveTyping(v)
 	}
@@ -339,6 +383,9 @@ func (reg *subPaneProjectionRegistry) Render(paneID string, sp *workspace.SubPan
 	}
 	p := reg.Get(paneID, sp.Type)
 	p.expanded = expanded
+	if reg.embedded {
+		reg.SyncFromWorkspace(paneID, sp.Messages, false)
+	}
 	view := sp.View()
 
 	if sp.Done && !expanded {
@@ -437,11 +484,6 @@ func (reg *subPaneProjectionRegistry) renderAgentCompact(paneID string, sp *work
 		p.scroll.Clamp()
 	}
 
-	sp.SetCompactContentH(contentH)
-	sp.SetCompactVisibleH(visibleH)
-	sp.SetCompactScrollY(p.scroll.Offset())
-	sp.SetCompactAutoScroll(p.scroll.AutoScroll())
-
 	var toolLines []chatprojection.SubPaneLine
 	if len(allToolLines) == 0 {
 		thinking := p.renderer.ActiveThinkingLineCount(width) > 0
@@ -467,16 +509,26 @@ func (reg *subPaneProjectionRegistry) renderAgentCompact(paneID string, sp *work
 // MessageList so the parent's render path still calls back into the
 // registry.
 func (m *App) renderSubPaneContentForApp(paneID string, width, maxH, spinFrame int, expanded bool) []chatprojection.SubPaneLine {
-	sp := m.PaneMgr.Get(paneID)
-	if sp == nil {
-		return []chatprojection.SubPaneLine{
-			chatprojection.NativeLine(chatprojection.PaintLine{Spans: []chatprojection.RowSpan{{Text: "", Role: ui.ColorFg}}}),
-			chatprojection.NativeLine(chatprojection.PaintLine{Spans: []chatprojection.RowSpan{{Text: "● unknown pane", Role: ui.ColorMuted}}}),
+	return m.subPaneContentForRegistry(m.subPaneProjections)(paneID, width, maxH, spinFrame, expanded)
+}
+
+// subPaneContentForRegistry keeps nested rendering in the embedding main view.
+func (m *App) subPaneContentForRegistry(reg *subPaneProjectionRegistry) chatprojection.SubPaneContentFn {
+	return func(paneID string, width, maxH, spinFrame int, expanded bool) []chatprojection.SubPaneLine {
+		sp := m.PaneMgr.Get(paneID)
+		if sp == nil {
+			return []chatprojection.SubPaneLine{
+				chatprojection.NativeLine(chatprojection.PaintLine{Spans: []chatprojection.RowSpan{{Text: "", Role: ui.ColorFg}}}),
+				chatprojection.NativeLine(chatprojection.PaintLine{Spans: []chatprojection.RowSpan{{Text: "● unknown pane", Role: ui.ColorMuted}}}),
+			}
 		}
+		p := reg.Get(paneID, sp.Type)
+		p.renderer.SetSubPaneContentFn(m.subPaneContentForRegistry(reg))
+		if n := m.AgentMgr.Get(paneID); n != nil && n.State != nil {
+			p.renderer.SetLegacyModelFallback(n.Model)
+			p.renderer.SetStreaming(n.State.Streaming)
+			p.renderer.SetActiveTyping(n.State.ComputeActiveTyping())
+		}
+		return reg.Render(paneID, sp, width, maxH, spinFrame, expanded)
 	}
-	if n := m.AgentMgr.Get(paneID); n != nil && n.State != nil {
-		m.subPaneProjections.SetStreaming(paneID, n.State.Streaming)
-		m.subPaneProjections.SetActiveTyping(paneID, n.State.ComputeActiveTyping())
-	}
-	return m.subPaneProjections.Render(paneID, sp, width, maxH, spinFrame, expanded)
 }

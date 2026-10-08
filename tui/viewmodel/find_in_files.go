@@ -7,7 +7,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/fileio"
-	"crude/tui/rendering"
 	findinfiles "crude/tui/screens/findinfiles"
 	"crude/tui/ui"
 	"crude/tui/wm"
@@ -140,23 +139,26 @@ func (m *App) markProjectSearchDirty() {
 
 func (m *App) openFindInFilesResult(match fileio.ProjectSearchMatch) tea.Cmd {
 	m.closeFindInFiles()
-	path := filepath.Clean(match.Path)
-	cmd, err := m.openEditorTab(path)
+	path, err := filepath.Abs(match.Path)
 	if err != nil {
 		m.Feedback.NotifyError("Cannot open " + match.RelativePath)
 		return nil
 	}
-	if m.EditorState.Editor == nil {
-		return cmd
+	match.Path = filepath.Clean(path)
+	group := m.Win.ActiveGroup()
+	if tab := m.Win.TabByTitle(m.editorTabTitle(match.Path)); tab != nil {
+		group = tab.Group
 	}
-	line := match.Line - 1
-	if line < 0 {
-		line = 0
+	m.unfocus()
+	cmd := m.openPaneFiles([]string{match.Path}, group)
+	if cmd == nil {
+		return nil
 	}
-	column := rendering.RuneIdxToCol([]rune(match.LineText), match.Column)
-	m.EditorState.Editor.SetCursorPosition(line, column)
-	m.EditorState.Editor.ScrollToCursor()
-	return cmd
+	return func() tea.Msg {
+		message := cmd().(paneFilesOpenedMsg)
+		message.landing = &match
+		return message
+	}
 }
 
 func (m *App) applyProjectReplace(msg findinfiles.ReplaceMsg) tea.Cmd {

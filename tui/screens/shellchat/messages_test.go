@@ -244,7 +244,7 @@ func TestContextBoundaryPaintHonorsTextSelection(t *testing.T) {
 	s.SyncScrollMetrics(len(lines), len(lines))
 	buf := s.PaintTestBuffer(40, len(lines))
 	tokens := ui.NewTokenSet(th)
-	want := tokens.Color(ui.ColorSelection)
+	want := tokens.Color(ui.ColorTextSelection)
 	// The top rule and a body row both visibly participate in one selection.
 	if got := buf.Get(2+1, 1).BG; got != want {
 		t.Fatalf("selected boundary rule bg=%v want selection", got)

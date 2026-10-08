@@ -56,10 +56,7 @@ func (m *App) AddOrchestrator(orchID string) {
 		projection.renderer.SetUsername(m.Username)
 		projection.renderer.SetSubPaneContentFn(m.renderSubPaneContentForApp)
 		projection.renderer.ScrollToTop()
-		if m.agentChatScroll == nil {
-			m.agentChatScroll = make(map[string]agentMainChatScrollSnapshot)
-		}
-		m.agentChatScroll[childID] = agentMainChatScrollSnapshot{Offset: 0, AutoScroll: false}
+
 	}
 	m.syncAgentStatusInventory()
 	m.syncAgentWindowTabs()
@@ -159,7 +156,16 @@ func (m *App) cleanupAgent(agentID string) {
 	}
 
 	for _, id := range ids {
-		m.clearAgentChatScroll(id)
+		if m.mainPanes != nil {
+			if view := m.mainPanes.agentViews[id]; view != nil {
+				for tabID, candidate := range m.mainPanes.views {
+					if candidate == view {
+						delete(m.mainPanes.views, tabID)
+					}
+				}
+				delete(m.mainPanes.agentViews, id)
+			}
+		}
 		if m.subPaneProjections != nil {
 			m.subPaneProjections.Remove(id)
 		}
@@ -426,6 +432,8 @@ func (m *App) keepWindowTab(title string) {
 // and prompt target from that one authority. Explicit user actions call
 // activateAgentWindowTab separately.
 func (m *App) syncAgentWindowTabs() {
+	preserveGroup := m.Win.ActiveGroup()
+	var added []window.TabID
 	preserveTitle := ""
 	if active := m.Win.ActiveTab(); active != nil {
 		preserveTitle = active.Title
@@ -462,7 +470,15 @@ func (m *App) syncAgentWindowTabs() {
 		}
 		title := m.agentTabTitle(id)
 		if m.Win.TabByTitle(title) == nil {
-			m.Win.OpenTabInactive(title, "", true)
+			// New background children follow their parent's group, not an
+			// unrelated editor or deliberately empty pane the user is using.
+			if n.Parent != nil {
+				if parent := m.Win.TabByTitle(m.agentTabTitle(n.Parent.ID)); parent != nil {
+					m.Win.FocusGroup(parent.Group)
+				}
+			}
+			added = append(added, m.Win.OpenTabInactive(title, "", true).ID)
+			m.Win.FocusGroup(preserveGroup)
 		}
 		if tab := m.Win.TabByTitle(title); tab != nil {
 			newIcon := m.agentTabIcon(id)
@@ -477,8 +493,8 @@ func (m *App) syncAgentWindowTabs() {
 	}
 
 	m.purgeStaleAgentTabs()
-	// Root first within each agent tree, including a resumed session whose
-	// child tabs were opened before its root. Keep editor slots where they are.
+	// Position newly discovered agents next to their family, without sorting
+	// existing tabs back over a deliberate user reorder.
 	order := m.AgentMgr.TabOrder()
 	ids := make([]window.TabID, 0, len(order))
 	for _, id := range order {
@@ -486,7 +502,44 @@ func (m *App) syncAgentWindowTabs() {
 			ids = append(ids, tab.ID)
 		}
 	}
-	m.Win.OrderTabsSubset(ids)
+	if len(added) > 0 {
+		freshSet := make(map[window.TabID]bool, len(added))
+		for _, id := range added {
+			freshSet[id] = true
+		}
+		stable := make([]window.TabID, 0, len(ids))
+		for _, tab := range m.Win.Tabs() {
+			if m.isAgentTabTitle(tab.Title) && !freshSet[tab.ID] {
+				stable = append(stable, tab.ID)
+			}
+		}
+		for _, fresh := range added {
+			insert := len(stable)
+			for position, id := range ids {
+				if id != fresh {
+					continue
+				}
+				for previous := position - 1; previous >= 0; previous-- {
+					found := false
+					for index, old := range stable {
+						if old == ids[previous] {
+							insert = index + 1
+							found = true
+							break
+						}
+					}
+					if found {
+						break
+					}
+				}
+				break
+			}
+			stable = append(stable, 0)
+			copy(stable[insert+1:], stable[insert:])
+			stable[insert] = fresh
+		}
+		m.Win.OrderTabsSubset(stable)
+	}
 	m.keepWindowTab(preserveTitle)
 	m.handleTabSwitch()
 }

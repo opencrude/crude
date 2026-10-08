@@ -45,6 +45,22 @@ type Buffer struct {
 // Bytes returns the buffer's text content as a byte slice.
 func (b *Buffer) Bytes() []byte { return b.buf.Bytes() }
 
+// SavedBytes returns an owned copy of the accepted disk savepoint. Capture it
+// together with Snapshot on the buffer's owning goroutine before background work.
+func (b *Buffer) SavedBytes() []byte {
+	if b == nil {
+		return nil
+	}
+	data := make([]byte, 0, b.savepoint.size)
+	cursor := b.savepoint.cursor(false)
+	for len(data) < b.savepoint.size {
+		span := cursor.span()
+		data = append(data, span...)
+		cursor.offset += len(span)
+	}
+	return data
+}
+
 // LineCount returns the number of lines in the buffer.
 func (b *Buffer) LineCount() int { return b.buf.LineCount() }
 
@@ -241,6 +257,21 @@ func (m *BufferManager) Get(id string) *Buffer {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
 	return m.buffers[id]
+}
+
+// InstallPrepared publishes a buffer loaded off the UI goroutine. An existing
+// live buffer always wins, including unsaved edits made while the read ran.
+func (m *BufferManager) InstallPrepared(prepared *Buffer) *Buffer {
+	if prepared == nil {
+		return nil
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if existing := m.buffers[prepared.Path]; existing != nil {
+		return existing
+	}
+	m.buffers[prepared.Path] = prepared
+	return prepared
 }
 
 // Close removes the manager's path/ID entry. Existing views retain the Buffer;

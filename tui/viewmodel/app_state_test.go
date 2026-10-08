@@ -373,6 +373,7 @@ func TestHandleQuit_AfterLastEditorCloses_Quits(t *testing.T) {
 
 func TestHandleQuit_ClosesOverlayFirst(t *testing.T) {
 	app := newTestApp(t)
+	selectDeckSession(t, app, app.ActiveSession, "agent")
 	app.openSessionSettings()
 	projection := app.activeSessionDeck()
 	if projection == nil || !projection.deck.IsOpen() {
@@ -832,8 +833,6 @@ func TestRemoveOrchestrator_CleansUp(t *testing.T) {
 	app := newTestApp(t)
 	app.AgentMgr.AddOrchestrator("ses_1_orch_1", &workspace.AgentState{})
 	app.subPaneProjections.Get("ses_1_orch_1", workspace.PaneAgent)
-	app.agentChatScroll = make(map[string]agentMainChatScrollSnapshot)
-	app.agentChatScroll["ses_1_orch_1"] = agentMainChatScrollSnapshot{Offset: 4, AutoScroll: false}
 
 	app.RemoveOrchestrator("ses_1_orch_1")
 
@@ -846,9 +845,7 @@ func TestRemoveOrchestrator_CleansUp(t *testing.T) {
 	if app.subPaneProjections.Has("ses_1_orch_1") {
 		t.Fatal("subPane projection should be removed when orchestrator closes")
 	}
-	if _, ok := app.agentChatScrollSnapshotForTest("ses_1_orch_1"); ok {
-		t.Fatal("per-agent scroll snapshot should be removed when orchestrator closes")
-	}
+
 }
 
 func TestAddOrchestratorKeepsExistingSessionReachable(t *testing.T) {
@@ -879,8 +876,8 @@ func TestHandleSubPaneCompletionIgnoresRemovedAgent(t *testing.T) {
 
 func TestHandleCancelConfirmationStopsTurnWithoutDenyingPermission(t *testing.T) {
 	app := newFullTestApp(t)
-	state := &workspace.AgentState{}
-	app.AgentMgr.AddOrchestrator("agent", state)
+	selectDeckSession(t, app, app.ActiveSession, "agent")
+	state := app.AgentMgr.Get("agent").State
 	projection := app.activeSessionProjection()
 	openTestAgentPrompt(t, app, projection, agentPromptRequest{question: "Continue?"})
 	projection.deckHost.Resize(80, 12)
@@ -1076,6 +1073,7 @@ func TestHandleInputEvent_RefOpen(t *testing.T) {
 
 func TestHandleInputEvent_SettingsOpen(t *testing.T) {
 	app := newTestApp(t)
+	selectDeckSession(t, app, app.ActiveSession, "agent")
 	cmds := app.handleInputEvent(input.SettingsOpenEvent{})
 	if len(cmds) != 0 {
 		t.Fatalf("expected 0 cmds, got %d", len(cmds))

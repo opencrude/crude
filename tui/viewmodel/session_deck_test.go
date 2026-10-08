@@ -15,14 +15,14 @@ func TestSessionDeckIsRetainedPerSession(t *testing.T) {
 	first := &workspace.Session{SessionID: "first", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
 	second := &workspace.Session{SessionID: "second", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
 
-	app.ActiveSession = first
+	selectDeckSession(t, app, first, "first-agent")
 	app.openSessionSettings()
 	firstProjection := app.activeSessionDeck()
 	if firstProjection == nil || !firstProjection.deck.IsOpen() || !firstProjection.deckFocused {
 		t.Fatal("first session deck did not open and focus")
 	}
 
-	app.ActiveSession = second
+	selectDeckSession(t, app, second, "second-agent")
 	app.openSessionSettings()
 	secondProjection := app.activeSessionDeck()
 	if secondProjection == nil || secondProjection == firstProjection || !secondProjection.deck.IsOpen() {
@@ -33,7 +33,7 @@ func TestSessionDeckIsRetainedPerSession(t *testing.T) {
 		t.Fatal("closing second session panel left its deck open")
 	}
 
-	app.ActiveSession = first
+	selectDeckSession(t, app, first, "first-agent")
 	if !firstProjection.deck.IsOpen() || firstProjection.settings != app.sessionSettings() {
 		t.Fatal("switching back did not restore the first session deck")
 	}
@@ -43,24 +43,23 @@ func TestConfirmationAndYoloResultsTargetOwningProjection(t *testing.T) {
 	app := newFullTestApp(t)
 	first := &workspace.Session{SessionID: "first", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
 	second := &workspace.Session{SessionID: "second", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
-	app.AgentMgr.AddOrchestrator("first-agent", &workspace.AgentState{})
 
-	app.ActiveSession = first
+	selectDeckSession(t, app, first, "first-agent")
 	firstProjection := app.activeSessionProjection()
 	prompt := openTestAgentPrompt(t, app, firstProjection, agentPromptRequest{agentID: "first-agent", question: "Proceed?", tool: "bash"})
 
-	app.ActiveSession = second
+	selectDeckSession(t, app, second, "second-agent")
 	secondProjection := app.activeSessionProjection()
 	app.resolvePromptConfirmation(prompt.confirmation, "always")
 	if firstProjection.deck.IsOpen() || secondProjection.deck.IsOpen() || app.ActiveSession != second {
 		t.Fatal("inactive confirmation resolution changed the active session")
 	}
 
-	app.ActiveSession = first
+	selectDeckSession(t, app, first, "first-agent")
 	firstProjection.yolo.Reset()
 	firstProjection.yoloAgentID = "first-agent"
 	firstProjection.deck.Open(sessionYoloPanel(firstProjection.yolo))
-	app.ActiveSession = second
+	selectDeckSession(t, app, second, "second-agent")
 	app.resolveSessionYolo(firstProjection.yolo, true)
 	if firstProjection.deck.IsOpen() || secondProjection.deck.IsOpen() || app.ActiveSession != second {
 		t.Fatal("inactive YOLO resolution changed the active session")
@@ -74,7 +73,7 @@ func TestBlockingQuestionPanelCapturesInputAndKeepsSessionOwnership(t *testing.T
 	app := newFullTestApp(t)
 	first := &workspace.Session{SessionID: "first", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
 	second := &workspace.Session{SessionID: "second", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
-	app.ActiveSession = first
+	selectDeckSession(t, app, first, "first-agent")
 	firstProjection := app.activeSessionProjection()
 	prompt := openTestAgentPrompt(t, app, firstProjection, agentPromptRequest{kind: agentPromptQuestions, agentID: "first-agent", questionsJSON: `[{"question":"Continue?","options":["yes","no"]}]`})
 
@@ -85,7 +84,7 @@ func TestBlockingQuestionPanelCapturesInputAndKeepsSessionOwnership(t *testing.T
 		t.Fatalf("blocking question click classified as %v", region)
 	}
 
-	app.ActiveSession = second
+	selectDeckSession(t, app, second, "second-agent")
 	secondProjection := app.activeSessionProjection()
 	app.resolveAgentQuestion(prompt.question, question.Result{}, true)
 	if firstProjection.deck.IsOpen() {
@@ -100,7 +99,7 @@ func TestSessionDeckReservesNativeRegionBelowMessages(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 100, 30
 	app.launcherScreen = nil
-	app.ActiveSession = &workspace.Session{SessionID: "session", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
+	selectDeckSession(t, app, &workspace.Session{SessionID: "session", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}, "agent")
 	app.openSessionSettings()
 	_ = app.computeContentLayout()
 
@@ -121,7 +120,7 @@ func TestSettingsProjectionLookupTargetsInactiveSession(t *testing.T) {
 	second := &workspace.Session{SessionID: "second", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
 	firstProjection := app.sessionProjections.Get(first)
 	app.sessionProjections.Get(second)
-	app.ActiveSession = second
+	selectDeckSession(t, app, second, "second-agent")
 
 	owner, projection := app.sessionProjections.projectionForSettings(firstProjection.settings)
 	if owner != first || projection != firstProjection {
@@ -133,14 +132,13 @@ func TestBackgroundJobsUpdateOwningInactiveSessionWithoutStealingFocus(t *testin
 	app := newFullTestApp(t)
 	first := &workspace.Session{SessionID: "first", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
 	second := &workspace.Session{SessionID: "second", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
-	app.AgentMgr.AddOrchestrator("first-agent", &workspace.AgentState{})
 	app.SessionsByAgent = make(map[string]*workspace.Session)
 	app.SessionsByAgent["first-agent"] = first
 
-	app.ActiveSession = first
+	selectDeckSession(t, app, first, "first-agent")
 	app.openSessionSettings()
 	firstProjection := app.activeSessionProjection()
-	app.ActiveSession = second
+	selectDeckSession(t, app, second, "second-agent")
 	secondProjection := app.activeSessionProjection()
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
 	app.updateSessionBackgroundJobs("first-agent", []fileio.AsyncCmdInfo{{
@@ -161,10 +159,9 @@ func TestBackgroundJobsUpdateOwningInactiveSessionWithoutStealingFocus(t *testin
 func TestBackgroundJobsPanelClosesAfterCompletedRowsExpire(t *testing.T) {
 	app := newFullTestApp(t)
 	session := &workspace.Session{SessionID: "session", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
-	app.AgentMgr.AddOrchestrator("agent", &workspace.AgentState{})
 	app.SessionsByAgent = make(map[string]*workspace.Session)
 	app.SessionsByAgent["agent"] = session
-	app.ActiveSession = session
+	selectDeckSession(t, app, session, "agent")
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
 	app.updateSessionBackgroundJobs("agent", []fileio.AsyncCmdInfo{{
 		Handle: "done", Command: "true", Status: fileio.AsyncCompleted, EndedAt: now,
@@ -183,9 +180,8 @@ func TestBackgroundJobsPanelClosesAfterCompletedRowsExpire(t *testing.T) {
 func TestBackgroundJobsDoesNotRetainFocusAfterBlockingPanelCloses(t *testing.T) {
 	app := newFullTestApp(t)
 	session := &workspace.Session{SessionID: "session", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
-	app.AgentMgr.AddOrchestrator("agent", &workspace.AgentState{})
 	app.SessionsByAgent = map[string]*workspace.Session{"agent": session}
-	app.ActiveSession = session
+	selectDeckSession(t, app, session, "agent")
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
 	app.updateSessionBackgroundJobs("agent", []fileio.AsyncCmdInfo{{
 		Handle: "running", Command: "go test ./...", Status: fileio.AsyncRunning, StartedAt: now,

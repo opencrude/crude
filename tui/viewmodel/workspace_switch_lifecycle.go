@@ -47,6 +47,7 @@ func sameWorkspaceRoot(current, candidate string) bool {
 // domain starts tearing down. The old tree watcher is stopped synchronously,
 // while git and launcher work already in flight becomes stale immediately.
 func (m *App) beginWorkspaceSwitch() workspaceSwitchState {
+	m.cancelLocalDiffs()
 	m.overlayHost.Close(ui.OverlayCapabilityPicker)
 	m.cancelCapabilityOperations()
 	m.closeMemoryBrowser()
@@ -121,6 +122,8 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	if m.Win != nil {
 		m.Win.CloseAll()
 	}
+	m.mainPanes = nil
+	m.paneFilePicker = nil
 	if m.sessionProjections != nil {
 		m.sessionProjections.items = nil
 	}
@@ -129,9 +132,6 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	}
 	m.sessionProjections = newSessionProjectionRegistry(m.Theme)
 	m.subPaneProjections = newSubPaneProjectionRegistry(m.Theme)
-	m.agentChatScroll = make(map[string]agentMainChatScrollSnapshot)
-	m.chatScrollAgent = ""
-	m.chatScrollNeedsRestore = false
 
 	if m.chatScreen != nil {
 		m.chatScreen.CancelPointerCapture()
@@ -173,6 +173,7 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 		m.sourceControl.SetSnapshot(workspace.GitSnapshot{})
 	}
 	m.gitReview = nil
+	m.localDiffs = nil
 	m.gitReviewSequence++
 	m.boardBrowser = nil
 	m.pendingOperationIssues = nil

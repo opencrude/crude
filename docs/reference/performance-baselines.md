@@ -7,6 +7,39 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Main View Panes (2026-10-08)
+
+### Aligned Git/local comparison reader
+
+Three Linux/i7-10750H runs (`GOMAXPROCS=2`, 200 ms, 10,000 source lines,
+160×40 viewport) measured 266–279 µs / 149,701 B / 311 allocations for syntax
+diff paint and 291–299 µs / 143,624–143,625 B / 539 allocations for aligned
+plain-source paint. Preparation is separate, off-UI: 16.4–17.2 ms and about
+16.9 MB for the plain 10,000-line fixture. Whole-document fallback lexing and
+temporary per-grapheme width slices initially cost 131–135 ms / 265 MB; removing
+that unnecessary plain-text work restored bounded preparation without changing
+rendering. Paint allocation gates add modest headroom; no prior gate is loosened.
+These are reader/component timings, not filesystem, full-shell or terminal
+transport latency. Syntax preparation and query changes remain source-sized work.
+
+### Main-group presentation
+
+At 200×50, with 300 mixed-role messages per retained agent, three isolated
+Linux/i7-10750H runs (`GOMAXPROCS=2`, 200 ms benchmark duration) measured:
+
+| `BenchmarkMainPane` stage | Time/op | Bytes/op | Allocs/op |
+|---|---:|---:|---:|
+| Presentation: editor + dense agent | 0.804–0.844 ms | 39,536–39,538 | 554 |
+| Presentation: two dense agents | 0.909–0.932 ms | 46,210–46,213 | 486 |
+| Divider mutation, no presented frame | 15.8–16.3 µs | 9,751 | 44 |
+
+Presentation includes the real `App.View` compositor/ANSI path, not terminal
+transport or emulator latency. Divider mutations and drag previews keep dense
+message generations warm; release commits final width using existing lazy
+viewport/overscan reflow. Warm agent switching still fits its unchanged
+15,000 B / 315 allocation gate: 14,075–14,128 B, 197–198 allocations,
+153.8–157.0 µs. Main-pane ceilings add bounded headroom; no existing gate is raised.
+
 ## Recovery Disclosure Clock (2026-10-05)
 
 The compact recovery row caches expanded diagnostic evidence separately from

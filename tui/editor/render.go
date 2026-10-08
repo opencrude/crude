@@ -17,6 +17,9 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 		return
 	}
 	w, h := surf.Width(), surf.Height()
+	if (w != e.viewW || h != e.viewH) && e.cursor.Line >= e.scrollY && e.cursor.Line < e.scrollY+e.bodyHeight() {
+		e.pendingReveal = true
+	}
 	e.viewW = w
 	e.viewH = h
 	if w < 10 || h < 4 {
@@ -24,7 +27,7 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 	}
 
 	bgColor := e.cellColor(e.th.Colors.Bg)
-	selBgColor := e.cellColor(e.th.Colors.Selection)
+	selFgColor, selBgColor := e.tokens.TextSelectionColors(e.cellColor(e.th.Colors.Fg))
 	blankCell := cell.NewCell(' ', bgColor, bgColor, 0)
 	sw := e.gutterWidth()
 	sbW := e.scrollbarColWidth()
@@ -44,6 +47,9 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 		e.syncHorizontalScrollChrome(textW, bodyH)
 	}
 	e.syncScrollChrome(bodyH)
+	if e.pendingReveal {
+		e.revealJump()
+	}
 
 	errColor := e.cellColor(e.th.Colors.Error)
 	warnColor := e.cellColor(e.th.Colors.Warning)
@@ -178,7 +184,12 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 					if vCol == visCol {
 						switch {
 						case e.isSelected(lineIdx, vCol):
-							e.paintGrapheme(buf, cx, bufY, sbX, clusters[ri], widths[ri], e.cellColor(e.th.Colors.Fg), selBgColor, 0, blankCell)
+							fg := e.cellColor(e.th.Colors.Fg)
+							if vCol < len(colorMap) && colorMap[vCol] != "" {
+								fg = e.cellColor(lipgloss.Color(colorMap[vCol]))
+							}
+							fg, bg := e.tokens.TextSelectionColors(fg)
+							e.paintGrapheme(buf, cx, bufY, sbX, clusters[ri], widths[ri], fg, bg, 0, blankCell)
 						case searchMatchIdx >= 0:
 							hlBg := e.searchHighlightBg(searchIsCurrent)
 							fg := e.cellColor(e.th.Colors.Fg)
@@ -188,11 +199,10 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 							if sev > 0 {
 								fg = diagFg
 							}
-							attr := diagAttr
-							if searchIsCurrent {
-								attr |= cell.AttrReverse
+							if cell.ContrastRatio(fg, hlBg) < 4.5 {
+								fg = cell.ContrastInk(hlBg)
 							}
-							e.paintGrapheme(buf, cx, bufY, sbX, clusters[ri], widths[ri], fg, hlBg, attr, blankCell)
+							e.paintGrapheme(buf, cx, bufY, sbX, clusters[ri], widths[ri], fg, hlBg, diagAttr, blankCell)
 						default:
 							fg := e.cellColor(e.th.Colors.Fg)
 							if vCol < len(colorMap) && colorMap[vCol] != "" {
@@ -206,18 +216,17 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 					} else if visCol < e.scrollX {
 						switch {
 						case e.isSelected(lineIdx, vCol):
-							buf.Set(cx, bufY, cell.NewCell(' ', e.cellColor(e.th.Colors.Fg), selBgColor, 0))
+							buf.Set(cx, bufY, cell.NewCell(' ', selFgColor, selBgColor, 0))
 						case searchMatchIdx >= 0:
 							hlBg := e.searchHighlightBg(searchIsCurrent)
 							fg := e.cellColor(e.th.Colors.Fg)
 							if sev > 0 {
 								fg = diagFg
 							}
-							attr := diagAttr
-							if searchIsCurrent {
-								attr |= cell.AttrReverse
+							if cell.ContrastRatio(fg, hlBg) < 4.5 {
+								fg = cell.ContrastInk(hlBg)
 							}
-							buf.Set(cx, bufY, cell.NewCell(' ', fg, hlBg, attr))
+							buf.Set(cx, bufY, cell.NewCell(' ', fg, hlBg, diagAttr))
 						default:
 							fg := bgColor
 							if sev > 0 {
@@ -229,10 +238,10 @@ func (e *Editor) Render(surf *surface.Surface, ctx ui.PaintContext) {
 				} else {
 					switch {
 					case e.isSelected(lineIdx, vCol):
-						buf.Set(cx, bufY, cell.NewCell(' ', e.cellColor(e.th.Colors.Fg), selBgColor, 0))
+						buf.Set(cx, bufY, cell.NewCell(' ', selFgColor, selBgColor, 0))
 					case searchMatchIdx >= 0:
 						hlBg := e.searchHighlightBg(searchIsCurrent)
-						buf.Set(cx, bufY, cell.NewCell(' ', e.cellColor(e.th.Colors.Muted), hlBg, 0))
+						buf.Set(cx, bufY, cell.NewCell(' ', cell.ContrastInk(hlBg), hlBg, 0))
 					default:
 						buf.Set(cx, bufY, blankCell)
 					}
@@ -446,6 +455,9 @@ func (e *Editor) paintGrapheme(
 // different line numbers; the highlight extends from Start to
 // EndCol on Start.Line, and from Col=0 to EndCol on End.Line.
 func (e *Editor) searchHighlightAt(line, col int) (int, bool) {
+	if e.landing != nil && e.landingRevision == e.Revision() && line == e.landing.Start.Line && col >= e.landing.Start.Col && col < e.landing.End.Col {
+		return 0, true
+	}
 	if e.search == nil || !e.search.Open {
 		return -1, false
 	}

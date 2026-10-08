@@ -287,6 +287,7 @@ func (s *Screen) applyDefaultColors() {
 		return
 	}
 	s.vt.SetDefaultColors(s.tokens.Color(ui.ColorFg), s.tokens.Color(ui.ColorBg))
+	s.vt.SetSelectionColors(s.tokens.Color(ui.ColorTextSelectionFg), s.tokens.Color(ui.ColorTextSelection))
 	s.vt.SetCursorColor(s.tokens.Color(ui.ColorCursor))
 }
 

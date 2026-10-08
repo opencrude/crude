@@ -59,7 +59,7 @@ func TestTextTidePreservesGraphemesGeometryAndSelection(t *testing.T) {
 					changed = changed || a.FG != b.FG
 				}
 			}
-			if buf.Get(1, 0).BG != tokens.Color(ui.ColorSelection) {
+			if buf.Get(1, 0).BG != tokens.Color(ui.ColorTextSelection) {
 				t.Fatal("tide overwrote selection")
 			}
 			previous = buf

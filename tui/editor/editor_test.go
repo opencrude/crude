@@ -10,6 +10,7 @@ import (
 
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 
+	"crude/tui/rendering"
 	"crude/tui/theme"
 )
 
@@ -17,14 +18,14 @@ import (
 
 func TestBuildChromaStyle_KeyTokensMapped(t *testing.T) {
 	th := theme.DefaultDark()
-	s := buildChromaStyle(th)
+	s := rendering.SourceStyle(th)
 	entry := s.Get(chroma.Keyword)
 	assert.True(t, entry.Colour.IsSet(), "Keyword should have a colour set")
 }
 
 func TestBuildChromaStyle_MarkdownTokensMapped(t *testing.T) {
 	th := theme.DefaultDark()
-	s := buildChromaStyle(th)
+	s := rendering.SourceStyle(th)
 	tests := []struct {
 		name  string
 		ttype chroma.TokenType
@@ -49,7 +50,7 @@ func TestBuildChromaStyle_MarkdownTokensMapped(t *testing.T) {
 
 func TestBuildChromaStyle_AllSubtypesMapped(t *testing.T) {
 	th := theme.DefaultDark()
-	s := buildChromaStyle(th)
+	s := rendering.SourceStyle(th)
 	allTypes := []chroma.TokenType{
 		chroma.Keyword, chroma.KeywordType, chroma.KeywordDeclaration, chroma.NameFunction,
 		chroma.NameDecorator, chroma.NameClass, chroma.NameBuiltin, chroma.NameVariable,
@@ -66,8 +67,8 @@ func TestBuildChromaStyle_AllSubtypesMapped(t *testing.T) {
 
 func TestBuildChromaStyle_StyleReuse(t *testing.T) {
 	th := theme.DefaultDark()
-	s1 := buildChromaStyle(th)
-	s2 := buildChromaStyle(th)
+	s1 := rendering.SourceStyle(th)
+	s2 := rendering.SourceStyle(th)
 	assert.Equal(t, s1.Get(chroma.Keyword).Colour.String(), s2.Get(chroma.Keyword).Colour.String())
 }
 
@@ -75,7 +76,7 @@ func TestBuildChromaStyle_StyleReuse(t *testing.T) {
 
 func TestChromaTokenColor_Hit(t *testing.T) {
 	e := editorWithTheme()
-	e.chromaStyle = buildChromaStyle(e.th)
+	e.chromaStyle = rendering.SourceStyle(e.th)
 	clr := e.chromaTokenColor(chroma.Keyword)
 	assert.NotEmpty(t, clr, "Keyword should return a colour")
 	assert.True(t, strings.HasPrefix(clr, "#"))
@@ -83,14 +84,14 @@ func TestChromaTokenColor_Hit(t *testing.T) {
 
 func TestChromaTokenColor_Miss(t *testing.T) {
 	e := editorWithTheme()
-	e.chromaStyle = buildChromaStyle(e.th)
+	e.chromaStyle = rendering.SourceStyle(e.th)
 	clr := e.chromaTokenColor(chroma.Text)
 	assert.Empty(t, clr, "Text token should return empty")
 }
 
 func TestChromaTokenColor_DifferentTokens(t *testing.T) {
 	e := editorWithTheme()
-	e.chromaStyle = buildChromaStyle(e.th)
+	e.chromaStyle = rendering.SourceStyle(e.th)
 	kw := e.chromaTokenColor(chroma.Keyword)
 	cm := e.chromaTokenColor(chroma.Comment)
 	assert.NotEqual(t, kw, cm, "Keyword and Comment should have different colours")
