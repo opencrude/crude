@@ -25,8 +25,41 @@ import (
 
 type RuntimeMessage struct {
 	Message provider.ChatMessage
+	// Prepare returns immutable, hidden enrichment. An error never permits the
+	// original to be sent without that data; Admit may still preserve the input.
+	Prepare func(context.Context, []provider.ChatMessage) ([]provider.ChatMessage, error)
 	Admit   func([]provider.ChatMessage) error
 	Release func(string)
+}
+
+func (runtime RuntimeMessage) staged(ctx context.Context, current []provider.ChatMessage) ([]provider.ChatMessage, error) {
+	if runtime.Prepare != nil && runtime.Admit == nil {
+		return nil, errors.New("runtime input preparation has no durable admission owner")
+	}
+	messages := []provider.ChatMessage{runtime.Message}
+	var err error
+	if runtime.Prepare != nil {
+		var enrichment []provider.ChatMessage
+		enrichment, err = runtime.Prepare(ctx, current)
+		messages = append(messages, enrichment...)
+	}
+	seen := make(map[string]bool, len(current)+len(messages))
+	for _, message := range current {
+		if message.InternalID != "" {
+			seen[message.InternalID] = true
+		}
+	}
+	delta := messages[:0]
+	for _, message := range messages {
+		if message.InternalID != "" && seen[message.InternalID] {
+			continue
+		}
+		delta = append(delta, message)
+		if message.InternalID != "" {
+			seen[message.InternalID] = true
+		}
+	}
+	return delta, err
 }
 
 func (a *Agent) Run(
@@ -61,7 +94,8 @@ func (a *Agent) Run(
 					runtimeCh = nil
 					continue
 				}
-				prospective := append(append([]provider.ChatMessage(nil), sessionMessages...), runtime.Message)
+				staged, prepareErr := runtime.staged(ctx, sessionMessages)
+				prospective := append(append([]provider.ChatMessage(nil), sessionMessages...), staged...)
 				if runtime.Admit != nil {
 					if err := runtime.Admit(prospective); err != nil {
 						if runtime.Release != nil {
@@ -70,9 +104,12 @@ func (a *Agent) Run(
 						continue
 					}
 				}
-				sessionMessages = append(sessionMessages, runtime.Message)
+				sessionMessages = append(sessionMessages, staged...)
 				a.lastActiveContext = append([]provider.ChatMessage(nil), sessionMessages...)
-				a.lastArchive = append(a.lastArchive, runtime.Message)
+				a.lastArchive = append(a.lastArchive, staged...)
+				if prepareErr != nil && runtime.Release != nil {
+					runtime.Release("human steering preparation failed")
+				}
 			default:
 				return append([]provider.ChatMessage(nil), a.lastArchive...)
 			}
@@ -153,6 +190,11 @@ func (a *Agent) Run(
 	}
 	var checkpointErr error
 	appendWire := func(messages ...provider.ChatMessage) {
+		for i := range messages {
+			if messages[i].InternalID == "" {
+				messages[i].InternalID = fmt.Sprintf("msg-%016x%016x", rand2.Uint64(), rand2.Uint64())
+			}
+		}
 		msgs = append(msgs, messages...)
 		archiveMsgs = append(archiveMsgs, messages...)
 		a.lastActiveContext = append([]provider.ChatMessage(nil), msgs[1:]...)
@@ -210,24 +252,50 @@ func (a *Agent) Run(
 	providerName := a.providerDisplayName()
 	cacheUsageUnknown := a.Provider.ProtocolID() == "ollama"
 	var bufferedRuntime []RuntimeMessage
-	admitBufferedRuntime := func() {
-		for _, runtime := range bufferedRuntime {
-			prospective := append(append([]provider.ChatMessage(nil), msgs...), runtime.Message)
-			if runtime.Admit != nil {
-				if err := runtime.Admit(prospective); err != nil {
-					if runtime.Release != nil {
-						runtime.Release("context admission failed")
-					}
-					continue
+	admitRuntime := func(runtime RuntimeMessage) error {
+		staged, prepareErr := runtime.staged(ctx, msgs)
+		prospective := append(append([]provider.ChatMessage(nil), msgs...), staged...)
+		if runtime.Admit != nil {
+			if err := runtime.Admit(prospective); err != nil {
+				if runtime.Release != nil {
+					runtime.Release("context admission failed")
 				}
+				a.setRunFailure(err, rootprompt.RecoveryInterrupted, RecoveryFailureStorage)
+				return err
 			}
-			appendWire(runtime.Message)
 		}
-		bufferedRuntime = nil
+		if len(staged) > 0 {
+			appendWire(staged...)
+		}
+		if prepareErr != nil {
+			if runtime.Release != nil {
+				runtime.Release("human steering preparation failed")
+			}
+			a.setRunFailure(prepareErr, rootprompt.RecoveryInterrupted, RecoveryFailureConfiguration)
+			return prepareErr
+		}
+		return nil
 	}
-	defer admitBufferedRuntime()
+	admitBufferedRuntime := func() error {
+		for len(bufferedRuntime) > 0 {
+			runtime := bufferedRuntime[0]
+			bufferedRuntime = bufferedRuntime[1:]
+			if err := admitRuntime(runtime); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	defer func() {
+		for _, runtime := range bufferedRuntime {
+			if runtime.Release != nil {
+				runtime.Release("attempt ended before context admission")
+			}
+		}
+	}()
 	for step := 0; ; step++ {
 		if ctx.Err() != nil {
+			_ = admitBufferedRuntime()
 			l.Warn("CANCEL", "context_cancelled", "step", step, "reason", ctx.Err().Error())
 			emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
 			return returnMessages()
@@ -251,30 +319,25 @@ func (a *Agent) Run(
 		drainRuntime := func() (int, error) {
 			if a.FlushRuntimeMessages != nil {
 				if err := a.FlushRuntimeMessages(ctx); err != nil {
+					a.setRunFailure(err, rootprompt.RecoveryInterrupted, RecoveryFailureStorage)
 					return 0, fmt.Errorf("flush runtime inbox: %w", err)
 				}
 			}
 			consumed := 0
-			admit := func(runtime RuntimeMessage) {
-				prospective := append(append([]provider.ChatMessage(nil), msgs...), runtime.Message)
-				if runtime.Admit != nil {
-					if err := runtime.Admit(prospective); err != nil {
-						if runtime.Release != nil {
-							runtime.Release("context admission failed")
-						}
-						l.Warn("RUNTIME", "message_admission_failed", "step", step, "error", err.Error())
-						return
-					}
+			admit := func(runtime RuntimeMessage) error {
+				if err := admitRuntime(runtime); err != nil {
+					l.Warn("RUNTIME", "message_admission_failed", "step", step, "error", err.Error())
+					return err
 				}
 				l.Info("RUNTIME", "human_steering_admitted", "step", step, "message_id", runtime.Message.InternalID)
-				appendWire(runtime.Message)
 				consumed++
+				return nil
 			}
-			if len(bufferedRuntime) > 0 {
-				queued := bufferedRuntime
-				bufferedRuntime = nil
-				for _, runtime := range queued {
-					admit(runtime)
+			for len(bufferedRuntime) > 0 {
+				runtime := bufferedRuntime[0]
+				bufferedRuntime = bufferedRuntime[1:]
+				if err := admit(runtime); err != nil {
+					return consumed, err
 				}
 			}
 			for {
@@ -284,14 +347,15 @@ func (a *Agent) Run(
 						runtimeInput = nil
 						return consumed, nil
 					}
-					admit(runtime)
+					if err := admit(runtime); err != nil {
+						return consumed, err
+					}
 				default:
 					return consumed, nil
 				}
 			}
 		}
 		if _, err := drainRuntime(); err != nil {
-			a.setRunFailure(err, rootprompt.RecoveryInterrupted, RecoveryFailureStorage)
 			a.emitError(emit, err)
 			return returnMessages()
 		}
@@ -564,7 +628,7 @@ func (a *Agent) Run(
 				l.Warn("COMPACT", "provider_context_recovery", "attempt", overflowRecoveries, "error", err.Error())
 				continue
 			}
-			admitBufferedRuntime()
+			runtimeErr := admitBufferedRuntime()
 			clearUnsentRuntimeNotices()
 			outcome := accounting.Failed
 			if completion.hasOutput() || ctx.Err() != nil {
@@ -632,6 +696,10 @@ func (a *Agent) Run(
 			var apiErr *apiCallError
 			if errors.As(err, &apiErr) && apiErr.IsCancellation() {
 				emit(AgentEvent{Type: "done", Data: map[string]any{"content": "Cancelled.", "reason": "cancelled"}})
+				return returnMessages()
+			}
+			if runtimeErr != nil {
+				a.emitError(emit, runtimeErr)
 				return returnMessages()
 			}
 			if !a.preserveReportState && apiErr != nil && apiErr.Partial && provider.Retryable(err) &&
@@ -899,10 +967,10 @@ func (a *Agent) Run(
 			guidancePaths, guidanceErr = guidanceCallPaths(toolCalls)
 			if guidanceErr == nil {
 				guidanceChanged, guidanceErr = a.guidance.loadPaths(ctx, guidancePaths)
-			} else if errors.As(guidanceErr, &guidanceOperandErr) {
-				// Invalid literal operands are ordinary local tool errors. They do
-				// not mutate the accepted scope set or park the agent for guidance.
 			}
+			// Invalid literal operands are ordinary local tool errors; they do not
+			// mutate the accepted scope set or park the agent for guidance.
+			_ = errors.As(guidanceErr, &guidanceOperandErr)
 		}
 		if guidanceChanged || guidanceErr != nil {
 			// No member of a batch may mutate a newly governed scope before the
@@ -998,10 +1066,15 @@ func (a *Agent) Run(
 		}
 
 		var lastToolResultIdx int
+		toolMessages := make([]provider.ChatMessage, 0, len(results))
+		for _, result := range results {
+			toolMessages = append(toolMessages, toolResultMessage(result, len(results)))
+		}
+		// Collection already checkpointed finished siblings. Publish the complete
+		// round together instead of temporarily regressing to its first result.
+		appendWire(toolMessages...)
 		for _, r := range results {
 			toolError := r.toolError || IsToolError(r.result.Content)
-			toolMessage := toolResultMessage(r, len(results))
-			appendWire(toolMessage)
 			if a.ToolResultAccepted != nil && !toolError {
 				a.ToolResultAccepted(r.name, r.id, append([]provider.ChatMessage(nil), msgs[1:]...))
 			}
@@ -1027,7 +1100,15 @@ func (a *Agent) Run(
 			return returnMessages()
 		}
 		if uncertain != nil {
-			a.setRunFailure(uncertain, rootprompt.RecoveryUncertain, RecoveryFailurePanic)
+			var structural *tools.StructuralFailureError
+			if errors.As(uncertain, &structural) {
+				// Ownership blockers are deterministic and repairable by the
+				// parent. They are not uncertain effects and must not enter
+				// automatic panic recovery.
+				a.setRunFailure(uncertain, rootprompt.RecoveryInterrupted, RecoveryFailureStructural)
+			} else {
+				a.setRunFailure(uncertain, rootprompt.RecoveryUncertain, RecoveryFailurePanic)
+			}
 			a.emitError(emit, uncertain)
 			return returnMessages()
 		}

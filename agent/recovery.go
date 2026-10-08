@@ -28,6 +28,7 @@ const (
 	RecoveryFailureRepeatedTools RecoveryFailureKind = "repeated_tools"
 	RecoveryFailureTruncated     RecoveryFailureKind = "truncated"
 	RecoveryFailureMissingReport RecoveryFailureKind = "missing_report"
+	RecoveryFailureStructural    RecoveryFailureKind = "structural"
 	RecoveryFailurePanic         RecoveryFailureKind = "panic"
 	RecoveryFailureUnknown       RecoveryFailureKind = "unknown"
 )
@@ -110,6 +111,10 @@ func AttentionRecovery(kind RecoveryFailureKind, err error) RecoveryFailure {
 		failure.Summary = "Final report is still required"
 		failure.Action = "Continue to publish the required final report"
 		failure.Continuation = rootprompt.RecoveryMissingReport
+	case RecoveryFailureStructural:
+		failure.Summary = "Child run is blocked by its ownership scope"
+		failure.Action = "Repair the exact claim, then Continue the preserved run"
+		failure.Continuation = rootprompt.RecoveryInterrupted
 	case RecoveryFailurePanic:
 		failure.Summary = "Run paused after an internal failure"
 		failure.Action = "Inspect current state, then Continue"
@@ -511,6 +516,8 @@ func classifyRecordedRecovery(kind RecoveryFailureKind, err error) RecoveryFailu
 		return CorrectiveRecovery(kind, err)
 	case RecoveryFailureMissingReport:
 		return CorrectiveRecovery(kind, err)
+	case RecoveryFailureStructural:
+		return AttentionRecovery(kind, err)
 	case RecoveryFailurePanic:
 		return AttentionRecovery(kind, err)
 	case RecoveryFailureUnknown:

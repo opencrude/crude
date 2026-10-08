@@ -128,9 +128,6 @@ type Session struct {
 	dbPath                   string
 	turnNumber               int
 	toolCallSeq              int
-	seqNum                   int
-	writeBuf                 []taggedMessage
-	writeMu                  sync.Mutex
 	closing                  int32
 	hardCancelled            int32
 	activeTurns              atomic.Int32
@@ -413,24 +410,11 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 	diff.SetLogger(lg)
 	fileio.SetSafetyLogger(lg)
 
-	if sessionDir != "" {
-		if ed, edErr := fileio.NewEditorWithSessionDir(sessionID, sessionDir, lg); edErr != nil {
-			lg.Warn("SESSION", "editor_init_error", "error", fmt.Sprintf("%v", edErr))
-		} else {
-			editor = ed
-		}
+	editor, err = fileio.NewEditorWithSessionDir(sessionID, filepath.Dir(lg.SessionDir()), lg)
+	if err != nil {
+		return nil, fmt.Errorf("session editor: %w", err)
 	}
-	if editor == nil {
-		fileioSessionID := fileio.GenerateSessionID()
-		if ed, edErr := fileio.NewEditorWithLogger(fileioSessionID, lg); edErr != nil {
-			lg.Warn("SESSION", "editor_init_error", "error", fmt.Sprintf("%v", edErr))
-		} else {
-			editor = ed
-		}
-	}
-	if editor != nil {
-		editor.SetLegacyJournalWrites(false)
-	}
+	editor.SetLegacyJournalWrites(false)
 
 	name, nameErr := allocateAgentName(homeDir)
 	if nameErr != nil {
@@ -490,7 +474,6 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 		tokens:               NewTokenTracker(lg),
 		db:                   db,
 		dbPath:               dbPath,
-		writeBuf:             make([]taggedMessage, 0, 64),
 		collaborationAgents:  make(map[string]collaboration.Agent),
 		collaborationContext: make(map[string][]provider.ChatMessage),
 		orchestrators:        make(map[string]*Orchestrator),
@@ -558,8 +541,6 @@ func (s *Session) Close() {
 		s.subAgentSup.Wait()
 	}
 	s.historyWg.Wait()
-
-	_ = s.flushWriteBufSync()
 
 	// Join memory workers before their workspace DB is closed. Optional
 	// provider work resumes from durable watermarks on the next open.

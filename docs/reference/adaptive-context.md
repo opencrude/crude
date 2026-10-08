@@ -24,6 +24,65 @@ Each explicitly configured context window is scoped to its category connection.
 Unconfigured connections use discovered metadata or the existing default; that
 default is a planning estimate, not proof of actual provider capacity.
 
+## Authoritative context publication
+
+`sessiondb.PublishContext` is the runtime publication transaction for a context
+owner. It checks the source revision and atomically commits transcript deltas,
+active context, immutable message identities, recovery and delivery receipts,
+and compaction state as applicable. Full immutable identities retain facts absent
+from the presentation transcript. Transcript comparisons use its actual persisted
+representation; they never replace the full identity check or restamp an existing
+message's metadata, turn, owner or timestamp.
+
+Root publishers serialize publication and live-state installation under the
+session message lock. A checkpoint can add accepted output between committed
+deliveries only if it retains every committed source message in order. It cannot
+relabel an old snapshot with a newly loaded revision. Failed finalization cannot
+roll back a later admission. Complete tool rounds are published together after
+partial checkpoints, never through successively shorter prefixes. There is no
+root write buffer or child whole-transcript replacement writer.
+
+Compaction retains the revision captured when its immutable source is published.
+Installation fails closed if that source changed during extraction. Stopped
+children use authoritative current context, retain newer facts and original
+transcript metadata, and commit their stop boundary and recovery state together.
+Parent result/mirror publication is a separate checked transaction; a mirror
+failure leaves an actionable retry rather than acknowledging unfinished work.
+
+Accepted local input consists of its immutable original plus an input-owned,
+hidden preparation suffix. Reference bytes and exact source identity, supplied
+ContextParts, current plan, recall, prior-session and runtime facts are captured
+before acknowledgement. Duplicate admission returns the same receipt; Continue
+reuses successful preparation rather than reloading mutable references. Invalid
+preparation preserves the original and selected identities in the checkpoint but
+blocks provider and tool advancement. MCP selection is not a grant, and external
+context remains attributed data. Explicit empty model modalities remain disabled,
+not unspecified. Storage errors during enabled recall fail closed.
+
+Closing rejects new reservations and preserves prepared inputs without enqueueing
+execution after the shutdown boundary. Stop changes execution ownership, not
+accepted input ownership. Neither action may delete a submitted human input,
+return it to the composer, or overwrite a newer unsubmitted draft.
+
+New accepted wire messages receive their stable identity before archive, active
+context and checkpoint installation. Finalization retries reuse those identities
+and authoritative committed facts; rendered final text is not a second source
+from which to manufacture another assistant message. A durable turn mirror must
+succeed before completion is acknowledged. Input's owning turn and generation
+are reserved before publication, and first/last human-prompt metadata commits in
+the same transaction as the transcript row.
+
+Existing development databases are aligned explicitly outside product code, not
+upgraded by opening them. Backups must include committed SQLite WAL state and
+associated configuration, references and Local History. Validate full typed
+context/checkpoint sources before populating an identity registry; the lossy
+transcript projection alone is not authoritative. Preserve existing IDs, unknown
+historical identities, metadata, timestamps, provenance, pins, receipts and
+history. A newly established revision baseline is not evidence of past publication
+counts. Stage and verify conversion before replacing any live data, fence the
+replacement against unchanged preimages, and verify passive resume without
+provider/tool/child replay. One-off alignment tools do not ship in the product.
+
 ## Layered policy
 
 1. Admit BTW and runtime child-result notices before measuring pressure. During

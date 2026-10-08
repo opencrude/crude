@@ -10,6 +10,7 @@ import (
 	"maps"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime/debug"
 	"sync"
 	"sync/atomic"
@@ -1043,6 +1044,7 @@ func (r *SubAgentRunner) runSubAgentLoop(
 ) {
 	done := false
 	var terminalDone *agent.AgentEvent
+	var terminalPublicationErr error
 	defer r.session.detachCollaborator(context.Background(), string(handle.Spec.ID))
 	r.session.reconcileCollaborationAdmissions(handle.DB, string(handle.Spec.ID))
 
@@ -1093,7 +1095,15 @@ func (r *SubAgentRunner) runSubAgentLoop(
 		}
 
 		if !done && ctx.Err() != nil {
-			if err := supervisor.Cancel(); err != nil {
+			err := terminalPublicationErr
+			if err == nil {
+				err = r.finalizeSubAgent(handle, agent.SubAgentResult{
+					AgentID: handle.Spec.ID, Name: handle.Spec.Name, Category: handle.Spec.Category,
+					SessionID: handle.SessionID, Status: agent.SubAgentCancelled,
+					Errors: []string{ctx.Err().Error()},
+				}, supervisor.Cancel, 0)
+			}
+			if err != nil {
 				r.session.finishRecovery(string(handle.Spec.ID), supervisor.IncidentID(), supervisor.CheckpointStatus().Generation)
 				status := supervisor.Park(agent.AttentionRecovery(agent.RecoveryFailureStorage, err))
 				checkpoint := recoveryState.checkpoint(status)
@@ -1109,11 +1119,6 @@ func (r *SubAgentRunner) runSubAgentLoop(
 				}
 				return
 			}
-			r.finalizeSubAgent(handle, agent.SubAgentResult{
-				AgentID: handle.Spec.ID, Name: handle.Spec.Name, Category: handle.Spec.Category,
-				SessionID: handle.SessionID, Status: agent.SubAgentCancelled,
-				Errors: []string{ctx.Err().Error()},
-			})
 			if r.sender != nil {
 				if terminalDone != nil {
 					sendRuntimeEvent(r.sender, *terminalDone)
@@ -1151,6 +1156,7 @@ func (r *SubAgentRunner) runSubAgentLoop(
 	userMsgs := append([]provider.ChatMessage(nil), recoveryState.active...)
 	if len(userMsgs) == 0 {
 		assignment := provider.NewTextMessage("user", userPrompt)
+		assignment.InternalID = recoveryState.pending.InternalID
 		assignment.Origin = provider.OriginAssignment
 		userMsgs = []provider.ChatMessage{assignment}
 	}
@@ -1208,11 +1214,12 @@ func (r *SubAgentRunner) runSubAgentLoop(
 			contextMessages = contextMessages[1:]
 		}
 		runID, _ := handle.RunIdentity()
-		if err := r.session.commitCollaborationAdmissions(
+		committed, err := r.session.commitCollaborationAdmissions(
 			handle.DB, handle.SessionID, string(handle.Spec.ID), string(handle.Spec.ID), runID,
 			handle.RuntimeEpoch, recoveryState.contextRevision,
 			collaborationDeltas(pendingCollaboration, contextMessages, string(handle.Spec.ID)), pendingCollaboration,
-		); err != nil {
+		)
+		if err != nil {
 			r.session.releaseCollaborationReservations(
 				string(handle.Spec.ID), handle.RuntimeEpoch, pendingCollaboration,
 				"child context admission failed",
@@ -1220,6 +1227,10 @@ func (r *SubAgentRunner) runSubAgentLoop(
 			pendingCollaboration = nil
 			return err
 		}
+		if err := reconcileChildRecoveryContext(recoveryState, committed); err != nil {
+			return err
+		}
+		contextGeneration = committed.Generation
 		if r.sender != nil {
 			for _, delivery := range pendingCollaboration {
 				r.sender.SendAgentEventWithID("collaboration_message", delivery.Event, string(handle.Spec.ID))
@@ -1235,17 +1246,19 @@ func (r *SubAgentRunner) runSubAgentLoop(
 		data["account_id"] = source.AccountID
 		data["model_id"] = source.ModelID
 		record := compactionRecordFromData(handle.SessionID, string(handle.Spec.ID), sessiondb.CompactionPreparing, data)
+		archive, _ := recoveryState.contexts()
+		recoveryState.snapshot(archive, source.Messages)
+		_, active := recoveryState.contexts()
 		state, err := sessiondb.PublishContext(handle.DB, sessiondb.ContextPublication{
-			SessionID: handle.SessionID, AgentID: string(handle.Spec.ID), RuntimeAgentID: string(handle.Spec.ID), ExpectedRevision: recoveryState.contextRevision,
-			Mutation: sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: contextGeneration, Reason: "compaction_source", Messages: append([]provider.ChatMessage(nil), source.Messages...)}}, Compaction: &record,
+			SessionID: handle.SessionID, AgentID: string(handle.Spec.ID), RuntimeAgentID: string(handle.Spec.ID), ExpectedRevision: recoveryState.contextRevisionValue(),
+			Mutation: sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: contextGeneration, Reason: "compaction_source", Messages: active}}, Compaction: &record,
 		})
 		if err == nil {
-			recoveryState.contextRevision = state.Revision
+			err = reconcileChildRecoveryContext(recoveryState, state)
 		}
 		return err
 	}
 	handle.Agent.CommitCompaction = func(commit agent.CompactionCommit) error {
-		contextGeneration++
 		data := compactionLifecycleData(commit.RequestID, commit.Trigger, commit.Role, compactionStageCount, compactionStageCount, commit.BeforeTokens, commit.AfterTokens)
 		data["context_window"] = commit.ContextWindow
 		data["provider_id"] = commit.ProviderID
@@ -1253,11 +1266,14 @@ func (r *SubAgentRunner) runSubAgentLoop(
 		data["model_id"] = commit.ModelID
 		record := compactionRecordFromData(handle.SessionID, string(handle.Spec.ID), sessiondb.CompactionCompleted, data)
 		state, err := sessiondb.PublishContext(handle.DB, sessiondb.ContextPublication{
-			SessionID: handle.SessionID, AgentID: string(handle.Spec.ID), RuntimeAgentID: string(handle.Spec.ID), ExpectedRevision: recoveryState.contextRevision,
-			Mutation: sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: contextGeneration, Reason: "automatic_compaction", Messages: append([]provider.ChatMessage(nil), commit.Messages...)}}, Compaction: &record, ArchivePrevious: true,
+			SessionID: handle.SessionID, AgentID: string(handle.Spec.ID), RuntimeAgentID: string(handle.Spec.ID), ExpectedRevision: recoveryState.contextRevisionValue(),
+			Mutation: sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: contextGeneration + 1, Reason: "automatic_compaction", Messages: canonicalContextMessages(commit.Messages)}}, Compaction: &record, ArchivePrevious: true,
 		})
 		if err == nil {
-			recoveryState.contextRevision = state.Revision
+			archive, _ := recoveryState.contexts()
+			recoveryState.snapshot(archive, state.Messages)
+			recoveryState.setContext(handle.SessionID, state.Revision, state.Generation, state.Reason)
+			contextGeneration = state.Generation
 		}
 		return err
 	}
@@ -1277,16 +1293,29 @@ func (r *SubAgentRunner) runSubAgentLoop(
 		break
 	}
 	runID, _ := handle.RunIdentity()
-	steeringCtx, stopSteering := context.WithCancel(ctx)
+	// Stop execution independently of the retained-input drain. The explicit
+	// post-run join below owns the worker's final publication boundary.
+	steeringCtx, stopSteering := context.WithCancel(context.WithoutCancel(ctx))
 	runtimeMessages, runtimeMessagesDone, flushRuntime := r.session.humanSteeringMessages(
 		steeringCtx, handle.DB, handle.SessionID, string(handle.Spec.ID), runID,
 		handle.RuntimeEpoch, func() uint64 { return contextGeneration },
 		handle.Spec.Model, r.sender,
 	)
+	defer func() { stopSteering(); <-runtimeMessagesDone }()
 	handle.Agent.FlushRuntimeMessages = flushRuntime
 	handle.Agent.Checkpoint = func(archive, active []provider.ChatMessage) error {
+		current, found, err := sessiondb.LoadContextState(handle.DB, handle.SessionID, string(handle.Spec.ID))
+		if err != nil {
+			return err
+		}
+		if found && !retainsContextSource(active, current.Messages) {
+			return fmt.Errorf("child checkpoint does not retain committed context revision %d", current.Revision)
+		}
 		recoveryState.snapshot(archive, active)
-		recoveryState.setContext(handle.SessionID, recoveryState.contextRevision, contextGeneration, "run_checkpoint")
+		recoveryState.mu.Lock()
+		recoveryState.contextRevision = loadContextRevision(current, found)
+		recoveryState.contextGeneration, recoveryState.contextReason = contextGeneration, "run_checkpoint"
+		recoveryState.mu.Unlock()
 		return persistRecoveryBoundary(ctx, supervisor)
 	}
 	childRunID, _ := handle.RunIdentity()
@@ -1367,6 +1396,9 @@ func (r *SubAgentRunner) runSubAgentLoop(
 		if err != nil {
 			return "", err
 		}
+		if handle.Spec.ModelContextWindow > 0 {
+			currentProvider.SetContextWindow(handle.Spec.ModelContextWindow)
+		}
 		handle.Agent.Provider, handle.Agent.Model = currentProvider, currentProvider.Model
 		handle.Spec.Provider = currentProvider.ID
 		if compactionCfg := cfg.GetCategoryConfig(CategoryAeron); compactionCfg.Model != "" {
@@ -1387,7 +1419,7 @@ func (r *SubAgentRunner) runSubAgentLoop(
 			Snapshot:   recoveryState.snapshot,
 			OnAttention: func(failure agent.RecoveryFailure) agent.AttentionDisposition {
 				switch failure.Kind {
-				case agent.RecoveryFailureConfiguration, agent.RecoveryFailureGuidance:
+				case agent.RecoveryFailureConfiguration, agent.RecoveryFailureGuidance, agent.RecoveryFailureStructural:
 					return agent.AttentionParkAttempt
 				default:
 					return agent.AttentionWait
@@ -1405,41 +1437,54 @@ func (r *SubAgentRunner) runSubAgentLoop(
 	}
 	active := runResult.Active
 	active = append(active, controlMessages...)
-	var transcriptAppend []sessiondb.ContextMessageDelta
-	for {
-		var publicationErr error
-		agentMsgs, active, transcriptAppend, publicationErr = childTerminalPublication(handle, agentMsgs, active, time.Now())
-		if publicationErr == nil {
-			break
-		}
-		if !supervisor.Await(ctx, agent.AttentionRecovery(agent.RecoveryFailureStorage, publicationErr)) {
-			return
-		}
-	}
-	recoveryState.snapshot(agentMsgs, active)
-	generation := contextGeneration
-	reason := "session_start"
-	if contextCheckpointContent(active) != "" && generation == 1 {
-		generation = 2
-		contextGeneration = generation
-	}
-	if contextCheckpointContent(active) != "" {
-		reason = "automatic_compaction"
-	}
 	terminalStatus := supervisor.CheckpointStatus()
 	if runResult.State == agent.SupervisedRunParked {
 		terminalStatus = runResult.Incident
 	}
-	terminalCheckpoint := recoveryState.checkpoint(terminalStatus)
+	var terminalCheckpoint sessiondb.RecoveryCheckpoint
+	var generation uint64
+	var reason string
 	for {
-		state, err := sessiondb.PublishContext(handle.DB, sessiondb.ContextPublication{
-			SessionID: handle.SessionID, AgentID: string(handle.Spec.ID), RuntimeAgentID: string(handle.Spec.ID), ExpectedRevision: recoveryState.contextRevision,
-			Mutation:         sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: generation, Reason: reason, Messages: active}},
-			TranscriptAppend: transcriptAppend, Recovery: &terminalCheckpoint,
-		})
+		recoveryState.snapshot(agentMsgs, active)
+		current, found, err := sessiondb.LoadContextState(handle.DB, handle.SessionID, string(handle.Spec.ID))
+		if err == nil && !found {
+			err = fmt.Errorf("child terminal context is unavailable")
+		}
 		if err == nil {
-			recoveryState.contextRevision = state.Revision
+			err = reconcileChildRecoveryContext(recoveryState, current)
+		}
+		var transcriptAppend []sessiondb.ContextMessageDelta
+		if err == nil {
+			agentMsgs, active = recoveryState.contexts()
+			var archive, context []provider.ChatMessage
+			archive, context, transcriptAppend, err = childTerminalPublication(handle, agentMsgs, active, time.Now())
+			if err == nil {
+				agentMsgs, active = archive, context
+				recoveryState.snapshot(agentMsgs, active)
+			}
+		}
+		var state sessiondb.ContextState
+		if err == nil {
+			generation, reason = current.Generation, "session_start"
+			if contextCheckpointContent(active) != "" {
+				generation, reason = max(uint64(2), generation), "automatic_compaction"
+			}
+			terminalCheckpoint = recoveryState.checkpoint(terminalStatus)
+			state, err = sessiondb.PublishContext(handle.DB, sessiondb.ContextPublication{
+				SessionID: handle.SessionID, AgentID: string(handle.Spec.ID), RuntimeAgentID: string(handle.Spec.ID), ExpectedRevision: current.Revision,
+				Mutation:         sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: generation, Reason: reason, Messages: active}},
+				TranscriptAppend: transcriptAppend, Recovery: &terminalCheckpoint,
+			})
+		}
+		if err == nil {
+			recoveryState.setContext(handle.SessionID, state.Revision, state.Generation, state.Reason)
+			terminalPublicationErr = nil
 			break
+		}
+		terminalPublicationErr = err
+		var conflict *sessiondb.ContextRevisionConflictError
+		if errors.As(err, &conflict) {
+			continue // Reconcile the actual new source; do not park stale bytes.
 		}
 		if !supervisor.Await(ctx, agent.AttentionRecovery(agent.RecoveryFailureStorage, err)) {
 			return
@@ -1474,14 +1519,44 @@ func (r *SubAgentRunner) runSubAgentLoop(
 		r.session.logger.Warn("SUBAGENT", "missing_final_report", "agent_id", handle.Spec.ID, "name", handle.Spec.Name)
 	}
 
+	result.HistoryMessageID = handle.Spec.HistoryMessageID
+	if id, revision, ok := handle.ReportArtifact(); ok {
+		result.ReportID, result.ReportRevision = id, revision
+	}
+	runID, runVersion := handle.RunIdentity()
+	terminalState, runState := sessiondb.TurnFailed, collaboration.RunFailed
+	if result.Status == agent.SubAgentCompleted {
+		terminalState, runState = sessiondb.TurnCompleted, collaboration.RunSucceeded
+	}
+	if result.Status == agent.SubAgentCancelled {
+		terminalState, runState = sessiondb.TurnInterrupted, collaboration.RunCancelled
+	}
+	intent := terminalSettlementIntent{SessionID: handle.SessionID, AgentID: string(handle.Spec.ID), OwnerID: string(handle.Spec.ID), Generation: handle.Agent.TurnGeneration, TurnState: terminalState, Child: &result,
+		Run: collaboration.FinishRunRequest{RunID: runID, AgentID: string(handle.Spec.ID), RuntimeEpoch: handle.RuntimeEpoch, ExpectedVersion: runVersion, State: runState, Outcome: string(result.Status), ContextCommitID: result.HistoryMessageID}}
 	settle := func() error {
-		if result.Status == agent.SubAgentCancelled {
+		if result.Status == agent.SubAgentCancelled || ctx.Err() != nil {
 			return supervisor.Cancel()
 		}
 		return supervisor.Resolve()
 	}
+	terminalStopPublished := result.Status == agent.SubAgentCancelled
 	for {
-		err := r.finalizeSubAgentWithSettlement(handle, result, settle)
+		intent.Stopped = ctx.Err() != nil
+		err := recoveryState.captureTerminalSettlement(intent)
+		if err == nil {
+			err = supervisor.Persist(supervisor.CheckpointStatus())
+		}
+		if ctx.Err() != nil && !terminalStopPublished {
+			if err == nil {
+				err = publishChildTerminalStop(handle, recoveryState, supervisor)
+			}
+			if err == nil {
+				terminalStopPublished = true
+			}
+		}
+		if err == nil {
+			err = r.finalizeSubAgent(handle, result, settle, 0)
+		}
 		if err == nil {
 			done = true
 			r.session.finishRecovery(string(handle.Spec.ID), supervisor.IncidentID(), supervisor.CheckpointStatus().Generation)
@@ -1490,10 +1565,156 @@ func (r *SubAgentRunner) runSubAgentLoop(
 			}
 			return
 		}
-		if !supervisor.Await(ctx, agent.AttentionRecovery(agent.RecoveryFailureStorage, err)) {
+		terminalPublicationErr = err
+		waitCtx := ctx
+		if ctx.Err() != nil {
+			// Stop execution, not ownership of the exact terminal publication.
+			waitCtx = r.sessionCtx
+		}
+		if !supervisor.Await(waitCtx, agent.AttentionRecovery(agent.RecoveryFailureStorage, err)) && r.sessionCtx.Err() != nil {
 			return
 		}
 	}
+}
+
+func publishChildTerminalStop(handle *agent.SubAgentHandle, run *recoveryRunState, supervisor *agent.Supervisor) error {
+	current, found, err := sessiondb.LoadContextState(handle.DB, handle.SessionID, string(handle.Spec.ID))
+	if err != nil {
+		return err
+	}
+	if !found {
+		return errors.New("child terminal source is unavailable")
+	}
+	if err := reconcileChildRecoveryContext(run, current); err != nil {
+		return err
+	}
+	archive, active := run.contexts()
+	boundaryID := "turn-stopped:" + supervisor.IncidentID()
+	if !slices.ContainsFunc(active, func(message provider.ChatMessage) bool { return message.InternalID == boundaryID }) {
+		boundary := provider.NewTextMessage("user", rootprompt.TurnStoppedBoundary())
+		boundary.InternalID, boundary.Origin, boundary.Visibility = boundaryID, provider.OriginTurnStopped, provider.VisibilityContextOnly
+		archive, active = append(archive, boundary), append(active, boundary)
+	}
+	archive, active, deltas, err := childTerminalPublication(handle, archive, active, time.Now())
+	if err != nil {
+		return err
+	}
+	run.snapshot(archive, active)
+	checkpoint := run.checkpoint(supervisor.CheckpointStatus())
+	state, err := sessiondb.PublishContext(handle.DB, sessiondb.ContextPublication{
+		SessionID: handle.SessionID, AgentID: string(handle.Spec.ID), RuntimeAgentID: string(handle.Spec.ID), ExpectedRevision: current.Revision,
+		Mutation:         sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: current.Generation, Reason: "explicit_terminal_stop", Messages: active}},
+		TranscriptAppend: deltas, Recovery: &checkpoint,
+	})
+	if err != nil {
+		return err
+	}
+	run.setContext(handle.SessionID, state.Revision, state.Generation, state.Reason)
+	return supervisor.Persist(supervisor.CheckpointStatus())
+}
+
+// Committed messages are immutable order anchors. Preserve accepted local output
+// while inserting late committed facts before the next shared anchor or at EOF.
+func reconcileChildRecoveryContext(run *recoveryRunState, committed sessiondb.ContextState) error {
+	run.mu.Lock()
+	defer run.mu.Unlock()
+	if committed.AgentID != run.contextOwnerID || committed.Revision < run.contextRevision || committed.Generation != run.contextGeneration {
+		return fmt.Errorf("child committed context owner, revision or generation changed")
+	}
+	source := canonicalContextMessages(committed.Messages)
+	merge := func(snapshot []provider.ChatMessage) ([]provider.ChatMessage, error) {
+		key := func(message provider.ChatMessage) (string, error) {
+			if message.InternalID != "" {
+				return "id:" + message.InternalID, nil
+			}
+			encoded, err := json.Marshal(canonicalContextMessage(message))
+			return "anonymous:" + string(encoded), err
+		}
+		indices := make(map[string][]int, len(source))
+		matched := make([]bool, len(source))
+		for i, message := range source {
+			identity, err := key(message)
+			if err != nil {
+				return nil, err
+			}
+			indices[identity] = append(indices[identity], i)
+			if message.InternalID != "" {
+				message.InternalID = ""
+				identity, err = key(message)
+				if err != nil {
+					return nil, err
+				}
+				indices[identity] = append(indices[identity], i)
+			}
+		}
+		merged := make([]provider.ChatMessage, 0, len(snapshot)+len(source))
+		cursor := 0
+		for _, message := range snapshot {
+			identity, err := key(message)
+			if err != nil {
+				return nil, err
+			}
+			matches, known := indices[identity]
+			if known && len(matches) == 0 && message.InternalID != "" {
+				return nil, &sessiondb.ContextMessageConflictError{InternalID: message.InternalID, Location: "duplicate child committed snapshot"}
+			}
+			if !known && message.InternalID != "" {
+				anonymous := message
+				anonymous.InternalID = ""
+				identity, err = key(anonymous)
+				if err != nil {
+					return nil, err
+				}
+				matches = indices[identity]
+				for len(matches) > 0 && (source[matches[0]].InternalID != "" || matched[matches[0]]) {
+					matches = matches[1:]
+				}
+			} else if message.InternalID == "" {
+				for len(matches) > 0 && matched[matches[0]] {
+					matches = matches[1:]
+				}
+			}
+			if len(matches) == 0 {
+				merged = append(merged, message)
+				continue
+			}
+			index := matches[0]
+			comparison := canonicalContextMessage(message)
+			if message.InternalID == "" || source[index].InternalID == "" {
+				comparison.InternalID = source[index].InternalID
+			}
+			if index < cursor || !reflect.DeepEqual(comparison, source[index]) {
+				return nil, &sessiondb.ContextMessageConflictError{InternalID: message.InternalID, Location: "child committed snapshot order or bytes"}
+			}
+			merged = append(merged, source[cursor:index]...)
+			if message.InternalID == "" {
+				message.InternalID = source[index].InternalID
+			}
+			merged = append(merged, message)
+			cursor = index + 1
+			matched[index] = true
+			indices[identity] = matches[1:]
+		}
+		return append(merged, source[cursor:]...), nil
+	}
+	active, err := merge(run.active)
+	if err != nil {
+		return err
+	}
+	archive, err := merge(run.archive)
+	if err != nil {
+		return err
+	}
+	active = canonicalContextMessages(active)
+	if !reflect.DeepEqual(run.active, active) || !reflect.DeepEqual(run.archive, archive) {
+		run.sourceRevision++
+	}
+	run.active, run.archive = active, archive
+	run.contextRevision, run.contextGeneration, run.contextReason = committed.Revision, committed.Generation, committed.Reason
+	if reflect.DeepEqual(active, source) {
+		run.publishedRevision = run.sourceRevision
+	}
+	return nil
 }
 
 func childTerminalPublication(
@@ -1518,7 +1739,7 @@ func childTerminalPublication(
 	originalKeys := make(map[string][]int)
 	for index, message := range archive {
 		if message.InternalID == "" {
-			encoded, _ := json.Marshal(message)
+			encoded, _ := json.Marshal(canonicalContextMessage(message))
 			originalKeys[string(encoded)] = append(originalKeys[string(encoded)], index)
 		}
 	}
@@ -1531,7 +1752,7 @@ func childTerminalPublication(
 		if active[activeIndex].InternalID != "" {
 			continue
 		}
-		encoded, _ := json.Marshal(active[activeIndex])
+		encoded, _ := json.Marshal(canonicalContextMessage(active[activeIndex]))
 		key := string(encoded)
 		matches := originalKeys[key]
 		if len(matches) > 0 {
@@ -1598,11 +1819,14 @@ func childTerminalPublication(
 		meta = canonicalizeDisplayMeta(message, meta, rawToolArgs[message.ToolCallID], index, stamp)
 		deltas = append(deltas, contextDelta(message, meta, 1, stamp, agentID))
 	}
-	return archive, active, deltas, nil
+	return canonicalContextMessages(archive), canonicalContextMessages(active), deltas, nil
 }
 
 func (r *SubAgentRunner) interruptSubAgentAttempt(handle *agent.SubAgentHandle) {
 	if r == nil || r.session == nil || handle == nil {
+		return
+	}
+	if checkpoint, found, err := sessiondb.LoadRecoveryCheckpoint(handle.DB, handle.SessionID, string(handle.Spec.ID)); err == nil && found && len(checkpoint.TerminalSettlement) != 0 {
 		return
 	}
 	runID, runVersion := handle.RunIdentity()
@@ -1625,17 +1849,17 @@ func (r *SubAgentRunner) interruptSubAgentAttempt(handle *agent.SubAgentHandle) 
 // finalizeSubAgent is the sole terminal delivery path for successful, failed,
 // cancelled, panicked, and unexpected child exits. Persistence alone is not a
 // completion signal: both the UI event and parent wake are mandatory.
-func (r *SubAgentRunner) finalizeSubAgent(handle *agent.SubAgentHandle, result agent.SubAgentResult) {
-	_ = r.finalizeSubAgentWithSettlement(handle, result, nil)
-}
-
-func (r *SubAgentRunner) finalizeSubAgentWithSettlement(
+func (r *SubAgentRunner) finalizeSubAgent(
 	handle *agent.SubAgentHandle,
 	result agent.SubAgentResult,
 	settle func() error,
+	settlementEpoch uint64,
 ) error {
-	if handle == nil {
-		return nil
+	if handle == nil || handle.DB == nil {
+		return errors.New("child terminal handle or ledger is unavailable")
+	}
+	if runID, _ := handle.RunIdentity(); runID != "" && r.session.CollaborationStore() == nil {
+		return errors.New("child terminal collaboration store is unavailable")
 	}
 	if handle.Agent != nil && handle.Agent.AsyncMgr != nil {
 		handle.Agent.AsyncMgr.CloseAndWait()
@@ -1660,12 +1884,10 @@ func (r *SubAgentRunner) finalizeSubAgentWithSettlement(
 		}
 		if err := sessiondb.FinishAgentTurn(handle.DB, handle.SessionID, string(handle.Spec.ID), generation, turnState); err != nil {
 			r.session.logger.Warn("SUBAGENT", "turn_state_finish_failed", "agent_id", handle.Spec.ID, "error", err.Error())
-			if settle != nil {
-				return err
-			}
+			return err
 		}
 	}
-	if err := r.persistResult(handle, result); err != nil && settle != nil {
+	if err := r.persistResult(handle, result); err != nil {
 		return err
 	}
 	runID, runVersion := handle.RunIdentity()
@@ -1684,13 +1906,12 @@ func (r *SubAgentRunner) finalizeSubAgentWithSettlement(
 			RunID: runID, AgentID: string(handle.Spec.ID),
 			RuntimeEpoch: handle.RuntimeEpoch, ExpectedVersion: runVersion,
 			State: runState, Outcome: outcome, ContextCommitID: result.HistoryMessageID,
+			SettlementEpoch: settlementEpoch,
 		})
 		if err != nil {
 			r.session.logger.Warn("COLLAB", "child_run_finish_failed",
 				"run_id", runID, "error", err.Error())
-			if settle != nil {
-				return err
-			}
+			return err
 		} else {
 			handle.SetRunVersion(finished.Version)
 			if handle.Spec.ParentID != "" {
@@ -1713,15 +1934,13 @@ func (r *SubAgentRunner) finalizeSubAgentWithSettlement(
 				if publishErr != nil {
 					r.session.logger.Warn("COLLAB", "child_outcome_publish_failed",
 						"run_id", runID, "error", publishErr.Error())
-					if settle != nil {
-						return publishErr
-					}
+					return publishErr
 				}
 			}
 		}
 	}
 	if handle.DB != nil {
-		if err := sessiondb.CloseSession(handle.DB, handle.SessionID); err != nil && settle != nil {
+		if err := sessiondb.CloseSession(handle.DB, handle.SessionID); err != nil {
 			return err
 		}
 	}
@@ -1731,7 +1950,7 @@ func (r *SubAgentRunner) finalizeSubAgentWithSettlement(
 		}
 	}
 	if handle.DB != nil {
-		if err := handle.DB.Close(); err != nil && settle != nil {
+		if err := handle.DB.Close(); err != nil {
 			return err
 		}
 	}
@@ -1748,93 +1967,6 @@ func (r *SubAgentRunner) finalizeSubAgentWithSettlement(
 	handle.ResultCh <- result
 	r.mgr.MarkFinished(handle.Spec.ID, result)
 	return nil
-}
-
-func persistSubAgentTranscript(
-	handle *agent.SubAgentHandle,
-	messages []provider.ChatMessage,
-) error {
-	if handle == nil || handle.DB == nil {
-		return nil
-	}
-	var persisted []provider.ChatMessage
-	var turns []int
-	var metas []sessiondb.DisplayMeta
-	rawToolArgs := toolCallArgsIndex(messages)
-	toolNames := make(map[string]string)
-	toolArgs := make(map[string]string)
-	for _, message := range messages {
-		for _, call := range message.ToolCalls {
-			toolNames[call.ID] = call.Function.Name
-			var params map[string]any
-			if parsed, err := provider.ToolCallParams(call); err == nil {
-				params = parsed
-				toolArgs[call.ID] = agent.FormatToolArgs(params)
-			}
-		}
-	}
-	assignmentSeen := false
-	baseSystemSkipped := false
-	turnIdentity := ttypes.TurnIdentity{
-		Generation: 1,
-		ProviderID: handle.Spec.Provider,
-		AccountID:  handle.Spec.AccountID,
-		ModelID:    handle.Spec.Model,
-	}
-	for _, message := range messages {
-		if message.Role == "system" && !baseSystemSkipped {
-			baseSystemSkipped = true
-			continue
-		}
-		persisted = append(persisted, message)
-		turns = append(turns, 1)
-		displayRole := message.Role
-		if message.Role == "user" && !assignmentSeen {
-			displayRole = "assignment"
-			assignmentSeen = true
-		}
-		meta := sessiondb.DisplayMeta{DisplayRole: displayRole}
-		if isProviderControlMessage(message) {
-			meta = sessiondb.DisplayMeta{
-				SnapshotVersion: sessiondb.ConversationSnapshotVersion,
-				DisplayRole:     "hidden_wire_context",
-				ContextOnly:     true,
-			}
-		}
-		if message.Role == "system" {
-			meta = sessiondb.DisplayMeta{
-				SnapshotVersion: sessiondb.ConversationSnapshotVersion,
-				DisplayRole:     "hidden_wire_context",
-				ContextOnly:     true,
-			}
-		}
-		if message.Role == "tool" {
-			meta.ToolName = toolNames[message.ToolCallID]
-			meta.ToolArgs = toolArgs[message.ToolCallID]
-			if message.ToolError {
-				meta.ToolStatus = "error"
-			} else {
-				meta.ToolStatus = "success"
-			}
-		}
-		if message.Role == "assistant" || message.Role == "tool" {
-			meta.TurnGeneration = turnIdentity.Generation
-			meta.ProviderID = turnIdentity.ProviderID
-			meta.AccountID = turnIdentity.AccountID
-			meta.ModelID = turnIdentity.ModelID
-		}
-		if message.Role != "system" && !isProviderControlMessage(message) {
-			meta = canonicalizeDisplayMeta(message, meta, rawToolArgs[message.ToolCallID], len(persisted)-1, time.Now())
-		}
-		metas = append(metas, meta)
-	}
-	if len(persisted) == 0 {
-		return nil
-	}
-	_, err := sessiondb.ReplaceMessagesWithMeta(
-		handle.DB, handle.SessionID, persisted, turns, metas,
-	)
-	return err
 }
 
 func (r *SubAgentRunner) buildSubAgentResult(handle *agent.SubAgentHandle, msgs []provider.ChatMessage) agent.SubAgentResult {
@@ -1951,7 +2083,8 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 		}
 
 		if isWriteTool(tool) {
-			for _, target := range writeToolTargets(tool, params) {
+			targets := writeToolTargets(tool, params)
+			for _, target := range targets {
 				if !ownershipScopeAllows(spec.FileOwnership, target) {
 					cause := fmt.Errorf("file %q is outside this agent's committed ownership scope", target)
 					return tools.ToolResult{}, &tools.StructuralFailureError{
@@ -1959,12 +2092,40 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 						OwnerAgentID: string(spec.ID), OwnerAgentName: spec.Name, Cause: cause,
 					}
 				}
-				if err := r.fileOwnership.CheckOrClaim(spec.ID, spec.Name, target, true); err != nil {
-					return tools.ToolResult{}, &tools.StructuralFailureError{
-						Kind: tools.StructuralFailureOwnershipConflict, Tool: tool, Target: target,
-						OwnerAgentID: string(spec.ID), OwnerAgentName: spec.Name, Cause: err,
-					}
+			}
+			if err := r.fileOwnership.CommitClaimAll(spec.ID, spec.Name, targets, true, func() error {
+				store := r.session.CollaborationStore()
+				if store == nil {
+					return errors.New("workspace collaboration runtime is unavailable")
 				}
+				participant, err := store.Agent(ctx, string(spec.ID))
+				if err != nil {
+					return err
+				}
+				identity, err := collaborationExecutionIdentity(ctx)
+				if err != nil {
+					return err
+				}
+				_, err = store.AcquireClaims(ctx, collaboration.AcquireClaimsRequest{
+					AgentID: string(spec.ID), RunID: participant.CurrentRunID,
+					RequestID: identity.ToolCallID, Paths: targets,
+				})
+				return err
+			}); err != nil {
+				// Claims are published only after every target has passed the
+				// complete preflight, so a blocked effect has no local claim
+				// side effect to leak into the next repair attempt.
+				return tools.ToolResult{}, &tools.StructuralFailureError{Kind: tools.StructuralFailureOwnershipConflict, Tool: tool, OwnerAgentID: string(spec.ID), OwnerAgentName: spec.Name, Cause: err}
+			}
+			releaseWrite, err := r.fileOwnership.BeginWrite(spec.ID, targets)
+			if err != nil {
+				return tools.ToolResult{}, &tools.StructuralFailureError{
+					Kind: tools.StructuralFailureOwnershipScope, Tool: tool,
+					OwnerAgentID: string(spec.ID), OwnerAgentName: spec.Name, Cause: err,
+				}
+			}
+			defer releaseWrite()
+			for _, target := range targets {
 				if r.sender != nil {
 					r.sender.SendAgentEventWithID("file_claim", map[string]string{
 						"agent_id":   string(spec.ID),
@@ -2459,6 +2620,9 @@ func toStringSlice(val any) []string {
 			}
 		}
 		return result
+	}
+	if arr, ok := val.([]string); ok {
+		return append([]string(nil), arr...)
 	}
 	return nil
 }

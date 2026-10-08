@@ -6,6 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/provider"
+	"crude/sessiondb"
 	"crude/tui/chatprojection"
 	"crude/tui/input"
 	"crude/tui/screens/confirmation"
@@ -497,8 +498,20 @@ func TestPreparedInputStopCommitsOnceWithoutClearingNewDraft(t *testing.T) {
 	if command == nil {
 		t.Fatal("prepare did not return an off-UI commit command")
 	}
-	app.Input.SetInput("newer draft")
 	app.CancelAgent(agentID)
+	app.Input.SetReferenceStore(app.ActiveSession.RefStore)
+	app.Input.SetInput("newer draft\nline\nline\nline\nline\nline\nline\nline\nline\n")
+	ref := sessiondb.Reference{ID: "new-draft-evidence", Kind: sessiondb.KindPastedText, Label: "[Pasted Text1]", Content: "new draft evidence"}
+	app.ActiveSession.RefStore.AddExisting(ref)
+	app.Input.InsertReference(ref)
+	undoText := app.Input.Value()
+	app.Input, _, _ = app.Input.Update(tea.KeyPressMsg{Code: '!', Text: "!"}, false, false)
+	app.Input.LayoutShell(80, 4)
+	app.Input.SetCursorFlat(3)
+	app.Input.SetSelection(2, 6)
+	app.Input.SetScrollOffset(1)
+	text, revision, cursor, scroll := app.Input.Value(), app.Input.DraftRevision(), app.Input.CursorFlat(), app.Input.ScrollOffset()
+	from, to := app.Input.InputSelectionRange()
 	message, ok := command().(inputAdmissionMsg)
 	if !ok {
 		t.Fatalf("commit returned %T", command())
@@ -507,8 +520,11 @@ func TestPreparedInputStopCommitsOnceWithoutClearingNewDraft(t *testing.T) {
 		t.Fatalf("status=%q err=%v", message.result.Status, message.result.Err)
 	}
 	_ = app.applyInputAdmission(message)
-	if app.Input.Value() != "newer draft" {
-		t.Fatalf("late receipt cleared newer draft: %q", app.Input.Value())
+	afterFrom, afterTo := app.Input.InputSelectionRange()
+	if app.Input.Value() != text || app.Input.DraftRevision() != revision || app.Input.CursorFlat() != cursor ||
+		app.Input.ScrollOffset() != scroll || afterFrom != from || afterTo != to ||
+		len(app.Input.SnapshotReferenceIDs()) != 1 || app.Input.SnapshotReferenceIDs()[0] != ref.ID {
+		t.Fatal("late receipt changed newer text, references, cursor, selection or scroll")
 	}
 	messages := app.AgentMgr.Get(agentID).State.Messages.Messages()
 	if len(messages) != 1 || messages[0].InternalID != message.result.Receipt.InputID || messages[0].Content != "original input" {
@@ -519,6 +535,196 @@ func TestPreparedInputStopCommitsOnceWithoutClearingNewDraft(t *testing.T) {
 	if len(messages) != 1 {
 		t.Fatalf("duplicate receipt appended another user row: %+v", messages)
 	}
+	state, found, err := sessiondb.LoadContextState(app.ActiveSession.DB, app.ActiveSession.SessionID, app.ActiveSession.SessionID)
+	if err != nil || !found {
+		t.Fatalf("load future context: found=%v err=%v", found, err)
+	}
+	count := 0
+	for _, contextMessage := range state.Messages {
+		if contextMessage.InternalID == message.result.Receipt.InputID {
+			count++
+			if contextMessage.ContentString() != "original input" {
+				t.Fatal("Stop changed accepted input in future context")
+			}
+		}
+	}
+	if count != 1 {
+		t.Fatalf("accepted input appears %d times in future context", count)
+	}
+	app.Input, _, _ = app.Input.Update(tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl}, false, false)
+	if app.Input.Value() != undoText {
+		t.Fatal("Stop/receipt consumed the newer draft's undo history")
+	}
+}
+
+func TestPreparedInputStopRejectsForeignOrStaleReceipt(t *testing.T) {
+	for _, field := range []string{"session", "agent", "input", "draft", "epoch", "generation", "workspace"} {
+		t.Run(field, func(t *testing.T) {
+			app := newFullTestApp(t)
+			agentID := addBackendTestOrchestrator(t, app)
+			app.ActiveSession = app.SessionsByAgent[agentID]
+			app.Input.SetInput("exact submitted draft")
+			command := app.submitPreparedInput(agentID, provider.PlainInput(app.Input.Value()), app.Input.DraftRevision())
+			if command == nil {
+				t.Fatal("prepare did not schedule commit")
+			}
+			app.CancelAgent(agentID)
+			message := command().(inputAdmissionMsg)
+			if message.result.Status != workspace.InputAdmissionPreservationPending {
+				t.Fatalf("commit=%+v", message.result)
+			}
+			switch field {
+			case "session":
+				message.result.Receipt.SessionID = "foreign"
+			case "agent":
+				message.result.Receipt.AgentID = "foreign"
+			case "input":
+				message.result.Receipt.InputID = "foreign"
+			case "draft":
+				message.result.Receipt.DraftRevision++
+			case "epoch":
+				message.result.Receipt.OwnerEpoch++
+			case "generation":
+				message.result.Receipt.TurnGeneration++
+			case "workspace":
+				app.workspaceSwitchGen.Add(1)
+			}
+			app.applyInputAdmission(message)
+			if app.Input.Value() != "exact submitted draft" || len(app.AgentMgr.Get(agentID).State.Messages.Messages()) != 0 {
+				t.Fatal("foreign/stale receipt changed the composer or conversation")
+			}
+		})
+	}
+}
+
+func TestPreparedInputStopReceiptCannotClearSiblingAgentDraft(t *testing.T) {
+	app := newFullTestApp(t)
+	agentID := addBackendTestOrchestrator(t, app)
+	app.ActiveSession = app.SessionsByAgent[agentID]
+	app.Input.SetInput("submitted draft")
+	command := app.submitPreparedInput(agentID, provider.PlainInput(app.Input.Value()), app.Input.DraftRevision())
+	if command == nil {
+		t.Fatal("prepare did not schedule commit")
+	}
+	app.CancelAgent(agentID)
+	message := command().(inputAdmissionMsg)
+	app.AgentMgr.AddSubAgent("sibling", agentID, "Sibling", "test", "researcher", workspace.NewAgentState("sibling", nil, nil))
+	app.AgentMgr.SetActive("sibling")
+	app.applyInputAdmission(message)
+	if app.Input.Value() != "submitted draft" {
+		t.Fatal("receipt cleared a different agent's composer in the same session")
+	}
+	if len(app.AgentMgr.Get(agentID).State.Messages.Messages()) != 1 || len(app.AgentMgr.Get("sibling").State.Messages.Messages()) != 0 {
+		t.Fatal("receipt did not project into its exact owning agent")
+	}
+}
+
+func TestPreparedInputStopLateAcceptedReceiptCannotReactivate(t *testing.T) {
+	app := newFullTestApp(t)
+	agentID := addBackendTestOrchestrator(t, app)
+	app.ActiveSession = app.SessionsByAgent[agentID]
+	app.Input.SetInput("submitted draft")
+	command := app.submitPreparedInput(agentID, provider.PlainInput(app.Input.Value()), app.Input.DraftRevision())
+	if command == nil {
+		t.Fatal("prepare did not schedule commit")
+	}
+	app.CancelAgent(agentID)
+	message := command().(inputAdmissionMsg)
+	// Dispatch acceptance may precede Stop while its UI acknowledgement is queued.
+	message.result.Status = workspace.InputAdmissionAccepted
+	state := app.AgentMgr.Get(agentID).State
+	state.BeginCancellation()
+	app.applyInputAdmission(message)
+	count := 0
+	for _, row := range state.Messages.Messages() {
+		if row.Role == ttypes.RoleUser && row.Content == "submitted draft" {
+			count++
+		}
+	}
+	if state.IsActive() || !state.Cancelling || count != 1 {
+		t.Fatalf("late receipt: active=%v cancelling=%v userRows=%d", state.IsActive(), state.Cancelling, count)
+	}
+}
+
+func TestPreparedInputStopReceiptCannotClearRestoredDraftWithSameRevision(t *testing.T) {
+	app := newFullTestApp(t)
+	agentID := addBackendTestOrchestrator(t, app)
+	app.ActiveSession = app.SessionsByAgent[agentID]
+	app.Input.SetInput("submitted draft")
+	command := app.submitPreparedInput(agentID, provider.PlainInput(app.Input.Value()), app.Input.DraftRevision())
+	if command == nil {
+		t.Fatal("prepare did not schedule commit")
+	}
+	app.CancelAgent(agentID)
+	message := command().(inputAdmissionMsg)
+	app.Input.ClearInput()
+	app.Input.SetInput("restored unsubmitted draft")
+	app.Input.SetDraftRevision(message.draftRevision)
+	app.applyInputAdmission(message)
+	if app.Input.Value() != "restored unsubmitted draft" {
+		t.Fatal("receipt consumed a different draft lifetime with a restored revision")
+	}
+	if rows := app.AgentMgr.Get(agentID).State.Messages.Messages(); len(rows) != 1 || rows[0].Content != "submitted draft" {
+		t.Fatalf("receipt lost its accepted input: %+v", rows)
+	}
+}
+
+func TestPreparedInputStopFloatingComposerKeepsSeparateAndNewerDrafts(t *testing.T) {
+	for _, change := range []string{"unchanged", "cursor", "selection", "scroll", "edit-undo", "reopened"} {
+		t.Run(change, func(t *testing.T) {
+			app := newFullTestApp(t)
+			agentID := addBackendTestOrchestrator(t, app)
+			app.ActiveSession = app.SessionsByAgent[agentID]
+			app.Input.SetInput("separate shell draft")
+			_, _ = app.toggleComposer()
+			screen := app.sessionComposer()
+			screen.SetValue("submitted text\nline\nline\nline\nline\nline\nline\nline\n")
+			var editor *ui.TextArea
+			for _, child := range screen.Children() {
+				if provider, ok := child.(ui.TextEditorProvider); ok {
+					editor, _ = provider.TextEditor().(*ui.TextArea)
+					break
+				}
+			}
+			if editor == nil {
+				t.Fatal("composer editor missing")
+			}
+			editor.Layout(ui.LayoutContext{}, ui.Rect{W: 40, H: 3})
+			command := app.submitComposerInput(agentID, screen.Value())
+			if command == nil {
+				t.Fatal("composer did not schedule durable admission")
+			}
+			app.CancelAgent(agentID)
+			switch change {
+			case "cursor":
+				editor.SetCursorFlat(2)
+			case "selection":
+				editor.SetSelection(1, 4)
+			case "scroll":
+				editor.SetScrollOffset(0)
+			case "edit-undo":
+				editor.InsertString("!")
+				editor.Handle(ui.EventContext{}, ui.KeyEvent(tea.KeyPressMsg{Code: 'z', Mod: tea.ModCtrl}))
+			case "reopened":
+				app.overlayHost.Close(ui.OverlayComposer)
+				_, _ = app.toggleComposer()
+				screen.SetValue("new unsubmitted floating draft")
+			}
+			before := editor.EditState()
+			text := screen.Value()
+			_ = app.applyInputAdmission(command().(inputAdmissionMsg))
+			if app.Input.Value() != "separate shell draft" {
+				t.Fatal("floating composer receipt consumed the separate shell draft")
+			}
+			if change == "unchanged" {
+				if app.overlayHost.IsOpen(ui.OverlayComposer) {
+					t.Fatal("receipt did not close its unchanged submitted composer")
+				}
+			} else if !app.overlayHost.IsOpen(ui.OverlayComposer) || editor.EditState() != before || screen.Value() != text {
+				t.Fatal("receipt closed or changed a newer/reopened floating draft")
+			}
+		})
+	}
 }
 
 func TestSubmitSteering_NonexistentAgent(t *testing.T) {
@@ -526,6 +732,26 @@ func TestSubmitSteering_NonexistentAgent(t *testing.T) {
 	cmd := app.submitSteering("nonexistent", "hello", nil)
 	if cmd != nil {
 		t.Fatal("expected nil cmd for nonexistent agent")
+	}
+}
+
+func TestRejectedSteeringKeepsDraftAndDoesNotFabricateHumanEvidence(t *testing.T) {
+	app := newFullTestApp(t)
+	app.AddOrchestrator("unbound")
+	app.Input.SetInput("unsubmitted exact draft")
+	app.Input.SetCursorFlat(3)
+	app.Input.SetSelection(1, 5)
+	revision, cursor := app.Input.DraftRevision(), app.Input.CursorFlat()
+	if cmd := app.submitSteering("unbound", app.Input.Value(), nil); cmd != nil {
+		t.Fatal("rejected steering scheduled persistence")
+	}
+	from, to := app.Input.InputSelectionRange()
+	if app.Input.Value() != "unsubmitted exact draft" || app.Input.DraftRevision() != revision ||
+		app.Input.CursorFlat() != cursor || from != 1 || to != 5 {
+		t.Fatal("rejected steering changed the unsubmitted editor state")
+	}
+	if rows := app.AgentMgr.Get("unbound").State.Messages.Messages(); len(rows) != 0 {
+		t.Fatalf("rejected steering fabricated human evidence: %+v", rows)
 	}
 }
 
@@ -804,10 +1030,23 @@ func TestHandleInputEvent_SteeringSubmit(t *testing.T) {
 	app.height = 24
 
 	app.AddOrchestrator("ses_1_orch_1")
+	app.Input.SetInput("keep this unsubmitted draft")
+	revision := app.Input.DraftRevision()
+	historyCount := 0
+	if app.Prompts != nil {
+		historyCount = len(app.Prompts.Entries())
+	}
 
 	cmds := app.handleInputEvent(input.SteeringSubmitEvent{Text: "btw text"})
-	if len(cmds) != 2 {
-		t.Fatalf("expected 2 cmds (history record + btw submit), got %d", len(cmds))
+	if len(cmds) != 1 || cmds[0] != nil {
+		t.Fatalf("unbound steering must not schedule a history write, got %v", cmds)
+	}
+	if app.Input.Value() != "keep this unsubmitted draft" || app.Input.DraftRevision() != revision ||
+		len(app.AgentMgr.Get("ses_1_orch_1").State.Messages.Messages()) != 0 {
+		t.Fatal("rejected steering consumed the draft or fabricated chat evidence")
+	}
+	if app.Prompts != nil && len(app.Prompts.Entries()) != historyCount {
+		t.Fatal("rejected steering was recorded as accepted prompt history")
 	}
 }
 

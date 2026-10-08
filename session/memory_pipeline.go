@@ -3,6 +3,7 @@ package session
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync"
@@ -62,23 +63,23 @@ func (j *memoryJobState) begin() (context.Context, bool) {
 // the cross-session history index, then (on cadence) extract durable
 // memories. Called from finalizeTurn off the UI thread; the mirror is durable
 // before this function returns, while extraction remains optional work.
-func (s *Session) afterTurnMemory(turn int, turnMsgs []provider.ChatMessage, finalContent string) {
+func (s *Session) afterTurnMemory(turn int, turnMsgs []provider.ChatMessage, finalContent string) error {
 	store := s.MemoryStore()
 	if store == nil || turn <= 0 || !containsHumanInput(turnMsgs) {
-		return
+		return nil
 	}
 	record := turnRecordFromMessages(s.sessionID, turn, turnMsgs, finalContent)
 	if _, ok := s.memoryJobs.begin(); !ok {
-		return
+		return errors.New("session memory lifecycle is closed")
 	}
 	defer s.memoryJobs.wg.Done()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err := store.RecordTurn(ctx, record); err != nil {
-		s.logger.Warn("MEMORY", "turn_mirror_failed", "error", err.Error())
-		return
+		return fmt.Errorf("persist completed turn mirror: %w", err)
 	}
 	s.maybeExtractMemories(turn)
+	return nil
 }
 
 func containsHumanInput(messages []provider.ChatMessage) bool {

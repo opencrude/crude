@@ -57,6 +57,21 @@ preserve or intentionally improve.
 | Open Tabs details | Click header model / context telemetry | Same single-row disclosure pattern, restricted to visible tabs. Identity, current model, known call/cost totals and lifecycle share the row; less important facts yield first at narrow widths. Expanded details expose an Open action. |
 | Terminate background command | Its row's Terminate button; compact close glyph on narrow grids | Only running rows expose the action. Click selects the exact command; Enter/Space activates a focused button, Up/Down or Tab moves between buttons, and Esc returns to the composer. Handle, PID, start time and owning session must still match. Finished/stale/replaced rows never signal a process, and the session and other jobs remain alive. |
 
+Submitting text captures an immutable input identity and returns an off-UI
+admission command. Only its exact session, agent, owner epoch, turn generation,
+draft revision and workspace receipt can consume that submitted draft. Text,
+references, cursor, selection, scroll and undo/edit ABA changes all invalidate
+that consumption. A floating composer cannot consume the separate shell draft
+or close a changed/reopened composer. Duplicate acknowledgement repeats neither
+chat nor prompt-history effects.
+
+Stop preserves the accepted original once in immediate chat and durable future
+context without returning it to the composer. A newer unsubmitted draft remains
+byte-for-byte and interaction-state intact. Rejected steering creates no human
+chat row or accepted history. Exact-owner late semantic stream/tool evidence is
+retained while stopping and after terminal acknowledgement, but never reactivates
+animation; only a genuinely new runtime generation can start new work.
+
 Prompt history owns content-addressed media beside `history.json` with
 owner-only permissions. Multimodal entries never merge by text similarity.
 Restoration imports fresh session references and rewrites only the recorded

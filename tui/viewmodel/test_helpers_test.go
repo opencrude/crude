@@ -1,7 +1,6 @@
 package viewmodel
 
 import (
-	"fmt"
 	"testing"
 	"time"
 
@@ -63,7 +62,7 @@ func runAppCommand(t *testing.T, app *App, command tea.Cmd) {
 		}
 		model, next := app.Update(message)
 		if model != app {
-			t.Fatal(fmt.Sprintf("command replaced App with %T", model))
+			t.Fatalf("command replaced App with %T", model)
 		}
 		if next != nil {
 			queue = append(queue, next)

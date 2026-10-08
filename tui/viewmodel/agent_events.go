@@ -3,6 +3,7 @@ package viewmodel
 import (
 	"context"
 	"fmt"
+	"math/rand/v2"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -10,9 +11,11 @@ import (
 	"crude/agent"
 	"crude/fileio"
 	"crude/provider"
+	"crude/sessiondb"
 	"crude/tui/chatprojection"
 	ttypes "crude/tui/types"
 	"crude/tui/ui"
+	"crude/tui/wm"
 	coretypes "crude/types"
 	"crude/workspace"
 )
@@ -46,13 +49,19 @@ func (m *App) submitInput(sessionID, text string, refIDs []string) tea.Cmd {
 
 type inputAdmissionMsg struct {
 	workspace       *workspace.Workspace
+	workspaceGen    uint64
 	session         *workspace.Session
+	intent          *workspace.InputAdmissionIntent
 	agentID         string
 	draftRevision   uint64
+	draftEpoch      uint64
 	input           provider.UserInput
 	referenceLabels []string
+	references      []sessiondb.Reference
 	result          workspace.InputAdmissionResult
-	closeComposer   bool
+	composerWindow  *wm.FloatingWindow
+	composerEditor  *ui.TextArea
+	composerState   ui.TextAreaState
 }
 
 func (m *App) submitPreparedInput(sessionID string, input provider.UserInput, draftRevision uint64) tea.Cmd {
@@ -77,22 +86,53 @@ func (m *App) submitPreparedInput(sessionID string, input provider.UserInput, dr
 	}
 	frontend := owner.SessionsByAgent[sessionID]
 	labels := m.referenceLabels(input.ReferenceIDs)
+	var references []sessiondb.Reference
+	if frontend != nil && frontend.RefStore != nil {
+		for _, id := range input.ReferenceIDs {
+			if ref, ok := frontend.RefStore.GetReference(id); ok {
+				references = append(references, ref)
+			}
+		}
+	}
+	if m.pendingInputAdmissions == nil {
+		m.pendingInputAdmissions = make(map[*workspace.InputAdmissionIntent]struct{})
+	}
+	m.pendingInputAdmissions[intent] = struct{}{}
+	workspaceGen := m.workspaceSwitchGen.Load()
+	draftEpoch := m.Input.DraftEpoch()
 	return func() tea.Msg {
 		result := owner.CommitAgentInputAdmission(context.Background(), intent)
-		return inputAdmissionMsg{workspace: owner, session: frontend, agentID: sessionID, draftRevision: intent.DraftRevision,
-			input: input, referenceLabels: labels, result: result}
+		return inputAdmissionMsg{workspace: owner, workspaceGen: workspaceGen, session: frontend, intent: intent,
+			agentID: sessionID, draftRevision: intent.DraftRevision, draftEpoch: draftEpoch,
+			input: input, referenceLabels: labels, references: references, result: result}
 	}
 }
 
 func (m *App) submitComposerInput(sessionID, text string) tea.Cmd {
-	command := m.submitPreparedInput(sessionID, provider.PlainInput(text), m.Input.DraftRevision())
+	screen := m.sessionComposer()
+	window := m.overlayHost.Window(ui.OverlayComposer)
+	if screen == nil || window == nil {
+		return nil
+	}
+	var editor *ui.TextArea
+	for _, child := range screen.Children() {
+		if provider, ok := child.(ui.TextEditorProvider); ok {
+			editor, _ = provider.TextEditor().(*ui.TextArea)
+			break
+		}
+	}
+	if editor == nil {
+		return nil
+	}
+	state := editor.EditState()
+	command := m.submitPreparedInput(sessionID, provider.PlainInput(text), 0)
 	if command == nil {
 		return nil
 	}
 	return func() tea.Msg {
 		message := command()
 		if admission, ok := message.(inputAdmissionMsg); ok {
-			admission.closeComposer = true
+			admission.composerWindow, admission.composerEditor, admission.composerState = window, editor, state
 			return admission
 		}
 		return message
@@ -100,32 +140,48 @@ func (m *App) submitComposerInput(sessionID, text string) tea.Cmd {
 }
 
 func (m *App) applyInputAdmission(msg inputAdmissionMsg) tea.Cmd {
-	if msg.workspace == nil || msg.workspace != m.Workspace || msg.session == nil || m.SessionsByAgent[msg.agentID] != msg.session {
+	if _, pending := m.pendingInputAdmissions[msg.intent]; !pending || msg.intent == nil {
+		return nil
+	}
+	if msg.workspace == nil || msg.workspace != m.Workspace || msg.workspaceGen != m.workspaceSwitchGen.Load() ||
+		msg.session == nil || m.SessionsByAgent[msg.agentID] != msg.session {
+		delete(m.pendingInputAdmissions, msg.intent)
 		return nil
 	}
 	switch msg.result.Status {
 	case workspace.InputAdmissionAccepted, workspace.InputAdmissionPreservationPending:
+		receipt := msg.result.Receipt
+		if receipt.SessionID != msg.session.SessionID || receipt.AgentID != msg.agentID || receipt.InputID != msg.intent.InputID ||
+			receipt.DraftRevision != msg.draftRevision || receipt.OwnerEpoch != msg.intent.OwnerEpoch ||
+			receipt.TurnGeneration != msg.intent.TurnGeneration || receipt.ContextRevision == 0 || receipt.AcceptedAt.IsZero() {
+			return nil
+		}
+		delete(m.pendingInputAdmissions, msg.intent)
 		node := m.AgentMgr.Get(msg.agentID)
 		if node != nil && node.State != nil && node.State.Messages != nil {
 			appended := node.State.Messages.AppendMessageIfAbsent(workspace.Message{InternalID: msg.result.Receipt.InputID, Role: ttypes.RoleUser,
 				Content: msg.input.Text, ReferenceLabels: msg.referenceLabels, Time: msg.result.Receipt.AcceptedAt})
-			if appended && msg.result.Status == workspace.InputAdmissionAccepted {
+			if appended && msg.result.Status == workspace.InputAdmissionAccepted && !node.State.Cancelling &&
+				!node.State.IsActive() && node.State.TurnIdentity.Generation < receipt.TurnGeneration {
 				node.State.SubmitInput(msg.input.Text)
 			}
 			m.syncAgentMessages(msg.agentID, true)
 		}
-		if m.ActiveSession == msg.session && m.Input.ClearInputAtRevision(msg.draftRevision) {
+		if msg.composerWindow == nil && m.ActiveSession == msg.session && m.AgentMgr.ActiveID() == msg.agentID &&
+			m.Input.DraftEpoch() == msg.draftEpoch && m.Input.ClearInputAtRevision(msg.draftRevision) {
 			m.persistComposerDraftIfChanged()
 		}
-		if msg.closeComposer {
+		if msg.composerWindow != nil && m.overlayHost.Window(ui.OverlayComposer) == msg.composerWindow &&
+			msg.composerEditor.EditState() == msg.composerState {
 			m.overlayHost.Close(ui.OverlayComposer)
 		}
-		historyCmd := m.recordPrompt(msg.input.Text, msg.input.ReferenceIDs...)
+		historyCmd := m.recordPromptWithReferences(msg.input.Text, msg.references)
 		if msg.result.Status == workspace.InputAdmissionPreservationPending && m.Feedback != nil {
 			m.Feedback.NotifyInfo("Message saved to context; execution is not available")
 		}
 		return historyCmd
 	case workspace.InputAdmissionRejected:
+		delete(m.pendingInputAdmissions, msg.intent)
 		if m.Feedback != nil {
 			m.Feedback.NotifyError("Message was not sent; your draft is kept")
 		}
@@ -140,26 +196,23 @@ func (m *App) submitSteering(sessionID, text string, refIDs []string) tea.Cmd {
 	}
 	agent := n.State
 	referenceLabels := m.referenceLabels(refIDs)
-	messageID := agent.Messages.AppendPendingSteering(workspace.Message{
-		Role:            ttypes.RoleUser,
-		Content:         text,
-		ReferenceLabels: referenceLabels,
-		Time:            time.Now(),
-	})
 	input := provider.InputWithRefs(text, refIDs)
-	input.InternalID = messageID
+	input.InternalID = fmt.Sprintf("steering-%016x", rand.Uint64())
 	if m.Workspace == nil || !m.SteerAgent(sessionID, input) {
-		agent.Messages.SettlePendingSteeringIDs([]string{messageID})
 		if m.Feedback != nil {
 			m.Feedback.NotifyError("human steering was not queued: this turn is no longer accepting notes")
 		}
 		return nil
 	}
+	agent.Messages.AppendPendingSteering(workspace.Message{
+		InternalID: input.InternalID, Role: ttypes.RoleUser, Content: text,
+		ReferenceLabels: referenceLabels, Time: time.Now(),
+	})
 	m.Input.ClearInputAtRevision(m.Input.DraftRevision())
 	m.persistComposerDraftIfChanged()
 	m.syncPendingSteeringCount()
 	m.syncAgentMessages(sessionID, true)
-	return nil
+	return m.recordPrompt(text, refIDs...)
 }
 
 func (m *App) referenceLabels(refIDs []string) []string {
@@ -389,11 +442,18 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 			}
 		}
 	} else if agent.Completed {
-		if evt.Type == "done" || evt.Type == "error" {
-			m.handleSubPaneCompletion(agentID)
+		// Exact-owner semantic evidence may outlive terminal presentation;
+		// AgentState owns keeping that correction inactive.
+		semantic := evt.Identity.Valid() && (evt.Type == "tool_result" || evt.Type == "stream_token" || evt.Type == "thinking" || evt.Type == "reasoning_classified")
+		turn, startsTurn := evt.Data.(coretypes.TurnIdentity)
+		freshTurn := evt.Type == "turn_started" && startsTurn && turn.Generation > agent.TurnIdentity.Generation
+		if !semantic && !freshTurn {
+			if evt.Type == "done" || evt.Type == "error" {
+				m.handleSubPaneCompletion(agentID)
+			}
+			m.syncAgentWindowTabs()
+			return nil
 		}
-		m.syncAgentWindowTabs()
-		return nil
 	}
 	if agent == nil {
 		return nil

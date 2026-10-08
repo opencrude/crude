@@ -69,6 +69,8 @@ not a runnable process waiting to be reopened.
 | `agent_send` | Directed note/reply/request/revision or rare running-agent broadcast |
 | `agent_respond` | Accept, defer, or decline an exact request revision |
 | `agent_control` | Request pause/resume/cancel/reopen for an exact agent/run version |
+| `agent_narrow_claims` | Narrow or explicitly relinquish the caller's own exact active run claims, without ending the run |
+| `agent_update_claims` | Replace a stopped, unfinished child's declarations under the exact parent and expected claim versions; never starts execution |
 | `publish_report` | Publish immutable authored evidence linked to the actual run/request |
 | `artifact_read` | Read an exact artifact revision; revision zero selects latest |
 | `agent_wait` | Wait for an exact run/report/agent condition without model polling |
@@ -203,6 +205,23 @@ Declared child ownership is reserved before model execution, across sessions.
 Native writes conflict with another active owner; repeated writes reuse the
 run's claim. Failed launches release their exact runtime and claims rather than
 leaving invisible running agents.
+
+Native ownership rejection is structural evidence, not an ordinary tool error
+for the model to retry unchanged. It parks the unfinished child and identifies
+the exact child, attempted run and incident for its parent. Repair and execution
+are separate operations. The active parent may narrow its own claims, then
+update its stopped child's claims using the exact expected claim version.
+Only explicit, incident/generation-fenced Continue starts a replacement child
+run. Repair alone makes no provider call, file effect or automatic wake.
+
+Run and claim preimages are positive exact integers; fractional, negative,
+unsafe or missing values fail closed. Narrowing cannot widen scope, steal a
+foreign run or claim, or repair an active child. An explicitly empty path list
+relinquishes ownership. Native file effects hold a read lease on their checked
+ownership through completion; claim replacement waits for in-flight effects.
+Multi-target preflight is atomic, so a rejected operand cannot leak neighboring
+claims. These leases complement, not replace, `fileio` mutation and history
+safeguards. Opaque shell and external MCP effects remain outside this guarantee.
 
 ## Lifecycle controls
 

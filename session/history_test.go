@@ -9,8 +9,10 @@ import (
 	"testing"
 
 	"crude/agent"
+	"crude/collaboration"
 	"crude/fileio"
 	"crude/safety"
+	"crude/tools"
 )
 
 func TestSuccessfulFileToolReportsScopedHistoryMutation(t *testing.T) {
@@ -51,6 +53,17 @@ func TestSubAgentToolPreservesMessageScopeAndReplacesActor(t *testing.T) {
 	}
 	defer sess.Close()
 	sess.SetWorkDir(project)
+	store := attachDelegationTestCollaboration(t, sess)
+	if _, err := sess.registerCollaborator(t.Context(), "root-agent", "root", sess.sessionID, "", CategoryDefault, sess.db); err != nil {
+		t.Fatal(err)
+	}
+	registered, err := sess.registerCollaborator(t.Context(), "child-agent", "child", "child-session", "root-agent", CategoryCrafter, sess.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.StartRun(t.Context(), collaboration.StartRunRequest{AgentID: registered.ID, RuntimeEpoch: registered.RuntimeEpoch, RequestID: "file-assignment", Origin: collaboration.OriginPeer}); err != nil {
+		t.Fatal(err)
+	}
 	var got HistoryMutation
 	committed := false
 	sess.SetHistoryMutationHook(func(_ context.Context, mutation HistoryMutation) error {
@@ -68,6 +81,7 @@ func TestSubAgentToolPreservesMessageScopeAndReplacesActor(t *testing.T) {
 	spec := agent.SubAgentSpec{ID: "child-agent", Name: "child", PolicyName: "workspace-write", Policy: policy}
 	toolFn := runner.buildProxiedToolFn(spec, nil, nil)
 	ctx := withHistoryScope(context.Background(), "session", "root-message", "root-agent")
+	ctx = context.WithValue(ctx, tools.ExecutionIdentityKey{}, tools.ExecutionIdentity{AgentID: "child-agent", ToolCallID: "file-effect"})
 	if _, err := toolFn(ctx, "write_file", map[string]any{"path": "child.txt", "content": "child data"}); err != nil {
 		t.Fatal(err)
 	}

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"os/user"
+	"path/filepath"
+	"slices"
 	"time"
 
 	"crude/agent"
@@ -96,6 +98,8 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		}
 	}()
 	exec := fileio.NewLocalExecWithLogger(lg)
+	_, previousTempErr := os.Lstat(filepath.Join(lg.SessionDir(), "tmp", "agent"))
+	createdTemp := os.IsNotExist(previousTempErr)
 	tempDir, err := prepareSessionTempDir(lg.SessionDir(), meta.ID)
 	if err != nil {
 		_ = lg.Close()
@@ -104,7 +108,7 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	}
 	keepTempDir := false
 	defer func() {
-		if !keepTempDir {
+		if !keepTempDir && createdTemp {
 			_ = os.RemoveAll(tempDir)
 		}
 	}()
@@ -125,23 +129,11 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	diff.SetLogger(lg)
 	fileio.SetSafetyLogger(lg)
 
-	if sessionDir != "" {
-		if ed, edErr := fileio.NewEditorWithSessionDir(meta.ID, sessionDir, lg); edErr != nil {
-			lg.Warn("SESSION", "editor_init_error", "error", fmt.Sprintf("%v", edErr))
-		} else {
-			editor = ed
-		}
+	editor, err = fileio.NewEditorWithSessionDir(meta.ID, filepath.Dir(lg.SessionDir()), lg)
+	if err != nil {
+		return nil, fmt.Errorf("resume: session editor: %w", err)
 	}
-	if editor == nil {
-		if ed, edErr := fileio.NewEditorWithLogger(meta.ID, lg); edErr != nil {
-			lg.Warn("SESSION", "editor_init_error", "error", fmt.Sprintf("%v", edErr))
-		} else {
-			editor = ed
-		}
-	}
-	if editor != nil {
-		editor.SetLegacyJournalWrites(false)
-	}
+	editor.SetLegacyJournalWrites(false)
 
 	workspaceCfg := copyConfig(cfg)
 	overrides, err := sessiondb.LoadAgentSettingOverrides(db, meta.ID)
@@ -198,9 +190,6 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		cleanMsgs := make([]provider.ChatMessage, 0, len(msgsWithMeta))
 		cleanTurns := make([]int, 0, len(msgsWithMeta))
 		for i, mm := range msgsWithMeta {
-			if mm.Meta.DisplayRole == "hidden_wire_context" && !mm.Meta.ContextOnly {
-				continue
-			}
 			cleanMsgs = append(cleanMsgs, mm.Msg)
 			if i < len(msgTurns) {
 				cleanTurns = append(cleanTurns, msgTurns[i])
@@ -270,12 +259,10 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		db:                 db,
 		dbPath:             dbPath,
 		turnNumber:         resumeTurnNumber,
-		seqNum:             len(msgs),
 		msgs:               msgs,
 		msgTurns:           msgTurns,
 		displayMetas:       displayMetas,
 		createdAts:         createdAts,
-		writeBuf:           make([]taggedMessage, 0, 64),
 		orchestrators:      make(map[string]*Orchestrator),
 		recoverySlots:      make(map[string]*recoverySlot),
 		pendingRecoveries:  make(map[string]sessiondb.RecoveryCheckpoint),
@@ -302,11 +289,6 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 				_ = lg.Close()
 				_ = db.Close()
 				return nil, fmt.Errorf("restore accepted recovery transcript: %w", err)
-			}
-			if err := sessiondb.SaveRecoveryCheckpoint(db, meta.ID, checkpoint); err != nil {
-				_ = lg.Close()
-				_ = db.Close()
-				return nil, fmt.Errorf("restore safe recovery context: %w", err)
 			}
 			sess.activeContext = append([]provider.ChatMessage(nil), checkpoint.ActiveContext...)
 		}
@@ -394,9 +376,9 @@ func subAgentResultFromRow(row sessiondb.SubAgentResultRow) agent.SubAgentResult
 		ReportID:       row.ReportID,
 		ReportRevision: row.ReportRevision,
 		LogPath:        row.SessionLogPath,
-		FilesRead:      append([]string(nil), row.FilesRead...),
-		FilesWritten:   append([]string(nil), row.FilesWritten...),
-		Errors:         append([]string(nil), row.Errors...),
+		FilesRead:      slices.Clone(row.FilesRead),
+		FilesWritten:   slices.Clone(row.FilesWritten),
+		Errors:         slices.Clone(row.Errors),
 		PromptTokens:   row.PromptTokens,
 		CompTokens:     row.CompletionTokens,
 		CostUSD:        row.CostUSD,

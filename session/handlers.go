@@ -37,14 +37,14 @@ func (s *Session) AppendWorkspaceHistoryEventWithID(eventID, content string, sta
 	if status.Time.IsZero() {
 		status.Time = createdAt
 	}
-	meta := sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, DisplayRole: "hidden_wire_context", ContextOnly: true,
+	meta := sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, DisplayRole: "hidden_wire_context",
 		Snapshots: []ttypes.ConversationMessage{status}}
 	s.msgsMu.Lock()
+	defer s.msgsMu.Unlock()
 	for _, existing := range s.msgs {
 		if existing.InternalID == eventID || (existing.EffectiveOrigin() == provider.OriginRuntimeContext && existing.Content.String() == content) {
 			for _, active := range s.activeContext {
 				if active.Content.String() == content {
-					s.msgsMu.Unlock()
 					return nil
 				}
 			}
@@ -53,48 +53,21 @@ func (s *Session) AppendWorkspaceHistoryEventWithID(eventID, content string, sta
 			if generation == 1 {
 				generation = 2
 			}
-			s.msgsMu.Unlock()
-			if s.db != nil {
-				state, err := sessiondb.PublishContext(s.db, sessiondb.ContextPublication{SessionID: s.sessionID, AgentID: s.sessionID, ExpectedRevision: s.contextRevision, Mutation: sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: generation, Reason: "workspace_restore", Messages: active}}, ArchivePrevious: true})
-				if err != nil {
-					return err
-				}
-				s.contextRevision = state.Revision
-			}
-			s.msgsMu.Lock()
-			s.activeContext = active
-			s.contextGeneration = generation
-			s.contextReason = "workspace_restore"
-			s.msgsMu.Unlock()
-			return nil
+			_, err := s.publishRootContext(sessiondb.ContextPublication{Mutation: sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: generation, Reason: "workspace_restore", Messages: canonicalContextMessages(active)}}, ArchivePrevious: true})
+			return err
 		}
 	}
 	msgs := append(append([]provider.ChatMessage(nil), s.msgs...), message)
 	turns := append(append([]int(nil), s.msgTurns...), s.turnNumber)
 	metas := append(append([]sessiondb.DisplayMeta(nil), s.displayMetas...), meta)
 	createdAts := append(append([]int64(nil), s.createdAts...), createdAt.UnixNano())
-	active := append(append([]provider.ChatMessage(nil), s.activeContext...), message)
-	generation := s.contextGeneration + 1
-	if generation == 1 {
-		generation = 2
+	if _, err := s.publishRootContext(sessiondb.ContextPublication{Mutation: sessiondb.ContextMutation{Append: []sessiondb.ContextMessageDelta{contextDelta(message, meta, s.turnNumber, createdAt, s.sessionID)}}}); err != nil {
+		return err
 	}
-	s.msgsMu.Unlock()
-	if s.db != nil {
-		state, err := sessiondb.PublishContext(s.db, sessiondb.ContextPublication{SessionID: s.sessionID, AgentID: s.sessionID, ExpectedRevision: s.contextRevision, Mutation: sessiondb.ContextMutation{Append: []sessiondb.ContextMessageDelta{contextDelta(message, meta, s.turnNumber, createdAt, s.sessionID)}}})
-		if err != nil {
-			return err
-		}
-		s.contextRevision = state.Revision
-	}
-	s.msgsMu.Lock()
 	s.msgs = msgs
 	s.msgTurns = turns
 	s.displayMetas = metas
 	s.createdAts = createdAts
-	s.activeContext = active
-	s.contextGeneration = generation
-	s.contextReason = "workspace_restore"
-	s.msgsMu.Unlock()
 	return nil
 }
 
@@ -145,13 +118,21 @@ func (s *Session) AppendSubAgentHistoryStatus(agentID, eventID string, status tt
 	if status.Time.IsZero() {
 		status.Time = time.Now()
 	}
-	meta := sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, DisplayRole: "hidden_wire_context", ContextOnly: true,
+	meta := sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, DisplayRole: "hidden_wire_context",
 		Snapshots: []ttypes.ConversationMessage{status}}
 	turn := 1
 	if len(rows) > 0 && rows[len(rows)-1].Turn > turn {
 		turn = rows[len(rows)-1].Turn
 	}
-	return true, sessiondb.AppendMessageWithMeta(childDB, childSessionID, message, turn, meta)
+	current, _, err := sessiondb.LoadContextState(childDB, childSessionID, agentID)
+	if err != nil {
+		return true, err
+	}
+	_, err = sessiondb.PublishContext(childDB, sessiondb.ContextPublication{
+		SessionID: childSessionID, AgentID: agentID, ExpectedRevision: current.Revision,
+		Mutation: sessiondb.ContextMutation{Append: []sessiondb.ContextMessageDelta{contextDelta(message, meta, turn, status.Time, agentID)}},
+	})
+	return true, err
 }
 
 func (s *Session) SetYolo(enabled bool) {

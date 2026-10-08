@@ -96,6 +96,7 @@ type App struct {
 	composerDraftOwners        map[*workspace.Session]*composerDraftOwner
 	composerDraftWrites        sync.WaitGroup
 	composerDraftStopping      atomic.Bool
+	pendingInputAdmissions     map[*workspace.InputAdmissionIntent]struct{}
 	referenceOverlay           *referenceOverlayState
 	pastedTextRequests         []pastedTextStoredMsg
 	DirtyPromptPath            string
@@ -423,13 +424,6 @@ func (m *App) SetPromptHistory(store *history.Store) {
 // fold is synchronous so ↑ recalls the prompt immediately; the file write is
 // deferred. Merged repeats still save — they change count/lastSeen/text.
 func (m *App) recordPrompt(text string, referenceIDs ...string) tea.Cmd {
-	if m.Prompts == nil {
-		return nil
-	}
-	if strings.TrimSpace(text) == "" {
-		return nil
-	}
-	text = strings.TrimSpace(text)
 	var refs []sessiondb.Reference
 	if store := m.RefStore(); store != nil {
 		for _, id := range referenceIDs {
@@ -438,6 +432,14 @@ func (m *App) recordPrompt(text string, referenceIDs ...string) tea.Cmd {
 			}
 		}
 	}
+	return m.recordPromptWithReferences(text, refs)
+}
+
+func (m *App) recordPromptWithReferences(text string, refs []sessiondb.Reference) tea.Cmd {
+	if m.Prompts == nil || strings.TrimSpace(text) == "" {
+		return nil
+	}
+	text = strings.TrimSpace(text)
 	var attachments []history.Attachment
 	for _, span := range input.FindRefRanges(text, refs) {
 		for _, ref := range refs {

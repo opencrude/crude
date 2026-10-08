@@ -183,6 +183,23 @@ func (t *TextArea) NeedsFrame() bool  { return true }
 // Value returns the full text content.
 func (t *TextArea) Value() string { return t.edit.Value() }
 
+// TextAreaState fences asynchronous editor acknowledgements without copying
+// the text. ContentRevision also distinguishes edit/undo and replacement ABA.
+type TextAreaState struct {
+	ContentRevision uint64
+	Cursor          int
+	SelectionFrom   int
+	SelectionTo     int
+	Scroll          int
+	Selecting       bool
+}
+
+func (t *TextArea) EditState() TextAreaState {
+	from, to := t.SelectionRange()
+	return TextAreaState{ContentRevision: t.edit.contentRevision, Cursor: t.CursorFlat(),
+		SelectionFrom: from, SelectionTo: to, Scroll: t.scroll, Selecting: t.IsSelecting()}
+}
+
 // SetValue replaces the content and places the cursor at the end.
 func (t *TextArea) SetValue(s string) {
 	t.edit.SetValue(s)

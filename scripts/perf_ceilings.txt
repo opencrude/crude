@@ -44,3 +44,5 @@ BenchmarkOpenIndexedHistory 460000 11000
 BenchmarkOpenIndexedHistory windows 600000 14000
 BenchmarkProjectInsightsCached10kDiagnostics 0 0
 BenchmarkUsageSummaryCached1000Requests 0 0
+BenchmarkPublishContextReplaceUnrelatedArchiveHistory/unrelated_0 10000 190
+BenchmarkPublishContextReplaceUnrelatedArchiveHistory/unrelated_2000 10000 190

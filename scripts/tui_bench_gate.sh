@@ -64,7 +64,7 @@ run_bench() {
     else
       echo "OK: $base ${b}B ${alloc} allocs (ceiling ${maxB}B/${maxAlloc})"
     fi
-  done < <(echo "$out" | grep -E '^Benchmark[A-Za-z0-9_]+-[0-9]+[[:space:]]+[0-9]+')
+  done < <(echo "$out" | grep -E '^Benchmark[A-Za-z0-9_/]+-[0-9]+[[:space:]]+[0-9]+')
 }
 
 echo "== TUI bench regression gate ($BENCH_GOOS) =="
@@ -74,6 +74,7 @@ run_bench '^BenchmarkBuffer(DirtyCheckLargeFile|SavepointManualRoundTripLargeFil
 run_bench 'BenchmarkChatStreamPaint' ./tui/screens/shellchat
 run_bench '^BenchmarkLargeDiffPreview$' ./tui/chatprojection
 run_bench '^BenchmarkOpenIndexedHistory$' ./localhistory
+run_bench '^BenchmarkPublishContextReplaceUnrelatedArchiveHistory$' ./sessiondb
 run_bench '^Benchmark(ProjectInsightsCached10kDiagnostics|UsageSummaryCached1000Requests)$' ./workspace
 # Scenario benches: steady-state work budgets (see scripts/perf_ceilings.txt).
 run_bench 'Benchmark(IdleTick|TabRederive|PointerMotionCoalesced|AgentSwitchWarm|SidebarResizePresentedFrame_500Msgs|SidebarResizeMutation_500Msgs|DenseChatSingleRowChange_500Msgs|DenseChatWidthCommit_500HeavyMsgs)' ./tui/viewmodel

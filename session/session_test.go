@@ -5,17 +5,73 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
+	"crude/fileio"
 	"crude/logger"
 	rootprompt "crude/prompt"
 	"crude/provider"
 	"crude/sessiondb"
 	ttypes "crude/types"
 )
+
+func TestResumeJournalFailurePreservesSavedWorkAndExistingArtifacts(t *testing.T) {
+	home, root := t.TempDir(), t.TempDir()
+	s, err := NewWithSessionDir("", testConfig(), home, root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := s.AppendWorkspaceHistoryEvent("saved-snapshot", "Retained history boundary"); err != nil {
+		t.Fatal(err)
+	}
+	path, id, temp := s.dbPath, s.sessionID, s.TempDir()
+	s.Close()
+	if err := os.MkdirAll(temp, 0700); err != nil {
+		t.Fatal(err)
+	}
+	evidence := filepath.Join(temp, "retained-output")
+	if err := os.WriteFile(evidence, []byte("prior-process evidence"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	journal := filepath.Join(root, id+".jsonl")
+	if err := os.Remove(journal); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(journal, 0700); err != nil {
+		t.Fatal(err)
+	}
+	foreignRoot := t.TempDir()
+	fileio.SetSessionsRootFn(func() (string, error) { return foreignRoot, nil })
+	t.Cleanup(func() { fileio.SetSessionsRootFn(nil) })
+	resumed, err := ResumeSessionWithDir(path, testConfig(), home, root)
+	if resumed != nil {
+		resumed.Close()
+	}
+	if err == nil || !strings.Contains(err.Error(), "session editor") || resumed != nil {
+		t.Fatalf("journal failure silently produced another editor/session: session=%v error=%v", resumed != nil, err)
+	}
+	bytes, err := os.ReadFile(evidence)
+	if err != nil || string(bytes) != "prior-process evidence" {
+		t.Fatalf("failed resume removed owned artifacts: error=%v", err)
+	}
+	db, err := sessiondb.OpenAndMigrate(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	rows, err := sessiondb.LoadMessagesWithMeta(db)
+	if err != nil || len(rows) != 1 || rows[0].Meta.Snapshots[0].Content != "Retained history boundary" {
+		t.Fatalf("failed resume lost saved history: rows=%d error=%v", len(rows), err)
+	}
+	entries, err := os.ReadDir(foreignRoot)
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("journal fallback escaped its exact session root: entries=%d error=%v", len(entries), err)
+	}
+}
 
 func TestSanitizeMessages_CleanTail(t *testing.T) {
 	msgs := []provider.ChatMessage{
@@ -315,15 +371,43 @@ func TestFinalizeTurnKeepsDurableHistoryOutsideCompactedContext(t *testing.T) {
 		provider.NewTextMessage("assistant", "old answer"),
 		provider.NewTextMessage("user", "current request"),
 	}
+	for i := range history {
+		history[i].InternalID = fmt.Sprintf("history-%d", i)
+	}
 	s := &Session{
 		msgs:         append([]provider.ChatMessage(nil), history...),
 		msgTurns:     []int{1, 1, 2},
 		displayMetas: make([]sessiondb.DisplayMeta, 3),
 		turnNumber:   2,
 	}
+	db, err := sessiondb.OpenAndMigrate(filepath.Join(t.TempDir(), "session.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	if err := sessiondb.CreateSessionRow(db, "session"); err != nil {
+		t.Fatal(err)
+	}
+	s.db, s.sessionID = db, "session"
+	var deltas []sessiondb.ContextMessageDelta
+	for i, message := range history {
+		when := time.Now()
+		meta := canonicalizeDisplayMeta(message, sessiondb.DisplayMeta{DisplayRole: message.Role}, "", i, when)
+		s.displayMetas[i] = meta
+		s.createdAts = append(s.createdAts, when.UnixNano())
+		deltas = append(deltas, contextDelta(message, meta, s.msgTurns[i], when, "root"))
+	}
+	if _, err := s.publishRootContext(sessiondb.ContextPublication{Mutation: sessiondb.ContextMutation{Append: deltas}}); err != nil {
+		t.Fatal(err)
+	}
 	context := []provider.ChatMessage{
 		provider.NewTextMessage("user", "<context_checkpoint>old state</context_checkpoint>"),
 		history[2],
+	}
+	context[0].InternalID = "checkpoint"
+	context[0].Origin, context[0].Visibility = provider.OriginCheckpoint, provider.VisibilityContextOnly
+	if _, err := s.publishRootContext(sessiondb.ContextPublication{Mutation: sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: 2, Reason: "automatic_compaction", Messages: canonicalContextMessages(context)}}, ArchivePrevious: true}); err != nil {
+		t.Fatal(err)
 	}
 	agentMessages := []provider.ChatMessage{
 		provider.NewTextMessage("system", "system"),
@@ -331,11 +415,13 @@ func TestFinalizeTurnKeepsDurableHistoryOutsideCompactedContext(t *testing.T) {
 		context[1],
 		provider.NewTextMessage("assistant", "new answer"),
 	}
-	_ = s.finalizeTurn(
+	if err := s.finalizeTurn(
 		agentMessages, len(context),
 		&displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)},
 		"new answer", "msg-2", ttypes.TurnIdentity{},
-	)
+	); err != nil {
+		t.Fatal(err)
+	}
 	if len(s.msgs) != 4 {
 		t.Fatalf("durable history length = %d: %+v", len(s.msgs), s.msgs)
 	}
@@ -347,6 +433,10 @@ func TestFinalizeTurnKeepsDurableHistoryOutsideCompactedContext(t *testing.T) {
 		if strings.Contains(message.ContentString(), "<context_checkpoint>") {
 			t.Fatal("ephemeral compaction checkpoint leaked into durable history")
 		}
+	}
+	rows, err := sessiondb.LoadMessagesWithMeta(db)
+	if err != nil || len(rows) != 4 || rows[0].Msg.ContentString() != "old request" || rows[3].Msg.ContentString() != "new answer" {
+		t.Fatalf("compacted finalization lost persisted history: rows=%+v error=%v", rows, err)
 	}
 }
 
@@ -372,7 +462,11 @@ func TestHardCancelSignalsEveryOrchestrator(t *testing.T) {
 }
 
 func TestFinalizeTurnPersistsHumanSteeringDisplayProjection(t *testing.T) {
-	s := &Session{}
+	s, err := NewWithSessionDir("steering-display", testConfig(), t.TempDir(), filepath.Join(t.TempDir(), "sessions"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(s.Close)
 	steering := provider.ChatMessage{
 		InternalID:      "steering-1",
 		DisplayContent:  "please include tests",
@@ -380,7 +474,9 @@ func TestFinalizeTurnPersistsHumanSteeringDisplayProjection(t *testing.T) {
 		Role:            "user",
 		Content:         provider.TextContent(rootprompt.HumanSteeringPrefix() + "please include tests"),
 	}
-	_ = s.finalizeTurn([]provider.ChatMessage{steering}, 0, &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}, "", "msg", ttypes.TurnIdentity{})
+	if err := s.finalizeTurn([]provider.ChatMessage{steering}, 0, &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}, "", "msg", ttypes.TurnIdentity{}); err != nil {
+		t.Fatal(err)
+	}
 	messages := s.MessagesWithMeta()
 	if len(messages) != 1 || messages[0].Meta.DisplayContent != "please include tests" ||
 		len(messages[0].Meta.ReferenceLabels) != 1 || messages[0].Meta.ReferenceLabels[0] != "@notes" {

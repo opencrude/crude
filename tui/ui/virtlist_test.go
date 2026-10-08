@@ -134,3 +134,44 @@ func TestVirtualListSetItemsKeepsStickToBottom(t *testing.T) {
 		t.Fatalf("after grow offset=%d max=%d", list.Scroll().Offset(), list.Scroll().MaxOffset())
 	}
 }
+
+func TestVirtualListRebuildPrefixReusesCapacity(t *testing.T) {
+	list := NewVirtualList("reuse", nil)
+	list.SetSelectionAnchorsScroll(false)
+	items := []VirtItem{{ID: "a", Height: 2, Label: "alpha"}, {ID: "b", Height: 1, Label: "bravo"}, {ID: "c", Height: 3, Label: "charlie"}}
+	list.SetItems(items)
+	list.Layout(LayoutContext{}, Rect{W: 20, H: 2})
+	list.SelectIndex(1)
+	list.Scroll().ScrollTo(2)
+	start := &list.prefix[0]
+	revision := list.StructureRevision()
+	if allocations := testing.AllocsPerRun(100, func() { list.SetItems(items) }); allocations != 0 {
+		t.Fatalf("warm index rebuild allocated %.0f times; want zero", allocations)
+	}
+	if &list.prefix[0] != start || list.StructureRevision() != revision+101 {
+		t.Fatal("index capacity was not reused or structural revision did not advance")
+	}
+	list.UpdateItem(0, VirtItem{ID: "a", Height: 3, Label: "alpha"})
+	if &list.prefix[0] != start || list.Scroll().Content() != 7 || list.ItemIndexAtRow(3) != 1 ||
+		list.SelectedIndex() != 1 || list.Scroll().Offset() != 2 {
+		t.Fatal("height delta broke index, selection or disarmed scroll")
+	}
+	list.SetItems([]VirtItem{{ID: "latest", Height: 1, Label: "latest"}})
+	if &list.prefix[0] != start || len(list.prefix) != 2 || list.prefix[1] != 1 ||
+		list.Scroll().Offset() != 0 || list.ItemIndexAtRow(1) != -1 {
+		t.Fatal("shrinking retained stale prefix rows or failed to clamp scroll")
+	}
+	buf := surface.NewCellBuffer(20, 2)
+	list.Paint(buf, 0, 0, PaintContext{})
+	if buf.Get(0, 0).Char != 'l' {
+		t.Fatal("latest replacement was not painted")
+	}
+	list.SetItems(nil)
+	if &list.prefix[0] != start || len(list.prefix) != 1 || list.prefix[0] != 0 || list.SelectedIndex() != -1 {
+		t.Fatal("empty replacement retained old index or selection")
+	}
+	list.SetItems(items)
+	if &list.prefix[0] != start || list.ItemIndexAtRow(3) != 1 {
+		t.Fatal("regrowth did not rebuild the reused prefix")
+	}
+}

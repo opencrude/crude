@@ -11,7 +11,7 @@ ensure-libghostty:
 	@if [ ! -f deps/libghostty-vt/lib/libghostty-vt.a ]; then ./scripts/bootstrap_libghostty.sh; fi
 
 build: ensure-libghostty
-	. scripts/libghostty_env.sh && go build ./...
+	. scripts/libghostty_env.sh && go build ./... && go build -o crude .
 
 # Full TUI test suite (all tui packages).
 test-tui: ensure-libghostty

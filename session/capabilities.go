@@ -196,7 +196,7 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 		if tool == "read_file" {
 			ownership.RecordRead(agent.AgentID(actor.ID), getStrParam(params, "path"))
 		}
-		if isWriteTool(tool) {
+		if isWriteTool(tool) && actor.ParentID == "" {
 			store := session.CollaborationStore()
 			if store == nil {
 				return tools.ToolResult{}, errors.New("workspace collaboration runtime is unavailable")
@@ -212,17 +212,21 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 			if identity.ToolCallID == "" {
 				return tools.ToolResult{}, errors.New("filesystem mutation requires an originating tool-call identity")
 			}
-			for _, path := range writeToolTargets(tool, params) {
-				if err := ownership.CheckOrClaim(agent.AgentID(actor.ID), name, path, true); err != nil {
-					return tools.ToolResult{}, err
-				}
-			}
-			if _, err := store.AcquireClaims(callCtx, collaboration.AcquireClaimsRequest{
-				AgentID: actor.ID, RunID: participant.CurrentRunID,
-				RequestID: identity.ToolCallID, Paths: writeToolTargets(tool, params),
+			targets := writeToolTargets(tool, params)
+			if err := ownership.CommitClaimAll(agent.AgentID(actor.ID), name, targets, true, func() error {
+				_, err := store.AcquireClaims(callCtx, collaboration.AcquireClaimsRequest{
+					AgentID: actor.ID, RunID: participant.CurrentRunID,
+					RequestID: identity.ToolCallID, Paths: targets,
+				})
+				return err
 			}); err != nil {
 				return tools.ToolResult{}, err
 			}
+			release, err := ownership.BeginWrite(agent.AgentID(actor.ID), targets)
+			if err != nil {
+				return tools.ToolResult{}, err
+			}
+			defer release()
 		}
 		return previousFn(callCtx, tool, params)
 	}

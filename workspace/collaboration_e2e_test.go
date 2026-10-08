@@ -17,6 +17,7 @@ import (
 
 	"crude/collaboration"
 	"crude/provider"
+	"crude/sessiondb"
 	ttypes "crude/types"
 )
 
@@ -202,6 +203,17 @@ func TestWorkspaceHumanSteeringTargetsExactActiveRun(t *testing.T) {
 	if !found {
 		t.Fatalf("second request lacked attributed human steering: %+v", requestMessages)
 	}
+	for _, expected := range []string{"begin work", "initial response", "prioritize the parser edge case"} {
+		count := 0
+		for _, message := range requestMessages {
+			if message.Role != "system" {
+				count += strings.Count(message.ContentString(), expected)
+			}
+		}
+		if count != 1 {
+			t.Fatalf("next provider request contains %q %d times, want once", expected, count)
+		}
+	}
 
 	persisted := false
 	for _, message := range frontend.backend.MessagesWithMeta() {
@@ -214,6 +226,19 @@ func TestWorkspaceHumanSteeringTargetsExactActiveRun(t *testing.T) {
 	}
 	if !persisted {
 		t.Fatal("admitted human steering was not retained in canonical session history")
+	}
+	current, present, err := sessiondb.LoadContextState(frontend.backend.DB(), frontend.backend.SessionID(), frontend.backend.SessionID())
+	if err != nil || !present {
+		t.Fatalf("load completed steering context: present=%v error=%v", present, err)
+	}
+	count := 0
+	for _, message := range current.Messages {
+		if message.InternalID == steering.InternalID {
+			count++
+		}
+	}
+	if count != 1 || requests.Load() != 2 {
+		t.Fatalf("steering duplicated, lost or replayed: messages=%d requests=%d", count, requests.Load())
 	}
 }
 

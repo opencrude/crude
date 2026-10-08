@@ -29,13 +29,23 @@ func (e *StructuralFailureError) Error() string {
 	if e == nil {
 		return "structural tool failure"
 	}
-	if e.Cause != nil {
-		return e.Cause.Error()
+	prefix := string(e.Kind)
+	if e.Tool != "" {
+		prefix += " tool=" + e.Tool
 	}
 	if e.Target != "" {
-		return fmt.Sprintf("%s: %s", e.Kind, e.Target)
+		prefix += " target=" + e.Target
 	}
-	return string(e.Kind)
+	if e.OwnerAgentID != "" {
+		prefix += " owner=" + e.OwnerAgentID
+	}
+	if e.Cause != nil {
+		return prefix + ": " + e.Cause.Error()
+	}
+	if e.Target != "" {
+		return fmt.Sprintf("%s: %s", prefix, e.Target)
+	}
+	return prefix
 }
 
 func (e *StructuralFailureError) Unwrap() error {
@@ -72,7 +82,7 @@ func NativeMetadata(name string) (ToolMetadata, bool) {
 		metadata.Effect = captypes.EffectWrite
 	case "delete_file":
 		metadata.Effect = captypes.EffectDelete
-	case "exec_command", "write_stdin", "execute_command", "async_execute_command", "kill_async_command", "multi_tool_use.parallel", "agent_start", "agent_control", "agent_update_claims":
+	case "exec_command", "write_stdin", "execute_command", "async_execute_command", "kill_async_command", "multi_tool_use.parallel", "agent_start", "agent_control", "agent_update_claims", "agent_narrow_claims":
 		metadata.Effect = captypes.EffectExecute
 	default:
 		return ToolMetadata{}, false

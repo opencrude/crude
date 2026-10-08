@@ -120,7 +120,7 @@ func (store *Store) RegisterAgent(ctx context.Context, registration AgentRegistr
 			heartbeat = now.UnixNano()
 		}
 		if newAttachment {
-			if err := store.recoverRuntime(ctx, tx, existing, registration.Admissions, now); err != nil {
+			if err := store.recoverRuntime(ctx, tx, existing, registration.Admissions, registration.PendingTerminal, now); err != nil {
 				return err
 			}
 			recovered = true
@@ -371,6 +371,21 @@ func (store *Store) StartRun(ctx context.Context, request StartRunRequest) (Run,
 			request.ID, request.RequestID, now.UnixNano(), request.AgentID, request.RuntimeEpoch); err != nil {
 			return err
 		}
+		var foreignDeclarations int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM collaboration_claims
+			WHERE agent_id=? AND run_id='' AND released_at=0 AND request_id!=?`, request.AgentID, request.RequestID).Scan(&foreignDeclarations); err != nil {
+			return err
+		}
+		if foreignDeclarations != 0 {
+			return fmt.Errorf("%w: declared claims belong to a different assignment", ErrConflict)
+		}
+		// Explicit Start/Continue binds the exact preserved declarations to this
+		// replacement run. Repair itself leaves them nonexecuting and unbound.
+		if _, err := tx.ExecContext(ctx, `UPDATE collaboration_claims
+			SET run_id=?,version=version+1
+			WHERE agent_id=? AND request_id=? AND run_id='' AND released_at=0`, request.ID, request.AgentID, request.RequestID); err != nil {
+			return err
+		}
 		result, err = loadRun(ctx, tx, request.ID)
 		return err
 	})
@@ -431,7 +446,14 @@ func (store *Store) updateRun(ctx context.Context, request FinishRunRequest) (Ru
 		if err != nil {
 			return err
 		}
-		if agent.RuntimeEpoch != request.RuntimeEpoch || agent.Presence != RuntimeAttached {
+		ownerEpoch := request.RuntimeEpoch
+		if request.SettlementEpoch != 0 {
+			if request.SettlementEpoch <= request.RuntimeEpoch || agent.CurrentRunID != "" || !request.State.Terminal() {
+				return ErrStale
+			}
+			ownerEpoch = request.SettlementEpoch
+		}
+		if agent.RuntimeEpoch != ownerEpoch || agent.Presence != RuntimeAttached {
 			return ErrStale
 		}
 		now := time.Now().UTC()

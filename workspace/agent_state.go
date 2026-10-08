@@ -93,6 +93,7 @@ type AgentState struct {
 	TurnIdentity    ttypes.TurnIdentity
 	runtimeIdentity ttypes.RuntimeEventIdentity
 	runtimeEventIDs map[string]struct{}
+	terminal        bool
 }
 
 func NewAgentState(id string, messages *Conversation, lg Logger) *AgentState {
@@ -127,6 +128,9 @@ func (a *AgentState) AcceptRuntimeEvent(id ttypes.RuntimeEventIdentity) bool {
 				return false
 			}
 		}
+	}
+	if current.Valid() && (id.RuntimeEpoch > current.RuntimeEpoch || id.Generation > current.Generation) {
+		a.terminal, a.Completed, a.Cancelling = false, false, false
 	}
 	a.runtimeIdentity = id
 	if len(a.runtimeEventIDs) >= 256 {
@@ -170,6 +174,9 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 		if !target.BeginTurn(identity) {
 			return nil
 		}
+		if identity.Generation > a.TurnIdentity.Generation {
+			a.terminal, a.Completed, a.Cancelling = false, false, false
+		}
 		if a.TurnIdentity.ProviderID != identity.ProviderID || a.TurnIdentity.AccountID != identity.AccountID || a.TurnIdentity.ModelID != identity.ModelID {
 			a.ReasoningMode = reasoning.Unknown
 		}
@@ -191,7 +198,8 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 	if status, ok := evt.Data.(recovery.Status); ok && evt.Type == "recovery" {
 		cancelledRecovery = status.State == recovery.Cancelled
 	}
-	if a.Cancelling && evt.Type != "done" && evt.Type != "error" && evt.Type != "usage" &&
+	inactive := a.Cancelling || a.terminal || a.Completed
+	if inactive && evt.Type != "done" && evt.Type != "error" && evt.Type != "usage" &&
 		evt.Type != "stream_token" && evt.Type != "thinking" && evt.Type != "tool_result" &&
 		evt.Type != "context_compaction_cancelled" && evt.Type != "context_compaction_failed" &&
 		evt.Type != "context_compacted" && evt.Type != "collaboration_message" && !cancelledRecovery {
@@ -357,21 +365,25 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 	case "thinking":
 		if delta, ok := evt.Data.(reasoning.Delta); ok && delta.Text != "" && delta.Kind != reasoning.Encrypted {
 			a.logIfInvalidUTF8("thinking", delta.Text)
-			target.ClearTurnStatus()
-			if thinkTarget != target {
-				thinkTarget.ClearTurnStatus()
+			if !inactive {
+				target.ClearTurnStatus()
+				if thinkTarget != target {
+					thinkTarget.ClearTurnStatus()
+				}
 			}
 			delta.Text = SanitizeForTerminal(delta.Text)
 			thinkTarget.AppendReasoning(delta)
 			if delta.Kind.IsSummary() || delta.Kind.IsRaw() {
 				a.ReasoningMode = delta.Kind
 			}
-			if !a.Cancelling {
+			if !inactive {
 				a.Running, a.Thinking = true, true
+				onStatusLine("Thinking")
+				onThinking(true, false, false)
+			} else {
+				thinkTarget.MarkAllThinkingInterrupted()
 			}
 			a.LastTokenTime = time.Now()
-			onStatusLine("Thinking")
-			onThinking(true, false, false)
 		}
 	case "reasoning_classified":
 		if kind, ok := evt.Data.(reasoning.Kind); ok {
@@ -385,18 +397,18 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 		if s, ok := evt.Data.(string); ok && s != "" {
 			a.logIfInvalidUTF8("stream_token", s)
 			s = SanitizeForTerminal(s)
-			if !a.Streaming {
+			if !a.Streaming && !inactive {
 				target.MarkAllThinkingDone()
 				if thinkTarget != target {
 					thinkTarget.MarkAllThinkingDone()
 				}
 			}
 			a.TokenBuf += s
-			if !a.Cancelling {
+			if !inactive {
 				a.Running, a.Streaming = true, true
+				onStatusLine("Receiving response")
+				onThinking(true, true, false)
 			}
-			onStatusLine("Receiving response")
-			onThinking(true, true, false)
 			target.EnsureAssistant()
 		}
 
@@ -436,11 +448,9 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 		return a.handleToolProgress(evt, target, onStatusLine)
 
 	case "tool_result":
-		if !a.Cancelling {
+		if !inactive {
 			a.Running, a.Thinking = true, true
-		}
-		finishThinkingBlocks(target, thinkTarget)
-		if !a.Cancelling {
+			finishThinkingBlocks(target, thinkTarget)
 			onThinking(true, false, false)
 		}
 		return a.handleToolResult(evt, target, onStatusLine)
@@ -479,9 +489,11 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 		a.BlockingMsgIdx = -1
 
 	case "done":
+		a.terminal = true
 		return a.handleDone(evt, target, thinkTarget, onThinking, onStatusLine)
 
 	case "error":
+		a.terminal = true
 		compactionFailure := a.ActiveCompaction.OperationID != "" && a.ActiveCompaction.Phase == "compaction_failed"
 		if a.TokenBuf != "" {
 			target.AppendToken(a.TokenBuf)

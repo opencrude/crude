@@ -133,6 +133,14 @@ func (m *App) cleanupAgent(agentID string) {
 			ids = agentSubtreeIDs(node)
 		}
 	}
+	for intent := range m.pendingInputAdmissions {
+		for _, id := range ids {
+			if intent.AgentID == id {
+				delete(m.pendingInputAdmissions, intent)
+				break
+			}
+		}
+	}
 
 	// Workspace.CloseAgent needs the tree and session ownership maps intact
 	// to route backend cancellation and persist a recoverable session row.

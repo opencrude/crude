@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"time"
 
 	"crude/buildinfo"
@@ -515,15 +516,23 @@ func checksum(data []byte) string {
 	return hex.EncodeToString(h[:])
 }
 
-var sessionsRootFn func() (string, error)
+var (
+	sessionsRootFn func() (string, error)
+	sessionsRootMu sync.RWMutex
+)
 
 func SetSessionsRootFn(fn func() (string, error)) {
+	sessionsRootMu.Lock()
 	sessionsRootFn = fn
+	sessionsRootMu.Unlock()
 }
 
 func journalDir() (string, error) {
-	if sessionsRootFn != nil {
-		return sessionsRootFn()
+	sessionsRootMu.RLock()
+	fn := sessionsRootFn
+	sessionsRootMu.RUnlock()
+	if fn != nil {
+		return fn()
 	}
 	return journalDirFallback()
 }

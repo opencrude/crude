@@ -14,16 +14,22 @@ import (
 // RecoveryCheckpoint is the durable, replay-safe state of one unfinished run.
 // Archive and ActiveContext are snapshots, not instructions to restart work.
 type RecoveryCheckpoint struct {
-	Status            recovery.Status
-	PendingInput      provider.UserInput
-	InputAdmitted     bool
-	Archive           []provider.ChatMessage
-	ActiveContext     []provider.ChatMessage
-	ContextOwnerID    string
-	ContextRevision   uint64
-	ContextGeneration uint64
-	ContextReason     string
-	OwnerData         []byte
+	Status             recovery.Status
+	PendingInput       provider.UserInput
+	InputAdmitted      bool
+	Archive            []provider.ChatMessage
+	ActiveContext      []provider.ChatMessage
+	ContextOwnerID     string
+	ContextRevision    uint64
+	ContextGeneration  uint64
+	ContextReason      string
+	OwnerData          []byte
+	TerminalSettlement json.RawMessage
+}
+
+type recoveryInput struct {
+	provider.UserInput
+	TerminalSettlement json.RawMessage `json:"terminal_settlement,omitempty"`
 }
 
 // SaveRecoveryCheckpoint atomically persists the exact incident status,
@@ -70,7 +76,7 @@ func saveRecoveryCheckpointTx(tx *sql.Tx, sessionID string, checkpoint RecoveryC
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	pending, err := json.Marshal(checkpoint.PendingInput)
+	pending, err := json.Marshal(recoveryInput{UserInput: checkpoint.PendingInput, TerminalSettlement: checkpoint.TerminalSettlement})
 	if err != nil {
 		return fmt.Errorf("sessiondb: encode recovery input: %w", err)
 	}
@@ -300,9 +306,11 @@ func scanRecoveryCheckpoint(scanner recoveryScanner) (RecoveryCheckpoint, error)
 	checkpoint.Status.StartedAt = time.Unix(0, startedAt)
 	checkpoint.Status.UpdatedAt = time.Unix(0, updatedAt)
 	checkpoint.InputAdmitted = inputAdmitted != 0
-	if err := json.Unmarshal(pending, &checkpoint.PendingInput); err != nil {
+	var input recoveryInput
+	if err := json.Unmarshal(pending, &input); err != nil {
 		return RecoveryCheckpoint{}, fmt.Errorf("sessiondb: decode recovery input: %w", err)
 	}
+	checkpoint.PendingInput, checkpoint.TerminalSettlement = input.UserInput, input.TerminalSettlement
 	if err := json.Unmarshal(archive, &checkpoint.Archive); err != nil {
 		return RecoveryCheckpoint{}, fmt.Errorf("sessiondb: decode recovery archive: %w", err)
 	}

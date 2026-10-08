@@ -61,8 +61,7 @@ Steps use the same vocabulary as the Linux
 ```powershell
 pwsh scripts/tuishot.ps1 -Cols 160 -Rows 40 .\tmp\settings `
   'key:ctrl+alt+p' `
-  'type:settings' `
-  'key:Down' `
+  'type:application settings' `
   'key:Return'
 ```
 

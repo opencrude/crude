@@ -6,6 +6,7 @@ import (
 	"time"
 
 	ttypes "crude/tui/types"
+	"crude/types"
 	"crude/types/reasoning"
 	"crude/workspace"
 )
@@ -85,6 +86,7 @@ func TestRepeatedThinkingBlocksEachKeepTheirScrollbar(t *testing.T) {
 	seen := make(map[string]bool)
 
 	for cycle := 0; cycle < 4; cycle++ {
+		app.handleAgentEvent(ttypes.AgentEventMsg{Type: "turn_started", AgentID: "repeat-agent", Data: types.TurnIdentity{Generation: uint64(cycle + 1), ModelID: "model"}})
 		app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "repeat-agent", Data: reasoning.Delta{Text: thinkingLines(40)}})
 		paneID := agent.ThinkingPaneID
 		if paneID == "" {

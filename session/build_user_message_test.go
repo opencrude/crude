@@ -59,9 +59,12 @@ func TestBuildUserMessageDeliversFileAttachments(t *testing.T) {
 	}
 
 	s := &Session{db: database}
-	msg := s.buildUserMessage(provider.InputWithRefs(
+	msg, _, err := s.buildUserMessageWithDisplay(provider.InputWithRefs(
 		"please review", []string{"ref-text", "ref-bin"},
 	), "test-model")
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	if msg.Content.IsText() {
 		t.Fatalf("multipart message expected, got plain text %q", msg.Content.String())
@@ -74,10 +77,10 @@ func TestBuildUserMessageDeliversFileAttachments(t *testing.T) {
 	}
 	rendered := all.String()
 
-	if !strings.Contains(rendered, "--- [File1] ---") || !strings.Contains(rendered, "hello attachment") {
+	if !strings.Contains(rendered, "[File1] (ref-text)") || !strings.Contains(rendered, "hello attachment") {
 		t.Fatalf("text attachment missing:\n%s", rendered)
 	}
-	if !strings.Contains(rendered, "--- [File2] ---") {
+	if !strings.Contains(rendered, "[File2] (ref-bin)") {
 		t.Fatalf("binary attachment header missing:\n%s", rendered)
 	}
 	for _, want := range []string{"Binary file (", "Hex dump of first", "execute_command"} {
@@ -147,22 +150,22 @@ func TestBuildUserMessageDeliversUnknownModelImageBytes(t *testing.T) {
 	}
 
 	s := &Session{db: database}
-	msg, labels := s.buildUserMessageWithDisplay(provider.InputWithRefs(
+	msg, labels, err := s.buildUserMessageWithDisplay(provider.InputWithRefs(
 		"[Pasted IMG1] what is this?", []string{ref.ID},
 	), "unknown-vision-alias-for-attachment-test")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(labels) != 1 || labels[0] != ref.Label {
 		t.Fatalf("reference labels = %v", labels)
 	}
 	parts := msg.Content.Parts()
-	if len(parts) != 2 || parts[0].Type != "text" || parts[0].Text != "what is this?" {
+	if len(parts) != 3 || parts[0].Type != "text" || parts[0].Text != "[Pasted IMG1] what is this?" || parts[1].Text != ref.AgentText() {
 		t.Fatalf("content parts = %+v", parts)
 	}
-	if parts[1].Type != "image_url" || parts[1].ImageURL == nil ||
-		!strings.HasPrefix(parts[1].ImageURL.URL, "data:image/png;base64,") {
-		t.Fatalf("image part = %+v", parts[1])
-	}
-	if strings.Contains(msg.Content.String(), ref.Label) || strings.Contains(msg.Content.String(), imagePath) {
-		t.Fatalf("display caption/path leaked into model text: %q", msg.Content.String())
+	if parts[2].Type != "image_url" || parts[2].ImageURL == nil ||
+		!strings.HasPrefix(parts[2].ImageURL.URL, "data:image/png;base64,") {
+		t.Fatalf("image part = %+v", parts[2])
 	}
 }
 
@@ -184,9 +187,12 @@ func TestBuildUserMessageExpandsPastedTextInsteadOfCaption(t *testing.T) {
 	}
 
 	s := &Session{db: database}
-	msg, labels := s.buildUserMessageWithDisplay(provider.InputWithRefs(
+	msg, labels, err := s.buildUserMessageWithDisplay(provider.InputWithRefs(
 		"summarize [Pasted Text1]", []string{ref.ID},
 	), "text-model")
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(labels) != 1 || labels[0] != ref.Label {
 		t.Fatalf("reference labels = %v", labels)
 	}
@@ -194,12 +200,12 @@ func TestBuildUserMessageExpandsPastedTextInsteadOfCaption(t *testing.T) {
 	if !strings.Contains(joined, "summarize") || !strings.Contains(joined, ref.Content) {
 		t.Fatalf("pasted payload missing from model content: %q", joined)
 	}
-	if strings.Contains(joined, ref.Label) {
-		t.Fatalf("reference caption leaked into model content: %q", joined)
+	if strings.Count(joined, ref.Content) != 1 || !strings.Contains(joined, ref.AgentText()) {
+		t.Fatalf("reference identity/content was not expanded exactly once: %q", joined)
 	}
 }
 
-func TestBuildUserMessageKnownNonVisionDoesNotExposeLocalImagePath(t *testing.T) {
+func TestPreparedInputKnownNonVisionFailsWithoutWeakeningOriginal(t *testing.T) {
 	dir := t.TempDir()
 	database, err := openTestRefDB(dir)
 	if err != nil {
@@ -209,7 +215,7 @@ func TestBuildUserMessageKnownNonVisionDoesNotExposeLocalImagePath(t *testing.T)
 	seedPromptReferenceSession(t, database, "nonvision-session", dir)
 
 	imagePath := filepath.Join(dir, "private.png")
-	if err := os.WriteFile(imagePath, []byte("png"), 0o600); err != nil {
+	if err := os.WriteFile(imagePath, mediaPNG.content, 0o600); err != nil {
 		t.Fatal(err)
 	}
 	ref := sessiondb.Reference{
@@ -222,9 +228,10 @@ func TestBuildUserMessageKnownNonVisionDoesNotExposeLocalImagePath(t *testing.T)
 
 	const model = "known-nonvision-attachment-test"
 	provider.SetModelCap(model, false, true)
-	msg := (&Session{db: database}).buildUserMessage(provider.InputWithRefs(
-		"inspect [Pasted IMG1]", []string{ref.ID},
-	), model)
+	input := provider.InputWithRefs("inspect [Pasted IMG1]", []string{ref.ID})
+	input.InternalID = "submitted-image"
+	prepared, err := (&Session{db: database}).prepareInput(t.Context(), input, modelAttributionConfig("http://fixture.invalid", model), nil)
+	msg := prepared.Message
 	if msg.Content.HasImage() {
 		t.Fatal("known non-vision model received an image part")
 	}
@@ -232,8 +239,11 @@ func TestBuildUserMessageKnownNonVisionDoesNotExposeLocalImagePath(t *testing.T)
 	if strings.Contains(text, imagePath) {
 		t.Fatalf("local image path leaked into model context: %q", text)
 	}
-	if !strings.Contains(text, "image omitted") {
-		t.Fatalf("missing non-vision explanation: %q", text)
+	if err == nil || !strings.Contains(err.Error(), "image") || msg.ContentString() != input.Text || len(prepared.Enrichment) != 1 {
+		t.Fatalf("unsupported image did not fail closed while retaining original: input=%+v err=%v", prepared, err)
+	}
+	if captured := prepared.Enrichment[0]; captured.InternalID != input.InternalID+"-references" || !captured.Content.HasImage() || captured.EffectiveVisibility() != provider.VisibilityContextOnly {
+		t.Fatalf("unsupported image lost its immutable hidden preimage: %+v", captured)
 	}
 }
 

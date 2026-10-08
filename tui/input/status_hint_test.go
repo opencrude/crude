@@ -6,7 +6,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/sessiondb"
 	"crude/tui/theme"
+	"crude/tui/ui"
 )
 
 func TestComposerHintIsStatusOnly(t *testing.T) {
@@ -55,6 +57,53 @@ func TestSubmitPreservesExactDraftUntilReceiptAndRevisionFencesClear(t *testing.
 	current := updated.DraftRevision()
 	if !updated.ClearInputAtRevision(current) || updated.Value() != "" {
 		t.Fatalf("current receipt did not consume exact draft: %q", updated.Value())
+	}
+}
+
+func TestDraftRevisionFencesReceiptAfterEditorOnlyChanges(t *testing.T) {
+	for _, change := range []struct {
+		name   string
+		mutate func(*Model)
+	}{
+		{"cursor", func(m *Model) { m.SetCursorFlat(3) }},
+		{"selection", func(m *Model) { m.SetSelection(2, 6) }},
+		{"clear-selection", func(m *Model) { m.ClearInputSelection() }},
+		{"scroll", func(m *Model) { m.SetScrollOffset(1) }},
+		{"reference-insert", func(m *Model) {
+			m.InsertReference(sessiondb.Reference{ID: "new-reference", Kind: sessiondb.KindPastedText, Label: "[Pasted Text1]"})
+		}},
+		{"reference-identity", func(m *Model) { m.UseReferenceIDs([]string{"new-reference"}) }},
+		{"pointer-cursor", func(m *Model) {
+			m.HandleShell(ui.EventContext{LocalX: m.input.Bounds().X + 3, LocalY: 1}, ui.Event{
+				Kind: ui.EventMouseClick, MouseClick: tea.MouseClickMsg{Button: tea.MouseLeft},
+			})
+		}},
+		{"pointer-scroll", func(m *Model) {
+			m.HandleShell(ui.EventContext{LocalY: 1}, ui.Event{
+				Kind: ui.EventMouseWheel, MouseWheel: tea.MouseWheelMsg{Button: tea.MouseWheelDown},
+			})
+		}},
+	} {
+		t.Run(change.name, func(t *testing.T) {
+			m := NewModel(theme.DefaultDark())
+			m.SetInput(strings.Repeat("draft line\n", 12))
+			m.LayoutShell(80, 4)
+			m.SetCursorFlat(0)
+			m.SetScrollOffset(0)
+			if change.name == "clear-selection" {
+				m.SetSelection(0, 4)
+			}
+			revision := m.DraftRevision()
+			before := m.draftStateKey()
+			change.mutate(&m)
+			after := m.draftStateKey()
+			if before == after {
+				t.Fatal("fixture did not change the editable draft state")
+			}
+			if m.ClearInputAtRevision(revision) || m.draftStateKey() != after {
+				t.Fatal("late receipt consumed a newer cursor, selection or scroll state")
+			}
+		})
 	}
 }
 

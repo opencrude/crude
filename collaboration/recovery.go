@@ -32,7 +32,7 @@ func validateAdmissionReceipt(receipt AdmissionReceipt) error {
 // Nothing from the old runtime is executed again: only uncommitted reservations
 // become pending and nonterminal runs become terminal records.
 func (store *Store) recoverRuntime(
-	ctx context.Context, tx *sql.Tx, agent Agent, receipts []AdmissionReceipt, now time.Time,
+	ctx context.Context, tx *sql.Tx, agent Agent, receipts []AdmissionReceipt, pendingTerminal *FinishRunRequest, now time.Time,
 ) error {
 	type orphanDelivery struct {
 		id, eventID, state, contextCommitID string
@@ -153,6 +153,17 @@ func (store *Store) recoverRuntime(
 		run, err := loadRun(ctx, tx, id)
 		if err != nil {
 			return err
+		}
+		if pendingTerminal != nil && pendingTerminal.RunID == run.ID {
+			if pendingTerminal.AgentID != agent.ID || pendingTerminal.RuntimeEpoch != run.RuntimeEpoch || pendingTerminal.ExpectedVersion != run.Version || !pendingTerminal.State.Terminal() {
+				return fmt.Errorf("%w: captured terminal owner/version changed", ErrConflict)
+			}
+			// The local checkpoint proves execution finished. Preserve this exact
+			// run for explicit storage-only settlement, not an orphaned replay.
+			if _, err := tx.ExecContext(ctx, `UPDATE collaboration_claims SET version=version+1,released_at=? WHERE run_id=? AND agent_id=? AND released_at=0`, now.UnixNano(), run.ID, agent.ID); err != nil {
+				return err
+			}
+			continue
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE collaboration_runs
 			SET state='interrupted',version=version+1,outcome='runtime interrupted',updated_at=?,ended_at=?

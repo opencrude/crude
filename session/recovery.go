@@ -26,18 +26,19 @@ type recoverySlot struct {
 }
 
 type recoveryRunState struct {
-	mu                sync.Mutex
-	pending           provider.UserInput
-	inputAdmitted     bool
-	archive           []provider.ChatMessage
-	active            []provider.ChatMessage
-	contextOwnerID    string
-	contextRevision   uint64
-	contextGeneration uint64
-	contextReason     string
-	ownerData         []byte
-	sourceRevision    uint64
-	publishedRevision uint64
+	mu                 sync.Mutex
+	pending            provider.UserInput
+	inputAdmitted      bool
+	archive            []provider.ChatMessage
+	active             []provider.ChatMessage
+	contextOwnerID     string
+	contextRevision    uint64
+	contextGeneration  uint64
+	contextReason      string
+	ownerData          []byte
+	terminalSettlement json.RawMessage
+	sourceRevision     uint64
+	publishedRevision  uint64
 }
 
 func newRecoveryRunState(input provider.UserInput, checkpoint *sessiondb.RecoveryCheckpoint) *recoveryRunState {
@@ -54,6 +55,7 @@ func newRecoveryRunState(input provider.UserInput, checkpoint *sessiondb.Recover
 	state.contextGeneration = checkpoint.ContextGeneration
 	state.contextReason = checkpoint.ContextReason
 	state.ownerData = append([]byte(nil), checkpoint.OwnerData...)
+	state.terminalSettlement = append(json.RawMessage(nil), checkpoint.TerminalSettlement...)
 	state.sourceRevision = 1
 	state.publishedRevision = 1
 	return state
@@ -78,7 +80,7 @@ func (s *recoveryRunState) snapshot(archive, active []provider.ChatMessage) {
 		}
 	}
 	archive = retainCanonicalMessages(archive, canonicalArchive)
-	active = retainCanonicalMessages(active, canonicalActive)
+	active = canonicalContextMessages(retainCanonicalMessages(active, canonicalActive))
 	changed := !reflect.DeepEqual(s.archive, archive) || !reflect.DeepEqual(s.active, active)
 	s.archive = append([]provider.ChatMessage(nil), archive...)
 	s.active = append([]provider.ChatMessage(nil), active...)
@@ -165,6 +167,7 @@ func (s *recoveryRunState) checkpoint(status recoverytypes.Status) sessiondb.Rec
 		ActiveContext:  append([]provider.ChatMessage(nil), s.active...),
 		ContextOwnerID: s.contextOwnerID, ContextRevision: s.contextRevision, ContextGeneration: s.contextGeneration,
 		ContextReason: s.contextReason, OwnerData: append([]byte(nil), s.ownerData...),
+		TerminalSettlement: append(json.RawMessage(nil), s.terminalSettlement...),
 	}
 }
 
@@ -175,6 +178,7 @@ func (s *recoveryRunState) publish(db *sql.DB, sessionID string, status recovery
 		Archive: append([]provider.ChatMessage(nil), s.archive...), ActiveContext: append([]provider.ChatMessage(nil), s.active...),
 		ContextOwnerID: s.contextOwnerID, ContextRevision: s.contextRevision, ContextGeneration: s.contextGeneration,
 		ContextReason: s.contextReason, OwnerData: append([]byte(nil), s.ownerData...),
+		TerminalSettlement: append(json.RawMessage(nil), s.terminalSettlement...),
 	}
 	owner, revision := s.contextOwnerID, s.contextRevision
 	sourceRevision := s.sourceRevision
@@ -250,6 +254,12 @@ func (s *Session) newRecoverySupervisor(
 		}
 	}
 	supervisor.Persist = func(status recoverytypes.Status) error {
+		state.mu.Lock()
+		owner := state.contextOwnerID
+		state.mu.Unlock()
+		if db == s.db && owner == s.sessionID {
+			return s.publishRootRecovery(state, status)
+		}
 		return state.publish(db, sessionID, status)
 	}
 	supervisor.Discard = func(id string) error {
@@ -274,16 +284,11 @@ func (s *Session) newRecoverySupervisor(
 	return supervisor, nil
 }
 
-func (s *Session) persistPendingRecovery(
-	db *sql.DB,
-	sessionID string,
-	supervisor *agent.Supervisor,
-	state *recoveryRunState,
-) error {
+func (s *Session) persistPendingRecovery(supervisor *agent.Supervisor) error {
 	if supervisor == nil {
 		return nil
 	}
-	return state.publish(db, sessionID, supervisor.CheckpointStatus())
+	return supervisor.Persist(supervisor.CheckpointStatus())
 }
 
 // Retry the same accepted boundary, not the stochastic provider request or tool
@@ -446,6 +451,9 @@ func (s *Session) RetryRecoveryFor(agentID, recoveryID string, generation uint64
 	}
 	s.recoveryMu.Unlock()
 
+	if len(checkpoint.TerminalSettlement) != 0 {
+		return s.retryTerminalSettlement(checkpoint)
+	}
 	s.orchMu.Lock()
 	orchestrator := s.orchestrators[agentID]
 	s.orchMu.Unlock()
@@ -464,6 +472,8 @@ func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint6
 	if s == nil || agentID == "" || recoveryID == "" || generation == 0 {
 		return false
 	}
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
 	s.recoveryMu.Lock()
 	if slot := s.recoverySlots[agentID]; slot != nil {
 		if slot.id != recoveryID || slot.generation != generation {
@@ -498,9 +508,14 @@ func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint6
 	if currentOrchestrator != nil {
 		currentOrchestrator.turnMu.Lock()
 		currentGeneration := currentOrchestrator.turnGeneration
+		live := currentOrchestrator.turnCancel != nil
 		currentOrchestrator.turnMu.Unlock()
 		if currentGeneration != generation {
 			return false
+		}
+		if live {
+			cancelled, _ := currentOrchestrator.cancelTurnForGeneration(generation)
+			return cancelled
 		}
 	}
 
@@ -512,6 +527,15 @@ func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint6
 	cancelledStatus.Action = ""
 	cancelledStatus.UpdatedAt = time.Now()
 	if len(checkpoint.OwnerData) > 0 {
+		// Recheck under the shared lifecycle fence before settling parked work.
+		s.recoveryMu.Lock()
+		current, exists := s.pendingRecoveries[agentID]
+		valid := exists && s.recoverySlots[agentID] == nil && current.Status.ID == recoveryID && current.Status.Generation == generation
+		s.recoveryMu.Unlock()
+		if !valid {
+			return false
+		}
+		checkpoint = current
 		var owner childRecoveryOwner
 		if json.Unmarshal(checkpoint.OwnerData, &owner) != nil ||
 			string(owner.Spec.ID) != agentID {
@@ -531,27 +555,10 @@ func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint6
 		if err != nil {
 			return false
 		}
-		archive, active := stoppedRecoveryContext(checkpoint)
-		checkpoint.Archive, checkpoint.ActiveContext = archive, active
-		checkpoint.Status = cancelledStatus
-		checkpoint.ContextOwnerID = agentID
-		checkpoint.ContextReason = "explicit_recovery_cancel"
 		handle := &agent.SubAgentHandle{
 			DB: childDB, SessionID: agentID, Spec: owner.Spec,
 		}
-		err = persistSubAgentTranscript(handle, archive)
-		if err == nil {
-			state, found, loadErr := sessiondb.LoadContextState(childDB, agentID, agentID)
-			if loadErr != nil {
-				err = loadErr
-			} else {
-				checkpoint.ContextRevision = loadContextRevision(state, found)
-				_, err = sessiondb.PublishContext(childDB, sessiondb.ContextPublication{
-					SessionID: agentID, AgentID: agentID, RuntimeAgentID: checkpoint.Status.AgentID, ExpectedRevision: checkpoint.ContextRevision,
-					Mutation: sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: max(uint64(1), checkpoint.ContextGeneration), Reason: "explicit_recovery_cancel", Messages: active}}, Recovery: &checkpoint,
-				})
-			}
-		}
+		checkpoint, err = publishStoppedChildRecovery(handle, checkpoint, cancelledStatus)
 		if err == nil {
 			err = sessiondb.FinishAgentTurn(childDB, agentID, agentID, generation, sessiondb.TurnInterrupted)
 		}
@@ -562,6 +569,7 @@ func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint6
 		if s.db == nil || sessiondb.InsertSubAgentResult(s.db, subAgentResultRow(s.sessionID, result)) != nil {
 			return false
 		}
+		cancelledStatus = checkpoint.Status
 		cancelledChild = &result
 	} else {
 		archive, active := stoppedRecoveryContext(checkpoint)
@@ -603,15 +611,11 @@ func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint6
 	}
 	if cancelledChild == nil {
 		s.msgsMu.Lock()
-		revision := s.contextRevision
+		_, err := s.publishRootContext(sessiondb.ContextPublication{RuntimeAgentID: parentCheckpoint.Status.AgentID, Recovery: &parentCheckpoint})
 		s.msgsMu.Unlock()
-		state, err := sessiondb.PublishContext(s.db, sessiondb.ContextPublication{SessionID: s.sessionID, AgentID: s.sessionID, RuntimeAgentID: parentCheckpoint.Status.AgentID, ExpectedRevision: revision, Recovery: &parentCheckpoint})
 		if err != nil {
 			return false
 		}
-		s.msgsMu.Lock()
-		s.contextRevision = state.Revision
-		s.msgsMu.Unlock()
 	} else if err := sessiondb.SaveRecoveryCheckpoint(s.db, s.sessionID, parentCheckpoint); err != nil {
 		return false
 	}
@@ -641,6 +645,108 @@ func (s *Session) CancelRecoveryFor(agentID, recoveryID string, generation uint6
 		}, agentID)
 	}
 	return true
+}
+
+func publishStoppedChildRecovery(handle *agent.SubAgentHandle, checkpoint sessiondb.RecoveryCheckpoint, status recoverytypes.Status) (sessiondb.RecoveryCheckpoint, error) {
+	agentID := string(handle.Spec.ID)
+	durable, open, err := sessiondb.LoadRecoveryCheckpoint(handle.DB, handle.SessionID, agentID)
+	if err != nil {
+		return checkpoint, err
+	}
+	if open {
+		if durable.Status.ID != status.ID || durable.Status.Generation != status.Generation || durable.ContextOwnerID != agentID {
+			return checkpoint, fmt.Errorf("child recovery incident changed before Stop")
+		}
+		checkpoint = durable
+	} else {
+		// The child transaction may have committed before a parent result/mirror
+		// failed. Retry only that exact cancelled publication, never a new task.
+		records, err := sessiondb.LoadRecoveryRecordsForOwner(handle.DB, handle.SessionID, agentID)
+		if err != nil {
+			return checkpoint, err
+		}
+		cancelled := false
+		for _, record := range records {
+			if record.ID == status.ID && record.Generation == status.Generation && record.State == recoverytypes.Cancelled {
+				status, cancelled = record, true
+				break
+			}
+		}
+		if !cancelled {
+			return checkpoint, fmt.Errorf("child recovery incident is no longer pending")
+		}
+		var archive, pending []byte
+		var admitted bool
+		if err := handle.DB.QueryRow(`SELECT archive_json,pending_input_json,input_admitted,owner_data
+			FROM agent_recoveries WHERE session_id=? AND agent_id=? AND incident_id=?`,
+			handle.SessionID, agentID, status.ID).Scan(&archive, &pending, &admitted, &checkpoint.OwnerData); err != nil {
+			return checkpoint, err
+		}
+		if err := json.Unmarshal(archive, &checkpoint.Archive); err != nil {
+			return checkpoint, err
+		}
+		if err := json.Unmarshal(pending, &checkpoint.PendingInput); err != nil {
+			return checkpoint, err
+		}
+		checkpoint.InputAdmitted = admitted
+	}
+	current, found, err := sessiondb.LoadContextState(handle.DB, handle.SessionID, agentID)
+	if err != nil {
+		return checkpoint, err
+	}
+	if !found || current.Revision < checkpoint.ContextRevision {
+		return checkpoint, fmt.Errorf("child current context is unavailable or older than its recovery checkpoint")
+	}
+	// The current context owns active bytes; the parked archive owns older
+	// evidence, including accepted output awaiting its first transcript identity.
+	run := newRecoveryRunState(checkpoint.PendingInput, &checkpoint)
+	run.active = append([]provider.ChatMessage(nil), current.Messages...)
+	if err := reconcileChildRecoveryContext(run, current); err != nil {
+		return checkpoint, err
+	}
+	archive, active := run.contexts()
+	identities := make(map[string]bool, len(archive))
+	for _, message := range archive {
+		identities[message.InternalID] = true
+	}
+	if !checkpoint.InputAdmitted && strings.TrimSpace(checkpoint.PendingInput.Text) != "" {
+		if checkpoint.PendingInput.InternalID == "" {
+			return checkpoint, fmt.Errorf("pending child assignment has no immutable identity")
+		}
+		if _, exists := identities[checkpoint.PendingInput.InternalID]; !exists {
+			pending := inputMessage(provider.NewTextMessage("user", checkpoint.PendingInput.Text), checkpoint.PendingInput)
+			archive, active = append(archive, pending), append(active, pending)
+		}
+		checkpoint.InputAdmitted = true
+	}
+	boundaryID := "turn-stopped:" + status.ID
+	if len(active) > 0 && active[len(active)-1].EffectiveOrigin() == provider.OriginTurnStopped {
+		boundaryID = active[len(active)-1].InternalID
+	}
+	if _, exists := identities[boundaryID]; !exists {
+		boundary := provider.NewTextMessage("user", rootprompt.TurnStoppedBoundary())
+		boundary.InternalID = boundaryID
+		boundary.Origin, boundary.Visibility = provider.OriginTurnStopped, provider.VisibilityContextOnly
+		archive, active = append(archive, boundary), append(active, boundary)
+	}
+	archive, active, deltas, err := childTerminalPublication(handle, archive, active, status.UpdatedAt)
+	if err != nil {
+		return checkpoint, err
+	}
+	checkpoint.Status, checkpoint.Archive, checkpoint.ActiveContext = status, archive, active
+	checkpoint.ContextOwnerID = agentID
+	state, err := sessiondb.PublishContext(handle.DB, sessiondb.ContextPublication{
+		SessionID: handle.SessionID, AgentID: agentID, RuntimeAgentID: agentID, ExpectedRevision: current.Revision,
+		Mutation: sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{
+			Generation: current.Generation, Reason: "explicit_recovery_cancel", Messages: active,
+		}}, TranscriptAppend: deltas, Recovery: &checkpoint,
+	})
+	if err != nil {
+		return checkpoint, err
+	}
+	checkpoint.ContextRevision, checkpoint.ContextGeneration, checkpoint.ContextReason = state.Revision, state.Generation, state.Reason
+	checkpoint.ActiveContext = append([]provider.ChatMessage(nil), state.Messages...)
+	return checkpoint, nil
 }
 
 func stoppedRecoveryContext(checkpoint sessiondb.RecoveryCheckpoint) ([]provider.ChatMessage, []provider.ChatMessage) {
