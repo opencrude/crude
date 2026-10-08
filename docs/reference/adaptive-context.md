@@ -42,6 +42,22 @@ roll back a later admission. Complete tool rounds are published together after
 partial checkpoints, never through successively shorter prefixes. There is no
 root write buffer or child whole-transcript replacement writer.
 
+Completed tool results obtain one stable message identity before their first
+partial-round checkpoint and retain it at final publication. An unfinished native
+parallel wrapper is different: its changing leaf evidence is stored in the recovery
+envelope's `InFlightTools`, not committed as an immutable provider tool message.
+Finishing the wrapper publishes its final result once and clears that evidence.
+Passive interruption materializes captured completed leaves with an explicitly
+unknown wrapper outcome; it does not replay the batch or erase attachments.
+
+Root and child publication both reconcile independently admitted exact lifecycle
+controls. Child revision conflicts re-read and validate the authoritative source
+with a bounded retry; changed or missing committed non-control messages still fail
+closed. The recovery lock spans publication and live installation, preventing a
+late acknowledgement from overwriting a newer snapshot. Runtime-notice admission
+commits its receipts first, then checkpoints the entire admitted batch together.
+Rejected reservations are never prematurely checkpointed and subsequently removed.
+
 Compaction retains the revision captured when its immutable source is published.
 Installation fails closed if that source changed during extraction. Stopped
 children use authoritative current context, retain newer facts and original

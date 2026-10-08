@@ -47,6 +47,20 @@ does not settle the unfinished coding task. Valid permission denials are never
 retried as technical errors, and recovery never expands tool/file/network grants.
 Children have no arbitrary task deadline; parents and users retain lifecycle control.
 
+HTTP failure classification is shared by every wire protocol and by streaming and
+non-streaming requests. A generic `invalid_request_error` / `invalid_request`
+envelope does not override a transient HTTP 408/409/425/429/5xx status. Specific
+quota, billing, authentication, model and validation evidence, an identified
+invalid parameter, and an explicit `x-should-retry: false` still prevent retries.
+Numeric status evidence inside a structured stream error follows the same rule;
+diagnostic prose alone never makes an unknown request error transient.
+
+This distinction matters for gateways: an upstream stream disconnect can arrive
+as an HTTP 408 JSON response even when Crude is using Chat Completions. Typing
+only a Responses SSE disconnect event does not cover that path. Such a
+misclassification parks without a deadline; the five-minute ceiling cannot wake
+an attention state that never scheduled an automatic wait.
+
 ## Shared cooldown contract
 
 `retry/` is the one authority for automatic cooldown arithmetic and waits:
@@ -80,6 +94,14 @@ retain real leaf results and mark their overall outcome unknown. Tool panics
 pause for inspection, including inside parallel batches; not-yet-started serial
 siblings do not execute after an uncertain failure. Per-path locks release even
 when the tool panics.
+
+An unfinished wrapper's evolving leaf evidence is recovery state, not an immutable
+accepted tool message. `InFlightTools` preserves that exact evidence (including
+attachments) separately until completion. A completed tool result keeps the same
+message identity across partial-round and final checkpoints. Passive interruption
+uses captured evidence once and explicitly marks unknown outcomes without replay.
+Root and child tests exercise real SQLite publication during out-of-order tool
+completion, rather than accepting every checkpoint in a mock callback.
 
 Normal input acceptance commits the original, successful immutable preparation,
 and initial supervisor checkpoint together before returning its owner-fenced
@@ -191,3 +213,27 @@ private timer, or optimistic lifecycle state is used for the row.
 See [network transport](network.md) for secure remediation of routing/TLS issues,
 [chat activity](chat-activity.md) for transcript contracts, and
 [workspace collaboration](workspace-collaboration.md) for exact lifecycle controls.
+
+## Regression acceptance
+
+- `provider/http_recovery_regression_test.go`: transient HTTP classes, generic
+  envelopes, streaming/non-streaming retry, explicit permanent evidence/vetoes,
+  and preserved invalid-parameter evidence.
+- `agent/http_recovery_regression_test.go`: every registered protocol, root and
+  child, repeated exhausted requests beyond the five-minute saturation point.
+  The clock wait is simulated; real timer expiry is tested below.
+- `session/http_recovery_regression_test.go`: real local HTTP, SQLite, root and
+  actual child runner; an earlier completed file effect remains exactly once,
+  persisted owner-specific countdown expires without a wake, child final report
+  retains provenance, and exact Stop prevents a delayed restart.
+- Existing supervised protocol journeys inject partial tool streams, missing
+  terminals and cancellation across all registered protocols. Persistence,
+  panic, permission and passive-resume suites remain required negative gates.
+- `tui/viewmodel/run_recovery_lifecycle_test.go` submits through the composer and
+  checks painted deadlines, manual repair for authentication, automatic HTTP 408
+  continuation, retained draft, and removal of stale recovery actions.
+
+These are deterministic local failure simulations, not a guarantee that every
+remote gateway reports trustworthy status codes or that an unavailable service
+will become reachable. Permanent/unknown faults and uncertain tool effects stay
+actionable rather than becoming blind infinite retries.

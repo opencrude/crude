@@ -334,6 +334,8 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	m.SpinFrame = spinFrame
 	m.Input.SetSpinFrame(spinFrame)
 	m.refreshSessionBackgroundJobs(now)
+	m.drainLSPDiagnostics()
+	completionCmd := m.autoCompletionCmd(now)
 	m.syncStatusOverview()
 	m.syncWorkspacePanels()
 	m.tickTerminalCursors(now)
@@ -421,10 +423,10 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 	// re-rendered even when main content hasn't changed.
 	if m.wantsFastTick() {
 		perf.SentinelTick()
-		return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, launcherCmd, streamingTickCmd())
+		return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, launcherCmd, completionCmd, streamingTickCmd())
 	}
 	perf.SentinelTick()
-	return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, launcherCmd, tickCmd())
+	return m, tea.Batch(diskSyncCmd, gitCmd, headerGitCmd, treeGitCmd, launcherCmd, completionCmd, tickCmd())
 }
 
 // wantsFastTick reports whether the 16 ms streaming tick is justified right
@@ -634,23 +636,31 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			m.setMode(ModeChat)
 		}
 	case lspDefinitionResultMsg:
-		if m.acceptsLSPGeneration(msg.generation) {
+		if m.acceptsLSPDocument(msg.generation, msg.filePath, msg.owner, msg.revision) {
 			m.handleDefinitionResult(msg)
 		}
+	case lspHoverResultMsg:
+		m.handleLSPHoverResult(msg)
 	case lspReferencesResultMsg:
-		if m.acceptsLSPGeneration(msg.generation) {
+		if m.acceptsLSPDocument(msg.generation, msg.filePath, msg.owner, msg.revision) {
 			m.handleReferencesResult(msg)
 		}
 	case lspDocumentSymbolsResultMsg:
-		if m.acceptsLSPGeneration(msg.generation) {
+		if m.acceptsLSPDocument(msg.generation, msg.filePath, msg.owner, msg.revision) {
 			m.handleDocumentSymbolsResult(msg)
 		}
 	case lspRenameResultMsg:
-		if m.acceptsLSPGeneration(msg.generation) {
-			m.handleRenameResult(msg)
+		if m.acceptsLSPDocument(msg.generation, msg.filePath, msg.owner, msg.revision) {
+			cmds = append(cmds, m.handleRenameResult(msg))
 		}
+	case lspRenamePreparedMsg:
+		m.showLSPRenamePreview(msg)
+	case lspRenameActionMsg:
+		cmds = append(cmds, m.handleLSPRenameAction(msg))
+	case lspRenameAppliedMsg:
+		m.handleLSPRenameApplied(msg)
 	case lspCompletionResultMsg:
-		if m.acceptsLSPGeneration(msg.generation) {
+		if m.acceptsLSPDocument(msg.generation, msg.filePath, msg.owner, msg.revision) {
 			m.handleCompletionResult(msg)
 		}
 	case ttypes.ErrorMsg:
@@ -1248,6 +1258,10 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 	if !tab.Closable {
 		return nil
 	}
+	// Release before a dirty-close modal captures its return focus. Otherwise
+	// Cancel restores the tab control even though the close operation ended.
+	m.releaseTabBarFocus()
+	defer m.syncRootFocus()
 	if tab.Resource.Kind == window.ResourceGitReview {
 		wasActive := m.Win.ActiveTab() != nil && m.Win.ActiveTab().ID == tab.ID
 		m.Win.CloseTab(index)
@@ -1306,6 +1320,14 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 // active would break the renderer's region classification and cause
 // Ctrl+Q to attempt a no-op close instead of quitting.
 func (m *App) handleTabSwitch() {
+	defer func() {
+		if m.LSPMgr != nil {
+			m.LSPMgr.SetActiveFile(m.EditorState.ActiveView)
+		}
+		m.closeCompletionPopup()
+		m.closeOutlinePopup()
+		m.closeReferencesPopup()
+	}()
 	defer m.openNextAgentPrompt()
 	// Always reset before re-deriving. This is the single source of
 	// truth for which view is active.
@@ -1329,6 +1351,7 @@ func (m *App) handleTabSwitch() {
 		agentID := m.agentIDFromTabTitle(activeTab.Title)
 		m.AgentMgr.SetActive(agentID)
 		m.ActivateSessionByAgent(agentID)
+		m.maybeHydrateComposerDraft()
 		m.OverlayState.SetYolo(m.YoloForAgent(agentID))
 		// Projection caches are source-version owned. Focus changes never make
 		// retained message pixels stale; SyncFromWorkspace invalidates only rows

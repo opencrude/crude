@@ -26,7 +26,7 @@ const (
 //     before any tab is open. Startup must NOT push FocusTree; the launcher keeps
 //     Enter = New Session until the user moves focus.
 //  3. FocusLauncher — welcome screen with no agent/editor tabs open.
-//  4. FocusTabBar — explicit tab-strip focus (Ctrl+T / click).
+//  4. FocusTabBar — explicit keyboard tab-strip navigation (Ctrl+T).
 //  5. FocusInput — *explicitly* requested chat focus (view.focus.chat) — wins
 //     over the editor even when an editor tab is open, so the user can drive
 //     the chat input without closing the editor.

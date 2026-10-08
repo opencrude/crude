@@ -291,10 +291,11 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 		m.FocusStack.Clear()
 		m.FocusStack.Push(FocusTree)
 	case regionTabBar:
-		m.setSessionDeckFocused(false)
-		m.setTermDockFocused(false)
-		m.FocusStack.Clear()
-		m.FocusStack.Push(FocusTabBar)
+		// A pointer selection/close commits the operation; it is not entry
+		// into keyboard strip navigation. Host focuses the hit control while
+		// dispatching, then the selected content takes focus back.
+		m.unfocus()
+		defer m.syncRootFocus()
 	case regionChat, regionInput:
 		m.unfocus()
 	case regionLauncher:
@@ -317,6 +318,12 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	}
 
 	res := m.rootHost.Handle(msg)
+	if region == regionTabBar {
+		// Restore content before activation can open a decision modal and
+		// capture its return focus. The Host's temporary pointer focus must
+		// never become that modal's saved keyboard owner.
+		m.syncRootFocus()
+	}
 	if cmd := m.applyHostPointerActions(res); cmd != nil {
 		cmds = append(cmds, cmd)
 	}

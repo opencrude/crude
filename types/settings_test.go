@@ -265,26 +265,13 @@ func TestLSPLanguageEnabledAndServerOverride(t *testing.T) {
 	}
 }
 
-func TestNormalizeLSPMigratesLegacyFeatureFlags(t *testing.T) {
-	// Old config.json only had enabled/auto_detect/diagnostics. New display
-	// and feature bools load as false and must not hide diagnostics.
-	got := NormalizeLSP(LSPSettings{Enabled: true, AutoDetect: true, Diagnostics: true})
-	if !got.DiagInEditor || !got.DiagInTree || !got.DiagInStatus {
-		t.Fatalf("legacy diagnostics must show in editor/tree/status: %#v", got)
-	}
-	if !got.Completions || !got.Hover || !got.Definition || !got.StartOnOpen {
-		t.Fatalf("legacy configs must inherit feature defaults: %#v", got)
-	}
-	if !got.Enabled || !got.Diagnostics {
-		t.Fatal("migration must not flip Enabled/Diagnostics")
-	}
-
-	explicit := NormalizeLSP(LSPSettings{
-		Enabled: true, Diagnostics: true, Completions: true,
-		DiagInEditor: false, DiagInTree: true, DiagInStatus: true,
-	})
-	if explicit.DiagInEditor {
-		t.Fatal("explicit editor-off must survive when other new flags are set")
+func TestNormalizeLSPPreservesExplicitAllFeaturesOff(t *testing.T) {
+	s := DefaultLSPSettings()
+	s.StartOnOpen, s.Completions, s.Hover, s.Definition, s.References, s.Outline, s.Rename, s.AutoComplete = false, false, false, false, false, false, false, false
+	s.DiagInEditor, s.DiagInTree, s.DiagInStatus = false, false, false
+	got := NormalizeLSP(s)
+	if got.StartOnOpen || got.Completions || got.Hover || got.Definition || got.References || got.Outline || got.Rename || got.AutoComplete || got.DiagInEditor || got.DiagInTree || got.DiagInStatus {
+		t.Fatal("normalization re-enabled explicitly disabled feature")
 	}
 }
 
@@ -292,6 +279,56 @@ func TestLSPSeverityAtLeast(t *testing.T) {
 	s := LSPSettings{MinSeverity: "warning"}
 	if !s.SeverityAtLeast(1) || !s.SeverityAtLeast(2) || s.SeverityAtLeast(3) {
 		t.Fatalf("warning threshold failed")
+	}
+}
+
+func TestLSPRuntimeContract(t *testing.T) {
+	s := DefaultLSPSettings()
+	for _, tc := range []struct{ path, command, language string }{
+		{"main.go", "gopls", "go"},
+		{"main.py", "pyright-langserver", "python"},
+		{"main.c", "clangd", "c"},
+		{"main.cpp", "clangd", "cpp"},
+		{"main.js", "typescript-language-server", "javascript"},
+		{"main.tsx", "typescript-language-server", "typescriptreact"},
+	} {
+		spec, ok := s.ResolveServer(tc.path)
+		if !ok || spec.Command != tc.command || spec.LanguageID != tc.language {
+			t.Fatalf("resolve %s: %+v, ok=%v", tc.path, spec, ok)
+		}
+	}
+	if _, ok := s.ResolveServer("main.unsupported"); ok {
+		t.Fatal("unsupported language must not launch a server")
+	}
+	s.Servers = map[string]string{".go": "custom-gopls"}
+	s.ServerArgs = map[string][]string{".go": {"serve"}}
+	spec, ok := s.ResolveServer("main.go")
+	if !ok || spec.Command != "custom-gopls" || !reflect.DeepEqual(spec.Args, []string{"serve"}) {
+		t.Fatalf("command override lost: %+v", spec)
+	}
+	clone := CloneLSPSettings(s)
+	clone.ServerArgs[".go"][0] = "changed"
+	lang := clone.Languages["go"]
+	lang.Enabled = false
+	clone.Languages["go"] = lang
+	if s.ServerArgs[".go"][0] != "serve" || !s.Languages["go"].Enabled {
+		t.Fatal("LSP settings clone aliases its source")
+	}
+	if _, ok := clone.ResolveServer("main.go"); ok {
+		t.Fatal("disabled language must not launch its override")
+	}
+	s.Enabled = false
+	s.MaxServers, s.IdleTimeoutSeconds, s.MaxDocumentBytes = 0, 0, 0
+	s = NormalizeLSP(s)
+	if _, ok := s.ResolveServer("main.go"); ok || s.Enabled {
+		t.Fatal("normalization must preserve disabled LSP")
+	}
+	if s.MaxServers <= 0 || s.IdleTimeoutSeconds <= 0 || s.MaxDocumentBytes <= 0 {
+		t.Fatalf("missing bounded runtime defaults: %+v", s)
+	}
+	limits := NormalizeLSP(LSPSettings{MaxServers: 1, IdleTimeoutSeconds: 30, MaxDocumentBytes: 1024})
+	if limits.MaxServers != 1 || limits.IdleTimeoutSeconds != 30 || limits.MaxDocumentBytes != 1024 {
+		t.Fatal("explicit resource limits were replaced")
 	}
 }
 

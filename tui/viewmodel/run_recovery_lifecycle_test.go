@@ -170,7 +170,7 @@ func TestRecoveryRealComposerRetryClickAndAutomaticContinuation(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
-	for _, failure := range []int{http.StatusUnauthorized, http.StatusServiceUnavailable} {
+	for _, failure := range []int{http.StatusUnauthorized, http.StatusServiceUnavailable, http.StatusRequestTimeout} {
 		t.Run(http.StatusText(failure), func(t *testing.T) {
 			var requests atomic.Int32
 			finish := make(chan struct{})
@@ -179,7 +179,11 @@ func TestRecoveryRealComposerRetryClickAndAutomaticContinuation(t *testing.T) {
 				if requests.Add(1) == 1 {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(failure)
-					_, _ = fmt.Fprint(w, `{"error":{"message":"provider unavailable for this attempt"}}`)
+					if failure == http.StatusRequestTimeout {
+						_, _ = fmt.Fprint(w, `{"error":{"type":"invalid_request_error","message":"stream error: stream disconnected before completion: stream closed before response.completed"}}`)
+					} else {
+						_, _ = fmt.Fprint(w, `{"error":{"message":"provider unavailable for this attempt"}}`)
+					}
 					return
 				}
 				w.Header().Set("Content-Type", "text/event-stream")
@@ -283,6 +287,14 @@ func TestRecoveryRealComposerRetryClickAndAutomaticContinuation(t *testing.T) {
 				}
 			} else if incident.State != recovery.Recovering || incident.RetryAt.IsZero() {
 				t.Fatalf("transport exhaustion has no automatic cooldown: %+v", incident)
+			} else {
+				var transcript strings.Builder
+				for row := app.chatRect.Y; row < app.chatRect.Y+app.chatRect.H-1; row++ {
+					transcript.WriteString(rowText(app, row))
+				}
+				if !strings.Contains(transcript.String(), "retry in ") || !strings.Contains(transcript.String(), "(Retry now)") || strings.Contains(transcript.String(), "Needs attention") {
+					t.Fatalf("real automatic deadline was not painted: %s", transcript.String())
+				}
 			}
 			waitFor("stream_token")
 			_, _ = app.Update(types.TickMsg(time.Now()))

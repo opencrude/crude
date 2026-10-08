@@ -87,9 +87,8 @@ type App struct {
 	FilePicker                *filepickerscreen.Screen
 	DiagPopupID               string
 
-	// Composer draft persistence (hydration). The active-session pointer is
-	// compared every frame; on change the composer clears immediately and the
-	// incoming session's persisted draft loads asynchronously.
+	// Composer state changes at session activation, never from Paint. Warm
+	// sessions retain their editor; cold persisted drafts load asynchronously.
 	composerHydratedFor        *workspace.Session
 	composerDraftEpoch         uint64
 	composerDraftErr           error
@@ -488,11 +487,7 @@ func (m *App) Init() tea.Cmd {
 	// Wire diagnostics before starting workspace LSP so fast servers cannot
 	// populate LSPManager's cache without notifying the tree/status update path.
 	m.wireLSPDiagnostics()
-	if m.OverlayState.IsChat() {
-		m.startLSPForWorkspace()
-	} else {
-		m.syncFileTreeDiagnosticsFromLSP()
-	}
+	m.syncFileTreeDiagnosticsFromLSP()
 
 	// Hook file tree watcher events into the LSP server so it learns about
 	// disk changes (git checkout, external edits, etc.). Workspace switches
@@ -804,25 +799,10 @@ func (m *App) handleQuit() (tea.Model, tea.Cmd) {
 	if m.Win.IsOpen() && m.Win.TabCount() > 0 {
 		activeIdx := m.Win.ActiveIndex()
 		if activeIdx >= 0 {
-			tab := m.Win.Tabs()[activeIdx]
-			action := m.Win.CloseTab(activeIdx)
-			if action == window.CloseNone {
-				return m, nil
-			}
-			// Closing an agent tab minimizes it; the orchestrator and
-			// its conversation survive for later restore.
-			if m.isAgentTabTitle(tab.Title) {
-				agentID := m.agentIDFromTabTitle(tab.Title)
-				m.minimizeAgent(agentID)
-			}
-			// If no tabs left, show welcome launcher
-			if m.AgentMgr.VisibleCount() == 0 && m.EditorState.ActiveView == "" && !m.Win.IsOpen() {
-				m.openLauncher()
-			}
 			// A tab was closed (or the launcher fallback shown): the quit
 			// is consumed. Quitting is only reachable via the fall-through
 			// below when there were no tabs to close at all.
-			return m, nil
+			return m, m.handleAgentTabClose(activeIdx)
 		}
 	}
 

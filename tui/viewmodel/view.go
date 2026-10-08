@@ -49,7 +49,6 @@ func (m *App) View() tea.View {
 	}
 	m.renderCtx.SpinFrame = m.SpinFrame
 	m.syncRenderFocus()
-	m.syncRootFocus()
 
 	// The root tree: one Host paints the whole shell into one full-screen
 	// surface. Floating windows are rendered by the WM on top afterwards.
@@ -415,6 +414,10 @@ func (m *App) renderShellToSurface() {
 	m.rootHost.SetFrame(m.SpinFrame)
 	m.rootHost.Resize(m.width, m.height)
 	m.rootHost.MarkLayout()
+	// Structural tab operations can mount a different content screen. Resolve
+	// focus after that screen is registered, before the first frame paints.
+	m.rootHost.Layout()
+	m.syncRootFocus()
 	m.rootHost.Paint(m.mainSurf.Buffer())
 }
 

@@ -939,13 +939,7 @@ func (e *StatusError) Error() string {
 
 // Retryable reports whether the status classically warrants a retry.
 func (e *StatusError) Retryable() bool {
-	if permanentAPIError(e.Code) || e.RetryHint == "false" {
-		return false
-	}
-	if e.StatusCode == 400 || e.StatusCode == 401 || e.StatusCode == 403 || e.StatusCode == 404 || e.StatusCode == 413 || e.StatusCode == 422 {
-		return false
-	}
-	return e.RetryHint == "true" || isRetryableStatus(e.StatusCode)
+	return retryableAPIStatus(e.StatusCode, e.Code+" "+e.APIType+" "+e.APICode, e.Param, e.RetryHint)
 }
 
 // readStatusError consumes a non-2xx response into a StatusError, parsing

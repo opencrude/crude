@@ -3,12 +3,15 @@ package viewmodel
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"crude/history"
 	"crude/sessiondb"
+	"crude/tui/input"
 	"crude/workspace"
 )
 
@@ -153,5 +156,163 @@ func TestTextOnlyHistoryCannotCaptureAnotherSessionsAttachment(t *testing.T) {
 	app.Input.InsertReference(ref)
 	if len(app.Input.PromptReferences()) != 1 {
 		t.Fatal("pinned history draft rejected an explicit attachment")
+	}
+}
+
+func TestPromptHistoryRecallBindsDestinationStoreBeforeSubmitting(t *testing.T) {
+	app := newFullTestApp(t)
+	app.ActiveSession = workspace.NewSession("destination", t.TempDir(), nil, stubLogger{})
+	// A fresh session or launcher-to-session transition can still have the
+	// shell input bound to the previous projection when recall begins.
+	app.Input.SetReferenceStore(workspace.NewReferenceStore("previous", t.TempDir(), nil))
+	path := filepath.Join(t.TempDir(), "image.png")
+	if err := os.WriteFile(path, []byte("image bytes"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	entry := history.Entry{Text: "inspect [Pasted IMG2]", Attachments: []history.Attachment{{
+		Start: 8, End: 21, Reference: sessiondb.Reference{ID: "source-image", Kind: sessiondb.KindPastedImage,
+			Label: "[Pasted IMG2]", FilePath: path, Mime: "image/png"},
+	}}}
+	cmd := app.recallPrompt(app.Input.RecallPrompt(entry))
+	if cmd == nil {
+		t.Fatal("missing import command")
+	}
+	app.applyPromptHistory(cmd().(promptHistoryRestoredMsg))
+	refs := app.Input.PromptReferences()
+	if len(refs) != 1 || refs[0].SessionID != "destination" {
+		t.Fatalf("imported image was not bound to composer: %+v", refs)
+	}
+	updated, _, event := app.Input.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, false, false)
+	app.Input = updated
+	submitted, ok := event.(input.SubmitEvent)
+	if !ok || len(submitted.ReferenceIDs) != 1 || submitted.ReferenceIDs[0] != refs[0].ID {
+		t.Fatalf("recall submitted literal text instead of selected image: %+v", event)
+	}
+}
+
+func TestPromptHistoryRecallMixedReferencesThroughEditAndResubmit(t *testing.T) {
+	for _, steering := range []bool{false, true} {
+		t.Run(map[bool]string{false: "send", true: "steer"}[steering], func(t *testing.T) {
+			app := newFullTestApp(t)
+			app.ActiveSession = workspace.NewSession("destination", t.TempDir(), nil, stubLogger{})
+			app.Input.SetReferenceStore(nil)
+			kinds := []sessiondb.Kind{sessiondb.KindPastedImage, sessiondb.KindPastedText,
+				sessiondb.KindPastedTextFile, sessiondb.KindSelectedFile, sessiondb.KindMCPTool, sessiondb.KindMCPContext}
+			entry := history.Entry{Text: "inspect "}
+			for i, kind := range kinds {
+				ref := sessiondb.Reference{ID: string(kind), Kind: kind, Label: "[source " + string(kind) + "]",
+					Title: "exact source", Mime: "text/plain", Content: "captured content"}
+				if kind == sessiondb.KindPastedImage || kind == sessiondb.KindPastedTextFile || kind == sessiondb.KindSelectedFile {
+					path := filepath.Join(t.TempDir(), "media.bin")
+					if err := os.WriteFile(path, []byte("immutable media"), 0600); err != nil {
+						t.Fatal(err)
+					}
+					ref.FilePath, ref.Content = path, ""
+					if i == 0 {
+						ref.Mime = "image/png"
+					}
+				}
+				start := len([]rune(entry.Text))
+				entry.Text += ref.Label
+				entry.Attachments = append(entry.Attachments, history.Attachment{Start: start, End: len([]rune(entry.Text)), Reference: ref})
+				entry.Text += " "
+			}
+			// A generated-looking literal must not acquire an imported reference.
+			entry.Text += "literal [Pasted IMG1] and array[0]"
+			store := history.New()
+			store.Record(entry.Text, time.Now(), entry.Attachments...)
+			path := filepath.Join(t.TempDir(), "history.json")
+			if err := store.Save(path); err != nil {
+				t.Fatal(err)
+			}
+			loaded, err := history.LoadFile(path)
+			if err != nil {
+				t.Fatal(err)
+			}
+			app.SetPromptHistory(loaded)
+			app.promptHistoryPath = path
+			cmd := app.recallPrompt(app.Input.RecallPrompt(loaded.Entries()[0]))
+			app.applyPromptHistory(cmd().(promptHistoryRestoredMsg))
+			if len(app.Input.ReferenceChips(160)) == 0 || len(app.Input.PromptReferences()) != len(kinds) {
+				t.Fatalf("recalled mixed attachments did not render as chips: %+v", app.Input.PromptReferences())
+			}
+			if !strings.Contains(app.Input.Value(), "literal [Pasted IMG1] and array[0]") {
+				t.Fatalf("literal prose changed: %q", app.Input.Value())
+			}
+			app.Input.SetCursorFlat(len([]rune(app.Input.Value())))
+			app.Input, _, _ = app.Input.Update(tea.PasteMsg{Content: " edited"}, false, false)
+			updated, _, event := app.Input.Update(tea.KeyPressMsg{Code: tea.KeyEnter}, steering, false)
+			app.Input = updated
+			var text string
+			var ids []string
+			switch submitted := event.(type) {
+			case input.SubmitEvent:
+				text, ids = submitted.Text, submitted.ReferenceIDs
+			case input.SteeringSubmitEvent:
+				text, ids = submitted.Text, submitted.ReferenceIDs
+			default:
+				t.Fatalf("no submit event: %+v", event)
+			}
+			if len(ids) != len(kinds) || !strings.HasSuffix(text, " edited") {
+				t.Fatalf("editing/resubmitting lost attachments: %+v", event)
+			}
+			for _, id := range ids {
+				ref, ok := app.RefStore().GetReference(id)
+				if !ok || ref.SessionID != "destination" {
+					t.Fatalf("submission ID not owned by destination: %s", id)
+				}
+			}
+			// Capture from precisely the selected IDs, never every session label.
+			cmd = app.recordPrompt(text, ids...)
+			if cmd == nil {
+				t.Fatal("missing save command")
+			}
+			if saved := cmd().(promptHistorySavedMsg); saved.err != nil {
+				t.Fatal(saved.err)
+			}
+			entries := loaded.Entries()
+			if len(entries[len(entries)-1].Attachments) != len(kinds) {
+				t.Fatal("resubmission lost mixed attachment snapshots")
+			}
+		})
+	}
+}
+
+func TestPromptHistoryRecallDoesNotRebindStaleOrFailedOwner(t *testing.T) {
+	for _, reason := range []string{"session switch", "edited draft", "missing media"} {
+		t.Run(reason, func(t *testing.T) {
+			app := newFullTestApp(t)
+			owner := workspace.NewSession("owner", t.TempDir(), nil, stubLogger{})
+			app.ActiveSession = owner
+			previous := workspace.NewReferenceStore("previous", t.TempDir(), nil)
+			ref, err := previous.CreateReference(sessiondb.CreateRequest{Kind: sessiondb.KindPastedText, Content: "keep"})
+			if err != nil {
+				t.Fatal(err)
+			}
+			app.Input.SetReferenceStore(previous)
+			app.Input.SetInput("keep " + ref.Label)
+			path := filepath.Join(t.TempDir(), "image.png")
+			if reason != "missing media" {
+				if err := os.WriteFile(path, []byte("media"), 0600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			entry := history.Entry{Text: "[old]", Attachments: []history.Attachment{{Start: 0, End: 5,
+				Reference: sessiondb.Reference{ID: "old", Label: "[old]", Kind: sessiondb.KindPastedImage, FilePath: path}}}}
+			cmd := app.recallPrompt(app.Input.RecallPrompt(entry))
+			result := cmd().(promptHistoryRestoredMsg)
+			switch reason {
+			case "session switch":
+				app.ActiveSession = workspace.NewSession("other", t.TempDir(), nil, stubLogger{})
+			case "edited draft":
+				app.Input.SetValuePreserveReferences("newer " + ref.Label)
+			}
+			before := app.Input.Value()
+			app.applyPromptHistory(result)
+			refs := app.Input.PromptReferences()
+			if app.Input.Value() != before || len(refs) != 1 || refs[0].ID != ref.ID {
+				t.Fatalf("stale/failed import changed the existing draft or reference owner: %q %+v", app.Input.Value(), refs)
+			}
+		})
 	}
 }

@@ -5,15 +5,14 @@ package lsp
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
-	"time"
 
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 	"github.com/charmbracelet/x/powernap/pkg/transport"
@@ -51,11 +50,9 @@ const (
 // legitimate repetition; refactoring these literals to typed
 // protocol structs would be a much bigger change.
 const (
-	fieldURI                 = "uri"
-	fieldVersion             = "version"
-	fieldTextDocument        = "textDocument"
-	fieldDynamicRegistration = "dynamicRegistration"
-	fieldValueSet            = "valueSet"
+	fieldURI          = "uri"
+	fieldVersion      = "version"
+	fieldTextDocument = "textDocument"
 	// markupKindMarkdown is the LSP MarkupKind value "markdown",
 	// used in documentationFormat / contentFormat arrays and as a
 	// nested key under "general".
@@ -116,13 +113,17 @@ func (c *Client) Initialize(ctx context.Context, enableSnippets bool) error {
 	// Extract root path from URI
 	rootPath := ""
 	if c.rootURI != "" {
-		rootPath = strings.TrimPrefix(c.rootURI, "file://")
+		var err error
+		rootPath, err = protocol.DocumentURI(c.rootURI).Path()
+		if err != nil {
+			return fmt.Errorf("invalid root URI: %w", err)
+		}
 	}
 
 	// Prepare workspace folders - some servers don't like nil
 	workspaceFolders := c.workspaceFolders
-	if workspaceFolders == nil {
-		workspaceFolders = []protocol.WorkspaceFolder{}
+	if len(workspaceFolders) == 0 && c.rootURI != "" {
+		workspaceFolders = []protocol.WorkspaceFolder{{URI: protocol.URI(c.rootURI), Name: filepath.Base(rootPath)}}
 	}
 
 	initParams := map[string]any{
@@ -155,6 +156,9 @@ func (c *Client) Initialize(ctx context.Context, enableSnippets bool) error {
 	c.cacheDocumentSaveCapabilities()
 
 	c.offsetEncoding = parseOffsetEncoding(result.Capabilities.PositionEncoding, result.OffsetEncoding)
+	if c.offsetEncoding != UTF16 {
+		return fmt.Errorf("server selected unsupported position encoding: %v", c.offsetEncoding)
+	}
 
 	// Send initialized notification
 	err = c.conn.Notify(ctx, MethodInitialized, map[string]any{})
@@ -164,27 +168,8 @@ func (c *Client) Initialize(ctx context.Context, enableSnippets bool) error {
 
 	c.initialized.Store(true)
 
-	// For gopls, send workspace/didChangeConfiguration to ensure it's ready
-	// This helps gopls properly set up its workspace views
-	if strings.Contains(c.Name, "gopls") {
-		configParams := map[string]any{
-			"settings": c.config,
-		}
-		_ = c.conn.Notify(ctx, MethodWorkspaceDidChangeConfiguration, configParams)
-
-		// Also send workspace/didChangeWatchedFiles to trigger gopls to scan the workspace
-		// This helps with the "no views" error
-		if c.rootURI != "" {
-			changesParams := map[string]any{
-				"changes": []map[string]any{
-					{
-						fieldURI: c.rootURI,
-						"type":   1, // Created
-					},
-				},
-			}
-			_ = c.conn.Notify(ctx, "workspace/didChangeWatchedFiles", changesParams)
-		}
+	if err := c.NotifyWorkspaceDidChangeConfiguration(ctx, c.config); err != nil {
+		return err
 	}
 
 	return nil
@@ -554,7 +539,16 @@ func (c *Client) RequestDefinition(ctx context.Context, filepath string, line, c
 
 	// Try []Location first (most common response from gopls).
 	var locs []protocol.Location
-	if err := json.Unmarshal(result, &locs); err == nil && len(locs) > 0 {
+	if err := json.Unmarshal(result, &locs); err == nil && len(locs) > 0 && locs[0].URI != "" {
+		return locs, nil
+	}
+
+	locs = nil
+	var links []protocol.LocationLink
+	if err := json.Unmarshal(result, &links); err == nil && len(links) > 0 && links[0].TargetURI != "" {
+		for _, link := range links {
+			locs = append(locs, protocol.Location{URI: link.TargetURI, Range: link.TargetSelectionRange})
+		}
 		return locs, nil
 	}
 
@@ -671,7 +665,7 @@ func (c *Client) setupHandlers() {
 		// Return configuration for each requested item
 		result := make([]any, len(configParams.Items))
 		for i := range configParams.Items {
-			result[i] = c.config
+			result[i] = configurationSection(c.config, configParams.Items[i].Section)
 		}
 
 		return result, nil
@@ -682,148 +676,50 @@ func (c *Client) setupHandlers() {
 }
 
 // makeClientCapabilities creates the client capabilities for initialization.
+func configurationSection(config map[string]any, section string) any {
+	if section == "" {
+		return config
+	}
+	if value, ok := config[section]; ok {
+		return value
+	}
+	var value any = config
+	for _, part := range strings.Split(section, ".") {
+		object, ok := value.(map[string]any)
+		if !ok {
+			return nil
+		}
+		value = object[part]
+	}
+	return value
+}
+
 func (c *Client) makeClientCapabilities(enableSnippets bool) map[string]any {
 	return map[string]any{
 		fieldTextDocument: map[string]any{
-			"synchronization": map[string]any{
-				fieldDynamicRegistration: false,
-				"willSave":               true,
-				"willSaveWaitUntil":      false,
-				"didSave":                true,
-			},
-			"completion": map[string]any{
-				fieldDynamicRegistration: true,
-				"completionItem": map[string]any{
-					"snippetSupport":          enableSnippets,
-					"commitCharactersSupport": true,
-					"documentationFormat":     []string{markupKindMarkdown, "plaintext"},
-					"deprecatedSupport":       true,
-					"preselectSupport":        true,
-					"insertReplaceSupport":    true,
-					"tagSupport": map[string]any{
-						fieldValueSet: []int{1}, // Deprecated
-					},
-					"resolveSupport": map[string]any{
-						"properties": []string{"documentation", "detail", "additionalTextEdits"},
-					},
-				},
-				"contextSupport": true,
-			},
-			"hover": map[string]any{
-				fieldDynamicRegistration: true,
-				"contentFormat":          []string{markupKindMarkdown, "plaintext"},
-			},
-			"definition": map[string]any{
-				fieldDynamicRegistration: true,
-				"linkSupport":            true,
-			},
-			"references": map[string]any{
-				fieldDynamicRegistration: true,
-			},
-			"documentHighlight": map[string]any{
-				fieldDynamicRegistration: true,
-			},
-			"documentSymbol": map[string]any{
-				fieldDynamicRegistration:            true,
-				"hierarchicalDocumentSymbolSupport": true,
-			},
-			"formatting": map[string]any{
-				fieldDynamicRegistration: true,
-			},
-			"rangeFormatting": map[string]any{
-				fieldDynamicRegistration: true,
-			},
-			"rename": map[string]any{
-				fieldDynamicRegistration: true,
-				"prepareSupport":         true,
-			},
-			"publishDiagnostics": map[string]any{
-				"relatedInformation":     true,
-				"versionSupport":         true,
-				"tagSupport":             map[string]any{fieldValueSet: []int{1, 2}},
-				"codeDescriptionSupport": true,
-				"dataSupport":            true,
-			},
-			"codeAction": map[string]any{
-				fieldDynamicRegistration: true,
-				"codeActionLiteralSupport": map[string]any{
-					"codeActionKind": map[string]any{
-						fieldValueSet: []string{
-							"quickfix",
-							"refactor",
-							"refactor.extract",
-							"refactor.inline",
-							"refactor.rewrite",
-							"source",
-							"source.organizeImports",
-						},
-					},
-				},
-				"isPreferredSupport": true,
-				"dataSupport":        true,
-				"resolveSupport": map[string]any{
-					"properties": []string{"edit"},
-				},
-			},
+			"synchronization":    map[string]any{"willSave": true, "didSave": true},
+			"completion":         map[string]any{"completionItem": map[string]any{"snippetSupport": enableSnippets, "insertReplaceSupport": true, "documentationFormat": []string{"plaintext", markupKindMarkdown}}},
+			"hover":              map[string]any{"contentFormat": []string{"plaintext", markupKindMarkdown}},
+			"definition":         map[string]any{"linkSupport": true},
+			"documentSymbol":     map[string]any{"hierarchicalDocumentSymbolSupport": true},
+			"publishDiagnostics": map[string]any{"versionSupport": true},
 		},
-		"workspace": map[string]any{
-			"applyEdit": true,
-			"workspaceEdit": map[string]any{
-				"documentChanges":       true,
-				"resourceOperations":    []string{"create", "rename", "delete"},
-				"failureHandling":       "textOnlyTransactional",
-				"normalizesLineEndings": true,
-			},
-			"didChangeConfiguration": map[string]any{
-				fieldDynamicRegistration: true,
-			},
-			"didChangeWatchedFiles": map[string]any{
-				fieldDynamicRegistration: true,
-				"relativePatternSupport": true,
-			},
-			"symbol": map[string]any{
-				fieldDynamicRegistration: true,
-			},
-			"configuration":    true,
-			"workspaceFolders": true,
-			"fileOperations": map[string]any{
-				fieldDynamicRegistration: true,
-				"didCreate":              true,
-				"willCreate":             true,
-				"didRename":              true,
-				"willRename":             true,
-				"didDelete":              true,
-				"willDelete":             true,
-			},
-		},
-		"window": map[string]any{
-			"workDoneProgress": true,
-			"showMessage": map[string]any{
-				"messageActionItem": map[string]any{
-					"additionalPropertiesSupport": true,
-				},
-			},
-			"showDocument": map[string]any{
-				"support": true,
-			},
-		},
-		"general": map[string]any{
-			"regularExpressions": map[string]any{
-				"engine":     "ECMAScript",
-				fieldVersion: "ES2020",
-			},
-			markupKindMarkdown: map[string]any{
-				"parser":     "marked",
-				fieldVersion: "1.1.0",
-			},
-			"positionEncodings": []string{"utf-8", "utf-16"},
-		},
+		"workspace": map[string]any{"configuration": true, "workspaceFolders": true},
+		"general":   map[string]any{"positionEncodings": []string{"utf-16"}},
 	}
 }
 
 // startServerProcess starts the language server process.
 func startServerProcess(ctx context.Context, config ClientConfig) (io.ReadWriteCloser, error) {
-	cmd := exec.CommandContext(ctx, config.Command, config.Args...) //nolint:gosec
+	cmd := exec.Command(config.Command, config.Args...) //nolint:gosec
+
+	if config.RootURI != "" {
+		root, err := protocol.DocumentURI(config.RootURI).Path()
+		if err != nil {
+			return nil, fmt.Errorf("invalid root URI: %w", err)
+		}
+		cmd.Dir = root
+	}
 
 	// Set environment variables
 	if config.Environment != nil {
@@ -850,10 +746,26 @@ func startServerProcess(ctx context.Context, config ClientConfig) (io.ReadWriteC
 		return nil, fmt.Errorf("failed to create stderr pipe: %w", err)
 	}
 
+	prepareProcess(cmd)
 	// Start the process
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("failed to start process: %w", err)
 	}
+
+	tree, err := ownProcess(cmd)
+	if err != nil {
+		_ = cmd.Process.Kill()
+		_ = cmd.Wait()
+		return nil, err
+	}
+	closer := &processCloser{stdin: stdin, stdout: stdout, stderr: stderr, tree: tree}
+	go func() {
+		select {
+		case <-ctx.Done():
+			_ = closer.Close()
+		case <-tree.done:
+		}
+	}()
 
 	// Monitor stderr
 	go func() {
@@ -872,13 +784,6 @@ func startServerProcess(ctx context.Context, config ClientConfig) (io.ReadWriteC
 		}
 	}()
 
-	closer := &processCloser{
-		cmd:    cmd,
-		stdin:  stdin,
-		stdout: stdout,
-		stderr: stderr,
-	}
-
 	reader := io.Reader(stdout)
 	writer := io.Writer(stdin)
 	if config.TransportWrap != nil {
@@ -890,37 +795,21 @@ func startServerProcess(ctx context.Context, config ClientConfig) (io.ReadWriteC
 }
 
 type processCloser struct {
-	cmd       *exec.Cmd
 	stdin     io.WriteCloser
 	stdout    io.ReadCloser
 	stderr    io.ReadCloser
+	tree      *processTree
 	closeOnce sync.Once
-	closeErr  error
 }
 
 func (c *processCloser) Close() error {
 	c.closeOnce.Do(func() {
-		errs := []error{
-			c.stdin.Close(),
-			c.stdout.Close(),
-			c.stderr.Close(),
-		}
-
-		done := make(chan error, 1)
-		go func() {
-			done <- c.cmd.Wait()
-		}()
-
-		timeout := time.After(5 * time.Second)
-		select {
-		case err := <-done:
-			errs = append(errs, err)
-		case <-timeout:
-			errs = append(errs, c.cmd.Process.Kill())
-			<-done
-		}
-
-		c.closeErr = errors.Join(errs...)
+		// Kill the owned tree before releasing/reaping its identity.
+		c.tree.stop()
+		_ = c.stdin.Close()
+		_ = c.stdout.Close()
+		_ = c.stderr.Close()
+		<-c.tree.done
 	})
-	return c.closeErr
+	return nil
 }

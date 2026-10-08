@@ -1,8 +1,10 @@
 package workspace
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -655,4 +657,155 @@ func testWorkspace(t *testing.T, dir string) *Workspace {
 		Logger:   testLogger{},
 	}
 	return ws
+}
+
+func TestFileOpsService_ApplyWorkspaceEdit_ValidationIsTransactional(t *testing.T) {
+	for _, kind := range []string{"later mismatch", "empty preimage", "duplicate", "outside root", "directory", "symlink", "symlink parent", "oversized"} {
+		t.Run(kind, func(t *testing.T) {
+			dir := t.TempDir()
+			svc := NewFileOpsService(dir, nil, nil)
+			a, b := filepath.Join(dir, "a"), filepath.Join(dir, "b")
+			if err := os.WriteFile(a, []byte("old-a"), 0o751); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(b, []byte("old-b"), 0o640); err != nil {
+				t.Fatal(err)
+			}
+			edits := []FileEdit{{a, "old-a", "new-a"}, {b, "old-b", "new-b"}}
+			switch kind {
+			case "later mismatch":
+				edits[1].OldContent = "wrong"
+			case "empty preimage":
+				edits[1].OldContent = ""
+			case "duplicate":
+				edits[1] = FileEdit{a, "new-a", "second"}
+			case "outside root":
+				edits[1].Path = filepath.Join(t.TempDir(), "outside")
+			case "directory":
+				edits[1].Path = dir
+			case "symlink":
+				link := filepath.Join(dir, "link")
+				if err := os.Symlink(b, link); err != nil {
+					t.Skip(err)
+				}
+				edits[1].Path = link
+			case "symlink parent":
+				link := filepath.Join(dir, "link-dir")
+				if err := os.Symlink(dir, link); err != nil {
+					t.Skip(err)
+				}
+				edits[1].Path = filepath.Join(link, "b")
+			case "oversized":
+				f, err := os.OpenFile(b, os.O_WRONLY, 0)
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = f.Truncate(maxWorkspaceEditBytes + 1)
+				closeErr := f.Close()
+				if err != nil {
+					t.Fatal(err)
+				}
+				if closeErr != nil {
+					t.Fatal(closeErr)
+				}
+			}
+			msg := svc.ApplyWorkspaceEdit(edits)
+			if msg.Succeeded() {
+				t.Fatal("unsafe transaction succeeded")
+			}
+			assertWorkspaceEditFile(t, a, "old-a", 0o751)
+			if kind != "oversized" {
+				assertWorkspaceEditFile(t, b, "old-b", 0o640)
+			}
+			matches, err := filepath.Glob(filepath.Join(dir, ".crude-workspace-edit-*"))
+			if err != nil || len(matches) != 0 {
+				t.Fatalf("staging files remain: %v, %v", matches, err)
+			}
+		})
+	}
+}
+
+func TestFileOpsService_ApplyWorkspaceEdit_EmptyFileAndModes(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "empty")
+	if err := os.WriteFile(path, nil, 0o751); err != nil {
+		t.Fatal(err)
+	}
+	svc := NewFileOpsService(dir, nil, nil)
+	if msg := svc.ApplyWorkspaceEdit([]FileEdit{{path, "", "filled"}}); !msg.Succeeded() {
+		t.Fatal(msg.Err)
+	}
+	assertWorkspaceEditFile(t, path, "filled", 0o751)
+}
+
+func TestFileOpsService_ApplyWorkspaceEdit_CommitFailureRollsBack(t *testing.T) {
+	for _, afterCommit := range []bool{false, true} {
+		t.Run(fmt.Sprint(afterCommit), func(t *testing.T) {
+			dir := t.TempDir()
+			svc := NewFileOpsService(dir, nil, nil)
+			edits := make([]FileEdit, 3)
+			for i := range edits {
+				path := filepath.Join(dir, fmt.Sprint(i))
+				if err := os.WriteFile(path, []byte("before"), 0o751); err != nil {
+					t.Fatal(err)
+				}
+				edits[i] = FileEdit{path, "before", "after"}
+			}
+			calls := 0
+			svc.commitWorkspaceEdit = func(from, to string) error {
+				calls++
+				failAt := 2
+				if afterCommit {
+					failAt = 3
+				}
+				if calls == failAt {
+					return fmt.Errorf("injected replacement failure")
+				}
+				return fileio.CommitAtomicFile(from, to)
+			}
+			msg := svc.ApplyWorkspaceEdit(edits)
+			if msg.Succeeded() {
+				t.Fatal("failed transaction reported success")
+			}
+			for _, edit := range edits {
+				assertWorkspaceEditFile(t, edit.Path, "before", 0o751)
+			}
+			if strings.Contains(msg.Detail, "applied") {
+				t.Fatalf("partial success detail: %s", msg.Detail)
+			}
+		})
+	}
+}
+
+func TestFileOpsService_ApplyWorkspaceEdit_MutationLease(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a")
+	if err := os.WriteFile(path, []byte("old"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	unlock := fileio.LockTreeMutation()
+	defer unlock()
+	svc := NewFileOpsService(dir, nil, nil)
+	if msg := svc.ApplyWorkspaceEdit([]FileEdit{{path, "old", "new"}}); msg.Succeeded() {
+		t.Fatal("edit bypassed mutation lease")
+	}
+	assertWorkspaceEditFile(t, path, "old", 0o644)
+}
+
+func assertWorkspaceEditFile(t *testing.T, path, content string, mode os.FileMode) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(data) != content {
+		t.Fatalf("%s: got %q, want %q", path, data, content)
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if runtime.GOOS != "windows" && info.Mode().Perm() != mode {
+		t.Fatalf("%s: mode %v, want %v", path, info.Mode(), mode)
+	}
 }

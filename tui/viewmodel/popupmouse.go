@@ -87,6 +87,9 @@ func (m *App) handlePopupContentHover(fw *wm.FloatingWindow, screenX, screenY in
 // Settings close requests return a pure command; CancelMsg later restores
 // live previews, while PromptMsg keeps the original window mounted.
 func (m *App) closePopupWindowByID(id string) tea.Cmd {
+	if id == string(lspRenameOverlay) && m.LSPPopup.RenamePreview != nil && m.LSPPopup.RenamePreview.busy {
+		return nil
+	}
 	if id == string(ui.OverlayWorkspaceSettings) {
 		if fw := m.windowManager.Window(id); fw != nil {
 			if w, ok := fw.Content.(*ui.WindowFrameWidget); ok {

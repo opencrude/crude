@@ -57,6 +57,7 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 	runtime := session.capabilities
 	session.mu.Unlock()
 	actor.Effects = effectsForPolicy(live.Policy)
+	actor.AllowedTools, actor.DeniedTools = agent.ModelToolSelection(actor.AllowedTools, actor.DeniedTools, live.Model)
 	previousPrepare := live.PrepareStep
 	previousFn := live.ToolFn
 	var boundEpoch uint64
@@ -105,7 +106,7 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 		}
 		for _, definition := range session.collaborationDefinitions(actor.ID) {
 			effect := collaborationEffect(definition.Function.Name)
-			selected := actorToolSelected(actor, definition.Function.Name) || definition.Function.Name == "publish_report" && actor.ParentID != ""
+			selected := runtimeCollaborationToolSelected(actor, definition.Function.Name)
 			if selected && slices.Contains(actor.Effects, effect) {
 				definitions = appendUniqueDefinition(definitions, definition)
 			}
@@ -144,7 +145,7 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 				return tools.ToolResult{}, collaboration.ErrStale
 			}
 		}
-		if slices.Contains(actor.DeniedTools, tool) || len(actor.AllowedTools) > 0 && !slices.Contains(actor.AllowedTools, tool) && (tool != "publish_report" || actor.ParentID == "") {
+		if !runtimeCollaborationToolSelected(actor, tool) {
 			return tools.ToolResult{}, fmt.Errorf("tool %q is excluded by the effective agent selection", tool)
 		}
 		if result, handled, err := session.executeCollaborationTool(callCtx, actor.ID, tool, params); handled {
@@ -230,6 +231,13 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 		}
 		return previousFn(callCtx, tool, params)
 	}
+}
+
+func runtimeCollaborationToolSelected(actor captypes.RuntimeActor, name string) bool {
+	if slices.Contains(actor.DeniedTools, name) {
+		return false
+	}
+	return name == "publish_report" && actor.ParentID != "" || actorToolSelected(actor, name)
 }
 
 func runtimeToolSelected(actor captypes.RuntimeActor, name string) bool {

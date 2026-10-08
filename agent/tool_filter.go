@@ -72,6 +72,16 @@ func FilterToolsForModel(allTools []tools.ToolDef, specAllowed, specDenied []str
 	return filterToolsWithCategory(tools.WithModelCommands(tools.ForModel(allTools, model), model), patchToolNames(specAllowed), patchToolNames(specDenied), cat, isSubAgent)
 }
 
+// ModelToolSelection resolves the same native aliases used by schema filtering.
+// Runtime dispatch and model-facing permissions must not retain old names after
+// the schema adapter offered apply_patch or exec_command instead.
+func ModelToolSelection(allowed, denied []string, model string) ([]string, []string) {
+	if codexio.IsGPT(model) {
+		return patchToolNames(allowed), patchToolNames(denied)
+	}
+	return append([]string(nil), allowed...), append([]string(nil), denied...)
+}
+
 func patchToolNames(names []string) []string {
 	result := make([]string, 0, len(names))
 	for _, name := range names {

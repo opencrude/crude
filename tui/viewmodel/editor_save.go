@@ -137,6 +137,9 @@ func (m *App) onEditorContentChanged(ed *editor.Editor, filePath, text string) {
 	}
 	if m.LSPMgr != nil {
 		m.LSPMgr.QueueFileUpdate(filePath, text)
+		if m.LSPMgr.Settings().AutoComplete && m.LSPPopup != nil {
+			m.LSPPopup.CompletionDue = time.Now().Add(350 * time.Millisecond)
+		}
 	}
 	m.markEditorGitDirty(time.Now())
 	if m.Workspace == nil || m.Documents == nil || ed == nil {

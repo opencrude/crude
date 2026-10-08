@@ -640,6 +640,7 @@ type ChatAPIError struct {
 	Message string `json:"message"`
 	Type    string `json:"type,omitempty"`
 	Code    any    `json:"code,omitempty"`
+	Param   string `json:"param,omitempty"`
 }
 
 type ToolDef struct {

@@ -281,7 +281,7 @@ func (s *OpenAIStandard) DecodeResponse(body []byte) (*ChatResponse, error) {
 		return nil, fmt.Errorf("unmarshal response: %w", err)
 	}
 	if resp.Error != nil {
-		return nil, openAIError(resp.Error.Type, resp.Error.Code, resp.Error.Message)
+		return nil, openAIError(resp.Error)
 	}
 	if len(resp.Choices) == 0 {
 		return nil, fmt.Errorf("OpenAI response contains no choices")
@@ -330,7 +330,7 @@ func (d *openAIChatStreamDecoder) Decode(event StreamEvent) (StreamUpdate, error
 		return StreamUpdate{}, fmt.Errorf("decode OpenAI chat stream event: %w", err)
 	}
 	if chunk.Error != nil {
-		return StreamUpdate{}, openAIError(chunk.Error.Type, chunk.Error.Code, chunk.Error.Message)
+		return StreamUpdate{}, openAIError(chunk.Error)
 	}
 
 	var update StreamUpdate
@@ -595,12 +595,12 @@ func openAIReasoningDetailItems(
 	return items
 }
 
-func openAIError(typ string, code any, message string) error {
+func openAIError(wire *ChatAPIError) error {
 	codeString := ""
-	if code != nil {
-		codeString = fmt.Sprint(code)
+	if wire.Code != nil {
+		codeString = fmt.Sprint(wire.Code)
 	}
-	return &APIError{Type: typ, Code: codeString, Message: message}
+	return &APIError{Type: wire.Type, Code: codeString, Message: wire.Message, Param: wire.Param}
 }
 
 // ModelsURL implements ModelLister.

@@ -202,10 +202,18 @@ func (s *StreamTransport) Write(p []byte) (n int, err error) {
 
 // Close implements io.Closer.
 func (s *StreamTransport) Close() error {
+	// Release the actual pipes first so an asynchronous writer cannot remain
+	// stuck draining a dead server. Then stop its idle queue goroutine too.
+	var err error
 	if s.closer != nil {
-		return s.closer.Close() //nolint:wrapcheck
+		err = s.closer.Close()
 	}
-	return nil
+	if closer, ok := s.writer.(io.Closer); ok {
+		if closeErr := closer.Close(); err == nil {
+			err = closeErr
+		}
+	}
+	return err
 }
 
 // ObjectStream creates a jsonrpc2.ObjectStream from the transport.

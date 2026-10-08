@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"errors"
 	"fmt"
+	rand2 "math/rand/v2"
 	"net"
 	"strings"
 	"time"
@@ -744,6 +745,7 @@ func terminalReason(event *AgentEvent) string {
 
 func appendRecoveryContinuation(active, archive []provider.ChatMessage, kind rootprompt.RecoveryKind) ([]provider.ChatMessage, []provider.ChatMessage) {
 	message := provider.NewTextMessage("user", rootprompt.RecoveryContinuation(kind))
+	message.InternalID = fmt.Sprintf("msg-%016x%016x", rand2.Uint64(), rand2.Uint64())
 	message.Origin = provider.OriginContinuation
 	message.Visibility = provider.VisibilityContextOnly
 	return append(active, message), append(archive, message)
@@ -754,6 +756,7 @@ func appendStoppedBoundary(archive, active []provider.ChatMessage) ([]provider.C
 		return archive, active
 	}
 	message := provider.NewTextMessage("user", rootprompt.TurnStoppedBoundary())
+	message.InternalID = fmt.Sprintf("turn-stopped:%016x%016x", rand2.Uint64(), rand2.Uint64())
 	message.Origin = provider.OriginTurnStopped
 	message.Visibility = provider.VisibilityContextOnly
 	return append(archive, message), append(active, message)

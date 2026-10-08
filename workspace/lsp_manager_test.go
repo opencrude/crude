@@ -44,6 +44,7 @@ func mkdir(t *testing.T, path string) {
 
 func TestLSPManager_New(t *testing.T) {
 	m := NewLSPManager(testLogger{})
+	t.Cleanup(m.Close)
 	if m == nil {
 		t.Fatal("NewLSPManager returned nil")
 	}
@@ -61,6 +62,7 @@ func TestLSPManager_New(t *testing.T) {
 
 func TestLSPManager_StartForWorkspace_NotFound(t *testing.T) {
 	m := NewLSPManager(testLogger{})
+	t.Cleanup(m.Close)
 	m.StartForWorkspace(t.TempDir())
 
 	conn, status, errMsg := m.Status()
@@ -75,6 +77,7 @@ func TestLSPManager_StartForWorkspace_NotFound(t *testing.T) {
 
 func TestLSPManager_FileDiagnostics(t *testing.T) {
 	m := NewLSPManager(testLogger{})
+	t.Cleanup(m.Close)
 
 	diags := m.FileDiagnostics("/tmp/nonexistent.go")
 	if len(diags) != 0 {
@@ -104,6 +107,7 @@ func TestLSPManager_FileDiagnostics(t *testing.T) {
 
 func TestLSPManager_FeatureGates(t *testing.T) {
 	m := NewLSPManager(testLogger{})
+	t.Cleanup(m.Close)
 	if !m.ShowDiagnosticsInEditor() || !m.ShowDiagnosticsInTree() || !m.ShowDiagnosticsInStatus() {
 		t.Fatal("default LSP settings should show diagnostics in editor, tree, and status")
 	}
@@ -149,6 +153,7 @@ func TestLSPManager_FeatureGates(t *testing.T) {
 
 func TestLSPManager_FileDiagnostics_PersistAfterSet(t *testing.T) {
 	m := NewLSPManager(testLogger{})
+	t.Cleanup(m.Close)
 
 	// Simulate a file being opened, receiving diagnostics, then closed.
 	m.setFileDiagnostics("/tmp/test.go", []model.LSPDiagnostic{
@@ -159,18 +164,19 @@ func TestLSPManager_FileDiagnostics_PersistAfterSet(t *testing.T) {
 	defer cancel()
 	m.CloseFile(ctx, "/tmp/test.go")
 
-	// Diagnostics should persist after close.
-	if !m.HasFileDiagnostics("/tmp/test.go") {
-		t.Error("diagnostics should persist after CloseFile")
+	// Closing drops overlay diagnostics; servers may later publish disk diagnostics.
+	if m.HasFileDiagnostics("/tmp/test.go") {
+		t.Error("overlay diagnostics should clear after CloseFile")
 	}
 	diags := m.FileDiagnostics("/tmp/test.go")
-	if len(diags) != 1 {
-		t.Fatalf("expected 1 diagnostic after close, got %d", len(diags))
+	if len(diags) != 0 {
+		t.Fatalf("expected no stale diagnostic after close, got %d", len(diags))
 	}
 }
 
 func TestLSPManager_FileDiagnostics_ReplaceOnUpdate(t *testing.T) {
 	m := NewLSPManager(testLogger{})
+	t.Cleanup(m.Close)
 
 	m.setFileDiagnostics("/tmp/test.go", []model.LSPDiagnostic{
 		{Line: 0, Col: 0, Severity: 1, Message: "old error"},
@@ -192,6 +198,7 @@ func TestLSPManager_FileDiagnostics_ReplaceOnUpdate(t *testing.T) {
 
 func TestLSPManager_FileDiagnostics_EmptyFile(t *testing.T) {
 	m := NewLSPManager(testLogger{})
+	t.Cleanup(m.Close)
 
 	m.setFileDiagnostics("/tmp/empty.go", nil)
 
@@ -208,6 +215,7 @@ func TestLSPManager_FileDiagnostics_EmptyFile(t *testing.T) {
 
 func TestLSPManager_FileDiagnostics_MultipleFiles(t *testing.T) {
 	m := NewLSPManager(testLogger{})
+	t.Cleanup(m.Close)
 
 	m.setFileDiagnostics("/tmp/a.go", []model.LSPDiagnostic{
 		{Line: 0, Severity: 1, Message: "a error"},
@@ -232,6 +240,7 @@ func TestLSPManager_FileDiagnostics_MultipleFiles(t *testing.T) {
 
 func TestLSPManager_Status_Lifecycle(t *testing.T) {
 	m := NewLSPManager(testLogger{})
+	t.Cleanup(m.Close)
 
 	conn, status, errMsg := m.Status()
 	if conn || status != model.LSPIdle || errMsg != "" {
@@ -250,6 +259,7 @@ func TestLSPManager_Status_Lifecycle(t *testing.T) {
 
 func TestLSPManager_OpenFile_NonExistentRoot(t *testing.T) {
 	m := NewLSPManager(testLogger{})
+	t.Cleanup(m.Close)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -265,6 +275,7 @@ func TestLSPManager_OpenFile_NonExistentRoot(t *testing.T) {
 
 func TestLSPManager_OnDiagnosticsCallback(t *testing.T) {
 	m := NewLSPManager(testLogger{})
+	t.Cleanup(m.Close)
 
 	called := false
 	var gotFP string
@@ -297,6 +308,7 @@ func TestLSPManager_OnDiagnosticsCallback(t *testing.T) {
 
 func TestLSPManager_OnDiagnosticsCallback_SetsDiagnosticsStore(t *testing.T) {
 	m := NewLSPManager(testLogger{})
+	t.Cleanup(m.Close)
 
 	m.SetOnDiagnostics(func(fp string, diags []model.LSPDiagnostic) {})
 
@@ -313,6 +325,7 @@ func TestLSPManager_OnDiagnosticsCallback_SetsDiagnosticsStore(t *testing.T) {
 
 func TestLSPManager_PendingText(t *testing.T) {
 	m := NewLSPManager(testLogger{})
+	t.Cleanup(m.Close)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -329,6 +342,7 @@ func TestLSPManager_PendingText(t *testing.T) {
 
 func TestLSPManager_UpdateFile_NoClient(t *testing.T) {
 	m := NewLSPManager(testLogger{})
+	t.Cleanup(m.Close)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -340,11 +354,13 @@ func TestLSPManager_UpdateFile_NoClient(t *testing.T) {
 func TestLSPManager_QueueFileUpdateCoalescesWithoutBlocking(t *testing.T) {
 	m := NewLSPManager(nil)
 	path := "/tmp/queued.go"
+	m.OpenFile(context.Background(), path, "initial")
+	t.Cleanup(m.Close)
 	m.QueueFileUpdate(path, "first")
 	m.QueueFileUpdate(path, "latest")
 
 	m.mu.Lock()
-	queued := m.pendingText[path]
+	queued := m.documents[path].text
 	timerCount := len(m.updateTimers)
 	m.mu.Unlock()
 	if queued != "latest" {
@@ -384,23 +400,12 @@ func (c *saveOrderClient) NotifySave(_ context.Context, _ string, text string, _
 	c.mu.Unlock()
 }
 
-type saveOrderRuntime struct{}
-
-func (saveOrderRuntime) NewClient(string, []string, string) LSPClient { return nil }
-func (saveOrderRuntime) ServerConfigForExt(ext string) (string, []string, bool) {
-	return "test-lsp", nil, ext == ".go"
-}
-func (saveOrderRuntime) RootURIForFile(string) string { return "file:///tmp" }
-func (saveOrderRuntime) LanguageID(string) string     { return "go" }
-func (saveOrderRuntime) AllServerConfigs() map[string]LSPServerConfig {
-	return map[string]LSPServerConfig{".go": {Cmd: "test-lsp"}}
-}
-
 func TestNotifyFileSaveFlushesLatestChangeBeforeSaveBoundary(t *testing.T) {
-	m := NewLSPManager(nil, saveOrderRuntime{})
+	m := NewLSPManager(nil)
 	client := &saveOrderClient{}
-	m.clients[clientKey("file:///tmp", "test-lsp")] = client
-	path := "/tmp/file.go"
+	path := filepath.Join(t.TempDir(), "file.go")
+	m.states["save-test"] = &lspClientState{client: client, status: LSPConnected}
+	m.documents[path] = &lspDocument{key: "save-test", opened: true, text: "initial", revision: 1, syncedRevision: 1}
 	m.QueueFileUpdate(path, "old")
 	m.QueueFileUpdate(path, "latest")
 	m.NotifyFileSave(context.Background(), path, "saved", DocumentSaveAfterDelay, true)
@@ -415,6 +420,7 @@ func TestNotifyFileSaveFlushesLatestChangeBeforeSaveBoundary(t *testing.T) {
 
 func TestLSPManager_CloseFile_NoClient(t *testing.T) {
 	m := NewLSPManager(testLogger{})
+	t.Cleanup(m.Close)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -425,12 +431,14 @@ func TestLSPManager_CloseFile_NoClient(t *testing.T) {
 
 func TestLSPManager_Stop_Idempotent(t *testing.T) {
 	m := NewLSPManager(testLogger{})
+	t.Cleanup(m.Close)
 	m.Stop()
 	m.Stop()
 }
 
 func TestLSPManager_Stop_AfterOpenFile(t *testing.T) {
 	m := NewLSPManager(testLogger{})
+	t.Cleanup(m.Close)
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
@@ -438,136 +446,30 @@ func TestLSPManager_Stop_AfterOpenFile(t *testing.T) {
 	m.Stop()
 
 	// Stop should clear the clients map.
-	if len(m.clients) != 0 {
-		t.Errorf("expected 0 clients after Stop, got %d", len(m.clients))
+	if len(m.states) != 0 {
+		t.Errorf("expected 0 clients after Stop, got %d", len(m.states))
 	}
 }
 
 func TestLSPManager_StartForWorkspace_NotPanic(t *testing.T) {
 	m := NewLSPManager(testLogger{})
+	t.Cleanup(m.Close)
 
 	// StartForWorkspace in a temp directory with no project markers.
 	// Should not panic or hang.
 	m.StartForWorkspace(t.TempDir())
 }
 
-func TestLSPManager_DetectProjectRoots(t *testing.T) {
-	m := NewLSPManager(testLogger{})
-	roots := m.detectProjectRoots(t.TempDir())
-	if len(roots) == 0 {
-		t.Error("detectProjectRoots should return at least the temp dir as a fallback root")
-	}
-}
-
-func TestScanProjectFiles(t *testing.T) {
-	dir := t.TempDir()
-
-	createFile(t, filepath.Join(dir, "main.go"), "package main")
-	createFile(t, filepath.Join(dir, "app.ts"), "const x = 1")
-	createFile(t, filepath.Join(dir, "README.md"), "# hi")
-	mkdir(t, filepath.Join(dir, "node_modules"))
-	createFile(t, filepath.Join(dir, "node_modules", "ignore.js"), "ignored")
-	mkdir(t, filepath.Join(dir, ".git"))
-	createFile(t, filepath.Join(dir, ".git", "config"), "ignored")
-
-	extSet := map[string]bool{".go": true, ".ts": true}
-	files := scanProjectFiles(dir, extSet)
-
-	if len(files) != 2 {
-		t.Fatalf("expected 2 files, got %d: %v", len(files), files)
-	}
-
-	wantGo := filepath.Join(dir, "main.go")
-	wantTS := filepath.Join(dir, "app.ts")
-	hasGo, hasTS := false, false
-	for _, f := range files {
-		if f == wantGo {
-			hasGo = true
-		}
-		if f == wantTS {
-			hasTS = true
-		}
-	}
-	if !hasGo {
-		t.Error("main.go should be in scanned files")
-	}
-	if !hasTS {
-		t.Error("app.ts should be in scanned files")
-	}
-}
-
-func TestScanPresentExtensions(t *testing.T) {
-	dir := t.TempDir()
-	createFile(t, dir+"/main.go", "package main")
-	createFile(t, dir+"/app.ts", "const x = 1")
-
-	exts := []string{".go", ".rs", ".py", ".ts"}
-	present := scanPresentExtensions(dir, exts)
-
-	if !present[".go"] {
-		t.Error("expected .go to be present")
-	}
-	if !present[".ts"] {
-		t.Error("expected .ts to be present")
-	}
-	if present[".rs"] {
-		t.Error("expected .rs to NOT be present")
-	}
-	if present[".py"] {
-		t.Error("expected .py to NOT be present")
-	}
-}
-
-func TestScanPresentExtensions_SkipIgnored(t *testing.T) {
-	dir := t.TempDir()
-	createFile(t, dir+"/real.go", "package main")
-	mkdir(t, dir+"/node_modules")
-	createFile(t, dir+"/node_modules/ignored.js", "ignored")
-	mkdir(t, dir+"/.git")
-	createFile(t, dir+"/.git/hooks.py", "ignored")
-
-	exts := []string{".go", ".js", ".py"}
-	present := scanPresentExtensions(dir, exts)
-
-	if !present[".go"] {
-		t.Error("expected .go to be present")
-	}
-	if present[".js"] {
-		t.Error("expected .js in node_modules to NOT be present")
-	}
-	if present[".py"] {
-		t.Error("expected .py in .git to NOT be present")
-	}
-}
-
-func TestScanPresentExtensions_NoMatches(t *testing.T) {
-	dir := t.TempDir()
-	createFile(t, dir+"/README.md", "# hi")
-	createFile(t, dir+"/Makefile", "all:")
-
-	present := scanPresentExtensions(dir, []string{".go", ".rs", ".py"})
-	if len(present) != 0 {
-		t.Errorf("expected no present extensions, got %v", present)
-	}
-}
-
-func TestWorkspaceBootstrapExtensionsExcludeJSONMetadata(t *testing.T) {
-	for _, ext := range workspaceBootstrapExtensions {
-		if ext == ".json" {
-			t.Fatal("JSON metadata must not start vscode-json-language-server during workspace bootstrap")
-		}
-	}
-}
-
 func TestLSPManager_AggregateConnectedServerIgnoresBackgroundFailure(t *testing.T) {
 	m := NewLSPManager(testLogger{})
+	t.Cleanup(m.Close)
 	m.mu.Lock()
-	m.states[clientKey("file:///project", "gopls")] = lspClientState{
+	m.states["go"] = &lspClientState{
 		rootURI: "file:///project",
 		cmd:     "gopls",
 		status:  model.LSPConnected,
 	}
-	m.states[clientKey("file:///project", "vscode-json-language-server")] = lspClientState{
+	m.states["json"] = &lspClientState{
 		rootURI: "file:///project",
 		cmd:     "vscode-json-language-server",
 		status:  model.LSPFailed,
@@ -584,19 +486,21 @@ func TestLSPManager_AggregateConnectedServerIgnoresBackgroundFailure(t *testing.
 
 func TestLSPManager_AggregateActiveFileFailureTakesPrecedence(t *testing.T) {
 	m := NewLSPManager(testLogger{})
+	t.Cleanup(m.Close)
 	m.mu.Lock()
 	m.activeFilePath = "/project/data.json"
 	// Compute the rootURI the same way the production code does so the
 	// state key matches regardless of platform (Linux: file:///project,
 	// Windows: file://<drive>:\project). The test is about aggregation
 	// precedence, not URI formatting.
-	rootURI := m.rootURIForFile(m.activeFilePath)
-	m.states[clientKey(rootURI, "gopls")] = lspClientState{
+	rootURI := fileURI(filepath.Dir(m.activeFilePath))
+	m.documents[m.activeFilePath] = &lspDocument{key: "json"}
+	m.states["go"] = &lspClientState{
 		rootURI: rootURI,
 		cmd:     "gopls",
 		status:  model.LSPConnected,
 	}
-	m.states[clientKey(rootURI, "vscode-json-language-server")] = lspClientState{
+	m.states["json"] = &lspClientState{
 		rootURI: rootURI,
 		cmd:     "vscode-json-language-server",
 		status:  model.LSPFailed,
@@ -611,48 +515,9 @@ func TestLSPManager_AggregateActiveFileFailureTakesPrecedence(t *testing.T) {
 	}
 }
 
-func TestScanProjectFiles_SkipNodeModules(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, "node_modules", "pkg"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "node_modules", "pkg", "index.js"), []byte("ignored"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "index.js"), []byte("not ignored"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	extSet := map[string]bool{".js": true}
-	files := scanProjectFiles(dir, extSet)
-	want := filepath.Join(dir, "index.js")
-	if len(files) != 1 || files[0] != want {
-		t.Fatalf("expected only %s, got %v", want, files)
-	}
-}
-
-func TestScanProjectFiles_SkipDotGit(t *testing.T) {
-	dir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(dir, ".git", "objects"), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, ".git", "objects", "pack.go"), []byte("ignored"), 0644); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.WriteFile(filepath.Join(dir, "work.go"), []byte("real"), 0644); err != nil {
-		t.Fatal(err)
-	}
-
-	extSet := map[string]bool{".go": true}
-	files := scanProjectFiles(dir, extSet)
-	want := filepath.Join(dir, "work.go")
-	if len(files) != 1 || files[0] != want {
-		t.Fatalf("expected only %s, got %v", want, files)
-	}
-}
-
 func TestProjectDiagnosticCounts_Empty(t *testing.T) {
 	m := NewLSPManager(testLogger{})
+	t.Cleanup(m.Close)
 	errs, warns, hints := m.ProjectDiagnosticCounts()
 	if errs != 0 || warns != 0 || hints != 0 {
 		t.Errorf("expected (0,0,0), got (%d,%d,%d)", errs, warns, hints)
@@ -661,6 +526,7 @@ func TestProjectDiagnosticCounts_Empty(t *testing.T) {
 
 func TestProjectDiagnosticCounts_Aggregates(t *testing.T) {
 	m := NewLSPManager(testLogger{})
+	t.Cleanup(m.Close)
 
 	m.setFileDiagnostics("/tmp/a.go", []model.LSPDiagnostic{
 		{Severity: model.DiagError},
@@ -687,6 +553,7 @@ func TestProjectDiagnosticCounts_Aggregates(t *testing.T) {
 
 func TestProjectDiagnosticCounts_AfterClear(t *testing.T) {
 	m := NewLSPManager(testLogger{})
+	t.Cleanup(m.Close)
 
 	m.setFileDiagnostics("/tmp/a.go", []model.LSPDiagnostic{
 		{Severity: model.DiagError},
@@ -701,6 +568,7 @@ func TestProjectDiagnosticCounts_AfterClear(t *testing.T) {
 
 func TestClientForFile_UnsupportedExt(t *testing.T) {
 	m := NewLSPManager(testLogger{})
+	t.Cleanup(m.Close)
 	c := m.clientForFile("/tmp/test.xyz")
 	if c != nil {
 		t.Error("clientForFile should return nil for unsupported extension")
@@ -709,22 +577,16 @@ func TestClientForFile_UnsupportedExt(t *testing.T) {
 
 func TestClientForFile_NoClient(t *testing.T) {
 	m := NewLSPManager(testLogger{})
+	t.Cleanup(m.Close)
 	c := m.clientForFile("/tmp/test.go")
 	if c != nil {
 		t.Error("clientForFile should return nil when no server is started")
 	}
 }
 
-func TestClientsForRootURI_Empty(t *testing.T) {
-	m := NewLSPManager(testLogger{})
-	clients := m.clientsForRootURI("file:///tmp")
-	if len(clients) != 0 {
-		t.Errorf("expected 0 clients, got %d", len(clients))
-	}
-}
-
 func TestUpdateFile_WrongClient(t *testing.T) {
 	m := NewLSPManager(testLogger{})
+	t.Cleanup(m.Close)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
@@ -734,6 +596,7 @@ func TestUpdateFile_WrongClient(t *testing.T) {
 
 func TestCloseFile_WrongClient(t *testing.T) {
 	m := NewLSPManager(testLogger{})
+	t.Cleanup(m.Close)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 

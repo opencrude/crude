@@ -1,6 +1,9 @@
 package viewmodel
 
-import "crude/tui/editor"
+import (
+	"crude/tui/editor"
+	"time"
+)
 
 // RefRow is one row in the references popup list.
 type RefRow struct {
@@ -22,16 +25,22 @@ type OutlineRow struct {
 // This is DISPLAY state — it tracks which LSP popups are open right now,
 // cursor positions within them, and the rendered data.
 type LSPPopupState struct {
-	RenameArmed      bool
-	OutlineOpen      bool
-	OutlineRows      []OutlineRow
-	OutlineCursor    int
-	ReferencesID     string
-	RefRows          []RefRow
-	RefCursor        int
-	CompletionID     string
-	CompletionItems  []editor.CompletionItem
-	CompletionCursor int
+	RenamePreview                 *lspRenamePreview
+	RenameArmed                   bool
+	OutlineOpen                   bool
+	OutlineRows                   []OutlineRow
+	OutlineCursor                 int
+	ReferencesID                  string
+	RefRows                       []RefRow
+	RefCursor                     int
+	CompletionID                  string
+	CompletionItems               []editor.CompletionItem
+	CompletionCursor              int
+	CompletionOwner               *editor.Editor
+	CompletionRevision            uint64
+	CompletionLine, CompletionCol int
+	CompletionDue                 time.Time
+	CompletionAutomatic           bool
 }
 
 // NewLSPPopupState creates an LSPPopupState with all fields zeroed.

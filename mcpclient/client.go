@@ -50,6 +50,9 @@ type Manager struct {
 	credentialDir string
 	credentialMu  sync.Mutex
 	authCallbacks map[string]*authorizationFlow
+	// Admission under mu precedes every add; Close rejects new work before
+	// joining connects and detached reconfiguration cleanup.
+	lifetimeTasks sync.WaitGroup
 }
 
 func New(root string) *Manager {
@@ -117,7 +120,8 @@ func (manager *Manager) Configure(configs map[string]captypes.ConnectionConfig) 
 			}
 			if existing.session != nil {
 				session := existing.session
-				go func() { _ = session.Close() }()
+				manager.lifetimeTasks.Add(1)
+				go func() { defer manager.lifetimeTasks.Done(); _ = session.Close() }()
 			}
 			existing.session = nil
 			existing.cancel = nil
@@ -211,7 +215,9 @@ func (manager *Manager) connect(ctx context.Context, id string, interactive bool
 	entry.interactiveAuth = interactive
 	entry.state.State, entry.state.Error = "connecting", ""
 	entry.state.AuthPending, entry.state.AuthURL = false, ""
+	manager.lifetimeTasks.Add(1)
 	manager.mu.Unlock()
+	defer manager.lifetimeTasks.Done()
 	defer func() {
 		manager.mu.Lock()
 		if current := manager.connections[id]; current == entry && current.epoch == epoch {
@@ -350,6 +356,9 @@ type headerTransport struct {
 }
 
 func (transport headerTransport) RoundTrip(request *http.Request) (*http.Response, error) {
+	if err := transport.lifetime.Err(); err != nil {
+		return nil, err
+	}
 	if request.URL.Scheme != transport.endpoint.Scheme || request.URL.Host != transport.endpoint.Host {
 		return nil, errors.New("credentials are bound to the configured MCP endpoint")
 	}
@@ -800,6 +809,9 @@ func (manager *Manager) Disconnect(id string) error {
 	cancel := entry.cancel
 	transport := entry.config.Transport
 	session := entry.session
+	if session != nil {
+		manager.lifetimeTasks.Add(1)
+	}
 	entry.session = nil
 	entry.cancel = nil
 	entry.interactiveAuth = false
@@ -810,6 +822,7 @@ func (manager *Manager) Disconnect(id string) error {
 		cancel()
 	}
 	if session != nil {
+		defer manager.lifetimeTasks.Done()
 		err := session.Close()
 		var exitError *exec.ExitError
 		if cancel != nil && transport == "stdio" && errors.As(err, &exitError) &&
@@ -842,4 +855,5 @@ func (manager *Manager) Close() {
 	for _, id := range ids {
 		_ = manager.Disconnect(id)
 	}
+	manager.lifetimeTasks.Wait()
 }

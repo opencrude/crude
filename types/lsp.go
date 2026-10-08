@@ -1,5 +1,85 @@
 package types
 
+import (
+	"path/filepath"
+	"strings"
+)
+
+// LSPServerSpec is the resolved launch contract shared by workspace and transport.
+type LSPServerSpec struct {
+	LanguageID            string
+	Command               string
+	Args                  []string
+	RootMarkers           []string
+	Environment           map[string]string
+	Settings              map[string]any
+	InitializationOptions map[string]any
+}
+
+// ResolveServer returns detached launch settings. AutoDetect gates only built-in
+// selection; explicit external definitions remain usable when it is off.
+func (s LSPSettings) ResolveServer(path string) (LSPServerSpec, bool) {
+	if !s.Enabled || s.Validate() != nil {
+		return LSPServerSpec{}, false
+	}
+	ext := strings.ToLower(filepath.Ext(path))
+	id, found := s.languageForExtension(ext)
+	cfg, configured := s.Languages[id]
+	if configured && !cfg.Enabled {
+		return LSPServerSpec{}, false
+	}
+	lang := languageByID(id)
+	cmd, args, explicit := s.ServerOverride(ext)
+	if !explicit {
+		if !s.AutoDetect || !found || lang.DefaultCmd == "" {
+			return LSPServerSpec{}, false
+		}
+		cmd, args = lang.DefaultCmd, append([]string(nil), lang.DefaultArgs...)
+	}
+	if cmd == "" {
+		return LSPServerSpec{}, false
+	}
+	wireID := id
+	switch ext {
+	case ".c", ".h":
+		wireID = "c"
+	case ".js", ".mjs", ".cjs":
+		wireID = "javascript"
+	case ".jsx":
+		wireID = "javascriptreact"
+	case ".tsx":
+		wireID = "typescriptreact"
+	case ".scss":
+		wireID = "scss"
+	case ".less":
+		wireID = "less"
+	case ".cs":
+		wireID = "csharp"
+	}
+	if cfg.LanguageID != "" {
+		wireID = cfg.LanguageID
+	}
+	if wireID == "" {
+		wireID = strings.TrimPrefix(ext, ".")
+	}
+	markers := lang.RootMarkers
+	if cfg.RootMarkers != nil {
+		markers = cfg.RootMarkers
+	}
+	spec := LSPServerSpec{LanguageID: wireID, Command: cmd, Args: args,
+		RootMarkers: append([]string(nil), markers...), Environment: cloneStringMap(cfg.Environment),
+		Settings: cloneJSONObject(cfg.Settings), InitializationOptions: cloneJSONObject(cfg.InitializationOptions)}
+	applyServerHints(&spec, s)
+	return spec, true
+}
+
+func CloneLSPSettings(s LSPSettings) LSPSettings {
+	s.Languages = cloneLanguages(s.Languages)
+	s.Servers = cloneStringMap(s.Servers)
+	s.ServerArgs = cloneStringSliceMap(s.ServerArgs)
+	return s
+}
+
 type LSPStatus int
 
 const (
@@ -46,12 +126,20 @@ type LSPSymbol struct {
 	Children []LSPSymbol
 }
 
+// LSPTextEdit positions use UTF-16 code units, as negotiated on the wire.
+type LSPTextEdit struct {
+	Line, Col, EndLine, EndCol int
+	NewText                    string
+}
+
 type CompletionItem struct {
-	Label         string
-	Detail        string
-	Documentation string
-	Kind          int
-	InsertText    string
+	TextEdit            *LSPTextEdit
+	AdditionalTextEdits []LSPTextEdit
+	Label               string
+	Detail              string
+	Documentation       string
+	Kind                int
+	InsertText          string
 }
 
 type ProjectInsights struct {

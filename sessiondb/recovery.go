@@ -25,11 +25,13 @@ type RecoveryCheckpoint struct {
 	ContextReason      string
 	OwnerData          []byte
 	TerminalSettlement json.RawMessage
+	InFlightTools      []provider.ChatMessage
 }
 
 type recoveryInput struct {
 	provider.UserInput
-	TerminalSettlement json.RawMessage `json:"terminal_settlement,omitempty"`
+	TerminalSettlement json.RawMessage        `json:"terminal_settlement,omitempty"`
+	InFlightTools      []provider.ChatMessage `json:"in_flight_tools,omitempty"`
 }
 
 // SaveRecoveryCheckpoint atomically persists the exact incident status,
@@ -76,7 +78,7 @@ func saveRecoveryCheckpointTx(tx *sql.Tx, sessionID string, checkpoint RecoveryC
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	pending, err := json.Marshal(recoveryInput{UserInput: checkpoint.PendingInput, TerminalSettlement: checkpoint.TerminalSettlement})
+	pending, err := json.Marshal(recoveryInput{UserInput: checkpoint.PendingInput, TerminalSettlement: checkpoint.TerminalSettlement, InFlightTools: checkpoint.InFlightTools})
 	if err != nil {
 		return fmt.Errorf("sessiondb: encode recovery input: %w", err)
 	}
@@ -311,6 +313,7 @@ func scanRecoveryCheckpoint(scanner recoveryScanner) (RecoveryCheckpoint, error)
 		return RecoveryCheckpoint{}, fmt.Errorf("sessiondb: decode recovery input: %w", err)
 	}
 	checkpoint.PendingInput, checkpoint.TerminalSettlement = input.UserInput, input.TerminalSettlement
+	checkpoint.InFlightTools = input.InFlightTools
 	if err := json.Unmarshal(archive, &checkpoint.Archive); err != nil {
 		return RecoveryCheckpoint{}, fmt.Errorf("sessiondb: decode recovery archive: %w", err)
 	}

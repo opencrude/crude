@@ -142,6 +142,9 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	}
 	m.Input.SetReferenceStore(nil)
 	m.Input.ClearInput()
+	m.composerHydratedFor = nil
+	m.composerDraftOwners = nil
+	m.composerDraftEpoch++
 
 	m.BufferMgr = editor.NewBufferManager()
 	m.EditorState = NewEditorState()

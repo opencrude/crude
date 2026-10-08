@@ -4,6 +4,7 @@ import (
 	"context"
 
 	"crude/tui/editor"
+	model "crude/types"
 	"crude/workspace"
 )
 
@@ -20,8 +21,9 @@ func newEditorLSPRuntime() workspace.LSPRuntime {
 	return editorLSPRuntime{}
 }
 
-func (editorLSPRuntime) NewClient(serverCmd string, serverArgs []string, rootURI string) workspace.LSPClient {
-	return &editorLSPClient{client: editor.NewLSPIntegration(serverCmd, serverArgs, rootURI)}
+func (editorLSPRuntime) NewClient(spec model.LSPServerSpec, rootURI string) workspace.LSPClient {
+	return &editorLSPClient{client: editor.NewLSPIntegration(spec.Command, spec.Args, rootURI,
+		editor.WithServerConfiguration(spec.Environment, spec.Settings, spec.InitializationOptions))}
 }
 
 func (c *editorLSPClient) OnDiagnostics(fn func(string, []workspace.LSPDiagnostic)) {
@@ -47,9 +49,6 @@ func (c *editorLSPClient) NotifySave(ctx context.Context, path, text string, rea
 func (c *editorLSPClient) NotifyWatchedFilesChanged(ctx context.Context, path string, changeType int) {
 	c.client.NotifyWatchedFilesChanged(ctx, path, changeType)
 }
-func (c *editorLSPClient) SyncFileFromDisk(ctx context.Context, path string, changeType int) {
-	c.client.SyncFileFromDisk(ctx, path, changeType)
-}
 func (c *editorLSPClient) RequestDefinition(ctx context.Context, path string, line, col int) []workspace.LSPLocation {
 	return c.client.RequestDefinition(ctx, path, line, col)
 }
@@ -67,25 +66,4 @@ func (c *editorLSPClient) RequestRename(ctx context.Context, path string, line, 
 }
 func (c *editorLSPClient) RequestCompletions(ctx context.Context, path string, line, col int) []workspace.CompletionItem {
 	return c.client.RequestCompletions(ctx, path, line, col)
-}
-
-func (editorLSPRuntime) ServerConfigForExt(ext string) (string, []string, bool) {
-	return editor.ServerConfigForExt(ext)
-}
-
-func (editorLSPRuntime) RootURIForFile(filePath string) string {
-	return editor.RootURIForFile(filePath)
-}
-
-func (editorLSPRuntime) LanguageID(ext string) string {
-	return editor.LanguageID(ext)
-}
-
-func (editorLSPRuntime) AllServerConfigs() map[string]workspace.LSPServerConfig {
-	configs := editor.AllServerConfigs()
-	out := make(map[string]workspace.LSPServerConfig, len(configs))
-	for ext, config := range configs {
-		out[ext] = workspace.LSPServerConfig{Cmd: config.Cmd, Args: append([]string(nil), config.Args...)}
-	}
-	return out
 }

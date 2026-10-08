@@ -410,9 +410,10 @@ Rules:
 
 - `View()` = bg fill → re-mount `mainSurf` → `configureShell()` (geometry
   via `computeContentLayout` + slot rects + screen projections) →
-  `renderShellToSurface()` (unconditional `MarkLayout` + `Paint`) → WM
-  render → composite. `syncRootFocus()` maps `focusTarget()` to the root
-  host's single focused component each frame.
+  `renderShellToSurface()` (unconditional `MarkLayout` + `Layout` → focus sync
+  → `Paint`) → WM render → composite. `syncRootFocus()` maps `focusTarget()`
+  to the root host's single focused component after the current content is
+  registered, before its first frame paints.
 - `renderShellToSurface` fills `mainSurf` with the theme background BEFORE
   the tree paints: unmounted slots (launcher replacing the editor, chat
   replacing the launcher, ...) must not leave their previous opaque cells
@@ -424,6 +425,12 @@ Rules:
   routing via `routeEditorMouse`, sidebar-divider drag, status row,
   context menus). Host pointer capture is the ONE capture service — hidden
   slots cancel capture via `Host.Layout` `validatePointerCapture`.
+- **Main-tab actions return keyboard focus to content.** Pointer selection,
+  close and overflow browsing never retain `FocusTabBar`; only deliberate
+  keyboard strip navigation keeps its heavy baseline until committed/exited.
+  Release a close action before a dirty-close modal captures return focus,
+  never at a late save acknowledgement. Background tab sync/completion must
+  preserve explicit focus. Guarded by `tab_action_focus_test.go`.
 - The editor screen stays input-no-op: editor keys/mouse route through
   viewmodel → `Editor.HandleEvent`. Deck panels keep their per-session
   `deckHost`; `deckMount` adapts paint (blit) and input (local coords).
@@ -929,6 +936,10 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
   context through one durable recovery checkpoint. Transcript, turn ledger and
   collaboration settlement must succeed before acknowledging natural completion.
   Finished parallel leaves checkpoint while siblings run, including native batches;
+  completed results receive their stable message IDs before their first checkpoint.
+  Evolving native-batch evidence lives in `RecoveryCheckpoint.InFlightTools`, not
+  the immutable active-message prefix. Completion clears only its exact evidence;
+  passive interruption preserves finished leaves and marks the remainder unknown.
   missing crash outcomes are unknown, never fabricated user cancellations.
   Preflight-blocked inputs keep their DB even without transcript rows. Pending
   children restore as actionable review surfaces, not completed or invisible work.
@@ -946,6 +957,13 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
   reservations and preserves prepared input without enqueueing execution.
   Stopped children use current authoritative context and retain newer facts;
   parent mirrors/results are separately checked, never silently acknowledged.
+  Root and child checkpoints both reconcile exact late lifecycle controls.
+  Runtime-note receipts commit before one complete batch checkpoint, never after
+  checkpointing reserved notes that a failed admission would try to remove.
+- `publish_report` is the mandatory child return channel, not an optional task-tool
+  allowlist member. Explicit denial is rejected before launch; schema projection,
+  dispatch and prompt permissions agree. Missing reporting infrastructure parks as
+  configuration failure before provider execution, never a model reminder loop.
 - Native file-ownership rejection is structural Needs attention and parks the
   unfinished child. Public `agent_narrow_claims` changes the caller's exact active
   claims; `agent_update_claims` changes only a stopped unfinished child at
@@ -958,6 +976,11 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
   per-wait maximum**, including Retry-After and millisecond/date hints. A server's
   24-hour hint must never cause an hours-long local retry sleep. Request/job
   attempt budgets and successful maintenance cadence remain separate.
+- Shared HTTP recovery uses status evidence, not generic error-envelope labels:
+  `invalid_request_error` must not turn 408/429/5xx into a permanent settings
+  fault. Specific auth/quota/validation evidence and explicit retry vetoes remain
+  non-retryable. Test every registered protocol plus real root/child timer expiry;
+  an SSE-only adapter test does not cover a gateway's HTTP JSON rejection.
 - Recovery uses one compact, expandable incident row. Automatic transport/DNS
   recovery needs no `/retry`; a real countdown and exact-owner `(Retry now)`
   action can shorten its cooldown. A red square blinks on the shared activity
@@ -1241,6 +1264,12 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   `workspace.ReferenceStore.RestorePrompt` imports session-owned media off the UI
   thread. A late result never overwrites a newer draft. Missing media fails
   closed; history eviction must not delete a session's restored attachments.
+- Composer session activation owns reference binding and draft restoration,
+  never Paint. Warm sessions retain their complete editor; cold loads are
+  activation/revision-fenced and cannot overwrite explicit history recall.
+  Bind the destination store before recalled IDs, preserve literal bracketed
+  prose, flush inactive queued drafts, and never let a stale paste completion
+  consume another session's numeric paste ID or release its Send barrier.
 - Permission, question and tool-projection lifecycle events never own the chat
   composer. Opening or completing a blocking deck/overlay may move focus but
   must preserve the exact draft text, attachment references, cursor, selection,

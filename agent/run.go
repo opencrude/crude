@@ -315,6 +315,12 @@ func (a *Agent) Run(
 				appendWire(notice)
 			}
 		}
+		if a.Depth > 0 && !a.reportPublished && findToolDef("publish_report", a.FilteredTools) == nil {
+			err := fmt.Errorf("required child report tool publish_report is unavailable; repair the effective tool configuration")
+			a.setRunFailure(err, rootprompt.RecoveryInterrupted, RecoveryFailureConfiguration)
+			a.emitError(emit, err)
+			return returnMessages()
+		}
 
 		drainRuntime := func() (int, error) {
 			if a.FlushRuntimeMessages != nil {
@@ -360,31 +366,45 @@ func (a *Agent) Run(
 			return returnMessages()
 		}
 		var runtimeNoticeIDs []string
+		var runtimeNotices []provider.ChatMessage
 		if a.PrepareRuntimeNotices != nil {
-			for _, notice := range a.PrepareRuntimeNotices() {
-				appendWire(notice)
-				runtimeNoticeIDs = append(runtimeNoticeIDs, notice.InternalID)
-			}
+			runtimeNotices = a.PrepareRuntimeNotices()
 		}
 		runtimeNoticesAccepted := false
+		if len(runtimeNotices) > 0 && a.CommitRuntimeNotices != nil {
+			// Admission owns these facts and receipts. Never checkpoint a reserved
+			// notice first and then remove that committed message if admission fails.
+			prospective := append(append([]provider.ChatMessage(nil), msgs...), runtimeNotices...)
+			if err := a.CommitRuntimeNotices(prospective); err != nil {
+				a.setRunFailure(err, rootprompt.RecoveryInterrupted, RecoveryFailureStorage)
+				a.emitError(emit, fmt.Errorf("runtime notice context admission failed: %w", err))
+				return returnMessages()
+			}
+			runtimeNoticesAccepted = true
+		}
+		if len(runtimeNotices) > 0 {
+			appendWire(runtimeNotices...)
+		}
+		for _, notice := range runtimeNotices {
+			runtimeNoticeIDs = append(runtimeNoticeIDs, notice.InternalID)
+		}
+		if len(runtimeNotices) > 0 && a.Checkpoint != nil && checkpointErr == nil {
+			runtimeNoticesAccepted = true
+		}
+		if runtimeNoticesAccepted && a.RuntimeNoticesAccepted != nil {
+			a.RuntimeNoticesAccepted()
+		}
+		if checkpointErr != nil {
+			a.setRunFailure(checkpointErr, rootprompt.RecoveryInterrupted, RecoveryFailureStorage)
+			a.emitError(emit, fmt.Errorf("persist admitted runtime boundary: %w", checkpointErr))
+			return returnMessages()
+		}
 		clearUnsentRuntimeNotices := func() {
 			if runtimeNoticesAccepted || len(runtimeNoticeIDs) == 0 {
 				return
 			}
 			msgs = removeMessagesByInternalID(msgs, runtimeNoticeIDs)
 			archiveMsgs = removeMessagesByInternalID(archiveMsgs, runtimeNoticeIDs)
-		}
-		if len(runtimeNoticeIDs) > 0 && a.CommitRuntimeNotices != nil {
-			if err := a.CommitRuntimeNotices(append([]provider.ChatMessage(nil), msgs...)); err != nil {
-				clearUnsentRuntimeNotices()
-				a.setRunFailure(err, rootprompt.RecoveryInterrupted, RecoveryFailureStorage)
-				a.emitError(emit, fmt.Errorf("runtime notice context admission failed: %w", err))
-				return returnMessages()
-			}
-			runtimeNoticesAccepted = true
-			if a.RuntimeNoticesAccepted != nil {
-				a.RuntimeNoticesAccepted()
-			}
 		}
 		ctxWindow = a.Provider.ContextWindow(a.Model)
 		if a.ContextCompactionPercent > 0 && ctxWindow > 0 {
@@ -939,24 +959,36 @@ func (a *Agent) Run(
 		emit(AgentEvent{Type: "phase", Data: "executing"})
 
 		results := make([]execResult, len(toolCalls))
+		resultMessages := make([]provider.ChatMessage, len(toolCalls))
+		resultIDs := make([]string, len(toolCalls))
+		for i := range resultIDs {
+			resultIDs[i] = fmt.Sprintf("msg-%016x%016x", rand2.Uint64(), rand2.Uint64())
+		}
 		receivedResults := make([]bool, len(toolCalls))
 		partialResults := make(map[int]execResult)
 		checkpointResults := func() {
-			if a.Checkpoint == nil {
+			if a.Checkpoint == nil && a.CheckpointTools == nil {
 				return
 			}
 			partial := make([]provider.ChatMessage, 0, len(results))
+			var inFlight []provider.ChatMessage
 			for i, done := range receivedResults {
 				if done {
-					partial = append(partial, toolResultMessage(results[i], len(results)))
+					partial = append(partial, resultMessages[i])
 				} else if progress, ok := partialResults[i]; ok {
-					partial = append(partial, toolResultMessage(progress, len(results)))
+					message := toolResultMessage(progress, len(results))
+					message.InternalID = resultIDs[i] + "-interrupted"
+					inFlight = append(inFlight, message)
 				}
 			}
 			a.lastArchive = append(append([]provider.ChatMessage(nil), archiveMsgs...), partial...)
 			a.lastActiveContext = append(append([]provider.ChatMessage(nil), msgs[1:]...), partial...)
 			if checkpointErr == nil {
-				checkpointErr = a.Checkpoint(a.ArchiveContext(), a.ActiveContext())
+				if a.CheckpointTools != nil {
+					checkpointErr = a.CheckpointTools(a.ArchiveContext(), a.ActiveContext(), inFlight)
+				} else {
+					checkpointErr = a.Checkpoint(a.ArchiveContext(), a.ActiveContext())
+				}
 			}
 		}
 		var uncertain error
@@ -1000,7 +1032,7 @@ func (a *Agent) Run(
 				}
 			}
 			batchEmit := func(event AgentEvent) {
-				if event.Type == "tool_call_streaming" && a.Checkpoint != nil {
+				if event.Type == "tool_call_streaming" && a.CheckpointTools != nil {
 					data, _ := event.Data.(map[string]any)
 					id, _ := data["tool_id"].(string)
 					content, _ := data["content"].(string)
@@ -1012,7 +1044,7 @@ func (a *Agent) Run(
 							if encodeErr == nil {
 								select {
 								case progressCh <- execResult{index: index, id: id, name: "multi_tool_use.parallel",
-									result: tools.ToolResult{Content: string(encoded)}, toolError: true}:
+									result: tools.ToolResult{Content: string(encoded), Attachments: checkpointAttachments(data)}, toolError: true}:
 								case <-ctx.Done():
 								}
 							}
@@ -1036,6 +1068,8 @@ func (a *Agent) Run(
 				}
 				if r.index >= 0 && r.index < len(results) {
 					results[r.index] = r
+					resultMessages[r.index] = toolResultMessage(r, len(results))
+					resultMessages[r.index].InternalID = resultIDs[r.index]
 					receivedResults[r.index] = true
 					if r.failure != nil {
 						uncertain = r.failure
@@ -1068,7 +1102,12 @@ func (a *Agent) Run(
 		var lastToolResultIdx int
 		toolMessages := make([]provider.ChatMessage, 0, len(results))
 		for _, result := range results {
-			toolMessages = append(toolMessages, toolResultMessage(result, len(results)))
+			message := resultMessages[result.index]
+			if message.InternalID == "" {
+				message = toolResultMessage(result, len(results))
+				message.InternalID = resultIDs[result.index]
+			}
+			toolMessages = append(toolMessages, message)
 		}
 		// Collection already checkpointed finished siblings. Publish the complete
 		// round together instead of temporarily regressing to its first result.
@@ -1158,6 +1197,11 @@ func (a *Agent) Run(
 			return returnMessages()
 		}
 	}
+}
+
+func checkpointAttachments(data map[string]any) []provider.ContentPart {
+	attachments, _ := data["checkpoint_attachments"].([]provider.ContentPart)
+	return append([]provider.ContentPart(nil), attachments...)
 }
 
 func toolResultMessage(result execResult, count int) provider.ChatMessage {

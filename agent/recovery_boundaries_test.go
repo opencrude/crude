@@ -200,6 +200,9 @@ func checkCompletedParallelSibling(t *testing.T, batch bool) {
 		}
 		return nil
 	}
+	a.CheckpointTools = func(archive, active, inFlight []provider.ChatMessage) error {
+		return a.Checkpoint(archive, append(append([]provider.ChatMessage(nil), active...), inFlight...))
+	}
 	ctx, cancel := context.WithTimeout(t.Context(), 3*time.Second)
 	defer cancel()
 	done := make(chan struct{})

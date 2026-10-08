@@ -71,18 +71,10 @@ func (m *App) openEditorTab(path string) (tea.Cmd, error) {
 
 	// Wire content changes to LSP manager.
 	ed.SetOnContentChanged(func(fp, text string) { m.onEditorContentChanged(ed, fp, text) })
-	// Open the file on the LSP server asynchronously. didOpen can block on the
-	// server pipe; editor tabs must become interactive immediately.
-	var lspOpenCmd tea.Cmd
+	// Register the exact editor lifetime immediately. The manager owns async
+	// discovery/start; a close cannot be overtaken by an old tea.Cmd didOpen.
 	if m.LSPMgr != nil {
-		lspMgr := m.LSPMgr
-		text := ed.Value()
-		lspOpenCmd = func() tea.Msg {
-			lspCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-			defer cancel()
-			lspMgr.OpenFile(lspCtx, path, text)
-			return nil
-		}
+		m.LSPMgr.OpenFile(context.Background(), path, ed.Value())
 	}
 
 	// Apply cached diagnostics immediately so the editor is never empty
@@ -111,7 +103,7 @@ func (m *App) openEditorTab(path string) (tea.Cmd, error) {
 		m.handleTabSwitch()
 	}
 
-	return tea.Batch(lspOpenCmd, m.refreshEditorGitCmd()), nil
+	return m.refreshEditorGitCmd(), nil
 }
 
 // jumpToDiagnostic opens the file containing the given diagnostic
@@ -268,6 +260,8 @@ func (m *App) closeEditorTab() {
 	if m.activeEditorPath() == "" {
 		return
 	}
+	m.releaseTabBarFocus()
+	defer m.syncRootFocus()
 	path := m.activeEditorPath()
 
 	// If the tab has unsaved edits, prompt before destroying the
@@ -420,6 +414,8 @@ func (m *App) retitleEditorWindowTab(oldPath, newPath string, ed *editor.Editor)
 // buffers are never discarded here: the walk stops at the first dirty tab and
 // opens the unsaved-changes prompt.
 func (m *App) closeAllEditorTabsExcept(path string) {
+	m.releaseTabBarFocus()
+	defer m.syncRootFocus()
 	toClose := []string{}
 	for p := range m.EditorState.Tabs {
 		if p != path {
@@ -467,6 +463,8 @@ func (m *App) abortPendingTabClose() {
 // closeEditorTabsToRightOf closes every tab whose index is greater
 // than the given window-tab index. Dirty buffers are prompted, not destroyed.
 func (m *App) closeEditorTabsToRightOf(idx int) {
+	m.releaseTabBarFocus()
+	defer m.syncRootFocus()
 	tabs := m.Win.Tabs()
 	toClose := make([]string, 0, len(tabs))
 	for i := len(tabs) - 1; i > idx; i-- {

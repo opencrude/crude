@@ -25,6 +25,7 @@ type promptHistoryRestoredMsg struct {
 	session    *workspace.Session
 	store      *workspace.ReferenceStore
 	generation uint64
+	revision   uint64
 	draft      string
 	text       string
 	refIDs     []string
@@ -32,12 +33,21 @@ type promptHistoryRestoredMsg struct {
 }
 
 func (m *App) recallPrompt(event input.HistoryRecallEvent) tea.Cmd {
+	if !m.Input.HistoryRecallCurrent(event.Generation) {
+		return nil
+	}
 	if len(event.Entry.Attachments) == 0 {
+		if store := m.RefStore(); store != nil {
+			m.Input.SetReferenceStore(store)
+		} else {
+			m.Input.SetReferenceStore(nil)
+		}
 		m.Input.FinishHistoryRecall(event.Generation, event.Entry.Text, nil, true)
 		m.persistComposerDraftIfChanged()
 		return nil
 	}
 	owner, store, draft := m.ActiveSession, m.RefStore(), m.Input.Value()
+	revision := m.Input.DraftRevision()
 	if store == nil {
 		m.Input.FinishHistoryRecall(event.Generation, "", nil, false)
 		m.Feedback.NotifyError("Open an agent session to restore attachments")
@@ -45,7 +55,7 @@ func (m *App) recallPrompt(event input.HistoryRecallEvent) tea.Cmd {
 	}
 	return func() tea.Msg {
 		text, ids, err := store.RestorePrompt(event.Entry)
-		return promptHistoryRestoredMsg{session: owner, store: store, generation: event.Generation, draft: draft, text: text, refIDs: ids, err: err}
+		return promptHistoryRestoredMsg{session: owner, store: store, generation: event.Generation, revision: revision, draft: draft, text: text, refIDs: ids, err: err}
 	}
 }
 
@@ -53,9 +63,16 @@ func (m *App) applyPromptHistory(msg promptHistoryRestoredMsg) {
 	if msg.session != m.ActiveSession || msg.store != m.RefStore() || !m.Input.HistoryRecallCurrent(msg.generation) {
 		return
 	}
-	if msg.draft != m.Input.Value() {
+	if msg.revision != m.Input.DraftRevision() || msg.draft != m.Input.Value() {
 		m.Input.FinishHistoryRecall(msg.generation, "", nil, false)
 		return
+	}
+	// Recall imports into the session store, which need not yet be the
+	// shell input's projection (for example after creating a session from
+	// the launcher). Bind that same owner before installing its exact IDs.
+	// Otherwise the labels paint as prose and Send drops every attachment.
+	if msg.err == nil {
+		m.Input.SetReferenceStore(msg.store)
 	}
 	if !m.Input.FinishHistoryRecall(msg.generation, msg.text, msg.refIDs, msg.err == nil) {
 		return

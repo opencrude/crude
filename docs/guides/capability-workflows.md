@@ -145,6 +145,11 @@ download, update or tool replay.
    Disable/remove operates on the same authoritative registration, with no hidden
    install record that can resurrect it.
 
+Closing the MCP manager joins admitted connection attempts and reconfiguration
+cleanup. A cancelled connection lifetime rejects late HTTP requests before they
+reach the transport. Loopback OAuth cleanup uses bounded graceful shutdown so
+receiving the code cannot close the browser acknowledgement mid-response.
+
 The shared passive observer runs while Settings or a capability sidebar is open,
 even after an active agent removes the launcher screen. It updates the retained
 Settings frame without Refresh/reopen or transport reconfiguration. An inspected

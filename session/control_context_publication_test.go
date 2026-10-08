@@ -2,6 +2,7 @@ package session
 
 import (
 	"errors"
+	"fmt"
 	"reflect"
 	"testing"
 	"time"
@@ -198,6 +199,68 @@ func TestCommittedRecoveryMergeRejectsDuplicateOrChangedIDsWithoutMutation(t *te
 			var conflict *sessiondb.ContextMessageConflictError
 			if !errors.As(err, &conflict) || conflict.InternalID != control.InternalID || !reflect.DeepEqual(before, run.checkpoint(recoverytypes.Status{})) {
 				t.Fatalf("changed/duplicate identity was accepted or mutated its source: error=%v", err)
+			}
+		})
+	}
+}
+
+func TestChildCheckpointAdoptsLateControlWithoutDroppingAcceptedOutput(t *testing.T) {
+	for _, corrupt := range []bool{false, true} {
+		t.Run(fmt.Sprintf("corrupt=%t", corrupt), func(t *testing.T) {
+			db := sessiondb.OpenAndMigrateAt(t.TempDir())
+			defer db.Close()
+			if err := sessiondb.CreateSessionRow(db, "child"); err != nil {
+				t.Fatal(err)
+			}
+			original := canonicalContextMessage(provider.NewTextMessage("user", "original assignment"))
+			original.InternalID = "assignment"
+			initial, err := sessiondb.PublishContext(db, sessiondb.ContextPublication{SessionID: "child", AgentID: "child", Mutation: sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: 1, Reason: "test", Messages: []provider.ChatMessage{original}}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			run := newRecoveryRunState(provider.UserInput{}, &sessiondb.RecoveryCheckpoint{ContextOwnerID: "child", ContextRevision: initial.Revision, ContextGeneration: 1, ContextReason: "test", Archive: initial.Messages, ActiveContext: initial.Messages})
+			accepted := provider.NewTextMessage("assistant", "accepted work")
+			accepted.InternalID = "accepted"
+			snapshot := append(append([]provider.ChatMessage(nil), initial.Messages...), accepted)
+			run.snapshot(snapshot, snapshot)
+			control := collaborationMessage(collaboration.PendingDelivery{Event: collaboration.Event{ID: "pause", Origin: collaboration.OriginHuman, Kind: collaboration.EventLifecycleControl, RunID: "exact-run", Body: "Pause", References: []collaboration.Reference{{Kind: "control", ID: "pause", Revision: 1}}}})
+			current, err := sessiondb.PublishContext(db, sessiondb.ContextPublication{SessionID: "child", AgentID: "child", ExpectedRevision: initial.Revision, Mutation: sessiondb.ContextMutation{Append: []sessiondb.ContextMessageDelta{contextDelta(control, sessiondb.DisplayMeta{ContextOnly: true}, 0, time.Now(), "child")}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if corrupt {
+				run.active[0].Content = provider.TextContent("changed assignment")
+			}
+			err = publishChildRecovery(db, "child", run, recoverytypes.Status{ID: "incident", AgentID: "child", Generation: 1})
+			if corrupt {
+				if err == nil {
+					t.Fatal("corrupted original was accepted")
+				}
+				got, _, loadErr := sessiondb.LoadContextState(db, "child", "child")
+				if loadErr != nil || !reflect.DeepEqual(got, current) {
+					t.Fatal("rejected checkpoint changed authority")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("late exact control wedged child publication: %v", err)
+			}
+			checkpoint, ok, err := sessiondb.LoadRecoveryCheckpoint(db, "child", "child")
+			if err != nil || !ok {
+				t.Fatal(err)
+			}
+			for _, messages := range [][]provider.ChatMessage{checkpoint.Archive, checkpoint.ActiveContext} {
+				for _, id := range []string{"assignment", "accepted", "pause"} {
+					count := 0
+					for _, m := range messages {
+						if m.InternalID == id {
+							count++
+						}
+					}
+					if count != 1 {
+						t.Fatalf("%s count=%d", id, count)
+					}
+				}
 			}
 		})
 	}

@@ -392,6 +392,15 @@ func (m *Model) BeginSave() bool {
 	if m == nil || m.saving || m.accountBusy {
 		return false
 	}
+	if form := m.categories[catLSP].Form; form != nil {
+		form.ValidateAll()
+		if form.AnyErrors() {
+			m.saveError = "Correct the highlighted Language Servers fields before saving."
+			m.SelectCategory(catLSP)
+			m.EnterForm()
+			return false
+		}
+	}
 	m.saving = true
 	m.saveError = ""
 	m.saveDisabled = make(map[*ui.FieldState]bool)
@@ -2506,89 +2515,6 @@ func (m *Model) collectAppearance(cfg *types.ThemeSettings) {
 
 func (m *Model) collectEditor(cfg *types.EditorSettings) {
 	*cfg = types.EditorSettings{TabSize: parseOpt(m.value(catEditor, "tab-size"), 4), WordWrap: m.value(catEditor, "word-wrap") == "on", LineNumbers: m.value(catEditor, "line-numbers") == "on", SyntaxTheme: m.value(catEditor, "syntax-theme"), RenderWhitespace: m.value(catEditor, "render-whitespace"), AutoSave: types.AutoSaveMode(m.value(catEditor, "auto-save")), AutoSaveDelay: parseOpt(m.value(catEditor, "auto-save-delay"), 1000), FormatOnSave: m.value(catEditor, "format-on-save") == "on"}
-}
-
-func (m *Model) collectLSP(cfg *types.LSPSettings) {
-	lsp := types.NormalizeLSP(types.LSPSettings{
-		Enabled:          m.value(catLSP, "enabled") == "on",
-		AutoDetect:       m.value(catLSP, "auto-detect") == "on",
-		StartOnOpen:      m.value(catLSP, "start-on-open") == "on",
-		Diagnostics:      m.value(catLSP, "diagnostics") == "on",
-		Completions:      m.value(catLSP, "completions") == "on",
-		Hover:            m.value(catLSP, "hover") == "on",
-		Definition:       m.value(catLSP, "goto-definition") == "on",
-		References:       m.value(catLSP, "find-references") == "on",
-		Outline:          m.value(catLSP, "outline") == "on",
-		Rename:           m.value(catLSP, "rename") == "on",
-		DiagInEditor:     m.value(catLSP, "diag-editor") == "on",
-		DiagInTree:       m.value(catLSP, "diag-tree") == "on",
-		DiagInStatus:     m.value(catLSP, "diag-status") == "on",
-		AutoComplete:     m.value(catLSP, "auto-complete") == "on",
-		MinSeverity:      m.value(catLSP, "min-severity"),
-		UpdateDebounceMS: parseOpt(m.value(catLSP, "debounce"), 300),
-		Languages:        make(map[string]types.LSPLanguageSettings),
-	})
-	for _, lang := range types.DefaultLSPLanguages() {
-		enabled := m.value(catLSP, "lang-"+lang.ID+"-enabled") == "on"
-		cmd := m.value(catLSP, "lang-"+lang.ID+"-cmd")
-		args := splitArgs(m.value(catLSP, "lang-"+lang.ID+"-args"))
-		if cmd == "" {
-			cmd = lang.DefaultCmd
-		}
-		if len(args) == 0 {
-			args = append([]string(nil), lang.DefaultArgs...)
-		}
-		lsp.Languages[lang.ID] = types.LSPLanguageSettings{Enabled: enabled, Command: cmd, Args: args}
-	}
-	*cfg = lsp
-}
-
-func splitArgs(s string) []string {
-	s = strings.TrimSpace(s)
-	if s == "" {
-		return nil
-	}
-	return strings.Fields(s)
-}
-
-func (m *Model) buildLSPForm(lsp types.LSPSettings) *ui.FormModel {
-	lsp = types.NormalizeLSP(lsp)
-	fields := []*ui.FieldState{
-		ui.SeparatorFieldState("language-intelligence", "Language intelligence"),
-		ui.BoolFieldState("enabled", "Enabled", lsp.Enabled, "Master switch for language servers in this scope."),
-		ui.BoolFieldState("auto-detect", "Auto-detect", lsp.AutoDetect, "Start a server from files present in the project."),
-		ui.BoolFieldState("start-on-open", "Start on open", lsp.StartOnOpen, "Launch detected servers when the workspace opens."),
-		ui.TextFieldState("debounce", "Update delay", fmt.Sprintf("%d", lsp.UpdateDebounceMS), "Milliseconds to wait after an edit before notifying the server."),
-		ui.SeparatorFieldState("features", "Features"),
-		ui.BoolFieldState("diagnostics", "Diagnostics", lsp.Diagnostics, "Publish errors, warnings, and hints from the server."),
-		ui.BoolFieldState("completions", "Completions", lsp.Completions, "Offer completion items at the cursor."),
-		ui.BoolFieldState("auto-complete", "Auto-complete", lsp.AutoComplete, "Trigger completions while typing."),
-		ui.BoolFieldState("hover", "Hover", lsp.Hover, "Show symbol documentation under the cursor."),
-		ui.BoolFieldState("goto-definition", "Go to definition", lsp.Definition, "Jump to the symbol definition."),
-		ui.BoolFieldState("find-references", "Find references", lsp.References, "List every reference to the symbol."),
-		ui.BoolFieldState("outline", "Document outline", lsp.Outline, "Build the file symbol outline."),
-		ui.BoolFieldState("rename", "Rename", lsp.Rename, "Rename the symbol across the project."),
-		ui.SeparatorFieldState("diagnostic-display", "Diagnostic display"),
-		ui.BoolFieldState("diag-editor", "In editor", lsp.DiagInEditor, "Underline issues in the open buffer."),
-		ui.BoolFieldState("diag-tree", "In file tree", lsp.DiagInTree, "Show issue counts on files in the sidebar."),
-		ui.BoolFieldState("diag-status", "In status bar", lsp.DiagInStatus, "Show project-wide error and warning totals."),
-		ui.CycleFieldState("min-severity", "Minimum severity", []string{"error", "warning", "info", "hint"}, lsp.MinSeverity, "Hide diagnostics weaker than this level."),
-		ui.SeparatorFieldState("servers", "Language servers"),
-	}
-	for _, lang := range types.DefaultLSPLanguages() {
-		cfg := lsp.Languages[lang.ID]
-		if cfg.Command == "" {
-			cfg.Command = lang.DefaultCmd
-			cfg.Args = append([]string(nil), lang.DefaultArgs...)
-			cfg.Enabled = true
-		}
-		fields = append(fields,
-			ui.BoolFieldState("lang-"+lang.ID+"-enabled", lang.Name, cfg.Enabled, "Start this server when matching files are present."),
-			ui.TextFieldState("lang-"+lang.ID+"-cmd", lang.ID+" command", cfg.Command, "Executable used for "+lang.Name+"."),
-			ui.TextFieldState("lang-"+lang.ID+"-args", lang.ID+" args", strings.Join(cfg.Args, " "), "Command arguments, space-separated."),
-		)
-	}
-	return formModel(fields...)
 }
 
 func (m *Model) collectUI(cfg *types.UISettings) {

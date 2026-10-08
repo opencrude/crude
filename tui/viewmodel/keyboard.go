@@ -2,7 +2,6 @@ package viewmodel
 
 import (
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -330,7 +329,11 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		return m, m.handleOutlinePopupKey(msg)
 	}
 	if m.LSPPopup.CompletionID != "" {
-		return m, m.handleCompletionPopupKey(msg)
+		switch msg.String() {
+		case "down", "up", "tab", "enter", "esc":
+			return m, m.handleCompletionPopupKey(msg)
+		}
+		m.closeCompletionPopup()
 	}
 	// LSP keybinds (only when a file is open and the LSP is up).
 	if m.EditorState.Editor.IsOpen() && m.LSPMgr != nil {
@@ -345,6 +348,8 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			return m, m.startRenameCmd()
 		case "ctrl+space": // LSP completion
 			return m, m.requestCompletionCmd()
+		case "alt+k":
+			return m, m.requestLSPHoverCmd()
 		case "f8": // next error (or first error in project on first press)
 			if m.EditorState.Editor.CursorLine() == 0 && m.EditorState.Editor.CursorCol() == 0 && m.EditorState.Editor.FirstError() != nil {
 				// Cursor at the very top: jump to first project error.
@@ -429,7 +434,12 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 		case "references-popup":
 			return m, m.handleReferencesPopupKey(msg)
 		case "completion-popup":
-			return m, m.handleCompletionPopupKey(msg)
+			switch msg.String() {
+			case "down", "up", "tab", "enter", "esc":
+				return m, m.handleCompletionPopupKey(msg)
+			}
+			m.closeCompletionPopup()
+			return m.dispatchEditorKey(msg)
 		case "outline-popup":
 			return m, m.handleOutlinePopupKey(msg)
 		case "command-palette":
@@ -459,6 +469,9 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 				cmds = append(cmds, cmd)
 			}
 			return m, tea.Batch(cmds...)
+
+		case string(lspRenameOverlay):
+			return m, m.forwardEventToWindowContent(fw, msg)
 
 		case "workspace-settings":
 			// Must forward Esc into the surface so CancelMsg can revert a live
@@ -857,6 +870,8 @@ func (m *App) pasteToWindowContent(fw *wm.FloatingWindow, msg tea.PasteMsg) tea.
 // lspDefinitionResultMsg is the response to a "go to definition" request.
 // locations is empty when the symbol has no definition or the request failed.
 type lspDefinitionResultMsg struct {
+	owner      *editor.Editor
+	revision   uint64
 	generation uint64
 	filePath   string
 	locations  []editor.LSPLocation
@@ -864,6 +879,8 @@ type lspDefinitionResultMsg struct {
 
 // lspReferencesResultMsg is the response to a "find references" request.
 type lspReferencesResultMsg struct {
+	owner      *editor.Editor
+	revision   uint64
 	generation uint64
 	filePath   string
 	locations  []editor.LSPLocation
@@ -872,6 +889,8 @@ type lspReferencesResultMsg struct {
 // lspDocumentSymbolsResultMsg is the response to a "document symbols" request.
 // symbols is empty when the file has no symbols (empty file, server unsupported).
 type lspDocumentSymbolsResultMsg struct {
+	owner      *editor.Editor
+	revision   uint64
 	generation uint64
 	filePath   string
 	symbols    []editor.LSPSymbol
@@ -879,6 +898,8 @@ type lspDocumentSymbolsResultMsg struct {
 
 // lspRenameResultMsg is the response to a "rename" request.
 type lspRenameResultMsg struct {
+	owner      *editor.Editor
+	revision   uint64
 	generation uint64
 	filePath   string
 	newName    string
@@ -888,6 +909,9 @@ type lspRenameResultMsg struct {
 
 // lspCompletionResultMsg is the response to a "completion" request.
 type lspCompletionResultMsg struct {
+	automatic  bool
+	owner      *editor.Editor
+	revision   uint64
 	generation uint64
 	filePath   string
 	line       int
@@ -901,7 +925,7 @@ func (m *App) requestDefinitionCmd() tea.Cmd {
 		return nil
 	}
 	filePath := m.EditorState.Editor.FilePath()
-	line, col := m.EditorState.Editor.CursorLine(), m.EditorState.Editor.CursorCol()
+	line, col := m.EditorState.Editor.LSPCursorPosition()
 	conn, status, _ := m.LSPMgr.Status()
 	if !conn || status != editor.LSPConnected {
 		m.Feedback.NotifyInfo("LSP not ready")
@@ -909,9 +933,10 @@ func (m *App) requestDefinitionCmd() tea.Cmd {
 	}
 	lspMgr := m.LSPMgr
 	ctx, generation := m.lspRequestContext()
+	owner, revision := m.EditorState.Editor, m.EditorState.Editor.Revision()
 	return tea.Cmd(func() tea.Msg {
 		locs := lspMgr.RequestDefinition(ctx, filePath, line, col)
-		return lspDefinitionResultMsg{generation: generation, filePath: filePath, locations: locs}
+		return lspDefinitionResultMsg{owner: owner, revision: revision, generation: generation, filePath: filePath, locations: locs}
 	})
 }
 
@@ -921,7 +946,7 @@ func (m *App) requestReferencesCmd() tea.Cmd {
 		return nil
 	}
 	filePath := m.EditorState.Editor.FilePath()
-	line, col := m.EditorState.Editor.CursorLine(), m.EditorState.Editor.CursorCol()
+	line, col := m.EditorState.Editor.LSPCursorPosition()
 	conn, status, _ := m.LSPMgr.Status()
 	if !conn || status != editor.LSPConnected {
 		m.Feedback.NotifyInfo("LSP not ready")
@@ -929,9 +954,10 @@ func (m *App) requestReferencesCmd() tea.Cmd {
 	}
 	lspMgr := m.LSPMgr
 	ctx, generation := m.lspRequestContext()
+	owner, revision := m.EditorState.Editor, m.EditorState.Editor.Revision()
 	return tea.Cmd(func() tea.Msg {
 		locs := lspMgr.FindReferences(ctx, filePath, line, col, true)
-		return lspReferencesResultMsg{generation: generation, filePath: filePath, locations: locs}
+		return lspReferencesResultMsg{owner: owner, revision: revision, generation: generation, filePath: filePath, locations: locs}
 	})
 }
 
@@ -949,9 +975,10 @@ func (m *App) requestDocumentSymbolsCmd() tea.Cmd {
 	}
 	lspMgr := m.LSPMgr
 	ctx, generation := m.lspRequestContext()
+	owner, revision := m.EditorState.Editor, m.EditorState.Editor.Revision()
 	return tea.Cmd(func() tea.Msg {
 		syms := lspMgr.RequestDocumentSymbols(ctx, filePath)
-		return lspDocumentSymbolsResultMsg{generation: generation, filePath: filePath, symbols: syms}
+		return lspDocumentSymbolsResultMsg{owner: owner, revision: revision, generation: generation, filePath: filePath, symbols: syms}
 	})
 }
 
@@ -967,11 +994,24 @@ func (m *App) startRenameCmd() tea.Cmd {
 		m.Feedback.NotifyInfo("LSP not ready")
 		return nil
 	}
-	// Arm rename mode: the next text submitted through the input is
-	// treated as the new symbol name. Esc cancels. The status bar
-	// explains what's happening.
-	m.LSPPopup.RenameArmed = true
-	m.Feedback.NotifyInfo("Rename: type new name and press Enter (Esc to cancel)")
+	owner, revision := m.EditorState.Editor, m.EditorState.Editor.Revision()
+	for _, tab := range m.EditorState.Tabs {
+		if tab.Editor.Modified() {
+			m.Feedback.NotifyInfo("Save modified files before a workspace rename")
+			return nil
+		}
+	}
+	m.openTreeTextPrompt(ui.TextPromptRename, "Rename symbol", "Enter the new symbol name. Changes will be previewed before applying.", "", "", func(value string) error {
+		if value == "" {
+			return fmt.Errorf("name cannot be empty")
+		}
+		if owner != m.EditorState.Editor || owner.Revision() != revision {
+			return fmt.Errorf("document changed; request rename again")
+		}
+		m.runDetachedAsyncCmd(m.submitRename(value))
+		return nil
+	})
+
 	return nil
 }
 
@@ -983,32 +1023,40 @@ func (m *App) submitRename(newName string) tea.Cmd {
 		return nil
 	}
 	filePath := m.EditorState.Editor.FilePath()
-	line, col := m.EditorState.Editor.CursorLine(), m.EditorState.Editor.CursorCol()
+	line, col := m.EditorState.Editor.LSPCursorPosition()
 	lspMgr := m.LSPMgr
 	ctx, generation := m.lspRequestContext()
+	owner, revision := m.EditorState.Editor, m.EditorState.Editor.Revision()
 	return tea.Cmd(func() tea.Msg {
 		edit, err := lspMgr.RequestRename(ctx, filePath, line, col, newName)
-		return lspRenameResultMsg{generation: generation, filePath: filePath, newName: newName, edit: edit, err: err}
+		return lspRenameResultMsg{owner: owner, revision: revision, generation: generation, filePath: filePath, newName: newName, edit: edit, err: err}
 	})
 }
 
 // requestCompletionCmd fires a completion request at the cursor.
 func (m *App) requestCompletionCmd() tea.Cmd {
+	return m.requestCompletion(false)
+}
+
+func (m *App) requestCompletion(automatic bool) tea.Cmd {
 	if !m.EditorState.Editor.IsOpen() || m.LSPMgr == nil {
 		return nil
 	}
 	filePath := m.EditorState.Editor.FilePath()
-	line, col := m.EditorState.Editor.CursorLine(), m.EditorState.Editor.CursorCol()
+	line, col := m.EditorState.Editor.LSPCursorPosition()
 	conn, status, _ := m.LSPMgr.Status()
 	if !conn || status != editor.LSPConnected {
-		m.Feedback.NotifyInfo("LSP not ready")
+		if !automatic {
+			m.Feedback.NotifyInfo("LSP not ready")
+		}
 		return nil
 	}
 	lspMgr := m.LSPMgr
 	ctx, generation := m.lspRequestContext()
+	owner, revision := m.EditorState.Editor, m.EditorState.Editor.Revision()
 	return tea.Cmd(func() tea.Msg {
 		items := lspMgr.RequestCompletions(ctx, filePath, line, col)
-		return lspCompletionResultMsg{generation: generation, filePath: filePath, line: line, col: col, items: items}
+		return lspCompletionResultMsg{automatic: automatic, owner: owner, revision: revision, generation: generation, filePath: filePath, line: line, col: col, items: items}
 	})
 }
 
@@ -1034,7 +1082,10 @@ func (m *App) handleDefinitionResult(msg lspDefinitionResultMsg) {
 			return
 		}
 	}
-	m.EditorState.Editor.SetCursorPosition(loc.Line, loc.Col)
+	if err := m.EditorState.Editor.SetLSPCursorPosition(loc.Line, loc.Col); err != nil {
+		m.Feedback.NotifyError(err.Error())
+		return
+	}
 	m.EditorState.Editor.ScrollToCursor()
 	layout := m.computeLayout()
 	m.EditorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
@@ -1079,8 +1130,14 @@ func (m *App) handleDocumentSymbolsResult(msg lspDocumentSymbolsResultMsg) {
 // window. The list is navigable with up/down; pressing Enter inserts the
 // selected item's text at the cursor.
 func (m *App) handleCompletionResult(msg lspCompletionResultMsg) {
+	line, col := m.EditorState.Editor.LSPCursorPosition()
+	if line != msg.line || col != msg.col {
+		return
+	}
 	if len(msg.items) == 0 {
-		m.Feedback.NotifyInfo("No completions")
+		if !msg.automatic {
+			m.Feedback.NotifyInfo("No completions")
+		}
 		return
 	}
 	// Limit to a reasonable number of items for the popup.
@@ -1089,67 +1146,25 @@ func (m *App) handleCompletionResult(msg lspCompletionResultMsg) {
 	if len(items) > maxItems {
 		items = items[:maxItems]
 	}
+	m.LSPPopup.CompletionOwner, m.LSPPopup.CompletionRevision = msg.owner, msg.revision
+	m.LSPPopup.CompletionLine, m.LSPPopup.CompletionCol = msg.line, msg.col
+	m.LSPPopup.CompletionAutomatic = msg.automatic
 	m.showCompletionPopup(items)
 }
 
-// handleRenameResult applies the workspace edit returned by the server.
-// We support the simple `Changes` map (legacy form) — that's what gopls and
-// most servers return for a single-file rename. The newer DocumentChanges
-// form is left as a TODO; the rename UX is still useful without it.
-func (m *App) handleRenameResult(msg lspRenameResultMsg) {
+// handleRenameResult prepares a checked, user-reviewed transaction off Update.
+func (m *App) handleRenameResult(msg lspRenameResultMsg) tea.Cmd {
 	if msg.err != nil {
 		m.Feedback.NotifyError("Rename failed: " + msg.err.Error())
-		return
+		return nil
 	}
 	edit, ok := msg.edit.(*protocol.WorkspaceEdit)
 	if !ok || edit == nil {
 		m.Feedback.NotifyInfo("Rename: no changes")
-		return
+		return nil
 	}
-
-	// Collect all edits into FileEdit structs for the workspace service.
-	var fileEdits []workspace.FileEdit
-	var filePaths []string
-	for uri, edits := range edit.Changes {
-		fp := uriToPath(string(uri))
-		data, err := os.ReadFile(fp)
-		if err != nil {
-			m.Logger.Warn("LSP", "rename_read", "file", fp, "error", err.Error())
-			continue
-		}
-		updated, err := applyTextEdits(string(data), edits)
-		if err != nil {
-			m.Logger.Warn("LSP", "rename_apply", "file", fp, "error", err.Error())
-			continue
-		}
-		fileEdits = append(fileEdits, workspace.FileEdit{
-			Path:       fp,
-			OldContent: string(data),
-			NewContent: updated,
-		})
-		filePaths = append(filePaths, fp)
-	}
-
-	if len(fileEdits) == 0 {
-		m.Feedback.NotifyInfo("Rename: no changes applied")
-		return
-	}
-
-	// Apply all edits through the workspace service.
-	result := m.ApplyWorkspaceEdit(fileEdits)
-	if !result.Succeeded() {
-		m.Feedback.NotifyError("Rename: " + result.Error())
-		return
-	}
-
-	// Reload editors for changed files.
-	for _, fp := range filePaths {
-		if m.EditorState.Editor.IsOpen() && m.EditorState.Editor.FilePath() == fp {
-			m.startSourceControlMutation(m.refreshEditorDiskCmd(m.EditorState.Editor))
-		}
-	}
-
-	m.Feedback.NotifyInfo(fmt.Sprintf("Renamed in %d file%s", len(fileEdits), pluralFile(len(fileEdits))))
+	root := m.RootPath
+	return func() tea.Msg { return prepareLSPRename(root, msg, edit) }
 }
 
 // countSymbols returns the total number of symbols in a tree, including
@@ -1163,104 +1178,12 @@ func countSymbols(syms []editor.LSPSymbol) int {
 	return n
 }
 
-func pluralFile(n int) string {
-	if n == 1 {
-		return ""
-	}
-	return "s"
-}
-
 // openFileInEditor opens the file at the given path in the editor, switching
 // to or creating the appropriate tab. Used by "go to definition" when the
 // target lives in another file.
 func (m *App) openFileInEditor(path string) error {
 	_, err := m.openEditorTab(path)
 	return err
-}
-
-// uriToPath strips the "file://" prefix from a DocumentURI.
-func uriToPath(uri string) string {
-	const prefix = "file://"
-	if len(uri) >= len(prefix) && uri[:len(prefix)] == prefix {
-		return uri[len(prefix):]
-	}
-	return uri
-}
-
-// applyTextEdits applies a list of LSP TextEdits to the given text. The
-// edits are applied back-to-front (highest offset first) so each edit's
-// range remains valid as we modify the buffer.
-//
-// Edits are assumed to be sorted by their position in the document; if not,
-// we sort them defensively. The result is the post-edit text.
-func applyTextEdits(text string, edits []protocol.TextEdit) (string, error) {
-	if len(edits) == 0 {
-		return text, nil
-	}
-	lines := strings.Split(text, "\n")
-
-	type editPos struct {
-		line    int
-		char    int
-		endLine int
-		endChar int
-		newText string
-	}
-	positions := make([]editPos, 0, len(edits))
-	for _, e := range edits {
-		positions = append(positions, editPos{
-			line:    int(e.Range.Start.Line),
-			char:    int(e.Range.Start.Character),
-			endLine: int(e.Range.End.Line),
-			endChar: int(e.Range.End.Character),
-			newText: e.NewText,
-		})
-	}
-
-	// Apply back-to-front to keep offsets stable.
-	for i := len(positions) - 1; i >= 0; i-- {
-		p := positions[i]
-		if p.line < 0 || p.line >= len(lines) {
-			continue
-		}
-		if p.endLine < 0 || p.endLine >= len(lines) {
-			p.endLine = len(lines) - 1
-		}
-		// Splice lines [p.line, p.endLine) into one, replace [p.char, p.endChar).
-		first := lines[p.line]
-		if p.char > len(first) {
-			p.char = len(first)
-		}
-		prefix := first[:p.char]
-
-		last := lines[p.endLine]
-		if p.endChar > len(last) {
-			p.endChar = len(last)
-		}
-		suffix := last[p.endChar:]
-
-		replacement := p.newText
-		// NewText may contain newlines; split it into pieces and inject.
-		parts := strings.Split(replacement, "\n")
-		var newLines []string
-		newLines = append(newLines, prefix+parts[0])
-		for i := 1; i < len(parts)-1; i++ {
-			newLines = append(newLines, parts[i])
-		}
-		if len(parts) > 1 {
-			newLines = append(newLines, parts[len(parts)-1]+suffix)
-		}
-
-		// Replace lines [p.line, p.endLine+1) with newLines.
-		combined := make([]string, 0, len(lines)-int(p.endLine-p.line)+len(newLines))
-		combined = append(combined, lines[:p.line]...)
-		combined = append(combined, newLines...)
-		if p.endLine+1 < len(lines) {
-			combined = append(combined, lines[p.endLine+1:]...)
-		}
-		lines = combined
-	}
-	return strings.Join(lines, "\n"), nil
 }
 
 // showReferencesPopup displays the list of references in a floating window.
@@ -1431,7 +1354,10 @@ func (m *App) jumpToReference(r refRow) {
 			return
 		}
 	}
-	m.EditorState.Editor.SetCursorPosition(r.Line, r.Col)
+	if err := m.EditorState.Editor.SetLSPCursorPosition(r.Line, r.Col); err != nil {
+		m.Feedback.NotifyError(err.Error())
+		return
+	}
 	m.EditorState.Editor.ScrollToCursor()
 	layout := m.computeLayout()
 	m.EditorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
@@ -1609,7 +1535,9 @@ func (m *App) handleOutlinePopupKey(msg tea.KeyPressMsg) tea.Cmd {
 	case "enter":
 		if m.LSPPopup.OutlineCursor >= 0 && m.LSPPopup.OutlineCursor < len(m.LSPPopup.OutlineRows) {
 			sym := m.LSPPopup.OutlineRows[m.LSPPopup.OutlineCursor].Sym
-			m.EditorState.Editor.SetCursorPosition(sym.Line, sym.Col)
+			if err := m.EditorState.Editor.SetLSPCursorPosition(sym.Line, sym.Col); err != nil {
+				m.Feedback.NotifyError(err.Error())
+			}
 			m.EditorState.Editor.ScrollToCursor()
 			layout := m.computeLayout()
 			m.EditorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
@@ -1626,7 +1554,9 @@ func (m *App) jumpToOutline(idx int) {
 		return
 	}
 	sym := m.LSPPopup.OutlineRows[idx].Sym
-	m.EditorState.Editor.SetCursorPosition(sym.Line, sym.Col)
+	if err := m.EditorState.Editor.SetLSPCursorPosition(sym.Line, sym.Col); err != nil {
+		m.Feedback.NotifyError(err.Error())
+	}
 	m.EditorState.Editor.ScrollToCursor()
 	layout := m.computeLayout()
 	m.EditorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)
@@ -1829,15 +1759,19 @@ func (m *App) acceptCompletion() {
 		return
 	}
 	item := m.LSPPopup.CompletionItems[m.LSPPopup.CompletionCursor]
-	insert := item.InsertText
-	if insert == "" {
-		insert = item.Label
+	if m.LSPPopup.CompletionOwner != m.EditorState.Editor || m.EditorState.Editor.Revision() != m.LSPPopup.CompletionRevision {
+		m.closeCompletionPopup()
+		return
 	}
-	// Insert the text at the cursor. The editor's insertRune handles
-	// multi-byte characters; we go rune-by-rune to keep it simple.
-	for _, r := range insert {
-		m.EditorState.Editor.InsertRune(r)
+	line, col := m.EditorState.Editor.LSPCursorPosition()
+	if line != m.LSPPopup.CompletionLine || col != m.LSPPopup.CompletionCol {
+		m.closeCompletionPopup()
+		return
 	}
+	if err := m.EditorState.Editor.ApplyCompletion(item); err != nil {
+		m.Feedback.NotifyError("Completion: " + err.Error())
+	}
+
 	m.closeCompletionPopup()
 	layout := m.computeLayout()
 	m.EditorState.Editor.RefreshCursorHover(layout.SidebarW, layout.ChatAreaTop)

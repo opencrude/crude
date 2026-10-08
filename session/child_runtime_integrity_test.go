@@ -980,10 +980,9 @@ func checkChildActiveStop(t *testing.T, rejectTerminal, lateSteering bool) {
 	}
 	t.Cleanup(s.Close)
 	s.SetWorkDir(t.TempDir())
-	var store *collaboration.Store
-	if lateSteering {
-		store = attachDelegationTestCollaboration(t, s)
-	}
+	// Child reporting is a required runtime channel even when this journey stops
+	// before publishing. Use the actual journal-backed product composition.
+	store := attachDelegationTestCollaboration(t, s)
 	root := provider.NewTextMessage("user", "retain the parent of an actively stopped child")
 	root.InternalID = "active-child-stop-parent-input"
 	stamp := time.Unix(100, 0)

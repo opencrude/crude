@@ -65,6 +65,12 @@ dispositions. Summaries are notifications, not substitutes for reading evidence.
 Enforcement and passive recovery live in the
 [workspace collaboration runtime](workspace-collaboration.md), not prompt prose.
 
+The child report contract describes `publish_report` as its required return
+channel, outside optional task-tool allowlists. Launch validation rejects an
+explicit denial; the prompt never overrides one. Runtime schema projection and
+dispatch share that selection rule, and unavailable reporting is a configuration
+failure rather than an endlessly repeated model reminder.
+
 Exact tool schemas, descriptions, validation/denial messages and result payloads
 stay with the executing interface. They are not competing system prompts. External
 MCP prompt templates are source-attributed capability data, not shipped Crude

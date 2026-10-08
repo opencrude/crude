@@ -252,6 +252,7 @@ func NewWorkspace(
 	}
 
 	lspMgr := NewLSPManager(lg)
+	lspMgr.SetWorkspaceRoot(rootPath)
 
 	// Initialize workspace-level persistence. Each workspace gets a
 	// dedicated folder and database based on the project directory hash.
@@ -463,7 +464,7 @@ func (w *Workspace) Close() {
 		w.TermMgr.CloseAll()
 	}
 	if w.LSPMgr != nil {
-		w.LSPMgr.Stop()
+		w.LSPMgr.Close()
 	}
 	if w.Status != nil {
 		w.Status.Close()
@@ -702,7 +703,7 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 	}
 	if w.LSPMgr != nil {
 		w.LSPMgr.SetOnDiagnostics(nil)
-		w.LSPMgr.Stop()
+		w.LSPMgr.Close()
 	}
 	if w.Status != nil {
 		w.Status.Close()
@@ -745,6 +746,7 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 	dbTransferred = true
 
 	w.LSPMgr = NewLSPManager(w.Logger)
+	w.LSPMgr.SetWorkspaceRoot(abs)
 	w.AgentMgr = NewAgentManager()
 	w.PaneMgr = NewPaneManager()
 	if w.ProjectSearch == nil {

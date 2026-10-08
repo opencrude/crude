@@ -98,7 +98,7 @@ func TestMCPAgentAccessApprovalUseAndPassiveDurability(t *testing.T) {
 	}
 	prepared, err = reopened.Prepare(t.Context(), actor)
 	if err != nil || len(prepared.Tools) != 0 || requests.Load() != beforeRestart || calls.Load() != 1 {
-		t.Fatal("passive reopen connected or replayed a tool")
+		t.Fatalf("passive reopen connected or replayed a tool: err=%v tools=%d requests=%d before=%d calls=%d", err, len(prepared.Tools), requests.Load(), beforeRestart, calls.Load())
 	}
 	if len(reopened.Snapshot().Settings.Connections["docs"].Grants) != 1 {
 		t.Fatal("grant vanished after reopen")

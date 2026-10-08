@@ -50,6 +50,14 @@ attempt without a required final deliverable is not success; unfinished root/chi
 work remains supervised or waits for attention. Cancellation remains distinct
 from success. The parent still reviews the evidence.
 
+Reporting is the mandatory child return channel, independent of optional task-tool
+allowlists. Allowlist expansion must not synthesize a `publish_report` denial.
+An explicit denial in a launch, role or profile is rejected before launch, rather
+than issuing a contradictory prompt. Offered schemas and execution use the same
+selection predicate. If reporting infrastructure is unavailable at a request
+boundary, the child parks for configuration repair before another provider call;
+model reminders are reserved for an available tool the model omitted.
+
 Request/job timeouts and repeated-identical-tool detection complement these prompt
 rules without permanently settling unfinished work. Children have no arbitrary
 task deadline. There is no arbitrary global step ceiling: a legitimate long task
