@@ -207,6 +207,12 @@ conversation. Each new human turn receives its current revision and complete
 step snapshot as hidden runtime context; the stable system planning contract
 asks the model to compare it with the new request and revise or close stale
 work. The runtime snapshot is data and is never attributed as a user message.
+Supplied steps replace the current ordered snapshot exactly; omitted obsolete
+steps survive only in immutable revision history. A materially superseding goal
+uses explicit `replace=true` with objective and complete steps, atomically resetting
+step provenance while retaining the plan identity and its audit history. Generic
+and native interfaces share this contract. Milestone updates and honest final
+closure remain model obligations, not inferred successes by the runtime.
 
 The September 29 failure sent roughly 598K input tokens with a 3,936-token
 generation cap derived from a 16K checkpoint split. The DeepSeek extraction

@@ -86,6 +86,8 @@ type PlanStep struct {
 // UpdateRequest is the complete desired plan snapshot supplied by the model.
 // It is declarative: the model provides the whole plan, not a delta operation.
 type UpdateRequest struct {
+	// Replace starts a new goal in this plan identity; prior snapshots remain in Events.
+	Replace     bool
 	PlanID      string
 	Revision    uint64
 	Objective   string

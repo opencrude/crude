@@ -442,6 +442,7 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	// split dividers, input selection, deck gutters) continue outside their
 	// original bounds until release — one capture service for the whole shell.
 	if m.rootHost != nil && m.rootHost.HasPointerCapture() {
+		m.clearPlanHover()
 		res := m.rootHost.Handle(msg)
 		if cmd := m.applyHostPointerActions(res); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -452,6 +453,9 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(cmds...)
 	}
 
+	if m.routePlanHoverMotion(msg) {
+		return m, tea.Batch(cmds...)
+	}
 	if m.windowManager != nil {
 		// Popup hover pre-selection: if the mouse is over a focusable
 		// popup, update its hover state and return (don't route motion

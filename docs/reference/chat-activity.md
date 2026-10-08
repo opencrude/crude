@@ -251,8 +251,8 @@ reflows on animation frames. Tool leaves retain `ui.ActivityDot`.
 
 The sweep and automatic page rotation both stop when the owning agent becomes
 inactive or enters stopping, cancelled, completed, failed or idle state. The
-static first page retains the lifecycle label (`Stopped` after cancellation) and
-plan facts that fit; the full plan stays in the transcript. A retained active
+static first page retains the lifecycle label (only `Stopped` after cancellation);
+the full plan stays available in the hover reader and transcript. A retained active
 plan never implies that the agent is still running, and the presentation does
 not alter its persisted lifecycle. A new active turn resumes animation.
 
@@ -271,8 +271,9 @@ projection. The strip never echoes the human prompt or memory-summary title;
 those remain available in their existing transcript/details surfaces.
 
 Priority is required action/failure/retry, upload and provider wait, live thinking
-reasoning, active-plan progress/current steps, plan objective/upcoming step, then
-successful-call counts. Upload bytes sent/total, percent, provider-wait identity
+reasoning, then the compact current task (`2/4 Refine plan updates`). Ordinary
+planned work shows only that task; Goal/Next/completion-count pages and call-count
+suffixes are absent. Upload bytes sent/total, percent, provider-wait identity
 and elapsed time, and retry reason/attempt/countdown retain the former indicator's
 information. These critical states never rotate away. Late upload callbacks for
 an already-streaming request cannot rewind the actor or its presentation.
@@ -280,19 +281,40 @@ an already-streaming request cannot rewind the actor or its presentation.
 `chatprojection.ActivityStrip` derives and retains bounded rows by source,
 geometry and theme. `shellchat` only publishes geometry and paints those rows;
 `Paint` never parses Markdown or reads domain storage. Full rows pack ordered
-facts when they fit. Overflowing optional facts rotate every six seconds on the
+thinking and compact task when they fit. Overflowing optional facts rotate every six seconds on the
 shared frame clock. New semantic thoughts regain priority; ordinary token deltas
-do not continually reset rotation. Counts occupy spare trailing space only and
-never displace primary facts or consume a rotation page.
+do not continually reset rotation.
 
 One session-owned `plan.Store` publishes an immutable `types/activity.Plan` view
 after successful transactions and restores it off-UI on resume. Existing tool
 result events trigger UI reconciliation. Failed revisions cannot change this
 view, and completed/cancelled plans release it. The strip never parses plan-tool
-JSON, mutate plans, or maintain a second plan owner for the strip.
+JSON, mutates plans, or maintains a second plan owner for the strip. Each child
+retains its own store and immutable snapshot across settlement and passive resume;
+child chats never borrow the root's plan. The projection
+includes every ordered step for read-only inspection. Hovering a chat's status
+band opens a content-sized, terminal-bounded WindowFrame popover above it, without
+changing the selected pane or taking composer focus. Moving into it keeps it open;
+wheel/scrollbar expose long plans. Click enables keyboard navigation and Ctrl+C
+copies the plan. Leave, outside click, Esc, owner unmount, modal takeover or plan
+completion dismiss it. Revisions refresh the existing reader without storage I/O.
 
-Transient status messages are not additional transcript rows; durable stop,
-history, and compaction boundaries remain ordinary transcript content. Internal
+When browsing older messages, a centered native `↓ Latest` button occupies the
+already-reserved gap above the status line. It adds no transcript height and
+does not cover messages. Click goes to the exact pane's materialized tail and
+re-arms stream following; short content, bottom position and tiny grids hide it.
+Captured selection/scrollbar drags keep ownership when crossing that band.
+
+Both planning interfaces publish clean desired snapshots. Omitted obsolete steps
+remain in immutable revision history, not cancelled entries in the current card.
+`replace=true` atomically supersedes the goal and step provenance on the same plan
+identity; stale or invalid updates preserve both current state and history.
+Prompts require latest-intent review, milestone updates, and honest final closure.
+
+Transient status messages are not additional transcript rows; history and
+compaction boundaries remain ordinary transcript content. Ordinary stopped
+boundaries and cancelled recovery notices remain canonical evidence but are
+excluded before grouping, spacers and height calculation. Internal
 actor generations still include stopped/unbilled work for cancellation and
 recovery, but are not the displayed successful-call count.
 Manual compaction owns the activity strip while its boundary is current:
@@ -391,8 +413,10 @@ Retry feedback starts on the first retry, occupies the fixed activity strip, sta
 reason/attempt/countdown, and remains immediately cancellable with Esc.
 
 Stopping preserves completed effects and accepted text. Do not strike through
-assistant text, thinking, or tool titles. Show a quiet, durable `Stopped by you`
-boundary, and keep input ready for the next instruction. The provider context
+assistant text, thinking, or tool titles. Show one quiet `Stopped` in the fixed
+strip, not additional `Stopped by you` or `Recovery stopped` transcript rows,
+and keep input ready for the next instruction. Interrupted tool leaves, real
+errors and actionable recovery remain visible. The provider context
 records the explicit non-human `turn_stopped` origin; it warns that interrupted
 running tools may have partial effects and must be inspected before resuming.
 Never retroactively mark a prior completed turn as cancelled, restart work on

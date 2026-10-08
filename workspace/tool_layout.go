@@ -21,7 +21,7 @@ type ToolLayout struct {
 }
 
 func DefaultToolLayout() ToolLayout {
-	return ToolLayout{Rail: []string{"files", "agents", "git", "skills", "mcp"}, Views: make(map[string]ToolViewState), PanelHeights: make(map[string]int)}
+	return ToolLayout{Rail: []string{"files", "agents", "skills", "mcp"}, Views: make(map[string]ToolViewState), PanelHeights: make(map[string]int)}
 }
 
 func (workspace *Workspace) LoadToolLayout() (ToolLayout, error) {
@@ -80,7 +80,7 @@ func validateToolLayout(layout ToolLayout) error {
 		}
 	}
 	for panel, height := range layout.PanelHeights {
-		if !slices.Contains([]string{"terminal", "workspace", "problems", "notices", "memory", "board"}, panel) || height < 0 || height > 1000 {
+		if !slices.Contains([]string{"terminal", "workspace", "problems", "notices", "memory", "board", "git"}, panel) || height < 0 || height > 1000 {
 			return errors.New("invalid workspace panel height or identity")
 		}
 	}

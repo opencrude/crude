@@ -51,14 +51,6 @@ func Validate(existing *Plan, req UpdateRequest) error {
 		}
 	}
 
-	if existing != nil {
-		for _, prior := range existing.Steps {
-			if _, ok := seen[prior.ID]; !ok {
-				return fmt.Errorf("plan step %q was omitted; retain it with status cancelled", prior.ID)
-			}
-		}
-	}
-
 	for _, step := range req.Steps {
 		for _, dependency := range step.DependsOn {
 			if dependency == step.ID {

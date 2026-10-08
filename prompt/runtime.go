@@ -68,7 +68,7 @@ func RuntimeReportReminder() string {
 func TurnContext(content string) string { return "<turn_context>\n" + content + "\n</turn_context>" }
 
 func ActivePlan(stateJSON string) string {
-	return "<active_plan format=\"json\">\n" + stateJSON + "\n</active_plan>\nSaved session state for planning tools; compare with the current human request and update the plan when its objective or steps no longer match."
+	return "<active_plan format=\"json\">\n" + stateJSON + "\n</active_plan>\nSaved session state for planning tools; compare with the latest human request. Update at milestones; omit obsolete steps, replace=true for a superseding goal, and close honestly before the final answer."
 }
 
 func HumanSteeringPrefix() string {

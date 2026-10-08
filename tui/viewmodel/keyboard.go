@@ -16,7 +16,6 @@ import (
 	"crude/tui/screens/activitylist"
 	"crude/tui/screens/launcher"
 	"crude/tui/screens/shelltree"
-	"crude/tui/screens/sourcecontrol"
 	"crude/tui/ui"
 	wm "crude/tui/wm"
 	"crude/types/recovery"
@@ -25,6 +24,14 @@ import (
 
 func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+	// Hover is passive: typing still belongs to the composer. Explicit click
+	// focuses the reading surface, while Esc dismisses it without stopping work.
+	if m.planHover != nil && (m.windowManager.Focused() == nil || m.windowManager.Focused().ID != string(ui.OverlayPlanHover)) {
+		m.clearPlanHover()
+		if msg.Code == tea.KeyEsc {
+			return m, nil
+		}
+	}
 	if m.mainPaneDragActive() && msg.Code == tea.KeyEsc {
 		m.mainPanes.drop = nil
 		m.rootHost.CancelPointerCapture()
@@ -130,7 +137,7 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					m.hideWorkspacePanel()
 					return m, nil
 				case "view.activity.git":
-					return m, m.toggleActivity(activityGit)
+					return m, m.toggleGitPanel()
 				case "terminal.new":
 					return m, m.openNewTerminal()
 				case "terminal.toggle":
@@ -251,10 +258,6 @@ func (m *App) focusTreeHostControl() bool {
 	if m.activityView == activityFiles {
 		if m.rootHost.Focused() != shelltree.FilterID {
 			m.rootHost.Focus(shelltree.TreeID)
-		}
-	} else if m.activityView == activityGit && m.sourceControl != nil {
-		if m.rootHost.Focused() != sourcecontrol.FilterID {
-			m.rootHost.Focus(sourcecontrol.ListID)
 		}
 	} else if m.activityList != nil {
 		if m.rootHost.Focused() != activitylist.FilterID {

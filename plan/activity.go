@@ -38,6 +38,7 @@ func (s *Store) publishActivity(p Plan) {
 	var blocked []activity.Step
 	for i, step := range p.Steps {
 		item := activity.Step{Number: i + 1, Text: step.Description, Status: string(step.Status), Reason: step.Reason}
+		view.Steps = append(view.Steps, item)
 		switch step.Status {
 		case StepCompleted:
 			view.Completed++

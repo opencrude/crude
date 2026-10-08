@@ -6,20 +6,21 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/screens/gitpanel"
 	"crude/tui/screens/shellheader"
 	"crude/tui/ui"
 	"crude/workspace"
 )
 
 // openBranchSwitcher opens the header's branch dropdown: local branches,
-// remote-tracking branches, and a fallback into the full source-control
-// panel. Left-click on the header Git segment lands here; right-click keeps
-// the shell region menu (dispatchMouseRightClick).
+// remote-tracking branches, and a fallback into the Git dock panel.
+// Left-click on the header Git segment lands here; right-click keeps the
+// shell region menu (dispatchMouseRightClick).
 func (m *App) openBranchSwitcher() tea.Cmd {
-	if m.sourceControl == nil {
-		return m.toggleActivity(activityGit)
+	if m.gitPanel == nil {
+		return nil
 	}
-	snapshot := m.sourceControl.Snapshot()
+	snapshot := m.gitPanel.Snapshot()
 	var local, remote []workspace.GitBranchSummary
 	for _, branch := range snapshot.Branches {
 		if branch.Remote {
@@ -50,14 +51,17 @@ func (m *App) openBranchSwitcher() tea.Cmd {
 			{Label: "Refresh", Detail: "Ctrl+R", Action: func() {
 				m.startSourceControlMutation(m.refreshSourceControl())
 			}},
-			{Label: "Open source control", Detail: "Ctrl+Shift+G", Action: func() {
-				m.startSourceControlMutation(m.toggleActivity(activityGit))
+			{Label: "Open Git panel", Detail: "Ctrl+Alt+G", Action: func() {
+				m.startSourceControlMutation(m.openGitPanel(gitpanel.ModeChanges))
+			}},
+			{Label: "Review all changes", Action: func() {
+				m.startSourceControlMutation(m.openGitReview("", ""))
 			}},
 		},
 	})
 	if len(local)+len(remote) == 0 {
 		// No branches listed: fall back to the panel instead of a dead menu.
-		return m.toggleActivity(activityGit)
+		return m.openGitPanel(gitpanel.ModeChanges)
 	}
 	return m.openBranchSwitcherAtHeader(st)
 }
@@ -88,7 +92,7 @@ func (m *App) branchMenuItems(branches []workspace.GitBranchSummary, current str
 			Label: name, Detail: detail, Disabled: disabled,
 			Action: func() {
 				m.startSourceControlMutation(m.sourceControlMutation(
-					"Switched to "+name, false,
+					"Switched to "+name, nil,
 					func(ctx context.Context, service *workspace.GitService) error {
 						return service.Checkout(ctx, name)
 					},

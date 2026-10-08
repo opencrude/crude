@@ -9,6 +9,76 @@ import (
 	"crude/sessiondb"
 )
 
+func TestPlanningAdaptersReplaceCleanGoalAndPreserveHistory(t *testing.T) {
+	for _, native := range []bool{false, true} {
+		name := "generic"
+		if native {
+			name = "native"
+		}
+		t.Run(name, func(t *testing.T) {
+			s := newTestSessionForPlan(t)
+			defer s.Close()
+			params := func(goal, text string) map[string]any {
+				if native {
+					return map[string]any{"objective": goal, "plan": []any{map[string]any{"step": text, "status": "in_progress"}}}
+				}
+				return map[string]any{"plan_id": "p", "objective": goal, "steps": []any{map[string]any{"id": "work", "description": text, "status": "in_progress"}}}
+			}
+			decode := func(result string) plan.Plan {
+				var p plan.Plan
+				if err := json.Unmarshal([]byte(result), &p); err != nil {
+					t.Fatal(err)
+				}
+				return p
+			}
+			result, err := s.executePlanTool(t.Context(), "update_plan", params("Old goal", "Old work"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			first := decode(result.Content)
+			replacement := params("New goal", "New work")
+			replacement["replace"] = true
+			replacement["revision"] = 0
+			if _, err := s.executePlanTool(t.Context(), "update_plan", replacement); err == nil {
+				t.Fatal("stale replacement succeeded")
+			}
+			replacement["revision"] = float64(first.Revision) // JSON tool transport number
+			result, err = s.executePlanTool(t.Context(), "update_plan", replacement)
+			if err != nil {
+				t.Fatal(err)
+			}
+			last := decode(result.Content)
+			if last.ID != first.ID || last.Revision != 2 || last.Objective != "New goal" || len(last.Steps) != 1 || last.Steps[0].Description != "New work" || last.Steps[0].Attempts != 1 {
+				t.Fatalf("replacement %+v", last)
+			}
+			result, err = s.executePlanTool(t.Context(), "get_plan", map[string]any{"plan_id": last.ID, "include_history": true})
+			if err != nil {
+				t.Fatal(err)
+			}
+			var history struct {
+				Events []plan.PlanEvent `json:"events"`
+			}
+			if err := json.Unmarshal([]byte(result.Content), &history); err != nil {
+				t.Fatal(err)
+			}
+			if len(history.Events) != 2 || history.Events[0].Payload.Objective != "Old goal" || history.Events[1].Type != "plan_replaced" {
+				t.Fatalf("history %+v", history)
+			}
+			closeParams := map[string]any{"plan_id": last.ID, "revision": float64(last.Revision), "status": "cancelled"}
+			if native {
+				closeParams["plan"] = []any{}
+			}
+			if _, err := s.executePlanTool(t.Context(), "update_plan", closeParams); err != nil {
+				t.Fatal(err)
+			}
+			result, err = s.executePlanTool(t.Context(), "get_plan", map[string]any{})
+			if err != nil || result.Content != `{"error":"no_active_plan"}` || s.PlanActivity() != nil {
+				t.Fatalf("closed plan remains: %s %v", result.Content, err)
+			}
+		})
+	}
+}
+
 func newTestSessionForPlan(t *testing.T) *Session {
 	t.Helper()
 	sm := NewSessionManager()

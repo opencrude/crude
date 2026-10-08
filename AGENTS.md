@@ -895,6 +895,14 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
   the root tree plus recursive watcher asynchronously with generation checks.
   Terminal IDs are process-wide monotonic so queued old-manager messages cannot
   target a replacement PTY.
+- **UI shutdown owns UI resources.** `App.StopAsyncIO` flushes drafts, rejects
+  new tree-watcher starts, joins accepted startup work, then closes the tree and
+  every distinct editor watcher. It is idempotent. Closing `Workspace` cannot
+  release TUI-owned editors; real-shell test fixtures must invoke the same UI
+  teardown and standalone editor fixtures must register `Editor.Close`. Leaked
+  fsnotify instances exhaust Linux inotify limits and make later watcher tests
+  fail with EMFILE even though they pass in isolation; never hide that with
+  retries, sleeps, skipped assertions or raised OS limits.
 - **Collaboration shares the current workspace database lifetime.** Prepare the
   target collaboration attachment before switch teardown. Detach old sessions and
   release their store's runtime locks before closing its borrowed SQL handle;
@@ -903,8 +911,8 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
   backend session construction.
 - **The header Git identity reconciles itself from watcher events.** The
   branch, changed-file count, and tracking on the header segment come from the
-  Source Control snapshot, so that snapshot must not depend on the user opening
-  the Source Control panel: file-watcher and repository-metadata events arm a
+  Git panel snapshot, so that snapshot must not depend on the user opening
+  the Git dock panel: file-watcher and repository-metadata events arm a
   debounced (`gitSnapshotIdleDelay`), burst-capped (`gitSnapshotHoldLimit`),
   fallback-bounded (`gitSnapshotFallback`) silent read that the tick loop
   starts (`tui/viewmodel/git_snapshot.go`). Reconciliation is silent by
@@ -992,6 +1000,13 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
   fault. Specific auth/quota/validation evidence and explicit retry vetoes remain
   non-retryable. Test every registered protocol plus real root/child timer expiry;
   an SSE-only adapter test does not cover a gateway's HTTP JSON rejection.
+- Established-stream errors use the shared `provider.streamErrorDecoder` for
+  Chat Completions, Responses/Codex, Anthropic SSE and Ollama NDJSON. A gateway
+  may translate an upstream disconnect into any of these wires, including a
+  string error. Recognize narrow typed/observed disconnect evidence at the stream
+  boundary, not arbitrary diagnostic prose in global retry policy. Preserve
+  auth/quota/validation and retry vetoes; accepted output requires semantic
+  continuation, never stochastic replay or execution of partial tool arguments.
 - Recovery uses one compact, expandable incident row. Automatic transport/DNS
   recovery needs no `/retry`; a real countdown and exact-owner `(Retry now)`
   action can shorten its cooldown. A red square blinks on the shared activity
@@ -1354,20 +1369,32 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   storage from `Screen.Paint`.
 - Chat reserves activity-strip geometry independently of phase. Transient
   provider/tool status must not appear/disappear as transcript rows. Durable
-  stop, history and compaction boundaries remain visible. Memory-summary titles
+  history and compaction boundaries remain visible. Ordinary stopped boundaries
+  and cancelled recovery notices remain canonical/context evidence but contribute
+  no chat rows, spacers, grouping boundaries or height. One quiet `Stopped` strip
+  remains; interrupted tools and genuine actionable recovery keep their evidence.
+  Memory-summary titles
   load through session-owned cancellable jobs, never from a screen or Update.
 - The strip prioritizes upload bytes/percent, provider waiting, retry and required
   action over optional rotation. Tidal motion applies to every active strip
   state; provisional and summarized thinking get the compact preview. Do not
-  echo the user prompt there. Plan progress/current
-  steps, objective and next step follow in order, packing to width or rotating
-  on the shared clock only while the agent is active. Stopping, cancelled,
-  completed and idle strips have no sweep or page rotation; the first page keeps
-  the lifecycle label and any plan facts that fit. Stopping never changes the
-  persisted plan lifecycle. Successful-call counts are trailing, lowest-priority
-  data.
+  echo the user prompt there. Ordinary planned activity is only `a/n Task name`;
+  no Goal/Next/progress-count pages or call-count suffix. Thinking can share or
+  rotate with that compact task. Stopping, cancelled, completed and idle strips
+  are static; cancellation says only `Stopped`. Stopping never changes the
+  persisted plan lifecycle.
   The session's one `plan.Store` publishes its committed immutable activity view;
-  the strip never becomes another plan owner.
+  the strip never becomes another plan owner. Hovering the strip inspects all
+  ordered steps in a bounded, scrollable passive WindowFrame popover, owned by
+  that exact pane without taking composer focus. Leave/Esc/outside/owner removal
+  dismiss it. `Latest` is a centered native button in the existing reserved gap
+  while scrolled up; it adds no transcript height and re-arms exact-pane follow.
+- Plans are clean desired snapshots, not execution logs. Omitted obsolete steps
+  remain only in immutable revision history. Both plan tool interfaces expose
+  `replace=true` to atomically supersede a changed goal and reset step provenance;
+  neither silently appends cancelled steps. Prompts require latest-intent review,
+  updates at milestones and honest closure before the final response. Explicit
+  revision fences and transaction rollback preserve history and current activity.
 - Command safety assessments belong to owner-scoped Notices, not retained
   `AgentState` alerts or live `NeedsAction` status. Only pending permissions and
   questions need input. Completed, cancelled and failed turns keep their own
@@ -1696,8 +1723,15 @@ button that needs a double click reads as broken.
 - Skills, MCP, Sources and Acquisition follow Memory in the existing AI settings
   group. Navigation and painting share the same grouped order; never append a
   second AI heading after Security or IDE.
-- Rail destinations are Files, Agents, Source Control, Skills and MCP; Terminals
-  has no rail identity. Workspace Memory is a retained footer panel shared with
+- Rail destinations are Files, Agents, Skills and MCP; Terminals and Git have no
+  rail identity. Git is the `gitpanel` bottom-dock destination (footer pill,
+  `Ctrl+Alt+G`); its multi-file `gitreview` main tab and the panel preview
+  share one `gitdiff.Document` and one prepared change set
+  (`prepareGitChanges`, re-derived only while a Git view is visible). Each
+  review is its own main tab (`gitReviews`, keyed by tab, per-instance
+  component IDs); never return to a single replaced review screen. Commit
+  messages are drafted by the Aeron role via `Workspace.PrepareCommitMessageWriter`
+  (configuration read on the update goroutine, streaming I/O in the background). Workspace Memory is a retained footer panel shared with
   `/memory`/palette, never a second floating overlay or session PanelDeck.
 - Skills/MCP settings deep-links retain the Settings frame and explicitly mark
   its Host layout. Async capability results target the owning Model directly,

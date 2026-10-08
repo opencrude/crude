@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"crude/tui/screens/termdock"
 	"errors"
 	"os"
 	"os/exec"
@@ -62,7 +63,7 @@ func readGitSnapshotNow(t *testing.T, app *App) workspace.GitSnapshot {
 	if cmd := app.applySourceControlResult(msg); cmd != nil {
 		t.Fatal("a silent result must not chain tree work the watchers already did")
 	}
-	return app.sourceControl.Snapshot()
+	return app.gitPanel.Snapshot()
 }
 
 // headerGitSegment returns the painted header's Git identity segment (the
@@ -212,7 +213,7 @@ func TestSilentGitSnapshotSkipsUnchangedProjection(t *testing.T) {
 		Branch:  "main",
 		Changes: []workspace.GitChange{{Path: "a.go", Area: workspace.GitAreaWorking, Code: "M"}},
 	}
-	app.sourceControl.SetSnapshot(snapshot)
+	app.gitPanel.SetSnapshot(snapshot)
 
 	apply := func(next workspace.GitSnapshot) {
 		t.Helper()
@@ -236,7 +237,7 @@ func TestSilentGitSnapshotSkipsUnchangedProjection(t *testing.T) {
 	if !app.editorGitStale.Load() {
 		t.Fatal("moved repository state must invalidate the gutter annotation")
 	}
-	if got := len(app.sourceControl.Snapshot().Changes); got != 2 {
+	if got := len(app.gitPanel.Snapshot().Changes); got != 2 {
 		t.Fatalf("panel changes = %d, want the reconciled projection", got)
 	}
 }
@@ -251,12 +252,12 @@ func TestSilentGitSnapshotStaysSilent(t *testing.T) {
 	// allowed to produce, so the service never touches a real repository.
 	app.Git = workspace.NewGitService(t.TempDir())
 	app.Tree.Visible = true
-	app.setActivity(activityGit, true)
 	snapshot := workspace.GitSnapshot{
 		Branch:  "main",
 		Changes: []workspace.GitChange{{Path: "a.go", Area: workspace.GitAreaWorking, Code: "M"}},
 	}
-	app.sourceControl.SetSnapshot(snapshot)
+	app.gitPanel.SetSnapshot(snapshot)
+	app.toggleWorkspacePanel(termdock.PanelGit)
 
 	failed := app.gitRefreshGen.Add(1)
 	app.gitReadsInFlight++
@@ -266,7 +267,7 @@ func TestSilentGitSnapshotStaysSilent(t *testing.T) {
 	if app.gitReadsInFlight != 0 {
 		t.Fatalf("failed read left %d slots in flight", app.gitReadsInFlight)
 	}
-	if branch := app.sourceControl.Snapshot().Branch; branch != "main" {
+	if branch := app.gitPanel.Snapshot().Branch; branch != "main" {
 		t.Fatalf("failed reconcile blanked the painted projection: %q", branch)
 	}
 	if issues := app.Status.Issues(); len(issues) != 0 {
@@ -285,7 +286,7 @@ func TestSilentGitSnapshotStaysSilent(t *testing.T) {
 		t.Fatal("reconcile read did not start")
 	}
 	app.paintShellFrame()
-	if plain := bufferPlain(app.mainSurf.Buffer()); !strings.Contains(plain, "Changes · 1") || strings.Contains(plain, "Refreshing repository") {
+	if plain := bufferPlain(app.mainSurf.Buffer()); !strings.Contains(plain, "Changes 1") || strings.Contains(plain, "refreshing") {
 		t.Fatalf("unrequested read flashed the panel loading state:\n%s", plain)
 	}
 	settled := app.gitRefreshGen.Load()
@@ -294,7 +295,7 @@ func TestSilentGitSnapshotStaysSilent(t *testing.T) {
 	// An explicit refresh still owns the loading state and its failure report.
 	app.refreshSourceControl()
 	app.paintShellFrame()
-	if plain := bufferPlain(app.mainSurf.Buffer()); !strings.Contains(plain, "Refreshing repository") {
+	if plain := bufferPlain(app.mainSurf.Buffer()); !strings.Contains(plain, "refreshing…") {
 		t.Fatalf("explicit refresh no longer shows the loading state:\n%s", plain)
 	}
 	explicit := app.gitRefreshGen.Load()
@@ -324,7 +325,7 @@ func TestWorkspaceSwitchRebasesInFlightGitReads(t *testing.T) {
 	if app.gitReadsInFlight != 0 {
 		t.Fatal("an abandoned read stole a slot from the replacement project")
 	}
-	if branch := app.sourceControl.Snapshot().Branch; branch != "" {
+	if branch := app.gitPanel.Snapshot().Branch; branch != "" {
 		t.Fatalf("an abandoned read painted the old project: %q", branch)
 	}
 

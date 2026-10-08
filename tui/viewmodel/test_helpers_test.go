@@ -16,6 +16,7 @@ import (
 	"crude/tui/screens/activitybar"
 	"crude/tui/screens/activitylist"
 	"crude/tui/screens/confirmation"
+	"crude/tui/screens/gitpanel"
 	"crude/tui/screens/launcher"
 	"crude/tui/screens/question"
 	"crude/tui/screens/shellchat"
@@ -26,7 +27,6 @@ import (
 	"crude/tui/screens/shelltabs"
 	"crude/tui/screens/shellterm"
 	"crude/tui/screens/shelltree"
-	"crude/tui/screens/sourcecontrol"
 	"crude/tui/screens/termdock"
 	"crude/tui/surface"
 	"crude/tui/theme"
@@ -122,10 +122,11 @@ func newTestApp(t testing.TB) *App {
 	sidebarScreen := shelltree.New(th, nil)
 	activityBar := activitybar.New(th)
 	activityList := activitylist.New(th)
-	sourceControl := sourcecontrol.New(th)
+	gitPanel := gitpanel.New(th)
 	launcherScreen := launcher.New(th)
 	launcherScreen.SetData(".", nil)
 	termDock := termdock.New(th)
+	termDock.SetPanel(termdock.PanelGit, gitPanel)
 
 	shell := newShellRoot(headerScreen, footerScreen, activityBar, sidebarScreen, termDock)
 	rootHost := ui.NewHost(th, shell)
@@ -160,7 +161,7 @@ func newTestApp(t testing.TB) *App {
 		sidebarScreen:      sidebarScreen,
 		activityBar:        activityBar,
 		activityList:       activityList,
-		sourceControl:      sourceControl,
+		gitPanel:           gitPanel,
 		termScreens:        make(map[string]*shellterm.Screen),
 		termDock:           termDock,
 		termDockHeight:     12,
@@ -178,12 +179,9 @@ func newTestApp(t testing.TB) *App {
 	app.initWorkspacePanels()
 	app.Win = window.New(th)
 	launcherScreen.SetFocusHandler(rootHost.Focus)
-	sourceControl.SetFocusHandler(rootHost.Focus)
+	gitPanel.SetFocusHandler(rootHost.Focus, rootHost.Focused)
 	t.Cleanup(func() {
-		app.closeWorkspaceEditors()
-		if app.Tree != nil && app.Tree.Model != nil {
-			app.Tree.Model.StopWatcher()
-		}
+		app.StopAsyncIO()
 		if app.Workspace != nil {
 			if app.TermMgr != nil {
 				app.TermMgr.CloseAll()
@@ -192,7 +190,6 @@ func newTestApp(t testing.TB) *App {
 				app.LSPMgr.Stop()
 			}
 		}
-		resetAsyncIOStateForTest(app)
 		if app.Workspace != nil {
 			app.Close()
 		}
@@ -321,8 +318,8 @@ func (m *App) shellSlotActive(id shellSlotID) bool {
 	case shellTermDockSlot:
 		control = m.shell.termDock
 	case shellGitReviewSlot:
-		if m.gitReview != nil {
-			control = m.gitReview
+		if view := m.activeGitReview(); view != nil {
+			control = view.screen
 		}
 	case shellMainPanesSlot:
 		control = m.shell.mainPanes

@@ -54,11 +54,11 @@ func TestToggleActivitySameViewHidesContent(t *testing.T) {
 	model := filetree.NewFileTreeModel(t.TempDir())
 	app.Tree = NewTreeState(model, 24)
 	app.sidebarScreen.SetModel(model)
-	app.toggleActivity(activityGit)
+	app.toggleActivity(activityAgents)
 	if !app.Tree.Visible {
-		t.Fatal("first toggle should show git list")
+		t.Fatal("first toggle should show the agents list")
 	}
-	app.toggleActivity(activityGit)
+	app.toggleActivity(activityAgents)
 	if app.Tree.Visible {
 		t.Fatal("second toggle of the same view should hide sidebar content")
 	}

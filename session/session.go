@@ -47,12 +47,13 @@ type IdentityEventSender interface {
 }
 
 type Session struct {
-	plans     atomic.Pointer[plan.Store]
-	agentName string
-	nameHome  string
-	ID        string
-	cfg       *Config
-	mu        sync.Mutex
+	plans      atomic.Pointer[plan.Store]
+	childPlans sync.Map // exact agent ID -> *plan.Store; retained after child DB closure
+	agentName  string
+	nameHome   string
+	ID         string
+	cfg        *Config
+	mu         sync.Mutex
 
 	provider *provider.Provider
 	// An older transcript without a connection pin stays disconnected until

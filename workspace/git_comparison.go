@@ -18,7 +18,6 @@ import (
 	"crude/fileio"
 
 	"github.com/go-git/go-git/v5"
-	"github.com/go-git/go-git/v5/config"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/filemode"
 	"github.com/go-git/go-git/v5/plumbing/format/index"
@@ -72,6 +71,7 @@ type gitReviewState struct {
 	headRaw     *plumbing.Reference
 	headTree    *object.Tree
 	fingerprint string
+	status      git.Status // lazily read once per state for rename sources
 }
 
 type gitReviewFile struct {
@@ -159,11 +159,7 @@ func (state *gitReviewState) compare(ctx context.Context, change GitChange) (Git
 	}
 	beforePath := rel
 	if change.Code == "R" || change.Code == "C" {
-		wt, err := state.repo.Worktree()
-		if err != nil {
-			return GitComparison{}, err
-		}
-		status, err := wt.Status()
+		status, err := state.worktreeStatus()
 		if err != nil {
 			return GitComparison{}, err
 		}
@@ -208,6 +204,22 @@ func (state *gitReviewState) compare(ctx context.Context, change GitChange) (Git
 	}
 	comparison.Fingerprint = gitReviewDigest(state.fingerprint, gitComparisonIdentity(comparison))
 	return comparison, ctx.Err()
+}
+
+func (state *gitReviewState) worktreeStatus() (git.Status, error) {
+	if state.status != nil {
+		return state.status, nil
+	}
+	wt, err := state.repo.Worktree()
+	if err != nil {
+		return nil, err
+	}
+	status, err := wt.Status()
+	if err != nil {
+		return nil, err
+	}
+	state.status = status
+	return status, nil
 }
 
 func gitComparisonIdentity(comparison GitComparison) string {
@@ -361,14 +373,20 @@ func gitReviewDiskFile(ctx context.Context, root, rel string) (gitReviewFile, er
 }
 
 func (s *GitService) StageReviewed(ctx context.Context, comparison GitComparison) error {
-	return s.mutateReviewed(ctx, comparison, true)
+	return s.mutateReviewed(ctx, comparison, true, func() (string, filemode.FileMode, bool, error) {
+		return comparison.After, filemode.FileMode(comparison.AfterMode), comparison.AfterPresent, nil
+	})
 }
 
 func (s *GitService) UnstageReviewed(ctx context.Context, comparison GitComparison) error {
-	return s.mutateReviewed(ctx, comparison, false)
+	return s.mutateReviewed(ctx, comparison, false, func() (string, filemode.FileMode, bool, error) {
+		return comparison.Before, filemode.FileMode(comparison.BeforeMode), comparison.BeforePresent, nil
+	})
 }
 
-func (s *GitService) mutateReviewed(ctx context.Context, comparison GitComparison, stage bool) error {
+// mutateReviewed replaces one index entry with target bytes, but only while
+// the painted comparison is still exactly the repository's state.
+func (s *GitService) mutateReviewed(ctx context.Context, comparison GitComparison, stage bool, target func() (string, filemode.FileMode, bool, error)) error {
 	if s == nil {
 		return errors.New("git service is unavailable")
 	}
@@ -418,9 +436,9 @@ func (s *GitService) mutateReviewed(ctx context.Context, comparison GitCompariso
 			entries = append(entries, entry)
 		}
 	}
-	text, mode, present := comparison.After, filemode.FileMode(comparison.AfterMode), comparison.AfterPresent
-	if !stage {
-		text, mode, present = comparison.Before, filemode.FileMode(comparison.BeforeMode), comparison.BeforePresent
+	text, mode, present, err := target()
+	if err != nil {
+		return err
 	}
 	if present {
 		if mode == filemode.Submodule {
@@ -554,162 +572,6 @@ func (state *gitReviewState) commitReview(ctx context.Context) (GitCommitReview,
 		review.Comparisons = append(review.Comparisons, comparison)
 	}
 	return review, ctx.Err()
-}
-
-func (s *GitService) CommitReviewed(ctx context.Context, review GitCommitReview, message string) error {
-	if s == nil {
-		return errors.New("git service is unavailable")
-	}
-	if strings.TrimSpace(message) == "" {
-		return errors.New("commit message is empty")
-	}
-	if review.Fingerprint == "" || len(review.Comparisons) == 0 {
-		return errors.New("review a non-empty staged set before committing")
-	}
-	unlock, err := fileio.LockMutationContext(ctx)
-	if err != nil {
-		return err
-	}
-	defer unlock()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	state, err := s.readReviewState(ctx)
-	if err != nil {
-		return err
-	}
-	lock, _, err := gitReviewIndexLock(state.repo)
-	if err != nil {
-		return err
-	}
-	defer func() { _ = lock.Close(); _ = os.Remove(lock.Name()) }()
-	if state.root != review.RepositoryRoot || state.fingerprint != review.Fingerprint {
-		return ErrGitReviewStale
-	}
-	current, err := state.commitReview(ctx)
-	if err != nil {
-		return err
-	}
-	if len(current.Comparisons) != len(review.Comparisons) {
-		return ErrGitReviewStale
-	}
-	for position, comparison := range current.Comparisons {
-		if gitComparisonIdentity(comparison) != gitComparisonIdentity(review.Comparisons[position]) {
-			return ErrGitReviewStale
-		}
-	}
-	storage := state.repo.Storer.(*filesystem.Storage)
-	for _, hook := range []string{"pre-commit", "prepare-commit-msg", "commit-msg", "post-commit"} {
-		info, err := os.Stat(filepath.Join(storage.Filesystem().Root(), "hooks", hook))
-		if err == nil && info.Mode().Perm()&0o111 != 0 {
-			return errors.New("reviewed commits do not bypass executable Git hooks; use an external Git client")
-		}
-		if err != nil && !errors.Is(err, os.ErrNotExist) {
-			return err
-		}
-	}
-	cfg, err := state.repo.ConfigScoped(config.SystemScope)
-	if err != nil {
-		return err
-	}
-	if signing := strings.ToLower(cfg.Raw.Section("commit").Option("gpgsign")); signing == "true" || signing == "yes" || signing == "on" || signing == "1" || cfg.Raw.Section("core").Option("hooksPath") != "" {
-		return errors.New("reviewed commits cannot bypass configured signing or custom hooks; use an external Git client")
-	}
-	options := &git.CommitOptions{}
-	if err := options.Validate(state.repo); err != nil {
-		return err
-	}
-	treeHash, err := gitReviewBuildTree(ctx, state.repo, state.idx)
-	if err != nil {
-		return err
-	}
-	commit := &object.Commit{Author: *options.Author, Committer: *options.Committer, Message: message, TreeHash: treeHash, ParentHashes: options.Parents}
-	encoded := state.repo.Storer.NewEncodedObject()
-	if err := commit.Encode(encoded); err != nil {
-		return err
-	}
-	hash, err := state.repo.Storer.SetEncodedObject(encoded)
-	if err != nil {
-		return err
-	}
-	fresh, err := s.readReviewState(ctx)
-	if err != nil {
-		return err
-	}
-	if fresh.fingerprint != review.Fingerprint {
-		return ErrGitReviewStale
-	}
-	name := plumbing.HEAD
-	if state.headRaw.Type() == plumbing.SymbolicReference {
-		name = state.headRaw.Target()
-	}
-	old := state.head
-	if old == nil {
-		return state.repo.Storer.SetReference(plumbing.NewHashReference(name, hash))
-	}
-	return state.repo.Storer.CheckAndSetReference(plumbing.NewHashReference(name, hash), old)
-}
-
-func gitReviewBuildTree(ctx context.Context, repo *git.Repository, idx *index.Index) (plumbing.Hash, error) {
-	trees := map[string]*object.Tree{"": {}}
-	for _, entry := range idx.Entries {
-		if entry.Stage != 0 {
-			return plumbing.ZeroHash, errors.New("cannot commit unresolved index stages")
-		}
-		if entry.IntentToAdd {
-			continue
-		}
-		if _, err := gitReviewPath("", entry.Name, ""); err != nil {
-			return plumbing.ZeroHash, err
-		}
-		dir := path.Dir(entry.Name)
-		if dir == "." {
-			dir = ""
-		}
-		if trees[dir] == nil {
-			trees[dir] = &object.Tree{}
-		}
-		trees[dir].Entries = append(trees[dir].Entries, object.TreeEntry{Name: path.Base(entry.Name), Hash: entry.Hash, Mode: entry.Mode})
-		for ancestor := dir; ancestor != ""; {
-			ancestor = path.Dir(ancestor)
-			if ancestor == "." {
-				ancestor = ""
-			}
-			if trees[ancestor] == nil {
-				trees[ancestor] = &object.Tree{}
-			}
-		}
-	}
-	directories := make([]string, 0, len(trees))
-	for dir := range trees {
-		directories = append(directories, dir)
-	}
-	sort.Slice(directories, func(first, second int) bool { return len(directories[first]) > len(directories[second]) })
-	var rootHash plumbing.Hash
-	for _, dir := range directories {
-		if err := ctx.Err(); err != nil {
-			return plumbing.ZeroHash, err
-		}
-		tree := trees[dir]
-		sort.Sort(object.TreeEntrySorter(tree.Entries))
-		encoded := repo.Storer.NewEncodedObject()
-		if err := tree.Encode(encoded); err != nil {
-			return plumbing.ZeroHash, err
-		}
-		hash, err := repo.Storer.SetEncodedObject(encoded)
-		if err != nil {
-			return plumbing.ZeroHash, err
-		}
-		if dir == "" {
-			rootHash = hash
-			continue
-		}
-		parent := path.Dir(dir)
-		if parent == "." {
-			parent = ""
-		}
-		trees[parent].Entries = append(trees[parent].Entries, object.TreeEntry{Name: path.Base(dir), Hash: hash, Mode: filemode.Dir})
-	}
-	return rootHash, nil
 }
 
 func (s *GitService) InspectCommit(ctx context.Context, hash string) (GitCommitEvidence, error) {

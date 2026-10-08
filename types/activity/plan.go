@@ -9,6 +9,7 @@ type Plan struct {
 	Revision                             uint64
 	Objective, Status                    string
 	Completed, Total, Skipped, Cancelled int
+	Steps                                []Step // complete ordered snapshot for read-only plan inspection
 	Current                              []Step
 	Next                                 *Step
 }

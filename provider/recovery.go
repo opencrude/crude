@@ -60,7 +60,7 @@ func permanentAPIError(code string) bool {
 	if quotaAPIError(code) {
 		return true
 	}
-	for _, kind := range []string{"invalid_api_key", "authentication_error", "permission_denied", "invalid_request", "context_length_exceeded", "model_not_found"} {
+	for _, kind := range []string{"invalid_api_key", "authentication_error", "permission_denied", "permission_error", "invalid_request", "context_length_exceeded", "model_not_found", "not_found_error", "request_too_large"} {
 		if strings.Contains(code, kind) {
 			return true
 		}
@@ -79,7 +79,7 @@ func quotaAPIError(code string) bool {
 // invalid parameter and explicit retry vetoes still fail closed. Do not inspect
 // diagnostic prose or make this policy depend on the chosen wire protocol.
 func retryableAPIStatus(status int, codes, param, retryHint string) bool {
-	if retryHint == "false" {
+	if retryHint == "false" || param != "" {
 		return false
 	}
 	for _, code := range strings.Fields(strings.ToLower(codes)) {
@@ -91,7 +91,7 @@ func retryableAPIStatus(status int, codes, param, retryHint string) bool {
 		}
 	}
 	switch status {
-	case 400, 401, 403, 404, 413, 422:
+	case 400, 401, 402, 403, 404, 413, 422:
 		return false
 	}
 	return retryHint == "true" || isRetryableStatus(status)
@@ -101,6 +101,10 @@ func retryableAPIStatus(status int, codes, param, retryHint string) bool {
 // only before accepted output; the agent owns continuations of partial output.
 func Retryable(err error) bool {
 	if err == nil || errors.Is(err, context.Canceled) {
+		return false
+	}
+	var veto *streamRetryVetoError
+	if errors.As(err, &veto) {
 		return false
 	}
 	var interrupted *StreamInterruptionError
@@ -117,6 +121,9 @@ func Retryable(err error) bool {
 	}
 	var api *APIError
 	if errors.As(err, &api) {
+		if api.Param != "" {
+			return false
+		}
 		code := strings.ToLower(api.Type + " " + api.Code)
 		if status, err := strconv.Atoi(api.Code); err == nil {
 			return retryableAPIStatus(status, code, api.Param, "")

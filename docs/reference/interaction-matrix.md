@@ -13,9 +13,9 @@ preserve or intentionally improve.
 | Find in Files | Ctrl+Alt+F | Not Ctrl+Shift+F under tmux 3.4 |
 | Replace in Files | Ctrl+Alt+H | Sibling of Find in Files; not Ctrl+Shift+H under tmux |
 | Toggle sidebar | Ctrl+B | Hides/shows the sidebar body; the 8-col activity rail (outer gutter plus padding before the panel left border) stays |
-| Files / Agents / Terminals / Source Control | Ctrl+Shift+E / A / U / G | Activity destinations; rail and panel bodies expose destination-aware context menus |
+| Files / Agents / Terminals / Git | Ctrl+Shift+E / A / U, Ctrl+Alt+G | Files and Agents are rail destinations; Terminals and Git are bottom-dock destinations (footer pills). Rail and panel bodies expose destination-aware context menus |
 | Application Settings | activity-bar gear | Bottom rail gear opens Application Settings (VS Code manage control); right-click also offers Workspace Settings |
-| Rail counts | Upper/lower-right of destination icons | Normal-size bold digits keep the script-like placement without tiny Unicode glyphs: Agents and other destinations use the top row of their three-row band; Source Control uses the bottom row. Counts above nine use `+` at the same level. Badges sit diagonally beyond the measured icon, never widen the rail or overwrite the panel rule, and remain inside their destination's whole-band click/hover target. Zero counts disappear. |
+| Rail counts | Upper/lower-right of destination icons | Normal-size bold digits keep the script-like placement without tiny Unicode glyphs: Every destination uses the top row of its three-row band. Counts above nine use `+` at the same level. Badges sit diagonally beyond the measured icon, never widen the rail or overwrite the panel rule, and remain inside their destination's whole-band click/hover target. Zero counts disappear. |
 | New terminal | Ctrl+Shift+` | Ghostty-pinned PTY; docks in the workspace terminal dock |
 | Toggle terminal | Ctrl+` | Focus last terminal, or leave it if it already owns keys |
 | Composer | Alt+C | |
@@ -66,6 +66,8 @@ and immutable snapshot lifetime are documented in Main View Panes.
 
 | Action | Binding / control | Notes |
 |--------|-------------------|-------|
+| Inspect active plan | Hover the chat activity line | Passive, exact-pane WindowFrame reader with complete steps and native scrolling. Moving into it keeps it open; click enables keyboard navigation/Ctrl+C. Leave/Esc/outside, a modal, hidden owner or completed plan dismiss it. No composer/draft/session switch. |
+| Jump to latest chat | Centered `↓ Latest` above activity while scrolled up; existing End with empty composer | Uses the existing reserved gap, never adds transcript height. Reaches the actual virtualized tail and re-arms stream following for that pane only. |
 | Composer growth/scroll | Automatic one-to-six text-row viewport; wheel or cursor navigation | The full composer is also capped at one third of the available content column, leaving a readable transcript. Excess draft text scrolls internally; a quiet `↑↓ first–last/total` range appears beside its rule when it fits. Wheel browsing survives repaint, hit testing uses the painted offset, and navigation/edits reveal the caret. Typing/restoring/resizing never converts the draft to an attachment or trims content. |
 | Browse prompt history | Up / Down at composer boundaries | Prefix-filtered recall preserves text and attachment snapshots; Down past the newest match restores the original draft. File I/O runs outside Update, with session and input-generation checks. |
 | Search prompt history | `/history` | Searchable single-line summaries show time, prompt preview, and attachment count. Click or Enter expands full text and attachment details; **Use in composer** restores without sending. Missing media fails closed and leaves the draft intact. |
@@ -102,6 +104,9 @@ byte-for-byte and interaction-state intact. Rejected steering creates no human
 chat row or accepted history. Exact-owner late semantic stream/tool evidence is
 retained while stopping and after terminal acknowledgement, but never reactivates
 animation; only a genuinely new runtime generation can start new work.
+Ordinary stopped boundaries and cancelled recovery notices remain durable but
+have no transcript rows or height; the fixed strip says only `Stopped`. Authentic
+recovery actions and interrupted tool evidence are not hidden.
 
 Prompt history owns content-addressed media beside `history.json` with
 owner-only permissions. Multimodal entries never merge by text similarity.
@@ -111,6 +116,10 @@ media is session-owned, so pruning the bounded history cannot break a resumed
 session. Individual binary reads are limited to 64 MiB. Capture failures are
 reported and marked unavailable rather than silently recalling text-only
 versions. Application shutdown flushes pending history before closing sessions.
+After the terminal program exits, idempotent UI teardown flushes composer drafts,
+fences and joins in-flight tree watcher startup, and closes all distinct editor
+and tree watchers. Workspace shutdown remains a separate domain operation; it
+does not own TUI resources. Late tree-ready/start callbacks cannot reopen watchers.
 
 Composer ownership changes at session activation, never during rendering. The
 destination reference store is bound before recalled attachment IDs are installed,
@@ -185,14 +194,32 @@ explicit empty result instead of unrelated suggestions.
 | Refresh tree | Ctrl+R | Relocated from `r` (typing now filters) |
 | Toggle hidden files | Ctrl+. | Relocated from `.` |
 
-## Source Control panel
+## Git panel (bottom dock)
 | Action | Binding / control | Notes |
 |--------|-------------------|-------|
-| Commit staged changes | Ctrl+Enter in commit field | Empty messages are rejected; refreshes snapshot after commit |
-| Refresh repository | Ctrl+R / context menu | Status, branch tracking, history, and branch list refresh asynchronously. The header's own Git identity also reconciles automatically after file and repository-metadata changes, so opening this panel is never required to see current state; an automatic reconcile never shows the loading state or raises a failure of its own |
-| Stage / unstage | change context menu | Supports individual paths and stage/unstage all |
-| Checkout local branch | Enter / branch context menu | Current branch is disabled |
-| Discard tracked changes | change context menu | Opens a danger confirmation with Cancel focused; untracked files are never deleted |
+| Open / focus / hide | Footer **Git** pill, `Ctrl+Alt+G`, header Git identity menu | Opening focuses the change list; repeating with focus inside hides the dock |
+| Move / preview | Up/Down, PgUp/PgDn, Home/End, click | Selection drives the live hunk preview; double-click or Enter opens the full review at that file |
+| Stage / unstage | Space, row `+` / `−`, section **Stage all** / **Unstage all**, `a` / `-` | Unsaved editor bytes are refused; after staging the cursor stays in place |
+| Discard | Row `↶`, `d` | Danger confirmation with Cancel focused, exact preimage, Local History recovery; untracked files are never deleted |
+| Open file | `o` | Opens at the first changed line |
+| Generate message | `[ Generate ]` beside Commit; `[ Stop ]` or Esc in the message while writing | Aeron (the narrow-task model role) drafts from exactly what Commit would record; text streams into the message under an animated progress rule; Stop, failure or timeout restore the previous draft. Commit is disabled while writing |
+| Resize list/preview | Drag the divider (or focus it and use ←/→) | Same shared split control as every other pane; the review's navigator/document divider works the same way |
+| Commit | **Commit** button, Ctrl+Enter in the message, `c` focuses the message | Commits the shown staged set via Git (hooks/signing apply); nothing staged → "Commit all N" stages exactly the listed paths; a different staged set or a conflict fails closed |
+| History / Branches | Tabs, `1` `2` `3` | History previews a commit read-only, Enter opens it in the main area; Branches switch after confirmation |
+| Refresh | Ctrl+R | Explicit refresh shows "refreshing…"; watcher reconciliation stays silent |
+
+## Git review (main area)
+| Action | Binding / control | Notes |
+|--------|-------------------|-------|
+| Navigate | Up/Down/PgUp/PgDn/Space, `]` `[` (Alt+→/←) file, `n` `p` (Alt+↓/↑) hunk | The file navigator follows the reading position; clicking a file scrolls to it |
+| Fold | Click a file header, `z` current file, `Z` / **Collapse all** every file | Click a `⋯ N unchanged lines` gap to expand it |
+| Per-file actions | Header Stage / Unstage / Mark Resolved / Discard / Open; `s` `u` `d` `o` | Stage/unstage records the painted bytes and fails closed when they changed |
+| Per-hunk actions | Hunk header Stage hunk / Unstage hunk / Discard hunk; `+` (stage, or unstage when staged), `-` unstage, `x` discard | Targets the hunk at the reading position; only that hunk's lines change in the index or on disk. Discard asks first and captures Local History; any newer change fails closed |
+| Select / copy | Drag (copies on release), Shift+↑/↓ whole lines, Ctrl+A current file, Ctrl+C, Esc clears | Copies source text only: no gutters, markers or split alignment rows; split selections stay on the side they started |
+| Find | Ctrl+F, Enter / Shift+Enter or F3 / Shift+F3, Esc | Case-insensitive across every shown line; folded files and gaps are not searched |
+| Open a line | Double-click any line | Opens the editor on that line (deleted lines land on the nearest surviving line) |
+| Presentation | `v`, **Split** / **Unified** link | Split needs 100 columns; narrower reverts to unified and keeps the preference |
+| Tabs | Every review is its own main tab: all changes (`[ Review all ]`), one file (Enter / double-click in the panel), a folder or file (Explorer/editor **View Changes**), one commit (History Enter) | Any number stay open, move and split like documents; reopening the same scope or commit activates its tab. A scoped tab offers `[ All changes ]`; Esc returns to the tab it came from |
 
 ## Agents panel
 

@@ -43,9 +43,6 @@ func (app *App) captureToolView() {
 		list := app.activityList.ViewState()
 		state.Filter, state.Selection, state.Offset = list.Filter, list.Selection, list.Offset
 	}
-	if app.sourceControl != nil && app.activityView == activityGit {
-		state.Filter, state.Selection, state.Offset, state.Collapsed = app.sourceControl.ViewState()
-	}
 	app.toolLayout.Views[app.activityView.ID()] = state
 }
 

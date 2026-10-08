@@ -308,7 +308,7 @@ func (s *OpenAIStandard) DecodeResponse(body []byte) (*ChatResponse, error) {
 }
 
 func (s *OpenAIStandard) NewStreamDecoder() StreamDecoder {
-	return &openAIChatStreamDecoder{}
+	return &streamErrorDecoder{protocol: s.Info().ID, inner: &openAIChatStreamDecoder{}}
 }
 
 type openAIChatStreamDecoder struct{ pendingCustom bool }

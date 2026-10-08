@@ -176,7 +176,7 @@ func TestGitComparisonUntrackedDeletedBinaryAndUnborn(t *testing.T) {
 	if len(review.Comparisons) != 1 || review.Head != "" {
 		t.Fatalf("unborn commit review=%+v", review)
 	}
-	if err := service.CommitReviewed(context.Background(), review, "initial\n\nExact reviewed binary"); err != nil {
+	if err := service.CommitStaged(context.Background(), []string{"binary.dat"}, "initial\n\nExact reviewed binary"); err != nil {
 		t.Fatal(err)
 	}
 	if err := os.Remove(filepath.Join(root, "binary.dat")); err != nil {
@@ -198,19 +198,18 @@ func TestGitComparisonUntrackedDeletedBinaryAndUnborn(t *testing.T) {
 	}
 }
 
-func TestGitReviewedCommitUsesExactStagedSetAndInspectsEvidence(t *testing.T) {
+func TestGitCommitStagedUsesExactStagedSetAndInspectsEvidence(t *testing.T) {
 	repo, wt, service, root := reviewRepository(t, true)
 	reviewWrite(t, root, "nested/feature.txt", "reviewed staged\n")
 	if _, err := wt.Add("nested/feature.txt"); err != nil {
 		t.Fatal(err)
 	}
-	review, err := service.ReviewCommit(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
 	reviewWrite(t, root, "nested/feature.txt", "newer working text\n")
+	if err := service.CommitStaged(context.Background(), []string{"nested/feature.txt", "other.txt"}, "wrong set"); !errors.Is(err, ErrGitReviewStale) {
+		t.Fatalf("commit accepted a staged set the user was not shown: %v", err)
+	}
 	message := "Feature\n\nMultiline message stays exact.\n"
-	if err := service.CommitReviewed(context.Background(), review, message); err != nil {
+	if err := service.CommitStaged(context.Background(), []string{"nested/feature.txt"}, message); err != nil {
 		t.Fatal(err)
 	}
 	head, err := repo.Head()
@@ -228,8 +227,8 @@ func TestGitReviewedCommitUsesExactStagedSetAndInspectsEvidence(t *testing.T) {
 	if remaining.After != "newer working text\n" || remaining.Before != "reviewed staged\n" {
 		t.Fatalf("commit consumed working bytes: %+v", remaining)
 	}
-	if err := service.CommitReviewed(context.Background(), review, "repeat"); !errors.Is(err, ErrGitReviewStale) {
-		t.Fatalf("old commit review accepted: %v", err)
+	if err := service.CommitStaged(context.Background(), []string{"nested/feature.txt"}, "repeat"); !errors.Is(err, ErrGitReviewStale) {
+		t.Fatalf("commit of an already committed set accepted: %v", err)
 	}
 }
 
@@ -257,5 +256,42 @@ func TestGitComparisonPathCancellationAndExistingLock(t *testing.T) {
 	lock, err := os.ReadFile(lockPath)
 	if err != nil || string(lock) != "external lock" {
 		t.Fatal("review stage changed another operation's lock")
+	}
+}
+
+func TestGitCompareChangesReadsOneSnapshotAndIsolatesFailures(t *testing.T) {
+	_, wt, service, root := reviewRepository(t, true)
+	reviewWrite(t, root, "file.txt", "edited\n")
+	reviewWrite(t, root, "added.txt", "brand new\n")
+	if _, err := wt.Add("added.txt"); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := service.Snapshot(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	changes := append(snapshot.Changes, GitChange{Path: "../escape", Area: GitAreaWorking})
+	results, err := service.CompareChanges(context.Background(), changes)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(results) != len(changes) {
+		t.Fatalf("results=%d changes=%d", len(results), len(changes))
+	}
+	byPath := map[string]GitChangeComparison{}
+	for _, result := range results {
+		byPath[result.Change.Path] = result
+	}
+	if got := byPath["file.txt"]; got.Err != nil || got.Comparison.After != "edited\n" {
+		t.Fatalf("working comparison=%+v", got)
+	}
+	if got := byPath["added.txt"]; got.Err != nil || got.Comparison.Area != GitAreaStaged || got.Comparison.After != "brand new\n" {
+		t.Fatalf("staged comparison=%+v", got)
+	}
+	if byPath["../escape"].Err == nil {
+		t.Fatal("unsafe path compared instead of failing on its own")
+	}
+	if got := snapshot.StagedPaths(); len(got) != 1 || got[0] != "added.txt" {
+		t.Fatalf("staged paths=%v", got)
 	}
 }

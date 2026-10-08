@@ -39,6 +39,7 @@ const (
 	OverlayOutline           OverlayID = "outline-popup"
 	OverlayDiagContext       OverlayID = "diag-context"
 	OverlayDiagHover         OverlayID = "diag-hover"
+	OverlayPlanHover         OverlayID = "plan-hover"
 	OverlaySessionPicker     OverlayID = "session-picker"
 	OverlayHelp              OverlayID = "help"
 	OverlayTerminalPrefix    OverlayID = "terminal/"
@@ -99,6 +100,7 @@ func (p OutsidePolicy) toWM() wm.ClickOutsideBehavior {
 // OverlayPolicy describes the behavior of a managed overlay.
 type OverlayPolicy struct {
 	Modal     bool // blocks clicks to windows below
+	Passive   bool // hover-open: keep keyboard focus until an explicit click
 	Focusable bool // participates in focus/mouse hit-testing
 	Movable   bool
 	Resizable bool
@@ -229,7 +231,11 @@ func (h *OverlayHost) Open(id OverlayID, fw *wm.FloatingWindow, policy OverlayPo
 	// scope can restore it when this overlay closes.
 	prior := h.focusedWindowID()
 	// Add to WM.
-	h.wm.AddWindow(fw)
+	if policy.Passive && !policy.Modal {
+		h.wm.AddWindowPassive(fw)
+	} else {
+		h.wm.AddWindow(fw)
+	}
 	// Track in stack.
 	h.stack = append(h.stack, &OverlayEntry{
 		ID:         id,
@@ -238,7 +244,7 @@ func (h *OverlayHost) Open(id OverlayID, fw *wm.FloatingWindow, policy OverlayPo
 		OnClose:    onClose,
 		priorFocus: prior,
 	})
-	if h.focusHost != nil {
+	if h.focusHost != nil && (!policy.Passive || policy.Modal) {
 		h.focusHost.PushFocusScope(ComponentID(string(id)), policy.Modal)
 	}
 	if h.onOpen != nil {

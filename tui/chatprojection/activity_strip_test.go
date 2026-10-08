@@ -68,22 +68,16 @@ func TestActivityStripPacksThenRotatesPlanFactsInOrder(t *testing.T) {
 	if !strings.Contains(first, "Inspecting the renderer") || strings.HasPrefix(first, "8") {
 		t.Fatalf("wrong priority: %s", first)
 	}
-	if next := strip.Line(7000).PlainText(); !strings.Contains(next, "Plan 1/4 done") || !strings.Contains(next, "Step 2/4") {
+	if next := strip.Line(7000).PlainText(); next != "2/4 Implement the projector" {
 		t.Fatalf("active step lost: %s", next)
 	}
-	if next := strip.Line(13000).PlainText(); !strings.Contains(next, "Goal") {
-		t.Fatalf("goal order: %s", next)
-	}
-	if next := strip.Line(19000).PlainText(); !strings.Contains(next, "Next 3/4") || !strings.HasSuffix(next, "8 turns") {
-		t.Fatalf("next step/count priority: %s", next)
-	}
-	if next := strip.Line(25000).PlainText(); next != first {
-		t.Fatalf("cycle did not wrap: %s", next)
+	if next := strip.Line(13000).PlainText(); next != first {
+		t.Fatalf("two-page cycle did not wrap: %s", next)
 	}
 	// Transport deltas must not continually restart rotation and starve plans.
 	view.Thinking += "."
 	strip.Update(view, 48, th, tokens)
-	if line := strip.Line(31000).PlainText(); !strings.Contains(line, "Step 2/4") {
+	if line := strip.Line(19000).PlainText(); !strings.Contains(line, "2/4 Implement the projector") {
 		t.Fatalf("token update starved plan: %s", line)
 	}
 	// New semantic blocks preempt secondary information immediately.
@@ -96,7 +90,7 @@ func TestActivityStripPacksThenRotatesPlanFactsInOrder(t *testing.T) {
 	if len(strip.pages) != 1 {
 		t.Fatalf("wide line wasted space on %d pages", len(strip.pages))
 	}
-	if text := strip.Line(32000).PlainText(); !strings.Contains(text, "Step 2/4") || !strings.HasSuffix(text, "8 turns") {
+	if text := strip.Line(32000).PlainText(); !strings.Contains(text, "2/4 Implement the projector") || strings.Contains(text, "turns") {
 		t.Fatalf("wide packing=%s", text)
 	}
 }
@@ -160,8 +154,8 @@ func TestActivityStripStoppedPlansStayStill(t *testing.T) {
 					Status: types.AgentStatusSnapshot{Phase: types.AgentTool, Detail: "Working"}}
 				strip.Update(view, width, th, tokens)
 				first := strip.Line(0)
-				if rotated := strip.Line(6100); !rotated.TextTide || rotated.PlainText() == first.PlainText() {
-					t.Fatal("fixture must rotate multiple active plan pages")
+				if rotated := strip.Line(6100); !rotated.TextTide || rotated.PlainText() != first.PlainText() {
+					t.Fatal("fixture must retain one compact active task")
 				}
 				view.Active, view.Status.Phase, view.Status.Detail = false, phase, string(phase)
 				view.Status.RetryAt = time.UnixMilli(12000)
@@ -171,7 +165,7 @@ func TestActivityStripStoppedPlansStayStill(t *testing.T) {
 					if line.TextTide {
 						t.Fatal("stopped strip still has a light sweep")
 					}
-					if phase == types.AgentCancelled && !strings.HasPrefix(line.PlainText(), "Stopped") {
+					if phase == types.AgentCancelled && line.PlainText() != "Stopped" {
 						t.Fatalf("stopped plan lacks its lifecycle label: %s", line.PlainText())
 					}
 					buf := surface.NewCellBuffer(width, 1)
@@ -198,8 +192,8 @@ func TestActivityStripStoppedPlansStayStill(t *testing.T) {
 				if !restarted.TextTide || restarted.TideCenter >= 0 {
 					t.Fatal("resumed tide did not enter from outside the text")
 				}
-				if strip.Line(116100).PlainText() == restarted.PlainText() {
-					t.Fatal("plan pages did not resume rotation")
+				if strip.Line(116100).PlainText() != restarted.PlainText() {
+					t.Fatal("compact task unexpectedly rotated")
 				}
 			})
 		}
@@ -243,7 +237,7 @@ func TestCompactionActivityOwnsStripUntilNextTurn(t *testing.T) {
 	view.Active = true
 	view.Status.Phase, view.Status.Detail = types.AgentTool, "Working"
 	strip.Update(view, 100, th, tokens)
-	if got := strip.Line(15000).PlainText(); !strings.Contains(got, "Working") || !strings.Contains(got, "Plan 3/4") {
+	if got := strip.Line(15000).PlainText(); got != "4/4 Run build, tests, and whole-repo lint" {
 		t.Fatalf("next turn did not restore the plan: %q", got)
 	}
 }
@@ -280,5 +274,44 @@ func BenchmarkActivityStripRetainedFrame(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		strip.Update(view, 100, th, tokens)
 		_ = strip.Line(i * 16)
+	}
+}
+
+func TestCompactPlanStatusIsOnlyCurrentOrdinalAndTask(t *testing.T) {
+	th := theme.DefaultDark()
+	p := &activity.Plan{ID: "p", Total: 5, Completed: 2, Skipped: 1, Objective: "Must not appear",
+		Current: []activity.Step{{Number: 3, Status: "in_progress", Text: "Task name", Reason: "Must not appear"}},
+		Next:    &activity.Step{Number: 4, Text: "Must not appear"}}
+	var strip ActivityStrip
+	strip.Update(types.AgentActivityView{Active: true, Plan: p, SuccessfulCalls: 99, CallsKnown: true,
+		Status: types.AgentStatusSnapshot{Phase: types.AgentTool, Detail: "Running tools"}}, 200, th, ui.NewTokenSet(th))
+	for _, frame := range []int{0, 6100, 18000} {
+		if got := strip.Line(frame).PlainText(); got != "3/5 Task name" {
+			t.Fatalf("compact task = %q", got)
+		}
+	}
+}
+
+func TestAttentionAndInterruptionOutrankPlanEvenWithStaleActiveFlag(t *testing.T) {
+	th := theme.DefaultDark()
+	for _, active := range []bool{false, true} {
+		for _, tc := range []struct {
+			phase types.AgentPhase
+			label string
+		}{
+			{types.AgentNeedsAttention, "Needs attention · work kept · /retry to continue"},
+			{types.AgentInterrupted, "Interrupted · work kept · /retry to continue"},
+			{types.AgentCancelled, "Stopped"},
+		} {
+			var strip ActivityStrip
+			strip.Update(types.AgentActivityView{Active: active, Plan: &activity.Plan{Total: 2, Current: []activity.Step{{Number: 1, Text: "Hidden task"}}},
+				Status: types.AgentStatusSnapshot{Phase: tc.phase}}, 200, th, ui.NewTokenSet(th))
+			for _, frame := range []int{0, 6001, 12001} {
+				line := strip.Line(frame)
+				if line.PlainText() != tc.label || line.TextTide {
+					t.Fatalf("active=%v phase=%s: %+v", active, tc.phase, line)
+				}
+			}
+		}
 	}
 }

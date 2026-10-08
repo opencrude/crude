@@ -20,7 +20,7 @@ const (
 	gitSnapshotHoldLimit = 2 * time.Second
 	// gitSnapshotFallback bounds staleness when no watcher event arrives at all:
 	// an overflowed or dropped event must not freeze the header identity until
-	// the user opens the Source Control panel.
+	// the user opens the Git panel.
 	gitSnapshotFallback = 30 * time.Second
 )
 
@@ -28,7 +28,7 @@ const (
 // itself starts from the tick loop so a burst collapses into a single snapshot,
 // mirroring the editor's gutter Git projection.
 func (m *App) requestGitSnapshot(now time.Time) {
-	if m == nil || m.sourceControl == nil {
+	if m == nil || m.gitPanel == nil {
 		return
 	}
 	m.gitSnapshotEventAt = now
@@ -41,7 +41,7 @@ func (m *App) requestGitSnapshot(now time.Time) {
 // burst has settled, a continuous burst has held the projection stale past the
 // hold limit, or the fallback interval elapsed without any event.
 func (m *App) gitSnapshotDue(now time.Time) bool {
-	if m == nil || m.sourceControl == nil {
+	if m == nil || m.gitPanel == nil {
 		return false
 	}
 	if !m.gitSnapshotEventAt.IsZero() {
@@ -59,7 +59,7 @@ func (m *App) gitSnapshotDue(now time.Time) bool {
 // superseded result loses that operation's notice, commit-field clear, editor
 // invalidation, and error report.
 func (m *App) gitSnapshotReady(now time.Time) bool {
-	if m == nil || m.sourceControl == nil || m.gitReadsInFlight > 0 {
+	if m == nil || m.gitPanel == nil || m.gitReadsInFlight > 0 {
 		return false
 	}
 	return m.gitSnapshotDue(now)
@@ -69,7 +69,7 @@ func (m *App) gitSnapshotReady(now time.Time) bool {
 // gitSnapshotReady first; this consumes the pending event burst and owns one
 // in-flight slot until its result settles.
 func (m *App) startGitSnapshotRead() tea.Cmd {
-	if m == nil || m.sourceControl == nil || m.gitReadsInFlight > 0 {
+	if m == nil || m.gitPanel == nil || m.gitReadsInFlight > 0 {
 		return nil
 	}
 	m.gitSnapshotEventAt = time.Time{}
@@ -89,7 +89,7 @@ func (m *App) startGitSnapshotRead() tea.Cmd {
 }
 
 // sameGitSnapshot reports whether two projections paint the same header
-// identity and Source Control panel. A silent reconciliation that finds no
+// identity and Git panel. A silent reconciliation that finds no
 // change must not rebuild the panel list or invalidate the editor's gutter
 // annotation (a Git read of its own) on every fallback pass.
 func sameGitSnapshot(a, b workspace.GitSnapshot) bool {

@@ -169,12 +169,18 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	m.wireLSPDiagnostics()
 	m.syncFileTreeDiagnosticsFromLSP()
 
-	if m.sourceControl != nil {
-		m.sourceControl.SetSnapshot(workspace.GitSnapshot{})
+	if m.gitPanel != nil {
+		m.gitPanel.SetSnapshot(workspace.GitSnapshot{})
+		m.gitPanel.SetPrepared(nil)
+		m.gitPanel.SetMessage("")
 	}
-	m.gitReview = nil
+	m.gitPrepareInFlight, m.gitPrepareDirty = false, false
+	m.gitPrepareGen++
+	m.stopCommitMessageWriter()
+	m.gitCommitWriteSequence++
+	m.gitEvidenceSequence++
+	m.gitReviews = nil
 	m.localDiffs = nil
-	m.gitReviewSequence++
 	m.boardBrowser = nil
 	m.pendingOperationIssues = nil
 	m.capabilitySnapshot = captypes.Snapshot{}
@@ -186,7 +192,6 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	m.workspacePanelMaximized = false
 	if m.activityBar != nil {
 		m.activityBar.SetBadge(activityAgents, 0)
-		m.activityBar.SetBadge(activityGit, 0)
 	}
 	m.syncPendingSteeringCount()
 	m.refreshActivityList()
@@ -199,7 +204,7 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	m.treeGitRefreshAt = time.Time{}
 	// The header identity belongs to the new project: drop the old pacing and
 	// reconcile the replacement repository as soon as the switch settles
-	// instead of waiting for the user to open the Source Control panel.
+	// instead of waiting for the user to open the Git panel.
 	m.gitSnapshotEventAt = time.Time{}
 	m.gitSnapshotBurstAt = time.Time{}
 	m.gitSnapshotAt = time.Time{}
@@ -225,6 +230,7 @@ func (m *App) beginWorkspaceTreeLoad(rootPath string) {
 
 func (m *App) applyWorkspaceTreeReady(msg workspaceTreeReadyMsg) {
 	if m == nil || msg.model == nil ||
+		m.asyncIOStopped.Load() ||
 		msg.generation != m.workspaceSwitchGen.Load() ||
 		!sameWorkspaceRoot(m.RootPath, msg.rootPath) {
 		if msg.model != nil {
@@ -252,6 +258,13 @@ func (m *App) wireAndStartWorkspaceTreeWatcherAsync(model *filetree.FileTreeMode
 	if m == nil || model == nil {
 		return
 	}
+	m.treeWatcherLifeMu.Lock()
+	if m.asyncIOStopped.Load() {
+		m.treeWatcherLifeMu.Unlock()
+		return
+	}
+	m.treeWatcherStarts.Add(1)
+	m.treeWatcherLifeMu.Unlock()
 	bus := m.eventBus
 	model.SetOnFileChanged(func(filePath string, changeType int) {
 		if m.workspaceSwitchGen.Load() != generation || bus == nil {
@@ -266,8 +279,9 @@ func (m *App) wireAndStartWorkspaceTreeWatcherAsync(model *filetree.FileTreeMode
 		bus.Send(filetree.TreeGitChangedMsg{Model: model})
 	})
 	go func() {
+		defer m.treeWatcherStarts.Done()
 		err := model.StartWatcher()
-		if m.workspaceSwitchGen.Load() != generation {
+		if m.asyncIOStopped.Load() || m.workspaceSwitchGen.Load() != generation {
 			model.SetOnFileChanged(nil)
 			model.SetOnGitChanged(nil)
 			model.StopWatcher()
@@ -284,6 +298,11 @@ func (m *App) wireAndStartWorkspaceTreeWatcherAsync(model *filetree.FileTreeMode
 // publishing a late callback into the new workspace.
 func (m *App) wireAndStartWorkspaceTreeWatcher(model *filetree.FileTreeModel) {
 	if m == nil || model == nil {
+		return
+	}
+	m.treeWatcherLifeMu.Lock()
+	defer m.treeWatcherLifeMu.Unlock()
+	if m.asyncIOStopped.Load() {
 		return
 	}
 	generation := m.workspaceSwitchGen.Load()
@@ -309,11 +328,11 @@ func (m *App) wireAndStartWorkspaceTreeWatcher(model *filetree.FileTreeModel) {
 // editor is normally also present in Tabs, but tests and transitional states
 // may leave a distinct active projection outside the map.
 func (m *App) closeWorkspaceEditors() {
-	if m.overlayHost != nil {
-		m.overlayHost.Close(editorChangesOverlay)
-	}
 	if m == nil || m.EditorState == nil {
 		return
+	}
+	if m.overlayHost != nil {
+		m.overlayHost.Close(editorChangesOverlay)
 	}
 	seen := make(map[*editor.Editor]struct{}, len(m.EditorState.Tabs)+1)
 	closeEditor := func(ed *editor.Editor) {

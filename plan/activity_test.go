@@ -14,7 +14,7 @@ func TestActivitySnapshotTracksCommittedPlanAndResume(t *testing.T) {
 		t.Fatal(err)
 	}
 	first := s.ActivitySnapshot()
-	if first == nil || first.Completed != 1 || len(first.Current) != 1 || first.Current[0].Number != 2 || first.Next.Number != 3 {
+	if first == nil || first.Completed != 1 || len(first.Steps) != 3 || first.Steps[0].Text != "Inspect" || first.Steps[2].Status != "pending" || len(first.Current) != 1 || first.Current[0].Number != 2 || first.Next.Number != 3 {
 		t.Fatalf("snapshot=%+v", first)
 	}
 	_, _, err = s.Update(ctx, UpdateRequest{PlanID: p.ID, Revision: p.Revision + 1, Status: StatusPaused})

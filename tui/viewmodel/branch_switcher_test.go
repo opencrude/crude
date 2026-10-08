@@ -17,7 +17,7 @@ import (
 func TestHeaderGitSegmentOwnsRepoCounts(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 28
-	app.sourceControl.SetSnapshot(workspace.GitSnapshot{
+	app.gitPanel.SetSnapshot(workspace.GitSnapshot{
 		Branch: "main", Ahead: 1, Behind: 2,
 		Changes: []workspace.GitChange{{Path: "one"}, {Path: "two"}},
 	})
@@ -53,7 +53,7 @@ func TestHeaderGitSegmentOwnsRepoCounts(t *testing.T) {
 func TestHeaderGitClickOpensBranchDropdown(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 28
-	app.sourceControl.SetSnapshot(workspace.GitSnapshot{
+	app.gitPanel.SetSnapshot(workspace.GitSnapshot{
 		Branch: "main",
 		Branches: []workspace.GitBranchSummary{
 			{Name: "main", Current: true},
@@ -81,7 +81,7 @@ func TestHeaderGitClickOpensBranchDropdown(t *testing.T) {
 			labels = append(labels, it.Label)
 		}
 	}
-	for _, want := range []string{"main", "feature/x", "origin/main", "Refresh", "Open source control"} {
+	for _, want := range []string{"main", "feature/x", "origin/main", "Refresh", "Open Git panel", "Review all changes"} {
 		if !containsLabel(labels, want) {
 			t.Fatalf("dropdown labels=%v missing %q", labels, want)
 		}
@@ -124,12 +124,12 @@ func TestHeaderGitClickOpensBranchDropdown(t *testing.T) {
 	app.overlayHost.Close(ui.OverlayContextMenu)
 }
 
-// No branches (unborn repo / no remotes): fall back to the source-control
-// panel instead of a dead one-item menu.
+// No branches (unborn repo / no remotes): fall back to the Git dock panel
+// instead of a dead one-item menu.
 func TestHeaderGitDropdownFallsBackToPanelWithoutBranches(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 28
-	app.sourceControl.SetSnapshot(workspace.GitSnapshot{Branch: "main"})
+	app.gitPanel.SetSnapshot(workspace.GitSnapshot{Branch: "main"})
 	app.paintShellFrame()
 
 	_, cmd := app.Update(shellheader.ActionMsg{Action: "git-branch"})
@@ -139,8 +139,8 @@ func TestHeaderGitDropdownFallsBackToPanelWithoutBranches(t *testing.T) {
 	if fw := app.windowManager.Window(string(ui.OverlayContextMenu)); fw != nil {
 		t.Fatal("no branches: dropdown must not open, panel toggles instead")
 	}
-	if app.activityView != activityGit {
-		t.Fatalf("activityView=%v want source control panel", app.activityView)
+	if !app.gitPanelOpen() {
+		t.Fatal("no branches: the Git dock panel must open instead")
 	}
 }
 
@@ -149,7 +149,7 @@ func TestHeaderGitDropdownFallsBackToPanelWithoutBranches(t *testing.T) {
 func TestHeaderGitRightClickKeepsRegionMenu(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 28
-	app.sourceControl.SetSnapshot(workspace.GitSnapshot{
+	app.gitPanel.SetSnapshot(workspace.GitSnapshot{
 		Branch:   "main",
 		Branches: []workspace.GitBranchSummary{{Name: "main", Current: true}},
 	})

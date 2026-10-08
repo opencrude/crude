@@ -61,7 +61,6 @@ type View int
 const (
 	ViewFiles View = iota
 	ViewAgents
-	ViewGit
 	ViewSkills
 	ViewMCP
 )
@@ -70,8 +69,6 @@ func (view View) ID() string {
 	switch view {
 	case ViewAgents:
 		return "agents"
-	case ViewGit:
-		return "git"
 	case ViewSkills:
 		return "skills"
 	case ViewMCP:
@@ -85,8 +82,6 @@ func (v View) Label() string {
 	switch v {
 	case ViewAgents:
 		return "Agents"
-	case ViewGit:
-		return "Source Control"
 	case ViewSkills:
 		return "Skills"
 	case ViewMCP:
@@ -106,8 +101,6 @@ func (v View) Icon(nerdFont bool) string {
 			// nf-fa-android. nf-fa-robot (U+F544) is a down-arrow in Nerd
 			// Fonts 2.x, where that cell is still Material Design Icons.
 			return "\uf17b"
-		case ViewGit:
-			return "\uf418" // nf-oct-git_branch
 		case ViewSkills:
 			return "\uf02d"
 		case ViewMCP:
@@ -119,8 +112,6 @@ func (v View) Icon(nerdFont bool) string {
 	switch v {
 	case ViewAgents:
 		return "◈"
-	case ViewGit:
-		return "⑂"
 	case ViewSkills:
 		return "≡"
 	case ViewMCP:
@@ -144,7 +135,7 @@ func SettingsIcon(nerdFont bool) string {
 	return "⚙"
 }
 
-var views = []View{ViewFiles, ViewAgents, ViewGit, ViewSkills, ViewMCP}
+var views = []View{ViewFiles, ViewAgents, ViewSkills, ViewMCP}
 
 // Views returns the rail order.
 func Views() []View { return append([]View(nil), views...) }
@@ -332,8 +323,8 @@ type countBadge struct {
 	row  int // band-local; always inside the destination's existing hit target
 }
 
-// badgeFor uses ordinary digits, with placement supplying the script-like look.
-// Git sits lower-right; the other destinations sit upper-right.
+// badgeFor uses ordinary digits, with placement supplying the script-like look:
+// every destination's count sits upper-right.
 func badgeFor(v View, n int) countBadge {
 	if n <= 0 {
 		return countBadge{}
@@ -341,9 +332,6 @@ func badgeFor(v View, n int) countBadge {
 	badge := countBadge{text: "+"}
 	if n <= 9 {
 		badge.text = string(rune('0' + n))
-	}
-	if v == ViewGit {
-		badge.row = RowStride - 1
 	}
 	return badge
 }
@@ -387,7 +375,8 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 func settingsHitIndex() int { return len(views) }
 
 // settingsBandTop is the component-local row where the manage gear band
-// starts. Empty when the rail is too short to keep a full band below Git.
+// starts. Empty when the rail is too short to keep a full band below the
+// destinations.
 func settingsBandTop(height int) int {
 	top := height - RowStride
 	if top < 0 {

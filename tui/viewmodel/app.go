@@ -23,7 +23,7 @@ import (
 	"crude/tui/screens/boardbrowser"
 	filepickerscreen "crude/tui/screens/filepicker"
 	findinfiles "crude/tui/screens/findinfiles"
-	"crude/tui/screens/gitreview"
+	"crude/tui/screens/gitpanel"
 	helpscreen "crude/tui/screens/help"
 	"crude/tui/screens/launcher"
 	historyscreen "crude/tui/screens/localhistory"
@@ -37,7 +37,6 @@ import (
 	"crude/tui/screens/shelltabs"
 	"crude/tui/screens/shellterm"
 	"crude/tui/screens/shelltree"
-	"crude/tui/screens/sourcecontrol"
 	"crude/tui/screens/termdock"
 	settingsui "crude/tui/settings"
 	"crude/tui/surface"
@@ -86,6 +85,7 @@ type App struct {
 	gitDiscardSequence        uint64
 	FilePicker                *filepickerscreen.Screen
 	DiagPopupID               string
+	planHover                 *planHoverState
 
 	// Composer state changes at session activation, never from Paint. Warm
 	// sessions retain their editor; cold persisted drafts load asynchronously.
@@ -183,7 +183,7 @@ type App struct {
 	sidebarScreen        *shelltree.Screen
 	activityBar          *activitybar.Screen
 	activityList         *activitylist.Screen
-	sourceControl        *sourcecontrol.Screen
+	gitPanel             *gitpanel.Panel
 	activityView         activitybar.View
 	termScreens          map[string]*shellterm.Screen
 	termDock             *termdock.Screen
@@ -208,9 +208,13 @@ type App struct {
 	findInFilesGen          int
 	memoryBrowser           *memorybrowser.Screen
 	boardBrowser            *boardbrowser.Screen
-	gitReview               *gitreview.Screen
-	gitReviewReturn         window.TabID
-	gitReviewSequence       uint64
+	gitReviews              map[window.TabID]*gitReviewView
+	gitPrepareGen           uint64
+	gitPrepareInFlight      bool
+	gitPrepareDirty         bool
+	gitEvidenceSequence     uint64
+	gitCommitWriteSequence  uint64
+	gitCommitWriteCancel    context.CancelFunc
 	localDiffs              map[window.TabID]*localDiffView
 	workspacePanelHeights   map[string]int
 	toolLayout              workspace.ToolLayout
@@ -224,6 +228,9 @@ type App struct {
 	providerPresets         []ttypes.ProviderPreset
 	asyncIO                 atomic.Pointer[appAsyncIOState]
 	asyncIOStopped          atomic.Bool
+	asyncIOStopOnce         sync.Once
+	treeWatcherLifeMu       sync.Mutex // fences startup admission against UI shutdown
+	treeWatcherStarts       sync.WaitGroup
 	launcherLoadGen         atomic.Uint64 // generation of the in-flight async launcher load
 	gitRefreshGen           atomic.Uint64
 	editorGitGen            atomic.Uint64
@@ -235,7 +242,7 @@ type App struct {
 	treeGitRefreshAt        time.Time
 	// Header Git reconciliation (git_snapshot.go): watcher events arm a
 	// debounced, coalesced silent snapshot read so the header identity follows
-	// the repository without the user opening the Source Control panel.
+	// the repository without the user opening the Git panel.
 	gitSnapshotEventAt time.Time       // most recent unreconciled watcher event
 	gitSnapshotBurstAt time.Time       // start of the current unreconciled burst
 	gitSnapshotAt      time.Time       // when the last snapshot read settled
@@ -272,8 +279,9 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	sidebarScreen := shelltree.New(th, treeModel)
 	activityBar := activitybar.New(th)
 	activityList := activitylist.New(th)
-	sourceControl := sourcecontrol.New(th)
+	gitPanel := gitpanel.New(th)
 	termDock := termdock.New(th)
+	termDock.SetPanel(termdock.PanelGit, gitPanel)
 	bufferMgr := editor.NewBufferManager()
 	comp := compositor.NewCompositor(80, 24)
 	wmgr := wm.NewWindowManager()
@@ -294,7 +302,7 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	shell := newShellRoot(headerScreen, footerScreen, activityBar, sidebarScreen, termDock)
 	rootHost := ui.NewHost(th, shell)
 	launcherScreen.SetFocusHandler(rootHost.Focus)
-	sourceControl.SetFocusHandler(rootHost.Focus)
+	gitPanel.SetFocusHandler(rootHost.Focus, rootHost.Focused)
 
 	edState := NewEditorState()
 	edState.Editor = editor.New(th)
@@ -336,7 +344,7 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 		sidebarScreen:       sidebarScreen,
 		activityBar:         activityBar,
 		activityList:        activityList,
-		sourceControl:       sourceControl,
+		gitPanel:            gitPanel,
 		termScreens:         make(map[string]*shellterm.Screen),
 		termDock:            termDock,
 		termDockHeight:      12,
@@ -908,7 +916,7 @@ func (m *App) registerOverlayHandlers() {
 	// The reveal is a no-op for windows without a WindowFrame body.
 	oh.SetOnOpen(func(id ui.OverlayID, fw *wm.FloatingWindow) {
 		switch id {
-		case ui.OverlayCompletion, ui.OverlayReferences, ui.OverlayOutline:
+		case ui.OverlayCompletion, ui.OverlayReferences, ui.OverlayOutline, ui.OverlayPlanHover:
 			return
 		}
 		if entry := oh.Get(id); entry != nil && entry.Policy.Modal {

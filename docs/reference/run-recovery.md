@@ -52,8 +52,27 @@ non-streaming requests. A generic `invalid_request_error` / `invalid_request`
 envelope does not override a transient HTTP 408/409/425/429/5xx status. Specific
 quota, billing, authentication, model and validation evidence, an identified
 invalid parameter, and an explicit `x-should-retry: false` still prevent retries.
-Numeric status evidence inside a structured stream error follows the same rule;
-diagnostic prose alone never makes an unknown request error transient.
+Numeric status evidence inside a structured stream error follows the same rule.
+Every registered streaming decoder also shares one wire-boundary classifier for
+the exact gateway diagnostic `stream error: stream disconnected before completion:
+stream closed before response.completed` or explicit `stream_error` /
+`gateway_stream_terminated` evidence. Gateways can retain that upstream Responses
+diagnostic in Chat Completions or Anthropic error events, or translate it into an
+Ollama NDJSON string/structured error. The classifier retains the original API
+cause and downstream protocol identity; it does not make arbitrary disconnect
+prose or non-streaming invalid requests retryable. Invalid parameters, specific
+permanent codes and the HTTP retry veto still take precedence.
+
+Vendor-native coverage is separate from gateway translations. Anthropic SSE
+`overloaded_error`, `api_error`, `timeout_error` and rate-limit errors remain
+transient; authentication/billing/permission/not-found/oversized/validation
+evidence remains permanent even when wrapped in a transient status. Ollama's
+documented exact string-only model-execution failures are recoverable at the
+stream boundary; missing models, invalid input, insufficient-memory requirements
+and unknown text are not guessed transient. The successful-stream retry veto
+also survives a missing terminal event. References: [Anthropic errors](https://platform.claude.com/docs/en/api/errors)
+and [Ollama errors](https://docs.ollama.com/api/errors). These tests simulate the
+documented wires locally, not live vendor availability.
 
 This distinction matters for gateways: an upstream stream disconnect can arrive
 as an HTTP 408 JSON response even when Crude is using Chat Completions. Typing
@@ -184,6 +203,11 @@ keeps the unfinished work. A subsequent failure updates the same incident.
 Needs attention and interrupted incidents remain static and expose Retry now.
 Recovered/cancelled incidents remove the retry target.
 
+Explicitly stopped turns retain their ordinary stop boundary and cancelled
+recovery incident as canonical history, but both contribute zero chat geometry.
+The fixed activity strip alone shows one quiet **Stopped** label. Other recovery
+states remain visible; stopping is not a request to erase accepted output.
+
 Clicking the header/chevron or the existing disclosure shortcut expands the
 actual full reason and remediation; dragging uses ordinary selection/copy and
 never activates Retry now. Expanded diagnostics use normal foreground ink and
@@ -219,6 +243,16 @@ See [network transport](network.md) for secure remediation of routing/TLS issues
 - `provider/http_recovery_regression_test.go`: transient HTTP classes, generic
   envelopes, streaming/non-streaming retry, explicit permanent evidence/vetoes,
   and preserved invalid-parameter evidence.
+- `provider/stream_recovery_regression_test.go`: exact established Chat gateway
+  failure before and after text/reasoning/tool fragments; actual HTTP SSE/NDJSON
+  paths for every registered protocol, including Anthropic events and Ollama
+  string/structured errors, permanent negatives and explicit retry vetoes.
+- `agent/stream_recovery_regression_test.go`: root/child semantic continuations
+  across every registered protocol, retained accepted prefix, discarded incomplete
+  calls, real countdown expiry and no manual wake or original-request replay.
+- `session/stream_recovery_regression_test.go`: actual Chat root/child runners,
+  durable SQLite countdown/continuation, retained exactly-once earlier file effect,
+  required child report provenance and exact Stop preventing a delayed restart.
 - `agent/http_recovery_regression_test.go`: every registered protocol, root and
   child, repeated exhausted requests beyond the five-minute saturation point.
   The clock wait is simulated; real timer expiry is tested below.

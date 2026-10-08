@@ -1,42 +1,68 @@
 package gitreview
 
 import (
-	"errors"
-	"fmt"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/tui/screens/gitdiff"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/workspace"
 )
 
-func reviewFixture() workspace.GitComparison {
-	return workspace.GitComparison{RepositoryRoot: "/repo", Path: "src/main.go", AbsolutePath: "/repo/src/main.go", Area: workspace.GitAreaWorking, BaseLabel: "Index", TargetLabel: "Working tree (disk)", Before: "package main\nvar value = 1\n", After: "package main\nvar value = 2\n", Fingerprint: "exact-reviewed-bytes", BeforePresent: true, AfterPresent: true}
+func change(path, before, after string, area workspace.GitChangeArea) workspace.GitChangeComparison {
+	c := workspace.GitChange{Path: path, AbsolutePath: "/repo/" + path, Area: area, Code: "M"}
+	return workspace.GitChangeComparison{Change: c, Comparison: workspace.GitComparison{
+		RepositoryRoot: "/repo", Path: path, AbsolutePath: "/repo/" + path, Area: area,
+		Before: before, After: after, BeforePresent: true, AfterPresent: true, Fingerprint: "fp-" + path,
+	}}
 }
 
-func reviewHost(screen *Screen, width, height int) *ui.Host {
+func numbered(n int, replace map[int]string) string {
+	var text strings.Builder
+	for line := 1; line <= n; line++ {
+		if value, ok := replace[line]; ok {
+			text.WriteString(value + "\n")
+			continue
+		}
+		text.WriteString("line " + string(rune('a'+line%26)) + "\n")
+	}
+	return text.String()
+}
+
+func reviewFiles() []gitdiff.File {
+	return gitdiff.PrepareChanges([]workspace.GitChangeComparison{
+		change("src/main.go", numbered(40, nil), numbered(40, map[int]string{20: "changed twenty"}), workspace.GitAreaWorking),
+		change("src/util.go", numbered(10, nil), numbered(10, map[int]string{2: "changed two"}), workspace.GitAreaStaged),
+		change("notes/readme.md", "a\n", "b\n", workspace.GitAreaWorking),
+	})
+}
+
+func render(t *testing.T, screen *Screen, width, height int) (*ui.Host, string) {
+	t.Helper()
 	host := ui.NewHost(screen.th, screen)
 	screen.SetFocusHandler(host.Focus)
 	host.Resize(width, height)
 	host.Layout()
-	host.Paint(surface.NewCellBuffer(width, height))
-	return host
+	buf := surface.NewCellBuffer(width, height)
+	host.Paint(buf)
+	return host, bufferText(buf)
 }
 
-func reviewText(buf *surface.CellBuffer) string {
+func bufferText(buf *surface.CellBuffer) string {
 	var text strings.Builder
 	for row := 0; row < buf.Height(); row++ {
 		for column := 0; column < buf.Width(); column++ {
 			current := buf.Get(column, row)
-			if current.Content != "" {
+			switch {
+			case current.Content != "":
 				text.WriteString(current.Content)
-			} else if current.Char == 0 {
+			case current.Char == 0:
 				text.WriteByte(' ')
-			} else if current.Width > 0 {
+			case current.Width > 0:
 				text.WriteRune(current.Char)
 			}
 		}
@@ -45,209 +71,109 @@ func reviewText(buf *surface.CellBuffer) string {
 	return text.String()
 }
 
-func TestGitReviewNativeTabsAndCompleteUnifiedComparison(t *testing.T) {
+func TestReviewStacksEveryFileWithNavigatorAndControls(t *testing.T) {
 	screen := New(theme.DefaultDark())
-	screen.SetComparison(PrepareComparison(screen.th, reviewFixture()))
-	host := reviewHost(screen, 120, 28)
-	buf := surface.NewCellBuffer(120, 28)
-	host.Paint(buf)
-	text := reviewText(buf)
-	for _, expected := range []string{"src/main.go", "Changes", "History", "Branches", "Index", "Working tree (disk)", "-var value = 1", "+var value = 2", "Stage file", "Review commit"} {
-		if !strings.Contains(text, expected) {
-			t.Fatalf("missing %q in native review:\n%s", expected, text)
+	screen.ShowChanges(reviewFiles(), "main")
+	_, text := render(t, screen, 160, 60)
+	for _, want := range []string{"Working tree changes", "3 files", "[ Split ]", "[ Collapse all ]", "[ Refresh ]", "util.go", "main.go", "readme.md", "changed twenty", "changed two", "unchanged lines", "Unstage", "Stage", "Discard"} {
+		if !strings.Contains(text, want) {
+			t.Fatalf("missing %q in review:\n%s", want, text)
 		}
 	}
-	if host.Component(ListID) != nil {
-		t.Fatal("default main review duplicates sidebar file inventory")
-	}
-	if !host.Focus(TabsID) {
-		t.Fatal("focus mode strip")
-	}
-	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyRight})
-	if screen.Mode() != ModeHistory || result.Action == nil || result.Action.ID != ActionMode || result.Action.Payload.(ModeRequest).Mode != ModeHistory {
-		t.Fatalf("shared tab mode intent=%+v mode=%s", result, screen.Mode())
+	if strings.Index(text, "changed two") > strings.Index(text, "changed twenty") {
+		t.Fatalf("staged file is not listed before working changes:\n%s", text)
 	}
 }
 
-func TestGitReviewNarrowFallbackRestoresPreferenceAndBounds(t *testing.T) {
+func TestReviewScopeIsAPermanentTabFilter(t *testing.T) {
 	screen := New(theme.DefaultDark())
-	screen.SetComparison(PrepareComparison(screen.th, reviewFixture()))
-	screen.SetPresentation(SideBySide)
-	host := reviewHost(screen, 150, 30)
-	if screen.Presentation() != SideBySide {
-		t.Fatal("wide preferred presentation was not used")
+	screen.ShowChanges(reviewFiles(), "main")
+	screen.SetScope("src/")
+	host, text := render(t, screen, 160, 60)
+	if strings.Contains(text, "readme.md") || !strings.Contains(text, "main.go") || !strings.Contains(text, "[ All changes ]") {
+		t.Fatalf("scope did not filter to src:\n%s", text)
 	}
-	before := screen.viewer
-	host.Resize(50, 25)
-	host.Layout()
-	if screen.Presentation() != Unified || screen.PreferredPresentation() != SideBySide {
-		t.Fatal("narrow fallback overwrote preferred layout")
+	if screen.Title() != "Changes · src" {
+		t.Fatalf("title=%q", screen.Title())
 	}
-	for _, width := range []int{1, 8, 23, 50, 120} {
-		host.Resize(width, 25)
-		host.Layout()
-		assertReviewBounds(t, screen, ui.Rect{W: width, H: 25})
-	}
-	host.Resize(150, 30)
-	host.Layout()
-	if screen.Presentation() != SideBySide || screen.viewer != before {
-		t.Fatal("wide restore replaced the reviewed source or preference")
+	host.Focus(screen.ID())
+	result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if screen.Scope() != "src" || result.Action == nil || result.Action.ID != ActionReturn {
+		t.Fatalf("Esc must return from the tab, keeping its scope: %+v", result.Action)
 	}
 }
 
-func assertReviewBounds(t *testing.T, component ui.Component, parent ui.Rect) {
-	t.Helper()
-	bounds := component.Bounds()
-	if !bounds.Empty() && (bounds.X < 0 || bounds.Y < 0 || bounds.X+bounds.W > parent.W || bounds.Y+bounds.H > parent.H) {
-		t.Fatalf("%s bounds=%+v outside parent=%+v", component.ID(), bounds, parent)
-	}
-	if group, ok := component.(ui.Parent); ok {
-		for _, child := range group.Children() {
-			assertReviewBounds(t, child, ui.Rect{W: bounds.W, H: bounds.H})
-		}
+func TestReviewInstancesHaveDistinctIdentities(t *testing.T) {
+	first, second := NewWithID(theme.DefaultDark(), "gitreview/1"), NewWithID(theme.DefaultDark(), "gitreview/2")
+	if first.DocumentID() == second.DocumentID() || first.FindID() == second.FindID() || first.DividerID() == second.DividerID() {
+		t.Fatal("two review tabs share component identities")
 	}
 }
 
-func TestGitReviewReadonlyScrollSearchCopyAndTypedMutation(t *testing.T) {
+func TestReviewNavigatorDividerDrags(t *testing.T) {
 	screen := New(theme.DefaultDark())
-	comparison := reviewFixture()
-	var before, after strings.Builder
-	for line := 0; line < 160; line++ {
-		fmt.Fprintf(&before, "old line %d %s\n", line, strings.Repeat("horizontal ", 20))
-		fmt.Fprintf(&after, "new line %d %s\n", line, strings.Repeat("horizontal ", 20))
+	screen.ShowChanges(reviewFiles(), "main")
+	host, _ := render(t, screen, 160, 40)
+	before := screen.navWidth
+	divider := screen.divider.Bounds()
+	host.Handle(tea.MouseClickMsg{X: divider.X, Y: divider.Y + 3, Button: tea.MouseLeft})
+	host.Handle(tea.MouseMotionMsg{X: divider.X + 10, Y: divider.Y + 3, Button: tea.MouseLeft})
+	host.Handle(tea.MouseReleaseMsg{X: divider.X + 10, Y: divider.Y + 3, Button: tea.MouseLeft})
+	host.Layout()
+	if screen.navWidth != before+10 {
+		t.Fatalf("navigator width %d → %d, want +10", before, screen.navWidth)
 	}
-	comparison.Before, comparison.After = before.String(), after.String()
-	screen.SetComparison(PrepareComparison(screen.th, comparison))
-	host := reviewHost(screen, 110, 26)
-	if !host.Focus(screen.DocumentID()) {
-		t.Fatal("focus unified reader")
+}
+
+func TestReviewFileIntentCarriesExactComparison(t *testing.T) {
+	screen := New(theme.DefaultDark())
+	screen.ShowChanges(reviewFiles(), "main")
+	host, _ := render(t, screen, 160, 60)
+	host.Focus(screen.DocumentID())
+	result := host.Handle(tea.KeyPressMsg{Code: 's', Text: "s"})
+	if result.Action == nil || result.Action.ID != gitdiff.ActionFile {
+		t.Fatalf("stage key produced %+v", result.Action)
 	}
-	value := screen.viewer.Comparison().After
-	host.Handle(tea.KeyPressMsg{Code: 'x', Text: "x"})
-	if screen.viewer.Comparison().After != value {
-		t.Fatal("read-only comparison accepted edits")
+	intent := result.Action.Payload.(gitdiff.FileIntent)
+	if intent.Op != gitdiff.OpUnstage || intent.Comparison.Fingerprint != "fp-src/util.go" {
+		t.Fatalf("first (staged) file intent=%+v", intent)
 	}
-	document, _ := host.ScreenRect(screen.DocumentID())
-	host.Handle(tea.MouseWheelMsg{X: document.X + 4, Y: document.Y + 2, Button: tea.MouseWheelDown})
-	if screen.viewer.ScrollOffset() == 0 {
-		t.Fatal("native diff wheel did not scroll")
+}
+
+func TestReviewCommitIsReadOnly(t *testing.T) {
+	screen := New(theme.DefaultDark())
+	files := gitdiff.PrepareComparisons([]workspace.GitComparison{{Path: "a.go", Before: "x\n", After: "y\n", BeforePresent: true, AfterPresent: true, Historical: true}})
+	screen.ShowCommit(workspace.GitCommitEvidence{Commit: workspace.GitCommitSummary{ShortHash: "abc1234", Subject: "Fix it"}}, files)
+	host, text := render(t, screen, 140, 30)
+	if !strings.Contains(text, "abc1234") || !strings.Contains(text, "Fix it") || strings.Contains(text, "Discard") || strings.Contains(text, " Stage ") {
+		t.Fatalf("commit review:\n%s", text)
 	}
-	host.Handle(tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
-	result := host.Handle(tea.KeyPressMsg{Code: 'c', Mod: tea.ModCtrl})
-	if result.Cmd == nil || result.Action != nil {
-		t.Fatal("copy must return an off-thread clipboard command, not navigation")
+	host.Focus(screen.DocumentID())
+	if result := host.Handle(tea.KeyPressMsg{Code: 's', Text: "s"}); result.Action != nil {
+		t.Fatalf("read-only commit emitted %+v", result.Action)
 	}
+}
+
+func TestReviewFindBarSearchesAndClosesWithEsc(t *testing.T) {
+	screen := New(theme.DefaultDark())
+	screen.ShowChanges(reviewFiles(), "main")
+	host, _ := render(t, screen, 160, 40)
+	host.Focus(screen.DocumentID())
 	host.Handle(tea.KeyPressMsg{Code: 'f', Mod: tea.ModCtrl})
-	host.MarkLayout()
+	if !screen.FindOpen() || host.Focused() != screen.FindID() {
+		t.Fatalf("Ctrl+F open=%v focus=%s", screen.FindOpen(), host.Focused())
+	}
+	for _, r := range "changed" {
+		host.Handle(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
 	host.Layout()
-	if host.Focused() != SearchID {
-		t.Fatalf("search focus=%s", host.Focused())
+	buf := surface.NewCellBuffer(160, 40)
+	host.Paint(buf)
+	if text := bufferText(buf); !strings.Contains(text, "Find · 1 / 2 matches") {
+		t.Fatalf("find status missing:\n%s", text)
 	}
-	for _, character := range "new line 70" {
-		host.Handle(tea.KeyPressMsg{Code: character, Text: string(character)})
-	}
-	if !screen.viewer.NextMatch(false) {
-		t.Fatal("native search did not find comparison content")
-	}
-	result = screen.HandleAction(ui.EventContext{}, ui.Action{ID: ActionStage})
-	request, ok := result.Action.Payload.(ComparisonRequest)
-	if !ok || request.Comparison.Fingerprint != comparison.Fingerprint || request.Comparison.After != comparison.After {
-		t.Fatalf("mutation does not carry the exact reviewed bytes: %+v", result)
-	}
-	screen.SetError(workspace.ErrGitReviewStale)
-	if result := screen.HandleAction(ui.EventContext{}, ui.Action{ID: ActionStage}); result.Action != nil {
-		t.Fatal("stale error left stage enabled")
-	}
-}
-
-func TestGitReviewCommitDraftExactSetAndStaleFailures(t *testing.T) {
-	screen := New(theme.DefaultDark())
-	first, second := reviewFixture(), reviewFixture()
-	first.Area, second.Area, second.Path = workspace.GitAreaStaged, workspace.GitAreaStaged, "second.go"
-	review := workspace.GitCommitReview{RepositoryRoot: "/repo", Head: "head", Fingerprint: "staged-set", Comparisons: []workspace.GitComparison{first, second}}
-	screen.InstallComparisons([]PreparedComparison{PrepareComparison(screen.th, first), PrepareComparison(screen.th, second)})
-	screen.SetCommitReview(review)
-	screen.SetCommitMessage("Subject\n\nDetailed message")
-	if screen.canCommit() {
-		t.Fatal("commit enabled before second staged file was reviewed")
-	}
-	screen.list.list.SelectIndex(1)
-	row, _ := screen.list.list.Selected()
-	screen.HandleAction(ui.EventContext{}, ui.Action{ID: "gitreview.activate", Payload: row})
-	result := screen.HandleAction(ui.EventContext{}, ui.Action{ID: ActionCommit})
-	if result.Action == nil || result.Action.ID != ActionCommit {
-		t.Fatalf("reviewed commit not available: %+v", result)
-	}
-	request := result.Action.Payload.(CommitRequest)
-	if request.Message != "Subject\n\nDetailed message" || request.Review.Fingerprint != review.Fingerprint || len(request.Review.Comparisons) != 2 {
-		t.Fatalf("commit lost exact draft or set: %+v", request)
-	}
-	screen.SetError(errors.New("commit identity unavailable"))
-	if screen.CommitMessage() != request.Message {
-		t.Fatal("failed commit destroyed draft")
-	}
-	screen.SetError(workspace.ErrGitReviewStale)
-	if screen.canCommit() || screen.CommitMessage() != request.Message {
-		t.Fatal("stale set did not preserve draft while refusing submission")
-	}
-	screen.SetComparison(PrepareComparison(screen.th, reviewFixture()))
-	screen.SetMode(ModeBranches)
-	screen.SetMode(ModeChanges)
-	if screen.CommitMessage() != request.Message {
-		t.Fatal("file/mode browsing destroyed commit draft")
-	}
-}
-
-func TestGitReviewBranchSelectionIsInspectionOnly(t *testing.T) {
-	screen := New(theme.DefaultDark())
-	screen.SetSnapshot(workspace.GitSnapshot{RepositoryRoot: "/repo", Head: "head", Branches: []workspace.GitBranchSummary{{Name: "main", Current: true}, {Name: "feature"}}})
-	screen.SetMode(ModeBranches)
-	host := reviewHost(screen, 120, 26)
-	host.Focus(ListID)
-	if result := host.Handle(tea.KeyPressMsg{Code: tea.KeyDown}); result.Action != nil {
-		t.Fatal("branch selection emitted mutation")
-	}
-	if result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter}); result.Action != nil {
-		t.Fatal("branch inspection checked out a branch")
-	}
-	result := screen.HandleAction(ui.EventContext{}, ui.Action{ID: ActionCheckout})
-	if result.Action == nil || result.Action.Payload.(CheckoutRequest).Branch.Name != "feature" {
-		t.Fatalf("explicit checkout=%+v", result)
-	}
-}
-
-func TestGitReviewBinaryLoadingAndEmptyAreExplicit(t *testing.T) {
-	for _, state := range []string{"binary", "empty", "loading", "error"} {
-		t.Run(state, func(t *testing.T) {
-			screen := New(theme.DefaultDark())
-			comparison := reviewFixture()
-			want := ""
-			switch state {
-			case "binary":
-				comparison.Binary = true
-				want = "Binary file"
-			case "empty":
-				comparison.Before, comparison.After = "", ""
-				comparison.Untracked = true
-				want = "Untracked empty file"
-			case "loading":
-				want = "Loading comparison"
-			case "error":
-				want = "Comparison unavailable"
-			}
-			screen.SetComparison(PrepareComparison(screen.th, comparison))
-			switch state {
-			case "loading":
-				screen.SetLoading(true)
-			case "error":
-				screen.SetError(errors.New("missing index object"))
-			}
-			host := reviewHost(screen, 120, 25)
-			buf := surface.NewCellBuffer(120, 25)
-			host.Paint(buf)
-			if !strings.Contains(reviewText(buf), want) {
-				t.Fatalf("%s silently rendered as a successful empty diff:\n%s", state, reviewText(buf))
-			}
-		})
+	host.Handle(tea.KeyPressMsg{Code: tea.KeyEsc})
+	if screen.FindOpen() || screen.Document().Query() != "" || host.Focused() != screen.DocumentID() {
+		t.Fatal("Esc must close find and return to the document")
 	}
 }

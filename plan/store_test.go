@@ -2,10 +2,75 @@ package plan
 
 import (
 	"context"
+	"reflect"
 	"testing"
 
 	"crude/sessiondb"
 )
+
+func TestStoreCleanSnapshotsAndAtomicReplacement(t *testing.T) {
+	s := newTestStore(t)
+	ctx := t.Context()
+	p, _, err := s.Update(ctx, UpdateRequest{PlanID: "p", Objective: "Old goal", Steps: []PlanStep{{ID: "keep", Description: "Keep", Status: StepInProgress}, {ID: "obsolete", Description: "Obsolete", Status: StepPending}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p, _, err = s.Update(ctx, UpdateRequest{PlanID: p.ID, Revision: p.Revision, Steps: []PlanStep{{ID: "keep", Description: "Keep", Status: StepCompleted}}})
+	if err != nil || len(p.Steps) != 1 {
+		t.Fatalf("removal: %+v %v", p, err)
+	}
+	prior := s.ActivitySnapshot()
+	for _, req := range []UpdateRequest{
+		{PlanID: p.ID, Revision: 1, Replace: true, Objective: "New goal", Steps: []PlanStep{{ID: "new", Description: "New", Status: StepPending}}},
+		{PlanID: p.ID, Revision: p.Revision, Replace: true},
+		{PlanID: p.ID, Revision: p.Revision, Replace: true, Objective: "New goal", Steps: []PlanStep{{ID: "new", Description: "New", Status: StepPending, DependsOn: []string{"obsolete"}}}},
+	} {
+		if _, _, err := s.Update(ctx, req); err == nil {
+			t.Fatal("invalid/stale replacement succeeded")
+		}
+		got, err := s.Get(ctx, p.ID)
+		if err != nil || !reflect.DeepEqual(got, p) || s.ActivitySnapshot() != prior {
+			t.Fatalf("failed replacement mutated state: %+v %v", got, err)
+		}
+	}
+	// Fail after row and step writes, proving the whole replacement rolls back.
+	if _, err := s.DB().Exec(`CREATE TRIGGER fail_replace BEFORE INSERT ON plan_events WHEN NEW.event_type = 'plan_replaced' BEGIN SELECT RAISE(ABORT, 'injected'); END`); err != nil {
+		t.Fatal(err)
+	}
+	req := UpdateRequest{PlanID: p.ID, Revision: p.Revision, Replace: true, Objective: "New goal", Steps: []PlanStep{{ID: "keep", Description: "New work", Status: StepPending}}}
+	if _, _, err := s.Update(ctx, req); err == nil {
+		t.Fatal("injected transaction failure succeeded")
+	}
+	got, err := s.Get(ctx, p.ID)
+	if err != nil || !reflect.DeepEqual(got, p) || s.ActivitySnapshot() != prior {
+		t.Fatal("transaction failure changed current state")
+	}
+	if _, err := s.DB().Exec(`DROP TRIGGER fail_replace`); err != nil {
+		t.Fatal(err)
+	}
+	p, _, err = s.Update(ctx, req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Objective != "New goal" || len(p.Steps) != 1 || p.Steps[0].Attempts != 0 || p.Steps[0].StartedAt != nil || p.Steps[0].FinishedAt != nil {
+		t.Fatalf("replacement: %+v", p)
+	}
+	events, err := s.Events(ctx, p.ID)
+	if err != nil || len(events) != 3 || len(events[0].Payload.Steps) != 2 || events[2].Type != "plan_replaced" {
+		t.Fatalf("history: %+v %v", events, err)
+	}
+	active, err := s.Active(ctx, "sess-1")
+	if err != nil || !reflect.DeepEqual(*active, p) || s.ActivitySnapshot().Objective != "New goal" || s.ActivitySnapshot().Total != 1 {
+		t.Fatal("active projection retained old goal")
+	}
+	resumed := NewStore(s.DB(), "sess-1")
+	if err := resumed.RestoreActivity(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !reflect.DeepEqual(s.ActivitySnapshot(), resumed.ActivitySnapshot()) {
+		t.Fatal("resume changed replacement")
+	}
+}
 
 func newTestStore(t *testing.T) *Store {
 	t.Helper()

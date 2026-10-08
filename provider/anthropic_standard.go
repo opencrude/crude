@@ -384,7 +384,7 @@ func (s *AnthropicStandard) DecodeResponse(body []byte) (*ChatResponse, error) {
 }
 
 func (s *AnthropicStandard) NewStreamDecoder() StreamDecoder {
-	return &anthropicStreamDecoder{blocks: make(map[int]*anthropicStreamBlock)}
+	return &streamErrorDecoder{protocol: s.Info().ID, inner: &anthropicStreamDecoder{blocks: make(map[int]*anthropicStreamBlock)}}
 }
 
 // ModelsURL implements ModelLister. Anthropic pages models with an opaque

@@ -283,7 +283,7 @@ func (s *OllamaStandard) DecodeResponse(body []byte) (*ChatResponse, error) {
 }
 
 func (s *OllamaStandard) NewStreamDecoder() StreamDecoder {
-	return &ollamaStreamDecoder{}
+	return &streamErrorDecoder{protocol: s.Info().ID, inner: &ollamaStreamDecoder{}}
 }
 
 // decodeOllamaNDJSON folds a newline-delimited sequence of chat chunks into

@@ -86,6 +86,23 @@ func CompleteTextWithMaxOutput(
 	return result.Content, nil
 }
 
+// CompleteTextStreaming is CompleteTextWithMaxOutput with each output token
+// delivered to emit as it arrives, for surfaces that show text being written.
+func CompleteTextStreaming(
+	ctx context.Context, p *provider.Provider, model, system, user string, maxOutput int, emit func(string),
+) (string, error) {
+	a := NewAgent(p, model, nil)
+	a.MaxOutputTokens = maxOutput
+	result, err := a.completeStream(ctx, []provider.ChatMessage{
+		provider.NewTextMessage("system", system),
+		provider.NewTextMessage("user", user),
+	}, nil, emit, nil, nil, nil, nil, nil, nil)
+	if err != nil {
+		return "", err
+	}
+	return result.Content, nil
+}
+
 func (a *Agent) completeStream(
 	ctx context.Context,
 	msgs []provider.ChatMessage,

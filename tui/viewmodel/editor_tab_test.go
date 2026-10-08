@@ -29,6 +29,7 @@ func TestEditorTab_StatePreservedAcrossSwitch(t *testing.T) {
 
 	// Open tab A.
 	edA := editor.New(th)
+	t.Cleanup(edA.Close)
 	if err := edA.Open(pathA); err != nil {
 		t.Fatal(err)
 	}
@@ -46,6 +47,7 @@ func TestEditorTab_StatePreservedAcrossSwitch(t *testing.T) {
 	// openEditorTab does internally — create a fresh editor and
 	// point m.editor at it).
 	edB := editor.New(th)
+	t.Cleanup(edB.Close)
 	if err := edB.Open(pathB); err != nil {
 		t.Fatal(err)
 	}
@@ -101,6 +103,7 @@ func TestEditorTab_MapIndependentTabs(t *testing.T) {
 	tabs := map[string]*EditorTab{}
 	for _, p := range []string{pathA, pathB} {
 		ed := editor.New(th)
+		t.Cleanup(ed.Close)
 		if err := ed.Open(p); err != nil {
 			t.Fatal(err)
 		}
@@ -140,6 +143,7 @@ func TestEditorTab_CloseRemovesOnlyThatTab(t *testing.T) {
 	tabs := map[string]*EditorTab{}
 	for _, p := range []string{pathA, pathB} {
 		ed := editor.New(th)
+		t.Cleanup(ed.Close)
 		if err := ed.Open(p); err != nil {
 			t.Fatal(err)
 		}

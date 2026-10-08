@@ -1,602 +1,391 @@
+// Package gitreview is the main-area Git review: every changed file (or every
+// file of one commit) as one continuous, hunk-focused document, with a file
+// navigator that follows the reading position. It paints prepared files and
+// forwards typed intents; the owner runs all repository work.
 package gitreview
 
 import (
-	"crypto/sha256"
-	"errors"
 	"fmt"
-	"path/filepath"
 	"strings"
 
 	"crude/tui/cell"
 	"crude/tui/rendering"
-	"crude/tui/screens/diffview"
+	"crude/tui/screens/gitdiff"
+	"crude/tui/screens/panelchrome"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/workspace"
 )
 
-const (
-	ScreenID    ui.ComponentID = "gitreview"
-	TabsID      ui.ComponentID = "gitreview/tabs"
-	HeaderID    ui.ComponentID = "gitreview/header"
-	ToolbarID   ui.ComponentID = "gitreview/toolbar"
-	SearchID    ui.ComponentID = "gitreview/search"
-	ListID      ui.ComponentID = "gitreview/list"
-	ScrollbarID ui.ComponentID = "gitreview/scrollbar"
-	DraftID     ui.ComponentID = "gitreview/draft"
-	DetailID    ui.ComponentID = "gitreview/detail"
-
-	ActionOpenFile      = "gitreview.open-file"
-	ActionOpenChange    = "gitreview.open-change"
-	ActionStage         = "gitreview.stage"
-	ActionUnstage       = "gitreview.unstage"
-	ActionReviewCommit  = "gitreview.review-commit"
-	ActionCommit        = "gitreview.commit"
-	ActionCheckout      = "gitreview.checkout"
-	ActionRefresh       = "gitreview.refresh"
-	ActionReturn        = "gitreview.return"
-	ActionMode          = "gitreview.mode"
-	ActionInspectCommit = "gitreview.inspect-commit"
-)
-
-type Mode string
+// ScreenPrefix starts every review component ID; each tab's screen has its
+// own instance prefix so several reviews can be visible at once.
+const ScreenPrefix = "gitreview"
 
 const (
-	ModeChanges  Mode = "changes"
-	ModeHistory  Mode = "history"
-	ModeBranches Mode = "branches"
+	ActionRefresh = "gitreview.refresh"
+	ActionReturn  = "gitreview.return"
+	// ActionOpenAll asks the owner for the unscoped all-changes review tab.
+	ActionOpenAll = "gitreview.open-all"
+
+	actionPresentation = "gitreview.presentation"
+	actionCollapse     = "gitreview.collapse"
+	actionNavigate     = "gitreview.navigate"
 )
 
-type Presentation = diffview.Presentation
+// Source says what the review shows.
+type Source uint8
 
 const (
-	Unified    Presentation = diffview.Unified
-	SideBySide Presentation = diffview.SideBySide
+	SourceChanges Source = iota // working tree and index
+	SourceCommit                // one historical commit, read-only
 )
 
-type ComparisonRequest struct {
-	Comparison workspace.GitComparison
-}
+// navigatorMinWidth is the narrowest review that keeps the file navigator.
+const navigatorMinWidth = 110
 
-type CommitRequest struct {
-	Review  workspace.GitCommitReview
-	Message string
-}
-
-type CheckoutRequest struct {
-	RepositoryRoot string
-	Head           string
-	Branch         workspace.GitBranchSummary
-}
-
-type ModeRequest struct {
-	Mode Mode
-}
-
-type InspectCommitRequest struct {
-	Commit workspace.GitCommitSummary
-}
-
+// Screen is the main-area review tab.
 type Screen struct {
 	ui.Base
-	th              *theme.Theme
-	tokens          *ui.TokenSet
-	tabs            *ui.Tabs
-	header          *ui.TextArea
-	toolbar         *reviewToolbar
-	search          *reviewSearch
-	list            *reviewList
-	scrollbar       *ui.ScrollbarControl
-	viewer          *diffview.Screen
-	draft           *commitDraft
-	detail          *ui.TextArea
-	focus           func(ui.ComponentID) bool
-	snapshot        workspace.GitSnapshot
-	comparison      workspace.GitComparison
-	haveComparison  bool
-	mode            Mode
-	preferred       Presentation
-	presented       Presentation
-	navigator       bool
-	sidebar         bool
-	searchOpen      bool
-	loading         bool
-	errText         string
-	commitPage      bool
-	commitReview    workspace.GitCommitReview
-	commitStale     bool
-	stagedSignature string
-	reviewed        map[string]bool
-	evidence        workspace.GitCommitEvidence
-	prepared        map[string]PreparedComparison
-	body            ui.Rect
+	th        *theme.Theme
+	tokens    *ui.TokenSet
+	document  *gitdiff.Document
+	navigator *fileNavigator
+	present   *ui.Button
+	collapse  *ui.Button
+	refresh   *ui.Button
+	clear     *ui.Button
+	split     *ui.SplitModel
+	divider   *ui.SplitDivider
+	focus     func(ui.ComponentID) bool
+	source    Source
+	all       []gitdiff.File
+	scope     string // repository-relative folder or file prefix; "" = all
+	commit    workspace.GitCommitSummary
+	branch    string
+	loading   bool
+	errText   string
+	navWidth  int
+	find      *findBar
+	findOpen  bool
+	statusY   int
+	bodyTop   int
 }
 
-func New(th *theme.Theme) *Screen {
+// New creates a review with the default instance ID.
+func New(th *theme.Theme) *Screen { return NewWithID(th, ScreenPrefix) }
+
+// NewWithID creates a review whose component IDs all start with id, so
+// several review tabs can be mounted (and split side by side) at once.
+func NewWithID(th *theme.Theme, id ui.ComponentID) *Screen {
 	if th == nil {
 		th = theme.DefaultDark()
 	}
 	tokens := ui.NewTokenSet(th)
-	screen := &Screen{Base: ui.NewBase(ScreenID), th: th, tokens: tokens, mode: ModeChanges, preferred: Unified, presented: Unified, sidebar: true, reviewed: make(map[string]bool)}
-	screen.tabs = ui.NewTabs(TabsID, tokens)
-	screen.tabs.SetChrome(ui.TabsShell)
-	screen.syncTabs()
-	screen.header = ui.NewTextArea(HeaderID, tokens, true)
-	screen.header.SetReadOnly(true)
-	screen.header.SetBackgroundColor(tokens.Color(ui.ColorBg))
-	screen.detail = ui.NewTextArea(DetailID, tokens, true)
-	screen.detail.SetReadOnly(true)
-	screen.detail.SetBackgroundColor(tokens.Color(ui.ColorBg))
-	screen.toolbar = newReviewToolbar(ToolbarID, screen)
-	screen.search = &reviewSearch{Base: ui.NewBase(SearchID), field: ui.NewFilterField(SearchID, tokens), owner: screen}
-	screen.search.field.SetPlaceholder("Find in comparison")
-	screen.search.field.SetPrompt(ui.SearchGlyphEnd(tokens))
-	screen.search.field.SetPromptPlacement(ui.PromptEnd)
-	screen.search.field.SetSubmitAction("")
-	screen.search.field.OnChanged(func(query string) { screen.applySearch(query) })
-	screen.list = newReviewList(screen)
-	screen.scrollbar = ui.NewScrollbarControl(ScrollbarID, screen.list.list.Scroll(), tokens)
-	screen.scrollbar.SetSurfaceBackground(ui.ColorBg)
-	screen.viewer = diffview.NewWithID(th, ui.NewID(ScreenID, "comparison"))
-	screen.viewer.SetPresentation(Unified)
-	screen.draft = &commitDraft{Base: ui.NewBase(DraftID), area: ui.NewTextArea(DraftID, tokens, true), owner: screen}
-	screen.draft.area.SetPlaceholder("Commit subject\n\nDescribe the staged changes")
-	screen.draft.area.SetSubmitAction(ActionCommit)
-	screen.syncHeader()
-	screen.syncList()
-	screen.syncToolbar()
+	screen := &Screen{Base: ui.NewBase(id), th: th, tokens: tokens}
+	screen.document = gitdiff.New(ui.NewID(id, "document"), tokens)
+	screen.document.SetEmptyText("No changes · the working tree matches the index and HEAD")
+	screen.navigator = newFileNavigator(screen)
+	screen.present = ui.NewButton(ui.NewID(id, "presentation"), "Split", actionPresentation)
+	screen.collapse = ui.NewButton(ui.NewID(id, "collapse"), "Collapse all", actionCollapse)
+	screen.refresh = ui.NewButton(ui.NewID(id, "refresh"), "Refresh", ActionRefresh)
+	screen.clear = ui.NewButton(ui.NewID(id, "all-changes"), "All changes", ActionOpenAll)
+	screen.split = ui.NewSplitModel(ui.Horizontal)
+	screen.split.SetMinSizes(20, 40)
+	screen.split.SetFraction(0.24)
+	screen.divider = ui.NewSplitDivider(ui.NewID(id, "divider"), screen.split)
+	screen.divider.SetColorRole(ui.ColorBorder)
+	screen.divider.SetFill(true)
+	screen.find = newFindBar(screen)
+	screen.SetTokens(tokens)
 	return screen
 }
 
-func (screen *Screen) SetFocusHandler(handler func(ui.ComponentID) bool) {
-	screen.focus = handler
-	screen.viewer.SetFocusHandler(handler)
-}
+// DocumentID is the component that owns keyboard focus in the review.
+func (screen *Screen) DocumentID() ui.ComponentID { return ui.NewID(screen.ID(), "document") }
 
-func (screen *Screen) focusID(id ui.ComponentID) {
-	if screen.focus != nil {
-		screen.focus(id)
-	}
-}
+// NavigatorID is the file navigator.
+func (screen *Screen) NavigatorID() ui.ComponentID { return ui.NewID(screen.ID(), "files") }
 
-func (screen *Screen) Mode() Mode { return screen.mode }
+// FindID is the find bar.
+func (screen *Screen) FindID() ui.ComponentID { return ui.NewID(screen.ID(), "find") }
 
-func (screen *Screen) SetMode(mode Mode) {
-	if mode != ModeChanges && mode != ModeHistory && mode != ModeBranches {
-		return
-	}
-	screen.mode = mode
-	screen.syncTabs()
-	screen.syncList()
-	screen.syncHeader()
-	screen.syncToolbar()
-}
+// DividerID is the navigator/document divider.
+func (screen *Screen) DividerID() ui.ComponentID { return screen.divider.ID() }
 
-func (screen *Screen) syncTabs() {
-	screen.tabs.SetItems([]ui.TabItem{{ID: string(ModeChanges), Label: "Changes"}, {ID: string(ModeHistory), Label: "History"}, {ID: string(ModeBranches), Label: "Branches"}}, string(screen.mode))
-}
-
-func (screen *Screen) SetPresentation(presentation Presentation) {
-	if presentation == Unified || presentation == SideBySide {
-		screen.preferred = presentation
-		screen.viewer.SetPresentation(presentation)
-		screen.syncToolbar()
-	}
-}
-
-func (screen *Screen) PreferredPresentation() Presentation { return screen.preferred }
-func (screen *Screen) Presentation() Presentation          { return screen.presented }
-func (screen *Screen) Comparison() workspace.GitComparison { return screen.comparison }
-
-func (screen *Screen) SetComparison(prepared PreparedComparison) {
-	screen.InstallComparisons([]PreparedComparison{prepared})
-	screen.commitPage = false
-	screen.SetMode(ModeChanges)
-	screen.setComparison(prepared.Comparison)
-}
-
-func (screen *Screen) setComparison(comparison workspace.GitComparison) {
-	changed := comparison != screen.comparison || !screen.haveComparison
-	screen.comparison, screen.haveComparison = comparison, true
-	screen.loading, screen.errText = false, ""
-	if changed {
-		if comparison.Binary {
-			screen.viewer.SetPrepared(diffview.Prepared{})
-			screen.syncHeader()
-			screen.syncToolbar()
-			return
-		}
-		prepared, exists := screen.prepared[comparison.Path+"\x00"+comparison.Fingerprint]
-		if !exists {
-			screen.SetError(errors.New("comparison presentation is unavailable; refresh the review"))
-			return
-		}
-		screen.viewer.SetPrepared(prepared.View)
-		screen.applySearch(screen.search.field.Value())
-	}
-	screen.syncHeader()
-	screen.syncToolbar()
-}
-
-func (screen *Screen) SetSnapshot(snapshot workspace.GitSnapshot) {
-	snapshot.Changes = append([]workspace.GitChange(nil), snapshot.Changes...)
-	snapshot.RecentCommits = append([]workspace.GitCommitSummary(nil), snapshot.RecentCommits...)
-	snapshot.Branches = append([]workspace.GitBranchSummary(nil), snapshot.Branches...)
-	signature := stagedSnapshotSignature(snapshot)
-	if screen.commitReview.Fingerprint != "" && screen.stagedSignature != "" && signature != screen.stagedSignature {
-		screen.commitStale = true
-	}
-	screen.snapshot = snapshot
-	screen.stagedSignature = signature
-	screen.syncList()
-	screen.syncHeader()
-	screen.syncToolbar()
-}
-
-func stagedSnapshotSignature(snapshot workspace.GitSnapshot) string {
-	var identity strings.Builder
-	fmt.Fprintf(&identity, "%s\x00%s", snapshot.RepositoryRoot, snapshot.Head)
-	for _, change := range snapshot.Changes {
-		if change.Area == workspace.GitAreaStaged || change.Area == workspace.GitAreaConflict {
-			fmt.Fprintf(&identity, "\x00%d:%s:%s", change.Area, change.Path, change.Code)
-		}
-	}
-	return fmt.Sprintf("%x", sha256.Sum256([]byte(identity.String())))
-}
-
-func (screen *Screen) SetSidebarAvailable(available bool) {
-	screen.sidebar = available
-	screen.syncList()
-	screen.syncToolbar()
-}
-
-func (screen *Screen) SetNavigatorVisible(visible bool) {
-	screen.navigator = visible
-	screen.syncList()
-	screen.syncToolbar()
-}
-
-func (screen *Screen) SetLoading(loading bool) {
-	screen.loading = loading
-	if loading {
-		screen.errText = ""
-	}
-	screen.syncToolbar()
-}
-
-func (screen *Screen) SetError(err error) {
-	screen.loading = false
-	if err == nil {
-		screen.errText = ""
-	} else {
-		screen.errText = err.Error()
-		if errors.Is(err, workspace.ErrGitReviewStale) {
-			screen.commitStale = true
-		}
-	}
-	screen.syncToolbar()
-}
-
-func (screen *Screen) SetCommitReview(review workspace.GitCommitReview) {
-	review.Comparisons = append([]workspace.GitComparison(nil), review.Comparisons...)
-	screen.commitReview = review
-	screen.commitPage, screen.commitStale, screen.loading, screen.errText = true, false, false, ""
-	screen.reviewed = make(map[string]bool)
-	screen.SetMode(ModeChanges)
-	screen.syncList()
-	if len(review.Comparisons) > 0 {
-		screen.reviewed[review.Comparisons[0].Path] = true
-		screen.setComparison(review.Comparisons[0])
-	}
-	screen.syncHeader()
-	screen.syncToolbar()
-}
-
-func (screen *Screen) CommitMessage() string { return screen.draft.area.Value() }
-func (screen *Screen) SetCommitMessage(message string) {
-	screen.draft.area.SetValue(message)
-	screen.syncToolbar()
-}
-
-func (screen *Screen) ClearCommitMessage() {
-	screen.draft.area.SetValue("")
-	screen.syncToolbar()
-}
-
-func (screen *Screen) CompleteCommit(request CommitRequest) {
-	if request.Message == screen.CommitMessage() {
-		screen.ClearCommitMessage()
-	}
-	if request.Review.Fingerprint == screen.commitReview.Fingerprint {
-		screen.commitReview = workspace.GitCommitReview{}
-		screen.commitPage = false
-		screen.commitStale = false
-	}
-	screen.syncList()
-	screen.syncHeader()
-	screen.syncToolbar()
-}
-
-func (screen *Screen) SetCommitEvidence(evidence workspace.GitCommitEvidence) {
-	evidence.Comparisons = append([]workspace.GitComparison(nil), evidence.Comparisons...)
-	screen.evidence = evidence
-	screen.loading, screen.errText = false, ""
-	screen.SetMode(ModeHistory)
-	screen.detail.SetValue(evidence.Commit.Hash + "\n" + evidence.Commit.Author + " · " + evidence.Commit.When.Format("2006-01-02 15:04") + "\n\n" + evidence.Message)
-	if len(evidence.Comparisons) > 0 {
-		screen.setComparison(evidence.Comparisons[0])
-	}
-	screen.syncList()
-	screen.syncToolbar()
-}
-
-func (screen *Screen) canCommit() bool {
-	if screen.loading || screen.commitStale || screen.errText != "" || screen.commitReview.Fingerprint == "" || strings.TrimSpace(screen.CommitMessage()) == "" || len(screen.commitReview.Comparisons) == 0 {
-		return false
-	}
-	for _, comparison := range screen.commitReview.Comparisons {
-		if !screen.reviewed[comparison.Path] {
-			return false
-		}
-	}
-	return true
-}
+func (screen *Screen) SetFocusHandler(handler func(ui.ComponentID) bool) { screen.focus = handler }
 
 func (screen *Screen) SetTokens(tokens *ui.TokenSet) {
 	if tokens == nil {
 		return
 	}
 	screen.tokens = tokens
-	screen.tabs.SetTokens(tokens)
-	screen.header.SetTokens(tokens)
-	screen.header.SetBackgroundColor(tokens.Color(ui.ColorBg))
-	screen.detail.SetTokens(tokens)
-	screen.detail.SetBackgroundColor(tokens.Color(ui.ColorBg))
-	screen.search.field.SetTokens(tokens)
-	screen.list.list.SetTokens(tokens)
-	screen.scrollbar.SetTokens(tokens)
-	screen.draft.area.SetTokens(tokens)
-	screen.viewer.SetTokens(tokens)
-	screen.toolbar.setTokens(tokens)
+	screen.document.SetTokens(tokens)
+	screen.navigator.setTokens(tokens)
+	screen.find.field.SetTokens(tokens)
+	screen.divider.SetTokens(tokens)
+	for _, button := range []*ui.Button{screen.present, screen.collapse, screen.refresh, screen.clear} {
+		button.SetTokens(tokens)
+		button.SetVariant(ui.VariantSecondary)
+		button.SetSurfaceBackground(tokens.Color(ui.ColorBg))
+	}
 }
 
 func (screen *Screen) SetTheme(th *theme.Theme) {
-	if th == nil {
-		return
+	if th != nil {
+		screen.th = th
+		screen.SetTokens(ui.NewTokenSet(th))
 	}
-	screen.th = th
-	screen.viewer.SetTheme(th)
-	screen.SetTokens(ui.NewTokenSet(th))
+}
+
+// Source reports whether the review shows working changes or a commit.
+func (screen *Screen) Source() Source { return screen.source }
+
+// Commit is the commit shown in SourceCommit.
+func (screen *Screen) Commit() workspace.GitCommitSummary { return screen.commit }
+
+// Scope is the active path filter ("" = every change).
+func (screen *Screen) Scope() string { return screen.scope }
+
+// Title names the main tab.
+func (screen *Screen) Title() string {
+	if screen.source == SourceCommit {
+		return "Commit " + screen.commit.ShortHash
+	}
+	if screen.scope != "" {
+		name, _ := gitdiff.SplitPath(screen.scope)
+		return "Changes · " + name
+	}
+	return "Changes"
+}
+
+// ShowChanges installs the working-tree change set. scope keeps its value
+// unless changed with SetScope.
+func (screen *Screen) ShowChanges(files []gitdiff.File, branch string) {
+	if screen.source != SourceChanges {
+		screen.document.SetFiles(nil)
+	}
+	screen.source, screen.branch = SourceChanges, branch
+	screen.commit = workspace.GitCommitSummary{}
+	screen.loading, screen.errText = false, ""
+	screen.all = files
+	screen.document.SetReadOnly(false)
+	screen.apply()
+}
+
+// ShowCommit installs one commit's files, read-only.
+func (screen *Screen) ShowCommit(evidence workspace.GitCommitEvidence, files []gitdiff.File) {
+	screen.source, screen.commit, screen.scope = SourceCommit, evidence.Commit, ""
+	screen.loading, screen.errText = false, ""
+	screen.all = files
+	screen.document.SetReadOnly(true)
+	screen.document.SetFiles(nil)
+	screen.apply()
+}
+
+// SetScope narrows working changes to a file or folder prefix. A tab keeps
+// its scope for life; the all-changes review is a separate tab.
+func (screen *Screen) SetScope(scope string) {
+	screen.scope = strings.Trim(scope, "/")
+	screen.apply()
+}
+
+func (screen *Screen) apply() {
+	files := screen.all
+	if screen.scope != "" {
+		files = make([]gitdiff.File, 0, len(screen.all))
+		for _, file := range screen.all {
+			path := file.Path()
+			if path == screen.scope || strings.HasPrefix(path, screen.scope+"/") {
+				files = append(files, file)
+			}
+		}
+	}
+	empty := "No changes · the working tree matches the index and HEAD"
+	if screen.scope != "" {
+		empty = "No changes under " + screen.scope
+	}
+	if screen.source == SourceCommit {
+		empty = "This commit changes no files"
+	}
+	screen.document.SetEmptyText(empty)
+	screen.document.SetFiles(files)
+	screen.navigator.setFiles(files)
+	screen.syncLinks()
+}
+
+// Reveal scrolls the document to the file with this key.
+func (screen *Screen) Reveal(key string) bool { return screen.document.RevealFile(key) }
+
+func (screen *Screen) SetLoading(loading bool) {
+	screen.loading = loading
+	if loading {
+		screen.errText = ""
+	}
+}
+
+func (screen *Screen) SetError(err error) {
+	screen.loading = false
+	screen.errText = ""
+	if err != nil {
+		screen.errText = err.Error()
+	}
+}
+
+func (screen *Screen) SetPresentation(presentation gitdiff.Presentation) {
+	screen.document.SetPresentation(presentation)
+	screen.syncLinks()
+}
+
+func (screen *Screen) Presentation() gitdiff.Presentation { return screen.document.Presentation() }
+
+func (screen *Screen) Document() *gitdiff.Document { return screen.document }
+
+// InvalidateWidthProfile is a geometry boundary; the document re-derives
+// widths on its next layout, so nothing is cached here.
+func (screen *Screen) InvalidateWidthProfile() {}
+
+func (screen *Screen) syncLinks() {
+	if screen.document.Presentation() == gitdiff.Split {
+		screen.present.SetLabel("Unified")
+	} else {
+		screen.present.SetLabel("Split")
+	}
+	if screen.document.AllCollapsed() {
+		screen.collapse.SetLabel("Expand all")
+	} else {
+		screen.collapse.SetLabel("Collapse all")
+	}
 }
 
 func (screen *Screen) Children() []ui.Component {
-	children := []ui.Component{screen.header, screen.tabs, screen.toolbar, screen.search}
-	if screen.showsList() {
-		children = append(children, screen.list, screen.scrollbar)
-	}
-	if screen.commitPage && screen.mode == ModeChanges {
-		children = append(children, screen.draft)
-	}
-	if screen.mode == ModeBranches || screen.mode == ModeHistory && screen.evidence.Commit.Hash == "" {
-		return append(children, screen.detail)
-	}
-	if screen.mode == ModeHistory && screen.evidence.Commit.Hash != "" {
-		children = append(children, screen.detail)
-	}
-	if screen.haveComparison && !screen.comparison.Binary {
-		if screen.comparisonState() == "" {
-			children = append(children, screen.viewer)
+	children := []ui.Component{}
+	for _, child := range []ui.Component{screen.present, screen.collapse, screen.refresh, screen.clear, screen.find, screen.navigator, screen.divider, screen.document} {
+		if !child.Bounds().Empty() {
+			children = append(children, child)
 		}
 	}
 	return children
 }
 
-func (screen *Screen) showsList() bool {
-	return screen.mode != ModeChanges || screen.commitPage || screen.navigator || !screen.sidebar
+func (screen *Screen) Measure(_ ui.LayoutContext, constraints ui.Constraints) ui.Size {
+	return constraints.ClampSize(ui.Size{W: constraints.MaxW, H: constraints.MaxH})
 }
 
 func (screen *Screen) Layout(ctx ui.LayoutContext, bounds ui.Rect) {
 	screen.SetBounds(bounds)
-	screen.presented = Unified
-	if screen.preferred == SideBySide && bounds.W >= 100 {
-		screen.presented = SideBySide
-	}
-	pad := min(screen.tokens.PadLR(), bounds.W/2)
-	innerW := max(0, bounds.W-2*pad)
-	headerH := min(2, bounds.H)
-	screen.header.Layout(ctx, ui.Rect{X: pad, W: innerW, H: headerH})
-	tabH := min(ui.StripHeight, max(0, bounds.H-headerH))
-	screen.tabs.Layout(ctx, ui.Rect{Y: headerH, W: bounds.W, H: tabH})
-	y := headerH + tabH
-	toolbarH := min(screen.toolbar.rows(innerW), max(0, bounds.H-y-5))
-	screen.toolbar.Layout(ctx, ui.Rect{X: pad, Y: y, W: innerW, H: toolbarH})
-	y += toolbarH
-	if screen.searchOpen {
-		screen.search.Layout(ctx, ui.Rect{X: pad, Y: y, W: innerW, H: min(1, max(0, bounds.H-y))})
-		y += screen.search.Bounds().H
+	screen.syncLinks()
+	pad := min(screen.tokens.PadLR(), bounds.W/4)
+	right := bounds.W - pad
+	buttons := []*ui.Button{screen.refresh, screen.collapse, screen.present}
+	if screen.scope != "" && screen.source == SourceChanges {
+		buttons = append(buttons, screen.clear)
 	} else {
-		screen.search.Layout(ctx, ui.Rect{})
+		screen.clear.Layout(ctx, ui.Rect{})
 	}
-	y++
-	body := ui.Rect{X: pad, Y: min(y, bounds.H), W: innerW, H: max(0, bounds.H-y)}
-	if screen.commitPage && screen.mode == ModeChanges {
-		commitH := min(5, max(0, body.H-4))
-		if innerW >= 80 {
-			listW := innerW / 3
-			screen.layoutList(ctx, ui.Rect{X: body.X, Y: body.Y, W: listW, H: commitH})
-			screen.draft.Layout(ctx, ui.Rect{X: body.X + listW + 1, Y: body.Y, W: max(0, innerW-listW-1), H: commitH})
-			body.Y += commitH
-			body.H -= commitH
-		} else {
-			listH := min(3, max(0, body.H-7))
-			screen.layoutList(ctx, ui.Rect{X: body.X, Y: body.Y, W: innerW, H: listH})
-			draftH := min(3, max(0, body.H-listH-4))
-			screen.draft.Layout(ctx, ui.Rect{X: body.X, Y: body.Y + listH, W: innerW, H: draftH})
-			body.Y += listH + draftH
-			body.H -= listH + draftH
+	for _, button := range buttons {
+		w := button.Measure(ctx, ui.Loose(40, 1)).W
+		if right-w-1 < bounds.W/2 || bounds.H < 4 {
+			button.Layout(ctx, ui.Rect{})
+			continue
 		}
-	} else if screen.showsList() {
-		if innerW >= 90 {
-			listW := min(36, innerW/3)
-			screen.layoutList(ctx, ui.Rect{X: body.X, Y: body.Y, W: listW, H: body.H})
-			body.X += listW + 1
-			body.W -= listW + 1
-		} else {
-			listH := min(4, max(0, body.H-4))
-			screen.layoutList(ctx, ui.Rect{X: body.X, Y: body.Y, W: innerW, H: listH})
-			body.Y += listH
-			body.H -= listH
-		}
+		right -= w
+		button.Layout(ctx, ui.Rect{X: right, Y: 0, W: w, H: 1})
+		right--
 	}
-	if screen.mode == ModeBranches || screen.mode == ModeHistory && screen.evidence.Commit.Hash == "" {
-		screen.detail.Layout(ctx, body)
-		return
+	top := 1
+	screen.statusY = top
+	top++
+	screen.find.Layout(ctx, ui.Rect{})
+	if screen.findOpen && bounds.H > top+3 {
+		screen.find.Layout(ctx, ui.Rect{X: pad, Y: top, W: max(0, min(60, bounds.W-2*pad)), H: 1})
+		top++
 	}
-	if screen.mode == ModeHistory {
-		detailH := min(3, max(0, body.H-4))
-		screen.detail.Layout(ctx, ui.Rect{X: body.X, Y: body.Y, W: body.W, H: detailH})
-		body.Y += detailH
-		body.H -= detailH
+	top = min(top, bounds.H)
+	screen.bodyTop = top
+	body := ui.Rect{Y: top, W: bounds.W, H: max(0, bounds.H-top)}
+	screen.navWidth = 0
+	if bounds.W >= navigatorMinWidth && len(screen.navigator.files) > 1 {
+		first, gap, _ := screen.split.Resolve(bounds.W)
+		first = max(20, min(first, bounds.W-40))
+		screen.navWidth = first
+		screen.divider.SetCurrentFirst(first)
+		screen.navigator.Layout(ctx, ui.Rect{X: 0, Y: body.Y, W: first, H: body.H})
+		screen.divider.Layout(ctx, ui.Rect{X: first, Y: body.Y, W: gap, H: body.H})
+		body.X, body.W = first+gap, max(0, bounds.W-first-gap)
+	} else {
+		screen.navigator.Layout(ctx, ui.Rect{})
+		screen.divider.Layout(ctx, ui.Rect{})
 	}
-	screen.body = body
-	screen.viewer.Layout(ctx, body)
-	screen.presented = screen.viewer.Presentation()
-}
-
-func (screen *Screen) layoutList(ctx ui.LayoutContext, bounds ui.Rect) {
-	barW := 0
-	if screen.scrollbar.NeededForViewport(bounds.H) {
-		barW = min(ui.ScrollbarWidth, bounds.W)
-	}
-	screen.list.Layout(ctx, ui.Rect{X: bounds.X, Y: bounds.Y, W: max(0, bounds.W-barW), H: bounds.H})
-	screen.scrollbar.Layout(ctx, ui.Rect{X: bounds.X + bounds.W - barW, Y: bounds.Y, W: barW, H: bounds.H})
+	screen.document.Layout(ctx, body)
 }
 
 func (screen *Screen) Paint(buf *surface.CellBuffer, originX, originY int, _ ui.PaintContext) {
-	if buf == nil || screen.tokens == nil {
-		return
-	}
 	bounds := screen.Bounds()
-	ui.FillRect(buf, originX, originY, bounds, cell.BlankCell(screen.tokens.Color(ui.ColorBg)))
-	statusY := screen.toolbar.Bounds().Y + screen.toolbar.Bounds().H
-	if screen.searchOpen {
-		statusY++
-	}
-	if statusY < bounds.H {
-		text, role := screen.status()
-		buf.WriteString(originX+bounds.X+screen.header.Bounds().X, originY+bounds.Y+statusY, rendering.TruncateLine(text, screen.header.Bounds().W), screen.tokens.Color(role), screen.tokens.Color(ui.ColorBg), 0)
-	}
-	if screen.mode == ModeBranches || screen.mode == ModeHistory && screen.evidence.Commit.Hash == "" {
+	tokens := screen.tokens
+	bg := tokens.Color(ui.ColorBg)
+	ui.FillRect(buf, originX, originY, bounds, cell.BlankCell(bg))
+	if bounds.Empty() {
 		return
 	}
-	if text := screen.comparisonState(); text != "" && !screen.body.Empty() {
-		for row, line := range rendering.WrapText(text, screen.body.W) {
-			if row >= screen.body.H {
-				break
-			}
-			buf.WriteString(originX+bounds.X+screen.body.X, originY+bounds.Y+screen.body.Y+row, line, screen.tokens.Color(ui.ColorMuted), screen.tokens.Color(ui.ColorBg), 0)
+	x, y := originX+bounds.X, originY+bounds.Y
+	pad := min(tokens.PadLR(), bounds.W/4)
+	limit := bounds.W - pad
+	for _, button := range []*ui.Button{screen.present, screen.collapse, screen.refresh, screen.clear} {
+		if !button.Bounds().Empty() {
+			limit = min(limit, button.Bounds().X-1)
 		}
 	}
-}
-
-func (screen *Screen) syncHeader() {
-	root := screen.snapshot.RepositoryRoot
-	if root == "" {
-		root = screen.comparison.RepositoryRoot
-	}
-	identity := filepath.Base(root)
-	if identity == "." || identity == "" {
-		identity = "Git review"
-	}
-	if screen.snapshot.Branch != "" {
-		identity += " / " + screen.snapshot.Branch
-	}
-	if screen.haveComparison && screen.mode != ModeBranches {
-		identity += "\n" + screen.comparison.Path
-		if screen.comparison.OriginalPath != "" {
-			identity += " ← " + screen.comparison.OriginalPath
+	col := x + pad
+	end := x + max(pad, limit)
+	write := func(text string, role ui.SemanticColor, attr cell.Attrs) {
+		if col >= end || text == "" {
+			return
 		}
+		text = rendering.TruncateVisual(text, end-col, "…")
+		buf.WriteString(col, y, text, tokens.Color(role), bg, attr)
+		col += rendering.VisibleWidth(text)
+	}
+	files, added, removed := screen.document.Stats()
+	if screen.source == SourceCommit {
+		write(screen.commit.ShortHash+"  ", ui.ColorAccent, cell.AttrBold)
+		write(screen.commit.Subject, ui.ColorFg, cell.AttrBold)
+		write("  "+screen.commit.Author, ui.ColorMuted, 0)
 	} else {
-		identity += "\n" + string(screen.mode)
+		title := "Working tree changes"
+		if screen.scope != "" {
+			title = "Changes in " + screen.scope
+		}
+		write(title, ui.ColorFg, cell.AttrBold)
+		if screen.branch != "" {
+			write("  "+gitdiff.BranchIcon(panelchrome.NerdFont(screen.th))+" "+screen.branch, ui.ColorMuted, 0)
+		}
 	}
-	if screen.header.Value() != identity {
-		screen.header.SetValue(identity)
-		screen.header.SetCursorFlat(0)
+	noun := "files"
+	if files == 1 {
+		noun = "file"
+	}
+	write(fmt.Sprintf("   %d %s  ", files, noun), ui.ColorMuted, 0)
+	write(fmt.Sprintf("+%d", added), ui.ColorDiffAddition, 0)
+	write(fmt.Sprintf(" −%d", removed), ui.ColorDiffDeletion, 0)
+	if screen.statusY < bounds.H {
+		text, role := screen.status()
+		buf.WriteString(x+pad, y+screen.statusY, rendering.TruncateVisual(text, max(0, bounds.W-2*pad), "…"), tokens.Color(role), bg, 0)
 	}
 }
 
 func (screen *Screen) status() (string, ui.SemanticColor) {
-	if screen.errText != "" {
-		return screen.errText, ui.ColorError
+	switch {
+	case screen.errText != "":
+		return "✕ " + screen.errText, ui.ColorError
+	case screen.loading:
+		return "Reading changes…", ui.ColorMuted
+	case screen.findOpen && screen.document.SearchStatus() != "":
+		return "Find · " + screen.document.SearchStatus() + " · Enter next · Shift+Enter previous · Esc close", ui.ColorMuted
+	case screen.source == SourceCommit:
+		return "Read-only · drag to copy · Ctrl+F find · ]/[ files · n/p hunks · double-click opens the line", ui.ColorMuted
 	}
-	if screen.loading {
-		return "Loading Git evidence…", ui.ColorMuted
-	}
-	if screen.commitPage && screen.mode == ModeChanges {
-		if screen.commitStale {
-			return "Staged set changed · Review commit again; your message is preserved", ui.ColorWarning
-		}
-		remaining := 0
-		for _, comparison := range screen.commitReview.Comparisons {
-			if !screen.reviewed[comparison.Path] {
-				remaining++
-			}
-		}
-		if remaining > 0 {
-			return fmt.Sprintf("Exact staged set · review %d remaining files before committing", remaining), ui.ColorMuted
-		}
-		return fmt.Sprintf("Exact staged set · %d files · commit includes index bytes only", len(screen.commitReview.Comparisons)), ui.ColorMuted
-	}
-	if screen.mode == ModeBranches {
-		return "Select to inspect · Checkout is an explicit action", ui.ColorMuted
-	}
-	if screen.mode == ModeHistory && screen.evidence.Commit.Hash == "" {
-		return "Select a commit, then Inspect to load its complete changes", ui.ColorMuted
-	}
-	if screen.haveComparison {
-		if screen.searchOpen && screen.viewer.SearchStatus() != "" {
-			return screen.viewer.SearchStatus(), ui.ColorMuted
-		}
-		return screen.comparison.BaseLabel + " → " + screen.comparison.TargetLabel + " · " + string(screen.presented), ui.ColorMuted
-	}
-	return "Select a change in Source Control to review it", ui.ColorMuted
-}
-
-func (screen *Screen) comparisonState() string {
-	if screen.loading {
-		return "Loading comparison; previous evidence is not a current mutation preview."
-	}
-	if screen.errText != "" {
-		return "Comparison unavailable. Refresh to retry; no Git mutation was inferred from missing evidence."
-	}
-	if !screen.haveComparison {
-		return "No comparison selected."
-	}
-	comparison := screen.comparison
-	if comparison.Binary {
-		return fmt.Sprintf("Binary file · %s → %s\n%d bytes → %d bytes. Text comparison is unavailable; Open file uses the working-tree version.", comparison.BaseLabel, comparison.TargetLabel, len(comparison.Before), len(comparison.After))
-	}
-	if comparison.Before == comparison.After {
-		switch {
-		case comparison.Deleted:
-			return "Deleted empty file."
-		case comparison.Untracked:
-			return "Untracked empty file · not yet in the index."
-		case comparison.BeforeMode != comparison.AfterMode:
-			return fmt.Sprintf("File mode changed: %06o → %06o; text is unchanged.", comparison.BeforeMode, comparison.AfterMode)
-		default:
-			return "No textual differences between the compared versions."
-		}
-	}
-	if screen.body.W < 10 || screen.body.H < 4 {
-		return "Increase the review area to inspect this comparison."
-	}
-	return ""
-}
-
-func (screen *Screen) Semantics() ui.Semantics {
-	return ui.Semantics{Role: ui.RoleGroup, Label: "Git review", Value: screen.comparison.Path, Description: screen.comparison.BaseLabel + " → " + screen.comparison.TargetLabel}
+	return "s/u file · +/− hunk · x discard hunk · drag to copy · Ctrl+F find · ]/[ files · n/p hunks · z fold", ui.ColorMuted
 }
 
 func (screen *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
@@ -604,47 +393,27 @@ func (screen *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
 		return ui.EventResult{}
 	}
 	switch evt.Key.String() {
+	case "ctrl+f":
+		screen.openFind()
+		return ui.EventResult{Handled: true, Action: &ui.Action{ID: "ui.focus", Payload: screen.FindID()}, Invalidate: ui.InvalidateLayout | ui.InvalidateFocus | ui.InvalidatePaint}
 	case "esc":
-		if screen.searchOpen {
-			screen.searchOpen = false
-			screen.focusID(screen.documentID())
+		if screen.findOpen {
+			screen.closeFind()
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidateFocus | ui.InvalidatePaint}
 		}
-		if screen.commitPage {
-			screen.commitPage = false
-			screen.syncList()
-			screen.syncToolbar()
-			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
-		}
-		return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionReturn}}
-	case "ctrl+f":
-		screen.searchOpen = true
-		screen.focusID(SearchID)
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidateFocus | ui.InvalidatePaint}
+		return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionReturn, Payload: screen}}
 	case "ctrl+r":
 		return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionRefresh}}
-	case "alt+down":
-		screen.NavigateHunk(1)
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
-	case "alt+up":
-		screen.NavigateHunk(-1)
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
-	case "alt+right", "alt+left":
-		result := ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
-		direction := 1
-		if evt.Key.String() == "alt+left" {
-			direction = -1
+	case "v":
+		return screen.HandleAction(ui.EventContext{}, ui.Action{ID: actionPresentation})
+	case "tab", "shift+tab":
+		target := screen.DocumentID()
+		if !screen.navigator.focused && screen.navWidth > 0 {
+			target = screen.NavigatorID()
 		}
-		screen.navigateFile(direction, &result)
-		return result
-	case "f3":
-		screen.nextMatch(false)
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
-	case "shift+f3":
-		screen.nextMatch(true)
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
-	case "tab":
-		screen.focusID(TabsID)
+		if screen.focus != nil {
+			screen.focus(target)
+		}
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	}
 	return ui.EventResult{}
@@ -653,95 +422,38 @@ func (screen *Screen) Handle(_ ui.EventContext, evt ui.Event) ui.EventResult {
 func (screen *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResult {
 	result := ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
 	switch action.ID {
-	case "tabs.activate":
-		mode, _ := action.Payload.(string)
-		screen.SetMode(Mode(mode))
-		result.Action = &ui.Action{ID: ActionMode, Payload: ModeRequest{Mode: screen.mode}}
-	case "tabs.enter":
-		screen.focusID(screen.documentID())
-		if screen.showsList() {
-			screen.focusID(ListID)
+	case actionPresentation:
+		if screen.document.Presentation() == gitdiff.Split {
+			screen.SetPresentation(gitdiff.Unified)
+		} else {
+			screen.SetPresentation(gitdiff.Split)
 		}
-	case "gitreview.activate":
-		row, ok := action.Payload.(ui.ListItem)
-		if !ok {
+	case actionCollapse:
+		screen.document.SetAllCollapsed(!screen.document.AllCollapsed())
+		screen.syncLinks()
+	case actionNavigate:
+		key, _ := action.Payload.(string)
+		screen.document.RevealFile(key)
+		screen.focusID(screen.DocumentID())
+		result.Invalidate |= ui.InvalidateFocus
+	case ui.ActionSplitResize:
+		if resize, ok := action.Payload.(ui.SplitResize); ok && resize.ID == screen.divider.ID() {
 			return result
 		}
-		screen.activateRow(row, &result)
-	case "gitreview.presentation":
-		if screen.preferred == Unified {
-			screen.SetPresentation(SideBySide)
-		} else {
-			screen.SetPresentation(Unified)
-		}
-	case "gitreview.navigator":
-		screen.SetNavigatorVisible(!screen.navigator)
-	case "gitreview.search":
-		screen.searchOpen = !screen.searchOpen
-		if screen.searchOpen {
-			screen.focusID(SearchID)
-		}
-	case "gitreview.previous-hunk":
-		screen.NavigateHunk(-1)
-	case "gitreview.next-hunk":
-		screen.NavigateHunk(1)
-	case "gitreview.previous-file":
-		screen.navigateFile(-1, &result)
-	case "gitreview.next-file":
-		screen.navigateFile(1, &result)
-	case "gitreview.copy-path":
-		result.Cmd = rendering.CopyToClipboardCmd(screen.comparison.Path)
-	case ActionReviewCommit:
-		screen.commitPage = true
-		screen.SetMode(ModeChanges)
-		result.Action = &ui.Action{ID: ActionReviewCommit}
-	case ActionStage, ActionUnstage, ActionOpenFile:
-		if screen.toolbar.bar.ActionEnabled(action.ID) {
-			result.Action = &ui.Action{ID: action.ID, Payload: ComparisonRequest{Comparison: screen.comparison}}
-		}
-	case ActionCommit:
-		if screen.canCommit() {
-			result.Action = &ui.Action{ID: ActionCommit, Payload: CommitRequest{Review: screen.commitReview, Message: screen.CommitMessage()}}
-		} else {
-			if strings.TrimSpace(screen.CommitMessage()) == "" {
-				screen.errText = "Enter a commit message; the draft remains editable"
-			}
-		}
-	case ActionCheckout:
-		if row, ok := screen.list.list.Selected(); ok {
-			if branch, ok := row.Payload.(workspace.GitBranchSummary); ok && !branch.Current && !screen.loading {
-				result.Action = &ui.Action{ID: ActionCheckout, Payload: CheckoutRequest{RepositoryRoot: screen.snapshot.RepositoryRoot, Head: screen.snapshot.Head, Branch: branch}}
-			}
-		}
-	case ActionInspectCommit:
-		if row, ok := screen.list.list.Selected(); ok {
-			if commit, ok := row.Payload.(workspace.GitCommitSummary); ok {
-				result.Action = &ui.Action{ID: ActionInspectCommit, Payload: InspectCommitRequest{Commit: commit}}
-			}
-		}
-	case "gitreview.focus-next", "gitreview.focus-previous":
-		screen.focusID(screen.documentID())
-	case ActionReturn, ActionRefresh:
-		result.Action = &ui.Action{ID: action.ID}
+		return ui.EventResult{Action: &action}
+	case ActionRefresh, ActionReturn, ActionOpenAll:
+		result.Action = &ui.Action{ID: action.ID, Payload: screen}
+	case gitdiff.ActionFile:
+		result.Action = &action
 	default:
 		return ui.EventResult{Action: &action}
 	}
-	screen.syncToolbar()
 	return result
 }
 
-func (screen *Screen) documentID() ui.ComponentID {
-	if screen.mode == ModeBranches {
-		return DetailID
-	}
-	return screen.viewer.DocumentID()
+func (screen *Screen) Semantics() ui.Semantics {
+	return ui.Semantics{Role: ui.RoleGroup, Label: "Git review", Value: screen.Title()}
 }
-
-func (screen *Screen) DocumentID() ui.ComponentID      { return screen.documentID() }
-func (screen *Screen) InvalidateWidthProfile()         { screen.viewer.InvalidateWidthProfile() }
-func (screen *Screen) NavigateHunk(direction int) bool { return screen.viewer.NavigateHunk(direction) }
-func (screen *Screen) applySearch(query string)        { screen.viewer.SetQuery(query) }
-func (screen *Screen) nextMatch(previous bool)         { screen.viewer.NextMatch(previous) }
 
 var _ ui.Component = (*Screen)(nil)
 var _ ui.Parent = (*Screen)(nil)

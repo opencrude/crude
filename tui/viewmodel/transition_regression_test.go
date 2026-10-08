@@ -30,6 +30,10 @@ func newTransitionApp(t *testing.T) *App {
 	ws.SetEventSender(noopEventSender{})
 	t.Setenv("MODELS_DEV_URL", "http://127.0.0.1:9/models-dev-unreachable")
 	app := NewApp(ws, nil)
+	t.Cleanup(func() {
+		app.StopAsyncIO()
+		ws.Close()
+	})
 	ws.LSPMgr.SetRuntime(noopLSPRuntime{})
 	_, _ = app.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
 	app.AddOrchestrator(

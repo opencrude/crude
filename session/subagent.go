@@ -25,7 +25,6 @@ import (
 	"crude/codexio"
 	"crude/collaboration"
 	"crude/fileio"
-	"crude/plan"
 	rootprompt "crude/prompt"
 	"crude/provider"
 	"crude/safety"
@@ -486,6 +485,10 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	if subDB == nil {
 		return nil, errors.New("sub-agent database is unavailable")
 	}
+	if err := r.session.bindChildPlanStore(string(spec.ID), subSessionID, subDB); err != nil {
+		_ = subDB.Close()
+		return nil, fmt.Errorf("restore child plan: %w", err)
+	}
 	if r.session.db == nil {
 		_ = subDB.Close()
 		return nil, errors.New("parent session database is unavailable")
@@ -793,6 +796,9 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 		return fail()
 	}
 	childCheckpoint.Status.AgentID = string(spec.ID)
+	if err := r.session.bindChildPlanStore(string(spec.ID), string(spec.ID), subDB); err != nil {
+		return fail()
+	}
 	childCheckpoint.ContextOwnerID = string(spec.ID)
 	childCheckpoint.Archive = reconcileInterruptedTools(childCheckpoint.Archive, childCheckpoint.InFlightTools...)
 	childCheckpoint.ActiveContext = reconcileInterruptedTools(childCheckpoint.ActiveContext, childCheckpoint.InFlightTools...)
@@ -2390,7 +2396,10 @@ func (r *SubAgentRunner) executeSubAgentPlanningTool(handle *agent.SubAgentHandl
 	if handle == nil || handle.DB == nil || handle.SessionID == "" {
 		return tools.ToolResult{}, fmt.Errorf("planning unavailable for sub-agent")
 	}
-	store := plan.NewStore(handle.DB, handle.SessionID)
+	store, err := r.session.childPlanStore(string(handle.Spec.ID), handle.SessionID, handle.DB)
+	if err != nil {
+		return tools.ToolResult{}, err
+	}
 	return executePlanToolWithStore(context.Background(), store, handle.SessionID, tool, params)
 }
 
