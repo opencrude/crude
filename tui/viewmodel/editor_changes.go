@@ -1,9 +1,7 @@
 package viewmodel
 
 import (
-	tea "charm.land/bubbletea/v2"
 	"fmt"
-	"os"
 	"path/filepath"
 
 	"crude/tui/editor"
@@ -11,7 +9,6 @@ import (
 	"crude/tui/screens/shelleditor"
 	"crude/tui/ui"
 	"crude/tui/wm"
-	"crude/workspace"
 )
 
 const editorChangesOverlay ui.OverlayID = "editor-changes"
@@ -69,42 +66,6 @@ func (m *App) navigateEditorChanges(msg editorchanges.NavigateMsg) {
 	if win := m.overlayHost.Window(editorChangesOverlay); win != nil {
 		win.MarkContentDirty()
 	}
-}
-
-type editorDiskComparisonMsg struct {
-	ed         *editor.Editor
-	revision   uint64
-	generation uint64
-	hunks      []workspace.GitHunk
-	err        error
-}
-
-func (m *App) compareEditorWithDisk(ed *editor.Editor) tea.Cmd {
-	path, text, revision, generation := ed.FilePath(), ed.Value(), ed.Revision(), m.workspaceSwitchGen.Load()
-	return func() tea.Msg {
-		data, err := os.ReadFile(path)
-		var hunks []workspace.GitHunk
-		if err == nil {
-			hunks = workspace.DocumentHunks(string(data), text)
-		}
-		return editorDiskComparisonMsg{ed: ed, revision: revision, generation: generation, hunks: hunks, err: err}
-	}
-}
-
-func (m *App) applyEditorDiskComparison(msg editorDiskComparisonMsg) {
-	if msg.generation != m.workspaceSwitchGen.Load() || !msg.ed.IsOpen() || msg.ed.Revision() != msg.revision {
-		return
-	}
-	if msg.err != nil {
-		m.Feedback.NotifyError(msg.err.Error())
-		return
-	}
-	if len(msg.hunks) == 0 {
-		m.Feedback.NotifyInfo("Buffer matches disk")
-		return
-	}
-	hunks := append([]editor.GitHunk(nil), msg.hunks...)
-	m.openEditorChanges(msg.ed, hunks, 0, "disk")
 }
 
 func (m *App) jumpEditorChange(direction int) {

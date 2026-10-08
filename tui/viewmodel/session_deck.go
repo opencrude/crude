@@ -140,6 +140,9 @@ func (m *App) openSessionYoloPanel() {
 }
 
 func (m *App) activeSessionDeck() *sessionProjection {
+	if m.Win != nil && m.activeAgentTabID() == "" {
+		return nil
+	}
 	projection := m.activeSessionProjection()
 	if projection == nil || projection.deck == nil || projection.deckHost == nil {
 		return nil
@@ -199,14 +202,6 @@ func (m *App) closeProjectionPanel(projection *sessionProjection, id string) {
 		projection.deckFocused, projection.deckFocus = true, panel.FocusID
 	}
 	m.normalizeSessionDeckFocus(projection)
-}
-
-func (m *App) sessionDeckHeight(maxHeight int) int {
-	projection := m.activeSessionDeck()
-	if projection == nil || !projection.deck.IsOpen() {
-		return 0
-	}
-	return projection.deck.PreferredHeight(maxHeight)
 }
 
 func (m *App) sessionDeckFocused() bool {

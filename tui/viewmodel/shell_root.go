@@ -20,16 +20,10 @@ type shellSlotID uint8
 const (
 	shellHeaderSlot shellSlotID = iota
 	shellFooterSlot
-	shellTabsSlot
 	shellActivitySlot
 	shellSidebarSlot
-	shellChatSlot
-	shellInputSlot
-	shellEditorSlot
-	shellLauncherSlot
-	shellDeckSlot
 	shellTermDockSlot
-	shellGitReviewSlot
+	shellMainPanesSlot
 	shellSlotCount
 )
 
@@ -39,26 +33,14 @@ func (id shellSlotID) String() string {
 		return "shell/header"
 	case shellFooterSlot:
 		return "shell/footer"
-	case shellTabsSlot:
-		return "shell/tabs"
 	case shellActivitySlot:
 		return "shell/activity"
 	case shellSidebarSlot:
 		return "shell/sidebar"
-	case shellChatSlot:
-		return "shell/chat"
-	case shellInputSlot:
-		return "shell/input"
-	case shellEditorSlot:
-		return "shell/editor"
-	case shellLauncherSlot:
-		return "shell/launcher"
-	case shellDeckSlot:
-		return "shell/deck"
 	case shellTermDockSlot:
 		return "shell/termdock"
-	case shellGitReviewSlot:
-		return "shell/gitreview"
+	case shellMainPanesSlot:
+		return "shell/main-panes"
 	}
 	return "shell/none"
 }
@@ -81,41 +63,17 @@ type shellRoot struct {
 	ui.Base
 	header    ui.Component
 	footer    ui.Component
-	tabs      ui.Component
 	activity  ui.Component
 	sidebar   ui.Component
-	chat      ui.Component
-	input     ui.Component
-	editor    ui.Component
-	launcher  ui.Component
-	deck      *deckMount
 	termDock  ui.Component
-	gitReview ui.Component
+	mainPanes ui.Component
 
 	slots [shellSlotCount]shellSlot
 	dirty bool
 }
 
-func newShellRoot(
-	header, footer, tabs, activity, sidebar, chat, input, editor, launcher ui.Component,
-	deck *deckMount,
-	termDock ui.Component,
-) *shellRoot {
-	return &shellRoot{
-		Base:     ui.NewBase("shell"),
-		header:   header,
-		footer:   footer,
-		tabs:     tabs,
-		activity: activity,
-		sidebar:  sidebar,
-		chat:     chat,
-		input:    input,
-		editor:   editor,
-		launcher: launcher,
-		deck:     deck,
-		termDock: termDock,
-		dirty:    true,
-	}
+func newShellRoot(header, footer, activity, sidebar, termDock ui.Component) *shellRoot {
+	return &shellRoot{Base: ui.NewBase("shell"), header: header, footer: footer, activity: activity, sidebar: sidebar, termDock: termDock, dirty: true}
 }
 
 // setSlot updates a slot's active flag and rect. It marks the tree dirty
@@ -145,27 +103,14 @@ func (s *shellRoot) SetScreen(id shellSlotID, c ui.Component) {
 		s.header = c
 	case shellFooterSlot:
 		s.footer = c
-	case shellTabsSlot:
-		s.tabs = c
 	case shellActivitySlot:
 		s.activity = c
 	case shellSidebarSlot:
 		s.sidebar = c
-	case shellChatSlot:
-		s.chat = c
-	case shellInputSlot:
-		s.input = c
-	case shellEditorSlot:
-		s.editor = c
-	case shellLauncherSlot:
-		s.launcher = c
 	case shellTermDockSlot:
 		s.termDock = c
-	case shellGitReviewSlot:
-		s.gitReview = c
-	case shellDeckSlot:
-		// deck mount is fixed; ignored
-		return
+	case shellMainPanesSlot:
+		s.mainPanes = c
 	default:
 		return
 	}
@@ -181,16 +126,10 @@ func (s *shellRoot) Children() []ui.Component {
 	}
 	appendSlot(shellHeaderSlot, s.header)
 	appendSlot(shellFooterSlot, s.footer)
-	appendSlot(shellTabsSlot, s.tabs)
 	appendSlot(shellActivitySlot, s.activity)
 	appendSlot(shellSidebarSlot, s.sidebar)
-	appendSlot(shellChatSlot, s.chat)
-	appendSlot(shellInputSlot, s.input)
-	appendSlot(shellEditorSlot, s.editor)
-	appendSlot(shellLauncherSlot, s.launcher)
-	appendSlot(shellDeckSlot, s.deck)
 	appendSlot(shellTermDockSlot, s.termDock)
-	appendSlot(shellGitReviewSlot, s.gitReview)
+	appendSlot(shellMainPanesSlot, s.mainPanes)
 	return out
 }
 
@@ -211,16 +150,10 @@ func (s *shellRoot) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	}
 	layoutSlot(shellHeaderSlot, s.header)
 	layoutSlot(shellFooterSlot, s.footer)
-	layoutSlot(shellTabsSlot, s.tabs)
 	layoutSlot(shellActivitySlot, s.activity)
 	layoutSlot(shellSidebarSlot, s.sidebar)
-	layoutSlot(shellChatSlot, s.chat)
-	layoutSlot(shellInputSlot, s.input)
-	layoutSlot(shellEditorSlot, s.editor)
-	layoutSlot(shellLauncherSlot, s.launcher)
-	layoutSlot(shellDeckSlot, s.deck)
 	layoutSlot(shellTermDockSlot, s.termDock)
-	layoutSlot(shellGitReviewSlot, s.gitReview)
+	layoutSlot(shellMainPanesSlot, s.mainPanes)
 }
 
 // Paint is a no-op: children are painted by Host.paintNode at their slot
@@ -241,15 +174,16 @@ func (s *shellRoot) Semantics() ui.Semantics {
 var _ ui.Component = (*shellRoot)(nil)
 var _ ui.Parent = (*shellRoot)(nil)
 
-// deckMount mounts the ACTIVE session's retained PanelDeck Host into the
+// deckMount mounts its exact session's retained PanelDeck Host into the
 // root tree. Per-session deckHosts stay as they are (Phase 12 design):
 // deckMount only adapts paint (deck surface blit at the slot rect) and
 // input (EventContext locals → deck-local tea.Msg) so the deck participates
 // in the one hit tree without rehoming its Host.
 type deckMount struct {
 	ui.Base
-	app  *App
-	surf *surface.Surface
+	app        *App
+	surf       *surface.Surface
+	projection *sessionProjection
 }
 
 func newDeckMount(app *App) *deckMount {
@@ -269,7 +203,7 @@ func (d *deckMount) Layout(_ ui.LayoutContext, r ui.Rect) { d.SetBounds(r) }
 
 func (d *deckMount) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	b := d.Bounds()
-	proj := d.app.activeSessionDeck()
+	proj := d.projection
 	if proj == nil || !proj.deck.IsOpen() || b.Empty() || buf == nil {
 		return
 	}
@@ -281,13 +215,15 @@ func (d *deckMount) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext
 	proj.deckHost.Resize(b.W, b.H)
 	proj.deckHost.SetFrame(d.app.SpinFrame)
 	proj.deckHost.Layout()
-	d.app.focusSessionDeckAfterLayout()
+	if proj == d.app.activeSessionDeck() {
+		d.app.focusSessionDeckAfterLayout()
+	}
 	proj.deckHost.Paint(d.surf.Buffer())
 	surface.BlitOpaque(buf, ox+b.X, oy+b.Y, d.surf.Buffer())
 }
 
 func (d *deckMount) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
-	proj := d.app.activeSessionDeck()
+	proj := d.projection
 	if proj == nil || !proj.deck.IsOpen() {
 		return ui.EventResult{}
 	}

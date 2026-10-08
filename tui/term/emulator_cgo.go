@@ -66,6 +66,8 @@ type Emulator struct {
 	curFocused      bool
 	curBlinkOn      bool
 	curColor        cell.Color
+	selFG           cell.Color
+	selBG           cell.Color
 }
 
 // NewEmulator creates an 80x24 libghostty-vt terminal.
@@ -571,6 +573,16 @@ func (e *Emulator) SetCursorColor(color cell.Color) {
 		return
 	}
 	e.curColor = color
+	e.invalidatePaint()
+}
+
+// SetSelectionColors sets the embedder's text-range ink and fill without
+// changing Ghostty's selection or the child's terminal colors.
+func (e *Emulator) SetSelectionColors(fg, bg cell.Color) {
+	if e == nil || (e.selFG.Equal(fg) && e.selBG.Equal(bg)) {
+		return
+	}
+	e.selFG, e.selBG = fg, bg
 	e.invalidatePaint()
 }
 

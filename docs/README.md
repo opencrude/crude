@@ -52,6 +52,8 @@ Read that first; this index only organizes the reference material.
   and where it lives in the code.
 - [Interaction matrix](reference/interaction-matrix.md) — keyboard/mouse
   contracts the component system must preserve.
+- [Main view panes](reference/main-view-panes.md) — draggable tab groups,
+  split previews, keyboard panes, retained resource state and ownership.
 - [Control usage map](reference/control-usage.md) — control categories and
   their `tui/ui` implementations.
 - [Settings layers](reference/settings.md) — the three-level settings model

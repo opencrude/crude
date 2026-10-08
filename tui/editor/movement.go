@@ -230,6 +230,14 @@ func runesToVisualCol(runes []rune, ri int) int {
 	return col
 }
 
+// RuneIndexToVisualColumn maps source rune offsets to editor columns, including
+// tab stops and complete graphemes. Search/LSP adapters must use source geometry.
+func RuneIndexToVisualColumn(text string, index int) int {
+	runes := []rune(text)
+	index = min(len(runes), max(0, index))
+	return LineVisualWidth(string(runes[:index]), tabWidth)
+}
+
 func colToRuneIdx(runes []rune, col int) int {
 	visCol := 0
 	for i, r := range runes {

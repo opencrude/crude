@@ -389,7 +389,7 @@ func TestActiveAgentConfirmationUsesModalOverEditorAndPreservesDraft(t *testing.
 	app.SessionsByAgent = map[string]*workspace.Session{"root": session}
 	app.switchToAgentView("root")
 	app.Input.SetInput("unfinished user prompt")
-	_ = newSaveTestEditor(t, app, "source")
+	openTestEditor(t, app)
 	app.paintShellFrame()
 
 	app.enqueueAgentConfirmation(agentPromptRequest{kind: agentPromptConfirmation, agentID: "root", blockID: "editor-block", question: "Allow write?"})

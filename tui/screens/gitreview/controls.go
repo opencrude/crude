@@ -204,8 +204,8 @@ func (screen *Screen) syncToolbar() {
 		}
 		add(label, "gitreview.presentation", ready && !screen.comparison.Binary)
 		add("Find", "gitreview.search", ready && !screen.comparison.Binary)
-		add("Previous", "gitreview.previous-hunk", len(screen.hunks) > 0)
-		add("Next", "gitreview.next-hunk", len(screen.hunks) > 0)
+		add("Previous", "gitreview.previous-hunk", screen.viewer.HunkCount() > 0)
+		add("Next", "gitreview.next-hunk", screen.viewer.HunkCount() > 0)
 		add("Copy path", "gitreview.copy-path", screen.haveComparison)
 	}
 	add("Refresh", ActionRefresh, !screen.loading)

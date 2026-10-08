@@ -1004,6 +1004,16 @@ func (r *Renderer) ExportMessageRowsSnapshot(width int) MessageRowsSnapshot {
 	if !r.lazyWidthReflow {
 		r.vl.EnsureHeights(r.renderItem, width)
 	}
+	// Newly materialized content may reveal a main scrollbar. Settle its width
+	// before publishing this snapshot, not on the first idle tick (which would
+	// discard a completed heavy diff's cache and repeat all preview work).
+	if r.extScroll != nil && r.ScrollbarWidth() != r.lastScrollbarW {
+		structureChanged = true
+		r.prepareRender(width)
+		if !r.lazyWidthReflow {
+			r.vl.EnsureHeights(r.renderItem, width)
+		}
+	}
 	// Width-only virtualization materializes the visible range plus overscan;
 	// offscreen dirty items retain previous/estimated heights until exposed.
 	heightChanged := false
@@ -1276,7 +1286,14 @@ func (r *Renderer) buildPaneLineMap(visible []string) {
 func (r *Renderer) ScrollbarWidth() int {
 	r.vl.BuildIndex()
 	w := r.paneScrollbarW
-	if r.paneScroll != nil {
+	// Main content/height belongs to this renderer's indexed rows. extScroll
+	// owns user offset, but its metrics are published after export; reading
+	// last frame's metrics here causes a second width invalidation next frame.
+	if r.extScroll != nil {
+		if r.vl.MaxScroll() > 0 {
+			w += ui.ScrollbarWidth
+		}
+	} else if r.paneScroll != nil {
 		if r.paneScroll.MaxOffset() > 0 {
 			w += ui.ScrollbarWidth
 		}

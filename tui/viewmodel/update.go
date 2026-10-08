@@ -29,7 +29,6 @@ import (
 	"crude/tui/screens/question"
 	sessionpicker "crude/tui/screens/sessionpicker"
 	"crude/tui/screens/sessionsettings"
-	"crude/tui/screens/shellchat"
 	"crude/tui/screens/shellfooter"
 	"crude/tui/screens/shellheader"
 	statusoverview "crude/tui/screens/statusoverview"
@@ -52,6 +51,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	previousEditor := m.logicalEditorFocus()
 	previousMode := m.editorSettings.AutoSave
 	model, command := m.update(msg)
+	m.syncLocalDiffFreshness()
 	m.syncMemoryBrowserLifecycle()
 	switch msg.(type) {
 	case tea.KeyPressMsg, tea.MouseClickMsg, tea.MouseWheelMsg, tea.MouseReleaseMsg:
@@ -157,6 +157,8 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case shellheader.ActionMsg:
 		switch msg.Action {
+		case "panes":
+			return m, m.openMainPaneMenu()
 		case "workspace":
 			m.openTabStats(msg.TargetID)
 		case "activity":
@@ -201,8 +203,6 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.Logger.Debug("UI", "resize", "width", msg.Width, "height", msg.Height)
 		m.width = msg.Width
 		m.height = msg.Height
-		m.subPaneProjections.SetSize(msg.Width, msg.Height)
-		m.Input.SetWidth(msg.Width)
 		if m.compositor != nil {
 			m.compositor.Resize(msg.Width, msg.Height)
 		}
@@ -239,8 +239,8 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case editorchanges.NavigateMsg:
 		m.navigateEditorChanges(msg)
 		return m, nil
-	case editorDiskComparisonMsg:
-		m.applyEditorDiskComparison(msg)
+	case localDiffPreparedMsg:
+		m.applyLocalDiffPrepared(msg)
 		return m, nil
 	case tea.BlurMsg:
 		if m.editorSettings.AutoSave == types.AutoSaveTerminalFocusLoss && m.DirtyPromptPath == "" {
@@ -310,7 +310,7 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case ttypes.SelectionTickMsg:
 		if m.chatScreen != nil && m.rootHost != nil {
-			m.rootHost.Focus(shellchat.ScreenID)
+			m.rootHost.Focus(m.chatScreen.ID())
 			res := m.rootHost.Handle(msg)
 			if res.Cmd != nil {
 				cmds = append(cmds, res.Cmd)
@@ -570,7 +570,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case workspace.TerminalTitleMsg:
 		m.applyTerminalTitle(msg.ID, msg.Title)
 	case findinfiles.OpenMsg:
-		if m.findInFiles != msg.Screen {
+		if m.findInFiles == nil || !m.findInFiles.AcceptsSearch(msg.Screen, msg.Generation) {
 			break
 		}
 		if cmd := m.openFindInFilesResult(msg.Match); cmd != nil {
@@ -752,6 +752,8 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		}
 		m.invalidatePathSearch(msg.Target)
 		m.invalidateDirectoryAsyncLoad(msg.Target)
+		paneOwner := m.paneFilePicker
+		m.paneFilePicker = nil
 		m.overlayHost.Close(ui.OverlayFilePicker)
 		if msg.Folder {
 			if m.launcherScreen != nil {
@@ -768,10 +770,18 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			if len(paths) == 0 && msg.Path != "" {
 				paths = []string{msg.Path}
 			}
+			if paneOwner != nil {
+				if paneOwner.generation == m.workspaceSwitchGen.Load() {
+					cmds = append(cmds, m.openPaneFiles(paths, paneOwner.group))
+				}
+				break
+			}
 			for _, path := range paths {
 				m.addFileReference(path)
 			}
 		}
+	case paneFilesOpenedMsg:
+		cmds = append(cmds, m.applyPaneFilesOpened(msg))
 	case filepickerscreen.CancelMsg:
 		if msg.ValidFor(m.FilePicker) {
 			m.invalidatePathSearch(msg.Target)
@@ -1262,6 +1272,10 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 	// Cancel restores the tab control even though the close operation ended.
 	m.releaseTabBarFocus()
 	defer m.syncRootFocus()
+	if tab.Resource.Kind == window.ResourceLocalDiff {
+		m.closeLocalDiff(tab.ID)
+		return nil
+	}
 	if tab.Resource.Kind == window.ResourceGitReview {
 		wasActive := m.Win.ActiveTab() != nil && m.Win.ActiveTab().ID == tab.ID
 		m.Win.CloseTab(index)
@@ -1320,6 +1334,7 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 // active would break the renderer's region classification and cause
 // Ctrl+Q to attempt a no-op close instead of quitting.
 func (m *App) handleTabSwitch() {
+	defer m.bindMainPaneFocus()
 	defer func() {
 		if m.LSPMgr != nil {
 			m.LSPMgr.SetActiveFile(m.EditorState.ActiveView)
@@ -1342,7 +1357,7 @@ func (m *App) handleTabSwitch() {
 		m.closeFindReplaceForTab(prevEditorPath, "")
 		return
 	}
-	if activeTab.Resource.Kind == window.ResourceGitReview {
+	if activeTab.Resource.Kind == window.ResourceGitReview || activeTab.Resource.Kind == window.ResourceLocalDiff {
 		m.closeFindReplaceForTab(prevEditorPath, "")
 		return
 	}
@@ -1401,6 +1416,7 @@ func (m *App) openFilePicker() {
 }
 
 func (m *App) openPicker(root string, mode filepickerscreen.Mode) {
+	m.paneFilePicker = nil
 	if m.FilePicker == nil {
 		m.FilePicker = filepickerscreen.New(m.Theme)
 	}

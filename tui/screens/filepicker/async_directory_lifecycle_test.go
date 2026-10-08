@@ -119,7 +119,7 @@ func TestPickerIntentEpochAndSequenceRejectStaleMessages(t *testing.T) {
 		t.Fatal("current directory load could not be cancelled")
 	}
 
-	selected := commandMessage[SelectMsg](t, screen.selectPath(filepath.FromSlash("/root/a.txt"), false))
+	selected := commandMessage[SelectMsg](t, screen.selectPath(filepath.FromSlash("/root/a.txt"), nil, false))
 	cancelled := commandMessage[CancelMsg](t, screen.cancel())
 	if selected.ValidFor(screen) {
 		t.Fatal("older selection remained current after cancel")

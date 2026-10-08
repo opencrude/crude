@@ -195,6 +195,10 @@ Selecting a file does not stage/discard. Explicit activation opens one typed
 main-area Git Changes tab with complete path and compared versions. Unstaged uses
 index→disk; staged uses HEAD→index. Unified/side-by-side, search/hunk navigation,
 copy/full-path and horizontal access preserve exact content at narrow sizes.
+The shared diff reader aligns source lines, retains syntax with themed change
+bands, and uses a draggable divider plus synchronized vertical scroll. Local
+Compare With Disk / Compare With Saved Version use the same reader in independent
+movable main tabs, without staging, saving or mutating the live source buffer.
 
 Stage/Unstage acts on reviewed bytes and rejects changed HEAD/index/disk; unsaved
 editor text must be explicitly saved and reviewed. Review commit keeps a multiline

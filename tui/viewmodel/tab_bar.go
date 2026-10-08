@@ -11,7 +11,7 @@ import (
 )
 
 func (m *App) tabBarVisible() bool {
-	return m.Win != nil && m.Win.IsOpen() && m.Win.TabCount() >= 1 && m.Win.Layout() == window.TabHorizontal
+	return m.Win != nil && (m.Win.TabCount() >= 1 || len(m.Win.GroupIDs()) > 1) && m.Win.Layout() == window.TabHorizontal
 }
 
 // tabBarRailCol is the screen column where the strip's first label (and so its
@@ -20,6 +20,11 @@ func (m *App) tabBarVisible() bool {
 // left of it, on the rail itself. Hit testing and tests share this one owner
 // instead of re-deriving the arithmetic.
 func (m *App) tabBarRailCol() int {
+	if m.mainPanes != nil {
+		if r, ok := m.rootHost.ScreenRect(m.tabScreen.ID()); ok {
+			return r.X + shelltabs.RailInset
+		}
+	}
 	return m.computeLayout().SidebarW + shelltabs.RailInset
 }
 
@@ -27,6 +32,11 @@ func (m *App) tabBarRailCol() int {
 // slot-local X. The slot spans the whole content column; the shelltabs
 // screen translates through its tabs bounds internally.
 func (m *App) tabBarLocalX(screenX int) int {
+	if m.mainPanes != nil {
+		if r, ok := m.rootHost.ScreenRect(m.tabScreen.ID()); ok {
+			return screenX - r.X
+		}
+	}
 	x := screenX - m.computeLayout().SidebarW
 	if x < 0 {
 		return 0
@@ -39,7 +49,12 @@ func (m *App) tabBarHitTest(screenX int) (tabIndex int, closeHit bool) {
 		return -1, false
 	}
 	m.syncTabBarHost()
-	return m.tabScreen.HitTest(m.tabBarLocalX(screenX))
+	i, closeHit := m.tabScreen.HitTest(m.tabBarLocalX(screenX))
+	tabs := m.Win.GroupTabs(m.Win.ActiveGroup())
+	if i < 0 || i >= len(tabs) {
+		return -1, false
+	}
+	return m.Win.IndexOf(tabs[i].ID), closeHit
 }
 
 func (m *App) winTabIndexByID(id string) int {
@@ -60,12 +75,12 @@ func (m *App) syncTabBarHost() {
 		return
 	}
 	m.syncEditorTabPresentation()
-	hover := -1
-	if m.Win.Hover.IsActive() {
-		hover = m.Win.Hover.Index
-	}
 	barFocused := m.FocusStack != nil && m.FocusStack.Top() == FocusTabBar
-	m.tabScreen.SetProjectionFromWindow(m.Win, hover, barFocused)
+	active := window.TabID(0)
+	if tab := m.Win.ActiveTab(); tab != nil {
+		active = tab.ID
+	}
+	m.tabScreen.SetProjectionFromTabs(m.Win.GroupTabs(m.Win.ActiveGroup()), active, barFocused)
 }
 
 // releaseTabBarFocus ends a tab operation without disturbing focus owned by a
@@ -97,28 +112,9 @@ func (m *App) handleTabBarHostResult(res ui.EventResult) tea.Cmd {
 		case "tabs.enter":
 			m.handleTabSwitch()
 			m.releaseTabBarFocus()
+		case "tabs.new":
+			return m.launcherNewSession()
 		}
 	}
 	return res.Cmd
-}
-
-// handleTabBarEvent routes tab-bar mouse events through the root host (the
-// tab slot geometry and hit-testing live in the shell tree). Actions from
-// the Tabs control bubble to the viewmodel via handleTabBarHostResult.
-func (m *App) handleTabBarEvent(msg tea.Msg) tea.Cmd {
-	if !m.tabBarVisible() || m.tabScreen == nil || m.rootHost == nil {
-		return nil
-	}
-	m.syncTabBarHost()
-	res := m.rootHost.Handle(msg)
-	switch msg := msg.(type) {
-	case tea.MouseMotionMsg:
-		if m.tabScreen.TabsControl().HoverIndex() >= 0 {
-			m.Win.Hover.Set(m.tabScreen.TabsControl().HoverIndex())
-		} else {
-			m.Win.Hover.Clear()
-		}
-		_ = msg
-	}
-	return m.handleTabBarHostResult(res)
 }

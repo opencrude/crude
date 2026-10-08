@@ -67,24 +67,29 @@ func ActivityRows(height int) int { return min(ActivityHeight, max(0, height-1))
 
 // New creates an agent-chat shell screen.
 func New(th *theme.Theme) *Screen {
+	return NewWithID(th, ScreenID)
+}
+
+// NewWithID creates an independently retained chat viewport in the shell tree.
+func NewWithID(th *theme.Theme, id ui.ComponentID) *Screen {
 	if th == nil {
 		th = theme.DefaultDark()
 	}
 	tokens := ui.NewTokenSet(th)
-	list := ui.NewVirtualList(AreaID, tokens)
+	list := ui.NewVirtualList(ui.NewID(id, "area"), tokens)
 	list.SetPointerPolicy(ui.PointerPolicyPassthrough)
 	list.SetSelectionAnchorsScroll(false)
 	list.SetBottomGravity(true) // short chats anchor above the input prompt
 	list.SetOpaqueRowFill(false)
 	list.Scroll().SetAutoScroll(true)
 	s := &Screen{
-		Base:   ui.NewBase(ScreenID),
+		Base:   ui.NewBase(id),
 		th:     th,
 		tokens: tokens,
 		list:   list,
 	}
 	list.SetRowPainter(s.paintMessageRow)
-	s.scrollbar = ui.NewScrollbarControl(ScrollbarID, list.Scroll(), tokens)
+	s.scrollbar = ui.NewScrollbarControl(ui.NewID(id, "scrollbar"), list.Scroll(), tokens)
 	// The nested pane gutter sits two columns left of the main track. Claim the
 	// separator, but never expand across it and steal nested-pane interaction.
 	s.scrollbar.SetPointerTargetSize(2)

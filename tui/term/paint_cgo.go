@@ -91,20 +91,27 @@ func (e *Emulator) rebuildPaintCache(fg, bg cell.Color) {
 		rowSel := C.crude_row_selection(rowIt)
 		x := 0
 		prevWide := false
-		wideFG, wideBG := fg, bg
+		var wideCell cell.Cell
 		for C.ghostty_render_state_row_cells_next(cells) {
 			if x >= w {
 				break
 			}
 			c := paintCell(cells, utf8, fg, bg)
 			if prevWide {
-				cont := cell.ContinuationCell
-				cont.FG, cont.BG = wideFG, wideBG
-				c = cont
+				// Preserve the primary's complete presentation (selection and
+				// cursor included) across the atomic grapheme span.
+				c = wideCell
+				c.Char, c.Content, c.Width = 0, "", 0
+				e.paintCache.Set(x, y, c)
+				prevWide = false
+				x++
+				continue
 			}
-			selected := bool(rowSel.has) && x >= int(rowSel.start_x) && x <= int(rowSel.end_x)
+			// A range touching either column selects the whole wide glyph.
+			selected := bool(rowSel.has) && x+max(1, int(c.Width))-1 >= int(rowSel.start_x) && x <= int(rowSel.end_x)
 			if selected {
-				c.Attr ^= cell.AttrReverse
+				c.FG, c.BG = e.selFG, e.selBG
+				c.Attr &^= cell.AttrReverse | cell.AttrDim
 			}
 			if showCursor(bool(curVis), bool(curInView), x, y, int(curX), int(curY)) && e.cursorPhaseVisible() {
 				c = applyCursorStyle(c, curStyle, e.curFocused, e.curColor)
@@ -112,7 +119,7 @@ func (e *Emulator) rebuildPaintCache(fg, bg cell.Color) {
 			e.paintCache.Set(x, y, c)
 			if c.Width == 2 {
 				prevWide = true
-				wideFG, wideBG = c.FG, c.BG
+				wideCell = c
 			} else {
 				prevWide = false
 			}

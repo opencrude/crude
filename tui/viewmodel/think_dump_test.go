@@ -12,7 +12,6 @@ func TestDumpThinkingPaneFullScreen(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 80
 	app.height = 24
-	app.agentChatScroll = make(map[string]agentMainChatScrollSnapshot)
 	app.AddOrchestrator(
 		"dump-agent")
 

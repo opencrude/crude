@@ -178,7 +178,6 @@ func (m *App) openLauncher() {
 	if m.launcherScreen == nil {
 		m.launcherScreen = launcher.New(m.Theme)
 		m.launcherScreen.SetFocusHandler(m.rootHost.Focus)
-		m.shell.SetScreen(shellLauncherSlot, m.launcherScreen)
 	}
 	m.refreshLauncherAsync(cwd)
 	if m.capabilitySnapshot.Generation != 0 || m.capabilitySnapshot.Error != "" {

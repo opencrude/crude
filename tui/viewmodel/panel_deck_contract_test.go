@@ -7,7 +7,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/fileio"
-	"crude/tui/editor"
 	"crude/tui/screens/confirmation"
 	"crude/tui/screens/question"
 	"crude/tui/screens/yolo"
@@ -21,12 +20,11 @@ func setupSessionDeckApp(t *testing.T) (*App, *sessionProjection) {
 	app.width = 100
 	app.height = 30
 	app.launcherScreen = nil
-	app.ActiveSession = &workspace.Session{
+	session := &workspace.Session{
 		SessionID: "session",
 		Settings:  workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil),
 	}
-	app.AddOrchestrator(
-		"agent")
+	selectDeckSession(t, app, session, "agent")
 
 	return app, app.activeSessionProjection()
 }
@@ -242,31 +240,35 @@ func TestPanelDeckViewmodelContractTable(t *testing.T) {
 		app := newFullTestApp(t)
 		first := &workspace.Session{SessionID: "first", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
 		second := &workspace.Session{SessionID: "second", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
-		app.ActiveSession = first
+		selectDeckSession(t, app, first, "first-agent")
 		app.openSessionSettings()
 		firstDeck := app.activeSessionProjection()
-		app.ActiveSession = second
+		selectDeckSession(t, app, second, "second-agent")
 		app.openSessionSettings()
 		secondDeck := app.activeSessionProjection()
 		if firstDeck == secondDeck || !firstDeck.deck.IsOpen() || !secondDeck.deck.IsOpen() {
 			t.Fatal("each session should retain an independent open deck")
 		}
 		app.closeSessionPanel(sessionSettingsPanelID)
-		app.ActiveSession = first
+		selectDeckSession(t, app, first, "first-agent")
 		if !firstDeck.deck.IsOpen() {
 			t.Fatal("switching back should restore first session deck state")
 		}
 	})
 
 	t.Run("blocking_wins_over_editor_focus", func(t *testing.T) {
-		app, projection := setupSessionDeckApp(t)
-		path := t.TempDir() + "/main.go"
-		ed := editor.NewPreview(app.Theme, path, "package main\n", 1)
-		app.EditorState.Editor = ed
-		app.EditorState.ActiveView = path
-		openTestAgentPrompt(t, app, projection, agentPromptRequest{question: "Proceed?"})
-		if !app.sessionDeckCapturesInput() {
-			t.Fatal("blocking panel must capture over editor")
+		app, _ := setupSessionDeckApp(t)
+		openMultiLineEditor(t, app, "package main\n")
+		ed := app.EditorState.Editor
+		before := ed.Value()
+		app.Input.SetInput("must-not-leak")
+		app.enqueueAgentConfirmation(agentPromptRequest{agentID: "agent", blockID: "editor-block", question: "Proceed?"})
+		if app.agentPrompt == nil || app.agentPrompt.inline || app.focusTarget() != FocusFloatingWindow {
+			t.Fatal("blocking request must capture over the selected editor in its modal")
+		}
+		app.dispatchKeyPress(tea.KeyPressMsg{Code: 'x', Text: "x"})
+		if ed.Value() != before || app.Input.Value() != "must-not-leak" {
+			t.Fatal("blocking request leaked a key to editor or composer")
 		}
 	})
 

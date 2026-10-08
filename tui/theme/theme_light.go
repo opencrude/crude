@@ -17,6 +17,8 @@ func DefaultLight() *Theme {
 		Warning:            lipgloss.Color("#9a6700"),
 		Border:             lipgloss.Color("#d0d7de"),
 		Selection:          lipgloss.Color("#dbeafe"),
+		TextSelection:      lipgloss.Color("#0969da"),
+		TextSelectionFg:    lipgloss.Color("#ffffff"),
 		Hover:              lipgloss.Color("#eaeef2"),
 		SubPaneBg:          lipgloss.Color("#eef1f4"),
 		IncompleteBg:       lipgloss.Color("#ffebe9"),

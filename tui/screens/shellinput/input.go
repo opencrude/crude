@@ -33,11 +33,16 @@ type Screen struct {
 
 // New creates a chat-input shell screen.
 func New(th *theme.Theme) *Screen {
+	return NewWithID(th, ScreenID)
+}
+
+// NewWithID mounts a session-owned composer without sharing hit-test identity.
+func NewWithID(th *theme.Theme, id ui.ComponentID) *Screen {
 	if th == nil {
 		th = theme.DefaultDark()
 	}
 	return &Screen{
-		Base:   ui.NewBase(ScreenID),
+		Base:   ui.NewBase(id),
 		th:     th,
 		tokens: ui.NewTokenSet(th),
 	}

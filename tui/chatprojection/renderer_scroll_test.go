@@ -60,6 +60,52 @@ func TestRendererMainExportMutatesExtScrollOnly(t *testing.T) {
 	}
 }
 
+func TestRendererScrollbarWidthUsesPresentationScrollOwner(t *testing.T) {
+	r, ext, pane := testRendererWithDualScroll(t)
+	r.SetPaneScrollbarWidth(2)
+	pane.SetContent(50)
+	pane.SetViewport(3)
+	ext.SetContent(3)
+	ext.SetViewport(10)
+	r.vl.SetViewport(10)
+	if got := r.ScrollbarWidth(); got != 2 {
+		t.Fatalf("compact overflow reserved main gutter: width=%d want 2", got)
+	}
+	ext.SetContent(50)
+	pane.SetContent(0)
+	seedScrollableMessages(r, 8)
+	r.vl.EnsureHeights(r.renderItem, 40)
+	if got := r.ScrollbarWidth(); got != 2+ui.ScrollbarWidth {
+		t.Fatalf("main overflow omitted main gutter: width=%d", got)
+	}
+	r.BindScroll(nil)
+	if got := r.ScrollbarWidth(); got != 2 {
+		t.Fatalf("pane-only fitting content reserved gutter: width=%d", got)
+	}
+	pane.SetContent(50)
+	if got := r.ScrollbarWidth(); got != 2+ui.ScrollbarWidth {
+		t.Fatalf("pane-only overflow omitted gutter: width=%d", got)
+	}
+}
+
+func TestFirstSnapshotSettlesNewScrollbarWithoutIdleReflow(t *testing.T) {
+	r, ext, _ := testRendererWithDualScroll(t)
+	ext.SetAutoScroll(true)
+	r.SetSize(70, 24)
+	seedScrollableMessages(r, 8)
+	first := r.ExportMessageRowsSnapshot(66)
+	r.SetSpinFrame(400)
+	second := r.ExportMessageRowsSnapshot(66)
+	if second.Generation != first.Generation {
+		t.Fatal("first idle export invalidated the just-published scrollbar width")
+	}
+	for _, msg := range r.Messages() {
+		if msg.CachedLines == nil {
+			t.Fatal("settled snapshot discarded unchanged message cache")
+		}
+	}
+}
+
 func TestRendererDisarmedPanePreservedDuringMainStreaming(t *testing.T) {
 	r, ext, pane := testRendererWithDualScroll(t)
 	seedScrollableMessages(r, 6)

@@ -87,10 +87,7 @@ func TestTransition_EditorCloseRestoresChat(t *testing.T) {
 	}
 
 	// Close the editor: the chat must come back with content.
-	if tab := app.Win.ActiveTab(); tab != nil {
-		app.Win.CloseTab(app.Win.ActiveIndex())
-	}
-	app.handleTabSwitch()
+	app.closeEditorTab()
 	app.paintShellFrame()
 
 	if !app.shellSlotActive(shellChatSlot) {
@@ -110,8 +107,7 @@ func TestTransition_EditorCloseShowsCleanLauncher(t *testing.T) {
 	t.Cleanup(func() {
 		app.Close()
 	})
-	app.AgentMgr.ClearActive()
-	app.AgentMgr.Remove("agent-1")
+	app.RemoveOrchestrator("agent-1")
 	app.openLauncher() // AddOrchestrator nils the launcher screen
 	app.paintShellFrame()
 	if !app.shellSlotActive(shellLauncherSlot) {
@@ -128,10 +124,7 @@ func TestTransition_EditorCloseShowsCleanLauncher(t *testing.T) {
 	}
 
 	// Close it: launcher must come back clean.
-	if tab := app.Win.ActiveTab(); tab != nil {
-		app.Win.CloseTab(app.Win.ActiveIndex())
-	}
-	app.handleTabSwitch()
+	app.closeEditorTab()
 	app.paintShellFrame()
 	if !app.shellSlotActive(shellLauncherSlot) {
 		t.Fatal("launcher must be active after editor close")

@@ -64,6 +64,7 @@ func TestStatusDeckHelpDerivesPanelNavFromRegistry(t *testing.T) {
 	app := newFullTestApp(t)
 	app.launcherScreen = nil
 	app.ActiveSession = workspace.NewSession("", "", nil, nil)
+	selectDeckSession(t, app, app.ActiveSession, "agent")
 	app.openSessionSettings()
 	if !app.sessionDeckFocused() {
 		t.Fatal("session settings did not focus the session deck")

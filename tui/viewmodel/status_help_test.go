@@ -20,13 +20,10 @@ func TestEditorHelpMovesToStatusWithoutReservingRows(t *testing.T) {
 	if err := os.WriteFile(path, []byte("package sample\n\nfunc handle() {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ed := editor.New(app.Theme)
-	if err := ed.Open(path); err != nil {
+	app.BufferMgr = editor.NewBufferManager()
+	if _, err := app.openEditorTab(path); err != nil {
 		t.Fatal(err)
 	}
-	defer ed.Close()
-	app.EditorState.Editor = ed
-	app.EditorState.ActiveView = path
 
 	help := app.contextualHelpView()
 	for _, want := range []string{"handlers.go", "1:1", "4L", "Ctrl+S save", "Esc close"} {
@@ -35,8 +32,8 @@ func TestEditorHelpMovesToStatusWithoutReservingRows(t *testing.T) {
 		}
 	}
 	_ = app.computeContentLayout()
-	// Editor reclaims the tab-bar rows; with no tab bar the chat area spans
-	// from chromeTopRow down to the bottom chrome (30 - 2 - 3).
+	// The real editor tab reserves its strip, but contextual help reserves
+	// no additional separator or content row.
 	if want := 30 - app.chromeBottomRows() - app.chromeTopRow(); app.ChatAreaHeight != want {
 		t.Fatalf("editor should reclaim help separator and row: height=%d, want %d", app.ChatAreaHeight, want)
 	}
@@ -47,7 +44,7 @@ func TestInlineModeHelpMovesToStatusWithoutReservingRows(t *testing.T) {
 	app.width = 100
 	app.height = 30
 	app.launcherScreen = nil
-	app.ActiveSession = workspace.NewSession("", "", nil, nil)
+	selectDeckSession(t, app, workspace.NewSession("", "", nil, nil), "agent")
 	app.openSessionSettings()
 
 	_ = app.computeContentLayout()
@@ -80,7 +77,7 @@ func TestContextualHelpCoversTabFocus(t *testing.T) {
 
 func TestComposerHelpMovesToStatusWithoutRenderingInInput(t *testing.T) {
 	app := newFullTestApp(t)
-	app.launcherScreen = nil
+	app.AddOrchestrator("agent")
 
 	help := app.contextualHelpView()
 	if !strings.Contains(help, "Enter send") || !strings.Contains(help, "Ctrl+O attach file") {
@@ -107,13 +104,10 @@ func TestEditorContextHelpDerivesShortcutsFromRegistry(t *testing.T) {
 	if err := os.WriteFile(path, []byte("package main\n\nfunc main() {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ed := editor.New(app.Theme)
-	if err := ed.Open(path); err != nil {
+	app.BufferMgr = editor.NewBufferManager()
+	if _, err := app.openEditorTab(path); err != nil {
 		t.Fatal(err)
 	}
-	defer ed.Close()
-	app.EditorState.Editor = ed
-	app.EditorState.ActiveView = path
 
 	help := app.contextualHelpView()
 	for _, want := range []string{
@@ -139,13 +133,10 @@ func TestEditorContextHelpFallsBackEmptyRegistry(t *testing.T) {
 	if err := os.WriteFile(path, []byte("package main\n\nfunc main() {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ed := editor.New(app.Theme)
-	if err := ed.Open(path); err != nil {
+	app.BufferMgr = editor.NewBufferManager()
+	if _, err := app.openEditorTab(path); err != nil {
 		t.Fatal(err)
 	}
-	defer ed.Close()
-	app.EditorState.Editor = ed
-	app.EditorState.ActiveView = path
 
 	help := app.contextualHelpView()
 	// Without registry, still shows position info and Esc close via chord fallbacks.

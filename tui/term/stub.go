@@ -30,27 +30,28 @@ func (e *Emulator) Resize(int, int)                  {}
 func (e *Emulator) Feed([]byte)                      {}
 func (e *Emulator) Paint(*surface.CellBuffer, int, int, cell.Color, cell.Color) {
 }
-func (e *Emulator) EncodeKey(tea.KeyPressMsg) []byte        { return nil }
-func (e *Emulator) EncodePaste([]byte) []byte               { return nil }
-func (e *Emulator) EncodeMouse(ui.Event, int, int) []byte   { return nil }
-func (e *Emulator) EncodeFocus(bool) []byte                 { return nil }
-func (e *Emulator) BracketedPaste() bool                    { return false }
-func (e *Emulator) MouseTracking() bool                     { return false }
-func (e *Emulator) AltScreen() bool                         { return false }
-func (e *Emulator) FocusReporting() bool                    { return false }
-func (e *Emulator) ViewportPinned() bool                    { return true }
-func (e *Emulator) ScrollDelta(int)                         {}
-func (e *Emulator) ScrollTop()                              {}
-func (e *Emulator) ScrollBottom()                           {}
-func (e *Emulator) Scrollbar() (offset, total, visible int) { return 0, 0, 0 }
-func (e *Emulator) SetDefaultColors(cell.Color, cell.Color) {}
-func (e *Emulator) SetCursorColor(cell.Color)               {}
-func (e *Emulator) CursorBlink() bool                       { return false }
-func (e *Emulator) SetCursorState(bool, bool) bool          { return false }
-func (e *Emulator) SelectionPress(int, int, uint64) bool    { return false }
-func (e *Emulator) SelectionDrag(int, int) bool             { return false }
-func (e *Emulator) SelectionRelease(int, int) bool          { return false }
-func (e *Emulator) HasSelection() bool                      { return false }
-func (e *Emulator) ClearSelection()                         {}
-func (e *Emulator) SelectAll()                              {}
-func (e *Emulator) SelectionText() string                   { return "" }
+func (e *Emulator) EncodeKey(tea.KeyPressMsg) []byte          { return nil }
+func (e *Emulator) EncodePaste([]byte) []byte                 { return nil }
+func (e *Emulator) EncodeMouse(ui.Event, int, int) []byte     { return nil }
+func (e *Emulator) EncodeFocus(bool) []byte                   { return nil }
+func (e *Emulator) BracketedPaste() bool                      { return false }
+func (e *Emulator) MouseTracking() bool                       { return false }
+func (e *Emulator) AltScreen() bool                           { return false }
+func (e *Emulator) FocusReporting() bool                      { return false }
+func (e *Emulator) ViewportPinned() bool                      { return true }
+func (e *Emulator) ScrollDelta(int)                           {}
+func (e *Emulator) ScrollTop()                                {}
+func (e *Emulator) ScrollBottom()                             {}
+func (e *Emulator) Scrollbar() (offset, total, visible int)   { return 0, 0, 0 }
+func (e *Emulator) SetDefaultColors(cell.Color, cell.Color)   {}
+func (e *Emulator) SetSelectionColors(cell.Color, cell.Color) {}
+func (e *Emulator) SetCursorColor(cell.Color)                 {}
+func (e *Emulator) CursorBlink() bool                         { return false }
+func (e *Emulator) SetCursorState(bool, bool) bool            { return false }
+func (e *Emulator) SelectionPress(int, int, uint64) bool      { return false }
+func (e *Emulator) SelectionDrag(int, int) bool               { return false }
+func (e *Emulator) SelectionRelease(int, int) bool            { return false }
+func (e *Emulator) HasSelection() bool                        { return false }
+func (e *Emulator) ClearSelection()                           {}
+func (e *Emulator) SelectAll()                                {}
+func (e *Emulator) SelectionText() string                     { return "" }

@@ -34,6 +34,8 @@ type Mode uint8
 const (
 	ModeFile Mode = iota
 	ModeFolder
+	// ModeOpenFile selects one document directly, without attach selections.
+	ModeOpenFile
 )
 
 // Entry is the small neutral adapter accepted by the existing workspace
@@ -604,9 +606,13 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContext) {
 	x = buf.WriteString(x, y, "◆ crude", accent, bg, cell.AttrBold)
 	label := "ATTACH FILES"
 	subtitle := "Choose files to add to this conversation · fuzzy-search as you type"
-	if s.mode == ModeFolder {
+	switch s.mode {
+	case ModeFolder:
 		label = "OPEN WORKSPACE"
 		subtitle = "Choose a project folder · fuzzy-search as you type"
+	case ModeOpenFile:
+		label = "OPEN FILE"
+		subtitle = "Choose a file to open in this pane · fuzzy-search as you type"
 	}
 	if x < ox+r.X+r.W-1 {
 		buf.WriteString(x, y, "  "+label, fg, bg, cell.AttrBold)
@@ -639,7 +645,7 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 		if entry.IsDir {
 			return s.navigate(entry.Path)
 		}
-		return ui.EventResult{Handled: true, Cmd: s.requestFileToggle(entry.Path), Invalidate: ui.InvalidatePaint}
+		return ui.EventResult{Handled: true, Cmd: s.requestFileActivation(entry.Path), Invalidate: ui.InvalidatePaint}
 	case "filepicker.breadcrumb.navigate":
 		path, ok := action.Payload.(string)
 		if !ok || path == "" {
@@ -665,6 +671,9 @@ func (s *Screen) HandleAction(_ ui.EventContext, action ui.Action) ui.EventResul
 }
 
 func (s *Screen) Semantics() ui.Semantics {
+	if s.mode == ModeOpenFile {
+		return ui.Semantics{Role: ui.RoleDialog, Label: "Open File", Value: s.current}
+	}
 	return ui.Semantics{Role: ui.RoleDialog, Label: "File picker", Value: s.current}
 }
 
@@ -673,8 +682,11 @@ func (s *Screen) rebuildActions() {
 		return
 	}
 	primary := "Attach Files"
-	if s.mode == ModeFolder {
+	switch s.mode {
+	case ModeFolder:
 		primary = "Open Workspace"
+	case ModeOpenFile:
+		primary = "Open File"
 	}
 	if !s.actions.SetLabel("filepicker.select", primary) {
 		s.actions = ui.NewActionBar(ActionsID, s.tokens,
@@ -683,10 +695,12 @@ func (s *Screen) rebuildActions() {
 		)
 		s.actions.SetCancelAction("filepicker.cancel")
 	}
-	if s.active && !s.AsyncDirectoryLoading() {
-		enabled := s.mode == ModeFolder || len(s.SelectedPaths()) > 0
-		s.actions.SetEnabled("filepicker.select", enabled)
+	enabled := s.mode == ModeFolder || len(s.SelectedPaths()) > 0
+	if s.mode == ModeOpenFile {
+		entry, ok := s.Selected()
+		enabled = ok && !entry.IsDir
 	}
+	s.actions.SetEnabled("filepicker.select", s.active && !s.AsyncDirectoryLoading() && enabled)
 }
 
 func (s *Screen) sync() {
@@ -748,7 +762,7 @@ func (s *Screen) configureModel() {
 	}
 	model := s.model
 	model.SetDirectoryLoader(func(path string) tea.Cmd { return s.requestChildLoad(path) })
-	model.SetFileSelectedHandler(func(path string) tea.Cmd { return s.requestFileToggle(path) })
+	model.SetFileSelectedHandler(func(path string) tea.Cmd { return s.requestFileActivation(path) })
 }
 
 func (s *Screen) rebuildTree() {
@@ -799,7 +813,23 @@ func (s *Screen) requestChildLoad(path string) tea.Cmd {
 	}
 }
 
-func (s *Screen) requestFileToggle(path string) tea.Cmd {
+func (s *Screen) requestFileActivation(path string) tea.Cmd {
+	if s == nil || s.model == nil {
+		return nil
+	}
+	if s.mode == ModeOpenFile {
+		if s.AsyncDirectoryLoading() {
+			return nil
+		}
+		node := s.model.NodeByPath(cleanAbs(path))
+		if node == nil || node.IsDir {
+			return nil
+		}
+		return s.selectPath(cleanAbs(path), nil, false).Cmd
+	}
+	if s.mode != ModeFile {
+		return nil
+	}
 	intent, ok := s.nextIntent()
 	if !ok {
 		return nil
@@ -841,6 +871,13 @@ func (s *Screen) confirm() ui.EventResult {
 	if s.mode == ModeFolder {
 		return s.selectPath(s.current, nil, true)
 	}
+	if s.mode == ModeOpenFile {
+		entry, ok := s.Selected()
+		if !ok || entry.IsDir {
+			return ui.EventResult{Handled: true}
+		}
+		return s.selectPath(entry.Path, nil, false)
+	}
 	paths := s.SelectedPaths()
 	if len(paths) == 0 {
 		return ui.EventResult{Handled: true}
@@ -848,17 +885,7 @@ func (s *Screen) confirm() ui.EventResult {
 	return s.selectPath(paths[0], paths, false)
 }
 
-func (s *Screen) selectPath(path string, args ...any) ui.EventResult {
-	var paths []string
-	var folder bool
-	for _, arg := range args {
-		switch value := arg.(type) {
-		case []string:
-			paths = value
-		case bool:
-			folder = value
-		}
-	}
+func (s *Screen) selectPath(path string, paths []string, folder bool) ui.EventResult {
 	intent, ok := s.nextIntent()
 	if !ok {
 		return ui.EventResult{Handled: true}
@@ -983,6 +1010,11 @@ func (s *Screen) confirmFiltered() ui.EventResult {
 		return ui.EventResult{Handled: true}
 	}
 	if node := s.model.SelectedNode(); node != nil {
+		if s.mode == ModeOpenFile {
+			cmd := s.model.ToggleExpandOrSelect()
+			s.sync()
+			return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidatePaint}
+		}
 		if node.IsDir && s.mode == ModeFolder {
 			return s.selectPath(node.Path, nil, true)
 		}
@@ -1037,6 +1069,9 @@ func (p *pickerTree) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if p.owner == nil || p.owner.model == nil {
 		return ui.EventResult{}
 	}
+	if p.owner.mode == ModeOpenFile && p.owner.AsyncDirectoryLoading() && (!evt.IsKey() || evt.Key.Code != tea.KeyEsc) {
+		return ui.EventResult{Handled: true}
+	}
 	if evt.IsKey() {
 		key := evt.Key
 		if key.Code == tea.KeyEsc {
@@ -1067,7 +1102,7 @@ func (p *pickerTree) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 					return p.owner.selectPath(node.Path, nil, true)
 				}
 				if p.owner.mode == ModeFile && !node.IsDir {
-					return ui.EventResult{Handled: true, Cmd: p.owner.requestFileToggle(node.Path), Invalidate: ui.InvalidatePaint}
+					return ui.EventResult{Handled: true, Cmd: p.owner.requestFileActivation(node.Path), Invalidate: ui.InvalidatePaint}
 				}
 			}
 			return ui.EventResult{Handled: true}
@@ -1092,8 +1127,8 @@ func (p *pickerTree) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft {
 		node := p.nodeAt(ctx.LocalY)
 		now := time.Now()
-		doubleClick := node != nil && node.IsDir && node.Path == p.lastClickPath && now.Sub(p.lastClickAt) <= 500*time.Millisecond
-		if node != nil && node.IsDir {
+		doubleClick := node != nil && node.Path == p.lastClickPath && now.Sub(p.lastClickAt) <= 500*time.Millisecond
+		if node != nil && (node.IsDir || p.owner.mode == ModeOpenFile) {
 			p.lastClickPath = node.Path
 			p.lastClickAt = now
 		} else {
@@ -1103,7 +1138,15 @@ func (p *pickerTree) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		if doubleClick {
 			p.lastClickPath = ""
 			p.lastClickAt = time.Time{}
-			return p.owner.navigate(node.Path)
+			if node.IsDir {
+				return p.owner.navigate(node.Path)
+			}
+			return ui.EventResult{Handled: true, Cmd: p.owner.requestFileActivation(node.Path), Invalidate: ui.InvalidatePaint}
+		}
+		if node != nil && !node.IsDir && p.owner.mode == ModeOpenFile {
+			p.owner.model.Select(node.Path)
+			p.owner.sync()
+			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 		}
 	}
 	localY := ctx.LocalY

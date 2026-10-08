@@ -30,6 +30,7 @@ const (
 	themeConsumerChatScreen         themeConsumerID = "chatScreen"
 	themeConsumerEditorScreen       themeConsumerID = "editorScreen"
 	themeConsumerEditorTokens       themeConsumerID = "EditorState.Editor"
+	themeConsumerComparisons        themeConsumerID = "comparisonScreens"
 	themeConsumerFindInFiles        themeConsumerID = "findInFiles"
 	themeConsumerFilePicker         themeConsumerID = "FilePicker"
 	themeConsumerSessionPicker      themeConsumerID = "sessionPicker"
@@ -49,6 +50,7 @@ var requiredThemeConsumerIDs = []themeConsumerID{
 	themeConsumerSubPaneProjections,
 	themeConsumerInputModel,
 	themeConsumerEditorTokens,
+	themeConsumerComparisons,
 	themeConsumerOpenOverlays,
 }
 
@@ -340,6 +342,13 @@ func (m *App) themeConsumers() []themeConsumer {
 				if m.EditorState != nil && m.EditorState.Editor != nil {
 					m.EditorState.Editor.SetTheme(th)
 				}
+				if m.EditorState != nil {
+					for _, tab := range m.EditorState.Tabs {
+						if tab != nil && tab.Editor != nil && tab.Editor != m.EditorState.Editor {
+							tab.Editor.SetTheme(th)
+						}
+					}
+				}
 			},
 			read: func() *theme.Theme {
 				if m.EditorState != nil && m.EditorState.Editor != nil {
@@ -347,6 +356,18 @@ func (m *App) themeConsumers() []themeConsumer {
 				}
 				return m.Theme
 			},
+		},
+		{
+			id: themeConsumerComparisons,
+			apply: func(th *theme.Theme) {
+				if m.gitReview != nil {
+					m.gitReview.SetTokens(ui.NewTokenSet(th))
+				}
+				for _, view := range m.localDiffs {
+					view.screen.SetTheme(th)
+				}
+			},
+			read: func() *theme.Theme { return m.Theme },
 		},
 		{
 			id: themeConsumerFindInFiles,

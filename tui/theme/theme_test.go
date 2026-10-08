@@ -205,6 +205,22 @@ func TestAllPresetsButtonTokensDistinctFromAccent(t *testing.T) {
 	}
 }
 
+func TestDarkTextSelectionIsNeutralGrayAndReadable(t *testing.T) {
+	th := DefaultDark()
+	r, g, b, _ := th.Colors.TextSelection.RGBA()
+	if r != g || g != b {
+		t.Fatalf("dark text-selection fill must be neutral gray, got RGB %d,%d,%d", r, g, b)
+	}
+	for _, background := range []color.Color{th.Colors.Bg, th.Colors.PopupBg, th.Colors.SubPaneBg} {
+		if ratio := contrastRatio(th.Colors.TextSelection, background); ratio < 3 {
+			t.Fatalf("gray selection must remain distinct from its surface: %.2f:1", ratio)
+		}
+	}
+	if ratio := contrastRatio(th.Colors.TextSelectionFg, th.Colors.TextSelection); ratio < 4.5 {
+		t.Fatalf("gray selection ink must remain readable: %.2f:1", ratio)
+	}
+}
+
 func sameRGB(a, b color.Color) bool {
 	if a == nil || b == nil {
 		return a == b

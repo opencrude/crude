@@ -16,7 +16,6 @@ func setupAgentChatScrollTest(t *testing.T) *App {
 	app := newFullTestApp(t)
 	app.width = 80
 	app.height = 24
-	app.agentChatScroll = make(map[string]agentMainChatScrollSnapshot)
 	return app
 }
 
@@ -77,6 +76,7 @@ func TestAgentChatScrollSwitchSaveRestore(t *testing.T) {
 
 	switchToAgentTab(app, "agent-b")
 	renderAgentChat(app)
+	scroll = app.chatScreen.ScrollModel()
 	if !scroll.AutoScroll() {
 		t.Fatal("new agent B should default to armed auto-scroll")
 	}
@@ -90,6 +90,7 @@ func TestAgentChatScrollSwitchSaveRestore(t *testing.T) {
 
 	switchToAgentTab(app, "agent-a")
 	renderAgentChat(app)
+	scroll = app.chatScreen.ScrollModel()
 	if scroll.AutoScroll() != wantAAuto {
 		t.Fatalf("restored A auto=%v want %v", scroll.AutoScroll(), wantAAuto)
 	}
@@ -99,6 +100,7 @@ func TestAgentChatScrollSwitchSaveRestore(t *testing.T) {
 
 	switchToAgentTab(app, "agent-b")
 	renderAgentChat(app)
+	scroll = app.chatScreen.ScrollModel()
 	if scroll.Offset() != wantBOff {
 		t.Fatalf("restored B offset=%d want %d", scroll.Offset(), wantBOff)
 	}
@@ -134,16 +136,13 @@ func TestAgentChatScrollStreamingDoesNotAlterSavedSnapshot(t *testing.T) {
 		renderAgentChat(app)
 	}
 
-	snap, ok := app.agentChatScrollSnapshotForTest("agent-a")
-	if !ok {
-		t.Fatal("expected saved snapshot for agent-a")
+	switchToAgentTab(app, "agent-a")
+	renderAgentChat(app)
+	scroll = app.chatScreen.ScrollModel()
+	if scroll.AutoScroll() || scroll.Offset() != 3 {
+		t.Fatalf("streaming B changed A scroll: auto=%v offset=%d", scroll.AutoScroll(), scroll.Offset())
 	}
-	if snap.AutoScroll {
-		t.Fatal("agent-a snapshot should remain disarmed")
-	}
-	if snap.Offset != 3 {
-		t.Fatalf("agent-a snapshot offset=%d want 3", snap.Offset)
-	}
+
 }
 
 func TestAgentChatScrollCloseClearsSnapshot(t *testing.T) {
@@ -159,14 +158,18 @@ func TestAgentChatScrollCloseClearsSnapshot(t *testing.T) {
 	switchToAgentTab(app, "agent-b")
 	renderAgentChat(app)
 
-	if _, ok := app.agentChatScrollSnapshotForTest("agent-a"); !ok {
-		t.Fatal("expected snapshot for agent-a after switch away")
+	switchToAgentTab(app, "agent-a")
+	renderAgentChat(app)
+	if scroll := app.chatScreen.ScrollModel(); scroll.AutoScroll() || scroll.Offset() != 2 {
+		t.Fatal("agent A lost retained scroll before close")
 	}
-
 	app.cleanupAgent("agent-a")
-	if _, ok := app.agentChatScrollSnapshotForTest("agent-a"); ok {
-		t.Fatal("snapshot should be cleared when agent closes")
+	app.AddOrchestrator("agent-a")
+	renderAgentChat(app)
+	if scroll := app.chatScreen.ScrollModel(); !scroll.AutoScroll() || scroll.Offset() != 0 {
+		t.Fatal("replacement agent inherited closed agent's scroll")
 	}
+	app.cleanupAgent("agent-a")
 	if app.subPaneProjections.Has("agent-a") {
 		t.Fatal("subPane projection should be removed when agent closes")
 	}
@@ -204,7 +207,9 @@ func TestAgentChatScrollContentShrinkClampsRestore(t *testing.T) {
 	scroll := app.chatScreen.ScrollModel()
 	scroll.SetAutoScroll(false)
 	scroll.ScrollTo(50)
-	app.agentChatScroll["agent-a"] = agentMainChatScrollSnapshot{Offset: 50, AutoScroll: false}
+	addOrchestrator(app, "agent-b")
+	switchToAgentTab(app, "agent-b")
+	renderAgentChat(app)
 
 	node := app.AgentMgr.Get("agent-a")
 	node.State.Messages = workspace.NewConversation()
@@ -216,8 +221,8 @@ func TestAgentChatScrollContentShrinkClampsRestore(t *testing.T) {
 	app.syncAgentMessages("agent-a", false)
 
 	switchToAgentTab(app, "agent-a")
-	app.chatScrollAgent = ""
 	renderAgentChat(app)
+	scroll = app.chatScreen.ScrollModel()
 
 	if scroll.Offset() > scroll.MaxOffset() {
 		t.Fatalf("restored offset %d exceeds max %d after shrink", scroll.Offset(), scroll.MaxOffset())

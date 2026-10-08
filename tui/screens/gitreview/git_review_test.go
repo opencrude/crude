@@ -77,7 +77,7 @@ func TestGitReviewNarrowFallbackRestoresPreferenceAndBounds(t *testing.T) {
 	if screen.Presentation() != SideBySide {
 		t.Fatal("wide preferred presentation was not used")
 	}
-	before := screen.before.ed
+	before := screen.viewer
 	host.Resize(50, 25)
 	host.Layout()
 	if screen.Presentation() != Unified || screen.PreferredPresentation() != SideBySide {
@@ -90,7 +90,7 @@ func TestGitReviewNarrowFallbackRestoresPreferenceAndBounds(t *testing.T) {
 	}
 	host.Resize(150, 30)
 	host.Layout()
-	if screen.Presentation() != SideBySide || screen.before.ed != before {
+	if screen.Presentation() != SideBySide || screen.viewer != before {
 		t.Fatal("wide restore replaced the reviewed source or preference")
 	}
 }
@@ -119,17 +119,17 @@ func TestGitReviewReadonlyScrollSearchCopyAndTypedMutation(t *testing.T) {
 	comparison.Before, comparison.After = before.String(), after.String()
 	screen.SetComparison(PrepareComparison(screen.th, comparison))
 	host := reviewHost(screen, 110, 26)
-	if !host.Focus(UnifiedID) {
+	if !host.Focus(screen.DocumentID()) {
 		t.Fatal("focus unified reader")
 	}
-	value := screen.unified.ed.Value()
+	value := screen.viewer.Comparison().After
 	host.Handle(tea.KeyPressMsg{Code: 'x', Text: "x"})
-	if screen.unified.ed.Value() != value {
+	if screen.viewer.Comparison().After != value {
 		t.Fatal("read-only comparison accepted edits")
 	}
-	document, _ := host.ScreenRect(UnifiedID)
+	document, _ := host.ScreenRect(screen.DocumentID())
 	host.Handle(tea.MouseWheelMsg{X: document.X + 4, Y: document.Y + 2, Button: tea.MouseWheelDown})
-	if screen.unified.ed.ScrollY() == 0 {
+	if screen.viewer.ScrollOffset() == 0 {
 		t.Fatal("native diff wheel did not scroll")
 	}
 	host.Handle(tea.KeyPressMsg{Code: 'a', Mod: tea.ModCtrl})
@@ -146,7 +146,7 @@ func TestGitReviewReadonlyScrollSearchCopyAndTypedMutation(t *testing.T) {
 	for _, character := range "new line 70" {
 		host.Handle(tea.KeyPressMsg{Code: character, Text: string(character)})
 	}
-	if !screen.unified.ed.Search().HasMatches() {
+	if !screen.viewer.NextMatch(false) {
 		t.Fatal("native search did not find comparison content")
 	}
 	result = screen.HandleAction(ui.EventContext{}, ui.Action{ID: ActionStage})

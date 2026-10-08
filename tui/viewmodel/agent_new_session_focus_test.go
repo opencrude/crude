@@ -228,7 +228,7 @@ func TestBackgroundSubAgentTabCreationDoesNotStealRootSelection(t *testing.T) {
 	}
 }
 
-func TestAgentTabSyncRepairsRootOrderWithoutMovingEditorOrSelection(t *testing.T) {
+func TestAgentTabSyncPreservesUserOrderWithoutMovingEditorOrSelection(t *testing.T) {
 	app, ws := newRealShellApp(t)
 	defer ws.Close()
 	app.AddOrchestrator("root")
@@ -240,12 +240,12 @@ func TestAgentTabSyncRepairsRootOrderWithoutMovingEditorOrSelection(t *testing.T
 		app.syncAgentWindowTabs()
 	}
 	secondEditor := openEditorTabs(t, app, "second.go")[0]
-	// Simulate a restored strip that listed children before the main agent.
+	// A deliberate reorder must not be undone by the next background tick.
 	rootTab := app.Win.TabByTitle(app.agentTabTitle("root"))
 	app.Win.MoveTab(app.Win.IndexOf(rootTab.ID), 3)
 	app.syncAgentWindowTabs()
-	want := []string{app.editorTabTitle(firstEditor), app.agentTabTitle("root"),
-		app.agentTabTitle("older"), app.agentTabTitle("newer"), app.editorTabTitle(secondEditor)}
+	want := []string{app.editorTabTitle(firstEditor), app.agentTabTitle("older"),
+		app.agentTabTitle("newer"), app.agentTabTitle("root"), app.editorTabTitle(secondEditor)}
 	tabs := app.Win.Tabs()
 	if len(tabs) != len(want) {
 		t.Fatalf("tabs=%+v want %v", tabs, want)
@@ -258,8 +258,8 @@ func TestAgentTabSyncRepairsRootOrderWithoutMovingEditorOrSelection(t *testing.T
 	assertEditorStillPainted(t, app, secondEditor)
 	app.switchToAgentView("older")
 	app.syncAgentWindowTabs()
-	if app.activeAgentTabID() != "older" || app.Win.Tabs()[1].Title != app.agentTabTitle("root") {
-		t.Fatal("background sync changed selected child or main-first order")
+	if app.activeAgentTabID() != "older" || app.Win.Tabs()[3].Title != app.agentTabTitle("root") {
+		t.Fatal("background sync changed selected child or user tab order")
 	}
 }
 

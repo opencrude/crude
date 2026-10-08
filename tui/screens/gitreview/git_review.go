@@ -9,6 +9,7 @@ import (
 
 	"crude/tui/cell"
 	"crude/tui/rendering"
+	"crude/tui/screens/diffview"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -23,9 +24,6 @@ const (
 	SearchID    ui.ComponentID = "gitreview/search"
 	ListID      ui.ComponentID = "gitreview/list"
 	ScrollbarID ui.ComponentID = "gitreview/scrollbar"
-	UnifiedID   ui.ComponentID = "gitreview/unified"
-	BeforeID    ui.ComponentID = "gitreview/before"
-	AfterID     ui.ComponentID = "gitreview/after"
 	DraftID     ui.ComponentID = "gitreview/draft"
 	DetailID    ui.ComponentID = "gitreview/detail"
 
@@ -50,11 +48,11 @@ const (
 	ModeBranches Mode = "branches"
 )
 
-type Presentation string
+type Presentation = diffview.Presentation
 
 const (
-	Unified    Presentation = "unified"
-	SideBySide Presentation = "side-by-side"
+	Unified    Presentation = diffview.Unified
+	SideBySide Presentation = diffview.SideBySide
 )
 
 type ComparisonRequest struct {
@@ -90,9 +88,7 @@ type Screen struct {
 	search          *reviewSearch
 	list            *reviewList
 	scrollbar       *ui.ScrollbarControl
-	unified         *documentPane
-	before          *documentPane
-	after           *documentPane
+	viewer          *diffview.Screen
 	draft           *commitDraft
 	detail          *ui.TextArea
 	focus           func(ui.ComponentID) bool
@@ -113,10 +109,7 @@ type Screen struct {
 	stagedSignature string
 	reviewed        map[string]bool
 	evidence        workspace.GitCommitEvidence
-	hunks           []workspace.GitHunk
 	prepared        map[string]PreparedComparison
-	unifiedHunks    []int
-	hunkIndex       int
 	body            ui.Rect
 }
 
@@ -125,7 +118,7 @@ func New(th *theme.Theme) *Screen {
 		th = theme.DefaultDark()
 	}
 	tokens := ui.NewTokenSet(th)
-	screen := &Screen{Base: ui.NewBase(ScreenID), th: th, tokens: tokens, mode: ModeChanges, preferred: Unified, presented: Unified, sidebar: true, hunkIndex: -1, reviewed: make(map[string]bool)}
+	screen := &Screen{Base: ui.NewBase(ScreenID), th: th, tokens: tokens, mode: ModeChanges, preferred: Unified, presented: Unified, sidebar: true, reviewed: make(map[string]bool)}
 	screen.tabs = ui.NewTabs(TabsID, tokens)
 	screen.tabs.SetChrome(ui.TabsShell)
 	screen.syncTabs()
@@ -145,9 +138,8 @@ func New(th *theme.Theme) *Screen {
 	screen.list = newReviewList(screen)
 	screen.scrollbar = ui.NewScrollbarControl(ScrollbarID, screen.list.list.Scroll(), tokens)
 	screen.scrollbar.SetSurfaceBackground(ui.ColorBg)
-	screen.unified = newDocumentPane(UnifiedID, screen)
-	screen.before = newDocumentPane(BeforeID, screen)
-	screen.after = newDocumentPane(AfterID, screen)
+	screen.viewer = diffview.NewWithID(th, ui.NewID(ScreenID, "comparison"))
+	screen.viewer.SetPresentation(Unified)
 	screen.draft = &commitDraft{Base: ui.NewBase(DraftID), area: ui.NewTextArea(DraftID, tokens, true), owner: screen}
 	screen.draft.area.SetPlaceholder("Commit subject\n\nDescribe the staged changes")
 	screen.draft.area.SetSubmitAction(ActionCommit)
@@ -157,7 +149,10 @@ func New(th *theme.Theme) *Screen {
 	return screen
 }
 
-func (screen *Screen) SetFocusHandler(handler func(ui.ComponentID) bool) { screen.focus = handler }
+func (screen *Screen) SetFocusHandler(handler func(ui.ComponentID) bool) {
+	screen.focus = handler
+	screen.viewer.SetFocusHandler(handler)
+}
 
 func (screen *Screen) focusID(id ui.ComponentID) {
 	if screen.focus != nil {
@@ -185,6 +180,7 @@ func (screen *Screen) syncTabs() {
 func (screen *Screen) SetPresentation(presentation Presentation) {
 	if presentation == Unified || presentation == SideBySide {
 		screen.preferred = presentation
+		screen.viewer.SetPresentation(presentation)
 		screen.syncToolbar()
 	}
 }
@@ -206,8 +202,7 @@ func (screen *Screen) setComparison(comparison workspace.GitComparison) {
 	screen.loading, screen.errText = false, ""
 	if changed {
 		if comparison.Binary {
-			screen.hunks, screen.unifiedHunks = nil, nil
-			screen.unified.ed, screen.before.ed, screen.after.ed = nil, nil, nil
+			screen.viewer.SetPrepared(diffview.Prepared{})
 			screen.syncHeader()
 			screen.syncToolbar()
 			return
@@ -217,12 +212,7 @@ func (screen *Screen) setComparison(comparison workspace.GitComparison) {
 			screen.SetError(errors.New("comparison presentation is unavailable; refresh the review"))
 			return
 		}
-		screen.hunks = prepared.hunks
-		screen.hunkIndex = -1
-		screen.unifiedHunks = prepared.rows
-		screen.unified.bind(prepared.unified, prepared.unifiedKinds)
-		screen.before.bind(prepared.before, prepared.beforeKinds)
-		screen.after.bind(prepared.after, prepared.afterKinds)
+		screen.viewer.SetPrepared(prepared.View)
 		screen.applySearch(screen.search.field.Value())
 	}
 	screen.syncHeader()
@@ -367,11 +357,7 @@ func (screen *Screen) SetTokens(tokens *ui.TokenSet) {
 	screen.list.list.SetTokens(tokens)
 	screen.scrollbar.SetTokens(tokens)
 	screen.draft.area.SetTokens(tokens)
-	for _, pane := range []*documentPane{screen.unified, screen.before, screen.after} {
-		if pane.ed != nil {
-			pane.ed.SetTokens(tokens)
-		}
-	}
+	screen.viewer.SetTokens(tokens)
 	screen.toolbar.setTokens(tokens)
 }
 
@@ -380,11 +366,7 @@ func (screen *Screen) SetTheme(th *theme.Theme) {
 		return
 	}
 	screen.th = th
-	for _, pane := range []*documentPane{screen.unified, screen.before, screen.after} {
-		if pane.ed != nil {
-			pane.ed.SetTheme(th)
-		}
-	}
+	screen.viewer.SetTheme(th)
 	screen.SetTokens(ui.NewTokenSet(th))
 }
 
@@ -403,10 +385,8 @@ func (screen *Screen) Children() []ui.Component {
 		children = append(children, screen.detail)
 	}
 	if screen.haveComparison && !screen.comparison.Binary {
-		if screen.presented == SideBySide {
-			children = append(children, screen.before, screen.after)
-		} else {
-			children = append(children, screen.unified)
+		if screen.comparisonState() == "" {
+			children = append(children, screen.viewer)
 		}
 	}
 	return children
@@ -480,16 +460,8 @@ func (screen *Screen) Layout(ctx ui.LayoutContext, bounds ui.Rect) {
 		body.H -= detailH
 	}
 	screen.body = body
-	if body.W < 100 {
-		screen.presented = Unified
-	}
-	if screen.presented == SideBySide {
-		leftW := max(0, (body.W-1)/2)
-		screen.before.Layout(ctx, ui.Rect{X: body.X, Y: body.Y, W: leftW, H: body.H})
-		screen.after.Layout(ctx, ui.Rect{X: body.X + leftW + 1, Y: body.Y, W: max(0, body.W-leftW-1), H: body.H})
-	} else {
-		screen.unified.Layout(ctx, body)
-	}
+	screen.viewer.Layout(ctx, body)
+	screen.presented = screen.viewer.Presentation()
 }
 
 func (screen *Screen) layoutList(ctx ui.LayoutContext, bounds ui.Rect) {
@@ -583,6 +555,9 @@ func (screen *Screen) status() (string, ui.SemanticColor) {
 		return "Select a commit, then Inspect to load its complete changes", ui.ColorMuted
 	}
 	if screen.haveComparison {
+		if screen.searchOpen && screen.viewer.SearchStatus() != "" {
+			return screen.viewer.SearchStatus(), ui.ColorMuted
+		}
 		return screen.comparison.BaseLabel + " → " + screen.comparison.TargetLabel + " · " + string(screen.presented), ui.ColorMuted
 	}
 	return "Select a change in Source Control to review it", ui.ColorMuted
@@ -759,64 +734,14 @@ func (screen *Screen) documentID() ui.ComponentID {
 	if screen.mode == ModeBranches {
 		return DetailID
 	}
-	if screen.presented == SideBySide {
-		return AfterID
-	}
-	return UnifiedID
+	return screen.viewer.DocumentID()
 }
 
-func (screen *Screen) NavigateHunk(direction int) bool {
-	if len(screen.hunks) == 0 {
-		return false
-	}
-	if screen.hunkIndex < 0 {
-		screen.hunkIndex = 0
-		if direction < 0 {
-			screen.hunkIndex = len(screen.hunks) - 1
-		}
-	} else {
-		screen.hunkIndex = (screen.hunkIndex + direction + len(screen.hunks)) % len(screen.hunks)
-	}
-	hunk := screen.hunks[screen.hunkIndex]
-	if screen.before.ed != nil {
-		screen.before.ed.SetCursorPosition(hunk.OldStart, 0)
-		screen.before.ed.ScrollToCursor()
-	}
-	if screen.after.ed != nil {
-		screen.after.ed.SetCursorPosition(hunk.NewStart, 0)
-		screen.after.ed.ScrollToCursor()
-	}
-	if screen.unified.ed != nil && len(screen.unifiedHunks) > 0 {
-		row := screen.unifiedHunks[min(screen.hunkIndex, len(screen.unifiedHunks)-1)]
-		screen.unified.ed.SetCursorPosition(row, 0)
-		screen.unified.ed.ScrollToCursor()
-	}
-	return true
-}
-
-func (screen *Screen) applySearch(query string) {
-	for _, pane := range []*documentPane{screen.unified, screen.before, screen.after} {
-		if pane != nil && pane.ed != nil {
-			pane.ed.SetQuery(query)
-		}
-	}
-}
-
-func (screen *Screen) nextMatch(previous bool) {
-	panes := []*documentPane{screen.unified}
-	if screen.presented == SideBySide {
-		panes = []*documentPane{screen.before, screen.after}
-	}
-	for _, pane := range panes {
-		if pane.ed != nil {
-			if previous {
-				pane.ed.PrevMatch()
-			} else {
-				pane.ed.NextMatch()
-			}
-		}
-	}
-}
+func (screen *Screen) DocumentID() ui.ComponentID      { return screen.documentID() }
+func (screen *Screen) InvalidateWidthProfile()         { screen.viewer.InvalidateWidthProfile() }
+func (screen *Screen) NavigateHunk(direction int) bool { return screen.viewer.NavigateHunk(direction) }
+func (screen *Screen) applySearch(query string)        { screen.viewer.SetQuery(query) }
+func (screen *Screen) nextMatch(previous bool)         { screen.viewer.NextMatch(previous) }
 
 var _ ui.Component = (*Screen)(nil)
 var _ ui.Parent = (*Screen)(nil)

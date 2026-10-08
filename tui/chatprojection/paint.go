@@ -143,9 +143,9 @@ func PaintLineAtBackground(buf *surface.CellBuffer, x, y, maxW int, pl PaintLine
 				cellFG, cellAttr = ui.TextTide(cellFG, cellAttr, tokens, pl.TideCenter, col)
 			}
 			if selStart < selEnd && nextCol > selStart && col < selEnd && tokens != nil {
-				// Text selection is not a focused list row — always Selection.
-				cellFG = tokens.Color(ui.ColorFg)
-				cellBG = tokens.Color(ui.ColorSelection)
+				// Selection preserves readable semantic/syntax ink.
+				cellFG, cellBG = tokens.TextSelectionColors(fg)
+				cellAttr &^= cell.AttrDim | cell.AttrReverse
 			}
 
 			curX = buf.WriteString(curX, y, cluster, cellFG, cellBG, cellAttr)
@@ -157,8 +157,7 @@ func PaintLineAtBackground(buf *surface.CellBuffer, x, y, maxW int, pl PaintLine
 		cellFG := cell.NoColor
 		cellBG := rowBg
 		if selStart < selEnd && col >= selStart && col < selEnd && tokens != nil {
-			cellFG = tokens.Color(ui.ColorFg)
-			cellBG = tokens.Color(ui.ColorSelection)
+			cellFG, cellBG = tokens.TextSelectionColors(cellFG)
 		}
 		curX = buf.WriteString(curX, y, " ", cellFG, cellBG, 0)
 		col++

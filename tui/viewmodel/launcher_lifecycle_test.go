@@ -114,7 +114,6 @@ func TestLauncherCapabilityResultsDoNotCrossOwnerOrWorkspace(t *testing.T) {
 		t.Fatal("capabilities were missing or historical binding claimed to be live: " + text)
 	}
 	app.launcherScreen = launcher.New(app.Theme)
-	app.shell.SetScreen(shellLauncherSlot, app.launcherScreen)
 	app.applyLauncherCapabilities(msg)
 	app.paintShellFrame()
 	if strings.Contains(bufferPlain(app.mainSurf.Buffer()), "Review skill") {

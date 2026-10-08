@@ -23,6 +23,8 @@ const (
 	ColorWarning
 	ColorBorder
 	ColorSelection
+	ColorTextSelection
+	ColorTextSelectionFg
 	ColorHover
 	ColorSubPaneBg
 	ColorPopupBg
@@ -134,6 +136,8 @@ func (ts *TokenSet) Rebuild(th *theme.Theme) {
 		ColorWarning:            rendering.ThemeColorToCell(c.Warning),
 		ColorBorder:             rendering.ThemeColorToCell(c.Border),
 		ColorSelection:          rendering.ThemeColorToCell(c.Selection),
+		ColorTextSelection:      rendering.ThemeColorToCell(c.TextSelection),
+		ColorTextSelectionFg:    rendering.ThemeColorToCell(c.TextSelectionFg),
 		ColorHover:              rendering.ThemeColorToCell(c.Hover),
 		ColorSubPaneBg:          rendering.ThemeColorToCell(c.SubPaneBg),
 		ColorPopupBg:            rendering.ThemeColorToCell(c.PopupBg),
@@ -358,4 +362,14 @@ func (ts *TokenSet) MenuInk(st ControlState, fg cell.Color) (primary, muted cell
 		primary = muted
 	}
 	return primary, muted
+}
+
+// TextSelectionColors preserves syntax ink when readable on the selected fill.
+// Otherwise the theme's selected foreground supplies at least 4.5:1 contrast.
+func (ts *TokenSet) TextSelectionColors(fg cell.Color) (cell.Color, cell.Color) {
+	bg := ts.Color(ColorTextSelection)
+	if fg.IsDefault() || cell.ContrastRatio(fg, bg) < 4.5 {
+		fg = ts.Color(ColorTextSelectionFg)
+	}
+	return fg, bg
 }

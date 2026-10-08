@@ -139,7 +139,7 @@ func TestFormTextAreaDragUsesHostCaptureAndCopiesOnRelease(t *testing.T) {
 	// The drag itself is highlighted before release.
 	buf := surface.NewCellBuffer(60, 20)
 	host.Paint(buf)
-	selectedBG := NewTokenSet(theme.DefaultDark()).Color(ColorSelection)
+	selectedBG := NewTokenSet(theme.DefaultDark()).Color(ColorTextSelection)
 	if got := buf.Get(x, y).BG; !got.Equal(selectedBG) {
 		t.Fatalf("drag selection bg=%v want %v", got, selectedBG)
 	}

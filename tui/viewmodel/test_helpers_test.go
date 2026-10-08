@@ -127,8 +127,7 @@ func newTestApp(t testing.TB) *App {
 	launcherScreen.SetData(".", nil)
 	termDock := termdock.New(th)
 
-	deck := newDeckMount(nil)
-	shell := newShellRoot(headerScreen, footerScreen, tabScreen, activityBar, sidebarScreen, chatScreen, inputScreen, editorScreen, launcherScreen, deck, termDock)
+	shell := newShellRoot(headerScreen, footerScreen, activityBar, sidebarScreen, termDock)
 	rootHost := ui.NewHost(th, shell)
 
 	app := &App{
@@ -177,7 +176,6 @@ func newTestApp(t testing.TB) *App {
 	}
 	app.Feedback = newFeedbackSink(app)
 	app.initWorkspacePanels()
-	deck.app = app
 	app.Win = window.New(th)
 	launcherScreen.SetFocusHandler(rootHost.Focus)
 	sourceControl.SetFocusHandler(rootHost.Focus)
@@ -275,12 +273,65 @@ func (m *App) paintShellFrame() {
 	m.syncRootFocus()
 }
 
-// shellSlotActive reports whether the slot is currently mounted in the tree.
+// View IDs used by mounted-control assertions; these are not shell slots.
+const (
+	shellTabsSlot shellSlotID = shellSlotCount + iota
+	shellChatSlot
+	shellInputSlot
+	shellEditorSlot
+	shellLauncherSlot
+	shellDeckSlot
+	shellGitReviewSlot
+)
+
+// shellSlotActive reports whether the corresponding control is mounted, whether
+// directly in the shell or in the focused tab's retained main-pane view.
 func (m *App) shellSlotActive(id shellSlotID) bool {
-	if m.shell == nil {
+	if m.shell == nil || m.rootHost == nil {
 		return false
 	}
-	return m.shell.slots[id].active
+	var control ui.Component
+	switch id {
+	case shellChatSlot:
+		control = m.chatScreen
+	case shellInputSlot:
+		control = m.inputScreen
+	case shellEditorSlot:
+		control = m.editorScreen
+	case shellTabsSlot:
+		control = m.tabScreen
+	case shellLauncherSlot:
+		if m.launcherScreen != nil {
+			control = m.launcherScreen
+		}
+	case shellDeckSlot:
+		if m.mainPanes != nil && m.Win != nil {
+			if g := m.mainPanes.groups[m.Win.ActiveGroup()]; g != nil && g.view != nil && g.view.deck != nil {
+				control = g.view.deck
+			}
+		}
+	case shellHeaderSlot:
+		control = m.shell.header
+	case shellFooterSlot:
+		control = m.shell.footer
+	case shellActivitySlot:
+		control = m.shell.activity
+	case shellSidebarSlot:
+		control = m.shell.sidebar
+	case shellTermDockSlot:
+		control = m.shell.termDock
+	case shellGitReviewSlot:
+		if m.gitReview != nil {
+			control = m.gitReview
+		}
+	case shellMainPanesSlot:
+		control = m.shell.mainPanes
+	}
+	if control == nil {
+		return false
+	}
+	rect, mounted := m.rootHost.ScreenRect(control.ID())
+	return mounted && !rect.Empty()
 }
 
 // rootHandleFocus sets the root-host focus and dispatches one message,
@@ -303,4 +354,18 @@ func testAccountConfig() *session.Config {
 	profile.Categories[session.CategoryDefault] = main
 	agents.Profiles[agents.ActiveProfile] = profile
 	return &session.Config{Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", Label: "Test", APIKey: "test", Connection: provider.Template{Name: "OpenAI", ProviderURL: "http://127.0.0.1:1", APIStandard: "openai", AuthType: provider.AuthProtocol}}}, Agents: agents}
+}
+
+// selectDeckSession binds the exact session family before creating or selecting
+// its real window tab. Raw ActiveSession alone does not mount a pane.
+func selectDeckSession(t *testing.T, app *App, session *workspace.Session, agentID string) {
+	t.Helper()
+	if app.SessionsByAgent == nil {
+		app.SessionsByAgent = make(map[string]*workspace.Session)
+	}
+	app.SessionsByAgent[agentID] = session
+	app.AddOrchestrator(agentID)
+	if app.ActiveSession != session || app.Win.ActiveTab() == nil || app.Win.ActiveTab().Title != app.agentTabTitle(agentID) {
+		t.Fatal("session family was not selected through its window tab")
+	}
 }

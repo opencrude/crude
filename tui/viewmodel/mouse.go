@@ -9,7 +9,6 @@ import (
 
 	"crude/tui/filetree"
 	"crude/tui/rendering"
-	"crude/tui/screens/shellinput"
 	"crude/tui/ui"
 	"crude/tui/wm"
 )
@@ -44,6 +43,27 @@ func (m *App) classifyShellRegion(x, y int, isWheel bool) shellRegion {
 
 	if x < m.sidebarHitWidth() {
 		return regionSidebar
+	}
+	if g := m.paneAt(x, y); g != nil {
+		if y < g.body.Y {
+			return regionTabBar
+		}
+		if g.deck.Contains(x, y) {
+			return regionSessionDeck
+		}
+		if g.editor.Contains(x, y) {
+			return regionEditor
+		}
+		if g.input.Contains(x, y) {
+			return regionInput
+		}
+		if g.chat.Contains(x, y) {
+			return regionChat
+		}
+		if m.launcherHostVisible() {
+			return regionLauncher
+		}
+		return regionNone
 	}
 
 	if !isWheel && m.tabBarVisible() {
@@ -107,7 +127,10 @@ func (m *App) blockingDeckShieldsPointer(x, y int, preserveDeckCapture bool) boo
 	if m.rootHost != nil {
 		captured, _, ok := m.rootHost.CapturedPointer()
 		if ok {
-			deckCaptured := m.shell != nil && m.shell.deck != nil && captured == m.shell.deck.ID()
+			deckCaptured := false
+			if c := m.rootHost.Component(captured); c != nil {
+				_, deckCaptured = c.(*deckMount)
+			}
 			if preserveDeckCapture && deckCaptured {
 				return false
 			}
@@ -126,6 +149,9 @@ func (m *App) agentPromptNavigationHit(x, y int) bool {
 	}
 	if x < m.sidebarHitWidth() {
 		return true
+	}
+	if g := m.paneAt(x, y); g != nil {
+		return y < g.body.Y || g.id != m.Win.ActiveGroup()
 	}
 	return m.tabBarVisible() && y >= m.chromeTopRow()-2 && y < m.chromeTopRow()
 }
@@ -196,7 +222,7 @@ func (m *App) inputLocalMouse(msg tea.Msg) tea.Msg {
 	if m.rootHost == nil {
 		return msg
 	}
-	r, ok := m.rootHost.ScreenRect(shellinput.ScreenID)
+	r, ok := m.rootHost.ScreenRect(m.inputScreen.ID())
 	if !ok || r.Empty() {
 		return msg
 	}
@@ -258,6 +284,10 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	if m.blockingDeckShieldsPointer(mouse.X, mouse.Y, false) {
 		return m, nil
 	}
+	m.activatePaneAt(mouse.X, mouse.Y)
+	if m.blockingDeckShieldsPointer(mouse.X, mouse.Y, false) {
+		return m, nil
+	}
 
 	region := m.classifyShellRegion(mouse.X, mouse.Y, false)
 
@@ -312,7 +342,7 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	// Legacy input-model selection: while the chat input is drag-selecting,
 	// a click outside the input must reach the input model so it cancels
 	// the selection (click-away contract).
-	if region == regionChat && m.Input.InputSelecting() {
+	if region == regionChat && m.Input.InputDragging() {
 		cmds = append(cmds, m.routeInputMouse(msg)...)
 		return m, tea.Batch(cmds...)
 	}
@@ -329,16 +359,6 @@ func (m *App) dispatchMouseClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd) {
 	}
 	if res.Cmd != nil {
 		cmds = append(cmds, res.Cmd)
-	}
-	// Tab-bar clicks bubble typed tabs.* actions up through the shell tree;
-	// the viewmodel translates them into window tab operations.
-	if res.Action != nil {
-		switch res.Action.ID {
-		case "tabs.activate", "tabs.close", "tabs.enter":
-			if cmd := m.handleTabBarHostResult(res); cmd != nil {
-				cmds = append(cmds, cmd)
-			}
-		}
 	}
 
 	if region == regionNone && m.FocusStack.Top() == FocusTree && mouse.X >= m.sidebarHitWidth() {
@@ -464,7 +484,7 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	// This is a critical performance fix: every motion event outside
 	// those regions clears stale tree/tab hover and returns without
 	// the launcher re-render churn.
-	if m.launcherScreen != nil && m.AgentMgr.VisibleCount() == 0 && m.EditorState.ActiveView == "" {
+	if m.launcherHostVisible() {
 		switch region {
 		case regionSidebar:
 			return m, m.handleShellPointer(msg)
@@ -487,7 +507,7 @@ func (m *App) dispatchMouseMotion(msg tea.MouseMotionMsg) (tea.Model, tea.Cmd) {
 	case regionTabBar:
 		// Tab hover is viewmodel state (Win.Hover) fed from the native
 		// Tabs control after routing the motion through the shell tree.
-		cmd := m.handleTabBarEvent(msg)
+		cmd := m.handleShellPointer(msg)
 		return m, cmd
 
 	case regionSessionDeck:
@@ -792,6 +812,10 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 	if m.blockingDeckShieldsPointer(mouse.X, mouse.Y, false) {
 		return m, nil
 	}
+	m.activatePaneAt(mouse.X, mouse.Y)
+	if m.blockingDeckShieldsPointer(mouse.X, mouse.Y, false) {
+		return m, nil
+	}
 	// A session deck panel covers the chat: a right-click inside it belongs to
 	// the panel's own controls (question write-ins), never to the message rows
 	// painted behind it.
@@ -801,6 +825,9 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 
 	region := m.classifyShellRegion(mouse.X, mouse.Y, false)
 	var st *ui.ContextMenuState
+	if g := m.paneAt(mouse.X, mouse.Y); g != nil && m.Win.GroupActiveTab(g.id) == nil && !m.launcherHostVisible() {
+		return m, m.openContextMenuState(mouse, m.emptyPaneMenu())
+	}
 	switch region {
 	case regionEditor:
 		st = m.buildEditorContextMenu(mouse)

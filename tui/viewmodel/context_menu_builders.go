@@ -13,8 +13,6 @@ import (
 	"crude/tui/screens/activitylist"
 	"crude/tui/screens/gitreview"
 	"crude/tui/screens/launcher"
-	"crude/tui/screens/shellchat"
-	"crude/tui/screens/shelleditor"
 	"crude/tui/screens/shelltree"
 	"crude/tui/screens/sourcecontrol"
 	"crude/tui/ui"
@@ -28,8 +26,8 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	}
 	ed := m.EditorState.Editor
 	if m.rootHost != nil {
-		if rect, ok := m.rootHost.ScreenRect(shelleditor.ScreenID); ok && rect.Contains(mouse.X, mouse.Y) {
-			if pos, valid := ed.PositionAt(mouse.X-rect.X, mouse.Y-rect.Y); valid {
+		if rect, ok := m.rootHost.ScreenRect(m.editorScreen.ID()); ok && rect.Contains(mouse.X, mouse.Y) {
+			if pos, valid := ed.PositionAt(mouse.X-rect.X, mouse.Y-rect.Y); valid && !ed.HasSelection() {
 				ed.SetCursorPosition(pos.Line, pos.Col)
 			}
 		}
@@ -101,6 +99,7 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 		Items: []ui.ContextMenuItem{
 			{Label: "Inspect change", Disabled: !hasHunk, Action: func() { m.inspectEditorChange(ed, line) }},
 			{Label: "Compare with disk", Action: func() { m.startSourceControlMutation(m.compareEditorWithDisk(ed)) }},
+			{Label: "Compare with saved version", Action: func() { m.runDetachedAsyncCmd(m.openLocalDiff(ed, localDiffSaved)) }},
 			{Label: "Next change", Disabled: len(ed.GitHunks()) == 0, Action: func() { m.jumpEditorChange(1) }},
 			{Label: "Previous change", Disabled: len(ed.GitHunks()) == 0, Action: func() { m.jumpEditorChange(-1) }},
 			{Label: "Copy blame commit", Disabled: !hasBlame || blameHash == "" || blame.Uncommitted, Action: func() {
@@ -564,6 +563,7 @@ func (m *App) buildTabBarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	tab := tabs[hit.TabIndex]
 
 	st := &ui.ContextMenuState{Title: "Tab"}
+	st.Sections = append(st.Sections, m.paneMenuSection(tab.ID))
 
 	// Get tab-specific info.
 	if m.isEditorTabTitle(tab.Title) {
@@ -850,7 +850,7 @@ func (m *App) buildChatContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 		},
 	})
 	if m.chatScreen != nil && m.rootHost != nil && m.ActiveSession != nil && m.HistoryService != nil {
-		if rect, ok := m.rootHost.ScreenRect(shellchat.AreaID); ok {
+		if rect, ok := m.rootHost.ScreenRect(m.chatScreen.VirtualList().ID()); ok {
 			if row, ok := m.chatScreen.MessageAtLocalY(mouse.Y - rect.Y); ok {
 				role := ""
 				var canonical workspace.Message

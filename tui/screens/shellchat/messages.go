@@ -178,7 +178,11 @@ func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item 
 	} else {
 		pl = chatprojection.PaintLine{Spans: []chatprojection.RowSpan{{Text: row.Lines[localRow], Role: ui.ColorFg}}}
 	}
-	layout := LayoutRow(s.paintState.compose, pl.VisibleWidth(), paneInfo)
+	// A divider drag may deliberately retain the old reflow width. Painting
+	// still belongs to today's viewport: clip content/gutters to its real cells.
+	compose := s.paintState.compose
+	compose.InnerW = min(compose.InnerW, max(0, s.width-2*compose.PadLR))
+	layout := LayoutRow(compose, pl.VisibleWidth(), paneInfo)
 	lineX := x + layout.PadLeft
 	if row.ContextBoundary && localRow >= row.ContextBoundaryStart {
 		bg := tokens.Color(ui.ColorBg)
@@ -190,8 +194,7 @@ func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item 
 				cellFG, cellBG := fg, bg
 				contentCol := col - layout.PadLeft
 				if selStart < selEnd && contentCol >= selStart && contentCol < selEnd {
-					cellFG = tokens.Color(ui.ColorFg)
-					cellBG = tokens.Color(ui.ColorSelection)
+					cellFG, cellBG = tokens.TextSelectionColors(cellFG)
 				}
 				buf.Set(x+col, y, cell.NewCell(rule, cellFG, cellBG, 0))
 			}
@@ -227,7 +230,7 @@ func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item 
 		}
 	}
 
-	gx := NestedGutterX(s.paintState.compose, width)
+	gx := NestedGutterX(compose, width)
 	if gx >= 0 && paneInfo.PaneID != "" {
 		s.paintNestedGutter(buf, x+gx, y, paneInfo, bg)
 	}
@@ -266,9 +269,8 @@ func paintNativeSpaces(buf *surface.CellBuffer, x, y, count int, tokens *ui.Toke
 	for i := 0; i < count; i++ {
 		cf, cb := fg, bg
 		if selStart < selEnd && col >= selStart && col < selEnd && tokens != nil {
-			// Text selection is not a focused list row — always Selection.
-			cf = tokens.Color(ui.ColorFg)
-			cb = tokens.Color(ui.ColorSelection)
+			// Padding belongs to the same semantic text range.
+			cf, cb = tokens.TextSelectionColors(cf)
 		}
 		buf.Set(x+i, y, cell.Cell{Char: ' ', Content: " ", Width: 1, FG: cf, BG: cb})
 		col++

@@ -120,7 +120,7 @@ func TestResponsesVerboseSummaryPromotesForRootAndChildWithoutReclassification(t
 					}
 					app.switchToAgentView(owner)
 					app.paintShellFrame()
-					gutter := app.subPaneProjections.PaneGutterState(paneID, pane)
+					gutter := app.subPaneProjections.ForOwner(owner).PaneGutterState(paneID, pane)
 					if !gutter.Visible || gutter.Scroll == nil || gutter.Scroll.MaxOffset() <= 0 {
 						t.Fatal("promoted summary has no scrolling body")
 					}
@@ -139,7 +139,7 @@ func TestResponsesVerboseSummaryPromotesForRootAndChildWithoutReclassification(t
 					if child && app.AgentMgr.Get("parent").State.ThinkingPaneID != "" {
 						t.Fatal("child changed parent's presentation")
 					}
-					projection := app.subPaneProjections.Get(paneID, workspace.PaneThinking).renderer
+					projection := app.subPaneProjections.ForOwner(owner).Get(paneID, workspace.PaneThinking).renderer
 					generation := projection.ExportMessageRowsSnapshot(width).Generation
 					for frame := 0; frame < 1200; frame += 400 {
 						projection.SetSpinFrame(frame)

@@ -25,9 +25,18 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg:
+		e.landing = nil
 		if e.readOnly {
 			if ui.IsCopyChord(msg) {
 				return rendering.CopyToClipboardCmd(e.SelectedText())
+			}
+			if msg.Mod.Contains(tea.ModAlt) {
+				return nil // Alt+Up/Down are mutating line moves in an editable document.
+			}
+			if msg.String() == "ctrl+a" {
+				line := max(0, e.LineCount()-1)
+				e.SetSelection(0, 0, line, e.lineVisualWidth(line))
+				return nil
 			}
 			switch msg.Code {
 			case tea.KeyLeft, tea.KeyRight, tea.KeyUp, tea.KeyDown, tea.KeyHome, tea.KeyEnd, tea.KeyPgUp, tea.KeyPgDown:
@@ -47,6 +56,7 @@ func (e *Editor) HandleEvent(msg tea.Msg) tea.Cmd {
 		e.cursorBlink.MarkActivity()
 		e.handleMouseWheel(msg)
 	case tea.MouseClickMsg:
+		e.landing = nil
 		if msg.Button == tea.MouseLeft && msg.Y >= 0 && msg.Y < e.bodyHeight() {
 			gutter := e.gutterGeometry()
 			line := e.scrollY + msg.Y

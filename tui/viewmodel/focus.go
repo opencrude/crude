@@ -87,6 +87,14 @@ func (m *App) setFocusTree() {
 // pushing FocusInput onto the stack so focusTarget() returns FocusInput
 // even when an editor tab is open. Used by view.focus.chat.
 func (m *App) setFocusInput() {
+	if m.Win != nil && m.activeAgentTabID() == "" && len(m.Win.GroupIDs()) > 1 {
+		for _, id := range m.Win.GroupIDs() {
+			if tab := m.Win.GroupActiveTab(id); tab != nil && m.isAgentTabTitle(tab.Title) {
+				m.focusMainGroup(id)
+				break
+			}
+		}
+	}
 	m.setSessionDeckFocused(false)
 	m.setTermDockFocused(false)
 	m.FocusStack.Clear()
@@ -107,6 +115,14 @@ func (m *App) setFocusInput() {
 // stack also drops any stale FocusInput (from a prior view.focus.chat)
 // that would otherwise shadow the editor.
 func (m *App) setFocusEditor() {
+	if m.Win != nil && !m.isEditorActive() && len(m.Win.GroupIDs()) > 1 {
+		for _, id := range m.Win.GroupIDs() {
+			if tab := m.Win.GroupActiveTab(id); tab != nil && m.isEditorTabTitle(tab.Title) {
+				m.focusMainGroup(id)
+				break
+			}
+		}
+	}
 	m.setSessionDeckFocused(false)
 	m.setTermDockFocused(false)
 	m.FocusStack.Clear()

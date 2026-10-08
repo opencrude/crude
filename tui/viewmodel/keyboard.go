@@ -15,8 +15,6 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/screens/activitylist"
 	"crude/tui/screens/launcher"
-	"crude/tui/screens/shellchat"
-	"crude/tui/screens/shelltabs"
 	"crude/tui/screens/shelltree"
 	"crude/tui/screens/sourcecontrol"
 	"crude/tui/ui"
@@ -27,6 +25,12 @@ import (
 
 func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	var cmds []tea.Cmd
+	if m.mainPaneDragActive() && msg.Code == tea.KeyEsc {
+		m.mainPanes.drop = nil
+		m.rootHost.CancelPointerCapture()
+		m.forceFrame()
+		return m, nil
+	}
 	if m.settingsPromptOnTop() {
 		return m, m.handleSettingsPromptKey(msg)
 	}
@@ -64,6 +68,9 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 			if match != nil {
+				if cmd, handled := m.handleMainPaneCommand(string(match.ID)); handled {
+					return m, cmd
+				}
 				switch match.ID {
 				case "palette.open":
 					return m.toggleCommandPalette()
@@ -84,6 +91,14 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 					m.openFilePicker()
 					return m, nil
 				case "file.close":
+					if m.isComparisonActive() {
+						return m, m.handleAgentTabClose(m.Win.ActiveIndex())
+					}
+					if m.emptyPaneActive() {
+						m.Win.RemoveEmptyGroup(m.Win.ActiveGroup())
+						m.focusMainGroup(m.Win.ActiveGroup())
+						return m, nil
+					}
 					m.closeEditorTab()
 					return m, nil
 				case "tabs.next", "tabs.previous":
@@ -149,13 +164,18 @@ func (m *App) dispatchKeyPress(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.sessionDeckCapturesInput() && (m.windowManager == nil || m.windowManager.Focused() == nil) {
 		return m, m.handleSessionDeckEvent(msg)
 	}
-	if m.isGitReviewActive() && m.focusTarget() != FocusTree && m.focusTarget() != FocusTabBar && m.focusTarget() != FocusFloatingWindow && !m.termDockOwnsKeys() {
+	if m.isComparisonActive() && m.focusTarget() != FocusTree && m.focusTarget() != FocusTabBar && m.focusTarget() != FocusFloatingWindow && !m.termDockOwnsKeys() {
 		m.syncRootFocus()
 		result := m.rootHost.Handle(msg)
 		return m, tea.Batch(result.Cmd, m.handleHostAction(result.Action))
 	}
 	if m.termDockOwnsKeys() && (m.windowManager == nil || m.windowManager.Focused() == nil) {
 		return m.dispatchTermDockKey(msg)
+	}
+	if m.emptyPaneActive() && m.focusTarget() == FocusInput {
+		m.syncRootFocus()
+		res := m.rootHost.Handle(msg)
+		return m, tea.Batch(res.Cmd, m.handleHostAction(res.Action))
 	}
 
 	// Esc always closes the topmost popup first, regardless of focus.
@@ -526,7 +546,7 @@ func (m *App) dispatchFloatingWindowKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd
 func (m *App) dispatchTabBarKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.tabBarVisible() && m.tabScreen != nil && m.rootHost != nil {
 		m.syncTabBarHost()
-		m.rootHost.Focus(shelltabs.TabsID)
+		m.rootHost.Focus(m.tabScreen.TabsControl().ID())
 		res := m.rootHost.Handle(msg)
 		cmd := m.handleTabBarHostResult(res)
 		if msg.Code == tea.KeyEsc && m.FocusStack.Top() == FocusTabBar {
@@ -627,7 +647,7 @@ func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, 
 				}
 			}
 			if m.chatScreen != nil && m.rootHost != nil {
-				m.rootHost.Focus(shellchat.ScreenID)
+				m.rootHost.Focus(m.chatScreen.ID())
 				res := m.rootHost.Handle(msg)
 				if res.Handled {
 					return m, nil
@@ -787,7 +807,7 @@ func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 		}
 		if m.tabBarVisible() && m.tabScreen != nil {
 			m.syncTabBarHost()
-			m.rootHost.Focus(shelltabs.TabsID)
+			m.rootHost.Focus(m.tabScreen.TabsControl().ID())
 			res := m.rootHost.Handle(msg)
 			return m, m.handleTabBarHostResult(res)
 		}

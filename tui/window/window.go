@@ -41,6 +41,7 @@ const (
 	ResourceDocument  ResourceKind = "document"
 	ResourceAgent     ResourceKind = "agent"
 	ResourceGitReview ResourceKind = "git-review"
+	ResourceLocalDiff ResourceKind = "local-diff"
 )
 
 type Resource struct {
@@ -50,6 +51,7 @@ type Resource struct {
 
 type Tab struct {
 	ID           TabID
+	Group        GroupID
 	Title        string
 	DisplayTitle string
 	Icon         string
@@ -80,19 +82,20 @@ const (
 )
 
 type Window struct {
-	tabs   []Tab
-	active int
-	width  int
-	layout TabLayout
+	tabs         []Tab
+	width        int
+	paneRoot     *PaneNode
+	focusedGroup GroupID
+	groupActive  map[GroupID]TabID
 
 	hint  string
 	Hover ui.Hover
 }
 
 func New(_ *theme.Theme) *Window {
-	return &Window{
-		Hover: ui.NewHover(),
-	}
+	w := &Window{Hover: ui.NewHover()}
+	w.ensureGroups()
+	return w
 }
 
 func (w *Window) OpenTab(title, icon string, closable bool) *Tab {
@@ -100,82 +103,65 @@ func (w *Window) OpenTab(title, icon string, closable bool) *Tab {
 }
 
 func (w *Window) OpenResource(resource Resource, title string, closable bool) *Tab {
+	w.ensureGroups()
 	for index := range w.tabs {
 		if w.tabs[index].Resource == resource {
-			w.active = index
+			w.SwitchTo(index)
 			return &w.tabs[index]
 		}
 	}
 	tab := newTab(title, "", closable, TabHorizontal)
 	tab.Resource = resource
-	w.tabs = append(w.tabs, tab)
-	w.active = len(w.tabs) - 1
-	return &w.tabs[w.active]
+	return w.appendTab(tab, true)
 }
 
+// OpenTabInactive adds to the focused group without changing group focus or
+// an existing selection. The first tab in an empty group becomes its selection.
 func (w *Window) OpenTabInactive(title, icon string, closable bool) *Tab {
+	w.ensureGroups()
 	for i := range w.tabs {
 		if w.tabs[i].Title == title {
 			return &w.tabs[i]
 		}
 	}
-	active := w.active
-	t := newTab(title, icon, closable, TabHorizontal)
-	w.tabs = append(w.tabs, t)
-	if len(w.tabs) == 1 || active < 0 {
-		w.active = 0
-	} else {
-		w.active = active
+	return w.appendTab(newTab(title, icon, closable, TabHorizontal), false)
+}
+
+func (w *Window) OpenTabWithLayout(title, icon string, closable bool, layout TabLayout) *Tab {
+	w.ensureGroups()
+	for i := range w.tabs {
+		if w.tabs[i].Title == title {
+			w.SwitchTo(i)
+			return &w.tabs[i]
+		}
+	}
+	return w.appendTab(newTab(title, icon, closable, layout), true)
+}
+
+func (w *Window) appendTab(tab Tab, activate bool) *Tab {
+	tab.Group = w.focusedGroup
+	w.tabs = append(w.tabs, tab)
+	if activate || w.groupActive[tab.Group] == 0 {
+		w.groupActive[tab.Group] = tab.ID
 	}
 	return &w.tabs[len(w.tabs)-1]
 }
 
-func (w *Window) OpenTabWithLayout(title, icon string, closable bool, layout TabLayout) *Tab {
-	for i := range w.tabs {
-		if w.tabs[i].Title == title {
-			w.active = i
-			return &w.tabs[i]
-		}
-	}
-	t := newTab(title, icon, closable, layout)
-	w.tabs = append(w.tabs, t)
-	w.active = len(w.tabs) - 1
-	w.layout = layout
-	return &w.tabs[w.active]
-}
-
 func (w *Window) CloseTab(index int) CloseAction {
+	w.ensureGroups()
 	if index < 0 || index >= len(w.tabs) {
 		return CloseNone
 	}
 	tab := w.tabs[index]
-	if !tab.Closable {
+	if !tab.Closable || (tab.Pinned && len(w.tabs) > 1) {
 		return CloseNone
 	}
-	if tab.Pinned && len(w.tabs) > 1 {
-		return CloseNone
-	}
-
 	w.tabs = append(w.tabs[:index], w.tabs[index+1:]...)
-
+	w.repairGroupSelection(tab.Group, tab.ID, index)
+	w.RemoveEmptyGroup(tab.Group)
 	if len(w.tabs) == 0 {
-		w.active = -1
-		w.layout = TabHorizontal
 		return CloseSwitchToChat
 	}
-
-	if index <= w.active {
-		w.active--
-		if w.active < 0 {
-			w.active = 0
-		}
-	}
-	if w.active >= len(w.tabs) {
-		w.active = len(w.tabs) - 1
-	}
-
-	w.layout = w.tabs[w.active].Layout
-
 	return CloseCancel
 }
 
@@ -189,53 +175,51 @@ func (w *Window) CloseTabByID(id TabID) CloseAction {
 }
 
 func (w *Window) CloseActiveTab() CloseAction {
-	if w.active >= 0 && w.active < len(w.tabs) {
-		return w.CloseTab(w.active)
-	}
-	return CloseNone
+	return w.CloseTab(w.ActiveIndex())
 }
 
 func (w *Window) CloseAll() {
 	w.tabs = nil
-	w.active = -1
-	w.layout = TabHorizontal
+	w.paneRoot = nil
+	w.groupActive = nil
+	w.focusedGroup = 0
+	w.ensureGroups()
 }
 
 func (w *Window) SwitchTo(index int) {
+	w.ensureGroups()
 	if index >= 0 && index < len(w.tabs) {
-		w.active = index
-		w.layout = w.tabs[index].Layout
+		tab := w.tabs[index]
+		w.focusedGroup = tab.Group
+		w.groupActive[tab.Group] = tab.ID
 	}
 }
 
-func (w *Window) Next() {
-	if len(w.tabs) == 0 {
-		return
-	}
-	w.active = (w.active + 1) % len(w.tabs)
-	w.layout = w.tabs[w.active].Layout
-}
+func (w *Window) Next() { w.cycleTab(1) }
+func (w *Window) Prev() { w.cycleTab(-1) }
 
-func (w *Window) Prev() {
-	if len(w.tabs) == 0 {
+func (w *Window) cycleTab(delta int) {
+	tabs := w.GroupTabs(w.ActiveGroup())
+	if len(tabs) == 0 {
 		return
 	}
-	w.active--
-	if w.active < 0 {
-		w.active = len(w.tabs) - 1
+	selected := w.groupActive[w.focusedGroup]
+	for i, tab := range tabs {
+		if tab.ID == selected {
+			w.groupActive[w.focusedGroup] = tabs[(i+delta+len(tabs))%len(tabs)].ID
+			return
+		}
 	}
-	w.layout = w.tabs[w.active].Layout
+	w.groupActive[w.focusedGroup] = tabs[0].ID
 }
 
 func (w *Window) ActiveIndex() int {
-	return w.active
+	w.ensureGroups()
+	return w.IndexOf(w.groupActive[w.focusedGroup])
 }
 
 func (w *Window) ActiveTab() *Tab {
-	if w.active >= 0 && w.active < len(w.tabs) {
-		return &w.tabs[w.active]
-	}
-	return nil
+	return w.GroupActiveTab(w.ActiveGroup())
 }
 
 func (w *Window) TabByTitle(title string) *Tab {
@@ -275,7 +259,10 @@ func (w *Window) TabCount() int {
 }
 
 func (w *Window) Layout() TabLayout {
-	return w.layout
+	if tab := w.ActiveTab(); tab != nil {
+		return tab.Layout
+	}
+	return TabHorizontal
 }
 
 func (w *Window) SetWidth(width int) {
@@ -293,8 +280,8 @@ func (w *Window) Hint() string {
 		}
 		return w.hint
 	}
-	if w.active >= 0 && w.active < len(w.tabs) {
-		if w.tabs[w.active].Closable {
+	if tab := w.ActiveTab(); tab != nil {
+		if tab.Closable {
 			return "[ ← → switch tabs · click × or esc to close ]"
 		}
 	}
@@ -381,6 +368,7 @@ func (w *Window) computeTabWidths() []int {
 
 	idealWidths := make([]int, n)
 	totalIdeal := 0
+	active := w.ActiveIndex()
 	for i, t := range w.tabs {
 		titleForWidth := t.DisplayTitle
 		if titleForWidth == "" {
@@ -392,7 +380,7 @@ func (w *Window) computeTabWidths() []int {
 			closeW = closeBtnWidth
 		}
 		ideal := tabPadLeft + titleW + closeW + tabPadRight
-		if i == w.active {
+		if i == active {
 			ideal += 2
 		}
 		if ideal < tabMinWidth {
@@ -460,14 +448,6 @@ func (w *Window) MoveTab(from, to int) {
 	t := w.tabs[from]
 	w.tabs = append(w.tabs[:from], w.tabs[from+1:]...)
 	w.tabs = append(w.tabs[:to], append([]Tab{t}, w.tabs[to:]...)...)
-
-	if w.active == from {
-		w.active = to
-	} else if from < w.active && to >= w.active {
-		w.active--
-	} else if from > w.active && to <= w.active {
-		w.active++
-	}
 }
 
 // OrderTabsSubset orders the named tabs within their existing slots. Other
@@ -485,10 +465,6 @@ func (w *Window) OrderTabsSubset(ids []TabID) {
 		wanted[id] = i
 	}
 	positions := make([]int, 0, len(ids))
-	selected := TabID(0)
-	if active := w.ActiveTab(); active != nil {
-		selected = active.ID
-	}
 	tabs := make([]Tab, len(ids))
 	for i, tab := range w.tabs {
 		if position, ok := wanted[tab.ID]; ok {
@@ -501,9 +477,6 @@ func (w *Window) OrderTabsSubset(ids []TabID) {
 	}
 	for i, position := range positions {
 		w.tabs[position] = tabs[i]
-		if tabs[i].ID == selected {
-			w.active = position
-		}
 	}
 }
 
