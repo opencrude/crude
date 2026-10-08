@@ -88,12 +88,16 @@ type Agent struct {
 	PrepareCompaction      func(CompactionSource) error
 	CommitCompaction       func(CompactionCommit) error
 	Checkpoint             func(archive, active []provider.ChatMessage) error
-	ContinuationContext    func(context.Context) (rootprompt.SessionContinuityData, error)
-	LatestHumanTurnState   func(context.Context) (string, bool, error)
-	GuidanceCacheLoad      func(string) (string, bool)
-	GuidanceCacheStore     func(string, string)
-	Ctx                    context.Context
-	Yolo                   bool
+	// CheckpointTools stores unfinished wrapper evidence separately from immutable
+	// accepted messages. A later completed result must not rewrite that evidence
+	// as though it were an already-committed protocol message.
+	CheckpointTools      func(archive, active, inFlight []provider.ChatMessage) error
+	ContinuationContext  func(context.Context) (rootprompt.SessionContinuityData, error)
+	LatestHumanTurnState func(context.Context) (string, bool, error)
+	GuidanceCacheLoad    func(string) (string, bool)
+	GuidanceCacheStore   func(string, string)
+	Ctx                  context.Context
+	Yolo                 bool
 	// YoloMode supplies the owning session's live policy to roots and children.
 	// Yolo remains the fallback for standalone agents.
 	YoloMode    func() bool

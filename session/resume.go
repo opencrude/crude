@@ -283,8 +283,8 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	}
 	for _, checkpoint := range openRecoveries {
 		if checkpoint.ContextOwnerID == meta.ID {
-			checkpoint.Archive = reconcileInterruptedTools(checkpoint.Archive)
-			checkpoint.ActiveContext = reconcileInterruptedTools(checkpoint.ActiveContext)
+			checkpoint.Archive = reconcileInterruptedTools(checkpoint.Archive, checkpoint.InFlightTools...)
+			checkpoint.ActiveContext = reconcileInterruptedTools(checkpoint.ActiveContext, checkpoint.InFlightTools...)
 			if err := sess.restoreRecoveryTranscript(&checkpoint); err != nil {
 				_ = lg.Close()
 				_ = db.Close()

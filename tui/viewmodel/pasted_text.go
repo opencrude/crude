@@ -59,8 +59,8 @@ func (m *App) applyPastedText(msg pastedTextStoredMsg) {
 	// order while allowing typing; discard invalidated draft owners immediately.
 	for len(m.pastedTextRequests) > 0 {
 		request := m.pastedTextRequests[0]
-		current := request.generation == m.workspaceSwitchGen.Load() && request.session == m.ActiveSession &&
-			request.store == m.RefStore() && request.agentID == m.AgentMgr.ActiveID() && m.Input.PasteCurrent(request.event)
+		sameOwner := request.generation == m.workspaceSwitchGen.Load() && request.session == m.ActiveSession && request.store == m.RefStore()
+		current := sameOwner && request.agentID == m.AgentMgr.ActiveID() && m.Input.PasteCurrent(request.event)
 		if current && !request.done {
 			break
 		}
@@ -70,7 +70,11 @@ func (m *App) applyPastedText(msg pastedTextStoredMsg) {
 			m.pastedTextRequests = nil
 		}
 		if !current {
-			m.Input.CompletePaste(request.event)
+			// Root/child tabs may share the same draft, but another session's
+			// first paste can reuse the numeric event ID/epoch. Never settle it.
+			if sameOwner {
+				m.Input.CompletePaste(request.event)
+			}
 			continue
 		}
 		m.attachPastedText(request)
@@ -78,12 +82,13 @@ func (m *App) applyPastedText(msg pastedTextStoredMsg) {
 }
 
 func (m *App) attachPastedText(msg pastedTextStoredMsg) {
-	if msg.generation != m.workspaceSwitchGen.Load() || m.ActiveSession != msg.session ||
-		m.RefStore() != msg.store || m.AgentMgr.ActiveID() != msg.agentID {
-		m.Input.CompletePaste(msg.event)
+	if msg.generation != m.workspaceSwitchGen.Load() || m.ActiveSession != msg.session || m.RefStore() != msg.store {
 		return
 	}
 	if !m.Input.CompletePaste(msg.event) {
+		return
+	}
+	if m.AgentMgr.ActiveID() != msg.agentID {
 		return
 	}
 	if msg.err != nil {

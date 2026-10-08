@@ -23,6 +23,7 @@ preserve or intentionally improve.
 | Close active editor tab | Ctrl+W | Uses the dirty-close Save / Don't Save / Cancel prompt; terminal focus keeps the key as PTY input |
 | Cancel/back | Esc | Never Ctrl+C for back; in editor focus, Back closes the tab after transient editor UI is dismissed. On a tool permission dock, Esc stops the turn without denying permission; Deny / `n` is the explicit rejection path. In a text control Esc first drops the selection; the chat composer's ladder is selection → draft → cancel the turn. |
 | Previous / next tab | Ctrl+[ / Ctrl+] | Global outside terminal key ownership, including editor focus |
+| Main tab actions and focus | Click tab / ×; tab context menu; close shortcut | Pointer selection and close return keys to the selected editor/chat, or workspace home when the last tab closes. Hover and overflow browsing never pin keyboard focus to the strip. Deliberate Ctrl+T + arrow/Home/End navigation retains strip focus until Enter/Down/Tab/Esc commits or leaves it; closing ends that navigation. Dirty-close Save / Don't Save / Cancel keeps its safe modal and never restores stale strip focus. Background tab updates preserve the current focus. |
 | Attach file / choose current folder | Ctrl+O | Opens Attach File from non-terminal shell views; a focused Open Workspace folder picker owns the same key locally and selects its current folder |
 | Copy | Ctrl+C / Ctrl+Shift+C | Copies the selection of the chat input, chat messages, editor, overlay editors, terminals, and every inline text control. Ctrl+Shift+C is the explicit copy chord (terminals already used it); unhandled Ctrl+C clears the chat draft, and Ctrl+C never navigates back. |
 | Cut | Ctrl+X | Text controls: cuts the selection, or the whole value when nothing is selected (masked fields refuse it) |
@@ -80,6 +81,23 @@ media is session-owned, so pruning the bounded history cannot break a resumed
 session. Individual binary reads are limited to 64 MiB. Capture failures are
 reported and marked unavailable rather than silently recalling text-only
 versions. Application shutdown flushes pending history before closing sessions.
+
+Composer ownership changes at session activation, never during rendering. The
+destination reference store is bound before recalled attachment IDs are installed,
+including text-only recalls that must not capture same-named media. Warm sessions
+retain the complete editor (text, attachment selection, cursor, selection, undo and
+history navigation); cold drafts load off Update with activation/revision fences.
+A recall intent outranks an earlier disk load, and pointer edits invalidate a late
+recall just like keyboard edits. An unmodified loading projection must not save
+an empty draft over unread persisted content. Teardown flushes inactive queued
+drafts too. Stale paste completions never consume another session's pending paste
+or release its Send barrier merely because numeric paste IDs coincide.
+
+Regression journeys cover mixed image/text/file/MCP references, exact image bytes
+reaching a local provider after Up → edit → Enter, literal-label collisions,
+missing media, session switching with undo, cold-load races, failed saves, and
+opposite completion orders for two sessions' pending pastes. Existing text editing,
+capability selection, clipboard and attachment suites remain required gates.
 
 Windows background-command termination uses the retained Job Object for both
 pipe and ConPTY commands; normal completion cleans descendants before waiting

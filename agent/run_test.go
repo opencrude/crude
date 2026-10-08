@@ -1094,6 +1094,7 @@ func TestMissingFinalReportGetsOneBoundedReminder(t *testing.T) {
 	p.Model = "test-model"
 	child := newTestAgent(t, p, p.Model)
 	child.Depth = 1
+	child.FilteredTools = append(append([]tools.ToolDef(nil), tools.AgentTools...), tools.CollaborationTools...)
 
 	var events []AgentEvent
 	messages := child.Run(context.Background(), nil, "system", func(event AgentEvent) {

@@ -1,7 +1,11 @@
 package viewmodel
 
 import (
+	"bytes"
+	"image"
+	"image/png"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -9,6 +13,8 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 
+	"crude/history"
+	"crude/sessiondb"
 	"crude/tui/ui"
 	"crude/types"
 	"crude/types/reasoning"
@@ -28,12 +34,35 @@ func TestRunRecoveryVisualAcceptance(t *testing.T) {
 	app := newFullTestApp(t)
 	app.Logger = stubLogger{}
 	app.width, app.height = 160, 40
+	if os.Getenv("CRUDE_VISUAL_RECOVERY_MEDIA") == "1" {
+		app.SessionsByAgent = map[string]*workspace.Session{"visual-recovery": workspace.NewSession("visual-media", t.TempDir(), nil, stubLogger{})}
+	}
 	app.AddOrchestrator("visual-recovery")
 	state := app.AgentMgr.Get("visual-recovery").State
 	state.Messages.AppendMessage(workspace.Message{Role: types.RoleUser, Time: time.Now(), Content: "Complete the refactor and verify it, keeping the accepted edits."})
 	state.Messages.AppendMessage(workspace.Message{Role: types.RoleAssistant, Time: time.Now(), Content: "The refactor is saved. Verification is still pending; recovery will continue from these exact results."})
 	app.maybeHydrateComposerDraft()
 	app.Input.SetInput("My next instruction is still a draft. Recovery must not consume it.")
+	if os.Getenv("CRUDE_VISUAL_RECOVERY_MEDIA") == "1" {
+		var media bytes.Buffer
+		if err := png.Encode(&media, image.NewRGBA(image.Rect(0, 0, 2, 2))); err != nil {
+			t.Fatal(err)
+		}
+		path := filepath.Join(t.TempDir(), "retained.png")
+		if err := os.WriteFile(path, media.Bytes(), 0600); err != nil {
+			t.Fatal(err)
+		}
+		text := "Retained draft: [image] with [notes]. Do not send during recovery."
+		entry := history.Entry{Text: text, Attachments: []history.Attachment{
+			{Start: 16, End: 23, Reference: sessiondb.Reference{ID: "image", Label: "[image]", Kind: sessiondb.KindPastedImage, Title: "Retained screenshot", Mime: "image/png", FilePath: path}},
+			{Start: 29, End: 36, Reference: sessiondb.Reference{ID: "notes", Label: "[notes]", Kind: sessiondb.KindPastedText, Content: "Exact recalled notes", Title: "Notes"}},
+		}}
+		cmd := app.recallPrompt(app.Input.RecallPrompt(entry))
+		app.applyPromptHistory(cmd().(promptHistoryRestoredMsg))
+		if len(app.Input.PromptReferences()) != 2 {
+			t.Fatal("visual fixture failed to restore mixed attachments")
+		}
+	}
 	model := &runRecoveryVisualModel{App: app, status: recovery.Status{
 		ID: "visual-incident", AgentID: state.ID, Generation: 1,
 		StartedAt: time.Now(), UpdatedAt: time.Now(), Attempt: 7,

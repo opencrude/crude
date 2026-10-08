@@ -4,16 +4,19 @@ import (
 	"context"
 	"os"
 	"path/filepath"
-	"strings"
+	"sync"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 
 	ttypes "crude/tui/types"
+	model "crude/types"
 	"crude/workspace"
 )
 
 type immediateTreeDiagRuntime struct {
+	mu       sync.Mutex
 	filePath string
 	diags    []workspace.LSPDiagnostic
 	rootURIs []string
@@ -25,36 +28,12 @@ type immediateTreeDiagClient struct {
 	diags    []workspace.LSPDiagnostic
 }
 
-func (r *immediateTreeDiagRuntime) NewClient(_ string, _ []string, rootURI string) workspace.LSPClient {
+func (r *immediateTreeDiagRuntime) NewClient(_ model.LSPServerSpec, rootURI string) workspace.LSPClient {
+	r.mu.Lock()
+	defer r.mu.Unlock()
 	r.rootURIs = append(r.rootURIs, rootURI)
 	r.client = &immediateTreeDiagClient{filePath: r.filePath, diags: r.diags}
 	return r.client
-}
-
-func (r *immediateTreeDiagRuntime) ServerConfigForExt(ext string) (string, []string, bool) {
-	if ext != ".go" {
-		return "", nil, false
-	}
-	return "test-lsp", nil, true
-}
-
-func (r *immediateTreeDiagRuntime) RootURIForFile(filePath string) string {
-	absPath, err := filepath.Abs(filePath)
-	if err != nil {
-		absPath = filePath
-	}
-	return "file://" + filepath.Dir(absPath)
-}
-
-func (r *immediateTreeDiagRuntime) LanguageID(ext string) string {
-	if ext == ".go" {
-		return "go"
-	}
-	return ""
-}
-
-func (r *immediateTreeDiagRuntime) AllServerConfigs() map[string]workspace.LSPServerConfig {
-	return map[string]workspace.LSPServerConfig{".go": {Cmd: "test-lsp"}}
 }
 
 func (c *immediateTreeDiagClient) OnDiagnostics(fn func(string, []workspace.LSPDiagnostic)) {
@@ -101,9 +80,16 @@ func TestInitWiresDiagnosticsBeforeWorkspaceLSPStart(t *testing.T) {
 	app.LSPMgr.SetRuntime(runtime)
 
 	_ = app.Init()
+	if len(runtime.rootURIs) != 0 {
+		t.Fatal("Init eagerly launched LSP")
+	}
+	_, err := app.openEditorTab(mainGo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitTreeLSP(t, app, mainGo)
 
 	assertLSPStartedForRoot(t, runtime, dir)
-	assertRecentDiagnosticsEvent(t, app)
 	node := app.Tree.Model.NodeByPath(mainGo)
 	if node == nil {
 		t.Fatalf("node not found at %q", mainGo)
@@ -128,9 +114,13 @@ func TestSwitchProjectRewiresDiagnosticsForNewLSPManager(t *testing.T) {
 	app.LSPMgr.SetRuntime(runtime)
 
 	app.startLSPForWorkspace()
+	_, err := app.openEditorTab(mainGo)
+	if err != nil {
+		t.Fatal(err)
+	}
+	awaitTreeLSP(t, app, mainGo)
 
 	assertLSPStartedForRoot(t, runtime, newDir)
-	assertRecentDiagnosticsEvent(t, app)
 	node := app.Tree.Model.NodeByPath(mainGo)
 	if node == nil {
 		t.Fatalf("node not found at %q", mainGo)
@@ -172,6 +162,8 @@ func newDiagnosticsTreeApp(t *testing.T, dir string) *App {
 
 func assertLSPStartedForRoot(t *testing.T, runtime *immediateTreeDiagRuntime, dir string) {
 	t.Helper()
+	runtime.mu.Lock()
+	defer runtime.mu.Unlock()
 	if len(runtime.rootURIs) != 1 {
 		t.Fatalf("started roots = %v, want exactly one", runtime.rootURIs)
 	}
@@ -186,12 +178,14 @@ func assertLSPStartedForRoot(t *testing.T, runtime *immediateTreeDiagRuntime, di
 	}
 }
 
-func assertRecentDiagnosticsEvent(t *testing.T, app *App) {
+func awaitTreeLSP(t *testing.T, app *App, path string) {
 	t.Helper()
-	for _, entry := range app.eventBus.RecentEvents(20) {
-		if strings.Contains(entry, "workspace.LSPDiagnosticsMsg") {
-			return
+	deadline := time.Now().Add(3 * time.Second)
+	for !app.LSPMgr.HasFileDiagnostics(path) {
+		if time.Now().After(deadline) {
+			t.Fatal("diagnostics never arrived")
 		}
+		time.Sleep(time.Millisecond)
 	}
-	t.Fatalf("recent events did not include LSP diagnostics: %v", app.eventBus.RecentEvents(20))
+	app.drainLSPDiagnostics()
 }

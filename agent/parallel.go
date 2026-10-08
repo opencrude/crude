@@ -65,12 +65,17 @@ func (a *Agent) executeParallel(ctx context.Context, tc provider.ToolCall, param
 		indices[call.ID] = i
 	}
 	var progressMu sync.Mutex
+	attachments := make([][]provider.ContentPart, len(calls))
 	publish := func() {
 		body, err := json.Marshal(map[string]any{"results": ordered})
 		if err != nil {
 			return
 		}
-		emit(AgentEvent{Type: "tool_call_streaming", Data: map[string]any{"tool_id": tc.ID, "internal_id": tc.InternalID, "name": tc.Function.Name, "content": string(body), "args": string(raw)}})
+		var retained []provider.ContentPart
+		for _, parts := range attachments {
+			retained = append(retained, parts...)
+		}
+		emit(AgentEvent{Type: "tool_call_streaming", Data: map[string]any{"tool_id": tc.ID, "internal_id": tc.InternalID, "name": tc.Function.Name, "content": string(body), "args": string(raw), "checkpoint_attachments": retained}})
 	}
 	childEmit := func(event AgentEvent) {
 		switch event.Type {
@@ -93,7 +98,6 @@ func (a *Agent) executeParallel(ctx context.Context, tc provider.ToolCall, param
 		}
 	}
 	results := a.executeToolCalls(ctx, calls, childEmit, responses, lastReply, 0)
-	attachments := make([][]provider.ContentPart, len(calls))
 	result := tools.ToolResult{}
 	var uncertain error
 	for range calls {
@@ -103,11 +107,11 @@ func (a *Agent) executeParallel(ctx context.Context, tc provider.ToolCall, param
 		}
 		progressMu.Lock()
 		ordered[r.index] = map[string]any{"recipient_name": r.name, "result": r.result.Content, "error": r.toolError, "added": r.result.Added, "removed": r.result.Removed}
+		attachments[r.index] = r.result.Attachments
 		publish()
 		progressMu.Unlock()
 		result.Added += r.result.Added
 		result.Removed += r.result.Removed
-		attachments[r.index] = r.result.Attachments
 	}
 	for _, parts := range attachments {
 		result.Attachments = append(result.Attachments, parts...)

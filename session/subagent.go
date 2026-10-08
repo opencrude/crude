@@ -299,6 +299,9 @@ func (r *SubAgentRunner) StartAgent(ctx context.Context, params map[string]any) 
 	}
 
 	profileInstructions := r.resolveProfile(profileName, category, &spec)
+	if err := validateChildReportPermission(spec); err != nil {
+		return tools.ToolResult{}, err
+	}
 	for index, path := range spec.FileOwnership {
 		if path != "" && !filepath.IsAbs(path) {
 			spec.FileOwnership[index] = filepath.Join(r.session.WorkDir(), path)
@@ -562,10 +565,11 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 		SessionID: subSessionID,
 		DB:        subDB,
 	}
+	promptAllowed, promptDenied := agent.ModelToolSelection(spec.AllowedTools, spec.DeniedTools, spec.Model)
 	systemPrompt, userPrompt := rootprompt.BuildChild(rootprompt.ChildOptions{
 		Category: spec.Category, Name: spec.Name, ID: string(spec.ID), ParentID: string(spec.ParentID), ParentTurn: spec.ParentTurn,
 		Description: spec.Description, Instructions: spec.Instructions, PolicyName: spec.PolicyName,
-		AllowedTools: spec.AllowedTools, DeniedTools: spec.DeniedTools, FileOwnership: spec.FileOwnership,
+		AllowedTools: promptAllowed, DeniedTools: promptDenied, FileOwnership: spec.FileOwnership,
 		ProfileInstructions: profileInstructions, WorkDir: r.session.WorkDir(),
 		TempDir: childTempDir, Model: spec.Model,
 	})
@@ -758,6 +762,10 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 		return false
 	}
 	spec := owner.Spec
+	if err := validateChildReportPermission(spec); err != nil {
+		r.session.logger.Warn("SUBAGENT", "report_permission_invalid", "agent_id", spec.ID, "error", err.Error())
+		return false
+	}
 	spec.Policy = agent.ComposePolicy(safety.DefaultPolicy(), spec.PolicyName, spec.Category)
 	// Child session identity is the stable agent ID in the current format.
 	dbPath, err := r.subAgentDBPath(string(spec.ID))
@@ -786,8 +794,8 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 	}
 	childCheckpoint.Status.AgentID = string(spec.ID)
 	childCheckpoint.ContextOwnerID = string(spec.ID)
-	childCheckpoint.Archive = reconcileInterruptedTools(childCheckpoint.Archive)
-	childCheckpoint.ActiveContext = reconcileInterruptedTools(childCheckpoint.ActiveContext)
+	childCheckpoint.Archive = reconcileInterruptedTools(childCheckpoint.Archive, childCheckpoint.InFlightTools...)
+	childCheckpoint.ActiveContext = reconcileInterruptedTools(childCheckpoint.ActiveContext, childCheckpoint.InFlightTools...)
 	if store := r.session.CollaborationStore(); store != nil {
 		claims, claimErr := store.Claims(context.Background(), string(spec.ID), true)
 		if claimErr != nil {
@@ -953,10 +961,11 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 		ID: string(spec.ID), ParentID: string(spec.ParentID), SessionID: handle.SessionID,
 		AllowedTools: spec.AllowedTools, DeniedTools: spec.DeniedTools, SkillModes: spec.SkillModes,
 	}, spec.Name)
+	promptAllowed, promptDenied := agent.ModelToolSelection(spec.AllowedTools, spec.DeniedTools, spec.Model)
 	systemPrompt, userPrompt := rootprompt.BuildChild(rootprompt.ChildOptions{
 		Category: spec.Category, Name: spec.Name, ID: string(spec.ID), ParentID: string(spec.ParentID), ParentTurn: spec.ParentTurn,
 		Description: spec.Description, Instructions: spec.Instructions, PolicyName: spec.PolicyName,
-		AllowedTools: spec.AllowedTools, DeniedTools: spec.DeniedTools, FileOwnership: spec.FileOwnership,
+		AllowedTools: promptAllowed, DeniedTools: promptDenied, FileOwnership: spec.FileOwnership,
 		ProfileInstructions: owner.ProfileInstructions, WorkDir: r.session.WorkDir(),
 		TempDir: childTempDir, Model: spec.Model,
 	})
@@ -1307,15 +1316,24 @@ func (r *SubAgentRunner) runSubAgentLoop(
 		if err != nil {
 			return err
 		}
-		if found && !retainsContextSource(active, current.Messages) {
-			return fmt.Errorf("child checkpoint does not retain committed context revision %d", current.Revision)
+		if found {
+			if err := retainChildCheckpointSource(recoveryState, archive, active, current); err != nil {
+				return err
+			}
+		} else {
+			recoveryState.snapshot(archive, active)
 		}
-		recoveryState.snapshot(archive, active)
 		recoveryState.mu.Lock()
 		recoveryState.contextRevision = loadContextRevision(current, found)
 		recoveryState.contextGeneration, recoveryState.contextReason = contextGeneration, "run_checkpoint"
 		recoveryState.mu.Unlock()
 		return persistRecoveryBoundary(ctx, supervisor)
+	}
+	handle.Agent.CheckpointTools = func(archive, active, inFlight []provider.ChatMessage) error {
+		recoveryState.mu.Lock()
+		recoveryState.inFlightTools = append([]provider.ChatMessage(nil), inFlight...)
+		recoveryState.mu.Unlock()
+		return handle.Agent.Checkpoint(archive, active)
 	}
 	childRunID, _ := handle.RunIdentity()
 	eventSource := &runtimeEventSource{ownerID: handle.SessionID, agentID: string(handle.Spec.ID), runID: childRunID, runtimeEpoch: handle.RuntimeEpoch, generation: turnGeneration}

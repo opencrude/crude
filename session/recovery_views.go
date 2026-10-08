@@ -34,7 +34,7 @@ func (s *Session) PendingSubAgentSnapshots() []SubAgentSnapshot {
 				Name: owner.Spec.Name, Category: owner.Spec.Category},
 			Model: owner.Spec.Model, Recovery: &status,
 		}
-		archive := recoveryArchiveMessages(reconcileInterruptedTools(checkpoint.Archive))
+		archive := recoveryArchiveMessages(reconcileInterruptedTools(checkpoint.Archive, checkpoint.InFlightTools...))
 		args := toolCallArgsIndex(archive)
 		names := make(map[string]string)
 		for _, message := range archive {

@@ -38,11 +38,23 @@ func constrainConfiguredTools(spec *agent.SubAgentSpec, allowed, denied []string
 	if len(allowed) > 0 {
 		definitions := append(append([]tools.ToolDef(nil), tools.AgentTools...), tools.CollaborationTools...)
 		for _, tool := range definitions {
+			// Reporting is the mandatory return channel of every child, not an
+			// optional task tool. An explicit deny is still rejected at admission.
+			if tool.Function.Name == "publish_report" {
+				continue
+			}
 			if !slices.Contains(allowed, tool.Function.Name) {
 				spec.DeniedTools = append(spec.DeniedTools, tool.Function.Name)
 			}
 		}
 	}
+}
+
+func validateChildReportPermission(spec agent.SubAgentSpec) error {
+	if slices.Contains(spec.DeniedTools, "publish_report") {
+		return fmt.Errorf("child role/profile explicitly denies required publish_report; enable reporting in Agents > Tool Access before launching")
+	}
+	return nil
 }
 
 func agentProfileCatalog(cfg *Config) string {

@@ -688,6 +688,12 @@ hover, definition, references, outline, rename), diagnostic display
 command/args overrides. `workspace.LSPManager` reads the **effective**
 `LSPSettings` and refuses to start or request gated features.
 
+The unfinished LSP runtime now has its minimal launch/settings contract so the
+normal source build remains runnable. Keep LSP disabled until the lifecycle work
+in [the active handoff](../plans/lsp-runtime-handoff.md) is validated. Its resource
+fields default to two servers, a 300-second idle timeout and a 2 MiB document limit;
+the native resource controls and expanded catalog are not yet integrated.
+
 ## Tests
 
 Layer coverage lives next to the code:

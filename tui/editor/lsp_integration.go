@@ -5,8 +5,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -22,12 +22,15 @@ type LSPDiagnostic = model.LSPDiagnostic
 // LSPIntegration manages a single LSP server connection for one project root.
 // Multiple files within the same root can be opened simultaneously.
 type LSPIntegration struct {
-	mu         sync.Mutex
-	client     *lsp.Client
-	serverCmd  string
-	serverArgs []string
-	serverEnv  map[string]string
-	rootURI    string
+	mu          sync.Mutex
+	client      *lsp.Client
+	serverCmd   string
+	serverArgs  []string
+	serverEnv   map[string]string
+	settings    map[string]any
+	initOptions map[string]any
+	launch      *lspLaunch
+	rootURI     string
 
 	// pipe monitors the subprocess stream. All writes are decoupled from
 	// caller goroutines through the async writer (see lsp_pipe.go); Done
@@ -51,7 +54,24 @@ func WithServerEnv(env map[string]string) LSPIntegrationOption {
 	}
 }
 
+type lspLaunch struct {
+	cancel context.CancelFunc
+	done   chan struct{}
+	client *lsp.Client
+	err    error
+}
+
+// WithServerConfiguration configures the subprocess and server-specific protocol settings.
+func WithServerConfiguration(environment map[string]string, settings, initOptions map[string]any) LSPIntegrationOption {
+	return func(l *LSPIntegration) {
+		l.serverEnv = environment
+		l.settings = settings
+		l.initOptions = initOptions
+	}
+}
+
 type openFileState struct {
+	version    int
 	uri        string
 	languageID string
 	text       string
@@ -85,61 +105,77 @@ func (l *LSPIntegration) RootURI() string {
 
 func (l *LSPIntegration) Start(ctx context.Context) error {
 	l.mu.Lock()
-	defer l.mu.Unlock()
-
 	if l.client != nil {
+		l.mu.Unlock()
 		return nil
 	}
-
-	// Decouple ALL LSP pipe I/O from caller goroutines (Bubble Tea's
-	// update goroutine in particular): jsonrpc2's buffered stream flushes
-	// synchronously and context-unaware, so a back-pressured server pipe
-	// used to block the UI indefinitely (see lsp_pipe.go). The monitor also
-	// surfaces connection death for server reaping/restart.
+	if launch := l.launch; launch != nil {
+		l.mu.Unlock()
+		select {
+		case <-launch.done:
+			return launch.err
+		case <-ctx.Done():
+			return ctx.Err()
+		}
+	}
+	initCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	launch := &lspLaunch{cancel: cancel, done: make(chan struct{})}
+	l.launch = launch
+	l.mu.Unlock()
+	defer cancel()
 	var pipe *lspPipeMonitor
 	client, err := lsp.NewClient(lsp.ClientConfig{
-		Command: l.serverCmd,
-		Args:    l.serverArgs,
-		RootURI: l.rootURI,
-		Environment: func() map[string]string {
-			if len(l.serverEnv) == 0 {
-				return nil
-			}
-			out := make(map[string]string, len(l.serverEnv))
-			for k, v := range l.serverEnv {
-				out[k] = v
-			}
-			return out
-		}(),
+		Command: l.serverCmd, Args: l.serverArgs, RootURI: l.rootURI,
+		Environment: l.serverEnv, Settings: l.settings, InitOptions: l.initOptions,
 		TransportWrap: func(reader io.Reader, writer io.Writer) (io.Reader, io.Writer) {
 			nr, nw, mon := wrapLSPPipe(reader, writer)
 			pipe = mon
 			return nr, nw
 		},
 	})
-	if err != nil {
-		return err
-	}
-
-	client.RegisterNotificationHandler("textDocument/publishDiagnostics", func(_ context.Context, _ string, params json.RawMessage) {
-		var diagParams protocol.PublishDiagnosticsParams
-		if err := json.Unmarshal(params, &diagParams); err != nil {
-			return
+	if err == nil {
+		l.mu.Lock()
+		launch.client = client
+		stopped := l.launch != launch
+		l.mu.Unlock()
+		if stopped {
+			client.Kill()
+			err = context.Canceled
+		} else {
+			client.RegisterNotificationHandler("textDocument/publishDiagnostics", func(_ context.Context, _ string, params json.RawMessage) {
+				var diagnostics struct {
+					protocol.PublishDiagnosticsParams
+					Version *int32 `json:"version"`
+				}
+				if json.Unmarshal(params, &diagnostics) == nil {
+					l.updateDiagnostics(launch, diagnostics.URI, diagnostics.Version, diagnostics.Diagnostics)
+				}
+			})
+			err = client.Initialize(initCtx, true)
+			if err != nil {
+				client.Kill()
+			}
 		}
-		l.updateDiagnostics(diagParams.URI, diagParams.Diagnostics)
-	})
-
-	initCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	defer cancel()
-
-	if err := client.Initialize(initCtx, false); err != nil {
-		client.Kill()
-		return err
 	}
-
-	l.client = client
-	l.pipe = pipe
-	return nil
+	l.mu.Lock()
+	if l.launch != launch || initCtx.Err() != nil {
+		if err == nil {
+			err = context.Canceled
+		}
+	} else if err == nil {
+		l.client = client
+		l.pipe = pipe
+	}
+	launch.err = err
+	if err != nil && l.launch == launch {
+		l.launch = nil
+	}
+	l.mu.Unlock()
+	if err != nil && client != nil {
+		client.Kill()
+	}
+	close(launch.done)
+	return err
 }
 
 // Done is closed when the underlying server connection dies (server exit,
@@ -164,11 +200,22 @@ func (l *LSPIntegration) OpenFile(ctx context.Context, filePath, languageID, tex
 	}
 	fp := filepath.Clean(filePath)
 	uri := string(protocol.URIFromPath(fp))
-	l.versionCounter++
-	version := l.versionCounter
-	l.openFiles[fp] = &openFileState{uri: uri, languageID: languageID, text: text}
-
-	_ = l.client.NotifyDidOpenTextDocument(ctx, uri, languageID, version, text)
+	version := l.versionCounter + 1
+	if state := l.openFiles[fp]; state != nil {
+		if state.text == text {
+			return
+		}
+		if l.client.NotifyDidChangeTextDocument(ctx, state.uri, version, []protocol.TextDocumentContentChangeEvent{{Value: protocol.TextDocumentContentChangeWholeDocument{Text: text}}}) == nil {
+			state.text = text
+			state.version = version
+			l.versionCounter = version
+		}
+		return
+	}
+	if l.client.NotifyDidOpenTextDocument(ctx, uri, languageID, version, text) == nil {
+		l.versionCounter = version
+		l.openFiles[fp] = &openFileState{uri: uri, languageID: languageID, text: text, version: version}
+	}
 }
 
 func (l *LSPIntegration) UpdateFile(ctx context.Context, filePath, text string) {
@@ -179,14 +226,15 @@ func (l *LSPIntegration) UpdateFile(ctx context.Context, filePath, text string) 
 	if l.client == nil || !ok || state.text == text {
 		return
 	}
-	l.versionCounter++
-	version := l.versionCounter
+	version := l.versionCounter + 1
 	uri := state.uri
 
 	if err := l.client.NotifyDidChangeTextDocument(ctx, uri, version, []protocol.TextDocumentContentChangeEvent{
 		{Value: protocol.TextDocumentContentChangeWholeDocument{Text: text}},
 	}); err == nil {
 		state.text = text
+		state.version = version
+		l.versionCounter = version
 	}
 }
 
@@ -229,24 +277,64 @@ func (l *LSPIntegration) RequestCompletions(ctx context.Context, filePath string
 		return nil
 	}
 	uri := state.uri
+	client := l.client
+	version := stateVersion(state)
 	l.mu.Unlock()
 
-	result, err := l.client.RequestCompletion(ctx, uri, protocol.Position{
+	result, err := client.RequestCompletion(ctx, uri, protocol.Position{
 		Line:      uint32(line),
 		Character: uint32(col),
 	})
+	if !l.currentDocument(fp, client, state, version) {
+		return nil
+	}
 	if err != nil || result == nil {
 		return nil
 	}
 	out := make([]CompletionItem, 0, len(result.Items))
 	for _, it := range result.Items {
-		out = append(out, CompletionItem{
+		if it.Command != nil {
+			continue
+		}
+		item := CompletionItem{
 			Label:         it.Label,
 			Detail:        it.Detail,
 			Documentation: documentationOf(it),
 			Kind:          int(it.Kind),
 			InsertText:    insertTextOf(it),
-		})
+		}
+		if it.TextEdit != nil {
+			var edit protocol.TextEdit
+			switch v := it.TextEdit.Value.(type) {
+			case protocol.TextEdit:
+				edit = v
+			case *protocol.TextEdit:
+				edit = *v
+			case protocol.InsertReplaceEdit:
+				edit = protocol.TextEdit{Range: v.Replace, NewText: v.NewText}
+			case *protocol.InsertReplaceEdit:
+				edit = protocol.TextEdit{Range: v.Replace, NewText: v.NewText}
+			default:
+				continue
+			}
+			converted := neutralTextEdit(edit)
+			item.TextEdit = &converted
+			item.InsertText = edit.NewText
+		}
+		if it.InsertTextFormat != nil && *it.InsertTextFormat == 2 {
+			plain, ok := expandSnippet(item.InsertText)
+			if !ok {
+				continue
+			}
+			item.InsertText = plain
+			if item.TextEdit != nil {
+				item.TextEdit.NewText = plain
+			}
+		}
+		for _, edit := range it.AdditionalTextEdits {
+			item.AdditionalTextEdits = append(item.AdditionalTextEdits, neutralTextEdit(edit))
+		}
+		out = append(out, item)
 	}
 	return out
 }
@@ -266,6 +354,9 @@ func insertTextOf(it protocol.CompletionItem) string {
 		case *protocol.TextEdit:
 			return t.NewText
 		}
+	}
+	if it.InsertText == "" {
+		return it.Label
 	}
 	return it.InsertText
 }
@@ -291,13 +382,17 @@ func (l *LSPIntegration) RequestDefinition(ctx context.Context, filePath string,
 	l.mu.Lock()
 	client := l.client
 	fp := filepath.Clean(filePath)
-	_, ok := l.openFiles[fp]
+	state, ok := l.openFiles[fp]
+	version := stateVersion(state)
 	l.mu.Unlock()
 
 	if client == nil || !ok {
 		return nil
 	}
 	results, err := client.RequestDefinition(ctx, fp, line, col)
+	if !l.currentDocument(fp, client, state, version) {
+		return nil
+	}
 	if err != nil {
 		return nil
 	}
@@ -311,13 +406,17 @@ func (l *LSPIntegration) FindReferences(ctx context.Context, filePath string, li
 	l.mu.Lock()
 	client := l.client
 	fp := filepath.Clean(filePath)
-	_, ok := l.openFiles[fp]
+	state, ok := l.openFiles[fp]
+	version := stateVersion(state)
 	l.mu.Unlock()
 
 	if client == nil || !ok {
 		return nil
 	}
 	results, err := client.FindReferences(ctx, fp, line, col, includeDeclaration)
+	if !l.currentDocument(fp, client, state, version) {
+		return nil
+	}
 	if err != nil {
 		return nil
 	}
@@ -330,13 +429,17 @@ func (l *LSPIntegration) RequestDocumentSymbols(ctx context.Context, filePath st
 	l.mu.Lock()
 	client := l.client
 	fp := filepath.Clean(filePath)
-	_, ok := l.openFiles[fp]
+	state, ok := l.openFiles[fp]
+	version := stateVersion(state)
 	l.mu.Unlock()
 
 	if client == nil || !ok {
 		return nil
 	}
 	results, err := client.RequestDocumentSymbols(ctx, fp)
+	if !l.currentDocument(fp, client, state, version) {
+		return nil
+	}
 	if err != nil {
 		return nil
 	}
@@ -358,12 +461,17 @@ func (l *LSPIntegration) RequestHover(ctx context.Context, filePath string, line
 		return "", fmt.Errorf("file not open in LSP")
 	}
 	uri := state.uri
+	client := l.client
+	version := stateVersion(state)
 	l.mu.Unlock()
 
-	hover, err := l.client.RequestHover(ctx, uri, protocol.Position{
+	hover, err := client.RequestHover(ctx, uri, protocol.Position{
 		Line:      uint32(line),
 		Character: uint32(col),
 	})
+	if !l.currentDocument(fp, client, state, version) {
+		return "", context.Canceled
+	}
 	if err != nil {
 		return "", err
 	}
@@ -382,13 +490,18 @@ func (l *LSPIntegration) RequestRename(ctx context.Context, filePath string, lin
 	l.mu.Lock()
 	client := l.client
 	fp := filepath.Clean(filePath)
-	_, ok := l.openFiles[fp]
+	state, ok := l.openFiles[fp]
+	version := stateVersion(state)
 	l.mu.Unlock()
 
 	if client == nil || !ok {
 		return nil, fmt.Errorf("file not open in LSP")
 	}
-	return client.RequestRename(ctx, fp, line, col, newName)
+	result, err := client.RequestRename(ctx, fp, line, col, newName)
+	if !l.currentDocument(fp, client, state, version) {
+		return nil, context.Canceled
+	}
+	return result, err
 }
 
 // ServerCmd returns the command used to launch the LSP server, e.g. "gopls".
@@ -397,16 +510,20 @@ func (l *LSPIntegration) ServerCmd() string {
 }
 
 func (l *LSPIntegration) toLSPLocations(locs []protocol.Location) []LSPLocation {
+	l.mu.Lock()
+	defer l.mu.Unlock()
 	out := make([]LSPLocation, 0, len(locs))
 	for _, p := range locs {
 		uri := string(p.URI)
+		col, endCol := int(p.Range.Start.Character), int(p.Range.End.Character)
+
 		out = append(out, LSPLocation{
 			URI:     uri,
 			Path:    l.uriToPath(p.URI),
 			Line:    int(p.Range.Start.Line),
-			Col:     int(p.Range.Start.Character),
+			Col:     col,
 			EndLine: int(p.Range.End.Line),
-			EndCol:  int(p.Range.End.Character),
+			EndCol:  endCol,
 		})
 	}
 	return out
@@ -475,17 +592,29 @@ func stripMarkdown(s string) string {
 
 func (l *LSPIntegration) Stop() {
 	l.mu.Lock()
+	launch := l.launch
+	l.launch = nil
 	client := l.client
 	l.client = nil
 	l.openFiles = make(map[string]*openFileState)
+	var starting *lsp.Client
+	if launch != nil {
+		launch.cancel()
+		starting = launch.client
+	}
 	l.mu.Unlock()
-
 	if client != nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		_ = client.Shutdown(ctx)
-		_ = client.Exit()
+		ctx, cancel := context.WithTimeout(context.Background(), 250*time.Millisecond)
+		if client.Shutdown(ctx) == nil {
+			_ = client.Exit()
+		}
+		cancel()
 		client.Kill()
+	} else if starting != nil {
+		starting.Kill()
+	}
+	if launch != nil {
+		<-launch.done
 	}
 }
 
@@ -511,55 +640,6 @@ func (l *LSPIntegration) NotifyWatchedFilesChanged(ctx context.Context, filePath
 	})
 }
 
-// SyncFileFromDisk re-reads the file from disk and pushes the content to the
-// LSP server via didChange. This is needed for files that were bulk-opened via
-// openProjectFiles (didOpen) but are NOT open in the editor UI. Per the LSP
-// spec, once a file is "open" the server's in-memory document is the source of
-// truth and didChangeWatchedFiles is ignored for it — so the only way to make
-// the server re-analyze after an external edit is to push the new content via
-// didChange.
-//
-// For deleted files, the file is closed via didClose so the server clears its
-// diagnostics.
-//
-// The caller must exclude the active editor file (which is handled by the
-// editor's own Reload + UpdateFile path) to avoid clobbering unsaved edits.
-func (l *LSPIntegration) SyncFileFromDisk(ctx context.Context, filePath string, changeType int) {
-	fp := filepath.Clean(filePath)
-
-	if changeType == 3 { // Deleted
-		l.CloseFile(ctx, fp)
-		return
-	}
-
-	// Read the new content from disk.
-	data, err := os.ReadFile(fp)
-	if err != nil {
-		// File may have been deleted between the fsnotify event and now.
-		l.CloseFile(ctx, fp)
-		return
-	}
-
-	l.mu.Lock()
-	_, isOpen := l.openFiles[fp]
-	l.mu.Unlock()
-
-	if !isOpen {
-		// File is not open in the LSP server. Send didOpen so the server
-		// starts tracking it and publishes diagnostics.
-		ext := strings.ToLower(filepath.Ext(fp))
-		langID := LanguageID(ext)
-		if langID == "" {
-			return
-		}
-		l.OpenFile(ctx, fp, langID, string(data))
-		return
-	}
-
-	// File is already open in the LSP — push the new content via didChange.
-	l.UpdateFile(ctx, fp, string(data))
-}
-
 func (l *LSPIntegration) Diagnostics() []LSPDiagnostic {
 	return nil // per-file diagnostics are not stored centrally; routed via callback
 }
@@ -572,114 +652,164 @@ func (l *LSPIntegration) uriToPath(uri protocol.DocumentURI) string {
 	return filepath.Clean(path)
 }
 
-func (l *LSPIntegration) updateDiagnostics(uri protocol.DocumentURI, diags []protocol.Diagnostic) {
+func (l *LSPIntegration) updateDiagnostics(launch *lspLaunch, uri protocol.DocumentURI, version *int32, diags []protocol.Diagnostic) {
 	filePath := l.uriToPath(uri)
-
-	out := make([]LSPDiagnostic, 0, len(diags))
-	for _, d := range diags {
-		out = append(out, LSPDiagnostic{
-			Line:     int(d.Range.Start.Line),
-			Col:      int(d.Range.Start.Character),
-			EndLine:  int(d.Range.End.Line),
-			EndCol:   int(d.Range.End.Character),
-			Message:  d.Message,
-			Severity: int(d.Severity),
-		})
-	}
-
 	l.mu.Lock()
+	if l.launch != launch {
+		l.mu.Unlock()
+		return
+	}
+	state := l.openFiles[filePath]
+	if state == nil || (version != nil && int(*version) != state.version) {
+		l.mu.Unlock()
+		return
+	}
 	cb := l.onDiagnostics
 	l.mu.Unlock()
-
+	out := make([]LSPDiagnostic, 0, len(diags))
+	for _, d := range diags {
+		out = append(out, LSPDiagnostic{Line: int(d.Range.Start.Line), Col: int(d.Range.Start.Character), EndLine: int(d.Range.End.Line), EndCol: int(d.Range.End.Character), Message: d.Message, Severity: int(d.Severity)})
+	}
 	if cb != nil {
-		cb(filePath, out)
+		l.mu.Lock()
+		current := l.launch == launch && l.openFiles[filePath] == state && (version == nil || state.version == int(*version))
+		l.mu.Unlock()
+		if current {
+			cb(filePath, out)
+		}
 	}
 }
 
-// LanguageID returns the LSP language identifier for a file extension.
-func LanguageID(ext string) string {
-	switch ext {
-	case ".go":
-		return "go"
-	case ".rs":
-		return "rust"
-	case ".py":
-		return "python"
-	case ".ts", ".tsx":
-		return "typescript"
-	case ".js", ".jsx":
-		return "javascript"
-	case ".css":
-		return "css"
-	case ".json":
-		return "json"
-	case ".c", ".h":
-		return "c"
-	case ".cpp", ".hpp", ".cc", ".hh", ".cxx", ".hxx", ".c++", ".h++":
-		return "cpp"
-	case ".cs":
-		return "csharp"
-	case ".zig":
-		return "zig"
-	case ".odin":
-		return "odin"
-	case ".lua":
-		return "lua"
-	default:
-		return ""
+func stateVersion(state *openFileState) int {
+	if state == nil {
+		return 0
 	}
+	return state.version
 }
 
-// RootURIForFile walks up from the file's directory looking for project
-// markers (go.mod, package.json, etc.) and returns a "file://" URI for
-// the first directory containing one.  If no marker is found it returns
-// the file's own directory as a file URI.
-func RootURIForFile(filePath string) string {
-	dir := filepath.Dir(filePath)
-	ext := strings.ToLower(filepath.Ext(filePath))
-	markers := []string{"go.mod", "package.json", "Cargo.toml", "pyproject.toml", "composer.json", "CMakeLists.txt", "compile_commands.json"}
-	preferred := map[string]string{
-		".go":   "go.mod",
-		".rs":   "Cargo.toml",
-		".py":   "pyproject.toml",
-		".c":    "compile_commands.json",
-		".cpp":  "compile_commands.json",
-		".h":    "compile_commands.json",
-		".hpp":  "compile_commands.json",
-		".cc":   "compile_commands.json",
-		".hh":   "compile_commands.json",
-		".cxx":  "compile_commands.json",
-		".hxx":  "compile_commands.json",
-		".c++":  "compile_commands.json",
-		".h++":  "compile_commands.json",
-		".cs":   ".csproj",
-		".zig":  "build.zig",
-		".odin": "ols.json",
-		".lua":  ".luarc.json",
-	}
-	if p, ok := preferred[ext]; ok {
-		markers = []string{p}
-	}
-	d := dir
-	for {
-		for _, m := range markers {
-			if _, err := os.Stat(filepath.Join(d, m)); err == nil {
-				return string(protocol.URIFromPath(d))
+func neutralTextEdit(edit protocol.TextEdit) model.LSPTextEdit {
+	return model.LSPTextEdit{Line: int(edit.Range.Start.Line), Col: int(edit.Range.Start.Character), EndLine: int(edit.Range.End.Line), EndCol: int(edit.Range.End.Character), NewText: edit.NewText}
+}
+
+// expandSnippet supports numeric tab stops, defaults and choices as plain text.
+// Variables/transforms are rejected rather than inserting executable-looking
+// snippet syntax or guessing environment values. Repeated stops mirror defaults.
+func expandSnippet(source string) (string, bool) {
+	values := make(map[string]string)
+	var parse func(string, int) (string, bool)
+	parse = func(s string, depth int) (string, bool) {
+		if depth > 16 {
+			return "", false
+		}
+		var out strings.Builder
+		for i := 0; i < len(s); {
+			if s[i] == '\\' {
+				if i+1 >= len(s) || !strings.ContainsRune(`\$},|`, rune(s[i+1])) {
+					return "", false
+				}
+				out.WriteByte(s[i+1])
+				i += 2
+				continue
 			}
+			if s[i] != '$' {
+				out.WriteByte(s[i])
+				i++
+				continue
+			}
+			i++
+			braced := i < len(s) && s[i] == '{'
+			if braced {
+				i++
+			}
+			start := i
+			for i < len(s) && s[i] >= '0' && s[i] <= '9' {
+				i++
+			}
+			if start == i {
+				return "", false
+			}
+			id := s[start:i]
+			if _, err := strconv.Atoi(id); err != nil {
+				return "", false
+			}
+			value := values[id]
+			if braced {
+				if i >= len(s) {
+					return "", false
+				}
+				switch s[i] {
+				case '}':
+					i++
+				case ':':
+					i++
+					start = i
+					level := 1
+					for i < len(s) && level > 0 {
+						if s[i] == '\\' {
+							i += 2
+							continue
+						}
+						if s[i] == '{' {
+							level++
+						}
+						if s[i] == '}' {
+							level--
+						}
+						if level > 0 {
+							i++
+						}
+					}
+					if i >= len(s) {
+						return "", false
+					}
+					var ok bool
+					value, ok = parse(s[start:i], depth+1)
+					if !ok {
+						return "", false
+					}
+					i++
+				case '|':
+					i++
+					var first strings.Builder
+					chosen := false
+					for i < len(s) && (s[i] != '|' || i+1 >= len(s) || s[i+1] != '}') {
+						if s[i] == '\\' {
+							if i+1 >= len(s) {
+								return "", false
+							}
+							i++
+							if !chosen {
+								first.WriteByte(s[i])
+							}
+							i++
+							continue
+						}
+						if s[i] == ',' {
+							chosen = true
+						} else if !chosen {
+							first.WriteByte(s[i])
+						}
+						i++
+					}
+					if i+1 >= len(s) {
+						return "", false
+					}
+					value = first.String()
+					i += 2
+				default:
+					return "", false
+				}
+			}
+			values[id] = value
+			out.WriteString(value)
 		}
-		parent := filepath.Dir(d)
-		if parent == d {
-			return string(protocol.URIFromPath(dir))
-		}
-		d = parent
+		return out.String(), true
 	}
+	return parse(source, 0)
 }
 
-// ServerConfigForExt returns the LSP server config for a file extension.
-func ServerConfigForExt(ext string) (cmd string, args []string, ok bool) {
-	cfg, ok := lspServers[ext]
-	if !ok {
-		return "", nil, false
-	}
-	return cfg.Cmd, cfg.Args, true
+func (l *LSPIntegration) currentDocument(path string, client *lsp.Client, state *openFileState, version int) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	return l.client == client && state != nil && l.openFiles[path] == state && state.version == version
 }

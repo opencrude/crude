@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -14,6 +15,25 @@ import (
 
 	captypes "crude/types/capability"
 )
+
+type cancelledLifetimeTransport struct{ calls int }
+
+func (transport *cancelledLifetimeTransport) RoundTrip(*http.Request) (*http.Response, error) {
+	transport.calls++
+	return nil, errors.New("cancelled lifetime reached transport")
+}
+
+func TestClosedMCPLifetimeCannotStartLateHTTPRequests(t *testing.T) {
+	lifetime, cancel := context.WithCancel(t.Context())
+	cancel()
+	base := &cancelledLifetimeTransport{}
+	endpoint, _ := url.Parse("https://example.test/mcp")
+	transport := headerTransport{base: base, endpoint: endpoint, lifetime: lifetime}
+	request, _ := http.NewRequest(http.MethodDelete, endpoint.String(), nil)
+	if _, err := transport.RoundTrip(request); !errors.Is(err, context.Canceled) || base.calls != 0 {
+		t.Fatalf("late teardown traffic escaped closed owner: calls=%d err=%v", base.calls, err)
+	}
+}
 
 func managedServer(t *testing.T, toolName string, call func(context.Context) (*mcp.CallToolResult, error)) (*httptest.Server, *atomic.Int32) {
 	t.Helper()

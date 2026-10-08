@@ -39,6 +39,7 @@ type recoveryRunState struct {
 	terminalSettlement json.RawMessage
 	sourceRevision     uint64
 	publishedRevision  uint64
+	inFlightTools      []provider.ChatMessage
 }
 
 func newRecoveryRunState(input provider.UserInput, checkpoint *sessiondb.RecoveryCheckpoint) *recoveryRunState {
@@ -56,6 +57,7 @@ func newRecoveryRunState(input provider.UserInput, checkpoint *sessiondb.Recover
 	state.contextReason = checkpoint.ContextReason
 	state.ownerData = append([]byte(nil), checkpoint.OwnerData...)
 	state.terminalSettlement = append(json.RawMessage(nil), checkpoint.TerminalSettlement...)
+	state.inFlightTools = append([]provider.ChatMessage(nil), checkpoint.InFlightTools...)
 	state.sourceRevision = 1
 	state.publishedRevision = 1
 	return state
@@ -84,9 +86,31 @@ func (s *recoveryRunState) snapshot(archive, active []provider.ChatMessage) {
 	changed := !reflect.DeepEqual(s.archive, archive) || !reflect.DeepEqual(s.active, active)
 	s.archive = append([]provider.ChatMessage(nil), archive...)
 	s.active = append([]provider.ChatMessage(nil), active...)
+	// A completed round retires only its exact in-flight evidence. Unrelated
+	// snapshots (including panic/attention) must retain unfinished leaf results.
+	completed := make(map[string]bool)
+	for _, message := range active {
+		if message.Role == "tool" {
+			completed[message.ToolCallID] = true
+		}
+	}
+	remaining := s.inFlightTools[:0]
+	for _, message := range s.inFlightTools {
+		if !completed[message.ToolCallID] {
+			remaining = append(remaining, message)
+		}
+	}
+	s.inFlightTools = remaining
 	if changed {
 		s.sourceRevision++
 	}
+	s.mu.Unlock()
+}
+
+func (s *recoveryRunState) snapshotTools(archive, active, inFlight []provider.ChatMessage) {
+	s.snapshot(archive, active)
+	s.mu.Lock()
+	s.inFlightTools = append([]provider.ChatMessage(nil), inFlight...)
 	s.mu.Unlock()
 }
 
@@ -168,22 +192,24 @@ func (s *recoveryRunState) checkpoint(status recoverytypes.Status) sessiondb.Rec
 		ContextOwnerID: s.contextOwnerID, ContextRevision: s.contextRevision, ContextGeneration: s.contextGeneration,
 		ContextReason: s.contextReason, OwnerData: append([]byte(nil), s.ownerData...),
 		TerminalSettlement: append(json.RawMessage(nil), s.terminalSettlement...),
+		InFlightTools:      append([]provider.ChatMessage(nil), s.inFlightTools...),
 	}
 }
 
 func (s *recoveryRunState) publish(db *sql.DB, sessionID string, status recoverytypes.Status) error {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	checkpoint := sessiondb.RecoveryCheckpoint{
 		Status: status, PendingInput: cloneUserInput(s.pending), InputAdmitted: s.inputAdmitted,
 		Archive: append([]provider.ChatMessage(nil), s.archive...), ActiveContext: append([]provider.ChatMessage(nil), s.active...),
 		ContextOwnerID: s.contextOwnerID, ContextRevision: s.contextRevision, ContextGeneration: s.contextGeneration,
 		ContextReason: s.contextReason, OwnerData: append([]byte(nil), s.ownerData...),
 		TerminalSettlement: append(json.RawMessage(nil), s.terminalSettlement...),
+		InFlightTools:      append([]provider.ChatMessage(nil), s.inFlightTools...),
 	}
 	owner, revision := s.contextOwnerID, s.contextRevision
 	sourceRevision := s.sourceRevision
 	dirty := sourceRevision != s.publishedRevision
-	s.mu.Unlock()
 	if owner == "" {
 		return sessiondb.SaveRecoveryCheckpoint(db, sessionID, checkpoint)
 	}
@@ -206,13 +232,11 @@ func (s *recoveryRunState) publish(db *sql.DB, sessionID string, status recovery
 	if err != nil {
 		return err
 	}
-	s.mu.Lock()
 	s.contextRevision, s.contextGeneration, s.contextReason = state.Revision, state.Generation, state.Reason
 	s.active = append([]provider.ChatMessage(nil), state.Messages...)
 	if s.sourceRevision == sourceRevision {
 		s.publishedRevision = sourceRevision
 	}
-	s.mu.Unlock()
 	return nil
 }
 
@@ -260,7 +284,7 @@ func (s *Session) newRecoverySupervisor(
 		if db == s.db && owner == s.sessionID {
 			return s.publishRootRecovery(state, status)
 		}
-		return state.publish(db, sessionID, status)
+		return publishChildRecovery(db, sessionID, state, status)
 	}
 	supervisor.Discard = func(id string) error {
 		return sessiondb.DeleteRecoveryCheckpoint(db, id)

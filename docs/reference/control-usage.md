@@ -69,6 +69,10 @@ selects only the background the strip sits on (shell `ColorBg` vs popup
 - **Focus** = the whole baseline turns into the heavy accent rule (`━`). Focus is
   distinct from hover and from the active tab; hover only fills the tab
   background (`ColorHover`) and never underlines.
+  The main strip reserves this treatment for deliberate keyboard navigation.
+  Pointer selection/close returns focus to content; overflow browsing and hover
+  do not retain strip focus. After close decisions, the first rendered frame and
+  next keystroke already belong to the surviving content, not the tab bar.
 - **Inactive labels** are muted. Truncation is `…`; the close affordance (` ×`)
   and the attention marker (`● `) are additive and never restyle the tab. The
   marker is a prefix, so it can never collide with a label's own trailing

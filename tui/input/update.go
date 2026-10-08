@@ -326,10 +326,9 @@ func (m Model) handleMouse(msg tea.MouseMsg) (Model, tea.Cmd, Event) {
 			}
 		case tea.MouseWheelUp, tea.MouseWheelDown:
 			if msg.Button == tea.MouseWheelUp {
-				m.browseHistoryUp()
-			} else {
-				m.browseHistoryDown()
+				return m, nil, m.browseHistoryUp()
 			}
+			return m, nil, m.browseHistoryDown()
 		}
 
 	case tea.MouseMotionMsg:

@@ -766,6 +766,10 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		recoveryState.snapshot(archive, active)
 		return persistRecoveryBoundary(ctx, supervisor)
 	}
+	ag.CheckpointTools = func(archive, active, inFlight []provider.ChatMessage) error {
+		recoveryState.snapshotTools(archive, active, inFlight)
+		return persistRecoveryBoundary(ctx, supervisor)
+	}
 	if activeCfg.ContextCompactionPercent != nil {
 		ag.ContextCompactionPercent = *activeCfg.ContextCompactionPercent
 	}

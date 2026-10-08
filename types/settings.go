@@ -56,33 +56,6 @@ func (o WorkspaceOverrides) IsEmpty() bool {
 		len(o.UI) == 0 && len(o.Font) == 0 && len(o.Agents) == 0 && len(o.Memory) == 0 && len(o.Safety) == 0 && len(o.LocalHistory) == 0 && len(o.Capabilities) == 0
 }
 
-// LSPLanguage describes a built-in language server the settings UI can
-// enable, disable, or retarget.
-type LSPLanguage struct {
-	ID          string
-	Name        string
-	Exts        []string
-	DefaultCmd  string
-	DefaultArgs []string
-}
-
-// DefaultLSPLanguages is the catalog of servers Crude knows how to start.
-func DefaultLSPLanguages() []LSPLanguage {
-	return []LSPLanguage{
-		{ID: "go", Name: "Go (gopls)", Exts: []string{".go"}, DefaultCmd: "gopls"},
-		{ID: "rust", Name: "Rust (rust-analyzer)", Exts: []string{".rs"}, DefaultCmd: "rust-analyzer"},
-		{ID: "python", Name: "Python (pyright)", Exts: []string{".py"}, DefaultCmd: "pyright-langserver", DefaultArgs: []string{"--stdio"}},
-		{ID: "typescript", Name: "TypeScript / JavaScript", Exts: []string{".ts", ".js", ".tsx", ".jsx"}, DefaultCmd: "typescript-language-server", DefaultArgs: []string{"--stdio"}},
-		{ID: "css", Name: "CSS", Exts: []string{".css"}, DefaultCmd: "vscode-css-language-server", DefaultArgs: []string{"--stdio"}},
-		{ID: "json", Name: "JSON", Exts: []string{".json"}, DefaultCmd: "vscode-json-language-server", DefaultArgs: []string{"--stdio"}},
-		{ID: "cpp", Name: "C / C++ (clangd)", Exts: []string{".c", ".h", ".cpp", ".hpp", ".cc", ".hh", ".cxx", ".hxx", ".c++", ".h++"}, DefaultCmd: "clangd"},
-		{ID: "csharp", Name: "C# (OmniSharp)", Exts: []string{".cs"}, DefaultCmd: "omnisharp", DefaultArgs: []string{"--languageserver"}},
-		{ID: "zig", Name: "Zig (zls)", Exts: []string{".zig"}, DefaultCmd: "zls"},
-		{ID: "odin", Name: "Odin (ols)", Exts: []string{".odin"}, DefaultCmd: "ols"},
-		{ID: "lua", Name: "Lua", Exts: []string{".lua"}, DefaultCmd: "lua-language-server"},
-	}
-}
-
 // DefaultLSPSettings is the application-level language-intelligence baseline.
 func DefaultLSPSettings() LSPSettings {
 	languages := make(map[string]LSPLanguageSettings, 16)
@@ -90,23 +63,28 @@ func DefaultLSPSettings() LSPSettings {
 		languages[lang.ID] = LSPLanguageSettings{Enabled: true, Command: lang.DefaultCmd, Args: append([]string(nil), lang.DefaultArgs...)}
 	}
 	return LSPSettings{
-		Enabled:          true,
-		AutoDetect:       true,
-		StartOnOpen:      true,
-		Diagnostics:      true,
-		Completions:      true,
-		Hover:            true,
-		Definition:       true,
-		References:       true,
-		Outline:          true,
-		Rename:           true,
-		DiagInEditor:     true,
-		DiagInTree:       true,
-		DiagInStatus:     true,
-		AutoComplete:     true,
-		MinSeverity:      "hint",
-		UpdateDebounceMS: 300,
-		Languages:        languages,
+		Enabled:            true,
+		AutoDetect:         true,
+		StartOnOpen:        true,
+		Diagnostics:        true,
+		Completions:        true,
+		Hover:              true,
+		Definition:         true,
+		References:         true,
+		Outline:            true,
+		Rename:             true,
+		DiagInEditor:       true,
+		DiagInTree:         true,
+		DiagInStatus:       true,
+		AutoComplete:       true,
+		MinSeverity:        "hint",
+		UpdateDebounceMS:   300,
+		MaxServers:         2,
+		ServerThreads:      2,
+		ServerMemoryMB:     1024,
+		IdleTimeoutSeconds: 300,
+		MaxDocumentBytes:   2 * 1024 * 1024,
+		Languages:          languages,
 	}
 }
 
@@ -232,38 +210,33 @@ func NormalizeEditorSettings(s EditorSettings) EditorSettings {
 	return s
 }
 
-// lspLegacyFeaturesUnset reports a config written before per-feature flags
-// existed. Those bools persist without omitempty, so a missing field loads as
-// false and would otherwise disable diagnostics even when Diagnostics is on.
-func lspLegacyFeaturesUnset(s LSPSettings) bool {
-	return !s.StartOnOpen && !s.Completions && !s.Hover && !s.Definition &&
-		!s.References && !s.Outline && !s.Rename && !s.AutoComplete &&
-		!s.DiagInEditor && !s.DiagInTree && !s.DiagInStatus
-}
-
 // NormalizeLSP fills missing language-intelligence fields without turning an
 // explicit all-off configuration back on.
 func NormalizeLSP(s LSPSettings) LSPSettings {
+	s = CloneLSPSettings(s)
 	def := DefaultLSPSettings()
+	if s.ServerThreads == 0 {
+		s.ServerThreads = def.ServerThreads
+	}
+	if s.ServerMemoryMB == 0 {
+		s.ServerMemoryMB = def.ServerMemoryMB
+	}
 	if s.MinSeverity == "" {
 		s.MinSeverity = def.MinSeverity
 	}
 	if s.UpdateDebounceMS == 0 {
 		s.UpdateDebounceMS = def.UpdateDebounceMS
 	}
-	if lspLegacyFeaturesUnset(s) {
-		s.StartOnOpen = def.StartOnOpen
-		s.Completions = def.Completions
-		s.Hover = def.Hover
-		s.Definition = def.Definition
-		s.References = def.References
-		s.Outline = def.Outline
-		s.Rename = def.Rename
-		s.AutoComplete = def.AutoComplete
-		s.DiagInEditor = def.DiagInEditor
-		s.DiagInTree = def.DiagInTree
-		s.DiagInStatus = def.DiagInStatus
+	if s.MaxServers == 0 {
+		s.MaxServers = def.MaxServers
 	}
+	if s.IdleTimeoutSeconds == 0 {
+		s.IdleTimeoutSeconds = def.IdleTimeoutSeconds
+	}
+	if s.MaxDocumentBytes == 0 {
+		s.MaxDocumentBytes = def.MaxDocumentBytes
+	}
+
 	if s.Languages == nil {
 		s.Languages = def.Languages
 	} else {
@@ -609,9 +582,7 @@ func cloneAppSettings(s AppSettings) AppSettings {
 	out.Memory.MemoryCategory.ContextCompactionPercent = cloneIntSetting(s.Memory.MemoryCategory.ContextCompactionPercent)
 	out.Safety.CommandRules = append([]CommandSeverityRule(nil), s.Safety.CommandRules...)
 	out.LocalHistory.ExtraIgnorePatterns = append([]string(nil), s.LocalHistory.ExtraIgnorePatterns...)
-	out.LSP.Languages = cloneLanguages(s.LSP.Languages)
-	out.LSP.Servers = cloneStringMap(s.LSP.Servers)
-	out.LSP.ServerArgs = cloneStringSliceMap(s.LSP.ServerArgs)
+	out.LSP = CloneLSPSettings(s.LSP)
 	return out
 }
 
@@ -655,6 +626,11 @@ func cloneLanguages(src map[string]LSPLanguageSettings) map[string]LSPLanguageSe
 	out := make(map[string]LSPLanguageSettings, len(src))
 	for k, v := range src {
 		v.Args = append([]string(nil), v.Args...)
+		v.Extensions = append([]string(nil), v.Extensions...)
+		v.RootMarkers = append([]string(nil), v.RootMarkers...)
+		v.Environment = cloneStringMap(v.Environment)
+		v.Settings = cloneJSONObject(v.Settings)
+		v.InitializationOptions = cloneJSONObject(v.InitializationOptions)
 		out[k] = v
 	}
 	return out
@@ -684,28 +660,18 @@ func cloneStringSliceMap(src map[string][]string) map[string][]string {
 
 // LanguageEnabled reports whether the language server for ext should start.
 func (s LSPSettings) LanguageEnabled(ext string) bool {
-	if !s.Enabled {
-		return false
-	}
-	id := languageIDForExt(ext)
-	if id == "" {
-		return true
-	}
-	if lang, ok := s.Languages[id]; ok {
-		return lang.Enabled
-	}
-	return true
+	_, ok := s.ResolveServer("document" + ext)
+	return ok
 }
 
-// ServerOverride returns a command override for ext when the user retargeted
-// that language. ok is false when the built-in default should be used.
+// ServerOverride returns an explicit command/argument definition without defaults.
 func (s LSPSettings) ServerOverride(ext string) (cmd string, args []string, ok bool) {
-	if cmd, exists := s.Servers[ext]; exists && cmd != "" {
-		return cmd, append([]string(nil), s.ServerArgs[ext]...), true
-	}
-	id := languageIDForExt(ext)
-	if id == "" {
+	id, _ := s.languageForExtension(ext)
+	if lang, exists := s.Languages[id]; exists && !lang.Enabled {
 		return "", nil, false
+	}
+	if cmd := s.Servers[ext]; cmd != "" {
+		return cmd, append([]string(nil), s.ServerArgs[ext]...), true
 	}
 	lang, exists := s.Languages[id]
 	if !exists || lang.Command == "" {

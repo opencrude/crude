@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"reflect"
 	"slices"
 	"time"
 
@@ -14,7 +15,13 @@ import (
 
 // reconcileInterruptedTools closes only missing outcomes, never rerunning a
 // historical call or claiming that an unknown side effect was cancelled.
-func reconcileInterruptedTools(messages []provider.ChatMessage) []provider.ChatMessage {
+func reconcileInterruptedTools(messages []provider.ChatMessage, evidence ...provider.ChatMessage) []provider.ChatMessage {
+	inFlight := make(map[string]provider.ChatMessage, len(evidence))
+	for _, message := range evidence {
+		if message.Role == "tool" && message.ToolCallID != "" {
+			inFlight[message.ToolCallID] = message
+		}
+	}
 	result := make([]provider.ChatMessage, 0, len(messages))
 	for i := 0; i < len(messages); i++ {
 		message := messages[i]
@@ -30,6 +37,10 @@ func reconcileInterruptedTools(messages []provider.ChatMessage) []provider.ChatM
 		}
 		for _, call := range message.ToolCalls {
 			if !present[call.ID] {
+				if partial, ok := inFlight[call.ID]; ok {
+					result = append(result, partial)
+					continue
+				}
 				result = append(result, provider.ChatMessage{
 					Role: "tool", ToolCallID: call.ID, ToolError: true,
 					Content: provider.TextContent("Outcome unknown: execution was interrupted before a durable result was recorded. This call has not been replayed."),
@@ -119,6 +130,12 @@ func (s *Session) restoreRecoveryTranscript(checkpoint *sessiondb.RecoveryCheckp
 		return err
 	}
 	archive := recoveryArchiveMessages(checkpoint.Archive)
+	inFlightIDs := make(map[string]provider.ChatMessage, len(checkpoint.InFlightTools))
+	for _, message := range checkpoint.InFlightTools {
+		if message.InternalID != "" {
+			inFlightIDs[message.InternalID] = canonicalContextMessage(message)
+		}
+	}
 	seen := make(map[string]bool, len(archive))
 	lastMatched := -1
 	for _, message := range archive {
@@ -176,7 +193,9 @@ func (s *Session) restoreRecoveryTranscript(checkpoint *sessiondb.RecoveryCheckp
 		}
 		canonical := canonicalContextMessage(message)
 		identity, exists := identities[message.InternalID]
-		if !exists && found && !anonymous {
+		partial, capturedInFlight := inFlightIDs[message.InternalID]
+		capturedInFlight = capturedInFlight && reflect.DeepEqual(partial, canonical)
+		if !exists && found && !anonymous && !capturedInFlight {
 			return &sessiondb.ContextMessageConflictError{InternalID: message.InternalID, Location: "missing recovery immutable identity"}
 		}
 		if exists {
@@ -241,7 +260,7 @@ func (s *Session) restoreRecoveryTranscript(checkpoint *sessiondb.RecoveryCheckp
 		if current.Revision == checkpoint.ContextRevision && !retainsContextSource(active, current.Messages) {
 			return fmt.Errorf("recovery context does not retain committed revision %d", current.Revision)
 		}
-		active = reconcileInterruptedTools(current.Messages)
+		active = reconcileInterruptedTools(current.Messages, checkpoint.InFlightTools...)
 	}
 	active = canonicalContextMessages(inheritContextMessageIDs(active, archive))
 	// Compacted active contexts are not archive-shaped. Match anonymous accepted

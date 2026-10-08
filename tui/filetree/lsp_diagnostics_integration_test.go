@@ -2,9 +2,10 @@ package filetree
 
 import (
 	"context"
-	"os"
 	"path/filepath"
+	"sync"
 	"testing"
+	"time"
 
 	model "crude/types"
 	"crude/workspace"
@@ -18,6 +19,7 @@ func (treeLSPTestLogger) Error(tag, msg string, pairs ...any) {}
 func (treeLSPTestLogger) Debug(tag, msg string, pairs ...any) {}
 
 type treeLSPTestClient struct {
+	ready         chan struct{}
 	onDiagnostics func(string, []workspace.LSPDiagnostic)
 }
 
@@ -25,7 +27,7 @@ func (c *treeLSPTestClient) OnDiagnostics(fn func(string, []workspace.LSPDiagnos
 	c.onDiagnostics = fn
 }
 
-func (c *treeLSPTestClient) Start(context.Context) error { return nil }
+func (c *treeLSPTestClient) Start(context.Context) error { close(c.ready); return nil }
 func (c *treeLSPTestClient) Stop()                       {}
 func (c *treeLSPTestClient) Done() <-chan struct{}       { return nil }
 func (c *treeLSPTestClient) OpenFile(context.Context, string, string, string) {
@@ -62,46 +64,20 @@ func (c *treeLSPTestClient) EmitDiagnostics(filePath string, diags []workspace.L
 }
 
 type treeLSPTestRuntime struct {
-	command string
-	client  *treeLSPTestClient
+	mu     sync.Mutex
+	client *treeLSPTestClient
 }
 
-func (r *treeLSPTestRuntime) NewClient(serverCmd string, serverArgs []string, rootURI string) workspace.LSPClient {
-	r.client = &treeLSPTestClient{}
+func (r *treeLSPTestRuntime) NewClient(model.LSPServerSpec, string) workspace.LSPClient {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.client = &treeLSPTestClient{ready: make(chan struct{})}
 	return r.client
-}
-
-func (r *treeLSPTestRuntime) ServerConfigForExt(ext string) (string, []string, bool) {
-	if ext != ".go" {
-		return "", nil, false
-	}
-	return r.command, nil, true
-}
-
-func (r *treeLSPTestRuntime) RootURIForFile(filePath string) string {
-	absPath, err := filepath.Abs(filePath)
-	if err != nil {
-		absPath = filePath
-	}
-	return "file://" + filepath.Dir(absPath)
-}
-
-func (r *treeLSPTestRuntime) LanguageID(ext string) string {
-	if ext == ".go" {
-		return "go"
-	}
-	return ""
-}
-
-func (r *treeLSPTestRuntime) AllServerConfigs() map[string]workspace.LSPServerConfig {
-	return map[string]workspace.LSPServerConfig{
-		".go": {Cmd: r.command},
-	}
 }
 
 func newTreeDiagnosticsManager(t *testing.T, tree *FileTreeModel) (*workspace.LSPManager, *treeLSPTestRuntime, *bool) {
 	t.Helper()
-	runtime := &treeLSPTestRuntime{command: os.Args[0]}
+	runtime := &treeLSPTestRuntime{}
 	mgr := workspace.NewLSPManager(treeLSPTestLogger{}, runtime)
 	treeUpdated := false
 	mgr.SetOnDiagnostics(func(filePath string, diags []workspace.LSPDiagnostic) {
@@ -119,16 +95,31 @@ func newTreeDiagnosticsManager(t *testing.T, tree *FileTreeModel) (*workspace.LS
 		}
 		tree.SetDiagnostics(filePath, errs, warns, hints)
 	})
-	t.Cleanup(mgr.Stop)
+	t.Cleanup(mgr.Close)
 	return mgr, runtime, &treeUpdated
 }
 
 func openTreeDiagnosticsFile(t *testing.T, mgr *workspace.LSPManager, runtime *treeLSPTestRuntime, filePath string) {
 	t.Helper()
 	mgr.OpenFile(context.Background(), filePath, "")
-	if runtime.client == nil {
-		t.Fatal("LSP runtime did not create a client")
+	deadline := time.Now().Add(3 * time.Second)
+	for {
+		runtime.mu.Lock()
+		client := runtime.client
+		runtime.mu.Unlock()
+		if client != nil {
+			select {
+			case <-client.ready:
+				return
+			default:
+			}
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("LSP client not ready")
+		}
+		time.Sleep(time.Millisecond)
 	}
+
 }
 
 func TestLSPManager_TreeDiagnosticsIntegration(t *testing.T) {

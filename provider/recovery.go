@@ -57,12 +57,44 @@ func (e *StreamInterruptionError) Unwrap() error {
 
 func permanentAPIError(code string) bool {
 	code = strings.ToLower(code)
-	for _, kind := range []string{"insufficient_quota", "billing", "credit_balance", "invalid_api_key", "authentication_error", "permission_denied", "invalid_request", "context_length_exceeded", "model_not_found"} {
+	if quotaAPIError(code) {
+		return true
+	}
+	for _, kind := range []string{"invalid_api_key", "authentication_error", "permission_denied", "invalid_request", "context_length_exceeded", "model_not_found"} {
 		if strings.Contains(code, kind) {
 			return true
 		}
 	}
 	return false
+}
+
+func quotaAPIError(code string) bool {
+	code = strings.ToLower(code)
+	return strings.Contains(code, "insufficient_quota") || strings.Contains(code, "billing") || strings.Contains(code, "credit_balance")
+}
+
+// retryableAPIStatus gives explicit HTTP/status evidence precedence over a
+// generic error-envelope label. Gateways use invalid_request_error for timeouts,
+// throttling and upstream outages too. Specific permanent codes, an identified
+// invalid parameter and explicit retry vetoes still fail closed. Do not inspect
+// diagnostic prose or make this policy depend on the chosen wire protocol.
+func retryableAPIStatus(status int, codes, param, retryHint string) bool {
+	if retryHint == "false" {
+		return false
+	}
+	for _, code := range strings.Fields(strings.ToLower(codes)) {
+		if (code == "invalid_request" || code == "invalid_request_error") && param == "" {
+			continue
+		}
+		if permanentAPIError(code) {
+			return false
+		}
+	}
+	switch status {
+	case 400, 401, 403, 404, 413, 422:
+		return false
+	}
+	return retryHint == "true" || isRetryableStatus(status)
 }
 
 // Retryable classifies recovery, not replay safety. The stream owner retries
@@ -86,11 +118,11 @@ func Retryable(err error) bool {
 	var api *APIError
 	if errors.As(err, &api) {
 		code := strings.ToLower(api.Type + " " + api.Code)
+		if status, err := strconv.Atoi(api.Code); err == nil {
+			return retryableAPIStatus(status, code, api.Param, "")
+		}
 		if permanentAPIError(code) {
 			return false
-		}
-		if status, err := strconv.Atoi(api.Code); err == nil {
-			return isRetryableStatus(status)
 		}
 		for _, kind := range []string{"overload", "rate_limit", "temporar", "api_error", "server_error", "internal_error", "timeout", "unavailable", "gateway_stream_terminated", "stream_error"} {
 			if strings.Contains(code, kind) {
@@ -134,7 +166,7 @@ func ErrorSummary(err error) string {
 	}
 	var status *StatusError
 	if errors.As(err, &status) {
-		if permanentAPIError(status.Code) && status.StatusCode == 429 {
+		if quotaAPIError(status.Code+" "+status.APIType+" "+status.APICode) && status.StatusCode == 429 {
 			return "Provider quota or billing limit reached"
 		}
 		switch status.StatusCode {

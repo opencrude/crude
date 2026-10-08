@@ -11,6 +11,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	ttypes "crude/tui/types"
+	model "crude/types"
 	"crude/workspace"
 )
 
@@ -52,14 +53,8 @@ type noopLSPRuntime struct{}
 
 type noopLSPClient struct{}
 
-func (noopLSPRuntime) NewClient(serverCmd string, serverArgs []string, rootURI string) workspace.LSPClient {
+func (noopLSPRuntime) NewClient(model.LSPServerSpec, string) workspace.LSPClient {
 	return noopLSPClient{}
-}
-func (noopLSPRuntime) ServerConfigForExt(ext string) (string, []string, bool) { return "", nil, false }
-func (noopLSPRuntime) RootURIForFile(filePath string) string                  { return "" }
-func (noopLSPRuntime) LanguageID(ext string) string                           { return "" }
-func (noopLSPRuntime) AllServerConfigs() map[string]workspace.LSPServerConfig {
-	return map[string]workspace.LSPServerConfig{}
 }
 
 func (noopLSPClient) OnDiagnostics(func(string, []workspace.LSPDiagnostic)) {}

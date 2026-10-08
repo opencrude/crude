@@ -252,7 +252,14 @@ func (manager *Manager) oauthHandler(config captypes.ConnectionConfig, lifetime 
 	var once sync.Once
 	cleanup = func() {
 		once.Do(func() {
-			_ = server.Close()
+			// Receiving the code wakes the token exchange before this handler has
+			// returned. Graceful bounded shutdown lets its HTTP acknowledgement
+			// finish rather than racing server.Close against the browser response.
+			ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+			defer cancel()
+			if err := server.Shutdown(ctx); err != nil {
+				_ = server.Close()
+			}
 			manager.mu.Lock()
 			if manager.authCallbacks[config.ID] == flow {
 				delete(manager.authCallbacks, config.ID)

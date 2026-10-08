@@ -659,9 +659,15 @@ type EditorSettings struct {
 // LSPLanguageSettings is the per-language overlay for one language server.
 // Empty Command/Args inherit the built-in default for that language.
 type LSPLanguageSettings struct {
-	Enabled bool     `json:"enabled"`
-	Command string   `json:"command,omitempty"`
-	Args    []string `json:"args,omitempty"`
+	Enabled               bool              `json:"enabled"`
+	Command               string            `json:"command,omitempty"`
+	Args                  []string          `json:"args,omitempty"`
+	Extensions            []string          `json:"extensions,omitempty"`
+	LanguageID            string            `json:"language_id,omitempty"`
+	RootMarkers           []string          `json:"root_markers,omitempty"`
+	Environment           map[string]string `json:"environment,omitempty"`
+	Settings              map[string]any    `json:"settings,omitempty"`
+	InitializationOptions map[string]any    `json:"initialization_options,omitempty"`
 }
 
 // LSPSettings is the language-intelligence configuration. Bools are persisted
@@ -682,11 +688,16 @@ type LSPSettings struct {
 	DiagInStatus bool `json:"diag_in_status"`
 	AutoComplete bool `json:"auto_complete"`
 	// MinSeverity is error, warning, info, or hint.
-	MinSeverity      string                         `json:"min_severity,omitempty"`
-	UpdateDebounceMS int                            `json:"update_debounce_ms,omitempty"`
-	Servers          map[string]string              `json:"servers,omitempty"`
-	ServerArgs       map[string][]string            `json:"server_args,omitempty"`
-	Languages        map[string]LSPLanguageSettings `json:"languages,omitempty"`
+	MinSeverity        string                         `json:"min_severity,omitempty"`
+	UpdateDebounceMS   int                            `json:"update_debounce_ms,omitempty"`
+	ServerThreads      int                            `json:"server_threads,omitempty"`
+	ServerMemoryMB     int                            `json:"server_memory_mb,omitempty"`
+	MaxServers         int                            `json:"max_servers,omitempty"`
+	IdleTimeoutSeconds int                            `json:"idle_timeout_seconds,omitempty"`
+	MaxDocumentBytes   int                            `json:"max_document_bytes,omitempty"`
+	Servers            map[string]string              `json:"servers,omitempty"`
+	ServerArgs         map[string][]string            `json:"server_args,omitempty"`
+	Languages          map[string]LSPLanguageSettings `json:"languages,omitempty"`
 }
 
 type UISettings struct {

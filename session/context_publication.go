@@ -1,6 +1,7 @@
 package session
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -74,6 +75,73 @@ func retainsContextSource(snapshot, source []provider.ChatMessage) bool {
 		}
 	}
 	return i == len(source)
+}
+
+// Children and roots obey the same rule: only journal-admitted lifecycle
+// controls may arrive outside the execution snapshot. Merge those exact facts;
+// never acknowledge a stale snapshot by merely assigning it a newer revision.
+func retainChildCheckpointSource(run *recoveryRunState, archive, active []provider.ChatMessage, current sessiondb.ContextState) error {
+	_, generation, _ := run.contextState()
+	if current.Generation != generation {
+		return fmt.Errorf("child checkpoint context generation changed")
+	}
+	var required, controls []provider.ChatMessage
+	for _, message := range current.Messages {
+		if message.Collaboration != nil && message.Collaboration.Kind == string(collaboration.EventLifecycleControl) {
+			controls = append(controls, message)
+		} else {
+			required = append(required, message)
+		}
+	}
+	if !retainsContextSource(active, required) {
+		return fmt.Errorf("child checkpoint does not retain committed context revision %d", current.Revision)
+	}
+	var err error
+	active, err = mergeCommittedContextMessages(canonicalContextMessages(active), canonicalContextMessages(current.Messages))
+	if err != nil {
+		return err
+	}
+	archive, err = mergeCommittedContextMessages(archive, controls)
+	if err != nil {
+		return err
+	}
+	run.snapshot(archive, active)
+	return nil
+}
+
+func publishChildRecovery(db *sql.DB, sessionID string, run *recoveryRunState, status recoverytypes.Status) error {
+	// Another exact-owner control may commit between load and publication. Rebase
+	// only those admitted facts, with bounded revision retry and no effect replay.
+	for attempt := 0; attempt < 8; attempt++ {
+		run.mu.Lock()
+		owner, revision := run.contextOwnerID, run.contextRevision
+		run.mu.Unlock()
+		if owner == "" {
+			return run.publish(db, sessionID, status)
+		}
+		current, found, err := sessiondb.LoadContextState(db, sessionID, owner)
+		if err != nil {
+			return err
+		}
+		if found && current.Revision != revision {
+			archive, active := run.contexts()
+			if current.Revision < revision {
+				return &sessiondb.ContextRevisionConflictError{SessionID: sessionID, AgentID: owner, Expected: revision, Actual: current.Revision}
+			}
+			if err := retainChildCheckpointSource(run, archive, active, current); err != nil {
+				return err
+			}
+			run.mu.Lock()
+			run.contextRevision = current.Revision
+			run.mu.Unlock()
+		}
+		err = run.publish(db, sessionID, status)
+		var conflict *sessiondb.ContextRevisionConflictError
+		if !errors.As(err, &conflict) {
+			return err
+		}
+	}
+	return fmt.Errorf("child context publication remained busy after bounded revision reconciliation")
 }
 
 func (s *Session) publishRootRecovery(run *recoveryRunState, status recoverytypes.Status) error {

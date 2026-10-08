@@ -173,6 +173,29 @@ func NewModel(t *theme.Theme) Model {
 	return m
 }
 
+// NewDraft creates a separate editor with the same shell configuration. Draft
+// text, undo, history navigation and attachment identities remain session-owned.
+func (m Model) NewDraft() Model {
+	next := NewModel(m.theme)
+	next.SetActionRegistry(m.actionRegistry)
+	next.SetHistory(m.history)
+	if m.width > 0 {
+		next.SetWidth(m.width)
+	}
+	next.SetSpinFrame(m.spinFrame)
+	next.showHint = m.showHint
+	return next
+}
+
+// SuspendDraft fences asynchronous recall/paste/admission from an earlier
+// activation without discarding the retained editor and its undo/history state.
+func (m *Model) SuspendDraft() {
+	m.CancelPointerCapture()
+	m.invalidatePendingPastes()
+	m.historyGeneration++
+	m.historyLoading = false
+}
+
 // SetTokens updates theme tokens on the TextArea and slash list.
 func (m *Model) SetTokens(ts *ui.TokenSet) {
 	m.tokens = ts

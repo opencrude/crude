@@ -74,7 +74,6 @@ func (m *App) handleLauncherCommand(msg launcher.CommandMsg) tea.Cmd {
 
 // launcherNewSession creates a new session from the launcher.
 func (m *App) launcherNewSession() tea.Cmd {
-	m.startLSPForWorkspace()
 	if m.Logger != nil {
 		m.Logger.Info("SESSION", "new_session_from_launcher")
 	}
@@ -145,7 +144,6 @@ func (m *App) launcherResumeSession(sessionID string, sessionMeta *sessiondb.Ses
 		m.showOperationFailure("Session could not be resumed", detail)
 		return nil
 	}
-	m.startLSPForWorkspace()
 	m.AddOrchestrator(result.OrchID)
 	if err := m.LastRegistryError(); err != nil && m.Feedback != nil {
 		m.Feedback.NotifyError("Session resumed but registry update failed: " + err.Error())

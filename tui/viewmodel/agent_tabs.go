@@ -99,6 +99,7 @@ func (m *App) terminateAgent(agentID string) tea.Cmd {
 	if agentID == "" || m.AgentMgr == nil || m.AgentMgr.Get(agentID) == nil {
 		return nil
 	}
+	defer m.releaseTabBarFocus()
 	m.cleanupAgent(agentID)
 	m.handleTabSwitch()
 	m.refreshActivityList()

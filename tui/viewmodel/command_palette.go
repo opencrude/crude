@@ -530,6 +530,8 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		m.toggleWorkspacePanel(termdock.PanelWorkspace)
 	case "lsp.start":
 		m.startLSPForWorkspace()
+	case "lsp.hover":
+		return m.requestLSPHoverCmd()
 	case "lsp.stop":
 		m.StopLSP()
 	case "lsp.restart":

@@ -1,6 +1,9 @@
 package viewmodel
 
-import "context"
+import (
+	"context"
+	"crude/tui/editor"
+)
 
 // resetLSPRequestContext invalidates every request issued by the previous
 // workspace generation. Result messages still carry a generation as a second
@@ -24,4 +27,8 @@ func (m *App) lspRequestContext() (context.Context, uint64) {
 
 func (m *App) acceptsLSPGeneration(generation uint64) bool {
 	return m != nil && generation == m.workspaceSwitchGen.Load()
+}
+
+func (m *App) acceptsLSPDocument(generation uint64, path string, owner *editor.Editor, revision uint64) bool {
+	return m.acceptsLSPGeneration(generation) && owner != nil && m.EditorState.Editor == owner && owner.IsOpen() && owner.FilePath() == path && owner.Revision() == revision
 }

@@ -68,6 +68,16 @@ func (m *App) syncTabBarHost() {
 	m.tabScreen.SetProjectionFromWindow(m.Win, hover, barFocused)
 }
 
+// releaseTabBarFocus ends a tab operation without disturbing focus owned by a
+// sidebar, dock, or modal. The selected content naturally owns the next key.
+// Release at the user action, not a later asynchronous save acknowledgement.
+func (m *App) releaseTabBarFocus() {
+	if m.FocusStack != nil && m.FocusStack.Top() == FocusTabBar {
+		m.FocusStack.Pop()
+	}
+	m.syncRootFocus()
+}
+
 func (m *App) handleTabBarHostResult(res ui.EventResult) tea.Cmd {
 	if res.Action != nil {
 		switch res.Action.ID {
@@ -85,10 +95,8 @@ func (m *App) handleTabBarHostResult(res ui.EventResult) tea.Cmd {
 				}
 			}
 		case "tabs.enter":
-			if m.FocusStack.Top() == FocusTabBar {
-				m.FocusStack.Pop()
-			}
 			m.handleTabSwitch()
+			m.releaseTabBarFocus()
 		}
 	}
 	return res.Cmd
@@ -102,7 +110,6 @@ func (m *App) handleTabBarEvent(msg tea.Msg) tea.Cmd {
 		return nil
 	}
 	m.syncTabBarHost()
-	m.rootHost.Focus(shelltabs.TabsID)
 	res := m.rootHost.Handle(msg)
 	switch msg := msg.(type) {
 	case tea.MouseMotionMsg:

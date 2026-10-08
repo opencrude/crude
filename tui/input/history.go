@@ -16,6 +16,7 @@ func (HistoryRecallEvent) event() {}
 func (m *Model) RecallPrompt(entry history.Entry) HistoryRecallEvent {
 	m.historyGeneration++
 	m.historyLoading = true
+	m.draftRevision++ // explicit recall intent outranks an older cold draft load
 	return HistoryRecallEvent{Entry: entry.Clone(), Generation: m.historyGeneration}
 }
 

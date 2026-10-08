@@ -84,6 +84,9 @@ Read that first; this index only organizes the reference material.
 
 ### Plans (active work only)
 
+- [LSP and runtime repair handoff](plans/lsp-runtime-handoff.md) — paused LSP
+  integration and restart-first runtime repair, with preserved child evidence.
+
 - [Chat projection handoff](plans/chat-projection-handoff.md) — **ACTIVE
   HANDOFF** for in-flight chat-projection work.
 - [Shell frame padding review](plans/shell-frame-padding-review.md) — open

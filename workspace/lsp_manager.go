@@ -3,9 +3,6 @@ package workspace
 import (
 	"context"
 	"fmt"
-	"io/fs"
-	"os"
-	"os/exec"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -15,674 +12,49 @@ import (
 	ttypes "crude/types"
 )
 
-// clientKey returns a unique key for a rootURI+cmd pair, allowing
-// multiple LSP servers (one per language) in the same project root.
-func clientKey(rootURI, cmd string) string { return rootURI + "|" + cmd }
-
-// workspaceBootstrapExtensions are languages worth starting from the workspace
-// scan alone. JSON is intentionally on-demand: repositories contain many config
-// and metadata JSON files that do not justify starting an optional JSON server.
-var workspaceBootstrapExtensions = []string{".go", ".rs", ".py", ".ts", ".js", ".tsx", ".jsx", ".css"}
-
-type lspClientState struct {
-	rootURI string
-	cmd     string
-	args    []string
-	status  LSPStatus
-	err     string
-}
-
-// LSPManager owns all LSP server connections for the application.
-// It lives for the full app lifetime, maintains diagnostics for every
-// file in the project (not just open tabs), and routes them to the
-// editor / file tree / status bar.
+// LSPManager is the sole workspace owner of server and open-document lifetimes.
+// Expensive root discovery, startup, synchronization and shutdown run on its
+// serialized worker; merely enabling intelligence never scans or opens sources.
 type LSPManager struct {
-	mu           sync.Mutex
-	documentSend sync.Mutex                // serializes change/save notifications, never disk I/O
-	clients      map[string]LSPClient      // keyed by clientKey(rootURI, cmd)
-	states       map[string]lspClientState // retained even when a client fails to start
-	logger       Logger
-
-	activeFilePath string
-	pendingText    map[string]string // latest text for files pending async start
-	updateTimers   map[string]*time.Timer
-
-	onDiagnostics func(filePath string, diags []LSPDiagnostic)
-
-	activeRootURI   string
-	activeConnected bool
-	activeError     string
-	activeStatus    LSPStatus
-
-	// Project-wide state
-	fileDiagnostics        map[string][]LSPDiagnostic // cached per file; survives tab close
-	docSymbols             map[string][]LSPSymbol     // per-file document outline cache
-	fileLastSync           map[string]int64           // per-file last diagnostic update (unix nanos)
-	fileDiagnosticServer   map[string]string
-	serverDiagnosticCounts map[string]diagnosticAggregate
-	issueCount             map[string]int // diagnostic message -> occurrence count, for "top issue"
-	symbolsCached          bool           // true once at least one file has been outlined
-	diagnosticErrors       int
-	diagnosticWarnings     int
-	diagnosticInfo         int
-	diagnosticHints        int
-	filesAffected          int
-	symbolCount            int
-	projectLastSync        int64
-	topIssue               string
-
-	// syncing is true while the server is doing a bulk operation (e.g. opening
-	// every project file after startup, or processing a flurry of didChange
-	// notifications). The status bar shows the dot animating while this is
-	// true so the user can see "the LSP is working" without waiting for a
-	// specific request to be in flight.
-	syncing bool
-
-	// In-flight request tracking (drives the busy indicator on the status bar).
-	inflight int
-	version  uint64
-
-	runtime LSPRuntime
-
-	settings ttypes.LSPSettings
+	mu                                                                    sync.Mutex
+	documentSend                                                          sync.Mutex
+	states                                                                map[string]*lspClientState
+	documents                                                             map[string]*lspDocument
+	updateTimers                                                          map[string]*time.Timer
+	runtime                                                               LSPRuntime
+	settings                                                              ttypes.LSPSettings
+	logger                                                                Logger
+	workspaceRoot                                                         string
+	activeFilePath                                                        string
+	activeRootURI                                                         string
+	activeConnected                                                       bool
+	activeError                                                           string
+	activeStatus                                                          LSPStatus
+	paused, manualStart, closed                                           bool
+	workerRunning                                                         bool
+	wake                                                                  chan struct{}
+	workerDone                                                            chan struct{}
+	diagnosticChanges                                                     map[string]bool
+	closedDocuments                                                       []lspClosedDocument
+	settingsGeneration                                                    uint64
+	onDiagnostics                                                         func(string, []LSPDiagnostic)
+	fileDiagnostics                                                       map[string][]LSPDiagnostic
+	docSymbols                                                            map[string][]LSPSymbol
+	fileLastSync                                                          map[string]int64
+	fileDiagnosticServer                                                  map[string]string
+	serverDiagnosticCounts                                                map[string]diagnosticAggregate
+	issueCount                                                            map[string]int
+	symbolsCached                                                         bool
+	diagnosticErrors, diagnosticWarnings, diagnosticInfo, diagnosticHints int
+	filesAffected, symbolCount                                            int
+	projectLastSync                                                       int64
+	topIssue                                                              string
+	syncing                                                               bool
+	inflight                                                              int
+	version                                                               uint64
 }
 
-type diagnosticAggregate struct {
-	files, errors, warnings, information, hints int
-}
-
-func NewLSPManager(logger Logger, runtimes ...LSPRuntime) *LSPManager {
-	var runtime LSPRuntime
-	if len(runtimes) > 0 {
-		runtime = runtimes[0]
-	}
-	return &LSPManager{
-		clients:                make(map[string]LSPClient),
-		states:                 make(map[string]lspClientState),
-		logger:                 logger,
-		pendingText:            make(map[string]string),
-		updateTimers:           make(map[string]*time.Timer),
-		fileDiagnostics:        make(map[string][]LSPDiagnostic),
-		docSymbols:             make(map[string][]LSPSymbol),
-		fileLastSync:           make(map[string]int64),
-		fileDiagnosticServer:   make(map[string]string),
-		serverDiagnosticCounts: make(map[string]diagnosticAggregate),
-		issueCount:             make(map[string]int),
-		runtime:                runtime,
-		settings:               ttypes.DefaultLSPSettings(),
-	}
-}
-
-func (m *LSPManager) SetRuntime(runtime LSPRuntime) {
-	m.mu.Lock()
-	m.runtime = runtime
-	m.mu.Unlock()
-}
-
-// SetSettings installs the effective language-intelligence configuration.
-func (m *LSPManager) SetSettings(s ttypes.LSPSettings) {
-	m.mu.Lock()
-	m.settings = ttypes.NormalizeLSP(s)
-	m.mu.Unlock()
-}
-
-func (m *LSPManager) Settings() ttypes.LSPSettings {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.settings
-}
-
-func (m *LSPManager) serverConfigForExt(ext string) (string, []string, bool) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.serverConfigForExtLocked(ext)
-}
-
-func (m *LSPManager) serverConfigForExtLocked(ext string) (string, []string, bool) {
-	settings := m.settings
-	if !settings.LanguageEnabled(ext) {
-		return "", nil, false
-	}
-	if cmd, args, ok := settings.ServerOverride(ext); ok {
-		return cmd, args, true
-	}
-	if m.runtime != nil {
-		return m.runtime.ServerConfigForExt(ext)
-	}
-	return defaultServerConfigForExt(ext)
-}
-
-func (m *LSPManager) rootURIForFile(filePath string) string {
-	if m.runtime != nil {
-		return m.runtime.RootURIForFile(filePath)
-	}
-	return defaultRootURI(filePath)
-}
-
-func (m *LSPManager) languageID(ext string) string {
-	if m.runtime != nil {
-		return m.runtime.LanguageID(ext)
-	}
-	return defaultLanguageID(ext)
-}
-
-// StartForWorkspace starts LSP servers for all supported project roots
-// found under workspaceDir.  This is called after the session picker
-// so the server is ready before any file is opened.
-func (m *LSPManager) StartForWorkspace(workspaceDir string) {
-	m.mu.Lock()
-	enabled := m.settings.Enabled
-	startOnOpen := m.settings.StartOnOpen
-	m.mu.Unlock()
-	if !enabled || !startOnOpen {
-		return
-	}
-	roots := m.detectProjectRoots(workspaceDir)
-	for _, root := range roots {
-		m.startServerForRoot(root)
-	}
-}
-
-// detectProjectRoots scans workspaceDir for project markers and returns
-// the directories that should have LSP servers started.
-func (m *LSPManager) detectProjectRoots(workspaceDir string) []string {
-	var roots []string
-	dir := workspaceDir
-	for _, marker := range []string{"go.mod", "package.json", "Cargo.toml", "pyproject.toml", "composer.json"} {
-		path := filepath.Join(dir, marker)
-		if _, err := os.Stat(path); err == nil {
-			roots = append(roots, fileURI(dir))
-			break
-		}
-	}
-	if len(roots) == 0 {
-		roots = append(roots, fileURI(dir))
-	}
-	return roots
-}
-
-// startServerForRoot starts an LSP server for each language that has
-// at least one source file in the project.  This avoids launching
-// servers for languages the project doesn't use.
-func (m *LSPManager) startServerForRoot(rootURI string) {
-	runtime := m.runtime
-	if runtime == nil {
-		return
-	}
-	rootPath := filePathFromURI(rootURI)
-	if rootPath == "" {
-		return
-	}
-
-	// Scan the project once to find which extensions actually exist.
-	allExts := workspaceBootstrapExtensions
-	present := scanPresentExtensions(rootPath, allExts)
-
-	// Build reverse map: cmd -> extensions it handles.
-	type cmdEntry struct {
-		cmd  string
-		args []string
-		exts []string
-	}
-	cmdMap := map[string]*cmdEntry{}
-	for _, ext := range allExts {
-		cmd, args, ok := runtime.ServerConfigForExt(ext)
-		if !ok {
-			continue
-		}
-		if e, exists := cmdMap[cmd]; exists {
-			e.exts = append(e.exts, ext)
-		} else {
-			cmdMap[cmd] = &cmdEntry{cmd: cmd, args: args, exts: []string{ext}}
-		}
-	}
-
-	for _, entry := range cmdMap {
-		// Only start this server if at least one of its file extensions
-		// was found in the project.
-		hasFiles := false
-		for _, ext := range entry.exts {
-			if present[ext] {
-				hasFiles = true
-				break
-			}
-		}
-		if !hasFiles {
-			continue
-		}
-
-		m.ensureServer(rootURI, entry.cmd, entry.args)
-	}
-}
-
-// ensureServer registers and asynchronously starts one server. It is used both
-// by workspace bootstrap and by OpenFile for on-demand languages such as JSON.
-func (m *LSPManager) ensureServer(rootURI, cmd string, args []string) LSPClient {
-	key := clientKey(rootURI, cmd)
-	m.mu.Lock()
-	if existing := m.clients[key]; existing != nil {
-		m.mu.Unlock()
-		return existing
-	}
-	m.mu.Unlock()
-
-	if m.runtime == nil {
-		return nil
-	}
-	client := m.runtime.NewClient(cmd, args, rootURI)
-	client.OnDiagnostics(func(fp string, diags []LSPDiagnostic) {
-		m.setFileDiagnosticsForServer(key, fp, diags)
-		if cb := m.captureOnDiagnostics(); cb != nil {
-			cb(fp, diags)
-		}
-	})
-
-	m.mu.Lock()
-	if existing := m.clients[key]; existing != nil {
-		m.mu.Unlock()
-		return existing
-	}
-	m.clients[key] = client
-	m.states[key] = lspClientState{rootURI: rootURI, cmd: cmd, args: append([]string(nil), args...), status: LSPStarting}
-	m.activeRootURI = rootURI
-	m.recomputeActiveStatusLocked()
-	m.mu.Unlock()
-
-	go m.startClient(key, client, rootURI, cmd, args)
-	return client
-}
-
-// scanPresentExtensions walks rootPath and returns a set of file extensions
-// found among source files, skipping dependency/build directories.
-func scanPresentExtensions(rootPath string, candidates []string) map[string]bool {
-	present := make(map[string]bool, len(candidates))
-	for _, e := range candidates {
-		present[e] = false
-	}
-
-	skipDirs := map[string]bool{
-		".git":             true,
-		"node_modules":     true,
-		"target":           true,
-		"vendor":           true,
-		".venv":            true,
-		"venv":             true,
-		"__pycache__":      true,
-		".next":            true,
-		"dist":             true,
-		"build":            true,
-		".cache":           true,
-		".terraform":       true,
-		"bower_components": true,
-	}
-
-	_ = filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return filepath.SkipDir
-		}
-		if d.IsDir() && d.Name() != filepath.Base(rootPath) && skipDirs[d.Name()] {
-			return filepath.SkipDir
-		}
-		if !d.IsDir() {
-			ext := strings.ToLower(filepath.Ext(path))
-			if _, ok := present[ext]; ok {
-				present[ext] = true
-				// Short-circuit once all candidates are found.
-				allFound := true
-				for _, v := range present {
-					if !v {
-						allFound = false
-						break
-					}
-				}
-				if allFound {
-					return filepath.SkipAll
-				}
-			}
-		}
-		return nil
-	})
-
-	// Filter to only those present.
-	result := make(map[string]bool)
-	for ext, found := range present {
-		if found {
-			result[ext] = true
-		}
-	}
-	return result
-}
-
-// clientForFile returns the client handling a given file path based on
-// its root URI and file extension.
-func (m *LSPManager) clientForFile(filePath string) LSPClient {
-	if m.runtime == nil {
-		return nil
-	}
-	rootURI := m.rootURIForFile(filePath)
-	ext := strings.ToLower(filepath.Ext(filePath))
-	cmd, _, ok := m.serverConfigForExt(ext)
-	if !ok {
-		return nil
-	}
-	key := clientKey(rootURI, cmd)
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.clients[key]
-}
-
-// clientsForRootURI returns all clients whose key begins with rootURI.
-func (m *LSPManager) clientsForRootURI(rootURI string) []LSPClient {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	var out []LSPClient
-	for k, c := range m.clients {
-		if strings.HasPrefix(k, rootURI+"|") {
-			out = append(out, c)
-		}
-	}
-	return out
-}
-
-func (m *LSPManager) SetOnDiagnostics(fn func(filePath string, diags []LSPDiagnostic)) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	m.onDiagnostics = fn
-}
-
-// OpenFile registers a file with its LSP server. Languages omitted from the
-// workspace bootstrap scan, such as JSON, start on demand here.
-func (m *LSPManager) OpenFile(ctx context.Context, filePath string, text string) {
-	if m.runtime == nil {
-		return
-	}
-	ext := strings.ToLower(filepath.Ext(filePath))
-	rootURI := m.rootURIForFile(filePath)
-	cmd, args, ok := m.serverConfigForExt(ext)
-	if !ok {
-		return
-	}
-
-	m.mu.Lock()
-	m.activeFilePath = filePath
-	m.pendingText[filePath] = text
-	m.activeRootURI = rootURI
-	client := m.clients[clientKey(rootURI, cmd)]
-	m.recomputeActiveStatusLocked()
-	m.mu.Unlock()
-
-	if client == nil {
-		m.ensureServer(rootURI, cmd, args)
-		return
-	}
-	langID := m.languageID(ext)
-	m.documentSend.Lock()
-	defer m.documentSend.Unlock()
-	client.OpenFile(ctx, filePath, langID, text)
-}
-
-// startClient creates its own context so the caller's short-lived context
-// (which may already be cancelled) does not kill the LSP handshake.
-// After the server connects it opens every source file in the project.
-func (m *LSPManager) startClient(key string, client LSPClient, rootURI, cmd string, args []string) {
-	startCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
-	defer cancel()
-
-	if _, err := exec.LookPath(cmd); err != nil {
-		m.removeClient(client)
-		m.mu.Lock()
-		m.states[key] = lspClientState{rootURI: rootURI, cmd: cmd, args: append([]string(nil), args...), status: LSPFailed, err: cmd + " not found in PATH"}
-		m.recomputeActiveStatusLocked()
-		m.mu.Unlock()
-		return
-	}
-
-	if err := client.Start(startCtx); err != nil {
-		m.removeClient(client)
-		m.mu.Lock()
-		m.states[key] = lspClientState{rootURI: rootURI, cmd: cmd, args: append([]string(nil), args...), status: LSPFailed, err: cmd + " failed to start: " + err.Error()}
-		m.recomputeActiveStatusLocked()
-		m.mu.Unlock()
-		return
-	}
-
-	// Reap the client when the underlying connection dies (server exit,
-	// pipe error, or a wedged server that hit the write-queue cap). The
-	// client is marked failed and removed so the next OpenFile restarts it;
-	// the lingering process is killed so a blocked pipe write can unwind.
-	m.reapOnDone(key, client, rootURI, cmd)
-
-	m.mu.Lock()
-	m.states[key] = lspClientState{rootURI: rootURI, cmd: cmd, args: append([]string(nil), args...), status: LSPConnected}
-	m.recomputeActiveStatusLocked()
-	m.mu.Unlock()
-
-	// Open every source file in the project so the server reports
-	// diagnostics for the entire workspace, not just open tabs. The
-	// syncing flag tells the status bar to animate the dot while the
-	// server is chewing through hundreds of didOpen notifications.
-	m.setSyncing(true)
-	m.openProjectFiles(rootURI, cmd)
-	m.setSyncing(false)
-}
-
-// openProjectFiles scans the project root for files handled by the given
-// server command and sends didOpen for each one.
-func (m *LSPManager) openProjectFiles(rootURI string, cmd string) {
-	rootPath := filePathFromURI(rootURI)
-	if rootPath == "" {
-		return
-	}
-
-	// Determine which extensions this server handles.
-	var exts []string
-	if m.runtime == nil {
-		return
-	}
-	for ext, cfg := range m.runtime.AllServerConfigs() {
-		if cfg.Cmd == cmd {
-			exts = append(exts, ext)
-		}
-	}
-	if len(exts) == 0 {
-		return
-	}
-
-	extSet := make(map[string]bool, len(exts))
-	for _, e := range exts {
-		extSet[e] = true
-	}
-
-	files := scanProjectFiles(rootPath, extSet)
-
-	// Find the right client.
-	key := clientKey(rootURI, cmd)
-	m.mu.Lock()
-	client := m.clients[key]
-	m.mu.Unlock()
-	if client == nil {
-		return
-	}
-
-	// Batch-open files with limited concurrency so we don't flood the
-	// server process with hundreds of simultaneous notifications.
-	var wg sync.WaitGroup
-	sem := make(chan struct{}, 10)
-	for _, fp := range files {
-		wg.Add(1)
-		go func(f string) {
-			defer wg.Done()
-			sem <- struct{}{}
-			defer func() { <-sem }()
-
-			ext := strings.ToLower(filepath.Ext(f))
-			langID := m.languageID(ext)
-			if langID == "" {
-				return
-			}
-
-			// Use pending text if available (e.g. an active editor tab),
-			// otherwise read from disk.
-			m.mu.Lock()
-			text, pending := m.pendingText[f]
-			m.mu.Unlock()
-			if !pending {
-				data, err := os.ReadFile(f)
-				if err != nil {
-					return
-				}
-				text = string(data)
-			}
-
-			client.OpenFile(context.Background(), f, langID, text)
-		}(fp)
-	}
-	wg.Wait()
-}
-
-// scanProjectFiles walks rootPath and returns all files whose extension
-// is in extSet.  Common dependency/build directories are skipped.
-func scanProjectFiles(rootPath string, extSet map[string]bool) []string {
-	var files []string
-
-	// Directories we never descend into.
-	skipDirs := map[string]bool{
-		".git":             true,
-		"node_modules":     true,
-		"target":           true,
-		"vendor":           true,
-		".venv":            true,
-		"venv":             true,
-		"__pycache__":      true,
-		".next":            true,
-		"dist":             true,
-		"build":            true,
-		".cache":           true,
-		".terraform":       true,
-		"bower_components": true,
-	}
-
-	_ = filepath.WalkDir(rootPath, func(path string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return filepath.SkipDir
-		}
-		if d.IsDir() && d.Name() != filepath.Base(rootPath) && skipDirs[d.Name()] {
-			return filepath.SkipDir
-		}
-		if !d.IsDir() {
-			ext := strings.ToLower(filepath.Ext(path))
-			if extSet[ext] {
-				files = append(files, path)
-			}
-		}
-		return nil
-	})
-	return files
-}
-
-func (m *LSPManager) CloseFile(ctx context.Context, filePath string) {
-	m.documentSend.Lock()
-	defer m.documentSend.Unlock()
-	m.mu.Lock()
-	m.activeFilePath = ""
-	delete(m.pendingText, filePath)
-	if timer := m.updateTimers[filePath]; timer != nil {
-		timer.Stop()
-		delete(m.updateTimers, filePath)
-	}
-	m.recomputeActiveStatusLocked()
-	clients := make([]LSPClient, 0, len(m.clients))
-	for _, client := range m.clients {
-		clients = append(clients, client)
-	}
-	m.mu.Unlock()
-
-	for _, client := range clients {
-		client.CloseFile(ctx, filePath)
-	}
-}
-
-func (m *LSPManager) UpdateFile(ctx context.Context, filePath, text string) {
-	m.documentSend.Lock()
-	defer m.documentSend.Unlock()
-	m.mu.Lock()
-	m.pendingText[filePath] = text
-	if timer := m.updateTimers[filePath]; timer != nil {
-		timer.Stop()
-		delete(m.updateTimers, filePath)
-	}
-	m.mu.Unlock()
-
-	client := m.clientForFile(filePath)
-	if client != nil {
-		client.UpdateFile(ctx, filePath, text)
-	}
-}
-
-// QueueFileUpdate coalesces rapid editor changes and performs the LSP write
-// away from Bubble Tea's input goroutine. This keeps typing responsive even
-// when a language server's stdin pipe is temporarily back-pressured.
-func (m *LSPManager) QueueFileUpdate(filePath, text string) {
-	const debounce = 60 * time.Millisecond
-	m.mu.Lock()
-	m.pendingText[filePath] = text
-	if timer := m.updateTimers[filePath]; timer != nil {
-		timer.Stop()
-	}
-	var timer *time.Timer
-	timer = time.AfterFunc(debounce, func() {
-		m.documentSend.Lock()
-		defer m.documentSend.Unlock()
-		m.mu.Lock()
-		if m.updateTimers[filePath] != timer {
-			m.mu.Unlock()
-			return
-		}
-		latest := m.pendingText[filePath]
-		delete(m.updateTimers, filePath)
-		m.mu.Unlock()
-
-		client := m.clientForFile(filePath)
-		if client == nil {
-			return
-		}
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		client.UpdateFile(ctx, filePath, latest)
-	})
-	m.updateTimers[filePath] = timer
-	m.mu.Unlock()
-}
-
-// NotifyFileSave runs off the UI thread. A pending text change is flushed before
-// either save boundary; newer edits are never replaced by the saved snapshot.
-func (m *LSPManager) NotifyFileSave(ctx context.Context, path, savedText string, reason DocumentSaveReason, before bool) {
-	m.documentSend.Lock()
-	defer m.documentSend.Unlock()
-	m.mu.Lock()
-	timer := m.updateTimers[path]
-	latest := m.pendingText[path]
-	if timer != nil {
-		timer.Stop()
-		delete(m.updateTimers, path)
-	}
-	m.mu.Unlock()
-	client := m.clientForFile(path)
-	if client == nil {
-		return
-	}
-	if timer != nil {
-		client.UpdateFile(ctx, path, latest)
-	}
-	saveReason := 1
-	switch reason {
-	case DocumentSaveAfterDelay:
-		saveReason = 2
-	case DocumentSaveFocusOut:
-		saveReason = 3
-	}
-	client.NotifySave(ctx, path, savedText, saveReason, before)
-}
+type diagnosticAggregate struct{ files, errors, warnings, information, hints int }
 
 func (m *LSPManager) Status() (connected bool, status LSPStatus, errMsg string) {
 	m.mu.Lock()
@@ -692,8 +64,12 @@ func (m *LSPManager) Status() (connected bool, status LSPStatus, errMsg string) 
 
 func (m *LSPManager) recomputeActiveStatusLocked() {
 	m.version++
+	if m.paused || m.closed || !m.settings.Enabled {
+		m.applyAggregateStateLocked(lspClientState{status: LSPIdle})
+		return
+	}
 	if state, ok := m.activeFileStateLocked(); ok {
-		m.applyAggregateStateLocked(state)
+		m.applyAggregateStateLocked(*state)
 		return
 	}
 
@@ -706,19 +82,20 @@ func (m *LSPManager) recomputeActiveStatusLocked() {
 	var firstStarting, firstFailed *lspClientState
 	for _, key := range keys {
 		state := m.states[key]
+		if state.closing || state.stopped {
+			continue
+		}
 		switch state.status {
 		case LSPConnected:
-			m.applyAggregateStateLocked(state)
+			m.applyAggregateStateLocked(*state)
 			return
 		case LSPStarting:
 			if firstStarting == nil {
-				copy := state
-				firstStarting = &copy
+				firstStarting = state
 			}
 		case LSPFailed:
 			if firstFailed == nil {
-				copy := state
-				firstFailed = &copy
+				firstFailed = state
 			}
 		}
 	}
@@ -733,17 +110,18 @@ func (m *LSPManager) recomputeActiveStatusLocked() {
 	m.applyAggregateStateLocked(lspClientState{status: LSPIdle})
 }
 
-func (m *LSPManager) activeFileStateLocked() (lspClientState, bool) {
-	if m.activeFilePath == "" {
-		return lspClientState{}, false
+func (m *LSPManager) activeFileStateLocked() (*lspClientState, bool) {
+	doc := m.documents[m.activeFilePath]
+	if doc == nil {
+		return nil, false
 	}
-	ext := strings.ToLower(filepath.Ext(m.activeFilePath))
-	cmd, _, ok := m.serverConfigForExtLocked(ext)
-	if !ok {
-		return lspClientState{}, false
+	if len(doc.text) > m.settings.MaxDocumentBytes {
+		return &lspClientState{status: LSPIdle, err: "Document exceeds the configured LSP size limit."}, true
 	}
-	rootURI := m.rootURIForFile(m.activeFilePath)
-	state, ok := m.states[clientKey(rootURI, cmd)]
+	state, ok := m.states[doc.key]
+	if ok && (state.closing || state.stopped) {
+		return &lspClientState{rootURI: state.rootURI, cmd: state.cmd, status: LSPIdle}, true
+	}
 	return state, ok
 }
 
@@ -774,7 +152,7 @@ func (m *LSPManager) ServerReady() bool {
 func (m *LSPManager) IsConfigured() bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if len(m.clients) > 0 || len(m.states) > 0 {
+	if len(m.states) > 0 {
 		return true
 	}
 	return m.activeStatus != LSPIdle
@@ -790,7 +168,7 @@ func (m *LSPManager) AllDiagnostics() map[string][]LSPDiagnostic {
 	defer m.mu.Unlock()
 	out := make(map[string][]LSPDiagnostic, len(m.fileDiagnostics))
 	for k, v := range m.fileDiagnostics {
-		out[k] = v
+		out[k] = append([]LSPDiagnostic(nil), v...)
 	}
 	return out
 }
@@ -802,6 +180,13 @@ func (m *LSPManager) AllDiagnostics() map[string][]LSPDiagnostic {
 func (m *LSPManager) ClearDiagnostics() {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.clearDiagnosticsLocked()
+}
+
+func (m *LSPManager) clearDiagnosticsLocked() {
+	for path := range m.fileDiagnostics {
+		m.diagnosticChanges[path] = true
+	}
 	m.fileDiagnostics = make(map[string][]LSPDiagnostic)
 	m.docSymbols = make(map[string][]LSPSymbol)
 	m.fileLastSync = make(map[string]int64)
@@ -813,6 +198,22 @@ func (m *LSPManager) ClearDiagnostics() {
 	m.diagnosticInfo, m.diagnosticHints = 0, 0
 	m.filesAffected, m.symbolCount, m.projectLastSync, m.topIssue = 0, 0, 0, ""
 	m.version++
+}
+
+// DrainDiagnosticChanges coalesces server notifications into one UI projection
+// per tick. It never performs I/O or blocks the server's protocol reader.
+func (m *LSPManager) DrainDiagnosticChanges() map[string][]LSPDiagnostic {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if len(m.diagnosticChanges) == 0 {
+		return nil
+	}
+	out := make(map[string][]LSPDiagnostic, len(m.diagnosticChanges))
+	for path := range m.diagnosticChanges {
+		out[path] = append([]LSPDiagnostic(nil), m.fileDiagnostics[path]...)
+	}
+	clear(m.diagnosticChanges)
+	return out
 }
 
 func (m *LSPManager) Version() uint64 {
@@ -888,6 +289,15 @@ func (m *LSPManager) ServerHealthSnapshots() []ttypes.LSPServerHealth {
 			Errors:        diagnostics.errors, Warnings: diagnostics.warnings,
 			Information: diagnostics.information, Hints: diagnostics.hints,
 		}
+		if state.waiting {
+			health.Status = "Waiting for slot"
+		}
+		if state.closing {
+			health.Status, health.Connected, health.Starting = "Stopping", false, false
+		}
+		if state.stopped {
+			health.Status, health.Connected, health.Starting = "Stopped", false, false
+		}
 		out = append(out, health)
 	}
 	m.mu.Unlock()
@@ -955,179 +365,6 @@ func (m *LSPManager) HasActiveFile() bool {
 	return m.activeFilePath != ""
 }
 
-// NotifyWatchedFilesChanged sends workspace/didChangeWatchedFiles to the LSP
-// server for a file that changed on disk. changeType matches LSP FileChangeType:
-// 1=Created, 2=Changed, 3=Deleted.
-func (m *LSPManager) NotifyWatchedFilesChanged(ctx context.Context, filePath string, changeType int) {
-	client := m.clientForFile(filePath)
-	if client != nil {
-		client.NotifyWatchedFilesChanged(ctx, filePath, changeType)
-	}
-}
-
-// SyncFileFromDisk re-reads a file from disk and pushes the new content to the
-// LSP server. This is the mechanism that makes background diagnostics react to
-// external edits (e.g. nano, git checkout) with zero user interaction — like
-// VSCode and JetBrains.
-//
-// Per the LSP spec, files opened via didOpen are tracked in-memory by the
-// server, and didChangeWatchedFiles is ignored for them. Since we bulk-open
-// all project files at startup (openProjectFiles), the only way to make the
-// server re-analyze after an external edit is to push the new content via
-// didChange (or didOpen for newly-created files).
-//
-// excludeFilePath should be set to the active editor file path (if any) so
-// that the editor's own Reload + UpdateFile path handles it instead. This
-// avoids clobbering the editor's unsaved edits.
-func (m *LSPManager) SyncFileFromDisk(ctx context.Context, filePath, excludeFilePath string, changeType int) {
-	if filePath == excludeFilePath {
-		return
-	}
-	client := m.clientForFile(filePath)
-	if client != nil {
-		client.SyncFileFromDisk(ctx, filePath, changeType)
-	}
-}
-
-func (m *LSPManager) Stop() {
-	m.mu.Lock()
-	for path, timer := range m.updateTimers {
-		timer.Stop()
-		delete(m.updateTimers, path)
-	}
-	clients := make([]LSPClient, 0, len(m.clients))
-	for _, c := range m.clients {
-		clients = append(clients, c)
-	}
-	m.clients = make(map[string]LSPClient)
-	m.states = make(map[string]lspClientState)
-	// Reset lifecycle state so the status bar and other consumers
-	// don't keep reporting a server that's been intentionally
-	// stopped. Cached diagnostics, symbols, and sync timestamps
-	// are intentionally NOT cleared here — ClearDiagnostics() does
-	// that explicitly when the caller wants a fully clean state.
-	m.activeConnected = false
-	m.activeStatus = LSPIdle
-	m.activeError = ""
-	m.syncing = false
-	m.inflight = 0
-	m.mu.Unlock()
-
-	for _, c := range clients {
-		c.Stop()
-	}
-}
-
-// RestartServer restarts one server asynchronously. The stable server key is
-// revalidated under the manager lock before any process is touched.
-func (m *LSPManager) RestartServer(id string) bool {
-	if m == nil || id == "" {
-		return false
-	}
-	m.mu.Lock()
-	state, exists := m.states[id]
-	client := m.clients[id]
-	if !exists || state.cmd == "" {
-		m.mu.Unlock()
-		return false
-	}
-	delete(m.clients, id)
-	state.status, state.err = LSPStarting, ""
-	m.states[id] = state
-	m.recomputeActiveStatusLocked()
-	m.mu.Unlock()
-	go func() {
-		if client != nil {
-			client.Stop()
-		}
-		m.ensureServer(state.rootURI, state.cmd, state.args)
-	}()
-	return true
-}
-
-func (m *LSPManager) StopServer(id string) bool {
-	if m == nil || id == "" {
-		return false
-	}
-	m.mu.Lock()
-	state, exists := m.states[id]
-	client := m.clients[id]
-	if !exists {
-		m.mu.Unlock()
-		return false
-	}
-	delete(m.clients, id)
-	state.status, state.err = LSPIdle, ""
-	m.states[id] = state
-	m.recomputeActiveStatusLocked()
-	m.mu.Unlock()
-	if client != nil {
-		go client.Stop()
-	}
-	return true
-}
-
-func (m *LSPManager) captureOnDiagnostics() func(string, []LSPDiagnostic) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.onDiagnostics
-}
-
-func (m *LSPManager) removeClient(client LSPClient) {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	for key, c := range m.clients {
-		if c == client {
-			delete(m.clients, key)
-			return
-		}
-	}
-}
-
-// reapOnDone watches a client's connection-death channel. On death the
-// client is removed from the registry and marked failed so the next
-// OpenFile starts a fresh server; the stale process is killed so a blocked
-// pipe write can unwind. Graceful stops remove the client first, making the
-// identity check a no-op. A nil Done channel (test fakes, unstarted
-// clients) disables reaping.
-func (m *LSPManager) reapOnDone(key string, client LSPClient, rootURI, cmd string) {
-	done := client.Done()
-	if done == nil {
-		return
-	}
-	go func() {
-		<-done
-		m.mu.Lock()
-		if m.clients[key] != client {
-			// Already removed (graceful stop or restart).
-			m.mu.Unlock()
-			return
-		}
-		delete(m.clients, key)
-		state := m.states[key]
-		state.rootURI, state.cmd, state.status, state.err = rootURI, cmd, LSPFailed, "language server connection lost"
-		m.states[key] = state
-		m.recomputeActiveStatusLocked()
-		m.mu.Unlock()
-
-		// Kill the lingering process outside the lock: the kill path may
-		// block up to the processCloser timeout while a wedged pipe
-		// unwinds.
-		client.Stop()
-	}()
-}
-
-// setSyncing flips the syncing flag used by the project-wide LSP status text.
-// Held briefly under m.mu.
-func (m *LSPManager) setSyncing(v bool) {
-	m.mu.Lock()
-	if m.syncing != v {
-		m.syncing = v
-		m.version++
-	}
-	m.mu.Unlock()
-}
-
 func (m *LSPManager) setFileDiagnostics(filePath string, diags []LSPDiagnostic) {
 	m.setFileDiagnosticsForServer("", filePath, diags)
 }
@@ -1135,12 +372,25 @@ func (m *LSPManager) setFileDiagnostics(filePath string, diags []LSPDiagnostic) 
 func (m *LSPManager) setFileDiagnosticsForServer(serverID, filePath string, diags []LSPDiagnostic) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	m.setFileDiagnosticsLocked(serverID, filePath, diags)
+}
+
+func (m *LSPManager) setFileDiagnosticsLocked(serverID, filePath string, diags []LSPDiagnostic) {
 	fp := filepath.Clean(filePath)
+	// Protocol output is untrusted. Bound retained diagnostics independently of
+	// the server heap hint, and avoid walking a growing cache on idle UI frames.
+	if len(diags) > 1000 {
+		diags = diags[:1000]
+	}
+	if _, exists := m.fileDiagnostics[fp]; !exists && len(diags) > 0 && len(m.fileDiagnostics) >= 10000 {
+		return
+	}
+	m.diagnosticChanges[fp] = true
 
 	if !m.settings.Enabled || !m.settings.Diagnostics {
 		diags = nil
 	} else if len(diags) > 0 {
-		filtered := diags[:0]
+		filtered := make([]LSPDiagnostic, 0, len(diags))
 		for _, d := range diags {
 			if m.settings.SeverityAtLeast(d.Severity) {
 				filtered = append(filtered, d)
@@ -1181,7 +431,7 @@ func (m *LSPManager) setFileDiagnosticsForServer(serverID, filePath string, diag
 		delete(m.fileLastSync, fp)
 		delete(m.fileDiagnosticServer, fp)
 	} else {
-		m.fileDiagnostics[fp] = diags
+		m.fileDiagnostics[fp] = append([]LSPDiagnostic(nil), diags...)
 		m.fileDiagnosticServer[fp] = serverID
 		aggregate := m.serverDiagnosticCounts[serverID]
 		if len(diags) > 0 {
@@ -1245,7 +495,7 @@ func (m *LSPManager) recomputeTopIssueLocked() {
 func (m *LSPManager) FileDiagnostics(filePath string) []LSPDiagnostic {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.fileDiagnostics[filepath.Clean(filePath)]
+	return append([]LSPDiagnostic(nil), m.fileDiagnostics[filepath.Clean(filePath)]...)
 }
 
 func (m *LSPManager) HasFileDiagnostics(filePath string) bool {
@@ -1312,11 +562,15 @@ func (m *LSPManager) RequestDefinition(ctx context.Context, filePath string, lin
 	}
 	var out []LSPLocation
 	_ = m.trackInflight(func() error {
-		client := m.clientForFile(filePath)
+		client, requestCtx, valid, cancel := m.requestClient(ctx, filePath)
+		defer cancel()
 		if client == nil {
 			return nil
 		}
-		out = client.RequestDefinition(ctx, filePath, line, col)
+		out = client.RequestDefinition(requestCtx, filePath, line, col)
+		if !valid() {
+			out = nil
+		}
 		return nil
 	})
 	return out
@@ -1329,11 +583,15 @@ func (m *LSPManager) FindReferences(ctx context.Context, filePath string, line, 
 	}
 	var out []LSPLocation
 	_ = m.trackInflight(func() error {
-		client := m.clientForFile(filePath)
+		client, requestCtx, valid, cancel := m.requestClient(ctx, filePath)
+		defer cancel()
 		if client == nil {
 			return nil
 		}
-		out = client.FindReferences(ctx, filePath, line, col, includeDeclaration)
+		out = client.FindReferences(requestCtx, filePath, line, col, includeDeclaration)
+		if !valid() {
+			out = nil
+		}
 		return nil
 	})
 	return out
@@ -1347,11 +605,15 @@ func (m *LSPManager) RequestDocumentSymbols(ctx context.Context, filePath string
 	}
 	var out []LSPSymbol
 	_ = m.trackInflight(func() error {
-		client := m.clientForFile(filePath)
+		client, requestCtx, valid, cancel := m.requestClient(ctx, filePath)
+		defer cancel()
 		if client == nil {
 			return nil
 		}
-		out = client.RequestDocumentSymbols(ctx, filePath)
+		out = client.RequestDocumentSymbols(requestCtx, filePath)
+		if !valid() {
+			out = nil
+		}
 		if out != nil {
 			m.mu.Lock()
 			path := filepath.Clean(filePath)
@@ -1398,13 +660,18 @@ func (m *LSPManager) RequestHover(ctx context.Context, filePath string, line, co
 		out string
 		err error
 	)
-	_ = m.trackInflight(func() error {
-		client := m.clientForFile(filePath)
+	err = m.trackInflight(func() error {
+		client, requestCtx, valid, cancel := m.requestClient(ctx, filePath)
+		defer cancel()
 		if client == nil {
 			return fmt.Errorf("no LSP client for %s", filePath)
 		}
-		out, err = client.RequestHover(ctx, filePath, line, col)
-		return nil
+		var requestErr error
+		out, requestErr = client.RequestHover(requestCtx, filePath, line, col)
+		if !valid() {
+			return fmt.Errorf("LSP document changed during hover")
+		}
+		return requestErr
 	})
 	return out, err
 }
@@ -1418,13 +685,19 @@ func (m *LSPManager) RequestRename(ctx context.Context, filePath string, line, c
 		out interface{}
 		err error
 	)
-	_ = m.trackInflight(func() error {
-		client := m.clientForFile(filePath)
+	err = m.trackInflight(func() error {
+		client, requestCtx, valid, cancel := m.requestClient(ctx, filePath)
+		defer cancel()
 		if client == nil {
 			return fmt.Errorf("no LSP client for %s", filePath)
 		}
-		out, err = client.RequestRename(ctx, filePath, line, col, newName)
-		return nil
+		var requestErr error
+		out, requestErr = client.RequestRename(requestCtx, filePath, line, col, newName)
+		if !valid() {
+			out = nil
+			return fmt.Errorf("LSP document changed during rename")
+		}
+		return requestErr
 	})
 	return out, err
 }
@@ -1436,11 +709,15 @@ func (m *LSPManager) RequestCompletions(ctx context.Context, filePath string, li
 	}
 	var out []CompletionItem
 	_ = m.trackInflight(func() error {
-		client := m.clientForFile(filePath)
+		client, requestCtx, valid, cancel := m.requestClient(ctx, filePath)
+		defer cancel()
 		if client == nil {
 			return nil
 		}
-		out = client.RequestCompletions(ctx, filePath, line, col)
+		out = client.RequestCompletions(requestCtx, filePath, line, col)
+		if !valid() {
+			out = nil
+		}
 		return nil
 	})
 	return out
@@ -1452,7 +729,7 @@ func (m *LSPManager) InvalidateFile(filePath string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	fp := filepath.Clean(filePath)
-	delete(m.fileDiagnostics, fp)
-	delete(m.fileLastSync, fp)
+	m.setFileDiagnosticsLocked(m.fileDiagnosticServer[fp], fp, nil)
+	m.symbolCount -= len(m.docSymbols[fp])
 	delete(m.docSymbols, fp)
 }

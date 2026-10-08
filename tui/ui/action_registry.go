@@ -650,9 +650,10 @@ var defaultActions = []*ActionDef{
 		Bindings:    []KeyBinding{{Key: "alt+o"}},
 		HintKey:     "Alt+O",
 	},
-	{ID: "lsp.start", Label: "Start Language Servers", Description: "start detected workspace language servers", Icon: "▷", Category: "Tools"},
+	{ID: "lsp.hover", Label: "Symbol Documentation", Description: "show language-server documentation at the editor cursor", Icon: "i", Category: "Tools", HintKey: "Alt+K"},
+	{ID: "lsp.start", Label: "Start Language Servers", Description: "start enabled servers for open editor documents", Icon: "▷", Category: "Tools"},
 	{ID: "lsp.stop", Label: "Stop Language Servers", Description: "stop all workspace language servers", Icon: "■", Category: "Tools"},
-	{ID: "lsp.restart", Label: "Restart Language Servers", Description: "restart all detected workspace language servers", Icon: "↻", Category: "Tools"},
+	{ID: "lsp.restart", Label: "Restart Language Servers", Description: "restart enabled servers for open editor documents", Icon: "↻", Category: "Tools"},
 	{ID: "lsp.problems", Label: "Project Problems", Description: "inspect reported workspace diagnostics", Icon: "!", Category: "Tools"},
 	{
 		ID:          "safety.yolo.toggle",
