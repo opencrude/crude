@@ -6,9 +6,11 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"crude/provider"
 	"crude/types/recovery"
@@ -44,6 +46,54 @@ func TestPublishContextCASAppendAndIdempotence(t *testing.T) {
 	var conflict *ContextRevisionConflictError
 	if !errors.As(err, &conflict) || conflict.Actual != 1 {
 		t.Fatalf("err=%v", err)
+	}
+}
+
+func TestPublishContextCommitsHumanPromptMetadataWithInput(t *testing.T) {
+	db := OpenAndMigrateAt(t.TempDir())
+	defer db.Close()
+	if err := CreateSessionRow(db, "session"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`UPDATE sessions SET model='model',provider='provider',account_id='account' WHERE id='session'`); err != nil {
+		t.Fatal(err)
+	}
+	first := ContextMessageDelta{Message: provider.ChatMessage{InternalID: "first", Role: "user", Content: provider.TextContent("original request")}, Turn: 1, CreatedAt: 1, AgentID: "root"}
+	state, err := PublishContext(db, ContextPublication{SessionID: "session", AgentID: "root", Mutation: ContextMutation{Append: []ContextMessageDelta{first}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	runtime := ContextMessageDelta{Message: provider.ChatMessage{InternalID: "runtime", Role: "user", Origin: provider.OriginRuntimeContext, Visibility: provider.VisibilityContextOnly, Content: provider.TextContent("not a human prompt")}, Meta: DisplayMeta{ContextOnly: true}, Turn: 1, CreatedAt: 2, AgentID: "root"}
+	state, err = PublishContext(db, ContextPublication{SessionID: "session", AgentID: "root", ExpectedRevision: state.Revision, Mutation: ContextMutation{Append: []ContextMessageDelta{runtime}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	meta, err := GetMeta(db)
+	if err != nil || !meta.FirstPrompt.Valid || !meta.LastPrompt.Valid || meta.FirstPrompt.String != "original request" || meta.LastPrompt.String != "original request" || meta.TurnCount != 1 {
+		t.Fatalf("initial input metadata = %+v error=%v", meta, err)
+	}
+	if _, err := db.Exec(`CREATE TRIGGER reject_input BEFORE INSERT ON messages WHEN NEW.internal_id='second' BEGIN SELECT RAISE(FAIL,'input commit unavailable'); END`); err != nil {
+		t.Fatal(err)
+	}
+	text := strings.Repeat("\u754c", 80)
+	second := ContextMessageDelta{Message: provider.ChatMessage{InternalID: "second", Role: "user", Origin: provider.OriginHumanSteering, Content: provider.TextContent("attributed steering envelope")}, Meta: DisplayMeta{DisplayContent: text}, Turn: 2, CreatedAt: 3, AgentID: "root"}
+	publication := ContextPublication{SessionID: "session", AgentID: "root", ExpectedRevision: state.Revision, Mutation: ContextMutation{Append: []ContextMessageDelta{second}}}
+	if _, err := PublishContext(db, publication); err == nil {
+		t.Fatal("failed input was acknowledged")
+	}
+	failed, err := GetMeta(db)
+	if err != nil || !reflect.DeepEqual(meta, failed) {
+		t.Fatalf("failed publication changed prompt metadata: before=%+v after=%+v error=%v", meta, failed, err)
+	}
+	if _, err := db.Exec(`DROP TRIGGER reject_input`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := PublishContext(db, publication); err != nil {
+		t.Fatal(err)
+	}
+	meta, err = GetMeta(db)
+	if err != nil || !meta.FirstPrompt.Valid || !meta.LastPrompt.Valid || meta.FirstPrompt.String != "original request" || meta.LastPrompt.String != strings.Repeat("\u754c", 66) || !utf8.ValidString(meta.LastPrompt.String) || meta.TurnCount != 2 {
+		t.Fatalf("committed steering metadata = %+v error=%v", meta, err)
 	}
 }
 
@@ -637,49 +687,6 @@ func BenchmarkPublishContextReplaceUnrelatedArchiveHistory(b *testing.B) {
 			for i := 0; i < b.N; i++ {
 				state, err = PublishContext(db, ContextPublication{SessionID: "target", AgentID: "root", ExpectedRevision: state.Revision, Mutation: ContextMutation{Replace: &ContextReplacement{Generation: uint64(i + 2), Reason: "replace", Messages: []provider.ChatMessage{{InternalID: "stable", Role: "system", Content: provider.TextContent("checkpoint")}}}}})
 				if err != nil {
-					b.Fatal(err)
-				}
-			}
-		})
-	}
-}
-
-func BenchmarkLegacyReplacementArchiveScan(b *testing.B) {
-	for _, unrelated := range []int{0, 2000} {
-		b.Run(fmt.Sprintf("unrelated_%d", unrelated), func(b *testing.B) {
-			db := OpenAndMigrateAt(b.TempDir())
-			defer db.Close()
-			if err := CreateSessionRow(db, "target"); err != nil {
-				b.Fatal(err)
-			}
-			for i := 0; i < unrelated; i++ {
-				payload, err := json.Marshal([]provider.ChatMessage{{InternalID: fmt.Sprintf("other-%d", i), Role: "user", Content: provider.TextContent("unrelated archived content")}})
-				if err != nil {
-					b.Fatal(err)
-				}
-				if _, err := db.Exec(`INSERT INTO agent_context_generations(session_id,agent_id,generation,reason,messages_json,created_at) VALUES(?,?,?,?,?,?)`, "target", fmt.Sprintf("other-%d", i), 1, "old", payload, i+1); err != nil {
-					b.Fatal(err)
-				}
-			}
-			b.ResetTimer()
-			for i := 0; i < b.N; i++ {
-				rows, err := db.Query(`SELECT messages_json FROM agent_context_generations`)
-				if err != nil {
-					b.Fatal(err)
-				}
-				for rows.Next() {
-					var payload []byte
-					var messages []provider.ChatMessage
-					if err := rows.Scan(&payload); err != nil {
-						rows.Close()
-						b.Fatal(err)
-					}
-					if err := json.Unmarshal(payload, &messages); err != nil {
-						rows.Close()
-						b.Fatal(err)
-					}
-				}
-				if err := rows.Close(); err != nil {
 					b.Fatal(err)
 				}
 			}

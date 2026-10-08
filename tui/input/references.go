@@ -44,6 +44,7 @@ func (m *Model) InsertReference(ref sessiondb.Reference) {
 	}
 	m.input.InsertString(ref.DisplayName())
 	m.applyReferenceRanges()
+	m.draftRevision++
 }
 
 func (m Model) RefRanges() []RefRange {

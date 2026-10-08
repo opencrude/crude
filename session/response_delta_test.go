@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"crude/provider"
 	"crude/sessiondb"
@@ -128,10 +129,13 @@ func TestResponsesDeltaSessionToolsTurnsAndPassiveResume(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// Race/checkptr-instrumented modernc checkpoints of this 750 KB prefix
+	// exceed the shared small-fixture wait; this is a protocol correctness test.
+	const turnTimeout = 20 * time.Second
 	if !orch.SubmitInput(provider.PlainInput("Inspect a.go. Retain this background:\n" + strings.Repeat("retained project context\n", 30_000))) {
 		t.Fatal("input rejected")
 	}
-	waitTurnDone(t, sender, orch.ID)
+	waitTurnDone(t, sender, orch.ID, turnTimeout)
 	waitAssistantCount(t, s, 1)
 	if requests.Load() != 2 {
 		t.Fatalf("tool loop requests=%d", requests.Load())
@@ -192,7 +196,7 @@ func TestResponsesDeltaSessionToolsTurnsAndPassiveResume(t *testing.T) {
 	if !orch.SubmitInput(provider.PlainInput("Continue with the next small request.")) {
 		t.Fatal("resumed input rejected")
 	}
-	waitTurnDone(t, sender, orch.ID)
+	waitTurnDone(t, sender, orch.ID, turnTimeout)
 	waitAssistantCount(t, resumed, 2)
 	resumed.msgsMu.Lock()
 	restored = append([]provider.ChatMessage(nil), resumed.activeContext...)
@@ -211,7 +215,7 @@ func TestResponsesDeltaSessionToolsTurnsAndPassiveResume(t *testing.T) {
 		if !orch.SubmitInput(provider.PlainInput("Continue on the selected model.")) {
 			t.Fatal("model-switched input rejected")
 		}
-		waitTurnDone(t, sender, orch.ID)
+		waitTurnDone(t, sender, orch.ID, turnTimeout)
 		waitAssistantCount(t, resumed, count)
 	}
 	mu.Lock()

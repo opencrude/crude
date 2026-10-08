@@ -2,8 +2,31 @@ package agent
 
 import (
 	"errors"
+	"slices"
 	"testing"
+	"time"
 )
+
+func TestCommitClaimAllFailurePublishesNoLocalTargets(t *testing.T) {
+	ownership := NewFileOwnership()
+	if err := ownership.PreClaim("root", "Root", []string{"src/existing.go"}); err != nil {
+		t.Fatal(err)
+	}
+	before := ownership.WriteClaimsByAgent("root")
+	storageFailure := errors.New("claim commit unavailable")
+	if err := ownership.CommitClaimAll("root", "Root", []string{"src/new.go", "src/another.go"}, true, func() error {
+		return storageFailure
+	}); !errors.Is(err, storageFailure) {
+		t.Fatalf("durable failure = %v", err)
+	}
+	if after := ownership.WriteClaimsByAgent("root"); !slices.Equal(before, after) {
+		t.Fatalf("failed commit leaked local claims: before=%v after=%v", before, after)
+	}
+	if release, err := ownership.BeginWrite("root", []string{"src"}); err == nil {
+		release()
+		t.Fatal("file claim authorized its broader parent directory")
+	}
+}
 
 func TestFileOwnershipUsesPathBoundaries(t *testing.T) {
 	ownership := NewFileOwnership()
@@ -15,6 +38,33 @@ func TestFileOwnershipUsesPathBoundaries(t *testing.T) {
 	}
 	if err := ownership.CheckOrClaim("second", "Second", "src/file.go", true); err == nil {
 		t.Fatal("child path did not conflict with claimed directory")
+	}
+}
+
+func TestFileOwnershipWriteLeaseOutlivesGuardDuringReplacement(t *testing.T) {
+	ownership := NewFileOwnership()
+	if err := ownership.PreClaim("child", "Child", []string{"src"}); err != nil {
+		t.Fatal(err)
+	}
+	release, err := ownership.BeginWrite("child", []string{"src/owned.go"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	committed := make(chan struct{})
+	go func() {
+		_ = ownership.CommitReplaceClaims("child", "Child", []string{"src/narrow.go"}, func() error { return nil })
+		close(committed)
+	}()
+	select {
+	case <-committed:
+		t.Fatal("claim replacement passed an in-flight file effect")
+	case <-time.After(20 * time.Millisecond):
+	}
+	release()
+	select {
+	case <-committed:
+	case <-time.After(time.Second):
+		t.Fatal("claim replacement did not proceed after the file effect ended")
 	}
 }
 
@@ -53,7 +103,7 @@ func TestFileOwnershipReplaceClaimsIsAtomicAndDropsBroadProjection(t *testing.T)
 	if err := ownership.PreClaim("other", "Other", []string{"docs"}); err != nil {
 		t.Fatal(err)
 	}
-	if err := ownership.ReplaceClaims("child", "Child", []string{"docs/readme.md"}); err == nil {
+	if err := ownership.ReplaceClaims("child", "Child", []string{"docs/reference/run-recovery.md"}); err == nil {
 		t.Fatal("conflicting replacement succeeded")
 	}
 	if got := ownership.WriteClaimsByAgent("child"); len(got) != 1 || got[0] != normalizeClaimPath("src") {

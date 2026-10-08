@@ -5,19 +5,28 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 
 	"crude/logger"
 )
 
-var safetyLogger *logger.Logger
+var (
+	safetyLogger   *logger.Logger
+	safetyLoggerMu sync.RWMutex
+)
 
 func SetSafetyLogger(lg *logger.Logger) {
+	safetyLoggerMu.Lock()
 	safetyLogger = lg
+	safetyLoggerMu.Unlock()
 }
 
 func safetyLogIf(fn func(lg *logger.Logger)) {
-	if safetyLogger != nil {
-		fn(safetyLogger)
+	safetyLoggerMu.RLock()
+	lg := safetyLogger
+	safetyLoggerMu.RUnlock()
+	if lg != nil {
+		fn(lg)
 	}
 }
 

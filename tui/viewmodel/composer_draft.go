@@ -67,11 +67,10 @@ type composerDraftLoadedMsg struct {
 // composerDraftSavedMsg closes one in-flight save; a coalesced dirty flag
 // re-arms the next save from Update (single-writer, ordered).
 type composerDraftSavedMsg struct {
-	session  *workspace.Session
-	epoch    uint64
-	revision uint64
-	err      error
-	raw      []byte
+	session *workspace.Session
+	epoch   uint64
+	err     error
+	raw     []byte
 }
 
 // maybeHydrateComposerDraft runs from Update/Init lifecycle boundaries. When the active

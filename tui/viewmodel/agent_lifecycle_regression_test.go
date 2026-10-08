@@ -1,14 +1,85 @@
 package viewmodel
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
+	"crude/agent"
 	"crude/tui/chatprojection"
 	ttypes "crude/tui/types"
+	"crude/types"
 	"crude/workspace"
 )
+
+func TestCancelledAgentEnvelopeRetainsLateSemanticEvidenceWithoutReactivation(t *testing.T) {
+	for _, owner := range []string{"root", "child"} {
+		for _, phase := range []string{"cancelling", "terminal"} {
+			t.Run(owner+"/"+phase, func(t *testing.T) {
+				app := newFullTestApp(t)
+				app.AddOrchestrator("root")
+				if owner == "child" {
+					pane := app.PaneMgr.GetOrCreate("child", workspace.PaneAgent, "child")
+					app.AgentMgr.AddSubAgent("child", "root", "Child", "model", "researcher", workspace.NewAgentState("child", pane.Messages, app.Logger))
+				}
+				state := app.AgentMgr.Get(owner).State
+				sequence := uint64(0)
+				deliver := func(kind string, data any) agent.AgentEvent {
+					sequence++
+					event := agent.AgentEvent{Type: kind, Data: data, AgentID: owner, Identity: types.RuntimeEventIdentity{
+						EventID: fmt.Sprintf("%s-%d", owner, sequence), OwnerID: "root", AgentID: owner,
+						RunID: "exact-run", RuntimeEpoch: 1, Generation: 1, Sequence: sequence,
+					}}
+					_, _ = app.Update(event)
+					return event
+				}
+				deliver("turn_started", types.TurnIdentity{Generation: 1, AccountID: "account", ProviderID: "provider", ModelID: "model"})
+				deliver("tool_call", map[string]any{"tool_id": "tool", "internal_id": "call", "name": "read_file", "args": `{"path":"evidence.txt"}`})
+				state.BeginCancellation()
+				if phase == "terminal" {
+					deliver("done", map[string]any{"reason": "cancelled"})
+					if owner == "child" {
+						state.Completed, state.Status = true, "cancelled"
+					}
+				}
+				deliver("tool_result", map[string]any{"tool_id": "tool", "internal_id": "call", "name": "read_file", "result": "late exact tool evidence"})
+				last := deliver("stream_token", "late exact stream evidence")
+				_ = state.Tick(1000)
+				tool, stream := false, false
+				for _, message := range state.Messages.Messages() {
+					tool = tool || message.Role == workspace.MessageRoleTool && message.Content == "late exact tool evidence"
+					stream = stream || message.Role == workspace.MessageRoleAssistant && strings.Contains(message.Content, "late exact stream evidence")
+				}
+				if !tool || !stream {
+					t.Errorf("late semantic evidence disappeared: tool=%v stream=%v", tool, stream)
+				}
+				if state.IsActive() || state.Messages.HasPendingToolLifecycles() {
+					t.Errorf("late semantic evidence reactivated stopped animation: running=%v thinking=%v streaming=%v pendingTools=%v",
+						state.Running, state.Thinking, state.Streaming, state.Messages.HasPendingToolLifecycles())
+				}
+				version := state.Messages.Version()
+				_, _ = app.Update(last)
+				last.Identity.EventID, last.Identity.OwnerID, last.Identity.Sequence = "foreign", "foreign-owner", sequence+1
+				_, _ = app.Update(last)
+				if state.Messages.Version() != version {
+					t.Fatal("duplicate/foreign semantic envelope changed stopped evidence")
+				}
+				next := agent.AgentEvent{Type: "turn_started", AgentID: owner,
+					Data:     types.TurnIdentity{Generation: 2, AccountID: "account", ProviderID: "provider", ModelID: "model"},
+					Identity: types.RuntimeEventIdentity{EventID: owner + "-next", OwnerID: "root", AgentID: owner, RunID: "next-run", RuntimeEpoch: 1, Generation: 2, Sequence: sequence + 1},
+				}
+				_, _ = app.Update(next)
+				next.Type, next.Data = "phase", "waiting_provider"
+				next.Identity.EventID, next.Identity.Sequence = owner+"-next-phase", sequence+2
+				_, _ = app.Update(next)
+				if !state.IsActive() || state.Completed || state.TurnIdentity.Generation != 2 {
+					t.Fatalf("genuine next generation stayed terminal: active=%v completed=%v generation=%d", state.IsActive(), state.Completed, state.TurnIdentity.Generation)
+				}
+			})
+		}
+	}
+}
 
 func TestSubAgentTerminalStatusIsNamedRoleAwareAndForcesCachedFooterFrame(t *testing.T) {
 	for _, tc := range []struct{ status, want string }{

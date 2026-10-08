@@ -5,6 +5,8 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -12,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
+	"unicode/utf8"
 
 	"crude/agent"
 	"crude/collaboration"
@@ -34,7 +37,12 @@ func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
 	s.sender = sender
 	defer s.detachCollaborator(context.Background(), o.ID)
 	s.reconcileCollaborationAdmissions(s.db, o.ID)
+	const collaborationPollInterval = 500 * time.Millisecond
+	passiveReady := true
+	var passiveRetryAt time.Time
 	if err := s.admitPassiveCollaboration(o, sender); err != nil {
+		passiveReady = false
+		passiveRetryAt = time.Now().Add(collaborationPollInterval)
 		l.Warn("COLLAB", "passive_recovery_deferred", "agent_id", o.ID, "error", err.Error())
 	}
 
@@ -44,11 +52,23 @@ func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
 		collaborationNotifications, unsubscribeCollaboration = store.Subscribe()
 	}
 	defer unsubscribeCollaboration()
-	collaborationPoll := time.NewTicker(500 * time.Millisecond)
+	collaborationPoll := time.NewTicker(collaborationPollInterval)
 	defer collaborationPoll.Stop()
 	startCollaborationTurn := func() bool {
-		if o.RuntimeEpoch == 0 || o.TurnActive() || o.closing.Load() {
+		if o.RuntimeEpoch == 0 || o.TurnActive() || o.closing.Load() || atomic.LoadInt32(&s.closing) != 0 {
 			return false
+		}
+		if !passiveReady {
+			// Reservation release also notifies this loop; failed storage must not
+			// turn its own notifications into an unbounded retry/wake cycle.
+			if time.Now().Before(passiveRetryAt) {
+				return false
+			}
+			if err := s.admitPassiveCollaboration(o, sender); err != nil {
+				passiveRetryAt = time.Now().Add(collaborationPollInterval)
+				return false
+			}
+			passiveReady = true
 		}
 		deliveries, err := s.reserveCollaboration(context.Background(), o.ID, o.RuntimeEpoch, 1)
 		if err != nil {
@@ -157,7 +177,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		s.msgsMu.Unlock()
 	}
 	var initialRecovery *recoverytypes.Status
-	if request.retry && request.recovery != nil {
+	if request.recovery != nil && request.recovery.Status.ID != "" {
 		status := request.recovery.Status
 		initialRecovery = &status
 	}
@@ -174,17 +194,32 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		currentMsgID = userInput.InternalID
 	}
 	userInput.InternalID = currentMsgID
+	s.msgsMu.Lock()
+	if request.sessionTurn == 0 && request.retry {
+		for i, message := range s.msgs {
+			if message.InternalID == currentMsgID && i < len(s.msgTurns) {
+				request.sessionTurn = s.msgTurns[i]
+				break
+			}
+		}
+	}
+	if request.sessionTurn == 0 {
+		request.sessionTurn = s.turnNumber + 1
+	}
+	s.turnNumber = max(s.turnNumber, request.sessionTurn)
+	s.msgsMu.Unlock()
 	recoveryState.setPending(userInput)
 	locallyAdmitted := request.recovery != nil && request.recovery.InputAdmitted
 	if !locallyAdmitted {
-		userMsg, referenceLabels := s.buildUserMessageWithDisplay(userInput, "")
+		// Submission is immutable even when subsequent reference preparation fails.
+		userMsg := inputMessage(provider.NewTextMessage("user", userInput.Text), userInput)
 		userMsg.InternalID = currentMsgID
 		userMsg.DisplayContent = userInput.Text
 		if userInput.DisplayText != "" {
 			userMsg.DisplayContent = userInput.DisplayText
 		}
 		createdAt := time.Now()
-		meta := canonicalizeDisplayMeta(userMsg, sessiondb.DisplayMeta{DisplayRole: "user", DisplayContent: userInput.Text, ReferenceLabels: referenceLabels}, "", len(s.msgs), createdAt)
+		meta := canonicalizeDisplayMeta(userMsg, sessiondb.DisplayMeta{DisplayRole: "user", DisplayContent: userInput.Text}, "", len(s.msgs), createdAt)
 		if len(request.deliveries) > 0 {
 			// The collaboration event owns the canonical message identity, payload and
 			// timestamp. The later admission transaction reuses this exact delta while
@@ -222,7 +257,6 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		recoveryState.setInputAdmitted(true)
 		recoveryState.snapshot(archive, active)
 		recoveryState.setContext(s.sessionID, s.contextRevision, s.contextGeneration, s.contextReason)
-		locallyAdmitted = true
 	}
 	turnFinished := false
 	turnFinalState := sessiondb.TurnFailed
@@ -232,8 +266,23 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		if turnFinished {
 			return nil
 		}
-		if ctx.Err() != nil {
+		if ctx.Err() != nil && turnFinalState != sessiondb.TurnCompleted {
 			turnFinalState = sessiondb.TurnInterrupted
+		}
+		if !recoveryParked && (turnFinalState == sessiondb.TurnCompleted || turnFinalState == sessiondb.TurnInterrupted) {
+			state, outcome := collaboration.RunCancelled, "cancelled"
+			if turnFinalState == sessiondb.TurnCompleted {
+				state, outcome = collaboration.RunSucceeded, "completed"
+			}
+			if err := recoveryState.captureTerminalSettlement(terminalSettlementIntent{
+				SessionID: s.sessionID, AgentID: o.ID, OwnerID: s.sessionID, Generation: turnGeneration, TurnState: turnFinalState, Stopped: ctx.Err() != nil,
+				Run: collaboration.FinishRunRequest{RunID: collaborationRun.ID, AgentID: o.ID, RuntimeEpoch: o.RuntimeEpoch, ExpectedVersion: collaborationRun.Version, State: state, Outcome: outcome, ContextCommitID: currentMsgID},
+			}); err != nil {
+				return err
+			}
+			if err := supervisor.Persist(supervisor.CheckpointStatus()); err != nil {
+				return err
+			}
 		}
 		if s.db != nil {
 			if err := sessiondb.FinishAgentTurn(s.db, s.sessionID, o.ID, turnGeneration, turnFinalState); err != nil {
@@ -255,7 +304,9 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			s.mu.Lock()
 			store := s.collaborationStore
 			s.mu.Unlock()
-			if store != nil {
+			if store == nil {
+				return errors.New("root terminal collaboration store is unavailable")
+			} else {
 				_, expectedVersion := o.collaborationRunIdentity()
 				if expectedVersion == 0 {
 					expectedVersion = collaborationRun.Version
@@ -291,6 +342,9 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		}
 		if err := finishTurn(); err != nil {
 			l.Warn("SESSION", "turn_state_finish_failed", "error", err.Error())
+			status := supervisor.Park(agent.AttentionRecovery(agent.RecoveryFailureStorage, err))
+			s.parkRecovery(recoveryState.checkpoint(status))
+			recoveryParked = true
 		}
 		o.endTurn(turnGeneration)
 		if !recoveryParked {
@@ -302,16 +356,65 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			if err := operation(); err != nil {
 				l.Warn("RECOVERY", "preflight_blocked", "agent_id", o.ID, "kind", kind, "error", err.Error())
 				if !supervisor.Await(ctx, agent.AttentionRecovery(kind, err)) {
-					if cancelErr := supervisor.Cancel(); cancelErr != nil {
-						status := supervisor.Park(agent.AttentionRecovery(agent.RecoveryFailureStorage, cancelErr))
-						s.parkRecovery(recoveryState.checkpoint(status))
-						recoveryParked = true
-						return false
+					if turnFinalState != sessiondb.TurnCompleted {
+						turnFinalState = sessiondb.TurnInterrupted
 					}
-					turnFinalState = sessiondb.TurnInterrupted
-					sender.SendAgentEventWithID("done", map[string]any{
-						"content": "Cancelled.", "reason": "cancelled",
-					}, o.ID)
+					settlementCtx, stopSettlement := context.WithCancel(context.WithoutCancel(ctx))
+					defer stopSettlement()
+					go func() {
+						select {
+						case <-o.stopCh:
+							stopSettlement()
+						case <-settlementCtx.Done():
+						}
+					}()
+					for {
+						// Stop cancels execution, not the mandatory terminal publisher.
+						s.msgsMu.Lock()
+						boundaryID := "turn-stopped:" + supervisor.IncidentID()
+						var cancelErr error
+						if !slices.ContainsFunc(s.activeContext, func(message provider.ChatMessage) bool { return message.InternalID == boundaryID }) {
+							stamp := time.Now()
+							boundary := provider.NewTextMessage("user", rootprompt.TurnStoppedBoundary())
+							boundary.InternalID, boundary.Origin, boundary.Visibility = boundaryID, provider.OriginTurnStopped, provider.VisibilityContextOnly
+							meta := canonicalizeDisplayMeta(boundary, sessiondb.DisplayMeta{}, "", len(s.msgs), stamp)
+							_, cancelErr = s.publishRootContext(sessiondb.ContextPublication{Mutation: sessiondb.ContextMutation{
+								Append: []sessiondb.ContextMessageDelta{contextDelta(boundary, meta, request.sessionTurn, stamp, o.ID)},
+							}})
+							if cancelErr == nil {
+								s.msgs = append(s.msgs, boundary)
+								s.msgTurns = append(s.msgTurns, request.sessionTurn)
+								s.displayMetas = append(s.displayMetas, meta)
+								s.createdAts = append(s.createdAts, stamp.UnixNano())
+							}
+						}
+						if cancelErr == nil {
+							recoveryState.snapshot(s.msgs, s.activeContext)
+							recoveryState.setContext(s.sessionID, s.contextRevision, s.contextGeneration, s.contextReason)
+						}
+						s.msgsMu.Unlock()
+						if cancelErr == nil {
+							cancelErr = finishTurn()
+						}
+						if cancelErr == nil {
+							cancelErr = supervisor.Cancel()
+						}
+						if cancelErr == nil {
+							break
+						}
+						if !supervisor.Await(settlementCtx, agent.AttentionRecovery(agent.RecoveryFailureStorage, cancelErr)) {
+							status := supervisor.Park(agent.AttentionRecovery(agent.RecoveryFailureStorage, cancelErr))
+							s.parkRecovery(recoveryState.checkpoint(status))
+							recoveryParked = true
+							return false
+						}
+					}
+					content, reason := "Cancelled.", "cancelled"
+					if turnFinalState == sessiondb.TurnCompleted {
+						content, reason = "Completed.", "end_turn"
+					}
+					source := &runtimeEventSource{ownerID: s.sessionID, agentID: o.ID, runID: collaborationRun.ID, runtimeEpoch: o.RuntimeEpoch, generation: turnGeneration}
+					sendRuntimeEvent(sender, source.bind(agent.AgentEvent{Type: "done", Data: map[string]any{"content": content, "reason": reason}}))
 					return false
 				}
 				continue
@@ -320,29 +423,24 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		}
 	}
 	if request.retry {
-		current, found, err := sessiondb.LoadContextState(s.db, s.sessionID, request.recovery.ContextOwnerID)
-		if err != nil {
-			if !recoverStep(agent.RecoveryFailureStorage, func() error { return err }) {
-				return
-			}
-		}
-		if found {
-			recoveryState.setContext(request.recovery.ContextOwnerID, current.Revision, current.Generation, current.Reason)
-		}
+		s.msgsMu.Lock()
+		recoveryState.snapshot(s.msgs, s.activeContext)
+		recoveryState.setContext(s.sessionID, s.contextRevision, s.contextGeneration, s.contextReason)
+		s.msgsMu.Unlock()
 		if err := supervisor.BeginRetry(); err != nil &&
 			!recoverStep(agent.RecoveryFailureStorage, func() error { return supervisor.BeginRetry() }) {
 			return
 		}
 		recoveryState.appendContinuation(rootprompt.RecoveryInterrupted)
 		if !recoverStep(agent.RecoveryFailureStorage, func() error {
-			return recoveryState.publish(s.db, s.sessionID, supervisor.CheckpointStatus())
+			return supervisor.Persist(supervisor.CheckpointStatus())
 		}) {
 			return
 		}
 		request.recovery.Archive, request.recovery.ActiveContext = recoveryState.contexts()
 	}
 	if !recoverStep(agent.RecoveryFailureStorage, func() error {
-		return s.persistPendingRecovery(s.db, s.sessionID, supervisor, recoveryState)
+		return s.persistPendingRecovery(supervisor)
 	}) {
 		return
 	}
@@ -419,7 +517,6 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	s.activeTurns.Add(1)
 	defer s.activeTurns.Add(-1)
 
-	s.turnNumber++
 	s.toolCallCountMu.Lock()
 	s.toolCallCount = 0
 	s.toolCallCountMu.Unlock()
@@ -516,132 +613,87 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 
 	var archiveCopy, contextMsgs, frozenPrefix []provider.ChatMessage
 	persistedPrefixLen := 0
-	resumingAdmitted := locallyAdmitted
-	if resumingAdmitted {
-		admittedArchive, admittedActive := recoveryState.contexts()
-		archiveCopy = recoveryArchiveMessages(admittedArchive)
-		contextMsgs = append([]provider.ChatMessage(nil), admittedActive...)
-		frozenPrefix = append([]provider.ChatMessage(nil), contextMsgs...)
-		s.msgsMu.Lock()
-		persistedPrefixLen = len(s.msgs)
-		s.activeContext = append([]provider.ChatMessage(nil), contextMsgs...)
-		if request.recovery != nil {
-			s.contextGeneration = max(s.contextGeneration, request.recovery.ContextGeneration)
-			s.contextReason = request.recovery.ContextReason
-		}
-		s.msgsMu.Unlock()
-		recoveryState.snapshot(archiveCopy, contextMsgs)
-	} else {
-		userMsg, referenceLabels := s.buildUserMessageWithDisplay(userInput, activeCfg.Model)
-		userMsg.InternalID = currentMsgID
-		userMsg.DisplayContent = userInput.Text
-		if userInput.DisplayText != "" {
-			userMsg.DisplayContent = userInput.DisplayText
-		}
-		requestContextParts := append([]string(nil), userInput.ContextParts...)
-		if humanTurn {
-			var currentPlan string
-			if !recoverStep(agent.RecoveryFailureStorage, func() error {
-				var err error
-				currentPlan, err = s.activePlanTurnContext(ctx)
-				return err
-			}) {
-				return
-			}
-			if currentPlan != "" {
-				requestContextParts = append(requestContextParts, currentPlan)
-			}
-			if memoryContext := s.recallMemoryContext(ctx, userInput.Text, userInput.ActivePaths); memoryContext != "" {
-				requestContextParts = append(requestContextParts, memoryContext)
-			}
-			if s.prevContextInjected.CompareAndSwap(false, true) {
-				if prevContext := s.previousSessionContext(ctx); prevContext != "" {
-					requestContextParts = append(requestContextParts, prevContext)
-				}
-			}
-		}
-		var runtimeParts []string
-		if status := agent.BuildAsyncCommandStatus(s.asyncMgr); status != "" {
-			runtimeParts = append(runtimeParts, status)
-		}
-		if runner := o.subAgentRunner(); runner != nil {
-			if status := agent.BuildSubAgentStatus(runner.Manager()); status != "" {
-				runtimeParts = append(runtimeParts, status)
-			}
-		}
-		if len(runtimeParts) > 0 {
-			requestContextParts = append(requestContextParts, "## Runtime Status\n\n"+strings.Join(runtimeParts, "\n\n"))
-		}
-		var runtimeContext *provider.ChatMessage
-		if content := strings.TrimSpace(strings.Join(requestContextParts, "\n\n")); content != "" {
-			message := provider.NewTextMessage("user", rootprompt.TurnContext(content))
-			message.InternalID = currentMsgID + "-context"
-			message.Origin = provider.OriginRuntimeContext
-			message.Visibility = provider.VisibilityContextOnly
-			runtimeContext = &message
-		}
-
-		if s.db != nil && humanTurn {
-			_ = sessiondb.UpdateFirstPrompt(s.db, s.sessionID, userInput.Text)
-			_ = sessiondb.UpdateLastPrompt(s.db, s.sessionID, userInput.Text)
-		}
-
-		s.msgsMu.Lock()
-		if s.activeContext == nil {
-			s.activeContext = append([]provider.ChatMessage(nil), s.msgs...)
-		}
-		frozenPrefix = append([]provider.ChatMessage(nil), s.activeContext...)
-		if runtimeContext != nil {
-			s.msgs = append(s.msgs, *runtimeContext)
-			s.activeContext = append(s.activeContext, *runtimeContext)
-			s.msgTurns = append(s.msgTurns, s.turnNumber)
-			s.displayMetas = append(s.displayMetas, sessiondb.DisplayMeta{
-				DisplayRole: "hidden_runtime_context", ContextOnly: true,
-			})
-		}
-		s.msgs = append(s.msgs, userMsg)
-		s.activeContext = append(s.activeContext, userMsg)
-		s.msgTurns = append(s.msgTurns, s.turnNumber)
-		userMeta := sessiondb.DisplayMeta{
-			DisplayRole:     "user",
-			DisplayContent:  userInput.Text,
-			ReferenceLabels: referenceLabels,
-		}
-		if userMsg.EffectiveVisibility() != provider.VisibilityConversation {
-			userMeta.DisplayRole = "hidden_runtime_context"
-			userMeta.ContextOnly = true
-		}
-		userMeta = canonicalizeDisplayMeta(userMsg, userMeta, "", len(s.msgs)-1, time.Now())
-		s.displayMetas = append(s.displayMetas, userMeta)
-		archiveCopy = append([]provider.ChatMessage(nil), s.msgs...)
-		contextMsgs = append([]provider.ChatMessage(nil), s.activeContext...)
-		persistedPrefixLen = len(archiveCopy)
-		s.msgsMu.Unlock()
-		recoveryState.setInputAdmitted(true)
-		recoveryState.snapshot(archiveCopy, contextMsgs)
-		if !recoverStep(agent.RecoveryFailureStorage, func() error {
-			return s.persistPendingRecovery(s.db, s.sessionID, supervisor, recoveryState)
+	admittedArchive, admittedActive := recoveryState.contexts()
+	archiveCopy = recoveryArchiveMessages(admittedArchive)
+	contextMsgs = append([]provider.ChatMessage(nil), admittedActive...)
+	// A completed preparation is an immutable, input-owned suffix. Continue must
+	// reuse it, not reload references or take a second plan/memory/runtime snapshot.
+	prepared := slices.ContainsFunc(archiveCopy, func(message provider.ChatMessage) bool {
+		return message.InternalID == currentMsgID+"-context"
+	})
+	if !prepared {
+		var input preparedInput
+		if !recoverStep(agent.RecoveryFailureConfiguration, func() error {
+			var err error
+			input, err = s.prepareInput(ctx, userInput, effectiveCfg, o, archiveCopy...)
+			return err
 		}) {
 			return
 		}
-		s.msgsMu.Lock()
-		s.contextRevision, s.contextGeneration, s.contextReason = recoveryState.contextState()
-		s.msgsMu.Unlock()
+		createdAt := time.Now()
+		deltas := make([]sessiondb.ContextMessageDelta, 0, len(input.Enrichment))
+		for _, message := range input.Enrichment {
+			meta := canonicalizeDisplayMeta(message, sessiondb.DisplayMeta{DisplayRole: "hidden_runtime_context", ContextOnly: true}, "", 0, createdAt)
+			deltas = append(deltas, contextDelta(message, meta, s.turnNumber, createdAt, o.ID))
+		}
+		if !recoverStep(agent.RecoveryFailureStorage, func() error {
+			s.msgsMu.Lock()
+			defer s.msgsMu.Unlock()
+			pending := make([]sessiondb.ContextMessageDelta, 0, len(deltas))
+			for _, delta := range deltas {
+				index := slices.IndexFunc(s.msgs, func(message provider.ChatMessage) bool { return message.InternalID == delta.Message.InternalID })
+				if index >= 0 {
+					if !reflect.DeepEqual(canonicalContextMessage(s.msgs[index]), delta.Message) {
+						return &sessiondb.ContextMessageConflictError{InternalID: delta.Message.InternalID, Location: "retained preparation"}
+					}
+					continue
+				}
+				pending = append(pending, delta)
+			}
+			state, err := s.publishRootContext(sessiondb.ContextPublication{Mutation: sessiondb.ContextMutation{Append: pending}})
+			if err != nil {
+				return err
+			}
+			for _, delta := range pending {
+				s.msgs = append(s.msgs, delta.Message)
+				s.msgTurns = append(s.msgTurns, delta.Turn)
+				s.displayMetas = append(s.displayMetas, delta.Meta)
+				s.createdAts = append(s.createdAts, delta.CreatedAt)
+			}
+			archiveCopy = append([]provider.ChatMessage(nil), s.msgs...)
+			contextMsgs = append([]provider.ChatMessage(nil), state.Messages...)
+			recoveryState.snapshot(archiveCopy, contextMsgs)
+			recoveryState.setContext(s.sessionID, state.Revision, state.Generation, state.Reason)
+			return nil
+		}) {
+			return
+		}
+		if !recoverStep(agent.RecoveryFailureStorage, func() error {
+			return s.persistPendingRecovery(supervisor)
+		}) {
+			return
+		}
 	}
+	if humanTurn {
+		s.prevContextInjected.Store(true)
+	}
+	frozenPrefix = append([]provider.ChatMessage(nil), contextMsgs...)
+	s.msgsMu.Lock()
+	persistedPrefixLen = len(s.msgs)
+	s.activeContext = append([]provider.ChatMessage(nil), contextMsgs...)
+	s.msgsMu.Unlock()
 	if len(request.deliveries) > 0 {
 		if !recoverStep(agent.RecoveryFailureStorage, func() error {
-			deltas := collaborationDeltas(request.deliveries, contextMsgs, o.ID)
 			// The event message was already admitted through the exact same
 			// revision-owned context source above. This transaction now publishes
 			// only the durable delivery receipt; re-appending through a separately
 			// reconstructed display delta creates a second metadata authority.
-			deltas = nil
-			return s.commitCollaborationAdmissions(
+			_, err := s.commitCollaborationAdmissions(
 				s.db, s.sessionID, s.sessionID, o.ID, collaborationRun.ID, o.RuntimeEpoch,
-				recoveryState.contextRevisionValue(), deltas, request.deliveries,
+				recoveryState.contextRevisionValue(), nil, request.deliveries,
 			)
+			return err
 		}) {
-			s.rollbackTurnInput(currentMsgID)
 			s.releaseCollaborationReservations(o.ID, o.RuntimeEpoch, request.deliveries, "context admission failed")
 			return
 		}
@@ -701,30 +753,18 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	ag.CompactionAgentProfile = agentProfile + "/" + CategoryAeron
 	ag.AgentID = agent.AgentID(o.ID)
 	ag.TurnGeneration = turnGeneration
+	var compactionRevision uint64
 	ag.PrepareCompaction = func(source agent.CompactionSource) error {
-		return s.beginRootCompaction(o.ID, source)
+		var err error
+		compactionRevision, err = s.beginRootCompaction(o.ID, source)
+		return err
 	}
 	ag.CommitCompaction = func(commit agent.CompactionCommit) error {
-		return s.commitRootCompaction(o.ID, commit)
+		return s.commitRootCompaction(o.ID, compactionRevision, commit)
 	}
 	ag.Checkpoint = func(archive, active []provider.ChatMessage) error {
 		recoveryState.snapshot(archive, active)
-		// Runtime steering can publish the exact active context through the same
-		// session owner between provider requests. Acknowledge that revision only
-		// when the checkpoint's complete active bytes equal the committed source;
-		// never attach a latest revision to an older/different snapshot.
-		s.msgsMu.Lock()
-		if reflect.DeepEqual(active, s.activeContext) {
-			recoveryState.setContext(s.sessionID, s.contextRevision, s.contextGeneration, s.contextReason)
-		}
-		s.msgsMu.Unlock()
-		if err := persistRecoveryBoundary(ctx, supervisor); err != nil {
-			return err
-		}
-		s.msgsMu.Lock()
-		s.contextRevision, s.contextGeneration, s.contextReason = recoveryState.contextState()
-		s.msgsMu.Unlock()
-		return nil
+		return persistRecoveryBoundary(ctx, supervisor)
 	}
 	if activeCfg.ContextCompactionPercent != nil {
 		ag.ContextCompactionPercent = *activeCfg.ContextCompactionPercent
@@ -788,7 +828,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		if len(contextMessages) > 0 && contextMessages[0].Role == "system" {
 			contextMessages = contextMessages[1:]
 		}
-		if err := s.commitCollaborationAdmissions(
+		if _, err := s.commitCollaborationAdmissions(
 			s.db, s.sessionID, s.sessionID, o.ID, collaborationRun.ID, o.RuntimeEpoch,
 			s.contextRevision, collaborationDeltas(pendingCollaboration, contextMessages, o.ID), pendingCollaboration,
 		); err != nil {
@@ -924,9 +964,6 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		},
 	)
 	agentMsgs := runResult.Archive
-	s.msgsMu.Lock()
-	s.contextRevision, s.contextGeneration, s.contextReason = recoveryState.contextState()
-	s.msgsMu.Unlock()
 	controlMessages := s.takeCollaborationContext(o.ID)
 	if len(controlMessages) > 0 {
 		agentMsgs = append(agentMsgs, controlMessages...)
@@ -939,7 +976,19 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	l.Info("AGENT", "loop_end", "len", len(finalContent))
 	activeContext := runResult.Active
 	activeContext = append(activeContext, controlMessages...)
+	s.msgsMu.Lock()
+	committed := append([]provider.ChatMessage(nil), s.activeContext...)
+	if retainsContextSource(committed, activeContext) {
+		activeContext = committed
+		for _, message := range s.msgs {
+			if message.InternalID != "" && !slices.ContainsFunc(agentMsgs, func(existing provider.ChatMessage) bool { return existing.InternalID == message.InternalID }) {
+				agentMsgs = append(agentMsgs, message)
+			}
+		}
+	}
+	s.msgsMu.Unlock()
 	recoveryState.snapshot(agentMsgs, activeContext)
+	agentMsgs, activeContext = recoveryState.contexts()
 	finalizeErr := s.finalizeTurn(agentMsgs, persistedPrefixLen, displayTracker, finalContent, currentMsgID, turnIdentity, activeContext)
 	for finalizeErr != nil {
 		if !supervisor.Await(ctx, agent.AttentionRecovery(agent.RecoveryFailureStorage, finalizeErr)) {
@@ -955,6 +1004,11 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			}, o.ID)
 			return
 		}
+		s.msgsMu.Lock()
+		if retainsContextSource(s.activeContext, activeContext) {
+			activeContext = append([]provider.ChatMessage(nil), s.activeContext...)
+		}
+		s.msgsMu.Unlock()
 		finalizeErr = s.finalizeTurn(agentMsgs, persistedPrefixLen, displayTracker, finalContent, currentMsgID, turnIdentity, activeContext)
 	}
 	s.msgsMu.Lock()
@@ -1006,15 +1060,18 @@ func (s *Session) preserveUnstartedInput(request turnRequest, o *Orchestrator) {
 	if s == nil || s.db == nil || o == nil || strings.TrimSpace(request.input.Text) == "" {
 		return
 	}
+	if request.recovery != nil && request.recovery.InputAdmitted {
+		return
+	}
 	input := cloneUserInput(request.input)
 	if input.InternalID == "" {
 		input.InternalID = newMessageID()
 	}
-	message, labels := s.buildUserMessageWithDisplay(input, "")
+	message := inputMessage(provider.NewTextMessage("user", input.Text), input)
 	message.InternalID = input.InternalID
 	message.DisplayContent = input.Text
 	meta := canonicalizeDisplayMeta(message, sessiondb.DisplayMeta{
-		DisplayRole: "user", DisplayContent: input.Text, ReferenceLabels: labels,
+		DisplayRole: "user", DisplayContent: input.Text,
 	}, "", 0, time.Now())
 	createdAt := time.Now()
 	s.msgsMu.Lock()
@@ -1256,17 +1313,19 @@ func (s *Session) finalizeTurn(
 	previousCreated := append([]int64(nil), s.createdAts...)
 	previousActive := append([]provider.ChatMessage(nil), s.activeContext...)
 	previousRevision, previousGeneration, previousReason := s.contextRevision, s.contextGeneration, s.contextReason
+	locked := true
 	defer func() {
-		if resultErr == nil || s.db == nil {
+		if !locked {
 			return
 		}
-		s.msgsMu.Lock()
-		s.msgs = previousMessages
-		s.msgTurns = previousTurns
-		s.displayMetas = previousMetas
-		s.createdAts = previousCreated
-		s.activeContext = previousActive
-		s.contextRevision, s.contextGeneration, s.contextReason = previousRevision, previousGeneration, previousReason
+		if resultErr != nil {
+			s.msgs = previousMessages
+			s.msgTurns = previousTurns
+			s.displayMetas = previousMetas
+			s.createdAts = previousCreated
+			s.activeContext = previousActive
+			s.contextRevision, s.contextGeneration, s.contextReason = previousRevision, previousGeneration, previousReason
+		}
 		s.msgsMu.Unlock()
 	}()
 	returned := append([]provider.ChatMessage(nil), agentMsgs...)
@@ -1280,7 +1339,27 @@ func (s *Session) finalizeTurn(
 		)
 		contextPrefixLen = len(returned)
 	}
-	additions := append([]provider.ChatMessage(nil), returned[contextPrefixLen:]...)
+	existing := make(map[string]provider.ChatMessage, len(s.msgs))
+	for _, message := range s.msgs {
+		if message.InternalID != "" {
+			existing[message.InternalID] = message
+		}
+	}
+	additions := make([]provider.ChatMessage, 0, len(returned)-contextPrefixLen)
+	for i := contextPrefixLen; i < len(returned); i++ {
+		message := returned[i]
+		if earlier, found := existing[message.InternalID]; found {
+			if !reflect.DeepEqual(canonicalContextMessage(message), canonicalContextMessage(earlier)) {
+				return &sessiondb.ContextMessageConflictError{InternalID: message.InternalID, Location: "live transcript"}
+			}
+			continue
+		}
+		if message.InternalID == "" {
+			message.InternalID = newMessageID()
+			returned[i].InternalID = message.InternalID
+		}
+		additions = append(additions, message)
+	}
 	additions = sanitizeMessages(additions)
 	rawToolArgs := toolCallArgsIndex(returned)
 	toolNames := make(map[string]string)
@@ -1352,27 +1431,13 @@ func (s *Session) finalizeTurn(
 		s.msgs = append(s.msgs, additions...)
 		s.msgTurns = append(s.msgTurns, additionTurns...)
 		s.displayMetas = append(s.displayMetas, additionMetas...)
-	} else if finalContent != "" {
-		message := provider.ChatMessage{InternalID: newMessageID(), Role: "assistant", Content: provider.TextContent(finalContent)}
-		createdAt := time.Now()
-		s.msgs = append(s.msgs, message)
-		additions = append(additions, message)
-		returned = append(returned, message)
-		s.msgTurns = append(s.msgTurns, s.turnNumber)
-		meta := canonicalizeDisplayMeta(message,
-			sessiondb.DisplayMeta{
-				DisplayRole: "assistant", TurnGeneration: turnIdentity.Generation,
-				ProviderID: turnIdentity.ProviderID, AccountID: turnIdentity.AccountID, ModelID: turnIdentity.ModelID,
-			}, "", len(s.msgs)-1, createdAt)
-		s.displayMetas = append(s.displayMetas, meta)
-		additionTurns, additionMetas, additionCreated = append(additionTurns, s.turnNumber), append(additionMetas, meta), append(additionCreated, createdAt)
+		for _, when := range additionCreated {
+			s.createdAts = append(s.createdAts, when.UnixNano())
+		}
 	}
 	nextContext := returned
 	if len(activeContext) > 0 && activeContext[0] != nil {
 		nextContext = activeContext[0]
-	}
-	if len(additions) == 0 && finalContent != "" {
-		nextContext = append(nextContext, provider.ChatMessage{Role: "assistant", Content: provider.TextContent(finalContent)})
 	}
 	if s.contextGeneration == 0 {
 		s.contextGeneration = 1
@@ -1380,9 +1445,12 @@ func (s *Session) finalizeTurn(
 	if s.contextReason == "" {
 		s.contextReason = "session_start"
 	}
+	nextContext = canonicalContextMessages(inheritContextMessageIDs(canonicalContextMessages(nextContext), canonicalContextMessages(returned)))
+	if !retainsContextSource(nextContext, s.activeContext) {
+		return fmt.Errorf("finalization does not retain committed context revision %d", s.contextRevision)
+	}
 	nextCheckpoint := contextCheckpointContent(nextContext)
-	expectedAppendContext := append(append([]provider.ChatMessage(nil), s.activeContext...), additions...)
-	nextContext = inheritContextMessageIDs(nextContext, expectedAppendContext)
+	expectedAppendContext := append(append([]provider.ChatMessage(nil), s.activeContext...), canonicalContextMessages(additions)...)
 	contextChanged := !reflect.DeepEqual(nextContext, expectedAppendContext)
 	if nextCheckpoint != "" {
 		if contextCheckpointContent(s.activeContext) != nextCheckpoint {
@@ -1400,8 +1468,6 @@ func (s *Session) finalizeTurn(
 
 	turnMsgs := s.messagesForTurnLocked(s.turnNumber)
 	turnNumber := s.turnNumber
-
-	s.msgsMu.Unlock()
 
 	if s.db != nil {
 		publication := sessiondb.ContextPublication{SessionID: s.sessionID, AgentID: s.sessionID, ExpectedRevision: contextRevision}
@@ -1421,14 +1487,17 @@ func (s *Session) finalizeTurn(
 			s.logger.Error("COMPACT", "context_state_persist_failed", "error", err.Error())
 			return err
 		}
-		s.msgsMu.Lock()
-		s.contextRevision = state.Revision
-		s.msgsMu.Unlock()
+		s.contextRevision, s.contextGeneration, s.contextReason = state.Revision, state.Generation, state.Reason
+		s.activeContext = append([]provider.ChatMessage(nil), state.Messages...)
 	} else if len(s.msgs) > 0 {
 		return errors.New("session database is unavailable")
 	}
+	s.msgsMu.Unlock()
+	locked = false
 
-	s.afterTurnMemory(turnNumber, turnMsgs, finalContent)
+	if err := s.afterTurnMemory(turnNumber, turnMsgs, finalContent); err != nil {
+		return err
+	}
 
 	if finalContent != "" {
 		s.logger.Info("CONV", "assistant_msg", "msg_id", msgID, "len", len(finalContent))
@@ -1458,24 +1527,6 @@ func inheritContextMessageIDs(actual, expected []provider.ChatMessage) []provide
 	return result
 }
 
-func (s *Session) persistFinalizedTurn() error {
-	if s == nil || s.db == nil {
-		return errors.New("session database is unavailable")
-	}
-	s.msgsMu.Lock()
-	revision := s.contextRevision
-	replacement := sessiondb.ContextReplacement{Generation: s.contextGeneration, Reason: s.contextReason, Messages: append([]provider.ChatMessage(nil), s.activeContext...)}
-	s.msgsMu.Unlock()
-	state, err := sessiondb.PublishContext(s.db, sessiondb.ContextPublication{SessionID: s.sessionID, AgentID: s.sessionID, ExpectedRevision: revision, Mutation: sessiondb.ContextMutation{Replace: &replacement}})
-	if err != nil {
-		return err
-	}
-	s.msgsMu.Lock()
-	s.contextRevision = state.Revision
-	s.msgsMu.Unlock()
-	return s.flushWriteBufSync()
-}
-
 func contextCheckpointContent(messages []provider.ChatMessage) string {
 	for _, message := range messages {
 		if message.EffectiveOrigin() == provider.OriginCheckpoint {
@@ -1483,50 +1534,6 @@ func contextCheckpointContent(messages []provider.ChatMessage) string {
 		}
 	}
 	return ""
-}
-
-func (s *Session) rollbackTurnInput(messageID string) {
-	if s == nil || messageID == "" {
-		return
-	}
-	remove := map[string]bool{messageID: true, messageID + "-context": true}
-	s.msgsMu.Lock()
-	defer s.msgsMu.Unlock()
-	nextMessages := make([]provider.ChatMessage, 0, len(s.msgs))
-	nextTurns := make([]int, 0, len(s.msgTurns))
-	nextMetas := make([]sessiondb.DisplayMeta, 0, len(s.displayMetas))
-	nextCreated := make([]int64, 0, len(s.createdAts))
-	for index, message := range s.msgs {
-		if remove[message.InternalID] {
-			continue
-		}
-		nextMessages = append(nextMessages, message)
-		if index < len(s.msgTurns) {
-			nextTurns = append(nextTurns, s.msgTurns[index])
-		}
-		if index < len(s.displayMetas) {
-			nextMetas = append(nextMetas, s.displayMetas[index])
-		}
-		if index < len(s.createdAts) {
-			nextCreated = append(nextCreated, s.createdAts[index])
-		}
-	}
-	s.msgs, s.msgTurns, s.displayMetas, s.createdAts = nextMessages, nextTurns, nextMetas, nextCreated
-	s.activeContext = removeSessionMessagesByInternalID(s.activeContext, messageID, messageID+"-context")
-}
-
-func removeSessionMessagesByInternalID(messages []provider.ChatMessage, ids ...string) []provider.ChatMessage {
-	remove := make(map[string]bool, len(ids))
-	for _, id := range ids {
-		remove[id] = true
-	}
-	result := messages[:0]
-	for _, message := range messages {
-		if !remove[message.InternalID] {
-			result = append(result, message)
-		}
-	}
-	return result
 }
 
 func persistedToolStatus(message provider.ChatMessage, current string) string {
@@ -1553,163 +1560,319 @@ func (s *Session) messagesForTurnLocked(turn int) []provider.ChatMessage {
 	return out
 }
 
-func (s *Session) buildUserMessage(input provider.UserInput, model string) provider.ChatMessage {
-	msg, _ := s.buildUserMessageWithDisplay(input, model)
-	return msg
+type preparedInput struct {
+	Message         provider.ChatMessage
+	ReferenceLabels []string
+	Enrichment      []provider.ChatMessage
 }
 
-func (s *Session) buildUserMessageWithDisplay(input provider.UserInput, model string) (provider.ChatMessage, []string) {
-	if len(input.ReferenceIDs) == 0 || s.db == nil {
-		return inputMessage(provider.NewTextMessage("user", input.Text), input), nil
+// prepareInput never changes the submitted row. Its suffix is published with
+// that row at admission, or appended once when an already-admitted turn starts.
+func (s *Session) prepareInput(ctx context.Context, input provider.UserInput, cfg *Config, o *Orchestrator, retained ...provider.ChatMessage) (preparedInput, error) {
+	result := preparedInput{Message: inputMessage(provider.NewTextMessage("user", input.Text), input)}
+	result.Message.InternalID = input.InternalID
+	if input.InternalID == "" {
+		return result, errors.New("input preparation requires the immutable submitted input identity")
 	}
-
-	// Unknown custom/alias models should get the attachment and let the provider
-	// decide. Treating missing catalog metadata as an explicit "no vision"
-	// silently replaced valid images with local paths the model could not read.
-	hasVision, visionKnown := provider.VisionCapability(model)
-
-	// Load only the referenced prompt references (filtered query)
-	refs, err := sessiondb.LoadPromptReferencesByIDs(s.db, input.ReferenceIDs)
-	if err != nil {
-		s.logger.Warn("REF", "load_refs_error", "error", err.Error())
-		return inputMessage(provider.NewTextMessage("user", input.Text), input), nil
+	// A preflight Continue may follow a settings repair while its caller still
+	// holds the old snapshot. Validate against the exact owning agent's selection.
+	if o != nil && s.runtimeProfile != nil {
+		cfg = s.runtimeProfile.GetEffectiveConfig(o.ID)
 	}
-
-	// Build an order-preserving map keyed by reference ID
-	refMap := make(map[string]sessiondb.Reference, len(refs))
-	for _, r := range refs {
-		refMap[r.ID] = r
+	if cfg == nil {
+		return result, errors.New("input preparation requires the selected session configuration")
 	}
-
-	orderedRefs := make([]sessiondb.Reference, 0, len(input.ReferenceIDs))
-	referenceLabels := make([]string, 0, len(input.ReferenceIDs))
-	promptText := input.Text
-	for _, id := range input.ReferenceIDs {
-		ref, ok := refMap[id]
-		if !ok || !ref.Active() {
+	if err := cfg.ValidateSelectedAgent(); err != nil {
+		return result, err
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	category := cfg.GetActiveDefaultCategory()
+	var references, turnContext *provider.ChatMessage
+	for i := range retained {
+		message := &retained[i]
+		var target **provider.ChatMessage
+		switch message.InternalID {
+		case input.InternalID + "-references":
+			target = &references
+		case input.InternalID + "-context":
+			target = &turnContext
+		default:
 			continue
 		}
-		orderedRefs = append(orderedRefs, ref)
-		label := ref.DisplayName()
-		if label != "" {
-			referenceLabels = append(referenceLabels, label)
-			promptText = strings.ReplaceAll(promptText, label, "")
+		if message.Role != "user" || message.EffectiveOrigin() != provider.OriginRuntimeContext || message.EffectiveVisibility() != provider.VisibilityContextOnly {
+			return result, fmt.Errorf("input %q has invalid retained preparation ownership", input.InternalID)
+		}
+		if *target != nil && (*target).Content != message.Content {
+			return result, fmt.Errorf("input %q has conflicting immutable preparation data", input.InternalID)
+		}
+		*target = message
+	}
+	var message provider.ChatMessage
+	var err error
+	if len(input.ReferenceIDs) > 0 {
+		if references != nil {
+			message = *references
+		} else {
+			if turnContext != nil {
+				return result, fmt.Errorf("input %q is missing its captured selected references; restore the exact preparation before Continue", input.InternalID)
+			}
+			selection := input
+			selection.Text = ""
+			message, result.ReferenceLabels, err = s.buildUserMessageWithDisplay(selection, category.Model)
+			if err != nil {
+				return result, err
+			}
+			message.InternalID = input.InternalID + "-references"
+			message.Origin, message.Visibility = provider.OriginRuntimeContext, provider.VisibilityContextOnly
+			message.Collaboration = nil
+		}
+		// Capture precedes capability validation: an unsupported selection still
+		// has an immutable preimage for repair, Stop and passive resume.
+		result.Enrichment = append(result.Enrichment, message)
+		var connection *provider.Provider
+		for _, part := range message.Content.Parts() {
+			modality := ""
+			switch part.Type {
+			case "image_url":
+				modality = provider.ModalityImage
+			case "document":
+				modality = provider.ModalityPDF
+			case "audio":
+				modality = provider.ModalityAudio
+			case "video":
+				modality = provider.ModalityVideo
+			}
+			if modality == "" {
+				continue
+			}
+			supported, known := provider.ModalityCapability(category.Model, modality)
+			if category.ModelModalities != nil {
+				supported, known = slices.Contains(category.ModelModalities, modality), true
+			}
+			if known && !supported {
+				return result, fmt.Errorf("selected %s attachment is unsupported by model %q; enable its modality or select a supported model before Continue", modality, category.Model)
+			}
+			if connection == nil {
+				connection, err = cfg.providerForCategory(category)
+				if err != nil {
+					return result, err
+				}
+			}
+			if !provider.ProtocolSupportsMedia(connection.ProtocolID(), modality, part.MimeType) {
+				return result, fmt.Errorf("selected %s attachment (%s) is unsupported by protocol %q; select a compatible connection or convert the attachment before Continue", modality, part.MimeType, connection.ProtocolID())
+			}
+		}
+	} else if references != nil {
+		return result, fmt.Errorf("input %q has captured references without a selected reference identity", input.InternalID)
+	}
+	if turnContext != nil {
+		result.Enrichment = append(result.Enrichment, *turnContext)
+		return result, nil
+	}
+	parts := append([]string(nil), input.ContextParts...)
+	if input.EffectiveOrigin() == provider.OriginHuman {
+		currentPlan, err := s.activePlanTurnContext(ctx)
+		if err != nil {
+			return result, fmt.Errorf("prepare current plan: %w", err)
+		}
+		if currentPlan != "" {
+			parts = append(parts, currentPlan)
+		}
+		recalled, err := s.recallMemoryContext(ctx, input.Text, input.ActivePaths)
+		if err != nil {
+			return result, err
+		}
+		if recalled != "" {
+			parts = append(parts, recalled)
+		}
+		if !s.prevContextInjected.Load() {
+			previous, err := s.previousSessionContext(ctx)
+			if err != nil {
+				return result, err
+			}
+			if previous != "" {
+				parts = append(parts, previous)
+			}
 		}
 	}
-
-	var parts []provider.ContentPart
-	if promptText = strings.TrimSpace(promptText); promptText != "" {
-		parts = append(parts, provider.ContentPart{Type: "text", Text: promptText})
+	var runtimeParts []string
+	if s.asyncMgr != nil {
+		if status := agent.BuildAsyncCommandStatus(s.asyncMgr); status != "" {
+			runtimeParts = append(runtimeParts, status)
+		}
 	}
+	if o != nil {
+		if runner := o.subAgentRunner(); runner != nil {
+			if status := agent.BuildSubAgentStatus(runner.Manager()); status != "" {
+				runtimeParts = append(runtimeParts, status)
+			}
+		}
+	}
+	if len(runtimeParts) > 0 {
+		parts = append(parts, "## Runtime Status\n\n"+strings.Join(runtimeParts, "\n\n"))
+	}
+	if err := ctx.Err(); err != nil {
+		return result, err
+	}
+	// Even an empty snapshot marks preparation complete, avoiding mutable rereads
+	// after Stop/Continue or passive resume of this same input identity.
+	message = provider.NewTextMessage("user", rootprompt.TurnContext(strings.Join(parts, "\n\n")))
+	message.InternalID = input.InternalID + "-context"
+	message.Origin, message.Visibility = provider.OriginRuntimeContext, provider.VisibilityContextOnly
+	result.Enrichment = append(result.Enrichment, message)
+	return result, nil
+}
 
-	for _, ref := range orderedRefs {
+func (s *Session) buildUserMessageWithDisplay(input provider.UserInput, model string) (provider.ChatMessage, []string, error) {
+	if len(input.ReferenceIDs) == 0 {
+		return inputMessage(provider.NewTextMessage("user", input.Text), input), nil, nil
+	}
+	if s.db == nil {
+		return provider.ChatMessage{}, nil, errors.New("selected references cannot be prepared: session database is unavailable; restore storage before Continue")
+	}
+	refs, err := sessiondb.LoadPromptReferencesByIDs(s.db, input.ReferenceIDs)
+	if err != nil {
+		return provider.ChatMessage{}, nil, fmt.Errorf("load selected references before Continue: %w", err)
+	}
+	byID := make(map[string]sessiondb.Reference, len(refs))
+	for _, ref := range refs {
+		byID[ref.ID] = ref
+	}
+	seen := make(map[string]bool, len(input.ReferenceIDs))
+	var labels []string
+	var parts []provider.ContentPart
+	if input.Text != "" {
+		parts = append(parts, provider.ContentPart{Type: "text", Text: input.Text})
+	}
+	for _, id := range input.ReferenceIDs {
+		if seen[id] {
+			continue
+		}
+		seen[id] = true
+		ref, found := byID[id]
+		if !found || !ref.Active() {
+			return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q is missing or inactive; restore that exact reference before Continue", id)
+		}
+		if s.sessionID != "" && ref.SessionID != s.sessionID {
+			return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q belongs to another session; reselect it for this input owner", id)
+		}
+		var media *provider.ContentPart
 		switch ref.Kind {
-		case sessiondb.KindPastedImage:
-			if visionKnown && !hasVision {
-				parts = append(parts, provider.ContentPart{
-					Type: "text",
-					Text: fmt.Sprintf(
-						"--- %s (image omitted: model does not advertise image input) ---",
-						ref.DisplayName(),
-					),
-				})
-				continue
+		case sessiondb.KindPastedText, sessiondb.KindMCPTool, sessiondb.KindMCPContext:
+			if ref.Content == "" {
+				return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q has no captured content; restore its preview before Continue", id)
 			}
-			var dataURL string
-			if ref.FilePath != "" {
-				// Validate file size before reading
-				if warning := provider.FileSizeExceeded(ref.FilePath, provider.MaxImageFileSizeFor(model)); warning != "" {
-					s.logger.Warn("REF", "image_too_large", "warning", warning)
-					parts = append(parts, provider.ContentPart{
-						Type: "text",
-						Text: fmt.Sprintf("--- %s (image omitted: too large) ---", ref.DisplayName()),
-					})
-					continue
-				}
-				// Read from file (preferred path — no base64 bloat in DB)
-				imgData, err := os.ReadFile(ref.FilePath)
+			if (ref.Kind == sessiondb.KindMCPTool || ref.Kind == sessiondb.KindMCPContext) && ref.Title == "" {
+				return provider.ChatMessage{}, nil, fmt.Errorf("selected MCP reference %q has no exact source identity; restore its preview before Continue", id)
+			}
+		case sessiondb.KindPastedImage, sessiondb.KindPastedTextFile, sessiondb.KindSelectedFile:
+			var info os.FileInfo
+			if ref.FilePath != "" && (ref.Kind == sessiondb.KindPastedImage || ref.Content == "") {
+				info, err = os.Lstat(ref.FilePath)
 				if err != nil {
-					s.logger.Warn("REF", "image_read_error", "path", ref.FilePath, "error", err.Error())
-					continue
+					return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q is unreadable; restore %q before Continue: %w", id, ref.FilePath, err)
 				}
-				mime := ref.Mime
-				if mime == "" {
-					if detected, ok := provider.ImageMimeFromExt(filepath.Ext(ref.FilePath)); ok {
-						mime = detected
+				if !info.Mode().IsRegular() {
+					return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q must be a regular file; repair %q before Continue", id, ref.FilePath)
+				}
+			}
+			modality, mime, isMedia := "", "", false
+			if ref.Kind == sessiondb.KindPastedImage {
+				modality, mime, isMedia = provider.ModalityImage, ref.Mime, true
+			} else if ref.Kind == sessiondb.KindSelectedFile && ref.Content == "" && ref.FilePath != "" {
+				modality, mime, isMedia = provider.MediaModalityFromPath(ref.FilePath)
+			}
+			limit := provider.MaxTextFileSizeFor(model)
+			if isMedia {
+				limit = provider.MaxImageFileSizeFor(model)
+			}
+			var data []byte
+			if info != nil {
+				if info.Size() > limit {
+					return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q exceeds the %d-byte model limit; repair %q before Continue", id, limit, ref.FilePath)
+				}
+				if isMedia {
+					file, err := os.Open(ref.FilePath)
+					if err != nil {
+						return provider.ChatMessage{}, nil, fmt.Errorf("read selected reference %q before Continue: %w", id, err)
 					}
-				}
-				if mime == "" {
-					mime = "image/png"
-				}
-				dataURL = "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(imgData)
-			} else if ref.Content != "" {
-				// Validate inline content size (base64 string length approximates byte size)
-				if int64(len(ref.Content)) > provider.MaxInlineContentSizeFor(model) {
-					s.logger.Warn("REF", "inline_image_too_large", "content_len", len(ref.Content))
-					parts = append(parts, provider.ContentPart{
-						Type: "text",
-						Text: fmt.Sprintf("--- %s (image omitted: too large) ---", ref.DisplayName()),
-					})
-					continue
-				}
-				// Fallback for legacy entries or inline content
-				mime := ref.Mime
-				if mime == "" {
-					mime = "image/png"
-				}
-				dataURL = "data:" + mime + ";base64," + ref.Content
-			}
-			if dataURL == "" {
-				continue
-			}
-			parts = append(parts, provider.ContentPart{
-				Type:     "image_url",
-				ImageURL: &provider.ImageURL{URL: dataURL},
-			})
-		case sessiondb.KindPastedText:
-			parts = append(parts, provider.ContentPart{Type: "text", Text: ref.Content})
-		case sessiondb.KindPastedTextFile, sessiondb.KindSelectedFile:
-			content := ref.Content
-			if content == "" && ref.FilePath != "" {
-				// Validate file size before reading
-				if warning := provider.FileSizeExceeded(ref.FilePath, provider.MaxTextFileSizeFor(model)); warning != "" {
-					s.logger.Warn("REF", "file_too_large", "warning", warning)
-					parts = append(parts, provider.ContentPart{
-						Type: "text",
-						Text: fmt.Sprintf("--- %s (omitted: too large) ---", ref.DisplayName()),
-					})
-					continue
-				}
-				ext := strings.ToLower(filepath.Ext(ref.FilePath))
-				if docconv.SupportedExt(ext) {
+					data, err = io.ReadAll(io.LimitReader(file, limit+1))
+					err = errors.Join(err, file.Close())
+					if err != nil {
+						return provider.ChatMessage{}, nil, fmt.Errorf("read selected reference %q before Continue: %w", id, err)
+					}
+					if int64(len(data)) > limit {
+						return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q grew beyond its %d-byte model limit; repair its capture before Continue", id, limit)
+					}
+				} else if ext := strings.ToLower(filepath.Ext(ref.FilePath)); docconv.SupportedExt(ext) {
 					markdown, metadata, err := docconv.ConvertFile(ref.FilePath)
 					if err != nil {
-						s.logger.Warn("REF", "document_convert_error", "path", ref.FilePath, "error", err.Error())
-						content = fmt.Sprintf(
-							"Document %s could not be converted: %s",
-							ref.DisplayName(), err.Error(),
-						)
-					} else {
-						content = docconv.Header(ref.FilePath, metadata) + markdown
+						return provider.ChatMessage{}, nil, fmt.Errorf("convert selected reference %q before Continue: %w", id, err)
 					}
-				} else if prev, perr := fileio.InspectFile(ref.FilePath, provider.MaxTextFileSizeFor(model), fileio.DefaultHexHeadBytes); perr == nil {
-					content = prev.ReadableText()
+					ref.Content = docconv.Header(ref.FilePath, metadata) + markdown
+				} else {
+					preview, err := fileio.InspectFile(ref.FilePath, limit, fileio.DefaultHexHeadBytes)
+					if err != nil {
+						return provider.ChatMessage{}, nil, fmt.Errorf("read selected reference %q before Continue: %w", id, err)
+					}
+					if preview.Truncated {
+						return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q grew beyond its %d-byte model limit; repair its capture before Continue", id, limit)
+					}
+					ref.Content = preview.ReadableText()
 				}
+			} else if isMedia && ref.Content != "" {
+				if int64(len(ref.Content)) > provider.MaxInlineContentSizeFor(model) {
+					return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q exceeds the inline media limit; repair its captured media before Continue", id)
+				}
+				data, err = base64.StdEncoding.DecodeString(ref.Content)
+				if err != nil {
+					return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q contains invalid Base64 media; repair its capture before Continue: %w", id, err)
+				}
+			} else if ref.Content == "" {
+				return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q has no readable content or file; restore its capture before Continue", id)
 			}
-			if content != "" {
-				label := ref.DisplayName()
-				parts = append(parts, provider.ContentPart{
-					Type: "text",
-					Text: fmt.Sprintf("--- %s ---\n%s", label, content),
-				})
+			if isMedia {
+				if len(data) == 0 || int64(len(data)) > limit {
+					return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q has empty or oversized media; repair its capture before Continue", id)
+				}
+				if mime == "" {
+					mime = http.DetectContentType(data)
+				}
+				part := provider.ContentPart{MimeType: mime, Filename: filepath.Base(ref.FilePath)}
+				switch modality {
+				case provider.ModalityImage:
+					if detected := http.DetectContentType(data); detected != mime || !strings.HasPrefix(mime, "image/") {
+						return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q has invalid image bytes for %q; repair its capture before Continue", id, mime)
+					}
+					part.Type, part.ImageURL = "image_url", &provider.ImageURL{URL: "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)}
+				case provider.ModalityPDF:
+					part.Type, part.Data = "document", data
+				case provider.ModalityAudio:
+					part.Type, part.Data = "audio", data
+				case provider.ModalityVideo:
+					part.Type, part.Data = "video", data
+				}
+				media = &part
+				ref.Content = ""
 			}
+		default:
+			return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q has unsupported kind %q; repair its capture before Continue", id, ref.Kind)
+		}
+		if !utf8.ValidString(ref.Content) || int64(len(ref.Content)) > provider.MaxTextFileSizeFor(model) {
+			return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q requires complete UTF-8 text within the model limit; repair its capture before Continue", id)
+		}
+		labels = append(labels, ref.DisplayName())
+		parts = append(parts, provider.ContentPart{Type: "text", Text: ref.AgentText()})
+		if media != nil {
+			parts = append(parts, *media)
 		}
 	}
-
-	if len(parts) == 0 {
-		return inputMessage(provider.NewTextMessage("user", promptText), input), referenceLabels
-	}
-	return inputMessage(provider.NewMultiPartMessage("user", parts), input), referenceLabels
+	return inputMessage(provider.NewMultiPartMessage("user", parts), input), labels, nil
 }
 
 func inputMessage(message provider.ChatMessage, input provider.UserInput) provider.ChatMessage {

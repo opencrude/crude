@@ -73,11 +73,12 @@ func formatOutputHeader(descriptor fileio.OutputDescriptor, info fileio.AsyncCmd
 	} else {
 		header += " retained_handle=none"
 	}
-	if descriptor.Status == fileio.AsyncRunning {
+	switch descriptor.Status {
+	case fileio.AsyncRunning:
 		header += " exit=unknown"
-	} else if descriptor.Status == fileio.AsyncKilled {
+	case fileio.AsyncKilled:
 		header += " exit=unavailable"
-	} else {
+	default:
 		header += fmt.Sprintf(" exit_code=%d", info.ExitCode)
 	}
 	if len(descriptor.ShownRanges) == 0 {

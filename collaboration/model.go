@@ -163,7 +163,8 @@ type AgentRegistration struct {
 	OwnerInstance string
 	// Admissions are immutable local context-commit receipts recovered by the
 	// execution owner before attaching. They are never supplied by a model.
-	Admissions []AdmissionReceipt
+	Admissions      []AdmissionReceipt
+	PendingTerminal *FinishRunRequest
 }
 
 type AdmissionReceipt struct {
@@ -215,6 +216,7 @@ type FinishRunRequest struct {
 	State           RunState
 	Outcome         string
 	ContextCommitID string
+	SettlementEpoch uint64
 }
 
 type Recipient struct {

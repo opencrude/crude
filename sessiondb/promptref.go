@@ -70,11 +70,11 @@ func (r Reference) AgentText() string {
 	case KindPastedText:
 		return fmt.Sprintf("Reference %s (%s):\n%s", name, r.ID, r.Content)
 	case KindPastedTextFile:
-		return fmt.Sprintf("Reference %s (%s): pasted text saved at %s", name, r.ID, r.FilePath)
+		return fmt.Sprintf("Reference %s (%s): pasted text saved at %s\n%s", name, r.ID, r.FilePath, r.Content)
 	case KindPastedImage:
 		return fmt.Sprintf("Reference %s (%s): pasted image saved at %s", name, r.ID, r.FilePath)
 	case KindSelectedFile:
-		return fmt.Sprintf("Reference %s (%s): selected file at %s", name, r.ID, r.FilePath)
+		return fmt.Sprintf("Reference %s (%s): selected file at %s\n%s", name, r.ID, r.FilePath, r.Content)
 	default:
 		if r.FilePath != "" {
 			return fmt.Sprintf("Reference %s (%s): %s", name, r.ID, r.FilePath)

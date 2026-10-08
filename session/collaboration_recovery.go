@@ -102,13 +102,16 @@ func (s *Session) admitPassiveCollaboration(o *Orchestrator, sender EventSender)
 		return nil
 	}
 	store := s.CollaborationStore()
+	if store == nil {
+		return errors.New("passive collaboration runtime is unavailable")
+	}
 	for {
 		deliveries, err := store.ReservePending(context.Background(), collaboration.ReserveRequest{
 			RecipientID: o.ID, RuntimeEpoch: o.RuntimeEpoch, ThroughSequence: o.passiveThrough,
 			Limit: 20, ExcludeKinds: []collaboration.EventKind{collaboration.EventLifecycleControl, collaboration.EventHumanSteering},
 		})
 		if errors.Is(err, collaboration.ErrUnavailable) {
-			return nil // Suspension preserves pending evidence until explicit resume.
+			return err // Suspension keeps the passive boundary closed until explicit resume.
 		}
 		if err != nil {
 			return err
@@ -117,13 +120,15 @@ func (s *Session) admitPassiveCollaboration(o *Orchestrator, sender EventSender)
 			return nil
 		}
 		s.msgsMu.Lock()
-		messages := append([]provider.ChatMessage(nil), s.activeContext...)
 		revision := s.contextRevision
 		s.msgsMu.Unlock()
+		// Only this admission suffix belongs here. Including current context lets
+		// an audit history reference select an unrelated immutable human message.
+		messages := make([]provider.ChatMessage, 0, len(deliveries))
 		for _, delivery := range deliveries {
 			messages = append(messages, collaborationMessage(delivery))
 		}
-		if err := s.commitCollaborationAdmissions(s.db, s.sessionID, s.sessionID, o.ID, "", o.RuntimeEpoch, revision, collaborationDeltas(deliveries, messages, o.ID), deliveries); err != nil {
+		if _, err := s.commitCollaborationAdmissions(s.db, s.sessionID, s.sessionID, o.ID, "", o.RuntimeEpoch, revision, collaborationDeltas(deliveries, messages, o.ID), deliveries); err != nil {
 			s.releaseCollaborationReservations(o.ID, o.RuntimeEpoch, deliveries, "passive resume admission failed")
 			return err
 		}

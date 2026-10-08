@@ -29,7 +29,9 @@ func TestMemoryShutdownCancelsMaintenanceDelay(t *testing.T) {
 func TestMemoryShutdownFinishesDurableTurnMirror(t *testing.T) {
 	store := newTestMemoryStore(t)
 	s := &Session{sessionID: "mirror", memoryStore: store}
-	s.afterTurnMemory(1, []provider.ChatMessage{{Role: "user", Content: "remember this turn"}}, "finished answer")
+	if err := s.afterTurnMemory(1, []provider.ChatMessage{{Role: "user", Content: "remember this turn"}}, "finished answer"); err != nil {
+		t.Fatal(err)
+	}
 	s.finishMemoryJobs()
 	turns, err := store.TurnsForSession(context.Background(), s.sessionID, 0, 12)
 	if err != nil || len(turns) != 1 || turns[0].AssistantText != "finished answer" {

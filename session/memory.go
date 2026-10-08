@@ -141,13 +141,13 @@ func (s *Session) touchedFilesSnapshot() []string {
 // token budget. Exposure is logged without reinforcing knowledge.
 func (s *Session) recallMemoryContext(
 	ctx context.Context, query string, activePaths []string,
-) string {
+) (string, error) {
 	store := s.MemoryStore()
 	if store == nil {
-		return ""
+		return "", nil
 	}
 	if !s.memorySettings().AutoRecallEnabled() {
-		return ""
+		return "", nil
 	}
 	records, err := store.Recall(ctx, memory.RecallQuery{
 		Text:         query,
@@ -157,11 +157,10 @@ func (s *Session) recallMemoryContext(
 		BudgetTokens: s.memorySettings().RecallBudgetOrDefault(defaultRecallBudgetTokens),
 	})
 	if err != nil {
-		s.logger.Warn("MEMORY", "recall_failed", "error", err.Error())
-		return ""
+		return "", fmt.Errorf("recall workspace memory: %w", err)
 	}
 	if len(records) == 0 {
-		return ""
+		return "", nil
 	}
 	refs := make([]memory.RevisionRef, 0, len(records))
 	projection := make([]rootprompt.WorkspaceMemoryRecord, 0, len(records))
@@ -172,25 +171,24 @@ func (s *Session) recallMemoryContext(
 			Content: record.Content, Pinned: record.Pinned})
 	}
 	if err := store.Expose(ctx, refs, s.sessionID, "automatic"); err != nil {
-		s.logger.Warn("MEMORY", "exposure_failed", "error", err.Error())
+		return "", fmt.Errorf("record workspace memory exposure: %w", err)
 	}
-	return rootprompt.WorkspaceMemory(projection)
+	return rootprompt.WorkspaceMemory(projection), nil
 }
 
 // previousSessionContext builds the continuity block injected on the first
 // turn of a session: the most recent prior session summaries.
-func (s *Session) previousSessionContext(ctx context.Context) string {
+func (s *Session) previousSessionContext(ctx context.Context) (string, error) {
 	store := s.MemoryStore()
 	if store == nil || !s.memorySettings().AutoRecallEnabled() {
-		return ""
+		return "", nil
 	}
 	summaries, err := store.LatestSummaries(ctx, s.sessionID, 2)
 	if err != nil {
-		s.logger.Warn("MEMORY", "summaries_failed", "error", err.Error())
-		return ""
+		return "", fmt.Errorf("load previous session summaries: %w", err)
 	}
 	if len(summaries) == 0 {
-		return ""
+		return "", nil
 	}
 	projection := make([]rootprompt.PreviousSession, 0, len(summaries))
 	for _, summary := range summaries {
@@ -201,7 +199,7 @@ func (s *Session) previousSessionContext(ctx context.Context) string {
 		projection = append(projection, rootprompt.PreviousSession{ID: summary.SessionID, Title: title, Age: formatAge(summary.UpdatedAt),
 			Summary: summary.Summary, Outcome: summary.Outcome, KeyFiles: append([]string(nil), summary.KeyFiles...)})
 	}
-	return rootprompt.PreviousSessions(projection)
+	return rootprompt.PreviousSessions(projection), nil
 }
 
 func formatAge(unixNano int64) string {

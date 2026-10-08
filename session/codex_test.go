@@ -9,8 +9,10 @@ import (
 	"testing"
 
 	"crude/agent"
+	"crude/collaboration"
 	"crude/fileio"
 	"crude/safety"
+	"crude/tools"
 )
 
 func TestNativePatchSessionHistoryAndChildOwnership(t *testing.T) {
@@ -21,6 +23,17 @@ func TestNativePatchSessionHistoryAndChildOwnership(t *testing.T) {
 	defer s.Close()
 	root := t.TempDir()
 	s.SetWorkDir(root)
+	store := attachDelegationTestCollaboration(t, s)
+	if _, err := s.registerCollaborator(t.Context(), "root-agent", "root", s.sessionID, "", CategoryDefault, s.db); err != nil {
+		t.Fatal(err)
+	}
+	registered, err := s.registerCollaborator(t.Context(), "codex-child", "child", "child-session", "root-agent", CategoryCrafter, s.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.StartRun(t.Context(), collaboration.StartRunRequest{AgentID: registered.ID, RuntimeEpoch: registered.RuntimeEpoch, RequestID: "patch-assignment", Origin: collaboration.OriginPeer}); err != nil {
+		t.Fatal(err)
+	}
 	var receipts []HistoryMutation
 	s.SetHistoryMutationHook(func(_ context.Context, m HistoryMutation) error {
 		if m.Committed == nil {
@@ -34,6 +47,7 @@ func TestNativePatchSessionHistoryAndChildOwnership(t *testing.T) {
 	tool := r.buildProxiedToolFn(spec, nil, nil)
 	input := "*** Begin Patch\n*** Add File: original\n+old\n*** Update File: original\n*** Move to: nested/renamed\n-old\n+new\n*** End Patch"
 	ctx := withHistoryScope(t.Context(), "session", "message", "root-agent")
+	ctx = context.WithValue(ctx, tools.ExecutionIdentityKey{}, tools.ExecutionIdentity{AgentID: "codex-child", ToolCallID: "patch-effect"})
 	result, err := tool(ctx, "apply_patch", map[string]any{"input": input})
 	if err != nil || !strings.Contains(result.Content, "```diff") {
 		t.Fatalf("%s %v", result.Content, err)

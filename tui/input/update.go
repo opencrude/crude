@@ -149,8 +149,7 @@ func (m Model) update(msg tea.Msg, thinking, blocking bool) (Model, tea.Cmd, Eve
 }
 
 func (m Model) draftStateKey() string {
-	start, end := m.input.SelectionRange()
-	return fmt.Sprintf("%s\x00%d\x00%d\x00%d\x00%d\x00%d\x00%v", m.input.Value(), m.input.CursorFlat(), start, end, m.input.ScrollOffset(), m.draftEpoch, m.ReferencedIDs())
+	return fmt.Sprintf("%v\x00%d\x00%v", m.input.EditState(), m.draftEpoch, m.SnapshotReferenceIDs())
 }
 
 func (m Model) handlePaste(content string) (Model, tea.Cmd, Event) {

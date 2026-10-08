@@ -3,6 +3,7 @@ package session
 import (
 	captypes "crude/types/capability"
 	"maps"
+	"slices"
 	"sync"
 
 	"crude/provider"
@@ -317,7 +318,7 @@ func copyConfig(src *Config) *Config {
 					v.DeniedTools = append([]string(nil), v.DeniedTools...)
 					v.SkillModes = maps.Clone(v.SkillModes)
 					v.ContextCompactionPercent = cloneIntPtr(v.ContextCompactionPercent)
-					v.ModelModalities = append([]string(nil), v.ModelModalities...)
+					v.ModelModalities = slices.Clone(v.ModelModalities)
 					v.ModelTemperature = cloneFloatPtr(v.ModelTemperature)
 					v.ModelTopP = cloneFloatPtr(v.ModelTopP)
 					profCopy.Categories[k] = v

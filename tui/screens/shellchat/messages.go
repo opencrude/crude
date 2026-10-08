@@ -40,6 +40,8 @@ type messagePaintState struct {
 // SetMessages installs message-level VirtItems (Height = len(Lines)) and paint
 // context for RowPainter compose + selection. ScrollModel content height follows
 // the sum of item heights.
+// Rows are borrowed on the UI goroutine. Item indices resolve against the current
+// snapshot, never boxed row copies or pointers into replaced snapshot storage.
 func (s *Screen) SetMessages(rows []chatprojection.MessageRow, paint PaintParams) {
 	if s == nil {
 		return
@@ -73,14 +75,26 @@ func (s *Screen) SetMessages(rows []chatprojection.MessageRow, paint PaintParams
 				continue
 			}
 			row := rows[i]
-			s.list.UpdateItem(i, ui.VirtItem{ID: row.ID, Height: max(1, len(row.Lines)), Payload: row})
+			s.list.UpdateItem(i, ui.VirtItem{ID: row.ID, Height: max(1, len(row.Lines)), Payload: i})
 		}
 		s.rowsSourceID = paint.SourceID
 		s.rowsGeneration = paint.Generation
 		return
 	}
-	items := make([]ui.VirtItem, len(rows))
-	starts = make([]int, len(rows))
+	items := s.list.Items()
+	if cap(items) < len(rows) {
+		items = make([]ui.VirtItem, len(rows))
+	} else {
+		if len(items) > len(rows) {
+			clear(items[len(rows):]) // release removed source IDs and payloads
+		}
+		items = items[:len(rows)]
+	}
+	if cap(starts) < len(rows) {
+		starts = make([]int, len(rows))
+	} else {
+		starts = starts[:len(rows)]
+	}
 	global := 0
 	for i, row := range rows {
 		starts[i] = global
@@ -91,7 +105,7 @@ func (s *Screen) SetMessages(rows []chatprojection.MessageRow, paint PaintParams
 		items[i] = ui.VirtItem{
 			ID:      row.ID,
 			Height:  h,
-			Payload: row,
+			Payload: i,
 		}
 		global += h
 	}
@@ -110,7 +124,6 @@ func (s *Screen) SetMessages(rows []chatprojection.MessageRow, paint PaintParams
 		selEL:       selEL,
 		selEC:       selEC,
 	}
-	s.list.SetRowPainter(s.paintMessageRow)
 	s.list.SetItems(items)
 	s.rowsSourceID = paint.SourceID
 	s.rowsGeneration = paint.Generation
@@ -127,20 +140,27 @@ func (s *Screen) MessageAtLocalY(localY int) (chatprojection.MessageRow, bool) {
 	if !ok {
 		return chatprojection.MessageRow{}, false
 	}
-	row, ok := item.Payload.(chatprojection.MessageRow)
-	return row, ok
+	index, ok := item.Payload.(int)
+	if !ok || index < 0 || index >= len(s.rows) {
+		return chatprojection.MessageRow{}, false
+	}
+	return s.rows[index], true
 }
 
 func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item ui.VirtItem, localRow int, _ ui.ControlState, _ ui.PaintContext, tokens *ui.TokenSet) {
 	if buf == nil || item.Height < 1 {
 		return
 	}
-	row, ok := item.Payload.(chatprojection.MessageRow)
-	if !ok || localRow < 0 || localRow >= len(row.Lines) {
+	index, ok := item.Payload.(int)
+	if !ok || index < 0 || index >= len(s.rows) || index >= len(s.paintState.globalStart) {
+		return
+	}
+	row := s.rows[index]
+	if localRow < 0 || localRow >= len(row.Lines) {
 		return
 	}
 
-	globalLine := s.globalLineForItem(item.ID, localRow)
+	globalLine := s.paintState.globalStart[index] + localRow
 
 	var paneInfo chatprojection.PaneLineInfo
 	if globalLine >= 0 && globalLine < len(s.paintState.paneLineMap) {
@@ -253,18 +273,4 @@ func paintNativeSpaces(buf *surface.CellBuffer, x, y, count int, tokens *ui.Toke
 		buf.Set(x+i, y, cell.Cell{Char: ' ', Content: " ", Width: 1, FG: cf, BG: cb})
 		col++
 	}
-}
-
-func (s *Screen) globalLineForItem(id string, localRow int) int {
-	items := s.list.Items()
-	for i, it := range items {
-		if it.ID != id {
-			continue
-		}
-		if i < len(s.paintState.globalStart) {
-			return s.paintState.globalStart[i] + localRow
-		}
-		break
-	}
-	return localRow
 }

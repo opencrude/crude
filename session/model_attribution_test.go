@@ -132,10 +132,15 @@ func waitRequestedModel(t *testing.T, models <-chan string) string {
 	}
 }
 
-func waitTurnDone(t *testing.T, sender *mockEventSender, agentID string) ttypes.TurnIdentity {
+func waitTurnDone(t *testing.T, sender *mockEventSender, agentID string, timeout ...time.Duration) ttypes.TurnIdentity {
 	t.Helper()
-	deadline := time.After(5 * time.Second)
+	budget := 5 * time.Second
+	if len(timeout) > 0 {
+		budget = timeout[0]
+	}
+	deadline := time.After(budget)
 	var identity ttypes.TurnIdentity
+	var lastRecovery any
 	for {
 		select {
 		case event := <-sender.ch:
@@ -145,11 +150,14 @@ func waitTurnDone(t *testing.T, sender *mockEventSender, agentID string) ttypes.
 			if event.typ == "turn_started" {
 				identity, _ = event.data.(ttypes.TurnIdentity)
 			}
+			if event.typ == "recovery" {
+				lastRecovery = event.data
+			}
 			if event.typ == "done" {
 				return identity
 			}
 		case <-deadline:
-			t.Fatal("turn did not complete")
+			t.Fatalf("turn did not complete; last recovery: %+v", lastRecovery)
 			return ttypes.TurnIdentity{}
 		}
 	}

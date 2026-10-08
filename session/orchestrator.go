@@ -31,12 +31,13 @@ type Orchestrator struct {
 }
 
 type turnRequest struct {
-	input      provider.UserInput
-	ctx        context.Context
-	generation uint64
-	deliveries []collaboration.PendingDelivery
-	recovery   *sessiondb.RecoveryCheckpoint
-	retry      bool
+	sessionTurn int
+	input       provider.UserInput
+	ctx         context.Context
+	generation  uint64
+	deliveries  []collaboration.PendingDelivery
+	recovery    *sessiondb.RecoveryCheckpoint
+	retry       bool
 }
 
 func (o *Orchestrator) reserveTurn(input provider.UserInput, deliveries []collaboration.PendingDelivery, recovery *sessiondb.RecoveryCheckpoint) (turnRequest, bool) {
@@ -66,24 +67,16 @@ func (o *Orchestrator) reserveTurn(input provider.UserInput, deliveries []collab
 
 func (o *Orchestrator) enqueueReserved(request turnRequest) bool {
 	o.turnMu.Lock()
-	if o.turnGeneration != request.generation || o.turnCancel == nil || o.turnCancelling || request.ctx.Err() != nil {
-		o.turnMu.Unlock()
+	defer o.turnMu.Unlock()
+	if o.closing.Load() || o.session != nil && atomic.LoadInt32(&o.session.closing) != 0 || o.turnGeneration != request.generation || o.turnCancel == nil || o.turnCancelling || request.ctx.Err() != nil {
 		return false
 	}
-	o.turnMu.Unlock()
 	select {
 	case o.inputCh <- request:
 		return true
 	default:
 		return false
 	}
-}
-
-func (o *Orchestrator) submitAdmittedInput(input provider.UserInput, archive, active []provider.ChatMessage, revision, generation uint64, reason string) bool {
-	checkpoint := sessiondb.RecoveryCheckpoint{PendingInput: cloneUserInput(input), InputAdmitted: true,
-		Archive: append([]provider.ChatMessage(nil), archive...), ActiveContext: append([]provider.ChatMessage(nil), active...),
-		ContextOwnerID: o.session.sessionID, ContextRevision: revision, ContextGeneration: generation, ContextReason: reason}
-	return o.submitTurn(input, nil, &checkpoint)
 }
 
 func (o *Orchestrator) submitRecovery(checkpoint sessiondb.RecoveryCheckpoint) bool {

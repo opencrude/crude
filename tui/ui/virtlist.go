@@ -86,7 +86,8 @@ func (v *VirtualList) UpdateItem(index int, item VirtItem) bool {
 	return true
 }
 
-// Items returns items.
+// Items returns borrowed item storage. Publish ID/height changes with SetItems
+// or UpdateItem so the height index and scroll metrics remain synchronized.
 func (v *VirtualList) Items() []VirtItem { return v.items }
 
 // SetActivateAction sets the action ID emitted on activation.
@@ -184,7 +185,11 @@ func (v *VirtualList) Scroll() *ScrollModel { return v.scroll }
 
 func (v *VirtualList) rebuildPrefix() {
 	v.structureRevision++
-	v.prefix = make([]int, len(v.items)+1)
+	if cap(v.prefix) < len(v.items)+1 {
+		v.prefix = make([]int, len(v.items)+1)
+	} else {
+		v.prefix = v.prefix[:len(v.items)+1]
+	}
 	total := 0
 	for i, it := range v.items {
 		v.prefix[i] = total

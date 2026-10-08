@@ -4,8 +4,10 @@ import (
 	"context"
 	"errors"
 	"sync"
+	"sync/atomic"
 	"time"
 
+	"crude/agent"
 	"crude/provider"
 	"crude/sessiondb"
 )
@@ -71,6 +73,11 @@ func (s *Session) PrepareInputAdmission(orchestratorID string, input provider.Us
 	if s == nil {
 		return nil, errors.New("session is unavailable")
 	}
+	s.admissionMu.Lock()
+	defer s.admissionMu.Unlock()
+	if atomic.LoadInt32(&s.closing) != 0 {
+		return nil, errors.New("session is closing")
+	}
 	s.orchMu.Lock()
 	orchestrator := s.orchestrators[orchestratorID]
 	s.orchMu.Unlock()
@@ -85,17 +92,18 @@ func (s *Session) PrepareInputAdmission(orchestratorID string, input provider.Us
 	if !reserved {
 		return nil, errors.New("input owner is busy or has unfinished work")
 	}
+	s.msgsMu.Lock()
+	request.sessionTurn = s.turnNumber + 1
+	s.msgsMu.Unlock()
 	intent := &InputAdmissionIntent{
 		SessionID: s.sessionID, AgentID: orchestratorID, InputID: input.InternalID,
 		DraftRevision: draftRevision, TurnGeneration: request.generation, OwnerEpoch: orchestrator.RuntimeEpoch,
 		session: s, orchestrator: orchestrator, request: request,
 	}
-	s.admissionMu.Lock()
 	if s.pendingAdmissions == nil {
 		s.pendingAdmissions = make(map[*InputAdmissionIntent]struct{})
 	}
 	s.pendingAdmissions[intent] = struct{}{}
-	s.admissionMu.Unlock()
 	return intent, nil
 }
 
@@ -126,31 +134,46 @@ func (s *Session) CommitInputAdmission(ctx context.Context, intent *InputAdmissi
 	// prepared local send. Persistence uses the session lifetime below.
 	orchestrator, request := intent.orchestrator, intent.request
 	input := cloneUserInput(request.input)
-	model := ""
+	var cfg *Config
 	if s.runtimeProfile != nil {
-		if cfg := s.runtimeProfile.GetEffectiveConfig(intent.AgentID); cfg != nil {
-			model = cfg.GetActiveDefaultCategory().Model
-		}
+		cfg = s.runtimeProfile.GetEffectiveConfig(intent.AgentID)
 	}
-	message, labels := s.buildUserMessageWithDisplay(input, model)
+	prepared, _ := s.prepareInput(context.WithoutCancel(ctx), input, cfg, orchestrator)
+	message := prepared.Message
 	message.InternalID = input.InternalID
 	message.DisplayContent = input.Text
 	if input.DisplayText != "" {
 		message.DisplayContent = input.DisplayText
 	}
 	createdAt := time.Now()
-	meta := canonicalizeDisplayMeta(message, sessiondb.DisplayMeta{DisplayRole: "user", DisplayContent: input.Text, ReferenceLabels: labels}, "", 0, createdAt)
+	meta := canonicalizeDisplayMeta(message, sessiondb.DisplayMeta{DisplayRole: "user", DisplayContent: input.Text, ReferenceLabels: prepared.ReferenceLabels, TurnGeneration: request.generation}, "", 0, createdAt)
 	s.msgsMu.Lock()
-	state, err := s.publishRootContext(sessiondb.ContextPublication{Mutation: sessiondb.ContextMutation{Append: []sessiondb.ContextMessageDelta{
-		contextDelta(message, meta, s.turnNumber, createdAt, intent.AgentID),
-	}}})
-	if err == nil {
-		s.msgs = append(s.msgs, message)
-		s.msgTurns = append(s.msgTurns, s.turnNumber)
-		s.displayMetas = append(s.displayMetas, meta)
-		s.createdAts = append(s.createdAts, createdAt.UnixNano())
+	turn := request.sessionTurn
+	deltas := []sessiondb.ContextMessageDelta{contextDelta(message, meta, turn, createdAt, intent.AgentID)}
+	for _, enrichment := range prepared.Enrichment {
+		meta := canonicalizeDisplayMeta(enrichment, sessiondb.DisplayMeta{DisplayRole: "hidden_runtime_context", ContextOnly: true}, "", 0, createdAt)
+		deltas = append(deltas, contextDelta(enrichment, meta, turn, createdAt, intent.AgentID))
 	}
-	archive := append([]provider.ChatMessage(nil), s.msgs...)
+	checkpoint := sessiondb.RecoveryCheckpoint{
+		Status:       agent.NewSupervisor(intent.AgentID, request.generation, nil).CheckpointStatus(),
+		PendingInput: cloneUserInput(input), InputAdmitted: true,
+		Archive:       append([]provider.ChatMessage(nil), s.msgs...),
+		ActiveContext: append([]provider.ChatMessage(nil), s.activeContext...),
+	}
+	for _, delta := range deltas {
+		checkpoint.Archive = append(checkpoint.Archive, delta.Message)
+		checkpoint.ActiveContext = append(checkpoint.ActiveContext, delta.Message)
+	}
+	state, err := s.publishRootContext(sessiondb.ContextPublication{RuntimeAgentID: intent.AgentID, Recovery: &checkpoint, Mutation: sessiondb.ContextMutation{Append: deltas}})
+	if err == nil {
+		s.turnNumber = max(s.turnNumber, turn)
+		for _, delta := range deltas {
+			s.msgs = append(s.msgs, delta.Message)
+			s.msgTurns = append(s.msgTurns, delta.Turn)
+			s.displayMetas = append(s.displayMetas, delta.Meta)
+			s.createdAts = append(s.createdAts, delta.CreatedAt)
+		}
+	}
 	s.msgsMu.Unlock()
 	if err != nil {
 		orchestrator.endTurn(request.generation)
@@ -159,7 +182,8 @@ func (s *Session) CommitInputAdmission(ctx context.Context, intent *InputAdmissi
 		return intent.result
 	}
 	receipt := InputAdmissionReceipt{SessionID: s.sessionID, AgentID: intent.AgentID, InputID: input.InternalID, ContextRevision: state.Revision, TurnGeneration: request.generation, OwnerEpoch: intent.OwnerEpoch, DraftRevision: intent.DraftRevision, AcceptedAt: createdAt}
-	checkpoint := sessiondb.RecoveryCheckpoint{PendingInput: cloneUserInput(input), InputAdmitted: true, Archive: archive, ActiveContext: append([]provider.ChatMessage(nil), state.Messages...), ContextOwnerID: s.sessionID, ContextRevision: state.Revision, ContextGeneration: state.Generation, ContextReason: state.Reason}
+	checkpoint.ContextOwnerID, checkpoint.ContextRevision, checkpoint.ContextGeneration, checkpoint.ContextReason = s.sessionID, state.Revision, state.Generation, state.Reason
+	checkpoint.ActiveContext = append([]provider.ChatMessage(nil), state.Messages...)
 	request.recovery = &checkpoint
 	if !orchestrator.enqueueReserved(request) {
 		orchestrator.endTurn(request.generation)

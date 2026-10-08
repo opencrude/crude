@@ -170,19 +170,20 @@ example:
 
 ```bash
 COLS=160 ROWS=40 FONT_SIZE=11 scripts/tuishot.sh /tmp/crude-screenshots \
-  key:ctrl+alt+p type:settings key:Down key:Return
+  key:ctrl+alt+p 'type:application settings' key:Return
 ```
 
 The equivalent native Windows capture is:
 
 ```powershell
 pwsh scripts/tuishot.ps1 -Cols 160 -Rows 40 .\tmp\crude-screenshots `
-  'key:ctrl+alt+p' 'type:settings' 'key:Down' 'key:Return'
+  'key:ctrl+alt+p' 'type:application settings' 'key:Return'
 ```
 
-`Ctrl+Alt+P` opens the Command Palette. From the launcher, filter with
-`type:settings`, press `Down` to select the Tools > Settings entry, then press
-`Return`.
+`Ctrl+Alt+P` opens the Command Palette. Filter with `type:application settings`
+and press `Return` to activate the highlighted Application Settings entry. The
+broader `settings` query also matches command descriptions; an extra `Down` can
+select a different action and is not part of this route.
 
 After every capture, close the dedicated Crude window before finishing. Do not
 leave a `CrudeShot`/`CrudeShot-*` window or capture process running. Keep
@@ -231,7 +232,7 @@ change is intentional and verified.
 │  app/  — IDE Shell, workspace manager               │
 │  Owns: app config (theme, font, UI prefs),          │
 │        workspace list/create/resume/delete, CLI      │
-│  ~/.crude/app.db, ~/.crude/config.json               │
+│  ~/.crude/config.json and app-global catalogs       │
 │  NO session/agent/orchestrator knowledge             │
 └─┬┘
                  │ creates, owns, persists
@@ -935,6 +936,23 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
   Continue run or `/retry` fences the exact incident/generation and must not
   consume drafts, switch another tab or restart old effects. Stop must also work
   for parked/interrupted work without an active collaboration run.
+- `sessiondb.PublishContext` is the revision-fenced runtime publication owner.
+  Root writers serialize durable publication and live installation under
+  `msgsMu`; checkpoints retain every committed source message, finalization
+  cannot roll back a newer admission, and complete tool rounds never regress
+  partial checkpoints. No root write buffer or child whole-transcript replacement
+  writer remains. Original input, successful immutable preparation and the
+  initial supervisor checkpoint commit before a receipt. Closing rejects new
+  reservations and preserves prepared input without enqueueing execution.
+  Stopped children use current authoritative context and retain newer facts;
+  parent mirrors/results are separately checked, never silently acknowledged.
+- Native file-ownership rejection is structural Needs attention and parks the
+  unfinished child. Public `agent_narrow_claims` changes the caller's exact active
+  claims; `agent_update_claims` changes only a stopped unfinished child at
+  the expected claim version. Neither wakes execution. Explicit incident-fenced
+  Continue starts a new run. Numeric preimages are exact positive integers,
+  widening and foreign/stale owners fail closed, and ownership read leases span
+  actual native effects so claim replacement cannot overtake an in-flight write.
 - `retry/` owns every Crude-managed automatic cooldown. Exponential math
   saturates safely and cancellation is prompt; **five minutes is the absolute
   per-wait maximum**, including Retry-After and millisecond/date hints. A server's
@@ -1228,6 +1246,12 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   must preserve the exact draft text, attachment references, cursor, selection,
   undo state and history position. Only explicit send/clear/cut actions consume
   those values; `blocking_complete` must never reset the input model.
+- Submitted-input receipts also fence draft/editor state, owner epoch, generation
+  and workspace. Cursor, selection, scroll, references and undo/edit ABA changes
+  protect a newer draft from consumption. Stop preserves accepted input in chat
+  and context, never in the composer. Exact-owner late semantic evidence remains
+  static after terminal acknowledgement; only a new runtime generation reactivates
+  work. See `docs/reference/interaction-matrix.md`.
 - Workspace and Open Tabs collapsed resource rows occupy exactly one line.
   Keep explicit Workspace section headings even for a single group. Click,
   Enter/Space, and Left/Right own disclosure; Open/Resume is an explicit action
@@ -1748,25 +1772,22 @@ manual workflows and acceptance boundaries.
 
 ---
 
-## Pre-existing Test Failures (NOT caused by our work)
-Verified against unmodified `e69447e` sources through a read-only Go overlay
-on 2026-10-05:
-- `tui/screens/shelltree/TestPaintGoldenCellBufferContract` has a dark 40×8
-  golden mismatch.
-- `tui/screens/shelltree/TestScreenDirIconConsumesTreeGlyphs` expects a
-  `TreeCollapsed` glyph absent from the current top-level directory row.
-- The allocation gate for `BenchmarkAgentSwitchWarm_80Msgs` fails at about
-  31.8 KB/op against its 15 KB/op ceiling (282 allocations remains within 315).
-
-Do not update goldens or loosen that ceiling without a separate verified fix.
-The earlier cross-platform LSP paths, Windows safety paths, and app config
-`HOME`/`USERPROFILE` failures remain fixed.
+## Validation Baseline
+- Tree fixtures select fallback fonts through `Theme.Tree.Config.UseNerdFont`,
+  the current configuration owner. The dark 40x8 golden and directory glyph
+  contracts pass without changing golden output.
+- Warm agent switching reuses the current list's storage and indexed row payloads
+  while retaining source-generation checks. Its existing 15,000 B / 315 allocation
+  ceiling remains unchanged; measurements are recorded in
+  `docs/reference/performance-baselines.md`.
+- Do not regenerate goldens or loosen allocation gates to hide a failure. Run the
+  current gates; historical failures are not exceptions to release acceptance.
 
 ## Test Commands
 ```bash
 go build ./...
-go test ./tui/editor/... ./tui/viewmodel/... ./tui/workspace/...
-go test ./... 2>&1 | grep -v "^ok\|cached\|^?"
+go test ./tui/editor/... ./tui/viewmodel/... ./workspace/...
+go test ./... -count=1 -timeout=180s
 make docs-check   # documentation acceptance gate
 ```
 

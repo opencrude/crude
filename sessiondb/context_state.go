@@ -197,7 +197,7 @@ func appendTranscriptMessageTx(tx *sql.Tx, sessionID, contextOwnerID string, del
 	if err := registerImmutableMessageTx(tx, sessionID, contextOwnerID, delta.Message, "transcript"); err != nil {
 		return false, err
 	}
-	desired := canonicalPersistedMessage(persistedMessage{Message: delta.Message, Meta: delta.Meta, Turn: delta.Turn, CreatedAt: delta.CreatedAt, AgentID: delta.AgentID})
+	desired := canonicalPersistedMessage(persistedMessage(delta))
 	existing, exists, err := loadPersistedMessageByInternalIDTx(tx, delta.Message.InternalID)
 	if err != nil {
 		return false, err
@@ -285,7 +285,7 @@ func appendContextMessageTx(tx *sql.Tx, sessionID string, state *ContextState, d
 	if delta.Message.InternalID == "" || delta.CreatedAt == 0 {
 		return false, errors.New("sessiondb: context append requires message id and timestamp")
 	}
-	desired := canonicalPersistedMessage(persistedMessage{Message: delta.Message, Meta: delta.Meta, Turn: delta.Turn, CreatedAt: delta.CreatedAt, AgentID: delta.AgentID})
+	desired := canonicalPersistedMessage(persistedMessage(delta))
 	if err := registerImmutableMessageTx(tx, sessionID, state.AgentID, delta.Message, "context"); err != nil {
 		return false, err
 	}

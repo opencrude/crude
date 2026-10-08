@@ -55,6 +55,7 @@ func TestThinkingOverflowLatchClearsOnSettingsChange(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 100, 40
 	app.AddOrchestrator("owner")
+	app.handleAgentEvent(types.AgentEventMsg{AgentID: "owner", Type: "turn_started", Data: types.TurnIdentity{Generation: 1, ModelID: "model"}})
 	long := strings.Repeat("a line of reasoning about the task\n", 20)
 
 	app.handleAgentEvent(types.AgentEventMsg{AgentID: "owner", Type: "thinking", Data: reasoning.Delta{Text: long, Kind: reasoning.Summary}})
@@ -68,6 +69,7 @@ func TestThinkingOverflowLatchClearsOnSettingsChange(t *testing.T) {
 	app.handleAgentEvent(types.AgentEventMsg{AgentID: "owner", Type: "done", Data: map[string]any{"reason": "completed"}})
 
 	// Latched: a later short block still opens in a pane.
+	app.handleAgentEvent(types.AgentEventMsg{AgentID: "owner", Type: "turn_started", Data: types.TurnIdentity{Generation: 2, ModelID: "model"}})
 	app.handleAgentEvent(types.AgentEventMsg{AgentID: "owner", Type: "thinking", Data: reasoning.Delta{Text: "brief", Kind: reasoning.Summary}})
 	if state.ThinkingPaneID == "" {
 		t.Fatal("session latch did not keep later blocks in a pane")
@@ -79,6 +81,7 @@ func TestThinkingOverflowLatchClearsOnSettingsChange(t *testing.T) {
 	if app.thinkingOverflowLatched() {
 		t.Fatal("settings change did not clear the promotion latch")
 	}
+	app.handleAgentEvent(types.AgentEventMsg{AgentID: "owner", Type: "turn_started", Data: types.TurnIdentity{Generation: 3, ModelID: "model"}})
 	app.handleAgentEvent(types.AgentEventMsg{AgentID: "owner", Type: "thinking", Data: reasoning.Delta{Text: "brief", Kind: reasoning.Summary}})
 	if state.ThinkingPaneID != "" {
 		t.Fatal("cleared latch still promoted a short block")

@@ -35,7 +35,11 @@ func TestPassiveRecoveryRestoresAcceptedTranscriptAndClosesUnknownToolExchange(t
 	original.msgs = []provider.ChatMessage{human}
 	original.msgTurns = []int{1}
 	original.displayMetas = []sessiondb.DisplayMeta{canonicalizeDisplayMeta(human, sessiondb.DisplayMeta{DisplayRole: "user"}, "", 0, time.Now())}
-	original.appendToWriteBuf(original.msgs, original.msgTurns, original.displayMetas)
+	if _, err := original.publishRootContext(sessiondb.ContextPublication{Mutation: sessiondb.ContextMutation{Append: []sessiondb.ContextMessageDelta{
+		contextDelta(human, original.displayMetas[0], 1, original.displayMetas[0].Snapshots[0].Time, "old-root"),
+	}}}); err != nil {
+		t.Fatal(err)
+	}
 	accepted := provider.NewTextMessage("assistant", "accepted before process death")
 	accepted.ToolCalls = []provider.ToolCall{{
 		ID: "uncertain-call", Type: "function",
@@ -48,7 +52,7 @@ func TestPassiveRecoveryRestoresAcceptedTranscriptAndClosesUnknownToolExchange(t
 		InputAdmitted: true, Archive: archive, ActiveContext: archive,
 		ContextOwnerID: sessionID, ContextGeneration: 2, ContextReason: "accepted_crash_boundary",
 	}
-	state, err := sessiondb.PublishContext(original.db, sessiondb.ContextPublication{SessionID: sessionID, AgentID: sessionID, Mutation: sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: 2, Reason: checkpoint.ContextReason, Messages: checkpoint.ActiveContext}}})
+	state, err := sessiondb.PublishContext(original.db, sessiondb.ContextPublication{SessionID: sessionID, AgentID: sessionID, ExpectedRevision: original.contextRevision, Mutation: sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: 2, Reason: checkpoint.ContextReason, Messages: canonicalContextMessages(checkpoint.ActiveContext)}}})
 	if err != nil {
 		original.Close()
 		t.Fatal(err)
@@ -139,7 +143,7 @@ func TestCloseRetainsUnadmittedPendingRecovery(t *testing.T) {
 	checkpoint := sessiondb.RecoveryCheckpoint{
 		Status:         recoverytypes.Status{ID: "pending-preflight", AgentID: "root", Generation: 1},
 		PendingInput:   provider.PlainInput("work that has not reached the provider"),
-		ContextOwnerID: id, ContextGeneration: 1,
+		ContextOwnerID: id, ContextGeneration: 1, ContextReason: "pending_preflight",
 	}
 	if err := sessiondb.SaveRecoveryCheckpoint(s.db, id, checkpoint); err != nil {
 		s.Close()

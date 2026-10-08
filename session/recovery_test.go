@@ -110,7 +110,7 @@ func TestRetryAndCancelRecoveryUseExactIncidentFence(t *testing.T) {
 	}
 }
 
-func TestFlushWriteBufferRetainsExactSnapshotUntilCommit(t *testing.T) {
+func TestRecoveryTranscriptRetainsExactSnapshotUntilCommit(t *testing.T) {
 	db, err := sessiondb.OpenAndMigrate(filepath.Join(t.TempDir(), "session.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -121,10 +121,8 @@ func TestFlushWriteBufferRetainsExactSnapshotUntilCommit(t *testing.T) {
 	}
 	s := &Session{db: db, sessionID: "session"}
 	message := provider.NewTextMessage("user", "must survive failed persistence")
-	s.appendToWriteBuf(
-		[]provider.ChatMessage{message}, []int{1},
-		[]sessiondb.DisplayMeta{{DisplayRole: "user", DisplayContent: message.ContentString()}},
-	)
+	message.InternalID = "submitted-input"
+	checkpoint := sessiondb.RecoveryCheckpoint{Status: recoverytypes.Status{ID: "incident", AgentID: "root", Generation: 1, UpdatedAt: time.Now()}, Archive: []provider.ChatMessage{message}, ActiveContext: []provider.ChatMessage{message}, ContextGeneration: 1}
 	if _, err := db.Exec(`
 		CREATE TRIGGER reject_message_flush
 		BEFORE INSERT ON messages
@@ -132,20 +130,20 @@ func TestFlushWriteBufferRetainsExactSnapshotUntilCommit(t *testing.T) {
 	`); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.flushWriteBufSync(); err == nil {
+	if err := s.restoreRecoveryTranscript(&checkpoint); err == nil {
 		t.Fatal("fault-injected flush unexpectedly succeeded")
 	}
-	if len(s.writeBuf) != 1 || s.writeBuf[0].msg.ContentString() != message.ContentString() {
-		t.Fatalf("failed flush dropped or changed buffer: %+v", s.writeBuf)
+	if len(s.msgs) != 0 || s.contextRevision != 0 || checkpoint.Archive[0].ContentString() != message.ContentString() {
+		t.Fatalf("failed publication changed source or live state: checkpoint=%+v messages=%+v", checkpoint, s.msgs)
 	}
 	if _, err := db.Exec(`DROP TRIGGER reject_message_flush`); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.flushWriteBufSync(); err != nil {
+	if err := s.restoreRecoveryTranscript(&checkpoint); err != nil {
 		t.Fatal(err)
 	}
-	if len(s.writeBuf) != 0 {
-		t.Fatalf("acknowledged snapshot remained buffered: %+v", s.writeBuf)
+	if len(s.msgs) != 1 || s.contextRevision == 0 {
+		t.Fatalf("committed snapshot not published to live state: %+v", s.msgs)
 	}
 	loaded, _, err := sessiondb.LoadMessages(db)
 	if err != nil || len(loaded) != 1 || loaded[0].ContentString() != message.ContentString() {
@@ -164,6 +162,74 @@ func TestRecoveryCancellationCannotHitAReplacementContext(t *testing.T) {
 	}
 	if s.CancelRecoveryFor("root", "old-incident", 1) || replacement.Err() != nil {
 		t.Fatal("old slot cancellation reached the replacement turn context")
+	}
+}
+
+func TestRootStopFencesContinuedReservationBeforeRecoveryRegistration(t *testing.T) {
+	db, err := sessiondb.OpenAndMigrate(filepath.Join(t.TempDir(), "session.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if err := sessiondb.CreateSessionRow(db, "session"); err != nil {
+		t.Fatal(err)
+	}
+	input := provider.PlainInput("exact parked input")
+	input.InternalID = "parked-input"
+	message := inputMessage(provider.NewTextMessage("user", input.Text), input)
+	message.InternalID = input.InternalID
+	state, err := sessiondb.PublishContext(db, sessiondb.ContextPublication{
+		SessionID: "session", AgentID: "session",
+		Mutation: sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: 1, Reason: "parked", Messages: []provider.ChatMessage{message}}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	checkpoint := sessiondb.RecoveryCheckpoint{
+		Status:       recoverytypes.Status{ID: "incident", AgentID: "root", Generation: 2, State: recoverytypes.Interrupted},
+		PendingInput: input, InputAdmitted: true, Archive: state.Messages, ActiveContext: state.Messages,
+		ContextOwnerID: "session", ContextRevision: state.Revision, ContextGeneration: state.Generation, ContextReason: state.Reason,
+	}
+	s := &Session{db: db, sessionID: "session", pendingRecoveries: map[string]sessiondb.RecoveryCheckpoint{"root": checkpoint},
+		orchestrators: make(map[string]*Orchestrator), activeContext: state.Messages,
+		contextRevision: state.Revision, contextGeneration: state.Generation, contextReason: state.Reason,
+	}
+	o := NewOrchestrator("root", s)
+	s.orchestrators[o.ID] = o
+	if !s.RetryRecoveryFor(o.ID, checkpoint.Status.ID, checkpoint.Status.Generation) {
+		t.Fatal("exact Continue did not reserve the parked task")
+	}
+	request := <-o.inputCh
+	defer o.endTurn(request.generation)
+	if request.ctx.Err() != nil || s.recoverySlots[o.ID] != nil {
+		t.Fatal("fixture skipped the admission-to-recovery-registration window")
+	}
+	s.lifecycleMu.Lock()
+	result := make(chan bool, 1)
+	started := make(chan struct{})
+	go func() {
+		close(started)
+		result <- s.CancelRecoveryFor(o.ID, checkpoint.Status.ID, checkpoint.Status.Generation)
+	}()
+	<-started
+	select {
+	case <-result:
+		s.lifecycleMu.Unlock()
+		t.Fatal("root Stop bypassed the Continue lifecycle fence")
+	case <-time.After(100 * time.Millisecond):
+	}
+	s.lifecycleMu.Unlock()
+	select {
+	case stopped := <-result:
+		if !stopped || request.ctx.Err() == nil || !o.turnCancelling {
+			t.Fatalf("Stop acknowledged without cancelling the continued reservation: stopped=%v error=%v", stopped, request.ctx.Err())
+		}
+	case <-time.After(time.Second):
+		t.Fatal("exact Stop could not fence the continued reservation")
+	}
+	current, present, err := sessiondb.LoadContextState(db, "session", "session")
+	if err != nil || !present || current.Revision != state.Revision || len(current.Messages) != 1 || current.Messages[0].InternalID != input.InternalID {
+		t.Fatalf("reservation cancellation published a false parked settlement: %+v error=%v", current, err)
 	}
 }
 

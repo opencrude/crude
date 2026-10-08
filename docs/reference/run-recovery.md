@@ -37,6 +37,7 @@ new human message or a replacement for permission policy.
 | Repeated tool loop, output truncation, missing final report | Bounded corrective continuation, then an actionable pause if correction does not work |
 | Authentication, billing/quota, invalid configuration/trust/guidance | Needs attention; no unbounded invalid-request loop or silent account/model failover |
 | Persistence failure | Keep the owned snapshot/draft, block unsafe advancement, and allow a checked retry |
+| Native file-ownership conflict | Structural Needs attention; park the child attempt and retain its assignment, evidence and exact incident, never auto-retry the same blocked effect |
 | Panic or uncertain effects | Preserve safe boundaries and pause for reconciliation; keep the root input service usable |
 | Explicit user or parent cancellation | Stop promptly, preserve completed effects/text and record the explicit stop boundary |
 
@@ -80,10 +81,37 @@ pause for inspection, including inside parallel batches; not-yet-started serial
 siblings do not execute after an uncertain failure. Per-path locks release even
 when the tool panics.
 
+Normal input acceptance commits the original, successful immutable preparation,
+and initial supervisor checkpoint together before returning its owner-fenced
+receipt. A failed selection or preparation keeps its exact pending input and
+requires attention instead of issuing a weakened request. Stop/close preserve
+accepted input even when execution has not been queued. Semantic late tool and
+stream events cannot reactivate a stopping or terminal generation or consume a
+later draft; a genuinely new generation remains runnable.
+
+Root checkpoint/finalization and delivery writers share the serialized
+revision-owned publication described in [adaptive context](adaptive-context.md).
+Child terminal context, transcript deltas and recovery settle in one transaction.
+Parent mirrors/results follow through separately checked publication; errors
+remain retryable and never manufacture successful cancellation or completion.
+
+Terminal settlement retains a typed, immutable publication intent in the durable
+checkpoint. Stop cancels execution, not that publisher's ownership. Required
+ledger, collaboration, result and mirror failures keep the exact incident
+actionable and withhold completion events. After shutdown or restart, passive
+resume performs no execution; exact Continue repairs only the captured settlement,
+without another provider request, tool effect or child run. Captured successful
+outcomes and report provenance are not rewritten into fabricated cancellations.
+
 Natural completion also waits for the durable turn and collaboration ledgers.
 Retrying finalization acknowledges only an already-committed identical terminal
 outcome for the exact run/owner/epoch/context; a different stop/outcome fails closed.
 Persistence retries do not request another stochastic answer.
+Session editor initialization always uses the owning session's artifact root and
+identity. A storage error is actionable startup failure, never permission to
+select a process-global journal directory, invent another session identity or
+continue with a missing editor. Failed resume preserves pre-existing session
+artifacts while cleaning only temporary data created by that failed attempt.
 An old recovery cancellation fences the owning turn context itself, not merely
 the earlier incident lookup. New human/peer turn admission cannot overwrite a
 parked task. The composer refuses an ordinary send before consuming that draft;

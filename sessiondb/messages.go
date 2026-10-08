@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"reflect"
 	"time"
+	"unicode/utf8"
 
 	"crude/provider"
 	ttypes "crude/types"
@@ -246,7 +247,7 @@ func AppendMessageWithMeta(db *sql.DB, sessionID string, m provider.ChatMessage,
 }
 
 func appendMessageWithMetaTx(tx *sql.Tx, sessionID string, delta ContextMessageDelta) error {
-	return appendPersistedMessageTx(tx, sessionID, persistedMessage{Message: delta.Message, Meta: delta.Meta, Turn: delta.Turn, CreatedAt: delta.CreatedAt, AgentID: delta.AgentID})
+	return appendPersistedMessageTx(tx, sessionID, persistedMessage(delta))
 }
 
 func appendPersistedMessageTx(tx *sql.Tx, sessionID string, value persistedMessage) error {
@@ -296,6 +297,21 @@ func appendPersistedMessageTx(tx *sql.Tx, sessionID string, value persistedMessa
 	_, err = tx.Exec(`INSERT INTO messages(role,origin,visibility,internal_id,collaboration_json,content,content_type,reasoning_content,reasoning,tool_calls,tool_name,tool_result,tool_call_id,tool_error,provider_items,cache_control,token_count,sequence_num,turn_number,agent_id,created_at,display_meta) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`, m.Role, m.EffectiveOrigin(), m.EffectiveVisibility(), m.InternalID, nullBytes(collaborationJSON), nullString(content), contentType, nullString(m.ReasoningContent), nullString(m.Reasoning), nullBytes(toolCallsJSON), nil, nullString(toolResult), nullString(m.ToolCallID), m.ToolError, nullBytes(providerJSON), nullBytes(cacheJSON), provider.EstimateMessageTokens(m, ""), seq, value.Turn, nullString(value.AgentID), value.CreatedAt, nullBytes(metaJSON))
 	if err != nil {
 		return err
+	}
+	if m.IsGenuineUserInput() {
+		prompt := value.Meta.DisplayContent
+		if prompt == "" {
+			prompt = m.ContentString()
+		}
+		if len(prompt) > 200 {
+			prompt = prompt[:200]
+			for !utf8.ValidString(prompt) {
+				prompt = prompt[:len(prompt)-1]
+			}
+		}
+		if _, err := tx.Exec(`UPDATE sessions SET first_prompt=COALESCE(first_prompt,?),last_prompt=? WHERE id=?`, prompt, prompt, sessionID); err != nil {
+			return err
+		}
 	}
 	result, err := tx.Exec(`UPDATE sessions SET message_count=(SELECT COUNT(*) FROM messages),turn_count=MAX(turn_count,?) WHERE id=?`, value.Turn, sessionID)
 	if err != nil {
@@ -395,6 +411,24 @@ func transcriptPersistedProjection(value persistedMessage) persistedMessage {
 	m.ReplaySourceModel = ""
 	m.ReplayPrefixHash = ""
 	m.ResponseReference = nil
+	// Empty optional slices are stored as SQL NULL. Their exact nil shape is
+	// guarded by the full immutable identity, not the transcript projection.
+	if len(m.ToolCalls) == 0 {
+		m.ToolCalls = nil
+	}
+	if len(m.ProviderItems) == 0 {
+		m.ProviderItems = nil
+	}
+	if m.Collaboration != nil {
+		attribution := *m.Collaboration
+		if len(attribution.RecipientIDs) == 0 {
+			attribution.RecipientIDs = nil
+		}
+		if len(attribution.RecipientNames) == 0 {
+			attribution.RecipientNames = nil
+		}
+		m.Collaboration = &attribution
+	}
 	value.Message = m
 	return value
 }

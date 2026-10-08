@@ -26,7 +26,7 @@ Building the embedded terminal requires the pinned `libghostty-vt` C library
 
 ```bash
 make libghostty     # one-time bootstrap of the pinned libghostty-vt
-make build          # go build ./... with the libghostty env
+make build          # validate all packages and rebuild ./crude with libghostty
 ```
 
 ## Test

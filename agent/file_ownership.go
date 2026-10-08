@@ -10,7 +10,7 @@ import (
 )
 
 type FileOwnership struct {
-	mu     sync.Mutex
+	mu     sync.RWMutex
 	claims map[string]ClaimEntry
 	reads  map[AgentID]map[string]struct{}
 }
@@ -49,6 +49,76 @@ func (fo *FileOwnership) CheckOrClaim(agentID AgentID, agentName string, path st
 		IsWrite:   isWrite,
 	}
 	return nil
+}
+
+// CheckOrClaimAll validates and publishes a complete effect's write targets as
+// one local ownership operation. A multi-file effect must not leave a claim for
+// an earlier target when a later target conflicts.
+func (fo *FileOwnership) CheckOrClaimAll(agentID AgentID, agentName string, paths []string, isWrite bool) error {
+	return fo.CommitClaimAll(agentID, agentName, paths, isWrite, nil)
+}
+
+// CommitClaimAll publishes target claims only after their durable owner accepts
+// the complete preflight, while retaining the same local ownership gate.
+func (fo *FileOwnership) CommitClaimAll(agentID AgentID, agentName string, paths []string, isWrite bool, commit func() error) error {
+	fo.mu.Lock()
+	defer fo.mu.Unlock()
+	normalized := make([]string, 0, len(paths))
+	for _, raw := range paths {
+		path := normalizeClaimPath(raw)
+		if path == "" {
+			return fmt.Errorf("empty file ownership target")
+		}
+		for _, prior := range normalized {
+			if claimPathsOverlap(path, prior) {
+				return fmt.Errorf("effect contains overlapping ownership targets %q and %q", path, prior)
+			}
+		}
+		for claimedPath, entry := range fo.claims {
+			if claimPathsOverlap(path, claimedPath) && entry.AgentID != agentID {
+				return fmt.Errorf("file %q is owned by agent %q (claimed at %s)", path, entry.AgentName, entry.ClaimedAt.Format("15:04:05"))
+			}
+		}
+		normalized = append(normalized, path)
+	}
+	if commit != nil {
+		if err := commit(); err != nil {
+			return err
+		}
+	}
+	now := time.Now()
+	for _, path := range normalized {
+		fo.claims[path] = ClaimEntry{AgentID: agentID, AgentName: agentName, ClaimedAt: now, IsWrite: isWrite}
+	}
+	return nil
+}
+
+// BeginWrite holds a read lease for the complete file effect. Claim
+// replacement takes the write side of the same gate, so a repair cannot
+// publish a narrower scope while an already-authorized effect is still in
+// flight. The caller must release the lease after the underlying mutation
+// returns, not after the guard check.
+func (fo *FileOwnership) BeginWrite(agentID AgentID, paths []string) (func(), error) {
+	fo.mu.RLock()
+	for _, raw := range paths {
+		path := normalizeClaimPath(raw)
+		if path == "" {
+			fo.mu.RUnlock()
+			return nil, fmt.Errorf("empty file ownership target")
+		}
+		allowed := false
+		for claimedPath, entry := range fo.claims {
+			if entry.AgentID == agentID && entry.IsWrite && pathWithin(path, claimedPath) {
+				allowed = true
+				break
+			}
+		}
+		if !allowed {
+			fo.mu.RUnlock()
+			return nil, fmt.Errorf("file %q is outside the agent's active ownership scope", path)
+		}
+	}
+	return fo.mu.RUnlock, nil
 }
 
 func (fo *FileOwnership) PreClaim(agentID AgentID, agentName string, paths []string) error {

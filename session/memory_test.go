@@ -53,7 +53,10 @@ func TestMemoryToolsAndAutomaticRecall(t *testing.T) {
 		t.Fatalf("scope paths = %+v", saved[0].ScopePaths)
 	}
 
-	contextText := s.recallMemoryContext(context.Background(), "testing convention", nil)
+	contextText, err := s.recallMemoryContext(context.Background(), "testing convention", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if contextText == "" || !containsAll(contextText, "<workspace_memory>", "Use race tests before handoff.") {
 		t.Fatalf("memory context = %q", contextText)
 	}
@@ -170,8 +173,8 @@ func TestMemoryDisabledSettings(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Remember: %v", err)
 	}
-	if got := s.recallMemoryContext(context.Background(), "hidden", nil); got != "" {
-		t.Fatalf("recall disabled but injected: %q", got)
+	if got, err := s.recallMemoryContext(context.Background(), "hidden", nil); err != nil || got != "" {
+		t.Fatalf("recall disabled but injected: %q error=%v", got, err)
 	}
 }
 

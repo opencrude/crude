@@ -237,7 +237,7 @@ func TestCollaborationResumeReconcilesLocalCommitWithoutProviderReplay(t *testin
 	// This is the actual crash window: local context committed, workspace receipt
 	// not yet published. It must never produce a second model invocation.
 	if err := sessiondb.SaveContextStateWithAdmissions(before.db, before.SessionID(), before.SessionID(), rootID,
-		sessiondb.ContextState{Generation: 1, Messages: active}, []sessiondb.CollaborationAdmission{admission}); err != nil {
+		sessiondb.ContextState{Generation: 1, Reason: "local_admission", Messages: canonicalContextMessages(active)}, []sessiondb.CollaborationAdmission{admission}); err != nil {
 		t.Fatal(err)
 	}
 	path := before.dbPath
@@ -492,7 +492,7 @@ func TestCollaborationWaitRequiresAllExactConditions(t *testing.T) {
 		t.Fatal(err)
 	}
 	encoded, _ := json.Marshal(result)
-	if !bytes.Contains(encoded, []byte(`"status":"caller_interrupted"`)) || !bytes.Contains(encoded, []byte(`"artifact_revision"`)) {
+	if !bytes.Contains(encoded, []byte(`"status":"terminal_without_match"`)) || !bytes.Contains(encoded, []byte(`"artifact_revision"`)) {
 		t.Fatalf("terminal run incorrectly satisfied or lost the pending condition: %s", encoded)
 	}
 	if _, err := s.waitForCollaboration(t.Context(), store, map[string]any{"agent_id": child.ID, "run_id": run.ID}); err == nil {
@@ -533,6 +533,7 @@ func TestCollaborationRecoversSettledChildAdmissionWithoutRelaunch(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(func() { _ = childDB.Close() })
 	if err := sessiondb.CreateSessionRow(childDB, childID); err != nil {
 		t.Fatal(err)
 	}
@@ -559,7 +560,7 @@ func TestCollaborationRecoversSettledChildAdmissionWithoutRelaunch(t *testing.T)
 		t.Fatalf("reserve = %+v, %v", deliveries, err)
 	}
 	if err := sessiondb.SaveContextStateWithAdmissions(childDB, childID, childID, childID,
-		sessiondb.ContextState{AgentID: childID, Generation: 1, Messages: []provider.ChatMessage{collaborationMessage(deliveries[0])}},
+		sessiondb.ContextState{AgentID: childID, Generation: 1, Reason: "child_admission_fixture", Messages: []provider.ChatMessage{collaborationMessage(deliveries[0])}},
 		[]sessiondb.CollaborationAdmission{{
 			DeliveryID: deliveries[0].Delivery.ID, EventID: deliveries[0].Event.ID, SessionID: childID, AgentID: childID,
 			RuntimeEpoch: child.RuntimeEpoch, DeliveryVersion: deliveries[0].Delivery.Version, ContextCommitID: "child-commit", RunID: run.ID,

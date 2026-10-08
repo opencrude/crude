@@ -60,11 +60,12 @@ func utf8SuffixBoundary(raw string, start int) int {
 
 func interactiveRetrieval(descriptor OutputDescriptor, info AsyncCmdInfo, firstOmitted int) string {
 	header := fmt.Sprintf("Command output: handle=%s status=%s total_bytes=%d", descriptor.Handle, descriptor.Status, descriptor.TotalBytes)
-	if descriptor.Status == AsyncRunning {
+	switch descriptor.Status {
+	case AsyncRunning:
 		header += "; exit unknown while running"
-	} else if descriptor.Status == AsyncKilled {
+	case AsyncKilled:
 		header += "; exit unavailable (command was killed)"
-	} else {
+	default:
 		header += fmt.Sprintf("; exit_code=%d", info.ExitCode)
 	}
 	if info.Error != "" {

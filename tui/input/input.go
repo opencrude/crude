@@ -392,6 +392,7 @@ func (m Model) InputSelectionRange() (start, end int) {
 }
 
 func (m *Model) ClearInputSelection() {
+	defer m.recordDraftEdit(m.input.EditState())
 	m.input.ClearSelection()
 }
 
@@ -406,9 +407,23 @@ func (m *Model) CancelPointerCapture() { m.input.CancelPointerCapture() }
 // the draft text is rewritten.
 func (m Model) CursorFlat() int { return m.input.CursorFlat() }
 
-func (m Model) ScrollOffset() int             { return m.input.ScrollOffset() }
-func (m *Model) SetScrollOffset(offset int)   { m.input.SetScrollOffset(offset) }
-func (m *Model) SetSelection(anchor, end int) { m.input.SetSelection(anchor, end) }
+func (m Model) ScrollOffset() int { return m.input.ScrollOffset() }
+
+func (m *Model) SetScrollOffset(offset int) {
+	defer m.recordDraftEdit(m.input.EditState())
+	m.input.SetScrollOffset(offset)
+}
+
+func (m *Model) SetSelection(anchor, end int) {
+	defer m.recordDraftEdit(m.input.EditState())
+	m.input.SetSelection(anchor, end)
+}
+
+func (m *Model) recordDraftEdit(before ui.TextAreaState) {
+	if m.input.EditState() != before {
+		m.draftRevision++
+	}
+}
 
 // DraftRevision is a monotonic identity for the complete editable draft. It
 // prevents a late admission result from clearing an edited or ABA-replaced
@@ -427,7 +442,10 @@ func (m *Model) ClearInputAtRevision(revision uint64) bool {
 }
 
 // SetCursorFlat moves the text cursor to a flat rune index.
-func (m *Model) SetCursorFlat(pos int) { m.input.SetCursorFlat(pos) }
+func (m *Model) SetCursorFlat(pos int) {
+	defer m.recordDraftEdit(m.input.EditState())
+	m.input.SetCursorFlat(pos)
+}
 
 func (m Model) Value() string {
 	return m.input.Value()
@@ -436,6 +454,9 @@ func (m Model) Value() string {
 // SnapshotReferenceIDs returns the exact identities pinned to this draft,
 // including currently unresolved attachments whose backing object is missing.
 func (m Model) SnapshotReferenceIDs() []string {
+	if m.promptReferenceIDs == nil {
+		return m.ReferencedIDs()
+	}
 	ids := make([]string, 0, len(m.promptReferenceIDs))
 	for id := range m.promptReferenceIDs {
 		ids = append(ids, id)
@@ -619,6 +640,7 @@ func (m Model) PaintShell(buf *surface.CellBuffer, ox, oy, width, height int, ct
 
 // HandleShell routes mouse/key events that target the shell surface locally.
 func (m *Model) HandleShell(ctx ui.EventContext, evt ui.Event) ui.EventResult {
+	defer m.recordDraftEdit(m.input.EditState())
 	if ctx.LocalY == 1 && len(m.activePromptRefs()) > 0 {
 		if evt.Kind == ui.EventMouseWheel {
 			delta := 1

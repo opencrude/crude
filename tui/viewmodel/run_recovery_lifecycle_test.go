@@ -220,10 +220,14 @@ func TestRecoveryRealComposerRetryClickAndAutomaticContinuation(t *testing.T) {
 			app.AddOrchestrator(orch.ID)
 			app.maybeHydrateComposerDraft()
 			app.Input.SetInput("Continue this exact task once the connection is restored.")
-			_, _ = app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+			_, submit := app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+			if submit == nil {
+				t.Fatal("Enter did not schedule durable admission")
+			}
 			const draft = "A different instruction that must stay unsent."
 			app.Input.SetInput(draft)
 			app.Input.SetCursorFlat(7)
+			runAppCommand(t, app, submit)
 			waitFor := func(typ string) types.AgentMsg {
 				t.Helper()
 				timeout := time.NewTimer(8 * time.Second)

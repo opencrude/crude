@@ -81,6 +81,47 @@ allocations and 0.586-0.598 ms per update. Native bridging now shares the colour
 map across each rendered block and retains styles across line breaks. The
 existing 2,740-allocation gate overage remains; no ceiling was loosened.
 
+## Warm Agent Switching (2026-10-07)
+
+`BenchmarkAgentSwitchWarm_80Msgs` retains renderer-source generation checks while
+reusing the active screen's item, row-start and prefix storage. Indexed payloads
+avoid boxing complete rows and always resolve against the current snapshot; no
+second per-source cache or frame suppression was introduced.
+
+| Measurement | Before | After |
+|-------------|--------|-------|
+| Bytes/op | 31,661-31,663 | 14,491-14,504 |
+| Allocs/op | 270 | 193-194 |
+| Time/op | 172.4-178.1 us | 158.7-181.6 us |
+
+Linux/i7-10750H measurements use `GOMAXPROCS=2`, three normal benchmark runs and a
+bounded validation run. Timing ranges overlap; the verified improvement is about
+54% fewer allocated bytes and 28-29% fewer allocations, not a guaranteed latency
+speedup. Profiles locate the removed allocations in list installation. A warmed
+list-installation regression fails with 84 allocations before and passes with zero
+after. Source collisions, changed-row paint, snapshot lifetime, selection, scroll
+and disclosure contracts remain guarded. The existing 15,000 B / 315 allocations
+gate is unchanged. This benchmark paints the shell, not the ANSI/terminal path.
+
+## Context Publication (2026-10-07)
+
+The revision-fenced context publisher is covered by the canonical benchmark gate.
+Three Linux runs with `GOMAXPROCS=2` measured:
+
+| Benchmark | Time/op | Bytes/op | Allocs/op | Allocation ceiling |
+|-----------|---------|----------|-----------|--------------------|
+| `BenchmarkPublishContextReplaceUnrelatedArchiveHistory/unrelated_0` | 0.82-0.84 ms | 8,095-8,100 | 156 | 10,000 B / 190 allocations |
+| `BenchmarkPublishContextReplaceUnrelatedArchiveHistory/unrelated_2000` | 0.71-0.74 ms | 8,087 | 157 | 10,000 B / 190 allocations |
+
+This measures a real SQLite replacement transaction including the immutable
+identity lookup, not a proxy counter. Unrelated archive size adds no payload
+scan or allocation growth. The removed historical scan comparison cost about
+6.5-6.7 ms, 2.32 MB and 34,010 allocations for 2,000 unrelated rows; no legacy
+scanner remains in the product or benchmark suite. Timing is reported, not
+hardware-gated. Allocation limits are machine-readable in
+`scripts/perf_ceilings.txt`; the gate parses named sub-benchmarks as well as leaf
+names. Owner-source size and dense UI presentation have separate existing gates.
+
 ## Purpose
 
 A CPU-hammering regression in a tick-driven TUI is almost never one

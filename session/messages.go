@@ -11,12 +11,6 @@ import (
 	ttypes "crude/types"
 )
 
-type taggedMessage struct {
-	msg  provider.ChatMessage
-	turn int
-	meta sessiondb.DisplayMeta
-}
-
 func childAgentIDFromResult(text string) string {
 	var payload map[string]any
 	if json.Unmarshal([]byte(text), &payload) == nil {
@@ -322,13 +316,8 @@ func (t *displayMetaTracker) get(toolID string) sessiondb.DisplayMeta {
 
 func (s *Session) HasMessages() bool {
 	s.msgsMu.Lock()
-	hasMessages := len(s.msgs) > 0
+	hasMessages := len(s.msgs) > 0 || len(s.activeContext) > 0
 	s.msgsMu.Unlock()
-	if !hasMessages {
-		s.writeMu.Lock()
-		hasMessages = len(s.writeBuf) > 0
-		s.writeMu.Unlock()
-	}
 	return hasMessages
 }
 
@@ -355,62 +344,6 @@ func (s *Session) MessagesWithMeta() []sessiondb.MessageWithMeta {
 		}
 	}
 	return out
-}
-
-func (s *Session) appendToWriteBuf(msgs []provider.ChatMessage, turns []int, metas []sessiondb.DisplayMeta) {
-	s.writeMu.Lock()
-	defer s.writeMu.Unlock()
-	s.writeBuf = s.writeBuf[:0]
-	for i, m := range msgs {
-		turn := 0
-		if i < len(turns) {
-			turn = turns[i]
-		}
-		var meta sessiondb.DisplayMeta
-		if i < len(metas) {
-			meta = metas[i]
-		}
-		s.writeBuf = append(s.writeBuf, taggedMessage{msg: m, turn: turn, meta: meta})
-	}
-}
-
-func (s *Session) flushWriteBufSync() error {
-	s.writeMu.Lock()
-	buf := append([]taggedMessage(nil), s.writeBuf...)
-	s.writeMu.Unlock()
-
-	if len(buf) == 0 || s.db == nil {
-		if s.db == nil && len(buf) > 0 {
-			return fmt.Errorf("session database is unavailable")
-		}
-		return nil
-	}
-
-	msgs := make([]provider.ChatMessage, len(buf))
-	turns := make([]int, len(buf))
-	metas := make([]sessiondb.DisplayMeta, len(buf))
-	for i, tm := range buf {
-		msgs[i] = tm.msg
-		turns[i] = tm.turn
-		metas[i] = tm.meta
-	}
-
-	newSeq, err := sessiondb.ReplaceMessagesWithMeta(s.db, s.sessionID, msgs, turns, metas)
-	if err != nil {
-		if s.logger != nil {
-			s.logger.Error("SESSIONDB", "sync_flush_error", "error", err.Error())
-		}
-		return err
-	}
-	s.writeMu.Lock()
-	if len(s.writeBuf) == len(buf) {
-		s.writeBuf = s.writeBuf[:0]
-	}
-	s.writeMu.Unlock()
-	s.msgsMu.Lock()
-	s.seqNum = newSeq
-	s.msgsMu.Unlock()
-	return nil
 }
 
 func sanitizeMessages(msgs []provider.ChatMessage) []provider.ChatMessage {

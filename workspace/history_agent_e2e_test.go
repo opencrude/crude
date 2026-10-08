@@ -55,9 +55,13 @@ func historyE2EConfig(url string) *session.Config {
 func waitHistoryAgentDone(t *testing.T, sender *historyE2ESender, agentID string) {
 	t.Helper()
 	deadline := time.After(5 * time.Second)
+	var lastRecovery any
 	for {
 		select {
 		case event := <-sender.events:
+			if event.typ == "recovery" && event.agentID == agentID {
+				lastRecovery = event.data
+			}
 			if event.typ == "error" && event.agentID == agentID {
 				t.Fatalf("real agent turn failed: %v", event.data)
 			}
@@ -65,7 +69,7 @@ func waitHistoryAgentDone(t *testing.T, sender *historyE2ESender, agentID string
 				return
 			}
 		case <-deadline:
-			t.Fatal("timed out waiting for real agent turn")
+			t.Fatalf("timed out waiting for real agent turn; last recovery: %+v", lastRecovery)
 		}
 	}
 }

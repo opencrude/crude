@@ -83,6 +83,7 @@ func New(th *theme.Theme) *Screen {
 		tokens: tokens,
 		list:   list,
 	}
+	list.SetRowPainter(s.paintMessageRow)
 	s.scrollbar = ui.NewScrollbarControl(ScrollbarID, list.Scroll(), tokens)
 	// The nested pane gutter sits two columns left of the main track. Claim the
 	// separator, but never expand across it and steal nested-pane interaction.

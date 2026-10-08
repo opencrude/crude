@@ -283,8 +283,8 @@ func TestShellChatVirtualListRowPainter(t *testing.T) {
 		if it.Height != 1 {
 			t.Fatalf("item[%d] height=%d want 1", i, it.Height)
 		}
-		if _, ok := it.Payload.(chatprojection.MessageRow); !ok {
-			t.Fatalf("item[%d] payload not MessageRow", i)
+		if index, ok := it.Payload.(int); !ok || index != i {
+			t.Fatalf("item[%d] payload is not its current snapshot index", i)
 		}
 	}
 	if list.Scroll().Content() != len(raw) {
