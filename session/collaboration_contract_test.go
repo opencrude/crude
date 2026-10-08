@@ -47,8 +47,7 @@ func collaborationContractFixture(t *testing.T) (*Session, *collaboration.Store,
 	if err != nil {
 		t.Fatal(err)
 	}
-	s := &Session{db: db, sessionID: "contract-session", collaborationStore: store,
-		collaborationContext: make(map[string][]provider.ChatMessage)}
+	s := &Session{db: db, sessionID: "contract-session", collaborationStore: store}
 	return s, store, parent, child
 }
 
@@ -76,6 +75,51 @@ func TestOwnedFinalizationRetryAcknowledgesOnlyExactTerminalOutcome(t *testing.T
 	request.State, request.Outcome = collaboration.RunCancelled, "cancelled"
 	if _, err := finishCollaborationRun(store, request); !errors.Is(err, collaboration.ErrStale) {
 		t.Fatalf("different terminal outcome was accepted: %v", err)
+	}
+}
+
+func TestPeerHistoryReferenceCannotRepublishReferencedTranscript(t *testing.T) {
+	s, store, parent, child := collaborationContractFixture(t)
+	original := provider.NewTextMessage("user", "original input remains immutable")
+	original.InternalID = "original-human"
+	stamp := time.Now()
+	meta := canonicalizeDisplayMeta(original, sessiondb.DisplayMeta{DisplayRole: "user", DisplayContent: original.ContentString()}, "", 0, stamp)
+	initial, err := s.publishRootContext(sessiondb.ContextPublication{Mutation: sessiondb.ContextMutation{Append: []sessiondb.ContextMessageDelta{contextDelta(original, meta, 1, stamp, parent.ID)}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	before, err := sessiondb.LoadMessagesWithMeta(s.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := store.StartRun(t.Context(), collaboration.StartRunRequest{AgentID: parent.ID, RuntimeEpoch: parent.RuntimeEpoch, Origin: collaboration.OriginHuman})
+	if err != nil {
+		t.Fatal(err)
+	}
+	event, err := store.Publish(t.Context(), collaboration.PublishRequest{
+		SenderID: child.ID, RecipientIDs: []string{parent.ID}, Origin: collaboration.OriginPeer,
+		Kind: collaboration.EventPeerNote, IdempotencyKey: "peer-evidence", Body: "Observe the referenced input, do not replace it.",
+		References: []collaboration.Reference{{Kind: "history_message", ID: original.InternalID}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	deliveries, err := store.ReservePending(t.Context(), collaboration.ReserveRequest{RecipientID: parent.ID, RuntimeEpoch: parent.RuntimeEpoch, Limit: 10})
+	if err != nil || len(deliveries) != 1 {
+		t.Fatalf("peer delivery missing: deliveries=%d error=%v", len(deliveries), err)
+	}
+	message := collaborationMessage(deliveries[0])
+	state, err := s.commitCollaborationAdmissions(s.db, s.sessionID, s.sessionID, parent.ID, run.ID, parent.RuntimeEpoch,
+		initial.Revision, collaborationDeltas(deliveries, append(initial.Messages, message), parent.ID), deliveries)
+	if err != nil {
+		t.Fatalf("peer evidence blocked execution by conflicting with its reference: %v", err)
+	}
+	if len(state.Messages) != 2 || state.Messages[0].InternalID != original.InternalID || state.Messages[1].InternalID != event.Event.ID || state.Messages[1].Collaboration.HistoryMessageID != original.InternalID {
+		t.Fatalf("peer event lost its own identity or evidence reference: %+v", state.Messages)
+	}
+	after, err := sessiondb.LoadMessagesWithMeta(s.db)
+	if err != nil || len(after) != 1 || after[0].CreatedAt != before[0].CreatedAt || after[0].Msg.ContentString() != original.ContentString() || after[0].Meta.DisplayContent != before[0].Meta.DisplayContent {
+		t.Fatalf("peer evidence rewrote the human transcript: %+v error=%v", after, err)
 	}
 }
 

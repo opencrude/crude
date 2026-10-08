@@ -112,6 +112,13 @@ workspace transaction. The event body, sender, origin, recipients, thread,
 request/run identity, supersession, references, and idempotency fingerprint are
 immutable.
 
+Peer notes, reports, outcomes and lifecycle controls retain their own event
+identity. A `history_message` reference names evidence, never a replacement
+identity for that event. Only an explicitly human-authored steering admission
+may bind its submitted input identity through that reference. Receipt
+publication must not reclassify an existing human or assistant transcript row
+as hidden runtime context.
+
 For each recipient:
 
 1. The attached runtime reserves one pending delivery using its epoch.

@@ -38,9 +38,6 @@ func (s *Session) SetCollaboration(store *collaboration.Store, instanceID string
 	if s.collaborationAgents == nil {
 		s.collaborationAgents = make(map[string]collaboration.Agent)
 	}
-	if s.collaborationContext == nil {
-		s.collaborationContext = make(map[string][]provider.ChatMessage)
-	}
 	if store != nil {
 		ctx, cancel := context.WithCancel(context.Background())
 		s.collaborationCancel = cancel
@@ -246,6 +243,9 @@ func collaborationDeltas(deliveries []collaboration.PendingDelivery, messages []
 }
 
 func collaborationHistoryMessageID(event collaboration.Event) string {
+	if event.Kind != collaboration.EventHumanSteering || event.Origin != collaboration.OriginHuman {
+		return event.ID
+	}
 	for _, reference := range event.References {
 		if reference.Kind == "history_message" && reference.ID != "" {
 			return reference.ID
@@ -889,7 +889,6 @@ func (s *Session) applyCollaborationControl(
 			[]collaboration.PendingDelivery{delivery}, "control context admission failed")
 		return
 	}
-	s.recordCollaborationContext(target.agentID, controlMessage)
 	if s.sender != nil {
 		s.sender.SendAgentEventWithID("collaboration_message", delivery.Event, target.agentID)
 	}
@@ -953,20 +952,6 @@ func (s *Session) applyRuntimeControl(
 		}
 	}
 	return "applied", nil
-}
-
-func (s *Session) recordCollaborationContext(agentID string, message provider.ChatMessage) {
-	s.mu.Lock()
-	s.collaborationContext[agentID] = append(s.collaborationContext[agentID], message)
-	s.mu.Unlock()
-}
-
-func (s *Session) takeCollaborationContext(agentID string) []provider.ChatMessage {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	messages := append([]provider.ChatMessage(nil), s.collaborationContext[agentID]...)
-	delete(s.collaborationContext, agentID)
-	return messages
 }
 
 func (s *Session) collaborationDefinitions(actorID string) []tools.ToolDef {
