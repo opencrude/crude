@@ -29,6 +29,7 @@ type PreparedCompaction struct {
 	AccountID   string
 	ModelID     string
 	Run         func() ttypes.CompactResultMsg
+	Cancel      func()
 }
 
 func (s *Session) PrepareCompaction(agentID string) (PreparedCompaction, ttypes.CompactResultMsg) {
@@ -84,7 +85,7 @@ func (s *Session) PrepareCompaction(agentID string) (PreparedCompaction, ttypes.
 	s.compactionWg.Add(1)
 	s.compactionMu.Unlock()
 
-	prepared := PreparedCompaction{OperationID: operationID, AgentID: agentID}
+	prepared := PreparedCompaction{OperationID: operationID, AgentID: agentID, Cancel: cancel}
 	if s.cfg != nil {
 		effectiveCfg := s.cfg
 		if s.runtimeProfile != nil {
@@ -104,6 +105,7 @@ func (s *Session) PrepareCompaction(agentID string) (PreparedCompaction, ttypes.
 		s.compactionStarted = true
 		s.compactionMu.Unlock()
 		defer func() {
+			completed := ctx.Err() == nil
 			cancel()
 			s.compactionMu.Lock()
 			if s.compactionID == operationID {
@@ -115,6 +117,10 @@ func (s *Session) PrepareCompaction(agentID string) (PreparedCompaction, ttypes.
 			s.compactionMu.Unlock()
 			s.compactionWg.Done()
 			s.turnGate.Unlock()
+			// Stop/close preserves queued work without launching another turn.
+			if completed {
+				go s.AdmitQueuedInputs(agentID)
+			}
 		}()
 		return s.runPreparedCompaction(ctx, operationID, agentID, prepared.ProviderID, prepared.ModelID, active, revision, generation, beforeMessages)
 	}
@@ -151,6 +157,7 @@ func (s *Session) runPreparedCompaction(
 ) ttypes.CompactResultMsg {
 	s.logger.Info("COMPACT", "manual_request", "operation_id", operationID)
 	usageModel := ""
+	sender := s.orchestratorSender(agentID)
 	emit := func(event agent.AgentEvent) {
 		event.AgentID = agentID
 		if err := s.persistCompactionEvent(s.db, s.sessionID, agentID, event); err != nil {
@@ -159,8 +166,8 @@ func (s *Session) runPreparedCompaction(
 		if event.Type == "usage" {
 			s.processUsageEvent(event.Data, usageModel, agentID, "")
 		}
-		if s.sender != nil {
-			s.sender.SendAgentEventWithID(event.Type, event.Data, agentID)
+		if sender != nil {
+			sender.SendAgentEventWithID(event.Type, event.Data, agentID)
 		}
 	}
 	startData := compactionLifecycleData(operationID, "manual", "root", 0, 0, 0, 0)

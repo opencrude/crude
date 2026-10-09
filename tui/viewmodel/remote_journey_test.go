@@ -116,14 +116,15 @@ func remoteJourneyRuntime(t *testing.T, endpoint string) *core.Runtime {
 			return nil, fmt.Errorf("invalid destination %s", root)
 		}
 		ws := workspace.NewWorkspace(root, "test-model", "tester", types.Settings{}, nil)
-		ws.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+		ws.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}, Memory: types.MemorySettings{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"}})
 		agents := session.DefaultAgentsConfig()
 		off := false
 		profile := agents.Profiles["default"]
 		profile.MultiAgent = &off
-		profile.Categories["default"] = session.CategoryConfig{AccountID: "test", Model: "test-model", ModelSupportsTools: true}
+		profile.Categories["default"] = session.CategoryConfig{AccountID: "test", Model: "test-model", ModelSupportsTools: true, ModelContextWindow: 200_000}
+		profile.Categories[session.CategoryAeron] = session.CategoryConfig{AccountID: "test", Model: "test-model", ModelContextWindow: 200_000, ModelMaxOutput: 2_048}
 		agents.Profiles["default"] = profile
-		ws.SetBackendConfig(&session.Config{Agents: agents, Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", APIKey: "test", Connection: provider.Template{Name: "test", ProviderURL: endpoint, APIStandard: "openai", AuthType: provider.AuthProtocol}}}}, home)
+		ws.SetBackendConfig(&session.Config{Agents: agents, Memory: types.MemorySettings{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"}, Accounts: map[string]provider.Account{"test": {ID: "test", ProviderID: "openai", APIKey: "test", Connection: provider.Template{Name: "test", ProviderURL: endpoint, APIStandard: "openai", AuthType: provider.AuthProtocol}}}}, home)
 		return ws, nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))
 	if err != nil {

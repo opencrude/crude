@@ -1057,6 +1057,10 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	if terminalDone != nil {
 		sendRuntimeEvent(sender, *terminalDone)
 	}
+	// A natural completion admits the next queued prompt; Stop never does.
+	if !cancelled {
+		go s.AdmitQueuedInputs(o.ID)
+	}
 }
 
 func (s *Session) preserveUnstartedInput(request turnRequest, o *Orchestrator) {
@@ -1468,14 +1472,13 @@ func (s *Session) finalizeTurnLocked(
 		return fmt.Errorf("finalization does not retain committed context revision %d", s.contextRevision)
 	}
 	nextCheckpoint := contextCheckpointContent(nextContext)
+	checkpointChanged := nextCheckpoint != "" && contextCheckpointContent(s.activeContext) != nextCheckpoint
 	expectedAppendContext := append(append([]provider.ChatMessage(nil), s.activeContext...), canonicalContextMessages(additions)...)
 	contextChanged := !reflect.DeepEqual(nextContext, expectedAppendContext)
-	if nextCheckpoint != "" {
-		if contextCheckpointContent(s.activeContext) != nextCheckpoint {
-			s.contextGeneration++
-			s.contextReason = "automatic_compaction"
-			contextChanged = true
-		}
+	if checkpointChanged {
+		s.contextGeneration++
+		s.contextReason = "automatic_compaction"
+		contextChanged = true
 	}
 	s.activeContext = append([]provider.ChatMessage(nil), nextContext...)
 	contextRevision := s.contextRevision
@@ -1496,7 +1499,7 @@ func (s *Session) finalizeTurnLocked(
 				}
 			}
 			publication.Mutation.Replace = &sessiondb.ContextReplacement{Generation: s.contextGeneration, Reason: s.contextReason, Messages: append([]provider.ChatMessage(nil), nextContext...)}
-			publication.ArchivePrevious = nextCheckpoint != ""
+			publication.ArchivePrevious = checkpointChanged
 		} else {
 			publication.Mutation.Append = deltas
 		}

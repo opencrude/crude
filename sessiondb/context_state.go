@@ -49,6 +49,9 @@ type ContextPublication struct {
 	Admissions       []CollaborationAdmission
 	Compaction       *CompactionRecord
 	ArchivePrevious  bool
+	// RuntimeState commits owner state (such as dequeueing an input) in the same
+	// transaction as its context and recovery checkpoint, before execution.
+	RuntimeState *RuntimeStateUpdate
 }
 
 type ContextRevisionConflictError struct {
@@ -146,7 +149,7 @@ func PublishContext(db *sql.DB, p ContextPublication) (ContextState, error) {
 		}
 	}
 	next.Revision = actual + 1
-	if !semanticChanged && !transcriptChanged && !p.ArchivePrevious && p.Recovery == nil && len(p.Admissions) == 0 && p.Compaction == nil {
+	if !semanticChanged && !transcriptChanged && !p.ArchivePrevious && p.Recovery == nil && len(p.Admissions) == 0 && p.Compaction == nil && p.RuntimeState == nil {
 		return current, nil
 	}
 	payload, err := json.Marshal(next.Messages)
@@ -178,6 +181,11 @@ func PublishContext(db *sql.DB, p ContextPublication) (ContextState, error) {
 	}
 	if p.Compaction != nil {
 		if err := saveCompactionRecordTx(tx, *p.Compaction); err != nil {
+			return ContextState{}, err
+		}
+	}
+	if p.RuntimeState != nil {
+		if err := saveRuntimeStateTx(tx, *p.RuntimeState); err != nil {
 			return ContextState{}, err
 		}
 	}

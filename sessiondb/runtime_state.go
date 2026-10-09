@@ -7,6 +7,20 @@ import (
 	"time"
 )
 
+type RuntimeStateUpdate struct {
+	Key   string
+	Value []byte
+}
+
+func saveRuntimeStateTx(tx *sql.Tx, update RuntimeStateUpdate) error {
+	if update.Key == "" {
+		return fmt.Errorf("sessiondb: runtime state key is required")
+	}
+	_, err := tx.Exec(`INSERT INTO session_runtime_state (key,value,updated_at) VALUES(?,?,?)
+		ON CONFLICT(key) DO UPDATE SET value=excluded.value,updated_at=excluded.updated_at`, update.Key, update.Value, time.Now().UnixNano())
+	return err
+}
+
 func SaveRuntimeState(ctx context.Context, db *sql.DB, key string, value []byte) error {
 	if db == nil {
 		return nil

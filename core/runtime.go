@@ -834,6 +834,9 @@ func (a *actor) mutate(request coreprotocol.Request) coreprotocol.Response {
 		if node == nil || node.State == nil || node.State.TurnIdentity.Generation != input.Generation {
 			return fault(request, "stale_generation", "agent generation changed")
 		}
+		if request.Method == coreprotocol.CancelAgent && input.OperationID != node.State.ActiveCompaction.OperationID {
+			return fault(request, "stale_operation", "agent compaction operation changed")
+		}
 		if request.Method == coreprotocol.TerminateAgent {
 			a.ws.CloseAgent(input.AgentID)
 			a.ws.ForgetAgentInventory(input.AgentID)
@@ -948,10 +951,9 @@ func (a *actor) startJob(command actorCommand) bool {
 	if uploadKnown {
 		service, serviceKnown = upload, true
 	}
-	owner, ownerKnown := a.prepareOwner(request)
-	if ownerKnown {
-		service, serviceKnown = owner, true
-	}
+	// Owner preparation can reserve session work or reduce a lifecycle row.
+	// Capacity and exact receipt replay checks must precede those effects.
+	ownerKnown := ownerOperation(request.Method)
 	lsp, lspKnown := a.prepareLSP(request)
 	if lspKnown {
 		service, serviceKnown = lsp, true
@@ -960,14 +962,14 @@ func (a *actor) startJob(command actorCommand) bool {
 	if documentSaveKnown {
 		service, serviceKnown = documentSave, true
 	}
-	if !lifecycle && request.Method != coreprotocol.SubmitInput && request.Method != coreprotocol.ListSessions && !serviceKnown {
+	if !lifecycle && request.Method != coreprotocol.SubmitInput && request.Method != coreprotocol.ListSessions && !serviceKnown && !ownerKnown {
 		return false
 	}
 	if a.inFlight >= 16 || lifecycle && a.lifecycle {
 		command.result <- fault(request, "busy", "bounded workspace operation capacity is occupied; retry with a new request identity")
 		return true
 	}
-	journal := request.Method != coreprotocol.ListSessions && (!serviceKnown || serviceMutation(request.Method) || resourceMutation(request.Method) || filesMutation(request.Method) || referenceMutation(request.Method) || settingsMutation(request.Method) || uploadMutation(request.Method) || ownerMutation(request.Method) || documentSnapshotSaveMutation(request.Method))
+	journal := request.Method != coreprotocol.ListSessions && ((!serviceKnown && !ownerKnown) || serviceMutation(request.Method) || resourceMutation(request.Method) || filesMutation(request.Method) || referenceMutation(request.Method) || settingsMutation(request.Method) || uploadMutation(request.Method) || ownerMutation(request.Method) || documentSnapshotSaveMutation(request.Method))
 	if journal {
 		prior, fresh, err := a.receipts.begin(a.ctx, request)
 		if err != nil {
@@ -982,6 +984,9 @@ func (a *actor) startJob(command actorCommand) bool {
 			}
 			return true
 		}
+	}
+	if ownerKnown {
+		service, serviceKnown = a.prepareOwner(request)
 	}
 	// Each job has its own context so its requester can cancel exactly it.
 	jobCtx, jobCancel := context.WithCancel(a.ctx)

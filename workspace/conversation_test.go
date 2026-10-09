@@ -221,6 +221,17 @@ func TestPendingSteeringStaysAfterProviderOutputUntilAcknowledged(t *testing.T) 
 	}
 }
 
+func TestStreamCompletionWithQueuedTailDoesNotDuplicateAnswer(t *testing.T) {
+	c := NewConversation()
+	c.AppendPendingSteering(Message{InternalID: "next", Role: MessageRoleUser, Content: "next prompt"})
+	c.AppendToken("one accepted answer")
+	c.Finish("one accepted answer", "completed", true, "")
+	messages := c.Messages()
+	if len(messages) != 2 || messages[0].Role != MessageRoleAssistant || messages[0].Content != "one accepted answer" || messages[1].InternalID != "next" || !messages[1].PendingSteering {
+		t.Fatalf("completion duplicated output or consumed pending input: %+v", messages)
+	}
+}
+
 func TestSteeringAdmissionMovesAboveTurnIndicatorAndRejectedNotesReturn(t *testing.T) {
 	conversation := NewConversation()
 	conversation.UpdateTurnStatus(TurnStatus{Phase: "preparing"})

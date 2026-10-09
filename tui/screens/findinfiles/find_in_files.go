@@ -829,7 +829,7 @@ func (q *findQuery) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		if key.String() == "ctrl+r" {
 			return q.owner.HandleAction(ctx, ui.Action{ID: "find.toggle-regex"})
 		}
-		if key.String() == "ctrl+enter" && q.owner.mode == ModeReplace {
+		if ui.IsCommitChord(key) && q.owner.mode == ModeReplace {
 			return q.owner.HandleAction(ctx, ui.Action{ID: "find.replace.all"})
 		}
 	}
@@ -891,7 +891,7 @@ func (q *replaceQuery) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult 
 		if key.String() == "ctrl+r" {
 			return q.owner.HandleAction(ctx, ui.Action{ID: "find.toggle-regex"})
 		}
-		if key.String() == "ctrl+enter" {
+		if ui.IsCommitChord(key) {
 			return q.owner.HandleAction(ctx, ui.Action{ID: "find.replace.all"})
 		}
 	}
@@ -925,7 +925,7 @@ func (l *findList) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		if key.String() == "ctrl+r" {
 			return l.owner.HandleAction(ctx, ui.Action{ID: "find.toggle-regex"})
 		}
-		if key.String() == "ctrl+enter" && l.owner.mode == ModeReplace {
+		if ui.IsCommitChord(key) && l.owner.mode == ModeReplace {
 			return l.owner.HandleAction(ctx, ui.Action{ID: "find.replace.all"})
 		}
 		switch key.Code {

@@ -29,7 +29,10 @@ type WorkspaceStatus struct {
 func (w WorkspaceStatus) Busy() bool { return w.Active.Any() || w.Operations > 0 }
 
 type CoreStatus struct {
-	PID            int               `json:"pid"`
+	PID int `json:"pid"`
+	// BuildID identifies the core's executable; shells from another build
+	// replace an idle core rather than speaking a mismatched protocol.
+	BuildID        string            `json:"build_id,omitempty"`
 	StartedAt      time.Time         `json:"started_at"`
 	Server         bool              `json:"server"`
 	GraceSeconds   float64           `json:"grace_seconds"`

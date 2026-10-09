@@ -23,6 +23,14 @@ type lifetimePolicy struct {
 	started  time.Time
 	shutdown func()
 	idleFrom time.Time
+	buildID  string
+}
+
+// SetBuildID records the executable identity reported by core.status.
+func (r *Runtime) SetBuildID(id string) {
+	r.lifetime.mu.Lock()
+	r.lifetime.buildID = id
+	r.lifetime.mu.Unlock()
 }
 
 // SetLifetimePolicy records the daemon mode reported by core.status and the
@@ -100,6 +108,7 @@ func (r *Runtime) Status(ctx context.Context) (coreprotocol.CoreStatus, error) {
 	r.mu.Unlock()
 	r.lifetime.mu.Lock()
 	status.Server, status.GraceSeconds, status.StartedAt = r.lifetime.server, r.lifetime.grace.Seconds(), r.lifetime.started
+	status.BuildID = r.lifetime.buildID
 	if !r.lifetime.idleFrom.IsZero() {
 		status.IdleForSeconds = time.Since(r.lifetime.idleFrom).Seconds()
 	}

@@ -163,6 +163,9 @@ type SessionRequest struct {
 type AgentRequest struct {
 	AgentID    string `json:"agent_id"`
 	Generation uint64 `json:"generation"`
+	// Manual compaction is independent of the last model turn. Stop must name
+	// its exact operation so delayed cancellation cannot stop its replacement.
+	OperationID string `json:"operation_id,omitempty"`
 }
 type InputRequest struct {
 	AgentID       string   `json:"agent_id"`

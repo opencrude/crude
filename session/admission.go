@@ -62,19 +62,58 @@ type InputAdmissionIntent struct {
 	session      *Session
 	orchestrator *Orchestrator
 	request      turnRequest
-	mu           sync.Mutex
-	committed    bool
-	result       InputAdmissionResult
+	// queued marks input bound for the durable queue rather than a turn.
+	queued    bool
+	dequeue   bool
+	mu        sync.Mutex
+	committed bool
+	result    InputAdmissionResult
 }
 
 // PrepareInputAdmission reserves the exact owner generation synchronously but
-// performs no database, filesystem, provider, reference, or command I/O.
+// performs no database, filesystem, provider, reference, or command I/O. Input
+// for a compacting owner, or behind already queued input, is marked for the
+// durable queue instead; Commit persists it.
 func (s *Session) PrepareInputAdmission(orchestratorID string, input provider.UserInput, draftRevision uint64) (*InputAdmissionIntent, error) {
 	if s == nil {
 		return nil, errors.New("session is unavailable")
 	}
 	s.admissionMu.Lock()
 	defer s.admissionMu.Unlock()
+	if atomic.LoadInt32(&s.closing) != 0 {
+		return nil, errors.New("session is closing")
+	}
+	if s.shouldQueueInput(orchestratorID) {
+		s.orchMu.Lock()
+		orchestrator := s.orchestrators[orchestratorID]
+		s.orchMu.Unlock()
+		if orchestrator == nil || orchestrator.closing.Load() || atomic.LoadInt32(&s.closing) != 0 {
+			return nil, errQueueOwnerUnavailable
+		}
+		input = cloneUserInput(input)
+		if input.InternalID == "" {
+			input.InternalID = newMessageID()
+		}
+		intent := &InputAdmissionIntent{SessionID: s.sessionID, AgentID: orchestratorID, InputID: input.InternalID,
+			DraftRevision: draftRevision, OwnerEpoch: orchestrator.RuntimeEpoch, session: s, orchestrator: orchestrator,
+			request: turnRequest{input: input}, queued: true}
+		s.registerInputAdmission(intent)
+		return intent, nil
+	}
+	return s.prepareReservedAdmissionLocked(orchestratorID, input, draftRevision)
+}
+
+// prepareReservedAdmission reserves a turn generation for immediate admission.
+func (s *Session) prepareReservedAdmission(orchestratorID string, input provider.UserInput, draftRevision uint64) (*InputAdmissionIntent, error) {
+	if s == nil {
+		return nil, errors.New("session is unavailable")
+	}
+	s.admissionMu.Lock()
+	defer s.admissionMu.Unlock()
+	return s.prepareReservedAdmissionLocked(orchestratorID, input, draftRevision)
+}
+
+func (s *Session) prepareReservedAdmissionLocked(orchestratorID string, input provider.UserInput, draftRevision uint64) (*InputAdmissionIntent, error) {
 	if atomic.LoadInt32(&s.closing) != 0 {
 		return nil, errors.New("session is closing")
 	}
@@ -100,11 +139,21 @@ func (s *Session) PrepareInputAdmission(orchestratorID string, input provider.Us
 		DraftRevision: draftRevision, TurnGeneration: request.generation, OwnerEpoch: orchestrator.RuntimeEpoch,
 		session: s, orchestrator: orchestrator, request: request,
 	}
+	s.registerInputAdmission(intent)
+	return intent, nil
+}
+
+func (s *Session) registerInputAdmission(intent *InputAdmissionIntent) {
 	if s.pendingAdmissions == nil {
 		s.pendingAdmissions = make(map[*InputAdmissionIntent]struct{})
 	}
 	s.pendingAdmissions[intent] = struct{}{}
-	return intent, nil
+}
+
+func (s *Session) finishInputAdmission(intent *InputAdmissionIntent) {
+	s.admissionMu.Lock()
+	delete(s.pendingAdmissions, intent)
+	s.admissionMu.Unlock()
 }
 
 // CommitInputAdmission durably accepts one prepared immutable input before it
@@ -112,6 +161,27 @@ func (s *Session) PrepareInputAdmission(orchestratorID string, input provider.Us
 // cancel the reserved generation before/during this call; the local commit still
 // succeeds exactly once and returns preservation_pending without starting work.
 func (s *Session) CommitInputAdmission(ctx context.Context, intent *InputAdmissionIntent) InputAdmissionResult {
+	if intent != nil && intent.queued && intent.session == s && s != nil {
+		intent.mu.Lock()
+		defer intent.mu.Unlock()
+		if intent.committed {
+			return intent.result
+		}
+		if intent.orchestrator == nil || intent.SessionID != s.sessionID || intent.AgentID != intent.orchestrator.ID ||
+			intent.InputID == "" || intent.InputID != intent.request.input.InternalID || intent.OwnerEpoch != intent.orchestrator.RuntimeEpoch {
+			return InputAdmissionResult{Status: InputAdmissionRejected, ErrorKind: InputAdmissionPreLocalRejection, Err: errors.New("queued input admission intent is invalid")}
+		}
+		defer s.finishInputAdmission(intent)
+		receipt, err := s.queueInput(intent.AgentID, intent.request.input, intent.DraftRevision)
+		intent.committed = true
+		if err != nil {
+			intent.result = InputAdmissionResult{Status: InputAdmissionRejected, ErrorKind: InputAdmissionStorageFailure, Err: err}
+			return intent.result
+		}
+		receipt.OwnerEpoch = intent.OwnerEpoch
+		intent.result = InputAdmissionResult{Status: InputAdmissionQueued, Receipt: receipt}
+		return intent.result
+	}
 	if s == nil || intent == nil || intent.session != s || intent.orchestrator == nil ||
 		intent.SessionID != s.sessionID || intent.AgentID != intent.orchestrator.ID ||
 		intent.InputID == "" || intent.TurnGeneration == 0 {
@@ -122,11 +192,7 @@ func (s *Session) CommitInputAdmission(ctx context.Context, intent *InputAdmissi
 	if intent.committed {
 		return intent.result
 	}
-	defer func() {
-		s.admissionMu.Lock()
-		delete(s.pendingAdmissions, intent)
-		s.admissionMu.Unlock()
-	}()
+	defer s.finishInputAdmission(intent)
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -164,7 +230,7 @@ func (s *Session) CommitInputAdmission(ctx context.Context, intent *InputAdmissi
 		checkpoint.Archive = append(checkpoint.Archive, delta.Message)
 		checkpoint.ActiveContext = append(checkpoint.ActiveContext, delta.Message)
 	}
-	state, err := s.publishRootContext(sessiondb.ContextPublication{RuntimeAgentID: intent.AgentID, Recovery: &checkpoint, Mutation: sessiondb.ContextMutation{Append: deltas}})
+	state, err := s.publishQueuedInput(intent, sessiondb.ContextPublication{RuntimeAgentID: intent.AgentID, Recovery: &checkpoint, Mutation: sessiondb.ContextMutation{Append: deltas}})
 	if err == nil {
 		s.turnNumber = max(s.turnNumber, turn)
 		for _, delta := range deltas {
@@ -185,6 +251,13 @@ func (s *Session) CommitInputAdmission(ctx context.Context, intent *InputAdmissi
 	checkpoint.ContextOwnerID, checkpoint.ContextRevision, checkpoint.ContextGeneration, checkpoint.ContextReason = s.sessionID, state.Revision, state.Generation, state.Reason
 	checkpoint.ActiveContext = append([]provider.ChatMessage(nil), state.Messages...)
 	request.recovery = &checkpoint
+	if intent.dequeue {
+		// Publish settlement before provider work can stream or finish. The
+		// exact row stays chronological even with another pending prompt behind it.
+		if sender := s.orchestratorSender(intent.AgentID); sender != nil {
+			sender.SendAgentEventWithID("queued_input_admitted", map[string]any{"input_id": intent.InputID}, intent.AgentID)
+		}
+	}
 	if !orchestrator.enqueueReserved(request) {
 		orchestrator.endTurn(request.generation)
 		intent.result = InputAdmissionResult{Status: InputAdmissionPreservationPending, Receipt: receipt, ErrorKind: InputAdmissionDispatchFailure, Err: errors.New("input was saved to context but execution is unavailable")}

@@ -201,3 +201,37 @@ func TestAgentIngressCompletedChildRetainsLateUsageAndClassification(t *testing.
 		t.Fatalf("terminal classification correction lost: %s", got)
 	}
 }
+
+func TestManualCompactionAfterTerminalTurnKeepsIndependentLifecycle(t *testing.T) {
+	for _, reason := range []string{"completed", "cancelled"} {
+		t.Run(reason, func(t *testing.T) {
+			w := newIngressWorkspace(t)
+			w.ApplyAgentEvent(ingressEnvelope("root", "session", "turn_started", 1, types.TurnIdentity{Generation: 1, ModelID: "model"}))
+			w.ApplyAgentEvent(ingressEnvelope("root", "session", "done", 2, map[string]any{"reason": reason}))
+			state := w.AgentMgr.Get("root").State
+			data := map[string]any{"request_id": "manual-after-turn", "trigger": "manual", "stage_count": 4, "stage_label": "Capturing intent"}
+			w.ApplyAgentEvent(AgentEvent{AgentID: "root", Type: "context_compaction_started", Data: data})
+			w.ApplyAgentEvent(AgentEvent{AgentID: "root", Type: "context_compaction_stage", Data: data})
+			status, _ := w.Status.Agent("root")
+			if state.ActiveCompaction.Phase != "compaction_extracting" || !state.IsActive() || status.Phase != types.AgentCompacting {
+				t.Fatalf("real terminal fence hid new compaction: active=%+v status=%+v", state.ActiveCompaction, status)
+			}
+			// The independent operation must not reopen animation for old accepted
+			// model output; that turn is still terminal until a new generation.
+			w.ApplyAgentEvent(ingressEnvelope("root", "session", "thinking", 3, reasoning.Delta{Text: "late old thought", Kind: reasoning.Raw}))
+			if _, active := state.Messages.ActiveThinking(); active {
+				t.Fatal("manual operation reactivated the terminal model turn")
+			}
+			w.ApplyAgentEvent(AgentEvent{AgentID: "root", Type: "context_compacted", Data: data})
+			status, _ = w.Status.Agent("root")
+			if state.ActiveCompaction.Phase != "" || state.IsActive() || status.Phase != types.AgentCompactionResult {
+				t.Fatalf("manual operation did not settle: active=%+v status=%+v", state.ActiveCompaction, status)
+			}
+			for _, kind := range []string{"context_compaction_started", "context_compaction_stage"} {
+				if w.ApplyAgentEvent(AgentEvent{AgentID: "root", Type: kind, Data: data}).Accepted || state.IsActive() {
+					t.Fatal("late lifecycle reopened settled compaction")
+				}
+			}
+		})
+	}
+}

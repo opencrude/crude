@@ -144,6 +144,13 @@ func (w *Workspace) installSessionHydration(frontend *Session, views []ChatMessa
 		node.State.Messages.MarkStreamingToolsCancelled()
 		node.State.Messages.MarkAllThinkingInterrupted()
 	}
+	// Prompts queued behind a compaction survive restart as pending rows; a
+	// passive resume never runs them until the owner next admits input.
+	if frontend.backend != nil {
+		for _, queued := range frontend.backend.QueuedInputs() {
+			node.State.Messages.AppendMessageIfAbsent(queuedInputMessage(queued.Input.InternalID, queued.Input.Text, queued.Input.DisplayText, queued.QueuedAt))
+		}
+	}
 	frontend.hydrated = true
 	w.agentRevision++
 }
@@ -386,6 +393,7 @@ func (w *Workspace) CancelAgent(agentID string) {
 	// prepared-before-collaboration window. Stop it first; collaboration records
 	// the attributed control when a run already exists.
 	if frontend := w.SessionsByAgent[agentID]; frontend != nil && frontend.backend != nil {
+		frontend.backend.CancelCompaction(agentID)
 		frontend.backend.CancelOrchestrator(agentID)
 	}
 	if w.Collaboration == nil {
@@ -442,6 +450,7 @@ const (
 	InputAdmissionAccepted            = session.InputAdmissionAccepted
 	InputAdmissionRejected            = session.InputAdmissionRejected
 	InputAdmissionPreservationPending = session.InputAdmissionPreservationPending
+	InputAdmissionQueued              = session.InputAdmissionQueued
 )
 
 // PrepareAgentInputAdmission reserves an exact owner/generation without I/O.
@@ -548,7 +557,7 @@ func (w *Workspace) CloseAgent(agentID string) {
 	// Persist registry metadata while we still have the Session reference and
 	// (usually) an open session DB handle for SyncSessionMeta.
 	if sess != nil {
-		w.persistSessionRegistry(sess)
+		w.persistSessionRegistry(sess, sess.DB)
 	}
 	delete(w.SessionsByAgent, agentID)
 	if sess != nil && sess.AgentID == agentID {

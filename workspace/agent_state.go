@@ -119,6 +119,9 @@ func (a *AgentState) ComputeActiveTyping() bool {
 func (a *AgentState) ApplyEvent(evt AgentEvent) AgentEffects {
 	var effects AgentEffects
 	target := a.Messages
+	if !a.acceptCompactionEvent(evt) {
+		return effects
+	}
 	if evt.Type == "turn_started" {
 		identity, ok := parseTurnIdentity(evt.Data)
 		if !ok || identity.Generation < a.TurnIdentity.Generation {
@@ -146,7 +149,11 @@ func (a *AgentState) ApplyEvent(evt AgentEvent) AgentEffects {
 		cancelledRecovery = status.State == recovery.Cancelled
 	}
 	inactive := a.Cancelling || a.terminal || a.Completed
-	if inactive && evt.Type != "done" && evt.Type != "error" && evt.Type != "usage" &&
+	// Manual compaction is a separate session operation, not a new model turn.
+	// Keep the old turn terminal so late output cannot animate again, but admit
+	// the new operation's lifecycle even after that turn completed or stopped.
+	manualCompaction := !a.Cancelling && !a.Completed && isManualCompactionEvent(evt)
+	if inactive && !manualCompaction && evt.Type != "done" && evt.Type != "error" && evt.Type != "usage" &&
 		evt.Type != "stream_token" && evt.Type != "thinking" && evt.Type != "tool_result" &&
 		evt.Type != "context_compaction_cancelled" && evt.Type != "context_compaction_failed" &&
 		evt.Type != "context_compacted" && evt.Type != "collaboration_message" && evt.Type != "reasoning_classified" && !cancelledRecovery {
@@ -466,6 +473,38 @@ func (a *AgentState) ApplyEvent(evt AgentEvent) AgentEffects {
 	}
 
 	return effects
+}
+
+func isManualCompactionEvent(evt AgentEvent) bool {
+	switch evt.Type {
+	case "context_compaction_started", "context_compaction_stage", "context_compaction_retrying", "context_compaction_committing",
+		"context_compacted", "context_compaction_cancelled", "context_compaction_failed":
+		return agentEventString(evt.Data, "trigger") == "manual" && agentEventString(evt.Data, "request_id") != ""
+	}
+	return false
+}
+
+// Session operations have their own identity; they must neither inherit the
+// previous model turn's terminal fence nor reopen a settled operation on a late
+// stage/start publication. Cancellation still shields active progress.
+func (a *AgentState) acceptCompactionEvent(evt AgentEvent) bool {
+	if !isManualCompactionEvent(evt) {
+		return true
+	}
+	id := agentEventString(evt.Data, "request_id")
+	if a.Completed || a.ActiveCompaction.OperationID != "" && a.ActiveCompaction.OperationID != id {
+		return false
+	}
+	if row := a.Messages.activeTurnStatus(id); row != nil {
+		switch row.LifecyclePhase {
+		case "compaction_completed", "compaction_cancelled", "compaction_failed", "compaction_interrupted":
+			return false
+		}
+	}
+	if evt.Type == "context_compaction_started" {
+		return !a.Cancelling
+	}
+	return a.ActiveCompaction.OperationID == id
 }
 
 func parseCompactionStatus(phase string, data any) TurnStatus {

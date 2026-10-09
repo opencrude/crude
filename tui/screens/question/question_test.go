@@ -397,3 +397,25 @@ func TestScreenTextOnlyEscapeLandsOnRailDirectly(t *testing.T) {
 		t.Fatalf("text-only esc focus=%v, want %v", host.Focused(), RailID)
 	}
 }
+
+// Under tmux without extended keys Ctrl+Enter arrives as plain Enter, so the
+// write-in also commits on Alt+Enter, which survives every multiplexer.
+func TestScreenWriteInCommitsOnAltEnter(t *testing.T) {
+	screen := New(theme.DefaultDark())
+	if got := screen.Reset(`[{"question":"Add a note"}]`); got != 1 {
+		t.Fatalf("Reset()=%d, want 1", got)
+	}
+	host := newTestHost(t, screen)
+	host.Focus(InputID)
+	for _, r := range "note" {
+		host.Handle(tea.KeyPressMsg{Code: r, Text: string(r)})
+	}
+	result := host.Handle(tea.KeyPressMsg{Mod: tea.ModAlt, Code: tea.KeyEnter})
+	if result.Cmd == nil {
+		t.Fatal("Alt+Enter did not commit the write-in answer")
+	}
+	message, ok := result.Cmd().(ResultMsg)
+	if !ok || message.Result.Answers["1"] != "note" {
+		t.Fatalf("commit result=%#v", result.Cmd())
+	}
+}
