@@ -27,7 +27,7 @@ func TestPermissionDenyImmediatelyClearsApprovalWithoutWaitingForBackend(t *test
 				}
 				emitTestPermission(app, "child-a", "denied-block")
 				app.paintShellFrame()
-				status, _ := app.Status.Agent("child-a")
+				status, _ := app.ws.Status().Agent("child-a")
 				if !status.NeedsAction || status.Phase != coretypes.AgentApproval {
 					t.Fatal("fixture did not reproduce a pending approval")
 				}
@@ -70,7 +70,7 @@ func TestPermissionDenyImmediatelyClearsApprovalWithoutWaitingForBackend(t *test
 				default:
 					t.Fatal("denial did not reach the exact backend")
 				}
-				if app.AgentMgr.Get("child-a").State.PendingBlockID != "" {
+				if app.ws.AgentMgr().Get("child-a").State.PendingBlockID != "" {
 					t.Error("accepted denial left the approval pending until a backend event")
 				}
 				// No backend event has arrived yet. Immediate and settled frames,
@@ -79,7 +79,7 @@ func TestPermissionDenyImmediatelyClearsApprovalWithoutWaitingForBackend(t *test
 					app.switchToAgentView(owner)
 					app.syncAgentStatusInventory()
 					app.paintShellFrame()
-					status, _ = app.Status.Agent("child-a")
+					status, _ = app.ws.Status().Agent("child-a")
 					if status.NeedsAction || status.Phase == coretypes.AgentApproval {
 						t.Errorf("Deny resurfaced approval: %+v", status)
 					}
@@ -99,7 +99,7 @@ func TestPermissionDenyImmediatelyClearsApprovalWithoutWaitingForBackend(t *test
 				}
 				emitTestPermission(app, "child-a", "new-block")
 				app.handleAgentEvent(types.AgentEventMsg{AgentID: "child-a", Type: "blocking_complete", Data: map[string]string{"block_id": "denied-block"}})
-				if app.AgentMgr.Get("child-a").State.PendingBlockID != "new-block" || len(app.agentPrompts) != 1 {
+				if app.ws.AgentMgr().Get("child-a").State.PendingBlockID != "new-block" || len(app.agentPrompts) != 1 {
 					t.Error("late denial completion removed a newer request")
 				}
 				app.resolvePromptConfirmation(app.agentPrompts[0].confirmation, "deny")

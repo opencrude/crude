@@ -23,7 +23,7 @@ turning something off at the application level reaches the workspace even
 years later.
 
 On a project switch, the target workspace database is opened before the old
-project is torn down. Its effective theme is then applied before target-owned
+shell attachment is detached; peer work in that project is retained. Its effective theme is then applied before target-owned
 editors, tree, and session projections are constructed, so no frame is built
 with the previous workspace palette.
 
@@ -531,23 +531,36 @@ high-impact operations on the human path.
 **Workspace root is execution truth.** Every workspace-created or resumed
 backend session is bound to that workspace's `RootPath`. Relative file, glob,
 grep, directory, synchronous command, async command, main-agent prompt, and
-subagent prompt paths resolve against the bound root. Switching projects closes
-the old sessions and newly created sessions cannot inherit the process startup
-directory.
+subagent prompt paths resolve against the bound root. Switching projects changes
+only the shell attachment; retained old-project sessions continue for peers. New
+sessions cannot inherit the process startup directory.
 
 **Session operations are explicitly addressed.** Workspace creation/opening,
 orchestrator startup, backend lookup and hydration name the session rather than
 reading a globally selected one. The TUI owns its selected session, model display
 alias and focus stack. Opening an already-live session reuses its runtime and
-does not replay provider work. This is an ownership extraction, not implemented
-multi-client transport: the current CLI still closes the runtime with its TUI.
-Remaining gates are in [core and shell separation](../plans/core-shell-separation.md).
+does not replay provider work. Normal CLI startup always attaches to the user core through `ConnectCore` and
+`shellport/remote`; shell exit detaches rather than closing sessions. Remaining
+release gates are in [core and shell separation](../plans/core-shell-separation.md).
 
-Agent tab selection/visibility and width-dependent reasoning panes are shell-local.
-Canonical workspace ingress owns semantic messages, pending decisions and usage;
-cold hydration installs retained state rather than a one-shot frontend tail. The
-current shell still schedules that ingress and owns runtime shutdown: no server,
-remote client or detach-survival feature is implied by this extraction.
+Agent tab selection/visibility, focus and reasoning geometry are shell-local.
+Core actors own semantic ingress, decisions and usage. Remote settings, sessions,
+status and LSP are detached replicas installed only on Update; account reads are
+redacted and unchanged stored-secret markers mean Keep, never credential replay.
+Application defaults are republished to retained workspaces after core commit.
+Connected account and preference forms retain their original opaque preimages;
+a background refresh cannot authorize an older draft against newer credentials
+or settings. Sparse workspace saves serialize with the settings lane and publish
+live session/LSP projections only on the core actor after off-actor persistence.
+
+Small queued application/workspace settings writes acknowledge local admission
+before durable completion and report failures later; full preference Save awaits
+the typed core result. Connected startup admits `--account`, `--model`,
+`--provider`, `--key` and `--system` through immutable write-only invocation
+selection on session create/open. All explicit selectors refuse already-live
+sessions. Keys use ephemeral accounts, never application persistence; `--system`
+adds profile instructions, not canonical policy replacement. Prefer configured
+Accounts over keys in shell arguments. See [core client protocol](core-client-protocol.md).
 
 Session form saves capture an exact backend operation and detached form on the
 owner thread, run persistence off-thread, then install a revisioned snapshot on
@@ -555,7 +568,8 @@ the owner thread. Background work never reads mutable workspace session maps or
 writes the frontend settings projection. The session lifetime fence rejects work
 after closing begins and joins already-admitted saves before database teardown.
 Snapshot revisions are process-local and meaningful only with the exact session
-object and workspace generation. They are not a remote durable command receipt.
+object and workspace generation. Connected saves additionally use typed core requests and durable mutation receipts;
+the local snapshot revision alone is not a remote receipt.
 
 The palette's Multi Agent toggle is a single-field operation on the captured
 session's current delegation policy. It does not replay `LastSettings`, role
@@ -563,11 +577,12 @@ overrides, root choice, model/account pins or tool restrictions. Repeating the
 same prepared operation returns its prior result instead of toggling again;
 late/out-of-order completions cannot replace another owner or newer projection.
 
-Stored overlays are re-diffed against the current application layer on load,
-which narrows legacy whole-category rows to their differing leaves. A
-snapshot cannot say which of its values the user meant, so migration keeps
-whatever still differs; **Reset section** in the workspace scope is how a
-category goes back to full inheritance.
+Stored overlays are re-diffed against current application defaults on load.
+`Workspace.LoadWorkspaceOverrides` still contains a pre-existing legacy
+whole-category `app_settings` reader. This is a remaining implementation/policy
+boundary, not a new connected-shell conversion guarantee. **Reset section**
+returns a workspace category to full inheritance. New format alignment must be
+backed up and performed manually outside product code.
 
 The selected account's `connection` supplies endpoint, authentication mode,
 wire protocol, headers, request options and transport budgets directly. Embedded
@@ -598,8 +613,12 @@ Save actions write only that workspace override.
 All automatic modes persist the exact buffer snapshot: no formatting, import
 organization, reload, cursor movement, selection change, or success toast.
 Format on manual save applies only to explicit saves. Shared editor buffers own
-live text and savepoint state; `workspace.DocumentSaveService` alone owns save
-deadlines and checked atomic disk commits. Revision acknowledgements cannot
+live text and savepoint state in the retained core; the connected coordinator
+retains optimistic private edits and shell-local scheduling, while core services
+own revision-checked `document.save` and atomic disk commits. Ordinary connected
+editors use Open/Sync/Edit/Close/Save/Format, not local source reads/watchers or
+`document.snapshot_save` as text authority. Accepted unsaved text and author undo
+are durable workspace state. Revision acknowledgements cannot
 clear newer edits, filesystem watcher echoes are reconciled by content identity
 rather than a time window, and a detected external change blocks writes until
 the user compares or discards it.
@@ -622,9 +641,11 @@ The Local History window exposes logical/physical diagnostics and the command
 palette provides `Create History Snapshot`, `Verify Local History`, `Prune Local
 History`, and `Open Local History Folder`.
 
-Legacy `workspace.db` key `app_settings` (full `AppSettings` blobs) is still
-read: `LoadWorkspaceOverrides` diffs it against current app defaults so existing
-projects keep their per-workspace theme/editor/LSP values.
+The workspace owner writes sparse `workspace_settings` overlays. Its existing
+`app_settings` legacy reader remains in `workspace/settings.go` and diffs those
+values against current defaults. Removal/manual data alignment is outside this
+connected-shell documentation change; do not infer that every legacy reader has
+already been removed.
 
 ## UI
 
@@ -718,8 +739,11 @@ command/args overrides. `workspace.LSPManager` reads the **effective**
 
 The default subprocess transport is `lspclient/`, independent of the editor/TUI.
 The workspace supplies it by default; merely constructing a manager launches no
-server. Test transports may override that factory. Shared live text and multi-client
-LSP lifetime still require the core/shell migration's document authority.
+server. Test transports may override that factory. Connected LSP has typed worker requests, replicated diagnostics/health and
+per-client diagnostic consumers; rename returns `*protocol.WorkspaceEdit`. Shell
+detach releases only its document views, not shared LSP servers. Universal
+connected editors use the core live-text authority and per-client open/close
+views; final native and distinct-host runtime acceptance remains separate.
 
 The unfinished LSP runtime now has its minimal launch/settings contract so the
 normal source build remains runnable. Keep LSP disabled until the lifecycle work

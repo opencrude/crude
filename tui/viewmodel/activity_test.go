@@ -109,10 +109,10 @@ func TestTerminalOverlayIDsAreDynamicKeepRoute(t *testing.T) {
 
 func TestAgentSidebarProjectsAgentForest(t *testing.T) {
 	app := newFullTestApp(t)
-	root := app.AgentMgr.AddOrchestrator("root", workspace.NewAgentState("root", nil, nil))
+	root := app.ws.AgentMgr().AddOrchestrator("root", workspace.NewAgentState("root", nil, nil))
 	root.Category = "default"
-	app.AgentMgr.AddSubAgent("child-a", "root", "Research", "model-a", "researcher", workspace.NewAgentState("child-a", nil, nil))
-	app.AgentMgr.AddSubAgent("child-b", "root", "Build", "model-b", "crafter", workspace.NewAgentState("child-b", nil, nil))
+	app.ws.AgentMgr().AddSubAgent("child-a", "root", "Research", "model-a", "researcher", workspace.NewAgentState("child-a", nil, nil))
+	app.ws.AgentMgr().AddSubAgent("child-b", "root", "Build", "model-b", "crafter", workspace.NewAgentState("child-b", nil, nil))
 
 	items := app.agentSidebarItems()
 	if len(items) < 1 || items[0].ID != sidebarItemNewAgent || !items[0].Command {

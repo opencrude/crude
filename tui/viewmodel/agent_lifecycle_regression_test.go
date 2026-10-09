@@ -18,13 +18,13 @@ func TestCancelledAgentEnvelopeRetainsLateSemanticEvidenceWithoutReactivation(t 
 		for _, phase := range []string{"cancelling", "terminal"} {
 			t.Run(owner+"/"+phase, func(t *testing.T) {
 				app := newFullTestApp(t)
-				app.SessionsByAgent = map[string]*workspace.Session{"root": {SessionID: "root", AgentID: "root"}}
+				wsOf(app).SessionsByAgent = map[string]*workspace.Session{"root": {SessionID: "root", AgentID: "root"}}
 				app.AddOrchestrator("root")
 				if owner == "child" {
-					pane := app.PaneMgr.GetOrCreate("child", workspace.PaneAgent, "child")
-					app.AgentMgr.AddSubAgent("child", "root", "Child", "model", "researcher", workspace.NewAgentState("child", pane.Messages, app.Logger))
+					pane := app.ws.PaneMgr().GetOrCreate("child", workspace.PaneAgent, "child")
+					app.ws.AgentMgr().AddSubAgent("child", "root", "Child", "model", "researcher", workspace.NewAgentState("child", pane.Messages, app.ws.Logger()))
 				}
-				state := app.AgentMgr.Get(owner).State
+				state := app.ws.AgentMgr().Get(owner).State
 				sequence := uint64(0)
 				deliver := func(kind string, data any) agent.AgentEvent {
 					sequence++
@@ -52,7 +52,7 @@ func TestCancelledAgentEnvelopeRetainsLateSemanticEvidenceWithoutReactivation(t 
 				}
 				assertStatus := func() {
 					t.Helper()
-					if status, ok := app.Status.Agent(owner); !ok || status.Phase != wantPhase || status.NeedsAction {
+					if status, ok := app.ws.Status().Agent(owner); !ok || status.Phase != wantPhase || status.NeedsAction {
 						t.Errorf("late evidence changed terminal status before/after inventory: got=%+v want=%s", status, wantPhase)
 					}
 				}
@@ -108,8 +108,8 @@ func TestSubAgentTerminalStatusIsNamedRoleAwareAndForcesCachedFooterFrame(t *tes
 			app := newFullTestApp(t)
 			app.width, app.height = 120, 30
 			app.AddOrchestrator("root")
-			pane := app.PaneMgr.GetOrCreate("child", workspace.PaneAgent, "child")
-			app.AgentMgr.AddSubAgent("child", "root", "Samuel sub Rebecca", "model", "researcher", workspace.NewAgentState("child", pane.Messages, app.Logger))
+			pane := app.ws.PaneMgr().GetOrCreate("child", workspace.PaneAgent, "child")
+			app.ws.AgentMgr().AddSubAgent("child", "root", "Samuel sub Rebecca", "model", "researcher", workspace.NewAgentState("child", pane.Messages, app.ws.Logger()))
 			app.cachedOutput, app.frameGate.deferred, app.frameGate.due = "cached", true, false
 			app.handleSubAgentCompleted(workspace.AgentEvent{Type: "sub_agent_completed", Data: map[string]string{
 				"agent_id": "child", "agent_name": "Samuel sub Rebecca", "category": "researcher", "status": tc.status,
@@ -117,7 +117,7 @@ func TestSubAgentTerminalStatusIsNamedRoleAwareAndForcesCachedFooterFrame(t *tes
 			if app.shouldDeferFrame() {
 				t.Fatal("terminal status remained hidden behind the presentation cache")
 			}
-			notice, ok := app.Status.LatestTransient(time.Now(), 5*time.Second)
+			notice, ok := app.ws.Status().LatestTransient(time.Now(), 5*time.Second)
 			if !ok || notice.Summary != tc.want || notice.Owner.ID != "child" || notice.Owner.ParentID != "root" {
 				t.Fatalf("terminal notice=%+v, ok=%v", notice, ok)
 			}
@@ -134,9 +134,9 @@ func TestClosingOrchestratorTabCleansEntireAgentSubtree(t *testing.T) {
 	app.AddOrchestrator(
 		"root")
 
-	childPane := app.PaneMgr.GetOrCreate("child", workspace.PaneAgent, "child")
+	childPane := app.ws.PaneMgr().GetOrCreate("child", workspace.PaneAgent, "child")
 	app.subPaneProjections.Get("child", workspace.PaneAgent)
-	child := app.AgentMgr.AddSubAgent(
+	child := app.ws.AgentMgr().AddSubAgent(
 		"child", "root", "Researcher", "child-model", "researcher",
 		workspace.NewAgentState("child", childPane.Messages, nil),
 	)
@@ -164,11 +164,11 @@ func TestClosingOrchestratorTabCleansEntireAgentSubtree(t *testing.T) {
 	app.cleanupAgent("root")
 	app.handleTabSwitch()
 
-	if got := app.AgentMgr.Count(); got != 0 {
+	if got := app.ws.AgentMgr().Count(); got != 0 {
 		t.Fatalf("agent manager retained %d nodes after root close", got)
 	}
 	for _, id := range []string{"root", "child"} {
-		if app.PaneMgr.Has(id) {
+		if app.ws.PaneMgr().Has(id) {
 			t.Errorf("pane %q survived subtree close", id)
 		}
 		if app.subPaneProjections.Has(id) {
@@ -205,10 +205,10 @@ func TestLateSubAgentStartAfterParentCloseIsDropped(t *testing.T) {
 		},
 	})
 
-	if app.AgentMgr.Get("late-child") != nil {
+	if app.ws.AgentMgr().Get("late-child") != nil {
 		t.Fatal("late child was added without a live parent")
 	}
-	if app.PaneMgr.Has("late-child") {
+	if app.ws.PaneMgr().Has("late-child") {
 		t.Fatal("late child left an orphan pane")
 	}
 	if app.subPaneProjections.Has("late-child") {
@@ -225,7 +225,7 @@ func TestRetryEventReachesCanonicalTranscript(t *testing.T) {
 	for _, attempt := range []int{1, 2} {
 		app.handleAgentEvent(ttypes.AgentEventMsg{AgentID: "root", Type: "retry", Data: map[string]any{"attempt": attempt, "limit": 6, "backoff": float64(3), "reason": "Provider temporarily unavailable"}})
 	}
-	messages := app.AgentMgr.Get("root").State.Messages.Messages()
+	messages := app.ws.AgentMgr().Get("root").State.Messages.Messages()
 	count := 0
 	for _, message := range messages {
 		if message.LifecyclePhase == "retrying" {
@@ -264,7 +264,7 @@ func TestSubAgentTerminalEventCannotRecreateGhostIdleStatus(t *testing.T) {
 		},
 	})
 
-	child := app.AgentMgr.Get("child")
+	child := app.ws.AgentMgr().Get("child")
 	if child == nil || child.State == nil || !child.State.Completed || child.State.Status != "cancelled" {
 		t.Fatalf("terminal child state = %#v", child)
 	}
@@ -276,7 +276,7 @@ func TestSubAgentTerminalEventCannotRecreateGhostIdleStatus(t *testing.T) {
 func TestFailedSubAgentParentRowAndReviewPaneRemainAuditable(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("root")
-	root := app.AgentMgr.Get("root").State.Messages
+	root := app.ws.AgentMgr().Get("root").State.Messages
 	root.UpdateToolCall("spawn-1", "tool-1", "agent_start", "category: researcher")
 	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "sub_agent_started", AgentID: "child", Data: map[string]string{
 		"agent_id": "child", "agent_name": "Lily", "category": "researcher", "task": "Inspect recovery", "parent_id": "root", "parent_tool_id": "spawn-1",
@@ -285,13 +285,13 @@ func TestFailedSubAgentParentRowAndReviewPaneRemainAuditable(t *testing.T) {
 	if len(parent) != 1 || parent[0].SubPaneID != "child" || parent[0].ToolProgressLabel != "Lily · Researcher — Inspect recovery" {
 		t.Fatalf("running child identity not in parent row: %+v", parent)
 	}
-	if pane := app.PaneMgr.Get("child"); pane == nil || pane.Title != "Lily · Researcher" {
+	if pane := app.ws.PaneMgr().Get("child"); pane == nil || pane.Title != "Lily · Researcher" {
 		t.Fatalf("running subpane title omitted the agent type: %+v", pane)
 	}
 	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "sub_agent_completed", AgentID: "child", Data: map[string]string{
 		"agent_id": "child", "agent_name": "Lily", "status": "failed_error",
 	}})
-	pane := app.PaneMgr.Get("child")
+	pane := app.ws.PaneMgr().Get("child")
 	if pane == nil || !pane.Done || pane.Status != "failed_error" {
 		t.Fatalf("failed child pane = %+v", pane)
 	}
@@ -305,7 +305,7 @@ func TestFailedSubAgentParentRowAndReviewPaneRemainAuditable(t *testing.T) {
 func TestParallelSubAgentStartsLinkToTheirOwnParentCalls(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("root")
-	parent := app.AgentMgr.Get("root").State.Messages
+	parent := app.ws.AgentMgr().Get("root").State.Messages
 	parent.UpdateToolCall("first", "first-msg", "agent_start", "description: inspect")
 	parent.UpdateToolCall("second", "second-msg", "agent_start", "description: test")
 	for _, start := range []struct{ id, name, call string }{
@@ -335,7 +335,7 @@ func TestCompletedSubAgentCanBeReopenedForReview(t *testing.T) {
 	if app.Win.TabByTitle(app.agentTabTitle("child")) == nil {
 		t.Fatal("live child tab was not created")
 	}
-	pane := app.PaneMgr.Get("child")
+	pane := app.ws.PaneMgr().Get("child")
 	projection := app.subPaneProjections.GetExisting("child")
 
 	app.handleAgentEvent(ttypes.AgentEventMsg{
@@ -345,14 +345,14 @@ func TestCompletedSubAgentCanBeReopenedForReview(t *testing.T) {
 			"agent_id": "child", "agent_name": "Child", "status": "completed",
 		},
 	})
-	child := app.AgentMgr.Get("child")
+	child := app.ws.AgentMgr().Get("child")
 	if child == nil || !child.IsCompleted() || !app.AgentView.IsHidden(child.ID) {
 		t.Fatalf("completed child was not archived: %#v", child)
 	}
 	if app.Win.TabByTitle(app.agentTabTitle("child")) != nil {
 		t.Fatal("completed child tab remained surfaced instead of archiving")
 	}
-	if app.PaneMgr.Get("child") != pane || app.subPaneProjections.GetExisting("child") != projection {
+	if app.ws.PaneMgr().Get("child") != pane || app.subPaneProjections.GetExisting("child") != projection {
 		t.Fatal("completion discarded the retained review surface")
 	}
 	foundClosedReview := false
@@ -389,9 +389,9 @@ func TestCompletedSubAgentCanBeReopenedForReview(t *testing.T) {
 func TestCompletingActiveChildSelectsVisibleRootAndPromptTarget(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("root")
-	pane := app.PaneMgr.GetOrCreate("child", workspace.PaneAgent, "child")
-	childState := workspace.NewAgentState("child", pane.Messages, app.Logger)
-	app.AgentMgr.AddSubAgent("child", "root", "child", "model", "researcher", childState)
+	pane := app.ws.PaneMgr().GetOrCreate("child", workspace.PaneAgent, "child")
+	childState := workspace.NewAgentState("child", pane.Messages, app.ws.Logger())
+	app.ws.AgentMgr().AddSubAgent("child", "root", "child", "model", "researcher", childState)
 	app.switchToAgentView("child")
 	if app.activeAgentTabID() != "child" {
 		t.Fatal("child was not the visible prompt target")
@@ -407,7 +407,7 @@ func TestCompletingActiveChildSelectsVisibleRootAndPromptTarget(t *testing.T) {
 
 func TestUsagePaneFollowsRequestRevisionsWithoutDoubleCounting(t *testing.T) {
 	app := newFullTestApp(t)
-	app.SessionsByAgent = map[string]*workspace.Session{"root": workspace.NewSession("session", "", nil, nil)}
+	wsOf(app).SessionsByAgent = map[string]*workspace.Session{"root": workspace.NewSession("session", "", nil, nil)}
 	app.AddOrchestrator("root")
 	emit := func(prompt, completion any, reported int64) {
 		app.handleAgentEvent(ttypes.AgentEventMsg{AgentID: "root", Type: "usage", Data: map[string]any{
@@ -416,12 +416,12 @@ func TestUsagePaneFollowsRequestRevisionsWithoutDoubleCounting(t *testing.T) {
 	}
 	emit(int64(90), float64(10), 1)
 	emit(int64(90), float64(10), 1)
-	if got := app.PaneMgr.Get("root").TokenCount; got != 100 {
+	if got := app.ws.PaneMgr().Get("root").TokenCount; got != 100 {
 		t.Fatalf("duplicate event inflated pane telemetry: %d", got)
 	}
 	emit(90, 20, 2)
 	emit(90, 999, 1)
-	if got := app.PaneMgr.Get("root").TokenCount; got != 110 {
+	if got := app.ws.PaneMgr().Get("root").TokenCount; got != 110 {
 		t.Fatalf("pane did not follow authoritative request revision: %d", got)
 	}
 }
@@ -430,9 +430,9 @@ func TestDangerousBackgroundAgentAlertIsVisibleWithoutChangingSelection(t *testi
 	app, ws := newRealShellApp(t)
 	defer ws.Close()
 	app.AddOrchestrator("root")
-	pane := app.PaneMgr.GetOrCreate("child", workspace.PaneAgent, "child")
-	childState := workspace.NewAgentState("child", pane.Messages, app.Logger)
-	app.AgentMgr.AddSubAgent("child", "root", "child", "model", "crafter", childState)
+	pane := app.ws.PaneMgr().GetOrCreate("child", workspace.PaneAgent, "child")
+	childState := workspace.NewAgentState("child", pane.Messages, app.ws.Logger())
+	app.ws.AgentMgr().AddSubAgent("child", "root", "child", "model", "crafter", childState)
 	app.MinimizeAgent("child")
 	path := openEditorTabs(t, app, "main.go")[0]
 
@@ -441,7 +441,7 @@ func TestDangerousBackgroundAgentAlertIsVisibleWithoutChangingSelection(t *testi
 		Data: map[string]any{"risk": "blocked", "reason": "Blocked disk write"},
 	})
 	app.paintShellFrame()
-	child := app.AgentMgr.Get("child")
+	child := app.ws.AgentMgr().Get("child")
 	if !app.AgentView.IsHidden(child.ID) || app.AgentView.ActiveID() == "child" || app.EditorState.ActiveView != path {
 		t.Fatalf("background alert changed navigation: hidden=%v active=%q editor=%q", app.AgentView.IsHidden(child.ID), app.AgentView.ActiveID(), app.EditorState.ActiveView)
 	}

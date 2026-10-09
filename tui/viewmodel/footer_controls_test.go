@@ -97,22 +97,22 @@ func TestFooterColorsFollowAttentionInsteadOfPermanentAlarms(t *testing.T) {
 	}
 	tokens := ui.NewTokenSet(app.Theme)
 	_, quiet := tokens.StatusStripColors(idle[1].FillRole, idle[1].Active, idle[1].Attention)
-	noticeID := app.Status.Notify(ttypes.NotificationRecord{Summary: "Build finished", Source: "test"})
+	noticeID := app.ws.Status().Notify(ttypes.NotificationRecord{Summary: "Build finished", Source: "test"})
 	unread := app.footerStatusSegments()[1]
 	_, alert := tokens.StatusStripColors(unread.FillRole, unread.Active, unread.Attention)
 	if !unread.Attention || quiet.Equal(alert) {
 		t.Fatal("unread notice did not strengthen its fill")
 	}
-	app.Status.MarkRead(noticeID, true)
+	app.ws.Status().MarkRead(noticeID, true)
 	if app.footerStatusSegments()[1].Attention {
 		t.Fatal("read notice retained attention fill")
 	}
-	app.Status.SetAgent(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{ID: "background"}, Phase: ttypes.AgentTool})
+	wsOf(app).Status.SetAgent(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{ID: "background"}, Phase: ttypes.AgentTool})
 	working := app.footerStatusSegments()[6]
 	if !working.Attention || working.FillRole != ui.ColorAccent2 {
 		t.Fatal("background work did not change Workspace color")
 	}
-	app.Status.SetAgent(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{ID: "background"}, Phase: ttypes.AgentQuestion, NeedsAction: true})
+	wsOf(app).Status.SetAgent(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{ID: "background"}, Phase: ttypes.AgentQuestion, NeedsAction: true})
 	if needsInput := app.footerStatusSegments()[6]; !needsInput.Attention || needsInput.FillRole != ui.ColorWarning {
 		t.Fatal("genuine input request did not change Workspace color")
 	}

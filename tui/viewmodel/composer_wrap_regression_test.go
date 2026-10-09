@@ -14,7 +14,7 @@ func TestComposerTypingSpaceInWrappedGapKeepsDraftAndPaintedCursor(t *testing.T)
 	for _, width := range []int{80, 160} {
 		t.Run(fmt.Sprint(width), func(t *testing.T) {
 			app := newFullTestApp(t)
-			app.Logger = stubLogger{}
+			wsOf(app).Logger = stubLogger{}
 			app.width, app.height = width, 40
 			app.AddOrchestrator("owner")
 			app.maybeHydrateComposerDraft()

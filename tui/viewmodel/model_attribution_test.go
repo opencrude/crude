@@ -11,20 +11,20 @@ import (
 
 func TestSessionSettingsSaveRefreshesRetainedLegacyModelFallback(t *testing.T) {
 	app := newFullTestApp(t)
-	app.Logger = stubLogger{}
+	wsOf(app).Logger = stubLogger{}
 	app.ModelName = "deepseek/deepseek-v4-flash-vision-exp"
 	rootID := addBackendTestOrchestrator(t, app)
 	app.ActivateSessionByAgent(rootID)
 	session := app.ActiveSession
 
-	node := app.AgentMgr.Get(rootID)
+	node := app.ws.AgentMgr().Get(rootID)
 	node.State.Messages.AppendMessage(workspace.Message{
 		InternalID: "legacy", Role: workspace.MessageRoleAssistant, Content: "legacy answer",
 	})
 	app.syncAgentMessages(rootID, false)
 
 	target := app.sessionProjections.Get(session).settings
-	settings := app.BackendSession(session.SessionID).SettingsSnapshot()
+	settings := app.ws.BackendSession(session.SessionID).SettingsSnapshot()
 	settings.SessionOverrides = map[string]types.CategorySettings{"default": {AccountID: settings.AccountID, Model: "kimi-k3"}}
 	_, command := app.Update(sessionsettings.SaveMsg{Target: target, Settings: settings})
 	runAppCommand(t, app, command)

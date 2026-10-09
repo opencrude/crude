@@ -30,7 +30,7 @@ func TestClosingAgentTabMinimizesWithoutCancelling(t *testing.T) {
 		t.Fatal("closing an agent tab should not return a command")
 	}
 
-	node := app.AgentMgr.Get("orch-1")
+	node := app.ws.AgentMgr().Get("orch-1")
 	if node == nil {
 		t.Fatal("closing a tab must not remove the agent")
 	}
@@ -40,13 +40,13 @@ func TestClosingAgentTabMinimizesWithoutCancelling(t *testing.T) {
 	if app.AgentView.VisibleCount() != 0 || app.Win.TabCount() != 0 {
 		t.Fatalf("tab should be gone: visible=%d tabs=%d", app.AgentView.VisibleCount(), app.Win.TabCount())
 	}
-	if app.PaneMgr.Get("orch-1") == nil {
+	if app.ws.PaneMgr().Get("orch-1") == nil {
 		t.Fatal("minimizing must retain the agent's pane")
 	}
 	if !app.subPaneProjections.Has("orch-1") {
 		t.Fatal("minimizing must retain the chat projection")
 	}
-	if _, ok := app.SessionsByAgent["orch-1"]; app.SessionsByAgent != nil && !ok {
+	if _, ok := app.ws.SessionsByAgent()["orch-1"]; app.ws.SessionsByAgent() != nil && !ok {
 		t.Fatal("minimizing must keep the session owned by its agent")
 	}
 
@@ -99,10 +99,10 @@ func TestTerminateAgentCancelsAndRemoves(t *testing.T) {
 
 	app.terminateAgent("orch-1")
 
-	if app.AgentMgr.Get("orch-1") != nil {
+	if app.ws.AgentMgr().Get("orch-1") != nil {
 		t.Fatal("terminate must remove the agent")
 	}
-	if app.PaneMgr.Get("orch-1") != nil {
+	if app.ws.PaneMgr().Get("orch-1") != nil {
 		t.Fatal("terminate must drop the agent's pane")
 	}
 	if app.Win.TabCount() != 0 {
@@ -116,7 +116,7 @@ func TestMinimizeHidesSubAgentsWithTheirOrchestrator(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 40
 	newMinimizeTestAgent(t, app, "orch-1")
-	app.AgentMgr.AddSubAgent("sub-1", "orch-1", "Research", "model", "researcher",
+	app.ws.AgentMgr().AddSubAgent("sub-1", "orch-1", "Research", "model", "researcher",
 		workspace.NewAgentState("sub-1", nil, nil))
 
 	app.minimizeAgent("orch-1")
@@ -141,12 +141,12 @@ func TestRestoreRootPreservesArchivedChildrenAndRootTabOrder(t *testing.T) {
 	app.AddOrchestrator("root")
 	for i := 0; i < 24; i++ {
 		id := fmt.Sprintf("archived-%d", i)
-		child := app.AgentMgr.AddSubAgent(id, "root", "Review", "model", "researcher",
+		child := app.ws.AgentMgr().AddSubAgent(id, "root", "Review", "model", "researcher",
 			workspace.NewAgentState(id, nil, nil))
 		app.MinimizeAgent(child.ID) // hydrated completed sub-agent
 		child.State.Completed = true
 	}
-	live := app.AgentMgr.AddSubAgent("live", "root", "Live", "model", "researcher",
+	live := app.ws.AgentMgr().AddSubAgent("live", "root", "Live", "model", "researcher",
 		workspace.NewAgentState("live", nil, nil))
 	app.syncAgentWindowTabs()
 	app.minimizeAgent("root")
@@ -183,7 +183,7 @@ func TestRestoreChildOfMinimizedRootOnlyOpensItsPath(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("root")
 	for _, id := range []string{"review", "sibling"} {
-		child := app.AgentMgr.AddSubAgent(id, "root", id, "model", "researcher",
+		child := app.ws.AgentMgr().AddSubAgent(id, "root", id, "model", "researcher",
 			workspace.NewAgentState(id, nil, nil))
 		app.MinimizeAgent(child.ID)
 		child.State.Completed = true
@@ -203,11 +203,11 @@ func TestRestoreChildOfMinimizedRootOnlyOpensItsPath(t *testing.T) {
 func TestRestoreNestedReviewRevealsOnlyItsAncestors(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("root")
-	app.AgentMgr.AddSubAgent("parent", "root", "parent", "model", "researcher",
+	app.ws.AgentMgr().AddSubAgent("parent", "root", "parent", "model", "researcher",
 		workspace.NewAgentState("parent", nil, nil))
-	app.AgentMgr.AddSubAgent("review", "parent", "review", "model", "researcher",
+	app.ws.AgentMgr().AddSubAgent("review", "parent", "review", "model", "researcher",
 		workspace.NewAgentState("review", nil, nil))
-	sibling := app.AgentMgr.AddSubAgent("sibling", "parent", "sibling", "model", "researcher",
+	sibling := app.ws.AgentMgr().AddSubAgent("sibling", "parent", "sibling", "model", "researcher",
 		workspace.NewAgentState("sibling", nil, nil))
 	app.MinimizeAgent(sibling.ID)
 	app.minimizeAgent("parent")
@@ -236,7 +236,7 @@ func TestResumeSessionWithManyCompletedChildrenOnlyOpensMainAgent(t *testing.T) 
 	sessionID := owner.SessionID
 	// Empty sessions are discarded by shutdown. Keep a real backend context
 	// boundary so this fixture takes the same resume path as a worked session.
-	if err := app.BackendSession(owner.SessionID).AppendWorkspaceHistoryEvent("Fixture continuity", "Continuity saved"); err != nil {
+	if err := app.ws.BackendSession(owner.SessionID).AppendWorkspaceHistoryEvent("Fixture continuity", "Continuity saved"); err != nil {
 		t.Fatal(err)
 	}
 	for i := 0; i < 40; i++ {
@@ -250,12 +250,12 @@ func TestResumeSessionWithManyCompletedChildrenOnlyOpensMainAgent(t *testing.T) 
 		}
 	}
 	app.cleanupAgent(rootID)
-	app.CloseAllSessions()
+	wsOf(app).CloseAllSessions()
 	// A closed backend session and its in-memory root tree are separate:
 	// restarting the UI starts with an empty agent manager and tab strip.
-	app.AgentMgr.Remove(rootID)
+	app.ws.AgentMgr().Remove(rootID)
 	app.Win.CloseAll()
-	result := app.OpenAgentSession(sessionID)
+	result := app.ws.OpenAgentSession(sessionID)
 	if result == nil || result.Error != "" {
 		t.Fatalf("resume failed: %+v", result)
 	}
@@ -265,8 +265,8 @@ func TestResumeSessionWithManyCompletedChildrenOnlyOpensMainAgent(t *testing.T) 
 		t.Fatalf("resumed main agent did not own its only tab: active=%q tabs=%+v",
 			app.AgentView.ActiveID(), app.Win.Tabs())
 	}
-	if app.AgentMgr.Count() != 41 {
-		t.Fatalf("lost child reviews on resume: count=%d", app.AgentMgr.Count())
+	if app.ws.AgentMgr().Count() != 41 {
+		t.Fatalf("lost child reviews on resume: count=%d", app.ws.AgentMgr().Count())
 	}
 	for i := 0; i < 40; i++ {
 		id := fmt.Sprintf("archived-%d", i)
@@ -280,7 +280,7 @@ func TestResumeSessionWithManyCompletedChildrenOnlyOpensMainAgent(t *testing.T) 
 	}
 	app.restoreAgent("archived-20")
 	if app.Win.TabCount() != 2 || app.AgentView.ActiveID() != "archived-20" ||
-		app.Win.Tabs()[0].Title != app.agentTabTitle(app.AgentMgr.OrchestratorFor("archived-20").ID) {
+		app.Win.Tabs()[0].Title != app.agentTabTitle(app.ws.AgentMgr().OrchestratorFor("archived-20").ID) {
 		t.Fatalf("explicit review did not open just one child after root: %+v", app.Win.Tabs())
 	}
 }

@@ -44,7 +44,7 @@ func setupCapturedChatSelection(t *testing.T, app *App, viewportH int, rows []ch
 		app.Tree = NewTreeState(nil, 30)
 	}
 	app.Tree.Visible = true
-	if app.AgentMgr.Count() == 0 {
+	if app.ws.AgentMgr().Count() == 0 {
 		app.AddOrchestrator(
 			"agent")
 
@@ -310,7 +310,7 @@ func setupCapturedChatScrollbar(t *testing.T, app *App, viewportH int, rows []ch
 		app.Tree = NewTreeState(nil, 30)
 	}
 	app.Tree.Visible = true
-	if app.AgentMgr.Count() == 0 {
+	if app.ws.AgentMgr().Count() == 0 {
 		app.AddOrchestrator(
 			"agent")
 

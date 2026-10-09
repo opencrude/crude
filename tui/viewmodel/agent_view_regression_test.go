@@ -22,7 +22,7 @@ import (
 func TestAgentView_LongInputDoesNotOverlapStatus(t *testing.T) {
 	app := newTransitionApp(t)
 	t.Cleanup(func() {
-		app.Close()
+		wsOf(app).Close()
 	})
 	_, _ = app.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	app.Input.SetInput(strings.Repeat("this is a very long line of text that keeps going and going and wrapping ", 12))
@@ -47,7 +47,7 @@ func TestAgentView_LongInputDoesNotOverlapStatus(t *testing.T) {
 func TestAgentView_TextAreaBgDoesNotOverwriteStatus(t *testing.T) {
 	app := newTransitionApp(t)
 	t.Cleanup(func() {
-		app.Close()
+		wsOf(app).Close()
 	})
 	app.ApplyThemePreset("light") // PopupBg #ffffff contrasts the divider
 	_, _ = app.Update(tea.WindowSizeMsg{Width: 240, Height: 60})
@@ -101,7 +101,7 @@ func rowTextFrom(app *App, y, startX int) string {
 func TestAgentView_ChatPaintsInsideSlot(t *testing.T) {
 	app := newTransitionApp(t)
 	t.Cleanup(func() {
-		app.Close()
+		wsOf(app).Close()
 	})
 	_, _ = app.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	app.paintShellFrame()
@@ -141,7 +141,7 @@ func TestAgentView_ChatPaintsInsideSlot(t *testing.T) {
 func TestAgentView_ShortChatAnchorsToBottom(t *testing.T) {
 	app := newTransitionApp(t)
 	t.Cleanup(func() {
-		app.Close()
+		wsOf(app).Close()
 	})
 	_, _ = app.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	app.paintShellFrame()
@@ -173,7 +173,7 @@ func TestAgentView_ShortChatAnchorsToBottom(t *testing.T) {
 func TestAgentView_LongChatDoesNotOverflowInputOrStatus(t *testing.T) {
 	app := newTransitionApp(t)
 	t.Cleanup(func() {
-		app.Close()
+		wsOf(app).Close()
 	})
 	_, _ = app.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
 	app.paintShellFrame()
@@ -240,7 +240,7 @@ func TestAgentView_ResumeContextOnlyMessagesDoNotCreateBlankTail(t *testing.T) {
 	for _, turns := range []int{1, 6} {
 		t.Run(fmt.Sprintf("%d_turns", turns), func(t *testing.T) {
 			app := newTransitionApp(t)
-			t.Cleanup(func() { app.Close() })
+			t.Cleanup(func() { wsOf(app).Close() })
 			db := sessiondb.OpenAndMigrateAt(t.TempDir())
 			t.Cleanup(func() { _ = db.Close() })
 			if err := sessiondb.CreateSessionRow(db, "resume"); err != nil {

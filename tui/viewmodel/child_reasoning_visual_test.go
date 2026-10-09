@@ -62,10 +62,10 @@ func TestChildReasoningVisualAcceptance(t *testing.T) {
 		t.Logf("Read-only researcher replay: %d bytes, wire kind %q", len(trace), display.Kind)
 	}
 	app := newFullTestApp(t)
-	app.Logger = stubLogger{}
+	wsOf(app).Logger = stubLogger{}
 	app.width, app.height = 160, 40
 	app.AddOrchestrator("parent")
-	app.AgentMgr.Get("parent").Label = "Rebecca"
+	app.ws.AgentMgr().Get("parent").Label = "Rebecca"
 	app.handleAgentEvent(types.AgentEventMsg{AgentID: "parent", Type: "thinking", Data: reasoning.Delta{Text: "Reviewing the researchers' findings", Kind: reasoning.Summary}})
 	app.handleAgentEvent(types.AgentEventMsg{AgentID: "child", Type: "sub_agent_started", Data: map[string]string{
 		"agent_id": "child", "agent_name": "Asha sub Rebecca", "category": "researcher", "parent_id": "parent", "model": "recorded-researcher",
@@ -79,7 +79,7 @@ func TestChildReasoningVisualAcceptance(t *testing.T) {
 		app.handleAgentEvent(types.AgentEventMsg{AgentID: "child", Type: "thinking", Data: reasoning.Delta{Text: remaining[:end], Kind: display.Kind, BlockID: display.BlockID}})
 		remaining = remaining[end:]
 	}
-	child := app.AgentMgr.Get("child").State
+	child := app.ws.AgentMgr().Get("child").State
 	if app.thinkingPaneID(child) == "" {
 		t.Fatal("recorded researcher stream did not promote")
 	}

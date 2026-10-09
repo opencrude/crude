@@ -38,9 +38,9 @@ func newBackendPromptFamilyApp(t *testing.T) (*App, string, string, map[string]c
 	t.Helper()
 	app, ws := newRealShellApp(t)
 	t.Cleanup(ws.Close)
-	app.SessionsByID = make(map[string]*workspace.Session)
-	app.SessionsByAgent = make(map[string]*workspace.Session)
-	t.Cleanup(app.CloseAllSessions)
+	wsOf(app).SessionsByID = make(map[string]*workspace.Session)
+	wsOf(app).SessionsByAgent = make(map[string]*workspace.Session)
+	t.Cleanup(wsOf(app).CloseAllSessions)
 	channels := make(map[string]chan types.BlockResponse)
 	var roots []string
 	for _, label := range []string{"Alpha", "Beta"} {
@@ -85,18 +85,18 @@ func newBackendPromptFamilyApp(t *testing.T) (*App, string, string, map[string]c
 		template.ProviderURL = server.URL
 		account.Connection = template
 		cfg.Accounts["test"] = account
-		sess, err := app.CreateSession(cfg, t.TempDir())
+		sess, err := wsOf(app).CreateSession(cfg, t.TempDir())
 		if err != nil {
 			t.Fatal(err)
 		}
-		backend := app.BackendSession(sess.SessionID)
+		backend := app.ws.BackendSession(sess.SessionID)
 		sender := promptFixtureSender{done: make(chan string, 1)}
-		orch, err := app.StartOrchestrator(sess.SessionID, sender)
+		orch, err := wsOf(app).StartOrchestrator(sess.SessionID, sender)
 		if err != nil {
 			t.Fatal(err)
 		}
 		app.AddOrchestrator(orch.ID)
-		app.AgentMgr.Get(orch.ID).Label = label
+		app.ws.AgentMgr().Get(orch.ID).Label = label
 		roots = append(roots, orch.ID)
 		channels[orch.ID] = orch.BlockResolveCh
 		if label != "Alpha" {
@@ -125,8 +125,8 @@ func newBackendPromptFamilyApp(t *testing.T) (*App, string, string, map[string]c
 				t.Fatal(err)
 			}
 			channels[child.id] = blockCh
-			pane := app.PaneMgr.GetOrCreate(child.id, workspace.PaneAgent, child.id)
-			app.AgentMgr.AddSubAgent(child.id, child.parent, child.id, "Test", "crafter", workspace.NewAgentState(child.id, pane.Messages, app.Logger))
+			pane := app.ws.PaneMgr().GetOrCreate(child.id, workspace.PaneAgent, child.id)
+			app.ws.AgentMgr().AddSubAgent(child.id, child.parent, child.id, "Test", "crafter", workspace.NewAgentState(child.id, pane.Messages, app.ws.Logger()))
 		}
 	}
 	app.syncAgentWindowTabs()
@@ -184,10 +184,10 @@ func newPromptFamilyApp(t testing.TB) *App {
 	app.AddOrchestrator("beta")
 	alpha := &workspace.Session{SessionID: "alpha-family", AgentID: "alpha"}
 	beta := &workspace.Session{SessionID: "beta-family", AgentID: "beta"}
-	app.SessionsByAgent = map[string]*workspace.Session{"alpha": alpha, "beta": beta}
+	wsOf(app).SessionsByAgent = map[string]*workspace.Session{"alpha": alpha, "beta": beta}
 	for _, child := range []struct{ id, parent string }{{"child-a", "alpha"}, {"child-b", "alpha"}, {"nested", "child-a"}} {
-		pane := app.PaneMgr.GetOrCreate(child.id, workspace.PaneAgent, child.id)
-		app.AgentMgr.AddSubAgent(child.id, child.parent, child.id, "model", "researcher", workspace.NewAgentState(child.id, pane.Messages, app.Logger))
+		pane := app.ws.PaneMgr().GetOrCreate(child.id, workspace.PaneAgent, child.id)
+		app.ws.AgentMgr().AddSubAgent(child.id, child.parent, child.id, "model", "researcher", workspace.NewAgentState(child.id, pane.Messages, app.ws.Logger()))
 	}
 	app.syncAgentWindowTabs()
 	app.switchToAgentView("alpha")
@@ -196,8 +196,8 @@ func newPromptFamilyApp(t testing.TB) *App {
 }
 
 func emitTestPermission(app *App, owner, block string) {
-	if app.AgentMgr.Get(owner) == nil {
-		for _, node := range app.AgentMgr.AllNodes() {
+	if app.ws.AgentMgr().Get(owner) == nil {
+		for _, node := range app.ws.AgentMgr().AllNodes() {
 			if node.Label == owner {
 				owner = node.ID
 				break
@@ -332,7 +332,7 @@ func TestTerminatedOwnerRemovesOwnSubtreeRequestsAndAdvancesOtherFamilies(t *tes
 	if len(app.agentPrompts) != 0 || app.agentPrompt != nil || app.overlayHost.IsOpen(ui.OverlayAgentPrompt) {
 		t.Fatal("terminating a family retained descendant prompts")
 	}
-	if app.AgentMgr.Get("beta") == nil {
+	if app.ws.AgentMgr().Get("beta") == nil {
 		t.Fatal("terminating one family removed another root")
 	}
 }
@@ -346,7 +346,7 @@ func TestOwnerCompletionAndLateResponsesCannotRemoveNewRequests(t *testing.T) {
 	current := app.agentPrompts[0]
 	app.handleAppMessages(confirmation.ResultMsg{Target: old, Choice: "allow"})
 	app.handleAgentEvent(types.AgentEventMsg{AgentID: "child-a", Type: "blocking_complete", Data: map[string]string{"block_id": "old"}})
-	if len(app.agentPrompts) != 1 || app.agentPrompts[0] != current || app.AgentMgr.Get("child-a").State.PendingBlockID != "new" {
+	if len(app.agentPrompts) != 1 || app.agentPrompts[0] != current || app.ws.AgentMgr().Get("child-a").State.PendingBlockID != "new" {
 		t.Fatal("late result/completion discarded the newer pending request")
 	}
 	app.handleSubAgentCompleted(workspace.AgentEvent{Type: "sub_agent_completed", Data: map[string]string{"agent_id": "child-a", "status": "cancelled"}})
@@ -361,10 +361,10 @@ func TestSubAgentConfirmationDocksInParentAndKeepsChildOwner(t *testing.T) {
 	app.AddOrchestrator("root")
 	session := &workspace.Session{SessionID: "root-session"}
 	app.ActiveSession = session
-	app.SessionsByAgent = map[string]*workspace.Session{"root": session}
-	pane := app.PaneMgr.GetOrCreate("child", workspace.PaneAgent, "child")
-	childState := workspace.NewAgentState("child", pane.Messages, app.Logger)
-	app.AgentMgr.AddSubAgent("child", "root", "Child", "model", "researcher", childState)
+	wsOf(app).SessionsByAgent = map[string]*workspace.Session{"root": session}
+	pane := app.ws.PaneMgr().GetOrCreate("child", workspace.PaneAgent, "child")
+	childState := workspace.NewAgentState("child", pane.Messages, app.ws.Logger())
+	app.ws.AgentMgr().AddSubAgent("child", "root", "Child", "model", "researcher", childState)
 	app.switchToAgentView("root")
 	app.paintShellFrame()
 
@@ -384,7 +384,7 @@ func TestActiveAgentConfirmationUsesModalOverEditorAndPreservesDraft(t *testing.
 	app.AddOrchestrator("root")
 	session := &workspace.Session{SessionID: "root-session"}
 	app.ActiveSession = session
-	app.SessionsByAgent = map[string]*workspace.Session{"root": session}
+	wsOf(app).SessionsByAgent = map[string]*workspace.Session{"root": session}
 	app.switchToAgentView("root")
 	app.Input.SetInput("unfinished user prompt")
 	openTestEditor(t, app)
@@ -407,7 +407,7 @@ func TestOtherSessionConfirmationUsesModalWithoutChangingActiveSession(t *testin
 	app.AddOrchestrator("second")
 	first := &workspace.Session{SessionID: "first-session"}
 	second := &workspace.Session{SessionID: "second-session"}
-	app.SessionsByAgent = map[string]*workspace.Session{"first": first, "second": second}
+	wsOf(app).SessionsByAgent = map[string]*workspace.Session{"first": first, "second": second}
 	app.ActiveSession = second
 	app.switchToAgentView("second")
 	app.paintShellFrame()

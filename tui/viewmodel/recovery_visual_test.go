@@ -32,13 +32,13 @@ func TestRunRecoveryVisualAcceptance(t *testing.T) {
 		t.Skip("requires the repository's dedicated terminal capture workflow")
 	}
 	app := newFullTestApp(t)
-	app.Logger = stubLogger{}
+	wsOf(app).Logger = stubLogger{}
 	app.width, app.height = 160, 40
 	if os.Getenv("CRUDE_VISUAL_RECOVERY_MEDIA") == "1" {
-		app.SessionsByAgent = map[string]*workspace.Session{"visual-recovery": workspace.NewSession("visual-media", t.TempDir(), nil, stubLogger{})}
+		wsOf(app).SessionsByAgent = map[string]*workspace.Session{"visual-recovery": workspace.NewSession("visual-media", t.TempDir(), nil, stubLogger{})}
 	}
 	app.AddOrchestrator("visual-recovery")
-	state := app.AgentMgr.Get("visual-recovery").State
+	state := app.ws.AgentMgr().Get("visual-recovery").State
 	state.Messages.AppendMessage(workspace.Message{Role: types.RoleUser, Time: time.Now(), Content: "Complete the refactor and verify it, keeping the accepted edits."})
 	state.Messages.AppendMessage(workspace.Message{Role: types.RoleAssistant, Time: time.Now(), Content: "The refactor is saved. Verification is still pending; recovery will continue from these exact results."})
 	app.maybeHydrateComposerDraft()

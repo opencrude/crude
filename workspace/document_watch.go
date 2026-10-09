@@ -1,0 +1,240 @@
+package workspace
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"path/filepath"
+	"sync"
+
+	"crude/document"
+	"github.com/fsnotify/fsnotify"
+)
+
+// One directory watcher follows atomic replacement as well as in-place writes.
+// Notifications are delivered by this worker, never from a document lock/actor.
+type documentWatch struct {
+	s          *DocumentService
+	watcher    *fsnotify.Watcher
+	err        error
+	dirs       map[string]bool
+	mu         sync.Mutex
+	pending    map[string]bool
+	wake       chan struct{}
+	stop, done chan struct{}
+	once       sync.Once
+}
+
+func newDocumentWatch(s *DocumentService) *documentWatch {
+	w := &documentWatch{s: s, dirs: make(map[string]bool), pending: make(map[string]bool), wake: make(chan struct{}, 1), stop: make(chan struct{}), done: make(chan struct{})}
+	go w.run()
+	return w
+}
+func (w *documentWatch) add(dir string) error {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	select {
+	case <-w.stop:
+		return context.Canceled
+	default:
+	}
+	if w.watcher == nil {
+		w.watcher, w.err = fsnotify.NewWatcher()
+		select {
+		case w.wake <- struct{}{}:
+		default:
+		}
+	}
+	if w.err != nil {
+		return w.err
+	}
+	if w.dirs[dir] {
+		return nil
+	}
+	if err := w.watcher.Add(dir); err != nil {
+		return err
+	}
+	w.dirs[dir] = true
+	return nil
+}
+func (w *documentWatch) changed(id string) {
+	w.mu.Lock()
+	w.pending[id] = true
+	w.mu.Unlock()
+	select {
+	case w.wake <- struct{}{}:
+	default:
+	}
+}
+func (w *documentWatch) close() {
+	w.once.Do(func() {
+		close(w.stop)
+		w.mu.Lock()
+		if w.watcher != nil {
+			_ = w.watcher.Close()
+		}
+		w.mu.Unlock()
+		<-w.done
+	})
+}
+func (w *documentWatch) run() {
+	defer close(w.done)
+	var events <-chan fsnotify.Event
+	var failures <-chan error
+	for {
+		select {
+		case <-w.stop:
+			return
+		case event, ok := <-events:
+			if !ok {
+				events = nil
+				continue
+			}
+			if event.Op&(fsnotify.Write|fsnotify.Create|fsnotify.Remove|fsnotify.Rename|fsnotify.Chmod) != 0 {
+				w.s.reconcilePath(filepath.Clean(event.Name))
+			}
+		case _, ok := <-failures:
+			if !ok {
+				failures = nil
+				continue
+			}
+			// Overflow means any retained disk preimage may have changed.
+			w.s.mu.Lock()
+			ids := make([]string, 0, len(w.s.docs))
+			for id := range w.s.docs {
+				ids = append(ids, id)
+			}
+			w.s.mu.Unlock()
+			for _, id := range ids {
+				w.s.reconcile(id)
+			}
+		case <-w.wake:
+			w.mu.Lock()
+			if w.watcher != nil {
+				events = w.watcher.Events
+				failures = w.watcher.Errors
+			}
+			pending := w.pending
+			w.pending = make(map[string]bool)
+			w.mu.Unlock()
+			w.s.mu.Lock()
+			bus := w.s.bus
+			closed := w.s.closed
+			w.s.mu.Unlock()
+			if bus != nil && !closed {
+				for id := range pending {
+					bus.Send(DocumentChangedMsg{ID: id})
+				}
+			}
+		}
+	}
+}
+
+func (s *DocumentService) reconcile(id string) {
+	s.mu.Lock()
+	s.reconcileLocked(id)
+	s.mu.Unlock()
+	s.changed(id)
+}
+
+// reconcileLocked is shared by watcher ingress and checked file transactions.
+func (s *DocumentService) reconcileLocked(id string) {
+	d := s.docs[id]
+	if d == nil || s.closed {
+		return
+	}
+	original := d
+	d = stageDocument(d)
+	if d.relocation != nil {
+		if err := s.recoverRelocationsLocked(); err != nil {
+			original.snapshot.Conflict = true
+		}
+		return
+	}
+	text, exists, err := readLiveDocument(d.snapshot.Path)
+	if err != nil {
+		d.snapshot.Conflict = true
+		if s.persistDocument(d) == nil {
+			*original = *d
+		}
+		return
+	}
+	hash := sha256.Sum256(text)
+	if !exists && d.snapshot.DiskExists && d.relocation == nil {
+		// Removal is not a text edit. Preserve the retained text and history;
+		// a save cannot silently recreate a deliberately removed resource.
+		d.snapshot.Conflict = true
+		if s.persistDocument(d) == nil {
+			*original = *d
+		}
+		return
+	}
+	if d.diskIntent != nil && hash == d.diskIntent.Hash && exists == d.diskIntent.Exists {
+		d.snapshot.Saved = bytes.Clone(text)
+		d.snapshot.DiskHash = hash
+		d.snapshot.DiskExists = exists
+		d.snapshot.Dirty = !bytes.Equal(d.snapshot.Text, text)
+		d.snapshot.Conflict = false
+		d.diskIntent = nil
+	} else if hash == d.snapshot.DiskHash && exists == d.snapshot.DiskExists && d.diskIntent == nil {
+		return
+	}
+	if d.diskIntent == nil && hash == d.snapshot.DiskHash && exists == d.snapshot.DiskExists {
+		// Exact pending disk commit reconciled above.
+	} else if d.snapshot.Dirty || d.diskIntent != nil {
+		// Preserve both local work and its original disk precondition; save must
+		// still fail closed rather than authorizing overwrite of external bytes.
+		d.snapshot.Conflict = true
+	} else {
+		c := document.Change{DocumentID: id, RequestID: "disk", BaseRevision: d.snapshot.Revision, Edits: []document.Edit{{Start: 0, End: len(d.snapshot.Text), Text: string(text)}}}
+		if _, err = s.commit(d, c); err != nil {
+			d.snapshot.Conflict = true
+		} else {
+			d.snapshot.Saved = bytes.Clone(text)
+			d.snapshot.DiskHash = hash
+			d.snapshot.DiskExists = exists
+			d.snapshot.Dirty = false
+			d.snapshot.Conflict = false
+		}
+	}
+	if s.persistDocument(d) == nil {
+		previousRevision := original.snapshot.Revision
+		*original = *d
+		if s.lsp != nil && d.lspOpen && d.snapshot.Revision != previousRevision {
+			s.lsp.UpdateFile(context.Background(), d.snapshot.Path, string(d.snapshot.Text))
+		}
+	}
+}
+
+// ReconcileDisk is an off-actor explicit reconciliation barrier for callers
+// requiring settled disk state, independent of filesystem event timing.
+func (s *DocumentService) ReconcileDisk(ctx context.Context, id string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	s.mu.Lock()
+	err := s.recoverRelocationsLocked()
+	if err == nil {
+		s.reconcileLocked(id)
+	}
+	s.mu.Unlock()
+	s.changed(id)
+	if err != nil {
+		return err
+	}
+	return ctx.Err()
+}
+
+func (s *DocumentService) reconcilePath(path string) {
+	s.mu.Lock()
+	d := s.documentAtPath(path)
+	id := ""
+	if d != nil {
+		id = d.snapshot.ID
+		s.reconcileLocked(id)
+	}
+	s.mu.Unlock()
+	if id != "" {
+		s.changed(id)
+	}
+}

@@ -1,13 +1,14 @@
 package viewmodel
 
 import (
+	"crude/shellport"
 	"crude/workspace"
 	"testing"
 )
 
 func TestAgentTabViewsNeverExposeRawIDAsDisplayTitle(t *testing.T) {
 	manager := workspace.NewAgentManager()
-	app := &App{Workspace: &workspace.Workspace{AgentMgr: manager}, AgentView: NewAgentViewState(manager)}
+	app := &App{ws: shellport.Local(&workspace.Workspace{AgentMgr: manager}), AgentView: NewAgentViewState(manager)}
 	node := manager.AddOrchestrator("2026_orch_1", workspace.NewAgentState("2026_orch_1", nil, nil))
 	node.Category = "default"
 

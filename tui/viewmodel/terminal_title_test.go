@@ -36,10 +36,10 @@ func TestTerminalTitleOutputDoesNotDeadlockOrDuplicate(t *testing.T) {
 	sink := &terminalJourneySink{}
 	bus := workspace.NewEventBus()
 	bus.SetSink(sink)
-	app.TermMgr.SetEventBus(bus)
+	wsOf(app).TermMgr.SetEventBus(bus)
 	done := make(chan struct{})
 	go func() {
-		app.terminalService().Send(workspace.TerminalOutputMsg{ID: info.ID, Data: []byte("\x1b]2;crude-title\x07")})
+		termSvc(app).Send(workspace.TerminalOutputMsg{ID: info.ID, Data: []byte("\x1b]2;crude-title\x07")})
 		close(done)
 	}()
 	select {
@@ -70,7 +70,7 @@ func TestTerminalTitleOutputDoesNotDeadlockOrDuplicate(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("Update re-entered synchronous bus on title effect")
 	}
-	if got, _ := app.TermMgr.Get(info.ID); got.Title != "crude-title" {
+	if got, _ := app.ws.TermMgr().Get(info.ID); got.Title != "crude-title" {
 		t.Fatalf("manager title=%q", got.Title)
 	}
 	if got := app.termScreens[info.ID].Title(); got != "crude-title" {
@@ -122,7 +122,7 @@ func TestWorkspaceSwitchTerminalCloseAllDoesNotReenterEventBus(t *testing.T) {
 		t.Skip("in-app PTYs are unix-only")
 	}
 	app := newTestApp(t)
-	mgr := app.TermMgr
+	mgr := wsOf(app).TermMgr
 	info, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{
 		Command: "/bin/cat",
 		CWD:     t.TempDir(),
@@ -142,7 +142,7 @@ func TestWorkspaceSwitchTerminalCloseAllDoesNotReenterEventBus(t *testing.T) {
 
 	done := make(chan struct{})
 	go func() {
-		app.terminalService().CloseAll()
+		termSvc(app).CloseAll()
 		close(done)
 	}()
 	select {

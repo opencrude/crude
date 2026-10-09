@@ -50,7 +50,7 @@ func TestBackgroundAgentEventsPreserveSelectedTabAndPromptOwner(t *testing.T) {
 		"risk": "destructive", "reason": "test alert",
 	}})
 	assertSelectedTab(t, app, app.agentTabTitle("other"))
-	notice, ok := app.Status.LatestUnread(types.SeverityWarning)
+	notice, ok := wsOf(app).Status.LatestUnread(types.SeverityWarning)
 	if app.AgentView.ActiveID() != "other" || !ok || notice.Owner.ID != "root" || notice.Summary != "test alert" {
 		t.Fatal("background safety alert changed navigation or lost its owning notification")
 	}
@@ -86,10 +86,10 @@ func TestLateBackgroundAgentInitializationPreservesEditorSelection(t *testing.T)
 	defer ws.Close()
 	app.AddOrchestrator("root")
 	path := openEditorTabs(t, app, "main.go")[0]
-	app.AgentMgr.AddOrchestrator("late", nil)
+	app.ws.AgentMgr().AddOrchestrator("late", nil)
 	app.handleAgentEvent(ttypes.AgentEventMsg{AgentID: "late", Type: "phase", Data: map[string]any{"name": "waiting_provider"}})
 	assertEditorStillPainted(t, app, path)
-	if app.AgentView.ActiveID() != "" || app.AgentMgr.Get("late").State == nil {
+	if app.AgentView.ActiveID() != "" || app.ws.AgentMgr().Get("late").State == nil {
 		t.Fatal("late initialization selected an agent or lost its state")
 	}
 }
@@ -98,11 +98,11 @@ func TestBackgroundChildPromptPreservesParentTab(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("root")
 	session := &workspace.Session{SessionID: "root-family"}
-	app.SessionsByAgent = map[string]*workspace.Session{"root": session}
+	wsOf(app).SessionsByAgent = map[string]*workspace.Session{"root": session}
 	app.ActiveSession = session
-	pane := app.PaneMgr.GetOrCreate("child", workspace.PaneAgent, "child")
-	app.AgentMgr.AddSubAgent("child", "root", "Child", "model", "researcher",
-		workspace.NewAgentState("child", pane.Messages, app.Logger))
+	pane := app.ws.PaneMgr().GetOrCreate("child", workspace.PaneAgent, "child")
+	app.ws.AgentMgr().AddSubAgent("child", "root", "Child", "model", "researcher",
+		workspace.NewAgentState("child", pane.Messages, app.ws.Logger()))
 	app.syncAgentWindowTabs()
 	app.handleAgentEvent(ttypes.AgentEventMsg{AgentID: "child", Type: "blocking", Data: map[string]string{
 		"block_id": "child-permission", "question": "Allow child write?", "operation": "write",

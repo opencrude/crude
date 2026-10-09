@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/shellport"
 	"crude/tui/screens/gitpanel"
 	"crude/tui/screens/shellheader"
 	"crude/tui/ui"
@@ -93,7 +94,7 @@ func (m *App) branchMenuItems(branches []workspace.GitBranchSummary, current str
 			Action: func() {
 				m.startSourceControlMutation(m.sourceControlMutation(
 					"Switched to "+name, nil,
-					func(ctx context.Context, service *workspace.GitService) error {
+					func(ctx context.Context, service shellport.GitService) error {
 						return service.Checkout(ctx, name)
 					},
 				))

@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"crude/shellport"
 	"crude/types"
 	"crude/workspace"
 )
@@ -16,9 +17,10 @@ func TestShellSessionSelectionDoesNotChangeAnotherShell(t *testing.T) {
 		SessionsByID:    map[string]*workspace.Session{"one": one, "two": two},
 		SessionsByAgent: map[string]*workspace.Session{"first": one, "second": two},
 	}
+	shared := shellport.Local(owner)
 	// This tests the selected-session seam, not multi-client event transport.
-	left := &App{Workspace: owner, FocusStack: NewFocusStack()}
-	right := &App{Workspace: owner, FocusStack: NewFocusStack()}
+	left := &App{ws: shared, FocusStack: NewFocusStack()}
+	right := &App{ws: shared, FocusStack: NewFocusStack()}
 	left.ActivateSessionByAgent("first")
 	right.ActivateSessionByAgent("second")
 	left.FocusStack.Push(FocusTree)
@@ -38,25 +40,25 @@ func TestShellSessionSelectionDoesNotChangeAnotherShell(t *testing.T) {
 
 func TestPaletteMultiAgentToggleUsesExactOwnerAndOnlyChangesDelegation(t *testing.T) {
 	app := newFullTestApp(t)
-	app.Logger = stubLogger{}
+	wsOf(app).Logger = stubLogger{}
 	firstID := addBackendTestOrchestrator(t, app)
-	first := app.SessionsByAgent[firstID]
+	first := app.ws.SessionsByAgent()[firstID]
 	secondID := addBackendTestOrchestrator(t, app)
-	second := app.SessionsByAgent[secondID]
+	second := app.ws.SessionsByAgent()[secondID]
 	configure := func(owner *workspace.Session, model string) {
 		t.Helper()
-		settings := app.BackendSession(owner.SessionID).SettingsSnapshot()
+		settings := app.ws.BackendSession(owner.SessionID).SettingsSnapshot()
 		settings.SessionOverrides = map[string]types.CategorySettings{"default": {
 			AccountID: settings.AccountID, Model: model, DeniedTools: []string{"write_file"}, SkillModes: map[string]string{"local": "manual"},
 		}}
-		if err := app.HandleSettingsSaveForSession(owner.SessionID, settings); err != nil {
+		if err := wsOf(app).HandleSettingsSaveForSession(owner.SessionID, settings); err != nil {
 			t.Fatal(err)
 		}
 	}
 	configure(first, "first-model")
 	configure(second, "second-model")
-	firstBefore := app.BackendSession(first.SessionID).SettingsSnapshots()
-	secondBefore := app.BackendSession(second.SessionID).SettingsSnapshots()
+	firstBefore := app.ws.BackendSession(first.SessionID).SettingsSnapshots()
+	secondBefore := app.ws.BackendSession(second.SessionID).SettingsSnapshots()
 	app.ActivateSessionByAgent(secondID)
 	// A display cache is never command authority, even if a prior save left it stale.
 	app.LastSettings = firstBefore.Effective
@@ -66,8 +68,8 @@ func TestPaletteMultiAgentToggleUsesExactOwnerAndOnlyChangesDelegation(t *testin
 	}
 	app.ActivateSessionByAgent(firstID) // switch before the off-thread command runs
 	runAppCommand(t, app, command)
-	firstAfter := app.BackendSession(first.SessionID).SettingsSnapshots()
-	secondAfter := app.BackendSession(second.SessionID).SettingsSnapshots()
+	firstAfter := app.ws.BackendSession(first.SessionID).SettingsSnapshots()
+	secondAfter := app.ws.BackendSession(second.SessionID).SettingsSnapshots()
 	if !reflect.DeepEqual(firstBefore, firstAfter) || !reflect.DeepEqual(secondBefore.Overrides, secondAfter.Overrides) ||
 		!reflect.DeepEqual(secondBefore.Base, secondAfter.Base) || secondBefore.Effective.Model != secondAfter.Effective.Model ||
 		secondBefore.Effective.Agents.Enabled == secondAfter.Effective.Agents.Enabled {
@@ -81,17 +83,17 @@ func TestPaletteMultiAgentToggleUsesExactOwnerAndOnlyChangesDelegation(t *testin
 func TestSelectedSettingsResultCannotOverwriteAnotherSession(t *testing.T) {
 	app := newFullTestApp(t)
 	firstID := addBackendTestOrchestrator(t, app)
-	first := app.SessionsByAgent[firstID]
+	first := app.ws.SessionsByAgent()[firstID]
 	secondID := addBackendTestOrchestrator(t, app)
-	second := app.SessionsByAgent[secondID]
+	second := app.ws.SessionsByAgent()[secondID]
 	app.ActiveSession = second
 	app.ModelName = "second-model"
 	app.LastSettings = types.Settings{Model: "second-model"}
-	operation, err := app.PrepareMultiAgentToggle(first.SessionID)
+	operation, err := app.ws.PrepareMultiAgentToggle(first.SessionID)
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := selectedSessionSettingsResult{workspace: app.Workspace, owner: first,
+	result := selectedSessionSettingsResult{workspace: app.ws, owner: first,
 		generation: app.workspaceSwitchGen.Load(), result: operation.Run()}
 	app.applySelectedSessionSettings(result)
 	if app.ModelName != "second-model" || app.LastSettings.Model != "second-model" || app.ActiveSession != second {

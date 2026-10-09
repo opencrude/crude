@@ -11,6 +11,7 @@ import (
 	_ "modernc.org/sqlite"
 
 	"crude/memory"
+	"crude/shellport"
 	"crude/tui/cell"
 	"crude/tui/screens/memorybrowser"
 	"crude/tui/screens/termdock"
@@ -63,7 +64,7 @@ func memoryBrowserCommandMessage[Message any](t *testing.T, command tea.Cmd) Mes
 func newMemoryBrowserTestApp(t *testing.T) (*App, memorybrowser.SearchMsg) {
 	t.Helper()
 	app := newFullTestApp(t)
-	app.WorkspaceDB = memoryBrowserTestStore(t)
+	wsOf(app).WorkspaceDB = memoryBrowserTestStore(t)
 	t.Cleanup(app.resetMemoryBrowser)
 	_, command := app.toggleMemoryBrowser()
 	return app, memoryBrowserCommandMessage[memorybrowser.SearchMsg](t, command)
@@ -71,7 +72,7 @@ func newMemoryBrowserTestApp(t *testing.T) (*App, memorybrowser.SearchMsg) {
 
 func TestMemoryBrowserRetainedWorkspaceDockAndUnavailableRecovery(t *testing.T) {
 	app, request := newMemoryBrowserTestApp(t)
-	record := memoryBrowserTestRecord(t, app.WorkspaceDB, "Retained record")
+	record := memoryBrowserTestRecord(t, wsOf(app).WorkspaceDB, "Retained record")
 	result := memoryBrowserCommandMessage[memoryBrowserSearchResultMsg](t, app.handleMemoryBrowserSearch(request))
 	app.applyMemoryBrowserSearch(result)
 	browser := app.memoryBrowser
@@ -95,7 +96,7 @@ func TestMemoryBrowserRetainedWorkspaceDockAndUnavailableRecovery(t *testing.T) 
 	if !ok || selected.ID != record.ID {
 		t.Fatal("hide/reopen lost selection")
 	}
-	app.WorkspaceDB = nil
+	wsOf(app).WorkspaceDB = nil
 	result = memoryBrowserCommandMessage[memoryBrowserSearchResultMsg](t, app.handleMemoryBrowserSearch(reopened))
 	app.applyMemoryBrowserSearch(result)
 	if !app.memoryBrowserVisible() || !errors.Is(app.memoryBrowser.SearchError(), workspace.ErrMemoryUnavailable) {
@@ -105,7 +106,7 @@ func TestMemoryBrowserRetainedWorkspaceDockAndUnavailableRecovery(t *testing.T) 
 
 func TestMemoryBrowserResultsRequireOwnerSequenceEpochAndWorkspaceGeneration(t *testing.T) {
 	app, first := newMemoryBrowserTestApp(t)
-	record := memoryBrowserTestRecord(t, app.WorkspaceDB, "Current")
+	record := memoryBrowserTestRecord(t, wsOf(app).WorkspaceDB, "Current")
 	firstCommand := app.handleMemoryBrowserSearch(first)
 	latest := memoryBrowserCommandMessage[memorybrowser.SearchMsg](t, app.memoryBrowser.Refresh())
 	latestCommand := app.handleMemoryBrowserSearch(latest)
@@ -119,7 +120,7 @@ func TestMemoryBrowserResultsRequireOwnerSequenceEpochAndWorkspaceGeneration(t *
 	}
 	current := memoryBrowserCommandMessage[memoryBrowserSearchResultMsg](t, latestCommand)
 	wrong := current
-	wrong.Owner = &workspace.Workspace{}
+	wrong.Owner = shellport.Local(&workspace.Workspace{})
 	app.applyMemoryBrowserSearch(wrong)
 	if _, ok := app.memoryBrowser.Selected(); ok {
 		t.Fatal("wrong workspace owner published rows")
@@ -154,12 +155,12 @@ func TestMemoryBrowserResultsRequireOwnerSequenceEpochAndWorkspaceGeneration(t *
 
 func TestMemoryBrowserCommandsCaptureOldWorkspaceDBAndCancelAtBoundary(t *testing.T) {
 	app, request := newMemoryBrowserTestApp(t)
-	oldDatabase := app.WorkspaceDB
+	oldDatabase := wsOf(app).WorkspaceDB
 	oldRecord := memoryBrowserTestRecord(t, oldDatabase, "Old project")
 	command := app.handleMemoryBrowserSearch(request)
 	newDatabase := memoryBrowserTestStore(t)
 	memoryBrowserTestRecord(t, newDatabase, "New project")
-	app.WorkspaceDB = newDatabase
+	wsOf(app).WorkspaceDB = newDatabase
 	result := memoryBrowserCommandMessage[memoryBrowserSearchResultMsg](t, command)
 	if len(result.Records) != 1 || result.Records[0].ID != oldRecord.ID {
 		t.Fatal("queued read followed mutable Workspace into another database")
@@ -180,7 +181,7 @@ func TestMemoryBrowserCommandsCaptureOldWorkspaceDBAndCancelAtBoundary(t *testin
 
 func TestMemoryBrowserCorrectionCommandUsesCASAndPreservesConflictedDraft(t *testing.T) {
 	app, request := newMemoryBrowserTestApp(t)
-	record := memoryBrowserTestRecord(t, app.WorkspaceDB, "Conflict record")
+	record := memoryBrowserTestRecord(t, wsOf(app).WorkspaceDB, "Conflict record")
 	app.applyMemoryBrowserSearch(memoryBrowserCommandMessage[memoryBrowserSearchResultMsg](t, app.handleMemoryBrowserSearch(request)))
 	intent := app.memoryBrowser.HandleAction(ui.EventContext{}, ui.Action{ID: "memorybrowser.inspect"})
 	detailRequest := memoryBrowserCommandMessage[memorybrowser.DetailMsg](t, intent.Cmd)
@@ -189,12 +190,12 @@ func TestMemoryBrowserCorrectionCommandUsesCASAndPreservesConflictedDraft(t *tes
 	app.memoryBrowser.HandleAction(ui.EventContext{}, ui.Action{ID: "memorybrowser.correct"})
 	newer := record
 	newer.Content = "Concurrent verified correction"
-	if _, err := app.WorkspaceDB.Memory.Update(context.Background(), record.ID, newer, memory.ActorAuto, "other"); err != nil {
+	if _, err := wsOf(app).WorkspaceDB.Memory.Update(context.Background(), record.ID, newer, memory.ActorAuto, "other"); err != nil {
 		t.Fatal(err)
 	}
 	mutation := memoryBrowserCommandMessage[memorybrowser.MutationMsg](t, app.memoryBrowser.HandleAction(ui.EventContext{}, ui.Action{ID: "memorybrowser.save"}).Cmd)
 	command := app.handleMemoryBrowserMutation(mutation)
-	before, err := app.WorkspaceDB.Memory.Get(context.Background(), record.ID)
+	before, err := wsOf(app).WorkspaceDB.Memory.Get(context.Background(), record.ID)
 	if err != nil || before.Revision != 2 {
 		t.Fatalf("handler did I/O or lost revision: %#v %v", before, err)
 	}
@@ -216,7 +217,7 @@ func TestMemoryBrowserCorrectionCommandUsesCASAndPreservesConflictedDraft(t *tes
 	if !errors.Is(app.memoryBrowser.MutationError(), memory.ErrRevisionConflict) {
 		t.Fatal("conflict not surfaced in retained form")
 	}
-	actual, err := app.WorkspaceDB.Memory.Get(context.Background(), record.ID)
+	actual, err := wsOf(app).WorkspaceDB.Memory.Get(context.Background(), record.ID)
 	if err != nil || actual.Content != newer.Content || actual.Revision != 2 {
 		t.Fatal("stale correction changed durable state")
 	}
@@ -225,7 +226,7 @@ func TestMemoryBrowserCorrectionCommandUsesCASAndPreservesConflictedDraft(t *tes
 func TestMemoryBrowserNormalNarrowRootHostMountAndFocus(t *testing.T) {
 	for _, size := range []ui.Size{{W: 80, H: 24}, {W: 120, H: 40}, {W: 40, H: 24}} {
 		app, request := newMemoryBrowserTestApp(t)
-		memoryBrowserTestRecord(t, app.WorkspaceDB, "Mounted record")
+		memoryBrowserTestRecord(t, wsOf(app).WorkspaceDB, "Mounted record")
 		app.applyMemoryBrowserSearch(memoryBrowserCommandMessage[memoryBrowserSearchResultMsg](t, app.handleMemoryBrowserSearch(request)))
 		app.width, app.height = size.W, size.H
 		app.rootHost.Resize(size.W, size.H)
@@ -251,7 +252,7 @@ func TestMemoryBrowserNormalNarrowRootHostMountAndFocus(t *testing.T) {
 
 func TestMemoryBrowserTypedDispatcherExecutesOwnedCommands(t *testing.T) {
 	app, request := newMemoryBrowserTestApp(t)
-	record := memoryBrowserTestRecord(t, app.WorkspaceDB, "Dispatched record")
+	record := memoryBrowserTestRecord(t, wsOf(app).WorkspaceDB, "Dispatched record")
 	_, command := app.Update(request)
 	result := memoryBrowserCommandMessage[memoryBrowserSearchResultMsg](t, command)
 	app.Update(result)
@@ -271,7 +272,7 @@ func TestMemoryBrowserTypedDispatcherExecutesOwnedCommands(t *testing.T) {
 		t.Fatal(completion.Err)
 	}
 	app.Update(completion)
-	actual, err := app.WorkspaceDB.Memory.Get(context.Background(), record.ID)
+	actual, err := wsOf(app).WorkspaceDB.Memory.Get(context.Background(), record.ID)
 	if err != nil || actual.Revision != 2 || !actual.Pinned {
 		t.Fatalf("typed mutation not persisted: %#v %v", actual, err)
 	}
@@ -279,7 +280,7 @@ func TestMemoryBrowserTypedDispatcherExecutesOwnedCommands(t *testing.T) {
 
 func TestMemoryBrowserDetailStaleResultsAndDuplicateMutationIntent(t *testing.T) {
 	app, request := newMemoryBrowserTestApp(t)
-	record := memoryBrowserTestRecord(t, app.WorkspaceDB, "Owner checked detail")
+	record := memoryBrowserTestRecord(t, wsOf(app).WorkspaceDB, "Owner checked detail")
 	app.applyMemoryBrowserSearch(memoryBrowserCommandMessage[memoryBrowserSearchResultMsg](t, app.handleMemoryBrowserSearch(request)))
 	intent := app.memoryBrowser.HandleAction(ui.EventContext{}, ui.Action{ID: "memorybrowser.inspect"})
 	detailRequest := memoryBrowserCommandMessage[memorybrowser.DetailMsg](t, intent.Cmd)
@@ -297,7 +298,7 @@ func TestMemoryBrowserDetailStaleResultsAndDuplicateMutationIntent(t *testing.T)
 	if command == nil || app.handleMemoryBrowserMutation(mutation) != nil {
 		t.Fatal("mutation intent was submitted more than once")
 	}
-	actual, err := app.WorkspaceDB.Memory.Get(context.Background(), record.ID)
+	actual, err := wsOf(app).WorkspaceDB.Memory.Get(context.Background(), record.ID)
 	if err != nil || actual.Pinned || actual.Revision != 1 {
 		t.Fatalf("mutation handler performed Update I/O: %#v %v", actual, err)
 	}
@@ -305,7 +306,7 @@ func TestMemoryBrowserDetailStaleResultsAndDuplicateMutationIntent(t *testing.T)
 	if mutationResult.Err != nil {
 		t.Fatal(mutationResult.Err)
 	}
-	actual, err = app.WorkspaceDB.Memory.Get(context.Background(), record.ID)
+	actual, err = wsOf(app).WorkspaceDB.Memory.Get(context.Background(), record.ID)
 	if err != nil || !actual.Pinned || actual.Revision != 2 {
 		t.Fatalf("command did not commit exact revision: %#v %v", actual, err)
 	}

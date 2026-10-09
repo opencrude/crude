@@ -24,7 +24,7 @@ type toolLayoutSavedMsg struct {
 }
 
 func (app *App) loadToolLayoutCmd() tea.Cmd {
-	owner, generation, version := &workspace.Workspace{WorkspaceDB: app.WorkspaceDB}, app.workspaceSwitchGen.Load(), app.toolLayoutVersion
+	owner, generation, version := app.ws.BindToolLayout(), app.workspaceSwitchGen.Load(), app.toolLayoutVersion
 	return func() tea.Msg {
 		layout, err := owner.LoadToolLayout()
 		return toolLayoutMsg{generation: generation, version: version, layout: layout, err: err}
@@ -110,7 +110,7 @@ func (app *App) saveToolLayoutCmd() tea.Cmd {
 	}
 	layout.PanelHeights, layout.Views = maps.Clone(app.workspacePanelHeights), maps.Clone(layout.Views)
 	layout.Rail = slices.Clone(layout.Rail)
-	owner := &workspace.Workspace{WorkspaceDB: app.WorkspaceDB}
+	owner := app.ws.BindToolLayout()
 	generation, version := app.workspaceSwitchGen.Load(), app.toolLayoutVersion
 	app.toolLayoutSaving = true
 	return func() tea.Msg { return toolLayoutSavedMsg{generation, version, owner.SaveToolLayout(layout)} }

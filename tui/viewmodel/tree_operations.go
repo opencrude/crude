@@ -7,6 +7,8 @@ import (
 	"strings"
 	"time"
 
+	"crude/shellport"
+
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/filetree"
@@ -43,7 +45,7 @@ func (m *App) startNewFileInTree(dir string) {
 				return fmt.Errorf("name cannot be empty")
 			}
 			full := filepath.Join(dir, value)
-			msg := m.CreateFile(full)
+			msg := m.ws.CreateFile(full)
 			if !msg.Succeeded() {
 				return msg.Err
 			}
@@ -70,7 +72,7 @@ func (m *App) startNewFolderInTree(dir string) {
 				return fmt.Errorf("name cannot be empty")
 			}
 			full := filepath.Join(dir, value)
-			msg := m.CreateFolder(full)
+			msg := m.ws.CreateFolder(full)
 			if !msg.Succeeded() {
 				return msg.Err
 			}
@@ -103,7 +105,7 @@ func (m *App) startRenameInTree(path string) {
 			}
 			dir := filepath.Dir(path)
 			newPath := filepath.Join(dir, value)
-			msg := m.RenamePath(path, newPath)
+			msg := m.ws.RenamePath(path, newPath)
 			if !msg.Succeeded() {
 				return msg.Err
 			}
@@ -115,7 +117,13 @@ func (m *App) startRenameInTree(path string) {
 				tab              *EditorTab
 			}
 			var retargets []editorRetarget
+			_, connected := m.ws.(shellport.ClientFiles)
 			for tabPath, tab := range m.EditorState.Tabs {
+				// Shared path metadata belongs to canonical snapshot synchronization,
+				// never local Retarget (which starts a second disk watcher/LSP view).
+				if connected || tab != nil && tab.Editor != nil && tab.Editor.DocumentState().DocumentID != "" {
+					continue
+				}
 				target := ""
 				if tabPath == path {
 					target = newPath
@@ -131,8 +139,8 @@ func (m *App) startRenameInTree(path string) {
 				}
 			}
 			for _, item := range retargets {
-				if m.Documents != nil {
-					m.Documents.Cancel(item.tab.Editor.BufferID())
+				if m.ws.Documents() != nil {
+					m.ws.Documents().Cancel(item.tab.Editor.BufferID())
 				}
 				if m.BufferMgr != nil {
 					if err := m.BufferMgr.Retarget(item.oldPath, item.newPath); err != nil {
@@ -149,8 +157,8 @@ func (m *App) startRenameInTree(path string) {
 					m.EditorState.ActiveView = item.newPath
 				}
 				m.retitleEditorWindowTab(item.oldPath, item.newPath, item.tab.Editor)
-				if m.LSPMgr != nil {
-					lsp, oldFile, newFile, text := m.LSPMgr, item.oldPath, item.newPath, item.tab.Editor.Value()
+				if m.ws.LSPMgr() != nil {
+					lsp, oldFile, newFile, text := m.ws.LSPMgr(), item.oldPath, item.newPath, item.tab.Editor.Value()
 					m.startSourceControlMutation(func() tea.Msg {
 						ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 						defer cancel()
@@ -193,7 +201,11 @@ func (m *App) startDeleteInTree(path string) {
 		}
 		rel, err := filepath.Rel(path, tabPath)
 		if tabPath == path || isDir && err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			detail += "\nUnsaved editor changes will be discarded."
+			if tab.Editor.DocumentState().DocumentID != "" {
+				detail += "\nShared unsaved work is protected; deletion will be refused."
+			} else {
+				detail += "\nUnsaved editor changes will be discarded."
+			}
 			break
 		}
 	}
@@ -390,7 +402,7 @@ func (m *App) confirmTreeDelete() {
 	if path == "" {
 		return
 	}
-	msg := m.DeletePath(path)
+	msg := m.ws.DeletePath(path)
 	if !msg.Succeeded() {
 		m.Feedback.NotifyError("delete " + filepath.Base(path) + ": " + msg.Err.Error())
 		return

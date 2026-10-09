@@ -177,7 +177,7 @@ func TestEditorHorizontalWheelPaintsThroughApp(t *testing.T) {
 	} {
 		t.Run(size.name, func(t *testing.T) {
 			app := setupEditorMouseApp(t, size.w, size.h, size.sidebar)
-			app.Logger = stubLogger{}
+			wsOf(app).Logger = stubLogger{}
 			line := strings.Repeat("abcdefghijklmnopqrstuvwxyz", 20)
 			openMultiLineEditor(t, app, strings.Repeat(line+"\n", 100))
 			_, _ = app.Update(tea.WindowSizeMsg{Width: size.w, Height: size.h})

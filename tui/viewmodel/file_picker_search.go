@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/shellport"
 	"crude/tui/filetree"
 	filepickerscreen "crude/tui/screens/filepicker"
 	"crude/workspace"
@@ -70,13 +71,25 @@ func (m *App) beginPickerPathSearch(msg filepickerscreen.SearchMsg) tea.Cmd {
 	state.pathSearchHidden[msg.Target] = includeHidden
 	state.pathSearchRunning[msg.Target] = true
 	state.mu.Unlock()
+	files, connected := m.ws.(shellport.ClientFiles)
 
 	return func() tea.Msg {
-		catalog, err := workspace.ScanBrowserPaths(ctx, workspace.BrowserPathRequest{
-			Root:            root,
-			DirectoriesOnly: directoriesOnly,
-			IncludeHidden:   includeHidden,
-		})
+		var catalog workspace.BrowserCatalog
+		var err error
+		if connected {
+			catalog, err = files.CatalogFiles(ctx, includeHidden)
+			if directoriesOnly {
+				entries := catalog.Entries[:0]
+				for _, entry := range catalog.Entries {
+					if entry.IsDir {
+						entries = append(entries, entry)
+					}
+				}
+				catalog.Entries = entries
+			}
+		} else {
+			catalog, err = workspace.ScanBrowserPaths(ctx, workspace.BrowserPathRequest{Root: root, DirectoriesOnly: directoriesOnly, IncludeHidden: includeHidden})
+		}
 		state.mu.Lock()
 		query := state.pathSearchQuery[msg.Target]
 		intent := state.pathSearchIntent[msg.Target]

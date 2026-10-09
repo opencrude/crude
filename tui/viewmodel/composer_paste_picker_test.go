@@ -16,10 +16,10 @@ import (
 
 // activatePasteSession gives paste journeys a real selected agent/window tab.
 func activatePasteSession(app *App, sess *workspace.Session) {
-	if app.SessionsByAgent == nil {
-		app.SessionsByAgent = make(map[string]*workspace.Session)
+	if app.ws.SessionsByAgent() == nil {
+		wsOf(app).SessionsByAgent = make(map[string]*workspace.Session)
 	}
-	app.SessionsByAgent[sess.SessionID] = sess
+	app.ws.SessionsByAgent()[sess.SessionID] = sess
 	app.ActiveSession = sess
 	app.AddOrchestrator(sess.SessionID)
 	app.Input.SetReferenceStore(sess.RefStore)

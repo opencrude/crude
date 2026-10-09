@@ -21,7 +21,7 @@ type uploadOwner struct {
 type referenceUpload struct {
 	owner uploadOwner
 	input coreprotocol.ReferenceUploadCommand
-	store *workspace.ReferenceStore
+	store workspace.SessionReferences
 	file  *os.File
 	next  int64
 }
@@ -57,7 +57,7 @@ func (a *actor) prepareUpload(request coreprotocol.Request) (func(context.Contex
 	if err := decode(request.Payload, &in); err != nil {
 		return func(context.Context) coreprotocol.Response { return fault(request, "invalid_request", err.Error()) }, true
 	}
-	var store *workspace.ReferenceStore
+	var store workspace.SessionReferences
 	for _, owner := range a.ws.Sessions {
 		if owner.SessionID == in.SessionID {
 			store = owner.RefStore
@@ -119,7 +119,7 @@ func (m *ReferenceUploads) Close() error {
 	return nil
 }
 
-func (m *ReferenceUploads) run(ctx context.Context, owner coreprotocol.Owner, workspaceID string, store *workspace.ReferenceStore, method string, in coreprotocol.ReferenceUploadCommand) (any, error) {
+func (m *ReferenceUploads) run(ctx context.Context, owner coreprotocol.Owner, workspaceID string, store workspace.SessionReferences, method string, in coreprotocol.ReferenceUploadCommand) (any, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	key := uploadOwner{owner, workspaceID}

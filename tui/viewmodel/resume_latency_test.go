@@ -93,7 +93,7 @@ func TestProviderWaitWithLargeDiffRemainsResponsive(t *testing.T) {
 			t.Fatalf("provider-wait tick froze: %s", elapsed)
 		}
 	}
-	rows := app.AgentMgr.Get("root").State.Messages.Messages()
+	rows := app.ws.AgentMgr().Get("root").State.Messages.Messages()
 	if len(rows) == 0 || rows[len(rows)-1].LifecyclePhase != "waiting_provider" {
 		t.Fatal("wait status disappeared instead of remaining live")
 	}
@@ -107,8 +107,8 @@ func BenchmarkResumeHydration(b *testing.B) {
 	for b.Loop() {
 		b.StopTimer()
 		conversation := workspace.NewConversation()
-		app.PaneMgr.Get("root").Messages = conversation
-		app.AgentMgr.Get("root").State.Messages = conversation
+		app.ws.PaneMgr().Get("root").Messages = conversation
+		app.ws.AgentMgr().Get("root").State.Messages = conversation
 		app.subPaneProjections.GetExisting("root").renderer.SyncMessages(nil, 0)
 		b.StartTimer()
 		app.handleAppMessages(ttypes.HistoryMessagesMsg(messages))

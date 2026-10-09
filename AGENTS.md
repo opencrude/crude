@@ -269,7 +269,8 @@ No callbacks between layers. Two mechanisms only:
 | Workspace → entities | Event bus | `bus.Publish(SettingsSaved{...})` → LSP reconnects |
 
 The `app/` layer does NOT wire TUI → workspace. The TUI holds a
-reference to `*workspace.Workspace` and calls methods directly. The
+`shellport.Workspace` (see `docs/reference/shell-port.md`; `shellport.Local`
+adapts the in-process `*workspace.Workspace`) and calls methods on it. The
 workspace publishes events that the TUI subscribes to.
 
 ### Current State (what is in the code today)
@@ -283,9 +284,9 @@ second source of truth.
 
 | Area | Current state |
 |---|---|
-| `app/` | Thin CLI entry: creates workspace, bootstraps session, starts TUI. No callbacks. `app/app.go` ~270 lines. |
+| `app/` | CLI attaches an independent shell via ConnectCore; the per-user core owns application config/catalog/history and constructs retained workspaces. No in-process interactive fallback. |
 | `workspace/` | Per-project state machine (repo root, NOT `tui/workspace/`). Owns sessions, orchestrators, LSP manager, file ops, project search, local-history lifecycle, workspace DB. Zero `tui/` imports (production + tests). |
-| `tui/` | Dumb renderer + input router. Holds `*workspace.Workspace`, calls methods, subscribes to the event bus. `tui/tui.go` has no callbacks. |
+| `tui/` | Dumb renderer + input router. Holds a `shellport.Workspace`, calls methods, subscribes to the event bus. `tui/tui.go` has no callbacks. |
 | `tui/viewmodel/App` | Presentation state holder. Uses one root `ui.Host` (`rootHost`) + one shell surface (`mainSurf`), with retained per-session `deckHost`s mounted through the shell. |
 | `crude/types` | Neutral contracts package; `tui/types` is a compatibility alias. Config split done: `AppSettings` + `SessionSettings` (three inheritance levels). Workspace overrides are FIELD-level, sessions snapshot — see `docs/reference/settings.md`. |
 | `session/` | Session domain library (sessions are workspace-scoped under `~/.crude/workspaces/<hash>/sessions/`); consumed by `workspace/`. |
@@ -385,10 +386,11 @@ for the implemented shell/component architecture.
 
 ### Core/shell extraction (in progress)
 
-The product still starts one TUI-owned runtime; multi-client/server mode is not
-implemented. Follow `docs/plans/core-shell-separation.md` for the remaining
-ownership, transport and release gates. Do not attach multiple Apps to one mutable
-Workspace or claim neutral ingress alone makes that safe.
+The product CLI now attaches independent TUI processes to one per-user core via
+typed RPC. Closing a shell detaches it rather than closing sessions or the retained
+workspace; server mode retains work with zero shells. Follow
+`docs/plans/core-shell-separation.md` for remaining native-platform and release
+acceptance limits. Never attach multiple Apps to one mutable Workspace.
 
 - `App` owns selected session, model display alias and focus; `Workspace` has no
   active session. Lifecycle, backend lookup and hydration require explicit session
@@ -406,20 +408,25 @@ Workspace or claim neutral ingress alone makes that safe.
   status and request-keyed usage reduction; `AgentState.ApplyEvent` returns neutral
   effects. Root registration and cold hydration install retained canonical state,
   never a one-shot client tail. Snapshot messages detach nested attribution and
-  references. The shell still schedules ingress/ticks on its Update thread:
-  a daemon-owned serialized loop and snapshot/subscription transport are NOT yet
-  integrated. `workspace/` must not import Bubble Tea or TUI rendering.
+  references. Core actors now own semantic ingress/ticks; connected shells install
+  immutable deltas on Update and present accepted effects without reducing again.
+  `workspace/` must not import Bubble Tea or TUI rendering.
 - `lspclient/` owns the nonvisual LSP transport. Workspace installs its default
-  runtime without TUI construction. Shared live-document ownership and detach-safe
-  LSP lifetime remain release gates; moving the client package alone is not enough.
+  runtime without TUI construction. Shared documents own didOpen/didChange/save;
+  exact per-client views release only their own LSP interest. Detach never stops a
+  peer's language server or replaces canonical text with shell-provided bytes.
 - The new `core/` path owns retained workspace actors, atomic snapshot/subscription
   admission, bounded resource workers, durable mutation receipts and private framed
   client transport. `coreclient.WorkspaceView` is a detached read mirror, never a
-  fake Workspace containing runtime services. These packages are not yet the CLI
-  startup path. Read `docs/reference/core-client-protocol.md` before extending them;
-  do not advertise connected-shell, daemon or SSH journeys before actual cutover.
+  fake Workspace containing runtime services. `shellport/remote` is the only CLI
+  runtime path; `shellport.Local` remains core/test infrastructure. Read
+  `docs/reference/core-client-protocol.md` before extending it. `--ssh` selects a
+  strictly host-key-verified system-SSH connection to the fixed stdio bridge;
+  remote paths stay in frames. Ten real Linux shells, twenty retained workspaces
+  and loopback SSH have measured acceptance, not physically unlimited/efficient
+  resources or distinct-host/native-Windows acceptance.
 - `workspace.TerminalService` now owns the one `terminalvt` parser and reply source
-  before PTY reads start, including the current standalone product. `shellterm`
+  before PTY reads start in the retained core. `shellterm`
   consumes immutable rows and typed asynchronous intents; `termview` owns local
   scroll/selection/wrapping-aware copy. Never restore a second shell parser or raw
   reply-capable output feed. Input/resize use exact controller leases and ordered
@@ -427,9 +434,21 @@ Workspace or claim neutral ingress alone makes that safe.
   is shell-local. Detach revokes authority, not the PTY.
 - `workspace.DocumentService` and the editor's shared-document adapter provide
   revision-fenced live text, safe pending edits and author-specific undo. The
-  existing file-opening/save/LSP UI still needs universal client integration;
-  constructing the service alone does not migrate those consumers. `clientstate`
-  similarly supplies isolated draft CAS storage but does not migrate old drafts.
+  connected product editors use that authority for every open/edit/undo/save;
+  shell PieceTables are optimistic projections with private cursors and no source
+  watcher. SQLite current-format checkpoints plus revision-fenced operation deltas
+  and exact receipts commit before accepted edits; cold recovery is passive.
+  Stable document IDs survive durable file/directory relocation. Core file and
+  document watchers publish invalidations; shell reads/transfers use typed RPC.
+  Lost edit/save/format outcomes recover their original receipt, never replay an
+  effect. Native conflict decisions default to Keep draft; explicit Use shared
+  backs up private work and never overwrites collaborators. `document.snapshot_save`
+  is checked disk infrastructure, not another live-text authority. `clientstate`
+  persists private composers and unresolved editor evidence with profile locks,
+  epochs and CAS; old data requires backed-up manual alignment outside product
+  code. Prompt history has one core writer. Invocation account/model/provider/key
+  selectors are captured per new/cold session, not application defaults; keys are
+  write-only ephemeral and `--system` extends the canonical profile overlay.
 
 ### Root Host + Shell Surface (Phase 13.9, since 2026-08-01)
 

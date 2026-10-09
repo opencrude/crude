@@ -71,7 +71,7 @@ func TestStructuredToolFamilyLiveSQLiteHydrationParity(t *testing.T) {
 			t.Run(fmt.Sprintf("%s/%d", themeCase.name, width), func(t *testing.T) {
 				app := newFullTestApp(t)
 				app.AddOrchestrator("structured-owner")
-				state := app.AgentMgr.Get("structured-owner").State
+				state := app.ws.AgentMgr().Get("structured-owner").State
 				database := sessiondb.OpenAndMigrateAt(t.TempDir())
 				defer database.Close()
 				if err := sessiondb.CreateSessionRow(database, state.ID); err != nil {

@@ -18,7 +18,7 @@ import (
 
 func TestLatestDenseHydratedWidthReflowPaintsTailAndPreservesOtherPaneAndDraft(t *testing.T) {
 	app := newFullTestApp(t)
-	app.Logger = stubLogger{}
+	wsOf(app).Logger = stubLogger{}
 	app.Tree.Visible = false
 	_, _ = app.Update(tea.WindowSizeMsg{Width: 180, Height: 40})
 	app.AddOrchestrator("other")
@@ -101,7 +101,7 @@ func TestLatestRemainsPaintedAcrossLiveTicks(t *testing.T) {
 	defer ws.Close()
 	app.Tree.Visible = false
 	app.AddOrchestrator("owner")
-	app.AgentMgr.Get("owner").State.Running = true
+	app.ws.AgentMgr().Get("owner").State.Running = true
 	for i := range 12 {
 		app.appendAgentMessage("owner", types.ChatMessage{Role: types.RoleAssistant, Content: fmt.Sprintf("### Accepted result %d\n\nChecked state ownership and retained completed work. The draft stays untouched while browsing the plan and older messages.", i+1), Time: time.Now()})
 	}

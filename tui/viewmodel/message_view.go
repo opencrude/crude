@@ -176,11 +176,11 @@ func cloneRecovery(status *recovery.Status) *recovery.Status {
 }
 
 func (m *App) syncAgentMessages(agentID string, scroll bool) {
-	node := m.AgentMgr.Get(agentID)
+	node := m.ws.AgentMgr().Get(agentID)
 	if node == nil || node.State == nil {
 		return
 	}
-	sp := m.PaneMgr.Get(agentID)
+	sp := m.ws.PaneMgr().Get(agentID)
 	if sp == nil {
 		return
 	}
@@ -204,7 +204,7 @@ func (m *App) syncAgentMessages(agentID string, scroll bool) {
 }
 
 func (m *App) syncPaneMessages(paneID string, scroll bool) {
-	sp := m.PaneMgr.Get(paneID)
+	sp := m.ws.PaneMgr().Get(paneID)
 	if sp == nil {
 		return
 	}
@@ -223,7 +223,7 @@ func (m *App) syncPaneMessages(paneID string, scroll bool) {
 }
 
 func (m *App) appendAgentMessage(agentID string, message ttypes.ChatMessage) {
-	if m.AppendAgentMessages(agentID, []workspace.Message{workspaceMessageFromChat(message)}, false) {
+	if m.ws.AppendAgentMessages(agentID, []workspace.Message{workspaceMessageFromChat(message)}, false) {
 		m.syncAgentMessages(agentID, true)
 	}
 }
@@ -240,7 +240,7 @@ func (m *App) hydrateActiveMessages(messages []ttypes.ChatMessage) {
 	}
 	// Hydrated streams are stopped. Normalize before publishing, and export
 	// the transcript once rather than copying every growing prefix.
-	if m.AppendAgentMessages(agentID, canonical, true) {
+	if m.ws.AppendAgentMessages(agentID, canonical, true) {
 		m.syncAgentMessages(agentID, true)
 	}
 }

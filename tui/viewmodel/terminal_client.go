@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/shellport"
 	"crude/tui/rendering"
 	"crude/tui/screens/shellterm"
 	"crude/tui/ui"
@@ -14,14 +15,14 @@ import (
 )
 
 type terminalCreatedMsg struct {
-	service    *workspace.TerminalService
+	service    shellport.TerminalService
 	generation uint64
 	info       workspace.TerminalInfo
 	lease      workspace.TerminalLease
 	err        error
 }
 type terminalProjectionMsg struct {
-	service    *workspace.TerminalService
+	service    shellport.TerminalService
 	generation uint64
 	command    shellterm.Command
 	projection workspace.TerminalProjection
@@ -29,19 +30,16 @@ type terminalProjectionMsg struct {
 	err        error
 }
 
-func (m *App) terminalService() *workspace.TerminalService {
-	if m.Workspace == nil {
+func (m *App) terminalService() shellport.TerminalService {
+	if m.ws == nil {
 		return nil
 	}
-	if m.Terminals == nil && m.TermMgr != nil {
-		service, err := workspace.NewTerminalService(m.TermMgr)
-		if err != nil {
-			m.reportTerminalIOError("initialize", "", err)
-			return nil
-		}
-		m.Terminals = service
+	service, err := m.ws.EnsureTerminals()
+	if err != nil {
+		m.reportTerminalIOError("initialize", "", err)
+		return nil
 	}
-	return m.Terminals
+	return service
 }
 
 func (m *App) terminalController() workspace.TerminalController {
@@ -137,7 +135,7 @@ func (m *App) terminalRefresh(id string) tea.Cmd {
 }
 
 func (m *App) applyTerminalCreated(msg terminalCreatedMsg) tea.Cmd {
-	if msg.service != m.Terminals || msg.generation != m.workspaceSwitchGen.Load() {
+	if msg.service != m.ws.Terminals() || msg.generation != m.workspaceSwitchGen.Load() {
 		return nil
 	}
 	if msg.err != nil {
@@ -155,7 +153,7 @@ func (m *App) applyTerminalCreated(msg terminalCreatedMsg) tea.Cmd {
 }
 
 func (m *App) applyTerminalProjection(msg terminalProjectionMsg) tea.Cmd {
-	if msg.service != m.Terminals || msg.generation != m.workspaceSwitchGen.Load() {
+	if msg.service != m.ws.Terminals() || msg.generation != m.workspaceSwitchGen.Load() {
 		return nil
 	}
 	mutating := msg.command.Kind != shellterm.CommandReadRows
@@ -186,10 +184,10 @@ func (m *App) applyTerminalProjection(msg terminalProjectionMsg) tea.Cmd {
 		m.reportTerminalIOError("command", id, msg.err)
 		return nextInput
 	}
-	if m.TermMgr == nil {
+	if m.ws.TermMgr() == nil {
 		return nextInput
 	}
-	if _, exists := m.TermMgr.Get(id); !exists {
+	if _, exists := m.ws.TermMgr().Get(id); !exists {
 		return nextInput
 	}
 	screen := m.ensureTermScreen(id, msg.projection.Info.Title)

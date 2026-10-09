@@ -21,7 +21,7 @@ func TestTerminalPickerUsesMatchingSuffixNumbersAndNamedPlacement(t *testing.T) 
 	}
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 40
-	manager := app.termMgr()
+	manager := wsOf(app).TermMgr
 	t.Cleanup(func() {
 		app.discardTerminalUI()
 		manager.CloseAll()
@@ -91,7 +91,7 @@ func TestTerminalPickerActionsKeepRealIDsAfterRenumbering(t *testing.T) {
 	}
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 40
-	manager := app.termMgr()
+	manager := wsOf(app).TermMgr
 	t.Cleanup(func() {
 		app.discardTerminalUI()
 		manager.CloseAll()
@@ -134,7 +134,7 @@ func TestDockAndPromoteTerminalUsesWorkspaceDockAndOverlay(t *testing.T) {
 	}
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 40
-	mgr := app.termMgr()
+	mgr := wsOf(app).TermMgr
 	if mgr == nil {
 		t.Fatal("TermMgr missing")
 	}
@@ -200,7 +200,7 @@ func TestFloatingTerminalBlinkInvalidatesRetainedWindow(t *testing.T) {
 	}
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 40
-	mgr := app.termMgr()
+	mgr := wsOf(app).TermMgr
 	info, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{
 		Command: "/bin/cat",
 		CWD:     t.TempDir(),
@@ -250,7 +250,7 @@ func TestPromoteTwoTerminalsStacksByZOrder(t *testing.T) {
 	}
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 40
-	mgr := app.termMgr()
+	mgr := wsOf(app).TermMgr
 	first, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 20, Rows: 8})
 	if err != nil {
 		t.Fatalf("pty create: %v", err)
@@ -282,10 +282,10 @@ func TestTerminalDockAvailableWithoutAISession(t *testing.T) {
 	}
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 40
-	app.AgentMgr = workspace.NewAgentManager()
-	app.AgentView = NewAgentViewState(app.AgentMgr)
+	wsOf(app).AgentMgr = workspace.NewAgentManager()
+	app.AgentView = NewAgentViewState(app.ws.AgentMgr())
 	app.ActiveSession = nil
-	mgr := app.termMgr()
+	mgr := wsOf(app).TermMgr
 	info, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 20, Rows: 8})
 	if err != nil {
 		t.Fatalf("pty create: %v", err)
@@ -314,7 +314,7 @@ func TestTerminalDockTabsAndClose(t *testing.T) {
 	}
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 40
-	mgr := app.termMgr()
+	mgr := wsOf(app).TermMgr
 	a, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 20, Rows: 8, Title: "one"})
 	if err != nil {
 		t.Fatalf("pty create: %v", err)
@@ -390,7 +390,7 @@ func TestTerminalDockFocusSendsKeysToPTYNotQuit(t *testing.T) {
 	}
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 40
-	mgr := app.termMgr()
+	mgr := wsOf(app).TermMgr
 	info, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 20, Rows: 8})
 	if err != nil {
 		t.Fatalf("pty create: %v", err)
@@ -412,7 +412,7 @@ func TestTerminalDockFocusStaysOnVTAndHasNoActionBar(t *testing.T) {
 	}
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 40
-	mgr := app.termMgr()
+	mgr := wsOf(app).TermMgr
 	info, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 20, Rows: 8})
 	if err != nil {
 		t.Fatalf("pty create: %v", err)
@@ -445,7 +445,7 @@ func TestTermDockHeaderIconsFloatAndCloseViaMouse(t *testing.T) {
 	}
 	app := newFullTestApp(t)
 	app.width, app.height = 160, 40
-	mgr := app.termMgr()
+	mgr := wsOf(app).TermMgr
 	info, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 20, Rows: 8})
 	if err != nil {
 		t.Fatalf("pty create: %v", err)
@@ -508,7 +508,7 @@ func TestTermDockLayoutSitsRightOfSidebar(t *testing.T) {
 	}
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 40
-	mgr := app.termMgr()
+	mgr := wsOf(app).TermMgr
 	info, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 20, Rows: 8})
 	if err != nil {
 		t.Fatalf("pty create: %v", err)

@@ -62,7 +62,11 @@ Read that first; this index only organizes the reference material.
   — durable agents/runs, automatic directed delivery, report revisions, live-only
   broadcast, explicit context admission, Board history and recovery.
 - [Core client protocol](reference/core-client-protocol.md) — implemented typed
-  transport, retained actors and resource APIs; not yet a public connected CLI.
+  connected CLI, retained actors, shared editors and SSH, with explicit transfer,
+  native-platform, distinct-host and performance acceptance limits.
+- [Shell port](reference/shell-port.md) — the `shellport.Workspace` interface the
+  TUI consumes instead of `*workspace.Workspace`: sub-interface layout, call
+  counts, mutation/RPC-ability inventory and the matching `coreprotocol` methods.
 - [In-app terminals](reference/in-app-terminals.md) — the embedded terminal
   multiplexer: libghostty-vt PTY engine, pinned Ghostty environment.
 - [Performance baselines](reference/performance-baselines.md) — recorded paint
@@ -79,6 +83,9 @@ Read that first; this index only organizes the reference material.
 
 ### Guides
 
+- [Core and shell workflows](guides/core-shell-workflows.md) — local/SSH commands,
+  shared-editor recovery, authoritative source owners and review acceptance limits.
+
 - [Component authoring](guides/component-authoring.md) — recipes for building
   TUI screens with the native `tui/ui` component system.
 - [Capability workflows](guides/capability-workflows.md) — manual Skills/MCP,
@@ -90,7 +97,7 @@ Read that first; this index only organizes the reference material.
 
 - [Core and shell separation](plans/core-shell-separation.md) — active migration
   to a single runtime authority with independent local/remote TUI clients;
-  multi-client release acceptance remains outstanding.
+  remaining native, distinct-host and final performance/release gates.
 - [LSP and runtime repair handoff](plans/lsp-runtime-handoff.md) — paused LSP
   integration and restart-first runtime repair, with preserved child evidence.
 

@@ -29,7 +29,7 @@ func TestActiveAgentConfirmationStaysInline(t *testing.T) {
 	app.AddOrchestrator("root")
 	session := &workspace.Session{SessionID: "root-session"}
 	app.ActiveSession = session
-	app.SessionsByAgent = map[string]*workspace.Session{"root": session}
+	wsOf(app).SessionsByAgent = map[string]*workspace.Session{"root": session}
 	app.paintShellFrame()
 	app.enqueueAgentConfirmation(agentPromptRequest{kind: agentPromptConfirmation, agentID: "root", blockID: "inline", question: "Allow write?"})
 	projection := app.activeSessionProjection()
@@ -47,10 +47,10 @@ func TestSubAgentConfirmationRoutesThroughOwningSession(t *testing.T) {
 	app.AddOrchestrator("root")
 	session := &workspace.Session{SessionID: "root-session"}
 	app.ActiveSession = session
-	app.SessionsByAgent = map[string]*workspace.Session{"root": session}
-	pane := app.PaneMgr.GetOrCreate("child", workspace.PaneAgent, "child")
-	childState := workspace.NewAgentState("child", pane.Messages, app.Logger)
-	app.AgentMgr.AddSubAgent("child", "root", "Child", "model", "researcher", childState)
+	wsOf(app).SessionsByAgent = map[string]*workspace.Session{"root": session}
+	pane := app.ws.PaneMgr().GetOrCreate("child", workspace.PaneAgent, "child")
+	childState := workspace.NewAgentState("child", pane.Messages, app.ws.Logger())
+	app.ws.AgentMgr().AddSubAgent("child", "root", "Child", "model", "researcher", childState)
 	app.syncAgentWindowTabs()
 	app.switchToAgentView("child")
 	app.paintShellFrame()

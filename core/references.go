@@ -73,7 +73,7 @@ func (a *actor) prepareReferences(request coreprotocol.Request) (func(context.Co
 	}, true
 }
 
-func runReferenceCommand(store *workspace.ReferenceStore, method string, in coreprotocol.ReferenceCommand) (any, error) {
+func runReferenceCommand(store workspace.SessionReferences, method string, in coreprotocol.ReferenceCommand) (any, error) {
 	referenceCommandMu.Lock()
 	defer referenceCommandMu.Unlock()
 	if method == coreprotocol.ReferenceList {

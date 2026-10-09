@@ -49,7 +49,7 @@ type capabilitySnapshotMsg struct {
 }
 
 func (app *App) capabilitySnapshotCmd() tea.Cmd {
-	owner, generation := app.Workspace, app.workspaceSwitchGen.Load()
+	owner, generation := app.ws, app.workspaceSwitchGen.Load()
 	if owner == nil {
 		return nil
 	}
@@ -130,7 +130,7 @@ func (app *App) projectLauncherCapabilities(snapshot captypes.Snapshot) {
 	}
 	bindings := make([]captypes.AgentBinding, 0, len(snapshot.Bindings))
 	for _, binding := range snapshot.Bindings {
-		if app.AgentTurnActive(binding.AgentID) {
+		if app.ws.AgentTurnActive(binding.AgentID) {
 			bindings = append(bindings, binding)
 		}
 	}
@@ -150,14 +150,14 @@ func (app *App) launcherCapabilitiesCmd(now time.Time) tea.Cmd {
 	// Settings and capability sidebars also observe this workspace. An active
 	// agent removes the launcher screen; only its optional projection depends
 	// on that screen, never scheduling the shared runtime observation.
-	if app.Workspace == nil || app.launcherCapabilityCancel != nil || now.Sub(app.launcherCapabilityAt) < 2*time.Second {
+	if app.ws == nil || app.launcherCapabilityCancel != nil || now.Sub(app.launcherCapabilityAt) < 2*time.Second {
 		return nil
 	}
 	app.launcherCapabilityAt = now
 	app.launcherCapabilitySequence++
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	app.launcherCapabilityCancel = cancel
-	owner, screen, generation, sequence := app.Workspace, app.launcherScreen, app.workspaceSwitchGen.Load(), app.launcherCapabilitySequence
+	owner, screen, generation, sequence := app.ws, app.launcherScreen, app.workspaceSwitchGen.Load(), app.launcherCapabilitySequence
 	return func() tea.Msg {
 		defer cancel()
 		snapshot, err := owner.CapabilityRuntimeSnapshot(ctx)
@@ -242,7 +242,7 @@ func (app *App) capabilityRequestCmd(message settingsui.CapabilityRequestMsg) te
 		return func() tea.Msg { return result }
 	}
 	if message.Action.Operation == "use" {
-		agent := app.AgentMgr.Get(app.activeAgentTabID())
+		agent := app.ws.AgentMgr().Get(app.activeAgentTabID())
 		if agent == nil || !agent.IsOrchestrator() {
 			result.Err = fmt.Errorf("select a root agent before staging a skill")
 			return func() tea.Msg { return result }
@@ -280,7 +280,7 @@ func (app *App) capabilityRequestCmd(message settingsui.CapabilityRequestMsg) te
 			return capabilityContextMsg{generation: generation, owner: owner, agentID: agentID, draft: draft, reference: reference, result: result}
 		}
 	}
-	owner := app.Workspace
+	owner := app.ws
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
 	if app.capabilityOperations == nil {
 		app.capabilityOperations = make(map[uint64]capabilityOperation)
@@ -346,7 +346,7 @@ func (app *App) invokeSkillWithRefs(remainder, draft string, refIDs []string) te
 		app.Feedback.NotifyError("Select an active agent and a source-qualified skill identity")
 		return nil
 	}
-	owner, generation := app.Workspace, app.workspaceSwitchGen.Load()
+	owner, generation := app.ws, app.workspaceSwitchGen.Load()
 	app.skillInvocationSequence++
 	sequence := app.skillInvocationSequence
 	draftRevision := app.Input.DraftRevision()

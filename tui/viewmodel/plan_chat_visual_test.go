@@ -28,7 +28,7 @@ func TestPlanChatVisualAcceptance(t *testing.T) {
 	defer ws.Close()
 	app.Tree.Visible = false
 	app.AddOrchestrator("visual-plan")
-	state := app.AgentMgr.Get("visual-plan").State
+	state := app.ws.AgentMgr().Get("visual-plan").State
 	state.Running = true
 	for i := range 12 {
 		state.Messages.AppendMessage(workspace.Message{Role: types.RoleAssistant, Content: fmt.Sprintf("### Accepted result %d\n\nChecked state ownership and retained completed work. The draft stays untouched while browsing the plan and older messages.", i+1), Time: time.Now()})
@@ -41,7 +41,7 @@ func TestPlanChatVisualAcceptance(t *testing.T) {
 		p.Steps[i].Text = names[i]
 	}
 	p.Current = []activity.Step{p.Steps[1]}
-	app.Status.SetAgent(types.AgentStatusSnapshot{Ref: types.ResourceRef{ID: "visual-plan"}, Phase: types.AgentTool, Detail: "Working"})
+	wsOf(app).Status.SetAgent(types.AgentStatusSnapshot{Ref: types.ResourceRef{ID: "visual-plan"}, Phase: types.AgentTool, Detail: "Working"})
 	model := &planChatVisualModel{App: app, t: t, plan: p}
 	program := tea.NewProgram(model, tea.WithWidthMethod(ansi.GraphemeWidth))
 	app.SetProgram(program)

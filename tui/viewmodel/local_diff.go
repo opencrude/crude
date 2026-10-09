@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/shellport"
 	"crude/tui/editor"
 	"crude/tui/screens/diffview"
 	"crude/tui/screens/localdiff"
@@ -20,9 +21,10 @@ import (
 type localDiffBaseline string
 
 const (
-	localDiffDisk  localDiffBaseline = "disk"
-	localDiffSaved localDiffBaseline = "saved"
-	localDiffLimit                   = 64 << 20
+	localDiffDisk   localDiffBaseline = "disk"
+	localDiffSaved  localDiffBaseline = "saved"
+	localDiffShared localDiffBaseline = "shared"
+	localDiffLimit                    = 64 << 20
 )
 
 // A local comparison owns immutable evidence, never another live buffer. Tab
@@ -82,6 +84,9 @@ func (m *App) openLocalDiff(ed *editor.Editor, baseline localDiffBaseline) tea.C
 		screen := localdiff.NewWithID(m.Theme, ui.ComponentID(fmt.Sprintf("localdiff/%d", tab.ID)))
 		screen.SetFocusHandler(m.rootHost.Focus)
 		view = &localDiffView{tab: tab.ID, returnTab: returnTab, source: ed, sourceID: ed.BufferID(), baseline: baseline, screen: screen}
+		if baseline == localDiffShared {
+			screen.SetRefreshEnabled(false)
+		}
 		m.localDiffs[tab.ID] = view
 	}
 	m.FocusStack.Clear()
@@ -102,6 +107,10 @@ func (m *App) localDiffSourceLive(view *localDiffView) bool {
 func (m *App) prepareLocalDiff(view *localDiffView) tea.Cmd {
 	if !m.localDiffSourceLive(view) {
 		view.screen.SetError(errors.New("source editor is closed; this snapshot is retained, but cannot be refreshed"))
+		return nil
+	}
+	if view.baseline == localDiffShared {
+		view.screen.SetNotice("Immutable shared/private comparison · reopen Resolve Shared Editor Changes for current versions")
 		return nil
 	}
 	if view.cancel != nil {
@@ -125,13 +134,18 @@ func (m *App) prepareLocalDiff(view *localDiffView) tea.Cmd {
 		saved = buffer.SavedBytes()
 	}
 	msg := localDiffPreparedMsg{owner: view, sequence: view.sequence, generation: m.workspaceSwitchGen.Load(), revision: snapshot.Revision, diskGeneration: view.source.DiskGeneration()}
+	files, remote := m.ws.(shellport.ClientFiles)
 	return func() tea.Msg {
 		defer cancel()
 		before, err := saved, ctx.Err()
 		label := "Saved version"
 		if err == nil && baseline == localDiffDisk {
 			label = "Disk snapshot"
-			before, err = readLocalDiffDisk(ctx, snapshot.Path)
+			if remote {
+				before, err = files.ReadExternalClientFile(ctx, snapshot.Path)
+			} else {
+				before, err = readLocalDiffDisk(ctx, snapshot.Path)
+			}
 		}
 		if err == nil && (len(before) > localDiffLimit || len(snapshot.Data) > localDiffLimit) {
 			err = errors.New("comparison exceeds the 64 MiB per-version limit")
@@ -203,6 +217,9 @@ func (m *App) applyLocalDiffPrepared(msg localDiffPreparedMsg) {
 // layout/paint, and never silently replace the evidence while the user reads it.
 func (m *App) syncLocalDiffFreshness() {
 	for _, view := range m.localDiffs {
+		if view.baseline == localDiffShared {
+			continue
+		}
 		notice := "Read-only snapshot · Refresh to compare the latest versions"
 		switch {
 		case !m.localDiffSourceLive(view):

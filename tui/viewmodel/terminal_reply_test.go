@@ -41,7 +41,7 @@ func TestTerminalReplyStormDoesNotDeadlockOrReenterBus(t *testing.T) {
 		t.Fatalf("query replies missing/duplicated: %q", text)
 	}
 	bus := workspace.NewEventBus()
-	app.TermMgr.SetEventBus(bus)
+	wsOf(app).TermMgr.SetEventBus(bus)
 	bus.SetSink(programMessageSink{program: tea.NewProgram(noopTeaModel{})})
 	defer bus.SetSink(nil)
 	done := make(chan struct{})

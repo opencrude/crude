@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	tea "charm.land/bubbletea/v2"
+	"crude/shellport"
 	"crude/tui/editor"
 	"crude/tui/screens/operationissue"
 	settingsui "crude/tui/settings"
@@ -32,7 +33,7 @@ func (m *App) showOperationFailure(title, detail string) {
 }
 
 func (m *App) presentOperationIssue(issue types.OperationIssue) {
-	m.notifyStatus(types.SeverityError, "operation", issue.Title, strings.Join([]string{issue.Summary, issue.Detail, issue.Guidance, issue.Path}, "\n\n"), types.ResourceRef{Kind: types.ResourceWorkspace, ID: m.RootPath})
+	m.notifyStatus(types.SeverityError, "operation", issue.Title, strings.Join([]string{issue.Summary, issue.Detail, issue.Guidance, issue.Path}, "\n\n"), types.ResourceRef{Kind: types.ResourceWorkspace, ID: m.ws.RootPath()})
 	m.pendingOperationIssues = append(m.pendingOperationIssues, issue)
 	m.showNextOperationIssue()
 }
@@ -47,7 +48,7 @@ func (m *App) showNextOperationIssue() {
 	switch issue.Target {
 	case types.RepairAccounts:
 		label = "Review accounts"
-		if len(m.AllAccounts()) == 0 {
+		if len(m.ws.AllAccounts()) == 0 {
 			label = "Add account"
 		}
 	case types.RepairMainAgent:
@@ -96,7 +97,7 @@ func (m *App) handleOperationIssueAction(msg operationissue.ActionMsg) tea.Cmd {
 	case types.RepairMainAgent:
 		m.openApplicationMainAgent()
 	case types.RepairSessionAccount:
-		if m.ActiveSession != nil && m.BackendSession(m.ActiveSession.SessionID) != nil && len(m.AllAccounts()) > 0 {
+		if m.ActiveSession != nil && m.ws.BackendSession(m.ActiveSession.SessionID) != nil && len(m.ws.AllAccounts()) > 0 {
 			return m.openSessionAccountPicker()
 		}
 		m.openApplicationAccounts()
@@ -112,6 +113,13 @@ func (m *App) handleOperationIssueAction(msg operationissue.ActionMsg) tea.Cmd {
 			}
 		}
 	case types.RepairConfigFile:
+		if _, remote := m.ws.(shellport.ClientFiles); remote {
+			cmd, err := m.openEditorTab(issue.Path)
+			if err != nil {
+				m.showOperationFailure("Config file could not be opened", err.Error())
+			}
+			return cmd
+		}
 		if m.BufferMgr == nil {
 			m.showOperationFailure("Config editor unavailable", "The document service is not initialized. Your original configuration is unchanged.")
 			return nil

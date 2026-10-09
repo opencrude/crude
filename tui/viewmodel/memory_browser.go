@@ -10,16 +10,16 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/memory"
+	"crude/shellport"
 	memorybrowser "crude/tui/screens/memorybrowser"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
-	"crude/workspace"
 )
 
 const memoryBrowserTimeout = 5 * time.Second
 
 type memoryBrowserController struct {
-	owner           *workspace.Workspace
+	owner           shellport.Workspace
 	generation      uint64
 	searchCancel    context.CancelFunc
 	detailCancel    context.CancelFunc
@@ -33,7 +33,7 @@ var memoryBrowserControllers sync.Map
 
 type memoryBrowserSearchResultMsg struct {
 	Request             memorybrowser.SearchMsg
-	Owner               *workspace.Workspace
+	Owner               shellport.Workspace
 	WorkspaceGeneration uint64
 	Records             []memory.ScoredRecord
 	Episodes            []memory.Episode
@@ -42,7 +42,7 @@ type memoryBrowserSearchResultMsg struct {
 
 type memoryBrowserDetailResultMsg struct {
 	Request             memorybrowser.DetailMsg
-	Owner               *workspace.Workspace
+	Owner               shellport.Workspace
 	WorkspaceGeneration uint64
 	Detail              memorybrowser.DetailData
 	Err                 error
@@ -50,18 +50,18 @@ type memoryBrowserDetailResultMsg struct {
 
 type memoryBrowserMutationResultMsg struct {
 	Request             memorybrowser.MutationMsg
-	Owner               *workspace.Workspace
+	Owner               shellport.Workspace
 	WorkspaceGeneration uint64
 	Record              memory.Record
 	Err                 error
 }
 
 func (m *App) memoryBrowserController() *memoryBrowserController {
-	value, loaded := memoryBrowserControllers.LoadOrStore(m, &memoryBrowserController{owner: m.Workspace, generation: m.workspaceSwitchGen.Load()})
+	value, loaded := memoryBrowserControllers.LoadOrStore(m, &memoryBrowserController{owner: m.ws, generation: m.workspaceSwitchGen.Load()})
 	controller := value.(*memoryBrowserController)
-	if loaded && (controller.owner != m.Workspace || controller.generation != m.workspaceSwitchGen.Load()) {
+	if loaded && (controller.owner != m.ws || controller.generation != m.workspaceSwitchGen.Load()) {
 		controller.cancel()
-		controller.owner, controller.generation = m.Workspace, m.workspaceSwitchGen.Load()
+		controller.owner, controller.generation = m.ws, m.workspaceSwitchGen.Load()
 	}
 	return controller
 }
@@ -148,21 +148,21 @@ func (m *App) syncMemoryBrowserLifecycle() {
 	}
 	if value, ok := memoryBrowserControllers.Load(m); ok {
 		controller := value.(*memoryBrowserController)
-		if controller.owner != m.Workspace || controller.generation != m.workspaceSwitchGen.Load() {
+		if controller.owner != m.ws || controller.generation != m.workspaceSwitchGen.Load() {
 			m.resetMemoryBrowser()
 		}
 	}
 }
 
-func (m *App) ownsMemoryBrowserResult(owner *workspace.Workspace, generation uint64, target *memorybrowser.Screen) bool {
-	return owner == m.Workspace && generation == m.workspaceSwitchGen.Load() && target == m.memoryBrowser && m.memoryBrowserVisible()
+func (m *App) ownsMemoryBrowserResult(owner shellport.Workspace, generation uint64, target *memorybrowser.Screen) bool {
+	return owner == m.ws && generation == m.workspaceSwitchGen.Load() && target == m.memoryBrowser && m.memoryBrowserVisible()
 }
 
-func memoryBrowserWorkspace(owner *workspace.Workspace) *workspace.Workspace {
+func memoryBrowserWorkspace(owner shellport.Workspace) shellport.MemoryStore {
 	if owner == nil {
 		return nil
 	}
-	return &workspace.Workspace{WorkspaceDB: owner.WorkspaceDB}
+	return owner.BindMemory()
 }
 
 func (m *App) memoryBrowserOwnsFocus(id ui.ComponentID) bool {
@@ -183,7 +183,7 @@ func (m *App) handleMemoryBrowserSearch(msg memorybrowser.SearchMsg) tea.Cmd {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), memoryBrowserTimeout)
 	controller.searchCancel = cancel
-	owner, generation := m.Workspace, m.workspaceSwitchGen.Load()
+	owner, generation := m.ws, m.workspaceSwitchGen.Load()
 	service := memoryBrowserWorkspace(owner)
 	return func() tea.Msg {
 		defer cancel()
@@ -220,7 +220,7 @@ func (m *App) handleMemoryBrowserDetail(msg memorybrowser.DetailMsg) tea.Cmd {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), memoryBrowserTimeout)
 	controller.detailCancel = cancel
-	owner, generation := m.Workspace, m.workspaceSwitchGen.Load()
+	owner, generation := m.ws, m.workspaceSwitchGen.Load()
 	service := memoryBrowserWorkspace(owner)
 	return func() tea.Msg {
 		defer cancel()
@@ -259,7 +259,7 @@ func (m *App) handleMemoryBrowserMutation(msg memorybrowser.MutationMsg) tea.Cmd
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), memoryBrowserTimeout)
 	controller.mutationCancel = cancel
-	owner, generation := m.Workspace, m.workspaceSwitchGen.Load()
+	owner, generation := m.ws, m.workspaceSwitchGen.Load()
 	service := memoryBrowserWorkspace(owner)
 	return func() tea.Msg {
 		defer cancel()

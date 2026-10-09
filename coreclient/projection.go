@@ -22,18 +22,19 @@ type WorkspaceView struct {
 	Logger                                   workspace.Logger
 	AgentMgr                                 *workspace.AgentManager
 	PaneMgr                                  *workspace.PaneManager
-	Sessions                                 []*Session
-	SessionsByID, SessionsByAgent            map[string]*Session
+	Sessions                                 []*workspace.Session
+	SessionsByID, SessionsByAgent            map[string]*workspace.Session
 	InitialSettings                          types.Settings
 	revision                                 uint64
 	agents                                   map[string]workspace.AgentSnapshot
 	membership                               map[string]map[string]bool
 	appSettings                              types.AppSettings
+	connectionIssues                         map[string]string
 }
 
 func NewWorkspaceView(client *Client, snapshot coreprotocol.WorkspaceSnapshot) (*WorkspaceView, error) {
 	v := &WorkspaceView{Client: client, AgentMgr: workspace.NewAgentManager(), PaneMgr: workspace.NewPaneManager(),
-		SessionsByID: make(map[string]*Session), SessionsByAgent: make(map[string]*Session),
+		SessionsByID: make(map[string]*workspace.Session), SessionsByAgent: make(map[string]*workspace.Session),
 		agents: make(map[string]workspace.AgentSnapshot), membership: make(map[string]map[string]bool)}
 	if err := v.InstallSnapshot(snapshot); err != nil {
 		return nil, err
@@ -102,36 +103,75 @@ func (v *WorkspaceView) InstallSnapshot(snapshot coreprotocol.WorkspaceSnapshot)
 	v.ID, v.RootPath, v.Username, v.StartTime = detached.ID, detached.Root, detached.Username, detached.StartedAt
 	v.InitialSettings = types.Settings{Theme: detached.Settings.Theme, Editor: detached.Settings.Editor, UI: detached.Settings.UI, Font: detached.Settings.Font}
 	v.appSettings = v.InitialSettings.AppPart()
-	sessions := make([]*Session, 0, len(detached.Sessions))
-	for _, s := range detached.Sessions {
+	v.installSessions(detached.Sessions)
+	if _, err := v.installChanges(changes); err != nil {
+		return err
+	}
+	v.InitialModelName = ""
+	if len(v.Sessions) > 0 {
+		v.InitialModelName = v.Sessions[0].Settings.Effective.Model
+	}
+	return nil
+}
+
+// InstallSessions reconciles the session set without transcripts, retaining
+// surviving session identities and their reference replicas.
+func (v *WorkspaceView) InstallSessions(snapshots []coreprotocol.SessionSnapshot) error {
+	ids := make(map[string]bool)
+	for _, s := range snapshots {
+		if s.ID == "" || ids[s.ID] {
+			return fmt.Errorf("%w: invalid session", ErrResync)
+		}
+		ids[s.ID] = true
+	}
+	detached, err := detach(snapshots)
+	if err != nil {
+		return err
+	}
+	v.installSessions(detached)
+	v.rebindSessions()
+	return nil
+}
+
+func (v *WorkspaceView) installSessions(snapshots []coreprotocol.SessionSnapshot) {
+	ids := make(map[string]bool, len(snapshots))
+	sessions := make([]*workspace.Session, 0, len(snapshots))
+	v.connectionIssues = make(map[string]string)
+	for _, s := range snapshots {
+		ids[s.ID] = true
+		if s.ConnectionIssue != "" {
+			v.connectionIssues[s.ID] = s.ConnectionIssue
+		}
 		owner := v.SessionsByID[s.ID]
 		if owner == nil {
-			owner = &Session{SessionID: s.ID}
+			owner = workspace.NewReplicaSession(s.ID, nil)
 			v.SessionsByID[s.ID] = owner
 		}
-		owner.install(s, v.InitialSettings)
+		v.installSession(owner, s, v.InitialSettings)
 		sessions = append(sessions, owner)
 	}
 	for id := range v.SessionsByID {
-		if !sessionIDs[id] {
+		if !ids[id] {
 			delete(v.SessionsByID, id)
 		}
 	}
 	v.Sessions = sessions
-	if _, err := v.installChanges(changes); err != nil {
-		return err
-	}
 	for _, s := range sessions {
 		s.AgentState = nil
 		if node := v.AgentMgr.Get(s.AgentID); node != nil {
 			s.AgentState = node.State
 		}
 	}
-	v.InitialModelName = ""
-	if len(sessions) > 0 {
-		v.InitialModelName = sessions[0].Settings.Effective.Model
+}
+
+// rebindSessions recomputes agent ownership after a session-set change.
+func (v *WorkspaceView) rebindSessions() {
+	v.SessionsByAgent = make(map[string]*workspace.Session, len(v.agents))
+	for id, a := range v.agents {
+		if s := v.SessionsByID[a.SessionID]; s != nil {
+			v.SessionsByAgent[id] = s
+		}
 	}
-	return nil
 }
 
 // ApplyChanges installs committed facts exactly once. Conversation revisions
@@ -280,6 +320,7 @@ func (v *WorkspaceView) installChanges(changes coreprotocol.AgentChangesResult) 
 	changed := append([]string(nil), changes.Removed...)
 	for _, id := range changes.Removed {
 		v.AgentMgr.Remove(id)
+		v.PaneMgr.Remove(id)
 		delete(v.agents, id)
 		delete(v.membership, id)
 	}
@@ -307,6 +348,12 @@ func (v *WorkspaceView) installChanges(changes coreprotocol.AgentChangesResult) 
 			}
 			node.Label, node.Model, node.Category = a.Label, a.Model, a.Category
 			node.State.InstallSnapshot(a)
+			pane := v.PaneMgr.GetOrCreate(a.ID, workspace.PaneAgent, a.Label)
+			pane.Messages = node.State.Messages
+			pane.Title, pane.Done, pane.Status = a.Label, a.Completed, a.Status
+			if a.Usage.InputTotal.Known && a.Usage.Output.Known {
+				pane.TokenCount = int(a.Usage.InputTotal.Value + a.Usage.Output.Value)
+			}
 			// Bodies belong only to Conversation, not a second retained snapshot.
 			a.Messages = nil
 			v.agents[a.ID] = a
@@ -327,7 +374,7 @@ func (v *WorkspaceView) installChanges(changes coreprotocol.AgentChangesResult) 
 		pending = next
 	}
 	v.revision = changes.Revision
-	v.SessionsByAgent = make(map[string]*Session, len(v.agents))
+	v.SessionsByAgent = make(map[string]*workspace.Session, len(v.agents))
 	for id, a := range v.agents {
 		if s := v.SessionsByID[a.SessionID]; s != nil {
 			v.SessionsByAgent[id] = s
@@ -366,8 +413,8 @@ func cloneTheme(theme types.ThemeSettings) types.ThemeSettings {
 	}
 	return theme
 }
-func (v *WorkspaceView) AppDefaults() types.AppSettings     { return v.LoadAppSettings() }
-func (v *WorkspaceView) SessionForAgent(id string) *Session { return v.SessionsByAgent[id] }
+func (v *WorkspaceView) AppDefaults() types.AppSettings               { return v.LoadAppSettings() }
+func (v *WorkspaceView) SessionForAgent(id string) *workspace.Session { return v.SessionsByAgent[id] }
 func (v *WorkspaceView) AgentActivity(id string) types.AgentActivityView {
 	result := v.agents[id].Activity
 	if result.Plan != nil {
@@ -398,7 +445,27 @@ func (v *WorkspaceView) AgentTurnActive(id string) bool {
 	node := v.AgentMgr.Get(id)
 	return node != nil && node.IsActive()
 }
-func (v *WorkspaceView) YoloForAgent(id string) bool   { return v.agents[id].Yolo }
+func (v *WorkspaceView) YoloForAgent(id string) bool { return v.agents[id].Yolo }
+
+// SetYolo reflects a requested YOLO change across the owning root's subtree
+// until the core's next delta confirms or replaces it.
+func (v *WorkspaceView) SetYolo(id string, enabled bool) {
+	root := v.AgentMgr.OrchestratorFor(id)
+	if root == nil {
+		return
+	}
+	var visit func(*workspace.AgentNode)
+	visit = func(node *workspace.AgentNode) {
+		if snapshot, ok := v.agents[node.ID]; ok {
+			snapshot.Yolo = enabled
+			v.agents[node.ID] = snapshot
+		}
+		for _, child := range node.Children {
+			visit(child)
+		}
+	}
+	visit(root)
+}
 func (v *WorkspaceView) AgentNameFor(id string) string { return v.agents[id].Label }
 
 // UsageSummary rolls up disjoint agent summaries. Context and model selection
@@ -494,4 +561,14 @@ func combineConfidence(a, b types.ValueConfidence) types.ValueConfidence {
 		return b
 	}
 	return a
+}
+
+// SessionConnectionIssue is the core's repair reason for an open session.
+func (v *WorkspaceView) SessionConnectionIssue(sessionID string) string {
+	return v.connectionIssues[sessionID]
+}
+
+// SessionSettingsRevision fences the next settings mutation for a session.
+func (v *WorkspaceView) SessionSettingsRevision(sessionID string) uint64 {
+	return v.SessionsByID[sessionID].SettingsRevision()
 }

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"crude/shellport"
 	"crude/tui/screens/activitybar"
 	"crude/tui/surface"
 	"crude/tui/ui"
@@ -70,7 +71,7 @@ func TestRuntimeCapabilityObservationWithActiveAgentAndNoLauncherScreen(t *testi
 	app := newFullTestApp(t)
 	app.width, app.height = 160, 40
 	projectDir := t.TempDir()
-	app.Workspace = workspace.NewWorkspace(projectDir, "test-model", "tester", types.Settings{}, stubLogger{})
+	app.ws = shellport.Local(workspace.NewWorkspace(projectDir, "test-model", "tester", types.Settings{}, stubLogger{}))
 	skillDir := filepath.Join(projectDir, "agent-review")
 	if err := os.MkdirAll(skillDir, 0o755); err != nil {
 		t.Fatal(err)
@@ -78,7 +79,7 @@ func TestRuntimeCapabilityObservationWithActiveAgentAndNoLauncherScreen(t *testi
 	if err := os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("---\nname: agent-review\ndescription: Agent-installed review workflow.\n---\nReview the exact evidence.\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	snapshot, _, _, err := app.CapabilityAction(t.Context(), captypes.Action{
+	snapshot, _, _, err := app.ws.CapabilityAction(t.Context(), captypes.Action{
 		Operation: "add-local",
 		Kind:      captypes.KindSkill,
 		Scope:     captypes.ScopeWorkspace,

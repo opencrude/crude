@@ -70,7 +70,7 @@ func TestTerminalOutputMaterializesScreenBeforeExplicitRegistration(t *testing.T
 		t.Skip("in-app PTYs are unix-only")
 	}
 	app := newTestApp(t)
-	mgr := app.termMgr()
+	mgr := wsOf(app).TermMgr
 	info, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{
 		Command: "/bin/cat",
 		CWD:     t.TempDir(),
@@ -106,7 +106,7 @@ func TestFloatingTerminalBellUsesFrameAttentionIcon(t *testing.T) {
 	}
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 40
-	mgr := app.termMgr()
+	mgr := wsOf(app).TermMgr
 	info, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{
 		Command: "/bin/cat",
 		CWD:     t.TempDir(),

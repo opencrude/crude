@@ -30,7 +30,7 @@ func (a *actor) prepareHistory(request coreprotocol.Request) func(context.Contex
 	if err := decode(request.Payload, &in); err != nil {
 		return func(context.Context) coreprotocol.Response { return fault(request, "invalid_request", err.Error()) }
 	}
-	var store *workspace.ReferenceStore
+	var store workspace.SessionReferences
 	for _, owner := range a.ws.Sessions {
 		if owner.SessionID == in.SessionID {
 			store = owner.RefStore
@@ -50,7 +50,7 @@ func (a *actor) prepareHistory(request coreprotocol.Request) func(context.Contex
 	}
 }
 
-func runHistoryCommand(h *history.Store, path string, store *workspace.ReferenceStore, method string, in coreprotocol.HistoryCommand) (any, error) {
+func runHistoryCommand(h *history.Store, path string, store workspace.SessionReferences, method string, in coreprotocol.HistoryCommand) (any, error) {
 	referenceCommandMu.Lock()
 	defer referenceCommandMu.Unlock()
 	list := func() coreprotocol.HistoryListResult {

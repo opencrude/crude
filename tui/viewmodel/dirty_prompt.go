@@ -24,11 +24,19 @@ func (m *App) showDirtyClosePrompt(path string) {
 	// BaseTitle: the tab's ● dirty marker must not leak into dialog text —
 	// the dialog itself communicates state.
 	filename := tab.Editor.BaseTitle()
-	if m.Documents != nil {
-		m.Documents.Cancel(tab.Editor.BufferID())
+	if m.ws.Documents() != nil {
+		m.ws.Documents().Cancel(tab.Editor.BufferID())
 	}
 	m.DirtyPromptChoice = 2
 	frame := ui.BuildDirtyCloseFrame(m.Theme, filename, m.DirtyPromptChoice)
+	if m.liveEditors[tab.Editor] != nil {
+		frame = ui.BuildConfirmFrame(m.Theme, ui.ConfirmFrameSpec{
+			Title: "Shared unsaved changes", Question: "Save to disk or close only this view?",
+			Detail:   "Closing keeps shared unsaved text for other views. Pending edits are published before closing; no shared work is discarded.",
+			Severity: ui.ConfirmPromptWarning, Width: 68, FocusedIndex: m.DirtyPromptChoice,
+			Buttons: []ui.ConfirmButtonSpec{{Label: "Save", ActionID: ui.ConfirmActionSave}, {Label: "Close view", ActionID: ui.ConfirmActionDiscard}, {Label: "Cancel", ActionID: ui.ConfirmActionCancel}},
+		})
+	}
 	w, h := frame.Measure(80, 40)
 
 	fw := wm.NewFloatingWindow(string(ui.OverlayDirtyClose), "", frame, w, h,
@@ -87,6 +95,9 @@ func (m *App) dirtyPromptDiscard() {
 func (m *App) dirtyPromptCancel() {
 	path := m.DirtyPromptPath
 	if tab := m.EditorState.Tabs[path]; tab != nil && tab.Editor != nil {
+		if state := m.liveEditors[tab.Editor]; state != nil {
+			state.closeAfter, state.closeView = false, false
+		}
 		if state := m.editorSaves[tab.Editor.BufferID()]; state != nil {
 			state.closeAfter = false
 		}
@@ -103,7 +114,7 @@ func (m *App) dirtyPromptCancel() {
 // rearmAfterDelayAutosave restores the After Delay deadline for one dirty
 // buffer after a close decision stopped suppressing scheduling.
 func (m *App) rearmAfterDelayAutosave(path string) {
-	if m.editorSettings.AutoSave != types.AutoSaveAfterDelay || m.Documents == nil || path == "" {
+	if m.editorSettings.AutoSave != types.AutoSaveAfterDelay || m.ws.Documents() == nil || path == "" {
 		return
 	}
 	tab := m.EditorState.Tabs[path]
@@ -117,7 +128,7 @@ func (m *App) rearmAfterDelayAutosave(path string) {
 	if state := m.editorSaves[id]; state != nil && (state.err != nil || state.discard || state.closeAfter) {
 		return
 	}
-	m.Documents.Schedule(id, path, tab.Editor.Revision(), time.Duration(m.editorSettings.AutoSaveDelay)*time.Millisecond)
+	m.ws.Documents().Schedule(id, path, tab.Editor.Revision(), time.Duration(m.editorSettings.AutoSaveDelay)*time.Millisecond)
 }
 
 // dirtyPromptCount is the number of buttons in the dirty-close dialog.

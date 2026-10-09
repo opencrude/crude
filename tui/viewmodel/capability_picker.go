@@ -104,7 +104,7 @@ func (app *App) handleCapabilityPickerAction(action ui.Action) (tea.Cmd, bool) {
 		ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 		owner.cancel = cancel
 		owner.sequence++
-		sequence, workspaceOwner := owner.sequence, app.Workspace
+		sequence, workspaceOwner := owner.sequence, app.ws
 		return func() tea.Msg {
 			defer cancel()
 			_, _, content, err := workspaceOwner.CapabilityAction(ctx, action)

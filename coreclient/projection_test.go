@@ -45,6 +45,11 @@ func TestWorkspaceViewIndependentStreamStablePointers(t *testing.T) {
 	if a.AgentMgr.Get("child").Parent != node || a.SessionForAgent("child") != session || session.AgentState != state {
 		t.Fatal("family not installed")
 	}
+	for _, id := range []string{"root", "child"} {
+		if pane := a.PaneMgr.Get(id); pane == nil || pane.Messages != a.AgentMgr.Get(id).State.Messages {
+			t.Fatalf("%s pane is not bound to its canonical replica transcript", id)
+		}
+	}
 	if node == b.AgentMgr.Get("root") || state == b.AgentMgr.Get("root").State {
 		t.Fatal("clients share mutable state")
 	}
@@ -86,6 +91,9 @@ func TestWorkspaceViewIndependentStreamStablePointers(t *testing.T) {
 	}
 	if a.AgentMgr.Count() != 0 || a.SessionForAgent("child") != nil || len(a.Revisions()) != 0 {
 		t.Fatal("removed family retained")
+	}
+	if len(a.PaneMgr.Panes()) != 0 {
+		t.Fatal("removed family retained replica panes")
 	}
 	if session.AgentState != nil {
 		t.Fatal("removed root retained by session")

@@ -74,10 +74,8 @@ func (m *App) startGitSnapshotRead() tea.Cmd {
 	}
 	m.gitSnapshotEventAt = time.Time{}
 	m.gitSnapshotBurstAt = time.Time{}
-	if m.Git == nil {
-		m.Git = workspace.NewGitService(m.RootPath)
-	}
-	service := m.Git
+	m.ws.EnsureGit()
+	service := m.ws.Git()
 	gen := m.gitRefreshGen.Add(1)
 	m.gitReadsInFlight++
 	return func() tea.Msg {

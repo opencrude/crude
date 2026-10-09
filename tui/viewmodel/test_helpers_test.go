@@ -8,6 +8,7 @@ import (
 
 	"crude/provider"
 	"crude/session"
+	"crude/shellport"
 	"crude/tui/cell"
 	"crude/tui/compositor"
 	"crude/tui/editor"
@@ -82,8 +83,8 @@ func openTestAgentPrompt(t testing.TB, app *App, projection *sessionProjection, 
 	if req.blockID == "" {
 		req.blockID = "block-1"
 	}
-	if app.AgentMgr.Get(req.agentID) == nil {
-		app.AgentMgr.AddOrchestrator(req.agentID, &workspace.AgentState{})
+	if app.ws.AgentMgr().Get(req.agentID) == nil {
+		app.ws.AgentMgr().AddOrchestrator(req.agentID, &workspace.AgentState{})
 	}
 	state := &agentPromptState{request: req, projection: projection}
 	if req.kind == agentPromptQuestions {
@@ -132,7 +133,7 @@ func newTestApp(t testing.TB) *App {
 	rootHost := ui.NewHost(th, shell)
 
 	app := &App{
-		Workspace: &workspace.Workspace{
+		ws: shellport.Local(&workspace.Workspace{
 			AgentMgr:  workspace.NewAgentManager(),
 			PaneMgr:   workspace.NewPaneManager(),
 			Git:       workspace.NewGitService("."),
@@ -140,7 +141,7 @@ func newTestApp(t testing.TB) *App {
 			StartTime: time.Now(),
 			LSPMgr:    workspace.NewLSPManager(nil),
 			Status:    workspace.NewStatusCenter(nil, nil),
-		},
+		}),
 		FocusStack:         NewFocusStack(),
 		ActiveSession:      &workspace.Session{},
 		Theme:              th,
@@ -175,7 +176,7 @@ func newTestApp(t testing.TB) *App {
 		width:              80,
 		height:             24,
 	}
-	app.AgentView = NewAgentViewState(app.AgentMgr)
+	app.AgentView = NewAgentViewState(app.ws.AgentMgr())
 
 	app.Feedback = newFeedbackSink(app)
 	app.initWorkspacePanels()
@@ -184,16 +185,16 @@ func newTestApp(t testing.TB) *App {
 	gitPanel.SetFocusHandler(rootHost.Focus, rootHost.Focused)
 	t.Cleanup(func() {
 		app.StopAsyncIO()
-		if app.Workspace != nil {
-			if app.TermMgr != nil {
-				app.TermMgr.CloseAll()
+		if wsOf(app) != nil {
+			if app.ws.TermMgr() != nil {
+				wsOf(app).TermMgr.CloseAll()
 			}
-			if app.LSPMgr != nil {
-				app.LSPMgr.Stop()
+			if app.ws.LSPMgr() != nil {
+				app.ws.LSPMgr().Stop()
 			}
 		}
-		if app.Workspace != nil {
-			app.Close()
+		if wsOf(app) != nil {
+			wsOf(app).Close()
 		}
 	})
 	return app
@@ -213,19 +214,19 @@ func newFullTestApp(t testing.TB) *App {
 func addBackendTestOrchestrator(t *testing.T, app *App) string {
 	t.Helper()
 	previousActive := app.ActiveSession
-	app.RootPath = t.TempDir()
-	app.WorkspaceDir = t.TempDir()
-	if app.SessionsByID == nil {
-		app.SessionsByID = make(map[string]*workspace.Session)
+	wsOf(app).RootPath = t.TempDir()
+	wsOf(app).WorkspaceDir = t.TempDir()
+	if app.ws.SessionsByID() == nil {
+		wsOf(app).SessionsByID = make(map[string]*workspace.Session)
 	}
-	if app.SessionsByAgent == nil {
-		app.SessionsByAgent = make(map[string]*workspace.Session)
+	if app.ws.SessionsByAgent() == nil {
+		wsOf(app).SessionsByAgent = make(map[string]*workspace.Session)
 	}
-	owner, err := app.CreateSession(testAccountConfig(), t.TempDir())
+	owner, err := wsOf(app).CreateSession(testAccountConfig(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	orchestrator, err := app.StartOrchestrator(owner.SessionID, noopEventSender{})
+	orchestrator, err := wsOf(app).StartOrchestrator(owner.SessionID, noopEventSender{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -234,8 +235,8 @@ func addBackendTestOrchestrator(t *testing.T, app *App) string {
 		app.ActiveSession = previousActive
 	}
 	t.Cleanup(func() {
-		app.CloseAgent(orchestrator.ID)
-		app.Close()
+		app.ws.CloseAgent(orchestrator.ID)
+		wsOf(app).Close()
 	})
 	return orchestrator.ID
 }
@@ -247,7 +248,7 @@ func newEditorPaintApp(t *testing.T, root string) *App {
 	th := theme.DefaultDark()
 	w, h := 100, 30
 	app := newFullTestApp(t)
-	app.Logger = stubLogger{}
+	wsOf(app).Logger = stubLogger{}
 	app.width = w
 	app.height = h
 	app.Theme = th
@@ -359,12 +360,23 @@ func testAccountConfig() *session.Config {
 // its real window tab. Raw ActiveSession alone does not mount a pane.
 func selectDeckSession(t *testing.T, app *App, session *workspace.Session, agentID string) {
 	t.Helper()
-	if app.SessionsByAgent == nil {
-		app.SessionsByAgent = make(map[string]*workspace.Session)
+	if app.ws.SessionsByAgent() == nil {
+		wsOf(app).SessionsByAgent = make(map[string]*workspace.Session)
 	}
-	app.SessionsByAgent[agentID] = session
+	app.ws.SessionsByAgent()[agentID] = session
 	app.AddOrchestrator(agentID)
 	if app.ActiveSession != session || app.Win.ActiveTab() == nil || app.Win.ActiveTab().Title != app.agentTabTitle(agentID) {
 		t.Fatal("session family was not selected through its window tab")
 	}
+}
+
+// wsOf returns the concrete workspace behind a test App. Tests run the shell
+// against shellport.Local and reach runtime internals directly.
+func wsOf(app *App) *workspace.Workspace { return shellport.Unwrap(app.ws) }
+
+// termSvc ensures and returns the concrete terminal service for tests that
+// drive PTY output directly.
+func termSvc(app *App) *workspace.TerminalService {
+	app.terminalService()
+	return wsOf(app).Terminals
 }

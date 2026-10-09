@@ -146,9 +146,6 @@ func (a *actor) prepareApplicationSettings(request coreprotocol.Request) (func(c
 			run := prepared.PrepareAction(in.Action)
 			operation = func(ctx context.Context) (types.AppSettings, any, error) {
 				s, entries, content, published, e := run(ctx)
-				if publishApp && reflect.DeepEqual(published, types.AppSettings{}) {
-					published = appBefore
-				}
 				if in.Action.Operation == "test" {
 					content = ""
 				}
@@ -202,6 +199,12 @@ func (a *actor) prepareApplicationSettings(request coreprotocol.Request) (func(c
 		mu.Lock()
 		defer mu.Unlock()
 		if result.Error != nil || out.Error != nil || len(out.Payload) == 0 {
+			return
+		}
+		// Preview, discovery and runtime observation do not commit preferences.
+		// Publishing their zero return used to reset application defaults after a
+		// preview, so its exact source could never pass the subsequent approval.
+		if reflect.DeepEqual(retained, types.AppSettings{}) {
 			return
 		}
 		if publishApp {

@@ -7,6 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/shellport"
 	"crude/tui/rendering"
 	"crude/tui/screens/shellterm"
 	"crude/tui/screens/termdock"
@@ -27,11 +28,11 @@ const (
 // the main chrome (legacy: the sidebar's row 3).
 func (m *App) termDockTopRow() int { return m.shellTopRow() }
 
-func (m *App) termMgr() *workspace.TerminalManager {
-	if m == nil || m.Workspace == nil {
+func (m *App) termMgr() shellport.TerminalManager {
+	if m == nil || m.ws == nil {
 		return nil
 	}
-	return m.TermMgr
+	return m.ws.TermMgr()
 }
 
 func (m *App) termDockVisible() bool {
@@ -163,7 +164,7 @@ func (m *App) openNewTerminal() tea.Cmd {
 		}
 		return nil
 	}
-	root, generation, controller := m.RootPath, m.workspaceSwitchGen.Load(), m.terminalController()
+	root, generation, controller := m.ws.RootPath(), m.workspaceSwitchGen.Load(), m.terminalController()
 	return func() tea.Msg {
 		info, err := service.Create(workspace.TerminalCreateOpts{CWD: root, Cols: defaultTermCols, Rows: defaultTermRows})
 		var lease workspace.TerminalLease
@@ -471,8 +472,8 @@ func (m *App) applyTerminalTitle(id, title string) {
 }
 
 func (m *App) discardTerminalUI() {
-	if m.Terminals != nil && m.terminalClientID != "" {
-		m.Terminals.Detach(m.terminalController())
+	if m.ws.Terminals() != nil && m.terminalClientID != "" {
+		m.ws.Terminals().Detach(m.terminalController())
 	}
 	if m.overlayHost != nil {
 		for _, e := range m.overlayHost.All() {

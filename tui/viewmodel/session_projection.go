@@ -73,14 +73,14 @@ func (r *sessionProjectionRegistry) Get(session *workspace.Session) *sessionProj
 }
 
 func (m *App) sessionProjectionForAgent(agentID string) (*workspace.Session, *sessionProjection) {
-	if m == nil || m.AgentMgr == nil || agentID == "" {
+	if m == nil || m.ws.AgentMgr() == nil || agentID == "" {
 		return nil, nil
 	}
-	orchestrator := m.AgentMgr.OrchestratorFor(agentID)
+	orchestrator := m.ws.AgentMgr().OrchestratorFor(agentID)
 	if orchestrator == nil {
 		return nil, nil
 	}
-	session := m.SessionsByAgent[orchestrator.ID]
+	session := m.ws.SessionsByAgent()[orchestrator.ID]
 	if session == nil {
 		return nil, nil
 	}
@@ -205,7 +205,7 @@ func (m *App) refreshSessionSettingsProjection(session *workspace.Session) {
 		projection = m.sessionProjections.Get(session)
 	}
 	effective, base := sessionSettingsSnapshot(session)
-	projection.settings.ConfigureAccounts(m.AllAccounts())
+	projection.settings.ConfigureAccounts(m.ws.AllAccounts())
 	projection.settings.SetCapabilities(m.capabilitySnapshot)
 	projection.settings.SetInheritance(effective, base, sessionSettingsOverrides(session))
 	if projection.deck != nil && projection.deck.Activate(sessionSettingsPanelID) {
@@ -215,7 +215,7 @@ func (m *App) refreshSessionSettingsProjection(session *workspace.Session) {
 }
 
 func (m *App) refreshAllSessionSettingsProjections() {
-	for _, session := range m.Sessions {
+	for _, session := range m.ws.Sessions() {
 		m.refreshSessionSettingsProjection(session)
 	}
 }

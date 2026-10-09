@@ -28,6 +28,7 @@ type Screen struct {
 	search              *ui.FilterField
 	focus               func(ui.ComponentID) bool
 	searchOpen, loading bool
+	refreshDisabled     bool
 	notice, errText     string
 }
 
@@ -110,10 +111,25 @@ func actionButtons() []ui.ActionBarButton {
 }
 func (s *Screen) configureActions(compact bool) {
 	buttons := actionButtons()
+	buttons[0].Enabled = !s.refreshDisabled
 	if compact {
 		buttons = []ui.ActionBarButton{{Label: "More", Action: "localdiff.more", Enabled: true}}
 	}
 	s.actions.SetButtons(buttons...)
+}
+
+// SetRefreshEnabled distinguishes immutable evidence from refreshable sources.
+func (s *Screen) SetRefreshEnabled(enabled bool) {
+	s.refreshDisabled = !enabled
+	s.configureActions(s.compact)
+	var items []ui.ListItem
+	for _, b := range actionButtons() {
+		if !enabled && b.Action == ActionRefresh {
+			continue
+		}
+		items = append(items, ui.ListItem{ID: b.Action, Label: b.Label, Command: true})
+	}
+	s.more.SetItems(items)
 }
 func (s *Screen) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
@@ -246,6 +262,9 @@ func (s *Screen) HandleAction(ctx ui.EventContext, a ui.Action) ui.EventResult {
 			return r
 		}
 	case ActionRefresh, ActionOpenSource, ActionClose:
+		if a.ID == ActionRefresh && s.refreshDisabled {
+			return ui.EventResult{Handled: true}
+		}
 		return s.action(a.ID)
 	case "localdiff.find":
 		return s.find()

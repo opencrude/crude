@@ -24,7 +24,7 @@ func TestTabActionFocusVisualAcceptance(t *testing.T) {
 		"main.go":   "package main\n\nfunc main() {\n\tprintln(\"Tab actions return focus to the content\")\n}\n",
 		"notes.txt": "Close this file tab, then type directly into the remaining editor.\nThe tab baseline should stay quiet after the operation.\n",
 	} {
-		if err := os.WriteFile(filepath.Join(app.RootPath, name), []byte(text), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(app.ws.RootPath(), name), []byte(text), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -46,7 +46,7 @@ type tabActionFocusVisualModel struct {
 func (m *tabActionFocusVisualModel) openTabs() {
 	for _, id := range []string{"Alpha", "Beta"} {
 		m.AddOrchestrator(id)
-		node := m.AgentMgr.Get(id)
+		node := m.ws.AgentMgr().Get(id)
 		node.Label = id
 		if len(node.State.Messages.Messages()) == 0 {
 			node.State.Messages.AppendMessage(workspace.Message{

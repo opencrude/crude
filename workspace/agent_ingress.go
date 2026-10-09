@@ -19,8 +19,12 @@ type AgentReduction struct {
 	AgentID        string
 	Added          bool
 	ChildCompleted bool
-	ChangedAgents  []string
-	Effects        AgentEffects
+	// EvidenceOnly marks settlement of existing evidence (collaboration
+	// delivery). It is not inventory/navigation and must never activate or
+	// hydrate a draft in any shell.
+	EvidenceOnly  bool
+	ChangedAgents []string
+	Effects       AgentEffects
 }
 
 // RegisterAgentRoot establishes inventory independently of any rendered shell.
@@ -176,8 +180,10 @@ func (w *Workspace) ApplyAgentEvent(evt AgentEvent) AgentReduction {
 		}
 	case "collaboration_delivery_admitted":
 		state.Messages.ConsumePendingSteering(agentEventString(evt.Data, "history_message_id"))
+		result.EvidenceOnly = true
 	case "collaboration_delivery_rejected":
 		state.Messages.SettlePendingSteeringMessages([]string{agentEventString(evt.Data, "history_message_id")})
+		result.EvidenceOnly = true
 	case "sub_agent_question":
 		if node.Parent == nil || node.Parent.State == nil || data["question"] == "" {
 			return result

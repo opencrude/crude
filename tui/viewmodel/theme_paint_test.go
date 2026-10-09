@@ -91,9 +91,9 @@ func TestApplyThemePreset_PaintedCellsLeaveOldPalette(t *testing.T) {
 func TestSettingsCancel_RevertsLiveThemePreview(t *testing.T) {
 	app := newPaintableThemeApp(t)
 	app.ApplyThemePreset("dark")
-	saved := app.LoadAppSettings()
+	saved := app.ws.LoadAppSettings()
 	saved.Theme.Preset = "dark"
-	_ = app.SaveAppSettings(saved)
+	_ = app.ws.SaveAppSettings(saved)
 
 	app.openWorkspaceSettings()
 	app.ApplyThemePreset("light") // simulate ThemePreviewMsg live cycle
@@ -115,9 +115,9 @@ func TestSettingsCancel_RevertsLiveThemePreview(t *testing.T) {
 // path that previously dropped the live theme preview without reverting.
 func TestSettingsEsc_ForwardsThroughFloatingWindow(t *testing.T) {
 	app := newPaintableThemeApp(t)
-	saved := app.LoadAppSettings()
+	saved := app.ws.LoadAppSettings()
 	saved.Theme.Preset = "dark"
-	_ = app.SaveAppSettings(saved)
+	_ = app.ws.SaveAppSettings(saved)
 	app.ApplyThemePreset("dark")
 	app.openWorkspaceSettings()
 	app.ApplyThemePreset("midnight")

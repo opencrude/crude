@@ -22,7 +22,7 @@ func (m *App) gitChangesUnder(path string) (string, []workspace.GitChange, bool)
 		return "", nil, false
 	}
 	if path == "" {
-		path = m.RootPath
+		path = m.ws.RootPath()
 	}
 	rel, err := filepath.Rel(snapshot.RepositoryRoot, path)
 	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {

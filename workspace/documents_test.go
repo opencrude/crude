@@ -251,3 +251,47 @@ func TestDocumentServiceMultiEditNewFileAndClose(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestDocumentServiceSyncEveryGroupedRevisionAndCloseViews(t *testing.T) {
+	s, snap, a, b := documentFixture(t, "start")
+	for i, text := range []string{"middle", "finish"} {
+		_, err := s.Apply(document.Change{Owner: a, DocumentID: snap.ID, RequestID: []string{"first", "second"}[i], BaseRevision: uint64(i + 1), GroupID: "typing", Edits: []document.Edit{{Start: 0, End: len([]string{"start", "middle"}[i]), Text: text}}})
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if _, err := s.Undo(a, snap.ID, "undo-exact", 3); err != nil {
+		t.Fatal(err)
+	}
+	sync, err := s.Sync(b, snap.ID, 1)
+	if err != nil || sync.Reset || len(sync.Changes) != 4 {
+		t.Fatalf("sync=%+v err=%v", sync, err)
+	}
+	text := []byte("start")
+	for i, c := range sync.Changes {
+		if c.BaseRevision != uint64(i+1) || c.RequestID == "" {
+			t.Fatal(c)
+		}
+		text, _, err = document.Apply(text, c.Edits)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	if string(text) != "start" || string(sync.Snapshot.Text) != "start" {
+		t.Fatalf("text=%q snapshot=%q", text, sync.Snapshot.Text)
+	}
+	sync.Changes[0].Edits[0].Text = "mutated"
+	if err = s.CloseView(a, snap.ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.Sync(a, snap.ID, 1); !errors.Is(err, document.ErrOwner) {
+		t.Fatal(err)
+	}
+	peer, err := s.Sync(b, snap.ID, 1)
+	if err != nil || peer.Changes[0].RequestID != "first" || peer.Changes[0].Edits[0].Text != "middle" {
+		t.Fatal(peer, err)
+	}
+	if _, err = s.Open(a, snap.Path); err != nil {
+		t.Fatal(err)
+	}
+}

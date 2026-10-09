@@ -23,12 +23,12 @@ import (
 func paneOwnershipSessions(t *testing.T) (*App, *workspace.Session, *workspace.Session, window.GroupID, window.GroupID) {
 	t.Helper()
 	app := newFullTestApp(t)
-	app.Logger = stubLogger{}
+	wsOf(app).Logger = stubLogger{}
 	app.Tree.Visible = false
 	_, _ = app.Update(tea.WindowSizeMsg{Width: 180, Height: 45})
 	first := workspace.NewSession("ownership-first", t.TempDir(), nil, nil)
 	second := workspace.NewSession("ownership-second", t.TempDir(), nil, nil)
-	app.SessionsByAgent = map[string]*workspace.Session{"first": first, "second": second}
+	wsOf(app).SessionsByAgent = map[string]*workspace.Session{"first": first, "second": second}
 	app.AddOrchestrator("first")
 	left := app.Win.ActiveGroup()
 	app.AddOrchestrator("second")
@@ -87,7 +87,7 @@ func TestMainPaneOwnershipCompletedChildKeepsSingleFamilyChrome(t *testing.T) {
 	app, first, _, left, right := paneOwnershipSessions(t)
 	app.switchToAgentView("first")
 	app.Input.SetInput("ROOT_DRAFT_MARKER")
-	child := app.AgentMgr.AddSubAgent("completed-child", "first", "Completed", "model", "crafter", workspace.NewAgentState("completed-child", nil, nil))
+	child := app.ws.AgentMgr().AddSubAgent("completed-child", "first", "Completed", "model", "crafter", workspace.NewAgentState("completed-child", nil, nil))
 	child.State.Completed = true
 	app.syncAgentWindowTabs()
 	app.Win.MoveTabToGroup(app.Win.TabByTitle(app.agentTabTitle(child.ID)).ID, right, 0)
@@ -231,11 +231,11 @@ func TestMainPaneOwnershipEmptyPickerKeyboardAsyncAndCancel(t *testing.T) {
 		t.Fatal("empty-pane O did not open real picker")
 	}
 	// Settle real directory I/O without reopening/replacing the picker owner.
-	runAppCommand(t, app, app.beginDirectoryAsyncLoad(app.FilePicker, app.RootPath))
+	runAppCommand(t, app, app.beginDirectoryAsyncLoad(app.FilePicker, app.ws.RootPath()))
 	app.forceFrame()
 	_ = app.View()
 	app.FilePicker.FocusTree()
-	for steps := 0; app.FilePicker.FocusedPath() != filepath.Join(app.RootPath, "main.go"); steps++ {
+	for steps := 0; app.FilePicker.FocusedPath() != filepath.Join(app.ws.RootPath(), "main.go"); steps++ {
 		if steps > 8 {
 			t.Fatal("real picker did not expose main.go")
 		}
@@ -251,7 +251,7 @@ func TestMainPaneOwnershipEmptyPickerKeyboardAsyncAndCancel(t *testing.T) {
 	if _, ok := prepared.(paneFilesOpenedMsg); !ok {
 		t.Fatalf("selection returned %T instead of off-UI pane preparation", prepared)
 	}
-	if app.EditorState.Tabs[filepath.Join(app.RootPath, "main.go")] != nil {
+	if app.EditorState.Tabs[filepath.Join(app.ws.RootPath(), "main.go")] != nil {
 		t.Fatal("picker read/installed file on Update")
 	}
 	_, _ = app.Update(prepared)
@@ -271,7 +271,7 @@ func TestMainPaneOwnershipEmptyPickerKeyboardAsyncAndCancel(t *testing.T) {
 func paneOwnershipDense(tb testing.TB) *App {
 	tb.Helper()
 	app := newFullTestApp(tb)
-	app.Logger = stubLogger{}
+	wsOf(app).Logger = stubLogger{}
 	app.width, app.height = 200, 50
 	app.Tree.Visible = false
 	for _, id := range []string{"dense-first", "dense-second"} {
@@ -380,7 +380,7 @@ func TestMainPaneOwnershipKeyboardNewSessionAndCancelledPicker(t *testing.T) {
 	}
 	paneJourneyKey(app, 'd', tea.ModCtrl|tea.ModAlt)
 	paneJourneyKey(app, 'o', 0)
-	runAppCommand(t, app, app.beginDirectoryAsyncLoad(app.FilePicker, app.RootPath))
+	runAppCommand(t, app, app.beginDirectoryAsyncLoad(app.FilePicker, app.ws.RootPath()))
 	app.FilePicker.FocusTree()
 	_, cmd := app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 	selection := paneOwnershipResult(t, cmd)

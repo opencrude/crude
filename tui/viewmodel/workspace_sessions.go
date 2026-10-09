@@ -8,16 +8,16 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/sessiondb"
+	"crude/shellport"
 	"crude/tui/screens/sessionpicker"
 	"crude/tui/screens/statusoverview"
 	"crude/tui/ui"
-	"crude/workspace"
 )
 
 // Cache the lightweight workspace registry, not an enrichment scan that opens
 // every session database. Only the visible Workspace panel refreshes it.
 type workspaceSessionCache struct {
-	db       *workspace.WorkspaceDB
+	db       shellport.WorkspaceStore
 	root     string
 	readAt   time.Time
 	sessions []sessiondb.SessionMeta
@@ -26,8 +26,8 @@ type workspaceSessionCache struct {
 
 func (m *App) refreshWorkspaceSessions(force bool) {
 	cache := &m.workspaceSessions
-	if cache.db != m.WorkspaceDB || cache.root != m.RootPath {
-		*cache = workspaceSessionCache{db: m.WorkspaceDB, root: m.RootPath}
+	if cache.db != m.ws.WorkspaceDB() || cache.root != m.ws.RootPath() {
+		*cache = workspaceSessionCache{db: m.ws.WorkspaceDB(), root: m.ws.RootPath()}
 	}
 	if !force && time.Since(cache.readAt) < time.Second {
 		return
@@ -42,7 +42,7 @@ func (m *App) refreshWorkspaceSessions(force bool) {
 func (m *App) workspaceSessionItems() []statusoverview.Item {
 	items := []statusoverview.Item{{ID: "previous-sessions", Label: "Previous Sessions", Header: true}}
 	cache := &m.workspaceSessions
-	if cache.db != m.WorkspaceDB || cache.root != m.RootPath {
+	if cache.db != m.ws.WorkspaceDB() || cache.root != m.ws.RootPath() {
 		return items
 	}
 	if cache.err != nil {
@@ -50,7 +50,7 @@ func (m *App) workspaceSessionItems() []statusoverview.Item {
 	}
 	sessions := make([]sessiondb.SessionMeta, 0, len(cache.sessions))
 	for _, meta := range cache.sessions {
-		if m.SessionsByID[meta.ID] == nil {
+		if m.ws.SessionsByID()[meta.ID] == nil {
 			sessions = append(sessions, meta)
 		}
 	}
@@ -95,7 +95,7 @@ func (m *App) workspaceSessionItems() []statusoverview.Item {
 
 func (m *App) resumeWorkspaceSession(id string) tea.Cmd {
 	cache := &m.workspaceSessions
-	if cache.db != m.WorkspaceDB || cache.root != m.RootPath {
+	if cache.db != m.ws.WorkspaceDB() || cache.root != m.ws.RootPath() {
 		return nil // A queued click from a different workspace must not navigate.
 	}
 	for _, meta := range cache.sessions {

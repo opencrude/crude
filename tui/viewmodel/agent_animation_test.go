@@ -20,7 +20,7 @@ func TestActivityStripShowsUploadThenOwningThinkingInsteadOfPrompt(t *testing.T)
 		app := newFullTestApp(t)
 		app.width, app.height = width, 40
 		app.AddOrchestrator("first")
-		app.AgentMgr.Get("first").State.Messages.AppendMessage(workspace.Message{Role: types.RoleUser, Content: "check grep without echoing my prompt"})
+		app.ws.AgentMgr().Get("first").State.Messages.AppendMessage(workspace.Message{Role: types.RoleUser, Content: "check grep without echoing my prompt"})
 		app.paintShellFrame()
 		activityY := app.chatRect.Y + app.chatRect.H - 1
 
@@ -75,7 +75,7 @@ func TestStoppedAgentPlanStripPaintRemainsStatic(t *testing.T) {
 			paint := func(frame int) []cell.Cell {
 				// Plan is the immutable backend projection; lifecycle comes from the
 				// real cancellation path and is independent of the plan's status.
-				view := app.AgentActivity("agent")
+				view := app.ws.AgentActivity("agent")
 				view.Plan = p
 				app.chatScreen.SetActivity(view)
 				app.chatScreen.Layout(ui.LayoutContext{}, ui.Rect{X: 2, Y: 1, W: width - 4, H: 3})
@@ -92,7 +92,7 @@ func TestStoppedAgentPlanStripPaintRemainsStatic(t *testing.T) {
 				t.Fatal("active fixture must animate")
 			}
 			_ = app.handleCancel()
-			if app.AgentActivity("agent").Active {
+			if app.ws.AgentActivity("agent").Active {
 				t.Fatal("cancellation left the activity view running")
 			}
 			stopping := paint(1800)
@@ -126,7 +126,7 @@ func TestActivityStripDoesNotCompactRawOrUnclassifiedThinking(t *testing.T) {
 	app.handleAgentEvent(types.AgentEventMsg{AgentID: "first", Type: "thinking", Data: reasoning.Delta{
 		Text: strings.Repeat("**Investigating grep**\n\n", 28), Kind: reasoning.Raw,
 	}})
-	if app.thinkingPaneID(app.AgentMgr.Get("first").State) == "" {
+	if app.thinkingPaneID(app.ws.AgentMgr().Get("first").State) == "" {
 		t.Fatal("fixture did not promote the raw thinking pane")
 	}
 	app.handleAgentEvent(types.AgentEventMsg{AgentID: "first", Type: "thinking", Data: reasoning.Delta{
@@ -143,7 +143,7 @@ func TestActivityStripDoesNotCompactRawOrUnclassifiedThinking(t *testing.T) {
 	if strings.Contains(line, "Clarifying hidden file behavior") || strings.Contains(line, "Investigating grep") {
 		t.Fatalf("raw thinking incorrectly received summary treatment: %q", line)
 	}
-	if pane := app.Get(app.thinkingPaneID(app.AgentMgr.Get("first").State)); pane == nil || !strings.Contains(pane.Messages.Messages()[0].Content, "Investigating grep") {
+	if pane := app.Get(app.thinkingPaneID(app.ws.AgentMgr().Get("first").State)); pane == nil || !strings.Contains(pane.Messages.Messages()[0].Content, "Investigating grep") {
 		t.Fatal("full thinking train was lost from the promoted pane")
 	}
 	app.handleAgentEvent(types.AgentEventMsg{AgentID: "first", Type: "thinking", Data: reasoning.Delta{Text: " unknown gateway trace"}})
@@ -156,14 +156,14 @@ func TestActivityStripDoesNotCompactRawOrUnclassifiedThinking(t *testing.T) {
 func TestAgentActivityStripHasStableGeometryAndPaintOnlyTide(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("agent")
-	state := app.AgentMgr.Get("agent").State
+	state := app.ws.AgentMgr().Get("agent").State
 	state.Messages.AppendMessage(workspace.Message{InternalID: "static", Role: workspace.MessageRoleAssistant, Content: "static body"})
 	state.Messages.AppendReasoning(reasoning.Delta{Text: "Inspecting the actual state", Kind: reasoning.Summary})
 	state.Running = true
 	state.TurnIdentity.Generation = 3
 	app.syncAgentMessages("agent", false)
 	status := types.AgentStatusSnapshot{Ref: types.ResourceRef{Kind: types.ResourceAgent, ID: "agent"}, Phase: types.AgentThinking, Detail: "Reasoning"}
-	app.Status.SetAgent(status)
+	wsOf(app).Status.SetAgent(status)
 	app.SpinFrame = 0
 	app.paintShellFrame()
 	renderer := app.activeMessageList()
@@ -193,7 +193,7 @@ func TestAgentActivityStripHasStableGeometryAndPaintOnlyTide(t *testing.T) {
 	viewport := app.chatScreen.ScrollModel().Viewport()
 	for _, phase := range []types.AgentPhase{types.AgentTool, types.AgentWaiting, types.AgentCancelled, types.AgentIdle} {
 		status.Phase, status.Detail = phase, string(phase)
-		app.Status.SetAgent(status)
+		wsOf(app).Status.SetAgent(status)
 		state.Running = phase != types.AgentCancelled && phase != types.AgentIdle
 		app.paintShellFrame()
 		if app.chatScreen.ScrollModel().Viewport() != viewport || renderer.ExportMessageRowsSnapshot(app.chatReflowInnerW).ContentHeight != before.ContentHeight {

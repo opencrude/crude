@@ -25,7 +25,7 @@ func (l *testLogger) Debug(tag, msg string, pairs ...any) {}
 func newTestAppWithLauncher(t *testing.T) *App {
 	t.Helper()
 	app := newTestApp(t)
-	app.Logger = &testLogger{}
+	wsOf(app).Logger = &testLogger{}
 	// Seed enough list rows for pointer-capture geometry tests that click mid-list.
 	workspaces := make([]workspace.WorkspaceInfo, 12)
 	for i := range workspaces {
@@ -75,7 +75,7 @@ func TestLauncher_AddOrchestrator_CreatesAgent(t *testing.T) {
 	if app.launcherScreen != nil {
 		t.Fatal("launcher should be cleared by AddOrchestrator")
 	}
-	n := app.AgentMgr.Get("ses_1_orch_1")
+	n := app.ws.AgentMgr().Get("ses_1_orch_1")
 	if n == nil {
 		t.Fatal("orchestrator agent should exist")
 	}
@@ -97,7 +97,7 @@ func TestLauncher_AddOrchestrator_ClearsLauncher(t *testing.T) {
 	if app.launcherScreen != nil {
 		t.Fatal("launcher should be cleared by AddOrchestrator")
 	}
-	if app.AgentMgr.Get("ses_1_orch_1") == nil {
+	if app.ws.AgentMgr().Get("ses_1_orch_1") == nil {
 		t.Fatal("orchestrator agent should exist")
 	}
 	if app.AgentView.ActiveID() != "ses_1_orch_1" {
@@ -116,7 +116,7 @@ func TestLauncher_FileOpen_NoSessionCreated(t *testing.T) {
 	if app.launcherScreen == nil {
 		t.Fatal("launcher should not be cleared by non-session events")
 	}
-	if app.AgentMgr.Count() != 0 {
+	if app.ws.AgentMgr().Count() != 0 {
 		t.Fatal("no agents should be created by file-open events")
 	}
 }
@@ -145,7 +145,7 @@ func TestSubAgentStarted_SubAgentWithParent(t *testing.T) {
 
 	// Create the parent orchestrator via AddOrchestrator
 	app.AddOrchestrator("ses_1_orch_1")
-	parent := app.AgentMgr.Get("ses_1_orch_1")
+	parent := app.ws.AgentMgr().Get("ses_1_orch_1")
 	parent.State.Messages.UpdateToolCall("tool-1", "internal-1", "agent_start", "category: researcher description: inspect lifecycle")
 
 	// Create a sub-agent with parent_id
@@ -162,14 +162,14 @@ func TestSubAgentStarted_SubAgentWithParent(t *testing.T) {
 	}
 	app.handleAgentEvent(subEvt)
 
-	subAgent := app.AgentMgr.Get("ses_1_orch_1_sub_abc")
+	subAgent := app.ws.AgentMgr().Get("ses_1_orch_1_sub_abc")
 	if subAgent == nil {
 		t.Fatal("sub-agent should exist")
 	}
 	if subAgent.State == nil || subAgent.State.Messages == nil {
 		t.Fatal("sub-agent should have a MsgList")
 	}
-	sp := app.PaneMgr.Get("ses_1_orch_1_sub_abc")
+	sp := app.ws.PaneMgr().Get("ses_1_orch_1_sub_abc")
 	if sp == nil {
 		t.Fatal("sub-agent should have a pane in paneMgr")
 	}
@@ -200,16 +200,16 @@ func TestMultipleOrchestrators(t *testing.T) {
 	app.AddOrchestrator("ses_1_orch_1")
 
 	// Add a sub-agent via the manager (simulating handleAgentEvent flow)
-	app.AgentMgr.AddSubAgent("ses_1_sub_abc", "ses_1_orch_1", "helper", "", "", &workspace.AgentState{})
+	app.ws.AgentMgr().AddSubAgent("ses_1_sub_abc", "ses_1_orch_1", "helper", "", "", &workspace.AgentState{})
 	app.syncAgentWindowTabs()
 
-	if app.AgentMgr.Count() != 2 {
-		t.Fatalf("expected 2 agents (orchestrator + sub), got %d", app.AgentMgr.Count())
+	if app.ws.AgentMgr().Count() != 2 {
+		t.Fatalf("expected 2 agents (orchestrator + sub), got %d", app.ws.AgentMgr().Count())
 	}
-	if app.AgentMgr.Get("ses_1_orch_1") == nil {
+	if app.ws.AgentMgr().Get("ses_1_orch_1") == nil {
 		t.Fatal("orchestrator should exist")
 	}
-	if app.AgentMgr.Get("ses_1_sub_abc") == nil {
+	if app.ws.AgentMgr().Get("ses_1_sub_abc") == nil {
 		t.Fatal("sub-agent should exist")
 	}
 

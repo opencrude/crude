@@ -131,6 +131,7 @@ func readFileChunk(ctx context.Context, root string, in coreprotocol.FileReadReq
 // workspace session maps or carry SQL handles. The actor lifetime joins workers.
 func (a *actor) prepareFiles(request coreprotocol.Request) (func(context.Context) coreprotocol.Response, bool) {
 	root, ops, store, history := a.ws.RootPath, a.ws.FileOps, a.ws.LocalHistory, a.ws.HistoryService
+	documents := a.ws.LiveDocuments
 	bad := func(code, message string) (func(context.Context) coreprotocol.Response, bool) {
 		return func(context.Context) coreprotocol.Response { return fault(request, code, message) }, true
 	}
@@ -212,7 +213,10 @@ func (a *actor) prepareFiles(request coreprotocol.Request) (func(context.Context
 					}
 					edits.Edits[i].Path = path
 				}
-				result = ops.ApplyWorkspaceEdit(edits.Edits)
+				if documents == nil {
+					return nil, errors.New("shared document authority unavailable")
+				}
+				result = documents.MutateFiles(ctx, workspace.FileOpApplyEdit, nil, edits.Edits, func() workspace.FileOperationResultMsg { return ops.ApplyWorkspaceEdit(edits.Edits) })
 			} else {
 				path, err := workspaceFilePath(root, in.Path, request.Method == coreprotocol.FilesCreate || request.Method == coreprotocol.FilesCreateFolder)
 				if err != nil {
@@ -223,11 +227,17 @@ func (a *actor) prepareFiles(request coreprotocol.Request) (func(context.Context
 				}
 				switch request.Method {
 				case coreprotocol.FilesCreate:
-					result = ops.CreateFile(path)
+					if documents == nil {
+						return nil, errors.New("shared document authority unavailable")
+					}
+					result = documents.MutateFiles(ctx, workspace.FileOpCreate, []string{path}, nil, func() workspace.FileOperationResultMsg { return ops.CreateFile(path) })
 				case coreprotocol.FilesCreateFolder:
 					result = ops.CreateFolder(path)
 				case coreprotocol.FilesDelete:
-					result = ops.DeletePath(path)
+					if documents == nil {
+						return nil, errors.New("shared document authority unavailable")
+					}
+					result = documents.MutateFiles(ctx, workspace.FileOpDelete, []string{path}, nil, func() workspace.FileOperationResultMsg { return ops.DeletePath(path) })
 				case coreprotocol.FilesRename:
 					target, err := workspaceFilePath(root, in.NewPath, true)
 					if err != nil {
@@ -236,7 +246,10 @@ func (a *actor) prepareFiles(request coreprotocol.Request) (func(context.Context
 					if target == root {
 						return nil, errors.New("workspace root mutation forbidden")
 					}
-					result = ops.RenamePath(path, target)
+					if documents == nil {
+						return nil, errors.New("shared document authority unavailable")
+					}
+					result = documents.MutateFiles(ctx, workspace.FileOpRename, []string{path, target}, nil, func() workspace.FileOperationResultMsg { return ops.RenamePath(path, target) })
 				}
 			}
 			out := coreprotocol.FileOperationResult{Op: result.Op, Path: result.Path, OldPath: result.OldPath, NewPath: result.NewPath, IsDir: result.IsDir, Detail: result.Detail}

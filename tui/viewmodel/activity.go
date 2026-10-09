@@ -108,10 +108,10 @@ func (m *App) refreshActivityList() {
 		return
 	}
 	if m.activityBar != nil {
-		if m.AgentMgr != nil {
+		if m.ws.AgentMgr() != nil {
 			// Counts every agent the panel lists, minimized included —
 			// that badge is how a backgrounded agent stays discoverable.
-			m.activityBar.SetBadge(activityAgents, m.AgentMgr.Count())
+			m.activityBar.SetBadge(activityAgents, m.ws.AgentMgr().Count())
 		}
 	}
 	nerd := panelchrome.NerdFont(m.Theme)
@@ -142,10 +142,10 @@ func (m *App) agentSidebarItems() []ui.ListItem {
 		Icon:    "+",
 		Command: true,
 	}}
-	if m.AgentMgr == nil {
+	if m.ws.AgentMgr() == nil {
 		return append(items, ui.ListItem{ID: "none", Label: "No agents", Disabled: true})
 	}
-	roots := m.AgentMgr.Orchestrators()
+	roots := m.ws.AgentMgr().Orchestrators()
 	if len(roots) == 0 {
 		return append(items, ui.ListItem{ID: "none", Label: "No agents", Disabled: true})
 	}
@@ -332,10 +332,10 @@ func (m *App) handleHostAction(action *ui.Action) tea.Cmd {
 		}
 	case chatprojection.ChatRecoveryRetryActionID:
 		payload, ok := action.Payload.(chatprojection.ChatRecoveryRetryPayload)
-		if !ok || m.AgentMgr == nil {
+		if !ok || m.ws.AgentMgr() == nil {
 			return nil
 		}
-		node := m.AgentMgr.Get(payload.AgentID)
+		node := m.ws.AgentMgr().Get(payload.AgentID)
 		if node == nil || node.State == nil {
 			return nil
 		}

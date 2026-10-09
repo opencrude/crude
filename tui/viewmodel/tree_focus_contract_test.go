@@ -32,7 +32,7 @@ func setupTreeRoutingApp(t *testing.T) (*App, *filetree.FileTreeModel, string) {
 	}
 
 	app := newFullTestApp(t)
-	app.Logger = stubLogger{}
+	wsOf(app).Logger = stubLogger{}
 	app.width = 100
 	app.height = 30
 	app.launcherScreen = nil

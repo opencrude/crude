@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"crude/agent"
+	"crude/clientstate"
+	"crude/shellport"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -250,24 +252,41 @@ func (t *TUI) AddOrchestrator(orchID string) {
 
 var global *TUI
 
+// StartOption configures shell-local state before the program's first frame.
+type StartOption func(*viewmodel.App) error
+
+// WithComposerDrafts binds the already exclusively acquired private profile.
+// The caller retains the store and attachment until Wait completes.
+func WithComposerDrafts(store *clientstate.Store, attachment clientstate.Attachment, workspaceID string) StartOption {
+	return func(a *viewmodel.App) error {
+		return a.ConfigureComposerDrafts(store, attachment, workspaceID)
+	}
+}
+
 // Start creates and starts the terminal UI for the given workspace.
 //
 // The workspace must already be initialized. The app layer is responsible
 // for setting workspace callbacks (OnNewSession, OnResumeSession) before
 // calling Start.
-func Start(ws *workspace.Workspace, presets []ProviderPreset, prompts *history.Store, lg interface {
+func Start(ws shellport.Workspace, presets []ProviderPreset, prompts *history.Store, lg interface {
 	Info(tag, msg string, pairs ...any)
 	Warn(tag, msg string, pairs ...any)
 	Error(tag, msg string, pairs ...any)
 	Debug(tag, msg string, pairs ...any)
-}) (*TUI, error) {
+}, options ...StartOption) (*TUI, error) {
 	t := &TUI{
 		doneCh: make(chan struct{}),
 	}
-	global = t
 
 	a := viewmodel.NewApp(ws, presets)
 	a.SetPromptHistory(prompts)
+	for _, option := range options {
+		if err := option(a); err != nil {
+			a.StopAsyncIO()
+			return nil, err
+		}
+	}
+	global = t
 	// Force UV to use the same grapheme-width method as Crude layout and
 	// surface packing. See ../../docs/reference/terminal-width.md.
 	program := tea.NewProgram(
@@ -291,7 +310,12 @@ func Start(ws *workspace.Workspace, presets []ProviderPreset, prompts *history.S
 		t.outbound.wait()
 		if t.app != nil {
 			t.app.StopAsyncIO()
-			t.app.StopLSP()
+			if _, connected := ws.(shellport.Replica); !connected {
+				t.app.StopLSP()
+			}
+			if err := t.app.CloseWorkspaceAttachment(); err != nil {
+				lg.Warn("TUI", "detach_failed", "error", err.Error())
+			}
 		}
 		if t.OnQuit != nil {
 			t.OnQuit()

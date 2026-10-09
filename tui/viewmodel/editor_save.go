@@ -132,29 +132,34 @@ func (m *App) markEditorDiskConflict(ed *editor.Editor, message string) {
 }
 
 func (m *App) onEditorContentChanged(ed *editor.Editor, filePath, text string) {
+	if state := m.liveEditors[ed]; state != nil {
+		state.due = time.Now().Add(time.Duration(m.editorSettings.AutoSaveDelay) * time.Millisecond)
+		m.markEditorGitDirty(time.Now())
+		return
+	}
 	if m.editorChanges != nil && m.editorChanges.source == ed {
 		m.overlayHost.Close(editorChangesOverlay)
 	}
-	if m.LSPMgr != nil {
-		m.LSPMgr.QueueFileUpdate(filePath, text)
-		if m.LSPMgr.Settings().AutoComplete && m.LSPPopup != nil {
+	if m.ws.LSPMgr() != nil {
+		m.ws.LSPMgr().QueueFileUpdate(filePath, text)
+		if m.ws.LSPMgr().Settings().AutoComplete && m.LSPPopup != nil {
 			m.LSPPopup.CompletionDue = time.Now().Add(350 * time.Millisecond)
 		}
 	}
 	m.markEditorGitDirty(time.Now())
-	if m.Workspace == nil || m.Documents == nil || ed == nil {
+	if m.ws == nil || m.ws.Documents() == nil || ed == nil {
 		return
 	}
 	if state := m.editorSaves[ed.BufferID()]; state != nil && (state.err != nil || state.discard || state.closeAfter) {
 		return
 	}
 	if !ed.Modified() {
-		m.Documents.Cancel(ed.BufferID())
+		m.ws.Documents().Cancel(ed.BufferID())
 		return
 	}
 	if m.editorSettings.AutoSave == types.AutoSaveAfterDelay && ed.Modified() && m.DirtyPromptPath != filePath {
 		delay := time.Duration(m.editorSettings.AutoSaveDelay) * time.Millisecond
-		m.Documents.Schedule(ed.BufferID(), filePath, ed.Revision(), delay)
+		m.ws.Documents().Schedule(ed.BufferID(), filePath, ed.Revision(), delay)
 	}
 }
 
@@ -173,13 +178,18 @@ func (m *App) requestEditorSave(ed *editor.Editor, reason workspace.DocumentSave
 }
 
 func (m *App) requestEditorSaveWithFormat(ed *editor.Editor, reason workspace.DocumentSaveReason, closeAfter, format bool) tea.Cmd {
-	if m.Workspace == nil || ed == nil || ed.ReadOnly() {
+	if state := m.liveEditors[ed]; state != nil {
+		state.save, state.reason, state.closeAfter = true, reason, closeAfter
+		state.format = format && reason == workspace.DocumentSaveManual && m.editorSettings.FormatOnSave
+		if state.uncertain == nil {
+			state.err = nil
+		}
 		return nil
 	}
-	if m.Documents == nil {
-		m.Documents = workspace.NewDocumentSaveService()
-		m.Documents.SetEventBus(m.eventBus)
+	if m.ws == nil || ed == nil || ed.ReadOnly() {
+		return nil
 	}
+	m.ws.EnsureDocuments(m.eventBus)
 	if m.editorSaves == nil {
 		m.editorSaves = make(map[string]*editorSaveState)
 	}
@@ -190,7 +200,7 @@ func (m *App) requestEditorSaveWithFormat(ed *editor.Editor, reason workspace.Do
 		}
 		return nil
 	}
-	m.Documents.Cancel(snapshot.ID)
+	m.ws.Documents().Cancel(snapshot.ID)
 	state := m.editorSaves[snapshot.ID]
 	if state == nil {
 		state = &editorSaveState{}
@@ -234,8 +244,8 @@ func (m *App) requestEditorSaveWithFormat(ed *editor.Editor, reason workspace.Do
 		BufferID: snapshot.ID, Path: snapshot.Path, Data: snapshot.Data, Revision: snapshot.Revision,
 		ExpectedHash: snapshot.ExpectedHash, ExpectedExist: snapshot.ExpectedExists, Reason: reason,
 	}
-	service := m.Documents
-	lsp := m.LSPMgr
+	service := m.ws.Documents()
+	lsp := m.ws.LSPMgr()
 	generation := m.workspaceSwitchGen.Load()
 	return func() tea.Msg {
 		defer cancel()
@@ -319,7 +329,7 @@ func (m *App) handleEditorSaveResult(msg editorSaveResultMsg) tea.Cmd {
 }
 
 func (m *App) handleAutosaveDue(msg workspace.DocumentAutosaveDueMsg) tea.Cmd {
-	if m.editorSettings.AutoSave != types.AutoSaveAfterDelay || m.Documents == nil || !m.Documents.AcceptDue(msg) {
+	if m.editorSettings.AutoSave != types.AutoSaveAfterDelay || m.ws.Documents() == nil || !m.ws.Documents().AcceptDue(msg) {
 		return nil
 	}
 	// The deadline carries the buffer lifetime; a rename between scheduling and
@@ -334,7 +344,7 @@ func (m *App) handleAutosaveDue(msg workspace.DocumentAutosaveDueMsg) tea.Cmd {
 func (m *App) applyEditorSettings(settings types.EditorSettings) {
 	settings = types.NormalizeEditorSettings(settings)
 	m.editorSettings = settings
-	if m.EditorState == nil || m.Documents == nil {
+	if m.EditorState == nil || m.ws.Documents() == nil {
 		return
 	}
 	for _, tab := range m.EditorState.Tabs {
@@ -342,13 +352,13 @@ func (m *App) applyEditorSettings(settings types.EditorSettings) {
 			continue
 		}
 		ed := tab.Editor
-		m.Documents.Cancel(ed.BufferID())
+		m.ws.Documents().Cancel(ed.BufferID())
 		if state := m.editorSaves[ed.BufferID()]; state != nil && state.inFlight && state.reason != workspace.DocumentSaveManual {
 			state.pending = false
 			state.cancel()
 		}
 		if settings.AutoSave == types.AutoSaveAfterDelay && ed.Modified() {
-			m.Documents.Schedule(ed.BufferID(), ed.FilePath(), ed.Revision(), time.Duration(settings.AutoSaveDelay)*time.Millisecond)
+			m.ws.Documents().Schedule(ed.BufferID(), ed.FilePath(), ed.Revision(), time.Duration(settings.AutoSaveDelay)*time.Millisecond)
 		}
 	}
 }
@@ -374,7 +384,7 @@ func (m *App) logicalEditorFocus() *editor.Editor {
 }
 
 func (m *App) setWorkspaceAutosave(enabled bool) {
-	overrides := m.LoadWorkspaceOverrides()
+	overrides := m.ws.LoadWorkspaceOverrides()
 	fields := make(map[string]any)
 	if len(overrides.Editor) != 0 {
 		if err := json.Unmarshal(overrides.Editor, &fields); err != nil {
@@ -393,10 +403,10 @@ func (m *App) setWorkspaceAutosave(enabled bool) {
 		return
 	}
 	overrides.Editor = data
-	if err := m.SaveWorkspaceSettings(overrides); err != nil {
+	if err := m.ws.SaveWorkspaceSettings(overrides); err != nil {
 		m.Feedback.NotifyError(err.Error())
 		return
 	}
-	m.applyEditorSettings(m.LoadAppSettings().Editor)
+	m.applyEditorSettings(m.ws.LoadAppSettings().Editor)
 	m.Feedback.NotifyInfo("Workspace auto save: " + string(mode))
 }

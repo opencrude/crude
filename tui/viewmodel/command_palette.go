@@ -503,9 +503,9 @@ func (m *App) cycleNextThemePreset() {
 	next := names[(idx+1)%len(names)]
 	m.applyThemePreset(next)
 	// Persist the choice so the next launch uses the same preset.
-	s := m.LoadAppSettings()
+	s := m.ws.LoadAppSettings()
 	s.Theme.Preset = next
-	if err := m.SaveAppSettings(s); err != nil && m.Feedback != nil {
+	if err := m.ws.SaveAppSettings(s); err != nil && m.Feedback != nil {
 		m.Feedback.NotifyError("theme save failed: " + err.Error())
 	}
 	if m.Feedback != nil {
@@ -634,7 +634,7 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		// startNewFileInTree requires a target directory. Prefer the
 		// active editor's parent so the new file lands next to the
 		// currently-open one. Fall back to the project root.
-		dir := m.RootPath
+		dir := m.ws.RootPath()
 		if m.EditorState.Editor != nil && m.EditorState.Editor.IsOpen() {
 			if fp := m.EditorState.Editor.FilePath(); fp != "" {
 				dir = filepath.Dir(fp)
@@ -648,6 +648,10 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		if ed := m.EditorState.Editor; ed != nil {
 			m.inspectEditorChange(ed, ed.CursorLine())
 		}
+	case "editor.resolveShared":
+		return m.OpenLiveEditorConflict(m.EditorState.Editor)
+	case "editor.privateRecovery":
+		return m.OpenEditorRecoveryBrowser()
 	case "editor.compareDisk", "editor.compareSaved":
 		if ed := m.EditorState.Editor; ed != nil && ed.IsOpen() {
 			if cmdID == "editor.compareSaved" {
@@ -775,7 +779,7 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		m.toggleReplaceInFiles()
 
 	case "agent.toggle.multiagent":
-		owner, runtime := m.ActiveSession, m.Workspace
+		owner, runtime := m.ActiveSession, m.ws
 		if owner == nil || runtime == nil {
 			m.Feedback.NotifyError("No session is selected")
 			break

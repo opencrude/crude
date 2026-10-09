@@ -40,7 +40,7 @@ func TestOpenHelpOpensModalWithoutChatDump(t *testing.T) {
 		t.Fatalf("help overlay missing usage content:\n%s", text)
 	}
 
-	app.Logger = stubLogger{}
+	wsOf(app).Logger = stubLogger{}
 	app.executeSlashCommand("/help")
 	if app.overlayHost.Window(ui.OverlayHelp) == nil {
 		t.Fatal("/help should keep or reopen the help overlay")

@@ -50,7 +50,7 @@ func ServeConnection(ctx context.Context, runtime *Runtime, conn io.ReadWriteClo
 	f := corewire.NewFramer(ctx, conn)
 	defer f.Close()
 	timer := time.AfterFunc(handshakeTimeout, func() { _ = f.Close() })
-	id, _, err := f.NegotiateServer(corewire.MaxFrameSize)
+	id, maximum, err := f.NegotiateServer(corewire.MaxFrameSize)
 	if err != nil {
 		timer.Stop()
 		return err
@@ -68,25 +68,28 @@ func ServeConnection(ctx context.Context, runtime *Runtime, conn io.ReadWriteClo
 	if err != nil {
 		return err
 	}
+	transfers := newPayloadTransfers(maximum)
+	defer transfers.Close()
 
-	queue := make(chan corewire.Frame, 64)
+	queue := make(chan corewire.EncodedFrame, 64)
 	var mu sync.Mutex
 	bytes := 0
 	enqueue := func(frame corewire.Frame) bool {
-		b, marshalErr := json.Marshal(frame)
-		if marshalErr != nil || len(b) > corewire.MaxFrameSize {
+		frame = transfers.WrapFrame(frame)
+		encoded, marshalErr := corewire.EncodeFrame(frame)
+		if marshalErr != nil || encoded.Len() > corewire.MaxFrameSize {
 			cancel()
 			return false
 		}
 		mu.Lock()
 		defer mu.Unlock()
-		if bytes+len(b)+4 > outputByteLimit {
+		if bytes+encoded.Len()+4 > outputByteLimit {
 			cancel()
 			return false
 		}
 		select {
-		case queue <- frame:
-			bytes += len(b) + 4
+		case queue <- encoded:
+			bytes += encoded.Len() + 4
 			return true
 		default:
 			cancel()
@@ -102,13 +105,12 @@ func ServeConnection(ctx context.Context, runtime *Runtime, conn io.ReadWriteClo
 			select {
 			case <-ctx.Done():
 				return
-			case frame := <-queue:
+			case encoded := <-queue:
 				t := time.AfterFunc(writeTimeout, func() { _ = f.Close() })
-				err := f.Write(frame)
+				err := f.WriteEncoded(encoded)
 				t.Stop()
-				b, _ := json.Marshal(frame)
 				mu.Lock()
-				bytes -= len(b) + 4
+				bytes -= encoded.Len() + 4
 				mu.Unlock()
 				if err != nil {
 					cancel()
@@ -150,6 +152,12 @@ func ServeConnection(ctx context.Context, runtime *Runtime, conn io.ReadWriteClo
 		}
 		if frame.Kind != corewire.KindRequest || !validID(frame.RequestID) || frame.ClientID != owner.ClientID || frame.Epoch != owner.Epoch || frame.Method == "" || frame.Error != nil || frame.Revision != 0 || (frame.WorkspaceID != "" && !validID(frame.WorkspaceID)) {
 			return errors.New("invalid request envelope or owner")
+		}
+		if response, handled := transfers.ReadFrame(frame); handled {
+			if !enqueue(response) {
+				return errors.New("payload transfer output capacity exceeded")
+			}
+			continue
 		}
 		mu.Lock()
 		if active[frame.RequestID] || len(active) >= maxInflight {

@@ -20,6 +20,7 @@ import (
 
 	"crude/agent"
 	"crude/coreprotocol"
+	"crude/corewire"
 	"crude/document"
 	"crude/history"
 	"crude/provider"
@@ -45,6 +46,8 @@ type Runtime struct {
 	history     *history.Store
 	historyPath string
 	uploads     *ReferenceUploads
+	draining    bool
+	lifetime    lifetimePolicy
 }
 
 func New(factory Factory, receiptPath string) (*Runtime, error) {
@@ -88,12 +91,12 @@ type Connection struct {
 }
 
 func (r *Runtime) Connect(clientID string) (*Connection, error) {
-	if !validID(clientID) {
+	if !validID(clientID) || strings.HasPrefix(clientID, "lsp:") {
 		return nil, errors.New("invalid client identity")
 	}
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.closed {
+	if r.closed || r.draining {
 		return nil, errors.New("core is closed")
 	}
 	if r.clients[clientID] != nil {
@@ -244,6 +247,9 @@ func (c *Connection) Dispatch(ctx context.Context, request coreprotocol.Request)
 	if request.Method == coreprotocol.Attach {
 		return finish(c.attach(ctx, request))
 	}
+	if request.Method == coreprotocol.CoreStatusMethod || request.Method == coreprotocol.CoreShutdownMethod {
+		return finish(c.runtime.coreMethod(ctx, c, request))
+	}
 	if request.Method == coreprotocol.GetReceipt {
 		var query coreprotocol.ReceiptRequest
 		if err := decode(request.Payload, &query); err != nil {
@@ -344,6 +350,7 @@ func (r *Runtime) workspace(ctx context.Context, id, root string) (*actor, error
 			}
 			if err == nil {
 				creation.actor = newActor(id, ws, r.receipts)
+				creation.actor.progress = r.publishProgress
 				creation.actor.runtime = r
 				r.workspaces[id] = creation.actor
 			}
@@ -367,26 +374,36 @@ func (r *Runtime) workspace(ctx context.Context, id, root string) (*actor, error
 }
 
 type actor struct {
-	runtime       *Runtime
-	id            string
-	ws            *workspace.Workspace
-	receipts      *receiptJournal
-	commands      chan actorCommand
-	ingress       chan workspace.AgentEvent
-	serviceEvents chan any
-	stop          chan struct{}
-	done          chan struct{}
-	once          sync.Once
-	subscribers   map[*Connection]struct{}
-	revision      uint64
-	ctx           context.Context
-	cancel        context.CancelFunc
-	jobs          chan actorJobResult
-	inFlight      int
-	lifecycle     bool
-	settingsBusy  bool
-	settingsQueue []actorCommand
-	resourceLane  *resourceLane
+	// statusVersion is the status-center version last announced to shells.
+	statusVersion uint64
+	lspVersion    uint64
+	lspViews      *lspViews
+	// jobCancels cancels exactly one requester's in-flight job.
+	jobCancels map[string]context.CancelFunc
+	// progress delivers request-scoped output to the requesting connection.
+	progress         func(coreprotocol.Owner, coreprotocol.Progress)
+	runtime          *Runtime
+	id               string
+	ws               *workspace.Workspace
+	receipts         *receiptJournal
+	commands         chan actorCommand
+	ingress          chan workspace.AgentEvent
+	serviceEvents    chan any
+	stop             chan struct{}
+	done             chan struct{}
+	once             sync.Once
+	subscribers      map[*Connection]struct{}
+	revision         uint64
+	ctx              context.Context
+	cancel           context.CancelFunc
+	jobs             chan actorJobResult
+	inFlight         int
+	lifecycle        bool
+	settingsBusy     bool
+	settingsQueue    []actorCommand
+	resourceLane     *resourceLane
+	fileWatch        *coreFileWatch
+	documentReleases []document.Owner
 }
 
 type actorCommand struct {
@@ -396,18 +413,28 @@ type actorCommand struct {
 	detach  *Connection
 	result  chan coreprotocol.Response
 	view    chan coreprotocol.WorkspaceSnapshot
+	inspect func()
 }
 
 func newActor(id string, ws *workspace.Workspace, receipts *receiptJournal) *actor {
 	ctx, cancel := context.WithCancel(context.Background())
 	a := &actor{ctx: ctx, cancel: cancel, jobs: make(chan actorJobResult, 16), id: id, ws: ws, receipts: receipts, commands: make(chan actorCommand, 128), ingress: make(chan workspace.AgentEvent, 1024), stop: make(chan struct{}), done: make(chan struct{}), subscribers: make(map[*Connection]struct{}), revision: 1}
 	a.resourceLane = newResourceLane(ctx, 32)
+	a.lspViews = newLSPViews(ws.LiveDocuments)
 	a.serviceEvents = make(chan any, 256)
 	bus := workspace.NewEventBus()
 	bus.SetSink(a)
 	ws.SetEventBus(bus)
 	ws.SetEventSender(a)
 	go a.run()
+	// newActor runs in the workspace factory worker. Watcher setup/traversal
+	// never executes on the actor or any shell's Update goroutine.
+	watch, err := startCoreFileWatch(ws.RootPath, func(change coreprotocol.FileChange) { a.Send(change) })
+	if err != nil {
+		ws.Logger.Warn("CORE", "file_watch_failed", "error", err.Error())
+	} else {
+		a.fileWatch = watch
+	}
 	return a
 }
 
@@ -449,6 +476,12 @@ func (a *actor) serviceEvent(message any) {
 	var id string
 	var effects *workspace.TerminalEffectsMsg
 	switch event := message.(type) {
+	case coreprotocol.FileChange:
+		a.broadcast(coreprotocol.Change{Files: []coreprotocol.FileChange{event}})
+		return
+	case workspace.DocumentChangedMsg:
+		a.broadcast(coreprotocol.Change{Documents: []string{event.ID}})
+		return
 	case workspace.TerminalChangedMsg:
 		id = event.ID
 	case workspace.TerminalExitedMsg:
@@ -499,14 +532,25 @@ func (a *actor) run() {
 		case message := <-a.serviceEvents:
 			a.serviceEvent(message)
 		case event := <-a.ingress:
+			if notice, ok := workspace.NoticeFromEvent(event); ok {
+				a.notice(notice)
+				continue
+			}
 			if reduced := a.ws.ApplyAgentEvent(event); reduced.Accepted {
-				a.changed(reduced.ChangedAgents)
+				a.reduced(reduced)
 			}
 		case now := <-tick.C:
+			a.drainDocumentReleases()
 			if reduced := a.ws.AdvanceAgentState(now); reduced.Accepted {
-				a.changed(reduced.ChangedAgents)
+				a.reduced(reduced)
 			}
+			a.publishStatusIfChanged()
+			a.publishLSPIfChanged()
 		case command := <-a.commands:
+			if command.inspect != nil {
+				command.inspect()
+				continue
+			}
 			if command.attach != nil {
 				a.subscribers[command.attach] = struct{}{}
 				command.view <- a.snapshot()
@@ -520,13 +564,16 @@ func (a *actor) run() {
 				if a.ws.LiveDocuments != nil {
 					a.ws.LiveDocuments.Detach(document.Owner{ClientID: command.detach.Owner.ClientID, Epoch: command.detach.Owner.Epoch})
 				}
+				a.lspViews.Detach(document.Owner{ClientID: command.detach.Owner.ClientID, Epoch: command.detach.Owner.Epoch})
+				a.documentReleases = append(a.documentReleases, document.Owner{ClientID: command.detach.Owner.ClientID, Epoch: command.detach.Owner.Epoch})
+				a.drainDocumentReleases()
 				continue
 			}
 			if !a.validClient(command.client) {
 				command.result <- fault(*command.request, "detached", "request attachment is stale")
 				continue
 			}
-			if strings.HasPrefix(command.request.Method, "settings.") && a.settingsBusy {
+			if (strings.HasPrefix(command.request.Method, "settings.") || command.request.Method == coreprotocol.WorkspaceOverridesSet) && a.settingsBusy {
 				if len(a.settingsQueue) >= 16 {
 					command.result <- fault(*command.request, "busy", "settings queue is full")
 				} else {
@@ -543,8 +590,24 @@ func (a *actor) run() {
 }
 
 func (a *actor) changed(ids []string) {
+	a.broadcast(coreprotocol.Change{Agents: slices.Clone(ids)})
+}
+
+// reduced publishes one accepted reduction with its effects, so every shell
+// presents exactly what the single semantic reducer decided.
+func (a *actor) reduced(reduction workspace.AgentReduction) {
+	reduction.ChangedAgents = slices.Clone(reduction.ChangedAgents)
+	a.broadcast(coreprotocol.Change{Agents: slices.Clone(reduction.ChangedAgents), Reductions: []workspace.AgentReduction{reduction}})
+}
+
+func (a *actor) notice(notice workspace.AgentNotice) {
+	a.broadcast(coreprotocol.Change{Notices: []workspace.AgentNotice{notice}})
+}
+
+func (a *actor) broadcast(change coreprotocol.Change) {
 	old := a.revision
 	a.revision++
+	change.WorkspaceID, change.BaseRevision, change.Revision = a.id, old, a.revision
 	for subscriber := range a.subscribers {
 		select {
 		case <-subscriber.done:
@@ -552,7 +615,7 @@ func (a *actor) changed(ids []string) {
 			continue
 		default:
 		}
-		subscriber.publish(coreprotocol.Change{WorkspaceID: a.id, BaseRevision: old, Revision: a.revision, Agents: slices.Clone(ids)})
+		subscriber.publish(change)
 	}
 }
 
@@ -587,6 +650,7 @@ func (a *actor) unsubscribe(c *Connection) {
 	if a.ws.LiveDocuments != nil {
 		a.ws.LiveDocuments.Detach(document.Owner{ClientID: c.Owner.ClientID, Epoch: c.Owner.Epoch})
 	}
+	a.lspViews.Detach(document.Owner{ClientID: c.Owner.ClientID, Epoch: c.Owner.Epoch})
 	select {
 	case a.commands <- actorCommand{detach: c}:
 	case <-a.stop:
@@ -611,7 +675,37 @@ func (a *actor) call(ctx context.Context, c *Connection, request coreprotocol.Re
 	}
 }
 func (a *actor) close() {
-	a.once.Do(func() { close(a.stop); <-a.done; a.resourceLane.close(); a.ws.CloseAllSessions(); a.ws.Close() })
+	a.once.Do(func() {
+		close(a.stop)
+		a.fileWatch.Close()
+		<-a.done
+		a.resourceLane.close()
+		for _, owner := range a.documentReleases {
+			if a.ws.LiveDocuments != nil {
+				a.ws.LiveDocuments.ReleaseDetached(owner)
+				a.ws.LiveDocuments.ReleaseDetached(lspViewOwner(owner))
+			}
+		}
+		a.ws.CloseAllSessions()
+		a.ws.Close()
+	})
+}
+
+// Detached epochs are fenced immediately; ordered final resource release must
+// never make the actor wait for a disk save holding the document mutation lock.
+func (a *actor) drainDocumentReleases() {
+	for len(a.documentReleases) > 0 {
+		owner := a.documentReleases[0]
+		docs := a.ws.LiveDocuments
+		if docs == nil {
+			a.documentReleases = a.documentReleases[1:]
+			continue
+		}
+		if !a.resourceLane.submit(func(context.Context) { docs.ReleaseDetached(owner); docs.ReleaseDetached(lspViewOwner(owner)) }) {
+			return
+		}
+		a.documentReleases = a.documentReleases[1:]
+	}
 }
 
 func decode(raw []byte, value any) error {
@@ -629,6 +723,9 @@ func response(request coreprotocol.Request, value any) coreprotocol.Response {
 	data, err := json.Marshal(value)
 	if err != nil {
 		return fault(request, "encode_failed", err.Error())
+	}
+	if len(data) > corewire.MaxPayloadSize {
+		return fault(request, "payload_limit", "result exceeds the bounded logical response limit")
 	}
 	return coreprotocol.Response{ID: request.ID, Payload: data}
 }
@@ -658,6 +755,12 @@ func (a *actor) execute(request coreprotocol.Request) coreprotocol.Response {
 	}
 	if request.Method == coreprotocol.Snapshot {
 		return response(request, a.snapshot())
+	}
+	if request.Method == coreprotocol.SessionSnapshots {
+		return response(request, a.sessionSnapshots())
+	}
+	if result, ok := a.executeOwner(request); ok {
+		return result
 	}
 
 	switch request.Method {
@@ -708,7 +811,9 @@ func (a *actor) mutate(request coreprotocol.Request) coreprotocol.Response {
 			return fault(request, "stale_decision", "decision no longer owns this pending block")
 		}
 		var accepted bool
-		if input.Choice != "" {
+		if input.Reject != "" {
+			accepted = a.ws.RejectQuestion(input.AgentID, input.BlockID, input.Reject)
+		} else if input.Choice != "" {
 			if input.Choice != "allow" && input.Choice != "deny" && input.Choice != "always" {
 				return fault(request, "invalid_decision", "invalid permission choice")
 			}
@@ -746,6 +851,13 @@ func (a *actor) snapshot() coreprotocol.WorkspaceSnapshot {
 	settings := a.ws.LoadAppSettings()
 	view := coreprotocol.WorkspaceSnapshot{ID: a.id, Root: a.ws.RootPath, Username: a.ws.Username, StartedAt: a.ws.StartTime, Revision: a.revision, Agents: a.ws.SnapshotAgents().Agents,
 		Settings: coreprotocol.ShellSettings{Theme: settings.Theme, Editor: settings.Editor, UI: settings.UI, Font: settings.Font}}
+	view.Sessions = a.sessionSnapshots()
+	return view
+}
+
+// sessionSnapshots projects the session set without transcripts.
+func (a *actor) sessionSnapshots() []coreprotocol.SessionSnapshot {
+	var out []coreprotocol.SessionSnapshot
 	for _, owner := range a.ws.Sessions {
 		s := coreprotocol.SessionSnapshot{ID: owner.SessionID, AgentID: owner.AgentID, CreatedAt: owner.CreatedAt}
 		if owner.Settings != nil {
@@ -755,9 +867,16 @@ func (a *actor) snapshot() coreprotocol.WorkspaceSnapshot {
 		if owner.RefStore != nil {
 			s.References = owner.RefStore.ListReferences()
 		}
-		view.Sessions = append(view.Sessions, s)
+		if backend := a.ws.BackendSession(owner.SessionID); backend != nil {
+			full := publicSessionSet(backend.SettingsSnapshots())
+			s.Full = &full
+		}
+		if err := a.ws.SessionConnectionIssue(owner.SessionID); err != nil {
+			s.ConnectionIssue = err.Error()
+		}
+		out = append(out, s)
 	}
-	return view
+	return out
 }
 
 // TODO: explicit typed service dispatch can share startJob's bounded worker and
@@ -791,7 +910,9 @@ func (a *actor) validClient(c *Connection) bool {
 }
 
 func humanInput(request coreprotocol.Request, input coreprotocol.InputRequest) provider.UserInput {
-	return provider.UserInput{Text: input.Text, ReferenceIDs: slices.Clone(input.ReferenceIDs), ActivePaths: slices.Clone(input.ActivePaths), Origin: provider.OriginHuman, InternalID: "client-" + request.Owner.ClientID + "-" + request.ID}
+	return provider.UserInput{Text: input.Text, DisplayText: input.DisplayText, ReferenceIDs: slices.Clone(input.ReferenceIDs),
+		ContextParts: slices.Clone(input.ContextParts), ActivePaths: slices.Clone(input.ActivePaths),
+		Origin: provider.OriginHuman, InternalID: "client-" + request.Owner.ClientID + "-" + request.ID}
 }
 
 func (a *actor) startJob(command actorCommand) bool {
@@ -803,6 +924,12 @@ func (a *actor) startJob(command actorCommand) bool {
 		service, serviceKnown = resource, true
 	}
 	files, filesKnown := a.prepareFiles(request)
+	if replace, known := a.prepareProjectReplace(request); known {
+		files, filesKnown = replace, true
+	}
+	if clientFiles, known := a.prepareClientFiles(request); known {
+		files, filesKnown = clientFiles, true
+	}
 	if filesKnown {
 		service, serviceKnown = files, true
 	}
@@ -811,12 +938,27 @@ func (a *actor) startJob(command actorCommand) bool {
 		service, serviceKnown = references, true
 	}
 	settings, settingsApply, settingsKnown := a.prepareSettings(request)
+	if preferences, apply, known := a.prepareWorkspacePreferences(request); known {
+		settings, settingsApply, settingsKnown = preferences, apply, true
+	}
 	if settingsKnown {
 		service, serviceKnown = settings, true
 	}
 	upload, uploadKnown := a.prepareUpload(request)
 	if uploadKnown {
 		service, serviceKnown = upload, true
+	}
+	owner, ownerKnown := a.prepareOwner(request)
+	if ownerKnown {
+		service, serviceKnown = owner, true
+	}
+	lsp, lspKnown := a.prepareLSP(request)
+	if lspKnown {
+		service, serviceKnown = lsp, true
+	}
+	documentSave, documentSaveKnown := a.prepareDocumentSnapshotSave(request)
+	if documentSaveKnown {
+		service, serviceKnown = documentSave, true
 	}
 	if !lifecycle && request.Method != coreprotocol.SubmitInput && request.Method != coreprotocol.ListSessions && !serviceKnown {
 		return false
@@ -825,7 +967,7 @@ func (a *actor) startJob(command actorCommand) bool {
 		command.result <- fault(request, "busy", "bounded workspace operation capacity is occupied; retry with a new request identity")
 		return true
 	}
-	journal := request.Method != coreprotocol.ListSessions && (!serviceKnown || serviceMutation(request.Method) || resourceMutation(request.Method) || filesMutation(request.Method) || referenceMutation(request.Method) || settingsMutation(request.Method) || uploadMutation(request.Method))
+	journal := request.Method != coreprotocol.ListSessions && (!serviceKnown || serviceMutation(request.Method) || resourceMutation(request.Method) || filesMutation(request.Method) || referenceMutation(request.Method) || settingsMutation(request.Method) || uploadMutation(request.Method) || ownerMutation(request.Method) || documentSnapshotSaveMutation(request.Method))
 	if journal {
 		prior, fresh, err := a.receipts.begin(a.ctx, request)
 		if err != nil {
@@ -841,6 +983,12 @@ func (a *actor) startJob(command actorCommand) bool {
 			return true
 		}
 	}
+	// Each job has its own context so its requester can cancel exactly it.
+	jobCtx, jobCancel := context.WithCancel(a.ctx)
+	if a.jobCancels == nil {
+		a.jobCancels = make(map[string]context.CancelFunc)
+	}
+	a.jobCancels[jobKey(request)] = jobCancel
 	fail := func(result coreprotocol.Response) bool {
 		a.finishJob(actorJobResult{command: command, apply: func() coreprotocol.Response { return result }, journal: journal})
 		return true
@@ -848,7 +996,7 @@ func (a *actor) startJob(command actorCommand) bool {
 	var run func() func() coreprotocol.Response
 	if serviceKnown {
 		run = func() func() coreprotocol.Response {
-			result := service(a.ctx)
+			result := service(jobCtx)
 			return func() coreprotocol.Response {
 				a.applyService(request, result)
 				if filesKnown {
@@ -862,26 +1010,14 @@ func (a *actor) startJob(command actorCommand) bool {
 				if (resourceKnown || filesKnown || referencesKnown || settingsKnown || uploadKnown) && journal && result.Error == nil {
 					a.changed(nil)
 				}
+				if result.Error == nil {
+					a.announceSettings(request.Method)
+				}
 				return result
 			}
 		}
 	} else if lifecycle {
-		var id string
-		if request.Method == coreprotocol.OpenSession {
-			var input coreprotocol.SessionRequest
-			if err := decode(request.Payload, &input); err != nil {
-				return fail(fault(request, "invalid_request", err.Error()))
-			}
-			if input.SessionID == "" {
-				return fail(fault(request, "invalid_request", "session identity is required"))
-			}
-			id = input.SessionID
-		} else {
-			if err := decode(request.Payload, &struct{}{}); err != nil {
-				return fail(fault(request, "invalid_request", err.Error()))
-			}
-		}
-		op, err := a.ws.PrepareAgentSession(id)
+		op, err := a.prepareInvocation(request)
 		if err != nil {
 			return fail(fault(request, "session_failed", err.Error()))
 		}
@@ -894,6 +1030,7 @@ func (a *actor) startJob(command actorCommand) bool {
 					return fault(request, "session_failed", out.Error)
 				}
 				a.changed([]string{out.OrchID})
+				a.broadcast(coreprotocol.Change{Sessions: true})
 				return response(request, out)
 			}
 		}
@@ -959,7 +1096,7 @@ func (a *actor) startJob(command actorCommand) bool {
 		apply := run()
 		a.jobs <- actorJobResult{command: command, apply: apply, lifecycle: lifecycle, journal: journal, admitted: true, settings: settingsKnown}
 	}
-	if resourceKnown {
+	if resourceKnown || lspKnown || (filesKnown && filesMutation(request.Method)) {
 		if !a.resourceLane.submit(func(context.Context) { work() }) {
 			a.finishJob(actorJobResult{command: command, admitted: true, journal: journal, apply: func() coreprotocol.Response { return fault(request, "cancelled", "resource owner is closing") }})
 		}
@@ -970,6 +1107,13 @@ func (a *actor) startJob(command actorCommand) bool {
 }
 
 func (a *actor) finishJob(job actorJobResult) {
+	if job.command.request != nil {
+		key := jobKey(*job.command.request)
+		if cancel := a.jobCancels[key]; cancel != nil {
+			cancel()
+			delete(a.jobCancels, key)
+		}
+	}
 	// Validation failures were never admitted as workers.
 	if job.lifecycle {
 		a.lifecycle = false
@@ -978,6 +1122,7 @@ func (a *actor) finishJob(job actorJobResult) {
 		return
 	}
 	result := job.apply()
+	a.publishLSPIfChanged()
 	result.Revision = a.revision
 	if job.journal {
 		if err := a.receipts.complete(context.Background(), *job.command.request, result); err != nil {

@@ -97,7 +97,7 @@ func TestSpecialChatBlocksPaintFullWidthAndResumeIdentically(t *testing.T) {
 					app.width, app.height = width, 60
 					app.ApplyThemePreset(preset)
 					app.AddOrchestrator("background-owner")
-					state := app.AgentMgr.Get("background-owner").State
+					state := app.ws.AgentMgr().Get("background-owner").State
 					state.Messages.AppendMessage(workspace.Message{Role: ctypes.RoleAssistant, Content: "Regular chat before"})
 					for _, message := range c.messages {
 						state.Messages.AppendMessage(message)
@@ -145,7 +145,7 @@ func TestSpecialChatBlocksPaintFullWidthAndResumeIdentically(t *testing.T) {
 					recovered.width, recovered.height = width, 60
 					recovered.ApplyThemePreset(preset)
 					recovered.AddOrchestrator(state.ID)
-					resumedState := recovered.AgentMgr.Get(state.ID).State
+					resumedState := recovered.ws.AgentMgr().Get(state.ID).State
 					for _, snapshot := range workspace.ConvertMessagesForDisplay(stored) {
 						resumedState.Messages.AppendMessage(snapshot)
 					}
@@ -197,7 +197,7 @@ func TestLiveThinkingPaneBackgroundIncludesMargins(t *testing.T) {
 			app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: "thinking-owner", Type: "thinking",
 				Data: reasoning.Delta{Text: trace, Kind: reasoning.Raw}})
 			app.paintShellFrame()
-			state := app.AgentMgr.Get("thinking-owner").State
+			state := app.ws.AgentMgr().Get("thinking-owner").State
 			if promoted != (app.thinkingPaneID(state) != "") {
 				t.Fatal("fixture did not exercise the expected thinking presentation")
 			}

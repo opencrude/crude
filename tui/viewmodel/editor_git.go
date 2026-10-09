@@ -74,14 +74,12 @@ func (m *App) refreshEditorGitCmd() tea.Cmd {
 	if path == "" {
 		return nil
 	}
-	if m.Git == nil {
-		m.Git = workspace.NewGitService(m.RootPath)
-	}
+	m.ws.EnsureGit()
 	content := m.EditorState.Editor.Value()
 	revision := m.EditorState.Editor.Revision()
 	gen := m.editorGitGen.Add(1)
 	workspaceGen := m.workspaceSwitchGen.Load()
-	service := m.Git
+	service := m.ws.Git()
 	if m.editorGitCancel != nil {
 		m.editorGitCancel()
 	}

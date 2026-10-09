@@ -314,17 +314,21 @@ type Settings struct {
 }
 
 type AppSettings struct {
-	Theme        ThemeSettings               `json:"theme,omitempty"`
-	Editor       EditorSettings              `json:"editor,omitempty"`
-	LSP          LSPSettings                 `json:"lsp,omitempty"`
-	UI           UISettings                  `json:"ui,omitempty"`
-	Font         FontSettings                `json:"font,omitempty"`
-	Accounts     map[string]provider.Account `json:"accounts,omitempty"`
-	Agents       AgentsSettings              `json:"agents,omitempty"`
-	Memory       MemorySettings              `json:"memory,omitempty"`
-	Capabilities captypes.Settings           `json:"capabilities,omitempty"`
-	Safety       SafetySettings              `json:"safety,omitempty"`
-	LocalHistory LocalHistorySettings        `json:"local_history,omitempty"`
+	// Observation revisions fence a connected form's original application and
+	// workspace preimages. They are client metadata, never persisted settings.
+	ApplicationRevision string                      `json:"-"`
+	WorkspaceRevision   string                      `json:"-"`
+	Theme               ThemeSettings               `json:"theme,omitempty"`
+	Editor              EditorSettings              `json:"editor,omitempty"`
+	LSP                 LSPSettings                 `json:"lsp,omitempty"`
+	UI                  UISettings                  `json:"ui,omitempty"`
+	Font                FontSettings                `json:"font,omitempty"`
+	Accounts            map[string]provider.Account `json:"accounts,omitempty"`
+	Agents              AgentsSettings              `json:"agents,omitempty"`
+	Memory              MemorySettings              `json:"memory,omitempty"`
+	Capabilities        captypes.Settings           `json:"capabilities,omitempty"`
+	Safety              SafetySettings              `json:"safety,omitempty"`
+	LocalHistory        LocalHistorySettings        `json:"local_history,omitempty"`
 	// Network is application-owned: trust, proxy credentials and client
 	// identities must never be promoted by a project's settings overlay.
 	Network network.Settings `json:"network,omitempty"`

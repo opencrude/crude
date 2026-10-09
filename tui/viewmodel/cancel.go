@@ -29,7 +29,7 @@ func (m *App) handleCancel() tea.Cmd {
 	}
 
 	if m.anyActive() {
-		for _, node := range m.AgentMgr.AllNodes() {
+		for _, node := range m.ws.AgentMgr().AllNodes() {
 			if node != nil && node.IsActive() {
 				m.cancelAgentTurn(node.ID)
 			}
@@ -45,12 +45,12 @@ func (m *App) cancelAgentTurn(agentID string) {
 	if agentID == "" {
 		return
 	}
-	if node := m.AgentMgr.Get(agentID); node != nil && node.State != nil {
+	if node := m.ws.AgentMgr().Get(agentID); node != nil && node.State != nil {
 		state := node.State
 		status := state.RecoveryStatus()
 		if m.canRetryAgentRecovery(agentID) {
-			if cancel := m.PrepareCancelAgentRecovery(agentID, status.ID, status.Generation); cancel != nil {
-				m.BeginAgentCancellation(agentID)
+			if cancel := m.ws.PrepareCancelAgentRecovery(agentID, status.ID, status.Generation); cancel != nil {
+				m.ws.BeginAgentCancellation(agentID)
 				m.dropThinkingPresentation(state)
 				m.syncAgentMessages(agentID, true)
 				generation := m.workspaceSwitchGen.Load()
@@ -60,9 +60,9 @@ func (m *App) cancelAgentTurn(agentID string) {
 				return
 			}
 		}
-		m.BeginAgentCancellation(agentID)
+		m.ws.BeginAgentCancellation(agentID)
 		m.dropThinkingPresentation(state)
 		m.syncAgentMessages(agentID, true)
 	}
-	m.CancelAgent(agentID)
+	m.ws.CancelAgent(agentID)
 }

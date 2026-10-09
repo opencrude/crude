@@ -43,7 +43,7 @@ func TestThinkingPaneShowsScrollbarOnFirstFrame(t *testing.T) {
 	app.AddOrchestrator(
 		"probe-agent")
 
-	node := app.AgentMgr.Get("probe-agent")
+	node := app.ws.AgentMgr().Get("probe-agent")
 	agent := node.State
 	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "probe-agent", Data: reasoning.Delta{Text: thinkingLines(40)}})
 	if app.thinkingPaneID(agent) == "" {
@@ -79,7 +79,7 @@ func TestRepeatedThinkingBlocksEachKeepTheirScrollbar(t *testing.T) {
 	app.AddOrchestrator(
 		"repeat-agent")
 
-	agent := app.AgentMgr.Get("repeat-agent").State
+	agent := app.ws.AgentMgr().Get("repeat-agent").State
 	fillAgentChat(app, "repeat-agent", 6, "history")
 	seen := make(map[string]bool)
 
@@ -148,7 +148,7 @@ func TestThinkingScrollbarPaintsOnFirstFrameAfterReturningToActivePane(t *testin
 	mainScroll.ScrollTo(0)
 
 	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "scrolled-agent", Data: reasoning.Delta{Text: thinkingLines(50)}})
-	paneID := app.thinkingPaneID(app.AgentMgr.Get("scrolled-agent").State)
+	paneID := app.thinkingPaneID(app.ws.AgentMgr().Get("scrolled-agent").State)
 	if paneID == "" {
 		t.Fatal("thinking was not promoted while main chat was scrolled away")
 	}
@@ -188,7 +188,7 @@ func TestThinkingPromotionContinuesIntoPane(t *testing.T) {
 
 	app.ChatAreaHeight = 6 // threshold = max(6/3, 5) = 5 wrapped lines
 
-	node := app.AgentMgr.Get("promote-agent")
+	node := app.ws.AgentMgr().Get("promote-agent")
 	if node == nil || node.State == nil {
 		t.Fatal("agent not created")
 	}
@@ -236,7 +236,7 @@ func TestThinkingPromotionStartTimeCoversWholeBlock(t *testing.T) {
 
 	app.ChatAreaHeight = 6
 
-	node := app.AgentMgr.Get("promote-time")
+	node := app.ws.AgentMgr().Get("promote-time")
 	if node == nil || node.State == nil {
 		t.Fatal("agent not created")
 	}
@@ -288,14 +288,14 @@ func TestThinkingPaneIDsAreUniquePerAgent(t *testing.T) {
 
 	for _, id := range []string{"promote-a", "promote-b"} {
 		app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: id, Data: reasoning.Delta{Text: thinkingLines(8)}})
-		agent := app.AgentMgr.Get(id).State
+		agent := app.ws.AgentMgr().Get(id).State
 		if app.thinkingPaneID(agent) == "" {
 			t.Fatalf("agent %s: thinking not promoted", id)
 		}
 	}
 
-	a := app.AgentMgr.Get("promote-a").State
-	b := app.AgentMgr.Get("promote-b").State
+	a := app.ws.AgentMgr().Get("promote-a").State
+	b := app.ws.AgentMgr().Get("promote-b").State
 	if app.thinkingPaneID(a) == app.thinkingPaneID(b) {
 		t.Fatalf("two agents share the same thinking pane: %q", app.thinkingPaneID(a))
 	}
@@ -310,7 +310,7 @@ func TestThinkingPaneDemotesToSummary(t *testing.T) {
 
 	app.ChatAreaHeight = 6
 
-	node := app.AgentMgr.Get("promote-done")
+	node := app.ws.AgentMgr().Get("promote-done")
 	agent := node.State
 
 	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "promote-done", Data: reasoning.Delta{Text: thinkingLines(8)}})
@@ -322,7 +322,7 @@ func TestThinkingPaneDemotesToSummary(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "stream_token", AgentID: "promote-done", Data: "hello"})
 
-	if app.PaneMgr.Has(paneID) || app.subPaneProjections.Has(paneID) {
+	if app.ws.PaneMgr().Has(paneID) || app.subPaneProjections.Has(paneID) {
 		t.Fatal("completed thinking kept a competing pane owner")
 	}
 	thought := agent.Messages.Messages()[0]
@@ -338,7 +338,7 @@ func TestThinkingPaneDemotesWhenTurnEndsDirectly(t *testing.T) {
 
 	app.ChatAreaHeight = 6
 
-	agent := app.AgentMgr.Get("direct-done").State
+	agent := app.ws.AgentMgr().Get("direct-done").State
 	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "direct-done", Data: reasoning.Delta{Text: thinkingLines(8)}})
 	paneID := app.thinkingPaneID(agent)
 	if paneID == "" {
@@ -350,7 +350,7 @@ func TestThinkingPaneDemotesWhenTurnEndsDirectly(t *testing.T) {
 		"reason":  "completed",
 	}})
 
-	if app.PaneMgr.Has(paneID) || app.subPaneProjections.Has(paneID) {
+	if app.ws.PaneMgr().Has(paneID) || app.subPaneProjections.Has(paneID) {
 		t.Fatal("thinking pane survived direct completion")
 	}
 	if app.thinkingPaneID(agent) != "" {

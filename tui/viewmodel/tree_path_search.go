@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/shellport"
 	"crude/tui/filetree"
 	"crude/tui/screens/shelltree"
 	"crude/workspace"
@@ -108,11 +109,16 @@ func (m *App) beginTreePathSearch(query string) tea.Cmd {
 	state.hidden[target] = includeHidden
 	state.running[target] = true
 	stateParent.mu.Unlock()
+	files, connected := m.ws.(shellport.ClientFiles)
 
 	return func() tea.Msg {
-		catalog, err := workspace.ScanBrowserPaths(ctx, workspace.BrowserPathRequest{
-			Root: root, IncludeHidden: includeHidden,
-		})
+		var catalog workspace.BrowserCatalog
+		var err error
+		if connected {
+			catalog, err = files.CatalogFiles(ctx, includeHidden)
+		} else {
+			catalog, err = workspace.ScanBrowserPaths(ctx, workspace.BrowserPathRequest{Root: root, IncludeHidden: includeHidden})
+		}
 		stateParent.mu.Lock()
 		latestQuery := state.query[target]
 		stateParent.mu.Unlock()

@@ -20,10 +20,10 @@ func TestCtrlAltE_TogglesNewestDisclosure(t *testing.T) {
 	ml := chatprojection.NewRenderer(th)
 	ml.SetSize(80, 30)
 	ml.SetChatAreaBounds(0, 30)
-	sp := app.PaneMgr.GetOrCreate("ses_1_orch_1", workspace.PaneAgent, "ses_1_orch_1")
+	sp := app.ws.PaneMgr().GetOrCreate("ses_1_orch_1", workspace.PaneAgent, "ses_1_orch_1")
 	proj := app.subPaneProjections.Get("ses_1_orch_1", workspace.PaneAgent)
 	proj.renderer = ml
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", &workspace.AgentState{Messages: sp.Messages})
+	app.ws.AgentMgr().AddOrchestrator("ses_1_orch_1", &workspace.AgentState{Messages: sp.Messages})
 	app.AgentView.SetActive("ses_1_orch_1")
 
 	// Seed two expandable messages: an early completed thought (collapsed by

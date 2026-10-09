@@ -193,11 +193,11 @@ func TestDocumentProjectionUndoIntentAndSavepoint(t *testing.T) {
 	if err := e.CompleteDocumentUndo(intent, document.ErrOverlap); err != nil {
 		t.Fatal(err)
 	}
-	if !errors.Is(e.DocumentState().Conflict, document.ErrOverlap) || e.Value() != "abc" {
+	if e.DocumentState().Conflict != nil || e.Value() != "abc" {
 		t.Fatal("failed undo changed bytes")
 	}
-	// Rejected undo remains explicitly conflicted until the client resolves it
-	// through a canonical delta; metadata-only saves still retain local text.
+	// A rejected author-specific undo must not block canonical sync; metadata-only
+	// saves still retain local text.
 	e.InsertRune('z')
 	s.Saved = []byte("abc")
 	s.DiskExists = false
@@ -207,6 +207,37 @@ func TestDocumentProjectionUndoIntentAndSavepoint(t *testing.T) {
 	}
 	if e.Value() != "zabc" || !e.Modified() || e.buffer.diskExists {
 		t.Fatal("save metadata lost newer typing")
+	}
+}
+
+func TestDocumentResetKeepsManagedBufferAndQueuedUndo(t *testing.T) {
+	e, s := projectionEditor(t, "abc")
+	manager := NewBufferManager()
+	buffer := manager.InstallPrepared(e.DocumentBuffer())
+	s.Revision, s.Text = 10, []byte("changed")
+	if err := e.ResetDocument(s); err != nil {
+		t.Fatal(err)
+	}
+	if manager.Get(s.Path) != e.DocumentBuffer() || buffer != e.DocumentBuffer() || e.Value() != "changed" {
+		t.Fatal("reset detached managed live buffer")
+	}
+	if err := e.BindDocumentOwner(projectionOwner); err != nil {
+		t.Fatal(err)
+	}
+	var intent DocumentUndoIntent
+	e.SetOnDocumentUndo(func(i DocumentUndoIntent) { intent = i })
+	e.InsertRune('X')
+	e.Undo()
+	c, err := e.CaptureDocumentEdits(projectionOwner, "queued", "queued")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := e.AcceptDocumentReceipt(document.Receipt{DocumentID: s.ID, RequestID: c.RequestID, Before: 10, Revision: 11, Accepted: true}); err != nil {
+		t.Fatal(err)
+	}
+	e.DrainDocumentUndo()
+	if !e.DocumentState().UndoPending || intent.ExpectedRevision != 11 {
+		t.Fatal("pending undo gesture was lost")
 	}
 }
 

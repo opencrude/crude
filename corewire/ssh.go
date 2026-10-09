@@ -3,6 +3,7 @@ package corewire
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"os/exec"
 	"regexp"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 )
 
 // SSHOptions intentionally does not expose arbitrary -o options or remote paths.
@@ -53,12 +55,44 @@ func DialSSH(ctx context.Context, o SSHOptions) (io.ReadWriteCloser, error) {
 }
 
 type sshConn struct {
-	in   io.WriteCloser
-	out  io.ReadCloser
-	cmd  *exec.Cmd
-	done chan struct{}
-	once sync.Once
-	err  error
+	in         io.WriteCloser
+	out        io.ReadCloser
+	cmd        *exec.Cmd
+	done       chan struct{}
+	once       sync.Once
+	diagnostic *sshDiagnostic
+}
+
+// Keep only a bounded tail. SSH/proxy output can be arbitrarily large; it must
+// never become an unbounded retained buffer or inject terminal control bytes.
+type sshDiagnostic struct {
+	mu   sync.Mutex
+	text []byte
+}
+
+func (d *sshDiagnostic) Write(p []byte) (int, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	const cap = 4096
+	if len(p) >= cap {
+		d.text = append(d.text[:0], p[len(p)-cap:]...)
+	} else {
+		if len(d.text)+len(p) > cap {
+			d.text = append(d.text[:0], d.text[len(d.text)+len(p)-cap:]...)
+		}
+		d.text = append(d.text, p...)
+	}
+	return len(p), nil
+}
+func (d *sshDiagnostic) String() string {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	return strings.TrimSpace(strings.Map(func(r rune) rune {
+		if r == '\n' || r == '\t' || !unicode.IsControl(r) {
+			return r
+		}
+		return -1
+	}, string(d.text)))
 }
 
 func dialSSH(ctx context.Context, program string, o SSHOptions) (io.ReadWriteCloser, error) {
@@ -81,15 +115,15 @@ func dialSSH(ctx context.Context, program string, o SSHOptions) (io.ReadWriteClo
 		_ = in.Close()
 		return nil, err
 	}
-	// Discard stderr rather than retain an unbounded diagnostic buffer.
-	cmd.Stderr = io.Discard
+	diagnostic := &sshDiagnostic{}
+	cmd.Stderr = diagnostic
 	if err = cmd.Start(); err != nil {
 		_ = in.Close()
 		_ = out.Close()
 		return nil, err
 	}
-	c := &sshConn{in: in, out: out, cmd: cmd, done: make(chan struct{})}
-	go func() { c.err = cmd.Wait(); close(c.done) }()
+	c := &sshConn{in: in, out: out, cmd: cmd, done: make(chan struct{}), diagnostic: diagnostic}
+	go func() { _ = cmd.Wait(); close(c.done) }()
 	go func() {
 		select {
 		case <-ctx.Done():
@@ -100,10 +134,30 @@ func dialSSH(ctx context.Context, program string, o SSHOptions) (io.ReadWriteClo
 	return c, nil
 }
 
-func (c *sshConn) Read(b []byte) (int, error)  { return c.out.Read(b) }
-func (c *sshConn) Write(b []byte) (int, error) { return c.in.Write(b) }
+func (c *sshConn) failure(err error) error {
+	if detail := c.diagnostic.String(); detail != "" {
+		return fmt.Errorf("SSH transport failed: %s: %w", detail, err)
+	}
+	return err
+}
+func (c *sshConn) Read(b []byte) (int, error) {
+	n, err := c.out.Read(b)
+	if err != nil {
+		_ = c.Close() // EOF is terminal for framed core transport; join the owner.
+		return n, c.failure(err)
+	}
+	return n, nil
+}
+func (c *sshConn) Write(b []byte) (int, error) {
+	n, err := c.in.Write(b)
+	if err != nil {
+		return n, c.failure(err)
+	}
+	return n, nil
+}
 func (c *sshConn) Close() error {
 	c.once.Do(func() { _ = c.in.Close(); _ = c.out.Close(); _ = c.cmd.Process.Kill() })
 	<-c.done
-	return c.err
+	// Closing the shell intentionally kills its relay, not the retained core.
+	return nil
 }

@@ -31,7 +31,7 @@ func TestGitIsADockDestinationNotARailView(t *testing.T) {
 			t.Fatal("Git still has a rail destination")
 		}
 	}
-	app.gitPanel.SetSnapshot(gitDockSnapshot(app.RootPath, workspace.GitChange{Path: "a.go", Area: workspace.GitAreaWorking, Code: "M"}))
+	app.gitPanel.SetSnapshot(gitDockSnapshot(app.ws.RootPath(), workspace.GitChange{Path: "a.go", Area: workspace.GitAreaWorking, Code: "M"}))
 	app.toggleGitPanel()
 	if !app.gitPanelOpen() || app.termDock.ActivePanel() != termdock.PanelGit {
 		t.Fatal("Git panel did not open in the dock")
@@ -67,7 +67,7 @@ func TestGitIsADockDestinationNotARailView(t *testing.T) {
 func TestExplorerContextMenuViewsChangesForAPath(t *testing.T) {
 	app := newFullTestApp(t)
 	root := t.TempDir()
-	app.RootPath = root
+	wsOf(app).RootPath = root
 	app.gitPanel.SetSnapshot(gitDockSnapshot(root,
 		workspace.GitChange{Path: "src/a.go", Area: workspace.GitAreaWorking, Code: "M"},
 		workspace.GitChange{Path: "src/b.go", Area: workspace.GitAreaStaged, Code: "A"},
@@ -123,7 +123,7 @@ func TestGitStageRefusesUnsavedEditorBytes(t *testing.T) {
 func TestPreparedChangesReachPanelAndReview(t *testing.T) {
 	app := newFullTestApp(t)
 	change := workspace.GitChange{Path: "a.go", Area: workspace.GitAreaWorking, Code: "M"}
-	app.gitPanel.SetSnapshot(gitDockSnapshot(app.RootPath, change))
+	app.gitPanel.SetSnapshot(gitDockSnapshot(app.ws.RootPath(), change))
 	app.openGitFileReview(change)
 	view := app.activeGitReview()
 	if view == nil || view.reveal == "" {
@@ -154,7 +154,7 @@ func TestGitReviewMakesRoomOnShortTerminals(t *testing.T) {
 	}{{30, false}, {60, true}} {
 		app := newFullTestApp(t)
 		app.width, app.height = 120, test.height
-		app.gitPanel.SetSnapshot(gitDockSnapshot(app.RootPath, workspace.GitChange{Path: "a.go", Area: workspace.GitAreaWorking, Code: "M"}))
+		app.gitPanel.SetSnapshot(gitDockSnapshot(app.ws.RootPath(), workspace.GitChange{Path: "a.go", Area: workspace.GitAreaWorking, Code: "M"}))
 		app.toggleGitPanel()
 		app.openGitReview("", "")
 		if app.gitPanelOpen() != test.keepDock {
@@ -168,7 +168,7 @@ func TestGitReviewKeysReachTheReviewThroughTheShell(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 140, 44
 	change := workspace.GitChange{Path: "a.go", Area: workspace.GitAreaWorking, Code: "M"}
-	app.gitPanel.SetSnapshot(gitDockSnapshot(app.RootPath, change))
+	app.gitPanel.SetSnapshot(gitDockSnapshot(app.ws.RootPath(), change))
 	app.openGitReview("", "")
 	review := app.activeGitReview().screen
 	review.ShowChanges(gitdiff.PrepareChanges([]workspace.GitChangeComparison{{Change: change, Comparison: workspace.GitComparison{Path: "a.go", Before: "a\n", After: "b\n", BeforePresent: true, AfterPresent: true, Fingerprint: "fp"}}}), "main")
@@ -190,7 +190,7 @@ func TestGitReviewsAreIndependentTabs(t *testing.T) {
 	app.width, app.height = 160, 50
 	a := workspace.GitChange{Path: "src/a.go", Area: workspace.GitAreaWorking, Code: "M"}
 	b := workspace.GitChange{Path: "src/b.go", Area: workspace.GitAreaWorking, Code: "M"}
-	app.gitPanel.SetSnapshot(gitDockSnapshot(app.RootPath, a, b))
+	app.gitPanel.SetSnapshot(gitDockSnapshot(app.ws.RootPath(), a, b))
 	app.openGitFileReview(a)
 	first := app.activeGitReview()
 	app.openGitFileReview(b)
@@ -237,7 +237,7 @@ func TestGitReviewsAreIndependentTabs(t *testing.T) {
 // a stopped or superseded run cannot overwrite a newer draft.
 func TestCommitMessageWriterIgnoresStaleRuns(t *testing.T) {
 	app := newFullTestApp(t)
-	app.gitPanel.SetSnapshot(gitDockSnapshot(app.RootPath, workspace.GitChange{Path: "a.go", Area: workspace.GitAreaWorking, Code: "M"}))
+	app.gitPanel.SetSnapshot(gitDockSnapshot(app.ws.RootPath(), workspace.GitChange{Path: "a.go", Area: workspace.GitAreaWorking, Code: "M"}))
 	app.gitCommitWriteSequence = 2
 	app.gitPanel.BeginWriting()
 	app.applyCommitMessageDelta(gitCommitDeltaMsg{sequence: 1, text: "stale"})

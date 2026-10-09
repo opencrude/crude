@@ -10,6 +10,7 @@ import (
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 
 	"crude/provider"
+	"crude/shellport"
 	"crude/tui/editor"
 	"crude/tui/input"
 	"crude/tui/rendering"
@@ -359,7 +360,7 @@ func (m *App) dispatchEditorKey(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.closeCompletionPopup()
 	}
 	// LSP keybinds (only when a file is open and the LSP is up).
-	if m.EditorState.Editor.IsOpen() && m.LSPMgr != nil {
+	if m.EditorState.Editor.IsOpen() && m.ws.LSPMgr() != nil {
 		switch msg.String() {
 		case "alt+.": // gd (go to definition) — Alt+. is widely used in TUI editors
 			return m, m.requestDefinitionCmd()
@@ -613,8 +614,8 @@ func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, 
 	// Ctrl+X cuts. The viewmodel must not shadow them or the two layers would
 	// disagree about selection state.
 	if msg.Code == tea.KeyEsc {
-		if m.Logger != nil {
-			m.Logger.Debug("CANCEL", "esc", "mode", m.OverlayState.Name())
+		if m.ws.Logger() != nil {
+			m.ws.Logger().Debug("CANCEL", "esc", "mode", m.OverlayState.Name())
 		}
 		cmd := m.handleCancel()
 		// The ladder can drop the selection or clear the draft, so the
@@ -686,7 +687,7 @@ func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, 
 		if node := m.AgentView.ActiveNode(); node != nil && node.State != nil {
 			status := node.State.RecoveryStatus()
 			parked := status.State == recovery.Interrupted ||
-				status.State == recovery.NeedsAttention && !m.AgentTurnActive(node.ID)
+				status.State == recovery.NeedsAttention && !m.ws.AgentTurnActive(node.ID)
 			text := strings.TrimSpace(m.Input.Value())
 			if parked && text != "" && !strings.HasPrefix(text, "/") {
 				// Refuse admission before the text control consumes its draft:
@@ -926,7 +927,7 @@ type lspRenameResultMsg struct {
 	generation uint64
 	filePath   string
 	newName    string
-	edit       interface{}
+	edit       *protocol.WorkspaceEdit
 	err        error
 }
 
@@ -944,17 +945,17 @@ type lspCompletionResultMsg struct {
 
 // requestDefinitionCmd fires a "go to definition" request at the cursor.
 func (m *App) requestDefinitionCmd() tea.Cmd {
-	if !m.EditorState.Editor.IsOpen() || m.LSPMgr == nil {
+	if !m.EditorState.Editor.IsOpen() || m.ws.LSPMgr() == nil {
 		return nil
 	}
 	filePath := m.EditorState.Editor.FilePath()
 	line, col := m.EditorState.Editor.LSPCursorPosition()
-	conn, status, _ := m.LSPMgr.Status()
+	conn, status, _ := m.ws.LSPMgr().Status()
 	if !conn || status != editor.LSPConnected {
 		m.Feedback.NotifyInfo("LSP not ready")
 		return nil
 	}
-	lspMgr := m.LSPMgr
+	lspMgr := m.ws.LSPMgr()
 	ctx, generation := m.lspRequestContext()
 	owner, revision := m.EditorState.Editor, m.EditorState.Editor.Revision()
 	return tea.Cmd(func() tea.Msg {
@@ -965,17 +966,17 @@ func (m *App) requestDefinitionCmd() tea.Cmd {
 
 // requestReferencesCmd fires a "find references" request at the cursor.
 func (m *App) requestReferencesCmd() tea.Cmd {
-	if !m.EditorState.Editor.IsOpen() || m.LSPMgr == nil {
+	if !m.EditorState.Editor.IsOpen() || m.ws.LSPMgr() == nil {
 		return nil
 	}
 	filePath := m.EditorState.Editor.FilePath()
 	line, col := m.EditorState.Editor.LSPCursorPosition()
-	conn, status, _ := m.LSPMgr.Status()
+	conn, status, _ := m.ws.LSPMgr().Status()
 	if !conn || status != editor.LSPConnected {
 		m.Feedback.NotifyInfo("LSP not ready")
 		return nil
 	}
-	lspMgr := m.LSPMgr
+	lspMgr := m.ws.LSPMgr()
 	ctx, generation := m.lspRequestContext()
 	owner, revision := m.EditorState.Editor, m.EditorState.Editor.Revision()
 	return tea.Cmd(func() tea.Msg {
@@ -987,16 +988,16 @@ func (m *App) requestReferencesCmd() tea.Cmd {
 // requestDocumentSymbolsCmd refreshes the document outline for the current
 // file and shows it in the outline panel.
 func (m *App) requestDocumentSymbolsCmd() tea.Cmd {
-	if !m.EditorState.Editor.IsOpen() || m.LSPMgr == nil {
+	if !m.EditorState.Editor.IsOpen() || m.ws.LSPMgr() == nil {
 		return nil
 	}
 	filePath := m.EditorState.Editor.FilePath()
-	conn, status, _ := m.LSPMgr.Status()
+	conn, status, _ := m.ws.LSPMgr().Status()
 	if !conn || status != editor.LSPConnected {
 		m.Feedback.NotifyInfo("LSP not ready")
 		return nil
 	}
-	lspMgr := m.LSPMgr
+	lspMgr := m.ws.LSPMgr()
 	ctx, generation := m.lspRequestContext()
 	owner, revision := m.EditorState.Editor, m.EditorState.Editor.Revision()
 	return tea.Cmd(func() tea.Msg {
@@ -1009,10 +1010,10 @@ func (m *App) requestDocumentSymbolsCmd() tea.Cmd {
 // the cursor. The actual rename request fires when the user confirms the new
 // name in the input.
 func (m *App) startRenameCmd() tea.Cmd {
-	if !m.EditorState.Editor.IsOpen() || m.LSPMgr == nil {
+	if !m.EditorState.Editor.IsOpen() || m.ws.LSPMgr() == nil {
 		return nil
 	}
-	conn, status, _ := m.LSPMgr.Status()
+	conn, status, _ := m.ws.LSPMgr().Status()
 	if !conn || status != editor.LSPConnected {
 		m.Feedback.NotifyInfo("LSP not ready")
 		return nil
@@ -1042,12 +1043,12 @@ func (m *App) startRenameCmd() tea.Cmd {
 // new name. Called from the input handler when renameArmed is true.
 func (m *App) submitRename(newName string) tea.Cmd {
 	m.LSPPopup.RenameArmed = false
-	if !m.EditorState.Editor.IsOpen() || m.LSPMgr == nil || newName == "" {
+	if !m.EditorState.Editor.IsOpen() || m.ws.LSPMgr() == nil || newName == "" {
 		return nil
 	}
 	filePath := m.EditorState.Editor.FilePath()
 	line, col := m.EditorState.Editor.LSPCursorPosition()
-	lspMgr := m.LSPMgr
+	lspMgr := m.ws.LSPMgr()
 	ctx, generation := m.lspRequestContext()
 	owner, revision := m.EditorState.Editor, m.EditorState.Editor.Revision()
 	return tea.Cmd(func() tea.Msg {
@@ -1062,19 +1063,19 @@ func (m *App) requestCompletionCmd() tea.Cmd {
 }
 
 func (m *App) requestCompletion(automatic bool) tea.Cmd {
-	if !m.EditorState.Editor.IsOpen() || m.LSPMgr == nil {
+	if !m.EditorState.Editor.IsOpen() || m.ws.LSPMgr() == nil {
 		return nil
 	}
 	filePath := m.EditorState.Editor.FilePath()
 	line, col := m.EditorState.Editor.LSPCursorPosition()
-	conn, status, _ := m.LSPMgr.Status()
+	conn, status, _ := m.ws.LSPMgr().Status()
 	if !conn || status != editor.LSPConnected {
 		if !automatic {
 			m.Feedback.NotifyInfo("LSP not ready")
 		}
 		return nil
 	}
-	lspMgr := m.LSPMgr
+	lspMgr := m.ws.LSPMgr()
 	ctx, generation := m.lspRequestContext()
 	owner, revision := m.EditorState.Editor, m.EditorState.Editor.Revision()
 	return tea.Cmd(func() tea.Msg {
@@ -1097,6 +1098,9 @@ func (m *App) handleDefinitionResult(msg lspDefinitionResultMsg) {
 	loc := msg.locations[0]
 	if loc.Path == "" {
 		m.Feedback.NotifyInfo("Definition in unindexed location")
+		return
+	}
+	if m.queueLiveNavigation(loc.Path, editor.LSPDiagnostic{Line: loc.Line, Col: loc.Col}, true) {
 		return
 	}
 	if loc.Path != m.EditorState.Editor.FilePath() {
@@ -1181,12 +1185,15 @@ func (m *App) handleRenameResult(msg lspRenameResultMsg) tea.Cmd {
 		m.Feedback.NotifyError("Rename failed: " + msg.err.Error())
 		return nil
 	}
-	edit, ok := msg.edit.(*protocol.WorkspaceEdit)
-	if !ok || edit == nil {
+	edit := msg.edit
+	if edit == nil {
 		m.Feedback.NotifyInfo("Rename: no changes")
 		return nil
 	}
-	root := m.RootPath
+	root := m.ws.RootPath()
+	if _, connected := m.ws.(shellport.ClientFiles); connected {
+		return m.prepareClientLSPRename(msg, edit)
+	}
 	return func() tea.Msg { return prepareLSPRename(root, msg, edit) }
 }
 
@@ -1371,6 +1378,9 @@ func (m *App) jumpToReference(r refRow) {
 	if r.File == "" {
 		return
 	}
+	if m.queueLiveNavigation(r.File, editor.LSPDiagnostic{Line: r.Line, Col: r.Col}, true) {
+		return
+	}
 	if r.File != m.EditorState.Editor.FilePath() {
 		if err := m.openFileInEditor(r.File); err != nil {
 			m.Feedback.NotifyError("Cannot open " + r.File)
@@ -1538,8 +1548,8 @@ func (m *App) syncOutlineListCursor() {
 		}
 	}
 	// Rebuild only if frame is missing list content.
-	if m.LSPMgr != nil && m.EditorState.Editor != nil {
-		m.showOutlinePopup(m.LSPMgr.DocumentSymbols(m.EditorState.Editor.FilePath()))
+	if m.ws.LSPMgr() != nil && m.EditorState.Editor != nil {
+		m.showOutlinePopup(m.ws.LSPMgr().DocumentSymbols(m.EditorState.Editor.FilePath()))
 	}
 }
 

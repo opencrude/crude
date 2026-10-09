@@ -39,10 +39,10 @@ func TestProjectReplaceFileOperationDoesNotReenterEventBus(t *testing.T) {
 	}
 
 	app := newFullTestApp(t)
-	app.RootPath = root
+	wsOf(app).RootPath = root
 	bus := workspace.NewEventBus()
-	app.FileOps = workspace.NewFileOpsService(root, bus, nil)
-	app.SetEventBus(bus)
+	wsOf(app).FileOps = workspace.NewFileOpsService(root, bus, nil)
+	app.ws.SetEventBus(bus)
 	setUndrainedProgram(t, bus)
 
 	app.toggleReplaceInFiles()
@@ -185,9 +185,9 @@ func newUndrainedTreeMutationApp(t *testing.T, root string) (*App, *workspace.Ev
 
 	app := newFullTestApp(t)
 	bus := workspace.NewEventBus()
-	app.RootPath = root
-	app.FileOps = workspace.NewFileOpsService(root, bus, nil)
-	app.SetEventBus(bus)
+	wsOf(app).RootPath = root
+	wsOf(app).FileOps = workspace.NewFileOpsService(root, bus, nil)
+	app.ws.SetEventBus(bus)
 	app.eventBus = bus
 	app.BufferMgr = editor.NewBufferManager()
 

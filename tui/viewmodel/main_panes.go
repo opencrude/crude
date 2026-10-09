@@ -124,7 +124,7 @@ func (p *mainPaneLayout) view(tab *window.Tab) *mainPaneView {
 		v.deck = newDeckMount(p.app)
 		v.deck.Base = ui.NewBase(ui.NewID(base, "deck"))
 		_, v.deck.projection = p.app.sessionProjectionForAgent(p.app.agentIDFromTabTitle(tab.Title))
-		if node := p.app.AgentMgr.Get(agentID); node != nil && node.State != nil && node.State.Completed {
+		if node := p.app.ws.AgentMgr().Get(agentID); node != nil && node.State != nil && node.State.Completed {
 			v.chat.ScrollModel().SetAutoScroll(false)
 			v.chat.ScrollModel().ScrollTo(0)
 		}
@@ -357,7 +357,7 @@ func paneHasGroup(n *window.PaneNode, id window.GroupID) bool {
 func (p *mainPaneLayout) configureAgent(g *mainPaneGroup, tab *window.Tab, body ui.Rect) {
 	m, v := p.app, g.view
 	id := m.agentIDFromTabTitle(tab.Title)
-	node := m.AgentMgr.Get(id)
+	node := m.ws.AgentMgr().Get(id)
 	if node == nil {
 		return
 	}
@@ -425,7 +425,7 @@ func (p *mainPaneLayout) ownsSessionComposer(group window.GroupID, sess *workspa
 			return false
 		}
 		agent := m.agentIDFromTabTitle(tab.Title)
-		node := m.AgentMgr.Get(agent)
+		node := m.ws.AgentMgr().Get(agent)
 		if node == nil || node.State != nil && node.State.Completed {
 			return false
 		}

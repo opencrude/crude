@@ -538,7 +538,7 @@ func (m *App) subPaneContentForRegistry(reg *subPaneProjectionRegistry) chatproj
 			m.presentThinking(p.renderer, sp.Messages)
 		}
 		p.renderer.SetSubPaneContentFn(m.subPaneContentForRegistry(reg))
-		if n := m.AgentMgr.Get(paneID); n != nil && n.State != nil {
+		if n := m.ws.AgentMgr().Get(paneID); n != nil && n.State != nil {
 			p.renderer.SetLegacyModelFallback(n.Model)
 			p.renderer.SetStreaming(n.State.Streaming)
 			p.renderer.SetActiveTyping(n.State.ComputeActiveTyping())

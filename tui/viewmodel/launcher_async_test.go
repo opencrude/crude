@@ -13,7 +13,7 @@ import (
 func TestLauncherOpen_PaintsWithoutWorkspaceScan(t *testing.T) {
 	app := newTestApp(t)
 	app.AgentView.ClearActive()
-	app.AgentMgr.Remove("agent-1")
+	app.ws.AgentMgr().Remove("agent-1")
 	app.width, app.height = 100, 30
 	app.openLauncher()
 	app.paintShellFrame()
@@ -34,7 +34,7 @@ func TestLauncherOpen_PaintsWithoutWorkspaceScan(t *testing.T) {
 func TestLauncherAsyncLoad_AppliesLatestGen(t *testing.T) {
 	app := newTestApp(t)
 	app.AgentView.ClearActive()
-	app.AgentMgr.Remove("agent-1")
+	app.ws.AgentMgr().Remove("agent-1")
 	app.openLauncher()
 	gen := app.launcherLoadGen.Load()
 
@@ -77,7 +77,7 @@ func TestLauncherAsyncLoad_AppliesLatestGen(t *testing.T) {
 func TestLauncherAsyncLoad_DroppedWhenLauncherClosed(t *testing.T) {
 	app := newTestApp(t)
 	app.AgentView.ClearActive()
-	app.AgentMgr.Remove("agent-1")
+	app.ws.AgentMgr().Remove("agent-1")
 	app.openLauncher()
 	gen := app.launcherLoadGen.Load()
 

@@ -19,7 +19,7 @@ func TestFilePickerNavigationLoadsDirectoryThroughWorkspace(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(subdir, "main.go"), []byte("package main"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	listing, err := app.BrowseDirectory(root)
+	listing, err := wsOf(app).BrowseDirectory(root)
 	if err != nil {
 		t.Fatal(err)
 	}

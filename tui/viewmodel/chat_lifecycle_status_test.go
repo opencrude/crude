@@ -14,7 +14,7 @@ import (
 
 func TestManualCompactionShowsOperationStatusInsteadOfIdlePlan(t *testing.T) {
 	app := newFullTestApp(t)
-	app.Logger = stubLogger{}
+	wsOf(app).Logger = stubLogger{}
 	id := addBackendTestOrchestrator(t, app)
 	data := map[string]any{
 		"request_id": "compact-status-1", "trigger": "manual", "role": "root",
@@ -26,7 +26,7 @@ func TestManualCompactionShowsOperationStatusInsteadOfIdlePlan(t *testing.T) {
 	paint := func() string {
 		app.syncAgentStatusInventory()
 		app.configureShell()
-		view := app.AgentActivity(id)
+		view := app.ws.AgentActivity(id)
 		view.Plan = plan
 		app.chatScreen.SetActivity(view)
 		app.renderShellToSurface()
@@ -37,7 +37,7 @@ func TestManualCompactionShowsOperationStatusInsteadOfIdlePlan(t *testing.T) {
 	if got := paint(); !strings.Contains(got, "Compacting context") || strings.Contains(got, "Idle") || strings.Contains(got, "Plan 3/4") {
 		t.Fatalf("active compaction strip=%q", got)
 	}
-	status, _ := app.Status.Agent(id)
+	status, _ := app.ws.Status().Agent(id)
 	if status.Phase != ttypes.AgentCompacting || status.RequestID != "compact-status-1" {
 		t.Fatalf("active status=%+v", status)
 	}
@@ -49,13 +49,13 @@ func TestManualCompactionShowsOperationStatusInsteadOfIdlePlan(t *testing.T) {
 			t.Fatalf("settled compaction strip=%q", got)
 		}
 	}
-	status, _ = app.Status.Agent(id)
+	status, _ = app.ws.Status().Agent(id)
 	if status.Phase != ttypes.AgentCompactionResult || status.NeedsAction {
 		t.Fatalf("settled status=%+v", status)
 	}
 	// A resumed boundary is still the authoritative latest operation even when
 	// the transient status center has no event snapshot yet.
-	app.Status.RemoveAgent(id)
+	wsOf(app).Status.RemoveAgent(id)
 	if got := paint(); !strings.Contains(got, "Context compacted") || strings.Contains(got, "Plan 3/4") {
 		t.Fatalf("rehydrated boundary strip=%q", got)
 	}
@@ -78,23 +78,23 @@ func TestManualCompactionShowsOperationStatusInsteadOfIdlePlan(t *testing.T) {
 
 func TestResumedManualCompactionBoundaryShowsReadyStatus(t *testing.T) {
 	app := newFullTestApp(t)
-	app.Logger = stubLogger{}
+	wsOf(app).Logger = stubLogger{}
 	id := addBackendTestOrchestrator(t, app)
 	planView := &activity.Plan{ID: "resumed-plan", Status: "active", Total: 4, Completed: 3,
 		Current: []activity.Step{{Number: 4, Text: "Run build, tests, and lint"}}}
-	app.AgentMgr.Get(id).State.Messages.AppendMessage(workspace.Message{
+	app.ws.AgentMgr().Get(id).State.Messages.AppendMessage(workspace.Message{
 		InternalID: "resumed-compaction", Role: workspace.MessageRoleStatus,
 		LifecyclePhase: "compaction_completed", LifecycleOperationID: "resumed-compaction",
 		LifecycleTrigger: "manual", LifecycleCompleted: 4, LifecycleStageCount: 4,
 		LifecycleBeforeTokens: 510100, LifecycleAfterTokens: 20500, Time: time.Now(),
 	})
 	app.syncAgentMessages(id, true)
-	app.Status.SetAgent(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{ID: id}, Phase: ttypes.AgentIdle, Detail: "Idle", RequestID: "old-request"})
-	if status, found := app.Status.Agent(id); found && status.Phase == ttypes.AgentCompactionResult {
+	wsOf(app).Status.SetAgent(ttypes.AgentStatusSnapshot{Ref: ttypes.ResourceRef{ID: id}, Phase: ttypes.AgentIdle, Detail: "Idle", RequestID: "old-request"})
+	if status, found := app.ws.Status().Agent(id); found && status.Phase == ttypes.AgentCompactionResult {
 		t.Fatal("fixture should restore from the durable boundary, not an event snapshot")
 	}
 	app.configureShell()
-	view := app.AgentActivity(id)
+	view := app.ws.AgentActivity(id)
 	view.Plan = planView
 	app.chatScreen.SetActivity(view)
 	app.renderShellToSurface()
@@ -111,11 +111,11 @@ func TestResumedManualCompactionBoundaryShowsReadyStatus(t *testing.T) {
 
 func TestSubmitProjectsLifecycleIntoChatNotBottomStatus(t *testing.T) {
 	app := newFullTestApp(t)
-	app.Logger = stubLogger{}
+	wsOf(app).Logger = stubLogger{}
 	agentID := addBackendTestOrchestrator(t, app)
 
 	runAppCommand(t, app, app.submitInput(agentID, "inspect lifecycle", nil))
-	messages := app.AgentMgr.Get(agentID).State.Messages.Messages()
+	messages := app.ws.AgentMgr().Get(agentID).State.Messages.Messages()
 	if len(messages) != 2 || messages[1].Role != types.RoleStatus || messages[1].LifecyclePhase != "preparing" {
 		t.Fatalf("submitted conversation = %#v", messages)
 	}
@@ -129,7 +129,7 @@ func TestSubmitProjectsLifecycleIntoChatNotBottomStatus(t *testing.T) {
 
 func TestPostCompactionThinkingCoalescesAndPaintsAfterBoundary(t *testing.T) {
 	app := newFullTestApp(t)
-	app.Logger = stubLogger{}
+	wsOf(app).Logger = stubLogger{}
 	agentID := addBackendTestOrchestrator(t, app)
 	base := map[string]any{
 		"request_id": "compact-1", "trigger": "manual", "role": "root",
@@ -143,7 +143,7 @@ func TestPostCompactionThinkingCoalescesAndPaintsAfterBoundary(t *testing.T) {
 	_ = app.handleAgentDomainEvent(workspace.AgentEvent{Type: "thinking", AgentID: agentID, Data: reasoning.Delta{Text: "first "}})
 	_ = app.handleAgentDomainEvent(workspace.AgentEvent{Type: "thinking", AgentID: agentID, Data: reasoning.Delta{Text: "second"}})
 
-	messages := app.AgentMgr.Get(agentID).State.Messages.Messages()
+	messages := app.ws.AgentMgr().Get(agentID).State.Messages.Messages()
 	statusAt, userAt, thinkingAt, thinkingCount := -1, -1, -1, 0
 	for index, message := range messages {
 		switch {

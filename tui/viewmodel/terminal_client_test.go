@@ -96,9 +96,9 @@ func feedAppTerminal(t *testing.T, app *App, id string, data []byte) {
 	bus := workspace.NewEventBus()
 	sink := &terminalJourneySink{}
 	bus.SetSink(sink)
-	app.TermMgr.SetEventBus(bus)
+	wsOf(app).TermMgr.SetEventBus(bus)
 	done := make(chan struct{})
-	go func() { app.terminalService().Send(workspace.TerminalOutputMsg{ID: id, Data: data}); close(done) }()
+	go func() { termSvc(app).Send(workspace.TerminalOutputMsg{ID: id, Data: data}); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
@@ -117,7 +117,7 @@ func waitAppTerminalClosed(t *testing.T, app *App, id string) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for time.Now().Before(deadline) {
-		if _, ok := app.TermMgr.Get(id); !ok {
+		if _, ok := app.ws.TermMgr().Get(id); !ok {
 			return
 		}
 		time.Sleep(time.Millisecond)

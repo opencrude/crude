@@ -6,6 +6,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/fileio"
+	"crude/shellport"
 	"crude/tui/screens/backgroundjobs"
 	"crude/tui/screens/sessionsettings"
 	"crude/tui/screens/yolo"
@@ -44,18 +45,18 @@ func (m *App) updateSessionBackgroundJobs(agentID string, commands []fileio.Asyn
 			state = types.OperationCancelled
 		}
 		owner := types.ResourceRef{Kind: types.ResourceAgent, ID: agentID}
-		if session := m.SessionsByAgent[agentID]; session != nil {
+		if session := m.ws.SessionsByAgent()[agentID]; session != nil {
 			owner.SessionID = session.SessionID
 		}
-		if m.Status != nil {
-			m.Status.SetOperation(types.OperationSnapshot{
+		if m.ws.Status() != nil {
+			m.ws.Status().SetOperation(types.OperationSnapshot{
 				ID: "command:" + command.Handle, Owner: owner, Kind: "background-command",
 				Label: command.Command, State: state, StartedAt: command.StartedAt,
 				EndedAt: command.EndedAt, Error: command.Error, OutputRef: command.Handle,
 				Cancellable: state == types.OperationRunning,
 			})
 			if state == types.OperationFailed {
-				m.Status.Notify(types.NotificationRecord{
+				m.ws.Status().Notify(types.NotificationRecord{
 					DedupKey: "command-failed:" + command.Handle, Owner: owner,
 					Severity: types.SeverityError, Source: "background-command",
 					Summary: "Background command failed", Detail: command.Command + ": " + command.Error,
@@ -104,7 +105,7 @@ type sessionSettingsModelsResultMsg struct {
 
 type sessionSettingsSaveResultMsg struct {
 	target     *sessionsettings.Screen
-	workspace  *workspace.Workspace
+	workspace  shellport.Workspace
 	generation uint64
 	result     workspace.SessionSettingsResult
 }
@@ -304,14 +305,14 @@ func (m *App) resolveSessionYolo(target *yolo.Screen, enabled bool) {
 }
 
 func (m *App) setAgentYolo(agentID string, enabled bool) {
-	previous := m.YoloForAgent(agentID)
-	if !m.SetYoloForAgent(agentID, enabled) {
+	previous := m.ws.YoloForAgent(agentID)
+	if !m.ws.SetYoloForAgent(agentID, enabled) {
 		m.notifyStatus(types.SeverityError, "safety", "YOLO mode was not changed", "The owning session is no longer available.", types.ResourceRef{Kind: types.ResourceAgent, ID: agentID})
 		return
 	}
-	node := m.AgentMgr.OrchestratorFor(agentID)
-	if node != nil && m.SessionsByAgent[node.ID] == m.ActiveSession {
-		m.OverlayState.SetYolo(m.YoloForAgent(agentID))
+	node := m.ws.AgentMgr().OrchestratorFor(agentID)
+	if node != nil && m.ws.SessionsByAgent()[node.ID] == m.ActiveSession {
+		m.OverlayState.SetYolo(m.ws.YoloForAgent(agentID))
 	}
 	if previous == enabled {
 		return
@@ -323,7 +324,7 @@ func (m *App) setAgentYolo(agentID string, enabled bool) {
 	if node != nil && node.State != nil && node.State.Messages != nil {
 		now := time.Now()
 		id := phase + ":" + now.Format(time.RFC3339Nano)
-		m.AppendAgentMessages(node.ID, []workspace.Message{{InternalID: id, Role: types.RoleStatus, LifecyclePhase: phase, LifecycleOperationID: id, Content: content, Time: now}}, false)
+		m.ws.AppendAgentMessages(node.ID, []workspace.Message{{InternalID: id, Role: types.RoleStatus, LifecyclePhase: phase, LifecycleOperationID: id, Content: content, Time: now}}, false)
 		m.syncAgentMessages(node.ID, false)
 	}
 }

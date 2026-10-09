@@ -9,10 +9,13 @@ import (
 const (
 	DocumentOpen    = "document.open"
 	DocumentRead    = "document.read"
+	DocumentSync    = "document.sync"
+	DocumentClose   = "document.close"
 	DocumentEdit    = "document.edit"
 	DocumentUndo    = "document.undo"
 	DocumentRedo    = "document.redo"
 	DocumentSave    = "document.save"
+	DocumentFormat  = "document.format"
 	TerminalList    = "terminal.list"
 	TerminalCreate  = "terminal.create"
 	TerminalRows    = "terminal.rows"
@@ -28,6 +31,10 @@ type DocumentOpenRequest struct {
 }
 type DocumentReadRequest struct {
 	ID string `json:"id"`
+}
+type DocumentSyncRequest struct {
+	ID    string `json:"id"`
+	After uint64 `json:"after"`
 }
 type DocumentEditRequest struct {
 	ID       string          `json:"id"`

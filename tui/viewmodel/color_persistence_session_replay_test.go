@@ -37,7 +37,7 @@ func TestRealSessionColorPersistenceReplay(t *testing.T) {
 
 	app := newFullTestApp(t)
 	app.AddOrchestrator("replay")
-	node := app.AgentMgr.Get("replay")
+	node := app.ws.AgentMgr().Get("replay")
 	for _, view := range views {
 		node.State.Messages.AppendMessage(workspace.Message(view))
 	}

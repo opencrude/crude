@@ -35,7 +35,7 @@ func paintHoverFixture(app *App, plans map[string]*activity.Plan) {
 	app.configureShell()
 	for id, p := range plans {
 		if view := app.mainPanes.agentViews[id]; view != nil {
-			activity := app.AgentActivity(id)
+			activity := app.ws.AgentActivity(id)
 			activity.Plan = p
 			view.chat.SetActivity(activity)
 		}

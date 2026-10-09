@@ -112,7 +112,7 @@ func TestLauncherViewmodelKeyboardContractTable(t *testing.T) {
 		if !ok || msg.Screen != screen || msg.Kind != launcher.ItemNewSession {
 			t.Fatalf("activation=%#v", cmd())
 		}
-		if app.AgentMgr.Count() != 0 {
+		if app.ws.AgentMgr().Count() != 0 {
 			t.Fatal("contract test must not invoke AddOrchestrator; activation is observable only")
 		}
 	})

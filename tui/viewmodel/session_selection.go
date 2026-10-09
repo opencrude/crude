@@ -1,16 +1,17 @@
 package viewmodel
 
 import (
+	"crude/shellport"
 	"crude/workspace"
 )
 
 // ActivateSessionByAgent selects a view owner only in this shell. Resource
 // creation, execution and persistence never consult this selection.
 func (m *App) ActivateSessionByAgent(agentID string) {
-	if m.Workspace == nil {
+	if m.ws == nil {
 		return
 	}
-	if owner := m.SessionForAgent(agentID); owner != nil {
+	if owner := m.ws.SessionForAgent(agentID); owner != nil {
 		m.ActiveSession = owner
 		if owner.Settings != nil {
 			m.ModelName = owner.Settings.Effective.Model
@@ -19,7 +20,7 @@ func (m *App) ActivateSessionByAgent(agentID string) {
 	}
 }
 
-func (m *App) RefStore() *workspace.ReferenceStore {
+func (m *App) RefStore() workspace.SessionReferences {
 	if m.ActiveSession == nil {
 		return nil
 	}
@@ -27,29 +28,29 @@ func (m *App) RefStore() *workspace.ReferenceStore {
 }
 
 func (m *App) ActiveSessionConnectionIssue() error {
-	if m.Workspace == nil || m.ActiveSession == nil {
+	if m.ws == nil || m.ActiveSession == nil {
 		return nil
 	}
-	return m.SessionConnectionIssue(m.ActiveSession.SessionID)
+	return m.ws.SessionConnectionIssue(m.ActiveSession.SessionID)
 }
 
 type selectedSessionSettingsResult struct {
-	workspace  *workspace.Workspace
+	workspace  shellport.Workspace
 	generation uint64
 	owner      *workspace.Session
 	result     workspace.SessionSettingsResult
 }
 
 func (m *App) applySelectedSessionSettings(result selectedSessionSettingsResult) {
-	if result.workspace != m.Workspace || result.generation != m.workspaceSwitchGen.Load() ||
-		result.owner == nil || m.SessionsByID[result.owner.SessionID] != result.owner {
+	if result.workspace != m.ws || result.generation != m.workspaceSwitchGen.Load() ||
+		result.owner == nil || m.ws.SessionsByID()[result.owner.SessionID] != result.owner {
 		return
 	}
 	if result.result.Err != nil {
 		m.Feedback.NotifyError(result.result.Err.Error())
 		return
 	}
-	if !m.ApplySessionSettingsResult(result.result) {
+	if !m.ws.ApplySessionSettingsResult(result.result) {
 		return
 	}
 	m.refreshSessionSettingsProjection(result.owner)

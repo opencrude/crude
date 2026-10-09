@@ -7,6 +7,44 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Core/shell resource checkpoint (2026-10-09)
+
+Parent-supplied real-process acceptance sampled twenty retained workspaces and
+ten independently rendered CLI tmux shells. The initial core sample recorded
+138,440,704 B RSS, 222 file descriptors and roughly 10% CPU; ten shell processes
+aggregated 740,962,304 B RSS, with roughly 10–13% CPU each during a two-second
+sample. These are initial workload/process observations, not settled idle rates,
+a prior-architecture comparison, final optimized numbers or proof of a smaller
+footprint. Retained ownership alone is not a performance result.
+
+Final isolated binary rerun measured 139,075,584 B core RSS, 222 FDs, 9% of one
+CPU over two seconds; ten shells aggregated 730,644,480 B RSS and about 9–11.5%
+CPU each. This remains an observed short post-startup sample, not settled idle
+or a comparison against the pre-extraction architecture.
+
+`workspace.BenchmarkDocumentDurableEditAfterHundredOps` measures SQLite-backed
+accepted edits after 100 commands at 4 KiB, 1 MiB and 4 MiB, including allocations
+and `sqlite-growth-B/op`. The source contains a 16 ms ordinary-edit budget for the
+4 MiB case with at least ten iterations. Parent verified three 10-iteration
+measurements of the final checkpoint-v2/delta implementation: 4 MiB ordinary
+durable edits took 2.20–2.45 ms and about 4.24 MB allocation versus 46–57 ms /
+about 27 MB before. Accepted operation deltas, affected-author history metadata
+and exact durable SQL receipts commit in one revision-CAS transaction. The SQL
+receipt ledger remains durable/growing; only its per-document in-memory cache
+is bounded at 256 entries. Rolling history retains at least 512 at its 1,024
+operation boundary. These are service/SQLite edit timings, not full-shell
+presentation latency or a settled process-resource comparison. Do not substitute an ephemeral text helper benchmark or
+omit durable receipt/history growth. Final results must state binary/source,
+hardware, workload, command, repetitions and memory/storage/latency separately.
+Independent parent rerun on Linux/i7-10750H (`go test ./workspace -run '^$'
+-bench '^BenchmarkDocumentDurableEditAfterHundredOps$' -benchtime=10x -count=3`)
+measured 0.807–0.832 ms / 48.6–49.3 KiB for 4 KiB, 0.921–0.981 ms /
+1.094 MB for 1 MiB, and 2.136–2.238 ms / 4.240 MB for 4 MiB. SQLite page growth
+was 1,638 B/op in each case, excluding total WAL bytes. No existing allocation
+ceiling was relaxed. Structural checkpoints/cold replay remain separate costs.
+See [review workflows](../guides/core-shell-workflows.md) and the
+[active acceptance plan](../plans/core-shell-separation.md).
+
 ## Main View Panes (2026-10-08)
 
 ### Aligned Git/local comparison reader

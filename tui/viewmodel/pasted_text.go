@@ -12,7 +12,7 @@ import (
 
 type pastedTextStoredMsg struct {
 	session    *workspace.Session
-	store      *workspace.ReferenceStore
+	store      workspace.SessionReferences
 	agentID    string
 	generation uint64
 	event      input.PasteAttachmentEvent

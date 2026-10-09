@@ -64,6 +64,7 @@ func NewPickerSearchModel(rootPath string, directoriesOnly bool, matches []PathM
 // persistent workspace tree; picker callers use the service-free defaults.
 func NewSearchModel(rootPath string, options ModelOptions, matches []PathMatch) *FileTreeModel {
 	options.InitialLoad = false
+	options.NoLocalIO = true
 	m := NewFileTreeModelWithOptions(rootPath, options)
 	root := m.Root
 	if root == nil {

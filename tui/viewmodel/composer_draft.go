@@ -2,44 +2,25 @@ package viewmodel
 
 import (
 	"bytes"
-	"context"
-	"database/sql"
 	"encoding/json"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
-	"crude/sessiondb"
+	"crude/clientstate"
 	"crude/tui/input"
 	"crude/workspace"
 )
 
-const composerDraftStateKey = "composer_draft"
-
 const composerDraftIOTimeout = 2 * time.Second
 
-// composerDraftSnapshot is the persisted per-session composer state. It lives
-// in the session's own SQLite DB (session_runtime_state), so the key needs no
-// session qualifier. RefSpans and IDs retain exact attachment identity, including
-// unresolved media; user-typed bracketed prose is never guessed as an attachment.
-type composerDraftSnapshot struct {
-	Text          string                 `json:"text"`
-	RefIDs        []string               `json:"ref_ids"`
-	Cursor        int                    `json:"cursor"`
-	SelectionFrom int                    `json:"selection_from,omitempty"`
-	SelectionTo   int                    `json:"selection_to,omitempty"`
-	Scroll        int                    `json:"scroll,omitempty"`
-	Revision      uint64                 `json:"revision"`
-	Spans         []composerDraftRefSpan `json:"spans,omitempty"`
-}
-
-type composerDraftRefSpan struct {
-	ID    string `json:"id"`
-	Start int    `json:"start"`
-	End   int    `json:"end"`
-}
+// composerDraftSnapshot is client-private full editor state. Its local edit
+// revision is independent of the store's CAS record revision.
+type composerDraftSnapshot = clientstate.Draft
+type composerDraftRefSpan = clientstate.RefSpan
 
 type composerDraftOwner struct {
+	record       *composerDraftRecord
 	epoch        uint64
 	loadRevision uint64
 	loading      bool
@@ -63,6 +44,7 @@ type composerDraftLoadedMsg struct {
 	requestRevision uint64
 	refIDs          []string
 	spans           []composerDraftRefSpan
+	binding         *composerDraftClient
 }
 
 // composerDraftSavedMsg closes one in-flight save; a coalesced dirty flag
@@ -72,6 +54,7 @@ type composerDraftSavedMsg struct {
 	epoch   uint64
 	err     error
 	raw     []byte
+	binding *composerDraftClient
 }
 
 // maybeHydrateComposerDraft runs at session activation/Init, never from Paint.
@@ -117,7 +100,7 @@ func (m *App) hydrateComposerDraftCmd() tea.Cmd {
 			m.Input.SetReferenceStore(store)
 		}
 	}
-	if sess.DB == nil {
+	if m.composerDraftClient == nil {
 		return nil
 	}
 	if owner.epoch == 0 {
@@ -126,7 +109,8 @@ func (m *App) hydrateComposerDraftCmd() tea.Cmd {
 	owner.loading = true
 	owner.loadRevision = m.Input.DraftRevision()
 	requestRevision := owner.loadRevision
-	return func() tea.Msg { return m.loadComposerDraftMsg(sess, epoch, requestRevision) }
+	client := m.composerDraftClient
+	return func() tea.Msg { return loadComposerDraft(client, owner.record, sess, epoch, requestRevision) }
 }
 
 func (m *App) draftOwner(sess *workspace.Session) *composerDraftOwner {
@@ -136,6 +120,9 @@ func (m *App) draftOwner(sess *workspace.Session) *composerDraftOwner {
 	owner := m.composerDraftOwners[sess]
 	if owner == nil {
 		owner = &composerDraftOwner{}
+		if m.composerDraftClient != nil {
+			owner.record = m.composerDraftClient.record(sess.SessionID)
+		}
 		m.composerDraftOwners[sess] = owner
 	}
 	return owner
@@ -144,24 +131,24 @@ func (m *App) draftOwner(sess *workspace.Session) *composerDraftOwner {
 // loadComposerDraftMsg reads one session's persisted draft. Split from the
 // async wrapper so tests can exercise the DB round-trip synchronously.
 func (m *App) loadComposerDraftMsg(sess *workspace.Session, epoch, requestRevision uint64) tea.Msg {
-	if sess == nil || sess.DB == nil {
+	if sess == nil || m.composerDraftClient == nil {
 		return nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), composerDraftIOTimeout)
-	defer cancel()
-	raw, err := sessiondb.LoadRuntimeState(ctx, sess.DB, composerDraftStateKey)
+	return loadComposerDraft(m.composerDraftClient, m.draftOwner(sess).record, sess, epoch, requestRevision)
+}
+
+func loadComposerDraft(client *composerDraftClient, record *composerDraftRecord, sess *workspace.Session, epoch, requestRevision uint64) tea.Msg {
+	raw, err := record.load(client)
 	if err != nil {
-		return composerDraftLoadedMsg{session: sess, epoch: epoch, requestRevision: requestRevision, err: err}
-	}
-	if len(raw) == 0 {
-		return composerDraftLoadedMsg{session: sess, epoch: epoch, requestRevision: requestRevision}
+		return composerDraftLoadedMsg{session: sess, epoch: epoch, requestRevision: requestRevision, binding: client, err: err}
 	}
 	var snap composerDraftSnapshot
 	if err := json.Unmarshal(raw, &snap); err != nil {
-		return composerDraftLoadedMsg{session: sess, epoch: epoch, requestRevision: requestRevision, err: err}
+		return composerDraftLoadedMsg{session: sess, epoch: epoch, requestRevision: requestRevision, err: err, binding: client}
 	}
 	return composerDraftLoadedMsg{
 		session:         sess,
+		binding:         client,
 		epoch:           epoch,
 		text:            snap.Text,
 		cursor:          snap.Cursor,
@@ -178,7 +165,7 @@ func (m *App) loadComposerDraftMsg(sess *workspace.Session, epoch, requestRevisi
 // applyComposerDraft restores a loaded draft for the unchanged active owner.
 // Missing references retain their exact IDs; no label-based repair is inferred.
 func (m *App) applyComposerDraft(msg composerDraftLoadedMsg) {
-	if msg.session == nil || m.ActiveSession != msg.session || msg.epoch != m.composerDraftEpoch {
+	if msg.binding != m.composerDraftClient || msg.session == nil || m.ActiveSession != msg.session || msg.epoch != m.composerDraftEpoch {
 		return
 	}
 	owner := m.draftOwner(msg.session)
@@ -218,7 +205,7 @@ func (m *App) persistComposerDraftIfChanged() {
 }
 
 func (m *App) persistComposerDraftFor(sess *workspace.Session) {
-	if sess == nil || sess.DB == nil {
+	if sess == nil || m.composerDraftClient == nil {
 		return
 	}
 	owner := m.draftOwner(sess)
@@ -249,26 +236,28 @@ func (m *App) startComposerDraftSave(sess *workspace.Session, owner *composerDra
 		return
 	}
 	owner.inFlight = append([]byte(nil), snap...)
-	db, epoch := sess.DB, owner.epoch
+	client, record, epoch := m.composerDraftClient, owner.record, owner.epoch
 	m.composerDraftWrites.Add(1)
 	m.runDetachedAsyncCmd(func() tea.Msg {
 		defer m.composerDraftWrites.Done()
-		return m.saveComposerDraftMsg(sess, db, epoch, snap)
+		return saveComposerDraft(client, record, sess, epoch, snap)
 	})
 }
 
 // saveComposerDraftMsg writes one draft snapshot. Split from the async
 // wrapper so tests can exercise the write synchronously.
-func (m *App) saveComposerDraftMsg(sess *workspace.Session, db *sql.DB, epoch uint64, snap []byte) tea.Msg {
-	ctx, cancel := context.WithTimeout(context.Background(), composerDraftIOTimeout)
-	defer cancel()
-	err := sessiondb.SaveRuntimeState(ctx, db, composerDraftStateKey, snap)
-	return composerDraftSavedMsg{session: sess, epoch: epoch, raw: snap, err: err}
+func (m *App) saveComposerDraftMsg(sess *workspace.Session, epoch uint64, snap []byte) tea.Msg {
+	return saveComposerDraft(m.composerDraftClient, m.draftOwner(sess).record, sess, epoch, snap)
+}
+
+func saveComposerDraft(client *composerDraftClient, record *composerDraftRecord, sess *workspace.Session, epoch uint64, snap []byte) tea.Msg {
+	err := record.save(client, snap)
+	return composerDraftSavedMsg{session: sess, epoch: epoch, raw: snap, err: err, binding: client}
 }
 
 func (m *App) onComposerDraftSaved(msg composerDraftSavedMsg) {
 	owner := m.composerDraftOwners[msg.session]
-	if owner == nil || owner.epoch != msg.epoch || !bytes.Equal(owner.inFlight, msg.raw) {
+	if msg.binding != m.composerDraftClient || owner == nil || owner.epoch != msg.epoch || !bytes.Equal(owner.inFlight, msg.raw) {
 		return
 	}
 	owner.inFlight = nil
@@ -301,7 +290,7 @@ func (m *App) flushComposerDraft() {
 		if sess == m.ActiveSession {
 			model = &m.Input
 		}
-		if sess.DB == nil || model == nil || owner.loading && model.DraftRevision() == owner.loadRevision {
+		if m.composerDraftClient == nil || model == nil || owner.loading && model.DraftRevision() == owner.loadRevision {
 			continue
 		}
 		snap, err := marshalComposerDraft(*model)
@@ -312,9 +301,7 @@ func (m *App) flushComposerDraft() {
 		if bytes.Equal(snap, owner.persisted) {
 			continue
 		}
-		ctx, cancel := context.WithTimeout(context.Background(), composerDraftIOTimeout)
-		err = sessiondb.SaveRuntimeState(ctx, sess.DB, composerDraftStateKey, snap)
-		cancel()
+		err = owner.record.save(m.composerDraftClient, snap)
 		if err != nil {
 			m.composerDraftErr = err
 			return

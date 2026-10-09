@@ -45,7 +45,8 @@ type NewSessionResult struct {
 // - File tree model
 // - Workspace-specific settings (inheriting from app config)
 //
-// The App struct (in tui/viewmodel) embeds *Workspace and delegates to it.
+// The App struct (in tui/viewmodel) reaches a Workspace only through the
+// shellport.Workspace interface (shellport.Local adapts this type).
 // Multiple workspaces can coexist for multi-project support.
 //
 // Session-scoped state (chat input, per-agent dialogs, message lists, cost
@@ -233,6 +234,9 @@ func (w *Workspace) SetEventBus(bus *EventBus) {
 	if w.Documents != nil {
 		w.Documents.SetEventBus(bus)
 	}
+	if w.LiveDocuments != nil {
+		w.LiveDocuments.SetEventBus(bus)
+	}
 }
 
 // NewWorkspace creates an empty workspace rooted at the given directory.
@@ -321,7 +325,7 @@ func NewWorkspace(
 		ws.HistoryService = NewLocalHistoryService(rootPath, historyStore, lg)
 	}
 	ws.Terminals, _ = NewTerminalService(ws.TermMgr) // newly allocated, empty manager
-	ws.LiveDocuments = NewDocumentService(rootPath, ws.Documents, ws.LSPMgr)
+	ws.LiveDocuments = NewDocumentService(rootPath, ws.Documents, ws.LSPMgr, workspaceSQLDB(wsDB))
 
 	// Self-heal the session registry from on-disk session DBs. Runs on
 	// workspace open (not the launcher workspace-list path, which is
@@ -384,6 +388,13 @@ func (w *Workspace) ensureWorkspacePersistence() error {
 	}
 	w.Collaboration = collaborationStore
 	w.collaborationErr = nil
+	if w.LiveDocuments != nil {
+		w.LiveDocuments.mu.Lock()
+		if w.LiveDocuments.stateDB == nil && len(w.LiveDocuments.docs) == 0 {
+			w.LiveDocuments.stateErr = w.LiveDocuments.attachState(db.DB)
+		}
+		w.LiveDocuments.mu.Unlock()
+	}
 	for _, frontendSession := range w.Sessions {
 		if frontendSession != nil && frontendSession.backend != nil {
 			frontendSession.backend.SetMemoryStore(db.Memory)
@@ -752,7 +763,8 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 	}
 	w.Documents = NewDocumentSaveService()
 	w.Documents.SetEventBus(w.eventBus)
-	w.LiveDocuments = NewDocumentService(abs, w.Documents, w.LSPMgr)
+	w.LiveDocuments = NewDocumentService(abs, w.Documents, w.LSPMgr, workspaceSQLDB(wsDB))
+	w.LiveDocuments.SetEventBus(w.eventBus)
 	w.TermMgr = NewTerminalManager(abs)
 	w.Terminals, _ = NewTerminalService(w.TermMgr)
 	w.Status = NewStatusCenter(workspaceSQLDB(wsDB), w.Logger)

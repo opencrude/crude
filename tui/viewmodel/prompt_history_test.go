@@ -25,7 +25,7 @@ func TestRecordPromptPersistsGlobalHistory(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "history.json")
 	app.promptHistoryPath = path
 	agentID := addBackendTestOrchestrator(t, app)
-	app.ActiveSession = app.SessionsByAgent[agentID]
+	app.ActiveSession = app.ws.SessionsByAgent()[agentID]
 	app.Input.SetInput("check the async deck now")
 
 	_, command := app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
@@ -88,7 +88,7 @@ func TestPromptHistoryRecallsAttachmentsAcrossSessionsAndRestoresDraft(t *testin
 	app.SetPromptHistory(history.New())
 	app.promptHistoryPath = filepath.Join(t.TempDir(), "history.json")
 	agentID := addBackendTestOrchestrator(t, app)
-	app.ActiveSession = app.SessionsByAgent[agentID]
+	app.ActiveSession = app.ws.SessionsByAgent()[agentID]
 	app.Input.SetReferenceStore(app.RefStore())
 	path := filepath.Join(t.TempDir(), "image.png")
 	if err := os.WriteFile(path, []byte("retained image"), 0600); err != nil {

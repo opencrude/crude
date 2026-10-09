@@ -124,7 +124,7 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	if m.Win != nil {
 		m.Win.CloseAll()
 	}
-	m.AgentView = NewAgentViewState(m.AgentMgr)
+	m.AgentView = NewAgentViewState(m.ws.AgentMgr())
 	m.thinkingPresentations = nil
 	m.thinkingLatch = nil
 	m.mainPanes = nil
@@ -161,12 +161,12 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	// A real tree constructs its Git resolver and reads the root directory.
 	// Build it off the Bubble Tea goroutine; the placeholder keeps every
 	// projection non-nil while that project-bound I/O is pending.
-	treeModel := filetree.NewPlaceholderFileTreeModel(m.RootPath)
+	treeModel := newClientFileTree(m)
 	m.Tree = NewTreeState(treeModel, m.Theme.Tree.Config.DefaultWidth)
 	if m.sidebarScreen != nil {
 		m.sidebarScreen.SetModel(treeModel)
 	}
-	m.beginWorkspaceTreeLoad(m.RootPath)
+	m.beginWorkspaceTreeLoad(m.ws.RootPath())
 
 	m.wireLSPDiagnostics()
 	m.syncFileTreeDiagnosticsFromLSP()
@@ -199,7 +199,7 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	m.refreshActivityList()
 
 	if m.launcherScreen != nil {
-		m.refreshLauncherAsync(m.RootPath)
+		m.refreshLauncherAsync(m.ws.RootPath())
 		m.launcherScreen.SyncFocus()
 	}
 	m.cachedOutput = ""
@@ -220,6 +220,10 @@ func (m *App) beginWorkspaceTreeLoad(rootPath string) {
 	if m == nil || rootPath == "" {
 		return
 	}
+	if cmd := m.beginClientFileTreeLoad(); cmd != nil {
+		m.runDetachedAsyncCmd(cmd)
+		return
+	}
 	generation := m.workspaceSwitchGen.Load()
 	m.runDetachedAsyncCmd(func() tea.Msg {
 		return workspaceTreeReadyMsg{
@@ -234,7 +238,7 @@ func (m *App) applyWorkspaceTreeReady(msg workspaceTreeReadyMsg) {
 	if m == nil || msg.model == nil ||
 		m.asyncIOStopped.Load() ||
 		msg.generation != m.workspaceSwitchGen.Load() ||
-		!sameWorkspaceRoot(m.RootPath, msg.rootPath) {
+		!sameWorkspaceRoot(m.ws.RootPath(), msg.rootPath) {
 		if msg.model != nil {
 			msg.model.StopWatcher()
 		}
@@ -289,8 +293,8 @@ func (m *App) wireAndStartWorkspaceTreeWatcherAsync(model *filetree.FileTreeMode
 			model.StopWatcher()
 			return
 		}
-		if err != nil && m.Logger != nil {
-			m.Logger.Warn("FILETREE", "watcher_start_failed", "error", err.Error())
+		if err != nil && m.ws.Logger() != nil {
+			m.ws.Logger().Warn("FILETREE", "watcher_start_failed", "error", err.Error())
 		}
 	}()
 }
@@ -321,8 +325,8 @@ func (m *App) wireAndStartWorkspaceTreeWatcher(model *filetree.FileTreeModel) {
 		}
 		bus.Send(filetree.TreeGitChangedMsg{Model: model})
 	})
-	if err := model.StartWatcher(); err != nil && m.Logger != nil {
-		m.Logger.Warn("FILETREE", "watcher_start_failed", "error", err.Error())
+	if err := model.StartWatcher(); err != nil && m.ws.Logger() != nil {
+		m.ws.Logger().Warn("FILETREE", "watcher_start_failed", "error", err.Error())
 	}
 }
 
@@ -373,7 +377,7 @@ func (m *App) closeWorkspaceBoundOverlays() {
 			m.overlayHost.Close(entry.ID)
 		}
 	}
-	m.CancelProjectSearch()
+	m.ws.CancelProjectSearch()
 	if search != nil && m.findInFiles == search {
 		search.Close()
 	}

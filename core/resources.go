@@ -2,9 +2,11 @@ package core
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 
 	"crude/coreprotocol"
+	"crude/corewire"
 	"crude/document"
 	"crude/workspace"
 )
@@ -43,6 +45,31 @@ func (a *actor) prepareResource(request coreprotocol.Request) (func(context.Cont
 			value, err := docs.Snapshot(input.ID)
 			return ok(value, err)
 		}, true
+	case coreprotocol.DocumentSync:
+		var input coreprotocol.DocumentSyncRequest
+		if err := decode(request.Payload, &input); err != nil {
+			return bad(err)
+		}
+		return func(context.Context) coreprotocol.Response {
+			value, err := docs.Sync(owner, input.ID, input.After)
+			if err == nil {
+				encoded, encodeErr := json.Marshal(value)
+				if encodeErr != nil {
+					return fault(request, "encode_failed", encodeErr.Error())
+				}
+				if len(encoded) > corewire.MaxPayloadSize {
+					value.Changes = nil
+					value.Reset = true
+				}
+			}
+			return ok(value, err)
+		}, true
+	case coreprotocol.DocumentClose:
+		var input coreprotocol.DocumentReadRequest
+		if err := decode(request.Payload, &input); err != nil {
+			return bad(err)
+		}
+		return func(context.Context) coreprotocol.Response { return ok(struct{}{}, docs.CloseView(owner, input.ID)) }, true
 	case coreprotocol.DocumentEdit:
 		var input coreprotocol.DocumentEditRequest
 		if err := decode(request.Payload, &input); err != nil {
@@ -52,12 +79,16 @@ func (a *actor) prepareResource(request coreprotocol.Request) (func(context.Cont
 			value, err := docs.Apply(document.Change{DocumentID: input.ID, RequestID: request.ID, Owner: owner, BaseRevision: input.Revision, GroupID: input.Group, Edits: input.Edits})
 			return ok(value, err)
 		}, true
-	case coreprotocol.DocumentUndo, coreprotocol.DocumentRedo, coreprotocol.DocumentSave:
+	case coreprotocol.DocumentFormat, coreprotocol.DocumentUndo, coreprotocol.DocumentRedo, coreprotocol.DocumentSave:
 		var input coreprotocol.DocumentRevisionRequest
 		if err := decode(request.Payload, &input); err != nil {
 			return bad(err)
 		}
 		return func(ctx context.Context) coreprotocol.Response {
+			if request.Method == coreprotocol.DocumentFormat {
+				value, err := docs.Format(ctx, owner, input.ID, request.ID, input.Revision)
+				return ok(value, err)
+			}
 			if request.Method == coreprotocol.DocumentSave {
 				value, err := docs.Save(ctx, owner, input.ID, input.Revision, input.Reason)
 				return ok(value, err)
@@ -152,9 +183,9 @@ func (a *actor) prepareResource(request coreprotocol.Request) (func(context.Cont
 
 func resourceMutation(method string) bool {
 	switch method {
-	case coreprotocol.DocumentRead, coreprotocol.TerminalList, coreprotocol.TerminalRows:
+	case coreprotocol.DocumentRead, coreprotocol.DocumentSync, coreprotocol.TerminalList, coreprotocol.TerminalRows:
 		return false
-	case coreprotocol.DocumentOpen, coreprotocol.DocumentEdit, coreprotocol.DocumentUndo, coreprotocol.DocumentRedo, coreprotocol.DocumentSave,
+	case coreprotocol.DocumentOpen, coreprotocol.DocumentClose, coreprotocol.DocumentFormat, coreprotocol.DocumentEdit, coreprotocol.DocumentUndo, coreprotocol.DocumentRedo, coreprotocol.DocumentSave,
 		coreprotocol.TerminalCreate, coreprotocol.TerminalControl, coreprotocol.TerminalRelease, coreprotocol.TerminalInput, coreprotocol.TerminalResize, coreprotocol.TerminalClose:
 		return true
 	}

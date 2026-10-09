@@ -119,10 +119,10 @@ func (m *App) MinimizeAgent(id string) { m.AgentView.SetHidden(id, true) }
 
 // RestoreAgent reveals only the selected path, preserving archived siblings.
 func (m *App) RestoreAgent(id string) {
-	if m.AgentMgr == nil {
+	if m.ws.AgentMgr() == nil {
 		return
 	}
-	node := m.AgentMgr.Get(id)
+	node := m.ws.AgentMgr().Get(id)
 	if node == nil {
 		return
 	}
@@ -135,10 +135,10 @@ func (m *App) RestoreAgent(id string) {
 // AgentTabViews returns the current agent tabs in forest order. Window IDs,
 // layout, hover, and close interaction remain TUI concerns.
 func (m *App) AgentTabViews() []workspace.TabView {
-	if m == nil || m.AgentMgr == nil {
+	if m == nil || m.ws.AgentMgr() == nil {
 		return nil
 	}
-	nodes := m.AgentMgr.AllNodes()
+	nodes := m.ws.AgentMgr().AllNodes()
 	views := make([]workspace.TabView, 0, len(nodes))
 	for _, node := range nodes {
 		if node == nil || m.AgentView.IsHidden(node.ID) {

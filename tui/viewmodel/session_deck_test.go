@@ -132,8 +132,8 @@ func TestBackgroundJobsUpdateOwningInactiveSessionWithoutStealingFocus(t *testin
 	app := newFullTestApp(t)
 	first := &workspace.Session{SessionID: "first", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
 	second := &workspace.Session{SessionID: "second", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
-	app.SessionsByAgent = make(map[string]*workspace.Session)
-	app.SessionsByAgent["first-agent"] = first
+	wsOf(app).SessionsByAgent = make(map[string]*workspace.Session)
+	app.ws.SessionsByAgent()["first-agent"] = first
 
 	selectDeckSession(t, app, first, "first-agent")
 	app.openSessionSettings()
@@ -159,8 +159,8 @@ func TestBackgroundJobsUpdateOwningInactiveSessionWithoutStealingFocus(t *testin
 func TestBackgroundJobsPanelClosesAfterCompletedRowsExpire(t *testing.T) {
 	app := newFullTestApp(t)
 	session := &workspace.Session{SessionID: "session", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
-	app.SessionsByAgent = make(map[string]*workspace.Session)
-	app.SessionsByAgent["agent"] = session
+	wsOf(app).SessionsByAgent = make(map[string]*workspace.Session)
+	app.ws.SessionsByAgent()["agent"] = session
 	selectDeckSession(t, app, session, "agent")
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
 	app.updateSessionBackgroundJobs("agent", []fileio.AsyncCmdInfo{{
@@ -180,7 +180,7 @@ func TestBackgroundJobsPanelClosesAfterCompletedRowsExpire(t *testing.T) {
 func TestBackgroundJobsDoesNotRetainFocusAfterBlockingPanelCloses(t *testing.T) {
 	app := newFullTestApp(t)
 	session := &workspace.Session{SessionID: "session", Settings: workspace.NewSessionSettingsState(types.Settings{}, types.Settings{}, nil)}
-	app.SessionsByAgent = map[string]*workspace.Session{"agent": session}
+	wsOf(app).SessionsByAgent = map[string]*workspace.Session{"agent": session}
 	selectDeckSession(t, app, session, "agent")
 	now := time.Date(2026, 7, 21, 12, 0, 0, 0, time.UTC)
 	app.updateSessionBackgroundJobs("agent", []fileio.AsyncCmdInfo{{

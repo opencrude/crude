@@ -7,7 +7,7 @@ import (
 
 func TestTerminalIdentityUsesWorkspaceNameForTitleAndIcon(t *testing.T) {
 	app := newTestApp(t)
-	app.RootPath = filepath.Join(t.TempDir(), "project-alpha")
+	wsOf(app).RootPath = filepath.Join(t.TempDir(), "project-alpha")
 
 	view := app.newTerminalView("")
 	const want = "project-alpha - Crude"
@@ -18,7 +18,7 @@ func TestTerminalIdentityUsesWorkspaceNameForTitleAndIcon(t *testing.T) {
 
 func TestTerminalIdentityStripsControlCharacters(t *testing.T) {
 	app := newTestApp(t)
-	app.RootPath = filepath.Join(t.TempDir(), "project\x1b]2;injected\x07")
+	wsOf(app).RootPath = filepath.Join(t.TempDir(), "project\x1b]2;injected\x07")
 
 	if got, want := app.terminalIdentity(), "project]2;injected - Crude"; got != want {
 		t.Fatalf("terminal identity=%q, want %q", got, want)

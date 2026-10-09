@@ -647,6 +647,9 @@ func (m *FileTreeModel) FilterActive() bool {
 // blocking the event loop on potentially large directory scans.
 func (m *FileTreeModel) RefreshFromDisk() tea.Cmd {
 	rootPath := m.RootPath()
+	if m.noLocalIO {
+		return m.RequestRemoteDirectory(rootPath)
+	}
 
 	return func() tea.Msg {
 		err := m.refreshTreeFromDisk()

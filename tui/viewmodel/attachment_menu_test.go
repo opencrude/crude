@@ -126,7 +126,7 @@ func TestSubmitInputCarriesReferenceLabelsIntoLiveConversation(t *testing.T) {
 
 	runAppCommand(t, app, app.submitInput(agentID, ref.DisplayName()+" review this", []string{ref.ID}))
 
-	node := app.AgentMgr.Get(agentID)
+	node := app.ws.AgentMgr().Get(agentID)
 	if node == nil || node.State == nil {
 		t.Fatal("attachment agent missing")
 	}

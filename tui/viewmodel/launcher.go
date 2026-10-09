@@ -1,12 +1,14 @@
 package viewmodel
 
 import (
+	"context"
 	"path/filepath"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"crude/sessiondb"
+	"crude/shellport"
 	filepickerscreen "crude/tui/screens/filepicker"
 	"crude/tui/screens/launcher"
 	"crude/tui/ui"
@@ -63,7 +65,7 @@ func (m *App) handleLauncherCommand(msg launcher.CommandMsg) tea.Cmd {
 	}
 	switch msg.Action {
 	case "launcher.retry":
-		m.refreshLauncherAsync(m.RootPath)
+		m.refreshLauncherAsync(m.ws.RootPath())
 	case "skills.manage":
 		return m.openCapabilityManager(activitySkills, "", msg.TargetID)
 	case "mcp.manage":
@@ -74,10 +76,13 @@ func (m *App) handleLauncherCommand(msg launcher.CommandMsg) tea.Cmd {
 
 // launcherNewSession creates a new session from the launcher.
 func (m *App) launcherNewSession() tea.Cmd {
-	if m.Logger != nil {
-		m.Logger.Info("SESSION", "new_session_from_launcher")
+	if _, connected := m.ws.(shellport.Replica); connected {
+		return m.remoteSessionCommand("")
 	}
-	result := m.NewAgentSession()
+	if m.ws.Logger() != nil {
+		m.ws.Logger().Info("SESSION", "new_session_from_launcher")
+	}
+	result := m.ws.NewAgentSession()
 	if result != nil && result.Error != "" {
 		if result.NeedsAccount {
 			m.showAccountRecovery(false, result.Error)
@@ -89,7 +94,7 @@ func (m *App) launcherNewSession() tea.Cmd {
 	if result != nil {
 		m.AddOrchestrator(result.OrchID)
 	}
-	if err := m.LastRegistryError(); err != nil && m.Feedback != nil {
+	if err := m.ws.LastRegistryError(); err != nil && m.Feedback != nil {
 		m.Feedback.NotifyError("Session created but registry update failed: " + err.Error())
 	}
 	return nil
@@ -97,8 +102,11 @@ func (m *App) launcherNewSession() tea.Cmd {
 
 // launcherOpenFolder switches to a workspace and refreshes the launcher.
 func (m *App) launcherOpenFolder(projectDir string) tea.Cmd {
-	if m.Logger != nil {
-		m.Logger.Info("WORKSPACE", "open_from_launcher", "path", projectDir)
+	if _, connected := m.ws.(shellport.Connection); connected {
+		return m.attachRemoteWorkspace(projectDir, "")
+	}
+	if m.ws.Logger() != nil {
+		m.ws.Logger().Info("WORKSPACE", "open_from_launcher", "path", projectDir)
 	}
 	if err := m.SwitchProject(projectDir); err != nil {
 		m.showOperationFailure("Workspace could not be opened", err.Error())
@@ -117,10 +125,16 @@ func (m *App) launcherResumeSession(sessionID string, sessionMeta *sessiondb.Ses
 	if sessionID == "" {
 		return nil
 	}
+	if _, connected := m.ws.(shellport.Connection); connected {
+		if sessionMeta != nil && sessionMeta.ProjectPath != "" && !sameWorkspaceRoot(m.ws.RootPath(), sessionMeta.ProjectPath) {
+			return m.attachRemoteWorkspace(sessionMeta.ProjectPath, sessionID)
+		}
+		return m.remoteSessionCommand(sessionID)
+	}
 	// Switch project if the session belongs to another folder.
 	if sessionMeta != nil && sessionMeta.ProjectPath != "" {
 		abs, _ := filepath.Abs(sessionMeta.ProjectPath)
-		cur, _ := filepath.Abs(m.RootPath)
+		cur, _ := filepath.Abs(m.ws.RootPath())
 		if abs != "" && abs != cur {
 			if err := m.SwitchProject(abs); err != nil {
 				m.showOperationFailure("Session workspace could not be opened", err.Error())
@@ -128,10 +142,10 @@ func (m *App) launcherResumeSession(sessionID string, sessionMeta *sessiondb.Ses
 			}
 		}
 	}
-	if m.Logger != nil {
-		m.Logger.Info("SESSION", "resume_selected", "id", sessionID)
+	if m.ws.Logger() != nil {
+		m.ws.Logger().Info("SESSION", "resume_selected", "id", sessionID)
 	}
-	result := m.OpenAgentSession(sessionID)
+	result := m.ws.OpenAgentSession(sessionID)
 	if result == nil || result.Error != "" {
 		if result != nil && result.NeedsAccount {
 			m.showAccountRecovery(true, result.Error)
@@ -145,7 +159,7 @@ func (m *App) launcherResumeSession(sessionID string, sessionMeta *sessiondb.Ses
 		return nil
 	}
 	m.AddOrchestrator(result.OrchID)
-	if err := m.LastRegistryError(); err != nil && m.Feedback != nil {
+	if err := m.ws.LastRegistryError(); err != nil && m.Feedback != nil {
 		m.Feedback.NotifyError("Session resumed but registry update failed: " + err.Error())
 	}
 	if err := m.ActiveSessionConnectionIssue(); err != nil {
@@ -163,7 +177,7 @@ func (m *App) launcherResumeSession(sessionID string, sessionMeta *sessiondb.Ses
 // goroutine — every back-to-launcher (last tab close, editor close, quit)
 // used to stall input and rendering for its full duration.
 func (m *App) openLauncher() {
-	cwd := m.RootPath
+	cwd := m.ws.RootPath()
 	if cwd == "" {
 		cwd = "."
 	}
@@ -206,8 +220,17 @@ func (m *App) refreshLauncherAsync(cwd string) {
 	if m.eventBus == nil {
 		return
 	}
+	files, remote := m.ws.(shellport.ClientFiles)
 	m.runDetachedAsyncCmd(func() tea.Msg {
-		infos, err := workspace.ListWorkspaceInfos()
+		var infos []workspace.WorkspaceInfo
+		var err error
+		if remote {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			infos, err = files.ListSavedWorkspaces(ctx)
+		} else {
+			infos, err = workspace.ListWorkspaceInfos()
+		}
 		if m.launcherLoadGen.Load() != gen {
 			return nil
 		}
@@ -217,7 +240,7 @@ func (m *App) refreshLauncherAsync(cwd string) {
 
 // openFolderPicker opens the existing file-picker UI in folder-select mode.
 func (m *App) openFolderPicker() {
-	start := m.RootPath
+	start := m.ws.RootPath()
 	if start == "" {
 		start = "."
 	}

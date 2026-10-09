@@ -78,7 +78,7 @@ func TestLauncherLoadingOwnsAnimationAndRejectsStaleCompletion(t *testing.T) {
 	if !screen.Loading() {
 		t.Fatal("stale completion stopped animation")
 	}
-	app.Update(launcherWorkspacesMsg{Screen: screen, Gen: gen, Cwd: app.RootPath, Err: errors.New("listing unavailable")})
+	app.Update(launcherWorkspacesMsg{Screen: screen, Gen: gen, Cwd: app.ws.RootPath(), Err: errors.New("listing unavailable")})
 	app.paintShellFrame()
 	if screen.Loading() || app.wantsFastTick() {
 		t.Fatal("settled load kept fast ticks")
@@ -145,7 +145,7 @@ func TestLauncherRefreshKeepsFocusOutsideLauncher(t *testing.T) {
 	app.FocusStack.Push(FocusTree)
 	app.syncRootFocus()
 	focus := app.rootHost.Focused()
-	app.Update(launcherWorkspacesMsg{Screen: app.launcherScreen, Cwd: app.RootPath, Gen: app.launcherLoadGen.Load(), Infos: []workspace.WorkspaceInfo{{ID: "other", ProjectDir: "/projects/other"}}})
+	app.Update(launcherWorkspacesMsg{Screen: app.launcherScreen, Cwd: app.ws.RootPath(), Gen: app.launcherLoadGen.Load(), Infos: []workspace.WorkspaceInfo{{ID: "other", ProjectDir: "/projects/other"}}})
 	if app.rootHost.Focused() != focus {
 		t.Fatal("workspace completion stole sidebar focus")
 	}

@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/shellport"
 	"crude/tui/editor"
 	"crude/tui/filetree"
 	findinfiles "crude/tui/screens/findinfiles"
@@ -33,7 +34,7 @@ func newWorkspaceSwitchLifecycleApp(t *testing.T, root string) *App {
 	t.Setenv("USERPROFILE", home)
 
 	ws := workspace.NewWorkspace(root, "test-model", "tester", ttypes.Settings{}, workspaceSwitchLifecycleLogger{})
-	app := NewApp(ws, nil)
+	app := NewApp(shellport.Local(ws), nil)
 	app.width = 100
 	app.height = 32
 	t.Cleanup(func() {
@@ -174,8 +175,8 @@ func TestWorkspaceSwitchValidationFailureRestoresOldWatcherAndGenerations(t *tes
 	if err := app.SwitchProject(newRoot); err == nil {
 		t.Fatal("workspace switch unexpectedly succeeded with an unusable data root")
 	}
-	if app.RootPath != oldRoot || app.Tree.Model != oldModel {
-		t.Fatalf("failed switch replaced old workspace: root=%q modelChanged=%v", app.RootPath, app.Tree.Model != oldModel)
+	if app.ws.RootPath() != oldRoot || app.Tree.Model != oldModel {
+		t.Fatalf("failed switch replaced old workspace: root=%q modelChanged=%v", app.ws.RootPath(), app.Tree.Model != oldModel)
 	}
 	select {
 	case <-oldWatcher.Done():

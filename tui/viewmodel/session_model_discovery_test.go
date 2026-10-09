@@ -23,7 +23,7 @@ func TestSessionModelsUseAccountEndpointAndOriginatingDeck(t *testing.T) {
 		ID: "work", ProviderID: "custom", Label: "Work", APIKey: "test",
 		Connection: provider.Template{Name: "Custom", ProviderURL: server.URL, APIStandard: "openai", AuthType: provider.AuthBearer},
 	}}
-	app.SetBackendConfig(&session.Config{Accounts: accounts}, t.TempDir())
+	wsOf(app).SetBackendConfig(&session.Config{Accounts: accounts}, t.TempDir())
 	settings := types.Settings{AccountID: "work", ProviderID: "custom"}
 	app.ActiveSession = &workspace.Session{SessionID: "first", Settings: workspace.NewSessionSettingsState(settings, settings, nil)}
 	app.openSessionSettings()
