@@ -53,9 +53,9 @@ func TestBackgroundJobMouseTerminationKeepsOtherJobsAndSessionAlive(t *testing.T
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	app := newFullTestApp(t)
-	app.Logger = &testLogger{}
-	app.RootPath, app.WorkspaceDir = t.TempDir(), t.TempDir()
-	app.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+	wsOf(app).Logger = &testLogger{}
+	wsOf(app).RootPath, wsOf(app).WorkspaceDir = t.TempDir(), t.TempDir()
+	wsOf(app).SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
 	config := testAccountConfig()
 	account := config.Accounts["test"]
 	template := account.Connection
@@ -68,20 +68,20 @@ func TestBackgroundJobMouseTerminationKeepsOtherJobsAndSessionAlive(t *testing.T
 	profile.Categories[session.CategoryDefault] = main
 	config.Agents.Profiles[config.Agents.ActiveProfile] = profile
 	config.Memory = types.MemorySettings{AutoRecall: "off", AutoExtract: "off", Consolidation: "off"}
-	app.SessionsByID = make(map[string]*workspace.Session)
-	app.SessionsByAgent = make(map[string]*workspace.Session)
-	owner, err := app.CreateSession(config, home)
+	wsOf(app).SessionsByID = make(map[string]*workspace.Session)
+	wsOf(app).SessionsByAgent = make(map[string]*workspace.Session)
+	owner, err := wsOf(app).CreateSession(config, home)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer app.CloseAllSessions()
+	defer wsOf(app).CloseAllSessions()
 	sender := &latencyEventSender{ctx: t.Context(), events: make(chan types.AgentEventMsg, 4096)}
-	orchestrator, err := app.StartOrchestrator(owner.SessionID, sender)
+	orchestrator, err := wsOf(app).StartOrchestrator(owner.SessionID, sender)
 	if err != nil {
 		t.Fatal(err)
 	}
 	app.AddOrchestrator(orchestrator.ID)
-	backend := app.BackendSession(owner.SessionID)
+	backend := app.ws.BackendSession(owner.SessionID)
 	backend.SetYolo(true)
 	if !backend.SubmitInput(orchestrator.ID, provider.PlainInput("start independent commands")) {
 		t.Fatal("turn not admitted")
@@ -145,7 +145,7 @@ func TestBackgroundJobMouseTerminationKeepsOtherJobsAndSessionAlive(t *testing.T
 			t.Fatal("selected command was not terminated")
 		}
 	}
-	if commands["neighbor-job"].Status != fileio.AsyncRunning || app.AgentMgr.Get(orchestrator.ID) == nil {
+	if commands["neighbor-job"].Status != fileio.AsyncRunning || app.ws.AgentMgr().Get(orchestrator.ID) == nil {
 		t.Fatal("termination killed another command or its session")
 	}
 	app.forceFrame()
@@ -177,8 +177,8 @@ func TestBackgroundJobCommandHelperProcess(t *testing.T) {
 func TestBackgroundJobRejectsWrongProjectionOrSettledRow(t *testing.T) {
 	app := newFullTestApp(t)
 	owner := &workspace.Session{SessionID: "session"}
-	app.AgentMgr.AddOrchestrator("root", &workspace.AgentState{})
-	app.SessionsByAgent = map[string]*workspace.Session{"root": owner}
+	app.ws.AgentMgr().AddOrchestrator("root", &workspace.AgentState{})
+	wsOf(app).SessionsByAgent = map[string]*workspace.Session{"root": owner}
 	app.ActiveSession = owner
 	projection := app.activeSessionProjection()
 	job := backgroundjobs.Job{OwnerID: "root", Handle: "job", PID: 123, StartedAt: time.Now(), Status: "running"}

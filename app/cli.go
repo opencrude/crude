@@ -1,10 +1,12 @@
 package app
 
 import (
+	"context"
 	"flag"
 	"fmt"
 	"maps"
 	"os"
+	"time"
 
 	"crude/provider"
 	"crude/session"
@@ -23,6 +25,21 @@ type CLIFlags struct {
 	Limit         int
 	Offset        int
 	DeleteSession string
+
+	// Core process routes. A shell is a client of the per-user core.
+	Core          bool
+	Server        bool
+	CoreGrace     time.Duration
+	CoreStatus    bool
+	CoreStop      bool
+	Force         bool
+	CoreStdio     bool
+	ClientProfile string
+	SSHHost       string
+	SSHUser       string
+	SSHPort       int
+	SSHIdentity   string
+	Workspace     string
 }
 
 // ParseFlags parses os.Args flags into CLIFlags.
@@ -31,15 +48,26 @@ func ParseFlags() CLIFlags {
 	accountFlag := flag.String("account", "", "Explicit account ID for the selected provider")
 	modelFlag := flag.String("model", "", "Model to use")
 	providerFlag := flag.String("provider", "", "Provider ID (openrouter, openai, anthropic, etc.)")
-	sysPromptFlag := flag.String("system", "", "Override system prompt")
+	sysPromptFlag := flag.String("system", "", "Session profile instructions (extend canonical policy)")
 	resumeFlag := flag.String("resume", "", "Resume session (session ID, 'last', or empty for picker)")
 	listSessionsFlag := flag.Bool("list-sessions", false, "List sessions and exit")
 	limitFlag := flag.Int("limit", 50, "Number of sessions to list (used with --list-sessions)")
 	offsetFlag := flag.Int("offset", 0, "Offset for session listing (used with --list-sessions)")
 	deleteSessionFlag := flag.String("delete-session", "", "Delete a session by ID")
+	coreFlag := flag.Bool("core", false, "Run this user's core in the foreground")
+	serverFlag := flag.Bool("server", false, "With --core: keep running with no attached shells until --core-stop")
+	graceFlag := flag.Duration("core-grace", DefaultCoreGrace, "With --core: idle time with no shells and no active work before the core exits")
+	coreStatusFlag := flag.Bool("core-status", false, "Print the running core's clients, workspaces and active work")
+	coreStopFlag := flag.Bool("core-stop", false, "Stop the running core (refused while work is active unless --force)")
+	forceFlag := flag.Bool("force", false, "With --core-stop: stop even though work is active")
+	coreStdioFlag := flag.Bool("core-stdio", false, "Relay one core connection over stdin/stdout (remote attach)")
+	clientProfileFlag := flag.String("client-profile", "", "Private durable composer profile (exclusive while this shell is running)")
+	sshHostFlag := flag.String("ssh", "", "Attach to a remote core through system SSH (host or configured alias)")
+	sshUserFlag := flag.String("ssh-user", "", "SSH login user")
+	sshPortFlag := flag.Int("ssh-port", 0, "SSH port (zero uses SSH configuration)")
+	sshIdentityFlag := flag.String("ssh-identity", "", "Local SSH identity file")
+	workspaceFlag := flag.String("workspace", "", "Workspace path on the selected core (required with --ssh)")
 	flag.Parse()
-
-	_ = sysPromptFlag // reserved for future use
 
 	return CLIFlags{
 		APIKey:        *apiKeyFlag,
@@ -52,6 +80,19 @@ func ParseFlags() CLIFlags {
 		Limit:         *limitFlag,
 		Offset:        *offsetFlag,
 		DeleteSession: *deleteSessionFlag,
+		Core:          *coreFlag,
+		Server:        *serverFlag,
+		CoreGrace:     *graceFlag,
+		CoreStatus:    *coreStatusFlag,
+		CoreStop:      *coreStopFlag,
+		Force:         *forceFlag,
+		CoreStdio:     *coreStdioFlag,
+		ClientProfile: *clientProfileFlag,
+		SSHHost:       *sshHostFlag,
+		SSHUser:       *sshUserFlag,
+		SSHPort:       *sshPortFlag,
+		SSHIdentity:   *sshIdentityFlag,
+		Workspace:     *workspaceFlag,
 	}
 }
 
@@ -191,6 +232,10 @@ func ResolveResume(flags CLIFlags) (string, error) {
 // Main is the app-layer entry point: parse flags, resolve config, run IDE.
 func Main() int {
 	flags := ParseFlags()
+	if err := validateConnectedInvocation(flags); err != nil {
+		fmt.Fprintf(os.Stderr, "crude: %v\n", err)
+		return 1
+	}
 
 	// Live perf sentinel (tui/perf). main.go discards slog to protect the
 	// TUI surface, so the sentinel writes directly to this file when set.
@@ -201,29 +246,86 @@ func Main() int {
 	if HandleCLICommands(flags) {
 		return 0
 	}
-
-	prepared := PrepareStartup(flags)
+	if code, handled := handleCoreCommands(flags); handled {
+		return code
+	}
 
 	home, _ := os.UserHomeDir()
-	projectDir, _ := os.Getwd()
-	sessionsRoot, _ := session.SessionsRoot()
-
-	application, err := New(Opts{
-		FC:            prepared.Config,
-		Home:          home,
-		SessionsRoot:  sessionsRoot,
-		ProjectDir:    projectDir,
-		ResumeID:      prepared.ResumeID,
-		StartupIssues: prepared.Issues,
-	})
+	projectDir, err := invocationRoot(flags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		return 1
 	}
+	// Do not load credentials, configure network policy or open session storage
+	// in the shell. All application state is owned by the connected core.
+	application := &App{home: home, projectDir: projectDir, resumeID: flags.Resume,
+		clientProfile: flags.ClientProfile, invocation: flags}
 
 	if err := application.Run(); err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		return 1
 	}
 	return 0
+}
+
+// handleCoreCommands runs the core process routes. It reports whether the
+// invocation was one of them and the process exit code.
+func handleCoreCommands(flags CLIFlags) (int, bool) {
+	home, _ := os.UserHomeDir()
+	switch {
+	case flags.Core:
+		if err := RunCore(CoreOptions{Home: home, Server: flags.Server, Grace: flags.CoreGrace}); err != nil {
+			if err == errCoreOwned {
+				fmt.Fprintln(os.Stderr, "crude: a core is already running for this user")
+				return 0, true
+			}
+			fmt.Fprintf(os.Stderr, "crude core: %v\n", err)
+			return 1, true
+		}
+		return 0, true
+	case flags.CoreStdio:
+		if err := RunCoreStdio(home); err != nil {
+			fmt.Fprintf(os.Stderr, "crude core-stdio: %v\n", err)
+			return 1, true
+		}
+		return 0, true
+	case flags.CoreStatus:
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		status, err := CoreStatus(ctx, home)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "crude: %v\n", err)
+			return 1, true
+		}
+		mode := "default (exits when idle)"
+		if status.Server {
+			mode = "server"
+		}
+		fmt.Printf("core pid %d, %s, up since %s\n", status.PID, mode, status.StartedAt.Format(time.RFC3339))
+		fmt.Printf("shells attached: %d\n", status.Clients)
+		for _, w := range status.Workspaces {
+			fmt.Printf("  %s  agents=%d sessions=%d turns=%d children=%d commands=%d compaction=%d memory=%d operations=%d\n",
+				w.Root, w.Agents, w.Sessions, w.Active.Turns, w.Active.Children, w.Active.AsyncCommands, w.Active.Compaction, w.Active.MemoryJobs, w.Operations)
+		}
+		return 0, true
+	case flags.CoreStop:
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		result, err := StopCore(ctx, home, flags.Force)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "crude: %v\n", err)
+			return 1, true
+		}
+		if !result.Accepted {
+			fmt.Fprintf(os.Stderr, "crude: core stop refused: %s\n", result.Reason)
+			for _, w := range result.Busy {
+				fmt.Fprintf(os.Stderr, "  %s  turns=%d children=%d commands=%d compaction=%d memory=%d operations=%d\n",
+					w.Root, w.Active.Turns, w.Active.Children, w.Active.AsyncCommands, w.Active.Compaction, w.Active.MemoryJobs, w.Operations)
+			}
+			return 2, true
+		}
+		fmt.Println("core stopping")
+		return 0, true
+	}
+	return 0, false
 }

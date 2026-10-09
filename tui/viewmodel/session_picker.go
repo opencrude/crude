@@ -19,7 +19,7 @@ func (m *App) openSessionPicker() {
 	}
 	m.overlayHost.Close(ui.OverlaySessionPicker)
 
-	sessions := m.ListSessions()
+	sessions := m.ws.ListSessions()
 	if m.sessionPicker == nil {
 		m.sessionPicker = sessionpicker.New(m.Theme)
 	}
@@ -84,9 +84,9 @@ func (m *App) sessionLiveInfos(sessions []sessiondb.SessionMeta) map[string]sess
 			live[id] = info
 		}
 	}
-	if m.AgentMgr != nil {
-		for agentID, sess := range m.SessionsByAgent {
-			node := m.AgentMgr.Get(agentID)
+	if m.ws.AgentMgr() != nil {
+		for agentID, sess := range m.ws.SessionsByAgent() {
+			node := m.ws.AgentMgr().Get(agentID)
 			if node == nil || sess == nil || sess.SessionID == "" {
 				continue
 			}

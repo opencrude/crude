@@ -1,0 +1,361 @@
+package remote
+
+import (
+	"context"
+	"errors"
+	"maps"
+	"reflect"
+
+	"crude/coreprotocol"
+	"crude/provider"
+	"crude/shellport"
+	"crude/types"
+	"crude/workspace"
+)
+
+// StoredSecret stands in for a credential the core holds but never sends.
+// Forms show it masked; submitting it unchanged means "keep", so a shell can
+// edit an account without ever receiving, or accidentally clearing, a secret.
+const StoredSecret = "\u2063stored\u2063"
+
+// storedKey marks a write-only map (headers, extra body) the core retains.
+const storedKey = "\u2063stored\u2063"
+
+// settingsSnapshot is the replicated, redacted settings state.
+type settingsSnapshot struct {
+	fetch    coreprotocol.SettingsFetchResult
+	defaults types.AgentsSettings
+}
+
+type settingsReplica struct {
+	w       *Workspace
+	current settingsSnapshot
+	ready   bool
+}
+
+func (s *settingsReplica) load(ctx context.Context) (settingsSnapshot, error) {
+	var out settingsSnapshot
+	if err := s.w.call(ctx, coreprotocol.SettingsFetch, struct{}{}, &out.fetch); err != nil {
+		return out, err
+	}
+	var overrides coreprotocol.OverridesResult
+	if err := s.w.call(ctx, coreprotocol.WorkspaceOverrides, struct{}{}, &overrides); err != nil {
+		return out, err
+	}
+	out.defaults = overrides.AgentDefaults
+	return out, nil
+}
+
+func (s *settingsReplica) install(snapshot settingsSnapshot) bool {
+	s.w.settingsMu.Lock()
+	defer s.w.settingsMu.Unlock()
+	changed := !s.ready || !reflect.DeepEqual(s.current, snapshot)
+	s.current, s.ready = snapshot, true
+	return changed
+}
+
+// accounts restores replica accounts with stored-secret markers.
+func (s *settingsReplica) accounts() map[string]provider.Account {
+	out := make(map[string]provider.Account, len(s.current.fetch.Accounts))
+	for id, view := range s.current.fetch.Accounts {
+		account := provider.Account{ID: view.ID, ProviderID: view.ProviderID, Label: view.Label, Connection: provider.CloneTemplate(view.Connection), ObservationRevision: view.Revision}
+		if view.APIKeyPresent {
+			account.APIKey = StoredSecret
+		}
+		if view.OAuthPresent {
+			account.OAuth = &provider.OAuthCredentials{AccessToken: StoredSecret, RefreshToken: StoredSecret}
+		}
+		if view.HeadersPresent {
+			account.Connection.Headers = map[string]string{storedKey: StoredSecret}
+		}
+		if view.ExtraBodyPresent {
+			account.Connection.ExtraBody = map[string]any{storedKey: StoredSecret}
+		}
+		out[id] = account
+	}
+	return out
+}
+
+func (w *Workspace) AllAccounts() map[string]provider.Account {
+	w.settingsMu.RLock()
+	defer w.settingsMu.RUnlock()
+	return w.settings.accounts()
+}
+
+func (w *Workspace) AppDefaults() types.AppSettings {
+	w.settingsMu.RLock()
+	defer w.settingsMu.RUnlock()
+	value := types.MergeAppWorkspace(w.settings.current.fetch.Application, types.WorkspaceOverrides{})
+	value.Accounts = w.settings.accounts()
+	value.Capabilities = markStoredCapabilities(value.Capabilities, w.settings.current.fetch.ConnectionSecretFields)
+	value.ApplicationRevision, value.WorkspaceRevision = w.settings.current.fetch.ApplicationRevision, w.settings.current.fetch.WorkspaceRevision
+	return value
+}
+
+func (w *Workspace) LoadAppSettings() types.AppSettings {
+	w.settingsMu.RLock()
+	defer w.settingsMu.RUnlock()
+	value := types.MergeAppWorkspace(w.settings.current.fetch.Effective, types.WorkspaceOverrides{})
+	value.Accounts = w.settings.accounts()
+	value.Capabilities = markStoredCapabilities(value.Capabilities, w.settings.current.fetch.ConnectionSecretFields)
+	value.ApplicationRevision, value.WorkspaceRevision = w.settings.current.fetch.ApplicationRevision, w.settings.current.fetch.WorkspaceRevision
+	return value
+}
+
+func (w *Workspace) LoadWorkspaceOverrides() types.WorkspaceOverrides {
+	w.settingsMu.RLock()
+	defer w.settingsMu.RUnlock()
+	return w.settings.current.fetch.Overrides
+}
+
+func (w *Workspace) WorkspaceAgentDefaults() types.AgentsSettings {
+	w.settingsMu.RLock()
+	defer w.settingsMu.RUnlock()
+	return types.MergeAppWorkspace(types.AppSettings{Agents: w.settings.current.defaults}, types.WorkspaceOverrides{}).Agents
+}
+
+func (w *Workspace) settingsBase() coreprotocol.SettingsFetchResult {
+	w.settingsMu.RLock()
+	defer w.settingsMu.RUnlock()
+	return w.settings.current.fetch
+}
+
+func (w *Workspace) refreshSettings() { w.pending.add(coreprotocol.Change{Settings: true}) }
+
+// proxyUpdate keeps the stored proxy unless the shell changed its public form.
+func proxyUpdate(base coreprotocol.SettingsFetchResult, next string) coreprotocol.SecretUpdate[string] {
+	if next == base.Application.Network.ProxyURL {
+		return coreprotocol.SecretUpdate[string]{Keep: true}
+	}
+	return coreprotocol.SecretUpdate[string]{Value: &next}
+}
+
+// saveApplication commits preferences against the replica captured on the
+// Update goroutine; it runs on any goroutine.
+func (w *Workspace) saveApplication(ctx context.Context, base coreprotocol.SettingsFetchResult, value types.AppSettings) (types.AppSettings, error) {
+	value.Accounts = nil
+	// Capabilities change through their own exact operations.
+	value.Capabilities = base.Application.Capabilities
+	request := coreprotocol.ApplicationPreferencesRequest{ExpectedRevision: base.ApplicationRevision,
+		Value: value, ProxyURL: proxyUpdate(base, value.Network.ProxyURL)}
+	result, err := w.rpc().SaveApplicationPreferences(ctx, request)
+	if err != nil {
+		return types.AppSettings{}, err
+	}
+	w.refreshSettings()
+	return result.Value, nil
+}
+
+func (w *Workspace) SaveAppSettings(s types.AppSettings) error {
+	base := w.settingsBase()
+	w.commands.push(func(ctx context.Context) {
+		if _, err := w.saveApplication(ctx, base, s); err != nil {
+			w.reportFailure("Save application settings", err)
+		}
+	})
+	return nil
+}
+
+func (w *Workspace) SaveWorkspaceSettings(overrides types.WorkspaceOverrides) error {
+	request := coreprotocol.WorkspacePreferencesRequest{ExpectedRevision: w.settingsBase().WorkspaceRevision, Overrides: overrides}
+	w.commands.push(func(ctx context.Context) {
+		if err := w.call(ctx, coreprotocol.WorkspaceOverridesSet, request, &coreprotocol.WorkspacePreferencesResult{}); err != nil {
+			w.reportFailure("Save workspace settings", err)
+			return
+		}
+		w.refreshSettings()
+	})
+	return nil
+}
+
+// draft converts an edited account into a write-only draft. Unchanged stored
+// markers keep the core's credentials; anything else replaces or clears them.
+func draft(after provider.Account, before coreprotocol.AccountView, exists bool) coreprotocol.AccountDraft {
+	connection := provider.CloneTemplate(after.Connection)
+	headers, extra := connection.Headers, connection.ExtraBody
+	connection.Headers, connection.ExtraBody = nil, nil
+	out := coreprotocol.AccountDraft{ID: after.ID, ProviderID: after.ProviderID, Label: after.Label, Connection: connection}
+	if exists && after.Connection.ProviderURL == before.Connection.ProviderURL {
+		out.Endpoint.Keep = true
+	} else {
+		url := after.Connection.ProviderURL
+		out.Endpoint.Value = &url
+	}
+	if exists && after.APIKey == StoredSecret {
+		out.APIKey.Keep = true
+	} else if after.APIKey != "" {
+		key := after.APIKey
+		out.APIKey.Value = &key
+	}
+	switch {
+	case after.OAuth == nil:
+	case exists && after.OAuth.AccessToken == StoredSecret:
+		out.OAuth.Keep = true
+	default:
+		oauth := *after.OAuth
+		out.OAuth.Value = &oauth
+	}
+	switch {
+	case exists && len(headers) == 1 && headers[storedKey] == StoredSecret:
+		out.Headers.Keep = true
+	case len(headers) != 0:
+		copy := maps.Clone(headers)
+		out.Headers.Value = &copy
+	}
+	switch {
+	case exists && len(extra) == 1 && extra[storedKey] == StoredSecret:
+		out.ExtraBody.Keep = true
+	case len(extra) != 0:
+		copy := maps.Clone(extra)
+		out.ExtraBody.Value = &copy
+	}
+	return out
+}
+
+func (w *Workspace) SaveAccountChange(change types.AccountChange) error {
+	before, exists := w.settingsBase().Accounts[change.ID]
+	if exists && (change.Before == nil || change.Before.ID != change.ID || change.Before.ObservationRevision == "" || change.Before.ObservationRevision != before.Revision) || !exists && change.Before != nil {
+		return errors.New("account changed since this editor opened; reopen it before saving")
+	}
+	request := coreprotocol.AccountChangeRequest{ID: change.ID}
+	if exists {
+		request.ExpectedRevision = change.Before.ObservationRevision
+	}
+	if change.After != nil {
+		value := draft(*change.After, before, exists)
+		request.After = &value
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+	defer cancel()
+	if _, err := w.rpc().ChangeAccount(ctx, request); err != nil {
+		return err
+	}
+	w.refreshSettings()
+	return nil
+}
+
+func (w *Workspace) PreparePreferencesSave(scope types.SettingsScope, settings types.AppSettings, overrides types.WorkspaceOverrides) func() workspace.PreferencesSaveResult {
+	base := w.settingsBase()
+	application := base.Application
+	return func() workspace.PreferencesSaveResult {
+		ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+		defer cancel()
+		result := workspace.PreferencesSaveResult{Scope: scope, AppSettings: application}
+		if settings.ApplicationRevision != base.ApplicationRevision || scope == types.SettingsScopeWorkspace && settings.WorkspaceRevision != base.WorkspaceRevision {
+			result.Err = errors.New("preferences changed since this editor opened; reopen it before saving")
+			return result
+		}
+		if scope == types.SettingsScopeWorkspace {
+			var out coreprotocol.WorkspacePreferencesResult
+			if err := w.call(ctx, coreprotocol.WorkspaceOverridesSet, coreprotocol.WorkspacePreferencesRequest{ExpectedRevision: base.WorkspaceRevision, Overrides: overrides}, &out); err != nil {
+				result.Err = err
+				return result
+			}
+			result.Effective = out.Effective
+			w.refreshSettings()
+			return result
+		}
+		saved, err := w.saveApplication(ctx, base, settings)
+		if err != nil {
+			result.Err = err
+			return result
+		}
+		result.AppSettings = saved
+		result.Effective = types.MergeAppWorkspace(saved, base.Overrides)
+		return result
+	}
+}
+
+// ApplyPreferencesSave reflects a successful save until the core's refreshed
+// settings arrive.
+func (w *Workspace) ApplyPreferencesSave(result workspace.PreferencesSaveResult) {
+	if result.Err != nil {
+		return
+	}
+	w.settingsMu.Lock()
+	defer w.settingsMu.Unlock()
+	if result.Scope == types.SettingsScopeApplication {
+		w.settings.current.fetch.Application = result.AppSettings
+	}
+	w.settings.current.fetch.Effective = result.Effective
+}
+
+func (w *Workspace) models(request coreprotocol.AccountModelsRequest) func() ([]types.ModelEntry, error) {
+	rpc := w.rpc()
+	return func() ([]types.ModelEntry, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*callTimeout)
+		defer cancel()
+		result, err := rpc.QueryAccountModels(ctx, request)
+		return result.Models, err
+	}
+}
+
+func (w *Workspace) PrepareAccountModels(templateID string, accountID, baseURL, standardID string) func() ([]types.ModelEntry, error) {
+	before, exists := w.settingsBase().Accounts[accountID]
+	if !exists {
+		return func() ([]types.ModelEntry, error) { return nil, errors.New("account is not configured") }
+	}
+	if templateID != "" && templateID != before.ProviderID {
+		return func() ([]types.ModelEntry, error) {
+			return nil, errors.New("account does not belong to the selected connection")
+		}
+	}
+	request := coreprotocol.AccountModelsRequest{AccountID: accountID, ExpectedRevision: before.Revision}
+	if baseURL != "" || standardID != "" {
+		account := w.AllAccounts()[accountID]
+		if baseURL != "" {
+			account.Connection.ProviderURL = baseURL
+		}
+		if standardID != "" {
+			account.Connection.APIStandard = standardID
+		}
+		value := draft(account, before, true)
+		request.Draft = &value
+	}
+	return w.models(request)
+}
+
+func (w *Workspace) PrepareDraftAccountModels(account provider.Account, baseURL, standardID string) func() ([]types.ModelEntry, error) {
+	if account.ID == "" || account.ProviderID == "" {
+		return func() ([]types.ModelEntry, error) { return nil, errors.New("select an account before fetching models") }
+	}
+	before, exists := w.settingsBase().Accounts[account.ID]
+	if baseURL != "" {
+		account.Connection.ProviderURL = baseURL
+	}
+	if standardID != "" {
+		account.Connection.APIStandard = standardID
+	}
+	value := draft(account, before, exists)
+	request := coreprotocol.AccountModelsRequest{AccountID: account.ID, Draft: &value}
+	if exists {
+		request.ExpectedRevision = before.Revision
+	}
+	return w.models(request)
+}
+
+// BindToolLayout pins the layout store to this attachment's workspace.
+func (w *Workspace) BindToolLayout() shellport.ToolLayoutStore { return toolLayout{w: w} }
+
+type toolLayout struct{ w *Workspace }
+
+func (t toolLayout) LoadToolLayout() (workspace.ToolLayout, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+	defer cancel()
+	var out coreprotocol.ToolLayoutRequest
+	err := t.w.call(ctx, coreprotocol.ToolLayoutLoad, struct{}{}, &out)
+	return out.Layout, err
+}
+
+func (t toolLayout) SaveToolLayout(layout workspace.ToolLayout) error {
+	ctx, cancel := context.WithTimeout(context.Background(), callTimeout)
+	defer cancel()
+	return t.w.call(ctx, coreprotocol.ToolLayoutSave, coreprotocol.ToolLayoutRequest{Layout: layout}, &coreprotocol.BoolResult{})
+}
+
+func (w *Workspace) LoadToolLayout() (workspace.ToolLayout, error) {
+	return toolLayout{w: w}.LoadToolLayout()
+}
+func (w *Workspace) SaveToolLayout(layout workspace.ToolLayout) error {
+	return toolLayout{w: w}.SaveToolLayout(layout)
+}

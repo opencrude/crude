@@ -43,7 +43,7 @@ func TestHeaderShowsWorkspacePathWhenFolderMatchesAppName(t *testing.T) {
 	t.Setenv("USERPROFILE", home)
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 28
-	app.RootPath = filepath.Join(home, "ocd", "crude")
+	wsOf(app).RootPath = filepath.Join(home, "ocd", "crude")
 	app.gitPanel.SetSnapshot(workspace.GitSnapshot{Branch: "feature/x"})
 	app.paintShellFrame()
 

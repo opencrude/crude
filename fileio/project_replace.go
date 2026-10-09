@@ -38,6 +38,13 @@ func ReplaceableMatch(m ProjectSearchMatch) bool {
 // contents. It does not write disk. Skipped is the number of hits that were
 // not contiguous content matches.
 func PlanProjectReplace(matches []ProjectSearchMatch, query, replacement string, opts ProjectSearchOptions) ([]ProjectFileReplacement, int, error) {
+	return PlanProjectReplaceWithReader(matches, query, replacement, opts, os.ReadFile)
+}
+
+// PlanProjectReplaceWithReader shares one exact planning contract with the core's
+// canonical live documents. The caller supplies an immutable bounded read; a
+// stale match never edits a different range just because its coordinates fit.
+func PlanProjectReplaceWithReader(matches []ProjectSearchMatch, query, replacement string, opts ProjectSearchOptions, read func(string) ([]byte, error)) ([]ProjectFileReplacement, int, error) {
 	query = strings.TrimSpace(query)
 	if query == "" {
 		return nil, 0, nil
@@ -79,7 +86,7 @@ func PlanProjectReplace(matches []ProjectSearchMatch, query, replacement string,
 	out := make([]ProjectFileReplacement, 0, len(order))
 	for _, path := range order {
 		g := byPath[path]
-		data, err := os.ReadFile(path)
+		data, err := read(path)
 		if err != nil {
 			return out, skipped, fmt.Errorf("read %s: %w", g.rel, err)
 		}
@@ -156,6 +163,9 @@ func matchByteSpan(content string, m ProjectSearchMatch) (int, int, bool) {
 	lineText := content[off:]
 	if j := strings.IndexByte(lineText, '\n'); j >= 0 {
 		lineText = lineText[:j]
+	}
+	if lineText != m.LineText {
+		return 0, 0, false
 	}
 	runes := []rune(lineText)
 	if m.Column < 0 || m.EndColumn > len(runes) || m.Column > m.EndColumn {

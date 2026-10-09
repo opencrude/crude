@@ -19,16 +19,11 @@ package app
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"sync"
 	"time"
 
-	tea "charm.land/bubbletea/v2"
-
-	"crude/history"
 	"crude/network"
 	"crude/provider"
-	"crude/session"
 	"crude/sessiondb"
 	"crude/tui"
 	ttypes "crude/types"
@@ -63,9 +58,15 @@ type App struct {
 	sessionsRoot string
 
 	// resumeID is an optional session ID from --resume.
-	resumeID string
+	resumeID      string
+	clientProfile string
+	invocation    CLIFlags
 
 	startupIssues []ttypes.OperationIssue
+
+	// defaultsChanged is installed by the core host to republish committed
+	// application defaults to every retained workspace.
+	defaultsChanged func()
 }
 
 // Opts configures the App. Passed to New() during initialization.
@@ -75,6 +76,8 @@ type Opts struct {
 	SessionsRoot  string
 	ProjectDir    string // project directory (defaults to cwd)
 	ResumeID      string // optional session to resume at startup
+	ClientProfile string
+	Invocation    CLIFlags
 	StartupIssues []ttypes.OperationIssue
 }
 
@@ -104,120 +107,16 @@ func New(opts Opts) (*App, error) {
 		projectDir:           opts.ProjectDir,
 		sessionsRoot:         opts.SessionsRoot,
 		resumeID:             opts.ResumeID,
+		clientProfile:        opts.ClientProfile,
+		invocation:           opts.Invocation,
 		startupIssues:        issues,
 	}, nil
 }
 
-// Run starts the IDE. This is the main entry point that:
-//  1. Creates a workspace (the IDE instance)
-//  2. Optionally resumes a session from --resume
-//  3. Starts the TUI with the workspace (launcher = workspace selector)
-//  4. Enters the main event loop
-//
-// When the TUI exits, Run() returns.
+// Run starts a connected shell. The retained core, not this process, owns
+// configuration, services and sessions; shell exit only releases attachments.
 func (a *App) Run() error {
-	lg := &appLogger{}
-	// The cache is application-wide and independent of configured accounts.
-	catalog, catalogErr := provider.OpenModelCatalog(filepath.Join(a.home, ".crude", "model-catalog.db"), provider.DefaultModelSources())
-	if catalogErr != nil {
-		lg.Debug("CATALOG", "cache_unavailable", "error", catalogErr.Error())
-	} else {
-		provider.UseModelCatalog(catalog)
-		defer func() { _ = catalog.Close() }()
-	}
-
-	// 1. Create the workspace shell (no session until launcher/resume picks one).
-	//
-	// The initial model badge must be the main agent's MODEL, never the provider
-	// ID. Reconcile the app config into a session config to resolve the main
-	// agent's default category (with provider defaults applied), then pass
-	// through only the model name. This is still a placeholder until a session
-	// publishes its real model, but it is the right one rather than a provider.
-	sessCfg0 := FileConfigToSession(a.fc)
-	initialModel := sessCfg0.GetActiveDefaultCategory().Model
-	ws := workspace.NewWorkspace(
-		a.projectDir,
-		initialModel,
-		session.ResolveUsername(),
-		a.initialSettings(),
-		lg,
-	)
-	for _, issue := range a.startupIssues {
-		ws.QueueStartupIssue(issue)
-	}
-
-	// 2. One shared credential manager survives copied session configs.
-	a.configureWorkspace(ws)
-	// 4. Start the TUI with provider presets for app settings.
-	prompts, err := history.LoadFile(history.DefaultPath())
-	if err != nil {
-		lg.Warn("APP", "history_load_failed", "error", err.Error())
-		prompts = history.New()
-	}
-	presets := providerPresets()
-	t, err := tui.Start(ws, presets, prompts, lg)
-	if err != nil {
-		ws.CloseAllSessions()
-		ws.Close()
-		return fmt.Errorf("start terminal UI: %w", err)
-	}
-	if catalog != nil {
-		stop, joined := make(chan struct{}), make(chan struct{})
-		go func() {
-			defer close(joined)
-			for {
-				select {
-				case <-stop:
-					return
-				case generation := <-catalog.Updates():
-					ws.ModelCatalogUpdated(generation)
-				}
-			}
-		}()
-		catalog.Start()
-		defer func() { close(stop); _ = catalog.Close(); <-joined }()
-	}
-
-	// 4b. Live-reload config.json (theme preset) without restarting.
-	if stopWatch, watchErr := WatchConfig(func(msg tea.Msg) {
-		if t.Program != nil {
-			t.Program.Send(msg)
-		}
-	}); watchErr == nil {
-		prevQuit := t.OnQuit
-		t.OnQuit = func() {
-			stopWatch()
-			if prevQuit != nil {
-				prevQuit()
-			}
-		}
-	} else {
-		lg.Warn("APP", "config_watch_unavailable", "error", watchErr.Error())
-	}
-
-	// Seed theme from config.json when workspace settings have no preset yet.
-	if ws.LoadAppSettings().Theme.Preset == "" && a.fc.Theme != nil && a.fc.Theme.Preset != "" {
-		t.ApplyThemePreset(a.fc.Theme.Preset)
-	}
-
-	// Resume uses the same owner-thread launcher path as explicit user resume;
-	// the app never races first paint by mutating sessions after tui.Start.
-	if a.resumeID != "" {
-		t.ResumeStartupSession(a.resumeID)
-	}
-
-	// 7. Wait for exit.
-	t.Wait()
-	// Finish media capture before releasing session resources. Save serializes
-	// with any command still completing after the UI loop has stopped.
-	if prompts.Len() > 0 {
-		if err := prompts.Save(history.DefaultPath()); err != nil {
-			lg.Warn("APP", "history_save_failed", "error", err.Error())
-		}
-	}
-	ws.CloseAllSessions()
-	ws.Close()
-	return nil
+	return runConnectedShell(a.home, a.projectDir, a.resumeID, a.clientProfile, a.invocation)
 }
 
 // persistAccountRotation runs under the manager commit lock so account saves
@@ -290,6 +189,7 @@ func (a *App) configureWorkspace(ws *workspace.Workspace) {
 		if err := network.ConfigureDefault(FileConfigToAppSettings(updated).Network); err != nil {
 			return ttypes.AppSettings{}, err
 		}
+		a.notifyDefaultsChanged()
 		// Persistence returns a snapshot. The workspace/UI owner publishes it
 		// only after its generation-bound command result arrives.
 		return FileConfigToAppSettings(updated), nil
@@ -328,6 +228,7 @@ func (a *App) configureWorkspace(ws *workspace.Workspace) {
 			return captypes.Settings{}, err
 		}
 		ws.SetAppDefaults(FileConfigToAppSettings(updated))
+		a.notifyDefaultsChanged()
 		if updated.Capabilities == nil {
 			return captypes.Settings{}, nil
 		}
@@ -364,14 +265,17 @@ func providerPresets() []tui.ProviderPreset {
 }
 
 // initialSettings builds the initial settings snapshot from the app config.
-func (a *App) initialSettings() tui.Settings {
-	settings := tui.Settings{
+func (a *App) initialSettings() ttypes.Settings { return a.initialSettingsFrom(a.fc) }
 
-		TurnLogsEnabled: boolStr(a.fc.IsTurnLogsEnabled()),
+// initialSettingsFrom builds a workspace's initial settings from one config
+// snapshot, so the core can build workspaces from its latest committed config.
+func (a *App) initialSettingsFrom(fc FileConfig) ttypes.Settings {
+	settings := ttypes.Settings{
+		TurnLogsEnabled: boolStr(fc.IsTurnLogsEnabled()),
 	}
-	main := FileConfigToSession(a.fc).GetActiveDefaultCategory()
+	main := FileConfigToSession(fc).GetActiveDefaultCategory()
 	settings.AccountID, settings.Model, settings.ThinkingEffort = main.AccountID, main.Model, main.ThinkingEffort
-	if account, ok := a.fc.Accounts[main.AccountID]; ok {
+	if account, ok := fc.Accounts[main.AccountID]; ok {
 		settings.ProviderID = account.ProviderID
 		settings.APIKey, settings.ProviderAPIKey = account.APIKey, account.APIKey
 		template := account.Connection

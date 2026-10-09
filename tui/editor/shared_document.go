@@ -24,6 +24,7 @@ type DocumentProjection struct {
 	onUndo       func(DocumentUndoIntent)
 	undoPending  bool
 	undoSequence uint64
+	queuedUndo   *bool
 	suppressed   bool
 }
 
@@ -122,6 +123,71 @@ func (e *Editor) DocumentState() DocumentState {
 		return DocumentState{}
 	}
 	return DocumentState{p.snapshot.ID, p.snapshot.Revision, len(p.pending), p.inflight != nil, p.undoPending, p.conflict}
+}
+
+// DocumentSnapshot is the detached canonical baseline, excluding optimistic edits.
+func (e *Editor) DocumentSnapshot() document.Snapshot {
+	p := e.documentProjection
+	if p == nil {
+		return document.Snapshot{}
+	}
+	s := p.snapshot
+	s.Text, s.Saved = bytes.Clone(s.Text), bytes.Clone(s.Saved)
+	return s
+}
+
+// DocumentBuffer exposes the one live buffer for nonvisual editor consumers.
+func (e *Editor) DocumentBuffer() *Buffer { return e.buffer }
+
+// ReconcileDocumentRevision allows a definitively rejected stale command to
+// rebase its retained draft. Unknown transport outcomes must never use this.
+func (e *Editor) ReconcileDocumentRevision() {
+	if p := e.documentProjection; p != nil && p.inflight == nil {
+		p.conflict = nil
+	}
+}
+
+// ResetDocument accepts an explicit history gap only for a settled projection.
+func (e *Editor) ResetDocument(s document.Snapshot) error {
+	p := e.documentProjection
+	if p == nil || len(p.pending) != 0 || p.inflight != nil || p.undoPending {
+		return ErrDocumentPending
+	}
+	if s.ID != p.snapshot.ID || s.Revision == 0 || !utf8.Valid(s.Text) || !utf8.Valid(s.Saved) || len(s.Text) > document.MaxBytes || len(s.Saved) > document.MaxBytes {
+		return document.ErrRevision
+	}
+	// Keep the managed buffer and mutation observer: all existing consumers
+	// must continue to see the same live text authority after a history gap.
+	p.suppressed = true
+	e.buf.ReplaceAll(string(s.Text))
+	p.suppressed = false
+	s.Text, s.Saved = bytes.Clone(s.Text), bytes.Clone(s.Saved)
+	p.snapshot, p.conflict = s, nil
+	e.installDocumentBaseline(s)
+	e.invalidateEditorCaches()
+	e.markDocumentWidthAll()
+	return nil
+}
+
+// UseSharedDocument discards only this settled private projection, never writes
+// shared text. The coordinator must durably back up the draft and check the
+// shared preimage first. A changed local revision refuses the decision.
+func (e *Editor) UseSharedDocument(s document.Snapshot, localRevision uint64) error {
+	p := e.documentProjection
+	if p == nil || e.Revision() != localRevision || p.inflight != nil || p.undoPending {
+		return ErrDocumentPending
+	}
+	if s.ID != p.snapshot.ID || s.Revision == 0 || !utf8.Valid(s.Text) || !utf8.Valid(s.Saved) || len(s.Text) > document.MaxBytes || len(s.Saved) > document.MaxBytes {
+		return document.ErrRevision
+	}
+	p.pending, p.queuedUndo = nil, nil
+	if err := e.ResetDocument(s); err != nil {
+		return err
+	}
+	e.ClearSelection()
+	e.cursor.Line = min(e.cursor.Line, max(0, e.buf.LineCount()-1))
+	e.clampCursorToLine()
+	return nil
 }
 
 // composeDocumentEdits uses symbolic base spans: no whole-file export per edit.
@@ -269,6 +335,9 @@ func (e *Editor) requestDocumentUndo(redo bool) {
 		return
 	}
 	if len(p.pending) > 0 || p.inflight != nil || p.undoPending || p.onUndo == nil || p.owner.ClientID == "" {
+		if p.onUndo != nil && p.owner.ClientID != "" && !p.undoPending {
+			p.queuedUndo = &redo
+		}
 		p.conflict = ErrDocumentPending
 		return
 	}
@@ -278,10 +347,22 @@ func (e *Editor) requestDocumentUndo(redo bool) {
 	p.onUndo(DocumentUndoIntent{p.snapshot.ID, p.owner, p.snapshot.Revision, redo, p.undoSequence, p})
 }
 
+// DrainDocumentUndo admits a queued keyboard gesture only after its preceding
+// local edits have been acknowledged and the canonical revision is current.
+func (e *Editor) DrainDocumentUndo() {
+	p := e.documentProjection
+	if p == nil || p.queuedUndo == nil || len(p.pending) != 0 || p.inflight != nil || p.undoPending {
+		return
+	}
+	redo := *p.queuedUndo
+	p.queuedUndo = nil
+	e.requestDocumentUndo(redo)
+}
+
 // BindDocumentOwner enables undo even before this view's first edit.
 func (e *Editor) BindDocumentOwner(owner document.Owner) error {
 	p := e.documentProjection
-	if p == nil || owner.ClientID == "" || owner.Epoch == 0 || (p.owner.ClientID != "" && p.owner != owner) {
+	if p == nil || owner.ClientID == "" || owner.Epoch == 0 || (p.owner.ClientID != "" && (p.owner.ClientID != owner.ClientID || p.owner.Epoch > owner.Epoch || p.owner != owner && (p.inflight != nil || p.undoPending))) {
 		return document.ErrOwner
 	}
 	p.owner = owner
@@ -296,7 +377,9 @@ func (e *Editor) CompleteDocumentUndo(intent DocumentUndoIntent, err error) erro
 			return document.ErrRequest
 		}
 		p.undoPending = false
-		p.conflict = err
+		// A definitive refusal is not a projection conflict. Sync must remain
+		// available so another author's newer revision can be installed.
+		p.conflict = nil
 		return nil
 	}
 	return document.ErrOwner

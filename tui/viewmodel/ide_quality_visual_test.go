@@ -24,11 +24,11 @@ func TestIDEQualityVisualAcceptance(t *testing.T) {
 	defer ws.Close()
 	app.Tree.Visible = false
 	short := "package sample\n\nfunc Greet() string {\n\treturn \"landing_target\"\n}\n"
-	path := filepath.Join(app.RootPath, "sample.go")
+	path := filepath.Join(app.ws.RootPath(), "sample.go")
 	if err := os.WriteFile(path, []byte(short), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	if err := os.WriteFile(filepath.Join(app.RootPath, "navigation.go"), []byte("package navigation\n\n// destination_marker\nfunc Destination() {}\n"), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(app.ws.RootPath(), "navigation.go"), []byte("package navigation\n\n// destination_marker\nfunc Destination() {}\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	openEditorTabs(t, app, "notes.md", "sample.go")

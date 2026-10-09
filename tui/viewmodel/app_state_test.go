@@ -43,7 +43,7 @@ func TestFocusTarget_Launcher(t *testing.T) {
 
 func TestFocusTarget_InputWithAgent(t *testing.T) {
 	app := newTestApp(t)
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", &workspace.AgentState{})
+	app.ws.AgentMgr().AddOrchestrator("ses_1_orch_1", &workspace.AgentState{})
 
 	target := app.focusTarget()
 	if target != FocusInput {
@@ -63,10 +63,10 @@ func TestActiveMsgList_WithAgent(t *testing.T) {
 	app := newTestApp(t)
 	th := theme.DefaultDark()
 	ml := chatprojection.NewRenderer(th)
-	sp := app.PaneMgr.GetOrCreate("ses_1_orch_1", workspace.PaneAgent, "ses_1_orch_1")
+	sp := app.ws.PaneMgr().GetOrCreate("ses_1_orch_1", workspace.PaneAgent, "ses_1_orch_1")
 	proj := app.subPaneProjections.Get("ses_1_orch_1", workspace.PaneAgent)
 	proj.renderer = ml
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", &workspace.AgentState{Messages: sp.Messages})
+	app.ws.AgentMgr().AddOrchestrator("ses_1_orch_1", &workspace.AgentState{Messages: sp.Messages})
 	app.AgentView.SetActive("ses_1_orch_1")
 
 	result := app.activeMsgList()
@@ -79,10 +79,10 @@ func TestActiveMessageList_Fallback(t *testing.T) {
 	app := newTestApp(t)
 	th := theme.DefaultDark()
 	ml := chatprojection.NewRenderer(th)
-	sp := app.PaneMgr.GetOrCreate("ses_1_orch_1", workspace.PaneAgent, "ses_1_orch_1")
+	sp := app.ws.PaneMgr().GetOrCreate("ses_1_orch_1", workspace.PaneAgent, "ses_1_orch_1")
 	proj := app.subPaneProjections.Get("ses_1_orch_1", workspace.PaneAgent)
 	proj.renderer = ml
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", &workspace.AgentState{Messages: sp.Messages})
+	app.ws.AgentMgr().AddOrchestrator("ses_1_orch_1", &workspace.AgentState{Messages: sp.Messages})
 	app.AgentView.SetActive("ses_1_orch_1")
 	// The fixture selects the shell explicitly; clear it so activeMessageList falls back
 	app.AgentView.ClearActive()
@@ -112,7 +112,7 @@ func TestAgentForView_NoAgents(t *testing.T) {
 func TestAgentForView_WithActiveAgentView(t *testing.T) {
 	app := newTestApp(t)
 	agent := &workspace.AgentState{Streaming: true}
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", agent)
+	app.ws.AgentMgr().AddOrchestrator("ses_1_orch_1", agent)
 
 	a := app.agentForView()
 	if a != agent {
@@ -132,7 +132,7 @@ func TestComputeContentLayout_NilActiveML(t *testing.T) {
 
 	// Add an agent with nil MsgList. Select the shell explicitly,
 	// so activeMsgList() returns nil (the node exists but MsgList is nil).
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", &workspace.AgentState{Messages: nil})
+	app.ws.AgentMgr().AddOrchestrator("ses_1_orch_1", &workspace.AgentState{Messages: nil})
 
 	// This should not panic — the nil activeML guard in computeContentLayout
 	// should produce a chat layout instead of dereferencing nil.
@@ -194,8 +194,8 @@ func TestHandleQuit_ClosesLastAgentTab(t *testing.T) {
 
 	app.AddOrchestrator("ses_1_orch_1")
 
-	if app.AgentMgr.Count() != 1 {
-		t.Fatalf("expected 1 agent, got %d", app.AgentMgr.Count())
+	if app.ws.AgentMgr().Count() != 1 {
+		t.Fatalf("expected 1 agent, got %d", app.ws.AgentMgr().Count())
 	}
 
 	// First handleQuit closes the tab and shows launcher. The agent is
@@ -235,8 +235,8 @@ func TestHandleQuit_TwoAgentTabs_ClosesActiveOnly(t *testing.T) {
 	app.AddOrchestrator("ses_1_orch_1")
 	app.AddOrchestrator("ses_2_orch_1")
 
-	if app.AgentMgr.Count() != 2 {
-		t.Fatalf("expected 2 agents, got %d", app.AgentMgr.Count())
+	if app.ws.AgentMgr().Count() != 2 {
+		t.Fatalf("expected 2 agents, got %d", app.ws.AgentMgr().Count())
 	}
 	if !app.Win.IsOpen() || app.Win.TabCount() != 2 {
 		t.Fatalf("expected 2 window tabs, got %d (open=%v)", app.Win.TabCount(), app.Win.IsOpen())
@@ -262,7 +262,7 @@ func TestHandleQuit_TwoAgentTabs_ClosesActiveOnly(t *testing.T) {
 	if !app.AgentView.IsHidden(activeID) {
 		t.Fatalf("active agent %q must be minimized, not terminated", activeID)
 	}
-	if app.AgentMgr.Get(activeID) == nil {
+	if app.ws.AgentMgr().Get(activeID) == nil {
 		t.Fatal("closing a tab must keep the agent alive for restore")
 	}
 	if !app.Win.IsOpen() || app.Win.TabCount() != 1 {
@@ -427,8 +427,8 @@ func TestHandleAgentTabClose_AgentTab(t *testing.T) {
 
 	app.AddOrchestrator("ses_1_orch_1")
 
-	if app.AgentMgr.Count() != 1 {
-		t.Fatalf("expected 1 agent, got %d", app.AgentMgr.Count())
+	if app.ws.AgentMgr().Count() != 1 {
+		t.Fatalf("expected 1 agent, got %d", app.ws.AgentMgr().Count())
 	}
 
 	cmd := app.handleAgentTabClose(0)
@@ -438,7 +438,7 @@ func TestHandleAgentTabClose_AgentTab(t *testing.T) {
 	if app.AgentView.VisibleCount() != 0 {
 		t.Fatal("expected no surfaced agents after closing last tab")
 	}
-	if app.AgentMgr.Get("ses_1_orch_1") == nil {
+	if app.ws.AgentMgr().Get("ses_1_orch_1") == nil {
 		t.Fatal("closing a tab must keep the agent alive for restore")
 	}
 }
@@ -463,7 +463,7 @@ func TestSubmitInputRejectsAgentWithoutBackendOwner(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("direct rejected admission should not return a command")
 	}
-	if got := app.AgentMgr.Get("ses_1_orch_1").State.Messages.Messages(); len(got) != 0 {
+	if got := app.ws.AgentMgr().Get("ses_1_orch_1").State.Messages.Messages(); len(got) != 0 {
 		t.Fatalf("rejected input leaked into live conversation: %+v", got)
 	}
 }
@@ -483,7 +483,7 @@ func TestSubmitInputUsesWorkspaceTurnAdmission(t *testing.T) {
 		t.Fatalf("admission returned %T", cmd())
 	}
 	_ = app.applyInputAdmission(msg)
-	messages := app.AgentMgr.Get(agentID).State.Messages.Messages()
+	messages := app.ws.AgentMgr().Get(agentID).State.Messages.Messages()
 	if len(messages) != 2 || messages[0].Content != "hello" || messages[1].Role != workspace.MessageRoleStatus {
 		t.Fatalf("admitted conversation=%+v", messages)
 	}
@@ -493,7 +493,7 @@ func TestPreparedInputStopCommitsOnceWithoutClearingNewDraft(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 80, 24
 	agentID := addBackendTestOrchestrator(t, app)
-	app.ActiveSession = app.SessionsByAgent[agentID]
+	app.ActiveSession = app.ws.SessionsByAgent()[agentID]
 	app.Input.SetInput("original input")
 	draftRevision := app.Input.DraftRevision()
 
@@ -501,7 +501,7 @@ func TestPreparedInputStopCommitsOnceWithoutClearingNewDraft(t *testing.T) {
 	if command == nil {
 		t.Fatal("prepare did not return an off-UI commit command")
 	}
-	app.CancelAgent(agentID)
+	app.ws.CancelAgent(agentID)
 	app.Input.SetReferenceStore(app.ActiveSession.RefStore)
 	app.Input.SetInput("newer draft\nline\nline\nline\nline\nline\nline\nline\nline\n")
 	ref := sessiondb.Reference{ID: "new-draft-evidence", Kind: sessiondb.KindPastedText, Label: "[Pasted Text1]", Content: "new draft evidence"}
@@ -529,12 +529,12 @@ func TestPreparedInputStopCommitsOnceWithoutClearingNewDraft(t *testing.T) {
 		len(app.Input.SnapshotReferenceIDs()) != 1 || app.Input.SnapshotReferenceIDs()[0] != ref.ID {
 		t.Fatal("late receipt changed newer text, references, cursor, selection or scroll")
 	}
-	messages := app.AgentMgr.Get(agentID).State.Messages.Messages()
+	messages := app.ws.AgentMgr().Get(agentID).State.Messages.Messages()
 	if len(messages) != 1 || messages[0].InternalID != message.result.Receipt.InputID || messages[0].Content != "original input" {
 		t.Fatalf("saved input projection=%+v receipt=%+v", messages, message.result.Receipt)
 	}
 	_ = app.applyInputAdmission(message)
-	messages = app.AgentMgr.Get(agentID).State.Messages.Messages()
+	messages = app.ws.AgentMgr().Get(agentID).State.Messages.Messages()
 	if len(messages) != 1 {
 		t.Fatalf("duplicate receipt appended another user row: %+v", messages)
 	}
@@ -565,13 +565,13 @@ func TestPreparedInputStopRejectsForeignOrStaleReceipt(t *testing.T) {
 		t.Run(field, func(t *testing.T) {
 			app := newFullTestApp(t)
 			agentID := addBackendTestOrchestrator(t, app)
-			app.ActiveSession = app.SessionsByAgent[agentID]
+			app.ActiveSession = app.ws.SessionsByAgent()[agentID]
 			app.Input.SetInput("exact submitted draft")
 			command := app.submitPreparedInput(agentID, provider.PlainInput(app.Input.Value()), app.Input.DraftRevision())
 			if command == nil {
 				t.Fatal("prepare did not schedule commit")
 			}
-			app.CancelAgent(agentID)
+			app.ws.CancelAgent(agentID)
 			message := command().(inputAdmissionMsg)
 			if message.result.Status != workspace.InputAdmissionPreservationPending {
 				t.Fatalf("commit=%+v", message.result)
@@ -593,7 +593,7 @@ func TestPreparedInputStopRejectsForeignOrStaleReceipt(t *testing.T) {
 				app.workspaceSwitchGen.Add(1)
 			}
 			app.applyInputAdmission(message)
-			if app.Input.Value() != "exact submitted draft" || len(app.AgentMgr.Get(agentID).State.Messages.Messages()) != 0 {
+			if app.Input.Value() != "exact submitted draft" || len(app.ws.AgentMgr().Get(agentID).State.Messages.Messages()) != 0 {
 				t.Fatal("foreign/stale receipt changed the composer or conversation")
 			}
 		})
@@ -603,21 +603,21 @@ func TestPreparedInputStopRejectsForeignOrStaleReceipt(t *testing.T) {
 func TestPreparedInputStopReceiptCannotClearSiblingAgentDraft(t *testing.T) {
 	app := newFullTestApp(t)
 	agentID := addBackendTestOrchestrator(t, app)
-	app.ActiveSession = app.SessionsByAgent[agentID]
+	app.ActiveSession = app.ws.SessionsByAgent()[agentID]
 	app.Input.SetInput("submitted draft")
 	command := app.submitPreparedInput(agentID, provider.PlainInput(app.Input.Value()), app.Input.DraftRevision())
 	if command == nil {
 		t.Fatal("prepare did not schedule commit")
 	}
-	app.CancelAgent(agentID)
+	app.ws.CancelAgent(agentID)
 	message := command().(inputAdmissionMsg)
-	app.AgentMgr.AddSubAgent("sibling", agentID, "Sibling", "test", "researcher", workspace.NewAgentState("sibling", nil, nil))
+	app.ws.AgentMgr().AddSubAgent("sibling", agentID, "Sibling", "test", "researcher", workspace.NewAgentState("sibling", nil, nil))
 	app.AgentView.SetActive("sibling")
 	app.applyInputAdmission(message)
 	if app.Input.Value() != "submitted draft" {
 		t.Fatal("receipt cleared a different agent's composer in the same session")
 	}
-	if len(app.AgentMgr.Get(agentID).State.Messages.Messages()) != 1 || len(app.AgentMgr.Get("sibling").State.Messages.Messages()) != 0 {
+	if len(app.ws.AgentMgr().Get(agentID).State.Messages.Messages()) != 1 || len(app.ws.AgentMgr().Get("sibling").State.Messages.Messages()) != 0 {
 		t.Fatal("receipt did not project into its exact owning agent")
 	}
 }
@@ -625,17 +625,17 @@ func TestPreparedInputStopReceiptCannotClearSiblingAgentDraft(t *testing.T) {
 func TestPreparedInputStopLateAcceptedReceiptCannotReactivate(t *testing.T) {
 	app := newFullTestApp(t)
 	agentID := addBackendTestOrchestrator(t, app)
-	app.ActiveSession = app.SessionsByAgent[agentID]
+	app.ActiveSession = app.ws.SessionsByAgent()[agentID]
 	app.Input.SetInput("submitted draft")
 	command := app.submitPreparedInput(agentID, provider.PlainInput(app.Input.Value()), app.Input.DraftRevision())
 	if command == nil {
 		t.Fatal("prepare did not schedule commit")
 	}
-	app.CancelAgent(agentID)
+	app.ws.CancelAgent(agentID)
 	message := command().(inputAdmissionMsg)
 	// Dispatch acceptance may precede Stop while its UI acknowledgement is queued.
 	message.result.Status = workspace.InputAdmissionAccepted
-	state := app.AgentMgr.Get(agentID).State
+	state := app.ws.AgentMgr().Get(agentID).State
 	state.BeginCancellation()
 	app.applyInputAdmission(message)
 	count := 0
@@ -652,13 +652,13 @@ func TestPreparedInputStopLateAcceptedReceiptCannotReactivate(t *testing.T) {
 func TestPreparedInputStopReceiptCannotClearRestoredDraftWithSameRevision(t *testing.T) {
 	app := newFullTestApp(t)
 	agentID := addBackendTestOrchestrator(t, app)
-	app.ActiveSession = app.SessionsByAgent[agentID]
+	app.ActiveSession = app.ws.SessionsByAgent()[agentID]
 	app.Input.SetInput("submitted draft")
 	command := app.submitPreparedInput(agentID, provider.PlainInput(app.Input.Value()), app.Input.DraftRevision())
 	if command == nil {
 		t.Fatal("prepare did not schedule commit")
 	}
-	app.CancelAgent(agentID)
+	app.ws.CancelAgent(agentID)
 	message := command().(inputAdmissionMsg)
 	app.Input.ClearInput()
 	app.Input.SetInput("restored unsubmitted draft")
@@ -667,7 +667,7 @@ func TestPreparedInputStopReceiptCannotClearRestoredDraftWithSameRevision(t *tes
 	if app.Input.Value() != "restored unsubmitted draft" {
 		t.Fatal("receipt consumed a different draft lifetime with a restored revision")
 	}
-	if rows := app.AgentMgr.Get(agentID).State.Messages.Messages(); len(rows) != 1 || rows[0].Content != "submitted draft" {
+	if rows := app.ws.AgentMgr().Get(agentID).State.Messages.Messages(); len(rows) != 1 || rows[0].Content != "submitted draft" {
 		t.Fatalf("receipt lost its accepted input: %+v", rows)
 	}
 }
@@ -677,7 +677,7 @@ func TestPreparedInputStopFloatingComposerKeepsSeparateAndNewerDrafts(t *testing
 		t.Run(change, func(t *testing.T) {
 			app := newFullTestApp(t)
 			agentID := addBackendTestOrchestrator(t, app)
-			app.ActiveSession = app.SessionsByAgent[agentID]
+			app.ActiveSession = app.ws.SessionsByAgent()[agentID]
 			app.Input.SetInput("separate shell draft")
 			_, _ = app.toggleComposer()
 			screen := app.sessionComposer()
@@ -697,7 +697,7 @@ func TestPreparedInputStopFloatingComposerKeepsSeparateAndNewerDrafts(t *testing
 			if command == nil {
 				t.Fatal("composer did not schedule durable admission")
 			}
-			app.CancelAgent(agentID)
+			app.ws.CancelAgent(agentID)
 			switch change {
 			case "cursor":
 				editor.SetCursorFlat(2)
@@ -753,7 +753,7 @@ func TestRejectedSteeringKeepsDraftAndDoesNotFabricateHumanEvidence(t *testing.T
 		app.Input.CursorFlat() != cursor || from != 1 || to != 5 {
 		t.Fatal("rejected steering changed the unsubmitted editor state")
 	}
-	if rows := app.AgentMgr.Get("unbound").State.Messages.Messages(); len(rows) != 0 {
+	if rows := app.ws.AgentMgr().Get("unbound").State.Messages.Messages(); len(rows) != 0 {
 		t.Fatalf("rejected steering fabricated human evidence: %+v", rows)
 	}
 }
@@ -763,7 +763,7 @@ func TestCollaborationDeliverySettlementClearsPendingStatus(t *testing.T) {
 	conversation := workspace.NewConversation()
 	first := conversation.AppendPendingSteering(workspace.Message{Role: workspace.MessageRoleUser, Content: "first"})
 	second := conversation.AppendPendingSteering(workspace.Message{Role: workspace.MessageRoleUser, Content: "second"})
-	app.AgentMgr.AddOrchestrator("agent", workspace.NewAgentState("agent", conversation, nil))
+	app.ws.AgentMgr().AddOrchestrator("agent", workspace.NewAgentState("agent", conversation, nil))
 	app.syncPendingSteeringCount()
 	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "collaboration_delivery_admitted", AgentID: "agent", Data: map[string]any{"history_message_id": first}})
 	if got := conversation.PendingSteeringCount(); got != 1 {
@@ -780,11 +780,11 @@ func TestStoppedSteeringSettlesInChatWithoutTouchingNewDraft(t *testing.T) {
 	owner := workspace.NewSession("owner", t.TempDir(), nil, nil)
 	other := workspace.NewSession("other", t.TempDir(), nil, nil)
 	app.ActiveSession = owner
-	app.SessionsByAgent = map[string]*workspace.Session{"agent": owner}
+	wsOf(app).SessionsByAgent = map[string]*workspace.Session{"agent": owner}
 	conversation := workspace.NewConversation()
 	first := conversation.AppendPendingSteering(workspace.Message{Role: workspace.MessageRoleUser, Content: "first note"})
 	second := conversation.AppendPendingSteering(workspace.Message{Role: workspace.MessageRoleUser, Content: "second note"})
-	app.AgentMgr.AddOrchestrator("agent", workspace.NewAgentState("agent", conversation, nil))
+	app.ws.AgentMgr().AddOrchestrator("agent", workspace.NewAgentState("agent", conversation, nil))
 	app.Input.SetInput("newer draft")
 	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "collaboration_delivery_rejected", AgentID: "agent", Data: map[string]any{"history_message_id": first}})
 	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "collaboration_delivery_rejected", AgentID: "agent", Data: map[string]any{"history_message_id": second}})
@@ -813,10 +813,10 @@ func TestCancelledPendingSteeringSettlesInPlaceAndIsIdempotent(t *testing.T) {
 	app := newFullTestApp(t)
 	owner := workspace.NewSession("owner", t.TempDir(), nil, nil)
 	app.ActiveSession = owner
-	app.SessionsByAgent = map[string]*workspace.Session{"agent": owner}
+	wsOf(app).SessionsByAgent = map[string]*workspace.Session{"agent": owner}
 	conversation := workspace.NewConversation()
 	id := conversation.AppendPendingSteering(workspace.Message{Role: workspace.MessageRoleUser, Content: "cancel me"})
-	app.AgentMgr.AddOrchestrator("agent", workspace.NewAgentState("agent", conversation, nil))
+	app.ws.AgentMgr().AddOrchestrator("agent", workspace.NewAgentState("agent", conversation, nil))
 	app.Input.SetInput("typed while waiting")
 	clear := workspace.AgentEvent{Type: "collaboration_delivery_rejected", AgentID: "agent", Data: map[string]any{"history_message_id": id}}
 	app.handleAgentDomainEvent(clear)
@@ -833,15 +833,15 @@ func TestCancelledPendingSteeringSettlesInPlaceAndIsIdempotent(t *testing.T) {
 
 func TestRemoveOrchestrator_CleansUp(t *testing.T) {
 	app := newTestApp(t)
-	app.AgentMgr.AddOrchestrator("ses_1_orch_1", &workspace.AgentState{})
+	app.ws.AgentMgr().AddOrchestrator("ses_1_orch_1", &workspace.AgentState{})
 	app.subPaneProjections.Get("ses_1_orch_1", workspace.PaneAgent)
 
 	app.RemoveOrchestrator("ses_1_orch_1")
 
-	if n := app.AgentMgr.Get("ses_1_orch_1"); n != nil {
+	if n := app.ws.AgentMgr().Get("ses_1_orch_1"); n != nil {
 		t.Fatal("agent should be removed from agentMgr")
 	}
-	if p := app.PaneMgr.Get("ses_1_orch_1"); p != nil {
+	if p := app.ws.PaneMgr().Get("ses_1_orch_1"); p != nil {
 		t.Fatal("agent should be removed from paneMgr")
 	}
 	if app.subPaneProjections.Has("ses_1_orch_1") {
@@ -855,10 +855,10 @@ func TestAddOrchestratorKeepsExistingSessionReachable(t *testing.T) {
 	app.AddOrchestrator("first")
 	app.AddOrchestrator("second")
 
-	if app.AgentMgr.Get("first") == nil || app.AgentMgr.Get("second") == nil {
+	if app.ws.AgentMgr().Get("first") == nil || app.ws.AgentMgr().Get("second") == nil {
 		t.Fatal("adding a second session hid the first orchestrator")
 	}
-	if got := app.AgentMgr.Count(); got != 2 {
+	if got := app.ws.AgentMgr().Count(); got != 2 {
 		t.Fatalf("agent count = %d, want 2", got)
 	}
 }
@@ -866,7 +866,7 @@ func TestAddOrchestratorKeepsExistingSessionReachable(t *testing.T) {
 func TestHandleAgentEventDropsUnknownOrchestrator(t *testing.T) {
 	app := newFullTestApp(t)
 	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "done", AgentID: "stale", Data: "done"})
-	if app.AgentMgr.Get("stale") != nil {
+	if app.ws.AgentMgr().Get("stale") != nil {
 		t.Fatal("stale event created an orchestrator without live channels")
 	}
 }
@@ -879,7 +879,7 @@ func TestHandleSubPaneCompletionIgnoresRemovedAgent(t *testing.T) {
 func TestHandleCancelConfirmationStopsTurnWithoutDenyingPermission(t *testing.T) {
 	app := newFullTestApp(t)
 	selectDeckSession(t, app, app.ActiveSession, "agent")
-	state := app.AgentMgr.Get("agent").State
+	state := app.ws.AgentMgr().Get("agent").State
 	projection := app.activeSessionProjection()
 	openTestAgentPrompt(t, app, projection, agentPromptRequest{question: "Continue?"})
 	projection.deckHost.Resize(80, 12)
@@ -1041,7 +1041,7 @@ func TestHandleInputEvent_SteeringSubmit(t *testing.T) {
 		t.Fatalf("unbound steering must not schedule a history write, got %v", cmds)
 	}
 	if app.Input.Value() != "keep this unsubmitted draft" || app.Input.DraftRevision() != revision ||
-		len(app.AgentMgr.Get("ses_1_orch_1").State.Messages.Messages()) != 0 {
+		len(app.ws.AgentMgr().Get("ses_1_orch_1").State.Messages.Messages()) != 0 {
 		t.Fatal("rejected steering consumed the draft or fabricated chat evidence")
 	}
 	if app.Prompts != nil && len(app.Prompts.Entries()) != historyCount {

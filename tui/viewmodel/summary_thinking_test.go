@@ -22,7 +22,7 @@ func TestSummaryThinkingStaysCompactAndPreservesFullTrainOnResume(t *testing.T) 
 			app := newFullTestApp(t)
 			app.width, app.height = width, 40
 			app.AddOrchestrator("summary")
-			state := app.AgentMgr.Get("summary").State
+			state := app.ws.AgentMgr().Get("summary").State
 			deltas := []reasoning.Delta{{Text: "**First approach**\n\nInspect the ownership and geometry.", Kind: kind, BlockID: "first"}}
 			for i := range 20 {
 				deltas = append(deltas, reasoning.Delta{Text: "Another brief update inspects ownership and geometry.", Kind: kind, BlockID: fmt.Sprintf("update-%d", i)})
@@ -118,7 +118,7 @@ func TestThinkingStripClickOpensAndClosesHiddenLiveTrace(t *testing.T) {
 	}})
 	app.paintShellFrame()
 	renderer := app.activeMessageList()
-	id := app.AgentMgr.Get("thinking").State.Messages.Messages()[0].InternalID
+	id := app.ws.AgentMgr().Get("thinking").State.Messages.Messages()[0].InternalID
 	if rows := renderer.ExportMessageRowsSnapshot(app.chatReflowInnerW).Rows; len(rows) != 0 {
 		t.Fatalf("collapsed live thought left a stray node: %+v", rows)
 	}
@@ -148,19 +148,19 @@ func TestThinkingTideDirectionFollowsOwningConnection(t *testing.T) {
 	app.AddOrchestrator("other")
 	app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: "first", Type: "turn_started", Data: ctypes.TurnIdentity{Generation: 1, ProviderID: "gateway", AccountID: "account", ModelID: "model"}})
 	app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: "first", Type: "thinking", Data: reasoning.Delta{Text: "Provisional thinking", Kind: reasoning.Provisional}})
-	if app.AgentActivity("first").TideForward {
+	if app.ws.AgentActivity("first").TideForward {
 		t.Fatal("unclassified thinking moved forward before evidence")
 	}
 	app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: "first", Type: "reasoning_classified", Data: reasoning.InferredSummary})
-	if !app.AgentActivity("first").TideForward || app.AgentActivity("other").TideForward {
+	if !app.ws.AgentActivity("first").TideForward || app.ws.AgentActivity("other").TideForward {
 		t.Fatal("settled direction leaked to another agent or failed to settle")
 	}
 	app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: "first", Type: "stream_token", Data: "Answer"})
-	if !app.AgentActivity("first").TideForward {
+	if !app.ws.AgentActivity("first").TideForward {
 		t.Fatal("forward tide stopped at the end of thinking")
 	}
 	app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: "first", Type: "turn_started", Data: ctypes.TurnIdentity{Generation: 2, ProviderID: "other-gateway", AccountID: "account", ModelID: "model"}})
-	if app.AgentActivity("first").TideForward {
+	if app.ws.AgentActivity("first").TideForward {
 		t.Fatal("changed serving connection retained stale tide classification")
 	}
 }

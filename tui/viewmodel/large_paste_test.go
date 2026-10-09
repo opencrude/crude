@@ -25,7 +25,7 @@ func TestLargeMultilinePasteBecomesAttachmentAcrossClipboardRoutes(t *testing.T)
 	for _, route := range []string{"terminal", "ctrl-v", "ctrl-shift-v"} {
 		t.Run(route, func(t *testing.T) {
 			app := newFullTestApp(t)
-			app.Logger = stubLogger{}
+			wsOf(app).Logger = stubLogger{}
 			app.AddOrchestrator("paste-owner")
 			app.ActiveSession = workspace.NewSession("paste-owner", t.TempDir(), nil, stubLogger{})
 			app.maybeHydrateComposerDraft()
@@ -113,10 +113,10 @@ func TestPastedTextSendsCompleteContentButKeepsChatCompact(t *testing.T) {
 	}))
 	defer server.Close()
 	app := newFullTestApp(t)
-	app.Logger = stubLogger{}
-	app.RootPath, app.WorkspaceDir = t.TempDir(), t.TempDir()
-	app.SessionsByID, app.SessionsByAgent = make(map[string]*workspace.Session), make(map[string]*workspace.Session)
-	app.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+	wsOf(app).Logger = stubLogger{}
+	wsOf(app).RootPath, wsOf(app).WorkspaceDir = t.TempDir(), t.TempDir()
+	wsOf(app).SessionsByID, wsOf(app).SessionsByAgent = make(map[string]*workspace.Session), make(map[string]*workspace.Session)
+	wsOf(app).SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
 	cfg := testAccountConfig()
 	account := cfg.Accounts["test"]
 	template := account.Connection
@@ -124,16 +124,16 @@ func TestPastedTextSendsCompleteContentButKeepsChatCompact(t *testing.T) {
 	account.Connection = template
 	cfg.Accounts["test"] = account
 	cfg.Agents.Enabled = false
-	owner, err := app.CreateSession(cfg, home)
+	owner, err := wsOf(app).CreateSession(cfg, home)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sender := &pastedTextJourneySender{events: make(chan types.AgentMsg, 512)}
-	orch, err := app.StartOrchestrator(owner.SessionID, sender)
+	orch, err := wsOf(app).StartOrchestrator(owner.SessionID, sender)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer app.CloseAgent(orch.ID)
+	defer app.ws.CloseAgent(orch.ID)
 	app.AddOrchestrator(orch.ID)
 	app.maybeHydrateComposerDraft()
 	_, command := app.Update(tea.PasteMsg{Content: content})
@@ -161,7 +161,7 @@ func TestPastedTextSendsCompleteContentButKeepsChatCompact(t *testing.T) {
 				t.Fatalf("turn settled before provider request: type=%s data=%+v", event.Type, event.Data)
 			}
 		case <-requestTimer.C:
-			node := app.AgentMgr.Get(orch.ID)
+			node := app.ws.AgentMgr().Get(orch.ID)
 			var messages []workspace.Message
 			if node != nil && node.State != nil && node.State.Messages != nil {
 				messages = node.State.Messages.Messages()
@@ -232,7 +232,8 @@ func TestPastedTextReferencesStayOrderedAndRestoreTheSavedDraft(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	_ = app.saveComposerDraftMsg(app.ActiveSession, db, app.composerDraftEpoch, raw)
+	configureComposerDraftTest(t, app)
+	_ = app.saveComposerDraftMsg(app.ActiveSession, app.composerDraftEpoch, raw)
 	app.Input.ClearInput()
 	app.draftOwner(app.ActiveSession).loadRevision = app.Input.DraftRevision()
 	requestRevision := app.Input.DraftRevision()
@@ -244,7 +245,7 @@ func TestPastedTextReferencesStayOrderedAndRestoreTheSavedDraft(t *testing.T) {
 
 func TestPastedTextFileChipOpensCompleteEditableOverlayAndSaves(t *testing.T) {
 	app := newFullTestApp(t)
-	app.Logger = stubLogger{}
+	wsOf(app).Logger = stubLogger{}
 	app.width, app.height = 80, 24
 	app.AddOrchestrator("paste-owner")
 	app.ActiveSession = workspace.NewSession("paste-owner", t.TempDir(), nil, stubLogger{})
@@ -308,7 +309,7 @@ func TestPastedTextPendingOwnershipAndFailureDoNotFloodDraft(t *testing.T) {
 	for _, scenario := range []string{"clear", "replace", "session", "workspace", "failure", "typing"} {
 		t.Run(scenario, func(t *testing.T) {
 			app := newFullTestApp(t)
-			app.Logger = stubLogger{}
+			wsOf(app).Logger = stubLogger{}
 			app.AddOrchestrator("paste-owner")
 			app.ActiveSession = workspace.NewSession("paste-owner", t.TempDir(), nil, stubLogger{})
 			app.maybeHydrateComposerDraft()

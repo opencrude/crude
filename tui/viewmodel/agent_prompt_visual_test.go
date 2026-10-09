@@ -48,8 +48,8 @@ func (m *promptFamilyVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if key, ok := msg.(tea.KeyPressMsg); ok {
 		switch key.Code {
 		case tea.KeyF2:
-			root := m.AgentMgr.Get(m.alpha)
-			if pane := m.PaneMgr.Get("child-a"); pane != nil {
+			root := m.ws.AgentMgr().Get(m.alpha)
+			if pane := m.ws.PaneMgr().Get("child-a"); pane != nil {
 				pane.Title = workspace.SubAgentActivityLabel("Samuel sub Rebecca", "researcher", "")
 			}
 			root.State.Messages.UpdateToolCall("visual-spawn", "visual-tool", "agent_start", "Researcher · Inspect renderer and report")
@@ -67,7 +67,7 @@ func (m *promptFamilyVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			emitTestPermission(m.App, "child-b", fmt.Sprintf("b-%d", m.sequence))
 			return m, nil
 		case tea.KeyF6:
-			for _, node := range m.AgentMgr.AllNodes() {
+			for _, node := range m.ws.AgentMgr().AllNodes() {
 				if node.Label == "child-a" {
 					m.cleanupAgent(node.ID)
 					break
@@ -86,7 +86,7 @@ func (m *promptFamilyVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		case tea.KeyF10:
 			m.switchToAgentView(m.alpha)
-			m.AgentMgr.Get(m.alpha).State.Messages.UpdateToolCall("visual-deny", "visual-deny", "edit_file", "main.go")
+			m.ws.AgentMgr().Get(m.alpha).State.Messages.UpdateToolCall("visual-deny", "visual-deny", "edit_file", "main.go")
 			m.handleAgentEvent(types.AgentEventMsg{AgentID: m.alpha, Type: "blocking", Data: map[string]string{
 				"block_id": "visual-deny", "operation": "Update", "tool": "edit_file", "target": "main.go",
 				"question": "Allow this Update operation on main.go?", "reason": "The edit_file tool modifies files on disk",
@@ -104,7 +104,7 @@ func (m *promptFamilyVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case tea.KeyF3:
-			command, err := m.openEditorTab(filepath.Join(m.RootPath, "main.go"))
+			command, err := m.openEditorTab(filepath.Join(m.ws.RootPath(), "main.go"))
 			if err != nil {
 				m.t.Fatal(err)
 			}

@@ -9,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/shellport"
 	"crude/tui/editor"
 	"crude/tui/ui"
 	"crude/tui/window"
@@ -30,6 +31,16 @@ func (m *App) editorPathFromTabTitle(title string) string {
 }
 
 func (m *App) openEditorTab(path string) (tea.Cmd, error) {
+	if _, connected := m.ws.(shellport.LiveDocuments); connected {
+		if tab := m.EditorState.Tabs[path]; tab != nil && tab.Editor.IsOpen() {
+			m.activateEditorTab(path)
+			return nil, nil
+		}
+		// Some established entry points cannot return a command. Update drains
+		// this queue, so none can silently lose an asynchronous open.
+		m.editorCommands = append(m.editorCommands, m.openPaneFiles([]string{path}, m.Win.ActiveGroup()))
+		return nil, nil
+	}
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return nil, err
@@ -67,14 +78,14 @@ func (m *App) installEditorBuffer(buf *editor.Buffer) {
 	ed.SetOnContentChanged(func(fp, text string) { m.onEditorContentChanged(ed, fp, text) })
 	// Register the exact editor lifetime immediately. The manager owns async
 	// discovery/start; a close cannot be overtaken by an old tea.Cmd didOpen.
-	if m.LSPMgr != nil {
-		m.LSPMgr.OpenFile(context.Background(), path, ed.Value())
+	if m.ws.LSPMgr() != nil {
+		m.ws.LSPMgr().OpenFile(context.Background(), path, ed.Value())
 	}
 
 	// Apply cached diagnostics immediately so the editor is never empty
 	// while waiting for the server to respond.
-	if m.LSPMgr != nil {
-		if cached := m.LSPMgr.FileDiagnostics(path); len(cached) > 0 {
+	if m.ws.LSPMgr() != nil {
+		if cached := m.ws.LSPMgr().FileDiagnostics(path); len(cached) > 0 {
 			ed.SetDiagnostics(cached)
 		}
 	}
@@ -102,6 +113,9 @@ func (m *App) jumpToDiagnostic(filePath string, d editor.LSPDiagnostic) {
 	if filePath == "" {
 		return
 	}
+	if m.queueLiveNavigation(filePath, d, false) {
+		return
+	}
 	// Open or activate the file. openEditorTab is a no-op if the
 	// tab is already the active one.
 	if _, err := m.openEditorTab(filePath); err != nil {
@@ -123,11 +137,11 @@ func (m *App) jumpToDiagnostic(filePath string, d editor.LSPDiagnostic) {
 // If a file is already open and has errors, that file's first error
 // wins. If the project has no errors, shows a status bar message.
 func (m *App) gotoFirstDiagnostic() {
-	if m.LSPMgr == nil {
+	if m.ws.LSPMgr() == nil {
 		m.Feedback.NotifyInfo("LSP not configured")
 		return
 	}
-	all := m.LSPMgr.AllDiagnostics()
+	all := m.ws.LSPMgr().AllDiagnostics()
 	if len(all) == 0 {
 		m.Feedback.NotifyInfo("No errors in project")
 		return
@@ -267,13 +281,22 @@ func (m *App) closeEditorTab() {
 // Used both for the normal close path and after the user confirms a
 // close-with-unsaved-changes prompt.
 func (m *App) closeEditorTabForce(path string) {
+	if tab := m.EditorState.Tabs[path]; tab != nil {
+		if state := m.liveEditors[tab.Editor]; state != nil {
+			ds := tab.Editor.DocumentState()
+			if state.busy || state.uncertain != nil || state.err != nil || ds.PendingEdits > 0 || ds.InFlight || ds.UndoPending || state.undo != nil || ds.Conflict != nil {
+				state.closeView = true
+				return
+			}
+		}
+	}
 	if m.editorChanges != nil && m.editorChanges.source.FilePath() == path {
 		m.overlayHost.Close(editorChangesOverlay)
 	}
 	if tab := m.EditorState.Tabs[path]; tab != nil && tab.Editor != nil {
 		id := tab.Editor.BufferID()
-		if m.Documents != nil {
-			m.Documents.Cancel(id)
+		if m.ws.Documents() != nil {
+			m.ws.Documents().Cancel(id)
 		}
 		if state := m.editorSaves[id]; state != nil && state.inFlight {
 			state.discard = true
@@ -297,9 +320,20 @@ func (m *App) closeEditorTabForce(path string) {
 
 	tab, ok := m.EditorState.Tabs[path]
 	if ok {
-		lspCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		m.LSPMgr.CloseFile(lspCtx, path)
+		if live, shared := m.ws.(shellport.LiveDocuments); shared {
+			id := tab.Editor.DocumentState().DocumentID
+			state := m.liveEditors[tab.Editor]
+			delete(m.liveEditors, tab.Editor)
+			if state != nil && state.refs != nil {
+				m.editorCommands = append(m.editorCommands, state.refs.releaseCmd(id))
+			} else {
+				m.editorCommands = append(m.editorCommands, func() tea.Msg { _ = live.CloseDocument(context.Background(), id); return nil })
+			}
+		} else if m.ws.LSPMgr() != nil {
+			lspCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			m.ws.LSPMgr().CloseFile(lspCtx, path)
+		}
 		tab.Editor.Close()
 		delete(m.EditorState.Tabs, path)
 		if m.BufferMgr != nil {

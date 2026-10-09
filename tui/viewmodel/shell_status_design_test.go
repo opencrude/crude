@@ -20,11 +20,11 @@ func TestShellStatusUsesSharedRailsAndOmitsZeroNoise(t *testing.T) {
 	app.AddOrchestrator("root")
 	session := workspace.NewSession("session", "root", nil, nil)
 	app.ActiveSession = session
-	app.SessionsByAgent = make(map[string]*workspace.Session)
-	app.SessionsByAgent["root"] = session
-	app.AgentMgr.Get("root").Model = "glm-5.3"
-	app.Status.SetAgent(types.AgentStatusSnapshot{Ref: types.ResourceRef{Kind: types.ResourceAgent, ID: "root"}, Label: "Main Agent", Phase: types.AgentIdle, Detail: "Idle", ModelID: "glm-5.3"})
-	app.RecordAgentUsage("root", map[string]any{
+	wsOf(app).SessionsByAgent = make(map[string]*workspace.Session)
+	app.ws.SessionsByAgent()["root"] = session
+	app.ws.AgentMgr().Get("root").Model = "glm-5.3"
+	wsOf(app).Status.SetAgent(types.AgentStatusSnapshot{Ref: types.ResourceRef{Kind: types.ResourceAgent, ID: "root"}, Label: "Main Agent", Phase: types.AgentIdle, Detail: "Idle", ModelID: "glm-5.3"})
+	wsOf(app).RecordAgentUsage("root", map[string]any{
 		"model":      "glm-5.3",
 		"request_id": "root/1/1", "prompt": 71500, "completion": 177,
 		"prompt_cached": 14300, "cache_read_known": true,
@@ -53,7 +53,7 @@ func TestShellStatusUsesSharedRailsAndOmitsZeroNoise(t *testing.T) {
 	if strings.Contains(header, "Reasoning") || strings.Contains(header, "Responding") {
 		t.Fatalf("header exposes low-level agent phase: %q", header)
 	}
-	app.Status.SetAgent(types.AgentStatusSnapshot{Ref: types.ResourceRef{Kind: types.ResourceAgent, ID: "root"}, Phase: types.AgentThinking, TotalBytes: 2 * 1024 * 1024})
+	wsOf(app).Status.SetAgent(types.AgentStatusSnapshot{Ref: types.ResourceRef{Kind: types.ResourceAgent, ID: "root"}, Phase: types.AgentThinking, TotalBytes: 2 * 1024 * 1024})
 	app.paintShellFrame()
 	header = rowText(app, 0)
 	if !strings.Contains(header, "↑~71.5k/1.05M 7%") || strings.Contains(header, " MB") || strings.Contains(header, "last ctx") {
@@ -108,7 +108,7 @@ func TestAgentHeaderRetainsUploadSizeAfterProviderWaitTransition(t *testing.T) {
 	app.syncAgentStatusEvent(tuitypes.AgentEventMsg{AgentID: "root", Type: "phase", Data: map[string]any{"name": "waiting_provider"}})
 	app.paintShellFrame()
 	header := rowText(app, 0)
-	status, _ := app.Status.Agent("root")
+	status, _ := app.ws.Status().Agent("root")
 	if status.TotalBytes != 2*1024*1024 || strings.Contains(header, " MB") || strings.Contains(header, "Waiting") {
 		t.Fatalf("upload data lost or leaked out of details: status=%+v header=%q", status, header)
 	}
@@ -118,7 +118,7 @@ func TestAgentHeaderKeepsLifecycleAndPayloadInDetails(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 28
 	app.AddOrchestrator("root")
-	app.Status.SetAgent(types.AgentStatusSnapshot{Ref: types.ResourceRef{Kind: types.ResourceAgent, ID: "root"}, Phase: types.AgentThinking, TotalBytes: 2 * 1024 * 1024, StartedAt: time.Now().Add(-5 * time.Second), PhaseStartedAt: time.Now().Add(-2 * time.Second)})
+	wsOf(app).Status.SetAgent(types.AgentStatusSnapshot{Ref: types.ResourceRef{Kind: types.ResourceAgent, ID: "root"}, Phase: types.AgentThinking, TotalBytes: 2 * 1024 * 1024, StartedAt: time.Now().Add(-5 * time.Second), PhaseStartedAt: time.Now().Add(-2 * time.Second)})
 	app.paintShellFrame()
 	header := rowText(app, 0)
 	if strings.Contains(header, "Working") || strings.Contains(header, "Waiting") || strings.Contains(header, "Reasoning") || strings.Contains(header, " MB") {
@@ -130,7 +130,7 @@ func TestAgentHeaderKeepsLifecycleAndPayloadInDetails(t *testing.T) {
 		}
 	}
 	for _, phase := range []types.AgentPhase{types.AgentApproval, types.AgentQuestion, types.AgentRetrying, types.AgentFailed, types.AgentCancelled} {
-		app.Status.SetAgent(types.AgentStatusSnapshot{Ref: types.ResourceRef{Kind: types.ResourceAgent, ID: "root"}, Phase: phase})
+		wsOf(app).Status.SetAgent(types.AgentStatusSnapshot{Ref: types.ResourceRef{Kind: types.ResourceAgent, ID: "root"}, Phase: phase})
 		app.paintShellFrame()
 		header = rowText(app, 0)
 		for _, label := range []string{"Permission", "Answer", "Retrying", "Failed", "Terminated"} {
@@ -138,7 +138,7 @@ func TestAgentHeaderKeepsLifecycleAndPayloadInDetails(t *testing.T) {
 				t.Fatalf("%s belongs in details: %q", label, header)
 			}
 		}
-		status, _ := app.Status.Agent("root")
+		status, _ := app.ws.Status().Agent("root")
 		if status.Phase != phase {
 			t.Fatalf("hiding header text destroyed state: %+v", status)
 		}

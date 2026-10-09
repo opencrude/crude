@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"crude/shellport"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/tui/window"
@@ -26,7 +27,7 @@ func TestViewModel_CreateFile_RoutesThroughWorkspace(t *testing.T) {
 
 	// Create a file through the workspace method.
 	path := filepath.Join(dir, "test-file.txt")
-	msg := app.CreateFile(path)
+	msg := app.ws.CreateFile(path)
 	if !msg.Succeeded() {
 		t.Fatalf("CreateFile failed: %v", msg.Err)
 	}
@@ -48,7 +49,7 @@ func TestViewModel_CreateFolder_RoutesThroughWorkspace(t *testing.T) {
 
 	// Create a folder through the workspace method.
 	path := filepath.Join(dir, "test-folder")
-	msg := app.CreateFolder(path)
+	msg := app.ws.CreateFolder(path)
 	if !msg.Succeeded() {
 		t.Fatalf("CreateFolder failed: %v", msg.Err)
 	}
@@ -75,7 +76,7 @@ func TestViewModel_RenamePath_RoutesThroughWorkspace(t *testing.T) {
 
 	// Rename through workspace method.
 	newPath := filepath.Join(dir, "new-name.txt")
-	msg := app.RenamePath(oldPath, newPath)
+	msg := app.ws.RenamePath(oldPath, newPath)
 	if !msg.Succeeded() {
 		t.Fatalf("RenamePath failed: %v", msg.Err)
 	}
@@ -100,7 +101,7 @@ func TestViewModel_DeletePath_RoutesThroughWorkspace(t *testing.T) {
 	}
 
 	// Delete through workspace method.
-	msg := app.DeletePath(path)
+	msg := app.ws.DeletePath(path)
 	if !msg.Succeeded() {
 		t.Fatalf("DeletePath failed: %v", msg.Err)
 	}
@@ -125,7 +126,7 @@ func TestViewModel_ApplyWorkspaceEdit_RoutesThroughWorkspace(t *testing.T) {
 	edits := []workspace.FileEdit{
 		{Path: path, OldContent: "old content", NewContent: "new content"},
 	}
-	msg := app.ApplyWorkspaceEdit(edits)
+	msg := app.ws.ApplyWorkspaceEdit(edits)
 	if !msg.Succeeded() {
 		t.Fatalf("ApplyWorkspaceEdit failed: %v", msg.Err)
 	}
@@ -146,7 +147,7 @@ func TestViewModel_CreateFile_DoesNotEchoReturnedResult(t *testing.T) {
 	app := newTestAppWithFileOpsAndBus(t, dir, bus)
 
 	path := filepath.Join(dir, "event-file.txt")
-	msg := app.CreateFile(path)
+	msg := app.ws.CreateFile(path)
 	if !msg.Succeeded() {
 		t.Fatalf("CreateFile failed: %v", msg.Err)
 	}
@@ -166,7 +167,7 @@ func TestViewModel_DeletePath_DoesNotEchoReturnedResult(t *testing.T) {
 	if err := os.WriteFile(path, []byte("data"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	msg := app.DeletePath(path)
+	msg := app.ws.DeletePath(path)
 	if !msg.Succeeded() {
 		t.Fatalf("DeletePath failed: %v", msg.Err)
 	}
@@ -181,7 +182,7 @@ func TestViewModel_CreateFile_ValidationPreventsEscape(t *testing.T) {
 	app := newTestAppWithFileOps(t, dir)
 
 	// Try to create a file outside workspace root.
-	msg := app.CreateFile("/tmp/outside-workspace.txt")
+	msg := app.ws.CreateFile("/tmp/outside-workspace.txt")
 	if msg.Succeeded() {
 		t.Fatal("expected failure for path outside workspace root")
 	}
@@ -192,7 +193,7 @@ func TestViewModel_CreateFile_ValidationRequiresAbsolutePath(t *testing.T) {
 	app := newTestAppWithFileOps(t, dir)
 
 	// Try to create with relative path.
-	msg := app.CreateFile("relative/path.txt")
+	msg := app.ws.CreateFile("relative/path.txt")
 	if msg.Succeeded() {
 		t.Fatal("expected failure for relative path")
 	}
@@ -202,7 +203,7 @@ func TestViewModel_RenamePath_SourceNotFound(t *testing.T) {
 	dir := t.TempDir()
 	app := newTestAppWithFileOps(t, dir)
 
-	msg := app.RenamePath(filepath.Join(dir, "nonexistent"), filepath.Join(dir, "new"))
+	msg := app.ws.RenamePath(filepath.Join(dir, "nonexistent"), filepath.Join(dir, "new"))
 	if msg.Succeeded() {
 		t.Fatal("expected failure for nonexistent source")
 	}
@@ -221,7 +222,7 @@ func TestViewModel_RenamePath_TargetExists(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	msg := app.RenamePath(oldPath, newPath)
+	msg := app.ws.RenamePath(oldPath, newPath)
 	if msg.Succeeded() {
 		t.Fatal("expected failure when target already exists")
 	}
@@ -231,7 +232,7 @@ func TestViewModel_DeletePath_NotFound(t *testing.T) {
 	dir := t.TempDir()
 	app := newTestAppWithFileOps(t, dir)
 
-	msg := app.DeletePath(filepath.Join(dir, "nonexistent"))
+	msg := app.ws.DeletePath(filepath.Join(dir, "nonexistent"))
 	if msg.Succeeded() {
 		t.Fatal("expected failure for nonexistent path")
 	}
@@ -246,7 +247,7 @@ func TestViewModel_CreateFile_AlreadyExists(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	msg := app.CreateFile(path)
+	msg := app.ws.CreateFile(path)
 	if msg.Succeeded() {
 		t.Fatal("expected failure for already-existing file")
 	}
@@ -257,7 +258,7 @@ func TestViewModel_CreateFolder_Nested(t *testing.T) {
 	app := newTestAppWithFileOps(t, dir)
 
 	path := filepath.Join(dir, "a", "b", "c")
-	msg := app.CreateFolder(path)
+	msg := app.ws.CreateFolder(path)
 	if !msg.Succeeded() {
 		t.Fatalf("CreateFolder nested failed: %v", msg.Err)
 	}
@@ -280,7 +281,7 @@ func TestViewModel_DeletePath_Directory(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	msg := app.DeletePath(dirPath)
+	msg := app.ws.DeletePath(dirPath)
 	if !msg.Succeeded() {
 		t.Fatalf("DeletePath for directory failed: %v", msg.Err)
 	}
@@ -307,7 +308,7 @@ func TestViewModel_ApplyWorkspaceEdit_MultipleFiles(t *testing.T) {
 		{Path: filepath.Join(dir, "a.txt"), OldContent: "old", NewContent: "new-a"},
 		{Path: filepath.Join(dir, "b.txt"), OldContent: "old", NewContent: "new-b"},
 	}
-	msg := app.ApplyWorkspaceEdit(edits)
+	msg := app.ws.ApplyWorkspaceEdit(edits)
 	if !msg.Succeeded() {
 		t.Fatalf("ApplyWorkspaceEdit failed: %v", msg.Err)
 	}
@@ -354,7 +355,7 @@ func newTestAppWithFileOpsAndBus(t *testing.T, dir string, bus *workspace.EventB
 	}
 
 	app := &App{
-		Workspace:          ws,
+		ws:                 shellport.Local(ws),
 		AgentView:          NewAgentViewState(ws.AgentMgr),
 		FocusStack:         NewFocusStack(),
 		ActiveSession:      &workspace.Session{},

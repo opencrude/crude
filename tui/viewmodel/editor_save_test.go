@@ -23,9 +23,9 @@ func newSaveTestEditor(t *testing.T, app *App, content string) *editor.Editor {
 func newAutosaveTestApp(t *testing.T) *App {
 	t.Helper()
 	app := newFullTestApp(t)
-	app.Documents = workspace.NewDocumentSaveService()
-	app.Documents.SetEventBus(app.eventBus)
-	t.Cleanup(app.Documents.Close)
+	wsOf(app).Documents = workspace.NewDocumentSaveService()
+	wsOf(app).Documents.SetEventBus(app.eventBus)
+	t.Cleanup(wsOf(app).Documents.Close)
 	return app
 }
 
@@ -109,11 +109,11 @@ func TestByteIdenticalManualEditClosesWithoutSavePrompt(t *testing.T) {
 	ed := newSaveTestEditor(t, app, "original bytes\n")
 	path := ed.FilePath()
 	ed.InsertRune('x')
-	if app.Documents.PendingDeadlines() != 1 {
+	if wsOf(app).Documents.PendingDeadlines() != 1 {
 		t.Fatal("real edit did not arm autosave")
 	}
 	ed.HandleEvent(tea.KeyPressMsg{Code: tea.KeyBackspace})
-	if ed.Modified() || app.Documents.PendingDeadlines() != 0 {
+	if ed.Modified() || wsOf(app).Documents.PendingDeadlines() != 0 {
 		t.Fatal("byte-identical edit retained dirty state or autosave deadline")
 	}
 	app.closeEditorTab()

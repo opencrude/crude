@@ -1,7 +1,8 @@
 # Core wire transport
 
-This package is a neutral transport, not a core runtime, RPC dispatcher, or usable
-attach feature. Its only wire values are JSON data. Applications explicitly
+> Status: Current transport reference; connected CLI integration lives in `app/`.
+
+This package is a neutral transport, not a core runtime or RPC dispatcher. Its only wire values are JSON data. Applications explicitly
 dispatch a closed typed method set and validate identities, epochs, revisions,
 receipts and payload schemas; no reflected method dispatch exists here.
 
@@ -11,6 +12,10 @@ receipts and payload schemas; no reflected method dispatch exists here.
 - `Frame` and `Fault`: JSON envelopes with raw JSON application payloads.
 - `NewFramer(context.Context, io.ReadWriteCloser) *Framer`;
   `Read() (Frame, error)`, `Write(Frame) error`, `Close() error`.
+- `EncodeFrame(Frame) (EncodedFrame, error)`, `FrameSize(Frame) (int, error)`
+  and `WriteEncoded(EncodedFrame) error`: immutable prepared output for exact
+  bounded-queue accounting, without repeated raw-JSON encoding. Incoming nested
+  keys, JSON syntax, UTF-8, depth and unknown envelope fields still validate.
 - `(*Framer).NegotiateClient(clientID string, maximum int) (int, error)` and
   `NegotiateServer(maximum int) (clientID string, maximum int, err error)`.
 - `LocalAddress(dataDir string) (string, error)`;
@@ -35,8 +40,8 @@ Framer with the full connection lifetime context.
 
 The data directory must already exist. Unix uses its canonical path and a private
 0700 `corewire` child containing a 0600 socket and persistent owner lock. Existing
-endpoints, even stale crash sockets, fail closed: external explicit cleanup is
-required. Close removes only its observed socket identity, never a replacement.
+live endpoints fail closed; crash-left sockets are reclaimed only under the
+exclusive owner lock. Close removes only its observed socket identity, never a replacement.
 Same-user access is full core access, not isolation from malicious processes of
 that user. Long Unix socket paths fail with the native OS error.
 
@@ -51,7 +56,10 @@ no PTY, no forwarding, no connection sharing, noninteractive authentication and
 the fixed remote command `crude --core-stdio`. Arbitrary SSH options and remote
 paths are not accepted. Cancellation kills and joins the owned ssh process;
 it cannot guarantee termination of remote application work or arbitrary children
-spawned by user-configured ProxyCommand. Stderr is discarded (bounded memory), so
-the current API reports stream/exit errors without detailed SSH diagnostics.
-The remote CLI bridge must be implemented by the application. No real remote SSH
-or live user core is used by the tests.
+spawned by user-configured ProxyCommand. Stderr retains a bounded 4 KiB tail
+with control characters removed for transport diagnostics. `app/` implements
+`--ssh HOST --workspace REMOTE_PATH` and the fixed stdio relay.
+`scripts/core_ssh_acceptance.py` uses genuine nonroot loopback OpenSSH and checks
+unknown/replaced host-key rejection; this is not distinct-host proof or native
+Windows acceptance. Large response transfer is an application protocol concern;
+Framer still rejects frames over 8 MiB before enqueue/allocation.

@@ -31,10 +31,10 @@ func TestWorkspaceDeleteMenuPreviewCancelDeleteAndUndo(t *testing.T) {
 		t.Fatal(err)
 	}
 	app := newFullTestApp(t)
-	app.RootPath = t.TempDir()
+	wsOf(app).RootPath = t.TempDir()
 	app.width, app.height = 130, 36
 	app.Tree = &TreeState{}
-	app.launcherScreen.SetData(app.RootPath, []workspace.WorkspaceInfo{{ID: workspace.WorkspaceID(project), ProjectDir: project}})
+	app.launcherScreen.SetData(app.ws.RootPath(), []workspace.WorkspaceInfo{{ID: workspace.WorkspaceID(project), ProjectDir: project}})
 	app.paintShellFrame()
 	messages := make(chan tea.Msg, 4)
 	restore := installDetachedMessageSinkForTest(app, func(msg tea.Msg) { messages <- msg })

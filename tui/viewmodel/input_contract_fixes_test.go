@@ -19,8 +19,8 @@ func newInputContractEditorApp(t *testing.T, names ...string) (*App, []string) {
 	t.Helper()
 	dir := t.TempDir()
 	app := newFullTestApp(t)
-	app.Logger = stubLogger{}
-	app.RootPath = dir
+	wsOf(app).Logger = stubLogger{}
+	wsOf(app).RootPath = dir
 	app.launcherScreen = nil
 	app.BufferMgr = editor.NewBufferManager()
 

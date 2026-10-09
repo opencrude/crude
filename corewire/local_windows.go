@@ -3,6 +3,7 @@ package corewire
 import (
 	"context"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"net"
 	"strings"
@@ -34,6 +35,12 @@ func LocalAddress(dataDir string) (string, error) {
 	return `\\.\pipe\crude-core-` + sid + "-" + addressHash(strings.ToLower(dir)), nil
 }
 
+// ErrOwned reports that a live core already owns the endpoint.
+var ErrOwned = errors.New("corewire: another core owns this data directory")
+
+// ReclaimStale is a no-op on Windows: named pipes vanish with their owner.
+func ReclaimStale(ctx context.Context, dataDir string) (bool, error) { return false, ctx.Err() }
+
 func ListenLocal(ctx context.Context, dataDir string) (net.Listener, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -49,6 +56,9 @@ func ListenLocal(ctx context.Context, dataDir string) (net.Listener, error) {
 	// Protected DACL: deny network logons; only the exact user may connect.
 	l, err := winio.ListenPipe(addr, &winio.PipeConfig{SecurityDescriptor: "D:P(D;;GA;;;NU)(A;;GA;;;" + sid + ")", InputBufferSize: 65536, OutputBufferSize: 65536})
 	if err != nil {
+		if errors.Is(err, windows.ERROR_ACCESS_DENIED) || errors.Is(err, windows.ERROR_PIPE_BUSY) {
+			return nil, ErrOwned
+		}
 		return nil, err
 	}
 	return bindListenerContext(ctx, &ownedListener{Listener: l, cleanup: func() error { return nil }}), nil

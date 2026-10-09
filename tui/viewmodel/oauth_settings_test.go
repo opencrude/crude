@@ -22,9 +22,9 @@ import (
 // showing "Not signed in" until the window was closed and reopened.
 func TestChatGPTSignInResultUpdatesOpenSettingsWindow(t *testing.T) {
 	app := newTestApp(t)
-	app.Logger = noopLogger{}
+	wsOf(app).Logger = noopLogger{}
 	// Seed an account so the Application Accounts page shows OAuth status.
-	app.SetAppDefaults(ttypes.AppSettings{
+	wsOf(app).SetAppDefaults(ttypes.AppSettings{
 
 		Accounts: map[string]provider.Account{"personal": {ID: "personal", ProviderID: "chatgpt", Label: "Personal", Connection: provider.DefaultTemplates()["chatgpt"]}},
 	})
@@ -62,19 +62,19 @@ func TestChatGPTSignInResultUpdatesOpenSettingsWindow(t *testing.T) {
 	}
 
 	// Authentication is staged in the account editor until confirmed.
-	if app.LoadAppSettings().Accounts["personal"].OAuth != nil {
+	if app.ws.LoadAppSettings().Accounts["personal"].OAuth != nil {
 		t.Fatal("sign-in persisted before confirming the account editor")
 	}
-	app.OnAppAccountChange = func(change coretypes.AccountChange) error {
-		settings := app.LoadAppSettings()
+	wsOf(app).OnAppAccountChange = func(change coretypes.AccountChange) error {
+		settings := app.ws.LoadAppSettings()
 		settings.Accounts[change.ID] = *change.After
-		app.SetAppDefaults(settings)
+		wsOf(app).SetAppDefaults(settings)
 		return nil
 	}
 	change := surfaceRoot.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.commit"}).Cmd().(settingsui.AccountChangeMsg)
 	_, save := app.Update(change)
 	_, _ = app.Update(save())
-	saved := app.LoadAppSettings()
+	saved := app.ws.LoadAppSettings()
 	if saved.Accounts["personal"].OAuth == nil || saved.Accounts["personal"].OAuth.Email != "u@example.com" {
 		t.Errorf("persisted chatgpt OAuth = %+v, want email u@example.com", saved.Accounts["personal"].OAuth)
 	}
@@ -86,8 +86,8 @@ func TestChatGPTSignInResultUpdatesOpenSettingsWindow(t *testing.T) {
 // opencode-go provider config.
 func TestSignInThenSwitchBackDoesNotCorruptConfig(t *testing.T) {
 	app := newTestApp(t)
-	app.Logger = noopLogger{}
-	app.SetAppDefaults(ttypes.AppSettings{
+	wsOf(app).Logger = noopLogger{}
+	wsOf(app).SetAppDefaults(ttypes.AppSettings{
 
 		Accounts: map[string]provider.Account{
 			"opencode": {ID: "opencode", ProviderID: "opencode-go", Label: "Work", APIKey: "sk-opencode", Connection: provider.DefaultTemplates()["opencode-go"]},
@@ -115,10 +115,10 @@ func TestSignInThenSwitchBackDoesNotCorruptConfig(t *testing.T) {
 	if cmd != nil {
 		t.Fatalf("unexpected cmd: %v", cmd)
 	}
-	app.OnAppAccountChange = func(change coretypes.AccountChange) error {
-		settings := app.LoadAppSettings()
+	wsOf(app).OnAppAccountChange = func(change coretypes.AccountChange) error {
+		settings := app.ws.LoadAppSettings()
 		settings.Accounts[change.ID] = *change.After
-		app.SetAppDefaults(settings)
+		wsOf(app).SetAppDefaults(settings)
 		return nil
 	}
 	change := surfaceRoot.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.commit"}).Cmd().(settingsui.AccountChangeMsg)
@@ -135,7 +135,7 @@ func TestSignInThenSwitchBackDoesNotCorruptConfig(t *testing.T) {
 	}
 
 	// The persisted opencode-go provider must keep its own URL/standard.
-	saved := app.LoadAppSettings()
+	saved := app.ws.LoadAppSettings()
 	ocg := saved.Accounts["opencode"].Connection
 	if ocg.ProviderURL != provider.DefaultTemplates()["opencode-go"].ProviderURL {
 		t.Errorf("opencode-go ProviderURL changed after Codex sign-in: %q", ocg.ProviderURL)
@@ -175,9 +175,9 @@ func settingsWidgetForTest(t *testing.T, fw *wm.FloatingWindow) *popup.Workspace
 
 func TestAccountEditorStaysWithinUnmovedSettingsWindow(t *testing.T) {
 	app := newTestApp(t)
-	app.Logger = noopLogger{}
+	wsOf(app).Logger = noopLogger{}
 	app.width, app.height = 160, 40
-	app.SetAppDefaults(ttypes.AppSettings{})
+	wsOf(app).SetAppDefaults(ttypes.AppSettings{})
 	app.openApplicationSettings()
 	fw := app.windowManager.Window(string(ui.OverlayWorkspaceSettings))
 	if fw == nil {
@@ -216,8 +216,8 @@ func TestAccountEditorStaysWithinUnmovedSettingsWindow(t *testing.T) {
 
 func TestAccountSaveFailureKeepsOpenFormAndPersistedState(t *testing.T) {
 	app := newTestApp(t)
-	app.Logger = noopLogger{}
-	app.SetAppDefaults(ttypes.AppSettings{Accounts: map[string]provider.Account{"personal": {ID: "personal", ProviderID: "chatgpt", Label: "Personal", Connection: provider.DefaultTemplates()["chatgpt"]}}})
+	wsOf(app).Logger = noopLogger{}
+	wsOf(app).SetAppDefaults(ttypes.AppSettings{Accounts: map[string]provider.Account{"personal": {ID: "personal", ProviderID: "chatgpt", Label: "Personal", Connection: provider.DefaultTemplates()["chatgpt"]}}})
 	app.openSettings(ttypes.SettingsScopeApplication)
 	fw := app.windowManager.Window("workspace-settings")
 	model := settingsWidgetForTest(t, fw).ModelForTest()
@@ -226,14 +226,14 @@ func TestAccountSaveFailureKeepsOpenFormAndPersistedState(t *testing.T) {
 	surfaceRoot.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.edit"})
 	id, generation := model.SignInRequest()
 	_, _ = app.Update(settingsui.ChatGPTSignInResultMsg{AccountID: id, Generation: generation, Creds: &provider.OAuthCredentials{AccessToken: "staged"}})
-	app.OnAppAccountChange = func(coretypes.AccountChange) error { return errors.New("disk unavailable") }
+	wsOf(app).OnAppAccountChange = func(coretypes.AccountChange) error { return errors.New("disk unavailable") }
 	change := surfaceRoot.HandleAction(ui.EventContext{}, ui.Action{ID: "settings.account.commit"}).Cmd().(settingsui.AccountChangeMsg)
 	_, save := app.Update(change)
 	_, _ = app.Update(save())
 	if app.windowManager.Window("workspace-settings") != fw {
 		t.Fatal("failed save closed the form")
 	}
-	if app.LoadAppSettings().Accounts[id].OAuth != nil {
+	if app.ws.LoadAppSettings().Accounts[id].OAuth != nil {
 		t.Fatal("failed save changed persisted account state")
 	}
 	if model.ValueForTest(model.SelectedCategory(), "chatgpt-status") != "Sign-in stored" {

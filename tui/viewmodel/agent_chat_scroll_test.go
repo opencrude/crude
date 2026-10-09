@@ -26,7 +26,7 @@ func addOrchestrator(app *App, id string) {
 }
 
 func fillAgentChat(app *App, agentID string, count int, prefix string) {
-	node := app.AgentMgr.Get(agentID)
+	node := app.ws.AgentMgr().Get(agentID)
 	if node == nil || node.State == nil || node.State.Messages == nil {
 		panic("agent missing for fillAgentChat")
 	}
@@ -122,7 +122,7 @@ func TestAgentChatScrollStreamingDoesNotAlterSavedSnapshot(t *testing.T) {
 	switchToAgentTab(app, "agent-b")
 	renderAgentChat(app)
 
-	nodeB := app.AgentMgr.Get("agent-b")
+	nodeB := app.ws.AgentMgr().Get("agent-b")
 	nodeB.State.Streaming = true
 	projB := app.subPaneProjections.GetExisting("agent-b")
 	projB.renderer.SetStreaming(true)
@@ -211,7 +211,7 @@ func TestAgentChatScrollContentShrinkClampsRestore(t *testing.T) {
 	switchToAgentTab(app, "agent-b")
 	renderAgentChat(app)
 
-	node := app.AgentMgr.Get("agent-a")
+	node := app.ws.AgentMgr().Get("agent-a")
 	node.State.Messages = workspace.NewConversation()
 	node.State.Messages.AppendMessage(workspace.Message{
 		Role:    ttypes.RoleAssistant,

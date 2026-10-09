@@ -18,6 +18,16 @@ import (
 const ProtocolVersion = 1
 const MaxFrameSize = 8 << 20
 
+// MaxPayloadSize bounds a complete logical response assembled from immutable
+// connection-owned chunks. Encoded frames still obey MaxFrameSize.
+const MaxPayloadSize = 64 << 20
+
+type PayloadTransfer struct {
+	ID     string `json:"id"`
+	Digest string `json:"digest"`
+	Size   int64  `json:"size"`
+}
+
 const (
 	KindHello    = "hello"
 	KindWelcome  = "welcome"
@@ -33,19 +43,20 @@ type Fault struct {
 }
 
 type Frame struct {
-	Version     int             `json:"version"`
-	Kind        string          `json:"kind"`
-	RequestID   string          `json:"request_id,omitempty"`
-	ClientID    string          `json:"client_id,omitempty"`
-	WorkspaceID string          `json:"workspace_id,omitempty"`
-	Epoch       uint64          `json:"epoch,omitempty"`
-	Revision    uint64          `json:"revision,omitempty"`
-	Method      string          `json:"method,omitempty"`
-	Payload     json.RawMessage `json:"payload,omitempty"`
-	Error       *Fault          `json:"error,omitempty"`
+	Version     int              `json:"version"`
+	Kind        string           `json:"kind"`
+	RequestID   string           `json:"request_id,omitempty"`
+	ClientID    string           `json:"client_id,omitempty"`
+	WorkspaceID string           `json:"workspace_id,omitempty"`
+	Epoch       uint64           `json:"epoch,omitempty"`
+	Revision    uint64           `json:"revision,omitempty"`
+	Method      string           `json:"method,omitempty"`
+	Payload     json.RawMessage  `json:"payload,omitempty"`
+	Error       *Fault           `json:"error,omitempty"`
+	Transfer    *PayloadTransfer `json:"transfer,omitempty"`
 }
 
-func (f Frame) validate() error {
+func (f Frame) validateMetadata() error {
 	if f.Version != ProtocolVersion {
 		return fmt.Errorf("unsupported protocol version %d", f.Version)
 	}
@@ -63,10 +74,69 @@ func (f Frame) validate() error {
 	if f.Error != nil && (len(f.Error.Code) > 65536 || len(f.Error.Message) > 65536) {
 		return errors.New("fault too large")
 	}
-	if len(f.Payload) > MaxFrameSize || (len(f.Payload) > 0 && !json.Valid(f.Payload)) {
+	if f.Transfer != nil {
+		if f.Kind != KindResponse || f.Error != nil || len(f.Payload) != 0 || f.Transfer.ID == "" || len(f.Transfer.ID) > 256 || len(f.Transfer.Digest) != 64 || f.Transfer.Size <= 0 || f.Transfer.Size > MaxPayloadSize {
+			return errors.New("invalid response transfer")
+		}
+	}
+	if len(f.Payload) > MaxFrameSize {
 		return errors.New("invalid or oversized payload")
 	}
 	return nil
+}
+
+func (f Frame) validate() error {
+	if err := f.validateMetadata(); err != nil {
+		return err
+	}
+	if len(f.Payload) > 0 && !json.Valid(f.Payload) {
+		return errors.New("invalid payload")
+	}
+	return nil
+}
+
+// EncodedFrame is immutable, validated output. Preparing it once lets bounded
+// queues account exact bytes without repeatedly compacting large raw JSON.
+type EncodedFrame struct{ data []byte }
+
+func (f EncodedFrame) Len() int { return len(f.data) }
+
+func FrameSize(frame Frame) (int, error) {
+	payload := frame.Payload
+	frame.Payload = nil
+	metadata, err := json.Marshal(frame)
+	if err != nil {
+		return 0, err
+	}
+	if len(payload) == 0 {
+		return len(metadata), nil
+	}
+	return len(metadata) + len(payload) + len(`,"payload":`), nil
+}
+
+func EncodeFrame(frame Frame) (EncodedFrame, error) {
+	if err := frame.validate(); err != nil {
+		return EncodedFrame{}, err
+	}
+	payload := frame.Payload
+	frame.Payload = nil
+	metadata, err := json.Marshal(frame)
+	if err != nil {
+		return EncodedFrame{}, err
+	}
+	if len(payload) == 0 {
+		return EncodedFrame{data: metadata}, nil
+	}
+	size := len(metadata) + len(payload) + len(`,"payload":`)
+	if size > MaxFrameSize {
+		return EncodedFrame{}, errors.New("frame exceeds maximum")
+	}
+	data := make([]byte, 0, size)
+	data = append(data, metadata[:len(metadata)-1]...)
+	data = append(data, `,"payload":`...)
+	data = append(data, payload...)
+	data = append(data, '}')
+	return EncodedFrame{data: data}, nil
 }
 
 // Framer owns connection cancellation. Any framing error closes the connection;
@@ -122,7 +192,8 @@ func (f *Framer) Read() (Frame, error) {
 		_ = f.Close()
 		return Frame{}, err
 	}
-	if err := frame.validate(); err != nil {
+	// strictJSON has already validated every nested payload byte and key.
+	if err := frame.validateMetadata(); err != nil {
 		_ = f.Close()
 		return Frame{}, err
 	}
@@ -135,52 +206,16 @@ func strictJSON(b []byte, dst any) error {
 	if !utf8.Valid(b) {
 		return errors.New("invalid UTF-8 JSON")
 	}
-	d := json.NewDecoder(bytes.NewReader(b))
-	var stack []map[string]bool
-	var keys []bool
-	for {
-		t, err := d.Token()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		switch v := t.(type) {
-		case json.Delim:
-			switch v {
-			case '{', '[':
-				if len(stack) >= 128 {
-					return errors.New("JSON nesting exceeds limit")
-				}
-				if len(keys) > 0 && stack[len(stack)-1] != nil {
-					keys[len(keys)-1] = true
-				}
-				var m map[string]bool
-				if v == '{' {
-					m = make(map[string]bool)
-				}
-				stack = append(stack, m)
-				keys = append(keys, true)
-			case '}', ']':
-				stack = stack[:len(stack)-1]
-				keys = keys[:len(keys)-1]
-			}
-		default:
-			if len(stack) > 0 && stack[len(stack)-1] != nil {
-				i := len(stack) - 1
-				if keys[i] {
-					s, ok := v.(string)
-					if !ok || stack[i][s] {
-						return errors.New("duplicate or invalid JSON key")
-					}
-					stack[i][s] = true
-				}
-				keys[i] = !keys[i]
-			}
-		}
+	if !json.Valid(b) {
+		return errors.New("invalid JSON")
 	}
-	d = json.NewDecoder(bytes.NewReader(b))
+	// Inspect only object keys, not decoded string values. Token decoding used
+	// to allocate and scan every large base64 chunk again solely to detect keys.
+	scan := jsonKeys{data: b}
+	if err := scan.value(0); err != nil {
+		return err
+	}
+	d := json.NewDecoder(bytes.NewReader(b))
 	d.DisallowUnknownFields()
 	if err := d.Decode(dst); err != nil {
 		return err
@@ -191,17 +226,112 @@ func strictJSON(b []byte, dst any) error {
 	return nil
 }
 
-func (f *Framer) Write(frame Frame) error {
-	f.wmu.Lock()
-	defer f.wmu.Unlock()
-	if err := frame.validate(); err != nil {
-		_ = f.Close()
-		return err
+type jsonKeys struct {
+	data []byte
+	pos  int
+}
+
+func (s *jsonKeys) space() {
+	for s.pos < len(s.data) && (s.data[s.pos] == ' ' || s.data[s.pos] == '\n' || s.data[s.pos] == '\r' || s.data[s.pos] == '\t') {
+		s.pos++
 	}
-	b, err := json.Marshal(frame)
+}
+func (s *jsonKeys) quoted() []byte {
+	start := s.pos
+	s.pos++
+	for s.pos < len(s.data) {
+		// Search quotes and escapes in native byte operations; ordinary response
+		// byte strings contain neither escapes nor nested JSON syntax.
+		rest := s.data[s.pos:]
+		quote := bytes.IndexByte(rest, '"')
+		escape := bytes.IndexByte(rest[:quote], '\\')
+		if escape >= 0 {
+			s.pos += escape + 2
+			continue
+		}
+		s.pos += quote + 1
+		return s.data[start:s.pos]
+	}
+	return nil
+}
+func (s *jsonKeys) value(depth int) error {
+	s.space()
+	switch s.data[s.pos] {
+	case '{':
+		if depth >= 128 {
+			return errors.New("JSON nesting exceeds limit")
+		}
+		s.pos++
+		s.space()
+		seen := make(map[string]bool)
+		for s.data[s.pos] != '}' {
+			raw := s.quoted()
+			var key string
+			if err := json.Unmarshal(raw, &key); err != nil {
+				return err
+			}
+			if seen[key] {
+				return errors.New("duplicate JSON key")
+			}
+			seen[key] = true
+			s.space()
+			s.pos++
+			if err := s.value(depth + 1); err != nil {
+				return err
+			}
+			s.space()
+			if s.data[s.pos] == ',' {
+				s.pos++
+				s.space()
+			} else {
+				break
+			}
+		}
+		s.pos++
+	case '[':
+		if depth >= 128 {
+			return errors.New("JSON nesting exceeds limit")
+		}
+		s.pos++
+		s.space()
+		for s.data[s.pos] != ']' {
+			if err := s.value(depth + 1); err != nil {
+				return err
+			}
+			s.space()
+			if s.data[s.pos] == ',' {
+				s.pos++
+			} else {
+				break
+			}
+		}
+		s.pos++
+	case '"':
+		s.quoted()
+	default:
+		for s.pos < len(s.data) && s.data[s.pos] != ',' && s.data[s.pos] != ']' && s.data[s.pos] != '}' {
+			s.pos++
+		}
+	}
+	return nil
+}
+
+func (f *Framer) Write(frame Frame) error {
+	encoded, err := EncodeFrame(frame)
 	if err != nil {
 		_ = f.Close()
 		return err
+	}
+	return f.WriteEncoded(encoded)
+}
+
+func (f *Framer) WriteEncoded(encoded EncodedFrame) error {
+	f.wmu.Lock()
+	defer f.wmu.Unlock()
+	b := encoded.data
+	if len(b) == 0 {
+		_ = f.Close()
+		return errors.New("empty prepared frame")
 	}
 	if int64(len(b)) > f.max.Load() {
 		_ = f.Close()

@@ -66,7 +66,7 @@ func TestTabCloseReturnsFocusToContent(t *testing.T) {
 				assertMainTabContentFocus(t, app, wantFocus)
 				if scenario == "active agent" || scenario == "inactive agent" || scenario == "last agent" {
 					id := app.agentIDFromTabTitle(closeTitle)
-					if node := app.AgentMgr.Get(id); node == nil || !app.AgentView.IsHidden(node.ID) {
+					if node := app.ws.AgentMgr().Get(id); node == nil || !app.AgentView.IsHidden(node.ID) {
 						t.Fatal("tab close must minimize the agent without destroying it")
 					}
 				}
@@ -210,7 +210,7 @@ func TestKeyboardAgentCloseUsesContentFocusHandoff(t *testing.T) {
 	app.setFocusTabBar()
 	_, _ = app.Update(tea.KeyPressMsg{Code: 'q', Mod: tea.ModCtrl})
 	assertSelectedTab(t, app, app.agentTabTitle("alpha"))
-	if node := app.AgentMgr.Get("beta"); node == nil || !app.AgentView.IsHidden(node.ID) {
+	if node := app.ws.AgentMgr().Get("beta"); node == nil || !app.AgentView.IsHidden(node.ID) {
 		t.Fatal("keyboard close must minimize, not terminate, the agent")
 	}
 	assertMainTabContentFocus(t, app, FocusInput)
@@ -268,9 +268,9 @@ func TestBackgroundTabChangesPreserveExplicitFocus(t *testing.T) {
 			} else {
 				app.setFocusTabBar()
 			}
-			pane := app.PaneMgr.GetOrCreate("background", workspace.PaneAgent, "Background")
-			app.AgentMgr.AddSubAgent("background", "alpha", "Background", "model", "researcher",
-				workspace.NewAgentState("background", pane.Messages, app.Logger))
+			pane := app.ws.PaneMgr().GetOrCreate("background", workspace.PaneAgent, "Background")
+			app.ws.AgentMgr().AddSubAgent("background", "alpha", "Background", "model", "researcher",
+				workspace.NewAgentState("background", pane.Messages, app.ws.Logger()))
 			app.syncAgentWindowTabs()
 			_ = app.View()
 			app.completeSubAgent("background")

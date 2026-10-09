@@ -183,15 +183,19 @@ func (a *actor) prepareSettings(request coreprotocol.Request) (func(context.Cont
 			}
 			publicOverrides.Capabilities, _ = json.Marshal(publicCapabilities(caps))
 		}
-		out := coreprotocol.SettingsFetchResult{ApplicationRevision: entityRevision(app), CapabilitiesRevision: entityRevision(types.MergeAppWorkspace(app, overrides).Capabilities), Application: publicApp(app), Effective: publicApp(types.MergeAppWorkspace(app, overrides)), Overrides: publicOverrides, Accounts: make(map[string]coreprotocol.AccountView), ConnectionSecretsPresent: make(map[string]bool)}
+		out := coreprotocol.SettingsFetchResult{ApplicationRevision: entityRevision(app), WorkspaceRevision: entityRevision(overrides), CapabilitiesRevision: entityRevision(types.MergeAppWorkspace(app, overrides).Capabilities), Application: publicApp(app), Effective: publicApp(types.MergeAppWorkspace(app, overrides)), Overrides: publicOverrides, Accounts: make(map[string]coreprotocol.AccountView), ConnectionSecretsPresent: make(map[string]bool)}
 		if u, err := url.Parse(app.Network.ProxyURL); err == nil {
 			out.ProxyCredentialsPresent = u.User != nil || u.RawQuery != ""
 		}
 		for id, account := range a.ws.AllAccounts() {
 			out.Accounts[id] = publicAccount(account)
 		}
-		for id, conn := range app.Capabilities.Connections {
+		out.ConnectionSecretFields = make(map[string]coreprotocol.ConnectionSecretPresence)
+		// Effective connections include workspace-bound registrations.
+		for id, conn := range types.MergeAppWorkspace(app, overrides).Capabilities.Connections {
 			out.ConnectionSecretsPresent[id] = len(conn.Environment)+len(conn.Headers)+len(conn.SecretRefs) != 0 || conn.CredentialRef != ""
+			out.ConnectionSecretFields[id] = coreprotocol.ConnectionSecretPresence{Args: len(conn.Args) != 0, Environment: len(conn.Environment) != 0,
+				Headers: len(conn.Headers) != 0, SecretRefs: len(conn.SecretRefs) != 0, CredentialRef: conn.CredentialRef != ""}
 		}
 		return result(out)
 	case coreprotocol.SessionSettingsRead:

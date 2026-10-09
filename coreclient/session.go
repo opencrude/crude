@@ -1,24 +1,16 @@
 package coreclient
 
 import (
-	"time"
-
 	"crude/coreprotocol"
+	"crude/session"
 	"crude/types"
 	"crude/workspace"
 )
 
-// Session contains only client-owned read data. Children share their root's
-// settings and reference family; there is no backend, database or runtime here.
-type Session struct {
-	SessionID, AgentID string
-	CreatedAt          time.Time
-	AgentState         *workspace.AgentState
-	Settings           *workspace.SessionSettingsState
-	RefStore           *References
-}
-
-func (s *Session) install(snapshot coreprotocol.SessionSnapshot, base types.Settings) {
+// installSession refreshes a replica session from a core snapshot. The replica
+// has no backend or database; children share their root's settings and
+// reference family.
+func (v *WorkspaceView) installSession(s *workspace.Session, snapshot coreprotocol.SessionSnapshot, base types.Settings) {
 	s.AgentID, s.CreatedAt = snapshot.AgentID, snapshot.CreatedAt
 	effective := base
 	settings := snapshot.Settings
@@ -29,14 +21,35 @@ func (s *Session) install(snapshot coreprotocol.SessionSnapshot, base types.Sett
 		value := *settings.MultiAgent
 		effective.SessionMultiAgent = &value
 	}
-	state := workspace.NewSessionSettingsState(effective, base, nil)
-	if s.Settings == nil {
-		s.Settings = state
+	if snapshot.Full != nil {
+		s.InstallSettingsSnapshot(SettingsSnapshot(*snapshot.Full))
 	} else {
-		*s.Settings = *state
+		state := workspace.NewSessionSettingsState(effective, base, nil)
+		if s.Settings == nil {
+			s.Settings = state
+		} else {
+			*s.Settings = *state
+		}
 	}
-	if s.RefStore == nil {
-		s.RefStore = NewReferences()
+	refs, _ := s.RefStore.(*References)
+	if refs == nil {
+		refs = newSessionReferences(v, s.SessionID)
+		s.RefStore = refs
 	}
-	s.RefStore.install(snapshot.References)
+	refs.bind(v)
+	refs.install(snapshot.References)
+}
+
+// SettingsSnapshot converts a redacted settings set into the domain form a
+// replica session installs. Credentials are absent by construction.
+func SettingsSnapshot(result coreprotocol.SessionSettingsResult) session.SettingsSnapshotSet {
+	return session.SettingsSnapshotSet{Revision: result.Revision, Effective: SessionSettingsValue(result.Effective),
+		Base: SessionSettingsValue(result.Base), Overrides: result.Overrides}
+}
+
+// SessionSettingsValue restores the fields Settings JSON deliberately omits.
+func SessionSettingsValue(dto coreprotocol.SessionSettingsDTO) types.Settings {
+	value := dto.Value
+	value.SessionMainAgent, value.SessionOverrides, value.SessionMultiAgent = dto.MainAgent, dto.Overrides, dto.MultiAgent
+	return value
 }

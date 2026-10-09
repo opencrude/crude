@@ -9,19 +9,19 @@ import (
 type statusHydrateErrMsg struct{ Err error }
 
 func (m *App) syncAgentStatusEvent(evt types.AgentEventMsg) {
-	if m.Workspace == nil {
+	if m.ws == nil {
 		return
 	}
-	m.ApplyAgentStatusEvent(workspace.AgentEvent{
+	m.ws.ApplyAgentStatusEvent(workspace.AgentEvent{
 		Type: evt.Type, Data: evt.Data, AgentID: evt.AgentID,
 	})
 }
 
 func (m *App) notifyStatus(severity ttypes.StatusSeverity, source, summary, detail string, owner ttypes.ResourceRef) string {
-	if m.Workspace == nil || m.Status == nil {
+	if m.ws == nil || m.ws.Status() == nil {
 		return ""
 	}
-	return m.Status.Notify(ttypes.NotificationRecord{
+	return m.ws.Status().Notify(ttypes.NotificationRecord{
 		DedupKey: source + ":" + owner.ID + ":" + summary,
 		Owner:    owner, Severity: severity, Source: source, Summary: summary, Detail: detail,
 		Transient: severity == ttypes.SeverityInfo,
@@ -29,12 +29,12 @@ func (m *App) notifyStatus(severity ttypes.StatusSeverity, source, summary, deta
 }
 
 func (m *App) syncLSPStatusIssues() {
-	if m.Workspace == nil || m.Status == nil || m.LSPMgr == nil {
+	if m.ws == nil || m.ws.Status() == nil || m.ws.LSPMgr() == nil {
 		return
 	}
-	center := m.Status
+	center := m.ws.Status()
 	failed := make(map[string]bool)
-	for _, server := range m.LSPMgr.ServerHealthSnapshots() {
+	for _, server := range m.ws.LSPMgr().ServerHealthSnapshots() {
 		issueID := "lsp:" + server.ID
 		if server.Error == "" {
 			center.ResolveIssue(issueID)
@@ -55,5 +55,5 @@ func (m *App) syncLSPStatusIssues() {
 }
 
 func (m *App) syncAgentStatusInventory() {
-	m.SyncAgentStatusInventory()
+	m.ws.SyncAgentStatusInventory()
 }

@@ -37,8 +37,8 @@ func TestOperationFailurePromptExplainsReasonWithoutLauncherAnnotation(t *testin
 	for _, size := range [][2]int{{160, 40}, {80, 24}} {
 		app := newTestAppWithLauncher(t)
 		app.width, app.height = size[0], size[1]
-		app.Status = workspace.NewStatusCenter(nil, &testLogger{})
-		t.Cleanup(app.Status.Close)
+		wsOf(app).Status = workspace.NewStatusCenter(nil, &testLogger{})
+		t.Cleanup(wsOf(app).Status.Close)
 		app.registerOverlayHandlers()
 		app.launcherNewSession() // the real failure entry point, no configured backend
 		painted := paintedOperationIssue(t, app)
@@ -53,7 +53,7 @@ func TestOperationFailurePromptExplainsReasonWithoutLauncherAnnotation(t *testin
 				t.Fatalf("launcher action was annotated with %q", forbidden)
 			}
 		}
-		notices := app.Status.Notifications(false)
+		notices := app.ws.Status().Notifications(false)
 		if len(notices) != 1 || !strings.Contains(notices[0].Detail, "Session configuration is unavailable") {
 			t.Fatal("recovery did not independently register its notice")
 		}
@@ -62,7 +62,7 @@ func TestOperationFailurePromptExplainsReasonWithoutLauncherAnnotation(t *testin
 		}
 		_, cmd := app.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
 		drainLauncherCommands(app, cmd)
-		if app.overlayHost.IsOpen(ui.OverlayOperationIssue) || app.AgentMgr.Count() != 0 || app.launcherScreen == nil {
+		if app.overlayHost.IsOpen(ui.OverlayOperationIssue) || app.ws.AgentMgr().Count() != 0 || app.launcherScreen == nil {
 			t.Fatal("default Close changed session or launcher state")
 		}
 	}
@@ -71,7 +71,7 @@ func TestOperationFailurePromptExplainsReasonWithoutLauncherAnnotation(t *testin
 func TestStartupIssuesWaitForSizeAndRemainActionable(t *testing.T) {
 	app := newTestAppWithLauncher(t)
 	app.width, app.height = 0, 0
-	app.QueueStartupIssue(types.OperationIssue{Title: "Account setup required", Summary: "Selected connection unavailable", Detail: `account "5c7eb662d2f8abcca6eeeb1cf1acbc50" not found`, Guidance: "Add an account and review Main Agent.", Target: types.RepairAccounts})
+	wsOf(app).QueueStartupIssue(types.OperationIssue{Title: "Account setup required", Summary: "Selected connection unavailable", Detail: `account "5c7eb662d2f8abcca6eeeb1cf1acbc50" not found`, Guidance: "Add an account and review Main Agent.", Target: types.RepairAccounts})
 	app.Update(tea.WindowSizeMsg{Width: 80, Height: 24})
 	text := paintedOperationIssue(t, app)
 	if !strings.Contains(text, "5c7eb662d2f8abcca6eeeb1cf1acbc50") || !strings.Contains(text, "Add account") {
@@ -81,7 +81,7 @@ func TestStartupIssuesWaitForSizeAndRemainActionable(t *testing.T) {
 	if !app.overlayHost.IsOpen(ui.OverlayWorkspaceSettings) {
 		t.Fatal("startup account repair did not open Settings")
 	}
-	if app.AgentMgr.Count() != 0 {
+	if app.ws.AgentMgr().Count() != 0 {
 		t.Fatal("repair action implicitly launched a session")
 	}
 }
@@ -91,15 +91,15 @@ func TestStartupResumeMissingSessionShowsPromptWithoutLeavingShell(t *testing.T)
 	t.Setenv("HOME", fixtureHome)
 	t.Setenv("USERPROFILE", fixtureHome)
 	app := newTestAppWithLauncher(t)
-	app.RootPath = t.TempDir()
-	app.SetBackendConfig(testAccountConfig(), t.TempDir())
-	app.SetEventSender(noopEventSender{})
+	wsOf(app).RootPath = t.TempDir()
+	wsOf(app).SetBackendConfig(testAccountConfig(), t.TempDir())
+	app.ws.SetEventSender(noopEventSender{})
 	app.Update(types.ResumeStartupMsg{SessionID: "missing-session"})
 	text := paintedOperationIssue(t, app)
 	if !strings.Contains(text, "Session could not be resumed") || !strings.Contains(text, "session database unavailable") || !strings.Contains(app.operationIssue.screen.Issue().Detail, "missing-session") {
 		t.Fatal(text)
 	}
-	if app.launcherScreen == nil || app.AgentMgr.Count() != 0 {
+	if app.launcherScreen == nil || app.ws.AgentMgr().Count() != 0 {
 		t.Fatal("startup resume failure left unusable shell")
 	}
 }

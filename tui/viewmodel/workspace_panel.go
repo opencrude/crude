@@ -46,9 +46,9 @@ func (m *App) syncWorkspacePanels() {
 	if m.termDock == nil {
 		return
 	}
-	version := m.LSPMgr.Version()
-	if m.Status != nil {
-		version += m.Status.Version()
+	version := m.ws.LSPMgr().Version()
+	if m.ws.Status() != nil {
+		version += m.ws.Status().Version()
 	}
 	second := time.Now().Unix()
 	if version == m.workspacePanelLastVersion && second == m.workspacePanelLastSecond {
@@ -94,10 +94,10 @@ func (m *App) toggleWorkspacePanel(panelID string) {
 	m.setTermDockFocused(opened)
 	if opened {
 		m.FocusStack.Clear()
-		if panelID == termdock.PanelNotices && m.Status != nil {
-			for _, notice := range m.Status.Notifications(false) {
+		if panelID == termdock.PanelNotices && m.ws.Status() != nil {
+			for _, notice := range m.ws.Status().Notifications(false) {
 				if !notice.Read {
-					m.Status.MarkRead(notice.ID, true)
+					m.ws.Status().MarkRead(notice.ID, true)
 				}
 			}
 			m.syncWorkspacePanels()
@@ -164,20 +164,20 @@ func (app *App) openTerminalPicker() {
 }
 
 func (m *App) problemPanelItems() []statusoverview.Item {
-	insights := m.LSPMgr.ProjectInsights()
+	insights := m.ws.LSPMgr().ProjectInsights()
 	items := []statusoverview.Item{{
 		ID: "workspace:summary", Label: "Workspace health", Summary: workspaceHealthSummary(insights), Active: true,
-		Owner: ttypes.ResourceRef{Kind: ttypes.ResourceWorkspace, ID: m.RootPath},
+		Owner: ttypes.ResourceRef{Kind: ttypes.ResourceWorkspace, ID: m.ws.RootPath()},
 		Lines: []statusoverview.DetailLine{
-			{Label: "Path", Value: m.RootPath, Role: ui.ColorFg},
+			{Label: "Path", Value: m.ws.RootPath(), Role: ui.ColorFg},
 			{Label: "Errors", Value: fmt.Sprintf("%d", insights.Errors), Role: mapBool(insights.Errors > 0, ui.ColorError, ui.ColorMuted)},
 			{Label: "Warnings", Value: fmt.Sprintf("%d", insights.Warnings), Role: mapBool(insights.Warnings > 0, ui.ColorWarning, ui.ColorMuted)},
 			{Label: "Affected files", Value: fmt.Sprintf("%d", insights.FilesAffected), Role: ui.ColorMuted},
 			{Label: "Tracked files", Value: fmt.Sprintf("%d", insights.FilesTracked), Role: ui.ColorMuted},
-			{Label: "Uptime", Value: formatDuration(time.Since(m.StartTime)), Role: ui.ColorMuted},
+			{Label: "Uptime", Value: formatDuration(time.Since(m.ws.StartTime())), Role: ui.ColorMuted},
 		},
 	}}
-	servers := m.LSPMgr.ServerHealthSnapshots()
+	servers := m.ws.LSPMgr().ServerHealthSnapshots()
 	if len(servers) > 0 {
 		items = append(items, statusoverview.Item{ID: "workspace-lsp", Label: "Language Servers", Header: true})
 	}
@@ -195,7 +195,7 @@ func (m *App) problemPanelItems() []statusoverview.Item {
 		items = append(items, statusoverview.Item{ID: "lsp:" + server.ID, Label: server.Name, Summary: server.Status, Icon: "◇", Owner: ttypes.ResourceRef{Kind: ttypes.ResourceLSP, ID: server.ID}, Lines: lines})
 	}
 
-	diagnostics := m.LSPMgr.AllDiagnostics()
+	diagnostics := m.ws.LSPMgr().AllDiagnostics()
 	if len(diagnostics) > 0 {
 		items = append(items, statusoverview.Item{ID: "workspace-problems", Label: "Problems", Header: true})
 	}
@@ -224,7 +224,7 @@ func (m *App) problemPanelItems() []statusoverview.Item {
 			})
 		}
 	}
-	for _, issue := range m.Status.Issues() {
+	for _, issue := range m.ws.Status().Issues() {
 		if issue.ResolvedAt.IsZero() && issue.Owner.Kind == ttypes.ResourceLSP {
 			items = append(items, statusoverview.Item{ID: "issue:" + issue.ID, Label: issue.Summary, Summary: issue.Detail, Icon: "!", Owner: issue.Owner, Lines: []statusoverview.DetailLine{{Label: "Issue", Value: issue.Detail, Role: severityRole(issue.Severity)}}})
 		}

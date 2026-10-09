@@ -16,8 +16,8 @@ func TestThinkingTwoReadersShareOnlyCanonicalState(t *testing.T) {
 	narrow, wide := newFullTestApp(t), newFullTestApp(t)
 	state := workspace.NewAgentState("shared", nil, nil)
 	for _, app := range []*App{narrow, wide} {
-		app.AgentMgr.AddOrchestrator(state.ID, state)
-		app.PaneMgr.GetOrCreate(state.ID, workspace.PaneAgent, "Shared").Messages = state.Messages
+		app.ws.AgentMgr().AddOrchestrator(state.ID, state)
+		app.ws.PaneMgr().GetOrCreate(state.ID, workspace.PaneAgent, "Shared").Messages = state.Messages
 		app.subPaneProjections.Get(state.ID, workspace.PaneAgent)
 	}
 	state.Messages.AppendMessage(workspace.Message{Role: types.RoleUser, Content: "prior history", Time: time.Now()})
@@ -88,7 +88,7 @@ func TestThinkingGeometryUsesExactOwnerAndRetainsHiddenWidth(t *testing.T) {
 		t.Fatal("hidden owner lost last-known width")
 	}
 	child := workspace.NewAgentState("nested", nil, nil)
-	app.AgentMgr.AddSubAgent("nested", "background", "Child", "", "researcher", child)
+	app.ws.AgentMgr().AddSubAgent("nested", "background", "Child", "", "researcher", child)
 	if app.thinkingOwnerWidth("nested") != expected {
 		t.Fatal("nested owner did not use parent embedding geometry")
 	}
@@ -98,9 +98,9 @@ func TestThinkingLatchUsesExactSessionOrSyntheticRoot(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("first")
 	app.AddOrchestrator("second")
-	first, second := app.AgentMgr.Get("first").State, app.AgentMgr.Get("second").State
+	first, second := app.ws.AgentMgr().Get("first").State, app.ws.AgentMgr().Get("second").State
 	owner := workspace.NewSession("owned", t.TempDir(), nil, nil)
-	app.SessionsByAgent = map[string]*workspace.Session{"first": owner}
+	wsOf(app).SessionsByAgent = map[string]*workspace.Session{"first": owner}
 	app.ActiveSession = workspace.NewSession("unrelated", t.TempDir(), nil, nil)
 	first.Messages.AppendThinking(strings.Repeat("long reasoning\n", 30))
 	app.reconcileThinkingPresentation(first, 40)
@@ -115,7 +115,7 @@ func TestThinkingLatchUsesExactSessionOrSyntheticRoot(t *testing.T) {
 	second.Messages.AppendThinking(strings.Repeat("long reasoning\n", 30))
 	app.reconcileThinkingPresentation(second, 40)
 	child := workspace.NewAgentState("child", nil, nil)
-	app.AgentMgr.AddSubAgent("child", "second", "Child", "", "researcher", child)
+	app.ws.AgentMgr().AddSubAgent("child", "second", "Child", "", "researcher", child)
 	child.Messages.AppendThinking("brief")
 	app.reconcileThinkingPresentation(child, 200)
 	if app.thinkingPaneID(child) == "" {
@@ -125,7 +125,7 @@ func TestThinkingLatchUsesExactSessionOrSyntheticRoot(t *testing.T) {
 
 func TestThinkingCompletedSyntheticPanePreservesSummary(t *testing.T) {
 	app := newFullTestApp(t)
-	pane := app.PaneMgr.GetOrCreate("synthetic", workspace.PaneThinking, "Thinking")
+	pane := app.ws.PaneMgr().GetOrCreate("synthetic", workspace.PaneThinking, "Thinking")
 	pane.TokenCount = 5200
 	pane.Collapse()
 	lines := app.subPaneProjections.Render(pane.ID, pane, 80, 5, 0, false)

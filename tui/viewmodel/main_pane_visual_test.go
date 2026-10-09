@@ -23,10 +23,10 @@ func TestMainPaneVisualAcceptance(t *testing.T) {
 	app.Tree.Visible = false
 	for _, id := range []string{"Alpha", "Beta"} {
 		sess := workspace.NewSession(id, t.TempDir(), nil, nil)
-		app.SessionsByAgent[id] = sess
+		app.ws.SessionsByAgent()[id] = sess
 		app.AddOrchestrator(id)
-		app.AgentMgr.Get(id).Label = id
-		app.AgentMgr.Get(id).State.Messages.AppendMessage(workspace.Message{Role: workspace.MessageRoleAssistant, Content: "This is " + id + ". Drag my tab to an edge to split, or to the middle to join a group. My conversation and draft stay mine.", Time: time.Now()})
+		app.ws.AgentMgr().Get(id).Label = id
+		app.ws.AgentMgr().Get(id).State.Messages.AppendMessage(workspace.Message{Role: workspace.MessageRoleAssistant, Content: "This is " + id + ". Drag my tab to an edge to split, or to the middle to join a group. My conversation and draft stay mine.", Time: time.Now()})
 		app.syncAgentMessages(id, false)
 		app.Input.SetInput(id + " draft stays with this session")
 	}
@@ -34,7 +34,7 @@ func TestMainPaneVisualAcceptance(t *testing.T) {
 		"main.go":  "package main\n\n// Drag tabs. The shaded target previews the exact landing pane.\nfunc main() {\n\tprintln(\"Independent editor, shared shell\")\n}\n",
 		"notes.md": "# Main view panes\n\n- Drag to left, right, top or bottom\n- Drop in the middle to merge tabs\n- Ctrl+Alt+L / D: empty pane\n- Alt+[ / ]: focus previous / next pane\n- Open File or New Session in an empty pane\n- The plus remains reachable when tabs overflow\n",
 	} {
-		if err := os.WriteFile(filepath.Join(app.RootPath, name), []byte(text), 0o600); err != nil {
+		if err := os.WriteFile(filepath.Join(app.ws.RootPath(), name), []byte(text), 0o600); err != nil {
 			t.Fatal(err)
 		}
 	}

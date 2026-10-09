@@ -40,7 +40,7 @@ type Session struct {
 	// RefStore manages @references (pasted text, images, selected files)
 	// for this session's chat input. Each session has its own reference
 	// store because references are tied to a specific conversation.
-	RefStore *ReferenceStore
+	RefStore SessionReferences
 
 	// AgentState holds the streaming/thinking state and live conversation data
 	// for this session's orchestrator. This is what AgentNode.State points to.
@@ -96,6 +96,18 @@ func NewSession(sessionID, sessionDir string, db *sql.DB, lg Logger) *Session {
 	}
 	_ = lg // logger is used by AgentState, not Session itself
 	return s
+}
+
+// NewReplicaSession creates a connected shell's session projection. It has no
+// backend, database or session directory: settings and references are replicas
+// installed from core snapshots, and every write is a core request.
+func NewReplicaSession(sessionID string, refs SessionReferences) *Session {
+	return &Session{
+		SessionID:    sessionID,
+		RefStore:     refs,
+		usageRecords: make(map[string]sessiondb.UsageRecord),
+		usageCache:   make(map[usageCacheKey]types.UsageSummary),
+	}
 }
 
 func (s *Session) attachBackend(backend *session.Session) {

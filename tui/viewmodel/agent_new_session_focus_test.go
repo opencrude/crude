@@ -15,7 +15,7 @@ func openEditorTabs(t *testing.T, app *App, names ...string) []string {
 	t.Helper()
 	paths := make([]string, 0, len(names))
 	for _, name := range names {
-		path := filepath.Join(app.RootPath, name)
+		path := filepath.Join(app.ws.RootPath(), name)
 		if _, err := os.Stat(path); err != nil {
 			if err := os.WriteFile(path, []byte("package "+name+"\n"), 0o600); err != nil {
 				t.Fatal(err)
@@ -199,7 +199,7 @@ func TestTabSyncWhileEditingCreatesMissingAgentTab(t *testing.T) {
 	defer ws.Close()
 
 	paths := openEditorTabs(t, app, "main.go")
-	app.AgentMgr.AddOrchestrator(
+	app.ws.AgentMgr().AddOrchestrator(
 		"background-orch",
 
 		workspace.NewAgentState("background-orch", nil, nil))
@@ -217,9 +217,9 @@ func TestTabSyncWhileEditingCreatesMissingAgentTab(t *testing.T) {
 func TestBackgroundSubAgentTabCreationDoesNotStealRootSelection(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("root")
-	pane := app.PaneMgr.GetOrCreate("child", workspace.PaneAgent, "child")
-	app.AgentMgr.AddSubAgent("child", "root", "child", "model", "researcher",
-		workspace.NewAgentState("child", pane.Messages, app.Logger))
+	pane := app.ws.PaneMgr().GetOrCreate("child", workspace.PaneAgent, "child")
+	app.ws.AgentMgr().AddSubAgent("child", "root", "child", "model", "researcher",
+		workspace.NewAgentState("child", pane.Messages, app.ws.Logger()))
 	app.syncAgentWindowTabs()
 
 	active := app.Win.ActiveTab()
@@ -234,9 +234,9 @@ func TestAgentTabSyncPreservesUserOrderWithoutMovingEditorOrSelection(t *testing
 	app.AddOrchestrator("root")
 	firstEditor := openEditorTabs(t, app, "first.go")[0]
 	for _, id := range []string{"older", "newer"} {
-		pane := app.PaneMgr.GetOrCreate(id, workspace.PaneAgent, id)
-		app.AgentMgr.AddSubAgent(id, "root", id, "model", "researcher",
-			workspace.NewAgentState(id, pane.Messages, app.Logger))
+		pane := app.ws.PaneMgr().GetOrCreate(id, workspace.PaneAgent, id)
+		app.ws.AgentMgr().AddSubAgent(id, "root", id, "model", "researcher",
+			workspace.NewAgentState(id, pane.Messages, app.ws.Logger()))
 		app.syncAgentWindowTabs()
 	}
 	secondEditor := openEditorTabs(t, app, "second.go")[0]
@@ -266,10 +266,10 @@ func TestAgentTabSyncPreservesUserOrderWithoutMovingEditorOrSelection(t *testing
 func TestAgentTabSyncGroupsMultipleRootsWithoutStealingSelection(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("first")
-	app.AgentMgr.AddSubAgent("first-child", "first", "first child", "model", "researcher",
+	app.ws.AgentMgr().AddSubAgent("first-child", "first", "first child", "model", "researcher",
 		workspace.NewAgentState("first-child", nil, nil))
 	app.AddOrchestrator("second")
-	app.AgentMgr.AddSubAgent("second-child", "second", "second child", "model", "researcher",
+	app.ws.AgentMgr().AddSubAgent("second-child", "second", "second child", "model", "researcher",
 		workspace.NewAgentState("second-child", nil, nil))
 	app.syncAgentWindowTabs()
 	want := []string{"first", "first-child", "second", "second-child"}
@@ -286,9 +286,9 @@ func TestAgentTabSyncGroupsMultipleRootsWithoutStealingSelection(t *testing.T) {
 func TestTabSyncRepairsStaleManagerSelectionFromVisibleWindow(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("root")
-	pane := app.PaneMgr.GetOrCreate("child", workspace.PaneAgent, "child")
-	app.AgentMgr.AddSubAgent("child", "root", "child", "model", "researcher",
-		workspace.NewAgentState("child", pane.Messages, app.Logger))
+	pane := app.ws.PaneMgr().GetOrCreate("child", workspace.PaneAgent, "child")
+	app.ws.AgentMgr().AddSubAgent("child", "root", "child", "model", "researcher",
+		workspace.NewAgentState("child", pane.Messages, app.ws.Logger()))
 	app.syncAgentWindowTabs()
 	app.AgentView.SetActive("child") // simulate stale background/domain selection
 
@@ -329,8 +329,8 @@ func TestSubAgentTabCreatedWhileEditingDoesNotStealEditor(t *testing.T) {
 
 	paths := openEditorTabs(t, app, "main.go")
 
-	childPane := app.PaneMgr.GetOrCreate("child", workspace.PaneAgent, "child")
-	if app.AgentMgr.AddSubAgent(
+	childPane := app.ws.PaneMgr().GetOrCreate("child", workspace.PaneAgent, "child")
+	if app.ws.AgentMgr().AddSubAgent(
 		"child", "root", "Researcher", "child-model", "researcher",
 		workspace.NewAgentState("child", childPane.Messages, nil),
 	) == nil {

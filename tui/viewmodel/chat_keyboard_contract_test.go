@@ -49,7 +49,7 @@ func setupChatRoutingApp(t *testing.T, viewportH int, rows []chatprojection.Mess
 	app.AddOrchestrator(
 		"agent")
 
-	node := app.AgentMgr.Get("agent")
+	node := app.ws.AgentMgr().Get("agent")
 	node.State.Completed = false
 	node.State.Streaming = false
 	node.State.Thinking = false
@@ -147,11 +147,11 @@ func TestChatViewmodelKeyboardContractTable(t *testing.T) {
 
 	t.Run("esc_clears_nonempty_input_when_agent_idle", func(t *testing.T) {
 		app, _ := setupChatRoutingApp(t, 3, []chatprojection.MessageRow{{ID: "m1", Lines: []string{"x"}}})
-		node := app.AgentMgr.Get("agent")
+		node := app.ws.AgentMgr().Get("agent")
 		node.State.Completed = true
 		node.State.Streaming = false
 		node.State.Thinking = false
-		if sp := app.PaneMgr.Get("agent"); sp != nil {
+		if sp := app.ws.PaneMgr().Get("agent"); sp != nil {
 			sp.Done = true
 		}
 		app.Input.SetInput("draft")
@@ -199,7 +199,7 @@ func TestChatViewmodelKeyboardContractTable(t *testing.T) {
 		}
 
 		scroll.StickToBottom()
-		node := app.AgentMgr.Get("agent")
+		node := app.ws.AgentMgr().Get("agent")
 		node.State.Messages.AppendMessage(workspace.Message{
 			Role: ttypes.RoleAssistant, Content: "another chunk\nmore lines", Time: time.Now(),
 		})
@@ -227,7 +227,7 @@ func TestChatViewmodelKeyboardContractTable(t *testing.T) {
 			t.Fatalf("setup: need disarmed mid-scroll offset, off=%d max=%d", wantOff, maxBefore)
 		}
 
-		node := app.AgentMgr.Get("agent")
+		node := app.ws.AgentMgr().Get("agent")
 		node.State.Messages.AppendMessage(workspace.Message{
 			Role: ttypes.RoleAssistant, Content: strings.Repeat("appended line\n", 8), Time: time.Now(),
 		})

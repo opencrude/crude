@@ -116,10 +116,11 @@ media is session-owned, so pruning the bounded history cannot break a resumed
 session. Individual binary reads are limited to 64 MiB. Capture failures are
 reported and marked unavailable rather than silently recalling text-only
 versions. Application shutdown flushes pending history before closing sessions.
-After the terminal program exits, idempotent UI teardown flushes composer drafts,
-fences and joins in-flight tree watcher startup, and closes all distinct editor
-and tree watchers. Workspace shutdown remains a separate domain operation; it
-does not own TUI resources. Late tree-ready/start callbacks cannot reopen watchers.
+After terminal exit, idempotent UI teardown flushes private composer drafts and
+accepted editor commands, retains unresolved editor recovery, and closes client
+views/collectors. Connected project and lazy document watchers belong to the
+retained core, not shells. Local/test adapters still close their UI-owned watchers.
+Shell detach never closes shared sessions, LSP servers or PTYs.
 
 Composer ownership changes at session activation, never during rendering. The
 destination reference store is bound before recalled attachment IDs are installed,
@@ -175,6 +176,7 @@ window derive from current bytes, not replayed change guesses.
 | Horizontal scroll | Two-finger horizontal / wheel-left/right; Shift+vertical wheel fallback | Scrollbar extent is the widest line in the whole document and does not change with vertical viewport |
 | Text cursor | Shared 400 ms phase after 800 ms activity hold | Muted reverse-video block; idle shell remains at 2.5 FPS so blink never freezes |
 | Compare with disk / saved version | Editor context menu or palette | Complete read-only main tab, native split divider, synchronized old/new vertical scroll, unified fallback, find/hunk navigation. Refresh replaces only the exact snapshot; Close never consumes source edits. |
+| Private editor drafts / discard backups | Palette **Private Editor Drafts** | Metadata-only private profile/workspace listing, explicit Preview/Copy/Open draft/Compare, default Close/Esc. Exact CAS protects unread/newer recovery. An already-open draft is compared, never replaced; reopening retains unknown command evidence without replay. |
 | Go to / search result landing | LSP navigation, Find in Files Open | A target already visible does not shift the viewport. Pre-render jumps wait for actual geometry; short files stay at the top. A visible, non-editing landing range clears on input/edit; typing never replaces the destination as a selection. |
 
 Find in Files retains query Home/End, routes Tab through result/preview/actions,
@@ -331,3 +333,21 @@ tab attention until the panel is activated or closed.
    root-Host hit testing. Deck-owned drags may still release outside; stale
    captures owned by underlying shell controls are canceled. Guarded by
    `TestPanelDeckViewmodelContractTable/blocking_panel_shields_pointer_outside_deck_rect`.
+
+## Connected shared-editor decisions
+
+Editor open, edit, undo/redo, save, format and close use exact core document
+identities/revisions with attachment epochs. Each shell retains cursor, selection
+and viewport; author undo does not undo another shell's accepted group. Dirty
+unsaved text is shared, not silently written to disk. Rename preserves document
+identity and dirty text; conflicted delete fails closed.
+
+Resolve Shared Editor Changes in the palette opens the native modal for parked
+or recovered drafts. Keep draft (default/Esc) changes nothing. Compare with
+shared opens immutable, read-only shared/local snapshots and does not consume the
+draft. Use shared text requires explicit discard confirmation and durable private
+backup, then clears only the exact private recovery record by tombstone. It never
+rewrites collaborators' accepted text. Pending/unknown commands require original
+receipt reconciliation first, never replay. External disk conflicts need separate
+comparison/reconciliation; accepting shared text is not permission to overwrite
+external changes. Failure keeps the draft and actionable reason visible.

@@ -116,6 +116,7 @@ type DirectoryEntry struct {
 	Path      string
 	IsDir     bool
 	IsSymlink bool
+	ModTime   time.Time
 }
 
 // ModelOptions controls optional services and projections for a tree model.
@@ -125,6 +126,8 @@ type ModelOptions struct {
 	DirectoriesOnly bool
 	EnableGit       bool
 	InitialLoad     bool
+	// NoLocalIO prevents filesystem resolution, reads, Git and watcher startup.
+	NoLocalIO bool
 }
 
 // recomputeAggregateStatuses recomputes AggregateStatus for every loaded
@@ -309,7 +312,8 @@ type FileTreeModel struct {
 	// Root is the root node of the tree (represents the workspace root dir).
 	Root *TreeNode
 
-	rootPath string
+	rootPath  string
+	noLocalIO bool
 
 	// nodes provides O(1) lookups from absolute path to TreeNode.
 	nodes map[string]*TreeNode
@@ -426,13 +430,16 @@ func NewFileTreeModel(rootPath string) *FileTreeModel {
 // before a picker is mounted on the UI thread.
 func NewFileTreeModelWithOptions(rootPath string, options ModelOptions) *FileTreeModel {
 	// Resolve to an absolute path.
-	absPath, err := filepath.Abs(rootPath)
-	if err != nil {
-		absPath = rootPath
+	absPath := filepath.Clean(rootPath)
+	if !options.NoLocalIO {
+		if resolved, err := filepath.Abs(rootPath); err == nil {
+			absPath = resolved
+		}
 	}
 
 	m := &FileTreeModel{
 		rootPath:           absPath,
+		noLocalIO:          options.NoLocalIO,
 		nodes:              make(map[string]*TreeNode),
 		sortBy:             SortByType,
 		showHidden:         false,
@@ -442,14 +449,14 @@ func NewFileTreeModelWithOptions(rootPath string, options ModelOptions) *FileTre
 		Hover:              ui.NewHover(),
 		filterEd:           ui.NewTextEdit(),
 	}
-	if options.EnableGit {
+	if options.EnableGit && !options.NoLocalIO {
 		m.gitResolver = NewGitStatusResolver(absPath)
 	}
 
 	// Create the root node.
-	info, err := os.Stat(absPath)
-	if err != nil {
-		info = nil
+	var info os.FileInfo
+	if !options.NoLocalIO && options.InitialLoad {
+		info, _ = os.Stat(absPath)
 	}
 	root := &TreeNode{
 		Name:       filepath.Base(absPath),
@@ -500,6 +507,9 @@ func NewPickerFileTreeModel(rootPath string, directoriesOnly bool) *FileTreeMode
 //
 // If the node is not a directory, this is a no-op.
 func (m *FileTreeModel) loadDirectory(node *TreeNode) error {
+	if m.noLocalIO {
+		return fmt.Errorf("remote tree requires asynchronous directory installation")
+	}
 	if node == nil || !node.IsDir {
 		return nil
 	}
@@ -679,7 +689,7 @@ func (m *FileTreeModel) SetDirectoryEntries(path string, entries []DirectoryEntr
 			continue
 		}
 		childPath := filepath.Clean(entry.Path)
-		if childPath == "." || childPath == path {
+		if childPath == "." || childPath == path || filepath.Dir(childPath) != path || filepath.Base(childPath) != entry.Name {
 			continue
 		}
 		child := existing[entry.Name]
@@ -696,10 +706,14 @@ func (m *FileTreeModel) SetDirectoryEntries(path string, entries []DirectoryEntr
 			child.Hidden = strings.HasPrefix(entry.Name, ".")
 			child.Parent = node
 			if !entry.IsDir {
+				for _, descendant := range child.Children {
+					m.removeNodeIndex(descendant)
+				}
 				child.Children = nil
 				child.IsExpanded = false
 			}
 		}
+		child.ModTime = entry.ModTime
 		children = append(children, child)
 		m.nodes[childPath] = child
 		delete(existing, entry.Name)
@@ -710,6 +724,7 @@ func (m *FileTreeModel) SetDirectoryEntries(path string, entries []DirectoryEntr
 	m.sortChildren(children)
 	node.Children = children
 	node.Loading = false
+	m.reapplyFilterAfterMutationLocked()
 	m.rebuildVisibleNodes()
 	return true
 }
@@ -1506,9 +1521,11 @@ func (m *FileTreeModel) handleFileModified(path string) {
 	}
 
 	// Update modification time.
-	info, err := os.Stat(path)
-	if err == nil {
-		node.ModTime = info.ModTime()
+	if !m.noLocalIO {
+		info, err := os.Stat(path)
+		if err == nil {
+			node.ModTime = info.ModTime()
+		}
 	}
 
 	// Refresh git status if available.
@@ -1777,6 +1794,10 @@ func (m *FileTreeModel) GitResolver() *GitStatusResolver {
 // path. Events are delivered to ProcessWatcherEvent in a background goroutine.
 func (m *FileTreeModel) StartWatcher() error {
 	m.mu.RLock()
+	if m.noLocalIO {
+		m.mu.RUnlock()
+		return nil
+	}
 	rootPath := m.rootPath
 	alreadyStarted := m.watcher != nil
 	m.mu.RUnlock()

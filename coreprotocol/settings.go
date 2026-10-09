@@ -88,6 +88,7 @@ type AccountModelsResult struct {
 }
 type SettingsFetchResult struct {
 	ApplicationRevision      string                   `json:"application_revision"`
+	WorkspaceRevision        string                   `json:"workspace_revision"`
 	CapabilitiesRevision     string                   `json:"capabilities_revision"`
 	Application              types.AppSettings        `json:"application"`
 	Effective                types.AppSettings        `json:"effective"`
@@ -95,6 +96,18 @@ type SettingsFetchResult struct {
 	Accounts                 map[string]AccountView   `json:"accounts"`
 	ProxyCredentialsPresent  bool                     `json:"proxy_credentials_present"`
 	ConnectionSecretsPresent map[string]bool          `json:"connection_secrets_present"`
+	// ConnectionSecretFields reports exactly which write-only connection fields
+	// hold a value, so shells can show and keep each one without receiving it.
+	ConnectionSecretFields map[string]ConnectionSecretPresence `json:"connection_secret_fields,omitempty"`
+}
+
+// ConnectionSecretPresence flags each redacted connection field.
+type ConnectionSecretPresence struct {
+	Args          bool `json:"args,omitempty"`
+	Environment   bool `json:"environment,omitempty"`
+	Headers       bool `json:"headers,omitempty"`
+	SecretRefs    bool `json:"secret_refs,omitempty"`
+	CredentialRef bool `json:"credential_ref,omitempty"`
 }
 type CapabilityActionRequest struct {
 	Action            captypes.Action         `json:"action"`

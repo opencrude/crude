@@ -263,7 +263,7 @@ func (m *App) resizeMainGroup(delta int) {
 
 func (m *App) openPaneFilePicker(group window.GroupID) {
 	m.focusMainGroup(group)
-	m.openPicker(m.RootPath, filepickerscreen.ModeOpenFile)
+	m.openPicker(m.ws.RootPath(), filepickerscreen.ModeOpenFile)
 	m.paneFilePicker = &paneFilePickerOwner{group: group, generation: m.workspaceSwitchGen.Load()}
 	if win := m.overlayHost.Window(ui.OverlayFilePicker); win != nil {
 		win.Title = "Open File in Pane"

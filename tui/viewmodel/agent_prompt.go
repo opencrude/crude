@@ -58,7 +58,7 @@ func (m *App) enqueueAgentQuestions(req agentPromptRequest) {
 }
 
 func (m *App) enqueueAgentPrompt(req agentPromptRequest) {
-	if m.AgentMgr == nil || m.AgentMgr.Get(req.agentID) == nil || req.blockID == "" {
+	if m.ws.AgentMgr() == nil || m.ws.AgentMgr().Get(req.agentID) == nil || req.blockID == "" {
 		return
 	}
 	for _, state := range m.agentPrompts {
@@ -76,7 +76,7 @@ func (m *App) enqueueAgentPrompt(req agentPromptRequest) {
 			if err != nil {
 				detail = err.Error()
 			}
-			m.RejectQuestion(req.agentID, req.blockID, detail)
+			m.ws.RejectQuestion(req.agentID, req.blockID, detail)
 			return
 		}
 	} else {
@@ -91,22 +91,22 @@ func (m *App) enqueueAgentPrompt(req agentPromptRequest) {
 }
 
 func (m *App) agentYoloEnabled(agentID string) bool {
-	if m.YoloForAgent(agentID) {
+	if m.ws.YoloForAgent(agentID) {
 		return true
 	}
-	return m.AgentMgr != nil && m.AgentView.ActiveID() == agentID && m.OverlayState != nil && m.OverlayState.IsYolo()
+	return m.ws.AgentMgr() != nil && m.AgentView.ActiveID() == agentID && m.OverlayState != nil && m.OverlayState.IsYolo()
 }
 
 func (m *App) openNextAgentPrompt() {
 	// Registry order is arrival order. Docked requests stay retained in their
 	// family when the user leaves; only never-docked requests enter the FIFO modal.
 	for _, state := range append([]*agentPromptState(nil), m.agentPrompts...) {
-		if m.AgentMgr.Get(state.request.agentID) == nil {
+		if m.ws.AgentMgr().Get(state.request.agentID) == nil {
 			m.removeAgentPrompt(state)
 			continue
 		}
 		if state.request.kind == agentPromptConfirmation && m.agentYoloEnabled(state.request.agentID) {
-			m.ResolveConfirmation(state.request.agentID, state.request.blockID, "allow")
+			m.ws.ResolveConfirmation(state.request.agentID, state.request.blockID, "allow")
 			m.removeAgentPrompt(state)
 			continue
 		}
@@ -136,7 +136,7 @@ func (m *App) openNextAgentPrompt() {
 }
 
 func (m *App) agentPromptInlineEligible(agentID string) bool {
-	owner := m.AgentMgr.OrchestratorFor(agentID)
+	owner := m.ws.AgentMgr().OrchestratorFor(agentID)
 	if owner == nil || m.Win == nil {
 		return false
 	}
@@ -148,7 +148,7 @@ func (m *App) agentPromptInlineEligible(agentID string) bool {
 		if tab == nil || !m.isAgentTabTitle(tab.Title) {
 			continue
 		}
-		visible := m.AgentMgr.OrchestratorFor(m.agentIDFromTabTitle(tab.Title))
+		visible := m.ws.AgentMgr().OrchestratorFor(m.agentIDFromTabTitle(tab.Title))
 		if visible != nil && owner.ID == visible.ID {
 			return true
 		}
@@ -169,7 +169,7 @@ func (m *App) openInlineAgentPrompt(state *agentPromptState) {
 		content, focus, label = state.question, question.OptionsID, "Questions"
 	}
 	name := state.request.agentID
-	if node := m.AgentMgr.Get(name); node != nil && node.Label != "" {
+	if node := m.ws.AgentMgr().Get(name); node != nil && node.Label != "" {
 		name = node.Label
 	}
 	projection.deck.Open(ui.PanelEntry{
@@ -290,7 +290,7 @@ func (m *App) resolveAgentConfirmationChoice(choice int) {
 }
 
 func (m *App) promptOwnerLabel(agentID string) string {
-	if node := m.AgentMgr.Get(agentID); node != nil && node.Label != "" {
+	if node := m.ws.AgentMgr().Get(agentID); node != nil && node.Label != "" {
 		return node.Label + " (" + agentID + ")"
 	}
 	return agentID
@@ -316,7 +316,7 @@ func (m *App) cancelPromptConfirmation(target *confirmation.Screen) {
 }
 
 func (m *App) resolveAgentPromptConfirmation(req agentPromptRequest, choice string) {
-	if m.ResolveConfirmation(req.agentID, req.blockID, choice) {
+	if m.ws.ResolveConfirmation(req.agentID, req.blockID, choice) {
 		m.syncAgentStatusInventory()
 	} else if m.Feedback != nil {
 		m.Feedback.NotifyError("Permission response was not sent: the request is no longer active")
@@ -329,7 +329,7 @@ func (m *App) resolveAgentQuestion(target *question.Screen, result question.Resu
 		return
 	}
 	req := state.request
-	if !m.ResolveQuestion(req.agentID, req.blockID, result.Answers, result.Questions, cancelled) && m.Feedback != nil {
+	if !m.ws.ResolveQuestion(req.agentID, req.blockID, result.Answers, result.Questions, cancelled) && m.Feedback != nil {
 		m.Feedback.NotifyError("Question response was not sent: the request is no longer active")
 	}
 	m.removeAgentPrompt(state)
@@ -342,7 +342,7 @@ func (m *App) cancelAgentPrompt() {
 		return
 	}
 	if state.request.kind == agentPromptQuestions {
-		m.ResolveQuestion(state.request.agentID, state.request.blockID, nil, nil, true)
+		m.ws.ResolveQuestion(state.request.agentID, state.request.blockID, nil, nil, true)
 	} else {
 		m.cancelAgentTurn(state.request.agentID)
 	}

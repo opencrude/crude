@@ -2,7 +2,6 @@ package viewmodel
 
 import (
 	tea "charm.land/bubbletea/v2"
-	"crude/fileio"
 	"crude/sessiondb"
 	"crude/workspace"
 	"strconv"
@@ -34,10 +33,11 @@ func (m *App) openHistoricalAttachment(key string) tea.Cmd {
 			m.Feedback.NotifyError("Open an agent session to preview attachments")
 			return nil
 		}
+		open := m.clientDesktopOpen()
 		return func() tea.Msg {
 			ref, err := store.ImportReference(attachment.Reference)
 			if err == nil {
-				err = fileio.OpenDesktopPath(ref.FilePath, false)
+				err = open(ref.FilePath, false)
 			}
 			return attachmentOpenedMsg{owner: owner, err: err}
 		}
@@ -59,7 +59,8 @@ func (m *App) openAttachment(id string, reveal bool) tea.Cmd {
 		return nil
 	}
 	owner := m.ActiveSession
+	open := m.clientDesktopOpen()
 	return func() tea.Msg {
-		return attachmentOpenedMsg{owner: owner, err: fileio.OpenDesktopPath(ref.FilePath, reveal)}
+		return attachmentOpenedMsg{owner: owner, err: open(ref.FilePath, reveal)}
 	}
 }

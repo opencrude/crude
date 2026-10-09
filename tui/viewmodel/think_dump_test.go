@@ -15,7 +15,7 @@ func TestDumpThinkingPaneFullScreen(t *testing.T) {
 	app.AddOrchestrator(
 		"dump-agent")
 
-	node := app.AgentMgr.Get("dump-agent")
+	node := app.ws.AgentMgr().Get("dump-agent")
 	agent := node.State
 	// Busy chat: pre-fill messages so the main chat itself scrolls.
 	fillAgentChat(app, "dump-agent", 5, "fill")

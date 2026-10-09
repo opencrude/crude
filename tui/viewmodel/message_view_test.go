@@ -52,7 +52,7 @@ func TestAppendActiveMessageUpdatesConversationAndProjection(t *testing.T) {
 
 	app.appendActiveMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: "hello", Time: time.Unix(1, 0)})
 
-	node := app.AgentMgr.Get("agent")
+	node := app.ws.AgentMgr().Get("agent")
 	if node == nil || node.State == nil {
 		t.Fatal("agent state was not created")
 	}
@@ -60,7 +60,7 @@ func TestAppendActiveMessageUpdatesConversationAndProjection(t *testing.T) {
 	if len(domain) != 1 || domain[0].Content != "hello" {
 		t.Fatalf("unexpected conversation state: %#v", domain)
 	}
-	pane := app.PaneMgr.Get("agent")
+	pane := app.ws.PaneMgr().Get("agent")
 	if pane == nil {
 		t.Fatal("pane was not created")
 	}

@@ -308,21 +308,22 @@ func (a *AgentState) ApplyEvent(evt AgentEvent) AgentEffects {
 	case "thinking":
 		if delta, ok := evt.Data.(reasoning.Delta); ok && delta.Text != "" && delta.Kind != reasoning.Encrypted {
 			a.logIfInvalidUTF8("thinking", delta.Text)
-			if !inactive {
-				target.ClearTurnStatus()
+			if inactive {
+				// Reasoning queued behind Stop or completion is not accepted
+				// evidence: it must not open a new thought (and shell pane) per
+				// delta or reactivate the stopped turn. The thought already
+				// retained keeps its interrupted/settled state.
+				break
 			}
+			target.ClearTurnStatus()
 			delta.Text = SanitizeForTerminal(delta.Text)
 			target.AppendReasoning(delta)
 			if delta.Kind.IsSummary() || delta.Kind.IsRaw() {
 				a.ReasoningMode = delta.Kind
 			}
-			if !inactive {
-				a.Running, a.Thinking = true, true
-				effects.setStatus("Thinking")
-				effects.setThinking(true, false, false)
-			} else {
-				target.MarkAllThinkingInterrupted()
-			}
+			a.Running, a.Thinking = true, true
+			effects.setStatus("Thinking")
+			effects.setThinking(true, false, false)
 			a.LastTokenTime = time.Now()
 		}
 	case "reasoning_classified":

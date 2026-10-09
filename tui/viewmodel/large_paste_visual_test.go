@@ -17,7 +17,7 @@ func TestLargePasteVisualAcceptance(t *testing.T) {
 		t.Skip("requires the repository's dedicated terminal capture workflow")
 	}
 	app := newFullTestApp(t)
-	app.Logger = stubLogger{}
+	wsOf(app).Logger = stubLogger{}
 	app.AddOrchestrator("paste-owner")
 	app.ActiveSession = workspace.NewSession("paste-owner", t.TempDir(), nil, stubLogger{})
 	app.maybeHydrateComposerDraft()

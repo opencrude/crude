@@ -26,7 +26,7 @@ func TestPromotedThoughtsJoinActivityAcrossRequests(t *testing.T) {
 			app.width, app.height = width, 40
 			app.AddOrchestrator("activity-owner")
 			app.AddOrchestrator("other-tab") // completion must target the owner, not the selected tab
-			state := app.AgentMgr.Get("activity-owner").State
+			state := app.ws.AgentMgr().Get("activity-owner").State
 			renderer := app.subPaneProjections.GetExisting(state.ID).renderer
 			renderer.SetSize(width, 40)
 			renderer.SetChatAreaBounds(0, 30)
@@ -150,7 +150,7 @@ func TestPromotedThinkingSettlesOnEveryLifecyclePath(t *testing.T) {
 			app := newFullTestApp(t)
 			app.AddOrchestrator("parent")
 			app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: "child", Type: "start", Data: map[string]string{"parent_id": "parent", "agent_name": "Child"}})
-			state := app.AgentMgr.Get("child").State
+			state := app.ws.AgentMgr().Get("child").State
 			app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: "child", Type: "thinking", Data: reasoning.Delta{Text: thinkingLines(40)}})
 			paneID := app.thinkingPaneID(state)
 			if paneID == "" {
@@ -161,7 +161,7 @@ func TestPromotedThinkingSettlesOnEveryLifecyclePath(t *testing.T) {
 			} else {
 				app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: "child", Type: event.name, Data: event.data})
 			}
-			if app.thinkingPaneID(state) != "" || app.PaneMgr.Has(paneID) || app.subPaneProjections.Has(paneID) {
+			if app.thinkingPaneID(state) != "" || app.ws.PaneMgr().Has(paneID) || app.subPaneProjections.Has(paneID) {
 				t.Fatal("settled nested thought left a pane boundary")
 			}
 			thought := state.Messages.Messages()[0]
@@ -175,10 +175,10 @@ func TestPromotedThinkingSettlesOnEveryLifecyclePath(t *testing.T) {
 func TestCompletedPaneAndActivityShareOneSpacer(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("root")
-	child := app.PaneMgr.GetOrCreate("finished-child", workspace.PaneAgent, "Finished child")
+	child := app.ws.PaneMgr().GetOrCreate("finished-child", workspace.PaneAgent, "Finished child")
 	app.subPaneProjections.Get(child.ID, child.Type)
 	child.Collapse()
-	state := app.AgentMgr.Get("root").State
+	state := app.ws.AgentMgr().Get("root").State
 	state.Messages.AppendMessage(workspace.Message{Role: ctypes.RoleTool, SubPaneID: child.ID})
 	state.Messages.AppendMessage(workspace.Message{Role: ctypes.RoleAssistant})
 	for _, id := range []string{"one", "two"} {

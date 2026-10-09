@@ -17,8 +17,10 @@ type SessionSettingsOperation struct {
 	form     *types.Settings
 	expected *uint64
 	reset    bool
-	once     sync.Once
-	result   SessionSettingsResult
+	// remote performs the operation in a core when the owner is a replica.
+	remote func() (session.SettingsSnapshotSet, error)
+	once   sync.Once
+	result SessionSettingsResult
 }
 
 type SessionSettingsResult struct {
@@ -82,7 +84,9 @@ func (operation *SessionSettingsOperation) Run() SessionSettingsResult {
 	}
 	operation.once.Do(func() {
 		operation.result.owner = operation.owner
-		if operation.reset {
+		if operation.remote != nil {
+			operation.result.Snapshot, operation.result.Err = operation.remote()
+		} else if operation.reset {
 			operation.result.Snapshot, operation.result.Err = operation.backend.ResetSettingsSnapshotAtRevision(*operation.expected)
 		} else if operation.expected != nil && operation.form == nil {
 			operation.result.Snapshot, operation.result.Err = operation.backend.ToggleMultiAgentAtRevision(*operation.expected)
@@ -130,4 +134,27 @@ func (owner *Session) installSettings(snapshot session.SettingsSnapshotSet) bool
 	owner.Settings = NewSessionSettingsState(snapshot.Effective, snapshot.Base, snapshot.Overrides)
 	owner.settingsRevision = snapshot.Revision
 	return true
+}
+
+// NewReplicaSessionSettingsOperation wraps a core request for a connected
+// shell's replica session. Its result is applied with ApplyReplicaSettings.
+func NewReplicaSessionSettingsOperation(owner *Session, run func() (session.SettingsSnapshotSet, error)) *SessionSettingsOperation {
+	return &SessionSettingsOperation{owner: owner, remote: run}
+}
+
+// ResultOwner is the replica session an operation result belongs to.
+func (result SessionSettingsResult) ResultOwner() *Session { return result.owner }
+
+// InstallSettingsSnapshot installs a newer redacted settings set on a replica
+// session; older revisions are rejected.
+func (owner *Session) InstallSettingsSnapshot(snapshot session.SettingsSnapshotSet) bool {
+	return owner.installSettings(snapshot)
+}
+
+// SettingsRevision is the installed settings revision that fences the next save.
+func (owner *Session) SettingsRevision() uint64 {
+	if owner == nil {
+		return 0
+	}
+	return owner.settingsRevision
 }

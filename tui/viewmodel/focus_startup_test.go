@@ -35,8 +35,8 @@ func TestStartupFocus_LauncherOwnsEnterAndHints(t *testing.T) {
 	app.ChatAreaHeight = 20
 	app.BufferMgr = editor.NewBufferManager()
 	app.EditorState = NewEditorState()
-	app.AgentMgr = workspace.NewAgentManager()
-	app.AgentView = NewAgentViewState(app.AgentMgr)
+	wsOf(app).AgentMgr = workspace.NewAgentManager()
+	app.AgentView = NewAgentViewState(app.ws.AgentMgr())
 	app.actionRegistry = ui.DefaultRegistry()
 	if app.FocusStack == nil {
 		app.FocusStack = NewFocusStack()

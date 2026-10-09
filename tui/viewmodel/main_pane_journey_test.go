@@ -185,7 +185,7 @@ func TestMainPaneJourneyNestedDividersAndCompactKeyboard(t *testing.T) {
 	defer ws.Close()
 	paneJourneySize(app, 180, 50)
 	for _, marker := range []string{"west", "north", "south"} {
-		path := filepath.Join(app.RootPath, marker+"_marker.go")
+		path := filepath.Join(app.ws.RootPath(), marker+"_marker.go")
 		if err := os.WriteFile(path, []byte(marker+"\n"), 0o600); err != nil {
 			t.Fatal(err)
 		}

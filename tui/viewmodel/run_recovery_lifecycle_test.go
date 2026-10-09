@@ -23,7 +23,7 @@ func TestRecoveryRetryDoesNotOverwriteResumedActivity(t *testing.T) {
 		for _, initial := range []recovery.State{recovery.Recovering, recovery.NeedsAttention, recovery.Interrupted} {
 			t.Run(fmt.Sprintf("%d/%s", width, initial), func(t *testing.T) {
 				app := newFullTestApp(t)
-				app.Logger = stubLogger{}
+				wsOf(app).Logger = stubLogger{}
 				app.width, app.height = width, 40
 				app.AddOrchestrator("neighbor")
 				app.AddOrchestrator("owner")
@@ -53,7 +53,7 @@ func TestRecoveryRetryDoesNotOverwriteResumedActivity(t *testing.T) {
 				status.Summary, status.UpdatedAt = "Retrying unfinished run", time.Now()
 				emit("recovery", status)
 				app.paintShellFrame()
-				if phase := app.AgentActivity("owner").Status.Phase; phase != types.AgentPreparing {
+				if phase := app.ws.AgentActivity("owner").Status.Phase; phase != types.AgentPreparing {
 					t.Fatalf("acknowledged retry still claims cooldown: %s", phase)
 				}
 				for _, event := range []struct {
@@ -80,8 +80,8 @@ func TestRecoveryRetryDoesNotOverwriteResumedActivity(t *testing.T) {
 							_, _ = app.Update(types.TickMsg(time.Now()))
 						}
 						app.paintShellFrame()
-						snapshot, _ := app.Status.Agent("owner")
-						activity := app.AgentActivity("owner")
+						snapshot, _ := app.ws.Status().Agent("owner")
+						activity := app.ws.AgentActivity("owner")
 						if snapshot.Phase != event.phase || activity.Status.Phase != event.phase || snapshot.NeedsAction {
 							t.Fatalf("%s frame %d: resumed phase overwritten: snapshot=%+v activity=%+v", event.typ, frame, snapshot, activity.Status)
 						}
@@ -101,7 +101,7 @@ func TestRecoveryRetryDoesNotOverwriteResumedActivity(t *testing.T) {
 				if app.canRetryAgentRecovery("owner") {
 					t.Fatal("active retry attempt still offers another Continue action")
 				}
-				for _, issue := range app.Status.Issues() {
+				for _, issue := range app.ws.Status().Issues() {
 					if issue.ID == "agent:owner" && issue.ResolvedAt.IsZero() {
 						t.Fatalf("acknowledged retry left a live needs-attention issue: %+v", issue)
 					}
@@ -114,7 +114,7 @@ func TestRecoveryRetryDoesNotOverwriteResumedActivity(t *testing.T) {
 				emit("done", map[string]any{"reason": "completed"})
 				_, _ = app.Update(types.TickMsg(time.Now()))
 				app.paintShellFrame()
-				if app.AgentActivity("owner").Status.Phase != types.AgentCompleted {
+				if app.ws.AgentActivity("owner").Status.Phase != types.AgentCompleted {
 					t.Fatal("recovery completion did not settle the activity")
 				}
 			})
@@ -129,23 +129,23 @@ func TestRecoveryActivityHonorsExplicitStopWhileIncidentIsPending(t *testing.T) 
 		ID: "incident", AgentID: "owner", Generation: 1, State: recovery.Recovering,
 		RetryAt: time.Now().Add(time.Minute),
 	}})
-	app.AgentMgr.Get("owner").State.BeginCancellation()
+	app.ws.AgentMgr().Get("owner").State.BeginCancellation()
 	app.syncAgentStatusInventory()
 	_ = app.handleAgentEvent(types.AgentEventMsg{Type: "recovery", AgentID: "owner", Data: recovery.Status{
 		ID: "incident", AgentID: "owner", Generation: 1, State: recovery.NeedsAttention,
 		Summary: "This queued event must not undo Stop", UpdatedAt: time.Now(),
 	}})
-	snapshot, _ := app.Status.Agent("owner")
+	snapshot, _ := app.ws.Status().Agent("owner")
 	if snapshot.Phase != types.AgentCancelling || snapshot.NeedsAction {
 		t.Fatalf("rejected queued recovery changed live status: %+v", snapshot)
 	}
-	for _, issue := range app.Status.Issues() {
+	for _, issue := range app.ws.Status().Issues() {
 		if issue.ID == "agent:owner" && issue.ResolvedAt.IsZero() {
 			t.Fatalf("rejected queued recovery raised an attention issue: %+v", issue)
 		}
 	}
 	app.paintShellFrame()
-	view := app.AgentActivity("owner")
+	view := app.ws.AgentActivity("owner")
 	if view.Status.Phase != types.AgentCancelling || view.Active {
 		t.Fatalf("pending incident hid Stop: %+v", view)
 	}
@@ -202,11 +202,11 @@ func TestRecoveryRealComposerRetryClickAndAutomaticContinuation(t *testing.T) {
 			}))
 			defer server.Close()
 			app := newFullTestApp(t)
-			app.Logger = stubLogger{}
-			app.RootPath, app.WorkspaceDir = t.TempDir(), t.TempDir()
-			app.SessionsByID = make(map[string]*workspace.Session)
-			app.SessionsByAgent = make(map[string]*workspace.Session)
-			app.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+			wsOf(app).Logger = stubLogger{}
+			wsOf(app).RootPath, wsOf(app).WorkspaceDir = t.TempDir(), t.TempDir()
+			wsOf(app).SessionsByID = make(map[string]*workspace.Session)
+			wsOf(app).SessionsByAgent = make(map[string]*workspace.Session)
+			wsOf(app).SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
 			cfg := testAccountConfig()
 			account := cfg.Accounts["test"]
 			template := account.Connection
@@ -214,19 +214,19 @@ func TestRecoveryRealComposerRetryClickAndAutomaticContinuation(t *testing.T) {
 			account.Connection = template
 			cfg.Accounts["test"] = account
 			cfg.Agents.Enabled = false
-			owner, err := app.CreateSession(cfg, t.TempDir())
+			owner, err := wsOf(app).CreateSession(cfg, t.TempDir())
 			if err != nil {
 				t.Fatal(err)
 			}
 			// CloseAgent releases the orchestrator, not its session's log/database.
 			// Join the backend before TempDir's Windows cleanup removes those files.
-			defer app.CloseAllSessions()
+			defer wsOf(app).CloseAllSessions()
 			sender := &recoveryJourneySender{events: make(chan types.AgentMsg, 512)}
-			orch, err := app.StartOrchestrator(owner.SessionID, sender)
+			orch, err := wsOf(app).StartOrchestrator(owner.SessionID, sender)
 			if err != nil {
 				t.Fatal(err)
 			}
-			defer app.CloseAgent(orch.ID)
+			defer app.ws.CloseAgent(orch.ID)
 			app.AddOrchestrator(orch.ID)
 			app.maybeHydrateComposerDraft()
 			app.Input.SetInput("Continue this exact task once the connection is restored.")
@@ -305,8 +305,8 @@ func TestRecoveryRealComposerRetryClickAndAutomaticContinuation(t *testing.T) {
 			waitFor("stream_token")
 			_, _ = app.Update(types.TickMsg(time.Now()))
 			app.paintShellFrame()
-			snapshot, _ := app.Status.Agent(orch.ID)
-			view := app.AgentActivity(orch.ID)
+			snapshot, _ := app.ws.Status().Agent(orch.ID)
+			view := app.ws.AgentActivity(orch.ID)
 			line := shellBufferRow(app, app.chatRect.Y+app.chatRect.H-1)
 			if snapshot.Phase != types.AgentResponding || view.Status.Phase != types.AgentResponding || !strings.Contains(line, "Receiving response") {
 				t.Fatalf("real resumed output still shows recovery: snapshot=%+v activity=%+v strip=%q", snapshot, view.Status, line)
@@ -329,7 +329,7 @@ func TestRecoveryRealComposerRetryClickAndAutomaticContinuation(t *testing.T) {
 			waitFor("done")
 			_, _ = app.Update(types.TickMsg(time.Now()))
 			app.paintShellFrame()
-			if view := app.AgentActivity(orch.ID); view.Active || view.Status.Phase != types.AgentCompleted || view.Recovery.State != recovery.Recovered {
+			if view := app.ws.AgentActivity(orch.ID); view.Active || view.Status.Phase != types.AgentCompleted || view.Recovery.State != recovery.Recovered {
 				t.Fatalf("real completion did not settle recovery: %+v", view)
 			}
 			var transcript strings.Builder

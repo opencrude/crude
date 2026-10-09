@@ -16,10 +16,10 @@ type recoveryRetryResultMsg struct {
 type recoveryCancelResultMsg recoveryRetryResultMsg
 
 func (m *App) canRetryAgentRecovery(agentID string) bool {
-	if m.AgentMgr == nil {
+	if m.ws.AgentMgr() == nil {
 		return false
 	}
-	node := m.AgentMgr.Get(agentID)
+	node := m.ws.AgentMgr().Get(agentID)
 	if node == nil || node.State == nil || node.State.Cancelling || node.State.Completed {
 		return false
 	}
@@ -34,8 +34,8 @@ func (m *App) retryAgentRecovery(agentID string) tea.Cmd {
 		}
 		return nil
 	}
-	status := m.AgentMgr.Get(agentID).State.RecoveryStatus()
-	run := m.PrepareAgentRecovery(agentID, status.ID, status.Generation)
+	status := m.ws.AgentMgr().Get(agentID).State.RecoveryStatus()
+	run := m.ws.PrepareAgentRecovery(agentID, status.ID, status.Generation)
 	if run == nil {
 		return nil
 	}
@@ -46,10 +46,10 @@ func (m *App) retryAgentRecovery(agentID string) tea.Cmd {
 }
 
 func (m *App) applyRecoveryRetryResult(result recoveryRetryResultMsg) {
-	if result.generation != m.workspaceSwitchGen.Load() || m.AgentMgr == nil || m.Feedback == nil {
+	if result.generation != m.workspaceSwitchGen.Load() || m.ws.AgentMgr() == nil || m.Feedback == nil {
 		return
 	}
-	if node := m.AgentMgr.Get(result.agentID); node == nil || node.State == nil ||
+	if node := m.ws.AgentMgr().Get(result.agentID); node == nil || node.State == nil ||
 		node.State.RecoveryStatus().ID != result.incidentID {
 		return
 	}
@@ -60,14 +60,14 @@ func (m *App) applyRecoveryRetryResult(result recoveryRetryResultMsg) {
 }
 
 func (m *App) applyRecoveryCancelResult(result recoveryCancelResultMsg) {
-	if result.generation != m.workspaceSwitchGen.Load() || m.AgentMgr == nil || result.accepted {
+	if result.generation != m.workspaceSwitchGen.Load() || m.ws.AgentMgr() == nil || result.accepted {
 		return
 	}
-	node := m.AgentMgr.Get(result.agentID)
+	node := m.ws.AgentMgr().Get(result.agentID)
 	if node == nil || node.State == nil || node.State.RecoveryStatus().ID != result.incidentID {
 		return
 	}
-	m.RejectAgentRecoveryCancellation(result.agentID, result.incidentID)
+	m.ws.RejectAgentRecoveryCancellation(result.agentID, result.incidentID)
 	if m.Feedback != nil {
 		m.Feedback.NotifyInfo("The recovery changed before Stop was applied; review this agent's current run")
 	}

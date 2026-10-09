@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -14,6 +15,7 @@ import (
 
 	"crude/clipboard"
 	"crude/sessiondb"
+	"crude/shellport"
 	"crude/tui/editor"
 	filepickerscreen "crude/tui/screens/filepicker"
 	"crude/tui/ui"
@@ -79,7 +81,7 @@ type clipboardAsyncJob struct {
 
 type clipboardAsyncImageStoredMsg struct {
 	session    *workspace.Session
-	store      *workspace.ReferenceStore
+	store      workspace.SessionReferences
 	ref        sessiondb.Reference
 	imageBytes int
 	err        error
@@ -103,30 +105,32 @@ const directoryAsyncTimeout = 10 * time.Second
 type appAsyncIOState struct {
 	mu sync.Mutex
 
-	nextClipboard       uint64
-	latestClipboard     map[clipboardAsyncKey]uint64
-	clipboardBackend    clipboardAsyncBackend
-	clipboardJobs       []clipboardAsyncJob
-	clipboardCond       *sync.Cond
-	clipboardClosed     bool
-	clipboardWorkerDone chan struct{}
-	clipboardWorkerRun  bool
-	nextDirectory       uint64
-	latestDirectory     map[*filepickerscreen.Screen]uint64
-	directoryCancel     map[*filepickerscreen.Screen]chan struct{}
-	directoryBrowser    directoryAsyncBrowser
-	nextPathSearch      uint64
-	latestPathSearch    map[*filepickerscreen.Screen]uint64
-	pathSearchCancel    map[*filepickerscreen.Screen]context.CancelFunc
-	pathSearchRoot      map[*filepickerscreen.Screen]string
-	pathSearchDirsOnly  map[*filepickerscreen.Screen]bool
-	pathSearchHidden    map[*filepickerscreen.Screen]bool
-	pathSearchCatalog   map[*filepickerscreen.Screen]workspace.BrowserCatalog
-	pathSearchRunning   map[*filepickerscreen.Screen]bool
-	pathSearchQuery     map[*filepickerscreen.Screen]string
-	pathSearchIntent    map[*filepickerscreen.Screen]filepickerscreen.IntentToken
-	treePathSearch      *treePathSearchState
-	detachedMessageSink func(tea.Msg)
+	nextClipboard           uint64
+	latestClipboard         map[clipboardAsyncKey]uint64
+	clipboardBackend        clipboardAsyncBackend
+	clipboardJobs           []clipboardAsyncJob
+	clipboardCond           *sync.Cond
+	clipboardClosed         bool
+	clipboardWorkerDone     chan struct{}
+	clipboardWorkerRun      bool
+	nextDirectory           uint64
+	latestDirectory         map[*filepickerscreen.Screen]uint64
+	directoryCancel         map[*filepickerscreen.Screen]chan struct{}
+	directoryBrowser        directoryAsyncBrowser
+	nextPathSearch          uint64
+	latestPathSearch        map[*filepickerscreen.Screen]uint64
+	pathSearchCancel        map[*filepickerscreen.Screen]context.CancelFunc
+	pathSearchRoot          map[*filepickerscreen.Screen]string
+	pathSearchDirsOnly      map[*filepickerscreen.Screen]bool
+	pathSearchHidden        map[*filepickerscreen.Screen]bool
+	pathSearchCatalog       map[*filepickerscreen.Screen]workspace.BrowserCatalog
+	pathSearchRunning       map[*filepickerscreen.Screen]bool
+	pathSearchQuery         map[*filepickerscreen.Screen]string
+	pathSearchIntent        map[*filepickerscreen.Screen]filepickerscreen.IntentToken
+	treePathSearch          *treePathSearchState
+	detachedMessageSink     func(tea.Msg)
+	desktopCaches           []string
+	editorRecoveryRevisions map[string]uint64
 }
 
 func asyncIOStateFor(m *App) *appAsyncIOState {
@@ -616,6 +620,7 @@ func (m *App) beginDirectoryAsyncLoadInternal(
 	state.directoryCancel[target] = cancel
 	browse := state.directoryBrowser
 	state.mu.Unlock()
+	files, remote := m.ws.(shellport.ClientFiles)
 
 	return func() tea.Msg {
 		state.mu.Lock()
@@ -632,7 +637,23 @@ func (m *App) beginDirectoryAsyncLoadInternal(
 		}
 		done := make(chan browseResult, 1)
 		go func() {
-			listing, err := browse(path)
+			var listing workspace.DirectoryListing
+			var err error
+			if remote {
+				ctx, stop := context.WithTimeout(context.Background(), directoryAsyncTimeout)
+				defer stop()
+				go func() {
+					select {
+					case <-cancel:
+						stop()
+					case <-ctx.Done():
+					}
+				}()
+				entries, readErr := files.BrowseExternalDirectory(ctx, path)
+				listing, err = clientDirectoryListing(files.CanonicalClientPath(path), entries), readErr
+			} else {
+				listing, err = browse(path)
+			}
 			done <- browseResult{listing: listing, err: err}
 		}()
 		timer := time.NewTimer(directoryAsyncTimeout)
@@ -760,6 +781,9 @@ func (m *App) StopAsyncIO() {
 }
 
 func (m *App) stopAsyncIO() {
+	// Exclusive post-program barrier: never turn an unresolved flush into a
+	// successful detach merely by closing its projection.
+	retainedEditors := m.retainEditorRecovery(m.FlushLiveEditors())
 	m.flushComposerDraft()
 	m.resetMemoryBrowser()
 	if m.overlayHost != nil {
@@ -780,13 +804,33 @@ func (m *App) stopAsyncIO() {
 		m.Tree.Model.SetOnGitChanged(nil)
 		m.Tree.Model.StopWatcher()
 	}
-	m.closeWorkspaceEditors()
+	if len(retainedEditors) == 0 {
+		m.closeWorkspaceEditors()
+	} else if m.EditorState != nil {
+		seen := make(map[*editor.Editor]bool)
+		closeEditor := func(ed *editor.Editor) {
+			if ed == nil || seen[ed] || retainedEditors[ed] {
+				return
+			}
+			seen[ed] = true
+			ed.SetOnContentChanged(nil)
+			ed.Close()
+		}
+		for _, tab := range m.EditorState.Tabs {
+			if tab != nil {
+				closeEditor(tab.Editor)
+			}
+		}
+		closeEditor(m.EditorState.Editor)
+	}
 	state := m.asyncIO.Swap(nil)
 	if state == nil {
 		return
 	}
 	state.mu.Lock()
 	state.clipboardClosed = true
+	caches := state.desktopCaches
+	state.desktopCaches = nil
 	workerRunning := state.clipboardWorkerRun
 	for target, cancel := range state.directoryCancel {
 		close(cancel)
@@ -816,6 +860,9 @@ func (m *App) stopAsyncIO() {
 		state.clipboardCond.Broadcast()
 	}
 	state.mu.Unlock()
+	for _, cache := range caches {
+		_ = os.RemoveAll(cache)
+	}
 	if workerRunning {
 		<-state.clipboardWorkerDone
 	}

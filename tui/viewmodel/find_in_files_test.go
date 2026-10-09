@@ -50,7 +50,7 @@ func TestFindInFilesShortcutRoutesTypingAndPaste(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 120
 	app.height = 36
-	app.RootPath = t.TempDir()
+	wsOf(app).RootPath = t.TempDir()
 	app.windowManager = wm.NewWindowManager()
 	app.overlayHost = ui.NewOverlayHost(app.windowManager)
 
@@ -83,7 +83,7 @@ func TestReplaceInFilesShortcutOpensSiblingOverlay(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 120
 	app.height = 36
-	app.RootPath = t.TempDir()
+	wsOf(app).RootPath = t.TempDir()
 	app.windowManager = wm.NewWindowManager()
 	app.overlayHost = ui.NewOverlayHost(app.windowManager)
 
@@ -108,8 +108,8 @@ func TestReplaceInFilesAppliesToDiskAndRefreshes(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 120
 	app.height = 36
-	app.RootPath = root
-	app.FileOps = workspace.NewFileOpsService(root, nil, nil)
+	wsOf(app).RootPath = root
+	wsOf(app).FileOps = workspace.NewFileOpsService(root, nil, nil)
 	app.windowManager = wm.NewWindowManager()
 	app.overlayHost = ui.NewOverlayHost(app.windowManager)
 	app.toggleReplaceInFiles()
@@ -142,7 +142,7 @@ func TestFindInFilesSearchRoutesThroughWorkspaceEvent(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 120
 	app.height = 36
-	app.RootPath = root
+	wsOf(app).RootPath = root
 	app.windowManager = wm.NewWindowManager()
 	app.overlayHost = ui.NewOverlayHost(app.windowManager)
 	app.toggleFindInFiles()
@@ -194,7 +194,7 @@ func TestFindInFilesIgnoresStaleOwnerMessages(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width = 120
 	app.height = 36
-	app.RootPath = t.TempDir()
+	wsOf(app).RootPath = t.TempDir()
 	app.windowManager = wm.NewWindowManager()
 	app.overlayHost = ui.NewOverlayHost(app.windowManager)
 	app.toggleFindInFiles()
@@ -208,7 +208,7 @@ func TestFindInFilesIgnoresStaleOwnerMessages(t *testing.T) {
 		t.Fatal("stale close should not affect the current Find in Files screen")
 	}
 
-	app.handleAppMessages(findinfiles.OpenMsg{Screen: stale, Match: fileio.ProjectSearchMatch{Path: filepath.Join(app.RootPath, "stale.go")}})
+	app.handleAppMessages(findinfiles.OpenMsg{Screen: stale, Match: fileio.ProjectSearchMatch{Path: filepath.Join(app.ws.RootPath(), "stale.go")}})
 	if app.findInFiles != current || app.windowManager.Window(findInFilesWindowID) == nil {
 		t.Fatal("stale open should not affect the current Find in Files screen")
 	}
@@ -219,7 +219,7 @@ func TestClosingFindInFilesPreservesBlockingSessionPanel(t *testing.T) {
 	selectDeckSession(t, app, app.ActiveSession, "agent")
 	app.width = 120
 	app.height = 36
-	app.RootPath = t.TempDir()
+	wsOf(app).RootPath = t.TempDir()
 	app.windowManager = wm.NewWindowManager()
 	app.overlayHost = ui.NewOverlayHost(app.windowManager)
 	projection := app.activeSessionProjection()
@@ -262,9 +262,9 @@ func TestFindInFilesActivationOpensAndPositionsEditor(t *testing.T) {
 		t.Fatal(err)
 	}
 	app := newFullTestApp(t)
-	app.RootPath = root
+	wsOf(app).RootPath = root
 	app.BufferMgr = editor.NewBufferManager()
-	app.LSPMgr = workspace.NewLSPManager(nil)
+	wsOf(app).LSPMgr = workspace.NewLSPManager(nil)
 	app.windowManager = wm.NewWindowManager()
 	app.overlayHost = ui.NewOverlayHost(app.windowManager)
 	app.findInFiles = nil

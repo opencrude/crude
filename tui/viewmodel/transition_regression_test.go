@@ -9,6 +9,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/shellport"
 	ttypes "crude/tui/types"
 	"crude/workspace"
 )
@@ -29,7 +30,7 @@ func newTransitionApp(t *testing.T) *App {
 	ws.SetAppDefaults(ttypes.AppSettings{Accounts: ws.AllAccounts()})
 	ws.SetEventSender(noopEventSender{})
 	t.Setenv("MODELS_DEV_URL", "http://127.0.0.1:9/models-dev-unreachable")
-	app := NewApp(ws, nil)
+	app := NewApp(shellport.Local(ws), nil)
 	t.Cleanup(func() {
 		app.StopAsyncIO()
 		ws.Close()
@@ -68,7 +69,7 @@ func chatAreaText(app *App) string {
 func TestTransition_EditorCloseRestoresChat(t *testing.T) {
 	app := newTransitionApp(t)
 	t.Cleanup(func() {
-		app.Close()
+		wsOf(app).Close()
 	})
 	app.paintShellFrame()
 
@@ -82,7 +83,7 @@ func TestTransition_EditorCloseRestoresChat(t *testing.T) {
 	}
 
 	// Open the editor over the chat.
-	if _, err := app.openEditorTab(filepath.Join(app.RootPath, "main.go")); err != nil {
+	if _, err := app.openEditorTab(filepath.Join(app.ws.RootPath(), "main.go")); err != nil {
 		t.Fatal(err)
 	}
 	app.paintShellFrame()
@@ -109,7 +110,7 @@ func TestTransition_EditorCloseRestoresChat(t *testing.T) {
 func TestTransition_EditorCloseShowsCleanLauncher(t *testing.T) {
 	app := newTransitionApp(t)
 	t.Cleanup(func() {
-		app.Close()
+		wsOf(app).Close()
 	})
 	app.RemoveOrchestrator("agent-1")
 	app.openLauncher() // AddOrchestrator nils the launcher screen
@@ -119,7 +120,7 @@ func TestTransition_EditorCloseShowsCleanLauncher(t *testing.T) {
 	}
 
 	// Open an editor.
-	if _, err := app.openEditorTab(filepath.Join(app.RootPath, "main.go")); err != nil {
+	if _, err := app.openEditorTab(filepath.Join(app.ws.RootPath(), "main.go")); err != nil {
 		t.Fatal(err)
 	}
 	app.paintShellFrame()
@@ -163,7 +164,7 @@ func TestTransition_EditorCloseShowsCleanLauncher(t *testing.T) {
 func TestTransition_TabSwitchEditorToAgentRestoresChat(t *testing.T) {
 	app := newTransitionApp(t)
 	t.Cleanup(func() {
-		app.Close()
+		wsOf(app).Close()
 	})
 	app.paintShellFrame()
 	if !app.shellSlotActive(shellChatSlot) {
@@ -171,7 +172,7 @@ func TestTransition_TabSwitchEditorToAgentRestoresChat(t *testing.T) {
 	}
 
 	// Open the editor: the agent tab stays in the tab bar.
-	if _, err := app.openEditorTab(filepath.Join(app.RootPath, "main.go")); err != nil {
+	if _, err := app.openEditorTab(filepath.Join(app.ws.RootPath(), "main.go")); err != nil {
 		t.Fatal(err)
 	}
 	app.paintShellFrame()

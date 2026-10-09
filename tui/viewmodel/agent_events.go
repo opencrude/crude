@@ -9,9 +9,9 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/agent"
-	"crude/fileio"
 	"crude/provider"
 	"crude/sessiondb"
+	"crude/shellport"
 	ttypes "crude/tui/types"
 	"crude/tui/ui"
 	"crude/tui/wm"
@@ -47,7 +47,7 @@ func (m *App) submitInput(sessionID, text string, refIDs []string) tea.Cmd {
 }
 
 type inputAdmissionMsg struct {
-	workspace       *workspace.Workspace
+	workspace       shellport.Workspace
 	workspaceGen    uint64
 	session         *workspace.Session
 	intent          *workspace.InputAdmissionIntent
@@ -64,12 +64,12 @@ type inputAdmissionMsg struct {
 }
 
 func (m *App) submitPreparedInput(sessionID string, input provider.UserInput, draftRevision uint64) tea.Cmd {
-	n := m.AgentMgr.Get(sessionID)
+	n := m.ws.AgentMgr().Get(sessionID)
 	if n == nil || n.State == nil {
 		return nil
 	}
 	input.ActivePaths = m.memoryContextPaths()
-	owner := m.Workspace
+	owner := m.ws
 	if owner == nil {
 		if m.Feedback != nil {
 			m.Feedback.NotifyError("Message was not sent; your draft is kept")
@@ -83,7 +83,7 @@ func (m *App) submitPreparedInput(sessionID string, input provider.UserInput, dr
 		}
 		return nil
 	}
-	frontend := owner.SessionsByAgent[sessionID]
+	frontend := owner.SessionsByAgent()[sessionID]
 	labels := m.referenceLabels(input.ReferenceIDs)
 	var references []sessiondb.Reference
 	if frontend != nil && frontend.RefStore != nil {
@@ -142,8 +142,8 @@ func (m *App) applyInputAdmission(msg inputAdmissionMsg) tea.Cmd {
 	if _, pending := m.pendingInputAdmissions[msg.intent]; !pending || msg.intent == nil {
 		return nil
 	}
-	if msg.workspace == nil || msg.workspace != m.Workspace || msg.workspaceGen != m.workspaceSwitchGen.Load() ||
-		msg.session == nil || m.SessionsByAgent[msg.agentID] != msg.session {
+	if msg.workspace == nil || msg.workspace != m.ws || msg.workspaceGen != m.workspaceSwitchGen.Load() ||
+		msg.session == nil || m.ws.SessionsByAgent()[msg.agentID] != msg.session {
 		delete(m.pendingInputAdmissions, msg.intent)
 		return nil
 	}
@@ -156,7 +156,7 @@ func (m *App) applyInputAdmission(msg inputAdmissionMsg) tea.Cmd {
 			return nil
 		}
 		delete(m.pendingInputAdmissions, msg.intent)
-		if !m.ApplyAgentInputAdmission(msg.intent, msg.result, msg.input, msg.referenceLabels) {
+		if !m.ws.ApplyAgentInputAdmission(msg.intent, msg.result, msg.input, msg.referenceLabels) {
 			return nil
 		}
 		m.syncAgentMessages(msg.agentID, true)
@@ -183,13 +183,21 @@ func (m *App) applyInputAdmission(msg inputAdmissionMsg) tea.Cmd {
 }
 
 func (m *App) submitSteering(sessionID, text string, refIDs []string) tea.Cmd {
-	n := m.AgentMgr.Get(sessionID)
+	n := m.ws.AgentMgr().Get(sessionID)
 	if n == nil || n.State == nil {
 		return nil
 	}
 	input := provider.InputWithRefs(text, refIDs)
 	input.InternalID = fmt.Sprintf("steering-%016x", rand.Uint64())
-	if m.Workspace == nil || !m.SteerAgent(sessionID, input) {
+	if service, connected := m.ws.(shellport.SteeringAdmission); connected {
+		owner, session, generation := m.ws, m.ActiveSession, m.workspaceSwitchGen.Load()
+		revision, epoch := m.Input.DraftRevision(), m.Input.DraftEpoch()
+		return func() tea.Msg {
+			accepted, err := service.AdmitSteering(context.Background(), sessionID, input)
+			return remoteSteeringAdmittedMsg{owner: owner, session: session, generation: generation, agentID: sessionID, revision: revision, epoch: epoch, input: input, accepted: accepted, err: err}
+		}
+	}
+	if m.ws == nil || !m.ws.SteerAgent(sessionID, input) {
 		if m.Feedback != nil {
 			m.Feedback.NotifyError("human steering was not queued: this turn is no longer accepting notes")
 		}
@@ -201,6 +209,30 @@ func (m *App) submitSteering(sessionID, text string, refIDs []string) tea.Cmd {
 	m.syncPendingSteeringCount()
 	m.syncAgentMessages(sessionID, true)
 	return m.recordPrompt(text, refIDs...)
+}
+
+type remoteSteeringAdmittedMsg struct {
+	owner                       shellport.Workspace
+	session                     *workspace.Session
+	generation, revision, epoch uint64
+	agentID                     string
+	input                       provider.UserInput
+	accepted                    bool
+	err                         error
+}
+
+func (m *App) applyRemoteSteering(msg remoteSteeringAdmittedMsg) tea.Cmd {
+	if msg.owner != m.ws || msg.generation != m.workspaceSwitchGen.Load() {
+		return nil
+	}
+	if !msg.accepted || msg.err != nil {
+		m.Feedback.NotifyError("Note was not accepted; your draft is kept")
+		return nil
+	}
+	if msg.session == m.ActiveSession && msg.agentID == m.AgentView.ActiveID() && m.Input.DraftEpoch() == msg.epoch && m.Input.ClearInputAtRevision(msg.revision) {
+		m.persistComposerDraftIfChanged()
+	}
+	return m.recordPrompt(msg.input.Text, msg.input.ReferenceIDs...)
 }
 
 func (m *App) referenceLabels(refIDs []string) []string {
@@ -235,45 +267,51 @@ func (m *App) handleAgentEnvelope(evt agent.AgentEvent) tea.Cmd {
 func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 	// Service notices do not mutate the conversation. Their presentation stays
 	// client-local while all semantic events enter the workspace reducer once.
-	switch evt.Type {
-	case "response_continuation_unavailable":
-		data, _ := evt.Data.(map[string]any)
-		reason, _ := data["reason"].(string)
+	if notice, ok := workspace.NoticeFromEvent(evt); ok {
+		return m.presentAgentNotice(notice)
+	}
+	return m.presentAgentReduction(m.ws.ApplyAgentEvent(evt))
+}
+
+// presentAgentNotice shows one typed service notice. Local ingress and core
+// subscriptions share it, so every attached shell presents notices alike.
+func (m *App) presentAgentNotice(notice workspace.AgentNotice) tea.Cmd {
+	switch notice.Type {
+	case workspace.NoticeResponseContinuationUnavailable:
 		message := "Responses delta unavailable: the endpoint returned no response ID; full uploads continue"
-		if reason == "response_not_stored" {
+		if notice.Reason == "response_not_stored" {
 			message = "Responses delta unavailable: the endpoint declined server storage; full uploads continue"
 		}
 		if m.Feedback != nil {
 			m.Feedback.NotifyInfo(message)
 		}
 		return nil
-	case "memory_saved":
-		if data, ok := evt.Data.(map[string]any); ok && m.Feedback != nil {
-			count, _ := data["count"].(int)
-			if count > 0 {
-				notice := fmt.Sprintf("Memory: saved %d from this session", count)
-				if titles, ok := data["titles"].([]string); ok && len(titles) > 0 {
-					notice = fmt.Sprintf("Memory: saved %q", titles[0])
-					if count > 1 {
-						notice += fmt.Sprintf(" +%d more", count-1)
-					}
+	case workspace.NoticeMemorySaved:
+		if notice.Count > 0 && m.Feedback != nil {
+			text := fmt.Sprintf("Memory: saved %d from this session", notice.Count)
+			if len(notice.Titles) > 0 {
+				text = fmt.Sprintf("Memory: saved %q", notice.Titles[0])
+				if notice.Count > 1 {
+					text += fmt.Sprintf(" +%d more", notice.Count-1)
 				}
-				m.Feedback.NotifyInfo(notice)
 			}
+			m.Feedback.NotifyInfo(text)
 		}
 		return m.refreshMemoryBrowser()
-	case "async_command_status":
-		if commands, ok := evt.Data.([]fileio.AsyncCmdInfo); ok {
-			m.updateSessionBackgroundJobs(evt.AgentID, commands, time.Now())
-		}
+	case workspace.NoticeAsyncCommandStatus:
+		m.updateSessionBackgroundJobs(notice.AgentID, notice.Commands, time.Now())
 		m.syncAgentWindowTabs()
-		return nil
 	}
-	change := m.ApplyAgentEvent(evt)
+	return nil
+}
+
+// presentAgentReduction consumes committed domain changes. It may change local
+// tabs, geometry, dialogs and feedback, but never replays the semantic event.
+func (m *App) presentAgentReduction(change workspace.AgentReduction) tea.Cmd {
 	if !change.Accepted {
 		return nil
 	}
-	if evt.Type == "collaboration_delivery_admitted" || evt.Type == "collaboration_delivery_rejected" {
+	if change.EvidenceOnly {
 		// Delivery settlement changes only existing evidence. It is not an
 		// inventory/navigation event and must never activate or hydrate a draft.
 		for _, id := range change.ChangedAgents {
@@ -282,22 +320,16 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 		m.syncPendingSteeringCount()
 		return nil
 	}
-	return m.presentAgentReduction(change)
-}
-
-// presentAgentReduction consumes committed domain changes. It may change local
-// tabs, geometry, dialogs and feedback, but never replays the semantic event.
-func (m *App) presentAgentReduction(change workspace.AgentReduction) tea.Cmd {
 	for _, id := range change.ChangedAgents {
 		m.ensureAgentProjection(id)
-		if node := m.AgentMgr.Get(id); node != nil && node.State != nil {
+		if node := m.ws.AgentMgr().Get(id); node != nil && node.State != nil {
 			m.reconcileThinkingPresentation(node.State, m.thinkingOwnerWidth(id))
 		}
 		m.syncAgentMessages(id, change.Effects.Done != nil || change.Effects.Error != nil)
 	}
 	m.applyAgentEffects(change.AgentID, change.Effects)
 	if change.ChildCompleted {
-		if node := m.AgentMgr.Get(change.AgentID); node != nil {
+		if node := m.ws.AgentMgr().Get(change.AgentID); node != nil {
 			m.publishSubAgentTerminalStatus(node.ID, node.Label, node.Category, node.State.Status)
 		}
 		m.archiveSubAgentTab(change.AgentID)
@@ -340,11 +372,11 @@ func (m *App) applyAgentEffects(agentID string, effects workspace.AgentEffects) 
 }
 
 func (m *App) syncPendingSteeringCount() {
-	if m.Feedback == nil || m.AgentMgr == nil {
+	if m.Feedback == nil || m.ws.AgentMgr() == nil {
 		return
 	}
 	count := 0
-	for _, node := range m.AgentMgr.AllNodes() {
+	for _, node := range m.ws.AgentMgr().AllNodes() {
 		if node != nil && node.State != nil && node.State.Messages != nil {
 			count += node.State.Messages.PendingSteeringCount()
 		}
@@ -368,14 +400,14 @@ func (m *App) nextThinkingPaneID(agentID string) string {
 	for {
 		m.thinkingPaneSequence++
 		paneID := fmt.Sprintf("thinking-%s-%d", agentID, m.thinkingPaneSequence)
-		if !m.PaneMgr.Has(paneID) && !m.subPaneProjections.Has(paneID) {
+		if !m.ws.PaneMgr().Has(paneID) && !m.subPaneProjections.Has(paneID) {
 			return paneID
 		}
 	}
 }
 
 func (m *App) handleSubPaneCompletion(agentID string) {
-	n := m.AgentMgr.Get(agentID)
+	n := m.ws.AgentMgr().Get(agentID)
 	if n == nil {
 		return
 	}
@@ -396,7 +428,7 @@ type agentResultFeedbackMsg struct {
 }
 
 func (m *App) handleAgentResultFeedback(msg agentResultFeedbackMsg) {
-	node := m.AgentMgr.Get(msg.agentID)
+	node := m.ws.AgentMgr().Get(msg.agentID)
 	if node == nil || node.Parent != nil || msg.reason == "" || msg.reason == "cancelled" {
 		return // child terminal feedback is richer in sub_agent_completed
 	}
@@ -421,7 +453,7 @@ func (m *App) handleSubAgentCompleted(evt workspace.AgentEvent) {
 			evt.AgentID = data["agent_id"]
 		}
 	}
-	change := m.ApplyAgentEvent(evt)
+	change := m.ws.ApplyAgentEvent(evt)
 	if change.Accepted {
 		m.presentAgentReduction(change)
 	}
@@ -429,7 +461,7 @@ func (m *App) handleSubAgentCompleted(evt workspace.AgentEvent) {
 
 func (m *App) publishSubAgentTerminalStatus(agentID, name, category, status string) {
 	if name == "" {
-		if node := m.AgentMgr.Get(agentID); node != nil {
+		if node := m.ws.AgentMgr().Get(agentID); node != nil {
 			name = workspace.AgentDisplayLabel(node)
 		}
 	}

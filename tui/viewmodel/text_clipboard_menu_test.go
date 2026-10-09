@@ -178,7 +178,7 @@ func TestRightClickOnInputOpensWholeDraftMenu(t *testing.T) {
 func TestEscLadderSelectionDraftThenTurn(t *testing.T) {
 	app := setupChatInputApp(t, 80, 24, false)
 	app.Input.SetInput("hello world")
-	node := app.AgentMgr.Get("agent")
+	node := app.ws.AgentMgr().Get("agent")
 	if node == nil || node.State == nil {
 		t.Fatal("test setup: no agent state")
 	}

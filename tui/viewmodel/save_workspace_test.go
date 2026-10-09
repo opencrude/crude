@@ -17,14 +17,14 @@ func TestSaveAsWorkspacePromotesAgentSettings(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("USERPROFILE", home)
 	app := newTestApp(t)
-	app.Logger = noopLogger{}
+	wsOf(app).Logger = noopLogger{}
 	wdb, err := workspace.OpenWorkspaceDB(t.TempDir())
 	if err != nil {
 		t.Fatalf("OpenWorkspaceDB: %v", err)
 	}
 	t.Cleanup(func() { _ = wdb.Close() })
-	app.WorkspaceDB = wdb
-	app.SetAppDefaults(ttypes.AppSettings{
+	wsOf(app).WorkspaceDB = wdb
+	wsOf(app).SetAppDefaults(ttypes.AppSettings{
 
 		Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
 			"default": {Provider: "openrouter", Model: "old-model"},
@@ -48,11 +48,11 @@ func TestSaveAsWorkspacePromotesAgentSettings(t *testing.T) {
 	}
 
 	// The workspace overrides must now carry the promoted agent settings.
-	overrides := app.LoadWorkspaceOverrides()
+	overrides := app.ws.LoadWorkspaceOverrides()
 	if len(overrides.Agents) == 0 {
 		t.Fatal("workspace overrides have no agents after save-as-workspace")
 	}
-	effective := app.LoadAppSettings()
+	effective := app.ws.LoadAppSettings()
 	got := effective.Agents.Categories["default"]
 	if got.Provider != "openai" || got.Model != "gpt-5.6" {
 		t.Errorf("default agent after save-as-workspace = %+v, want openai/gpt-5.6", got)

@@ -11,6 +11,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"crude/shellport"
 	"crude/textdiff"
 	"crude/tui/editor"
 	"crude/tui/surface"
@@ -97,6 +98,23 @@ func (p *lspRenamePreview) SetTokens(tokens *ui.TokenSet) {
 }
 
 func prepareLSPRename(root string, msg lspRenameResultMsg, edit *protocol.WorkspaceEdit) lspRenamePreparedMsg {
+	return prepareLSPRenameWithReader(root, msg, edit, nil)
+}
+
+func (m *App) prepareClientLSPRename(msg lspRenameResultMsg, edit *protocol.WorkspaceEdit) tea.Cmd {
+	root := m.ws.RootPath()
+	files, remote := m.ws.(shellport.ClientFiles)
+	return func() tea.Msg {
+		if !remote {
+			return prepareLSPRename(root, msg, edit)
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		return prepareLSPRenameWithReader(root, msg, edit, func(path string) ([]byte, error) { return files.ReadClientFile(ctx, path) })
+	}
+}
+
+func prepareLSPRenameWithReader(root string, msg lspRenameResultMsg, edit *protocol.WorkspaceEdit, read func(string) ([]byte, error)) lspRenamePreparedMsg {
 	out := lspRenamePreparedMsg{request: msg}
 	var preview strings.Builder
 	grouped := make(map[string][]model.LSPTextEdit)
@@ -155,28 +173,15 @@ func prepareLSPRename(root string, msg lspRenameResultMsg, edit *protocol.Worksp
 	}
 	total := 0
 	for _, path := range paths {
-		info, err := os.Lstat(path)
+		var data []byte
+		var err error
+		if read != nil {
+			data, err = read(path)
+		} else {
+			data, err = readRenameLocalFile(path)
+		}
 		if err != nil {
 			out.err = err
-			return out
-		}
-		if !info.Mode().IsRegular() || info.Size() > 2<<20 {
-			out.err = fmt.Errorf("rename requires regular files up to 2 MiB: %s", path)
-			return out
-		}
-		f, err := os.Open(path)
-		if err != nil {
-			out.err = err
-			return out
-		}
-		data, readErr := io.ReadAll(io.LimitReader(f, (2<<20)+1))
-		closeErr := f.Close()
-		if readErr != nil {
-			out.err = readErr
-			return out
-		}
-		if closeErr != nil {
-			out.err = closeErr
 			return out
 		}
 		total += len(data)
@@ -209,6 +214,29 @@ func prepareLSPRename(root string, msg lspRenameResultMsg, edit *protocol.Worksp
 	}
 	out.preview = fmt.Sprintf("Rename to %q in %d files.\nApply creates a Local History safety snapshot; recover via Local History.\n\n", msg.newName, len(out.edits)) + preview.String()
 	return out
+}
+
+func readRenameLocalFile(path string) ([]byte, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() || info.Size() > 2<<20 {
+		return nil, fmt.Errorf("rename requires regular files up to 2 MiB: %s", path)
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	data, readErr := io.ReadAll(io.LimitReader(f, (2<<20)+1))
+	closeErr := f.Close()
+	if readErr != nil {
+		return nil, readErr
+	}
+	if closeErr != nil {
+		return nil, closeErr
+	}
+	return data, nil
 }
 
 func (m *App) showLSPRenamePreview(msg lspRenamePreparedMsg) {
@@ -268,7 +296,7 @@ func (m *App) handleLSPRenameAction(msg lspRenameActionMsg) tea.Cmd {
 	}
 	p.busy = true
 	p.bar.SetButtons(ui.ActionBarButton{Label: "Applying…", Action: "apply", Enabled: false})
-	owner := m.Workspace
+	owner := m.ws
 	ctx, _ := m.lspRequestContext()
 	ctx, p.cancel = context.WithCancel(ctx)
 	edits := append([]workspace.FileEdit(nil), p.edits...)

@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/shellport"
 	ttypes "crude/tui/types"
 	model "crude/types"
 	"crude/workspace"
@@ -36,7 +37,7 @@ func newRealShellApp(t *testing.T) (*App, *workspace.Workspace) {
 	ws.SetAppDefaults(ttypes.AppSettings{Accounts: ws.AllAccounts()})
 	ws.SetEventSender(noopEventSender{})
 	t.Setenv("MODELS_DEV_URL", "http://127.0.0.1:9/models-dev-unreachable")
-	app := NewApp(ws, nil)
+	app := NewApp(shellport.Local(ws), nil)
 	t.Cleanup(func() {
 		app.StopAsyncIO()
 		ws.Close()
@@ -127,7 +128,7 @@ func assertLauncherBack(t *testing.T, app *App, retainedAgents int) {
 	if app.AgentView.VisibleCount() != 0 {
 		t.Fatalf("surfaced agents=%d want 0", app.AgentView.VisibleCount())
 	}
-	if got := app.AgentMgr.Count(); got != retainedAgents {
+	if got := app.ws.AgentMgr().Count(); got != retainedAgents {
 		t.Fatalf("retained agents=%d want %d", got, retainedAgents)
 	}
 	// A minimized idle agent remains in the aggregate agent report, which is
@@ -192,8 +193,8 @@ func TestRealSessionLastTabCloseSwitchesToLauncher(t *testing.T) {
 	if app.Win.TabCount() != 1 {
 		t.Fatalf("agent tab count=%d want 1 after launcherNewSession", app.Win.TabCount())
 	}
-	if app.AgentMgr.Count() != 1 {
-		t.Fatalf("agents=%d want 1", app.AgentMgr.Count())
+	if app.ws.AgentMgr().Count() != 1 {
+		t.Fatalf("agents=%d want 1", app.ws.AgentMgr().Count())
 	}
 	app.paintShellFrame()
 	if !app.shellSlotActive(shellChatSlot) || app.shellSlotActive(shellLauncherSlot) {
@@ -234,7 +235,7 @@ func TestAgentLastTabCloseSwitchesToLauncher(t *testing.T) {
 func TestEditorLastTabCloseSwitchesToLauncher(t *testing.T) {
 	app, ws := newRealShellApp(t)
 	defer ws.Close()
-	path := filepath.Join(app.RootPath, "main.go")
+	path := filepath.Join(app.ws.RootPath(), "main.go")
 	if _, err := app.openEditorTab(path); err != nil {
 		t.Fatal(err)
 	}

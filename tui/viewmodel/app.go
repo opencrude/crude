@@ -12,6 +12,7 @@ import (
 
 	"crude/history"
 	"crude/sessiondb"
+	"crude/shellport"
 	"crude/tui/cell"
 	"crude/tui/compositor"
 	"crude/tui/editor"
@@ -61,7 +62,7 @@ const (
 
 type Logger = workspace.Logger
 type App struct {
-	*workspace.Workspace
+	ws shellport.Workspace
 
 	// Focus belongs to this shell, never to the workspace runtime. A second
 	// shell must not observe or reset another shell's navigation stack.
@@ -100,6 +101,13 @@ type App struct {
 	// sessions retain their editor; cold persisted drafts load asynchronously.
 	composerHydratedFor        *workspace.Session
 	composerDraftEpoch         uint64
+	composerDraftClient        *composerDraftClient
+	pendingOrchestrators       map[string]bool
+	workspaceAttachSequence    uint64
+	workspaceAttachCancel      context.CancelFunc
+	workspaceAttachPending     bool
+	sessionLifecycleSequence   uint64
+	sessionLifecyclePending    bool
 	composerDraftErr           error
 	composerDraftOwners        map[*workspace.Session]*composerDraftOwner
 	composerDraftWrites        sync.WaitGroup
@@ -165,6 +173,9 @@ type App struct {
 	mainPanes       *mainPaneLayout
 	paneFilePicker  *paneFilePickerOwner
 	paneFileOpenSeq uint64
+	liveEditors     map[*editor.Editor]*liveEditorState
+	liveOpenRefs    *liveDocumentRefs
+	editorCommands  []tea.Cmd
 	// Rectangles computed by computeContentLayout each frame; they drive
 	// shell slot geometry AND viewmodel policy (mouse region classification
 	// for editor/divider/status and focus-stack updates).
@@ -269,6 +280,7 @@ type App struct {
 	workspaceSwitchGen atomic.Uint64   // invalidates project-bound async callbacks
 	lspRequestCtx      context.Context // canceled whenever the workspace generation changes
 	lspRequestCancel   context.CancelFunc
+	lspDiagnostics     shellport.LSPDiagnosticConsumer
 	reveals            map[string]revealAnim // in-flight popup reveal animations (overlay ID → anim)
 
 	OnQuit        func()
@@ -278,7 +290,7 @@ type App struct {
 	lastCancelTime time.Time
 }
 
-func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
+func NewApp(ws shellport.Workspace, presets []ttypes.ProviderPreset) *App {
 	th := theme.FromPreset(themePresetFromSettings(ws.LoadAppSettings()))
 	applyWorkspaceFrame(&th, ws)
 	im := input.NewModel(th)
@@ -289,11 +301,16 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	chatScreen := shellchat.New(th)
 	editorScreen := shelleditor.New(th)
 	rendering.SetInvalidUTF8Logger(func(tag, msg string, pairs ...any) {
-		if ws.Logger != nil {
-			ws.Logger.Warn(tag, msg, pairs...)
+		if ws.Logger() != nil {
+			ws.Logger().Warn(tag, msg, pairs...)
 		}
 	})
-	treeModel := filetree.NewFileTreeModel(ws.RootPath)
+	var treeModel *filetree.FileTreeModel
+	if _, connected := ws.(shellport.ClientFiles); connected {
+		treeModel = filetree.NewPlaceholderFileTreeModel(ws.RootPath())
+	} else {
+		treeModel = filetree.NewFileTreeModel(ws.RootPath())
+	}
 	tree := NewTreeState(treeModel, th.Tree.Config.DefaultWidth)
 	sidebarScreen := shelltree.New(th, treeModel)
 	activityBar := activitybar.New(th)
@@ -312,7 +329,7 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	// The workspace listing loads asynchronously (refreshLauncherAsync from
 	// Init) so the first frame never blocks on the workspace DB scan.
 	launcherScreen := launcher.New(th)
-	launcherScreen.BeginLoad(ws.RootPath)
+	launcherScreen.BeginLoad(ws.RootPath())
 
 	// The root tree: one Host mounts the whole shell and paints into one
 	// full-screen surface. The compositor renders this single surface under
@@ -342,10 +359,10 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	comp.Root().AddChild(mainSurf)
 
 	app := &App{
-		Workspace:           ws,
-		AgentView:           NewAgentViewState(ws.AgentMgr),
+		ws:                  ws,
+		AgentView:           NewAgentViewState(ws.AgentMgr()),
 		FocusStack:          NewFocusStack(),
-		ModelName:           ws.InitialModelName,
+		ModelName:           ws.InitialModelName(),
 		composerDraftOwners: make(map[*workspace.Session]*composerDraftOwner),
 		Theme:               th,
 		Input:               im,
@@ -353,7 +370,7 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 		BufferMgr:           bufferMgr,
 		Tree:                tree,
 		FilePicker:          filepickerscreen.New(th),
-		LastSettings:        ws.InitialSettings,
+		LastSettings:        ws.InitialSettings(),
 		EditorState:         edState,
 		OverlayState:        NewOverlayState(),
 		LSPPopup:            NewLSPPopupState(),
@@ -388,6 +405,10 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 		sessionProjections:  sessionProjections,
 	}
 	app.Feedback = newFeedbackSink(app)
+	if _, connected := ws.(shellport.ClientFiles); connected {
+		app.Tree.Model = newClientFileTree(app)
+		app.sidebarScreen.SetModel(app.Tree.Model)
+	}
 	app.initWorkspacePanels()
 	if app.sidebarScreen != nil {
 		app.sidebarScreen.SetPathSearchHandler(app.beginTreePathSearch)
@@ -402,7 +423,7 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 // projections that are rooted in the old project directory. Workspace does
 // not construct file-tree renderers or editor controls.
 func (m *App) SwitchProject(projectDir string) error {
-	if sameWorkspaceRoot(m.RootPath, projectDir) {
+	if sameWorkspaceRoot(m.ws.RootPath(), projectDir) {
 		return nil
 	}
 	for _, tab := range m.EditorState.Tabs {
@@ -421,16 +442,16 @@ func (m *App) SwitchProject(projectDir string) error {
 		return fmt.Errorf("save composer draft before switching workspace: %w", m.composerDraftErr)
 	}
 	state := m.beginWorkspaceSwitch()
-	if err := m.Workspace.SwitchProject(projectDir); err != nil {
+	if err := m.ws.SwitchProject(projectDir); err != nil {
 		state.restore(m)
 		return err
 	}
 	// Workspace.SwitchProject has loaded the target workspace overrides. Apply
 	// its effective palette before constructing any target-owned projections.
-	m.applyThemePreset(themePresetFromSettings(m.LoadAppSettings()))
+	m.applyThemePreset(themePresetFromSettings(m.ws.LoadAppSettings()))
 	m.finishWorkspaceSwitch(state)
 	m.editorSaves = make(map[string]*editorSaveState)
-	m.applyEditorSettings(m.LoadAppSettings().Editor)
+	m.applyEditorSettings(m.ws.LoadAppSettings().Editor)
 	return nil
 }
 
@@ -462,6 +483,9 @@ func (m *App) recordPrompt(text string, referenceIDs ...string) tea.Cmd {
 }
 
 func (m *App) recordPromptWithReferences(text string, refs []sessiondb.Reference) tea.Cmd {
+	if cmd, handled := m.recordRemotePrompt(text, refs); handled {
+		return cmd
+	}
 	if m.Prompts == nil || strings.TrimSpace(text) == "" {
 		return nil
 	}
@@ -511,6 +535,11 @@ func (m *App) SetProgram(p *tea.Program) {
 			m.eventBus.SetSink(programMessageSink{program: p})
 		}
 	}
+	if p != nil {
+		if replica, ok := m.ws.(shellport.Replica); ok {
+			replica.StartReplica()
+		}
+	}
 }
 
 func (m *App) Init() tea.Cmd {
@@ -523,19 +552,19 @@ func (m *App) Init() tea.Cmd {
 	// Hook file tree watcher events into the LSP server so it learns about
 	// disk changes (git checkout, external edits, etc.). Workspace switches
 	// use this exact helper too, keeping startup and replacement in lockstep.
-	if m.Tree != nil {
+	if _, connected := m.ws.(shellport.ClientFiles); !connected && m.Tree != nil {
 		m.wireAndStartWorkspaceTreeWatcher(m.Tree.Model)
 	}
 
 	// Kick the async launcher workspace listing for the welcome screen so
 	// the first frame paints immediately (no workspace DB scan on boot).
 	if m.launcherScreen != nil {
-		m.refreshLauncherAsync(m.RootPath)
+		m.refreshLauncherAsync(m.ws.RootPath())
 	}
 
 	var statusCmd tea.Cmd
-	if m.Workspace != nil && m.Status != nil {
-		center := m.Status
+	if m.ws != nil && m.ws.Status() != nil {
+		center := m.ws.Status()
 		statusCmd = func() tea.Msg {
 			if err := center.Hydrate(); err != nil {
 				return statusHydrateErrMsg{Err: err}
@@ -543,7 +572,7 @@ func (m *App) Init() tea.Cmd {
 			return workspace.StatusCenterHydratedMsg{}
 		}
 	}
-	return tea.Batch(draftCmd, tickCmd(), statusCmd, m.refreshSourceControl(), m.capabilitySnapshotCmd(), m.loadToolLayoutCmd())
+	return tea.Batch(m.beginClientFileTreeLoad(), draftCmd, tickCmd(), statusCmd, m.refreshSourceControl(), m.capabilitySnapshotCmd(), m.loadToolLayoutCmd(), m.loadRemotePromptHistory())
 }
 
 // openTextOverlayWindow opens the text overlay as a floating window.
@@ -669,16 +698,16 @@ func (m *App) openSettingsTo(scope ttypes.SettingsScope, accounts bool) {
 	m.overlayHost.Close(ui.OverlaySettingsPrompt)
 	m.overlayHost.Close(ui.OverlayWorkspaceSettings)
 
-	appDefaults := m.AppDefaults()
-	overrides := m.LoadWorkspaceOverrides()
+	appDefaults := m.ws.AppDefaults()
+	overrides := m.ws.LoadWorkspaceOverrides()
 	working := appDefaults
 	title := "Application Settings"
 	if scope == ttypes.SettingsScopeWorkspace {
-		working = m.LoadAppSettings()
+		working = m.ws.LoadAppSettings()
 		title = "Workspace Settings"
 	}
 	if len(working.Agents.Categories) == 0 {
-		working.Agents = m.WorkspaceAgentDefaults()
+		working.Agents = m.ws.WorkspaceAgentDefaults()
 	}
 	wsWidget := popup.NewWorkspaceSettingsScoped(m.Theme, working, m.providerPresets, scope, appDefaults, overrides)
 	if body, ok := wsWidget.Component().(*settingsui.WorkspaceSettingsSurface); ok {
@@ -901,7 +930,7 @@ func (m *App) openSessionSettings() {
 	if p == nil || p.settings == nil {
 		return
 	}
-	p.settings.ConfigureAccounts(m.AllAccounts())
+	p.settings.ConfigureAccounts(m.ws.AllAccounts())
 	p.settings.SetCapabilities(m.capabilitySnapshot)
 	p.settings.SaveSnapshot()
 	m.openSessionSettingsPanel()
@@ -917,7 +946,7 @@ func (m *App) resetOrchestratorOverrides() {
 			return
 		}
 	}
-	m.ResetOrchestratorOverrides(id)
+	m.ws.ResetOrchestratorOverrides(id)
 	m.refreshSessionSettingsProjection(m.ActiveSession)
 	m.Feedback.NotifyInfo("Session overrides reset to workspace defaults")
 }

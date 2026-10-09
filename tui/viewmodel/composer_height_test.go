@@ -14,11 +14,11 @@ func TestComposerTallDraftPreservesChatAndBounds(t *testing.T) {
 	for _, size := range [][2]int{{160, 40}, {80, 24}, {60, 16}} {
 		t.Run(fmt.Sprintf("%dx%d", size[0], size[1]), func(t *testing.T) {
 			app := newFullTestApp(t)
-			app.Logger = stubLogger{}
+			wsOf(app).Logger = stubLogger{}
 			app.width, app.height = size[0], size[1]
 			app.AddOrchestrator("owner")
 			app.maybeHydrateComposerDraft()
-			app.AgentMgr.Get("owner").State.Messages.AppendMessage(workspace.Message{
+			app.ws.AgentMgr().Get("owner").State.Messages.AppendMessage(workspace.Message{
 				Role: workspace.MessageRoleAssistant, Content: "The transcript must remain visible while drafting.",
 			})
 			app.syncAgentMessages("owner", false)

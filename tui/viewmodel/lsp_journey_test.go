@@ -16,8 +16,8 @@ import (
 func lspJourneyEditor(t *testing.T, text string) (*App, string, *editor.Editor) {
 	t.Helper()
 	app := newDiagnosticsTreeApp(t, t.TempDir())
-	app.LSPMgr.SetRuntime(noopLSPRuntime{})
-	path := filepath.Join(app.RootPath, "lsp-journey.go")
+	wsOf(app).LSPMgr.SetRuntime(noopLSPRuntime{})
+	path := filepath.Join(app.ws.RootPath(), "lsp-journey.go")
 	if err := os.WriteFile(path, []byte(text), 0600); err != nil {
 		t.Fatal(err)
 	}
@@ -71,7 +71,7 @@ func TestLSPRenamePreviewCancelAndApplyAreExplicit(t *testing.T) {
 				{Range: protocol.Range{Start: protocol.Position{Line: 0, Character: 4}, End: protocol.Position{Line: 0, Character: 7}}, NewText: "new"},
 				{Range: protocol.Range{Start: protocol.Position{Line: 1, Character: 0}, End: protocol.Position{Line: 1, Character: 3}}, NewText: "new"},
 			}}}
-			prepared := prepareLSPRename(app.RootPath, request, edit)
+			prepared := prepareLSPRename(app.ws.RootPath(), request, edit)
 			if prepared.err != nil {
 				t.Fatal(prepared.err)
 			}
@@ -116,7 +116,7 @@ func TestLSPRenameRefusesStaleDirtyAndMalformedEdit(t *testing.T) {
 	app, path, ed := lspJourneyEditor(t, "old\n")
 	request := lspRenameResultMsg{owner: ed, revision: ed.Revision(), generation: app.workspaceSwitchGen.Load(), filePath: path, newName: "new"}
 	edit := &protocol.WorkspaceEdit{Changes: map[protocol.DocumentURI][]protocol.TextEdit{protocol.URIFromPath(path): {{Range: protocol.Range{End: protocol.Position{Character: 3}}, NewText: "new"}}}}
-	prepared := prepareLSPRename(app.RootPath, request, edit)
+	prepared := prepareLSPRename(app.ws.RootPath(), request, edit)
 	app.showLSPRenamePreview(prepared)
 	p := app.LSPPopup.RenamePreview
 	ed.InsertRune('x')
@@ -128,7 +128,7 @@ func TestLSPRenameRefusesStaleDirtyAndMalformedEdit(t *testing.T) {
 		t.Fatal("dirty refusal wrote bytes")
 	}
 	edit.Changes[protocol.URIFromPath(path)][0].Range.End.Character = 999
-	if got := prepareLSPRename(app.RootPath, request, edit); got.err == nil {
+	if got := prepareLSPRename(app.ws.RootPath(), request, edit); got.err == nil {
 		t.Fatal("out of range edit silently clamped")
 	}
 }

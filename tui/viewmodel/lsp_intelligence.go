@@ -22,13 +22,13 @@ type lspHoverResultMsg struct {
 
 func (m *App) requestLSPHoverCmd() tea.Cmd {
 	ed := m.EditorState.Editor
-	if ed == nil || !ed.IsOpen() || m.LSPMgr == nil || !m.LSPMgr.ServerReady() {
+	if ed == nil || !ed.IsOpen() || m.ws.LSPMgr() == nil || !m.ws.LSPMgr().ServerReady() {
 		return nil
 	}
 	ctx, generation := m.lspRequestContext()
 	revision, path := ed.Revision(), ed.FilePath()
 	line, col := ed.LSPCursorPosition()
-	manager := m.LSPMgr
+	manager := m.ws.LSPMgr()
 	return func() tea.Msg {
 		text, err := manager.RequestHover(ctx, path, line, col)
 		return lspHoverResultMsg{ed, revision, generation, path, text, line, col, err}
@@ -67,7 +67,7 @@ func (m *App) autoCompletionCmd(now time.Time) tea.Cmd {
 	}
 	m.LSPPopup.CompletionDue = time.Time{}
 	ed := m.EditorState.Editor
-	if m.LSPMgr == nil || !m.LSPMgr.Settings().AutoComplete || m.EditorState.ActiveView == "" || ed == nil || !ed.IsOpen() || m.focusTarget() != FocusEditor || m.LSPPopup.CompletionID != "" {
+	if m.ws.LSPMgr() == nil || !m.ws.LSPMgr().Settings().AutoComplete || m.EditorState.ActiveView == "" || ed == nil || !ed.IsOpen() || m.focusTarget() != FocusEditor || m.LSPPopup.CompletionID != "" {
 		return nil
 	}
 	if m.windowManager != nil && m.windowManager.Focused() != nil {

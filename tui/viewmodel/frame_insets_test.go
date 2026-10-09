@@ -158,7 +158,7 @@ func TestApplyFramePreviewBlankFieldMeansZero(t *testing.T) {
 func TestHeaderRightRunStaysInsidePaddedSlot(t *testing.T) {
 	app := newFullTestApp(t)
 	app.ModelName = "some-model"
-	app.StartTime = time.Now().Add(-time.Minute)
+	wsOf(app).StartTime = time.Now().Add(-time.Minute)
 	app.width, app.height = 100, 30
 	setTestFrame(app, 0, 6, 0, 0)
 
@@ -197,7 +197,7 @@ func TestHeaderRightRunStaysInsidePaddedSlot(t *testing.T) {
 func TestThemeFrameFromWorkspaceSettings(t *testing.T) {
 	app := newFullTestApp(t)
 	two, three, one, four := 2, 3, 1, 4
-	app.SetAppDefaults(ttypes.AppSettings{
+	wsOf(app).SetAppDefaults(ttypes.AppSettings{
 		Theme: ttypes.ThemeSettings{PadTop: &two, PadBottom: &three, PadLeft: &one, PadRight: &four},
 	})
 	app.ApplyThemePreset("dark")
@@ -226,7 +226,7 @@ func TestThemeFrameDefaultsWhenUnset(t *testing.T) {
 func TestFramePadClamped(t *testing.T) {
 	app := newFullTestApp(t)
 	huge := 100
-	app.SetAppDefaults(ttypes.AppSettings{
+	wsOf(app).SetAppDefaults(ttypes.AppSettings{
 		Theme: ttypes.ThemeSettings{PadTop: &huge},
 	})
 	app.ApplyThemePreset("dark")

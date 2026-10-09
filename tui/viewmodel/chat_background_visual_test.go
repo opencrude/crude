@@ -21,10 +21,10 @@ func TestChatBackgroundVisualAcceptance(t *testing.T) {
 		t.Skip("requires sequential scripts/tuishot.sh in a dedicated terminal")
 	}
 	app := newFullTestApp(t)
-	app.Logger = stubLogger{}
+	wsOf(app).Logger = stubLogger{}
 	app.width, app.height = 160, 40
 	app.AddOrchestrator("background-owner")
-	state := app.AgentMgr.Get("background-owner").State
+	state := app.ws.AgentMgr().Get("background-owner").State
 	state.Messages.AppendMessage(workspace.Message{Role: ctypes.RoleAssistant,
 		Content: "Regular replies stay on the chat background. Special elements form distinct full-width bands."})
 	for _, c := range specialChatBackgroundCases()[:3] {
@@ -32,7 +32,7 @@ func TestChatBackgroundVisualAcceptance(t *testing.T) {
 			state.Messages.AppendMessage(message)
 		}
 	}
-	pane := app.PaneMgr.GetOrCreate("visual-child", workspace.PaneAgent, "Asha · Researcher")
+	pane := app.ws.PaneMgr().GetOrCreate("visual-child", workspace.PaneAgent, "Asha · Researcher")
 	pane.Messages.AppendMessage(workspace.Message{
 		Role: ctypes.RoleTool, ToolName: "read_file", ToolArgs: "parser.go", ToolStatus: ctypes.ToolStatusSuccess,
 	})
@@ -77,7 +77,7 @@ func (m *chatBackgroundVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.handleAgentEvent(ctypes.AgentEventMsg{AgentID: m.ownerID, Type: "done",
 				Data: map[string]any{"reason": "completed"}})
 			renderer := m.subPaneProjections.GetExisting(m.ownerID).renderer
-			for _, message := range m.AgentMgr.Get(m.ownerID).State.Messages.Messages() {
+			for _, message := range m.ws.AgentMgr().Get(m.ownerID).State.Messages.Messages() {
 				if message.Role == ctypes.RoleThinking {
 					renderer.ToggleDisclosure(message.InternalID)
 				}

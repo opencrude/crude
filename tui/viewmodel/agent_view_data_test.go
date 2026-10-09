@@ -1,13 +1,14 @@
 package viewmodel
 
 import (
+	"crude/shellport"
 	"crude/workspace"
 	"testing"
 )
 
 func TestAgentTabViewsExposeDomainStateWithoutTUIObjects(t *testing.T) {
 	manager := workspace.NewAgentManager()
-	app := &App{Workspace: &workspace.Workspace{AgentMgr: manager}, AgentView: NewAgentViewState(manager)}
+	app := &App{ws: shellport.Local(&workspace.Workspace{AgentMgr: manager}), AgentView: NewAgentViewState(manager)}
 	root := manager.AddOrchestrator("root", workspace.NewAgentState("root", nil, nil))
 	root.Category = "default"
 	manager.AddSubAgent("child", "root", "Research", "model", "researcher", workspace.NewAgentState("child", nil, nil))

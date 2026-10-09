@@ -155,33 +155,35 @@ type modelSnapshot struct {
 
 // Model is the workspace settings screen state.
 type Model struct {
-	th              *theme.Theme
-	categories      []Category
-	selected        int
-	pane            int // 0: category rail, 1: form
-	snapshot        *modelSnapshot
-	presets         []types.ProviderPreset
-	accounts        map[string]provider.Account
-	accountID       string // account being browsed, never an active connection
-	saving          bool
-	saveError       string
-	saveDisabled    map[*ui.FieldState]bool
-	authGeneration  map[string]uint64
-	authErrors      map[string]string
-	authWaitingID   string
-	fetchGeneration map[string]uint64
-	accountEditor   *accountEdit
-	accountBusy     bool
-	accountError    string
-	nextCategory    int
-	nextScope       types.SettingsScope
-	preferencesBase []byte
-	models          map[string][]types.ModelEntry
-	searchEd        *ui.TextEdit
-	searchActive    bool
-	accountQuery    string
-	scope           types.SettingsScope
-	appDefaults     types.AppSettings
+	th                  *theme.Theme
+	categories          []Category
+	selected            int
+	pane                int // 0: category rail, 1: form
+	snapshot            *modelSnapshot
+	presets             []types.ProviderPreset
+	accounts            map[string]provider.Account
+	accountID           string // account being browsed, never an active connection
+	saving              bool
+	saveError           string
+	saveDisabled        map[*ui.FieldState]bool
+	authGeneration      map[string]uint64
+	authErrors          map[string]string
+	authWaitingID       string
+	fetchGeneration     map[string]uint64
+	accountEditor       *accountEdit
+	accountBusy         bool
+	accountError        string
+	nextCategory        int
+	nextScope           types.SettingsScope
+	preferencesBase     []byte
+	models              map[string][]types.ModelEntry
+	searchEd            *ui.TextEdit
+	searchActive        bool
+	accountQuery        string
+	scope               types.SettingsScope
+	appDefaults         types.AppSettings
+	applicationRevision string
+	workspaceRevision   string
 	// agents holds the working AgentsSettings so the main agent form's
 	// Multi-Agent toggle reads and writes the real workspace flag.
 	agents                   *types.AgentsSettings
@@ -282,6 +284,8 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		th: th, presets: presets,
 		accounts: cloneAccounts(current.Accounts), authGeneration: map[string]uint64{}, authErrors: map[string]string{}, fetchGeneration: map[string]uint64{},
 		models: make(map[string][]types.ModelEntry), scope: scope, appDefaults: appDefaults,
+		applicationRevision: current.ApplicationRevision,
+		workspaceRevision:   current.WorkspaceRevision,
 		agents:              &current.Agents,
 		memoryAgent:         current.Memory.MemoryCategory,
 		autoReviewer:        current.Safety.AutoPermission.Normalized(),
@@ -2210,6 +2214,7 @@ func (m *Model) currentOverrideKey() string {
 // AppSettings returns the values held by the shared form models.
 func (m *Model) AppSettings() types.AppSettings {
 	var settings types.AppSettings
+	settings.ApplicationRevision, settings.WorkspaceRevision = m.applicationRevision, m.workspaceRevision
 	m.collectAccounts(&settings)
 	m.collectAgents(&settings.Agents)
 	m.collectMemory(&settings.Memory)

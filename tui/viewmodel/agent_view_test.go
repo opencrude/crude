@@ -5,6 +5,7 @@ import (
 	"slices"
 	"testing"
 
+	"crude/shellport"
 	ttypes "crude/types"
 	"crude/workspace"
 )
@@ -16,9 +17,10 @@ func TestAgentViewIndependentShellNavigationPreservesSharedLifecycle(t *testing.
 	review := manager.AddSubAgent("review", "parent", "Review", "model", "crafter", &workspace.AgentState{Completed: true, Status: "completed"})
 	sibling := manager.AddSubAgent("sibling", "parent", "Sibling", "model", "crafter", &workspace.AgentState{Completed: true})
 	owner := &workspace.Workspace{AgentMgr: manager, Status: workspace.NewStatusCenter(nil, nil)}
+	shared := shellport.Local(owner)
 	// Navigation-only holders: no running Apps, event sinks or shared UI resources.
-	left := &App{Workspace: owner, AgentView: NewAgentViewState(manager)}
-	right := &App{Workspace: owner, AgentView: NewAgentViewState(manager)}
+	left := &App{ws: shared, AgentView: NewAgentViewState(manager)}
+	right := &App{ws: shared, AgentView: NewAgentViewState(manager)}
 	before := make(map[string]workspace.AgentState)
 	for _, node := range manager.AllNodes() {
 		before[node.ID] = *node.State

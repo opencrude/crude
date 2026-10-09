@@ -117,7 +117,7 @@ func (m *App) openWorkspaceDelete(entry launcher.WorkspaceEntry) {
 	policy.Decorated = true
 	policy.Movable = true
 	m.overlayHost.Open(ui.OverlayWorkspaceDelete, fw, policy, nil)
-	current := m.RootPath
+	current := m.ws.RootPath()
 	m.runDetachedAsyncCmd(func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
@@ -221,7 +221,7 @@ func (m *App) applyWorkspaceDeleteResult(msg workspaceDeleteResultMsg) {
 		m.Feedback.NotifyError(msg.err.Error())
 	}
 	if (msg.err == nil || fileio.WriteCommitted(msg.err)) && m.launcherScreen != nil {
-		m.refreshLauncherAsync(m.RootPath)
+		m.refreshLauncherAsync(m.ws.RootPath())
 	}
 	m.refreshWorkspaceDelete(p)
 }

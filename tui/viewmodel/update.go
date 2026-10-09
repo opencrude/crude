@@ -12,6 +12,7 @@ import (
 	"crude/agent"
 	"crude/provider"
 	"crude/sessiondb"
+	"crude/shellport"
 	"crude/tui/editor"
 	"crude/tui/filetree"
 	"crude/tui/perf"
@@ -52,6 +53,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	previousMode := m.editorSettings.AutoSave
 	model, command := m.update(msg)
 	command = tea.Batch(command, m.drainTerminalCommands())
+	command = tea.Batch(command, m.drainLiveEditorCommands())
 	m.syncLocalDiffFreshness()
 	m.syncMemoryBrowserLifecycle()
 	switch msg.(type) {
@@ -74,6 +76,20 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if handled, cmd := m.handleEditorRecoveryBrowserMessage(msg); handled {
+		return m, cmd
+	}
+	if m.workspaceAttachPending {
+		switch event := msg.(type) {
+		case tea.KeyPressMsg:
+			if event.Code == tea.KeyEsc && m.workspaceAttachCancel != nil {
+				m.workspaceAttachCancel()
+			}
+			return m, nil
+		case tea.PasteMsg, tea.MouseClickMsg, tea.MouseMotionMsg, tea.MouseReleaseMsg, tea.MouseWheelMsg:
+			return m, nil
+		}
+	}
 	var cmds []tea.Cmd
 	coalescePresentation := false
 	switch msg.(type) {
@@ -97,6 +113,49 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// the complete shell, with expensive leaf work retained by source version.
 
 	switch msg := msg.(type) {
+	case clientTreeDirectoryMsg:
+		m.applyClientTreeDirectory(msg)
+		return m, nil
+	case shellport.ClientFilesChangedMsg:
+		if msg.Owner == m.ws {
+			return m, m.applyCoreFileChanges(msg.Changes)
+		}
+		return m, nil
+	case clientProjectReplaceMsg:
+		return m, m.applyClientProjectReplace(msg)
+	case liveEditorResult:
+		m.applyLiveEditorResult(msg)
+		return m, nil
+	case liveConflictMsg:
+		return m, m.applyLiveConflict(msg)
+	case editorRecoveryClearedMsg:
+		m.applyEditorRecoveryCleared(msg)
+		return m, nil
+	case shellport.LiveDocumentsChangedMsg:
+		if msg.Owner == m.ws {
+			m.invalidateLiveEditors(msg.IDs)
+		}
+		return m, nil
+	case shellport.ReplicaChangesMsg:
+		return m, m.applyReplicaChanges(msg)
+	case remotePromptHistoryMsg:
+		m.applyRemotePromptHistory(msg)
+		return m, nil
+	case remoteSteeringAdmittedMsg:
+		return m, m.applyRemoteSteering(msg)
+	case shellport.SettingsChangedMsg:
+		m.applyThemePreset(themePresetFromSettings(m.ws.LoadAppSettings()))
+		m.applyEditorSettings(m.ws.LoadAppSettings().Editor)
+		return m, nil
+	case shellport.ReplicaFailureMsg:
+		if msg.Owner == m.ws {
+			m.showOperationFailure(msg.Operation+" failed", msg.Error)
+		}
+		return m, nil
+	case remoteWorkspaceReadyMsg:
+		return m, m.applyRemoteWorkspace(msg)
+	case remoteSessionReadyMsg:
+		return m, m.applyRemoteSession(msg)
 	case types.OperationIssueMsg:
 		m.presentOperationIssue(msg.Issue)
 		return m, nil
@@ -115,7 +174,7 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case referenceContentSavedMsg:
 		m.applyReferenceSave(msg)
 	case statusHydrateErrMsg:
-		m.notifyStatus(types.SeverityWarning, "status", "Notification history unavailable", msg.Err.Error(), types.ResourceRef{Kind: types.ResourceWorkspace, ID: m.RootPath})
+		m.notifyStatus(types.SeverityWarning, "status", "Notification history unavailable", msg.Err.Error(), types.ResourceRef{Kind: types.ResourceWorkspace, ID: m.ws.RootPath()})
 		return m, nil
 	case workspace.StatusCenterHydratedMsg:
 		m.syncWorkspacePanels()
@@ -135,14 +194,14 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.syncWorkspacePanels()
 		return m, nil
 	case statusoverview.MarkReadMsg:
-		if m.Workspace != nil && m.Status != nil {
-			m.Status.MarkRead(msg.ID, true)
+		if m.ws != nil && m.ws.Status() != nil {
+			m.ws.Status().MarkRead(msg.ID, true)
 			m.syncStatusOverview()
 		}
 		return m, nil
 	case statusoverview.DismissMsg:
-		if m.Workspace != nil && m.Status != nil {
-			m.Status.Dismiss(msg.ID)
+		if m.ws != nil && m.ws.Status() != nil {
+			m.ws.Status().Dismiss(msg.ID)
 			m.syncStatusOverview()
 		}
 		return m, nil
@@ -203,7 +262,7 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case tea.WindowSizeMsg:
 		initialSize := m.width == 0 || m.height == 0
-		m.Logger.Debug("UI", "resize", "width", msg.Width, "height", msg.Height)
+		m.ws.Logger().Debug("UI", "resize", "width", msg.Width, "height", msg.Height)
 		m.width = msg.Width
 		m.height = msg.Height
 		if m.compositor != nil {
@@ -215,7 +274,7 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		if initialSize {
-			for _, issue := range m.TakeStartupIssues() {
+			for _, issue := range m.ws.TakeStartupIssues() {
 				m.presentOperationIssue(issue)
 			}
 		}
@@ -267,7 +326,7 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.dispatchPasteMsg(msg)
 
 	case tea.MouseClickMsg:
-		m.Logger.Debug("UI", "mouse", "click", "x", msg.Mouse().X, "y", msg.Mouse().Y, "button", fmt.Sprintf("%d", msg.Button))
+		m.ws.Logger().Debug("UI", "mouse", "click", "x", msg.Mouse().X, "y", msg.Mouse().Y, "button", fmt.Sprintf("%d", msg.Button))
 		if m.settingsPromptOnTop() && msg.Button == tea.MouseRight {
 			return m, nil
 		}
@@ -287,7 +346,7 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.settingsPromptOnTop() {
 			return m, nil
 		}
-		m.Logger.Debug("UI", "mouse", "wheel", "x", msg.X, "y", msg.Y, "button", fmt.Sprintf("%d", msg.Button))
+		m.ws.Logger().Debug("UI", "mouse", "wheel", "x", msg.X, "y", msg.Y, "button", fmt.Sprintf("%d", msg.Button))
 		return m.dispatchMouseWheel(msg)
 
 	case tea.MouseMotionMsg:
@@ -305,8 +364,8 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		// Same as MouseMotionMsg: let the release handler set
 		// dirty when it actually does something visible.
-		if m.Logger != nil {
-			m.Logger.Debug("UI", "mouse", "release", "x", msg.Mouse().X, "y", msg.Mouse().Y)
+		if m.ws.Logger() != nil {
+			m.ws.Logger().Debug("UI", "mouse", "release", "x", msg.Mouse().X, "y", msg.Mouse().Y)
 		}
 		m.forceFrame()
 		return m.dispatchMouseRelease(msg)
@@ -389,8 +448,8 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
-	m.AdvanceAgentState(now)
-	for _, n := range m.AgentMgr.AllNodes() {
+	m.ws.AdvanceAgentState(now)
+	for _, n := range m.ws.AgentMgr().AllNodes() {
 		if n.State != nil {
 			m.syncAgentMessages(n.ID, false)
 		}
@@ -547,13 +606,13 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		m.requestGitSnapshot(time.Now())
 	case findinfiles.SearchRequestMsg:
 		if m.findInFiles != nil && m.findInFiles.AcceptsSearch(msg.Screen, msg.Generation) {
-			m.findInFilesRequest = m.StartProjectSearch(msg.Query, msg.Options)
+			m.findInFilesRequest = m.ws.StartProjectSearch(msg.Query, msg.Options)
 			m.findInFilesGen = msg.Generation
 			m.markProjectSearchDirty()
 		}
 	case findinfiles.SearchCancelMsg:
 		if m.findInFiles == msg.Screen {
-			m.CancelProjectSearch()
+			m.ws.CancelProjectSearch()
 			m.findInFilesRequest = 0
 			m.findInFilesGen = 0
 		}
@@ -675,14 +734,14 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			m.handleCompletionResult(msg)
 		}
 	case ttypes.ErrorMsg:
-		m.Logger.Debug("UI", "error", "msg", string(msg))
+		m.ws.Logger().Debug("UI", "error", "msg", string(msg))
 		m.Feedback.NotifyError(string(msg))
 	case slashBackendResultMsg:
 		m.handleSlashBackendResult(msg)
 	case ttypes.UpdateModelMsg:
 		m.ModelName = string(msg)
-		m.Logger.Debug("UI", "model_update", "model", string(msg))
-		for _, node := range m.AgentMgr.AllNodes() {
+		m.ws.Logger().Debug("UI", "model_update", "model", string(msg))
+		for _, node := range m.ws.AgentMgr().AllNodes() {
 			if m.subPaneProjections.Has(node.ID) {
 				m.subPaneProjections.Get(node.ID, workspace.PaneAgent).renderer.SetLegacyModelFallback(string(msg))
 			}
@@ -691,19 +750,19 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			ml.SetLegacyModelFallback(string(msg))
 		}
 	case ttypes.OpenSettingsMsg:
-		m.Logger.Info("UI", "open_session_settings")
+		m.ws.Logger().Info("UI", "open_session_settings")
 		m.openSessionSettings()
 	case selectedSessionSettingsResult:
 		m.applySelectedSessionSettings(msg)
 	case rendering.ClipboardCopiedMsg:
-		m.Logger.Debug("CLIPBOARD", "copied")
+		m.ws.Logger().Debug("CLIPBOARD", "copied")
 		m.Feedback.NotifyInfo("copied to clipboard")
 	case rendering.ClipboardErrorMsg:
-		m.Logger.Error("CLIPBOARD", "error", "error", string(msg))
+		m.ws.Logger().Error("CLIPBOARD", "error", "error", string(msg))
 		m.Feedback.NotifyError(string(msg))
 	case ttypes.UndoResultMsg:
 		if msg.Error != "" {
-			m.Logger.Error("JOURNAL", "undo_error", "error", msg.Error)
+			m.ws.Logger().Error("JOURNAL", "undo_error", "error", msg.Error)
 			m.Feedback.NotifyError(msg.Error)
 		}
 		if msg.Desc != "" && m.AgentView.ActiveID() != "" {
@@ -759,8 +818,10 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		m.paneFilePicker = nil
 		m.overlayHost.Close(ui.OverlayFilePicker)
 		if msg.Folder {
-			if m.launcherScreen != nil {
-				_ = m.launcherOpenFolder(msg.Path)
+			if _, connected := m.ws.(shellport.Connection); connected {
+				cmds = append(cmds, m.attachRemoteWorkspace(msg.Path, ""))
+			} else if m.launcherScreen != nil {
+				cmds = append(cmds, m.launcherOpenFolder(msg.Path))
 			} else if err := m.SwitchProject(msg.Path); err != nil {
 				if m.Feedback != nil {
 					m.Feedback.NotifyError("Failed to open workspace: " + err.Error())
@@ -792,7 +853,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			m.overlayHost.Close(ui.OverlayFilePicker)
 		}
 	case settingsui.SaveMsg:
-		m.Logger.Info("CONFIG", "settings_save", "scope", string(msg.Scope))
+		m.ws.Logger().Info("CONFIG", "settings_save", "scope", string(msg.Scope))
 		cmds = append(cmds, m.savePreferences(msg))
 	case preferencesSavedMsg:
 		m.applyPreferencesSaved(msg)
@@ -802,7 +863,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		m.applyRecoveryCancelResult(msg)
 	case settingsui.AccountChangeMsg:
 		request := msg
-		owner := m.Workspace
+		owner := m.ws
 		generation := m.workspaceSwitchGen.Load()
 		cmds = append(cmds, func() tea.Msg {
 			err := owner.SaveAccountChange(request.Change)
@@ -923,20 +984,20 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case settingsui.ScopeMsg:
 		m.openSettings(msg.Scope)
 	case settingsui.ResetSectionMsg:
-		overrides := m.LoadWorkspaceOverrides()
+		overrides := m.ws.LoadWorkspaceOverrides()
 		overrides.ClearCategory(msg.Key)
-		if err := m.SaveWorkspaceSettings(overrides); err != nil {
+		if err := m.ws.SaveWorkspaceSettings(overrides); err != nil {
 			m.Feedback.NotifyError("Failed to reset section: " + err.Error())
 		} else {
-			m.applyThemePreset(themePresetFromSettings(m.LoadAppSettings()))
+			m.applyThemePreset(themePresetFromSettings(m.ws.LoadAppSettings()))
 			m.refreshAllSessionSettingsProjections()
 			m.openSettings(ttypes.SettingsScopeWorkspace)
-			m.applyEditorSettings(m.LoadAppSettings().Editor)
+			m.applyEditorSettings(m.ws.LoadAppSettings().Editor)
 		}
 	case settingsui.CancelMsg:
 		// Live preset cycling previews via ThemePreviewMsg without persisting.
 		// Cancel must restore the last saved palette across the whole UI.
-		m.applyThemePreset(themePresetFromSettings(m.LoadAppSettings()))
+		m.applyThemePreset(themePresetFromSettings(m.ws.LoadAppSettings()))
 		m.clearFramePreview()
 		m.overlayHost.Close(ui.OverlayWorkspaceSettings)
 	case settingsui.PromptMsg:
@@ -951,7 +1012,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		m.applyFramePreview(msg)
 	case settingsui.FetchModelsMsg:
 		request := msg
-		fetch := m.PrepareDraftAccountModels(request.Account, request.BaseURL, request.StandardID)
+		fetch := m.ws.PrepareDraftAccountModels(request.Account, request.BaseURL, request.StandardID)
 		cmds = append(cmds, func() tea.Msg {
 			models, err := fetch()
 			if err != nil {
@@ -1006,7 +1067,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		}
 	case workspace.HistoryServiceStatus:
 		if msg.Error != "" {
-			m.Logger.Error("HISTORY", "service_error", "error", msg.Error)
+			m.ws.Logger().Error("HISTORY", "service_error", "error", msg.Error)
 			m.Feedback.NotifyError("Local history: " + msg.Error)
 		}
 	case settingsui.ChatGPTSignInResultMsg, settingsui.ChatGPTSignOutMsg:
@@ -1019,7 +1080,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			}
 		}
 	case sessionsettings.SaveMsg:
-		m.Logger.Info("CONFIG", "session_settings_save")
+		m.ws.Logger().Info("CONFIG", "session_settings_save")
 		m.Feedback.NotifyInfo("saving...")
 		s := msg.Settings
 		session, _ := m.sessionProjections.projectionForSettings(msg.Target)
@@ -1028,7 +1089,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			break
 		}
 		target := msg.Target
-		owner, generation := m.Workspace, m.workspaceSwitchGen.Load()
+		owner, generation := m.ws, m.workspaceSwitchGen.Load()
 		operation, err := owner.PrepareSessionSettingsSave(session.SessionID, s)
 		if err != nil {
 			m.Feedback.NotifyError(err.Error())
@@ -1044,26 +1105,26 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		}
 		// Promote the current agent settings to workspace defaults so every
 		// future agent (and new session) inherits them.
-		m.Logger.Info("CONFIG", "session_settings_save_as_workspace")
-		appDefaults := m.AppDefaults()
+		m.ws.Logger().Info("CONFIG", "session_settings_save_as_workspace")
+		appDefaults := m.ws.AppDefaults()
 		working := appDefaults
 		working.Agents = msg.Settings.Agents
 		overrides := types.WorkspaceOverridesFromDiff(appDefaults, working)
-		if err := m.SaveWorkspaceSettings(overrides); err != nil {
+		if err := m.ws.SaveWorkspaceSettings(overrides); err != nil {
 			m.Feedback.NotifyError("Failed to save as workspace settings: " + err.Error())
 		} else {
 			m.refreshAllSessionSettingsProjections()
 			m.Feedback.NotifyInfo("Agent settings saved as workspace defaults")
 		}
 	case sessionSettingsSaveResultMsg:
-		if msg.workspace != m.Workspace || msg.generation != m.workspaceSwitchGen.Load() {
+		if msg.workspace != m.ws || msg.generation != m.workspaceSwitchGen.Load() {
 			break
 		}
 		session, projection := m.sessionProjections.projectionForSettings(msg.target)
 		if msg.result.Err != nil {
-			m.Logger.Error("CONFIG", "save_error", "error", msg.result.Err.Error())
+			m.ws.Logger().Error("CONFIG", "save_error", "error", msg.result.Err.Error())
 			m.Feedback.NotifyError(msg.result.Err.Error())
-		} else if m.ApplySessionSettingsResult(msg.result) && projection != nil {
+		} else if m.ws.ApplySessionSettingsResult(msg.result) && projection != nil {
 			current := msg.result.Snapshot.Effective
 			if session.Settings != nil {
 				m.refreshSessionSettingsProjection(session)
@@ -1073,7 +1134,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 				m.ModelName = current.Model
 				m.LastSettings = current
 			}
-			for _, node := range m.AgentMgr.AllNodes() {
+			for _, node := range m.ws.AgentMgr().AllNodes() {
 				if node == nil || !node.IsOrchestrator() {
 					continue
 				}
@@ -1087,7 +1148,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			m.Feedback.NotifyInfo("settings saved")
 		}
 	case sessionsettings.CancelMsg:
-		m.Logger.Info("CONFIG", "session_settings_cancel")
+		m.ws.Logger().Info("CONFIG", "session_settings_cancel")
 		_, projection := m.sessionProjections.projectionForSettings(msg.Target)
 		if msg.Target != nil {
 			msg.Target.RestoreSnapshot()
@@ -1097,7 +1158,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		session, projection := m.sessionProjections.projectionForSettings(msg.Target)
 		if session == nil {
 			m.Feedback.NotifyError("Session settings owner is no longer available")
-		} else if err := m.ResetSessionSettingsForSession(session.SessionID); err != nil {
+		} else if err := m.ws.ResetSessionSettingsForSession(session.SessionID); err != nil {
 			m.Feedback.NotifyError("Failed to reset session settings: " + err.Error())
 		} else {
 			m.refreshSessionSettingsProjection(session)
@@ -1113,7 +1174,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		}
 		// Resolve the selected account, including its endpoint/protocol overrides.
 		// Template defaults must not overwrite the account during discovery.
-		fetch := m.PrepareAccountModels(request.ProviderID, request.AccountID, "", "")
+		fetch := m.ws.PrepareAccountModels(request.ProviderID, request.AccountID, "", "")
 		cmds = append(cmds, func() tea.Msg {
 			models, err := fetch()
 			return sessionSettingsModelsResultMsg{target: target, providerID: request.ProviderID, accountID: request.AccountID, generation: request.Generation, models: models, err: err}
@@ -1139,10 +1200,10 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case yolo.ResultMsg:
 		m.resolveSessionYolo(msg.Target, msg.Enabled)
 	case filetree.FileSelectedMsg:
-		m.Logger.Info("TREE", "file_selected", "path", msg.Path)
+		m.ws.Logger().Info("TREE", "file_selected", "path", msg.Path)
 		cmd, err := m.openEditorTab(msg.Path)
 		if err != nil {
-			m.Logger.Error("TREE", "open_editor_error", "error", err.Error())
+			m.ws.Logger().Error("TREE", "open_editor_error", "error", err.Error())
 		}
 		if cmd != nil {
 			cmds = append(cmds, cmd)
@@ -1150,12 +1211,12 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		m.unfocus()
 		m.syncRenderFocus()
 	case filetree.EnterFilterModeMsg:
-		m.Logger.Debug("TREE", "enter_filter_mode")
+		m.ws.Logger().Debug("TREE", "enter_filter_mode")
 		m.FocusStack.Clear()
 		m.FocusStack.Push(FocusTree)
 	case filetree.TreeRefreshDoneMsg:
 		if msg.Err != nil {
-			m.Logger.Error("TREE", "refresh_error", "error", msg.Err.Error())
+			m.ws.Logger().Error("TREE", "refresh_error", "error", msg.Err.Error())
 			m.Feedback.NotifyError("tree refresh error: " + msg.Err.Error())
 		}
 		if msg.Err == nil && m.Tree != nil && m.Tree.Model == msg.Model {
@@ -1179,7 +1240,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		}
 		m.treeGitRefreshAt = time.Now()
 		if msg.Err != nil {
-			m.Logger.Warn("GIT", "tree_status_refresh_failed", "error", msg.Err.Error())
+			m.ws.Logger().Warn("GIT", "tree_status_refresh_failed", "error", msg.Err.Error())
 		}
 		if cmd := msg.Model.Update(msg); cmd != nil {
 			cmds = append(cmds, cmd)
@@ -1346,8 +1407,8 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 func (m *App) handleTabSwitch() {
 	defer m.bindMainPaneFocus()
 	defer func() {
-		if m.LSPMgr != nil {
-			m.LSPMgr.SetActiveFile(m.EditorState.ActiveView)
+		if m.ws.LSPMgr() != nil {
+			m.ws.LSPMgr().SetActiveFile(m.EditorState.ActiveView)
 		}
 		m.closeCompletionPopup()
 		m.closeOutlinePopup()
@@ -1377,7 +1438,7 @@ func (m *App) handleTabSwitch() {
 		m.AgentView.SetActive(agentID)
 		m.ActivateSessionByAgent(agentID)
 		m.maybeHydrateComposerDraft()
-		m.OverlayState.SetYolo(m.YoloForAgent(agentID))
+		m.OverlayState.SetYolo(m.ws.YoloForAgent(agentID))
 		// Projection caches are source-version owned. Focus changes never make
 		// retained message pixels stale; SyncFromWorkspace invalidates only rows
 		// whose canonical conversation version changed.
@@ -1396,12 +1457,12 @@ func (m *App) handleTabSwitch() {
 		if !ok {
 			// Tab entry is missing (shouldn't normally happen, but be
 			// defensive). Re-open to recover.
-			if m.Logger != nil {
-				m.Logger.Warn("EDITOR", "tab_missing_on_switch", "path", path)
+			if m.ws.Logger() != nil {
+				m.ws.Logger().Warn("EDITOR", "tab_missing_on_switch", "path", path)
 			}
 			_, err := m.openEditorTab(path)
-			if err != nil && m.Logger != nil {
-				m.Logger.Error("EDITOR", "reopen_failed", "error", err.Error())
+			if err != nil && m.ws.Logger() != nil {
+				m.ws.Logger().Error("EDITOR", "reopen_failed", "error", err.Error())
 			}
 			return
 		}
@@ -1418,7 +1479,7 @@ func (m *App) handleTabSwitch() {
 }
 
 func (m *App) openFilePicker() {
-	root := m.RootPath
+	root := m.ws.RootPath()
 	if root == "" {
 		root, _ = m.workingDir()
 	}

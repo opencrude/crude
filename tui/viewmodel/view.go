@@ -75,7 +75,7 @@ func (m *App) newTerminalView(output string) tea.View {
 }
 
 func (m *App) terminalIdentity() string {
-	workspaceName := filepath.Base(filepath.Clean(m.RootPath))
+	workspaceName := filepath.Base(filepath.Clean(m.ws.RootPath()))
 	workspaceName = strings.TrimSpace(strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {
 			return -1
@@ -384,7 +384,7 @@ func (m *App) configureHeaderScreen() {
 	m.headerScreen.SetProjection(shellheader.Projection{
 		ModelName: m.ModelName,
 		YOLO:      m.OverlayState.IsYolo(),
-		StartTime: m.StartTime,
+		StartTime: m.ws.StartTime(),
 		// No ViewLabel: the active agent already has its own window tab, so
 		// the header stays on app + model only.
 		Width:         m.width - frame.Left - frame.Right,
@@ -464,8 +464,8 @@ func (m *App) configurePaneChat(agentID string, view *mainPaneView, rect ui.Rect
 	if agentID == m.AgentView.ActiveID() {
 		m.chatReflowContentW, m.chatReflowInnerW = renderContentW, renderInnerW
 	}
-	activity := m.AgentActivity(agentID)
-	if node := m.AgentMgr.Get(agentID); node != nil && m.thinkingPaneID(node.State) != "" {
+	activity := m.ws.AgentActivity(agentID)
+	if node := m.ws.AgentMgr().Get(agentID); node != nil && m.thinkingPaneID(node.State) != "" {
 		activity.Thinking, activity.ThinkingID = "", ""
 	}
 	if activity.ThinkingID != "" {
@@ -475,7 +475,7 @@ func (m *App) configurePaneChat(agentID string, view *mainPaneView, rect ui.Rect
 	chatH := rect.H - shellchat.ActivityRows(rect.H)
 
 	var activeAgent *workspace.AgentState
-	if node := m.AgentMgr.Get(agentID); node != nil {
+	if node := m.ws.AgentMgr().Get(agentID); node != nil {
 		activeAgent = node.State
 	}
 	activeTyping := false
@@ -486,7 +486,7 @@ func (m *App) configurePaneChat(agentID string, view *mainPaneView, rect ui.Rect
 	activeML.SetStreaming(activeAgent != nil && activeAgent.Streaming)
 	activeML.SetSpinFrame(m.SpinFrame)
 	activeML.SetActiveTyping(activeTyping)
-	if center := m.Status; center != nil {
+	if center := m.ws.Status(); center != nil {
 		if status, ok := center.Agent(agentID); ok {
 			activeML.SetPhase(string(status.Phase))
 		}

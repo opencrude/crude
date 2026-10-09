@@ -48,7 +48,7 @@ func (app *App) toggleBoardBrowser() tea.Cmd {
 }
 
 func (app *App) boardRequestCmd(request boardbrowser.Request) tea.Cmd {
-	owner, generation := app.Workspace, app.workspaceSwitchGen.Load()
+	owner, generation := app.ws, app.workspaceSwitchGen.Load()
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()

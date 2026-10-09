@@ -72,6 +72,7 @@ func (a *App) commitCoreAccount(change ttypes.AccountChange) (ttypes.AppSettings
 	if err != nil {
 		return ttypes.AppSettings{}, err
 	}
+	a.notifyDefaultsChanged()
 	return detachedCoreSettings(updated), nil
 }
 
@@ -114,7 +115,24 @@ func (a *App) commitCorePreferences(before, after ttypes.AppSettings) (ttypes.Ap
 	if err := network.ConfigureDefault(FileConfigToAppSettings(updated).Network); err != nil {
 		return ttypes.AppSettings{}, err
 	}
+	a.notifyDefaultsChanged()
 	return detachedCoreSettings(updated), nil
+}
+
+// notifyDefaultsChanged tells the core host that committed application
+// defaults changed, so every retained workspace adopts them, not only the
+// workspace whose request performed the commit.
+func (a *App) notifyDefaultsChanged() {
+	if a.defaultsChanged != nil {
+		a.defaultsChanged()
+	}
+}
+
+// committedDefaults is the current durable application snapshot.
+func (a *App) committedDefaults() ttypes.AppSettings {
+	a.configMu.Lock()
+	defer a.configMu.Unlock()
+	return detachedCoreSettings(a.fc)
 }
 
 func detachedCoreSettings(value FileConfig) ttypes.AppSettings {

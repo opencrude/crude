@@ -33,7 +33,7 @@ func TestRecoveryJourneyPreservesDraftAndCanonicalHydration(t *testing.T) {
 		if app.Input.Value() != draft {
 			t.Fatalf("state %s consumed the composer draft", state)
 		}
-		node := app.AgentMgr.Get(status.AgentID)
+		node := app.ws.AgentMgr().Get(status.AgentID)
 		messages := node.State.Messages.Messages()
 		if len(messages) != 1 || messages[0].Recovery == nil || messages[0].Recovery.State != state {
 			t.Fatalf("state %s did not retain one incident: %+v", state, messages)
@@ -63,7 +63,7 @@ func TestSendingWhilePassivelyInterruptedKeepsExactComposerDraft(t *testing.T) {
 	if app.Input.Value() != draft || app.Input.CursorFlat() != 7 {
 		t.Fatal("rejected pending-run submission consumed or reset the draft")
 	}
-	if got := app.AgentMgr.Get("owner").State.Messages.Messages(); len(got) != 1 || got[0].Recovery == nil {
+	if got := app.ws.AgentMgr().Get("owner").State.Messages.Messages(); len(got) != 1 || got[0].Recovery == nil {
 		t.Fatalf("rejected input fabricated a sent human message: %+v", got)
 	}
 }
@@ -73,7 +73,7 @@ func TestRecoveryCancelAcknowledgementPassesShieldButLateRetryCannotReactivate(t
 	app.AddOrchestrator("owner")
 	status := recovery.Status{ID: "incident", AgentID: "owner", Generation: 1, State: recovery.NeedsAttention}
 	_ = app.handleAgentEvent(types.AgentEventMsg{Type: "recovery", AgentID: "owner", Data: status})
-	node := app.AgentMgr.Get("owner")
+	node := app.ws.AgentMgr().Get("owner")
 	node.State.BeginCancellation()
 	status.State = recovery.Recovering
 	_ = app.handleAgentEvent(types.AgentEventMsg{Type: "recovery", AgentID: "owner", Data: status})
@@ -84,7 +84,7 @@ func TestRecoveryCancelAcknowledgementPassesShieldButLateRetryCannotReactivate(t
 	_ = app.handleAgentEvent(types.AgentEventMsg{Type: "recovery", AgentID: "owner", Data: status})
 	_ = app.handleAgentEvent(types.AgentEventMsg{Type: "done", AgentID: "owner", Data: map[string]any{"reason": "cancelled"}})
 	app.syncAgentStatusInventory()
-	snapshot, _ := app.Status.Agent("owner")
+	snapshot, _ := app.ws.Status().Agent("owner")
 	if node.State.IsActive() || app.canRetryAgentRecovery("owner") || snapshot.NeedsAction || snapshot.Phase != types.AgentCancelled {
 		t.Fatalf("stopped recovery is still working/actionable: %+v", snapshot)
 	}

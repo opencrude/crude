@@ -61,7 +61,7 @@ func TestThinkingScrollbarGeometry(t *testing.T) {
 	app.width = 80
 	app.height = 24
 	setupReproAgent(t, app, "repro-agent")
-	node := app.AgentMgr.Get("repro-agent")
+	node := app.ws.AgentMgr().Get("repro-agent")
 	agent := node.State
 
 	// Long chat so the MAIN chat overflows too.
@@ -152,7 +152,7 @@ func TestThinkingScrolledWindowStable(t *testing.T) {
 	app.width = 80
 	app.height = 24
 	setupReproAgent(t, app, "scro-agent")
-	node := app.AgentMgr.Get("scro-agent")
+	node := app.ws.AgentMgr().Get("scro-agent")
 	agent := node.State
 
 	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "scro-agent", Data: reasoning.Delta{Text: thinkingLines(40)}})
@@ -182,7 +182,7 @@ func TestCompletedExpandedThoughtScrollsWithTranscript(t *testing.T) {
 	app.width = 80
 	app.height = 24
 	setupReproAgent(t, app, "done-scroll")
-	node := app.AgentMgr.Get("done-scroll")
+	node := app.ws.AgentMgr().Get("done-scroll")
 	state := node.State
 
 	var uniqueThinking strings.Builder
@@ -209,7 +209,7 @@ func TestCompletedExpandedThoughtScrollsWithTranscript(t *testing.T) {
 			break
 		}
 	}
-	if thoughtID == "" || app.PaneMgr.Has(paneID) {
+	if thoughtID == "" || app.ws.PaneMgr().Has(paneID) {
 		t.Fatal("completed thought did not return to transcript ownership")
 	}
 	ml := app.activeMessageList()

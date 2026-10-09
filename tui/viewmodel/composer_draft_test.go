@@ -1,7 +1,6 @@
 package viewmodel
 
 import (
-	"context"
 	"encoding/json"
 	"path/filepath"
 	"testing"
@@ -55,6 +54,7 @@ func TestComposerDraftRoundTripWithDB(t *testing.T) {
 	}
 
 	app := newFullTestApp(t)
+	configureComposerDraftTest(t, app)
 	sess := workspace.NewSession("roundtrip", t.TempDir(), db, nil)
 	app.ActiveSession = sess
 	app.Input.SetReferenceStore(sess.RefStore)
@@ -89,7 +89,7 @@ func TestComposerDraftRoundTripWithDB(t *testing.T) {
 	app.composerHydratedFor = sess
 	app.draftOwner(sess).epoch = 1
 	app.draftOwner(sess).loadRevision = app.Input.DraftRevision()
-	if _, ok := app.saveComposerDraftMsg(sess, db, 1, snap).(composerDraftSavedMsg); !ok {
+	if _, ok := app.saveComposerDraftMsg(sess, 1, snap).(composerDraftSavedMsg); !ok {
 		t.Fatal("save must acknowledge with composerDraftSavedMsg")
 	}
 
@@ -167,6 +167,7 @@ func TestComposerDraftCursorSelectionScrollOnlyChangesPersistAndFlush(t *testing
 		t.Fatal(err)
 	}
 	app := newFullTestApp(t)
+	configureComposerDraftTest(t, app)
 	sess := workspace.NewSession("owner", t.TempDir(), db, nil)
 	app.ActiveSession, app.composerHydratedFor, app.composerDraftEpoch = sess, sess, 1
 	app.draftOwner(sess).epoch = 1
@@ -175,7 +176,7 @@ func TestComposerDraftCursorSelectionScrollOnlyChangesPersistAndFlush(t *testing
 	app.Input.SetSelection(4, 7)
 	app.Input.SetScrollOffset(1)
 	app.flushComposerDraft()
-	raw, err := sessiondb.LoadRuntimeState(context.Background(), db, composerDraftStateKey)
+	raw, err := app.draftOwner(sess).record.load(app.composerDraftClient)
 	if err != nil {
 		t.Fatal(err)
 	}

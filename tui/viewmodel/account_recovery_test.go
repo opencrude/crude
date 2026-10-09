@@ -20,27 +20,27 @@ import (
 
 func TestNewSessionWithoutAccountShowsPaintedRecoveryAndOpensAccounts(t *testing.T) {
 	app := newTestAppWithLauncher(t)
-	app.RootPath = t.TempDir()
-	app.WorkspaceDir = t.TempDir()
+	wsOf(app).RootPath = t.TempDir()
+	wsOf(app).WorkspaceDir = t.TempDir()
 	app.registerOverlayHandlers()
 	cfg := testAccountConfig()
 	cfg.Accounts = nil
-	app.SetBackendConfig(cfg, t.TempDir())
-	app.SetEventSender(noopEventSender{})
+	wsOf(app).SetBackendConfig(cfg, t.TempDir())
+	app.ws.SetEventSender(noopEventSender{})
 
 	priorSession := app.ActiveSession
-	result := app.NewAgentSession()
+	result := app.ws.NewAgentSession()
 	if result == nil || !result.NeedsAccount || !strings.Contains(result.Error, session.ErrAccountRequired.Error()) {
 		t.Fatalf("no-account create result = %+v, want an explicit account-required failure", result)
 	}
-	if len(app.Sessions) != 0 || len(app.SessionsByID) != 0 || app.ActiveSession != priorSession {
+	if len(app.ws.Sessions()) != 0 || len(app.ws.SessionsByID()) != 0 || app.ActiveSession != priorSession {
 		t.Fatal("account-required failure created or activated a session")
 	}
 
 	if cmd := app.launcherNewSession(); cmd != nil {
 		t.Fatal("failed creation should not enqueue an agent")
 	}
-	if app.AgentMgr.Count() != 0 || len(app.Sessions) != 0 || len(app.SessionsByID) != 0 || app.ActiveSession != priorSession || app.launcherScreen == nil || !app.overlayHost.IsOpen(ui.OverlayOperationIssue) {
+	if app.ws.AgentMgr().Count() != 0 || len(app.ws.Sessions()) != 0 || len(app.ws.SessionsByID()) != 0 || app.ActiveSession != priorSession || app.launcherScreen == nil || !app.overlayHost.IsOpen(ui.OverlayOperationIssue) {
 		t.Fatal("failed creation must leave launcher intact and open recovery")
 	}
 	fw := app.windowManager.Window(string(ui.OverlayOperationIssue))
@@ -66,7 +66,7 @@ func TestNewSessionWithoutAccountShowsPaintedRecoveryAndOpensAccounts(t *testing
 		t.Fatal("safe dismissal is not the default action")
 	}
 	drainLauncherCommands(app, app.forwardEventToWindowContent(app.windowManager.Window(string(ui.OverlayOperationIssue)), tea.KeyPressMsg{Code: tea.KeyEnter}))
-	if app.overlayHost.IsOpen(ui.OverlayOperationIssue) || app.AgentMgr.Count() != 0 || app.launcherScreen == nil {
+	if app.overlayHost.IsOpen(ui.OverlayOperationIssue) || app.ws.AgentMgr().Count() != 0 || app.launcherScreen == nil {
 		t.Fatal("dismissing warning must not create a session or lose launcher")
 	}
 
@@ -90,7 +90,7 @@ func TestNewSessionWithoutAccountShowsPaintedRecoveryAndOpensAccounts(t *testing
 
 func TestNewSessionWithSavedAccountsOpensMainAgentSelection(t *testing.T) {
 	app := newTestAppWithLauncher(t)
-	app.RootPath, app.WorkspaceDir = t.TempDir(), t.TempDir()
+	wsOf(app).RootPath, wsOf(app).WorkspaceDir = t.TempDir(), t.TempDir()
 	app.registerOverlayHandlers()
 	cfg := testAccountConfig()
 	profile := cfg.Agents.Profiles[cfg.Agents.ActiveProfile]
@@ -98,12 +98,12 @@ func TestNewSessionWithSavedAccountsOpensMainAgentSelection(t *testing.T) {
 	main.AccountID = ""
 	profile.Categories[session.CategoryDefault] = main
 	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile
-	app.SetBackendConfig(cfg, t.TempDir())
-	app.SetEventSender(noopEventSender{})
-	app.SetAppDefaults(ttypes.AppSettings{Accounts: cfg.Accounts,
+	wsOf(app).SetBackendConfig(cfg, t.TempDir())
+	app.ws.SetEventSender(noopEventSender{})
+	wsOf(app).SetAppDefaults(ttypes.AppSettings{Accounts: cfg.Accounts,
 		Agents: ttypes.AgentsSettings{Categories: map[string]ttypes.CategorySettings{session.CategoryDefault: {Model: "test-model"}}}})
 	app.launcherNewSession()
-	if app.AgentMgr.Count() != 0 || !app.overlayHost.IsOpen(ui.OverlayOperationIssue) {
+	if app.ws.AgentMgr().Count() != 0 || !app.overlayHost.IsOpen(ui.OverlayOperationIssue) {
 		t.Fatal("missing Main Agent account did not keep launcher and show recovery")
 	}
 	if fw := app.windowManager.Window(string(ui.OverlayOperationIssue)); fw != nil {
@@ -129,7 +129,7 @@ func TestNewSessionWithSavedAccountsOpensMainAgentSelection(t *testing.T) {
 			mainSelected = true
 		}
 	}
-	if !mainSelected || app.AgentMgr.Count() != 0 {
+	if !mainSelected || app.ws.AgentMgr().Count() != 0 {
 		t.Fatal("recovery chose an account automatically or opened the wrong settings page")
 	}
 }
@@ -138,18 +138,18 @@ func TestResumeUnpinnedSessionKeepsHistoryAndOpensConnectionPicker(t *testing.T)
 	t.Setenv("HOME", t.TempDir())
 	app := newTestAppWithLauncher(t)
 	root := t.TempDir()
-	app.RootPath = root
-	app.SessionsByID = make(map[string]*workspace.Session)
-	app.SessionsByAgent = make(map[string]*workspace.Session)
+	wsOf(app).RootPath = root
+	wsOf(app).SessionsByID = make(map[string]*workspace.Session)
+	wsOf(app).SessionsByAgent = make(map[string]*workspace.Session)
 	dataDir, err := workspace.WorkspaceDir(root)
 	if err != nil {
 		t.Fatal(err)
 	}
-	app.WorkspaceDir = dataDir
-	app.SetEventSender(noopEventSender{})
+	wsOf(app).WorkspaceDir = dataDir
+	app.ws.SetEventSender(noopEventSender{})
 	cfg := testAccountConfig()
 	home := t.TempDir()
-	app.SetBackendConfig(cfg, home)
+	wsOf(app).SetBackendConfig(cfg, home)
 	sessionDir := filepath.Join(dataDir, "sessions")
 	original, err := session.NewWithSessionDir("", cfg, home, sessionDir)
 	if err != nil {
@@ -189,5 +189,5 @@ func TestResumeUnpinnedSessionKeepsHistoryAndOpensConnectionPicker(t *testing.T)
 	if !app.overlayHost.IsOpen(ui.OverlayOperationIssue) {
 		t.Fatal("startup resume did not present connection recovery")
 	}
-	app.CloseAllSessions()
+	wsOf(app).CloseAllSessions()
 }

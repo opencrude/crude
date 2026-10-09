@@ -1,12 +1,15 @@
 package viewmodel
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
 	"crude/fileio"
+	"crude/shellport"
 	findinfiles "crude/tui/screens/findinfiles"
 	"crude/tui/ui"
 	"crude/tui/wm"
@@ -43,7 +46,7 @@ func (m *App) toggleProjectSearch(mode findinfiles.Mode) (tea.Model, tea.Cmd) {
 	query, replacement, caseSensitive, regex := m.captureProjectSearch()
 	m.closeFindInFiles()
 
-	root := m.RootPath
+	root := m.ws.RootPath()
 	if root == "" {
 		root = "."
 	}
@@ -95,7 +98,7 @@ func (m *App) toggleProjectSearch(mode findinfiles.Mode) (tea.Model, tea.Cmd) {
 	search.FocusQuery()
 	searchCopy := search
 	m.overlayHost.Open(overlay, fw, ui.DefaultOverlayPolicy(), func() {
-		m.CancelProjectSearch()
+		m.ws.CancelProjectSearch()
 		m.findInFilesRequest = 0
 		m.findInFilesGen = 0
 		if searchCopy != nil {
@@ -169,6 +172,22 @@ func (m *App) applyProjectReplace(msg findinfiles.ReplaceMsg) tea.Cmd {
 	if !msg.All {
 		matches = []fileio.ProjectSearchMatch{msg.Match}
 	}
+	if _, remote := m.ws.(shellport.ClientFiles); remote {
+		planner, ok := m.ws.(interface {
+			PlanProjectReplace(context.Context, []fileio.ProjectSearchMatch, string, string, fileio.ProjectSearchOptions) ([]fileio.ProjectFileReplacement, int, error)
+		})
+		if !ok {
+			m.Feedback.NotifyError("Core replace planning is unavailable; no files changed")
+			return nil
+		}
+		generation, screen, port := m.workspaceSwitchGen.Load(), m.findInFiles, m.ws
+		return func() tea.Msg {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			edits, skipped, err := planner.PlanProjectReplace(ctx, matches, msg.Query, msg.Replacement, msg.Options)
+			return clientProjectReplaceMsg{generation: generation, screen: screen, port: port, query: msg.Query, replacement: msg.Replacement, edits: edits, skipped: skipped, err: err}
+		}
+	}
 	edits, skipped, err := fileio.PlanProjectReplace(matches, msg.Query, msg.Replacement, msg.Options)
 	if err != nil {
 		m.findInFiles.SetNotice("Replace failed")
@@ -195,7 +214,7 @@ func (m *App) applyProjectReplace(msg findinfiles.ReplaceMsg) tea.Cmd {
 		files++
 	}
 	if len(disk) > 0 {
-		result := m.ApplyWorkspaceEdit(disk)
+		result := m.ws.ApplyWorkspaceEdit(disk)
 		if !result.Succeeded() && m.Feedback != nil {
 			m.Feedback.NotifyError(result.Error())
 		}
@@ -213,6 +232,67 @@ func (m *App) applyProjectReplace(msg findinfiles.ReplaceMsg) tea.Cmd {
 	}
 	m.markProjectSearchDirty()
 	return m.findInFiles.ScheduleSearch()
+}
+
+type clientProjectReplaceMsg struct {
+	generation         uint64
+	screen             *findinfiles.Screen
+	port               shellport.Workspace
+	query, replacement string
+	edits              []fileio.ProjectFileReplacement
+	skipped            int
+	err                error
+	diskApplied        bool
+}
+
+func (m *App) applyClientProjectReplace(msg clientProjectReplaceMsg) tea.Cmd {
+	if msg.screen == nil || msg.generation != m.workspaceSwitchGen.Load() || msg.port != m.ws || msg.screen != m.findInFiles || msg.screen.Query() != msg.query || msg.screen.Replacement() != msg.replacement {
+		return nil
+	}
+	if msg.err != nil {
+		msg.screen.SetNotice("Replace failed")
+		m.Feedback.NotifyError(msg.err.Error())
+		m.markProjectSearchDirty()
+		return nil
+	}
+	// Check every local view before applying anything. A stale plan must never
+	// overwrite newer unsaved text in this shell.
+	for _, edit := range msg.edits {
+		if m.EditorState != nil {
+			if tab := m.EditorState.Tabs[edit.Path]; tab != nil && tab.Editor != nil && tab.Editor.Value() != edit.OldContent {
+				msg.screen.SetNotice("Files changed; search again before replacing")
+				m.markProjectSearchDirty()
+				return nil
+			}
+		}
+	}
+	var disk []workspace.FileEdit
+	count := 0
+	for _, edit := range msg.edits {
+		if m.EditorState.Tabs[edit.Path] == nil {
+			disk = append(disk, workspace.FileEdit{Path: edit.Path, OldContent: edit.OldContent, NewContent: edit.NewContent})
+		}
+		count += edit.Count
+	}
+	if len(disk) > 0 && !msg.diskApplied {
+		owner := m.ws
+		return func() tea.Msg {
+			result := owner.ApplyWorkspaceEdit(disk)
+			msg.diskApplied = true
+			msg.err = result.Err
+			return msg
+		}
+	}
+	// Disk preconditions commit off Update before optimistic editor changes. A
+	// rejected disk transaction must not leave half-applied private live edits.
+	for _, edit := range msg.edits {
+		if m.EditorState.Tabs[edit.Path] != nil {
+			m.applyReplacementToOpenBuffer(edit)
+		}
+	}
+	msg.screen.SetNotice(fmt.Sprintf("Replaced %d in %d files · skipped %d", count, len(msg.edits), msg.skipped))
+	m.markProjectSearchDirty()
+	return msg.screen.ScheduleSearch()
 }
 
 func (m *App) applyReplacementToOpenBuffer(edit fileio.ProjectFileReplacement) bool {

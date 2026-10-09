@@ -13,7 +13,7 @@ func TestResponsesContinuationFailureIsVisibleAndDeduplicated(t *testing.T) {
 	event := workspace.AgentEvent{Type: "response_continuation_unavailable", AgentID: "root", Data: map[string]any{"reason": "response_not_stored"}}
 	app.handleAgentDomainEvent(event)
 	app.handleAgentDomainEvent(event)
-	notifications := app.Status.Notifications(true)
+	notifications := app.ws.Status().Notifications(true)
 	matched := 0
 	for _, notification := range notifications {
 		if strings.Contains(notification.Summary, "endpoint declined server storage") {

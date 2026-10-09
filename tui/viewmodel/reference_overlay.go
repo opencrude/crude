@@ -11,7 +11,7 @@ import (
 
 type referenceOverlayState struct {
 	session    *workspace.Session
-	store      *workspace.ReferenceStore
+	store      workspace.SessionReferences
 	screen     *textoverlay.Screen
 	ref        sessiondb.Reference
 	original   string

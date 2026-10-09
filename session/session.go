@@ -925,9 +925,16 @@ func (s *Session) CancelOrchestrator(id string) (bool, []string) {
 	orchestrator := s.orchestrators[id]
 	s.orchMu.Unlock()
 	if orchestrator == nil {
+		if s.logger != nil {
+			s.logger.Warn("AGENT", "cancel_unrouted", "orchestrator_id", id)
+		}
 		return false, nil
 	}
-	return orchestrator.CancelTurn()
+	cancelled, ids := orchestrator.CancelTurn()
+	if s.logger != nil {
+		s.logger.Info("AGENT", "cancel_requested", "orchestrator_id", id, "cancelled", cancelled, "turns", len(ids))
+	}
+	return cancelled, ids
 }
 
 // SubmitInput registers a cancellable turn before handing it to the session

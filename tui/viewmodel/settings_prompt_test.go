@@ -17,10 +17,10 @@ import (
 func newSettingsPromptApp(t *testing.T) (*App, *wm.FloatingWindow, *settingsui.WorkspaceSettingsSurface) {
 	t.Helper()
 	app := newTestApp(t)
-	app.Logger = noopLogger{}
+	wsOf(app).Logger = noopLogger{}
 	app.width, app.height = 160, 40
 	app.registerOverlayHandlers()
-	app.SetAppDefaults(types.AppSettings{
+	wsOf(app).SetAppDefaults(types.AppSettings{
 
 		Accounts: map[string]provider.Account{
 			"work": {ID: "work", ProviderID: "openrouter", Label: "Work", Connection: provider.DefaultTemplates()["openrouter"]},
@@ -147,7 +147,7 @@ func TestSettingsPromptRejectsChangedSelectionOnAccept(t *testing.T) {
 		t.Fatal("conflict closed or replaced settings")
 	}
 	found := false
-	for _, notice := range app.Status.Notifications(true) {
+	for _, notice := range app.ws.Status().Notifications(true) {
 		if notice.Summary == "Settings changed; review and retry" {
 			found = true
 		}

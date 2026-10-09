@@ -9,11 +9,11 @@ import (
 
 func TestSlashMutationsRejectActiveTurnWithoutStartingAsyncWork(t *testing.T) {
 	app := newFullTestApp(t)
-	app.Logger = stubLogger{}
+	wsOf(app).Logger = stubLogger{}
 	app.AddOrchestrator(
 		"agent")
 
-	node := app.AgentMgr.Get("agent")
+	node := app.ws.AgentMgr().Get("agent")
 	node.State.Running = true
 	node.State.Thinking = true
 
@@ -30,11 +30,11 @@ func TestSlashMutationsRejectActiveTurnWithoutStartingAsyncWork(t *testing.T) {
 
 func TestYoloSlashRemainsAvailableDuringActiveTurn(t *testing.T) {
 	app := newFullTestApp(t)
-	app.Logger = stubLogger{}
+	wsOf(app).Logger = stubLogger{}
 	app.AddOrchestrator(
 		"agent")
 
-	node := app.AgentMgr.Get("agent")
+	node := app.ws.AgentMgr().Get("agent")
 	node.State.Running = true
 	node.State.Thinking = true
 

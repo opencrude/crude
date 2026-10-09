@@ -15,7 +15,7 @@ type thinkingPresentationKey struct {
 }
 
 func (m *App) thinkingKey(agent *workspace.AgentState) thinkingPresentationKey {
-	return thinkingPresentationKey{session: m.SessionForAgent(agent.ID), agent: agent}
+	return thinkingPresentationKey{session: m.ws.SessionForAgent(agent.ID), agent: agent}
 }
 func (m *App) thinkingPaneID(agent *workspace.AgentState) string {
 	if agent == nil {
@@ -35,10 +35,10 @@ func (m *App) Get(id string) *workspace.SubPane {
 			return pane
 		}
 	}
-	return m.PaneMgr.Get(id)
+	return m.ws.PaneMgr().Get(id)
 }
 func (m *App) thinkingOwnerWidth(id string) int {
-	node := m.AgentMgr.Get(id)
+	node := m.ws.AgentMgr().Get(id)
 	if node == nil || node.State == nil {
 		return 0
 	}
@@ -130,7 +130,7 @@ func (m *App) reconcileThinkingPresentation(agent *workspace.AgentState, width i
 	}
 	thought, active := agent.Messages.ActiveThinking()
 	for key := range m.thinkingPresentations {
-		if key.agent == agent && (!active || key.thought != thought.InternalID || key.session != m.SessionForAgent(agent.ID)) {
+		if key.agent == agent && (!active || key.thought != thought.InternalID || key.session != m.ws.SessionForAgent(agent.ID)) {
 			m.dropThinkingPresentation(agent)
 			break
 		}
@@ -138,9 +138,9 @@ func (m *App) reconcileThinkingPresentation(agent *workspace.AgentState, width i
 	if !active || m.thinkingPaneID(agent) != "" || width <= 0 {
 		return
 	}
-	session := m.SessionForAgent(agent.ID)
+	session := m.ws.SessionForAgent(agent.ID)
 	root := agent
-	if node := m.AgentMgr.OrchestratorFor(agent.ID); node != nil {
+	if node := m.ws.AgentMgr().OrchestratorFor(agent.ID); node != nil {
 		root = node.State
 	}
 	latched := m.thinkingLatch[session]

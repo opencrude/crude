@@ -16,7 +16,7 @@ func TestPreferencesSaveIsOffUIAndPreservesDraftOnFailure(t *testing.T) {
 	before := model.AppSettings()
 	entered, release := make(chan struct{}), make(chan struct{})
 	defer close(release)
-	app.OnAppSettingsSave = func(settings types.AppSettings) (types.AppSettings, error) {
+	wsOf(app).OnAppSettingsSave = func(settings types.AppSettings) (types.AppSettings, error) {
 		close(entered)
 		<-release
 		return types.AppSettings{}, errors.New("client certificate cannot be read")

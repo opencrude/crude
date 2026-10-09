@@ -18,8 +18,8 @@ type slashBackendResultMsg struct {
 }
 
 func (m *App) executeSlashCommand(cmd string) tea.Cmd {
-	if m.Logger != nil {
-		m.Logger.Info("INPUT", "slash_command", "cmd", cmd)
+	if m.ws.Logger() != nil {
+		m.ws.Logger().Info("INPUT", "slash_command", "cmd", cmd)
 	}
 
 	cmdName, remainder := parseSlashCommand(cmd)
@@ -40,38 +40,38 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 	case "/skill":
 		return m.invokeSkill(remainder, cmd)
 	case "/settings":
-		m.Logger.Info("INPUT", "slash", "command", "settings")
+		m.ws.Logger().Info("INPUT", "slash", "command", "settings")
 		m.openSessionSettings()
 	case "/history":
-		m.openPromptHistory()
+		cmds = append(cmds, m.openPromptHistory())
 	case "/model":
-		m.Logger.Info("INPUT", "slash", "command", "model")
+		m.ws.Logger().Info("INPUT", "slash", "command", "model")
 		if cmd := m.openSessionModelPicker(); cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 	case "/sessions":
-		m.Logger.Info("INPUT", "slash", "command", "sessions")
+		m.ws.Logger().Info("INPUT", "slash", "command", "sessions")
 		m.openSessionPicker()
 	case "/memory":
-		m.Logger.Info("INPUT", "slash", "command", "memory")
+		m.ws.Logger().Info("INPUT", "slash", "command", "memory")
 		_, cmd := m.toggleMemoryBrowser()
 		if cmd != nil {
 			cmds = append(cmds, cmd)
 		}
 	case "/help":
-		m.Logger.Info("INPUT", "slash", "command", "help")
+		m.ws.Logger().Info("INPUT", "slash", "command", "help")
 		m.openHelp()
 	case "/compact":
-		m.Logger.Info("INPUT", "slash", "command", "compact")
+		m.ws.Logger().Info("INPUT", "slash", "command", "compact")
 		if agentID == "" {
 			m.Feedback.NotifyError("No active session")
 			break
 		}
-		if m.AgentTurnActive(agentID) {
+		if m.ws.AgentTurnActive(agentID) {
 			m.Feedback.NotifyError("Stop the active turn before compacting context")
 			break
 		}
-		prepared, result := m.PrepareCompactForAgent(agentID)
+		prepared, result := m.ws.PrepareCompactForAgent(agentID)
 		if prepared.Run == nil {
 			if result.Error != "" {
 				m.Feedback.NotifyError(result.Error)
@@ -92,10 +92,10 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 	case "/debug-lsp":
 		var b strings.Builder
 		b.WriteString("LSP Debug:\n")
-		if m.LSPMgr != nil {
-			conn, status, errMsg := m.LSPMgr.Status()
+		if m.ws.LSPMgr() != nil {
+			conn, status, errMsg := m.ws.LSPMgr().Status()
 			fmt.Fprintf(&b, "  connected=%v  status=%d  error=%q\n", conn, status, errMsg)
-			ins := m.LSPMgr.ProjectInsights()
+			ins := m.ws.LSPMgr().ProjectInsights()
 			fmt.Fprintf(&b, "  server=%s  ready=%v  files=%d  err=%d  warn=%d  hints=%d\n",
 				ins.ServerName, ins.ServerReady, ins.FilesAffected, ins.Errors, ins.Warnings, ins.Hints)
 		}
@@ -114,19 +114,19 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 			m.Feedback.NotifyError("No active session")
 			break
 		}
-		if m.YoloForAgent(agentID) {
+		if m.ws.YoloForAgent(agentID) {
 			m.setAgentYolo(agentID, false)
 		} else {
 			m.openSessionYoloPanel()
-			m.Logger.Info("SAFETY", "yolo_prompt", "source", "slash")
+			m.ws.Logger().Info("SAFETY", "yolo_prompt", "source", "slash")
 		}
 	case "/undo":
-		m.Logger.Info("INPUT", "slash", "command", cmd)
+		m.ws.Logger().Info("INPUT", "slash", "command", cmd)
 		if agentID == "" {
 			m.Feedback.NotifyError("No active session")
 			break
 		}
-		if m.AgentTurnActive(agentID) {
+		if m.ws.AgentTurnActive(agentID) {
 			m.Feedback.NotifyError("Stop the active turn before undoing file operations")
 			break
 		}
@@ -134,7 +134,7 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 	case "/undo-n", "/undo-all":
 		m.Feedback.NotifyError("Legacy destructive undo commands were removed. Use /undo to review message changes safely.")
 	default:
-		m.Logger.Warn("INPUT", "slash_unknown", "cmd", cmdName)
+		m.ws.Logger().Warn("INPUT", "slash_unknown", "cmd", cmdName)
 		m.Feedback.NotifyError(fmt.Sprintf("Unknown command: %s (try /help)", cmdName))
 	}
 
@@ -159,7 +159,7 @@ func parseSlashCommand(command string) (string, string) {
 func (m *App) handleSlashBackendResult(msg slashBackendResultMsg) {
 	if msg.undo != nil {
 		if msg.undo.Error != "" {
-			m.Logger.Error("JOURNAL", "slash_failed", "command", msg.command, "error", msg.undo.Error)
+			m.ws.Logger().Error("JOURNAL", "slash_failed", "command", msg.command, "error", msg.undo.Error)
 			m.Feedback.NotifyError(msg.undo.Error)
 			return
 		}
@@ -171,14 +171,14 @@ func (m *App) handleSlashBackendResult(msg slashBackendResultMsg) {
 	}
 	if msg.compact != nil {
 		if msg.compact.Cancelled {
-			m.Logger.Info("COMPACT", "slash_cancelled", "operation_id", msg.compact.OperationID)
+			m.ws.Logger().Info("COMPACT", "slash_cancelled", "operation_id", msg.compact.OperationID)
 			return
 		}
 		if msg.compact.Error != "" {
-			m.Logger.Error("COMPACT", "slash_failed", "error", msg.compact.Error)
+			m.ws.Logger().Error("COMPACT", "slash_failed", "error", msg.compact.Error)
 			m.Feedback.NotifyError(msg.compact.Error)
 			return
 		}
-		m.Logger.Info("COMPACT", "slash_ok", "before", msg.compact.Before, "after", msg.compact.After)
+		m.ws.Logger().Info("COMPACT", "slash_ok", "before", msg.compact.Before, "after", msg.compact.After)
 	}
 }

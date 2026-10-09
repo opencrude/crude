@@ -73,19 +73,19 @@ func TestLiveOllamaWaitLatency(t *testing.T) {
 	cfg := &session.Config{Accounts: stored.Accounts, Agents: agents}
 	t.Setenv("HOME", t.TempDir())
 	app := newFullTestApp(t)
-	app.RootPath, app.WorkspaceDir = t.TempDir(), t.TempDir()
-	app.Logger = &testLogger{}
-	app.SessionsByID = make(map[string]*workspace.Session)
-	app.SessionsByAgent = make(map[string]*workspace.Session)
-	owner, err := app.CreateSession(cfg, os.Getenv("HOME"))
+	wsOf(app).RootPath, wsOf(app).WorkspaceDir = t.TempDir(), t.TempDir()
+	wsOf(app).Logger = &testLogger{}
+	wsOf(app).SessionsByID = make(map[string]*workspace.Session)
+	wsOf(app).SessionsByAgent = make(map[string]*workspace.Session)
+	owner, err := wsOf(app).CreateSession(cfg, os.Getenv("HOME"))
 	if err != nil {
 		t.Fatal(err)
 	}
 	ctx, cancel := context.WithTimeout(t.Context(), 150*time.Second)
 	sender := &latencyEventSender{ctx: ctx, events: make(chan ttypes.AgentEventMsg, 4096)}
-	defer app.CloseAllSessions()
+	defer wsOf(app).CloseAllSessions()
 	defer cancel()
-	orch, err := app.StartOrchestrator(owner.SessionID, sender)
+	orch, err := wsOf(app).StartOrchestrator(owner.SessionID, sender)
 	if err != nil {
 		t.Fatal(err)
 	}

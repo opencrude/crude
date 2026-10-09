@@ -27,14 +27,14 @@ func TestStaleTerminalMessagesCannotTargetReplacementManagerSession(t *testing.T
 	if err != nil {
 		t.Fatalf("create old terminal: %v", err)
 	}
-	oldService := app.Terminals
+	oldService := wsOf(app).Terminals
 	oldService.CloseAll()
 	app.discardTerminalUI()
 	app.workspaceSwitchGen.Add(1)
 
 	newMgr := workspace.NewTerminalManager(t.TempDir())
-	app.TermMgr = newMgr
-	app.Terminals = nil
+	wsOf(app).TermMgr = newMgr
+	wsOf(app).Terminals = nil
 	newInfo, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{
 		Command: "/bin/cat",
 		CWD:     t.TempDir(),
@@ -72,7 +72,7 @@ func TestStaleTerminalMessagesCannotTargetReplacementManagerSession(t *testing.T
 	runTerminalCommand(t, app, result.Cmd)
 	deadline := time.Now().Add(time.Second)
 	for time.Now().Before(deadline) {
-		projection, err := app.Terminals.Rows(newInfo.ID, -1, 0)
+		projection, err := app.ws.Terminals().Rows(newInfo.ID, -1, 0)
 		if err == nil && strings.Contains(terminalProjectionText(projection), "x") {
 			return
 		}

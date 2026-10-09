@@ -27,6 +27,24 @@ type ReferenceStore struct {
 	db             *sql.DB
 }
 
+// SessionReferences is a session's @reference store as consumed by shells and
+// the core. The local implementation is ReferenceStore; a connected shell uses
+// a replica whose reads are local and whose writes are core requests.
+type SessionReferences interface {
+	ReadReferenceContent(id string) (content string, readOnly bool, err error)
+	SaveReferenceContent(expected sessiondb.Reference, original, content string) error
+	CreateReference(req sessiondb.CreateRequest) (sessiondb.Reference, error)
+	RestorePrompt(entry history.Entry) (string, []string, error)
+	ImportReference(old sessiondb.Reference) (sessiondb.Reference, error)
+	DeleteReference(id string) error
+	RenameReference(id, label string) (string, bool)
+	GetReference(id string) (sessiondb.Reference, bool)
+	ListReferences() []sessiondb.Reference
+	AddExisting(ref sessiondb.Reference)
+}
+
+var _ SessionReferences = (*ReferenceStore)(nil)
+
 func NewReferenceStore(sessionID, sessionDir string, db *sql.DB) *ReferenceStore {
 	return &ReferenceStore{
 		refs:       make(map[string]sessiondb.Reference),

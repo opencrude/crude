@@ -9,7 +9,7 @@ import (
 func TestGlobalHeaderRemainsAboveActivitySidebar(t *testing.T) {
 	app := newFullTestApp(t)
 	app.ModelName = "main-model"
-	app.StartTime = time.Now().Add(-2 * time.Minute)
+	wsOf(app).StartTime = time.Now().Add(-2 * time.Minute)
 	app.paintShellFrame()
 
 	header := shellBufferRow(app, app.frameTopRow())

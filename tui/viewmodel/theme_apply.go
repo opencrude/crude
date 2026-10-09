@@ -1,11 +1,11 @@
 package viewmodel
 
 import (
+	"crude/shellport"
 	"crude/tui/theme"
 	ttypes "crude/tui/types"
 	"crude/tui/ui"
 	"crude/tui/wm"
-	"crude/workspace"
 )
 
 // themeConsumerID names a theme sink that ApplyThemePreset must update.
@@ -66,10 +66,10 @@ type themeConsumer struct {
 // the user's frame and explicit Nerd Font choice survive every theme rebuild
 // (startup, settings save, cancel-to-saved, and config.json hot reload).
 func (m *App) applyThemeFrame(th *theme.Theme) {
-	if m == nil || th == nil || m.Workspace == nil {
+	if m == nil || th == nil || m.ws == nil {
 		return
 	}
-	applyThemePreferences(th, m.LoadAppSettings())
+	applyThemePreferences(th, m.ws.LoadAppSettings())
 }
 
 func applyThemePreferences(th *theme.Theme, settings ttypes.AppSettings) {
@@ -104,7 +104,7 @@ func clampFramePad(n int) int {
 
 // applyWorkspaceFrame is the workspace-first form of applyThemeFrame for
 // startup, where the initial theme is built before the App exists.
-func applyWorkspaceFrame(th **theme.Theme, ws *workspace.Workspace) {
+func applyWorkspaceFrame(th **theme.Theme, ws shellport.Workspace) {
 	if th == nil || *th == nil || ws == nil {
 		return
 	}

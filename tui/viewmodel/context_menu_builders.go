@@ -58,7 +58,7 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	// SetDiagnostics/LSPDiagnostic; we just need the existence
 	// check.
 	diags := m.EditorState.Editor.DiagnosticsAt(pos.Line, pos.Col)
-	hasLSP := m.LSPMgr != nil && m.LSPMgr.ServerReady()
+	hasLSP := m.ws.LSPMgr() != nil && m.ws.LSPMgr().ServerReady()
 
 	lspSection := ui.ContextMenuSection{SectionLabel: "Code"}
 	if hasLSP {
@@ -107,6 +107,7 @@ func (m *App) buildEditorContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 			{Label: "Inspect change", Disabled: !hasHunk, Action: func() { m.inspectEditorChange(ed, line) }},
 			{Label: "Compare with disk", Action: func() { m.startSourceControlMutation(m.compareEditorWithDisk(ed)) }},
 			{Label: "Compare with saved version", Action: func() { m.runDetachedAsyncCmd(m.openLocalDiff(ed, localDiffSaved)) }},
+			{Label: "Resolve shared changes", Disabled: m.liveEditors[ed] == nil, Action: func() { m.startSourceControlMutation(m.OpenLiveEditorConflict(ed)) }},
 			{Label: "Next change", Disabled: len(ed.GitHunks()) == 0, Action: func() { m.jumpEditorChange(1) }},
 			{Label: "Previous change", Disabled: len(ed.GitHunks()) == 0, Action: func() { m.jumpEditorChange(-1) }},
 			{Label: "Copy blame commit", Disabled: !hasBlame || blameHash == "" || blame.Uncommitted, Action: func() {
@@ -199,12 +200,12 @@ func (m *App) buildActivityRailContextMenu(view activitybar.View) *ui.ContextMen
 				}},
 				{Label: "New file", Action: func() {
 					if m.Tree != nil && m.Tree.Model != nil {
-						m.startNewFileInTree(m.RootPath)
+						m.startNewFileInTree(m.ws.RootPath())
 					}
 				}},
 				{Label: "New folder", Action: func() {
 					if m.Tree != nil && m.Tree.Model != nil {
-						m.startNewFolderInTree(m.RootPath)
+						m.startNewFolderInTree(m.ws.RootPath())
 					}
 				}},
 				{Label: "Refresh", Detail: "Ctrl+R", Action: func() {
@@ -310,7 +311,7 @@ func (m *App) buildAgentSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState
 	if hit && strings.HasPrefix(item.ID, "agent:") {
 		agentID = strings.TrimPrefix(item.ID, "agent:")
 	}
-	node := m.AgentMgr.Get(agentID)
+	node := m.ws.AgentMgr().Get(agentID)
 	title := activitybar.ViewAgents.Glyph() + " Agents"
 	if node != nil {
 		label := workspace.AgentDisplayLabel(node)
@@ -411,10 +412,10 @@ func (m *App) buildSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	if path == "" {
 		createSection.Items = append(createSection.Items,
 			ui.ContextMenuItem{Label: "New file", Action: func() {
-				m.startNewFileInTree(m.RootPath)
+				m.startNewFileInTree(m.ws.RootPath())
 			}},
 			ui.ContextMenuItem{Label: "New folder", Action: func() {
-				m.startNewFolderInTree(m.RootPath)
+				m.startNewFolderInTree(m.ws.RootPath())
 			}},
 		)
 	}
@@ -451,7 +452,7 @@ func (m *App) buildSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	if section, ok := m.explorerGitSection(path, isDir); ok {
 		st.Sections = append(st.Sections, section)
 	}
-	if path != "" && m.HistoryService != nil {
+	if path != "" && m.ws.HistoryService() != nil {
 		target := path
 		st.Sections = append(st.Sections, ui.ContextMenuSection{
 			SectionLabel: "Local History",
@@ -740,7 +741,7 @@ func (m *App) buildChatContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	st := &ui.ContextMenuState{Title: "Chat"}
 	agentID := m.AgentView.ActiveID()
 	if m.canRetryAgentRecovery(agentID) {
-		status := m.AgentMgr.Get(agentID).State.RecoveryStatus()
+		status := m.ws.AgentMgr().Get(agentID).State.RecoveryStatus()
 		st.Sections = append(st.Sections, ui.ContextMenuSection{
 			SectionLabel: "Run recovery",
 			Items: []ui.ContextMenuItem{
@@ -784,7 +785,7 @@ func (m *App) buildChatContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 			}},
 		},
 	})
-	if m.chatScreen != nil && m.rootHost != nil && m.ActiveSession != nil && m.HistoryService != nil {
+	if m.chatScreen != nil && m.rootHost != nil && m.ActiveSession != nil && m.ws.HistoryService() != nil {
 		if rect, ok := m.rootHost.ScreenRect(m.chatScreen.VirtualList().ID()); ok {
 			if row, ok := m.chatScreen.MessageAtLocalY(mouse.Y - rect.Y); ok {
 				role := ""
@@ -810,7 +811,7 @@ func (m *App) buildChatContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 				if role == workspace.MessageRoleUser {
 					sessionID, messageID := m.ActiveSession.SessionID, row.ID
 					agentID := m.AgentView.ActiveID()
-					active := agentID != "" && m.AgentTurnActive(agentID)
+					active := agentID != "" && m.ws.AgentTurnActive(agentID)
 					open := func() { cmd := m.openLocalHistoryForMessage(sessionID, messageID, agentID); m.runDetachedAsyncCmd(cmd) }
 					st.Sections = append(st.Sections, ui.ContextMenuSection{SectionLabel: "Local History", Items: []ui.ContextMenuItem{
 						{Label: "Preview this agent's changes", Disabled: active, Detail: map[bool]string{true: "turn active", false: ""}[active], Action: open},

@@ -19,11 +19,11 @@ func TestComposerSizingVisualAcceptance(t *testing.T) {
 		t.Skip("requires the dedicated terminal capture workflow")
 	}
 	app := newFullTestApp(t)
-	app.Logger = stubLogger{}
+	wsOf(app).Logger = stubLogger{}
 	app.AddOrchestrator("draft-owner")
 	app.ActiveSession = workspace.NewSession("draft-owner", t.TempDir(), nil, stubLogger{})
 	app.maybeHydrateComposerDraft()
-	app.AgentMgr.Get("draft-owner").State.Messages.AppendMessage(workspace.Message{
+	app.ws.AgentMgr().Get("draft-owner").State.Messages.AppendMessage(workspace.Message{
 		Role:    workspace.MessageRoleAssistant,
 		Content: "The conversation stays readable while the composer grows a little, then scrolls internally. Small notes and lists stay inline; a substantial diagnostic becomes an attachment.",
 	})

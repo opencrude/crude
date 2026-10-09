@@ -1,6 +1,8 @@
 package viewmodel
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"strconv"
 	"strings"
@@ -9,12 +11,94 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/history"
+	"crude/sessiondb"
+	"crude/shellport"
 	"crude/tui/input"
 	"crude/tui/screens/statusoverview"
 	"crude/tui/ui"
 	"crude/tui/wm"
 	"crude/workspace"
 )
+
+type remotePromptHistoryMsg struct {
+	owner      shellport.Workspace
+	store      *history.Store
+	generation uint64
+	entries    []history.Entry
+	err        error
+}
+
+// loadRemotePromptHistory is scheduled by Init, never executed in Update.
+func (m *App) loadRemotePromptHistory() tea.Cmd {
+	service, ok := m.ws.(shellport.PromptHistory)
+	if !ok || m.Prompts == nil {
+		return nil
+	}
+	owner, store, generation := m.ws, m.Prompts, m.workspaceSwitchGen.Load()
+	sessionID := ""
+	if m.ActiveSession != nil {
+		sessionID = m.ActiveSession.SessionID
+	}
+	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		entries, err := service.ListPromptHistory(ctx, sessionID)
+		return remotePromptHistoryMsg{owner: owner, store: store, generation: generation, entries: entries, err: err}
+	}
+}
+
+// recordRemotePrompt returns handled=true even on invalid connected input:
+// callers must not fall back to a local Record/Save writer.
+func (m *App) recordRemotePrompt(text string, refs []sessiondb.Reference) (tea.Cmd, bool) {
+	service, ok := m.ws.(shellport.PromptHistory)
+	if !ok {
+		return nil, false
+	}
+	text = strings.TrimSpace(text)
+	if text == "" || m.Prompts == nil {
+		return nil, true
+	}
+	owner, store, generation := m.ws, m.Prompts, m.workspaceSwitchGen.Load()
+	sessionID := ""
+	if m.ActiveSession != nil {
+		sessionID = m.ActiveSession.SessionID
+	}
+	var attachments []history.Attachment
+	for _, span := range input.FindRefRanges(text, refs) {
+		for _, ref := range refs {
+			if ref.ID == span.ID {
+				attachments = append(attachments, history.Attachment{Start: span.Start, End: span.End, Reference: ref})
+				break
+			}
+		}
+	}
+	return func() tea.Msg {
+		result := remotePromptHistoryMsg{owner: owner, store: store, generation: generation}
+		if sessionID == "" {
+			result.err = errors.New("prompt history needs an exact open session")
+			return result
+		}
+		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		defer cancel()
+		result.entries, result.err = service.RecordPromptHistory(ctx, sessionID, text, attachments)
+		return result
+	}, true
+}
+
+func (m *App) applyRemotePromptHistory(msg remotePromptHistoryMsg) {
+	if msg.owner != m.ws || msg.store != m.Prompts || msg.generation != m.workspaceSwitchGen.Load() {
+		return
+	}
+	if msg.err != nil {
+		m.Feedback.NotifyError("Could not update prompt history: " + msg.err.Error())
+		return
+	}
+	m.Prompts.InstallReplica(msg.entries)
+	m.syncPromptRecall()
+	if m.overlayHost != nil && m.overlayHost.IsOpen(ui.OverlayPromptHistory) {
+		m.renderPromptHistory()
+	}
+}
 
 type promptHistorySavedMsg struct {
 	store *history.Store
@@ -23,7 +107,7 @@ type promptHistorySavedMsg struct {
 
 type promptHistoryRestoredMsg struct {
 	session    *workspace.Session
-	store      *workspace.ReferenceStore
+	store      workspace.SessionReferences
 	generation uint64
 	revision   uint64
 	draft      string
@@ -84,7 +168,12 @@ func (m *App) applyPromptHistory(msg promptHistoryRestoredMsg) {
 	m.persistComposerDraftIfChanged()
 }
 
-func (m *App) openPromptHistory() {
+func (m *App) openPromptHistory() tea.Cmd {
+	m.renderPromptHistory()
+	return m.loadRemotePromptHistory()
+}
+
+func (m *App) renderPromptHistory() {
 	if m.overlayHost == nil || m.Prompts == nil {
 		return
 	}

@@ -127,8 +127,8 @@ func TestHeaderGitReconcileBurstTiming(t *testing.T) {
 func TestRepositoryEventReconcilesHeaderWithoutOpeningPanel(t *testing.T) {
 	app := newTestApp(t)
 	root := newGitRepoFixture(t)
-	app.RootPath = root
-	app.Git = workspace.NewGitService(root)
+	wsOf(app).RootPath = root
+	wsOf(app).Git = workspace.NewGitService(root)
 	treeModel := filetree.NewFileTreeModel(root)
 	app.Tree = NewTreeState(treeModel, 24)
 	t.Cleanup(treeModel.StopWatcher)
@@ -172,8 +172,8 @@ func TestRepositoryEventReconcilesHeaderWithoutOpeningPanel(t *testing.T) {
 func TestHeaderGitIdentityFollowsRepository(t *testing.T) {
 	app := newTestApp(t)
 	root := newGitRepoFixture(t)
-	app.RootPath = root
-	app.Git = workspace.NewGitService(root)
+	wsOf(app).RootPath = root
+	wsOf(app).Git = workspace.NewGitService(root)
 
 	snapshot := readGitSnapshotNow(t, app)
 	if snapshot.Branch != "work" {
@@ -247,10 +247,10 @@ func TestSilentGitSnapshotSkipsUnchangedProjection(t *testing.T) {
 // explicit refresh keeps reporting exactly as before.
 func TestSilentGitSnapshotStaysSilent(t *testing.T) {
 	app := newTestApp(t)
-	app.Logger = stubLogger{}
+	wsOf(app).Logger = stubLogger{}
 	// No read in this test is executed: it asserts the presentation a read is
 	// allowed to produce, so the service never touches a real repository.
-	app.Git = workspace.NewGitService(t.TempDir())
+	wsOf(app).Git = workspace.NewGitService(t.TempDir())
 	app.Tree.Visible = true
 	snapshot := workspace.GitSnapshot{
 		Branch:  "main",
@@ -270,13 +270,13 @@ func TestSilentGitSnapshotStaysSilent(t *testing.T) {
 	if branch := app.gitPanel.Snapshot().Branch; branch != "main" {
 		t.Fatalf("failed reconcile blanked the painted projection: %q", branch)
 	}
-	if issues := app.Status.Issues(); len(issues) != 0 {
+	if issues := app.ws.Status().Issues(); len(issues) != 0 {
 		t.Fatalf("silent failure raised issues: %#v", issues)
 	}
-	if notices := app.Status.Notifications(true); len(notices) != 0 {
+	if notices := app.ws.Status().Notifications(true); len(notices) != 0 {
 		t.Fatalf("silent failure notified the user: %#v", notices)
 	}
-	if ops := app.Status.Operations(); len(ops) != 0 {
+	if ops := wsOf(app).Status.Operations(); len(ops) != 0 {
 		t.Fatalf("silent failure recorded operations: %#v", ops)
 	}
 
@@ -300,10 +300,10 @@ func TestSilentGitSnapshotStaysSilent(t *testing.T) {
 	}
 	explicit := app.gitRefreshGen.Load()
 	app.applySourceControlResult(sourceControlResultMsg{gen: explicit, err: errors.New("boom")})
-	if issues := app.Status.Issues(); len(issues) != 1 {
+	if issues := app.ws.Status().Issues(); len(issues) != 1 {
 		t.Fatalf("explicit failure issues = %#v, want one reported issue", issues)
 	}
-	if notices := app.Status.Notifications(true); len(notices) != 1 {
+	if notices := app.ws.Status().Notifications(true); len(notices) != 1 {
 		t.Fatalf("explicit failure notices = %#v, want one error notification", notices)
 	}
 }

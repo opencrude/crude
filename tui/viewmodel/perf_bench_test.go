@@ -99,7 +99,7 @@ func BenchmarkSidebarResizePresentedFrame_500Msgs(b *testing.B) {
 	for _, msg := range seedBudgetSession(500, 2) {
 		app.appendActiveMessage(msg)
 	}
-	if node := app.AgentMgr.Get(app.AgentView.ActiveID()); node != nil && node.State != nil && node.State.Messages != nil {
+	if node := app.ws.AgentMgr().Get(app.AgentView.ActiveID()); node != nil && node.State != nil && node.State.Messages != nil {
 		node.State.Messages.ClearTurnStatus()
 	}
 	app.paintShellFrame()
@@ -127,7 +127,7 @@ func BenchmarkSidebarResizeMutation_500Msgs(b *testing.B) {
 	for _, msg := range seedBudgetSession(500, 2) {
 		app.appendActiveMessage(msg)
 	}
-	if node := app.AgentMgr.Get(app.AgentView.ActiveID()); node != nil && node.State != nil && node.State.Messages != nil {
+	if node := app.ws.AgentMgr().Get(app.AgentView.ActiveID()); node != nil && node.State != nil && node.State.Messages != nil {
 		node.State.Messages.ClearTurnStatus()
 	}
 	app.paintShellFrame()

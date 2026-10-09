@@ -8,8 +8,8 @@ import (
 )
 
 func (m *App) applyTerminalWidthProfile(msg tea.TerminalWidthProfileMsg) {
-	if m.Logger != nil {
-		m.Logger.Info("TERM", "width_calibrated",
+	if m.ws.Logger() != nil {
+		m.ws.Logger().Info("TERM", "width_calibrated",
 			"measured", msg.Measured,
 			"corrections", msg.Corrections,
 			"ambiguous_width", msg.AmbiguousWidth,

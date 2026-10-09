@@ -34,7 +34,7 @@ func (m *App) statusHeaderLeftSegments() []shellheader.Segment {
 			segments = append(segments, shellheader.Segment{Text: label, Role: ui.ColorMuted, Action: "panes", Priority: 1})
 		}
 	}
-	if workspacePath := shortWorkspacePath(m.RootPath); workspacePath != "" {
+	if workspacePath := shortWorkspacePath(m.ws.RootPath()); workspacePath != "" {
 		segments = append(segments, shellheader.Segment{Text: workspacePath, Role: ui.ColorMuted, Priority: 1})
 	}
 	if m.gitPanel != nil {
@@ -118,9 +118,9 @@ func (m *App) statusHeaderRightSegments() []shellheader.Segment {
 	}
 	if strings.HasPrefix(target, "agent:") {
 		agentID := strings.TrimPrefix(target, "agent:")
-		if node := m.AgentMgr.Get(agentID); node != nil {
-			usage, _ := m.UsageSummary(node.ID, ttypes.UsageThisAgent)
-			identity := m.AgentModelIdentity(node.ID)
+		if node := m.ws.AgentMgr().Get(agentID); node != nil {
+			usage, _ := m.ws.UsageSummary(node.ID, ttypes.UsageThisAgent)
+			identity := m.ws.AgentModelIdentity(node.ID)
 			if model := firstNonempty(identity.ModelID, m.ModelName); model != "" {
 				segments = append(segments, shellheader.Segment{Text: model, Role: ui.ColorMuted, Action: "tabs", TargetID: target, Priority: 4})
 			}
@@ -143,8 +143,8 @@ func (m *App) statusHeaderRightSegments() []shellheader.Segment {
 			segments = append(segments, shellheader.Segment{Text: blame, Role: ui.ColorMuted, Action: "tabs", TargetID: target, Priority: 4})
 		}
 	}
-	if !m.StartTime.IsZero() {
-		segments = append(segments, shellheader.Segment{Text: formatDuration(time.Since(m.StartTime)), Role: ui.ColorMuted, Action: "workspace", TargetID: "workspace:summary", Priority: 2})
+	if !m.ws.StartTime().IsZero() {
+		segments = append(segments, shellheader.Segment{Text: formatDuration(time.Since(m.ws.StartTime())), Role: ui.ColorMuted, Action: "workspace", TargetID: "workspace:summary", Priority: 2})
 	}
 	return segments
 }
@@ -218,9 +218,9 @@ func (m *App) activeHeaderContext() (context, metrics, target string) {
 		return state, "", "editor:" + path
 	}
 	if id := m.AgentView.ActiveID(); id != "" {
-		state, _ := m.Status.Agent(id)
+		state, _ := m.ws.Status().Agent(id)
 		context = formatAgentState(state)
-		if usage, ok := m.UsageSummary(id, ttypes.UsageThisAgent); ok {
+		if usage, ok := m.ws.UsageSummary(id, ttypes.UsageThisAgent); ok {
 			parts := make([]string, 0, 2)
 			if usage.ContextUsed.Known && usage.ContextLimit.Known && usage.ContextLimit.Value > 0 {
 				percent := float64(usage.ContextUsed.Value) * 100 / float64(usage.ContextLimit.Value)
@@ -266,7 +266,7 @@ func (m *App) terminalHeaderContext(id string) (context, metrics, target string)
 // footerStatusSegments forms a contiguous, vivid strip of status tools and
 // Workspace. Previous Sessions lives inside Workspace, not in the footer.
 func (m *App) footerStatusSegments() []shellfooter.Segment {
-	insights := m.LSPMgr.ProjectInsights()
+	insights := m.ws.LSPMgr().ProjectInsights()
 	problemText := "Problems"
 	if insights.Errors > 0 || insights.Warnings > 0 {
 		parts := make([]string, 0, 2)
@@ -279,7 +279,7 @@ func (m *App) footerStatusSegments() []shellfooter.Segment {
 		problemText = strings.Join(parts, "") + " Problems"
 	}
 	problemRole := diagnosticRole(insights.Errors, insights.Warnings)
-	for _, server := range m.LSPMgr.ServerHealthSnapshots() {
+	for _, server := range m.ws.LSPMgr().ServerHealthSnapshots() {
 		if server.Error != "" {
 			problemRole = ui.ColorError
 			break
@@ -287,8 +287,8 @@ func (m *App) footerStatusSegments() []shellfooter.Segment {
 	}
 
 	unread := 0
-	if m.Status != nil {
-		unread = m.Status.UnreadCount()
+	if m.ws.Status() != nil {
+		unread = m.ws.Status().UnreadCount()
 	}
 	noticeText := "Notices"
 	if unread > 0 {
@@ -333,7 +333,7 @@ func (m *App) footerStatusSegments() []shellfooter.Segment {
 // configureFooterScreen left-aligns it.
 func (m *App) footerHelpSegments() []shellfooter.Segment {
 	segments := make([]shellfooter.Segment, 0, 4)
-	if center := m.Status; center != nil {
+	if center := m.ws.Status(); center != nil {
 		if notice, ok := center.LatestTransient(time.Now(), 5*time.Second); ok {
 			segments = append(segments, shellfooter.Segment{Text: notice.Summary, Role: ui.ColorMuted, Priority: 0})
 		}
@@ -350,7 +350,7 @@ func (m *App) footerHelpSegments() []shellfooter.Segment {
 }
 
 func (m *App) backgroundAgentCounts() (working, needsAction int) {
-	center := m.Status
+	center := m.ws.Status()
 	if center == nil {
 		return 0, 0
 	}
@@ -484,7 +484,7 @@ func (m *App) syncStatusOverview() {
 func (m *App) statusTabItems() []statusoverview.Item {
 	items := make([]statusoverview.Item, 0)
 	activeAgent := m.AgentView.ActiveID()
-	nodes := m.AgentMgr.AllNodes()
+	nodes := m.ws.AgentMgr().AllNodes()
 	if len(nodes) > 0 {
 		items = append(items, statusoverview.Item{ID: "group-agents", Label: fmt.Sprintf("Open Agents (%d)", len(nodes)), Header: true})
 	}
@@ -493,7 +493,7 @@ func (m *App) statusTabItems() []statusoverview.Item {
 		if label == "" {
 			label = "Main Agent"
 		}
-		state, found := m.Status.Agent(node.ID)
+		state, found := m.ws.Status().Agent(node.ID)
 		if !found {
 			state = ttypes.AgentStatusSnapshot{Phase: ttypes.AgentIdle, Detail: "Idle", ModelID: node.Model}
 		}
@@ -503,8 +503,8 @@ func (m *App) statusTabItems() []statusoverview.Item {
 		} else if node.ID == activeAgent && m.EditorState.ActiveView == "" {
 			actionLabel = "Return to Tab"
 		}
-		agentUsage, hasUsage := m.UsageSummary(node.ID, ttypes.UsageThisAgent)
-		identity := m.AgentModelIdentity(node.ID)
+		agentUsage, hasUsage := m.ws.UsageSummary(node.ID, ttypes.UsageThisAgent)
+		identity := m.ws.AgentModelIdentity(node.ID)
 		model := firstNonempty(identity.ModelID, "Model unavailable")
 		subtitle := model
 		provider := identity.ProviderID
@@ -512,7 +512,7 @@ func (m *App) statusTabItems() []statusoverview.Item {
 			subtitle = displayProvider(provider) + " / " + model
 		}
 		lines := []statusoverview.DetailLine{{Label: "Activity", Value: firstNonempty(state.Detail, string(state.Phase)), Role: ui.ColorMuted}}
-		if activity := m.AgentActivity(node.ID); activity.Summary != "" {
+		if activity := m.ws.AgentActivity(node.ID); activity.Summary != "" {
 			lines = append(lines, statusoverview.DetailLine{Label: "Session", Value: activity.Summary, Role: ui.ColorMuted})
 		}
 		if node.IsActive() && state.ModelID != "" && state.ModelID != identity.ModelID {
@@ -673,7 +673,7 @@ func (m *App) agentUsageSections(agentID string) []statusoverview.UsageSection {
 	sections := make([]statusoverview.UsageSection, 0, 4)
 	var previous ttypes.UsageSummary
 	for _, scope := range []ttypes.UsageScope{ttypes.UsageThisAgent, ttypes.UsageSubtree, ttypes.UsageSession} {
-		summary, ok := m.UsageSummary(agentID, scope)
+		summary, ok := m.ws.UsageSummary(agentID, scope)
 		if !ok {
 			continue
 		}
@@ -743,7 +743,7 @@ func displayProvider(provider string) string {
 
 func (m *App) statusNotificationItems() []statusoverview.Item {
 	items := []statusoverview.Item{{ID: "notices", Label: "Notifications", Header: true}}
-	for _, notice := range m.Status.Notifications(false) {
+	for _, notice := range m.ws.Status().Notifications(false) {
 		state := "Read"
 		if !notice.Read {
 			state = "Unread"
@@ -818,12 +818,12 @@ func (m *App) handleStatusOverviewNavigate(msg statusoverview.NavigateMsg) tea.C
 		_, command := m.toggleMemoryBrowser()
 		return command
 	case action == "lsp:restart":
-		if !m.LSPMgr.RestartServer(msg.Item.Owner.ID) {
+		if !m.ws.LSPMgr().RestartServer(msg.Item.Owner.ID) {
 			m.Feedback.NotifyError("Language server is no longer available")
 		}
 		return nil
 	case action == "lsp:stop":
-		if !m.LSPMgr.StopServer(msg.Item.Owner.ID) {
+		if !m.ws.LSPMgr().StopServer(msg.Item.Owner.ID) {
 			m.Feedback.NotifyError("Language server is no longer available")
 		}
 		return nil
@@ -863,11 +863,11 @@ func (m *App) openStatusOverviewMore(item statusoverview.Item) {
 		}
 		menuItems = append(menuItems,
 			ui.ContextMenuItem{Label: label, Action: func() {
-				m.Status.MarkRead(id, !read)
+				m.ws.Status().MarkRead(id, !read)
 				m.syncStatusOverview()
 			}},
 			ui.ContextMenuItem{Label: "Dismiss", Action: func() {
-				m.Status.Dismiss(id)
+				m.ws.Status().Dismiss(id)
 				m.syncStatusOverview()
 			}},
 		)

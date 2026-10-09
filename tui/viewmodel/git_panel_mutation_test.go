@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/shellport"
 	"crude/tui/ui"
 	"crude/workspace"
 )
@@ -20,7 +21,7 @@ func TestSourceControlMutationHasDeadline(t *testing.T) {
 	cmd := app.sourceControlMutation(
 		"unreachable",
 		nil,
-		func(ctx context.Context, _ *workspace.GitService) error {
+		func(ctx context.Context, _ shellport.GitService) error {
 			<-ctx.Done()
 			return ctx.Err()
 		},
@@ -43,7 +44,7 @@ func TestSourceControlMutationHasDeadline(t *testing.T) {
 func TestDiscardGitChangeUsesSafeConfirmation(t *testing.T) {
 	app := newFullTestApp(t)
 	change := workspace.GitChange{
-		Path: "main.go", AbsolutePath: app.RootPath + "/main.go",
+		Path: "main.go", AbsolutePath: app.ws.RootPath() + "/main.go",
 		Area: workspace.GitAreaWorking, Code: "M", Description: "Modified",
 	}
 	app.startDiscardGitChange(change)

@@ -36,7 +36,7 @@ type pending struct {
 	result  chan coreprotocol.Response
 }
 type queued struct {
-	frame corewire.Frame
+	frame corewire.EncodedFrame
 	bytes int
 }
 type Client struct {
@@ -128,11 +128,18 @@ func (c *Client) CallRequest(ctx context.Context, request coreprotocol.Request) 
 		return coreprotocol.Response{}, errors.New("invalid request")
 	}
 	frame := corewire.Frame{Version: 1, Kind: corewire.KindRequest, RequestID: request.ID, ClientID: c.owner.ClientID, Epoch: c.owner.Epoch, WorkspaceID: request.WorkspaceID, Method: request.Method, Payload: append(json.RawMessage(nil), request.Payload...)}
-	b, err := json.Marshal(frame)
+	size, err := corewire.FrameSize(frame)
 	if err != nil {
 		return coreprotocol.Response{}, err
 	}
-	if len(b) > corewire.MaxFrameSize {
+	if size > corewire.MaxFrameSize {
+		return coreprotocol.Response{}, errors.New("request frame too large")
+	}
+	encoded, err := corewire.EncodeFrame(frame)
+	if err != nil {
+		return coreprotocol.Response{}, err
+	}
+	if encoded.Len() > corewire.MaxFrameSize {
 		return coreprotocol.Response{}, errors.New("request frame too large")
 	}
 	request.Payload = nil // Retain only correlation metadata after enqueue.
@@ -142,13 +149,13 @@ func (c *Client) CallRequest(ctx context.Context, request coreprotocol.Request) 
 		err = c.err
 	} else if _, exists := c.pending[request.ID]; exists {
 		err = errors.New("request already pending")
-	} else if len(c.pending) >= 16 || c.bytes+len(b)+4 > 8<<20 {
+	} else if len(c.pending) >= 16 || c.bytes+encoded.Len()+4 > 8<<20 {
 		err = errors.New("client capacity exceeded")
 	} else {
 		select {
-		case c.queue <- queued{frame, len(b) + 4}:
+		case c.queue <- queued{encoded, encoded.Len() + 4}:
 			c.pending[request.ID] = p
-			c.bytes += len(b) + 4
+			c.bytes += encoded.Len() + 4
 		default:
 			err = errors.New("client output queue full")
 		}
@@ -159,7 +166,7 @@ func (c *Client) CallRequest(ctx context.Context, request coreprotocol.Request) 
 	}
 	select {
 	case r := <-p.result:
-		return r, nil
+		return c.completePayload(ctx, request, r)
 	case <-ctx.Done():
 		return coreprotocol.Response{}, &UncertainError{request.ID, ctx.Err()}
 	case <-c.done:
@@ -175,7 +182,7 @@ func (c *Client) write() {
 			return
 		case q := <-c.queue:
 			t := time.AfterFunc(30*time.Second, func() { c.fail(ErrClosed) })
-			err := c.f.Write(q.frame)
+			err := c.f.WriteEncoded(q.frame)
 			t.Stop()
 			c.mu.Lock()
 			c.bytes -= q.bytes
@@ -219,7 +226,7 @@ func (c *Client) read() {
 				c.fail(errors.New("response request binding mismatch"))
 				return
 			}
-			r := coreprotocol.Response{ID: f.RequestID, Revision: f.Revision, Payload: f.Payload}
+			r := coreprotocol.Response{ID: f.RequestID, Revision: f.Revision, Payload: f.Payload, Transfer: f.Transfer}
 			if f.Error != nil {
 				r.Error = &coreprotocol.Fault{Code: f.Error.Code, Message: f.Error.Message}
 			}

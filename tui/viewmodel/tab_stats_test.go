@@ -11,7 +11,7 @@ import (
 
 func TestOpenTabsUsesVisibleTabInventory(t *testing.T) {
 	app := newTransitionApp(t)
-	t.Cleanup(app.Close)
+	t.Cleanup(wsOf(app).Close)
 	app.minimizeAgent("agent-1")
 	app.AddOrchestrator("visible")
 	app.AddOrchestrator("minimized")

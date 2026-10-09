@@ -89,25 +89,25 @@ func TestEnableSubAgentsMidSessionSurfacesChildren(t *testing.T) {
 			}}}},
 		}
 		app := newFullTestApp(t)
-		app.RootPath, app.WorkspaceDir = t.TempDir(), t.TempDir()
-		app.Logger = &testLogger{}
-		app.SetAppDefaults(ttypes.AppSettings{LocalHistory: ttypes.LocalHistorySettings{Enabled: "off"}})
-		app.SessionsByID = make(map[string]*workspace.Session)
-		app.SessionsByAgent = make(map[string]*workspace.Session)
-		owner, err := app.CreateSession(cfg, home)
+		wsOf(app).RootPath, wsOf(app).WorkspaceDir = t.TempDir(), t.TempDir()
+		wsOf(app).Logger = &testLogger{}
+		wsOf(app).SetAppDefaults(ttypes.AppSettings{LocalHistory: ttypes.LocalHistorySettings{Enabled: "off"}})
+		wsOf(app).SessionsByID = make(map[string]*workspace.Session)
+		wsOf(app).SessionsByAgent = make(map[string]*workspace.Session)
+		owner, err := wsOf(app).CreateSession(cfg, home)
 		if err != nil {
 			t.Fatal(err)
 		}
-		defer app.CloseAllSessions()
+		defer wsOf(app).CloseAllSessions()
 		sender := &latencyEventSender{ctx: t.Context(), events: make(chan ttypes.AgentEventMsg, 4096)}
-		orch, err := app.StartOrchestrator(owner.SessionID, sender)
+		orch, err := wsOf(app).StartOrchestrator(owner.SessionID, sender)
 		if err != nil {
 			t.Fatal(err)
 		}
 		parentAgentID.Store(orch.ID)
 		app.AddOrchestrator(orch.ID)
-		backend := app.BackendSession(owner.SessionID)
-		if app.AgentMgr.Get(orch.ID).Label != "Jeff" || app.Win.TabByTitle(app.agentTabTitle(orch.ID)).DisplayTitle != "Jeff" {
+		backend := app.ws.BackendSession(owner.SessionID)
+		if app.ws.AgentMgr().Get(orch.ID).Label != "Jeff" || app.Win.TabByTitle(app.agentTabTitle(orch.ID)).DisplayTitle != "Jeff" {
 			t.Fatal("root tab did not render the allocated first name")
 		}
 		backend.SetYolo(true)
@@ -131,7 +131,7 @@ func TestEnableSubAgentsMidSessionSurfacesChildren(t *testing.T) {
 		on := true
 		settings.SessionMultiAgent = &on
 		settings.Agents.Enabled = true
-		if err := app.HandleSettingsSaveForSession(owner.SessionID, settings); err != nil {
+		if err := wsOf(app).HandleSettingsSaveForSession(owner.SessionID, settings); err != nil {
 			t.Fatal(err)
 		}
 		if !backend.SubmitInput(orch.ID, provider.PlainInput("launch the child now")) {
@@ -157,7 +157,7 @@ func TestEnableSubAgentsMidSessionSurfacesChildren(t *testing.T) {
 				t.Fatalf("child start event missing after enabling delegation; requests=%d; messages=%+v", parentRequests.Load(), backend.MessagesWithMeta())
 			}
 		}
-		node := app.AgentMgr.Get(childID)
+		node := app.ws.AgentMgr().Get(childID)
 		if node == nil || node.Parent == nil || node.Parent.ID != orch.ID {
 			t.Fatal("running child missing from agent tree")
 		}
@@ -167,7 +167,7 @@ func TestEnableSubAgentsMidSessionSurfacesChildren(t *testing.T) {
 		if node.Label != "Tom sub Jeff" || app.Win.TabByTitle(app.agentTabTitle(childID)).DisplayTitle != "Tom sub Jeff" {
 			t.Fatalf("child task hint replaced personal identity/parentage: %q", node.Label)
 		}
-		if app.PaneMgr.Get(childID) == nil {
+		if app.ws.PaneMgr().Get(childID) == nil {
 			t.Fatal("running child missing from conversation panes")
 		}
 		app.switchToAgentView(childID)
@@ -177,15 +177,15 @@ func TestEnableSubAgentsMidSessionSurfacesChildren(t *testing.T) {
 		settings = backend.SettingsSnapshot()
 		settings.SessionMultiAgent = &off
 		settings.Agents.Enabled = false
-		if err := app.HandleSettingsSaveForSession(owner.SessionID, settings); err != nil {
+		if err := wsOf(app).HandleSettingsSaveForSession(owner.SessionID, settings); err != nil {
 			t.Fatal(err)
 		}
-		if !agentTabPresent(app, childID) || app.AgentMgr.Get(childID) != node {
+		if !agentTabPresent(app, childID) || app.ws.AgentMgr().Get(childID) != node {
 			t.Fatal("disabling delegation hid or replaced the active child")
 		}
 		steering := provider.InputWithRefs("include the exact parser edge case", nil)
 		steering.InternalID = "child-steering-1"
-		if !app.SteerAgent(childID, steering) {
+		if !app.ws.SteerAgent(childID, steering) {
 			t.Fatal("human steering could not target the exact active child")
 		}
 		// Let the real child finish, then verify its retained conversation and DB.
@@ -223,7 +223,7 @@ func TestEnableSubAgentsMidSessionSurfacesChildren(t *testing.T) {
 		case <-time.After(2 * time.Second):
 			t.Fatal("child did not receive human steering at its safe boundary")
 		}
-		node = app.AgentMgr.Get(childID)
+		node = app.ws.AgentMgr().Get(childID)
 		if node == nil || !node.State.Completed {
 			t.Fatal("completed child missing from retained agent list")
 		}
@@ -259,7 +259,7 @@ func TestEnableSubAgentsMidSessionSurfacesChildren(t *testing.T) {
 		if snapshots[0].Result.Name != "Tom sub Jeff" || rows[len(rows)-1].AgentName != "Tom sub Jeff" {
 			t.Fatal("saved child history lost personal identity and parentage")
 		}
-		registered, err := app.WorkspaceDB.ListSessions()
+		registered, err := app.ws.WorkspaceDB().ListSessions()
 		if err != nil || len(registered) != 1 || registered[0].AgentName.String != "Jeff" {
 			t.Fatalf("previous-session registry lost root name: %+v err=%v", registered, err)
 		}

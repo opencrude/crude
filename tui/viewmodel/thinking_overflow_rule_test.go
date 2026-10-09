@@ -32,8 +32,8 @@ func TestThinkingOverflowPromotionIsSharedByMainAndSubAgents(t *testing.T) {
 	app.handleAgentEvent(types.AgentEventMsg{AgentID: "main", Type: "thinking", Data: reasoning.Delta{Text: trace, Kind: reasoning.Summary}})
 	app.handleAgentEvent(types.AgentEventMsg{AgentID: "child", Type: "thinking", Data: reasoning.Delta{Text: trace, Kind: reasoning.Summary}})
 
-	main := app.AgentMgr.Get("main").State
-	child := app.AgentMgr.Get("child").State
+	main := app.ws.AgentMgr().Get("main").State
+	child := app.ws.AgentMgr().Get("child").State
 	if app.thinkingPaneID(main) == "" || app.thinkingPaneID(child) == "" {
 		t.Fatalf("overflow did not promote both owners: main=%q child=%q", app.thinkingPaneID(main), app.thinkingPaneID(child))
 	}
@@ -61,13 +61,13 @@ func TestThinkingOverflowLatchClearsOnSettingsChange(t *testing.T) {
 	app.width, app.height = 100, 40
 	app.AddOrchestrator("owner")
 	owner := workspace.NewSession("thinking-owner", t.TempDir(), nil, nil)
-	app.SessionsByAgent = map[string]*workspace.Session{"owner": owner}
+	wsOf(app).SessionsByAgent = map[string]*workspace.Session{"owner": owner}
 	app.ActiveSession = owner
 	app.handleAgentEvent(types.AgentEventMsg{AgentID: "owner", Type: "turn_started", Data: types.TurnIdentity{Generation: 1, ModelID: "model"}})
 	long := strings.Repeat("a line of reasoning about the task\n", 20)
 
 	app.handleAgentEvent(types.AgentEventMsg{AgentID: "owner", Type: "thinking", Data: reasoning.Delta{Text: long, Kind: reasoning.Summary}})
-	state := app.AgentMgr.Get("owner").State
+	state := app.ws.AgentMgr().Get("owner").State
 	if app.thinkingPaneID(state) == "" {
 		t.Fatal("overflowing block did not promote")
 	}

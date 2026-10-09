@@ -17,17 +17,17 @@ func TestCancelCloseRearmsAfterDelayAutosave(t *testing.T) {
 	ed := newSaveTestEditor(t, app, "base")
 	app.editorSettings = types.NormalizeEditorSettings(types.EditorSettings{AutoSave: types.AutoSaveAfterDelay})
 	ed.InsertRune('x')
-	if got := app.Documents.PendingDeadlines(); got != 1 {
+	if got := wsOf(app).Documents.PendingDeadlines(); got != 1 {
 		t.Fatalf("typing armed %d deadlines, want 1", got)
 	}
 
 	app.showDirtyClosePrompt(ed.FilePath())
-	if got := app.Documents.PendingDeadlines(); got != 0 {
+	if got := wsOf(app).Documents.PendingDeadlines(); got != 0 {
 		t.Fatalf("open close prompt kept %d deadlines, want 0", got)
 	}
 
 	app.dirtyPromptCancel()
-	if got := app.Documents.PendingDeadlines(); got != 1 {
+	if got := wsOf(app).Documents.PendingDeadlines(); got != 1 {
 		t.Fatalf("cancel close left %d deadlines, want 1", got)
 	}
 	if !ed.IsOpen() || !ed.Modified() {
@@ -36,7 +36,7 @@ func TestCancelCloseRearmsAfterDelayAutosave(t *testing.T) {
 
 	// Re-arming replaces the deadline instead of stacking a duplicate timer.
 	ed.InsertRune('y')
-	if got := app.Documents.PendingDeadlines(); got != 1 {
+	if got := wsOf(app).Documents.PendingDeadlines(); got != 1 {
 		t.Fatalf("edit after cancel left %d deadlines, want 1", got)
 	}
 }
@@ -50,7 +50,7 @@ func TestCancelCloseArmsNothingWhenAutosaveIsOff(t *testing.T) {
 
 	app.showDirtyClosePrompt(ed.FilePath())
 	app.dirtyPromptCancel()
-	if got := app.Documents.PendingDeadlines(); got != 0 {
+	if got := wsOf(app).Documents.PendingDeadlines(); got != 0 {
 		t.Fatalf("disabled autosave armed %d deadlines", got)
 	}
 }

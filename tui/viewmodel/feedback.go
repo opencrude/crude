@@ -3,8 +3,8 @@ package viewmodel
 import (
 	"strings"
 
+	"crude/shellport"
 	types "crude/types"
-	"crude/workspace"
 )
 
 // feedbackSink maps short presentation feedback into the typed workspace
@@ -13,11 +13,11 @@ type feedbackSink struct{ app *App }
 
 func newFeedbackSink(app *App) *feedbackSink { return &feedbackSink{app: app} }
 
-func (s *feedbackSink) center() *workspace.StatusCenter {
-	if s == nil || s.app == nil || s.app.Workspace == nil {
+func (s *feedbackSink) center() shellport.StatusService {
+	if s == nil || s.app == nil || s.app.ws == nil {
 		return nil
 	}
-	return s.app.Status
+	return s.app.ws.Status()
 }
 
 func (s *feedbackSink) owner() types.ResourceRef {
@@ -29,12 +29,12 @@ func (s *feedbackSink) owner() types.ResourceRef {
 	}
 	if id := s.app.AgentView.ActiveID(); id != "" {
 		ref := types.ResourceRef{Kind: types.ResourceAgent, ID: id}
-		if session := s.app.SessionsByAgent[id]; session != nil {
+		if session := s.app.ws.SessionsByAgent()[id]; session != nil {
 			ref.SessionID = session.SessionID
 		}
 		return ref
 	}
-	return types.ResourceRef{Kind: types.ResourceWorkspace, ID: s.app.RootPath}
+	return types.ResourceRef{Kind: types.ResourceWorkspace, ID: s.app.ws.RootPath()}
 }
 
 func (s *feedbackSink) NotifyInfo(message string) {
@@ -55,12 +55,12 @@ func (s *feedbackSink) NotifyAgentTransient(agentID, message string, severity ty
 		return
 	}
 	owner := types.ResourceRef{Kind: types.ResourceAgent, ID: agentID}
-	if s.app != nil && s.app.AgentMgr != nil {
-		if root := s.app.AgentMgr.OrchestratorFor(agentID); root != nil {
+	if s.app != nil && s.app.ws.AgentMgr() != nil {
+		if root := s.app.ws.AgentMgr().OrchestratorFor(agentID); root != nil {
 			if root.ID != agentID {
 				owner.ParentID = root.ID
 			}
-			if session := s.app.SessionsByAgent[root.ID]; session != nil {
+			if session := s.app.ws.SessionsByAgent()[root.ID]; session != nil {
 				owner.SessionID = session.SessionID
 			}
 		}

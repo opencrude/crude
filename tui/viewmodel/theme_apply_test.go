@@ -120,9 +120,9 @@ func TestApplyThemePreset_ConfigHotReloadPath(t *testing.T) {
 
 func TestApplyThemePreset_PreservesExplicitNerdFontPreference(t *testing.T) {
 	app := newFullTestApp(t)
-	settings := app.AppDefaults()
+	settings := app.ws.AppDefaults()
 	settings.UI.UseNerdFont = true
-	app.SetAppDefaults(settings)
+	wsOf(app).SetAppDefaults(settings)
 
 	app.ApplyThemePreset("dark")
 

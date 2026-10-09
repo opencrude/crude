@@ -5,6 +5,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/shellport"
 	"crude/tui/chatprojection"
 	"crude/tui/ui"
 	"crude/tui/window"
@@ -12,22 +13,51 @@ import (
 )
 
 func (m *App) AddOrchestrator(orchID string) {
+	if _, remote := m.ws.(shellport.Replica); remote && m.ws.AgentMgr().Get(orchID) == nil {
+		if m.pendingOrchestrators == nil {
+			m.pendingOrchestrators = make(map[string]bool)
+		}
+		m.pendingOrchestrators[orchID] = true
+		return
+	}
+	m.addOrchestrator(orchID, true)
+}
+
+// addOrchestrator surfaces inventory without allowing peer-created roots to
+// steal this shell's selection or editor focus.
+func (m *App) addOrchestrator(orchID string, activate bool) {
+	if !activate {
+		m.ensureAgentProjection(orchID)
+		for _, childID := range agentSubtreeIDs(m.ws.AgentMgr().Get(orchID)) {
+			if childID == orchID {
+				continue
+			}
+			if node := m.ws.AgentMgr().Get(childID); node != nil && node.State != nil && node.State.Completed && m.subPaneProjections.GetExisting(childID) == nil {
+				m.MinimizeAgent(childID)
+			}
+			m.ensureAgentProjection(childID)
+			m.syncAgentMessages(childID, false)
+		}
+		m.syncAgentMessages(orchID, false)
+		m.syncAgentWindowTabs()
+		return
+	}
 	if m.rootHost != nil {
 		m.rootHost.CancelPointerCapture()
 	}
 	m.launcherScreen = nil
 	m.ActivateSessionByAgent(orchID)
-	m.RegisterAgentRoot(orchID)
+	m.ws.RegisterAgentRoot(orchID)
 	m.ensureAgentProjection(orchID)
-	m.HydrateSubAgents(orchID)
+	m.ws.HydrateSubAgents(orchID)
 	// Cold lifecycle preparation may have installed child inventory before the
 	// shell sees it. Only unseen completed review children default to minimized;
 	// reopening a warm root preserves this shell's deliberate child choices.
-	for _, childID := range agentSubtreeIDs(m.AgentMgr.Get(orchID)) {
+	for _, childID := range agentSubtreeIDs(m.ws.AgentMgr().Get(orchID)) {
 		if childID == orchID {
 			continue
 		}
-		node := m.AgentMgr.Get(childID)
+		node := m.ws.AgentMgr().Get(childID)
 		if node != nil && node.State != nil && node.State.Completed && m.subPaneProjections.GetExisting(childID) == nil {
 			m.MinimizeAgent(childID)
 		}
@@ -44,7 +74,7 @@ func (m *App) AddOrchestrator(orchID string) {
 // ensureAgentProjection binds a local renderer to existing canonical inventory.
 // It never constructs another AgentState or replaces a live conversation.
 func (m *App) ensureAgentProjection(id string) {
-	node := m.AgentMgr.Get(id)
+	node := m.ws.AgentMgr().Get(id)
 	if node == nil || node.State == nil || m.subPaneProjections == nil {
 		return
 	}
@@ -54,7 +84,7 @@ func (m *App) ensureAgentProjection(id string) {
 		projection.renderer.SetSubPaneContentFn(m.renderSubPaneContentForApp)
 	}
 	projection.renderer.SetLegacyModelFallback(node.Model)
-	projection.renderer.SetUsername(m.Username)
+	projection.renderer.SetUsername(m.ws.Username())
 }
 
 func (m *App) RemoveOrchestrator(orchID string) {
@@ -67,10 +97,10 @@ func (m *App) RemoveOrchestrator(orchID string) {
 // Agents panel so one click brings it back. Closing a tab must never kill
 // work in flight — terminating is the explicit cleanupAgent path.
 func (m *App) minimizeAgent(agentID string) {
-	if agentID == "" || m.AgentMgr == nil || m.AgentMgr.Get(agentID) == nil {
+	if agentID == "" || m.ws.AgentMgr() == nil || m.ws.AgentMgr().Get(agentID) == nil {
 		return
 	}
-	ids := agentSubtreeIDs(m.AgentMgr.Get(agentID))
+	ids := agentSubtreeIDs(m.ws.AgentMgr().Get(agentID))
 	m.MinimizeAgent(agentID)
 	for _, id := range ids {
 		if m.Win == nil {
@@ -87,7 +117,7 @@ func (m *App) minimizeAgent(agentID string) {
 // turn, stops the orchestrator, and drops every buffer. Only user-invoked
 // "Terminate" actions reach it — closing a tab minimizes instead.
 func (m *App) terminateAgent(agentID string) tea.Cmd {
-	if agentID == "" || m.AgentMgr == nil || m.AgentMgr.Get(agentID) == nil {
+	if agentID == "" || m.ws.AgentMgr() == nil || m.ws.AgentMgr().Get(agentID) == nil {
 		return nil
 	}
 	defer m.releaseTabBarFocus()
@@ -103,7 +133,7 @@ func (m *App) terminateAgent(agentID string) tea.Cmd {
 
 // restoreAgent re-surfaces a minimized agent and focuses its tab.
 func (m *App) restoreAgent(agentID string) {
-	if agentID == "" || m.AgentMgr == nil || m.AgentMgr.Get(agentID) == nil {
+	if agentID == "" || m.ws.AgentMgr() == nil || m.ws.AgentMgr().Get(agentID) == nil {
 		return
 	}
 	// The launcher only exists while nothing is surfaced; a restored agent
@@ -120,8 +150,8 @@ func (m *App) restoreAgent(agentID string) {
 // sleeping child after the Agents panel has already lost its parent tree.
 func (m *App) cleanupAgent(agentID string) {
 	ids := []string{agentID}
-	if m.AgentMgr != nil {
-		if node := m.AgentMgr.Get(agentID); node != nil {
+	if m.ws.AgentMgr() != nil {
+		if node := m.ws.AgentMgr().Get(agentID); node != nil {
 			ids = agentSubtreeIDs(node)
 		}
 	}
@@ -145,14 +175,14 @@ func (m *App) cleanupAgent(agentID string) {
 		}
 	}
 	for _, id := range ids {
-		if node := m.AgentMgr.Get(id); node != nil && node.State != nil {
+		if node := m.ws.AgentMgr().Get(id); node != nil && node.State != nil {
 			m.clearThinkingPresentationOwner(node.State)
 		}
 	}
-	m.CloseAgent(agentID)
-	if m.AgentMgr != nil {
-		m.AgentView.forgetSubtree(m.AgentMgr.Get(agentID))
-		m.ForgetAgentInventory(agentID)
+	m.ws.CloseAgent(agentID)
+	if m.ws.AgentMgr() != nil {
+		m.AgentView.forgetSubtree(m.ws.AgentMgr().Get(agentID))
+		m.ws.ForgetAgentInventory(agentID)
 	}
 
 	for _, id := range ids {
@@ -209,7 +239,7 @@ func (m *App) activeMsgList() *chatprojection.Renderer {
 }
 
 func (m *App) completeSubAgent(agentID string) {
-	node := m.AgentMgr.Get(agentID)
+	node := m.ws.AgentMgr().Get(agentID)
 	if node == nil || node.State == nil || node.Parent == nil {
 		return
 	}
@@ -217,7 +247,7 @@ func (m *App) completeSubAgent(agentID string) {
 	if status == "" || status == "running" {
 		status = "completed"
 	}
-	change := m.ApplyAgentEvent(workspace.AgentEvent{AgentID: agentID, Type: "sub_agent_completed", Data: map[string]string{"agent_id": agentID, "status": status}})
+	change := m.ws.ApplyAgentEvent(workspace.AgentEvent{AgentID: agentID, Type: "sub_agent_completed", Data: map[string]string{"agent_id": agentID, "status": status}})
 	if change.Accepted {
 		m.archiveSubAgentTab(agentID)
 	}
@@ -225,7 +255,7 @@ func (m *App) completeSubAgent(agentID string) {
 
 // archiveSubAgentTab is this shell's completion policy, not runtime settlement.
 func (m *App) archiveSubAgentTab(agentID string) {
-	node := m.AgentMgr.Get(agentID)
+	node := m.ws.AgentMgr().Get(agentID)
 	if node == nil {
 		return
 	}
@@ -246,10 +276,10 @@ func (m *App) archiveSubAgentTab(agentID string) {
 }
 
 func (m *App) anyActive() bool {
-	if m.AgentMgr.AnyActive() {
+	if m.ws.AgentMgr().AnyActive() {
 		return true
 	}
-	for _, sp := range m.PaneMgr.Panes() {
+	for _, sp := range m.ws.PaneMgr().Panes() {
 		if !sp.Done {
 			return true
 		}
@@ -259,8 +289,8 @@ func (m *App) anyActive() bool {
 
 func (m *App) setMode(newMode Mode) {
 	oldMode := m.OverlayState.Current()
-	if m.Logger != nil {
-		m.Logger.Debug("UI", "mode_switch", "from", modeName(oldMode), "to", modeName(newMode))
+	if m.ws.Logger() != nil {
+		m.ws.Logger().Debug("UI", "mode_switch", "from", modeName(oldMode), "to", modeName(newMode))
 	}
 	m.OverlayState.Set(newMode)
 	if ml := m.activeMsgList(); ml != nil {
@@ -284,7 +314,7 @@ func (m *App) activeMessageList() *chatprojection.Renderer {
 		return activeML
 	}
 	// Fallback: use any available agent's projection MessageList
-	for _, n := range m.AgentMgr.AllNodes() {
+	for _, n := range m.ws.AgentMgr().AllNodes() {
 		if p := m.subPaneProjections.GetExisting(n.ID); p != nil {
 			return p.renderer
 		}
@@ -296,7 +326,7 @@ func (m *App) agentForView() *workspace.AgentState {
 	if n := m.AgentView.ActiveNode(); n != nil && n.State != nil {
 		return n.State
 	}
-	for _, n := range m.AgentMgr.AllNodes() {
+	for _, n := range m.ws.AgentMgr().AllNodes() {
 		if n.State != nil {
 			return n.State
 		}
@@ -307,7 +337,7 @@ func (m *App) agentForView() *workspace.AgentState {
 func (m *App) switchToAgentView(agentID string) {
 	if agentID == "" {
 		m.AgentView.ClearActive()
-	} else if n := m.AgentMgr.Get(agentID); n != nil && n.State != nil {
+	} else if n := m.ws.AgentMgr().Get(agentID); n != nil && n.State != nil {
 		// Selecting a minimized agent is how the user brings it back.
 		if m.AgentView.IsHidden(n.ID) {
 			m.RestoreAgent(agentID)
@@ -315,7 +345,7 @@ func (m *App) switchToAgentView(agentID string) {
 			m.AgentView.SetActive(agentID)
 		}
 		m.ActivateSessionByAgent(agentID)
-		m.OverlayState.SetYolo(m.YoloForAgent(agentID))
+		m.OverlayState.SetYolo(m.ws.YoloForAgent(agentID))
 	}
 
 	curr := m.AgentView.ActiveID()
@@ -425,7 +455,7 @@ func (m *App) syncAgentWindowTabs() {
 	// previously left selectable agents without tabs and stale tabs without a
 	// prompt target.
 	for _, id := range m.AgentView.TabOrder() {
-		n := m.AgentMgr.Get(id)
+		n := m.ws.AgentMgr().Get(id)
 		if n == nil || m.AgentView.IsHidden(n.ID) {
 			continue
 		}
@@ -518,7 +548,7 @@ func (m *App) activeAgentTabID() string {
 		return ""
 	}
 	id := m.agentIDFromTabTitle(tab.Title)
-	if node := m.AgentMgr.Get(id); node != nil && !m.AgentView.IsHidden(node.ID) {
+	if node := m.ws.AgentMgr().Get(id); node != nil && !m.AgentView.IsHidden(node.ID) {
 		return id
 	}
 	return ""
@@ -580,7 +610,7 @@ func (m *App) purgeStaleAgentTabs() {
 		}
 		if m.isAgentTabTitle(tabs[i].Title) {
 			agentID := m.agentIDFromTabTitle(tabs[i].Title)
-			n := m.AgentMgr.Get(agentID)
+			n := m.ws.AgentMgr().Get(agentID)
 			if n == nil || m.AgentView.IsHidden(n.ID) {
 				m.Win.CloseTabByID(tabs[i].ID)
 			}

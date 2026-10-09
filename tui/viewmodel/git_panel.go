@@ -10,6 +10,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/shellport"
 	"crude/tui/screens/gitdiff"
 	"crude/tui/screens/gitpanel"
 	"crude/tui/screens/termdock"
@@ -56,13 +57,11 @@ func (m *App) refreshSourceControl() tea.Cmd {
 	if m.gitPanel == nil {
 		return nil
 	}
-	if m.Git == nil {
-		m.Git = workspace.NewGitService(m.RootPath)
-	}
+	m.ws.EnsureGit()
 	m.gitPanel.SetLoading(true)
 	gen := m.gitRefreshGen.Add(1)
 	m.recordGitOperation(gen, "Refresh Git")
-	service := m.Git
+	service := m.ws.Git()
 	m.gitReadsInFlight++
 	return func() tea.Msg {
 		ctx, cancel := m.sourceControlContext()
@@ -75,17 +74,15 @@ func (m *App) refreshSourceControl() tea.Cmd {
 func (m *App) sourceControlMutation(
 	notice string,
 	commit *gitpanel.CommitRequest,
-	mutate func(context.Context, *workspace.GitService) error,
+	mutate func(context.Context, shellport.GitService) error,
 ) tea.Cmd {
-	if m.Git == nil {
-		m.Git = workspace.NewGitService(m.RootPath)
-	}
+	m.ws.EnsureGit()
 	if m.gitPanel != nil {
 		m.gitPanel.SetLoading(true)
 	}
 	gen := m.gitRefreshGen.Add(1)
 	m.recordGitOperation(gen, firstNonempty(notice, "Update Git"))
-	service := m.Git
+	service := m.ws.Git()
 	m.gitReadsInFlight++
 	return func() tea.Msg {
 		ctx, cancel := m.sourceControlContext()
@@ -132,8 +129,8 @@ func (m *App) applySourceControlResult(msg sourceControlResultMsg) tea.Cmd {
 			// Unrequested reads never report: a workspace without a repository,
 			// or a transient failure, must not raise an issue or toast. The last
 			// known projection stays painted.
-			if m.Logger != nil {
-				m.Logger.Debug("GIT", "snapshot_reconcile_failed", "error", msg.err.Error())
+			if m.ws.Logger() != nil {
+				m.ws.Logger().Debug("GIT", "snapshot_reconcile_failed", "error", msg.err.Error())
 			}
 			return nil
 		}
@@ -141,7 +138,7 @@ func (m *App) applySourceControlResult(msg sourceControlResultMsg) tea.Cmd {
 			m.gitPanel.SetBusy("")
 		}
 		m.finishGitOperation(msg.gen, types.OperationFailed, msg.err.Error())
-		m.Status.SetIssue(types.IssueSnapshot{ID: "git", Owner: types.ResourceRef{Kind: types.ResourceGit, ID: m.RootPath}, Severity: types.SeverityError, Summary: "Source control failed", Detail: msg.err.Error()})
+		m.ws.Status().SetIssue(types.IssueSnapshot{ID: "git", Owner: types.ResourceRef{Kind: types.ResourceGit, ID: m.ws.RootPath()}, Severity: types.SeverityError, Summary: "Source control failed", Detail: msg.err.Error()})
 		m.gitPanel.SetError(msg.err)
 		if m.Feedback != nil {
 			m.Feedback.NotifyError("Source control: " + msg.err.Error())
@@ -159,7 +156,7 @@ func (m *App) applySourceControlResult(msg sourceControlResultMsg) tea.Cmd {
 		return m.prepareGitChangesIfVisible()
 	}
 	m.finishGitOperation(msg.gen, types.OperationSucceeded, "")
-	m.Status.ResolveIssue("git")
+	m.ws.Status().ResolveIssue("git")
 	m.presentGitSnapshot(msg.snapshot)
 	if msg.commit != nil {
 		m.gitPanel.CompleteCommit(*msg.commit)
@@ -188,27 +185,27 @@ func (m *App) presentGitSnapshot(snapshot workspace.GitSnapshot) {
 }
 
 func (m *App) recordGitOperation(generation uint64, label string) {
-	if m.Status == nil {
+	if m.ws.Status() == nil {
 		return
 	}
-	m.Status.SetOperation(types.OperationSnapshot{
-		ID: fmt.Sprintf("git:%d", generation), Owner: types.ResourceRef{Kind: types.ResourceGit, ID: m.RootPath},
+	m.ws.Status().SetOperation(types.OperationSnapshot{
+		ID: fmt.Sprintf("git:%d", generation), Owner: types.ResourceRef{Kind: types.ResourceGit, ID: m.ws.RootPath()},
 		Kind: "git", Label: label, State: types.OperationRunning, StartedAt: time.Now(), Cancellable: true,
 	})
 }
 
 func (m *App) finishGitOperation(generation uint64, state types.OperationState, errorText string) {
-	if m.Status == nil {
+	if m.ws.Status() == nil {
 		return
 	}
-	m.Status.FinishOperation(fmt.Sprintf("git:%d", generation), state, errorText)
+	m.ws.Status().FinishOperation(fmt.Sprintf("git:%d", generation), state, errorText)
 }
 
 func (m *App) discardGitChange(preview workspace.GitDiscardPreview) tea.Cmd {
-	owner := m.Workspace
+	owner := m.ws
 	return m.sourceControlMutation(
 		"Discarded "+filepath.Base(preview.Comparison.Path)+" · recover through Local History", nil,
-		func(ctx context.Context, _ *workspace.GitService) error {
+		func(ctx context.Context, _ shellport.GitService) error {
 			_, err := owner.DiscardGitReviewed(ctx, preview)
 			return err
 		},
@@ -224,7 +221,7 @@ func (m *App) startDiscardGitChange(change workspace.GitChange) {
 	m.GitDiscardPending = &copy
 	m.gitDiscardPreview = nil
 	m.gitDiscardSequence++
-	sequence, generation, owner := m.gitDiscardSequence, m.workspaceSwitchGen.Load(), m.Workspace
+	sequence, generation, owner := m.gitDiscardSequence, m.workspaceSwitchGen.Load(), m.ws
 	m.startSourceControlMutation(func() tea.Msg {
 		ctx, cancel := m.sourceControlContext()
 		defer cancel()
@@ -358,13 +355,11 @@ func (m *App) prepareGitChanges() tea.Cmd {
 		m.gitPrepareDirty = true
 		return nil
 	}
-	if m.Git == nil {
-		m.Git = workspace.NewGitService(m.RootPath)
-	}
+	m.ws.EnsureGit()
 	changes := append([]workspace.GitChange(nil), m.gitPanel.Snapshot().Changes...)
 	m.gitPrepareInFlight = true
 	m.gitPrepareGen++
-	generation, owner, service := m.gitPrepareGen, m.workspaceSwitchGen.Load(), m.Git
+	generation, owner, service := m.gitPrepareGen, m.workspaceSwitchGen.Load(), m.ws.Git()
 	return func() tea.Msg {
 		if len(changes) == 0 {
 			return gitChangesPreparedMsg{workspace: owner, generation: generation}
@@ -385,8 +380,8 @@ func (m *App) applyGitChangesPrepared(msg gitChangesPreparedMsg) tea.Cmd {
 	}
 	m.gitPrepareInFlight = false
 	if msg.err != nil {
-		if m.Logger != nil {
-			m.Logger.Debug("GIT", "prepare_changes_failed", "error", msg.err.Error())
+		if m.ws.Logger() != nil {
+			m.ws.Logger().Debug("GIT", "prepare_changes_failed", "error", msg.err.Error())
 		}
 	} else {
 		m.gitPanel.SetPrepared(msg.files)
@@ -442,7 +437,7 @@ func (m *App) stageGitChanges(changes []workspace.GitChange) tea.Cmd {
 	if len(paths) == 1 {
 		notice = "Staged " + filepath.Base(paths[0])
 	}
-	return m.sourceControlMutation(notice, nil, func(ctx context.Context, service *workspace.GitService) error {
+	return m.sourceControlMutation(notice, nil, func(ctx context.Context, service shellport.GitService) error {
 		return service.Stage(ctx, paths...)
 	})
 }
@@ -456,7 +451,7 @@ func (m *App) unstageGitChanges(changes []workspace.GitChange) tea.Cmd {
 	if len(paths) == 1 {
 		notice = "Unstaged " + filepath.Base(paths[0])
 	}
-	return m.sourceControlMutation(notice, nil, func(ctx context.Context, service *workspace.GitService) error {
+	return m.sourceControlMutation(notice, nil, func(ctx context.Context, service shellport.GitService) error {
 		return service.Unstage(ctx, paths...)
 	})
 }
@@ -473,7 +468,7 @@ func (m *App) commitGit(request gitpanel.CommitRequest) tea.Cmd {
 	m.gitPanel.SetBusy("Committing")
 	copy := request
 	notice := "Committed " + gitCountNoun(len(request.Paths), "file")
-	return m.sourceControlMutation(notice, &copy, func(ctx context.Context, service *workspace.GitService) error {
+	return m.sourceControlMutation(notice, &copy, func(ctx context.Context, service shellport.GitService) error {
 		if request.StageAll {
 			if err := service.Stage(ctx, request.Paths...); err != nil {
 				return err
@@ -522,7 +517,7 @@ func (m *App) handleGitFileIntent(intent gitdiff.FileIntent) tea.Cmd {
 		if stage {
 			verb = "Staged a hunk of "
 		}
-		return m.sourceControlMutation(verb+filepath.Base(intent.Change.Path), nil, func(ctx context.Context, service *workspace.GitService) error {
+		return m.sourceControlMutation(verb+filepath.Base(intent.Change.Path), nil, func(ctx context.Context, service shellport.GitService) error {
 			if stage {
 				return service.StageHunk(ctx, comparison, hunk)
 			}
@@ -550,7 +545,7 @@ func (m *App) handleGitFileIntent(intent gitdiff.FileIntent) tea.Cmd {
 		if stage {
 			verb = "Staged "
 		}
-		return m.sourceControlMutation(verb+filepath.Base(intent.Change.Path), nil, func(ctx context.Context, service *workspace.GitService) error {
+		return m.sourceControlMutation(verb+filepath.Base(intent.Change.Path), nil, func(ctx context.Context, service shellport.GitService) error {
 			switch {
 			case exact && stage:
 				return service.StageReviewed(ctx, comparison)
@@ -585,10 +580,8 @@ func (m *App) inspectGitCommitInto(commit workspace.GitCommitSummary, view *gitR
 }
 
 func (m *App) loadGitEvidence(hash string, tab window.TabID, sequence uint64) tea.Cmd {
-	if m.Git == nil {
-		m.Git = workspace.NewGitService(m.RootPath)
-	}
-	owner, service := m.workspaceSwitchGen.Load(), m.Git
+	m.ws.EnsureGit()
+	owner, service := m.workspaceSwitchGen.Load(), m.ws.Git()
 	return func() tea.Msg {
 		ctx, cancel := m.sourceControlContext()
 		defer cancel()
@@ -701,7 +694,7 @@ func (m *App) startGitCheckout(branch workspace.GitBranchSummary) {
 	snapshot := m.gitPanel.Snapshot()
 	state := &ui.ContextMenuState{Title: "Switch to " + branch.Name, Sections: []ui.ContextMenuSection{{Items: []ui.ContextMenuItem{
 		{Label: "Switch branch", Detail: "uncommitted changes move with you", Action: func() {
-			m.startSourceControlMutation(m.sourceControlMutation("Switched to "+branch.Name, nil, func(ctx context.Context, service *workspace.GitService) error {
+			m.startSourceControlMutation(m.sourceControlMutation("Switched to "+branch.Name, nil, func(ctx context.Context, service shellport.GitService) error {
 				current, err := service.Snapshot(ctx)
 				if err != nil {
 					return err
@@ -724,12 +717,12 @@ func (m *App) confirmDiscardGitHunk(intent gitdiff.FileIntent) {
 		m.Feedback.NotifyError(path + " has unsaved edits · save it before discarding")
 		return
 	}
-	owner, comparison, hunk := m.Workspace, intent.Comparison, intent.Hunk
+	owner, comparison, hunk := m.ws, intent.Comparison, intent.Hunk
 	name := filepath.Base(intent.Change.Path)
 	state := &ui.ContextMenuState{Title: fmt.Sprintf("Discard hunk in %s (lines %d–%d)?", name, hunk.NewStart+1, hunk.NewEnd), Sections: []ui.ContextMenuSection{{Items: []ui.ContextMenuItem{
 		{Label: "Cancel"},
 		{Label: "Discard hunk", Detail: "recoverable in Local History", Action: func() {
-			m.startSourceControlMutation(m.sourceControlMutation("Discarded a hunk of "+name+" · recover through Local History", nil, func(ctx context.Context, _ *workspace.GitService) error {
+			m.startSourceControlMutation(m.sourceControlMutation("Discarded a hunk of "+name+" · recover through Local History", nil, func(ctx context.Context, _ shellport.GitService) error {
 				_, err := owner.DiscardGitHunk(ctx, comparison, hunk)
 				return err
 			}))

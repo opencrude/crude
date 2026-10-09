@@ -31,10 +31,10 @@ var errGitCommitWriteStopped = errors.New("generation stopped · your previous d
 // Commit would record. The model and account are resolved here, on the update
 // goroutine; only repository reads and the request run in the background.
 func (m *App) startCommitMessageWriter(request gitpanel.GenerateRequest) tea.Cmd {
-	if m.gitPanel == nil || m.gitPanel.Writing() || m.Workspace == nil {
+	if m.gitPanel == nil || m.gitPanel.Writing() || m.ws == nil {
 		return nil
 	}
-	writer, err := m.PrepareCommitMessageWriter()
+	writer, err := m.ws.PrepareCommitMessageWriter()
 	if err != nil {
 		m.gitPanel.SetError(err)
 		return nil

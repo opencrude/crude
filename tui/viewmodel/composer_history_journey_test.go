@@ -32,7 +32,7 @@ func TestComposerSessionSwitchOwnsDraftAndReferenceLifecycle(t *testing.T) {
 	app := newFullTestApp(t)
 	first := workspace.NewSession("first", t.TempDir(), nil, nil)
 	second := workspace.NewSession("second", t.TempDir(), nil, nil)
-	app.SessionsByAgent = map[string]*workspace.Session{"first": first, "second": second}
+	wsOf(app).SessionsByAgent = map[string]*workspace.Session{"first": first, "second": second}
 	app.AddOrchestrator("first")
 	if app.composerHydratedFor != first {
 		t.Fatal("real session activation did not bind the composer lifecycle")
@@ -75,6 +75,7 @@ func TestComposerSessionSwitchOwnsDraftAndReferenceLifecycle(t *testing.T) {
 
 func TestComposerColdLoadAndInactiveFlushRespectLatestDraft(t *testing.T) {
 	app := newFullTestApp(t)
+	configureComposerDraftTest(t, app)
 	db, err := sessiondb.OpenAndMigrate(filepath.Join(t.TempDir(), "draft.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -89,7 +90,7 @@ func TestComposerColdLoadAndInactiveFlushRespectLatestDraft(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := sessiondb.SaveRuntimeState(t.Context(), db, composerDraftStateKey, saved); err != nil {
+	if err := app.draftOwner(first).record.save(app.composerDraftClient, saved); err != nil {
 		t.Fatal(err)
 	}
 	app.ActiveSession = first
@@ -98,7 +99,7 @@ func TestComposerColdLoadAndInactiveFlushRespectLatestDraft(t *testing.T) {
 	app.ActiveSession = second
 	app.hydrateComposerDraftCmd()
 	app.flushComposerDraft()
-	raw, err := sessiondb.LoadRuntimeState(t.Context(), db, composerDraftStateKey)
+	raw, err := app.draftOwner(first).record.load(app.composerDraftClient)
 	if err != nil || !bytes.Equal(raw, saved) {
 		t.Fatal("unresolved cold load overwrote the saved draft with an empty projection")
 	}
@@ -124,7 +125,7 @@ func TestComposerColdLoadAndInactiveFlushRespectLatestDraft(t *testing.T) {
 	app.ActiveSession = second
 	app.hydrateComposerDraftCmd()
 	app.flushComposerDraft()
-	raw, err = sessiondb.LoadRuntimeState(t.Context(), db, composerDraftStateKey)
+	raw, err = app.draftOwner(first).record.load(app.composerDraftClient)
 	var snapshot composerDraftSnapshot
 	if err != nil || json.Unmarshal(raw, &snapshot) != nil || snapshot.Text != "latest exact edit" {
 		t.Fatalf("teardown lost inactive queued edit: %s err=%v", raw, err)
@@ -156,7 +157,7 @@ func TestComposerSessionSwitchDoesNotConsumeAnotherPendingPaste(t *testing.T) {
 			app := newFullTestApp(t)
 			first := workspace.NewSession("first", t.TempDir(), nil, nil)
 			second := workspace.NewSession("second", t.TempDir(), nil, nil)
-			app.SessionsByAgent = map[string]*workspace.Session{"first": first, "second": second}
+			wsOf(app).SessionsByAgent = map[string]*workspace.Session{"first": first, "second": second}
 			app.AddOrchestrator("first")
 			app.Input.SetInput("old draft ")
 			_, old := app.Update(tea.PasteMsg{Content: strings.Repeat("old paste\n", 600)})
@@ -259,10 +260,10 @@ func TestHistoryRecallToActualProviderRetainsMixedContent(t *testing.T) {
 	}))
 	defer server.Close()
 	app := newFullTestApp(t)
-	app.Logger = stubLogger{}
-	app.RootPath, app.WorkspaceDir = t.TempDir(), t.TempDir()
-	app.SessionsByID, app.SessionsByAgent = make(map[string]*workspace.Session), make(map[string]*workspace.Session)
-	app.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
+	wsOf(app).Logger = stubLogger{}
+	wsOf(app).RootPath, wsOf(app).WorkspaceDir = t.TempDir(), t.TempDir()
+	wsOf(app).SessionsByID, wsOf(app).SessionsByAgent = make(map[string]*workspace.Session), make(map[string]*workspace.Session)
+	wsOf(app).SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
 	cfg := testAccountConfig()
 	account := cfg.Accounts["test"]
 	account.Connection.ProviderURL = server.URL
@@ -273,17 +274,17 @@ func TestHistoryRecallToActualProviderRetainsMixedContent(t *testing.T) {
 	category.ModelModalities = []string{provider.ModalityImage}
 	profile.Categories[session.CategoryDefault] = category
 	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile
-	owner, err := app.CreateSession(cfg, home)
+	owner, err := wsOf(app).CreateSession(cfg, home)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer app.CloseAllSessions()
+	defer wsOf(app).CloseAllSessions()
 	sender := &recoveryJourneySender{events: make(chan types.AgentMsg, 512)}
-	orch, err := app.StartOrchestrator(owner.SessionID, sender)
+	orch, err := wsOf(app).StartOrchestrator(owner.SessionID, sender)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer app.CloseAgent(orch.ID)
+	defer app.ws.CloseAgent(orch.ID)
 	app.AddOrchestrator(orch.ID)
 	app.SetPromptHistory(store)
 	_, recall := app.Update(tea.KeyPressMsg{Code: tea.KeyUp})

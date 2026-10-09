@@ -20,7 +20,7 @@ func TestParallelPreparationKeepsPlacementWhileArgumentsStream(t *testing.T) {
 				app := newFullTestApp(t)
 				app.width, app.height = width, 32
 				app.AddOrchestrator("preparation")
-				state := app.AgentMgr.Get("preparation").State
+				state := app.ws.AgentMgr().Get("preparation").State
 				groupID := "activity:batch:0"
 				if prior {
 					groupID = "activity:prior-a"

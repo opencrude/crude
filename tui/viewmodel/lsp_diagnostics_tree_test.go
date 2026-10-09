@@ -10,6 +10,7 @@ import (
 
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 
+	"crude/shellport"
 	ttypes "crude/tui/types"
 	model "crude/types"
 	"crude/workspace"
@@ -77,7 +78,7 @@ func TestInitWiresDiagnosticsBeforeWorkspaceLSPStart(t *testing.T) {
 		filePath: mainGo,
 		diags:    []workspace.LSPDiagnostic{{Severity: workspace.DiagError, Message: "boom"}},
 	}
-	app.LSPMgr.SetRuntime(runtime)
+	wsOf(app).LSPMgr.SetRuntime(runtime)
 
 	_ = app.Init()
 	if len(runtime.rootURIs) != 0 {
@@ -111,7 +112,7 @@ func TestSwitchProjectRewiresDiagnosticsForNewLSPManager(t *testing.T) {
 		filePath: mainGo,
 		diags:    []workspace.LSPDiagnostic{{Severity: workspace.DiagWarning, Message: "warn"}},
 	}
-	app.LSPMgr.SetRuntime(runtime)
+	wsOf(app).LSPMgr.SetRuntime(runtime)
 
 	app.startLSPForWorkspace()
 	_, err := app.openEditorTab(mainGo)
@@ -149,7 +150,7 @@ func newDiagnosticsTreeApp(t *testing.T, dir string) *App {
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("HOME", home)
 	ws := workspace.NewWorkspace(dir, "test", "test", ttypes.Settings{}, stubLogger{})
-	app := NewApp(ws, nil)
+	app := NewApp(shellport.Local(ws), nil)
 	t.Cleanup(func() {
 		app.StopAsyncIO()
 		app.StopLSP()
@@ -179,7 +180,7 @@ func assertLSPStartedForRoot(t *testing.T, runtime *immediateTreeDiagRuntime, di
 func awaitTreeLSP(t *testing.T, app *App, path string) {
 	t.Helper()
 	deadline := time.Now().Add(3 * time.Second)
-	for !app.LSPMgr.HasFileDiagnostics(path) {
+	for !wsOf(app).LSPMgr.HasFileDiagnostics(path) {
 		if time.Now().After(deadline) {
 			t.Fatal("diagnostics never arrived")
 		}

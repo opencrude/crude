@@ -17,12 +17,12 @@ func (m *App) terminateBackgroundJob(request backgroundjobs.TerminateRequest) te
 		return nil
 	}
 	ref := fileio.AsyncCmdRef{Handle: job.Handle, PID: job.PID, StartedAt: job.StartedAt}
-	terminate, err := m.PrepareAsyncCommandTermination(job.OwnerID, ref)
+	terminate, err := m.ws.PrepareAsyncCommandTermination(job.OwnerID, ref)
 	if err != nil {
 		m.Feedback.NotifyError(err.Error())
 		return nil
 	}
-	status := m.Status
+	status := m.ws.Status()
 	resource := types.ResourceRef{Kind: types.ResourceAgent, ID: job.OwnerID, SessionID: owner.SessionID}
 	return func() tea.Msg {
 		if err := terminate(); err != nil {

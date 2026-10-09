@@ -35,8 +35,8 @@ func TestChildRawReasoningStaysInItsPaneWhileParentHasCompactThinking(t *testing
 		Text: trace, Kind: reasoning.InferredRaw,
 	}})
 
-	child := app.AgentMgr.Get("child")
-	parent := app.AgentMgr.Get("parent")
+	child := app.ws.AgentMgr().Get("child")
+	parent := app.ws.AgentMgr().Get("parent")
 	if child == nil || app.thinkingPaneID(child.State) == "" {
 		t.Fatal("child raw trace did not promote into its own thinking pane")
 	}
@@ -47,7 +47,7 @@ func TestChildRawReasoningStaysInItsPaneWhileParentHasCompactThinking(t *testing
 	if thought, active := pane.Messages.ActiveThinking(); !active || !strings.Contains(thought.Content, "Raw child investigation") {
 		t.Fatal("child thinking pane lost the raw body")
 	}
-	if app.thinkingPaneID(parent.State) != "" || !strings.Contains(app.AgentActivity("parent").Thinking, "Parent summary") {
+	if app.thinkingPaneID(parent.State) != "" || !strings.Contains(app.ws.AgentActivity("parent").Thinking, "Parent summary") {
 		t.Fatal("child raw trace changed the parent's compact reasoning")
 	}
 	app.switchToAgentView("child")
@@ -84,7 +84,7 @@ func TestResponsesVerboseSummaryPromotesForRootAndChildWithoutReclassification(t
 					// Background children must promote before their tab is selected.
 					app.switchToAgentView("parent")
 					app.paintShellFrame()
-					state := app.AgentMgr.Get(owner).State
+					state := app.ws.AgentMgr().Get(owner).State
 					decoder := (&provider.OpenAIResponsesStandard{}).NewStreamDecoder()
 					stream := func(text string) {
 						t.Helper()
@@ -140,7 +140,7 @@ func TestResponsesVerboseSummaryPromotesForRootAndChildWithoutReclassification(t
 					if strings.Contains(shellBufferRow(app, app.chatRect.Y+app.chatRect.H-1), "MORE-EVIDENCE") {
 						t.Fatal("promoted body duplicated in activity strip")
 					}
-					if child && app.thinkingPaneID(app.AgentMgr.Get("parent").State) != "" {
+					if child && app.thinkingPaneID(app.ws.AgentMgr().Get("parent").State) != "" {
 						t.Fatal("child changed parent's presentation")
 					}
 					projection := app.subPaneProjections.ForOwner(owner).Get(paneID, workspace.PaneThinking).renderer
@@ -156,7 +156,7 @@ func TestResponsesVerboseSummaryPromotesForRootAndChildWithoutReclassification(t
 					} else {
 						app.handleAgentEvent(types.AgentEventMsg{AgentID: owner, Type: "done", Data: map[string]any{"reason": terminal}})
 					}
-					if app.PaneMgr.Has(paneID) || app.subPaneProjections.Has(paneID) || app.thinkingPaneID(state) != "" {
+					if app.ws.PaneMgr().Has(paneID) || app.subPaneProjections.Has(paneID) || app.thinkingPaneID(state) != "" {
 						t.Fatal("settled thought left a competing pane owner")
 					}
 					thought = state.Messages.Messages()[thoughtIndex]
@@ -218,7 +218,7 @@ func TestChildMeasuredRawReasoningPromotesAfterUsageArrives(t *testing.T) {
 	app.handleAgentEvent(types.AgentEventMsg{AgentID: "child", Type: "thinking", Data: reasoning.Delta{
 		Text: strings.Repeat("unlabelled child trace.\n", 25), Kind: reasoning.Provisional,
 	}})
-	child := app.AgentMgr.Get("child")
+	child := app.ws.AgentMgr().Get("child")
 	if child == nil || app.thinkingPaneID(child.State) == "" {
 		t.Fatal("child trace did not promote through the shared overflow rule")
 	}

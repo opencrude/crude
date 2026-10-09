@@ -36,20 +36,20 @@ func (m *App) openLocalHistory() tea.Cmd { return m.openLocalHistoryForMessage("
 
 func (m *App) openLocalHistoryForPath(path string) tea.Cmd {
 	cmd := m.openLocalHistoryForMessage("", "", "")
-	if cmd == nil || m.LocalHistory == nil {
+	if cmd == nil || m.ws.LocalHistory() == nil {
 		return cmd
 	}
-	rel, err := filepath.Rel(m.RootPath, path)
+	rel, err := filepath.Rel(m.ws.RootPath(), path)
 	if err != nil {
 		return cmd
 	}
 	rel = filepath.ToSlash(rel)
 	return func() tea.Msg {
-		records, err := m.LocalHistory.FileHistory(rel, 500)
+		records, err := m.ws.LocalHistory().FileHistory(rel, 500)
 		if err != nil {
 			return historyscreen.TimelineMsg{Error: err.Error()}
 		}
-		stats, err := m.LocalHistory.Stats()
+		stats, err := m.ws.LocalHistory().Stats()
 		if err != nil {
 			return historyscreen.TimelineMsg{Error: err.Error()}
 		}
@@ -58,7 +58,7 @@ func (m *App) openLocalHistoryForPath(path string) tea.Cmd {
 }
 
 func (m *App) openLatestHistoryCmd(agentID string) tea.Cmd {
-	if m.ActiveSession == nil || m.HistoryService == nil {
+	if m.ActiveSession == nil || m.ws.HistoryService() == nil {
 		return func() tea.Msg { return historyLatestMsg{Error: "No active session history"} }
 	}
 	if agentID == "" {
@@ -66,7 +66,7 @@ func (m *App) openLatestHistoryCmd(agentID string) tea.Cmd {
 	}
 	sessionID := m.ActiveSession.SessionID
 	return func() tea.Msg {
-		scopes, err := m.HistoryService.AgentUndoableScopes(sessionID, agentID)
+		scopes, err := m.ws.HistoryService().AgentUndoableScopes(sessionID, agentID)
 		if err != nil {
 			return historyLatestMsg{Error: err.Error()}
 		}
@@ -97,7 +97,7 @@ func overlappingLatestScopes(scopes []localhistory.MessageScope) []localhistory.
 }
 
 func (m *App) openLocalHistoryForMessage(sessionID, messageID, agentID string) tea.Cmd {
-	if m.Workspace == nil || m.HistoryService == nil {
+	if m.ws == nil || m.ws.HistoryService() == nil {
 		if m.Feedback != nil {
 			m.Feedback.NotifyError("Local history is unavailable")
 		}
@@ -114,9 +114,9 @@ func (m *App) openLocalHistoryForMessage(sessionID, messageID, agentID string) t
 			var plan localhistory.RestorePlan
 			var err error
 			if agentID == "" {
-				plan, err = m.HistoryService.PlanMessageRestore(context.Background(), sessionID, messageID)
+				plan, err = m.ws.HistoryService().PlanMessageRestore(context.Background(), sessionID, messageID)
 			} else {
-				plan, err = m.HistoryService.PlanAgentRestore(context.Background(), sessionID, messageID, agentID)
+				plan, err = m.ws.HistoryService().PlanAgentRestore(context.Background(), sessionID, messageID, agentID)
 			}
 			if err != nil {
 				return historyscreen.PlanMsg{Error: err.Error()}
@@ -125,11 +125,11 @@ func (m *App) openLocalHistoryForMessage(sessionID, messageID, agentID string) t
 		}
 	}
 	return func() tea.Msg {
-		records, err := m.LocalHistory.Timeline(500)
+		records, err := m.ws.LocalHistory().Timeline(500)
 		if err != nil {
 			return historyscreen.TimelineMsg{Error: err.Error()}
 		}
-		stats, err := m.LocalHistory.Stats()
+		stats, err := m.ws.LocalHistory().Stats()
 		if err != nil {
 			return historyscreen.TimelineMsg{Error: err.Error()}
 		}
@@ -158,7 +158,7 @@ func (m *App) openHistoryCandidates(msg historyCandidatesMsg) tea.Cmd {
 		return nil
 	}
 	return func() tea.Msg {
-		timeline, err := m.LocalHistory.Timeline(10000)
+		timeline, err := m.ws.LocalHistory().Timeline(10000)
 		if err != nil {
 			return historyscreen.TimelineMsg{Error: err.Error()}
 		}
@@ -175,29 +175,29 @@ func (m *App) openHistoryCandidates(msg historyCandidatesMsg) tea.Cmd {
 			records = append(records, record)
 			refs[record.ID] = historyscreen.MessageRef{SessionID: msg.SessionID, MessageID: scope.MessageID, AgentID: scope.AgentID}
 		}
-		stats, _ := m.LocalHistory.Stats()
+		stats, _ := m.ws.LocalHistory().Stats()
 		return historyscreen.TimelineMsg{Records: records, Stats: stats, Messages: refs}
 	}
 }
 
 func (m *App) verifyHistoryCmd() tea.Cmd {
 	return func() tea.Msg {
-		if m.LocalHistory == nil {
+		if m.ws.LocalHistory() == nil {
 			return historyOperationMsg{Error: "Local history unavailable"}
 		}
-		if err := m.LocalHistory.VerifyAll(context.Background()); err != nil {
+		if err := m.ws.LocalHistory().VerifyAll(context.Background()); err != nil {
 			return historyOperationMsg{Error: err.Error()}
 		}
 		return historyOperationMsg{Label: "Local history verified"}
 	}
 }
 func (m *App) pruneHistoryCmd() tea.Cmd {
-	settings := m.LoadAppSettings().LocalHistory
+	settings := m.ws.LoadAppSettings().LocalHistory
 	return func() tea.Msg {
-		if m.LocalHistory == nil {
+		if m.ws.LocalHistory() == nil {
 			return historyOperationMsg{Error: "Local history unavailable"}
 		}
-		result, err := m.LocalHistory.Prune(context.Background(), localhistory.RetentionPolicy{KeepHours: settings.RetentionKeepHours, KeepDaily: settings.RetentionKeepDaily, MaxSnapshots: settings.RetentionMaxSnapshots, BudgetBytes: int64(settings.StorageBudgetMB) * 1024 * 1024})
+		result, err := m.ws.LocalHistory().Prune(context.Background(), localhistory.RetentionPolicy{KeepHours: settings.RetentionKeepHours, KeepDaily: settings.RetentionKeepDaily, MaxSnapshots: settings.RetentionMaxSnapshots, BudgetBytes: int64(settings.StorageBudgetMB) * 1024 * 1024})
 		if err != nil {
 			return historyOperationMsg{Error: err.Error()}
 		}
@@ -205,12 +205,12 @@ func (m *App) pruneHistoryCmd() tea.Cmd {
 	}
 }
 func (m *App) captureHistoryCmd() tea.Cmd {
-	settings := m.LoadAppSettings().LocalHistory
+	settings := m.ws.LoadAppSettings().LocalHistory
 	return func() tea.Msg {
-		if m.LocalHistory == nil {
+		if m.ws.LocalHistory() == nil {
 			return historyOperationMsg{Error: "Local history unavailable"}
 		}
-		_, changed, err := m.LocalHistory.SnapshotIfChanged(context.Background(), localhistory.SnapshotOptions{Kind: "manual", Label: "Manual snapshot", DisableGitIgnore: !settings.UseGitIgnoreValue(), ExtraIgnorePatterns: append([]string(nil), settings.ExtraIgnorePatterns...), MaxFileSize: int64(settings.MaxFileSizeMB) * 1024 * 1024})
+		_, changed, err := m.ws.LocalHistory().SnapshotIfChanged(context.Background(), localhistory.SnapshotOptions{Kind: "manual", Label: "Manual snapshot", DisableGitIgnore: !settings.UseGitIgnoreValue(), ExtraIgnorePatterns: append([]string(nil), settings.ExtraIgnorePatterns...), MaxFileSize: int64(settings.MaxFileSizeMB) * 1024 * 1024})
 		if err != nil {
 			return historyOperationMsg{Error: err.Error()}
 		}
@@ -221,10 +221,10 @@ func (m *App) captureHistoryCmd() tea.Cmd {
 	}
 }
 func (m *App) openHistoryLocationCmd() tea.Cmd {
-	if m.LocalHistory == nil {
+	if m.ws.LocalHistory() == nil {
 		return func() tea.Msg { return historyOperationMsg{Error: "Local history unavailable"} }
 	}
-	path := m.LocalHistory.Root()
+	path := m.ws.LocalHistory().Root()
 	return func() tea.Msg {
 		if err := fileio.OpenDesktopPath(path, false); err != nil {
 			return historyOperationMsg{Error: "Open history folder: " + err.Error()}
@@ -242,18 +242,18 @@ func historySnapshotOptions(settings ttypes.LocalHistorySettings) localhistory.S
 }
 
 func (m *App) historyPreviewCmd(request historyscreen.PreviewRequest) tea.Cmd {
-	if m.LocalHistory == nil {
+	if m.ws.LocalHistory() == nil {
 		return nil
 	}
-	settings := m.LoadAppSettings().LocalHistory
+	settings := m.ws.LoadAppSettings().LocalHistory
 	return func() tea.Msg {
 		if request.MessageID != "" {
 			var plan localhistory.RestorePlan
 			var err error
 			if request.AgentID == "" {
-				plan, err = m.HistoryService.PlanMessageRestore(context.Background(), request.SessionID, request.MessageID)
+				plan, err = m.ws.HistoryService().PlanMessageRestore(context.Background(), request.SessionID, request.MessageID)
 			} else {
-				plan, err = m.HistoryService.PlanAgentRestore(context.Background(), request.SessionID, request.MessageID, request.AgentID)
+				plan, err = m.ws.HistoryService().PlanAgentRestore(context.Background(), request.SessionID, request.MessageID, request.AgentID)
 			}
 			if err != nil {
 				return historyscreen.PlanMsg{Error: err.Error()}
@@ -263,9 +263,9 @@ func (m *App) historyPreviewCmd(request historyscreen.PreviewRequest) tea.Cmd {
 		var plan localhistory.RestorePlan
 		var err error
 		if len(request.Paths) > 0 {
-			plan, err = m.LocalHistory.PlanRestorePaths(context.Background(), request.SnapshotID, historySnapshotOptions(settings), request.Paths)
+			plan, err = m.ws.LocalHistory().PlanRestorePaths(context.Background(), request.SnapshotID, historySnapshotOptions(settings), request.Paths)
 		} else {
-			plan, err = m.LocalHistory.PlanRestore(context.Background(), request.SnapshotID, historySnapshotOptions(settings))
+			plan, err = m.ws.LocalHistory().PlanRestore(context.Background(), request.SnapshotID, historySnapshotOptions(settings))
 		}
 		if err != nil {
 			return historyscreen.PlanMsg{Error: err.Error()}
@@ -275,7 +275,7 @@ func (m *App) historyPreviewCmd(request historyscreen.PreviewRequest) tea.Cmd {
 }
 
 func (m *App) historyApplyCmd(request historyscreen.ApplyRequest) tea.Cmd {
-	if m.HistoryService == nil {
+	if m.ws.HistoryService() == nil {
 		return nil
 	}
 	for _, choice := range request.Choices {
@@ -286,12 +286,12 @@ func (m *App) historyApplyCmd(request historyscreen.ApplyRequest) tea.Cmd {
 		}
 	}
 	return func() tea.Msg {
-		result, err := m.ApplyHistoryRestoreChoices(context.Background(), request.PlanID, request.Choices)
+		result, err := m.ws.ApplyHistoryRestoreChoices(context.Background(), request.PlanID, request.Choices)
 		if err != nil {
 			return historyscreen.AppliedMsg{Error: err.Error()}
 		}
 		warning := ""
-		if err := m.AppendHistoryRestoreEvent(result); err != nil {
+		if err := m.ws.AppendHistoryRestoreEvent(result); err != nil {
 			warning = "conversation event failed: " + err.Error()
 		}
 		return historyscreen.AppliedMsg{Result: result, Warning: warning}
@@ -306,7 +306,7 @@ func (m *App) historyPathDirty(rel string) bool {
 		if tab == nil || tab.Editor == nil || !tab.Editor.Modified() {
 			continue
 		}
-		resolved, err := filepath.Rel(m.RootPath, path)
+		resolved, err := filepath.Rel(m.ws.RootPath(), path)
 		if err == nil && filepath.ToSlash(resolved) == rel {
 			return true
 		}
@@ -321,7 +321,7 @@ func (m *App) applyHistoryRefresh(result localhistory.RestoreResult) tea.Cmd {
 			if tab == nil || tab.Editor == nil || tab.Editor.Modified() {
 				continue
 			}
-			rel, err := filepath.Rel(m.RootPath, path)
+			rel, err := filepath.Rel(m.ws.RootPath(), path)
 			if err == nil && slices.Contains(result.Paths, filepath.ToSlash(rel)) {
 				cmds = append(cmds, m.refreshEditorDiskCmd(tab.Editor))
 			}

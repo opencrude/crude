@@ -326,6 +326,8 @@ var defaultActions = []*ActionDef{
 	{ID: "editor.autosave.disable", Label: "Disable Auto Save", Description: "disable autosave in this workspace", Category: "File"},
 	{ID: "editor.compareDisk", Label: "Compare With Disk", Description: "open a read-only split comparison of disk and editor snapshots", Category: "File"},
 	{ID: "editor.compareSaved", Label: "Compare With Saved Version", Description: "open a read-only split comparison of the saved baseline and unsaved editor text", Category: "File"},
+	{ID: "editor.resolveShared", Label: "Resolve Shared Editor Changes", Description: "review the retained private draft against current shared text", Category: "File"},
+	{ID: "editor.privateRecovery", Label: "Private Editor Drafts", Description: "preview and recover retained private drafts and discard backups", Category: "File"},
 
 	// ─── Edit ────────────────────────────────────────────────────────
 	{ID: "editor.change.inspect", Label: "Inspect Current Change", Description: "inspect HEAD versus buffer", Category: "Edit"},
