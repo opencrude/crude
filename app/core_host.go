@@ -119,6 +119,7 @@ func RunCore(opts CoreOptions) error {
 		lg.Warn("CORE", "history_install_failed", "error", err.Error())
 	}
 	runtime.SetLifetimePolicy(opts.Server, opts.Grace, cancel)
+	runtime.SetBuildID(BuildID())
 
 	var background sync.WaitGroup
 	// One latest-wins worker republishes committed application defaults on each
@@ -247,7 +248,13 @@ func ConnectCore(ctx context.Context, home, clientID string) (*coreclient.Client
 		return nil, err
 	}
 	if client, err := dialCore(ctx, dataDir, clientID); err == nil {
-		return client, nil
+		replaced, err := replaceStaleCore(ctx, home, client)
+		if err != nil {
+			return nil, err
+		}
+		if !replaced {
+			return client, nil
+		}
 	}
 	if err := spawnCore(home); err != nil {
 		return nil, fmt.Errorf("start core: %w", err)
@@ -416,3 +423,46 @@ func (l *coreLogger) Debug(tag, msg string, pairs ...any) {}
 func (l *coreLogger) Close() error                        { return l.file.Close() }
 
 var _ workspace.Logger = (*coreLogger)(nil)
+
+// replaceStaleCore checks that the running core is this exact build. An idle
+// core from another build (for example the previous `go run .`) is stopped
+// gracefully so a fresh one can start; a busy one is never interrupted.
+func replaceStaleCore(ctx context.Context, home string, client *coreclient.Client) (bool, error) {
+	var status coreprotocol.CoreStatus
+	if err := client.Call(ctx, "", coreprotocol.CoreStatusMethod, struct{}{}, &status); err != nil {
+		_ = client.Close()
+		return false, fmt.Errorf("query running core: %w", err)
+	}
+	if status.BuildID == BuildID() {
+		return false, nil
+	}
+	busy := core.BusyWorkspaces(status)
+	if status.Clients > 0 || len(busy) > 0 {
+		_ = client.Close()
+		detail := fmt.Sprintf("%d shell(s) attached", status.Clients)
+		for _, w := range busy {
+			detail += fmt.Sprintf("; %s has active work (turns=%d children=%d commands=%d)", w.Root, w.Active.Turns, w.Active.Children, w.Active.AsyncCommands)
+		}
+		return false, fmt.Errorf("a core from a different build (pid %d) is still in use: %s. Close the other shells or let the work finish, then retry; `crude --core-stop --force` stops it anyway", status.PID, detail)
+	}
+	var result coreprotocol.ShutdownResult
+	err := client.Call(ctx, "", coreprotocol.CoreShutdownMethod, coreprotocol.ShutdownRequest{}, &result)
+	_ = client.Close()
+	if err != nil || !result.Accepted {
+		if err == nil {
+			err = errors.New(result.Reason)
+		}
+		return false, fmt.Errorf("replace core from a different build: %w", err)
+	}
+	// Wait for the old core to release the endpoint before starting ours.
+	deadline := time.Now().Add(30 * time.Second)
+	for time.Now().Before(deadline) {
+		probe, err := corewire.DialLocal(ctx, DataDir(home))
+		if err != nil {
+			return true, nil
+		}
+		_ = probe.Close()
+		time.Sleep(100 * time.Millisecond)
+	}
+	return false, errors.New("the previous core did not shut down within 30s; see " + CoreLogPath(home))
+}

@@ -890,8 +890,8 @@ func (t *TextArea) handleKey(m tea.KeyPressMsg) EventResult {
 		t.EnsureCursorVisible()
 		return EventResult{Handled: true, Invalidate: InvalidatePaint}
 	}
-	// Ctrl+Enter always submits (even in multi-line mode)
-	if m.Mod.Contains(tea.ModCtrl) && m.Code == tea.KeyEnter {
+	// The commit chord always submits (even in multi-line mode).
+	if IsCommitChord(m) {
 		if t.submitID != "" {
 			return EventResult{
 				Handled:    true,

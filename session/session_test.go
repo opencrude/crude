@@ -438,6 +438,19 @@ func TestFinalizeTurnKeepsDurableHistoryOutsideCompactedContext(t *testing.T) {
 	if err != nil || len(rows) != 4 || rows[0].Msg.ContentString() != "old request" || rows[3].Msg.ContentString() != "new answer" {
 		t.Fatalf("compacted finalization lost persisted history: rows=%+v error=%v", rows, err)
 	}
+	// Ordinary follow-up publication retains the same checkpoint. It must not
+	// archive the evolving generation again under its already-immutable identity.
+	for round := range 2 {
+		prefix := len(s.msgs)
+		archive := append([]provider.ChatMessage(nil), s.msgs...)
+		answer := provider.NewTextMessage("assistant", fmt.Sprintf("follow-up %d", round))
+		answer.InternalID = fmt.Sprintf("follow-up-%d", round)
+		archive = append(archive, answer)
+		active := append(append([]provider.ChatMessage(nil), s.activeContext...), answer)
+		if err := s.finalizeTurn(archive, prefix, &displayMetaTracker{metas: make(map[string]*sessiondb.DisplayMeta)}, answer.ContentString(), answer.InternalID, ttypes.TurnIdentity{}, active); err != nil {
+			t.Fatalf("retained checkpoint blocked ordinary follow-up %d: %v", round, err)
+		}
+	}
 }
 
 func TestHardCancelSignalsEveryOrchestrator(t *testing.T) {

@@ -835,14 +835,20 @@ func (m *App) handleQuit() (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 	}
+	// A closable passive/interactive deck panel is the top-most rung. Decision
+	// panels close only through their own action (closing means deny/cancel),
+	// and status panels are not closable, so the chord falls through and
+	// minimizes the tab; a pending decision stays pending for its restore.
 	if projection := m.activeSessionDeck(); projection != nil && projection.deck.IsOpen() {
-		if panel := projection.deck.Active(); panel != nil && panel.ID == sessionSettingsPanelID && projection.settings != nil {
-			projection.settings.RestoreSnapshot()
+		if panel := projection.deck.Active(); panel != nil && panel.Closable && panel.CloseAction == "" && panel.Policy != ui.PanelBlocking {
+			if panel.ID == sessionSettingsPanelID && projection.settings != nil {
+				projection.settings.RestoreSnapshot()
+			}
+			projection.deck.CloseActive()
+			projection.deckHost.MarkLayout()
+			projection.deckFocused = projection.deck.IsOpen()
+			return m, nil
 		}
-		projection.deck.CloseActive()
-		projection.deckHost.MarkLayout()
-		projection.deckFocused = projection.deck.IsOpen()
-		return m, nil
 	}
 
 	// If there's an editor open, close it

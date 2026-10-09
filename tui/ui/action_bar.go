@@ -406,7 +406,9 @@ func (ab *ActionBar) Handle(ctx EventContext, evt Event) EventResult {
 			return EventResult{Handled: true, Action: &Action{ID: ab.cancelAction}, Invalidate: InvalidatePaint}
 		}
 		for i := range ab.buttons {
-			if ab.buttons[i].shortcut != "" && key.String() == ab.buttons[i].shortcut && ab.buttons[i].enabled {
+			shortcut := ab.buttons[i].shortcut
+			matched := shortcut != "" && key.String() == shortcut || shortcut == CommitChord && IsCommitChord(key)
+			if matched && ab.buttons[i].enabled {
 				ab.focused = i
 				return EventResult{Handled: true, Action: &Action{ID: ab.buttons[i].action}, Invalidate: InvalidateFocus | InvalidatePaint}
 			}

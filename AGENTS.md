@@ -1674,6 +1674,13 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   real stage units, never fabricated completion percentages. Active, retrying,
   completed, cancelled, failed, and resumed-interrupted forms share geometry;
   generic turn cleanup must never consume these durable operation rows.
+- Manual compaction is a separate exact-ID operation after a completed/stopped
+  model turn, never permission to reactivate old output. Connected composers
+  queue input durably with replicated pending rows; dequeue, context and recovery
+  commit atomically before execution. Stop preserves the queue, cold resume is
+  passive, and queue-only sessions are not empty. Core capacity/receipt checks
+  precede owner preparation; shutdown cancels extraction before joining workers
+  and mirrors final session metadata without reading a closed SQL handle.
 - Context-boundary tables are ordinary chat content for interaction: native
   rows, full-bleed rules, and body cells all participate in drag selection,
   clipboard copy, hover/hit testing, and row context menus. Their distinct

@@ -49,7 +49,8 @@ func (w *Workspace) ApplyAgentStatusEvent(evt AgentEvent) {
 	// reactivate status before a later inventory repaint repairs it.
 	if state := node.State; state != nil && evt.Type != "done" && evt.Type != "error" &&
 		evt.Type != "sub_agent_completed" && evt.Type != "safety_alert" && evt.Type != "recovery" &&
-		(state.Cancelling || state.terminal || state.Completed) {
+		(state.Cancelling || state.terminal || state.Completed) &&
+		(!state.terminal || state.Cancelling || state.Completed || !isManualCompactionEvent(evt)) {
 		if state.Cancelling {
 			snapshot.Phase, snapshot.Detail, snapshot.NeedsAction = ttypes.AgentCancelling, "Stopping", false
 			center.SetAgent(snapshot)

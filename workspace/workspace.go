@@ -495,7 +495,9 @@ func (w *Workspace) CloseAllSessions() {
 			fs.backend.Close()
 		}
 		if fs != nil && fs.SessionID != "" {
-			w.persistSessionRegistry(fs)
+			// Close joined finalization and closed the borrowed session handle.
+			// Read the final on-disk metadata, including shutdown-preserved input.
+			w.persistSessionRegistry(fs, nil)
 		}
 	}
 	w.Sessions = w.Sessions[:0]
@@ -529,7 +531,7 @@ func (w *Workspace) noteRegistryErr(op string, err error) {
 // with up-to-date metadata and a closed_at stamp. Reuses RegisterSession,
 // SyncSessionMeta / syncSessionMetaFromDB, and CloseSession. Never deletes the
 // session DB. Safe to call when the session was never registered (legacy).
-func (w *Workspace) persistSessionRegistry(fs *Session) {
+func (w *Workspace) persistSessionRegistry(fs *Session, sessionDB *sql.DB) {
 	if w == nil || w.WorkspaceDB == nil || fs == nil || fs.SessionID == "" {
 		return
 	}
@@ -546,8 +548,8 @@ func (w *Workspace) persistSessionRegistry(fs *Session) {
 	} else {
 		w.noteRegistryErr("", nil)
 	}
-	if fs.DB != nil {
-		if err := w.WorkspaceDB.syncSessionMetaFromDB(fs.DB, fs.SessionID); err != nil {
+	if sessionDB != nil {
+		if err := w.WorkspaceDB.syncSessionMetaFromDB(sessionDB, fs.SessionID); err != nil {
 			w.noteRegistryErr("session_sync_failed", err)
 			if err := w.WorkspaceDB.SyncSessionMeta(w.RootPath, fs.SessionID); err != nil {
 				w.noteRegistryErr("session_sync_failed", err)

@@ -118,6 +118,9 @@ func (w *Workspace) ApplyAgentEvent(evt AgentEvent) AgentReduction {
 		w.RegisterAgentRoot(node.ID)
 	}
 	state := node.State
+	if !state.acceptCompactionEvent(evt) {
+		return result
+	}
 	if identified && !state.AcceptRuntimeEvent(evt.Identity) {
 		return result
 	}
@@ -178,6 +181,16 @@ func (w *Workspace) ApplyAgentEvent(evt AgentEvent) AgentReduction {
 			pane.Status = state.Status
 			pane.Collapse()
 		}
+	case "input_queued":
+		data, _ := evt.Data.(map[string]any)
+		id, _ := data["input_id"].(string)
+		text, _ := data["text"].(string)
+		display, _ := data["display_text"].(string)
+		state.Messages.AppendMessageIfAbsent(queuedInputMessage(id, text, display, time.Now()))
+		result.EvidenceOnly = true
+	case "queued_input_admitted":
+		state.Messages.ConsumePendingSteering(agentEventString(evt.Data, "input_id"))
+		result.EvidenceOnly = true
 	case "collaboration_delivery_admitted":
 		state.Messages.ConsumePendingSteering(agentEventString(evt.Data, "history_message_id"))
 		result.EvidenceOnly = true
@@ -448,6 +461,22 @@ func (w *Workspace) snapshotAgents(includeMessages bool) AgentWorkspaceSnapshot 
 // ApplyAgentInputAdmission commits the visible accepted input on the same owner
 // as runtime output. Only the originating client consumes its draft afterward.
 func (w *Workspace) ApplyAgentInputAdmission(intent *InputAdmissionIntent, result InputAdmissionResult, input provider.UserInput, labels []string) bool {
+	if w != nil && w.AgentMgr != nil && intent != nil && result.Status == InputAdmissionQueued {
+		receipt := result.Receipt
+		node := w.AgentMgr.Get(intent.AgentID)
+		owner := w.SessionForAgent(intent.AgentID)
+		if receipt.InputID != intent.InputID || receipt.AgentID != intent.AgentID || receipt.SessionID != intent.SessionID ||
+			receipt.OwnerEpoch != intent.OwnerEpoch || receipt.DraftRevision != intent.DraftRevision || receipt.AcceptedAt.IsZero() ||
+			node == nil || node.State == nil || owner == nil || owner.SessionID != receipt.SessionID {
+			return false
+		}
+		message := queuedInputMessage(receipt.InputID, input.Text, input.DisplayText, receipt.AcceptedAt)
+		message.ReferenceLabels = labels
+		if node.State.Messages.AppendMessageIfAbsent(message) {
+			w.agentRevision++
+		}
+		return true
+	}
 	if w == nil || w.AgentMgr == nil || intent == nil ||
 		(result.Status != InputAdmissionAccepted && result.Status != InputAdmissionPreservationPending) {
 		return false
@@ -474,4 +503,13 @@ func (w *Workspace) ApplyAgentInputAdmission(intent *InputAdmissionIntent, resul
 	w.agentRevision++
 	w.SyncAgentStatusInventory()
 	return true
+}
+
+// queuedInputMessage is the pending row for a prompt waiting in the durable
+// queue. Admission consumes the pending mark in place, keeping one identity.
+func queuedInputMessage(id, text, display string, at time.Time) Message {
+	if display != "" {
+		text = display
+	}
+	return Message{InternalID: id, Role: MessageRoleUser, Origin: provider.OriginHuman, Content: text, Time: at, PendingSteering: true}
 }

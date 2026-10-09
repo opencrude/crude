@@ -148,11 +148,13 @@ func (m *App) applyInputAdmission(msg inputAdmissionMsg) tea.Cmd {
 		return nil
 	}
 	switch msg.result.Status {
-	case workspace.InputAdmissionAccepted, workspace.InputAdmissionPreservationPending:
+	case workspace.InputAdmissionAccepted, workspace.InputAdmissionPreservationPending, workspace.InputAdmissionQueued:
 		receipt := msg.result.Receipt
+		queued := msg.result.Status == workspace.InputAdmissionQueued
 		if receipt.SessionID != msg.session.SessionID || receipt.AgentID != msg.agentID || receipt.InputID != msg.intent.InputID ||
-			receipt.DraftRevision != msg.draftRevision || receipt.OwnerEpoch != msg.intent.OwnerEpoch ||
-			receipt.TurnGeneration != msg.intent.TurnGeneration || receipt.ContextRevision == 0 || receipt.AcceptedAt.IsZero() {
+			receipt.DraftRevision != msg.draftRevision || receipt.OwnerEpoch != msg.intent.OwnerEpoch || receipt.AcceptedAt.IsZero() ||
+			// A queued prompt has no turn or context revision until it is admitted.
+			!queued && (receipt.TurnGeneration != msg.intent.TurnGeneration || receipt.ContextRevision == 0) {
 			return nil
 		}
 		delete(m.pendingInputAdmissions, msg.intent)
@@ -171,6 +173,9 @@ func (m *App) applyInputAdmission(msg inputAdmissionMsg) tea.Cmd {
 		historyCmd := m.recordPromptWithReferences(msg.input.Text, msg.references)
 		if msg.result.Status == workspace.InputAdmissionPreservationPending && m.Feedback != nil {
 			m.Feedback.NotifyInfo("Message saved to context; execution is not available")
+		}
+		if queued && m.Feedback != nil {
+			m.Feedback.NotifyInfo("Queued · sends when the current work finishes")
 		}
 		return historyCmd
 	case workspace.InputAdmissionRejected:
@@ -197,7 +202,15 @@ func (m *App) submitSteering(sessionID, text string, refIDs []string) tea.Cmd {
 			return remoteSteeringAdmittedMsg{owner: owner, session: session, generation: generation, agentID: sessionID, revision: revision, epoch: epoch, input: input, accepted: accepted, err: err}
 		}
 	}
-	if m.ws == nil || !m.ws.SteerAgent(sessionID, input) {
+	if m.ws == nil {
+		return nil
+	}
+	if !m.ws.SteerAgent(sessionID, input) {
+		// A manual compaction has no run to take notes: send it as ordinary
+		// input, which the owner queues durably until compaction finishes.
+		if m.agentCompacting(sessionID) {
+			return m.submitPreparedInput(sessionID, provider.InputWithRefs(text, refIDs), m.Input.DraftRevision())
+		}
 		if m.Feedback != nil {
 			m.Feedback.NotifyError("human steering was not queued: this turn is no longer accepting notes")
 		}
@@ -225,9 +238,19 @@ func (m *App) applyRemoteSteering(msg remoteSteeringAdmittedMsg) tea.Cmd {
 	if msg.owner != m.ws || msg.generation != m.workspaceSwitchGen.Load() {
 		return nil
 	}
-	if !msg.accepted || msg.err != nil {
+	if msg.err != nil {
 		m.Feedback.NotifyError("Note was not accepted; your draft is kept")
 		return nil
+	}
+	if !msg.accepted {
+		// A manual compaction has no run to take notes: admit it as input,
+		// which the core queues durably until compaction finishes.
+		if !m.agentCompacting(msg.agentID) || msg.session != m.ActiveSession || m.AgentView.ActiveID() != msg.agentID ||
+			m.Input.DraftEpoch() != msg.epoch || m.Input.DraftRevision() != msg.revision {
+			m.Feedback.NotifyError("Note was not accepted; your draft is kept")
+			return nil
+		}
+		return m.submitPreparedInput(msg.agentID, provider.InputWithRefs(msg.input.Text, msg.input.ReferenceIDs), msg.revision)
 	}
 	if msg.session == m.ActiveSession && msg.agentID == m.AgentView.ActiveID() && m.Input.DraftEpoch() == msg.epoch && m.Input.ClearInputAtRevision(msg.revision) {
 		m.persistComposerDraftIfChanged()
@@ -489,4 +512,10 @@ func (m *App) publishSubAgentTerminalStatus(agentID, name, category, status stri
 	}
 	m.Feedback.NotifyAgentTransient(agentID, marker+" "+identity+" "+outcome, severity)
 	m.forceFrame()
+}
+
+// agentCompacting reports a visible context compaction on the exact agent.
+func (m *App) agentCompacting(agentID string) bool {
+	node := m.ws.AgentMgr().Get(agentID)
+	return node != nil && node.State != nil && node.State.ActiveCompaction.Phase != ""
 }

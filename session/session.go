@@ -156,7 +156,11 @@ type Session struct {
 	pendingRecoveries        map[string]sessiondb.RecoveryCheckpoint
 	admissionMu              sync.Mutex
 	pendingAdmissions        map[*InputAdmissionIntent]struct{}
-	lifecycleMu              sync.Mutex
+	// queued is the durable input queue held while the root compacts.
+	queueMu      sync.Mutex
+	queueAdmitMu sync.Mutex
+	queued       []QueuedInput
+	lifecycleMu  sync.Mutex
 
 	// runtimeProfile holds ephemeral per-orchestrator config overrides
 	// that never persist to disk.
@@ -485,6 +489,9 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 		sessionOverrides:    pinnedAccountOverrides(cfg),
 	}
 
+	if err := sess.loadQueuedInputs(); err != nil {
+		return nil, err
+	}
 	if dir := lg.SessionDir(); dir != "" {
 		_ = os.MkdirAll(filepath.Join(dir, "reports"), 0755)
 	}
@@ -506,12 +513,16 @@ func (s *Session) Close() {
 	s.settingsOperationMu.Unlock()
 	s.stopCompactionForClose()
 	s.compactionWg.Wait()
+	// Join any accepted queue admission before closing its database. Late
+	// kicks recheck closing under this same barrier and cannot touch storage.
+	s.queueAdmitMu.Lock()
 	s.admissionMu.Lock()
 	pendingAdmissions := make([]*InputAdmissionIntent, 0, len(s.pendingAdmissions))
 	for intent := range s.pendingAdmissions {
 		pendingAdmissions = append(pendingAdmissions, intent)
 	}
 	s.admissionMu.Unlock()
+	s.queueAdmitMu.Unlock()
 	for _, intent := range pendingAdmissions {
 		result := s.CommitInputAdmission(context.Background(), intent)
 		if result.Status == InputAdmissionRejected && s.logger != nil {
@@ -555,7 +566,7 @@ func (s *Session) Close() {
 	if s.editor != nil {
 		s.editor.Close()
 	}
-	hasMsgs := s.HasMessages()
+	hasMsgs := s.HasMessages() || len(s.QueuedInputs()) != 0
 	// A preflight-blocked turn may own an exact pending input without a
 	// transcript yet. Never prune its recovery DB as an empty session.
 	if s.db != nil && !hasMsgs {

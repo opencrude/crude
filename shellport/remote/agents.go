@@ -92,6 +92,9 @@ func (w *Workspace) generation(agentID string) uint64 {
 
 func (w *Workspace) CancelAgent(agentID string) {
 	request := coreprotocol.AgentRequest{AgentID: agentID, Generation: w.generation(agentID)}
+	if node := w.view.AgentMgr.Get(agentID); node != nil && node.State != nil {
+		request.OperationID = node.State.ActiveCompaction.OperationID
+	}
 	w.commands.push(func(ctx context.Context) {
 		if err := w.call(ctx, coreprotocol.CancelAgent, request, &struct{}{}); err != nil {
 			w.logger.Warn("REMOTE", "cancel_failed", "agent", agentID, "error", err.Error())
@@ -285,12 +288,13 @@ func (w *Workspace) CommitAgentInputAdmission(ctx context.Context, intent *works
 // ApplyAgentInputAdmission: the accepted message reaches the replica in the
 // conversation delta; this only confirms the exact receipt for draft release.
 func (w *Workspace) ApplyAgentInputAdmission(intent *workspace.InputAdmissionIntent, result workspace.InputAdmissionResult, _ provider.UserInput, _ []string) bool {
-	if intent == nil || (result.Status != workspace.InputAdmissionAccepted && result.Status != workspace.InputAdmissionPreservationPending) {
+	queued := result.Status == workspace.InputAdmissionQueued
+	if intent == nil || (result.Status != workspace.InputAdmissionAccepted && result.Status != workspace.InputAdmissionPreservationPending && !queued) {
 		return false
 	}
 	receipt := result.Receipt
 	return receipt.InputID == intent.InputID && receipt.AgentID == intent.AgentID && receipt.SessionID == intent.SessionID &&
-		receipt.DraftRevision == intent.DraftRevision && receipt.ContextRevision != 0 && !receipt.AcceptedAt.IsZero()
+		receipt.DraftRevision == intent.DraftRevision && (queued || receipt.ContextRevision != 0) && !receipt.AcceptedAt.IsZero()
 }
 
 func (w *Workspace) ResetOrchestratorOverrides(orchID string) {

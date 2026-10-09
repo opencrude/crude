@@ -1072,9 +1072,8 @@ func (c *Conversation) Finish(content, reason string, wasStreaming bool, boundar
 	}
 	incomplete := reason != "" && reason != "completed"
 	if content != "" && !incomplete {
-		if wasStreaming && len(c.messages) > 0 {
-			last := c.messages[len(c.messages)-1]
-			if last.Role == MessageRoleAssistant {
+		if wasStreaming {
+			if last := c.lastNonPending(); last != nil && last.Role == MessageRoleAssistant {
 				if last.Content == "" {
 					last.Content = content
 					c.commitChange(last)

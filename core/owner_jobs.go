@@ -71,7 +71,13 @@ func (a *actor) prepareOwner(request coreprotocol.Request) (func(context.Context
 		}}); reduced.Accepted {
 			a.reduced(reduced)
 		}
-		return func(context.Context) coreprotocol.Response { return response(request, prepared.Run()) }, true
+		return func(ctx context.Context) coreprotocol.Response {
+			// Actor shutdown and exact request cancellation own the admitted job;
+			// joining workers must not wait forever for a provider extraction.
+			stop := context.AfterFunc(ctx, prepared.Cancel)
+			defer stop()
+			return response(request, prepared.Run())
+		}, true
 	case coreprotocol.ToolLayoutLoad:
 		store := &workspace.Workspace{WorkspaceDB: ws.WorkspaceDB}
 		return func(context.Context) coreprotocol.Response {
@@ -175,6 +181,16 @@ func ownerMutation(method string) bool {
 	case coreprotocol.AgentRecover, coreprotocol.AgentRecoverCancel, coreprotocol.AgentStopCommand, coreprotocol.AgentCompact,
 		coreprotocol.WorkspaceOverridesSet, coreprotocol.ToolLayoutSave, coreprotocol.HistoryRestoreEvent,
 		coreprotocol.GitStagePaths, coreprotocol.GitUnstagePaths:
+		return true
+	}
+	return false
+}
+
+func ownerOperation(method string) bool {
+	switch method {
+	case coreprotocol.AgentRecover, coreprotocol.AgentRecoverCancel, coreprotocol.AgentStopCommand, coreprotocol.AgentCompact,
+		coreprotocol.ToolLayoutLoad, coreprotocol.ToolLayoutSave, coreprotocol.HistoryRestoreEvent, coreprotocol.HistoryUndoScopes,
+		coreprotocol.GitStagePaths, coreprotocol.GitUnstagePaths, coreprotocol.GitCommitModel, coreprotocol.GitCommitMessage:
 		return true
 	}
 	return false

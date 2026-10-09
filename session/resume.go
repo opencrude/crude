@@ -355,6 +355,9 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 			sess.subAgentSup.Manager().HydrateCompleted(result)
 		}
 	}
+	if err := sess.loadQueuedInputs(); err != nil {
+		return nil, fmt.Errorf("resume: %w", err)
+	}
 	keepTempDir = true
 	resourcesTransferred = true
 	return sess, nil

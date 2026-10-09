@@ -113,6 +113,14 @@ also returns its domain receipt; a late acknowledgement cannot consume another
 draft. Permission/question decisions resolve the exact pending block once;
 disconnect never implies approval.
 
+Manual compaction has an operation identity independent of the last model-turn
+generation. `agent.cancel` carries that exact operation ID when present, rejecting
+late Stop requests against replacement work. Compaction jobs observe exact request
+and actor shutdown cancellation. Owner preparation starts only after capacity and
+receipt checks; receipt replay must not reserve another operation. Queued input
+receipts have no turn/context revision until their atomic dequeue/admission, and
+pending message flags survive conversation reset/delta JSON projection.
+
 Connected account forms retain their opaque original account revision; a newer
 replica cannot silently authorize an old form. Application/workspace forms retain
 the corresponding original preference revisions. Sparse workspace saves are

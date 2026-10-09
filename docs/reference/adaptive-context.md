@@ -202,6 +202,29 @@ The transcript remains archived, while the checkpoint replaces the active
 context. On resume, the durable boundary supplies the settled status until a
 new turn starts. Automatic compaction resumes its interrupted turn instead of
 displaying a manual completion prompt.
+Manual operations retain their own exact operation identity independently of a
+completed/stopped model turn. Its terminal fence still prevents old output from
+reactivating work, while compaction lifecycle/progress reaches every connected
+shell. Duplicate or late progress cannot reopen a settled operation.
+
+Input submitted during manual compaction is acknowledged only after it enters
+the session's durable ordered queue. Both shells see one pending human row;
+only the submitting shell may consume its exact unchanged draft. The pending
+marker is part of the replicated message contract. Natural completion admits
+the next prompt; Stop cancels the exact compaction and preserves queued input
+without starting a new turn. Queue removal, context admission and its recovery
+checkpoint commit in one SQLite transaction before execution or settlement is
+announced. A failed dequeue preserves the queue and starts nothing. Queue-only
+sessions are never pruned as empty; cold resume restores pending rows passively
+and rejects corrupt queue data instead of overwriting it. Loading occurs in the
+session creation/resume worker, not UI preparation, hydration or painting.
+
+Core job capacity and durable receipt replay checks precede owner preparation,
+so a refused/repeated request cannot leave compaction ownership reserved.
+Shutdown cancels extraction and joins its owner before closing persistence;
+final session metadata is mirrored from the settled on-disk database, never a
+closed borrowed handle. Follow-up turns retaining an unchanged checkpoint do
+not re-archive its evolving generation under an immutable archive identity.
 The active plan lives in the session's plan store, outside the compacted
 conversation. Each new human turn receives its current revision and complete
 step snapshot as hidden runtime context; the stable system planning contract
@@ -260,6 +283,13 @@ cancellation, exact source archival, and passive persisted checkpoint
 restoration, answered-request non-replay, live async-state refresh, and bounded
 project-guidance compilation. Name-allocation tests
 also exhaust the full first-name/surname tier without duplicate numeric labels.
+
+Connected regression journeys complete a real initial turn, start `/compact`,
+hold the extraction request, and submit through both shell composers. They
+assert painted compaction and pending rows, ordered single execution, no duplicate
+answers, unchanged newer/peer drafts, exact Stop, passive cold resume, receipt
+replay, and shutdown of a live extraction. Storage-failure tests inject a rejected
+dequeue transaction and verify no context, execution, or false acknowledgement.
 
 This is not a promise of perfect recall: model summaries can omit facts, token
 estimation without reported usage remains approximate, and media contents are not

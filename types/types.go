@@ -75,7 +75,7 @@ type ConversationMessage struct {
 	IncompleteReason       string            `json:"incomplete_reason,omitempty"`
 	SubPaneID              string            `json:"sub_pane_id,omitempty"`
 	PermTag                string            `json:"perm_tag,omitempty"`
-	PendingSteering        bool              `json:"-"`
+	PendingSteering        bool              `json:"pending_steering,omitempty"`
 	Recovery               *recovery.Status  `json:"recovery,omitempty"`
 }
 

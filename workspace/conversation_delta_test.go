@@ -1,12 +1,42 @@
 package workspace
 
 import (
+	"encoding/json"
 	"reflect"
 	"testing"
 	"time"
 
 	"crude/types/reasoning"
 )
+
+func TestConversationPendingInputSurvivesWireResetAndDelta(t *testing.T) {
+	source, replica := NewConversation(), NewConversation()
+	source.AppendPendingSteering(Message{InternalID: "queued-input", Role: MessageRoleUser, Content: "wait for compaction"})
+	apply := func(revision uint64) {
+		t.Helper()
+		data, err := json.Marshal(source.ChangesSince(revision))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var delta ConversationDelta
+		if err := json.Unmarshal(data, &delta); err != nil {
+			t.Fatal(err)
+		}
+		if err := replica.InstallDelta(delta); err != nil {
+			t.Fatal(err)
+		}
+	}
+	apply(0)
+	if replica.PendingSteeringCount() != 1 {
+		t.Fatal("wire reset dropped the pending input marker")
+	}
+	revision := source.Version()
+	source.ConsumePendingSteering("queued-input")
+	apply(revision)
+	if replica.PendingSteeringCount() != 0 || len(replica.Messages()) != 1 {
+		t.Fatal("wire admission did not settle the same input in place")
+	}
+}
 
 // Apply publications to a subscriber-owned replica and compare with the legacy
 // full export. Inputs use real mutation entry points, not journal helpers.
