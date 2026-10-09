@@ -23,7 +23,6 @@ func TestWorkspaceSwitchCancelsSearchWithoutReusingRequestIdentity(t *testing.T)
 
 	service := ws.ProjectSearch
 	request := service.Begin(oldRoot, "old-query", fileio.ProjectSearchOptions{})
-	oldFocus := ws.FocusStack
 
 	if err := ws.SwitchProject(newRoot); err != nil {
 		t.Fatal(err)
@@ -47,8 +46,5 @@ func TestWorkspaceSwitchCancelsSearchWithoutReusingRequestIdentity(t *testing.T)
 	}
 	if next.Root != newRoot {
 		t.Fatalf("new request root=%q want %q", next.Root, newRoot)
-	}
-	if ws.FocusStack == oldFocus {
-		t.Fatal("project-scoped focus stack survived domain switch")
 	}
 }

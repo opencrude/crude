@@ -6,20 +6,18 @@ import (
 	"time"
 
 	"crude/tools"
-
-	tea "charm.land/bubbletea/v2"
 )
 
-func (a *AgentState) handleToolCallStreaming(evt AgentEvent, target *Conversation, onStatusLine func(string)) tea.Cmd {
+func (a *AgentState) handleToolCallStreaming(evt AgentEvent, target *Conversation, effects *AgentEffects) {
 	origData, ok := evt.Data.(map[string]any)
 	if !ok {
-		return nil
+		return
 	}
 	toolID, _ := origData["tool_id"].(string)
 	internalID, _ := origData["internal_id"].(string)
 	name, _ := origData["name"].(string)
 	if name == "" || name == "reply" {
-		return nil
+		return
 	}
 	path, _ := origData["path"].(string)
 	command, _ := origData["command"].(string)
@@ -156,7 +154,7 @@ func (a *AgentState) handleToolCallStreaming(evt AgentEvent, target *Conversatio
 	data["old_lines_int"] = int(oldLines)
 	data["new_lines_int"] = int(newLines)
 
-	onStatusLine(toolOperationStatus(name, "preparing"))
+	effects.setStatus(toolOperationStatus(name, "preparing"))
 	target.UpdateToolStreaming(toolID, internalID, name, data)
 	if round, _ := origData["request_id"].(string); round != "" {
 		target.SetToolRound(toolID, internalID, round)
@@ -166,10 +164,9 @@ func (a *AgentState) handleToolCallStreaming(evt AgentEvent, target *Conversatio
 			target.SetToolInput(toolID, internalID, input, "")
 		}
 	}
-	return nil
 }
 
-func (a *AgentState) handleToolCall(evt AgentEvent, target *Conversation, onStatusLine func(string)) tea.Cmd {
+func (a *AgentState) handleToolCall(evt AgentEvent, target *Conversation, effects *AgentEffects) {
 	if data, ok := evt.Data.(map[string]any); ok {
 		toolID, _ := data["tool_id"].(string)
 		internalID, _ := data["internal_id"].(string)
@@ -177,11 +174,11 @@ func (a *AgentState) handleToolCall(evt AgentEvent, target *Conversation, onStat
 		if name == "" || name == "reply" {
 			// Reply tool calls only contribute a user-facing message when their
 			// result arrives; they never allocate a tool row.
-			return nil
+			return
 		}
 		args, _ := data["args"].(string)
 		argsCompact := SummarizeToolArgs(name, args)
-		onStatusLine(ToolLabel(name, argsCompact))
+		effects.setStatus(ToolLabel(name, argsCompact))
 		target.UpdateToolCall(toolID, internalID, name, argsCompact)
 		if round, _ := data["request_id"].(string); round != "" {
 			target.SetToolRound(toolID, internalID, round)
@@ -212,16 +209,15 @@ func (a *AgentState) handleToolCall(evt AgentEvent, target *Conversation, onStat
 			a.PendingPermTool = ""
 		}
 	}
-	return nil
 }
 
-func (a *AgentState) handleToolProgress(evt AgentEvent, target *Conversation, onStatusLine func(string)) tea.Cmd {
+func (a *AgentState) handleToolProgress(evt AgentEvent, target *Conversation, effects *AgentEffects) {
 	if data, ok := evt.Data.(map[string]any); ok {
 		toolID, _ := data["tool_id"].(string)
 		internalID, _ := data["internal_id"].(string)
 		name, _ := data["name"].(string)
 		if name == "" || name == "reply" {
-			return nil
+			return
 		}
 		phase, _ := data["phase"].(string)
 		message, _ := data["message"].(string)
@@ -232,23 +228,22 @@ func (a *AgentState) handleToolProgress(evt AgentEvent, target *Conversation, on
 
 		target.UpdateToolProgress(toolID, internalID, name, phase, message, path, int(linesAdded), int(linesRemoved), int(estTokens))
 		if phase == "done" {
-			onStatusLine(toolOperationStatus(name, "done"))
+			effects.setStatus(toolOperationStatus(name, "done"))
 		} else if phase == "error" {
-			onStatusLine(toolOperationStatus(name, "failed"))
+			effects.setStatus(toolOperationStatus(name, "failed"))
 		} else if phase != "" && message != "" {
-			onStatusLine(message)
+			effects.setStatus(message)
 		}
 	}
-	return nil
 }
 
-func (a *AgentState) handleToolResult(evt AgentEvent, target *Conversation, onStatusLine func(string)) tea.Cmd {
+func (a *AgentState) handleToolResult(evt AgentEvent, target *Conversation, effects *AgentEffects) {
 	if data, ok := evt.Data.(map[string]any); ok {
 		toolID, _ := data["tool_id"].(string)
 		internalID, _ := data["internal_id"].(string)
 		name, _ := data["name"].(string)
 		if name == "" {
-			return nil
+			return
 		}
 		result, _ := data["result"].(string)
 		errFlag, _ := data["error"].(string)
@@ -264,7 +259,7 @@ func (a *AgentState) handleToolResult(evt AgentEvent, target *Conversation, onSt
 					TurnGeneration: target.turnIdentity.Generation, AccountID: target.turnIdentity.AccountID,
 					ProviderID: target.turnIdentity.ProviderID, ModelID: target.turnIdentity.ModelID})
 			}
-			return nil
+			return
 		}
 		if !target.HasToolMessage(toolID, internalID) && result != "" {
 			target.AppendMessage(Message{InternalID: "tool-result:" + internalID, Role: MessageRoleTool,
@@ -276,17 +271,16 @@ func (a *AgentState) handleToolResult(evt AgentEvent, target *Conversation, onSt
 		linesAdded := toInt(data["lines_added"])
 		linesRemoved := toInt(data["lines_removed"])
 		if isError {
-			onStatusLine(toolOperationStatus(name, "failed"))
+			effects.setStatus(toolOperationStatus(name, "failed"))
 		} else {
-			onStatusLine(toolOperationStatus(name, "done"))
+			effects.setStatus(toolOperationStatus(name, "done"))
 		}
 		target.UpdateToolResult(toolID, internalID, name, result, isError, int(estTokens), int(linesAdded), int(linesRemoved))
 		if interrupted, _ := data["interrupted"].(bool); interrupted {
 			target.MarkToolNotExecuted(toolID, internalID)
-			onStatusLine("Reconnecting before running tool")
+			effects.setStatus("Reconnecting before running tool")
 		}
 	}
-	return nil
 }
 
 func toolOperationStatus(name, phase string) string {
@@ -309,17 +303,17 @@ func toolOperationStatus(name, phase string) string {
 	return PascalCaseTool(name) + " done"
 }
 
-func (a *AgentState) handlePermissionResolved(evt AgentEvent, target *Conversation, onStatusLine func(string)) tea.Cmd {
+func (a *AgentState) handlePermissionResolved(evt AgentEvent, target *Conversation, effects *AgentEffects) {
 	data, ok := evt.Data.(map[string]any)
 	if !ok {
-		return nil
+		return
 	}
 	toolID, _ := data["tool_id"].(string)
 	internalID, _ := data["internal_id"].(string)
 	tool, _ := data["tool"].(string)
 	decision, _ := data["decision"].(string)
 	if decision == "" {
-		return nil
+		return
 	}
 	if !target.SetToolPermTag(toolID, internalID, decision) {
 		a.PendingPermTag = decision
@@ -327,20 +321,19 @@ func (a *AgentState) handlePermissionResolved(evt AgentEvent, target *Conversati
 	}
 	switch decision {
 	case "denied":
-		onStatusLine("Permission denied for " + PascalCaseTool(tool))
+		effects.setStatus("Permission denied for " + PascalCaseTool(tool))
 	case "reviewer-denied":
-		onStatusLine("Automatic reviewer denied " + PascalCaseTool(tool))
+		effects.setStatus("Automatic reviewer denied " + PascalCaseTool(tool))
 	case "reviewer-allowed":
-		onStatusLine("Automatic reviewer allowed " + PascalCaseTool(tool))
+		effects.setStatus("Automatic reviewer allowed " + PascalCaseTool(tool))
 	case "always":
-		onStatusLine("Permission always allowed for " + PascalCaseTool(tool))
+		effects.setStatus("Permission always allowed for " + PascalCaseTool(tool))
 	default:
-		onStatusLine("Permission allowed for " + PascalCaseTool(tool))
+		effects.setStatus("Permission allowed for " + PascalCaseTool(tool))
 	}
-	return nil
 }
 
-func (a *AgentState) handleBlocking(evt AgentEvent, target *Conversation, thinkTarget *Conversation, onBlocking func(), onConfirmReset func(question, operation, tool, target, risk, reason, suggestion string), onQuestionReset func(questionsJSON string)) tea.Cmd {
+func (a *AgentState) handleBlocking(evt AgentEvent, target *Conversation, effects *AgentEffects) {
 	var data map[string]string
 	questionsJSON := ""
 	if d, ok := evt.Data.(map[string]any); ok {
@@ -368,28 +361,24 @@ func (a *AgentState) handleBlocking(evt AgentEvent, target *Conversation, thinkT
 	suggestion := data["suggestion"]
 	a.PendingBlockID = data["block_id"]
 	a.Thinking = false
-	onBlocking()
+	effects.Blocking = true
 	target.MarkAllThinkingDone()
-	if thinkTarget != target {
-		thinkTarget.MarkAllThinkingDone()
-	}
 
 	if operation == "questions" || operation == "question" {
-		onQuestionReset(questionsJSON)
+		effects.Prompt = &AgentPrompt{BlockID: a.PendingBlockID, QuestionsJSON: questionsJSON, IsQuestion: true}
 	} else {
-		onConfirmReset(question, operation, tool, tgt, risk, reason, suggestion)
+		effects.Prompt = &AgentPrompt{BlockID: a.PendingBlockID, Question: question, Operation: operation, Tool: tool, Target: tgt, Risk: risk, Reason: reason, Suggestion: suggestion}
 	}
 
 	a.PendingPermTool = tool
 	a.BlockingMsgIdx = -1
-	return nil
 }
 
 // handleBlockingAuto handles operations that are auto-allowed because the user
 // previously chose "Always Allow". It stores a compact permission tag that will
 // be applied to the next matching tool_call message, instead of showing a
 // separate verbose message.
-func (a *AgentState) handleBlockingAuto(evt AgentEvent, target *Conversation, thinkTarget *Conversation) tea.Cmd {
+func (a *AgentState) handleBlockingAuto(evt AgentEvent, target *Conversation) {
 	var data map[string]string
 	if d, ok := evt.Data.(map[string]any); ok {
 		data = make(map[string]string, len(d))
@@ -403,16 +392,12 @@ func (a *AgentState) handleBlockingAuto(evt AgentEvent, target *Conversation, th
 	}
 	tool := data["tool"]
 	target.MarkAllThinkingDone()
-	if thinkTarget != target {
-		thinkTarget.MarkAllThinkingDone()
-	}
 	// Store the tag so it's applied as a muted suffix on the next tool_call.
 	a.PendingPermTag = "auto"
 	a.PendingPermTool = tool
-	return nil
 }
 
-func (a *AgentState) handleDone(evt AgentEvent, target *Conversation, thinkTarget *Conversation, onThinking func(thinking, streaming, blocking bool), onStatusLine func(string)) tea.Cmd {
+func (a *AgentState) handleDone(evt AgentEvent, target *Conversation, effects *AgentEffects) {
 	if a.TokenBuf != "" {
 		target.AppendToken(a.TokenBuf)
 		a.TokenBuf = ""
@@ -433,27 +418,12 @@ func (a *AgentState) handleDone(evt AgentEvent, target *Conversation, thinkTarge
 
 	if reason == "cancelled" {
 		target.MarkAllThinkingInterrupted()
-		if thinkTarget != target {
-			thinkTarget.MarkAllThinkingInterrupted()
-		}
 		target.MarkStreamingToolsCancelled()
-		if thinkTarget != target {
-			thinkTarget.MarkStreamingToolsCancelled()
-		}
 	} else if reason != "completed" && reason != "" {
 		target.MarkAllThinkingInterrupted()
-		if thinkTarget != target {
-			thinkTarget.MarkAllThinkingInterrupted()
-		}
 		target.MarkStreamingToolsCancelled()
-		if thinkTarget != target {
-			thinkTarget.MarkStreamingToolsCancelled()
-		}
 	} else {
 		target.MarkAllThinkingDone()
-		if thinkTarget != target {
-			thinkTarget.MarkAllThinkingDone()
-		}
 	}
 	a.Thinking = false
 	a.Streaming = false
@@ -463,8 +433,8 @@ func (a *AgentState) handleDone(evt AgentEvent, target *Conversation, thinkTarge
 	a.PendingPermTool = ""
 	a.PendingBlockID = ""
 	a.BlockingMsgIdx = -1
-	onThinking(false, false, false)
-	onStatusLine("")
+	effects.setThinking(false, false, false)
+	effects.setStatus("")
 
 	boundaryID := ""
 	if data, ok := evt.Data.(map[string]any); ok {
@@ -472,7 +442,7 @@ func (a *AgentState) handleDone(evt AgentEvent, target *Conversation, thinkTarge
 	}
 	target.Finish(content, reason, wasStreaming, boundaryID)
 
-	return DoneResultCmd(a.ID, reason)
+	effects.Done = &AgentDoneResult{AgentID: a.ID, Reason: reason}
 }
 
 func FormatErr(data any) string {

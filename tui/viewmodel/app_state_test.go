@@ -67,6 +67,7 @@ func TestActiveMsgList_WithAgent(t *testing.T) {
 	proj := app.subPaneProjections.Get("ses_1_orch_1", workspace.PaneAgent)
 	proj.renderer = ml
 	app.AgentMgr.AddOrchestrator("ses_1_orch_1", &workspace.AgentState{Messages: sp.Messages})
+	app.AgentView.SetActive("ses_1_orch_1")
 
 	result := app.activeMsgList()
 	if result != ml {
@@ -82,8 +83,9 @@ func TestActiveMessageList_Fallback(t *testing.T) {
 	proj := app.subPaneProjections.Get("ses_1_orch_1", workspace.PaneAgent)
 	proj.renderer = ml
 	app.AgentMgr.AddOrchestrator("ses_1_orch_1", &workspace.AgentState{Messages: sp.Messages})
-	// AddOrchestrator sets active automatically; clear it so activeMessageList falls back
-	app.AgentMgr.ClearActive()
+	app.AgentView.SetActive("ses_1_orch_1")
+	// The fixture selects the shell explicitly; clear it so activeMessageList falls back
+	app.AgentView.ClearActive()
 
 	result := app.activeMessageList()
 	if result != ml {
@@ -128,7 +130,7 @@ func TestComputeContentLayout_NilActiveML(t *testing.T) {
 	app.width = 80
 	app.height = 24
 
-	// Add an agent with nil MsgList. AddOrchestrator sets it active,
+	// Add an agent with nil MsgList. Select the shell explicitly,
 	// so activeMsgList() returns nil (the node exists but MsgList is nil).
 	app.AgentMgr.AddOrchestrator("ses_1_orch_1", &workspace.AgentState{Messages: nil})
 
@@ -202,10 +204,10 @@ func TestHandleQuit_ClosesLastAgentTab(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("expected nil cmd (launcher shown)")
 	}
-	if app.AgentMgr.VisibleCount() != 0 {
+	if app.AgentView.VisibleCount() != 0 {
 		t.Fatal("expected no surfaced agents after closing the last tab")
 	}
-	if !app.AgentMgr.IsHidden("ses_1_orch_1") {
+	if !app.AgentView.IsHidden("ses_1_orch_1") {
 		t.Fatal("closing a tab must minimize the agent, not terminate it")
 	}
 
@@ -257,7 +259,7 @@ func TestHandleQuit_TwoAgentTabs_ClosesActiveOnly(t *testing.T) {
 	if app.Quit {
 		t.Fatal("expected app.Quit to stay false after closing the active tab")
 	}
-	if !app.AgentMgr.IsHidden(activeID) {
+	if !app.AgentView.IsHidden(activeID) {
 		t.Fatalf("active agent %q must be minimized, not terminated", activeID)
 	}
 	if app.AgentMgr.Get(activeID) == nil {
@@ -266,8 +268,8 @@ func TestHandleQuit_TwoAgentTabs_ClosesActiveOnly(t *testing.T) {
 	if !app.Win.IsOpen() || app.Win.TabCount() != 1 {
 		t.Fatalf("expected remaining tab to stay open, got %d tabs (open=%v)", app.Win.TabCount(), app.Win.IsOpen())
 	}
-	if app.AgentMgr.VisibleCount() != 1 {
-		t.Fatalf("expected 1 surfaced agent, got %d", app.AgentMgr.VisibleCount())
+	if app.AgentView.VisibleCount() != 1 {
+		t.Fatalf("expected 1 surfaced agent, got %d", app.AgentView.VisibleCount())
 	}
 
 	// Second Ctrl+Q: the last agent tab closes and the launcher shows,
@@ -282,8 +284,8 @@ func TestHandleQuit_TwoAgentTabs_ClosesActiveOnly(t *testing.T) {
 	if app.Win.IsOpen() || app.Win.TabCount() != 0 {
 		t.Fatalf("expected all window tabs closed, got %d", app.Win.TabCount())
 	}
-	if app.AgentMgr.VisibleCount() != 0 {
-		t.Fatalf("expected no surfaced agents, got %d", app.AgentMgr.VisibleCount())
+	if app.AgentView.VisibleCount() != 0 {
+		t.Fatalf("expected no surfaced agents, got %d", app.AgentView.VisibleCount())
 	}
 	if app.launcherScreen == nil {
 		t.Fatal("expected launcher to be shown after the last tab closed")
@@ -336,8 +338,8 @@ func TestHandleTabSwitch_ClearsStaleViewOnLastClose(t *testing.T) {
 	if app.EditorState.ActiveView != "" {
 		t.Fatalf("expected activeEditorView=\"\" with no tab, got %q", app.EditorState.ActiveView)
 	}
-	if app.AgentMgr.ActiveID() != "" {
-		t.Fatalf("expected ActiveID=\"\" with no tab, got %q", app.AgentMgr.ActiveID())
+	if app.AgentView.ActiveID() != "" {
+		t.Fatalf("expected ActiveID=\"\" with no tab, got %q", app.AgentView.ActiveID())
 	}
 }
 
@@ -433,7 +435,7 @@ func TestHandleAgentTabClose_AgentTab(t *testing.T) {
 	if cmd != nil {
 		t.Fatal("expected nil cmd after closing agent tab")
 	}
-	if app.AgentMgr.VisibleCount() != 0 {
+	if app.AgentView.VisibleCount() != 0 {
 		t.Fatal("expected no surfaced agents after closing last tab")
 	}
 	if app.AgentMgr.Get("ses_1_orch_1") == nil {
@@ -610,7 +612,7 @@ func TestPreparedInputStopReceiptCannotClearSiblingAgentDraft(t *testing.T) {
 	app.CancelAgent(agentID)
 	message := command().(inputAdmissionMsg)
 	app.AgentMgr.AddSubAgent("sibling", agentID, "Sibling", "test", "researcher", workspace.NewAgentState("sibling", nil, nil))
-	app.AgentMgr.SetActive("sibling")
+	app.AgentView.SetActive("sibling")
 	app.applyInputAdmission(message)
 	if app.Input.Value() != "submitted draft" {
 		t.Fatal("receipt cleared a different agent's composer in the same session")
@@ -764,11 +766,11 @@ func TestCollaborationDeliverySettlementClearsPendingStatus(t *testing.T) {
 	app.AgentMgr.AddOrchestrator("agent", workspace.NewAgentState("agent", conversation, nil))
 	app.syncPendingSteeringCount()
 	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "collaboration_delivery_admitted", AgentID: "agent", Data: map[string]any{"history_message_id": first}})
-	if got := testSteeringCount(app); got != 1 {
+	if got := conversation.PendingSteeringCount(); got != 1 {
 		t.Fatalf("pending human steering count=%d want 1", got)
 	}
 	app.handleAgentDomainEvent(workspace.AgentEvent{Type: "collaboration_delivery_rejected", AgentID: "agent", Data: map[string]any{"history_message_id": second}})
-	if got := testSteeringCount(app); got != 0 {
+	if got := conversation.PendingSteeringCount(); got != 0 {
 		t.Fatalf("pending human steering count=%d want 0", got)
 	}
 }

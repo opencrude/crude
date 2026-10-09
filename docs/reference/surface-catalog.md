@@ -27,13 +27,20 @@ surfaces below retain their policies.
 | Chat input | `tui/screens/shellinput/`, `tui/input/`, `tui/ui/text_area.go` | Native Host paint into the main shell surface in its session-family owner pane; one-to-six text-row viewport plus host one-third-column cap, internal draft scroll and quiet visible-row range. Graceful size-plus-overflow paste promotion is separate from typed/restored draft geometry. `ui.TextArea` + reference chips + `ui.List` slash popup; composer **and slash list** fill is shell `ColorBg` (not popup); no leading `❯`; no `components.TextInput` on chat path |
 | Session Panel Deck tabs | `tui/ui/tabs.go`, `tui/ui/panel_deck.go`, `tui/viewmodel/session_deck.go` | Per-session native component panel region below messages (settings, questions, confirmation, YOLO, jobs) — not terminals. Deck chrome keeps row 0 as its top rule and gives the shared strip rows 1-2 (labels flush on the deck edge + the baseline the strip owns), so panels keep the same content height as the old rule; docked forms share chat `ColorBg` and the compact single-line form density (`NewDockedForm`); floating windows keep `ColorPopupBg` and the spacious settings form. |
 | Workspace bottom panel | `tui/screens/termdock/`, `tui/screens/statusoverview/`, `tui/viewmodel/workspace_panel.go`, `tui/viewmodel/terminals.go` | One resizable retained workspace panel selected by Problems / Notices / Terminals / Board / Memory / Workspace. Per-panel normal heights and reversible maximize/restore/hide preserve data and processes; blocking session decisions take priority on short grids. Status search or panel tabs/title share their first row with host controls; browse search and local actions share a row when they fit. Terminal instances use compact numbered tabs beside actions and a named overflow picker; New/Float/Close are explicit, Hide does not terminate. Status lists retain search/disclosure and explicit Open/Resume actions. No duplicate workspace destination strip. |
-| In-app terminal (docked) | `tui/screens/shellterm/`, `tui/term/`, `workspace/terminal.go` | libghostty-vt PTY + VT paint in the workspace dock. See [`docs/reference/in-app-terminals.md`](./in-app-terminals.md) |
+| In-app terminal (docked) | `tui/screens/shellterm/`, `tui/termview/`, `terminalvt/`, `workspace/terminal_service.go` | One core-owned libghostty parser/reply source; immutable grids and shell-local selection/scroll in the workspace dock. See [`docs/reference/in-app-terminals.md`](./in-app-terminals.md) |
 | Legacy inline panel tabs | deleted | Replaced by native per-session PanelDeck tabs; not the floating OverlayHost |
 | Header + footer status | `tui/screens/shellheader/`, `tui/screens/shellfooter/`, `tui/viewmodel/status_overview.go` | Header retains workspace/branch identity and active-view facts; Open Tabs is a separate statistics modal. Footer left has ranked hints/Help; right has the contiguous Problems / Notices / Terminals / Board / Memory / Workspace controls, with selected/attention priority and explicit More overflow. Board and Memory have no permanent count badges. Health and notifications are workspace-owned; background updates never select a panel. |
 | Contextual help | `tui/ui/hint.go`, `tui/ui/key_chord.go`, `tui/viewmodel/view.go` | Registry-derived Hint/KeyChord segments (Phase 13 item 2) |
 | Main content surface | `tui/viewmodel/view.go`, `tui/viewmodel/main_panes.go` | One shell surface/root Host paints recursive main groups; retained per-tab editor/chat screens, not competing per-pane compositor layers. Header telemetry follows focused group. |
 
 ## Primary views
+
+Agent tab selection and visibility belong to each shell's `AgentViewState`.
+Thinking promotion is likewise a reversible local projection
+(`tui/viewmodel/thinking_presentation.go`): it borrows the canonical thought without
+moving its body out of the owning agent conversation. Canonical ingress and cold
+hydration live in workspace; this ownership split does not yet provide independent
+connected clients. See the active [core/shell plan](../plans/core-shell-separation.md).
 
 | Surface | Primary files | Notes |
 |---------|---------------|-------|

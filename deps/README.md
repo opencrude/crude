@@ -8,7 +8,7 @@ commit and installs only `libghostty-vt` into a gitignored prefix.
 
 `go.mitchellh.com/libghostty` at `56450a2` requires **Go 1.26**. Crude's
 toolchain is **Go 1.25**. That module also wraps the entire unstable C
-surface (~80 files). Crude uses a narrow local cgo adapter in `tui/term`
+surface (~80 files). Crude uses a narrow nonvisual cgo adapter in `terminalvt`
 against the pinned headers instead.
 
 ## Bootstrap
@@ -61,7 +61,7 @@ At runtime `workspace.TerminfoDir()` materializes the compiled entry under
 always resolves — including for installed binaries with no repository
 checkout.
 
-`go build` / `go test` then link via cgo `#cgo` paths relative to `tui/term`.
+`go build` / `go test` then link via cgo `#cgo` paths relative to `terminalvt`.
 `CGO_ENABLED=0` builds compile a stub that returns an error from
-`term.NewEmulator`; they do not silently keep the old parser or advertise
+`terminalvt.New`; they do not silently keep the old parser or advertise
 working `TERM=xterm-ghostty` emulation.

@@ -27,7 +27,7 @@ func (s *feedbackSink) owner() types.ResourceRef {
 	if path := s.app.EditorState.ActiveView; path != "" {
 		return types.ResourceRef{Kind: types.ResourceEditor, ID: path}
 	}
-	if id := s.app.AgentMgr.ActiveID(); id != "" {
+	if id := s.app.AgentView.ActiveID(); id != "" {
 		ref := types.ResourceRef{Kind: types.ResourceAgent, ID: id}
 		if session := s.app.SessionsByAgent[id]; session != nil {
 			ref.SessionID = session.SessionID

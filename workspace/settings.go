@@ -150,12 +150,6 @@ func (w *Workspace) applySettingsProjection(effective ttypes.AppSettings) {
 			Capabilities: effective.Capabilities,
 			Safety:       effective.Safety,
 		})
-		if frontendSession.Settings != nil {
-			frontendSession.Settings.SetInheritance(
-				frontendSession.backend.SettingsSnapshot(),
-				frontendSession.backend.WorkspaceSettingsSnapshot(),
-				frontendSession.backend.SessionOverridesSnapshot(),
-			)
-		}
+		frontendSession.installSettings(frontendSession.backend.SettingsSnapshots())
 	}
 }

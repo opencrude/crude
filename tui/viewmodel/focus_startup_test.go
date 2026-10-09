@@ -36,9 +36,10 @@ func TestStartupFocus_LauncherOwnsEnterAndHints(t *testing.T) {
 	app.BufferMgr = editor.NewBufferManager()
 	app.EditorState = NewEditorState()
 	app.AgentMgr = workspace.NewAgentManager()
+	app.AgentView = NewAgentViewState(app.AgentMgr)
 	app.actionRegistry = ui.DefaultRegistry()
 	if app.FocusStack == nil {
-		app.FocusStack = workspace.NewFocusStack()
+		app.FocusStack = NewFocusStack()
 	}
 
 	app.launcherScreen.SetData(dir, nil)

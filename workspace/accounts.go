@@ -29,13 +29,14 @@ func (w *Workspace) AllAccounts() map[string]provider.Account {
 	return cloneAccounts(w.appDefaults.Accounts)
 }
 
-// ActiveSessionConnectionIssue leaves a resumed transcript readable while the
+// SessionConnectionIssue leaves a resumed transcript readable while the
 // UI offers explicit repair of a missing or removed connection.
-func (w *Workspace) ActiveSessionConnectionIssue() error {
-	if w.ActiveSession == nil || w.ActiveSession.backend == nil {
+func (w *Workspace) SessionConnectionIssue(sessionID string) error {
+	backend := w.BackendSession(sessionID)
+	if backend == nil {
 		return nil
 	}
-	return w.ActiveSession.backend.ConnectionIssue()
+	return backend.ConnectionIssue()
 }
 
 func cloneAccounts(accounts map[string]provider.Account) map[string]provider.Account {

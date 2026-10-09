@@ -50,7 +50,7 @@ func TestWorkspacePeerMessageWakesExactIdleAgentWithoutPolling(t *testing.T) {
 		t.Fatal(err)
 	}
 	firstSender := &historyE2ESender{events: make(chan historyE2EEvent, 1024)}
-	firstRoot, err := workspace.StartOrchestrator(firstSender)
+	firstRoot, err := workspace.StartOrchestrator(first.SessionID, firstSender)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -62,7 +62,7 @@ func TestWorkspacePeerMessageWakesExactIdleAgentWithoutPolling(t *testing.T) {
 		t.Fatal(err)
 	}
 	secondSender := &historyE2ESender{events: make(chan historyE2EEvent, 1024)}
-	secondRoot, err := workspace.StartOrchestrator(secondSender)
+	secondRoot, err := workspace.StartOrchestrator(second.SessionID, secondSender)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -153,7 +153,7 @@ func TestWorkspaceHumanSteeringTargetsExactActiveRun(t *testing.T) {
 		t.Fatal(err)
 	}
 	sender := &historyE2ESender{events: make(chan historyE2EEvent, 1024)}
-	root, err := workspace.StartOrchestrator(sender)
+	root, err := workspace.StartOrchestrator(frontend.SessionID, sender)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -378,7 +378,7 @@ func TestWorkspaceAgentsCollaborateToRepairAndVerifyProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	coordinatorSender := &historyE2ESender{events: make(chan historyE2EEvent, 1024)}
-	coordinator, err := owner.StartOrchestrator(coordinatorSender)
+	coordinator, err := owner.StartOrchestrator(coordinatorSession.SessionID, coordinatorSender)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -392,7 +392,7 @@ func TestWorkspaceAgentsCollaborateToRepairAndVerifyProject(t *testing.T) {
 		t.Fatal(err)
 	}
 	implementerSender := &historyE2ESender{events: make(chan historyE2EEvent, 1024)}
-	implementer, err := owner.StartOrchestrator(implementerSender)
+	implementer, err := owner.StartOrchestrator(implementerSession.SessionID, implementerSender)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -44,7 +44,7 @@ type lspClosedDocument struct {
 
 func NewLSPManager(logger Logger, runtimes ...LSPRuntime) *LSPManager {
 	m := &LSPManager{
-		logger: logger, settings: ttypes.DefaultLSPSettings(),
+		logger: logger, settings: ttypes.DefaultLSPSettings(), runtime: defaultLSPRuntime{},
 		states: make(map[string]*lspClientState), documents: make(map[string]*lspDocument),
 		updateTimers: make(map[string]*time.Timer), wake: make(chan struct{}, 1),
 		fileDiagnostics: make(map[string][]LSPDiagnostic), docSymbols: make(map[string][]LSPSymbol),

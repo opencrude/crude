@@ -269,7 +269,7 @@ func TestMainPaneJourneyAgentsAndEditorsKeepIndependentSelection(t *testing.T) {
 	paneJourneyKey(app, '[', tea.ModAlt)
 	app.syncAgentWindowTabs()
 	_ = app.View()
-	if app.Win.ActiveTab().ID != alpha || app.Win.GroupActiveTab(right).ID != beta || app.AgentMgr.ActiveID() != "alpha" {
+	if app.Win.ActiveTab().ID != alpha || app.Win.GroupActiveTab(right).ID != beta || app.AgentView.ActiveID() != "alpha" {
 		t.Fatal("inactive agent paint/sync changed focused agent or other pane selection")
 	}
 }

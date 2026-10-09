@@ -343,13 +343,11 @@ func newTestAppWithFileOpsAndBus(t *testing.T, dir string, bus *workspace.EventB
 	wmgr := wm.NewWindowManager()
 
 	ws := &workspace.Workspace{
-		RootPath:      dir,
-		AgentMgr:      workspace.NewAgentManager(),
-		PaneMgr:       workspace.NewPaneManager(),
-		FocusStack:    workspace.NewFocusStack(),
-		StartTime:     time.Now(),
-		ActiveSession: &workspace.Session{},
-		FileOps:       workspace.NewFileOpsService(dir, bus, &testLogger{}),
+		RootPath:  dir,
+		AgentMgr:  workspace.NewAgentManager(),
+		PaneMgr:   workspace.NewPaneManager(),
+		StartTime: time.Now(),
+		FileOps:   workspace.NewFileOpsService(dir, bus, &testLogger{}),
 	}
 	if bus != nil {
 		ws.SetEventBus(bus)
@@ -357,6 +355,9 @@ func newTestAppWithFileOpsAndBus(t *testing.T, dir string, bus *workspace.EventB
 
 	app := &App{
 		Workspace:          ws,
+		AgentView:          NewAgentViewState(ws.AgentMgr),
+		FocusStack:         NewFocusStack(),
+		ActiveSession:      &workspace.Session{},
 		Theme:              th,
 		Tree:               NewTreeState(nil, 30),
 		OverlayState:       NewOverlayState(),

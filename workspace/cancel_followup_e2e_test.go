@@ -61,7 +61,7 @@ func TestWorkspaceStopRetainsOriginalAndCompletesFollowingTurns(t *testing.T) {
 		t.Fatal(err)
 	}
 	sender := &historyE2ESender{events: make(chan historyE2EEvent, 1024)}
-	root, err := ws.StartOrchestrator(sender)
+	root, err := ws.StartOrchestrator(frontend.SessionID, sender)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -249,7 +249,7 @@ func TestWorkspacePeerReferencesPreserveThreeActiveRoots(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		root, err := ws.StartOrchestrator(sender)
+		root, err := ws.StartOrchestrator(frontend.SessionID, sender)
 		if err != nil {
 			t.Fatal(err)
 		}

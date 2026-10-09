@@ -81,7 +81,7 @@ func (m *App) toggleWorkspacePanel(panelID string) {
 	m.workspacePanelLastVersion, m.workspacePanelLastSecond = 0, 0
 	m.syncWorkspacePanels()
 	if panelID == termdock.PanelTerminal && m.termDock.Empty() {
-		_ = m.openNewTerminal()
+		m.runDetachedAsyncCmd(m.openNewTerminal())
 		return
 	}
 	if height := m.workspacePanelHeights[panelID]; height > 0 {
@@ -155,7 +155,7 @@ func (app *App) openTerminalPicker() {
 			nextNumber++
 		}
 		placement := "Docked"
-		if terminal.Placement == workspace.TerminalFloating {
+		if app.terminalPlacement(terminal.ID) == workspace.TerminalFloating {
 			placement = "Floating"
 		}
 		items = append(items, ui.ContextMenuItem{Label: fmt.Sprintf("%s %d", title, number), Detail: placement, Action: func() { app.focusTerminal(id) }})

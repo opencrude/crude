@@ -217,7 +217,7 @@ func (m *App) activeHeaderContext() (context, metrics, target string) {
 		}
 		return state, "", "editor:" + path
 	}
-	if id := m.AgentMgr.ActiveID(); id != "" {
+	if id := m.AgentView.ActiveID(); id != "" {
 		state, _ := m.Status.Agent(id)
 		context = formatAgentState(state)
 		if usage, ok := m.UsageSummary(id, ttypes.UsageThisAgent); ok {
@@ -356,7 +356,7 @@ func (m *App) backgroundAgentCounts() (working, needsAction int) {
 	}
 	foreground := ""
 	if m.EditorState.ActiveView == "" && !m.terminalDockOwnsKeys() {
-		foreground = m.AgentMgr.ActiveID()
+		foreground = m.AgentView.ActiveID()
 	}
 	for _, status := range center.Agents() {
 		if status.Ref.ID == foreground {
@@ -483,7 +483,7 @@ func (m *App) syncStatusOverview() {
 
 func (m *App) statusTabItems() []statusoverview.Item {
 	items := make([]statusoverview.Item, 0)
-	activeAgent := m.AgentMgr.ActiveID()
+	activeAgent := m.AgentView.ActiveID()
 	nodes := m.AgentMgr.AllNodes()
 	if len(nodes) > 0 {
 		items = append(items, statusoverview.Item{ID: "group-agents", Label: fmt.Sprintf("Open Agents (%d)", len(nodes)), Header: true})
@@ -498,7 +498,7 @@ func (m *App) statusTabItems() []statusoverview.Item {
 			state = ttypes.AgentStatusSnapshot{Phase: ttypes.AgentIdle, Detail: "Idle", ModelID: node.Model}
 		}
 		action, actionLabel := "agent:"+node.ID, "Switch to Tab"
-		if node.IsHidden() {
+		if m.AgentView.IsHidden(node.ID) {
 			actionLabel = "Restore Agent"
 		} else if node.ID == activeAgent && m.EditorState.ActiveView == "" {
 			actionLabel = "Return to Tab"
@@ -525,7 +525,7 @@ func (m *App) statusTabItems() []statusoverview.Item {
 		if state.TotalBytes > 0 {
 			lines = append(lines, statusoverview.DetailLine{Label: "Payload", Value: rendering.FormatBytes(state.TotalBytes) + " serialized; not tokens", Role: ui.ColorMuted})
 		}
-		if node.IsHidden() {
+		if m.AgentView.IsHidden(node.ID) {
 			lines = append(lines, statusoverview.DetailLine{Label: "Visibility", Value: "Minimized", Role: ui.ColorMuted})
 		}
 		if state.ReadOnly {
@@ -630,7 +630,7 @@ func (m *App) statusTabItems() []statusoverview.Item {
 				state = fmt.Sprintf("Exited %d", terminal.ExitCode)
 			}
 			placement := "Docked"
-			if terminal.Placement == workspace.TerminalFloating {
+			if m.terminalPlacement(terminal.ID) == workspace.TerminalFloating {
 				placement = "Floating"
 			}
 			items = append(items, statusoverview.Item{

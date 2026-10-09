@@ -57,8 +57,8 @@ func assertAgentIsPaintedView(t *testing.T, app *App, agentID string) {
 	if app.EditorState.ActiveView != "" {
 		t.Fatalf("editor still painted ActiveView=%q", app.EditorState.ActiveView)
 	}
-	if app.AgentMgr.ActiveID() != agentID {
-		t.Fatalf("active agent=%q want %q", app.AgentMgr.ActiveID(), agentID)
+	if app.AgentView.ActiveID() != agentID {
+		t.Fatalf("active agent=%q want %q", app.AgentView.ActiveID(), agentID)
 	}
 	app.paintShellFrame()
 	if !app.shellSlotActive(shellChatSlot) {
@@ -112,7 +112,7 @@ func TestNewAgentWhileEditingSurfacesAndActivatesTab(t *testing.T) {
 	if cmd := app.launcherNewSession(); cmd != nil {
 		_ = cmd()
 	}
-	id := app.AgentMgr.ActiveID()
+	id := app.AgentView.ActiveID()
 	if id == "" {
 		t.Fatal("New Agent must create and activate a session")
 	}
@@ -139,7 +139,7 @@ func TestNewAgentWhileEditing_SidebarButton(t *testing.T) {
 	}); cmd != nil {
 		_ = cmd()
 	}
-	id := app.AgentMgr.ActiveID()
+	id := app.AgentView.ActiveID()
 	if id == "" {
 		t.Fatal("Agents panel New Agent must start a session")
 	}
@@ -223,8 +223,8 @@ func TestBackgroundSubAgentTabCreationDoesNotStealRootSelection(t *testing.T) {
 	app.syncAgentWindowTabs()
 
 	active := app.Win.ActiveTab()
-	if active == nil || active.Title != app.agentTabTitle("root") || app.AgentMgr.ActiveID() != "root" {
-		t.Fatalf("background child stole selection: tab=%#v activeAgent=%q", active, app.AgentMgr.ActiveID())
+	if active == nil || active.Title != app.agentTabTitle("root") || app.AgentView.ActiveID() != "root" {
+		t.Fatalf("background child stole selection: tab=%#v activeAgent=%q", active, app.AgentView.ActiveID())
 	}
 }
 
@@ -290,13 +290,13 @@ func TestTabSyncRepairsStaleManagerSelectionFromVisibleWindow(t *testing.T) {
 	app.AgentMgr.AddSubAgent("child", "root", "child", "model", "researcher",
 		workspace.NewAgentState("child", pane.Messages, app.Logger))
 	app.syncAgentWindowTabs()
-	app.AgentMgr.SetActive("child") // simulate stale background/domain selection
+	app.AgentView.SetActive("child") // simulate stale background/domain selection
 
 	app.syncAgentWindowTabs()
 	active := app.Win.ActiveTab()
-	if active == nil || active.Title != app.agentTabTitle("root") || app.AgentMgr.ActiveID() != "root" || app.activeAgentTabID() != "root" {
+	if active == nil || active.Title != app.agentTabTitle("root") || app.AgentView.ActiveID() != "root" || app.activeAgentTabID() != "root" {
 		t.Fatalf("window authority did not repair split state: tab=%#v manager=%q prompt=%q",
-			active, app.AgentMgr.ActiveID(), app.activeAgentTabID())
+			active, app.AgentView.ActiveID(), app.activeAgentTabID())
 	}
 }
 

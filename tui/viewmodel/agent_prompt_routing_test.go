@@ -89,15 +89,13 @@ func newBackendPromptFamilyApp(t *testing.T) (*App, string, string, map[string]c
 		if err != nil {
 			t.Fatal(err)
 		}
-		backend := app.BackendSession()
+		backend := app.BackendSession(sess.SessionID)
 		sender := promptFixtureSender{done: make(chan string, 1)}
-		orch, err := backend.NewOrchestrator(sender)
+		orch, err := app.StartOrchestrator(sess.SessionID, sender)
 		if err != nil {
 			t.Fatal(err)
 		}
 		app.AddOrchestrator(orch.ID)
-		sess.AgentID = orch.ID
-		app.SessionsByAgent[orch.ID] = sess
 		app.AgentMgr.Get(orch.ID).Label = label
 		roots = append(roots, orch.ID)
 		channels[orch.ID] = orch.BlockResolveCh
@@ -418,7 +416,7 @@ func TestOtherSessionConfirmationUsesModalWithoutChangingActiveSession(t *testin
 	if app.agentPrompt == nil || app.agentPrompt.inline || !app.overlayHost.IsOpen(ui.OverlayAgentPrompt) {
 		t.Fatalf("other-session confirmation did not use modal routing: %+v", app.agentPrompt)
 	}
-	if app.ActiveSession != second || app.AgentMgr.ActiveID() != "second" {
+	if app.ActiveSession != second || app.AgentView.ActiveID() != "second" {
 		t.Fatal("background confirmation stole the active session")
 	}
 }

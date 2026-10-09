@@ -23,9 +23,7 @@ func TestActivityReadStormSurvivesDBRecoveryAndDisclosure(t *testing.T) {
 	state := workspace.NewAgentState("root", nil, nil)
 	event := func(typ string, data any) {
 		t.Helper()
-		state.HandleEvent(workspace.AgentEvent{Type: typ, Data: data}, nil,
-			func(string) {}, func(bool, bool, bool) {}, func() {},
-			func(string, string, string, string, string, string, string) {}, func(string) {}, func() {})
+		state.ApplyEvent(workspace.AgentEvent{Type: typ, Data: data})
 	}
 	for i, path := range []string{"first.go", "second.go"} {
 		id := []string{"read-one", "read-two"}[i]

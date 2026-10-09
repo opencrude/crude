@@ -77,7 +77,7 @@ func TestLiveOllamaWaitLatency(t *testing.T) {
 	app.Logger = &testLogger{}
 	app.SessionsByID = make(map[string]*workspace.Session)
 	app.SessionsByAgent = make(map[string]*workspace.Session)
-	_, err = app.CreateSession(cfg, os.Getenv("HOME"))
+	owner, err := app.CreateSession(cfg, os.Getenv("HOME"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -85,7 +85,7 @@ func TestLiveOllamaWaitLatency(t *testing.T) {
 	sender := &latencyEventSender{ctx: ctx, events: make(chan ttypes.AgentEventMsg, 4096)}
 	defer app.CloseAllSessions()
 	defer cancel()
-	orch, err := app.StartOrchestrator(sender)
+	orch, err := app.StartOrchestrator(owner.SessionID, sender)
 	if err != nil {
 		t.Fatal(err)
 	}

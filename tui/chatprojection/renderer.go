@@ -74,6 +74,8 @@ type Renderer struct {
 	exportViewportH  int
 	lazyWidthReflow  bool
 	frameSensitive   map[string]struct{}
+	thinkingPanes    map[string]string
+	thinkingOriginal map[string]types.ChatMessage
 }
 
 type MessageRowsSnapshot struct {
@@ -890,9 +892,77 @@ func (r *Renderer) SourceVersion() uint64 {
 	return r.sync.SourceVersion()
 }
 
+// PresentThinkingPane replaces only a retained frontend row.
+func (r *Renderer) PresentThinkingPane(id, paneID string) {
+	message := r.sync.MsgByID[id]
+	if message == nil || message.SubPaneID == paneID {
+		return
+	}
+	if r.thinkingPanes == nil {
+		r.thinkingPanes = make(map[string]string)
+		r.thinkingOriginal = make(map[string]types.ChatMessage)
+	}
+	if _, saved := r.thinkingOriginal[id]; !saved {
+		r.thinkingOriginal[id] = *message
+	}
+	r.thinkingPanes[id] = paneID
+	*message = types.ChatMessage{InternalID: id, Role: types.RoleTool, Content: "Thinking", SubPaneID: paneID, Time: message.Time}
+	r.sync.BumpVersion()
+	r.syncActivityItems([]string{id})
+}
+
+// SetThinkingPanes installs the complete shell-local override set. Removing an
+// override restores the retained source row even when its source version did not
+// change (for example shell teardown or a changed presentation decision).
+func (r *Renderer) SetThinkingPanes(panes map[string]string) {
+	var changed []string
+	for id := range r.thinkingPanes {
+		if _, keep := panes[id]; keep {
+			continue
+		}
+		if message := r.sync.MsgByID[id]; message != nil {
+			*message = r.thinkingOriginal[id]
+			message.CachedLines = nil
+			changed = append(changed, id)
+		}
+		delete(r.thinkingPanes, id)
+		delete(r.thinkingOriginal, id)
+	}
+	if len(changed) > 0 {
+		r.sync.BumpVersion()
+		r.syncActivityItems(changed)
+	}
+	for id, paneID := range panes {
+		r.PresentThinkingPane(id, paneID)
+	}
+}
+
+// RemoveThinkingPane releases one exact pane without affecting other owners
+// whose conversations may allocate the same local thought ID.
+func (r *Renderer) RemoveThinkingPane(paneID string) {
+	panes := make(map[string]string, len(r.thinkingPanes))
+	for thought, pane := range r.thinkingPanes {
+		if pane != paneID {
+			panes[thought] = pane
+		}
+	}
+	r.SetThinkingPanes(panes)
+}
+
 // SyncMessages updates the retained TUI projection from workspace-owned
 // message data. Stable IDs preserve unchanged render caches and scroll state.
 func (r *Renderer) SyncMessages(messages []types.ChatMessage, sourceVersion uint64) {
+	if sourceVersion == r.sync.SourceVersion() {
+		return
+	}
+	// Restore only overridden rows before the ordinary source diff. The saved
+	// values are display projections, never another canonical Conversation.
+	for id, original := range r.thinkingOriginal {
+		if message := r.sync.MsgByID[id]; message != nil {
+			*message = original
+		}
+	}
+	clear(r.thinkingOriginal)
 	cursorOwnerID := r.streamingCursorOwnerID()
 	result, ok := r.sync.SyncMessages(messages, sourceVersion)
 	if !ok {
@@ -907,6 +977,13 @@ func (r *Renderer) SyncMessages(messages []types.ChatMessage, sourceVersion uint
 	}
 	r.syncActivityItems(result.ChangedIDs)
 	r.pruneExpanded()
+	for id, paneID := range r.thinkingPanes {
+		if r.sync.MsgByID[id] == nil {
+			delete(r.thinkingPanes, id)
+			continue
+		}
+		r.PresentThinkingPane(id, paneID)
+	}
 }
 
 func (r *Renderer) RemoveMessage(idx int) {

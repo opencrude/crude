@@ -535,6 +535,34 @@ subagent prompt paths resolve against the bound root. Switching projects closes
 the old sessions and newly created sessions cannot inherit the process startup
 directory.
 
+**Session operations are explicitly addressed.** Workspace creation/opening,
+orchestrator startup, backend lookup and hydration name the session rather than
+reading a globally selected one. The TUI owns its selected session, model display
+alias and focus stack. Opening an already-live session reuses its runtime and
+does not replay provider work. This is an ownership extraction, not implemented
+multi-client transport: the current CLI still closes the runtime with its TUI.
+Remaining gates are in [core and shell separation](../plans/core-shell-separation.md).
+
+Agent tab selection/visibility and width-dependent reasoning panes are shell-local.
+Canonical workspace ingress owns semantic messages, pending decisions and usage;
+cold hydration installs retained state rather than a one-shot frontend tail. The
+current shell still schedules that ingress and owns runtime shutdown: no server,
+remote client or detach-survival feature is implied by this extraction.
+
+Session form saves capture an exact backend operation and detached form on the
+owner thread, run persistence off-thread, then install a revisioned snapshot on
+the owner thread. Background work never reads mutable workspace session maps or
+writes the frontend settings projection. The session lifetime fence rejects work
+after closing begins and joins already-admitted saves before database teardown.
+Snapshot revisions are process-local and meaningful only with the exact session
+object and workspace generation. They are not a remote durable command receipt.
+
+The palette's Multi Agent toggle is a single-field operation on the captured
+session's current delegation policy. It does not replay `LastSettings`, role
+overrides, root choice, model/account pins or tool restrictions. Repeating the
+same prepared operation returns its prior result instead of toggling again;
+late/out-of-order completions cannot replace another owner or newer projection.
+
 Stored overlays are re-diffed against the current application layer on load,
 which narrows legacy whole-category rows to their differing leaves. A
 snapshot cannot say which of its values the user meant, so migration keeps
@@ -687,6 +715,11 @@ hover, definition, references, outline, rename), diagnostic display
 (editor / tree / status + minimum severity), and per-language enable plus
 command/args overrides. `workspace.LSPManager` reads the **effective**
 `LSPSettings` and refuses to start or request gated features.
+
+The default subprocess transport is `lspclient/`, independent of the editor/TUI.
+The workspace supplies it by default; merely constructing a manager launches no
+server. Test transports may override that factory. Shared live text and multi-client
+LSP lifetime still require the core/shell migration's document authority.
 
 The unfinished LSP runtime now has its minimal launch/settings contract so the
 normal source build remains runnable. Keep LSP disabled until the lifecycle work

@@ -82,8 +82,8 @@ func TestLauncher_AddOrchestrator_CreatesAgent(t *testing.T) {
 	if n.State == nil || n.State.Messages == nil {
 		t.Fatal("orchestrator should have its own MsgList")
 	}
-	if app.AgentMgr.ActiveID() != "ses_1_orch_1" {
-		t.Fatalf("expected ActiveID ses_1_orch_1, got %q", app.AgentMgr.ActiveID())
+	if app.AgentView.ActiveID() != "ses_1_orch_1" {
+		t.Fatalf("expected ActiveID ses_1_orch_1, got %q", app.AgentView.ActiveID())
 	}
 }
 
@@ -100,8 +100,8 @@ func TestLauncher_AddOrchestrator_ClearsLauncher(t *testing.T) {
 	if app.AgentMgr.Get("ses_1_orch_1") == nil {
 		t.Fatal("orchestrator agent should exist")
 	}
-	if app.AgentMgr.ActiveID() != "ses_1_orch_1" {
-		t.Fatalf("expected active agent ses_1_orch_1, got %q", app.AgentMgr.ActiveID())
+	if app.AgentView.ActiveID() != "ses_1_orch_1" {
+		t.Fatalf("expected active agent ses_1_orch_1, got %q", app.AgentView.ActiveID())
 	}
 }
 
@@ -215,8 +215,8 @@ func TestMultipleOrchestrators(t *testing.T) {
 
 	// Switch between available agents (sub-agent first, then orchestrator)
 	app.switchToAgentView("ses_1_sub_abc")
-	if app.AgentMgr.ActiveID() != "ses_1_sub_abc" {
-		t.Fatalf("expected active agent ses_1_sub_abc, got %q", app.AgentMgr.ActiveID())
+	if app.AgentView.ActiveID() != "ses_1_sub_abc" {
+		t.Fatalf("expected active agent ses_1_sub_abc, got %q", app.AgentView.ActiveID())
 	}
 }
 

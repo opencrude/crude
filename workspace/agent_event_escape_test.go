@@ -15,10 +15,9 @@ func TestLiveCommandTitleShowsRealOperators(t *testing.T) {
 	want := "cd /home/lenovo/ocd/crude && golangci-lint run ./tui/settings/... 2>&1 | tail -20"
 
 	state := NewAgentState("agent", nil, nil)
-	state.HandleEvent(AgentEvent{Type: "tool_call", Data: map[string]any{
+	state.ApplyEvent(AgentEvent{Type: "tool_call", Data: map[string]any{
 		"internal_id": "message", "tool_id": "call", "name": "execute_command", "args": args,
-	}}, nil, func(string) {}, func(bool, bool, bool) {}, func() {},
-		func(string, string, string, string, string, string, string) {}, func(string) {}, func() {})
+	}})
 
 	messages := state.Messages.Messages()
 	if len(messages) != 1 {

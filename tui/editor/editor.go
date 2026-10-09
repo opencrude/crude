@@ -43,7 +43,8 @@ type Editor struct {
 	// to the buffer instead of the local PieceTable. This enables buffer
 	// sharing across multiple editor views (split view, diff view).
 	// nil when the Editor was opened via the legacy Open() path.
-	buffer *Buffer
+	buffer             *Buffer
+	documentProjection *DocumentProjection
 
 	cursor  Position
 	scrollX int
@@ -226,6 +227,7 @@ func (e *Editor) ReadOnly() bool { return e.readOnly }
 func (e *Editor) SetLineNumbers(visible bool) { e.hideLineNumbers = !visible }
 
 func (e *Editor) Open(path string) error {
+	e.detachDocument()
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return err
@@ -271,6 +273,7 @@ func (e *Editor) Open(path string) error {
 // loading. The Editor delegates all text access to the buffer. Call this
 // instead of Open() when using the BufferManager.
 func (e *Editor) OpenBuffer(buf *Buffer) {
+	e.detachDocument()
 	e.buffer = buf
 	e.filePath = buf.Path
 	e.title = buf.Title
@@ -336,6 +339,7 @@ func (e *Editor) ApplyFormatted(text string) {
 }
 
 func (e *Editor) Close() {
+	e.detachDocument()
 	e.stopWatching()
 	e.open = false
 	e.filePath = ""
@@ -349,6 +353,9 @@ func (e *Editor) Close() {
 }
 
 func (e *Editor) Retarget(path string) error {
+	if e.documentProjection != nil {
+		return fmt.Errorf("core document retarget requires a new canonical attachment")
+	}
 	abs, err := filepath.Abs(path)
 	if err != nil {
 		return err
@@ -507,7 +514,7 @@ func (e *Editor) notifyContentChanged() {
 func (e *Editor) emitContentChanged() {
 	e.remapGitProjection()
 	e.markDocumentWidthChanged()
-	if e.onContentChanged != nil {
+	if e.documentProjection == nil && e.onContentChanged != nil {
 		e.onContentChanged(e.filePath, string(e.buf.Bytes()))
 	}
 }

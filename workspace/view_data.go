@@ -49,37 +49,3 @@ type TabView struct {
 	Pinned       bool
 	Active       bool
 }
-
-// AgentTabViews returns the current agent tabs in forest order. Window IDs,
-// layout, hover, and close interaction remain TUI concerns.
-func (w *Workspace) AgentTabViews() []TabView {
-	if w == nil || w.AgentMgr == nil {
-		return nil
-	}
-	nodes := w.AgentMgr.AllNodes()
-	views := make([]TabView, 0, len(nodes))
-	for _, node := range nodes {
-		if node == nil || node.IsHidden() {
-			continue
-		}
-		state := ""
-		if node.State != nil {
-			state = node.State.Status
-		}
-		kind := "orchestrator"
-		if node.Parent != nil {
-			kind = "sub-agent"
-		}
-		label := AgentDisplayLabel(node)
-		views = append(views, TabView{
-			ID:           node.ID,
-			Title:        "agent:" + node.ID,
-			DisplayTitle: label,
-			Kind:         kind,
-			State:        state,
-			Closable:     true,
-			Active:       node.ID == w.AgentMgr.ActiveID(),
-		})
-	}
-	return views
-}

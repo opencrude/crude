@@ -8,6 +8,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/terminalvt"
 	"crude/workspace"
 )
 
@@ -20,109 +21,94 @@ func (noopTeaModel) Init() tea.Cmd                       { return nil }
 func (noopTeaModel) Update(tea.Msg) (tea.Model, tea.Cmd) { return noopTeaModel{}, nil }
 func (noopTeaModel) View() tea.View                      { return tea.View{} }
 
-// Regression: an OSC title arriving via TerminalOutputMsg must NOT be
-// published synchronously. Feed runs inside Bubble Tea's update goroutine and
-// the event bus delivers via Program.Send on an unbuffered channel, so a
-// synchronous TerminalManager.SetTitle there deadlocks the loop (an otherwise
-// idle terminal "hung" as soon as the shell set its OSC title). The title is
-// published from an async command instead; exactly one TerminalTitleMsg must
-// reach the bus.
+// Parser effects arrive from the service worker; applying the immutable title
+// must not echo it through the synchronous bus on the update thread.
 func TestTerminalTitleOutputDoesNotDeadlockOrDuplicate(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("in-app PTYs are unix-only")
+		t.Skip("/bin/cat PTY workload")
 	}
-	app := newTestApp(t)
-	mgr := app.TermMgr
-	info, err := mgr.Create(workspace.TerminalCreateOpts{
-		Command: "/bin/cat",
-		CWD:     t.TempDir(),
-		Cols:    40,
-		Rows:    10,
-		Title:   "cat",
-	})
+	app := newFullTestApp(t)
+	info, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 40, Rows: 10, Title: "cat"})
 	if err != nil {
-		t.Fatalf("Create: %v", err)
+		t.Fatal(err)
 	}
-	t.Cleanup(func() { mgr.Close(info.ID) })
-	app.ensureTermScreen(info.ID, info.Title)
-
+	app.dockTerminal(info.ID)
+	sink := &terminalJourneySink{}
 	bus := workspace.NewEventBus()
-	mgr.SetEventBus(bus)
-	// A connected program that never drains msgs: any synchronous Send from
-	// Update blocks forever. The fixed code must not call it on this path.
-	bus.SetProgram(tea.NewProgram(noopTeaModel{}))
-
-	done := make(chan tea.Cmd, 1)
+	bus.SetSink(sink)
+	app.TermMgr.SetEventBus(bus)
+	done := make(chan struct{})
 	go func() {
-		_, cmd := app.Update(workspace.TerminalOutputMsg{
-			ID:   info.ID,
-			Data: []byte("\x1b]2;crude-title\x07"),
-		})
-		done <- cmd
+		app.terminalService().Send(workspace.TerminalOutputMsg{ID: info.ID, Data: []byte("\x1b]2;crude-title\x07")})
+		close(done)
 	}()
-	var batch tea.Cmd
 	select {
-	case batch = <-done:
+	case <-done:
 	case <-time.After(5 * time.Second):
-		t.Fatal("Update deadlocked on OSC title arrival (synchronous event-bus publish)")
+		t.Fatal("service blocked publishing title")
 	}
-
-	if batch == nil {
-		t.Fatal("expected an async title-publish command")
-	}
-	// Deliver with no program connected: the bus logs the event without
-	// blocking, which is exactly how we observe it here.
-	bus.SetProgram(nil)
-	if msg := batch(); msg != nil {
-		t.Fatalf("title-publish command returned %T; want nil (it only republishes)", msg)
-	}
-
-	found := 0
-	deadline := time.Now().Add(2 * time.Second)
-	for time.Now().Before(deadline) && found == 0 {
-		for _, e := range bus.RecentEvents(64) {
-			if strings.Contains(e, "TerminalTitleMsg") {
-				found++
-			}
-		}
-		if found == 0 {
-			time.Sleep(10 * time.Millisecond)
+	sink.mu.Lock()
+	messages := append([]any(nil), sink.messages...)
+	sink.mu.Unlock()
+	titles := 0
+	var title workspace.TerminalEffectsMsg
+	for _, msg := range messages {
+		if fx, ok := msg.(workspace.TerminalEffectsMsg); ok && fx.Effects.TitleChanged {
+			titles++
+			title = fx
 		}
 	}
-	if found != 1 {
-		t.Fatalf("observed %d TerminalTitleMsg events; want exactly 1", found)
+	if titles != 1 {
+		t.Fatalf("observed %d title effects; want exactly one", titles)
 	}
-	if got, _ := mgr.Get(info.ID); got.Title != "crude-title" {
-		t.Fatalf("manager title=%q want %q", got.Title, "crude-title")
+	bus.SetSink(programMessageSink{program: tea.NewProgram(noopTeaModel{})})
+	defer bus.SetSink(nil)
+	updated := make(chan struct{})
+	go func() { _, _ = app.Update(title); close(updated) }()
+	select {
+	case <-updated:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Update re-entered synchronous bus on title effect")
+	}
+	if got, _ := app.TermMgr.Get(info.ID); got.Title != "crude-title" {
+		t.Fatalf("manager title=%q", got.Title)
+	}
+	if got := app.termScreens[info.ID].Title(); got != "crude-title" {
+		t.Fatalf("screen title=%q", got)
 	}
 }
 
-// OSC 52 arrives while Update is handling PTY output. The system clipboard
-// helper may launch wl-copy/xclip, so the write must be returned as a command
-// rather than executed on the update goroutine.
-func TestTerminalClipboardOutputDefersSystemWrite(t *testing.T) {
+// OSC 52 is an inert offer, not permission to write this shell's clipboard.
+func TestTerminalClipboardOutputRequiresExplicitCopy(t *testing.T) {
 	app := newTestApp(t)
-	const id = "osc52"
-	app.ensureTermScreen(id, "cat")
-	t.Cleanup(func() { app.dropTermScreen(id) })
-
+	screen := app.ensureTermScreen("osc52", "cat")
+	app.terminalLeases = map[string]workspace.TerminalLease{"osc52": {TerminalID: "osc52", Owner: app.terminalController(), Generation: 1}}
+	writes := 0
+	screen.SetCopy(func(string) tea.Cmd { writes++; return func() tea.Msg { return nil } })
 	done := make(chan tea.Cmd, 1)
 	go func() {
-		done <- app.handleTerminalOutput(workspace.TerminalOutputMsg{
-			ID:   id,
-			Data: []byte("\x1b]52;c;aGVsbG8=\x07"),
-		})
+		_, cmd := app.Update(workspace.TerminalEffectsMsg{ID: "osc52", Effects: terminalvt.Effects{Clipboard: [][]byte{[]byte("hello")}}})
+		done <- cmd
 	}()
-
 	select {
 	case cmd := <-done:
-		if cmd == nil {
-			t.Fatal("OSC 52 returned no async clipboard command")
+		runTerminalCommand(t, app, cmd)
+		if writes != 0 {
+			t.Fatal("child offer automatically wrote system clipboard")
 		}
-		// Deliberately do not execute cmd: the contract under test is that
-		// external clipboard I/O happens only after Update returns it.
+		if !strings.Contains(testStatusText(app), "Copy offered text") {
+			t.Fatal("clipboard offer was not explained to the user")
+		}
+		if app.terminalClipboard["osc52"] != "hello" {
+			t.Fatal("complete clipboard offer was not retained")
+		}
+		app.openTerminalControlMenu("osc52")
+		items := app.LastContextMenu.Sections[0].Items
+		if len(items) != 2 || items[1].Label != "Copy offered text" {
+			t.Fatal("clipboard offer has no explicit copy action")
+		}
 	case <-time.After(5 * time.Second):
-		t.Fatal("OSC 52 blocked the update path on system clipboard I/O")
+		t.Fatal("clipboard offer blocked Update")
 	}
 }
 
@@ -137,7 +123,7 @@ func TestWorkspaceSwitchTerminalCloseAllDoesNotReenterEventBus(t *testing.T) {
 	}
 	app := newTestApp(t)
 	mgr := app.TermMgr
-	info, err := mgr.Create(workspace.TerminalCreateOpts{
+	info, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{
 		Command: "/bin/cat",
 		CWD:     t.TempDir(),
 		Cols:    40,
@@ -152,11 +138,11 @@ func TestWorkspaceSwitchTerminalCloseAllDoesNotReenterEventBus(t *testing.T) {
 	mgr.SetEventBus(bus)
 	// Never run this program. Its message channel has no receiver, exactly as
 	// when Program.Send is called recursively from the active Update pass.
-	bus.SetProgram(tea.NewProgram(noopTeaModel{}))
+	bus.SetSink(programMessageSink{program: tea.NewProgram(noopTeaModel{})})
 
 	done := make(chan struct{})
 	go func() {
-		mgr.CloseAll()
+		app.terminalService().CloseAll()
 		close(done)
 	}()
 	select {
@@ -164,7 +150,7 @@ func TestWorkspaceSwitchTerminalCloseAllDoesNotReenterEventBus(t *testing.T) {
 	case <-time.After(5 * time.Second):
 		t.Fatal("CloseAll deadlocked by publishing back into the active update loop")
 	}
-	bus.SetProgram(nil)
+	bus.SetSink(nil)
 
 	if _, ok := mgr.Get(info.ID); ok {
 		t.Fatal("terminal survived CloseAll")

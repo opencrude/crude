@@ -20,7 +20,7 @@ func TestDumpThinkingPaneFullScreen(t *testing.T) {
 	// Busy chat: pre-fill messages so the main chat itself scrolls.
 	fillAgentChat(app, "dump-agent", 5, "fill")
 	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "dump-agent", Data: reasoning.Delta{Text: thinkingLines(40)}})
-	if agent.ThinkingPaneID == "" {
+	if app.thinkingPaneID(agent) == "" {
 		t.Fatal("not promoted")
 	}
 	for i := 0; i < 20; i++ {

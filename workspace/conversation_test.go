@@ -59,9 +59,9 @@ func TestConversationStreamingLifecycle(t *testing.T) {
 	agent := NewAgentState("agent", conversation, &testLogger{})
 	identity := ttypes.TurnIdentity{Generation: 3, ProviderID: "ollama-cloud", ModelID: "kimi-k3"}
 
-	agent.HandleEvent(AgentEvent{Type: "turn_started", AgentID: "agent", Data: identity}, nil, ignoreStatus, ignoreThinking, func() {}, ignoreConfirm, func(string) {}, func() {})
-	agent.HandleEvent(AgentEvent{Type: "thinking", AgentID: "agent", Data: reasoning.Delta{Text: "considering"}}, nil, ignoreStatus, ignoreThinking, func() {}, ignoreConfirm, func(string) {}, func() {})
-	agent.HandleEvent(AgentEvent{Type: "stream_token", AgentID: "agent", Data: "hello"}, nil, ignoreStatus, ignoreThinking, func() {}, ignoreConfirm, func(string) {}, func() {})
+	agent.ApplyEvent(AgentEvent{Type: "turn_started", AgentID: "agent", Data: identity})
+	agent.ApplyEvent(AgentEvent{Type: "thinking", AgentID: "agent", Data: reasoning.Delta{Text: "considering"}})
+	agent.ApplyEvent(AgentEvent{Type: "stream_token", AgentID: "agent", Data: "hello"})
 	agent.Tick(1)
 
 	messages := conversation.Messages()
@@ -139,28 +139,17 @@ func TestConversationFinishCancelledPreservesContentAndAppendsStop(t *testing.T)
 	}
 }
 
-func TestConversationThinkingPromotionRestoresIdentityAndPosition(t *testing.T) {
+func TestConversationThinkingRetainsIdentityAndPosition(t *testing.T) {
 	conversation := NewConversation()
 	conversation.BeginTurn(ttypes.TurnIdentity{Generation: 2, ModelID: "model", ProviderID: "provider"})
 	conversation.AppendThinking("private reasoning")
 	original := conversation.Messages()[0]
-	thought, ok := conversation.PromoteThinking("pane")
-	if !ok || !reflect.DeepEqual(thought, original) || conversation.Messages()[0].InternalID != original.InternalID {
-		t.Fatalf("promotion lost thought identity: %+v", thought)
-	}
+	conversation.AppendThinking(" continued")
+	conversation.MarkAllThinkingDone()
 	conversation.AppendMessage(Message{Role: MessageRoleTool, ToolName: "read_file"})
-	if conversation.RestoreThinking("pane", thought) {
-		t.Fatal("active thought restored before it finished")
-	}
-	thought.Content += " continued"
-	thought.ThinkingActive = false
-	thought.ThinkingDuration = time.Second
-	if !conversation.RestoreThinking("pane", thought) {
-		t.Fatal("settled thought was not restored")
-	}
 	got := conversation.Messages()
-	if len(got) != 2 || got[0].InternalID != original.InternalID || got[0].Content != thought.Content || got[0].SubPaneID != "" || got[0].ModelID != "model" {
-		t.Fatalf("restore lost thought position, content, or attribution: %+v", got)
+	if len(got) != 2 || got[0].InternalID != original.InternalID || got[0].Content != "private reasoning continued" || got[0].ThinkingActive || got[0].SubPaneID != "" || got[0].ModelID != "model" {
+		t.Fatalf("canonical reasoning lost identity or content: %+v", got)
 	}
 }
 
@@ -287,11 +276,8 @@ func TestCancellingTurnStatusRejectsLateProviderPhase(t *testing.T) {
 	state.SubmitInput("work")
 	state.Cancelling = true
 	state.Messages.UpdateTurnStatus(TurnStatus{Phase: "cancelling"})
-	state.HandleEvent(
-		AgentEvent{Type: "phase", Data: map[string]any{"name": "waiting_provider"}}, nil,
-		func(string) {}, func(bool, bool, bool) {}, func() {},
-		func(string, string, string, string, string, string, string) {}, func(string) {}, func() {},
-	)
+	state.ApplyEvent(
+		AgentEvent{Type: "phase", Data: map[string]any{"name": "waiting_provider"}})
 	messages := state.Messages.Messages()
 	if len(messages) != 1 || messages[0].LifecyclePhase != "cancelling" {
 		t.Fatalf("late provider phase replaced cancellation: %#v", messages)
@@ -372,7 +358,7 @@ func TestCompactionOperationRowsSurviveTurnCleanupAndRemainIDScoped(t *testing.T
 func TestAgentStateCompactionRetryAndCancellationRemainOneQuietBoundary(t *testing.T) {
 	state := NewAgentState("agent", nil, nil)
 	handle := func(event AgentEvent) {
-		state.HandleEvent(event, nil, ignoreStatus, ignoreThinking, func() {}, ignoreConfirm, func(string) {}, func() {})
+		state.ApplyEvent(event)
 	}
 	base := map[string]any{
 		"request_id": "compact-1", "trigger": "manual", "role": "root",
@@ -430,19 +416,14 @@ func TestAutomaticCompactionFailureDoesNotAppendDuplicateErrorRow(t *testing.T) 
 		"stage": 3, "completed_stages": 2, "stage_count": 4,
 		"stage_label": "Capturing state", "error": "download recovery exhausted",
 	}
-	state.HandleEvent(AgentEvent{Type: "context_compaction_failed", Data: data}, nil, ignoreStatus, ignoreThinking, func() {}, ignoreConfirm, func(string) {}, func() {})
-	state.HandleEvent(AgentEvent{Type: "error", Data: "context compaction failed"}, nil, ignoreStatus, ignoreThinking, func() {}, ignoreConfirm, func(string) {}, func() {})
+	state.ApplyEvent(AgentEvent{Type: "context_compaction_failed", Data: data})
+	state.ApplyEvent(AgentEvent{Type: "error", Data: "context compaction failed"})
 	messages := state.Messages.Messages()
 	if len(messages) != 1 || messages[0].LifecyclePhase != "compaction_failed" || messages[0].Role != MessageRoleStatus {
 		t.Fatalf("automatic failure produced duplicate transcript noise: %+v", messages)
 	}
 }
 
-func ignoreStatus(string) {}
-
-func ignoreThinking(bool, bool, bool) {}
-
-func ignoreConfirm(string, string, string, string, string, string, string) {}
 func TestCancellationDoesNotMarkPreviousTurnIncomplete(t *testing.T) {
 	c := NewConversation()
 	c.AppendMessage(Message{InternalID: "old", Role: MessageRoleAssistant, Content: "Prior turn completed"})

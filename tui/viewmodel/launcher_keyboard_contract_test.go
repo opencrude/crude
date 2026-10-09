@@ -22,7 +22,7 @@ func setupLauncherRoutingApp(t *testing.T, workspaces []workspace.WorkspaceInfo)
 	app.Tree = NewTreeState(filetree.NewFileTreeModel(t.TempDir()), 30)
 	app.Tree.Visible = true
 	if app.FocusStack == nil {
-		app.FocusStack = workspace.NewFocusStack()
+		app.FocusStack = NewFocusStack()
 	}
 	if app.windowManager == nil {
 		app.windowManager = wm.NewWindowManager()

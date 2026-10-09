@@ -32,7 +32,7 @@ func TestPromotedThoughtsJoinActivityAcrossRequests(t *testing.T) {
 			renderer.SetChatAreaBounds(0, 30)
 			for round := range 8 {
 				app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: state.ID, Type: "thinking", Data: reasoning.Delta{Text: thinkingLines(40)}})
-				if state.ThinkingPaneID == "" {
+				if app.thinkingPaneID(state) == "" {
 					t.Fatal("fixture did not exercise real thinking promotion")
 				}
 				id := fmt.Sprintf("read-%d", round)
@@ -54,7 +54,7 @@ func TestPromotedThoughtsJoinActivityAcrossRequests(t *testing.T) {
 			}
 			app.switchToAgentView(state.ID)
 			app.paintShellFrame()
-			if app.AgentMgr.ActiveID() != state.ID {
+			if app.AgentView.ActiveID() != state.ID {
 				t.Fatal("owner tab did not restore")
 			}
 			app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: state.ID, Type: "done", Data: map[string]any{"reason": "completed"}})
@@ -152,7 +152,7 @@ func TestPromotedThinkingSettlesOnEveryLifecyclePath(t *testing.T) {
 			app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: "child", Type: "start", Data: map[string]string{"parent_id": "parent", "agent_name": "Child"}})
 			state := app.AgentMgr.Get("child").State
 			app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: "child", Type: "thinking", Data: reasoning.Delta{Text: thinkingLines(40)}})
-			paneID := state.ThinkingPaneID
+			paneID := app.thinkingPaneID(state)
 			if paneID == "" {
 				t.Fatal("nested thought not promoted")
 			}
@@ -161,7 +161,7 @@ func TestPromotedThinkingSettlesOnEveryLifecyclePath(t *testing.T) {
 			} else {
 				app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: "child", Type: event.name, Data: event.data})
 			}
-			if state.ThinkingPaneID != "" || app.PaneMgr.Has(paneID) || app.subPaneProjections.Has(paneID) {
+			if app.thinkingPaneID(state) != "" || app.PaneMgr.Has(paneID) || app.subPaneProjections.Has(paneID) {
 				t.Fatal("settled nested thought left a pane boundary")
 			}
 			thought := state.Messages.Messages()[0]

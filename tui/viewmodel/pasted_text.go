@@ -33,7 +33,7 @@ func (m *App) storePastedText(event input.PasteAttachmentEvent) tea.Cmd {
 		kind = sessiondb.KindPastedTextFile
 	}
 	result := pastedTextStoredMsg{
-		session: owner, store: store, agentID: m.AgentMgr.ActiveID(),
+		session: owner, store: store, agentID: m.AgentView.ActiveID(),
 		generation: m.workspaceSwitchGen.Load(), event: event,
 	}
 	m.pastedTextRequests = append(m.pastedTextRequests, result)
@@ -60,7 +60,7 @@ func (m *App) applyPastedText(msg pastedTextStoredMsg) {
 	for len(m.pastedTextRequests) > 0 {
 		request := m.pastedTextRequests[0]
 		sameOwner := request.generation == m.workspaceSwitchGen.Load() && request.session == m.ActiveSession && request.store == m.RefStore()
-		current := sameOwner && request.agentID == m.AgentMgr.ActiveID() && m.Input.PasteCurrent(request.event)
+		current := sameOwner && request.agentID == m.AgentView.ActiveID() && m.Input.PasteCurrent(request.event)
 		if current && !request.done {
 			break
 		}
@@ -88,7 +88,7 @@ func (m *App) attachPastedText(msg pastedTextStoredMsg) {
 	if !m.Input.CompletePaste(msg.event) {
 		return
 	}
-	if m.AgentMgr.ActiveID() != msg.agentID {
+	if m.AgentView.ActiveID() != msg.agentID {
 		return
 	}
 	if msg.err != nil {

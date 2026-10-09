@@ -1,7 +1,6 @@
 package workspace
 
 import (
-	"slices"
 	"testing"
 )
 
@@ -30,7 +29,6 @@ func TestAgentManagerRemoveTreePreservesOtherOrchestrators(t *testing.T) {
 	mgr.AddOrchestrator("first", &AgentState{})
 	mgr.AddSubAgent("first-child", "first", "child", "model", "category", &AgentState{})
 	mgr.AddOrchestrator("second", &AgentState{})
-	mgr.SetActive("first-child")
 
 	mgr.Remove("first")
 
@@ -40,43 +38,4 @@ func TestAgentManagerRemoveTreePreservesOtherOrchestrators(t *testing.T) {
 	if mgr.Get("second") == nil || mgr.Count() != 1 {
 		t.Fatal("removing one orchestrator removed or hid another orchestrator")
 	}
-	if got := mgr.ActiveID(); got != "" {
-		t.Fatalf("ActiveID() = %q after removing active descendant, want empty", got)
-	}
-}
-
-func TestAgentManagerVisibilityPreservesIndependentChildChoicesAndForestOrder(t *testing.T) {
-	mgr := NewAgentManager()
-	mgr.AddOrchestrator("first", &AgentState{})
-	mgr.AddSubAgent("running", "first", "running", "", "", &AgentState{})
-	mgr.AddSubAgent("archived", "first", "archived", "", "", &AgentState{})
-	mgr.AddSubAgent("grandchild", "running", "grandchild", "", "", &AgentState{})
-	mgr.AddOrchestrator("second", &AgentState{})
-	mgr.AddSubAgent("second-child", "second", "second child", "", "", &AgentState{})
-	mgr.SetHidden("archived", true)
-	assertOrder := func(want ...string) {
-		t.Helper()
-		if got := mgr.TabOrder(); !slices.Equal(got, want) {
-			t.Fatalf("TabOrder=%v, want %v", got, want)
-		}
-		if got := mgr.VisibleCount(); got != len(want) {
-			t.Fatalf("VisibleCount=%d, want %d", got, len(want))
-		}
-	}
-	assertOrder("first", "running", "grandchild", "second", "second-child")
-	mgr.SetActive("grandchild")
-	mgr.SetHidden("first", true)
-	if mgr.ActiveID() != "" || !mgr.IsHidden("grandchild") || !mgr.IsHidden("archived") {
-		t.Fatal("minimizing the parent must hide all descendants and clear a hidden active child")
-	}
-	assertOrder("second", "second-child")
-	mgr.SetHidden("first", false)
-	if !mgr.IsHidden("archived") || mgr.Get("archived").Hidden != true {
-		t.Fatal("restoring the parent changed its archived child's own visibility")
-	}
-	assertOrder("first", "running", "grandchild", "second", "second-child")
-	mgr.SetHidden("running", true)
-	assertOrder("first", "second", "second-child")
-	mgr.SetHidden("running", false)
-	assertOrder("first", "running", "grandchild", "second", "second-child")
 }

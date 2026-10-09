@@ -5,9 +5,9 @@
 Crude embeds a terminal multiplexer in the TUI. Each session is a PTY whose
 environment is pinned to **Ghostty 1.3.0** (`types.PinnedGhosttyVersion`,
 `TERM=xterm-ghostty`). Emulation is **libghostty-vt** at the commit in
-`deps/GHOSTTY_PIN`, linked through a narrow cgo adapter in `tui/term`.
+`deps/GHOSTTY_PIN`, linked through a narrow presentation-neutral cgo adapter in `terminalvt/`.
 `CGO_ENABLED=0` builds compile a stub that returns an error from
-`term.NewEmulator`; they do not keep a hand-written parser.
+`terminalvt.New`; they do not keep a hand-written parser.
 
 `go.mitchellh.com/libghostty` requires Go 1.26. Crude stays on Go 1.25 and
 owns the adapter instead of that module.
@@ -39,17 +39,17 @@ without this database: child rc scripts break (`tput colors` returns empty).
 | Paste | `EncodePaste` — bracketed-paste wrapping + unsafe-control sanitization per DEC 2004 |
 | Mouse reporting | Ghostty mouse encoder when the child enables tracking (X10/normal/button/any, SGR/URXVT/UTF-8) |
 | Shift override | Shift+click/drag bypasses tracking for selection (standard escape hatch) |
-| Selection | Ghostty selection gestures: click anchor, drag, double-click word, triple-click line; render-state ranges use theme TextSelection/TextSelectionFg, including atomic wide glyphs; native child reverse/faint cannot hide selection |
-| Copy | Copy-on-select + `Ctrl+Shift+C`; `Ctrl+Shift+A` selects all; text formatted with Ghostty clipboard semantics (unwrap + trim) |
-| OSC 52 clipboard | Child clipboard writes land on the system clipboard via an async command (decoded MIME, text/plain preferred); reads are always ignored and the helper subprocess is time-bounded |
+| Selection | Client-local `termview` click/drag, double-click word and triple-click line; theme TextSelection/TextSelectionFg preserves atomic wide glyphs independently of child reverse/faint |
+| Copy | Copy-on-select + `Ctrl+Shift+C`; `Ctrl+Shift+A` selects all; client-local extraction uses projected soft-wrap metadata to unwrap and trim text |
+| OSC 52 clipboard | Child writes become an offer, never an automatic system-clipboard write; the controlling shell exposes **Copy offered text** in the terminal menu. Clipboard reads are ignored |
 | Scrollback | Wheel scrolls viewport; `Shift+PgUp/PgDn/Home/End` on the primary screen; typing/paste snaps to bottom; right-edge scrollbar overlay while scrolled |
 | Alt screen wheel | No tracking + alternate screen → wheel sends arrow keys (3×), like Ghostty's alternate-scroll |
 | Focus reporting | DEC mode 1004 → CSI I/O on real pane-focus transitions (`syncTerminalFocusReports` sweep, idempotent) |
-| Cursor styles | DECSCUSR: block/hollow use one visible SGR reverse operation, bar/underline render `AttrUnderline`; input/output/movement/resize/focus changes hold the focused cursor visible, then a 600 ms idle delay starts 600 ms blink phases; retained floating windows invalidate only on transitions |
+| Cursor styles | DECSCUSR requests normalize to the shared reverse-video block geometry; embedded applications retain blink/steady timing, and the shell paints the projected cursor |
 | Bell | BEL flags an unfocused dock tab or adds a `•` icon to an unfocused floating `WindowFrame`; focusing the terminal clears it |
-| OSC titles | Deferred to end of Feed, published via async command (never synchronous bus publish) |
+| OSC titles | Collected after Feed, committed by the service and delivered as neutral effects outside the engine lock |
 | OSC 7 pwd | Updates `TerminalInfo.CWD` (file:// URL parsed to a path) |
-| Query replies | DA/DSR/XTVERSION/size replies enqueue on the async `ptyWriter` — never block or re-enter the bus (`TestTerminalReplyStormDoesNotDeadlockOrReenterBus`) |
+| Query replies | Only `TerminalService` enqueues DA/DSR/XTVERSION/size replies on the async `ptyWriter`; clients receive no reply bytes and cannot answer twice |
 
 All libghostty effect callbacks (title, bell, pwd, clipboard) are collected
 during `vt_write` and flushed after the C call returns — handlers must never
@@ -72,11 +72,26 @@ attached to an 8×2 PTY. The PTY resize is attempted first; on failure the
 emulator keeps its previous grid and the next layout retries rather than
 committing a desynchronized size.
 
-PTY reads may race the caller that mounts a newly-created screen. On the first
-`TerminalOutputMsg`, the viewmodel materializes the retained emulator directly
-from the manager snapshot when needed and feeds the bytes immediately. This
-uses the emulator's bounded scrollback and does not add an unbounded startup
-buffer.
+`workspace.TerminalService` is installed on an empty manager before PTY creation.
+Its prepared-create hook installs the sole engine before the first output read.
+PTY bytes enter this service even without a mounted screen; downstream readers
+receive bounded detached rows, not raw output. There is no shell startup parser
+or second query-reply source.
+
+Input and resize require the exact `TerminalLease`: terminal ID, client ID,
+attachment epoch and lease generation. A second controller cannot silently steal
+it; release/detach invalidates only the exact owner. Viewers may read rows and
+select/scroll locally without input authority. The standalone shell admits
+key/paste/focus/resize commands on Update into a bounded 256-command FIFO, then
+executes service calls off Update. Resize geometry is acknowledged from the
+returned projection, not optimistically committed by Paint. Async results are
+fenced to the service and workspace-switch generation; stale reads cannot
+replace a newer page.
+
+The neutral engine caps grids at 1000×500, row pages at 512 rows and scrollback
+at 10,000 lines with a 32 MiB byte budget. Client-local history pages retain
+history identity and soft-wrap metadata; selection is cleared on incompatible
+history/grid transitions rather than copied from unrelated rows.
 
 Terminal IDs come from one process-wide monotonic sequence, not a
 `TerminalManager`-local counter. Workspace switching replaces the manager while
@@ -92,7 +107,9 @@ SIGKILLs the group. Descendants that stayed in the group (sh -c pipelines,
 non-job-control children) cannot survive as orphans
 (`TestTerminalCloseKillsProcessGroup`). Job-control shells forward SIGHUP to
 their own jobs. `Workspace.Close` and project switches call
-`TerminalManager.CloseAll` (`TestTerminalManagerCloseAllReapsChildren`).
+the terminal service/manager close path (`TestTerminalManagerCloseAllReapsChildren`).
+This is still the standalone CLI lifecycle: switching projects tears down the old
+resources. The retained-core protocol detach path is not yet the product route.
 Explicit close is command-owned and does not publish a `TerminalClosedMsg`:
 workspace switches and close actions run on Bubble Tea's update goroutine, so
 synchronously echoing through `EventBus.Send` would deadlock on `Program.Send`.
@@ -101,9 +118,11 @@ synchronously echoing through `EventBus.Send` would deadlock on `Program.Send`.
 
 | Layer | Owns |
 |-------|------|
-| `workspace.TerminalManager` | PTY lifecycle, I/O, placement snapshot, events |
-| `tui/term` | libghostty-vt bridge painted into `CellBuffer` |
-| `tui/screens/shellterm` | One session: paint + keys/paste/mouse into the PTY + Float/Dock/Close |
+| `workspace.TerminalManager` | PTY process lifecycle and bounded asynchronous I/O |
+| `workspace.TerminalService` | One VT engine/reply owner, metadata, exact controller leases and detached row pages |
+| `terminalvt/` | Neutral libghostty-vt engine, encoding, effects and row projections; no TUI imports |
+| `tui/termview` | Client-local row cache, scroll, selection/copy and snapshot painting |
+| `tui/screens/shellterm` | Immutable projection reader; key/paste/mouse/resize intents + Float/Dock/Close |
 | `tui/screens/termdock` | Workspace bottom-panel host, resize handle, compact numbered terminal tabs, shared header controls, and retained PTY mounting |
 | `tui/viewmodel` | Dock slot, OverlayHost windows, activity list, focus |
 
@@ -121,6 +140,12 @@ outer emulator matches the Ghostty pin. In-app PTYs always set:
 - `COLORTERM=truecolor`
 
 ## Placement
+
+Dock/floating placement and focus belong to each shell (`App.terminalPlacements`),
+not the PTY service. The service has one process/grid; a viewer does not acquire
+resize authority merely by laying out a screen. See the
+[core client protocol](core-client-protocol.md) for the implemented resource API
+and the still-outstanding connected-product cutover.
 
 - **Docked:** Terminal mode in the workspace bottom panel (`tui/screens/termdock`)
   above the footer, independent of AI session `PanelDeck`. Available in launcher,

@@ -42,6 +42,9 @@ type subPaneProjection struct {
 	expanded bool
 
 	source *workspace.Conversation
+	// A local thought renderer is a filtered projection of a canonical agent
+	// conversation; generic embedded sync must not replace it with all messages.
+	localThinking bool
 }
 
 // subPaneProjectionRegistry owns the per-pane projections and the
@@ -50,9 +53,11 @@ type subPaneProjectionRegistry struct {
 	projections map[string]*subPaneProjection
 	theme       *theme.Theme
 	// owners retain independent inline presentation; root projections remain main renderers.
-	owners   map[string]*subPaneProjectionRegistry
-	embedded bool
-	username string
+	owners         map[string]*subPaneProjectionRegistry
+	embedded       bool
+	username       string
+	thinkingWidths map[*workspace.AgentState]int
+	thinkingRoots  map[*workspace.AgentState]bool
 }
 
 func newSubPaneProjectionRegistry(th *theme.Theme) *subPaneProjectionRegistry {
@@ -354,7 +359,9 @@ func (reg *subPaneProjectionRegistry) ScrollbarLineCount(paneID string, sp *work
 }
 
 // BuildPaneGutters collects gutter state for all panes referenced in paneLineMap.
-func (reg *subPaneProjectionRegistry) BuildPaneGutters(paneLineMap []chatprojection.PaneLineInfo, paneMgr *workspace.PaneManager) map[string]shellchat.PaneGutterState {
+func (reg *subPaneProjectionRegistry) BuildPaneGutters(paneLineMap []chatprojection.PaneLineInfo, paneMgr interface {
+	Get(string) *workspace.SubPane
+}) map[string]shellchat.PaneGutterState {
 	out := make(map[string]shellchat.PaneGutterState)
 	for _, info := range paneLineMap {
 		if info.PaneID == "" {
@@ -383,10 +390,13 @@ func (reg *subPaneProjectionRegistry) Render(paneID string, sp *workspace.SubPan
 	}
 	p := reg.Get(paneID, sp.Type)
 	p.expanded = expanded
-	if reg.embedded {
+	if reg.embedded && !p.localThinking {
 		reg.SyncFromWorkspace(paneID, sp.Messages, false)
 	}
-	view := sp.View()
+	view := workspace.SubPaneView{Header: workspace.SubPaneHeaderView{Title: sp.Title, Type: sp.Type, Elapsed: sp.Elapsed(), Thinking: true}}
+	if !p.localThinking {
+		view = sp.View()
+	}
 
 	if sp.Done && !expanded {
 		return []chatprojection.SubPaneLine{
@@ -515,7 +525,7 @@ func (m *App) renderSubPaneContentForApp(paneID string, width, maxH, spinFrame i
 // subPaneContentForRegistry keeps nested rendering in the embedding main view.
 func (m *App) subPaneContentForRegistry(reg *subPaneProjectionRegistry) chatprojection.SubPaneContentFn {
 	return func(paneID string, width, maxH, spinFrame int, expanded bool) []chatprojection.SubPaneLine {
-		sp := m.PaneMgr.Get(paneID)
+		sp := m.Get(paneID)
 		if sp == nil {
 			return []chatprojection.SubPaneLine{
 				chatprojection.NativeLine(chatprojection.PaintLine{Spans: []chatprojection.RowSpan{{Text: "", Role: ui.ColorFg}}}),
@@ -523,6 +533,10 @@ func (m *App) subPaneContentForRegistry(reg *subPaneProjectionRegistry) chatproj
 			}
 		}
 		p := reg.Get(paneID, sp.Type)
+		if !m.syncLocalThinking(reg, sp) {
+			reg.SyncFromWorkspace(paneID, sp.Messages, false)
+			m.presentThinking(p.renderer, sp.Messages)
+		}
 		p.renderer.SetSubPaneContentFn(m.subPaneContentForRegistry(reg))
 		if n := m.AgentMgr.Get(paneID); n != nil && n.State != nil {
 			p.renderer.SetLegacyModelFallback(n.Model)

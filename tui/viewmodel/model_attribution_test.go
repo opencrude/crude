@@ -4,34 +4,32 @@ import (
 	"strings"
 	"testing"
 
-	"crude/tui/types"
+	"crude/tui/screens/sessionsettings"
+	"crude/types"
 	"crude/workspace"
 )
 
 func TestSessionSettingsSaveRefreshesRetainedLegacyModelFallback(t *testing.T) {
-	app := newTestApp(t)
+	app := newFullTestApp(t)
+	app.Logger = stubLogger{}
 	app.ModelName = "deepseek/deepseek-v4-flash-vision-exp"
+	rootID := addBackendTestOrchestrator(t, app)
+	app.ActivateSessionByAgent(rootID)
 	session := app.ActiveSession
-	session.SessionID = "session"
-	app.SessionsByID = map[string]*workspace.Session{"session": session}
-	app.SessionsByAgent = map[string]*workspace.Session{"root": session}
-	app.AddOrchestrator("root")
 
-	node := app.AgentMgr.Get("root")
+	node := app.AgentMgr.Get(rootID)
 	node.State.Messages.AppendMessage(workspace.Message{
 		InternalID: "legacy", Role: workspace.MessageRoleAssistant, Content: "legacy answer",
 	})
-	app.syncAgentMessages("root", false)
+	app.syncAgentMessages(rootID, false)
 
 	target := app.sessionProjections.Get(session).settings
-	app.Update(sessionSettingsSaveResultMsg{
-		target: target,
-		settings: types.Settings{
-			Model: "kimi-k3",
-		},
-	})
+	settings := app.BackendSession(session.SessionID).SettingsSnapshot()
+	settings.SessionOverrides = map[string]types.CategorySettings{"default": {AccountID: settings.AccountID, Model: "kimi-k3"}}
+	_, command := app.Update(sessionsettings.SaveMsg{Target: target, Settings: settings})
+	runAppCommand(t, app, command)
 
-	renderer := app.subPaneProjections.GetExisting("root").renderer
+	renderer := app.subPaneProjections.GetExisting(rootID).renderer
 	renderer.SetSize(100, 30)
 	renderer.SetChatAreaBounds(0, 25)
 	_ = renderer.Render(100)

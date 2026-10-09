@@ -76,7 +76,7 @@ func liveLSPExecutable(t *testing.T, ctx context.Context, name string) string {
 
 func liveLSPManager(t *testing.T, root string) (*workspace.LSPManager, *liveLSPRuntime) {
 	t.Helper()
-	r := &liveLSPRuntime{LSPRuntime: newEditorLSPRuntime()}
+	r := &liveLSPRuntime{LSPRuntime: workspace.NewLSPRuntime()}
 	m := workspace.NewLSPManager(nil, r)
 	t.Cleanup(m.Close) // Only this manager's exact owned processes are stopped.
 	s := model.DefaultLSPSettings()

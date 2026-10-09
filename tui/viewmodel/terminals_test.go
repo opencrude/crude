@@ -27,7 +27,7 @@ func TestTerminalPickerUsesMatchingSuffixNumbersAndNamedPlacement(t *testing.T) 
 		manager.CloseAll()
 	})
 	for range 16 {
-		terminal, err := manager.Create(workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 40, Rows: 8, Title: "Terminal"})
+		terminal, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 40, Rows: 8, Title: "Terminal"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -98,7 +98,7 @@ func TestTerminalPickerActionsKeepRealIDsAfterRenumbering(t *testing.T) {
 	})
 	var ids []string
 	for range 3 {
-		terminal, err := manager.Create(workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 40, Rows: 8, Title: "Terminal"})
+		terminal, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 40, Rows: 8, Title: "Terminal"})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -111,6 +111,7 @@ func TestTerminalPickerActionsKeepRealIDsAfterRenumbering(t *testing.T) {
 	closedAction, secondAction := items[1].Action, items[2].Action
 	app.closeContextMenu()
 	app.closeTerminal(ids[0])
+	waitAppTerminalClosed(t, app, ids[0])
 	if app.termDock.Number(ids[1]) != 1 {
 		t.Fatal("remaining terminal did not receive the first display number")
 	}
@@ -137,7 +138,7 @@ func TestDockAndPromoteTerminalUsesWorkspaceDockAndOverlay(t *testing.T) {
 	if mgr == nil {
 		t.Fatal("TermMgr missing")
 	}
-	info, err := mgr.Create(workspace.TerminalCreateOpts{
+	info, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{
 		Command: "/bin/cat",
 		CWD:     t.TempDir(),
 		Cols:    40,
@@ -145,7 +146,7 @@ func TestDockAndPromoteTerminalUsesWorkspaceDockAndOverlay(t *testing.T) {
 		Title:   "cat",
 	})
 	if err != nil {
-		t.Skipf("pty create: %v", err)
+		t.Fatalf("pty create: %v", err)
 	}
 	t.Cleanup(func() { mgr.Close(info.ID) })
 
@@ -176,9 +177,8 @@ func TestDockAndPromoteTerminalUsesWorkspaceDockAndOverlay(t *testing.T) {
 	if app.termDock.Contains(info.ID) {
 		t.Fatal("promoted terminal must leave the dock")
 	}
-	got, ok := mgr.Get(info.ID)
-	if !ok || got.Placement != workspace.TerminalFloating {
-		t.Fatalf("placement=%v floating=%v", got.Placement, ok)
+	if got := app.terminalPlacement(info.ID); got != workspace.TerminalFloating {
+		t.Fatalf("placement=%v want floating", got)
 	}
 
 	app.dockTerminal(info.ID)
@@ -201,14 +201,14 @@ func TestFloatingTerminalBlinkInvalidatesRetainedWindow(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 40
 	mgr := app.termMgr()
-	info, err := mgr.Create(workspace.TerminalCreateOpts{
+	info, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{
 		Command: "/bin/cat",
 		CWD:     t.TempDir(),
 		Cols:    40,
 		Rows:    12,
 	})
 	if err != nil {
-		t.Skipf("pty create: %v", err)
+		t.Fatalf("pty create: %v", err)
 	}
 	t.Cleanup(func() {
 		app.discardTerminalUI()
@@ -221,7 +221,7 @@ func TestFloatingTerminalBlinkInvalidatesRetainedWindow(t *testing.T) {
 	if screen == nil || fw == nil {
 		t.Fatal("floating terminal projection missing")
 	}
-	screen.Feed([]byte("x\x1b[1;1H"))
+	feedAppTerminal(t, app, info.ID, []byte("x\x1b[1;1H"))
 	screen.SetTermFocused(true)
 
 	// First render performs the floating layout (a resize is cursor activity).
@@ -251,13 +251,13 @@ func TestPromoteTwoTerminalsStacksByZOrder(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 40
 	mgr := app.termMgr()
-	first, err := mgr.Create(workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 20, Rows: 8})
+	first, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 20, Rows: 8})
 	if err != nil {
-		t.Skipf("pty create: %v", err)
+		t.Fatalf("pty create: %v", err)
 	}
-	second, err := mgr.Create(workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 20, Rows: 8})
+	second, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 20, Rows: 8})
 	if err != nil {
-		t.Skipf("pty create: %v", err)
+		t.Fatalf("pty create: %v", err)
 	}
 	t.Cleanup(func() {
 		mgr.Close(first.ID)
@@ -283,11 +283,12 @@ func TestTerminalDockAvailableWithoutAISession(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 40
 	app.AgentMgr = workspace.NewAgentManager()
+	app.AgentView = NewAgentViewState(app.AgentMgr)
 	app.ActiveSession = nil
 	mgr := app.termMgr()
-	info, err := mgr.Create(workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 20, Rows: 8})
+	info, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 20, Rows: 8})
 	if err != nil {
-		t.Skipf("pty create: %v", err)
+		t.Fatalf("pty create: %v", err)
 	}
 	t.Cleanup(func() { mgr.Close(info.ID) })
 	app.dockTerminal(info.ID)
@@ -314,13 +315,13 @@ func TestTerminalDockTabsAndClose(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 40
 	mgr := app.termMgr()
-	a, err := mgr.Create(workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 20, Rows: 8, Title: "one"})
+	a, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 20, Rows: 8, Title: "one"})
 	if err != nil {
-		t.Skipf("pty create: %v", err)
+		t.Fatalf("pty create: %v", err)
 	}
-	b, err := mgr.Create(workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 20, Rows: 8, Title: "two"})
+	b, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 20, Rows: 8, Title: "two"})
 	if err != nil {
-		t.Skipf("pty create: %v", err)
+		t.Fatalf("pty create: %v", err)
 	}
 	t.Cleanup(func() {
 		mgr.Close(a.ID)
@@ -335,6 +336,7 @@ func TestTerminalDockTabsAndClose(t *testing.T) {
 		t.Fatalf("active=%s want %s", app.termDock.ActiveID(), b.ID)
 	}
 	app.closeTerminal(b.ID)
+	waitAppTerminalClosed(t, app, b.ID)
 	if _, ok := mgr.Get(b.ID); ok {
 		t.Fatal("closed tab must kill that PTY")
 	}
@@ -389,9 +391,9 @@ func TestTerminalDockFocusSendsKeysToPTYNotQuit(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 40
 	mgr := app.termMgr()
-	info, err := mgr.Create(workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 20, Rows: 8})
+	info, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 20, Rows: 8})
 	if err != nil {
-		t.Skipf("pty create: %v", err)
+		t.Fatalf("pty create: %v", err)
 	}
 	t.Cleanup(func() { mgr.Close(info.ID) })
 	app.dockTerminal(info.ID)
@@ -411,9 +413,9 @@ func TestTerminalDockFocusStaysOnVTAndHasNoActionBar(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 40
 	mgr := app.termMgr()
-	info, err := mgr.Create(workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 20, Rows: 8})
+	info, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 20, Rows: 8})
 	if err != nil {
-		t.Skipf("pty create: %v", err)
+		t.Fatalf("pty create: %v", err)
 	}
 	t.Cleanup(func() { mgr.Close(info.ID) })
 	app.dockTerminal(info.ID)
@@ -444,9 +446,9 @@ func TestTermDockHeaderIconsFloatAndCloseViaMouse(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 160, 40
 	mgr := app.termMgr()
-	info, err := mgr.Create(workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 20, Rows: 8})
+	info, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 20, Rows: 8})
 	if err != nil {
-		t.Skipf("pty create: %v", err)
+		t.Fatalf("pty create: %v", err)
 	}
 	t.Cleanup(func() { mgr.Close(info.ID) })
 	app.dockTerminal(info.ID)
@@ -466,9 +468,8 @@ func TestTermDockHeaderIconsFloatAndCloseViaMouse(t *testing.T) {
 	}
 	model, _ := app.dispatchMouseClick(tea.MouseClickMsg{X: floatX, Y: iconRow, Button: tea.MouseLeft})
 	app = model.(*App)
-	got, _ := mgr.Get(info.ID)
-	if got.Placement != workspace.TerminalFloating {
-		t.Fatalf("placement=%v want floating after clicking the ⇱ header icon", got.Placement)
+	if got := app.terminalPlacement(info.ID); got != workspace.TerminalFloating {
+		t.Fatalf("placement=%v want floating after clicking the ⇱ header icon", got)
 	}
 	if app.termDock.Contains(info.ID) {
 		t.Fatal("dock still contains the floated terminal")
@@ -494,6 +495,7 @@ func TestTermDockHeaderIconsFloatAndCloseViaMouse(t *testing.T) {
 	}
 	model, _ = app.dispatchMouseClick(tea.MouseClickMsg{X: closeX, Y: iconRow, Button: tea.MouseLeft})
 	app = model.(*App)
+	waitAppTerminalClosed(t, app, info.ID)
 	if _, ok := mgr.Get(info.ID); ok {
 		t.Fatal("terminal still alive after clicking the ✕ header icon")
 	}
@@ -507,9 +509,9 @@ func TestTermDockLayoutSitsRightOfSidebar(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 40
 	mgr := app.termMgr()
-	info, err := mgr.Create(workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 20, Rows: 8})
+	info, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{Command: "/bin/cat", CWD: t.TempDir(), Cols: 20, Rows: 8})
 	if err != nil {
-		t.Skipf("pty create: %v", err)
+		t.Fatalf("pty create: %v", err)
 	}
 	t.Cleanup(func() { mgr.Close(info.ID) })
 	app.dockTerminal(info.ID)

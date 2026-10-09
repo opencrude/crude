@@ -625,7 +625,7 @@ func TestExecutePaletteCommandRevealInTree(t *testing.T) {
 // crash, even with no active ID.
 func TestExecutePaletteCommandNoActiveAgentCancel(t *testing.T) {
 	app := newFullTestApp(t)
-	if app.AgentMgr.ActiveID() != "" {
+	if app.AgentView.ActiveID() != "" {
 		t.Skip("test requires no active agent")
 	}
 	app.executePaletteCommand("agent.cancel")

@@ -77,7 +77,7 @@ func (m *App) launcherNewSession() tea.Cmd {
 	if m.Logger != nil {
 		m.Logger.Info("SESSION", "new_session_from_launcher")
 	}
-	result := m.NewSessionFromLauncher()
+	result := m.NewAgentSession()
 	if result != nil && result.Error != "" {
 		if result.NeedsAccount {
 			m.showAccountRecovery(false, result.Error)
@@ -131,7 +131,7 @@ func (m *App) launcherResumeSession(sessionID string, sessionMeta *sessiondb.Ses
 	if m.Logger != nil {
 		m.Logger.Info("SESSION", "resume_selected", "id", sessionID)
 	}
-	result := m.ResumeSessionFromLauncher(sessionID)
+	result := m.OpenAgentSession(sessionID)
 	if result == nil || result.Error != "" {
 		if result != nil && result.NeedsAccount {
 			m.showAccountRecovery(true, result.Error)
@@ -147,14 +147,6 @@ func (m *App) launcherResumeSession(sessionID string, sessionMeta *sessiondb.Ses
 	m.AddOrchestrator(result.OrchID)
 	if err := m.LastRegistryError(); err != nil && m.Feedback != nil {
 		m.Feedback.NotifyError("Session resumed but registry update failed: " + err.Error())
-	}
-	if m.ActiveSession != nil {
-		if msgs := m.ActiveSession.TakeHydratedMessages(); len(msgs) > 0 {
-			m.hydrateActiveMessages(ChatMessagesFromViews(msgs))
-		}
-		if refs := m.ActiveSession.TakeHydratedRefs(); len(refs) > 0 {
-			m.SetReferences(refs)
-		}
 	}
 	if err := m.ActiveSessionConnectionIssue(); err != nil {
 		m.showAccountRecovery(true, err.Error())

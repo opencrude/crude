@@ -97,7 +97,7 @@ func TestMainPaneOwnershipCompletedChildKeepsSingleFamilyChrome(t *testing.T) {
 	for range 3 {
 		app.forceFrame()
 		_ = app.View()
-		if app.ActiveSession != first || app.AgentMgr.ActiveID() != child.ID || app.Win.ActiveGroup() != right {
+		if app.ActiveSession != first || app.AgentView.ActiveID() != child.ID || app.Win.ActiveGroup() != right {
 			t.Fatal("paint changed active family/member")
 		}
 		if app.mainPanes.groups[left].input.Empty() || !app.mainPanes.groups[right].input.Empty() {

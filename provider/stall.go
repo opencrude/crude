@@ -166,6 +166,13 @@ func (w *progressWatch) currentTimeout() time.Duration {
 
 func (w *progressWatch) setPhase(phase string) {
 	w.mu.Lock()
+	// Upload EOF and response headers are observed on independent transport
+	// goroutines. Once download starts, a late upload callback cannot reset its
+	// byte count, clock or error attribution back to waiting for headers.
+	if phase == w.phase || w.phase == "download" || w.phase == "response headers" && phase == "upload" {
+		w.mu.Unlock()
+		return
+	}
 	w.phase = phase
 	w.bytes = 0
 	w.last = time.Now()
@@ -177,8 +184,12 @@ func (w *progressWatch) setPhase(phase string) {
 }
 
 func (w *progressWatch) progress(bytes int64) {
+	w.progressInPhase("", bytes)
+}
+
+func (w *progressWatch) progressInPhase(phase string, bytes int64) {
 	w.mu.Lock()
-	if bytes <= w.bytes {
+	if phase != "" && phase != w.phase || bytes <= w.bytes {
 		w.mu.Unlock()
 		return
 	}
@@ -222,7 +233,7 @@ func (r *watchedUploadReader) Read(buffer []byte) (int, error) {
 	n, err := r.inner.Read(buffer)
 	if n > 0 {
 		r.read += int64(n)
-		r.watch.progress(r.read)
+		r.watch.progressInPhase("upload", r.read)
 	}
 	if err == io.EOF || (r.total > 0 && r.read >= r.total) {
 		r.watch.setPhase("response headers")
@@ -234,7 +245,7 @@ func (r *watchedReadCloser) Read(buffer []byte) (int, error) {
 	n, err := r.inner.Read(buffer)
 	if n > 0 {
 		r.read += int64(n)
-		r.watch.progress(r.read)
+		r.watch.progressInPhase("download", r.read)
 	}
 	if err != nil {
 		var stalled *ProgressStallError

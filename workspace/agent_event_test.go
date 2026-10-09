@@ -48,11 +48,13 @@ func TestToolEventsNeverPublishStructuredArgumentsAsStatusOrOperand(t *testing.T
 	} {
 		t.Run(tc.tool, func(t *testing.T) {
 			state := NewAgentState("agent", nil, nil)
-			status := ""
-			state.HandleEvent(AgentEvent{Type: "tool_call", Data: map[string]any{
+			effects := state.ApplyEvent(AgentEvent{Type: "tool_call", Data: map[string]any{
 				"internal_id": "message", "tool_id": "call", "name": tc.tool, "args": tc.args,
-			}}, nil, func(line string) { status = line }, func(bool, bool, bool) {}, func() {},
-				func(string, string, string, string, string, string, string) {}, func(string) {}, func() {})
+			}})
+			status := effects.Status
+			if !effects.StatusChanged {
+				t.Fatal("tool call did not publish a status effect")
+			}
 			messages := state.Messages.Messages()
 			if len(messages) != 1 || messages[0].ToolArgs != tc.want ||
 				strings.Contains(messages[0].ToolProgressLabel, `"`) || strings.Contains(status, `"`) {
@@ -78,10 +80,13 @@ func TestToolStatusRejectsStructuredToolNames(t *testing.T) {
 func TestParallelToolEventRetainsChildrenWithoutShowingAPIFields(t *testing.T) {
 	input := `{"tool_uses":[{"recipient_name":"functions.execute_command","parameters":{"command":"go test ./..."}},{"recipient_name":"functions.read_file","parameters":{"path":"main.go"}}]}`
 	state := NewAgentState("agent", nil, nil)
-	status := ""
-	state.HandleEvent(AgentEvent{Type: "tool_call", Data: map[string]any{
+	effects := state.ApplyEvent(AgentEvent{Type: "tool_call", Data: map[string]any{
 		"internal_id": "batch", "tool_id": "call", "name": "multi_tool_use.parallel", "args": input,
-	}}, nil, func(line string) { status = line }, func(bool, bool, bool) {}, func() {}, func(string, string, string, string, string, string, string) {}, func(string) {}, func() {})
+	}})
+	status := effects.Status
+	if !effects.StatusChanged {
+		t.Fatal("parallel tool call did not publish a status effect")
+	}
 	messages := state.Messages.Messages()
 	if len(messages) != 1 || messages[0].ToolInput != input || messages[0].ToolArgs != "2 tools" || status != "Running 2 tools" {
 		t.Fatalf("batch call state = %+v; status = %q", messages, status)
@@ -92,7 +97,7 @@ func TestExecutingPhaseRemovesOnlyTransientProviderWait(t *testing.T) {
 	state := NewAgentState("agent", nil, nil)
 	state.Messages.UpdateTurnStatus(TurnStatus{Phase: "compaction_completed", OperationID: "checkpoint"})
 	state.Messages.UpdateTurnStatus(TurnStatus{Phase: "waiting_provider", Provider: "gateway"})
-	state.HandleEvent(AgentEvent{Type: "phase", Data: "executing"}, nil, func(string) {}, func(bool, bool, bool) {}, func() {}, func(string, string, string, string, string, string, string) {}, func(string) {}, func() {})
+	state.ApplyEvent(AgentEvent{Type: "phase", Data: "executing"})
 	messages := state.Messages.Messages()
 	if len(messages) != 1 || messages[0].LifecycleOperationID != "checkpoint" {
 		t.Fatalf("tool execution retained stale provider wait or cleared durable checkpoint: %+v", messages)
@@ -102,7 +107,7 @@ func TestExecutingPhaseRemovesOnlyTransientProviderWait(t *testing.T) {
 func TestRetryUpdatesOneStatusAndStopIgnoresLateRetry(t *testing.T) {
 	state := NewAgentState("agent", nil, nil)
 	emit := func(event AgentEvent) {
-		state.HandleEvent(event, nil, func(string) {}, func(bool, bool, bool) {}, func() {}, func(string, string, string, string, string, string, string) {}, func(string) {}, func() {})
+		state.ApplyEvent(event)
 	}
 	for _, attempt := range []int{1, 2, 3} {
 		emit(AgentEvent{Type: "retry", Data: map[string]any{"attempt": attempt, "limit": 6, "backoff": float64(4), "reason": "Provider temporarily unavailable"}})
@@ -121,7 +126,7 @@ func TestRetryUpdatesOneStatusAndStopIgnoresLateRetry(t *testing.T) {
 func TestThinkingBlockFinalizesWhenToolActionStarts(t *testing.T) {
 	state := NewAgentState("agent", nil, nil)
 	handle := func(event AgentEvent) {
-		state.HandleEvent(event, nil, func(string) {}, func(bool, bool, bool) {}, func() {}, func(string, string, string, string, string, string, string) {}, func(string) {}, func() {})
+		state.ApplyEvent(event)
 	}
 	handle(AgentEvent{Type: "thinking", Data: reasoning.Delta{Text: "brief thought"}})
 	time.Sleep(time.Millisecond)
@@ -145,8 +150,7 @@ func TestReplyResultCreatesOneAttributedProgressMessageNotAToolRow(t *testing.T)
 	state := NewAgentState("root", nil, nil)
 	identity := ttypes.TurnIdentity{Generation: 1, ProviderID: "openai", ModelID: "model"}
 	handle := func(evt AgentEvent) {
-		state.HandleEvent(evt, nil, func(string) {}, func(bool, bool, bool) {}, func() {},
-			func(string, string, string, string, string, string, string) {}, func(string) {}, func() {})
+		state.ApplyEvent(evt)
 	}
 	handle(AgentEvent{Type: "turn_started", Data: identity})
 	handle(AgentEvent{Type: "tool_call", Data: map[string]any{"tool_id": "progress-1", "name": "reply"}})
@@ -164,13 +168,13 @@ func TestReplyResultCreatesOneAttributedProgressMessageNotAToolRow(t *testing.T)
 func TestCancellingAgentIgnoresQueuedNonTerminalEvents(t *testing.T) {
 	state := NewAgentState("agent", nil, nil)
 	state.SubmitInput("start")
-	state.HandleEvent(AgentEvent{Type: "thinking", Data: reasoning.Delta{Text: "before cancel"}}, nil, func(string) {}, func(bool, bool, bool) {}, func() {}, func(string, string, string, string, string, string, string) {}, func(string) {}, func() {})
+	state.ApplyEvent(AgentEvent{Type: "thinking", Data: reasoning.Delta{Text: "before cancel"}})
 	state.BeginCancellation()
 	if state.IsActive() {
 		t.Fatal("cancellation left the visual turn active")
 	}
 	before := state.Messages.Messages()
-	state.HandleEvent(AgentEvent{Type: "thinking", Data: reasoning.Delta{Text: " stale"}}, nil, func(string) {}, func(bool, bool, bool) {}, func() {}, func(string, string, string, string, string, string, string) {}, func(string) {}, func() {})
+	state.ApplyEvent(AgentEvent{Type: "thinking", Data: reasoning.Delta{Text: " stale"}})
 	after := state.Messages.Messages()
 	if len(after) != len(before) || after[0].Content != before[0].Content {
 		t.Fatalf("queued event mutated cancelling state: before=%#v after=%#v", before, after)
@@ -186,24 +190,13 @@ func TestAgentToolLifecycleRemainsActiveBetweenPermissionAndNextTurn(t *testing.
 		t.Fatalf("submit lifecycle row = %#v", initial)
 	}
 	statusID := initial[0].InternalID
-	status := ""
-	active := false
-	handle := func(evt AgentEvent) {
-		state.HandleEvent(evt, nil,
-			func(line string) { status = line },
-			func(thinking, streaming, blocking bool) { active = thinking || streaming || blocking },
-			func() { active = true },
-			func(string, string, string, string, string, string, string) {},
-			func(string) {},
-			func() {},
-		)
-	}
+	handle := func(evt AgentEvent) AgentEffects { return state.ApplyEvent(evt) }
 
-	handle(AgentEvent{Type: "tool_call_streaming", Data: map[string]any{
+	effects := handle(AgentEvent{Type: "tool_call_streaming", Data: map[string]any{
 		"internal_id": "internal-1", "tool_id": "tool-1", "name": "edit_file", "path": "main.go",
 	}})
-	if !state.IsActive() || !active || !strings.Contains(status, "Preparing Edit File") {
-		t.Fatalf("streaming tool lifecycle: active=%v callback=%v status=%q", state.IsActive(), active, status)
+	if !state.IsActive() || !effects.ThinkingChanged || !effects.Thinking || !effects.StatusChanged || !strings.Contains(effects.Status, "Preparing Edit File") {
+		t.Fatalf("streaming tool lifecycle: active=%v effects=%+v", state.IsActive(), effects)
 	}
 	if messages := conversation.Messages(); len(messages) != 1 || messages[0].Role != MessageRoleTool || messages[0].InternalID != statusID {
 		t.Fatalf("lifecycle row did not transform in place: %#v", messages)
@@ -214,18 +207,18 @@ func TestAgentToolLifecycleRemainsActiveBetweenPermissionAndNextTurn(t *testing.
 	handle(AgentEvent{Type: "permission_resolved", Data: map[string]any{
 		"internal_id": "internal-1", "tool_id": "tool-1", "tool": "edit_file", "decision": "allowed",
 	}})
-	handle(AgentEvent{Type: "blocking_complete"})
-	if !state.IsActive() || !active {
+	effects = handle(AgentEvent{Type: "blocking_complete"})
+	if !state.IsActive() || !effects.ThinkingChanged || !effects.Thinking || effects.Streaming || effects.Blocking {
 		t.Fatal("blocking_complete incorrectly made the running tool idle")
 	}
 	if messages := conversation.Messages(); len(messages) != 1 || messages[0].PermTag != "allowed" {
 		t.Fatalf("permission lifecycle was not attached to tool: %#v", messages)
 	}
-	handle(AgentEvent{Type: "tool_result", Data: map[string]any{
+	effects = handle(AgentEvent{Type: "tool_result", Data: map[string]any{
 		"internal_id": "internal-1", "tool_id": "tool-1", "name": "edit_file", "result": "ok",
 	}})
-	if !state.IsActive() || !strings.Contains(status, "done") {
-		t.Fatalf("post-tool lifecycle: active=%v status=%q", state.IsActive(), status)
+	if !state.IsActive() || !effects.StatusChanged || !strings.Contains(effects.Status, "done") {
+		t.Fatalf("post-tool lifecycle: active=%v effects=%+v", state.IsActive(), effects)
 	}
 	handle(AgentEvent{Type: "done", Data: map[string]any{"content": "done", "reason": "completed"}})
 	if state.IsActive() {
@@ -235,16 +228,13 @@ func TestAgentToolLifecycleRemainsActiveBetweenPermissionAndNextTurn(t *testing.
 
 func TestStructuredTurnPhasesExposeUploadAndProviderWait(t *testing.T) {
 	state := NewAgentState("agent", nil, nil)
-	thinking := false
 	var statusID string
 	for index, event := range []AgentEvent{
 		{Type: "phase", Data: map[string]any{"name": "preparing", "progress": 37, "provider": "OpenAI", "uploaded_bytes": int64(37), "total_bytes": int64(100)}},
 		{Type: "phase", Data: map[string]any{"name": "waiting_provider", "provider": "OpenAI"}},
 	} {
-		state.HandleEvent(event, nil, func(string) {}, func(active, _, _ bool) {
-			thinking = active
-		}, func() {}, func(string, string, string, string, string, string, string) {}, func(string) {}, func() {})
-		if !thinking || !state.IsActive() {
+		effects := state.ApplyEvent(event)
+		if !effects.ThinkingChanged || !effects.Thinking || !state.IsActive() {
 			t.Fatalf("phase %#v was not active", event.Data)
 		}
 		messages := state.Messages.Messages()
@@ -261,7 +251,7 @@ func TestStructuredTurnPhasesExposeUploadAndProviderWait(t *testing.T) {
 			t.Fatalf("provider wait replaced rather than updated row: %#v", messages[0])
 		}
 	}
-	state.HandleEvent(AgentEvent{Type: "thinking", Data: reasoning.Delta{Text: "reasoning"}}, nil, func(string) {}, func(bool, bool, bool) {}, func() {}, func(string, string, string, string, string, string, string) {}, func(string) {}, func() {})
+	state.ApplyEvent(AgentEvent{Type: "thinking", Data: reasoning.Delta{Text: "reasoning"}})
 	messages := state.Messages.Messages()
 	if len(messages) != 1 || messages[0].Role != MessageRoleThinking {
 		t.Fatalf("normal provider output did not consume lifecycle row: %#v", messages)

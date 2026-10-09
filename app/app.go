@@ -20,8 +20,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"reflect"
-	"strings"
 	"sync"
 	"time"
 
@@ -244,7 +242,9 @@ func (a *App) persistAccountRotation(account provider.Account) error {
 // tests to exercise the real workspace entry point without starting the TUI.
 func (a *App) configureWorkspace(ws *workspace.Workspace) {
 	// The callback updates only its account: never write an old app snapshot.
-	a.accounts = provider.NewAccountManager(a.fc.Accounts, a.persistAccountRotation)
+	if a.accounts == nil {
+		a.accounts = provider.NewAccountManager(a.fc.Accounts, a.persistAccountRotation)
+	}
 	sessCfg := FileConfigToSession(a.fc)
 	sessCfg.AccountManager = a.accounts
 	ws.SetBackendConfig(sessCfg, a.home)
@@ -294,67 +294,14 @@ func (a *App) configureWorkspace(ws *workspace.Workspace) {
 		// only after its generation-bound command result arrives.
 		return FileConfigToAppSettings(updated), nil
 	}
+	ws.OnAppAccountCommit = a.commitCoreAccount
+	ws.OnAppPreferencesCommit = a.commitCorePreferences
 	ws.OnAppAccountChange = func(change ttypes.AccountChange) error {
-		var updated FileConfig
-		err := a.accounts.Commit(func(_ map[string]provider.Account) (map[string]provider.Account, error) {
-			a.configMu.Lock()
-			defer a.configMu.Unlock()
-			var saveErr error
-			updated, saveErr = updateFileConfig(func(current *FileConfig) error {
-				if change.ID == "" || change.ProviderID == "" {
-					return fmt.Errorf("invalid account identity")
-				}
-				if change.Before != nil && change.Before.ID != change.ID {
-					return fmt.Errorf("invalid account precondition")
-				}
-				before, exists := current.Accounts[change.ID]
-				if change.Before == nil {
-					if exists {
-						return fmt.Errorf("account was created while settings were open; reopen Accounts")
-					}
-				} else if !exists || !reflect.DeepEqual(before, *change.Before) {
-					return fmt.Errorf("account changed while settings were open; reopen Accounts")
-				}
-				if change.After == nil {
-					if change.Before == nil {
-						return fmt.Errorf("cannot remove a missing account")
-					}
-					delete(current.Accounts, change.ID)
-				} else {
-					if change.After.ID != change.ID || change.After.ProviderID != change.ProviderID || strings.TrimSpace(change.After.Label) == "" {
-						return fmt.Errorf("invalid account identity or name")
-					}
-					resolved := change.After.Connection
-					if err := resolved.Validate(); err != nil {
-						return fmt.Errorf("invalid account connection: %w", err)
-					}
-					if resolved.AuthType != provider.AuthNone && change.After.APIKey == "" && (change.After.OAuth == nil || change.After.OAuth.AccessToken == "" && change.After.OAuth.RefreshToken == "") {
-						return fmt.Errorf("configure authentication for account %q", change.After.Label)
-					}
-					for id, other := range current.Accounts {
-						if id != change.ID && strings.EqualFold(strings.TrimSpace(other.Label), strings.TrimSpace(change.After.Label)) {
-							return fmt.Errorf("an account with that name already exists")
-						}
-					}
-					if current.Accounts == nil {
-						current.Accounts = make(map[string]provider.Account)
-					}
-					current.Accounts[change.ID] = cloneAccount(*change.After)
-				}
-				return nil
-			})
-			if saveErr != nil {
-				return nil, saveErr
-			}
-			a.fc = updated
-			a.persistedAccounts = cloneAccounts(updated.Accounts)
-			delete(a.rotationPredecessors, change.ID)
-			return updated.Accounts, nil
-		})
+		updated, err := a.commitCoreAccount(change)
 		if err != nil {
 			return err
 		}
-		ws.SetAppDefaults(FileConfigToAppSettings(updated))
+		ws.SetAppDefaults(updated)
 		return nil
 	}
 	ws.SetAppDefaults(FileConfigToAppSettings(a.fc))

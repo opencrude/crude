@@ -1,6 +1,7 @@
 package workspace
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -23,6 +24,7 @@ import (
 // Turn input, blocking responses, human steering, and cancellation are routed through
 // generation-bound Workspace methods rather than cross-layer channels.
 type NewSessionResult struct {
+	SessionID    string
 	OrchID       string
 	Error        string
 	NeedsAccount bool
@@ -117,25 +119,24 @@ type Workspace struct {
 	instanceID       string
 	// Documents is the single scheduler and disk-commit authority for editor
 	// buffers in this workspace.
-	Documents *DocumentSaveService
+	Documents     *DocumentSaveService
+	LiveDocuments *DocumentService
 
 	// TermMgr owns in-app PTY sessions (the terminal multiplexer).
 	TermMgr *TerminalManager
+	// Terminals owns the one parser/reply state for every PTY. Shells consume
+	// immutable projections; they never parse a second reply-capable byte stream.
+	Terminals *TerminalService
 	// Status retains typed workspace-scoped lifecycle, activity, issue, and
 	// notification projections. Resource managers remain authoritative.
 	Status             *StatusCenter
 	registryCostWriter *registryCostWriter
 
-	// FocusStack manages keyboard focus as a stack. Pushing a floating
-	// window or clicking the tree pushes focus; closing pops back.
-	FocusStack *FocusStack
-
 	// ── Sessions
 	//
 	// The workspace owns all AI conversations for this project. Sessions
 	// is the canonical list; SessionsByID indexes by session ID for fast
-	// lookup. ActiveSession points to the conversation currently displayed
-	// in the chat view. nil when the launcher/workspace selector is showing.
+	// lookup. Selection belongs to each shell, not this runtime.
 
 	// Sessions is the canonical list of all frontend sessions in this workspace.
 	Sessions []*Session
@@ -147,8 +148,10 @@ type Workspace struct {
 	// A session may own more than one orchestrator over its lifetime.
 	SessionsByAgent map[string]*Session
 
-	// ActiveSession is the currently-active frontend session.
-	ActiveSession *Session
+	// Agent admission and snapshots share the workspace's serialized owner.
+	// These are runtime facts, never a client's selected tab or pane geometry.
+	agentRevision uint64
+	agentPrompts  map[string]AgentPrompt
 
 	// ── Backend session config (set by app layer)
 	//
@@ -175,6 +178,10 @@ type Workspace struct {
 	// OnAppAccountChange persists one application account without writing other
 	// settings drafts. The app layer owns the config file and account manager.
 	OnAppAccountChange func(change ttypes.AccountChange) error
+	// Core commits return an immutable durable snapshot. Only the serialized
+	// workspace owner publishes it; workers must never call SetAppDefaults.
+	OnAppAccountCommit     func(ttypes.AccountChange) (ttypes.AppSettings, error)
+	OnAppPreferencesCommit func(before, after ttypes.AppSettings) (ttypes.AppSettings, error)
 	// OnAppCapabilityRegistration persists one service-initiated application
 	// capability registration. The app layer owns config.json, so it applies the
 	// shared registration owner under its config lock rather than replacing
@@ -188,9 +195,8 @@ type Workspace struct {
 	// Logger is the global logger.
 	Logger Logger
 
-	// ModelName is the display name of the active model.
-	// Set during workspace creation, updated by the TUI layer.
-	ModelName string
+	// InitialModelName is startup display metadata, not a selected session.
+	InitialModelName string
 
 	// InitialSettings is the neutral settings snapshot supplied by the app
 	// layer. The TUI may use it to initialize its presentation state.
@@ -301,12 +307,11 @@ func NewWorkspace(
 		TermMgr:            NewTerminalManager(rootPath),
 		Status:             NewStatusCenter(workspaceSQLDB(wsDB), lg),
 		registryCostWriter: newRegistryCostWriter(wsDB, lg),
-		FocusStack:         NewFocusStack(),
 		Sessions:           make([]*Session, 0),
 		SessionsByID:       make(map[string]*Session),
 		SessionsByAgent:    make(map[string]*Session),
 		Logger:             lg,
-		ModelName:          modelName,
+		InitialModelName:   modelName,
 		InitialSettings:    initial,
 		Username:           username,
 		StartTime:          time.Now(),
@@ -315,6 +320,8 @@ func NewWorkspace(
 	if historyStore != nil {
 		ws.HistoryService = NewLocalHistoryService(rootPath, historyStore, lg)
 	}
+	ws.Terminals, _ = NewTerminalService(ws.TermMgr) // newly allocated, empty manager
+	ws.LiveDocuments = NewDocumentService(rootPath, ws.Documents, ws.LSPMgr)
 
 	// Self-heal the session registry from on-disk session DBs. Runs on
 	// workspace open (not the launcher workspace-list path, which is
@@ -413,33 +420,6 @@ func (w *Workspace) ensureWorkspacePersistence() error {
 	return nil
 }
 
-// SessionDir returns the session directory for the active session.
-// Convenience accessor — delegates to ActiveSession.
-func (w *Workspace) SessionDir() string {
-	if w.ActiveSession != nil {
-		return w.ActiveSession.SessionDir
-	}
-	return ""
-}
-
-// SessionDB returns the SQLite handle for the active session.
-// Convenience accessor — delegates to ActiveSession.
-func (w *Workspace) SessionDB() *sql.DB {
-	if w.ActiveSession != nil {
-		return w.ActiveSession.DB
-	}
-	return nil
-}
-
-// RefStore returns the reference store for the active session.
-// Convenience accessor — delegates to ActiveSession.
-func (w *Workspace) RefStore() *ReferenceStore {
-	if w.ActiveSession != nil {
-		return w.ActiveSession.RefStore
-	}
-	return nil
-}
-
 // WorkspaceRoot returns the project root path (alias for RootPath).
 // Provided as a method for interface compatibility.
 func (w *Workspace) WorkspaceRoot() string {
@@ -454,13 +434,18 @@ func (w *Workspace) Close() {
 	defer w.capabilityMu.Unlock()
 	w.CloseAllSessions()
 	w.CancelProjectSearch()
+	if w.LiveDocuments != nil {
+		w.LiveDocuments.Close()
+	}
 	if w.Documents != nil {
 		w.Documents.Close()
 	}
 	if w.Capabilities != nil {
 		w.Capabilities.Close()
 	}
-	if w.TermMgr != nil {
+	if w.Terminals != nil {
+		w.Terminals.CloseAll()
+	} else if w.TermMgr != nil {
 		w.TermMgr.CloseAll()
 	}
 	if w.LSPMgr != nil {
@@ -505,7 +490,6 @@ func (w *Workspace) CloseAllSessions() {
 	w.Sessions = w.Sessions[:0]
 	w.SessionsByID = make(map[string]*Session)
 	w.SessionsByAgent = make(map[string]*Session)
-	w.ActiveSession = nil
 }
 
 // LastRegistryError returns the most recent non-fatal session-registry write
@@ -697,9 +681,16 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 	}
 	w.Capabilities = nil
 	w.FileOwnership = agent.NewFileOwnership()
+	if w.LiveDocuments != nil {
+		w.LiveDocuments.Close()
+	}
 	if w.TermMgr != nil {
 		w.TermMgr.SetEventBus(nil)
-		w.TermMgr.CloseAll()
+		if w.Terminals != nil {
+			w.Terminals.CloseAll()
+		} else {
+			w.TermMgr.CloseAll()
+		}
 	}
 	if w.LSPMgr != nil {
 		w.LSPMgr.SetOnDiagnostics(nil)
@@ -748,6 +739,8 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 	w.LSPMgr = NewLSPManager(w.Logger)
 	w.LSPMgr.SetWorkspaceRoot(abs)
 	w.AgentMgr = NewAgentManager()
+	w.agentPrompts = nil
+	w.agentRevision++
 	w.PaneMgr = NewPaneManager()
 	if w.ProjectSearch == nil {
 		w.ProjectSearch = NewProjectSearchService()
@@ -759,7 +752,9 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 	}
 	w.Documents = NewDocumentSaveService()
 	w.Documents.SetEventBus(w.eventBus)
+	w.LiveDocuments = NewDocumentService(abs, w.Documents, w.LSPMgr)
 	w.TermMgr = NewTerminalManager(abs)
+	w.Terminals, _ = NewTerminalService(w.TermMgr)
 	w.Status = NewStatusCenter(workspaceSQLDB(wsDB), w.Logger)
 	w.registryCostWriter = newRegistryCostWriter(wsDB, w.Logger)
 	status := w.Status
@@ -775,7 +770,6 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 			bus.Send(StatusCenterHydratedMsg{})
 		}
 	}()
-	w.FocusStack = NewFocusStack()
 	w.registryErr = nil
 	if w.eventBus != nil {
 		w.TermMgr.SetEventBus(w.eventBus)
@@ -843,98 +837,22 @@ func (w *Workspace) SetEventSender(sender session.EventSender) {
 	w.sender = sender
 }
 
-// NewSessionFromLauncher creates a new session and starts its orchestrator.
-// Called by the launcher when the user selects "New Session".
-func (w *Workspace) NewSessionFromLauncher() *NewSessionResult {
-	if w.sessionCfg == nil {
-		w.Logger.Warn("WORKSPACE", "no_session_config")
-		return &NewSessionResult{Error: "Session configuration is unavailable"}
-	}
-	if w.sender == nil {
-		return &NewSessionResult{Error: "Session event transport is unavailable"}
-	}
-	previous := w.ActiveSession
-	_, err := w.CreateSession(w.sessionCfg, w.homeDir)
-	if err != nil {
-		w.Logger.Warn("WORKSPACE", "new_session_failed", "error", err.Error())
-		return &NewSessionResult{Error: "Failed to create session: " + err.Error(), NeedsAccount: errors.Is(err, session.ErrAccountRequired)}
-	}
-	orch, err := w.StartOrchestrator(w.sender)
-	if err != nil {
-		w.Logger.Warn("WORKSPACE", "start_orchestrator_failed", "error", err.Error())
-		w.abandonUnstartedSession(w.ActiveSession, previous)
-		return &NewSessionResult{Error: "Failed to start session: " + err.Error()}
-	}
-	return &NewSessionResult{
-		OrchID: orch.ID,
-	}
+// NewAgentSession creates a session and registers its runtime without selecting
+// it in any shell. Callers must serialize workspace lifecycle operations.
+func (w *Workspace) NewAgentSession() *NewSessionResult {
+	return w.openAgentSessionOperation("")
 }
 
-// ResumeSessionFromLauncher resumes an existing session by ID and starts
-// its orchestrator in-place (no process restart). Returns the failure reason.
-// If the session is already open, it is activated and a new orchestrator
-// is started for multi-session support.
-func (w *Workspace) ResumeSessionFromLauncher(sessionID string) *NewSessionResult {
-	if w.sessionCfg == nil {
-		w.Logger.Warn("WORKSPACE", "no_session_config")
-		return &NewSessionResult{Error: "Session configuration is unavailable"}
-	}
-	if w.sender == nil {
-		return &NewSessionResult{Error: "Session event transport is unavailable"}
-	}
-	previous := w.ActiveSession
-	created := false
+// OpenAgentSession opens an exact saved session or returns its existing runtime.
+// Opening never selects a client view or starts a provider turn.
+func (w *Workspace) OpenAgentSession(sessionID string) *NewSessionResult {
+	return w.openAgentSessionOperation(sessionID)
+}
 
-	// Already open: activate its existing orchestrator when it still has one.
-	if existing, ok := w.SessionsByID[sessionID]; ok && existing != nil {
-		w.ActiveSession = existing
-		if node := w.AgentMgr.Get(existing.AgentID); node != nil {
-			return &NewSessionResult{
-				OrchID: node.ID,
-			}
-		}
-	} else {
-		_, err := w.ResumeSession(sessionID, w.sessionCfg, w.homeDir)
-		if err != nil {
-			w.Logger.Warn("WORKSPACE", "resume_failed", "id", sessionID, "error", err.Error())
-			return &NewSessionResult{Error: "Failed to resume session: " + err.Error(), NeedsAccount: errors.Is(err, session.ErrAccountRequired)}
-		}
-		created = true
-	}
-	orch, err := w.StartOrchestrator(w.sender)
+func (w *Workspace) openAgentSessionOperation(id string) *NewSessionResult {
+	op, err := w.PrepareAgentSession(id)
 	if err != nil {
-		w.Logger.Warn("WORKSPACE", "start_orchestrator_failed", "error", err.Error())
-		if created {
-			w.abandonUnstartedSession(w.ActiveSession, previous)
-		} else {
-			w.ActiveSession = previous
-		}
-		return &NewSessionResult{Error: "Failed to start session: " + err.Error()}
+		return &NewSessionResult{Error: err.Error(), NeedsAccount: errors.Is(err, session.ErrAccountRequired)}
 	}
-
-	// Hydrate history for the resumed session.
-	w.Hydrate()
-
-	return &NewSessionResult{
-		OrchID: orch.ID,
-	}
-}
-
-// ActivateSessionByAgent switches the workspace business context to the
-// session backing an orchestrator tab.
-func (w *Workspace) ActivateSessionByAgent(agentID string) {
-	if sess := w.sessionForAgent(agentID); sess != nil {
-		w.activateSession(sess)
-		return
-	}
-	for _, sess := range w.Sessions {
-		if sess != nil && sess.AgentID == agentID {
-			w.activateSession(sess)
-			return
-		}
-	}
-}
-
-func (w *Workspace) activateSession(sess *Session) {
-	w.ActiveSession = sess
+	return w.ApplyAgentSession(op.Run(context.Background()))
 }

@@ -188,11 +188,16 @@ func (m *App) syncAgentMessages(agentID string, scroll bool) {
 	if proj == nil {
 		return
 	}
-	if node.State.Messages == nil || proj.renderer.SourceVersion() == node.State.Messages.Version() {
+	if node.State.Messages == nil {
+		return
+	}
+	if proj.renderer.SourceVersion() == node.State.Messages.Version() {
+		m.presentThinking(proj.renderer, node.State.Messages)
 		return
 	}
 	messages, version := chatMessagesFromConversation(node.State.Messages)
 	proj.renderer.SyncMessages(messages, version)
+	m.presentThinking(proj.renderer, node.State.Messages)
 	if scroll {
 		proj.renderer.ScrollToBottom()
 	}
@@ -217,43 +222,25 @@ func (m *App) syncPaneMessages(paneID string, scroll bool) {
 	}
 }
 
-func (m *App) syncConversationMessages(conversation *workspace.Conversation, scroll bool) {
-	if conversation == nil {
-		return
-	}
-	for id, pane := range m.PaneMgr.Panes() {
-		if pane != nil && pane.Messages == conversation {
-			m.syncPaneMessages(id, scroll)
-			return
-		}
-	}
-}
-
 func (m *App) appendAgentMessage(agentID string, message ttypes.ChatMessage) {
-	node := m.AgentMgr.Get(agentID)
-	if node == nil || node.State == nil || node.State.Messages == nil {
-		return
+	if m.AppendAgentMessages(agentID, []workspace.Message{workspaceMessageFromChat(message)}, false) {
+		m.syncAgentMessages(agentID, true)
 	}
-	node.State.Messages.AppendMessage(workspaceMessageFromChat(message))
-	m.syncAgentMessages(agentID, true)
 }
 
 func (m *App) appendActiveMessage(message ttypes.ChatMessage) {
-	m.appendAgentMessage(m.AgentMgr.ActiveID(), message)
+	m.appendAgentMessage(m.AgentView.ActiveID(), message)
 }
 
 func (m *App) hydrateActiveMessages(messages []ttypes.ChatMessage) {
-	agentID := m.AgentMgr.ActiveID()
-	node := m.AgentMgr.Get(agentID)
-	if node == nil || node.State == nil || node.State.Messages == nil {
-		return
-	}
+	agentID := m.AgentView.ActiveID()
+	canonical := make([]workspace.Message, 0, len(messages))
 	for _, message := range messages {
-		node.State.Messages.AppendMessage(workspaceMessageFromChat(message))
+		canonical = append(canonical, workspaceMessageFromChat(message))
 	}
 	// Hydrated streams are stopped. Normalize before publishing, and export
 	// the transcript once rather than copying every growing prefix.
-	node.State.Messages.MarkStreamingToolsCancelled()
-	node.State.Messages.MarkAllThinkingInterrupted()
-	m.syncAgentMessages(agentID, true)
+	if m.AppendAgentMessages(agentID, canonical, true) {
+		m.syncAgentMessages(agentID, true)
+	}
 }

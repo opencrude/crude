@@ -133,16 +133,16 @@ func newTestApp(t testing.TB) *App {
 
 	app := &App{
 		Workspace: &workspace.Workspace{
-			AgentMgr:      workspace.NewAgentManager(),
-			PaneMgr:       workspace.NewPaneManager(),
-			Git:           workspace.NewGitService("."),
-			TermMgr:       workspace.NewTerminalManager("."),
-			FocusStack:    workspace.NewFocusStack(),
-			StartTime:     time.Now(),
-			ActiveSession: &workspace.Session{},
-			LSPMgr:        workspace.NewLSPManager(nil),
-			Status:        workspace.NewStatusCenter(nil, nil),
+			AgentMgr:  workspace.NewAgentManager(),
+			PaneMgr:   workspace.NewPaneManager(),
+			Git:       workspace.NewGitService("."),
+			TermMgr:   workspace.NewTerminalManager("."),
+			StartTime: time.Now(),
+			LSPMgr:    workspace.NewLSPManager(nil),
+			Status:    workspace.NewStatusCenter(nil, nil),
 		},
+		FocusStack:         NewFocusStack(),
+		ActiveSession:      &workspace.Session{},
 		Theme:              th,
 		Input:              im,
 		Tree:               NewTreeState(nil, 30),
@@ -175,6 +175,8 @@ func newTestApp(t testing.TB) *App {
 		width:              80,
 		height:             24,
 	}
+	app.AgentView = NewAgentViewState(app.AgentMgr)
+
 	app.Feedback = newFeedbackSink(app)
 	app.initWorkspacePanels()
 	app.Win = window.New(th)
@@ -219,11 +221,11 @@ func addBackendTestOrchestrator(t *testing.T, app *App) string {
 	if app.SessionsByAgent == nil {
 		app.SessionsByAgent = make(map[string]*workspace.Session)
 	}
-	_, err := app.CreateSession(testAccountConfig(), t.TempDir())
+	owner, err := app.CreateSession(testAccountConfig(), t.TempDir())
 	if err != nil {
 		t.Fatal(err)
 	}
-	orchestrator, err := app.StartOrchestrator(noopEventSender{})
+	orchestrator, err := app.StartOrchestrator(owner.SessionID, noopEventSender{})
 	if err != nil {
 		t.Fatal(err)
 	}

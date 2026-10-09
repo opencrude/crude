@@ -583,11 +583,10 @@ func TestPaintedCommandRowShowsRealOperators(t *testing.T) {
 
 	conv := workspace.NewConversation()
 	state := workspace.NewAgentState("agent", conv, nil)
-	state.HandleEvent(workspace.AgentEvent{Type: "tool_call", Data: map[string]any{
+	state.ApplyEvent(workspace.AgentEvent{Type: "tool_call", Data: map[string]any{
 		"internal_id": "internal-1", "tool_id": "call-1", "name": "execute_command",
 		"args": string(payload),
-	}}, nil, func(string) {}, func(bool, bool, bool) {}, func() {},
-		func(string, string, string, string, string, string, string) {}, func(string) {}, func() {})
+	}})
 
 	messages, _ := chatMessagesFromConversation(conv)
 	if len(messages) != 1 {

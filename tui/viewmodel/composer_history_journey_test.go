@@ -273,12 +273,13 @@ func TestHistoryRecallToActualProviderRetainsMixedContent(t *testing.T) {
 	category.ModelModalities = []string{provider.ModalityImage}
 	profile.Categories[session.CategoryDefault] = category
 	cfg.Agents.Profiles[cfg.Agents.ActiveProfile] = profile
-	if _, err := app.CreateSession(cfg, home); err != nil {
+	owner, err := app.CreateSession(cfg, home)
+	if err != nil {
 		t.Fatal(err)
 	}
 	defer app.CloseAllSessions()
 	sender := &recoveryJourneySender{events: make(chan types.AgentMsg, 512)}
-	orch, err := app.StartOrchestrator(sender)
+	orch, err := app.StartOrchestrator(owner.SessionID, sender)
 	if err != nil {
 		t.Fatal(err)
 	}

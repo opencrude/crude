@@ -9,7 +9,7 @@ import (
 )
 
 // TestEventBusConcurrentSendAndRecentEventsDuringTeardown mirrors the
-// workspace ingress path used by App callbacks while SetProgram toggles.
+// workspace ingress path used by App callbacks while SetSink toggles.
 func TestEventBusConcurrentSendAndRecentEventsDuringTeardown(t *testing.T) {
 	bus := workspace.NewEventBus()
 	const workers = 24
@@ -20,7 +20,7 @@ func TestEventBusConcurrentSendAndRecentEventsDuringTeardown(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < perWorker; i++ {
-			bus.SetProgram(nil)
+			bus.SetSink(nil)
 		}
 	}()
 	for w := 0; w < workers; w++ {
@@ -38,6 +38,6 @@ func TestEventBusConcurrentSendAndRecentEventsDuringTeardown(t *testing.T) {
 	wg.Wait()
 
 	if events := bus.RecentEvents(32); len(events) == 0 {
-		t.Fatal("expected logged events after concurrent Send during SetProgram toggles")
+		t.Fatal("expected logged events after concurrent Send during SetSink toggles")
 	}
 }

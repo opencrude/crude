@@ -125,43 +125,10 @@ func (m *App) ensureTermScreen(id, title string) *shellterm.Screen {
 		return s
 	}
 	s := shellterm.New(m.Theme, id, title)
-	s.SetWrite(func(data []byte) {
-		m.writeTerminal(id, data)
-	})
-	s.SetResize(func(cols, rows int) error {
-		return m.resizeTerminal(id, cols, rows)
-	})
+	s.SetCommand(m.terminalCommand)
 	s.SetCopy(rendering.CopyToClipboardCmd)
-	// Note: no synchronous title hook. OSC titles are published from
-	// handleTerminalOutput via an async tea.Cmd; publishing here would
-	// re-enter the event bus while it is handling TerminalOutputMsg.
 	m.termScreens[id] = s
 	return s
-}
-
-func (m *App) writeTerminal(id string, data []byte) {
-	mgr := m.termMgr()
-	if mgr == nil {
-		m.reportTerminalIOError("write", id, fmt.Errorf("terminals are unavailable"))
-		return
-	}
-	if err := mgr.Write(id, data); err != nil {
-		m.reportTerminalIOError("write", id, err)
-	}
-}
-
-func (m *App) resizeTerminal(id string, cols, rows int) error {
-	mgr := m.termMgr()
-	if mgr == nil {
-		err := fmt.Errorf("terminals are unavailable")
-		m.reportTerminalIOError("resize", id, err)
-		return err
-	}
-	if err := mgr.Resize(id, cols, rows); err != nil {
-		m.reportTerminalIOError("resize", id, err)
-		return err
-	}
-	return nil
 }
 
 func (m *App) reportTerminalIOError(operation, id string, err error) {
@@ -189,27 +156,22 @@ func (m *App) dropTermScreen(id string) {
 }
 
 func (m *App) openNewTerminal() tea.Cmd {
-	mgr := m.termMgr()
-	if mgr == nil {
+	service := m.terminalService()
+	if service == nil {
 		if m.Feedback != nil {
 			m.Feedback.NotifyError("Terminals are unavailable")
 		}
 		return nil
 	}
-	info, err := mgr.Create(workspace.TerminalCreateOpts{
-		CWD:  m.RootPath,
-		Cols: defaultTermCols,
-		Rows: defaultTermRows,
-	})
-	if err != nil {
-		if m.Feedback != nil {
-			m.Feedback.NotifyError(err.Error())
+	root, generation, controller := m.RootPath, m.workspaceSwitchGen.Load(), m.terminalController()
+	return func() tea.Msg {
+		info, err := service.Create(workspace.TerminalCreateOpts{CWD: root, Cols: defaultTermCols, Rows: defaultTermRows})
+		var lease workspace.TerminalLease
+		if err == nil {
+			lease, err = service.Acquire(info.ID, controller)
 		}
-		return nil
+		return terminalCreatedMsg{service: service, generation: generation, info: info, lease: lease, err: err}
 	}
-	m.ensureTermScreen(info.ID, info.Title)
-	m.dockTerminal(info.ID)
-	return nil
 }
 
 func (m *App) dockTerminal(id string) {
@@ -229,7 +191,7 @@ func (m *App) dockTerminal(id string) {
 		m.overlayHost.Close(ui.TerminalOverlayID(id))
 		m.suppressTermClose = ""
 	}
-	mgr.SetPlacement(id, workspace.TerminalDocked)
+	m.setTerminalPlacement(id, workspace.TerminalDocked)
 	m.termDock.Mount(id, screen)
 	m.termDock.ShowPanel(termdock.PanelTerminal)
 	m.setSessionDeckFocused(false)
@@ -252,7 +214,7 @@ func (m *App) promoteTerminal(id string) {
 	}
 	screen.SetFloating(true)
 	screen.SetAttention(false)
-	mgr.SetPlacement(id, workspace.TerminalFloating)
+	m.setTerminalPlacement(id, workspace.TerminalFloating)
 	m.setTermDockFocused(false)
 	m.openTerminalWindow(id, screen)
 }
@@ -329,7 +291,7 @@ func (m *App) focusTerminal(id string) {
 	if !ok {
 		return
 	}
-	if info.Placement == workspace.TerminalFloating {
+	if m.terminalPlacement(info.ID) == workspace.TerminalFloating {
 		oid := ui.TerminalOverlayID(id)
 		if !m.overlayHost.IsOpen(oid) {
 			m.promoteTerminal(id)
@@ -348,68 +310,21 @@ func (m *App) closeTerminal(id string) {
 	if id == "" {
 		return
 	}
+	if m.terminalClosed == nil {
+		m.terminalClosed = make(map[string]bool)
+	}
+	m.terminalClosed[id] = true
 	if m.overlayHost != nil {
 		m.suppressTermClose = id
 		m.overlayHost.Close(ui.TerminalOverlayID(id))
 		m.suppressTermClose = ""
 	}
 	m.dropTermScreen(id)
-	if mgr := m.termMgr(); mgr != nil {
-		mgr.Close(id)
+	delete(m.terminalLeases, id)
+	delete(m.terminalPlacements, id)
+	if service := m.terminalService(); service != nil {
+		m.runDetachedAsyncCmd(func() tea.Msg { service.Close(id); return nil })
 	}
-}
-
-func (m *App) handleTerminalOutput(msg workspace.TerminalOutputMsg) tea.Cmd {
-	s := m.termScreens[msg.ID]
-	if s == nil {
-		// PTY reads start as soon as Create returns. Materialize the retained
-		// projection on first output so a fast child cannot lose its startup
-		// banner before openNewTerminal mounts the screen. This is bounded by
-		// the emulator's configured scrollback; no parallel byte buffer exists.
-		if mgr := m.termMgr(); mgr != nil {
-			if info, ok := mgr.Get(msg.ID); ok {
-				s = m.ensureTermScreen(msg.ID, info.Title)
-			}
-		}
-		if s == nil {
-			return nil
-		}
-	}
-	var cmds []tea.Cmd
-	fx := s.Feed(msg.Data)
-	if m.overlayHost != nil {
-		if fw := m.overlayHost.Window(ui.TerminalOverlayID(msg.ID)); fw != nil {
-			fw.MarkContentDirty()
-		}
-	}
-	if fx.HasClipboard {
-		// OSC 52 / OSC 1337 clipboard write from the child.
-		cmds = append(cmds, rendering.CopyToClipboardCmd(fx.Clipboard))
-	}
-	if fx.Bell {
-		m.markTerminalBell(msg.ID)
-	}
-	if fx.PwdChanged {
-		// No event-bus publish: SetCWD only updates the snapshot field.
-		if mgr := m.termMgr(); mgr != nil {
-			mgr.SetCWD(msg.ID, s.PWD())
-		}
-	}
-	if fx.TitleChanged {
-		// Feed runs while Bubble Tea is handling TerminalOutputMsg, and the
-		// event bus delivers via Program.Send to an unbuffered channel. A
-		// synchronous TerminalManager.SetTitle here would deadlock the update
-		// loop (an idle floating terminal "hangs" as soon as the shell sets its
-		// OSC title), so publish the title from an async command instead.
-		id, title := msg.ID, s.Title()
-		cmds = append(cmds, func() tea.Msg {
-			if mgr := m.termMgr(); mgr != nil {
-				mgr.SetTitle(id, title)
-			}
-			return nil
-		})
-	}
-	return tea.Batch(cmds...)
 }
 
 // tickTerminalCursors advances libghostty cursor presentation. Docked
@@ -503,11 +418,9 @@ func (m *App) handleTerminalAction(action ui.Action) bool {
 		id, _ := action.Payload.(string)
 		m.closeTerminal(id)
 		return true
-	case shellterm.ActionWrite:
-		payload, ok := action.Payload.(shellterm.WritePayload)
-		if ok {
-			m.writeTerminal(payload.ID, payload.Data)
-		}
+	case shellterm.ActionTakeControl:
+		id, _ := action.Payload.(string)
+		m.openTerminalControlMenu(id)
 		return true
 	}
 	return false
@@ -558,6 +471,9 @@ func (m *App) applyTerminalTitle(id, title string) {
 }
 
 func (m *App) discardTerminalUI() {
+	if m.Terminals != nil && m.terminalClientID != "" {
+		m.Terminals.Detach(m.terminalController())
+	}
 	if m.overlayHost != nil {
 		for _, e := range m.overlayHost.All() {
 			if !ui.IsTerminalOverlay(e.ID) {
@@ -581,6 +497,14 @@ func (m *App) discardTerminalUI() {
 		delete(m.termScreens, id)
 	}
 	m.termScreens = make(map[string]*shellterm.Screen)
+	m.terminalLeases = nil
+	m.terminalReads = nil
+	m.terminalDirty = nil
+	m.terminalPlacements = nil
+	m.terminalQueue = nil
+	m.terminalBusy = false
+	m.terminalClipboard = nil
+	m.terminalClosed = nil
 	m.termDockFocused = false
 }
 

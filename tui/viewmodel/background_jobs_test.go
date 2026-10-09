@@ -76,12 +76,12 @@ func TestBackgroundJobMouseTerminationKeepsOtherJobsAndSessionAlive(t *testing.T
 	}
 	defer app.CloseAllSessions()
 	sender := &latencyEventSender{ctx: t.Context(), events: make(chan types.AgentEventMsg, 4096)}
-	orchestrator, err := app.StartOrchestrator(sender)
+	orchestrator, err := app.StartOrchestrator(owner.SessionID, sender)
 	if err != nil {
 		t.Fatal(err)
 	}
 	app.AddOrchestrator(orchestrator.ID)
-	backend := app.BackendSession()
+	backend := app.BackendSession(owner.SessionID)
 	backend.SetYolo(true)
 	if !backend.SubmitInput(orchestrator.ID, provider.PlainInput("start independent commands")) {
 		t.Fatal("turn not admitted")

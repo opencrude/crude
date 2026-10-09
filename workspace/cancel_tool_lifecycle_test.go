@@ -45,10 +45,10 @@ func TestCancelSettlesQueuedToolResultsWithoutReplayingAnimation(t *testing.T) {
 	if c.AdvanceToolLifecycles(time.Now().Add(10 * time.Second)) {
 		t.Fatal("old dwell frame resurrected stopped tools")
 	}
-	state.HandleEvent(AgentEvent{Type: "tool_result", Data: map[string]any{
+	state.ApplyEvent(AgentEvent{Type: "tool_result", Data: map[string]any{
 		"tool_id": "build", "internal_id": "build", "name": "execute_command", "result": "late result",
-	}}, nil, ignoreStatus, ignoreThinking, func() {}, ignoreConfirm, func(string) {}, func() {})
-	state.HandleEvent(AgentEvent{Type: "done", Data: map[string]any{"reason": "cancelled"}}, nil, ignoreStatus, ignoreThinking, func() {}, ignoreConfirm, func(string) {}, func() {})
+	}})
+	state.ApplyEvent(AgentEvent{Type: "done", Data: map[string]any{"reason": "cancelled"}})
 	want["build"] = struct{ status, preview, result string }{"success", "done", "late result"}
 	assert()
 	if state.IsActive() || c.HasPendingToolLifecycles() {

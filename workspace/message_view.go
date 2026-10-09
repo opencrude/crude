@@ -8,6 +8,5 @@ import ttypes "crude/types"
 type ChatMessageView = ttypes.ConversationMessage
 
 func messageFromView(view ChatMessageView) Message {
-	view.ReferenceLabels = append([]string(nil), view.ReferenceLabels...)
-	return Message(view)
+	return ttypes.CloneConversationMessage(view)
 }

@@ -124,7 +124,7 @@ func TestTwoConcurrentSessionsUseIndependentAccounts(t *testing.T) {
 			t.Fatal(err)
 		}
 		sender := &historyE2ESender{events: make(chan historyE2EEvent, 128)}
-		orch, err := w.StartOrchestrator(sender)
+		orch, err := w.StartOrchestrator(frontend.SessionID, sender)
 		if err != nil {
 			t.Fatal(err)
 		}

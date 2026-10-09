@@ -186,12 +186,13 @@ func (s *Session) HandleUndo(cmd string) ttypes.UndoResultMsg {
 }
 
 func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
+	_, err := s.SaveSettingsSnapshot(tuiSettings)
+	return err
+}
+
+// saveSettingsLocked requires settingsOperationMu, delegationMu and mu.
+func (s *Session) saveSettingsLocked(tuiSettings ttypes.Settings) error {
 	l := s.logger
-	s.delegationMu.Lock()
-	defer s.delegationMu.Unlock()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.permissionReviewRevision.Add(1)
 
 	oldDelegation := s.cfg.IsMultiAgentEnabled()
 	defer func() { s.recordDelegationChange(oldDelegation, s.cfg.IsMultiAgentEnabled()) }()
@@ -241,6 +242,7 @@ func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 			return fmt.Errorf("save session settings: %w", err)
 		}
 	}
+	s.permissionReviewRevision.Add(1)
 	s.cfg = newCfg
 	s.selectedMainAgent = tuiSettings.SessionMainAgent
 	s.accountUnpinned = false
@@ -276,6 +278,7 @@ func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 	if modelChanged {
 		l.Info("CONFIG", "model_change", "from", oldModel, "to", mainCat.Model)
 	}
+	s.settingsRevision++
 	l.Info("CONFIG", "save_complete", "template", newTemplate, "account", mainCat.AccountID, "model", mainCat.Model, "turn_logs", s.cfg.TurnLogsEnabled)
 	s.wakeAllRecoveries()
 	return nil
@@ -396,7 +399,11 @@ func workspaceMainCategory(base *Config) *CategoryConfig {
 func (s *Session) SettingsSnapshot() ttypes.Settings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	settings := ConfigToSettings(s.cfg)
+	return s.settingsSnapshotLocked()
+}
+
+func (s *Session) settingsSnapshotLocked() ttypes.Settings {
+	settings := detachedSettingsSnapshot(s.cfg)
 	settings.SessionMainAgent = s.selectedMainAgent
 	settings.SessionMultiAgent = cloneBoolPtr(s.multiAgentOverride)
 	if s.multiAgentOverride != nil {
@@ -426,13 +433,17 @@ func (s *Session) ConnectionIssue() error {
 func (s *Session) WorkspaceSettingsSnapshot() ttypes.Settings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	return ConfigToSettings(s.workspaceCfg)
+	return detachedSettingsSnapshot(s.workspaceCfg)
 }
 
 // SessionOverridesSnapshot returns only explicit DB-backed overrides.
 func (s *Session) SessionOverridesSnapshot() map[string]ttypes.CategorySettings {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	return s.sessionOverridesSnapshotLocked()
+}
+
+func (s *Session) sessionOverridesSnapshotLocked() map[string]ttypes.CategorySettings {
 	out := make(map[string]ttypes.CategorySettings, len(s.sessionOverrides))
 	for category, override := range s.sessionOverrides {
 		out[category] = ttypes.CategorySettings{
@@ -449,52 +460,8 @@ func (s *Session) SessionOverridesSnapshot() map[string]ttypes.CategorySettings 
 // ResetSessionSettings removes persisted overrides and immediately restores
 // the workspace defaults for this session.
 func (s *Session) ResetSessionSettings() error {
-	s.delegationMu.Lock()
-	defer s.delegationMu.Unlock()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if s.accountUnpinned {
-		return fmt.Errorf("select a connection for this session before resetting: %w", ErrAccountRequired)
-	}
-	s.permissionReviewRevision.Add(1)
-	oldDelegation := s.cfg.IsMultiAgentEnabled()
-	defer func() { s.recordDelegationChange(oldDelegation, s.cfg.IsMultiAgentEnabled()) }()
-	// Reset can adopt current workspace role models, but this session's
-	// connection pin survives until an explicit connection change is saved.
-	pins := make(map[string]sessiondb.AgentSettingOverride)
-	for role, override := range s.sessionOverrides {
-		if strings.HasPrefix(role, "root/") {
-			continue
-		}
-		if override.AccountID != "" {
-			pins[role] = sessiondb.AgentSettingOverride{AccountID: override.AccountID}
-		}
-	}
-	if _, ok := pins[CategoryDefault]; !ok {
-		main := s.cfg.GetActiveDefaultCategory()
-		pins[CategoryDefault] = sessiondb.AgentSettingOverride{AccountID: main.AccountID}
-	}
-	newCfg := configWithSessionOverrides(s.workspaceCfg, pins)
-	main := newCfg.GetActiveDefaultCategory()
-	configuredProvider, err := newCfg.providerForCategory(main)
-	if err != nil {
-		return err
-	}
-	if s.db != nil {
-		if err := sessiondb.SaveSessionSettings(s.db, s.sessionID, newCfg.providerIDForAccount(main.AccountID), main.AccountID, pins, sessiondb.SessionFlags{}); err != nil {
-			return err
-		}
-	}
-	s.cfg = newCfg
-	s.selectedMainAgent = ""
-	s.sessionOverrides = pins
-	s.multiAgentOverride = nil
-	if s.runtimeProfile != nil {
-		s.runtimeProfile.UpdateBase(s.cfg)
-	}
-	s.provider = configuredProvider
-	s.wakeAllRecoveries()
-	return nil
+	_, err := s.ResetSettingsSnapshot()
+	return err
 }
 
 // UpdateWorkspaceDefaults refreshes the inherited workspace baseline: provider
@@ -507,6 +474,10 @@ func (s *Session) ResetSessionSettings() error {
 // rebuildEffectiveConfigLocked, which re-applies them on top of the refreshed
 // baseline.
 func (s *Session) UpdateWorkspaceDefaults(settings ttypes.AppSettings) {
+	if err := s.beginSettingsOperation(); err != nil {
+		return
+	}
+	defer s.settingsOperationMu.Unlock()
 	s.delegationMu.Lock()
 	defer s.delegationMu.Unlock()
 	s.mu.Lock()
@@ -524,6 +495,10 @@ func (s *Session) UpdateWorkspaceDefaults(settings ttypes.AppSettings) {
 // agent role defaults. Only explicit user action (resetting a session's
 // settings) reaches it.
 func (s *Session) AdoptWorkspaceDefaults(settings ttypes.AppSettings) {
+	if err := s.beginSettingsOperation(); err != nil {
+		return
+	}
+	defer s.settingsOperationMu.Unlock()
 	s.delegationMu.Lock()
 	defer s.delegationMu.Unlock()
 	s.mu.Lock()
@@ -548,6 +523,7 @@ func (s *Session) refreshProviderCredentialsLocked(settings ttypes.AppSettings) 
 }
 
 func (s *Session) rebuildEffectiveConfigLocked() {
+	s.settingsRevision++
 	s.permissionReviewRevision.Add(1)
 	oldDelegation := s.cfg.IsMultiAgentEnabled()
 	defer func() { s.recordDelegationChange(oldDelegation, s.cfg.IsMultiAgentEnabled()) }()

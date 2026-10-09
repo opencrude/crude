@@ -312,7 +312,7 @@ func (m *App) closeEditorTabForce(path string) {
 	// handleTabSwitch() will look up the new active path in the map.
 	m.handleTabSwitch()
 
-	if m.AgentMgr.VisibleCount() == 0 && m.EditorState.ActiveView == "" {
+	if m.AgentView.VisibleCount() == 0 && m.EditorState.ActiveView == "" {
 		m.openLauncher()
 		m.LastInteractionTime = time.Now()
 	}

@@ -2,7 +2,6 @@ package workspace
 
 import (
 	"crude/types"
-	"slices"
 )
 
 // QueueStartupIssue retains recovery context until the frontend has a usable
@@ -28,25 +27,4 @@ func (w *Workspace) queuePersistenceStartupIssues() {
 	if w.localHistoryErr != nil {
 		w.QueueStartupIssue(types.OperationIssue{Title: "Local History needs attention", Summary: "Crude opened, but workspace history could not initialize.", Detail: w.localHistoryErr.Error(), Guidance: "Check the reported path and storage permissions. Required history safeguards remain enforced; Crude will not bypass them to execute work.", Target: types.RepairSettings, Path: w.WorkspaceDir})
 	}
-}
-
-// abandonUnstartedSession releases a failed launch without retaining invisible
-// workers or changing another session. Close preserves saved transcripts and
-// pending inputs; it prunes only sessions proven empty by the session owner.
-func (w *Workspace) abandonUnstartedSession(failed, previous *Session) {
-	if failed == nil {
-		return
-	}
-	if failed.backend != nil {
-		failed.backend.Close()
-	}
-	w.persistSessionRegistry(failed)
-	w.Sessions = slices.DeleteFunc(w.Sessions, func(item *Session) bool { return item == failed })
-	delete(w.SessionsByID, failed.SessionID)
-	for id, item := range w.SessionsByAgent {
-		if item == failed {
-			delete(w.SessionsByAgent, id)
-		}
-	}
-	w.ActiveSession = previous
 }

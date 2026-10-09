@@ -252,13 +252,13 @@ func TestThinkingPanePromotionRoundTrip(t *testing.T) {
 	agent.Messages.AppendThinking("deep thought 1\n")
 	agent.Messages.AppendThinking("deep thought 2\n")
 	app.syncAgentMessages("promote-agent", false)
-	// Force promote by setting a ThinkingPaneID and appending the marker.
-	paneID := "thinking-test"
-	sp := app.PaneMgr.GetOrCreate(paneID, workspace.PaneThinking, "Thinking")
-	app.subPaneProjections.Get(paneID, workspace.PaneThinking)
-	agent.ThinkingPaneID = paneID
+	app.promoteThinkingToPane(agent)
+	paneID := app.thinkingPaneID(agent)
+	sp := app.Get(paneID)
+	app.syncLocalThinking(app.subPaneProjections, sp)
+
 	// Render the thinking pane; it should produce content.
-	app.syncPaneMessages(paneID, false)
+	app.syncLocalThinking(app.subPaneProjections, sp)
 	lines := app.subPaneProjections.Render(paneID, sp, 40, 5, 0, true)
 	if len(lines) == 0 {
 		t.Fatal("thinking pane rendered zero lines")

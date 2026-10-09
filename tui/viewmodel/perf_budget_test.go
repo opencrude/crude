@@ -128,7 +128,7 @@ const (
 // shape the guarded trailing-assistant drop in InvalidateCache hunts for.
 func clearTurnTail(t *testing.T, app *App) {
 	t.Helper()
-	if node := app.AgentMgr.Get(app.AgentMgr.ActiveID()); node != nil && node.State != nil && node.State.Messages != nil {
+	if node := app.AgentMgr.Get(app.AgentView.ActiveID()); node != nil && node.State != nil && node.State.Messages != nil {
 		node.State.Messages.ClearTurnStatus()
 	}
 	app.paintShellFrame()

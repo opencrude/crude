@@ -1,22 +1,30 @@
 package shellterm
 
 import (
-	"bytes"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/terminalvt"
 	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
 	"crude/tui/ui"
+	"crude/workspace"
 )
 
 func TestScreenSelectionThemeSwitchPreservesChildInk(t *testing.T) {
 	s, _ := newTestScreen(t)
-	s.Feed([]byte("\x1b[?25l\x1b[2;7;38;2;200;10;20;48;2;30;40;50mabc"))
+	fixture(s, "abc", 11, terminalvt.Modes{})
+	for i := 0; i < 3; i++ {
+		s.view.Grid.Cells[0][i].FG = terminalvt.Color{Explicit: true, R: 200, G: 10, B: 20}
+		s.view.Grid.Cells[0][i].BG = terminalvt.Color{Explicit: true, R: 30, G: 40, B: 50}
+		s.view.Grid.Cells[0][i].Style = terminalvt.Style{Faint: true, Inverse: true}
+	}
+	s.view.Grid.Cursor.Visible = false
 	buf := surface.NewCellBuffer(40, 11)
 	s.Paint(buf, 0, 0, ui.PaintContext{})
 	original := buf.Get(2, 0)
@@ -37,35 +45,45 @@ func TestScreenSelectionThemeSwitchPreservesChildInk(t *testing.T) {
 		if got := buf.Get(2, 0); got != original {
 			t.Fatalf("theme changed explicit child ink: got=%+v want=%+v", got, original)
 		}
-		if got := s.vt.SelectionText(); got != "ab" {
+		if got, _ := s.view.SelectionText(); got != "ab" {
 			t.Fatalf("theme changed selection text=%q", got)
 		}
 	}
-	s.vt.ClearSelection()
+	s.view.ClearSelection()
 	host.Paint(buf)
 	if c := buf.Get(0, 0); c.FG != original.FG || c.BG != original.BG || c.Attr != original.Attr {
 		t.Fatalf("clearing selection did not restore child ink: %+v", c)
 	}
 }
 
-func newTestScreen(t *testing.T) (*Screen, *[][]byte) {
+func fixture(s *Screen, text string, total int, modes terminalvt.Modes) {
+	cells := make([][]terminalvt.Cell, total)
+	for y := range cells {
+		cells[y] = make([]terminalvt.Cell, 40)
+		for x := range cells[y] {
+			cells[y][x] = terminalvt.Cell{Text: " ", Width: 1}
+		}
+		for x, r := range text {
+			if x < 40 {
+				cells[y][x].Text = string(r)
+			}
+		}
+	}
+	s.SetProjection(workspace.TerminalProjection{Info: workspace.TerminalInfo{ID: "t1", Title: "Terminal", Alive: true}, Generation: s.view.Generation + 1, Grid: terminalvt.Projection{Cols: 40, GridRows: 11, Total: total, Cells: cells, Modes: modes, Cursor: terminalvt.Cursor{Visible: true, Blink: true}}})
+}
+func newTestScreen(t *testing.T) (*Screen, *[]Command) {
 	t.Helper()
 	s := New(theme.DefaultDark(), "t1", "Terminal")
-	if s.initErr != nil {
-		t.Skipf("libghostty-vt: %v", s.initErr)
-	}
 	t.Cleanup(s.Close)
-	var writes [][]byte
-	s.SetWrite(func(b []byte) {
-		writes = append(writes, append([]byte(nil), b...))
-	})
-	s.Layout(ui.LayoutContext{}, ui.Rect{X: 0, Y: 0, W: 40, H: 11})
-	return s, &writes
+	var commands []Command
+	s.SetCommand(func(c Command) tea.Cmd { commands = append(commands, c); return nil })
+	fixture(s, "", 11, terminalvt.Modes{})
+	s.Layout(ui.LayoutContext{}, ui.Rect{W: 40, H: 11})
+	s.SetControlled(true)
+	s.TakePendingCommands()
+	return s, &commands
 }
-
-func joined(writes *[][]byte) string {
-	return string(bytes.Join(*writes, nil))
-}
+func joined(commands *[]Command) string { return fmt.Sprint(*commands) }
 
 func keyEvent(code rune, mod tea.KeyMod, text string) ui.Event {
 	return ui.KeyEvent(tea.KeyPressMsg{Code: code, Mod: mod, Text: text})
@@ -73,9 +91,7 @@ func keyEvent(code rune, mod tea.KeyMod, text string) ui.Event {
 
 func TestScreenShiftPageUpScrollsInsteadOfWriting(t *testing.T) {
 	s, writes := newTestScreen(t)
-	for i := 0; i < 40; i++ {
-		s.Feed([]byte("line\r\n"))
-	}
+	fixture(s, "line", 51, terminalvt.Modes{})
 	res := s.Handle(ui.EventContext{}, keyEvent(tea.KeyPgUp, tea.ModShift, ""))
 	if !res.Handled {
 		t.Fatal("Shift+PgUp not handled")
@@ -83,73 +99,67 @@ func TestScreenShiftPageUpScrollsInsteadOfWriting(t *testing.T) {
 	if len(*writes) != 0 {
 		t.Fatalf("Shift+PgUp wrote %q to the PTY; want scrollback scroll", joined(writes))
 	}
-	if s.vt.ViewportPinned() {
+	if s.view.Pinned() {
 		t.Fatal("viewport still pinned after Shift+PgUp")
 	}
 	s.Handle(ui.EventContext{}, keyEvent(tea.KeyEnd, tea.ModShift, ""))
-	if !s.vt.ViewportPinned() {
+	if !s.view.Pinned() {
 		t.Fatal("Shift+End did not return to bottom")
 	}
 }
 
 func TestScreenTypingSnapsToBottomAndClearsSelection(t *testing.T) {
 	s, writes := newTestScreen(t)
-	for i := 0; i < 40; i++ {
-		s.Feed([]byte("line\r\n"))
-	}
-	s.vt.ScrollDelta(-5)
-	s.vt.SelectionPress(0, 0, 1)
-	s.vt.SelectionDrag(3, 0)
-	if !s.vt.HasSelection() {
+	fixture(s, "line", 51, terminalvt.Modes{})
+	s.view.ScrollDelta(-5)
+	s.view.SelectionPress(0, 0, 1)
+	s.view.SelectionDrag(3, 0)
+	if !s.view.HasSelection() {
 		t.Fatal("fixture selection missing")
 	}
 	s.Handle(ui.EventContext{}, keyEvent('a', 0, "a"))
-	if s.vt.HasSelection() {
+	if s.view.HasSelection() {
 		t.Fatal("typing kept the selection")
 	}
-	if !s.vt.ViewportPinned() {
+	if !s.view.Pinned() {
 		t.Fatal("typing did not snap the viewport to the bottom")
 	}
-	if got := joined(writes); got != "a" {
+	if got := joined(writes); len(*writes) != 1 || (*writes)[0].Key.Text != "a" {
 		t.Fatalf("typed bytes=%q want a", got)
 	}
 }
 
 func TestScreenAltScreenWheelSendsArrows(t *testing.T) {
 	s, writes := newTestScreen(t)
-	s.Feed([]byte("\x1b[?1049h"))
+	fixture(s, "", 11, terminalvt.Modes{AltScreen: true})
 	res := s.Handle(ui.EventContext{LocalX: 3, LocalY: 3},
 		ui.MouseWheelEvent(tea.MouseWheelMsg{Button: tea.MouseWheelUp, X: 3, Y: 3}))
 	if !res.Handled {
 		t.Fatal("wheel not handled")
 	}
 	got := joined(writes)
-	if got != strings.Repeat("\x1b[A", 3) {
+	if len(*writes) != 1 || (*writes)[0].Key.Code != terminalvt.KeyUp || (*writes)[0].Repeat != 3 {
 		t.Fatalf("alt-screen wheel wrote %q; want three Up arrows", got)
 	}
 }
 
 func TestScreenPrimaryScreenWheelScrollsViewport(t *testing.T) {
 	s, writes := newTestScreen(t)
-	for i := 0; i < 40; i++ {
-		s.Feed([]byte("line\r\n"))
-	}
+	fixture(s, "line", 51, terminalvt.Modes{})
 	s.Handle(ui.EventContext{LocalX: 3, LocalY: 3},
 		ui.MouseWheelEvent(tea.MouseWheelMsg{Button: tea.MouseWheelUp, X: 3, Y: 3}))
 	if len(*writes) != 0 {
 		t.Fatalf("primary-screen wheel wrote %q; want viewport scroll", joined(writes))
 	}
-	if s.vt.ViewportPinned() {
+	if s.view.Pinned() {
 		t.Fatal("wheel did not scroll into history")
 	}
 }
 
 func TestScreenScrollbackScrollbarTrackAndThumbInteraction(t *testing.T) {
 	s, _ := newTestScreen(t)
-	for i := 0; i < 60; i++ {
-		s.Feed([]byte("line\r\n"))
-	}
-	s.vt.ScrollDelta(-10)
+	fixture(s, "line", 71, terminalvt.Modes{})
+	s.view.ScrollDelta(-10)
 	host := ui.NewHost(theme.DefaultDark(), s)
 	host.Resize(40, 11)
 	host.Layout()
@@ -165,12 +175,12 @@ func TestScreenScrollbackScrollbarTrackAndThumbInteraction(t *testing.T) {
 	if trackY >= bar.H {
 		t.Fatal("harness: no track cell outside thumb")
 	}
-	before, _, _ := s.vt.Scrollbar()
+	before, _, _ := s.view.Scrollbar()
 	// The internal terminal scrollbar also accepts the two cells inward from
 	// the painted right-edge stroke.
 	host.Handle(tea.MouseClickMsg{X: bar.X - 2, Y: trackY, Button: tea.MouseLeft})
 	host.Handle(tea.MouseReleaseMsg{X: bar.X - 2, Y: trackY, Button: tea.MouseLeft})
-	afterTrack, _, _ := s.vt.Scrollbar()
+	afterTrack, _, _ := s.view.Scrollbar()
 	if afterTrack == before || s.selecting {
 		t.Fatalf("track click offset=%d->%d selecting=%v", before, afterTrack, s.selecting)
 	}
@@ -187,7 +197,7 @@ func TestScreenScrollbackScrollbarTrackAndThumbInteraction(t *testing.T) {
 		dragY = 0
 	}
 	host.Handle(tea.MouseMotionMsg{X: 2, Y: dragY, Button: tea.MouseLeft})
-	afterDrag, _, _ := s.vt.Scrollbar()
+	afterDrag, _, _ := s.view.Scrollbar()
 	if afterDrag == afterTrack {
 		t.Fatalf("thumb drag offset stayed at %d", afterDrag)
 	}
@@ -208,7 +218,7 @@ func TestScreenSelectionCopiesOnRelease(t *testing.T) {
 	})
 	now := uint64(1_000_000_000)
 	s.SetNow(func() uint64 { return now })
-	s.Feed([]byte("hello world"))
+	fixture(s, "hello world", 11, terminalvt.Modes{})
 
 	s.Handle(ui.EventContext{LocalX: 0, LocalY: 0},
 		ui.MouseClickEvent(tea.MouseClickMsg{Button: tea.MouseLeft, X: 0, Y: 0}))
@@ -238,9 +248,9 @@ func TestScreenCtrlShiftCCopiesWithoutWriting(t *testing.T) {
 			return nil
 		}
 	})
-	s.Feed([]byte("hello world"))
-	s.vt.SelectionPress(6, 0, 1)
-	s.vt.SelectionDrag(10, 0)
+	fixture(s, "hello world", 11, terminalvt.Modes{})
+	s.view.SelectionPress(6, 0, 1)
+	s.view.SelectionDrag(10, 0)
 
 	res := s.Handle(ui.EventContext{}, keyEvent('c', tea.ModCtrl|tea.ModShift, ""))
 	if !res.Handled {
@@ -263,9 +273,8 @@ func TestScreenCtrlShiftCCopiesWithoutWriting(t *testing.T) {
 
 func TestScreenShiftClickBypassesMouseTracking(t *testing.T) {
 	s, writes := newTestScreen(t)
-	s.Feed([]byte("\x1b[?1000h\x1b[?1006h"))
-	s.Feed([]byte("target text"))
-	if !s.vt.MouseTracking() {
+	fixture(s, "target text", 11, terminalvt.Modes{MouseTracking: true})
+	if !s.view.Grid.Modes.MouseTracking {
 		t.Fatal("mouse tracking not enabled by fixture")
 	}
 	s.Handle(ui.EventContext{LocalX: 0, LocalY: 0},
@@ -275,7 +284,7 @@ func TestScreenShiftClickBypassesMouseTracking(t *testing.T) {
 	}
 	s.Handle(ui.EventContext{LocalX: 5, LocalY: 0},
 		ui.MouseMotionEvent(tea.MouseMotionMsg{Button: tea.MouseLeft, Mod: tea.ModShift, X: 5, Y: 0}))
-	if !s.vt.HasSelection() {
+	if !s.view.HasSelection() {
 		t.Fatal("shift-drag did not build a selection while tracking is on")
 	}
 
@@ -289,18 +298,19 @@ func TestScreenShiftClickBypassesMouseTracking(t *testing.T) {
 
 func TestScreenFocusReportTransitions(t *testing.T) {
 	s, writes := newTestScreen(t)
-	s.Feed([]byte("\x1b[?1004h"))
+	fixture(s, "", 11, terminalvt.Modes{FocusReporting: true})
 	s.SetTermFocused(true)
 	s.SetTermFocused(true)
 	s.SetTermFocused(false)
-	if got := joined(writes); got != "\x1b[I\x1b[O" {
+	*writes = s.TakePendingCommands()
+	if got := joined(writes); len(*writes) != 2 || !(*writes)[0].Focused || (*writes)[1].Focused {
 		t.Fatalf("focus reports=%q want CSI I then CSI O exactly once each", got)
 	}
 }
 
 func TestScreenCursorTickReportsBlinkPhaseChanges(t *testing.T) {
 	s, _ := newTestScreen(t)
-	s.Feed([]byte("x\x1b[1;1H"))
+	fixture(s, "x", 11, terminalvt.Modes{})
 	s.SetTermFocused(true)
 	s.resetCursorBlink(time.UnixMilli(0))
 
@@ -324,7 +334,7 @@ func TestScreenCursorTickReportsBlinkPhaseChanges(t *testing.T) {
 
 func TestScreenCursorActivityStopsBlinkUntilIdle(t *testing.T) {
 	s, _ := newTestScreen(t)
-	s.Feed([]byte("x\x1b[1;1H"))
+	fixture(s, "x", 11, terminalvt.Modes{})
 	s.SetTermFocused(true)
 	start := time.UnixMilli(0)
 	s.resetCursorBlink(start)
@@ -344,22 +354,150 @@ func TestScreenCursorActivityStopsBlinkUntilIdle(t *testing.T) {
 	}
 }
 
-func TestScreenFeedReportsClipboardAndBell(t *testing.T) {
+func TestScreenProjectionMetadataAndAttention(t *testing.T) {
 	s, _ := newTestScreen(t)
-	fx := s.Feed([]byte("ding\x07"))
-	if !fx.Bell {
-		t.Fatal("bell not reported")
+	p := s.projection
+	p.Info.CWD = "file:///tmp/dir"
+	p.Info.Title = "child title"
+	s.SetProjection(p)
+	if s.PWD() != "/tmp/dir" || s.Title() != "child title" {
+		t.Fatal("metadata lost")
 	}
-	fx = s.Feed([]byte("\x1b]52;c;aGVsbG8=\x07"))
-	if !fx.HasClipboard || fx.Clipboard != "hello" {
-		t.Fatalf("clipboard effect=%+v want hello", fx)
+	if !s.SetAttention(true) || !s.HasAttention() || s.SetAttention(true) {
+		t.Fatal("attention transitions")
 	}
-	fx = s.Feed([]byte("\x1b]7;file:///tmp/dir\x07"))
-	if !fx.PwdChanged || s.PWD() != "/tmp/dir" {
-		t.Fatalf("pwd effect=%+v PWD=%q want /tmp/dir", fx, s.PWD())
+}
+
+func TestObserverInputRequiresExplicitControlButCanSelectAndScroll(t *testing.T) {
+	s, commands := newTestScreen(t)
+	fixture(s, "hello", 51, terminalvt.Modes{MouseTracking: true})
+	s.SetControlled(false)
+	res := s.Handle(ui.EventContext{}, keyEvent('x', 0, "x"))
+	if res.Action == nil || res.Action.ID != ActionTakeControl || len(*commands) != 0 {
+		t.Fatal("observer input escaped lease gate")
 	}
-	fx = s.Feed([]byte("plain"))
-	if fx.Bell || fx.HasClipboard || fx.PwdChanged || fx.TitleChanged {
-		t.Fatalf("quiet feed reported effects: %+v", fx)
+	s.Handle(ui.EventContext{LocalX: 0, LocalY: 0}, ui.MouseClickEvent(tea.MouseClickMsg{Button: tea.MouseLeft}))
+	s.Handle(ui.EventContext{LocalX: 4, LocalY: 0}, ui.MouseMotionEvent(tea.MouseMotionMsg{Button: tea.MouseLeft}))
+	if !s.view.HasSelection() {
+		t.Fatal("observer cannot select tracked screen")
+	}
+	s.Handle(ui.EventContext{}, keyEvent(tea.KeyPgUp, tea.ModShift, ""))
+	if s.view.Pinned() || len(*commands) != 0 {
+		t.Fatal("observer scroll sent input")
+	}
+}
+
+func TestProjectionPageRequestsRejectStaleIntentAndMovePaint(t *testing.T) {
+	s, _ := newTestScreen(t)
+	p := s.projection
+	p.Generation++
+	p.Grid.Total = 51
+	p.Grid.Start = 40
+	for i := range p.Grid.Cells {
+		p.Grid.Cells[i][0].Text = "z"
+	}
+	s.SetProjection(p)
+	s.Handle(ui.EventContext{}, keyEvent(tea.KeyPgUp, tea.ModShift, ""))
+	pending := s.TakePendingCommands()
+	if len(pending) != 1 || pending[0].Kind != CommandReadRows {
+		t.Fatalf("page intent=%+v", pending)
+	}
+	first := pending[0]
+	s.Handle(ui.EventContext{}, keyEvent(tea.KeyHome, tea.ModShift, ""))
+	next := s.TakePendingCommands()
+	if len(next) != 1 {
+		t.Fatalf("new intent=%+v", next)
+	}
+	page := p
+	page.Grid.Start = 0
+	page.Grid.Cells = make([][]terminalvt.Cell, 11)
+	for i := range page.Grid.Cells {
+		page.Grid.Cells[i] = []terminalvt.Cell{{Text: "a", Width: 1}}
+	}
+	if s.SetRows(first.Sequence, page) {
+		t.Fatal("older request applied")
+	}
+	if !s.SetRows(next[0].Sequence, page) {
+		t.Fatal("current page rejected")
+	}
+	buf := surface.NewCellBuffer(40, 11)
+	s.Paint(buf, 0, 0, ui.PaintContext{})
+	if buf.Get(0, 0).Content != "a" && buf.Get(0, 0).Char != 'a' {
+		t.Fatalf("scroll did not move painted content %+v", buf.Get(0, 0))
+	}
+	page.Grid.Cells[0][0].Text = "b"
+	s.Paint(buf, 0, 0, ui.PaintContext{})
+	if buf.Get(0, 0).Content == "b" {
+		t.Fatal("snapshot aliased caller memory")
+	}
+	page.Generation--
+	if s.SetRows(next[0].Sequence, page) {
+		t.Fatal("old generation applied")
+	}
+}
+
+func TestSelectionWordLineAndAll(t *testing.T) {
+	s, _ := newTestScreen(t)
+	fixture(s, "hello world", 11, terminalvt.Modes{})
+	s.view.SelectionPress(7, 0, 1_000_000_000)
+	s.view.SelectionPress(7, 0, 1_100_000_000)
+	if text, _ := s.view.SelectionText(); text != "world" {
+		t.Fatalf("word=%q", text)
+	}
+	s.view.SelectionPress(7, 0, 1_200_000_000)
+	if text, _ := s.view.SelectionText(); text != "hello world" {
+		t.Fatalf("line=%q", text)
+	}
+	s.Handle(ui.EventContext{}, keyEvent('a', tea.ModCtrl|tea.ModShift, ""))
+	if text, _ := s.view.SelectionText(); strings.Count(text, "hello world") != 11 {
+		t.Fatalf("all=%q", text)
+	}
+}
+
+func TestPendingSelectAllCopyFetchesHistoryBeforeClipboard(t *testing.T) {
+	s, _ := newTestScreen(t)
+	p := s.projection
+	p.Generation++
+	p.Grid.Total = 22
+	p.Grid.Start = 11
+	s.SetProjection(p)
+	var copied string
+	s.SetCopy(func(text string) tea.Cmd { return func() tea.Msg { copied = text; return nil } })
+	s.Handle(ui.EventContext{}, keyEvent('a', tea.ModCtrl|tea.ModShift, ""))
+	res := s.Handle(ui.EventContext{}, keyEvent('c', tea.ModCtrl|tea.ModShift, ""))
+	if res.Cmd != nil || copied != "" {
+		t.Fatal("incomplete history copied")
+	}
+	commands := s.TakePendingCommands()
+	if len(commands) != 1 || commands[0].Start != 0 || commands[0].Count != 22 {
+		t.Fatalf("copy pages=%+v", commands)
+	}
+	page := p
+	page.Grid.Start = 0
+	page.Grid.Cells = make([][]terminalvt.Cell, 22)
+	for i := range page.Grid.Cells {
+		page.Grid.Cells[i] = []terminalvt.Cell{{Text: "line", Width: 1}}
+	}
+	if !s.SetRows(commands[0].Sequence, page) {
+		t.Fatal("copy page rejected")
+	}
+	cmd := s.TakePendingCopy()
+	if cmd == nil {
+		t.Fatal("complete selection did not produce command")
+	}
+	cmd()
+	if strings.Count(copied, "line") != 22 {
+		t.Fatalf("partial copy=%q", copied)
+	}
+}
+
+func TestTypedKeyPasteAndMouseStayUnencoded(t *testing.T) {
+	s, commands := newTestScreen(t)
+	s.Handle(ui.EventContext{}, keyEvent(tea.KeyUp, tea.ModCtrl|tea.ModAlt, ""))
+	s.Handle(ui.EventContext{}, ui.Event{Kind: ui.EventCustom, Custom: tea.PasteMsg{Content: "\x1b[hello"}})
+	fixture(s, "", 11, terminalvt.Modes{MouseTracking: true})
+	s.Handle(ui.EventContext{LocalX: 2, LocalY: 3}, ui.MouseClickEvent(tea.MouseClickMsg{Button: tea.MouseLeft}))
+	if len(*commands) != 3 || (*commands)[0].Key.Code != terminalvt.KeyUp || (*commands)[0].Key.Mod != terminalvt.ModCtrl|terminalvt.ModAlt || string((*commands)[1].Paste) != "\x1b[hello" || (*commands)[2].Mouse.X != 2 || (*commands)[2].Mouse.Y != 3 {
+		t.Fatalf("commands=%+v", commands)
 	}
 }

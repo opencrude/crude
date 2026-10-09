@@ -96,7 +96,7 @@ func (m *App) handleOperationIssueAction(msg operationissue.ActionMsg) tea.Cmd {
 	case types.RepairMainAgent:
 		m.openApplicationMainAgent()
 	case types.RepairSessionAccount:
-		if m.ActiveSession != nil && m.BackendSession() != nil && len(m.AllAccounts()) > 0 {
+		if m.ActiveSession != nil && m.BackendSession(m.ActiveSession.SessionID) != nil && len(m.AllAccounts()) > 0 {
 			return m.openSessionAccountPicker()
 		}
 		m.openApplicationAccounts()

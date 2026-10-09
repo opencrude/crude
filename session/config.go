@@ -589,7 +589,13 @@ func ConfigToSettings(cfg *Config) ttypes.Settings {
 		agentsSettings.Categories[CategoryDefault] = categoryToSettings(cfg, mainCat)
 	}
 
-	for name, p := range cfg.Agents.Profiles {
+	profileNames := make([]string, 0, len(cfg.Agents.Profiles))
+	for name := range cfg.Agents.Profiles {
+		profileNames = append(profileNames, name)
+	}
+	slices.Sort(profileNames)
+	for _, name := range profileNames {
+		p := cfg.Agents.Profiles[name]
 		ps := ttypes.ProfileSettings{Name: name, Categories: make(map[string]ttypes.CategorySettings)}
 		for k := range p.Categories {
 			ps.Categories[k] = categoryToSettings(cfg, cfg.GetCategoryConfig(k))

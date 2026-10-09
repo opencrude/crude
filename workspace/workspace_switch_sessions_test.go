@@ -38,21 +38,23 @@ func TestWorkspaceSwitchLauncherStartsAndResumesSessions(t *testing.T) {
 	ws.SetEventSender(sender)
 
 	sessionIDs := make(map[string]string)
+	var lastOpened *Session
 	start := func(root string, resume bool) {
 		t.Helper()
 		callsBeforeStartup := providerCalls.Load()
 		var result *NewSessionResult
 		if resume {
-			result = ws.ResumeSessionFromLauncher(sessionIDs[root])
+			result = ws.OpenAgentSession(sessionIDs[root])
 		} else {
-			result = ws.NewSessionFromLauncher()
+			result = ws.NewAgentSession()
 		}
 		if result.Error != "" || result.OrchID == "" {
 			t.Fatalf("launcher startup in %q (resume=%t): %+v", root, resume, result)
 		}
-		frontend := ws.ActiveSession
+		frontend := ws.SessionsByID[result.SessionID]
+		lastOpened = frontend
 		if frontend == nil || frontend.backend == nil || frontend.AgentID != result.OrchID {
-			t.Fatal("launcher did not activate the new session's registered agent")
+			t.Fatal("session opening did not return the exact registered owner")
 		}
 		if resume && frontend.SessionID != sessionIDs[root] {
 			t.Fatal("resume changed the saved session identity")
@@ -76,7 +78,7 @@ func TestWorkspaceSwitchLauncherStartsAndResumesSessions(t *testing.T) {
 			t.Fatalf("agent registered to the wrong workspace or lifetime: %+v", registered)
 		}
 		if err := frontend.DB.Ping(); err != nil {
-			t.Fatalf("active session database is not usable: %v", err)
+			t.Fatalf("opened session database is not usable: %v", err)
 		}
 		if providerCalls.Load() != callsBeforeStartup {
 			t.Fatal("passive startup called the provider")
@@ -103,7 +105,7 @@ func TestWorkspaceSwitchLauncherStartsAndResumesSessions(t *testing.T) {
 	start(rootA, false)
 	for index, root := range []string{rootB, rootA, rootB} {
 		oldDB, oldStore := ws.WorkspaceDB, ws.Collaboration
-		oldSession := ws.ActiveSession
+		oldSession := lastOpened
 		if err := ws.SwitchProject(root); err != nil {
 			t.Fatal(err)
 		}
@@ -119,7 +121,7 @@ func TestWorkspaceSwitchLauncherStartsAndResumesSessions(t *testing.T) {
 		if err := oldSession.DB.Ping(); err == nil {
 			t.Fatal("workspace switch left the previous session database open")
 		}
-		if ws.SessionsByID[oldSession.SessionID] != nil && oldSession.SessionID != ws.ActiveSession.SessionID {
+		if ws.SessionsByID[oldSession.SessionID] != nil && oldSession.SessionID != lastOpened.SessionID {
 			t.Fatal("previous workspace's session remained in the live session index")
 		}
 	}

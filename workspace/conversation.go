@@ -59,6 +59,8 @@ type Conversation struct {
 	version       uint64
 	turnIdentity  ttypes.TurnIdentity
 	lastRecovery  recovery.Status
+	changeJournal []conversationChange
+	pendingChange conversationChange
 }
 
 const toolPhaseMinDwell = 120 * time.Millisecond
@@ -119,7 +121,7 @@ func (c *Conversation) Messages() []Message {
 	}
 	out := make([]Message, len(c.messages))
 	for i, message := range c.messages {
-		out[i] = *message
+		out[i] = ttypes.CloneConversationMessage(*message)
 	}
 	return out
 }
@@ -128,7 +130,7 @@ func (c *Conversation) AppendMessage(message Message) string {
 	if c == nil {
 		return ""
 	}
-	copy := message
+	copy := ttypes.CloneConversationMessage(message)
 	if message.Recovery != nil && (c.lastRecovery.ID == "" || !message.Recovery.UpdatedAt.Before(c.lastRecovery.UpdatedAt)) {
 		c.lastRecovery = *message.Recovery
 	}
@@ -147,7 +149,7 @@ func (c *Conversation) AppendMessage(message Message) string {
 	}
 	c.insertMessage(&copy)
 	c.index(&copy)
-	c.version++
+	c.commitChange(&copy)
 	return copy.InternalID
 }
 
@@ -171,6 +173,7 @@ func (c *Conversation) Brief() string {
 // and lifecycle rows arriving after admission are inserted before those notes;
 // once a note is acknowledged, normal chronological appends resume after it.
 func (c *Conversation) insertMessage(message *Message) {
+	c.pendingChange.structural = true
 	if message.PendingSteering {
 		c.messages = append(c.messages, message)
 		return
@@ -202,7 +205,7 @@ func (c *Conversation) lastNonPending() *Message {
 func (c *Conversation) ActiveThinking() (Message, bool) {
 	if c != nil {
 		if last := c.lastNonPending(); last != nil && last.Role == MessageRoleThinking && last.ThinkingActive {
-			return *last, true
+			return ttypes.CloneConversationMessage(*last), true
 		}
 	}
 	return Message{}, false
@@ -227,7 +230,7 @@ func (c *Conversation) SetLatestThinkingKind(kind reasoning.Kind) bool {
 			return false
 		}
 		message.ThinkingDisplay.Kind = kind
-		c.version++
+		c.commitChange(message)
 		return true
 	}
 	return false
@@ -254,7 +257,7 @@ func (c *Conversation) ConsumePendingSteering(id string) bool {
 	if status := c.activeTurnStatus(""); status != nil {
 		c.moveBeforePending(status)
 	}
-	c.version++
+	c.commitChange(message)
 	return true
 }
 
@@ -278,11 +281,12 @@ func (c *Conversation) SettlePendingSteeringMessages(ids []string) []Message {
 		_, selected := wanted[message.InternalID]
 		if selected && message.Role == MessageRoleUser {
 			message.PendingSteering = false
-			settled = append(settled, *message)
+			c.changed(message)
+			settled = append(settled, ttypes.CloneConversationMessage(*message))
 		}
 	}
 	if len(settled) > 0 {
-		c.version++
+		c.commitChange(nil)
 	}
 	return settled
 }
@@ -316,7 +320,7 @@ func (c *Conversation) AppendToken(token string) {
 		return
 	}
 	last.Content += token
-	c.version++
+	c.commitChange(last)
 }
 
 func (c *Conversation) AppendThinking(content string) {
@@ -335,12 +339,15 @@ func (c *Conversation) AppendReasoning(delta reasoning.Delta) {
 		}
 		if last.Role == MessageRoleThinking && last.ThinkingActive {
 			last.Content = last.ThinkingDisplay.Append(last.Content, delta)
-			c.version++
+			c.commitChange(last)
 			return
 		}
 	}
 	for _, message := range c.messages {
-		message.ThinkingActive = false
+		if message.ThinkingActive {
+			c.changed(message)
+			message.ThinkingActive = false
+		}
 	}
 	display := reasoning.Display{}
 	content := display.Append("", delta)
@@ -413,7 +420,7 @@ func (c *Conversation) UpdateTurnStatus(status TurnStatus) {
 		}
 		c.insertMessage(message)
 		c.index(message)
-		c.version++
+		c.commitChange(message)
 		return
 	}
 	if message.LifecyclePhase != status.Phase && status.OperationID == "" {
@@ -470,7 +477,7 @@ func (c *Conversation) UpdateTurnStatus(status TurnStatus) {
 		message.ModelID = status.ModelID
 	}
 	c.moveBeforePending(message)
-	c.version++
+	c.commitChange(message)
 }
 
 // ClearTurnStatus removes an unconsumed lifecycle row when normal provider
@@ -484,6 +491,8 @@ func (c *Conversation) ClearTurnStatus() {
 	for _, message := range c.messages {
 		if message.Role == MessageRoleStatus && message.LifecycleOperationID == "" {
 			delete(c.byID, message.InternalID)
+			c.pendingChange.removed = append(c.pendingChange.removed, message.InternalID)
+			c.pendingChange.structural = true
 			changed = true
 			continue
 		}
@@ -491,7 +500,7 @@ func (c *Conversation) ClearTurnStatus() {
 	}
 	if changed {
 		c.messages = kept
-		c.version++
+		c.commitChange(nil)
 	}
 }
 
@@ -528,6 +537,9 @@ func (c *Conversation) moveBeforePending(message *Message) {
 	c.messages = append(c.messages, nil)
 	copy(c.messages[insertAt+1:], c.messages[insertAt:])
 	c.messages[insertAt] = message
+	if current != insertAt {
+		c.pendingChange.structural = true
+	}
 }
 
 func (c *Conversation) MarkAllThinkingDone() {
@@ -542,6 +554,7 @@ func (c *Conversation) MarkAllThinkingDone() {
 			}
 			message.ThinkingActive = false
 			message.ThinkingInterrupted = false
+			c.changed(message)
 			changed = true
 		}
 	}
@@ -563,6 +576,7 @@ func (c *Conversation) MarkAllThinkingInterrupted() {
 		}
 		if message.ThinkingActive || message.ThinkingInterrupted {
 			message.ThinkingActive = false
+			c.changed(message)
 			changed = true
 		}
 	}
@@ -597,44 +611,10 @@ func (c *Conversation) MarkStreamingToolsCancelled() {
 		}
 		message.ToolProgressPhase = ""
 		message.ToolProgressMessage = ""
+		c.changed(message)
 		changed = true
 	}
 	c.bumpIf(changed)
-}
-
-// PromoteThinking transfers the active block to a pane, leaving its stable
-// identity and position in the transcript. The pane owns the body until restore.
-func (c *Conversation) PromoteThinking(paneID string) (Message, bool) {
-	if c != nil && paneID != "" {
-		for _, message := range c.messages {
-			if message.Role == MessageRoleThinking && message.ThinkingActive {
-				thought := *message
-				*message = Message{InternalID: thought.InternalID, Role: MessageRoleTool, Content: "Thinking", SubPaneID: paneID, Time: thought.Time}
-				c.version++
-				return thought, true
-			}
-		}
-	}
-	return Message{}, false
-}
-
-// RestoreThinking returns a settled pane body to its original transcript slot.
-// Completion is not a permanent pane boundary: inline and promoted thoughts
-// must have identical semantics for grouping, disclosure, and recovery.
-func (c *Conversation) RestoreThinking(paneID string, thought Message) bool {
-	if c == nil || paneID == "" || thought.Role != MessageRoleThinking || thought.ThinkingActive {
-		return false
-	}
-	for _, message := range c.messages {
-		if message.SubPaneID == paneID {
-			thought.InternalID = message.InternalID
-			thought.SubPaneID = ""
-			*message = thought
-			c.version++
-			return true
-		}
-	}
-	return false
 }
 
 func (c *Conversation) UpdateToolStreaming(toolID, internalID, name string, data map[string]any) {
@@ -693,7 +673,7 @@ func (c *Conversation) UpdateToolStreaming(toolID, internalID, name string, data
 		message.ToolProgressMessage = ""
 		c.bindToolID(message, toolID)
 		c.bindInternalID(message, internalID)
-		c.version++
+		c.commitChange(message)
 		return
 	}
 
@@ -725,7 +705,7 @@ func (c *Conversation) UpdateToolStreaming(toolID, internalID, name string, data
 	if hasStreamingDetail {
 		c.scheduleToolTransition(message, "streaming", "streaming")
 	}
-	c.version++
+	c.commitChange(message)
 }
 
 func (c *Conversation) UpdateToolCall(toolID, internalID, name, argsCompact string) {
@@ -752,7 +732,7 @@ func (c *Conversation) UpdateToolCall(toolID, internalID, name, argsCompact stri
 		}
 		c.bindToolID(message, toolID)
 		c.bindInternalID(message, internalID)
-		c.version++
+		c.commitChange(message)
 		return
 	}
 
@@ -775,7 +755,7 @@ func (c *Conversation) UpdateToolCall(toolID, internalID, name, argsCompact stri
 	c.index(message)
 	c.startToolTimeline(message)
 	c.scheduleToolTransition(message, "streaming", "calling")
-	c.version++
+	c.commitChange(message)
 }
 
 // AttachSubPaneToTool links a child to the exact parent agent_start call.
@@ -792,7 +772,7 @@ func (c *Conversation) AttachSubPaneToTool(toolID, paneID, label string) bool {
 	}
 	message.SubPaneID = paneID
 	message.ToolProgressLabel = label
-	c.version++
+	c.commitChange(message)
 	return true
 }
 
@@ -804,14 +784,14 @@ func (c *Conversation) SetToolCommand(toolID, internalID, command string) {
 	}
 	if message := c.findTool(internalID, toolID); message != nil {
 		message.ToolCommand = command
-		c.version++
+		c.commitChange(message)
 	}
 }
 
 func (c *Conversation) SetToolRound(toolID, internalID, roundID string) {
 	if message := c.findTool(internalID, toolID); message != nil && roundID != "" && message.ToolRoundID != roundID {
 		message.ToolRoundID = roundID
-		c.version++
+		c.commitChange(message)
 	}
 }
 
@@ -819,7 +799,7 @@ func (c *Conversation) MarkToolNotExecuted(toolID, internalID string) {
 	if msg := c.findTool(internalID, toolID); msg != nil {
 		msg.ToolStatus, msg.ToolPreviewPhase = "interrupted", ttypes.ToolPreviewDone
 		delete(c.toolTimelines, msg)
-		c.version++
+		c.commitChange(msg)
 	}
 }
 
@@ -832,7 +812,7 @@ func (c *Conversation) SetToolInput(toolID, internalID, input, scope string) {
 	if message := c.findTool(internalID, toolID); message != nil {
 		message.ToolInput = input
 		message.ToolScope = scope
-		c.version++
+		c.commitChange(message)
 	}
 }
 
@@ -891,7 +871,7 @@ func (c *Conversation) UpdateToolProgress(toolID, internalID, name, phase, detai
 	default:
 		c.scheduleToolTransition(message, "streaming", message.ToolStatus)
 	}
-	c.version++
+	c.commitChange(message)
 }
 
 func (c *Conversation) UpdateToolResult(toolID, internalID, name, result string, isError bool, estTokens, linesAdded, linesRemoved int) {
@@ -914,7 +894,7 @@ func (c *Conversation) UpdateToolResult(toolID, internalID, name, result string,
 			message.Content = result
 		}
 		delete(c.toolTimelines, message)
-		c.version++
+		c.commitChange(message)
 		return
 	}
 	if isError {
@@ -935,7 +915,7 @@ func (c *Conversation) UpdateToolResult(toolID, internalID, name, result string,
 	} else {
 		message.Content = message.ToolName + " " + message.ToolArgs
 	}
-	c.version++
+	c.commitChange(message)
 }
 
 func (c *Conversation) startToolTimeline(message *Message) *toolTimeline {
@@ -1026,10 +1006,11 @@ func (c *Conversation) AdvanceToolLifecycles(now time.Time) bool {
 				delete(c.toolTimelines, message)
 			}
 		}
+		c.changed(message)
 		changed = true
 	}
 	if changed {
-		c.version++
+		c.commitChange(nil)
 	}
 	return changed
 }
@@ -1055,7 +1036,7 @@ func (c *Conversation) SetToolPermTag(toolID, internalID, tag string) bool {
 		return true
 	}
 	message.PermTag = tag
-	c.version++
+	c.commitChange(message)
 	return true
 }
 
@@ -1069,7 +1050,7 @@ func (c *Conversation) MarkError(reason string) {
 		if message.Role == MessageRoleAssistant && message.Content != "" {
 			message.Incomplete = true
 			message.IncompleteReason = reason
-			c.version++
+			c.commitChange(message)
 		}
 	}
 	c.AppendMessage(Message{
@@ -1096,7 +1077,7 @@ func (c *Conversation) Finish(content, reason string, wasStreaming bool, boundar
 			if last.Role == MessageRoleAssistant {
 				if last.Content == "" {
 					last.Content = content
-					c.version++
+					c.commitChange(last)
 				}
 				return
 			}
@@ -1121,7 +1102,7 @@ func (c *Conversation) Finish(content, reason string, wasStreaming bool, boundar
 		if message.Role == MessageRoleAssistant || message.Role == MessageRoleThinking {
 			message.Incomplete = true
 			message.IncompleteReason = label
-			c.version++
+			c.commitChange(message)
 			return
 		}
 	}
@@ -1234,7 +1215,7 @@ func (c *Conversation) messageIndex(target *Message) int {
 
 func (c *Conversation) bumpIf(changed bool) {
 	if changed {
-		c.version++
+		c.commitChange(nil)
 	}
 }
 

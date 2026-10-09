@@ -128,9 +128,9 @@ func TestCreateSessionRecoversWorkspaceMemoryAfterInitialDBFailure(t *testing.T)
 	}
 }
 
-func TestNewSessionFromLauncherReturnsVisibleFailure(t *testing.T) {
+func TestNewAgentSessionReturnsVisibleFailure(t *testing.T) {
 	ws := &Workspace{Logger: nopLogger{}}
-	result := ws.NewSessionFromLauncher()
+	result := ws.NewAgentSession()
 	if result == nil || result.Error == "" {
 		t.Fatalf("launcher result=%+v want visible failure", result)
 	}
