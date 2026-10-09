@@ -176,7 +176,7 @@ func (m *App) agentSidebarItems() []ui.ListItem {
 		}
 		// Minimized agents stay listed here: this panel is how they come
 		// back, so the row has to say the tab is gone, not that the agent is.
-		if n.IsHidden() {
+		if m.AgentView.IsHidden(n.ID) {
 			if n.IsCompleted() {
 				icon = "✓"
 			} else if detail == "running" {

@@ -198,7 +198,7 @@ func TestLiveThinkingPaneBackgroundIncludesMargins(t *testing.T) {
 				Data: reasoning.Delta{Text: trace, Kind: reasoning.Raw}})
 			app.paintShellFrame()
 			state := app.AgentMgr.Get("thinking-owner").State
-			if promoted != (state.ThinkingPaneID != "") {
+			if promoted != (app.thinkingPaneID(state) != "") {
 				t.Fatal("fixture did not exercise the expected thinking presentation")
 			}
 			bg := ui.NewTokenSet(app.Theme).Color(ui.ColorSubPaneBg)

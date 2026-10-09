@@ -2,6 +2,7 @@ package types
 
 import (
 	captypes "crude/types/capability"
+	"maps"
 	"time"
 
 	"crude/network"
@@ -261,6 +262,7 @@ func CloneAgentProfiles(source map[string]AgentProfileSettings) map[string]Agent
 		}
 		value.AllowedTools = append([]string(nil), value.AllowedTools...)
 		value.DeniedTools = append([]string(nil), value.DeniedTools...)
+		value.SkillModes = maps.Clone(value.SkillModes)
 		value.FileOwnership = append([]string(nil), value.FileOwnership...)
 		if value.ModelModalities != nil {
 			value.ModelModalities = append(make([]string, 0, len(value.ModelModalities)), value.ModelModalities...)
@@ -905,11 +907,6 @@ type SaveSettingsMsg Settings
 type UpdateModelMsg string
 type ModelsListMsg []ModelEntry
 type ModelsErrorMsg string
-
-type SettingsSaveResultMsg struct {
-	Settings Settings
-	Err      error
-}
 
 type SelectionTickMsg time.Time
 type HistoryMessagesMsg []ChatMessage

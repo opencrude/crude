@@ -24,6 +24,7 @@ func TestCtrlAltE_TogglesNewestDisclosure(t *testing.T) {
 	proj := app.subPaneProjections.Get("ses_1_orch_1", workspace.PaneAgent)
 	proj.renderer = ml
 	app.AgentMgr.AddOrchestrator("ses_1_orch_1", &workspace.AgentState{Messages: sp.Messages})
+	app.AgentView.SetActive("ses_1_orch_1")
 
 	// Seed two expandable messages: an early completed thought (collapsed by
 	// default) and the newest one. Ctrl+Alt+E must toggle only the newest.

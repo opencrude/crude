@@ -321,7 +321,8 @@ for the implemented shell/component architecture.
 | `lsp_popup_state.go` | LSP popup state (outline/references/completion) |
 | `launcher.go` | Session launcher |
 | `command_palette.go` | Command palette |
-| `focus.go` | Focus target helpers |
+| `focus.go`, `focus_stack.go` | Shell-owned focus target helpers and LIFO |
+| `session_selection.go` | Shell-selected session/model and owner-fenced settings results |
 | `layout.go` | Layout calculations |
 | `cancel.go` | Cancel handler |
 | `popupmouse.go` | Popup mouse dispatch |
@@ -331,13 +332,13 @@ for the implemented shell/component architecture.
 | File | Role |
 |---|---|
 | `workspace.go` | Workspace struct (composition root: managers + references) |
-| `foundation.go` | Mode/FocusTarget/PaneType enums, Logger, EventBus |
+| `foundation.go` | Mode/PaneType enums, Logger, neutral single-sink EventBus |
 | `agent_manager.go` | AgentNode/AgentManager (tree + flat index) |
-| `session.go` | Session struct (dialogs, refs, token metrics) |
-| `agent_state.go` | AgentState streaming/thinking state + HandleEvent |
+| `session.go` | Exact session backend, references, settings and usage projection |
+| `agent_state.go`, `agent_effects.go` | Callback-free ApplyEvent reducer and neutral effects |
+| `agent_status_events.go` | Accepted-event status reduction |
 | `agent_state_events.go` | Tool handling sub-methods on AgentState |
 | `conversation.go` | Canonical live message store (Conversation/Message) |
-| `focus_stack.go` | FocusStack LIFO |
 | `lsp_manager.go` | LSPManager (connections, diagnostics cache) |
 | `references.go` | ReferenceStore (SQLite-backed @references) |
 | `file_ops.go` | FileOpsService (filesystem mutations) |
@@ -381,6 +382,54 @@ for the implemented shell/component architecture.
 ---
 
 ## Rendering Architecture (stable — no planned changes)
+
+### Core/shell extraction (in progress)
+
+The product still starts one TUI-owned runtime; multi-client/server mode is not
+implemented. Follow `docs/plans/core-shell-separation.md` for the remaining
+ownership, transport and release gates. Do not attach multiple Apps to one mutable
+Workspace or claim neutral ingress alone makes that safe.
+
+- `App` owns selected session, model display alias and focus; `Workspace` has no
+  active session. Lifecycle, backend lookup and hydration require explicit session
+  IDs. `NewAgentSession`/`OpenAgentSession` return identities without selecting a
+  shell; opening an already-live session reuses its backend.
+- `App.AgentView` owns selected agent and exact-node tab visibility. AgentManager
+  owns inventory only; no shared Hidden/active field may return. Width-dependent
+  thinking panes are reversible shell projections of the canonical thought, not
+  another Conversation or a core ThinkingPaneID. Each owner uses its own retained
+  geometry and session latch; promotion never rewrites shared transcript content.
+- `EventBus` accepts a neutral `MessageSink`; the TUI owns the concrete program
+  adapter. It remains synchronous single-sink ingress, not a queued/replayable
+  subscription stream. Its debug log is not delivery or durable evidence.
+- `Workspace.ApplyAgentEvent` owns semantic inventory, conversation, prompt,
+  status and request-keyed usage reduction; `AgentState.ApplyEvent` returns neutral
+  effects. Root registration and cold hydration install retained canonical state,
+  never a one-shot client tail. Snapshot messages detach nested attribution and
+  references. The shell still schedules ingress/ticks on its Update thread:
+  a daemon-owned serialized loop and snapshot/subscription transport are NOT yet
+  integrated. `workspace/` must not import Bubble Tea or TUI rendering.
+- `lspclient/` owns the nonvisual LSP transport. Workspace installs its default
+  runtime without TUI construction. Shared live-document ownership and detach-safe
+  LSP lifetime remain release gates; moving the client package alone is not enough.
+- The new `core/` path owns retained workspace actors, atomic snapshot/subscription
+  admission, bounded resource workers, durable mutation receipts and private framed
+  client transport. `coreclient.WorkspaceView` is a detached read mirror, never a
+  fake Workspace containing runtime services. These packages are not yet the CLI
+  startup path. Read `docs/reference/core-client-protocol.md` before extending them;
+  do not advertise connected-shell, daemon or SSH journeys before actual cutover.
+- `workspace.TerminalService` now owns the one `terminalvt` parser and reply source
+  before PTY reads start, including the current standalone product. `shellterm`
+  consumes immutable rows and typed asynchronous intents; `termview` owns local
+  scroll/selection/wrapping-aware copy. Never restore a second shell parser or raw
+  reply-capable output feed. Input/resize use exact controller leases and ordered
+  queues; OSC clipboard text is an explicit controller-local copy offer. Placement
+  is shell-local. Detach revokes authority, not the PTY.
+- `workspace.DocumentService` and the editor's shared-document adapter provide
+  revision-fenced live text, safe pending edits and author-specific undo. The
+  existing file-opening/save/LSP UI still needs universal client integration;
+  constructing the service alone does not migrate those consumers. `clientstate`
+  similarly supplies isolated draft CAS storage but does not migrate old drafts.
 
 ### Root Host + Shell Surface (Phase 13.9, since 2026-08-01)
 
@@ -699,13 +748,13 @@ Legacy `tui/widgets/popupchrome.go` is **deleted**.
 
 ### Agent Tab Close Is Minimize, Not Terminate (since 2026-08-13)
 
-Closing an agent tab **minimizes** it: `AgentNode.Hidden` is set, the window
+Closing an agent tab **minimizes** it: the shell's `AgentView` hides it, the window
 tab goes away, and nothing else changes. The orchestrator keeps streaming,
 the conversation, panes, chat projections, scroll offsets, and session
 ownership are all retained. A stray click must never destroy work in flight.
 
-- `Workspace.MinimizeAgent` / `RestoreAgent` own the domain flag. Each node's
-  `Hidden` records its own tab choice; `AgentNode.IsHidden()` also checks
+- `App.MinimizeAgent` / `RestoreAgent` change only that shell's exact-node
+  visibility map; `AgentView.IsHidden()` also checks
   ancestors. Minimizing a root hides its subtree without overwriting archived
   child choices. Restoring it returns previously open children, while completed
   review children remain closed. Explicitly opening a nested child reveals its
@@ -718,8 +767,8 @@ ownership are all retained. A stray click must never destroy work in flight.
   children belong with their parent rather than another focused empty pane.
   Resumed completed children are
   retained in the Agents panel as closed review surfaces, never mass-opened.
-- **`AgentMgr.Count()` vs `VisibleCount()`**: shell gates choosing between
-  launcher / chat / editor must use `VisibleCount()`, otherwise a workspace
+- **`AgentMgr.Count()` vs `AgentView.VisibleCount()`**: shell gates choosing between
+  launcher / chat / editor must use the latter, otherwise a workspace
   whose agents are all minimized shows an empty chat instead of the
   launcher. `Count()` stays the true total for the aggregate status report and
   the Agents rail badge. The footer remains a quiet system-level utility rail;
@@ -1077,7 +1126,7 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
 
 - `powernap` is vendored (`third_party/powernap`) with a `TransportWrap`
   hook in `ClientConfig` (see `lsp.ClientConfig`); `LSPIntegration.Start`
-  passes a wrapper that installs `lspPipeMonitor` (`tui/editor/lsp_pipe.go`).
+  passes a wrapper that installs `lspPipeMonitor` (`lspclient/lsp_pipe.go`).
 - `asyncPipeWriter`: `Write` only enqueues a copy (O(1)); ONE dedicated
   writer goroutine performs the actual pipe writes in FIFO order. The queue
   is byte-bounded (`lspWriteQueueCap`); a fully-stalled server trips the cap

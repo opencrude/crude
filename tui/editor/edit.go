@@ -223,6 +223,10 @@ func (e *Editor) endUndoGroup() {
 }
 
 func (e *Editor) undo() {
+	if e.documentProjection != nil {
+		e.requestDocumentUndo(false)
+		return
+	}
 	if e.changeIndex <= 0 {
 		return
 	}
@@ -258,6 +262,10 @@ func (e *Editor) undo() {
 func (e *Editor) Undo() { e.undo() }
 
 func (e *Editor) redo() {
+	if e.documentProjection != nil {
+		e.requestDocumentUndo(true)
+		return
+	}
 	if e.changeIndex >= len(e.changes) {
 		return
 	}

@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"os"
 	"unicode/utf8"
+
+	"crude/document"
 )
 
 type source int
@@ -32,6 +34,8 @@ type PieceTable struct {
 	lineOffsets []int
 	cacheValid  bool
 	revision    uint64
+	// mutationObserver is a UI-local notification, never a backend call.
+	mutationObserver func(document.Edit)
 }
 
 type bufferLineChange struct {
@@ -82,11 +86,22 @@ func (pt *PieceTable) Load(filePath string) error {
 // file. The "didChange" notification must be fired by the caller — this
 // function only touches the buffer.
 func (pt *PieceTable) ReplaceAll(text string) {
+	size := 0
+	for _, p := range pt.pieces {
+		size += p.length
+	}
 	pt.original = []byte(text)
 	pt.add = []byte{}
 	pt.pieces = []piece{{buffer: originalBuffer, start: 0, length: len(text)}}
 	pt.revision++
 	pt.invalidateCache()
+	pt.observeMutation(document.Edit{Start: 0, End: size, Text: text})
+}
+
+func (pt *PieceTable) observeMutation(edit document.Edit) {
+	if pt.mutationObserver != nil {
+		pt.mutationObserver(edit)
+	}
 }
 
 func (pt *PieceTable) ensureCache() {
@@ -250,6 +265,7 @@ func (pt *PieceTable) Insert(pos Position, text []byte) (EditInfo, error) {
 		pt.revision++
 		pt.recordLineChange(pos.Line, pos.Line, bytes.Count(text, []byte{'\n'}))
 		pt.invalidateCache()
+		pt.observeMutation(document.Edit{Start: offset, End: offset, Text: string(text)})
 		return EditInfo{}, nil
 	}
 
@@ -291,6 +307,7 @@ func (pt *PieceTable) Insert(pos Position, text []byte) (EditInfo, error) {
 	pt.revision++
 	pt.recordLineChange(pos.Line, pos.Line, bytes.Count(text, []byte{'\n'}))
 	pt.invalidateCache()
+	pt.observeMutation(document.Edit{Start: offset, End: offset, Text: string(text)})
 
 	return EditInfo{}, nil
 }
@@ -336,6 +353,7 @@ func (pt *PieceTable) Delete(start, end Position) (EditInfo, error) {
 	pt.revision++
 	pt.recordLineChange(start.Line, end.Line, start.Line-end.Line)
 	pt.invalidateCache()
+	pt.observeMutation(document.Edit{Start: startOff, End: endOff})
 
 	return EditInfo{}, nil
 }

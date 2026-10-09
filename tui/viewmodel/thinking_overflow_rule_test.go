@@ -9,6 +9,7 @@ import (
 	"crude/tui/chatprojection"
 	types "crude/types"
 	"crude/types/reasoning"
+	"crude/workspace"
 )
 
 // TestThinkingOverflowPromotionIsSharedByMainAndSubAgents pins the single
@@ -33,12 +34,16 @@ func TestThinkingOverflowPromotionIsSharedByMainAndSubAgents(t *testing.T) {
 
 	main := app.AgentMgr.Get("main").State
 	child := app.AgentMgr.Get("child").State
-	if main.ThinkingPaneID == "" || child.ThinkingPaneID == "" {
-		t.Fatalf("overflow did not promote both owners: main=%q child=%q", main.ThinkingPaneID, child.ThinkingPaneID)
+	if app.thinkingPaneID(main) == "" || app.thinkingPaneID(child) == "" {
+		t.Fatalf("overflow did not promote both owners: main=%q child=%q", app.thinkingPaneID(main), app.thinkingPaneID(child))
 	}
-	for _, tc := range []struct{ id, paneID string }{{"main", main.ThinkingPaneID}, {"child", child.ThinkingPaneID}} {
-		pane := app.PaneMgr.Get(tc.paneID)
-		if pane == nil || len(pane.Messages.Messages()) == 0 || !strings.Contains(pane.Messages.Messages()[0].Content, "a line of reasoning") {
+	for _, tc := range []struct{ id, paneID string }{{"main", app.thinkingPaneID(main)}, {"child", app.thinkingPaneID(child)}} {
+		pane := app.Get(tc.paneID)
+		if pane == nil {
+			t.Fatalf("%s pane missing", tc.id)
+		}
+		thought, active := pane.Messages.ActiveThinking()
+		if !active || !strings.Contains(thought.Content, "a line of reasoning") {
 			t.Fatalf("%s pane lost the promoted body", tc.id)
 		}
 	}
@@ -55,12 +60,15 @@ func TestThinkingOverflowLatchClearsOnSettingsChange(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 100, 40
 	app.AddOrchestrator("owner")
+	owner := workspace.NewSession("thinking-owner", t.TempDir(), nil, nil)
+	app.SessionsByAgent = map[string]*workspace.Session{"owner": owner}
+	app.ActiveSession = owner
 	app.handleAgentEvent(types.AgentEventMsg{AgentID: "owner", Type: "turn_started", Data: types.TurnIdentity{Generation: 1, ModelID: "model"}})
 	long := strings.Repeat("a line of reasoning about the task\n", 20)
 
 	app.handleAgentEvent(types.AgentEventMsg{AgentID: "owner", Type: "thinking", Data: reasoning.Delta{Text: long, Kind: reasoning.Summary}})
 	state := app.AgentMgr.Get("owner").State
-	if state.ThinkingPaneID == "" {
+	if app.thinkingPaneID(state) == "" {
 		t.Fatal("overflowing block did not promote")
 	}
 	if !app.thinkingOverflowLatched() {
@@ -71,7 +79,7 @@ func TestThinkingOverflowLatchClearsOnSettingsChange(t *testing.T) {
 	// Latched: a later short block still opens in a pane.
 	app.handleAgentEvent(types.AgentEventMsg{AgentID: "owner", Type: "turn_started", Data: types.TurnIdentity{Generation: 2, ModelID: "model"}})
 	app.handleAgentEvent(types.AgentEventMsg{AgentID: "owner", Type: "thinking", Data: reasoning.Delta{Text: "brief", Kind: reasoning.Summary}})
-	if state.ThinkingPaneID == "" {
+	if app.thinkingPaneID(state) == "" {
 		t.Fatal("session latch did not keep later blocks in a pane")
 	}
 	app.handleAgentEvent(types.AgentEventMsg{AgentID: "owner", Type: "done", Data: map[string]any{"reason": "completed"}})
@@ -83,7 +91,7 @@ func TestThinkingOverflowLatchClearsOnSettingsChange(t *testing.T) {
 	}
 	app.handleAgentEvent(types.AgentEventMsg{AgentID: "owner", Type: "turn_started", Data: types.TurnIdentity{Generation: 3, ModelID: "model"}})
 	app.handleAgentEvent(types.AgentEventMsg{AgentID: "owner", Type: "thinking", Data: reasoning.Delta{Text: "brief", Kind: reasoning.Summary}})
-	if state.ThinkingPaneID != "" {
+	if app.thinkingPaneID(state) != "" {
 		t.Fatal("cleared latch still promoted a short block")
 	}
 }

@@ -103,9 +103,10 @@ type sessionSettingsModelsResultMsg struct {
 }
 
 type sessionSettingsSaveResultMsg struct {
-	target   *sessionsettings.Screen
-	settings types.Settings
-	err      error
+	target     *sessionsettings.Screen
+	workspace  *workspace.Workspace
+	generation uint64
+	result     workspace.SessionSettingsResult
 }
 
 func sessionSettingsPanel(screen *sessionsettings.Screen) ui.PanelEntry {
@@ -128,7 +129,7 @@ func (m *App) openSessionYoloPanel() {
 		return
 	}
 	projection.yolo.Reset()
-	projection.yoloAgentID = m.AgentMgr.ActiveID()
+	projection.yoloAgentID = m.AgentView.ActiveID()
 	projection.deck.Open(sessionYoloPanel(projection.yolo))
 	if panel := projection.deck.Active(); panel == nil || panel.ID != sessionYoloPanelID {
 		projection.deckHost.MarkLayout()
@@ -322,7 +323,7 @@ func (m *App) setAgentYolo(agentID string, enabled bool) {
 	if node != nil && node.State != nil && node.State.Messages != nil {
 		now := time.Now()
 		id := phase + ":" + now.Format(time.RFC3339Nano)
-		node.State.Messages.AppendMessage(workspace.Message{InternalID: id, Role: types.RoleStatus, LifecyclePhase: phase, LifecycleOperationID: id, Content: content, Time: now})
+		m.AppendAgentMessages(node.ID, []workspace.Message{{InternalID: id, Role: types.RoleStatus, LifecyclePhase: phase, LifecycleOperationID: id, Content: content, Time: now}}, false)
 		m.syncAgentMessages(node.ID, false)
 	}
 }

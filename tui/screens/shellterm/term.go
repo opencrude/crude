@@ -7,9 +7,11 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
+	"crude/terminalvt"
 	"crude/tui/cell"
+	"crude/tui/rendering"
 	"crude/tui/surface"
-	"crude/tui/term"
+	"crude/tui/termview"
 	"crude/tui/theme"
 	"crude/tui/ui"
 	"crude/workspace"
@@ -19,57 +21,48 @@ const (
 	ScreenID  ui.ComponentID = "shellterm"
 	SurfaceID ui.ComponentID = "shellterm/surface"
 
-	ActionPromote = "terminal.promote"
-	ActionDock    = "terminal.dock"
-	ActionClose   = "terminal.close"
-	ActionWrite   = "terminal.write"
+	ActionPromote     = "terminal.promote"
+	ActionDock        = "terminal.dock"
+	ActionClose       = "terminal.close"
+	ActionTakeControl = "terminal.takeControl"
 )
 
 // Screen paints one PTY session and routes keys into it.
 type Screen struct {
 	ui.Base
-	th        *theme.Theme
-	tokens    *ui.TokenSet
-	termID    string
-	title     string
-	vt        *term.Emulator
-	initErr   error
-	floating  bool
-	exited    bool
-	write     func([]byte)
-	resize    func(cols, rows int) error
-	copy      func(string) tea.Cmd
-	now       func() uint64
-	cols      int
-	rows      int
-	scroll    *ui.ScrollModel
-	scrollbar *ui.ScrollbarControl
+	th                   *theme.Theme
+	tokens               *ui.TokenSet
+	termID               string
+	title                string
+	view                 termview.View
+	projection           workspace.TerminalProjection
+	controlled           bool
+	closed               bool
+	command              func(Command) tea.Cmd
+	pending              []Command
+	readSequence         uint64
+	readStart, readCount int
+	readPending          bool
+	copyPending          bool
+	blinkOn              bool
+	floating             bool
+	exited               bool
+	copy                 func(string) tea.Cmd
+	now                  func() uint64
+	cols                 int
+	rows                 int
+	scroll               *ui.ScrollModel
+	scrollbar            *ui.ScrollbarControl
 
 	focusKnown         bool
 	focused            bool
 	selecting          bool
 	lastCursorActivity time.Time
 	attention          bool
-
-	fedBell bool
-	fedClip string
-	hasClip bool
-	fedPwd  bool
 }
 
-// FeedEffects reports side effects of one Feed batch that the caller must
-// publish OUTSIDE the current update pass (event-bus publishes from inside
-// Feed would re-enter the update loop).
-type FeedEffects struct {
-	TitleChanged bool
-	Bell         bool
-	Clipboard    string
-	HasClipboard bool
-	PwdChanged   bool
-}
-
-// New creates a terminal screen for id. Construction succeeds even when
-// libghostty-vt is unavailable; Paint shows the error and input is a no-op.
+// New creates a projection-only terminal screen for id. The host supplies rows
+// and an explicit control lease; construction never creates a terminal engine.
 func New(th *theme.Theme, id, title string) *Screen {
 	if th == nil {
 		th = theme.DefaultDark()
@@ -86,37 +79,13 @@ func New(th *theme.Theme, id, title string) *Screen {
 	s.scroll = ui.NewScrollModel()
 	s.scrollbar = ui.NewScrollbarControl(ui.ComponentID("shellterm/scrollbar/"+id), s.scroll, tokens)
 	s.scrollbar.OnScroll(func(oldOffset, newOffset int) {
-		if s.vt != nil && oldOffset != newOffset {
-			s.vt.ScrollDelta(newOffset - oldOffset)
+		if oldOffset != newOffset {
+			s.view.ScrollDelta(newOffset - oldOffset)
+			s.requestRows()
 		}
 	})
 	s.now = func() uint64 { return uint64(time.Now().UnixNano()) }
-	s.vt, s.initErr = term.NewEmulator()
-	if s.vt != nil {
-		// Effect state is data-only: publishing to the workspace/event bus is
-		// the caller's job (via the FeedEffects returned from Feed), because
-		// Feed runs while Bubble Tea is handling TerminalOutputMsg and a
-		// synchronous event-bus publish would re-enter the update loop.
-		s.vt.SetTitleHandler(func(t string) {
-			s.title = t
-		})
-		s.vt.SetReplyHandler(func(b []byte) {
-			if s.write != nil {
-				s.write(b)
-			}
-		})
-		s.vt.SetBellHandler(func() {
-			s.fedBell = true
-		})
-		s.vt.SetClipboardHandler(func(text string) {
-			s.fedClip = text
-			s.hasClip = true
-		})
-		s.vt.SetPwdHandler(func(string) {
-			s.fedPwd = true
-		})
-		s.applyDefaultColors()
-	}
+	s.blinkOn = true
 	return s
 }
 
@@ -135,8 +104,134 @@ func (s *Screen) Title() string {
 	return "Terminal"
 }
 
-func (s *Screen) SetWrite(fn func([]byte))                { s.write = fn }
-func (s *Screen) SetResize(fn func(cols, rows int) error) { s.resize = fn }
+func (s *Screen) SetCommand(fn func(Command) tea.Cmd) { s.command = fn }
+func (s *Screen) SetControlled(v bool) {
+	if s.controlled == v {
+		return
+	}
+	s.controlled = v
+	if !v {
+		kept := s.pending[:0]
+		for _, c := range s.pending {
+			if c.Kind == CommandReadRows {
+				kept = append(kept, c)
+			}
+		}
+		s.pending = kept
+	}
+	if v {
+		s.queue(Command{Kind: CommandFocus, Focused: s.focused})
+		s.requestResize()
+	}
+}
+func (s *Screen) Controlled() bool { return s.controlled }
+
+// SetProjection installs a detached immutable service snapshot, rejecting older generations.
+func (s *Screen) SetProjection(p workspace.TerminalProjection) {
+	if s.closed || p.Info.ID != s.termID || p.Generation < s.view.Generation {
+		return
+	}
+	changed := p.Generation != s.view.Generation
+	if !s.view.Install(p.Grid, p.Generation) {
+		return
+	}
+	if changed {
+		s.copyPending = false
+		s.readPending = false
+	}
+	p.Grid = s.view.Grid
+	s.projection = p
+	s.cols, s.rows = p.Grid.Cols, p.Grid.GridRows
+	s.title = p.Info.Title
+	s.exited = !p.Info.Alive
+	if changed {
+		s.resetCursorBlink(time.Now())
+	}
+	s.requestRows()
+}
+
+// SetRows fences asynchronous page responses by both request intent and source generation.
+func (s *Screen) SetRows(sequence uint64, p workspace.TerminalProjection) bool {
+	if !s.readPending || sequence != s.readSequence || p.Generation < s.view.Generation || p.Info.ID != s.termID {
+		return false
+	}
+	s.readPending = false
+	s.SetProjection(p)
+	if s.copyPending {
+		s.requestSelectionRows()
+	}
+	return true
+}
+
+// RowsFailed releases only the exact in-flight page intent. The host presents
+// the service error and may request another page on the next interaction.
+func (s *Screen) RowsFailed(sequence uint64) {
+	if s.readPending && sequence == s.readSequence {
+		s.readPending = false
+		s.copyPending = false
+	}
+}
+
+// TakePendingCommands drains intents from layout/focus/page installation. The host
+// executes them asynchronously, never from Paint or Layout.
+func (s *Screen) TakePendingCommands() []Command { out := s.pending; s.pending = nil; return out }
+func (s *Screen) queue(c Command)                { c.ID = s.termID; s.pending = append(s.pending, c) }
+func (s *Screen) requestResize() {
+	c, r := workspace.NormalizeTerminalSize(s.Bounds().W, s.Bounds().H)
+	if s.controlled && !s.exited && (c != s.cols || r != s.rows) {
+		for _, p := range s.pending {
+			if p.Kind == CommandResize && p.Cols == c && p.Rows == r {
+				return
+			}
+		}
+		s.queue(Command{Kind: CommandResize, Cols: c, Rows: r})
+	}
+}
+func (s *Screen) requestPage(start, count int) {
+	if s.closed || count <= 0 {
+		return
+	}
+	if s.readPending && s.readStart == start && s.readCount == count {
+		return
+	}
+	s.readSequence++
+	kept := s.pending[:0]
+	for _, c := range s.pending {
+		if c.Kind != CommandReadRows {
+			kept = append(kept, c)
+		}
+	}
+	s.pending = kept
+	s.readStart, s.readCount = start, count
+	s.readPending = true
+	s.queue(Command{Kind: CommandReadRows, Start: start, Count: count, Sequence: s.readSequence, Generation: s.view.Generation})
+}
+func (s *Screen) requestRows() {
+	if a, n, ok := s.view.VisibleMissing(); ok {
+		s.requestPage(a, n)
+	}
+}
+func (s *Screen) requestSelectionRows() {
+	if a, n, ok := s.view.SelectionMissing(); ok {
+		s.requestPage(a, n)
+	}
+}
+
+// TakePendingCopy returns the clipboard command after every selected page arrived.
+func (s *Screen) TakePendingCopy() tea.Cmd {
+	if !s.copyPending {
+		return nil
+	}
+	text, ok := s.view.SelectionText()
+	if !ok {
+		return nil
+	}
+	s.copyPending = false
+	if text != "" && s.copy != nil {
+		return s.copy(text)
+	}
+	return nil
+}
 
 // SetCopy builds the asynchronous command that writes selected text to the
 // system clipboard. Clipboard subprocess I/O must never run in Handle, which
@@ -153,10 +248,7 @@ func (s *Screen) SetNow(fn func() uint64) {
 // PWD returns the child's OSC 7 working directory as a filesystem path
 // (OSC 7 payloads are file:// URLs).
 func (s *Screen) PWD() string {
-	if s.vt == nil {
-		return ""
-	}
-	raw := s.vt.PWD()
+	raw := s.projection.Info.CWD
 	if raw == "" || !strings.HasPrefix(raw, "file://") {
 		return raw
 	}
@@ -170,44 +262,27 @@ func (s *Screen) PWD() string {
 // SetTermFocused reports focus transitions to the child (CSI I/O) when it
 // enabled DEC mode 1004. Idempotent per state.
 func (s *Screen) SetTermFocused(v bool) {
-	if s.vt == nil || s.exited {
-		return
-	}
 	if s.focusKnown && s.focused == v {
 		return
 	}
 	s.focusKnown = true
 	s.focused = v
 	s.resetCursorBlink(time.Now())
-	if data := s.vt.EncodeFocus(v); len(data) > 0 && s.write != nil {
-		s.write(data)
+	if s.controlled && !s.exited {
+		s.queue(Command{Kind: CommandFocus, Focused: v})
 	}
 }
-
-// resetCursorBlink records terminal activity and immediately makes the cursor
-// visible. Movement, input, output, resize, and focus changes all restart the
-// idle delay instead of letting an old wall-clock blink phase hide the cursor.
 func (s *Screen) resetCursorBlink(now time.Time) bool {
 	s.lastCursorActivity = now
-	if s.vt == nil || s.exited {
-		return false
-	}
-	return s.vt.SetCursorState(s.focused, true)
+	changed := !s.blinkOn
+	s.blinkOn = true
+	return changed
 }
-
-// TickCursor advances the cursor's focused blink phase. It returns true only
-// when the visible cursor state changed, allowing retained floating windows to
-// invalidate their cached content without repainting on every application
-// tick. Unfocused terminals keep a steady dim cursor.
 func (s *Screen) TickCursor(now time.Time) bool {
-	if s.vt == nil || s.exited {
-		return false
-	}
-	blinkOn := true
-	if s.focused {
-		blinkOn = ui.CursorPhaseVisible(int(now.UnixMilli()), int(s.lastCursorActivity.UnixMilli()), s.vt.CursorBlink())
-	}
-	return s.vt.SetCursorState(s.focused, blinkOn)
+	on := !s.focused || ui.CursorPhaseVisible(int(now.UnixMilli()), int(s.lastCursorActivity.UnixMilli()), s.view.Grid.Cursor.Blink)
+	changed := on != s.blinkOn
+	s.blinkOn = on
+	return changed
 }
 
 func (s *Screen) SetFloating(v bool) { s.floating = v }
@@ -233,37 +308,12 @@ func (s *Screen) SetWindowTitle(title string) {
 	}
 }
 
-// Feed parses PTY bytes. The returned effects must be published
-// asynchronously — publishing to the event bus while Bubble Tea is still
-// inside the TerminalOutputMsg update would re-enter the update loop through
-// Program.Send and can deadlock it.
-func (s *Screen) Feed(data []byte) FeedEffects {
-	if s.vt == nil {
-		return FeedEffects{}
-	}
-	before := s.title
-	s.fedBell = false
-	s.fedClip = ""
-	s.hasClip = false
-	s.fedPwd = false
-	s.vt.Feed(data)
-	if len(data) > 0 {
-		s.resetCursorBlink(time.Now())
-	}
-	return FeedEffects{
-		TitleChanged: s.title != before,
-		Bell:         s.fedBell,
-		Clipboard:    s.fedClip,
-		HasClipboard: s.hasClip,
-		PwdChanged:   s.fedPwd,
-	}
-}
-
 func (s *Screen) Close() {
-	if s.vt != nil {
-		s.vt.Close()
-		s.vt = nil
-	}
+	s.closed = true
+	s.pending = nil
+	s.readPending = false
+	s.copyPending = false
+	s.CancelPointerCapture()
 }
 
 func (s *Screen) SetTokens(tokens *ui.TokenSet) {
@@ -271,7 +321,6 @@ func (s *Screen) SetTokens(tokens *ui.TokenSet) {
 	if s.scrollbar != nil {
 		s.scrollbar.SetTokens(tokens)
 	}
-	s.applyDefaultColors()
 }
 
 func (s *Screen) SetTheme(th *theme.Theme) {
@@ -280,15 +329,6 @@ func (s *Screen) SetTheme(th *theme.Theme) {
 	}
 	s.th = th
 	s.SetTokens(ui.NewTokenSet(th))
-}
-
-func (s *Screen) applyDefaultColors() {
-	if s.vt == nil || s.tokens == nil {
-		return
-	}
-	s.vt.SetDefaultColors(s.tokens.Color(ui.ColorFg), s.tokens.Color(ui.ColorBg))
-	s.vt.SetSelectionColors(s.tokens.Color(ui.ColorTextSelectionFg), s.tokens.Color(ui.ColorTextSelection))
-	s.vt.SetCursorColor(s.tokens.Color(ui.ColorCursor))
 }
 
 func (s *Screen) PreferredHeight(maxHeight int) int {
@@ -309,20 +349,8 @@ func (s *Screen) Measure(_ ui.LayoutContext, cs ui.Constraints) ui.Size {
 
 func (s *Screen) Layout(_ ui.LayoutContext, r ui.Rect) {
 	s.SetBounds(r)
-	cols, rows := workspace.NormalizeTerminalSize(r.W, r.H)
-	if s.vt != nil && (cols != s.cols || rows != s.rows) {
-		// Resize the PTY first. If its ioctl fails, keep the emulator on the
-		// previous grid so the two sides cannot silently diverge; a later
-		// layout retries because s.cols/s.rows were not committed.
-		if s.resize != nil {
-			if err := s.resize(cols, rows); err != nil {
-				return
-			}
-		}
-		s.cols, s.rows = cols, rows
-		s.vt.Resize(cols, rows)
-		s.resetCursorBlink(time.Now())
-	}
+	s.requestResize()
+	s.requestRows()
 }
 
 func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext) {
@@ -333,24 +361,25 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 		bg = s.tokens.Color(ui.ColorBg)
 	}
 	ui.FillRect(buf, ox, oy, r, cell.BlankCell(bg))
-	if s.initErr != nil {
-		msg := " libghostty-vt unavailable: " + s.initErr.Error()
-		buf.WriteString(ox+r.X, oy+r.Y, msg, fg, bg, 0)
+	if s.projection.Error != "" {
+		if r.H > 0 {
+			buf.WriteString(ox+r.X, oy+r.Y, rendering.TruncateVisual(" "+s.projection.Error, r.W, "…"), fg, bg, 0)
+		}
 		return
 	}
-	if s.vt != nil {
-		if ctx.Frame > 0 {
-			s.TickCursor(time.UnixMilli(int64(ctx.Frame)))
-		} else {
-			s.TickCursor(time.Now())
-		}
-		s.vt.Paint(buf, ox+r.X, oy+r.Y, fg, bg)
-		s.paintScrollbackScrollbar(buf, ox+r.X, oy+r.Y)
+	if ctx.Frame > 0 {
+		s.TickCursor(time.UnixMilli(int64(ctx.Frame)))
+	} else {
+		s.TickCursor(time.Now())
 	}
+	s.view.Paint(buf, ox+r.X, oy+r.Y, r.W, r.H, s.tokens, s.focused, s.blinkOn)
+	s.paintScrollbackScrollbar(buf, ox+r.X, oy+r.Y)
 	if s.exited && s.tokens != nil {
 		msg := " [process exited] "
 		y := oy + r.Y + max(0, r.H-2)
-		buf.WriteString(ox+r.X, y, msg, s.tokens.Color(ui.ColorMuted), bg, 0)
+		if r.H > 0 {
+			buf.WriteString(ox+r.X, y, rendering.TruncateVisual(msg, r.W, "…"), s.tokens.Color(ui.ColorMuted), bg, 0)
+		}
 	}
 	_ = ctx
 }
@@ -359,14 +388,14 @@ func (s *Screen) Paint(buf *surface.CellBuffer, ox, oy int, ctx ui.PaintContext)
 // interaction and geometry path. The control remains mounted while dragging
 // to avoid losing capture when the thumb reaches the bottom.
 func (s *Screen) syncScrollbackScrollbar() bool {
-	if s.vt == nil || s.scrollbar == nil || s.rows < 2 || s.cols < 2 {
+	if s.closed || s.scrollbar == nil || s.rows < 2 || s.cols < 2 {
 		return false
 	}
-	offset, total, visible := s.vt.Scrollbar()
+	offset, total, visible := s.view.Scrollbar()
 	ui.SyncScrollModel(s.scroll, total, visible, offset)
 	s.scrollbar.SetScroll(s.scroll)
-	s.scrollbar.Layout(ui.LayoutContext{}, ui.Rect{X: s.cols - ui.ScrollbarWidth, W: ui.ScrollbarWidth, H: s.rows})
-	return total > visible && (!s.vt.ViewportPinned() || s.scrollbar.IsDragging())
+	s.scrollbar.Layout(ui.LayoutContext{}, ui.Rect{X: max(0, s.Bounds().W-ui.ScrollbarWidth), W: ui.ScrollbarWidth, H: s.Bounds().H})
+	return total > visible && (!s.view.Pinned() || s.scrollbar.IsDragging())
 }
 
 func (s *Screen) paintScrollbackScrollbar(buf *surface.CellBuffer, ox, oy int) {
@@ -378,14 +407,20 @@ func (s *Screen) paintScrollbackScrollbar(buf *surface.CellBuffer, ox, oy int) {
 
 func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if evt.Kind == ui.EventKey {
-		return s.handleKey(evt.Key)
+		res := s.handleKey(evt.Key)
+		s.requestRows()
+		return res
 	}
 	if evt.Kind == ui.EventCustom {
-		if paste, ok := evt.Custom.(tea.PasteMsg); ok && !s.exited && s.vt != nil {
+		if paste, ok := evt.Custom.(tea.PasteMsg); ok && !s.exited && !s.closed {
+			if !s.controlled {
+				return s.takeControlResult()
+			}
 			s.resetCursorBlink(time.Now())
-			s.vt.ClearSelection()
-			s.vt.ScrollBottom()
-			return s.writeBytes(s.vt.EncodePaste([]byte(paste.Content)))
+			s.view.ClearSelection()
+			s.view.ScrollBottom()
+			s.requestRows()
+			return s.send(Command{Kind: CommandPaste, Paste: []byte(paste.Content)})
 		}
 	}
 	switch evt.Kind {
@@ -396,7 +431,7 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 }
 
 func (s *Screen) handleKey(key tea.KeyPressMsg) ui.EventResult {
-	if s.exited || s.vt == nil {
+	if s.closed {
 		return ui.EventResult{Handled: true}
 	}
 	s.resetCursorBlink(time.Now())
@@ -405,7 +440,7 @@ func (s *Screen) handleKey(key tea.KeyPressMsg) ui.EventResult {
 	if ctrlShift {
 		switch key.Code {
 		case 'c', 'C':
-			if s.vt.HasSelection() {
+			if s.view.HasSelection() {
 				return ui.EventResult{
 					Handled:    true,
 					Cmd:        s.copySelection(),
@@ -413,42 +448,44 @@ func (s *Screen) handleKey(key tea.KeyPressMsg) ui.EventResult {
 				}
 			}
 		case 'a', 'A':
-			s.vt.SelectAll()
+			s.view.SelectAll()
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 		}
 	}
 	// Shift+PgUp/PgDn/Home/End drive scrollback while the primary screen is
 	// visible. Full-screen apps (alt screen) get the keys unchanged.
-	if shift && !s.vt.AltScreen() {
+	if shift && !s.view.Grid.Modes.AltScreen {
 		page := max(1, s.rows-1)
 		switch key.Code {
 		case tea.KeyPgUp:
-			s.vt.ScrollDelta(-page)
+			s.view.ScrollDelta(-page)
+			s.requestRows()
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 		case tea.KeyPgDown:
-			s.vt.ScrollDelta(page)
+			s.view.ScrollDelta(page)
+			s.requestRows()
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 		case tea.KeyHome:
-			s.vt.ScrollTop()
+			s.view.ScrollTop()
+			s.requestRows()
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 		case tea.KeyEnd:
-			s.vt.ScrollBottom()
+			s.view.ScrollBottom()
+			s.requestRows()
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 		}
 	}
-	s.vt.ClearSelection()
-	if !s.vt.ViewportPinned() {
-		s.vt.ScrollBottom()
+	if !s.controlled || s.exited {
+		return s.takeControlResult()
 	}
-	data := s.vt.EncodeKey(key)
-	if len(data) > 0 {
-		return s.writeBytes(data)
-	}
-	return ui.EventResult{Handled: true}
+	s.view.ClearSelection()
+	s.view.ScrollBottom()
+	s.requestRows()
+	return s.send(Command{Kind: CommandKey, Key: neutralKey(key)})
 }
 
 func (s *Screen) handleMouse(ctx ui.EventContext, evt ui.Event) ui.EventResult {
-	if s.exited || s.vt == nil {
+	if s.closed {
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus}
 	}
 	cellX, cellY := ctx.LocalX, ctx.LocalY
@@ -465,18 +502,14 @@ func (s *Screen) handleMouse(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	case ui.EventMouseClick, ui.EventMouseRelease, ui.EventMouseWheel:
 		s.resetCursorBlink(time.Now())
 	case ui.EventMouseMotion:
-		if s.selecting || evt.MouseMotion.Button != tea.MouseNone || s.vt.MouseTracking() {
+		if s.selecting || evt.MouseMotion.Button != tea.MouseNone || s.view.Grid.Modes.MouseTracking {
 			s.resetCursorBlink(time.Now())
 		}
 	}
 	// Shift bypasses application mouse tracking (standard escape hatch so
 	// the user can always select/copy).
-	if s.vt.MouseTracking() && !mouseShift(evt) {
-		data := s.vt.EncodeMouse(evt, cellX, cellY)
-		if len(data) > 0 {
-			return s.writeBytes(data)
-		}
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus}
+	if s.view.Grid.Modes.MouseTracking && !mouseShift(evt) && s.controlled && !s.exited {
+		return s.send(Command{Kind: CommandMouse, Mouse: neutralMouse(evt, cellX, cellY)})
 	}
 	switch evt.Kind {
 	case ui.EventMouseWheel:
@@ -492,35 +525,29 @@ func (s *Screen) handleMouse(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		}
 		// Alternate screen has no scrollback: translate the wheel into
 		// arrow keys (less/vim/man scrolling) like Ghostty's alt-scroll.
-		if s.vt.AltScreen() {
-			code := tea.KeyUp
+		if s.view.Grid.Modes.AltScreen {
+			code := terminalvt.KeyUp
 			if delta > 0 {
-				code = tea.KeyDown
+				code = terminalvt.KeyDown
 			}
-			arrow := s.vt.EncodeKey(tea.KeyPressMsg{Code: code})
-			if len(arrow) == 0 {
-				return ui.EventResult{Handled: true}
-			}
-			out := make([]byte, 0, 3*len(arrow))
-			for i := 0; i < 3; i++ {
-				out = append(out, arrow...)
-			}
-			return s.writeBytes(out)
+			return s.send(Command{Kind: CommandKey, Key: terminalvt.Key{Code: code}, Repeat: 3})
 		}
-		s.vt.ScrollDelta(delta)
+		s.view.ScrollDelta(delta)
+		s.requestRows()
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 	case ui.EventMouseClick:
 		if evt.MouseClick.Button == tea.MouseLeft {
 			// A handled left click makes the Host capture the pointer, so
 			// drags keep landing here even when they leave the bounds.
 			s.selecting = true
-			s.vt.SelectionPress(cellX, cellY, s.now())
+			s.view.SelectionPress(cellX, cellY, s.now())
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 		}
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus}
 	case ui.EventMouseMotion:
 		if s.selecting && evt.MouseMotion.Button == tea.MouseLeft {
-			s.vt.SelectionDrag(cellX, cellY)
+			s.view.SelectionDrag(cellX, cellY)
+			s.requestRows()
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
 		}
 		return ui.EventResult{Handled: true}
@@ -528,7 +555,7 @@ func (s *Screen) handleMouse(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 		if s.selecting && evt.MouseRelease.Button == tea.MouseLeft {
 			s.selecting = false
 			var cmd tea.Cmd
-			if s.vt.SelectionRelease(cellX, cellY) {
+			if s.view.SelectionRelease(cellX, cellY) {
 				cmd = s.copySelection()
 			}
 			return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidatePaint}
@@ -571,10 +598,16 @@ func (s *Screen) CancelPointerCapture() {
 // copySelection builds the command that sends the active selection to the
 // system clipboard (copy-on-select, matching mainstream terminal behavior).
 func (s *Screen) copySelection() tea.Cmd {
-	if s.vt == nil || s.copy == nil {
+	if s.copy == nil {
 		return nil
 	}
-	if text := s.vt.SelectionText(); text != "" {
+	text, ok := s.view.SelectionText()
+	if !ok {
+		s.copyPending = true
+		s.requestSelectionRows()
+		return nil
+	}
+	if text != "" {
 		return s.copy(text)
 	}
 	return nil
@@ -598,25 +631,22 @@ func (s *Screen) Semantics() ui.Semantics {
 	return ui.Semantics{Role: ui.RoleGroup, Label: s.Title()}
 }
 
-func (s *Screen) writeBytes(data []byte) ui.EventResult {
-	if len(data) == 0 {
+func (s *Screen) takeControlResult() ui.EventResult {
+	return ui.EventResult{Handled: true, Action: &ui.Action{ID: ActionTakeControl, Payload: s.termID}}
+}
+func (s *Screen) send(c Command) ui.EventResult {
+	if s.closed || s.exited {
 		return ui.EventResult{Handled: true}
 	}
-	if s.write != nil {
-		s.write(data)
-		return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
+	if !s.controlled {
+		return s.takeControlResult()
 	}
-	return ui.EventResult{
-		Handled:    true,
-		Action:     &ui.Action{ID: ActionWrite, Payload: writePayload{ID: s.termID, Data: data}},
-		Invalidate: ui.InvalidatePaint,
+	c.ID = s.termID
+	var cmd tea.Cmd
+	if s.command != nil {
+		cmd = s.command(c)
+	} else {
+		s.queue(c)
 	}
+	return ui.EventResult{Handled: true, Cmd: cmd, Invalidate: ui.InvalidatePaint}
 }
-
-type writePayload struct {
-	ID   string
-	Data []byte
-}
-
-// WritePayload is the ActionWrite payload.
-type WritePayload = writePayload

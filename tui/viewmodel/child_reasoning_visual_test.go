@@ -80,10 +80,10 @@ func TestChildReasoningVisualAcceptance(t *testing.T) {
 		remaining = remaining[end:]
 	}
 	child := app.AgentMgr.Get("child").State
-	if child.ThinkingPaneID == "" {
+	if app.thinkingPaneID(child) == "" {
 		t.Fatal("recorded researcher stream did not promote")
 	}
-	if thought, _ := app.PaneMgr.Get(child.ThinkingPaneID).Messages.ActiveThinking(); thought.Content != trace || thought.ThinkingDisplay.Kind != display.Kind {
+	if thought, _ := app.Get(app.thinkingPaneID(child)).Messages.ActiveThinking(); thought.Content != trace || thought.ThinkingDisplay.Kind != display.Kind {
 		t.Fatal("replay altered the provider trace")
 	}
 	app.switchToAgentView("child")

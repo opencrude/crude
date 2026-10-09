@@ -215,14 +215,14 @@ func (m *App) buildActivityRailContextMenu(view activitybar.View) *ui.ContextMen
 			},
 		})
 	case activitybar.ViewAgents:
-		activeNode := m.AgentMgr.ActiveNode()
+		activeNode := m.AgentView.ActiveNode()
 		st.Sections = append(st.Sections, ui.ContextMenuSection{
 			SectionLabel: "Agents",
 			Items: []ui.ContextMenuItem{
 				{Label: "New session", Action: func() { m.startSourceControlMutation(m.launcherNewSession()) }},
 				{Label: "Manage sessions…", Action: m.openSessionPicker},
 				{Label: "Cancel active agent", Disabled: activeNode == nil || !activeNode.IsActive(), Action: func() {
-					if node := m.AgentMgr.ActiveNode(); node != nil {
+					if node := m.AgentView.ActiveNode(); node != nil {
 						m.cancelAgentTurn(node.ID)
 					}
 				}},
@@ -330,7 +330,7 @@ func (m *App) buildAgentSidebarContextMenu(mouse tea.Mouse) *ui.ContextMenuState
 				{Label: "Continue run", Disabled: !m.canRetryAgentRecovery(node.ID), Detail: "from saved work", Action: func() {
 					m.runDetachedAsyncCmd(m.retryAgentRecovery(node.ID))
 				}},
-				{Label: "Minimize agent", Disabled: node.IsHidden(), Detail: "keeps running", Action: func() {
+				{Label: "Minimize agent", Disabled: m.AgentView.IsHidden(node.ID), Detail: "keeps running", Action: func() {
 					m.minimizeAgent(node.ID)
 				}},
 				{Label: "Cancel agent", Disabled: !node.IsActive() && !m.canRetryAgentRecovery(node.ID), Action: func() {
@@ -738,7 +738,7 @@ func (m *App) replaceRefSpans(spans []input.RefRange, newLabel string) {
 // message list. (For now: clipboard + a copy-all option.)
 func (m *App) buildChatContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 	st := &ui.ContextMenuState{Title: "Chat"}
-	agentID := m.AgentMgr.ActiveID()
+	agentID := m.AgentView.ActiveID()
 	if m.canRetryAgentRecovery(agentID) {
 		status := m.AgentMgr.Get(agentID).State.RecoveryStatus()
 		st.Sections = append(st.Sections, ui.ContextMenuSection{
@@ -790,7 +790,7 @@ func (m *App) buildChatContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 				role := ""
 				var canonical workspace.Message
 				canonicalFound := false
-				if node := m.AgentMgr.ActiveNode(); node != nil && node.State != nil && node.State.Messages != nil {
+				if node := m.AgentView.ActiveNode(); node != nil && node.State != nil && node.State.Messages != nil {
 					for _, msg := range node.State.Messages.Messages() {
 						if msg.InternalID == row.ID {
 							role = msg.Role
@@ -809,7 +809,7 @@ func (m *App) buildChatContextMenu(mouse tea.Mouse) *ui.ContextMenuState {
 				}
 				if role == workspace.MessageRoleUser {
 					sessionID, messageID := m.ActiveSession.SessionID, row.ID
-					agentID := m.AgentMgr.ActiveID()
+					agentID := m.AgentView.ActiveID()
 					active := agentID != "" && m.AgentTurnActive(agentID)
 					open := func() { cmd := m.openLocalHistoryForMessage(sessionID, messageID, agentID); m.runDetachedAsyncCmd(cmd) }
 					st.Sections = append(st.Sections, ui.ContextMenuSection{SectionLabel: "Local History", Items: []ui.ContextMenuItem{

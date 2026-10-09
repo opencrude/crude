@@ -427,7 +427,7 @@ func (m *App) configureChatScreen() {
 func (m *App) configureChatScreenWithLayout(_ contentLayout) {
 	m.bindMainPaneFocus()
 	if tab := m.Win.ActiveTab(); tab != nil {
-		m.configurePaneChat(m.AgentMgr.ActiveID(), m.mainPanes.view(tab), m.chatRect)
+		m.configurePaneChat(m.AgentView.ActiveID(), m.mainPanes.view(tab), m.chatRect)
 	}
 }
 
@@ -461,10 +461,13 @@ func (m *App) configurePaneChat(agentID string, view *mainPaneView, rect ui.Rect
 	} else {
 		view.reflowContentW, view.reflowInnerW = renderContentW, renderInnerW
 	}
-	if agentID == m.AgentMgr.ActiveID() {
+	if agentID == m.AgentView.ActiveID() {
 		m.chatReflowContentW, m.chatReflowInnerW = renderContentW, renderInnerW
 	}
 	activity := m.AgentActivity(agentID)
+	if node := m.AgentMgr.Get(agentID); node != nil && m.thinkingPaneID(node.State) != "" {
+		activity.Thinking, activity.ThinkingID = "", ""
+	}
 	if activity.ThinkingID != "" {
 		activity.ThinkingExpanded = activeML.DisclosureExpanded(activity.ThinkingID)
 	}
@@ -503,7 +506,7 @@ func (m *App) configurePaneChat(agentID string, view *mainPaneView, rect ui.Rect
 	msgRows, paneLineMap, contentH := snapshot.Rows, snapshot.PaneLineMap, snapshot.ContentHeight
 	syncPaneScroll(screen, chatH, contentH)
 
-	paneGutters := view.embedded.BuildPaneGutters(paneLineMap, m.PaneMgr)
+	paneGutters := view.embedded.BuildPaneGutters(paneLineMap, m)
 	nestingLevel := 0
 	for _, gutter := range paneGutters {
 		if gutter.Visible && gutter.Scroll != nil {
@@ -518,7 +521,7 @@ func (m *App) configurePaneChat(agentID string, view *mainPaneView, rect ui.Rect
 		snapshot = activeML.ExportMessageRowsSnapshot(renderInnerW)
 		msgRows, paneLineMap, contentH = snapshot.Rows, snapshot.PaneLineMap, snapshot.ContentHeight
 		syncPaneScroll(screen, chatH, contentH)
-		paneGutters = view.embedded.BuildPaneGutters(paneLineMap, m.PaneMgr)
+		paneGutters = view.embedded.BuildPaneGutters(paneLineMap, m)
 	}
 
 	mainSBVisible := contentH > chatH
@@ -626,7 +629,7 @@ func (m *App) contextualHelpSegments() (prefix string, segs []ui.HintSegment) {
 	case FocusTree:
 		if m.activityView == activityAgents {
 			prefix := "agents"
-			if node := m.AgentMgr.ActiveNode(); node != nil && node.State != nil && node.State.Completed {
+			if node := m.AgentView.ActiveNode(); node != nil && node.State != nil && node.State.Completed {
 				prefix = "read-only agent review"
 			}
 			return prefix, []ui.HintSegment{
@@ -709,7 +712,7 @@ func (m *App) contextualHelpSegments() (prefix string, segs []ui.HintSegment) {
 		}
 		return prefix, segs
 	}
-	if node := m.AgentMgr.ActiveNode(); node != nil && node.State != nil && node.State.Completed {
+	if node := m.AgentView.ActiveNode(); node != nil && node.State != nil && node.State.Completed {
 		return "read-only agent review", []ui.HintSegment{
 			ui.TextSeg("scroll ↑↓"),
 			ui.ActionSeg("view.focus.sidebar"),

@@ -39,7 +39,7 @@ func (c *Conversation) UpdateRecovery(status recovery.Status) bool {
 	}
 	*message = RecoveryMessage(status)
 	c.lastRecovery = status
-	c.version++
+	c.commitChange(message)
 	return true
 }
 

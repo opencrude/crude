@@ -17,7 +17,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -59,177 +58,94 @@ func (w *Workspace) Bootstrap(cfg *session.Config, homeDir string, resumeID stri
 // CreateSession creates a new AI conversation in this workspace.
 // The session DB, logs, and reports are stored under the workspace folder.
 func (w *Workspace) CreateSession(cfg *session.Config, homeDir string) (*Session, error) {
-	if err := w.ensureWorkspacePersistence(); err != nil {
-		return nil, fmt.Errorf("workspace persistence unavailable: %w", err)
-	}
-	// The backend session generates its own ID and directory under the
-	// workspace sessions folder. We create the parent dir first so the
-	// logger can land there.
-	tmpDir, err := SessionDir(w.RootPath, "tmp")
+	op, err := w.prepareSessionLifecycle("", cfg, homeDir, false)
 	if err != nil {
-		return nil, fmt.Errorf("session dir: %w", err)
-	}
-	// Remove the temporary placeholder.
-	_ = os.RemoveAll(tmpDir)
-
-	// Create the backend session. It will generate a session ID and place
-	// its artifacts under the workspace sessions root.
-	sessionsRoot := filepath.Join(w.WorkspaceDir, "sessions")
-	bs, err := session.NewWithSessionDir("", cfg, homeDir, sessionsRoot)
-	if err != nil {
-		return nil, fmt.Errorf("new backend session: %w", err)
-	}
-	// Tools execute inside this workspace's project root. Every later
-	// relative path and command cwd resolves against w.RootPath.
-	bs.SetWorkDir(w.RootPath)
-	if w.WorkspaceDB != nil {
-		bs.SetMemoryStore(w.WorkspaceDB.Memory)
-		bs.StartMemoryMaintenance()
-	}
-	w.bindSessionHistory(bs)
-	if err := w.bindSessionRuntime(bs); err != nil {
-		bs.Close()
 		return nil, err
 	}
-
-	fs := NewSession(bs.SessionID(), bs.SessionDir(), bs.DB(), w.Logger)
-	fs.attachBackend(bs)
-	fs.SessionDir = bs.SessionDir()
-	fs.Settings = NewSessionSettingsState(
-		bs.SettingsSnapshot(),
-		bs.WorkspaceSettingsSnapshot(),
-		bs.SessionOverridesSnapshot(),
-	)
-
-	w.addSession(fs)
-	w.deliverPendingHistoryNotifications(fs.SessionID)
-
-	if w.WorkspaceDB != nil {
-		if err := w.WorkspaceDB.SetAgentName(fs.SessionID, bs.AgentName()); err != nil {
-			w.noteRegistryErr("agent_name_register_failed", err)
-		}
-		model := bs.ModelName()
-		providerID := bs.SettingsSnapshot().ProviderID
-		projectName := filepath.Base(w.RootPath)
-		if err := w.WorkspaceDB.RegisterSession(fs.SessionID, w.RootPath, projectName, model, providerID); err != nil {
-			// Non-fatal: session DB exists; registry failure must not block create.
-			w.noteRegistryErr("session_register_failed", err)
-		} else {
-			w.noteRegistryErr("", nil)
-		}
+	result := op.Run(context.Background())
+	if result.Err != nil {
+		return nil, result.Err
 	}
-
-	return fs, nil
+	w.installSessionLifecycle(result)
+	return result.owner, nil
 }
 
 // ResumeSession loads an existing workspace-scoped session by ID.
 func (w *Workspace) ResumeSession(sessionID string, cfg *session.Config, homeDir string) (*Session, error) {
-	if err := w.ensureWorkspacePersistence(); err != nil {
-		return nil, fmt.Errorf("workspace persistence unavailable: %w", err)
-	}
-	dbPath, err := SessionDBPath(w.RootPath, sessionID)
+	op, err := w.prepareSessionLifecycle(sessionID, cfg, homeDir, false)
 	if err != nil {
-		return nil, fmt.Errorf("resolve session db: %w", err)
-	}
-
-	sessionsRoot := filepath.Join(w.WorkspaceDir, "sessions")
-	if _, statErr := os.Stat(dbPath); statErr != nil {
-		return nil, fmt.Errorf("session database unavailable: %w", statErr)
-	}
-
-	bs, err := session.ResumeSessionWithDir(dbPath, cfg, homeDir, sessionsRoot)
-	if err != nil {
-		return nil, fmt.Errorf("resume backend session: %w", err)
-	}
-	// The current workspace root is authoritative for the resumed lifetime.
-	bs.SetWorkDir(w.RootPath)
-	if w.WorkspaceDB != nil {
-		bs.SetMemoryStore(w.WorkspaceDB.Memory)
-		bs.StartMemoryMaintenance()
-	}
-	w.bindSessionHistory(bs)
-	if err := w.bindSessionRuntime(bs); err != nil {
-		bs.Close()
 		return nil, err
 	}
-
-	fs := NewSession(bs.SessionID(), bs.SessionDir(), bs.DB(), w.Logger)
-	fs.attachBackend(bs)
-	fs.SessionDir = bs.SessionDir()
-	fs.Settings = NewSessionSettingsState(
-		bs.SettingsSnapshot(),
-		bs.WorkspaceSettingsSnapshot(),
-		bs.SessionOverridesSnapshot(),
-	)
-
-	w.addSession(fs)
-	w.deliverPendingHistoryNotifications(fs.SessionID)
-
-	// Ensure the workspace-scoped session is registered in the local registry.
-	if w.WorkspaceDB != nil {
-		model := bs.ModelName()
-		providerID := bs.SettingsSnapshot().ProviderID
-		projectName := filepath.Base(w.RootPath)
-		if err := w.WorkspaceDB.RegisterSession(fs.SessionID, w.RootPath, projectName, model, providerID); err != nil {
-			// Non-fatal: resume still succeeds; surface via LastRegistryError.
-			w.noteRegistryErr("session_register_failed", err)
-		} else {
-			w.noteRegistryErr("", nil)
-		}
+	result := op.Run(context.Background())
+	if result.Err != nil {
+		return nil, result.Err
 	}
-
-	return fs, nil
+	w.installSessionLifecycle(result)
+	return result.owner, nil
 }
 
 // addSession registers a frontend session in the canonical collections.
 func (w *Workspace) addSession(fs *Session) {
 	w.Sessions = append(w.Sessions, fs)
 	w.SessionsByID[fs.SessionID] = fs
-	w.ActiveSession = fs
-	// The header badge must show the session's real main-agent model once a
-	// session is active, replacing the startup placeholder.
-	if fs.backend != nil {
-		w.ModelName = fs.backend.ModelName()
-	}
 }
 
-// Hydrate loads conversation history from the active backend session into
-// the active frontend session. Called after the TUI starts for resumed
-// sessions.
-func (w *Workspace) Hydrate() {
-	if w.ActiveSession == nil || w.ActiveSession.backend == nil {
+// HydrateSession loads conversation history into the explicitly owned frontend
+// session. Hydration restores saved state without reviving execution.
+func (w *Workspace) HydrateSession(sessionID string) {
+	frontend := w.SessionsByID[sessionID]
+	if frontend == nil || frontend.backend == nil || frontend.hydrated || frontend.AgentID == "" {
 		return
 	}
-	msgs := w.ActiveSession.backend.MessagesWithMeta()
+	views := w.prepareSessionHydration(frontend)
+	w.installSessionHydration(frontend, views)
+}
+
+func (w *Workspace) prepareSessionHydration(frontend *Session) []ChatMessageView {
+	msgs := frontend.backend.MessagesWithMeta()
 	views := ConvertMessagesForDisplay(msgs)
-	views = w.hydrateRecoveryViews(views, w.ActiveSession)
-	for _, record := range w.ActiveSession.backend.CompactionRecords("") {
+	views = w.hydrateRecoveryViews(views, frontend)
+	for _, record := range frontend.backend.CompactionRecords("") {
 		views = append(views, compactionRecordView(record))
 	}
-	if len(views) > 0 {
-		slices.SortStableFunc(views, func(left, right ChatMessageView) int {
-			return left.Time.Compare(right.Time)
-		})
-		w.ActiveSession.hydratedMessages = views
-	}
 
-	if db := w.ActiveSession.DB; db != nil {
+	if db := frontend.DB; db != nil {
 		if records, err := sessiondb.ListUsageRecords(db); err == nil {
-			w.ActiveSession.usageMu.Lock()
-			w.ActiveSession.usageRecords = make(map[string]sessiondb.UsageRecord, len(records))
-			w.ActiveSession.usageCache = make(map[usageCacheKey]ttypes.UsageSummary)
-			w.ActiveSession.usageVersion++
+			frontend.usageMu.Lock()
+			frontend.usageRecords = make(map[string]sessiondb.UsageRecord, len(records))
+			frontend.usageCache = make(map[usageCacheKey]ttypes.UsageSummary)
+			frontend.usageVersion++
 			for _, record := range records {
-				w.ActiveSession.usageRecords[record.RequestID] = record
+				frontend.usageRecords[record.RequestID] = record
 			}
-			w.ActiveSession.usageMu.Unlock()
+			frontend.usageMu.Unlock()
 		} else {
 			w.Logger.Warn("WORKSPACE", "usage_hydrate_failed", "error", err.Error())
 		}
-		if refs, err := sessiondb.LoadPromptReferences(db); err == nil && len(refs) > 0 {
-			w.ActiveSession.hydratedRefs = refs
+		if refs, err := sessiondb.LoadPromptReferences(db); err == nil && frontend.RefStore != nil {
+			for _, ref := range refs {
+				frontend.RefStore.AddExisting(ref)
+			}
 		}
 	}
+	slices.SortStableFunc(views, func(left, right ChatMessageView) int { return left.Time.Compare(right.Time) })
+	return views
+}
+
+func (w *Workspace) installSessionHydration(frontend *Session, views []ChatMessageView) {
+	node := w.RegisterAgentRoot(frontend.AgentID)
+	if node == nil || node.State == nil {
+		return
+	}
+	if len(views) > 0 {
+		for _, view := range views {
+			node.State.Messages.AppendMessage(messageFromView(view))
+		}
+		node.State.Messages.MarkStreamingToolsCancelled()
+		node.State.Messages.MarkAllThinkingInterrupted()
+	}
+	frontend.hydrated = true
+	w.agentRevision++
 }
 
 // HydrateSubAgents rebuilds completed review and unfinished recovery surfaces
@@ -242,10 +158,34 @@ func (w *Workspace) HydrateSubAgents(parentID string) []string {
 	if frontendSession == nil || frontendSession.backend == nil {
 		return nil
 	}
-	var hydrated []string
 	snapshots := frontendSession.backend.CompletedSubAgentSnapshots()
 	snapshots = append(snapshots, frontendSession.backend.PendingSubAgentSnapshots()...)
+	return w.installPreparedSubAgents(parentID, frontendSession, prepareSubAgentViews(snapshots))
+}
+
+type preparedSubAgent struct {
+	snapshot session.SubAgentSnapshot
+	views    []ChatMessageView
+}
+
+func prepareSubAgentViews(snapshots []session.SubAgentSnapshot) []preparedSubAgent {
+	prepared := make([]preparedSubAgent, 0, len(snapshots))
 	for _, snapshot := range snapshots {
+		views := ConvertMessagesForDisplay(snapshot.Messages)
+		for _, record := range snapshot.Compactions {
+			views = append(views, compactionRecordView(record))
+		}
+		slices.SortStableFunc(views, func(left, right ChatMessageView) int { return left.Time.Compare(right.Time) })
+		prepared = append(prepared, preparedSubAgent{snapshot: snapshot, views: views})
+	}
+	return prepared
+}
+
+func (w *Workspace) installPreparedSubAgents(parentID string, frontendSession *Session, prepared []preparedSubAgent) []string {
+	var hydrated []string
+	for _, item := range prepared {
+		snapshot := item.snapshot
+
 		result := snapshot.Result
 		id := string(result.AgentID)
 		if id == "" || w.AgentMgr.Get(id) != nil {
@@ -259,13 +199,7 @@ func (w *Workspace) HydrateSubAgents(parentID string) []string {
 			label = id
 		}
 		pane := w.PaneMgr.GetOrCreate(id, PaneAgent, label)
-		paneViews := ConvertMessagesForDisplay(snapshot.Messages)
-		for _, record := range snapshot.Compactions {
-			paneViews = append(paneViews, compactionRecordView(record))
-		}
-		slices.SortStableFunc(paneViews, func(left, right ChatMessageView) int {
-			return left.Time.Compare(right.Time)
-		})
+		paneViews := item.views
 		for _, view := range paneViews {
 			pane.Messages.AppendMessage(messageFromView(view))
 		}
@@ -308,7 +242,6 @@ func (w *Workspace) HydrateSubAgents(parentID string) []string {
 			w.PaneMgr.Remove(id)
 			continue
 		}
-		node.Hidden = true
 		hydrated = append(hydrated, id)
 	}
 	return hydrated
@@ -316,44 +249,24 @@ func (w *Workspace) HydrateSubAgents(parentID string) []string {
 
 // ── Backend Session Accessors
 
-// BackendSession returns the underlying backend session for the active
-// frontend session.
-func (w *Workspace) BackendSession() *session.Session {
-	if w.ActiveSession != nil {
-		return w.ActiveSession.backend
+// BackendSession returns the underlying backend for the specified session.
+func (w *Workspace) BackendSession(sessionID string) *session.Session {
+	if frontend := w.SessionsByID[sessionID]; frontend != nil {
+		return frontend.backend
 	}
 	return nil
 }
 
-// HandleSettingsSave applies settings only to the active AI session.
-// Workspace defaults are persisted separately through SaveAppSettings.
-func (w *Workspace) HandleSettingsSave(s ttypes.Settings) error {
-	if b := w.BackendSession(); b != nil {
-		if err := b.HandleSettingsSave(s); err != nil {
-			return err
-		}
-		if w.ActiveSession != nil && w.ActiveSession.Settings != nil {
-			w.ActiveSession.Settings.SetInheritance(b.SettingsSnapshot(), b.WorkspaceSettingsSnapshot(), b.SessionOverridesSnapshot())
-		}
-		return nil
-	}
-	return nil
-}
-
-// HandleSettingsSaveForSession applies overrides to the session that opened
-// the inline editor, even if the user switches tabs before the async save runs.
+// HandleSettingsSaveForSession is the serialized, synchronous domain path.
+// UI callers prepare on their owner thread, run off-thread, then apply the result.
 func (w *Workspace) HandleSettingsSaveForSession(sessionID string, settings ttypes.Settings) error {
-	frontendSession := w.SessionsByID[sessionID]
-	if frontendSession == nil || frontendSession.backend == nil {
-		return fmt.Errorf("session %q is not active", sessionID)
-	}
-	if err := frontendSession.backend.HandleSettingsSave(settings); err != nil {
+	operation, err := w.PrepareSessionSettingsSave(sessionID, settings)
+	if err != nil {
 		return err
 	}
-	if frontendSession.Settings != nil {
-		frontendSession.Settings.SetInheritance(frontendSession.backend.SettingsSnapshot(), frontendSession.backend.WorkspaceSettingsSnapshot(), frontendSession.backend.SessionOverridesSnapshot())
-	}
-	return nil
+	result := operation.Run()
+	w.ApplySessionSettingsResult(result)
+	return result.Err
 }
 
 // WorkspaceAgentDefaults returns the effective defaults shown by the
@@ -380,15 +293,6 @@ func (w *Workspace) HandleFetchModels(providerID, accountID, baseURL, standardID
 	return w.PrepareAccountModels(providerID, accountID, baseURL, standardID)()
 }
 
-// HandleUndo undoes the last message.
-func (w *Workspace) HandleUndo(cmd string) interface{} {
-	agentID := ""
-	if w.AgentMgr != nil {
-		agentID = w.AgentMgr.ActiveID()
-	}
-	return w.HandleUndoForAgent(agentID, cmd)
-}
-
 // HandleUndoForAgent applies an undo to the session that owns agentID. The
 // explicit owner keeps an async slash command from following a later tab
 // switch into a different session.
@@ -397,16 +301,6 @@ func (w *Workspace) HandleUndoForAgent(agentID, cmd string) ttypes.UndoResultMsg
 		return sess.backend.HandleUndo(cmd)
 	}
 	return ttypes.UndoResultMsg{Error: "no active session"}
-}
-
-// HandleCompact force-compacts the backend session's conversation context
-// into a summary checkpoint.
-func (w *Workspace) HandleCompact() interface{} {
-	agentID := ""
-	if w.AgentMgr != nil {
-		agentID = w.AgentMgr.ActiveID()
-	}
-	return w.HandleCompactForAgent(agentID)
 }
 
 // HandleCompactForAgent compacts only the session captured when the slash
@@ -438,15 +332,6 @@ func (w *Workspace) PrepareCompactForAgent(agentID string) (session.PreparedComp
 	return session.PreparedCompaction{}, ttypes.CompactResultMsg{Error: "no active session"}
 }
 
-// SetYolo toggles auto-approve mode.
-func (w *Workspace) SetYolo(enabled bool) {
-	agentID := ""
-	if w.AgentMgr != nil {
-		agentID = w.AgentMgr.ActiveID()
-	}
-	w.SetYoloForAgent(agentID, enabled)
-}
-
 // SetYoloForAgent updates the owning session's live safety policy.
 func (w *Workspace) SetYoloForAgent(agentID string, enabled bool) bool {
 	if sess := w.sessionForAgent(agentID); sess != nil && sess.backend != nil {
@@ -475,13 +360,6 @@ func (w *Workspace) AgentTurnActive(agentID string) bool {
 		}
 	}
 	return false
-}
-
-// HardCancel forcefully cancels all running agents.
-func (w *Workspace) HardCancel() {
-	if b := w.BackendSession(); b != nil {
-		b.HardCancel()
-	}
 }
 
 // CancelSubAgent cancels a specific sub-agent by ID.
@@ -628,36 +506,24 @@ func (w *Workspace) SteerAgent(agentID string, input provider.UserInput) bool {
 		RunID:          participant.CurrentRunID,
 		References:     references,
 	})
-	return err == nil
-}
-
-// MinimizeAgent dismisses an agent from the tab bar without stopping any
-// backend work. The orchestrator keeps streaming, tool calls keep running,
-// and the session stays owned by this agent — only the surfaced tab goes
-// away. This is what closing a tab does; terminating is CloseAgent.
-func (w *Workspace) MinimizeAgent(agentID string) {
-	if w.AgentMgr == nil || w.AgentMgr.Get(agentID) == nil {
-		return
+	if err != nil {
+		return false
 	}
-	w.AgentMgr.SetHidden(agentID, true)
-}
-
-// RestoreAgent brings a minimized agent back and makes it the active one.
-func (w *Workspace) RestoreAgent(agentID string) {
-	if w.AgentMgr == nil {
-		return
+	if node := w.AgentMgr.Get(agentID); node != nil && node.State != nil {
+		var labels []string
+		if owner := w.SessionForAgent(agentID); owner != nil && owner.RefStore != nil {
+			for _, id := range input.ReferenceIDs {
+				if ref, ok := owner.RefStore.GetReference(id); ok && ref.Active() {
+					labels = append(labels, ref.DisplayName())
+				}
+			}
+		}
+		node.State.Messages.AppendMessageIfAbsent(Message{InternalID: input.InternalID,
+			Role: MessageRoleUser, Origin: provider.OriginHumanSteering, Content: input.Text,
+			ReferenceLabels: labels, Time: time.Now(), PendingSteering: true})
+		w.agentRevision++
 	}
-	node := w.AgentMgr.Get(agentID)
-	if node == nil {
-		return
-	}
-	// A child opened from Agents must be reachable even when its root is
-	// minimized. Reveal only this path; sibling review tabs stay archived.
-	for current := node; current != nil; current = current.Parent {
-		w.AgentMgr.SetHidden(current.ID, false)
-	}
-	w.AgentMgr.SetActive(agentID)
-	w.ActivateSessionByAgent(agentID)
+	return true
 }
 
 // CloseAgent stops backend work for agentID before the TUI removes its state.
@@ -762,10 +628,24 @@ func (w *Workspace) resolveAgentBlock(agentID string, response ttypes.BlockRespo
 	if sess == nil || sess.backend == nil {
 		return false
 	}
-	return sess.backend.ResolveBlock(agentID, response)
+	if !sess.backend.ResolveBlock(agentID, response) {
+		return false
+	}
+	// The exact backend decision is already accepted. Publish its semantic
+	// acknowledgement now; a later event cannot clear a replacement block.
+	w.ApplyAgentEvent(AgentEvent{AgentID: agentID, Type: "blocking_complete", Data: map[string]string{"block_id": response.RequestID}})
+	return true
+}
+
+// SessionForAgent returns the session that owns the exact agent or its root.
+func (w *Workspace) SessionForAgent(agentID string) *Session {
+	return w.sessionForAgent(agentID)
 }
 
 func (w *Workspace) sessionForAgent(agentID string) *Session {
+	if w == nil || agentID == "" {
+		return nil
+	}
 	if w.AgentMgr != nil {
 		if root := w.AgentMgr.OrchestratorFor(agentID); root != nil {
 			agentID = root.ID
@@ -793,16 +673,17 @@ func (w *Workspace) AgentUsage(agentID string) (ttypes.UsageSummary, bool) {
 
 // ResetOrchestratorOverrides clears runtime overrides for an orchestrator.
 func (w *Workspace) ResetOrchestratorOverrides(orchID string) {
-	b := w.BackendSession()
-	if b == nil {
+	frontend := w.sessionForAgent(orchID)
+	if frontend == nil || frontend.backend == nil {
 		return
 	}
+	b := frontend.backend
 	b.RuntimeProfile().RemoveOverride(orchID)
 	w.adoptCurrentDefaults(b)
 	if err := b.ResetSessionSettings(); err != nil {
 		w.Logger.Warn("RUNTIME", "session_settings_reset_failed", "error", err.Error())
-	} else if w.ActiveSession != nil && w.ActiveSession.Settings != nil {
-		w.ActiveSession.Settings.ResetToWorkspace(b.WorkspaceSettingsSnapshot())
+	} else {
+		frontend.installSettings(b.SettingsSnapshots())
 	}
 	w.Logger.Info("RUNTIME", "orchestrator_reset", "id", orchID)
 }
@@ -822,23 +703,6 @@ func (w *Workspace) adoptCurrentDefaults(b *session.Session) {
 	})
 }
 
-// ResetSessionSettings clears the active session's DB-backed overrides and
-// re-inherits the current workspace defaults.
-func (w *Workspace) ResetSessionSettings() error {
-	b := w.BackendSession()
-	if b == nil {
-		return fmt.Errorf("no active session")
-	}
-	w.adoptCurrentDefaults(b)
-	if err := b.ResetSessionSettings(); err != nil {
-		return err
-	}
-	if w.ActiveSession != nil && w.ActiveSession.Settings != nil {
-		w.ActiveSession.Settings.ResetToWorkspace(b.WorkspaceSettingsSnapshot())
-	}
-	return nil
-}
-
 // ResetSessionSettingsForSession clears the persisted overrides owned by a
 // specific frontend session without depending on which tab is currently active.
 func (w *Workspace) ResetSessionSettingsForSession(sessionID string) error {
@@ -850,57 +714,8 @@ func (w *Workspace) ResetSessionSettingsForSession(sessionID string) error {
 	if err := frontendSession.backend.ResetSessionSettings(); err != nil {
 		return err
 	}
-	if frontendSession.Settings != nil {
-		frontendSession.Settings.ResetToWorkspace(frontendSession.backend.WorkspaceSettingsSnapshot())
-	}
+	frontendSession.installSettings(frontendSession.backend.SettingsSnapshots())
 	return nil
-}
-
-// BackendModelName returns the display name of the active model.
-func (w *Workspace) BackendModelName() string {
-	if b := w.BackendSession(); b != nil {
-		return b.ModelName()
-	}
-	return ""
-}
-
-// CloseSession closes the active backend session.
-func (w *Workspace) CloseSession() {
-	if b := w.BackendSession(); b != nil {
-		b.Close()
-	}
-}
-
-// SessionHasMessages returns true if the active backend session has messages.
-func (w *Workspace) SessionHasMessages() bool {
-	if b := w.BackendSession(); b != nil {
-		return b.HasMessages()
-	}
-	return false
-}
-
-// SessionID returns the active backend session's database ID.
-func (w *Workspace) SessionID() string {
-	if b := w.BackendSession(); b != nil {
-		return b.SessionID()
-	}
-	return ""
-}
-
-// SessionStart returns when the active backend session was created.
-func (w *Workspace) SessionStart() time.Time {
-	if b := w.BackendSession(); b != nil {
-		return b.SessionStart()
-	}
-	return time.Time{}
-}
-
-// CostSnapshot returns the active session's cost accumulation snapshot.
-func (w *Workspace) CostSnapshot() session.CostSnapshot {
-	if b := w.BackendSession(); b != nil {
-		return b.CostSnapshot()
-	}
-	return session.CostSnapshot{}
 }
 
 // ── Session List / Delete (workspace-scoped)
@@ -990,20 +805,21 @@ func (w *Workspace) DeleteSession(sessionID string) {
 	}
 }
 
-// StartOrchestrator starts the backend orchestrator for the active session.
+// StartOrchestrator starts the backend orchestrator for the specified session.
 // Returns the orchestrator's channels, or an error.
-func (w *Workspace) StartOrchestrator(sender session.EventSender) (*session.Orchestrator, error) {
-	b := w.BackendSession()
-	if b == nil {
-		return nil, fmt.Errorf("no active backend session")
+func (w *Workspace) StartOrchestrator(sessionID string, sender session.EventSender) (*session.Orchestrator, error) {
+	frontend := w.SessionsByID[sessionID]
+	if frontend == nil || frontend.backend == nil {
+		return nil, fmt.Errorf("session %q has no backend", sessionID)
 	}
-	orch, err := b.NewOrchestrator(sender)
-	if err == nil && orch != nil && w.ActiveSession != nil {
-		w.ActiveSession.AgentID = orch.ID
+	orch, err := frontend.backend.NewOrchestrator(sender)
+	if err == nil && orch != nil {
+		frontend.AgentID = orch.ID
 		if w.SessionsByAgent == nil {
 			w.SessionsByAgent = make(map[string]*Session)
 		}
-		w.SessionsByAgent[orch.ID] = w.ActiveSession
+		w.SessionsByAgent[orch.ID] = frontend
+		w.RegisterAgentRoot(orch.ID)
 	}
 	return orch, err
 }

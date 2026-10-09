@@ -76,12 +76,12 @@ func TestPlanHoverOwnsExactPaneAndDoesNotTakeDraftFocus(t *testing.T) {
 	paintHoverFixture(app, plans)
 	screen := app.mainPanes.agentViews["left"].chat
 	anchor := app.planActivityRect(screen)
-	focus, group, agent := app.rootHost.Focused(), app.Win.ActiveGroup(), app.AgentMgr.ActiveID()
+	focus, group, agent := app.rootHost.Focused(), app.Win.ActiveGroup(), app.AgentView.ActiveID()
 	app.dispatchMouseMotion(tea.MouseMotionMsg{X: anchor.X + 5, Y: anchor.Y})
 	if app.planHover == nil || app.planHover.owner != screen {
 		t.Fatal("status hover did not open the exact left pane's plan")
 	}
-	if app.windowManager.Focused() != nil || app.rootHost.Focused() != focus || app.Win.ActiveGroup() != group || app.AgentMgr.ActiveID() != agent {
+	if app.windowManager.Focused() != nil || app.rootHost.Focused() != focus || app.Win.ActiveGroup() != group || app.AgentView.ActiveID() != agent {
 		t.Fatal("passive hover changed keyboard/session/pane ownership")
 	}
 	if text := hoverPopoverText(app); !strings.Contains(text, "Left owner goal") || strings.Contains(text, "Right owner goal") || !strings.Contains(text, "Verify outcome 04") {

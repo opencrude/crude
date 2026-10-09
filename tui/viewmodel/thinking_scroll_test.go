@@ -69,20 +69,12 @@ func TestThinkingScrollbarGeometry(t *testing.T) {
 
 	// Promote thinking via the real threshold path.
 	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "repro-agent", Data: reasoning.Delta{Text: thinkingLines(40)}})
-	if agent.ThinkingPaneID == "" {
+	if app.thinkingPaneID(agent) == "" {
 		t.Fatal("thinking was not promoted")
 	}
 	for i := 0; i < 10; i++ {
 		app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "repro-agent", Data: reasoning.Delta{Text: thinkingLines(5)}})
 	}
-
-	// Assistant reply right after the pane.
-	agent.Messages.AppendMessage(workspace.Message{
-		Role:    ttypes.RoleAssistant,
-		Content: "REPLY-MARKER after thinking\nsecond line",
-		Time:    time.Now(),
-	})
-	app.syncAgentMessages("repro-agent", false)
 
 	app.paintShellFrame()
 
@@ -105,8 +97,8 @@ func TestThinkingScrollbarGeometry(t *testing.T) {
 	}
 
 	// Wheel over pane content: pane scroll must move, main chat must not.
-	paneID := agent.ThinkingPaneID
-	scroll := app.subPaneProjections.ForOwner(app.AgentMgr.ActiveID()).ScrollModel(paneID)
+	paneID := app.thinkingPaneID(agent)
+	scroll := app.subPaneProjections.ForOwner(app.AgentView.ActiveID()).ScrollModel(paneID)
 	if scroll == nil {
 		t.Fatal("pane scroll model missing")
 	}
@@ -164,22 +156,16 @@ func TestThinkingScrolledWindowStable(t *testing.T) {
 	agent := node.State
 
 	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "scro-agent", Data: reasoning.Delta{Text: thinkingLines(40)}})
-	if agent.ThinkingPaneID == "" {
+	if app.thinkingPaneID(agent) == "" {
 		t.Fatal("thinking was not promoted")
 	}
 	for i := 0; i < 10; i++ {
 		app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "scro-agent", Data: reasoning.Delta{Text: thinkingLines(5)}})
 	}
-	agent.Messages.AppendMessage(workspace.Message{
-		Role:    ttypes.RoleAssistant,
-		Content: "REPLY-MARKER",
-		Time:    time.Now(),
-	})
-	app.syncAgentMessages("scro-agent", false)
 	app.paintShellFrame()
 
-	paneID := agent.ThinkingPaneID
-	scroll := app.subPaneProjections.ForOwner(app.AgentMgr.ActiveID()).ScrollModel(paneID)
+	paneID := app.thinkingPaneID(agent)
+	scroll := app.subPaneProjections.ForOwner(app.AgentView.ActiveID()).ScrollModel(paneID)
 	if scroll == nil {
 		t.Fatal("pane scroll model missing")
 	}
@@ -204,7 +190,7 @@ func TestCompletedExpandedThoughtScrollsWithTranscript(t *testing.T) {
 		fmt.Fprintf(&uniqueThinking, "reasoning-row-%02d %s\n", i, strings.Repeat("x", 35))
 	}
 	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "done-scroll", Data: reasoning.Delta{Text: uniqueThinking.String()}})
-	paneID := state.ThinkingPaneID
+	paneID := app.thinkingPaneID(state)
 	if paneID == "" {
 		t.Fatal("thinking was not promoted")
 	}

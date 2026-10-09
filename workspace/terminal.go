@@ -8,8 +8,6 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
-
-	tea "charm.land/bubbletea/v2"
 )
 
 const (
@@ -106,26 +104,29 @@ type TerminalTitleMsg struct {
 
 // TerminalManager owns workspace-scoped interactive PTY sessions.
 type TerminalManager struct {
-	mu    sync.Mutex
-	items map[string]*terminalSession
-	order []string
-	bus   *EventBus
-	root  string
-	host  HostInfo
+	mu         sync.Mutex
+	items      map[string]*terminalSession
+	order      []string
+	bus        *EventBus
+	outputSink MessageSink
+	root       string
+	host       HostInfo
 }
 
 type terminalSession struct {
-	id        string
-	title     string
-	cwd       string
-	cols      int
-	rows      int
-	placement TerminalPlacement
-	alive     bool
-	exitCode  int
-	exitErr   string
-	io        terminalIO
-	writer    *ptyWriter
+	id         string
+	title      string
+	cwd        string
+	cols       int
+	rows       int
+	placement  TerminalPlacement
+	alive      bool
+	exitCode   int
+	exitErr    string
+	io         terminalIO
+	writer     *ptyWriter
+	outputSink MessageSink
+	readDone   chan struct{}
 }
 
 // ptyWriter serializes PTY stdin on a dedicated goroutine so the UI
@@ -300,6 +301,18 @@ func (m *TerminalManager) SetEventBus(bus *EventBus) {
 	m.mu.Unlock()
 }
 
+// SetOutputSink selects the sole PTY byte consumer for subsequently created
+// terminals. Existing sessions retain their captured sink. A nil sink uses the
+// event bus for the current shell path; status events always use the event bus.
+func (m *TerminalManager) SetOutputSink(sink MessageSink) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.outputSink = sink
+	m.mu.Unlock()
+}
+
 // Host returns the detected outer terminal / multiplexer.
 func (m *TerminalManager) Host() HostInfo {
 	if m == nil {
@@ -310,6 +323,13 @@ func (m *TerminalManager) Host() HostInfo {
 
 // Create starts a new PTY session. Command empty means the user shell.
 func (m *TerminalManager) Create(opts TerminalCreateOpts) (TerminalInfo, error) {
+	return m.CreatePrepared(opts, nil)
+}
+
+// CreatePrepared installs an exact-identity consumer before any PTY reader or
+// exit publisher starts. A failed preparation closes and removes only that PTY.
+// prepare must not start consuming the PTY itself.
+func (m *TerminalManager) CreatePrepared(opts TerminalCreateOpts, prepare func(TerminalInfo) error) (TerminalInfo, error) {
 	if m == nil {
 		return TerminalInfo{}, fmt.Errorf("terminal manager is nil")
 	}
@@ -347,14 +367,26 @@ func (m *TerminalManager) Create(opts TerminalCreateOpts) (TerminalInfo, error) 
 		alive:     true,
 		io:        io,
 		writer:    newPtyWriter(io),
+		readDone:  make(chan struct{}),
 	}
 	m.mu.Lock()
+	sess.outputSink = m.outputSink
+	if sess.outputSink == nil && m.bus != nil {
+		sess.outputSink = m.bus
+	}
 	m.items[id] = sess
 	m.order = append(m.order, id)
+	info := sess.info()
 	m.mu.Unlock()
+	if prepare != nil {
+		if err := prepare(info); err != nil {
+			m.Close(id)
+			return TerminalInfo{}, fmt.Errorf("prepare terminal %s: %w", id, err)
+		}
+	}
 	go m.readLoop(sess)
 	go m.waitLoop(sess)
-	return sess.info(), nil
+	return info, nil
 }
 
 // List returns terminals in creation order.
@@ -523,13 +555,16 @@ func (m *TerminalManager) CloseAll() {
 }
 
 func (m *TerminalManager) readLoop(s *terminalSession) {
+	defer close(s.readDone)
 	buf := make([]byte, 8192)
 	for {
 		n, err := s.io.Read(buf)
 		if n > 0 {
 			data := make([]byte, n)
 			copy(data, buf[:n])
-			m.emit(TerminalOutputMsg{ID: s.id, Data: data})
+			if s.outputSink != nil {
+				s.outputSink.Send(TerminalOutputMsg{ID: s.id, Data: data})
+			}
 		}
 		if err != nil {
 			return
@@ -539,21 +574,26 @@ func (m *TerminalManager) readLoop(s *terminalSession) {
 
 func (m *TerminalManager) waitLoop(s *terminalSession) {
 	code, err := s.io.Wait()
+	// Never publish exit ahead of the reader's final accepted bytes. Close does
+	// not join these publishers: a downstream synchronous bus may be UI-owned.
+	<-s.readDone
 	errStr := ""
 	if err != nil {
 		errStr = err.Error()
 	}
 	m.mu.Lock()
-	if existing := m.items[s.id]; existing != nil {
+	if existing := m.items[s.id]; existing == s {
 		existing.alive = false
 		existing.exitCode = code
 		existing.exitErr = errStr
+		m.mu.Unlock()
+		m.emit(TerminalExitedMsg{ID: s.id, ExitCode: code, Err: errStr})
+		return
 	}
 	m.mu.Unlock()
-	m.emit(TerminalExitedMsg{ID: s.id, ExitCode: code, Err: errStr})
 }
 
-func (m *TerminalManager) emit(msg tea.Msg) {
+func (m *TerminalManager) emit(msg any) {
 	m.mu.Lock()
 	bus := m.bus
 	m.mu.Unlock()
@@ -580,7 +620,3 @@ func (s *terminalSession) info() TerminalInfo {
 		ExitErr:   s.exitErr,
 	}
 }
-
-var _ tea.Msg = TerminalOutputMsg{}
-var _ tea.Msg = TerminalExitedMsg{}
-var _ tea.Msg = TerminalTitleMsg{}

@@ -12,7 +12,7 @@ import (
 
 // openSessionPicker opens the native past-sessions overlay.
 // Always allowed: the multi-agent tab model resumes into an additional tab
-// (ResumeSessionFromLauncher) without discarding the current agent/session.
+// (OpenAgentSession) without discarding the current agent/session.
 func (m *App) openSessionPicker() {
 	if m.overlayHost == nil {
 		return
@@ -94,7 +94,7 @@ func (m *App) sessionLiveInfos(sessions []sessiondb.SessionMeta) map[string]sess
 			switch {
 			case node.IsActive():
 				status = sessionpicker.StatusWorking
-			case node.IsHidden():
+			case m.AgentView.IsHidden(node.ID):
 				status = sessionpicker.StatusMinimized
 			}
 			live[sess.SessionID] = live[sess.SessionID].Merge(sessionpicker.LiveInfo{

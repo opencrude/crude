@@ -100,7 +100,6 @@ func TestRecordAgentUsageUpdatesOwningSession(t *testing.T) {
 			"first":  first,
 			"second": second,
 		},
-		ActiveSession: second,
 	}
 
 	got, ok := ws.RecordAgentUsage("first", map[string]any{

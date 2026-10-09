@@ -25,7 +25,7 @@ func TestBackgroundAgentEventsPreserveSelectedTabAndPromptOwner(t *testing.T) {
 	defer ws.Close()
 	app.AddOrchestrator("root")
 	app.AddOrchestrator("other")
-	if app.AgentMgr.ActiveID() != "other" {
+	if app.AgentView.ActiveID() != "other" {
 		t.Fatal("precondition: other agent selected")
 	}
 
@@ -33,10 +33,10 @@ func TestBackgroundAgentEventsPreserveSelectedTabAndPromptOwner(t *testing.T) {
 		"block_id": "root-permission", "question": "Allow write?", "operation": "write", "tool": "edit_file",
 	}})
 	assertSelectedTab(t, app, app.agentTabTitle("other"))
-	if app.AgentMgr.ActiveID() != "other" || app.agentPrompt == nil || app.agentPrompt.inline ||
+	if app.AgentView.ActiveID() != "other" || app.agentPrompt == nil || app.agentPrompt.inline ||
 		app.agentPrompt.request.agentID != "root" || app.agentPrompt.request.blockID != "root-permission" ||
 		!app.overlayHost.IsOpen(ui.OverlayAgentPrompt) {
-		t.Fatalf("background permission did not retain owner/modal: selected=%q prompt=%+v", app.AgentMgr.ActiveID(), app.agentPrompt)
+		t.Fatalf("background permission did not retain owner/modal: selected=%q prompt=%+v", app.AgentView.ActiveID(), app.agentPrompt)
 	}
 	// A modal can accept a decision for its original owner even though a
 	// backend-less test workspace reports that delivery is no longer active.
@@ -51,7 +51,7 @@ func TestBackgroundAgentEventsPreserveSelectedTabAndPromptOwner(t *testing.T) {
 	}})
 	assertSelectedTab(t, app, app.agentTabTitle("other"))
 	notice, ok := app.Status.LatestUnread(types.SeverityWarning)
-	if app.AgentMgr.ActiveID() != "other" || !ok || notice.Owner.ID != "root" || notice.Summary != "test alert" {
+	if app.AgentView.ActiveID() != "other" || !ok || notice.Owner.ID != "root" || notice.Summary != "test alert" {
 		t.Fatal("background safety alert changed navigation or lost its owning notification")
 	}
 
@@ -76,7 +76,7 @@ func TestBackgroundAgentEventsPreserveSelectedTabAndPromptOwner(t *testing.T) {
 	// Explicit navigation remains authoritative after unattended events.
 	app.switchToAgentView("root")
 	assertSelectedTab(t, app, app.agentTabTitle("root"))
-	if app.AgentMgr.ActiveID() != "root" || app.EditorState.ActiveView != "" {
+	if app.AgentView.ActiveID() != "root" || app.EditorState.ActiveView != "" {
 		t.Fatal("explicit agent navigation did not select its painted view")
 	}
 }
@@ -89,7 +89,7 @@ func TestLateBackgroundAgentInitializationPreservesEditorSelection(t *testing.T)
 	app.AgentMgr.AddOrchestrator("late", nil)
 	app.handleAgentEvent(ttypes.AgentEventMsg{AgentID: "late", Type: "phase", Data: map[string]any{"name": "waiting_provider"}})
 	assertEditorStillPainted(t, app, path)
-	if app.AgentMgr.ActiveID() != "" || app.AgentMgr.Get("late").State == nil {
+	if app.AgentView.ActiveID() != "" || app.AgentMgr.Get("late").State == nil {
 		t.Fatal("late initialization selected an agent or lost its state")
 	}
 }
@@ -108,7 +108,7 @@ func TestBackgroundChildPromptPreservesParentTab(t *testing.T) {
 		"block_id": "child-permission", "question": "Allow child write?", "operation": "write",
 	}})
 	assertSelectedTab(t, app, app.agentTabTitle("root"))
-	if app.AgentMgr.ActiveID() != "root" || len(app.agentPrompts) != 1 || !app.agentPrompts[0].inline ||
+	if app.AgentView.ActiveID() != "root" || len(app.agentPrompts) != 1 || !app.agentPrompts[0].inline ||
 		app.agentPrompts[0].request.agentID != "child" || app.overlayHost.IsOpen(ui.OverlayAgentPrompt) {
 		t.Fatalf("child permission stole parent or lost family dock: %+v", app.agentPrompts)
 	}

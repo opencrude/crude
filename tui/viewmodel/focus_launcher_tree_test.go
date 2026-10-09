@@ -28,6 +28,7 @@ func TestFocusPrecedence_TreeWinsOverVisibleLauncher(t *testing.T) {
 	app.BufferMgr = editor.NewBufferManager()
 	app.EditorState = NewEditorState()
 	app.AgentMgr = workspace.NewAgentManager()
+	app.AgentView = NewAgentViewState(app.AgentMgr)
 
 	app.launcherScreen.SetData(dir, nil)
 	app.paintShellFrame()
@@ -69,6 +70,7 @@ func TestClickLauncherSearchClearsStaleTreeFocus(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 100, 30
 	app.AgentMgr = workspace.NewAgentManager()
+	app.AgentView = NewAgentViewState(app.AgentMgr)
 	model := filetree.NewFileTreeModel(dir)
 	app.Tree = NewTreeState(model, 28)
 	app.Tree.Visible = true

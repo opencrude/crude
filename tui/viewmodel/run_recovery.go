@@ -67,7 +67,7 @@ func (m *App) applyRecoveryCancelResult(result recoveryCancelResultMsg) {
 	if node == nil || node.State == nil || node.State.RecoveryStatus().ID != result.incidentID {
 		return
 	}
-	node.State.Cancelling = false
+	m.RejectAgentRecoveryCancellation(result.agentID, result.incidentID)
 	if m.Feedback != nil {
 		m.Feedback.NotifyInfo("The recovery changed before Stop was applied; review this agent's current run")
 	}

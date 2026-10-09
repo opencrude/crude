@@ -14,9 +14,7 @@ func TestCanonicalBatchCancellationPaintsStaticRetainedEvidence(t *testing.T) {
 	state := workspace.NewAgentState("agent", nil, nil)
 	state.SubmitInput("read and build")
 	event := func(typ string, data any) {
-		state.HandleEvent(workspace.AgentEvent{Type: typ, Data: data}, nil,
-			func(string) {}, func(bool, bool, bool) {}, func() {},
-			func(string, string, string, string, string, string, string) {}, func(string) {}, func() {})
+		state.ApplyEvent(workspace.AgentEvent{Type: typ, Data: data})
 	}
 	input := `{"tool_uses":[{"recipient_name":"read_file","parameters":{"path":"a.go"}},{"recipient_name":"execute_command","parameters":{"command":"build"}}]}`
 	event("tool_call", map[string]any{"tool_id": "batch", "internal_id": "batch", "name": "multi_tool_use.parallel", "args": input})

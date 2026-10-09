@@ -16,51 +16,45 @@ func (m *App) AddOrchestrator(orchID string) {
 		m.rootHost.CancelPointerCapture()
 	}
 	m.launcherScreen = nil
-	if m.AgentMgr.Get(orchID) != nil {
-		m.switchToAgentView(orchID)
-		return
-	}
-
-	ml := chatprojection.NewRenderer(m.Theme)
-	ml.SetLegacyModelFallback(m.ModelName)
-	ml.SetUsername(m.Username)
-	ml.SetSubPaneContentFn(m.renderSubPaneContentForApp)
-
-	sp := m.PaneMgr.GetOrCreate(orchID, workspace.PaneAgent, orchID)
-	proj := m.subPaneProjections.Get(orchID, workspace.PaneAgent)
-	// Replace the projection's auto-created MessageList with the one
-	// already configured above (carrying SetSubPaneContentFn). This
-	// preserves the existing AddOrchestrator contract while keeping the
-	// MessageList ownership on the TUI projection side.
-	proj.renderer = ml
-	proj.renderer.SetLegacyModelFallback(m.ModelName)
-	proj.renderer.SetUsername(m.Username)
-
-	agent := workspace.NewAgentState(orchID, sp.Messages, m.Logger)
-	node := m.AgentMgr.AddOrchestrator(orchID, agent)
-	// Bind the durable session identity; task/model labels never own names.
-	if node != nil {
-		node.Category = "default"
-		node.Model = m.ModelName
-		node.Label = m.AgentNameFor(orchID)
-		sp.Title = node.Label
-	}
-	for _, childID := range m.HydrateSubAgents(orchID) {
-		child := m.AgentMgr.Get(childID)
-		pane := m.PaneMgr.Get(childID)
-		if child == nil || pane == nil {
+	m.ActivateSessionByAgent(orchID)
+	m.RegisterAgentRoot(orchID)
+	m.ensureAgentProjection(orchID)
+	m.HydrateSubAgents(orchID)
+	// Cold lifecycle preparation may have installed child inventory before the
+	// shell sees it. Only unseen completed review children default to minimized;
+	// reopening a warm root preserves this shell's deliberate child choices.
+	for _, childID := range agentSubtreeIDs(m.AgentMgr.Get(orchID)) {
+		if childID == orchID {
 			continue
 		}
-		projection := m.subPaneProjections.Get(childID, workspace.PaneAgent)
-		projection.renderer.SetLegacyModelFallback(child.Model)
-		projection.renderer.SetUsername(m.Username)
-		projection.renderer.SetSubPaneContentFn(m.renderSubPaneContentForApp)
-		projection.renderer.ScrollToTop()
-
+		node := m.AgentMgr.Get(childID)
+		if node != nil && node.State != nil && node.State.Completed && m.subPaneProjections.GetExisting(childID) == nil {
+			m.MinimizeAgent(childID)
+		}
+		m.ensureAgentProjection(childID)
+		m.syncAgentMessages(childID, false)
 	}
+	m.syncAgentMessages(orchID, false)
 	m.syncAgentStatusInventory()
+	m.RestoreAgent(orchID)
 	m.syncAgentWindowTabs()
 	m.activateAgentWindowTab(orchID)
+}
+
+// ensureAgentProjection binds a local renderer to existing canonical inventory.
+// It never constructs another AgentState or replaces a live conversation.
+func (m *App) ensureAgentProjection(id string) {
+	node := m.AgentMgr.Get(id)
+	if node == nil || node.State == nil || m.subPaneProjections == nil {
+		return
+	}
+	projection := m.subPaneProjections.GetExisting(id)
+	if projection == nil {
+		projection = m.subPaneProjections.Get(id, workspace.PaneAgent)
+		projection.renderer.SetSubPaneContentFn(m.renderSubPaneContentForApp)
+	}
+	projection.renderer.SetLegacyModelFallback(node.Model)
+	projection.renderer.SetUsername(m.Username)
 }
 
 func (m *App) RemoveOrchestrator(orchID string) {
@@ -100,7 +94,7 @@ func (m *App) terminateAgent(agentID string) tea.Cmd {
 	m.cleanupAgent(agentID)
 	m.handleTabSwitch()
 	m.refreshActivityList()
-	if m.AgentMgr.VisibleCount() == 0 && m.EditorState.ActiveView == "" {
+	if m.AgentView.VisibleCount() == 0 && m.EditorState.ActiveView == "" {
 		m.openLauncher()
 		m.LastInteractionTime = time.Now()
 	}
@@ -150,9 +144,15 @@ func (m *App) cleanupAgent(agentID string) {
 			}
 		}
 	}
+	for _, id := range ids {
+		if node := m.AgentMgr.Get(id); node != nil && node.State != nil {
+			m.clearThinkingPresentationOwner(node.State)
+		}
+	}
 	m.CloseAgent(agentID)
 	if m.AgentMgr != nil {
-		m.AgentMgr.Remove(agentID)
+		m.AgentView.forgetSubtree(m.AgentMgr.Get(agentID))
+		m.ForgetAgentInventory(agentID)
 	}
 
 	for _, id := range ids {
@@ -168,14 +168,6 @@ func (m *App) cleanupAgent(agentID string) {
 		}
 		if m.subPaneProjections != nil {
 			m.subPaneProjections.Remove(id)
-		}
-		if m.PaneMgr != nil {
-			m.PaneMgr.Remove(id)
-		}
-		if m.Feedback != nil {
-			if m.Status != nil {
-				m.Status.RemoveAgent(id)
-			}
 		}
 		if m.Win != nil {
 			if tab := m.Win.TabByTitle(m.agentTabTitle(id)); tab != nil {
@@ -206,7 +198,7 @@ func agentSubtreeIDs(root *workspace.AgentNode) []string {
 }
 
 func (m *App) activeMsgList() *chatprojection.Renderer {
-	n := m.AgentMgr.ActiveNode()
+	n := m.AgentView.ActiveNode()
 	if n == nil {
 		return nil
 	}
@@ -217,63 +209,36 @@ func (m *App) activeMsgList() *chatprojection.Renderer {
 }
 
 func (m *App) completeSubAgent(agentID string) {
-	n := m.AgentMgr.Get(agentID)
-	if n == nil || n.State == nil {
+	node := m.AgentMgr.Get(agentID)
+	if node == nil || node.State == nil || node.Parent == nil {
 		return
 	}
-	for _, id := range agentSubtreeIDs(n) {
+	status := node.State.Status
+	if status == "" || status == "running" {
+		status = "completed"
+	}
+	change := m.ApplyAgentEvent(workspace.AgentEvent{AgentID: agentID, Type: "sub_agent_completed", Data: map[string]string{"agent_id": agentID, "status": status}})
+	if change.Accepted {
+		m.archiveSubAgentTab(agentID)
+	}
+}
+
+// archiveSubAgentTab is this shell's completion policy, not runtime settlement.
+func (m *App) archiveSubAgentTab(agentID string) {
+	node := m.AgentMgr.Get(agentID)
+	if node == nil {
+		return
+	}
+	for _, id := range agentSubtreeIDs(node) {
 		m.dismissAgentPromptFor(id)
 	}
-	if n.State.Completed {
-		return
-	}
-
-	parentID := ""
-	if n.Parent != nil {
-		parentID = n.Parent.ID
-	}
-	title := m.agentTabTitle(agentID)
-	if tab := m.Win.TabByTitle(title); tab != nil {
-		wasActive := m.Win.IndexOf(tab.ID) == m.Win.ActiveIndex()
+	if tab := m.Win.TabByTitle(m.agentTabTitle(agentID)); tab != nil {
 		m.Win.CloseTabByID(tab.ID)
-		if wasActive && m.AgentMgr.ActiveID() == agentID {
-			m.AgentMgr.ClearActive()
-			if parentID != "" {
-				m.subPaneProjections.InvalidateAllMessages(parentID)
-			}
-		}
 	}
-	// Completion archives the tab but retains every pane/message for review.
-	// The Agents panel reopens it without restarting execution.
 	m.MinimizeAgent(agentID)
-
-	if sp := m.PaneMgr.Get(agentID); sp != nil {
-		sp.Status = n.State.Status
-		if sp.Status == "" || sp.Status == "running" {
-			sp.Status = "completed"
-		}
-		if !sp.Done {
-			sp.Collapse()
-		}
-		if parentID != "" {
-			m.subPaneProjections.InvalidateSubPane(parentID, agentID)
-		}
+	if node.Parent != nil {
+		m.subPaneProjections.InvalidateSubPane(node.Parent.ID, agentID)
 	}
-
-	n.State.Completed = true
-	n.State.Streaming = false
-	n.State.Thinking = false
-	n.State.Running = false
-	n.State.Cancelling = false
-	n.State.PendingBlockID = ""
-	if n.State.Status == "" || n.State.Status == "running" {
-		n.State.Status = "completed"
-	}
-
-	if m.Status != nil {
-		m.Status.RemoveAgent(agentID)
-	}
-
 	if !m.Win.IsOpen() {
 		m.setMode(ModeChat)
 	}
@@ -328,7 +293,7 @@ func (m *App) activeMessageList() *chatprojection.Renderer {
 }
 
 func (m *App) agentForView() *workspace.AgentState {
-	if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
+	if n := m.AgentView.ActiveNode(); n != nil && n.State != nil {
 		return n.State
 	}
 	for _, n := range m.AgentMgr.AllNodes() {
@@ -341,19 +306,19 @@ func (m *App) agentForView() *workspace.AgentState {
 
 func (m *App) switchToAgentView(agentID string) {
 	if agentID == "" {
-		m.AgentMgr.ClearActive()
+		m.AgentView.ClearActive()
 	} else if n := m.AgentMgr.Get(agentID); n != nil && n.State != nil {
 		// Selecting a minimized agent is how the user brings it back.
-		if n.IsHidden() {
+		if m.AgentView.IsHidden(n.ID) {
 			m.RestoreAgent(agentID)
 		} else {
-			m.AgentMgr.SetActive(agentID)
-			m.ActivateSessionByAgent(agentID)
-			m.OverlayState.SetYolo(m.YoloForAgent(agentID))
+			m.AgentView.SetActive(agentID)
 		}
+		m.ActivateSessionByAgent(agentID)
+		m.OverlayState.SetYolo(m.YoloForAgent(agentID))
 	}
 
-	curr := m.AgentMgr.ActiveID()
+	curr := m.AgentView.ActiveID()
 	m.syncAgentWindowTabs()
 	if curr != "" {
 		m.activateAgentWindowTab(curr)
@@ -441,7 +406,7 @@ func (m *App) syncAgentWindowTabs() {
 
 	// If no surfaced agents exist, purge agent tabs and return. Minimized
 	// agents are still in the manager but own no tab.
-	if m.AgentMgr.VisibleCount() == 0 {
+	if m.AgentView.VisibleCount() == 0 {
 		m.purgeAgentTabs()
 		m.EditorState.TabSnapshotCache = ""
 		m.keepWindowTab(preserveTitle)
@@ -459,9 +424,9 @@ func (m *App) syncAgentWindowTabs() {
 	// creation and tab creation must not be separate authorities: that split
 	// previously left selectable agents without tabs and stale tabs without a
 	// prompt target.
-	for _, id := range m.AgentMgr.TabOrder() {
+	for _, id := range m.AgentView.TabOrder() {
 		n := m.AgentMgr.Get(id)
-		if n == nil || n.IsHidden() {
+		if n == nil || m.AgentView.IsHidden(n.ID) {
 			continue
 		}
 		view, ok := viewByID[id]
@@ -495,7 +460,7 @@ func (m *App) syncAgentWindowTabs() {
 	m.purgeStaleAgentTabs()
 	// Position newly discovered agents next to their family, without sorting
 	// existing tabs back over a deliberate user reorder.
-	order := m.AgentMgr.TabOrder()
+	order := m.AgentView.TabOrder()
 	ids := make([]window.TabID, 0, len(order))
 	for _, id := range order {
 		if tab := m.Win.TabByTitle(m.agentTabTitle(id)); tab != nil {
@@ -553,7 +518,7 @@ func (m *App) activeAgentTabID() string {
 		return ""
 	}
 	id := m.agentIDFromTabTitle(tab.Title)
-	if node := m.AgentMgr.Get(id); node != nil && !node.IsHidden() {
+	if node := m.AgentMgr.Get(id); node != nil && !m.AgentView.IsHidden(node.ID) {
 		return id
 	}
 	return ""
@@ -616,7 +581,7 @@ func (m *App) purgeStaleAgentTabs() {
 		if m.isAgentTabTitle(tabs[i].Title) {
 			agentID := m.agentIDFromTabTitle(tabs[i].Title)
 			n := m.AgentMgr.Get(agentID)
-			if n == nil || n.IsHidden() {
+			if n == nil || m.AgentView.IsHidden(n.ID) {
 				m.Win.CloseTabByID(tabs[i].ID)
 			}
 		}

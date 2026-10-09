@@ -1,19 +1,15 @@
 package viewmodel
 
-import (
-	"crude/workspace"
-)
-
-type FocusTarget = workspace.FocusTarget
+type FocusTarget int
 
 const (
-	FocusNone           = workspace.FocusNone
-	FocusTree           = workspace.FocusTree
-	FocusEditor         = workspace.FocusEditor
-	FocusTabBar         = workspace.FocusTabBar
-	FocusInput          = workspace.FocusInput
-	FocusFloatingWindow = workspace.FocusFloatingWindow
-	FocusLauncher       = workspace.FocusLauncher
+	FocusNone FocusTarget = iota
+	FocusTree
+	FocusEditor
+	FocusTabBar
+	FocusInput
+	FocusFloatingWindow
+	FocusLauncher
 )
 
 // focusTarget resolves which region owns keyboard input.

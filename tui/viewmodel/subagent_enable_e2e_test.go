@@ -94,18 +94,19 @@ func TestEnableSubAgentsMidSessionSurfacesChildren(t *testing.T) {
 		app.SetAppDefaults(ttypes.AppSettings{LocalHistory: ttypes.LocalHistorySettings{Enabled: "off"}})
 		app.SessionsByID = make(map[string]*workspace.Session)
 		app.SessionsByAgent = make(map[string]*workspace.Session)
-		if _, err := app.CreateSession(cfg, home); err != nil {
+		owner, err := app.CreateSession(cfg, home)
+		if err != nil {
 			t.Fatal(err)
 		}
 		defer app.CloseAllSessions()
 		sender := &latencyEventSender{ctx: t.Context(), events: make(chan ttypes.AgentEventMsg, 4096)}
-		orch, err := app.StartOrchestrator(sender)
+		orch, err := app.StartOrchestrator(owner.SessionID, sender)
 		if err != nil {
 			t.Fatal(err)
 		}
 		parentAgentID.Store(orch.ID)
 		app.AddOrchestrator(orch.ID)
-		backend := app.BackendSession()
+		backend := app.BackendSession(owner.SessionID)
 		if app.AgentMgr.Get(orch.ID).Label != "Jeff" || app.Win.TabByTitle(app.agentTabTitle(orch.ID)).DisplayTitle != "Jeff" {
 			t.Fatal("root tab did not render the allocated first name")
 		}
@@ -130,7 +131,7 @@ func TestEnableSubAgentsMidSessionSurfacesChildren(t *testing.T) {
 		on := true
 		settings.SessionMultiAgent = &on
 		settings.Agents.Enabled = true
-		if err := app.HandleSettingsSave(settings); err != nil {
+		if err := app.HandleSettingsSaveForSession(owner.SessionID, settings); err != nil {
 			t.Fatal(err)
 		}
 		if !backend.SubmitInput(orch.ID, provider.PlainInput("launch the child now")) {
@@ -176,7 +177,7 @@ func TestEnableSubAgentsMidSessionSurfacesChildren(t *testing.T) {
 		settings = backend.SettingsSnapshot()
 		settings.SessionMultiAgent = &off
 		settings.Agents.Enabled = false
-		if err := app.HandleSettingsSave(settings); err != nil {
+		if err := app.HandleSettingsSaveForSession(owner.SessionID, settings); err != nil {
 			t.Fatal(err)
 		}
 		if !agentTabPresent(app, childID) || app.AgentMgr.Get(childID) != node {

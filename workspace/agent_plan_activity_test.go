@@ -70,8 +70,9 @@ func TestAgentActivityUsesExactPlanOwner(t *testing.T) {
 	if ws.AgentActivity("no-plan").Plan != nil || ws.AgentActivity("missing").Plan != nil {
 		t.Fatal("child without plan borrowed root plan")
 	}
-	ws.ActiveSession = &Session{AgentID: "unrelated"}
-	if ws.AgentActivity("child").Plan != child || ws.AgentActivity("root").Plan != root {
+	unrelated := &Session{AgentID: "unrelated"}
+	ws.SessionsByAgent["unrelated"] = unrelated
+	if ws.AgentActivity("child").Plan != child || ws.AgentActivity("root").Plan != root || ws.SessionForAgent("unrelated") != unrelated || ws.AgentActivity("unrelated").Plan != nil {
 		t.Fatal("background inspection changed owner")
 	}
 	mgr.Remove("child")

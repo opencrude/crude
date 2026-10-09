@@ -12,7 +12,7 @@ import (
 // in flight (gen bumped); the listing arrives later via launcherWorkspacesMsg.
 func TestLauncherOpen_PaintsWithoutWorkspaceScan(t *testing.T) {
 	app := newTestApp(t)
-	app.AgentMgr.ClearActive()
+	app.AgentView.ClearActive()
 	app.AgentMgr.Remove("agent-1")
 	app.width, app.height = 100, 30
 	app.openLauncher()
@@ -33,7 +33,7 @@ func TestLauncherOpen_PaintsWithoutWorkspaceScan(t *testing.T) {
 // the workspace list without resetting the user's filter state.
 func TestLauncherAsyncLoad_AppliesLatestGen(t *testing.T) {
 	app := newTestApp(t)
-	app.AgentMgr.ClearActive()
+	app.AgentView.ClearActive()
 	app.AgentMgr.Remove("agent-1")
 	app.openLauncher()
 	gen := app.launcherLoadGen.Load()
@@ -76,12 +76,12 @@ func TestLauncherAsyncLoad_AppliesLatestGen(t *testing.T) {
 // the launcher was replaced by a session must not resurrect launcher state.
 func TestLauncherAsyncLoad_DroppedWhenLauncherClosed(t *testing.T) {
 	app := newTestApp(t)
-	app.AgentMgr.ClearActive()
+	app.AgentView.ClearActive()
 	app.AgentMgr.Remove("agent-1")
 	app.openLauncher()
 	gen := app.launcherLoadGen.Load()
 
-	app.AgentMgr.ClearActive()
+	app.AgentView.ClearActive()
 	app.launcherScreen = nil // simulate AddOrchestrator replacing the launcher
 
 	_, _ = app.Update(launcherWorkspacesMsg{

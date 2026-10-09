@@ -62,7 +62,7 @@ func TestTabSwitchSteadyStateKeepsRenderCache(t *testing.T) {
 	if !cached {
 		t.Fatal("steady-state handleTabSwitch dropped the render cache")
 	}
-	if got := app.AgentMgr.ActiveID(); got != "root" {
+	if got := app.AgentView.ActiveID(); got != "root" {
 		t.Fatalf("active agent drifted: %q", got)
 	}
 }
@@ -104,7 +104,7 @@ func TestTabSwitchAwayAndBackKeepsRenderCache(t *testing.T) {
 		app.Win.CloseTab(app.Win.ActiveIndex())
 	}
 	app.handleTabSwitch()
-	if got := app.AgentMgr.ActiveID(); got != "root" {
+	if got := app.AgentView.ActiveID(); got != "root" {
 		t.Fatalf("agent not re-activated after editor close: %q", got)
 	}
 	if cached, _ := tabSwitchCacheProbe(app, "root", body); !cached {

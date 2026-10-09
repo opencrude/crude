@@ -19,11 +19,11 @@ func (m *App) handleCancel() tea.Cmd {
 		return nil
 	}
 
-	if m.AgentMgr.VisibleCount() == 0 && m.EditorState.ActiveView == "" {
+	if m.AgentView.VisibleCount() == 0 && m.EditorState.ActiveView == "" {
 		return nil
 	}
 
-	if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil && !n.State.Completed && (n.State.IsActive() || m.canRetryAgentRecovery(n.ID)) {
+	if n := m.AgentView.ActiveNode(); n != nil && n.State != nil && !n.State.Completed && (n.State.IsActive() || m.canRetryAgentRecovery(n.ID)) {
 		m.cancelAgentTurn(n.ID)
 		return nil
 	}
@@ -50,7 +50,8 @@ func (m *App) cancelAgentTurn(agentID string) {
 		status := state.RecoveryStatus()
 		if m.canRetryAgentRecovery(agentID) {
 			if cancel := m.PrepareCancelAgentRecovery(agentID, status.ID, status.Generation); cancel != nil {
-				state.BeginCancellation()
+				m.BeginAgentCancellation(agentID)
+				m.dropThinkingPresentation(state)
 				m.syncAgentMessages(agentID, true)
 				generation := m.workspaceSwitchGen.Load()
 				m.runDetachedAsyncCmd(func() tea.Msg {
@@ -59,14 +60,8 @@ func (m *App) cancelAgentTurn(agentID string) {
 				return
 			}
 		}
-		state.BeginCancellation()
-		if state.ThinkingPaneID != "" {
-			if pane := m.PaneMgr.Get(state.ThinkingPaneID); pane != nil && pane.Messages != nil {
-				pane.Messages.MarkAllThinkingInterrupted()
-				m.syncPaneMessages(state.ThinkingPaneID, true)
-			}
-			m.handleSubPaneCompletion(agentID)
-		}
+		m.BeginAgentCancellation(agentID)
+		m.dropThinkingPresentation(state)
 		m.syncAgentMessages(agentID, true)
 	}
 	m.CancelAgent(agentID)

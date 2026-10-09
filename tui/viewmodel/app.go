@@ -63,6 +63,15 @@ type Logger = workspace.Logger
 type App struct {
 	*workspace.Workspace
 
+	// Focus belongs to this shell, never to the workspace runtime. A second
+	// shell must not observe or reset another shell's navigation stack.
+	FocusStack *FocusStack
+	AgentView  *AgentViewState
+	// ActiveSession selects this client's composer/settings owner. Core commands
+	// receive an explicit session or agent identity instead of reading it.
+	ActiveSession *workspace.Session
+	ModelName     string
+
 	// TUI-owned presentation state. Workspace retains only domain data and
 	// services; these controls and render projections are owned by the host.
 	Theme                     *theme.Theme
@@ -177,22 +186,32 @@ type App struct {
 	sessionProjections *sessionProjectionRegistry
 
 	// App-scoped fields (not on workspace.Workspace)
-	headerScreen         *shellheader.Screen
-	footerScreen         *shellfooter.Screen
-	tabScreen            *shelltabs.Screen
-	sidebarScreen        *shelltree.Screen
-	activityBar          *activitybar.Screen
-	activityList         *activitylist.Screen
-	gitPanel             *gitpanel.Panel
-	activityView         activitybar.View
-	termScreens          map[string]*shellterm.Screen
-	termDock             *termdock.Screen
-	termDockHeight       int
-	termDockFocused      bool
-	suppressTermClose    string
-	inputScreen          *shellinput.Screen
-	chatScreen           *shellchat.Screen
-	thinkingPaneSequence uint64
+	headerScreen          *shellheader.Screen
+	footerScreen          *shellfooter.Screen
+	tabScreen             *shelltabs.Screen
+	sidebarScreen         *shelltree.Screen
+	activityBar           *activitybar.Screen
+	activityList          *activitylist.Screen
+	gitPanel              *gitpanel.Panel
+	activityView          activitybar.View
+	termScreens           map[string]*shellterm.Screen
+	terminalClientID      string
+	terminalLeases        map[string]workspace.TerminalLease
+	terminalReads         map[string]bool
+	terminalDirty         map[string]bool
+	terminalPlacements    map[string]workspace.TerminalPlacement
+	terminalQueue         []tea.Cmd
+	terminalBusy          bool
+	terminalClipboard     map[string]string
+	terminalClosed        map[string]bool
+	termDock              *termdock.Screen
+	termDockHeight        int
+	termDockFocused       bool
+	suppressTermClose     string
+	inputScreen           *shellinput.Screen
+	chatScreen            *shellchat.Screen
+	thinkingPaneSequence  uint64
+	thinkingPresentations map[thinkingPresentationKey]*workspace.SubPane
 	// thinkingLatch records sessions that have already promoted a reasoning
 	// block. Once latched, every later thinking block in that session opens in
 	// its own pane instead of restarting inline. A settings change clears it.
@@ -288,7 +307,6 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 	rctx := wm.NewRenderContext(th)
 	eb := workspace.NewEventBus()
 	ws.SetEventBus(eb)
-	ws.LSPMgr.SetRuntime(newEditorLSPRuntime())
 
 	// Start on workspace home; sessions remain in the Workspace panel.
 	// The workspace listing loads asynchronously (refreshLauncherAsync from
@@ -325,6 +343,9 @@ func NewApp(ws *workspace.Workspace, presets []ttypes.ProviderPreset) *App {
 
 	app := &App{
 		Workspace:           ws,
+		AgentView:           NewAgentViewState(ws.AgentMgr),
+		FocusStack:          NewFocusStack(),
+		ModelName:           ws.InitialModelName,
 		composerDraftOwners: make(map[*workspace.Session]*composerDraftOwner),
 		Theme:               th,
 		Input:               im,
@@ -484,7 +505,11 @@ func (m *App) SetReferences(refs []sessiondb.Reference) {
 
 func (m *App) SetProgram(p *tea.Program) {
 	if m.eventBus != nil {
-		m.eventBus.SetProgram(p)
+		if p == nil {
+			m.eventBus.SetSink(nil)
+		} else {
+			m.eventBus.SetSink(programMessageSink{program: p})
+		}
 	}
 }
 
@@ -884,7 +909,7 @@ func (m *App) openSessionSettings() {
 
 // resetOrchestratorOverrides clears all runtime overrides for the current orchestrator.
 func (m *App) resetOrchestratorOverrides() {
-	id := m.AgentMgr.ActiveID()
+	id := m.AgentView.ActiveID()
 	if id == "" {
 		id = m.EditorState.ActiveView
 		if id == "" {

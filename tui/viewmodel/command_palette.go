@@ -11,7 +11,6 @@ import (
 
 	"crude/tui/screens/termdock"
 	"crude/tui/theme"
-	ttypes "crude/tui/types"
 	"crude/tui/ui"
 	"crude/tui/wm"
 	"crude/workspace"
@@ -758,11 +757,11 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		}
 
 	case "agent.cancel":
-		if id := m.AgentMgr.ActiveID(); id != "" {
+		if id := m.AgentView.ActiveID(); id != "" {
 			m.cancelAgentTurn(id)
 		}
 	case "agent.retry":
-		return m.retryAgentRecovery(m.AgentMgr.ActiveID())
+		return m.retryAgentRecovery(m.AgentView.ActiveID())
 	case "settings.network":
 		m.openNetworkSettings()
 
@@ -776,14 +775,20 @@ func (m *App) executePaletteCommand(cmdID string) tea.Cmd {
 		m.toggleReplaceInFiles()
 
 	case "agent.toggle.multiagent":
-		s := m.LastSettings
-		s.Agents.Enabled = !s.Agents.Enabled
-		enabled := s.Agents.Enabled
-		s.SessionMultiAgent = &enabled
+		owner, runtime := m.ActiveSession, m.Workspace
+		if owner == nil || runtime == nil {
+			m.Feedback.NotifyError("No session is selected")
+			break
+		}
+		operation, err := runtime.PrepareMultiAgentToggle(owner.SessionID)
+		if err != nil {
+			m.Feedback.NotifyError(err.Error())
+			break
+		}
 		m.Feedback.NotifyInfo("Toggling multi-agent mode...")
+		generation := m.workspaceSwitchGen.Load()
 		cmds = append(cmds, func() tea.Msg {
-			err := m.HandleSettingsSave(s)
-			return ttypes.SettingsSaveResultMsg{Settings: s, Err: err}
+			return selectedSessionSettingsResult{workspace: runtime, generation: generation, owner: owner, result: operation.Run()}
 		})
 
 	case "app.toggleTheme":

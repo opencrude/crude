@@ -12,7 +12,6 @@ import (
 	"crude/fileio"
 	"crude/provider"
 	"crude/sessiondb"
-	"crude/tui/chatprojection"
 	ttypes "crude/tui/types"
 	"crude/tui/ui"
 	"crude/tui/wm"
@@ -157,17 +156,11 @@ func (m *App) applyInputAdmission(msg inputAdmissionMsg) tea.Cmd {
 			return nil
 		}
 		delete(m.pendingInputAdmissions, msg.intent)
-		node := m.AgentMgr.Get(msg.agentID)
-		if node != nil && node.State != nil && node.State.Messages != nil {
-			appended := node.State.Messages.AppendMessageIfAbsent(workspace.Message{InternalID: msg.result.Receipt.InputID, Role: ttypes.RoleUser,
-				Content: msg.input.Text, ReferenceLabels: msg.referenceLabels, Time: msg.result.Receipt.AcceptedAt})
-			if appended && msg.result.Status == workspace.InputAdmissionAccepted && !node.State.Cancelling &&
-				!node.State.IsActive() && node.State.TurnIdentity.Generation < receipt.TurnGeneration {
-				node.State.SubmitInput(msg.input.Text)
-			}
-			m.syncAgentMessages(msg.agentID, true)
+		if !m.ApplyAgentInputAdmission(msg.intent, msg.result, msg.input, msg.referenceLabels) {
+			return nil
 		}
-		if msg.composerWindow == nil && m.ActiveSession == msg.session && m.AgentMgr.ActiveID() == msg.agentID &&
+		m.syncAgentMessages(msg.agentID, true)
+		if msg.composerWindow == nil && m.ActiveSession == msg.session && m.AgentView.ActiveID() == msg.agentID &&
 			m.Input.DraftEpoch() == msg.draftEpoch && m.Input.ClearInputAtRevision(msg.draftRevision) {
 			m.persistComposerDraftIfChanged()
 		}
@@ -194,8 +187,6 @@ func (m *App) submitSteering(sessionID, text string, refIDs []string) tea.Cmd {
 	if n == nil || n.State == nil {
 		return nil
 	}
-	agent := n.State
-	referenceLabels := m.referenceLabels(refIDs)
 	input := provider.InputWithRefs(text, refIDs)
 	input.InternalID = fmt.Sprintf("steering-%016x", rand.Uint64())
 	if m.Workspace == nil || !m.SteerAgent(sessionID, input) {
@@ -204,10 +195,7 @@ func (m *App) submitSteering(sessionID, text string, refIDs []string) tea.Cmd {
 		}
 		return nil
 	}
-	agent.Messages.AppendPendingSteering(workspace.Message{
-		InternalID: input.InternalID, Role: ttypes.RoleUser, Content: text,
-		ReferenceLabels: referenceLabels, Time: time.Now(),
-	})
+
 	m.Input.ClearInputAtRevision(m.Input.DraftRevision())
 	m.persistComposerDraftIfChanged()
 	m.syncPendingSteeringCount()
@@ -237,45 +225,18 @@ func (m *App) referenceLabels(refIDs []string) []string {
 }
 
 func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
-	domain := workspace.AgentEvent{
-		Type:    evt.Type,
-		Data:    evt.Data,
-		AgentID: evt.AgentID,
-	}
-	if m.StaleAgentUpload(domain) {
-		return nil
-	}
-	cmd := m.handleAgentDomainEvent(domain)
-	m.syncAgentStatusEvent(evt)
-	return cmd
+	return m.handleAgentDomainEvent(workspace.AgentEvent{Type: evt.Type, Data: evt.Data, AgentID: evt.AgentID})
 }
 
 func (m *App) handleAgentEnvelope(evt agent.AgentEvent) tea.Cmd {
-	domain := workspace.AgentEvent{Type: evt.Type, Data: evt.Data, AgentID: evt.AgentID, Identity: evt.Identity}
-	if !m.acceptRuntimeEventIdentity(domain) || m.StaleAgentUpload(domain) {
-		return nil
-	}
-	cmd := m.handleAgentDomainEvent(domain)
-	m.syncAgentStatusEvent(ttypes.AgentEventMsg{Type: evt.Type, Data: evt.Data, AgentID: evt.AgentID})
-	return cmd
-}
-
-func (m *App) acceptRuntimeEventIdentity(evt workspace.AgentEvent) bool {
-	id := evt.Identity
-	if !id.Valid() || id.AgentID != evt.AgentID {
-		return false
-	}
-	node := m.AgentMgr.Get(evt.AgentID)
-	if node == nil || node.State == nil {
-		// Structural start events create the owner below; their backend identity is
-		// still exact and must not be rewritten from payload data.
-		return evt.Type == "sub_agent_started" || evt.Type == "start"
-	}
-	return node.State.AcceptRuntimeEvent(id)
+	return m.handleAgentDomainEvent(workspace.AgentEvent{Type: evt.Type, Data: evt.Data, AgentID: evt.AgentID, Identity: evt.Identity})
 }
 
 func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
-	if evt.Type == "response_continuation_unavailable" {
+	// Service notices do not mutate the conversation. Their presentation stays
+	// client-local while all semantic events enter the workspace reducer once.
+	switch evt.Type {
+	case "response_continuation_unavailable":
 		data, _ := evt.Data.(map[string]any)
 		reason, _ := data["reason"].(string)
 		message := "Responses delta unavailable: the endpoint returned no response ID; full uploads continue"
@@ -286,32 +247,7 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 			m.Feedback.NotifyInfo(message)
 		}
 		return nil
-	}
-	if evt.Type == "collaboration_delivery_admitted" {
-		if node := m.AgentMgr.Get(evt.AgentID); node != nil && node.State != nil && node.State.Messages != nil {
-			data, _ := evt.Data.(map[string]any)
-			internalID, _ := data["history_message_id"].(string)
-			node.State.Messages.ConsumePendingSteering(internalID)
-			m.syncAgentMessages(evt.AgentID, false)
-		}
-		m.syncPendingSteeringCount()
-		m.syncAgentWindowTabs()
-		return nil
-	}
-	if evt.Type == "collaboration_delivery_rejected" {
-		if node := m.AgentMgr.Get(evt.AgentID); node != nil && node.State != nil && node.State.Messages != nil {
-			data, _ := evt.Data.(map[string]any)
-			id, _ := data["history_message_id"].(string)
-			ids := []string{id}
-			node.State.Messages.SettlePendingSteeringMessages(ids)
-			m.syncAgentMessages(evt.AgentID, true)
-		}
-		m.syncPendingSteeringCount()
-		return nil
-	}
-	if evt.Type == "memory_saved" {
-		// Background extraction saved durable memories. Surface it visibly
-		// but without blocking (status line, not a modal or chat message).
+	case "memory_saved":
 		if data, ok := evt.Data.(map[string]any); ok && m.Feedback != nil {
 			count, _ := data["count"].(int)
 			if count > 0 {
@@ -326,228 +262,81 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 			}
 		}
 		return m.refreshMemoryBrowser()
-	}
-	if evt.Type == "async_command_status" {
-		switch evt.Type {
-		case "async_command_status":
-			if cmds, ok := evt.Data.([]fileio.AsyncCmdInfo); ok {
-				m.updateSessionBackgroundJobs(evt.AgentID, cmds, time.Now())
-			}
-			m.syncAgentWindowTabs()
-			return nil
+	case "async_command_status":
+		if commands, ok := evt.Data.([]fileio.AsyncCmdInfo); ok {
+			m.updateSessionBackgroundJobs(evt.AgentID, commands, time.Now())
 		}
 		m.syncAgentWindowTabs()
 		return nil
 	}
-
-	agentID := evt.AgentID
-	if agentID == "" {
-		m.syncAgentWindowTabs()
+	change := m.ApplyAgentEvent(evt)
+	if !change.Accepted {
 		return nil
 	}
-
-	agentNode := m.AgentMgr.Get(agentID)
-	var agent *workspace.AgentState
-	if agentNode != nil {
-		agent = agentNode.State
-	}
-
-	if agentNode == nil || agent == nil {
-		// Check if this is an orchestrator (no parent) or a sub-agent
-		evtData, _ := evt.Data.(map[string]string)
-		parentID := evtData["parent_id"]
-
-		if parentID == "" {
-			// Orchestrator nodes are registered with their live channels before
-			// normal events arrive. Never manufacture a channel-less fallback for
-			// stale events after a tab has closed.
-			if existing := m.AgentMgr.Get(agentID); existing != nil {
-				sp := m.PaneMgr.GetOrCreate(agentID, workspace.PaneAgent, agentID)
-				_ = sp
-				proj := m.subPaneProjections.Get(agentID, workspace.PaneAgent)
-				proj.renderer.SetLegacyModelFallback(m.ModelName)
-				proj.renderer.SetUsername(m.Username)
-				proj.renderer.SetSubPaneContentFn(m.renderSubPaneContentForApp)
-				agent = workspace.NewAgentState(agentID, sp.Messages, m.Logger)
-				existing.State = agent
-				agentNode = existing
-			} else {
-				if m.Logger != nil {
-					m.Logger.Warn("AGENT", "event_for_unknown_orchestrator", "id", agentID, "type", evt.Type)
-				}
-				return nil
-			}
-			// A late state initialization is structural; the selected window
-			// tab remains the only authority for the active view.
-			m.syncAgentWindowTabs()
-		} else {
-			// A sub-agent start can arrive after its orchestrator tab was
-			// closed. The parent tree is the lifecycle authority: without it,
-			// creating only a pane/projection would produce a ghost that the
-			// status bar can see but the Agents panel cannot.
-			if m.AgentMgr.Get(parentID) == nil {
-				if m.Logger != nil {
-					m.Logger.Warn(
-						"AGENT", "event_for_unknown_subagent_parent",
-						"id", agentID, "parent_id", parentID, "type", evt.Type,
-					)
-				}
-				return nil
-			}
-			// Sub-agent: create sub-pane
-			label := evtData["agent_name"]
-			if label == "" {
-				label = agentID
-			}
-			cat := evtData["category"]
-			paneTitle := workspace.SubAgentActivityLabel(label, cat, "")
-			sp := m.PaneMgr.GetOrCreate(agentID, workspace.PaneAgent, paneTitle)
-			sp.Title = paneTitle
-			sp.Status = "running"
-			subModel := m.ModelName
-			if model, ok := evtData["model"]; ok && model != "" {
-				subModel = model
-			}
-			proj := m.subPaneProjections.Get(agentID, workspace.PaneAgent)
-			proj.renderer.SetLegacyModelFallback(subModel)
-			proj.renderer.SetUsername(m.Username)
-			// Nested subpanes (e.g. a promoted thinking block inside this
-			// sub-agent's own chat) render through the same registry.
-			proj.renderer.SetSubPaneContentFn(m.renderSubPaneContentForApp)
-			agent = workspace.NewAgentState(agentID, sp.Messages, m.Logger)
-			if assignment := evtData["prompt"]; assignment != "" {
-				agent.Messages.AppendMessage(workspace.Message{
-					Role: workspace.MessageRoleAssignment, Content: assignment, Time: time.Now(),
-				})
-			}
-			// Keep the canonical label intact. Tabs and sidebar rows own their
-			// width-specific elision; truncating here permanently loses identity.
-			modelStr := m.ModelName
-			if md, ok := evtData["model"]; ok && md != "" {
-				modelStr = md
-			}
-			agentNode = m.AgentMgr.AddSubAgent(agentID, parentID, label, modelStr, cat, agent)
-			if agentNode == nil {
-				m.PaneMgr.Remove(agentID)
-				m.subPaneProjections.Remove(agentID)
-				return nil
-			}
-			if parent := m.AgentMgr.Get(parentID); parent != nil && parent.State != nil && parent.State.Messages != nil {
-				childLabel := workspace.SubAgentActivityLabel(label, cat, evtData["task"])
-				// Without the exact call ID, keep child review in its tab/Agents
-				// panel instead of creating a second or incorrectly linked row.
-				if parent.State.Messages.AttachSubPaneToTool(evtData["parent_tool_id"], agentID, childLabel) {
-					m.syncAgentMessages(parentID, false)
-				}
-			}
+	if evt.Type == "collaboration_delivery_admitted" || evt.Type == "collaboration_delivery_rejected" {
+		// Delivery settlement changes only existing evidence. It is not an
+		// inventory/navigation event and must never activate or hydrate a draft.
+		for _, id := range change.ChangedAgents {
+			m.syncAgentMessages(id, false)
 		}
-	} else if agent.Completed {
-		// Exact-owner semantic evidence may outlive terminal presentation;
-		// AgentState owns keeping that correction inactive.
-		semantic := evt.Identity.Valid() && (evt.Type == "tool_result" || evt.Type == "stream_token" || evt.Type == "thinking" || evt.Type == "reasoning_classified")
-		turn, startsTurn := evt.Data.(coretypes.TurnIdentity)
-		freshTurn := evt.Type == "turn_started" && startsTurn && turn.Generation > agent.TurnIdentity.Generation
-		if !semantic && !freshTurn {
-			if evt.Type == "done" || evt.Type == "error" {
-				m.handleSubPaneCompletion(agentID)
-			}
-			m.syncAgentWindowTabs()
-			return nil
-		}
-	}
-	if agent == nil {
+		m.syncPendingSteeringCount()
 		return nil
 	}
-	// Permission and question prompts dock for the selected family or
-	// use a modal for a background family. Neither requires switching tabs;
-	// safety alerts likewise update their owner without changing navigation.
+	return m.presentAgentReduction(change)
+}
 
-	switch evt.Type {
-	case "sub_agent_started":
-		m.handleSubAgentStarted(evt)
-	case "sub_agent_completed":
-		m.handleSubAgentCompleted(evt)
-		return nil
-	case "sub_agent_question":
-		m.handleSubAgentQuestion(evt)
-	case "file_claim":
-		m.handleFileClaim(evt)
-	}
-
-	thinkingTarget := m.getThinkingTarget(agentID, agent)
-
-	// agent is guaranteed non-nil past the guard above.
-	hasThinking := agent.ThinkingPaneID != ""
-
-	cmd := agent.HandleEvent(evt, thinkingTarget,
-		func(string) {},
-		func(thinking, streaming, blocking bool) {
-		},
-		func() {
-			m.OverlayState.SetBlocking(true)
-			m.Feedback.NotifyInfo("")
-		},
-		func(question, operation, tool, target, risk, reason, suggestion string) {
-			m.enqueueAgentConfirmation(agentPromptRequest{
-				kind: agentPromptConfirmation, agentID: agentID, blockID: agent.PendingBlockID,
-				question: question, operation: operation, tool: tool, target: target,
-				risk: risk, reason: reason, suggestion: suggestion,
-			})
-		},
-		func(questionsJSON string) {
-			m.enqueueAgentQuestions(agentPromptRequest{kind: agentPromptQuestions, agentID: agentID, blockID: agent.PendingBlockID, questionsJSON: questionsJSON})
-		},
-		func() {
-			blockID := ""
-			switch data := evt.Data.(type) {
-			case map[string]string:
-				blockID = data["block_id"]
-			case map[string]any:
-				blockID, _ = data["block_id"].(string)
-			}
-			m.dismissAgentPromptBlock(agentID, blockID)
-		},
-	)
-	if evt.Type == "done" || evt.Type == "error" {
-		m.dismissAgentPromptFor(agentID)
-	}
-	m.syncAgentMessages(agentID, evt.Type == "done" || evt.Type == "error")
-	m.syncConversationMessages(thinkingTarget, evt.Type == "done" || evt.Type == "error")
-
-	// The block's own content, first-token time and the chat width decide
-	// promotion; a later wire classification no longer changes the decision.
-	// Main and sub-agent blocks both enter through this one call.
-	if evt.Type == "thinking" {
-		m.checkThinkingPromotion(agent, thinkingTarget)
-	}
-
-	if hasThinking && agent.ThinkingPaneID != "" {
-		if pane := m.PaneMgr.Get(agent.ThinkingPaneID); pane != nil {
-			messages := pane.Messages.Messages()
-			if len(messages) == 1 && !messages[0].ThinkingActive {
-				m.handleSubPaneCompletion(agentID)
-			}
+// presentAgentReduction consumes committed domain changes. It may change local
+// tabs, geometry, dialogs and feedback, but never replays the semantic event.
+func (m *App) presentAgentReduction(change workspace.AgentReduction) tea.Cmd {
+	for _, id := range change.ChangedAgents {
+		m.ensureAgentProjection(id)
+		if node := m.AgentMgr.Get(id); node != nil && node.State != nil {
+			m.reconcileThinkingPresentation(node.State, m.thinkingOwnerWidth(id))
 		}
+		m.syncAgentMessages(id, change.Effects.Done != nil || change.Effects.Error != nil)
 	}
-
-	if evt.Type == "done" || evt.Type == "error" {
-		m.handleSubPaneCompletion(agentID)
-		if m.Status != nil {
-			m.Status.RemoveAgent(agentID)
+	m.applyAgentEffects(change.AgentID, change.Effects)
+	if change.ChildCompleted {
+		if node := m.AgentMgr.Get(change.AgentID); node != nil {
+			m.publishSubAgentTerminalStatus(node.ID, node.Label, node.Category, node.State.Status)
 		}
+		m.archiveSubAgentTab(change.AgentID)
 	}
-
-	switch evt.Type {
-	case "usage":
-		m.handleUsageData(evt.Data, agentID)
+	if change.Effects.Done != nil || change.Effects.Error != nil {
+		m.dismissAgentPromptFor(change.AgentID)
+		m.handleSubPaneCompletion(change.AgentID)
 	}
-
-	// Sync window tabs after all state mutations to ensure tab state
-	// matches agent state. This was previously called in View() which
-	// caused flickering by mutating render state every frame.
+	m.syncPendingSteeringCount()
 	m.syncAgentWindowTabs()
+	if done := change.Effects.Done; done != nil {
+		return func() tea.Msg { return agentResultFeedbackMsg{agentID: done.AgentID, reason: done.Reason} }
+	}
+	return nil
+}
 
-	return m.processAgentResults(agentID, cmd)
+// applyAgentEffects projects neutral reducer output into this shell. The
+// reducer owns state transitions; it never opens a UI or calls back into it.
+func (m *App) applyAgentEffects(agentID string, effects workspace.AgentEffects) {
+	if effects.Blocking {
+		m.OverlayState.SetBlocking(true)
+		m.Feedback.NotifyInfo("")
+	}
+	if prompt := effects.Prompt; prompt != nil {
+		request := agentPromptRequest{agentID: agentID, blockID: prompt.BlockID,
+			question: prompt.Question, operation: prompt.Operation, tool: prompt.Tool,
+			target: prompt.Target, risk: prompt.Risk, reason: prompt.Reason,
+			suggestion: prompt.Suggestion, questionsJSON: prompt.QuestionsJSON}
+		if prompt.IsQuestion {
+			request.kind = agentPromptQuestions
+			m.enqueueAgentQuestions(request)
+		} else {
+			request.kind = agentPromptConfirmation
+			m.enqueueAgentConfirmation(request)
+		}
+	}
+	if effects.DismissPrompt {
+		m.dismissAgentPromptBlock(agentID, effects.DismissBlockID)
+	}
 }
 
 func (m *App) syncPendingSteeringCount() {
@@ -562,119 +351,17 @@ func (m *App) syncPendingSteeringCount() {
 	}
 }
 
-func (m *App) getThinkingTarget(agentID string, agent *workspace.AgentState) *workspace.Conversation {
-	// Once thinking has been promoted to its own pane, keep streaming into
-	// that pane instead of spawning a fresh inline block in the chat. The
-	// pane check must come first: the main orchestrator also owns a PaneAgent
-	// in the manager, so PaneMgr.Has(agentID) alone would never redirect.
-	if agent != nil && agent.ThinkingPaneID != "" {
-		if sp := m.PaneMgr.Get(agent.ThinkingPaneID); sp != nil {
-			return sp.Messages
-		}
-		// Stale reference (pane closed) — fall through to a real conversation.
-		agent.ThinkingPaneID = ""
-	}
+// ThinkingOverflowInnerW is the focused chat width, for shell geometry callers.
+func (m *App) ThinkingOverflowInnerW() int { return m.thinkingOwnerWidth(m.AgentView.ActiveID()) }
 
-	if m.PaneMgr.Has(agentID) {
-		return m.PaneMgr.Get(agentID).Messages
-	}
-
-	sp := m.PaneMgr.GetOrCreate(agentID, workspace.PaneAgent, agentID)
-	return sp.Messages
-}
-
-// ThinkingOverflowInnerW is the inner width of the chat area the reasoning body
-// is painted in. The renderer paints at this width and ThinkingOverflowsInline
-// measures at the same width, so a promoted block has already overflowed the
-// form it left. computeContentLayout is the one shell-geometry owner; deriving
-// the width there keeps promotion correct even before the first frame is
-// painted. Zero means no readable column exists yet.
-func (m *App) ThinkingOverflowInnerW() int {
-	if m == nil {
-		return 0
-	}
-	return max(0, m.computeContentLayout().InnerW)
-}
-
-// thinkingOverflowLatched reports the session-wide latch: once a session has
-// promoted a reasoning block, every later block in that session opens in its own
-// pane instead of restarting inline. The latch is per session, so main and
-// sub-agent blocks share one policy. It is cleared by a settings change.
-func (m *App) thinkingOverflowLatched() bool {
-	if m == nil || m.ActiveSession == nil {
-		return false
-	}
-	return m.thinkingLatch[m.ActiveSession]
-}
-
-func (m *App) setThinkingOverflowLatched() {
-	if m == nil || m.ActiveSession == nil {
-		return
-	}
-	if m.thinkingLatch == nil {
-		m.thinkingLatch = make(map[*workspace.Session]bool)
-	}
-	m.thinkingLatch[m.ActiveSession] = true
-}
-
-// clearThinkingOverflowLatch resets the burst promotion latch for one session
-// after a settings change, so the next thinking block starts inline again.
+func (m *App) thinkingOverflowLatched() bool { return m.thinkingLatch[m.ActiveSession] }
 func (m *App) clearThinkingOverflowLatch(session *workspace.Session) {
-	if m == nil || session == nil {
-		return
-	}
 	delete(m.thinkingLatch, session)
 }
 
-// checkThinkingPromotion promotes an active, un-promoted reasoning block when it
-// has outgrown the inline transcript form. Main and sub-agent blocks run through
-// this same function: the owner only selects which chat is the inline target.
-func (m *App) checkThinkingPromotion(agent *workspace.AgentState, target *workspace.Conversation) {
-	if agent == nil || !agent.Thinking || agent.ThinkingPaneID != "" {
-		return
-	}
-	if target == nil {
-		return
-	}
-	thought, ok := target.ActiveThinking()
-	if !ok {
-		return
-	}
-	innerW := m.ThinkingOverflowInnerW()
-	if innerW <= 0 {
-		return
-	}
-	if !m.thinkingOverflowLatched() && !chatprojection.ThinkingOverflowsInline(
-		thought.Content, thought.ThinkingDisplay.Start, thought.Time, chatprojection.ThinkingOverflowWidth(innerW),
-	) {
-		return
-	}
-	m.promoteThinkingToPane(agent)
-	m.setThinkingOverflowLatched()
-}
-
 func (m *App) promoteThinkingToPane(agent *workspace.AgentState) {
-	if agent == nil || agent.Messages == nil {
-		return
-	}
-	paneID := m.nextThinkingPaneID(agent.ID)
-	thought, ok := agent.Messages.PromoteThinking(paneID)
-	if !ok {
-		return
-	}
-
-	sp := m.PaneMgr.GetOrCreate(paneID, workspace.PaneThinking, "Thinking")
-	proj := m.subPaneProjections.Get(paneID, workspace.PaneThinking)
-	proj.renderer.SetLegacyModelFallback(m.ModelName)
-	proj.renderer.SetUsername(m.Username)
-
-	sp.Messages.AppendMessage(thought)
-	sp.StartTime = thought.Time
-
-	agent.ThinkingPaneID = paneID
-
+	m.installThinkingPresentation(agent)
 	m.syncAgentMessages(agent.ID, false)
-	m.syncPaneMessages(paneID, false)
 }
 
 func (m *App) nextThinkingPaneID(agentID string) string {
@@ -692,27 +379,12 @@ func (m *App) handleSubPaneCompletion(agentID string) {
 	if n == nil {
 		return
 	}
-	if n.State != nil && n.State.ThinkingPaneID != "" {
-		paneID := n.State.ThinkingPaneID
-		sp := m.PaneMgr.Get(paneID)
-		if sp != nil {
-			messages := sp.Messages.Messages()
-			if len(messages) != 1 || !n.State.Messages.RestoreThinking(paneID, messages[0]) {
-				return
-			}
-			m.PaneMgr.Remove(paneID)
-			m.subPaneProjections.Remove(paneID)
-		}
-		n.State.ThinkingPaneID = ""
+	if n.State != nil && m.thinkingPaneID(n.State) != "" {
+		m.dropThinkingPresentation(n.State)
 		m.syncAgentMessages(agentID, false)
 		return
 	}
 
-	sp := m.PaneMgr.Get(agentID)
-	if sp == nil {
-		return
-	}
-	sp.Collapse()
 	if n.Parent != nil {
 		m.subPaneProjections.InvalidateSubPane(n.Parent.ID, agentID)
 	}
@@ -721,24 +393,6 @@ func (m *App) handleSubPaneCompletion(agentID string) {
 type agentResultFeedbackMsg struct {
 	agentID string
 	reason  string
-}
-
-func (m *App) processAgentResults(agentID string, cmd tea.Cmd) tea.Cmd {
-	if cmd == nil {
-		return nil
-	}
-	return func() tea.Msg {
-		msg := cmd()
-		switch result := msg.(type) {
-		case workspace.AgentDoneResultMsg:
-			return agentResultFeedbackMsg{agentID: agentID, reason: result.Reason}
-		case workspace.AgentErrorResultMsg:
-			// The canonical error row and syncAgentStatusEvent already publish
-			// the diagnostic and its owner-scoped Notice. Do not echo it through
-			// foreground feedback from this asynchronous completion command.
-		}
-		return nil
-	}
 }
 
 func (m *App) handleAgentResultFeedback(msg agentResultFeedbackMsg) {
@@ -759,127 +413,18 @@ func (m *App) handleAgentResultFeedback(msg agentResultFeedbackMsg) {
 	m.forceFrame()
 }
 
-func (m *App) handleUsageData(data any, agentID string) {
-	if pane := m.PaneMgr.Get(agentID); pane != nil {
-		pane.TokenCount += usageEventTokens(data)
-	}
-	m.RecordAgentUsage(agentID, data)
-}
-
-func usageEventTokens(data any) int {
-	read := func(values map[string]any, key string) int {
-		switch value := values[key].(type) {
-		case int:
-			return value
-		case int64:
-			return int(value)
-		case float64:
-			return int(value)
-		default:
-			return 0
-		}
-	}
-	switch values := data.(type) {
-	case map[string]any:
-		return read(values, "prompt") + read(values, "completion")
-	case map[string]int:
-		return values["prompt"] + values["completion"]
-	default:
-		return 0
-	}
-}
-
-func (m *App) handleSubAgentQuestion(evt workspace.AgentEvent) {
-	data, ok := evt.Data.(map[string]string)
-	if !ok {
-		return
-	}
-	agentName := data["agent_name"]
-	category := data["category"]
-	question := data["question"]
-	if agentName == "" || question == "" {
-		return
-	}
-	content := fmt.Sprintf("[%s:%s] asks: %s", category, agentName, question)
-	if m.AgentMgr.ActiveID() != "" {
-		m.appendActiveMessage(ttypes.ChatMessage{
-			Role:    ttypes.RoleTool,
-			Content: content,
-			Time:    time.Now(),
-		})
-	}
-}
-
-func (m *App) handleFileClaim(evt workspace.AgentEvent) {
-	data, ok := evt.Data.(map[string]string)
-	if !ok {
-		return
-	}
-	_ = data["agent_name"]
-	_ = data["category"]
-	_ = data["path"]
-}
-
-func (m *App) handleSubAgentStarted(evt workspace.AgentEvent) {
-	data, ok := evt.Data.(map[string]string)
-	if !ok {
-		return
-	}
-	agentID := data["agent_id"]
-	agentName := data["agent_name"]
-	if agentID == "" || agentName == "" {
-		return
-	}
-	label := agentName
-	category := data["category"]
-	if pane := m.PaneMgr.Get(agentID); pane != nil {
-		pane.Title = workspace.SubAgentActivityLabel(label, category, "")
-	}
-	if n := m.AgentMgr.Get(agentID); n != nil {
-		n.Label = label
-		if n.State != nil {
-			n.State.Status = "running"
-		}
-	}
-	if model := data["model"]; model != "" {
-		if n := m.AgentMgr.Get(agentID); n != nil {
-			n.Model = model
-		}
-		if p := m.subPaneProjections.GetExisting(agentID); p != nil {
-			p.renderer.SetLegacyModelFallback(model)
-		}
-	}
-	if category != "" {
-		if n := m.AgentMgr.Get(agentID); n != nil {
-			n.Category = category
-		}
-	}
-	_ = data["parent_id"] // parent relationship already set by AddSubAgent
-}
-
+// handleSubAgentCompleted is also used by local lifecycle fixtures. Production
+// events use handleAgentDomainEvent and the same exact domain reducer.
 func (m *App) handleSubAgentCompleted(evt workspace.AgentEvent) {
-	data, ok := evt.Data.(map[string]string)
-	if !ok {
-		return
+	if evt.AgentID == "" {
+		if data, ok := evt.Data.(map[string]string); ok {
+			evt.AgentID = data["agent_id"]
+		}
 	}
-	agentID := data["agent_id"]
-	status := data["status"]
-	if agentID == "" || status == "" {
-		return
+	change := m.ApplyAgentEvent(evt)
+	if change.Accepted {
+		m.presentAgentReduction(change)
 	}
-
-	if n := m.AgentMgr.Get(agentID); n != nil && n.State != nil {
-		n.State.Status = status
-	}
-
-	if status == "running" {
-		return
-	}
-	m.publishSubAgentTerminalStatus(agentID, data["agent_name"], data["category"], status)
-	if pane := m.PaneMgr.Get(agentID); pane != nil {
-		pane.Status = status
-	}
-	m.completeSubAgent(agentID)
 }
 
 func (m *App) publishSubAgentTerminalStatus(agentID, name, category, status string) {

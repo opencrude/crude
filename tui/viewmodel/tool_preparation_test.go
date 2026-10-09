@@ -130,7 +130,7 @@ func TestParallelPreparationKeepsPlacementWhileArgumentsStream(t *testing.T) {
 }
 
 func TestAgentToolStatusRejectsStructuredToolNames(t *testing.T) {
-	if got := agentToolDetail(map[string]any{"name": `{"private_id":"agent-8f21"}`}); got != "Running tool" {
+	if got := workspace.AgentToolDetail(map[string]any{"name": `{"private_id":"agent-8f21"}`}); got != "Running tool" {
 		t.Fatalf("structured name leaked into operation detail: %q", got)
 	}
 }

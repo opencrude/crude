@@ -37,13 +37,17 @@ func TestChildRawReasoningStaysInItsPaneWhileParentHasCompactThinking(t *testing
 
 	child := app.AgentMgr.Get("child")
 	parent := app.AgentMgr.Get("parent")
-	if child == nil || child.State.ThinkingPaneID == "" {
+	if child == nil || app.thinkingPaneID(child.State) == "" {
 		t.Fatal("child raw trace did not promote into its own thinking pane")
 	}
-	if pane := app.PaneMgr.Get(child.State.ThinkingPaneID); pane == nil || !strings.Contains(pane.Messages.Messages()[0].Content, "Raw child investigation") {
+	pane := app.Get(app.thinkingPaneID(child.State))
+	if pane == nil {
+		t.Fatal("child thinking pane missing")
+	}
+	if thought, active := pane.Messages.ActiveThinking(); !active || !strings.Contains(thought.Content, "Raw child investigation") {
 		t.Fatal("child thinking pane lost the raw body")
 	}
-	if parent.State.ThinkingPaneID != "" || !strings.Contains(app.AgentActivity("parent").Thinking, "Parent summary") {
+	if app.thinkingPaneID(parent.State) != "" || !strings.Contains(app.AgentActivity("parent").Thinking, "Parent summary") {
 		t.Fatal("child raw trace changed the parent's compact reasoning")
 	}
 	app.switchToAgentView("child")
@@ -97,7 +101,7 @@ func TestResponsesVerboseSummaryPromotesForRootAndChildWithoutReclassification(t
 						}
 					}
 					stream("**Inspecting ownership**\n\n")
-					if state.ThinkingPaneID != "" {
+					if app.thinkingPaneID(state) != "" {
 						t.Fatal("short summary unexpectedly promoted")
 					}
 					thoughtIndex := len(state.Messages.Messages()) - 1
@@ -107,13 +111,13 @@ func TestResponsesVerboseSummaryPromotesForRootAndChildWithoutReclassification(t
 					for range 45 {
 						stream(paragraph)
 					}
-					paneID := state.ThinkingPaneID
+					paneID := app.thinkingPaneID(state)
 					if paneID == "" {
 						t.Fatal("gateway's long summary_text stream remained confined to the activity strip")
 					}
 					stream("MORE-EVIDENCE")
 					trace += "MORE-EVIDENCE"
-					pane := app.PaneMgr.Get(paneID)
+					pane := app.Get(paneID)
 					thought, ok := pane.Messages.ActiveThinking()
 					if !ok || thought.InternalID != thoughtID || thought.Content != trace || thought.ThinkingDisplay.Kind != reasoning.Summary {
 						t.Fatal("promotion changed source classification, identity or stream content")
@@ -136,7 +140,7 @@ func TestResponsesVerboseSummaryPromotesForRootAndChildWithoutReclassification(t
 					if strings.Contains(shellBufferRow(app, app.chatRect.Y+app.chatRect.H-1), "MORE-EVIDENCE") {
 						t.Fatal("promoted body duplicated in activity strip")
 					}
-					if child && app.AgentMgr.Get("parent").State.ThinkingPaneID != "" {
+					if child && app.thinkingPaneID(app.AgentMgr.Get("parent").State) != "" {
 						t.Fatal("child changed parent's presentation")
 					}
 					projection := app.subPaneProjections.ForOwner(owner).Get(paneID, workspace.PaneThinking).renderer
@@ -152,7 +156,7 @@ func TestResponsesVerboseSummaryPromotesForRootAndChildWithoutReclassification(t
 					} else {
 						app.handleAgentEvent(types.AgentEventMsg{AgentID: owner, Type: "done", Data: map[string]any{"reason": terminal}})
 					}
-					if app.PaneMgr.Has(paneID) || app.subPaneProjections.Has(paneID) || state.ThinkingPaneID != "" {
+					if app.PaneMgr.Has(paneID) || app.subPaneProjections.Has(paneID) || app.thinkingPaneID(state) != "" {
 						t.Fatal("settled thought left a competing pane owner")
 					}
 					thought = state.Messages.Messages()[thoughtIndex]
@@ -192,7 +196,7 @@ func TestResponsesVerboseSummaryPromotesForRootAndChildWithoutReclassification(t
 					// The session stays latched after it promoted one block, so a
 					// later short thought opens in its own pane instead of restarting
 					// inline. Only a settings change clears that choice.
-					if state.ThinkingPaneID == "" {
+					if app.thinkingPaneID(state) == "" {
 						t.Fatal("session latch did not carry into the next turn")
 					}
 				})
@@ -215,10 +219,10 @@ func TestChildMeasuredRawReasoningPromotesAfterUsageArrives(t *testing.T) {
 		Text: strings.Repeat("unlabelled child trace.\n", 25), Kind: reasoning.Provisional,
 	}})
 	child := app.AgentMgr.Get("child")
-	if child == nil || child.State.ThinkingPaneID == "" {
+	if child == nil || app.thinkingPaneID(child.State) == "" {
 		t.Fatal("child trace did not promote through the shared overflow rule")
 	}
-	if pane := app.PaneMgr.Get(child.State.ThinkingPaneID); pane == nil || !strings.Contains(pane.Messages.Messages()[0].Content, "unlabelled child trace") {
+	if pane := app.Get(app.thinkingPaneID(child.State)); pane == nil || !strings.Contains(pane.Messages.Messages()[0].Content, "unlabelled child trace") {
 		t.Fatal("child trace was lost during promotion")
 	}
 }

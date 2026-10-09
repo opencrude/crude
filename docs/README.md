@@ -61,6 +61,8 @@ Read that first; this index only organizes the reference material.
 - [Workspace collaboration runtime](reference/workspace-collaboration.md)
   — durable agents/runs, automatic directed delivery, report revisions, live-only
   broadcast, explicit context admission, Board history and recovery.
+- [Core client protocol](reference/core-client-protocol.md) — implemented typed
+  transport, retained actors and resource APIs; not yet a public connected CLI.
 - [In-app terminals](reference/in-app-terminals.md) — the embedded terminal
   multiplexer: libghostty-vt PTY engine, pinned Ghostty environment.
 - [Performance baselines](reference/performance-baselines.md) — recorded paint
@@ -86,6 +88,9 @@ Read that first; this index only organizes the reference material.
 
 ### Plans (active work only)
 
+- [Core and shell separation](plans/core-shell-separation.md) — active migration
+  to a single runtime authority with independent local/remote TUI clients;
+  multi-client release acceptance remains outstanding.
 - [LSP and runtime repair handoff](plans/lsp-runtime-handoff.md) — paused LSP
   integration and restart-first runtime repair, with preserved child evidence.
 

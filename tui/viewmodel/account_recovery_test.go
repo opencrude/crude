@@ -29,7 +29,7 @@ func TestNewSessionWithoutAccountShowsPaintedRecoveryAndOpensAccounts(t *testing
 	app.SetEventSender(noopEventSender{})
 
 	priorSession := app.ActiveSession
-	result := app.NewSessionFromLauncher()
+	result := app.NewAgentSession()
 	if result == nil || !result.NeedsAccount || !strings.Contains(result.Error, session.ErrAccountRequired.Error()) {
 		t.Fatalf("no-account create result = %+v, want an explicit account-required failure", result)
 	}

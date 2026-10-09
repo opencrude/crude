@@ -81,7 +81,7 @@ func TestCodexPatchProductionUndoRestoresMoveOverwriteAndDelete(t *testing.T) {
 	}
 	frontend.backend.SetYolo(true)
 	sender := &historyE2ESender{events: make(chan historyE2EEvent, 128)}
-	orch, err := ws.StartOrchestrator(sender)
+	orch, err := ws.StartOrchestrator(frontend.SessionID, sender)
 	if err != nil {
 		t.Fatal(err)
 	}

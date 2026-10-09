@@ -46,7 +46,7 @@ func TestThinkingPaneShowsScrollbarOnFirstFrame(t *testing.T) {
 	node := app.AgentMgr.Get("probe-agent")
 	agent := node.State
 	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "probe-agent", Data: reasoning.Delta{Text: thinkingLines(40)}})
-	if agent.ThinkingPaneID == "" {
+	if app.thinkingPaneID(agent) == "" {
 		t.Fatal("thinking was not promoted")
 	}
 	for i := 0; i < 20; i++ {
@@ -86,7 +86,7 @@ func TestRepeatedThinkingBlocksEachKeepTheirScrollbar(t *testing.T) {
 	for cycle := 0; cycle < 4; cycle++ {
 		app.handleAgentEvent(ttypes.AgentEventMsg{Type: "turn_started", AgentID: "repeat-agent", Data: types.TurnIdentity{Generation: uint64(cycle + 1), ModelID: "model"}})
 		app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "repeat-agent", Data: reasoning.Delta{Text: thinkingLines(40)}})
-		paneID := agent.ThinkingPaneID
+		paneID := app.thinkingPaneID(agent)
 		if paneID == "" {
 			t.Fatalf("cycle %d: thinking was not promoted", cycle)
 		}
@@ -99,8 +99,8 @@ func TestRepeatedThinkingBlocksEachKeepTheirScrollbar(t *testing.T) {
 		}
 
 		app.paintShellFrame()
-		sp := app.PaneMgr.Get(paneID)
-		gutter := app.subPaneProjections.ForOwner(app.AgentMgr.ActiveID()).PaneGutterState(paneID, sp)
+		sp := app.Get(paneID)
+		gutter := app.subPaneProjections.ForOwner(app.AgentView.ActiveID()).PaneGutterState(paneID, sp)
 		if !gutter.Visible || gutter.Scroll == nil || gutter.Scroll.MaxOffset() <= 0 {
 			t.Fatalf("cycle %d pane %q lacks an overflowing scrollbar: %+v", cycle, paneID, gutter)
 		}
@@ -128,7 +128,7 @@ func TestRepeatedThinkingBlocksEachKeepTheirScrollbar(t *testing.T) {
 			"content": "reply",
 			"reason":  "completed",
 		}})
-		if agent.ThinkingPaneID != "" {
+		if app.thinkingPaneID(agent) != "" {
 			t.Fatalf("cycle %d: thinking pane remained active after completion", cycle)
 		}
 	}
@@ -148,7 +148,7 @@ func TestThinkingScrollbarPaintsOnFirstFrameAfterReturningToActivePane(t *testin
 	mainScroll.ScrollTo(0)
 
 	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "scrolled-agent", Data: reasoning.Delta{Text: thinkingLines(50)}})
-	paneID := app.AgentMgr.Get("scrolled-agent").State.ThinkingPaneID
+	paneID := app.thinkingPaneID(app.AgentMgr.Get("scrolled-agent").State)
 	if paneID == "" {
 		t.Fatal("thinking was not promoted while main chat was scrolled away")
 	}
@@ -197,7 +197,7 @@ func TestThinkingPromotionContinuesIntoPane(t *testing.T) {
 	// Stream enough thinking to exceed the 5-line threshold.
 	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "promote-agent", Data: reasoning.Delta{Text: thinkingLines(8)}})
 
-	if agent.ThinkingPaneID == "" {
+	if app.thinkingPaneID(agent) == "" {
 		t.Fatal("thinking was not promoted to a pane")
 	}
 
@@ -205,13 +205,12 @@ func TestThinkingPromotionContinuesIntoPane(t *testing.T) {
 	// not back into the main conversation.
 	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "promote-agent", Data: reasoning.Delta{Text: "EXTRA-THINKING"}})
 
-	for _, msg := range agent.Messages.Messages() {
-		if msg.Role == workspace.MessageRoleThinking && msg.ThinkingActive {
-			t.Fatalf("main conversation has an active inline thinking block after promotion: %q", msg.Content)
-		}
+	thought, active := agent.Messages.ActiveThinking()
+	if !active || !strings.Contains(thought.Content, "EXTRA-THINKING") {
+		t.Fatal("canonical thought lost streamed continuation")
 	}
 
-	sp := app.PaneMgr.Get(agent.ThinkingPaneID)
+	sp := app.Get(app.thinkingPaneID(agent))
 	if sp == nil {
 		t.Fatal("thinking pane missing")
 	}
@@ -245,10 +244,10 @@ func TestThinkingPromotionStartTimeCoversWholeBlock(t *testing.T) {
 
 	// First thinking chunk seeds the block with its start time.
 	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "promote-time", Data: reasoning.Delta{Text: thinkingLines(8)}})
-	if agent.ThinkingPaneID == "" {
+	if app.thinkingPaneID(agent) == "" {
 		t.Fatal("thinking was not promoted")
 	}
-	sp := app.PaneMgr.Get(agent.ThinkingPaneID)
+	sp := app.Get(app.thinkingPaneID(agent))
 	if sp == nil {
 		t.Fatal("thinking pane missing")
 	}
@@ -290,15 +289,15 @@ func TestThinkingPaneIDsAreUniquePerAgent(t *testing.T) {
 	for _, id := range []string{"promote-a", "promote-b"} {
 		app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: id, Data: reasoning.Delta{Text: thinkingLines(8)}})
 		agent := app.AgentMgr.Get(id).State
-		if agent.ThinkingPaneID == "" {
+		if app.thinkingPaneID(agent) == "" {
 			t.Fatalf("agent %s: thinking not promoted", id)
 		}
 	}
 
 	a := app.AgentMgr.Get("promote-a").State
 	b := app.AgentMgr.Get("promote-b").State
-	if a.ThinkingPaneID == b.ThinkingPaneID {
-		t.Fatalf("two agents share the same thinking pane: %q", a.ThinkingPaneID)
+	if app.thinkingPaneID(a) == app.thinkingPaneID(b) {
+		t.Fatalf("two agents share the same thinking pane: %q", app.thinkingPaneID(a))
 	}
 }
 
@@ -315,10 +314,10 @@ func TestThinkingPaneDemotesToSummary(t *testing.T) {
 	agent := node.State
 
 	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "promote-done", Data: reasoning.Delta{Text: thinkingLines(8)}})
-	if agent.ThinkingPaneID == "" {
+	if app.thinkingPaneID(agent) == "" {
 		t.Fatal("thinking was not promoted")
 	}
-	paneID := agent.ThinkingPaneID
+	paneID := app.thinkingPaneID(agent)
 	// Thinking finishes: streaming begins.
 	time.Sleep(20 * time.Millisecond)
 	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "stream_token", AgentID: "promote-done", Data: "hello"})
@@ -341,7 +340,7 @@ func TestThinkingPaneDemotesWhenTurnEndsDirectly(t *testing.T) {
 
 	agent := app.AgentMgr.Get("direct-done").State
 	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "direct-done", Data: reasoning.Delta{Text: thinkingLines(8)}})
-	paneID := agent.ThinkingPaneID
+	paneID := app.thinkingPaneID(agent)
 	if paneID == "" {
 		t.Fatal("thinking was not promoted")
 	}
@@ -354,8 +353,8 @@ func TestThinkingPaneDemotesWhenTurnEndsDirectly(t *testing.T) {
 	if app.PaneMgr.Has(paneID) || app.subPaneProjections.Has(paneID) {
 		t.Fatal("thinking pane survived direct completion")
 	}
-	if agent.ThinkingPaneID != "" {
-		t.Fatalf("active thinking pane ID remained %q after done", agent.ThinkingPaneID)
+	if app.thinkingPaneID(agent) != "" {
+		t.Fatalf("active thinking pane ID remained %q after done", app.thinkingPaneID(agent))
 	}
 	thought := agent.Messages.Messages()[0]
 	if thought.Role != ttypes.RoleThinking || thought.ThinkingActive || thought.Content != thinkingLines(8) {

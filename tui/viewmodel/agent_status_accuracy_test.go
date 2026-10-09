@@ -27,43 +27,47 @@ func TestAgentStatusAutoAllowedTagsNeverRequestApproval(t *testing.T) {
 
 func TestAgentStatusYoloAndQuestionLifecycle(t *testing.T) {
 	app := newFullTestApp(t)
-	app.AddOrchestrator("root")
-	state := app.AgentMgr.Get("root").State
+	id := addBackendTestOrchestrator(t, app)
+	state := app.AgentMgr.Get(id).State
 	state.Running = true
 	state.PendingBlockID = "block-1"
-	app.OverlayState.SetYolo(true)
-	app.syncAgentStatusEvent(tuitypes.AgentEventMsg{AgentID: "root", Type: "blocking", Data: map[string]any{"operation": "execute"}})
+	if !app.SetYoloForAgent(id, true) {
+		t.Fatal("could not enable backend YOLO")
+	}
+	app.syncAgentStatusEvent(tuitypes.AgentEventMsg{AgentID: id, Type: "blocking", Data: map[string]any{"operation": "execute"}})
 	app.syncAgentStatusInventory()
-	status, _ := app.Status.Agent("root")
+	status, _ := app.Status.Agent(id)
 	if status.NeedsAction || status.Phase == ttypes.AgentApproval {
 		t.Fatalf("YOLO agent incorrectly needs approval: %+v", status)
 	}
 	// YOLO bypasses permission requests, not genuine questions to the user.
-	app.syncAgentStatusEvent(tuitypes.AgentEventMsg{AgentID: "root", Type: "blocking", Data: map[string]any{"operation": "questions"}})
+	app.syncAgentStatusEvent(tuitypes.AgentEventMsg{AgentID: id, Type: "blocking", Data: map[string]any{"operation": "questions"}})
 	app.syncAgentStatusInventory()
-	status, _ = app.Status.Agent("root")
+	status, _ = app.Status.Agent(id)
 	if !status.NeedsAction || status.Phase != ttypes.AgentQuestion || formatAgentState(status) != "Needs answer" {
 		t.Fatalf("question lost its input state under YOLO: %+v", status)
 	}
 	state.PendingBlockID = ""
-	app.syncAgentStatusEvent(tuitypes.AgentEventMsg{AgentID: "root", Type: "blocking_complete"})
+	app.syncAgentStatusEvent(tuitypes.AgentEventMsg{AgentID: id, Type: "blocking_complete"})
 	app.syncAgentStatusInventory()
-	status, _ = app.Status.Agent("root")
+	status, _ = app.Status.Agent(id)
 	if status.NeedsAction || status.Phase == ttypes.AgentQuestion {
 		t.Fatalf("answered question still needs input: %+v", status)
 	}
-	app.OverlayState.SetYolo(false)
+	if !app.SetYoloForAgent(id, false) {
+		t.Fatal("could not disable backend YOLO")
+	}
 	state.PendingBlockID = "block-2"
-	app.syncAgentStatusEvent(tuitypes.AgentEventMsg{AgentID: "root", Type: "blocking", Data: map[string]string{"operation": "execute"}})
+	app.syncAgentStatusEvent(tuitypes.AgentEventMsg{AgentID: id, Type: "blocking", Data: map[string]string{"operation": "execute"}})
 	app.syncAgentStatusInventory()
-	status, _ = app.Status.Agent("root")
+	status, _ = app.Status.Agent(id)
 	if !status.NeedsAction || status.Phase != ttypes.AgentApproval {
 		t.Fatalf("real approval request was hidden: %+v", status)
 	}
 	state.PendingBlockID = ""
-	app.syncAgentStatusEvent(tuitypes.AgentEventMsg{AgentID: "root", Type: "permission_resolved"})
+	app.syncAgentStatusEvent(tuitypes.AgentEventMsg{AgentID: id, Type: "permission_resolved"})
 	app.syncAgentStatusInventory()
-	status, _ = app.Status.Agent("root")
+	status, _ = app.Status.Agent(id)
 	if status.NeedsAction || status.Phase == ttypes.AgentApproval {
 		t.Fatalf("resolved approval remained pending: %+v", status)
 	}

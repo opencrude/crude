@@ -30,7 +30,6 @@ type switchPreflightSnapshot struct {
 	fileOps       *FileOpsService
 	git           *GitService
 	termMgr       *TerminalManager
-	focusStack    *FocusStack
 	session       *Session
 	search        ProjectSearchRequest
 }
@@ -47,7 +46,6 @@ func newSwitchPreflightWorkspace(t *testing.T) (*Workspace, switchPreflightSnaps
 	ws.Sessions = []*Session{frontendSession}
 	ws.SessionsByID = map[string]*Session{frontendSession.SessionID: frontendSession}
 	ws.SessionsByAgent = map[string]*Session{frontendSession.AgentID: frontendSession}
-	ws.ActiveSession = frontendSession
 
 	search := ws.ProjectSearch.Begin(root, "still-active", fileio.ProjectSearchOptions{})
 	return ws, switchPreflightSnapshot{
@@ -62,7 +60,6 @@ func newSwitchPreflightWorkspace(t *testing.T) (*Workspace, switchPreflightSnaps
 		fileOps:       ws.FileOps,
 		git:           ws.Git,
 		termMgr:       ws.TermMgr,
-		focusStack:    ws.FocusStack,
 		session:       frontendSession,
 		search:        search,
 	}
@@ -88,17 +85,15 @@ func assertSwitchPreflightStateIntact(t *testing.T, ws *Workspace, before switch
 		ws.ProjectSearch != before.projectSearch ||
 		ws.FileOps != before.fileOps ||
 		ws.Git != before.git ||
-		ws.TermMgr != before.termMgr ||
-		ws.FocusStack != before.focusStack {
+		ws.TermMgr != before.termMgr {
 		t.Fatal("one or more project managers changed after rejected switch")
 	}
 	if len(ws.Sessions) != 1 || ws.Sessions[0] != before.session {
 		t.Fatal("session list changed after rejected switch")
 	}
 	if ws.SessionsByID[before.session.SessionID] != before.session ||
-		ws.SessionsByAgent[before.session.AgentID] != before.session ||
-		ws.ActiveSession != before.session {
-		t.Fatal("session indexes or active session changed after rejected switch")
+		ws.SessionsByAgent[before.session.AgentID] != before.session {
+		t.Fatal("session indexes changed after rejected switch")
 	}
 	select {
 	case <-before.search.ctx.Done():

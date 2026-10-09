@@ -2,37 +2,24 @@ package workspace
 
 import (
 	"database/sql"
+	"maps"
+	"slices"
 	"sync"
 	"time"
 
 	"crude/session"
 	"crude/sessiondb"
 	"crude/types"
+	captypes "crude/types/capability"
 )
 
-// Session is the frontend state for one agent conversation. It is the TUI
-// counterpart to the backend session.Session (in crude/session/) — the
-// backend runs the agent loop, the LLM calls, the tool execution; the
-// frontend Session owns conversation data, the chat input draft, the
-// per-agent dialogs (confirm, question, yolo, text overlay, composer),
-// the reference store, and the cost/token tracking.
+// Session pairs one workspace conversation with its backend execution owner and
+// its own session database. Workspace creation/opening registers it independently
+// of any shell selection. Children share the root's reference/settings family.
 //
-// One Session per orchestrator. Sub-agents do NOT get their own Session —
-// they get a SubPane (owned by PaneMgr) with conversation data and a temporary
-// MessageList projection, and share the orchestrator's Session for dialogs and
-// references.
-//
-// The Session is created when an orchestrator is added (via
-// AgentManager.AddOrchestrator) and destroyed when the orchestrator is
-// removed (via AgentManager.Remove). The AgentNode.State field points to
-// the Session's AgentState (streaming, thinking, conversation data, etc.).
-//
-// Persistence: each Session owns a sessionID, sessionDir, and *sql.DB.
-// These are the SQLite handles for this conversation's messages, cost
-// snapshots, sub-agent results, and prompt references. In the current
-// architecture, all sessions share the same .db file (the app creates
-// one session.Session). In a future multi-session architecture, each
-// Session would have its own .db file.
+// The shell owns the composer editor, focus, dialogs and rendering projections;
+// the backend owns provider context, tools, permissions and durable publication.
+// This object retains neutral reference, settings, usage and hydration data.
 type Session struct {
 	// SessionID is the unique identifier for this session's backend
 	// (session.Session). Used for SQLite persistence and session resume.
@@ -62,7 +49,8 @@ type Session struct {
 	// Settings is the domain snapshot for this conversation's provider/model/
 	// thinking overrides. The TUI creates a retained presentation projection
 	// from this data; workspace never owns the settings form or dialog widgets.
-	Settings *SessionSettingsState
+	Settings         *SessionSettingsState
+	settingsRevision uint64
 
 	// CreatedAt is when this session was created (for display).
 	CreatedAt time.Time
@@ -84,12 +72,9 @@ type Session struct {
 	// by Workspace.Bootstrap(). Nil until bootstrapped.
 	backend *session.Session
 
-	// hydratedMessages stores converted messages from session resume.
-	// Set by Workspace.Hydrate(), consumed by the TUI layer on startup.
-	hydratedMessages []ChatMessageView
-
-	// hydratedRefs stores prompt references from session resume.
-	hydratedRefs []sessiondb.Reference
+	// hydrated fences cold installation into the canonical conversation. Every
+	// observer subsequently reads the same retained state, never a one-shot tail.
+	hydrated bool
 }
 
 // NewSession creates a frontend session with the given persistence handles.
@@ -139,28 +124,20 @@ func NewSessionSettingsState(effective, base types.Settings, overrides map[strin
 	}
 }
 
-func (s *SessionSettingsState) SetInheritance(effective, base types.Settings, overrides map[string]types.CategorySettings) {
-	if s == nil {
-		return
-	}
-	s.Effective = cloneSettings(effective)
-	s.Base = cloneSettings(base)
-	s.Overrides = copyCategoryMap(overrides)
-}
-
-func (s *SessionSettingsState) ResetToWorkspace(base types.Settings) {
-	if s == nil {
-		return
-	}
-	s.Base = cloneSettings(base)
-	s.Effective = cloneSettings(base)
-	s.Overrides = make(map[string]types.CategorySettings)
-}
-
 func cloneSettings(src types.Settings) types.Settings {
 	dst := src
 	dst.Agents.Categories = copyCategoryMap(src.Agents.Categories)
+	dst.Agents.AgentProfiles = types.CloneAgentProfiles(src.Agents.AgentProfiles)
+	dst.Agents.Profiles = slices.Clone(src.Agents.Profiles)
+	for i := range dst.Agents.Profiles {
+		dst.Agents.Profiles[i].Categories = copyCategoryMap(src.Agents.Profiles[i].Categories)
+	}
 	dst.SessionOverrides = copyCategoryMap(src.SessionOverrides)
+	dst.Capabilities = captypes.Clone(src.Capabilities)
+	dst.Memory.MemoryCategory = cloneCategorySettings(src.Memory.MemoryCategory)
+	dst.Safety.CommandRules = slices.Clone(src.Safety.CommandRules)
+	dst.LocalHistory.ExtraIgnorePatterns = slices.Clone(src.LocalHistory.ExtraIgnorePatterns)
+	dst.LSP = types.CloneLSPSettings(src.LSP)
 	if src.SessionMultiAgent != nil {
 		value := *src.SessionMultiAgent
 		dst.SessionMultiAgent = &value
@@ -169,23 +146,32 @@ func cloneSettings(src types.Settings) types.Settings {
 }
 
 func copyCategoryMap(src map[string]types.CategorySettings) map[string]types.CategorySettings {
+	if src == nil {
+		return nil
+	}
 	dst := make(map[string]types.CategorySettings, len(src))
 	for key, value := range src {
-		dst[key] = value
+		dst[key] = cloneCategorySettings(value)
 	}
 	return dst
 }
 
-// TakeHydratedMessages returns and clears messages loaded during resume.
-func (s *Session) TakeHydratedMessages() []ChatMessageView {
-	messages := s.hydratedMessages
-	s.hydratedMessages = nil
-	return messages
+func cloneCategorySettings(value types.CategorySettings) types.CategorySettings {
+	value.AllowedTools = slices.Clone(value.AllowedTools)
+	value.DeniedTools = slices.Clone(value.DeniedTools)
+	value.SkillModes = maps.Clone(value.SkillModes)
+	value.ModelModalities = slices.Clone(value.ModelModalities)
+	value.Enabled = cloneSettingPointer(value.Enabled)
+	value.ModelTemperature = cloneSettingPointer(value.ModelTemperature)
+	value.ModelTopP = cloneSettingPointer(value.ModelTopP)
+	value.ContextCompactionPercent = cloneSettingPointer(value.ContextCompactionPercent)
+	return value
 }
 
-// TakeHydratedRefs returns and clears references loaded during resume.
-func (s *Session) TakeHydratedRefs() []sessiondb.Reference {
-	refs := s.hydratedRefs
-	s.hydratedRefs = nil
-	return refs
+func cloneSettingPointer[T any](source *T) *T {
+	if source == nil {
+		return nil
+	}
+	value := *source
+	return &value
 }

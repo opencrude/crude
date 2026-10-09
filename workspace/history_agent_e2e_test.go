@@ -92,12 +92,12 @@ func TestPromptWithFreshHistoryReachesProvider(t *testing.T) {
 	ws := NewWorkspace(project, "history-model", "tester", ttypes.Settings{}, &testLogger{})
 	t.Cleanup(ws.Close)
 	ws.SetAppDefaults(ttypes.AppSettings{LocalHistory: ttypes.LocalHistorySettings{Enabled: "on", UseGitIgnore: "on", MaxFileSizeMB: 10}})
-	_, err := ws.CreateSession(historyE2EConfig(server.URL), home)
+	frontend, err := ws.CreateSession(historyE2EConfig(server.URL), home)
 	if err != nil {
 		t.Fatal(err)
 	}
 	sender := &historyE2ESender{events: make(chan historyE2EEvent, 64)}
-	orchestrator, err := ws.StartOrchestrator(sender)
+	orchestrator, err := ws.StartOrchestrator(frontend.SessionID, sender)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -173,7 +173,7 @@ func TestAgentUndoProductionPathPreservesExternalPreimage(t *testing.T) {
 	}
 	frontend.backend.SetYolo(true)
 	sender := &historyE2ESender{events: make(chan historyE2EEvent, 64)}
-	orchestrator, err := ws.StartOrchestrator(sender)
+	orchestrator, err := ws.StartOrchestrator(frontend.SessionID, sender)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -261,7 +261,7 @@ func TestAgentUndoProductionPathGuardsPostToolExternalOverwrite(t *testing.T) {
 	}
 	frontend.backend.SetYolo(true)
 	sender := &historyE2ESender{events: make(chan historyE2EEvent, 64)}
-	orchestrator, err := ws.StartOrchestrator(sender)
+	orchestrator, err := ws.StartOrchestrator(frontend.SessionID, sender)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -310,7 +310,7 @@ func TestHistoryStartFailurePausesBeforeProviderExecution(t *testing.T) {
 		return errors.New("history disk unavailable")
 	}, nil)
 	sender := &historyE2ESender{events: make(chan historyE2EEvent, 16)}
-	orchestrator, err := ws.StartOrchestrator(sender)
+	orchestrator, err := ws.StartOrchestrator(frontend.SessionID, sender)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -368,7 +368,7 @@ func TestEnabledHistoryStoreOpenFailureBlocksProviderAndTools(t *testing.T) {
 		t.Fatal(err)
 	}
 	sender := &historyE2ESender{events: make(chan historyE2EEvent, 16)}
-	orchestrator, err := blocked.StartOrchestrator(sender)
+	orchestrator, err := blocked.StartOrchestrator(frontend.SessionID, sender)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -443,7 +443,7 @@ func TestDisabledHistoryTurnStillExcludesRestore(t *testing.T) {
 		t.Fatal(err)
 	}
 	sender := &historyE2ESender{events: make(chan historyE2EEvent, 16)}
-	orchestrator, err := ws.StartOrchestrator(sender)
+	orchestrator, err := ws.StartOrchestrator(frontend.SessionID, sender)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -510,7 +510,7 @@ func TestAgentUndoTracksInsideAndOutsideFilesystemMutations(t *testing.T) {
 	}
 	frontend.backend.SetYolo(true)
 	sender := &historyE2ESender{events: make(chan historyE2EEvent, 64)}
-	orchestrator, err := ws.StartOrchestrator(sender)
+	orchestrator, err := ws.StartOrchestrator(frontend.SessionID, sender)
 	if err != nil {
 		t.Fatal(err)
 	}

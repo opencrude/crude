@@ -111,6 +111,8 @@ func (state workspaceSwitchState) restore(m *App) {
 // constructing replacements. Theme, compositor, root Host, action registry,
 // history, and application-global overlays stay alive.
 func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
+	m.FocusStack = NewFocusStack()
+	m.ActiveSession = nil
 	for len(m.agentPrompts) > 0 {
 		m.removeAgentPrompt(m.agentPrompts[0])
 	}
@@ -122,6 +124,9 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	if m.Win != nil {
 		m.Win.CloseAll()
 	}
+	m.AgentView = NewAgentViewState(m.AgentMgr)
+	m.thinkingPresentations = nil
+	m.thinkingLatch = nil
 	m.mainPanes = nil
 	m.paneFilePicker = nil
 	if m.sessionProjections != nil {
@@ -163,9 +168,6 @@ func (m *App) finishWorkspaceSwitch(state workspaceSwitchState) {
 	}
 	m.beginWorkspaceTreeLoad(m.RootPath)
 
-	if m.LSPMgr != nil {
-		m.LSPMgr.SetRuntime(newEditorLSPRuntime())
-	}
 	m.wireLSPDiagnostics()
 	m.syncFileTreeDiagnosticsFromLSP()
 

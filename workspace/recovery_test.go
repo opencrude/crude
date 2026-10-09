@@ -13,9 +13,7 @@ func TestRecoveryTransitionsRetainOneCanonicalRowAndUnfinishedOwnership(t *testi
 	conversation := NewConversation()
 	state := NewAgentState("owner", conversation, nil)
 	handleEvent := func(event AgentEvent) {
-		state.HandleEvent(event, nil,
-			func(string) {}, func(bool, bool, bool) {}, func() {},
-			func(string, string, string, string, string, string, string) {}, func(string) {}, func() {})
+		state.ApplyEvent(event)
 	}
 	handleEvent(AgentEvent{Type: "stream_token", Data: "accepted output"})
 	status := recovery.Status{
@@ -58,9 +56,7 @@ func TestStaleRecoveryCannotReplaceANewerTurn(t *testing.T) {
 	state := NewAgentState("owner", NewConversation(), nil)
 	state.TurnIdentity = types.TurnIdentity{Generation: 3, ModelID: "model"}
 	state.Running = true
-	state.HandleEvent(AgentEvent{Type: "recovery", Data: recovery.Status{ID: "old", AgentID: "owner", Generation: 2, State: recovery.NeedsAttention}}, nil,
-		func(string) {}, func(bool, bool, bool) {}, func() {},
-		func(string, string, string, string, string, string, string) {}, func(string) {}, func() {})
+	state.ApplyEvent(AgentEvent{Type: "recovery", Data: recovery.Status{ID: "old", AgentID: "owner", Generation: 2, State: recovery.NeedsAttention}})
 	if state.Recovery.ID != "" || len(state.Messages.Messages()) != 0 || !state.IsActive() {
 		t.Fatal("stale recovery changed a replacement turn")
 	}

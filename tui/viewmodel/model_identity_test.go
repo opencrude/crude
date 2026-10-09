@@ -14,7 +14,7 @@ func TestSavedModelIdentityUpdatesHeaderWithoutRewritingUsage(t *testing.T) {
 	old := app.AgentModelIdentity(first)
 	owner := app.SessionsByAgent[first]
 	app.ActiveSession = owner
-	backend := app.BackendSession()
+	backend := app.BackendSession(owner.SessionID)
 	app.RecordAgentUsage(first, map[string]any{"request_outcome": "succeeded", "request_id": "old", "reported_at": int64(1), "model": old.ModelID, "provider": old.ProviderID, "account_id": old.AccountID, "turn_generation": uint64(1), "prompt": 200, "context_prompt": 200, "context_window": 1000, "cost": 0.2, "cost_known": true})
 	second := addBackendTestOrchestrator(t, app)
 	settings := backend.SettingsSnapshot()

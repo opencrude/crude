@@ -34,7 +34,7 @@ func TestSummaryThinkingStaysCompactAndPreservesFullTrainOnResume(t *testing.T) 
 			for _, delta := range deltas {
 				app.handleAgentEvent(ctypes.AgentEventMsg{AgentID: "summary", Type: "thinking", Data: delta})
 				app.paintShellFrame()
-				if state.ThinkingPaneID != "" {
+				if app.thinkingPaneID(state) != "" {
 					t.Fatal("summary promoted into a pane")
 				}
 			}

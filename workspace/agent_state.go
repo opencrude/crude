@@ -5,8 +5,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	tea "charm.land/bubbletea/v2"
-
 	"crude/collaboration"
 	"crude/provider"
 	ttypes "crude/types"
@@ -15,44 +13,6 @@ import (
 )
 
 const IdleTickInterval = 400 * time.Millisecond
-
-func TickCmd() tea.Cmd {
-	return tea.Tick(IdleTickInterval, func(t time.Time) tea.Msg {
-		return TickMsg(t)
-	})
-}
-
-func StreamingTickCmd() tea.Cmd {
-	return tea.Tick(16*time.Millisecond, func(t time.Time) tea.Msg {
-		return TickMsg(t)
-	})
-}
-
-// TickMsg is the workspace-owned tick message. The TUI converts it to
-// ttypes.TickMsg at the boundary.
-type TickMsg time.Time
-
-type AgentDoneResultMsg struct {
-	Reason  string
-	AgentID string
-}
-
-type AgentErrorResultMsg struct {
-	Err     string
-	AgentID string
-}
-
-func DoneResultCmd(agentID, reason string) tea.Cmd {
-	return func() tea.Msg {
-		return AgentDoneResultMsg{Reason: reason, AgentID: agentID}
-	}
-}
-
-func ErrorResultCmd(agentID, errMsg string) tea.Cmd {
-	return func() tea.Msg {
-		return AgentErrorResultMsg{Err: errMsg, AgentID: agentID}
-	}
-}
 
 type AgentState struct {
 	ID        string
@@ -74,8 +34,7 @@ type AgentState struct {
 	Status           string
 	Logger           Logger
 
-	ThinkingPaneID string
-	ReasoningMode  reasoning.Kind
+	ReasoningMode reasoning.Kind
 
 	// Index of the last blocking question message in the message list,
 	// so it can be updated in-place when the user confirms/denies.
@@ -140,7 +99,7 @@ func (a *AgentState) AcceptRuntimeEvent(id ttypes.RuntimeEventIdentity) bool {
 	return true
 }
 
-func (a *AgentState) Tick(spinFrame int) tea.Cmd {
+func (a *AgentState) Tick(spinFrame int) {
 	if a.Messages != nil {
 		a.Messages.AdvanceToolLifecycles(time.Now())
 	}
@@ -150,29 +109,23 @@ func (a *AgentState) Tick(spinFrame int) tea.Cmd {
 		a.LastTokenTime = time.Now()
 	}
 	a.SpinFrame = spinFrame
-	if a.Streaming || a.Thinking || (a.Messages != nil && a.Messages.HasPendingToolLifecycles()) {
-		return StreamingTickCmd()
-	}
-	return TickCmd()
 }
 
 func (a *AgentState) ComputeActiveTyping() bool {
 	return (a.Streaming || a.Thinking) && !a.LastTokenTime.IsZero() && time.Since(a.LastTokenTime) < 400*time.Millisecond
 }
 
-func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, onStatusLine func(string), onThinking func(thinking, streaming, blocking bool), onBlocking func(), onConfirmReset func(question, operation, tool, target, risk, reason, suggestion string), onQuestionReset func(questionsJSON string), onConfirmDismiss func()) tea.Cmd {
+// ApplyEvent mutates canonical agent state and returns presentation-neutral effects.
+func (a *AgentState) ApplyEvent(evt AgentEvent) AgentEffects {
+	var effects AgentEffects
 	target := a.Messages
-	thinkTarget := thinkingTarget
-	if thinkTarget == nil {
-		thinkTarget = target
-	}
 	if evt.Type == "turn_started" {
 		identity, ok := parseTurnIdentity(evt.Data)
 		if !ok || identity.Generation < a.TurnIdentity.Generation {
-			return nil
+			return effects
 		}
 		if !target.BeginTurn(identity) {
-			return nil
+			return effects
 		}
 		if identity.Generation > a.TurnIdentity.Generation {
 			a.terminal, a.Completed, a.Cancelling = false, false, false
@@ -181,16 +134,10 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 			a.ReasoningMode = reasoning.Unknown
 		}
 		a.TurnIdentity = identity
-		if thinkTarget != target {
-			thinkTarget.BeginTurn(identity)
-		}
-		return nil
+		return effects
 	}
 	if a.TurnIdentity.Generation > 0 {
 		target.BeginTurn(a.TurnIdentity)
-		if thinkTarget != target {
-			thinkTarget.BeginTurn(a.TurnIdentity)
-		}
 	}
 	// Events already queued before a cancel request must not reactivate the
 	// turn while its terminal done/error event catches up through the UI pump.
@@ -202,15 +149,15 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 	if inactive && evt.Type != "done" && evt.Type != "error" && evt.Type != "usage" &&
 		evt.Type != "stream_token" && evt.Type != "thinking" && evt.Type != "tool_result" &&
 		evt.Type != "context_compaction_cancelled" && evt.Type != "context_compaction_failed" &&
-		evt.Type != "context_compacted" && evt.Type != "collaboration_message" && !cancelledRecovery {
-		return nil
+		evt.Type != "context_compacted" && evt.Type != "collaboration_message" && evt.Type != "reasoning_classified" && !cancelledRecovery {
+		return effects
 	}
 
 	switch evt.Type {
 	case "collaboration_message":
 		event, ok := evt.Data.(collaboration.Event)
 		if !ok || event.ID == "" {
-			return nil
+			return effects
 		}
 		attribution := &provider.CollaborationAttribution{
 			EventID: event.ID, ThreadID: event.ThreadID, SenderID: event.SenderID,
@@ -240,8 +187,8 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 		a.Streaming = false
 		a.Cancelling = false
 		target.UpdateTurnStatus(status)
-		onStatusLine("Preparing context compaction")
-		onThinking(true, false, false)
+		effects.setStatus("Preparing context compaction")
+		effects.setThinking(true, false, false)
 
 	case "context_compaction_stage":
 		status := parseCompactionStatus("compaction_extracting", evt.Data)
@@ -250,8 +197,8 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 		a.Thinking = true
 		a.Streaming = false
 		target.UpdateTurnStatus(status)
-		onStatusLine(status.StageName)
-		onThinking(true, false, false)
+		effects.setStatus(status.StageName)
+		effects.setThinking(true, false, false)
 
 	case "context_compaction_retrying":
 		status := parseCompactionStatus("compaction_retrying", evt.Data)
@@ -260,8 +207,8 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 		a.Thinking = true
 		a.Streaming = false
 		target.UpdateTurnStatus(status)
-		onStatusLine("Recovering context compaction")
-		onThinking(true, false, false)
+		effects.setStatus("Recovering context compaction")
+		effects.setThinking(true, false, false)
 
 	case "context_compaction_committing":
 		status := parseCompactionStatus("compaction_committing", evt.Data)
@@ -270,8 +217,8 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 		a.Thinking = true
 		a.Streaming = false
 		target.UpdateTurnStatus(status)
-		onStatusLine("Saving compacted context")
-		onThinking(true, false, false)
+		effects.setStatus("Saving compacted context")
+		effects.setThinking(true, false, false)
 
 	case "context_compacted":
 		status := parseCompactionStatus("compaction_completed", evt.Data)
@@ -280,11 +227,11 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 			a.Running = false
 			a.Thinking = false
 			a.Streaming = false
-			onThinking(false, false, false)
+			effects.setThinking(false, false, false)
 		}
 		a.Cancelling = false
 		a.ActiveCompaction = TurnStatus{}
-		onStatusLine("Context compacted")
+		effects.setStatus("Context compacted")
 
 	case "context_compaction_cancelled":
 		status := parseCompactionStatus("compaction_cancelled", evt.Data)
@@ -294,8 +241,8 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 		a.Streaming = false
 		a.Cancelling = false
 		a.ActiveCompaction = TurnStatus{}
-		onStatusLine("Context compaction cancelled")
-		onThinking(false, false, false)
+		effects.setStatus("Context compaction cancelled")
+		effects.setThinking(false, false, false)
 
 	case "context_compaction_failed":
 		status := parseCompactionStatus("compaction_failed", evt.Data)
@@ -304,13 +251,13 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 			a.Running = false
 			a.Thinking = false
 			a.Streaming = false
-			onThinking(false, false, false)
+			effects.setThinking(false, false, false)
 			a.ActiveCompaction = TurnStatus{}
 		} else {
 			a.ActiveCompaction = status
 		}
 		a.Cancelling = false
-		onStatusLine("Compaction failed")
+		effects.setStatus("Compaction failed")
 
 	case "phase":
 		status, ok := ParseAgentPhase(evt.Data)
@@ -326,7 +273,7 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 					target.ClearTurnStatus()
 				}
 			}
-			onThinking(true, false, false)
+			effects.setThinking(true, false, false)
 		}
 
 	case "retry":
@@ -334,13 +281,13 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 			reason, _ := data["reason"].(string)
 			backoff, _ := data["backoff"].(float64)
 			target.UpdateTurnStatus(TurnStatus{Phase: "retrying", Detail: reason, RetryAttempt: int(phaseInt64(data["attempt"])) + 1, RetryLimit: int(phaseInt64(data["limit"])), RetryAt: time.Now().Add(time.Duration(backoff * float64(time.Second)))})
-			onStatusLine("Recovering provider connection")
+			effects.setStatus("Recovering provider connection")
 		}
 	case "recovery":
 		status, ok := evt.Data.(recovery.Status)
 		if !ok || status.ID == "" || status.AgentID != "" && status.AgentID != a.ID ||
 			status.Generation > 0 && status.Generation < a.TurnIdentity.Generation {
-			return nil
+			return effects
 		}
 		if a.TokenBuf != "" {
 			target.AppendToken(a.TokenBuf)
@@ -348,10 +295,6 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 		}
 		target.MarkAllThinkingInterrupted()
 		target.MarkStreamingToolsCancelled()
-		if thinkTarget != target {
-			thinkTarget.MarkAllThinkingInterrupted()
-			thinkTarget.MarkStreamingToolsCancelled()
-		}
 		target.ClearTurnStatus()
 		target.UpdateRecovery(status)
 		a.Recovery = status
@@ -360,34 +303,31 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 		// Waiting for configuration is still an owned, unfinished turn.
 		a.Running = status.State != recovery.Interrupted && status.State != recovery.Cancelled
 		a.Cancelling, a.Completed = false, false
-		onStatusLine(status.Summary)
-		onThinking(a.Running, false, false)
+		effects.setStatus(status.Summary)
+		effects.setThinking(a.Running, false, false)
 	case "thinking":
 		if delta, ok := evt.Data.(reasoning.Delta); ok && delta.Text != "" && delta.Kind != reasoning.Encrypted {
 			a.logIfInvalidUTF8("thinking", delta.Text)
 			if !inactive {
 				target.ClearTurnStatus()
-				if thinkTarget != target {
-					thinkTarget.ClearTurnStatus()
-				}
 			}
 			delta.Text = SanitizeForTerminal(delta.Text)
-			thinkTarget.AppendReasoning(delta)
+			target.AppendReasoning(delta)
 			if delta.Kind.IsSummary() || delta.Kind.IsRaw() {
 				a.ReasoningMode = delta.Kind
 			}
 			if !inactive {
 				a.Running, a.Thinking = true, true
-				onStatusLine("Thinking")
-				onThinking(true, false, false)
+				effects.setStatus("Thinking")
+				effects.setThinking(true, false, false)
 			} else {
-				thinkTarget.MarkAllThinkingInterrupted()
+				target.MarkAllThinkingInterrupted()
 			}
 			a.LastTokenTime = time.Now()
 		}
 	case "reasoning_classified":
 		if kind, ok := evt.Data.(reasoning.Kind); ok {
-			thinkTarget.SetLatestThinkingKind(kind)
+			target.SetLatestThinkingKind(kind)
 			if kind.IsSummary() || kind.IsRaw() {
 				a.ReasoningMode = kind
 			}
@@ -399,15 +339,12 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 			s = SanitizeForTerminal(s)
 			if !a.Streaming && !inactive {
 				target.MarkAllThinkingDone()
-				if thinkTarget != target {
-					thinkTarget.MarkAllThinkingDone()
-				}
 			}
 			a.TokenBuf += s
 			if !inactive {
 				a.Running, a.Streaming = true, true
-				onStatusLine("Receiving response")
-				onThinking(true, true, false)
+				effects.setStatus("Receiving response")
+				effects.setThinking(true, true, false)
 			}
 			target.EnsureAssistant()
 		}
@@ -415,7 +352,7 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 	case "tool_call_streaming":
 		a.Running = true
 		a.Thinking = true
-		finishThinkingBlocks(target, thinkTarget)
+		finishThinkingBlocks(target)
 		if a.Streaming {
 			if a.TokenBuf != "" {
 				target.AppendToken(a.TokenBuf)
@@ -423,13 +360,14 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 			}
 			a.Streaming = false
 		}
-		onThinking(true, false, false)
-		return a.handleToolCallStreaming(evt, target, onStatusLine)
+		effects.setThinking(true, false, false)
+		a.handleToolCallStreaming(evt, target, &effects)
+		return effects
 
 	case "tool_call":
 		a.Running = true
 		a.Thinking = true
-		finishThinkingBlocks(target, thinkTarget)
+		finishThinkingBlocks(target)
 		if a.Streaming {
 			if a.TokenBuf != "" {
 				target.AppendToken(a.TokenBuf)
@@ -437,38 +375,44 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 			}
 			a.Streaming = false
 		}
-		onThinking(true, false, false)
-		return a.handleToolCall(evt, target, onStatusLine)
+		effects.setThinking(true, false, false)
+		a.handleToolCall(evt, target, &effects)
+		return effects
 
 	case "tool_progress":
 		a.Running = true
 		a.Thinking = true
-		finishThinkingBlocks(target, thinkTarget)
-		onThinking(true, false, false)
-		return a.handleToolProgress(evt, target, onStatusLine)
+		finishThinkingBlocks(target)
+		effects.setThinking(true, false, false)
+		a.handleToolProgress(evt, target, &effects)
+		return effects
 
 	case "tool_result":
 		if !inactive {
 			a.Running, a.Thinking = true, true
-			finishThinkingBlocks(target, thinkTarget)
-			onThinking(true, false, false)
+			finishThinkingBlocks(target)
+			effects.setThinking(true, false, false)
 		}
-		return a.handleToolResult(evt, target, onStatusLine)
+		a.handleToolResult(evt, target, &effects)
+		return effects
 
 	case "permission_resolved":
 		a.Running = true
 		a.Thinking = true
-		finishThinkingBlocks(target, thinkTarget)
-		onThinking(true, false, false)
-		return a.handlePermissionResolved(evt, target, onStatusLine)
+		finishThinkingBlocks(target)
+		effects.setThinking(true, false, false)
+		a.handlePermissionResolved(evt, target, &effects)
+		return effects
 
 	case "blocking":
 		a.Running = true
-		finishThinkingBlocks(target, thinkTarget)
-		return a.handleBlocking(evt, target, thinkTarget, onBlocking, onConfirmReset, onQuestionReset)
+		finishThinkingBlocks(target)
+		a.handleBlocking(evt, target, &effects)
+		return effects
 
 	case "blocking_auto":
-		return a.handleBlockingAuto(evt, target, thinkTarget)
+		a.handleBlockingAuto(evt, target)
+		return effects
 
 	case "blocking_complete":
 		blockID := ""
@@ -479,18 +423,19 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 			blockID, _ = data["block_id"].(string)
 		}
 		if blockID != "" && a.PendingBlockID != "" && blockID != a.PendingBlockID {
-			return nil
+			return effects
 		}
-		onConfirmDismiss()
+		effects.DismissPrompt, effects.DismissBlockID = true, blockID
 		a.PendingBlockID = ""
 		a.Running = true
 		a.Thinking = true
-		onThinking(true, false, false)
+		effects.setThinking(true, false, false)
 		a.BlockingMsgIdx = -1
 
 	case "done":
 		a.terminal = true
-		return a.handleDone(evt, target, thinkTarget, onThinking, onStatusLine)
+		a.handleDone(evt, target, &effects)
+		return effects
 
 	case "error":
 		a.terminal = true
@@ -501,10 +446,6 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 		}
 		target.MarkAllThinkingInterrupted()
 		target.MarkStreamingToolsCancelled()
-		if thinkTarget != target {
-			thinkTarget.MarkAllThinkingInterrupted()
-			thinkTarget.MarkStreamingToolsCancelled()
-		}
 		errMsg := FormatErr(evt.Data)
 		if !compactionFailure {
 			target.MarkError(errMsg)
@@ -518,11 +459,12 @@ func (a *AgentState) HandleEvent(evt AgentEvent, thinkingTarget *Conversation, o
 		a.PendingBlockID = ""
 		a.BlockingMsgIdx = -1
 		a.ActiveCompaction = TurnStatus{}
-		onThinking(false, false, false)
-		return ErrorResultCmd(a.ID, errMsg)
+		effects.setThinking(false, false, false)
+		effects.Error = &AgentErrorResult{AgentID: a.ID, Err: errMsg}
+		return effects
 	}
 
-	return nil
+	return effects
 }
 
 func parseCompactionStatus(phase string, data any) TurnStatus {
@@ -621,12 +563,9 @@ func (a *AgentState) IsActive() bool {
 	return a.Running || a.Streaming || a.Thinking
 }
 
-func finishThinkingBlocks(target, thinkTarget *Conversation) {
+func finishThinkingBlocks(target *Conversation) {
 	if target != nil {
 		target.MarkAllThinkingDone()
-	}
-	if thinkTarget != nil && thinkTarget != target {
-		thinkTarget.MarkAllThinkingDone()
 	}
 }
 

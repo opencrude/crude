@@ -38,8 +38,8 @@ func TestLauncherMissingTransportDoesNotCreateInvisibleSession(t *testing.T) {
 	w := NewWorkspace(t.TempDir(), "model", "tester", types.Settings{}, nopLogger{})
 	t.Cleanup(w.Close)
 	w.SetBackendConfig(workspaceToolRootConfig(), t.TempDir())
-	result := w.NewSessionFromLauncher()
-	if !strings.Contains(result.Error, "transport") || len(w.Sessions) != 0 || w.ActiveSession != nil {
+	result := w.NewAgentSession()
+	if !strings.Contains(result.Error, "transport") || len(w.Sessions) != 0 {
 		t.Fatal("failed transport created a hidden session")
 	}
 	files, err := filepath.Glob(filepath.Join(w.WorkspaceDir, "sessions", "*.db"))
@@ -58,11 +58,11 @@ func TestLauncherRegistrationFailureCleansFailedSession(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	result := w.NewSessionFromLauncher()
+	result := w.NewAgentSession()
 	if !strings.Contains(result.Error, "registration blocked") {
 		t.Fatalf("did not reproduce real agent-registration failure: %+v", result)
 	}
-	if len(w.Sessions) != 0 || len(w.SessionsByID) != 0 || w.ActiveSession != nil {
+	if len(w.Sessions) != 0 || len(w.SessionsByID) != 0 {
 		t.Fatal("startup failure retained an invisible backend")
 	}
 	if agents, err := w.Collaboration.ListAgents(t.Context(), collaboration.AgentQuery{}); err != nil || len(agents) != 0 {

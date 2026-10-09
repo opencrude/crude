@@ -214,14 +214,15 @@ func TestRecoveryRealComposerRetryClickAndAutomaticContinuation(t *testing.T) {
 			account.Connection = template
 			cfg.Accounts["test"] = account
 			cfg.Agents.Enabled = false
-			if _, err := app.CreateSession(cfg, t.TempDir()); err != nil {
+			owner, err := app.CreateSession(cfg, t.TempDir())
+			if err != nil {
 				t.Fatal(err)
 			}
 			// CloseAgent releases the orchestrator, not its session's log/database.
 			// Join the backend before TempDir's Windows cleanup removes those files.
 			defer app.CloseAllSessions()
 			sender := &recoveryJourneySender{events: make(chan types.AgentMsg, 512)}
-			orch, err := app.StartOrchestrator(sender)
+			orch, err := app.StartOrchestrator(owner.SessionID, sender)
 			if err != nil {
 				t.Fatal(err)
 			}

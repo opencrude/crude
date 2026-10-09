@@ -18,6 +18,7 @@ func TestCancelledAgentEnvelopeRetainsLateSemanticEvidenceWithoutReactivation(t 
 		for _, phase := range []string{"cancelling", "terminal"} {
 			t.Run(owner+"/"+phase, func(t *testing.T) {
 				app := newFullTestApp(t)
+				app.SessionsByAgent = map[string]*workspace.Session{"root": {SessionID: "root", AgentID: "root"}}
 				app.AddOrchestrator("root")
 				if owner == "child" {
 					pane := app.PaneMgr.GetOrCreate("child", workspace.PaneAgent, "child")
@@ -28,7 +29,7 @@ func TestCancelledAgentEnvelopeRetainsLateSemanticEvidenceWithoutReactivation(t 
 				deliver := func(kind string, data any) agent.AgentEvent {
 					sequence++
 					event := agent.AgentEvent{Type: kind, Data: data, AgentID: owner, Identity: types.RuntimeEventIdentity{
-						EventID: fmt.Sprintf("%s-%d", owner, sequence), OwnerID: "root", AgentID: owner,
+						EventID: fmt.Sprintf("%s-%d", owner, sequence), OwnerID: owner, AgentID: owner,
 						RunID: "exact-run", RuntimeEpoch: 1, Generation: 1, Sequence: sequence,
 					}}
 					_, _ = app.Update(event)
@@ -45,7 +46,22 @@ func TestCancelledAgentEnvelopeRetainsLateSemanticEvidenceWithoutReactivation(t 
 				}
 				deliver("tool_result", map[string]any{"tool_id": "tool", "internal_id": "call", "name": "read_file", "result": "late exact tool evidence"})
 				last := deliver("stream_token", "late exact stream evidence")
-				_ = state.Tick(1000)
+				wantPhase := types.AgentCancelling
+				if phase == "terminal" {
+					wantPhase = types.AgentCancelled
+				}
+				assertStatus := func() {
+					t.Helper()
+					if status, ok := app.Status.Agent(owner); !ok || status.Phase != wantPhase || status.NeedsAction {
+						t.Errorf("late evidence changed terminal status before/after inventory: got=%+v want=%s", status, wantPhase)
+					}
+				}
+				assertStatus()
+				deliver("phase", "waiting_provider")
+				assertStatus()
+				app.syncAgentStatusInventory()
+				assertStatus()
+				state.Tick(1000)
 				tool, stream := false, false
 				for _, message := range state.Messages.Messages() {
 					tool = tool || message.Role == workspace.MessageRoleTool && message.Content == "late exact tool evidence"
@@ -67,7 +83,7 @@ func TestCancelledAgentEnvelopeRetainsLateSemanticEvidenceWithoutReactivation(t 
 				}
 				next := agent.AgentEvent{Type: "turn_started", AgentID: owner,
 					Data:     types.TurnIdentity{Generation: 2, AccountID: "account", ProviderID: "provider", ModelID: "model"},
-					Identity: types.RuntimeEventIdentity{EventID: owner + "-next", OwnerID: "root", AgentID: owner, RunID: "next-run", RuntimeEpoch: 1, Generation: 2, Sequence: sequence + 1},
+					Identity: types.RuntimeEventIdentity{EventID: owner + "-next", OwnerID: owner, AgentID: owner, RunID: "next-run", RuntimeEpoch: 1, Generation: 2, Sequence: sequence + 1},
 				}
 				_, _ = app.Update(next)
 				next.Type, next.Data = "phase", "waiting_provider"
@@ -330,7 +346,7 @@ func TestCompletedSubAgentCanBeReopenedForReview(t *testing.T) {
 		},
 	})
 	child := app.AgentMgr.Get("child")
-	if child == nil || !child.IsCompleted() || !child.Hidden {
+	if child == nil || !child.IsCompleted() || !app.AgentView.IsHidden(child.ID) {
 		t.Fatalf("completed child was not archived: %#v", child)
 	}
 	if app.Win.TabByTitle(app.agentTabTitle("child")) != nil {
@@ -350,8 +366,8 @@ func TestCompletedSubAgentCanBeReopenedForReview(t *testing.T) {
 	}
 
 	app.restoreAgent("child")
-	if child.Hidden || app.AgentMgr.ActiveID() != "child" {
-		t.Fatalf("completed child did not become active review: hidden=%v active=%q", child.Hidden, app.AgentMgr.ActiveID())
+	if app.AgentView.IsHidden(child.ID) || app.AgentView.ActiveID() != "child" {
+		t.Fatalf("completed child did not become active review: hidden=%v active=%q", app.AgentView.IsHidden(child.ID), app.AgentView.ActiveID())
 	}
 	if app.Win.TabByTitle(app.agentTabTitle("child")) == nil {
 		t.Fatal("completed child review tab was not reopened")
@@ -383,18 +399,30 @@ func TestCompletingActiveChildSelectsVisibleRootAndPromptTarget(t *testing.T) {
 
 	app.completeSubAgent("child")
 	active := app.Win.ActiveTab()
-	if active == nil || active.Title != app.agentTabTitle("root") || app.AgentMgr.ActiveID() != "root" || app.activeAgentTabID() != "root" {
+	if active == nil || active.Title != app.agentTabTitle("root") || app.AgentView.ActiveID() != "root" || app.activeAgentTabID() != "root" {
 		t.Fatalf("completion left split active state: tab=%#v manager=%q prompt=%q",
-			active, app.AgentMgr.ActiveID(), app.activeAgentTabID())
+			active, app.AgentView.ActiveID(), app.activeAgentTabID())
 	}
 }
 
-func TestUsageEventTokensAccumulatesProviderNumericForms(t *testing.T) {
-	if got := usageEventTokens(map[string]any{"prompt": int64(90), "completion": float64(10)}); got != 100 {
-		t.Fatalf("usage tokens=%d want 100", got)
+func TestUsagePaneFollowsRequestRevisionsWithoutDoubleCounting(t *testing.T) {
+	app := newFullTestApp(t)
+	app.SessionsByAgent = map[string]*workspace.Session{"root": workspace.NewSession("session", "", nil, nil)}
+	app.AddOrchestrator("root")
+	emit := func(prompt, completion any, reported int64) {
+		app.handleAgentEvent(ttypes.AgentEventMsg{AgentID: "root", Type: "usage", Data: map[string]any{
+			"request_id": "request", "reported_at": reported, "prompt": prompt, "completion": completion,
+		}})
 	}
-	if got := usageEventTokens(map[string]int{"prompt": 7, "completion": 3}); got != 10 {
-		t.Fatalf("integer usage tokens=%d want 10", got)
+	emit(int64(90), float64(10), 1)
+	emit(int64(90), float64(10), 1)
+	if got := app.PaneMgr.Get("root").TokenCount; got != 100 {
+		t.Fatalf("duplicate event inflated pane telemetry: %d", got)
+	}
+	emit(90, 20, 2)
+	emit(90, 999, 1)
+	if got := app.PaneMgr.Get("root").TokenCount; got != 110 {
+		t.Fatalf("pane did not follow authoritative request revision: %d", got)
 	}
 }
 
@@ -414,8 +442,8 @@ func TestDangerousBackgroundAgentAlertIsVisibleWithoutChangingSelection(t *testi
 	})
 	app.paintShellFrame()
 	child := app.AgentMgr.Get("child")
-	if !child.Hidden || app.AgentMgr.ActiveID() == "child" || app.EditorState.ActiveView != path {
-		t.Fatalf("background alert changed navigation: hidden=%v active=%q editor=%q", child.Hidden, app.AgentMgr.ActiveID(), app.EditorState.ActiveView)
+	if !app.AgentView.IsHidden(child.ID) || app.AgentView.ActiveID() == "child" || app.EditorState.ActiveView != path {
+		t.Fatalf("background alert changed navigation: hidden=%v active=%q editor=%q", app.AgentView.IsHidden(child.ID), app.AgentView.ActiveID(), app.EditorState.ActiveView)
 	}
 	assertEditorStillPainted(t, app, path)
 	if status := testStatusText(app); !strings.Contains(status, "Blocked disk write") {

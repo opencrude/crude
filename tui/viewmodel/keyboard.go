@@ -683,7 +683,7 @@ func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, 
 	}
 
 	if msg.Code == tea.KeyEnter && !msg.Mod.Contains(tea.ModAlt) && !m.LSPPopup.RenameArmed {
-		if node := m.AgentMgr.ActiveNode(); node != nil && node.State != nil {
+		if node := m.AgentView.ActiveNode(); node != nil && node.State != nil {
 			status := node.State.RecoveryStatus()
 			parked := status.State == recovery.Interrupted ||
 				status.State == recovery.NeedsAttention && !m.AgentTurnActive(node.ID)
@@ -699,7 +699,7 @@ func (m *App) dispatchChatKey(msg tea.KeyPressMsg, cmds *[]tea.Cmd) (tea.Model, 
 		}
 	}
 	canType := false
-	if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
+	if n := m.AgentView.ActiveNode(); n != nil && n.State != nil {
 		canType = !n.State.Completed && n.State.IsActive()
 	}
 	updated, cmd, evt := m.Input.Update(msg, canType && !m.OverlayState.IsBlocking(), m.OverlayState.IsBlocking())
@@ -845,7 +845,7 @@ func (m *App) dispatchPasteMsg(msg tea.PasteMsg) (tea.Model, tea.Cmd) {
 	}
 	m.Input.SetReferenceStore(m.RefStore())
 	canType := false
-	if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
+	if n := m.AgentView.ActiveNode(); n != nil && n.State != nil {
 		canType = !n.State.Completed && n.State.IsActive()
 	}
 	updated, cmd, evt := m.Input.Update(msg, canType && !m.OverlayState.IsBlocking(), m.OverlayState.IsBlocking())

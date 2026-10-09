@@ -126,7 +126,7 @@ func TestActivityStripDoesNotCompactRawOrUnclassifiedThinking(t *testing.T) {
 	app.handleAgentEvent(types.AgentEventMsg{AgentID: "first", Type: "thinking", Data: reasoning.Delta{
 		Text: strings.Repeat("**Investigating grep**\n\n", 28), Kind: reasoning.Raw,
 	}})
-	if app.AgentMgr.Get("first").State.ThinkingPaneID == "" {
+	if app.thinkingPaneID(app.AgentMgr.Get("first").State) == "" {
 		t.Fatal("fixture did not promote the raw thinking pane")
 	}
 	app.handleAgentEvent(types.AgentEventMsg{AgentID: "first", Type: "thinking", Data: reasoning.Delta{
@@ -143,7 +143,7 @@ func TestActivityStripDoesNotCompactRawOrUnclassifiedThinking(t *testing.T) {
 	if strings.Contains(line, "Clarifying hidden file behavior") || strings.Contains(line, "Investigating grep") {
 		t.Fatalf("raw thinking incorrectly received summary treatment: %q", line)
 	}
-	if pane := app.PaneMgr.Get(app.AgentMgr.Get("first").State.ThinkingPaneID); pane == nil || !strings.Contains(pane.Messages.Messages()[0].Content, "Investigating grep") {
+	if pane := app.Get(app.thinkingPaneID(app.AgentMgr.Get("first").State)); pane == nil || !strings.Contains(pane.Messages.Messages()[0].Content, "Investigating grep") {
 		t.Fatal("full thinking train was lost from the promoted pane")
 	}
 	app.handleAgentEvent(types.AgentEventMsg{AgentID: "first", Type: "thinking", Data: reasoning.Delta{Text: " unknown gateway trace"}})

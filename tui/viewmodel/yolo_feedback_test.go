@@ -15,7 +15,7 @@ func TestYoloTransitionsUseOnePathAndDoNotImpersonateAssistant(t *testing.T) {
 	id := addBackendTestOrchestrator(t, app)
 	t.Cleanup(app.CloseAllSessions)
 	app.ActiveSession = app.SessionsByAgent[id]
-	app.AgentMgr.SetActive(id)
+	app.AgentView.SetActive(id)
 	state := app.AgentMgr.Get(id).State
 	app.executeSlashCommand("/yolo")
 	projection := app.activeSessionProjection()

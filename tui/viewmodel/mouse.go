@@ -91,7 +91,7 @@ func (m *App) classifyShellRegion(x, y int, isWheel bool) shellRegion {
 	// regions below — the launcher must NOT steal those clicks.
 	// The file tree (sidebar) is already handled above (regionSidebar
 	// check), so the launcher never interferes with it.
-	if m.AgentMgr.VisibleCount() == 0 && m.EditorState.ActiveView == "" && m.launcherScreen != nil {
+	if m.AgentView.VisibleCount() == 0 && m.EditorState.ActiveView == "" && m.launcherScreen != nil {
 		if y >= layout.ChatAreaTop && y < layout.ChatAreaTop+m.ChatAreaHeight {
 			return regionLauncher
 		}
@@ -99,7 +99,7 @@ func (m *App) classifyShellRegion(x, y int, isWheel bool) shellRegion {
 		// region (so the user can still type / to filter).
 	}
 
-	if m.AgentMgr.VisibleCount() == 0 && m.EditorState.ActiveView == "" {
+	if m.AgentView.VisibleCount() == 0 && m.EditorState.ActiveView == "" {
 		return regionInput
 	}
 
@@ -203,7 +203,7 @@ func (m *App) setSidebarWidth(w int) {
 func (m *App) routeInputMouse(msg tea.Msg) []tea.Cmd {
 	var cmds []tea.Cmd
 	canType := false
-	if n := m.AgentMgr.ActiveNode(); n != nil && n.State != nil {
+	if n := m.AgentView.ActiveNode(); n != nil && n.State != nil {
 		canType = !n.State.Completed && n.State.IsActive()
 	}
 	updated, cmd, evt := m.Input.Update(m.inputLocalMouse(msg), canType && !m.OverlayState.IsBlocking(), m.OverlayState.IsBlocking())
@@ -806,6 +806,10 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 	// Copy/Cut; anything else keeps its own right-click behavior.
 	if m.windowManager != nil {
 		if hitWin := m.windowManager.HandleMouse(msg); hitWin != nil {
+			if id, ok := ui.TerminalIDFromOverlay(ui.OverlayID(hitWin.ID)); ok {
+				m.openTerminalControlMenu(id)
+				return m, nil
+			}
 			if hit, ok := windowTextClipboardHit(hitWin, mouse); ok {
 				return m, m.openContextMenuState(mouse, m.textClipboardMenu(hitWin.Title, hit))
 			}
@@ -833,6 +837,11 @@ func (m *App) dispatchMouseRightClick(msg tea.MouseClickMsg) (tea.Model, tea.Cmd
 		return m, m.openContextMenuState(mouse, m.emptyPaneMenu())
 	}
 	switch region {
+	case regionTermDock:
+		if m.termDock != nil && m.termDock.TerminalActive() {
+			m.openTerminalControlMenu(m.termDock.ActiveID())
+			return m, nil
+		}
 	case regionEditor:
 		st = m.buildEditorContextMenu(mouse)
 	case regionSidebar:

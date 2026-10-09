@@ -95,10 +95,7 @@ func (w *Workspace) AppendHistoryRestoreEvent(result localhistory.RestoreResult)
 	if w == nil {
 		return nil
 	}
-	frontend := w.ActiveSession
-	if result.SessionID != "" {
-		frontend = w.SessionsByID[result.SessionID]
-	}
+	frontend := w.SessionsByID[result.SessionID]
 	if frontend == nil {
 		return fmt.Errorf("workspace history restore owner is unavailable")
 	}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
 	"testing"
 	"time"
 
@@ -36,6 +37,14 @@ func TestHydrateSubAgentsRestoresCompletedAndPendingReviewTree(t *testing.T) {
 		PromptTokens: 100, CompletionTokens: 25, DurationMs: 1500, CreatedAt: time.Now().UnixNano(),
 	}); err != nil {
 		t.Fatal(err)
+	}
+	for _, status := range []string{"cancelled", "failed_timeout"} {
+		if err := sessiondb.InsertSubAgentResult(parentDB, sessiondb.SubAgentResultRow{
+			ParentSessionID: "parent", ChildSessionID: status, AgentID: status,
+			AgentName: status, AgentCategory: "crafter", Status: status, SummaryGist: "retained terminal report", CreatedAt: time.Now().UnixNano(),
+		}); err != nil {
+			t.Fatal(err)
+		}
 	}
 	for _, record := range []sessiondb.UsageRecord{
 		{RequestID: "root/1/1", SessionID: "parent", AgentID: "root", PromptTokens: 10, CompletionTokens: 4, CachedTokens: 2, CacheReadKnown: true, CostUSD: 0.01, CostKnown: true, CreatedAt: 1, UpdatedAt: 1},
@@ -110,26 +119,36 @@ func TestHydrateSubAgentsRestoresCompletedAndPendingReviewTree(t *testing.T) {
 	}
 	t.Cleanup(backend.Close)
 	frontend := NewSession("parent", backend.SessionDir(), backend.DB(), nopLogger{})
+	frontend.AgentID = "root"
 	frontend.attachBackend(backend)
 	manager := NewAgentManager()
 	panes := NewPaneManager()
 	ws := &Workspace{
-		RootPath: root, AgentMgr: manager, PaneMgr: panes, ActiveSession: frontend,
+		RootPath: root, AgentMgr: manager, PaneMgr: panes, Status: NewStatusCenter(nil, nil),
+		SessionsByID:    map[string]*Session{frontend.SessionID: frontend},
 		SessionsByAgent: map[string]*Session{"root": frontend}, Logger: nopLogger{},
 	}
+	t.Cleanup(ws.Status.Close)
 	manager.AddOrchestrator("root", NewAgentState("root", NewConversation(), nopLogger{}))
-	ws.Hydrate()
+	ws.HydrateSession(frontend.SessionID)
 	if usage, ok := ws.UsageSummary("root", types.UsageSession); !ok || usage.InputTotal.Value != 110 || usage.Output.Value != 29 || usage.CacheRead.Value != 2 {
 		t.Fatalf("hydrated request usage = %#v ok=%v", usage, ok)
 	}
 
 	ids := ws.HydrateSubAgents("root")
-	if len(ids) != 2 || ids[0] != "child" || ids[1] != "pending-child" {
+	if len(ids) != 4 {
 		t.Fatalf("hydrated IDs = %v", ids)
+	}
+	ws.SyncAgentStatusInventory()
+	for id, phase := range map[string]types.AgentPhase{"cancelled": types.AgentCancelled, "failed_timeout": types.AgentFailed} {
+		status, ok := ws.Status.Agent(id)
+		if !ok || status.Phase != phase || status.Ref.SessionID != "parent" || !status.ReadOnly {
+			t.Fatalf("cold terminal outcome changed: id=%s status=%+v", id, status)
+		}
 	}
 	child := manager.Get("child")
 	pane := panes.Get("child")
-	if child == nil || pane == nil || !child.Hidden || !child.IsCompleted() || child.Label != "full-child-review-name" || child.Model != "child-model" {
+	if child == nil || pane == nil || !child.IsCompleted() || child.Label != "full-child-review-name" || child.Model != "child-model" {
 		t.Fatalf("hydrated child = %#v pane=%#v", child, pane)
 	}
 	views := pane.Messages.Messages()
@@ -147,9 +166,14 @@ func TestHydrateSubAgentsRestoresCompletedAndPendingReviewTree(t *testing.T) {
 	if len(pendingViews) != 3 || pendingViews[1].Content != "accepted child work" || pendingViews[2].Recovery == nil {
 		t.Fatalf("pending child lost accepted transcript or recovery row: %+v", pendingViews)
 	}
-	for _, view := range frontend.hydratedMessages {
+	for _, view := range manager.Get("root").State.Messages.Messages() {
 		if view.Recovery != nil && view.Recovery.AgentID == "pending-child" {
 			t.Fatal("child incident was incorrectly attributed to root chat")
 		}
+	}
+	before := ws.SnapshotAgents()
+	ws.HydrateSession(frontend.SessionID)
+	if after := ws.SnapshotAgents(); !reflect.DeepEqual(before, after) {
+		t.Fatal("a second observer replayed cold hydration")
 	}
 }

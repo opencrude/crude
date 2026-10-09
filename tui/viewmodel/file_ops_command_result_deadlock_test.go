@@ -206,10 +206,10 @@ func setUndrainedProgram(t *testing.T, bus *workspace.EventBus) {
 	t.Helper()
 
 	ctx, cancel := context.WithCancel(context.Background())
-	bus.SetProgram(tea.NewProgram(fileOpsUndrainedProgramModel{}, tea.WithContext(ctx)))
+	bus.SetSink(programMessageSink{program: tea.NewProgram(fileOpsUndrainedProgramModel{}, tea.WithContext(ctx))})
 	t.Cleanup(func() {
 		cancel()
-		bus.SetProgram(nil)
+		bus.SetSink(nil)
 	})
 }
 

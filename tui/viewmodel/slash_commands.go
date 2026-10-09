@@ -28,7 +28,7 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 	}
 
 	var cmds []tea.Cmd
-	agentID := m.AgentMgr.ActiveID()
+	agentID := m.AgentView.ActiveID()
 
 	switch cmdName {
 	case "/retry":
@@ -105,7 +105,7 @@ func (m *App) executeSlashCommand(cmd string) tea.Cmd {
 				fmt.Fprintf(&b, "    %s\n", e)
 			}
 		}
-		if m.AgentMgr.ActiveID() != "" {
+		if m.AgentView.ActiveID() != "" {
 			m.appendActiveMessage(ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: b.String(), Time: time.Now()})
 		}
 

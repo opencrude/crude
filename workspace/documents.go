@@ -1,0 +1,440 @@
+package workspace
+
+import (
+	"bytes"
+	"context"
+	"crypto/sha256"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"sync"
+	"unicode/utf8"
+
+	"crude/document"
+)
+
+const documentHistoryLimit = 1024
+const documentHistoryBytes = 32 << 20
+const documentCountLimit = 128
+const documentRequestLimit = 16384
+
+type documentOperation struct {
+	revision       uint64
+	edits, inverse []document.Edit
+	owner          document.Owner
+	group          string
+}
+type documentUndoUnit []int
+type liveDocument struct {
+	snapshot     document.Snapshot
+	owners       map[document.Owner]bool
+	journal      []documentOperation
+	undo, redo   map[document.Owner][]documentUndoUnit
+	historyBytes int
+}
+type documentRequest struct {
+	hash    [32]byte
+	receipt document.Receipt
+	err     error
+}
+
+// DocumentService owns live text, savepoints, revisions and per-owner undo.
+// All methods serialize, including disk saves. Invoke I/O methods off any UI
+// thread. The supplied save/LSP services are borrowed, not closed by this owner.
+type DocumentService struct {
+	mu       sync.Mutex
+	root     string
+	saves    *DocumentSaveService
+	lsp      *LSPManager
+	docs     map[string]*liveDocument
+	requests map[string]documentRequest
+	epochs   map[string]uint64
+	detached map[document.Owner]bool
+	closed   bool
+}
+
+func NewDocumentService(root string, saves *DocumentSaveService, lsp *LSPManager) *DocumentService {
+	return &DocumentService{root: root, saves: saves, lsp: lsp, docs: make(map[string]*liveDocument), requests: make(map[string]documentRequest), epochs: make(map[string]uint64), detached: make(map[document.Owner]bool)}
+}
+
+func (s *DocumentService) Open(owner document.Owner, path string) (document.Snapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return document.Snapshot{}, context.Canceled
+	}
+	if owner.ClientID == "" || len(owner.ClientID) > 256 || owner.Epoch == 0 || owner.Epoch < s.epochs[owner.ClientID] || s.detached[owner] {
+		return document.Snapshot{}, document.ErrOwner
+	}
+	if path == "" || len(path) > 4096 || (s.epochs[owner.ClientID] == 0 && len(s.epochs) >= 1024) {
+		return document.Snapshot{}, document.ErrLimit
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(s.root, path)
+	}
+	path, err := filepath.Abs(path)
+	if err != nil {
+		return document.Snapshot{}, err
+	}
+	// Refuse symlink aliases, matching the checked disk writer's path contract.
+	parent, err := filepath.EvalSymlinks(filepath.Dir(path))
+	if err != nil || parent != filepath.Dir(path) {
+		return document.Snapshot{}, errors.New("document parent must be an existing non-symlink directory")
+	}
+	d := s.docs[path]
+	if d == nil {
+		if len(s.docs) >= documentCountLimit {
+			return document.Snapshot{}, document.ErrLimit
+		}
+		text, exists, err := readLiveDocument(path)
+		if err != nil {
+			return document.Snapshot{}, err
+		}
+		d = &liveDocument{snapshot: document.Snapshot{ID: path, Path: path, Revision: 1, Text: text, Saved: bytes.Clone(text), DiskHash: sha256.Sum256(text), DiskExists: exists}, owners: make(map[document.Owner]bool), undo: make(map[document.Owner][]documentUndoUnit), redo: make(map[document.Owner][]documentUndoUnit)}
+		s.docs[path] = d
+		if s.lsp != nil {
+			s.lsp.OpenFile(context.Background(), path, string(text))
+		}
+	}
+	if owner.Epoch > s.epochs[owner.ClientID] {
+		for _, live := range s.docs {
+			for previous := range live.owners {
+				if previous.ClientID == owner.ClientID {
+					delete(live.owners, previous)
+				}
+			}
+		}
+	}
+	s.epochs[owner.ClientID] = owner.Epoch
+	d.owners[owner] = true
+	return cloneDocument(d.snapshot), nil
+}
+
+func readLiveDocument(path string) ([]byte, bool, error) {
+	info, err := os.Lstat(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, true, errors.New("document is not a regular file")
+	}
+	if info.Size() > document.MaxBytes {
+		return nil, true, document.ErrLimit
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, true, err
+	}
+	defer func() { _ = f.Close() }()
+	text, err := io.ReadAll(io.LimitReader(f, document.MaxBytes+1))
+	if err != nil {
+		return nil, true, err
+	}
+	if len(text) > document.MaxBytes {
+		return nil, true, document.ErrLimit
+	}
+	if !utf8.Valid(text) {
+		return nil, true, errors.New("document is not UTF-8")
+	}
+	return text, true, nil
+}
+
+func cloneDocument(s document.Snapshot) document.Snapshot {
+	s.Text = bytes.Clone(s.Text)
+	s.Saved = bytes.Clone(s.Saved)
+	return s
+}
+func (s *DocumentService) Snapshot(id string) (document.Snapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return document.Snapshot{}, context.Canceled
+	}
+	d := s.docs[id]
+	if d == nil {
+		return document.Snapshot{}, os.ErrNotExist
+	}
+	return cloneDocument(d.snapshot), nil
+}
+func (s *DocumentService) owned(owner document.Owner, id string) (*liveDocument, error) {
+	if s.closed {
+		return nil, context.Canceled
+	}
+	d := s.docs[id]
+	if d == nil {
+		return nil, os.ErrNotExist
+	}
+	if !d.owners[owner] || s.detached[owner] || s.epochs[owner.ClientID] != owner.Epoch {
+		return nil, document.ErrOwner
+	}
+	return d, nil
+}
+
+// request IDs are scoped to the exact owner epoch, across all its documents.
+func (s *DocumentService) command(kind string, c document.Change, run func(*liveDocument) (uint64, error)) (document.Receipt, error) {
+	r := document.Receipt{RequestID: c.RequestID, DocumentID: c.DocumentID}
+	if c.RequestID == "" || len(c.RequestID) > 256 || len(c.GroupID) > 256 || len(c.Owner.ClientID) > 256 || len(c.DocumentID) > 4096 {
+		r.Error = document.ErrLimit.Error()
+		return r, document.ErrLimit
+	}
+	keyBytes, _ := json.Marshal(struct {
+		Owner document.Owner
+		ID    string
+	}{c.Owner, c.RequestID})
+	payload, _ := json.Marshal(struct {
+		Kind   string
+		Change document.Change
+	}{kind, c})
+	hash := sha256.Sum256(payload)
+	key := string(keyBytes)
+	d, err := s.owned(c.Owner, c.DocumentID)
+	if err != nil {
+		r.Error = err.Error()
+		return r, err
+	}
+	if prior, ok := s.requests[key]; ok {
+		if prior.hash != hash {
+			r.Error = document.ErrRequest.Error()
+			return r, document.ErrRequest
+		}
+		return prior.receipt, prior.err
+	}
+	r.Before = d.snapshot.Revision
+	r.Revision = r.Before
+	if len(s.requests) >= documentRequestLimit {
+		r.Error = document.ErrLimit.Error()
+		return r, document.ErrLimit
+	}
+	if c.BaseRevision != r.Before {
+		err = document.ErrRevision
+	} else {
+		r.Revision, err = run(d)
+	}
+	r.Accepted = err == nil
+	if err != nil {
+		r.Error = err.Error()
+	}
+	s.requests[key] = documentRequest{hash: hash, receipt: r, err: err}
+	return r, err
+}
+
+func (s *DocumentService) commit(d *liveDocument, owner document.Owner, group string, edits []document.Edit) (int, error) {
+	text, inverse, err := document.Apply(d.snapshot.Text, edits)
+	if err != nil {
+		return 0, err
+	}
+	weight := 0
+	for _, e := range edits {
+		weight += len(e.Text)
+	}
+	for _, e := range inverse {
+		weight += len(e.Text)
+	}
+	if len(d.journal) >= documentHistoryLimit || d.historyBytes+weight > documentHistoryBytes {
+		return 0, document.ErrLimit
+	}
+	d.snapshot.Text = text
+	d.snapshot.Revision++
+	d.snapshot.Dirty = !bytes.Equal(text, d.snapshot.Saved)
+	d.journal = append(d.journal, documentOperation{revision: d.snapshot.Revision, edits: append([]document.Edit(nil), edits...), inverse: inverse, owner: owner, group: group})
+	d.historyBytes += weight
+	if s.lsp != nil {
+		s.lsp.UpdateFile(context.Background(), d.snapshot.Path, string(text))
+	}
+	return len(d.journal) - 1, nil
+}
+
+func (s *DocumentService) Apply(c document.Change) (document.Receipt, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	// Bound untrusted command serialization before request hashing.
+	if len(c.Edits) > document.MaxEdits {
+		return document.Receipt{}, document.ErrLimit
+	}
+	weight := 0
+	for _, e := range c.Edits {
+		weight += len(e.Text)
+		if weight > document.MaxBytes {
+			return document.Receipt{}, document.ErrLimit
+		}
+	}
+	return s.command("edit", c, func(d *liveDocument) (uint64, error) {
+		index, err := s.commit(d, c.Owner, c.GroupID, c.Edits)
+		if err != nil {
+			return d.snapshot.Revision, err
+		}
+		stack := d.undo[c.Owner]
+		if c.GroupID != "" && index > 0 && d.journal[index-1].owner == c.Owner && d.journal[index-1].group == c.GroupID && len(stack) > 0 && stack[len(stack)-1][len(stack[len(stack)-1])-1] == index-1 {
+			stack[len(stack)-1] = append(stack[len(stack)-1], index)
+		} else {
+			stack = append(stack, documentUndoUnit{index})
+		}
+		d.undo[c.Owner] = stack
+		delete(d.redo, c.Owner)
+		return d.snapshot.Revision, nil
+	})
+}
+
+func (s *DocumentService) Undo(owner document.Owner, id, requestID string, expected uint64) (document.Receipt, error) {
+	return s.history(false, owner, id, requestID, expected)
+}
+func (s *DocumentService) Redo(owner document.Owner, id, requestID string, expected uint64) (document.Receipt, error) {
+	return s.history(true, owner, id, requestID, expected)
+}
+func (s *DocumentService) history(redo bool, owner document.Owner, id, requestID string, expected uint64) (document.Receipt, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	kind := "undo"
+	if redo {
+		kind = "redo"
+	}
+	return s.command(kind, document.Change{DocumentID: id, RequestID: requestID, Owner: owner, BaseRevision: expected}, func(d *liveDocument) (uint64, error) {
+		from, to := d.undo, d.redo
+		if redo {
+			from, to = d.redo, d.undo
+		}
+		stack := from[owner]
+		if len(stack) == 0 {
+			return d.snapshot.Revision, errors.New("document history is empty")
+		}
+		unit := stack[len(stack)-1]
+		// Cancelling a contiguous group is exact only before later work changes
+		// its coordinate space. Single operations support disjoint rebase; groups
+		// with later work conservatively fail rather than guess transformed spans.
+		if len(unit) > 1 && unit[len(unit)-1] != len(d.journal)-1 {
+			return d.snapshot.Revision, document.ErrOverlap
+		}
+		// Prepare the whole group on a detached document, so a later conflict or
+		// capacity failure cannot partially undo a group.
+		trial := &liveDocument{snapshot: d.snapshot, journal: append([]documentOperation(nil), d.journal...), historyBytes: d.historyBytes}
+		result := documentUndoUnit{}
+		cancelled := make(map[int]bool)
+		for i := len(unit) - 1; i >= 0; i-- {
+			index := unit[i]
+			edits := trial.journal[index].inverse
+			var err error
+			for j := index + 1; j < len(trial.journal); j++ {
+				if cancelled[j] {
+					continue
+				}
+				edits, err = document.Rebase(edits, trial.journal[j].edits)
+				if err != nil {
+					return d.snapshot.Revision, err
+				}
+			}
+			text, inverse, err := document.Apply(trial.snapshot.Text, edits)
+			if err != nil {
+				return d.snapshot.Revision, err
+			}
+			weight := 0
+			for _, e := range edits {
+				weight += len(e.Text)
+			}
+			for _, e := range inverse {
+				weight += len(e.Text)
+			}
+			if len(trial.journal) >= documentHistoryLimit || trial.historyBytes+weight > documentHistoryBytes {
+				return d.snapshot.Revision, document.ErrLimit
+			}
+			trial.snapshot.Text = text
+			trial.snapshot.Revision++
+			trial.historyBytes += weight
+			trial.journal = append(trial.journal, documentOperation{revision: trial.snapshot.Revision, edits: edits, inverse: inverse, owner: owner})
+			result = append(result, len(trial.journal)-1)
+			// These exact operation/inverse pairs cancel for the remaining group.
+			cancelled[index] = true
+			cancelled[len(trial.journal)-1] = true
+		}
+		d.snapshot = trial.snapshot
+		d.snapshot.Dirty = !bytes.Equal(d.snapshot.Text, d.snapshot.Saved)
+		d.journal = trial.journal
+		d.historyBytes = trial.historyBytes
+		from[owner] = stack[:len(stack)-1]
+		to[owner] = append(to[owner], result)
+		if s.lsp != nil {
+			s.lsp.UpdateFile(context.Background(), d.snapshot.Path, string(d.snapshot.Text))
+		}
+		return d.snapshot.Revision, nil
+	})
+}
+
+// Save requires an owner separately from the document ID and exact revision.
+// No formatting or synthetic text change occurs. The mutex fences edits through
+// the checked commit, so its savepoint cannot acknowledge newer text.
+func (s *DocumentService) Save(ctx context.Context, owner document.Owner, id string, revision uint64, reason DocumentSaveReason) (document.Snapshot, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	d, err := s.owned(owner, id)
+	if err != nil {
+		return document.Snapshot{}, err
+	}
+	if revision != d.snapshot.Revision {
+		return cloneDocument(d.snapshot), document.ErrRevision
+	}
+	if s.saves == nil {
+		return cloneDocument(d.snapshot), fmt.Errorf("document disk authority is not configured")
+	}
+	if s.lsp != nil {
+		s.lsp.NotifyFileSave(ctx, d.snapshot.Path, string(d.snapshot.Text), reason, true)
+	}
+	r := s.saves.Save(ctx, DocumentSaveRequest{BufferID: id, Path: d.snapshot.Path, Data: bytes.Clone(d.snapshot.Text), Revision: revision, ExpectedHash: d.snapshot.DiskHash, ExpectedExist: d.snapshot.DiskExists, Reason: reason})
+	if r.Committed || r.Unchanged {
+		d.snapshot.Saved = bytes.Clone(d.snapshot.Text)
+		d.snapshot.DiskHash = r.DiskHash
+		d.snapshot.DiskExists = true
+		d.snapshot.Dirty = false
+		d.snapshot.Conflict = false
+		if s.lsp != nil {
+			s.lsp.NotifyFileSave(ctx, d.snapshot.Path, string(d.snapshot.Text), reason, false)
+		}
+	}
+	if errors.Is(r.Err, ErrDocumentConflict) {
+		d.snapshot.Conflict = true
+	}
+	return cloneDocument(d.snapshot), r.Err
+}
+
+func (s *DocumentService) Detach(owner document.Owner) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed || owner.ClientID == "" || owner.Epoch == 0 || s.epochs[owner.ClientID] > owner.Epoch {
+		return
+	}
+	// A queued first Open may not have published an epoch yet. Record detach
+	// anyway so that delayed work cannot acquire a view after its client left.
+	s.epochs[owner.ClientID] = owner.Epoch
+	// Epoch monotonicity already fences older incarnations; retain only the
+	// latest detached epoch for each bounded client identity.
+	for previous := range s.detached {
+		if previous.ClientID == owner.ClientID {
+			delete(s.detached, previous)
+		}
+	}
+	s.detached[owner] = true
+	for _, d := range s.docs {
+		delete(d.owners, owner)
+	}
+	// Documents and LSP remain retained even with zero views: detach is not discard.
+}
+func (s *DocumentService) Close() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
+	s.closed = true
+	for id, d := range s.docs {
+		if s.saves != nil {
+			s.saves.Cancel(id)
+		}
+		if s.lsp != nil {
+			s.lsp.CloseFile(context.Background(), d.snapshot.Path)
+		}
+	}
+}

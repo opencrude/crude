@@ -38,9 +38,12 @@ func TestEventBusConcurrentSendAndRecentEvents(t *testing.T) {
 	}
 }
 
-// TestEventBusConcurrentSetProgramAndSend verifies SetProgram does not race Send.
-func TestEventBusConcurrentSetProgramAndSend(t *testing.T) {
+// TestEventBusConcurrentSetSinkAndSend verifies replacement does not race delivery
+// and each message reaches exactly one of the attached neutral sinks.
+func TestEventBusConcurrentSetSinkAndSend(t *testing.T) {
 	bus := NewEventBus()
+	first, second := &eventBusRecordingSink{}, &eventBusRecordingSink{}
+	bus.SetSink(first)
 	var wg sync.WaitGroup
 	const n = 100
 
@@ -48,7 +51,8 @@ func TestEventBusConcurrentSetProgramAndSend(t *testing.T) {
 	go func() {
 		defer wg.Done()
 		for i := 0; i < n; i++ {
-			bus.SetProgram(nil)
+			bus.SetSink(second)
+			bus.SetSink(first)
 		}
 	}()
 	go func() {
@@ -59,4 +63,7 @@ func TestEventBusConcurrentSetProgramAndSend(t *testing.T) {
 		}
 	}()
 	wg.Wait()
+	if got := len(first.snapshot()) + len(second.snapshot()); got != n {
+		t.Fatalf("delivered %d messages, want %d", got, n)
+	}
 }

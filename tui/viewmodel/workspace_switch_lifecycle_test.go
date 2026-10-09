@@ -205,6 +205,8 @@ func TestWorkspaceSwitchAppliesTargetThemeAndClearsProjectDraft(t *testing.T) {
 	app := newWorkspaceSwitchLifecycleApp(t, oldRoot)
 	app.ApplyThemePreset("dark")
 	app.Input.SetValuePreserveReferences("old project secret")
+	app.FocusStack.Push(FocusTree)
+	app.ActiveSession = &workspace.Session{SessionID: "old-selected-session"}
 
 	target := workspace.NewWorkspace(
 		newRoot, "test-model", "tester", ttypes.Settings{}, workspaceSwitchLifecycleLogger{},
@@ -224,6 +226,9 @@ func TestWorkspaceSwitchAppliesTargetThemeAndClearsProjectDraft(t *testing.T) {
 	}
 	if got := app.Input.Value(); got != "" {
 		t.Fatalf("old workspace draft survived switch: %q", got)
+	}
+	if app.FocusStack.Top() != FocusNone || app.ActiveSession != nil {
+		t.Fatal("successful workspace switch retained old shell selection or focus")
 	}
 }
 

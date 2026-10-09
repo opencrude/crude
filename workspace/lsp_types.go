@@ -29,7 +29,7 @@ type CompletionItem = model.CompletionItem
 type ProjectInsights = model.ProjectInsights
 
 // LSPClient is the workspace-facing connection contract. The concrete
-// powernap/editor client is supplied by the TUI adapter at composition time.
+// subprocess transport is supplied by the workspace runtime.
 type LSPClient interface {
 	OnDiagnostics(func(filePath string, diags []LSPDiagnostic))
 	Start(context.Context) error

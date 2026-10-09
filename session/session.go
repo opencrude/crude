@@ -141,6 +141,8 @@ type Session struct {
 	sender                   EventSender
 	subAgentSup              *SubAgentRunner
 	subAgentMu               sync.Mutex
+	settingsRevision         uint64     // protected by mu; successful settings publication generation
+	settingsOperationMu      sync.Mutex // settings lifetime fence; precedes delegationMu and mu
 	delegationMu             sync.Mutex
 	delegationNoticeMu       sync.Mutex
 	permissionReviewRevision atomic.Uint64
@@ -496,7 +498,12 @@ func (s *Session) Close() {
 	if !atomic.CompareAndSwapInt32(&s.closing, 0, 1) {
 		return
 	}
+	// Closing rejects new settings work before joining operations already admitted.
+	// Publish the closing log only after their final settings logs have completed;
+	// do not hold mu (or the lifetime fence) during the remaining shutdown.
+	s.settingsOperationMu.Lock()
 	s.logger.Info("SESSION", "close", "has_messages", s.HasMessages())
+	s.settingsOperationMu.Unlock()
 	s.stopCompactionForClose()
 	s.compactionWg.Wait()
 	s.admissionMu.Lock()

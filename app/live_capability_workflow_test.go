@@ -223,7 +223,7 @@ verification codes; never invent a record identifier or reuse an old remote code
 		t.Fatal(err)
 	}
 	firstSender := &liveCapabilitySender{events: make(chan liveCapabilityEvent, 256)}
-	firstOrchestrator, err := ws.StartOrchestrator(firstSender)
+	firstOrchestrator, err := ws.StartOrchestrator(firstSession.SessionID, firstSender)
 	if err != nil {
 		ws.Close()
 		t.Fatal(err)
@@ -245,7 +245,7 @@ verification codes; never invent a record identifier or reuse an old remote code
 	firstPrompt := `Audit the live evidence available to this workspace using the live-evidence procedure: obtain its bundled receipt verification and the current independently served verification for the same record. Report both codes exactly, not guesses or placeholders. Leave the required procedure and integration registered for later agents in this workspace. Work read-only, without commands, writes, edits or delegation. Any installation or new access is subject to review.`
 	submitLiveCapabilityInput(t, ws, firstOrchestrator.ID, firstPrompt, visual)
 	firstObserved := waitLiveCapabilityTurn(t, ws, firstOrchestrator.ID, firstSender.events, expectedSkillID, expectedMCPID, true)
-	firstCanonical := liveLastAnswer(ws.BackendSession())
+	firstCanonical := liveLastAnswer(ws.BackendSession(firstSession.SessionID))
 	if !strings.Contains(firstCanonical, skillEvidence) || !strings.Contains(firstCanonical, mcpEvidence+"_1") {
 		ws.Close()
 		t.Fatalf("first canonical transcript omitted evidence markers: skill=%t mcp=%t",
@@ -275,7 +275,7 @@ verification codes; never invent a record identifier or reuse an old remote code
 	remoteRevision.Store(2)
 	submitLiveCapabilityInput(t, ws, firstOrchestrator.ID, repeatPrompt, visual)
 	repeatObserved := waitLiveCapabilityTurn(t, ws, firstOrchestrator.ID, firstSender.events, expectedSkillID, expectedMCPID, false)
-	requireLiveCapabilityAnswer(t, ws, skillEvidence, mcpEvidence+"_2")
+	requireLiveCapabilityAnswer(t, ws, firstSession.SessionID, skillEvidence, mcpEvidence+"_2")
 	if sdkCalls.Load() <= beforeRepeat {
 		t.Fatal("same-agent follow-up reused old remote evidence")
 	}
@@ -318,14 +318,15 @@ verification codes; never invent a record identifier or reuse an old remote code
 	// Resume the original session passively, then explicitly continue it. The
 	// source is gone, so a replay/reacquisition cannot hide lost durability.
 	registryBeforeSecond := registryRequests.Load()
-	if _, err := reopened.Bootstrap(cfg, home, firstSessionID); err != nil {
+	resumedSession, err := reopened.Bootstrap(cfg, home, firstSessionID)
+	if err != nil {
 		t.Fatal(err)
 	}
 	if sdkCalls.Load() != passiveSDK || mcpRequests.Load() != passiveHTTP {
 		t.Fatal("passive session resume reconnected MCP or replayed a tool")
 	}
 	resumedSender := &liveCapabilitySender{events: make(chan liveCapabilityEvent, 256)}
-	resumedOrchestrator, err := reopened.StartOrchestrator(resumedSender)
+	resumedOrchestrator, err := reopened.StartOrchestrator(resumedSession.SessionID, resumedSender)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,7 +340,7 @@ verification codes; never invent a record identifier or reuse an old remote code
 		t.Fatal("explicit resumed follow-up was not admitted")
 	}
 	resumedObserved := waitLiveCapabilityTurn(t, reopened, resumedOrchestrator.ID, resumedSender.events, expectedSkillID, expectedMCPID, false)
-	requireLiveCapabilityAnswer(t, reopened, skillEvidence, mcpEvidence+"_3")
+	requireLiveCapabilityAnswer(t, reopened, resumedSession.SessionID, skillEvidence, mcpEvidence+"_3")
 	if sdkCalls.Load() <= passiveSDK {
 		t.Fatal("resumed agent did not use fresh remote evidence")
 	}
@@ -349,7 +350,7 @@ verification codes; never invent a record identifier or reuse an old remote code
 		t.Fatal(err)
 	}
 	secondSender := &liveCapabilitySender{events: make(chan liveCapabilityEvent, 256)}
-	secondOrchestrator, err := reopened.StartOrchestrator(secondSender)
+	secondOrchestrator, err := reopened.StartOrchestrator(secondSession.SessionID, secondSender)
 	if err != nil {
 		reopened.Close()
 		t.Fatal(err)
@@ -367,7 +368,7 @@ verification codes; never invent a record identifier or reuse an old remote code
 		t.Fatal("second durable capability task was not admitted")
 	}
 	secondObserved := waitLiveCapabilityTurn(t, reopened, secondOrchestrator.ID, secondSender.events, expectedSkillID, expectedMCPID, false)
-	requireLiveCapabilityAnswer(t, reopened, skillEvidence, mcpEvidence+"_4")
+	requireLiveCapabilityAnswer(t, reopened, secondSession.SessionID, skillEvidence, mcpEvidence+"_4")
 	if registryRequests.Load() != registryBeforeSecond {
 		reopened.Close()
 		t.Fatal("second task reacquired or rediscovered the MCP registry entry")
@@ -575,9 +576,9 @@ func liveLastAnswer(backend *session.Session) string {
 	return text
 }
 
-func requireLiveCapabilityAnswer(t *testing.T, ws *workspace.Workspace, skillEvidence, mcpEvidence string) {
+func requireLiveCapabilityAnswer(t *testing.T, ws *workspace.Workspace, sessionID, skillEvidence, mcpEvidence string) {
 	t.Helper()
-	answer := liveLastAnswer(ws.BackendSession())
+	answer := liveLastAnswer(ws.BackendSession(sessionID))
 	if !strings.Contains(answer, skillEvidence) || !strings.Contains(answer, mcpEvidence) {
 		t.Fatalf("terminal answer did not report both current verification codes: %s", answer)
 	}

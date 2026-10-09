@@ -51,6 +51,7 @@ func (m *App) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	previousEditor := m.logicalEditorFocus()
 	previousMode := m.editorSettings.AutoSave
 	model, command := m.update(msg)
+	command = tea.Batch(command, m.drainTerminalCommands())
 	m.syncLocalDiffFreshness()
 	m.syncMemoryBrowserLifecycle()
 	switch msg.(type) {
@@ -77,7 +78,7 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	coalescePresentation := false
 	switch msg.(type) {
 	case tea.MouseMotionMsg, interactiveFrameMsg:
-	case ttypes.AgentMsg, agent.AgentEvent, workspace.TerminalOutputMsg:
+	case ttypes.AgentMsg, agent.AgentEvent, workspace.TerminalChangedMsg:
 		coalescePresentation = true
 	default:
 		m.forceFrame()
@@ -388,9 +389,9 @@ func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
 			}
 		}
 	}
+	m.AdvanceAgentState(now)
 	for _, n := range m.AgentMgr.AllNodes() {
 		if n.State != nil {
-			n.State.Tick(spinFrame)
 			m.syncAgentMessages(n.ID, false)
 		}
 	}
@@ -567,10 +568,14 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			m.markProjectSearchDirty()
 			m.findInFilesRequest = 0
 		}
-	case workspace.TerminalOutputMsg:
-		if cmd := m.handleTerminalOutput(msg); cmd != nil {
-			cmds = append(cmds, cmd)
-		}
+	case terminalCreatedMsg:
+		cmds = append(cmds, m.applyTerminalCreated(msg))
+	case terminalProjectionMsg:
+		cmds = append(cmds, m.applyTerminalProjection(msg))
+	case workspace.TerminalChangedMsg:
+		cmds = append(cmds, m.terminalRefresh(msg.ID))
+	case workspace.TerminalEffectsMsg:
+		m.handleTerminalEffects(msg)
 	case workspace.TerminalExitedMsg:
 		m.handleTerminalExited(msg)
 	case workspace.TerminalTitleMsg:
@@ -688,16 +693,8 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case ttypes.OpenSettingsMsg:
 		m.Logger.Info("UI", "open_session_settings")
 		m.openSessionSettings()
-	case ttypes.SettingsSaveResultMsg:
-		if msg.Err != nil {
-			m.Logger.Error("CONFIG", "save_error", "error", msg.Err.Error())
-			m.Feedback.NotifyError(msg.Err.Error())
-		} else {
-			m.Logger.Info("CONFIG", "saved")
-			m.ModelName = msg.Settings.Model
-			m.LastSettings = msg.Settings
-			m.Feedback.NotifyInfo("settings saved")
-		}
+	case selectedSessionSettingsResult:
+		m.applySelectedSessionSettings(msg)
 	case rendering.ClipboardCopiedMsg:
 		m.Logger.Debug("CLIPBOARD", "copied")
 		m.Feedback.NotifyInfo("copied to clipboard")
@@ -709,7 +706,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			m.Logger.Error("JOURNAL", "undo_error", "error", msg.Error)
 			m.Feedback.NotifyError(msg.Error)
 		}
-		if msg.Desc != "" && m.AgentMgr.ActiveID() != "" {
+		if msg.Desc != "" && m.AgentView.ActiveID() != "" {
 			m.appendActiveMessage(ttypes.ChatMessage{
 				Role:    ttypes.RoleAssistant,
 				Content: msg.Desc,
@@ -1030,11 +1027,15 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			m.Feedback.NotifyError("Session settings owner is no longer available")
 			break
 		}
-		sessionID := session.SessionID
 		target := msg.Target
+		owner, generation := m.Workspace, m.workspaceSwitchGen.Load()
+		operation, err := owner.PrepareSessionSettingsSave(session.SessionID, s)
+		if err != nil {
+			m.Feedback.NotifyError(err.Error())
+			break
+		}
 		cmds = append(cmds, func() tea.Msg {
-			err := m.HandleSettingsSaveForSession(sessionID, s)
-			return sessionSettingsSaveResultMsg{target: target, settings: s, err: err}
+			return sessionSettingsSaveResultMsg{target: target, workspace: owner, generation: generation, result: operation.Run()}
 		})
 	case sessionsettings.SaveAsWorkspaceMsg:
 		if msg.Settings.SessionMainAgent != "" {
@@ -1055,12 +1056,15 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			m.Feedback.NotifyInfo("Agent settings saved as workspace defaults")
 		}
 	case sessionSettingsSaveResultMsg:
+		if msg.workspace != m.Workspace || msg.generation != m.workspaceSwitchGen.Load() {
+			break
+		}
 		session, projection := m.sessionProjections.projectionForSettings(msg.target)
-		if msg.err != nil {
-			m.Logger.Error("CONFIG", "save_error", "error", msg.err.Error())
-			m.Feedback.NotifyError(msg.err.Error())
-		} else if projection != nil {
-			current := msg.settings
+		if msg.result.Err != nil {
+			m.Logger.Error("CONFIG", "save_error", "error", msg.result.Err.Error())
+			m.Feedback.NotifyError(msg.result.Err.Error())
+		} else if m.ApplySessionSettingsResult(msg.result) && projection != nil {
+			current := msg.result.Snapshot.Effective
 			if session.Settings != nil {
 				m.refreshSessionSettingsProjection(session)
 				current = session.Settings.Effective
@@ -1075,8 +1079,6 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 				}
 				owner, _ := m.sessionProjectionForAgent(node.ID)
 				if owner == session {
-					node.Model = current.Model
-					node.Model = m.AgentModelIdentity(node.ID).ModelID
 					m.subPaneProjections.Get(node.ID, workspace.PaneAgent).renderer.SetLegacyModelFallback(current.Model)
 				}
 			}
@@ -1301,7 +1303,7 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 		// explicit action from the tab or Agents-panel context menu.
 		m.minimizeAgent(agentID)
 		m.handleTabSwitch()
-		if m.AgentMgr.VisibleCount() == 0 && m.EditorState.ActiveView == "" {
+		if m.AgentView.VisibleCount() == 0 && m.EditorState.ActiveView == "" {
 			m.openLauncher()
 			m.LastInteractionTime = time.Now()
 			return nil
@@ -1328,7 +1330,7 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 
 	m.Win.CloseTab(index)
 	m.handleTabSwitch()
-	if m.AgentMgr.VisibleCount() == 0 && m.EditorState.ActiveView == "" {
+	if m.AgentView.VisibleCount() == 0 && m.EditorState.ActiveView == "" {
 		m.openLauncher()
 	}
 	return nil
@@ -1356,7 +1358,7 @@ func (m *App) handleTabSwitch() {
 	// truth for which view is active.
 	prevEditorPath := m.EditorState.ActiveView
 	m.EditorState.ActiveView = ""
-	m.AgentMgr.ClearActive()
+	m.AgentView.ClearActive()
 
 	activeTab := m.Win.ActiveTab()
 	if activeTab == nil {
@@ -1372,7 +1374,7 @@ func (m *App) handleTabSwitch() {
 
 	if m.isAgentTabTitle(activeTab.Title) {
 		agentID := m.agentIDFromTabTitle(activeTab.Title)
-		m.AgentMgr.SetActive(agentID)
+		m.AgentView.SetActive(agentID)
 		m.ActivateSessionByAgent(agentID)
 		m.maybeHydrateComposerDraft()
 		m.OverlayState.SetYolo(m.YoloForAgent(agentID))
@@ -1475,29 +1477,9 @@ func (m *App) workingDir() (string, error) {
 }
 
 func tickCmd() tea.Cmd {
-	cmd := workspace.TickCmd()
-	if cmd == nil {
-		return nil
-	}
-	return func() tea.Msg {
-		msg := cmd()
-		if tick, ok := msg.(workspace.TickMsg); ok {
-			return ttypes.TickMsg(tick)
-		}
-		return msg
-	}
+	return tea.Tick(workspace.IdleTickInterval, func(at time.Time) tea.Msg { return ttypes.TickMsg(at) })
 }
 
 func streamingTickCmd() tea.Cmd {
-	cmd := workspace.StreamingTickCmd()
-	if cmd == nil {
-		return nil
-	}
-	return func() tea.Msg {
-		msg := cmd()
-		if tick, ok := msg.(workspace.TickMsg); ok {
-			return ttypes.TickMsg(tick)
-		}
-		return msg
-	}
+	return tea.Tick(16*time.Millisecond, func(at time.Time) tea.Msg { return ttypes.TickMsg(at) })
 }

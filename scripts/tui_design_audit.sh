@@ -99,7 +99,6 @@ allow_raw=(
   'tui/theme/'
   'tui/cell/'
   'tui/rendering/'
-  'tui/term/'
 )
 raw_hits="$(rg -n 'NewTrueColor\(|color\.RGBA\{|cell\.Color\{[^}]*R:' --glob '*.go' --glob '!*_test.go' tui/ || true)"
 if [[ -n "$raw_hits" ]]; then
@@ -232,12 +231,13 @@ else
 fi
 
 # 11) Three-layer boundary: workspace/ must never import crude/tui
-# (Phase 14 exit criterion — dependency checks enforce the architecture).
-if rg -n 'crude/tui' --glob '*.go' workspace/ 2>/dev/null; then
-  echo "FAIL: workspace/ imports crude/tui (three-layer boundary violated)"
-  fail=1
-else
+# Parse actual imports, including test files. Text search falsely matches the
+# boundary test's forbidden-path literals and cannot distinguish code from imports.
+if go test ./workspace -run '^TestWorkspaceDoesNotOwnShellSelectionOrTerminalRuntime$' -count=1; then
   echo "OK: workspace/ has no crude/tui imports"
+else
+  echo "FAIL: workspace/ three-layer or shell ownership boundary violated"
+  fail=1
 fi
 
 if [[ $fail -ne 0 ]]; then

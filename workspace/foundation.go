@@ -4,8 +4,6 @@ import (
 	"fmt"
 	"sync"
 	"time"
-
-	tea "charm.land/bubbletea/v2"
 )
 
 //  ─ Mode enum
@@ -39,20 +37,6 @@ type Logger interface {
 	Error(tag, msg string, pairs ...any)
 	Debug(tag, msg string, pairs ...any)
 }
-
-//  FocusTarget enum ─
-
-type FocusTarget int
-
-const (
-	FocusNone FocusTarget = iota
-	FocusTree
-	FocusEditor
-	FocusTabBar
-	FocusInput
-	FocusFloatingWindow
-	FocusLauncher
-)
 
 //  PaneType enum ─
 
@@ -101,48 +85,46 @@ type eventLogEntry struct {
 	detail  string
 }
 
-// EventBus is the single ingress point for external events into the Bubble Tea
-// event loop. Goroutine-driven callbacks (LSP diagnostics, file watcher) send
-// messages through the bus instead of mutating App state directly.
-//
-// The bus:
-//  1. Ensures all state mutations happen on the main goroutine (via program.Send)
-//  2. Maintains a ring-buffer log of recent events for debugging
-//  3. Drops events gracefully if the program is not yet initialized
-type EventBus struct {
-	program *tea.Program
-	log     []eventLogEntry
-	mu      sync.Mutex
+// MessageSink owns delivery of external messages to their consumer. Send is
+// synchronous; the sink is responsible for its own dispatch and lifecycle.
+type MessageSink interface {
+	Send(any)
 }
 
-// NewEventBus creates an EventBus with no program attached. Call SetProgram
-// before the program starts so callbacks wired in Init() can use the bus.
+// EventBus is a single-sink ingress point for external events. It records a
+// bounded log even when no sink is attached, in which case delivery is dropped.
+// It does not queue messages or own the consumer's execution context.
+type EventBus struct {
+	sink MessageSink
+	log  []eventLogEntry
+	mu   sync.Mutex
+}
+
+// NewEventBus creates an EventBus with no sink attached.
 func NewEventBus() *EventBus {
 	return &EventBus{
 		log: make([]eventLogEntry, 0, eventLogCapacity),
 	}
 }
 
-// SetProgram connects the bus to the Bubble Tea program. Must be called
-// before program.Run() so that Init()'s callbacks (which use the bus) work.
-func (b *EventBus) SetProgram(p *tea.Program) {
+// SetSink replaces the delivery target. A nil sink clears the target. A Send
+// already in progress may still deliver to the sink it captured before replacement.
+func (b *EventBus) SetSink(sink MessageSink) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
-	b.program = p
+	b.sink = sink
 }
 
-// Send delivers a message to the Bubble Tea event loop. If the program is not
-// yet connected (SetProgram not called or program has quit), the event is
-// logged but not delivered — this prevents silent data loss from callbacks
-// that fire before Init() or after shutdown.
-func (b *EventBus) Send(msg tea.Msg) {
+// Send logs a message and synchronously delivers it to the captured sink, if
+// attached. Delivery happens outside the bus lock so sinks may reenter the bus.
+func (b *EventBus) Send(msg any) {
 	b.mu.Lock()
-	prog := b.program
+	sink := b.sink
 	b.appendLog(msg)
 	b.mu.Unlock()
 
-	if prog != nil {
-		prog.Send(msg)
+	if sink != nil {
+		sink.Send(msg)
 	}
 }
 
@@ -167,7 +149,7 @@ func (b *EventBus) RecentEvents(n int) []string {
 }
 
 // appendLog records an event in the ring buffer. Caller must hold b.mu.
-func (b *EventBus) appendLog(msg tea.Msg) {
+func (b *EventBus) appendLog(msg any) {
 	entry := eventLogEntry{
 		time:    time.Now(),
 		msgType: fmt.Sprintf("%T", msg),
@@ -182,7 +164,7 @@ func (b *EventBus) appendLog(msg tea.Msg) {
 }
 
 // msgDetail extracts a human-readable detail string from common event types.
-func msgDetail(msg tea.Msg) string {
+func msgDetail(msg any) string {
 	switch m := msg.(type) {
 	case LSPDiagnosticsMsg:
 		return fmt.Sprintf("file=%s diags=%d", m.FilePath, len(m.Diagnostics))
@@ -200,7 +182,3 @@ func msgDetail(msg tea.Msg) string {
 		return ""
 	}
 }
-
-var _ tea.Msg = LSPDiagnosticsMsg{}
-var _ tea.Msg = FileWatcherMsg{}
-var _ tea.Msg = ProjectSearchCompletedMsg{}

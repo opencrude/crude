@@ -2,7 +2,9 @@ package viewmodel
 
 import (
 	"runtime"
+	"strings"
 	"testing"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -15,8 +17,7 @@ func TestStaleTerminalMessagesCannotTargetReplacementManagerSession(t *testing.T
 		t.Skip("in-app PTYs are unix-only")
 	}
 	app := newTestApp(t)
-	oldMgr := app.termMgr()
-	oldInfo, err := oldMgr.Create(workspace.TerminalCreateOpts{
+	oldInfo, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{
 		Command: "/bin/cat",
 		CWD:     t.TempDir(),
 		Cols:    20,
@@ -26,11 +27,15 @@ func TestStaleTerminalMessagesCannotTargetReplacementManagerSession(t *testing.T
 	if err != nil {
 		t.Fatalf("create old terminal: %v", err)
 	}
-	oldMgr.CloseAll()
+	oldService := app.Terminals
+	oldService.CloseAll()
+	app.discardTerminalUI()
+	app.workspaceSwitchGen.Add(1)
 
 	newMgr := workspace.NewTerminalManager(t.TempDir())
 	app.TermMgr = newMgr
-	newInfo, err := newMgr.Create(workspace.TerminalCreateOpts{
+	app.Terminals = nil
+	newInfo, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{
 		Command: "/bin/cat",
 		CWD:     t.TempDir(),
 		Cols:    20,
@@ -49,16 +54,11 @@ func TestStaleTerminalMessagesCannotTargetReplacementManagerSession(t *testing.T
 	}
 
 	newScreen := app.ensureTermScreen(newInfo.ID, newInfo.Title)
-	wrote := ""
-	newScreen.SetWrite(func(data []byte) { wrote += string(data) })
 
 	// These represent messages already queued by the old manager when the
 	// workspace replacement happened. None may materialize an old screen or
 	// target the replacement manager's terminal.
-	_ = app.handleTerminalOutput(workspace.TerminalOutputMsg{
-		ID:   oldInfo.ID,
-		Data: []byte("\x1b]2;stale-output\x07"),
-	})
+	_ = app.applyTerminalProjection(terminalProjectionMsg{service: oldService, projection: workspace.TerminalProjection{Info: workspace.TerminalInfo{ID: oldInfo.ID, Title: "stale-output"}}})
 	app.applyTerminalTitle(oldInfo.ID, "stale-title")
 	app.handleTerminalExited(workspace.TerminalExitedMsg{ID: oldInfo.ID, ExitCode: 9, Err: "stale-exit"})
 
@@ -68,8 +68,15 @@ func TestStaleTerminalMessagesCannotTargetReplacementManagerSession(t *testing.T
 	if got := newScreen.Title(); got != "new" {
 		t.Fatalf("stale old message mutated replacement title to %q", got)
 	}
-	newScreen.Handle(ui.EventContext{}, ui.KeyEvent(tea.KeyPressMsg{Code: 'x', Text: "x"}))
-	if wrote != "x" {
-		t.Fatalf("replacement terminal stopped accepting input after stale exit: wrote=%q", wrote)
+	result := newScreen.Handle(ui.EventContext{}, ui.KeyEvent(tea.KeyPressMsg{Code: 'x', Text: "x"}))
+	runTerminalCommand(t, app, result.Cmd)
+	deadline := time.Now().Add(time.Second)
+	for time.Now().Before(deadline) {
+		projection, err := app.Terminals.Rows(newInfo.ID, -1, 0)
+		if err == nil && strings.Contains(terminalProjectionText(projection), "x") {
+			return
+		}
+		time.Sleep(time.Millisecond)
 	}
+	t.Fatal("replacement terminal stopped accepting input after stale exit")
 }

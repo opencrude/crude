@@ -15,7 +15,6 @@ import (
 	"crude/fileio"
 	"crude/mcpclient"
 	"crude/provider"
-	"crude/session"
 	"crude/skills"
 	"crude/types"
 	captypes "crude/types/capability"
@@ -70,21 +69,6 @@ func (workspace *Workspace) ensureCapabilities(ctx context.Context) error {
 	if workspace.FileOwnership == nil {
 		workspace.FileOwnership = agent.NewFileOwnership()
 	}
-	return nil
-}
-
-func (workspace *Workspace) bindSessionRuntime(backend *session.Session) error {
-	if err := workspace.ensureWorkspacePersistence(); err != nil {
-		return err
-	}
-	if err := workspace.ensureCapabilities(context.Background()); err != nil {
-		return err
-	}
-	if workspace.Collaboration == nil {
-		return errors.New("workspace collaboration runtime is unavailable")
-	}
-	backend.SetCollaboration(workspace.Collaboration, workspace.instanceID)
-	backend.SetCapabilities(workspace.Capabilities, workspace.FileOwnership)
 	return nil
 }
 

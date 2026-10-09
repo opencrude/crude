@@ -124,11 +124,12 @@ func TestPastedTextSendsCompleteContentButKeepsChatCompact(t *testing.T) {
 	account.Connection = template
 	cfg.Accounts["test"] = account
 	cfg.Agents.Enabled = false
-	if _, err := app.CreateSession(cfg, home); err != nil {
+	owner, err := app.CreateSession(cfg, home)
+	if err != nil {
 		t.Fatal(err)
 	}
 	sender := &pastedTextJourneySender{events: make(chan types.AgentMsg, 512)}
-	orch, err := app.StartOrchestrator(sender)
+	orch, err := app.StartOrchestrator(owner.SessionID, sender)
 	if err != nil {
 		t.Fatal(err)
 	}

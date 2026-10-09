@@ -124,8 +124,8 @@ func assertLauncherBack(t *testing.T, app *App, retainedAgents int) {
 	if app.Win.TabCount() != 0 {
 		t.Fatalf("tabs=%d want 0 after closing last tab", app.Win.TabCount())
 	}
-	if app.AgentMgr.VisibleCount() != 0 {
-		t.Fatalf("surfaced agents=%d want 0", app.AgentMgr.VisibleCount())
+	if app.AgentView.VisibleCount() != 0 {
+		t.Fatalf("surfaced agents=%d want 0", app.AgentView.VisibleCount())
 	}
 	if got := app.AgentMgr.Count(); got != retainedAgents {
 		t.Fatalf("retained agents=%d want %d", got, retainedAgents)
@@ -179,7 +179,7 @@ func assertLauncherBack(t *testing.T, app *App, retainedAgents int) {
 }
 
 // TestRealSessionLastTabCloseSwitchesToLauncher drives the REAL
-// launcher session flow (NewSessionFromLauncher — session DB + orchestrator)
+// launcher session flow (NewAgentSession — session DB + orchestrator)
 // then closes the last tab via the tab-bar close click.
 func TestRealSessionLastTabCloseSwitchesToLauncher(t *testing.T) {
 	app, ws := newRealShellApp(t)

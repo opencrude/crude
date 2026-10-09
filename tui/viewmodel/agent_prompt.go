@@ -94,7 +94,7 @@ func (m *App) agentYoloEnabled(agentID string) bool {
 	if m.YoloForAgent(agentID) {
 		return true
 	}
-	return m.AgentMgr != nil && m.AgentMgr.ActiveID() == agentID && m.OverlayState != nil && m.OverlayState.IsYolo()
+	return m.AgentMgr != nil && m.AgentView.ActiveID() == agentID && m.OverlayState != nil && m.OverlayState.IsYolo()
 }
 
 func (m *App) openNextAgentPrompt() {
@@ -186,7 +186,7 @@ func (m *App) openInlineAgentPrompt(state *agentPromptState) {
 
 func (m *App) syncAgentPromptBlocking() {
 	if m.OverlayState != nil {
-		m.OverlayState.SetBlocking(m.agentPrompt != nil || (m.agentPromptInlineEligible(m.AgentMgr.ActiveID()) && m.sessionDeckBlocking()))
+		m.OverlayState.SetBlocking(m.agentPrompt != nil || (m.agentPromptInlineEligible(m.AgentView.ActiveID()) && m.sessionDeckBlocking()))
 	}
 }
 
@@ -317,15 +317,6 @@ func (m *App) cancelPromptConfirmation(target *confirmation.Screen) {
 
 func (m *App) resolveAgentPromptConfirmation(req agentPromptRequest, choice string) {
 	if m.ResolveConfirmation(req.agentID, req.blockID, choice) {
-		if node := m.AgentMgr.Get(req.agentID); node != nil && node.State != nil {
-			// Delivery has accepted this exact decision. Release its local
-			// attention state in the same frame as the prompt, not on a later
-			// backend event; a newer request must never inherit this response.
-			if node.State.PendingBlockID == req.blockID {
-				node.State.PendingBlockID = ""
-			}
-			node.State.Running, node.State.Thinking = true, true
-		}
 		m.syncAgentStatusInventory()
 	} else if m.Feedback != nil {
 		m.Feedback.NotifyError("Permission response was not sent: the request is no longer active")

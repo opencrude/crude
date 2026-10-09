@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"crude/tui/rendering"
+	"crude/tui/screens/shellterm"
 	"crude/tui/screens/termdock"
 	"crude/tui/surface"
 	"crude/tui/ui"
@@ -70,7 +71,7 @@ func TestTerminalOutputMaterializesScreenBeforeExplicitRegistration(t *testing.T
 	}
 	app := newTestApp(t)
 	mgr := app.termMgr()
-	info, err := mgr.Create(workspace.TerminalCreateOpts{
+	info, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{
 		Command: "/bin/cat",
 		CWD:     t.TempDir(),
 		Cols:    40,
@@ -84,14 +85,12 @@ func TestTerminalOutputMaterializesScreenBeforeExplicitRegistration(t *testing.T
 		app.dropTermScreen(info.ID)
 		mgr.Close(info.ID)
 	})
+	app.dropTermScreen(info.ID)
 	if app.termScreens[info.ID] != nil {
 		t.Fatal("fixture unexpectedly registered a terminal screen")
 	}
 
-	_ = app.handleTerminalOutput(workspace.TerminalOutputMsg{
-		ID:   info.ID,
-		Data: []byte("startup banner\r\n\x1b]2;ready\x07"),
-	})
+	feedAppTerminal(t, app, info.ID, []byte("startup banner\r\n\x1b]2;ready\x07"))
 	screen := app.termScreens[info.ID]
 	if screen == nil {
 		t.Fatal("first output was dropped instead of materializing the screen")
@@ -108,7 +107,7 @@ func TestFloatingTerminalBellUsesFrameAttentionIcon(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 40
 	mgr := app.termMgr()
-	info, err := mgr.Create(workspace.TerminalCreateOpts{
+	info, err := createAppTerminal(t, app, workspace.TerminalCreateOpts{
 		Command: "/bin/cat",
 		CWD:     t.TempDir(),
 		Cols:    40,
@@ -156,13 +155,17 @@ func TestTerminalManagerErrorsReachFeedback(t *testing.T) {
 	}{
 		{
 			name: "write",
-			run:  func(app *App) { app.writeTerminal("missing", []byte("x")) },
-			want: "Terminal write failed",
+			run: func(app *App) {
+				runTerminalCommand(t, app, app.terminalCommand(shellterm.Command{ID: "missing", Kind: shellterm.CommandPaste, Paste: []byte("x")}))
+			},
+			want: "Terminal command failed",
 		},
 		{
 			name: "resize",
-			run:  func(app *App) { _ = app.resizeTerminal("missing", 1, 1) },
-			want: "Terminal resize failed",
+			run: func(app *App) {
+				runTerminalCommand(t, app, app.terminalCommand(shellterm.Command{ID: "missing", Kind: shellterm.CommandResize, Cols: 1, Rows: 1}))
+			},
+			want: "Terminal command failed",
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
