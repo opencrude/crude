@@ -25,28 +25,29 @@ func newTextAreaForm(t *testing.T) (*Form, *FormField) {
 
 func TestTextAreaFieldHeightSpansRows(t *testing.T) {
 	_, field := newTextAreaForm(t)
-	// Label row + 4 editor rows + description row.
-	if got := field.height(); got != 6 {
-		t.Fatalf("height = %d, want 6", got)
+	// 4 editor rows starting on the label row, then the description row.
+	if got := field.height(); got != 5 {
+		t.Fatalf("height = %d, want 5", got)
 	}
 	field.field.Rows = 6
-	if got := field.height(); got != 8 {
-		t.Fatalf("height with Rows=6 = %d, want 8", got)
+	if got := field.height(); got != 7 {
+		t.Fatalf("height with Rows=6 = %d, want 7", got)
 	}
 }
 
-func TestTextAreaFieldPaintsBelowLabel(t *testing.T) {
+func TestTextAreaFieldPaintsInValueColumn(t *testing.T) {
 	form, field := newTextAreaForm(t)
 	field.Area().SetValue("x")
 	buf := surface.NewCellBuffer(60, 20)
 	form.Paint(buf, 0, 0, PaintContext{Focused: true})
 	fr := field.Bounds()
-	editorX := fr.X + field.labelIndent() + 1
-	editorY := fr.Y + 1
+	// The editor box starts in the value column on the label row.
+	editorX := fr.X + field.valueX(fr.W) + 1
+	editorY := fr.Y
 	if got := buf.Get(editorX, editorY).Char; got != 'x' {
 		t.Fatalf("textarea content row=%q want x at (%d,%d)", string(got), editorX, editorY)
 	}
-	descriptionY := fr.Y + 1 + field.areaRows()
+	descriptionY := fr.Y + field.areaRows()
 	insideDescription := buf.Get(editorX, descriptionY)
 	farDescription := buf.Get(fr.X+fr.W-1, descriptionY)
 	if !insideDescription.BG.Equal(farDescription.BG) {

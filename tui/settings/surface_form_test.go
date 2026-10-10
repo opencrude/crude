@@ -51,7 +51,7 @@ func TestSettingsScrollbarReachesBottomAcrossResize(t *testing.T) {
 			if settled := paint(); settled != immediate {
 				t.Fatal("settled frame moved after scrollbar release")
 			}
-			if s.scope.Bounds().Y+s.scope.Bounds().H != s.Bounds().H {
+			if footer := s.Bounds().H - 1; s.scope.Bounds().Y != footer || s.accountEditorBar.Bounds().Y != footer {
 				t.Fatal("scope toggle is not aligned with footer buttons")
 			}
 		})

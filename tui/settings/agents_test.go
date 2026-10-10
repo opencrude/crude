@@ -241,20 +241,38 @@ func TestAgentDiscoveryPreservesSavedAndPendingCapabilities(t *testing.T) {
 	}
 }
 
+// The model catalog lives in the core. A catalog update therefore refetches
+// every loaded account list through the core instead of re-deriving cards in
+// this catalog-less shell; arriving cards populate inherited modalities
+// without dirtying unedited settings or becoming explicit overrides.
 func TestAgentModalitiesTrackCatalogWithoutPersistingAutomaticOverrides(t *testing.T) {
-	model := "reactive-public-card-" + t.TempDir()
-	m := New(theme.DefaultDark(), types.AppSettings{Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {Model: model}}}}, nil)
+	m := New(theme.DefaultDark(), types.AppSettings{
+		Accounts: map[string]provider.Account{"work": {ID: "work", ProviderID: "openai", Label: "Work", APIKey: "test", Connection: provider.Template{ProviderURL: "https://example.test/v1", APIStandard: "openai"}}},
+		Agents:   types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {AccountID: "work", Model: "vision"}}},
+	}, nil)
 	s := NewSurface(theme.DefaultDark(), m)
 	m.SelectCategory(catAgents)
 	c := s.agents
-	c.begin("role/default", false)
+	open := c.begin("role/default", false)
 	image := c.draft.Field(fieldModalityPrefix + provider.ModalityImage)
 	if !strings.Contains(image.Description, "unknown") {
 		t.Fatal("missing metadata was presented as a verified No")
 	}
-	provider.LoadModelMetas(map[string]provider.ModelMeta{model: {ContextWindow: 128000, MaxOutput: 8192, InputPrice: 0.00001, PricingKnown: true, ModalitySupport: map[string]bool{provider.ModalityImage: true}, Modalities: []string{provider.ModalityImage}}})
+	first, ok := open().(FetchModelsMsg)
+	if !ok {
+		t.Fatal("editor did not prefetch its account's models")
+	}
+	m.Update(ModelsMsg{ProviderID: first.ProviderID, AccountID: first.AccountID, Generation: first.Generation, Models: []types.ModelEntry{{ID: "vision"}}})
 	before := m.preferenceBytes()
-	m.Update(types.ModelCatalogUpdatedMsg{Generation: 1})
+	_, refetch := m.Update(types.ModelCatalogUpdatedMsg{Generation: 1})
+	if refetch == nil {
+		t.Fatal("catalog update did not refetch the loaded account through the core")
+	}
+	request, ok := refetch().(FetchModelsMsg)
+	if !ok || request.AccountID != "work" {
+		t.Fatalf("catalog refetch = %#v, want the work account", request)
+	}
+	m.Update(ModelsMsg{ProviderID: request.ProviderID, AccountID: request.AccountID, Generation: request.Generation, Models: []types.ModelEntry{{ID: "vision", ContextWindow: 128000, MaxOutput: 8192, ModalitySupport: map[string]bool{provider.ModalityImage: true}, Modalities: []string{provider.ModalityImage}}}})
 	c.syncModel()
 	if c.draft.AnyDirty() || !slices.Equal(m.preferenceBytes(), before) {
 		t.Fatal("background metadata made unedited settings dirty")
@@ -305,9 +323,14 @@ func TestBuiltinInstructionsEditThroughHostAndScrollbarMatchesPopup(t *testing.T
 		if !strings.Contains(bufferPlain(buf), "Edited built-in instructions") || !strings.Contains(bufferPlain(buf), "Purpose") || !strings.Contains(bufferPlain(buf), "Apply agent") {
 			t.Fatalf("%s instructions or their Apply action were not painted", role.key)
 		}
+		// The editor's decisions replace Save/Close on the footer row.
 		bar, ok := host.ScreenRect(c.bar.ID())
-		if !ok || bar.Y+bar.H > s.actions.Bounds().Y-1 {
-			t.Fatal("agent actions overlap the settings footer")
+		closeBar := s.closeBar.Bounds()
+		if !ok || bar.Y != s.Bounds().H-1 || closeBar.Y != bar.Y || bar.X+bar.W+s.tokens.ButtonGap() != closeBar.X || closeBar.X+closeBar.W != s.contentRect.X+s.contentRect.W {
+			t.Fatalf("agent decisions are not on the footer row directly before Close: %+v close=%+v", bar, closeBar)
+		}
+		if !s.actions.Bounds().Empty() {
+			t.Fatal("window Save/Close stayed mounted beside the agent decisions")
 		}
 		host.Handle(tea.MouseClickMsg{X: bar.X + 2, Y: bar.Y, Button: tea.MouseLeft})
 		if c.draft != nil {

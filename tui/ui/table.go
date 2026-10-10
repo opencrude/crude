@@ -278,7 +278,10 @@ func (t *Table) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintCo
 		if idx == t.sel.Index() {
 			attr = cell.AttrBold
 		}
-		t.paintRowCells(buf, originX+r.X, rowY, fg, rowBG, attr, t.rows[idx])
+		// Shared list ink: a focused or selected row's fill carries every
+		// cell in the row's own ink, so secondary columns stay readable.
+		strong := st == StateFocused || st == StateSelected
+		t.paintRowCells(buf, originX+r.X, rowY, fg, rowBG, attr, t.rows[idx], strong)
 	}
 }
 
@@ -297,7 +300,7 @@ func (t *Table) paintHeader(buf *surface.CellBuffer, x, y int, bg cell.Color) {
 	}
 }
 
-func (t *Table) paintRowCells(buf *surface.CellBuffer, x, y int, fg, bg cell.Color, attr cell.Attrs, row TableRow) {
+func (t *Table) paintRowCells(buf *surface.CellBuffer, x, y int, fg, bg cell.Color, attr cell.Attrs, row TableRow, strong bool) {
 	for c := range t.cols {
 		w := t.widths[c]
 		if w < 1 {
@@ -314,7 +317,7 @@ func (t *Table) paintRowCells(buf *surface.CellBuffer, x, y int, fg, bg cell.Col
 			cattr = attr | row.Cells[c].Attr
 		}
 		cf := fg
-		if role != ColorFg && t.tokens != nil {
+		if role != ColorFg && t.tokens != nil && !strong {
 			cf = t.tokens.Color(role)
 		}
 		t.paintCell(buf, x+t.colX[c], y, w, text, t.cols[c].Align, cf, bg, cattr)

@@ -29,24 +29,33 @@ func TestAgentModelFirstFetchPaintsChoicesAndCapabilities(t *testing.T) {
 			host := widget.Host()
 			host.Resize(140, 40)
 			host.Layout()
-			s.ShowMainAgent()
+			// Opening the editor starts discovery: the core owns the model
+			// catalog, so capabilities can only come from its model list.
+			open := s.ShowMainAgent()
 			host.MarkLayout()
 			host.Layout()
-			c := s.agents
-			c.form.FocusField(fieldModel)
-			host.Focus(AgentSettingsFormID)
-			result := host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
-			if result.Cmd == nil || !c.form.Field(fieldModel).SelectOpen() {
-				t.Fatal("first model dropdown open did not start discovery")
+			if open == nil {
+				t.Fatal("opening the agent editor did not start model discovery")
 			}
-			request, ok := result.Cmd().(FetchModelsMsg)
+			request, ok := open().(FetchModelsMsg)
 			if !ok {
-				t.Fatal("dropdown did not issue an account-scoped model request")
+				t.Fatal("editor did not issue an account-scoped model request")
 			}
+			c := s.agents
 			widget.HandleEvent(ModelsMsg{ProviderID: request.ProviderID, AccountID: request.AccountID, Generation: request.Generation, Models: []types.ModelEntry{
 				{ID: "text-model", Name: "Text Mini"},
 				{ID: "vision-model", Name: "Sight Pro", ContextWindow: 128000, MaxOutput: 8192, Modalities: []string{provider.ModalityImage, provider.ModalityPDF}},
 			}})
+			if currentModel != "" {
+				// The reported regression: capabilities must fill on first
+				// open, without the user touching the model dropdown.
+				if got := c.draft.Field(fieldModalityPrefix + provider.ModalityImage).Value.String(); got != "yes" {
+					t.Fatalf("capabilities did not sync on first open: image = %q", got)
+				}
+			}
+			c.form.FocusField(fieldModel)
+			host.Focus(AgentSettingsFormID)
+			host.Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
 			buf := surface.NewCellBuffer(140, 40)
 			host.Paint(buf)
 			if !c.form.Field(fieldModel).SelectOpen() || !strings.Contains(bufferPlain(buf), "Text Mini") {

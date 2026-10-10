@@ -80,7 +80,7 @@ func SegmentedFieldState(id, label string, options []FormOption, current, descri
 // NumberFieldState builds a narrow single-line numeric field with a unit.
 func NumberFieldState(id, label string, value int, unit, description string) *FieldState {
 	f := TextFieldState(id, label, fmt.Sprintf("%d", value), description)
-	f.Unit = unit
+	f.Unit, f.Numeric = unit, true
 	return f
 }
 

@@ -229,7 +229,7 @@ func (catalog *capabilityCatalog) paintStoreRow(buffer *surface.CellBuffer, x, y
 		if state != ui.StateFocused {
 			edge = tokens.Color(ui.ColorMuted)
 		}
-		buffer.WriteString(x, y, "▎", edge, bg, 0)
+		buffer.WriteString(x, y, tokens.Glyphs().FocusEdge, edge, bg, 0)
 	}
 	if localRow == 0 && active {
 		fg = tokens.Color(ui.ColorAccent)
@@ -654,7 +654,8 @@ func (catalog *capabilityCatalog) layoutStoreBrowse(ctx ui.LayoutContext, top, h
 	catalog.searchRule.SetActive(catalog.searching())
 	catalog.searchRule.Layout(ctx, ui.Rect{Y: row, W: width, H: 1})
 	row++
-	catalog.layoutStore(ctx, ui.Rect{Y: row + 1, W: width, H: max(0, top+height-row-1)})
+	// One breathing row above the results and one below, before the status.
+	catalog.layoutStore(ctx, ui.Rect{Y: row + 1, W: width, H: max(0, top+height-row-2)})
 }
 
 func (catalog *capabilityCatalog) storeEntries() []captypes.Entry {

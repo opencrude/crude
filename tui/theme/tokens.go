@@ -24,6 +24,7 @@ type Glyphs struct {
 	CycleLeft      string // previous-value affordance of a cycle control
 	CycleRight     string // next-value affordance of a cycle control
 	Modified       string // unsaved-change marker (rail, footer, field labels)
+	FocusEdge      string // left edge marking the focused form row or selected card
 }
 
 // Typography captures semantic text emphasis that themes may vary without
@@ -72,6 +73,7 @@ func DefaultGlyphs() Glyphs {
 		CycleLeft:      "‹",
 		CycleRight:     "›",
 		Modified:       "●",
+		FocusEdge:      "▎",
 	}
 }
 

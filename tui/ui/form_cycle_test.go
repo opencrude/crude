@@ -64,11 +64,29 @@ func TestSegmentedClickSelectsThatSegment(t *testing.T) {
 	}
 }
 
-func TestSwitchPaintsStateMarkerNotArrows(t *testing.T) {
-	_, _, buf := paintedForm(t, BoolFieldState("on", "Enabled", true, ""), BoolFieldState("off", "Hidden", false, ""))
+// Spacious switches are a compact ‹ On › box in the stepper's language,
+// sized to the widest state so both rows' arrows line up. Never circles.
+func TestSwitchIsACompactArrowBox(t *testing.T) {
+	form, model, buf := paintedForm(t, BoolFieldState("on", "Enabled", true, ""), BoolFieldState("off", "Hidden", false, ""))
 	plain := formBufferPlain(buf)
-	if !strings.Contains(plain, "● On") || !strings.Contains(plain, "○ Off") || strings.Contains(plain, "←") {
-		t.Fatalf("switches must read ● On / ○ Off:\n%s", plain)
+	if strings.ContainsAny(plain, "●○") {
+		t.Fatalf("switches must not paint circle markers:\n%s", plain)
+	}
+	on, off := form.Field("on"), form.Field("off")
+	onRow, offRow := formRowText(buf, on.Bounds().Y), formRowText(buf, off.Bounds().Y)
+	if !strings.Contains(onRow, "On") || !strings.Contains(offRow, "Off") {
+		t.Fatalf("switch states not painted:\n%s", plain)
+	}
+	if strings.Index(onRow, "‹") != strings.Index(offRow, "‹") || strings.Index(onRow, "›") != strings.Index(offRow, "›") {
+		t.Fatalf("switch arrows do not line up:\n%s", plain)
+	}
+	if w := off.boxWidth(off.Bounds().W); w > 12 {
+		t.Fatalf("switch box width %d, want compact", w)
+	}
+	// Any click on the row flips it, including the label.
+	clickField(form, "off", 1)
+	if got := model.Field("off").Value.String(); got != "on" {
+		t.Fatalf("label click left the switch %q", got)
 	}
 }
 
@@ -81,6 +99,48 @@ func TestUnitFieldIsContentSized(t *testing.T) {
 	}
 	if w := form.Field("delay").Control().Bounds().W; w > 20 {
 		t.Fatalf("number input width %d, want a short box", w)
+	}
+}
+
+// A stepper is an ordered scale: ‹ at the first value and › at the last hold
+// still (and their arrows dim) instead of wrapping to the other end, for
+// clicks and keys alike. Clicking the label column never steps.
+func TestStepperHoldsAtItsEnds(t *testing.T) {
+	cycle := CycleFieldState("tries", "Attempts", []string{"1", "2", "3"}, "1", "")
+	form, model, buf := paintedForm(t, cycle)
+	left, right := formColOf(buf, 0, "‹"), formColOf(buf, 0, "›")
+	if left < 0 || right < 0 {
+		t.Fatalf("stepper not painted:\n%s", formBufferPlain(buf))
+	}
+	tokens := NewTokenSet(theme.DefaultDark())
+	if got := buf.Get(left, 0).FG; !got.Equal(tokens.Color(ColorMuted)) {
+		t.Fatalf("‹ at the first value should dim, got %v", got)
+	}
+	clickField(form, "tries", left)
+	if got := model.Field("tries").Value.String(); got != "1" {
+		t.Fatalf("‹ at the first value wrapped to %q", got)
+	}
+	clickField(form, "tries", 1)
+	if got := model.Field("tries").Value.String(); got != "1" {
+		t.Fatalf("label click stepped to %q", got)
+	}
+	field := form.Field("tries")
+	key := func(code rune) {
+		field.Handle(EventContext{}, KeyEvent(tea.KeyPressMsg{Code: code}))
+	}
+	key(tea.KeyLeft)
+	if got := model.Field("tries").Value.String(); got != "1" {
+		t.Fatalf("Left at the first value wrapped to %q", got)
+	}
+	key(tea.KeyRight)
+	key(tea.KeyRight)
+	key(tea.KeyRight)
+	if got := model.Field("tries").Value.String(); got != "3" {
+		t.Fatalf("Right past the last value = %q, want it held at 3", got)
+	}
+	clickField(form, "tries", right)
+	if got := model.Field("tries").Value.String(); got != "3" {
+		t.Fatalf("› at the last value wrapped to %q", got)
 	}
 }
 

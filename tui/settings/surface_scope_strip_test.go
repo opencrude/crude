@@ -118,7 +118,13 @@ func TestSettingsFooterHasNoBlankRowBetweenScopeAndActions(t *testing.T) {
 		if !strings.Contains(labels, "Workspace") {
 			t.Fatalf("scope=%s footer labels=%q", scope, labels)
 		}
-		if rule := settingsRow(buf, labelsRow-1, 104); strings.Trim(rule, " ─│┃") != "" {
+		// A separator keeps the rail's scope switch apart from the page's
+		// notice and buttons, continuing the rail divider through the footer.
+		if workX := strings.Index(labels, "Workspace"); !strings.Contains(labels[workX:], "│ ") {
+			t.Fatalf("scope=%s footer lacks the separator after the scope switch: %q", scope, labels)
+		}
+		// The rule may only carry the rail divider's junction (┼).
+		if rule := settingsRow(buf, labelsRow-1, 104); strings.Trim(rule, " ─│┃┼") != "" {
 			t.Fatalf("scope=%s footer rule row carries text: %q", scope, rule)
 		}
 		actions := settingsRow(buf, labelsRow, 104)

@@ -834,14 +834,18 @@ next tick finally synced.
 
 - Every Application/Workspace Settings page follows
   `docs/reference/settings-design.md`: the surface paints one three-row header
-  (title/breadcrumb, subtitle), fields are one row, the focused field's help is
-  wrapped below the body, and the footer shows unsaved status beside
-  `[ Save ]` (enabled only when dirty) and `[ Close ]`. Catalogs never paint
-  their own titles; rail rows mark unsaved pages.
-- Controls: switches for booleans, segments for short choices, `‹ value ›`
-  steppers whose `‹` always steps back, unit-bearing content-sized number
-  inputs, name/value tables for lists. Never put units in labels, raw JSON in
-  ordinary fields, or a per-page footer/label dialect.
+  (title/breadcrumb, subtitle), fields are one row with a breathing row between
+  them, the hovered (else focused) field's help reads in the empty row above the
+  footer rule, and the shared one-row footer owns page notices, unsaved status
+  and the buttons — `[ Close ]` always rightmost, preceded by `[ Save ]`
+  or by an editor's decisions (primary first, Back last). Catalogs never paint their own titles or help strips;
+  rail rows mark unsaved pages; rail and search share one navigation path.
+- Controls: every box starts on one value column and shares one width; rows are
+  never filled (focus = accent edge + label). Compact `‹ On ›` boxes for booleans (never
+  `●`/`○`), segment pills for short choices, `‹ value ›` steppers over naturally
+  ordered ladders whose ends hold, short number boxes, name/value tables for
+  lists. Never put units in labels, raw JSON in ordinary fields, or a per-page
+  footer/label dialect.
 - Skills/MCP search live after a typing pause over the shared `ProgressRule`;
   a newer live search supersedes an in-flight one. Language Servers is a
   list → detail page; `LSPSettings.Languages` is the only server authority.

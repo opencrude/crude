@@ -1,6 +1,7 @@
 package settings
 
 import (
+	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
@@ -58,8 +59,16 @@ func TestSettingsFormMouseHoverKeepsKeyboardTarget(t *testing.T) {
 	}
 	buf := surface.NewCellBuffer(100, 26)
 	host.Paint(buf)
-	if got, want := buf.Get(x, y).BG, body.tokens.Color(ui.ColorHover); !got.Equal(want) {
-		t.Fatalf("unfocused form hover bg=%v want %v", got, want)
+	// Hover lights the row's control, never the label column.
+	if got, want := buf.Get(x, y).BG, body.tokens.Color(ui.ColorPopupBg); !got.Equal(want) {
+		t.Fatalf("hovered label bg=%v want the surface %v", got, want)
+	}
+	lit := false
+	for col := x; col < formRect.X+formRect.W; col++ {
+		lit = lit || buf.Get(col, y).BG.Equal(body.tokens.Color(ui.ColorHover))
+	}
+	if !lit {
+		t.Fatal("hovered row's control did not take the hover fill")
 	}
 	body.form.FocusFirst()
 	body.FocusForm()
@@ -73,11 +82,15 @@ func TestSettingsFormMouseHoverKeepsKeyboardTarget(t *testing.T) {
 	}
 	buf = surface.NewCellBuffer(100, 26)
 	host.Paint(buf)
-	if got, want := buf.Get(x, y).BG, body.tokens.Color(ui.ColorHover); !got.Equal(want) {
-		t.Fatalf("hovered row bg=%v want %v", got, want)
+	if got, want := buf.Get(x, y).BG, body.tokens.Color(ui.ColorPopupBg); !got.Equal(want) {
+		t.Fatalf("hovered label bg=%v want the surface %v", got, want)
 	}
-	if got, want := buf.Get(x+body.form.Field("word-wrap").Bounds().W/2, y).BG, body.tokens.Color(ui.ColorHover); !got.Equal(want) {
-		t.Fatalf("hovered row control bg=%v want %v", got, want)
+	lit = false
+	for col := x; col < formRect.X+formRect.W; col++ {
+		lit = lit || buf.Get(col, y).BG.Equal(body.tokens.Color(ui.ColorHover))
+	}
+	if !lit {
+		t.Fatal("hovered row control did not take the hover fill")
 	}
 	if got, want := buf.Get(x+1, y).FG, body.tokens.Color(ui.ColorFg); !got.Equal(want) {
 		t.Fatalf("hovered label fg=%v want unfocused %v", got, want)
@@ -96,5 +109,38 @@ func TestSettingsFormMouseHoverKeepsKeyboardTarget(t *testing.T) {
 	res = host.Handle(tea.MouseClickMsg{X: x, Y: y, Button: tea.MouseLeft})
 	if !res.Handled || model.value(catEditor, "word-wrap") != "on" {
 		t.Fatalf("click did not toggle Word wrap: result=%+v value=%q", res, model.value(catEditor, "word-wrap"))
+	}
+}
+
+// Field help lives in the empty row above the footer rule: the hovered
+// field's description, otherwise the focused field's. It never takes body
+// rows, never sits beside a control, and the footer row stays one line.
+func TestFieldHelpReadsInTheRowAboveTheFooterRule(t *testing.T) {
+	th := theme.DefaultDark()
+	model := New(th, types.AppSettings{Editor: types.EditorSettings{TabSize: 4}}, nil)
+	model.SelectCategory(catEditor)
+	body := NewSurface(th, model)
+	host := ui.NewHost(th, body)
+	body.SetFocusHandler(func(id ui.ComponentID) { host.Focus(id) })
+	host.Resize(120, 30)
+	body.form.FocusField("tab-size")
+	body.FocusForm()
+	host.MarkLayout()
+	host.Layout()
+	helpRow := body.Bounds().H - footerRows - 1
+	paint := func() string {
+		buf := surface.NewCellBuffer(120, 30)
+		host.Paint(buf)
+		return settingsRow(buf, helpRow, 120)
+	}
+	tabSize, wordWrap := body.form.Field("tab-size").FieldState(), body.form.Field("word-wrap").FieldState()
+	if row := paint(); !strings.Contains(row, tabSize.Description[:20]) {
+		t.Fatalf("focused field's help not in the row above the rule: %q", row)
+	}
+	formRect, _ := host.ScreenRect(WorkspaceSettingsFormID)
+	wrap := body.form.Field("word-wrap").Bounds()
+	host.Handle(tea.MouseMotionMsg{X: formRect.X + 2, Y: formRect.Y + wrap.Y})
+	if row := paint(); !strings.Contains(row, wordWrap.Description[:20]) {
+		t.Fatalf("hovered field's help did not replace the focused one: %q", row)
 	}
 }

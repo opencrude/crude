@@ -746,10 +746,7 @@ func TestMultiAgentControlAlignsUnderModelColumn(t *testing.T) {
 		t.Fatalf("missing rows: mainY=%d multiY=%d", mainY, multiY)
 	}
 	modelCol := colOfPos(buf, mainY, "stealth/ox-alpha")
-	ctrlCol := colOfPos(buf, multiY, "●")
-	if ctrlCol < 0 {
-		ctrlCol = colOfPos(buf, multiY, "○")
-	}
+	ctrlCol := colOfPos(buf, multiY, "‹")
 	if modelCol < 0 || ctrlCol < 0 {
 		t.Fatalf("model col=%d ctrl col=%d", modelCol, ctrlCol)
 	}

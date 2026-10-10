@@ -184,25 +184,30 @@ func (catalog *agentCatalog) refreshCapabilityLimits() {
 				reason = "Required child reporting"
 				field.Value = ui.BoolValue(true)
 			}
+			// Only an exceptional state (denied, required, unavailable) reads
+			// under its switch; the routine one is the focused field's inline help.
+			field.DescriptionImportant = reason != ""
 			if !custom && reason == "" {
 				reason = "Inherited role selection; choose Custom to override"
 			}
 			if custom && reason == "" {
 				reason = "Selected intent; effective schema inclusion is request-bound"
 			}
-			field.Description, field.DescriptionImportant = reason, true
+			field.Description = reason
 		}
 		if strings.HasPrefix(field.ID, "agent-skill/") {
 			id := strings.TrimPrefix(field.ID, "agent-skill/")
 			skill, exists := catalog.model.capabilities.Skills[id]
 			field.Description = "Inherit " + mapDefault(skill.Mode, "automatic") + "; scripts still need execution permission"
-			field.DescriptionImportant = true
+			field.DescriptionImportant = false
 			if !exists {
 				field.Description = "Unavailable skill; saved invocation intent is retained"
+				field.DescriptionImportant = true
 			}
 			for _, entry := range catalog.model.capabilitySnapshot.Entries {
 				if entry.ID == id && entry.Kind == captypes.KindSkill && entry.Reason != "" {
 					field.Description = entry.Reason + "; invocation intent retained"
+					field.DescriptionImportant = true
 				}
 			}
 		}

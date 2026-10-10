@@ -263,6 +263,22 @@ func (w *WindowFrameWidget) NeedsFrame() bool {
 	return ok && body.NeedsFrame()
 }
 
+// Animated is content with continuous motion (an indeterminate progress
+// rule), as opposed to a merely blinking caret: while it reports true the
+// shell ticks at frame rate instead of the idle cadence.
+type Animated interface {
+	NeedsAnimation() bool
+}
+
+// NeedsAnimation forwards the body's continuous-motion request.
+func (w *WindowFrameWidget) NeedsAnimation() bool {
+	if w == nil {
+		return false
+	}
+	body, ok := w.Body().(Animated)
+	return ok && body.NeedsAnimation()
+}
+
 func (w *WindowFrameWidget) Body() Component {
 	if w == nil || w.frame == nil {
 		return nil

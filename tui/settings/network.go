@@ -59,7 +59,7 @@ func (m *Model) buildNetworkProxyForm(settings network.Settings) *ui.FormModel {
 	}, settings.ProxyMode, "From environment uses HTTP_PROXY, HTTPS_PROXY and NO_PROXY. None connects directly. Custom URL uses the proxy below.")
 	proxyURL := ui.PasswordFieldState(fieldNetworkProxyURL, "Proxy URL", settings.ProxyURL,
 		"Used in Custom mode. HTTP(S), SOCKS4/SOCKS5 use local DNS; SOCKS4a/SOCKS5h use proxy/remote DNS. Credentials are masked and never copied.")
-	proxyURL.DescriptionImportant = true
+	proxyURL.Placeholder = "http://proxy.example:8080 or socks5h://host:1080"
 	proxyURL.Validator = func(value ui.FieldValue) []string {
 		if proxyURL.ReadOnly {
 			return nil
@@ -88,16 +88,13 @@ func (m *Model) buildNetworkCertificatesForm(settings network.Settings) *ui.Form
 	systemTrust.ReadOnly = true
 	caFile := ui.TextFieldState(fieldNetworkCAFile, "Custom CA file", settings.CAFile,
 		"Optional PEM certificate authorities added to system trust. This trusts their issuers normally; it is not a certificate pin or TLS bypass.")
-	caFile.DescriptionImportant = true
 	trustedHost := ui.TextFieldState(fieldNetworkTrustedCertificateHost, "Exception host", settings.TrustedCertificateHost,
 		"Exact hostname for the leaf certificate exception; no wildcard or other destination is covered.")
 	trustedPin := ui.TextFieldState(fieldNetworkTrustedCertificatePin, "Leaf SHA-256", settings.TrustedCertificateSHA256,
 		"Exact leaf DER pin only; accepts self-signed/invalid certificates for this host, never a blanket TLS bypass.")
-	trustedPin.DescriptionImportant = true
 	trustedPin.Validator = optionalSHA256Validator
 	clientHost := ui.TextFieldState(fieldNetworkClientCertificateHost, "Client host", settings.ClientCertificateHost,
 		"Exact hostname allowed to receive this mTLS certificate and key. The identity is never offered to another host.")
-	clientHost.DescriptionImportant = true
 	return m.networkForm("certificates",
 		ui.SeparatorFieldState("network-server-trust", "Server trust"),
 		systemTrust,
@@ -180,7 +177,6 @@ func (m *Model) networkForm(page string, fields ...*ui.FieldState) *ui.FormModel
 	scope := ui.TextFieldState("network-"+page+"-scope", "Workspace policy", "Inherited from Application Settings",
 		"Network routing, trust, and credential paths are application-owned. This workspace cannot edit or override them.")
 	scope.ReadOnly = true
-	scope.DescriptionImportant = true
 	return formModel(append([]*ui.FieldState{
 		ui.SeparatorFieldState("network-"+page+"-inheritance", "Application-owned network policy"),
 		scope,

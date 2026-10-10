@@ -136,6 +136,9 @@ func (catalog *capabilityCatalog) detailCollection() bool {
 
 func (catalog *capabilityCatalog) actionBars() []*ui.ActionBar {
 	bars := []*ui.ActionBar{catalog.bar}
+	if catalog.footerDecisions() {
+		bars = nil // the decision bar is laid out in the settings footer
+	}
 	if len(catalog.more.ButtonLabels()) > 0 {
 		bars = append(bars, catalog.more)
 	}
@@ -169,7 +172,11 @@ func (catalog *capabilityCatalog) layoutActions(buttons []ui.ActionBarButton) {
 		rows[len(rows)-1] = append(rows[len(rows)-1], button)
 		used += buttonWidth
 	}
-	for len(catalog.extraBars)+2 < len(rows) {
+	capacity := 2 // bar and more before any extra rows
+	if catalog.footerDecisions() {
+		capacity = 1
+	}
+	for len(catalog.extraBars)+capacity < len(rows) {
 		bar := ui.NewActionBar(ui.NewID(capabilityCatalogID, "actions-"+strconv.Itoa(len(catalog.extraBars)+2)), catalog.tokens)
 		bar.SetAlignEnd(false)
 		bar.SetCancelAction("settings.capability.back")
@@ -177,6 +184,10 @@ func (catalog *capabilityCatalog) layoutActions(buttons []ui.ActionBarButton) {
 		catalog.extraBars = append(catalog.extraBars, bar)
 	}
 	bars := append([]*ui.ActionBar{catalog.bar, catalog.more}, catalog.extraBars...)
+	if catalog.footerDecisions() {
+		// Operations fill the body rows; the first bar is the footer's.
+		bars = bars[1:]
+	}
 	for index, bar := range bars {
 		bar.SetExitActions("settings.capability.actions-next/"+strconv.Itoa(index), "settings.capability.actions-prev/"+strconv.Itoa(index))
 		if index < len(rows) {
@@ -203,6 +214,20 @@ func (catalog *capabilityCatalog) moveActionFocus(index int, forward bool) {
 	} else {
 		catalog.focusContent()
 	}
+}
+
+// moveDecisionFocus leaves the footer decision bar: forward to Close,
+// backward to the last operation row or the page content.
+func (catalog *capabilityCatalog) moveDecisionFocus(forward bool) {
+	if forward {
+		catalog.owner.focusID(WorkspaceSettingsCloseBarID)
+		return
+	}
+	if bars := catalog.actionBars(); len(bars) > 0 {
+		catalog.owner.focusID(bars[len(bars)-1].ID())
+		return
+	}
+	catalog.focusContent()
 }
 
 func (catalog *capabilityCatalog) layoutTable(ctx ui.LayoutContext, table *ui.Table, scrollbar *ui.ScrollbarControl, rect ui.Rect) {
@@ -237,9 +262,12 @@ func (catalog *capabilityCatalog) layoutDetailBody(ctx ui.LayoutContext, rect ui
 	var body strings.Builder
 	for _, field := range model.Fields() {
 		if field.ReadOnly {
-			body.WriteString(field.Label + "\n" + field.Value.String() + "\n")
+			if body.Len() > 0 {
+				body.WriteString("\n")
+			}
+			body.WriteString(field.Label + "\n\n" + alignKeyValues(field.Value.String()) + "\n")
 			if field.Description != "" {
-				body.WriteString(field.Description + "\n")
+				body.WriteString("\n" + field.Description + "\n")
 			}
 		} else {
 			inputs = append(inputs, field)
@@ -260,12 +288,41 @@ func (catalog *capabilityCatalog) layoutDetailBody(ctx ui.LayoutContext, rect ui
 		}
 		catalog.form.SetForm(form, "", "")
 		inputHeight = min(max(0, rect.H/2), catalog.form.PreferredHeight(rect.H))
-		catalog.form.SetHideDescriptions(rect.W < 55)
 		catalog.layoutForm(ctx, ui.Rect{X: rect.X, Y: rect.Y, W: rect.W, H: inputHeight})
 	} else {
 		catalog.form.Layout(ctx, ui.Rect{})
 	}
 	catalog.reader.Layout(ctx, ui.Rect{X: rect.X, Y: rect.Y + inputHeight, W: rect.W, H: max(0, rect.H-inputHeight)})
+}
+
+// alignKeyValues lines up each run of "Key: value" lines on one value column
+// so a read-only detail reads as a table instead of a ragged list.
+func alignKeyValues(text string) string {
+	lines := strings.Split(text, "\n")
+	keyOf := func(line string) (string, string, bool) {
+		key, value, ok := strings.Cut(line, ": ")
+		if !ok || key == "" || len(key) > 24 || strings.Count(key, " ") > 2 {
+			return "", "", false
+		}
+		return key, value, true
+	}
+	for start := 0; start < len(lines); {
+		end, width := start, 0
+		for end < len(lines) {
+			key, _, ok := keyOf(lines[end])
+			if !ok {
+				break
+			}
+			width = max(width, len(key))
+			end++
+		}
+		for index := start; index < end; index++ {
+			key, value, _ := keyOf(lines[index])
+			lines[index] = key + strings.Repeat(" ", width-len(key)+2) + value
+		}
+		start = max(end, start+1)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func (catalog *capabilityCatalog) layoutDetail(ctx ui.LayoutContext, top, height int) {
@@ -357,25 +414,33 @@ func (catalog *capabilityCatalog) entityBytes() []byte {
 	return encoded
 }
 
-func (catalog *capabilityCatalog) detailActions(button func(string, string) ui.ActionBarButton) ([]ui.ActionBarButton, []ui.ActionBarButton) {
-	primary := []ui.ActionBarButton{button("Back", "back")}
+// detailActions splits a detail page's buttons into its footer decision
+// (the install/review step, then Back — always last) and the page's own
+// operations, which stay above the footer.
+func (catalog *capabilityCatalog) detailActions(button func(string, string) ui.ActionBarButton) (decision, primary, secondary []ui.ActionBarButton) {
+	back := button("Back", "back")
+	decide := func(label, operation string) []ui.ActionBarButton {
+		main := button(label, operation)
+		main.Variant = ui.VariantPrimary
+		return []ui.ActionBarButton{main, back}
+	}
 	if catalog.detailPage == "acquisition" && catalog.acquisition != nil {
 		label := "Install reviewed"
 		if catalog.acquisition.Operation == "update" {
 			label = "Update reviewed"
 		}
-		return append(primary, button(label, "confirm-acquisition")), nil
+		return decide(label, "confirm-acquisition"), nil, nil
 	}
-	var secondary []ui.ActionBarButton
+	decision = []ui.ActionBarButton{back}
 	entry := catalog.entry()
 	if !entry.Installed && entry.State == "unsupported" {
-		return primary, nil
+		return decision, nil, nil
 	}
 	model := catalog.owner.model
 	if catalog.kind == captypes.KindSkill {
 		skill, installed := model.capabilities.Skills[catalog.id]
 		if !installed {
-			return append(primary, button("Install", "install")), nil
+			return decide("Install", "install"), nil, nil
 		}
 		switch catalog.detailPage {
 		case "instructions":
@@ -404,7 +469,7 @@ func (catalog *capabilityCatalog) detailActions(button func(string, string) ui.A
 	} else {
 		connection, installed := model.capabilities.Connections[catalog.id]
 		if !installed {
-			return append(primary, button("Install", "install")), nil
+			return decide("Install", "install"), nil, nil
 		}
 		state := catalog.connectionState()
 		switch catalog.detailPage {
@@ -448,7 +513,7 @@ func (catalog *capabilityCatalog) detailActions(button func(string, string) ui.A
 			}
 		}
 	}
-	return primary, secondary
+	return decision, primary, secondary
 }
 
 func capabilityReadOnly(id, label, body, description string) *ui.FieldState {

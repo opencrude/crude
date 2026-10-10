@@ -90,7 +90,7 @@ func TestFormKeyValuesFieldCommitsThroughModel(t *testing.T) {
 	host.Layout()
 	host.Paint(buf)
 	plain := plainGrid(buf, 60, 16)
-	if !strings.Contains(plain, "Use one non-empty Name: value header per line.") {
+	if !strings.Contains(plain, "Use one non-empty Name: value header") {
 		t.Fatalf("validation message missing from the painted field:\n%s", plain)
 	}
 	if !strings.Contains(plain, "Sent with every request.") {

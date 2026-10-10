@@ -508,6 +508,15 @@ func (m *App) wantsFastTick() bool {
 	if m.gitPanel != nil && m.gitPanel.Writing() && m.gitPanelOpen() {
 		return true
 	}
+	// A window showing continuous motion (settings capability search) moves
+	// at frame rate; a caret blink alone keeps the idle cadence.
+	if m.windowManager != nil {
+		for _, fw := range m.windowManager.Windows() {
+			if animated, ok := fw.Content.(ui.Animated); ok && animated.NeedsAnimation() {
+				return true
+			}
+		}
+	}
 	// Popup reveal animations need the fast tick to render the slide-in.
 	return len(m.reveals) > 0
 }

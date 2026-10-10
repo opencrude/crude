@@ -39,7 +39,13 @@ func TestSettingsWindowHoverRendersWithoutChangingKeyboardTarget(t *testing.T) {
 	if rowY < formRect.Y || rowY >= formRect.Y+formRect.H {
 		t.Fatalf("Thinking row not visible in settings form: y=%d form=%+v", rowY, formRect)
 	}
-	localX := formRect.X + 2
+	// Hover lights the row's control (the Thinking segments), never its label.
+	row := strings.Split(bufferPlain(before), "\n")[rowY]
+	localX := len([]rune(row[:strings.Index(row, " None ")])) + 1 // an unselected segment
+	if localX < formRect.X {
+		t.Fatalf("Thinking segments not painted in the form: x=%d", localX)
+	}
+	label := before.Get(formRect.X+2, rowY).BG
 	baseline := before.Get(localX, rowY).BG
 	px, py := window.Position()
 	selected := body.Model().SelectedCategory()
@@ -55,6 +61,9 @@ func TestSettingsWindowHoverRendersWithoutChangingKeyboardTarget(t *testing.T) {
 	}
 	if got, want := painted.Get(localX, rowY).FG, tokens.Color(ui.ColorFg); !got.Equal(want) {
 		t.Fatalf("hovered field fg=%v want unfocused %v", got, want)
+	}
+	if got := painted.Get(formRect.X+2, rowY).BG; !got.Equal(label) {
+		t.Fatalf("hover filled the label column: %v, was %v", got, label)
 	}
 
 	// Moving over the category rail should not navigate without a click.

@@ -276,7 +276,7 @@ func (g *KeyValueGrid) Paint(buf *surface.CellBuffer, originX, originY int, ctx 
 		panel = g.color(ColorHover)
 	}
 	FillRect(buf, 0, 0, Rect{X: x, Y: y, W: r.W, H: r.H}, cell.BlankCell(panel))
-	g.paintHeaderRow(buf, x, y, r.W)
+	g.paintHeaderRow(buf, x, y, r.W, panel)
 	off, vh := g.scroll.Offset(), g.scroll.Viewport()
 	for row := 0; row < vh && off+row < len(g.rows); row++ {
 		g.paintRow(buf, x, y, y+1+row, r.W, off+row, ctx)
@@ -286,10 +286,10 @@ func (g *KeyValueGrid) Paint(buf *surface.CellBuffer, originX, originY int, ctx 
 	}
 }
 
-func (g *KeyValueGrid) paintHeaderRow(buf *surface.CellBuffer, x, y, w int) {
-	headBG := g.color(ColorPopupBg)
+// paintHeaderRow captions the columns on the table's own panel fill, so the
+// whole table reads as one raised control rather than a header slab.
+func (g *KeyValueGrid) paintHeaderRow(buf *surface.CellBuffer, x, y, w int, headBG cell.Color) {
 	headFG := g.color(ColorMuted)
-	FillRect(buf, 0, 0, Rect{X: x, Y: y, W: w, H: 1}, cell.BlankCell(headBG))
 	nameCaption, valueCaption := g.captions()
 	buf.WriteString(x+1, y, rendering.TruncateVisual(nameCaption, max(1, w-2), ""), headFG, headBG, cell.AttrBold)
 	if x0 := g.nameWidth(w) + 1; x0 < w-keyValueGutter {
@@ -410,7 +410,16 @@ func (g *KeyValueGrid) paintAddRow(buf *surface.CellBuffer, x, y, w int, ctx Pai
 	if g.addLabel != "" {
 		label = g.addLabel
 	}
-	buf.WriteString(x+1, y, rendering.TruncateVisual(label, max(1, w-2), ""), primary, bg, attr)
+	// The append row is an action: an accent "+" names it as one.
+	plusFG := g.color(ColorAccent)
+	if st == StateFocused {
+		plusFG = primary
+	}
+	if st == StateDefault {
+		primary = g.color(ColorMuted)
+	}
+	buf.WriteString(x+1, y, "+", plusFG, bg, cell.AttrBold)
+	buf.WriteString(x+3, y, rendering.TruncateVisual(label, max(1, w-4), ""), primary, bg, attr)
 }
 
 // editor returns the retained editor for a column, creating it on first use.

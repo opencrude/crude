@@ -663,7 +663,7 @@ Application | Workspace switch in the **bottom-left** rail footer. Both
 labels stay visible and clickable; the active side uses accent (orange)
 text on a distinct background. Save/Close stay mounted across overlay
 ticks (`SetModel` must not rebuild the action bars). Page anatomy, controls,
-help strip and footer status follow [Settings design language](settings-design.md). Command Palette
+field help and footer status follow [Settings design language](settings-design.md). Command Palette
 entries:
 
 - `settings.open` — Application Settings

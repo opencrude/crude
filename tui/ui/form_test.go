@@ -46,8 +46,10 @@ func TestFormRoutesPasteAndMouseToRetainedFields(t *testing.T) {
 		t.Fatalf("targeted Ctrl+V paste=%q", got)
 	}
 
-	// The second field starts after the title, detail, divider, and first row.
-	host.Handle(tea.MouseClickMsg{X: 20, Y: 4, Button: tea.MouseLeft})
+	// Click the right half of the second field's control (it starts after
+	// the title, detail, divider, first row and the breathing gap).
+	cycle := form.Field("cycle")
+	host.Handle(tea.MouseClickMsg{X: cycle.Bounds().X + cycle.valueX(cycle.Bounds().W) + cycle.boxWidth(cycle.Bounds().W) - 2, Y: cycle.Bounds().Y, Button: tea.MouseLeft})
 	if got := model.Field("cycle").Value.String(); got != "two" {
 		t.Fatalf("mouse cycle value=%q, want two", got)
 	}
@@ -167,32 +169,34 @@ func TestFormFieldPaintsDirtyMarkerOnModifiedLabel(t *testing.T) {
 		return b.String()
 	}
 
-	if plain := paint(); strings.Contains(plain, "Tab size •") {
+	if plain := paint(); strings.Contains(plain, "Tab size ●") {
 		t.Fatalf("unmodified field must not paint dirty marker:\n%s", plain)
 	}
 	model.SetValue("tab-size", StringValue("8"))
 	if !model.Field("tab-size").Dirty {
 		t.Fatal("field must be dirty after SetValue diverges from Initial")
 	}
-	if plain := paint(); !strings.Contains(plain, "Tab size •") {
-		t.Fatalf("dirty field must paint • marker on the label:\n%s", plain)
+	if plain := paint(); !strings.Contains(plain, "Tab size ●") {
+		t.Fatalf("dirty field must paint ● marker on the label:\n%s", plain)
 	}
 	model.Commit()
-	if plain := paint(); strings.Contains(plain, "Tab size •") {
+	if plain := paint(); strings.Contains(plain, "Tab size ●") {
 		t.Fatalf("committed field must drop the dirty marker:\n%s", plain)
 	}
 }
 
-func TestMultilineFormLabelsStayOnSurfaceWhileSingleLineLabelsHighlight(t *testing.T) {
+// Spacious rows are never filled: every label stays on the surface while
+// focused, and the focus fill belongs to the control's own box, which starts
+// on the label row in the shared value column — multi-line editors included.
+func TestSpaciousLabelsStayOnSurfaceWhileControlBoxesTakeFocus(t *testing.T) {
 	tokens := NewTokenSet(theme.DefaultDark())
 	for _, tc := range []struct {
 		name  string
 		field *FieldState
-		want  cell.Color
 	}{
-		{"textarea", TextAreaFieldState("value", "Instructions", "line one\nline two", ""), tokens.Color(ColorPopupBg)},
-		{"key-values", KeyValuesFieldState("value", "Headers", "Name: value", ""), tokens.Color(ColorPopupBg)},
-		{"single-line", TextFieldState("value", "Name", "short", ""), tokens.Color(ColorHover)},
+		{"textarea", TextAreaFieldState("value", "Instructions", "line one\nline two", "")},
+		{"key-values", KeyValuesFieldState("value", "Headers", "Name: value", "")},
+		{"single-line", TextFieldState("value", "Name", "short", "")},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			model := NewFormModel()
@@ -202,14 +206,13 @@ func TestMultilineFormLabelsStayOnSurfaceWhileSingleLineLabelsHighlight(t *testi
 			form.FocusField(tc.field.ID)
 			buf := surface.NewCellBuffer(55, 12)
 			form.Paint(buf, 0, 0, PaintContext{Focused: true})
-			label := form.Field(tc.field.ID).Bounds()
-			if got := buf.Get(2, label.Y).BG; !got.Equal(tc.want) {
-				t.Fatalf("focused %s label background = %v, want %v", tc.name, got, tc.want)
+			field := form.Field(tc.field.ID)
+			label := field.Bounds()
+			if got := buf.Get(2, label.Y).BG; !got.Equal(tokens.Color(ColorPopupBg)) {
+				t.Fatalf("focused %s label background = %v, want the surface", tc.name, got)
 			}
-			if tc.name == "textarea" {
-				if got := buf.Get(3, label.Y+1).BG; got.IsDefault() || !got.Equal(tokens.Color(ColorHover)) {
-					t.Fatalf("textarea body lost its own focused fill: %v", got)
-				}
+			if got := buf.Get(field.valueX(label.W), label.Y).BG; !got.Equal(tokens.Color(ColorHover)) {
+				t.Fatalf("focused %s control box = %v, want the focus fill", tc.name, got)
 			}
 		})
 	}
@@ -452,12 +455,12 @@ func TestFormNavRowPaintsChevronNotPrompt(t *testing.T) {
 		Type: FieldNav, Inherited: true, InheritedFrom: "workspace",
 	})
 	form := NewForm("form", model, "", "", tokens)
-	form.Layout(LayoutContext{}, Rect{W: 60, H: 4})
-	buf := surface.NewCellBuffer(60, 4)
+	form.Layout(LayoutContext{}, Rect{W: 80, H: 4})
+	buf := surface.NewCellBuffer(80, 4)
 	form.Paint(buf, 0, 0, PaintContext{Focused: true})
 	var b strings.Builder
 	for y := 0; y < 4; y++ {
-		for x := 0; x < 60; x++ {
+		for x := 0; x < 80; x++ {
 			if c := buf.Get(x, y); c.Char != 0 {
 				b.WriteRune(c.Char)
 			}
@@ -736,7 +739,7 @@ func TestCycleControlAlignsWithSharedValueColumn(t *testing.T) {
 		t.Fatalf("missing rows:\n%s", formBufferPlain(buf))
 	}
 	provider := formColOf(buf, navY, "openrouter")
-	cycle := formColOf(buf, cycleY, "● On")
+	cycle := formColOf(buf, cycleY, "‹ On ›")
 	if provider < 0 || cycle < 0 {
 		t.Fatalf("missing value cells: provider=%d cycle=%d\n%s", provider, cycle, formBufferPlain(buf))
 	}
