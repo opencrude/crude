@@ -184,6 +184,16 @@ func (m *App) dockTerminal(id string) {
 	if !ok {
 		return
 	}
+	m.dockTerminalInfo(info)
+}
+
+// A create receipt is already exact core evidence even when the independent
+// inventory replica has not arrived. Mount from that immutable value on Update.
+func (m *App) dockTerminalInfo(info workspace.TerminalInfo) {
+	if m.termDock == nil {
+		return
+	}
+	id := info.ID
 	screen := m.ensureTermScreen(id, info.Title)
 	screen.SetFloating(false)
 	screen.SetAttention(false)

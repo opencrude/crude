@@ -179,6 +179,7 @@ func (m *App) presentGitSnapshot(snapshot workspace.GitSnapshot) {
 		return
 	}
 	m.gitPanel.SetSnapshot(snapshot)
+	m.projectTreeGitSnapshot(snapshot)
 	if m.EditorState != nil && m.EditorState.Editor != nil && m.EditorState.Editor.IsOpen() {
 		m.markEditorGitStaleNow()
 	}

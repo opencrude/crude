@@ -2,10 +2,30 @@ package filetree
 
 import (
 	"context"
+	"maps"
 	"path/filepath"
 
 	tea "charm.land/bubbletea/v2"
 )
+
+// SetRemoteGitStatuses installs one complete core snapshot on Update. Empty
+// snapshots clear stale marks; retained metadata also applies to later pages.
+// No resolver, watcher or filesystem access is involved.
+func (m *FileTreeModel) SetRemoteGitStatuses(statuses map[string]GitStatus) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if !m.noLocalIO {
+		return
+	}
+	m.remoteGitStatuses = maps.Clone(statuses)
+	if m.remoteGitStatuses == nil {
+		m.remoteGitStatuses = make(map[string]GitStatus)
+	}
+	for path, node := range m.nodes {
+		node.GitStatus = m.remoteGitStatuses[path]
+	}
+	m.recomputeAggregateStatuses()
+}
 
 // NewRemoteModel constructs a pure projection. loader must return a command,
 // not perform I/O itself. Root requests are explicit via RequestRemoteDirectory.

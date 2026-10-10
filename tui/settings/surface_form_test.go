@@ -172,13 +172,16 @@ func TestSettingsCategories_AllFormsPopulateFields(t *testing.T) {
 		host.Layout()
 
 		wantFields := category.Form.Fields()
-		if category.Name == "Accounts" || category.Name == "Agents" || category.Name == "Skills" || category.Name == "MCP" || category.Name == "Sources" {
+		if category.Name == "Accounts" || category.Name == "Agents" || category.Name == "Skills" || category.Name == "MCP" || category.Name == "Sources" || category.Name == "Language Servers" {
 			want := "Add account"
+			if category.Name == "Language Servers" {
+				want = "Add server"
+			}
 			if category.Name == "Agents" {
 				want = "Main Agent"
 			}
 			if category.Name == "Skills" || category.Name == "MCP" {
-				want = "Installed only"
+				want = "Installed"
 			}
 			if category.Name == "Sources" {
 				want = "Add source"

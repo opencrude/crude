@@ -18,6 +18,16 @@ type CapabilityRequestMsg struct {
 	Target   *Model
 	Action   capability.Action
 	Sequence uint64
+	// Supersedes is a still-running live search this request replaces; the
+	// host cancels it so only the newest query reaches the network.
+	Supersedes uint64
+}
+
+// CapabilitySearchTickMsg fires after the live-search quiet period. Only the
+// newest generation for its exact settings model may start a search.
+type CapabilitySearchTickMsg struct {
+	Target     *Model
+	Generation uint64
 }
 
 type CapabilityResultMsg struct {
@@ -108,6 +118,13 @@ func (m *Model) applyCapabilityResult(result CapabilityResultMsg) {
 
 func (m *Model) requestCapability(action capability.Action) (uint64, tea.Cmd) {
 	auxiliary := action.Operation == "snapshot" || action.Operation == "auth-return" || action.Operation == "open-auth-url"
+	// A newer live search replaces an older one instead of queueing behind it.
+	supersedes := uint64(0)
+	if m.capabilityPending != nil && m.capabilityPending.Operation == "discover" && action.Operation == "discover" {
+		supersedes = m.capabilitySequence
+		delete(m.capabilityRequests, supersedes)
+		m.capabilityPending = nil
+	}
 	if m.capabilityPending != nil && action.Operation != "cancel" && !auxiliary {
 		return 0, nil
 	}
@@ -135,7 +152,9 @@ func (m *Model) requestCapability(action capability.Action) (uint64, tea.Cmd) {
 		m.capabilityPending = &detached
 		m.capabilityResult = nil
 	}
-	return sequence, func() tea.Msg { return CapabilityRequestMsg{Target: m, Action: detached, Sequence: sequence} }
+	return sequence, func() tea.Msg {
+		return CapabilityRequestMsg{Target: m, Action: detached, Sequence: sequence, Supersedes: supersedes}
+	}
 }
 
 func (m *Model) capabilityScope() capability.Scope {
@@ -147,23 +166,24 @@ func (m *Model) capabilityScope() capability.Scope {
 
 func (m *Model) buildAcquisitionForm() *ui.FormModel {
 	settings := m.capabilities.Acquisition
-	selection := ui.SelectFieldState("capability-automatic-selection", "Automatic selection", settings.AutomaticSelection,
-		[]ui.FormOption{{ID: "on", Label: "Relevant available capabilities"}, {ID: "off", Label: "Explicit use only"}}, "Selecting an installed capability is separate from acquiring or approving it.")
-	mode := ui.SelectFieldState("capability-acquisition-mode", "New acquisition", settings.Mode,
-		[]ui.FormOption{{ID: "manual", Label: "Manual only"}, {ID: "ask", Label: "Ask before acquiring"}, {ID: "automatic", Label: "Within approved sources and grants"}}, "Discovery is not a grant. Updates are explicit; unknown effects and changed schemas need access review.")
+	selection := ui.SegmentedFieldState("capability-automatic-selection", "Use installed", []ui.FormOption{{ID: "on", Label: "When relevant"}, {ID: "off", Label: "Only when asked"}}, settings.AutomaticSelection,
+		"Whether agents may load installed skills and tools that look relevant on their own. Using something installed never acquires or approves anything new.")
+	mode := ui.SegmentedFieldState("capability-acquisition-mode", "Install new", []ui.FormOption{{ID: "manual", Label: "Never"}, {ID: "ask", Label: "Ask first"}, {ID: "automatic", Label: "Within approved sources"}}, settings.Mode,
+		"Whether agents may acquire capabilities they find. Discovery is not a grant; updates stay explicit and changed schemas need access review.")
 	return formModel(
 		ui.SeparatorFieldState("capability-selection", "Selection and approval"), selection, mode,
-		&ui.FieldState{ID: "capability-sources", Label: "Sources and trust", Type: ui.FieldNav, Target: "settings.capability.sources"},
+		&ui.FieldState{ID: "capability-sources", Label: "Sources and trust", Type: ui.FieldNav, Target: "settings.capability.sources", Columns: []string{"Registries and repositories"}, Description: "Where Skills and MCP search, and which sources are trusted."},
 		ui.SeparatorFieldState("capability-budgets", "Operation and request budgets"),
-		capabilityIntField("capability-timeout", "Timeout (seconds)", int64(settings.TimeoutSeconds), 1, 3600, "A bounded acquisition deadline, not permission to retry a remote mutation."),
-		capabilityIntField("capability-download-bytes", "Maximum download (bytes)", settings.MaxDownloadBytes, 1024, 1<<30, "Downloaded artifacts are verified before becoming usable."),
-		capabilityIntField("capability-max-tools", "Maximum tools per request", int64(settings.MaxTools), 1, 1024, "Selection intent survives exclusion by the producing model's request budget."),
-		capabilityIntField("capability-schema-bytes", "Maximum schemas (bytes)", int64(settings.MaxSchemaBytes), 1024, 16<<20, "Dynamic schemas share this bounded request budget."),
+		capabilityIntField("capability-timeout", "Install timeout", "seconds", int64(settings.TimeoutSeconds), 1, 3600, "A bounded acquisition deadline, not permission to retry a remote change."),
+		capabilityIntField("capability-download-bytes", "Largest download", "MB", max(1, settings.MaxDownloadBytes/mebibyte), 1, 1024, "Downloads above this size are refused. Every artifact is verified before it becomes usable."),
+		capabilityIntField("capability-max-tools", "Tools per request", "max", int64(settings.MaxTools), 1, 1024, "The most dynamic tools offered to a model in one request; selection intent survives the cut."),
+		capabilityIntField("capability-schema-bytes", "Schema budget", "KB", int64(settings.MaxSchemaBytes)/1024, 1, 16<<10, "Total size of dynamic tool schemas in one request."),
 	)
 }
 
-func capabilityIntField(id, label string, value, minimum, maximum int64, description string) *ui.FieldState {
+func capabilityIntField(id, label, unit string, value, minimum, maximum int64, description string) *ui.FieldState {
 	field := ui.TextFieldState(id, label, strconv.FormatInt(value, 10), description)
+	field.Unit = unit
 	field.Validator = func(value ui.FieldValue) []string {
 		parsed, err := strconv.ParseInt(strings.TrimSpace(value.String()), 10, 64)
 		if err != nil || parsed < minimum || parsed > maximum {
@@ -184,14 +204,15 @@ func (m *Model) acquisitionFromForm() capability.AcquisitionSettings {
 	if value, err := strconv.Atoi(m.value(catAcquisition, "capability-timeout")); err == nil {
 		settings.TimeoutSeconds = value
 	}
-	if value, err := strconv.ParseInt(m.value(catAcquisition, "capability-download-bytes"), 10, 64); err == nil {
-		settings.MaxDownloadBytes = value
+	// Displayed sizes are rounded; an untouched value keeps its exact bytes.
+	if value, err := strconv.ParseInt(m.value(catAcquisition, "capability-download-bytes"), 10, 64); err == nil && value != max(1, settings.MaxDownloadBytes/mebibyte) {
+		settings.MaxDownloadBytes = value * mebibyte
 	}
 	if value, err := strconv.Atoi(m.value(catAcquisition, "capability-max-tools")); err == nil {
 		settings.MaxTools = value
 	}
-	if value, err := strconv.Atoi(m.value(catAcquisition, "capability-schema-bytes")); err == nil {
-		settings.MaxSchemaBytes = value
+	if value, err := strconv.Atoi(m.value(catAcquisition, "capability-schema-bytes")); err == nil && value != settings.MaxSchemaBytes/1024 {
+		settings.MaxSchemaBytes = value * 1024
 	}
 	return settings
 }

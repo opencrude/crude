@@ -65,6 +65,7 @@ type WorkspaceSettingsSurface struct {
 	form             *ui.Form
 	agents           *agentCatalog
 	capCatalog       *capabilityCatalog
+	lsp              *lspCatalog
 	reset            *ui.ActionBar
 	actions          *ui.ActionBar
 	listScroll       *ui.ScrollbarControl
@@ -72,8 +73,14 @@ type WorkspaceSettingsSurface struct {
 	split            *ui.SplitModel
 	divider          *ui.SplitDivider
 	contentRect      ui.Rect
+	helpRect         ui.Rect
+	footerStatus     ui.Rect
 	focus            func(ui.ComponentID)
 }
+
+// pageHeaderRows is the shared page heading every settings page reserves:
+// title (breadcrumb), subtitle, and one breathing row before the body.
+const pageHeaderRows = 3
 
 func NewSurface(th *theme.Theme, model *Model) *WorkspaceSettingsSurface {
 	if th == nil {
@@ -92,6 +99,7 @@ func NewSurface(th *theme.Theme, model *Model) *WorkspaceSettingsSurface {
 	s.categories = &settingsCategoryList{Base: ui.NewBase(WorkspaceSettingsListID), list: ui.NewList(WorkspaceSettingsListID, tokens), owner: s}
 	s.categories.list.SetActivateAction("settings.category.open")
 	s.categories.list.SetSelectionMarker(false)
+	s.categories.list.SetRowPainter(s.paintRailRow)
 	s.accounts = &settingsAccountTable{Base: ui.NewBase(WorkspaceSettingsAccountsID), table: ui.NewTable(WorkspaceSettingsAccountsID, tokens), owner: s}
 	s.accounts.table.SetActivateAction("settings.account.edit")
 	s.accounts.table.SetShowHeader(true)
@@ -108,6 +116,7 @@ func NewSurface(th *theme.Theme, model *Model) *WorkspaceSettingsSurface {
 	s.form.SetArrowExitsForm(true)
 	s.agents = newAgentCatalog(s)
 	s.capCatalog = newCapabilityCatalog(s)
+	s.lsp = newLSPCatalog(s)
 	s.listScroll = ui.NewScrollbarControl(WorkspaceSettingsListScrollID, s.categories.list.Scroll(), tokens)
 	s.listScroll.SetSurfaceBackground(ui.ColorPopupBg)
 	s.listScroll.SetPointerTargetSize(1)
@@ -147,8 +156,21 @@ func NewSurface(th *theme.Theme, model *Model) *WorkspaceSettingsSurface {
 		ui.ActionBarButton{Label: "Disconnect", Action: "settings.chatgpt.signout", Enabled: false})
 	s.accountAuthBar.SetAlignEnd(false)
 	s.rebuildActions()
+	s.bindModel()
 	s.syncModel()
 	return s
+}
+
+// bindModel subscribes the surface to field edits so Save and the rail's
+// unsaved markers follow the draft immediately.
+func (s *WorkspaceSettingsSurface) bindModel() {
+	if s.model == nil {
+		return
+	}
+	s.model.onChange = func() {
+		s.syncSaveState()
+		s.categories.syncItems()
+	}
 }
 
 func (s *WorkspaceSettingsSurface) rebuildActions() {
@@ -180,6 +202,10 @@ func (s *WorkspaceSettingsSurface) accountsOpen() bool {
 
 func (s *WorkspaceSettingsSurface) agentsOpen() bool {
 	return s.model != nil && s.model.SelectedCategory() == catAgents
+}
+
+func (s *WorkspaceSettingsSurface) lspServersOpen() bool {
+	return s.model != nil && s.model.SelectedCategory() == catLanguageServers
 }
 
 func (s *WorkspaceSettingsSurface) capabilitiesOpen() bool {
@@ -220,7 +246,7 @@ func (s *WorkspaceSettingsSurface) syncAccountControls() {
 	s.accountAuthBar.SetEnabled("settings.chatgpt.signin", !busy && (s.model.accountEditor == nil || s.model.authWaitingID != s.model.accountEditor.draft.ID))
 	s.accountEditorBar.SetEnabled("settings.account.commit", !busy)
 	s.accountEditorBar.SetEnabled("settings.account.cancel-edit", !busy)
-	s.actions.SetEnabled("settings.save", !busy)
+	s.actions.SetEnabled("settings.save", !busy && s.hasUnsavedDrafts())
 	s.actions.SetEnabled("settings.close", !busy)
 	if s.reset != nil {
 		s.reset.SetEnabled("settings.reset", !busy)
@@ -231,7 +257,7 @@ func (s *WorkspaceSettingsSurface) Children() []ui.Component {
 	// The form keeps its Host identity even while a table owns the content
 	// area. This lets a category switch focus its first input before the next
 	// frame's layout, without painting or hit-testing an empty form over rows.
-	children := []ui.Component{s.scope, s.search, s.categories, s.form, s.agents, s.capCatalog}
+	children := []ui.Component{s.scope, s.search, s.categories, s.form, s.agents, s.capCatalog, s.lsp}
 	switch {
 	case s.accountsOpen() && s.model.accountEditor != nil:
 		children = append(children, s.accountEditorBar)
@@ -254,7 +280,7 @@ func (s *WorkspaceSettingsSurface) Children() []ui.Component {
 	if s.listScroll != nil && s.listScroll.Needed() {
 		children = append(children, s.listScroll)
 	}
-	if s.formScroll != nil && s.formScroll.Needed() && !s.agentsOpen() && (!s.accountsOpen() || s.model.accountEditor != nil) {
+	if s.formScroll != nil && s.formScroll.Needed() && s.formPageOpen() {
 		children = append(children, s.formScroll)
 	}
 	if s.divider != nil {
@@ -269,6 +295,9 @@ func (s *WorkspaceSettingsSurface) SetTokens(tokens *ui.TokenSet) {
 	}
 	if s.capCatalog != nil {
 		s.capCatalog.SetTokens(tokens)
+	}
+	if s.lsp != nil {
+		s.lsp.SetTokens(tokens)
 	}
 	if s.scope != nil {
 		s.scope.SetTokens(tokens)
@@ -334,6 +363,14 @@ func (s *WorkspaceSettingsSurface) FocusScope()                             { s.
 func (s *WorkspaceSettingsSurface) FocusSearch()                            { s.focusID(WorkspaceSettingsSearchID) }
 func (s *WorkspaceSettingsSurface) FocusCategories()                        { s.focusID(WorkspaceSettingsListID) }
 func (s *WorkspaceSettingsSurface) FocusForm() {
+	if s.lspServersOpen() {
+		if s.lsp.draft != nil {
+			s.focusID(s.lsp.form.ID())
+		} else {
+			s.focusID(s.lsp.filter.ID())
+		}
+		return
+	}
 	if s.capabilitiesOpen() {
 		s.capCatalog.focusContent()
 		return
@@ -397,6 +434,7 @@ func (s *WorkspaceSettingsSurface) focusID(id ui.ComponentID) {
 
 func (s *WorkspaceSettingsSurface) SetModel(model *Model) {
 	s.model = model
+	s.bindModel()
 	s.search.owner, s.categories.owner = s, s
 	s.syncModel()
 }
@@ -461,6 +499,16 @@ func (s *WorkspaceSettingsSurface) paneTitleParts() []string {
 		}
 		return parts
 	}
+	if s.lspServersOpen() {
+		if s.lsp.draft == nil {
+			return []string{"Language Servers"}
+		}
+		name := s.lsp.editing
+		if server, ok := s.model.lspServer(s.lsp.editing); ok {
+			name = server.name
+		}
+		return []string{"Language Servers", name}
+	}
 	if s.agentsOpen() {
 		if s.agents.draft == nil {
 			return []string{"Agents"}
@@ -484,12 +532,88 @@ func (s *WorkspaceSettingsSurface) paneTitleParts() []string {
 		return []string{"Accounts", action}
 	}
 	if s.accountsOpen() {
-		if len(s.model.accounts) > 0 {
-			return []string{"Accounts  " + strconv.Itoa(len(s.model.accounts))}
-		}
 		return []string{"Accounts"}
 	}
 	return nil
+}
+
+// pageName is the selected category's display name.
+func (s *WorkspaceSettingsSurface) pageName() string {
+	if s.model == nil || s.model.selected < 0 || s.model.selected >= len(s.model.categories) {
+		return ""
+	}
+	if s.model.selected == catMain {
+		return "Agents"
+	}
+	return s.model.categories[s.model.selected].Name
+}
+
+// pageCount is the quiet collection size shown after a list page's title.
+func (s *WorkspaceSettingsSurface) pageCount() string {
+	if s.model == nil || len(s.paneTitleParts()) > 1 {
+		return ""
+	}
+	switch {
+	case s.accountsOpen():
+		if n := len(s.model.accounts); n > 0 {
+			return strconv.Itoa(n)
+		}
+	case s.agentsOpen():
+		if n := len(s.agents.table.Rows()); n > 0 {
+			return strconv.Itoa(n)
+		}
+	case s.lspServersOpen():
+		if n := len(s.lsp.table.Rows()); n > 0 {
+			return strconv.Itoa(n)
+		}
+	case s.capabilitiesOpen():
+		if !s.capCatalog.detail && s.capCatalog.edit == "" && s.capCatalog.choosing == "" {
+			if n := len(s.capCatalog.store.Items()); n > 0 {
+				return strconv.Itoa(n)
+			}
+		}
+	}
+	return ""
+}
+
+// pageSubtitle is the one-line purpose beneath the title. Editors describe
+// the thing being edited; list and preference pages describe the page.
+func (s *WorkspaceSettingsSurface) pageSubtitle() string {
+	if s.model == nil {
+		return ""
+	}
+	switch {
+	case s.accountsOpen() && s.model.accountEditor != nil:
+		if s.model.accountEditor.isNew {
+			return "Connect a provider. Credentials stay on this computer."
+		}
+		return "Connection, credentials and transport for this account."
+	case s.agentsOpen() && s.agents.draft != nil:
+		return "Model, instructions and tool access for this agent."
+	case s.lspServersOpen() && s.lsp.draft != nil:
+		return "Command, files and environment for this server. Changes save with the window."
+
+	case s.capabilitiesOpen() && s.capCatalog.choosing != "":
+		return "Choose " + strings.TrimPrefix(s.capCatalog.choosing, "filter-") + " · Enter applies · Esc returns"
+	case s.capabilitiesOpen() && (s.capCatalog.detail || s.capCatalog.edit != ""):
+		return ""
+	}
+	if s.model.selected < 0 || s.model.selected >= len(s.model.categories) {
+		return ""
+	}
+	if s.model.selected == catMain {
+		return s.model.categories[catAgents].Description
+	}
+	return s.model.categories[s.model.selected].Description
+}
+
+// syncSaveState enables Save only when there is something to save.
+func (s *WorkspaceSettingsSurface) syncSaveState() {
+	if s.model == nil || s.actions == nil {
+		return
+	}
+	busy := s.model.accountBusy || s.model.Saving()
+	s.actions.SetEnabled("settings.save", !busy && s.hasUnsavedDrafts())
 }
 
 // RequestClose closes the entire window, never a nested settings page. Back,
@@ -516,6 +640,7 @@ func (s *WorkspaceSettingsSurface) syncModel() {
 		return
 	}
 	s.agents.syncModel()
+	s.lsp.syncModel()
 	s.search.field.SetValue(s.model.searchText())
 	s.categories.syncItems()
 	s.accounts.syncRows()
@@ -531,7 +656,7 @@ func (s *WorkspaceSettingsSurface) refreshForm() {
 		return
 	}
 	category := s.model.categories[s.model.selected]
-	if s.agentsOpen() || s.capabilitiesOpen() {
+	if s.agentsOpen() || s.capabilitiesOpen() || s.lspServersOpen() {
 		s.form.SetForm(nil, "", "")
 	} else {
 		s.form.SetForm(category.Form, "", "")
@@ -552,49 +677,48 @@ func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	leftW, gap := s.railGeometry(innerW)
 	railX := workspaceSettingsInset
 	formX, formW := railX+leftW+gap, max(1, r.W-(railX+leftW+gap)-workspaceSettingsInset)
-	// A narrow editor cannot afford one clipped description row per field.
-	// Keep full-size textareas and native controls; suppress painted help only.
-	s.form.SetHideDescriptions(formW < 55)
-	if formW < 55 {
-		s.form.SetFieldGap(0)
-	} else {
-		s.form.SetFieldGap(1)
-	}
-	if s.accountsOpen() {
-		if formW < 73 {
-			s.actions.SetLabel("settings.save", "Save")
-			s.actions.SetLabel("settings.close", "Close")
-		} else {
-			s.actions.SetLabel("settings.save", "Save")
-			s.actions.SetLabel("settings.close", "Close")
-		}
-	} else {
-		s.actions.SetLabel("settings.save", "Save")
-		s.actions.SetLabel("settings.close", "Cancel")
-	}
+	// Every field is one row; its explanation lives in the help strip below
+	// the page, wrapped in full instead of clipped beside each control.
+	s.form.SetHideDescriptions(true)
+	s.form.SetFieldGap(0)
+	s.actions.SetLabel("settings.save", "Save")
+	s.actions.SetLabel("settings.close", "Close")
 	footerH := 2
 	topPad := s.topPad()
 	searchY := topPad
 	catY, catH := topPad+2, max(1, r.H-footerH-(topPad+2))
-	formH := max(1, r.H-footerH-topPad)
-	s.contentRect = ui.Rect{X: formX, Y: topPad, W: formW, H: formH}
+	bodyY := topPad + pageHeaderRows
+	bodyBottom := max(bodyY+1, r.H-footerH)
+	formH := max(1, bodyBottom-bodyY)
+	s.contentRect = ui.Rect{X: formX, Y: topPad, W: formW, H: max(1, r.H-footerH-topPad)}
 	footerY := max(0, r.H-1)
 	s.search.Layout(ctx, ui.Rect{X: railX, Y: searchY, W: leftW, H: 1})
 	s.categories.Layout(ctx, ui.Rect{X: railX, Y: catY, W: leftW, H: catH})
-	formRect := ui.Rect{X: formX, Y: topPad, W: formW, H: formH}
+	helpLines := 0
+	if s.formPageOpen() {
+		helpLines = helpStripLines(formH)
+	}
+	helpH := helpLines
+	if helpLines > 1 {
+		helpH++ // one quiet row separates the last field from its help
+	}
+	s.helpRect = ui.Rect{X: formX, Y: bodyBottom - helpLines, W: formW, H: helpLines}
+	formRect := ui.Rect{X: formX, Y: bodyY, W: formW, H: max(1, formH-helpH)}
 	if s.accountsOpen() {
 		s.accountEditorBar.Layout(ctx, ui.Rect{X: formX, Y: footerY, W: formW, H: 1})
 		if s.model.accountEditor != nil {
-			formRect = ui.Rect{X: formX, Y: topPad + 2, W: formW, H: max(1, formH-3)}
 			if s.model.accountEditor.draft.Connection.AuthType == provider.AuthChatGPT {
-				s.accountAuthBar.Layout(ctx, ui.Rect{X: formX, Y: min(topPad+formH-2, topPad+4+s.form.PreferredHeight(formH-4)), W: formW, H: 1})
+				formRect.H = max(1, formRect.H-2)
+				authY := bodyY + min(formRect.H, s.form.PreferredHeight(formRect.H)) + 1
+				s.accountAuthBar.Layout(ctx, ui.Rect{X: formX, Y: authY, W: formW, H: 1})
 			}
 		} else {
-			s.accountFilter.Layout(ctx, ui.Rect{X: formX, Y: topPad + 1, W: formW, H: 1})
-			actionY := s.layoutCatalogActions(ctx, formX, formW, topPad+formH-1, s.accountAdd, s.accountBar, s.accountMoreBar)
+			s.accountFilter.Layout(ctx, ui.Rect{X: formX, Y: bodyY, W: formW, H: 1})
+			actionY := s.layoutCatalogActions(ctx, formX, formW, bodyBottom-1, s.accountAdd, s.accountBar, s.accountMoreBar)
 			// Keep one row between the table and actions for errors/progress.
-			tableH := max(1, actionY-(topPad+3)-2)
-			s.accounts.Layout(ctx, ui.Rect{X: formX, Y: topPad + 3, W: formW, H: tableH})
+			tableY := bodyY + 2
+			tableH := max(1, actionY-tableY-2)
+			s.accounts.Layout(ctx, ui.Rect{X: formX, Y: tableY, W: formW, H: tableH})
 			if s.accountScroll.NeededForViewport(max(1, tableH-1)) {
 				list := s.accounts.Bounds()
 				barW := min(ui.ScrollbarWidth+1, list.W)
@@ -612,7 +736,7 @@ func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	// One authoritative viewport height per layout. Laying out the full form
 	// first would clamp away a scrollbar drag before the shorter tab body ran.
 	if s.agentsOpen() {
-		s.agents.Layout(ctx, ui.Rect{X: formX, Y: topPad, W: formW, H: formH})
+		s.agents.Layout(ctx, ui.Rect{X: formX, Y: bodyY, W: formW, H: formH})
 	} else {
 		s.agents.Layout(ctx, ui.Rect{})
 	}
@@ -625,11 +749,16 @@ func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		case catSources:
 			s.capCatalog.switchKind("source")
 		}
-		s.capCatalog.Layout(ctx, ui.Rect{X: formX, Y: topPad, W: formW, H: formH})
+		s.capCatalog.Layout(ctx, ui.Rect{X: formX, Y: bodyY, W: formW, H: formH})
 	} else {
 		s.capCatalog.Layout(ctx, ui.Rect{})
 	}
-	if s.agentsOpen() || s.capabilitiesOpen() || s.accountsOpen() && s.model.accountEditor == nil {
+	if s.lspServersOpen() {
+		s.lsp.Layout(ctx, ui.Rect{X: formX, Y: bodyY, W: formW, H: formH})
+	} else {
+		s.lsp.Layout(ctx, ui.Rect{})
+	}
+	if s.agentsOpen() || s.capabilitiesOpen() || s.lspServersOpen() || s.accountsOpen() && s.model.accountEditor == nil {
 		s.form.Layout(ctx, ui.Rect{})
 	} else {
 		s.form.Layout(ctx, formRect)
@@ -642,7 +771,7 @@ func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 	} else if s.listScroll != nil {
 		s.listScroll.Layout(ctx, ui.Rect{})
 	}
-	if !s.agentsOpen() && s.formScroll != nil && (!s.accountsOpen() || s.model.accountEditor != nil) && s.formScroll.Needed() {
+	if s.formPageOpen() && s.formScroll != nil && s.formScroll.Needed() {
 		barW := min(ui.ScrollbarWidth+1, formRect.W)
 		stroke := min(ui.ScrollbarWidth, barW)
 		s.form.Layout(ctx, ui.Rect{X: formRect.X, Y: formRect.Y, W: max(1, formRect.W-barW), H: formRect.H})
@@ -670,6 +799,8 @@ func (s *WorkspaceSettingsSurface) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		actionsW = max(1, formW-resetW-gap)
 	}
 	s.actions.Layout(ctx, ui.Rect{X: actionsX, Y: footerY, W: actionsW, H: 1})
+	actionsUsed := min(actionsW, s.actions.Measure(ctx, ui.Loose(actionsW, 1)).W)
+	s.footerStatus = ui.Rect{X: actionsX, Y: footerY, W: max(0, actionsW-actionsUsed-2), H: 1}
 	if s.divider != nil {
 		s.divider.SetCurrentFirst(leftW)
 		s.divider.Layout(ctx, ui.Rect{X: railX + leftW, Y: 0, W: gap, H: max(0, r.H-2)})
@@ -768,37 +899,193 @@ func (s *WorkspaceSettingsSurface) Paint(buf *surface.CellBuffer, originX, origi
 	innerW := max(1, r.W-workspaceSettingsInset*2)
 	leftW, _ := s.railGeometry(innerW)
 	railX := workspaceSettingsInset
-	if !s.accountsOpen() || s.model.accountEditor == nil {
-		searchY := oy + s.topPad() + 1
-		for x := ox + railX; x < ox+railX+leftW; x++ {
-			buf.Set(x, searchY, cell.NewCell(ui.FirstRune(ui.DefaultGlyphsFromTokens(s.tokens).BorderH, '-'), divider, bg, 0))
-		}
+	searchY := oy + s.topPad() + 1
+	for x := ox + railX; x < ox+railX+leftW; x++ {
+		buf.Set(x, searchY, cell.NewCell(ui.FirstRune(ui.DefaultGlyphsFromTokens(s.tokens).BorderH, '-'), divider, bg, 0))
 	}
+	s.paintPageHeader(buf, ox, oy, bg)
+	muted := s.tokens.Color(ui.ColorMuted)
 	if s.accountsOpen() {
-		accent := s.tokens.Color(ui.ColorAccent)
 		contentX, contentW := s.contentRect.X, s.contentRect.W
-		buf.WriteString(ox+contentX, oy+s.topPad(), rendering.TruncateVisual(s.PaneTitle(), contentW, ""), accent, bg, cell.AttrBold)
+		bodyY := s.topPad() + pageHeaderRows
 		if s.model.accountEditor == nil && len(s.model.accounts) == 0 {
-			buf.WriteString(ox+contentX, oy+s.topPad()+4, "No accounts yet. Add one to start a session.", s.tokens.Color(ui.ColorMuted), bg, 0)
+			s.paintEmptyState(buf, ox+contentX, oy+bodyY+3, contentW, "No accounts yet", "Add an account to connect a provider. Every agent and session picks from these.", bg)
 		} else if s.model.accountEditor == nil && len(s.model.accountRows()) == 0 {
-			buf.WriteString(ox+contentX, oy+s.topPad()+4, "No matching accounts.", s.tokens.Color(ui.ColorMuted), bg, 0)
+			s.paintEmptyState(buf, ox+contentX, oy+bodyY+3, contentW, "No matching accounts", "Clear the search to see every account.", bg)
 		}
 		noticeY := s.accountBar.Bounds().Y - 1
 		if s.model.accountEditor != nil {
-			noticeY = s.accountEditorBar.Bounds().Y - 2
+			noticeY = s.helpRect.Y - 1
 		} else if s.accountAdd.Bounds().Y < s.accountBar.Bounds().Y {
 			noticeY = s.accountAdd.Bounds().Y - 1
 		}
 		if s.model.accountError != "" && s.model.accountEditor == nil {
 			buf.WriteString(ox+contentX, oy+noticeY, rendering.TruncateVisual(s.model.accountError, contentW, ""), s.tokens.Color(ui.ColorError), bg, 0)
 		} else if s.model.accountBusy {
-			buf.WriteString(ox+contentX, oy+noticeY, "Saving account...", s.tokens.Color(ui.ColorMuted), bg, 0)
+			buf.WriteString(ox+contentX, oy+noticeY, "Saving account…", muted, bg, 0)
 		}
 	}
+	s.paintHelp(buf, ox, oy, bg)
 	// This separator is above the entire footer, not a tab baseline.
 	for x := 0; x < r.W; x++ {
 		buf.Set(ox+x, oy+r.H-2, cell.NewCell(ui.FirstRune(s.tokens.Glyphs().BorderH, '-'), divider, bg, 0))
 	}
+	s.paintFooterStatus(buf, ox, oy, bg)
+}
+
+// paintRailRow paints one category: the indented name, plus a warning-ink
+// marker when the page holds unsaved edits.
+func (s *WorkspaceSettingsSurface) paintRailRow(buf *surface.CellBuffer, x, y, width int, item ui.ListItem, state ui.ControlState, _ ui.PaintContext, tokens *ui.TokenSet) {
+	fg, bg := tokens.ListRowColors(state)
+	if state == ui.StateDefault || state == ui.StateDisabled {
+		bg = tokens.Color(ui.ColorPopupBg)
+	}
+	fg, _ = tokens.MenuInk(state, fg)
+	attr := cell.Attrs(0)
+	if state == ui.StateFocused || state == ui.StateSelected {
+		attr = cell.AttrBold
+	}
+	indent := max(0, tokens.FormIndent())
+	markerW := 0
+	if item.Detail != "" {
+		markerW = rendering.VisibleWidth(item.Detail) + 1
+		buf.WriteString(x+width-markerW, y, item.Detail, tokens.Color(ui.ColorWarning), bg, 0)
+	}
+	buf.WriteString(x+indent, y, rendering.TruncateVisual(item.Label, max(1, width-indent-markerW-1), "…"), fg, bg, attr)
+}
+
+// NeedsFrame keeps the window animating while a live capability search runs.
+func (s *WorkspaceSettingsSurface) NeedsFrame() bool {
+	return s.model != nil && s.capabilitiesOpen() && s.capCatalog.searching()
+}
+
+// formPageOpen reports whether the content pane shows the shared settings
+// form (an ordinary preference page or the account editor), which owns the
+// help strip below it.
+func (s *WorkspaceSettingsSurface) formPageOpen() bool {
+	if s.model == nil || s.agentsOpen() || s.capabilitiesOpen() || s.lspServersOpen() {
+		return false
+	}
+	return !s.accountsOpen() || s.model.accountEditor != nil
+}
+
+// helpStripLines sizes the focused-field help for the available body height.
+func helpStripLines(bodyH int) int {
+	switch {
+	case bodyH >= 14:
+		return 2
+	case bodyH >= 7:
+		return 1
+	default:
+		return 0
+	}
+}
+
+// paintPageHeader draws the one heading every settings page shares: the
+// title (or breadcrumb trail, whose parents read as quiet links), an
+// optional muted count, and the page's one-line purpose.
+func (s *WorkspaceSettingsSurface) paintPageHeader(buf *surface.CellBuffer, ox, oy int, bg cell.Color) {
+	x, w, y := ox+s.contentRect.X, s.contentRect.W, oy+s.topPad()
+	if w <= 0 {
+		return
+	}
+	accent, muted := s.tokens.Color(ui.ColorAccent), s.tokens.Color(ui.ColorMuted)
+	parts := s.paneTitleParts()
+	if len(parts) == 0 {
+		parts = []string{s.pageName()}
+	}
+	sep := s.breadcrumbSeparator()
+	used := 0
+	for index, part := range parts {
+		if index > 0 {
+			buf.WriteString(x+used, y, rendering.TruncateVisual(sep, max(0, w-used), ""), muted, bg, 0)
+			used += rendering.VisibleWidth(sep)
+		}
+		ink, attr := muted, cell.Attrs(0)
+		if index == len(parts)-1 {
+			ink, attr = accent, cell.AttrBold
+		}
+		text := rendering.TruncateVisual(part, max(0, w-used), "…")
+		buf.WriteString(x+used, y, text, ink, bg, attr)
+		used += rendering.VisibleWidth(text)
+	}
+	if count := s.pageCount(); count != "" && used+2 < w {
+		buf.WriteString(x+used+2, y, rendering.TruncateVisual(count, w-used-2, ""), muted, bg, 0)
+	}
+	if subtitle := s.pageSubtitle(); subtitle != "" {
+		buf.WriteString(x, y+1, rendering.TruncateVisual(subtitle, w, "…"), muted, bg, 0)
+	}
+}
+
+// paintEmptyState draws the shared empty-collection message: a bold line and
+// a wrapped muted explanation.
+func (s *WorkspaceSettingsSurface) paintEmptyState(buf *surface.CellBuffer, x, y, w int, title, body string, bg cell.Color) {
+	buf.WriteString(x, y, rendering.TruncateVisual(title, w, "…"), s.tokens.Color(ui.ColorFg), bg, cell.AttrBold)
+	for index, line := range rendering.WordWrap(body, max(1, w)) {
+		if index > 1 {
+			break
+		}
+		buf.WriteString(x, y+1+index, line, s.tokens.Color(ui.ColorMuted), bg, 0)
+	}
+}
+
+// paintHelp explains the focused (or hovered) field in full beneath the page.
+func (s *WorkspaceSettingsSurface) paintHelp(buf *surface.CellBuffer, ox, oy int, bg cell.Color) {
+	rect := s.helpRect
+	if rect.Empty() || !s.formPageOpen() {
+		return
+	}
+	field := s.form.HelpField()
+	if field == nil {
+		return
+	}
+	paintFieldHelp(buf, ox+rect.X, oy+rect.Y, rect.W, rect.H, field, s.tokens, bg)
+}
+
+// paintFieldHelp is the shared help-strip painter for every settings form.
+func paintFieldHelp(buf *surface.CellBuffer, x, y, w, h int, field *ui.FieldState, tokens *ui.TokenSet, bg cell.Color) {
+	if field == nil || w <= 0 || h <= 0 {
+		return
+	}
+	text := strings.TrimSpace(field.Description)
+	ink := tokens.Color(ui.ColorMuted)
+	if len(field.Errors) > 0 {
+		text, ink = strings.Join(field.Errors, " · "), tokens.Color(ui.ColorError)
+	}
+	if text == "" {
+		return
+	}
+	lines := rendering.WordWrap(text, w)
+	for index := 0; index < h && index < len(lines); index++ {
+		line := lines[index]
+		if index == h-1 && len(lines) > h {
+			line = rendering.TruncateVisual(strings.Join(lines[index:], " "), w, "…")
+		}
+		buf.WriteString(x, y+index, line, ink, bg, 0)
+	}
+}
+
+// paintFooterStatus states unsaved work beside Save, so a disabled Save and a
+// clean page read the same way everywhere.
+func (s *WorkspaceSettingsSurface) paintFooterStatus(buf *surface.CellBuffer, ox, oy int, bg cell.Color) {
+	rect := s.footerStatus
+	if rect.W <= 0 || s.model == nil || (s.accountsOpen() && s.model.accountEditor != nil) || s.agents.draft != nil {
+		return
+	}
+	text, ink := "", s.tokens.Color(ui.ColorMuted)
+	switch {
+	case s.model.Saving():
+		text = "Saving…"
+	case s.model.SaveError() != "":
+		text, ink = s.model.SaveError(), s.tokens.Color(ui.ColorError)
+	case s.hasUnsavedDrafts():
+		text, ink = s.tokens.Glyphs().Modified+" Unsaved changes", s.tokens.Color(ui.ColorWarning)
+	}
+	if text == "" {
+		return
+	}
+	text = rendering.TruncateVisual(text, rect.W, "…")
+	buf.WriteString(ox+rect.X+rect.W-rendering.VisibleWidth(text), oy+rect.Y, text, ink, bg, 0)
 }
 
 // Handle receives keys bubbled from focused children (search TextField leaves
@@ -823,8 +1110,15 @@ func (s *WorkspaceSettingsSurface) Handle(ctx ui.EventContext, evt ui.Event) ui.
 	if evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft && ctx.LocalY == s.topPad() {
 		parts := s.paneTitleParts()
 		if len(parts) > 1 && ui.BreadcrumbIndex(parts, s.breadcrumbSeparator(), ctx.LocalX-s.contentRect.X, s.contentRect.W) == 0 {
-			if s.accountsOpen() && s.model.accountEditor != nil {
+			switch {
+			case s.accountsOpen() && s.model.accountEditor != nil:
 				return s.cancelAccountEdit()
+			case s.agentsOpen() && s.agents.draft != nil:
+				return s.agents.back()
+			case s.capabilitiesOpen() && (s.capCatalog.detail || s.capCatalog.edit != ""):
+				return s.capCatalog.back()
+			case s.lspServersOpen() && s.lsp.draft != nil:
+				return s.lsp.back()
 			}
 		}
 	}
@@ -892,6 +1186,11 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 		return s.capCatalog.HandleAction(ui.EventContext{}, action)
 	}
 	switch action.ID {
+	case "settings.lsp.servers":
+		s.model.SelectCategory(catLanguageServers)
+		s.syncModel()
+		s.FocusForm()
+		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint | ui.InvalidateFocus}
 	case "form.changed":
 		fieldID, _ := action.Payload.(string)
 		if fieldID == "preset" {

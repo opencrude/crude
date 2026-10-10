@@ -44,6 +44,7 @@ type capabilityContextMsg struct {
 
 type capabilitySnapshotMsg struct {
 	generation uint64
+	sequence   uint64
 	snapshot   captypes.Snapshot
 	err        error
 }
@@ -56,19 +57,22 @@ func (app *App) capabilitySnapshotCmd() tea.Cmd {
 	if app.capabilitySnapshotCancel != nil {
 		app.capabilitySnapshotCancel()
 	}
+	app.capabilitySnapshotSequence++
+	sequence := app.capabilitySnapshotSequence
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	app.capabilitySnapshotCancel = cancel
 	return func() tea.Msg {
 		defer cancel()
 		snapshot, err := owner.CapabilitySnapshot(ctx)
-		return capabilitySnapshotMsg{generation: generation, snapshot: snapshot, err: err}
+		return capabilitySnapshotMsg{generation: generation, sequence: sequence, snapshot: snapshot, err: err}
 	}
 }
 
 func (app *App) applyCapabilitySnapshot(message capabilitySnapshotMsg) {
-	if message.generation != app.workspaceSwitchGen.Load() {
+	if message.generation != app.workspaceSwitchGen.Load() || message.sequence != app.capabilitySnapshotSequence {
 		return
 	}
+	app.capabilitySnapshotCancel = nil
 	// An explicit refresh supersedes periodic observations already in flight.
 	if app.launcherCapabilityCancel != nil {
 		app.launcherCapabilityCancel()
@@ -91,6 +95,11 @@ func (app *App) applyObservedCapabilitySnapshot(snapshot captypes.Snapshot, err 
 		return
 	}
 	if reflect.DeepEqual(snapshot, app.capabilitySnapshot) {
+		// A new home screen still needs the retained snapshot even when shared
+		// runtime state did not change while the previous home was unmounted.
+		if projectLauncher {
+			app.projectLauncherCapabilities(snapshot)
+		}
 		return
 	}
 	app.capabilitySnapshot = snapshot
@@ -232,6 +241,10 @@ func (app *App) openCapabilityManager(view activitybar.View, query, id string) t
 func (app *App) capabilityRequestCmd(message settingsui.CapabilityRequestMsg) tea.Cmd {
 	generation := app.workspaceSwitchGen.Load()
 	result := settingsui.CapabilityResultMsg{Target: message.Target, Action: message.Action, Snapshot: app.capabilitySnapshot, Sequence: message.Sequence, WorkspaceGeneration: generation}
+	if operation, exists := app.capabilityOperations[message.Supersedes]; message.Supersedes != 0 && exists && operation.target == message.Target {
+		operation.cancel()
+		delete(app.capabilityOperations, message.Supersedes)
+	}
 	if message.Action.Operation == "cancel" {
 		sequence, _ := strconv.ParseUint(message.Action.Arguments["sequence"], 10, 64)
 		if operation, exists := app.capabilityOperations[sequence]; exists && operation.target == message.Target {
@@ -312,6 +325,7 @@ func (app *App) cancelCapabilityOperations() {
 		app.capabilitySnapshotCancel()
 		app.capabilitySnapshotCancel = nil
 	}
+	app.capabilitySnapshotSequence++
 	for sequence, operation := range app.capabilityOperations {
 		operation.cancel()
 		delete(app.capabilityOperations, sequence)
@@ -369,7 +383,12 @@ func (app *App) applyCapabilityResult(message settingsui.CapabilityResultMsg) te
 		return nil
 	}
 	if message.Snapshot.Generation != 0 && message.Snapshot.Generation >= app.capabilitySnapshot.Generation {
-		app.applyCapabilitySnapshot(capabilitySnapshotMsg{generation: message.WorkspaceGeneration, snapshot: message.Snapshot})
+		// An accepted operation supersedes older explicit reads as well as polls.
+		if app.capabilitySnapshotCancel != nil {
+			app.capabilitySnapshotCancel()
+		}
+		app.capabilitySnapshotSequence++
+		app.applyCapabilitySnapshot(capabilitySnapshotMsg{generation: message.WorkspaceGeneration, sequence: app.capabilitySnapshotSequence, snapshot: message.Snapshot})
 	}
 	window := app.overlayHost.Window(ui.OverlayWorkspaceSettings)
 	if window != nil {
@@ -393,6 +412,25 @@ func (app *App) applyCapabilityResult(message settingsui.CapabilityResultMsg) te
 	}
 	app.refreshActivityList()
 	return nil
+}
+
+// applyCapabilitySearchTick lets the exact settings model that armed a live
+// search decide whether its quiet period still names the current query.
+func (app *App) applyCapabilitySearchTick(message settingsui.CapabilitySearchTickMsg) tea.Cmd {
+	window := app.overlayHost.Window(ui.OverlayWorkspaceSettings)
+	if window == nil {
+		return nil
+	}
+	body := app.settingsSurface(window)
+	if body == nil || body.Model() != message.Target {
+		return nil
+	}
+	command := body.CapabilitySearchTick(message)
+	if frame, ok := window.Content.(*ui.WindowFrameWidget); ok {
+		frame.Host().MarkLayout()
+	}
+	window.MarkContentDirty()
+	return command
 }
 
 func (app *App) openNavigationMenu() {

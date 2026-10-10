@@ -253,7 +253,21 @@ func (ts *TokenSet) Glyphs() theme.Glyphs {
 	if ts == nil || ts.theme == nil {
 		return theme.DefaultGlyphs()
 	}
-	return ts.theme.Glyphs
+	g, def := ts.theme.Glyphs, theme.DefaultGlyphs()
+	// Control markers are newer than some theme tables; a blank marker would
+	// silently erase a switch's state, so missing ones use the reference set.
+	for _, pair := range []struct {
+		dst *string
+		src string
+	}{
+		{&g.SwitchOn, def.SwitchOn}, {&g.SwitchOff, def.SwitchOff},
+		{&g.CycleLeft, def.CycleLeft}, {&g.CycleRight, def.CycleRight}, {&g.Modified, def.Modified},
+	} {
+		if *pair.dst == "" {
+			*pair.dst = pair.src
+		}
+	}
+	return g
 }
 
 // Typography returns the active typography token table.

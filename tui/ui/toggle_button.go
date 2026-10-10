@@ -17,8 +17,14 @@ type ToggleButton struct {
 	checked      bool
 	disabled     bool
 	switchChrome bool
+	chip         bool
 	tokens       *TokenSet
 }
+
+// SetChip paints the toggle as a filter chip: a switch marker ("●"/"○")
+// before the label instead of a bracketed button, so a filter state never
+// reads as a command.
+func (b *ToggleButton) SetChip(enabled bool) { b.chip = enabled }
 
 // NewToggleButton creates a compact checkable action control.
 func NewToggleButton(id ComponentID, label, actionID string, tokens *TokenSet) *ToggleButton {
@@ -47,7 +53,19 @@ func (b *ToggleButton) SetDisabled(disabled bool) { b.disabled = disabled }
 func (b *ToggleButton) SetCancelAction(actionID string) { b.cancelID = actionID }
 
 func (b *ToggleButton) Measure(_ LayoutContext, cs Constraints) Size {
-	return cs.ClampSize(Size{W: rendering.VisibleWidth(b.label), H: 1})
+	w := rendering.VisibleWidth(b.label)
+	if b.chip {
+		w += rendering.VisibleWidth(b.chipMarker()) + 3
+	}
+	return cs.ClampSize(Size{W: w, H: 1})
+}
+
+func (b *ToggleButton) chipMarker() string {
+	g := DefaultGlyphsFromTokens(b.tokens)
+	if b.checked {
+		return g.SwitchOn
+	}
+	return g.SwitchOff
 }
 
 func (b *ToggleButton) Layout(_ LayoutContext, r Rect) { b.SetBounds(r) }
@@ -58,6 +76,10 @@ func (b *ToggleButton) Paint(buf *surface.CellBuffer, originX, originY int, ctx 
 		return
 	}
 	st := ResolveControlState(b.disabled, ctx.Focused, false, false, ctx.Hovered)
+	if b.chip && b.tokens != nil {
+		b.paintChip(buf, originX, originY, r, st)
+		return
+	}
 	fg, bg := cell.NoColor, cell.NoColor
 	if b.tokens != nil {
 		fg, bg = b.tokens.ButtonColors(st)
@@ -79,6 +101,29 @@ func (b *ToggleButton) Paint(buf *surface.CellBuffer, originX, originY int, ctx 
 		attr = cell.AttrBold
 	}
 	buf.WriteString(originX+r.X, originY+r.Y, rendering.TruncateVisual(b.label, r.W, ""), fg, bg, attr)
+}
+
+func (b *ToggleButton) paintChip(buf *surface.CellBuffer, originX, originY int, r Rect, st ControlState) {
+	bg := b.tokens.Color(ColorPopupBg)
+	labelFG, markerFG := b.tokens.Color(ColorMuted), b.tokens.Color(ColorMuted)
+	attr := cell.Attrs(0)
+	if b.checked {
+		labelFG, markerFG = b.tokens.Color(ColorFg), b.tokens.Color(ColorAccent)
+	}
+	switch st {
+	case StateFocused:
+		bg, labelFG, attr = b.tokens.Color(ColorHover), b.tokens.Color(ColorAccent), cell.AttrBold
+	case StateHovered:
+		bg = b.tokens.Color(ColorHover)
+	case StateDisabled:
+		labelFG, markerFG = b.tokens.Color(ColorMuted), b.tokens.Color(ColorMuted)
+	}
+	FillRect(buf, originX, originY, r, cell.BlankCell(bg))
+	marker := b.chipMarker()
+	x := originX + r.X + 1
+	buf.WriteString(x, originY+r.Y, marker, markerFG, bg, 0)
+	x += rendering.VisibleWidth(marker) + 1
+	buf.WriteString(x, originY+r.Y, rendering.TruncateVisual(b.label, max(0, r.W-(x-originX-r.X)-1), "…"), labelFG, bg, attr)
 }
 
 func (b *ToggleButton) Handle(_ EventContext, evt Event) EventResult {

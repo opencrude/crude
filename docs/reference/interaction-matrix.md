@@ -18,6 +18,7 @@ preserve or intentionally improve.
 | Rail counts | Upper/lower-right of destination icons | Normal-size bold digits keep the script-like placement without tiny Unicode glyphs: Every destination uses the top row of its three-row band. Counts above nine use `+` at the same level. Badges sit diagonally beyond the measured icon, never widen the rail or overwrite the panel rule, and remain inside their destination's whole-band click/hover target. Zero counts disappear. |
 | New terminal | Ctrl+Shift+` | Ghostty-pinned PTY; docks in the workspace terminal dock |
 | Toggle terminal | Ctrl+` | Focus last terminal, or leave it if it already owns keys |
+| Notices → Terminals | Bottom-row pills | Changes the painted panel even when a new terminal's create receipt arrives before its inventory. Notices restore on cold core start and new workspace notices reach all connected shells |
 | Composer | Alt+C | |
 | Quit application | Ctrl+Q | |
 | Close active editor tab / empty pane | Ctrl+W | Editor uses the dirty-close Save / Don't Save / Cancel prompt; an empty focused group alone is removed without closing neighboring resources; terminal focus keeps the key as PTY input |
@@ -197,6 +198,11 @@ explicit empty result instead of unrelated suggestions.
 | Refresh tree | Ctrl+R | Relocated from `r` (typing now filters) |
 | Toggle hidden files | Ctrl+. | Relocated from `.` |
 
+Connected trees project the core Git snapshot and versioned LSP diagnostics,
+including status arriving before a directory page and collapsed or filtered
+descendants. File/index changes refresh status without opening Git; clean state
+clears old markers. Shells never add a local Git resolver or project watcher.
+
 ## Git panel (bottom dock)
 | Action | Binding / control | Notes |
 |--------|-------------------|-------|
@@ -313,6 +319,10 @@ tab attention until the panel is activated or closed.
 - Loading uses a thin `ProgressRule` ink sweep, not blinking dots or fake
   percentages. The last successful listing stays usable during refresh. Only
   the current owner/generation can settle loading; errors expose Retry.
+- Capability state is initialized without starting a session. Superseded refresh
+  cancellations cannot paint failure over a newer result. Last usable skill/MCP
+  rows stay accessible on observation failure; configuration attention outranks an
+  idle transport, and cached discovery alone never claims connected.
 - Right-click a workspace name or path offers Open, Copy path and Delete
   workspace. Delete opens an asynchronous review with Cancel focused. It moves
   saved workspace/session data into recovery storage; project files are never

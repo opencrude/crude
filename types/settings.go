@@ -193,8 +193,7 @@ func ApplyAppDefaults(s *AppSettings) {
 
 func lspUnset(s LSPSettings) bool {
 	return !s.Enabled && !s.AutoDetect && !s.Diagnostics && !s.Completions &&
-		!s.Hover && !s.Definition && s.MinSeverity == "" && len(s.Languages) == 0 &&
-		len(s.Servers) == 0
+		!s.Hover && !s.Definition && s.MinSeverity == "" && len(s.Languages) == 0
 }
 
 func NormalizeEditorSettings(s EditorSettings) EditorSettings {
@@ -647,17 +646,6 @@ func cloneStringMap(src map[string]string) map[string]string {
 	return out
 }
 
-func cloneStringSliceMap(src map[string][]string) map[string][]string {
-	if src == nil {
-		return nil
-	}
-	out := make(map[string][]string, len(src))
-	for k, v := range src {
-		out[k] = append([]string(nil), v...)
-	}
-	return out
-}
-
 // LanguageEnabled reports whether the language server for ext should start.
 func (s LSPSettings) LanguageEnabled(ext string) bool {
 	_, ok := s.ResolveServer("document" + ext)
@@ -669,9 +657,6 @@ func (s LSPSettings) ServerOverride(ext string) (cmd string, args []string, ok b
 	id, _ := s.languageForExtension(ext)
 	if lang, exists := s.Languages[id]; exists && !lang.Enabled {
 		return "", nil, false
-	}
-	if cmd := s.Servers[ext]; cmd != "" {
-		return cmd, append([]string(nil), s.ServerArgs[ext]...), true
 	}
 	lang, exists := s.Languages[id]
 	if !exists || lang.Command == "" {

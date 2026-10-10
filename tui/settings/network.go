@@ -32,19 +32,19 @@ func (m *Model) buildNetworkConnectionForm(settings network.Settings) *ui.FormMo
 	settings = m.networkDisplaySettings(settings)
 	fields := []*ui.FieldState{
 		ui.SeparatorFieldState("network-connect", "Connection establishment"),
-		networkPositiveIntField(fieldNetworkConnectTimeout, "Connect timeout", settings.ConnectTimeoutSeconds,
-			"Seconds allowed for each TCP connection; model response waiting is separate."),
-		networkPositiveIntField(fieldNetworkTLSHandshakeTimeout, "TLS handshake", settings.TLSHandshakeTimeoutSeconds,
-			"Seconds allowed to negotiate and verify TLS after TCP connects."),
+		networkPositiveIntField(fieldNetworkConnectTimeout, "Connect timeout", "seconds", settings.ConnectTimeoutSeconds,
+			"Time allowed to open each TCP connection. Waiting for a model's answer is governed separately by each account."),
+		networkPositiveIntField(fieldNetworkTLSHandshakeTimeout, "TLS handshake", "seconds", settings.TLSHandshakeTimeoutSeconds,
+			"Time allowed to negotiate and verify TLS once TCP connects."),
 		ui.SeparatorFieldState("network-reuse", "Connection reuse"),
-		networkPositiveIntField(fieldNetworkKeepAlive, "TCP keep-alive", settings.KeepAliveSeconds,
-			"Seconds between keep-alive probes on established connections."),
-		networkPositiveIntField(fieldNetworkIdleConnTimeout, "Idle pool timeout", settings.IdleConnTimeoutSeconds,
-			"Seconds an unused pooled connection may remain open."),
-		networkPositiveIntField(fieldNetworkMaxIdleConnsPerHost, "Idle limit / host", settings.MaxIdleConnsPerHost,
-			"Upper bound for reusable idle connections kept for one destination."),
+		networkPositiveIntField(fieldNetworkKeepAlive, "Keep-alive probe", "seconds", settings.KeepAliveSeconds,
+			"Interval between TCP keep-alive probes on open connections."),
+		networkPositiveIntField(fieldNetworkIdleConnTimeout, "Close idle after", "seconds", settings.IdleConnTimeoutSeconds,
+			"How long an unused pooled connection may stay open."),
+		networkPositiveIntField(fieldNetworkMaxIdleConnsPerHost, "Idle per host", "connections", settings.MaxIdleConnsPerHost,
+			"The most reusable idle connections kept for one destination."),
 		ui.SeparatorFieldState("network-http", "HTTP protocol"),
-		ui.BoolFieldState(fieldNetworkDisableHTTP2, "Disable HTTP/2", settings.DisableHTTP2,
+		ui.BoolFieldState(fieldNetworkDisableHTTP2, "Force HTTP/1.1", settings.DisableHTTP2,
 			"Compatibility fallback that forces HTTP/1.1. Leave off unless an endpoint or proxy requires it."),
 	}
 	return m.networkForm("connection", fields...)
@@ -52,11 +52,11 @@ func (m *Model) buildNetworkConnectionForm(settings network.Settings) *ui.FormMo
 
 func (m *Model) buildNetworkProxyForm(settings network.Settings) *ui.FormModel {
 	settings = m.networkDisplaySettings(settings)
-	mode := ui.SelectFieldState(fieldNetworkProxyMode, "Proxy mode", settings.ProxyMode, []ui.FormOption{
-		{ID: network.ProxyModeEnvironment, Label: "Environment", Detail: "Use HTTP_PROXY, HTTPS_PROXY and NO_PROXY"},
-		{ID: network.ProxyModeDirect, Label: "Direct", Detail: "Do not use a proxy"},
-		{ID: network.ProxyModeCustom, Label: "Custom URL", Detail: "Use the configured proxy URL"},
-	}, "Choose environment proxy variables, a direct connection, or one custom proxy URL.")
+	mode := ui.SegmentedFieldState(fieldNetworkProxyMode, "Proxy", []ui.FormOption{
+		{ID: network.ProxyModeEnvironment, Label: "From environment"},
+		{ID: network.ProxyModeDirect, Label: "None"},
+		{ID: network.ProxyModeCustom, Label: "Custom URL"},
+	}, settings.ProxyMode, "From environment uses HTTP_PROXY, HTTPS_PROXY and NO_PROXY. None connects directly. Custom URL uses the proxy below.")
 	proxyURL := ui.PasswordFieldState(fieldNetworkProxyURL, "Proxy URL", settings.ProxyURL,
 		"Used in Custom mode. HTTP(S), SOCKS4/SOCKS5 use local DNS; SOCKS4a/SOCKS5h use proxy/remote DNS. Credentials are masked and never copied.")
 	proxyURL.DescriptionImportant = true
@@ -116,17 +116,14 @@ func (m *Model) buildNetworkCertificatesForm(settings network.Settings) *ui.Form
 }
 
 func networkTLSMinimumField(current string) *ui.FieldState {
-	field := ui.CycleFieldState(fieldNetworkTLSMinimumVersion, "Minimum TLS", nil, current,
-		"Reject older TLS versions. TLS 1.2 is the compatibility baseline; TLS 1.3 is stricter.")
-	field.Options = []ui.FormOption{
+	return ui.SegmentedFieldState(fieldNetworkTLSMinimumVersion, "Minimum TLS", []ui.FormOption{
 		{ID: network.TLSMinimumVersion12, Label: "TLS 1.2"},
 		{ID: network.TLSMinimumVersion13, Label: "TLS 1.3"},
-	}
-	return field
+	}, current, "Reject older TLS versions. TLS 1.2 is the compatibility baseline; TLS 1.3 is stricter.")
 }
 
-func networkPositiveIntField(id, label string, value int, description string) *ui.FieldState {
-	field := ui.TextFieldState(id, label, strconv.Itoa(value), description)
+func networkPositiveIntField(id, label, unit string, value int, description string) *ui.FieldState {
+	field := ui.NumberFieldState(id, label, value, unit, description)
 	field.Validator = func(value ui.FieldValue) []string {
 		parsed, err := strconv.Atoi(strings.TrimSpace(value.String()))
 		if err != nil || parsed < 1 {

@@ -101,7 +101,7 @@ func TestSettingsCloseXFromDeepPages(t *testing.T) {
 func TestSettingsCloseFooterFromCapabilityDetail(t *testing.T) {
 	app, parent, body := newSettingsPromptApp(t)
 	body.OpenCapabilities(captypes.KindMCP, "", "docs")
-	col, row := settingsTextCell(t, parent, "[ Cancel ]")
+	col, row := settingsTextCell(t, parent, "[ Close ]")
 	x, y := parent.Position()
 	_, cmd := app.Update(tea.MouseClickMsg{X: x + col + 3, Y: y + row, Button: tea.MouseLeft})
 	if cmd == nil {

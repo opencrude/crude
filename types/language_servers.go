@@ -180,16 +180,6 @@ func (s LSPSettings) Validate() error {
 			}
 		}
 	}
-	for ext := range s.Servers {
-		if !validLSPExtension(ext) {
-			return fmt.Errorf("invalid server extension %q", ext)
-		}
-	}
-	for ext := range s.ServerArgs {
-		if !validLSPExtension(ext) {
-			return fmt.Errorf("invalid server_args extension %q", ext)
-		}
-	}
 	return nil
 }
 

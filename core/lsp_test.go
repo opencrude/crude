@@ -91,10 +91,10 @@ func TestLSPPrepareWorkerCaptureAndCancellation(t *testing.T) {
 func TestLSPSnapshotSettingsDetached(t *testing.T) {
 	manager := workspace.NewLSPManager(nil)
 	t.Cleanup(manager.Close)
-	manager.SetSettings(types.LSPSettings{Servers: map[string]string{".go": "test"}})
+	manager.SetSettings(types.LSPSettings{Languages: map[string]types.LSPLanguageSettings{"go": {Command: "test", Args: []string{"serve"}}}})
 	s := lspSnapshot(manager)
-	s.Settings.Servers[".go"] = "changed"
-	if manager.Settings().Servers[".go"] != "test" {
+	s.Settings.Languages["go"].Args[0] = "changed"
+	if manager.Settings().Languages["go"].Args[0] != "serve" {
 		t.Fatal("snapshot shared settings")
 	}
 }

@@ -252,7 +252,7 @@ func TestNetworkPagesPaintAtDesktopAndNarrowSizes(t *testing.T) {
 		field    string
 		label    string
 	}{
-		{catNetworkConnection, fieldNetworkDisableHTTP2, "Disable HTTP/2"},
+		{catNetworkConnection, fieldNetworkDisableHTTP2, "Force HTTP/1.1"},
 		{catNetworkProxy, fieldNetworkProxyURL, "Proxy URL"},
 		{catNetworkCertificates, fieldNetworkTrustedCertificatePin, "Leaf SHA-256"},
 	} {

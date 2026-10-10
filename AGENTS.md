@@ -425,6 +425,12 @@ acceptance limits. Never attach multiple Apps to one mutable Workspace.
   remote paths stay in frames. Ten real Linux shells, twenty retained workspaces
   and loopback SSH have measured acceptance, not physically unlimited/efficient
   resources or distinct-host/native-Windows acceptance.
+- Retained core creation hydrates Notices and initializes capability metadata on
+  its factory worker before actor publication, never from shell startup or a
+  model session. Passive capability observations bypass long settings operations;
+  editable settings reads retain ordered preimages. Explicit refresh sequence plus
+  workspace generation fences stale cancellations. Terminal create receipts mount
+  exact returned identity before inventory; Notices→Terminals must repaint.
 - `workspace.TerminalService` now owns the one `terminalvt` parser and reply source
   before PTY reads start in the retained core. `shellterm`
   consumes immutable rows and typed asynchronous intents; `termview` owns local
@@ -823,6 +829,22 @@ next tick finally synced.
   tab and `handleTabSwitch` clears `ActiveView`. Do not call that helper
   from the tick path.
 - Guarded by `tui/viewmodel/agent_new_session_focus_test.go`.
+
+### Settings Design Language
+
+- Every Application/Workspace Settings page follows
+  `docs/reference/settings-design.md`: the surface paints one three-row header
+  (title/breadcrumb, subtitle), fields are one row, the focused field's help is
+  wrapped below the body, and the footer shows unsaved status beside
+  `[ Save ]` (enabled only when dirty) and `[ Close ]`. Catalogs never paint
+  their own titles; rail rows mark unsaved pages.
+- Controls: switches for booleans, segments for short choices, `‹ value ›`
+  steppers whose `‹` always steps back, unit-bearing content-sized number
+  inputs, name/value tables for lists. Never put units in labels, raw JSON in
+  ordinary fields, or a per-page footer/label dialect.
+- Skills/MCP search live after a typing pause over the shared `ProgressRule`;
+  a newer live search supersedes an in-flight one. Language Servers is a
+  list → detail page; `LSPSettings.Languages` is the only server authority.
 
 ### Agent Settings and Session Root Selection
 
@@ -1848,7 +1870,8 @@ button that needs a double click reads as broken.
   `types/capability`, `skills-directory` community search, and
   `official-mcp-registry`, including remote HTTP and pinned npm/PyPI packages.
   Skills/MCP use readable store cards with inline Install/Manage, an explicit
-  Installed-only filter and Source/Sort choice lists, not administration tables.
+  Installed chip, live search over the shared progress rule and Source/Sort
+  choice lists, not administration tables.
   All-source search interleaves ranked results; unsupported variants and partial
   source failures stay visible. Built-ins can be edited or disabled but not deleted; source
   trust never bypasses exact acquisition preview or MCP grants.
@@ -1896,6 +1919,11 @@ See `docs/guides/capability-workflows.md` for actual routes, protocol limits,
 manual workflows and acceptance boundaries.
 
 ### File Tree Filter And Guide Geometry
+- Connected trees project the header/panel's one core Git snapshot and retained
+  diagnostics, including unloaded descendants and filtered search matches. Both
+  ordinary file and Git metadata changes arm reconciliation. Directory response
+  order cannot erase status; clean snapshots clear it. Never add client resolvers
+  or project watchers to repair missing replica metadata.
 - `shelltree.FilterField` is the single text owner for clicked input AND
   type-to-filter while the tree has focus. `FileTreeModel` may derive its
   in-memory projection when no async path-search service is installed; the

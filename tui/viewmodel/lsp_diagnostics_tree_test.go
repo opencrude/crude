@@ -27,6 +27,8 @@ type immediateTreeDiagRuntime struct {
 type immediateTreeDiagClient struct {
 	filePath string
 	diags    []workspace.LSPDiagnostic
+	mu       sync.Mutex
+	publish  func(string, []workspace.LSPDiagnostic)
 }
 
 func (r *immediateTreeDiagRuntime) NewClient(_ model.LSPServerSpec, rootURI string) workspace.LSPClient {
@@ -38,7 +40,19 @@ func (r *immediateTreeDiagRuntime) NewClient(_ model.LSPServerSpec, rootURI stri
 }
 
 func (c *immediateTreeDiagClient) OnDiagnostics(fn func(string, []workspace.LSPDiagnostic)) {
+	c.mu.Lock()
+	c.publish = fn
+	c.mu.Unlock()
 	fn(c.filePath, c.diags)
+}
+
+func (c *immediateTreeDiagClient) publishDiagnostics(diags []workspace.LSPDiagnostic) {
+	c.mu.Lock()
+	fn := c.publish
+	c.mu.Unlock()
+	if fn != nil {
+		fn(c.filePath, diags)
+	}
 }
 
 func (c *immediateTreeDiagClient) Start(context.Context) error { return nil }

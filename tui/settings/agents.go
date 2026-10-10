@@ -8,7 +8,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"crude/provider"
-	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/ui"
@@ -25,6 +24,7 @@ var agentRoles = []struct {
 }{{"default", "Main Agent", catMain}, {"researcher", "Researcher", catResearcher}, {"crafter", "Crafter", catCrafter}, {"aeron", "Aeron", catAeron}, {"memory", "Memory Agent", catMemory}, {"auto-review", "Auto Review Agent", catAutoReviewPolicy}}
 
 type agentCatalog struct {
+	helpRect ui.Rect
 	ui.Base
 	owner                     *WorkspaceSettingsSurface
 	model                     *Model
@@ -570,36 +570,46 @@ func (c *agentCatalog) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		c.filter.Layout(ctx, ui.Rect{})
 		c.table.Layout(ctx, ui.Rect{})
 		c.listScroll.Layout(ctx, ui.Rect{})
-		c.tabs.Layout(ctx, ui.Rect{Y: 2, W: w, H: ui.StripHeight})
+		c.tabs.Layout(ctx, ui.Rect{Y: 0, W: w, H: ui.StripHeight})
 		c.toolFilter.Layout(ctx, ui.Rect{})
-		formY := 5
+		formY := ui.StripHeight + 1
 		if c.page == "tools" && c.roleIndex != catMemory && c.roleIndex != catAutoReviewPolicy {
-			c.toolFilter.Layout(ctx, ui.Rect{Y: 4, W: w, H: 1})
-			formY = 6
+			c.toolFilter.Layout(ctx, ui.Rect{Y: ui.StripHeight, W: w, H: 1})
+			formY = ui.StripHeight + 2
 		}
-		c.form.SetHideDescriptions(w < 48)
-		c.form.Layout(ctx, ui.Rect{Y: formY, W: max(1, w-2), H: max(1, h-formY-3)})
+		// Rows from the bottom: action bar, notice, help strip, breathing row.
+		c.form.SetHideDescriptions(true)
+		c.form.SetFieldGap(0)
+		helpLines := helpStripLines(h - formY - 2)
+		helpH := helpLines
+		if helpLines > 1 {
+			helpH++
+		}
+		formH := max(1, h-formY-2-helpH)
+		c.helpRect = ui.Rect{Y: h - 2 - helpLines, W: w, H: helpLines}
+		c.form.Layout(ctx, ui.Rect{Y: formY, W: max(1, w-2), H: formH})
 		// Register only the painted stroke so the reserved gutter column
 		// between the form and the bar stays inert for pointer input.
-		c.formScroll.Layout(ctx, ui.Rect{X: w - ui.ScrollbarWidth, Y: formY, W: ui.ScrollbarWidth, H: max(1, h-formY-3)})
+		c.formScroll.Layout(ctx, ui.Rect{X: w - ui.ScrollbarWidth, Y: formY, W: ui.ScrollbarWidth, H: formH})
 		if !c.formScroll.Needed() {
 			c.formScroll.Layout(ctx, ui.Rect{})
 		}
 		c.bar.Layout(ctx, ui.Rect{Y: h - 1, W: w, H: 1})
 		c.more.Layout(ctx, ui.Rect{})
 	} else {
+		c.helpRect = ui.Rect{}
 		c.toolFilter.Layout(ctx, ui.Rect{})
 		c.tabs.Layout(ctx, ui.Rect{})
 		c.form.Layout(ctx, ui.Rect{})
 		c.formScroll.Layout(ctx, ui.Rect{})
-		c.filter.Layout(ctx, ui.Rect{Y: 1, W: w, H: 1})
+		c.filter.Layout(ctx, ui.Rect{Y: 0, W: w, H: 1})
 		c.table.SetColumns([]ui.TableColumn{{ID: "name", Label: "Agent", Track: ui.FractionGridTrack(2)}, {ID: "role", Label: "Role", Track: ui.FractionGridTrack(2)}, {ID: "model", Label: "Model", Track: ui.FractionGridTrack(3)}})
 		firstAction := h - 1
 		if c.stackActions {
 			firstAction--
 		}
-		c.table.Layout(ctx, ui.Rect{Y: 3, W: max(1, w-2), H: max(1, firstAction-5)})
-		c.listScroll.Layout(ctx, ui.Rect{X: w - ui.ScrollbarWidth, Y: 4, W: ui.ScrollbarWidth, H: max(1, firstAction-6)})
+		c.table.Layout(ctx, ui.Rect{Y: 2, W: max(1, w-2), H: max(1, firstAction-4)})
+		c.listScroll.Layout(ctx, ui.Rect{X: w - ui.ScrollbarWidth, Y: 3, W: ui.ScrollbarWidth, H: max(1, firstAction-5)})
 		if !c.listScroll.Needed() {
 			c.listScroll.Layout(ctx, ui.Rect{})
 		}
@@ -616,8 +626,10 @@ func (c *agentCatalog) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintCont
 	if r.Empty() {
 		return
 	}
-	title := c.owner.PaneTitle()
-	buf.WriteString(ox+r.X, oy+r.Y, rendering.TruncateVisual(title, r.W, "…"), c.owner.tokens.Color(ui.ColorAccent), c.owner.tokens.Color(ui.ColorPopupBg), cell.AttrBold)
+	bg := c.owner.tokens.Color(ui.ColorPopupBg)
+	if c.draft != nil && !c.helpRect.Empty() {
+		paintFieldHelp(buf, ox+r.X+c.helpRect.X, oy+r.Y+c.helpRect.Y, c.helpRect.W, c.helpRect.H, c.form.HelpField(), c.owner.tokens, bg)
+	}
 	if c.notice != "" {
 		row := r.H - 2
 		if c.stackActions {
@@ -629,11 +641,6 @@ func (c *agentCatalog) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintCont
 func (c *agentCatalog) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	if c.owner != nil && c.owner.model != nil && c.owner.model.Saving() {
 		return ui.EventResult{Handled: true}
-	}
-	if c.draft != nil && evt.Kind == ui.EventMouseClick && evt.MouseClick.Button == tea.MouseLeft && ctx.LocalY == 0 {
-		if ui.BreadcrumbIndex(c.owner.paneTitleParts(), c.owner.breadcrumbSeparator(), ctx.LocalX, c.Bounds().W) == 0 {
-			return c.back()
-		}
 	}
 	if evt.IsKey() && evt.Key.Code == tea.KeyEsc && c.draft != nil {
 		return c.back()

@@ -250,6 +250,19 @@ func (w *WindowFrameWidget) Frame() *WindowFrame {
 }
 
 // Body returns the component mounted inside the frame.
+// NeedsFrame also honors a frame-sensitive body: a window whose content shows
+// indeterminate progress keeps animating while focus rests on any control.
+func (w *WindowFrameWidget) NeedsFrame() bool {
+	if w == nil {
+		return false
+	}
+	if w.ComponentWidget.NeedsFrame() {
+		return true
+	}
+	body, ok := w.Body().(FrameSensitive)
+	return ok && body.NeedsFrame()
+}
+
 func (w *WindowFrameWidget) Body() Component {
 	if w == nil || w.frame == nil {
 		return nil

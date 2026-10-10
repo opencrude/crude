@@ -17,7 +17,10 @@ import (
 //	FieldSelect               "▾" right-aligned when closed, "▴" when open
 //	FieldMultiSelect          "▾" right-aligned when closed, "▴" when open;
 //	                          option rows prefix "[x]"/"[ ]"
-//	FieldCycle                "←" left edge, "→" right edge (value centered);
+//	FieldCycle                content-sized "‹ value ›" stepper (‹ previous,
+//	                          › and the value next); StyleSwitch paints
+//	                          "● On"/"○ Off"; StyleSegmented paints every
+//	                          option inline and a click selects it directly;
 //	                          compact docks share the FieldNav table columns
 //	FieldToggle, FieldCheckbox "[x]" / "[ ]" inline
 //	FieldKeyValues            editable two-column table (Name/value rows plus
@@ -159,7 +162,7 @@ type FieldState struct {
 	Inherited            bool
 	InheritedFrom        string
 	Options              []FormOption
-	Columns              []string // compact FieldNav table cells after the label; for FieldCycle, empty spacer slots before the cycle control (column alignment)
+	Columns              []string // compact FieldNav table cells after the label; for FieldCycle, empty spacer slots before the cycle control (column alignment); for FieldKeyValues, the two column captions
 	Validator            func(value FieldValue) []string
 	// Live marks fields whose edits fire the form.changed action on every
 	// value change (not just on commit). Used by numeric fields with a live
@@ -168,7 +171,24 @@ type FieldState struct {
 	Target string // for FieldNav: target page/focus ID
 	Button bool   // for FieldNav: render as an inset boxed button in the control column instead of a full-width drill-in row
 	Rows   int    // for FieldTextArea: visible editor rows; 0 means the default
+	// Style selects the presentation of a FieldCycle: StyleSwitch paints a
+	// binary choice as a "● On"/"○ Off" switch, StyleSegmented paints every
+	// option inline so the whole choice is visible and directly clickable.
+	Style FieldStyle
+	// Unit is a muted suffix painted after a single-line value ("ms",
+	// "MB"). Unit fields get a narrow, content-sized input.
+	Unit string
 }
+
+// FieldStyle refines how a field's control is painted without changing its
+// value protocol.
+type FieldStyle uint8
+
+const (
+	StyleDefault FieldStyle = iota
+	StyleSwitch
+	StyleSegmented
+)
 
 func (f *FieldState) HasErrors() bool { return len(f.Errors) > 0 }
 

@@ -58,6 +58,9 @@ Read that first; this index only organizes the reference material.
   their `tui/ui` implementations.
 - [Settings layers](reference/settings.md) — the three-level settings model
   (app → workspace → session) and what each layer owns.
+- [Settings design language](reference/settings-design.md) — the one page
+  anatomy, control dialect, help strip, footer and live store search every
+  Settings page follows.
 - [Workspace collaboration runtime](reference/workspace-collaboration.md)
   — durable agents/runs, automatic directed delivery, report revisions, live-only
   broadcast, explicit context admission, Board history and recovery.

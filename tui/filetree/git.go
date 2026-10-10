@@ -223,6 +223,34 @@ func gitStatusPriority(status GitStatus) int {
 	}
 }
 
+// GitStatusFromCode projects the neutral core status code into tree semantics.
+func GitStatusFromCode(code string) GitStatus {
+	switch code {
+	case "!":
+		return GitConflicted
+	case "M":
+		return GitModified
+	case "A", "C":
+		return GitStaged
+	case "D":
+		return GitDeleted
+	case "R":
+		return GitRenamed
+	case "U", "?":
+		return GitUntracked
+	default:
+		return GitNone
+	}
+}
+
+// DominantGitStatus uses the same precedence as local repository projection.
+func DominantGitStatus(a, b GitStatus) GitStatus {
+	if gitStatusPriority(b) > gitStatusPriority(a) {
+		return b
+	}
+	return a
+}
+
 // RepoPath returns the absolute path of the git repository root.
 func (r *GitStatusResolver) RepoPath() string {
 	return r.repoPath

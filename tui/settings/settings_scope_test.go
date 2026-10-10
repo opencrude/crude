@@ -232,7 +232,7 @@ func TestSettingsFormScrollDoesNotPaintFooter(t *testing.T) {
 	}
 	assertFooterClear := func(t *testing.T, buf *surface.CellBuffer) {
 		t.Helper()
-		if !bufferContains(buf, "Save") || !bufferContains(buf, "Cancel") {
+		if !bufferContains(buf, "Save") || !bufferContains(buf, "Close") {
 			t.Fatalf("footer actions missing:\n%s", bufferPlain(buf))
 		}
 		footerY := h - 1

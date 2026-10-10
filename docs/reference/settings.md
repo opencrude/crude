@@ -99,10 +99,11 @@ order in both settings scopes.
 
 Skills and MCP use a single store-style catalog, not administration tables or
 separate Installed/Discover modes. Cards show names, publisher/source, descriptions,
-setup state and a native Install/Manage action. **Installed only** is an explicit
-checkbox: local filtering never starts an external search, process or provider
-request. Enter or Search queries enabled sources; Source and Sort open explicit
-choice lists, not hidden cycles. Source selection queries that exact source rather
+setup state and a native Install/Manage action. The **Installed** chip is an
+explicit local filter: it never starts an external search, process or provider
+request. Typing searches enabled sources live after a short pause (Enter searches
+at once) with the shared progress rule; Source and Sort open explicit choice
+lists, not hidden cycles. See [Settings design language](settings-design.md). Source selection queries that exact source rather
 than filtering an already capped all-source page. Inspect replaces only the right
 pane; Back retains query, selection and scroll. Scope remains
 Application/Workspace in the footer. Source names, field labels/descriptions and
@@ -138,6 +139,14 @@ remove that screen while Settings or a capability sidebar remains visible. Open
 inspected MCP tool details refresh their exact schema/grant in place, or clear
 obsolete evidence when a tool disappears, without replacing focused filters or
 editable drafts.
+
+Cold retained-workspace creation initializes capability metadata off the actor
+before shell attachment, without starting transports or downloading/executing
+anything. Passive capability reads are independent of long-running settings
+operations; editable policy reads still follow preceding saves. Explicit refresh
+results are workspace- and sequence-fenced. Failed observation keeps usable named
+resources visible with refresh-failed status, and invalid/setup/approval-required
+MCP configuration cannot be hidden by an idle or cached transport state.
 
 MCP details include Overview, Connection, Tools, Resources, Prompts, Access and
 Activity. Connect/disconnect, detached Test, refresh, sign-in/out and Save
@@ -652,8 +661,9 @@ already been removed.
 One floating window (`ui.OverlayWorkspaceSettings`) with a segmented
 Application | Workspace switch in the **bottom-left** rail footer. Both
 labels stay visible and clickable; the active side uses accent (orange)
-text on a distinct background. Save/Cancel stay mounted across overlay
-ticks (`SetModel` must not rebuild the action bars). Command Palette
+text on a distinct background. Save/Close stay mounted across overlay
+ticks (`SetModel` must not rebuild the action bars). Page anatomy, controls,
+help strip and footer status follow [Settings design language](settings-design.md). Command Palette
 entries:
 
 - `settings.open` — Application Settings
@@ -690,7 +700,7 @@ Leftover width is distributed as space after the label and before
 inherited text (not filler periods). `·` is a column separator only.
 Labels and values use `ColorFg`; inherited/meta use `ColorMuted`.
 Up/Down cycle fields and the left-aligned Save/Cancel/Reset
-row; Esc closes or goes back. Agent rows keep a trailing `▸`
+row of the session deck; Esc closes or goes back. Agent rows keep a trailing `▸`
 (`TreeCollapsed`). Never paint `❯`.
 
 Visual contracts for this window:
@@ -702,21 +712,24 @@ Visual contracts for this window:
   on both the left rail and the right-hand form
 - Search magnifier is trailing (`SearchGlyphEnd` + `PromptEnd`)
 - Full-height **resizable** vertical divider between rail and form (`ui.SplitDivider`)
-- No right-panel title/description; the form starts after the top pad
+- Every page shares the three-row header (title or breadcrumb, subtitle,
+  breathing row); fields are one row and the focused field's help is wrapped
+  below the body
 - Group gap on the left rail (`ListItem.Spacer` between AI and IDE)
 - Section gap on the right (`Form` field gap + separator rows)
 - Focused form row uses one background for label and control
-- The Application/Workspace background toggle shares the Save/Cancel footer
+- The Application/Workspace background toggle shares the Save/Close footer
   row; one full-width separator is directly above the entire row
-- Save/Cancel right-align; Reset section sits on the opposite side of the
-  form footer (just right of the vertical divider)
+- Save/Close right-align behind the unsaved-changes status; Save is enabled
+  only while something is unsaved. Reset section sits on the opposite side of
+  the form footer (just right of the vertical divider)
 - `FieldSelect` is an overlay (z-order paint pass) with box-drawing chrome.
   Opening a dropdown does not grow form height or push later fields down;
   it flips above the field when there is no room below
 - Left and right panels get an on-demand `ScrollbarControl` (`Needed()` is
   false while content fits)
 - Form paint clips to the panel viewport. Scrolled fields must not overwrite
-  the footer separator or Save/Cancel row
+  the footer separator or Save/Close row
 - Accounts is one searchable compact table with Add account/Edit/Clone/Remove.
   Errors/progress occupy its reserved status row, not the action row. Its editor
   replaces only the right pane; the frame title remains Application Settings or
@@ -730,11 +743,14 @@ Visual contracts for this window:
 
 ## LSP
 
-Application and workspace settings share the same Language Servers page:
-master enable, start-on-open, per-feature gates (diagnostics, completions,
-hover, definition, references, outline, rename), diagnostic display
-(editor / tree / status + minimum severity), and per-language enable plus
-command/args overrides. `workspace.LSPManager` reads the **effective**
+Application and workspace settings share two pages. **Code Intelligence** holds
+the master enable, auto-detect, start-on-open, per-feature gates (diagnostics,
+completions, hover, definition, references, outline, rename), diagnostic display
+(editor / tree / status + minimum severity) and resource limits. **Language
+Servers** is a searchable server table with a per-server editor: enable,
+command, shell-style arguments, file extensions/language ID (custom servers),
+project markers, environment table, and the JSON `settings`/`initializationOptions`
+objects. Per-language `Languages` entries are the only server authority. `workspace.LSPManager` reads the **effective**
 `LSPSettings` and refuses to start or request gated features.
 
 The default subprocess transport is `lspclient/`, independent of the editor/TUI.
@@ -748,8 +764,8 @@ views; final native and distinct-host runtime acceptance remains separate.
 The unfinished LSP runtime now has its minimal launch/settings contract so the
 normal source build remains runnable. Keep LSP disabled until the lifecycle work
 in [the active handoff](../plans/lsp-runtime-handoff.md) is validated. Its resource
-fields default to two servers, a 300-second idle timeout and a 2 MiB document limit;
-the native resource controls and expanded catalog are not yet integrated.
+fields default to two servers, a 300-second idle timeout and a 2 MiB document limit,
+edited on Code Intelligence (the document limit in MB).
 
 ## Tests
 
