@@ -103,7 +103,8 @@ func TestCatalogActionsShareBottomAnchorAndMeasuredGaps(t *testing.T) {
 	host := ui.NewHost(th, s)
 	for _, size := range []ui.Size{{W: 124, H: 28}, {W: 88, H: 24}, {W: 70, H: 18}} {
 		host.Resize(size.W, size.H)
-		lastRow := size.H - 3 // one rule and the shared settings footer
+		// The footer, the help row above its rule, then one empty row.
+		lastRow := size.H - footerRows - 3
 		for _, catalog := range []string{"agents", "accounts"} {
 			switch catalog {
 			case "agents":

@@ -2,9 +2,11 @@ package settings
 
 import (
 	"bytes"
+	"cmp"
 	"encoding/json"
 	"fmt"
 	"image/color"
+	"math"
 	"reflect"
 	"slices"
 	"strconv"
@@ -1059,7 +1061,11 @@ func dialConnectField(seconds int) *ui.FieldState {
 	field := ui.CycleFieldState(fieldDialConnect, "Connect timeout", nil, strconv.Itoa(seconds),
 		"Network defaults inherit separate TCP/TLS budgets. An explicit value overrides both, not model response waiting.")
 	field.Options = []ui.FormOption{{ID: "0", Label: "Network defaults"}}
-	field.Options = append(field.Options, dialFieldOptions(seconds, 0, dialConnectLadder, "s")[1:]...)
+	for _, option := range dialFieldOptions(seconds, 0, dialConnectLadder, "s") {
+		if option.ID != "0" {
+			field.Options = append(field.Options, option)
+		}
+	}
 	field.Validator = func(value ui.FieldValue) []string {
 		if field.ReadOnly {
 			return nil
@@ -1096,20 +1102,24 @@ func dialChoiceID(value, builtinDefault int) string {
 	return strconv.Itoa(value)
 }
 
-// dialFieldOptions builds a ladder of concrete choices led by the built-in
-// default. A stored value outside the ladder is inserted so existing settings
-// stay visible and editable.
+// dialFieldOptions builds a ladder of concrete choices in natural order: the
+// built-in default sits at its own value (marked "(default)") and Unlimited
+// (0) comes last, so the stepper's ‹ always means less and › always more. A
+// stored value outside the ladder is inserted so it stays visible and editable.
 func dialFieldOptions(current, builtinDefault int, ladder []int, unit string) []ui.FormOption {
-	values := []int{builtinDefault}
-	for _, value := range ladder {
-		if !slices.Contains(values, value) {
-			values = append(values, value)
-		}
-	}
-	if current > 0 && !slices.Contains(values, current) {
+	values := append([]int{builtinDefault}, ladder...)
+	if current > 0 {
 		values = append(values, current)
-		slices.Sort(values[1:])
 	}
+	// 0 means Unlimited: it ranks after every finite value.
+	rank := func(value int) int {
+		if value == 0 {
+			return math.MaxInt
+		}
+		return value
+	}
+	slices.SortFunc(values, func(a, b int) int { return cmp.Compare(rank(a), rank(b)) })
+	values = slices.Compact(values)
 	options := make([]ui.FormOption, 0, len(values))
 	for _, value := range values {
 		options = append(options, ui.FormOption{
@@ -1301,6 +1311,9 @@ func (m *Model) samplingFields(cfg types.CategorySettings) []*ui.FieldState {
 	topPField := ui.TextFieldState(fieldTopP, "Top P", topP,
 		"0-1; blank = provider default.")
 	topPField.Validator = floatRangeValidator(0, 1)
+	for _, field := range []*ui.FieldState{temperatureField, topPField} {
+		field.Numeric, field.Placeholder = true, "default"
+	}
 	return []*ui.FieldState{
 		ui.SeparatorFieldState("sampling", "Sampling"),
 		temperatureField,
@@ -1342,6 +1355,7 @@ func numericField(id, label string, value int, description string) *ui.FieldStat
 		current = strconv.Itoa(value)
 	}
 	f := ui.TextFieldState(id, label, current, description)
+	f.Numeric = true
 	f.Validator = func(v ui.FieldValue) []string {
 		trimmed := strings.TrimSpace(v.String())
 		if trimmed == "" {
@@ -1488,7 +1502,6 @@ func (m *Model) autoReviewPolicyFields(settings types.AutoPermissionSettings) []
 	ceiling := autoPermissionIntField(fieldAutoPermRetryCeiling, "Retry ceiling", auto.MaxRetryOutputTokens, 16, 8192,
 		"Hard per-attempt output limit. Too little headroom can exhaust reasoning before the verdict.")
 	ceiling.Unit = "tokens"
-	ceiling.DescriptionImportant = true
 	unresolved := ui.SegmentedFieldState(fieldAutoPermUnresolved, "When unsure", askDeny, auto.UnresolvedMode,
 		"Ask me pauses for a person. Deny rejects structural uncertainty, a model 'ask' or exhausted recovery so unattended work continues safely.")
 	timeout := autoPermissionIntField(fieldAutoPermTimeout, "Timeout per attempt", auto.TimeoutSeconds, 1, 120,
@@ -1884,30 +1897,15 @@ func (m *Model) Update(msg tea.Msg) (Model, tea.Cmd) {
 	case CapabilityResultMsg:
 		m.applyCapabilityResult(msg)
 	case types.ModelCatalogUpdatedMsg:
+		// The catalog lives in the core; this shell cannot re-derive model
+		// cards locally. Refetch every loaded account list through the core.
+		var cmds []tea.Cmd
 		for accountID, account := range m.accounts {
-			key := accountModelKey(account.ProviderID, accountID)
-			if entries, loaded := m.models[key]; loaded {
-				infos := make([]provider.ModelInfo, len(entries))
-				for index, entry := range entries {
-					infos[index] = provider.ModelInfo{ID: entry.ID, Name: entry.Name}
-				}
-				entries = types.ModelEntriesFromInfos(infos)
-				m.models[key] = entries
-				for _, category := range []int{catMain, catResearcher, catCrafter, catAeron, catAgents} {
-					if m.value(category, fieldConnection) != accountID {
-						continue
-					}
-					if field := m.categories[category].Form.Field(fieldModel); field != nil && !field.Loading && len(field.Errors) == 0 {
-						field.Options = ui.ModelOptions(entries)
-					}
-				}
+			if _, loaded := m.models[accountModelKey(account.ProviderID, accountID)]; loaded {
+				cmds = append(cmds, m.fetchModelsForAccountCmd(account.ProviderID, accountID))
 			}
 		}
-		for _, category := range []int{catMain, catResearcher, catCrafter, catAeron, catAgents} {
-			if m.categories[category].Form.Field(fieldModel) != nil {
-				m.autofillCapabilities(category)
-			}
-		}
+		return *m, tea.Batch(cmds...)
 	case AccountChangeResultMsg:
 		if msg.Target == m {
 			m.applyAccountChange(msg)
@@ -1983,15 +1981,32 @@ func (m *Model) OpenSelect(fieldID string) tea.Cmd {
 	if fieldID != fieldModel || m.currentForm() == nil {
 		return nil
 	}
-	providerID, accountID := m.resolvedAccount(m.selected)
+	return m.prefetchModels(m.selected)
+}
+
+// prefetchModels asks the core for the selected account's model list when a
+// form showing that account has none yet. The core owns the model catalog, so
+// its entries are the only source of a model's capabilities: an agent editor
+// prefetches on open and on every account change, and capability rows fill as
+// soon as the list arrives instead of waiting for the model dropdown.
+func (m *Model) prefetchModels(category int) tea.Cmd {
+	if m == nil || category < 0 || category >= len(m.categories) || m.categories[category].Form == nil {
+		return nil
+	}
+	providerID, accountID := m.resolvedAccount(category)
 	if providerID == "" || accountID == "" {
 		return nil
 	}
-	field := m.currentForm().Field(fieldModel)
-	if field == nil || len(field.Options) > 0 {
+	field := m.categories[category].Form.Field(fieldModel)
+	if field == nil || len(field.Options) > 0 || field.Loading {
 		return nil
 	}
-	field.Loading, field.LoadMessage = true, "Fetching models..."
+	if models, loaded := m.models[accountModelKey(providerID, accountID)]; loaded && len(models) > 0 {
+		field.Options = ui.ModelOptions(models)
+		m.autofillCapabilities(category)
+		return nil
+	}
+	field.Loading, field.LoadMessage = true, "Fetching models…"
 	return m.fetchModelsForAccountCmd(providerID, accountID)
 }
 func (m *Model) fetchModelsCmd() tea.Cmd {
@@ -2249,6 +2264,21 @@ func (m *Model) visibleCategoryIndices() []int {
 		return groupOrder[leftGroup] - groupOrder[rightGroup]
 	})
 	return indices
+}
+
+// searchTarget is the page a search lands on: the selected page while it
+// still matches, otherwise the first match.
+func (m *Model) searchTarget() int {
+	visible := m.visibleCategoryIndices()
+	for _, index := range visible {
+		if index == m.selected {
+			return index
+		}
+	}
+	if len(visible) > 0 {
+		return visible[0]
+	}
+	return m.selected
 }
 
 func (m *Model) ensureVisibleSelection() {

@@ -288,7 +288,7 @@ func (f *Form) contentHeight() int {
 			height++
 		}
 		height += field.height()
-		if i < len(f.fields)-1 && f.fieldGap > 0 && field.FieldState().Type != FieldSeparator && f.fields[i+1].FieldState().Type != FieldSeparator {
+		if i < len(f.fields)-1 && f.fieldGap > 0 {
 			height += f.fieldGap
 		}
 	}
@@ -334,7 +334,7 @@ func (f *Form) Layout(ctx LayoutContext, r Rect) {
 		}
 		field.Layout(ctx, Rect{X: fieldX, Y: contentY - f.scroll.Offset(), W: fieldW, H: h})
 		contentY += h
-		if i < len(f.fields)-1 && f.fieldGap > 0 && field.FieldState().Type != FieldSeparator && f.fields[i+1].FieldState().Type != FieldSeparator {
+		if i < len(f.fields)-1 && f.fieldGap > 0 {
 			contentY += f.fieldGap
 		}
 	}

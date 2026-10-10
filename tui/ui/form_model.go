@@ -17,11 +17,12 @@ import (
 //	FieldSelect               "▾" right-aligned when closed, "▴" when open
 //	FieldMultiSelect          "▾" right-aligned when closed, "▴" when open;
 //	                          option rows prefix "[x]"/"[ ]"
-//	FieldCycle                content-sized "‹ value ›" stepper (‹ previous,
-//	                          › and the value next); StyleSwitch paints
-//	                          "● On"/"○ Off"; StyleSegmented paints every
-//	                          option inline and a click selects it directly;
-//	                          compact docks share the FieldNav table columns
+//	FieldCycle                fixed-width "‹ value ›" stepper (left half
+//	                          previous, right half next, ends hold);
+//	                          StyleSwitch paints a compact ‹ On › box;
+//	                          StyleSegmented paints every option as one pill
+//	                          and a click selects it directly; compact docks
+//	                          share the FieldNav table columns
 //	FieldToggle, FieldCheckbox "[x]" / "[ ]" inline
 //	FieldKeyValues            editable two-column table (Name/value rows plus
 //	                          an add row) below the label; row states reuse the
@@ -140,7 +141,10 @@ type FormOption struct {
 
 // FieldState tracks the current state of a single field.
 type FieldState struct {
-	// DescriptionImportant keeps non-blocking warnings visible on narrow forms.
+	// DescriptionImportant paints the description under the control even when
+	// a form routes descriptions to inline help. Reserve it for exceptional
+	// per-field state (a denied tool, a catalog disagreement); routine
+	// explanations belong in the focused field's inline help.
 	DescriptionImportant bool
 	ID                   string
 	Label                string
@@ -178,6 +182,9 @@ type FieldState struct {
 	// Unit is a muted suffix painted after a single-line value ("ms",
 	// "MB"). Unit fields get a narrow, content-sized input.
 	Unit string
+	// Numeric marks a single-line number without a unit (temperature): it
+	// gets the same short box as unit fields.
+	Numeric bool
 }
 
 // FieldStyle refines how a field's control is painted without changing its

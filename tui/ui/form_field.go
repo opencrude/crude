@@ -35,6 +35,15 @@ type FormField struct {
 	colWidths       []int
 }
 
+// Spacious control geometry. Every control is a box that starts on the form's
+// value column; text inside a box starts one cell in. Inputs, dropdowns,
+// steppers, drill-ins, tables and text areas share one width, so their right
+// edges line up too; it is capped at a comfortable reading measure.
+const (
+	wideControlW  = 60
+	shortControlW = 12
+)
+
 const selectOverlayChrome = 1
 
 func NewFormField(id ComponentID, f *FieldState, tokens *TokenSet) *FormField {
@@ -259,6 +268,10 @@ func (ff *FormField) height() int {
 	}
 	if ff.field.Type == FieldKeyValues {
 		h := 1 + ff.keyValuesHeight()
+		if !ff.compact {
+			// Spacious tables start on the label row, in the value column.
+			h = ff.keyValuesHeight()
+		}
 		if !ff.compact && (!ff.hideDescription || ff.field.DescriptionImportant) && ff.field.Description != "" {
 			h++
 		}
@@ -266,6 +279,13 @@ func (ff *FormField) height() int {
 	}
 	if ff.compact {
 		return 1 + len(ff.field.Errors)
+	}
+	if ff.field.Type == FieldTextArea {
+		h := ff.areaRows()
+		if ff.field.Description != "" && (!ff.hideDescription || ff.field.DescriptionImportant) {
+			h++
+		}
+		return h + len(ff.field.Errors)
 	}
 	if ff.field.Type == FieldNav {
 		if strings.TrimSpace(ff.navDetail()) != "" {
@@ -286,6 +306,10 @@ func (ff *FormField) height() int {
 
 func (ff *FormField) Layout(ctx LayoutContext, r Rect) {
 	ff.SetBounds(r)
+	if !ff.compact {
+		ff.layoutSpacious(ctx, r)
+		return
+	}
 	controlX, controlW := ff.controlX(r.W), ff.controlWidth(r.W)
 	if ff.control != nil {
 		if editorX := ff.compactEditorX(r.W); editorX >= 0 {
@@ -311,6 +335,72 @@ func (ff *FormField) Layout(ctx LayoutContext, r Rect) {
 	}
 }
 
+// layoutSpacious places the retained editors inside their value-column boxes.
+func (ff *FormField) layoutSpacious(ctx LayoutContext, r Rect) {
+	vx, boxW := ff.valueX(r.W), ff.boxWidth(r.W)
+	if ff.control != nil {
+		ff.control.Layout(ctx, Rect{X: vx + 1, Y: 0, W: max(1, boxW-2), H: 1})
+	}
+	if ff.area != nil {
+		ff.area.Layout(ctx, Rect{X: vx + 1, Y: 0, W: max(1, boxW-2), H: ff.areaRows()})
+	}
+	if ff.grid != nil {
+		ff.grid.Layout(ctx, Rect{X: vx, Y: 0, W: max(1, boxW), H: ff.keyValuesHeight()})
+	}
+}
+
+// valueX is the spacious value column: every control's box starts here.
+func (ff *FormField) valueX(width int) int { return ff.controlX(width) + 1 }
+
+// boxWidth is the spacious control width by kind: short boxes for numbers
+// with units, content-sized switches and segments, and one shared wide box
+// for everything else.
+func (ff *FormField) boxWidth(width int) int {
+	available := max(1, width-ff.valueX(width))
+	switch {
+	case (ff.field.Unit != "" || ff.field.Numeric) && (ff.field.Type == FieldText || ff.field.Type == FieldPassword):
+		return min(available, max(shortControlW, rendering.VisibleWidth(ff.field.Value.String())+4))
+	case ff.field.Type == FieldCycle && ff.field.Style == StyleSwitch:
+		// A switch is a compact ‹ On › box sized to its widest state.
+		return min(available, ff.maxOptionWidth()+6)
+	case ff.field.Type == FieldToggle || ff.field.Type == FieldCheckbox:
+		return min(available, rendering.VisibleWidth("Off")+6)
+	case ff.field.Type == FieldCycle && ff.cycleSegments(available) != nil:
+		segments := ff.cycleSegments(available)
+		last := segments[len(segments)-1]
+		return last.x + last.w
+	}
+	return min(available, wideControlW)
+}
+
+func (ff *FormField) maxOptionWidth() int {
+	w := rendering.VisibleWidth(ff.field.Placeholder)
+	for _, option := range ff.field.Options {
+		w = max(w, rendering.VisibleWidth(option.Label))
+	}
+	if w == 0 {
+		w = rendering.VisibleWidth("Not set")
+	}
+	return w
+}
+
+// isStepper reports whether a spacious cycle paints as the ‹ value › box.
+func (ff *FormField) isStepper(width int) bool {
+	if ff.field.Type != FieldCycle || ff.field.Style == StyleSwitch {
+		return false
+	}
+	return ff.cycleSegments(max(1, width-ff.valueX(width))) == nil
+}
+
+// selectPanel returns the field-relative x and width of the open dropdown.
+func (ff *FormField) selectPanel(width int) (int, int) {
+	if ff.compact {
+		return ff.controlX(width), ff.controlWidth(width)
+	}
+	vx := ff.valueX(width)
+	return vx, max(1, min(width-vx, max(ff.boxWidth(width), 32)))
+}
+
 func (ff *FormField) layoutOverlay(ctx LayoutContext, formH int) {
 	if ff.selectList == nil || !ff.selectOpen {
 		return
@@ -321,7 +411,7 @@ func (ff *FormField) layoutOverlay(ctx LayoutContext, formH int) {
 	if r.Y+1+rows > formH && r.Y-rows >= 0 {
 		ff.overlayY = -rows
 	}
-	controlX, controlW := ff.controlX(r.W), ff.controlWidth(r.W)
+	controlX, controlW := ff.selectPanel(r.W)
 	innerX := controlX + selectOverlayChrome
 	innerW := max(1, controlW-2*selectOverlayChrome)
 	if ff.selectFilter != nil {
@@ -342,7 +432,9 @@ func (ff *FormField) selectPanelHeight() int {
 }
 
 func (ff *FormField) labelIndent() int {
-	if ff.compact || (ff.field != nil && (ff.field.Type == FieldSeparator || ff.field.Type == FieldNav || ff.field.Type == FieldSpacer)) {
+	// Spacious drill-ins are ordinary rows: their label shares the field
+	// indent and their box the value column.
+	if ff.compact || (ff.field != nil && (ff.field.Type == FieldSeparator || ff.field.Type == FieldSpacer)) {
 		return 0
 	}
 	if ff.tokens == nil {
@@ -432,16 +524,13 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 		ff.paintSeparator(buf, x, y, r.W, mutedFG, dividerFG, bg)
 		return
 	}
-	if ff.compact && (ff.field.Type == FieldNav || ff.field.Type == FieldCycle) {
-		ff.paintCompactRow(buf, x, y, r.W, ctx, labelFG, valueFG, mutedFG, bg)
+	if !ff.compact {
+		ff.paintSpacious(buf, originX, originY, ctx, focusedRow, hoveredRow, bg)
 		return
 	}
-	if ff.field.Type == FieldNav {
-		if ff.field.Button {
-			ff.paintNavButton(buf, x, y, r.W, ctx, labelFG, mutedFG, bg, focusedRow, rowBG)
-		} else {
-			ff.paintNav(buf, x, y, r.W, ctx, labelFG, mutedFG, bg)
-		}
+	// Compact docks: one table row per field on the chat surface.
+	if ff.field.Type == FieldNav || ff.field.Type == FieldCycle {
+		ff.paintCompactRow(buf, x, y, r.W, ctx, labelFG, valueFG, mutedFG, bg)
 		return
 	}
 
@@ -454,11 +543,7 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 		labelBG = bg
 	}
 	labelX := x + ff.labelIndent()
-	labelMax := max(1, ff.labelWidth()-1)
-	if ff.compact {
-		labelMax = max(1, ff.labelWidth())
-	}
-	label := rendering.TruncateVisual(ff.field.Label, labelMax, "")
+	label := rendering.TruncateVisual(ff.field.Label, max(1, ff.labelWidth()), "")
 	// Markers are appended after truncation so they are never clipped; they
 	// borrow up to 2 cells from the 2-cell label→control gap (controlX =
 	// labelW+1) and can never overlap the control itself.
@@ -499,18 +584,10 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 		contentX = controlX
 	}
 	contentW := max(1, controlW-2)
-	// Spacious settings raise idle input controls; hovered controls share
-	// the row's tint. Compact docks keep the chat surface beneath idle rows.
-	// Choice controls (switches, segments, cycles) are content-sized marks
-	// on the row itself, never an empty input-looking slab.
+	// Compact docks keep the chat surface beneath idle rows.
 	controlBG := rowBG
-	inputLike := ff.field.Type != FieldCycle
 	if editorX < 0 && (ff.field.Type == FieldText || ff.field.Type == FieldPassword) {
 		controlW = ff.inputWidth(controlW)
-	}
-	if !ff.compact && !focusedRow && !hoveredRow && inputLike {
-		controlBG = ff.tokensColor(ColorPopupSubtleBg, bg)
-		FillRect(buf, 0, 0, Rect{X: controlX, Y: y, W: controlW, H: 1}, cell.BlankCell(controlBG))
 	}
 
 	if ff.field.ReadOnly && isHexColor(ff.field.Value.String()) {
@@ -531,17 +608,11 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 			}
 			buf.WriteString(contentX, y, rendering.TruncateVisual(text, contentW, "…"), valueFG, controlBG, 0)
 		}
-	} else if ff.field.Type == FieldCycle {
-		ff.paintCycle(buf, contentX, y, contentW, focusedRow, valueFG, mutedFG, controlBG)
 	} else {
 		ff.paintChoice(buf, contentX, y, contentW, ctx, valueFG, mutedFG, controlBG)
 	}
 
 	line := 1
-	if !ff.compact && (!ff.hideDescription || ff.field.DescriptionImportant) && ff.field.Description != "" && line < r.H {
-		buf.WriteString(contentX, y+line, rendering.TruncateVisual(ff.field.Description, contentW, "…"), mutedFG, bg, 0)
-		line++
-	}
 	for _, err := range ff.field.Errors {
 		if line >= r.H {
 			break
@@ -549,6 +620,271 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 		buf.WriteString(contentX, y+line, rendering.TruncateVisual(err, contentW, "…"), errorFG, bg, 0)
 		line++
 	}
+}
+
+// paintSpacious renders one settings row. The row itself is never filled:
+// focus is an accent edge plus an accent label, and each control is its own
+// box on the shared value column, so stacked rows never fuse into one slab
+// and every box edge lines up with the boxes above and below it.
+func (ff *FormField) paintSpacious(buf *surface.CellBuffer, originX, originY int, ctx PaintContext, focused, hovered bool, bg cell.Color) {
+	r := ff.Bounds()
+	x, y := originX+r.X, originY+r.Y
+	fg, muted, accent := ff.tokensColor(ColorFg, cell.NoColor), ff.tokensColor(ColorMuted, cell.NoColor), ff.tokensColor(ColorAccent, cell.NoColor)
+	inactive := ff.field.Disabled || ff.field.ReadOnly
+
+	indent := ff.labelIndent()
+	if focused && indent > 0 {
+		edge := DefaultGlyphsFromTokens(ff.tokens).FocusEdge
+		buf.WriteString(x+indent-1, y, edge, accent, bg, 0)
+	}
+	labelFG, labelAttr := fg, cell.Attrs(0)
+	switch {
+	case focused:
+		labelFG, labelAttr = accent, cell.AttrBold
+	case inactive:
+		labelFG = muted
+	}
+	label := rendering.TruncateVisual(ff.field.Label, max(1, ff.labelWidth()-1), "…")
+	if ff.field.Required && ff.field.Label != "" {
+		label += " *"
+	}
+	if ff.field.Dirty && ff.field.Label != "" {
+		label += " " + DefaultGlyphsFromTokens(ff.tokens).Modified
+	}
+	buf.WriteString(x+indent, y, label, labelFG, bg, labelAttr)
+
+	vx, boxW := x+ff.valueX(r.W), ff.boxWidth(r.W)
+	box := ff.boxBG(focused, hovered, bg)
+	valueFG := fg
+	if ff.field.Disabled {
+		valueFG = muted
+	}
+	rows := 1
+	switch ff.field.Type {
+	case FieldText, FieldPassword:
+		if ff.field.ReadOnly && isHexColor(ff.field.Value.String()) {
+			ff.paintColorValue(buf, vx+1, y, boxW-1, valueFG, muted, bg)
+			break
+		}
+		if ff.field.ReadOnly {
+			box = bg
+		}
+		FillRect(buf, 0, 0, Rect{X: vx, Y: y, W: boxW, H: 1}, cell.BlankCell(box))
+		if ff.control != nil {
+			ff.control.SetBackgroundColor(box)
+			ff.control.Paint(buf, x, y, ctx)
+		}
+		if ff.field.Unit != "" {
+			buf.WriteString(vx+boxW+1, y, ff.field.Unit, muted, bg, 0)
+		}
+	case FieldTextArea:
+		rows = ff.areaRows()
+		if ff.field.ReadOnly {
+			box = bg
+		}
+		FillRect(buf, 0, 0, Rect{X: vx, Y: y, W: boxW, H: rows}, cell.BlankCell(box))
+		if ff.area != nil {
+			ff.area.SetBackgroundColor(box)
+			ff.area.Paint(buf, x, y, ctx)
+		}
+	case FieldKeyValues:
+		rows = ff.keyValuesHeight()
+		if ff.grid != nil {
+			ff.grid.Paint(buf, x, y, ctx)
+		}
+	case FieldSelect, FieldMultiSelect:
+		ff.paintSelectBox(buf, vx, y, boxW, focused, valueFG, muted, accent, box)
+	case FieldCycle:
+		ff.paintSpaciousCycle(buf, vx, y, boxW, r.W, focused, hovered, valueFG, muted, accent, box, bg)
+	case FieldToggle, FieldCheckbox:
+		text := "Off"
+		if ff.field.Value.Bool() {
+			text = "On"
+		}
+		arrow := ff.arrowInk(focused, hovered, valueFG, accent, muted)
+		ff.paintArrowBox(buf, vx, y, boxW, text, arrow, arrow, valueFG, box)
+	case FieldNav:
+		ff.paintNavBox(buf, vx, y, boxW, focused, valueFG, muted, accent, box)
+	}
+
+	contentX, contentW := vx+1, max(1, r.W-ff.valueX(r.W)-1)
+	line := rows
+	detail := ff.field.Description
+	if ff.hideDescription && !ff.field.DescriptionImportant {
+		detail = ""
+	}
+	if ff.field.Type == FieldNav {
+		detail = ff.navDetail()
+	}
+	if strings.TrimSpace(detail) != "" && line < r.H {
+		buf.WriteString(contentX, y+line, rendering.TruncateVisual(detail, contentW, "…"), muted, bg, 0)
+		line++
+	}
+	errorFG := ff.tokensColor(ColorError, cell.NoColor)
+	for _, err := range ff.field.Errors {
+		if line >= r.H {
+			break
+		}
+		buf.WriteString(contentX, y+line, rendering.TruncateVisual(err, contentW, "…"), errorFG, bg, 0)
+		line++
+	}
+}
+
+// boxBG is the fill of a spacious control: raised while idle, the hover fill
+// while the pointer rests on it or it owns focus.
+func (ff *FormField) boxBG(focused, hovered bool, bg cell.Color) cell.Color {
+	if (focused || hovered) && !ff.field.Disabled {
+		return ff.tokensColor(ColorHover, bg)
+	}
+	return ff.tokensColor(ColorPopupSubtleBg, bg)
+}
+
+func (ff *FormField) paintSelectBox(buf *surface.CellBuffer, x, y, w int, focused bool, fg, muted, accent, box cell.Color) {
+	FillRect(buf, 0, 0, Rect{X: x, Y: y, W: w, H: 1}, cell.BlankCell(box))
+	indicator := "▾"
+	if ff.selectOpen {
+		indicator = "▴"
+	}
+	text, ink, attr := "", fg, cell.Attrs(0)
+	if ff.field.Type == FieldMultiSelect {
+		labels := make([]string, 0, len(ff.field.Value.Strings()))
+		for _, id := range ff.field.Value.Strings() {
+			labels = append(labels, ff.optionLabel(id))
+		}
+		text = strings.Join(labels, ", ")
+	} else if value := ff.field.Value.String(); value != "" {
+		text = ff.optionLabel(value)
+	}
+	if text == "" {
+		text, ink, attr = ff.field.Placeholder, muted, cell.AttrItalic
+		if text == "" {
+			text = "Not set"
+		}
+		if ff.field.Loading {
+			text = mapNonEmpty(ff.field.LoadMessage, "Loading…")
+		}
+	}
+	buf.WriteString(x+1, y, rendering.TruncateVisual(text, max(1, w-4), "…"), ink, box, attr)
+	arrow := muted
+	if focused || ff.selectOpen {
+		arrow = accent
+	}
+	if w >= 3 {
+		buf.WriteString(x+w-2, y, indicator, arrow, box, 0)
+	}
+}
+
+func (ff *FormField) optionLabel(id string) string {
+	for _, option := range ff.field.Options {
+		if option.ID == id {
+			return option.Label
+		}
+	}
+	return id
+}
+
+func mapNonEmpty(value, fallback string) string {
+	if strings.TrimSpace(value) == "" {
+		return fallback
+	}
+	return value
+}
+
+// paintNavBox renders a drill-in row as a button box: its summary (or, for
+// Button navs, its own label) and a trailing ▸, so it reads as clickable.
+func (ff *FormField) paintNavBox(buf *surface.CellBuffer, x, y, w int, focused bool, fg, muted, accent, box cell.Color) {
+	FillRect(buf, 0, 0, Rect{X: x, Y: y, W: w, H: 1}, cell.BlankCell(box))
+	summary := strings.TrimSpace(ff.field.Value.String())
+	if len(ff.field.Columns) > 0 {
+		summary = strings.Join(ff.field.Columns, "  ")
+	}
+	if ff.field.Button || summary == "" {
+		summary = mapNonEmpty(summary, "Open")
+		if ff.field.Button {
+			summary = ff.field.Label
+		}
+	}
+	ink := fg
+	if !ff.field.Button && len(ff.field.Columns) == 0 {
+		ink = muted
+	}
+	chevron := string(FirstRune(DefaultGlyphsFromTokens(ff.tokens).TreeCollapsed, '▸'))
+	buf.WriteString(x+1, y, rendering.TruncateVisual(summary, max(1, w-4), "…"), ink, box, 0)
+	arrow := muted
+	if focused {
+		arrow = accent
+	}
+	if w >= 3 {
+		buf.WriteString(x+w-2, y, chevron, arrow, box, 0)
+	}
+}
+
+// paintSpaciousCycle draws a switch, a segmented pill, or a fixed-width
+// ‹ value › stepper whose arrows hold their columns as values change.
+func (ff *FormField) paintSpaciousCycle(buf *surface.CellBuffer, x, y, w, rowW int, focused, hovered bool, fg, muted, accent, box, bg cell.Color) {
+	if ff.field.Disabled {
+		accent = muted
+	}
+	switch {
+	case ff.field.Style == StyleSwitch:
+		// Two states: both arrows always flip it, so neither dims.
+		arrow := ff.arrowInk(focused, hovered, fg, accent, muted)
+		ff.paintArrowBox(buf, x, y, w, ff.cycleLabel(), arrow, arrow, fg, box)
+		return
+	case !ff.isStepper(rowW):
+		selected := ff.selectedIndex()
+		idle := muted
+		if focused || hovered {
+			idle = fg
+		}
+		for _, segment := range ff.cycleSegments(max(1, rowW-ff.valueX(rowW))) {
+			option := ff.field.Options[segment.index]
+			ink, fill, attr := idle, box, cell.Attrs(0)
+			if segment.index == selected {
+				fill, attr = accent, cell.AttrBold
+				ink = cell.ContrastColor(accent)
+			}
+			if option.Disabled {
+				ink = muted
+			}
+			buf.WriteString(x+segment.x, y, " "+option.Label+" ", ink, fill, attr)
+		}
+		return
+	}
+	arrow := ff.arrowInk(focused, hovered, fg, accent, muted)
+	// An arrow with nowhere left to go dims: the scale ends there.
+	index, last := ff.selectedIndex(), len(ff.field.Options)-1
+	leftInk, rightInk := arrow, arrow
+	if index <= 0 {
+		leftInk = muted
+	}
+	if index >= last {
+		rightInk = muted
+	}
+	ff.paintArrowBox(buf, x, y, w, ff.cycleLabel(), leftInk, rightInk, fg, box)
+}
+
+func (ff *FormField) arrowInk(focused, hovered bool, fg, accent, muted cell.Color) cell.Color {
+	switch {
+	case ff.field.Disabled:
+		return muted
+	case focused || hovered:
+		return accent
+	}
+	return fg
+}
+
+// paintArrowBox is the one ‹ value › box shared by steppers and switches:
+// arrows on fixed columns at both ends, the value centered between them.
+func (ff *FormField) paintArrowBox(buf *surface.CellBuffer, x, y, w int, value string, leftInk, rightInk, fg, box cell.Color) {
+	FillRect(buf, 0, 0, Rect{X: x, Y: y, W: w, H: 1}, cell.BlankCell(box))
+	g := DefaultGlyphsFromTokens(ff.tokens)
+	buf.WriteString(x+1, y, g.CycleLeft, leftInk, box, cell.AttrBold)
+	if w >= 4 {
+		buf.WriteString(x+w-2, y, g.CycleRight, rightInk, box, cell.AttrBold)
+	}
+	label := rendering.TruncateVisual(value, max(1, w-6), "…")
+	buf.WriteString(x+max(3, (w-rendering.VisibleWidth(label))/2), y, label, fg, box, 0)
 }
 
 // paintTextAreaBody renders the multi-line editor below the label row plus
@@ -657,8 +993,8 @@ func (ff *FormField) PaintOverlay(buf *surface.CellBuffer, originX, originY int,
 	if ctx.Focused {
 		borderFG = ff.tokensColor(ColorPopupBorderFocused, borderFG)
 	}
-	controlX := x + ff.controlX(r.W)
-	controlW := ff.controlWidth(r.W)
+	panelX, controlW := ff.selectPanel(r.W)
+	controlX := x + panelX
 	contentX := controlX + selectOverlayChrome
 	contentW := max(1, controlW-2*selectOverlayChrome)
 	rows := ff.selectPanelHeight()
@@ -898,121 +1234,6 @@ func (ff *FormField) Handle(ctx EventContext, evt Event) EventResult {
 	return EventResult{}
 }
 
-func (ff *FormField) paintNav(buf *surface.CellBuffer, x, y, width int, ctx PaintContext, fg, muted, bg cell.Color) {
-	if width < 1 {
-		return
-	}
-	if ff.compact {
-		ff.paintNavCompact(buf, x, y, width, ctx, fg, muted, bg)
-		return
-	}
-	if ff.field.Disabled {
-		fg = muted
-	}
-	focused := ctx.Focused && !ff.field.Disabled
-	hovered := ctx.Hovered && !ff.field.Disabled && !focused
-	rowBG := bg
-	if focused || hovered {
-		rowBG = ff.tokensColor(ColorHover, bg)
-		FillRect(buf, 0, 0, Rect{X: x, Y: y, W: width, H: ff.height()}, cell.BlankCell(rowBG))
-	}
-	labelFG, labelAttr := fg, cell.Attrs(0)
-	if focused {
-		labelFG, labelAttr = ff.tokensColor(ColorAccent, fg), cell.AttrBold
-	}
-	// A drill-in row aligns with the fields around it: the label sits in the
-	// label column and the destination summary plus ▸ in the value column,
-	// so it reads as "this setting lives one level down", not as a heading.
-	labelX := x + ff.labelIndent()
-	buf.WriteString(labelX, y, rendering.TruncateVisual(ff.field.Label, max(1, ff.labelWidth()-1), "…"), labelFG, rowBG, labelAttr)
-	chevron := string(FirstRune(DefaultGlyphsFromTokens(ff.tokens).TreeCollapsed, '▸'))
-	valueX := x + ff.controlX(width) + 1
-	summary := strings.TrimSpace(ff.field.Value.String())
-	if len(ff.field.Columns) > 0 {
-		summary = strings.Join(ff.field.Columns, "  ")
-	}
-	if summary == "" {
-		summary = "Open"
-	}
-	available := max(1, x+width-valueX-rendering.VisibleWidth(chevron)-1)
-	summary = rendering.TruncateVisual(summary, available, "…")
-	chevronFG := muted
-	if focused {
-		chevronFG = labelFG
-	}
-	buf.WriteString(valueX, y, summary, muted, rowBG, 0)
-	buf.WriteString(valueX+rendering.VisibleWidth(summary)+1, y, chevron, chevronFG, rowBG, 0)
-	detail := ff.navDetail()
-	if detail == "" || ff.height() < 2 {
-		return
-	}
-	indent := max(1, ff.labelIndent())
-	buf.WriteString(x+indent, y+1, rendering.TruncateVisual(detail, max(1, width-indent), "…"), muted, rowBG, 0)
-}
-
-// paintNavButton renders a FieldNav as an inset boxed button occupying the
-// right control column (matching the dropdown/select affordance) rather than a
-// full-width drill-in row. The chevron is inset one gutter from the right
-// border so it never sticks to the scrollbar, and the box uses the popup
-// border + subtle background, picking up accent + hover when focused.
-func (ff *FormField) paintNavButton(buf *surface.CellBuffer, x, y, width int, ctx PaintContext, fg, muted, bg cell.Color, focused bool, rowBG cell.Color) {
-	if width < 3 {
-		ff.paintNav(buf, x, y, width, ctx, fg, muted, bg)
-		return
-	}
-	controlX := x + ff.controlX(width)
-	controlW := ff.controlWidth(width)
-	if controlW < 3 {
-		controlX, controlW = x, width
-	}
-
-	buttonBG := ff.tokensColor(ColorPopupSubtleBg, bg)
-	if ctx.Hovered && !ff.field.Disabled {
-		buttonBG = rowBG
-	}
-	borderFG := ff.tokensColor(ColorPopupBorder, muted)
-	chevronFG := muted
-	labelFG := fg
-	labelAttr := cell.Attrs(0)
-	if focused {
-		buttonBG = rowBG
-		borderFG = ff.tokensColor(ColorAccent, borderFG)
-		chevronFG = ff.tokensColor(ColorAccent, muted)
-		labelFG = ff.tokensColor(ColorAccent, fg)
-		labelAttr = cell.AttrBold
-	}
-	if ff.field.Disabled {
-		labelFG, chevronFG, borderFG = muted, muted, muted
-	}
-
-	FillRect(buf, 0, 0, Rect{X: controlX, Y: y, W: controlW, H: 1}, cell.BlankCell(buttonBG))
-	vBorder := FirstRune(DefaultGlyphsFromTokens(ff.tokens).BorderV, '│')
-	buf.Set(controlX, y, cell.NewCell(vBorder, borderFG, buttonBG, 0))
-	buf.Set(controlX+controlW-1, y, cell.NewCell(vBorder, borderFG, buttonBG, 0))
-
-	chevron := string(FirstRune(DefaultGlyphsFromTokens(ff.tokens).TreeCollapsed, '▸'))
-	chevronW := rendering.VisibleWidth(chevron)
-	innerX := controlX + 1
-	innerW := controlW - 2
-	chevX := innerX + innerW - chevronW - 1 // one gutter before the right border
-	labelStart := innerX + 1                // one cell pad after the left border
-	labelMax := max(1, chevX-labelStart-1)
-	if labelMax > 0 {
-		buf.WriteString(labelStart, y, rendering.TruncateVisual(ff.field.Label, labelMax, "…"), labelFG, buttonBG, labelAttr)
-	}
-	if chevronW > 0 && chevX >= innerX {
-		buf.WriteString(chevX, y, chevron, chevronFG, buttonBG, 0)
-	}
-
-	if detail := strings.TrimSpace(ff.navDetail()); detail != "" && ff.height() >= 2 {
-		buf.WriteString(labelStart, y+1, rendering.TruncateVisual(detail, max(1, innerW-1), "…"), muted, bg, 0)
-	}
-}
-
-func (ff *FormField) paintNavCompact(buf *surface.CellBuffer, x, y, width int, ctx PaintContext, fg, muted, bg cell.Color) {
-	ff.paintCompactRow(buf, x, y, width, ctx, fg, ff.tokensColor(ColorFg, fg), muted, bg)
-}
-
 func (ff *FormField) paintCompactRow(buf *surface.CellBuffer, x, y, width int, ctx PaintContext, labelFG, valueFG, muted, bg cell.Color) {
 	if ff.field == nil {
 		return
@@ -1202,13 +1423,6 @@ func (ff *FormField) cycleDisplay() string {
 		text = "Not set"
 	}
 	g := DefaultGlyphsFromTokens(ff.tokens)
-	if ff.field.Style == StyleSwitch {
-		marker := g.SwitchOff
-		if ff.switchOn() {
-			marker = g.SwitchOn
-		}
-		return marker + " " + text
-	}
 	return g.CycleLeft + " " + text + " " + g.CycleRight
 }
 
@@ -1238,12 +1452,6 @@ func isNumeric(value string) bool {
 	return digits > 0
 }
 
-// switchOn reports whether a switch field holds its first (affirmative)
-// option. Bool and Yes/No toggles both list the enabled state first.
-func (ff *FormField) switchOn() bool {
-	return len(ff.field.Options) > 0 && ff.field.Value.String() == ff.field.Options[0].ID
-}
-
 type cycleSegment struct {
 	x, w  int
 	index int
@@ -1256,7 +1464,8 @@ func (ff *FormField) cycleSegments(width int) []cycleSegment {
 	if ff.field.Style != StyleSegmented || len(ff.field.Options) < 2 {
 		return nil
 	}
-	const gap = 1
+	// Segments touch: together they read as one pill-shaped control.
+	const gap = 0
 	segments := make([]cycleSegment, 0, len(ff.field.Options))
 	x := 0
 	for index, option := range ff.field.Options {
@@ -1273,93 +1482,53 @@ func (ff *FormField) cycleSegments(width int) []cycleSegment {
 	return segments
 }
 
-// paintCycle draws the three cycle presentations: a switch, inline
-// segments, or a content-sized ‹ value › stepper.
-func (ff *FormField) paintCycle(buf *surface.CellBuffer, x, y, width int, focused bool, fg, muted, bg cell.Color) {
-	if width < 1 {
-		return
-	}
-	accent := ff.tokensColor(ColorAccent, fg)
-	g := DefaultGlyphsFromTokens(ff.tokens)
-	if ff.field.Disabled {
-		fg, accent = muted, muted
-	}
-	switch ff.field.Style {
-	case StyleSwitch:
-		label := ff.cycleLabel()
-		if ff.switchOn() {
-			buf.WriteString(x, y, g.SwitchOn, accent, bg, cell.AttrBold)
-			buf.WriteString(x+rendering.VisibleWidth(g.SwitchOn)+1, y, rendering.TruncateVisual(label, max(1, width-2), "…"), fg, bg, 0)
-		} else {
-			buf.WriteString(x, y, g.SwitchOff, muted, bg, 0)
-			buf.WriteString(x+rendering.VisibleWidth(g.SwitchOff)+1, y, rendering.TruncateVisual(label, max(1, width-2), "…"), muted, bg, 0)
-		}
-		return
-	case StyleSegmented:
-		if segments := ff.cycleSegments(width); segments != nil {
-			selected := ff.selectedIndex()
-			selBG := ff.tokensColor(ColorSelection, bg)
-			if focused {
-				selBG = ff.tokensColor(ColorPopupSubtleBg, selBG)
-			}
-			for _, segment := range segments {
-				option := ff.field.Options[segment.index]
-				ink, fill, attr := muted, bg, cell.Attrs(0)
-				if segment.index == selected {
-					ink, fill, attr = accent, selBG, cell.AttrBold
-				}
-				if option.Disabled {
-					ink = muted
-				}
-				buf.WriteString(x+segment.x, y, " "+option.Label+" ", ink, fill, attr)
-			}
-			return
-		}
-	}
-	label := ff.cycleLabel()
-	arrow := muted
-	if focused {
-		arrow = accent
-	}
-	left, right := g.CycleLeft, g.CycleRight
-	leftW := rendering.VisibleWidth(left)
-	text := rendering.TruncateVisual(label, max(1, width-leftW-rendering.VisibleWidth(right)-2), "…")
-	buf.WriteString(x, y, left, arrow, bg, 0)
-	buf.WriteString(x+leftW+1, y, text, fg, bg, 0)
-	buf.WriteString(x+leftW+2+rendering.VisibleWidth(text), y, right, arrow, bg, 0)
-}
-
 // cycleClickTarget resolves a pointer click on a cycle control to the option
-// it selects. Segments select themselves; the ‹ affordance steps back, the ›
-// affordance and the value step forward. A switch simply flips.
-func (ff *FormField) cycleClickTarget(localX int) int {
+// it selects. Segments select themselves; the ‹ half of a stepper steps back
+// and the › half steps forward; a switch flips from anywhere on its row. ok
+// is false for a click beside a stepper or segments (the label column or past
+// the control's end): that click only focuses the row, never guessing a
+// direction.
+func (ff *FormField) cycleClickTarget(localX int) (int, bool) {
 	n := len(ff.field.Options)
 	current := ff.selectedIndex()
 	next, previous := (current+1)%n, (current-1+n)%n
 	width := ff.Bounds().W
-	x0, spanW := ff.cycleSpan(width)
-	if ff.field.Style == StyleSegmented && !ff.compact {
-		for _, segment := range ff.cycleSegments(max(1, ff.controlWidth(width)-2)) {
-			if localX >= x0+segment.x && localX < x0+segment.x+segment.w {
-				return segment.index
+	if !ff.compact {
+		// A switch's whole row is its label: any click flips it.
+		if ff.field.Style == StyleSwitch {
+			return next, true
+		}
+		x0, w := ff.valueX(width), ff.boxWidth(width)
+		if localX < x0 || localX >= x0+w {
+			return current, false
+		}
+		switch {
+		case !ff.isStepper(width):
+			for _, segment := range ff.cycleSegments(max(1, width-x0)) {
+				if localX >= x0+segment.x && localX < x0+segment.x+segment.w {
+					return segment.index, true
+				}
 			}
+			return current, false
+		case localX < x0+w/2:
+			return max(0, current-1), true
+		default:
+			return min(n-1, current+1), true
 		}
 	}
+	x0, spanW := ff.cycleSpan(width)
 	if ff.field.Style == StyleSwitch || x0 < 0 {
-		return next
+		return next, true
 	}
 	g := DefaultGlyphsFromTokens(ff.tokens)
-	leftW, rightW := rendering.VisibleWidth(g.CycleLeft), rendering.VisibleWidth(g.CycleRight)
+	leftW := rendering.VisibleWidth(g.CycleLeft)
 	switch {
-	case localX >= x0 && localX < x0+leftW+1:
-		return previous
-	case localX >= x0+spanW-rightW-1 && localX < x0+spanW:
-		return next
-	case localX < x0:
-		// Clicking the label column is not a request to step backwards.
-		return next
+	case localX < x0 || localX >= x0+spanW:
+		return current, false
+	case localX < x0+leftW+1:
+		return previous, true
 	}
-	return next
+	return next, true
 }
 
 // cycleSpan returns the field-relative x and painted width of the ‹ value ›
@@ -1367,12 +1536,6 @@ func (ff *FormField) cycleClickTarget(localX int) int {
 // cannot place it.
 func (ff *FormField) cycleSpan(width int) (int, int) {
 	g := DefaultGlyphsFromTokens(ff.tokens)
-	if !ff.compact {
-		x := ff.editorControlX(width) + 1
-		contentW := max(1, ff.controlWidth(width)-2)
-		label := rendering.TruncateVisual(ff.cycleLabel(), max(1, contentW-rendering.VisibleWidth(g.CycleLeft)-rendering.VisibleWidth(g.CycleRight)-2), "…")
-		return x, rendering.VisibleWidth(g.CycleLeft) + rendering.VisibleWidth(label) + rendering.VisibleWidth(g.CycleRight) + 2
-	}
 	raw := ff.compactColumnsRaw()
 	if len(raw) == 0 {
 		return -1, 0
@@ -1636,8 +1799,7 @@ func (ff *FormField) selectPanelContains(x, y int) bool {
 	if !ff.selectOpen {
 		return false
 	}
-	w := ff.Bounds().W
-	controlX, controlW := ff.controlX(w), ff.controlWidth(w)
+	controlX, controlW := ff.selectPanel(ff.Bounds().W)
 	y0, y1 := 0, 1
 	if ff.overlayY < 0 {
 		y0 = ff.overlayY
@@ -1667,7 +1829,10 @@ func (ff *FormField) filterContext(ctx EventContext) EventContext {
 
 func (ff *FormField) handleCycle(ctx EventContext, evt Event) EventResult {
 	if evt.Kind == EventMouseClick && evt.MouseClick.Button == tea.MouseLeft && len(ff.field.Options) > 0 {
-		idx := ff.cycleClickTarget(ctx.LocalX)
+		idx, ok := ff.cycleClickTarget(ctx.LocalX)
+		if !ok {
+			return EventResult{Handled: true, Invalidate: InvalidatePaint}
+		}
 		ff.setValue(StringValue(ff.field.Options[idx].ID))
 		return EventResult{
 			Handled:    true,
@@ -1683,10 +1848,17 @@ func (ff *FormField) handleCycle(ctx EventContext, evt Event) EventResult {
 		return EventResult{}
 	}
 	idx := ff.selectedIndex()
-	if key.Code == tea.KeyLeft {
-		idx = (idx - 1 + len(ff.field.Options)) % len(ff.field.Options)
-	} else {
-		idx = (idx + 1) % len(ff.field.Options)
+	n := len(ff.field.Options)
+	switch {
+	case ff.clamps() && key.Code == tea.KeyLeft:
+		// A stepper is an ordered scale: its ends hold instead of wrapping.
+		idx = max(0, idx-1)
+	case ff.clamps() && key.Code == tea.KeyRight:
+		idx = min(n-1, idx+1)
+	case key.Code == tea.KeyLeft:
+		idx = (idx - 1 + n) % n
+	default:
+		idx = (idx + 1) % n
 	}
 	ff.setValue(StringValue(ff.field.Options[idx].ID))
 	return EventResult{
@@ -1694,6 +1866,12 @@ func (ff *FormField) handleCycle(ctx EventContext, evt Event) EventResult {
 		Action:     &Action{ID: "form.changed", Payload: ff.field.ID},
 		Invalidate: InvalidatePaint,
 	}
+}
+
+// clamps reports whether arrow keys hold at the ends of the options: true
+// for a spacious ‹ value › stepper, whose arrows read as less and more.
+func (ff *FormField) clamps() bool {
+	return !ff.compact && ff.isStepper(ff.Bounds().W)
 }
 
 func (ff *FormField) handleToggle(evt Event) EventResult {

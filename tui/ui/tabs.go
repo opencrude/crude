@@ -91,7 +91,15 @@ type Tabs struct {
 	pressID        string
 	pressX, pressY int
 	dragging       bool
+	// pointerFocus marks focus that arrived by clicking a tab. The heavy
+	// focus baseline is reserved for deliberate keyboard navigation, so a
+	// click never leaves the strip looking "stuck" in focus.
+	pointerFocus bool
 }
+
+// ActivatedByPointer reports whether the latest selection came from a click.
+// Hosts use it to return keyboard focus to the tab's content.
+func (t *Tabs) ActivatedByPointer() bool { return t.pointerFocus }
 
 func NewTabs(id ComponentID, tokens *TokenSet) *Tabs {
 	return &Tabs{Base: NewBase(id), active: -1, hover: -1, scrollHover: -1, tokens: tokens}
@@ -471,7 +479,9 @@ func (t *Tabs) ensureActiveVisible(widths []int, width int) {
 
 // focused reports whether the strip paints its focus treatment: the shell
 // forwards bar focus, every other surface relies on Host focus.
-func (t *Tabs) focused(ctx PaintContext) bool { return t.barFocused || ctx.Focused }
+func (t *Tabs) focused(ctx PaintContext) bool {
+	return t.barFocused || ctx.Focused && !t.pointerFocus
+}
 
 func (t *Tabs) Paint(buf *surface.CellBuffer, originX, originY int, ctx PaintContext) {
 	r := t.Bounds()
@@ -572,6 +582,7 @@ func (t *Tabs) Handle(ctx EventContext, evt Event) EventResult {
 		if len(t.items) == 0 {
 			return EventResult{}
 		}
+		t.pointerFocus = false
 		var next int
 		switch {
 		case evt.Key.Code == tea.KeyLeft || evt.Key.String() == "ctrl+[":
@@ -640,6 +651,7 @@ func (t *Tabs) Handle(ctx EventContext, evt Event) EventResult {
 		}
 		t.active = index
 		t.manualScroll = false
+		t.pointerFocus = true
 		if r := t.Bounds(); !r.Empty() {
 			t.ranges = t.computeRanges(r.W)
 		}

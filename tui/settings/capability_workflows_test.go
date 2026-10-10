@@ -330,9 +330,13 @@ func TestCapabilityNativePagesStayBoundedAtNarrowWidths(t *testing.T) {
 			host.MarkLayout()
 			host.Layout()
 			bounds := catalog.Bounds()
+			// The decision bar lives on the settings footer row.
+			if bar := catalog.bar.Bounds(); bounds.Y+bar.Y != root.Bounds().H-1 || bounds.X+bar.X+bar.W+root.tokens.ButtonGap() != root.closeBar.Bounds().X {
+				t.Fatalf("%s at %+v: decisions are not on the footer row: %+v", page, size, bar)
+			}
 			for _, child := range catalog.Children() {
 				rect := child.Bounds()
-				if rect.Empty() {
+				if rect.Empty() || child == catalog.bar {
 					continue
 				}
 				if rect.X < 0 || rect.Y < 0 || rect.X+rect.W > bounds.W || rect.Y+rect.H > bounds.H {

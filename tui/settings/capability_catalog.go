@@ -29,7 +29,6 @@ type capabilityCatalog struct {
 	tabs                     *ui.Tabs
 	filter                   *capabilitySearchInput
 	searchRule               *ui.ProgressRule
-	helpRect                 ui.Rect
 	searchGeneration         uint64
 	searchArmed              bool
 	store                    *capabilityStoreView
@@ -143,9 +142,7 @@ func newCapabilityCatalog(owner *WorkspaceSettingsSurface) *capabilityCatalog {
 	catalog.browse.SetActivateAction("settings.capability.inspect-item")
 	catalog.tree = ui.NewTree("settings/capabilities/files", owner.tokens)
 	catalog.tree.SetSurfaceBackground(ui.ColorPopupBg)
-	catalog.form = ui.NewForm(capabilityFormID, nil, "", "", owner.tokens)
-	catalog.form.SetArrowExitsForm(true)
-	catalog.form.SetFieldGap(0)
+	catalog.form = newSettingsForm(capabilityFormID, owner.tokens)
 	catalog.reader = ui.NewTextArea("settings/capabilities/reader", owner.tokens, true)
 	catalog.reader.SetReadOnly(true)
 	catalog.storeScroll = ui.NewScrollbarControl("settings/capabilities/store-scroll", catalog.store.Scroll(), owner.tokens)
@@ -290,7 +287,9 @@ func (catalog *capabilityCatalog) actions() {
 	button := func(label, action string) ui.ActionBarButton {
 		return ui.ActionBarButton{ID: ui.NewID(capabilityCatalogID, action), Label: label, Action: "settings.capability." + action, Enabled: true}
 	}
-	var primary, secondary []ui.ActionBarButton
+	// primary/secondary are page operations painted above the footer;
+	// decision holds an editor's or detail page's footer buttons.
+	var primary, secondary, decision []ui.ActionBarButton
 	if catalog.edit != "" {
 		label := "Save"
 		if catalog.edit == "grant" {
@@ -302,12 +301,13 @@ func (catalog *capabilityCatalog) actions() {
 		} else if catalog.edit == "make-local-copy" {
 			label = "Create copy"
 		}
-		primary = []ui.ActionBarButton{button(label, "save"), button("Back", "back")}
+		decision = []ui.ActionBarButton{button(label, "save"), button("Back", "back")}
+		decision[0].Variant = ui.VariantPrimary
 		if catalog.kind == captypes.KindMCP && catalog.edit != "grant" && catalog.edit != "import" {
-			secondary = []ui.ActionBarButton{button("Test draft", "test")}
+			primary = []ui.ActionBarButton{button("Test draft", "test")}
 		}
 	} else if catalog.detail {
-		primary, secondary = catalog.detailActions(button)
+		decision, primary, secondary = catalog.detailActions(button)
 	} else if catalog.choosing != "" {
 		primary = []ui.ActionBarButton{button("Back", "close-filter")}
 	} else {
@@ -348,7 +348,7 @@ func (catalog *capabilityCatalog) actions() {
 			primary[index].Enabled = selected
 		}
 	}
-	for _, buttons := range [][]ui.ActionBarButton{primary, secondary} {
+	for _, buttons := range [][]ui.ActionBarButton{decision, primary, secondary} {
 		for index := range buttons {
 			operation := strings.TrimPrefix(buttons[index].Action, "settings.capability.")
 			if catalog.owner.model.capabilityPending != nil && !slices.Contains([]string{"back", "cancel", "snapshot", "auth-return", "open-auth-url", "sources", "acquisition"}, operation) {
@@ -362,7 +362,29 @@ func (catalog *capabilityCatalog) actions() {
 			}
 		}
 	}
+	if catalog.footerDecisions() {
+		catalog.bar.SetButtons(decision...)
+		catalog.bar.SetExitActions("settings.capability.decision-next", "settings.capability.decision-prev")
+	}
 	catalog.layoutActions(append(primary, secondary...))
+}
+
+// footerDecisions reports whether this page's decision bar lives in the
+// shared settings footer: every editor and detail page; collections keep
+// their actions in the body.
+func (catalog *capabilityCatalog) footerDecisions() bool {
+	return catalog.edit != "" || catalog.detail
+}
+
+// statusText is the operation progress or result message for the footer.
+func (catalog *capabilityCatalog) statusText() string {
+	if pending := catalog.owner.model.capabilityPending; pending != nil {
+		if pending.Operation == "discover" {
+			return "Searching enabled sources…"
+		}
+		return pending.Operation + " running — Cancel operation stops it"
+	}
+	return strings.ReplaceAll(catalog.message, "\n", " ")
 }
 
 func (catalog *capabilityCatalog) Measure(_ ui.LayoutContext, constraints ui.Constraints) ui.Size {
@@ -425,6 +447,13 @@ func (catalog *capabilityCatalog) Layout(ctx ui.LayoutContext, rect ui.Rect) {
 	actionHeight := min(len(bars), max(0, rect.H-2))
 	bottom := max(1, rect.H-actionHeight)
 	catalog.statusY = max(0, bottom-1)
+	if catalog.footerDecisions() {
+		// Status reads in the footer; operations sit flush above it.
+		catalog.statusY = bottom
+		if actionHeight > 0 {
+			catalog.statusY = bottom - 1
+		}
+	}
 	for index, bar := range bars {
 		if index < actionHeight {
 			bar.Layout(ctx, ui.Rect{Y: bottom + index, W: rect.W, H: 1})
@@ -438,18 +467,9 @@ func (catalog *capabilityCatalog) Layout(ctx ui.LayoutContext, rect ui.Rect) {
 		contentY = ui.StripHeight
 	}
 	height := max(0, catalog.statusY-contentY)
-	catalog.helpRect = ui.Rect{}
 	if catalog.edit != "" {
-		// Editors share the settings help strip: one row per field, the
-		// focused field's explanation in full below.
-		catalog.form.SetHideDescriptions(true)
-		helpLines := helpStripLines(height)
-		helpH := helpLines
-		if helpLines > 1 {
-			helpH++
-		}
-		catalog.helpRect = ui.Rect{Y: contentY + height - helpLines, W: rect.W, H: helpLines}
-		catalog.layoutForm(ctx, ui.Rect{Y: contentY, W: rect.W, H: max(1, height-helpH)})
+		// Field help reads in the shared settings footer.
+		catalog.layoutForm(ctx, ui.Rect{Y: contentY, W: rect.W, H: max(1, height)})
 	} else if catalog.detail {
 		catalog.layoutDetail(ctx, contentY, height)
 	} else {
@@ -474,23 +494,28 @@ func (catalog *capabilityCatalog) Paint(buffer *surface.CellBuffer, originX, ori
 	}
 	rect := catalog.Bounds()
 	ui.FillRect(buffer, originX, originY, rect, cell.BlankCell(catalog.tokens.Color(ui.ColorPopupBg)))
-	message := catalog.message
-	if pending := catalog.owner.model.capabilityPending; pending != nil {
-		message = pending.Operation + " running — Cancel stops this operation"
-		if pending.Operation == "discover" {
-			message = "Searching enabled sources…"
+	if catalog.footerDecisions() {
+		// Status and help read in the shared settings footer. An empty
+		// collection says why it is empty instead of leaving a blank gap.
+		if catalog.detail && catalog.edit == "" && catalog.detailCollection() && len(catalog.browse.Rows()) == 0 {
+			table := catalog.browse.Bounds()
+			title, body := "Nothing discovered yet", "Connect this server to list its "+catalog.detailPage+"."
+			if _, installed := catalog.owner.model.capabilities.Connections[catalog.id]; !installed {
+				body = "Install this server, then connect it to list its " + catalog.detailPage + "."
+			}
+			if catalog.filter.Value() != "" {
+				title, body = "No matches", "Clear the search to see every item."
+			}
+			catalog.owner.paintEmptyState(buffer, originX+rect.X+table.X, originY+rect.Y+table.Y+1, table.W, title, body, catalog.tokens.Color(ui.ColorPopupBg))
 		}
+		return
 	}
-	if !catalog.helpRect.Empty() {
-		paintFieldHelp(buffer, originX+rect.X+catalog.helpRect.X, originY+rect.Y+catalog.helpRect.Y, catalog.helpRect.W, catalog.helpRect.H, catalog.form.HelpField(), catalog.tokens, catalog.tokens.Color(ui.ColorPopupBg))
+	catalog.paintStoreEmpty(buffer, originX+rect.X, originY+rect.Y)
+	message := catalog.statusText()
+	if message == "" {
+		message = catalog.storeStatus()
 	}
-	if catalog.edit == "" && !catalog.detail {
-		catalog.paintStoreEmpty(buffer, originX+rect.X, originY+rect.Y)
-		if message == "" {
-			message = catalog.storeStatus()
-		}
-	}
-	buffer.WriteString(originX+rect.X, originY+rect.Y+catalog.statusY, rendering.TruncateVisual(strings.ReplaceAll(message, "\n", " "), rect.W, "…"), catalog.tokens.Color(ui.ColorMuted), catalog.tokens.Color(ui.ColorPopupBg), 0)
+	buffer.WriteString(originX+rect.X, originY+rect.Y+catalog.statusY, rendering.TruncateVisual(message, rect.W, "…"), catalog.tokens.Color(ui.ColorMuted), catalog.tokens.Color(ui.ColorPopupBg), 0)
 }
 
 func (catalog *capabilityCatalog) Semantics() ui.Semantics {
@@ -524,7 +549,8 @@ func (catalog *capabilityCatalog) HandleAction(_ ui.EventContext, action ui.Acti
 			}
 			catalog.saveListState()
 			catalog.detailForm(id)
-			if action.ID == "tabs.enter" {
+			// Enter and a click both hand the keyboard to the page itself.
+			if action.ID == "tabs.enter" || catalog.tabs.ActivatedByPointer() {
 				catalog.focusContent()
 			}
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidateLayout | ui.InvalidatePaint}
@@ -712,6 +738,9 @@ func (catalog *capabilityCatalog) HandleAction(_ ui.EventContext, action ui.Acti
 	case "close-filter":
 		catalog.choosing = ""
 		catalog.owner.focusID(catalog.storeFilters.ID())
+		return catalog.changed()
+	case "decision-next", "decision-prev":
+		catalog.moveDecisionFocus(operation == "decision-next")
 		return catalog.changed()
 	case "filters-next":
 		catalog.owner.focusID(catalog.store.ID())

@@ -262,6 +262,7 @@ func (ts *TokenSet) Glyphs() theme.Glyphs {
 	}{
 		{&g.SwitchOn, def.SwitchOn}, {&g.SwitchOff, def.SwitchOff},
 		{&g.CycleLeft, def.CycleLeft}, {&g.CycleRight, def.CycleRight}, {&g.Modified, def.Modified},
+		{&g.FocusEdge, def.FocusEdge},
 	} {
 		if *pair.dst == "" {
 			*pair.dst = pair.src

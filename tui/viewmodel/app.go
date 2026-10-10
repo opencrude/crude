@@ -679,16 +679,18 @@ func (m *App) openApplicationAccounts() {
 	m.openSettingsTo(ttypes.SettingsScopeApplication, true)
 }
 
-func (m *App) openApplicationMainAgent() {
+func (m *App) openApplicationMainAgent() tea.Cmd {
 	m.openSettingsTo(ttypes.SettingsScopeApplication, false)
 	if fw := m.windowManager.Window(string(ui.OverlayWorkspaceSettings)); fw != nil {
 		if frame, ok := fw.Content.(*ui.WindowFrameWidget); ok {
 			if body, ok := frame.Body().(*settingsui.WorkspaceSettingsSurface); ok {
-				body.ShowMainAgent()
+				cmd := body.ShowMainAgent()
 				frame.Host().MarkLayout()
+				return cmd
 			}
 		}
 	}
+	return nil
 }
 
 func (m *App) openSettings(scope ttypes.SettingsScope) {

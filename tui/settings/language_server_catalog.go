@@ -36,7 +36,6 @@ type lspCatalog struct {
 	bar        *ui.ActionBar
 	draft      *ui.FormModel
 	editing    string
-	helpRect   ui.Rect
 	notice     string
 }
 
@@ -88,10 +87,7 @@ func newLSPCatalog(owner *WorkspaceSettingsSurface) *lspCatalog {
 	c.listScroll = ui.NewScrollbarControl("settings/language-servers/scroll", c.table.Scroll(), t)
 	c.listScroll.SetSurfaceBackground(ui.ColorPopupBg)
 	c.listScroll.SetPointerTargetSize(1)
-	c.form = ui.NewForm(LanguageServerFormID, nil, "", "", t)
-	c.form.SetFieldGap(0)
-	c.form.SetHideDescriptions(true)
-	c.form.SetArrowExitsForm(true)
+	c.form = newSettingsForm(LanguageServerFormID, t)
 	c.formScroll = ui.NewScrollbarControl("settings/language-servers/form-scroll", c.form.Scroll(), t)
 	c.formScroll.SetSurfaceBackground(ui.ColorPopupBg)
 	c.formScroll.SetPointerTargetSize(1)
@@ -125,7 +121,6 @@ func (c *lspCatalog) refreshRows() {
 		selected = row.ID
 	}
 	query := strings.ToLower(strings.TrimSpace(c.filter.Value()))
-	glyphs := c.owner.tokens.Glyphs()
 	var rows []ui.TableRow
 	for _, server := range m.lspServers() {
 		command := strings.TrimSpace(server.cfg.Command + " " + joinShellWords(server.cfg.Args))
@@ -136,9 +131,9 @@ func (c *lspCatalog) refreshRows() {
 		if query != "" && !strings.Contains(strings.ToLower(server.name+" "+server.id+" "+command+" "+extensions), query) {
 			continue
 		}
-		status, role := glyphs.SwitchOn+" On", ui.ColorFg
+		status, role := "On", ui.ColorFg
 		if !server.cfg.Enabled {
-			status, role = glyphs.SwitchOff+" Off", ui.ColorMuted
+			status, role = "Off", ui.ColorMuted
 		}
 		name := server.name
 		if !server.builtin {
@@ -168,13 +163,13 @@ func (c *lspCatalog) selected() (lspServer, bool) {
 func (c *lspCatalog) rebuildBar() {
 	if c.draft != nil {
 		server, _ := c.model().lspServer(c.editing)
-		buttons := []ui.ActionBarButton{{Label: "Back to servers", Action: "lsp.back", Variant: ui.VariantPrimary, Enabled: true}}
-		if server.builtin {
-			buttons = append(buttons, ui.ActionBarButton{Label: "Restore default", Action: "lsp.reset", Enabled: true})
-		} else {
-			buttons = append(buttons, ui.ActionBarButton{Label: "Remove server", Action: "lsp.remove", Variant: ui.VariantDanger, Enabled: true})
+		// Edits apply to the settings draft as they are made, so the editor
+		// closes with Done rather than a separate apply step.
+		buttons := []ui.ActionBarButton{{Label: "Restore default", Action: "lsp.reset", Enabled: true}}
+		if !server.builtin {
+			buttons = []ui.ActionBarButton{{Label: "Remove server", Action: "lsp.remove", Variant: ui.VariantDanger, Enabled: true}}
 		}
-		c.bar.SetButtons(buttons...)
+		c.bar.SetButtons(append(buttons, ui.ActionBarButton{Label: "Done", Action: "lsp.back", Variant: ui.VariantPrimary, Enabled: true})...)
 		return
 	}
 	server, ok := c.selected()
@@ -367,7 +362,11 @@ func (c *lspCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.EventR
 	case "lsp.back":
 		return c.back()
 	case "lsp.bar.forward":
-		c.owner.FocusActions()
+		if c.draft != nil {
+			c.owner.focusID(WorkspaceSettingsCloseBarID)
+		} else {
+			c.owner.FocusActions()
+		}
 		return ui.EventResult{Handled: true, Invalidate: ui.InvalidateFocus | ui.InvalidatePaint}
 	case "lsp.bar.backward":
 		if c.draft != nil {
@@ -417,19 +416,13 @@ func (c *lspCatalog) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		return
 	}
 	w, h := r.W, r.H
-	c.bar.Layout(ctx, ui.Rect{Y: h - 1, W: w, H: 1})
 	if c.draft != nil {
 		c.filter.Layout(ctx, ui.Rect{})
 		c.table.Layout(ctx, ui.Rect{})
 		c.listScroll.Layout(ctx, ui.Rect{})
-		// Bottom-up: actions, notice, help strip, breathing row.
-		helpLines := helpStripLines(h - 2)
-		helpH := helpLines
-		if helpLines > 1 {
-			helpH++
-		}
-		formH := max(1, h-2-helpH)
-		c.helpRect = ui.Rect{Y: h - 2 - helpLines, W: w, H: helpLines}
+		// The decision bar, notices and field help live in the shared
+		// settings footer; the form owns the whole body.
+		formH := max(1, h)
 		c.form.Layout(ctx, ui.Rect{W: max(1, w-2), H: formH})
 		c.formScroll.Layout(ctx, ui.Rect{X: w - ui.ScrollbarWidth, W: ui.ScrollbarWidth, H: formH})
 		if !c.formScroll.Needed() {
@@ -437,7 +430,7 @@ func (c *lspCatalog) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		}
 		return
 	}
-	c.helpRect = ui.Rect{}
+	c.bar.Layout(ctx, ui.Rect{Y: h - 1, W: w, H: 1})
 	c.form.Layout(ctx, ui.Rect{})
 	c.formScroll.Layout(ctx, ui.Rect{})
 	c.filter.Layout(ctx, ui.Rect{W: w, H: 1})
@@ -456,13 +449,10 @@ func (c *lspCatalog) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintContex
 	}
 	tokens := c.owner.tokens
 	bg := tokens.Color(ui.ColorPopupBg)
-	if c.draft != nil && !c.helpRect.Empty() {
-		paintFieldHelp(buf, ox+r.X+c.helpRect.X, oy+r.Y+c.helpRect.Y, c.helpRect.W, c.helpRect.H, c.form.HelpField(), tokens, bg)
-	}
 	if c.draft == nil && len(c.table.Rows()) == 0 {
 		c.owner.paintEmptyState(buf, ox+r.X, oy+r.Y+3, r.W, "No matching servers", "Clear the search, or add a server for another language.", bg)
 	}
-	if c.notice != "" {
+	if c.notice != "" && c.draft == nil {
 		buf.WriteString(ox+r.X, oy+r.Y+r.H-2, rendering.TruncateVisual(c.notice, r.W, "…"), tokens.Color(ui.ColorError), bg, 0)
 	}
 }

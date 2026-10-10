@@ -135,48 +135,41 @@ func TestDialerFieldsSelectBuiltInDefaultsForNil(t *testing.T) {
 	}
 }
 
+// Ladders read in natural order — the default sits at its own value and
+// Unlimited comes last — so a stepper's ‹ always means less and › more.
 func TestDialFieldOptionsLabelBuiltInDefault(t *testing.T) {
 	options := dialFieldOptions(0, 30, dialConnectLadder, "s")
-	if len(options) == 0 || options[0].ID != "30" {
-		t.Fatalf("first option = %+v, want the built-in default 30", options[0])
-	}
-	if options[0].Label != "30s (default)" {
-		t.Errorf("default label = %q, want %q", options[0].Label, "30s (default)")
-	}
-	for _, option := range options[1:] {
-		if option.Label == options[0].Label {
-			t.Errorf("non-default option shares the default label: %+v", option)
+	var ids []string
+	for _, option := range options {
+		ids = append(ids, option.ID)
+		if option.ID == "30" && option.Label != "30s (default)" {
+			t.Errorf("default label = %q, want %q", option.Label, "30s (default)")
 		}
+		if option.ID != "30" && strings.Contains(option.Label, "(default)") {
+			t.Errorf("non-default option marked default: %+v", option)
+		}
+	}
+	if got := strings.Join(ids, ","); got != "5,10,30,60" {
+		t.Fatalf("ladder = %s, want natural order 5,10,30,60", got)
 	}
 }
 
 func TestDialFieldOptionsUnlimitedLabel(t *testing.T) {
 	options := dialFieldOptions(0, 0, dialTimeoutLadder, "s")
-	if options[0].ID != "0" || options[0].Label != "Unlimited (default)" {
-		t.Fatalf("first option = %+v, want Unlimited (default)", options[0])
+	last := options[len(options)-1]
+	if last.ID != "0" || last.Label != "Unlimited (default)" {
+		t.Fatalf("last option = %+v, want Unlimited (default) after every finite value", last)
 	}
 }
 
 func TestDialFieldOptionsInsertOffLadderValue(t *testing.T) {
 	options := dialFieldOptions(45, 0, dialTimeoutLadder, "s")
-	ids := map[string]bool{}
+	var ids []string
 	for _, option := range options {
-		ids[option.ID] = true
+		ids = append(ids, option.ID)
 	}
-	if !ids["45"] {
-		t.Fatalf("off-ladder stored value 45 missing from options: %+v", options)
-	}
-	// The built-in default stays first; the ladder remains sorted.
-	if options[0].ID != "0" {
-		t.Errorf("first option = %q, want built-in default", options[0].ID)
-	}
-	for i := 1; i+1 < len(options); i++ {
-		prev, next := options[i].ID, options[i+1].ID
-		if prevInt, err1 := strconv.Atoi(prev); err1 == nil {
-			if nextInt, err2 := strconv.Atoi(next); err2 == nil && prevInt > nextInt {
-				t.Errorf("ladder not sorted at %d: %q > %q", i, prev, next)
-			}
-		}
+	if got := strings.Join(ids, ","); got != "30,45,60,120,300,600,0" {
+		t.Fatalf("ladder = %s, want the off-ladder value in order and Unlimited last", got)
 	}
 }
 

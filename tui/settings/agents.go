@@ -24,7 +24,6 @@ var agentRoles = []struct {
 }{{"default", "Main Agent", catMain}, {"researcher", "Researcher", catResearcher}, {"crafter", "Crafter", catCrafter}, {"aeron", "Aeron", catAeron}, {"memory", "Memory Agent", catMemory}, {"auto-review", "Auto Review Agent", catAutoReviewPolicy}}
 
 type agentCatalog struct {
-	helpRect ui.Rect
 	ui.Base
 	owner                     *WorkspaceSettingsSurface
 	model                     *Model
@@ -67,8 +66,7 @@ func newAgentCatalog(owner *WorkspaceSettingsSurface) *agentCatalog {
 	c.table.SetColumnGap(2)
 	c.tabs = ui.NewTabs("settings/agents/tabs", t)
 	c.tabs.SetItems([]ui.TabItem{{ID: "model", Label: "Model"}, {ID: "instructions", Label: "Instructions"}, {ID: "tools", Label: "Tool Access"}}, "model")
-	c.form = ui.NewForm(AgentSettingsFormID, nil, "", "", t)
-	c.form.SetFieldGap(0)
+	c.form = newSettingsForm(AgentSettingsFormID, t)
 	c.bar = ui.NewActionBar("settings/agents/actions", t)
 	c.bar.SetAlignEnd(false)
 	c.more = ui.NewActionBar("settings/agents/more-actions", t)
@@ -200,7 +198,9 @@ func (c *agentCatalog) barWidth(buttons []ui.ActionBarButton) int {
 	return width
 }
 
-func (c *agentCatalog) begin(key string, duplicate bool) {
+// begin opens the editor for one agent and returns the model prefetch that
+// fills its capability rows.
+func (c *agentCatalog) begin(key string, duplicate bool) tea.Cmd {
 	c.toolPage = nil
 	c.roleIndex = -1
 	c.id = ""
@@ -295,6 +295,7 @@ func (c *agentCatalog) begin(key string, duplicate bool) {
 	c.rebuildBar()
 	c.owner.focusID(c.form.ID())
 	c.form.FocusFirst()
+	return c.model.prefetchModels(catAgents)
 }
 
 func (c *agentCatalog) fieldChanged(id string) {
@@ -577,16 +578,9 @@ func (c *agentCatalog) Layout(ctx ui.LayoutContext, r ui.Rect) {
 			c.toolFilter.Layout(ctx, ui.Rect{Y: ui.StripHeight, W: w, H: 1})
 			formY = ui.StripHeight + 2
 		}
-		// Rows from the bottom: action bar, notice, help strip, breathing row.
-		c.form.SetHideDescriptions(true)
-		c.form.SetFieldGap(0)
-		helpLines := helpStripLines(h - formY - 2)
-		helpH := helpLines
-		if helpLines > 1 {
-			helpH++
-		}
-		formH := max(1, h-formY-2-helpH)
-		c.helpRect = ui.Rect{Y: h - 2 - helpLines, W: w, H: helpLines}
+		// The decision bar, notices and field help live in the shared
+		// settings footer; the form owns the whole body below the tabs.
+		formH := max(1, h-formY)
 		c.form.Layout(ctx, ui.Rect{Y: formY, W: max(1, w-2), H: formH})
 		// Register only the painted stroke so the reserved gutter column
 		// between the form and the bar stays inert for pointer input.
@@ -594,10 +588,8 @@ func (c *agentCatalog) Layout(ctx ui.LayoutContext, r ui.Rect) {
 		if !c.formScroll.Needed() {
 			c.formScroll.Layout(ctx, ui.Rect{})
 		}
-		c.bar.Layout(ctx, ui.Rect{Y: h - 1, W: w, H: 1})
 		c.more.Layout(ctx, ui.Rect{})
 	} else {
-		c.helpRect = ui.Rect{}
 		c.toolFilter.Layout(ctx, ui.Rect{})
 		c.tabs.Layout(ctx, ui.Rect{})
 		c.form.Layout(ctx, ui.Rect{})
@@ -626,11 +618,7 @@ func (c *agentCatalog) Paint(buf *surface.CellBuffer, ox, oy int, _ ui.PaintCont
 	if r.Empty() {
 		return
 	}
-	bg := c.owner.tokens.Color(ui.ColorPopupBg)
-	if c.draft != nil && !c.helpRect.Empty() {
-		paintFieldHelp(buf, ox+r.X+c.helpRect.X, oy+r.Y+c.helpRect.Y, c.helpRect.W, c.helpRect.H, c.form.HelpField(), c.owner.tokens, bg)
-	}
-	if c.notice != "" {
+	if c.notice != "" && c.draft == nil {
 		row := r.H - 2
 		if c.stackActions {
 			row--
@@ -662,15 +650,18 @@ func (c *agentCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.Even
 		c.owner.focusID(c.form.ID())
 		c.form.FocusFirst()
 	case "form.changed":
+		if id, _ := action.Payload.(string); id == fieldConnection && c.draft != nil {
+			result.Cmd = c.model.prefetchModels(catAgents)
+		}
 	case "agents.add":
-		c.begin("", false)
+		result.Cmd = c.begin("", false)
 	case "agents.edit":
 		if row.ID != "" {
-			c.begin(row.ID, false)
+			result.Cmd = c.begin(row.ID, false)
 		}
 	case "agents.duplicate":
 		if row.ID != "" {
-			c.begin(row.ID, true)
+			result.Cmd = c.begin(row.ID, true)
 		}
 	case "agents.back":
 		return c.back()
@@ -678,6 +669,10 @@ func (c *agentCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.Even
 		return c.back()
 	case "agents.discard":
 		c.closeDraft()
+		if next := c.model.nextCategory; next >= 0 {
+			c.model.nextCategory = -1
+			return c.owner.openCategory(next)
+		}
 		if next := c.owner.capCatalog.nextOpen; next != nil {
 			c.owner.capCatalog.nextOpen = nil
 			return c.owner.OpenCapabilities(next.kind, next.query, next.id)
@@ -689,7 +684,7 @@ func (c *agentCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.Even
 	case "agents.stay":
 		c.confirm = ""
 		c.notice = ""
-		c.model.nextScope = ""
+		c.model.nextScope, c.model.nextCategory = "", -1
 		c.owner.capCatalog.nextOpen = nil
 		c.rebuildBar()
 		if c.draft != nil {
@@ -768,7 +763,9 @@ func (c *agentCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.Even
 		if c.draft != nil {
 			page, _ := action.Payload.(string)
 			c.setPage(page)
-			if action.ID == "tabs.enter" {
+			// Enter and a click both hand the keyboard to the page itself.
+			if action.ID == "tabs.enter" || c.tabs.ActivatedByPointer() {
+				c.form.FocusFirst()
 				c.owner.focusID(c.form.ID())
 			}
 		}
@@ -780,7 +777,9 @@ func (c *agentCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.Even
 	case "form.exit.backward":
 		c.owner.focusID(c.tabs.ID())
 	case "actionbar.exit.forward", "actionbar.exit.backward":
-		if c.draft != nil {
+		if c.draft != nil && action.ID == "actionbar.exit.forward" {
+			c.owner.focusID(WorkspaceSettingsCloseBarID)
+		} else if c.draft != nil {
 			c.owner.focusID(c.tabs.ID())
 		} else if c.stackActions && action.ID == "actionbar.exit.forward" {
 			c.owner.focusID(c.more.ID())
