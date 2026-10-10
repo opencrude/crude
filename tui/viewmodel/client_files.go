@@ -58,6 +58,27 @@ func (m *App) applyClientTreeDirectory(msg clientTreeDirectoryMsg) {
 	}
 }
 
+// The header, panel and connected tree share the same core-owned status read.
+// Collapse both index/worktree entries using the established tree precedence.
+func (m *App) projectTreeGitSnapshot(snapshot workspace.GitSnapshot) {
+	if _, connected := m.ws.(shellport.ClientFiles); !connected || m.Tree == nil || m.Tree.Model == nil {
+		return
+	}
+	statuses := make(map[string]filetree.GitStatus, len(snapshot.Changes))
+	for _, change := range snapshot.Changes {
+		path := change.AbsolutePath
+		if path == "" {
+			path = filepath.Join(snapshot.RepositoryRoot, filepath.FromSlash(change.Path))
+		}
+		status := filetree.GitStatusFromCode(change.Code)
+		statuses[filepath.Clean(path)] = filetree.DominantGitStatus(statuses[filepath.Clean(path)], status)
+	}
+	m.Tree.Model.SetRemoteGitStatuses(statuses)
+	if m.sidebarScreen != nil {
+		m.sidebarScreen.RefreshStatus()
+	}
+}
+
 func (m *App) beginClientFileTreeLoad() tea.Cmd {
 	if _, ok := m.ws.(shellport.ClientFiles); !ok || m.Tree == nil || m.Tree.Model == nil {
 		return nil
@@ -72,6 +93,11 @@ func (m *App) applyCoreFileChanges(changes []coreprotocol.FileChange) tea.Cmd {
 		return nil
 	}
 	paths := make(map[string]bool)
+	if len(changes) != 0 {
+		// Working-tree bytes matter just as much as .git metadata. A save can
+		// change M/U/D markers without touching the index or branch files.
+		m.requestGitSnapshot(time.Now())
+	}
 	for _, change := range changes {
 		if change.Resync {
 			paths[m.ws.RootPath()] = true
@@ -83,9 +109,6 @@ func (m *App) applyCoreFileChanges(changes []coreprotocol.FileChange) tea.Cmd {
 		}
 		if change.Path != "" {
 			paths[filepath.Dir(change.Path)] = true
-		}
-		if change.Git || change.Resync {
-			m.requestGitSnapshot(time.Now())
 		}
 	}
 	var commands []tea.Cmd

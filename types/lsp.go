@@ -75,8 +75,6 @@ func (s LSPSettings) ResolveServer(path string) (LSPServerSpec, bool) {
 
 func CloneLSPSettings(s LSPSettings) LSPSettings {
 	s.Languages = cloneLanguages(s.Languages)
-	s.Servers = cloneStringMap(s.Servers)
-	s.ServerArgs = cloneStringSliceMap(s.ServerArgs)
 	return s
 }
 

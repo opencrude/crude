@@ -41,7 +41,7 @@ Explicit manager changes still publish their committed snapshots immediately.
    bound to the installation. Workspace deletion then removes only that overlay,
    never the installed bytes.
 2. The catalog combines search results and current registrations without duplicate
-   identities. **Installed only** restricts it to registrations without networking.
+   identities. The **Installed** chip restricts it to registrations without networking.
    Cards expose Install/Manage directly. Inspect opens Overview, Instructions,
    Files and Access & use; versioned managed packages also expose Versions.
 3. Read instructions/List files are explicit bounded reads. Authored files can
@@ -74,7 +74,7 @@ does not prevent user-managed install or browsing.
 ## MCP
 
 Manage MCP or `/mcp [query]` opens the same searchable store in the retained Settings
-window. Installed only is an explicit local-only filter. The official Registry
+window. The Installed chip is an explicit local-only filter. The official Registry
 includes remote HTTP and exact-version npm/PyPI packages; required setup is shown,
 and unsupported variants remain inspectable with reasons. Search is bounded to 100
 results and eight Registry cursor pages, not a claim of exhaustive marketplace

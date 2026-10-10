@@ -20,7 +20,7 @@ func TestSecurityPagesSeparateCommandSafetyFromAutoReviewPolicy(t *testing.T) {
 		host.Layout()
 		buf := surface.NewCellBuffer(width, 42)
 		host.Paint(buf)
-		for _, text := range []string{"Command policy", "Unknown commands", "Save", "Cancel"} {
+		for _, text := range []string{"Command policy", "Unclassified commands", "Save", "Close"} {
 			if !bufferContains(buf, text) {
 				t.Errorf("width %d missing rendered %q:\n%s", width, text, bufferPlain(buf))
 			}
@@ -31,7 +31,7 @@ func TestSecurityPagesSeparateCommandSafetyFromAutoReviewPolicy(t *testing.T) {
 		host.Layout()
 		buf.Clear()
 		host.Paint(buf)
-		for _, text := range []string{"Review outcomes", "Unresolved review", "Thinking effort", "Technical recovery", "Initial output tokens"} {
+		for _, text := range []string{"Review outcomes", "When unsure", "Thinking effort", "Technical recovery", "First attempt budget"} {
 			if !bufferContains(buf, text) {
 				t.Errorf("width %d missing Auto Review policy %q", width, text)
 			}

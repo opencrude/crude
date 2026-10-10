@@ -50,6 +50,20 @@ func TestCapabilitiesShowNamedLiveStateAndHideInactiveEntries(t *testing.T) {
 	}
 }
 
+func TestCapabilityConfigAttentionIsNotHiddenByIdleTransport(t *testing.T) {
+	s, host, buf := testScreen(t, 130, 32, nil)
+	s.SetCapabilities(captypes.Snapshot{
+		Entries:     []captypes.Entry{{ID: "broken", Name: "Documentation MCP", Kind: captypes.KindMCP, State: "unavailable"}},
+		Connections: []captypes.ConnectionState{{ID: "broken", State: "not started"}},
+	})
+	host.MarkLayout()
+	host.Paint(buf)
+	text := bufferText(buf)
+	if !strings.Contains(text, "Documentation MCP") || !strings.Contains(text, "unavailable") || !strings.Contains(text, "1 need attention") {
+		t.Fatalf("idle transport hid invalid connection configuration:\n%s", text)
+	}
+}
+
 func TestCapabilityOverflowScrollsWithoutMovingWorkspaceResults(t *testing.T) {
 	s, h, buf := testScreen(t, 120, 30, manyWorkspaces(25))
 	var snapshot captypes.Snapshot

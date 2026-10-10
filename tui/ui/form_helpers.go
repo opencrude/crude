@@ -64,7 +64,24 @@ func BoolFieldState(id, label string, value bool, description string) *FieldStat
 	if value {
 		current = "on"
 	}
-	return CycleFieldState(id, label, []string{"on", "off"}, current, description)
+	f := CycleFieldState(id, label, []string{"on", "off"}, current, description)
+	f.Options = []FormOption{{ID: "on", Label: "On"}, {ID: "off", Label: "Off"}}
+	f.Style = StyleSwitch
+	return f
+}
+
+// SegmentedFieldState builds a cycle field painted as inline segments. Use it
+// for small, short option sets where seeing every choice beats cycling.
+func SegmentedFieldState(id, label string, options []FormOption, current, description string) *FieldState {
+	v := StringValue(current)
+	return &FieldState{ID: id, Label: label, Description: description, Type: FieldCycle, Value: v, Initial: v, Options: options, Style: StyleSegmented}
+}
+
+// NumberFieldState builds a narrow single-line numeric field with a unit.
+func NumberFieldState(id, label string, value int, unit, description string) *FieldState {
+	f := TextFieldState(id, label, fmt.Sprintf("%d", value), description)
+	f.Unit = unit
+	return f
 }
 
 // BoolValue reads back a BoolFieldState field.
@@ -84,6 +101,7 @@ func ToggleFieldState(id, label string, value bool, description string) *FieldSt
 	}
 	f := CycleFieldState(id, label, []string{"yes", "no"}, current, description)
 	f.Options = []FormOption{{ID: "yes", Label: "Yes"}, {ID: "no", Label: "No"}}
+	f.Style = StyleSwitch
 	return f
 }
 

@@ -123,6 +123,7 @@ type App struct {
 	capabilityOperations       map[uint64]capabilityOperation
 	capabilityPicker           *capabilityPickerOwner
 	capabilitySnapshotCancel   context.CancelFunc
+	capabilitySnapshotSequence uint64
 	launcherCapabilityCancel   context.CancelFunc
 	launcherCapabilitySequence uint64
 	launcherCapabilityAt       time.Time

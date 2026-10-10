@@ -1,7 +1,6 @@
 package settings
 
 import (
-	"encoding/json"
 	"fmt"
 	"reflect"
 	"slices"
@@ -28,11 +27,14 @@ type capabilityCatalog struct {
 	owner                    *WorkspaceSettingsSurface
 	tokens                   *ui.TokenSet
 	tabs                     *ui.Tabs
-	filter                   *ui.FilterField
+	filter                   *capabilitySearchInput
+	searchRule               *ui.ProgressRule
+	helpRect                 ui.Rect
+	searchGeneration         uint64
+	searchArmed              bool
 	store                    *capabilityStoreView
 	storeFilters             *ui.ActionBar
 	installed                *capabilityInstalledFilter
-	searchButton             *ui.ActionBar
 	choices                  *ui.List
 	choiceScroll             *ui.ScrollbarControl
 	choosing                 string
@@ -98,7 +100,9 @@ func newCapabilityCatalog(owner *WorkspaceSettingsSurface) *capabilityCatalog {
 	catalog := &capabilityCatalog{Base: ui.NewBase(capabilityCatalogID), owner: owner, model: owner.model, tokens: owner.tokens, kind: captypes.KindSkill, forms: make(map[string]*ui.FormModel), inputForms: make(map[string]*ui.FormModel), views: make(map[string]capabilityListState), requests: make(map[uint64]capabilityViewRequest), preview: make(map[string]CapabilityResultMsg), files: make(map[string][]string), storeButtons: make(map[string]*ui.Button)}
 	catalog.tabs = ui.NewTabs(capabilityTabsID, owner.tokens)
 	catalog.tabs.SetChrome(ui.TabsPopup)
-	catalog.filter = ui.NewFilterField(capabilityFilterID, owner.tokens)
+	catalog.filter = &capabilitySearchInput{FilterField: ui.NewFilterField(capabilityFilterID, owner.tokens), owner: catalog}
+	catalog.searchRule = ui.NewProgressRule("settings/capabilities/search-progress", owner.tokens)
+	catalog.searchRule.SetSurfaceBackground(ui.ColorPopupBg)
 	catalog.filter.SetPrompt(ui.SearchGlyphEnd(owner.tokens))
 	catalog.filter.SetPromptPlacement(ui.PromptEnd)
 	catalog.filter.SetSubmitAction("settings.capability.search")
@@ -113,6 +117,7 @@ func newCapabilityCatalog(owner *WorkspaceSettingsSurface) *capabilityCatalog {
 			catalog.syncDetailRows()
 		} else {
 			catalog.syncRows()
+			catalog.searchArmed = catalog.liveSearchable()
 		}
 	})
 	catalog.store = &capabilityStoreView{VirtualList: ui.NewVirtualList(capabilityStoreID, owner.tokens), owner: catalog}
@@ -127,10 +132,7 @@ func newCapabilityCatalog(owner *WorkspaceSettingsSurface) *capabilityCatalog {
 	catalog.storeFilters.SetExitActions("settings.capability.filters-next", "settings.capability.filters-prev")
 	catalog.installed = &capabilityInstalledFilter{ToggleButton: ui.NewToggleButton("settings/capabilities/installed", "Installed only", "settings.capability.installed-only", owner.tokens), owner: catalog}
 	catalog.installed.SetCancelAction("settings.capability.back")
-	catalog.searchButton = ui.NewActionBar("settings/capabilities/search", owner.tokens, ui.ActionBarButton{Label: "Search", Action: "settings.capability.search", Enabled: true})
-	catalog.searchButton.SetAlignEnd(false)
-	catalog.searchButton.SetCancelAction("settings.capability.back")
-	catalog.searchButton.SetExitActions("settings.capability.search-next", "settings.capability.search-prev")
+	catalog.installed.SetChip(true)
 	catalog.choices = ui.NewList("settings/capabilities/choices", owner.tokens)
 	catalog.choices.SetActivateAction("settings.capability.choose")
 	catalog.choiceScroll = ui.NewScrollbarControl("settings/capabilities/choice-scroll", catalog.choices.Scroll(), owner.tokens)
@@ -174,7 +176,7 @@ func (catalog *capabilityCatalog) SetTokens(tokens *ui.TokenSet) {
 	catalog.store.SetTokens(tokens)
 	catalog.storeFilters.SetTokens(tokens)
 	catalog.installed.SetTokens(tokens)
-	catalog.searchButton.SetTokens(tokens)
+	catalog.searchRule.SetTokens(tokens)
 	catalog.choices.SetTokens(tokens)
 	catalog.choiceScroll.SetTokens(tokens)
 	for _, button := range catalog.storeButtons {
@@ -196,7 +198,7 @@ func (catalog *capabilityCatalog) SetTokens(tokens *ui.TokenSet) {
 }
 
 func (catalog *capabilityCatalog) Children() []ui.Component {
-	children := []ui.Component{catalog.tabs, catalog.filter, catalog.storeFilters, catalog.installed, catalog.searchButton, catalog.choices, catalog.choiceScroll, catalog.store, catalog.browse, catalog.tree, catalog.form, catalog.reader}
+	children := []ui.Component{catalog.tabs, catalog.filter, catalog.storeFilters, catalog.installed, catalog.searchRule, catalog.choices, catalog.choiceScroll, catalog.store, catalog.browse, catalog.tree, catalog.form, catalog.reader}
 	if catalog.Bounds().Empty() {
 		return children
 	}
@@ -331,7 +333,9 @@ func (catalog *capabilityCatalog) actions() {
 			secondary = []ui.ActionBarButton{button("Reset inherited", "reset-inherited"), button("Refresh", "snapshot")}
 		}
 	}
-	if catalog.owner.model.capabilityPending != nil {
+	if pending := catalog.owner.model.capabilityPending; pending != nil && pending.Operation != "discover" {
+		// Live searches are replaced or cleared by typing; only explicit
+		// operations need a visible cancel.
 		secondary = append(secondary, button("Cancel operation", "cancel"))
 	}
 	selected := catalog.id != ""
@@ -368,7 +372,7 @@ func (catalog *capabilityCatalog) Layout(ctx ui.LayoutContext, rect ui.Rect) {
 	catalog.SetBounds(rect)
 	catalog.syncModel()
 	if rect.Empty() {
-		for _, child := range []ui.Component{catalog.tabs, catalog.filter, catalog.storeFilters, catalog.installed, catalog.searchButton, catalog.choices, catalog.choiceScroll, catalog.store, catalog.browse, catalog.tree, catalog.form, catalog.reader, catalog.storeScroll, catalog.formScroll, catalog.browseScroll, catalog.treeScroll, catalog.bar, catalog.more} {
+		for _, child := range []ui.Component{catalog.tabs, catalog.filter, catalog.storeFilters, catalog.installed, catalog.searchRule, catalog.choices, catalog.choiceScroll, catalog.store, catalog.browse, catalog.tree, catalog.form, catalog.reader, catalog.storeScroll, catalog.formScroll, catalog.browseScroll, catalog.treeScroll, catalog.bar, catalog.more} {
 			child.Layout(ctx, ui.Rect{})
 		}
 		for _, bar := range catalog.extraBars {
@@ -398,7 +402,7 @@ func (catalog *capabilityCatalog) Layout(ctx ui.LayoutContext, rect ui.Rect) {
 		catalog.storeFilters.Layout(ctx, ui.Rect{})
 		catalog.storeScroll.Layout(ctx, ui.Rect{})
 		catalog.installed.Layout(ctx, ui.Rect{})
-		catalog.searchButton.Layout(ctx, ui.Rect{})
+		catalog.searchRule.Layout(ctx, ui.Rect{})
 	}
 	catalog.choices.Layout(ctx, ui.Rect{})
 	catalog.choiceScroll.Layout(ctx, ui.Rect{})
@@ -428,14 +432,24 @@ func (catalog *capabilityCatalog) Layout(ctx ui.LayoutContext, rect ui.Rect) {
 			bar.Layout(ctx, ui.Rect{})
 		}
 	}
-	contentY := 2
+	contentY := 0
 	if catalog.edit == "" && catalog.detail {
-		catalog.tabs.Layout(ctx, ui.Rect{Y: 1, W: rect.W, H: min(ui.StripHeight, max(0, catalog.statusY-1))})
-		contentY = 1 + ui.StripHeight
+		catalog.tabs.Layout(ctx, ui.Rect{Y: 0, W: rect.W, H: min(ui.StripHeight, max(0, catalog.statusY))})
+		contentY = ui.StripHeight
 	}
 	height := max(0, catalog.statusY-contentY)
+	catalog.helpRect = ui.Rect{}
 	if catalog.edit != "" {
-		catalog.layoutForm(ctx, ui.Rect{Y: contentY, W: rect.W, H: height})
+		// Editors share the settings help strip: one row per field, the
+		// focused field's explanation in full below.
+		catalog.form.SetHideDescriptions(true)
+		helpLines := helpStripLines(height)
+		helpH := helpLines
+		if helpLines > 1 {
+			helpH++
+		}
+		catalog.helpRect = ui.Rect{Y: contentY + height - helpLines, W: rect.W, H: helpLines}
+		catalog.layoutForm(ctx, ui.Rect{Y: contentY, W: rect.W, H: max(1, height-helpH)})
 	} else if catalog.detail {
 		catalog.layoutDetail(ctx, contentY, height)
 	} else {
@@ -460,13 +474,17 @@ func (catalog *capabilityCatalog) Paint(buffer *surface.CellBuffer, originX, ori
 	}
 	rect := catalog.Bounds()
 	ui.FillRect(buffer, originX, originY, rect, cell.BlankCell(catalog.tokens.Color(ui.ColorPopupBg)))
-	buffer.WriteString(originX+rect.X, originY+rect.Y, rendering.TruncateVisual(catalog.owner.PaneTitle(), rect.W, "…"), catalog.tokens.Color(ui.ColorAccent), catalog.tokens.Color(ui.ColorPopupBg), cell.AttrBold)
 	message := catalog.message
-	if catalog.owner.model.capabilityPending != nil {
-		message = catalog.owner.model.capabilityPending.Operation + " running — Cancel stops this operation"
+	if pending := catalog.owner.model.capabilityPending; pending != nil {
+		message = pending.Operation + " running — Cancel stops this operation"
+		if pending.Operation == "discover" {
+			message = "Searching enabled sources…"
+		}
+	}
+	if !catalog.helpRect.Empty() {
+		paintFieldHelp(buffer, originX+rect.X+catalog.helpRect.X, originY+rect.Y+catalog.helpRect.Y, catalog.helpRect.W, catalog.helpRect.H, catalog.form.HelpField(), catalog.tokens, catalog.tokens.Color(ui.ColorPopupBg))
 	}
 	if catalog.edit == "" && !catalog.detail {
-		catalog.paintStoreHeading(buffer, originX+rect.X, originY+rect.Y, rect.W)
 		catalog.paintStoreEmpty(buffer, originX+rect.X, originY+rect.Y)
 		if message == "" {
 			message = catalog.storeStatus()
@@ -482,11 +500,6 @@ func (catalog *capabilityCatalog) Semantics() ui.Semantics {
 func (catalog *capabilityCatalog) Handle(ctx ui.EventContext, event ui.Event) ui.EventResult {
 	if catalog.owner != nil && catalog.owner.model != nil && catalog.owner.model.Saving() {
 		return ui.EventResult{Handled: true}
-	}
-	if event.Kind == ui.EventMouseClick && event.MouseClick.Button == tea.MouseLeft && ctx.LocalY == 0 && (catalog.detail || catalog.edit != "") {
-		if ui.BreadcrumbIndex(catalog.owner.paneTitleParts(), catalog.owner.breadcrumbSeparator(), ctx.LocalX, catalog.Bounds().W) == 0 {
-			return catalog.back()
-		}
 	}
 	if event.IsKey() && event.Key.Code == tea.KeyEsc {
 		return catalog.back()
@@ -690,7 +703,8 @@ func (catalog *capabilityCatalog) HandleAction(_ ui.EventContext, action ui.Acti
 		state.selected, state.offset = "", 0
 		catalog.views[catalog.viewKey()] = state
 		catalog.syncRows()
-		return catalog.changed()
+		catalog.searchArmed = true
+		return catalog.withLiveSearch(catalog.changed())
 	case "filter-source", "filter-type", "filter-sort":
 		return catalog.openStoreFilter(operation)
 	case "choose":
@@ -699,14 +713,11 @@ func (catalog *capabilityCatalog) HandleAction(_ ui.EventContext, action ui.Acti
 		catalog.choosing = ""
 		catalog.owner.focusID(catalog.storeFilters.ID())
 		return catalog.changed()
-	case "filters-next", "search-next":
+	case "filters-next":
 		catalog.owner.focusID(catalog.store.ID())
 		return catalog.changed()
 	case "filters-prev":
 		catalog.owner.focusID(catalog.installed.ID())
-		return catalog.changed()
-	case "search-prev":
-		catalog.owner.focusID(catalog.filter.ID())
 		return catalog.changed()
 	case "inspect-item":
 		catalog.inspectItem()
@@ -766,7 +777,7 @@ func (catalog *capabilityCatalog) editForm() {
 	} else if catalog.kind == captypes.KindSkill {
 		value := model.capabilities.Skills[catalog.id]
 		catalog.draftOriginal = captypes.Action{Kind: catalog.kind, ID: catalog.id, Skill: &value}
-		fields = []*ui.FieldState{ui.TextFieldState("id", "Identity", value.ID, "Source-qualified identity"), ui.TextFieldState("name", "Name", value.Name, "Lowercase skill directory name"), ui.TextFieldState("path", "Directory", value.Path, "Authored directories are never deleted by Remove"), ui.CycleFieldState("mode", "Invocation", []string{"automatic", "manual", "disabled"}, mapDefault(value.Mode, "automatic"), "Selection is not permission"), ui.TextAreaFieldState("description", "Description", "", "Required for Create skill")}
+		fields = []*ui.FieldState{ui.TextFieldState("id", "Identity", value.ID, "Source-qualified identity"), ui.TextFieldState("name", "Name", value.Name, "Lowercase skill directory name"), ui.TextFieldState("path", "Directory", value.Path, "Authored directories are never deleted by Remove"), ui.SegmentedFieldState("mode", "Use", []ui.FormOption{{ID: "automatic", Label: "Automatically"}, {ID: "manual", Label: "When asked"}, {ID: "disabled", Label: "Never"}}, mapDefault(value.Mode, "automatic"), "Automatically lets agents load this skill when relevant. Loading a skill is not a permission grant."), ui.TextAreaFieldState("description", "Description", "", "Required for Create skill")}
 		if value.Managed {
 			fields[2].ReadOnly = true
 			fields[2].Description = "Managed bytes are immutable. Make local copy before editing files."
@@ -774,23 +785,18 @@ func (catalog *capabilityCatalog) editForm() {
 	} else if catalog.kind == "source" {
 		value := model.capabilities.Sources[catalog.id]
 		catalog.draftOriginal = captypes.Action{Kind: catalog.kind, ID: catalog.id, Source: &value}
-		fields = []*ui.FieldState{ui.TextFieldState("id", "Identity", value.ID, ""), ui.TextFieldState("name", "Name", value.Name, ""), ui.CycleFieldState("kind", "Source", []string{"local", "repository", "registry", "skill-registry"}, mapDefault(value.Kind, "local"), ""), ui.TextFieldState("location", "Location", value.Location, "HTTPS MCP/skill registry, pinned repository, or local directory"), ui.TextFieldState("revision", "Pinned revision", value.Revision, "Repositories require a full commit digest"), ui.TextFieldState("digest", "Artifact digest", value.Digest, "Exact SHA-256 when the source requires artifact verification."), ui.BoolFieldState("trusted", "Approved acquisition", value.Trusted, "Publisher provenance is not a code safety certificate"), ui.BoolFieldState("disabled", "Disabled", value.Disabled, "Do not search or acquire from this source.")}
+		fields = []*ui.FieldState{ui.TextFieldState("id", "Identity", value.ID, ""), ui.TextFieldState("name", "Name", value.Name, ""), ui.SegmentedFieldState("kind", "Type", []ui.FormOption{{ID: "local", Label: "Folder"}, {ID: "repository", Label: "Repository"}, {ID: "registry", Label: "MCP registry"}, {ID: "skill-registry", Label: "Skill registry"}}, mapDefault(value.Kind, "local"), "A folder on this computer, a commit-pinned repository, or a registry service."), ui.TextFieldState("location", "Location", value.Location, "HTTPS MCP/skill registry, pinned repository, or local directory"), ui.TextFieldState("revision", "Pinned revision", value.Revision, "Repositories require a full commit digest"), ui.TextFieldState("digest", "Artifact digest", value.Digest, "Exact SHA-256 when the source requires artifact verification."), ui.BoolFieldState("trusted", "Approved acquisition", value.Trusted, "Publisher provenance is not a code safety certificate"), ui.BoolFieldState("disabled", "Disabled", value.Disabled, "Do not search or acquire from this source.")}
 	} else {
 		value := captypes.Clone(model.capabilities).Connections[catalog.id]
 		catalog.draftOriginal = captypes.Action{Kind: catalog.kind, ID: catalog.id, Connection: &value}
-		args, _ := json.Marshal(value.Args)
-		environment, _ := json.Marshal(value.Environment)
-		headers, _ := json.Marshal(value.Headers)
-		secrets, _ := json.Marshal(value.SecretRefs)
-		environmentDescription := "Explicit non-secret values only"
-		if len(value.RequiredEnv) > 0 {
-			environmentDescription += ". Required by this package: " + strings.Join(value.RequiredEnv, ", ")
-		}
-		fields = []*ui.FieldState{ui.TextFieldState("id", "Identity", value.ID, "Stable connection identity"), ui.TextFieldState("name", "Name", value.Name, ""), ui.CycleFieldState("transport", "Transport", []string{"http", "stdio"}, mapDefault(value.Transport, "http"), "Streamable HTTP or a managed local process"), ui.TextFieldState("url", "Endpoint", value.URL, "Credentials are endpoint-bound"), ui.TextFieldState("command", "Executable", value.Command, "No shell interpolation"), ui.TextAreaFieldState("args", "Arguments", string(args), "JSON array, exact argument boundaries"), ui.TextFieldState("directory", "Working directory", value.Directory, ""), ui.TextAreaFieldState("environment", "Environment", string(environment), environmentDescription), ui.TextAreaFieldState("headers", "Headers", string(headers), "Non-secret headers"), ui.TextAreaFieldState("secrets", "Secret references", string(secrets), "Map header/env name to env:VARIABLE; credentials remain application-owned"), ui.CycleFieldState("auth", "Authentication", []string{"none", "oauth"}, mapDefault(value.Auth, "none"), "Sign in is explicit"), ui.TextFieldState("oauth-client", "OAuth client", value.OAuthClientID, "Blank uses dynamic registration"), ui.BoolFieldState("launch", "Approve local launch", value.LaunchApproved, "Unsandboxed launch exposes this executable to your user privileges; automatic acquisition cannot start it")}
-		fields = append(fields, capabilityIntField("timeout", "Timeout (seconds)", int64(max(1, value.TimeoutSeconds)), 1, 3600, "Bounded operations. Unknown remote mutations are never retried automatically."), ui.TextAreaFieldState("oauth-scopes", "OAuth scopes", strings.Join(value.OAuthScopes, "\n"), "One scope per line; signing in stays application-owned."))
+		fields = mcpConnectionFields(value)
 	}
 	if catalog.id != "" && catalog.edit == "edit" {
-		fields[0].ReadOnly = true
+		for _, field := range fields {
+			if field.ID == "id" {
+				field.ReadOnly = true
+			}
+		}
 	}
 	if catalog.edit == "create-skill" {
 		for _, field := range fields {
@@ -806,24 +812,57 @@ func (catalog *capabilityCatalog) editForm() {
 		if slices.Contains([]string{"id", "name", "path", "location"}, field.ID) {
 			field.Required = true
 		}
-		if slices.Contains([]string{"args", "environment", "headers", "secrets"}, field.ID) {
-			id := field.ID
-			field.Validator = func(value ui.FieldValue) []string {
-				var target any = &map[string]string{}
-				if id == "args" {
-					target = &[]string{}
-				}
-				if err := json.Unmarshal([]byte(mapDefault(strings.TrimSpace(value.String()), "null")), target); err != nil {
-					return []string{"Enter a valid JSON " + mapState(id == "args", "string array", "string map") + "."}
-				}
-				return nil
-			}
-		}
 	}
 	model.capabilityDraft = formModel(fields...)
 	catalog.form.SetForm(model.capabilityDraft, "", "")
 	catalog.baseline = formDraftBytes(model.capabilityDraft)
 	catalog.actions()
+}
+
+// mcpConnectionFields lays a connection out the way people think about it:
+// identity, then how to reach a remote server, then how to launch a local
+// one. Lists are typed as command lines and name/value tables, never JSON.
+func mcpConnectionFields(value captypes.ConnectionConfig) []*ui.FieldState {
+	environmentDescription := "Non-secret values passed to the process. Put credentials in Secret references."
+	if len(value.RequiredEnv) > 0 {
+		environmentDescription += " Required by this package: " + strings.Join(value.RequiredEnv, ", ")
+	}
+	table := func(id, label, add string, entries map[string]string, description string, captions ...string) *ui.FieldState {
+		field := ui.KeyValuesFieldState(id, label, formatEnvironment(entries), description)
+		field.Placeholder, field.Columns = add, captions
+		return field
+	}
+	args := ui.TextFieldState("args", "Arguments", joinShellWords(value.Args), `Written like a shell command line; quote values with spaces. Nothing is expanded or interpolated.`)
+	args.Validator = func(field ui.FieldValue) []string {
+		if _, err := splitShellWords(field.String()); err != nil {
+			return []string{err.Error()}
+		}
+		return nil
+	}
+	transport := ui.SegmentedFieldState("transport", "Runs as", []ui.FormOption{{ID: "http", Label: "Remote server"}, {ID: "stdio", Label: "Local process"}}, mapDefault(value.Transport, "http"),
+		"Remote server connects over streamable HTTP. Local process launches an executable on this computer.")
+	auth := ui.SegmentedFieldState("auth", "Sign in", []ui.FormOption{{ID: "none", Label: "None"}, {ID: "oauth", Label: "OAuth"}}, mapDefault(value.Auth, "none"), "OAuth sign-in is always an explicit step you start.")
+	return []*ui.FieldState{
+		ui.SeparatorFieldState("mcp-identity", "Connection"),
+		ui.TextFieldState("name", "Name", value.Name, "How this connection appears to you and your agents."),
+		ui.TextFieldState("id", "Identity", value.ID, "A stable identifier; tool grants and history refer to it."),
+		transport,
+		ui.SeparatorFieldState("mcp-remote", "Remote server"),
+		ui.TextFieldState("url", "Endpoint", value.URL, "The server's HTTPS URL. Credentials are bound to this exact endpoint."),
+		table("headers", "Headers", "Add header", value.Headers, "Non-secret request headers. Put tokens in Secret references.", "Header", "Value"),
+		auth,
+		ui.TextFieldState("oauth-client", "OAuth client", value.OAuthClientID, "Leave blank to register dynamically."),
+		ui.TextFieldState("oauth-scopes", "OAuth scopes", strings.Join(value.OAuthScopes, " "), "Space- or comma-separated scopes to request at sign-in."),
+		ui.SeparatorFieldState("mcp-local", "Local process"),
+		ui.TextFieldState("command", "Executable", value.Command, "Program to launch, found on PATH or given as an absolute path. No shell is involved."),
+		args,
+		ui.TextFieldState("directory", "Working directory", value.Directory, "Where the process starts. Leave blank for the workspace."),
+		table("environment", "Environment", "Add variable", value.Environment, environmentDescription, "Variable", "Value"),
+		ui.BoolFieldState("launch", "Approve local launch", value.LaunchApproved, "The process runs unsandboxed with your user's privileges. Automatic acquisition can never start it."),
+		ui.SeparatorFieldState("mcp-secrets", "Secrets and limits"),
+		table("secrets", "Secret references", "Add reference", value.SecretRefs, "Map a header or environment name to env:VARIABLE. Credentials stay with the application, never in this file.", "Name", "Reference"),
+		capabilityIntField("timeout", "Timeout", "seconds", int64(max(1, value.TimeoutSeconds)), 1, 3600, "Each operation's deadline. Unknown remote changes are never retried automatically."),
+	}
 }
 
 func mapDefault(value, fallback string) string {
@@ -894,15 +933,15 @@ func (catalog *capabilityCatalog) draftAction() (captypes.Action, error) {
 		connection.ID, connection.Name, connection.Transport, connection.URL, connection.Command, connection.Directory, connection.Auth, connection.OAuthClientID = value("id"), value("name"), value("transport"), value("url"), value("command"), value("directory"), value("auth"), value("oauth-client")
 		connection.LaunchApproved = ui.BoolFieldValue(form.Field("launch"))
 		connection.TimeoutSeconds, _ = strconv.Atoi(value("timeout"))
-		connection.OAuthScopes = strings.Fields(value("oauth-scopes"))
-		for _, entry := range []struct {
-			raw    string
-			target any
-		}{{value("args"), &connection.Args}, {value("environment"), &connection.Environment}, {value("headers"), &connection.Headers}, {value("secrets"), &connection.SecretRefs}} {
-			if err := json.Unmarshal([]byte(mapDefault(entry.raw, "null")), entry.target); err != nil {
-				return request, fmt.Errorf("invalid JSON in connection arguments, environment, headers or references: %w", err)
-			}
+		connection.OAuthScopes = splitList(value("oauth-scopes"))
+		args, err := splitShellWords(value("args"))
+		if err != nil {
+			return request, fmt.Errorf("arguments: %w", err)
 		}
+		connection.Args = args
+		connection.Environment = parseEnvironment(form.Field("environment").Value.String())
+		connection.Headers = parseEnvironment(form.Field("headers").Value.String())
+		connection.SecretRefs = parseEnvironment(form.Field("secrets").Value.String())
 		request.Operation, request.Connection = "save-connection", &connection
 	}
 	return request, nil

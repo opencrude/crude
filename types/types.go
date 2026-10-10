@@ -701,8 +701,6 @@ type LSPSettings struct {
 	MaxServers         int                            `json:"max_servers,omitempty"`
 	IdleTimeoutSeconds int                            `json:"idle_timeout_seconds,omitempty"`
 	MaxDocumentBytes   int                            `json:"max_document_bytes,omitempty"`
-	Servers            map[string]string              `json:"servers,omitempty"`
-	ServerArgs         map[string][]string            `json:"server_args,omitempty"`
 	Languages          map[string]LSPLanguageSettings `json:"languages,omitempty"`
 }
 

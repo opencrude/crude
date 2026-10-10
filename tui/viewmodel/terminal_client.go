@@ -148,7 +148,7 @@ func (m *App) applyTerminalCreated(msg terminalCreatedMsg) tea.Cmd {
 	m.terminalLeases[msg.info.ID] = msg.lease
 	screen := m.ensureTermScreen(msg.info.ID, msg.info.Title)
 	screen.SetControlled(true)
-	m.dockTerminal(msg.info.ID)
+	m.dockTerminalInfo(msg.info)
 	return m.terminalRefresh(msg.info.ID)
 }
 
@@ -187,7 +187,7 @@ func (m *App) applyTerminalProjection(msg terminalProjectionMsg) tea.Cmd {
 	if m.ws.TermMgr() == nil {
 		return nextInput
 	}
-	if _, exists := m.ws.TermMgr().Get(id); !exists {
+	if _, exists := m.ws.TermMgr().Get(id); !exists && m.termScreens[id] == nil {
 		return nextInput
 	}
 	screen := m.ensureTermScreen(id, msg.projection.Info.Title)

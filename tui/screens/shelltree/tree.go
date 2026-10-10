@@ -297,6 +297,14 @@ func (s *Screen) ClearPathSearch() {
 	s.syncFromModel()
 }
 
+// RefreshStatus keeps filtered rows in step with the authoritative tree without
+// reconstructing the user's search, selection or scroll position.
+func (s *Screen) RefreshStatus() {
+	if s.searchModel != nil {
+		s.searchModel.RefreshStatusFrom(s.model)
+	}
+}
+
 func (s *Screen) applyConfig() {
 	s.cfg = filetree.PaintConfigFromTheme(s.th)
 	if s.model != nil {

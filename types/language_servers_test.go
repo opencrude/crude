@@ -51,7 +51,7 @@ func TestExternalLanguagesAndAutoDetect(t *testing.T) {
 	if _, ok := s.ResolveServer("a.rb"); ok {
 		t.Fatal("disabled custom started")
 	}
-	s.Servers = map[string]string{".go": "external-go"}
+	s.Languages["go"] = LSPLanguageSettings{Enabled: true, Command: "external-go"}
 	if _, ok := s.ResolveServer("a.go"); !ok {
 		t.Fatal("explicit external disabled by auto-detect")
 	}

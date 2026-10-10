@@ -1,6 +1,7 @@
 package filetree
 
 import (
+	"maps"
 	"path/filepath"
 	"sort"
 	"strings"
@@ -138,9 +139,8 @@ func NewSearchModel(rootPath string, options ModelOptions, matches []PathMatch) 
 	return m
 }
 
-// NewSearchModelFromBase preserves lightweight Git and diagnostic metadata for
-// paths already materialized by the persistent tree without constructing any
-// new resolver or performing any filesystem work.
+// NewSearchModelFromBase preserves complete Git and diagnostic metadata, even
+// for unloaded search matches, without a resolver or filesystem work.
 func NewSearchModelFromBase(base *FileTreeModel, matches []PathMatch) *FileTreeModel {
 	if base == nil {
 		return NewSearchModel(".", ModelOptions{}, matches)
@@ -149,19 +149,40 @@ func NewSearchModelFromBase(base *FileTreeModel, matches []PathMatch) *FileTreeM
 	m.showHidden = base.ShowHidden()
 	for path, node := range m.nodes {
 		source := base.NodeByPath(path)
-		if source == nil {
-			continue
+		if source != nil {
+			node.ModTime = source.ModTime
 		}
-		node.GitStatus = source.GitStatus
-		node.AggregateStatus = source.AggregateStatus
-		node.DiagnosticCount = source.DiagnosticCount
-		node.DiagErrors = source.DiagErrors
-		node.DiagWarnings = source.DiagWarnings
-		node.DiagHints = source.DiagHints
-		node.ModTime = source.ModTime
 	}
+	m.RefreshStatusFrom(base)
 	m.rebuildVisibleNodes()
 	return m
+}
+
+// RefreshStatusFrom updates only presentation metadata on an existing search
+// projection. Its selection, disclosure and scroll remain privately owned.
+func (m *FileTreeModel) RefreshStatusFrom(base *FileTreeModel) {
+	if m == nil || base == nil || m == base {
+		return
+	}
+	base.mu.RLock()
+	statuses := maps.Clone(base.remoteGitStatuses)
+	if base.gitResolver != nil {
+		statuses = make(map[string]GitStatus)
+		for path, status := range base.gitResolver.AllStatuses() {
+			statuses[filepath.Join(base.gitResolver.RepoPath(), filepath.FromSlash(path))] = status
+		}
+	}
+	diagnostics := maps.Clone(base.diagnosticResolver)
+	base.mu.RUnlock()
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.remoteGitStatuses = statuses
+	for path, node := range m.nodes {
+		node.GitStatus = statuses[path]
+	}
+	m.diagnosticResolver = diagnostics
+	m.recomputeAggregateStatuses()
+	m.recomputeAggregateDiagnostics()
 }
 
 func fuzzyPathScore(value, query string) (int, []int, bool) {

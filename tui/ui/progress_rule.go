@@ -17,7 +17,14 @@ type ProgressRule struct {
 	active bool
 	frame  int
 	motion TextTideMotion
+	bg     SemanticColor
+	bgSet  bool
 }
+
+// SetSurfaceBackground paints the rule on an explicit surface fill. Rules on
+// floating popups need it: an unset background would show the cell beneath
+// the window instead of the popup body.
+func (r *ProgressRule) SetSurfaceBackground(role SemanticColor) { r.bg, r.bgSet = role, true }
 
 func NewProgressRule(id ComponentID, tokens *TokenSet) *ProgressRule {
 	return &ProgressRule{Base: NewBase(id), tokens: tokens}
@@ -31,7 +38,7 @@ func (r *ProgressRule) SetActive(active bool) {
 	r.active = active
 }
 func (r *ProgressRule) NeedsFrame() bool { return r.active }
-func (r *ProgressRule) Paint(buf *surface.CellBuffer, ox, oy int, _ PaintContext) {
+func (r *ProgressRule) Paint(buf *surface.CellBuffer, ox, oy int, ctx PaintContext) {
 	b := r.Bounds()
 	if b.Empty() || r.tokens == nil {
 		return
@@ -42,13 +49,23 @@ func (r *ProgressRule) Paint(buf *surface.CellBuffer, ox, oy int, _ PaintContext
 		return
 	}
 	ink := r.tokens.Color(ColorBorder)
-	buf.WriteString(ox+b.X, oy+b.Y, strings.Repeat(glyph, b.W/width), ink, cell.NoColor, 0)
+	bg := cell.NoColor
+	if r.bgSet {
+		bg = r.tokens.Color(r.bg)
+	}
+	buf.WriteString(ox+b.X, oy+b.Y, strings.Repeat(glyph, b.W/width), ink, bg, 0)
 	if !r.active {
 		return
 	}
-	center := r.motion.Advance(r.frame, b.W, true)
+	frame := r.frame
+	if frame == 0 {
+		// Hosts that publish the shared clock through PaintContext need no
+		// separate SetFrame plumbing.
+		frame = ctx.Frame
+	}
+	center := r.motion.Advance(frame, b.W, true)
 	for column := 0; column+width <= b.W; column += width {
 		fg, _ := TextTide(ink, 0, r.tokens, center, column)
-		buf.WriteString(ox+b.X+column, oy+b.Y, glyph, fg, cell.NoColor, 0)
+		buf.WriteString(ox+b.X+column, oy+b.Y, glyph, fg, bg, 0)
 	}
 }

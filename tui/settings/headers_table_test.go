@@ -175,7 +175,7 @@ func TestSettingsHeaderTablePaintsInPane(t *testing.T) {
 	buf := newTestBuffer(120, 46)
 	h.host.Paint(buf)
 	painted := bufferPlain(buf)
-	for _, want := range []string{"Accounts", "Extra headers", "Name", "Value", "X-Tenant", "acme", "X-Trace", "enabled", "Add header"} {
+	for _, want := range []string{"Accounts", "Extra headers", "Header", "Value", "X-Tenant", "acme", "X-Trace", "enabled", "Add header"} {
 		if !strings.Contains(painted, want) {
 			t.Fatalf("painted editor missing %q:\n%s", want, painted)
 		}

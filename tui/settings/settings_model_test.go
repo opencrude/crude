@@ -114,19 +114,19 @@ func TestSettingsSearchFiltersGroupedNavigation(t *testing.T) {
 	cw := ui.NewComponentWidget(th, surfaceRoot, 80, 24)
 	surfaceRoot.SetFocusHandler(cw.Focus)
 	surfaceRoot.FocusSearch()
-	for _, r := range "font" {
+	for _, r := range "interface" {
 		cw.Host().Handle(tea.KeyPressMsg{Code: r, Text: string(r)})
 	}
-	if !m.searchActive || m.SelectedCategory() != catFont {
-		t.Fatalf("search active=%v selected=%d, want font", m.searchActive, m.SelectedCategory())
+	if !m.searchActive || m.SelectedCategory() != catUI {
+		t.Fatalf("search active=%v selected=%d, want interface", m.searchActive, m.SelectedCategory())
 	}
-	if items := m.CategoryItems(); len(items) != 2 || items[1].Label != "Font" {
-		t.Fatalf("filtered category items = %#v, want only Font", items)
+	if items := m.CategoryItems(); len(items) != 2 || items[1].Label != "Interface" {
+		t.Fatalf("filtered category items = %#v, want only Interface", items)
 	}
 
 	surf := surface.NewSurface("settings-search-test", 80, 24, cell.TransparentBlank())
 	cw.Render(surf, &wm.RenderContext{Theme: th})
-	if !bufferContains(surf.Buffer(), "Font") || bufferContains(surf.Buffer(), "Accounts") {
+	if !bufferContains(surf.Buffer(), "Interface") || bufferContains(surf.Buffer(), "Accounts") {
 		t.Fatal("filtered settings categories were not rendered")
 	}
 }
@@ -183,6 +183,14 @@ func TestSettingsSurfaceActionBarEmitsMessages(t *testing.T) {
 	surfaceRoot.SetFocusHandler(cw.Focus)
 	surf := surface.NewSurface("settings-action-bar", 80, 24, cell.TransparentBlank())
 	cw.Render(surf, &wm.RenderContext{Theme: th})
+	cw.Focus(WorkspaceSettingsActionID)
+	if result := cw.Host().Handle(tea.KeyPressMsg{Code: tea.KeyEnter}); result.Cmd != nil {
+		if _, saved := result.Cmd().(SaveMsg); saved {
+			t.Fatal("Save must stay disabled while nothing changed")
+		}
+	}
+	m.SetValueForTest(catEditor, "word-wrap", "on")
+	surfaceRoot.syncSaveState()
 	cw.Focus(WorkspaceSettingsActionID)
 	result := cw.Host().Handle(tea.KeyPressMsg{Code: tea.KeyEnter})
 	if result.Cmd == nil {

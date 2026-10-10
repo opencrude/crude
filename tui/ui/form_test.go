@@ -682,7 +682,7 @@ func TestCompactTextEditorAlignsWithSharedValueColumn(t *testing.T) {
 	// Every second-column value on the docked form shares one column: the
 	// nav row's model, the cycle control, and the text editor's value.
 	value := formColOf(buf, navY, "glm-5.3-flash")
-	cycle := formColOf(buf, thinkY, "← max →")
+	cycle := formColOf(buf, thinkY, "‹ max ›")
 	text := formColOf(buf, textY, "85")
 	if value < 0 || cycle < 0 || text < 0 {
 		t.Fatalf("missing value cells: nav=%d cycle=%d text=%d\n%s", value, cycle, text, formBufferPlain(buf))
@@ -736,7 +736,7 @@ func TestCycleControlAlignsWithSharedValueColumn(t *testing.T) {
 		t.Fatalf("missing rows:\n%s", formBufferPlain(buf))
 	}
 	provider := formColOf(buf, navY, "openrouter")
-	cycle := formColOf(buf, cycleY, "← on →")
+	cycle := formColOf(buf, cycleY, "● On")
 	if provider < 0 || cycle < 0 {
 		t.Fatalf("missing value cells: provider=%d cycle=%d\n%s", provider, cycle, formBufferPlain(buf))
 	}

@@ -300,18 +300,17 @@ func TestLSPRuntimeContract(t *testing.T) {
 	if _, ok := s.ResolveServer("main.unsupported"); ok {
 		t.Fatal("unsupported language must not launch a server")
 	}
-	s.Servers = map[string]string{".go": "custom-gopls"}
-	s.ServerArgs = map[string][]string{".go": {"serve"}}
+	s.Languages["go"] = LSPLanguageSettings{Enabled: true, Command: "custom-gopls", Args: []string{"serve"}}
 	spec, ok := s.ResolveServer("main.go")
 	if !ok || spec.Command != "custom-gopls" || !reflect.DeepEqual(spec.Args, []string{"serve"}) {
 		t.Fatalf("command override lost: %+v", spec)
 	}
 	clone := CloneLSPSettings(s)
-	clone.ServerArgs[".go"][0] = "changed"
+	clone.Languages["go"].Args[0] = "changed"
 	lang := clone.Languages["go"]
 	lang.Enabled = false
 	clone.Languages["go"] = lang
-	if s.ServerArgs[".go"][0] != "serve" || !s.Languages["go"].Enabled {
+	if s.Languages["go"].Args[0] != "serve" || !s.Languages["go"].Enabled {
 		t.Fatal("LSP settings clone aliases its source")
 	}
 	if _, ok := clone.ResolveServer("main.go"); ok {

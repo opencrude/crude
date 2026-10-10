@@ -43,13 +43,17 @@ func (s *statusReplica) fetch() (statusSnapshot, error) {
 // install adopts a core snapshot on the Update goroutine. It reports whether
 // the shell must re-read status.
 func (s *statusReplica) install(snapshot statusSnapshot) bool {
-	if snapshot.Version == s.core.Version && s.version != 0 {
+	if snapshot.Version <= s.core.Version && s.version != 0 {
 		return false
 	}
 	s.core = snapshot
 	s.version++
 	return true
 }
+
+// A replacement core starts a new version domain. Preserve private toasts but
+// do not compare its cold snapshot against the previous core's revision.
+func (s *statusReplica) resetRevision() { s.core.Version, s.version = 0, 0 }
 
 func (s *statusReplica) send(mutation coreprotocol.StatusMutation) {
 	s.w.commands.push(func(ctx context.Context) {

@@ -161,6 +161,19 @@ func (f *Form) SetTokens(tokens *TokenSet) {
 	}
 }
 
+// HelpField is the field whose explanation a help strip should show: the
+// hovered field while the pointer rests on one, otherwise the focused field.
+func (f *Form) HelpField() *FieldState {
+	for _, index := range []int{f.hovered, f.focused} {
+		if index >= 0 && index < len(f.fields) {
+			if state := f.fields[index].FieldState(); !state.skipFocus() {
+				return state
+			}
+		}
+	}
+	return nil
+}
+
 // Field returns the retained field by semantic ID.
 func (f *Form) Field(id string) *FormField {
 	for _, field := range f.fields {

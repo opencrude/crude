@@ -69,6 +69,12 @@ func NewBoundFormField(id ComponentID, model *FormModel, f *FieldState, tokens *
 		ff.grid.SetTitle(f.Label, f.Description)
 		ff.grid.SetValue(f.Value.String())
 		ff.grid.SetReadOnly(f.ReadOnly || f.Disabled)
+		// A key/value field's placeholder names its append row.
+		ff.grid.SetAddLabel(f.Placeholder)
+		// Two Columns name the table's columns.
+		if len(f.Columns) == 2 {
+			ff.grid.SetCaptions(f.Columns[0], f.Columns[1])
+		}
 	}
 	if f.Type == FieldSelect || f.Type == FieldMultiSelect {
 		ff.selectList = NewList(NewID(id, "options"), tokens)
@@ -288,6 +294,7 @@ func (ff *FormField) Layout(ctx LayoutContext, r Rect) {
 			// so the first glyph lands on the table's second column.
 			ff.control.Layout(ctx, Rect{X: editorX, Y: 0, W: max(1, r.W-editorX), H: 1})
 		} else {
+			controlW = ff.inputWidth(controlW)
 			ff.control.Layout(ctx, Rect{X: controlX + 1, Y: 0, W: max(1, controlW-2), H: 1})
 		}
 	}
@@ -492,10 +499,16 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 		contentX = controlX
 	}
 	contentW := max(1, controlW-2)
-	// Spacious settings raise idle controls; hovered controls share the
-	// row's tint. Compact docks keep the chat surface beneath idle rows.
+	// Spacious settings raise idle input controls; hovered controls share
+	// the row's tint. Compact docks keep the chat surface beneath idle rows.
+	// Choice controls (switches, segments, cycles) are content-sized marks
+	// on the row itself, never an empty input-looking slab.
 	controlBG := rowBG
-	if !ff.compact && !focusedRow && !hoveredRow {
+	inputLike := ff.field.Type != FieldCycle
+	if editorX < 0 && (ff.field.Type == FieldText || ff.field.Type == FieldPassword) {
+		controlW = ff.inputWidth(controlW)
+	}
+	if !ff.compact && !focusedRow && !hoveredRow && inputLike {
 		controlBG = ff.tokensColor(ColorPopupSubtleBg, bg)
 		FillRect(buf, 0, 0, Rect{X: controlX, Y: y, W: controlW, H: 1}, cell.BlankCell(controlBG))
 	}
@@ -508,6 +521,9 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 			fieldCtx.Focused = ctx.Focused
 			ff.control.SetBackgroundColor(controlBG)
 			ff.control.Paint(buf, originX+r.X, originY+r.Y, fieldCtx)
+			if ff.field.Unit != "" && editorX < 0 {
+				buf.WriteString(controlX+controlW+1, y, ff.field.Unit, mutedFG, rowBG, 0)
+			}
 		} else {
 			text := ff.field.Value.String()
 			if text == "" {
@@ -515,6 +531,8 @@ func (ff *FormField) Paint(buf *surface.CellBuffer, originX, originY int, ctx Pa
 			}
 			buf.WriteString(contentX, y, rendering.TruncateVisual(text, contentW, "…"), valueFG, controlBG, 0)
 		}
+	} else if ff.field.Type == FieldCycle {
+		ff.paintCycle(buf, contentX, y, contentW, focusedRow, valueFG, mutedFG, controlBG)
 	} else {
 		ff.paintChoice(buf, contentX, y, contentW, ctx, valueFG, mutedFG, controlBG)
 	}
@@ -731,30 +749,7 @@ func (ff *FormField) paintChoice(buf *surface.CellBuffer, x, y, width int, ctx P
 			indicator = "▾"
 		}
 	case FieldCycle:
-		for _, option := range ff.field.Options {
-			if option.ID == value {
-				text = option.Label
-				break
-			}
-		}
-		if text == "" {
-			text = ff.field.Placeholder
-		}
-		if text == "" {
-			text = "Not set"
-		}
-		left, right := "←", "→"
-		if ff.compact {
-			text = left + " " + text + " " + right
-			break
-		}
-		middleW := max(1, width-rendering.VisibleWidth(left)-rendering.VisibleWidth(right)-2)
-		text = left + " " + rendering.TruncateVisual(text, middleW, "…")
-		pad := width - rendering.VisibleWidth(text) - rendering.VisibleWidth(right)
-		if pad < 1 {
-			pad = 1
-		}
-		text += strings.Repeat(" ", pad) + right
+		text = ff.cycleDisplay()
 	case FieldToggle, FieldCheckbox:
 		if ff.field.Value.Bool() {
 			text = "[x]"
@@ -889,7 +884,7 @@ func (ff *FormField) Handle(ctx EventContext, evt Event) EventResult {
 	case FieldSelect, FieldMultiSelect:
 		return ff.handleSelect(ctx, evt)
 	case FieldCycle:
-		return ff.handleCycle(evt)
+		return ff.handleCycle(ctx, evt)
 	case FieldToggle, FieldCheckbox:
 		return ff.handleToggle(evt)
 	case FieldNav:
@@ -921,33 +916,37 @@ func (ff *FormField) paintNav(buf *surface.CellBuffer, x, y, width int, ctx Pain
 		rowBG = ff.tokensColor(ColorHover, bg)
 		FillRect(buf, 0, 0, Rect{X: x, Y: y, W: width, H: ff.height()}, cell.BlankCell(rowBG))
 	}
+	labelFG, labelAttr := fg, cell.Attrs(0)
 	if focused {
-		fg = ff.tokensColor(ColorAccent, fg)
+		labelFG, labelAttr = ff.tokensColor(ColorAccent, fg), cell.AttrBold
 	}
+	// A drill-in row aligns with the fields around it: the label sits in the
+	// label column and the destination summary plus ▸ in the value column,
+	// so it reads as "this setting lives one level down", not as a heading.
+	labelX := x + ff.labelIndent()
+	buf.WriteString(labelX, y, rendering.TruncateVisual(ff.field.Label, max(1, ff.labelWidth()-1), "…"), labelFG, rowBG, labelAttr)
 	chevron := string(FirstRune(DefaultGlyphsFromTokens(ff.tokens).TreeCollapsed, '▸'))
-	chevronW := rendering.VisibleWidth(chevron)
-	labelW := max(1, width-chevronW-1)
-	label := rendering.TruncateVisual(ff.field.Label, labelW, "…")
-	labelAttr := cell.Attrs(0)
+	valueX := x + ff.controlX(width) + 1
+	summary := strings.TrimSpace(ff.field.Value.String())
+	if len(ff.field.Columns) > 0 {
+		summary = strings.Join(ff.field.Columns, "  ")
+	}
+	if summary == "" {
+		summary = "Open"
+	}
+	available := max(1, x+width-valueX-rendering.VisibleWidth(chevron)-1)
+	summary = rendering.TruncateVisual(summary, available, "…")
+	chevronFG := muted
 	if focused {
-		labelAttr = cell.AttrBold
+		chevronFG = labelFG
 	}
-	buf.WriteString(x, y, label, fg, rowBG, labelAttr)
-	if chevronW > 0 && chevronW <= width {
-		chevronFG := muted
-		if focused {
-			chevronFG = fg
-		}
-		buf.WriteString(x+width-chevronW, y, chevron, chevronFG, rowBG, 0)
-	}
+	buf.WriteString(valueX, y, summary, muted, rowBG, 0)
+	buf.WriteString(valueX+rendering.VisibleWidth(summary)+1, y, chevron, chevronFG, rowBG, 0)
 	detail := ff.navDetail()
 	if detail == "" || ff.height() < 2 {
 		return
 	}
-	indent := ff.labelIndent()
-	if indent < 1 {
-		indent = 1
-	}
+	indent := max(1, ff.labelIndent())
 	buf.WriteString(x+indent, y+1, rendering.TruncateVisual(detail, max(1, width-indent), "…"), muted, rowBG, 0)
 }
 
@@ -1187,7 +1186,7 @@ func (ff *FormField) compactEditorX(width int) int {
 
 func (ff *FormField) cycleDisplay() string {
 	if ff.field == nil {
-		return "←  →"
+		return ""
 	}
 	text := ff.field.Value.String()
 	for _, option := range ff.field.Options {
@@ -1202,7 +1201,225 @@ func (ff *FormField) cycleDisplay() string {
 	if text == "" {
 		text = "Not set"
 	}
-	return "← " + text + " →"
+	g := DefaultGlyphsFromTokens(ff.tokens)
+	if ff.field.Style == StyleSwitch {
+		marker := g.SwitchOff
+		if ff.switchOn() {
+			marker = g.SwitchOn
+		}
+		return marker + " " + text
+	}
+	return g.CycleLeft + " " + text + " " + g.CycleRight
+}
+
+// inputWidth sizes a spacious single-line input to its content class instead
+// of stretching every box across the pane: numbers and unit fields get a
+// short box, other text a readable line, so adjacent inputs never fuse into
+// one slab and the eye finds each value.
+func (ff *FormField) inputWidth(available int) int {
+	value := strings.TrimSpace(ff.field.Value.String())
+	if ff.field.Unit != "" || (value != "" && isNumeric(value)) {
+		return min(available, max(12, rendering.VisibleWidth(value)+4))
+	}
+	return min(available, 56)
+}
+
+func isNumeric(value string) bool {
+	digits := 0
+	for index, r := range value {
+		switch {
+		case r >= '0' && r <= '9':
+			digits++
+		case r == '.' || (index == 0 && r == '-'):
+		default:
+			return false
+		}
+	}
+	return digits > 0
+}
+
+// switchOn reports whether a switch field holds its first (affirmative)
+// option. Bool and Yes/No toggles both list the enabled state first.
+func (ff *FormField) switchOn() bool {
+	return len(ff.field.Options) > 0 && ff.field.Value.String() == ff.field.Options[0].ID
+}
+
+type cycleSegment struct {
+	x, w  int
+	index int
+}
+
+// cycleSegments lays out every option of a segmented field inline, relative
+// to the control's content x. It returns nil when the options cannot all fit,
+// in which case the control falls back to the ‹ value › cycle.
+func (ff *FormField) cycleSegments(width int) []cycleSegment {
+	if ff.field.Style != StyleSegmented || len(ff.field.Options) < 2 {
+		return nil
+	}
+	const gap = 1
+	segments := make([]cycleSegment, 0, len(ff.field.Options))
+	x := 0
+	for index, option := range ff.field.Options {
+		w := rendering.VisibleWidth(option.Label) + 2
+		if index > 0 {
+			x += gap
+		}
+		segments = append(segments, cycleSegment{x: x, w: w, index: index})
+		x += w
+	}
+	if x > width {
+		return nil
+	}
+	return segments
+}
+
+// paintCycle draws the three cycle presentations: a switch, inline
+// segments, or a content-sized ‹ value › stepper.
+func (ff *FormField) paintCycle(buf *surface.CellBuffer, x, y, width int, focused bool, fg, muted, bg cell.Color) {
+	if width < 1 {
+		return
+	}
+	accent := ff.tokensColor(ColorAccent, fg)
+	g := DefaultGlyphsFromTokens(ff.tokens)
+	if ff.field.Disabled {
+		fg, accent = muted, muted
+	}
+	switch ff.field.Style {
+	case StyleSwitch:
+		label := ff.cycleLabel()
+		if ff.switchOn() {
+			buf.WriteString(x, y, g.SwitchOn, accent, bg, cell.AttrBold)
+			buf.WriteString(x+rendering.VisibleWidth(g.SwitchOn)+1, y, rendering.TruncateVisual(label, max(1, width-2), "…"), fg, bg, 0)
+		} else {
+			buf.WriteString(x, y, g.SwitchOff, muted, bg, 0)
+			buf.WriteString(x+rendering.VisibleWidth(g.SwitchOff)+1, y, rendering.TruncateVisual(label, max(1, width-2), "…"), muted, bg, 0)
+		}
+		return
+	case StyleSegmented:
+		if segments := ff.cycleSegments(width); segments != nil {
+			selected := ff.selectedIndex()
+			selBG := ff.tokensColor(ColorSelection, bg)
+			if focused {
+				selBG = ff.tokensColor(ColorPopupSubtleBg, selBG)
+			}
+			for _, segment := range segments {
+				option := ff.field.Options[segment.index]
+				ink, fill, attr := muted, bg, cell.Attrs(0)
+				if segment.index == selected {
+					ink, fill, attr = accent, selBG, cell.AttrBold
+				}
+				if option.Disabled {
+					ink = muted
+				}
+				buf.WriteString(x+segment.x, y, " "+option.Label+" ", ink, fill, attr)
+			}
+			return
+		}
+	}
+	label := ff.cycleLabel()
+	arrow := muted
+	if focused {
+		arrow = accent
+	}
+	left, right := g.CycleLeft, g.CycleRight
+	leftW := rendering.VisibleWidth(left)
+	text := rendering.TruncateVisual(label, max(1, width-leftW-rendering.VisibleWidth(right)-2), "…")
+	buf.WriteString(x, y, left, arrow, bg, 0)
+	buf.WriteString(x+leftW+1, y, text, fg, bg, 0)
+	buf.WriteString(x+leftW+2+rendering.VisibleWidth(text), y, right, arrow, bg, 0)
+}
+
+// cycleClickTarget resolves a pointer click on a cycle control to the option
+// it selects. Segments select themselves; the ‹ affordance steps back, the ›
+// affordance and the value step forward. A switch simply flips.
+func (ff *FormField) cycleClickTarget(localX int) int {
+	n := len(ff.field.Options)
+	current := ff.selectedIndex()
+	next, previous := (current+1)%n, (current-1+n)%n
+	width := ff.Bounds().W
+	x0, spanW := ff.cycleSpan(width)
+	if ff.field.Style == StyleSegmented && !ff.compact {
+		for _, segment := range ff.cycleSegments(max(1, ff.controlWidth(width)-2)) {
+			if localX >= x0+segment.x && localX < x0+segment.x+segment.w {
+				return segment.index
+			}
+		}
+	}
+	if ff.field.Style == StyleSwitch || x0 < 0 {
+		return next
+	}
+	g := DefaultGlyphsFromTokens(ff.tokens)
+	leftW, rightW := rendering.VisibleWidth(g.CycleLeft), rendering.VisibleWidth(g.CycleRight)
+	switch {
+	case localX >= x0 && localX < x0+leftW+1:
+		return previous
+	case localX >= x0+spanW-rightW-1 && localX < x0+spanW:
+		return next
+	case localX < x0:
+		// Clicking the label column is not a request to step backwards.
+		return next
+	}
+	return next
+}
+
+// cycleSpan returns the field-relative x and painted width of the ‹ value ›
+// stepper, for both spacious and compact (table) rows; x is -1 when the row
+// cannot place it.
+func (ff *FormField) cycleSpan(width int) (int, int) {
+	g := DefaultGlyphsFromTokens(ff.tokens)
+	if !ff.compact {
+		x := ff.editorControlX(width) + 1
+		contentW := max(1, ff.controlWidth(width)-2)
+		label := rendering.TruncateVisual(ff.cycleLabel(), max(1, contentW-rendering.VisibleWidth(g.CycleLeft)-rendering.VisibleWidth(g.CycleRight)-2), "…")
+		return x, rendering.VisibleWidth(g.CycleLeft) + rendering.VisibleWidth(label) + rendering.VisibleWidth(g.CycleRight) + 2
+	}
+	raw := ff.compactColumnsRaw()
+	if len(raw) == 0 {
+		return -1, 0
+	}
+	cells, colMins := ff.compactCellMins(raw)
+	chevronW := rendering.VisibleWidth(string(FirstRune(g.TreeCollapsed, '▸')))
+	trailerW := chevronW + TableMinGap
+	plan := planCompactTable(width, ff.labelWidth(), trailerW, colMins)
+	target := len(ff.field.Columns)
+	sepW := rendering.VisibleWidth(TableSep)
+	col := plan.labelW + plan.gapL
+	last := len(cells) - 1
+	for i := range cells {
+		if i > 0 {
+			if i == last {
+				col += plan.flex
+			}
+			col += sepW
+		}
+		if i == target {
+			if i >= len(plan.colW) {
+				return -1, 0
+			}
+			return col, min(plan.colW[i], rendering.VisibleWidth(cells[i]))
+		}
+		if i < len(plan.colW) {
+			col += plan.colW[i]
+		}
+	}
+	return -1, 0
+}
+
+// cycleLabel resolves the current option's display label.
+func (ff *FormField) cycleLabel() string {
+	value := ff.field.Value.String()
+	for _, option := range ff.field.Options {
+		if option.ID == value {
+			return option.Label
+		}
+	}
+	if ff.field.Placeholder != "" {
+		return ff.field.Placeholder
+	}
+	if value == "" {
+		return "Not set"
+	}
+	return value
 }
 
 func padInheritedColumns(cols []string, inherited bool, width int) []string {
@@ -1448,9 +1665,9 @@ func (ff *FormField) filterContext(ctx EventContext) EventContext {
 	return ctx
 }
 
-func (ff *FormField) handleCycle(evt Event) EventResult {
+func (ff *FormField) handleCycle(ctx EventContext, evt Event) EventResult {
 	if evt.Kind == EventMouseClick && evt.MouseClick.Button == tea.MouseLeft && len(ff.field.Options) > 0 {
-		idx := (ff.selectedIndex() + 1) % len(ff.field.Options)
+		idx := ff.cycleClickTarget(ctx.LocalX)
 		ff.setValue(StringValue(ff.field.Options[idx].ID))
 		return EventResult{
 			Handled:    true,

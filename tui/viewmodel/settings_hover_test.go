@@ -31,13 +31,13 @@ func TestSettingsWindowHoverRendersWithoutChangingKeyboardTarget(t *testing.T) {
 	before := window.Surface().Children()[0].Buffer()
 	rowY := -1
 	for y, line := range strings.Split(bufferPlain(before), "\n") {
-		if strings.Contains(line, "Thinking level") {
+		if strings.Contains(line, "Thinking ") {
 			rowY = y
 			break
 		}
 	}
 	if rowY < formRect.Y || rowY >= formRect.Y+formRect.H {
-		t.Fatalf("Thinking level row not visible in settings form: y=%d form=%+v", rowY, formRect)
+		t.Fatalf("Thinking row not visible in settings form: y=%d form=%+v", rowY, formRect)
 	}
 	localX := formRect.X + 2
 	baseline := before.Get(localX, rowY).BG

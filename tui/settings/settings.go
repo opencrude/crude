@@ -151,6 +151,7 @@ type modelSnapshot struct {
 	pane       int
 	accountID  string
 	accounts   map[string]provider.Account
+	languages  map[string]types.LSPLanguageSettings
 }
 
 // Model is the workspace settings screen state.
@@ -199,6 +200,13 @@ type Model struct {
 	capabilityResult         *CapabilityResultMsg
 	capabilityRevision       uint64
 	capabilityDraft          *ui.FormModel
+	// lspLanguages is the working server inventory edited by the Language
+	// Servers page; lspLanguagesBase is the saved baseline for dirty state.
+	lspLanguages     map[string]types.LSPLanguageSettings
+	lspLanguagesBase map[string]types.LSPLanguageSettings
+	// onChange lets the retained surface reconcile Save/rail state after any
+	// field edit without the form routing an action through it.
+	onChange func()
 }
 
 type accountEdit struct {
@@ -302,19 +310,19 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 	}
 	appearanceFields := append([]*ui.FieldState{
 		ui.SeparatorFieldState("theme", "Theme"),
-		ui.CycleFieldState("preset", "Preset", append([]string(nil), theme.AllPresetNames...), appearance.Preset, "Choose a complete visual palette for the workspace."),
-		ui.SeparatorFieldState("palette", "Palette preview"),
+		ui.CycleFieldState("preset", "Theme", append([]string(nil), theme.AllPresetNames...), appearance.Preset, "A complete palette for the whole window. ‹ and › preview themes live; Close without saving to go back."),
+		ui.SeparatorFieldState("palette", "Palette"),
 	}, appearanceColorFields(appearance.Preset, appearance)...)
 	appearanceFields = append(appearanceFields,
 		// The form shows the effective value on each row; when the stored
 		// value is unset (nil) the accessor resolves to the default. Blank
 		// input means "inherit the default". Fields are Live so the frame
 		// previews around the live shell while Settings stays open.
-		ui.SeparatorFieldState("frame", "Shell frame"),
-		liveFramePadField("frame-top", "Top padding", appearance.PadTopOrDefault(), "Blank rows reserved above the header."),
-		liveFramePadField("frame-bottom", "Bottom padding", appearance.PadBottomOrDefault(), "Blank rows reserved below the status bar."),
-		liveFramePadField("frame-left", "Left padding", appearance.PadLeftOrDefault(), "Blank columns reserved left of the activity rail."),
-		liveFramePadField("frame-right", "Right padding", appearance.PadRightOrDefault(), "Blank columns reserved right of the content."),
+		ui.SeparatorFieldState("frame", "Window margins"),
+		liveFramePadField("frame-top", "Top", "rows", appearance.PadTopOrDefault(), "Blank rows above the header. Changes preview immediately."),
+		liveFramePadField("frame-bottom", "Bottom", "rows", appearance.PadBottomOrDefault(), "Blank rows below the status bar. Changes preview immediately."),
+		liveFramePadField("frame-left", "Left", "columns", appearance.PadLeftOrDefault(), "Blank columns left of the activity rail. Changes preview immediately."),
+		liveFramePadField("frame-right", "Right", "columns", appearance.PadRightOrDefault(), "Blank columns right of the content. Changes preview immediately."),
 	)
 	m.categories = []Category{
 		{Name: "Accounts", Group: "AI", Description: "Named account credentials and complete connection settings.", Form: m.buildAccountsForm()},
@@ -331,26 +339,27 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		{Name: "Appearance", Group: "IDE", Description: "Theme palette and surface colors.", Form: formModel(appearanceFields...)},
 		{Name: "Editor", Group: "IDE", Description: "Editing, wrapping, syntax, and save behavior.", Form: formModel(
 			ui.SeparatorFieldState("editing", "Editing"),
-			ui.TextFieldState("tab-size", "Tab size", fmt.Sprintf("%d", editor.TabSize), "Number of spaces inserted when a tab is used."),
-			ui.BoolFieldState("word-wrap", "Word wrap", editor.WordWrap, "Wrap long lines inside the editor viewport."),
-			ui.BoolFieldState("line-numbers", "Line numbers", editor.LineNumbers, "Show the document line-number gutter."),
-			ui.CycleFieldState("syntax-theme", "Syntax theme", []string{"catppuccin", "dracula", "github", "monokai", "solarized"}, editor.SyntaxTheme, "Color grammar used for source code."),
-			ui.CycleFieldState("render-whitespace", "Render whitespace", []string{"none", "boundary", "all"}, editor.RenderWhitespace, "Show spaces and tabs when inspecting layout."),
+			ui.NumberFieldState("tab-size", "Tab size", editor.TabSize, "spaces", "How wide a tab is, and how many spaces Tab inserts."),
+			ui.BoolFieldState("word-wrap", "Word wrap", editor.WordWrap, "Wrap long lines inside the editor instead of scrolling sideways."),
+			ui.BoolFieldState("line-numbers", "Line numbers", editor.LineNumbers, "Show the line-number gutter."),
+			ui.SegmentedFieldState("syntax-theme", "Syntax colors", []ui.FormOption{{ID: "catppuccin", Label: "Catppuccin"}, {ID: "dracula", Label: "Dracula"}, {ID: "github", Label: "GitHub"}, {ID: "monokai", Label: "Monokai"}, {ID: "solarized", Label: "Solarized"}}, editor.SyntaxTheme, "The color grammar used for source code."),
+			ui.SegmentedFieldState("render-whitespace", "Show whitespace", []ui.FormOption{{ID: "none", Label: "Never"}, {ID: "boundary", Label: "At edges"}, {ID: "all", Label: "Always"}}, editor.RenderWhitespace, "Draw spaces and tabs. At edges shows only leading and trailing whitespace."),
 			ui.SeparatorFieldState("saving", "Saving"),
 			autoSaveModeField(editor.AutoSave),
 			autoSaveDelayField(editor.AutoSaveDelay),
 			ui.BoolFieldState("format-on-save", "Format on manual save", editor.FormatOnSave, "Format explicit saves only. Automatic saves always preserve the exact text you typed."),
 		)},
-		{Name: "Language Servers", Group: "IDE", Description: "Language intelligence and diagnostics.", Form: m.buildLSPForm(lsp)},
+		{Name: "Code Intelligence", Group: "IDE", Description: "Completions, navigation and diagnostics from language servers, and how much they may use.", Form: m.buildLSPForm(lsp)},
 		{Name: "Interface", Group: "IDE", Description: "File tree, sidebar, icons, and diagnostics.", Form: formModel(
-			ui.SeparatorFieldState("workspace-chrome", "Workspace chrome"),
-			ui.CycleFieldState("context-help", "Context help", []string{"compact", "expanded", "off"}, defaultString(uiSettings.ContextHelp, "compact"), "Show focused-surface shortcuts in the top status area; full Help remains available."),
-			ui.TextFieldState("sidebar-width", "Sidebar width", fmt.Sprintf("%d", uiSettings.SidebarWidth), "Width of the file and workspace navigation rail."),
-			ui.BoolFieldState("show-hidden", "Show hidden files", uiSettings.ShowHiddenFiles, "Include dotfiles in the workspace tree."),
-			ui.BoolFieldState("show-icons", "Show file icons", uiSettings.ShowIcons, "Display file-type icons in navigation."),
-			ui.BoolFieldState("nerd-font", "Nerd font", uiSettings.UseNerdFont, "Use extended icon glyphs when the font supports them."),
-			ui.BoolFieldState("git-status", "Git status", uiSettings.ShowGitStatus, "Show changed-file markers in the workspace tree."),
-			ui.BoolFieldState("diagnostics", "Diagnostics", uiSettings.ShowDiagnostics, "Show language diagnostics in navigation."),
+			ui.SeparatorFieldState("workspace-chrome", "Layout"),
+			ui.SegmentedFieldState("context-help", "Shortcut hints", []ui.FormOption{{ID: "compact", Label: "Compact"}, {ID: "expanded", Label: "Expanded"}, {ID: "off", Label: "Off"}}, defaultString(uiSettings.ContextHelp, "compact"), "Shortcuts for the focused area, shown at the top of the window. Full Help (F1) is always available."),
+			ui.NumberFieldState("sidebar-width", "Sidebar width", uiSettings.SidebarWidth, "columns", "Width of the file and workspace navigation sidebar."),
+			ui.SeparatorFieldState("workspace-tree", "File tree"),
+			ui.BoolFieldState("show-hidden", "Hidden files", uiSettings.ShowHiddenFiles, "Include dotfiles in the workspace tree."),
+			ui.BoolFieldState("show-icons", "File icons", uiSettings.ShowIcons, "Show file-type icons beside names."),
+			ui.BoolFieldState("nerd-font", "Nerd Font icons", uiSettings.UseNerdFont, "Use extended icon glyphs. Turn on only if your terminal font is a Nerd Font."),
+			ui.BoolFieldState("git-status", "Git status", uiSettings.ShowGitStatus, "Mark changed files in the tree."),
+			ui.BoolFieldState("diagnostics", "Problems", uiSettings.ShowDiagnostics, "Mark files that have language diagnostics."),
 		)},
 		{Name: "Font", Group: "IDE", Description: "Terminal font hints and ligatures.", Form: formModel(
 			ui.SeparatorFieldState("typography", "Typography"),
@@ -361,15 +370,23 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		{Name: "Local History", Group: "IDE", Description: "Automatic project snapshots, retention, and safe restore policy.", Form: m.buildHistoryForm(current.LocalHistory)},
 	}
 	m.categories = append(m.categories, Category{Name: "Agents", Group: "AI", Description: "Built-in roles and reusable named agents.", Form: formModel()})
+	m.lspLanguages = cloneLSPLanguages(types.NormalizeLSP(lsp).Languages)
+	m.lspLanguagesBase = cloneLSPLanguages(m.lspLanguages)
 	m.categories = append(m.categories,
-		Category{Name: "Skills", Group: "AI", Description: "Installed skills, manual discovery, source-qualified instructions and invocation modes.", Form: formModel()},
-		Category{Name: "MCP", Group: "AI", Description: "Named MCP connections, tools, resources, prompts, access and activity.", Form: formModel()},
-		Category{Name: "Sources", Group: "AI", Description: "Shared local directories, pinned repositories and capability registries.", Form: formModel()},
-		Category{Name: "Acquisition", Group: "AI", Description: "Automatic capability selection, acquisition approval and bounded access budgets.", Form: m.buildAcquisitionForm()},
+		Category{Name: "Skills", Group: "AI", Description: "Reusable expertise your agents can load. Search every source and install in one step.", Form: formModel()},
+		Category{Name: "MCP", Group: "AI", Description: "Tools and services your agents can call. Search registries or add your own server.", Form: formModel()},
+		Category{Name: "Sources", Group: "AI", Description: "Where Skills and MCP search: built-in registries plus your own repositories and folders.", Form: formModel()},
+		Category{Name: "Acquisition", Group: "AI", Description: "When agents may pick or install capabilities on their own, and the limits they work within.", Form: m.buildAcquisitionForm()},
+		Category{Name: "Language Servers", Group: "IDE", Description: "The server behind each language. Open one to change its command, arguments or environment.", Form: formModel()},
 	)
 	for index := range m.categories {
 		category := index
-		m.categories[index].Form.OnChanged(func(fieldID string) { m.handleFieldChanged(category, fieldID) })
+		m.categories[index].Form.OnChanged(func(fieldID string) {
+			m.handleFieldChanged(category, fieldID)
+			if m.onChange != nil {
+				m.onChange()
+			}
+		})
 	}
 	m.ensureVisibleSelection()
 	m.preferencesBase = m.preferenceBytes()
@@ -399,11 +416,17 @@ func (m *Model) BeginSave() bool {
 	if form := m.categories[catLSP].Form; form != nil {
 		form.ValidateAll()
 		if form.AnyErrors() {
-			m.saveError = "Correct the highlighted Language Servers fields before saving."
+			m.saveError = "Correct the highlighted Code Intelligence fields before saving."
 			m.SelectCategory(catLSP)
 			m.EnterForm()
 			return false
 		}
+	}
+	if err := (types.LSPSettings{Languages: m.lspLanguages}).Validate(); err != nil {
+		m.saveError = "Language Servers: " + err.Error()
+		m.SelectCategory(catLanguageServers)
+		m.EnterForm()
+		return false
 	}
 	m.saving = true
 	m.saveError = ""
@@ -443,6 +466,7 @@ func (m *Model) FinishSave(err error) {
 		}
 	}
 	m.preferencesBase = m.preferenceBytes()
+	m.lspLanguagesBase = cloneLSPLanguages(m.lspLanguages)
 }
 
 func (m *Model) Saving() bool {
@@ -469,22 +493,22 @@ func (m *Model) accountEditorDirty() bool {
 }
 
 func (m *Model) buildHistoryForm(settings types.LocalHistorySettings) *ui.FormModel {
-	extra := ui.TextAreaFieldState(fieldHistoryIgnores, "Additional ignores", strings.Join(settings.ExtraIgnorePatterns, "\n"), "One Git-style pattern per line. Stored history never enters the project tree.")
+	extra := ui.TextAreaFieldState(fieldHistoryIgnores, "Also ignore", strings.Join(settings.ExtraIgnorePatterns, "\n"), "One Git-style pattern per line. Stored history never enters the project tree.")
 	extra.Rows = 4
 	return formModel(
 		ui.SeparatorFieldState("history-capture", "Capture"),
-		ui.BoolFieldState(fieldHistoryEnabled, "Enabled", settings.EnabledValue(), "Capture workspace history and message boundaries."),
-		ui.BoolFieldState(fieldHistoryGitIgnore, "Honor .gitignore", settings.UseGitIgnoreValue(), "Apply nested Git ignore rules and product derived-content defaults."),
-		ui.BoolFieldState(fieldHistoryExternal, "External changes", settings.CaptureExternalValue(), "Capture shell commands, generators, and other editors through the workspace watcher."),
-		ui.TextFieldState(fieldHistoryMaxFile, "Maximum file size (MB)", strconv.Itoa(settings.MaxFileSizeMB), "Files above this limit are excluded before reading or hashing."),
-		ui.TextFieldState(fieldHistoryDebounce, "Debounce (ms)", strconv.Itoa(settings.DebounceMS), "Quiet period before watcher changes become an automatic snapshot."),
-		ui.TextFieldState(fieldHistoryReconcile, "Reconcile interval (seconds)", strconv.Itoa(settings.ReconcileIntervalSeconds), "Bounded scan interval used to recover missed watcher events."),
+		ui.BoolFieldState(fieldHistoryEnabled, "Local history", settings.EnabledValue(), "Keep restorable snapshots of the workspace and of each message boundary."),
+		ui.BoolFieldState(fieldHistoryGitIgnore, "Honor .gitignore", settings.UseGitIgnoreValue(), "Skip files your Git ignore rules exclude, plus build output Crude knows about."),
+		ui.BoolFieldState(fieldHistoryExternal, "Capture outside edits", settings.CaptureExternalValue(), "Also snapshot changes made by shell commands, generators and other editors."),
+		ui.NumberFieldState(fieldHistoryMaxFile, "Skip files over", settings.MaxFileSizeMB, "MB", "Larger files are never read or stored."),
+		ui.NumberFieldState(fieldHistoryDebounce, "Snapshot after", settings.DebounceMS, "ms", "Quiet period after file changes before an automatic snapshot."),
+		ui.NumberFieldState(fieldHistoryReconcile, "Rescan every", settings.ReconcileIntervalSeconds, "seconds", "A bounded rescan that recovers changes the file watcher missed."),
 		extra,
 		ui.SeparatorFieldState("history-retention", "Retention"),
-		ui.TextFieldState(fieldHistoryKeepHours, "Keep hourly window", strconv.Itoa(settings.RetentionKeepHours), "Keep every snapshot this many recent hours."),
-		ui.TextFieldState(fieldHistoryKeepDaily, "Keep daily snapshots", strconv.Itoa(settings.RetentionKeepDaily), "Keep one older snapshot per day."),
-		ui.TextFieldState(fieldHistoryMaxSnaps, "Maximum snapshots", strconv.Itoa(settings.RetentionMaxSnapshots), "Upper bound after protected message and restore snapshots."),
-		ui.TextFieldState(fieldHistoryBudget, "Storage budget (MB)", strconv.Itoa(settings.StorageBudgetMB), "Prune unprotected history when physical storage exceeds this budget."),
+		ui.NumberFieldState(fieldHistoryKeepHours, "Keep everything for", settings.RetentionKeepHours, "hours", "Every snapshot from this recent window is kept."),
+		ui.NumberFieldState(fieldHistoryKeepDaily, "Then keep daily for", settings.RetentionKeepDaily, "days", "Older history keeps one snapshot per day."),
+		ui.NumberFieldState(fieldHistoryMaxSnaps, "Keep at most", settings.RetentionMaxSnapshots, "snapshots", "Upper bound after protected message and restore snapshots."),
+		ui.NumberFieldState(fieldHistoryBudget, "Storage budget", settings.StorageBudgetMB, "MB", "Unprotected history is pruned once storage passes this size."),
 		ui.SeparatorFieldState("history-restore", "Restore safety"),
 		&ui.FieldState{ID: fieldHistorySafety, Label: "Safety snapshot", Type: ui.FieldText, Value: ui.StringValue("Always on"), ReadOnly: true, Description: "Every restore captures current state first; this safety invariant cannot be disabled."},
 	)
@@ -493,24 +517,42 @@ func (m *Model) buildHistoryForm(settings types.LocalHistorySettings) *ui.FormMo
 func formModel(fields ...*ui.FieldState) *ui.FormModel {
 	m := ui.NewFormModel()
 	for _, field := range fields {
+		liftUnit(field)
 		m.AddField(field)
 	}
 	return m
 }
 
-func autoSaveModeField(mode types.AutoSaveMode) *ui.FieldState {
-	field := ui.CycleFieldState("auto-save", "Auto save", nil, string(mode), "Save text without formatting. Terminal focus loss requires focus reports from the host terminal.")
-	field.Options = []ui.FormOption{
-		{ID: string(types.AutoSaveOff), Label: "Off (default)"},
-		{ID: string(types.AutoSaveAfterDelay), Label: "After delay"},
-		{ID: string(types.AutoSaveEditorFocusChange), Label: "On editor focus change"},
-		{ID: string(types.AutoSaveTerminalFocusLoss), Label: "On terminal focus loss"},
+// settingsUnits are the measurement suffixes a settings label may carry in
+// parentheses. They move into the field's Unit so labels read as names
+// ("Debounce") and the value reads as a quantity ("750 ms").
+var settingsUnits = []string{"ms", "seconds", "minutes", "hours", "bytes", "KB", "MB", "MiB", "tokens"}
+
+// liftUnit moves a trailing "(unit)" from a single-line field's label into
+// its Unit slot.
+func liftUnit(field *ui.FieldState) {
+	if field == nil || field.Unit != "" || (field.Type != ui.FieldText && field.Type != ui.FieldPassword) {
+		return
 	}
-	return field
+	for _, unit := range settingsUnits {
+		if suffix := " (" + unit + ")"; strings.HasSuffix(field.Label, suffix) {
+			field.Label, field.Unit = strings.TrimSuffix(field.Label, suffix), unit
+			return
+		}
+	}
+}
+
+func autoSaveModeField(mode types.AutoSaveMode) *ui.FieldState {
+	return ui.SegmentedFieldState("auto-save", "Auto save", []ui.FormOption{
+		{ID: string(types.AutoSaveOff), Label: "Off"},
+		{ID: string(types.AutoSaveAfterDelay), Label: "After delay"},
+		{ID: string(types.AutoSaveEditorFocusChange), Label: "Editor switch"},
+		{ID: string(types.AutoSaveTerminalFocusLoss), Label: "Window blur"},
+	}, string(mode), "Save text exactly as typed, never formatted. Editor switch saves when focus leaves the editor; Window blur needs focus reports from your terminal.")
 }
 
 func autoSaveDelayField(delay int) *ui.FieldState {
-	field := ui.TextFieldState("auto-save-delay", "Auto-save delay (ms)", strconv.Itoa(delay), "Quiet period for After delay mode (250-60000 ms).")
+	field := ui.NumberFieldState("auto-save-delay", "Save after", delay, "ms", "Quiet period before an After delay save, from 250 to 60000 ms.")
 	field.Validator = func(value ui.FieldValue) []string {
 		delay, err := strconv.Atoi(strings.TrimSpace(value.String()))
 		if err != nil || delay < 250 || delay > 60000 {
@@ -1169,17 +1211,17 @@ func (m *Model) buildAgentForm(cfg types.CategorySettings, isMain bool) *ui.Form
 	providerID := m.accounts[cfg.AccountID].ProviderID
 	fields := []*ui.FieldState{
 		ui.SeparatorFieldState("agent", "Agent behavior"),
-		ui.SelectFieldState(fieldConnection, "Account", cfg.AccountID, m.connectionOptions(false), "Connection for this agent."),
-		ui.ModelFieldState(fieldModel, "Model", cfg.Model, ui.ModelOptions(m.models[accountModelKey(providerID, cfg.AccountID)]), "Models from this account."),
-		ui.ThinkingFieldState(fieldThinkingEffort, cfg.ThinkingEffort, "Reasoning budget."),
+		ui.SelectFieldState(fieldConnection, "Account", cfg.AccountID, m.connectionOptions(false), "The account this agent connects through."),
+		ui.ModelFieldState(fieldModel, "Model", cfg.Model, ui.ModelOptions(m.models[accountModelKey(providerID, cfg.AccountID)]), "Models offered by this account. Enter fetches the list."),
+		thinkingSegments(cfg.ThinkingEffort),
 	}
 	fields = append(fields, m.capabilityFields(cfg)...)
 	compaction := types.DefaultContextCompactionPercent
 	if cfg.ContextCompactionPercent != nil {
 		compaction = *cfg.ContextCompactionPercent
 	}
-	compactionField := ui.TextFieldState(fieldContextCompaction, "Compact context at", fmt.Sprintf("%d", compaction),
-		"Context percent; 0 disables.")
+	compactionField := ui.NumberFieldState(fieldContextCompaction, "Compact context at", compaction, "% full",
+		"Summarize older context once the window is this full. 0 never compacts automatically.")
 	compactionField.Validator = intRangeValidator(0, 100)
 	fields = append(fields,
 		ui.SeparatorFieldState("context-management", "Context management"),
@@ -1199,6 +1241,21 @@ func (m *Model) buildAgentForm(cfg types.CategorySettings, isMain bool) *ui.Form
 	return formModel(fields...)
 }
 
+// thinkingSegments shows every reasoning level at once; Default leaves the
+// choice to the provider.
+func thinkingSegments(current string) *ui.FieldState {
+	options := []ui.FormOption{{ID: "", Label: "Default"}}
+	for _, level := range ui.ThinkingLevels {
+		label := strings.ToUpper(level[:1]) + level[1:]
+		if level == "xhigh" {
+			label = "X-High"
+		}
+		options = append(options, ui.FormOption{ID: level, Label: label})
+	}
+	return ui.SegmentedFieldState(fieldThinkingEffort, "Thinking", options, current,
+		"How much the model reasons before answering. Default leaves it to the provider; higher levels are slower and cost more.")
+}
+
 // capabilityFields builds the Model capabilities section: window limits and
 // modality toggles for the agent's model. Values left blank inherit whatever
 // the model registry reports at use time, so they never freeze stale numbers.
@@ -1206,9 +1263,12 @@ func (m *Model) capabilityFields(cfg types.CategorySettings) []*ui.FieldState {
 	fields := []*ui.FieldState{
 		ui.SeparatorFieldState("capabilities", "Model capabilities"),
 		numericField(fieldCtxWindow, "Context window", cfg.ModelContextWindow,
-			"Input tokens; blank = model default."),
+			"Input tokens the model accepts. Leave blank to use what the model reports."),
 		numericField(fieldMaxOutput, "Max output", cfg.ModelMaxOutput,
-			"Output tokens; blank = model default."),
+			"Output tokens per response. Leave blank to use what the model reports."),
+	}
+	for _, field := range fields[1:] {
+		field.Unit, field.Placeholder = "tokens", "auto"
 	}
 	fields[1].Inherited = cfg.ModelContextWindow == 0
 	fields[2].Inherited = cfg.ModelMaxOutput == 0
@@ -1338,30 +1398,39 @@ func (m *Model) agentsEnabled() bool {
 func (m *Model) buildMemoryForm(mem types.MemorySettings) *ui.FormModel {
 	return formModel(
 		ui.SeparatorFieldState("memory-recall", "Recall"),
-		ui.BoolFieldState("auto-recall", "Auto recall", mem.AutoRecallEnabled(), "Inject relevant workspace memories into context each turn."),
-		ui.TextFieldState("recall-budget", "Recall budget", fmt.Sprintf("%d", mem.RecallBudgetOrDefault(types.DefaultMemoryRecallBudget)), "Token budget for the injected memory block."),
-		ui.TextFieldState("recall-limit", "Recall limit", fmt.Sprintf("%d", mem.RecallLimitOrDefault(types.DefaultMemoryRecallLimit)), "Maximum memories injected per turn."),
-		ui.SeparatorFieldState("memory-background", "Background curation"),
-		ui.BoolFieldState("auto-extract", "Auto extract", mem.AutoExtractEnabled(), "Extract durable memories and summaries in a background job."),
-		ui.TextFieldState("extract-every", "Extract cadence", fmt.Sprintf("%d", mem.ExtractCadenceOrDefault(types.DefaultMemoryExtractCadence)), "Run extraction every N turns."),
-		ui.BoolFieldState("consolidation", "Consolidation", mem.ConsolidationEnabled(), "Background dedup, contradiction resolution, and memory decay. Configure its agent in Agents > Memory Agent."),
+		ui.BoolFieldState("auto-recall", "Recall memories", mem.AutoRecallEnabled(), "Add relevant workspace memories to the agent's context on every turn."),
+		ui.NumberFieldState("recall-budget", "Recall budget", mem.RecallBudgetOrDefault(types.DefaultMemoryRecallBudget), "tokens", "The most context the recalled memory block may use."),
+		ui.NumberFieldState("recall-limit", "Memories per turn", mem.RecallLimitOrDefault(types.DefaultMemoryRecallLimit), "max", "The most memories added to a single turn."),
+		ui.SeparatorFieldState("memory-background", "Learning"),
+		ui.BoolFieldState("auto-extract", "Learn in background", mem.AutoExtractEnabled(), "Extract durable memories and summaries from finished turns in a background job."),
+		ui.NumberFieldState("extract-every", "Learn every", mem.ExtractCadenceOrDefault(types.DefaultMemoryExtractCadence), "turns", "How often background learning runs."),
+		ui.BoolFieldState("consolidation", "Tidy memories", mem.ConsolidationEnabled(), "Merge duplicates, resolve contradictions and let stale memories fade. Its model is set in Agents › Memory Agent."),
 	)
 }
 
 func (m *Model) buildSafetyForm(settings types.SafetySettings) *ui.FormModel {
-	riskOptions := []string{"unknown", "safe", "project-write", "network", "destructive", "blocked"}
-	confirmOptions := []string{"unknown", "project-write", "network", "destructive"}
-	rules := ui.TextFieldState(fieldSafetyRules, "Command rules", formatCommandRules(settings.CommandRules),
-		"Semicolon-separated glob=severity rules, for example scripts/*.sh=safe; deploy*=destructive.")
+	severity := func(ids ...string) []ui.FormOption {
+		labels := map[string]string{"unknown": "Unknown", "safe": "Safe", "project-write": "Writes", "network": "Network", "destructive": "Destructive", "blocked": "Blocked"}
+		options := make([]ui.FormOption, len(ids))
+		for index, id := range ids {
+			options[index] = ui.FormOption{ID: id, Label: labels[id]}
+		}
+		return options
+	}
+	riskOptions := severity("unknown", "safe", "project-write", "network", "destructive", "blocked")
+	rules := ui.KeyValuesFieldState(fieldSafetyRules, "Command rules", formatCommandRules(settings.CommandRules),
+		"Pattern on the left, severity on the right, e.g. scripts/*.sh → safe or deploy* → destructive. Severities: unknown, safe, project-write, network, destructive, blocked.")
+	rules.Placeholder = "Add rule"
+	rules.Columns = []string{"Pattern", "Severity"}
 	rules.Validator = commandRulesValidator
 	return formModel(
 		ui.SeparatorFieldState("command-policy", "Command policy"),
-		ui.CycleFieldState(fieldSafetyConfirmAt, "Confirm commands at", confirmOptions, settings.ConfirmAt,
-			"Ask before commands at or above this effective severity."),
-		ui.CycleFieldState(fieldSafetyUnknown, "Unknown commands", riskOptions, settings.UnknownCommandRisk,
-			"Severity for commands the structural parser cannot classify."),
-		ui.CycleFieldState(fieldSafetyScript, "Local scripts", riskOptions, settings.ScriptExecutionRisk,
-			"Severity for direct .sh execution and shell/source wrappers."),
+		ui.SegmentedFieldState(fieldSafetyConfirmAt, "Ask before", severity("unknown", "project-write", "network", "destructive"), settings.ConfirmAt,
+			"Ask before running commands at or above this severity. Unknown asks for everything the parser cannot prove safe."),
+		ui.SegmentedFieldState(fieldSafetyUnknown, "Unclassified commands", riskOptions, settings.UnknownCommandRisk,
+			"The severity given to commands the structural parser cannot classify."),
+		ui.SegmentedFieldState(fieldSafetyScript, "Local scripts", riskOptions, settings.ScriptExecutionRisk,
+			"The severity given to running .sh files directly and to shell/source wrappers."),
 		rules,
 		ui.SeparatorFieldState("safety-attention", "Attention"),
 		ui.BoolFieldState(fieldSafetyNotify, "Danger notifications", settings.NotifyDangerous != "off",
@@ -1398,51 +1467,54 @@ func (m *Model) buildAutoReviewerForm() *ui.FormModel {
 
 func (m *Model) autoReviewPolicyFields(settings types.AutoPermissionSettings) []*ui.FieldState {
 	auto := settings.Normalized()
-	thinking := ui.SelectFieldState(fieldAutoPermThinking, "Thinking effort", auto.ThinkingEffort, []ui.FormOption{
-		{ID: "low", Label: "Low", Detail: "Recommended"},
-		{ID: "medium", Label: "Medium"},
-		{ID: "high", Label: "High"},
-		{ID: "max", Label: "Maximum"},
-	}, "Low is the reliable default. Higher effort consumes more of the output budget; unsupported values fail closed.")
-	thinking.DescriptionImportant = true
-	format := ui.SelectFieldState(fieldAutoPermFormat, "Response format", auto.ResponseFormat, []ui.FormOption{
-		{ID: types.AutoPermissionFormatAuto, Label: "Auto", Detail: "Recommended"},
+	askDeny := []ui.FormOption{{ID: "ask", Label: "Ask me"}, {ID: "deny", Label: "Deny"}}
+	thinking := ui.SegmentedFieldState(fieldAutoPermThinking, "Thinking effort", []ui.FormOption{
+		{ID: "low", Label: "Low"}, {ID: "medium", Label: "Medium"}, {ID: "high", Label: "High"}, {ID: "max", Label: "Maximum"},
+	}, auto.ThinkingEffort, "Low is the reliable default. Higher effort spends more of the output budget; values a model does not support fail closed.")
+	format := ui.SegmentedFieldState(fieldAutoPermFormat, "Response format", []ui.FormOption{
+		{ID: types.AutoPermissionFormatAuto, Label: "Auto"},
 		{ID: types.AutoPermissionFormatJSONSchema, Label: "JSON schema"},
 		{ID: types.AutoPermissionFormatJSONObject, Label: "JSON object"},
 		{ID: types.AutoPermissionFormatPrompt, Label: "Prompt only"},
-	}, "Auto tries a strict schema on OpenAI Chat endpoints, then falls back when a retry is available. Explicit formats fail closed when unsupported.")
-	format.DescriptionImportant = true
+	}, auto.ResponseFormat, "Auto (recommended) tries a strict schema on OpenAI Chat endpoints, then falls back when a retry is available. Explicit formats fail closed when unsupported.")
 	retries := autoPermissionIntField(fieldAutoPermRetries, "Retries", auto.MaxAttempts-1, 0, 5,
-		"Additional requests after timeout, truncation, transport failure, or invalid output. Valid allow, deny, and ask decisions are never retried.")
-	growth := ui.SelectFieldState(fieldAutoPermGrowth, "Retry token growth", auto.RetryTokenGrowth, []ui.FormOption{
+		"Extra requests after a timeout, truncation, transport failure or invalid output. Valid allow, deny and ask decisions are never retried.")
+	retries.Unit = "max"
+	growth := ui.SegmentedFieldState(fieldAutoPermGrowth, "Grow budget on retry", []ui.FormOption{
 		{ID: types.AutoPermissionGrowthFixed, Label: "Fixed"},
-		{ID: types.AutoPermissionGrowth2x, Label: "2x"},
-		{ID: types.AutoPermissionGrowth4x, Label: "4x", Detail: "Recommended"},
-	}, "How the output budget increases after each technical failure; the retry ceiling always wins.")
-	ceiling := autoPermissionIntField(fieldAutoPermRetryCeiling, "Retry token ceiling", auto.MaxRetryOutputTokens, 16, 8192,
-		"Hard per-attempt ceiling. Too little headroom can exhaust reasoning before the verdict.")
+		{ID: types.AutoPermissionGrowth2x, Label: "2×"},
+		{ID: types.AutoPermissionGrowth4x, Label: "4×"},
+	}, auto.RetryTokenGrowth, "How much the output budget grows after each technical failure (4× recommended). The retry ceiling always wins.")
+	ceiling := autoPermissionIntField(fieldAutoPermRetryCeiling, "Retry ceiling", auto.MaxRetryOutputTokens, 16, 8192,
+		"Hard per-attempt output limit. Too little headroom can exhaust reasoning before the verdict.")
+	ceiling.Unit = "tokens"
 	ceiling.DescriptionImportant = true
-	unresolved := ui.CycleFieldState(fieldAutoPermUnresolved, "Unresolved review", []string{"ask", "deny"}, auto.UnresolvedMode,
-		"Ask pauses for a person. Deny rejects structural uncertainty, model ask, or exhausted technical recovery so unattended work can continue safely.")
-	unresolved.DescriptionImportant = true
+	unresolved := ui.SegmentedFieldState(fieldAutoPermUnresolved, "When unsure", askDeny, auto.UnresolvedMode,
+		"Ask me pauses for a person. Deny rejects structural uncertainty, a model 'ask' or exhausted recovery so unattended work continues safely.")
+	timeout := autoPermissionIntField(fieldAutoPermTimeout, "Timeout per attempt", auto.TimeoutSeconds, 1, 120,
+		"Each attempt has this deadline. A fully exhausted review never approves.")
+	timeout.Unit = "seconds"
+	initial := autoPermissionIntField(fieldAutoPermOutputTokens, "First attempt budget", auto.MaxOutputTokens, 16, 4096,
+		"First-attempt response cap, including hidden reasoning on providers that report it as output.")
+	initial.Unit = "tokens"
+	input := autoPermissionIntField(fieldAutoPermInputBytes, "Review input limit", auto.MaxInputBytes, 64<<10, 1<<20,
+		"Caps the complete serialized review payload for the exact tool arguments and operation metadata; conversation history and the ambient environment are excluded. The safe floor is 64 KiB (65536), the ceiling 1 MiB (1048576), and nothing is truncated.")
+	input.Unit = "bytes"
 	return []*ui.FieldState{
 		ui.SeparatorFieldState("auto-permission-section-outcomes", "Review outcomes"),
-		ui.CycleFieldState(fieldAutoPermDenyMode, "Denied verdict", []string{"ask", "deny"}, auto.DenyMode,
-			"Ask you or reject this call when the model returns deny. Review never creates a permanent grant."),
+		ui.SegmentedFieldState(fieldAutoPermDenyMode, "When it denies", askDeny, auto.DenyMode,
+			"Ask you, or reject the call, when the reviewer returns deny. Review never creates a permanent grant."),
 		unresolved,
 		thinking,
 		format,
 		ui.SeparatorFieldState("auto-permission-section-recovery", "Technical recovery"),
-		autoPermissionIntField(fieldAutoPermTimeout, "Timeout per attempt", auto.TimeoutSeconds, 1, 120,
-			"Each attempt has this deadline. A fully exhausted review never approves."),
-		autoPermissionIntField(fieldAutoPermOutputTokens, "Initial output tokens", auto.MaxOutputTokens, 16, 4096,
-			"First-attempt response cap, including hidden reasoning on providers that report it as output."),
+		timeout,
+		initial,
 		retries,
 		growth,
 		ceiling,
 		ui.SeparatorFieldState("auto-permission-section-bounds", "Review bounds"),
-		autoPermissionIntField(fieldAutoPermInputBytes, "Input byte cap", auto.MaxInputBytes, 64<<10, 1<<20,
-			"Caps the complete serialized review payload for the exact tool arguments and operation metadata; conversation history and the ambient environment are excluded. The safe floor is 64 KiB, the configurable ceiling is 1 MiB, and nothing is truncated."),
+		input,
 	}
 }
 
@@ -1494,9 +1566,9 @@ func validateAutoReviewPolicyForm(form *ui.FormModel) {
 		return
 	}
 	if ceiling < initial {
-		field.Errors = append(field.Errors, "Retry token ceiling must be at least the initial output tokens.")
+		field.Errors = append(field.Errors, "The retry ceiling must be at least the first attempt budget.")
 	} else if retries > 0 && growth != types.AutoPermissionGrowthFixed && ceiling == initial {
-		field.Errors = append(field.Errors, "Increasing retries need a ceiling above the initial output tokens.")
+		field.Errors = append(field.Errors, "Growing retries need a ceiling above the first attempt budget.")
 	}
 }
 
@@ -1533,22 +1605,33 @@ func formFieldValue(form *ui.FormModel, id string) string {
 	return ""
 }
 
+// Command rules edit as a two-column table, one "pattern: severity" line per
+// rule. The severity is the text after the last colon, so patterns may
+// themselves contain colons.
 func formatCommandRules(rules []types.CommandSeverityRule) string {
-	parts := make([]string, 0, len(rules))
+	lines := make([]string, 0, len(rules))
 	for _, rule := range rules {
 		if strings.TrimSpace(rule.Pattern) != "" && strings.TrimSpace(rule.Risk) != "" {
-			parts = append(parts, strings.TrimSpace(rule.Pattern)+"="+strings.TrimSpace(rule.Risk))
+			lines = append(lines, strings.TrimSpace(rule.Pattern)+": "+strings.TrimSpace(rule.Risk))
 		}
 	}
-	return strings.Join(parts, "; ")
+	return strings.Join(lines, "\n")
+}
+
+func splitCommandRule(line string) (string, string, bool) {
+	index := strings.LastIndex(line, ":")
+	if index < 0 {
+		return "", "", false
+	}
+	pattern, risk := strings.TrimSpace(line[:index]), strings.TrimSpace(line[index+1:])
+	return pattern, risk, pattern != "" && risk != ""
 }
 
 func parseCommandRules(value string) []types.CommandSeverityRule {
 	var rules []types.CommandSeverityRule
-	for _, raw := range strings.Split(value, ";") {
-		parts := strings.SplitN(strings.TrimSpace(raw), "=", 2)
-		if len(parts) == 2 && strings.TrimSpace(parts[0]) != "" && strings.TrimSpace(parts[1]) != "" {
-			rules = append(rules, types.CommandSeverityRule{Pattern: strings.TrimSpace(parts[0]), Risk: strings.TrimSpace(parts[1])})
+	for _, line := range strings.Split(value, "\n") {
+		if pattern, risk, ok := splitCommandRule(line); ok {
+			rules = append(rules, types.CommandSeverityRule{Pattern: pattern, Risk: risk})
 		}
 	}
 	return rules
@@ -1556,14 +1639,12 @@ func parseCommandRules(value string) []types.CommandSeverityRule {
 
 func commandRulesValidator(value ui.FieldValue) []string {
 	validRisk := map[string]bool{"unknown": true, "safe": true, "project-write": true, "network": true, "destructive": true, "blocked": true}
-	for _, raw := range strings.Split(value.String(), ";") {
-		raw = strings.TrimSpace(raw)
-		if raw == "" {
+	for _, line := range strings.Split(value.String(), "\n") {
+		if strings.TrimSpace(line) == "" {
 			continue
 		}
-		parts := strings.SplitN(raw, "=", 2)
-		if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || !validRisk[strings.TrimSpace(parts[1])] {
-			return []string{"Use glob=severity entries separated by semicolons."}
+		if _, risk, ok := splitCommandRule(line); !ok || !validRisk[risk] {
+			return []string{"Each rule needs a pattern and one of: unknown, safe, project-write, network, destructive, blocked."}
 		}
 	}
 	return nil
@@ -2082,9 +2163,35 @@ func (m *Model) CategoryItems() []ui.ListItem {
 			items = append(items, ui.ListItem{ID: "settings/group/" + strings.ToLower(category.Group), Label: category.Group, Header: true})
 			lastGroup = category.Group
 		}
-		items = append(items, ui.ListItem{ID: fmt.Sprintf("settings/category/%d", index), Label: category.Name, Payload: index})
+		item := ui.ListItem{ID: fmt.Sprintf("settings/category/%d", index), Label: category.Name, Payload: index}
+		if m.categoryDirty(index) {
+			item.Detail = railModifiedMarker
+		}
+		items = append(items, item)
 	}
 	return items
+}
+
+// railModifiedMarker tags a rail row whose page holds unsaved edits.
+const railModifiedMarker = "●"
+
+// categoryDirty reports unsaved edits on one preference page.
+func (m *Model) categoryDirty(index int) bool {
+	if index < 0 || index >= len(m.categories) || index == catAccounts {
+		return false
+	}
+	if index == catLanguageServers {
+		return m.lspLanguagesDirty()
+	}
+	if index == catAgents {
+		for _, agent := range []int{catMain, catResearcher, catCrafter, catAeron} {
+			if form := m.categories[agent].Form; form != nil && form.AnyDirty() {
+				return true
+			}
+		}
+	}
+	form := m.categories[index].Form
+	return form != nil && form.AnyDirty()
 }
 
 func (m *Model) visibleCategoryIndices() []int {
@@ -2100,7 +2207,9 @@ func (m *Model) visibleCategoryIndices() []int {
 	}
 	indices := make([]int, 0, len(m.categories))
 	for index, category := range m.categories {
-		if index == catAgents || index == catResearcher || index == catCrafter || index == catAeron {
+		// Agent roles live inside the Agents catalog; Font holds terminal
+		// hints nothing consumes, so it is not offered as a page.
+		if index == catAgents || index == catResearcher || index == catCrafter || index == catAeron || index == catFont {
 			continue
 		}
 		if index == catMain {
@@ -2129,7 +2238,7 @@ func (m *Model) visibleCategoryIndices() []int {
 	slices.SortStableFunc(indices, func(left, right int) int {
 		leftGroup, rightGroup := m.categories[left].Group, m.categories[right].Group
 		if leftGroup == rightGroup {
-			return 0
+			return railPosition(left) - railPosition(right)
 		}
 		if leftGroup == networkGroupName {
 			return 1
@@ -2153,6 +2262,21 @@ func (m *Model) ensureVisibleSelection() {
 		}
 	}
 	m.selected = visible[0]
+}
+
+// railPosition orders pages inside a rail group. Pages appear in definition
+// order, except that Language Servers sits directly after Code Intelligence,
+// the page whose behavior it configures, and Agents stands where the Main
+// Agent role is defined.
+func railPosition(index int) int {
+	switch index {
+	case catLanguageServers:
+		return catLSP*2 + 1
+	case catAgents:
+		// The Agents catalog takes the Main Agent role's place.
+		return catMain * 2
+	}
+	return index * 2
 }
 
 // networkGroupName is the rail group for application-owned transport policy.
@@ -2182,6 +2306,7 @@ const (
 	catMCP
 	catSources
 	catAcquisition
+	catLanguageServers
 )
 
 func (m *Model) currentOverrideKey() string {
@@ -2190,7 +2315,7 @@ func (m *Model) currentOverrideKey() string {
 		return "appearance"
 	case catEditor:
 		return "editor"
-	case catLSP:
+	case catLSP, catLanguageServers:
 		return "lsp"
 	case catUI:
 		return "interface"
@@ -2464,9 +2589,9 @@ func framePadFieldState(id, label string, value int, description string) *ui.Fie
 
 // liveFramePadField is a shell-frame padding row wired for live preview:
 // every keystroke emits form.changed so the shell re-insets immediately.
-func liveFramePadField(id, label string, value int, description string) *ui.FieldState {
+func liveFramePadField(id, label, unit string, value int, description string) *ui.FieldState {
 	f := framePadFieldState(id, label, value, description)
-	f.Live = true
+	f.Live, f.Unit = true, unit
 	return f
 }
 
@@ -2543,6 +2668,7 @@ func (m *Model) Snapshot() {
 		categories: make([]categorySnapshot, len(m.categories)),
 		selected:   m.selected, pane: m.pane,
 		accountID: m.accountID, accounts: cloneAccounts(m.accounts),
+		languages: cloneLSPLanguages(m.lspLanguages),
 	}
 	for index, category := range m.categories {
 		values := make(map[string]ui.FieldValue, category.Form.FieldCount())
@@ -2572,6 +2698,8 @@ func (m *Model) Restore() {
 	}
 	m.selected, m.pane = m.snapshot.selected, m.snapshot.pane
 	m.accountID, m.accounts = m.snapshot.accountID, cloneAccounts(m.snapshot.accounts)
+	m.lspLanguages = cloneLSPLanguages(m.snapshot.languages)
+	m.syncLSPSummary()
 	m.accountEditor = nil
 	m.accountError = ""
 	m.rebuildAccountsForm()

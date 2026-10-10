@@ -123,9 +123,6 @@ func TestSettingsFooterHasNoBlankRowBetweenScopeAndActions(t *testing.T) {
 		}
 		actions := settingsRow(buf, labelsRow, 104)
 		closeLabel := "[ Close ]"
-		if scope == types.SettingsScopeWorkspace {
-			closeLabel = "[ Cancel ]"
-		}
 		if !strings.Contains(actions, "[ Save ]") || !strings.Contains(actions, closeLabel) {
 			t.Fatalf("scope=%s command row=%q", scope, actions)
 		}

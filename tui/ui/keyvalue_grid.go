@@ -51,6 +51,8 @@ type KeyValuePair struct {
 // removes the focused row, and typing on a row starts a fresh edit of that
 // cell. The add row below the last pair creates the next row.
 type KeyValueGrid struct {
+	addLabel                  string
+	nameCaption, valueCaption string
 	Base
 	tokens   *TokenSet
 	label    string
@@ -68,6 +70,23 @@ type KeyValueGrid struct {
 }
 
 // NewKeyValueGrid builds an empty grid. Rows arrive through SetValue/SetRows.
+// SetCaptions names the two columns ("Variable", "Value").
+func (g *KeyValueGrid) SetCaptions(name, value string) { g.nameCaption, g.valueCaption = name, value }
+
+func (g *KeyValueGrid) captions() (string, string) {
+	name, value := keyValueNameHeader, keyValueValueHeader
+	if g.nameCaption != "" {
+		name = g.nameCaption
+	}
+	if g.valueCaption != "" {
+		value = g.valueCaption
+	}
+	return name, value
+}
+
+// SetAddLabel names the append row for what the table holds ("Add variable").
+func (g *KeyValueGrid) SetAddLabel(label string) { g.addLabel = label }
+
 func NewKeyValueGrid(id ComponentID, tokens *TokenSet) *KeyValueGrid {
 	return &KeyValueGrid{Base: NewBase(id), tokens: tokens, hover: -1, scroll: NewScrollModel()}
 }
@@ -210,7 +229,8 @@ func (g *KeyValueGrid) Layout(_ LayoutContext, r Rect) {
 // nameWidth resolves the name column: wide enough for the longest live name,
 // capped at half the grid so the value column never collapses.
 func (g *KeyValueGrid) nameWidth(w int) int {
-	width := rendering.VisibleWidth(keyValueNameHeader) + 1
+	nameCaption, _ := g.captions()
+	width := rendering.VisibleWidth(nameCaption) + 1
 	for _, row := range g.rows {
 		width = max(width, rendering.VisibleWidth(row.Key)+1)
 	}
@@ -270,9 +290,10 @@ func (g *KeyValueGrid) paintHeaderRow(buf *surface.CellBuffer, x, y, w int) {
 	headBG := g.color(ColorPopupBg)
 	headFG := g.color(ColorMuted)
 	FillRect(buf, 0, 0, Rect{X: x, Y: y, W: w, H: 1}, cell.BlankCell(headBG))
-	buf.WriteString(x+1, y, rendering.TruncateVisual(keyValueNameHeader, max(1, w-2), ""), headFG, headBG, cell.AttrBold)
+	nameCaption, valueCaption := g.captions()
+	buf.WriteString(x+1, y, rendering.TruncateVisual(nameCaption, max(1, w-2), ""), headFG, headBG, cell.AttrBold)
 	if x0 := g.nameWidth(w) + 1; x0 < w-keyValueGutter {
-		buf.WriteString(x+x0, y, rendering.TruncateVisual(keyValueValueHeader, max(1, w-x0-1), ""), headFG, headBG, cell.AttrBold)
+		buf.WriteString(x+x0, y, rendering.TruncateVisual(valueCaption, max(1, w-x0-1), ""), headFG, headBG, cell.AttrBold)
 	}
 }
 
@@ -385,7 +406,11 @@ func (g *KeyValueGrid) paintAddRow(buf *surface.CellBuffer, x, y, w int, ctx Pai
 	if st == StateFocused || st == StateSelected {
 		attr = cell.AttrBold
 	}
-	buf.WriteString(x+1, y, rendering.TruncateVisual(keyValueAddLabel, max(1, w-2), ""), primary, bg, attr)
+	label := keyValueAddLabel
+	if g.addLabel != "" {
+		label = g.addLabel
+	}
+	buf.WriteString(x+1, y, rendering.TruncateVisual(label, max(1, w-2), ""), primary, bg, attr)
 }
 
 // editor returns the retained editor for a column, creating it on first use.

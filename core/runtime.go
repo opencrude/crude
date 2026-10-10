@@ -24,6 +24,7 @@ import (
 	"crude/document"
 	"crude/history"
 	"crude/provider"
+	"crude/types"
 	"crude/workspace"
 )
 
@@ -344,6 +345,17 @@ func (r *Runtime) workspace(ctx context.Context, id, root string) (*actor, error
 		go func() {
 			defer r.factoryWG.Done()
 			ws, err := r.factory(root)
+			if err == nil && ws != nil {
+				// Retained resources initialize before an actor or shell can read
+				// them. This I/O belongs to the factory worker, never actor Update.
+				initCtx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+				initErr := ws.InitializeCoreResources(initCtx)
+				cancel()
+				if initErr != nil {
+					ws.Logger.Warn("CORE", "workspace_resources_failed", "error", initErr.Error())
+					ws.Status.Notify(types.NotificationRecord{Severity: types.SeverityError, Source: "workspace", Summary: "Workspace resources need attention", Detail: "Saved Notices or capabilities could not be loaded. Inspect the workspace persistence and Skills/MCP settings before retrying."})
+				}
+			}
 			r.mu.Lock()
 			if err == nil && r.closed {
 				err = errors.New("core is closed")
@@ -573,7 +585,7 @@ func (a *actor) run() {
 				command.result <- fault(*command.request, "detached", "request attachment is stale")
 				continue
 			}
-			if (strings.HasPrefix(command.request.Method, "settings.") || command.request.Method == coreprotocol.WorkspaceOverridesSet) && a.settingsBusy {
+			if serializedSettings(command.request.Method) && a.settingsBusy {
 				if len(a.settingsQueue) >= 16 {
 					command.result <- fault(*command.request, "busy", "settings queue is full")
 				} else {
@@ -1086,20 +1098,21 @@ func (a *actor) startJob(command actorCommand) bool {
 		}
 	}
 	a.inFlight++
-	if settingsKnown {
+	settingsExclusive := settingsKnown && serializedSettings(request.Method)
+	if settingsExclusive {
 		a.settingsBusy = true
 	}
 	work := func() {
 		defer func() {
 			if recovered := recover(); recovered != nil {
-				a.jobs <- actorJobResult{command: command, admitted: true, lifecycle: lifecycle, settings: settingsKnown,
+				a.jobs <- actorJobResult{command: command, admitted: true, lifecycle: lifecycle, settings: settingsExclusive,
 					apply: func() coreprotocol.Response {
 						return fault(request, "outcome_uncertain", fmt.Sprintf("operation panicked: %v; inspect receipt before retrying", recovered))
 					}}
 			}
 		}()
 		apply := run()
-		a.jobs <- actorJobResult{command: command, apply: apply, lifecycle: lifecycle, journal: journal, admitted: true, settings: settingsKnown}
+		a.jobs <- actorJobResult{command: command, apply: apply, lifecycle: lifecycle, journal: journal, admitted: true, settings: settingsExclusive}
 	}
 	if resourceKnown || lspKnown || (filesKnown && filesMutation(request.Method)) {
 		if !a.resourceLane.submit(func(context.Context) { work() }) {

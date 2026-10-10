@@ -58,6 +58,7 @@ func (m *Model) buildAccountEditorForm() *ui.FormModel {
 	}
 	auth := ui.SelectFieldState(accountFieldAuthType, "Authentication", connection.AuthType, authTypeOptions(), "Credential transport for this account.")
 	headers := ui.KeyValuesFieldState(accountFieldHeaders, "Extra headers", formatHeaders(connection.Headers), "Sent with every request made through this account.")
+	headers.Placeholder, headers.Columns = "Add header", []string{"Header", "Value"}
 	headers.Validator = headerMapValidator
 	fields := []*ui.FieldState{ui.SeparatorFieldState("account-identity", "Account")}
 	if edit.isNew {

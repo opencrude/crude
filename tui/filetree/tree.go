@@ -138,12 +138,15 @@ type ModelOptions struct {
 // This is O(git_statuses * depth) and scales to very large repos because it
 // never walks unloaded subtrees — it uses the git resolver's complete map.
 func (m *FileTreeModel) recomputeAggregateStatuses() {
-	if m.gitResolver == nil || m.Root == nil {
+	if m.Root == nil {
 		return
 	}
-
-	statuses := m.gitResolver.AllStatuses()
-	repoPath := m.gitResolver.RepoPath()
+	statuses, repoPath := m.remoteGitStatuses, m.rootPath
+	if m.gitResolver != nil {
+		statuses, repoPath = m.gitResolver.AllStatuses(), m.gitResolver.RepoPath()
+	} else if statuses == nil {
+		return
+	}
 
 	// Clear all existing aggregate statuses.
 	var clearAgg func(n *TreeNode)
@@ -163,7 +166,13 @@ func (m *FileTreeModel) recomputeAggregateStatuses() {
 		if status == GitNone {
 			continue
 		}
-		absPath := filepath.Join(repoPath, relPath)
+		absPath := relPath
+		if !filepath.IsAbs(absPath) {
+			absPath = filepath.Join(repoPath, relPath)
+		}
+		if !m.containsPath(absPath) {
+			continue
+		}
 		dir := filepath.Dir(absPath)
 		for {
 			if node, ok := m.nodes[dir]; ok {
@@ -210,7 +219,7 @@ func (m *FileTreeModel) SetDiagnostics(path string, errors, warnings, hints int)
 	// load the parent directory so the node becomes available.  The directory
 	// stays collapsed — we only materialise the tree node so its diagnostic
 	// counts are set and propagated upward for aggregate display.
-	if _, ok := m.nodes[fp]; !ok {
+	if _, ok := m.nodes[fp]; !ok && !m.noLocalIO && m.containsPath(fp) {
 		m.ensureDiagnosticsNode(fp)
 	}
 
@@ -265,27 +274,32 @@ func (m *FileTreeModel) recomputeAggregateDiagnostics() {
 	}
 	clearDiag(m.Root)
 
-	// First pass: set file-level counts from the resolver.
+	// Status may arrive before a directory page. Project unloaded descendants
+	// onto their nearest loaded ancestor without reading disk or inventing rows.
 	for path, counts := range m.diagnosticResolver {
-		if node, ok := m.nodes[path]; ok {
-			node.DiagnosticCount = counts.Errors + counts.Warnings + counts.Hints
-			node.DiagErrors = counts.Errors
-			node.DiagWarnings = counts.Warnings
-			node.DiagHints = counts.Hints
+		if !m.containsPath(path) {
+			continue
 		}
-	}
-
-	// Second pass: propagate all counts up from files to root.
-	for path := range m.diagnosticResolver {
-		if node, ok := m.nodes[path]; ok {
-			for p := node.Parent; p != nil; p = p.Parent {
-				p.DiagnosticCount += node.DiagnosticCount
-				p.DiagErrors += node.DiagErrors
-				p.DiagWarnings += node.DiagWarnings
-				p.DiagHints += node.DiagHints
+		for current := path; ; current = filepath.Dir(current) {
+			if node := m.nodes[current]; node != nil {
+				for p := node; p != nil; p = p.Parent {
+					p.DiagnosticCount += counts.Errors + counts.Warnings + counts.Hints
+					p.DiagErrors += counts.Errors
+					p.DiagWarnings += counts.Warnings
+					p.DiagHints += counts.Hints
+				}
+				break
+			}
+			if parent := filepath.Dir(current); parent == current {
+				break
 			}
 		}
 	}
+}
+
+func (m *FileTreeModel) containsPath(path string) bool {
+	rel, err := filepath.Rel(m.rootPath, path)
+	return err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // IsLeaf returns true if this node is a file (not a directory).
@@ -367,6 +381,9 @@ type FileTreeModel struct {
 
 	// gitResolver resolves git status (may be nil).
 	gitResolver *GitStatusResolver
+	// remoteGitStatuses retains the core's complete absolute-path projection,
+	// including descendants whose directory rows have not arrived yet.
+	remoteGitStatuses map[string]GitStatus
 	// gitRefreshPending/gitRefreshQueued coalesce status scans while preserving
 	// one trailing refresh when repository changes arrive during an active scan.
 	gitRefreshPending bool
@@ -714,6 +731,9 @@ func (m *FileTreeModel) SetDirectoryEntries(path string, entries []DirectoryEntr
 			}
 		}
 		child.ModTime = entry.ModTime
+		if m.remoteGitStatuses != nil {
+			child.GitStatus = m.remoteGitStatuses[childPath]
+		}
 		children = append(children, child)
 		m.nodes[childPath] = child
 		delete(existing, entry.Name)

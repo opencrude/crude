@@ -14,7 +14,7 @@ func TestLSPReplicaReadIsolationAndClear(t *testing.T) {
 	s := coreprotocol.LSPSnapshot{Available: true, Version: 7,
 		Diagnostics: map[string][]workspace.LSPDiagnostic{"a.go": {{Message: "original"}}},
 		Symbols:     map[string][]workspace.LSPSymbol{"a.go": {{Name: "parent", Children: []workspace.LSPSymbol{{Name: "child"}}}}},
-		Settings:    types.LSPSettings{Servers: map[string]string{".go": "gopls"}},
+		Settings:    types.LSPSettings{Languages: map[string]types.LSPLanguageSettings{"go": {Command: "gopls", Args: []string{"serve"}}}},
 		Health:      []types.LSPServerHealth{{ID: "one"}}, Connected: true, Ready: true, Status: workspace.LSPConnected}
 	l.install(s)
 	s.Diagnostics["a.go"][0].Message = "changed"
@@ -27,8 +27,8 @@ func TestLSPReplicaReadIsolationAndClear(t *testing.T) {
 		t.Fatal("replica aliased snapshot or reads")
 	}
 	st := l.Settings()
-	st.Servers[".go"] = "caller"
-	if l.Settings().Servers[".go"] != "gopls" || !l.ServerReady() {
+	st.Languages["go"].Args[0] = "caller"
+	if l.Settings().Languages["go"].Args[0] != "serve" || !l.ServerReady() {
 		t.Fatal("settings/health replica")
 	}
 	var consumer shellport.LSPDiagnosticConsumer

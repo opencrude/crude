@@ -104,8 +104,12 @@ func (s *Screen) SetCapabilities(snapshot captypes.Snapshot) {
 			state := entry.State
 			for _, connection := range snapshot.Connections {
 				if connection.ID == entry.ConnectionID || connection.ID == entry.ID {
-					state = connection.State
-					if connection.Cached {
+					// Invalid configuration is already authoritative attention
+					// evidence; an idle transport must not hide it as not started.
+					if entry.State == "not started" {
+						state = connection.State
+					}
+					if connection.Cached && state == "connected" {
 						state = "not started"
 					}
 					break
@@ -114,7 +118,7 @@ func (s *Screen) SetCapabilities(snapshot captypes.Snapshot) {
 			switch state {
 			case "connected":
 				connected++
-			case "failed", "needs sign-in", "unavailable":
+			case "failed", "needs sign-in", "unavailable", "setup required", "approval required":
 				attention++
 			default:
 				continue
@@ -141,9 +145,18 @@ func (s *Screen) SetCapabilities(snapshot captypes.Snapshot) {
 		connections = []ui.ListItem{{ID: "", Label: "No active connections", Command: true}}
 	}
 	if snapshot.Error != "" {
-		skillStatus, mcpStatus = "Unavailable", "Unavailable"
-		skills = []ui.ListItem{{Label: "Couldn’t read skill state", Detail: "Inspect", Command: true}}
-		connections = []ui.ListItem{{Label: "Couldn’t read connection state", Detail: "Inspect", Command: true}}
+		if activeSkills == 0 {
+			skillStatus = "Unavailable"
+			skills = []ui.ListItem{{Label: "Couldn’t read skill state", Detail: "Inspect", Command: true}}
+		} else {
+			skillStatus += " · refresh failed"
+		}
+		if connected+attention == 0 {
+			mcpStatus = "Unavailable"
+			connections = []ui.ListItem{{Label: "Couldn’t read connection state", Detail: "Inspect", Command: true}}
+		} else {
+			mcpStatus += " · refresh failed"
+		}
 	}
 	s.skills.setRows(skills, skillStatus)
 	s.mcp.setRows(connections, mcpStatus)
@@ -187,7 +200,7 @@ func (p *capabilityPanel) paintRow(buf *surface.CellBuffer, x, y, width int, ite
 	if detail == "connected" || detail == "loaded" {
 		ink = tokens.Color(ui.ColorSuccess)
 	}
-	if detail == "failed" || detail == "needs sign-in" || detail == "unavailable" {
+	if detail == "failed" || detail == "needs sign-in" || detail == "unavailable" || detail == "setup required" || detail == "approval required" {
 		ink = tokens.Color(ui.ColorWarning)
 	}
 	buf.WriteString(x+width-metaW, y, detail, ink, bg, 0)

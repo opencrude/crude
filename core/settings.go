@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"net/url"
+	"strings"
 
 	"crude/coreprotocol"
 	"crude/provider"
@@ -275,4 +276,14 @@ func settingsMutation(method string) bool {
 		return true
 	}
 	return false
+}
+
+// Passive capability observations alone bypass the settings lane. Editable
+// settings reads still capture after prior writers publish their committed
+// preimages. OAuth/connect may last minutes; a home-state read cannot wait there.
+func serializedSettings(method string) bool {
+	if method == coreprotocol.CapabilityRuntime || method == coreprotocol.CapabilitySnapshot {
+		return false
+	}
+	return strings.HasPrefix(method, "settings.") || method == coreprotocol.WorkspaceOverridesSet
 }

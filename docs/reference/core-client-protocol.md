@@ -20,6 +20,11 @@ Actors admit commands and agent events, flush accepted text on their own ticks,
 reduce workspace state and publish revision changes. Resource I/O is prepared or
 performed off the actor where required and completed under owner fences.
 
+Before publishing a retained actor, its factory worker restores saved Notices
+and initializes configured capability metadata. Neither requires a model session
+or a shell to open Settings. Initialization never connects MCP, downloads skills
+or replays tools; failures retain a usable shell and an explicit workspace notice.
+
 A connection has an immutable client ID and attachment epoch. Every request is
 bound to the negotiated owner; selecting another tab is not a change of owner.
 `workspace.attach` installs a subscription and captures its snapshot at the actor
@@ -128,6 +133,12 @@ revision-fenced and serialize with other settings jobs: workers commit storage,
 then the actor alone installs session/LSP projections. Stored-secret markers mean
 explicit Keep, never a credential read or an empty replacement.
 
+Passive `settings.capability.runtime` and `.snapshot` reads bypass the serialized
+settings lane so a pending Connect/Sign in cannot starve home polling. Editable
+settings reads and writes remain ordered after prior publication. Each shell's
+explicit capability refresh has its own sequence as well as workspace generation;
+cancelled or superseded results cannot replace newer success or cancel a newer poll.
+
 ## Shared resources and private state
 
 `workspace.DocumentService` is the universal connected editor text/revision,
@@ -147,6 +158,12 @@ Path is mutable metadata. Durable batch intents fence rename, preserve dirty
 unsaved text and protect conflicted deletes. Core owns one project watcher and
 lazy document-directory watching; connected shells do not watch/read project
 source files. File browse/catalog/read and replace-plan RPCs use core paths.
+
+The connected tree consumes the same Git snapshot as the header and Git panel,
+not a client-local resolver. It retains complete status and diagnostic metadata
+before directory pages arrive, including collapsed descendants and filtered search
+matches. Ordinary file changes as well as repository metadata arm reconciliation;
+clean snapshots and removed diagnostics clear previous markers.
 Explicit desktop opens materialize bounded client-local caches, not remote paths
 passed to local filesystem readers.
 
@@ -209,6 +226,12 @@ API keys, OAuth tokens, proxy passwords, credential headers or secret-bearing
 extra bodies belong in read models or documentation examples. Client-local
 desktop/clipboard effects require explicit interaction, not a core-side action
 on every connected desktop.
+
+Terminal create acknowledgements mount their exact returned ID/title on Update
+without waiting for the independently delivered inventory. Switching from Notices
+to Terminals must replace the painted panel regardless of receipt/inventory order.
+Saved and newly published Notices reach every shell; stale same-core snapshots
+cannot erase newer notices, and reconnect resets the status revision domain.
 
 ## Invocation selection and acceptance limits
 

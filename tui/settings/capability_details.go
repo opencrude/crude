@@ -219,7 +219,6 @@ func (catalog *capabilityCatalog) layoutTable(ctx ui.LayoutContext, table *ui.Ta
 }
 
 func (catalog *capabilityCatalog) layoutForm(ctx ui.LayoutContext, rect ui.Rect) {
-	catalog.form.SetHideDescriptions(rect.W < 55)
 	catalog.form.Layout(ctx, rect)
 	if catalog.formScroll.Needed() {
 		barWidth := min(ui.ScrollbarWidth+1, rect.W)
@@ -261,6 +260,7 @@ func (catalog *capabilityCatalog) layoutDetailBody(ctx ui.LayoutContext, rect ui
 		}
 		catalog.form.SetForm(form, "", "")
 		inputHeight = min(max(0, rect.H/2), catalog.form.PreferredHeight(rect.H))
+		catalog.form.SetHideDescriptions(rect.W < 55)
 		catalog.layoutForm(ctx, ui.Rect{X: rect.X, Y: rect.Y, W: rect.W, H: inputHeight})
 	} else {
 		catalog.form.Layout(ctx, ui.Rect{})

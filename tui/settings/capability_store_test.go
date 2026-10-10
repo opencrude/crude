@@ -88,7 +88,7 @@ func TestCapabilityStoreHasExplicitInstalledFilterAndInlineExactInstall(t *testi
 	if catalog.detail || catalog.filter.Value() != "guide" || strings.Contains(bufferPlain(buffer), "[ Install ]") {
 		t.Fatal("installation failed to return to retained results with installed status")
 	}
-	x, y = storeTextPoint(t, buffer, "[ ] Installed only")
+	x, y = storeTextPoint(t, buffer, "○ Installed")
 	result = host.Handle(tea.MouseClickMsg{X: x + 1, Y: y, Button: tea.MouseLeft})
 	if result.Cmd != nil || model.capabilityPending != nil || catalog.views[catalog.viewKey()].show != "installed" {
 		t.Fatal("Installed-only filter initiated external activity")

@@ -19,6 +19,11 @@ type Glyphs struct {
 	TreeExpanded   string
 	TreeCollapsed  string
 	BreadcrumbSep  string
+	SwitchOn       string // filled marker of an enabled switch control
+	SwitchOff      string // hollow marker of a disabled switch control
+	CycleLeft      string // previous-value affordance of a cycle control
+	CycleRight     string // next-value affordance of a cycle control
+	Modified       string // unsaved-change marker (rail, footer, field labels)
 }
 
 // Typography captures semantic text emphasis that themes may vary without
@@ -62,6 +67,11 @@ func DefaultGlyphs() Glyphs {
 		TreeExpanded:   "▾",
 		TreeCollapsed:  "▸",
 		BreadcrumbSep:  "▸",
+		SwitchOn:       "●",
+		SwitchOff:      "○",
+		CycleLeft:      "‹",
+		CycleRight:     "›",
+		Modified:       "●",
 	}
 }
 

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -141,13 +142,22 @@ func (catalog *capabilityCatalog) syncStoreFilters(_ []captypes.Entry, state cap
 			Action: "settings.capability." + action, Variant: variant, Enabled: true,
 		}
 	}
-	buttons := []ui.ActionBarButton{button("Source: "+catalog.sourceFilterLabel(state.source), "filter-source", ui.VariantGhost), button("Sort: "+storeFilterLabel(state.sort), "filter-sort", ui.VariantGhost)}
+	sources := "All sources"
+	if state.source != "" {
+		sources = catalog.sourceFilterLabel(state.source)
+	}
+	chevron := catalog.tokens.Glyphs().TreeExpanded
+	buttons := []ui.ActionBarButton{button(sources+" "+chevron, "filter-source", ui.VariantGhost), button(storeFilterLabel(state.sort)+" "+chevron, "filter-sort", ui.VariantGhost)}
 	if catalog.kind == "source" {
-		buttons = []ui.ActionBarButton{button("Type: "+storeFilterLabel(mapDefault(state.entryType, "all")), "filter-type", ui.VariantGhost)}
+		types := "All types"
+		if state.entryType != "" {
+			types = storeFilterLabel(state.entryType)
+		}
+		buttons = []ui.ActionBarButton{button(types+" "+chevron, "filter-type", ui.VariantGhost)}
 	}
 	catalog.storeFilters.SetButtons(buttons...)
 	catalog.installed.SetChecked(state.show == "installed")
-	catalog.installed.SetLabel(mapState(state.show == "installed", "[x] Installed only", "[ ] Installed only"))
+	catalog.installed.SetLabel("Installed")
 }
 
 func storeFilterLabel(value string) string {
@@ -160,10 +170,12 @@ func storeFilterLabel(value string) string {
 		return "Installed"
 	case "ready":
 		return "Ready"
+	case "name":
+		return "Name A–Z"
 	case "popular":
-		return "Popular"
+		return "Most installed"
 	case "relevance":
-		return "Relevant"
+		return "Most relevant"
 	default:
 		if len(value) == 1 {
 			return strings.ToUpper(value)
@@ -197,20 +209,34 @@ func (catalog *capabilityCatalog) paintStoreRow(buffer *surface.CellBuffer, x, y
 	if !ok || width <= 1 {
 		return
 	}
-	fg, bg := tokens.ListRowColors(state)
 	if localRow == item.Height-1 {
 		return // The quiet gap belongs to the collection, not the card highlight.
 	}
-	ui.FillRect(buffer, 0, 0, ui.Rect{X: x, Y: y, W: width, H: 1}, cell.BlankCell(bg))
-	// The header carries keyboard focus; the reading body stays on the quiet
-	// selected surface rather than becoming a four-row block of accent ink.
-	if state == ui.StateFocused && localRow > 0 {
-		fg, bg = tokens.ListRowColors(ui.StateSelected)
-		ui.FillRect(buffer, 0, 0, ui.Rect{X: x, Y: y, W: width, H: 1}, cell.BlankCell(bg))
+	// Cards stay readable in every state: selection is a quiet surface with
+	// an accent edge and accent title, never a solid accent slab that would
+	// swallow the card's own Install button.
+	active := state == ui.StateFocused || state == ui.StateSelected
+	fg, bg := tokens.Color(ui.ColorFg), tokens.Color(ui.ColorPopupBg)
+	switch {
+	case active:
+		bg = tokens.Color(ui.ColorSelection)
+	case state == ui.StateHovered:
+		bg = tokens.Color(ui.ColorHover)
 	}
-	primary, muted := tokens.MenuInk(state, fg)
-	left := x + 1
-	available := max(0, width-2)
+	ui.FillRect(buffer, 0, 0, ui.Rect{X: x, Y: y, W: width, H: 1}, cell.BlankCell(bg))
+	if active {
+		edge := tokens.Color(ui.ColorAccent)
+		if state != ui.StateFocused {
+			edge = tokens.Color(ui.ColorMuted)
+		}
+		buffer.WriteString(x, y, "▎", edge, bg, 0)
+	}
+	if localRow == 0 && active {
+		fg = tokens.Color(ui.ColorAccent)
+	}
+	muted := tokens.Color(ui.ColorMuted)
+	left := x + 2
+	available := max(0, width-3)
 	if localRow == 0 {
 		button := catalog.storeButtons[entry.ID]
 		buttonWidth := 0
@@ -218,15 +244,10 @@ func (catalog *capabilityCatalog) paintStoreRow(buffer *surface.CellBuffer, x, y
 			buttonWidth = button.Bounds().W
 			paintButton := *button
 			paintButton.SetSurfaceBackground(bg)
-			if state == ui.StateFocused && !catalog.store.actionFocus {
-				// Primary ink on an accent-filled header is invisible. Keep the
-				// native button on its normal surface until its own focus enters.
-				paintButton.SetSurfaceBackground(tokens.Color(ui.ColorPopupBg))
-			}
-			paintButton.Paint(buffer, x, y, ui.PaintContext{Hovered: state == ui.StateHovered, Focused: state == ui.StateFocused && catalog.store.actionFocus})
+			paintButton.Paint(buffer, x, y, ui.PaintContext{Focused: active && catalog.store.actionFocus})
 		}
 		nameWidth := max(0, available-buttonWidth-2)
-		buffer.WriteString(left, y, rendering.TruncateVisual(entry.Name, nameWidth, "…"), primary, bg, cell.AttrBold)
+		buffer.WriteString(left, y, rendering.TruncateVisual(entry.Name, nameWidth, "…"), fg, bg, cell.AttrBold)
 		return
 	}
 	text := catalog.storeEntryMeta(entry)
@@ -268,6 +289,69 @@ type capabilityStoreView struct {
 	*ui.VirtualList
 	owner       *capabilityCatalog
 	actionFocus bool
+}
+
+// capabilitySearchInput is the store's query field. Typing arms a live
+// search: after a short quiet period the catalog queries enabled sources,
+// so results follow the query without an explicit Search command.
+type capabilitySearchInput struct {
+	*ui.FilterField
+	owner *capabilityCatalog
+}
+
+// capabilityLiveSearchDelay is the typing pause before a live search starts.
+const capabilityLiveSearchDelay = 350 * time.Millisecond
+
+func (input *capabilitySearchInput) Handle(ctx ui.EventContext, event ui.Event) ui.EventResult {
+	result := input.FilterField.Handle(ctx, event)
+	return input.owner.withLiveSearch(result)
+}
+
+// liveSearchable reports whether the current store view queries sources as
+// the user types: Skills and MCP browsing a non-empty query, not limited to
+// installed items.
+func (catalog *capabilityCatalog) liveSearchable() bool {
+	if catalog.kind == "source" || catalog.detail || catalog.edit != "" {
+		return false
+	}
+	state := catalog.views[catalog.viewKey()]
+	return state.show != "installed" && strings.TrimSpace(state.query) != "" && !catalog.discoveryCurrent(state)
+}
+
+// withLiveSearch attaches the debounced search tick to an event result when
+// the query (or a filter that scopes it) changed.
+func (catalog *capabilityCatalog) withLiveSearch(result ui.EventResult) ui.EventResult {
+	if !catalog.searchArmed {
+		return result
+	}
+	catalog.searchArmed = false
+	if !catalog.liveSearchable() {
+		return result
+	}
+	catalog.searchGeneration++
+	generation, target := catalog.searchGeneration, catalog.owner.model
+	tick := tea.Tick(capabilityLiveSearchDelay, func(time.Time) tea.Msg {
+		return CapabilitySearchTickMsg{Target: target, Generation: generation}
+	})
+	result.Handled = true
+	result.Cmd = tea.Batch(result.Cmd, tick)
+	return result
+}
+
+// CapabilitySearchTick starts the live search when its quiet period still
+// names the newest query.
+func (s *WorkspaceSettingsSurface) CapabilitySearchTick(msg CapabilitySearchTickMsg) tea.Cmd {
+	catalog := s.capCatalog
+	if s.model == nil || msg.Target != s.model || msg.Generation != catalog.searchGeneration || !s.capabilitiesOpen() || !catalog.liveSearchable() {
+		return nil
+	}
+	return catalog.searchStore().Cmd
+}
+
+// searching reports a live store search in flight.
+func (catalog *capabilityCatalog) searching() bool {
+	pending := catalog.owner.model.capabilityPending
+	return pending != nil && pending.Operation == "discover" && pending.Kind == catalog.kind
 }
 
 type capabilityInstalledFilter struct {
@@ -445,7 +529,6 @@ func (catalog *capabilityCatalog) searchStore() ui.EventResult {
 		return catalog.changed()
 	}
 	if strings.TrimSpace(catalog.filter.Value()) == "" {
-		catalog.message = "Enter a search to browse enabled sources, or select Installed only."
 		return catalog.changed()
 	}
 	catalog.saveListState()
@@ -508,7 +591,8 @@ func (catalog *capabilityCatalog) chooseStoreFilter() ui.EventResult {
 	catalog.choosing = ""
 	catalog.syncRows()
 	catalog.owner.focusID(catalog.storeFilters.ID())
-	return catalog.changed()
+	catalog.searchArmed = true
+	return catalog.withLiveSearch(catalog.changed())
 }
 
 func (catalog *capabilityCatalog) layoutStoreBrowse(ctx ui.LayoutContext, top, height int) {
@@ -516,7 +600,7 @@ func (catalog *capabilityCatalog) layoutStoreBrowse(ctx ui.LayoutContext, top, h
 	catalog.syncStoreFilters(nil, catalog.views[catalog.viewKey()])
 	catalog.syncStoreButtons(catalog.storeEntries())
 	if catalog.choosing != "" {
-		for _, component := range []ui.Component{catalog.filter, catalog.installed, catalog.searchButton, catalog.storeFilters, catalog.store, catalog.storeScroll} {
+		for _, component := range []ui.Component{catalog.filter, catalog.installed, catalog.searchRule, catalog.storeFilters, catalog.store, catalog.storeScroll} {
 			component.Layout(ctx, ui.Rect{})
 		}
 		barWidth, stroke := 0, 0
@@ -528,35 +612,49 @@ func (catalog *capabilityCatalog) layoutStoreBrowse(ctx ui.LayoutContext, top, h
 		catalog.choiceScroll.Layout(ctx, ui.Rect{X: width - stroke, Y: top, W: stroke, H: height})
 		return
 	}
-	searchWidth := 0
-	if catalog.kind != "source" && width >= 28 {
-		searchWidth = catalog.searchButton.Measure(ctx, ui.Loose(width, 1)).W
+	// One toolbar: query first, then the filters that scope it. Wide panes
+	// keep everything on the search row; narrow panes wrap the filters below.
+	switch catalog.kind {
+	case captypes.KindSkill:
+		catalog.filter.SetPlaceholder("Search skills")
+	case captypes.KindMCP:
+		catalog.filter.SetPlaceholder("Search MCP servers")
+	default:
+		catalog.filter.SetPlaceholder("Search sources")
 	}
-	catalog.filter.Layout(ctx, ui.Rect{Y: top, W: max(0, width-searchWidth-mapStateInt(searchWidth > 0, 2, 0)), H: min(1, height)})
-	catalog.searchButton.Layout(ctx, ui.Rect{X: width - searchWidth, Y: top, W: searchWidth, H: min(1, height)})
-	catalog.filter.SetPlaceholder("Search " + catalog.title())
-	if catalog.kind != "source" {
-		catalog.filter.SetPlaceholder("Search " + catalog.title() + " — Enter to search sources")
-	}
-	filterY := top + 1
-	filterHeight := 1
 	installedW := 0
 	if catalog.kind != "source" {
-		installedW = min(width, catalog.installed.Measure(ctx, ui.Loose(width, 1)).W)
+		installedW = catalog.installed.Measure(ctx, ui.Loose(width, 1)).W
 	}
-	catalog.installed.Layout(ctx, ui.Rect{Y: filterY, W: installedW, H: min(1, max(0, height-1))})
 	filtersW := catalog.storeFilters.Measure(ctx, ui.Loose(1024, 1)).W
-	filterX := mapStateInt(installedW > 0, installedW+2, 0)
-	if filterX+filtersW > width {
-		filterHeight = 2
-		filterX, filterY = 0, filterY+1
+	controlsW := filtersW + mapStateInt(installedW > 0, installedW+1, 0)
+	row := top
+	if width-controlsW-2 >= 28 {
+		searchW := width - controlsW - 2
+		catalog.filter.Layout(ctx, ui.Rect{Y: row, W: searchW, H: min(1, height)})
+		x := searchW + 2
+		catalog.installed.Layout(ctx, ui.Rect{X: x, Y: row, W: installedW, H: min(1, height)})
+		x += mapStateInt(installedW > 0, installedW+1, 0)
+		catalog.storeFilters.Layout(ctx, ui.Rect{X: x, Y: row, W: max(0, width-x), H: min(1, height)})
+		row++
+	} else {
+		catalog.filter.Layout(ctx, ui.Rect{Y: row, W: width, H: min(1, height)})
+		row++
+		catalog.installed.Layout(ctx, ui.Rect{Y: row, W: min(width, installedW), H: min(1, max(0, height-1))})
+		x := mapStateInt(installedW > 0, installedW+1, 0)
+		if filtersW > width-x {
+			catalog.storeFilters.SetButtons(
+				ui.ActionBarButton{Label: "Source", Action: "settings.capability.filter-source", Variant: ui.VariantGhost, Enabled: true},
+				ui.ActionBarButton{Label: "Sort", Action: "settings.capability.filter-sort", Variant: ui.VariantGhost, Enabled: true})
+		}
+		catalog.storeFilters.Layout(ctx, ui.Rect{X: x, Y: row, W: max(0, width-x), H: min(1, max(0, height-1))})
+		row++
 	}
-	// Shorten labels coherently before the native ActionBar publishes hit bounds.
-	if filtersW > width {
-		catalog.storeFilters.SetButtons(ui.ActionBarButton{Label: "Source", Action: "settings.capability.filter-source", Enabled: true}, ui.ActionBarButton{Label: "Sort", Action: "settings.capability.filter-sort", Enabled: true})
-	}
-	catalog.storeFilters.Layout(ctx, ui.Rect{X: filterX, Y: filterY, W: max(0, width-filterX), H: min(1, max(0, top+height-filterY))})
-	catalog.layoutStore(ctx, ui.Rect{Y: top + filterHeight + 2, W: width, H: max(0, height-filterHeight-2)})
+	// The rule separates the toolbar from results and carries search motion.
+	catalog.searchRule.SetActive(catalog.searching())
+	catalog.searchRule.Layout(ctx, ui.Rect{Y: row, W: width, H: 1})
+	row++
+	catalog.layoutStore(ctx, ui.Rect{Y: row + 1, W: width, H: max(0, top+height-row-1)})
 }
 
 func (catalog *capabilityCatalog) storeEntries() []captypes.Entry {
@@ -576,37 +674,26 @@ func mapStateInt(condition bool, first, second int) int {
 	return second
 }
 
-func (catalog *capabilityCatalog) paintStoreHeading(buffer *surface.CellBuffer, x, y, width int) {
-	text := "Reusable expertise for your next task"
-	switch catalog.kind {
-	case captypes.KindMCP:
-		text = "Tools and services, ready to connect"
-	case "source":
-		text = "Your discovery sources · select a card to configure"
-	}
-	if catalog.choosing != "" {
-		text = "Choose " + strings.TrimPrefix(catalog.choosing, "filter-") + " · Enter to apply · Esc to return"
-	}
-	buffer.WriteString(x, y+1, rendering.TruncateVisual(text, width, "…"), catalog.tokens.Color(ui.ColorMuted), catalog.tokens.Color(ui.ColorPopupBg), 0)
-}
-
 func (catalog *capabilityCatalog) paintStoreEmpty(buffer *surface.CellBuffer, x, y int) {
 	if catalog.choosing != "" || len(catalog.store.Items()) > 0 || catalog.store.Bounds().Empty() {
 		return
 	}
 	bounds := catalog.store.Bounds()
 	state := catalog.views[catalog.viewKey()]
-	title, body := "Find your next capability", "Search a task, tool or service above. Results include source, publisher and an Install action."
+	title, body := "Find your next capability", "Start typing a task, tool or service. Results from every enabled source appear as you type, each with an Install action."
+	if catalog.kind == captypes.KindMCP {
+		title = "Connect a tool or service"
+	}
 	if state.show == "installed" {
-		title, body = "No installed matches", "Clear the search, or turn off Installed only to find something new."
+		title, body = "Nothing installed matches", "Clear the search, or turn off Installed to search every source."
 	} else if catalog.discoveryCurrent(state) {
 		title, body = "No matches in these sources", "Try another query or source. Add a repository, registry or local directory in Sources."
 	}
 	if catalog.kind == "source" {
 		title, body = "No matching sources", "Clear the search or add a discovery source below."
 	}
-	if catalog.owner.model.capabilityPending != nil {
-		title, body = "Searching your sources", "Results will appear here. You can cancel this search without changing installed items."
+	if catalog.searching() {
+		title, body = "Searching your sources…", "Results appear here as soon as the sources answer. Keep typing to refine."
 	}
 	row := bounds.Y + min(1, max(0, bounds.H-1))
 	buffer.WriteString(x+1, y+row, rendering.TruncateVisual(title, max(0, bounds.W-2), "…"), catalog.tokens.Color(ui.ColorFg), catalog.tokens.Color(ui.ColorPopupBg), cell.AttrBold)
@@ -623,11 +710,9 @@ func (catalog *capabilityCatalog) storeStatus() string {
 		return fmt.Sprintf("%d sources · source trust never grants execution access", len(catalog.store.Items()))
 	}
 	if state := catalog.views[catalog.viewKey()]; state.show == "installed" {
-		return fmt.Sprintf("%d installed matches · no external search", len(catalog.store.Items()))
-	} else if strings.TrimSpace(state.query) != "" && !catalog.discoveryCurrent(state) {
-		return "Press Enter or Search to query enabled sources."
+		return fmt.Sprintf("%d installed · Enter opens details", len(catalog.store.Items()))
 	}
-	return fmt.Sprintf("%d items · Enter details · Right / Tab row action", len(catalog.store.Items()))
+	return fmt.Sprintf("%d results · Enter opens details · → reaches the row action", len(catalog.store.Items()))
 }
 
 func (catalog *capabilityCatalog) sourceCoverage(kind string) string {

@@ -961,6 +961,10 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		if command := m.applyCapabilityResult(msg); command != nil {
 			cmds = append(cmds, command)
 		}
+	case settingsui.CapabilitySearchTickMsg:
+		if command := m.applyCapabilitySearchTick(msg); command != nil {
+			cmds = append(cmds, command)
+		}
 	case settingsui.AccountChangeResultMsg:
 		if msg.WorkspaceGeneration != m.workspaceSwitchGen.Load() {
 			break
@@ -1244,6 +1248,9 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		}
 		if cmd := msg.Model.Update(msg); cmd != nil {
 			cmds = append(cmds, cmd)
+		}
+		if m.sidebarScreen != nil {
+			m.sidebarScreen.RefreshStatus()
 		}
 	}
 

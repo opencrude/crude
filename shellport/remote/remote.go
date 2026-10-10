@@ -634,6 +634,9 @@ func (w *Workspace) ApplyReplicaChanges(msg shellport.ReplicaChangesMsg) shellpo
 		applied = w.installSnapshot(batch.snapshot, true)
 	case snapshotBatch:
 		if batch.client != nil {
+			if batch.client != w.view.Client {
+				w.status.resetRevision()
+			}
 			w.view.Client = batch.client
 		}
 		applied = w.installSnapshot(batch.snapshot, false)

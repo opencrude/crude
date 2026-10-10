@@ -109,6 +109,9 @@ func (m *App) handleLSPDiagnosticsUpdate(msg workspace.LSPDiagnosticsMsg) {
 		} else {
 			m.Tree.Model.SetDiagnostics(msg.FilePath, 0, 0, 0)
 		}
+		if m.sidebarScreen != nil {
+			m.sidebarScreen.RefreshStatus()
+		}
 	}
 	if tab := m.EditorState.Tabs[msg.FilePath]; tab != nil && tab.Editor != nil {
 		if m.ws.LSPMgr() != nil && !m.ws.LSPMgr().ShowDiagnosticsInEditor() {
@@ -158,6 +161,9 @@ func (m *App) clearTreeDiagnostics() {
 		return
 	}
 	m.Tree.Model.ClearDiagnostics()
+	if m.sidebarScreen != nil {
+		m.sidebarScreen.RefreshStatus()
+	}
 }
 
 // handleFileWatcherEvent processes a file system change that arrived through
