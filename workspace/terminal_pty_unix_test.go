@@ -18,7 +18,7 @@ import (
 func TestTerminalCloseKillsProcessGroup(t *testing.T) {
 	io, err := startTerminalIO("/bin/sh", []string{"-c",
 		`sleep 300 & echo "CHILD:$!"; wait`,
-	}, t.TempDir(), 40, 10)
+	}, PTYEnviron(nil), t.TempDir(), 40, 10)
 	if err != nil {
 		t.Fatalf("start PTY: %v", err)
 	}
@@ -117,7 +117,7 @@ func TestPTYChildResolvesPinnedTerminfo(t *testing.T) {
 
 	io, err := startTerminalIO("sh", []string{"-c",
 		`printf 'colors='; tput colors; echo; infocmp -x xterm-ghostty >/dev/null && echo TERMINFO_OK; exit 0`,
-	}, t.TempDir(), 80, 24)
+	}, PTYEnviron(nil), t.TempDir(), 80, 24)
 	if err != nil {
 		t.Fatalf("start PTY: %v", err)
 	}

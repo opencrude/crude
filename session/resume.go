@@ -74,8 +74,6 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 		}
 	}
 
-	fileio.SetSessionsRootFn(func() (string, error) { return sessionDir, nil })
-
 	lg, err := logger.New(logger.Options{
 		HomeDir:        homeDir,
 		TurnLogEnabled: cfg.TurnLogsEnabled,
@@ -90,9 +88,6 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	var editor *fileio.Editor
 	defer func() {
 		if !resourcesTransferred {
-			if editor != nil {
-				editor.Close()
-			}
 			_ = lg.Close()
 			_ = db.Close()
 		}
@@ -129,11 +124,7 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	diff.SetLogger(lg)
 	fileio.SetSafetyLogger(lg)
 
-	editor, err = fileio.NewEditorWithSessionDir(meta.ID, filepath.Dir(lg.SessionDir()), lg)
-	if err != nil {
-		return nil, fmt.Errorf("resume: session editor: %w", err)
-	}
-	editor.SetLegacyJournalWrites(false)
+	editor = fileio.NewEditor(meta.ID, lg)
 
 	workspaceCfg := copyConfig(cfg)
 	overrides, err := sessiondb.LoadAgentSettingOverrides(db, meta.ID)

@@ -289,6 +289,25 @@ func (wdb *WorkspaceDB) RegisterSession(sessionID, projectPath, projectName, mod
 	return nil
 }
 
+// ForgetSession removes the registry row and name of a session whose storage
+// no longer exists because it was pruned as empty.
+func (wdb *WorkspaceDB) ForgetSession(sessionID string) error {
+	if wdb == nil || wdb.DB == nil {
+		return fmt.Errorf("workspace db not open")
+	}
+	tx, err := wdb.DB.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	for _, statement := range []string{`DELETE FROM workspace_sessions WHERE session_id = ?`, `DELETE FROM workspace_agent_names WHERE session_id = ?`} {
+		if _, err := tx.Exec(statement, sessionID); err != nil {
+			return fmt.Errorf("forget session %s: %w", sessionID, err)
+		}
+	}
+	return tx.Commit()
+}
+
 // CloseSession marks a session as closed in the workspace registry.
 func (wdb *WorkspaceDB) CloseSession(sessionID string) error {
 	_, err := wdb.DB.Exec(`

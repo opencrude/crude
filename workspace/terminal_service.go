@@ -81,8 +81,9 @@ func (s *TerminalService) Create(opts TerminalCreateOpts) (TerminalInfo, error) 
 	if closed {
 		return TerminalInfo{}, errors.New("terminal service is closed")
 	}
+	scrollback := s.manager.Settings().ScrollbackLines
 	return s.manager.CreatePrepared(opts, func(info TerminalInfo) error {
-		e, err := terminalvt.New(terminalvt.Options{Cols: info.Cols, Rows: info.Rows})
+		e, err := terminalvt.New(terminalvt.Options{Cols: info.Cols, Rows: info.Rows, ScrollbackLines: scrollback})
 		if err != nil {
 			return err
 		}

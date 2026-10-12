@@ -535,6 +535,14 @@ func (w *Workspace) persistSessionRegistry(fs *Session, sessionDB *sql.DB) {
 	if w == nil || w.WorkspaceDB == nil || fs == nil || fs.SessionID == "" {
 		return
 	}
+	if fs.backend != nil && fs.backend.Pruned() {
+		// The backend owns retention: an empty session removed its storage, so
+		// the registry forgets it rather than resurrecting a row for a deleted DB.
+		if err := w.WorkspaceDB.ForgetSession(fs.SessionID); err != nil {
+			w.noteRegistryErr("session_forget_failed", err)
+		}
+		return
+	}
 	model, provider := "", ""
 	if fs.backend != nil {
 		model = fs.backend.ModelName()

@@ -219,6 +219,13 @@ func (m *App) promoteTerminal(id string) {
 	if !ok {
 		return
 	}
+	m.floatTerminalInfo(info)
+}
+
+// floatTerminalInfo opens a terminal window from an exact identity, including
+// a create receipt whose inventory replica has not arrived yet.
+func (m *App) floatTerminalInfo(info workspace.TerminalInfo) {
+	id := info.ID
 	screen := m.ensureTermScreen(id, info.Title)
 	if m.termDock != nil {
 		m.termDock.Unmount(id)

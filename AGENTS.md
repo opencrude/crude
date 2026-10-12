@@ -1021,6 +1021,28 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
   `blockingDeckShieldsPointer` consumes coordinates outside the deck before
   root-Host hit testing, cancels stale underlying captures, and permits only a
   deck-owned drag to release outside its slot.
+- **Terminals have their own core lane and settings-owned shells.** Terminal
+  create/input/resize/control/rows run on the actor's `terminalLane`, never
+  behind document/file/LSP effects on `resourceLane`. The core resolves an
+  ordinary new terminal's shell from effective `TerminalSettings` with
+  `workspace.DetectTerminalShells` (Auto: PowerShell 7 → Windows PowerShell →
+  cmd; `$SHELL` first on Unix); `startTerminalIO` has no shell fallback. A
+  missing selected shell fails with guidance, never a silent substitute. The
+  detected list is core-host metadata (`AppSettings.TerminalShells`, `json:"-"`).
+- **Detached cores run from a staged image.** `spawnCore` executes
+  `~/.crude/bin/crude-core-<build-id>`, never the starting executable, so
+  `go run`/rebuilds can delete or replace it on Windows while the core lives.
+- **`buildinfo.Home` is the one crude data root.** `CRUDE_HOME` gives an
+  isolated profile (own core, config, workspaces, sessions) for developing crude
+  inside crude; never call `os.UserHomeDir` for crude data paths. Display-only
+  `~` abbreviation keeps the real home.
+- **Session retention has one owner.** `session.Close` prunes an empty session
+  only when its DB holds no messages/queue/recovery and
+  `collaboration.RetireUnreferencedSession` proves no run/event/delivery/
+  artifact/claim/child refers to its agents (it then removes those directory
+  rows). The workspace forgets a `Pruned()` session's registry row and name;
+  it never re-registers a deleted DB. The legacy file journal is removed: undo
+  is Local History operation receipts only.
 - **PTY input is bounded and non-blocking.** `ptyWriter.Write` either queues the
   complete payload or returns `ErrTerminalBackpressure`; never silently drop
   bytes. `NormalizeTerminalSize` is the shared emulator/PTY 8×2 floor, and a

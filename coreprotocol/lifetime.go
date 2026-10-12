@@ -32,7 +32,10 @@ type CoreStatus struct {
 	PID int `json:"pid"`
 	// BuildID identifies the core's executable; shells from another build
 	// replace an idle core rather than speaking a mismatched protocol.
-	BuildID        string            `json:"build_id,omitempty"`
+	BuildID string `json:"build_id,omitempty"`
+	// Executable is the image the core runs from, a staged copy that never
+	// pins the shell's own executable.
+	Executable     string            `json:"executable,omitempty"`
 	StartedAt      time.Time         `json:"started_at"`
 	Server         bool              `json:"server"`
 	GraceSeconds   float64           `json:"grace_seconds"`

@@ -139,6 +139,7 @@ func (w *Workspace) applySettingsProjection(effective ttypes.AppSettings) {
 	if w.HistoryService != nil {
 		w.HistoryService.UpdateSettings(effective.LocalHistory)
 	}
+	w.TermMgr.SetSettings(effective.Terminal)
 	for _, frontendSession := range w.Sessions {
 		if frontendSession == nil || frontendSession.backend == nil {
 			continue

@@ -106,6 +106,7 @@ func (r *Runtime) Status(ctx context.Context) (coreprotocol.CoreStatus, error) {
 	r.mu.Lock()
 	status := coreprotocol.CoreStatus{PID: os.Getpid(), Clients: len(r.clients), Opening: len(r.creating), Draining: r.draining}
 	r.mu.Unlock()
+	status.Executable, _ = os.Executable()
 	r.lifetime.mu.Lock()
 	status.Server, status.GraceSeconds, status.StartedAt = r.lifetime.server, r.lifetime.grace.Seconds(), r.lifetime.started
 	status.BuildID = r.lifetime.buildID

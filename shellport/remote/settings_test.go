@@ -45,3 +45,15 @@ func TestRemoteStoredCredentialsProduceExplicitKeep(t *testing.T) {
 		t.Fatal("explicit replacement ignored")
 	}
 }
+
+func TestRemoteSettingsExposeCoreTerminalShells(t *testing.T) {
+	shells := []types.TerminalShell{{ID: "zsh", Label: "Zsh", Path: "/bin/zsh", LoginArgs: []string{"-l"}}}
+	w := &Workspace{}
+	w.settings = &settingsReplica{w: w}
+	w.settings.install(settingsSnapshot{fetch: coreprotocol.SettingsFetchResult{TerminalShells: shells}})
+	for _, value := range []types.AppSettings{w.AppDefaults(), w.LoadAppSettings()} {
+		if len(value.TerminalShells) != 1 || value.TerminalShells[0].Path != "/bin/zsh" {
+			t.Fatalf("settings form lost the core's shells: %+v", value.TerminalShells)
+		}
+	}
+}

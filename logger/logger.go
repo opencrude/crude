@@ -37,7 +37,7 @@ type Options struct {
 // New creates a new session logger with a unique session directory.
 func New(opts Options) (*Logger, error) {
 	if opts.HomeDir == "" {
-		home, err := os.UserHomeDir()
+		home, err := buildinfo.Home()
 		if err != nil {
 			home = "."
 		}

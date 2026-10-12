@@ -16,6 +16,7 @@ import (
 	"crude/session"
 	"crude/types"
 	captypes "crude/types/capability"
+	"crude/workspace"
 )
 
 // A keyed entity digest is opaque even for low-entropy credentials. Revisions
@@ -188,6 +189,7 @@ func (a *actor) prepareSettings(request coreprotocol.Request) (func(context.Cont
 		if u, err := url.Parse(app.Network.ProxyURL); err == nil {
 			out.ProxyCredentialsPresent = u.User != nil || u.RawQuery != ""
 		}
+		out.TerminalShells = workspace.DetectTerminalShells()
 		for id, account := range a.ws.AllAccounts() {
 			out.Accounts[id] = publicAccount(account)
 		}

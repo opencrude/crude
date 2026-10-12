@@ -646,6 +646,15 @@ daily snapshots, 500 total unprotected snapshots, and a 1 GiB budget. Safety
 snapshots are mandatory and displayed read-only. Additional ignore patterns are
 one Git-style pattern per line.
 
+Terminal is an application/workspace IDE category with field-level live
+inheritance (`TerminalSettings`, override key `terminal`), placed after
+Interface. It holds the shell (Auto, a shell detected on the core's machine, or
+Custom with a command), shell-style arguments, Login shell, extra environment
+variables, Open new terminals (Docked/Floating) and Scrollback (1,000–10,000
+lines, 10,000 default). A workspace may choose a different shell while still
+inheriting every other terminal field. Auto order, detection and failure rules
+are in [in-app terminals](in-app-terminals.md#shell-selection).
+
 The Local History window exposes logical/physical diagnostics and the command
 palette provides `Create History Snapshot`, `Verify Local History`, `Prune Local
 History`, and `Open Local History Folder`.

@@ -3,6 +3,7 @@ package types
 import (
 	"encoding/json"
 	"reflect"
+	"slices"
 
 	"crude/network"
 	"crude/provider"
@@ -48,12 +49,13 @@ type WorkspaceOverrides struct {
 	Safety       json.RawMessage `json:"safety,omitempty"`
 	LocalHistory json.RawMessage `json:"local_history,omitempty"`
 	Capabilities json.RawMessage `json:"capabilities,omitempty"`
+	Terminal     json.RawMessage `json:"terminal,omitempty"`
 }
 
 // IsEmpty reports that the workspace inherits everything.
 func (o WorkspaceOverrides) IsEmpty() bool {
 	return len(o.Theme) == 0 && len(o.Editor) == 0 && len(o.LSP) == 0 &&
-		len(o.UI) == 0 && len(o.Font) == 0 && len(o.Agents) == 0 && len(o.Memory) == 0 && len(o.Safety) == 0 && len(o.LocalHistory) == 0 && len(o.Capabilities) == 0
+		len(o.UI) == 0 && len(o.Font) == 0 && len(o.Agents) == 0 && len(o.Memory) == 0 && len(o.Safety) == 0 && len(o.LocalHistory) == 0 && len(o.Capabilities) == 0 && len(o.Terminal) == 0
 }
 
 // DefaultLSPSettings is the application-level language-intelligence baseline.
@@ -109,6 +111,7 @@ func ApplyAppDefaults(s *AppSettings) {
 		s.Editor.RenderWhitespace = "none"
 	}
 	s.Editor = NormalizeEditorSettings(s.Editor)
+	s.Terminal = NormalizeTerminalSettings(s.Terminal)
 	if lspUnset(s.LSP) {
 		s.LSP = DefaultLSPSettings()
 	} else {
@@ -263,6 +266,8 @@ func MergeAppWorkspace(app AppSettings, ws WorkspaceOverrides) AppSettings {
 	applySparse(&out.Memory, ws.Memory)
 	applySparse(&out.Safety, ws.Safety)
 	applySparse(&out.LocalHistory, ws.LocalHistory)
+	applySparse(&out.Terminal, ws.Terminal)
+	out.Terminal = NormalizeTerminalSettings(out.Terminal)
 	out.Capabilities = mergeCapabilities(out.Capabilities, ws.Capabilities)
 	return out
 }
@@ -284,6 +289,7 @@ func OverridesFromDiff(app, working AppSettings) WorkspaceOverrides {
 	out.Memory = sparseDiff(app.Memory, working.Memory)
 	out.Safety = sparseDiff(app.Safety, working.Safety)
 	out.LocalHistory = sparseDiff(app.LocalHistory, working.LocalHistory)
+	out.Terminal = sparseDiff(app.Terminal, working.Terminal)
 	out.Capabilities = capabilityDiff(app.Capabilities, working.Capabilities)
 	return out
 }
@@ -540,6 +546,8 @@ func (o WorkspaceOverrides) CategoryOverridden(name string) bool {
 		return len(o.Capabilities) > 0
 	case "safety":
 		return len(o.Safety) > 0
+	case "terminal":
+		return len(o.Terminal) > 0
 	}
 	return false
 }
@@ -570,6 +578,8 @@ func (o *WorkspaceOverrides) ClearCategory(name string) {
 		o.Safety = nil
 	case "local_history", "local history", "history":
 		o.LocalHistory = nil
+	case "terminal":
+		o.Terminal = nil
 	}
 }
 
@@ -582,6 +592,8 @@ func cloneAppSettings(s AppSettings) AppSettings {
 	out.Safety.CommandRules = append([]CommandSeverityRule(nil), s.Safety.CommandRules...)
 	out.LocalHistory.ExtraIgnorePatterns = append([]string(nil), s.LocalHistory.ExtraIgnorePatterns...)
 	out.LSP = CloneLSPSettings(s.LSP)
+	out.Terminal = CloneTerminalSettings(s.Terminal)
+	out.TerminalShells = slices.Clone(s.TerminalShells)
 	return out
 }
 

@@ -16,7 +16,7 @@ import (
 func allocateAgentName(home string) (string, error) {
 	if home == "" {
 		var err error
-		home, err = os.UserHomeDir()
+		home, err = buildinfo.Home()
 		if err != nil {
 			return "", err
 		}

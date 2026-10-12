@@ -18,12 +18,7 @@ func newMutationEditor(t *testing.T, id string) *Editor {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = log.Close() })
-	editor, err := NewEditorWithSessionDir(id, root, log)
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = editor.Close() })
-	return editor
+	return NewEditor(id, log)
 }
 
 func TestWriteTrackedPreparesExactReceiptBeforeAnyMutation(t *testing.T) {

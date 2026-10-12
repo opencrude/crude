@@ -329,6 +329,10 @@ type AppSettings struct {
 	Capabilities        captypes.Settings           `json:"capabilities,omitempty"`
 	Safety              SafetySettings              `json:"safety,omitempty"`
 	LocalHistory        LocalHistorySettings        `json:"local_history,omitempty"`
+	Terminal            TerminalSettings            `json:"terminal,omitempty"`
+	// TerminalShells are the shells installed on the core's machine. They are
+	// observation metadata for the settings form, never persisted settings.
+	TerminalShells []TerminalShell `json:"-"`
 	// Network is application-owned: trust, proxy credentials and client
 	// identities must never be promoted by a project's settings overlay.
 	Network network.Settings `json:"network,omitempty"`
@@ -790,11 +794,6 @@ type QuestionResult struct {
 	Answers   map[string]string
 	Questions map[string]string
 	Cancelled bool
-}
-
-type UndoResultMsg struct {
-	Desc  string
-	Error string
 }
 
 // CompactResultMsg reports the outcome of a forced context compaction.

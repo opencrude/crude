@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"path/filepath"
 	"strings"
 
@@ -50,7 +49,7 @@ func (workspace *Workspace) ensureCapabilities(ctx context.Context) error {
 	// paths and the default stdio working directory.
 	home := workspace.homeDir
 	if home == "" {
-		home, _ = os.UserHomeDir()
+		home, _ = buildinfo.Home()
 	}
 	if home == "" {
 		return errors.New("application capability storage is unavailable")

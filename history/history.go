@@ -286,7 +286,7 @@ type fileV1 struct {
 // DefaultPath returns the global history file location: <home>/.crude/history.json
 // (or the beta data dir). Falls back to a relative path when home is unknown.
 func DefaultPath() string {
-	home, err := os.UserHomeDir()
+	home, err := buildinfo.Home()
 	if err != nil {
 		return "crude_history.json"
 	}

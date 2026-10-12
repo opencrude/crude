@@ -104,10 +104,7 @@ func TestSessionFileMutationFailsClosedWithoutEditor(t *testing.T) {
 	}
 	defer sess.Close()
 	sess.SetWorkDir(project)
-	if sess.editor != nil {
-		sess.editor.Close()
-		sess.editor = nil
-	}
+	sess.editor = nil
 	result, err := sess.ExecuteToolForTest(context.Background(), "write_file", map[string]any{"path": "unsafe.txt", "content": "data"})
 	if err == nil || !strings.Contains(result.Content, "mutation receipt requires an editor") {
 		t.Fatalf("result=%q err=%v", result.Content, err)

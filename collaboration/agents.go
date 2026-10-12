@@ -550,3 +550,46 @@ func loadRun(ctx context.Context, tx *sql.Tx, id string) (Run, error) {
 	run.EndedAt = timeFromUnixNano(endedAt)
 	return run, nil
 }
+
+// RetireUnreferencedSession removes the directory entries of a session that
+// never took part in collaboration, so a pruned empty session leaves no agent
+// behind. It fails closed: when any of the session's agents is still attached,
+// or any run, event, delivery, artifact, claim or child agent refers to one,
+// nothing is removed and retired is false — that session holds work and must
+// be kept.
+func (store *Store) RetireUnreferencedSession(ctx context.Context, sessionID string) (bool, error) {
+	if err := validateIdentity("session_id", sessionID, 256); err != nil {
+		return false, err
+	}
+	retired := false
+	err := store.transaction(ctx, func(tx *sql.Tx) error {
+		var agents, attached int
+		if err := tx.QueryRowContext(ctx, `SELECT COUNT(*), COALESCE(SUM(presence = ?), 0) FROM collaboration_agents WHERE session_id = ?`, RuntimeAttached, sessionID).Scan(&agents, &attached); err != nil {
+			return err
+		}
+		if attached > 0 {
+			return nil
+		}
+		var references int
+		if err := tx.QueryRowContext(ctx, `WITH owned(id) AS (SELECT id FROM collaboration_agents WHERE session_id = ?)
+			SELECT (SELECT COUNT(*) FROM collaboration_runs WHERE agent_id IN owned)
+			     + (SELECT COUNT(*) FROM collaboration_events WHERE sender_id IN owned)
+			     + (SELECT COUNT(*) FROM collaboration_deliveries WHERE recipient_id IN owned)
+			     + (SELECT COUNT(*) FROM collaboration_artifacts WHERE author_id IN owned)
+			     + (SELECT COUNT(*) FROM collaboration_claims WHERE agent_id IN owned)
+			     + (SELECT COUNT(*) FROM collaboration_agents WHERE parent_id IN owned AND session_id != ?)`, sessionID, sessionID).Scan(&references); err != nil {
+			return err
+		}
+		if references > 0 {
+			return nil
+		}
+		if agents > 0 {
+			if _, err := tx.ExecContext(ctx, `DELETE FROM collaboration_agents WHERE session_id = ?`, sessionID); err != nil {
+				return err
+			}
+		}
+		retired = true
+		return nil
+	})
+	return retired, err
+}

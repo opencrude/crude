@@ -13,7 +13,6 @@ import (
 type slashBackendResultMsg struct {
 	agentID string
 	command string
-	undo    *ttypes.UndoResultMsg
 	compact *ttypes.CompactResultMsg
 }
 
@@ -157,18 +156,6 @@ func parseSlashCommand(command string) (string, string) {
 }
 
 func (m *App) handleSlashBackendResult(msg slashBackendResultMsg) {
-	if msg.undo != nil {
-		if msg.undo.Error != "" {
-			m.ws.Logger().Error("JOURNAL", "slash_failed", "command", msg.command, "error", msg.undo.Error)
-			m.Feedback.NotifyError(msg.undo.Error)
-			return
-		}
-		if msg.undo.Desc != "" {
-			m.Feedback.NotifyInfo(msg.undo.Desc)
-			m.appendAgentMessage(msg.agentID, ttypes.ChatMessage{Role: ttypes.RoleAssistant, Content: msg.undo.Desc, Time: time.Now()})
-		}
-		return
-	}
 	if msg.compact != nil {
 		if msg.compact.Cancelled {
 			m.ws.Logger().Info("COMPACT", "slash_cancelled", "operation_id", msg.compact.OperationID)

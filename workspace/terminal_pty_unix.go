@@ -23,18 +23,10 @@ type waitResult struct {
 	err  error
 }
 
-func startTerminalIO(command string, args []string, cwd string, cols, rows int) (terminalIO, error) {
-	shell := command
-	if shell == "" {
-		shell = os.Getenv("SHELL")
-		if shell == "" {
-			shell = "/bin/bash"
-		}
-		args = []string{"-l"}
-	}
-	cmd := exec.Command(shell, args...)
+func startTerminalIO(command string, args, env []string, cwd string, cols, rows int) (terminalIO, error) {
+	cmd := exec.Command(command, args...)
 	cmd.Dir = cwd
-	cmd.Env = PTYEnviron(nil)
+	cmd.Env = env
 	ws := &pty.Winsize{Rows: uint16(rows), Cols: uint16(cols)}
 	file, err := pty.StartWithSize(cmd, ws)
 	if err != nil {

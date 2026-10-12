@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crude/buildinfo"
 	"flag"
 	"fmt"
 	"maps"
@@ -250,7 +251,7 @@ func Main() int {
 		return code
 	}
 
-	home, _ := os.UserHomeDir()
+	home, _ := buildinfo.Home()
 	projectDir, err := invocationRoot(flags)
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
@@ -271,7 +272,7 @@ func Main() int {
 // handleCoreCommands runs the core process routes. It reports whether the
 // invocation was one of them and the process exit code.
 func handleCoreCommands(flags CLIFlags) (int, bool) {
-	home, _ := os.UserHomeDir()
+	home, _ := buildinfo.Home()
 	switch {
 	case flags.Core:
 		if err := RunCore(CoreOptions{Home: home, Server: flags.Server, Grace: flags.CoreGrace}); err != nil {
@@ -302,6 +303,7 @@ func handleCoreCommands(flags CLIFlags) (int, bool) {
 			mode = "server"
 		}
 		fmt.Printf("core pid %d, %s, up since %s\n", status.PID, mode, status.StartedAt.Format(time.RFC3339))
+		fmt.Printf("executable: %s\n", status.Executable)
 		fmt.Printf("shells attached: %d\n", status.Clients)
 		for _, w := range status.Workspaces {
 			fmt.Printf("  %s  agents=%d sessions=%d turns=%d children=%d commands=%d compaction=%d memory=%d operations=%d\n",
