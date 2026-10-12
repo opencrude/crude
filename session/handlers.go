@@ -149,42 +149,6 @@ func (s *Session) YoloEnabled() bool {
 	return s != nil && s.yolo.Load()
 }
 
-func (s *Session) HandleUndo(cmd string) ttypes.UndoResultMsg {
-	if !s.turnGate.TryLock() {
-		return ttypes.UndoResultMsg{Error: "Stop the active turn before undoing file operations"}
-	}
-	defer s.turnGate.Unlock()
-	l := s.logger
-	l.Info("INPUT", "undo", "cmd", cmd)
-	if strings.HasPrefix(cmd, "/undo") {
-		return ttypes.UndoResultMsg{Error: "Legacy journal undo is retired. Use /undo in the IDE to open the Local History preview."}
-	}
-	if s.editor == nil {
-		l.Warn("EDITOR", "undo_no_editor", "cmd", cmd)
-		return ttypes.UndoResultMsg{Error: "file editor not available"}
-	}
-	if cmd == "/changes" {
-		files := s.editor.ChangedFiles()
-		l.Info("EDITOR", "changed_files", "count", len(files))
-		if len(files) == 0 {
-			return ttypes.UndoResultMsg{Desc: "No file changes this session."}
-		}
-		var sb strings.Builder
-		fmt.Fprintf(&sb, "%d file(s) changed this session:\n", len(files))
-		for _, f := range files {
-			rel, relErr := filepath.Rel(".", f)
-			if relErr != nil {
-				rel = f
-			}
-			sb.WriteString("  " + rel + "\n")
-		}
-		sb.WriteString("Use /undo in the IDE to review message-scoped Local History safely.")
-		return ttypes.UndoResultMsg{Desc: sb.String()}
-	}
-	l.Warn("INPUT", "undo_unknown", "cmd", cmd)
-	return ttypes.UndoResultMsg{}
-}
-
 func (s *Session) HandleSettingsSave(tuiSettings ttypes.Settings) error {
 	_, err := s.SaveSettingsSnapshot(tuiSettings)
 	return err

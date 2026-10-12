@@ -99,6 +99,8 @@ type SettingsFetchResult struct {
 	// ConnectionSecretFields reports exactly which write-only connection fields
 	// hold a value, so shells can show and keep each one without receiving it.
 	ConnectionSecretFields map[string]ConnectionSecretPresence `json:"connection_secret_fields,omitempty"`
+	// TerminalShells are detected on the core's machine, which may be remote.
+	TerminalShells []types.TerminalShell `json:"terminal_shells,omitempty"`
 }
 
 // ConnectionSecretPresence flags each redacted connection field.

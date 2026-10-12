@@ -56,5 +56,7 @@ func isolate() error {
 			return err
 		}
 	}
-	return nil
+	// A developer's dev profile must not leak in, and per-test HOME overrides
+	// must keep deciding where crude data lives.
+	return os.Unsetenv("CRUDE_HOME")
 }

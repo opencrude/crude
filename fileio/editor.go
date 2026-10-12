@@ -14,13 +14,13 @@ import (
 	"crude/logger"
 )
 
+// Editor performs exact, receipt-prepared file mutations for one session.
+// Recovery and undo belong to Local History operation receipts.
 type Editor struct {
-	sessionID     string
-	msgID         string
-	journal       *Journal
-	policy        *pathPolicy
-	logger        *logger.Logger
-	journalWrites bool
+	sessionID string
+	msgID     string
+	policy    *pathPolicy
+	logger    *logger.Logger
 }
 
 // MutationStateKind identifies the kind of an exact path image.
@@ -122,32 +122,8 @@ type MutationComplete func(operationID string, committed bool) error
 // completion callback is invoked exactly once after preparation.
 type MutationPrepare func(MutationReceipt) (MutationComplete, error)
 
-func NewEditorWithLogger(sessionID string, lg *logger.Logger) (*Editor, error) {
-	j, err := OpenJournal(sessionID, lg)
-	if err != nil {
-		return nil, fmt.Errorf("editor: open journal: %w", err)
-	}
-	return &Editor{
-		sessionID:     sessionID,
-		journal:       j,
-		policy:        defaultPathPolicy(),
-		logger:        lg,
-		journalWrites: true,
-	}, nil
-}
-
-func NewEditorWithSessionDir(sessionID, sessionsRoot string, lg *logger.Logger) (*Editor, error) {
-	j, err := OpenJournalAtDir(sessionID, sessionsRoot, lg)
-	if err != nil {
-		return nil, fmt.Errorf("editor: open journal: %w", err)
-	}
-	return &Editor{
-		sessionID:     sessionID,
-		journal:       j,
-		policy:        defaultPathPolicy(),
-		logger:        lg,
-		journalWrites: true,
-	}, nil
+func NewEditor(sessionID string, lg *logger.Logger) *Editor {
+	return &Editor{sessionID: sessionID, policy: defaultPathPolicy(), logger: lg}
 }
 
 func GenerateSessionID() string {
@@ -167,26 +143,7 @@ func GenerateSessionID() string {
 
 func (e *Editor) WithMessage(msgID string) *Editor {
 	e.logger.Debug("EDITOR", "with_message", "msg_id", msgID)
-	return &Editor{
-		sessionID:     e.sessionID,
-		msgID:         msgID,
-		journal:       e.journal,
-		policy:        e.policy,
-		logger:        e.logger,
-		journalWrites: e.journalWrites,
-	}
-}
-
-func (e *Editor) SetLegacyJournalWrites(enabled bool) { e.journalWrites = enabled }
-func (e *Editor) recordJournal(entry JournalEntry) error {
-	if !e.journalWrites {
-		return nil
-	}
-	return e.journal.record(entry)
-}
-
-func (e *Editor) Close() error {
-	return e.journal.Close()
+	return &Editor{sessionID: e.sessionID, msgID: msgID, policy: e.policy, logger: e.logger}
 }
 
 func (e *Editor) Read(path string) (string, error) {
@@ -296,10 +253,6 @@ func (e *Editor) writeBytesTracked(path string, newBytes []byte, prepare Mutatio
 		if err := validateParentDir(abs); err != nil {
 			return fmt.Errorf("write %s: %w", path, err)
 		}
-		entry := buildCreateEntry(e.sessionID, e.msgID, opID, abs, newBytes)
-		if err := e.recordJournal(entry); err != nil {
-			return fmt.Errorf("write %s: journal: %w", path, err)
-		}
 		start := time.Now()
 		writeErr := writeMutationFileChecked(abs, newBytes, 0644, e.logger, absentState(), parentGuard)
 		dur := time.Since(start).Milliseconds()
@@ -316,10 +269,6 @@ func (e *Editor) writeBytesTracked(path string, newBytes []byte, prepare Mutatio
 	newSize := len(newBytes)
 	e.logger.Debug("FILEIO", "write_overwrite", "path", abs, "old_size", oldSize, "new_size", newSize, "delta", newSize-oldSize, "op_id", opID)
 
-	entry, err := buildWriteEntry(e.sessionID, e.msgID, opID, abs, existing, newBytes, fi.Mode().Perm())
-	if err != nil {
-		return fmt.Errorf("write %s: build journal entry: %w", path, err)
-	}
 	complete, err := prepareMutation(prepare, MutationReceipt{OperationID: opID, OperationName: "write_file", Paths: []MutationPathState{{Path: abs, Before: regularState(existing, fi.Mode()), After: regularState(newBytes, fi.Mode())}}})
 	if err != nil {
 		return fmt.Errorf("write %s: prepare: %w", path, err)
@@ -328,9 +277,6 @@ func (e *Editor) writeBytesTracked(path string, newBytes []byte, prepare Mutatio
 	before := regularState(existing, fi.Mode())
 	if err := validateMutationState(abs, before); err != nil {
 		return fmt.Errorf("write %s: precondition: %w", path, err)
-	}
-	if err := e.recordJournal(entry); err != nil {
-		return fmt.Errorf("write %s: journal: %w", path, err)
 	}
 	start := time.Now()
 	writeErr := writeMutationFileChecked(abs, newBytes, fi.Mode(), e.logger, before, parentGuard)
@@ -382,11 +328,6 @@ func (e *Editor) PatchTracked(path string, ops []SearchReplace, prepare Mutation
 	newBytes := []byte(newContent)
 	opID := newOpID()
 
-	entry, err := buildWriteEntry(e.sessionID, e.msgID, opID, abs, oldBytes, newBytes, fi.Mode().Perm())
-	if err != nil {
-		e.logger.Error("FILEIO", "patch_journal_failed", "path", abs, "error", err.Error())
-		return fmt.Errorf("patch %s: build journal entry: %w", path, err)
-	}
 	complete, err := prepareMutation(prepare, MutationReceipt{OperationID: opID, OperationName: "edit_file", Paths: []MutationPathState{{Path: abs, Before: regularState(oldBytes, fi.Mode()), After: regularState(newBytes, fi.Mode())}}})
 	if err != nil {
 		return fmt.Errorf("patch %s: prepare: %w", path, err)
@@ -395,10 +336,6 @@ func (e *Editor) PatchTracked(path string, ops []SearchReplace, prepare Mutation
 	before := regularState(oldBytes, fi.Mode())
 	if err := validateMutationState(abs, before); err != nil {
 		return fmt.Errorf("patch %s: precondition: %w", path, err)
-	}
-	if err := e.recordJournal(entry); err != nil {
-		e.logger.Error("FILEIO", "patch_journal_record_failed", "path", abs, "error", err.Error())
-		return fmt.Errorf("patch %s: journal: %w", path, err)
 	}
 	start := time.Now()
 	writeErr := writeMutationFileChecked(abs, newBytes, fi.Mode(), e.logger, before, parentGuard)
@@ -452,13 +389,6 @@ func (e *Editor) deleteTracked(path string, prepare MutationPrepare) (resultErr 
 		return fmt.Errorf("delete %s: precondition: %w", path, err)
 	}
 
-	entry, err := buildDeleteEntry(e.sessionID, e.msgID, opID, abs, oldBytes, fi.Mode().Perm())
-	if err != nil {
-		return fmt.Errorf("delete %s: build journal entry: %w", path, err)
-	}
-	if err := e.recordJournal(entry); err != nil {
-		return fmt.Errorf("delete %s: journal: %w", path, err)
-	}
 	start := time.Now()
 	if err := parentGuard.validate(abs); err != nil {
 		return fmt.Errorf("delete %s: precommit: %w", path, err)
@@ -553,13 +483,6 @@ func (e *Editor) MoveTracked(src, dst string, prepare MutationPrepare) (resultEr
 	if err := validateParentDir(dstAbs); err != nil {
 		return fmt.Errorf("move %s: %w", dst, err)
 	}
-	entry, err := buildMoveEntry(e.sessionID, e.msgID, opID, srcAbs, dstAbs, oldBytes, fi.Mode().Perm())
-	if err != nil {
-		return fmt.Errorf("move %s → %s: build journal entry: %w", src, dst, err)
-	}
-	if err := e.recordJournal(entry); err != nil {
-		return fmt.Errorf("move %s → %s: journal: %w", src, dst, err)
-	}
 	start := time.Now()
 	if err := srcParentGuard.validate(srcAbs); err != nil {
 		return fmt.Errorf("move %s → %s: source precommit: %w", src, dst, err)
@@ -646,10 +569,6 @@ func (e *Editor) CopyTracked(src, dst string, prepare MutationPrepare) (resultEr
 	}
 	if err := validateParentDir(dstAbs); err != nil {
 		return fmt.Errorf("copy %s: %w", dst, err)
-	}
-	entry := buildCopyEntry(e.sessionID, e.msgID, opID, dstAbs, data)
-	if err := e.recordJournal(entry); err != nil {
-		return fmt.Errorf("copy %s → %s: journal: %w", src, dst, err)
 	}
 	return writeMutationFileChecked(dstAbs, data, afterMode, e.logger, dstState, dstParentGuard)
 }
@@ -795,58 +714,6 @@ func rejectHardlinkMutation(path string, info os.FileInfo) error {
 		return fmt.Errorf("refusing to mutate hard-linked file %s because selective undo cannot preserve link topology", path)
 	}
 	return nil
-}
-
-func (e *Editor) UndoLast() error {
-	return e.journal.UndoLast()
-}
-
-func (e *Editor) UndoMessage(msgID string) error {
-	return e.journal.UndoMessage(msgID)
-}
-
-func (e *Editor) UndoN(n int) error {
-	return e.journal.UndoN(n)
-}
-
-func (e *Editor) UndoSession() error {
-	return e.journal.UndoSession()
-}
-
-func (e *Editor) Log() []JournalEntry {
-	out := make([]JournalEntry, len(e.journal.entries))
-	copy(out, e.journal.entries)
-	return out
-}
-
-func (e *Editor) MessageLog(msgID string) []JournalEntry {
-	var out []JournalEntry
-	for _, entry := range e.journal.entries {
-		if entry.MsgID == msgID {
-			out = append(out, entry)
-		}
-	}
-	return out
-}
-
-func (e *Editor) ChangedFiles() []string {
-	seen := make(map[string]bool)
-	var paths []string
-	for _, entry := range e.journal.entries {
-		if !seen[entry.Path] {
-			seen[entry.Path] = true
-			paths = append(paths, entry.Path)
-		}
-		if entry.DestPath != "" && !seen[entry.DestPath] {
-			seen[entry.DestPath] = true
-			paths = append(paths, entry.DestPath)
-		}
-	}
-	return paths
-}
-
-func (e *Editor) HasChanges() bool {
-	return len(e.journal.entries) > 0
 }
 
 func newOpID() string {

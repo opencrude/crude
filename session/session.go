@@ -124,11 +124,14 @@ type Session struct {
 	toolCallCount   int
 	toolCallCountMu sync.Mutex
 
-	db                       *sql.DB
-	dbPath                   string
-	turnNumber               int
-	toolCallSeq              int
-	closing                  int32
+	db          *sql.DB
+	dbPath      string
+	turnNumber  int
+	toolCallSeq int
+	closing     int32
+	// pruned records that Close found nothing durable to keep and removed the
+	// session's storage; the workspace registry must then forget the session.
+	pruned                   atomic.Bool
 	hardCancelled            int32
 	activeTurns              atomic.Int32
 	turnGate                 sync.RWMutex
@@ -353,7 +356,6 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 	if sessionDir != "" {
 		_ = os.MkdirAll(sessionDir, 0700)
 	}
-	fileio.SetSessionsRootFn(func() (string, error) { return sessionDir, nil })
 
 	lg, err := logger.New(logger.Options{
 		HomeDir:        homeDir,
@@ -368,9 +370,6 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 	var db *sql.DB
 	defer func() {
 		if !resourcesTransferred {
-			if editor != nil {
-				editor.Close()
-			}
 			if db != nil {
 				_ = db.Close()
 			}
@@ -416,11 +415,7 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 	diff.SetLogger(lg)
 	fileio.SetSafetyLogger(lg)
 
-	editor, err = fileio.NewEditorWithSessionDir(sessionID, filepath.Dir(lg.SessionDir()), lg)
-	if err != nil {
-		return nil, fmt.Errorf("session editor: %w", err)
-	}
-	editor.SetLegacyJournalWrites(false)
+	editor = fileio.NewEditor(sessionID, lg)
 
 	name, nameErr := allocateAgentName(homeDir)
 	if nameErr != nil {
@@ -563,9 +558,6 @@ func (s *Session) Close() {
 	// provider work resumes from durable watermarks on the next open.
 	s.finishMemoryJobs()
 
-	if s.editor != nil {
-		s.editor.Close()
-	}
 	hasMsgs := s.HasMessages() || len(s.QueuedInputs()) != 0
 	// A preflight-blocked turn may own an exact pending input without a
 	// transcript yet. Never prune its recovery DB as an empty session.
@@ -577,6 +569,16 @@ func (s *Session) Close() {
 		} else {
 			hasMsgs = len(checkpoints) > 0
 		}
+	}
+	// Collaboration lives in the workspace database. A peer's delivery to this
+	// idle session, or any run, event or claim of its agents, is work it must
+	// keep even without a transcript; otherwise its directory entry retires.
+	if store := s.CollaborationStore(); store != nil && !hasMsgs {
+		retired, err := store.RetireUnreferencedSession(context.Background(), s.sessionID)
+		if err != nil {
+			s.logger.Error("COLLAB", "close_retire_failed", "error", err.Error())
+		}
+		hasMsgs = err != nil || !retired
 	}
 
 	if s.db != nil {
@@ -594,11 +596,19 @@ func (s *Session) Close() {
 	s.logger.Close()
 	if !hasMsgs {
 		_ = s.logger.Remove()
+		pruned := true
 		if s.dbPath != "" {
-			_ = os.Remove(s.dbPath)
+			if err := os.Remove(s.dbPath); err != nil && !os.IsNotExist(err) {
+				pruned = false // The database stays resumable and registered.
+			}
 		}
+		s.pruned.Store(pruned)
 	}
 }
+
+// Pruned reports that Close removed this empty session's storage, so it no
+// longer exists anywhere and must not stay registered.
+func (s *Session) Pruned() bool { return s != nil && s.pruned.Load() }
 
 func (s *Session) SessionDir() string {
 	return s.logger.SessionDir()

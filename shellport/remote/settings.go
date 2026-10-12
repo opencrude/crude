@@ -5,6 +5,7 @@ import (
 	"errors"
 	"maps"
 	"reflect"
+	"slices"
 
 	"crude/coreprotocol"
 	"crude/provider"
@@ -89,6 +90,7 @@ func (w *Workspace) AppDefaults() types.AppSettings {
 	value.Accounts = w.settings.accounts()
 	value.Capabilities = markStoredCapabilities(value.Capabilities, w.settings.current.fetch.ConnectionSecretFields)
 	value.ApplicationRevision, value.WorkspaceRevision = w.settings.current.fetch.ApplicationRevision, w.settings.current.fetch.WorkspaceRevision
+	value.TerminalShells = slices.Clone(w.settings.current.fetch.TerminalShells)
 	return value
 }
 
@@ -99,6 +101,7 @@ func (w *Workspace) LoadAppSettings() types.AppSettings {
 	value.Accounts = w.settings.accounts()
 	value.Capabilities = markStoredCapabilities(value.Capabilities, w.settings.current.fetch.ConnectionSecretFields)
 	value.ApplicationRevision, value.WorkspaceRevision = w.settings.current.fetch.ApplicationRevision, w.settings.current.fetch.WorkspaceRevision
+	value.TerminalShells = slices.Clone(w.settings.current.fetch.TerminalShells)
 	return value
 }
 

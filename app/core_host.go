@@ -2,9 +2,11 @@ package app
 
 import (
 	"context"
+	"crude/buildinfo"
 	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"net"
 	"os"
 	"os/exec"
@@ -37,7 +39,7 @@ type CoreOptions struct {
 }
 
 // DataDir is the per-user data directory that owns the core endpoint.
-func DataDir(home string) string { return filepath.Join(home, ".crude") }
+func DataDir(home string) string { return filepath.Join(home, buildinfo.DataDir()) }
 
 // CoreLogPath is where a detached core writes its diagnostics.
 func CoreLogPath(home string) string { return filepath.Join(DataDir(home), "core.log") }
@@ -50,7 +52,7 @@ var errCoreOwned = errors.New("another core already serves this data directory")
 // every retained workspace for this user; shells are clients of it.
 func RunCore(opts CoreOptions) error {
 	if opts.Home == "" {
-		opts.Home, _ = os.UserHomeDir()
+		opts.Home, _ = buildinfo.Home()
 	}
 	if opts.Grace <= 0 {
 		opts.Grace = DefaultCoreGrace
@@ -304,16 +306,27 @@ func spawnCore(home string) error {
 		return err
 	}
 	defer func() { _ = logFile.Close() }()
-	cmd := exec.Command(exe, "--core")
-	cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, logFile, logFile
-	cmd.Dir = home
-	cmd.SysProcAttr = detachedProcAttr()
-	if err := cmd.Start(); err != nil {
-		return err
+	// A start of another build may prune this image between staging and
+	// execution; staging again is the complete recovery.
+	for attempt := 0; ; attempt++ {
+		image, err := stageCoreImage(home, exe, BuildID())
+		if err != nil {
+			return fmt.Errorf("stage core executable: %w", err)
+		}
+		cmd := exec.Command(image, "--core")
+		cmd.Stdin, cmd.Stdout, cmd.Stderr = nil, logFile, logFile
+		cmd.Dir = home
+		cmd.SysProcAttr = detachedProcAttr()
+		if err := cmd.Start(); err != nil {
+			if attempt == 0 && errors.Is(err, fs.ErrNotExist) {
+				continue
+			}
+			return err
+		}
+		// Reap without waiting on the core's lifetime.
+		go func() { _ = cmd.Wait() }()
+		return nil
 	}
-	// Reap without waiting on the core's lifetime.
-	go func() { _ = cmd.Wait() }()
-	return nil
 }
 
 // RunCoreStdio relays one framed connection between stdio and the local core.
@@ -443,7 +456,7 @@ func replaceStaleCore(ctx context.Context, home string, client *coreclient.Clien
 		for _, w := range busy {
 			detail += fmt.Sprintf("; %s has active work (turns=%d children=%d commands=%d)", w.Root, w.Active.Turns, w.Active.Children, w.Active.AsyncCommands)
 		}
-		return false, fmt.Errorf("a core from a different build (pid %d) is still in use: %s. Close the other shells or let the work finish, then retry; `crude --core-stop --force` stops it anyway", status.PID, detail)
+		return false, fmt.Errorf("a core from a different build (pid %d) is still in use: %s. To run this build beside it (for example developing crude inside crude), give it its own profile: set %s to a separate directory. Otherwise close the other shells or let the work finish, then retry; `crude --core-stop --force` stops it anyway", status.PID, detail, buildinfo.HomeEnv)
 	}
 	var result coreprotocol.ShutdownResult
 	err := client.Call(ctx, "", coreprotocol.CoreShutdownMethod, coreprotocol.ShutdownRequest{}, &result)

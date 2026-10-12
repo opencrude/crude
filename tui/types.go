@@ -9,7 +9,6 @@ type (
 	ModelEntry     = ttypes.ModelEntry
 	ProviderPreset = ttypes.ProviderPreset
 	ConfirmResult  = ttypes.ConfirmResult
-	UndoResultMsg  = ttypes.UndoResultMsg
 )
 
 type ChatMessage = ttypes.ChatMessage

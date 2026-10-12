@@ -11,6 +11,7 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/screens/shellterm"
 	"crude/tui/ui"
+	roottypes "crude/types"
 	"crude/workspace"
 )
 
@@ -148,7 +149,11 @@ func (m *App) applyTerminalCreated(msg terminalCreatedMsg) tea.Cmd {
 	m.terminalLeases[msg.info.ID] = msg.lease
 	screen := m.ensureTermScreen(msg.info.ID, msg.info.Title)
 	screen.SetControlled(true)
-	m.dockTerminalInfo(msg.info)
+	if m.ws.LoadAppSettings().Terminal.Placement == roottypes.TerminalPlacementFloating {
+		m.floatTerminalInfo(msg.info)
+	} else {
+		m.dockTerminalInfo(msg.info)
+	}
 	return m.terminalRefresh(msg.info.ID)
 }
 

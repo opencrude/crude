@@ -4,10 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"os"
+	"slices"
 	"sync"
 	"sync/atomic"
 	"time"
+
+	ttypes "crude/types"
 )
 
 const (
@@ -111,6 +115,7 @@ type TerminalManager struct {
 	outputSink MessageSink
 	root       string
 	host       HostInfo
+	settings   ttypes.TerminalSettings
 }
 
 type terminalSession struct {
@@ -285,9 +290,10 @@ type terminalIO interface {
 // output reaches the TUI.
 func NewTerminalManager(rootPath string) *TerminalManager {
 	return &TerminalManager{
-		items: make(map[string]*terminalSession),
-		root:  rootPath,
-		host:  DetectHost(),
+		items:    make(map[string]*terminalSession),
+		root:     rootPath,
+		host:     DetectHost(),
+		settings: ttypes.NormalizeTerminalSettings(ttypes.TerminalSettings{}),
 	}
 }
 
@@ -311,6 +317,27 @@ func (m *TerminalManager) SetOutputSink(sink MessageSink) {
 	m.mu.Lock()
 	m.outputSink = sink
 	m.mu.Unlock()
+}
+
+// SetSettings selects the shell, environment and scrollback for terminals
+// created afterwards; running terminals keep what they started with.
+func (m *TerminalManager) SetSettings(settings ttypes.TerminalSettings) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.settings = ttypes.NormalizeTerminalSettings(settings)
+	m.mu.Unlock()
+}
+
+// Settings returns the configuration new terminals start with.
+func (m *TerminalManager) Settings() ttypes.TerminalSettings {
+	if m == nil {
+		return ttypes.NormalizeTerminalSettings(ttypes.TerminalSettings{})
+	}
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return ttypes.CloneTerminalSettings(m.settings)
 }
 
 // Host returns the detected outer terminal / multiplexer.
@@ -353,9 +380,21 @@ func (m *TerminalManager) CreatePrepared(opts TerminalCreateOpts, prepare func(T
 	if title == "" {
 		title = "Terminal"
 	}
-	io, err := startTerminalIO(opts.Command, opts.Args, cwd, cols, rows)
+	settings := m.Settings()
+	command, args := opts.Command, opts.Args
+	if command == "" {
+		var err error
+		if command, args, err = ttypes.ResolveTerminalLaunch(settings, DetectTerminalShells()); err != nil {
+			return TerminalInfo{}, err
+		}
+	}
+	env := PTYEnviron(nil)
+	for _, key := range slices.Sorted(maps.Keys(settings.Environment)) {
+		env = setEnv(env, key, settings.Environment[key])
+	}
+	io, err := startTerminalIO(command, args, env, cwd, cols, rows)
 	if err != nil {
-		return TerminalInfo{}, err
+		return TerminalInfo{}, fmt.Errorf("start %s: %w", command, err)
 	}
 	sess := &terminalSession{
 		id:        id,

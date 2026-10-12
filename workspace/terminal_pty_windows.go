@@ -5,7 +5,6 @@ package workspace
 import (
 	"fmt"
 	"os"
-	"os/exec"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -37,19 +36,11 @@ type waitResult struct {
 	err  error
 }
 
-func startTerminalIO(command string, args []string, cwd string, cols, rows int) (terminalIO, error) {
-	shell := command
-	if shell == "" {
-		shell = findWindowsShell()
-		if args == nil {
-			args = []string{}
-		}
-	}
-
+func startTerminalIO(command string, args, env []string, cwd string, cols, rows int) (terminalIO, error) {
 	// Build the command line. CreateProcess wants a single mutable UTF-16
 	// command line string, not an argv. Quote each argument using the
 	// CommandLineToArgvW-compatible algorithm so paths with spaces survive.
-	cmdLine := buildWindowsCommandLine(shell, args)
+	cmdLine := buildWindowsCommandLine(command, args)
 
 	// Two pipe pairs: one for PTY input (we write → ConPTY reads),
 	// one for PTY output (ConPTY writes → we read).
@@ -153,7 +144,7 @@ func startTerminalIO(command string, args []string, cwd string, cols, rows int) 
 		}
 	}
 
-	envBlock, err := buildWindowsEnvBlock(PTYEnviron(nil))
+	envBlock, err := buildWindowsEnvBlock(env)
 	if err != nil {
 		windows.ClosePseudoConsole(hpc)
 		_ = windows.CloseHandle(ptyInWrite)
@@ -290,18 +281,6 @@ func (c *conpty) Pid() int {
 		return 0
 	}
 	return int(c.procInfo.ProcessId)
-}
-
-// findWindowsShell returns the preferred shell for ConPTY sessions.
-// PowerShell is preferred on Windows 10+; cmd.exe is the fallback.
-func findWindowsShell() string {
-	if p, err := exec.LookPath("powershell.exe"); err == nil {
-		return p
-	}
-	if p, err := exec.LookPath("pwsh.exe"); err == nil {
-		return p
-	}
-	return "cmd.exe"
 }
 
 // buildWindowsCommandLine constructs a CreateProcess-compatible command line

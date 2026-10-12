@@ -1,14 +1,13 @@
 package session
 
 import (
-	"os"
 	"path/filepath"
 
 	"crude/buildinfo"
 )
 
 func SessionsRoot() (string, error) {
-	home, err := os.UserHomeDir()
+	home, err := buildinfo.Home()
 	if err != nil {
 		return "", err
 	}

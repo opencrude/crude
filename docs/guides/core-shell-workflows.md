@@ -18,6 +18,34 @@ crude --core-stop                 # refuses active work/other clients
 # --force is explicit destructive shutdown, not ordinary shell close.
 ```
 
+A started core runs from a content-addressed copy of the executable,
+`~/.crude/bin/crude-core-<build-id>[.exe]`, never from the image that started it.
+`go run .` can therefore delete its temporary build when the shell exits and a
+rebuild can replace `crude.exe` while the previous core lingers, which Windows
+otherwise refuses. Copies of other builds are pruned on the next start once they
+no longer run. `crude --core-status` prints the image a core runs from.
+
+### Developing crude inside crude
+
+A shell refuses to replace a core from another build while that core has shells
+or active work, so a dev build started from a terminal inside your running crude
+cannot disturb it. Run the dev build with its own profile instead:
+
+```powershell
+$env:CRUDE_HOME = "$HOME\crude-dev"; go run .
+```
+
+```sh
+CRUDE_HOME=~/crude-dev go run .
+```
+
+`CRUDE_HOME` (`buildinfo.Home`) replaces the home directory for every crude data
+path — core endpoint, config, workspaces, sessions, history and logs — so the dev
+build starts its own core beside yours. Child tools still see the real `HOME`.
+Copy `config.json` into `<CRUDE_HOME>/.crude/` if the dev profile should reuse
+your accounts. Test binaries always isolate `CRUDE_HOME` through
+`internal/testhome`.
+
 Without `--server`, the core drains after zero clients and zero active work persist
 for `--core-grace` (a Go duration). Core failure interrupts execution; restart and
 session resume are passive, never historical provider/tool replay. Private client

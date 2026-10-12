@@ -254,6 +254,12 @@ func (op *SessionLifecycleOperation) run(ctx context.Context) (result SessionLif
 }
 
 func (w *Workspace) installSessionLifecycle(result SessionLifecycleResult) {
+	if result.Err != nil && result.cold && result.owner != nil && result.owner.backend.Pruned() && w.WorkspaceDB != nil {
+		// A failed new session closed as empty; its registry row must not outlive it.
+		if err := w.WorkspaceDB.ForgetSession(result.owner.SessionID); err != nil {
+			w.noteRegistryErr("session_forget_failed", err)
+		}
+	}
 	if result.Err != nil || result.owner == nil {
 		return
 	}

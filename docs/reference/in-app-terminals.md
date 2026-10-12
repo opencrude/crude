@@ -55,6 +55,35 @@ All libghostty effect callbacks (title, bell, pwd, clipboard) are collected
 during `vt_write` and flushed after the C call returns — handlers must never
 re-enter libghostty mid-parse.
 
+## Shell selection
+
+Settings › Terminal (application, with field-level workspace overrides) owns the
+shell, arguments, login-shell flag, extra environment, scrollback and where new
+terminals open. The core resolves the launch in `TerminalManager.CreatePrepared`
+from the effective settings it was given (`Workspace.applySettingsProjection` →
+`TerminalManager.SetSettings`); shells never send a command for an ordinary new
+terminal, and `startTerminalIO` receives an explicit command, arguments and
+environment with no fallback of its own.
+
+`workspace.DetectTerminalShells` runs on the core's machine (which may be remote
+over `--ssh`) and returns installed shells in **Auto** preference order:
+
+| Platform | Auto order | Also offered |
+|---|---|---|
+| Windows | PowerShell 7 (`pwsh`, PATH or Program Files) → Windows PowerShell 5.1 → Command Prompt (`%ComSpec%`) | Git Bash (located from its install or `git.exe`, never PATH `bash.exe`, which is the WSL launcher), WSL |
+| macOS | `$SHELL` → zsh → bash → fish → sh | |
+| Linux/other Unix | `$SHELL` → bash → zsh → fish → sh | |
+
+The list travels to the settings form as `SettingsFetchResult.TerminalShells` /
+`AppSettings.TerminalShells` (observation metadata, `json:"-"`, never persisted).
+Auto names its target (`Auto (PowerShell 7)`) and the Command field previews the
+resolved executable. A selected shell that is not installed — for example one
+synced from another machine — stays visible as `zsh (not installed)` and terminal
+creation fails with guidance; it is never silently replaced. Custom requires a
+command. Login shell adds each shell's own login arguments (`-l`, Git Bash
+`--login -i`); user arguments follow. Running terminals keep the configuration
+they started with.
+
 ## PTY input and size contracts
 
 PTY stdin is serialized by one dedicated `ptyWriter` goroutine. Its queue is
@@ -89,7 +118,13 @@ fenced to the service and workspace-switch generation; stale reads cannot
 replace a newer page.
 
 The neutral engine caps grids at 1000×500, row pages at 512 rows and scrollback
-at 10,000 lines with a 32 MiB byte budget. Client-local history pages retain
+at 10,000 lines with a 32 MiB byte budget; Settings › Terminal › Scrollback
+lowers the line limit for new terminals.
+
+In the core, terminal create, input, resize, control and row reads run on each
+workspace actor's own terminal lane. Documents, file mutations and language
+servers keep the separate resource lane, so their slow effects never delay a
+keystroke or redraw (`TestTerminalOperationsDoNotWaitBehindDocumentLane`). Client-local history pages retain
 history identity and soft-wrap metadata; selection is cleared on incompatible
 history/grid transitions rather than copied from unrelated rows.
 
@@ -186,7 +221,8 @@ and `Ctrl+Alt+P` (command palette).
 - `Ctrl+Shift+\`` new, `Ctrl+\`` focus last or create (toggles focus off when
   a terminal already owns keys)
 - Terminals activity list: **New Terminal**
-- New terminals always dock when the dock can be shown.
+- New terminals dock by default; Settings › Terminal › Open new terminals can
+  open them floating instead. Either placement can be changed afterwards.
 
 Windows uses native ConPTY (`CreatePseudoConsole` + `STARTUPINFOEX`) and assigns
 the suspended shell to the same kill-on-close Job Object authority used by

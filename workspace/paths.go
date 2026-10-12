@@ -64,7 +64,7 @@ func workspaceID(projectDir string) string {
 // WorkspaceRoot returns the base directory for all workspace folders.
 // Layout: ~/.crude/workspaces/
 func WorkspaceRoot() (string, error) {
-	home, err := os.UserHomeDir()
+	home, err := buildinfo.Home()
 	if err != nil {
 		return "", fmt.Errorf("home dir: %w", err)
 	}

@@ -181,6 +181,17 @@ func (a *actor) prepareResource(request coreprotocol.Request) (func(context.Cont
 	return nil, false
 }
 
+// terminalMethod selects the terminal lane; every other resource effect keeps
+// the document lane's admission order.
+func terminalMethod(method string) bool {
+	switch method {
+	case coreprotocol.TerminalList, coreprotocol.TerminalCreate, coreprotocol.TerminalRows, coreprotocol.TerminalControl,
+		coreprotocol.TerminalRelease, coreprotocol.TerminalInput, coreprotocol.TerminalResize, coreprotocol.TerminalClose:
+		return true
+	}
+	return false
+}
+
 func resourceMutation(method string) bool {
 	switch method {
 	case coreprotocol.DocumentRead, coreprotocol.DocumentSync, coreprotocol.TerminalList, coreprotocol.TerminalRows:

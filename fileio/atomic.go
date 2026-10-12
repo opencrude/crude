@@ -39,10 +39,6 @@ func CommitAtomicFile(from, to string) error {
 
 const maxTrackedMutationBytes int64 = 256 << 20
 
-func writeAtomic(path string, data []byte, perm os.FileMode, lg *logger.Logger) error {
-	return writeAtomicChecked(path, data, perm, lg, nil)
-}
-
 // WriteAtomicChecked replaces path with data after precommit succeeds. It is
 // the shared low-level commit primitive for workspace mutation services; policy
 // and precondition ownership stay with the caller.

@@ -300,16 +300,6 @@ func (w *Workspace) HandleFetchModels(providerID, accountID, baseURL, standardID
 	return w.PrepareAccountModels(providerID, accountID, baseURL, standardID)()
 }
 
-// HandleUndoForAgent applies an undo to the session that owns agentID. The
-// explicit owner keeps an async slash command from following a later tab
-// switch into a different session.
-func (w *Workspace) HandleUndoForAgent(agentID, cmd string) ttypes.UndoResultMsg {
-	if sess := w.sessionForAgent(agentID); sess != nil && sess.backend != nil {
-		return sess.backend.HandleUndo(cmd)
-	}
-	return ttypes.UndoResultMsg{Error: "no active session"}
-}
-
 // HandleCompactForAgent compacts only the session captured when the slash
 // command was submitted.
 func (w *Workspace) HandleCompactForAgent(agentID string) ttypes.CompactResultMsg {

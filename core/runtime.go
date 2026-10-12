@@ -393,27 +393,30 @@ type actor struct {
 	// jobCancels cancels exactly one requester's in-flight job.
 	jobCancels map[string]context.CancelFunc
 	// progress delivers request-scoped output to the requesting connection.
-	progress         func(coreprotocol.Owner, coreprotocol.Progress)
-	runtime          *Runtime
-	id               string
-	ws               *workspace.Workspace
-	receipts         *receiptJournal
-	commands         chan actorCommand
-	ingress          chan workspace.AgentEvent
-	serviceEvents    chan any
-	stop             chan struct{}
-	done             chan struct{}
-	once             sync.Once
-	subscribers      map[*Connection]struct{}
-	revision         uint64
-	ctx              context.Context
-	cancel           context.CancelFunc
-	jobs             chan actorJobResult
-	inFlight         int
-	lifecycle        bool
-	settingsBusy     bool
-	settingsQueue    []actorCommand
-	resourceLane     *resourceLane
+	progress      func(coreprotocol.Owner, coreprotocol.Progress)
+	runtime       *Runtime
+	id            string
+	ws            *workspace.Workspace
+	receipts      *receiptJournal
+	commands      chan actorCommand
+	ingress       chan workspace.AgentEvent
+	serviceEvents chan any
+	stop          chan struct{}
+	done          chan struct{}
+	once          sync.Once
+	subscribers   map[*Connection]struct{}
+	revision      uint64
+	ctx           context.Context
+	cancel        context.CancelFunc
+	jobs          chan actorJobResult
+	inFlight      int
+	lifecycle     bool
+	settingsBusy  bool
+	settingsQueue []actorCommand
+	resourceLane  *resourceLane
+	// terminalLane orders PTY effects independently of documents, files and
+	// language servers, so their slow work never delays a keystroke.
+	terminalLane     *resourceLane
 	fileWatch        *coreFileWatch
 	documentReleases []document.Owner
 }
@@ -432,6 +435,7 @@ func newActor(id string, ws *workspace.Workspace, receipts *receiptJournal) *act
 	ctx, cancel := context.WithCancel(context.Background())
 	a := &actor{ctx: ctx, cancel: cancel, jobs: make(chan actorJobResult, 16), id: id, ws: ws, receipts: receipts, commands: make(chan actorCommand, 128), ingress: make(chan workspace.AgentEvent, 1024), stop: make(chan struct{}), done: make(chan struct{}), subscribers: make(map[*Connection]struct{}), revision: 1}
 	a.resourceLane = newResourceLane(ctx, 32)
+	a.terminalLane = newResourceLane(ctx, 32)
 	a.lspViews = newLSPViews(ws.LiveDocuments)
 	a.serviceEvents = make(chan any, 256)
 	bus := workspace.NewEventBus()
@@ -692,6 +696,7 @@ func (a *actor) close() {
 		a.fileWatch.Close()
 		<-a.done
 		a.resourceLane.close()
+		a.terminalLane.close()
 		for _, owner := range a.documentReleases {
 			if a.ws.LiveDocuments != nil {
 				a.ws.LiveDocuments.ReleaseDetached(owner)
@@ -1115,7 +1120,11 @@ func (a *actor) startJob(command actorCommand) bool {
 		a.jobs <- actorJobResult{command: command, apply: apply, lifecycle: lifecycle, journal: journal, admitted: true, settings: settingsExclusive}
 	}
 	if resourceKnown || lspKnown || (filesKnown && filesMutation(request.Method)) {
-		if !a.resourceLane.submit(func(context.Context) { work() }) {
+		lane := a.resourceLane
+		if terminalMethod(request.Method) {
+			lane = a.terminalLane
+		}
+		if !lane.submit(func(context.Context) { work() }) {
 			a.finishJob(actorJobResult{command: command, admitted: true, journal: journal, apply: func() coreprotocol.Response { return fault(request, "cancelled", "resource owner is closing") }})
 		}
 	} else {

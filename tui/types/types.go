@@ -58,7 +58,6 @@ type (
 	ProviderPreset       = model.ProviderPreset
 	ConfirmResult        = model.ConfirmResult
 	QuestionResult       = model.QuestionResult
-	UndoResultMsg        = model.UndoResultMsg
 	CompactResultMsg     = model.CompactResultMsg
 	ChatMessage          = model.ChatMessage
 	AgentEventMsg        = model.AgentEventMsg

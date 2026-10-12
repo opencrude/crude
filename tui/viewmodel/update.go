@@ -769,18 +769,6 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case rendering.ClipboardErrorMsg:
 		m.ws.Logger().Error("CLIPBOARD", "error", "error", string(msg))
 		m.Feedback.NotifyError(string(msg))
-	case ttypes.UndoResultMsg:
-		if msg.Error != "" {
-			m.ws.Logger().Error("JOURNAL", "undo_error", "error", msg.Error)
-			m.Feedback.NotifyError(msg.Error)
-		}
-		if msg.Desc != "" && m.AgentView.ActiveID() != "" {
-			m.appendActiveMessage(ttypes.ChatMessage{
-				Role:    ttypes.RoleAssistant,
-				Content: msg.Desc,
-				Time:    time.Now(),
-			})
-		}
 	case ttypes.HistoryMessagesMsg:
 		m.hydrateActiveMessages(msg)
 	case pickerPathSearchResultMsg:

@@ -87,7 +87,7 @@ func TestConPTYResize(t *testing.T) {
 // TestTerminalCloseKillsProcessGroup. ConPTY does not have process groups, so
 // we check that the direct child process is no longer running after Close.
 func TestConPTYCloseKillsChild(t *testing.T) {
-	io, err := startTerminalIO("", nil, t.TempDir(), 40, 10)
+	io, err := startTerminalIO("cmd.exe", nil, PTYEnviron(nil), t.TempDir(), 40, 10)
 	if err != nil {
 		t.Fatalf("start PTY: %v", err)
 	}

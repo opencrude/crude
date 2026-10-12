@@ -158,6 +158,8 @@ type modelSnapshot struct {
 
 // Model is the workspace settings screen state.
 type Model struct {
+	// terminalShells are detected on the core's machine; Auto resolves to the first.
+	terminalShells      []types.TerminalShell
 	th                  *theme.Theme
 	categories          []Category
 	selected            int
@@ -301,6 +303,7 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		autoReviewer:        current.Safety.AutoPermission.Normalized(),
 		capabilities:        capability.Normalize(current.Capabilities),
 		capabilityDiscovery: make(map[capability.Kind][]capability.Entry),
+		terminalShells:      slices.Clone(current.TerminalShells),
 	}
 	accountIDs := make([]string, 0, len(m.accounts))
 	for id := range m.accounts {
@@ -380,6 +383,7 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 		Category{Name: "Sources", Group: "AI", Description: "Where Skills and MCP search: built-in registries plus your own repositories and folders.", Form: formModel()},
 		Category{Name: "Acquisition", Group: "AI", Description: "When agents may pick or install capabilities on their own, and the limits they work within.", Form: m.buildAcquisitionForm()},
 		Category{Name: "Language Servers", Group: "IDE", Description: "The server behind each language. Open one to change its command, arguments or environment.", Form: formModel()},
+		Category{Name: "Terminal", Group: "IDE", Description: "The shell integrated terminals start, its environment, and where new terminals open.", Form: m.buildTerminalForm(current.Terminal)},
 	)
 	for index := range m.categories {
 		category := index
@@ -1738,6 +1742,10 @@ func (m *Model) isAgentCategory(index int) bool {
 }
 
 func (m *Model) handleFieldChanged(category int, fieldID string) {
+	if category == catTerminal && fieldID == fieldTerminalShell {
+		m.syncTerminalCommand(m.categories[catTerminal].Form)
+		return
+	}
 	if category == catAppearance && fieldID == "preset" {
 		m.syncAppearanceColors()
 		return
@@ -2302,6 +2310,9 @@ func railPosition(index int) int {
 	switch index {
 	case catLanguageServers:
 		return catLSP*2 + 1
+	case catTerminal:
+		// Terminal follows Interface, the other window-chrome page.
+		return catUI*2 + 1
 	case catAgents:
 		// The Agents catalog takes the Main Agent role's place.
 		return catMain * 2
@@ -2337,6 +2348,7 @@ const (
 	catSources
 	catAcquisition
 	catLanguageServers
+	catTerminal
 )
 
 func (m *Model) currentOverrideKey() string {
@@ -2359,6 +2371,8 @@ func (m *Model) currentOverrideKey() string {
 		return "safety"
 	case catHistory:
 		return "local_history"
+	case catTerminal:
+		return "terminal"
 	case catSkills, catMCP, catSources, catAcquisition:
 		return "capabilities"
 	default:
@@ -2381,6 +2395,7 @@ func (m *Model) AppSettings() types.AppSettings {
 	m.collectLSP(&settings.LSP)
 	m.collectUI(&settings.UI)
 	m.collectFont(&settings.Font)
+	m.collectTerminal(&settings.Terminal)
 	settings.Capabilities = capability.Clone(m.capabilities)
 	settings.Capabilities.Acquisition = m.acquisitionFromForm()
 	return settings

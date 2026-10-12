@@ -128,7 +128,7 @@ func TerminfoDir() string {
 	if dir := os.Getenv("CRUDE_TERMINFO_DIR"); dir != "" {
 		return dir
 	}
-	home, err := os.UserHomeDir()
+	home, err := buildinfo.Home()
 	if err != nil {
 		return ""
 	}

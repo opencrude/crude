@@ -14,7 +14,7 @@ import (
 	"crude/network"
 	"crude/provider"
 	"crude/session"
-	ttypes "crude/tui/types"
+	ttypes "crude/types"
 	captypes "crude/types/capability"
 )
 
@@ -30,6 +30,7 @@ type FileConfig struct {
 	Memory          *ttypes.MemorySettings       `json:"memory,omitempty"`
 	Safety          *ttypes.SafetySettings       `json:"safety,omitempty"`
 	LocalHistory    *ttypes.LocalHistorySettings `json:"local_history,omitempty"`
+	Terminal        *ttypes.TerminalSettings     `json:"terminal,omitempty"`
 	Capabilities    *captypes.Settings           `json:"capabilities,omitempty"`
 	Network         *network.Settings            `json:"network,omitempty"`
 }
@@ -46,7 +47,7 @@ func DefaultFileConfig() FileConfig {
 }
 
 func ConfigPath() string {
-	home, err := os.UserHomeDir()
+	home, err := buildinfo.Home()
 	if err != nil {
 		return "crude_config.json"
 	}
@@ -212,6 +213,9 @@ func FileConfigToAppSettings(fc FileConfig) ttypes.AppSettings {
 		s.LocalHistory = *fc.LocalHistory
 		s.LocalHistory.ExtraIgnorePatterns = append([]string(nil), fc.LocalHistory.ExtraIgnorePatterns...)
 	}
+	if fc.Terminal != nil {
+		s.Terminal = ttypes.CloneTerminalSettings(*fc.Terminal)
+	}
 	ttypes.ApplyAppDefaults(&s)
 	return s
 }
@@ -230,6 +234,8 @@ func ApplyAppSettingsToFileConfig(fc *FileConfig, s ttypes.AppSettings) {
 	fc.Memory = &memorySettings
 	fc.Safety = &safetySettings
 	fc.LocalHistory = &historySettings
+	terminalSettings := ttypes.CloneTerminalSettings(s.Terminal)
+	fc.Terminal = &terminalSettings
 	networkSettings := network.Normalize(s.Network)
 	fc.Network = &networkSettings
 	capabilities := captypes.Clone(s.Capabilities)

@@ -17,6 +17,7 @@
 package app
 
 import (
+	"crude/buildinfo"
 	"fmt"
 	"os"
 	"sync"
@@ -96,7 +97,7 @@ func New(opts Opts) (*App, error) {
 	}
 	home := opts.Home
 	if home == "" {
-		home, _ = os.UserHomeDir()
+		home, _ = buildinfo.Home()
 	}
 
 	return &App{

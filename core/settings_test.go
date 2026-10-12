@@ -3,6 +3,7 @@ package core
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -136,5 +137,25 @@ func TestConfigProfilesProduceStableSettingsRevision(t *testing.T) {
 		if len(value.Agents.Profiles) != 3 || value.Agents.Profiles[0].Name != "alpha" || value.Agents.Profiles[1].Name != "middle" || value.Agents.Profiles[2].Name != "zeta" || entityRevision(value) != first {
 			t.Fatal("profile order or revision unstable")
 		}
+	}
+}
+
+// Terminal shells are a fact of the core's machine; a remote shell must offer
+// the shells installed where its terminals will actually run.
+func TestSettingsFetchCarriesCoreHostTerminalShells(t *testing.T) {
+	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
+	defer ws.Close()
+	ws.SetAppDefaults(types.AppSettings{})
+	a := &actor{ws: ws}
+	run, _, known := a.prepareSettings(coreprotocol.Request{Method: coreprotocol.SettingsFetch, Payload: json.RawMessage(`{}`)})
+	if !known {
+		t.Fatal("fetch not dispatched")
+	}
+	var out coreprotocol.SettingsFetchResult
+	if err := json.Unmarshal(run(context.Background()).Payload, &out); err != nil {
+		t.Fatal(err)
+	}
+	if want := workspace.DetectTerminalShells(); len(want) == 0 || !reflect.DeepEqual(out.TerminalShells, want) {
+		t.Fatalf("fetched shells = %+v; want %+v", out.TerminalShells, want)
 	}
 }
