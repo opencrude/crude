@@ -98,6 +98,9 @@ Read that first; this index only organizes the reference material.
 
 ### Plans (active work only)
 
+- [Agentic control, MCP capabilities, and worktree execution](plans/agentic-control-and-capabilities.md)
+  — implementation plan for precise Crude self-control, generic MCP interoperability,
+  coherent capability autonomy and managed isolated coding work.
 - [Core and shell separation](plans/core-shell-separation.md) — active migration
   to a single runtime authority with independent local/remote TUI clients;
   remaining native, distinct-host and final performance/release gates.
