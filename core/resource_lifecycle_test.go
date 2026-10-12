@@ -112,7 +112,7 @@ func resourceRuntime(t *testing.T) (*Runtime, string) {
 		t.Fatal(err)
 	}
 	e.Close()
-	t.Setenv("HOME", t.TempDir())
+	setCoreTestHome(t, t.TempDir())
 	root := t.TempDir()
 	r, err := New(func(root string) (*workspace.Workspace, error) {
 		return workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{}), nil

@@ -108,9 +108,16 @@ func remoteJourneyUntil(t *testing.T, shells []remoteJourneyShell, condition fun
 	}
 }
 
+var remoteJourneyAmbientHome = os.Getenv("HOME")
+
 func remoteJourneyRuntime(t *testing.T, endpoint string) *core.Runtime {
 	t.Helper()
-	home := t.TempDir()
+	home := os.Getenv("HOME")
+	if home == "" || home == remoteJourneyAmbientHome {
+		home = t.TempDir()
+	}
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	runtime, err := core.New(func(root string) (*workspace.Workspace, error) {
 		if info, err := os.Stat(root); err != nil || !info.IsDir() {
 			return nil, fmt.Errorf("invalid destination %s", root)

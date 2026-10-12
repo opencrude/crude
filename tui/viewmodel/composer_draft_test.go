@@ -3,6 +3,7 @@ package viewmodel
 import (
 	"encoding/json"
 	"path/filepath"
+	"slices"
 	"testing"
 
 	"crude/sessiondb"
@@ -109,8 +110,11 @@ func TestComposerDraftRoundTripWithDB(t *testing.T) {
 	if got := app.Input.Value(); got != want {
 		t.Fatalf("hydrated draft = %q, want exact unresolved text %q", got, want)
 	}
+	// Snapshot IDs are a sorted set; random reference IDs carry no creation order.
 	ids := app.Input.SnapshotReferenceIDs()
-	if len(ids) != 2 || ids[0] != refKeep.ID || ids[1] != refGhost.ID {
+	wantIDs := []string{refKeep.ID, refGhost.ID}
+	slices.Sort(wantIDs)
+	if !slices.Equal(ids, wantIDs) {
 		t.Fatalf("hydrated references = %v, want exact original IDs", ids)
 	}
 	if cursor := app.Input.CursorFlat(); cursor < 0 || cursor > len([]rune(want)) {

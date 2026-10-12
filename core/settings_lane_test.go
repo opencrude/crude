@@ -14,7 +14,7 @@ import (
 )
 
 func TestSettingsLaneCapturesOnlyAfterPriorPublication(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setCoreTestHome(t, t.TempDir())
 	entered, release := make(chan struct{}), make(chan struct{})
 	defer func() {
 		select {

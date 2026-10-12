@@ -42,7 +42,7 @@ func callCore(t *testing.T, c *Connection, id, ws, method string, value any) cor
 }
 
 func TestRetainedTenClientsSameAgentAndOneSubmission(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setCoreTestHome(t, t.TempDir())
 	var calls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		calls.Add(1)
@@ -248,7 +248,7 @@ func TestFactoryIODoesNotHoldRegistryLock(t *testing.T) {
 }
 
 func TestActorRejectsQueuedDetachedOwnerAndStaleDecision(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setCoreTestHome(t, t.TempDir())
 	runtime, err := New(func(root string) (*workspace.Workspace, error) {
 		return workspace.NewWorkspace(root, "test", "tester", types.Settings{}, coreTestLogger{}), nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))

@@ -15,7 +15,7 @@ import (
 )
 
 func TestInvocationTypedCoreJourney(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setCoreTestHome(t, t.TempDir())
 	r, err := New(func(root string) (*workspace.Workspace, error) {
 		w := workspace.NewWorkspace(root, "saved-model", "tester", types.Settings{}, coreTestLogger{})
 		w.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})
@@ -61,7 +61,12 @@ func TestInvocationTypedCoreJourney(t *testing.T) {
 	if actor.ws.BackendSession(identity.SessionID).ModelName() != "selected-model" {
 		t.Fatal("refusal mutated session")
 	}
-	if err := filepath.WalkDir(actor.ws.WorkspaceDir, func(path string, entry os.DirEntry, err error) error {
+	workspaceDir := actor.ws.WorkspaceDir
+	c.Close()
+	if err := r.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := filepath.WalkDir(workspaceDir, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {
 			return err
 		}

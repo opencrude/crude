@@ -18,7 +18,7 @@ import (
 
 func sharedDocumentRuntime(t *testing.T) (*Runtime, string) {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	setCoreTestHome(t, t.TempDir())
 	r, err := New(func(root string) (*workspace.Workspace, error) {
 		return workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{}), nil
 	}, filepath.Join(t.TempDir(), "receipts.db"))

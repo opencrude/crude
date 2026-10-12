@@ -24,7 +24,9 @@ import (
 )
 
 func TestInvocationProviderWireKeepsPolicyAndEphemeralAuth(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	profileHome := t.TempDir()
+	t.Setenv("HOME", profileHome)
+	t.Setenv("USERPROFILE", profileHome)
 	const key = "acceptance-ephemeral-write-only-key"
 	type observed struct {
 		model, system string
@@ -118,6 +120,13 @@ func TestInvocationProviderWireKeepsPolicyAndEphemeralAuth(t *testing.T) {
 	}
 	if cfg.GetActiveDefaultCategory().Model != "saved-model" || accounts["saved"].APIKey != "saved-key" || len(accounts) != 1 {
 		t.Fatal("invocation mutated shared defaults/accounts")
+	}
+	// Release Windows' exclusive journal lock before auditing persisted bytes.
+	if err := client.Close(); err != nil {
+		t.Fatal(err)
+	}
+	if err := runtime.Close(); err != nil {
+		t.Fatal(err)
 	}
 	if err := filepath.WalkDir(home, func(path string, entry os.DirEntry, err error) error {
 		if err != nil {

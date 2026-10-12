@@ -19,7 +19,7 @@ import (
 
 func failureRuntime(t *testing.T) *Runtime {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	setCoreTestHome(t, t.TempDir())
 	r, err := New(func(root string) (*workspace.Workspace, error) {
 		ws := workspace.NewWorkspace(root, "", "tester", types.Settings{}, coreTestLogger{})
 		ws.SetAppDefaults(types.AppSettings{LocalHistory: types.LocalHistorySettings{Enabled: "off"}})

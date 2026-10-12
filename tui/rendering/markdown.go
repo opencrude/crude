@@ -1,17 +1,60 @@
 package rendering
 
 import (
+	"bytes"
 	"fmt"
 	"image/color"
+	"reflect"
+	"slices"
 
 	"crude/tui/theme"
 
-	"charm.land/glamour/v2"
 	"charm.land/glamour/v2/ansi"
 	"charm.land/glamour/v2/styles"
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/extension"
+	"github.com/yuin/goldmark/parser"
+	"github.com/yuin/goldmark/renderer"
+	"github.com/yuin/goldmark/util"
 )
 
-func MakeMdRenderer(width int, th *theme.Theme) *glamour.TermRenderer {
+// MarkdownRenderer is Glamour's ANSI node renderer over a goldmark parser that
+// does not recognize raw HTML. Chat text is not a web page: models routinely
+// write literal tags (<context>, Vec<T>), and Glamour sanitizes recognized HTML
+// away, silently deleting the user's or model's words. With HTML parsing off,
+// every angle bracket stays ordinary text and no escaping pass is needed.
+type MarkdownRenderer struct {
+	md goldmark.Markdown
+}
+
+// Render returns the ANSI-styled Markdown projection of in.
+func (r *MarkdownRenderer) Render(in string) (string, error) {
+	var buf bytes.Buffer
+	err := r.md.Convert([]byte(in), &buf)
+	return buf.String(), err
+}
+
+func newMarkdownRenderer(options ansi.Options) *MarkdownRenderer {
+	withoutHTML := func(values []util.PrioritizedValue, html any) []util.PrioritizedValue {
+		return slices.DeleteFunc(values, func(value util.PrioritizedValue) bool {
+			return reflect.TypeOf(value.Value) == reflect.TypeOf(html)
+		})
+	}
+	md := goldmark.New(
+		goldmark.WithParser(parser.NewParser(
+			parser.WithBlockParsers(withoutHTML(parser.DefaultBlockParsers(), parser.NewHTMLBlockParser())...),
+			parser.WithInlineParsers(withoutHTML(parser.DefaultInlineParsers(), parser.NewRawHTMLParser())...),
+			parser.WithParagraphTransformers(parser.DefaultParagraphTransformers()...),
+		)),
+		// Same extensions and options as glamour.NewTermRenderer.
+		goldmark.WithExtensions(extension.GFM, extension.DefinitionList),
+		goldmark.WithParserOptions(parser.WithAutoHeadingID()),
+	)
+	md.SetRenderer(renderer.NewRenderer(renderer.WithNodeRenderers(util.Prioritized(ansi.NewRenderer(options), 1000))))
+	return &MarkdownRenderer{md: md}
+}
+
+func MakeMdRenderer(width int, th *theme.Theme) *MarkdownRenderer {
 	w := width - 4 - 16
 	if w < 20 {
 		w = 20
@@ -73,14 +116,7 @@ func MakeMdRenderer(width int, th *theme.Theme) *glamour.TermRenderer {
 	style.List.Margin = uintPtr(0)
 	style.Table.Margin = uintPtr(0)
 
-	renderer, err := glamour.NewTermRenderer(
-		glamour.WithStyles(style),
-		glamour.WithWordWrap(w),
-	)
-	if err == nil {
-		return renderer
-	}
-	return nil
+	return newMarkdownRenderer(ansi.Options{WordWrap: w, Styles: style})
 }
 
 func uintPtr(u uint) *uint    { return &u }

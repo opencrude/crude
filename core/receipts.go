@@ -34,8 +34,13 @@ func privatePath(path string) error {
 			if info.Mode()&os.ModeSymlink != 0 {
 				return fmt.Errorf("receipt path contains symlink: %s", current)
 			}
-			if current == absolute && (!info.Mode().IsRegular() || info.Mode().Perm()&0077 != 0) {
-				return errors.New("receipt files must be private regular files")
+			if current == absolute {
+				if !info.Mode().IsRegular() {
+					return errors.New("receipt files must be private regular files")
+				}
+				if err := receiptFilePermissions(current, info); err != nil {
+					return fmt.Errorf("receipt file %s: %w", current, err)
+				}
 			}
 		} else if !os.IsNotExist(err) {
 			return err
@@ -67,6 +72,9 @@ func openReceipts(path string) (*receiptJournal, error) {
 	if err := lockFile.Close(); err != nil {
 		return nil, err
 	}
+	if err := privatePath(path + ".lock"); err != nil {
+		return nil, err
+	}
 	lock := flock.New(path + ".lock")
 	locked, err := lock.TryLock()
 	if err != nil {
@@ -91,6 +99,9 @@ func openReceipts(path string) (*receiptJournal, error) {
 		return nil, err
 	}
 	if err := file.Close(); err != nil {
+		return nil, err
+	}
+	if err := privatePath(path); err != nil {
 		return nil, err
 	}
 	db, err := sql.Open("sqlite", path)

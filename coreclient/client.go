@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"sync"
 	"time"
 
@@ -150,7 +151,13 @@ func (c *Client) CallRequest(ctx context.Context, request coreprotocol.Request) 
 	} else if _, exists := c.pending[request.ID]; exists {
 		err = errors.New("request already pending")
 	} else if len(c.pending) >= 16 || c.bytes+encoded.Len()+4 > 8<<20 {
-		err = errors.New("client capacity exceeded")
+		// The shell owns the terminal, so the evidence travels with the error.
+		methods := make([]string, 0, len(c.pending))
+		for _, pending := range c.pending {
+			methods = append(methods, pending.request.Method)
+		}
+		slices.Sort(methods)
+		err = fmt.Errorf("client capacity exceeded: pending=%d bytes=%d next=%s in-flight=%v", len(c.pending), c.bytes, request.Method, methods)
 	} else {
 		select {
 		case c.queue <- queued{encoded, encoded.Len() + 4}:

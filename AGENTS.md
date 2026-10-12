@@ -1142,6 +1142,15 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
   overrides inherited heading colours. Native bridges tokenize through the
   shared ANSI decoder, suppress OSC/control payloads, and carry SGR state across
   a rendered block (`BridgeAnsiLines`), not only within individual rows.
+  `rendering.MarkdownRenderer` is Glamour's ANSI renderer over goldmark with
+  only the raw-HTML parsers removed: chat text is not HTML, so `<context>` or
+  `Vec<T>` stays literal instead of being sanitized away. Never add an escaping
+  pre-pass or restore `glamour.NewTermRenderer` for chat.
+- **Child assignments display typed fields, never their envelope.** Providers
+  receive `prompt.BuildChild`'s escaped `<delegated_assignment>`; live events,
+  persisted snapshots and recovery checkpoints carry `childAssignmentDisplay`
+  (description + verbatim instructions as Markdown). Never parse the envelope
+  or model-authored structure back out of text.
 - **ANSI search false-matches**: NEVER use `strings.Index(rawLine, label)`
   on an ANSI-styled string — the label text can match inside escape codes.
   Always `stripAnsi` first, then search plain text.
@@ -1959,6 +1968,12 @@ manual workflows and acceptance boundaries.
   merely to make tests compile.
 - Run the complete package test and `go test ./...` after deletion; targeted screen
   tests cannot detect missing package-wide helpers.
+- Packages whose tests construct workspaces, sessions, history or a core use
+  `TestMain` → `internal/testhome.Run`, which points HOME, USERPROFILE and the
+  platform data dirs at one temp profile. Setting only `HOME` is not isolation
+  on Windows (`os.UserHomeDir` reads USERPROFILE); it wrote >1000 test
+  workspaces and sessions into a real profile. Add the TestMain to any new
+  package that can reach `~/.crude`.
 
 ---
 

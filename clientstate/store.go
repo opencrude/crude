@@ -132,6 +132,10 @@ func Open(path string) (*Store, error) {
 		return nil, err
 	}
 	u := url.URL{Scheme: "file", Path: filepath.ToSlash(abs)}
+	// A Windows drive belongs in the URI path, not its authority.
+	if !strings.HasPrefix(u.Path, "/") {
+		u.Path = "/" + u.Path
+	}
 	db, err := sql.Open("sqlite", u.String())
 	if err != nil {
 		return nil, err

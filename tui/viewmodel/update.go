@@ -889,7 +889,11 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case capabilityPickerResultMsg:
 		m.applyCapabilityPickerResult(msg)
 	case toolLayoutMsg:
-		if msg.generation == m.workspaceSwitchGen.Load() && msg.version == m.toolLayoutVersion {
+		if msg.generation == m.workspaceSwitchGen.Load() && msg.version == m.toolLayoutVersion && msg.err != nil {
+			// A failed load carries no layout; keep the current one rather than
+			// installing an empty rail. Reset navigation rewrites the stored value.
+			m.Feedback.NotifyError("Workspace layout could not be loaded; using the default navigation: " + msg.err.Error())
+		} else if msg.generation == m.workspaceSwitchGen.Load() && msg.version == m.toolLayoutVersion {
 			m.toolLayout = msg.layout
 			m.workspacePanelHeights = msg.layout.PanelHeights
 			m.activityBar.SetOrder(msg.layout.Rail)
@@ -1421,19 +1425,23 @@ func (m *App) handleAgentTabClose(index int) tea.Cmd {
 // active would break the renderer's region classification and cause
 // Ctrl+Q to attempt a no-op close instead of quitting.
 func (m *App) handleTabSwitch() {
+	prevEditorPath := m.EditorState.ActiveView
+	prevEditor := m.EditorState.Editor
+	prevAgentID := m.AgentView.ActiveID()
 	defer m.bindMainPaneFocus()
 	defer func() {
-		if m.ws.LSPMgr() != nil {
+		if prevEditorPath != m.EditorState.ActiveView && m.ws.LSPMgr() != nil {
 			m.ws.LSPMgr().SetActiveFile(m.EditorState.ActiveView)
 		}
-		m.closeCompletionPopup()
-		m.closeOutlinePopup()
-		m.closeReferencesPopup()
+		if prevEditorPath != m.EditorState.ActiveView || prevEditor != m.EditorState.Editor || prevAgentID != m.AgentView.ActiveID() {
+			m.closeCompletionPopup()
+			m.closeOutlinePopup()
+			m.closeReferencesPopup()
+		}
 	}()
 	defer m.openNextAgentPrompt()
 	// Always reset before re-deriving. This is the single source of
 	// truth for which view is active.
-	prevEditorPath := m.EditorState.ActiveView
 	m.EditorState.ActiveView = ""
 	m.AgentView.ClearActive()
 
@@ -1485,7 +1493,9 @@ func (m *App) handleTabSwitch() {
 		m.EditorState.ActiveView = path
 		m.EditorState.Editor = tab.Editor
 		m.closeFindReplaceForTab(prevEditorPath, path)
-		m.markEditorGitStaleNow()
+		if prevEditorPath != path || prevEditor != tab.Editor {
+			m.markEditorGitStaleNow()
+		}
 		return
 	}
 

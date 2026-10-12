@@ -54,7 +54,7 @@ func (w *largeDocumentWire) Read(p []byte) (int, error) {
 }
 
 func TestLargeDocumentAcceptanceRuntimeWireSnapshotReceipt(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setCoreTestHome(t, t.TempDir())
 	root, journal := t.TempDir(), filepath.Join(t.TempDir(), "receipts.db")
 	factory := func(root string) (*workspace.Workspace, error) {
 		ws := workspace.NewWorkspace(root, "", "acceptance", types.Settings{}, coreTestLogger{})

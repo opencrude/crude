@@ -60,15 +60,7 @@ func (m *App) openPaneFiles(paths []string, group window.GroupID) tea.Cmd {
 		}
 		msg.refs = m.liveOpenRefs
 	}
-	recoveryLoads := make(map[string]func() (clientstate.EditorRecoveryRecord, error), len(paths))
-	if connected {
-		for _, path := range paths {
-			if files, ok := m.ws.(shellport.ClientFiles); ok {
-				path = files.CanonicalClientPath(path)
-			}
-			recoveryLoads[path] = m.prepareEditorRecovery(path)
-		}
-	}
+	loadRecovery := m.prepareEditorRecovery()
 	return func() tea.Msg {
 		prepared := editor.NewBufferManager()
 		for _, path := range paths {
@@ -76,9 +68,7 @@ func (m *App) openPaneFiles(paths []string, group window.GroupID) tea.Cmd {
 				s, err := msg.refs.open(context.Background(), path)
 				file := paneFilePrepared{path: s.Path, err: err, snapshot: &s}
 				if err == nil {
-					if load := recoveryLoads[s.Path]; load != nil {
-						file.recovery, file.recoveryErr = load()
-					}
+					file.recovery, file.recoveryErr = loadRecovery(s.Path)
 				}
 				msg.files = append(msg.files, file)
 				continue

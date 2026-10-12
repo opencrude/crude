@@ -21,7 +21,7 @@ import (
 
 func TestCoreCompactionReceiptsFenceReplayAndShutdownCancelsExtraction(t *testing.T) {
 	home := t.TempDir()
-	t.Setenv("HOME", home)
+	setCoreTestHome(t, home)
 	t.Setenv("USERPROFILE", home)
 	entered := make(chan struct{}, 8)
 	release := make(chan struct{})

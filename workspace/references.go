@@ -4,7 +4,9 @@ import (
 	"crude/history"
 	"database/sql"
 	"encoding/base64"
+	"errors"
 	"fmt"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -90,7 +92,7 @@ func (s *ReferenceStore) CreateReference(req sessiondb.CreateRequest) (sessiondb
 		}
 	}
 	ref := sessiondb.Reference{
-		ID:        fmt.Sprintf("ref-%d-%d", time.Now().UnixNano(), idx),
+		ID:        fmt.Sprintf("ref-%016x%016x", rand.Uint64(), rand.Uint64()),
 		SessionID: s.sessionID,
 		Kind:      req.Kind,
 		Label:     label,
@@ -384,11 +386,17 @@ func (s *ReferenceStore) writeReferenceFile(label string, data []byte, ext strin
 	if base == "" {
 		base = "reference"
 	}
-	path := filepath.Join(dir, fmt.Sprintf("%s-%d%s", base, time.Now().UnixNano(), ext))
-	if err := os.WriteFile(path, data, 0600); err != nil {
+	file, err := os.CreateTemp(dir, base+"-*"+ext)
+	if err != nil {
 		return "", err
 	}
-	return path, nil
+	_, writeErr := file.Write(data)
+	closeErr := file.Close()
+	if err := errors.Join(writeErr, closeErr); err != nil {
+		_ = os.Remove(file.Name())
+		return "", err
+	}
+	return file.Name(), nil
 }
 
 func defaultReferenceLabel(kind sessiondb.Kind, idx int) string {
