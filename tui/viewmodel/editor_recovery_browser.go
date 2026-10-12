@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path"
 	"strings"
 	"unicode/utf8"
 
@@ -165,7 +166,8 @@ func (m *App) handleEditorRecoveryBrowserMessage(raw tea.Msg) (bool, tea.Cmd) {
 			if strings.Contains(r.Key.Path, "#discard-backup-") {
 				kind = "Discard backup"
 			}
-			items = append(items, ui.ListItem{ID: r.Key.Path, Label: r.Key.Path, Detail: fmt.Sprintf("%s · r%d · %d bytes", kind, r.Revision, r.Bytes), Payload: r})
+			label := path.Base(strings.ReplaceAll(r.Key.Path, "\\", "/"))
+			items = append(items, ui.ListItem{ID: r.Key.Path, Label: label, Detail: fmt.Sprintf("%s · r%d · %d bytes · %s", kind, r.Revision, r.Bytes, r.Key.Path), Payload: r})
 		}
 		p.list.SetItems(items)
 		p.detail.SetValue("Showing up to 128 private records. Select a row and Preview to load its original path and retained text. Open draft never publishes edits; an already-open editor is compared, never replaced. Close changes nothing.")

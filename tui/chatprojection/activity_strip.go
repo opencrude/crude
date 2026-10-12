@@ -6,7 +6,6 @@ import (
 	"strings"
 	"time"
 
-	"charm.land/glamour/v2"
 	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/ui"
@@ -26,7 +25,7 @@ type ActivityStrip struct {
 	tokens                   *ui.TokenSet
 	ready                    bool
 	pages                    []PaintLine
-	md                       *glamour.TermRenderer
+	md                       *rendering.MarkdownRenderer
 	cycleKey                 string
 	cycleStart               int
 	resetCycle               bool

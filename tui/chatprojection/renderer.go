@@ -6,7 +6,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"charm.land/glamour/v2"
 
 	"crude/tui/perf"
 	"crude/tui/rendering"
@@ -31,7 +30,7 @@ type Renderer struct {
 	chatAreaTop    int
 	chatAreaHeight int
 
-	mdRenderer          *glamour.TermRenderer
+	mdRenderer          *rendering.MarkdownRenderer
 	cachedWidth         int
 	width               int
 	height              int
@@ -1736,11 +1735,11 @@ func (r *Renderer) messageIndexOf(target *types.ChatMessage) int {
 	return -1
 }
 
-func (r *Renderer) MdRenderer() *glamour.TermRenderer {
+func (r *Renderer) MdRenderer() *rendering.MarkdownRenderer {
 	return r.makeMdRenderer()
 }
 
-func (r *Renderer) makeMdRenderer() *glamour.TermRenderer {
+func (r *Renderer) makeMdRenderer() *rendering.MarkdownRenderer {
 	contentWidth, _ := r.availableMessageWidths()
 	// Glamour's shared renderer intentionally has a 20-column readable-body
 	// minimum. Below that policy threshold, use the plain wrapping path so a

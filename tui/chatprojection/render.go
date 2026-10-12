@@ -5,11 +5,9 @@ import (
 
 	"crude/tui/rendering"
 	"crude/tui/types"
-
-	"charm.land/glamour/v2"
 )
 
-func renderMarkdown(content string, mdRenderer *glamour.TermRenderer) (string, bool) {
+func renderMarkdown(content string, mdRenderer *rendering.MarkdownRenderer) (string, bool) {
 	if mdRenderer == nil {
 		return "", false
 	}
@@ -26,7 +24,7 @@ func renderMarkdown(content string, mdRenderer *glamour.TermRenderer) (string, b
 	return strings.TrimRight(r, "\n"), true
 }
 
-func updateStreamingCache(msg *types.ChatMessage, mdRenderer *glamour.TermRenderer, contentWidth int) {
+func updateStreamingCache(msg *types.ChatMessage, mdRenderer *rendering.MarkdownRenderer, contentWidth int) {
 	lastNL := strings.LastIndex(msg.Content, "\n")
 	completedLen := 0
 	if lastNL >= 0 {

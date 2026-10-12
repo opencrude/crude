@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -15,6 +16,7 @@ import (
 	"crude/core"
 	"crude/coreclient"
 	"crude/coreprotocol"
+	"crude/internal/testhome"
 )
 
 // TestMain lets this test binary act as the crude executable: spawnCore and
@@ -23,18 +25,23 @@ func TestMain(m *testing.M) {
 	if os.Getenv("CRUDE_APP_TEST_MAIN") == "1" {
 		os.Exit(Main())
 	}
-	os.Exit(m.Run())
+	os.Exit(testhome.Run(m))
 }
 
 // coreTestHome isolates every core path (socket, config, sessions, logs). Unix
-// socket paths are length-limited, so the home lives directly under /tmp.
+// socket paths are length-limited, so Unix homes live directly under /tmp.
 func coreTestHome(t *testing.T) string {
 	t.Helper()
-	home, err := os.MkdirTemp("/tmp", "crc")
+	parent := "/tmp"
+	if runtime.GOOS == "windows" {
+		parent = ""
+	}
+	home, err := os.MkdirTemp(parent, "crc")
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("CRUDE_APP_TEST_MAIN", "1")
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)

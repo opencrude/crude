@@ -353,7 +353,7 @@ func TestLSPManager_UpdateFile_NoClient(t *testing.T) {
 
 func TestLSPManager_QueueFileUpdateCoalescesWithoutBlocking(t *testing.T) {
 	m := NewLSPManager(nil)
-	path := "/tmp/queued.go"
+	path := filepath.Join(t.TempDir(), "queued.go")
 	m.OpenFile(context.Background(), path, "initial")
 	t.Cleanup(m.Close)
 	m.QueueFileUpdate(path, "first")

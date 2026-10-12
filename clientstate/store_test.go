@@ -1,9 +1,11 @@
 package clientstate
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"os"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -50,6 +52,49 @@ func requireError(t *testing.T, err, expected error) {
 	t.Helper()
 	if !errors.Is(err, expected) {
 		t.Fatalf("error = %v; want %v", err, expected)
+	}
+}
+
+func TestOpenFilesystemPathsPreserveDraftAndReceipt(t *testing.T) {
+	for _, relative := range []bool{false, true} {
+		t.Run(fmt.Sprintf("relative=%t", relative), func(t *testing.T) {
+			root := t.TempDir()
+			t.Chdir(root)
+			path := filepath.Join("profile #100% +", "client-state.db")
+			if !relative {
+				path = filepath.Join(root, path)
+			}
+			if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+				t.Fatal(err)
+			}
+			s := openTestStore(t, path)
+			a := attach(t, s, "client")
+			put := putFor(a, "saved", 0, fullDraft("[ref] retained draft", "ref"))
+			want, err := s.Save(t.Context(), put)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Release(t.Context(), a.ClientID, a.Epoch); err != nil {
+				t.Fatal(err)
+			}
+			if err := s.Close(); err != nil {
+				t.Fatal(err)
+			}
+			raw, err := os.ReadFile(path)
+			if err != nil || !bytes.HasPrefix(raw, []byte("SQLite format 3\x00")) {
+				t.Fatalf("database was not written to the exact filesystem path %q: %v", path, err)
+			}
+			reopened := openTestStore(t, path)
+			next := attach(t, reopened, a.ClientID)
+			got, err := reopened.Load(next.ClientID, next.Epoch, put.Key)
+			if err != nil || !reflect.DeepEqual(got, want) {
+				t.Fatalf("reopened draft = %+v, %v; want %+v", got, err, want)
+			}
+			receipt, err := reopened.LookupReceipt(t.Context(), next.ClientID, next.Epoch, put.RequestID)
+			if err != nil || !reflect.DeepEqual(receipt, want) {
+				t.Fatalf("reopened receipt = %+v, %v; want %+v", receipt, err, want)
+			}
+		})
 	}
 }
 

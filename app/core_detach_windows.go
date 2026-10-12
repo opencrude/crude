@@ -12,7 +12,8 @@ import (
 // process group, so closing the originating console does not stop it.
 func detachedProcAttr() *syscall.SysProcAttr {
 	return &syscall.SysProcAttr{
-		CreationFlags: windows.DETACHED_PROCESS | windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW,
+		// DETACHED_PROCESS disables CREATE_NO_WINDOW and lets children create consoles.
+		CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.CREATE_NO_WINDOW,
 		HideWindow:    true,
 	}
 }

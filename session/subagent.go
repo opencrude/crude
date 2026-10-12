@@ -59,6 +59,26 @@ type childRecoveryOwner struct {
 	ProfileInstructions string             `json:"profile_instructions,omitempty"`
 }
 
+// childAssignmentDisplay is the chat projection of a typed assignment. The
+// provider receives prompt.BuildChild's escaped XML envelope; people read the
+// parent's authored description and instructions verbatim as Markdown. Both
+// derive from the same spec fields, so nothing ever parses the envelope or
+// model-authored structure back out of text.
+func childAssignmentDisplay(spec agent.SubAgentSpec) string {
+	description := strings.TrimSpace(spec.Description)
+	instructions := strings.TrimSpace(spec.Instructions)
+	switch {
+	case description == "" || description == instructions:
+		return instructions
+	case instructions == "":
+		return description
+	}
+	if !strings.ContainsAny(description, "\r\n*") {
+		description = "**" + description + "**"
+	}
+	return description + "\n\n" + instructions
+}
+
 func NewSubAgentRunner(s *Session, maxConcurrent int) *SubAgentRunner {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &SubAgentRunner{
@@ -585,11 +605,12 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	assignmentInput := provider.UserInput{
 		InternalID:  "assignment-" + string(spec.ID),
 		Text:        userPrompt,
-		DisplayText: userPrompt,
+		DisplayText: childAssignmentDisplay(spec),
 		Origin:      provider.OriginAssignment,
 	}
 	assignment := provider.NewTextMessage("user", userPrompt)
 	assignment.InternalID = assignmentInput.InternalID
+	assignment.DisplayContent = assignmentInput.DisplayText
 	assignment.Origin = provider.OriginAssignment
 	recoveryState := newRecoveryRunState(assignmentInput, nil)
 	recoveryState.inputAdmitted = true
@@ -1071,7 +1092,7 @@ func (r *SubAgentRunner) runSubAgentLoop(
 			"model":          handle.Spec.Model,
 			"provider":       handle.Spec.Provider,
 			"task":           handle.Spec.Description,
-			"prompt":         userPrompt,
+			"prompt":         childAssignmentDisplay(handle.Spec),
 			"parent_id":      string(handle.Spec.ParentID),
 			"parent_tool_id": handle.Spec.ParentToolCallID,
 		}, string(handle.Spec.ID))
@@ -1171,6 +1192,7 @@ func (r *SubAgentRunner) runSubAgentLoop(
 	if len(userMsgs) == 0 {
 		assignment := provider.NewTextMessage("user", userPrompt)
 		assignment.InternalID = recoveryState.pending.InternalID
+		assignment.DisplayContent = childAssignmentDisplay(handle.Spec)
 		assignment.Origin = provider.OriginAssignment
 		userMsgs = []provider.ChatMessage{assignment}
 	}

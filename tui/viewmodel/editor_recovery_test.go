@@ -44,7 +44,8 @@ func TestEditorRecoveryShutdownAndReopen(t *testing.T) {
 	if err = two.app.ConfigureComposerDrafts(store, a, "test-workspace"); err != nil {
 		t.Fatal(err)
 	}
-	reopened := liveTestOpen(t, two.app, path)
+	runAppCommand(t, two.app, two.app.openPaneFiles([]string{filepath.ToSlash(path)}, two.app.Win.ActiveGroup()))
+	reopened := two.app.EditorState.Tabs[path].Editor
 	// Reopening exercises the actual pane-load recovery route, not a second
 	// helper restore over a draft already installed by that same route.
 	if reopened.Value() != "Xbase" || reopened.DocumentState().Conflict == nil {

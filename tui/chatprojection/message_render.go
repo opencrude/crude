@@ -6,8 +6,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"charm.land/glamour/v2"
-
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/theme"
@@ -55,7 +53,7 @@ type renderContext struct {
 	streaming           bool
 	isLastMsg           bool
 	phase               string
-	mdRenderer          *glamour.TermRenderer
+	mdRenderer          *rendering.MarkdownRenderer
 	// disclosure is the resolved expand/collapse mode for this message
 	// (see disclosure.go). Deterministic defaults keep live and hydrated
 	// sessions rendering the same shape.
@@ -493,7 +491,7 @@ func renderThinkingSummary(msg types.ChatMessage, ctx renderContext) messageLine
 // ThinkingPreviewLine paints the latest semantic block/paragraph of live
 // reasoning. It is shared by compact summary rows and the fixed activity strip;
 // the complete canonical body is never truncated by this presentation.
-func ThinkingPreviewLine(content string, display reasoning.Display, md *glamour.TermRenderer, tokens *ui.TokenSet) PaintLine {
+func ThinkingPreviewLine(content string, display reasoning.Display, md *rendering.MarkdownRenderer, tokens *ui.TokenSet) PaintLine {
 	body := thinkingPreviewBody(content, display)
 	rendered, ok := renderMarkdown(body, md)
 	if !ok {

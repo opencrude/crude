@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -51,7 +52,7 @@ func TestStopAsyncIOJoinsInFlightTreeStartup(t *testing.T) {
 	app, _ := newRealShellApp(t)
 	root := t.TempDir()
 	for i := range 30 {
-		if err := os.MkdirAll(filepath.Join(root, string(rune('a'+i))), 0700); err != nil {
+		if err := os.MkdirAll(filepath.Join(root, fmt.Sprintf("dir-%02d", i)), 0700); err != nil {
 			t.Fatal(err)
 		}
 	}

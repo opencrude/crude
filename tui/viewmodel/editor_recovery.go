@@ -16,9 +16,9 @@ import (
 
 // prepareEditorRecovery captures the immutable private binding on Update; the
 // returned loader runs in the file-open command, never on the UI goroutine.
-func (m *App) prepareEditorRecovery(path string) func() (clientstate.EditorRecoveryRecord, error) {
+func (m *App) prepareEditorRecovery() func(string) (clientstate.EditorRecoveryRecord, error) {
 	c := m.composerDraftClient
-	return func() (clientstate.EditorRecoveryRecord, error) {
+	return func(path string) (clientstate.EditorRecoveryRecord, error) {
 		if c == nil {
 			return clientstate.EditorRecoveryRecord{}, nil
 		}

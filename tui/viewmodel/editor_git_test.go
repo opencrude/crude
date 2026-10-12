@@ -11,7 +11,9 @@ import (
 
 	"crude/tui/cell"
 	"crude/tui/editor"
+	"crude/tui/rendering"
 	"crude/tui/surface"
+	ttypes "crude/tui/types"
 	"crude/tui/ui"
 	"crude/workspace"
 )
@@ -189,6 +191,46 @@ func TestGutterRefreshResetsTheTypingBurst(t *testing.T) {
 	app.markEditorGitDirty(time.Now().Add(10 * time.Millisecond))
 	if app.editorGitDue(time.Now().Add(100 * time.Millisecond)) {
 		t.Fatal("stale burst timestamps survived a dispatched refresh")
+	}
+}
+
+func TestBackgroundTabSyncDoesNotRestartEditorServices(t *testing.T) {
+	app, paths := newInputContractEditorApp(t, "stable.go")
+	ed := app.EditorState.Editor
+	_ = app.View()
+	if cmd := app.refreshEditorGitCmd(); cmd == nil {
+		t.Fatal("initial annotation request missing")
+	}
+	generation := app.editorGitGen.Load()
+	for range 64 {
+		app.syncAgentWindowTabs()
+		app.Update(ttypes.TickMsg(time.Now()))
+		if app.editorGitGen.Load() != generation || app.editorGitDue(time.Now()) {
+			t.Fatal("unchanged editor selection restarted Git work during background synchronization")
+		}
+	}
+	if app.EditorState.Editor != ed || app.EditorState.ActiveView != paths[0] {
+		t.Fatal("background synchronization changed the selected editor lifetime")
+	}
+	ed.SetGitAnnotation(ed.Revision(), ed.Value(), nil, nil, false)
+	ed.SetCursorPosition(0, 0)
+	ed.ScrollToCursor()
+	before := ed.Value()
+	app.setFocusEditor()
+	app.Update(tea.KeyPressMsg{Code: 'x', Text: "x"})
+	for range 32 {
+		app.syncAgentWindowTabs()
+		if app.editorGitDue(time.Now()) {
+			t.Fatal("background synchronization bypassed the typing debounce")
+		}
+	}
+	app.forceFrame()
+	painted := rendering.StripAnsi(app.View().Content)
+	if ed.Value() != "x"+before || !strings.Contains(painted, "xpackage main") {
+		t.Fatalf("typed content was not retained and painted: text=%q, frame=%s", ed.Value(), painted)
+	}
+	if !app.editorGitDue(time.Now().Add(editorGitIdleDelay)) {
+		t.Fatal("real edits no longer schedule a bounded annotation refresh")
 	}
 }
 

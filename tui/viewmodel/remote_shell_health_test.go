@@ -180,7 +180,9 @@ func TestRemoteShellTerminalCreateReceiptBeforeInventoryChangesPanel(t *testing.
 }
 
 func TestRemoteShellColdNoticesAndPeerDelivery(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	root := t.TempDir()
 	seed := workspace.NewWorkspace(root, "", "tester", types.Settings{}, nil)
 	seed.Status.Notify(types.NotificationRecord{ID: "persisted-notice", Summary: "Persisted workspace notice", Detail: "Exact persisted evidence.", Source: "fixture"})

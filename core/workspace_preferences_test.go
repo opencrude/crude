@@ -11,7 +11,7 @@ import (
 )
 
 func TestWorkspacePreferencesWorkerPersistsBeforeActorPublishes(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setCoreTestHome(t, t.TempDir())
 	ws := workspace.NewWorkspace(t.TempDir(), "", "tester", types.Settings{}, coreTestLogger{})
 	t.Cleanup(ws.Close)
 	ws.SetAppDefaults(types.AppSettings{})

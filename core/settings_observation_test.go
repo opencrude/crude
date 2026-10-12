@@ -13,7 +13,7 @@ import (
 )
 
 func TestCapabilityObservationDoesNotWaitForSettingsWriter(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setCoreTestHome(t, t.TempDir())
 	entered, release := make(chan struct{}), make(chan struct{})
 	runtime, err := New(func(root string) (*workspace.Workspace, error) {
 		w := workspace.NewWorkspace(root, "", "tester", types.Settings{}, nil)

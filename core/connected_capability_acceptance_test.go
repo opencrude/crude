@@ -14,7 +14,7 @@ import (
 )
 
 func TestConnectedCapabilityReviewedInstallRejectsChangedBinding(t *testing.T) {
-	t.Setenv("HOME", t.TempDir())
+	setCoreTestHome(t, t.TempDir())
 	root := t.TempDir()
 	directory := filepath.Join(root, "source", "guide")
 	if err := os.MkdirAll(filepath.Dir(directory), 0700); err != nil {

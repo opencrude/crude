@@ -6,7 +6,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/url"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
@@ -115,10 +117,15 @@ func TestFakeLSPServerHelper(t *testing.T) {
 // helper env var, exactly like a real language server subprocess.
 func newFakeLSPServerIntegration(t *testing.T, root string) *LSPIntegration {
 	t.Helper()
+	uriPath := filepath.ToSlash(root)
+	if !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	rootURI := (&url.URL{Scheme: "file", Path: uriPath}).String()
 	integration := NewLSPIntegration(
 		os.Args[0],
 		[]string{"-test.run", "TestFakeLSPServerHelper"},
-		"file://"+root,
+		rootURI,
 		WithServerEnv(map[string]string{"CRUDE_FAKE_LSP_SERVER": "1"}),
 	)
 	integration.OnDiagnostics(func(string, []LSPDiagnostic) {})

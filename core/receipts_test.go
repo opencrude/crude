@@ -68,11 +68,25 @@ func TestReceiptRejectsSymlinkAndPublicFile(t *testing.T) {
 		_ = journal.close()
 		t.Fatal("symlink accepted")
 	}
-	if err := os.Chmod(target, 0644); err != nil {
-		t.Fatal(err)
-	}
+	makeReceiptPublic(t, target)
 	if journal, err := openReceipts(target); err == nil {
 		_ = journal.close()
 		t.Fatal("public file accepted")
+	}
+}
+
+func TestReceiptRejectsPublicSidecars(t *testing.T) {
+	for _, suffix := range []string{".lock", "-wal", "-shm"} {
+		t.Run(suffix, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "receipts.db")
+			if err := os.WriteFile(path+suffix, nil, 0600); err != nil {
+				t.Fatal(err)
+			}
+			makeReceiptPublic(t, path+suffix)
+			if journal, err := openReceipts(path); err == nil {
+				_ = journal.close()
+				t.Fatalf("public %s sidecar accepted", suffix)
+			}
+		})
 	}
 }

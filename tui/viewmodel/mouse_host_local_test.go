@@ -25,6 +25,10 @@ func openMultiLineEditor(t *testing.T, app *App, content string) string {
 	if _, err := app.openEditorTab(path); err != nil {
 		t.Fatal(err)
 	}
+	t.Cleanup(app.StopAsyncIO)
+	if lsp := app.ws.LSPMgr(); lsp != nil {
+		t.Cleanup(lsp.Stop)
+	}
 	return path
 }
 

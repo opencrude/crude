@@ -45,6 +45,32 @@ func TestMarkdownKeepsEstablishedVisualHierarchy(t *testing.T) {
 	}
 }
 
+// Chat text is not HTML. Glamour sanitizes recognized tags away, which deleted
+// words from model output and delegated assignments; they must stay literal
+// while ordinary Markdown keeps rendering.
+func TestMarkdownKeepsLiteralTagsAsText(t *testing.T) {
+	md := MakeMdRenderer(110, theme.DefaultDark())
+	raw, err := md.Render("**Audit** the <task> handling for Vec<T>:\n\n- first\n\n<context>\nrepo uses <b>go</b>\n</context>\n\nSee <https://example.test/a>.")
+	if err != nil {
+		t.Fatal(err)
+	}
+	var text strings.Builder
+	var bold bool
+	for _, run := range ParseAnsiRuns(raw) {
+		text.WriteString(run.Text)
+		bold = bold || strings.Contains(run.Text, "Audit") && run.Attr&cell.AttrBold != 0
+	}
+	plain := text.String()
+	for _, want := range []string{"the <task> handling for Vec<T>:", "<context>", "repo uses <b>go</b>", "</context>", "https://example.test/a"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("rendered Markdown dropped %q: %q", want, plain)
+		}
+	}
+	if !bold || strings.Contains(plain, "**") || !strings.Contains(plain, "• first") {
+		t.Errorf("ordinary Markdown stopped rendering: bold=%t text=%q", bold, plain)
+	}
+}
+
 func TestANSIControlsDoNotBecomePaintedText(t *testing.T) {
 	for _, wrapper := range []struct{ name, start, end string }{
 		{"OSC-ST", "\x1b]8;id=7;https://example.test/hidden\x1b\\", "\x1b]8;;\x1b\\"},

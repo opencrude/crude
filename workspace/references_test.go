@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"crude/sessiondb"
@@ -92,6 +93,60 @@ func TestReferenceStore_CreateReferenceConcurrent(t *testing.T) {
 		}
 		labels[ref.Label] = struct{}{}
 	}
+}
+
+func TestReferenceStoreMixedKindsWithFrozenClock(t *testing.T) {
+	dir := t.TempDir()
+	synctest.Test(t, func(t *testing.T) {
+		store := NewReferenceStore("sess1", dir, nil)
+		kinds := []sessiondb.Kind{sessiondb.KindPastedText, sessiondb.KindMCPTool, sessiondb.KindMCPContext}
+		ids := make(map[string]bool)
+		for _, kind := range kinds {
+			ref, err := store.CreateReference(sessiondb.CreateRequest{Kind: kind, Content: string(kind)})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if ids[ref.ID] {
+				t.Fatalf("mixed reference kinds share identity %q at the same timestamp", ref.ID)
+			}
+			ids[ref.ID] = true
+		}
+		if refs := store.ListReferences(); len(refs) != len(kinds) {
+			t.Fatalf("retained %d references; want %d", len(refs), len(kinds))
+		}
+	})
+}
+
+func TestImportedMediaWithFrozenClockPreservesEachFile(t *testing.T) {
+	dir := t.TempDir()
+	first := filepath.Join(dir, "first.bin")
+	second := filepath.Join(dir, "second.bin")
+	if err := os.WriteFile(first, []byte("first media"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(second, []byte("second media"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	store := NewReferenceStore("sess1", dir, nil)
+	synctest.Test(t, func(t *testing.T) {
+		one, err := store.ImportReference(sessiondb.Reference{Kind: sessiondb.KindPastedTextFile, FilePath: first})
+		if err != nil {
+			t.Fatal(err)
+		}
+		two, err := store.ImportReference(sessiondb.Reference{Kind: sessiondb.KindPastedTextFile, FilePath: second})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if one.FilePath == two.FilePath {
+			t.Fatal("distinct media copied onto the same session-owned file")
+		}
+		for _, tc := range []struct{ path, want string }{{one.FilePath, "first media"}, {two.FilePath, "second media"}} {
+			got, err := os.ReadFile(tc.path)
+			if err != nil || string(got) != tc.want {
+				t.Fatalf("media = %q, %v; want %q", got, err, tc.want)
+			}
+		}
+	})
 }
 
 func TestReferenceStore_CreateReference_TextFile(t *testing.T) {
