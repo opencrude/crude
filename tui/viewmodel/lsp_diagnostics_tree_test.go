@@ -11,7 +11,6 @@ import (
 	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 
 	"crude/shellport"
-	ttypes "crude/tui/types"
 	model "crude/types"
 	"crude/workspace"
 )
@@ -78,7 +77,7 @@ func (c *immediateTreeDiagClient) RequestDocumentSymbols(context.Context, string
 func (c *immediateTreeDiagClient) RequestHover(context.Context, string, int, int) (string, error) {
 	return "", nil
 }
-func (c *immediateTreeDiagClient) RequestRename(context.Context, string, int, int, string) (interface{}, error) {
+func (c *immediateTreeDiagClient) RequestRename(context.Context, string, int, int, string) (*protocol.WorkspaceEdit, error) {
 	return nil, nil
 }
 func (c *immediateTreeDiagClient) RequestCompletions(context.Context, string, int, int) []workspace.CompletionItem {
@@ -163,7 +162,7 @@ func newDiagnosticsTreeApp(t *testing.T, dir string) *App {
 	home := t.TempDir()
 	t.Setenv("USERPROFILE", home)
 	t.Setenv("HOME", home)
-	ws := workspace.NewWorkspace(dir, "test", "test", ttypes.Settings{}, stubLogger{})
+	ws := workspace.NewWorkspace(dir, "test", "test", model.Settings{}, stubLogger{})
 	app := NewApp(shellport.Local(ws), nil)
 	t.Cleanup(func() {
 		app.StopAsyncIO()

@@ -97,7 +97,7 @@ func TestExecutingPhaseRemovesOnlyTransientProviderWait(t *testing.T) {
 	state := NewAgentState("agent", nil, nil)
 	state.Messages.UpdateTurnStatus(TurnStatus{Phase: "compaction_completed", OperationID: "checkpoint"})
 	state.Messages.UpdateTurnStatus(TurnStatus{Phase: "waiting_provider", Provider: "gateway"})
-	state.ApplyEvent(AgentEvent{Type: "phase", Data: "executing"})
+	state.ApplyEvent(AgentEvent{Type: "phase", Data: map[string]any{"name": "executing"}})
 	messages := state.Messages.Messages()
 	if len(messages) != 1 || messages[0].LifecycleOperationID != "checkpoint" {
 		t.Fatalf("tool execution retained stale provider wait or cleared durable checkpoint: %+v", messages)

@@ -115,7 +115,6 @@ type ShellSettings struct {
 	Theme  types.ThemeSettings  `json:"theme"`
 	Editor types.EditorSettings `json:"editor"`
 	UI     types.UISettings     `json:"ui"`
-	Font   types.FontSettings   `json:"font"`
 }
 
 type SessionSettings struct {

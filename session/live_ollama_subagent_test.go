@@ -165,3 +165,7 @@ func TestLiveOllamaAsyncSubAgentSurvivesParentContextEnd(t *testing.T) {
 		t.Fatalf("child inherited parent turn cancellation: %+v", completed)
 	}
 }
+
+func (s *liveSubAgentSender) SendAgentEventEnvelope(event agent.AgentEvent) {
+	s.SendAgentEventWithID(event.Type, event.Data, event.AgentID)
+}

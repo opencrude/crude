@@ -13,8 +13,8 @@ import (
 	"crude/tui/editor"
 	"crude/tui/rendering"
 	"crude/tui/surface"
-	ttypes "crude/tui/types"
 	"crude/tui/ui"
+	ttypes "crude/types"
 	"crude/workspace"
 )
 

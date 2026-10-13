@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
 // reapableClient is an LSPClient fake whose Done channel the test controls,
@@ -32,7 +33,7 @@ func (c *reapableClient) RequestDocumentSymbols(context.Context, string) []LSPSy
 func (c *reapableClient) RequestHover(context.Context, string, int, int) (string, error) {
 	return "", nil
 }
-func (c *reapableClient) RequestRename(context.Context, string, int, int, string) (interface{}, error) {
+func (c *reapableClient) RequestRename(context.Context, string, int, int, string) (*protocol.WorkspaceEdit, error) {
 	return nil, nil
 }
 func (c *reapableClient) RequestCompletions(context.Context, string, int, int) []CompletionItem {

@@ -79,6 +79,11 @@ func PolicyAllowsMetadata(policy safety.Policy, metadata tools.ToolMetadata) boo
 	if metadata.Name == "" || metadata.Scope == "" || metadata.Dynamic && metadata.Fingerprint == "" {
 		return false
 	}
+	if metadata.ContextResolved {
+		// This admits only the gateway to its authoritative resolver. The owner
+		// must enforce the returned descriptor's exact effect before execution.
+		return policy.IsAllowed(safety.OpRead)
+	}
 	switch metadata.Effect {
 	case captypes.EffectRead, captypes.EffectCommunication:
 		return policy.IsAllowed(safety.OpRead)

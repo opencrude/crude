@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 )
 
 func testRendererWithDualScroll(t *testing.T) (*Renderer, *ui.ScrollModel, *ui.ScrollModel) {

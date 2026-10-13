@@ -13,7 +13,7 @@ import (
 	"crude/sessiondb"
 	"crude/tui/rendering"
 	"crude/tui/screens/activitybar"
-	ttypes "crude/tui/types"
+	ttypes "crude/types"
 	"crude/workspace"
 )
 

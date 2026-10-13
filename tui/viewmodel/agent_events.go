@@ -12,7 +12,6 @@ import (
 	"crude/provider"
 	"crude/sessiondb"
 	"crude/shellport"
-	ttypes "crude/tui/types"
 	"crude/tui/ui"
 	"crude/tui/wm"
 	coretypes "crude/types"
@@ -279,7 +278,7 @@ func (m *App) referenceLabels(refIDs []string) []string {
 	return labels
 }
 
-func (m *App) handleAgentEvent(evt ttypes.AgentEventMsg) tea.Cmd {
+func (m *App) handleAgentEvent(evt coretypes.AgentEventMsg) tea.Cmd {
 	return m.handleAgentDomainEvent(workspace.AgentEvent{Type: evt.Type, Data: evt.Data, AgentID: evt.AgentID})
 }
 
@@ -300,6 +299,13 @@ func (m *App) handleAgentDomainEvent(evt workspace.AgentEvent) tea.Cmd {
 // subscriptions share it, so every attached shell presents notices alike.
 func (m *App) presentAgentNotice(notice workspace.AgentNotice) tea.Cmd {
 	switch notice.Type {
+	case workspace.NoticeAttachmentExcluded:
+		if center := m.ws.Status(); center != nil {
+			center.Notify(coretypes.NotificationRecord{DedupKey: "attachment:" + notice.AgentID + ":" + notice.Reason,
+				Owner: coretypes.ResourceRef{Kind: coretypes.ResourceAgent, ID: notice.AgentID}, Severity: coretypes.SeverityWarning,
+				Source: "attachment", Summary: notice.Reason, Detail: notice.Reason})
+		}
+		return nil
 	case workspace.NoticeResponseContinuationUnavailable:
 		message := "Responses delta unavailable: the endpoint returned no response ID; full uploads continue"
 		if notice.Reason == "response_not_stored" {

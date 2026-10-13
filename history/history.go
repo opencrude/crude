@@ -293,9 +293,8 @@ func DefaultPath() string {
 	return filepath.Join(home, buildinfo.DataDir(), "history.json")
 }
 
-// LoadFile reads path, transparently migrating the legacy format (a plain
-// JSON array of strings written by pre-history versions). Missing file yields
-// an empty store.
+// LoadFile reads the current versioned history file. A missing file yields an
+// empty store; any other format is rejected rather than reinterpreted.
 func LoadFile(path string) (*Store, error) {
 	s := New()
 	data, err := os.ReadFile(path)
@@ -305,7 +304,6 @@ func LoadFile(path string) (*Store, error) {
 		}
 		return nil, err
 	}
-	// Try current format first.
 	var v1 fileV1
 	if err := json.Unmarshal(data, &v1); err == nil && v1.Version == 1 && v1.Entries != nil {
 		now := time.Now()
@@ -332,32 +330,7 @@ func LoadFile(path string) (*Store, error) {
 		s.evictLocked(now)
 		return s, nil
 	}
-	// Legacy plain array: preserve order, counts unknown → 1. Timestamps are
-	// staggered backwards from the file's mtime so migrated entries age
-	// realistically for eviction scoring instead of looking brand new.
-	var legacy []string
-	if err := json.Unmarshal(data, &legacy); err != nil {
-		return nil, err
-	}
-	base := fileMtime(path)
-	for i, text := range legacy {
-		if strings.TrimSpace(text) == "" {
-			continue
-		}
-		ts := base.Add(-time.Duration(len(legacy)-i) * time.Second).Unix()
-		s.entries = append(s.entries, Entry{ID: fmt.Sprintf("%016x", rand.Uint64()), Text: text, Count: 1, FirstSeen: ts, LastSeen: ts})
-	}
-	s.reindexLocked()
-	s.evictLocked(time.Now())
-	return s, nil
-}
-
-// fileMtime returns the modification time of path, or now if unavailable.
-func fileMtime(path string) time.Time {
-	if fi, err := os.Stat(path); err == nil {
-		return fi.ModTime()
-	}
-	return time.Now()
+	return nil, fmt.Errorf("unsupported prompt history format in %s", path)
 }
 
 // Save writes the store atomically (temp file + rename, owner-only perms).

@@ -66,7 +66,7 @@ func TestControlExecutionConnectedSelectionAndChildIntegration(t *testing.T) {
 			if step == 0 {
 				name, params = "read_file", map[string]any{"path": "disk.txt"}
 			} else {
-				if !strings.Contains(string(raw), selectedRoot) || !strings.Contains(string(raw), "human dirty") {
+				if !strings.Contains(string(raw), wireText(selectedRoot)) || !strings.Contains(string(raw), "human dirty") {
 					t.Error("root request did not use selected checkout and dirty baseline")
 				}
 				close(rootReady)

@@ -105,7 +105,7 @@ func (reg *subPaneProjectionRegistry) SetTheme(th *theme.Theme) {
 // Get returns the projection for paneID, creating it (with a fresh
 // MessageList) if missing. paneType is recorded on first creation so the
 // registry can later decide which scrollbar path is active. Callers must
-// initialize SetLegacyModelFallback/SetUsername/SetSubPaneContentFn after first
+// initialize SetUsername/SetSubPaneContentFn after first
 // creation. On an existing projection, paneType is updated to the passed
 // value (cheap) so the registry stays correct if a pane is re-created
 // with a different type.
@@ -448,7 +448,7 @@ func (reg *subPaneProjectionRegistry) Render(paneID string, sp *workspace.SubPan
 	lines = append(lines, headerLine)
 	for i := 0; i < visibleH; i++ {
 		if i < len(contentLines) {
-			if i < len(contentNative) && !contentNative[i].PreferANSI() {
+			if i < len(contentNative) {
 				lines = append(lines, chatprojection.NativeLine(contentNative[i]))
 			} else {
 				// Fallback: thinking content is plain text (never Glamour),
@@ -539,7 +539,6 @@ func (m *App) subPaneContentForRegistry(reg *subPaneProjectionRegistry) chatproj
 		}
 		p.renderer.SetSubPaneContentFn(m.subPaneContentForRegistry(reg))
 		if n := m.ws.AgentMgr().Get(paneID); n != nil && n.State != nil {
-			p.renderer.SetLegacyModelFallback(n.Model)
 			p.renderer.SetStreaming(n.State.Streaming)
 			p.renderer.SetActiveTyping(n.State.ComputeActiveTyping())
 		}

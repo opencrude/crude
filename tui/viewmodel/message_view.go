@@ -2,7 +2,7 @@ package viewmodel
 
 import (
 	"crude/provider"
-	ttypes "crude/tui/types"
+	ttypes "crude/types"
 	"crude/types/recovery"
 	"crude/workspace"
 )

@@ -2,7 +2,7 @@ package chatprojection
 
 import (
 	"crude/tui/cell"
-	"crude/tui/types"
+	"crude/types"
 	"fmt"
 	"strings"
 	"testing"

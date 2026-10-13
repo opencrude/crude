@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"reflect"
+	"strings"
 	"time"
 
 	"crude/collaboration"
@@ -77,22 +78,41 @@ func retainsContextSource(snapshot, source []provider.ChatMessage) bool {
 	return i == len(source)
 }
 
-// Children and roots obey the same rule: only journal-admitted lifecycle
-// controls may arrive outside the execution snapshot. Merge those exact facts;
+// Children and roots obey the same rule: journal-admitted controls and human
+// steering may arrive outside the execution snapshot. Merge those exact facts;
 // never acknowledge a stale snapshot by merely assigning it a newer revision.
+func independentlyAdmittedContext(messages []provider.ChatMessage) (required, admitted []provider.ChatMessage) {
+	steering := make(map[string]bool)
+	for _, message := range messages {
+		if message.Collaboration != nil && message.Collaboration.EventID != "" &&
+			message.Collaboration.Kind == string(collaboration.EventHumanSteering) && message.EffectiveOrigin() == provider.OriginHumanSteering {
+			steering[message.InternalID] = true
+		}
+	}
+	for _, message := range messages {
+		independent := message.Collaboration != nil && message.Collaboration.Kind == string(collaboration.EventLifecycleControl) || steering[message.InternalID]
+		if !independent && message.EffectiveOrigin() == provider.OriginRuntimeContext && message.EffectiveVisibility() == provider.VisibilityContextOnly {
+			for _, suffix := range []string{"-references", "-context"} {
+				if strings.HasSuffix(message.InternalID, suffix) && steering[strings.TrimSuffix(message.InternalID, suffix)] {
+					independent = true
+				}
+			}
+		}
+		if independent {
+			admitted = append(admitted, message)
+		} else {
+			required = append(required, message)
+		}
+	}
+	return required, admitted
+}
+
 func retainChildCheckpointSource(run *recoveryRunState, archive, active []provider.ChatMessage, current sessiondb.ContextState) error {
 	_, generation, _ := run.contextState()
 	if current.Generation != generation {
 		return fmt.Errorf("child checkpoint context generation changed")
 	}
-	var required, controls []provider.ChatMessage
-	for _, message := range current.Messages {
-		if message.Collaboration != nil && message.Collaboration.Kind == string(collaboration.EventLifecycleControl) {
-			controls = append(controls, message)
-		} else {
-			required = append(required, message)
-		}
-	}
+	required, controls := independentlyAdmittedContext(current.Messages)
 	if !retainsContextSource(active, required) {
 		return fmt.Errorf("child checkpoint does not retain committed context revision %d", current.Revision)
 	}
@@ -169,21 +189,10 @@ func (s *Session) reconcileRootRecoveryLocked(run *recoveryRunState) error {
 	if run.sourceRevision == run.publishedRevision {
 		active = append([]provider.ChatMessage(nil), s.activeContext...)
 	}
-	var controls []provider.ChatMessage
-	for _, message := range s.activeContext {
-		if message.Collaboration != nil && message.Collaboration.Kind == string(collaboration.EventLifecycleControl) {
-			controls = append(controls, message)
-		}
-	}
+	source, controls := independentlyAdmittedContext(s.activeContext)
 	if !retainsContextSource(active, s.activeContext) {
-		// Only independently admitted control events may be absent from a root
+		// Only independently admitted journal events may be absent from a root
 		// execution snapshot. All other committed source facts remain mandatory.
-		source := make([]provider.ChatMessage, 0, len(s.activeContext)-len(controls))
-		for _, message := range s.activeContext {
-			if message.Collaboration == nil || message.Collaboration.Kind != string(collaboration.EventLifecycleControl) {
-				source = append(source, message)
-			}
-		}
 		if !retainsContextSource(active, source) {
 			return fmt.Errorf("recovery checkpoint does not retain committed context revision %d", s.contextRevision)
 		}

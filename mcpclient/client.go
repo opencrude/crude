@@ -441,14 +441,17 @@ func (body *boundedBody) Close() error {
 func (manager *Manager) transport(config captypes.ConnectionConfig, lifetime context.Context, epoch uint64, interactive bool) (mcp.Transport, func(), error) {
 	cleanup := func() {}
 	if config.Transport == "stdio" {
-		command := exec.CommandContext(lifetime, config.Command, config.Args...)
+		// The pipe owner owns cancellation, termination and Wait together. A
+		// CommandContext kill races graceful EOF and can report Access denied on
+		// Windows after the process has already exited.
+		command := exec.Command(config.Command, config.Args...)
 		command.Dir = config.Directory
 		if command.Dir == "" {
 			command.Dir = manager.root
 		} else if !filepath.IsAbs(command.Dir) {
 			command.Dir = filepath.Join(manager.root, command.Dir)
 		}
-		command.Env = []string{"PATH=" + os.Getenv("PATH")}
+		command.Env = stdioBaseEnvironment()
 		for name, value := range config.Environment {
 			command.Env = append(command.Env, name+"="+value)
 		}
@@ -459,7 +462,7 @@ func (manager *Manager) transport(config captypes.ConnectionConfig, lifetime con
 			}
 			command.Env = append(command.Env, name+"="+value)
 		}
-		return &boundedCommandTransport{command: command}, cleanup, nil
+		return &boundedCommandTransport{command: command, lifetime: lifetime}, cleanup, nil
 	}
 	headers := make(map[string]string)
 	for name, value := range config.Headers {

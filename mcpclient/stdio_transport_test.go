@@ -3,6 +3,7 @@ package mcpclient
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"strings"
@@ -15,6 +16,10 @@ func TestBoundedStdioHelper(t *testing.T) {
 	mode := os.Getenv("CRUDE_MCP_BOUND_HELPER")
 	if mode == "" {
 		return
+	}
+	if mode == "graceful" {
+		_, _ = io.Copy(io.Discard, os.Stdin)
+		os.Exit(0)
 	}
 	if mode == "oversized" {
 		_, _ = fmt.Fprint(os.Stdout, `{"jsonrpc":"2.0","method":"notifications/message","params":{"data":"`+strings.Repeat("z", maxResultBytes)+`"}}`+"\n")
@@ -31,13 +36,16 @@ func TestStdioIngressBoundAndOwnedShutdown(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	for _, mode := range []string{"oversized", "silent"} {
+	for _, mode := range []string{"oversized", "silent", "graceful"} {
 		t.Run(mode, func(t *testing.T) {
 			lifetime, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			command := exec.CommandContext(lifetime, executable, "-test.run=^TestBoundedStdioHelper$")
-			command.Env = []string{"CRUDE_MCP_BOUND_HELPER=" + mode}
-			transport := &boundedCommandTransport{command: command}
+			command := exec.Command(executable, "-test.run=^TestBoundedStdioHelper$")
+			// The race runtime otherwise sleeps one second after main returns,
+			// exactly the production grace period. Test process behavior, not that
+			// instrumentation-only exit delay.
+			command.Env = append(stdioBaseEnvironment(), "CRUDE_MCP_BOUND_HELPER="+mode, "GORACE=atexit_sleep_ms=0")
+			transport := &boundedCommandTransport{command: command, lifetime: lifetime}
 			connection, err := transport.Connect(t.Context())
 			if err != nil {
 				t.Fatal(err)
@@ -58,7 +66,13 @@ func TestStdioIngressBoundAndOwnedShutdown(t *testing.T) {
 			var closers sync.WaitGroup
 			for i := 0; i < 3; i++ {
 				closers.Add(1)
-				go func() { defer closers.Done(); _ = connection.Close() }()
+				go func() {
+					defer closers.Done()
+					err := connection.Close()
+					if mode == "graceful" && err != nil {
+						t.Errorf("graceful cancellation raced process exit: %v", err)
+					}
+				}()
 			}
 			closed := make(chan struct{})
 			go func() { closers.Wait(); close(closed) }()
@@ -67,7 +81,7 @@ func TestStdioIngressBoundAndOwnedShutdown(t *testing.T) {
 			case <-time.After(3 * time.Second):
 				t.Fatal("shutdown blocked")
 			}
-			if mode == "silent" {
+			if mode == "silent" || mode == "graceful" {
 				select {
 				case err := <-read:
 					if err == nil {

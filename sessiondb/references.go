@@ -34,19 +34,6 @@ func UpdatePromptReferenceContent(db *sql.DB, id, content string) error {
 	return nil
 }
 
-// UpdatePromptReferenceFilePath updates the file_path and clears the content
-// for a prompt reference. This is used to migrate legacy base64 image references
-// to disk-based storage, preventing re-migration on every session load.
-func UpdatePromptReferenceFilePath(db *sql.DB, id, filePath string) error {
-	_, err := db.Exec(`
-		UPDATE prompt_references SET file_path = ?, content = '' WHERE id = ? AND deleted_at IS NULL
-	`, filePath, id)
-	if err != nil {
-		return fmt.Errorf("sessiondb: update prompt reference file path: %w", err)
-	}
-	return nil
-}
-
 func DeletePromptReference(db *sql.DB, id string) error {
 	_, err := db.Exec(`
 		UPDATE prompt_references SET deleted_at = ? WHERE id = ? AND deleted_at IS NULL

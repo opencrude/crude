@@ -8,28 +8,24 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 )
 
-func TestBlankNativeSpacerNotANSIFallback(t *testing.T) {
+func TestBlankNativeSpacerIsPaintable(t *testing.T) {
 	blank := buildPlainBodyLine("")
-	if blank.PreferANSI() {
-		t.Fatal("blank native spacer must not PreferANSI")
-	}
 	if blank.IsZero() {
 		t.Fatal("blank native spacer must not be IsZero (empty-text span)")
 	}
 
 	th := theme.DefaultDark()
 	ctx := renderContext{
-		th:                  th,
-		contentWidth:        40,
-		innerW:              60,
-		width:               80,
-		height:              40,
-		legacyModelFallback: "test",
-		username:            "user",
+		th:           th,
+		contentWidth: 40,
+		innerW:       60,
+		width:        80,
+		height:       40,
+		username:     "user",
 	}
 
 	// Plain assistant body with an embedded blank line stays native (mdRenderer nil).
@@ -40,10 +36,7 @@ func TestBlankNativeSpacerNotANSIFallback(t *testing.T) {
 	}, ctx, true)
 	foundBlank := false
 	for _, pl := range plain.native {
-		if pl.PreferANSI() {
-			t.Fatalf("plain body unexpectedly PreferANSI: %#v", pl)
-		}
-		if pl.PlainText() == "" && !pl.PreferANSI() {
+		if pl.PlainText() == "" {
 			foundBlank = true
 		}
 	}
@@ -65,11 +58,6 @@ func TestBlankNativeSpacerNotANSIFallback(t *testing.T) {
 		Content: "# Heading\n\nparagraph",
 		Time:    time.Now(),
 	}, ctx, true)
-	for i, pl := range rich.native {
-		if pl.PreferANSI() {
-			t.Fatalf("row %d PreferANSI — markdown must bridge to native, got %#v", i, pl)
-		}
-	}
 	// Theme-bound Markdown may map every colour back to a semantic role; rich
 	// emphasis must still survive the native bridge without ANSI fallback.
 	foundStyle := false

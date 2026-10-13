@@ -6,7 +6,7 @@ import (
 	"strings"
 
 	toolargs "crude/tools"
-	"crude/tui/types"
+	"crude/types"
 )
 
 // A batch is a provider envelope, not a second visual tool family. Derive

@@ -7,9 +7,9 @@ import (
 	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
 	"crude/tui/wm"
+	"crude/types"
 )
 
 func TestWorkspaceSettingsPaintMainAgentOnFirstFrame(t *testing.T) {
@@ -202,12 +202,12 @@ func TestSettingsScrollbarsAppearOnlyOnOverflow(t *testing.T) {
 		t.Fatalf("settings scrollbar has no leading empty column: form=%+v bar=%+v", form, bar)
 	}
 
-	model.SelectCategory(catFont)
+	model.SelectCategory(catHistory)
 	surfaceRoot.refreshForm()
-	host.Resize(90, 28)
+	host.Resize(90, 200)
 	host.Layout()
 	if surfaceRoot.formScroll.Needed() {
-		t.Fatal("Font form should fit a 28-row panel without a scrollbar")
+		t.Fatal("Local History form should fit a 200-row panel without a scrollbar")
 	}
 }
 

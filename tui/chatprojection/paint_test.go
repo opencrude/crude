@@ -10,8 +10,8 @@ import (
 	"crude/tui/chatprojection"
 	"crude/tui/surface"
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 	"crude/workspace"
 )
 

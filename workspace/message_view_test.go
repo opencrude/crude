@@ -28,18 +28,6 @@ func TestConvertMessagesForDisplayUsesCanonicalSnapshotWithoutReconstruction(t *
 	}
 }
 
-func TestConvertMessagesForDisplayUsesAgentIDForChildLink(t *testing.T) {
-	message := provider.NewTextMessage("tool", `{"agent_id":"child-1","session_id":"session-1","status":"running"}`)
-	message.ToolCallID = "call"
-	views := ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{
-		Msg:  message,
-		Meta: sessiondb.DisplayMeta{DisplayRole: "tool", ToolName: "agent_start", ToolStatus: "success"},
-	}})
-	if len(views) != 1 || views[0].SubPaneID != "child-1" {
-		t.Fatalf("sub-agent link = %#v", views)
-	}
-}
-
 func TestCanonicalEmptySnapshotSuppressesProviderOnlyAssistantEnvelope(t *testing.T) {
 	views := ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{
 		Msg:  provider.ChatMessage{Role: "assistant", ToolCalls: []provider.ToolCall{{ID: "call"}}},
@@ -84,93 +72,5 @@ func TestConvertMessagesForDisplayKeepsExplicitContextBoundarySnapshots(t *testi
 				t.Fatalf("explicit context boundary was lost: %+v", views)
 			}
 		})
-	}
-}
-
-func TestConvertMessagesForDisplayRetainsToolResultBody(t *testing.T) {
-	message := provider.NewTextMessage("tool", "=== RUN TestOne\n--- PASS: TestOne")
-	message.ToolCallID = "call-1"
-	views := ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{
-		Msg: message,
-		Meta: sessiondb.DisplayMeta{
-			DisplayRole: "tool", ToolName: "execute_command", ToolArgs: `{"command":"go test ./..."}`,
-			ToolStatus: "success",
-		},
-	}})
-	if len(views) != 1 {
-		t.Fatalf("hydrated views = %+v", views)
-	}
-	if views[0].Content != "=== RUN TestOne\n--- PASS: TestOne" {
-		t.Fatalf("tool result body lost during hydration: %q", views[0].Content)
-	}
-	if views[0].ToolName != "execute_command" || views[0].ToolPreviewPhase != "done" {
-		t.Fatalf("tool presentation metadata = %+v", views[0])
-	}
-	if views[0].ToolCommand != "go test ./..." || views[0].ToolArgs != "go test ./..." {
-		t.Fatalf("hydrated command metadata = %+v", views[0])
-	}
-}
-
-func TestConvertMessagesForDisplayHydratesThinkingDuration(t *testing.T) {
-	thinking := provider.NewTextMessage("assistant", "answer")
-	thinking.ReasoningContent = "reasoning body"
-	views := ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{
-		{Msg: thinking, Meta: sessiondb.DisplayMeta{DisplayRole: "thinking", DurationMs: 5000}},
-	})
-	if len(views) < 1 || views[0].Role != "thinking" {
-		t.Fatalf("hydrated views = %+v", views)
-	}
-	if views[0].ThinkingDuration != 5*time.Second {
-		t.Fatalf("thinking duration = %v", views[0].ThinkingDuration)
-	}
-}
-
-func TestConvertMessagesForDisplayPreservesLegacyMetaAttribution(t *testing.T) {
-	message := provider.NewTextMessage("assistant", "answer")
-	views := ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{
-		Msg: message,
-		Meta: sessiondb.DisplayMeta{
-			DisplayRole: "assistant", TurnGeneration: 7,
-			ProviderID: "ollama-cloud", ModelID: "kimi-k3",
-		},
-	}})
-	if len(views) != 1 || views[0].TurnGeneration != 7 ||
-		views[0].ProviderID != "ollama-cloud" || views[0].ModelID != "kimi-k3" {
-		t.Fatalf("hydrated attribution = %#v", views)
-	}
-}
-
-func TestConvertMessagesForDisplayUsesOriginalReferenceCaption(t *testing.T) {
-	message := provider.NewMultiPartMessage("user", []provider.ContentPart{
-		{Type: "text", Text: "what is this?"},
-		{Type: "image_url", ImageURL: &provider.ImageURL{URL: "data:image/png;base64,eA=="}},
-	})
-	views := ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{
-		Msg: message,
-		Meta: sessiondb.DisplayMeta{
-			DisplayRole:     "user",
-			DisplayContent:  "[Pasted IMG1] what is this?",
-			ReferenceLabels: []string{"[Pasted IMG1]"},
-		},
-	}})
-	if len(views) != 1 || views[0].Content != "[Pasted IMG1] what is this?" {
-		t.Fatalf("hydrated views = %+v", views)
-	}
-	if len(views[0].ReferenceLabels) != 1 || views[0].ReferenceLabels[0] != "[Pasted IMG1]" {
-		t.Fatalf("hydrated reference labels = %v", views[0].ReferenceLabels)
-	}
-}
-
-func TestConvertMessagesForDisplayLegacyMultipartUsesPromptPartOnly(t *testing.T) {
-	message := provider.NewMultiPartMessage("user", []provider.ContentPart{
-		{Type: "text", Text: "[Pasted Text1] summarize"},
-		{Type: "text", Text: "private pasted payload"},
-	})
-	views := ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{
-		Msg:  message,
-		Meta: sessiondb.DisplayMeta{DisplayRole: "user"},
-	}})
-	if len(views) != 1 || views[0].Content != "[Pasted Text1] summarize" {
-		t.Fatalf("legacy hydrated views = %+v", views)
 	}
 }

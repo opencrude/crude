@@ -12,8 +12,8 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 )
 
 // renderAssistantLines is a helper that renders an assistant message through
@@ -54,14 +54,7 @@ func TestMarkdownBridgedToNativeGoldenCellBuffer(t *testing.T) {
 		t.Fatal("no native rows")
 	}
 
-	// 1. No row requests the ANSI path.
-	for i, pl := range native {
-		if pl.PreferANSI() {
-			t.Fatalf("row %d PreferANSI — markdown must be fully native", i)
-		}
-	}
-
-	// 2. Paint into a cell buffer and check no escape runes leak.
+	// Paint into a cell buffer and check no escape runes leak.
 	buf := surface.NewCellBuffer(80, len(native))
 	for y, pl := range native {
 		chatprojection.PaintLineAt(buf, 0, y, 80, pl, tokens, 0, 0, false)
@@ -134,11 +127,6 @@ func TestStreamingCursorNative(t *testing.T) {
 		t.Fatal("no rows")
 	}
 	native := rows[0].Native
-	for i, pl := range native {
-		if pl.PreferANSI() {
-			t.Fatalf("streaming row %d PreferANSI", i)
-		}
-	}
 	// The last row should carry the block cursor ("█") when blink is on.
 	last := native[len(native)-1]
 	if !strings.Contains(last.PlainText(), "█") && !strings.Contains(last.PlainText(), " ") {
@@ -221,44 +209,6 @@ func flattenForSelection(rows []chatprojection.MessageRow) []string {
 	return all
 }
 
-// TestNoChatRowRequestsANSIPath scans a full assistant render (markdown with
-// code block) and asserts that the message row painter never hits the ANSI
-// branch. We verify by checking every native row has PreferANSI()==false and
-// that the Lines mirror equals the native PlainText (so the ANSI string is
-// never needed for painting).
-func TestNoChatRowRequestsANSIPath(t *testing.T) {
-	th := theme.DefaultDark()
-	r := chatprojection.NewRenderer(th)
-	r.SetSize(80, 40)
-	r.SetChatAreaBounds(0, 40)
-	r.SetStreaming(false)
-	content := "# Heading\n\nplain text\n\n```go\nfunc f() {}\n```"
-	r.AppendMessage(types.ChatMessage{
-		Role:    types.RoleAssistant,
-		Content: content,
-		Time:    time.Now(),
-	})
-	rows, _, _ := r.ExportMessageRows(80)
-	for ri, row := range rows {
-		for i, pl := range row.Native {
-			if pl.PreferANSI() {
-				t.Fatalf("row %d native[%d] PreferANSI", ri, i)
-			}
-			// The native plain text must match the Lines mirror (modulo the
-			// ANSI that was stripped by the bridge).
-			if i < len(row.Lines) {
-				pt := pl.PlainText()
-				stripped := rendering.StripAnsi(row.Lines[i])
-				if pt != stripped && pt != row.Lines[i] {
-					// Allow Glamour padding differences; the key invariant is
-					// that PreferANSI is never true.
-					_ = stripped
-				}
-			}
-		}
-	}
-}
-
 // TestBridgeAnsiLineKnownThemeColourMapsToRole verifies that a colour matching
 // a theme role is mapped back to the SemanticColor role (so it follows theme
 // switches), while an unmatched colour is carried as an explicit override.
@@ -272,9 +222,6 @@ func TestBridgeAnsiLineKnownThemeColourMapsToRole(t *testing.T) {
 	// Build an ANSI string using the theme's Fg truecolour.
 	ansiFG := fgCell.ANSIFG() + "hello\x1b[0m"
 	pl := chatprojection.BridgeAnsiLine(ansiFG, tokens)
-	if pl.PreferANSI() {
-		t.Fatal("bridged line PreferANSI")
-	}
 	if len(pl.Spans) == 0 {
 		t.Fatal("no spans")
 	}

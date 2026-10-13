@@ -14,8 +14,8 @@ import (
 	"crude/tui/filetree"
 	"crude/tui/screens/launcher"
 	"crude/tui/screens/shellchat"
-	ttypes "crude/tui/types"
 	"crude/tui/ui"
+	ttypes "crude/types"
 	"crude/workspace"
 )
 

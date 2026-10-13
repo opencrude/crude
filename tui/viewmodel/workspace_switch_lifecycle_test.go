@@ -15,8 +15,8 @@ import (
 	"crude/tui/filetree"
 	findinfiles "crude/tui/screens/findinfiles"
 	"crude/tui/theme"
-	ttypes "crude/tui/types"
 	"crude/tui/ui"
+	ttypes "crude/types"
 	"crude/workspace"
 )
 

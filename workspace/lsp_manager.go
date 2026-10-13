@@ -10,6 +10,8 @@ import (
 	"time"
 
 	ttypes "crude/types"
+
+	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
 // LSPManager is the sole workspace owner of server and open-document lifetimes.
@@ -677,12 +679,12 @@ func (m *LSPManager) RequestHover(ctx context.Context, filePath string, line, co
 }
 
 // RequestRename routes a rename request to the right client.
-func (m *LSPManager) RequestRename(ctx context.Context, filePath string, line, col int, newName string) (interface{}, error) {
+func (m *LSPManager) RequestRename(ctx context.Context, filePath string, line, col int, newName string) (*protocol.WorkspaceEdit, error) {
 	if !m.featureOn(func(s ttypes.LSPSettings) bool { return s.Rename }) {
 		return nil, nil
 	}
 	var (
-		out interface{}
+		out *protocol.WorkspaceEdit
 		err error
 	)
 	err = m.trackInflight(func() error {

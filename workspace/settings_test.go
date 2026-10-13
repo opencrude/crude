@@ -1,7 +1,6 @@
 package workspace
 
 import (
-	"encoding/json"
 	"testing"
 
 	ttypes "crude/types"
@@ -53,35 +52,6 @@ func TestWorkspaceCanExplicitlyDisableInheritedAutosave(t *testing.T) {
 	}
 }
 
-func TestLoadWorkspaceOverridesMigratesLegacyAppSettings(t *testing.T) {
-	setTestHome(t)
-	wdb := openTestWorkspaceDB(t)
-	w := &Workspace{WorkspaceDB: wdb, Logger: testLogger{}}
-	app := ttypes.AppSettings{Theme: ttypes.ThemeSettings{Preset: "dark"}, Editor: ttypes.EditorSettings{TabSize: 4}}
-	ttypes.ApplyAppDefaults(&app)
-	w.SetAppDefaults(app)
-
-	legacy := app
-	legacy.Theme.Preset = "light"
-	data, err := json.Marshal(legacy)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := wdb.SetSetting(legacyAppSettingsDBKey, string(data)); err != nil {
-		t.Fatal(err)
-	}
-	got := w.LoadWorkspaceOverrides()
-	if string(got.Theme) != `{"preset":"light"}` {
-		t.Fatalf("legacy app_settings should become a sparse theme override: %s", got.Theme)
-	}
-	if len(got.Editor) != 0 {
-		t.Fatalf("unchanged editor should inherit, got %s", got.Editor)
-	}
-	if w.LoadAppSettings().Theme.Preset != "light" {
-		t.Fatalf("effective theme=%q want light", w.LoadAppSettings().Theme.Preset)
-	}
-}
-
 // A workspace that overrides one field must keep tracking the application
 // layer for every field it never touched, for as long as the workspace
 // exists. This is the difference between inheriting and hard-copying.
@@ -118,55 +88,5 @@ func TestWorkspaceKeepsInheritingUntouchedAppSettings(t *testing.T) {
 	}
 	if !effective.LSP.Hover {
 		t.Fatal("inheriting must not disable unrelated features")
-	}
-}
-
-// Categories a legacy whole-category row never mentioned keep inheriting,
-// and clearing a category returns it to full inheritance. A stored snapshot
-// cannot say which of its values the user meant, so migration keeps whatever
-// still differs; "Reset section" in workspace settings is the way out.
-func TestLegacyWholeCategoryOverlayNarrowsToDifferingFields(t *testing.T) {
-	setTestHome(t)
-	wdb := openTestWorkspaceDB(t)
-	w := &Workspace{WorkspaceDB: wdb, Logger: testLogger{}}
-	app := ttypes.AppSettings{
-		Editor: ttypes.EditorSettings{TabSize: 4, Minimap: true},
-		LSP:    ttypes.DefaultLSPSettings(),
-	}
-	ttypes.ApplyAppDefaults(&app)
-	w.SetAppDefaults(app)
-
-	// How older releases wrote it: one key per overridden category, each
-	// holding a full snapshot of that category.
-	legacyEditor := app.Editor
-	legacyEditor.TabSize = 2
-	editorJSON, err := json.Marshal(legacyEditor)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := wdb.SetSetting(workspaceSettingsKey, `{"editor":`+string(editorJSON)+`}`); err != nil {
-		t.Fatal(err)
-	}
-
-	app.LSP.Completions = false
-	w.SetAppDefaults(app)
-
-	overrides := w.LoadWorkspaceOverrides()
-	if len(overrides.LSP) != 0 {
-		t.Fatalf("a category the overlay never mentioned must inherit, got %s", overrides.LSP)
-	}
-	if w.LoadAppSettings().LSP.Completions {
-		t.Fatal("app-level completions off must reach this workspace")
-	}
-	if w.LoadAppSettings().Editor.TabSize != 2 {
-		t.Fatal("legacy editor override lost")
-	}
-
-	overrides.ClearCategory("editor")
-	if err := w.SaveWorkspaceSettings(overrides); err != nil {
-		t.Fatal(err)
-	}
-	if got := w.LoadAppSettings().Editor.TabSize; got != 4 {
-		t.Fatalf("clearing a category must restore inheritance, tab size %d", got)
 	}
 }

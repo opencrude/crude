@@ -8,7 +8,6 @@ import (
 
 	"crude/agent"
 	"crude/tui/chatprojection"
-	ttypes "crude/tui/types"
 	"crude/types"
 	"crude/workspace"
 )
@@ -57,7 +56,7 @@ func TestCancelledAgentEnvelopeRetainsLateSemanticEvidenceWithoutReactivation(t 
 					}
 				}
 				assertStatus()
-				deliver("phase", "waiting_provider")
+				deliver("phase", map[string]any{"name": "waiting_provider"})
 				assertStatus()
 				app.syncAgentStatusInventory()
 				assertStatus()
@@ -86,7 +85,7 @@ func TestCancelledAgentEnvelopeRetainsLateSemanticEvidenceWithoutReactivation(t 
 					Identity: types.RuntimeEventIdentity{EventID: owner + "-next", OwnerID: owner, AgentID: owner, RunID: "next-run", RuntimeEpoch: 1, Generation: 2, Sequence: sequence + 1},
 				}
 				_, _ = app.Update(next)
-				next.Type, next.Data = "phase", "waiting_provider"
+				next.Type, next.Data = "phase", map[string]any{"name": "waiting_provider"}
 				next.Identity.EventID, next.Identity.Sequence = owner+"-next-phase", sequence+2
 				_, _ = app.Update(next)
 				if !state.IsActive() || state.Completed || state.TurnIdentity.Generation != 2 {
@@ -195,7 +194,7 @@ func TestLateSubAgentStartAfterParentCloseIsDropped(t *testing.T) {
 
 	app.cleanupAgent("root")
 
-	app.handleAgentEvent(ttypes.AgentEventMsg{
+	app.handleAgentEvent(types.AgentEventMsg{
 		Type:    "sub_agent_started",
 		AgentID: "late-child",
 		Data: map[string]string{
@@ -223,7 +222,7 @@ func TestRetryEventReachesCanonicalTranscript(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("root")
 	for _, attempt := range []int{1, 2} {
-		app.handleAgentEvent(ttypes.AgentEventMsg{AgentID: "root", Type: "retry", Data: map[string]any{"attempt": attempt, "limit": 6, "backoff": float64(3), "reason": "Provider temporarily unavailable"}})
+		app.handleAgentEvent(types.AgentEventMsg{AgentID: "root", Type: "retry", Data: map[string]any{"attempt": attempt, "limit": 6, "backoff": float64(3), "reason": "Provider temporarily unavailable"}})
 	}
 	messages := app.ws.AgentMgr().Get("root").State.Messages.Messages()
 	count := 0
@@ -245,7 +244,7 @@ func TestSubAgentTerminalEventCannotRecreateGhostIdleStatus(t *testing.T) {
 	app.AddOrchestrator("root")
 	baselineActive := testActiveAgentCount(app)
 	baselineIdle := testIdleAgentCount(app)
-	app.handleAgentEvent(ttypes.AgentEventMsg{
+	app.handleAgentEvent(types.AgentEventMsg{
 		Type:    "sub_agent_started",
 		AgentID: "child",
 		Data: map[string]string{
@@ -256,7 +255,7 @@ func TestSubAgentTerminalEventCannotRecreateGhostIdleStatus(t *testing.T) {
 		t.Fatalf("active count before completion=%d, want %d", got, baselineActive+1)
 	}
 
-	app.handleAgentEvent(ttypes.AgentEventMsg{
+	app.handleAgentEvent(types.AgentEventMsg{
 		Type:    "sub_agent_completed",
 		AgentID: "child",
 		Data: map[string]string{
@@ -278,7 +277,7 @@ func TestFailedSubAgentParentRowAndReviewPaneRemainAuditable(t *testing.T) {
 	app.AddOrchestrator("root")
 	root := app.ws.AgentMgr().Get("root").State.Messages
 	root.UpdateToolCall("spawn-1", "tool-1", "agent_start", "category: researcher")
-	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "sub_agent_started", AgentID: "child", Data: map[string]string{
+	app.handleAgentEvent(types.AgentEventMsg{Type: "sub_agent_started", AgentID: "child", Data: map[string]string{
 		"agent_id": "child", "agent_name": "Lily", "category": "researcher", "task": "Inspect recovery", "parent_id": "root", "parent_tool_id": "spawn-1",
 	}})
 	parent := root.Messages()
@@ -288,7 +287,7 @@ func TestFailedSubAgentParentRowAndReviewPaneRemainAuditable(t *testing.T) {
 	if pane := app.ws.PaneMgr().Get("child"); pane == nil || pane.Title != "Lily · Researcher" {
 		t.Fatalf("running subpane title omitted the agent type: %+v", pane)
 	}
-	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "sub_agent_completed", AgentID: "child", Data: map[string]string{
+	app.handleAgentEvent(types.AgentEventMsg{Type: "sub_agent_completed", AgentID: "child", Data: map[string]string{
 		"agent_id": "child", "agent_name": "Lily", "status": "failed_error",
 	}})
 	pane := app.ws.PaneMgr().Get("child")
@@ -311,7 +310,7 @@ func TestParallelSubAgentStartsLinkToTheirOwnParentCalls(t *testing.T) {
 	for _, start := range []struct{ id, name, call string }{
 		{"child-two", "Jane", "second"}, {"child-one", "Lily", "first"},
 	} {
-		app.handleAgentEvent(ttypes.AgentEventMsg{Type: "sub_agent_started", AgentID: start.id, Data: map[string]string{
+		app.handleAgentEvent(types.AgentEventMsg{Type: "sub_agent_started", AgentID: start.id, Data: map[string]string{
 			"agent_id": start.id, "agent_name": start.name, "parent_id": "root", "parent_tool_id": start.call,
 		}})
 	}
@@ -325,7 +324,7 @@ func TestCompletedSubAgentCanBeReopenedForReview(t *testing.T) {
 	app := newFullTestApp(t)
 	app.AddOrchestrator("root")
 	const assignment = "# Assignment\n- Description: inspect lifecycle"
-	app.handleAgentEvent(ttypes.AgentEventMsg{
+	app.handleAgentEvent(types.AgentEventMsg{
 		Type:    "sub_agent_started",
 		AgentID: "child",
 		Data: map[string]string{
@@ -338,7 +337,7 @@ func TestCompletedSubAgentCanBeReopenedForReview(t *testing.T) {
 	pane := app.ws.PaneMgr().Get("child")
 	projection := app.subPaneProjections.GetExisting("child")
 
-	app.handleAgentEvent(ttypes.AgentEventMsg{
+	app.handleAgentEvent(types.AgentEventMsg{
 		Type:    "sub_agent_completed",
 		AgentID: "child",
 		Data: map[string]string{
@@ -410,7 +409,7 @@ func TestUsagePaneFollowsRequestRevisionsWithoutDoubleCounting(t *testing.T) {
 	wsOf(app).SessionsByAgent = map[string]*workspace.Session{"root": workspace.NewSession("session", "", nil, nil)}
 	app.AddOrchestrator("root")
 	emit := func(prompt, completion any, reported int64) {
-		app.handleAgentEvent(ttypes.AgentEventMsg{AgentID: "root", Type: "usage", Data: map[string]any{
+		app.handleAgentEvent(types.AgentEventMsg{AgentID: "root", Type: "usage", Data: map[string]any{
 			"request_id": "request", "reported_at": reported, "prompt": prompt, "completion": completion,
 		}})
 	}
@@ -436,7 +435,7 @@ func TestDangerousBackgroundAgentAlertIsVisibleWithoutChangingSelection(t *testi
 	app.MinimizeAgent("child")
 	path := openEditorTabs(t, app, "main.go")[0]
 
-	app.handleAgentEvent(ttypes.AgentEventMsg{
+	app.handleAgentEvent(types.AgentEventMsg{
 		Type: "safety_alert", AgentID: "child",
 		Data: map[string]any{"risk": "blocked", "reason": "Blocked disk write"},
 	})

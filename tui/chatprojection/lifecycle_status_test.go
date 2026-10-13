@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 )
 
 func TestTransientLifecycleDoesNotChangeTranscriptGeometry(t *testing.T) {
@@ -131,7 +131,7 @@ func TestCompactionLifecycleUsesRetainedBoundaryTable(t *testing.T) {
 	if strings.Contains(joined, "●  Compaction") || strings.Contains(joined, "Context       ") || strings.Contains(joined, "Stage         ") {
 		t.Fatalf("compaction retained obsolete labels or two-column marker gap: %q", joined)
 	}
-	direct := renderCompactionMessage(msg, renderContext{innerW: 92, contentWidth: 76, legacyModelFallback: "aeron/model", spinFrame: 1})
+	direct := renderCompactionMessage(msg, renderContext{innerW: 92, contentWidth: 76, spinFrame: 1})
 	for index := 1; index < len(direct.native)-1; index++ {
 		if got := direct.native[index].VisibleWidth(); got != 92 {
 			t.Fatalf("row %d width=%d want right column aligned with 92-column header", index, got)

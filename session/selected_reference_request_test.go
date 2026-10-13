@@ -287,7 +287,7 @@ func TestPreparedInputEnrichmentReachesLocallyAdmittedRequestExactlyOnce(t *test
 }
 
 func TestSelectedReferencePreparationFailurePreservesInputWithoutEffects(t *testing.T) {
-	for _, failure := range []string{"missing", "inactive", "foreign", "unreadable", "missing-media", "empty-media", "invalid-media", "unsupported-kind", "unsupported-model", "explicit-empty-model", "unsupported-protocol", "reference-load", "closed-memory", "unreadable-summaries"} {
+	for _, failure := range []string{"missing", "inactive", "foreign", "unreadable", "unsupported-kind", "unsupported-model", "explicit-empty-model", "unsupported-protocol", "reference-load", "closed-memory", "unreadable-summaries"} {
 		t.Run(failure, func(t *testing.T) {
 			var calls atomic.Int32
 			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
@@ -347,12 +347,6 @@ func TestSelectedReferencePreparationFailurePreservesInputWithoutEffects(t *test
 				ref.SessionID = "foreign"
 			case "unreadable":
 				ref.FilePath = project
-			case "missing-media":
-				ref.FilePath = filepath.Join(project, "missing.png")
-			case "empty-media":
-				ref.FilePath = ""
-			case "invalid-media":
-				ref.FilePath, ref.Content = "", "invalid base64 capture"
 			case "unsupported-kind":
 				ref.Kind = "unknown-kind"
 			case "unsupported-protocol":

@@ -10,15 +10,13 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/tools"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 	"crude/types/reasoning"
 )
 
 // messageLines is one render pass producing parallel plain-text lines and
-// native rows. After the ANSI-fallback deletion, native rows are always real
-// PaintLines (never PreferANSI); lines is kept as a plain-text mirror for
-// selection/copy.
+// native rows; lines is the plain-text mirror for selection/copy.
 type messageLines struct {
 	lines          []string
 	native         []PaintLine
@@ -39,21 +37,20 @@ func (ml messageLines) withCursor(cursorIdx, spinFrame int, activeTyping bool) m
 }
 
 type renderContext struct {
-	th                  *theme.Theme
-	tokens              *ui.TokenSet
-	contentWidth        int
-	innerW              int
-	width               int
-	height              int
-	chatHeight          int
-	spinFrame           int
-	activeTyping        bool
-	legacyModelFallback string
-	username            string
-	streaming           bool
-	isLastMsg           bool
-	phase               string
-	mdRenderer          *rendering.MarkdownRenderer
+	th           *theme.Theme
+	tokens       *ui.TokenSet
+	contentWidth int
+	innerW       int
+	width        int
+	height       int
+	chatHeight   int
+	spinFrame    int
+	activeTyping bool
+	username     string
+	streaming    bool
+	isLastMsg    bool
+	phase        string
+	mdRenderer   *rendering.MarkdownRenderer
 	// disclosure is the resolved expand/collapse mode for this message
 	// (see disclosure.go). Deterministic defaults keep live and hydrated
 	// sessions rendering the same shape.
@@ -204,13 +201,7 @@ func renderAssignmentMessage(msg types.ChatMessage, ctx renderContext, suppressH
 func renderAssistantMessage(msg types.ChatMessage, ctx renderContext, suppressHeader bool) messageLines {
 	var ml messageLines
 	timeLabel := rendering.FormatTimeLabel(msg.Time)
-	modelName := msg.ModelID
-	if modelName == "" {
-		// Sessions written before per-turn attribution use the renderer's
-		// explicitly configured legacy fallback. Attributed rows never do.
-		modelName = ctx.legacyModelFallback
-	}
-	header := buildAssistantHeader(modelName, msg.Incomplete, timeLabel, ctx.innerW, suppressHeader)
+	header := buildAssistantHeader(msg.ModelID, msg.Incomplete, timeLabel, ctx.innerW, suppressHeader)
 	if !header.IsZero() {
 		ml.lines = append(ml.lines, header.PlainText())
 		ml.native = append(ml.native, header)
@@ -777,9 +768,6 @@ func renderCompactionMessage(msg types.ChatMessage, ctx renderContext) messageLi
 		}
 	}
 	modelName := msg.ModelID
-	if modelName == "" {
-		modelName = ctx.legacyModelFallback
-	}
 	if modelName == "" {
 		modelName = "Aeron"
 	}

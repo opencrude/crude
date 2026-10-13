@@ -277,7 +277,12 @@ func TestReferenceContentPersistenceFailureRollsBackExactState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(loaded) != 2 || loaded[0] != inline || loaded[1] != fileRef {
+	byID := make(map[string]sessiondb.Reference, len(loaded))
+	for _, ref := range loaded {
+		byID[ref.ID] = ref
+	}
+	// Windows timestamps can tie. Row order is not evidence of a mutation.
+	if len(loaded) != 2 || byID[inline.ID] != inline || byID[fileRef.ID] != fileRef {
 		t.Fatalf("database state changed on failure: got %#v", loaded)
 	}
 }

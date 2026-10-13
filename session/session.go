@@ -38,12 +38,8 @@ var ErrHistoryDisabled = errors.New("local history disabled")
 type EventSender interface {
 	SendAgentEvent(typ string, data any)
 	SendAgentEventWithID(typ string, data any, agentID string)
-}
-
-// IdentityEventSender is the neutral exact-run seam. Legacy senders remain
-// usable while presentation migrates; runtime sources must preserve a supplied
-// identity rather than regenerating it on duplicate delivery.
-type IdentityEventSender interface {
+	// SendAgentEventEnvelope is the exact-run seam. Runtime sources preserve a
+	// supplied identity rather than regenerating it on duplicate delivery.
 	SendAgentEventEnvelope(event agent.AgentEvent)
 }
 
@@ -131,11 +127,10 @@ type Session struct {
 	toolCallCount   int
 	toolCallCountMu sync.Mutex
 
-	db          *sql.DB
-	dbPath      string
-	turnNumber  int
-	toolCallSeq int
-	closing     int32
+	db         *sql.DB
+	dbPath     string
+	turnNumber int
+	closing    int32
 	// pruned records that Close found nothing durable to keep and removed the
 	// session's storage; the workspace registry must then forget the session.
 	pruned                   atomic.Bool
@@ -905,12 +900,6 @@ func (s *Session) completedSubAgentDBPath(childSessionID string) string {
 	if dir := s.SessionDir(); dir != "" {
 		path := filepath.Join(dir, "subagents", childSessionID+".db")
 		if _, err := os.Stat(path); err == nil {
-			return path
-		}
-	}
-	if legacyRoot, err := SessionsRoot(); err == nil {
-		path := filepath.Join(legacyRoot, childSessionID+".db")
-		if _, statErr := os.Stat(path); statErr == nil {
 			return path
 		}
 	}

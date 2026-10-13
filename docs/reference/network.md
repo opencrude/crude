@@ -9,7 +9,7 @@ the AI, Security, and IDE groups:
 
 | Page | Controls |
 |---|---|
-| Connection | TCP connect timeout, TLS handshake timeout, TCP keep-alive, idle-pool lifetime, idle connections per host, HTTP/2 compatibility |
+| Connection | TCP connect timeout, TLS handshake timeout, TCP keep-alive idle/interval/probes, idle-pool lifetime, idle connections per host, HTTP/2 compatibility and health checks |
 | Proxy | Environment / Direct / Custom URL, credential-masked proxy URL, proxy bypass |
 | Certificates | Minimum TLS version, additive custom CA file, exact leaf-certificate exception, exact-host mTLS identity |
 
@@ -44,10 +44,14 @@ using defaults. No direct fallback, reset, or trust widening occurs.
 |---|---|
 | TCP connect timeout | 30 seconds |
 | TLS handshake timeout | 10 seconds |
-| TCP keep-alive | 30 seconds |
+| TCP keep-alive after | 30 seconds |
+| TCP keep-alive interval | 10 seconds |
+| TCP keep-alive probes | 3 |
 | Idle connection lifetime | 90 seconds |
 | Idle connections per host | 10 |
 | HTTP/2 | Enabled |
+| HTTP/2 health check after | 15 seconds |
+| HTTP/2 health check timeout | 15 seconds |
 | Minimum TLS | TLS 1.2 |
 
 TLS 1.3 is an explicit stricter minimum. Disabling HTTP/2 is a compatibility
@@ -56,6 +60,13 @@ response waiting; the provider progress watchdog remains the sole owner of
 header/stream silence. An explicit provider/account Connect timeout overrides
 both its TCP and TLS establishment budgets. An unset provider Connect timeout
 inherits the separate Network budgets.
+
+Dead pooled connections are detected for every protocol: HTTP/2 connections
+are pinged after the configured read silence and closed when the ping goes
+unanswered; TCP keep-alive probes (idle, interval, count) close dead HTTP/1.1
+and HTTP/2 connections alike. A connection that dies during a retry cooldown is
+therefore redialed rather than reused by the next attempt. These are
+idle-connection probes, not request deadlines.
 
 A provider progress stall retires only the actual failed transport connection,
 including a pooled HTTP/2 connection that remains locally established while

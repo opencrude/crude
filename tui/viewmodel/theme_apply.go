@@ -3,9 +3,9 @@ package viewmodel
 import (
 	"crude/shellport"
 	"crude/tui/theme"
-	ttypes "crude/tui/types"
 	"crude/tui/ui"
 	"crude/tui/wm"
+	ttypes "crude/types"
 )
 
 // themeConsumerID names a theme sink that ApplyThemePreset must update.

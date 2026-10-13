@@ -109,12 +109,6 @@ func (l *lspReplica) OpenFile(_ context.Context, path, text string) {
 func (l *lspReplica) CloseFile(_ context.Context, path string) {
 	l.send(coreprotocol.LSPCloseFile, coreprotocol.LSPRequest{Path: path})
 }
-func (l *lspReplica) QueueFileUpdate(path, text string) {
-	l.send(coreprotocol.LSPQueueFileUpdate, coreprotocol.LSPRequest{Path: path, Text: text})
-}
-func (l *lspReplica) NotifyFileSave(_ context.Context, path, text string, reason workspace.DocumentSaveReason, before bool) {
-	l.send(coreprotocol.LSPNotifyFileSave, coreprotocol.LSPRequest{Path: path, Text: text, Reason: reason, Before: before})
-}
 func (l *lspReplica) NotifyWatchedFilesChanged(_ context.Context, path string, changeType int) {
 	l.send(coreprotocol.LSPNotifyWatchedFilesChanged, coreprotocol.LSPRequest{Path: path, ChangeType: changeType})
 }

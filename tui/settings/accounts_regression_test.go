@@ -9,8 +9,8 @@ import (
 	"crude/provider"
 	"crude/tui/surface"
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 )
 
 func TestAccountCatalogFilterAndScrollbarWithThousandAccounts(t *testing.T) {

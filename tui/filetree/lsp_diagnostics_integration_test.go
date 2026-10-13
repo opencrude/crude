@@ -2,6 +2,7 @@ package filetree
 
 import (
 	"context"
+	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -50,7 +51,7 @@ func (c *treeLSPTestClient) RequestDocumentSymbols(context.Context, string) []wo
 func (c *treeLSPTestClient) RequestHover(context.Context, string, int, int) (string, error) {
 	return "", nil
 }
-func (c *treeLSPTestClient) RequestRename(context.Context, string, int, int, string) (interface{}, error) {
+func (c *treeLSPTestClient) RequestRename(context.Context, string, int, int, string) (*protocol.WorkspaceEdit, error) {
 	return nil, nil
 }
 func (c *treeLSPTestClient) RequestCompletions(context.Context, string, int, int) []workspace.CompletionItem {

@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"crude/tui/chatprojection"
-	ttypes "crude/tui/types"
 	"crude/tui/ui"
+	ttypes "crude/types"
 	"crude/workspace"
 )
 
@@ -302,9 +302,6 @@ func TestThinkingSubpaneNativeRowsPreserveScrollPad(t *testing.T) {
 		}
 		if l.Native == nil {
 			t.Fatalf("content row %d degraded to ANSI Text=%q", i, l.Text)
-		}
-		if l.Native.PreferANSI() {
-			t.Fatalf("content row %d PreferANSI", i)
 		}
 	}
 	// Gravity topPad must be stripped: first content row is not an empty pad.

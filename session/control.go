@@ -64,6 +64,10 @@ func controlEffectAllowed(policy safety.Policy, effect control.Effect) bool {
 	}
 }
 
+func controlDescriptorAllowed(policy safety.Policy, descriptor control.Descriptor) bool {
+	return !descriptor.HumanOnly && controlEffectAllowed(policy, descriptor.Effect)
+}
+
 // bindAgentControl retains the admitted shell identity for the complete turn and
 // its children. The runtime rechecks the actual caller/run and target at effects.
 func (s *Session) bindAgentControl(ctx context.Context, live *agent.Agent, target *control.Target) {
@@ -124,7 +128,7 @@ func (s *Session) bindAgentControl(ctx context.Context, live *agent.Agent, targe
 			}
 			var allowed []control.Descriptor
 			for _, descriptor := range descriptors {
-				if descriptor.Effect == "" || controlEffectAllowed(live.Policy, descriptor.Effect) {
+				if !descriptor.HumanOnly && (descriptor.Effect == "" || controlEffectAllowed(live.Policy, descriptor.Effect)) {
 					allowed = append(allowed, descriptor)
 				}
 			}
@@ -172,7 +176,7 @@ func (s *Session) bindAgentControl(ctx context.Context, live *agent.Agent, targe
 		if err != nil {
 			return tools.ToolResult{}, err
 		}
-		if descriptor.HumanOnly || !controlEffectAllowed(live.Policy, descriptor.Effect) {
+		if !controlDescriptorAllowed(live.Policy, descriptor) {
 			return tools.ToolResult{}, errors.New("resolved Crude operation exceeds this agent's effect ceiling or requires human authority")
 		}
 		result, err := runtime.Execute(callCtx, request)

@@ -86,7 +86,8 @@ func (p *MediaReadPolicy) AdmitBytes(name, declared string, data []byte) (provid
 
 // MediaReadPolicy carries the model capability snapshot read_file needs to
 // decide between attaching a binary media file and refusing it explicitly.
-// A nil policy keeps the legacy behavior: every binary is refused.
+// Without a policy the model's media capability is unknown, so every binary
+// read fails closed.
 type MediaReadPolicy struct {
 	// Model is the active model ID used for capability lookup and limits.
 	Model string
@@ -182,8 +183,8 @@ func baseNameOf(path string) string {
 	return path
 }
 
-// mediaPolicyFor resolves the effective policy, treating a nil options value
-// as the legacy no-media policy.
+// mediaPolicyFor resolves the effective policy; nil means media capability is
+// unknown and binaries are refused.
 func mediaPolicyFor(opts *ToolOptions) *MediaReadPolicy {
 	if opts == nil || opts.Media == nil {
 		return nil

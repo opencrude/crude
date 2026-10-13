@@ -123,7 +123,7 @@ func TestControlInputCapturesSelectedExecutionForFreshSend(t *testing.T) {
 	for i := 0; i < 2; i++ {
 		select {
 		case got := <-wire:
-			if !strings.Contains(got, execution.Root) || i == 1 && !strings.Contains(got, "selected-only evidence") {
+			if !strings.Contains(got, wireText(execution.Root)) || i == 1 && !strings.Contains(got, "selected-only evidence") {
 				t.Fatalf("control input ignored selected checkout, request %d: %s", i, got)
 			}
 		case <-ctx.Done():

@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 )
 
@@ -70,7 +71,8 @@ func TestModesDeletedDocumentsAndCanceledCreation(t *testing.T) {
 		t.Fatal(err)
 	}
 	fi, err := os.Stat(filepath.Join(c.Root, "a.txt"))
-	if err != nil || fi.Mode().Perm() != 0755 {
+	// Windows has no executable permission bits to preserve.
+	if err != nil || runtime.GOOS != "windows" && fi.Mode().Perm() != 0755 {
 		t.Fatalf("mode lost: %v %v", fi, err)
 	}
 	put(t, c.Root, "deleted", []byte("new child"))

@@ -1,8 +1,10 @@
 package workspace
 
 import (
+	"bytes"
 	"database/sql"
-	"encoding/base64"
+	"image"
+	"image/png"
 	"os"
 	"path/filepath"
 	"sync"
@@ -59,6 +61,7 @@ func TestReferenceStore_CreateReference(t *testing.T) {
 
 func TestReferenceStore_CreateReferenceConcurrent(t *testing.T) {
 	store := NewReferenceStore("sess1", t.TempDir(), nil)
+	data := referenceImageFixture(t)
 	const count = 32
 	var wg sync.WaitGroup
 	errs := make(chan error, count)
@@ -67,9 +70,9 @@ func TestReferenceStore_CreateReferenceConcurrent(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			_, err := store.CreateReference(sessiondb.CreateRequest{
-				Kind:    sessiondb.KindPastedImage,
-				Mime:    "image/png",
-				Content: base64.StdEncoding.EncodeToString([]byte("image")),
+				Kind: sessiondb.KindPastedImage,
+				Mime: "image/png",
+				Data: data,
 			})
 			errs <- err
 		}()
@@ -187,13 +190,12 @@ func TestReferenceStore_CreateReference_Image(t *testing.T) {
 
 	store := NewReferenceStore("sess1", dir, db)
 
-	imgData := []byte("fake image")
-	b64 := base64.StdEncoding.EncodeToString(imgData)
+	imgData := referenceImageFixture(t)
 
 	ref, err := store.CreateReference(sessiondb.CreateRequest{
-		Kind:    sessiondb.KindPastedImage,
-		Content: b64,
-		Mime:    "image/png",
+		Kind: sessiondb.KindPastedImage,
+		Data: imgData,
+		Mime: "image/png",
 	})
 	if err != nil {
 		t.Fatalf("CreateReference: %v", err)
@@ -204,7 +206,7 @@ func TestReferenceStore_CreateReference_Image(t *testing.T) {
 	if ref.Label != "[Pasted IMG1]" {
 		t.Errorf("Label: got %q, want [Pasted IMG1]", ref.Label)
 	}
-	// KindPastedImage decodes base64, writes to disk, clears Content
+	// Binary image bytes are stored exactly, never as encoded text.
 	if ref.Content != "" {
 		t.Errorf("Content should be cleared after writing to file, got %d chars", len(ref.Content))
 	}
@@ -214,6 +216,19 @@ func TestReferenceStore_CreateReference_Image(t *testing.T) {
 	if _, err := os.Stat(ref.FilePath); os.IsNotExist(err) {
 		t.Errorf("file should exist at %q", ref.FilePath)
 	}
+	stored, err := os.ReadFile(ref.FilePath)
+	if err != nil || !bytes.Equal(stored, imgData) {
+		t.Fatalf("image bytes changed: err=%v", err)
+	}
+}
+
+func referenceImageFixture(t *testing.T) []byte {
+	t.Helper()
+	var data bytes.Buffer
+	if err := png.Encode(&data, image.NewRGBA(image.Rect(0, 0, 2, 2))); err != nil {
+		t.Fatal(err)
+	}
+	return data.Bytes()
 }
 
 func TestReferenceStore_CreateReference_LabelCollision(t *testing.T) {
@@ -355,86 +370,6 @@ func TestReferenceStore_AddExisting_UpdatesCounter(t *testing.T) {
 	}
 	if newRef.Label != "[Pasted Text6]" {
 		t.Errorf("expected [Pasted Text6], got %q", newRef.Label)
-	}
-}
-
-func TestReferenceStore_AddExisting_ImageMigration(t *testing.T) {
-	db, dir := setupRefStoreDB(t)
-	defer db.Close()
-
-	store := NewReferenceStore("sess1", dir, db)
-
-	// Create base64 image content
-	imgData := []byte("fake image data")
-	b64 := base64.StdEncoding.EncodeToString(imgData)
-
-	// Add existing ref with Content set but no FilePath
-	ref := sessiondb.Reference{
-		ID:        "img-ref",
-		SessionID: "sess1",
-		Kind:      sessiondb.KindPastedImage,
-		Label:     "[Pasted IMG3]",
-		Mime:      "image/png",
-		Content:   b64,
-		FilePath:  "",
-		CreatedAt: time.Now().UnixNano(),
-	}
-	store.AddExisting(ref)
-
-	// Verify migration happened
-	got, ok := store.GetReference("img-ref")
-	if !ok {
-		t.Fatal("ref should be in store")
-	}
-	if got.Content != "" {
-		t.Errorf("Content should be cleared after migration, got %d chars", len(got.Content))
-	}
-	if got.FilePath == "" {
-		t.Error("FilePath should be set after migration")
-	}
-	// File should exist on disk
-	if _, err := os.Stat(got.FilePath); os.IsNotExist(err) {
-		t.Errorf("migrated file should exist at %q", got.FilePath)
-	}
-}
-
-func TestReferenceStore_AddExisting_ImageMigration_DBPersist(t *testing.T) {
-	db, dir := setupRefStoreDB(t)
-	defer db.Close()
-
-	store := NewReferenceStore("sess1", dir, db)
-
-	// Insert the legacy reference into DB first
-	imgData := []byte("fake image data for DB test")
-	b64 := base64.StdEncoding.EncodeToString(imgData)
-	ref := sessiondb.Reference{
-		ID:        "img-db-ref",
-		SessionID: "sess1",
-		Kind:      sessiondb.KindPastedImage,
-		Label:     "[Pasted IMG1]",
-		Mime:      "image/png",
-		Content:   b64,
-		FilePath:  "",
-		CreatedAt: time.Now().UnixNano(),
-	}
-	_ = sessiondb.InsertPromptReference(db, ref)
-
-	// Now load and add via AddExisting
-	store.AddExisting(ref)
-
-	// Verify the DB was updated
-	refs, err := sessiondb.LoadPromptReferencesByIDs(db, []string{"img-db-ref"})
-	if err != nil {
-		t.Fatalf("LoadPromptReferencesByIDs: %v", err)
-	}
-	if len(refs) != 1 {
-		t.Fatalf("expected 1 ref, got %d", len(refs))
-	}
-	if refs[0].Content != "" {
-		t.Errorf("DB Content should be cleared after migration, got %q", refs[0].Content)
-	}
-	if refs[0].FilePath == "" {
-		t.Error("DB FilePath should be set after migration")
 	}
 }
 

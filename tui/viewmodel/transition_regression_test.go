@@ -10,7 +10,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/shellport"
-	ttypes "crude/tui/types"
+	ttypes "crude/types"
 	"crude/workspace"
 )
 

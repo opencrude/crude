@@ -169,9 +169,7 @@ func (s *Screen) paintMessageRow(buf *surface.CellBuffer, x, y, width int, item 
 
 	selStart, selEnd := selectionCols(s.paintState, globalLine)
 
-	// Native rows are always real after the ANSI-fallback deletion. The
-	// PreferANSI branch is gone; if a row ever lacks a native entry we build
-	// a plain body line from the text so painting never touches the ANSI path.
+	// A row lacking a native entry paints a plain body line from its text.
 	var pl chatprojection.PaintLine
 	if localRow < len(row.Native) {
 		pl = row.Native[localRow]

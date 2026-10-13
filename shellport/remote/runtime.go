@@ -30,7 +30,7 @@ func (w *Workspace) Logger() workspace.Logger { return w.logger }
 func (w *Workspace) InitialSettings() types.Settings {
 	value := w.view.InitialSettings
 	settings := w.LoadAppSettings()
-	value.Theme, value.Editor, value.UI, value.Font = settings.Theme, settings.Editor, settings.UI, settings.Font
+	value.Theme, value.Editor, value.UI = settings.Theme, settings.Editor, settings.UI
 	return value
 }
 func (w *Workspace) InitialModelName() string {

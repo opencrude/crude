@@ -14,7 +14,6 @@ package workspace
 import (
 	"context"
 	"database/sql"
-	"encoding/json"
 	"fmt"
 	"os"
 	"slices"
@@ -887,7 +886,7 @@ func canonicalizeToolSnapshotForDisplay(snapshot *ChatMessageView) {
 func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageView {
 	var result []ChatMessageView
 
-	toolNameByCallID, batchArgsByCallID := buildToolNameIndex(msgs)
+	batchArgsByCallID := parallelBatchArguments(msgs)
 
 	for _, mm := range msgs {
 		if mm.Meta.SnapshotVersion > 0 {
@@ -899,211 +898,24 @@ func ConvertMessagesForDisplay(msgs []sessiondb.MessageWithMeta) []ChatMessageVi
 				canonicalizeToolSnapshotForDisplay(&snapshot)
 				result = append(result, snapshot)
 			}
-			continue
 		}
-		// Explicit snapshots above may expose a context boundary. The provider
-		// envelope itself must never enter the visible transcript or its geometry.
-		if mm.Meta.ContextOnly || mm.Msg.EffectiveVisibility() == provider.VisibilityContextOnly {
-			continue
-		}
-		role := mm.Meta.DisplayRole
-		if role == "" {
-			role = mm.Msg.Role
-		}
-
-		msgTime := time.Now()
-		if mm.CreatedAt > 0 {
-			msgTime = time.Unix(0, mm.CreatedAt)
-		}
-
-		switch role {
-		case "user":
-			content := mm.Meta.DisplayContent
-			if content == "" {
-				content = userMessageDisplayContent(mm.Msg.Content)
-			}
-			result = append(result, ChatMessageView{
-				Role:            "user",
-				Content:         content,
-				ReferenceLabels: append([]string(nil), mm.Meta.ReferenceLabels...),
-				Time:            msgTime,
-			})
-
-		case "assistant":
-			result = append(result, ChatMessageView{
-				Role: "assistant", Content: mm.Msg.Content.String(), Time: msgTime,
-				TurnGeneration: mm.Meta.TurnGeneration,
-				AccountID:      mm.Meta.AccountID,
-				ProviderID:     mm.Meta.ProviderID, ModelID: mm.Meta.ModelID,
-			})
-
-		case "thinking":
-			var thinkingDuration time.Duration
-			if mm.Meta.DurationMs > 0 {
-				thinkingDuration = time.Duration(mm.Meta.DurationMs) * time.Millisecond
-			}
-			result = append(result, ChatMessageView{
-				Role:             "thinking",
-				Content:          mm.Msg.ReasoningContent,
-				Time:             msgTime,
-				ThinkingDuration: thinkingDuration,
-				ThinkingDisplay:  mm.Msg.ReasoningDisplay,
-				TurnGeneration:   mm.Meta.TurnGeneration,
-				AccountID:        mm.Meta.AccountID,
-				ProviderID:       mm.Meta.ProviderID,
-				ModelID:          mm.Meta.ModelID,
-			})
-			if mm.Msg.Content.String() != "" {
-				result = append(result, ChatMessageView{
-					Role: "assistant", Content: mm.Msg.Content.String(), Time: msgTime,
-					TurnGeneration: mm.Meta.TurnGeneration,
-					AccountID:      mm.Meta.AccountID,
-					ProviderID:     mm.Meta.ProviderID, ModelID: mm.Meta.ModelID,
-				})
-			}
-
-		case "tool":
-			toolName := mm.Meta.ToolName
-			toolArgs := mm.Meta.ToolArgs
-			toolStatus := mm.Meta.ToolStatus
-			if toolStatus == "" {
-				toolStatus = "success"
-			}
-			if toolName == "" && mm.Msg.ToolCallID != "" {
-				if name, ok := toolNameByCallID[mm.Msg.ToolCallID]; ok {
-					toolName = name
-				}
-			}
-
-			argsCompact := SummarizeToolArgs(toolName, toolArgs)
-			content := mm.Msg.Content.String()
-			if content == "" {
-				content = toolName
-				if argsCompact != "" {
-					content = toolName + " " + argsCompact
-				}
-			}
-
-			chatMsg := ChatMessageView{
-				Role:              "tool",
-				Content:           content,
-				Time:              msgTime,
-				ToolName:          toolName,
-				ToolID:            mm.Msg.ToolCallID,
-				ToolArgs:          argsCompact,
-				ToolCommand:       ExtractArg(toolArgs, "command"),
-				ToolInput:         persistedToolInput(toolName, toolArgs),
-				ToolScope:         persistedToolScope(toolName, toolArgs),
-				ToolStatus:        toolStatus,
-				ToolProgressLabel: mm.Meta.ProgressLabel,
-				PermTag:           mm.Meta.PermTag,
-				ToolPreviewPhase:  "done",
-				TurnGeneration:    mm.Meta.TurnGeneration,
-				AccountID:         mm.Meta.AccountID,
-				ProviderID:        mm.Meta.ProviderID,
-				ModelID:           mm.Meta.ModelID,
-			}
-			if toolName == "multi_tool_use.parallel" && chatMsg.ToolInput == "" {
-				chatMsg.ToolInput = batchArgsByCallID[mm.Msg.ToolCallID]
-			}
-
-			if mm.Meta.DurationMs > 0 {
-				chatMsg.ToolDuration = time.Duration(mm.Meta.DurationMs) * time.Millisecond
-			}
-			if mm.Meta.EstTokens > 0 {
-				chatMsg.ToolEstTokens = mm.Meta.EstTokens
-			}
-			if mm.Meta.LinesAdded > 0 || mm.Meta.LinesRemoved > 0 {
-				chatMsg.ToolLinesAdded = mm.Meta.LinesAdded
-				chatMsg.ToolLinesRemoved = mm.Meta.LinesRemoved
-			}
-			if mm.Meta.SubPaneID != "" {
-				chatMsg.SubPaneID = mm.Meta.SubPaneID
-			} else if toolName == "agent_start" {
-				chatMsg.SubPaneID = persistedSubAgentID(content)
-			}
-
-			result = append(result, chatMsg)
-
-		default:
-			if mm.Msg.Content.String() != "" {
-				result = append(result, ChatMessageView{
-					Role:    role,
-					Content: mm.Msg.Content.String(),
-					Time:    msgTime,
-				})
-			}
-		}
+		// Rows without a canonical snapshot are provider-context envelopes;
+		// they never enter the visible transcript or its geometry.
 	}
 
 	return result
 }
 
-func persistedSubAgentID(content string) string {
-	var payload map[string]any
-	if json.Unmarshal([]byte(content), &payload) == nil {
-		if value, _ := payload["agent_id"].(string); value != "" {
-			return value
-		}
-	}
-	return ""
-}
-
-func persistedToolInput(toolName, args string) string {
-	if tools.RetainsStructuredToolInput(toolName) {
-		return args
-	}
-	switch toolName {
-	case "multi_tool_use.parallel":
-		return args
-	case "grep_files":
-		return ExtractArg(args, "pattern")
-	case "web_search", "arxiv_search":
-		return ExtractArg(args, "query")
-	case "web_fetch":
-		return ExtractArg(args, "url")
-	}
-	return ""
-}
-
-func persistedToolScope(toolName, args string) string {
-	if toolName == "grep_files" {
-		return ExtractArg(args, "path")
-	}
-	return ""
-}
-
-// userMessageDisplayContent keeps hydration identical to the live composer.
-// Multipart payload parts contain expanded files/images for the provider and
-// must never be dumped into the visible user message on resume.
-func userMessageDisplayContent(content provider.MessageContent) string {
-	if content.IsText() {
-		return content.String()
-	}
-	for _, part := range content.Parts() {
-		if part.Type == "text" && part.Text != "" {
-			return part.Text
-		}
-	}
-	return content.ContentDescription()
-}
-
-func buildToolNameIndex(msgs []sessiondb.MessageWithMeta) (map[string]string, map[string]string) {
-	index := make(map[string]string)
+func parallelBatchArguments(msgs []sessiondb.MessageWithMeta) map[string]string {
 	batchArgs := make(map[string]string)
 	for _, mm := range msgs {
-		if mm.Msg.Role == "assistant" && len(mm.Msg.ToolCalls) > 0 {
-			for _, tc := range mm.Msg.ToolCalls {
-				if tc.ID != "" && tc.Function.Name != "" {
-					index[tc.ID] = tc.Function.Name
-					if tc.Function.Name == "multi_tool_use.parallel" {
-						batchArgs[tc.ID] = tc.Function.Arguments
-					}
-				}
+		for _, tc := range mm.Msg.ToolCalls {
+			if mm.Msg.Role == "assistant" && tc.ID != "" && tc.Function.Name == "multi_tool_use.parallel" {
+				batchArgs[tc.ID] = tc.Function.Arguments
 			}
 		}
 	}
-	return index, batchArgs
+	return batchArgs
 }
 
 func nullStr(ns *sql.NullString) string {

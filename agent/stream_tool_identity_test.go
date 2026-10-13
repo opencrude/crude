@@ -96,3 +96,17 @@ func TestToolAccumulatorPreservesDistinctCallsWhenSnapshotsMove(t *testing.T) {
 		t.Fatalf("identity/order changed: starts=%d calls=%+v", starts, final)
 	}
 }
+
+func TestReplacementAgentsNeverReuseToolProjectionIdentity(t *testing.T) {
+	seen := make(map[string]bool)
+	for range 10 {
+		a := &Agent{}
+		calls := make(map[int]*toolCallAccumulator)
+		a.accumulateToolCall(calls, provider.ToolCallDelta{Index: 0, ID: "provider-call", Name: "apply_patch"}, nil, nil)
+		id := finalizeToolCalls(calls)[0].InternalID
+		if id == "" || seen[id] {
+			t.Fatalf("replacement Agent reused projection identity %q", id)
+		}
+		seen[id] = true
+	}
+}

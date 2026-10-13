@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"crude/tui/types"
+	"crude/types"
 )
 
 // MessageSync projects workspace-owned chat rows into a retained TUI store.

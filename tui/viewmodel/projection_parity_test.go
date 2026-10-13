@@ -10,7 +10,6 @@ import (
 	"crude/sessiondb"
 	"crude/tui/chatprojection"
 	"crude/tui/theme"
-	"crude/tui/types"
 	ctypes "crude/types"
 	"crude/workspace"
 )
@@ -451,7 +450,7 @@ func exportRows(t *testing.T, r *chatprojection.Renderer, expanded bool) []chatp
 
 // liveToolMessages drives the conversation the way agent events do and returns
 // the projections the viewmodel publishes for it.
-func liveToolMessages(t *testing.T, toolID string, c projectionCase) []types.ChatMessage {
+func liveToolMessages(t *testing.T, toolID string, c projectionCase) []ctypes.ChatMessage {
 	t.Helper()
 	conv := workspace.NewConversation()
 	internalID := "live-1"

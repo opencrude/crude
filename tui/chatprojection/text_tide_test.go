@@ -7,8 +7,8 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 	"crude/types/reasoning"
 )
 

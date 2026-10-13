@@ -254,6 +254,7 @@ func (s *Session) CommitInputAdmission(ctx context.Context, intent *InputAdmissi
 		intent.committed = true
 		return intent.result
 	}
+	notifyAttachmentIssues(s.orchestratorSender(intent.AgentID), intent.AgentID, prepared.AttachmentIssues)
 	receipt := InputAdmissionReceipt{SessionID: s.sessionID, AgentID: intent.AgentID, InputID: input.InternalID, ContextRevision: state.Revision, TurnGeneration: request.generation, OwnerEpoch: intent.OwnerEpoch, DraftRevision: intent.DraftRevision, AcceptedAt: createdAt}
 	checkpoint.ContextOwnerID, checkpoint.ContextRevision, checkpoint.ContextGeneration, checkpoint.ContextReason = s.sessionID, state.Revision, state.Generation, state.Reason
 	checkpoint.ActiveContext = append([]provider.ChatMessage(nil), state.Messages...)

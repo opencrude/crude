@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/tui/types"
+	"crude/types"
 )
 
 func TestParallelUsesSameTreeAsIndividualTools(t *testing.T) {

@@ -348,30 +348,14 @@ func readWorkspaceMeta(ctx context.Context, dbPath string) *WorkspaceInfo {
 		info.ProjectDir = p
 		info.ProjectName = filepath.Base(p)
 	}
-	// Fall back to the most recent session's project_dir. Prefer project_name
-	// when the column exists; legacy registries omit it.
-	cols, colErr := tableColumnsContext(ctx, db, "workspace_sessions")
-	if colErr != nil {
-		// Locked/corrupt DB — still return a stub entry from the folder name.
-		return info
-	}
-	var rows *sql.Rows
-	var qerr error
-	if cols["project_name"] {
-		rows, qerr = db.QueryContext(ctx, `
-			SELECT project_dir, project_name, created_at
-			FROM workspace_sessions
-			ORDER BY created_at DESC
-			LIMIT 1
-		`)
-	} else {
-		rows, qerr = db.QueryContext(ctx, `
-			SELECT project_dir, '' AS project_name, created_at
-			FROM workspace_sessions
-			ORDER BY created_at DESC
-			LIMIT 1
-		`)
-	}
+	// Fall back to the most recent session's project_dir. A locked or corrupt
+	// DB still yields a stub entry from the folder name.
+	rows, qerr := db.QueryContext(ctx, `
+		SELECT project_dir, project_name, created_at
+		FROM workspace_sessions
+		ORDER BY created_at DESC
+		LIMIT 1
+	`)
 	if qerr == nil {
 		if rows.Next() {
 			var dir, name string
@@ -396,11 +380,18 @@ func readWorkspaceMeta(ctx context.Context, dbPath string) *WorkspaceInfo {
 		_ = rows.Close()
 	}
 	// Session count (exclude rows whose session DB was marked unavailable).
-	if cols["db_missing"] {
-		_ = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM workspace_sessions WHERE db_missing = 0`).Scan(&info.SessionCount)
-	} else {
-		_ = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM workspace_sessions`).Scan(&info.SessionCount)
-	}
+	_ = db.QueryRowContext(ctx, `SELECT COUNT(*) FROM workspace_sessions WHERE db_missing = 0`).Scan(&info.SessionCount)
 	info.ProjectName = WorkspaceDisplayName(*info)
 	return info
+}
+
+func canonicalizePath(p string) string {
+	if p == "" {
+		return ""
+	}
+	abs, err := filepath.Abs(p)
+	if err != nil {
+		return filepath.Clean(p)
+	}
+	return filepath.Clean(abs)
 }

@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	sessionsettings "crude/tui/screens/sessionsettings"
-	ttypes "crude/tui/types"
 	"crude/types"
 	"crude/workspace"
 )
@@ -24,7 +23,7 @@ func TestSaveAsWorkspacePromotesAgentSettings(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = wdb.Close() })
 	wsOf(app).WorkspaceDB = wdb
-	wsOf(app).SetAppDefaults(ttypes.AppSettings{
+	wsOf(app).SetAppDefaults(types.AppSettings{
 
 		Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
 			"default": {Provider: "openrouter", Model: "old-model"},

@@ -558,6 +558,7 @@ func (s *Session) newHumanSteeringRuntimeMessage(
 				return err
 			}
 			notify("collaboration_delivery_admitted", "")
+			notifyAttachmentIssues(sender, agentID, prepared.AttachmentIssues)
 			return nil
 		},
 		Release: release,

@@ -44,10 +44,9 @@ func TestLSPMutationsQueueWithoutRPC(t *testing.T) {
 	w.commands.init()
 	l := newLSPReplica(w)
 	l.OpenFile(context.Background(), "a.go", "text")
-	l.QueueFileUpdate("a.go", "next")
 	l.CloseFile(context.Background(), "a.go")
 	l.Stop()
-	for i := 0; i < 4; i++ {
+	for i := 0; i < 3; i++ {
 		if fn, ok := w.commands.pop(); !ok || fn == nil {
 			t.Fatal("mutation not queued", i)
 		}

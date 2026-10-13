@@ -12,8 +12,8 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/screens/shellchat"
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 )
 
 func TestUserAndAgentHeadersPaintSubtleThemeRulesAcrossViewport(t *testing.T) {

@@ -31,11 +31,13 @@ type Reference struct {
 }
 
 type CreateRequest struct {
-	Kind     Kind
-	Label    string
-	Title    string
-	Mime     string
+	Kind  Kind
+	Label string
+	Title string
+	Mime  string
+	// Content is captured text; Data is the original binary image, never Base64.
 	Content  string
+	Data     []byte
 	FilePath string
 	Inline   bool
 }

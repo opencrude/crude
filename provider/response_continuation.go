@@ -184,8 +184,7 @@ func inlineImageBytesMatchMIME(mediaType string, data []byte) bool {
 	default:
 		return false
 	}
-	sniffed := strings.SplitN(http.DetectContentType(data), ";", 2)[0]
-	return sniffed == mediaType
+	return ValidateImageBytes(mediaType, data) == nil
 }
 
 func continuationMediaReplayRejected(req *ChatRequest, plan ResponseContinuationPlan, cause error) bool {

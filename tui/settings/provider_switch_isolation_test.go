@@ -5,7 +5,7 @@ import (
 
 	"crude/provider"
 	"crude/tui/theme"
-	"crude/tui/types"
+	"crude/types"
 )
 
 // TestAccountEditDoesNotCorruptOtherAccountConnection reproduces the reported

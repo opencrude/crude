@@ -57,6 +57,7 @@ type CategoryConfig struct {
 	ModelTemperature         *float64 `json:"model_temperature,omitempty"`
 	ModelTopP                *float64 `json:"model_top_p,omitempty"`
 	ContextCompactionPercent *int     `json:"context_compaction_percent,omitempty"`
+	ContextRetentionTokens   *int     `json:"context_retention_tokens,omitempty"`
 }
 
 type ProfileConfig struct {
@@ -99,7 +100,8 @@ func DefaultAgentsConfig() AgentsConfig {
 				Categories: categories,
 			},
 		},
-		AgentProfiles: ttypes.DefaultNamedAgents(),
+		// Named agents are user-created; none ship with a clean install.
+		AgentProfiles: map[string]AgentProfileConfig{},
 	}
 }
 
@@ -202,8 +204,8 @@ func cloneBoolPtr(src *bool) *bool {
 	return &value
 }
 
-// GetActiveDefaultCategory resolves the main agent ("default", legacy "main")
-// category. No provider or account is inferred when the category is absent.
+// GetActiveDefaultCategory resolves the main agent ("default") category.
+// No provider or account is inferred when the category is absent.
 func (c *Config) GetActiveDefaultCategory() CategoryConfig {
 	prof, _ := activeProfileCfg(c)
 	if c.SelectedAgent != "" {
@@ -212,22 +214,16 @@ func (c *Config) GetActiveDefaultCategory() CategoryConfig {
 			return selected
 		}
 	}
-	for _, key := range []string{CategoryDefault, "main"} {
-		if cat, ok := prof.Categories[key]; ok {
-			if cat.Inherit == InheritWorkspace && c.workspaceMain != nil {
-				resolved := *c.workspaceMain
-				if cat.AccountID != "" {
-					resolved.AccountID = cat.AccountID
-				}
-				resolved = mergeCategoryConfig(resolved, CategoryConfig{AllowedTools: cat.AllowedTools, DeniedTools: cat.DeniedTools, SkillModes: cat.SkillModes})
-				c.resolveCategoryDefaults(&resolved)
-				return resolved
-			}
-			c.resolveCategoryDefaults(&cat)
-			return cat
+	cat := prof.Categories[CategoryDefault]
+	if cat.Inherit == InheritWorkspace && c.workspaceMain != nil {
+		resolved := *c.workspaceMain
+		if cat.AccountID != "" {
+			resolved.AccountID = cat.AccountID
 		}
+		resolved = mergeCategoryConfig(resolved, CategoryConfig{AllowedTools: cat.AllowedTools, DeniedTools: cat.DeniedTools, SkillModes: cat.SkillModes})
+		c.resolveCategoryDefaults(&resolved)
+		return resolved
 	}
-	cat := CategoryConfig{}
 	c.resolveCategoryDefaults(&cat)
 	return cat
 }
@@ -313,6 +309,9 @@ func (c *Config) selectedMainCategory(prof ProfileConfig) (CategoryConfig, error
 		if named.ContextCompactionPercent != nil {
 			selected.ContextCompactionPercent = cloneIntPtr(named.ContextCompactionPercent)
 		}
+		if named.ContextRetentionTokens != nil {
+			selected.ContextRetentionTokens = cloneIntPtr(named.ContextRetentionTokens)
+		}
 		selected.Instructions = strings.TrimSpace(strings.Join([]string{selected.Instructions, named.Instructions}, "\n\n"))
 		selected.DeniedTools = append(append([]string(nil), selected.DeniedTools...), named.DeniedTools...)
 		selected = mergeCategoryConfig(selected, CategoryConfig{SkillModes: named.SkillModes})
@@ -333,6 +332,9 @@ func (c *Config) selectedMainCategory(prof ProfileConfig) (CategoryConfig, error
 		}
 		if over.ContextCompactionPercent != nil {
 			selected.ContextCompactionPercent = cloneIntPtr(over.ContextCompactionPercent)
+		}
+		if over.ContextRetentionTokens != nil {
+			selected.ContextRetentionTokens = cloneIntPtr(over.ContextRetentionTokens)
 		}
 	}
 	return selected, nil
@@ -362,7 +364,7 @@ func (c *Config) ValidateSelectedAgent() error {
 //
 // Editing the source therefore propagates to every role that inherits it.
 func (c *Config) GetCategoryConfig(category string) CategoryConfig {
-	if category == "" || category == CategoryDefault || category == "main" {
+	if category == "" || category == CategoryDefault {
 		return c.GetActiveDefaultCategory()
 	}
 	prof, _ := activeProfileCfg(c)
@@ -408,8 +410,7 @@ func (c *Config) GetCategoryConfig(category string) CategoryConfig {
 // GetMemoryCategory resolves the memory agent's configuration. It behaves like
 // any other agent: an explicit session override (profile Categories["memory"]),
 // then the configured MemoryCategory, wins; otherwise it inherits the main
-// agent live. Backward-compat Memory.Model (a bare override) is folded in when
-// the memory category sets no model of its own.
+// agent live.
 func (c *Config) GetMemoryCategory() CategoryConfig {
 	memory := catSettingsToConfig(c.Memory.MemoryCategory)
 	finish := func(cat CategoryConfig) CategoryConfig {
@@ -447,11 +448,6 @@ func (c *Config) GetMemoryCategory() CategoryConfig {
 		return finish(cat)
 	}
 	cat := memory
-	// A legacy bare model override still applies when no explicit memory
-	// category model is set.
-	if cat.Model == "" && c.Memory.Model != "" {
-		cat.Model = c.Memory.Model
-	}
 	main := c.GetActiveDefaultCategory()
 	if cat.AccountID == "" && cat.Model == "" && cat.ThinkingEffort == "" && cat.ModelMaxOutput == 0 && cat.ModelContextWindow == 0 && cat.ModelTemperature == nil && cat.ModelTopP == nil && cat.ModelModalities == nil {
 		main.Enabled = cloneBoolPtr(cat.Enabled)
@@ -478,6 +474,13 @@ func (c *Config) resolveCategoryDefaults(cat *CategoryConfig) {
 	} else {
 		value := min(100, max(0, *cat.ContextCompactionPercent))
 		cat.ContextCompactionPercent = &value
+	}
+	if cat.ContextRetentionTokens == nil {
+		value := ttypes.DefaultContextRetentionTokens
+		cat.ContextRetentionTokens = &value
+	} else {
+		value := min(ttypes.MaxContextRetentionTokens, max(ttypes.MinContextRetentionTokens, *cat.ContextRetentionTokens))
+		cat.ContextRetentionTokens = &value
 	}
 }
 
@@ -514,6 +517,7 @@ func catConfigToSettings(v CategoryConfig) ttypes.CategorySettings {
 		ModelTemperature:         v.ModelTemperature,
 		ModelTopP:                v.ModelTopP,
 		ContextCompactionPercent: cloneIntPtr(v.ContextCompactionPercent),
+		ContextRetentionTokens:   cloneIntPtr(v.ContextRetentionTokens),
 	}
 }
 
@@ -539,6 +543,7 @@ func catSettingsToConfig(v ttypes.CategorySettings) CategoryConfig {
 		ModelTemperature:         v.ModelTemperature,
 		ModelTopP:                v.ModelTopP,
 		ContextCompactionPercent: cloneIntPtr(v.ContextCompactionPercent),
+		ContextRetentionTokens:   cloneIntPtr(v.ContextRetentionTokens),
 	}
 }
 
@@ -699,6 +704,7 @@ func ApplyWorkspaceAgentDefaults(cfg *Config, agents ttypes.AgentsSettings) {
 		merged.ModelTemperature = cloneFloatPtr(value.ModelTemperature)
 		merged.ModelTopP = cloneFloatPtr(value.ModelTopP)
 		merged.ContextCompactionPercent = cloneIntPtr(value.ContextCompactionPercent)
+		merged.ContextRetentionTokens = cloneIntPtr(value.ContextRetentionTokens)
 		merged.Instructions = value.Instructions
 		merged.AllowedTools = append([]string(nil), value.AllowedTools...)
 		merged.DeniedTools = append([]string(nil), value.DeniedTools...)

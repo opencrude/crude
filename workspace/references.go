@@ -3,7 +3,6 @@ package workspace
 import (
 	"crude/history"
 	"database/sql"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"math/rand/v2"
@@ -124,14 +123,14 @@ func (s *ReferenceStore) CreateReference(req sessiondb.CreateRequest) (sessiondb
 	}
 
 	if ref.Kind == sessiondb.KindPastedImage && ref.Content != "" {
+		return sessiondb.Reference{}, errors.New("image creation requires binary Data, not text Content")
+	}
+	if ref.Kind == sessiondb.KindPastedImage && len(req.Data) > 0 {
 		ext := provider.ImageExtFromMime(ref.Mime)
-		b64 := ref.Content
-		ref.Content = ""
-		data, err := base64.StdEncoding.DecodeString(b64)
-		if err != nil {
-			return sessiondb.Reference{}, fmt.Errorf("decode base64 image: %w", err)
+		if err := provider.ValidateImageBytes(ref.Mime, req.Data); err != nil {
+			return sessiondb.Reference{}, err
 		}
-		path, err := s.writeReferenceFile(ref.Label, data, ext)
+		path, err := s.writeReferenceFile(ref.Label, req.Data, ext)
 		if err != nil {
 			return sessiondb.Reference{}, err
 		}
@@ -343,26 +342,6 @@ func (s *ReferenceStore) AddExisting(ref sessiondb.Reference) {
 	defer s.mu.Unlock()
 	if s.refs == nil {
 		s.refs = make(map[string]sessiondb.Reference)
-	}
-
-	// Migrate legacy pasted images: decode base64 to disk if Content is set
-	// but FilePath is empty. Also migrate if both are set (Content should be
-	// cleared to avoid DB bloat).
-	if ref.Kind == sessiondb.KindPastedImage && ref.Content != "" {
-		b64 := ref.Content
-		ref.Content = ""
-		data, err := base64.StdEncoding.DecodeString(b64)
-		if err == nil {
-			ext := provider.ImageExtFromMime(ref.Mime)
-			path, err := s.writeReferenceFile(ref.Label, data, ext)
-			if err == nil {
-				ref.FilePath = path
-				// Persist the migration so we don't re-migrate on next load
-				if s.db != nil {
-					_ = sessiondb.UpdatePromptReferenceFilePath(s.db, ref.ID, path)
-				}
-			}
-		}
 	}
 
 	s.refs[ref.ID] = ref

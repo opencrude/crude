@@ -6,7 +6,7 @@ import (
 
 	ccrude "crude/tools"
 	"crude/tui/rendering"
-	"crude/tui/types"
+	"crude/types"
 )
 
 // ToolTitle keeps presentation roles separate from their text. Consumers must
@@ -74,6 +74,10 @@ var toolVerbs = map[string][3]string{
 	"mcp_request_access":      {"Preparing MCP access", "Requesting MCP access", "Reviewed MCP access"},
 	"mcp_read_resource":       {"Preparing resource read", "Reading MCP resource", "Read MCP resource"},
 	"mcp_get_prompt":          {"Preparing prompt fetch", "Fetching MCP prompt", "Fetched MCP prompt"},
+	"agent_update_claims":     {"Preparing scope repair", "Repairing agent file scope", "Repaired agent file scope"},
+	"agent_narrow_claims":     {"Preparing scope change", "Narrowing file scope", "Narrowed file scope"},
+	"crude_commands":          {"Preparing command discovery", "Finding Crude commands", "Found Crude commands"},
+	"crude_control":           {"Preparing Crude operation", "Running Crude operation", "Ran Crude operation"},
 }
 
 func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
@@ -229,7 +233,8 @@ func BuildToolTitle(msg types.ChatMessage, phase string) ToolTitle {
 func isCollaborationOperation(name string) bool {
 	switch name {
 	case "agent_list", "agent_inspect", "agent_start", "agent_send", "agent_respond",
-		"agent_control", "publish_report", "artifact_read", "agent_wait", "board_read":
+		"agent_control", "publish_report", "artifact_read", "agent_wait", "board_read",
+		"agent_update_claims", "agent_narrow_claims":
 		return true
 	default:
 		return false

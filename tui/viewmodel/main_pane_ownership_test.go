@@ -14,9 +14,9 @@ import (
 	"crude/tui/editor"
 	"crude/tui/perf"
 	filepickerscreen "crude/tui/screens/filepicker"
-	ttypes "crude/tui/types"
 	"crude/tui/ui"
 	"crude/tui/window"
+	ttypes "crude/types"
 	"crude/workspace"
 )
 

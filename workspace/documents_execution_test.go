@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"crude/document"
@@ -124,7 +125,8 @@ func TestExecutionApplyMixedDirtyDocumentsAndUndo(t *testing.T) {
 		t.Fatal(e)
 	}
 	fi, e := os.Stat(filepath.Join(root, "disk.txt"))
-	if e != nil || fi.Mode().Perm() != 0755 {
+	// Windows has no executable permission bits to preserve.
+	if e != nil || runtime.GOOS != "windows" && fi.Mode().Perm() != 0755 {
 		t.Fatalf("mode %v %v", fi, e)
 	}
 	if _, e = s.history.store.LoadManifest(receipt.SafetySnapshotID); e != nil {

@@ -168,35 +168,3 @@ func TestLoadPromptReferences_DeletedExcluded(t *testing.T) {
 		t.Errorf("expected ref-y, got %s", refs[0].ID)
 	}
 }
-
-func TestUpdatePromptReferenceFilePath(t *testing.T) {
-	db, _ := setupRefDB(t)
-	defer db.Close()
-
-	ref := makeRef("ref-fp", "pasted_image", "[Pasted IMG1]")
-	ref.Content = "base64data"
-	ref.Mime = "image/png"
-	if err := InsertPromptReference(db.db, ref); err != nil {
-		t.Fatalf("insert: %v", err)
-	}
-
-	// Update file path and clear content
-	if err := UpdatePromptReferenceFilePath(db.db, "ref-fp", "/tmp/img.png"); err != nil {
-		t.Fatalf("UpdatePromptReferenceFilePath: %v", err)
-	}
-
-	// Load back and verify
-	refs, err := LoadPromptReferencesByIDs(db.db, []string{"ref-fp"})
-	if err != nil {
-		t.Fatalf("LoadPromptReferencesByIDs: %v", err)
-	}
-	if len(refs) != 1 {
-		t.Fatalf("expected 1 ref, got %d", len(refs))
-	}
-	if refs[0].FilePath != "/tmp/img.png" {
-		t.Errorf("FilePath: got %q, want /tmp/img.png", refs[0].FilePath)
-	}
-	if refs[0].Content != "" {
-		t.Errorf("Content should be cleared, got %q", refs[0].Content)
-	}
-}

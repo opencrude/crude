@@ -165,11 +165,7 @@ func resolveConfigFrom(fc FileConfig, flags CLIFlags) (FileConfig, error) {
 			profileName = fc.Agents.ActiveProfile
 		}
 		profile := fc.Agents.Profiles[profileName]
-		var exists bool
-		mainCat, exists = profile.Categories[session.CategoryDefault]
-		if !exists {
-			mainCat = profile.Categories["main"]
-		}
+		mainCat = profile.Categories[session.CategoryDefault]
 	}
 
 	accountID := flags.Account
@@ -217,20 +213,25 @@ func resolveConfigFrom(fc FileConfig, flags CLIFlags) (FileConfig, error) {
 	return fc, nil
 }
 
-// HandleCLICommands runs CLI-only operations (list/delete sessions).
-// Returns true if a CLI-only command was handled (caller should exit).
-func HandleCLICommands(flags CLIFlags) bool {
-	sessionsRoot, _ := session.SessionsRoot()
-
+// HandleCLICommands runs workspace-scoped CLI-only operations (list/delete
+// sessions). It returns the exit code and whether the invocation was handled.
+func HandleCLICommands(flags CLIFlags, home, projectDir string) (int, bool) {
 	if flags.ListSessions {
-		ListSessions(sessionsRoot, flags.Limit, flags.Offset)
-		return true
+		if err := ListSessions(home, projectDir, flags.Limit, flags.Offset); err != nil {
+			fmt.Fprintf(os.Stderr, "Error listing sessions: %v\n", err)
+			return 1, true
+		}
+		return 0, true
 	}
 	if flags.DeleteSession != "" {
-		DeleteSession(sessionsRoot, flags.DeleteSession)
-		return true
+		if err := DeleteSession(home, projectDir, flags.DeleteSession); err != nil {
+			fmt.Fprintf(os.Stderr, "Error deleting session: %v\n", err)
+			return 1, true
+		}
+		fmt.Printf("Session %s deleted.\n", flags.DeleteSession)
+		return 0, true
 	}
-	return false
+	return 0, false
 }
 
 // ResolveResume resolves the --resume flag. Empty means launcher picker.
@@ -238,8 +239,18 @@ func ResolveResume(flags CLIFlags) (string, error) {
 	if flags.Resume == "" {
 		return "", nil
 	}
-	sessionsRoot, _ := session.SessionsRoot()
-	return ResolveResumeID(sessionsRoot, flags.Resume)
+	if flags.SSHHost != "" {
+		return flags.Resume, nil
+	}
+	projectDir, err := invocationRoot(flags)
+	if err != nil {
+		return "", err
+	}
+	home, err := buildinfo.Home()
+	if err != nil {
+		return "", err
+	}
+	return ResolveResumeID(home, projectDir, flags.Resume)
 }
 
 // Main is the app-layer entry point: parse flags, resolve config, run IDE.
@@ -267,9 +278,6 @@ func Main() int {
 		fmt.Fprintf(os.Stderr, "crude-perf: %v\n", err)
 	}
 
-	if HandleCLICommands(flags) {
-		return 0
-	}
 	if code, handled := handleCoreCommands(flags); handled {
 		return code
 	}
@@ -280,9 +288,20 @@ func Main() int {
 		fmt.Fprintf(os.Stderr, "%v\n", err)
 		return 1
 	}
+	if code, handled := HandleCLICommands(flags, home, projectDir); handled {
+		return code
+	}
+	resumeID := flags.Resume
+	if resumeID != "" && flags.SSHHost == "" {
+		resumeID, err = ResolveResumeID(home, projectDir, resumeID)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "crude: %v\n", err)
+			return 1
+		}
+	}
 	// Do not load credentials, configure network policy or open session storage
 	// in the shell. All application state is owned by the connected core.
-	application := &App{home: home, projectDir: projectDir, resumeID: flags.Resume,
+	application := &App{home: home, projectDir: projectDir, resumeID: resumeID,
 		clientProfile: flags.ClientProfile, invocation: flags}
 
 	if err := application.Run(); err != nil {

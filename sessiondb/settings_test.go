@@ -35,7 +35,8 @@ func TestCurrentSchemaReopenPreservesAgentSettings(t *testing.T) {
 			t.Fatalf("migration changed transcript: %q, %v", content, err)
 		}
 	}
-	want["default"] = AgentSettingOverride{AccountID: "work", SkillModes: map[string]string{"team:review": "manual"}}
+	retention := 32000
+	want["default"] = AgentSettingOverride{AccountID: "work", SkillModes: map[string]string{"team:review": "manual"}, ContextRetentionTokens: &retention}
 	if err := SaveAgentSettingOverrides(db, "existing", want); err != nil {
 		t.Fatal(err)
 	}

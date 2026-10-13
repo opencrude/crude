@@ -17,10 +17,7 @@ func (w *Workspace) SaveAccountChange(change ttypes.AccountChange) error {
 	return w.OnAppAccountChange(change)
 }
 
-const (
-	workspaceSettingsKey   = "workspace_settings"
-	legacyAppSettingsDBKey = "app_settings"
-)
+const workspaceSettingsKey = "workspace_settings"
 
 // SetAppDefaults stores the application-layer snapshot from config.json.
 func (w *Workspace) SetAppDefaults(s ttypes.AppSettings) {
@@ -43,33 +40,20 @@ func (w *Workspace) EffectiveAppSettings() ttypes.AppSettings {
 }
 
 // LoadWorkspaceOverrides reads the sparse workspace overlay from workspace.db.
-// Legacy `app_settings` rows are treated as overrides so existing projects
-// keep their per-workspace theme/editor/LSP values.
-//
-// Stored overlays are re-diffed against the current application layer before
-// use. Older releases wrote whole categories, which froze every sibling
-// field at the application value of that day; re-diffing keeps only the
-// leaves that genuinely differ so untouched fields inherit again.
+// Saves store only leaves that differ from the application layer, so the
+// stored overlay is used as is.
 func (w *Workspace) LoadWorkspaceOverrides() ttypes.WorkspaceOverrides {
 	if w == nil || w.WorkspaceDB == nil {
 		return ttypes.WorkspaceOverrides{}
 	}
-	defaults := w.AppDefaults()
+	var overrides ttypes.WorkspaceOverrides
 	if raw := w.WorkspaceDB.GetSetting(workspaceSettingsKey); raw != "" {
-		var overrides ttypes.WorkspaceOverrides
-		if err := json.Unmarshal([]byte(raw), &overrides); err == nil {
-			return ttypes.OverridesFromDiff(defaults, ttypes.MergeAppWorkspace(defaults, overrides))
+		if err := json.Unmarshal([]byte(raw), &overrides); err != nil {
+			w.Logger.Warn("WORKSPACE", "workspace_settings_unreadable", "error", err.Error())
+			return ttypes.WorkspaceOverrides{}
 		}
 	}
-	raw := w.WorkspaceDB.GetSetting(legacyAppSettingsDBKey)
-	if raw == "" {
-		return ttypes.WorkspaceOverrides{}
-	}
-	var legacy ttypes.AppSettings
-	if err := json.Unmarshal([]byte(raw), &legacy); err != nil {
-		return ttypes.WorkspaceOverrides{}
-	}
-	return ttypes.OverridesFromDiff(defaults, legacy)
+	return overrides
 }
 
 // SaveWorkspaceSettings persists sparse workspace overrides and reapplies

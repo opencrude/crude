@@ -7,8 +7,8 @@ import (
 
 	"crude/tui/surface"
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 )
 
 func diffContentRows(bufA, bufB *surface.CellBuffer, x0, x1, w, h int) int {

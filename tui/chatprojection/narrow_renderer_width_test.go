@@ -4,8 +4,8 @@ import (
 	"testing"
 
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 )
 
 func TestRendererDerivesNarrowWidthsFromActualBounds(t *testing.T) {

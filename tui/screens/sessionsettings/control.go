@@ -119,8 +119,8 @@ func (s *Screen) ControlMetadata(id ui.ComponentID, action string) (control.Effe
 					switch field.ID {
 					case fieldMultiAgent, "capabilities":
 						human = true
-					case fieldProvider, fieldModel, fieldThinking, fieldContextCompaction:
-						human = control.SettingsAuthority("agents.categories." + s.role + "." + map[string]string{fieldProvider: "account_id", fieldModel: "Model", fieldThinking: "ThinkingEffort", fieldContextCompaction: "context_compaction_percent"}[field.ID])
+					case fieldProvider, fieldModel, fieldThinking, fieldContextCompaction, fieldContextRetention:
+						human = control.SettingsAuthority("agents.categories." + s.role + "." + map[string]string{fieldProvider: "account_id", fieldModel: "Model", fieldThinking: "ThinkingEffort", fieldContextCompaction: "context_compaction_percent", fieldContextRetention: "context_retention_tokens"}[field.ID])
 					}
 				}
 			}

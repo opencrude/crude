@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -91,7 +92,7 @@ func (a *Agent) executeToolCalls(ctx context.Context, toolCalls []provider.ToolC
 	var nonBlocking, blocking []indexedToolCall
 	for index, tc := range toolCalls {
 		indexed := indexedToolCall{index: index, call: tc}
-		if (isPotentiallyBlocking(tc.Function.Name) || strings.HasPrefix(tc.Function.Name, "mcp__") || tc.Function.Name == "capability_activate" || tc.Function.Name == "mcp_request_access") && !a.parallelCommandAllowed(tc) {
+		if (isPotentiallyBlocking(tc.Function.Name) || strings.HasPrefix(tc.Function.Name, "mcp__")) && !a.parallelCommandAllowed(tc) {
 			blocking = append(blocking, indexed)
 		} else {
 			nonBlocking = append(nonBlocking, indexed)
@@ -180,6 +181,10 @@ func isPotentiallyBlocking(name string) bool {
 	case "reply", "publish_report":
 		return true
 	case "update_plan", "get_plan":
+		return true
+	// Approval-producing operations need the shared block response channel;
+	// without it an authorization prompt resolves as an immediate denial.
+	case "capability_activate", "mcp_request_access", "crude_control":
 		return true
 	default:
 		return false
@@ -658,10 +663,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 				authorized, origin = true, "yolo"
 			} else {
 				evidence := automatic.Evidence()
-				risk := safety.RiskUnknown
-				if fmt.Sprint(evidence["effect"]) == "write" {
-					risk = safety.RiskProjectWrite
-				}
+				risk := approvalRisk(evidence)
 				// The reviewer receives actual redacted phase evidence, not just the
 				// model's opaque capability ID or its claimed authorization.
 				encoded, _ := json.Marshal(evidence)
@@ -679,7 +681,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		}
 		if !authorized {
 			drainStaleBlockResponses(blockResolveCh)
-			emit(AgentEvent{Type: "blocking", Data: map[string]string{"block_id": blockID, "operation": "Read", "tool": tc.Function.Name, "target": id, "question": "Approve this exact capability change?", "reason": reason}})
+			emit(AgentEvent{Type: "blocking", Data: approvalBlockingData(blockID, tc.Function.Name, id, reason, toolErr)})
 			response, answered := waitForBlockResponse(ctx, blockResolveCh, blockID)
 			emit(AgentEvent{Type: "blocking_complete", Data: map[string]string{"block_id": blockID}})
 			authorized = answered && (response.Value == "allow" || response.Value == "always")
@@ -695,8 +697,13 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 			ctx = approvedContext
 			result, toolErr = a.ToolFn(approvedContext, tc.Function.Name, params)
 		} else {
-			result = tools.ToolResult{Content: "Capability change was denied or cancelled. Do not retry or expand permissions; use an available adequate method."}
-			toolErr = errors.New("capability change not approved")
+			if tc.Function.Name == "crude_control" {
+				result = tools.ToolResult{Content: "Crude control operation was denied or cancelled. Do not retry or broaden the requested operation; use an available adequate method."}
+				toolErr = errors.New("crude control operation not approved")
+			} else {
+				result = tools.ToolResult{Content: "Capability change was denied or cancelled. Do not retry or expand permissions; use an available adequate method."}
+				toolErr = errors.New("capability change not approved")
+			}
 			break
 		}
 	}
@@ -962,4 +969,99 @@ func questionBlockResult(response ttypes.BlockResponse) (string, bool) {
 	default:
 		return "Question request failed because its completion outcome was invalid. Call question again.", true
 	}
+}
+
+// approvalRisk maps the owner-resolved effect of an exact authorization phase
+// to the reviewer's risk vocabulary. Unknown effects stay unknown, never safe.
+func approvalRisk(evidence map[string]any) safety.CommandRisk {
+	switch fmt.Sprint(evidence["effect"]) {
+	case "write":
+		return safety.RiskProjectWrite
+	case "delete":
+		return safety.RiskDestructive
+	default:
+		return safety.RiskUnknown
+	}
+}
+
+// approvalBlockingData describes an exact authorization phase by its resolved
+// effect. Crude control operations are not capability changes, and a write,
+// delete or execute must never be presented as a read.
+func approvalBlockingData(blockID, tool, target, reason string, cause error) map[string]string {
+	data := map[string]string{"block_id": blockID, "operation": "Read", "tool": tool, "target": target,
+		"question": "Approve this exact capability change?", "reason": reason}
+	var evidence interface{ Evidence() map[string]any }
+	if !errors.As(cause, &evidence) {
+		return data
+	}
+	fields := evidence.Evidence()
+	effect := fmt.Sprint(fields["effect"])
+	if effect == "" || effect == "<nil>" {
+		return data
+	}
+	data["operation"] = strings.ToUpper(effect[:1]) + effect[1:]
+	data["risk"] = approvalRisk(fields).String()
+	if fields["phase"] == "control" {
+		data["question"] = fmt.Sprintf("Allow Crude to %s: %s?", effect, target)
+		if input, ok := fields["input"].(json.RawMessage); ok && controlArgumentLines(input) != "" {
+			data["reason"] = controlArgumentLines(input)
+		} else {
+			data["reason"] = "This operation changes Crude's own state through its semantic control API."
+		}
+	}
+	return data
+}
+
+// controlArgumentLines presents exact control arguments as readable
+// "path: value" lines rather than a raw JSON envelope.
+func controlArgumentLines(raw json.RawMessage) string {
+	var value any
+	if json.Unmarshal(raw, &value) != nil {
+		return ""
+	}
+	var lines []string
+	sensitive := func(path string) bool {
+		path = strings.ToLower(path)
+		for _, term := range []string{"password", "secret", "token", "credential", "api_key", "apikey", "private_key"} {
+			if strings.Contains(path, term) {
+				return true
+			}
+		}
+		return false
+	}
+	var walk func(prefix string, value any)
+	walk = func(prefix string, value any) {
+		if sensitive(prefix) {
+			lines = append(lines, prefix+": [redacted]")
+			return
+		}
+		switch typed := value.(type) {
+		case map[string]any:
+			keys := make([]string, 0, len(typed))
+			for key := range typed {
+				keys = append(keys, key)
+			}
+			sort.Strings(keys)
+			for _, key := range keys {
+				path := key
+				if prefix != "" {
+					path = prefix + "." + key
+				}
+				walk(path, typed[key])
+			}
+		case []any:
+			if len(typed) == 0 {
+				lines = append(lines, prefix+": (none)")
+			}
+			for index, item := range typed {
+				walk(fmt.Sprintf("%s[%d]", prefix, index), item)
+			}
+		case nil:
+			lines = append(lines, prefix+": null")
+		default:
+			lines = append(lines, prefix+": "+fmt.Sprint(typed))
+		}
+	}
+	walk("", value)
+	return strings.Join(lines, "\n")
 }

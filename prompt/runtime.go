@@ -67,6 +67,11 @@ func RuntimeReportReminder() string {
 
 func TurnContext(content string) string { return "<turn_context>\n" + content + "\n</turn_context>" }
 
+func UnavailableAttachment(id, label, reason string) string {
+	return `<unavailable_attachment id="` + XMLText(id) + `" label="` + XMLText(label) + `">` +
+		XMLText(reason) + "\nThe system excluded only this faulty attachment from model input. The original message and stored evidence are preserved. Continue the task using the remaining evidence; do not claim to have inspected this attachment. If its contents are essential, explain that specific limitation rather than retrying the same broken capture.</unavailable_attachment>"
+}
+
 func ActivePlan(stateJSON string) string {
 	return "<active_plan format=\"json\">\n" + stateJSON + "\n</active_plan>\nSaved session state for planning tools; compare with the latest human request. Update at milestones; omit obsolete steps, replace=true for a superseding goal, and close honestly before the final answer."
 }

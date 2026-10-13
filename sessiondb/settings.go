@@ -20,6 +20,7 @@ type AgentSettingOverride struct {
 	Inherit                  string
 	ThinkingEffort           string
 	ContextCompactionPercent *int
+	ContextRetentionTokens   *int
 	AllowedTools             []string
 	DeniedTools              []string
 	SkillModes               map[string]string
@@ -55,14 +56,16 @@ func LoadAgentSettingOverrides(db *sql.DB, sessionID string) (map[string]AgentSe
 			override.ContextCompactionPercent = &value
 		}
 		var capabilities struct {
-			AllowedTools []string
-			DeniedTools  []string
-			SkillModes   map[string]string
+			AllowedTools           []string
+			DeniedTools            []string
+			SkillModes             map[string]string
+			ContextRetentionTokens *int `json:"context_retention_tokens,omitempty"`
 		}
 		if err := json.Unmarshal([]byte(selection), &capabilities); err != nil {
 			return nil, err
 		}
 		override.AllowedTools, override.DeniedTools, override.SkillModes = capabilities.AllowedTools, capabilities.DeniedTools, capabilities.SkillModes
+		override.ContextRetentionTokens = capabilities.ContextRetentionTokens
 		overrides[category] = override
 	}
 	return overrides, rows.Err()
@@ -87,14 +90,15 @@ func saveAgentSettingOverrides(tx *sql.Tx, sessionID string, overrides map[strin
 	for category, override := range overrides {
 		if override.Provider == "" && override.AccountID == "" && override.Model == "" &&
 			override.APIStandard == "" && override.ThinkingEffort == "" &&
-			override.ContextCompactionPercent == nil && override.Inherit == "" && override.AllowedTools == nil && override.DeniedTools == nil && override.SkillModes == nil {
+			override.ContextCompactionPercent == nil && override.ContextRetentionTokens == nil && override.Inherit == "" && override.AllowedTools == nil && override.DeniedTools == nil && override.SkillModes == nil {
 			continue
 		}
 		selection, err := json.Marshal(struct {
-			AllowedTools []string
-			DeniedTools  []string
-			SkillModes   map[string]string
-		}{override.AllowedTools, override.DeniedTools, override.SkillModes})
+			AllowedTools           []string
+			DeniedTools            []string
+			SkillModes             map[string]string
+			ContextRetentionTokens *int `json:"context_retention_tokens,omitempty"`
+		}{override.AllowedTools, override.DeniedTools, override.SkillModes, override.ContextRetentionTokens})
 		if err != nil {
 			return err
 		}

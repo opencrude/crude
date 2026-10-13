@@ -101,7 +101,7 @@ func (v *WorkspaceView) InstallSnapshot(snapshot coreprotocol.WorkspaceSnapshot)
 		return err
 	}
 	v.ID, v.RootPath, v.Username, v.StartTime = detached.ID, detached.Root, detached.Username, detached.StartedAt
-	v.InitialSettings = types.Settings{Theme: detached.Settings.Theme, Editor: detached.Settings.Editor, UI: detached.Settings.UI, Font: detached.Settings.Font}
+	v.InitialSettings = types.Settings{Theme: detached.Settings.Theme, Editor: detached.Settings.Editor, UI: detached.Settings.UI}
 	v.appSettings = v.InitialSettings.AppPart()
 	v.installSessions(detached.Sessions)
 	if _, err := v.installChanges(changes); err != nil {

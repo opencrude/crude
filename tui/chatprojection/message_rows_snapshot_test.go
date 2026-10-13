@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 )
 
 func TestMessageRowsSnapshotGenerationAndStableHeightDelta(t *testing.T) {

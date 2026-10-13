@@ -3,7 +3,10 @@ package core
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"image"
+	"image/png"
 	"os"
 	"strings"
 	"testing"
@@ -65,7 +68,12 @@ func TestReferenceBridgeContentAndPreimages(t *testing.T) {
 
 func TestReferenceBridgeChunkedMediaAndIsolation(t *testing.T) {
 	store := workspace.NewReferenceStore("session", t.TempDir(), nil)
-	data := bytes.Repeat([]byte{0, 1, 255, 3}, coreprotocol.ReferenceChunkBytes)
+	var encoded bytes.Buffer
+	encoder := png.Encoder{CompressionLevel: png.NoCompression}
+	if err := encoder.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 1024, 1024))); err != nil {
+		t.Fatal(err)
+	}
+	data := encoded.Bytes()
 	value, err := runReferenceCommand(store, coreprotocol.ReferenceCreate, coreprotocol.ReferenceCommand{SessionID: "session", Create: &coreprotocol.ReferenceCreateRequest{Kind: sessiondb.KindPastedImage, Data: data, Mime: "image/png"}})
 	if err != nil {
 		t.Fatal(err)
@@ -118,6 +126,20 @@ func TestReferenceBridgeChunkedMediaAndIsolation(t *testing.T) {
 	in.Offset, in.Digest = 0, ""
 	if _, err = runReferenceCommand(store, coreprotocol.ReferenceReadMedia, in); err == nil {
 		t.Fatal("missing media silently downgraded")
+	}
+}
+
+func TestReferenceBridgeRejectsEncodedTextAsImage(t *testing.T) {
+	store := workspace.NewReferenceStore("session", t.TempDir(), nil)
+	var encoded bytes.Buffer
+	if err := png.Encode(&encoded, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+		t.Fatal(err)
+	}
+	for _, data := range [][]byte{[]byte(base64.StdEncoding.EncodeToString(encoded.Bytes())), []byte("not an image"), nil} {
+		_, err := runReferenceCommand(store, coreprotocol.ReferenceCreate, coreprotocol.ReferenceCommand{SessionID: "session", Create: &coreprotocol.ReferenceCreateRequest{Kind: sessiondb.KindPastedImage, Data: data, Mime: "image/png"}})
+		if err == nil || len(store.ListReferences()) != 0 {
+			t.Fatal("invalid image was published")
+		}
 	}
 }
 

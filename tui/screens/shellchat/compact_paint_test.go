@@ -8,8 +8,8 @@ import (
 	"crude/tui/chatprojection"
 	"crude/tui/screens/shellchat"
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 	"crude/workspace"
 )
 
@@ -84,7 +84,7 @@ func flattenRows(rows []chatprojection.MessageRow) []string {
 	out := make([]string, 0, len(rows))
 	for _, row := range rows {
 		for i, line := range row.Lines {
-			if i < len(row.Native) && !row.Native[i].PreferANSI() {
+			if i < len(row.Native) {
 				out = append(out, row.Native[i].PlainText())
 			} else {
 				out = append(out, line)

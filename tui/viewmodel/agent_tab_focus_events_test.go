@@ -4,7 +4,6 @@ import (
 	"testing"
 
 	"crude/tui/screens/question"
-	ttypes "crude/tui/types"
 	"crude/tui/ui"
 	"crude/types"
 	"crude/workspace"
@@ -29,7 +28,7 @@ func TestBackgroundAgentEventsPreserveSelectedTabAndPromptOwner(t *testing.T) {
 		t.Fatal("precondition: other agent selected")
 	}
 
-	app.handleAgentEvent(ttypes.AgentEventMsg{AgentID: "root", Type: "blocking", Data: map[string]string{
+	app.handleAgentEvent(types.AgentEventMsg{AgentID: "root", Type: "blocking", Data: map[string]string{
 		"block_id": "root-permission", "question": "Allow write?", "operation": "write", "tool": "edit_file",
 	}})
 	assertSelectedTab(t, app, app.agentTabTitle("other"))
@@ -46,7 +45,7 @@ func TestBackgroundAgentEventsPreserveSelectedTabAndPromptOwner(t *testing.T) {
 		t.Fatal("resolved permission left a modal open")
 	}
 
-	app.handleAgentEvent(ttypes.AgentEventMsg{AgentID: "root", Type: "safety_alert", Data: map[string]any{
+	app.handleAgentEvent(types.AgentEventMsg{AgentID: "root", Type: "safety_alert", Data: map[string]any{
 		"risk": "destructive", "reason": "test alert",
 	}})
 	assertSelectedTab(t, app, app.agentTabTitle("other"))
@@ -60,7 +59,7 @@ func TestBackgroundAgentEventsPreserveSelectedTabAndPromptOwner(t *testing.T) {
 	app.Input.SetInput("retain background question draft")
 	ed := app.EditorState.Editor
 	editorText := ed.Value()
-	app.handleAgentEvent(ttypes.AgentEventMsg{AgentID: "root", Type: "blocking", Data: map[string]any{
+	app.handleAgentEvent(types.AgentEventMsg{AgentID: "root", Type: "blocking", Data: map[string]any{
 		"block_id": "root-question", "operation": "questions", "questions_json": `[{"question":"Which option?","options":["A","B"]}]`,
 	}})
 	assertEditorStillPainted(t, app, path)
@@ -99,7 +98,7 @@ func TestLateBackgroundAgentInitializationPreservesEditorSelection(t *testing.T)
 	app.AddOrchestrator("root")
 	path := openEditorTabs(t, app, "main.go")[0]
 	app.ws.AgentMgr().AddOrchestrator("late", nil)
-	app.handleAgentEvent(ttypes.AgentEventMsg{AgentID: "late", Type: "phase", Data: map[string]any{"name": "waiting_provider"}})
+	app.handleAgentEvent(types.AgentEventMsg{AgentID: "late", Type: "phase", Data: map[string]any{"name": "waiting_provider"}})
 	assertEditorStillPainted(t, app, path)
 	if app.AgentView.ActiveID() != "" || app.ws.AgentMgr().Get("late").State == nil {
 		t.Fatal("late initialization selected an agent or lost its state")
@@ -116,7 +115,7 @@ func TestBackgroundChildPromptPreservesParentTab(t *testing.T) {
 	app.ws.AgentMgr().AddSubAgent("child", "root", "Child", "model", "researcher",
 		workspace.NewAgentState("child", pane.Messages, app.ws.Logger()))
 	app.syncAgentWindowTabs()
-	app.handleAgentEvent(ttypes.AgentEventMsg{AgentID: "child", Type: "blocking", Data: map[string]string{
+	app.handleAgentEvent(types.AgentEventMsg{AgentID: "child", Type: "blocking", Data: map[string]string{
 		"block_id": "child-permission", "question": "Allow child write?", "operation": "write",
 	}})
 	assertSelectedTab(t, app, app.agentTabTitle("root"))

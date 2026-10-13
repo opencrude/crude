@@ -101,7 +101,7 @@ func (rp *RuntimeProfile) HasOverride(orchID string) bool {
 func (rp *RuntimeProfile) SetCategoryOverride(orchID, category string, cat CategoryConfig) {
 	oo := rp.GetOrCreateOverride(orchID)
 	rp.mu.Lock()
-	if cat.Model == "" && cat.AccountID == "" && cat.ThinkingEffort == "" && cat.ContextCompactionPercent == nil {
+	if cat.Model == "" && cat.AccountID == "" && cat.ThinkingEffort == "" && cat.ContextCompactionPercent == nil && cat.ContextRetentionTokens == nil {
 		delete(oo.CategoryOverrides, category)
 	} else {
 		if oo.CategoryOverrides == nil {
@@ -268,6 +268,10 @@ func mergeCategoryConfig(base, override CategoryConfig) CategoryConfig {
 		value := *override.ContextCompactionPercent
 		merged.ContextCompactionPercent = &value
 	}
+	if override.ContextRetentionTokens != nil {
+		value := *override.ContextRetentionTokens
+		merged.ContextRetentionTokens = &value
+	}
 	return merged
 }
 
@@ -285,6 +289,7 @@ func copyConfig(src *Config) *Config {
 	if src.selectedMainOverride != nil {
 		override := *src.selectedMainOverride
 		override.ContextCompactionPercent = cloneIntPtr(override.ContextCompactionPercent)
+		override.ContextRetentionTokens = cloneIntPtr(override.ContextRetentionTokens)
 		dst.selectedMainOverride = &override
 	}
 	if src.Accounts != nil {
@@ -295,10 +300,12 @@ func copyConfig(src *Config) *Config {
 	}
 	dst.Safety.CommandRules = append([]ttypes.CommandSeverityRule(nil), src.Safety.CommandRules...)
 	dst.Memory.MemoryCategory.ContextCompactionPercent = cloneIntPtr(src.Memory.MemoryCategory.ContextCompactionPercent)
+	dst.Memory.MemoryCategory.ContextRetentionTokens = cloneIntPtr(src.Memory.MemoryCategory.ContextRetentionTokens)
 
 	if src.workspaceMain != nil {
 		m := *src.workspaceMain
 		m.ContextCompactionPercent = cloneIntPtr(src.workspaceMain.ContextCompactionPercent)
+		m.ContextRetentionTokens = cloneIntPtr(src.workspaceMain.ContextRetentionTokens)
 		dst.workspaceMain = &m
 	}
 
@@ -318,6 +325,7 @@ func copyConfig(src *Config) *Config {
 					v.DeniedTools = append([]string(nil), v.DeniedTools...)
 					v.SkillModes = maps.Clone(v.SkillModes)
 					v.ContextCompactionPercent = cloneIntPtr(v.ContextCompactionPercent)
+					v.ContextRetentionTokens = cloneIntPtr(v.ContextRetentionTokens)
 					v.ModelModalities = slices.Clone(v.ModelModalities)
 					v.ModelTemperature = cloneFloatPtr(v.ModelTemperature)
 					v.ModelTopP = cloneFloatPtr(v.ModelTopP)

@@ -544,6 +544,9 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	if spec.ContextCompactionPercent != nil {
 		a.ContextCompactionPercent = *spec.ContextCompactionPercent
 	}
+	if spec.ContextRetentionTokens != nil {
+		a.CompactionRetentionTokens = *spec.ContextRetentionTokens
+	}
 	a.AgentID = spec.ID
 	a.TurnGeneration = 1
 	a.Depth = spec.Depth
@@ -961,6 +964,9 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 	live.CommandPolicy = safety.CommandPolicyFromSettings(cfg.Safety)
 	if spec.ContextCompactionPercent != nil {
 		live.ContextCompactionPercent = *spec.ContextCompactionPercent
+	}
+	if spec.ContextRetentionTokens != nil {
+		live.CompactionRetentionTokens = *spec.ContextRetentionTokens
 	}
 	live.AgentID, live.TurnGeneration = spec.ID, parentCheckpoint.Status.Generation
 	live.Depth, live.ParentID, live.Policy = spec.Depth, spec.ParentID, spec.Policy
@@ -2317,6 +2323,9 @@ func (r *SubAgentRunner) resolveProfile(name string, category string, spec *agen
 		if spec.ContextCompactionPercent == nil && catCfg.ContextCompactionPercent != nil {
 			spec.ContextCompactionPercent = cloneIntPtr(catCfg.ContextCompactionPercent)
 		}
+		if spec.ContextRetentionTokens == nil && catCfg.ContextRetentionTokens != nil {
+			spec.ContextRetentionTokens = cloneIntPtr(catCfg.ContextRetentionTokens)
+		}
 		if spec.ModelInputPrice == 0 && catCfg.ModelInputPrice > 0 {
 			spec.ModelInputPrice = catCfg.ModelInputPrice
 		}
@@ -2383,6 +2392,9 @@ func (r *SubAgentRunner) resolveProfile(name string, category string, spec *agen
 			if ap.ContextCompactionPercent != nil {
 				spec.ContextCompactionPercent = cloneIntPtr(ap.ContextCompactionPercent)
 			}
+			if ap.ContextRetentionTokens != nil {
+				spec.ContextRetentionTokens = cloneIntPtr(ap.ContextRetentionTokens)
+			}
 			if ap.Instructions != "" {
 				instructionsParts = append(instructionsParts, ap.Instructions)
 			}
@@ -2439,6 +2451,9 @@ func (r *SubAgentRunner) applyCategoryDefaults(spec *agent.SubAgentSpec) {
 		}
 		if spec.ContextCompactionPercent == nil && categoryCfg.ContextCompactionPercent != nil {
 			spec.ContextCompactionPercent = cloneIntPtr(categoryCfg.ContextCompactionPercent)
+		}
+		if spec.ContextRetentionTokens == nil && categoryCfg.ContextRetentionTokens != nil {
+			spec.ContextRetentionTokens = cloneIntPtr(categoryCfg.ContextRetentionTokens)
 		}
 	}
 	if spec.PolicyName == "" {

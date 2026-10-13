@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"crude/agent"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
@@ -614,4 +615,8 @@ func liveCapabilityProofDir(t *testing.T) string {
 		t.Fatal(err)
 	}
 	return requested
+}
+
+func (s *liveCapabilitySender) SendAgentEventEnvelope(event agent.AgentEvent) {
+	s.SendAgentEventWithID(event.Type, event.Data, event.AgentID)
 }

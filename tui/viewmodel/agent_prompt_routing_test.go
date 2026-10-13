@@ -420,3 +420,7 @@ func TestOtherSessionConfirmationUsesModalWithoutChangingActiveSession(t *testin
 		t.Fatal("background confirmation stole the active session")
 	}
 }
+
+func (s promptFixtureSender) SendAgentEventEnvelope(event agent.AgentEvent) {
+	s.SendAgentEventWithID(event.Type, event.Data, event.AgentID)
+}

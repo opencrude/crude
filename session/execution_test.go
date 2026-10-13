@@ -4,6 +4,7 @@ import (
 	"crude/agent"
 	"crude/safety"
 	"crude/worktree"
+	"path/filepath"
 	"testing"
 )
 
@@ -21,7 +22,7 @@ func TestExecutionAutoRequiresServiceAndExplicitSharedKeepsRoot(t *testing.T) {
 	if err := r.prepareChildExecution(t.Context(), &spec, "run"); err != nil {
 		t.Fatal(err)
 	}
-	if spec.ExecutionRoot != s.WorkDir() || len(spec.FileOwnership) != 1 || spec.FileOwnership[0] != s.WorkDir()+"/owned.go" {
+	if spec.ExecutionRoot != s.WorkDir() || len(spec.FileOwnership) != 1 || spec.FileOwnership[0] != filepath.Join(s.WorkDir(), "owned.go") {
 		t.Fatalf("explicit shared %+v", spec)
 	}
 }

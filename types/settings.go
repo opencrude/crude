@@ -10,6 +10,14 @@ import (
 	captypes "crude/types/capability"
 )
 
+const (
+	// DefaultContextRetentionTokens preserves the established compaction policy:
+	// keep up to 20K estimated tokens of recent genuine human input verbatim.
+	DefaultContextRetentionTokens = 20_000
+	MinContextRetentionTokens     = 1_000
+	MaxContextRetentionTokens     = 200_000
+)
+
 // AccountChange is one revision-checked application credential mutation.
 // Other app preferences are never included in the write.
 type AccountChange struct {
@@ -43,7 +51,6 @@ type WorkspaceOverrides struct {
 	Editor       json.RawMessage `json:"editor,omitempty"`
 	LSP          json.RawMessage `json:"lsp,omitempty"`
 	UI           json.RawMessage `json:"ui,omitempty"`
-	Font         json.RawMessage `json:"font,omitempty"`
 	Agents       json.RawMessage `json:"agents,omitempty"`
 	Memory       json.RawMessage `json:"memory,omitempty"`
 	Safety       json.RawMessage `json:"safety,omitempty"`
@@ -55,7 +62,7 @@ type WorkspaceOverrides struct {
 // IsEmpty reports that the workspace inherits everything.
 func (o WorkspaceOverrides) IsEmpty() bool {
 	return len(o.Theme) == 0 && len(o.Editor) == 0 && len(o.LSP) == 0 &&
-		len(o.UI) == 0 && len(o.Font) == 0 && len(o.Agents) == 0 && len(o.Memory) == 0 && len(o.Safety) == 0 && len(o.LocalHistory) == 0 && len(o.Capabilities) == 0 && len(o.Terminal) == 0
+		len(o.UI) == 0 && len(o.Agents) == 0 && len(o.Memory) == 0 && len(o.Safety) == 0 && len(o.LocalHistory) == 0 && len(o.Capabilities) == 0 && len(o.Terminal) == 0
 }
 
 // DefaultLSPSettings is the application-level language-intelligence baseline.
@@ -122,9 +129,6 @@ func ApplyAppDefaults(s *AppSettings) {
 	}
 	if s.UI.ContextHelp == "" {
 		s.UI.ContextHelp = "compact"
-	}
-	if s.Font.Size == 0 {
-		s.Font.Size = 12
 	}
 	if s.Accounts == nil {
 		s.Accounts = make(map[string]provider.Account)
@@ -261,7 +265,6 @@ func MergeAppWorkspace(app AppSettings, ws WorkspaceOverrides) AppSettings {
 	applySparse(&out.Editor, ws.Editor)
 	applySparse(&out.LSP, ws.LSP)
 	applySparse(&out.UI, ws.UI)
-	applySparse(&out.Font, ws.Font)
 	applySparse(&out.Agents, ws.Agents)
 	applySparse(&out.Memory, ws.Memory)
 	applySparse(&out.Safety, ws.Safety)
@@ -274,17 +277,12 @@ func MergeAppWorkspace(app AppSettings, ws WorkspaceOverrides) AppSettings {
 
 // OverridesFromDiff records the individual leaf values in working that
 // differ from app. Everything else inherits.
-//
-// It is also the migration path for legacy whole-category overrides: run a
-// stored overlay through MergeAppWorkspace and back through this function
-// and only the genuinely different leaves survive.
 func OverridesFromDiff(app, working AppSettings) WorkspaceOverrides {
 	var out WorkspaceOverrides
 	out.Theme = sparseDiff(app.Theme, working.Theme)
 	out.Editor = sparseDiff(app.Editor, working.Editor)
 	out.LSP = sparseDiff(app.LSP, working.LSP)
 	out.UI = sparseDiff(app.UI, working.UI)
-	out.Font = sparseDiff(app.Font, working.Font)
 	out.Agents = sparseDiff(app.Agents, working.Agents)
 	out.Memory = sparseDiff(app.Memory, working.Memory)
 	out.Safety = sparseDiff(app.Safety, working.Safety)
@@ -536,8 +534,6 @@ func (o WorkspaceOverrides) CategoryOverridden(name string) bool {
 		return len(o.LSP) > 0
 	case "ui", "interface":
 		return len(o.UI) > 0
-	case "font":
-		return len(o.Font) > 0
 	case "agents":
 		return len(o.Agents) > 0
 	case "memory":
@@ -566,8 +562,6 @@ func (o *WorkspaceOverrides) ClearCategory(name string) {
 		o.LSP = nil
 	case "ui", "interface":
 		o.UI = nil
-	case "font":
-		o.Font = nil
 	case "agents":
 		o.Agents = nil
 	case "memory":
@@ -589,6 +583,7 @@ func cloneAppSettings(s AppSettings) AppSettings {
 	out.Accounts = provider.CloneAccounts(s.Accounts)
 	out.Agents = cloneAgents(s.Agents)
 	out.Memory.MemoryCategory.ContextCompactionPercent = cloneIntSetting(s.Memory.MemoryCategory.ContextCompactionPercent)
+	out.Memory.MemoryCategory.ContextRetentionTokens = cloneIntSetting(s.Memory.MemoryCategory.ContextRetentionTokens)
 	out.Safety.CommandRules = append([]CommandSeverityRule(nil), s.Safety.CommandRules...)
 	out.LocalHistory.ExtraIgnorePatterns = append([]string(nil), s.LocalHistory.ExtraIgnorePatterns...)
 	out.LSP = CloneLSPSettings(s.LSP)
@@ -603,6 +598,7 @@ func cloneAgents(src AgentsSettings) AgentsSettings {
 		out.Categories = make(map[string]CategorySettings, len(src.Categories))
 		for k, v := range src.Categories {
 			v.ContextCompactionPercent = cloneIntSetting(v.ContextCompactionPercent)
+			v.ContextRetentionTokens = cloneIntSetting(v.ContextRetentionTokens)
 			out.Categories[k] = v
 		}
 	}
@@ -614,6 +610,7 @@ func cloneAgents(src AgentsSettings) AgentsSettings {
 				out.Profiles[i].Categories = make(map[string]CategorySettings, len(profile.Categories))
 				for key, value := range profile.Categories {
 					value.ContextCompactionPercent = cloneIntSetting(value.ContextCompactionPercent)
+					value.ContextRetentionTokens = cloneIntSetting(value.ContextRetentionTokens)
 					out.Profiles[i].Categories[key] = value
 				}
 			}

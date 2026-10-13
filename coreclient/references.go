@@ -118,6 +118,12 @@ func (r *References) CreateReference(req sessiondb.CreateRequest) (sessiondb.Ref
 	create := coreprotocol.ReferenceCreateRequest{Kind: req.Kind, Label: req.Label, Title: req.Title, Mime: req.Mime, Inline: req.Inline}
 	// A path names a file on this client's machine; its bytes travel in frames.
 	data := []byte(req.Content)
+	if req.Kind == sessiondb.KindPastedImage {
+		if req.Content != "" {
+			return sessiondb.Reference{}, errors.New("image creation requires binary Data, not text Content")
+		}
+		data = req.Data
+	}
 	if req.FilePath != "" {
 		if data, err = os.ReadFile(req.FilePath); err != nil {
 			return sessiondb.Reference{}, err

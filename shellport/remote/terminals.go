@@ -57,6 +57,13 @@ func (t *terminalReplica) install(infos []workspace.TerminalInfo) []any {
 			follow = append(follow, workspace.TerminalTitleMsg{ID: next.ID, Title: next.Title})
 		}
 	}
+	// A terminal closed by another owner (a peer shell or Crude control) leaves
+	// the inventory entirely; this shell must unmount it like an exit.
+	for _, previous := range t.infos {
+		if !slices.ContainsFunc(infos, func(next workspace.TerminalInfo) bool { return next.ID == previous.ID }) {
+			follow = append(follow, workspace.TerminalExitedMsg{ID: previous.ID, ExitCode: previous.ExitCode, Err: previous.ExitErr})
+		}
+	}
 	t.infos = slices.Clone(infos)
 	return follow
 }

@@ -8,7 +8,6 @@ import (
 
 	"crude/provider"
 	settingsui "crude/tui/settings"
-	ttypes "crude/tui/types"
 	"crude/tui/ui"
 	"crude/tui/ui/popup"
 	"crude/tui/wm"
@@ -24,11 +23,11 @@ func TestChatGPTSignInResultUpdatesOpenSettingsWindow(t *testing.T) {
 	app := newTestApp(t)
 	wsOf(app).Logger = noopLogger{}
 	// Seed an account so the Application Accounts page shows OAuth status.
-	wsOf(app).SetAppDefaults(ttypes.AppSettings{
+	wsOf(app).SetAppDefaults(coretypes.AppSettings{
 
 		Accounts: map[string]provider.Account{"personal": {ID: "personal", ProviderID: "chatgpt", Label: "Personal", Connection: provider.DefaultTemplates()["chatgpt"]}},
 	})
-	app.openSettings(ttypes.SettingsScopeApplication)
+	app.openSettings(coretypes.SettingsScopeApplication)
 
 	fw := app.windowManager.Window("workspace-settings")
 	if fw == nil {
@@ -87,14 +86,14 @@ func TestChatGPTSignInResultUpdatesOpenSettingsWindow(t *testing.T) {
 func TestSignInThenSwitchBackDoesNotCorruptConfig(t *testing.T) {
 	app := newTestApp(t)
 	wsOf(app).Logger = noopLogger{}
-	wsOf(app).SetAppDefaults(ttypes.AppSettings{
+	wsOf(app).SetAppDefaults(coretypes.AppSettings{
 
 		Accounts: map[string]provider.Account{
 			"opencode": {ID: "opencode", ProviderID: "opencode-go", Label: "Work", APIKey: "sk-opencode", Connection: provider.DefaultTemplates()["opencode-go"]},
 			"personal": {ID: "personal", ProviderID: "chatgpt", Label: "Personal", Connection: provider.DefaultTemplates()["chatgpt"]},
 		},
 	})
-	app.openSettings(ttypes.SettingsScopeApplication)
+	app.openSettings(coretypes.SettingsScopeApplication)
 
 	fw := app.windowManager.Window("workspace-settings")
 	if fw == nil {
@@ -127,7 +126,7 @@ func TestSignInThenSwitchBackDoesNotCorruptConfig(t *testing.T) {
 
 	// Save via the app Update (the same path the Save button uses).
 	_, cmd = app.Update(settingsui.SaveMsg{
-		Scope:       ttypes.SettingsScopeApplication,
+		Scope:       coretypes.SettingsScopeApplication,
 		AppSettings: ws.ModelForTest().AppSettings(),
 	})
 	if cmd != nil {
@@ -177,7 +176,7 @@ func TestAccountEditorStaysWithinUnmovedSettingsWindow(t *testing.T) {
 	app := newTestApp(t)
 	wsOf(app).Logger = noopLogger{}
 	app.width, app.height = 160, 40
-	wsOf(app).SetAppDefaults(ttypes.AppSettings{})
+	wsOf(app).SetAppDefaults(coretypes.AppSettings{})
 	app.openApplicationSettings()
 	fw := app.windowManager.Window(string(ui.OverlayWorkspaceSettings))
 	if fw == nil {
@@ -217,8 +216,8 @@ func TestAccountEditorStaysWithinUnmovedSettingsWindow(t *testing.T) {
 func TestAccountSaveFailureKeepsOpenFormAndPersistedState(t *testing.T) {
 	app := newTestApp(t)
 	wsOf(app).Logger = noopLogger{}
-	wsOf(app).SetAppDefaults(ttypes.AppSettings{Accounts: map[string]provider.Account{"personal": {ID: "personal", ProviderID: "chatgpt", Label: "Personal", Connection: provider.DefaultTemplates()["chatgpt"]}}})
-	app.openSettings(ttypes.SettingsScopeApplication)
+	wsOf(app).SetAppDefaults(coretypes.AppSettings{Accounts: map[string]provider.Account{"personal": {ID: "personal", ProviderID: "chatgpt", Label: "Personal", Connection: provider.DefaultTemplates()["chatgpt"]}}})
+	app.openSettings(coretypes.SettingsScopeApplication)
 	fw := app.windowManager.Window("workspace-settings")
 	model := settingsWidgetForTest(t, fw).ModelForTest()
 	model.SelectAccounts()

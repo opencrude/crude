@@ -225,9 +225,15 @@ func TestUnsupportedAndBudgets(t *testing.T) {
 	if _, err = limited.Create(ctx, Request{Owner: testOwner, Mode: Isolated}); err == nil {
 		t.Fatal("budget ignored")
 	}
+	// A configured but unused driver (Git for Windows ships filter.lfs in its
+	// system config) runs nothing and must not block setup.
 	gitTest(t, root, "config", "filter.untrusted.clean", "touch should-not-run")
-	if _, err = s.Create(ctx, Request{Owner: testOwner, Mode: Isolated}); err == nil {
-		t.Fatal("configured filter accepted")
+	if _, err := s.Create(ctx, Request{Owner: testOwner, Mode: Isolated}); err != nil {
+		t.Fatalf("unused configured filter blocked setup: %v", err)
+	}
+	put(t, root, ".git/info/attributes", []byte("* filter=untrusted\n"))
+	if _, err = s.Create(ctx, Request{Owner: testOwner, Mode: Isolated}); err == nil || !strings.Contains(err.Error(), `git filter "untrusted"`) {
+		t.Fatalf("applied filter accepted or rejected for another reason: %v", err)
 	}
 }
 

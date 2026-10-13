@@ -3,7 +3,7 @@ package chatprojection
 import (
 	"strings"
 
-	"crude/tui/types"
+	"crude/types"
 )
 
 // disclosure.go owns the per-message disclosure (expand/collapse) state for

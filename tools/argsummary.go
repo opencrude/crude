@@ -187,6 +187,14 @@ func SummarizeArgs(tool, argsStr string) string {
 		return joinOperands(ExtractArg(argsStr, "connection_id"), ExtractArg(argsStr, "name"))
 	case "memory_feedback":
 		return ""
+	case "crude_commands":
+		return ExtractArg(argsStr, "query")
+	case "crude_control":
+		return ExtractArg(argsStr, "command")
+	case "agent_update_claims":
+		return ExtractArg(argsStr, "agent_id")
+	case "agent_narrow_claims":
+		return ""
 	}
 	if tool == "grep_files" {
 		pattern := ExtractArg(argsStr, "pattern")
@@ -282,7 +290,8 @@ func RetainsStructuredToolInput(name string) bool {
 		"publish_report", "artifact_read", "agent_wait", "board_read",
 		"remember", "recall_memory", "update_memory",
 		"forget_memory", "memory_feedback", "search_history", "capability_search",
-		"capability_activate", "mcp_request_access", "mcp_read_resource", "mcp_get_prompt":
+		"capability_activate", "mcp_request_access", "mcp_read_resource", "mcp_get_prompt",
+		"agent_update_claims", "agent_narrow_claims", "crude_commands", "crude_control":
 		return true
 	}
 	return strings.HasPrefix(name, "mcp__")

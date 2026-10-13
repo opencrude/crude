@@ -14,9 +14,9 @@ import (
 	"crude/tui/screens/launcher"
 	"crude/tui/settings"
 	"crude/tui/theme"
-	ttypes "crude/tui/types"
 	"crude/tui/ui"
 	"crude/tui/wm"
+	ttypes "crude/types"
 	"crude/workspace"
 )
 

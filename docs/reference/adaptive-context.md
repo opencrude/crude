@@ -70,8 +70,13 @@ hidden preparation suffix. Reference bytes and exact source identity, supplied
 ContextParts, current plan, recall, prior-session and runtime facts are captured
 before acknowledgement. Duplicate admission returns the same receipt; Continue
 reuses successful preparation rather than reloading mutable references. Invalid
-preparation preserves the original and selected identities in the checkpoint but
-blocks provider and tool advancement. MCP selection is not a grant, and external
+ownership, configuration or storage preserves the original and selected identities
+in the checkpoint and blocks unsafe advancement. Missing/empty pasted-image captures
+and mismatched image bytes instead exclude that exact attachment, record immutable
+unavailable-attachment evidence and publish a warning. The original human text,
+good attachments and stored evidence remain intact; normal sends and mid-run
+steering continue without replay or manual history editing.
+MCP selection is not a grant, and external
 context remains attributed data. Explicit empty model modalities remain disabled,
 not unspecified. Storage errors during enabled recall fail closed.
 
@@ -147,7 +152,11 @@ provider/tool/child replay. One-off alignment tools do not ship in the product.
    remaining context after its system prompt and tool schemas. There is no
    independent 16K checkpoint ceiling or fixed per-stage quota. A complete
    extraction that exceeds the remaining space is refined with the same model;
-   verbatim recent human input uses whatever space remains. Oversized individual
+   verbatim recent human input is retained up to the resolved agent setting
+   (20,000 estimated tokens by default, configurable from 1,000 to 200,000),
+   then further bounded by whatever continuation space actually remains. Answered
+   human requirements use the same limit inside their marked context-only history
+   block. Oversized individual
    inputs are represented in the checkpoint rather than retained unboundedly
    alongside it; the original source remains archived. Reject empty,
    tool-calling, control-invalid, truncated, nonshrinking, or over-budget results.
@@ -164,8 +173,10 @@ provider/tool/child replay. One-off alignment tools do not ship in the product.
    when deciding whether the request was answered; the standalone path uses
    message-order evidence only when that state is unavailable. An answered
    request is represented by the checkpoint rather than appended as new-looking
-   user input. Pending human input and child assignment remain verbatim when
-   they fit.
+   user input. Pending human input remains verbatim within the configured retention
+   budget. A child's latest assignment is not reduced to that recent-input limit:
+   it may use all available continuation space, but still falls back to extraction
+   when it cannot fit safely.
 10. Runtime owners are sampled again after extraction. The handoff carries the
     current plan and session selection plus exact async handle/command/cwd/PID,
     status, output length and observed cursor, and child identity/status. A

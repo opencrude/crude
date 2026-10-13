@@ -83,7 +83,6 @@ func (m *App) ensureAgentProjection(id string) {
 		projection = m.subPaneProjections.Get(id, workspace.PaneAgent)
 		projection.renderer.SetSubPaneContentFn(m.renderSubPaneContentForApp)
 	}
-	projection.renderer.SetLegacyModelFallback(node.Model)
 	projection.renderer.SetUsername(m.ws.Username())
 }
 

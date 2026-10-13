@@ -59,7 +59,7 @@ func TestBuildUserMessageDeliversFileAttachments(t *testing.T) {
 	}
 
 	s := &Session{db: database}
-	msg, _, err := s.buildUserMessageWithDisplay(provider.InputWithRefs(
+	msg, _, _, err := s.buildUserMessageWithDisplay(provider.InputWithRefs(
 		"please review", []string{"ref-text", "ref-bin"},
 	), "test-model")
 	if err != nil {
@@ -150,7 +150,7 @@ func TestBuildUserMessageDeliversUnknownModelImageBytes(t *testing.T) {
 	}
 
 	s := &Session{db: database}
-	msg, labels, err := s.buildUserMessageWithDisplay(provider.InputWithRefs(
+	msg, labels, _, err := s.buildUserMessageWithDisplay(provider.InputWithRefs(
 		"[Pasted IMG1] what is this?", []string{ref.ID},
 	), "unknown-vision-alias-for-attachment-test")
 	if err != nil {
@@ -187,7 +187,7 @@ func TestBuildUserMessageExpandsPastedTextInsteadOfCaption(t *testing.T) {
 	}
 
 	s := &Session{db: database}
-	msg, labels, err := s.buildUserMessageWithDisplay(provider.InputWithRefs(
+	msg, labels, _, err := s.buildUserMessageWithDisplay(provider.InputWithRefs(
 		"summarize [Pasted Text1]", []string{ref.ID},
 	), "text-model")
 	if err != nil {

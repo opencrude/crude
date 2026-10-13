@@ -9,6 +9,7 @@ const (
 	NoticeResponseContinuationUnavailable = "response_continuation_unavailable"
 	NoticeMemorySaved                     = "memory_saved"
 	NoticeAsyncCommandStatus              = "async_command_status"
+	NoticeAttachmentExcluded              = "attachment_excluded"
 )
 
 // AgentNotice is one typed service notice.
@@ -29,7 +30,7 @@ type AgentNotice struct {
 func NoticeFromEvent(evt AgentEvent) (AgentNotice, bool) {
 	notice := AgentNotice{Type: evt.Type, AgentID: evt.AgentID}
 	switch evt.Type {
-	case NoticeResponseContinuationUnavailable:
+	case NoticeResponseContinuationUnavailable, NoticeAttachmentExcluded:
 		data, _ := evt.Data.(map[string]any)
 		notice.Reason, _ = data["reason"].(string)
 	case NoticeMemorySaved:

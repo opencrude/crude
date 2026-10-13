@@ -35,7 +35,10 @@ checkout; relative claims bind its exact resolved root.
 
 Git preparation disables hooks/fsmonitor and removes inherited `GIT_*` controls;
 a detached no-checkout worktree plus captured bytes avoids executing setup hooks
-or filters. Configured Git filters, unresolved index state, submodules, symlink/
+or filters. A configured Git filter driver that an attribute applies to a
+copied path (tracked or explicitly included) fails setup; merely configured
+drivers, such as the `filter.lfs` entries Git for Windows installs system-wide,
+execute nothing and are accepted. Unresolved index state, submodules, symlink/
 nonregular baselines and alternate commit bases fail conservatively. The supplied
 base must resolve to local HEAD. This does not reproduce the original index's
 staging state as a separate authority. Git administration (`.git` pointer files,

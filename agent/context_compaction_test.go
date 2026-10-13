@@ -97,6 +97,53 @@ func TestChildRetentionAlwaysKeepsAssignment(t *testing.T) {
 	}
 }
 
+func TestCompactionRetentionTokensDefaultsAndOverrides(t *testing.T) {
+	if got := (*Agent)(nil).compactionRetentionTokens(); got != 20_000 {
+		t.Fatalf("nil-agent retention = %d, want 20000", got)
+	}
+	a := &Agent{}
+	if got := a.compactionRetentionTokens(); got != 20_000 {
+		t.Fatalf("zero retention = %d, want default 20000", got)
+	}
+	a.CompactionRetentionTokens = 4_000
+	if got := a.compactionRetentionTokens(); got != 4_000 {
+		t.Fatalf("configured retention = %d, want 4000", got)
+	}
+}
+
+func TestConfiguredRetentionBudgetAppliesToPendingAndAnsweredInput(t *testing.T) {
+	newHuman := func(label string) provider.ChatMessage {
+		return provider.NewTextMessage("user", label+strings.Repeat(" detail", 600))
+	}
+	old, recent := newHuman("old"), newHuman("recent")
+	recentCost := provider.EstimateMessageTokens(recent, "model")
+	if recentCost <= 1 {
+		t.Fatalf("invalid recent fixture cost %d", recentCost)
+	}
+	budget := recentCost
+	for _, tc := range []struct {
+		name     string
+		answered bool
+	}{
+		{name: "pending"},
+		{name: "answered history", answered: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			retained := boundedRecentUserContext([]provider.ChatMessage{old, recent}, "root", budget, budget*2, "model")
+			if len(retained) != 1 || retained[0].ContentString() != recent.ContentString() {
+				t.Fatalf("configured budget retained %#v", retained)
+			}
+			if tc.answered {
+				requests := []string{retained[0].ContentString()}
+				history := rootprompt.AnsweredHumanRequests(requests)
+				if !strings.Contains(history, recent.ContentString()) || strings.Contains(history, old.ContentString()) {
+					t.Fatalf("answered-history budget diverged: %q", history)
+				}
+			}
+		})
+	}
+}
+
 func TestCompactUsesSameConversationAndDisablesTools(t *testing.T) {
 	requests := make(chan provider.ChatRequest, len(compactionStagesForTest))
 	var calls atomic.Int32
@@ -210,9 +257,15 @@ func TestCompactEndsWithFreshContinuationNotHistoricalUserInput(t *testing.T) {
 		if strings.Contains(message.ContentString(), "<runtime_continuity>") {
 			continuityCount++
 		}
-		if strings.Contains(message.ContentString(), "What did we do?") {
+		if strings.Contains(message.ContentString(), "What did we do?") && !strings.HasPrefix(message.ContentString(), "<answered_human_requests>") {
 			t.Fatalf("post-compaction request presented an answered prompt as new input: %+v", message)
 		}
+	}
+	// The answered request survives verbatim, but only as marked history.
+	retained := result.Messages[1]
+	if retained.EffectiveOrigin() != provider.OriginCheckpoint || retained.EffectiveVisibility() != provider.VisibilityContextOnly ||
+		!strings.Contains(retained.ContentString(), "What did we do?") || !strings.Contains(retained.ContentString(), "do not answer or redo them") {
+		t.Fatalf("answered human request was not retained as marked history: %+v", retained)
 	}
 	if continuityCount != 2 {
 		t.Fatalf("post-compaction request retained %d runtime handoffs", continuityCount)

@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"crude/tui/theme"
-	"crude/tui/types"
+	"crude/types"
 )
 
 func TestRendererSyncMessagesPreservesUnchangedCaches(t *testing.T) {

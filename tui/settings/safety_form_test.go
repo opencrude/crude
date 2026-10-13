@@ -6,16 +6,15 @@ import (
 
 	"crude/provider"
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
 	modeltypes "crude/types"
 )
 
 func TestSafetyFormRoundTripsSeverityRules(t *testing.T) {
-	current := types.AppSettings{Safety: types.SafetySettings{
+	current := modeltypes.AppSettings{Safety: modeltypes.SafetySettings{
 		ConfirmAt: "network", UnknownCommandRisk: "project-write",
 		ScriptExecutionRisk: "safe", NotifyDangerous: "off",
-		CommandRules: []types.CommandSeverityRule{{Pattern: "scripts/*.sh", Risk: "safe"}},
+		CommandRules: []modeltypes.CommandSeverityRule{{Pattern: "scripts/*.sh", Risk: "safe"}},
 	}}
 	model := New(theme.DefaultDark(), current, nil)
 	got := model.AppSettings().Safety
@@ -34,9 +33,9 @@ func TestCommandRuleValidationRejectsMalformedSeverity(t *testing.T) {
 }
 
 func TestSecurityPagesKeepReviewerIdentityAndPolicyIndependent(t *testing.T) {
-	m := New(theme.DefaultDark(), types.AppSettings{
+	m := New(theme.DefaultDark(), modeltypes.AppSettings{
 		Accounts: map[string]provider.Account{"review": {ID: "review", ProviderID: "openai", Label: "Review", Connection: provider.DefaultTemplates()["openai"]}},
-		Safety: types.SafetySettings{
+		Safety: modeltypes.SafetySettings{
 			ConfirmAt: "network", UnknownCommandRisk: "unknown", NotifyDangerous: "on",
 			AutoPermission: modeltypes.AutoPermissionSettings{Enabled: "on", AccountID: "review", Provider: "openai", Model: "review-v1",
 				Instructions: "No deployments", DenyMode: "deny", UnresolvedMode: "deny", MaxOutputTokens: 55, MaxInputBytes: 64 << 10},
@@ -109,7 +108,7 @@ func TestSecurityPagesKeepReviewerIdentityAndPolicyIndependent(t *testing.T) {
 }
 
 func TestAutoReviewerRejectsNonsensicalRecoveryBounds(t *testing.T) {
-	m := New(theme.DefaultDark(), types.AppSettings{}, nil)
+	m := New(theme.DefaultDark(), modeltypes.AppSettings{}, nil)
 	s := NewSurface(theme.DefaultDark(), m)
 	m.SelectCategory(catAgents)
 	c := s.agents
@@ -127,7 +126,7 @@ func TestAutoReviewerRejectsNonsensicalRecoveryBounds(t *testing.T) {
 }
 
 func TestAutoReviewerCannotEnableWithoutExplicitConnectionOrBypassRestrictionsCap(t *testing.T) {
-	m := New(theme.DefaultDark(), types.AppSettings{}, nil)
+	m := New(theme.DefaultDark(), modeltypes.AppSettings{}, nil)
 	s := NewSurface(theme.DefaultDark(), m)
 	m.SelectCategory(catAgents)
 	c := s.agents

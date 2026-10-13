@@ -8,7 +8,7 @@ import (
 	"crude/tui/cell"
 	"crude/tui/chatprojection"
 	"crude/tui/theme"
-	"crude/tui/types"
+	"crude/types"
 )
 
 func TestBuildPlanViewRows_RendersStepCard(t *testing.T) {
@@ -20,11 +20,6 @@ func TestBuildPlanViewRows_RendersStepCard(t *testing.T) {
 	rows := chatprojection.BuildPlanViewRows(raw, 80)
 	if len(rows) < 4 {
 		t.Fatalf("expected >=4 rows, got %d", len(rows))
-	}
-	for i, r := range rows {
-		if r.PreferANSI() {
-			t.Fatalf("row %d PreferANSI — plan view must be native", i)
-		}
 	}
 	header := rows[0].PlainText()
 	if !strings.Contains(header, "Plan: Fix persistence") {

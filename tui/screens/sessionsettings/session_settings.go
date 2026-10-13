@@ -34,6 +34,7 @@ const (
 	fieldThinking          = "thinking-effort"
 	fieldMultiAgent        = "multi-agent"
 	fieldContextCompaction = "context-compaction-percent"
+	fieldContextRetention  = "context-retention-tokens"
 )
 
 // Live-inheritance markers, mirroring session.InheritMain/InheritWorkspace.
@@ -619,6 +620,20 @@ func (s *Screen) openRole(role string) {
 		return nil
 	}
 	model.AddField(compactionField)
+	retention := types.DefaultContextRetentionTokens
+	if cfg.ContextRetentionTokens != nil {
+		retention = *cfg.ContextRetentionTokens
+	}
+	retentionField := ui.TextFieldState(fieldContextRetention, "Keep recent input", strconv.Itoa(retention), "Estimated tokens retained verbatim through compaction; actual context capacity remains the hard limit.")
+	retentionField.Numeric, retentionField.Unit = true, "tokens"
+	retentionField.Validator = func(value ui.FieldValue) []string {
+		parsed, err := strconv.Atoi(strings.TrimSpace(value.String()))
+		if err != nil || parsed < types.MinContextRetentionTokens || parsed > types.MaxContextRetentionTokens {
+			return []string{"Must be an integer between 1,000 and 200,000."}
+		}
+		return nil
+	}
+	model.AddField(retentionField)
 	if role != memoryRole {
 		model.AddField(&ui.FieldState{ID: "capabilities", Label: "Capabilities", Type: ui.FieldNav, Target: "session-settings.capabilities.open"})
 	}
@@ -1143,6 +1158,11 @@ func (s *Screen) applyRoleForm() {
 		compaction = min(100, max(0, compaction))
 		cfg.ContextCompactionPercent = &compaction
 	}
+	retention, err := strconv.Atoi(strings.TrimSpace(s.formModel.Field(fieldContextRetention).Value.String()))
+	if err != nil || retention < types.MinContextRetentionTokens || retention > types.MaxContextRetentionTokens {
+		return
+	}
+	cfg.ContextRetentionTokens = &retention
 	// A manual override never carries a live-inherit marker.
 	cfg.Inherit = ""
 	setCategory(&s.effective, s.role, cfg)
@@ -1160,6 +1180,9 @@ func (s *Screen) applyRoleForm() {
 	}
 	if key == "default" || s.role != "default" || !s.formModel.Field(fieldContextCompaction).Value.Equal(s.formModel.Field(fieldContextCompaction).Initial) {
 		override.ContextCompactionPercent = cloneIntPtr(cfg.ContextCompactionPercent)
+	}
+	if key == "default" || s.role != "default" || !s.formModel.Field(fieldContextRetention).Value.Equal(s.formModel.Field(fieldContextRetention).Initial) {
+		override.ContextRetentionTokens = cloneIntPtr(cfg.ContextRetentionTokens)
 	}
 	if key == "default" {
 		override.Provider = cfg.Provider
@@ -1225,7 +1248,7 @@ func inheritCategory(inherit string) types.CategorySettings {
 func (s *Screen) ToSettings() types.Settings {
 	s.applyRootForm()
 	settings := cloneSettings(s.effective)
-	for role, over := range s.overrides {
+	for role, over := range copyCategoryMap(s.overrides) {
 		settings.SessionOverrides[role] = over
 	}
 	settings.Agents.Enabled = s.effective.Agents.Enabled
@@ -1326,6 +1349,7 @@ func categoryFor(settings, base types.Settings, role string) types.CategorySetti
 			// Copy the compaction pointer so the role category and
 			// Memory.MemoryCategory never alias one int.
 			cat.ContextCompactionPercent = cloneIntPtr(cat.ContextCompactionPercent)
+			cat.ContextRetentionTokens = cloneIntPtr(cat.ContextRetentionTokens)
 			return cat
 		}
 	}
@@ -1356,6 +1380,7 @@ func copyCategoryMap(src map[string]types.CategorySettings) map[string]types.Cat
 		value.DeniedTools = slices.Clone(value.DeniedTools)
 		value.SkillModes = maps.Clone(value.SkillModes)
 		value.ContextCompactionPercent = cloneIntPtr(value.ContextCompactionPercent)
+		value.ContextRetentionTokens = cloneIntPtr(value.ContextRetentionTokens)
 		dst[key] = value
 	}
 	return dst
@@ -1371,6 +1396,7 @@ func cloneSettings(src types.Settings) types.Settings {
 	// Memory.MemoryCategory is the memory role's workspace-level source; clone
 	// its pointer so the base and effective layers never share one int.
 	dst.Memory.MemoryCategory.ContextCompactionPercent = cloneIntPtr(src.Memory.MemoryCategory.ContextCompactionPercent)
+	dst.Memory.MemoryCategory.ContextRetentionTokens = cloneIntPtr(src.Memory.MemoryCategory.ContextRetentionTokens)
 	return dst
 }
 

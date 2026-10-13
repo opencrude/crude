@@ -17,7 +17,6 @@ import (
 
 	"crude/sessiondb"
 	"crude/tui/rendering"
-	"crude/tui/types"
 	"crude/tui/viewmodel"
 	roottypes "crude/types"
 	"crude/types/reasoning"
@@ -64,7 +63,7 @@ type programMessagePump struct {
 const agentVisualDeliveryInterval = time.Second / 60
 
 type pendingAgentDelta struct {
-	event  types.AgentMsg
+	event  roottypes.AgentMsg
 	chunks []string
 	size   int
 }
@@ -105,12 +104,12 @@ func coalescePendingAgentDelta(tail *list.Element, msg tea.Msg) bool {
 	if tail == nil {
 		return false
 	}
-	next, ok := msg.(types.AgentMsg)
+	next, ok := msg.(roottypes.AgentMsg)
 	if !ok {
 		return false
 	}
 	switch previous := tail.Value.(type) {
-	case types.AgentMsg:
+	case roottypes.AgentMsg:
 		if previous.AgentID != next.AgentID || previous.Type != next.Type {
 			return false
 		}
@@ -232,7 +231,7 @@ func (p *programMessagePump) run() {
 }
 
 func isAgentVisualUpdate(msg tea.Msg) bool {
-	event, ok := msg.(types.AgentMsg)
+	event, ok := msg.(roottypes.AgentMsg)
 	if !ok {
 		return false
 	}
@@ -354,7 +353,7 @@ func (t *TUI) SendAgentEvent(typ string, data any) {
 }
 
 func (t *TUI) SendAgentEventWithID(typ string, data any, agentID string) {
-	t.send(types.AgentMsg(AgentEventMsg{Type: typ, Data: data, AgentID: agentID}))
+	t.send(roottypes.AgentMsg(AgentEventMsg{Type: typ, Data: data, AgentID: agentID}))
 }
 
 // SendAgentEventEnvelope preserves the backend's exact owner/run/epoch/
@@ -365,7 +364,7 @@ func (t *TUI) SendAgentEventEnvelope(event agent.AgentEvent) {
 }
 
 func (t *TUI) SetError(err string) {
-	t.send(types.ErrorMsg(err))
+	t.send(roottypes.ErrorMsg(err))
 }
 
 // ShowOperationIssue sends recovery context through the same FIFO owner path
@@ -377,15 +376,15 @@ func (t *TUI) ShowOperationIssue(issue roottypes.OperationIssue) {
 func (t *TUI) ResumeStartupSession(id string) { t.send(roottypes.ResumeStartupMsg{SessionID: id}) }
 
 func (t *TUI) UpdateModelName(name string) {
-	t.send(types.UpdateModelMsg(name))
+	t.send(roottypes.UpdateModelMsg(name))
 }
 
 func (t *TUI) HydrateMessages(msgs []workspace.ChatMessageView) {
-	t.send(types.HistoryMessagesMsg(viewmodel.ChatMessagesFromViews(msgs)))
+	t.send(roottypes.HistoryMessagesMsg(viewmodel.ChatMessagesFromViews(msgs)))
 }
 
 func (t *TUI) OpenSettings() {
-	t.send(types.OpenSettingsMsg{})
+	t.send(roottypes.OpenSettingsMsg{})
 }
 
 func (t *TUI) send(msg tea.Msg) {

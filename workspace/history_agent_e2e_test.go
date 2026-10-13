@@ -2,6 +2,7 @@ package workspace
 
 import (
 	"context"
+	"crude/agent"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -569,4 +570,8 @@ func TestAgentUndoTracksInsideAndOutsideFilesystemMutations(t *testing.T) {
 	if data, err := os.ReadFile(outsidePath); err != nil || string(data) != "outside agent change" {
 		t.Fatalf("outside safety restore=%q err=%v", data, err)
 	}
+}
+
+func (s *historyE2ESender) SendAgentEventEnvelope(event agent.AgentEvent) {
+	s.SendAgentEventWithID(event.Type, event.Data, event.AgentID)
 }

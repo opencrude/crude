@@ -192,6 +192,19 @@ func terminalMethod(method string) bool {
 	return false
 }
 
+// Apply resource publication on the actor, after the worker's effect completes.
+// Explicit PTY close intentionally emits no synchronous manager event, so both
+// RPC and semantic control must invalidate inventory through this same owner.
+func (a *actor) applyResource(request coreprotocol.Request, result coreprotocol.Response) {
+	if result.Error != nil || request.Method != coreprotocol.TerminalClose {
+		return
+	}
+	var input coreprotocol.TerminalIDRequest
+	if decode(request.Payload, &input) == nil && input.ID != "" {
+		a.broadcast(coreprotocol.Change{Terminals: []string{input.ID}})
+	}
+}
+
 func resourceMutation(method string) bool {
 	switch method {
 	case coreprotocol.DocumentRead, coreprotocol.DocumentSync, coreprotocol.TerminalList, coreprotocol.TerminalRows:

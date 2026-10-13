@@ -3,7 +3,6 @@ package viewmodel
 import (
 	"testing"
 
-	tuitypes "crude/tui/types"
 	"crude/tui/ui"
 	"crude/types"
 	"crude/workspace"
@@ -78,7 +77,7 @@ func TestAgentFailurePublishesOneNoticeForItsActualOwner(t *testing.T) {
 	app.AddOrchestrator("background")
 	app.ws.AgentMgr().Get("background").State.Running = true
 	app.AddOrchestrator("foreground")
-	cmd := app.handleAgentEvent(tuitypes.AgentEventMsg{AgentID: "background", Type: "error", Data: "history sync failed"})
+	cmd := app.handleAgentEvent(types.AgentEventMsg{AgentID: "background", Type: "error", Data: "history sync failed"})
 	if cmd != nil {
 		cmd()
 	}

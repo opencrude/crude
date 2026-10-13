@@ -154,7 +154,8 @@ being half-saved, and Save refuses an invalid inventory with the reason.
 
 ## Removed on purpose
 
-- The Font page (no consumer read it) is no longer offered.
+- Font settings are removed: a terminal application cannot choose the host
+  terminal's font. Icon glyph compatibility stays on the Nerd Font toggle.
 - `LSPSettings.Servers`/`ServerArgs` were a second, extension-keyed server
   authority beside per-language definitions; Languages is the only one.
 - The Code Intelligence page's raw "Custom servers / advanced JSON" editor is

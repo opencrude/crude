@@ -22,7 +22,7 @@ Callers import it directly; do not recreate forwarding APIs in `agent/`,
 | `prompt/guidance.go`, `guidance_compile.go` | Named-file discovery, hashes, verbatim representation, compiler/verifier wording, compiled ledger envelope |
 | `prompt/memory.go` | No-tools memory extraction/consolidation policy and input envelopes |
 | `prompt/permission.go` | Fixed no-tools review policy and narrowing restrictions |
-| `prompt/runtime.go` | Continuity, turn context, plans, memory recall, delegation, wakes, and interruptions |
+| `prompt/runtime.go` | Continuity, turn context, plans, memory recall, delegation, wakes, interruptions and exact unavailable-attachment explanations |
 | `prompt/recovery.go` | Typed, code-authored continuations for preserved unfinished work; never new human input |
 | `agent/` | Model requests, admission budgets, guidance compilation/verification execution, tool-batch deferral, checkpoint validation |
 | `session/`, `memory/`, `workspace/`, `fileio/` | Configuration and source selection, typed live facts, evidence validation, domain lifecycle and persistence |
@@ -277,8 +277,12 @@ extraction. Compaction is not a new user request.
 Known durable human-turn state decides whether the request is completed. When
 unavailable, the current standalone path uses message-order evidence. An answered
 request must not be appended as new-looking human input after the checkpoint;
-pending input and child assignments are retained within their budget. The
-original transcript remains unchanged.
+it is carried verbatim in one code-authored, context-only
+`<answered_human_requests>` history block so its requirements stay binding
+without being re-answered. Pending input is retained within the recent-input
+budget; a child's latest assignment may use all available continuation space.
+In-run compaction rebuilds the continuation system message from the current
+guidance render. The original transcript remains unchanged.
 
 Current command handles/status/cursors, plan state and child identities override
 stale model-generated descriptions. Snapshotting observes existing owners; it

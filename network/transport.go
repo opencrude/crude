@@ -80,8 +80,13 @@ func NewTransport(settings Settings, connectTimeout time.Duration) (http.RoundTr
 		transports:     make(map[transportKey]*http.Transport),
 	}
 	transport.dialer = net.Dialer{
-		Timeout:   connectTimeout,
-		KeepAlive: time.Duration(settings.KeepAliveSeconds) * time.Second,
+		Timeout: connectTimeout,
+		KeepAliveConfig: net.KeepAliveConfig{
+			Enable:   true,
+			Idle:     time.Duration(settings.KeepAliveSeconds) * time.Second,
+			Interval: time.Duration(settings.KeepAliveIntervalSeconds) * time.Second,
+			Count:    settings.KeepAliveCount,
+		},
 	}
 	return transport, nil
 }
@@ -204,6 +209,13 @@ func (t *Transport) buildTransport(scheme, host string, profile tlsProfile, prox
 		TLSHandshakeTimeout:   time.Duration(t.settings.TLSHandshakeTimeoutSeconds) * time.Second,
 		ExpectContinueTimeout: time.Second,
 		TLSClientConfig:       tlsConfig,
+		// Health-check pooled HTTP/2 connections. A blackholed multiplexed
+		// connection otherwise stays eligible through a retry cooldown, and the
+		// next attempt waits out a full stall timeout before redialing.
+		HTTP2: &http.HTTP2Config{
+			SendPingTimeout: time.Duration(t.settings.HTTP2PingIntervalSeconds) * time.Second,
+			PingTimeout:     time.Duration(t.settings.HTTP2PingTimeoutSeconds) * time.Second,
+		},
 	}
 	if t.settings.DisableHTTP2 {
 		transport.TLSNextProto = make(map[string]func(string, *tls.Conn) http.RoundTripper)
