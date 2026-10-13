@@ -271,6 +271,8 @@ func eventKindLabel(kind collaboration.EventKind) string {
 		return "Control"
 	case collaboration.EventControlOutcome:
 		return "Control outcome"
+	case collaboration.EventCommandOutcome:
+		return "Command outcome"
 	case collaboration.EventPeerReply:
 		return "Reply"
 	default:

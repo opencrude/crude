@@ -764,6 +764,17 @@ Legacy `tui/widgets/popupchrome.go` is **deleted**.
 - Noninteractive Windows commands use `CREATE_NO_WINDOW` plus `HideWindow`;
   package managers such as WinGet must never attach to or paint into Crude's host
   console. Stdout/stderr is visible only through the captured tool/job result.
+- Tracked background commands notify their owning agent when they complete,
+  fail or time out on their own (`AsyncCommandManager.SetSettleObserver` →
+  durable `command_outcome` collaboration event, admitted at a safe boundary or
+  waking the idle agent). Never make agents poll or `wait` for completion.
+  Explicit kills, exits already returned inline or by an exec-session call, and
+  `RetainSettled` output retention are not reported again.
+- Local stdio MCP servers inherit the full host environment, like agent shell
+  commands; never reintroduce a variable allowlist. Server stderr tails are
+  attached to failures. Registry packages are prepared through the owning
+  agent's background command manager after launch authorization, never inside
+  the handshake deadline. See `docs/guides/capability-workflows.md`.
 - Every session publishes one stable session-owned cross-platform
   `<temporary_directory>` and exports it as `CRUDE_TEMP_DIR` to commands. Use it
   for noisy logs and transient artifacts. `read_async_output` returns bounded

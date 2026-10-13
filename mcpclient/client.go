@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -43,6 +44,9 @@ type connection struct {
 	interactiveAuth bool
 	secrets         map[string]struct{}
 	outputSchemas   map[string]*jsonschema.Resolved
+	// stderr belongs to the exact launch epoch that created it.
+	stderr      *stderrTail
+	stderrEpoch uint64
 }
 
 type Manager struct {
@@ -164,6 +168,9 @@ func (manager *Manager) States() []captypes.ConnectionState {
 	states := make([]captypes.ConnectionState, 0, len(manager.connections))
 	for _, entry := range manager.connections {
 		state := entry.state
+		if entry.stderr != nil {
+			state.Stderr = redactSecrets(entry.config, entry.secrets, entry.stderr.Text(0))
+		}
 		encoded, _ := json.Marshal(state)
 		var detached captypes.ConnectionState
 		if json.Unmarshal(encoded, &detached) == nil {
@@ -298,6 +305,7 @@ func (manager *Manager) connect(ctx context.Context, id string, interactive bool
 			err = connectCtx.Err()
 		}
 		cancel()
+		err = manager.diagnosed(id, epoch, err)
 		manager.failed(id, epoch, err)
 		return manager.safeError(config, err)
 	}
@@ -319,6 +327,7 @@ func (manager *Manager) connect(ctx context.Context, id string, interactive bool
 		manager.mu.Unlock()
 		cancel()
 		_ = session.Close()
+		err = manager.diagnosed(id, epoch, err)
 		manager.failed(id, epoch, err)
 		return err
 	}
@@ -328,16 +337,17 @@ func (manager *Manager) connect(ctx context.Context, id string, interactive bool
 
 func (manager *Manager) watchSession(id string, epoch uint64, session *mcp.ClientSession, cancel context.CancelFunc) {
 	err := session.Wait()
+	if err == nil {
+		err = errors.New("MCP server disconnected")
+	}
+	err = manager.diagnosed(id, epoch, err)
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 	if entry := manager.connections[id]; entry != nil && entry.epoch == epoch && entry.session == session {
 		cancel()
 		entry.session, entry.cancel = nil, nil
 		entry.state.State, entry.state.Cached = "failed", hasCatalog(entry.state)
-		entry.state.Error = "MCP server disconnected"
-		if err != nil {
-			entry.state.Error = redactSecrets(entry.config, entry.secrets, err.Error())
-		}
+		entry.state.Error = redactSecrets(entry.config, entry.secrets, err.Error())
 	}
 }
 
@@ -376,7 +386,9 @@ func (manager *Manager) failed(id string, epoch uint64, err error) {
 		if errors.Is(err, errNeedsSignIn) || strings.Contains(message, "401") || strings.Contains(message, "unauthorized") || strings.Contains(message, "sign-in") || strings.Contains(message, "sign in again") {
 			entry.state.State = "needs sign-in"
 		}
-		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		// Cancellation is not a server fault. A missed deadline is: keep its
+		// reason and diagnostics visible instead of resetting to "not started".
+		if errors.Is(err, context.Canceled) {
 			entry.state.State, entry.state.Error = "not started", ""
 		}
 	}
@@ -462,7 +474,13 @@ func (manager *Manager) transport(config captypes.ConnectionConfig, lifetime con
 			}
 			command.Env = append(command.Env, name+"="+value)
 		}
-		return &boundedCommandTransport{command: command, lifetime: lifetime}, cleanup, nil
+		tail := newStderrTail()
+		manager.mu.Lock()
+		if entry := manager.connections[config.ID]; entry != nil && entry.epoch == epoch {
+			entry.stderr, entry.stderrEpoch = tail, epoch
+		}
+		manager.mu.Unlock()
+		return &boundedCommandTransport{command: command, lifetime: lifetime, stderr: tail}, cleanup, nil
 	}
 	headers := make(map[string]string)
 	for name, value := range config.Headers {
@@ -563,9 +581,50 @@ func (manager *Manager) safeError(config captypes.ConnectionConfig, err error) e
 		return context.Canceled
 	}
 	if errors.Is(err, context.DeadlineExceeded) {
-		return context.DeadlineExceeded
+		if err.Error() == context.DeadlineExceeded.Error() {
+			return context.DeadlineExceeded
+		}
+		// Preserve the deadline identity and the attached server diagnostics.
+		return redactedError{text: manager.redact(config, err.Error()), cause: context.DeadlineExceeded}
 	}
 	return errors.New(manager.redact(config, err.Error()))
+}
+
+type redactedError struct {
+	text  string
+	cause error
+}
+
+func (e redactedError) Error() string { return e.text }
+func (e redactedError) Unwrap() error { return e.cause }
+
+// diagnosticTailBytes bounds stderr quoted inside one error message.
+const diagnosticTailBytes = 2 << 10
+
+// diagnosed attaches the exact launch's redacted stderr tail. Without it a
+// crashed local server is indistinguishable from a protocol EOF, and neither
+// the agent nor the user can repair its environment without reproducing the
+// launch by hand.
+func (manager *Manager) diagnosed(id string, epoch uint64, err error) error {
+	if err == nil {
+		return nil
+	}
+	manager.mu.RLock()
+	var tail *stderrTail
+	var config captypes.ConnectionConfig
+	var secrets map[string]struct{}
+	if entry := manager.connections[id]; entry != nil && entry.stderr != nil && entry.stderrEpoch == epoch {
+		tail, config, secrets = entry.stderr, entry.config, maps.Clone(entry.secrets)
+	}
+	manager.mu.RUnlock()
+	text := tail.Text(250 * time.Millisecond)
+	if text == "" {
+		return err
+	}
+	if len(text) > diagnosticTailBytes {
+		text = "…" + strings.ToValidUTF8(text[len(text)-diagnosticTailBytes:], "")
+	}
+	return fmt.Errorf("%w; server stderr (tail): %s", err, redactSecrets(config, secrets, text))
 }
 
 func (manager *Manager) session(id string) (*mcp.ClientSession, captypes.ConnectionConfig, uint64, error) {
@@ -755,7 +814,7 @@ type taskCallAuthorization struct {
 }
 
 func (manager *Manager) call(ctx context.Context, tool captypes.Tool, arguments map[string]any, task *taskCallAuthorization) (captypes.Result, error) {
-	session, config, _, err := manager.session(tool.ConnectionID)
+	session, config, epoch, err := manager.session(tool.ConnectionID)
 	if err != nil {
 		return captypes.Result{}, err
 	}
@@ -795,7 +854,7 @@ func (manager *Manager) call(ctx context.Context, tool captypes.Tool, arguments 
 	result, err := session.CallTool(ctx, &mcp.CallToolParams{Name: tool.OriginalName, Arguments: arguments, Meta: mcp.Meta{"progressToken": tool.Name + "/" + fmt.Sprint(time.Now().UnixNano())}})
 	if err != nil {
 		unknown := tool.Effect != captypes.EffectRead
-		return captypes.Result{Unknown: unknown, IsError: true}, manager.safeError(config, err)
+		return captypes.Result{Unknown: unknown, IsError: true}, manager.safeError(config, manager.diagnosed(tool.ConnectionID, epoch, err))
 	}
 	projection := newContentProjection(manager, config)
 	projection.result.IsError = result.IsError

@@ -279,8 +279,10 @@ func TestManagedWorkflowStdioApprovalIsolationAndContext(test *testing.T) {
 	if err := json.Unmarshal(result.Structured, &observed); err != nil {
 		test.Fatal(err)
 	}
-	if observed.Message != "approved request" || !observed.ExplicitEnvironment || !observed.ReferencedSecret || !observed.WorkingDirectory || observed.InheritedSecret || observed.InheritedHome || observed.InheritedCloudSecret || observed.Credential != "[redacted]" {
-		test.Fatalf("helper did not receive exactly the approved environment: %#v", observed)
+	if observed.Message != "approved request" || !observed.ExplicitEnvironment || !observed.ReferencedSecret || !observed.WorkingDirectory || !observed.InheritedSecret || !observed.InheritedHome || !observed.InheritedCloudSecret || observed.Credential != "[redacted]" {
+		// An authorized local server inherits the complete host environment, like
+		// an agent shell command, plus its explicit environment and secret refs.
+		test.Fatalf("helper did not receive the host plus approved environment: %#v", observed)
 	}
 	workflowEventually(test, "managed progress notification", func() bool {
 		return strings.Contains(strings.Join(workflowState(test, manager, config.ID).Logs, "\n"), "Progress: 1")

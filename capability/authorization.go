@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"time"
 
 	captypes "crude/types/capability"
@@ -77,8 +78,8 @@ func (service *Service) connectActor(ctx context.Context, actor captypes.Runtime
 	if config.Disabled {
 		return errors.New("MCP connection is disabled")
 	}
-	if len(missingConnectionEnvironment(config)) != 0 {
-		return errors.New("MCP connection needs required environment or credentials")
+	if missing := missingConnectionEnvironment(config); len(missing) != 0 {
+		return fmt.Errorf("MCP connection needs required environment: %s. Supply values you have through capability_activate environment; ask the user only for credentials you do not have", strings.Join(missing, ", "))
 	}
 	if config.Source != "" {
 		source, exists := settings.Sources[config.Source]
@@ -92,21 +93,46 @@ func (service *Service) connectActor(ctx context.Context, actor captypes.Runtime
 	if !actorAllows(actor, "capability_activate", captypes.EffectExecute) {
 		return errors.New("local MCP host execution exceeds the agent effect ceiling")
 	}
-	if config.LaunchApproved {
-		return service.actorClients(actor).Connect(ctx, config.ID)
+	clients := service.actorClients(actor)
+	// Reconfiguration disconnects a changed connection, so a live session runs
+	// this exact configuration. Reusing it launches nothing; tool access still
+	// requires its own grants.
+	for _, state := range clients.States() {
+		if state.ID == config.ID && state.State == "connected" {
+			return nil
+		}
 	}
-	preview := captypes.LaunchPreview{Connection: config, Actor: actor}
-	preview.Token = previewToken(struct {
-		Config captypes.ConnectionConfig
-		Policy captypes.AcquisitionSettings
-		Source captypes.SourceConfig
-		Actor  captypes.RuntimeActor
-	}{config, settings.Acquisition, settings.Sources[config.Source], actor})
+	if !config.LaunchApproved {
+		if err := service.authorizeLaunch(ctx, actor, config, settings); err != nil {
+			return err
+		}
+	}
+	prepared, err := service.prepareLaunch(ctx, config)
+	if err != nil {
+		return err
+	}
+	if config.LaunchApproved {
+		err = clients.Connect(ctx, config.ID)
+	} else {
+		err = clients.ConnectAuthorized(ctx, config.ID, config)
+	}
+	if err == nil {
+		service.markPrepared(prepared)
+	}
+	return err
+}
+
+// authorizeLaunch admits one exact local launch for the owning run. A recorded
+// authorization survives a failed connection or a package preparation in the
+// same run, so retrying does not ask again; a new run or any configuration,
+// policy, source or actor change requires a fresh authorization.
+func (service *Service) authorizeLaunch(ctx context.Context, actor captypes.RuntimeActor, config captypes.ConnectionConfig, settings captypes.Settings) error {
+	preview := captypes.LaunchPreview{Connection: config, Actor: actor, Token: launchToken(config, settings, actor)}
 	service.mu.RLock()
 	previous := service.launches[taskKey(actor)][config.ID]
 	service.mu.RUnlock()
 	if actor.RunID != "" && previous == preview.Token {
-		return service.actorClients(actor).ConnectAuthorized(ctx, config.ID, config)
+		return nil
 	}
 	approved, ok := ctx.Value(captypes.LaunchApprovedKey{}).(captypes.LaunchPreview)
 	if !ok {
@@ -126,16 +152,28 @@ func (service *Service) connectActor(ctx context.Context, actor captypes.Runtime
 	if err := service.recordAuthorization(ctx, actor, origin, "launch", preview.Token, request.Evidence()); err != nil {
 		return err
 	}
-	if err := service.actorClients(actor).ConnectAuthorized(ctx, config.ID, config); err != nil {
-		return err
-	}
+	service.grantLaunch(actor, config.ID, preview.Token)
+	return nil
+}
+
+// launchToken binds a launch authorization to the exact configuration, policy,
+// source and owning run.
+func launchToken(config captypes.ConnectionConfig, settings captypes.Settings, actor captypes.RuntimeActor) string {
+	return previewToken(struct {
+		Config captypes.ConnectionConfig
+		Policy captypes.AcquisitionSettings
+		Source captypes.SourceConfig
+		Actor  captypes.RuntimeActor
+	}{config, settings.Acquisition, settings.Sources[config.Source], actor})
+}
+
+func (service *Service) grantLaunch(actor captypes.RuntimeActor, id, token string) {
 	service.mu.Lock()
+	defer service.mu.Unlock()
 	if service.launches[taskKey(actor)] == nil {
 		service.launches[taskKey(actor)] = make(map[string]string)
 	}
-	service.launches[taskKey(actor)][config.ID] = preview.Token
-	service.mu.Unlock()
-	return nil
+	service.launches[taskKey(actor)][id] = token
 }
 
 func (service *Service) SetRuntimeAuthority(authority captypes.RuntimeAuthority) {

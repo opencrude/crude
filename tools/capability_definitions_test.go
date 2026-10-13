@@ -44,10 +44,12 @@ func TestCapabilityActivationAndAccessHaveDisjointRequiredSchemas(t *testing.T) 
 		}
 		found[name] = true
 		if name == "capability_activate" {
-			// The binding is an optional explicit choice; a provider requiring
-			// all properties must not be able to force a workspace binding or
-			// MCP grant data into skill activation.
-			if len(schema.Properties) != 2 || schema.Properties["id"] == nil || schema.Properties["scope"] == nil ||
+			// The binding and launch environment are optional explicit choices
+			// (an empty environment is a no-op); a provider requiring all
+			// properties must not be able to force MCP grant data into skill
+			// activation.
+			if len(schema.Properties) != 3 || schema.Properties["id"] == nil || schema.Properties["scope"] == nil ||
+				schema.Properties["environment"] == nil || schema.Properties["grants"] != nil ||
 				len(schema.Required) != 1 || schema.Required[0] != "id" {
 				t.Fatal("a provider requiring all properties could force MCP grant data into skill activation")
 			}

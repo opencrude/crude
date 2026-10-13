@@ -36,6 +36,7 @@ func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
 	l := s.logger
 	l.Info("SESSION", "run_start", "orchestrator_id", o.ID)
 	s.sender = sender
+	s.observeCommandOutcomes(s.asyncMgr, o.ID)
 	defer s.detachCollaborator(context.Background(), o.ID)
 	s.reconcileCollaborationAdmissions(s.db, o.ID)
 	const collaborationPollInterval = 500 * time.Millisecond

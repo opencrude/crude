@@ -73,6 +73,34 @@ does not prevent user-managed install or browsing.
 
 ## MCP
 
+Local (stdio) servers inherit the complete host environment, exactly like agent
+shell commands: an authorized launch already runs unsandboxed with the user's
+privileges, so a curated variable list was never a boundary and only broke
+display, session-bus, locale, proxy and toolchain-dependent servers. Explicit
+connection environment and secret references override inherited values. The
+server's redacted stderr tail is captured per launch and attached to handshake,
+disconnect and tool-call failures and to the connection state, so a crash reads
+as its own reason (for example `Could not open main display`), not a bare EOF.
+
+Registry packages (npm/PyPI) are prepared before their first launch in a core
+process: after the launch is authorized, the owning agent session runs
+`npx --yes --package=<pkg@ver> --call "exit 0"` or `uvx --from <pkg==ver> python -c ""`
+through its ordinary background command manager. Quick preparation continues
+inline; a slow download is promoted to a normal tracked command (stable
+`mcp_prepare_<id>` handle in the background jobs panel, Terminate-able, readable
+with `read_async_output`) and reported to the agent as a `command_outcome` event,
+after which it activates the same ID again. Preparation has no deadline; the
+handshake keeps the ordinary connection budget once the package is local. Edited
+argument vectors and shell-host connections launch directly.
+
+`capability_activate` accepts an optional `environment` object for server-specific
+settings (empty value unsets). It is one exact, durable registration change whose
+values are shown to the approver; approving it also authorizes launching exactly
+that configuration for the run. Credential references stay user-owned and cannot
+be shadowed. A live connection is reused without another launch authorization,
+and a recorded run-local launch authorization survives a failed connect or a
+preparation in the same run.
+
 Local MCP process teardown has one pipe/process owner for cancellation, EOF,
 bounded termination and reaping. Termination is armed before potentially blocking
 Windows pipe closes; it does not race a second `CommandContext` cancellation kill

@@ -177,6 +177,14 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 			requestSnapshot := snapshot
 			mu.RUnlock()
 			result, err := runtime.Execute(callCtx, currentActor(), requestSnapshot, tool, params)
+			var preparation *captypes.PreparationRequired
+			if errors.As(err, &preparation) {
+				prepared, outcome, prepErr := session.prepareCapabilityPackage(callCtx, live, *preparation)
+				if !prepared {
+					return outcome, prepErr
+				}
+				result, err = runtime.Execute(captypes.WithPrepared(callCtx, preparation.Key), currentActor(), requestSnapshot, tool, params)
+			}
 			return capabilityMediaResult(result, err, live.MediaReadPolicy)
 		}
 		if !agent.PolicyAllows(live.Policy, tool) && tool != "multi_tool_use.parallel" {
