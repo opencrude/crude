@@ -184,7 +184,7 @@ func checkHTTPGatewayDisconnectRecovery(t *testing.T, owner string, stop bool) {
 		// Prevent the report notification starting an unrelated parent turn.
 		s.CloseOrchestrator(orch.ID)
 		waitSessionSupervisedJourney(t, "parent input loop close", s.orchWg.Wait)
-		result, startErr := runner.StartAgent(ctx, map[string]any{"category": CategoryCrafter, "description": original, "allowed_tools": []string{"write_file", "publish_report"}})
+		result, startErr := runner.StartAgent(ctx, map[string]any{"category": CategoryCrafter, "description": original, "isolation": "shared", "allowed_tools": []string{"write_file", "publish_report"}})
 		if startErr != nil {
 			t.Fatal(startErr)
 		}

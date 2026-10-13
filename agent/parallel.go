@@ -66,6 +66,7 @@ func (a *Agent) executeParallel(ctx context.Context, tc provider.ToolCall, param
 	}
 	var progressMu sync.Mutex
 	attachments := make([][]provider.ContentPart, len(calls))
+	orderedParts := make([][]provider.ContentPart, len(calls))
 	publish := func() {
 		body, err := json.Marshal(map[string]any{"results": ordered})
 		if err != nil {
@@ -75,7 +76,14 @@ func (a *Agent) executeParallel(ctx context.Context, tc provider.ToolCall, param
 		for _, parts := range attachments {
 			retained = append(retained, parts...)
 		}
-		emit(AgentEvent{Type: "tool_call_streaming", Data: map[string]any{"tool_id": tc.ID, "internal_id": tc.InternalID, "name": tc.Function.Name, "content": string(body), "args": string(raw), "checkpoint_attachments": retained}})
+		var contentParts []provider.ContentPart
+		for i, parts := range orderedParts {
+			if parts != nil {
+				contentParts = append(contentParts, provider.ContentPart{Type: "text", Text: fmt.Sprintf("Parallel result %d: %s", i+1, calls[i].Function.Name)})
+				contentParts = append(contentParts, parts...)
+			}
+		}
+		emit(AgentEvent{Type: "tool_call_streaming", Data: map[string]any{"tool_id": tc.ID, "internal_id": tc.InternalID, "name": tc.Function.Name, "content": string(body), "args": string(raw), "checkpoint_attachments": retained, "checkpoint_content_parts": contentParts}})
 	}
 	childEmit := func(event AgentEvent) {
 		switch event.Type {
@@ -108,6 +116,7 @@ func (a *Agent) executeParallel(ctx context.Context, tc provider.ToolCall, param
 		progressMu.Lock()
 		ordered[r.index] = map[string]any{"recipient_name": r.name, "result": r.result.Content, "error": r.toolError, "added": r.result.Added, "removed": r.result.Removed}
 		attachments[r.index] = r.result.Attachments
+		orderedParts[r.index] = tools.ResultContentParts(r.result)
 		publish()
 		progressMu.Unlock()
 		result.Added += r.result.Added
@@ -115,6 +124,10 @@ func (a *Agent) executeParallel(ctx context.Context, tc provider.ToolCall, param
 	}
 	for _, parts := range attachments {
 		result.Attachments = append(result.Attachments, parts...)
+	}
+	for i, parts := range orderedParts {
+		result.ContentParts = append(result.ContentParts, provider.ContentPart{Type: "text", Text: fmt.Sprintf("Parallel result %d: %s", i+1, calls[i].Function.Name)})
+		result.ContentParts = append(result.ContentParts, parts...)
 	}
 	body, err := json.Marshal(map[string]any{"results": ordered})
 	result.Content = string(body)

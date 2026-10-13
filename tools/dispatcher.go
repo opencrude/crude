@@ -98,10 +98,13 @@ func GetFloatArgAny(args map[string]any, key string, defaultVal float64) float64
 }
 
 type ToolResult struct {
-	Content     string
-	Added       int
-	Removed     int
-	Attachments []provider.ContentPart
+	Content string
+	// ContentParts is the canonical ordered multimodal result, when supplied.
+	// Content remains display/search evidence; encoders never stringify media.
+	ContentParts []provider.ContentPart
+	Added        int
+	Removed      int
+	Attachments  []provider.ContentPart
 }
 
 func (r ToolResult) String() string {

@@ -272,3 +272,25 @@ syntax, depth and UTF-8 validation; output encodes once for bounded queue accoun
 Final ten-shell and genuine loopback SSH reruns pass. Native Windows and
 distinct-host SSH remain unverified; cross-builds and loopback are not substitutes.
 Resource sampling does not prove a smaller footprint.
+
+## Semantic control and capability host channels
+
+The implemented [control contract](control-contract.md) shares the command catalog
+between native `crude_commands`/`crude_control` and `crude --mcp`. Core/client typed
+control describe/resolve/execute, shell registration/intent/results and immutable
+external-client registration preserve original shell epoch and caller/run. Four
+external tools expose discovery, invocation, informational shells and receipts;
+startup effects and optional exact shell binding cannot be widened in-session.
+Domain and shell mutations have caller-owned receipts, observed via
+`operation.receipt`/`request.receipt`, never replayed or retargeted after ambiguity.
+Bounded 1–128 semantic inspection pages are read-only; the retained 256 shell
+mutation receipt cap does not consume a read-call budget.
+
+Capability host dispatch separates core-host stdio from an explicitly selected
+shell worker. Shell host requires its exact attached epoch, stdio, an absolute
+shell-local directory and no forwarded environment/header credential values.
+Secret references resolve at the selected host. No shell chooser is inferred from
+focus or SSH topology. Managed [execution contexts](managed-executions.md) preserve
+logical workspace ownership while native paths, Git and MCP roots resolve to the
+selected checkout. Native Windows/SSH host-locality and full UI acceptance remain
+separate unverified gates; transport implementation is not universal automation.

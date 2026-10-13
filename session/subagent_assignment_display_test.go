@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"crude/agent"
+	"crude/collaboration"
 	"crude/tools"
 )
 
@@ -74,11 +75,22 @@ func TestChildAssignmentChatShowsAuthoredTextNotProviderEnvelope(t *testing.T) {
 	t.Cleanup(s.Close)
 	project := t.TempDir()
 	s.SetWorkDir(project)
+	store := attachDelegationTestCollaboration(t, s)
+	parent, err := s.registerCollaborator(t.Context(), "assignment-parent", "parent", s.sessionID, "", CategoryDefault, s.db)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := store.StartRun(t.Context(), collaboration.StartRunRequest{
+		AgentID: parent.ID, RuntimeEpoch: parent.RuntimeEpoch, Origin: collaboration.OriginHuman,
+	}); err != nil {
+		t.Fatal(err)
+	}
 	// An unreadable guidance source parks the child before any provider request.
 	if err := os.Mkdir(filepath.Join(project, "AGENTS.md"), 0700); err != nil {
 		t.Fatal(err)
 	}
 	runner := NewSubAgentRunner(s, 1)
+	runner.orchestratorID = parent.ID
 	s.subAgentSup = runner
 	sender := &assignmentEventSender{}
 	runner.SetSender(sender)
@@ -88,6 +100,7 @@ func TestChildAssignmentChatShowsAuthoredTextNotProviderEnvelope(t *testing.T) {
 	const instructions = "Inspect <delegated_assignment> handling & report:\n- escaped tags\n- `code` spans"
 	result, err := runner.StartAgent(t.Context(), map[string]any{
 		"category": CategoryResearcher, "description": "Audit the parser", "instructions": instructions,
+		"isolation": "shared",
 	})
 	if err != nil {
 		t.Fatal(err)

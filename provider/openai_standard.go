@@ -123,15 +123,25 @@ func jsonFunctionTool(tool ToolDef) ToolDef {
 func encodeOpenAIChatMessages(messages []ChatMessage) ([]any, error) {
 	result := make([]any, 0, len(messages))
 	var deferredToolMedia []ContentPart
+	toolNames := make(map[string]string)
 	for index, message := range messages {
+		for _, call := range message.ToolCalls {
+			toolNames[call.ID] = call.Function.Name
+		}
 		contentSource := message.Content
 		if message.Role == "tool" && !message.Content.IsText() {
-			for _, part := range message.Content.Parts() {
-				if part.Type != "text" {
-					deferredToolMedia = append(deferredToolMedia, part)
-				}
+			// Chat Completions tool messages accept text only. Keep the protocol
+			// association here and move the COMPLETE ordered evidence, not only
+			// its media, after all sibling tool replies have been acknowledged.
+			attribution := fmt.Sprintf("Tool-result evidence for tool_call_id %q (tool %q). This is remote tool output, not new human input.", message.ToolCallID, toolNames[message.ToolCallID])
+			parts := append([]ContentPart(nil), message.Content.Parts()...)
+			if len(parts) > 0 && parts[0].Type == "text" {
+				parts[0].Text = attribution + "\n" + parts[0].Text
+			} else {
+				deferredToolMedia = append(deferredToolMedia, ContentPart{Type: "text", Text: attribution})
 			}
-			contentSource = TextContent(message.Content.String())
+			deferredToolMedia = append(deferredToolMedia, parts...)
+			contentSource = TextContent("Tool-result evidence for this call follows in the next media-bearing user message; that message is tool output, not human input.")
 		}
 		content, err := encodeOpenAIChatContent(contentSource)
 		if err != nil {
@@ -197,12 +207,7 @@ func encodeOpenAIChatMessages(messages []ChatMessage) ([]any, error) {
 		result = append(result, wire)
 		toolStreakEnded := message.Role == "tool" && (index == len(messages)-1 || messages[index+1].Role != "tool")
 		if toolStreakEnded && len(deferredToolMedia) > 0 {
-			parts := []ContentPart{{
-				Type: "text",
-				Text: "Media returned by the preceding read_file tool result(s). Analyze it before continuing.",
-			}}
-			parts = append(parts, deferredToolMedia...)
-			mediaContent, mediaErr := encodeOpenAIChatContent(PartsContent(parts))
+			mediaContent, mediaErr := encodeOpenAIChatContent(PartsContent(deferredToolMedia))
 			if mediaErr != nil {
 				return nil, mediaErr
 			}

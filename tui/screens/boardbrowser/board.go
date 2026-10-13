@@ -23,6 +23,7 @@ type Request struct {
 	Operation string
 	Query     string
 	Thread    string
+	Page      string
 	Since     int64
 	Snapshot  int64
 	Through   int64
@@ -105,7 +106,7 @@ func (screen *Screen) Request(operation string) Request {
 	screen.errorText = ""
 	request := Request{
 		Target: screen, Sequence: screen.sequence, Operation: operation,
-		Query: screen.filter.Value(), Thread: screen.thread,
+		Query: screen.filter.Value(), Thread: screen.thread, Page: screen.page,
 	}
 	if operation == "next" {
 		request.Since = screen.snapshot.Page.Cursor

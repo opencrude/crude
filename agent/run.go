@@ -1044,7 +1044,7 @@ func (a *Agent) Run(
 							if encodeErr == nil {
 								select {
 								case progressCh <- execResult{index: index, id: id, name: "multi_tool_use.parallel",
-									result: tools.ToolResult{Content: string(encoded), Attachments: checkpointAttachments(data)}, toolError: true}:
+									result: tools.ToolResult{Content: string(encoded), ContentParts: checkpointContentParts(data), Attachments: checkpointAttachments(data)}, toolError: true}:
 								case <-ctx.Done():
 								}
 							}
@@ -1204,11 +1204,18 @@ func checkpointAttachments(data map[string]any) []provider.ContentPart {
 	return append([]provider.ContentPart(nil), attachments...)
 }
 
+func checkpointContentParts(data map[string]any) []provider.ContentPart {
+	parts, _ := data["checkpoint_content_parts"].([]provider.ContentPart)
+	return append([]provider.ContentPart(nil), parts...)
+}
+
 func toolResultMessage(result execResult, count int) provider.ChatMessage {
-	content := provider.TextContent(result.result.Content)
-	if len(result.result.Attachments) > 0 {
-		parts := []provider.ContentPart{{Type: "text", Text: result.result.Content}}
-		content = provider.PartsContent(append(parts, result.result.Attachments...))
+	parts := tools.ResultContentParts(result.result)
+	content := provider.PartsContent(parts)
+	if len(parts) == 0 {
+		content = provider.TextContent("")
+	} else if len(parts) == 1 && parts[0].Type == "text" {
+		content = provider.TextContent(parts[0].Text)
 	}
 	message := provider.ChatMessage{Role: "tool", ToolCallID: result.id, Content: content,
 		ToolError: result.toolError || IsToolError(result.result.Content)}

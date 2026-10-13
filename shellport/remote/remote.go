@@ -50,14 +50,16 @@ type Workspace struct {
 
 	// conn is the current connection; reconnect replaces it. Any goroutine may
 	// issue a request through call().
-	connMu    sync.Mutex
-	client    *coreclient.Client
-	id        string
-	root      string
-	clientID  string
-	profileID string
-	ctx       context.Context
-	cancel    context.CancelFunc
+	connMu         sync.Mutex
+	client         *coreclient.Client
+	id             string
+	root           string
+	clientID       string
+	profileID      string
+	controlEnabled bool
+	controlClient  *coreclient.Client
+	ctx            context.Context
+	cancel         context.CancelFunc
 
 	// view is the replica. Only the shell's Update goroutine touches it after
 	// Attach returns (ApplyReplicaChanges and the read accessors).
@@ -192,7 +194,9 @@ func attach(ctx context.Context, client *coreclient.Client, root string) (corepr
 // Close detaches this shell. The core keeps the workspace and its work.
 func (w *Workspace) Close() error {
 	w.stopOnce.Do(func() {
+		w.connMu.Lock()
 		w.cancel()
+		w.connMu.Unlock()
 		close(w.stop)
 		w.CancelProjectSearch()
 		w.documents.Close()
@@ -300,7 +304,11 @@ func (w *Workspace) SetEventBus(bus *workspace.EventBus) {
 	w.busMu.Unlock()
 }
 
-func (w *Workspace) StartReplica() { w.startOnce.Do(func() { close(w.busSet) }) }
+func (w *Workspace) StartReplica() {
+	w.startOnce.Do(func() { close(w.busSet) })
+	w.StartShellControl()
+	w.StartCapabilityHost()
+}
 
 // pendingChanges coalesces change events while a fetch is in flight, so the
 // connection's bounded event queue is always drained promptly.
@@ -455,6 +463,8 @@ func (w *Workspace) reconnect() (*coreclient.Client, bool) {
 				cancel()
 				w.connMu.Lock()
 				w.client, w.id = client, attached.WorkspaceID
+				w.startControlLocked(client, attached.WorkspaceID)
+				w.startCapabilityHostLocked(client, attached.WorkspaceID)
 				w.connMu.Unlock()
 				w.logger.Info("REMOTE", "reconnected", "workspace", attached.WorkspaceID)
 				w.pending.add(coreprotocol.Change{Resync: true})

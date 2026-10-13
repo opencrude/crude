@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 
+	"crude/collaboration"
 	"crude/skills"
 	"crude/types"
 	captypes "crude/types/capability"
@@ -65,10 +66,10 @@ func appRegistrationFixture(owner *Workspace) func(captypes.RegistrationChange) 
 
 func acquireLocalSkill(t *testing.T, owner *Workspace, activation map[string]any) captypes.SkillConfig {
 	t.Helper()
+	actor := activeCapabilityActor(t, owner, "agent-1")
 	if err := owner.ensureCapabilities(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	actor := captypes.RuntimeActor{ID: "agent-1", Effects: []captypes.Effect{captypes.EffectRead}}
 	if _, err := owner.Capabilities.Execute(t.Context(), actor, captypes.RuntimeSnapshot{}, "capability_search", map[string]any{"query": "review", "kind": "skill"}); err != nil {
 		t.Fatal(err)
 	}
@@ -76,6 +77,34 @@ func acquireLocalSkill(t *testing.T, owner *Workspace, activation map[string]any
 		t.Fatal(err)
 	}
 	return owner.LoadAppSettings().Capabilities.Skills["local:review"]
+}
+
+// Use the same durable attached participant/run authority as product execution;
+// a bare actor ID is not permission to acquire capabilities.
+func activeCapabilityActor(t *testing.T, owner *Workspace, id string) captypes.RuntimeActor {
+	t.Helper()
+	if owner.Collaboration == nil {
+		store, err := collaboration.Attach(owner.WorkspaceDB.DB, owner.RootPath, filepath.Join(t.TempDir(), "locks"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		owner.Collaboration = store
+		t.Cleanup(func() { _ = store.Close() })
+	}
+	participant, err := owner.Collaboration.RegisterAgent(t.Context(), collaboration.AgentRegistration{
+		ID: id, Name: id, SessionID: "capability-fixture", Category: "crafter", OwnerInstance: "capability-fixture-owner",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	run, err := owner.Collaboration.StartRun(t.Context(), collaboration.StartRunRequest{
+		AgentID: participant.ID, RuntimeEpoch: participant.RuntimeEpoch, Origin: collaboration.OriginHuman,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return captypes.RuntimeActor{ID: participant.ID, SessionID: participant.SessionID, RunID: run.ID,
+		RuntimeEpoch: participant.RuntimeEpoch, Effects: []captypes.Effect{captypes.EffectRead}}
 }
 
 // TestAgentAcquisitionDefaultsToApplicationScope is the regression for the

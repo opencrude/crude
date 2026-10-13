@@ -32,11 +32,14 @@ type Host struct {
 	// screen bounds per component after last layout
 	screen map[ComponentID]Rect
 	// depth per component (root = 0) for hit-test preference
-	depth    map[ComponentID]int
-	parent   map[ComponentID]ComponentID
-	needsLay bool
-	needsPnt bool
-	frame    int
+	depth          map[ComponentID]int
+	parent         map[ComponentID]ComponentID
+	needsLay       bool
+	needsPnt       bool
+	frame          int
+	controls       map[ComponentID]*controlMount
+	controlScratch map[ComponentID]*controlMount
+	controlEpoch   uint64
 }
 
 // NewHost creates a host with the given theme and optional root.
@@ -90,6 +93,8 @@ func (h *Host) SetTheme(th *theme.Theme) {
 // SetRoot replaces the root component.
 func (h *Host) SetRoot(root Component) {
 	h.CancelPointerCapture()
+	h.controls = nil
+	h.controlScratch = nil
 	h.root = root
 	h.registry = make(map[ComponentID]Component)
 	h.screen = make(map[ComponentID]Rect)
@@ -267,6 +272,11 @@ func (h *Host) Layout() {
 		}
 	}
 	h.validatePointerCapture(capturedComp)
+	// Semantic discovery is on demand, never another per-frame tree export.
+	// Once observed, keep its lifetime fences current across unmount/replacement.
+	if h.controls != nil {
+		h.syncControlMounts(false)
+	}
 	h.needsLay = false
 }
 

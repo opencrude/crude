@@ -98,7 +98,7 @@ func New(th *theme.Theme) *Screen {
 	field.SetSubmitAction("")
 	s.search = &searchField{Base: ui.NewBase(SearchID), field: field, owner: s}
 
-	list := ui.NewList(ListID, tokens)
+	list := ui.NewList(ui.NewID(ListID, "control"), tokens)
 	list.SetActivateAction("memorybrowser.activate")
 	list.SetDefaultRowBackground(ui.ColorBg)
 	s.list = &browserList{Base: ui.NewBase(ListID), list: list, owner: s}
@@ -108,7 +108,7 @@ func New(th *theme.Theme) *Screen {
 	s.empty.SetColorRole(ui.ColorMuted)
 	s.status = ui.NewLabel(StatusID, "Workspace-wide · Enter inspect · / search", th)
 	s.status.SetColorRole(ui.ColorMuted)
-	area := ui.NewTextArea(DetailID, tokens, true)
+	area := ui.NewTextArea(ui.NewID(DetailID, "control"), tokens, true)
 	area.SetReadOnly(true)
 	area.SetSubmitAction("")
 	area.SetBackgroundColor(tokens.Color(ui.ColorBg))

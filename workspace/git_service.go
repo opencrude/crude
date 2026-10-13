@@ -126,7 +126,7 @@ func (s *GitService) open() (*git.Repository, string, error) {
 	if root == "" {
 		root = "."
 	}
-	repo, err := git.PlainOpenWithOptions(root, &git.PlainOpenOptions{DetectDotGit: true})
+	repo, err := git.PlainOpenWithOptions(root, &git.PlainOpenOptions{DetectDotGit: true, EnableDotGitCommonDir: true})
 	if err != nil {
 		return nil, "", fmt.Errorf("open Git repository: %w", err)
 	}

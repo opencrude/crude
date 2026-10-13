@@ -41,17 +41,20 @@ type queued struct {
 	bytes int
 }
 type Client struct {
-	f       *corewire.Framer
-	owner   coreprotocol.Owner
-	mu      sync.Mutex
-	pending map[string]pending
-	bytes   int
-	err     error
-	queue   chan queued
-	events  chan coreprotocol.Change
-	done    chan struct{}
-	once    sync.Once
-	wg      sync.WaitGroup
+	f               *corewire.Framer
+	owner           coreprotocol.Owner
+	mu              sync.Mutex
+	pending         map[string]pending
+	bytes           int
+	err             error
+	queue           chan queued
+	events          chan coreprotocol.Change
+	done            chan struct{}
+	once            sync.Once
+	wg              sync.WaitGroup
+	controls        chan coreprotocol.ControlEnvelope
+	controlReceived map[string]*receivedControl
+	controlBytes    int
 }
 
 // Dial uses ctx only for negotiation (bounded to ten seconds). Once successful,
@@ -82,6 +85,8 @@ func Dial(ctx context.Context, conn io.ReadWriteCloser, clientID string) (*Clien
 	}
 	t.Stop()
 	c := &Client{f: f, owner: owner, pending: make(map[string]pending), queue: make(chan queued, 16), events: make(chan coreprotocol.Change, 64), done: make(chan struct{})}
+	c.controls = make(chan coreprotocol.ControlEnvelope, coreprotocol.ControlMaxOutstanding)
+	c.controlReceived = make(map[string]*receivedControl)
 	c.wg.Add(2)
 	go c.read()
 	go c.write()
@@ -205,6 +210,7 @@ func (c *Client) write() {
 func (c *Client) read() {
 	defer c.wg.Done()
 	defer close(c.events)
+	defer close(c.controls)
 	for {
 		f, err := c.f.Read()
 		if err != nil {
@@ -244,6 +250,20 @@ func (c *Client) read() {
 				return
 			}
 		case corewire.KindEvent, corewire.KindResync:
+			if f.Method == coreprotocol.CapabilityHostRequest {
+				if err := c.ReceiveCapabilityHost(f); err != nil {
+					c.fail(err)
+					return
+				}
+				continue
+			}
+			if f.Method == coreprotocol.ControlRequest {
+				if err := c.receiveControl(f); err != nil {
+					c.fail(err)
+					return
+				}
+				continue
+			}
 			var change coreprotocol.Change
 			if f.Method != "workspace.changed" || f.RequestID != "" || f.Error != nil || json.Unmarshal(f.Payload, &change) != nil || change.WorkspaceID != f.WorkspaceID || change.Revision != f.Revision || (f.Kind == corewire.KindResync) != change.Resync {
 				c.fail(errors.New("invalid change event"))

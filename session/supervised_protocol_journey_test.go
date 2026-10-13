@@ -360,7 +360,7 @@ func checkSessionSupervisedProtocolJourney(t *testing.T, protocol, owner, outcom
 		s.CloseOrchestrator(orch.ID)
 		waitSessionSupervisedJourney(t, "parent input-loop close", s.orchWg.Wait)
 		result, err := runner.StartAgent(ctx, map[string]any{"category": CategoryCrafter, "description": original,
-			"allowed_tools": []string{"write_file", "publish_report"}})
+			"isolation": "shared", "allowed_tools": []string{"write_file", "publish_report"}})
 		if err != nil {
 			t.Fatal(err)
 		}

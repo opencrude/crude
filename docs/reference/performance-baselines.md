@@ -7,6 +7,24 @@
 
 Recorded: 2026-08-30 (previous captures: 2026-07-17, 2026-07-31)
 
+## Semantic control acceptance (2026-10-12)
+
+The initial control integration failed existing allocation gates: idle tick
+44,416 B, warm switch 46,042 B, and two-agent presentation 123,371 B per operation.
+Profiles located unnecessary semantic mount construction on ordinary Host layout
+and a per-lookup glyph table escape. Semantic inventory now starts only on
+explicit observation; observed lifetimes still reconcile unmounts. Glyph lookup
+uses allocation-free value defaults and retains theme overrides. No frame or
+model mutations were suppressed and no ceiling was raised.
+
+The complete `make bench-gate` rerun on Linux/i7-10750H with `GOMAXPROCS=2`
+measured 12,612 B / 204 allocations for idle tick, 14,238 B / 202 for warm agent
+switch, 39,770 B / 560 for editor-plus-agent presentation, and 46,464 B / 489 for
+two-agent presentation. All current gates passed. These are local benchmark
+measurements, not network/terminal latency. Explicit inspection remains source-sized
+hashing work and returns at most 128 records within a 64-KiB serialized page;
+it never exports every virtual row to find a mounted control after the first 4,096.
+
 ## Core/shell resource checkpoint (2026-10-09)
 
 Parent-supplied real-process acceptance sampled twenty retained workspaces and

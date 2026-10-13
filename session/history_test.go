@@ -61,7 +61,8 @@ func TestSubAgentToolPreservesMessageScopeAndReplacesActor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.StartRun(t.Context(), collaboration.StartRunRequest{AgentID: registered.ID, RuntimeEpoch: registered.RuntimeEpoch, RequestID: "file-assignment", Origin: collaboration.OriginPeer}); err != nil {
+	run, err := store.StartRun(t.Context(), collaboration.StartRunRequest{AgentID: registered.ID, RuntimeEpoch: registered.RuntimeEpoch, RequestID: "file-assignment", Origin: collaboration.OriginPeer})
+	if err != nil {
 		t.Fatal(err)
 	}
 	var got HistoryMutation
@@ -81,7 +82,7 @@ func TestSubAgentToolPreservesMessageScopeAndReplacesActor(t *testing.T) {
 	spec := agent.SubAgentSpec{ID: "child-agent", Name: "child", PolicyName: "workspace-write", Policy: policy}
 	toolFn := runner.buildProxiedToolFn(spec, nil, nil)
 	ctx := withHistoryScope(context.Background(), "session", "root-message", "root-agent")
-	ctx = context.WithValue(ctx, tools.ExecutionIdentityKey{}, tools.ExecutionIdentity{AgentID: "child-agent", ToolCallID: "file-effect"})
+	ctx = context.WithValue(ctx, tools.ExecutionIdentityKey{}, tools.ExecutionIdentity{AgentID: "child-agent", RunID: run.ID, ToolCallID: "file-effect"})
 	if _, err := toolFn(ctx, "write_file", map[string]any{"path": "child.txt", "content": "child data"}); err != nil {
 		t.Fatal(err)
 	}

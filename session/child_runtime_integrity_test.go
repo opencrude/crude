@@ -224,7 +224,7 @@ func TestChildRuntimeReceiptImmediatelyPreparesCompactionFromExactSource(t *test
 			close(release)
 		}
 	})
-	result, err := runner.StartAgent(t.Context(), map[string]any{"category": CategoryResearcher, "description": "retain peer notice before compaction"})
+	result, err := runner.StartAgent(t.Context(), map[string]any{"category": CategoryResearcher, "description": "retain peer notice before compaction", "isolation": "shared"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -424,7 +424,7 @@ func newParkedChildFixture(t *testing.T) *parkedChildFixture {
 		return tools.ToolResult{}, nil
 	})
 	result, err := runner.StartAgent(t.Context(), map[string]any{
-		"category": CategoryResearcher, "description": "preserve the exact original child assignment",
+		"category": CategoryResearcher, "description": "preserve the exact original child assignment", "isolation": "shared",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -785,7 +785,15 @@ func TestChildStopDuringFailedTerminalSettlementRetriesOnlyPersistence(t *testin
 				t.Fatal(err)
 			}
 			baseSender := newMockEventSender()
-			sender := &sessionSupervisedJourneySender{mockEventSender: baseSender, observe: func(typ string, _ any, _ string) {
+			// Native child tools execute against their own root, not the parent
+			// tool proxy. Observe the exact real read outcome to guard replay.
+			sender := &sessionSupervisedJourneySender{mockEventSender: baseSender, observe: func(typ string, data any, _ string) {
+				if typ == "tool_result" {
+					result, _ := data.(map[string]any)
+					if result["tool_id"] == "settlement-read" && result["name"] == "list_directory" && result["error"] != "true" && strings.Contains(fmt.Sprint(result["result"]), project) {
+						effects.Add(1)
+					}
+				}
 				if typ == "done" || typ == "sub_agent_completed" || typ == "sub_agent_done" {
 					acknowledgements.Add(1)
 				}
@@ -794,11 +802,6 @@ func TestChildStopDuringFailedTerminalSettlementRetriesOnlyPersistence(t *testin
 			s.subAgentSup = runner
 			runner.SetOrchestratorID(s.sessionID)
 			runner.SetSender(sender)
-			runner.SetParentToolFn(func(context.Context, string, map[string]any) (tools.ToolResult, error) {
-				effects.Add(1)
-				_, err := os.ReadDir(project)
-				return tools.ToolResult{Content: "one exact directory observation"}, err
-			})
 			t.Cleanup(func() {
 				select {
 				case <-release:
@@ -806,7 +809,7 @@ func TestChildStopDuringFailedTerminalSettlementRetriesOnlyPersistence(t *testin
 					close(release)
 				}
 			})
-			result, err := runner.StartAgent(t.Context(), map[string]any{"category": CategoryResearcher, "description": "retain this assignment through failed final settlement"})
+			result, err := runner.StartAgent(t.Context(), map[string]any{"category": CategoryResearcher, "description": "retain this assignment through failed final settlement", "isolation": "shared"})
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -993,15 +996,20 @@ func checkChildActiveStop(t *testing.T, rejectTerminal, lateSteering bool) {
 		t.Fatal(err)
 	}
 	s.msgs, s.msgTurns, s.displayMetas, s.createdAts = []provider.ChatMessage{root}, []int{1}, []sessiondb.DisplayMeta{meta}, []int64{stamp.UnixNano()}
-	sender := newMockEventSender()
+	// Count the native read's exact successful outcome, not an unused parent
+	// proxy; the durable checkpoint below independently verifies its content.
+	sender := &sessionSupervisedJourneySender{mockEventSender: newMockEventSender(), observe: func(typ string, data any, _ string) {
+		if typ == "tool_result" {
+			result, _ := data.(map[string]any)
+			if result["tool_id"] == "child-read-once" && result["name"] == "list_directory" && result["error"] != "true" && strings.Contains(fmt.Sprint(result["result"]), s.WorkDir()) {
+				effects.Add(1)
+			}
+		}
+	}}
 	runner := NewSubAgentRunner(s, 1)
 	s.subAgentSup = runner
 	runner.SetSender(sender)
-	runner.SetParentToolFn(func(context.Context, string, map[string]any) (tools.ToolResult, error) {
-		effects.Add(1)
-		return tools.ToolResult{Content: "exact child observation"}, nil
-	})
-	result, err := runner.StartAgent(t.Context(), map[string]any{"category": CategoryResearcher, "description": "inspect once and retain accepted work on Stop"})
+	result, err := runner.StartAgent(t.Context(), map[string]any{"category": CategoryResearcher, "description": "inspect once and retain accepted work on Stop", "isolation": "shared"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -1043,7 +1051,7 @@ accepted:
 		if message.ContentString() == "accepted child work" && message.ReasoningContent == "accepted child reasoning" {
 			acceptedWork++
 		}
-		if message.Role == "tool" && message.ToolCallID == "child-read-once" && message.ContentString() == "exact child observation" {
+		if message.Role == "tool" && message.ToolCallID == "child-read-once" && !message.ToolError && strings.Contains(message.ContentString(), "Directory "+s.WorkDir()+" is empty") {
 			outcomes++
 		}
 	}

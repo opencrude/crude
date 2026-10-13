@@ -769,7 +769,6 @@ func (s *Screen) advance() ui.EventResult {
 	}
 	return ui.EventResult{
 		Handled:    true,
-		Action:     &ui.Action{ID: "panel.close"},
 		Cmd:        func() tea.Msg { return ResultMsg{Target: s, Result: s.Result()} },
 		Invalidate: ui.InvalidateLayout | ui.InvalidatePaint,
 	}
@@ -778,7 +777,6 @@ func (s *Screen) advance() ui.EventResult {
 func (s *Screen) cancel() ui.EventResult {
 	return ui.EventResult{
 		Handled:    true,
-		Action:     &ui.Action{ID: "panel.close"},
 		Cmd:        func() tea.Msg { return CancelMsg{Target: s} },
 		Invalidate: ui.InvalidateLayout | ui.InvalidatePaint,
 	}

@@ -93,19 +93,39 @@ func encodeOllamaMessages(messages []ChatMessage) ([]map[string]any, error) {
 		} else {
 			var texts []string
 			var images []string
-			for _, part := range m.Content.Parts() {
+			parts := m.Content.Parts()
+			interleaved := false
+			seenImage := false
+			for _, part := range parts {
+				if part.Type == "image_url" {
+					seenImage = true
+				} else if part.Type == "text" && part.Text != "" && seenImage {
+					interleaved = true
+				}
+			}
+			for _, part := range parts {
 				switch part.Type {
 				case "text":
 					if part.Text != "" {
 						texts = append(texts, part.Text)
 					}
 				case "image_url":
+					// Native Ollama separates images from content. Retain an explicit
+					// positional reference rather than silently flattening interleaved
+					// evidence into text followed by unrelated images.
+					if interleaved {
+						texts = append(texts, fmt.Sprintf("[Image %d in this message's images array]", len(images)+1))
+					}
 					if part.ImageURL != nil {
 						images = append(images, dataURLToBase64(part.ImageURL.URL))
 					} else if len(part.Data) > 0 {
 						// Inline media attachment from the tool boundary.
 						images = append(images, base64.StdEncoding.EncodeToString(part.Data))
+					} else {
+						return nil, fmt.Errorf("ollama image content is missing bytes or a URL")
 					}
+				default:
+					return nil, fmt.Errorf("native Ollama content part %q is unsupported", part.Type)
 				}
 			}
 			wire["content"] = strings.Join(texts, "\n")

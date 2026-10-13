@@ -10,6 +10,46 @@ import (
 	"crude/localhistory"
 )
 
+// WithHistoryMutation uses the actual retained document owner. Dirty/conflicted
+// documents fail closed rather than discarding accepted unsaved work. Clean
+// documents reconcile while edits/saves remain excluded through the disk effect.
+func (s *DocumentService) WithHistoryMutation(ctx context.Context, paths []string, run func() error) error {
+	s.mu.Lock()
+	var changed []string
+	defer func() {
+		s.mu.Unlock()
+		for _, id := range changed {
+			s.changed(id)
+		}
+	}()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if s.closed || s.stateErr != nil {
+		return errors.New("document authority unavailable")
+	}
+	for _, d := range s.docs {
+		for _, path := range paths {
+			if !documentUnder(path, d.snapshot.Path) {
+				continue
+			}
+			if d.snapshot.Dirty || d.snapshot.Conflict || d.diskIntent != nil || d.relocation != nil {
+				return fmt.Errorf("retained document %s must be saved/reconciled before history mutation", d.snapshot.Path)
+			}
+			changed = append(changed, d.snapshot.ID)
+			break
+		}
+	}
+	err := run()
+	for _, id := range changed {
+		s.reconcileLocked(id)
+		if d := s.docs[id]; d != nil && d.snapshot.Conflict {
+			err = errors.Join(err, errors.New("disk effect requires document reconciliation; do not replay"))
+		}
+	}
+	return err
+}
+
 type HistoryRestored struct {
 	Result localhistory.RestoreResult
 }

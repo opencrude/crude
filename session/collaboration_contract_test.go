@@ -404,6 +404,7 @@ func TestAgentStartSelectsExactConfiguredProfileAndRejectsInvalidSelections(t *t
 	}
 	result, err := runner.StartAgent(t.Context(), map[string]any{
 		"description": "Use configured profile", "category": "crafter", "profile": "configured",
+		"isolation":     "shared",
 		"allowed_tools": []any{"publish_report"},
 	})
 	if err != nil {

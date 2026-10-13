@@ -25,6 +25,7 @@ type SessionLifecycleOperation struct {
 	database                                     *WorkspaceDB
 	collaboration                                *collaboration.Store
 	capabilities                                 *capability.Service
+	executions                                   *ExecutionService
 	claims                                       *agent.FileOwnership
 	sender                                       session.EventSender
 	history                                      *LocalHistoryService
@@ -117,6 +118,9 @@ func (w *Workspace) prepareSessionLifecycle(id string, cfg *session.Config, home
 	if err := w.ensureCapabilities(context.Background()); err != nil {
 		return nil, err
 	}
+	if err := w.ensureExecutions(); err != nil {
+		return nil, err
+	}
 	configuration := *cfg
 	configuration.AccountManager = nil
 	raw, err := json.Marshal(configuration)
@@ -130,7 +134,7 @@ func (w *Workspace) prepareSessionLifecycle(id string, cfg *session.Config, home
 	captured.AccountManager = cfg.AccountManager
 	op := &SessionLifecycleOperation{root: w.RootPath, directory: w.WorkspaceDir, home: home,
 		sessionID: id, instanceID: w.instanceID, cfg: &captured, logger: w.Logger,
-		database: w.WorkspaceDB, collaboration: w.Collaboration, capabilities: w.Capabilities,
+		database: w.WorkspaceDB, collaboration: w.Collaboration, capabilities: w.Capabilities, executions: w.Executions,
 		claims: w.FileOwnership, sender: w.sender, history: w.HistoryService,
 		historyErr: w.localHistoryErr, historyEnabled: w.EffectiveAppSettings().LocalHistory.EnabledValue(),
 		existing: w.SessionsByID[id], start: start}
@@ -181,6 +185,7 @@ func (op *SessionLifecycleOperation) run(ctx context.Context) (result SessionLif
 		backend.SetMemoryStore(op.database.Memory)
 		backend.SetCollaboration(op.collaboration, op.instanceID)
 		backend.SetCapabilities(op.capabilities, op.claims)
+		backend.SetExecutionService(op.executions)
 		if op.history != nil {
 			backend.SetHistoryHooks(op.history.BeginMessage, op.history.EndMessage)
 			backend.SetHistoryContinuationHooks(op.history.BeginContinuation, op.history.EndContinuation)

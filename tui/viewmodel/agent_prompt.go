@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"crude/shellport"
 	"fmt"
 	"strings"
 
@@ -324,13 +325,30 @@ func (m *App) resolveAgentPromptConfirmation(req agentPromptRequest, choice stri
 }
 
 func (m *App) resolveAgentQuestion(target *question.Screen, result question.Result, cancelled bool) {
+	if _, ok := m.ws.(shellport.QuestionReceipt); ok {
+		cmd, err := m.prepareQuestionReply(target, result, cancelled, "")
+		if err != nil {
+			if m.Feedback != nil {
+				m.Feedback.NotifyError(err.Error())
+			}
+			return
+		}
+		// Tab-close callers cannot return a command. Deliver the same detached
+		// owner-fenced receipt asynchronously; never Send on Update itself.
+		bus := m.eventBus
+		go func() { bus.Send(cmd()) }()
+		return
+	}
 	state := m.promptForScreen(target)
 	if state == nil {
 		return
 	}
 	req := state.request
-	if !m.ws.ResolveQuestion(req.agentID, req.blockID, result.Answers, result.Questions, cancelled) && m.Feedback != nil {
-		m.Feedback.NotifyError("Question response was not sent: the request is no longer active")
+	if !m.ws.ResolveQuestion(req.agentID, req.blockID, result.Answers, result.Questions, cancelled) {
+		if m.Feedback != nil {
+			m.Feedback.NotifyError("Question response was not sent: the request is no longer active")
+		}
+		return
 	}
 	m.removeAgentPrompt(state)
 	m.openNextAgentPrompt()
@@ -342,7 +360,8 @@ func (m *App) cancelAgentPrompt() {
 		return
 	}
 	if state.request.kind == agentPromptQuestions {
-		m.ws.ResolveQuestion(state.request.agentID, state.request.blockID, nil, nil, true)
+		m.resolveAgentQuestion(state.question, question.Result{}, true)
+		return
 	} else {
 		m.cancelAgentTurn(state.request.agentID)
 	}

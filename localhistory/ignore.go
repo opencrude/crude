@@ -2,6 +2,7 @@ package localhistory
 
 import (
 	"bufio"
+	"fmt"
 	"io/fs"
 	"os"
 	"path/filepath"
@@ -26,9 +27,85 @@ var defaultIgnoredDirectoryNames = func() map[string]bool {
 	return names
 }()
 
-type ignoreMatcher struct{ matcher gitignore.Matcher }
+type ignoreMatcher struct {
+	matcher  gitignore.Matcher
+	root     string
+	gitAdmin []string
+}
+
+// Git metadata is never user history, including linked-worktree pointer files.
+// Resolve the on-disk pointers without invoking Git, hooks or external programs.
+func gitAdministration(root string) ([]string, error) {
+	pointer := filepath.Join(root, ".git")
+	info, err := os.Lstat(pointer)
+	if os.IsNotExist(err) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	admin := pointer
+	if info.Mode().IsRegular() {
+		data, err := os.ReadFile(pointer)
+		if err != nil {
+			return nil, err
+		}
+		text := strings.TrimSpace(string(data))
+		if !strings.HasPrefix(text, "gitdir: ") {
+			return nil, fmt.Errorf("invalid Git administration pointer")
+		}
+		admin = strings.TrimSpace(strings.TrimPrefix(text, "gitdir: "))
+		if !filepath.IsAbs(admin) {
+			admin = filepath.Join(root, admin)
+		}
+	}
+	admin, err = filepath.EvalSymlinks(admin)
+	if err != nil {
+		return nil, err
+	}
+	result := []string{admin}
+	data, err := os.ReadFile(filepath.Join(admin, "commondir"))
+	if os.IsNotExist(err) {
+		return result, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	common := strings.TrimSpace(string(data))
+	if !filepath.IsAbs(common) {
+		common = filepath.Join(admin, common)
+	}
+	common, err = filepath.EvalSymlinks(common)
+	if err != nil {
+		return nil, err
+	}
+	return append(result, common), nil
+}
+
+func (m *ignoreMatcher) hardExcluded(path string) bool {
+	for _, part := range strings.Split(filepath.ToSlash(filepath.Clean(path)), "/") {
+		if strings.EqualFold(part, ".git") {
+			return true
+		}
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(m.root, filepath.FromSlash(path))
+	}
+	for _, admin := range m.gitAdmin {
+		rel, err := filepath.Rel(admin, path)
+		if err == nil && rel != ".." && !strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+			return true
+		}
+	}
+	return false
+}
 
 func newIgnoreMatcher(root string, opts SnapshotOptions) (*ignoreMatcher, error) {
+	admin, err := gitAdministration(root)
+	if err != nil {
+		return nil, err
+	}
+	hard := &ignoreMatcher{root: root, gitAdmin: admin}
 	patterns := make([]gitignore.Pattern, 0, len(defaultIgnoredDirectories)+len(opts.ExtraIgnorePatterns))
 	for _, pattern := range defaultIgnoredDirectories {
 		patterns = append(patterns, gitignore.ParsePattern(pattern, nil))
@@ -38,6 +115,12 @@ func newIgnoreMatcher(root string, opts SnapshotOptions) (*ignoreMatcher, error)
 		err := filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
 			if err != nil {
 				return err
+			}
+			if path != root && hard.hardExcluded(path) {
+				if entry.IsDir() {
+					return filepath.SkipDir
+				}
+				return nil
 			}
 			if !entry.IsDir() {
 				return nil
@@ -83,14 +166,15 @@ func newIgnoreMatcher(root string, opts SnapshotOptions) (*ignoreMatcher, error)
 	} else if !os.IsNotExist(err) {
 		return nil, err
 	}
-	return &ignoreMatcher{matcher: gitignore.NewMatcher(patterns)}, nil
+	hard.matcher = gitignore.NewMatcher(patterns)
+	return hard, nil
 }
 
 func (m *ignoreMatcher) ignored(rel string, isDir bool) bool {
 	if m == nil || rel == "." || rel == "" {
 		return false
 	}
-	return m.matcher.Match(strings.Split(filepath.ToSlash(rel), "/"), isDir)
+	return m.hardExcluded(rel) || m.matcher.Match(strings.Split(filepath.ToSlash(rel), "/"), isDir)
 }
 
 func (s *Store) ShouldIgnore(rel string, isDir bool, opts SnapshotOptions) (bool, error) {

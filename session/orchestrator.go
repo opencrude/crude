@@ -52,6 +52,10 @@ func (o *Orchestrator) reserveTurn(input provider.UserInput, deliveries []collab
 		return turnRequest{}, false
 	}
 	if o.session != nil {
+		if o.session.ValidateHistoryAdmission() != nil {
+			cancel()
+			return turnRequest{}, false
+		}
 		o.session.recoveryMu.Lock()
 		_, unfinished := o.session.pendingRecoveries[o.ID]
 		o.session.recoveryMu.Unlock()
@@ -87,6 +91,10 @@ func (o *Orchestrator) submitRecovery(checkpoint sessiondb.RecoveryCheckpoint) b
 	o.turnMu.Lock()
 	defer o.turnMu.Unlock()
 	if o.closing.Load() || o.turnCancel != nil || checkpoint.Status.Generation < o.turnGeneration {
+		cancel()
+		return false
+	}
+	if o.session != nil && o.session.ValidateHistoryAdmission() != nil {
 		cancel()
 		return false
 	}
@@ -134,6 +142,9 @@ func NewOrchestrator(id string, s *Session) *Orchestrator {
 // the session loop. Cancellation is therefore reliable even in the tiny
 // admission-to-receive window that channel-only signalling could not cover.
 func (o *Orchestrator) SubmitInput(input provider.UserInput) bool {
+	if o != nil && o.session != nil {
+		input = o.session.bindInputExecution(input)
+	}
 	return o.submitTurn(input, nil, nil)
 }
 

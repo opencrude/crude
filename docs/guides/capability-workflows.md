@@ -92,8 +92,9 @@ clears the flow; expired/revoked authorization requires explicit reauthenticatio
 Tools → Review grant requires effect, resource scope and observed schema
 fingerprint. Changed/unknown operations fail closed. Profile/session selection
 cannot exceed the role ceiling or grant permission. A local scope label does not
-sandbox filesystem/network access; unsandboxed local launch requires explicit
-approval and is not offered for automatic startup. External MCP writes are outside
+sandbox filesystem/network access; unsandboxed local launch requires exact
+authorization and is eligible for Manual/Auto Review/YOLO within host/effect
+ceilings. Authentication and consent remain user-owned. External MCP writes are outside
 native file ownership and undo. Ambiguous mutating outcomes stay unknown and are
 not replayed.
 
@@ -104,14 +105,48 @@ descriptors. Tool chips express user selection, not approval. Resource/prompt
 chips retain external attribution; changed arguments/session/agent/draft reject
 late results. Nothing is submitted automatically.
 
+The declared MCP profile uses Go SDK v1.8.0 negotiation: 2026-07-28,
+2025-11-25, 2025-06-18, 2025-03-26 and 2024-11-05. Advertised SDK protocol
+versions do not imply support for every optional feature in those specifications.
+Crude disables multi-round-trip extensions and advertises only actual client
+capabilities; resource links remain references, not automatic fetch permission.
+
 Coverage: managed stdio and Streamable HTTP, endpoint-bound OAuth, bounded
-tools/resources/prompts discovery, schema changes, text/structured/image tool
-results, progress, timeouts and cancellation. Composer resource/prompt previews
-are text-only. Sampling, elicitation, task extensions, remote channels and rich
-MCP apps are unsupported and not advertised. Resume starts no connection,
+tools/resources/prompts discovery, schema changes, ordered mixed text, structured,
+image, audio, embedded-resource and resource-link
+results, progress, timeouts and cancellation. Declared output schemas participate
+in fingerprints and structured-output validation; external schema references are
+not fetched. Encoded projected content has a 1 MiB budget; oversized content fails
+explicitly. Model modality and wire support still govern media admission. Roots
+use official file-URI roots/list behavior for the resolved execution directory;
+roots are context, not a filesystem sandbox. Composer resource/prompt previews
+are text-only. Sampling, elicitation, task extensions, rich MCP apps and optional
+remote UI channels are unsupported and not advertised. Resume starts no connection,
 download, update or tool replay.
 
+## Host locality and external computer-use
+
+Connection host defaults to `core`; stdio runs on that host with the resolved
+execution directory. Explicit `host: "shell"` uses the original connected shell's
+worker and exact attachment epoch, never a convenient replacement shell. It requires
+stdio and an explicit absolute shell-local directory. Environment/header credential
+bytes are not forwarded; supported secret references resolve on the selected host.
+Detach, changed run/configuration and cancellation fence late calls and revoke
+run-local authority. Manual Settings UI for selecting/configuring shell-host execution
+is not yet a complete advertised journey; do not infer it from transport support.
+
+Users can select an external computer-use MCP appropriate to their OS/vendor and
+authorize its actual host effects. Crude bundles no universal desktop driver and
+cannot guarantee screenshot, mouse, browser or authentication automation for every
+integration. Native [Crude control](../reference/control-contract.md) is semantic IDE
+control, not external desktop access.
+
 ## Agent Discovery, Acquisition, And Durable Use
+
+Relevant installed capabilities and acquisition may be used proactively when they
+improve the task, even when native tools exist. Exact activation follows the user's
+Manual/Auto Review/YOLO policy, explicit denials, trusted sources, host and effect
+ceilings. Source text and server annotations never impersonate human authorization.
 
 1. `capability_search` honors the requested result limit and returns matching
    installed entries before querying external sources. Local, installed and pinned
@@ -136,7 +171,9 @@ download, update or tool replay.
 4. MCP activation connects and returns observed tools and their fingerprints,
    separately from the actually usable tools. If access is missing, the agent can
    request `mcp_request_access` with `connection_id` and `grants`: original tool name, fingerprint,
-   effect and resource scope. The user reviews that exact durable access change.
+   effect and resource scope. Human approval persists that exact durable access
+     change; reviewer/YOLO approval grants only run-local access, revoked at the
+     owner/run boundary and rechecked against schema, host, connection and ceilings.
    Grants inherit the connection's existing binding; approving access never moves
    an application-bound connection into the workspace. The agent never infers a
    grant from server annotations or a successful connection.
@@ -237,8 +274,9 @@ Commit. Discard prepares an exact preimage, defaults to Cancel, captures
 mandatory Local History recovery and aborts when the file/index/HEAD changes.
 Hunk stage/unstage writes only that hunk's lines to the index under the same
 exact-bytes check; hunk discard confirms, snapshots Local History and fails
-closed on any newer change. Untracked data is never deleted. Worktrees and
-remote operations are not presented as working features. Local Compare With Disk / Compare With
+closed on any newer change. Untracked data is never deleted. Managed execution worktrees use the separate
+[execution service](../reference/managed-executions.md), not this Git panel as an
+isolation/integration shortcut. Remote Git operations are not advertised. Local Compare With Disk / Compare With
 Saved Version keep the separate full-file reader in movable main tabs.
 
 ## Validation Evidence

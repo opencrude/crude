@@ -56,6 +56,10 @@ Read that first; this index only organizes the reference material.
   split previews, keyboard panes, retained resource state and ownership.
 - [Control usage map](reference/control-usage.md) — control categories and
   their `tui/ui` implementations.
+- [Crude semantic control](reference/control-contract.md) — shared native/MCP
+  command catalog, exact-shell targeting, contextual authority and truthful receipts.
+- [Managed execution contexts](reference/managed-executions.md) — faithful checkout
+  baselines, exact run/tool roots, guarded integration, undo and retained work.
 - [Settings layers](reference/settings.md) — the three-level settings model
   (app → workspace → session) and what each layer owns.
 - [Settings design language](reference/settings-design.md) — the one page

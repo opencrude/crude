@@ -236,11 +236,15 @@ func (f *FieldState) Validate() {
 
 // FormModel holds the values and state for all fields in a form.
 type FormModel struct {
-	fields    []*FieldState
-	fieldByID map[string]*FieldState
-	pages     [][]string // nil or single-page = all fields in one page
-	onChanged func(fieldID string)
+	fields         []*FieldState
+	fieldByID      map[string]*FieldState
+	pages          [][]string // nil or single-page = all fields in one page
+	onChanged      func(fieldID string)
+	editGeneration uint64
 }
+
+// EditGeneration fences value ABA even when no inspection occurred between edits.
+func (m *FormModel) EditGeneration() uint64 { return m.editGeneration }
 
 func NewFormModel() *FormModel {
 	return &FormModel{
@@ -274,6 +278,7 @@ func (m *FormModel) SetValue(id string, v FieldValue) {
 		return
 	}
 	f.Value = v
+	m.editGeneration++
 	f.Dirty = !f.Value.Equal(f.Initial)
 	f.Validate()
 	if m.onChanged != nil {
@@ -314,6 +319,9 @@ func (m *FormModel) Commit() {
 
 func (m *FormModel) Reset() {
 	for _, f := range m.fields {
+		if !f.Value.Equal(f.Initial) {
+			m.editGeneration++
+		}
 		f.Value = f.Initial
 		f.Dirty = false
 	}

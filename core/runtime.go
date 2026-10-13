@@ -25,6 +25,7 @@ import (
 	"crude/history"
 	"crude/provider"
 	"crude/types"
+	"crude/types/control"
 	"crude/workspace"
 )
 
@@ -80,15 +81,22 @@ func (r *Runtime) SetPromptHistory(store *history.Store, path string) error {
 // Connection is one authenticated local/SSH transport lifetime. Its queue is
 // bounded; a slow observer receives resynchronization, never domain backpressure.
 type Connection struct {
-	runtime   *Runtime
-	Owner     coreprotocol.Owner
-	mu        sync.Mutex
-	attached  map[string]*actor
-	events    chan coreprotocol.Change
-	done      chan struct{}
-	once      sync.Once
-	publishMu sync.Mutex
-	resync    bool
+	runtime            *Runtime
+	Owner              coreprotocol.Owner
+	mu                 sync.Mutex
+	attached           map[string]*actor
+	events             chan coreprotocol.Change
+	done               chan struct{}
+	once               sync.Once
+	publishMu          sync.Mutex
+	resync             bool
+	controls           chan coreprotocol.ControlEnvelope
+	controlRegistered  map[string]bool
+	controlExternal    map[string]map[control.Effect]bool
+	controlTargets     map[string]*control.ShellOwner
+	controlReceipts    map[string]*controlReceipt
+	controlOutstanding int
+	controlBytes       int
 }
 
 func (r *Runtime) Connect(clientID string) (*Connection, error) {
@@ -105,6 +113,11 @@ func (r *Runtime) Connect(clientID string) (*Connection, error) {
 	}
 	r.epochs[clientID]++
 	c := &Connection{runtime: r, Owner: coreprotocol.Owner{ClientID: clientID, Epoch: r.epochs[clientID]}, attached: make(map[string]*actor), events: make(chan coreprotocol.Change, subscriberCapacity), done: make(chan struct{})}
+	c.controls = make(chan coreprotocol.ControlEnvelope, coreprotocol.ControlMaxOutstanding)
+	c.controlRegistered = make(map[string]bool)
+	c.controlExternal = make(map[string]map[control.Effect]bool)
+	c.controlTargets = make(map[string]*control.ShellOwner)
+	c.controlReceipts = make(map[string]*controlReceipt)
 	r.clients[clientID] = c
 	return c, nil
 }
@@ -143,7 +156,9 @@ func (c *Connection) Close() {
 		c.mu.Lock()
 		owners := c.attached
 		c.attached = make(map[string]*actor)
+		c.detachControlsLocked("")
 		c.mu.Unlock()
+		c.DetachCapabilityHosts("")
 		for _, owner := range owners {
 			owner.unsubscribe(c)
 		}
@@ -198,6 +213,9 @@ func (r *Runtime) Close() error {
 		clients = append(clients, c)
 	}
 	r.mu.Unlock()
+	for _, c := range clients {
+		c.Close()
+	}
 	r.factoryWG.Wait()
 	r.mu.Lock()
 	actors := make([]*actor, 0, len(r.workspaces))
@@ -205,9 +223,6 @@ func (r *Runtime) Close() error {
 		actors = append(actors, a)
 	}
 	r.mu.Unlock()
-	for _, c := range clients {
-		c.Close()
-	}
 	for _, a := range actors {
 		a.close()
 	}
@@ -248,6 +263,21 @@ func (c *Connection) Dispatch(ctx context.Context, request coreprotocol.Request)
 	if request.Method == coreprotocol.Attach {
 		return finish(c.attach(ctx, request))
 	}
+	if request.Method == coreprotocol.ControlShellRegister || request.Method == coreprotocol.ControlShellReply {
+		return finish(c.controlMethod(request))
+	}
+	if request.Method == coreprotocol.CapabilityHostRegister || request.Method == coreprotocol.CapabilityHostReply {
+		return finish(c.CapabilityHostMethod(request))
+	}
+	if request.Method == coreprotocol.QuestionControl {
+		return c.QuestionControlMethod(ctx, request)
+	}
+	if request.Method == coreprotocol.SubmitControlInput {
+		return c.ControlInputMethod(ctx, request)
+	}
+	if request.Method == coreprotocol.ControlClientRegister || request.Method == coreprotocol.ControlDescribe || request.Method == coreprotocol.ControlResolve || request.Method == coreprotocol.ControlExecute || request.Method == coreprotocol.ControlShells {
+		return c.controlClientMethod(ctx, request)
+	}
 	if request.Method == coreprotocol.CoreStatusMethod || request.Method == coreprotocol.CoreShutdownMethod {
 		return finish(c.runtime.coreMethod(ctx, c, request))
 	}
@@ -271,7 +301,9 @@ func (c *Connection) Dispatch(ctx context.Context, request coreprotocol.Request)
 	if request.Method == coreprotocol.Detach {
 		c.mu.Lock()
 		delete(c.attached, request.WorkspaceID)
+		c.detachControlsLocked(request.WorkspaceID)
 		c.mu.Unlock()
+		c.DetachCapabilityHosts(request.WorkspaceID)
 		a.unsubscribe(c)
 		return finish(response(request, struct{}{}))
 	}
@@ -355,6 +387,9 @@ func (r *Runtime) workspace(ctx context.Context, id, root string) (*actor, error
 					ws.Logger.Warn("CORE", "workspace_resources_failed", "error", initErr.Error())
 					ws.Status.Notify(types.NotificationRecord{Severity: types.SeverityError, Source: "workspace", Summary: "Workspace resources need attention", Detail: "Saved Notices or capabilities could not be loaded. Inspect the workspace persistence and Skills/MCP settings before retrying."})
 				}
+				if ws.Capabilities != nil {
+					ws.Capabilities.SetHostDispatcher(r)
+				}
 			}
 			r.mu.Lock()
 			if err == nil && r.closed {
@@ -412,7 +447,9 @@ type actor struct {
 	inFlight      int
 	lifecycle     bool
 	settingsBusy  bool
+	historyBusy   bool // owner-held restore exclusion through mutation and publication
 	settingsQueue []actorCommand
+	controlQueue  []*actorControlCommand
 	resourceLane  *resourceLane
 	// terminalLane orders PTY effects independently of documents, files and
 	// language servers, so their slow work never delays a keystroke.
@@ -422,6 +459,7 @@ type actor struct {
 }
 
 type actorCommand struct {
+	control *actorControlCommand
 	request *coreprotocol.Request
 	client  *Connection
 	attach  *Connection
@@ -563,6 +601,10 @@ func (a *actor) run() {
 			a.publishStatusIfChanged()
 			a.publishLSPIfChanged()
 		case command := <-a.commands:
+			if command.control != nil {
+				a.admitControl(command.control)
+				continue
+			}
 			if command.inspect != nil {
 				command.inspect()
 				continue
@@ -930,13 +972,30 @@ func (a *actor) validClient(c *Connection) bool {
 }
 
 func humanInput(request coreprotocol.Request, input coreprotocol.InputRequest) provider.UserInput {
-	return provider.UserInput{Text: input.Text, DisplayText: input.DisplayText, ReferenceIDs: slices.Clone(input.ReferenceIDs),
+	target := control.Target{WorkspaceID: request.WorkspaceID, Shell: &control.ShellOwner{ClientID: request.Owner.ClientID, Epoch: request.Owner.Epoch}}
+	return provider.UserInput{Text: input.Text, DisplayText: input.DisplayText, ReferenceIDs: slices.Clone(input.ReferenceIDs), ControlTarget: &target,
 		ContextParts: slices.Clone(input.ContextParts), ActivePaths: slices.Clone(input.ActivePaths),
 		Origin: provider.OriginHuman, InternalID: "client-" + request.Owner.ClientID + "-" + request.ID}
 }
 
+func (a *actor) bindInputExecution(input *provider.UserInput, agentID string) {
+	if input.ControlTarget == nil {
+		return
+	}
+	if owner := a.ws.SessionForAgent(agentID); owner != nil {
+		input.ControlTarget.SessionID = owner.SessionID
+		if backend := a.ws.BackendSession(owner.SessionID); backend != nil {
+			input.ControlTarget.ExecutionID = backend.ExecutionSelection().ID
+		}
+	}
+}
+
 func (a *actor) startJob(command actorCommand) bool {
 	request := *command.request
+	if a.historyBusy && (request.Method == coreprotocol.NewSession || request.Method == coreprotocol.OpenSession || request.Method == coreprotocol.SubmitInput || request.Method == coreprotocol.SteerInput || request.Method == coreprotocol.AgentRecover || request.Method == coreprotocol.AgentCompact) {
+		command.result <- fault(request, "restore_busy", "history restore owns admission; input and work are retained")
+		return true
+	}
 	lifecycle := request.Method == coreprotocol.NewSession || request.Method == coreprotocol.OpenSession
 	service, serviceKnown := a.prepareService(request)
 	resource, resourceKnown := a.prepareResource(request)
@@ -1051,6 +1110,7 @@ func (a *actor) startJob(command actorCommand) bool {
 				if out.Error != "" {
 					return fault(request, "session_failed", out.Error)
 				}
+				a.bindControlSessions()
 				a.changed([]string{out.OrchID})
 				a.broadcast(coreprotocol.Change{Sessions: true})
 				return response(request, out)
@@ -1065,6 +1125,7 @@ func (a *actor) startJob(command actorCommand) bool {
 			return fail(fault(request, "invalid_input", "only nonempty human input is accepted"))
 		}
 		value := humanInput(request, input)
+		a.bindInputExecution(&value, input.AgentID)
 		intent, err := a.ws.PrepareAgentInputAdmission(input.AgentID, value, input.DraftRevision)
 		if err != nil {
 			return fail(fault(request, "input_rejected", err.Error()))
@@ -1176,6 +1237,12 @@ func (a *actor) finishJob(job actorJobResult) {
 			if a.settingsBusy {
 				break
 			}
+		}
+		for !a.settingsBusy && len(a.controlQueue) > 0 {
+			command := a.controlQueue[0]
+			a.controlQueue[0] = nil
+			a.controlQueue = a.controlQueue[1:]
+			a.admitControl(command)
 		}
 	}
 }

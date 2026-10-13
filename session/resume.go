@@ -349,6 +349,9 @@ func ResumeSessionWithDir(dbPath string, cfg *Config, homeDir, sessionDir string
 	if err := sess.loadQueuedInputs(); err != nil {
 		return nil, fmt.Errorf("resume: %w", err)
 	}
+	if err := sess.loadExecutionSelection(); err != nil {
+		return nil, fmt.Errorf("resume: %w", err)
+	}
 	keepTempDir = true
 	resourcesTransferred = true
 	return sess, nil

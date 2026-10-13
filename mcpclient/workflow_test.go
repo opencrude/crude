@@ -290,8 +290,19 @@ func TestManagedWorkflowStdioApprovalIsolationAndContext(test *testing.T) {
 		test.Fatalf("stdio resource %#v: %v", resource, err)
 	}
 	prompt, err := manager.GetPrompt(ctx, config.ID, "review", map[string]string{"topic": "transport isolation"})
-	if err != nil || len(prompt.Content) != 1 || prompt.Content[0].Type != "prompt" || prompt.Content[0].Text != "user: Review transport isolation" {
+	if err != nil || len(prompt.Content) != 1 || prompt.Content[0].Type != "text" || prompt.Content[0].Text != "Review transport isolation" {
 		test.Fatalf("stdio prompt %#v: %v", prompt, err)
+	}
+	var promptSource struct {
+		ConnectionID string `json:"mcp_connection_id"`
+		Name         string `json:"mcp_prompt_name"`
+		Messages     []struct {
+			Role         string `json:"source_role"`
+			ContentIndex int    `json:"content_index"`
+		} `json:"mcp_source_messages"`
+	}
+	if err := json.Unmarshal(prompt.Structured, &promptSource); err != nil || promptSource.ConnectionID != config.ID || promptSource.Name != "review" || len(promptSource.Messages) != 1 || promptSource.Messages[0].Role != "user" || promptSource.Messages[0].ContentIndex != 0 {
+		test.Fatalf("external prompt source attribution %s: %v", prompt.Structured, err)
 	}
 	if _, err := manager.GetPrompt(ctx, config.ID, "review", nil); err == nil {
 		test.Fatal("missing required prompt argument succeeded")

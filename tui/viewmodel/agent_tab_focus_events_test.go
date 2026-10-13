@@ -57,6 +57,9 @@ func TestBackgroundAgentEventsPreserveSelectedTabAndPromptOwner(t *testing.T) {
 
 	path := openEditorTabs(t, app, "main.go")[0]
 	assertSelectedTab(t, app, app.editorTabTitle(path))
+	app.Input.SetInput("retain background question draft")
+	ed := app.EditorState.Editor
+	editorText := ed.Value()
 	app.handleAgentEvent(ttypes.AgentEventMsg{AgentID: "root", Type: "blocking", Data: map[string]any{
 		"block_id": "root-question", "operation": "questions", "questions_json": `[{"question":"Which option?","options":["A","B"]}]`,
 	}})
@@ -67,11 +70,20 @@ func TestBackgroundAgentEventsPreserveSelectedTabAndPromptOwner(t *testing.T) {
 		t.Fatalf("background question did not retain modal and owner: %+v", app.agentPrompt)
 	}
 	owner := app.agentPrompt.question
+	prompt := app.agentPrompt
+	focus := app.focusTarget()
 	app.resolveAgentQuestion(owner, question.Result{}, true)
 	assertEditorStillPainted(t, app, path)
-	if app.agentPrompt != nil || app.overlayHost.IsOpen(ui.OverlayAgentPrompt) {
-		t.Fatal("answered question left modal open")
+	// There is no live backend block in this fixture, so failed delivery cannot
+	// consume the question or release its focus/draft/editor ownership.
+	if app.agentPrompt != prompt || app.agentPrompt.question != owner || !app.overlayHost.IsOpen(ui.OverlayAgentPrompt) {
+		t.Fatal("question disappeared without backend acknowledgement")
 	}
+	if app.focusTarget() != focus || app.Input.Value() != "retain background question draft" || app.EditorState.Editor != ed || ed.Value() != editorText {
+		t.Fatal("failed question acknowledgement changed focus, composer, or editor")
+	}
+	// Explicitly dismiss the fixture prompt before testing later navigation.
+	app.dismissAgentPromptBlock("root", "root-question")
 
 	// Explicit navigation remains authoritative after unattended events.
 	app.switchToAgentView("root")

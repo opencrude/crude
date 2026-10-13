@@ -57,6 +57,14 @@ header/stream silence. An explicit provider/account Connect timeout overrides
 both its TCP and TLS establishment budgets. An unset provider Connect timeout
 inherits the separate Network budgets.
 
+A provider progress stall retires only the actual failed transport connection,
+including a pooled HTTP/2 connection that remains locally established while
+traffic is blackholed. The next automatic attempt may redial using the same
+captured routing/TLS policy; it does not rebuild the transport or fall back direct.
+Retirement can interrupt other streams multiplexed on that failed connection.
+Their accepted-output recovery safeguards remain in force. Ordinary cancellation
+and overall deadlines do not retire a connection as a progress failure.
+
 All automatic cooldowns, including rate-limit hints, use the independent
 [five-minute retry contract](run-recovery.md#shared-cooldown-contract). A connect,
 request, progress, or maintenance-job timeout is not a retry cooldown.

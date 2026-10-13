@@ -29,6 +29,7 @@ import (
 	"crude/sessiondb"
 	ttypes "crude/types"
 	captypes "crude/types/capability"
+	"crude/types/control"
 	recoverytypes "crude/types/recovery"
 )
 
@@ -58,14 +59,20 @@ type Session struct {
 	provider *provider.Provider
 	// An older transcript without a connection pin stays disconnected until
 	// the user explicitly saves a session connection.
-	accountUnpinned       bool
-	exec                  fileio.Executer
-	editor                *fileio.Editor
-	logger                *logger.Logger
-	permStore             *safety.PermissionStore
-	asyncMgr              *fileio.AsyncCommandManager
-	memoryStore           *memory.Store
-	capabilities          captypes.Runtime
+	accountUnpinned bool
+	exec            fileio.Executer
+	editor          *fileio.Editor
+	logger          *logger.Logger
+	permStore       *safety.PermissionStore
+	asyncMgr        *fileio.AsyncCommandManager
+	memoryStore     *memory.Store
+	capabilities    captypes.Runtime
+	execution       ExecutionService
+	// executionSelection is the next-input checkout, not a mutable working
+	// directory. Already admitted input and live runs retain their own binding.
+	executionSelection    string
+	executionRevision     uint64
+	controlRuntime        control.Runtime
 	fileOwnership         *agent.FileOwnership
 	collaborationStore    *collaboration.Store
 	collaborationInstance string
@@ -487,6 +494,9 @@ func NewWithSessionDir(id string, cfg *Config, homeDir, sessionDir string) (*Ses
 	if err := sess.loadQueuedInputs(); err != nil {
 		return nil, err
 	}
+	if err := sess.loadExecutionSelection(); err != nil {
+		return nil, err
+	}
 	if dir := lg.SessionDir(); dir != "" {
 		_ = os.MkdirAll(filepath.Join(dir, "reports"), 0755)
 	}
@@ -545,6 +555,7 @@ func (s *Session) Close() {
 	if s.asyncMgr != nil {
 		s.asyncMgr.CloseAndWait()
 	}
+	s.reconcileRootExecutionPins()
 	if s.subAgentSup != nil {
 		s.subAgentSup.SessionCancel()
 		for _, h := range s.subAgentSup.Manager().ActiveHandles() {
@@ -705,23 +716,37 @@ func (s *Session) systemPrompt(multiAgent bool) string {
 }
 
 func (s *Session) systemPromptForModel(multiAgent bool, model string) string {
+	root := ""
+	if s != nil {
+		root = s.WorkDir()
+	}
+	return s.systemPromptForModelAtRoot(multiAgent, model, root)
+}
+
+func (s *Session) systemPromptForModelAtRoot(multiAgent bool, model, root string) string {
 	if s == nil {
 		return rootprompt.BuildRoot(rootprompt.RootOptions{MultiAgent: multiAgent})
 	}
+	s.mu.Lock()
+	var cfg *Config
+	if s.cfg != nil {
+		cfg = copyConfig(s.cfg)
+	}
+	s.mu.Unlock()
 	s.systemPromptMu.Lock()
 	defer s.systemPromptMu.Unlock()
 	if s.systemPrompts == nil {
 		s.systemPrompts = make(map[string]string)
 	}
 	instructions := ""
-	if s.cfg != nil {
-		instructions = s.cfg.GetActiveDefaultCategory().Instructions
+	if cfg != nil {
+		instructions = cfg.GetActiveDefaultCategory().Instructions
 	}
 	catalog := ""
 	if multiAgent {
-		catalog = agentProfileCatalog(s.cfg)
+		catalog = agentProfileCatalog(cfg)
 	}
-	key := fmt.Sprintf("%t:%s:%s:%s", multiAgent, model, instructions, catalog)
+	key := fmt.Sprintf("%t:%s:%s:%s:%s", multiAgent, model, instructions, catalog, root)
 	if prompt, ok := s.systemPrompts[key]; ok {
 		return prompt
 	}
@@ -729,7 +754,7 @@ func (s *Session) systemPromptForModel(multiAgent bool, model string) string {
 	// against; a stale cwd here misdirects the model after a workspace
 	// switch even when execution itself is correctly re-rooted.
 	prompt := rootprompt.BuildRoot(rootprompt.RootOptions{
-		MultiAgent: multiAgent, WorkDir: s.WorkDir(), TempDir: s.TempDir(), Model: model,
+		MultiAgent: multiAgent, WorkDir: root, TempDir: s.TempDir(), Model: model,
 	})
 	prompt = rootprompt.ApplyRootOverlays(prompt, instructions, s.agentName, catalog)
 	s.systemPrompts[key] = prompt

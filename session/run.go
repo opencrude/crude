@@ -29,6 +29,7 @@ import (
 	ttypes "crude/types"
 	captypes "crude/types/capability"
 	recoverytypes "crude/types/recovery"
+	"crude/worktree"
 )
 
 func (s *Session) RunOrchestrator(o *Orchestrator, sender EventSender) {
@@ -262,6 +263,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	turnFinalState := sessiondb.TurnFailed
 	recoveryParked := false
 	var collaborationRun collaboration.Run
+	executionRoot := s.WorkDir()
 	finishTurn := func() error {
 		if turnFinished {
 			return nil
@@ -324,9 +326,22 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			}
 		}
 		turnFinished = true
+		s.revokeCapabilityRunFor(captypes.RuntimeActor{ID: o.ID, SessionID: s.sessionID, RunID: collaborationRun.ID, RuntimeEpoch: o.RuntimeEpoch, TurnGeneration: turnGeneration, ExecutionRoot: executionRoot}, userInput.ControlTarget)
+		s.reconcileRootExecutionPins()
 		return nil
 	}
 	defer func() {
+		// Parking during unwind must not advertise Retry while the old turn
+		// still owns its reservation, nor publish between slot removal and
+		// installing the exact passive checkpoint. Await's live wake path is
+		// unaffected; only terminal unwind holds this emission until teardown.
+		emit := supervisor.Emit
+		var parkedEvents []agent.AgentEvent
+		park := func(failure agent.RecoveryFailure) recoverytypes.Status {
+			supervisor.Emit = func(event agent.AgentEvent) { parkedEvents = append(parkedEvents, event) }
+			defer func() { supervisor.Emit = emit }()
+			return supervisor.Park(failure)
+		}
 		if recovered := recover(); recovered != nil {
 			panicErr := fmt.Errorf("session turn panic: %v", recovered)
 			l.Error("SESSION", "turn_panic", "agent_id", o.ID, "error", panicErr.Error())
@@ -336,19 +351,24 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 				l.Warn("SESSION", "turn_state_finish_failed", "error", err.Error())
 			}
 			s.finishRecovery(o.ID, supervisor.IncidentID(), turnGeneration)
-			status := supervisor.Park(agent.AttentionRecovery(agent.RecoveryFailurePanic, panicErr))
+			status := park(agent.AttentionRecovery(agent.RecoveryFailurePanic, panicErr))
 			checkpoint := recoveryState.checkpoint(status)
 			s.parkRecovery(checkpoint)
 		}
 		if err := finishTurn(); err != nil {
 			l.Warn("SESSION", "turn_state_finish_failed", "error", err.Error())
-			status := supervisor.Park(agent.AttentionRecovery(agent.RecoveryFailureStorage, err))
+			status := park(agent.AttentionRecovery(agent.RecoveryFailureStorage, err))
 			s.parkRecovery(recoveryState.checkpoint(status))
 			recoveryParked = true
 		}
 		o.endTurn(turnGeneration)
 		if !recoveryParked {
 			s.finishRecovery(o.ID, supervisor.IncidentID(), turnGeneration)
+		}
+		for _, event := range parkedEvents {
+			if emit != nil {
+				emit(event)
+			}
 		}
 	}()
 	recoverStep := func(kind agent.RecoveryFailureKind, operation func() error) bool {
@@ -505,6 +525,16 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		}
 		collaborationRun = started
 		o.setCollaborationRun(started)
+	}
+
+	if userInput.ControlTarget != nil && userInput.ControlTarget.ExecutionID != "" {
+		if !recoverStep(agent.RecoveryFailureConfiguration, func() error {
+			var err error
+			executionRoot, err = s.pinRootExecution(ctx, userInput.ControlTarget.ExecutionID, worktree.Owner{AgentID: o.ID, RunID: collaborationRun.ID})
+			return err
+		}) {
+			return
+		}
 	}
 
 	// Use per-orchestrator effective config from runtime profile.
@@ -744,6 +774,8 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	eventSource := &runtimeEventSource{ownerID: s.sessionID, agentID: o.ID, runID: collaborationRun.ID, runtimeEpoch: o.RuntimeEpoch, generation: turnGeneration}
 	sendRuntimeEvent(sender, eventSource.bind(agent.AgentEvent{Type: "turn_started", Data: turnIdentity}))
 	ag := s.newAgent(turnProvider, effectiveCfg.IsMultiAgentEnabled(), activeCfg.ModelModalities)
+	ag.WorkDir = executionRoot
+	ag.ToolFn = s.buildToolFnAtRoot(effectiveCfg.IsMultiAgentEnabled(), turnProvider, activeCfg.ModelModalities, executionRoot)
 	ag.GuidancePaths = append([]string(nil), userInput.ActivePaths...)
 	ag.MaxOutputTokens = activeCfg.ModelMaxOutput
 	ag.ReasoningContentKind = s.inferredReasoningKind(o.ID, turnProvider.ID, turnProvider.AccountID, turnProvider.Model)
@@ -752,6 +784,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	_, agentProfile := activeProfileCfg(effectiveCfg)
 	ag.CompactionAgentProfile = agentProfile + "/" + CategoryAeron
 	ag.AgentID = agent.AgentID(o.ID)
+	ag.RunID = collaborationRun.ID
 	ag.TurnGeneration = turnGeneration
 	var compactionRevision uint64
 	ag.PrepareCompaction = func(source agent.CompactionSource) error {
@@ -801,6 +834,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		return configuredOrchestratorTools(current, current.IsMultiAgentEnabled(), ag.Model), s.takeDelegationNotices()
 	}
 	s.bindAgentRuntime(ctx, ag, captypes.RuntimeActor{ID: o.ID, SessionID: s.sessionID, AllowedTools: activeCfg.AllowedTools, DeniedTools: activeCfg.DeniedTools, SkillModes: activeCfg.SkillModes}, s.AgentName())
+	s.bindAgentControl(ctx, ag, userInput.ControlTarget)
 	defer s.FileOwnership().Release(agent.AgentID(o.ID))
 	var pendingCollaboration []collaboration.PendingDelivery
 	defer func() {
@@ -848,7 +882,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	}
 	ag.SetToolCallSeqStart(s.toolCallSeq)
 	var finalContent string
-	prompt := s.systemPromptForModel(effectiveCfg.IsMultiAgentEnabled(), ag.Model)
+	prompt := s.systemPromptForModelAtRoot(effectiveCfg.IsMultiAgentEnabled(), ag.Model, ag.WorkDir)
 
 	displayTracker := &displayMetaTracker{
 		metas: make(map[string]*sessiondb.DisplayMeta),
@@ -956,7 +990,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 			Generation: turnGeneration, ProviderID: currentProvider.ID,
 			AccountID: currentProvider.AccountID, ModelID: currentProvider.Model,
 		}
-		return s.systemPromptForModel(current.IsMultiAgentEnabled(), ag.Model), nil
+		return s.systemPromptForModelAtRoot(current.IsMultiAgentEnabled(), ag.Model, ag.WorkDir), nil
 	}
 	runResult := ag.RunSupervised(
 		historyCtx, contextMsgs, prompt, emit, o.BlockResolveCh, s.sessionID, runtimeMessages,

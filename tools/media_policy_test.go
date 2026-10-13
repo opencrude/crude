@@ -1,10 +1,12 @@
 package tools
 
 import (
+	"bytes"
 	"image"
 	"image/png"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"crude/provider"
@@ -41,5 +43,39 @@ func TestMediaOverridesWinOverCatalogIncludingExplicitNo(t *testing.T) {
 		if !handled || (len(attachments) > 0) != tc.accepted {
 			t.Fatalf("catalog=%v override=%#v: %q, attachments=%d", tc.catalog, tc.override, text, len(attachments))
 		}
+	}
+}
+
+func TestMediaByteAdmissionPDFAndAudioProtocolContracts(t *testing.T) {
+	var pngBytes bytes.Buffer
+	if err := png.Encode(&pngBytes, image.NewRGBA(image.Rect(0, 0, 1, 1))); err != nil {
+		t.Fatal(err)
+	}
+	wav := append([]byte("RIFF"), 0, 0, 0, 0)
+	wav = append(wav, []byte("WAVEfmt ")...)
+	for _, tc := range []struct {
+		standard, mime, kind string
+		data                 []byte
+		deny                 bool
+	}{
+		{"openai", "application/pdf", "document", []byte("%PDF-1.7\nfixture\n%%EOF"), false},
+		{"anthropic", "application/pdf", "document", []byte("%PDF-1.7\nfixture\n%%EOF"), false},
+		{"openai", "audio/wav", "audio", wav, false},
+		{"anthropic", "audio/wav", "audio", wav, true},
+		{"ollama", "application/pdf", "document", []byte("%PDF-1.7\nfixture\n%%EOF"), true},
+		{"unknown", "image/png", "image_url", pngBytes.Bytes(), true},
+	} {
+		p := &MediaReadPolicy{Model: "fixture", Standard: tc.standard, Modalities: []string{"image", "pdf", "audio"}}
+		part, err := p.AdmitBytes("fixture", tc.mime, tc.data)
+		if (err != nil) != tc.deny || (!tc.deny && part.Type != tc.kind) {
+			t.Fatalf("%s %s: part=%+v err=%v", tc.standard, tc.mime, part, err)
+		}
+	}
+	p := &MediaReadPolicy{Model: "fixture", Standard: "openai", Modalities: []string{}}
+	if _, err := p.AdmitBytes("fixture", "image/png", pngBytes.Bytes()); err == nil || !strings.Contains(err.Error(), "disabled") {
+		t.Fatal("explicit empty became inherited")
+	}
+	if _, err := p.AdmitBytes("fixture", "image/png", []byte("not an image")); err == nil || !strings.Contains(err.Error(), "does not match") {
+		t.Fatal("spoofed MIME accepted")
 	}
 }

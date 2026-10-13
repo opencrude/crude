@@ -62,8 +62,8 @@ func TestMCPBinaryAndUnknownEvidenceReachToolResults(t *testing.T) {
 	}}
 	owner.bindAgentRuntime(t.Context(), live, captypes.RuntimeActor{ID: "owner"}, "Owner")
 	result, err := live.ToolFn(t.Context(), "mcp_read_resource", map[string]any{"connection_id": "docs", "uri": "docs://document"})
-	if err != nil {
-		t.Fatal(err)
+	if err == nil || !strings.Contains(result.Content, "Media refused:") {
+		t.Fatalf("invalid PDF bytes must be refused with evidence: result=%+v err=%v", result, err)
 	}
 	for _, want := range []string{"Binary resource", "application/pdf", "5 bytes", "docs://document", "\nResult unknown:"} {
 		if !strings.Contains(result.Content, want) {

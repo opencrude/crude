@@ -41,6 +41,10 @@ type CLIFlags struct {
 	SSHPort       int
 	SSHIdentity   string
 	Workspace     string
+	MCP           bool
+	MCPEffects    string
+	MCPShell      string
+	MCPShellEpoch uint64
 }
 
 // ParseFlags parses os.Args flags into CLIFlags.
@@ -68,6 +72,10 @@ func ParseFlags() CLIFlags {
 	sshPortFlag := flag.Int("ssh-port", 0, "SSH port (zero uses SSH configuration)")
 	sshIdentityFlag := flag.String("ssh-identity", "", "Local SSH identity file")
 	workspaceFlag := flag.String("workspace", "", "Workspace path on the selected core (required with --ssh)")
+	mcpFlag := flag.Bool("mcp", false, "Expose Crude semantic control as an MCP stdio server (no interactive shell)")
+	mcpEffectsFlag := flag.String("mcp-effects", "", "With --mcp: immutable allowed effects, comma-separated (default read)")
+	mcpShellFlag := flag.String("mcp-shell", "", "With --mcp: exact registered target shell client ID (never inferred)")
+	mcpShellEpochFlag := flag.Uint64("mcp-shell-epoch", 0, "With --mcp-shell: exact registered shell epoch")
 	flag.Parse()
 
 	return CLIFlags{
@@ -94,6 +102,10 @@ func ParseFlags() CLIFlags {
 		SSHPort:       *sshPortFlag,
 		SSHIdentity:   *sshIdentityFlag,
 		Workspace:     *workspaceFlag,
+		MCP:           *mcpFlag,
+		MCPEffects:    *mcpEffectsFlag,
+		MCPShell:      *mcpShellFlag,
+		MCPShellEpoch: *mcpShellEpochFlag,
 	}
 }
 
@@ -233,9 +245,20 @@ func ResolveResume(flags CLIFlags) (string, error) {
 // Main is the app-layer entry point: parse flags, resolve config, run IDE.
 func Main() int {
 	flags := ParseFlags()
+	if err := validateMCPInvocation(flags); err != nil {
+		fmt.Fprintf(os.Stderr, "crude: %v\n", err)
+		return 1
+	}
 	if err := validateConnectedInvocation(flags); err != nil {
 		fmt.Fprintf(os.Stderr, "crude: %v\n", err)
 		return 1
+	}
+	if flags.MCP {
+		if err := RunMCP(context.Background(), flags); err != nil {
+			fmt.Fprintf(os.Stderr, "crude mcp: %v\n", err)
+			return 1
+		}
+		return 0
 	}
 
 	// Live perf sentinel (tui/perf). main.go discards slog to protect the

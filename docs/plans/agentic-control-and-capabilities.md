@@ -1,6 +1,6 @@
 # Agentic Control, MCP Capabilities, and Worktree Execution
 
-> Status: IN PROGRESS — implementation plan prepared on 2026-10-11; product implementation has not started. Unchecked gates below are required outcomes, not current guarantees.
+> Status: IN PROGRESS — core/native/MCP control, ordered media, autonomy and managed executions are implemented; integrated acceptance and native-platform limits remain open. Unchecked gates below are required outcomes, not current guarantees.
 
 ## 1. Goal and product boundary
 
@@ -434,7 +434,7 @@ or prune proven safe owned artifacts; they never force deletion to meet a quota.
 
 ## 8. Implementation sequence and bounded work assignments
 
-All stages begin unchecked. Update evidence and current references in the same
+Stage exits remain unchecked unless full acceptance is recorded. Update evidence and current references in the same
 change that lands a stage. Stage 0 fixes interfaces before dependent edits; later
 parallel work has exclusive concrete file scopes and no duplicated whole-repo
 validation. The parent owns policy decisions, integration and consolidated gates.
@@ -452,6 +452,83 @@ validation. The parent owns policy decisions, integration and consolidated gates
 First implementation task: Stage 0 contracts and regression fixtures. First
 user-visible milestone: Stage 1 connected control journey. Do not begin with
 RobotGo/Cua installation or a prompt-only worktree recommendation.
+
+### Current implementation checkpoint (2026-10-12)
+
+- `types/control` now defines neutral commands/targets/caller attribution,
+  exact-owner/precondition checks, operation outcomes and bounded inspection
+  values. See [the current value contract](../reference/control-contract.md).
+  The retained core authenticates callers, resolves contextual effects and routes
+  exact shell intents through Update. Native `crude_commands`/`crude_control`
+  and the built `crude --mcp` SDK adapter share this path. Mutation receipts retain
+  original outcomes, including observing a completed Close after its owner unmounts.
+- MCP client mixed-content projection preserves text, image/audio bytes, embedded
+  resources and unfetched source links across calls/resource reads/prompts under
+  the existing encoded bound. External prompt roles are separate attributed
+  metadata rather than a `user:` prefix or local authority.
+- Real SDK fixtures verify ordered text/image/audio/error evidence in supported
+  root/child provider requests and passive SQLite resume. Output schemas and list
+  changes invalidate exact grants; shell-host transport has a two-shell framed
+  journey with disconnect refusal, not automatic fallback.
+- Auto Review/YOLO acquisition → launch → access → use journeys have no
+  human-response helper. Durable installs and run-local authority remain separate;
+  ceilings, denials, credentials and actual human consent are not bypassed.
+- Managed execution binds native tools, commands, guidance, MCP roots and claims
+  to faithful dirty/accepted-document or parent-checkout baselines. Real concurrent
+  children, reviewed integration, inverse restore and linked Git administration
+  exclusion pass focused journeys. Unsupported filters/submodules/alternate bases
+  fail conservatively; native Windows/SSH acceptance is not established.
+- Connected control acceptance covers tree visibility, file/pane geometry, actual
+  PTY mount, ordinary workspace settings, session decks/questions, Memory/Board,
+  private composers and contextual authority. Sequential Linux 160×40 and 80×24
+  captures independently verified original framed receipts, one visible retained
+  terminal and persisted workspace Tab size=8; both test processes exited zero and
+  dedicated capture windows were closed. This is not exhaustive UI-family coverage.
+- Inspection obeys both the 128-record and 64-KiB result budgets, retaining the
+  exact first-unreturned Host cursor. Direct mounted lookup has no 4,096-virtual-row
+  cutoff. Existing performance gates pass after removing unrequested per-frame
+  semantic inventory and glyph-table heap allocation, without raising ceilings.
+- The additional reported upload defect was reproduced using an actual HTTP/2
+  TCP blackhole: stream cancellation alone reused the dead pooled connection after
+  cooldown. Exact progress-stall connection retirement now forces usable redial;
+  provider same-client and durable root/child automatic recovery/Stop tests pass.
+- Repository build, affected packages, focused races, docs/design and allocation
+  gates have passing evidence. The complete normal suite and zero-issue lint pass
+  after the recovery-publication fix. Full viewmodel race acceptance took 244 s:
+  its initial 240-s run exhausted the package budget during active SQLite work,
+  not a deadlock/race; a complete bounded 480-s rerun passed. Core/client,
+  capability/MCP/worktree/workspace, UI/settings and shellport race gates pass.
+  A race-run upload fixture initially buffered into header wait rather than
+  upload stall. A valid explicit 256-KiB stream receive window preserves the
+  requested upload-failure shape; the 32-KiB experiment caused flow-control
+  failures and was replaced, not accepted or hidden by weakening the assertion.
+  Final `go test ./... -count=1 -timeout=180s` and focused root/child upload +
+  panic-recovery race reruns pass with that bounded fixture. Repository lint
+  reports zero issues. Complete bench/docs/design gates remain unchanged and pass.
+  Windows amd64/macOS arm64 cross-builds pass. Native desktop interaction and
+  distinct-host SSH are unverified;
+  this plan stays active. No live core, production configuration or existing
+  user-session data was replaced or converted for these tests.
+
+### Remaining acceptance obligations
+
+Keep this plan active rather than inferring full release completion from the
+passing Linux gates:
+
+- Run native Windows/macOS filesystem, terminal and control interaction journeys,
+  and distinct-host SSH core/local-shell MCP placement. Cross-builds are not those
+  journeys. Credentials and OS consent stay user-owned.
+- Expand the checked semantic surface inventory and connected journeys beyond
+  the tested families; a mounted descriptor or direct product-handler unit test
+  does not establish exhaustive user-behind-the-keyboard parity.
+- Exercise shell-host cold resume/stale reconnect epochs and optional MCP features
+  only where the supported profile declares them; no host fallback/replay.
+- Add explicit connected negative journeys for busy/queued/compacting control
+  composer Send (currently intentionally refused rather than misattributed),
+  and additional domain commit/presentation-loss cases.
+- Verify configured worktree exclusion/failure/cleanup behavior on native hosts;
+  submodules, unsafe/nonregular files, filters and alternate bases are explicit
+  conservative limitations, not hidden copies or legacy fallback implementations.
 
 ## 9. Acceptance matrix
 

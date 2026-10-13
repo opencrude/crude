@@ -32,6 +32,7 @@ func (s *Session) newToolFn(multiAgent bool) func(ctx context.Context, tool stri
 
 func (s *Session) newAgent(p *provider.Provider, multiAgent bool, modalities []string) *agent.Agent {
 	a := agent.NewAgent(p, p.Model, s.logger)
+	a.MediaReadPolicy = &tools.MediaReadPolicy{Model: p.Model, Standard: p.StandardID(), Modalities: slices.Clone(modalities)}
 	if s.cfg != nil {
 		a.CommandPolicy = safety.CommandPolicyFromSettings(s.cfg.Safety)
 	}
@@ -45,7 +46,7 @@ func (s *Session) newAgent(p *provider.Provider, multiAgent bool, modalities []s
 
 	a.Policy = safety.DefaultPolicy()
 
-	a.ToolFn = s.buildToolFn(multiAgent, p, modalities)
+	a.ToolFn = s.buildToolFn(multiAgent, p, slices.Clone(modalities))
 	s.bindAgentPermissionPolicy(a)
 	return a
 }
@@ -79,13 +80,19 @@ func (s *Session) bindGuidanceCache(a *agent.Agent) {
 // buildToolFn constructs the actual tool dispatch closure. It reads session
 // state (yolo, multiAgent) at call time so it stays correct across turns.
 func (s *Session) buildToolFn(multiAgent bool, turnProvider *provider.Provider, modalities []string) func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
+	return s.buildToolFnAtRoot(multiAgent, turnProvider, modalities, s.WorkDir())
+}
+
+// buildToolFnAtRoot captures execution geometry without moving logical session
+// settings, collaboration or history to another checkout.
+func (s *Session) buildToolFnAtRoot(multiAgent bool, turnProvider *provider.Provider, modalities []string, root string) func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
 	return func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
 		if ctx != nil {
 			if err := ctx.Err(); err != nil {
 				return tools.ToolResult{Content: "Turn cancelled before tool execution."}, err
 			}
 		}
-		s.resolveRelativeParams(tool, params)
+		resolveRelativeParamsAtRoot(root, tool, params)
 		s.recordToolTouch(tool, params)
 		if result, handled, err := s.executeMemoryTool(ctx, tool, params); handled {
 			return result, err
@@ -96,7 +103,7 @@ func (s *Session) buildToolFn(multiAgent bool, turnProvider *provider.Provider, 
 			if s.cfg != nil {
 				policy = safety.CommandPolicyFromSettings(s.cfg.Safety)
 			}
-			return executeCodexCommand(ctx, s.asyncMgr, s.WorkDir(), tool, params, policy)
+			return executeCodexCommand(ctx, s.asyncMgr, root, tool, params, policy)
 		case "update_plan", "get_plan":
 			return s.executePlanTool(ctx, tool, params)
 		case "async_execute_command":
@@ -113,7 +120,7 @@ func (s *Session) buildToolFn(multiAgent bool, turnProvider *provider.Provider, 
 			}
 			cwd := getStrParam(params, "cwd")
 			if cwd == "" {
-				cwd = s.WorkDir()
+				cwd = root
 			}
 			timeout := tools.GetIntArgAny(params, "timeout_seconds", 0)
 			info, err := s.asyncMgr.Start(handle, command, cwd, timeout)
@@ -171,6 +178,9 @@ func (s *Session) buildToolFn(multiAgent bool, turnProvider *provider.Provider, 
 			}
 
 		case "execute_command":
+			if getStrParam(params, "cwd") == "" {
+				params["cwd"] = root
+			}
 			return s.executeCommandAutoPromote(ctx, params)
 
 		default:
@@ -178,7 +188,7 @@ func (s *Session) buildToolFn(multiAgent bool, turnProvider *provider.Provider, 
 			if opts == nil {
 				opts = &tools.ToolOptions{}
 			}
-			opts.WorkDir = s.WorkDir()
+			opts.WorkDir = root
 			opts.PrepareMutation = func(receipt fileio.MutationReceipt) (fileio.MutationComplete, error) {
 				return s.prepareHistoryMutation(ctx, receipt)
 			}
@@ -219,14 +229,10 @@ func toolOptionsForProvider(turnProvider *provider.Provider, modalities []string
 	}
 }
 
-// resolveRelativeParams rewrites relative path parameters against the
-// session's workspace root so every tool (read/write/edit/glob/grep/list and
-// command cwd) operates inside the project the session belongs to.
-func (s *Session) resolveRelativeParams(tool string, params map[string]any) {
-	if s == nil || params == nil {
+func resolveRelativeParamsAtRoot(root, tool string, params map[string]any) {
+	if params == nil {
 		return
 	}
-	root := s.workDir
 	if root == "" {
 		return
 	}
@@ -250,9 +256,11 @@ func (s *Session) resolveRelativeParams(tool string, params map[string]any) {
 			}
 		}
 	}
-	if tool == "grep_files" || tool == "execute_command" || tool == "async_execute_command" {
-		if value, ok := params["cwd"].(string); ok && value != "" && !filepath.IsAbs(value) {
-			params["cwd"] = filepath.Join(root, value)
+	if tool == "grep_files" || tool == "execute_command" || tool == "async_execute_command" || tool == "exec_command" {
+		for _, key := range []string{"cwd", "workdir"} {
+			if value, ok := params[key].(string); ok && value != "" && !filepath.IsAbs(value) {
+				params[key] = filepath.Join(root, value)
+			}
 		}
 	}
 }

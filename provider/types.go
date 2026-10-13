@@ -2,6 +2,7 @@ package provider
 
 import (
 	"bytes"
+	"crude/types/control"
 	"crude/types/reasoning"
 	"encoding/json"
 	"fmt"
@@ -21,6 +22,9 @@ type UserInput struct {
 	// the memory system can boost recall of memories scoped to those paths.
 	ActivePaths   []string
 	Collaboration *CollaborationAttribution
+	// ControlTarget is trusted IDE admission context, not model-authored text.
+	// The immutable submitting attachment does not follow later tab selections.
+	ControlTarget *control.Target
 }
 
 type CollaborationAttribution struct {
@@ -50,6 +54,21 @@ func InputWithRefs(text string, refIDs []string) UserInput {
 
 func RuntimeInput(origin MessageOrigin, text string) UserInput {
 	return UserInput{Text: text, Origin: origin}
+}
+
+// ControlInputProvenance is immutable source evidence, never human intent.
+// Its serialized ContextPart survives preparation, checkpoints and provider
+// projection without coupling provider contracts to workspace/core owners.
+type ControlInputProvenance struct {
+	ControlRequestID string         `json:"control_request_id"`
+	Caller           control.Caller `json:"caller"`
+}
+
+func InputFromControl(text string, refs []string, provenance ControlInputProvenance) UserInput {
+	evidence, _ := json.Marshal(struct {
+		ControlInput ControlInputProvenance `json:"control_input"`
+	}{provenance})
+	return UserInput{Text: text, ReferenceIDs: append([]string(nil), refs...), Origin: OriginRuntimeContext, ContextParts: []string{string(evidence)}}
 }
 
 func (i UserInput) EffectiveOrigin() MessageOrigin {
