@@ -83,3 +83,7 @@ func (m Model) PasteCurrent(event PasteAttachmentEvent) bool {
 }
 
 func (m Model) DraftEpoch() uint64 { return m.draftEpoch }
+
+// HasPendingPastes is the semantic Send barrier for attachment persistence.
+// Only exact-current completions or an explicit draft replacement release it.
+func (m Model) HasPendingPastes() bool { return len(m.pendingPastes) != 0 }

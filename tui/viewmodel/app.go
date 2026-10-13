@@ -62,7 +62,10 @@ const (
 
 type Logger = workspace.Logger
 type App struct {
-	ws shellport.Workspace
+	ws                   shellport.Workspace
+	shellControlRevision uint64
+	shellControlStamp    [32]byte
+	shellControlPending  int
 
 	// Focus belongs to this shell, never to the workspace runtime. A second
 	// shell must not observe or reset another shell's navigation stack.

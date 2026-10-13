@@ -3,7 +3,6 @@ package mcpclient
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -13,6 +12,8 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path/filepath"
+	"reflect"
 	"regexp"
 	"runtime"
 	"sort"
@@ -20,6 +21,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/google/jsonschema-go/jsonschema"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 
 	"crude/network"
@@ -40,6 +42,7 @@ type connection struct {
 	discovered      bool
 	interactiveAuth bool
 	secrets         map[string]struct{}
+	outputSchemas   map[string]*jsonschema.Resolved
 }
 
 type Manager struct {
@@ -62,6 +65,12 @@ func New(root string) *Manager {
 func Validate(config captypes.ConnectionConfig) error {
 	if !identityPattern.MatchString(config.ID) || strings.TrimSpace(config.Name) == "" {
 		return errors.New("connection needs a stable alphanumeric ID and a name")
+	}
+	if config.Host != "" && config.Host != "core" && config.Host != "shell" {
+		return errors.New("MCP host must be core or shell")
+	}
+	if config.Host == "shell" && config.Transport != "stdio" {
+		return errors.New("shell MCP host supports stdio only")
 	}
 	switch config.Transport {
 	case "http":
@@ -169,7 +178,18 @@ func (manager *Manager) Connect(ctx context.Context, id string) error {
 	return manager.connect(ctx, id, false)
 }
 
+type launchAuthorizationKey struct{}
+
+// ConnectAuthorized admits one exact, internally reviewed launch without
+// persisting LaunchApproved. It is not an agent parameter or a durable grant.
+func (manager *Manager) ConnectAuthorized(ctx context.Context, id string, expected captypes.ConnectionConfig) error {
+	return manager.connect(context.WithValue(ctx, launchAuthorizationKey{}, expected), id, false)
+}
+
 func (manager *Manager) connect(ctx context.Context, id string, interactive bool) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	manager.mu.Lock()
 	entry := manager.connections[id]
 	if manager.closed || entry == nil {
@@ -185,6 +205,14 @@ func (manager *Manager) connect(ctx context.Context, id string, interactive bool
 		return errors.New("connection is already connecting")
 	}
 	config := entry.config
+	if config.Host == "shell" {
+		manager.mu.Unlock()
+		return errors.New("shell MCP connection requires exact connected-shell dispatcher")
+	}
+	if expected, authorized := ctx.Value(launchAuthorizationKey{}).(captypes.ConnectionConfig); authorized && !reflect.DeepEqual(expected, config) {
+		manager.mu.Unlock()
+		return errors.New("MCP launch configuration changed after authorization")
+	}
 	if config.Disabled {
 		manager.mu.Unlock()
 		return errors.New("connection is disabled")
@@ -205,8 +233,10 @@ func (manager *Manager) connect(ctx context.Context, id string, interactive bool
 		return fmt.Errorf("connection needs required environment configuration: %s", strings.Join(missing, ", "))
 	}
 	if config.Transport == "stdio" && !config.LaunchApproved {
-		manager.mu.Unlock()
-		return errors.New("local server launch needs explicit approval; automatic unsandboxed launches are forbidden")
+		if _, authorized := ctx.Value(launchAuthorizationKey{}).(captypes.ConnectionConfig); !authorized {
+			manager.mu.Unlock()
+			return errors.New("local server launch requires approval/authorization for its exact configuration")
+		}
 	}
 	entry.epoch++
 	epoch := entry.epoch
@@ -251,6 +281,10 @@ func (manager *Manager) connect(ctx context.Context, id string, interactive bool
 			manager.log(id, epoch, fmt.Sprintf("Progress: %v", request.Params.Progress))
 		},
 	})
+	if manager.root != "" {
+		//nolint:staticcheck // Roots remain interoperable for negotiated pre-2026-07-28 servers during the official SDK deprecation window; newer protocols do not use this callback.
+		client.AddRoots(&mcp.Root{URI: (&url.URL{Scheme: "file", Path: filepath.ToSlash(manager.root)}).String(), Name: filepath.Base(manager.root)})
+	}
 	transport, cleanup, err := manager.transport(config, lifetime, epoch, interactive)
 	if err != nil {
 		cancel()
@@ -411,6 +445,8 @@ func (manager *Manager) transport(config captypes.ConnectionConfig, lifetime con
 		command.Dir = config.Directory
 		if command.Dir == "" {
 			command.Dir = manager.root
+		} else if !filepath.IsAbs(command.Dir) {
+			command.Dir = filepath.Join(manager.root, command.Dir)
 		}
 		command.Env = []string{"PATH=" + os.Getenv("PATH")}
 		for name, value := range config.Environment {
@@ -423,7 +459,7 @@ func (manager *Manager) transport(config captypes.ConnectionConfig, lifetime con
 			}
 			command.Env = append(command.Env, name+"="+value)
 		}
-		return &mcp.CommandTransport{Command: command}, cleanup, nil
+		return &boundedCommandTransport{command: command}, cleanup, nil
 	}
 	headers := make(map[string]string)
 	for name, value := range config.Headers {
@@ -551,6 +587,7 @@ func (manager *Manager) Refresh(ctx context.Context, id string) error {
 	ctx, cancel := context.WithTimeout(ctx, time.Duration(seconds)*time.Second)
 	defer cancel()
 	state := captypes.ConnectionState{ID: id, State: "connected"}
+	outputSchemas := make(map[string]*jsonschema.Resolved)
 	cursor := ""
 	seen := make(map[string]bool)
 	pages := 0
@@ -573,8 +610,25 @@ func (manager *Manager) Refresh(ctx context.Context, id string) error {
 				if err != nil || len(schema) > 64<<10 {
 					return fmt.Errorf("tool %q has an invalid or oversized input schema", tool.Name)
 				}
-				fingerprint := digest(append([]byte(tool.Name+"\n"+tool.Description+"\n"), schema...))
-				projected := captypes.Tool{Name: ToolName(id, tool.Name), OriginalName: tool.Name, ConnectionID: id, Description: tool.Description, InputSchema: schema, Fingerprint: fingerprint, Reason: "Needs explicit effect and scope grant"}
+				var output json.RawMessage
+				var resolved *jsonschema.Resolved
+				if tool.OutputSchema != nil {
+					output, err = json.Marshal(tool.OutputSchema)
+					if err != nil || len(schema)+len(output) > 64<<10 {
+						return fmt.Errorf("tool %q has an invalid or oversized output schema", tool.Name)
+					}
+					resolved, err = resolveOutputSchema(output)
+					if err != nil {
+						return fmt.Errorf("tool %q has an invalid output schema: %w", tool.Name, err)
+					}
+				}
+				identity, _ := json.Marshal(struct {
+					Name, Description string
+					Input, Output     json.RawMessage
+				}{tool.Name, tool.Description, schema, output})
+				fingerprint := digest(identity)
+				outputSchemas[fingerprint] = resolved
+				projected := captypes.Tool{Name: ToolName(id, tool.Name), OriginalName: tool.Name, ConnectionID: id, Description: tool.Description, InputSchema: schema, OutputSchema: output, Fingerprint: fingerprint, Reason: "Needs explicit effect and scope grant"}
 				if grant, found := config.Grants[tool.Name]; found && !grant.Disabled && grant.Fingerprint == fingerprint && grant.Scope != "" && validEffect(grant.Effect) {
 					projected.Effect, projected.Scope, projected.Selected, projected.Reason = grant.Effect, grant.Scope, true, ""
 				}
@@ -657,6 +711,7 @@ func (manager *Manager) Refresh(ctx context.Context, id string) error {
 	}
 	state.Logs = entry.state.Logs
 	entry.state, entry.discovered = state, true
+	entry.outputSchemas = outputSchemas
 	return nil
 }
 
@@ -681,6 +736,22 @@ func validEffect(effect captypes.Effect) bool {
 }
 
 func (manager *Manager) Call(ctx context.Context, tool captypes.Tool, arguments map[string]any) (captypes.Result, error) {
+	return manager.call(ctx, tool, arguments, nil)
+}
+
+// CallAuthorized uses a task-local grant that the capability owner has already
+// checked. Live discovery and the entire connection preimage are still required.
+// It never modifies the saved connection or its durable grants.
+func (manager *Manager) CallAuthorized(ctx context.Context, tool captypes.Tool, arguments map[string]any, expected captypes.ConnectionConfig, grant captypes.ToolGrant) (captypes.Result, error) {
+	return manager.call(ctx, tool, arguments, &taskCallAuthorization{expected: expected, grant: grant})
+}
+
+type taskCallAuthorization struct {
+	expected captypes.ConnectionConfig
+	grant    captypes.ToolGrant
+}
+
+func (manager *Manager) call(ctx context.Context, tool captypes.Tool, arguments map[string]any, task *taskCallAuthorization) (captypes.Result, error) {
 	session, config, _, err := manager.session(tool.ConnectionID)
 	if err != nil {
 		return captypes.Result{}, err
@@ -688,10 +759,12 @@ func (manager *Manager) Call(ctx context.Context, tool captypes.Tool, arguments 
 	manager.mu.RLock()
 	entry := manager.connections[tool.ConnectionID]
 	currentGrant := false
+	var outputSchema *jsonschema.Resolved
 	if entry != nil && entry.discovered {
 		for _, current := range entry.state.Tools {
-			if current.Name == tool.Name && current.Fingerprint == tool.Fingerprint && current.Effect == tool.Effect && current.Scope == tool.Scope && current.Selected {
+			if current.Name == tool.Name && current.Fingerprint == tool.Fingerprint && (task != nil || current.Effect == tool.Effect && current.Scope == tool.Scope && current.Selected) {
 				currentGrant = true
+				outputSchema = entry.outputSchemas[current.Fingerprint]
 				break
 			}
 		}
@@ -701,6 +774,12 @@ func (manager *Manager) Call(ctx context.Context, tool captypes.Tool, arguments 
 		return captypes.Result{}, errors.New("MCP operation changed or discovery is unverified; refresh and review access before execution")
 	}
 	grant, exists := config.Grants[tool.OriginalName]
+	if task != nil {
+		if !reflect.DeepEqual(task.expected, config) {
+			return captypes.Result{}, errors.New("MCP connection changed after task authorization")
+		}
+		grant, exists = task.grant, true
+	}
 	if !exists || grant.Disabled || grant.Fingerprint != tool.Fingerprint || grant.Scope != tool.Scope || grant.Effect != tool.Effect || !validEffect(tool.Effect) {
 		return captypes.Result{}, errors.New("MCP tool grant is missing, revoked, or changed")
 	}
@@ -715,33 +794,32 @@ func (manager *Manager) Call(ctx context.Context, tool captypes.Tool, arguments 
 		unknown := tool.Effect != captypes.EffectRead
 		return captypes.Result{Unknown: unknown, IsError: true}, manager.safeError(config, err)
 	}
-	projected := captypes.Result{IsError: result.IsError}
+	projection := newContentProjection(manager, config)
+	projection.result.IsError = result.IsError
+	var evidenceError error
 	for _, item := range result.Content {
-		switch content := item.(type) {
-		case *mcp.TextContent:
-			projected.Content = append(projected.Content, captypes.Content{Type: "text", Text: manager.redact(config, content.Text)})
-		case *mcp.ImageContent:
-			projected.Content = append(projected.Content, captypes.Content{Type: "image", Data: base64.StdEncoding.EncodeToString(content.Data), MIMEType: content.MIMEType})
-		default:
-			encoded, err := json.Marshal(content)
-			if err != nil {
-				return captypes.Result{}, err
+		if err := projection.appendContent(item); err != nil {
+			if evidenceError == nil {
+				evidenceError = err
 			}
-			projected.Content = append(projected.Content, captypes.Content{Type: "text", Text: manager.redact(config, string(encoded))})
 		}
 	}
-	if result.StructuredContent != nil {
-		encoded, err := json.Marshal(result.StructuredContent)
-		if err != nil {
-			return captypes.Result{}, err
+	if err := projection.structured(result.StructuredContent); err != nil {
+		if evidenceError == nil {
+			evidenceError = err
 		}
-		projected.Structured = json.RawMessage(manager.redact(config, string(encoded)))
 	}
-	encoded, _ := json.Marshal(projected)
-	if len(encoded) > maxResultBytes {
-		return captypes.Result{}, errors.New("MCP result exceeds the 1 MiB output budget")
+	// Validate the received JSON, before credential redaction can change its types.
+	// This is local evidence failure after an ACK, never an unknown remote effect.
+	if outputSchema != nil {
+		if err := validateStructuredOutput(outputSchema, result.StructuredContent); err != nil && evidenceError == nil {
+			evidenceError = err
+		}
 	}
-	return projected, nil
+	if evidenceError != nil {
+		return projection.acknowledgedFailure(tool.Effect, evidenceError)
+	}
+	return projection.finish()
 }
 
 func (manager *Manager) ReadResource(ctx context.Context, id, uri string) (captypes.Result, error) {
@@ -759,15 +837,13 @@ func (manager *Manager) ReadResource(ctx context.Context, id, uri string) (capty
 	if err != nil {
 		return captypes.Result{}, manager.safeError(config, err)
 	}
-	projected := captypes.Result{}
+	projection := newContentProjection(manager, config)
 	for _, content := range result.Contents {
-		projected.Content = append(projected.Content, captypes.Content{Type: "resource", Text: manager.redact(config, content.Text), URI: content.URI, Data: base64.StdEncoding.EncodeToString(content.Blob), MIMEType: content.MIMEType})
+		if err := projection.appendResource(content); err != nil {
+			return captypes.Result{}, err
+		}
 	}
-	encoded, _ := json.Marshal(projected)
-	if len(encoded) > maxResultBytes {
-		return captypes.Result{}, errors.New("MCP resource exceeds the 1 MiB output budget")
-	}
-	return projected, nil
+	return projection.finish()
 }
 
 func (manager *Manager) GetPrompt(ctx context.Context, id, name string, arguments map[string]string) (captypes.Result, error) {
@@ -785,17 +861,22 @@ func (manager *Manager) GetPrompt(ctx context.Context, id, name string, argument
 	if err != nil {
 		return captypes.Result{}, manager.safeError(config, err)
 	}
-	projected := captypes.Result{}
+	projection := newContentProjection(manager, config)
+	// Roles describe external source messages, never local instruction authority.
+	attribution := promptAttribution{ConnectionID: id, Name: name}
 	for _, message := range result.Messages {
-		if text, ok := message.Content.(*mcp.TextContent); ok {
-			projected.Content = append(projected.Content, captypes.Content{Type: "prompt", Text: string(message.Role) + ": " + manager.redact(config, text.Text)})
+		if message == nil {
+			return captypes.Result{}, errors.New("MCP prompt contains a nil message")
+		}
+		attribution.Messages = append(attribution.Messages, promptMessageAttribution{Role: string(message.Role), ContentIndex: len(projection.result.Content)})
+		if err := projection.appendContent(message.Content); err != nil {
+			return captypes.Result{}, err
 		}
 	}
-	encoded, _ := json.Marshal(projected)
-	if len(encoded) > maxResultBytes {
-		return captypes.Result{}, errors.New("MCP prompt exceeds the 1 MiB output budget")
+	if err := projection.structured(attribution); err != nil {
+		return captypes.Result{}, err
 	}
-	return projected, nil
+	return projection.finish()
 }
 
 func (manager *Manager) Disconnect(id string) error {

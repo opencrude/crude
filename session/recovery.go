@@ -245,6 +245,10 @@ func cloneUserInput(input provider.UserInput) provider.UserInput {
 	result.ReferenceIDs = append([]string(nil), input.ReferenceIDs...)
 	result.ContextParts = append([]string(nil), input.ContextParts...)
 	result.ActivePaths = append([]string(nil), input.ActivePaths...)
+	if input.ControlTarget != nil {
+		copy := input.ControlTarget.Clone()
+		result.ControlTarget = &copy
+	}
 	if input.Collaboration != nil {
 		copy := *input.Collaboration
 		copy.RecipientIDs = append([]string(nil), input.Collaboration.RecipientIDs...)

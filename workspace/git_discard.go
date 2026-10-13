@@ -17,13 +17,17 @@ type GitDiscardPreview struct {
 }
 
 func (workspace *Workspace) PreviewGitDiscard(ctx context.Context, change GitChange) (GitDiscardPreview, error) {
-	if workspace.LocalHistory == nil || workspace.Git == nil {
+	return PreviewGitDiscardAt(ctx, workspace.Git, workspace.LocalHistory, change)
+}
+
+func PreviewGitDiscardAt(ctx context.Context, git *GitService, store *localhistory.Store, change GitChange) (GitDiscardPreview, error) {
+	if store == nil || git == nil {
 		return GitDiscardPreview{}, errors.New("discard requires available repository and Local History recovery")
 	}
 	if change.Area != GitAreaWorking {
 		return GitDiscardPreview{}, errors.New("discard only applies to reviewed tracked working-tree changes; untracked files are never deleted")
 	}
-	comparison, err := workspace.Git.Compare(ctx, change)
+	comparison, err := git.Compare(ctx, change)
 	if err != nil {
 		return GitDiscardPreview{}, err
 	}
@@ -34,19 +38,44 @@ func (workspace *Workspace) PreviewGitDiscard(ctx context.Context, change GitCha
 }
 
 func (workspace *Workspace) DiscardGitReviewed(ctx context.Context, preview GitDiscardPreview) (string, error) {
-	if workspace.LocalHistory == nil || workspace.Git == nil || preview.Comparison.Fingerprint == "" {
+	return DiscardGitReviewedAt(ctx, workspace.Git, workspace.LocalHistory, workspace.LiveDocuments, preview)
+}
+
+func DiscardGitReviewedAt(ctx context.Context, git *GitService, store *localhistory.Store, documents *DocumentService, preview GitDiscardPreview) (string, error) {
+	if store == nil || git == nil || preview.Comparison.Fingerprint == "" {
 		return "", errors.New("discard preview or mandatory recovery store is unavailable")
 	}
+	var safetyID string
+	run := func() error {
+		var err error
+		safetyID, err = discardGitReviewedDisk(ctx, git, store, preview)
+		return err
+	}
+	if documents != nil {
+		err := documents.WithHistoryMutation(ctx, []string{preview.Comparison.AbsolutePath}, run)
+		return safetyID, err
+	}
+	err := run()
+	return safetyID, err
+}
+
+func discardGitReviewedDisk(ctx context.Context, service *GitService, store *localhistory.Store, preview GitDiscardPreview) (string, error) {
 	unlock, err := fileio.LockMutationContext(ctx)
 	if err != nil {
 		return "", err
 	}
 	defer unlock()
-	service := workspace.Git
 	service.mu.Lock()
 	defer service.mu.Unlock()
 	comparison := preview.Comparison
 	verify := func() error {
+		if comparison.RepositoryRoot != service.root {
+			return errors.New("discard preview belongs to another repository")
+		}
+		path, err := integrationPath(service.root, filepath.ToSlash(comparison.Path))
+		if err != nil || path != comparison.AbsolutePath {
+			return errors.New("discard target path changed or contains a symlink")
+		}
 		state, err := service.readReviewState(ctx)
 		if err != nil {
 			return err
@@ -67,7 +96,7 @@ func (workspace *Workspace) DiscardGitReviewed(ctx context.Context, preview GitD
 	if err := verify(); err != nil {
 		return "", err
 	}
-	safety, err := workspace.LocalHistory.Snapshot(ctx, localhistory.SnapshotOptions{Kind: "safety", Label: "Before Git discard: " + comparison.Path, IncludePaths: []string{comparison.Path}, DisableGitIgnore: true, MaxFileSize: gitComparisonLimit})
+	safety, err := store.Snapshot(ctx, localhistory.SnapshotOptions{Kind: "safety", Label: "Before Git discard: " + comparison.Path, IncludePaths: []string{comparison.Path}, DisableGitIgnore: true, MaxFileSize: gitComparisonLimit})
 	if err != nil {
 		return "", err
 	}

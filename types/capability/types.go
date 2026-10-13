@@ -2,6 +2,7 @@ package capability
 
 import (
 	"context"
+	"crude/types/control"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -62,6 +63,7 @@ type ToolGrant struct {
 type ConnectionConfig struct {
 	ID             string               `json:"id"`
 	Name           string               `json:"name"`
+	Host           string               `json:"host,omitempty"`
 	Transport      string               `json:"transport"`
 	URL            string               `json:"url,omitempty"`
 	Command        string               `json:"command,omitempty"`
@@ -138,6 +140,7 @@ type Tool struct {
 	Name         string
 	Description  string
 	InputSchema  json.RawMessage
+	OutputSchema json.RawMessage
 	ConnectionID string
 	OriginalName string
 	Fingerprint  string
@@ -242,19 +245,27 @@ type Action struct {
 }
 
 type RuntimeActor struct {
-	ID           string
-	ParentID     string
-	SessionID    string
-	AllowedTools []string
-	DeniedTools  []string
-	Effects      []Effect
-	SkillModes   map[string]string
+	ID             string
+	RunID          string
+	RuntimeEpoch   uint64
+	TurnGeneration uint64
+	WorkspaceID    string
+	ShellOwner     *control.ShellOwner
+	ExecutionRoot  string
+	ParentID       string
+	SessionID      string
+	AllowedTools   []string
+	DeniedTools    []string
+	Effects        []Effect
+	SkillModes     map[string]string
 }
 
 type RuntimeSnapshot struct {
-	Generation uint64
-	Tools      []Tool
-	Notices    []string
+	Generation     uint64
+	RunID          string
+	TurnGeneration uint64
+	Tools          []Tool
+	Notices        []string
 }
 
 type Runtime interface {
@@ -298,6 +309,7 @@ type SearchResult struct {
 
 type AccessApprovalRequired struct {
 	Preview AccessPreview
+	Actor   RuntimeActor
 }
 
 func (request *AccessApprovalRequired) Error() string {
@@ -324,6 +336,7 @@ type ApprovalRequired struct {
 	ID      string
 	Reason  string
 	Preview AcquisitionPreview
+	Actor   RuntimeActor
 }
 
 func (request *ApprovalRequired) CapabilityApprovalContext(ctx context.Context) context.Context {

@@ -32,6 +32,7 @@ import (
 	"crude/tools"
 	ttypes "crude/types"
 	recoverytypes "crude/types/recovery"
+	"crude/worktree"
 )
 
 type SubAgentRunner struct {
@@ -288,15 +289,17 @@ func (r *SubAgentRunner) StartAgent(ctx context.Context, params map[string]any) 
 	name := deriveSubAgentName(category, description)
 
 	spec := agent.SubAgentSpec{
-		ID:           agent.AgentID("agent-" + generateShortID()),
-		Name:         name,
-		Category:     category,
-		Description:  description,
-		Instructions: getStrParam(params, "instructions"),
-		PolicyName:   getStrParam(params, "policy"),
-		Depth:        1,
-		ParentID:     agent.AgentID(r.orchestratorID),
-		ParentTurn:   r.parentTurn.Load(),
+		ID:            agent.AgentID("agent-" + generateShortID()),
+		Name:          name,
+		Category:      category,
+		Description:   description,
+		Instructions:  getStrParam(params, "instructions"),
+		PolicyName:    getStrParam(params, "policy"),
+		Depth:         1,
+		ParentID:      agent.AgentID(r.orchestratorID),
+		ParentTurn:    r.parentTurn.Load(),
+		Isolation:     getStrParam(params, "isolation"),
+		ControlTarget: controlTargetFromContext(ctx),
 	}
 	if history, ok := historyScopeFromContext(ctx); ok {
 		spec.HistoryMessageID = history.messageID
@@ -310,21 +313,15 @@ func (r *SubAgentRunner) StartAgent(ctx context.Context, params map[string]any) 
 	}
 	if raw, ok := params["file_ownership"]; ok {
 		spec.FileOwnership = toStringSlice(raw)
-		validated, validateErr := validateOwnershipPaths(r.session.WorkDir(), spec.FileOwnership)
+		_, validateErr := validateOwnershipPaths(r.session.WorkDir(), spec.FileOwnership)
 		if validateErr != nil {
 			return tools.ToolResult{Content: "Error: " + validateErr.Error()}, validateErr
 		}
-		spec.FileOwnership = validated
 	}
 
 	profileInstructions := r.resolveProfile(profileName, category, &spec)
 	if err := validateChildReportPermission(spec); err != nil {
 		return tools.ToolResult{}, err
-	}
-	for index, path := range spec.FileOwnership {
-		if path != "" && !filepath.IsAbs(path) {
-			spec.FileOwnership[index] = filepath.Join(r.session.WorkDir(), path)
-		}
 	}
 	activeConfig := r.effectiveCfg
 	if activeConfig == nil {
@@ -353,12 +350,6 @@ func (r *SubAgentRunner) StartAgent(ctx context.Context, params map[string]any) 
 		return tools.ToolResult{Content: fmt.Sprintf("Error: %s", err)}, fmt.Errorf("%s", err)
 	}
 
-	if len(spec.FileOwnership) > 0 {
-		if err := r.fileOwnership.PreClaim(spec.ID, spec.Name, spec.FileOwnership); err != nil {
-			return tools.ToolResult{Content: fmt.Sprintf("Error: %s", err)}, fmt.Errorf("%s", err)
-		}
-	}
-
 	handle, err := r.launchSubAgent(ctx, spec, profileInstructions)
 	if err != nil {
 		r.fileOwnership.Release(spec.ID)
@@ -380,6 +371,7 @@ func (r *SubAgentRunner) StartAgent(ctx context.Context, params map[string]any) 
 		"agent_id": string(spec.ID), "name": spec.Name, "category": spec.Category,
 		"status": "running", "session_id": handle.SessionID,
 		"run_id": runID, "run_version": runVersion,
+		"execution_id": handle.Spec.ExecutionID, "execution_root": handle.Spec.ExecutionRoot, "isolation": handle.Spec.Isolation,
 	})
 	return tools.ToolResult{Content: string(resultJSON)}, nil
 }
@@ -530,6 +522,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	filteredTools := agent.FilterToolsForModel(allToolDefs, spec.AllowedTools, spec.DeniedTools, spec.Category, true, p.Model)
 
 	a := agent.NewAgent(p, p.Model, r.session.logger)
+	a.MediaReadPolicy = &tools.MediaReadPolicy{Model: p.Model, Standard: p.StandardID(), Modalities: slices.Clone(spec.ModelModalities)}
 	a.WorkDir = r.session.WorkDir()
 	a.GuidancePaths = append([]string(nil), spec.FileOwnership...)
 	r.session.bindContinuity(a, subDB, subSessionID)
@@ -588,12 +581,95 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 		SessionID: subSessionID,
 		DB:        subDB,
 	}
+	registered, err := r.session.registerCollaborator(subCtx, string(spec.ID), spec.Name, subSessionID, string(spec.ParentID), spec.Category, subDB)
+	if err != nil {
+		r.fileOwnership.Release(spec.ID)
+		if subDB != nil {
+			_ = sessiondb.CloseSession(subDB, subSessionID)
+			_ = subDB.Close()
+		}
+		subCancel()
+		return nil, fmt.Errorf("register workspace child: %w", err)
+	}
+	handle.RuntimeEpoch = registered.RuntimeEpoch
+	launched := false
+	defer func() {
+		if launched {
+			return
+		}
+		subCancel()
+		a.AsyncMgr.CloseAndWait()
+		if store := r.session.CollaborationStore(); store != nil {
+			if runID, runVersion := handle.RunIdentity(); runID != "" {
+				_, _ = store.FinishRun(context.Background(), collaboration.FinishRunRequest{
+					RunID: runID, AgentID: string(spec.ID), RuntimeEpoch: handle.RuntimeEpoch,
+					ExpectedVersion: runVersion, State: collaboration.RunCancelled, Outcome: "launch aborted",
+				})
+			}
+		}
+		r.releaseExecutionPin(spec, handle)
+		r.fileOwnership.Release(spec.ID)
+		_ = subDB.Close()
+		r.session.detachCollaborator(context.Background(), string(spec.ID))
+	}()
+	if store := r.session.CollaborationStore(); store != nil && handle.RuntimeEpoch > 0 {
+		run, runErr := store.StartRun(ctx, collaboration.StartRunRequest{
+			AgentID: string(spec.ID), RuntimeEpoch: handle.RuntimeEpoch,
+			RequestID: spec.ParentToolCallID, Origin: collaboration.OriginPeer,
+		})
+		if runErr != nil {
+			r.session.detachCollaborator(context.Background(), string(spec.ID))
+			r.fileOwnership.Release(spec.ID)
+			if subDB != nil {
+				_ = sessiondb.CloseSession(subDB, subSessionID)
+				_ = subDB.Close()
+			}
+			subCancel()
+			return nil, fmt.Errorf("start workspace child run: %w", runErr)
+		}
+		handle.SetRunIdentity(run.ID, run.Version)
+		a.RunID = run.ID
+		if err := r.prepareChildExecution(ctx, &spec, run.ID); err != nil {
+			return nil, fmt.Errorf("prepare child execution: %w", err)
+		}
+		handle.Spec = spec
+		a.WorkDir = spec.ExecutionRoot
+		a.GuidancePaths = slices.Clone(spec.FileOwnership)
+		if err := r.fileOwnership.PreClaim(spec.ID, spec.Name, spec.FileOwnership); err != nil {
+			return nil, err
+		}
+
+		if len(spec.FileOwnership) > 0 {
+			if _, err := store.AcquireClaims(ctx, collaboration.AcquireClaimsRequest{
+				AgentID: string(spec.ID), RunID: run.ID, RequestID: spec.ParentToolCallID, Paths: spec.FileOwnership,
+			}); err != nil {
+				r.fileOwnership.Release(spec.ID)
+				if subDB != nil {
+					_ = subDB.Close()
+				}
+				return nil, fmt.Errorf("reserve workspace child ownership: %w", err)
+			}
+		}
+	} else {
+		// Standalone explicit shared sessions create no managed artifact or
+		// setup effects. Managed execution always requires a durable run owner.
+		if spec.Isolation != string(worktree.Shared) {
+			return nil, errors.New("child execution requires a durable collaboration run")
+		}
+		spec.ExecutionRoot = r.session.WorkDir()
+		spec.FileOwnership, err = validateOwnershipPaths(spec.ExecutionRoot, spec.FileOwnership)
+		if err != nil {
+			return nil, err
+		}
+		handle.Spec = spec
+	}
+
 	promptAllowed, promptDenied := agent.ModelToolSelection(spec.AllowedTools, spec.DeniedTools, spec.Model)
 	systemPrompt, userPrompt := rootprompt.BuildChild(rootprompt.ChildOptions{
 		Category: spec.Category, Name: spec.Name, ID: string(spec.ID), ParentID: string(spec.ParentID), ParentTurn: spec.ParentTurn,
 		Description: spec.Description, Instructions: spec.Instructions, PolicyName: spec.PolicyName,
 		AllowedTools: promptAllowed, DeniedTools: promptDenied, FileOwnership: spec.FileOwnership,
-		ProfileInstructions: profileInstructions, WorkDir: r.session.WorkDir(),
+		ProfileInstructions: profileInstructions, WorkDir: spec.ExecutionRoot,
 		TempDir: childTempDir, Model: spec.Model,
 	})
 	ownerData, err := json.Marshal(childRecoveryOwner{Spec: spec, ProfileInstructions: profileInstructions})
@@ -656,71 +732,18 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 		subCancel()
 		return nil, fmt.Errorf("persist child assignment: %w", err)
 	}
-	registered, err := r.session.registerCollaborator(subCtx, string(spec.ID), spec.Name, subSessionID, string(spec.ParentID), spec.Category, subDB)
-	if err != nil {
-		_ = supervisor.Cancel()
-		r.session.finishRecovery(string(spec.ID), supervisor.IncidentID(), 1)
-		r.fileOwnership.Release(spec.ID)
-		if subDB != nil {
-			_ = sessiondb.CloseSession(subDB, subSessionID)
-			_ = subDB.Close()
-		}
-		subCancel()
-		return nil, fmt.Errorf("register workspace child: %w", err)
-	}
-	handle.RuntimeEpoch = registered.RuntimeEpoch
-	launched := false
 	defer func() {
-		if launched {
-			return
+		if !launched {
+			_ = supervisor.Cancel()
+			r.session.finishRecovery(string(spec.ID), supervisor.IncidentID(), 1)
 		}
-		_ = supervisor.Cancel()
-		r.session.finishRecovery(string(spec.ID), supervisor.IncidentID(), 1)
-		subCancel()
-		a.AsyncMgr.CloseAndWait()
-		if store := r.session.CollaborationStore(); store != nil {
-			if runID, runVersion := handle.RunIdentity(); runID != "" {
-				_, _ = store.FinishRun(context.Background(), collaboration.FinishRunRequest{
-					RunID: runID, AgentID: string(spec.ID), RuntimeEpoch: handle.RuntimeEpoch,
-					ExpectedVersion: runVersion, State: collaboration.RunCancelled, Outcome: "launch aborted",
-				})
-			}
-		}
-		r.session.detachCollaborator(context.Background(), string(spec.ID))
 	}()
-	if store := r.session.CollaborationStore(); store != nil && handle.RuntimeEpoch > 0 {
-		run, runErr := store.StartRun(ctx, collaboration.StartRunRequest{
-			AgentID: string(spec.ID), RuntimeEpoch: handle.RuntimeEpoch,
-			RequestID: spec.ParentToolCallID, Origin: collaboration.OriginPeer,
-		})
-		if runErr != nil {
-			r.session.detachCollaborator(context.Background(), string(spec.ID))
-			r.fileOwnership.Release(spec.ID)
-			if subDB != nil {
-				_ = sessiondb.CloseSession(subDB, subSessionID)
-				_ = subDB.Close()
-			}
-			subCancel()
-			return nil, fmt.Errorf("start workspace child run: %w", runErr)
-		}
-		handle.SetRunIdentity(run.ID, run.Version)
-		if len(spec.FileOwnership) > 0 {
-			if _, err := store.AcquireClaims(ctx, collaboration.AcquireClaimsRequest{
-				AgentID: string(spec.ID), RunID: run.ID, RequestID: spec.ParentToolCallID, Paths: spec.FileOwnership,
-			}); err != nil {
-				r.fileOwnership.Release(spec.ID)
-				if subDB != nil {
-					_ = subDB.Close()
-				}
-				return nil, fmt.Errorf("reserve workspace child ownership: %w", err)
-			}
-		}
-	}
 
 	a.ToolFn = r.buildProxiedToolFn(spec, blockCh, handle)
 	a.PrepareStep = func() ([]tools.ToolDef, []provider.ChatMessage) {
 		return tools.ForModel(filteredTools, p.Model), nil
 	}
+	r.session.bindAgentControl(subCtx, a, spec.ControlTarget)
 	r.session.bindAgentRuntime(subCtx, a, captypes.RuntimeActor{ID: string(spec.ID), ParentID: string(spec.ParentID), SessionID: subSessionID, AllowedTools: spec.AllowedTools, DeniedTools: spec.DeniedTools, SkillModes: spec.SkillModes}, spec.Name)
 
 	if err := ctx.Err(); err != nil {
@@ -820,6 +843,23 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 	if err := r.session.bindChildPlanStore(string(spec.ID), string(spec.ID), subDB); err != nil {
 		return fail()
 	}
+	if spec.ExecutionID != "" {
+		e, err := r.session.executionService()
+		if err != nil {
+			return fail()
+		}
+		retained, err := e.Inspect(spec.ExecutionID)
+		if err != nil || !retained.Ready || retained.Removed || retained.Root != spec.ExecutionRoot || retained.Owner.AgentID != string(spec.ID) {
+			return fail()
+		}
+		for _, pin := range retained.Pins {
+			if pin.AgentID == string(spec.ID) && pin.RunID == spec.ExecutionRunID {
+				if err := r.session.ReleaseExecution(context.Background(), spec.ExecutionID, pin); err != nil {
+					return fail()
+				}
+			}
+		}
+	}
 	childCheckpoint.ContextOwnerID = string(spec.ID)
 	childCheckpoint.Archive = reconcileInterruptedTools(childCheckpoint.Archive, childCheckpoint.InFlightTools...)
 	childCheckpoint.ActiveContext = reconcileInterruptedTools(childCheckpoint.ActiveContext, childCheckpoint.InFlightTools...)
@@ -904,7 +944,8 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 	spec.Provider, spec.ProviderURL, spec.APIStandard = p.ID, p.BaseURL, p.StandardID()
 	filteredTools := agent.FilterToolsForModel(tools.AgentTools, spec.AllowedTools, spec.DeniedTools, spec.Category, true, p.Model)
 	live := agent.NewAgent(p, p.Model, r.session.logger)
-	live.WorkDir = r.session.WorkDir()
+	live.MediaReadPolicy = &tools.MediaReadPolicy{Model: p.Model, Standard: p.StandardID(), Modalities: slices.Clone(spec.ModelModalities)}
+	live.WorkDir = childExecutionRoot(spec, r.session.WorkDir())
 	live.GuidancePaths = append([]string(nil), spec.FileOwnership...)
 	r.session.bindContinuity(live, subDB, string(spec.ID))
 	r.session.bindGuidanceCache(live)
@@ -966,6 +1007,27 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 			return parkResume(agent.RecoveryFailureStorage, runErr)
 		}
 		handle.SetRunIdentity(run.ID, run.Version)
+		live.RunID = run.ID
+		if spec.ExecutionID != "" {
+			service, err := r.session.executionService()
+			if err != nil {
+				return parkResume(agent.RecoveryFailureConfiguration, err)
+			}
+			if err := service.Pin(spec.ExecutionID, worktree.Owner{AgentID: string(spec.ID), RunID: run.ID}); err != nil {
+				return parkResume(agent.RecoveryFailureStorage, err)
+			}
+			spec.ExecutionRunID = run.ID
+			handle.Spec = spec
+			data, err := json.Marshal(childRecoveryOwner{Spec: spec, ProfileInstructions: owner.ProfileInstructions})
+			if err != nil {
+				return parkResume(agent.RecoveryFailureStorage, err)
+			}
+			recoveryState.ownerData = data
+			if err := supervisor.Persist(supervisor.CheckpointStatus()); err != nil {
+				return parkResume(agent.RecoveryFailureStorage, err)
+			}
+		}
+
 		if len(spec.FileOwnership) > 0 {
 			if _, err := store.AcquireClaims(context.Background(), collaboration.AcquireClaimsRequest{
 				AgentID: string(spec.ID), RunID: run.ID,
@@ -984,6 +1046,7 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 	live.PrepareStep = func() ([]tools.ToolDef, []provider.ChatMessage) {
 		return tools.ForModel(filteredTools, live.Model), nil
 	}
+	r.session.bindAgentControl(subCtx, live, spec.ControlTarget)
 	r.session.bindAgentRuntime(subCtx, live, captypes.RuntimeActor{
 		ID: string(spec.ID), ParentID: string(spec.ParentID), SessionID: handle.SessionID,
 		AllowedTools: spec.AllowedTools, DeniedTools: spec.DeniedTools, SkillModes: spec.SkillModes,
@@ -993,7 +1056,7 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 		Category: spec.Category, Name: spec.Name, ID: string(spec.ID), ParentID: string(spec.ParentID), ParentTurn: spec.ParentTurn,
 		Description: spec.Description, Instructions: spec.Instructions, PolicyName: spec.PolicyName,
 		AllowedTools: promptAllowed, DeniedTools: promptDenied, FileOwnership: spec.FileOwnership,
-		ProfileInstructions: owner.ProfileInstructions, WorkDir: r.session.WorkDir(),
+		ProfileInstructions: owner.ProfileInstructions, WorkDir: live.WorkDir,
 		TempDir: childTempDir, Model: spec.Model,
 	})
 	if err := r.mgr.Register(handle); err != nil {
@@ -1077,6 +1140,12 @@ func (r *SubAgentRunner) runSubAgentLoop(
 	recoveryState *recoveryRunState,
 	resumed bool,
 ) {
+	defer func() {
+		if handle.Agent != nil && handle.Agent.AsyncMgr != nil {
+			handle.Agent.AsyncMgr.CloseAndWait()
+		}
+		r.releaseExecutionPin(handle.Spec, handle)
+	}()
 	done := false
 	var terminalDone *agent.AgentEvent
 	var terminalPublicationErr error
@@ -1780,6 +1849,9 @@ func (r *SubAgentRunner) interruptSubAgentAttempt(handle *agent.SubAgentHandle) 
 		return
 	}
 	handle.SetRunVersion(finished.Version)
+	if handle.Agent != nil {
+		r.revokeChildCapabilityRun(handle, runID)
+	}
 }
 
 // finalizeSubAgent is the sole terminal delivery path for successful, failed,
@@ -1850,6 +1922,9 @@ func (r *SubAgentRunner) finalizeSubAgent(
 			return err
 		} else {
 			handle.SetRunVersion(finished.Version)
+			if handle.Agent != nil {
+				r.revokeChildCapabilityRun(handle, runID)
+			}
 			if handle.Spec.ParentID != "" {
 				var references []collaboration.Reference
 				if result.HistoryMessageID != "" {
@@ -1966,14 +2041,17 @@ func (r *SubAgentRunner) buildSubAgentResult(handle *agent.SubAgentHandle, msgs 
 }
 
 func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh chan ttypes.BlockResponse, handle *agent.SubAgentHandle) func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
-	r.parentToolMu.RLock()
-	parentFn := r.parentToolFn
-	r.parentToolMu.RUnlock()
+	root := childExecutionRoot(spec, r.session.WorkDir())
+	var turnProvider *provider.Provider
+	if handle != nil && handle.Agent != nil {
+		turnProvider = handle.Agent.Provider
+	}
+	nativeFn := r.session.buildToolFnAtRoot(false, turnProvider, spec.ModelModalities, root)
 	return func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
 		if !agent.PolicyAllows(spec.Policy, tool) {
 			return tools.ToolResult{}, fmt.Errorf("[POLICY BLOCK] Tool %q is not allowed for this agent. Your policy is %q", tool, spec.PolicyName)
 		}
-		r.session.resolveRelativeParams(tool, params)
+		resolveRelativeParamsAtRoot(root, tool, params)
 		if tool == "apply_patch" {
 			if err := agent.CheckPatchPolicy(spec.Policy, getStrParam(params, "input")); err != nil {
 				return tools.ToolResult{}, err
@@ -2042,8 +2120,15 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 				if err != nil {
 					return err
 				}
+				runID := identity.RunID
+				if handle != nil {
+					runID, _ = handle.RunIdentity()
+				}
+				if runID == "" || participant.CurrentRunID != runID {
+					return collaboration.ErrStale
+				}
 				_, err = store.AcquireClaims(ctx, collaboration.AcquireClaimsRequest{
-					AgentID: string(spec.ID), RunID: participant.CurrentRunID,
+					AgentID: string(spec.ID), RunID: runID,
 					RequestID: identity.ToolCallID, Paths: targets,
 				})
 				return err
@@ -2077,7 +2162,7 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 			if handle == nil || handle.Agent == nil {
 				return tools.ToolResult{}, fmt.Errorf("child command manager unavailable")
 			}
-			return executeCodexCommand(ctx, handle.Agent.AsyncMgr, r.session.WorkDir(), tool, params, handle.Agent.CommandPolicy)
+			return executeCodexCommand(ctx, handle.Agent.AsyncMgr, root, tool, params, handle.Agent.CommandPolicy)
 		}
 		if isAsyncCommandTool(tool) {
 			return r.executeSubAgentAsyncCommand(handle, tool, params)
@@ -2091,28 +2176,7 @@ func (r *SubAgentRunner) buildProxiedToolFn(spec agent.SubAgentSpec, blockCh cha
 			return tools.ToolResult{}, fmt.Errorf("rate limit exceeded for account %q", spec.AccountID)
 		}
 
-		if parentFn != nil {
-			p := params
-			if p == nil {
-				p = make(map[string]any)
-			}
-			p["_subagent"] = true
-			if handle != nil && handle.Agent != nil && handle.Agent.Provider != nil {
-				p["_media_model"] = handle.Agent.Model
-				p["_media_standard"] = handle.Agent.Provider.StandardID()
-				p["_media_modalities"] = append([]string(nil), spec.ModelModalities...)
-			}
-			return parentFn(withHistoryActor(ctx, string(spec.ID)), tool, p)
-		}
-		var opts *tools.ToolOptions
-		if handle != nil && handle.Agent != nil && handle.Agent.Provider != nil {
-			opts = toolOptionsForProvider(handle.Agent.Provider, spec.ModelModalities, params)
-		}
-		result := tools.ExecuteWithJSONOptions(tool, params, r.session.exec, r.session.editor, r.session.YoloEnabled(), r.session.logger, ctx, opts)
-		if agent.IsToolError(result.Content) {
-			return result, fmt.Errorf("%s", result.Content)
-		}
-		return result, nil
+		return nativeFn(withHistoryActor(ctx, string(spec.ID)), tool, params)
 	}
 }
 
@@ -2446,7 +2510,7 @@ func (r *SubAgentRunner) executeSubAgentAsyncCommand(handle *agent.SubAgentHandl
 		}
 		cwd := getStrParam(params, "cwd")
 		if cwd == "" {
-			cwd = r.session.WorkDir()
+			cwd = handle.Agent.WorkDir
 		}
 		timeout := tools.GetIntArgAny(params, "timeout_seconds", 0)
 		info, err := mgr.Start(handleName, command, cwd, timeout)
@@ -2524,7 +2588,7 @@ func (r *SubAgentRunner) executeSubAgentCommandAutoPromote(ctx context.Context, 
 
 	cwd := getStrParam(params, "cwd")
 	if cwd == "" {
-		cwd = r.session.WorkDir()
+		cwd = handle.Agent.WorkDir
 	}
 	timeout := tools.GetIntArgAny(params, "timeout_seconds", -1)
 	if timeout < 0 {

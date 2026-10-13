@@ -1,0 +1,105 @@
+package coreprotocol
+
+import (
+	"encoding/json"
+	"errors"
+
+	"crude/corewire"
+	"crude/types/control"
+)
+
+const (
+	ControlShellRegister    = "control.shell.register"
+	ControlShellReply       = "control.shell.reply"
+	ControlRequest          = "control.request"
+	ControlMaxEnvelopeBytes = 1 << 20
+	ControlMaxQueuedBytes   = 8 << 20
+	ControlMaxOutstanding   = 16
+)
+
+// ControlEnvelope is attribution and an immutable descriptor preimage, not
+// authorization. The gateway and the effect owner remain responsible for grants
+// and current resource/revision/open-epoch checks.
+type ControlEnvelope struct {
+	Request    control.Request    `json:"request"`
+	Descriptor control.Descriptor `json:"descriptor"`
+}
+
+func (e ControlEnvelope) Clone() ControlEnvelope {
+	return ControlEnvelope{Request: e.Request.Clone(), Descriptor: e.Descriptor.Clone()}
+}
+
+func controlID(id string, optional bool) bool {
+	if id == "" {
+		return optional
+	}
+	if len(id) > 256 {
+		return false
+	}
+	for _, r := range id {
+		if r < 33 || r > 126 {
+			return false
+		}
+	}
+	return true
+}
+
+// ValidateTransport narrows neutral IDs to the core envelope contract.
+func (e ControlEnvelope) ValidateTransport(workspaceID string, owner control.ShellOwner) error {
+	if f := e.Request.Validate(e.Descriptor); f != nil {
+		return f
+	}
+	if e.Descriptor.Scope != control.Shell || e.Request.Target.WorkspaceID != workspaceID || e.Request.Target.Shell == nil || *e.Request.Target.Shell != owner {
+		return errors.New("control request target binding mismatch")
+	}
+	for _, id := range []string{workspaceID, owner.ClientID, e.Request.ID, e.Request.CommandID, e.Descriptor.Input.ID, e.Descriptor.Output.ID} {
+		if !controlID(id, false) {
+			return errors.New("invalid control transport identity")
+		}
+	}
+	// Component/resource identities follow the neutral bounded UTF-8 contract;
+	// they are data, not frame routing IDs. Retained ActionBar controls can include
+	// spaces or Unicode in their logical identity, unlike core actor/run IDs.
+	for _, id := range []string{e.Request.Target.ExecutionID, e.Request.Target.SessionID, e.Request.Caller.AgentID, e.Request.Caller.RunID, e.Request.Caller.ClientID} {
+		if !controlID(id, true) {
+			return errors.New("invalid control transport identity")
+		}
+	}
+	b, err := json.Marshal(e)
+	if err != nil {
+		return err
+	}
+	if len(b) > ControlMaxEnvelopeBytes {
+		return errors.New("control envelope exceeds limit")
+	}
+	size, err := corewire.FrameSize(corewire.Frame{Version: 1, Kind: corewire.KindEvent, ClientID: owner.ClientID, Epoch: owner.Epoch, WorkspaceID: workspaceID, RequestID: e.Request.ID, Method: ControlRequest, Payload: b})
+	if err != nil {
+		return err
+	}
+	if size > ControlMaxEnvelopeBytes {
+		return errors.New("encoded control frame exceeds limit")
+	}
+	return nil
+}
+
+func ValidateControlResult(r control.Result) error {
+	if f := r.Validate(); f != nil {
+		return f
+	}
+	if !controlID(r.RequestID, false) || !controlID(r.OperationID, false) {
+		return errors.New("invalid control result identity")
+	}
+	for _, id := range r.ResourceIDs {
+		if !controlID(id, false) {
+			return errors.New("invalid control resource identity")
+		}
+	}
+	b, err := json.Marshal(r)
+	if err != nil {
+		return err
+	}
+	if len(b) > ControlMaxEnvelopeBytes {
+		return errors.New("control result exceeds limit")
+	}
+	return nil
+}

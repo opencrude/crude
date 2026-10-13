@@ -362,7 +362,7 @@ func TestParentClaimRepairProviderJourneyRequiresExplicitContinuation(t *testing
 		t.Fatal(err)
 	}
 	first.reply <- map[string]any{"tool_calls": []any{tool(0, "claim-launch", "agent_start", map[string]any{
-		"description": task, "category": CategoryCrafter, "file_ownership": []string{"allowed.txt", "unused.txt"},
+		"description": task, "category": CategoryCrafter, "isolation": "shared", "file_ownership": []string{"allowed.txt", "unused.txt"},
 	})}}
 	initialChild := next(childCalls, "child ownership violation")
 	second := next(rootCalls, "root receives allocated child")

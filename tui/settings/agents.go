@@ -392,6 +392,11 @@ func (c *agentCatalog) closeDraft() {
 	c.model.categories[catAgents].Form = formModel()
 	c.refreshRows()
 	c.owner.focusID(c.table.ID())
+	// Apply replaces the role form and closes the entity draft. Reconcile the
+	// retained shared Save button just as an ordinary form edit does.
+	if c.model.onChange != nil {
+		c.model.onChange()
+	}
 }
 
 func (c *agentCatalog) apply() bool {
@@ -461,33 +466,7 @@ func (c *agentCatalog) apply() bool {
 		c.notice = "Auto Review Agent updated. Save settings to persist these changes."
 		return true
 	}
-	cfg := c.model.agentCategoryFromForm(c.draft, c.base)
-	cfg.Inherit = ""
-	if c.roleIndex == catMain {
-		cfg.Enabled = nil
-	} else {
-		enabled := ui.BoolFieldValue(c.draft.Field("agent-enabled"))
-		cfg.Enabled = &enabled
-	}
-	if c.draft.Field("agent-tool-mode").Value.String() == "Role defaults" {
-		cfg.AllowedTools = nil
-		cfg.DeniedTools = nil
-	} else {
-		cfg.AllowedTools = nil
-		cfg.DeniedTools = nil
-		for _, field := range c.draft.Fields() {
-			if !strings.HasPrefix(field.ID, "agent-tool/") {
-				continue
-			}
-			name := strings.TrimPrefix(field.ID, "agent-tool/")
-			if field.Value.Bool() {
-				cfg.AllowedTools = append(cfg.AllowedTools, name)
-			} else {
-				cfg.DeniedTools = append(cfg.DeniedTools, name)
-			}
-		}
-	}
-	cfg.SkillModes = c.selectedSkillModes()
+	cfg := c.prospectiveCategory()
 	if c.roleIndex >= 0 {
 		if c.roleIndex == catMemory {
 			c.model.memoryAgent = cfg
@@ -506,28 +485,7 @@ func (c *agentCatalog) apply() bool {
 		index := c.roleIndex
 		c.model.categories[index].Form.OnChanged(func(id string) { c.model.handleFieldChanged(index, id) })
 	} else {
-		p := c.profile
-		p.Category = c.draft.Field("agent-role").Value.String()
-		p.Enabled = cfg.Enabled
-		p.AccountID = cfg.AccountID
-		p.Model = cfg.Model
-		p.Description = cfg.Description
-		p.Instructions = cfg.Instructions
-		p.AllowedTools = cfg.AllowedTools
-		p.DeniedTools = cfg.DeniedTools
-		p.SkillModes = cfg.SkillModes
-		p.ContextCompactionPercent = cfg.ContextCompactionPercent
-		p.ThinkingEffort = cfg.ThinkingEffort
-		p.ModelContextWindow = cfg.ModelContextWindow
-		p.ModelMaxOutput = cfg.ModelMaxOutput
-		if ui.BoolFieldValue(c.draft.Field("agent-inherit-modalities")) {
-			p.ModelModalities = nil
-		} else {
-			p.ModelModalities = append(make([]string, 0, len(cfg.ModelModalities)), cfg.ModelModalities...)
-		}
-		p.ModelTemperature = cfg.ModelTemperature
-		p.ModelTopP = cfg.ModelTopP
-		p.FileOwnership = strings.Fields(c.draft.Field("agent-file-ownership").Value.String())
+		p := c.prospectiveProfile(cfg)
 		if c.model.agents.AgentProfiles == nil {
 			c.model.agents.AgentProfiles = map[string]types.AgentProfileSettings{}
 		}
@@ -536,6 +494,82 @@ func (c *agentCatalog) apply() bool {
 	c.closeDraft()
 	c.notice = "Agent updated. Save settings to persist these changes."
 	return true
+}
+
+// prospectiveCategory is the pure collector shared by Apply and control admission.
+// It includes every page, not just the currently mounted fields.
+func (c *agentCatalog) toolsDirty() bool {
+	for _, field := range c.draft.Fields() {
+		if (field.ID == "agent-tool-mode" || strings.HasPrefix(field.ID, "agent-tool/")) && !field.Value.Equal(field.Initial) {
+			return true
+		}
+	}
+	return false
+}
+
+func (c *agentCatalog) prospectiveCategory() types.CategorySettings {
+	cfg := c.model.agentCategoryFromForm(c.draft, c.base)
+	cfg.Inherit = ""
+	if c.roleIndex == catMain {
+		cfg.Enabled = nil
+	} else {
+		field := c.draft.Field("agent-enabled")
+		if !field.Value.Equal(field.Initial) {
+			enabled := ui.BoolFieldValue(field)
+			cfg.Enabled = &enabled
+		}
+	}
+	if field := c.draft.Field("agent-tool-mode"); field.Value.String() == "Role defaults" {
+		if !field.Value.Equal(field.Initial) {
+			cfg.AllowedTools = nil
+			cfg.DeniedTools = nil
+		}
+	} else if c.toolsDirty() {
+		cfg.AllowedTools = nil
+		cfg.DeniedTools = nil
+		for _, field := range c.draft.Fields() {
+			if !strings.HasPrefix(field.ID, "agent-tool/") {
+				continue
+			}
+			name := strings.TrimPrefix(field.ID, "agent-tool/")
+			if field.Value.Bool() {
+				cfg.AllowedTools = append(cfg.AllowedTools, name)
+			} else {
+				cfg.DeniedTools = append(cfg.DeniedTools, name)
+			}
+		}
+	}
+	cfg.SkillModes = c.selectedSkillModes()
+	if len(cfg.SkillModes) == 0 {
+		cfg.SkillModes = nil
+	}
+	return cfg
+}
+
+func (c *agentCatalog) prospectiveProfile(cfg types.CategorySettings) types.AgentProfileSettings {
+	p := c.profile
+	p.Category = c.draft.Field("agent-role").Value.String()
+	p.Enabled = cfg.Enabled
+	p.AccountID = cfg.AccountID
+	p.Model = cfg.Model
+	p.Description = cfg.Description
+	p.Instructions = cfg.Instructions
+	p.AllowedTools = cfg.AllowedTools
+	p.DeniedTools = cfg.DeniedTools
+	p.SkillModes = cfg.SkillModes
+	p.ContextCompactionPercent = cfg.ContextCompactionPercent
+	p.ThinkingEffort = cfg.ThinkingEffort
+	p.ModelContextWindow = cfg.ModelContextWindow
+	p.ModelMaxOutput = cfg.ModelMaxOutput
+	if ui.BoolFieldValue(c.draft.Field("agent-inherit-modalities")) {
+		p.ModelModalities = nil
+	} else {
+		p.ModelModalities = append(make([]string, 0, len(cfg.ModelModalities)), cfg.ModelModalities...)
+	}
+	p.ModelTemperature = cfg.ModelTemperature
+	p.ModelTopP = cfg.ModelTopP
+	p.FileOwnership = strings.Fields(c.draft.Field("agent-file-ownership").Value.String())
+	return p
 }
 
 func (c *agentCatalog) Children() []ui.Component {

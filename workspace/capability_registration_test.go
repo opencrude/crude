@@ -220,10 +220,10 @@ func TestAgentCapabilityActivationPersistsInWorkspaceSettingsWithoutShadowInstal
 			owner.Capabilities.Close()
 		}
 	})
+	actor := activeCapabilityActor(t, owner, "agent-1")
 	if err := owner.ensureCapabilities(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	actor := captypes.RuntimeActor{ID: "agent-1", Effects: []captypes.Effect{captypes.EffectRead}}
 	search, err := owner.Capabilities.Execute(t.Context(), actor, captypes.RuntimeSnapshot{}, "capability_search", map[string]any{
 		"query": "review",
 		"kind":  string(captypes.KindSkill),
@@ -265,7 +265,7 @@ func TestAgentCapabilityActivationPersistsInWorkspaceSettingsWithoutShadowInstal
 	if _, exists := snapshot.Settings.Skills[id]; !exists {
 		t.Fatal("fresh service did not reopen the workspace registration from settings")
 	}
-	if _, err := owner.Capabilities.Execute(t.Context(), captypes.RuntimeActor{ID: "agent-2", Effects: []captypes.Effect{captypes.EffectRead}}, captypes.RuntimeSnapshot{}, "capability_activate", map[string]any{"id": id, "scope": "workspace"}); err != nil {
+	if _, err := owner.Capabilities.Execute(t.Context(), activeCapabilityActor(t, owner, "agent-2"), captypes.RuntimeSnapshot{}, "capability_activate", map[string]any{"id": id, "scope": "workspace"}); err != nil {
 		t.Fatalf("fresh service tried to reacquire removed source bytes: %v", err)
 	}
 

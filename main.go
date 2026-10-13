@@ -23,6 +23,10 @@ func main() {
 		}()
 	}
 
-	platform.InitConsole()
+	// Protocol/core routes may share a Windows console with their caller. Do
+	// not change that console's code pages for a noninteractive subprocess.
+	if app.NeedsInteractiveConsole(os.Args[1:]) {
+		platform.InitConsole()
+	}
 	os.Exit(app.Main())
 }

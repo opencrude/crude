@@ -11,6 +11,7 @@ import (
 	"crude/agent"
 	"crude/buildinfo"
 	"crude/capability"
+	"crude/collaboration"
 	"crude/fileio"
 	"crude/mcpclient"
 	"crude/provider"
@@ -60,6 +61,7 @@ func (workspace *Workspace) ensureCapabilities(ctx context.Context) error {
 		return err
 	}
 	service.SetRegistrationStore(newCapabilityRegistrationStore(workspace))
+	service.SetRuntimeAuthority(capabilityRuntimeAuthority{store: workspace.Collaboration})
 	if err := service.Configure(ctx, workspace.LoadAppSettings().Capabilities); err != nil {
 		service.Close()
 		return err
@@ -413,4 +415,29 @@ func (workspace *Workspace) PrepareSkillInput(ctx context.Context, agentID, id, 
 		}
 	}
 	return input, nil
+}
+
+// The store is captured with the service lifetime, never looked up in a newer
+// workspace after a switch. No shell state participates in execution authority.
+type capabilityRuntimeAuthority struct{ store *collaboration.Store }
+
+func (authority capabilityRuntimeAuthority) ValidateRuntime(ctx context.Context, actor captypes.RuntimeActor) error {
+	if authority.store == nil || actor.RunID == "" || actor.RuntimeEpoch == 0 {
+		return collaboration.ErrUnavailable
+	}
+	participant, err := authority.store.Agent(ctx, actor.ID)
+	if err != nil {
+		return err
+	}
+	if participant.SessionID != actor.SessionID || participant.ParentID != actor.ParentID || participant.CurrentRunID != actor.RunID || participant.RuntimeEpoch != actor.RuntimeEpoch || participant.Presence != collaboration.RuntimeAttached || participant.State != collaboration.AgentAvailable {
+		return collaboration.ErrStale
+	}
+	run, err := authority.store.Run(ctx, actor.RunID)
+	if err != nil {
+		return err
+	}
+	if run.AgentID != actor.ID || run.RuntimeEpoch != actor.RuntimeEpoch || (run.State != collaboration.RunRunning && run.State != collaboration.RunWaitingHuman && run.State != collaboration.RunWaitingEvent) {
+		return collaboration.ErrStale
+	}
+	return ctx.Err()
 }

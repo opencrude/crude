@@ -234,6 +234,11 @@ func TestConcurrentLazyRunnerAndDisableKeepsChildControl(t *testing.T) {
 	}
 	live := sess.newAgent(sess.provider, true, nil)
 	live.AgentID = agent.AgentID(orch.ID)
+	run, err := store.StartRun(t.Context(), collaboration.StartRunRequest{AgentID: orch.ID, RuntimeEpoch: orch.RuntimeEpoch, Origin: collaboration.OriginHuman})
+	if err != nil {
+		t.Fatal(err)
+	}
+	live.RunID = run.ID
 	sess.bindAgentRuntime(t.Context(), live, captypes.RuntimeActor{
 		ID: orch.ID, SessionID: sess.SessionID(),
 	}, sess.AgentName())

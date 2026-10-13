@@ -128,6 +128,24 @@ func ServeConnection(ctx context.Context, runtime *Runtime, conn io.ReadWriteClo
 			case <-c.Done():
 				cancel()
 				return
+			case envelope := <-c.Controls():
+				if !c.ControlPending(envelope) {
+					continue
+				}
+				b, marshalErr := json.Marshal(envelope)
+				if marshalErr != nil || !enqueue(corewire.Frame{Version: 1, Kind: corewire.KindEvent, ClientID: owner.ClientID, Epoch: owner.Epoch, WorkspaceID: envelope.Request.Target.WorkspaceID, RequestID: envelope.Request.ID, Method: coreprotocol.ControlRequest, Payload: b}) {
+					cancel()
+					return
+				}
+			case request := <-c.CapabilityHostRequests():
+				if !c.CapabilityHostPending(request) {
+					continue
+				}
+				b, marshalErr := json.Marshal(request)
+				if marshalErr != nil || !enqueue(corewire.Frame{Version: 1, Kind: corewire.KindEvent, ClientID: owner.ClientID, Epoch: owner.Epoch, WorkspaceID: request.WorkspaceID, RequestID: request.ID, Method: coreprotocol.CapabilityHostRequest, Payload: b}) {
+					cancel()
+					return
+				}
 			case change, ok := <-c.Events():
 				if !ok {
 					cancel()

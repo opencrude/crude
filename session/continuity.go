@@ -24,10 +24,16 @@ func (s *Session) bindContinuity(live *agent.Agent, db *sql.DB, sessionID string
 		if err != nil {
 			return rootprompt.SessionContinuityData{}, err
 		}
-		current := s.cfg
+		// Settings publication owns cfg and the runtime profile under s.mu.
+		// Detach the effective config before projecting it outside that lock.
+		s.mu.Lock()
+		var current *Config
 		if s.runtimeProfile != nil {
 			current = s.runtimeProfile.GetEffectiveConfig(string(live.AgentID))
+		} else if s.cfg != nil {
+			current = copyConfig(s.cfg)
 		}
+		s.mu.Unlock()
 		state := struct {
 			SessionID       string               `json:"session_id"`
 			LatestTurn      *sessiondb.TurnState `json:"latest_turn"`

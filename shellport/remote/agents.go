@@ -161,7 +161,21 @@ func (w *Workspace) decide(request coreprotocol.DecisionRequest) bool {
 }
 
 func (w *Workspace) ResolveQuestion(agentID, blockID string, answers, questions map[string]string, cancelled bool) bool {
-	return w.decide(coreprotocol.DecisionRequest{AgentID: agentID, BlockID: blockID, Answers: answers, Questions: questions, Cancelled: cancelled})
+	// A synchronous UI method cannot acknowledge a remote effect. Connected
+	// callers use ResolveQuestionReceipt from a command and retain the prompt.
+	return false
+}
+
+func (w *Workspace) ResolveQuestionReceipt(ctx context.Context, agentID, blockID string, answers, questions map[string]string, cancelled bool) (coreprotocol.QuestionControlResult, error) {
+	var out coreprotocol.DecisionResult
+	err := w.call(ctx, coreprotocol.Decide, coreprotocol.DecisionRequest{AgentID: agentID, BlockID: blockID, Answers: answers, Questions: questions, Cancelled: cancelled}, &out)
+	return coreprotocol.QuestionControlResult{Accepted: out.Accepted, BlockID: blockID}, err
+}
+
+func (w *Workspace) ResolveQuestionControl(ctx context.Context, request coreprotocol.QuestionControlRequest) (coreprotocol.QuestionControlResult, error) {
+	var out coreprotocol.QuestionControlResult
+	err := w.call(ctx, coreprotocol.QuestionControl, request, &out)
+	return out, err
 }
 
 func (w *Workspace) RejectQuestion(agentID, blockID, detail string) bool {

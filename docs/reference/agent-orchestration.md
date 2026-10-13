@@ -124,3 +124,18 @@ Primary documentation reviewed for this change:
 These sources motivate Crude's ownership and handoff rules, not a claim that its
 runtime is identical to those products. In particular, this change does not add
 Claude Code's turn-budget configuration or ADK's deterministic workflow scheduler.
+
+## Managed child execution
+
+`agent_start` accepts `isolation: auto|shared|worktree`; use the managed service,
+not shell Git improvisation. Auto isolates supported independent writers in Git
+projects and otherwise records shared execution. Dirty files and accepted document
+text are preserved; children of an active managed parent use its exact current
+`SourceContextID` checkout, not stale logical overlays or private shell drafts.
+Relative claims bind the resolved root; absolute logical claims are not silently
+rebased. Worktrees are coordination/isolation artifacts, not security sandboxes.
+Only the exact reviewed delta integrates through shared documents and mandatory
+Local History safety/undo; active-run, Keep and recovery pins prevent unsafe cleanup.
+See [managed executions](managed-executions.md) for conservative baseline exclusions,
+crash recovery and explicit native Windows/SSH acceptance limits. Research links
+above motivate policy, not a guarantee of universal automatic isolation.

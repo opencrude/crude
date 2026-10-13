@@ -6,6 +6,10 @@ import (
 )
 
 func (s *Session) patchAlwaysAllowed(input string) bool {
+	return s.patchAlwaysAllowedAtRoot(s.WorkDir(), input)
+}
+
+func (s *Session) patchAlwaysAllowedAtRoot(root, input string) bool {
 	if s.permStore == nil {
 		return false
 	}
@@ -13,7 +17,7 @@ func (s *Session) patchAlwaysAllowed(input string) bool {
 	if err != nil || len(patch.Operations) == 0 {
 		return false
 	}
-	for _, access := range patch.Accesses(s.WorkDir()) {
+	for _, access := range patch.Accesses(root) {
 		if !s.permStore.IsAlwaysAllowed(safety.CRUDEOp(access.Operation), "apply_patch", access.Path) {
 			return false
 		}
@@ -22,6 +26,10 @@ func (s *Session) patchAlwaysAllowed(input string) bool {
 }
 
 func (s *Session) grantPatchAlways(input string) {
+	s.grantPatchAlwaysAtRoot(s.WorkDir(), input)
+}
+
+func (s *Session) grantPatchAlwaysAtRoot(root, input string) {
 	if s.permStore == nil {
 		return
 	}
@@ -29,7 +37,7 @@ func (s *Session) grantPatchAlways(input string) {
 	if err != nil {
 		return
 	}
-	for _, access := range patch.Accesses(s.WorkDir()) {
+	for _, access := range patch.Accesses(root) {
 		s.permStore.GrantAlways(safety.CRUDEOp(access.Operation), "apply_patch", access.Path)
 	}
 }

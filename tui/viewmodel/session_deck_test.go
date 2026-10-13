@@ -87,8 +87,10 @@ func TestBlockingQuestionPanelCapturesInputAndKeepsSessionOwnership(t *testing.T
 	selectDeckSession(t, app, second, "second-agent")
 	secondProjection := app.activeSessionProjection()
 	app.resolveAgentQuestion(prompt.question, question.Result{}, true)
-	if firstProjection.deck.IsOpen() {
-		t.Fatal("inactive question owner retained a resolved panel")
+	// This fixture has no live backend block: failed acknowledgement must retain
+	// the exact question rather than consume it as if a response was accepted.
+	if !firstProjection.deck.IsOpen() {
+		t.Fatal("inactive question disappeared without a backend acknowledgement")
 	}
 	if secondProjection.deck.IsOpen() || app.ActiveSession != second {
 		t.Fatal("resolving an inactive question changed the active session projection")

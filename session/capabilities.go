@@ -2,7 +2,6 @@ package session
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"fmt"
 	"slices"
@@ -61,17 +60,29 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 	previousPrepare := live.PrepareStep
 	previousFn := live.ToolFn
 	var boundEpoch uint64
-	var boundRunID string
-	if store := session.CollaborationStore(); store != nil {
+	boundRunID := live.RunID
+	if session.CollaborationStore() != nil {
 		session.mu.Lock()
 		boundEpoch = session.collaborationAgents[actor.ID].RuntimeEpoch
 		session.mu.Unlock()
-		if participant, err := store.Agent(ctx, actor.ID); err == nil {
-			boundRunID = participant.CurrentRunID
-		}
 	}
 	var mu sync.RWMutex
 	snapshot := captypes.RuntimeSnapshot{}
+	currentActor := func() captypes.RuntimeActor {
+		current := actor
+		current.RunID = boundRunID
+		current.RuntimeEpoch = boundEpoch
+		current.TurnGeneration = live.TurnGeneration
+		current.ExecutionRoot = live.WorkDir
+		if live.ControlTarget != nil {
+			current.WorkspaceID = live.ControlTarget.WorkspaceID
+			if live.ControlTarget.Shell != nil {
+				owner := *live.ControlTarget.Shell
+				current.ShellOwner = &owner
+			}
+		}
+		return current
+	}
 	live.PrepareStep = func() ([]tools.ToolDef, []provider.ChatMessage) {
 		var definitions []tools.ToolDef
 		var notices []provider.ChatMessage
@@ -81,7 +92,7 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 			definitions = append([]tools.ToolDef(nil), live.FilteredTools...)
 		}
 		if runtime != nil {
-			prepared, err := runtime.Prepare(ctx, actor)
+			prepared, err := runtime.Prepare(ctx, currentActor())
 			if err != nil {
 				session.logger.Warn("CAPABILITY", "prepare_failed", "error", err.Error())
 			} else {
@@ -141,7 +152,14 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 				return tools.ToolResult{}, err
 			}
 			if participant.RuntimeEpoch != boundEpoch || participant.CurrentRunID != boundRunID ||
-				participant.Presence != collaboration.RuntimeAttached {
+				participant.Presence != collaboration.RuntimeAttached || participant.State != collaboration.AgentAvailable {
+				return tools.ToolResult{}, collaboration.ErrStale
+			}
+			run, err := session.CollaborationStore().Run(callCtx, boundRunID)
+			if err != nil {
+				return tools.ToolResult{}, err
+			}
+			if run.State != collaboration.RunRunning && run.State != collaboration.RunWaitingHuman && run.State != collaboration.RunWaitingEvent {
 				return tools.ToolResult{}, collaboration.ErrStale
 			}
 		}
@@ -158,41 +176,13 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 			mu.RLock()
 			requestSnapshot := snapshot
 			mu.RUnlock()
-			result, err := runtime.Execute(callCtx, actor, requestSnapshot, tool, params)
-			var text strings.Builder
-			for _, content := range result.Content {
-				if content.Text != "" {
-					text.WriteString(content.Text)
-					text.WriteByte('\n')
-				} else if content.Data != "" {
-					data, decodeErr := base64.StdEncoding.DecodeString(content.Data)
-					if decodeErr != nil {
-						text.WriteString("Binary content returned; its byte size is unavailable.\n")
-					} else {
-						fmt.Fprintf(&text, "Binary %s · %s · %d bytes", content.Type, content.MIMEType, len(data))
-						if content.URI != "" {
-							fmt.Fprintf(&text, " · %s", content.URI)
-						}
-						text.WriteByte('\n')
-					}
-				}
-			}
-			if len(result.Structured) > 0 {
-				text.Write(result.Structured)
-			}
-			if result.Unknown {
-				text.WriteByte('\n')
-				text.WriteString("Result unknown: the remote operation may have taken effect. Do not retry blindly.")
-			}
-			if result.IsError && err == nil {
-				err = errors.New("MCP server reported a tool failure")
-			}
-			return tools.ToolResult{Content: strings.TrimSpace(text.String())}, err
+			result, err := runtime.Execute(callCtx, currentActor(), requestSnapshot, tool, params)
+			return capabilityMediaResult(result, err, live.MediaReadPolicy)
 		}
 		if !agent.PolicyAllows(live.Policy, tool) && tool != "multi_tool_use.parallel" {
 			return tools.ToolResult{}, fmt.Errorf("tool %q is denied by the agent policy", tool)
 		}
-		session.resolveRelativeParams(tool, params)
+		resolveRelativeParamsAtRoot(live.WorkDir, tool, params)
 		ownership := session.FileOwnership()
 		if tool == "read_file" {
 			ownership.RecordRead(agent.AgentID(actor.ID), getStrParam(params, "path"))
@@ -210,13 +200,16 @@ func (session *Session) bindAgentRuntime(ctx context.Context, live *agent.Agent,
 				return tools.ToolResult{}, collaboration.ErrUnavailable
 			}
 			identity, _ := callCtx.Value(tools.ExecutionIdentityKey{}).(tools.ExecutionIdentity)
+			if boundRunID == "" || identity.RunID != boundRunID || participant.CurrentRunID != boundRunID {
+				return tools.ToolResult{}, collaboration.ErrStale
+			}
 			if identity.ToolCallID == "" {
 				return tools.ToolResult{}, errors.New("filesystem mutation requires an originating tool-call identity")
 			}
 			targets := writeToolTargets(tool, params)
 			if err := ownership.CommitClaimAll(agent.AgentID(actor.ID), name, targets, true, func() error {
 				_, err := store.AcquireClaims(callCtx, collaboration.AcquireClaimsRequest{
-					AgentID: actor.ID, RunID: participant.CurrentRunID,
+					AgentID: actor.ID, RunID: boundRunID,
 					RequestID: identity.ToolCallID, Paths: targets,
 				})
 				return err

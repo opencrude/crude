@@ -9,6 +9,7 @@ import (
 
 	"crude/safety"
 	ttypes "crude/types"
+	"crude/types/control"
 )
 
 type AgentID string
@@ -55,6 +56,11 @@ type SubAgentSpec struct {
 	ParentTurn       uint64            `json:"parent_turn"`
 	ParentToolCallID string            `json:"parent_tool_call_id,omitempty"`
 	HistoryMessageID string            `json:"history_message_id,omitempty"`
+	Isolation        string            `json:"isolation,omitempty"`
+	ExecutionID      string            `json:"execution_id,omitempty"`
+	ExecutionRoot    string            `json:"execution_root,omitempty"`
+	ExecutionRunID   string            `json:"execution_run_id,omitempty"`
+	ControlTarget    *control.Target   `json:"control_target,omitempty"`
 
 	ModelContextWindow int      `json:"model_context_window,omitempty"`
 	ModelMaxOutput     int      `json:"model_max_output,omitempty"`

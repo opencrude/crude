@@ -200,7 +200,7 @@ func TestResourceWireDetachCannotRetainQueuedAcquire(t *testing.T) {
 	b.call(t, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: root}, nil)
 	var info workspace.TerminalInfo
 	a.call(t, attached.WorkspaceID, coreprotocol.TerminalCreate, workspace.TerminalCreateOpts{Command: "/bin/cat", Cols: 30, Rows: 4}, &info)
-	// Hold the real effect lane, not a substitute queue. A snapshot response
+	// Hold the real terminal lane, not a substitute queue. A snapshot response
 	// proves the actor admitted Acquire while its service effect is still delayed.
 	r.mu.Lock()
 	actor := r.workspaces[attached.WorkspaceID]
@@ -209,8 +209,8 @@ func TestResourceWireDetachCannotRetainQueuedAcquire(t *testing.T) {
 	var releaseOnce sync.Once
 	unblock := func() { releaseOnce.Do(func() { close(release) }) }
 	t.Cleanup(unblock)
-	if !actor.resourceLane.submit(func(context.Context) { close(entered); <-release }) {
-		t.Fatal("could not hold effect lane")
+	if !actor.terminalLane.submit(func(context.Context) { close(entered); <-release }) {
+		t.Fatal("could not hold terminal lane")
 	}
 	<-entered
 	acquire := a.send(t, attached.WorkspaceID, coreprotocol.TerminalControl, coreprotocol.TerminalIDRequest{ID: info.ID})

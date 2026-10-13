@@ -10,6 +10,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/http/httptrace"
 	"net/url"
 	"sort"
 	"strings"
@@ -828,6 +829,9 @@ func withStreamFlag(req *ChatRequest, stream bool) *ChatRequest {
 // bounded error reporting. It does not inspect the response body.
 func (c *Client) do(ctx context.Context, method string, endpoint *url.URL, body []byte) (*http.Response, error) {
 	watch, attemptCtx := newProgressWatch(ctx, c.stall)
+	attemptCtx = httptrace.WithClientTrace(attemptCtx, &httptrace.ClientTrace{
+		GotConn: func(info httptrace.GotConnInfo) { watch.gotConn(info.Conn) },
+	})
 	var reader io.Reader
 	var getBody func() (io.ReadCloser, error)
 	if body != nil {

@@ -48,10 +48,10 @@ func (s *Session) permissionReviewer(a *agent.Agent) agent.PermissionReviewer {
 		// Existing human grants keep their normal path and incur no review
 		// request. Returning ask lets the authoritative permission store
 		// resolve the pending prompt, rather than inventing reviewer credit.
-		if s.permissionAlreadyGranted(tc.Function.Name, params, risk) {
+		if s.permissionAlreadyGrantedAtRoot(a.WorkDir, tc.Function.Name, params, risk) {
 			return ask
 		}
-		payload, ok := permissionReviewPayload(s.WorkDir(), tc.Function.Name, params, risk, settings.MaxInputBytes)
+		payload, ok := permissionReviewPayload(a.WorkDir, tc.Function.Name, params, risk, settings.MaxInputBytes)
 		if !ok {
 			return unresolved("Operation is outside the configured automatic review boundary.")
 		}
@@ -82,7 +82,7 @@ func (s *Session) permissionReviewer(a *agent.Agent) agent.PermissionReviewer {
 		}
 		// Revalidate filesystem scope after the remote wait; a path may have
 		// been replaced with a symlink while the reviewer was responding.
-		if _, ok := permissionReviewPayload(s.WorkDir(), tc.Function.Name, params, risk, settings.MaxInputBytes); !ok {
+		if _, ok := permissionReviewPayload(a.WorkDir, tc.Function.Name, params, risk, settings.MaxInputBytes); !ok {
 			return unresolved("Operation scope changed while automatic review was running.")
 		}
 		if review.Decision == "deny" && settings.DenyMode != "deny" {
@@ -293,9 +293,9 @@ func emitPermissionReviewUsage(a *agent.Agent, p *provider.Provider, usage *prov
 	}})
 }
 
-func (s *Session) permissionAlreadyGranted(tool string, params map[string]any, risk safety.CommandRisk) bool {
+func (s *Session) permissionAlreadyGrantedAtRoot(root, tool string, params map[string]any, risk safety.CommandRisk) bool {
 	if tool == "apply_patch" {
-		return s.patchAlwaysAllowed(getStrParam(params, "input"))
+		return s.patchAlwaysAllowedAtRoot(root, getStrParam(params, "input"))
 	}
 	if s.permStore == nil {
 		return false

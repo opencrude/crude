@@ -128,6 +128,7 @@ type appAsyncIOState struct {
 	pathSearchQuery         map[*filepickerscreen.Screen]string
 	pathSearchIntent        map[*filepickerscreen.Screen]filepickerscreen.IntentToken
 	treePathSearch          *treePathSearchState
+	treeControlSequence     uint64
 	detachedMessageSink     func(tea.Msg)
 	desktopCaches           []string
 	editorRecoveryRevisions map[string]uint64
@@ -781,6 +782,12 @@ func (m *App) StopAsyncIO() {
 }
 
 func (m *App) stopAsyncIO() {
+	if port, ok := m.ws.(shellport.CapabilityHost); ok {
+		port.StopCapabilityHost()
+	}
+	if port, ok := m.ws.(shellport.ShellControl); ok {
+		port.StopShellControl()
+	}
 	// Exclusive post-program barrier: never turn an unresolved flush into a
 	// successful detach merely by closing its projection.
 	retainedEditors := m.retainEditorRecovery(m.FlushLiveEditors())

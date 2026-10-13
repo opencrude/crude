@@ -893,8 +893,8 @@ next tick finally synced.
   approve uncertainty, secret/oversized input or exhausted recovery. Unknown,
   network, destructive and shell-composed operations are reviewer evidence, not
   structural exclusions; immutable hard blocks still run before review. Security
-  keeps Command Safety separate. Never add toggles for hard blocks, human-only
-  grants, or mandatory restore safeguards; explain those constraints beside the
+  keeps Command Safety separate. Never add toggles for hard blocks, human-owned
+  authority changes, or mandatory restore safeguards; explain those constraints beside the
   controls they govern. A rejected reviewer result never becomes an Always
   allow grant.
 - `ui.FormField` paints multiline labels (textarea and key/value grid) on the
@@ -1058,6 +1058,15 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
   An explicit provider/account connect setting also owns its TLS handshake
   budget; unset values inherit the separate Network TCP/TLS defaults. Neither
   is a competing response-header timeout.
+
+- **Progress-stall recovery retires the exact failed connection.** HTTP/2 stream
+  cancellation alone can leave a blackholed pooled connection eligible after
+  cooldown. Provider watchdogs capture `httptrace.GotConn` and close only that
+  connection when a typed upload/header/download stall wins; ordinary stop and
+  overall deadline do not flush the pool or change routing/TLS. Sibling streams
+  on the failed connection may be interrupted and retain normal accepted-output
+  continuation safeguards. Real same-client and root/child upload tests must prove
+  automatic redial plus complete payload delivery, not just a finished countdown.
 
 ### Unfinished run recovery and network transport
 - `agent.Supervisor` is the one root/child unfinished-run lifecycle. Request
@@ -1881,14 +1890,14 @@ button that needs a double click reads as broken.
   store; a workspace registration is only an overlay row pointing at that
   app-global path. `types/capability.ApplyRegistration` is the single publication
   owner shared by the workspace overlay store and the app config owner.
-- Agent acquisitions and exact MCP access changes publish through the normal
+- Agent acquisitions and human-approved durable MCP access changes publish through the normal
   settings registration maps (config.json for application scope, the sparse
   workspace overlay for workspace scope), never a second shadow install table.
   Preserve neighboring installs/preferences and fence the exact source, policy,
   selected preimage and workspace lifetime. MCP activation exposes observed
   fingerprints separately from usable tools; separate `mcp_request_access` grants require
-  immutable explicit approval, never source annotations or generic Always-read
-  permission. Skill activation includes its installed path. Passive restart
+  exact authorization: human approval persists durable grants, while reviewer/YOLO
+  grants are run-local, never human authority or source annotations. Skill activation includes its installed path. Passive restart
   reconnects/downloads/replays nothing; explicit activation rechecks tool schemas.
   Live capability observation refreshes Settings/sidebar/home without configuring
   transports or inspecting skill files on Update. It must keep running with
@@ -1896,7 +1905,11 @@ button that needs a double click reads as broken.
   MCP details retain their exact tool identity and refresh schema/grant evidence
   without replacing filters or editable drafts; removed tools clear old claims.
   Local/installed/pinned-repository discovery ranks normalized keywords before
-  applying limits. Agent guidance uses concise queries and exact returned IDs,
+  applying limits. Agent guidance proactively uses relevant installed capabilities or acquisitions
+  when they improve the task, even when native tools exist, within the user-selected
+  Manual/Auto Review/YOLO policy, explicit denials, source trust and host/effect
+  ceilings. Authentication and consent remain user-owned. Exact stdio launch is
+  review/YOLO eligible, not a sandbox or durable tool grant. Use concise queries and exact returned IDs,
   not catalog paths as a substitute for durable installation. Live acceptance
   submits through the actual composer and keeps chat visible; screenshot-driver
   exit alone is not proof that the model/persistence test completed.
@@ -1949,6 +1962,18 @@ button that needs a double click reads as broken.
   admits old evidence passively with zero provider/tool/child replay; genuinely
   new peer input may wake the attached idle root. See
   `docs/reference/workspace-collaboration.md`.
+
+Native `crude_commands` discovers exact schemas before `crude_control` uses the
+same semantic API as `crude --mcp`. Keep original shell/run and epochs/revisions;
+observe partial/uncertain domain and shell receipts with `operation.receipt`, never
+replay or retarget them. Generic controls/keys cannot bypass human-only authority.
+External computer-use is a user-selected MCP, not a bundled universal driver.
+See `docs/reference/control-contract.md`. Managed `agent_start` isolation uses
+`auto|shared|worktree`, faithful dirty/accepted-document or current parent
+`SourceContextID` baselines, exact reviewed integration and Local History recovery.
+Worktrees are not security sandboxes; respect run/recovery retention pins and
+conservative repository exclusions in `docs/reference/managed-executions.md`.
+Full UI-family/platform acceptance and final repository gates remain separate.
 
 See `docs/guides/capability-workflows.md` for actual routes, protocol limits,
 manual workflows and acceptance boundaries.

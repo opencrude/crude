@@ -122,6 +122,7 @@ type Workspace struct {
 	// buffers in this workspace.
 	Documents     *DocumentSaveService
 	LiveDocuments *DocumentService
+	Executions    *ExecutionService
 
 	// TermMgr owns in-app PTY sessions (the terminal multiplexer).
 	TermMgr *TerminalManager
@@ -445,6 +446,9 @@ func (w *Workspace) Close() {
 	defer w.capabilityMu.Unlock()
 	w.CloseAllSessions()
 	w.CancelProjectSearch()
+	if err := CloseExecutionHistory(w); err != nil {
+		w.Logger.Warn("HISTORY", "execution_history_close_failed", "error", err.Error())
+	}
 	if w.LiveDocuments != nil {
 		w.LiveDocuments.Close()
 	}
@@ -774,6 +778,7 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 	w.Documents = NewDocumentSaveService()
 	w.Documents.SetEventBus(w.eventBus)
 	w.LiveDocuments = NewDocumentService(abs, w.Documents, w.LSPMgr, workspaceSQLDB(wsDB))
+	w.Executions = nil
 	w.LiveDocuments.SetEventBus(w.eventBus)
 	w.TermMgr = NewTerminalManager(abs)
 	w.Terminals, _ = NewTerminalService(w.TermMgr)

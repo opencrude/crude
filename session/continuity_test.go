@@ -2,6 +2,7 @@ package session
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -45,5 +46,55 @@ func TestSessionContinuityUsesDurableTurnAndCurrentPlanOwners(t *testing.T) {
 	data, err = live.ContinuationContext(context.Background())
 	if err != nil || !strings.Contains(data.PlanContext, "Saved session state") || !strings.Contains(data.PlanContext, "Observe existing build") {
 		t.Fatalf("continuity lost current plan owner: %+v (%v)", data, err)
+	}
+}
+
+func TestSessionContinuityTracksConcurrentLiveSettings(t *testing.T) {
+	s := newTestSessionForPlan(t)
+	defer s.Close()
+	category := s.cfg.GetActiveDefaultCategory()
+	p, err := s.cfg.providerForCategory(category)
+	if err != nil {
+		t.Fatal(err)
+	}
+	live := s.newAgent(p, true, category.ModelModalities)
+	live.AgentID = "continuity-settings-owner"
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan error, 1)
+	go func() {
+		for ctx.Err() == nil {
+			if _, err := live.ContinuationContext(t.Context()); err != nil {
+				done <- err
+				return
+			}
+		}
+		done <- nil
+	}()
+	defer func() {
+		cancel()
+		if err := <-done; err != nil {
+			t.Error(err)
+		}
+	}()
+	for i := 0; i < 30; i++ {
+		enabled := i%2 == 0
+		settings := s.SettingsSnapshot()
+		settings.SessionMultiAgent = &enabled
+		if err := s.HandleSettingsSave(settings); err != nil {
+			t.Fatal(err)
+		}
+		data, err := live.ContinuationContext(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		var state struct {
+			MultiAgent bool `json:"multi_agent_enabled"`
+		}
+		if err := json.Unmarshal([]byte(data.StateJSON), &state); err != nil {
+			t.Fatal(err)
+		}
+		if state.MultiAgent != enabled {
+			t.Fatalf("continuity retained stale delegation: got=%v want=%v", state.MultiAgent, enabled)
+		}
 	}
 }

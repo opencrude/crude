@@ -615,7 +615,7 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 
 	a.logger.Info("TOOL", "call", "name", tc.Function.Name, "params", formatToolArgs(params))
 	toolStart := time.Now()
-	ctx = context.WithValue(ctx, tools.ExecutionIdentityKey{}, tools.ExecutionIdentity{AgentID: string(a.AgentID), MessageID: tc.InternalID, ToolCallID: tc.ID})
+	ctx = context.WithValue(ctx, tools.ExecutionIdentityKey{}, tools.ExecutionIdentity{AgentID: string(a.AgentID), RunID: a.RunID, MessageID: tc.InternalID, ToolCallID: tc.ID})
 
 	var result tools.ToolResult
 	var toolErr error
@@ -638,23 +638,73 @@ func (a *Agent) executeOneToolCall(ctx context.Context, tc provider.ToolCall, em
 		CapabilityApproval() (string, string)
 		CapabilityApprovalContext(context.Context) context.Context
 	}
-	if (tc.Function.Name == "capability_activate" || tc.Function.Name == "mcp_request_access") && errors.As(toolErr, &approval) {
+	seenApprovals := make(map[string]bool)
+	for phase := 0; phase < 3 && errors.As(toolErr, &approval); phase++ {
 		id, reason := approval.CapabilityApproval()
-		drainStaleBlockResponses(blockResolveCh)
-		emit(AgentEvent{Type: "blocking", Data: map[string]string{"block_id": blockID, "operation": "Read", "tool": tc.Function.Name, "target": id, "question": "Approve this exact capability change?", "reason": reason}})
-		response, answered := waitForBlockResponse(ctx, blockResolveCh, blockID)
-		emit(AgentEvent{Type: "blocking_complete", Data: map[string]string{"block_id": blockID}})
-		if answered && (response.Value == "allow" || response.Value == "always") {
-			emitPermissionDecision(emit, tc, "allow")
+		intent := id + "\x00" + reason
+		if seenApprovals[intent] {
+			toolErr = errors.New("identical authorized intent did not advance; capability execution stopped")
+			break
+		}
+		seenApprovals[intent] = true
+		origin := "human"
+		authorized := false
+		var automatic interface {
+			CapabilityApprovalContextFor(context.Context, string) context.Context
+			Evidence() map[string]any
+		}
+		if errors.As(toolErr, &automatic) {
+			if a.yoloEnabled() {
+				authorized, origin = true, "yolo"
+			} else {
+				evidence := automatic.Evidence()
+				risk := safety.RiskUnknown
+				if fmt.Sprint(evidence["effect"]) == "write" {
+					risk = safety.RiskProjectWrite
+				}
+				// The reviewer receives actual redacted phase evidence, not just the
+				// model's opaque capability ID or its claimed authorization.
+				encoded, _ := json.Marshal(evidence)
+				reviewCall := tc
+				reviewCall.Function.Arguments = string(encoded)
+				var denied *execResult
+				authorized, denied = a.reviewPermission(ctx, reviewCall, evidence, risk, emit)
+				if denied != nil {
+					return *denied
+				}
+				if authorized {
+					origin = "reviewer"
+				}
+			}
+		}
+		if !authorized {
+			drainStaleBlockResponses(blockResolveCh)
+			emit(AgentEvent{Type: "blocking", Data: map[string]string{"block_id": blockID, "operation": "Read", "tool": tc.Function.Name, "target": id, "question": "Approve this exact capability change?", "reason": reason}})
+			response, answered := waitForBlockResponse(ctx, blockResolveCh, blockID)
+			emit(AgentEvent{Type: "blocking_complete", Data: map[string]string{"block_id": blockID}})
+			authorized = answered && (response.Value == "allow" || response.Value == "always")
+		}
+		if authorized {
+			if origin == "human" {
+				emitPermissionDecision(emit, tc, "allow")
+			}
 			approvedContext := approval.CapabilityApprovalContext(ctx)
+			if automatic != nil {
+				approvedContext = automatic.CapabilityApprovalContextFor(ctx, origin)
+			}
+			ctx = approvedContext
 			result, toolErr = a.ToolFn(approvedContext, tc.Function.Name, params)
 		} else {
 			result = tools.ToolResult{Content: "Capability change was denied or cancelled. Do not retry or expand permissions; use an available adequate method."}
 			toolErr = errors.New("capability change not approved")
+			break
 		}
 	}
 	if toolErr != nil && result.Content == "" {
 		result.Content = fmt.Sprintf("Error: %s", toolErr.Error())
+		if result.ContentParts != nil {
+			result.ContentParts = append(result.ContentParts, provider.ContentPart{Type: "text", Text: result.Content})
+		}
 	}
 	toolFailed := toolErr != nil || IsToolError(result.Content)
 	if tc.Function.Name == "publish_report" && !toolFailed && getStr(params, "kind") == "final" {
@@ -894,8 +944,14 @@ func questionBlockResult(response ttypes.BlockResponse) (string, bool) {
 		if strings.TrimSpace(response.Value) == "" {
 			return "Question was answered without any selected or written response. Ask again with clearer options if the answer is required.", true
 		}
+		if response.AttributionKind == "agent" || response.AttributionKind == "external" {
+			return fmt.Sprintf("Answer supplied by %s %q, not by the human user:\n%s", response.AttributionKind, response.AttributionID, response.Value), false
+		}
 		return response.Value, false
 	case ttypes.BlockUserCancelled:
+		if response.AttributionKind == "agent" || response.AttributionKind == "external" {
+			return fmt.Sprintf("The %s %q cancelled this task question without a human answer. Do not treat this as human approval.", response.AttributionKind, response.AttributionID), true
+		}
 		return "The user cancelled this question without answering. Continue only if the missing answer is not required; otherwise explain what information is still needed.", true
 	case ttypes.BlockValidationError:
 		detail := strings.TrimSpace(response.Detail)

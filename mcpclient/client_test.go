@@ -194,3 +194,34 @@ func TestPackageConnectionRequiresDeclaredEnvironmentBeforeLaunch(t *testing.T) 
 		t.Fatalf("missing package setup was not reported: %v", err)
 	}
 }
+
+func TestAcknowledgedProjectionFailureDoesNotReplayMutation(t *testing.T) {
+	for _, effect := range []captypes.Effect{captypes.EffectWrite, captypes.EffectRead} {
+		for _, serverError := range []bool{false, true} {
+			t.Run(string(effect)+"/"+map[bool]string{false: "success", true: "error"}[serverError], func(t *testing.T) {
+				endpoint, calls := managedServer(t, "change", func(context.Context) (*mcp.CallToolResult, error) {
+					// A tiny wire response expands beyond the local budget only
+					// after credential redaction. The actual SDK accepted it.
+					return &mcp.CallToolResult{IsError: serverError, Content: []mcp.Content{&mcp.TextContent{Text: "receipt"}, &mcp.TextContent{Text: strings.Repeat("x", maxResultBytes/8)}, &mcp.TextContent{Text: "tail"}}}, nil
+				})
+				manager := New(t.TempDir())
+				defer manager.Close()
+				config := captypes.ConnectionConfig{ID: "fixture", Name: "Fixture", Transport: "http", URL: endpoint.URL, Headers: map[string]string{"X-Secret": "x"}}
+				manager.Configure(map[string]captypes.ConnectionConfig{config.ID: config})
+				if err := manager.Connect(t.Context(), config.ID); err != nil {
+					t.Fatal(err)
+				}
+				tool := manager.States()[0].Tools[0]
+				config.Grants = map[string]captypes.ToolGrant{"change": {Effect: effect, Scope: "workspace", Fingerprint: tool.Fingerprint}}
+				manager.Configure(map[string]captypes.ConnectionConfig{config.ID: config})
+				if err := manager.Connect(t.Context(), config.ID); err != nil {
+					t.Fatal(err)
+				}
+				result, err := manager.Call(t.Context(), manager.States()[0].Tools[0], nil)
+				if err == nil || result.Unknown || result.IsError != serverError || calls.Load() != 1 || len(result.Content) != 3 || result.Content[0].Text != "receipt" || result.Content[1].Text != "tail" || !strings.Contains(result.Content[2].Text, "LOCAL evidence") || !strings.Contains(err.Error(), "Do not replay") || !strings.Contains(err.Error(), "effect: "+string(effect)) {
+					t.Fatalf("acknowledgement lost: %#v %v calls=%d", result, err, calls.Load())
+				}
+			})
+		}
+	}
+}

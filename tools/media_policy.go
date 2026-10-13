@@ -1,14 +1,88 @@
 package tools
 
 import (
+	"bytes"
 	"encoding/base64"
 	"fmt"
+	"mime"
+	"net/http"
 	"slices"
 	"strings"
 
 	"crude/logger"
 	"crude/provider"
 )
+
+// AdmitBytes validates inline bytes without opening a path, fetching a URI or
+// transforming the media. It shares read_file's model and wire admission owner.
+func (p *MediaReadPolicy) AdmitBytes(name, declared string, data []byte) (provider.ContentPart, error) {
+	if len(data) == 0 {
+		return provider.ContentPart{}, fmt.Errorf("empty media block")
+	}
+	if p == nil {
+		return provider.ContentPart{}, fmt.Errorf("media input is disabled: no active model policy")
+	}
+	if int64(len(data)) > provider.MaxImageFileSizeFor(p.Model) {
+		return provider.ContentPart{}, fmt.Errorf("media exceeds model %q byte limit", p.Model)
+	}
+	declared, _, err := mime.ParseMediaType(declared)
+	if err != nil {
+		return provider.ContentPart{}, fmt.Errorf("invalid media MIME: %w", err)
+	}
+	actual := http.DetectContentType(data)
+	// ISO base media files expose their major brand in the initial ftyp box.
+	if actual == "application/octet-stream" && len(data) >= 12 && string(data[4:8]) == "ftyp" {
+		switch string(data[8:12]) {
+		case "isom", "iso2", "mp41", "mp42", "avc1":
+			actual = "video/mp4"
+		case "qt  ":
+			actual = "video/quicktime"
+		}
+	}
+	// Normalize WAV sniffing aliases to the provider contract's audio/wav.
+	if actual == "audio/x-wav" || actual == "audio/wave" {
+		actual = "audio/wav"
+	}
+	if declared == "audio/x-wav" {
+		declared = "audio/wav"
+	}
+	if actual == "application/octet-stream" && bytes.HasPrefix(data, []byte{0xff, 0xfb}) {
+		actual = "audio/mpeg"
+	}
+	if actual != declared {
+		return provider.ContentPart{}, fmt.Errorf("media MIME %q does not match bytes (%q)", declared, actual)
+	}
+	var modality string
+	switch {
+	case strings.HasPrefix(actual, "image/"):
+		modality = provider.ModalityImage
+	case actual == "application/pdf":
+		modality = provider.ModalityPDF
+	case strings.HasPrefix(actual, "audio/"):
+		modality = provider.ModalityAudio
+	case strings.HasPrefix(actual, "video/"):
+		modality = provider.ModalityVideo
+	default:
+		return provider.ContentPart{}, fmt.Errorf("unsupported media MIME %q", actual)
+	}
+	supported := slices.Contains(p.Modalities, modality)
+	if p.Modalities == nil {
+		supported, _ = provider.ModalityCapability(p.Model, modality)
+	}
+	if !supported {
+		return provider.ContentPart{}, fmt.Errorf("%s input is disabled for model %q", modality, p.Model)
+	}
+	if !provider.ProtocolSupportsMedia(p.Standard, modality, actual) {
+		return provider.ContentPart{}, fmt.Errorf("protocol %q cannot carry %s MIME %q", p.Standard, modality, actual)
+	}
+	part := provider.ContentPart{Type: mediaPartType(modality), MimeType: actual, Filename: baseNameOf(name)}
+	if modality == provider.ModalityImage {
+		part.ImageURL = &provider.ImageURL{URL: "data:" + actual + ";base64," + base64.StdEncoding.EncodeToString(data)}
+	} else {
+		part.Data = bytes.Clone(data)
+	}
+	return part, nil
+}
 
 // MediaReadPolicy carries the model capability snapshot read_file needs to
 // decide between attaching a binary media file and refusing it explicitly.
@@ -75,17 +149,9 @@ func (p *MediaReadPolicy) tryMediaAttachment(path string, lg *logger.Logger) (ha
 	if err != nil {
 		return true, fmt.Sprintf("Error: reading %s: %v", path, err), nil
 	}
-	part := provider.ContentPart{
-		Type:     mediaPartType(modality),
-		MimeType: mime,
-		Filename: baseNameOf(path),
-	}
-	if modality == provider.ModalityImage {
-		part.ImageURL = &provider.ImageURL{
-			URL: "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data),
-		}
-	} else {
-		part.Data = data
+	part, err := p.AdmitBytes(path, mime, data)
+	if err != nil {
+		return true, fmt.Sprintf("Error: reading %s: %v", path, err), nil
 	}
 	if lg != nil {
 		lg.Info("TOOL", "media_attached", "path", path, "modality", modality, "bytes", len(data))

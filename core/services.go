@@ -31,7 +31,21 @@ func serviceCall[I, O any](request coreprotocol.Request, run func(context.Contex
 
 // Workspace/service lifetimes remain fixed until the actor joins all workers.
 func (a *actor) prepareService(request coreprotocol.Request) (func(context.Context) coreprotocol.Response, bool) {
+	return a.prepareServiceAtRoot(request, a.ws.RootPath)
+}
+
+func (a *actor) prepareServiceAtRoot(request coreprotocol.Request, root string) (func(context.Context) coreprotocol.Response, bool) {
 	ws, git := a.ws, a.ws.Git
+	if root != ws.RootPath {
+		git = workspace.NewGitService(root)
+		// Discard's recovery owner is currently logical-root scoped. Do not
+		// substitute raw Git discard and lose its mandatory safety receipt.
+		if request.Method == coreprotocol.PreviewGitDiscard || request.Method == coreprotocol.DiscardGitReviewed || request.Method == coreprotocol.DiscardGitHunk {
+			return func(context.Context) coreprotocol.Response {
+				return fault(request, "unavailable", "isolated Git discard requires an execution-root Local History adapter")
+			}, true
+		}
+	}
 	var store *memory.Store
 	if ws.WorkspaceDB != nil {
 		store = ws.WorkspaceDB.Memory

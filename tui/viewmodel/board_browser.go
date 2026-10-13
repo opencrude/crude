@@ -18,6 +18,7 @@ type boardResultMsg struct {
 	request    boardbrowser.Request
 	snapshot   workspace.BoardSnapshot
 	err        error
+	committed  bool
 }
 
 func (app *App) openBoardBrowser() tea.Cmd {
@@ -53,14 +54,16 @@ func (app *App) boardRequestCmd(request boardbrowser.Request) tea.Cmd {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		var err error
+		committed := false
 		if request.Operation == "mark-read" {
 			err = owner.MarkBoardRead(ctx, request.Through)
+			committed = err == nil
 		}
 		var snapshot workspace.BoardSnapshot
 		if err == nil {
 			snapshot, err = owner.BoardSnapshot(ctx, request.Query, request.Thread, request.Since, request.Snapshot)
 		}
-		return boardResultMsg{generation: generation, request: request, snapshot: snapshot, err: err}
+		return boardResultMsg{generation: generation, request: request, snapshot: snapshot, err: err, committed: committed}
 	}
 }
 

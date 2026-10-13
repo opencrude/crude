@@ -814,3 +814,22 @@ Layer coverage lives next to the code:
   `workspace/tool_root_e2e_test.go` — same-turn multimodal tool delivery,
   protocol schemas, persistence/resume, capability and safety gates, and
   workspace-switch execution roots
+
+## Semantic settings control and authority
+
+The [control API](control-contract.md) discovers redacted settings, exact field
+paths/types and revisions; ordinary set/reset operations use the authoritative
+app/workspace/session owner and exact preimages. Generic native form Save resolves
+the effect of **all pending drafts**, including off-page account/capability/agent
+editors, not merely the currently visible ordinary field. Open epochs and edit
+generations reject close/reopen and edit/undo ABA; modal decision policy is not
+bypassed by semantic controls. Credentials, grants, consent and privilege changes
+stay human-owned and cannot approve themselves through generic buttons/keys.
+
+Capability acquisitions and exact stdio launch are eligible for Manual/Auto
+Review/YOLO within explicit denials, source trust, host and effect ceilings. Human
+MCP grant approval persists at the connection binding; reviewer/YOLO grants are
+run-local, not durable human authority. Authentication/consent remain user actions.
+Core is the default execution host; shell-host stdio requires an explicit absolute
+local directory and exact attachment epoch. Full manual shell-host configuration
+UI remains a limitation, not a promised automatic host selection.

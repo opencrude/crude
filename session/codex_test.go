@@ -31,7 +31,8 @@ func TestNativePatchSessionHistoryAndChildOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := store.StartRun(t.Context(), collaboration.StartRunRequest{AgentID: registered.ID, RuntimeEpoch: registered.RuntimeEpoch, RequestID: "patch-assignment", Origin: collaboration.OriginPeer}); err != nil {
+	run, err := store.StartRun(t.Context(), collaboration.StartRunRequest{AgentID: registered.ID, RuntimeEpoch: registered.RuntimeEpoch, RequestID: "patch-assignment", Origin: collaboration.OriginPeer})
+	if err != nil {
 		t.Fatal(err)
 	}
 	var receipts []HistoryMutation
@@ -47,7 +48,14 @@ func TestNativePatchSessionHistoryAndChildOwnership(t *testing.T) {
 	tool := r.buildProxiedToolFn(spec, nil, nil)
 	input := "*** Begin Patch\n*** Add File: original\n+old\n*** Update File: original\n*** Move to: nested/renamed\n-old\n+new\n*** End Patch"
 	ctx := withHistoryScope(t.Context(), "session", "message", "root-agent")
-	ctx = context.WithValue(ctx, tools.ExecutionIdentityKey{}, tools.ExecutionIdentity{AgentID: "codex-child", ToolCallID: "patch-effect"})
+	missingRun := context.WithValue(ctx, tools.ExecutionIdentityKey{}, tools.ExecutionIdentity{AgentID: "codex-child", ToolCallID: "unbound-patch-effect"})
+	if _, err := tool(missingRun, "apply_patch", map[string]any{"input": input}); err == nil {
+		t.Fatal("unbound patch inferred authority from the participant's current run")
+	}
+	if _, err := os.Stat(filepath.Join(root, "nested/renamed")); !os.IsNotExist(err) || len(receipts) != 0 {
+		t.Fatalf("unbound patch mutated files or recorded history: err=%v receipts=%d", err, len(receipts))
+	}
+	ctx = context.WithValue(ctx, tools.ExecutionIdentityKey{}, tools.ExecutionIdentity{AgentID: "codex-child", RunID: run.ID, ToolCallID: "patch-effect"})
 	result, err := tool(ctx, "apply_patch", map[string]any{"input": input})
 	if err != nil || !strings.Contains(result.Content, "```diff") {
 		t.Fatalf("%s %v", result.Content, err)

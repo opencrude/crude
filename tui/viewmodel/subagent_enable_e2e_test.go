@@ -90,6 +90,10 @@ func TestEnableSubAgentsMidSessionSurfacesChildren(t *testing.T) {
 		}
 		app := newFullTestApp(t)
 		wsOf(app).RootPath, wsOf(app).WorkspaceDir = t.TempDir(), t.TempDir()
+		// The shell fixture bypasses Workspace.New; install the real accepted
+		// document owner before CreateSession constructs its execution service.
+		wsOf(app).LiveDocuments = workspace.NewDocumentService(wsOf(app).RootPath, wsOf(app).Documents, wsOf(app).LSPMgr)
+		defer wsOf(app).LiveDocuments.Close()
 		wsOf(app).Logger = &testLogger{}
 		wsOf(app).SetAppDefaults(ttypes.AppSettings{LocalHistory: ttypes.LocalHistorySettings{Enabled: "off"}})
 		wsOf(app).SessionsByID = make(map[string]*workspace.Session)

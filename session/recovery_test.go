@@ -251,7 +251,21 @@ func TestRootTurnPanicParksTaskAndInputServiceAcceptsExactRetry(t *testing.T) {
 	}
 	t.Cleanup(session.Close)
 	sender := newMockEventSender()
-	orchestrator, err := session.NewOrchestrator(sender)
+	observed := make(chan bool, 1)
+	var orchestrator *Orchestrator
+	checking := &sessionSupervisedJourneySender{mockEventSender: sender}
+	checking.observe = func(typ string, data any, _ string) {
+		status, ok := data.(recoverytypes.Status)
+		if typ != "recovery" || !ok || status.State != recoverytypes.NeedsAttention || !strings.Contains(status.Detail, "injected owner panic") {
+			return
+		}
+		session.recoveryMu.Lock()
+		checkpoint, parked := session.pendingRecoveries[orchestrator.ID]
+		slot := session.recoverySlots[orchestrator.ID]
+		session.recoveryMu.Unlock()
+		observed <- parked && slot == nil && checkpoint.Status.ID == status.ID && !orchestrator.TurnActive()
+	}
+	orchestrator, err = session.NewOrchestrator(checking)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -266,6 +280,9 @@ func TestRootTurnPanicParksTaskAndInputServiceAcceptsExactRetry(t *testing.T) {
 		t.Fatal("initial turn was not admitted")
 	}
 	first := waitRecoveryEvent(t, sender)
+	if !<-observed {
+		t.Fatal("panic attention was published before exact passive retry ownership")
+	}
 	if first.State != recoverytypes.NeedsAttention || first.ID == "" {
 		t.Fatalf("panic recovery = %+v", first)
 	}

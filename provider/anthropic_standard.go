@@ -277,6 +277,8 @@ func anthropicTextAndImageBlocks(msg ChatMessage, allowImages bool) ([]any, erro
 					"data":       base64.StdEncoding.EncodeToString(part.Data),
 				},
 			})
+		default:
+			return nil, fmt.Errorf("anthropic Messages content part %q is unsupported", part.Type)
 		}
 	}
 	return blocks, nil

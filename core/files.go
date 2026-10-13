@@ -130,7 +130,14 @@ func readFileChunk(ctx context.Context, root string, in coreprotocol.FileReadReq
 // prepareFiles captures services/root on the actor; workers never traverse mutable
 // workspace session maps or carry SQL handles. The actor lifetime joins workers.
 func (a *actor) prepareFiles(request coreprotocol.Request) (func(context.Context) coreprotocol.Response, bool) {
-	root, ops, store, history := a.ws.RootPath, a.ws.FileOps, a.ws.LocalHistory, a.ws.HistoryService
+	return a.prepareFilesAtRoot(request, a.ws.RootPath)
+}
+
+func (a *actor) prepareFilesAtRoot(request coreprotocol.Request, root string) (func(context.Context) coreprotocol.Response, bool) {
+	ops, store, history := a.ws.FileOps, a.ws.LocalHistory, a.ws.HistoryService
+	if root != a.ws.RootPath {
+		ops = workspace.NewFileOpsService(root, nil, a.ws.Logger)
+	}
 	documents := a.ws.LiveDocuments
 	bad := func(code, message string) (func(context.Context) coreprotocol.Response, bool) {
 		return func(context.Context) coreprotocol.Response { return fault(request, code, message) }, true

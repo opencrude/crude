@@ -140,9 +140,10 @@ func TestPanelDeckViewmodelContractTable(t *testing.T) {
 		}
 	})
 
-	t.Run("question_esc_returns_to_rail_then_closes_without_input_leak", func(t *testing.T) {
+	t.Run("question_esc_returns_to_rail_then_retains_failed_reply_without_input_leak", func(t *testing.T) {
 		app, projection := setupSessionDeckApp(t)
-		openTestAgentPrompt(t, app, projection, agentPromptRequest{kind: agentPromptQuestions, questionsJSON: `[{"question":"Continue?","options":["yes","no"]}]`})
+		prompt := openTestAgentPrompt(t, app, projection, agentPromptRequest{kind: agentPromptQuestions, questionsJSON: `[{"question":"Continue?","options":["yes","no"]}]`})
+		questionOwner := prompt.question
 		if !app.sessionDeckBlocking() {
 			t.Fatal("question panel must block")
 		}
@@ -171,8 +172,13 @@ func TestPanelDeckViewmodelContractTable(t *testing.T) {
 				app.Update(msg)
 			}
 		}
-		if projection.deck.IsOpen() {
-			t.Fatal("cancelled question should close panel")
+		// This backend-less fixture cannot acknowledge cancellation. Retain the
+		// exact question and its rail focus until an accepted owner reply arrives.
+		if !projection.deck.IsOpen() || app.promptForScreen(questionOwner) != prompt || prompt.question != questionOwner || !app.sessionDeckBlocking() || !app.sessionDeckCapturesInput() {
+			t.Fatal("failed question acknowledgement consumed its panel or input ownership")
+		}
+		if projection.deckHost.Focused() != question.RailID {
+			t.Fatalf("failed reply changed rail focus to %q", projection.deckHost.Focused())
 		}
 		if app.Input.Value() != "blocked" {
 			t.Fatal("question cancel leaked key to chat input")

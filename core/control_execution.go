@@ -1,0 +1,305 @@
+package core
+
+import (
+	"context"
+	"encoding/json"
+	"errors"
+	"fmt"
+	"reflect"
+	"strings"
+	"sync"
+
+	"crude/collaboration"
+	"crude/coreprotocol"
+	"crude/types/control"
+	"crude/worktree"
+)
+
+// Identity comes from the admitted gateway caller, never an input owner.
+func (a *actor) prepareControlExecution(in control.Request, owner coreprotocol.Owner) (func(context.Context) control.Result, func(control.Result) control.Result, bool) {
+	if owner.ClientID == "" || owner.Epoch == 0 {
+		return controlFailure(in, control.Invalid, "trusted caller owner is required")
+	}
+	if a.ws == nil || a.ws.Executions == nil {
+		return controlFailure(in, control.Unavailable, "managed execution authority unavailable")
+	}
+	if in.CommandID == "execution.selection" || in.CommandID == "execution.select" {
+		return a.prepareControlExecutionSelection(in)
+	}
+	service := a.ws.Executions
+	var id string
+	var plan worktree.PlanDelta
+	var create struct {
+		Mode           worktree.Mode `json:"mode"`
+		BaseCommit     string        `json:"base_commit,omitempty"`
+		Independent    bool          `json:"independent,omitempty"`
+		IncludeIgnored []string      `json:"include_ignored,omitempty"`
+	}
+	switch in.CommandID {
+	case "execution.list", "execution.integrations":
+		if err := controlDecode(in.Input, &struct{}{}); err != nil {
+			return controlFailure(in, control.Invalid, err.Error())
+		}
+	case "execution.create":
+		if err := controlDecode(in.Input, &create); err != nil {
+			return controlFailure(in, control.Invalid, err.Error())
+		}
+		if create.Mode != worktree.Auto && create.Mode != worktree.Shared && create.Mode != worktree.Isolated {
+			return controlFailure(in, control.Invalid, "mode must be auto, shared or worktree")
+		}
+	case "execution.apply":
+		var input struct {
+			Plan worktree.PlanDelta `json:"plan"`
+		}
+		if err := controlDecode(in.Input, &input); err != nil {
+			return controlFailure(in, control.Invalid, err.Error())
+		}
+		plan, id = input.Plan, input.Plan.ContextID
+	case "execution.undo", "execution.recover":
+		var input struct {
+			OperationID string `json:"operation_id"`
+		}
+		if err := controlDecode(in.Input, &input); err != nil {
+			return controlFailure(in, control.Invalid, err.Error())
+		}
+		id = input.OperationID
+	case "execution.inspect", "execution.review", "execution.keep", "execution.cleanup":
+		var input struct {
+			ID string `json:"id"`
+		}
+		if err := controlDecode(in.Input, &input); err != nil {
+			return controlFailure(in, control.Invalid, err.Error())
+		}
+		id = input.ID
+	default:
+		return nil, nil, false
+	}
+	discovery := in.CommandID == "execution.list" || in.CommandID == "execution.integrations" || in.CommandID == "execution.create"
+	if discovery && in.Target.ResourceID != "" || !discovery && (id == "" || in.Target.ResourceID != id) {
+		return controlFailure(in, control.Invalid, "exact resource target must match input identity")
+	}
+	if in.Preconditions.Revision != nil || in.Preconditions.OpenEpoch != nil {
+		return controlFailure(in, control.Invalid, "execution uses immutable plan digests, not revision/epoch preconditions")
+	}
+	trusted := worktree.Owner{AgentID: "client:" + owner.ClientID, RunID: fmt.Sprintf("epoch:%d", owner.Epoch)}
+	agent := in.Caller.Kind == control.AgentCaller
+	if agent {
+		trusted = worktree.Owner{AgentID: in.Caller.AgentID, RunID: in.Caller.RunID}
+	}
+	if !discovery {
+		var actual worktree.Owner
+		if in.CommandID == "execution.undo" || in.CommandID == "execution.recover" {
+			status, err := service.Integration(id)
+			if err != nil {
+				return controlFailure(in, control.Unavailable, err.Error())
+			}
+			actual = status.Plan.Owner
+		} else {
+			c, err := service.Inspect(id)
+			if err != nil {
+				return controlFailure(in, control.Unavailable, err.Error())
+			}
+			if c.LogicalRoot != a.ws.RootPath {
+				return controlFailure(in, control.Denied, "execution belongs to another logical workspace")
+			}
+			actual = c.Owner
+		}
+		if err := a.controlExecutionOwner(context.Background(), in, actual); err != nil {
+			return controlFailure(in, control.Denied, err.Error())
+		}
+		if in.CommandID == "execution.apply" && plan.Owner != actual {
+			return controlFailure(in, control.Invalid, "plan owner differs from authoritative execution owner")
+		}
+		trusted = actual // external callers manage the inspected owner under gateway approval.
+	}
+	var once sync.Once
+	var result control.Result
+	return func(ctx context.Context) control.Result {
+		once.Do(func() {
+			result = control.Result{RequestID: in.ID, OperationID: in.ID, State: control.Committed}
+			if id != "" {
+				result.ResourceIDs = []string{id}
+			}
+			if ctx.Err() != nil {
+				result.State = control.Failed
+				result.Fault = &control.Fault{Code: control.Unavailable, Message: ctx.Err().Error()}
+				return
+			}
+			if !discovery {
+				if err := a.controlExecutionOwner(ctx, in, trusted); err != nil {
+					result.State, result.Fault = control.Failed, &control.Fault{Code: control.Denied, Message: err.Error()}
+					return
+				}
+			}
+			var output any
+			var err error
+			switch in.CommandID {
+			case "execution.list":
+				output = service.List()
+			case "execution.integrations":
+				output, err = service.Integrations()
+			case "execution.inspect":
+				output, err = service.Inspect(id)
+			case "execution.create":
+				var c worktree.Context
+				c, err = service.Create(ctx, worktree.Request{Owner: trusted, Mode: create.Mode, BaseCommit: create.BaseCommit, Independent: create.Independent, IncludeIgnored: create.IncludeIgnored})
+				// Allocation is not execution. An external connection has no
+				// running task whose lifetime could release Create's initial pin.
+				if err == nil && !agent && c.ID != "" {
+					err = service.Unpin(c.ID, trusted)
+					if err == nil {
+						c, err = service.Inspect(c.ID)
+					}
+				}
+				output = c
+				if c.ID != "" {
+					result.ResourceIDs = []string{c.ID}
+				}
+			case "execution.review":
+				output, err = service.Review(ctx, id)
+			case "execution.apply":
+				// An exact committed owner receipt outranks current destination
+				// state. A lost reply must not re-review/replay the original effect.
+				statuses, readErr := service.Integrations()
+				if readErr != nil {
+					err = readErr
+					break
+				}
+				for _, status := range statuses {
+					if status.State == "committed" && reflect.DeepEqual(status.Plan, plan) {
+						output = status.Receipt
+						break
+					}
+				}
+				if output != nil {
+					break
+				}
+				var current worktree.PlanDelta
+				current, err = service.Review(ctx, id)
+				if err != nil || !reflect.DeepEqual(current, plan) {
+					result.State = control.Failed
+					result.Fault = &control.Fault{Code: control.Stale, Message: "reviewed source/destination changed; review again"}
+					return
+				}
+				output, err = service.Apply(ctx, plan)
+			case "execution.keep":
+				err = service.Keep(id, trusted)
+				output = map[string]string{"id": id}
+			case "execution.cleanup":
+				err = service.Cleanup(ctx, id, trusted)
+				output = map[string]string{"id": id}
+			case "execution.undo":
+				output, err = service.Undo(ctx, id)
+			case "execution.recover":
+				output, err = service.RecoverIntegration(ctx, id)
+			}
+			if receipt, ok := output.(worktree.Receipt); ok && receipt.OperationID != "" {
+				result.ResourceIDs = append(result.ResourceIDs, receipt.OperationID)
+			}
+			result.Output, _ = json.Marshal(output)
+			if err != nil {
+				result.State = control.Failed
+				code := control.OperationFailed
+				if in.CommandID == "execution.apply" || in.CommandID == "execution.undo" || in.CommandID == "execution.recover" || in.CommandID == "execution.create" || in.CommandID == "execution.cleanup" {
+					result.State, code = control.Uncertain, control.UnknownOutcome
+				}
+				result.Fault = &control.Fault{Code: code, Message: err.Error()}
+			}
+		})
+		return result.Clone()
+	}, nil, true
+}
+
+// The artifact owner never changes during integration. Authority to manage a
+// descendant is derived from the durable parent chain, not inventory labels or
+// a caller-supplied owner. The gateway separately fences the caller's live run.
+func (a *actor) controlExecutionOwner(ctx context.Context, in control.Request, actual worktree.Owner) error {
+	mutation := in.CommandID == "execution.apply" || in.CommandID == "execution.undo" || in.CommandID == "execution.recover" || in.CommandID == "execution.keep" || in.CommandID == "execution.cleanup"
+	if in.Caller.Kind != control.AgentCaller && (!mutation || strings.HasPrefix(actual.AgentID, "client:")) {
+		return nil
+	}
+	store := a.ws.Collaboration
+	if store == nil {
+		return errors.New("execution ancestry authority unavailable")
+	}
+	run, err := store.Run(ctx, actual.RunID)
+	if err != nil || run.AgentID != actual.AgentID || mutation && !run.State.Terminal() {
+		return errors.New("execution requires an exact settled owner run before mutation")
+	}
+	if in.Caller.Kind != control.AgentCaller {
+		return nil // Explicit external grant, but never an active child's effect.
+	}
+	caller, err := store.Agent(ctx, in.Caller.AgentID)
+	if err != nil {
+		return errors.New("execution caller ancestry unavailable")
+	}
+	seen := map[string]bool{}
+	for id := actual.AgentID; id != "" && !seen[id]; {
+		seen[id] = true
+		participant, err := store.Agent(ctx, id)
+		if err != nil {
+			break
+		}
+		if participant.ID == caller.ID {
+			if actual.AgentID == caller.ID && actual.RunID != in.Caller.RunID {
+				return errors.New("execution belongs to another exact caller run")
+			}
+			return nil
+		}
+		id = participant.ParentID
+	}
+	return errors.New("execution does not belong to this exact agent/run or its descendants")
+}
+
+func (a *actor) prepareControlExecutionSelection(in control.Request) (func(context.Context) control.Result, func(control.Result) control.Result, bool) {
+	var input struct {
+		ID               *string `json:"id"`
+		ExpectedRevision *uint64 `json:"expected_revision"`
+	}
+	if in.CommandID == "execution.selection" {
+		if err := controlDecode(in.Input, &struct{}{}); err != nil {
+			return controlFailure(in, control.Invalid, err.Error())
+		}
+	} else if err := controlDecode(in.Input, &input); err != nil {
+		return controlFailure(in, control.Invalid, err.Error())
+	}
+	id := ""
+	if input.ID != nil {
+		id = *input.ID
+	}
+	if in.Target.SessionID == "" || in.Target.ResourceID != id || in.Preconditions.OpenEpoch != nil {
+		return controlFailure(in, control.Invalid, "exact session target and matching selection id are required")
+	}
+	if in.CommandID == "execution.select" && (input.ExpectedRevision == nil || input.ID == nil) {
+		return controlFailure(in, control.Invalid, "id and expected_revision are required")
+	}
+	if in.Preconditions.Revision != nil && (input.ExpectedRevision == nil || *input.ExpectedRevision != *in.Preconditions.Revision) {
+		return controlFailure(in, control.Stale, "revision precondition differs from expected_revision")
+	}
+	backend := a.ws.BackendSession(in.Target.SessionID)
+	if backend == nil {
+		return controlFailure(in, control.Unavailable, "exact session is not open")
+	}
+	return func(ctx context.Context) control.Result {
+		selection := backend.ExecutionSelection()
+		var err error
+		if in.CommandID == "execution.select" {
+			selection, err = backend.SelectExecution(ctx, id, *input.ExpectedRevision)
+		}
+		result := control.Result{RequestID: in.ID, OperationID: in.ID, State: control.Committed}
+		if err != nil {
+			code := control.OperationFailed
+			if errors.Is(err, collaboration.ErrStale) {
+				code = control.Stale
+			}
+			result.State, result.Fault = control.Failed, &control.Fault{Code: code, Message: err.Error()}
+			return result
+		}
+		result.Output, _ = json.Marshal(selection)
+		result.Revision = &selection.Revision
+		if selection.ID != "" {
+			result.ResourceIDs = []string{selection.ID}
+		}
+		return result
+	}, nil, true
+}

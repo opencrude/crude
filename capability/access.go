@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"reflect"
 	"slices"
 
 	captypes "crude/types/capability"
@@ -21,7 +22,7 @@ func (service *Service) activationResult(ctx context.Context, actor captypes.Run
 	}
 	result := captypes.ActivationResult{ConnectionID: id, State: "connected", Notices: prepared.Notices}
 	budgets := service.Snapshot().Settings.Acquisition
-	for _, state := range service.clients.States() {
+	for _, state := range service.actorClients(actor).States() {
 		if state.ID == id {
 			result.State = state.State
 			schemaBytes := 0
@@ -45,9 +46,9 @@ func (service *Service) activationResult(ctx context.Context, actor captypes.Run
 		}
 	}
 	if len(result.UsableTools) > 0 {
-		result.Next = "Use the exact UsableTools names offered at the next request boundary. Installation and grants remain durable at their configured binding."
+		result.Next = "Use the exact UsableTools names offered at the next request boundary. Installations remain durable at their configured binding; automatic access is limited to the owning run."
 	} else {
-		result.Next = "Connected does not mean tool access. Request exact observed tools using mcp_request_access connection_id plus grants [{tool: original name, fingerprint: observed fingerprint, effect: intended effect, scope: resource scope}]. New or changed grants require explicit approval; agent ceilings and schema budgets still apply."
+		result.Next = "Connected does not mean tool access. Request exact observed tools using mcp_request_access connection_id plus grants [{tool: original name, fingerprint: observed fingerprint, effect: intended effect, scope: resource scope}]. New or changed grants require exact authorization under the owning session's Manual/Auto Review/YOLO policy; agent ceilings and schema budgets still apply."
 	}
 	encoded, err := json.Marshal(result)
 	return textResult(string(encoded)), err
@@ -74,7 +75,7 @@ func decodeAccessRequests(raw any) ([]captypes.AccessRequest, error) {
 }
 
 func (service *Service) accessPreview(actor captypes.RuntimeActor, id string, requests []captypes.AccessRequest) (captypes.AccessPreview, captypes.Settings, bool, error) {
-	snapshot := service.Snapshot()
+	snapshot := service.actorSnapshot(actor)
 	connection, exists := snapshot.Settings.Connections[id]
 	if !exists || connection.Disabled {
 		return captypes.AccessPreview{}, snapshot.Settings, false, errors.New("installed MCP connection is unavailable")
@@ -119,7 +120,12 @@ func (service *Service) accessPreview(actor captypes.RuntimeActor, id string, re
 		preview.Tools = append(preview.Tools, observed)
 		expected := captypes.ToolGrant{Fingerprint: request.Fingerprint, Effect: request.Effect, Scope: request.Scope}
 		if connection.Grants[request.Tool] != expected {
-			changed = true
+			if task, ok := service.taskAccess(actor, connection, request.Tool); !ok || task != expected {
+				changed = true
+			}
+		}
+		if connection.Grants[request.Tool].Disabled {
+			return preview, snapshot.Settings, false, errors.New("MCP tool access is explicitly disabled")
 		}
 	}
 	// Bind approval to the producing endpoint/configuration, live schemas, exact
@@ -128,7 +134,8 @@ func (service *Service) accessPreview(actor captypes.RuntimeActor, id string, re
 		Preview captypes.AccessPreview
 		Policy  captypes.AcquisitionSettings
 		Source  captypes.SourceConfig
-	}{preview, snapshot.Settings.Acquisition, snapshot.Settings.Sources[connection.Source]})
+		Actor   captypes.RuntimeActor
+	}{preview, snapshot.Settings.Acquisition, snapshot.Settings.Sources[connection.Source], actor})
 	if err != nil {
 		return preview, snapshot.Settings, false, err
 	}
@@ -163,10 +170,38 @@ func (service *Service) activateAccess(ctx context.Context, actor captypes.Runti
 	}
 	approved, exists := ctx.Value(captypes.AccessApprovedKey{}).(captypes.AccessPreview)
 	if !exists {
-		return captypes.Result{}, &captypes.AccessApprovalRequired{Preview: preview}
+		return captypes.Result{}, &captypes.AccessApprovalRequired{Preview: preview, Actor: actor}
 	}
 	if approved.Token == "" || approved.Token != preview.Token {
 		return captypes.Result{}, errors.New("MCP connection, schema or requested access changed; request a fresh exact approval")
+	}
+	origin := "human"
+	if authorization, ok := captypes.AuthorizationFrom(ctx); ok {
+		if authorization.Token != preview.Token || !reflect.DeepEqual(authorization.Actor, actor) {
+			return captypes.Result{}, errors.New("MCP authorization owner or run changed")
+		}
+		origin = authorization.Origin
+	}
+	if origin != "human" && actor.RunID == "" {
+		return captypes.Result{}, errors.New("automatic MCP access requires an active run identity")
+	}
+	if err := service.recordAuthorization(ctx, actor, origin, "access", preview.Token, (&captypes.AccessApprovalRequired{Preview: preview}).Evidence()); err != nil {
+		return captypes.Result{}, err
+	}
+	if origin != "human" {
+		service.mu.Lock()
+		if service.runs[actorKey(actor)] != taskKey(actor) {
+			service.mu.Unlock()
+			return captypes.Result{}, errors.New("MCP access run was revoked or replaced")
+		}
+		if service.taskGrants[taskKey(actor)] == nil {
+			service.taskGrants[taskKey(actor)] = make(map[string]taskGrant)
+		}
+		for _, request := range requests {
+			service.taskGrants[taskKey(actor)][id+"\x00"+request.Tool] = taskGrant{Connection: preview.Connection, Grant: captypes.ToolGrant{Effect: request.Effect, Scope: request.Scope, Fingerprint: request.Fingerprint}}
+		}
+		service.mu.Unlock()
+		return service.activationResult(ctx, actor, id)
 	}
 	after := captypes.Clone(before)
 	connection := after.Connections[id]

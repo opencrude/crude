@@ -141,19 +141,11 @@ func (b *Button) Handle(ctx EventContext, evt Event) EventResult {
 	switch evt.Kind {
 	case EventKey:
 		if evt.Key.Code == tea.KeyEnter || evt.Key.Code == tea.KeySpace {
-			return EventResult{
-				Handled:    true,
-				Action:     &Action{ID: b.actionID, Payload: b.label},
-				Invalidate: InvalidatePaint,
-			}
+			return b.activateControl()
 		}
 	case EventMouseClick:
 		if evt.MouseClick.Button == tea.MouseLeft {
-			return EventResult{
-				Handled:    true,
-				Action:     &Action{ID: b.actionID, Payload: b.label},
-				Invalidate: InvalidatePaint,
-			}
+			return b.activateControl()
 		}
 	}
 	return EventResult{}

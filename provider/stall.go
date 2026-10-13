@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"sync"
 	"time"
 )
@@ -104,6 +105,7 @@ type progressWatch struct {
 	wake      chan struct{}
 	done      chan struct{}
 	stopOnce  sync.Once
+	conn      net.Conn
 }
 
 func newProgressWatch(parent context.Context, policy progressTimeouts) (*progressWatch, context.Context) {
@@ -139,6 +141,19 @@ func (w *progressWatch) run() {
 			w.mu.Unlock()
 			if silence >= timeout {
 				w.cancel(&ProgressStallError{Phase: phase, Bytes: bytes, Silence: silence})
+				var stalled *ProgressStallError
+				if !errors.As(context.Cause(w.ctx), &stalled) {
+					return // explicit cancellation or overall deadline won
+				}
+				// HTTP/2 cancellation resets a stream, but leaves a blackholed
+				// multiplexed connection eligible for the next attempt. Retire
+				// only this stalled attempt's connection, not the whole pool.
+				w.mu.Lock()
+				conn := w.conn
+				w.mu.Unlock()
+				if conn != nil {
+					_ = conn.Close()
+				}
 				return
 			}
 			timer.Reset(max(time.Millisecond, timeout-silence))
@@ -155,6 +170,17 @@ func (w *progressWatch) run() {
 		case <-w.ctx.Done():
 			return
 		}
+	}
+}
+
+func (w *progressWatch) gotConn(conn net.Conn) {
+	w.mu.Lock()
+	w.conn = conn
+	w.mu.Unlock()
+	// Connection acquisition can race with expiry of the startup watchdog.
+	var stalled *ProgressStallError
+	if errors.As(context.Cause(w.ctx), &stalled) {
+		_ = conn.Close()
 	}
 }
 

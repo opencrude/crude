@@ -99,6 +99,16 @@ cooldowns; no individual automatic retry wait grows into hours. The public model
 catalog has the same failure ceiling; its successful six-hour refresh cadence is
 not shortened. Reviewer/model-job safety budgets remain independent.
 
+The provider's per-attempt progress watchdog captures the actual transport
+connection. A typed upload/header/download progress stall retires that exact
+connection before the next attempt can reuse it. Cancelling an HTTP/2 stream
+alone leaves a silently blackholed connection in the multiplexed pool; a finished
+cooldown would otherwise select the same unusable connection instead of redialing.
+Ordinary user cancellation and overall request deadlines do not trigger this
+retirement, and no pool-wide flush, policy change or unconditional redial is used.
+Retiring a failed multiplexed connection can interrupt sibling streams on it;
+accepted output still uses semantic continuation, never stochastic request replay.
+
 ## Durability and replay safety
 
 Pending work is checkpointed before admission/effects, with the original input,
@@ -228,6 +238,12 @@ it cannot wake another incident or consume a new draft. Stop remains available
 while waiting/recovering. Configuration changes can wake an active waiting owner;
 they do not silently restart passively recovered history.
 
+A root panic/unwind first installs the exact passive checkpoint and releases its
+old turn reservation, then emits the actionable attention state. Retry cannot
+race a published incident against missing pending ownership or an old still-live
+reservation. Ordinary active cooldown/attention waits keep their live wake path;
+this publication ordering does not wait or replay accepted work.
+
 Exact per-message timestamps/producing connection facts are retained when already
 present in display snapshots. A crash checkpoint that contains only a canonical
 tail can supply its boundary timestamp, not reconstruct unrecorded per-token times
@@ -240,6 +256,12 @@ See [network transport](network.md) for secure remediation of routing/TLS issues
 
 ## Regression acceptance
 
+- `provider/upload_retry_network_test.go`: actual HTTP/2 TLS through a local TCP
+  blackhole; upload and header stalls automatically redial after cooldown and
+  send the complete byte-identical original payload without a reset/wake. Accepted
+  partial output is not replayed; cancellation/deadline during cooldown prevents
+  a second attempt. Custom transports without `httptrace.GotConn` cannot provide
+  this exact-connection retirement; the shared product transport is exercised.
 - `provider/http_recovery_regression_test.go`: transient HTTP classes, generic
   envelopes, streaming/non-streaming retry, explicit permanent evidence/vetoes,
   and preserved invalid-parameter evidence.
@@ -260,6 +282,11 @@ See [network transport](network.md) for secure remediation of routing/TLS issues
   actual child runner; an earlier completed file effect remains exactly once,
   persisted owner-specific countdown expires without a wake, child final report
   retains provenance, and exact Stop prevents a delayed restart.
+- `session/upload_retry_journey_test.go`: actual root and `StartAgent` child,
+  HTTP/2 upload flow-control stall through a TCP blackhole, durable automatic
+  supervisor cooldown and redial without manual wake. The complete original
+  input and earlier exactly-once file effect survive; child reports retain their
+  true run/author, and exact Stop prevents a later dial after the abandoned wait.
 - Existing supervised protocol journeys inject partial tool streams, missing
   terminals and cancellation across all registered protocols. Persistence,
   panic, permission and passive-resume suites remain required negative gates.

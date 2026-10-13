@@ -113,6 +113,15 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// the complete shell, with expensive leaf work retained by source version.
 
 	switch msg := msg.(type) {
+	case shellport.ControlRequestMsg:
+		return m, m.handleShellControl(msg)
+	case shellControlDoneMsg:
+		return m, m.finishShellControl(msg)
+	case shellControlReplyMsg:
+		if msg.err != nil {
+			m.ws.Logger().Warn("CONTROL", "reply_failed", "error", msg.err.Error())
+		}
+		return m, nil
 	case clientTreeDirectoryMsg:
 		m.applyClientTreeDirectory(msg)
 		return m, nil
@@ -1087,22 +1096,12 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case sessionsettings.SaveMsg:
 		m.ws.Logger().Info("CONFIG", "session_settings_save")
 		m.Feedback.NotifyInfo("saving...")
-		s := msg.Settings
-		session, _ := m.sessionProjections.projectionForSettings(msg.Target)
-		if session == nil {
-			m.Feedback.NotifyError("Session settings owner is no longer available")
-			break
-		}
-		target := msg.Target
-		owner, generation := m.ws, m.workspaceSwitchGen.Load()
-		operation, err := owner.PrepareSessionSettingsSave(session.SessionID, s)
+		cmd, err := m.prepareSessionSettingsSave(msg)
 		if err != nil {
 			m.Feedback.NotifyError(err.Error())
 			break
 		}
-		cmds = append(cmds, func() tea.Msg {
-			return sessionSettingsSaveResultMsg{target: target, workspace: owner, generation: generation, result: operation.Run()}
-		})
+		cmds = append(cmds, cmd)
 	case sessionsettings.SaveAsWorkspaceMsg:
 		if msg.Settings.SessionMainAgent != "" {
 			m.Feedback.NotifyError("Choose Main Agent before saving agent settings as workspace defaults")
@@ -1195,9 +1194,29 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			projection.deckHost.MarkLayout()
 		}
 	case question.ResultMsg:
-		m.resolveAgentQuestion(msg.Target, msg.Result, false)
+		if _, ok := m.ws.(shellport.QuestionReceipt); ok {
+			cmd, err := m.prepareQuestionReply(msg.Target, msg.Result, false, "")
+			if err != nil {
+				m.Feedback.NotifyError(err.Error())
+			} else {
+				cmds = append(cmds, cmd)
+			}
+		} else {
+			m.resolveAgentQuestion(msg.Target, msg.Result, false)
+		}
 	case question.CancelMsg:
-		m.resolveAgentQuestion(msg.Target, question.Result{}, true)
+		if _, ok := m.ws.(shellport.QuestionReceipt); ok {
+			cmd, err := m.prepareQuestionReply(msg.Target, question.Result{}, true, "")
+			if err != nil {
+				m.Feedback.NotifyError(err.Error())
+			} else {
+				cmds = append(cmds, cmd)
+			}
+		} else {
+			m.resolveAgentQuestion(msg.Target, question.Result{}, true)
+		}
+	case questionReplyMsg:
+		m.applyQuestionReply(msg)
 	case confirmation.ResultMsg:
 		m.resolvePromptConfirmation(msg.Target, msg.Choice)
 	case confirmation.CancelMsg:

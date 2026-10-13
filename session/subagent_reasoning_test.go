@@ -39,7 +39,7 @@ func TestSubAgentClassifiesItsOwnFlattenedReasoningDuringToolLoop(t *testing.T) 
 		case 1, 2:
 			delta["tool_calls"] = []any{map[string]any{"index": 0, "id": fmt.Sprintf("read-%d", step), "type": "function", "function": map[string]string{"name": "list_directory", "arguments": `{"path":"."}`}}}
 		case 3:
-			delta["tool_calls"] = []any{map[string]any{"index": 0, "id": "report", "type": "function", "function": map[string]string{"name": "publish_report", "arguments": `{"report":"Findings recorded"}`}}}
+			delta["tool_calls"] = []any{map[string]any{"index": 0, "id": "report", "type": "function", "function": map[string]string{"name": "publish_report", "arguments": `{"recipient_ids":["parent"],"kind":"final","summary":"Findings recorded","body":"Inspected the source."}`}}}
 		case 4:
 			delta["content"] = "Finished."
 			finish = "stop"
@@ -69,18 +69,27 @@ func TestSubAgentClassifiesItsOwnFlattenedReasoningDuringToolLoop(t *testing.T) 
 		t.Fatal(err)
 	}
 	defer s.Close()
+	s.SetWorkDir(t.TempDir())
+	attachDelegationTestCollaboration(t, s)
+	if _, err := s.registerCollaborator(t.Context(), "parent", "parent", s.SessionID(), "", CategoryDefault, s.db); err != nil {
+		t.Fatal(err)
+	}
 	runner := NewSubAgentRunner(s, 1)
+	s.subAgentSup = runner
 	defer runner.SessionCancel()
 	sender := &liveSubAgentSender{}
 	runner.SetSender(sender)
 	handle, err := runner.launchSubAgent(context.Background(), agent.SubAgentSpec{
-		ID: "child", Name: "researcher", Category: CategoryResearcher,
+		ID: "child", Name: "researcher", Category: CategoryResearcher, Isolation: "shared",
 		Description: "Inspect the source", ParentID: "parent", Policy: safety.ReadOnlyPolicy(),
 	}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
 	runner.Wait()
+	if results := runner.Manager().CompletedResults(); len(results) != 1 || results[0].Status != agent.SubAgentCompleted || results[0].ReportID == "" {
+		t.Fatalf("child did not complete with its real final report: %+v", results)
+	}
 	if requests.Load() != 4 || handle.Agent.ReasoningContentKind != reasoning.InferredRaw {
 		t.Fatalf("child requests=%d inferred kind=%q", requests.Load(), handle.Agent.ReasoningContentKind)
 	}

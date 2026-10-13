@@ -119,10 +119,12 @@ const (
 // agent-assigned internal tool ID, which prevents a late response from an old
 // panel from resolving a newer request.
 type BlockResponse struct {
-	RequestID string
-	Outcome   BlockOutcome
-	Value     string
-	Detail    string
+	RequestID       string
+	Outcome         BlockOutcome
+	Value           string
+	Detail          string
+	AttributionKind string
+	AttributionID   string
 }
 
 const (

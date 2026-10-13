@@ -14,6 +14,7 @@ import (
 	"crude/safety"
 	"crude/tools"
 	ttypes "crude/types"
+	"crude/types/control"
 	"crude/types/reasoning"
 )
 
@@ -40,19 +41,28 @@ type StepRecord struct {
 }
 
 type Agent struct {
-	Provider                 *provider.Provider
-	Model                    string
-	ReasoningContentKind     reasoning.Kind
-	condensedSamples         int
-	rawSamples               int
-	sawRawReasoning          bool
-	CompactionProvider       *provider.Provider
-	CompactionTargetModel    string
-	CompactionTargetWindow   int
-	CompactionTargetTokens   int
-	CompactionMaxOutput      int
-	CompactionAgentProfile   string
-	AgentID                  AgentID
+	Provider *provider.Provider
+	Model    string
+	// MediaReadPolicy is the exact resolved role's immutable input-modality
+	// snapshot for this Agent instance. Native reads and dynamic tool results
+	// must use it instead of another role's settings or the mutable model catalog.
+	// Nil remains available for standalone agents that inherit catalog policy.
+	MediaReadPolicy        *tools.MediaReadPolicy
+	ControlTarget          *control.Target
+	ReasoningContentKind   reasoning.Kind
+	condensedSamples       int
+	rawSamples             int
+	sawRawReasoning        bool
+	CompactionProvider     *provider.Provider
+	CompactionTargetModel  string
+	CompactionTargetWindow int
+	CompactionTargetTokens int
+	CompactionMaxOutput    int
+	CompactionAgentProfile string
+	AgentID                AgentID
+	// RunID is the immutable durable owner of this instance's effects. Never
+	// discover a replacement run from current inventory during tool execution.
+	RunID                    string
 	TurnGeneration           uint64
 	Policy                   safety.Policy
 	CommandPolicy            safety.CommandPolicy

@@ -14,9 +14,9 @@ import (
 
 	"crude/agent"
 	"crude/capability"
+	"crude/collaboration"
 	"crude/provider"
 	"crude/skills"
-	ttypes "crude/types"
 	captypes "crude/types/capability"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -37,11 +37,14 @@ func TestTaskAcquiresSkillActivatesMCPUsesToolAndResumesPassively(test *testing.
 	})
 	endpoint := httptest.NewServer(mcp.NewStreamableHTTPHandler(func(*http.Request) *mcp.Server { return server }, &mcp.StreamableHTTPOptions{Stateless: true}))
 	defer endpoint.Close()
-	database, err := sql.Open("sqlite", filepath.Join(test.TempDir(), "workspace.db"))
+	database, err := sql.Open("sqlite", filepath.Join(test.TempDir(), "workspace.db")+"?_pragma=busy_timeout(5000)&_pragma=foreign_keys(ON)&_pragma=journal_mode(WAL)")
 	if err != nil {
 		test.Fatal(err)
 	}
 	defer func() { _ = database.Close() }()
+	// Match the product workspace DB's connection policy for the shared
+	// collaboration and capability authorization writers.
+	database.SetMaxOpenConns(1)
 	runtime, err := capability.New(root, filepath.Join(test.TempDir(), "artifacts"), database)
 	if err != nil {
 		test.Fatal(err)
@@ -105,43 +108,28 @@ func TestTaskAcquiresSkillActivatesMCPUsesToolAndResumesPassively(test *testing.
 	defer owner.Close()
 	owner.SetWorkDir(root)
 	owner.SetCapabilities(runtime, agent.NewFileOwnership())
+	store, err := collaboration.Attach(database, root, filepath.Join(home, "locks"))
+	if err != nil {
+		test.Fatal(err)
+	}
+	defer func() { _ = store.Close() }()
+	owner.SetCollaboration(store, "yolo-capability-fixture")
+	runtime.SetRuntimeAuthority(sessionAutonomyAuthority{store: store})
 	owner.SetYolo(true)
 	sender := newMockEventSender()
 	orchestrator, err := owner.NewOrchestrator(sender)
 	if err != nil {
 		test.Fatal(err)
 	}
-	approvalCtx, stopApproval := context.WithCancel(test.Context())
-	defer stopApproval()
-	var approvedRequests atomic.Int32
-	go func() {
-		for {
-			select {
-			case <-approvalCtx.Done():
-				return
-			case event := <-sender.ch:
-				if event.typ != "blocking" {
-					continue
-				}
-				data, _ := event.data.(map[string]string)
-				answer := "deny"
-				if data["tool"] == "mcp_request_access" && data["target"] == "task" &&
-					strings.Contains(data["reason"], `"effect":"read"`) && strings.Contains(data["reason"], `"scope":"workspace"`) {
-					answer = "allow"
-					approvedRequests.Add(1)
-				}
-				orchestrator.ResolveBlock(ttypes.BlockResponse{RequestID: data["block_id"], Outcome: ttypes.BlockAnswered, Value: answer})
-				return
-			}
-		}
-	}()
 	if !orchestrator.SubmitInput(provider.PlainInput("Use review-task to inspect exact fixture evidence")) {
 		test.Fatal("task was not admitted")
 	}
 	var activationContext, dynamicDefinition, actualResult bool
+	var capturedWire []string
 	for requestIndex := 0; requestIndex < 6; requestIndex++ {
 		body := waitCapturedRequest(test, requests)
 		encoded, _ := json.Marshal(body)
+		capturedWire = append(capturedWire, string(encoded))
 		activationContext = activationContext || strings.Contains(string(encoded), "source instructions, subordinate")
 		actualResult = actualResult || strings.Contains(string(encoded), "real SDK tool evidence")
 		if requestIndex >= 4 {
@@ -154,8 +142,11 @@ func TestTaskAcquiresSkillActivatesMCPUsesToolAndResumesPassively(test *testing.
 	}
 	waitTurnDone(test, sender, orchestrator.ID)
 	waitAssistantCount(test, owner, 1)
-	if !activationContext || !dynamicDefinition || !actualResult || mutations.Load() != 1 || approvedRequests.Load() != 1 {
-		test.Fatalf("task workflow: skill=%t definition=%t result=%t SDK calls=%d", activationContext, dynamicDefinition, actualResult, mutations.Load())
+	if !activationContext || !dynamicDefinition || !actualResult || mutations.Load() != 1 {
+		test.Fatalf("task workflow: skill=%t definition=%t result=%t SDK calls=%d\n%s", activationContext, dynamicDefinition, actualResult, mutations.Load(), strings.Join(capturedWire, "\n"))
+	}
+	if len(runtime.Snapshot().Settings.Connections["task"].Grants) != 0 {
+		test.Fatal("YOLO synthesized durable tool trust")
 	}
 	if !runtime.Snapshot().Settings.Skills["local:"+skill.Name].Managed {
 		test.Fatal("task acquisition did not publish an immutable managed artifact")

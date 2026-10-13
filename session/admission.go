@@ -83,6 +83,10 @@ func (s *Session) PrepareInputAdmission(orchestratorID string, input provider.Us
 	if atomic.LoadInt32(&s.closing) != 0 {
 		return nil, errors.New("session is closing")
 	}
+	if err := s.ValidateHistoryAdmission(); err != nil {
+		return nil, err
+	}
+	input = s.bindInputExecution(input)
 	if s.shouldQueueInput(orchestratorID) {
 		s.orchMu.Lock()
 		orchestrator := s.orchestrators[orchestratorID]
@@ -116,6 +120,9 @@ func (s *Session) prepareReservedAdmission(orchestratorID string, input provider
 func (s *Session) prepareReservedAdmissionLocked(orchestratorID string, input provider.UserInput, draftRevision uint64) (*InputAdmissionIntent, error) {
 	if atomic.LoadInt32(&s.closing) != 0 {
 		return nil, errors.New("session is closing")
+	}
+	if err := s.ValidateHistoryAdmission(); err != nil {
+		return nil, err
 	}
 	s.orchMu.Lock()
 	orchestrator := s.orchestrators[orchestratorID]

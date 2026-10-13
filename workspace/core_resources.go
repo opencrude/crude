@@ -15,5 +15,8 @@ func (w *Workspace) InitializeCoreResources(ctx context.Context) error {
 		errs = append(errs, w.Status.Hydrate())
 	}
 	errs = append(errs, w.ensureCapabilities(ctx))
+	if ctx.Err() == nil {
+		errs = append(errs, w.ensureExecutions())
+	}
 	return errors.Join(errs...)
 }

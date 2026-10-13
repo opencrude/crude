@@ -143,10 +143,17 @@ func (s *Store) snapshotIncludingPaths(ctx context.Context, opts SnapshotOptions
 	if err != nil {
 		return Manifest{}, err
 	}
+	matcher, err := newIgnoreMatcher(s.workspaceRoot, opts)
+	if err != nil {
+		return Manifest{}, err
+	}
 	tracked := make([]string, 0, len(paths))
 	for _, key := range paths {
 		key, ok := cleanOperationPath(key)
 		if !ok || !filepath.IsAbs(filepath.FromSlash(key)) {
+			continue
+		}
+		if matcher.hardExcluded(key) {
 			continue
 		}
 		tracked = append(tracked, key)
@@ -223,6 +230,12 @@ func (s *Store) scan(ctx context.Context, opts SnapshotOptions, storeObjects boo
 			return nil
 		}
 		rel = filepath.ToSlash(rel)
+		if matcher.hardExcluded(rel) {
+			if dirEntry.IsDir() {
+				return filepath.SkipDir
+			}
+			return nil
+		}
 		info, err := dirEntry.Info()
 		if err != nil {
 			return err
