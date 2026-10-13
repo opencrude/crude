@@ -12,7 +12,7 @@ import (
 	"crude/tui/editor"
 	"crude/tui/screens/launcher"
 	"crude/tui/screens/shellchat"
-	ttypes "crude/tui/types"
+	ttypes "crude/types"
 )
 
 func openTestEditor(t *testing.T, app *App) string {

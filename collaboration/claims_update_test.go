@@ -2,6 +2,7 @@ package collaboration
 
 import (
 	"errors"
+	"strings"
 	"testing"
 )
 
@@ -44,6 +45,11 @@ func TestUpdateClaimsNarrowsOriginalCeilingAtomicallyAndAudits(t *testing.T) {
 	}
 	if len(result.Claims) != 2 || result.Audit.ID == "" || result.Audit.Kind != EventPeerNote {
 		t.Fatalf("result = %+v", result)
+	}
+	// The audit body is delivered into the child's transcript; it is prose,
+	// never the raw claim JSON.
+	if strings.HasPrefix(result.Audit.Body, "{") || !strings.Contains(result.Audit.Body, "one.go") {
+		t.Fatalf("audit body is not readable: %q", result.Audit.Body)
 	}
 	versions := map[string]uint64{}
 	for _, claim := range result.Claims {

@@ -24,8 +24,9 @@ type DisplayMeta struct {
 	AccountID       string                       `json:"account_id,omitempty"`
 	ModelID         string                       `json:"model_id,omitempty"`
 
-	// Legacy fields remain readable for sessions written before canonical
-	// conversation snapshots landed. New writes always populate Snapshots.
+	// Writer inputs that session canonicalization projects into Snapshots;
+	// hydration reads only Snapshots. DisplayRole also marks assignment and
+	// hidden runtime-context rows.
 	DisplayRole     string   `json:"display_role,omitempty"`
 	DisplayContent  string   `json:"display_content,omitempty"`
 	ReferenceLabels []string `json:"reference_labels,omitempty"`

@@ -33,14 +33,10 @@ type RowSpan struct {
 }
 
 // PaintLine is a single terminal row of semantic spans with optional subpane
-// background applied at compose/paint time (not stored as ANSI).
-//
-// ANSIFallback marks "no native row — paint Lines[i] via the ANSI path".
-// An empty-but-native spacer uses Spans with empty text (see buildPlainBodyLine)
-// and ANSIFallback=false so blank lines never collide with the fallback signal.
+// background applied at compose/paint time (not stored as ANSI). An empty
+// spacer uses Spans with empty text (see buildPlainBodyLine).
 type PaintLine struct {
-	Spans        []RowSpan
-	ANSIFallback bool
+	Spans []RowSpan
 	// PaneBackground fills the whole transcript row, including its margins,
 	// with ColorSubPaneBg. It follows content through wrapping and grouping;
 	// transcript-owned leading spacers never carry it.
@@ -67,22 +63,15 @@ func (pl PaintLine) VisibleWidth() int {
 	return rendering.VisibleWidth(pl.PlainText())
 }
 
-// IsZero reports whether the line carries no paintable spans.
-// Prefer PreferANSI() when deciding native vs ANSI paint — blank native
-// spacers are non-zero (empty-text span) while ANSI fallback may also be empty.
+// IsZero reports whether the line carries no paintable spans. Blank native
+// spacers are non-zero (empty-text span).
 func (pl PaintLine) IsZero() bool {
-	return len(pl.Spans) == 0 && !pl.ANSIFallback
-}
-
-// PreferANSI reports whether shellchat must paint the parallel ANSI/string line.
-func (pl PaintLine) PreferANSI() bool {
-	return pl.ANSIFallback
+	return len(pl.Spans) == 0
 }
 
 // SubPaneLine is one row emitted by subpane projection. Native lines paint
 // directly into CellBuffer; Text holds the plain-text mirror (set by
-// NativeLine) used by selection/copy. The legacy ANSI-only path (ANSILine)
-// has been removed — every row carries a Native PaintLine.
+// NativeLine) used by selection/copy.
 type SubPaneLine struct {
 	Native         *PaintLine
 	Text           string

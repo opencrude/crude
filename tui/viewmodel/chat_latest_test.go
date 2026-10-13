@@ -6,7 +6,6 @@ import (
 	"crude/sessiondb"
 	"crude/tui/rendering"
 	"crude/tui/screens/shellchat"
-	ttypes "crude/tui/types"
 	"crude/tui/ui"
 	"crude/types"
 	"crude/workspace"
@@ -113,7 +112,7 @@ func TestLatestRemainsPaintedAcrossLiveTicks(t *testing.T) {
 		app.paintShellFrame()
 	}
 	for tick := range 20 {
-		_, _ = app.Update(ttypes.TickMsg(time.Now().Add(time.Duration(tick) * time.Second)))
+		_, _ = app.Update(types.TickMsg(time.Now().Add(time.Duration(tick) * time.Second)))
 		app.paintShellFrame()
 		if !bufferContainsPlain(app.mainSurf.Buffer(), "Latest") {
 			s := app.chatScreen.ScrollModel()

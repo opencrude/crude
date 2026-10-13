@@ -157,6 +157,17 @@ Crude's chat composer handles that event by reading the system clipboard image
 on its existing asynchronous worker and persisting an ordinary attachment.
 Changing the terminal's paste bindings is not required.
 
+`TestConnectedClipboardImageReachesProviderExactly` verifies the connected
+composer, framed inline/chunked transport, binary storage and exact provider image
+payload. `TestConnectedNativeClipboardImage` additionally uses the real OS reader
+when `CRUDE_SYNTHETIC_CLIPBOARD=1`; run it only while owning a synthetic 2×2 PNG
+clipboard fixture, preserving/restoring the previous clipboard in memory. Never
+enable it against an arbitrary user's clipboard. Native Windows acceptance passed;
+the shared Linux build compiles, but native Linux clipboard acceptance is separate.
+The 4.8 MB uncompressed image passes ordinary execution; its race-instrumented
+end-to-end test still exceeds the existing eight-second journey bound during
+context preparation. No bound was relaxed and that gate remains open.
+
 For a native check, save the original clipboard, put a small synthetic bitmap
 on it, open a new session without submitting a prompt, and send `key:ctrl+v`.
 Wait for the attachment chip and verify the existing draft stays intact. Repeat

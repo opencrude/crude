@@ -39,6 +39,7 @@ func (s *GitService) CompareChanges(ctx context.Context, changes []GitChange) ([
 	if err != nil {
 		return nil, err
 	}
+	defer state.close()
 	out := make([]GitChangeComparison, 0, min(len(changes), GitChangesLimit))
 	var total int64
 	for index, change := range changes {
@@ -99,6 +100,7 @@ func (s *GitService) CommitStaged(ctx context.Context, expected []string, messag
 	if err != nil {
 		return err
 	}
+	defer state.close()
 	review, err := state.commitReview(ctx)
 	if err != nil {
 		return err

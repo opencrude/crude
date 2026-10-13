@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"crude/agent"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -342,4 +343,8 @@ func TestRecoveryRealComposerRetryClickAndAutomaticContinuation(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (s *recoveryJourneySender) SendAgentEventEnvelope(event agent.AgentEvent) {
+	s.SendAgentEventWithID(event.Type, event.Data, event.AgentID)
 }

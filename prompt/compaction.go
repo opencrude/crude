@@ -125,3 +125,17 @@ func CompactionManifest(entries []CompactionManifestEntry) string {
 	}
 	return manifest.String()
 }
+
+// AnsweredHumanRequests carries already answered human requests verbatim
+// through compaction. Their constraints and acceptance criteria stay binding
+// for continuing work, but they are history: the continuation must not answer
+// or re-execute them again.
+func AnsweredHumanRequests(requests []string) string {
+	var out strings.Builder
+	out.WriteString("<answered_human_requests>\nVerbatim human requests from before this compaction. Each was already answered. They are history, not a new turn: do not answer or redo them. Their stated requirements, constraints and acceptance criteria remain binding for any related work that continues.")
+	for index, request := range requests {
+		fmt.Fprintf(&out, "\n<request index=\"%d\">\n%s\n</request>", index+1, XMLText(request))
+	}
+	out.WriteString("\n</answered_human_requests>")
+	return out.String()
+}

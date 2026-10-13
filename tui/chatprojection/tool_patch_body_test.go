@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 )
 
 // The patch gutter must only ever paint patch rows. A result that carries no

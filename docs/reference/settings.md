@@ -586,10 +586,8 @@ overrides, root choice, model/account pins or tool restrictions. Repeating the
 same prepared operation returns its prior result instead of toggling again;
 late/out-of-order completions cannot replace another owner or newer projection.
 
-Stored overlays are re-diffed against current application defaults on load.
-`Workspace.LoadWorkspaceOverrides` still contains a pre-existing legacy
-whole-category `app_settings` reader. This is a remaining implementation/policy
-boundary, not a new connected-shell conversion guarantee. **Reset section**
+Saves store only the leaves that differ from the application layer, and the
+stored overlay is loaded as is. **Reset section**
 returns a workspace category to full inheritance. New format alignment must be
 backed up and performed manually outside product code.
 
@@ -603,6 +601,15 @@ provider selector, persisted Providers catalog, or compatibility reader.
 workspace). Application defaults alone are `AppDefaults()`.
 
 ## Who writes what
+
+CLI `--list-sessions`, `--resume last` (or an exact ID), and `--delete-session`
+resolve the selected workspace's current registry/store, never a global legacy
+sessions folder. Offline deletion exclusively owns the core endpoint, refuses
+active/foreign/unsafe identities, and retains the database, WAL/SHM, attachments
+and registry preimage in the printed `.session-delete-*` recovery directory.
+Failed registry commit restores staged files; a failed rollback keeps the recovery
+copy and reports its location. Recovery is manual while the core is stopped; no
+automatic format migration or silent transcript rewrite occurs.
 
 | Action | Persistence | Must not write |
 |--------|-------------|----------------|
@@ -659,11 +666,8 @@ The Local History window exposes logical/physical diagnostics and the command
 palette provides `Create History Snapshot`, `Verify Local History`, `Prune Local
 History`, and `Open Local History Folder`.
 
-The workspace owner writes sparse `workspace_settings` overlays. Its existing
-`app_settings` legacy reader remains in `workspace/settings.go` and diffs those
-values against current defaults. Removal/manual data alignment is outside this
-connected-shell documentation change; do not infer that every legacy reader has
-already been removed.
+The workspace owner writes and reads only sparse `workspace_settings` overlays.
+There is no `app_settings` reader; older rows are dead data.
 
 ## UI
 
@@ -702,6 +706,14 @@ fragments and bounded model-backed chunk-and-reduce instead of deleting history.
 Provider-confirmed overflow retries only after reducing the request; extraction
 capacity adapts to reported usage and explicit context-limit rejections.
 Checkpoints and verbatim human retention are sized for the continuation model.
+Each agent's **Keep recent input** setting controls the preferred verbatim budget
+from 1,000 to 200,000 estimated tokens (20,000 by default). Application values
+flow into workspace defaults field by field, and a session snapshots/overrides the
+resolved agent value like its compaction threshold. The checkpoint, current runtime
+handoff, tool/system envelope, and real continuation capacity remain hard bounds;
+raising the preference cannot overflow them. Answered human requirements use the
+same budget in their marked context-only history block. A child's latest assignment
+may use all remaining continuation space rather than this recent-input cap.
 Failure, truncated extraction, or cancellation installs no partial checkpoint.
 Zero disables automatic compaction and overflow recovery; `/compact` uses the
 same transaction. See [adaptive context handling](adaptive-context.md).

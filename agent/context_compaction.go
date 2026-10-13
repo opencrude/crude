@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	ttypes "crude/types"
 	"crude/types/accounting"
 	"encoding/xml"
 	"errors"
@@ -17,8 +18,7 @@ import (
 )
 
 const (
-	compactionRecentUserMaxTokens = 20_000
-	compactionStageRecoveries     = 3
+	compactionStageRecoveries = 3
 )
 
 type CompactResult struct {
@@ -128,6 +128,7 @@ func (a *Agent) contextCompactor(targetWindow int) *Agent {
 	compactor.CompactionTargetModel = a.Model
 	compactor.CompactionTargetWindow = targetWindow
 	compactor.CompactionTargetTokens = a.contextThreshold(targetWindow)
+	compactor.CompactionRetentionTokens = a.CompactionRetentionTokens
 	compactor.MaxOutputTokens = a.CompactionMaxOutput
 	compactor.CompactionAgentProfile = a.CompactionAgentProfile
 	return compactor
@@ -356,7 +357,8 @@ func (a *Agent) compactWithModel(
 	if err != nil {
 		return compactOutcome{}, err
 	}
-	retentionBudget := min(compactionRecentUserMaxTokens, max(0, continuationLimit-fixed-provider.EstimateMessageTokens(checkpointMsg, targetModel)-provider.EstimateMessageTokens(continuity, targetModel)-1))
+	available := max(0, continuationLimit-fixed-provider.EstimateMessageTokens(checkpointMsg, targetModel)-provider.EstimateMessageTokens(continuity, targetModel)-1)
+	retentionBudget := min(a.compactionRetentionTokens(), available)
 	answered := latestHumanRequestAnswered(msgs[1:])
 	if role == "root" && a.LatestHumanTurnState != nil {
 		state, known, stateErr := a.LatestHumanTurnState(ctx)
@@ -367,11 +369,25 @@ func (a *Agent) compactWithModel(
 			answered = state == "completed"
 		}
 	}
+	compacted := []provider.ChatMessage{checkpointMsg}
 	if role == "root" && answered {
+		// An answered request must not be replayed as a pending user turn, but
+		// its verbatim requirements must survive: carry it as marked history.
+		if answeredHumans := boundedRecentUserContext(msgs[1:], role, retentionBudget, available, targetModel); len(answeredHumans) > 0 {
+			requests := make([]string, 0, len(answeredHumans))
+			for _, human := range answeredHumans {
+				requests = append(requests, human.ContentString())
+			}
+			history := provider.NewTextMessage("user", rootprompt.AnsweredHumanRequests(requests))
+			history.Origin, history.Visibility = provider.OriginCheckpoint, provider.VisibilityContextOnly
+			if provider.EstimateMessageTokens(history, targetModel) <= available {
+				compacted = append(compacted, history)
+			}
+		}
 		retentionBudget = 0
 	}
-	recentUsers := boundedRecentUserContext(msgs[1:], role, retentionBudget, targetModel)
-	compacted := append([]provider.ChatMessage{checkpointMsg}, recentUsers...)
+	recentUsers := boundedRecentUserContext(msgs[1:], role, retentionBudget, available, targetModel)
+	compacted = append(compacted, recentUsers...)
 	compacted = append(compacted, continuity)
 	afterTokens := estimateCanonicalRequest(append([]provider.ChatMessage{msgs[0]}, compacted...), tools, targetModel)
 	if ctx.Err() != nil {
@@ -393,6 +409,13 @@ func (a *Agent) compactWithModel(
 		ContextWindow: ctxWindow, RequestID: requestID, Trigger: trigger, Role: role,
 		AccountID: a.Provider.AccountID, ProviderID: a.Provider.ID, ModelID: a.Model,
 	}, nil
+}
+
+func (a *Agent) compactionRetentionTokens() int {
+	if a == nil || a.CompactionRetentionTokens <= 0 {
+		return ttypes.DefaultContextRetentionTokens
+	}
+	return a.CompactionRetentionTokens
 }
 
 func compactionEventData(requestID, trigger, role string, stage, completed, before, after, ctxWindow int) map[string]any {
@@ -522,23 +545,42 @@ func retainRecentUserContext(msgs []provider.ChatMessage, role string, budget in
 	return selected
 }
 
-func boundedRecentUserContext(messages []provider.ChatMessage, role string, budget int, model string) []provider.ChatMessage {
-	var selected []provider.ChatMessage
+// boundedRecentUserContext retains verbatim human input within budget. A
+// child's latest assignment is its original instruction set rather than
+// optional recent context: it may use all available continuation space and is
+// left to the extracted checkpoint only when it cannot fit there at all.
+func boundedRecentUserContext(messages []provider.ChatMessage, role string, budget, available int, model string) []provider.ChatMessage {
+	keep := make(map[int]bool)
+	if role == "child" {
+		for index := len(messages) - 1; index >= 0; index-- {
+			if messages[index].EffectiveOrigin() != provider.OriginAssignment {
+				continue
+			}
+			if cost := provider.EstimateMessageTokens(messages[index], model); cost <= available {
+				keep[index] = true
+				budget = min(budget, available-cost)
+			}
+			break
+		}
+	}
 	used := 0
 	for index := len(messages) - 1; index >= 0; index-- {
 		message := messages[index]
-		if !message.IsGenuineUserInput() && (role != "child" || message.EffectiveOrigin() != provider.OriginAssignment) {
+		if keep[index] || !message.IsGenuineUserInput() {
 			continue
 		}
 		cost := provider.EstimateMessageTokens(message, model)
 		if used+cost > budget {
 			continue
 		}
-		selected = append(selected, message)
+		keep[index] = true
 		used += cost
 	}
-	for left, right := 0, len(selected)-1; left < right; left, right = left+1, right-1 {
-		selected[left], selected[right] = selected[right], selected[left]
+	selected := make([]provider.ChatMessage, 0, len(keep))
+	for index, message := range messages {
+		if keep[index] {
+			selected = append(selected, message)
+		}
 	}
 	return selected
 }

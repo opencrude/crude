@@ -4,6 +4,8 @@ import (
 	"sort"
 
 	"crude/tui/perf"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 type renderItem struct {
@@ -422,7 +424,8 @@ func (vl *itemList) ExtractVisible() []string {
 }
 
 // ExtractVisibleNative returns PaintLines parallel to ExtractVisible(), using
-// the same skip/pad/scroll arithmetic. Missing native rows are marked PreferANSI.
+// the same skip/pad/scroll arithmetic. A missing native row paints its plain
+// text until the owning renderer repairs it.
 func (vl *itemList) ExtractVisibleNative() []PaintLine {
 	vl.BuildIndex()
 
@@ -525,11 +528,10 @@ func (vl *itemList) assembleNativeOutput(firstItem, lastItem, skipLines int) []P
 			if j < len(item.Native) {
 				output = append(output, item.Native[j])
 			} else {
-				// The owning Renderer repairs this invariant on the next render.
-				// Preserve ANSI styling for this frame rather than silently
-				// converting a rich row to plain ColorFg.
+				// The owning Renderer repairs this invariant on the next render;
+				// this frame paints the row's plain text.
 				item.Dirty = true
-				output = append(output, PaintLine{ANSIFallback: true})
+				output = append(output, buildPlainBodyLine(ansi.Strip(lines[j])))
 			}
 			accumulated++
 			if accumulated >= vl.viewportH {

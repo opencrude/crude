@@ -1,14 +1,13 @@
 package viewmodel
 
 import (
-	"crude/tui/types"
 	ttypes "crude/types"
 	"crude/workspace"
 )
 
 type statusHydrateErrMsg struct{ Err error }
 
-func (m *App) syncAgentStatusEvent(evt types.AgentEventMsg) {
+func (m *App) syncAgentStatusEvent(evt ttypes.AgentEventMsg) {
 	if m.ws == nil {
 		return
 	}

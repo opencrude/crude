@@ -5,6 +5,8 @@ import (
 
 	"crude/lspclient"
 	model "crude/types"
+
+	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 )
 
 // defaultLSPRuntime supplies the real subprocess transport without a shell.
@@ -30,6 +32,6 @@ func (defaultLSPRuntime) NewClient(spec model.LSPServerSpec, rootURI string) LSP
 }
 
 // RequestRename adapts the protocol result to the workspace request contract.
-func (c *runtimeLSPClient) RequestRename(ctx context.Context, path string, line, col int, name string) (interface{}, error) {
+func (c *runtimeLSPClient) RequestRename(ctx context.Context, path string, line, col int, name string) (*protocol.WorkspaceEdit, error) {
 	return c.LSPIntegration.RequestRename(ctx, path, line, col, name)
 }

@@ -6,8 +6,8 @@ import (
 	"crude/provider"
 	"crude/tui/settings"
 	"crude/tui/theme"
-	ttypes "crude/tui/types"
 	"crude/tui/ui"
+	ttypes "crude/types"
 )
 
 func TestSignInResultUpdatesOpenModel(t *testing.T) {

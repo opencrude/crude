@@ -9,8 +9,8 @@ import (
 	"crude/network"
 	"crude/tui/surface"
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 )
 
 func TestSettingsNetworkGroupOrderAndSearch(t *testing.T) {
@@ -58,9 +58,13 @@ func TestNetworkSettingsRoundTripAndValidation(t *testing.T) {
 		ConnectTimeoutSeconds:      45,
 		TLSHandshakeTimeoutSeconds: 12,
 		KeepAliveSeconds:           40,
+		KeepAliveIntervalSeconds:   12,
+		KeepAliveCount:             4,
 		IdleConnTimeoutSeconds:     120,
 		MaxIdleConnsPerHost:        24,
 		DisableHTTP2:               true,
+		HTTP2PingIntervalSeconds:   20,
+		HTTP2PingTimeoutSeconds:    7,
 		TLSMinimumVersion:          network.TLSMinimumVersion13,
 		CAFile:                     "/secure/roots.pem",
 		ClientCertificateFile:      "/secure/client.pem",

@@ -8,8 +8,8 @@ import (
 
 	"crude/tui/surface"
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 )
 
 // The settings form and category rail have separate keyboard selection and

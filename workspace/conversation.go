@@ -629,6 +629,9 @@ func (c *Conversation) UpdateToolStreaming(toolID, internalID, name string, data
 	hasStreamingDetail := target != "" || contentLines > 0 || oldLines > 0 || newLines > 0 || estTokens > 0
 
 	message := c.findTool(internalID, toolID)
+	if message != nil && (message.ToolStatus == "success" || message.ToolStatus == "error" || message.ToolStatus == "cancelled") {
+		return // Late evidence for this exact call cannot reopen or clone it.
+	}
 	if message == nil {
 		message = c.promoteTurnStatusToTool(toolID, internalID, name)
 	}
@@ -713,6 +716,9 @@ func (c *Conversation) UpdateToolCall(toolID, internalID, name, argsCompact stri
 		return
 	}
 	message := c.findTool(internalID, toolID)
+	if message != nil && (message.ToolStatus == "success" || message.ToolStatus == "error" || message.ToolStatus == "cancelled") {
+		return
+	}
 	if message == nil {
 		message = c.promoteTurnStatusToTool(toolID, internalID, name)
 	}
@@ -1144,11 +1150,15 @@ func (c *Conversation) findTool(internalID, toolID string) *Message {
 	if c == nil {
 		return nil
 	}
-	if internalID != "" && c.byID[internalID] != nil {
-		return c.byID[internalID]
-	}
 	if toolID != "" {
-		return c.byID[toolID]
+		if message := c.byID[toolID]; message != nil {
+			return message
+		}
+	}
+	if internalID != "" {
+		if message := c.byID[internalID]; message != nil && (toolID == "" || message.ToolID == "" || message.ToolID == toolID) {
+			return message
+		}
 	}
 	return nil
 }

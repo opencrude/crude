@@ -108,13 +108,15 @@ func (store *Store) UpdateClaims(ctx context.Context, request UpdateClaimsReques
 			}
 			result.Claims = append(result.Claims, claim)
 		}
-		body, _ := json.Marshal(map[string]any{"agent_id": agent.ID, "terminal_run_id": run.ID, "released": result.Released, "claims": result.Claims})
+		// The body is read by the child and shown in its transcript; exact claim
+		// identities stay in the typed result and the claim_repair reference.
+		body := claimRepairBody(run.ID, result.Claims, len(result.Released))
 		auditPreimage, _ := json.Marshal(map[string]any{"agent_id": agent.ID, "terminal_run_id": run.ID, "run_version": run.Version, "expected_versions": request.ExpectedVersions, "paths": paths})
 		auditHash := sha256.Sum256(auditPreimage)
 		published, err := store.publishTx(ctx, tx, PublishRequest{
 			SenderID: request.ParentID, IdempotencyKey: fmt.Sprintf("claim-repair:%s:%d:%x", run.ID, run.Version, auditHash[:12]),
 			RecipientIDs: []string{agent.ID}, Origin: OriginRuntime, Kind: EventPeerNote,
-			Body: string(body), RunID: run.ID, RequestID: run.RequestID,
+			Body: body, RunID: run.ID, RequestID: run.RequestID,
 			References: []Reference{{Kind: "claim_repair", ID: run.ID, Revision: int(run.Version)}},
 		})
 		if err != nil {
@@ -288,4 +290,13 @@ func pathContains(parent, path string) bool {
 	}
 	relative, err := filepath.Rel(parent, path)
 	return err == nil && relative != "." && relative != ".." && !strings.HasPrefix(relative, ".."+string(filepath.Separator))
+}
+
+func claimRepairBody(runID string, claims []Claim, released int) string {
+	paths := make([]string, 0, len(claims))
+	for _, claim := range claims {
+		paths = append(paths, claim.Path)
+	}
+	return fmt.Sprintf("File scope repaired after run %s: released %d claim(s); now owns %s. Continue explicitly to resume work.",
+		runID, released, strings.Join(paths, ", "))
 }

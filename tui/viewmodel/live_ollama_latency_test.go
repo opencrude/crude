@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"context"
+	"crude/agent"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -11,7 +12,7 @@ import (
 
 	"crude/provider"
 	"crude/session"
-	ttypes "crude/tui/types"
+	ttypes "crude/types"
 	"crude/workspace"
 )
 
@@ -138,4 +139,8 @@ func TestLiveOllamaWaitLatency(t *testing.T) {
 	if maxUpdate > 500*time.Millisecond || maxPaint > 500*time.Millisecond {
 		t.Fatal("live request blocked UI for over 500ms")
 	}
+}
+
+func (s *latencyEventSender) SendAgentEventEnvelope(event agent.AgentEvent) {
+	s.SendAgentEventWithID(event.Type, event.Data, event.AgentID)
 }

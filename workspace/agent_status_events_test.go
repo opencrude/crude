@@ -120,7 +120,7 @@ func TestApplyAgentStatusEventRecoveryAcknowledgementAndError(t *testing.T) {
 	status.RetryAt = time.Time{}
 	applyRecovery()
 	requireAgentStatusPhase(t, w, node.ID, ttypes.AgentPreparing, "Resuming run", false)
-	w.ApplyAgentStatusEvent(AgentEvent{AgentID: node.ID, Type: "phase", Data: "waiting_provider"})
+	w.ApplyAgentStatusEvent(AgentEvent{AgentID: node.ID, Type: "phase", Data: map[string]any{"name": "waiting_provider"}})
 	requireAgentStatusPhase(t, w, node.ID, ttypes.AgentWaiting, "Waiting for provider", false)
 	w.ApplyAgentStatusEvent(AgentEvent{AgentID: node.ID, Type: "thinking"})
 	before := requireAgentStatusPhase(t, w, node.ID, ttypes.AgentThinking, "Reasoning", false)

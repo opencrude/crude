@@ -8,8 +8,8 @@ import (
 
 	"crude/provider"
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 )
 
 // TestOAuthResultReachesModelThroughFrameDispatch verifies that a

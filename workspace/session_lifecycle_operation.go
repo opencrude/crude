@@ -80,11 +80,7 @@ func (g *lifecycleEventGate) SendAgentEventEnvelope(event agent.AgentEvent) {
 		return
 	}
 	g.mu.Unlock()
-	if exact, ok := g.sender.(session.IdentityEventSender); ok {
-		exact.SendAgentEventEnvelope(event)
-	} else {
-		g.sender.SendAgentEventWithID(event.Type, event.Data, event.AgentID)
-	}
+	g.sender.SendAgentEventEnvelope(event)
 }
 func (g *lifecycleEventGate) activate(w *Workspace) {
 	g.mu.Lock()

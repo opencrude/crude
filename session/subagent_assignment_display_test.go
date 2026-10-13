@@ -146,3 +146,7 @@ func TestChildAssignmentChatShowsAuthoredTextNotProviderEnvelope(t *testing.T) {
 		t.Fatalf("recovery checkpoint lost the display projection: %+v", checkpoint)
 	}
 }
+
+func (s *assignmentEventSender) SendAgentEventEnvelope(event agent.AgentEvent) {
+	s.SendAgentEventWithID(event.Type, event.Data, event.AgentID)
+}

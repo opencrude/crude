@@ -159,7 +159,7 @@ func (s *Service) ValidateDestination(ctx context.Context, plan PlanDelta, docum
 			} else {
 				mode := d.Mode
 				if mode == 0 {
-					mode = 0644
+					mode = defaultDocumentMode
 					if f != nil {
 						mode = f.Mode
 					}
@@ -272,7 +272,7 @@ func (s *Service) RecordIntegration(ctx context.Context, plan PlanDelta, receipt
 			} else {
 				mode := d.Mode
 				if mode == 0 {
-					mode = 0644
+					mode = defaultDocumentMode
 					if f != nil {
 						mode = f.Mode
 					}

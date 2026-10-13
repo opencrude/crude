@@ -42,7 +42,6 @@ import (
 	settingsui "crude/tui/settings"
 	"crude/tui/surface"
 	"crude/tui/theme"
-	ttypes "crude/tui/types"
 	"crude/tui/ui"
 	"crude/tui/ui/popup"
 	"crude/tui/window"
@@ -142,13 +141,13 @@ type App struct {
 	SpinFrame           int
 	Prompts             *history.Store
 	promptHistoryPath   string
-	LastSettings        ttypes.Settings
+	LastSettings        roottypes.Settings
 
 	// Display state (owned by viewmodel — tracks what's visible/active)
 	EditorState    *EditorState
 	OverlayState   *OverlayState
 	LSPPopup       *LSPPopupState
-	editorSettings ttypes.EditorSettings
+	editorSettings roottypes.EditorSettings
 	editorSaves    map[string]*editorSaveState
 	editorChanges  *editorChangesView
 
@@ -259,7 +258,7 @@ type App struct {
 	workspacePanelMaximized bool
 	capabilitySnapshot      captypes.Snapshot
 	skillInvocationSequence uint64
-	providerPresets         []ttypes.ProviderPreset
+	providerPresets         []roottypes.ProviderPreset
 	asyncIO                 atomic.Pointer[appAsyncIOState]
 	asyncIOStopped          atomic.Bool
 	asyncIOStopOnce         sync.Once
@@ -294,7 +293,7 @@ type App struct {
 	lastCancelTime time.Time
 }
 
-func NewApp(ws shellport.Workspace, presets []ttypes.ProviderPreset) *App {
+func NewApp(ws shellport.Workspace, presets []roottypes.ProviderPreset) *App {
 	th := theme.FromPreset(themePresetFromSettings(ws.LoadAppSettings()))
 	applyWorkspaceFrame(&th, ws)
 	im := input.NewModel(th)
@@ -671,19 +670,19 @@ func (m *App) openFilePickerWindow() {
 
 // openWorkspaceSettings opens the JetBrains-style workspace settings as a floating window.
 func (m *App) openWorkspaceSettings() {
-	m.openSettings(ttypes.SettingsScopeWorkspace)
+	m.openSettings(roottypes.SettingsScopeWorkspace)
 }
 
 func (m *App) openApplicationSettings() {
-	m.openSettings(ttypes.SettingsScopeApplication)
+	m.openSettings(roottypes.SettingsScopeApplication)
 }
 
 func (m *App) openApplicationAccounts() {
-	m.openSettingsTo(ttypes.SettingsScopeApplication, true)
+	m.openSettingsTo(roottypes.SettingsScopeApplication, true)
 }
 
 func (m *App) openApplicationMainAgent() tea.Cmd {
-	m.openSettingsTo(ttypes.SettingsScopeApplication, false)
+	m.openSettingsTo(roottypes.SettingsScopeApplication, false)
 	if fw := m.windowManager.Window(string(ui.OverlayWorkspaceSettings)); fw != nil {
 		if frame, ok := fw.Content.(*ui.WindowFrameWidget); ok {
 			if body, ok := frame.Body().(*settingsui.WorkspaceSettingsSurface); ok {
@@ -696,11 +695,11 @@ func (m *App) openApplicationMainAgent() tea.Cmd {
 	return nil
 }
 
-func (m *App) openSettings(scope ttypes.SettingsScope) {
+func (m *App) openSettings(scope roottypes.SettingsScope) {
 	m.openSettingsTo(scope, false)
 }
 
-func (m *App) openSettingsTo(scope ttypes.SettingsScope, accounts bool) {
+func (m *App) openSettingsTo(scope roottypes.SettingsScope, accounts bool) {
 	m.overlayHost.Close(ui.OverlaySettingsPrompt)
 	m.overlayHost.Close(ui.OverlayWorkspaceSettings)
 
@@ -708,7 +707,7 @@ func (m *App) openSettingsTo(scope ttypes.SettingsScope, accounts bool) {
 	overrides := m.ws.LoadWorkspaceOverrides()
 	working := appDefaults
 	title := "Application Settings"
-	if scope == ttypes.SettingsScopeWorkspace {
+	if scope == roottypes.SettingsScopeWorkspace {
 		working = m.ws.LoadAppSettings()
 		title = "Workspace Settings"
 	}

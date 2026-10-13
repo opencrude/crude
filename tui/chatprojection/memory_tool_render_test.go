@@ -6,7 +6,7 @@ import (
 	"testing"
 
 	"crude/tui/theme"
-	"crude/tui/types"
+	"crude/types"
 )
 
 func TestRenderSearchHistoryStructured(t *testing.T) {

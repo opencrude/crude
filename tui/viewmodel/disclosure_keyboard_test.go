@@ -8,7 +8,7 @@ import (
 
 	"crude/tui/chatprojection"
 	"crude/tui/theme"
-	ttypes "crude/tui/types"
+	ttypes "crude/types"
 	"crude/workspace"
 )
 

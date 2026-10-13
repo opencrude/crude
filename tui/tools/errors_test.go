@@ -1,7 +1,7 @@
 package tools
 
 import (
-	"crude/tui/types"
+	"crude/types"
 	"fmt"
 	"strings"
 	"testing"

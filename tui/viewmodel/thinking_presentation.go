@@ -2,7 +2,7 @@ package viewmodel
 
 import (
 	"crude/tui/chatprojection"
-	"crude/tui/types"
+	"crude/types"
 	"crude/workspace"
 )
 

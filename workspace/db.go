@@ -89,11 +89,6 @@ func openWorkspaceDBAt(dbPath string) (*WorkspaceDB, error) {
 
 // migrateWorkspaceSchema adds workspace-level tables that don't belong in
 // the session database. This runs alongside the sessiondb migration.
-//
-// CREATE TABLE IF NOT EXISTS alone is not enough for additive evolution: an
-// existing table keeps its old column set. Missing columns are detected via
-// PRAGMA table_info and added with ALTER TABLE so legacy workspace DBs upgrade
-// idempotently.
 func migrateWorkspaceSchema(db *sql.DB) error {
 	// Workspace metadata: key-value store for workspace-level settings
 	_, err := db.Exec(`
@@ -163,76 +158,7 @@ func migrateWorkspaceSchema(db *sql.DB) error {
 	if _, err := db.Exec(`CREATE TABLE IF NOT EXISTS workspace_agent_names (session_id TEXT PRIMARY KEY, name TEXT NOT NULL)`); err != nil {
 		return err
 	}
-	return ensureWorkspaceSessionColumns(db)
-}
-
-// workspaceSessionColumns is the additive column set for workspace_sessions.
-// Order matches the CREATE TABLE above; session_id/project_dir/created_at are
-// assumed present on any legacy registry table.
-var workspaceSessionColumns = []struct {
-	Name string
-	DDL  string
-}{
-	{"project_name", "TEXT NOT NULL DEFAULT ''"},
-	{"model", "TEXT NOT NULL DEFAULT ''"},
-	{"provider", "TEXT NOT NULL DEFAULT ''"},
-	{"closed_at", "INTEGER NOT NULL DEFAULT 0"},
-	{"message_count", "INTEGER NOT NULL DEFAULT 0"},
-	{"turn_count", "INTEGER NOT NULL DEFAULT 0"},
-	{"first_prompt", "TEXT"},
-	{"last_prompt", "TEXT"},
-	{"total_cost", "REAL NOT NULL DEFAULT 0.0"},
-	// db_missing marks a registry row whose session .db was not found during
-	// enrichment. Rows are never DELETE'd on apparent absence — a path bug or
-	// transient condition must not destroy the user's index. Listings exclude
-	// db_missing=1; clearing the flag restores the row when the DB reappears.
-	{"db_missing", "INTEGER NOT NULL DEFAULT 0"},
-}
-
-// ensureWorkspaceSessionColumns adds any missing columns on workspace_sessions.
-// Safe to run on brand-new, current, and legacy DBs (idempotent).
-func ensureWorkspaceSessionColumns(db *sql.DB) error {
-	existing, err := tableColumns(db, "workspace_sessions")
-	if err != nil {
-		return err
-	}
-	for _, col := range workspaceSessionColumns {
-		if existing[col.Name] {
-			continue
-		}
-		stmt := fmt.Sprintf("ALTER TABLE workspace_sessions ADD COLUMN %s %s", col.Name, col.DDL)
-		if _, err := db.Exec(stmt); err != nil {
-			return fmt.Errorf("add column %s: %w", col.Name, err)
-		}
-	}
 	return nil
-}
-
-// tableColumns returns the set of column names for table via PRAGMA table_info.
-func tableColumns(db *sql.DB, table string) (map[string]bool, error) {
-	return tableColumnsContext(context.Background(), db, table)
-}
-
-// tableColumnsContext is tableColumns with a context-bound query.
-func tableColumnsContext(ctx context.Context, db *sql.DB, table string) (map[string]bool, error) {
-	rows, err := db.QueryContext(ctx, `PRAGMA table_info(`+table+`)`)
-	if err != nil {
-		return nil, err
-	}
-	defer func() { _ = rows.Close() }()
-
-	out := make(map[string]bool)
-	for rows.Next() {
-		var cid int
-		var name, ctype string
-		var notnull, pk int
-		var dflt sql.NullString
-		if err := rows.Scan(&cid, &name, &ctype, &notnull, &dflt, &pk); err != nil {
-			return nil, err
-		}
-		out[name] = true
-	}
-	return out, rows.Err()
 }
 
 // GetSetting retrieves a workspace-level setting by key.
@@ -262,9 +188,9 @@ func (wdb *WorkspaceDB) SetSetting(key, value string) error {
 
 // RegisterSession records a new AI session in the workspace's session registry.
 // Called when a new session is created within this workspace.
-// Returns a non-nil error when the INSERT fails (e.g. legacy schema missing
-// columns). Callers must log/surface the error but must not treat it as fatal
-// for session creation — the session DB remains the source of truth.
+// Returns a non-nil error when the INSERT fails. Callers must log/surface the
+// error but must not treat it as fatal for session creation — the session DB
+// remains the source of truth.
 func (wdb *WorkspaceDB) RegisterSession(sessionID, projectPath, projectName, model, provider string) error {
 	if wdb == nil || wdb.DB == nil {
 		return fmt.Errorf("workspace db not open")

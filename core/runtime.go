@@ -912,7 +912,7 @@ func (a *actor) mutate(request coreprotocol.Request) coreprotocol.Response {
 func (a *actor) snapshot() coreprotocol.WorkspaceSnapshot {
 	settings := a.ws.LoadAppSettings()
 	view := coreprotocol.WorkspaceSnapshot{ID: a.id, Root: a.ws.RootPath, Username: a.ws.Username, StartedAt: a.ws.StartTime, Revision: a.revision, Agents: a.ws.SnapshotAgents().Agents,
-		Settings: coreprotocol.ShellSettings{Theme: settings.Theme, Editor: settings.Editor, UI: settings.UI, Font: settings.Font}}
+		Settings: coreprotocol.ShellSettings{Theme: settings.Theme, Editor: settings.Editor, UI: settings.UI}}
 	view.Sessions = a.sessionSnapshots()
 	return view
 }
@@ -1080,6 +1080,9 @@ func (a *actor) startJob(command actorCommand) bool {
 			result := service(jobCtx)
 			return func() coreprotocol.Response {
 				a.applyService(request, result)
+				if resourceKnown {
+					a.applyResource(request, result)
+				}
 				if filesKnown {
 					if err := a.applyFiles(request, result); err != nil {
 						return fault(request, "publication_failed", err.Error())

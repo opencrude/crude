@@ -13,9 +13,13 @@ const (
 	fieldNetworkConnectTimeout         = "network-connect-timeout"
 	fieldNetworkTLSHandshakeTimeout    = "network-tls-handshake-timeout"
 	fieldNetworkKeepAlive              = "network-keep-alive"
+	fieldNetworkKeepAliveInterval      = "network-keep-alive-interval"
+	fieldNetworkKeepAliveCount         = "network-keep-alive-count"
 	fieldNetworkIdleConnTimeout        = "network-idle-connection-timeout"
 	fieldNetworkMaxIdleConnsPerHost    = "network-max-idle-connections-per-host"
 	fieldNetworkDisableHTTP2           = "network-disable-http2"
+	fieldNetworkHTTP2PingInterval      = "network-http2-ping-interval"
+	fieldNetworkHTTP2PingTimeout       = "network-http2-ping-timeout"
 	fieldNetworkProxyMode              = "network-proxy-mode"
 	fieldNetworkProxyURL               = "network-proxy-url"
 	fieldNetworkNoProxy                = "network-no-proxy"
@@ -37,8 +41,12 @@ func (m *Model) buildNetworkConnectionForm(settings network.Settings) *ui.FormMo
 		networkPositiveIntField(fieldNetworkTLSHandshakeTimeout, "TLS handshake", "seconds", settings.TLSHandshakeTimeoutSeconds,
 			"Time allowed to negotiate and verify TLS once TCP connects."),
 		ui.SeparatorFieldState("network-reuse", "Connection reuse"),
-		networkPositiveIntField(fieldNetworkKeepAlive, "Keep-alive probe", "seconds", settings.KeepAliveSeconds,
-			"Interval between TCP keep-alive probes on open connections."),
+		networkPositiveIntField(fieldNetworkKeepAlive, "Keep-alive after", "seconds", settings.KeepAliveSeconds,
+			"Idle time before the first TCP keep-alive probe on an open connection."),
+		networkPositiveIntField(fieldNetworkKeepAliveInterval, "Keep-alive interval", "seconds", settings.KeepAliveIntervalSeconds,
+			"Time between unanswered TCP keep-alive probes."),
+		networkPositiveIntField(fieldNetworkKeepAliveCount, "Keep-alive probes", "probes", settings.KeepAliveCount,
+			"Unanswered probes before a dead connection is closed and redialed. This is how HTTP/1.1 connections are health-checked."),
 		networkPositiveIntField(fieldNetworkIdleConnTimeout, "Close idle after", "seconds", settings.IdleConnTimeoutSeconds,
 			"How long an unused pooled connection may stay open."),
 		networkPositiveIntField(fieldNetworkMaxIdleConnsPerHost, "Idle per host", "connections", settings.MaxIdleConnsPerHost,
@@ -46,6 +54,10 @@ func (m *Model) buildNetworkConnectionForm(settings network.Settings) *ui.FormMo
 		ui.SeparatorFieldState("network-http", "HTTP protocol"),
 		ui.BoolFieldState(fieldNetworkDisableHTTP2, "Force HTTP/1.1", settings.DisableHTTP2,
 			"Compatibility fallback that forces HTTP/1.1. Leave off unless an endpoint or proxy requires it."),
+		networkPositiveIntField(fieldNetworkHTTP2PingInterval, "Health check after", "seconds", settings.HTTP2PingIntervalSeconds,
+			"Read silence before an HTTP/2 connection is pinged. A dead connection is then redialed instead of reused after a retry."),
+		networkPositiveIntField(fieldNetworkHTTP2PingTimeout, "Health check timeout", "seconds", settings.HTTP2PingTimeoutSeconds,
+			"Time to wait for the ping reply before the HTTP/2 connection is closed."),
 	}
 	return m.networkForm("connection", fields...)
 }
@@ -192,9 +204,13 @@ func (m *Model) networkSettingsFromForms() network.Settings {
 		ConnectTimeoutSeconds:      networkIntValue(m.value(catNetworkConnection, fieldNetworkConnectTimeout), defaults.ConnectTimeoutSeconds),
 		TLSHandshakeTimeoutSeconds: networkIntValue(m.value(catNetworkConnection, fieldNetworkTLSHandshakeTimeout), defaults.TLSHandshakeTimeoutSeconds),
 		KeepAliveSeconds:           networkIntValue(m.value(catNetworkConnection, fieldNetworkKeepAlive), defaults.KeepAliveSeconds),
+		KeepAliveIntervalSeconds:   networkIntValue(m.value(catNetworkConnection, fieldNetworkKeepAliveInterval), defaults.KeepAliveIntervalSeconds),
+		KeepAliveCount:             networkIntValue(m.value(catNetworkConnection, fieldNetworkKeepAliveCount), defaults.KeepAliveCount),
 		IdleConnTimeoutSeconds:     networkIntValue(m.value(catNetworkConnection, fieldNetworkIdleConnTimeout), defaults.IdleConnTimeoutSeconds),
 		MaxIdleConnsPerHost:        networkIntValue(m.value(catNetworkConnection, fieldNetworkMaxIdleConnsPerHost), defaults.MaxIdleConnsPerHost),
 		DisableHTTP2:               m.value(catNetworkConnection, fieldNetworkDisableHTTP2) == "on",
+		HTTP2PingIntervalSeconds:   networkIntValue(m.value(catNetworkConnection, fieldNetworkHTTP2PingInterval), defaults.HTTP2PingIntervalSeconds),
+		HTTP2PingTimeoutSeconds:    networkIntValue(m.value(catNetworkConnection, fieldNetworkHTTP2PingTimeout), defaults.HTTP2PingTimeoutSeconds),
 		TLSMinimumVersion:          defaultString(strings.TrimSpace(m.value(catNetworkCertificates, fieldNetworkTLSMinimumVersion)), defaults.TLSMinimumVersion),
 		CAFile:                     strings.TrimSpace(m.value(catNetworkCertificates, fieldNetworkCAFile)),
 		ClientCertificateFile:      strings.TrimSpace(m.value(catNetworkCertificates, fieldNetworkClientCertificateFile)),
@@ -284,12 +300,20 @@ func networkValidationTarget(message string) (int, string) {
 		return catNetworkConnection, fieldNetworkConnectTimeout
 	case strings.Contains(lower, "handshake"), strings.Contains(lower, "tls_handshake"):
 		return catNetworkConnection, fieldNetworkTLSHandshakeTimeout
+	case strings.Contains(lower, "keep_alive_interval"):
+		return catNetworkConnection, fieldNetworkKeepAliveInterval
+	case strings.Contains(lower, "keep_alive_count"):
+		return catNetworkConnection, fieldNetworkKeepAliveCount
 	case strings.Contains(lower, "keepalive"), strings.Contains(lower, "keep-alive"), strings.Contains(lower, "keep_alive"):
 		return catNetworkConnection, fieldNetworkKeepAlive
 	case strings.Contains(lower, "max_idle"):
 		return catNetworkConnection, fieldNetworkMaxIdleConnsPerHost
 	case strings.Contains(lower, "idle"):
 		return catNetworkConnection, fieldNetworkIdleConnTimeout
+	case strings.Contains(lower, "http2_ping_interval"):
+		return catNetworkConnection, fieldNetworkHTTP2PingInterval
+	case strings.Contains(lower, "http2_ping_timeout"):
+		return catNetworkConnection, fieldNetworkHTTP2PingTimeout
 	case strings.Contains(lower, "http2"), strings.Contains(lower, "http/2"):
 		return catNetworkConnection, fieldNetworkDisableHTTP2
 	case strings.Contains(lower, "client key"), strings.Contains(lower, "client_key"):

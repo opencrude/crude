@@ -61,6 +61,11 @@ type ToolMetadata struct {
 	Scope       string
 	Fingerprint string
 	Dynamic     bool
+	// ContextResolved marks a native gateway whose actual effect is resolved
+	// from the exact request before execution. Effect is intentionally empty:
+	// callers may admit the gateway for resolution, but must not treat that
+	// admission as read authority for the resolved operation.
+	ContextResolved bool
 }
 
 type ExecutionIdentity struct {
@@ -75,8 +80,10 @@ type ExecutionIdentityKey struct{}
 func NativeMetadata(name string) (ToolMetadata, bool) {
 	metadata := ToolMetadata{Name: name, Scope: "workspace"}
 	switch name {
-	case "read_file", "glob_files", "grep_files", "list_directory", "web_search", "web_fetch", "arxiv_search", "recall_memory", "search_history", "get_plan", "check_async_command", "read_async_output", "wait", "capability_search", "capability_activate", "mcp_request_access", "mcp_read_resource", "mcp_get_prompt", "agent_list", "agent_inspect", "artifact_read", "agent_wait", "board_read", "crude_commands", "crude_control":
+	case "read_file", "glob_files", "grep_files", "list_directory", "web_search", "web_fetch", "arxiv_search", "recall_memory", "search_history", "get_plan", "check_async_command", "read_async_output", "wait", "capability_search", "capability_activate", "mcp_request_access", "mcp_read_resource", "mcp_get_prompt", "agent_list", "agent_inspect", "artifact_read", "agent_wait", "board_read", "crude_commands":
 		metadata.Effect = captypes.EffectRead
+	case "crude_control":
+		metadata.ContextResolved = true
 	case "reply", "question", "update_plan", "remember", "update_memory", "forget_memory", "memory_feedback", "agent_send", "agent_respond", "publish_report":
 		metadata.Effect = captypes.EffectCommunication
 	case "apply_patch", "write_file", "edit_file", "move_file", "copy_file":

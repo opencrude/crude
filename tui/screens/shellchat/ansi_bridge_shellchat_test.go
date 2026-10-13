@@ -8,14 +8,13 @@ import (
 	"crude/tui/chatprojection"
 	"crude/tui/screens/shellchat"
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 )
 
 // TestShellchatPaintsMarkdownWithoutANSIPath drives a markdown assistant
-// message through the shellchat Screen paint pipeline and asserts:
-// 1. The painted buffer contains no ANSI escape runes.
-// 2. No message row requests the ANSI path (all native rows PreferANSI==false).
+// message through the shellchat Screen paint pipeline and asserts the painted
+// buffer contains no ANSI escape runes or hyperlink metadata.
 func TestShellchatPaintsMarkdownWithoutANSIPath(t *testing.T) {
 	th := theme.DefaultDark()
 	screen := shellchat.New(th)
@@ -32,12 +31,8 @@ func TestShellchatPaintsMarkdownWithoutANSIPath(t *testing.T) {
 	})
 	rows, paneMap, _ := r.ExportMessageRows(80)
 
-	// Assert every native row is non-PreferANSI before painting.
-	for ri, row := range rows {
-		for i, pl := range row.Native {
-			if pl.PreferANSI() {
-				t.Fatalf("row %d native[%d] PreferANSI — ANSI path must be gone", ri, i)
-			}
+	for _, row := range rows {
+		for _, pl := range row.Native {
 			if text := pl.PlainText(); strings.Contains(text, "id=") || strings.Contains(text, "]8;") {
 				t.Fatalf("terminal hyperlink metadata reached a product chat row: %q", text)
 			}

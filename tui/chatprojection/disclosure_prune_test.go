@@ -6,7 +6,7 @@ import (
 
 	"crude/tui/chatprojection"
 	"crude/tui/theme"
-	"crude/tui/types"
+	"crude/types"
 )
 
 func TestRenderer_PrunesExpandedWhenMessagesRemoved(t *testing.T) {

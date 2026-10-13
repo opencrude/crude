@@ -6,7 +6,7 @@ import (
 
 	"crude/tui/rendering"
 	"crude/tui/theme"
-	"crude/tui/types"
+	"crude/types"
 )
 
 // Regression: plain tool bodies used to character-wrap (HardWrap), which could

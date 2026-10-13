@@ -80,6 +80,10 @@ thoughts contribute to the summary without consuming the tool-leaf budget.
 The producing request ID travels with each tool event and canonical snapshot;
 parallel children inherit it. Older unattributed calls use their stable call
 identity, with batch children sharing their parent's identity.
+Internal tool projection IDs are allocated uniquely, not from counters that
+restart in replacement children or cold sessions. Exact provider call IDs outrank
+internal aliases during lookup; a late delta for a settled call never clones or
+reactivates its row. Stream updates change one retained leaf, not one row per delta.
 Active leaves and explicitly opened evidence stay visible regardless of age.
 Retention is source-driven, never a wall-clock timer. Expanding a
 group reveals the hidden branches **inside the same tree**, in call order; it

@@ -8,8 +8,8 @@ import (
 
 	"crude/tui/chatprojection"
 	"crude/tui/rendering"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 )
 
 const selScrollInterval = 60 * time.Millisecond

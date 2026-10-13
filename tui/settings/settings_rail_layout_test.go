@@ -5,8 +5,8 @@ import (
 
 	"crude/tui/surface"
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 )
 
 // TestSettingsNetworkGroupIsLast pins the rail order: the application-owned

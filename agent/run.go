@@ -451,7 +451,14 @@ func (a *Agent) Run(
 					a.emitError(emit, fmt.Errorf("context compaction failed; original context retained: %w", compactErr))
 					return returnMessages()
 				}
-				nextMessages := append([]provider.ChatMessage{msgs[0]}, outcome.Messages...)
+				// Guidance updates admitted during this run lived in runtime messages
+				// the checkpoint replaces; the continuation system message carries
+				// the current complete guidance instead of the run's initial render.
+				system := msgs[0]
+				if a.guidance != nil {
+					system.Content = provider.TextContent(a.guidance.basePrompt + "\n\n" + a.guidance.rendered)
+				}
+				nextMessages := append([]provider.ChatMessage{system}, outcome.Messages...)
 				stageCount := len(rootprompt.CompactionStages())
 				commitData := compactionEventData(requestID, "automatic", outcome.Role, stageCount, stageCount, activeTokens, outcome.AfterTokens, outcome.ContextWindow)
 				commitData["account_id"] = outcome.AccountID
@@ -956,7 +963,7 @@ func (a *Agent) Run(
 		}
 		continuations = 0
 
-		emit(AgentEvent{Type: "phase", Data: "executing"})
+		emit(AgentEvent{Type: "phase", Data: map[string]any{"name": "executing"}})
 
 		results := make([]execResult, len(toolCalls))
 		resultMessages := make([]provider.ChatMessage, len(toolCalls))

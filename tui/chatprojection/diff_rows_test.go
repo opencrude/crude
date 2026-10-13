@@ -14,17 +14,11 @@ import (
 
 func TestBuildDiffRowsEmpty(t *testing.T) {
 	// The unified-diff parser is lenient: empty/plain input yields a single
-	// context row (matching the former ANSI renderer). What matters is that
-	// every row is native, never PreferANSI.
+	// context row (matching the former ANSI renderer).
 	for _, in := range []string{"", "just plain text"} {
 		rows := chatprojection.BuildDiffRows(in, 0, 80)
 		if len(rows) == 0 {
 			t.Fatalf("input %q yielded no rows", in)
-		}
-		for i, r := range rows {
-			if r.PreferANSI() {
-				t.Fatalf("input %q row %d PreferANSI", in, i)
-			}
 		}
 	}
 }
@@ -34,12 +28,6 @@ func TestBuildDiffRowsRoles(t *testing.T) {
 	rows := chatprojection.BuildDiffRows(raw, 0, 80)
 	if len(rows) < 3 {
 		t.Fatalf("expected at least 3 rows, got %d", len(rows))
-	}
-	// Every row must be native (never PreferANSI).
-	for i, r := range rows {
-		if r.PreferANSI() {
-			t.Fatalf("row %d PreferANSI — diff must be fully native", i)
-		}
 	}
 	// Find the addition and deletion rows by their content.
 	var addRow, delRow, ctxRow *chatprojection.PaintLine
@@ -123,9 +111,6 @@ func TestBuildDiffRowsTruncationIndicator(t *testing.T) {
 	for _, r := range rows {
 		if strings.Contains(r.PlainText(), "more changes not shown") {
 			found = true
-			if r.PreferANSI() {
-				t.Fatal("truncation row PreferANSI")
-			}
 		}
 	}
 	if !found {

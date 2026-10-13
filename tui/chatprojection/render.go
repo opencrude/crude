@@ -4,7 +4,7 @@ import (
 	"strings"
 
 	"crude/tui/rendering"
-	"crude/tui/types"
+	"crude/types"
 )
 
 func renderMarkdown(content string, mdRenderer *rendering.MarkdownRenderer) (string, bool) {

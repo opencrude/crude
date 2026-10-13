@@ -62,22 +62,23 @@ type Agent struct {
 	AgentID                AgentID
 	// RunID is the immutable durable owner of this instance's effects. Never
 	// discover a replacement run from current inventory during tool execution.
-	RunID                    string
-	TurnGeneration           uint64
-	Policy                   safety.Policy
-	CommandPolicy            safety.CommandPolicy
-	PermissionReviewer       PermissionReviewer
-	Depth                    int
-	ParentID                 AgentID
-	WorkDir                  string
-	GuidancePaths            []string
-	MaxRetries               int
-	MaxOutputTokens          int
-	ContextCompactionPercent int
-	ContextArchive           []provider.ChatMessage
-	FrozenPrefix             []provider.ChatMessage
-	lastActiveContext        []provider.ChatMessage
-	FilteredTools            []tools.ToolDef
+	RunID                     string
+	TurnGeneration            uint64
+	Policy                    safety.Policy
+	CommandPolicy             safety.CommandPolicy
+	PermissionReviewer        PermissionReviewer
+	Depth                     int
+	ParentID                  AgentID
+	WorkDir                   string
+	GuidancePaths             []string
+	MaxRetries                int
+	MaxOutputTokens           int
+	ContextCompactionPercent  int
+	CompactionRetentionTokens int
+	ContextArchive            []provider.ChatMessage
+	FrozenPrefix              []provider.ChatMessage
+	lastActiveContext         []provider.ChatMessage
+	FilteredTools             []tools.ToolDef
 	// PrepareStep snapshots live tools and runtime notices between requests,
 	// never while a parallel tool batch is using the previous snapshot.
 	PrepareStep func() ([]tools.ToolDef, []provider.ChatMessage)
@@ -116,7 +117,6 @@ type Agent struct {
 	// testHTTPClient, when set, is injected into the provider transport for
 	// tests. Production agents use the provider's own tuned transport.
 	testHTTPClient       *http.Client
-	toolCallSeq          int
 	compactionRetryDelay func(int) time.Duration
 	contextBaseline      contextMeter
 
@@ -223,8 +223,6 @@ func (a *Agent) fileMutex(path string) *sync.Mutex {
 	return val.(*sync.Mutex)
 }
 
-func (a *Agent) SetToolCallSeqStart(n int) { a.toolCallSeq = n }
-func (a *Agent) ToolCallSeq() int          { return a.toolCallSeq }
 func (a *Agent) SetHTTPClient(client *http.Client) {
 	if client != nil {
 		a.testHTTPClient = client
@@ -237,10 +235,11 @@ func NewAgent(p *provider.Provider, model string, lg *logger.Logger) *Agent {
 		turn = lg.Turn()
 	}
 	return &Agent{
-		Provider:                 p,
-		Model:                    model,
-		ContextCompactionPercent: ttypes.DefaultContextCompactionPercent,
-		CommandPolicy:            safety.DefaultCommandPolicy(),
+		Provider:                  p,
+		Model:                     model,
+		ContextCompactionPercent:  ttypes.DefaultContextCompactionPercent,
+		CompactionRetentionTokens: ttypes.DefaultContextRetentionTokens,
+		CommandPolicy:             safety.DefaultCommandPolicy(),
 		ToolFn: func(ctx context.Context, tool string, params map[string]any) (tools.ToolResult, error) {
 			return tools.ToolResult{}, nil
 		},

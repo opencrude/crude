@@ -11,7 +11,6 @@ import (
 	"crude/tui/chatprojection"
 	"crude/tui/surface"
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
 	ctypes "crude/types"
 	"crude/types/activity"
@@ -351,7 +350,7 @@ func (s *Screen) Handle(ctx ui.EventContext, evt ui.Event) ui.EventResult {
 	}
 
 	if evt.Kind == ui.EventCustom {
-		if _, ok := evt.Custom.(types.SelectionTickMsg); ok {
+		if _, ok := evt.Custom.(ctypes.SelectionTickMsg); ok {
 			return s.handleSelectionTick()
 		}
 	}

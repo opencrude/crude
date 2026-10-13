@@ -3,6 +3,7 @@ package tools
 import (
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 
@@ -145,6 +146,41 @@ func buildCollaborationResult(name, content, input string) StructuredResult {
 			report := reportSection(report)
 			report.DetailOnly = true
 			result.Sections = append(result.Sections, report)
+		}
+		return result
+	case "agent_update_claims", "agent_narrow_claims":
+		var claims struct {
+			Released []collaboration.Claim `json:"released"`
+			Claims   []collaboration.Claim `json:"claims"`
+			Audit    collaboration.Event   `json:"audit"`
+		}
+		if json.Unmarshal([]byte(content), &claims) != nil || claims.Released == nil && claims.Claims == nil {
+			return BuildReadableResult(content)
+		}
+		result := StructuredResult{
+			Summary: resultCount(len(claims.Claims), "owned path", "owned paths") + " · " + fmt.Sprint(len(claims.Released)) + " released",
+			Unit:    "claims",
+		}
+		section := ResultSection{Title: "File scope"}
+		var paths []string
+		slices.SortFunc(claims.Claims, func(a, b collaboration.Claim) int { return strings.Compare(a.Path, b.Path) })
+		slices.SortFunc(claims.Released, func(a, b collaboration.Claim) int { return strings.Compare(a.Path, b.Path) })
+		for _, claim := range claims.Claims {
+			paths = append(paths, claim.Path)
+			section.Details = append(section.Details, ResultField{"Claim · " + claim.Path, fmt.Sprintf("%s · version %d", claim.ID, claim.Version)})
+		}
+		for _, claim := range claims.Released {
+			section.Details = append(section.Details, ResultField{"Released · " + claim.Path, claim.ID})
+		}
+		section.Body = strings.Join(paths, "\n")
+		if section.Body == "" {
+			section.Body = "No file scope retained."
+		}
+		result.Sections = append(result.Sections, section)
+		if claims.Audit.ID != "" {
+			audit := collaborationEventSection(claims.Audit)
+			audit.DetailOnly = true
+			result.Sections = append(result.Sections, audit)
 		}
 		return result
 	case "agent_wait":

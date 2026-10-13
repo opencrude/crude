@@ -8,8 +8,8 @@ import (
 
 	"crude/tui/surface"
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 )
 
 // The scope toggle uses arrow keys to request a scope change without becoming

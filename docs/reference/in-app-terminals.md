@@ -143,11 +143,15 @@ non-job-control children) cannot survive as orphans
 (`TestTerminalCloseKillsProcessGroup`). Job-control shells forward SIGHUP to
 their own jobs. `Workspace.Close` and project switches call
 the terminal service/manager close path (`TestTerminalManagerCloseAllReapsChildren`).
-This is still the standalone CLI lifecycle: switching projects tears down the old
-resources. The retained-core protocol detach path is not yet the product route.
+Connected shells detach on project switch or exit; retained PTYs remain owned by
+the core. Explicit close or core/workspace shutdown owns process termination.
 Explicit close is command-owned and does not publish a `TerminalClosedMsg`:
 workspace switches and close actions run on Bubble Tea's update goroutine, so
 synchronously echoing through `EventBus.Send` would deadlock on `Program.Send`.
+Both the typed RPC and semantic control completion publish the same actor-owned
+terminal inventory invalidation. Every replica unmounts removed IDs, including
+docked and floating views, without closing an unrelated workspace panel. Hide
+only changes presentation and is never a substitute for close.
 
 ## Layers
 

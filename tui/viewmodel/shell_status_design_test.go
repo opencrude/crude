@@ -8,7 +8,6 @@ import (
 	"time"
 
 	"crude/tui/editor"
-	tuitypes "crude/tui/types"
 	"crude/tui/ui"
 	types "crude/types"
 	"crude/workspace"
@@ -104,8 +103,8 @@ func TestAgentHeaderRetainsUploadSizeAfterProviderWaitTransition(t *testing.T) {
 	app := newFullTestApp(t)
 	app.width, app.height = 120, 28
 	app.AddOrchestrator("root")
-	app.syncAgentStatusEvent(tuitypes.AgentEventMsg{AgentID: "root", Type: "phase", Data: map[string]any{"name": "preparing", "progress": 100, "uploaded_bytes": float64(2 * 1024 * 1024), "total_bytes": float64(2 * 1024 * 1024)}})
-	app.syncAgentStatusEvent(tuitypes.AgentEventMsg{AgentID: "root", Type: "phase", Data: map[string]any{"name": "waiting_provider"}})
+	app.syncAgentStatusEvent(types.AgentEventMsg{AgentID: "root", Type: "phase", Data: map[string]any{"name": "preparing", "progress": 100, "uploaded_bytes": float64(2 * 1024 * 1024), "total_bytes": float64(2 * 1024 * 1024)}})
+	app.syncAgentStatusEvent(types.AgentEventMsg{AgentID: "root", Type: "phase", Data: map[string]any{"name": "waiting_provider"}})
 	app.paintShellFrame()
 	header := rowText(app, 0)
 	status, _ := app.ws.Status().Agent("root")

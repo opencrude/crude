@@ -68,7 +68,7 @@ func runControlVisual(t *testing.T, headless bool, width, height int) {
 		}
 	})
 	opts := []tea.ProgramOption{tea.WithWidthMethod(ansi.GraphemeWidth)}
-	m.settled = make(chan struct{}, 3)
+	m.settled = make(chan struct{}, 4)
 	if headless {
 		opts = append(opts, tea.WithInput(nil), tea.WithOutput(io.Discard), tea.WithoutRenderer(), tea.WithWindowSize(width, height))
 	}
@@ -92,7 +92,7 @@ func runControlVisual(t *testing.T, headless bool, width, height int) {
 	m.ws.(shellport.ShellControl).StartShellControl()
 	if headless {
 		go func() {
-			for _, key := range []rune{tea.KeyF2, tea.KeyF3, tea.KeyF4} {
+			for _, key := range []rune{tea.KeyF2, tea.KeyF3, tea.KeyF5, tea.KeyF4} {
 				program.Send(tea.KeyPressMsg{Code: key})
 				select {
 				case <-m.settled:
@@ -110,7 +110,7 @@ func runControlVisual(t *testing.T, headless bool, width, height int) {
 	if m.failure != nil {
 		t.Fatal(m.failure)
 	}
-	for _, key := range []int{2, 3, 4} {
+	for _, key := range []int{2, 3, 4, 5} {
 		if !m.completed[key] {
 			t.Errorf("F%d milestone not completed", key)
 		}
@@ -131,7 +131,7 @@ func runControlVisual(t *testing.T, headless bool, width, height int) {
 	}
 	if !t.Failed() {
 		if resultPath := os.Getenv("CRUDE_CONTROL_VISUAL_RESULT"); resultPath != "" {
-			if err := os.WriteFile(resultPath, []byte("CONTROL_VISUAL_SUCCESS F2 F3 F4; framed receipts, mounted editor, one PTY, persisted workspace tab_size=8\n"), 0600); err != nil {
+			if err := os.WriteFile(resultPath, []byte("CONTROL_VISUAL_SUCCESS F2 F3 F5 F4; framed receipts, mounted editor, PTY opened and closed, persisted workspace tab_size=8\n"), 0600); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -184,6 +184,8 @@ func (m *controlVisualModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			key = 3
 		case tea.KeyF4:
 			key = 4
+		case tea.KeyF5:
+			key = 5
 		case tea.KeyF9:
 			if !m.busy {
 				return m, tea.Quit
@@ -228,6 +230,12 @@ func (m *controlVisualModel) connect() error {
 		return err
 	}
 	m.client = c
+	// Like the product MCP adapter, this controller is not a replica: drain
+	// unsolicited workspace changes so a busy workspace cannot overflow it.
+	go func() {
+		for range c.Events() {
+		}
+	}()
 	if err := c.Call(ctx, "", coreprotocol.Attach, coreprotocol.AttachRequest{Root: m.root}, nil); err != nil {
 		return err
 	}
@@ -247,7 +255,7 @@ func (m *controlVisualModel) connect() error {
 		}
 		for _, shell := range shells {
 			if shell.Owner == *target.Shell {
-				return c.Call(ctx, target.WorkspaceID, coreprotocol.ControlClientRegister, coreprotocol.ControlClientGrant{Effects: []control.Effect{control.Read, control.Write, control.Execute}, Shell: target.Shell}, nil)
+				return c.Call(ctx, target.WorkspaceID, coreprotocol.ControlClientRegister, coreprotocol.ControlClientGrant{Effects: []control.Effect{control.Read, control.Write, control.Execute, control.Delete}, Shell: target.Shell}, nil)
 			}
 		}
 		select {
@@ -421,6 +429,32 @@ func (m *controlVisualModel) journey(key int) error {
 			}
 			return nil
 		})
+	case 5:
+		if m.terminal == "" {
+			return fmt.Errorf("open a terminal before close acceptance")
+		}
+		if err := do("terminal.close", map[string]any{"id": m.terminal}); err != nil {
+			return err
+		}
+		// Observe replica presentation; never replay the committed close.
+		deadline := time.Now().Add(5 * time.Second)
+		for {
+			closed := false
+			if err := m.check(func(m *controlVisualModel) error {
+				m.View()
+				closed = len(m.termMgr().List()) == 0 && m.termScreens[m.terminal] == nil && !m.termDockVisible()
+				return nil
+			}); err != nil {
+				return err
+			}
+			if closed {
+				return nil
+			}
+			if time.Now().After(deadline) {
+				return fmt.Errorf("committed terminal close did not unmount")
+			}
+			time.Sleep(10 * time.Millisecond)
+		}
 	case 4:
 		if err := do("settings.open", map[string]any{"scope": "workspace"}); err != nil {
 			return err

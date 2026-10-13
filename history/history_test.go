@@ -1,7 +1,6 @@
 package history
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -167,38 +166,6 @@ func TestSaveLoadRoundTripV1(t *testing.T) {
 	}
 	if loaded.Entries()[1].Count != 2 {
 		t.Fatalf("count lost on round trip: %+v", loaded.Entries()[1])
-	}
-}
-
-func TestLoadFileMigratesLegacyArray(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "history.json")
-	legacy := []string{"hello", "", "make a fibonacci python script here", "hello"}
-	data, _ := json.Marshal(legacy)
-	stamp := time.Date(2026, 7, 5, 13, 21, 0, 0, time.UTC)
-	if err := os.WriteFile(path, data, 0600); err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chtimes(path, stamp, stamp); err != nil {
-		t.Fatal(err)
-	}
-	s, err := LoadFile(path)
-	if err != nil {
-		t.Fatalf("LoadFile: %v", err)
-	}
-	if s.Len() != 3 {
-		t.Fatalf("len = %d, want 3 (blank dropped)", s.Len())
-	}
-	entries := s.Entries()
-	for _, e := range entries {
-		if e.Count != 1 {
-			t.Fatalf("migrated count = %d, want 1: %+v", e.Count, e)
-		}
-		if e.LastSeen > stamp.Unix() {
-			t.Fatalf("migrated entry stamped after mtime: %+v", e)
-		}
-	}
-	if entries[2].Text != "hello" {
-		t.Fatalf("legacy order not preserved: %+v", entries)
 	}
 }
 

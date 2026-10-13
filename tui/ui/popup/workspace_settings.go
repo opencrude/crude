@@ -5,8 +5,8 @@ import (
 
 	"crude/tui/settings"
 	"crude/tui/theme"
-	ttypes "crude/tui/types"
 	"crude/tui/ui"
+	ttypes "crude/types"
 )
 
 type WorkspaceSettings struct {

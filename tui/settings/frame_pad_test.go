@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"crude/tui/theme"
-	"crude/tui/types"
+	"crude/types"
 )
 
 // TestAppearanceFramePadFieldsPresent verifies the Appearance form exposes the

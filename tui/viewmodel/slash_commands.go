@@ -7,7 +7,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	ttypes "crude/tui/types"
+	ttypes "crude/types"
 )
 
 type slashBackendResultMsg struct {

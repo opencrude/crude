@@ -83,7 +83,9 @@ func (a *actor) prepareControlDomain(in control.Request, owner coreprotocol.Owne
 	var run func(context.Context) coreprotocol.Response
 	var handled bool
 	var apply func(coreprotocol.Response) error
-	if run, handled = a.prepareResource(request); !handled {
+	if run, handled = a.prepareResource(request); handled {
+		apply = func(result coreprotocol.Response) error { a.applyResource(request, result); return nil }
+	} else {
 		if run, handled = a.prepareFilesAtRoot(request, root); !handled {
 			run, handled = a.prepareServiceAtRoot(request, root)
 			apply = func(result coreprotocol.Response) error { a.applyService(request, result); return nil }

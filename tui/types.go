@@ -1,7 +1,7 @@
 package tui
 
 import (
-	ttypes "crude/tui/types"
+	ttypes "crude/types"
 )
 
 type (

@@ -7,8 +7,8 @@ import (
 
 	"crude/tui/settings"
 	"crude/tui/theme"
-	ttypes "crude/tui/types"
 	"crude/tui/ui"
+	ttypes "crude/types"
 )
 
 // setTestFrame writes the frame insets directly onto the app theme.

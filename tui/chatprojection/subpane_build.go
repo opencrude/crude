@@ -6,8 +6,8 @@ import (
 	"crude/tui/cell"
 	"crude/tui/rendering"
 	"crude/tui/tools"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 	"crude/workspace"
 )
 

@@ -94,7 +94,10 @@ func TestHydrateSubAgentsRestoresCompletedAndPendingReviewTree(t *testing.T) {
 		provider.NewTextMessage("user", "# Assignment\n- Description: preserve me"),
 		provider.NewTextMessage("assistant", "Completed report."),
 	}
-	if _, err := sessiondb.ReplaceMessagesWithMeta(childDB, "child", messages, []int{1, 1}, []sessiondb.DisplayMeta{{DisplayRole: "assignment"}, {DisplayRole: "assistant"}}); err != nil {
+	if _, err := sessiondb.ReplaceMessagesWithMeta(childDB, "child", messages, []int{1, 1}, []sessiondb.DisplayMeta{
+		{SnapshotVersion: sessiondb.ConversationSnapshotVersion, DisplayRole: "assignment", Snapshots: []types.ConversationMessage{{Role: "assignment", Content: messages[0].Content.String()}}},
+		{SnapshotVersion: sessiondb.ConversationSnapshotVersion, DisplayRole: "assistant", Snapshots: []types.ConversationMessage{{Role: "assistant", Content: messages[1].Content.String()}}},
+	}); err != nil {
 		t.Fatal(err)
 	}
 	if err := childDB.Close(); err != nil {

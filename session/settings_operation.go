@@ -61,6 +61,7 @@ func detachedSettingsSnapshot(cfg *Config) types.Settings {
 	category.ModelTemperature = cloneFloatPtr(category.ModelTemperature)
 	category.ModelTopP = cloneFloatPtr(category.ModelTopP)
 	category.ContextCompactionPercent = cloneIntPtr(category.ContextCompactionPercent)
+	category.ContextRetentionTokens = cloneIntPtr(category.ContextRetentionTokens)
 	settings.Memory.MemoryCategory = category
 	return settings
 }

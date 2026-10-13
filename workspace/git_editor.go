@@ -51,10 +51,11 @@ func (s *GitService) AnnotateFile(ctx context.Context, absPath, content string) 
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	_, root, err := s.open()
+	repo, root, err := s.open()
 	if err != nil {
 		return GitFileAnnotation{}, err
 	}
+	closeGitRepository(repo)
 	rel, err := repoRelPath(root, absPath)
 	if err != nil {
 		return GitFileAnnotation{}, err

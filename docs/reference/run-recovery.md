@@ -38,6 +38,7 @@ new human message or a replacement for permission policy.
 | Authentication, billing/quota, invalid configuration/trust/guidance | Needs attention; no unbounded invalid-request loop or silent account/model failover |
 | Persistence failure | Keep the owned snapshot/draft, block unsafe advancement, and allow a checked retry |
 | Native file-ownership conflict | Structural Needs attention; park the child attempt and retain its assignment, evidence and exact incident, never auto-retry the same blocked effect |
+| Faulty clipboard-image capture | Exclude only the missing/empty/invalid image, preserve the original text and reference evidence, report the exact exclusion and continue with usable attachments |
 | Panic or uncertain effects | Preserve safe boundaries and pause for reconciliation; keep the root input service usable |
 | Explicit user or parent cancellation | Stop promptly, preserve completed effects/text and record the explicit stop boundary |
 
@@ -142,6 +143,11 @@ later draft; a genuinely new generation remains runnable.
 
 Root checkpoint/finalization and delivery writers share the serialized
 revision-owned publication described in [adaptive context](adaptive-context.md).
+Root and child checkpoint reconciliation retains late journal-admitted human
+steering and its immutable preparation suffix, just as it retains lifecycle
+controls. A failed attachment must not turn an independently committed note into
+an unrecoverable stale-checkpoint error. Changed/reordered original source still
+fails closed; this never replaces a newer context with an old one.
 Child terminal context, transcript deltas and recovery settle in one transaction.
 Parent mirrors/results follow through separately checked publication; errors
 remain retryable and never manufacture successful cancellation or completion.

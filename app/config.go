@@ -26,7 +26,6 @@ type FileConfig struct {
 	Editor          *ttypes.EditorSettings       `json:"editor,omitempty"`
 	LSP             *ttypes.LSPSettings          `json:"lsp,omitempty"`
 	UI              *ttypes.UISettings           `json:"ui,omitempty"`
-	Font            *ttypes.FontSettings         `json:"font,omitempty"`
 	Memory          *ttypes.MemorySettings       `json:"memory,omitempty"`
 	Safety          *ttypes.SafetySettings       `json:"safety,omitempty"`
 	LocalHistory    *ttypes.LocalHistorySettings `json:"local_history,omitempty"`
@@ -190,9 +189,6 @@ func FileConfigToAppSettings(fc FileConfig) ttypes.AppSettings {
 	if fc.UI != nil {
 		s.UI = *fc.UI
 	}
-	if fc.Font != nil {
-		s.Font = *fc.Font
-	}
 	if fc.Agents != nil {
 		s.Agents = session.ConfigToSettings(&session.Config{Agents: *fc.Agents}).Agents
 	}
@@ -224,13 +220,12 @@ func ApplyAppSettingsToFileConfig(fc *FileConfig, s ttypes.AppSettings) {
 	if fc == nil {
 		return
 	}
-	theme, editor, lsp, ui, font, memorySettings, safetySettings, historySettings := s.Theme, s.Editor, s.LSP, s.UI, s.Font, s.Memory, s.Safety, s.LocalHistory
+	theme, editor, lsp, ui, memorySettings, safetySettings, historySettings := s.Theme, s.Editor, s.LSP, s.UI, s.Memory, s.Safety, s.LocalHistory
 	safetySettings.CommandRules = append([]ttypes.CommandSeverityRule(nil), s.Safety.CommandRules...)
 	fc.Theme = &theme
 	fc.Editor = &editor
 	fc.LSP = &lsp
 	fc.UI = &ui
-	fc.Font = &font
 	fc.Memory = &memorySettings
 	fc.Safety = &safetySettings
 	fc.LocalHistory = &historySettings

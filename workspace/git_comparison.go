@@ -93,10 +93,13 @@ func (s *GitService) Compare(ctx context.Context, change GitChange) (GitComparis
 	if err != nil {
 		return GitComparison{}, err
 	}
+	defer state.close()
 	return state.compare(ctx, change)
 }
 
-func (s *GitService) readReviewState(ctx context.Context) (*gitReviewState, error) {
+func (state *gitReviewState) close() { closeGitRepository(state.repo) }
+
+func (s *GitService) readReviewState(ctx context.Context) (_ *gitReviewState, err error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -104,6 +107,11 @@ func (s *GitService) readReviewState(ctx context.Context) (*gitReviewState, erro
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if err != nil {
+			closeGitRepository(repo)
+		}
+	}()
 	idx, err := repo.Storer.Index()
 	if err != nil {
 		return nil, fmt.Errorf("read Git index: %w", err)
@@ -407,6 +415,7 @@ func (s *GitService) mutateReviewed(ctx context.Context, comparison GitCompariso
 	if err != nil {
 		return err
 	}
+	defer state.close()
 	lock, indexPath, err := gitReviewIndexLock(state.repo)
 	if err != nil {
 		return err
@@ -417,6 +426,7 @@ func (s *GitService) mutateReviewed(ctx context.Context, comparison GitCompariso
 		if err != nil {
 			return err
 		}
+		defer fresh.close()
 		current, err := fresh.compare(ctx, GitChange{Path: comparison.Path, AbsolutePath: comparison.AbsolutePath, Area: comparison.Area})
 		if err != nil {
 			return err
@@ -504,6 +514,7 @@ func (s *GitService) ReviewCommit(ctx context.Context) (GitCommitReview, error) 
 	if err != nil {
 		return GitCommitReview{}, err
 	}
+	defer state.close()
 	return state.commitReview(ctx)
 }
 
@@ -590,6 +601,7 @@ func (s *GitService) InspectCommit(ctx context.Context, hash string) (GitCommitE
 	if err != nil {
 		return GitCommitEvidence{}, err
 	}
+	defer state.close()
 	commit, err := state.repo.CommitObject(plumbing.NewHash(hash))
 	if err != nil {
 		return GitCommitEvidence{}, err

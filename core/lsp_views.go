@@ -8,8 +8,8 @@ import (
 	"path/filepath"
 )
 
-// Legacy language views acquire their own document view, never another
-// editor's view. DocumentService alone publishes text to the language server.
+// Language views acquire their own document view, never another editor's
+// view. DocumentService alone publishes text to the language server.
 type lspViews struct{ docs *workspace.DocumentService }
 
 func newLSPViews(docs *workspace.DocumentService) *lspViews { return &lspViews{docs: docs} }

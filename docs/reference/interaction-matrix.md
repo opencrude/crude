@@ -33,6 +33,13 @@ preserve or intentionally improve.
 | Paste | Bracketed paste primary; Ctrl+V / Ctrl+Shift+V fallback | Routes to the focused control; launcher/tree paste never leaks into hidden chat input. Windows Terminal image-only clipboard pastes arrive as empty bracketed pastes: only the chat composer asynchronously reads and attaches the clipboard image. Non-empty text remains exact; an empty paste without an image is a silent no-op, never a read of unrelated clipboard text. |
 | Large text paste | Substantial overflow, not a line count alone | Attach at 4 KiB; also at eight logical lines with at least 512 bytes of trimmed payload, or ten wrapped rows with at least 1 KiB of trimmed payload. Wrapped evaluation uses the real text column with a 40-column floor. Short prose/small lists stay literal even on a tiny grid. Terminal and image-first clipboard routes share the policy; the full Pasted text attachment loads off Update. Pending storage preserves paste order and blocks Send; owner/draft changes invalidate late insertion and failures never dump the payload. |
 
+Clipboard images use binary `CreateRequest.Data` through local and connected
+reference stores; `Content` is text, never a Base64 image transport. Inline and
+chunked RPCs preserve original bytes. MIME/signature validation rejects encoded
+text before publication. Faulty stored image evidence produces an exact exclusion
+and warning while retaining the original message and good media, without editing
+history. Permission, ownership and storage failures remain fail-closed.
+
 ## Main view panes
 
 Current ownership, lifecycle and limits: [Main View Panes](main-view-panes.md).

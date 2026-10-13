@@ -30,9 +30,5 @@ func sendRuntimeEvent(sender EventSender, event agent.AgentEvent) {
 	if sender == nil {
 		return
 	}
-	if exact, ok := sender.(IdentityEventSender); ok && event.Identity.Valid() {
-		exact.SendAgentEventEnvelope(event)
-		return
-	}
-	sender.SendAgentEventWithID(event.Type, event.Data, event.AgentID)
+	sender.SendAgentEventEnvelope(event)
 }

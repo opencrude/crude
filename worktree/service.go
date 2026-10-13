@@ -222,8 +222,49 @@ func (b *boundedOutput) Write(p []byte) (int, error) {
 	return b.Buffer.Write(p)
 }
 func (s *Service) git(ctx context.Context, root string, args ...string) ([]byte, error) {
+	return s.gitInput(ctx, root, nil, args...)
+}
+
+// rejectAppliedFilters refuses setup only when a configured filter driver would
+// actually run for a copied path. Merely configured drivers, such as the
+// filter.lfs entries Git for Windows installs system-wide, execute nothing.
+func (s *Service) rejectAppliedFilters(ctx context.Context, root string, extra []string) error {
+	filters, filterErr := s.git(ctx, root, "config", "--get-regexp", `^filter\.`)
+	if filterErr != nil && ctx.Err() != nil {
+		return ctx.Err()
+	}
+	if len(filters) == 0 {
+		return nil
+	}
+	input, err := s.git(ctx, root, "ls-files", "-z")
+	if err != nil {
+		return err
+	}
+	for _, path := range extra {
+		input = append(append(input, path...), 0)
+	}
+	if len(input) == 0 {
+		return nil
+	}
+	attributes, err := s.gitInput(ctx, root, input, "check-attr", "-z", "--stdin", "filter")
+	if err != nil {
+		return err
+	}
+	fields := strings.Split(string(attributes), "\x00")
+	for i := 0; i+2 < len(fields); i += 3 {
+		if value := fields[i+2]; value != "unspecified" && value != "unset" {
+			return fmt.Errorf("git filter %q applies to %s; setup execution requires separate authorization", value, fields[i])
+		}
+	}
+	return nil
+}
+
+func (s *Service) gitInput(ctx context.Context, root string, stdin []byte, args ...string) ([]byte, error) {
 	argv := append([]string{"-c", "core.hooksPath=" + os.DevNull, "-c", "core.fsmonitor=false", "-C", root}, args...)
 	cmd := exec.CommandContext(ctx, "git", argv...)
+	if stdin != nil {
+		cmd.Stdin = bytes.NewReader(stdin)
+	}
 	for _, variable := range os.Environ() {
 		if !strings.HasPrefix(variable, "GIT_") {
 			cmd.Env = append(cmd.Env, variable)
@@ -330,12 +371,8 @@ func (s *Service) Create(ctx context.Context, req Request) (Context, error) {
 	}
 	isGit := gitErr == nil
 	if isGit {
-		filters, filterErr := s.git(ctx, sourceRoot, "config", "--get-regexp", "^filter\\.")
-		if len(filters) != 0 {
-			return Context{}, errors.New("configured Git filters unsupported; setup execution requires separate authorization")
-		}
-		if filterErr != nil && ctx.Err() != nil {
-			return Context{}, ctx.Err()
+		if err := s.rejectAppliedFilters(ctx, sourceRoot, req.IncludeIgnored); err != nil {
+			return Context{}, err
 		}
 		r, err := canonical(strings.TrimSpace(string(gitRoot)))
 		if err != nil || r != sourceRoot {
@@ -647,7 +684,7 @@ func (s *Service) capture(ctx context.Context, root, common string, docs map[str
 			} else {
 				mode := d.Mode
 				if mode == 0 {
-					mode = 0644
+					mode = defaultDocumentMode
 					if f != nil {
 						mode = f.Mode
 					}

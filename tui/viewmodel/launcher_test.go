@@ -10,8 +10,8 @@ import (
 	"crude/sessiondb"
 	"crude/tui/screens/launcher"
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 	"crude/workspace"
 )
 

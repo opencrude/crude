@@ -10,15 +10,14 @@ import (
 	"crude/tui/cell"
 	"crude/tui/surface"
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
 	"crude/tui/wm"
 	modeltypes "crude/types"
 )
 
 func TestSettingsCategoriesKeepCapabilitiesInOneAIGroup(t *testing.T) {
-	for _, scope := range []types.SettingsScope{types.SettingsScopeApplication, types.SettingsScopeWorkspace} {
-		m := NewScoped(theme.DefaultDark(), types.AppSettings{}, nil, scope, types.AppSettings{}, types.WorkspaceOverrides{})
+	for _, scope := range []modeltypes.SettingsScope{modeltypes.SettingsScopeApplication, modeltypes.SettingsScopeWorkspace} {
+		m := NewScoped(theme.DefaultDark(), modeltypes.AppSettings{}, nil, scope, modeltypes.AppSettings{}, modeltypes.WorkspaceOverrides{})
 		for _, query := range []string{"", "AI"} {
 			m.SetSearchQuery(query)
 			group := ""
@@ -35,7 +34,7 @@ func TestSettingsCategoriesKeepCapabilitiesInOneAIGroup(t *testing.T) {
 				}
 			}
 			want := []string{"Agents", "Memory", "Skills", "MCP", "Sources", "Acquisition"}
-			if scope == types.SettingsScopeApplication {
+			if scope == modeltypes.SettingsScopeApplication {
 				want = append([]string{"Accounts"}, want...)
 			}
 			if !reflect.DeepEqual(ai, want) {
@@ -51,15 +50,15 @@ func TestSettingsCategoriesKeepCapabilitiesInOneAIGroup(t *testing.T) {
 
 func TestAppSettingsPreserveAccountConnectionsAndAgentDefaults(t *testing.T) {
 	th := theme.DefaultDark()
-	current := types.AppSettings{
+	current := modeltypes.AppSettings{
 
 		Accounts: map[string]provider.Account{"router": {ID: "router", ProviderID: "openrouter", Label: "Personal", Connection: provider.DefaultTemplates()["openrouter"]}, "work": {ID: "work", ProviderID: "openai", Label: "Work", Connection: provider.DefaultTemplates()["openai"]}},
-		Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{
+		Agents: modeltypes.AgentsSettings{Categories: map[string]modeltypes.CategorySettings{
 			"default": {AccountID: "router", Model: "main-model", ThinkingEffort: "medium"},
 			"crafter": {AccountID: "work", Model: "craft-model", ThinkingEffort: "high"},
 		}},
 	}
-	m := New(th, current, []types.ProviderPreset{
+	m := New(th, current, []modeltypes.ProviderPreset{
 		{ID: "openrouter", Name: "OpenRouter"},
 		{ID: "openai", Name: "OpenAI"},
 	})
@@ -75,7 +74,7 @@ func TestAppSettingsPreserveAccountConnectionsAndAgentDefaults(t *testing.T) {
 
 func TestSettingsSurfacePaintAndNavigation(t *testing.T) {
 	th := theme.DefaultDark()
-	m := New(th, types.AppSettings{}, nil)
+	m := New(th, modeltypes.AppSettings{}, nil)
 	surfaceRoot := NewSurface(th, m)
 	cw := ui.NewComponentWidget(th, surfaceRoot, 90, 28)
 	surfaceRoot.SetFocusHandler(cw.Focus)
@@ -109,7 +108,7 @@ func TestSettingsSurfacePaintAndNavigation(t *testing.T) {
 
 func TestSettingsSearchFiltersGroupedNavigation(t *testing.T) {
 	th := theme.DefaultDark()
-	m := New(th, types.AppSettings{}, nil)
+	m := New(th, modeltypes.AppSettings{}, nil)
 	surfaceRoot := NewSurface(th, m)
 	cw := ui.NewComponentWidget(th, surfaceRoot, 80, 24)
 	surfaceRoot.SetFocusHandler(cw.Focus)
@@ -133,7 +132,7 @@ func TestSettingsSearchFiltersGroupedNavigation(t *testing.T) {
 
 func TestSettingsSurfaceRailUsesConsistentInset(t *testing.T) {
 	th := theme.DefaultDark()
-	m := New(th, types.AppSettings{}, nil)
+	m := New(th, modeltypes.AppSettings{}, nil)
 	surfaceRoot := NewSurface(th, m)
 	surfaceRoot.Layout(ui.LayoutContext{Theme: th}, ui.Rect{W: 90, H: 24})
 
@@ -150,7 +149,7 @@ func TestSettingsSurfaceRailUsesConsistentInset(t *testing.T) {
 
 func TestSettingsSurfaceSplitDividerDragResizesRail(t *testing.T) {
 	th := theme.DefaultDark()
-	m := New(th, types.AppSettings{}, nil)
+	m := New(th, modeltypes.AppSettings{}, nil)
 	surfaceRoot := NewSurface(th, m)
 	cw := ui.NewComponentWidget(th, surfaceRoot, 90, 28)
 	surfaceRoot.SetFocusHandler(cw.Focus)
@@ -177,7 +176,7 @@ func TestSettingsSurfaceSplitDividerDragResizesRail(t *testing.T) {
 
 func TestSettingsSurfaceActionBarEmitsMessages(t *testing.T) {
 	th := theme.DefaultDark()
-	m := New(th, types.AppSettings{}, nil)
+	m := New(th, modeltypes.AppSettings{}, nil)
 	surfaceRoot := NewSurface(th, m)
 	cw := ui.NewComponentWidget(th, surfaceRoot, 80, 24)
 	surfaceRoot.SetFocusHandler(cw.Focus)
@@ -204,7 +203,7 @@ func TestSettingsSurfaceActionBarEmitsMessages(t *testing.T) {
 
 func TestSettingsSurfaceNativeFormPersistsTextAndCategoryChanges(t *testing.T) {
 	th := theme.DefaultDark()
-	m := New(th, types.AppSettings{}, nil)
+	m := New(th, modeltypes.AppSettings{}, nil)
 	surfaceRoot := NewSurface(th, m)
 	cw := ui.NewComponentWidget(th, surfaceRoot, 90, 28)
 	surfaceRoot.SetFocusHandler(cw.Focus)
@@ -245,7 +244,7 @@ func TestSettingsSurfaceNativeFormPersistsTextAndCategoryChanges(t *testing.T) {
 
 func TestSettingsSurfaceAccountBrowsingDoesNotSwitchMainAgentAccount(t *testing.T) {
 	th := theme.DefaultDark()
-	m := New(th, types.AppSettings{Accounts: map[string]provider.Account{"personal": {ID: "personal", ProviderID: "openrouter", Label: "Personal", Connection: provider.DefaultTemplates()["openrouter"]}, "work": {ID: "work", ProviderID: "openai", Label: "Work", Connection: provider.DefaultTemplates()["openai"]}}, Agents: types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {AccountID: "personal", Model: "m"}}}}, []types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}, {ID: "openai", Name: "OpenAI"}})
+	m := New(th, modeltypes.AppSettings{Accounts: map[string]provider.Account{"personal": {ID: "personal", ProviderID: "openrouter", Label: "Personal", Connection: provider.DefaultTemplates()["openrouter"]}, "work": {ID: "work", ProviderID: "openai", Label: "Work", Connection: provider.DefaultTemplates()["openai"]}}, Agents: modeltypes.AgentsSettings{Categories: map[string]modeltypes.CategorySettings{"default": {AccountID: "personal", Model: "m"}}}}, []modeltypes.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}, {ID: "openai", Name: "OpenAI"}})
 	surf := NewSurface(th, m)
 	host := ui.NewHost(th, surf)
 	host.Resize(90, 28)
@@ -260,7 +259,7 @@ func TestSettingsSurfaceAccountBrowsingDoesNotSwitchMainAgentAccount(t *testing.
 
 func TestSafetyAutoPermissionDefaultsAndRoundTrip(t *testing.T) {
 	th := theme.DefaultDark()
-	m := New(th, types.AppSettings{Accounts: map[string]provider.Account{"review": {ID: "review", ProviderID: "openai", Label: "Review", Connection: provider.DefaultTemplates()["openai"]}}}, []types.ProviderPreset{{ID: "openai", Name: "OpenAI"}})
+	m := New(th, modeltypes.AppSettings{Accounts: map[string]provider.Account{"review": {ID: "review", ProviderID: "openai", Label: "Review", Connection: provider.DefaultTemplates()["openai"]}}}, []modeltypes.ProviderPreset{{ID: "openai", Name: "OpenAI"}})
 	root := NewSurface(th, m)
 	m.SelectCategory(catAgents)
 	c := root.agents
@@ -304,11 +303,11 @@ func TestSafetyAutoPermissionDefaultsAndRoundTrip(t *testing.T) {
 
 func TestSafetyAutoPermissionProviderAndModelPickerAreExplicit(t *testing.T) {
 	th := theme.DefaultDark()
-	m := New(th, types.AppSettings{
+	m := New(th, modeltypes.AppSettings{
 
 		Accounts: map[string]provider.Account{"review": {ID: "review", ProviderID: "openai", Label: "Review", APIKey: "secret", Connection: provider.Template{Name: "OpenAI", ProviderURL: "https://api.example/v1", APIStandard: "openai-responses", AuthType: provider.AuthProtocol}}},
-		Safety:   types.SafetySettings{AutoPermission: modeltypes.AutoPermissionSettings{Provider: "openrouter", Model: "reviewer-old"}},
-	}, []types.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}, {ID: "openai", Name: "OpenAI"}})
+		Safety:   modeltypes.SafetySettings{AutoPermission: modeltypes.AutoPermissionSettings{Provider: "openrouter", Model: "reviewer-old"}},
+	}, []modeltypes.ProviderPreset{{ID: "openrouter", Name: "OpenRouter"}, {ID: "openai", Name: "OpenAI"}})
 
 	root := NewSurface(th, m)
 	m.SelectCategory(catAgents)
@@ -329,7 +328,7 @@ func TestSafetyAutoPermissionProviderAndModelPickerAreExplicit(t *testing.T) {
 	if !field.Loading {
 		t.Fatal("auto-permission model picker did not enter loading state")
 	}
-	_, _ = m.Update(ModelsMsg{ProviderID: "openai", AccountID: "review", Generation: request.Generation, Models: []types.ModelEntry{{ID: "gpt-5-mini", Name: "GPT-5 mini"}}})
+	_, _ = m.Update(ModelsMsg{ProviderID: "openai", AccountID: "review", Generation: request.Generation, Models: []modeltypes.ModelEntry{{ID: "gpt-5-mini", Name: "GPT-5 mini"}}})
 	field = m.currentForm().Field(fieldModel)
 	if field.Loading || len(field.Options) != 1 || field.Options[0].ID != "gpt-5-mini" {
 		t.Fatalf("auto-permission model picker after fetch = %+v", field)
@@ -345,11 +344,11 @@ func TestSafetyAutoPermissionProviderAndModelPickerAreExplicit(t *testing.T) {
 
 func TestSettingsModelSelectFetchStaysOpenWhenModelsArrive(t *testing.T) {
 	th := theme.DefaultDark()
-	m := New(th, types.AppSettings{
+	m := New(th, modeltypes.AppSettings{
 
 		Accounts: map[string]provider.Account{"review": {ID: "review", ProviderID: "openai", Label: "Review", APIKey: "secret", Connection: provider.Template{Name: "OpenAI", ProviderURL: "https://api.example/v1", APIStandard: "openai-responses", AuthType: provider.AuthProtocol}}},
-		Agents:   types.AgentsSettings{Categories: map[string]types.CategorySettings{"default": {Provider: "openai", AccountID: "review"}}},
-	}, []types.ProviderPreset{{ID: "openai", Name: "OpenAI"}})
+		Agents:   modeltypes.AgentsSettings{Categories: map[string]modeltypes.CategorySettings{"default": {Provider: "openai", AccountID: "review"}}},
+	}, []modeltypes.ProviderPreset{{ID: "openai", Name: "OpenAI"}})
 	surfaceRoot := NewSurface(th, m)
 	frame := ui.NewWindowFrameWidget(th, "settings-frame", ui.FrameWindow, "Settings", surfaceRoot, nil, true, 90, 28)
 	surfaceRoot.SetFocusHandler(frame.Focus)
@@ -375,7 +374,7 @@ func TestSettingsModelSelectFetchStaysOpenWhenModelsArrive(t *testing.T) {
 		t.Fatal("model select closed before asynchronous result")
 	}
 
-	updated, _ := m.Update(ModelsMsg{ProviderID: "openai", AccountID: "review", Generation: request.Generation, Models: []types.ModelEntry{{ID: "gpt-5", Name: "GPT-5"}}})
+	updated, _ := m.Update(ModelsMsg{ProviderID: "openai", AccountID: "review", Generation: request.Generation, Models: []modeltypes.ModelEntry{{ID: "gpt-5", Name: "GPT-5"}}})
 	m = &updated
 	surfaceRoot.SetModel(m)
 	if m.currentForm().Field(fieldModel).Loading {

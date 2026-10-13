@@ -13,8 +13,6 @@ const (
 	LSPClearDiagnostics          = "lsp.clear_diagnostics"
 	LSPOpenFile                  = "lsp.open_file"
 	LSPCloseFile                 = "lsp.close_file"
-	LSPQueueFileUpdate           = "lsp.queue_file_update"
-	LSPNotifyFileSave            = "lsp.notify_file_save"
 	LSPNotifyWatchedFilesChanged = "lsp.notify_watched_files_changed"
 	LSPSetActiveFile             = "lsp.set_active_file"
 	LSPStartForWorkspace         = "lsp.start_for_workspace"

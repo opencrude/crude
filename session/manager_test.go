@@ -1,6 +1,7 @@
 package session
 
 import (
+	"crude/agent"
 	"testing"
 
 	"crude/provider"
@@ -341,4 +342,8 @@ func TestCloseOrchestratorStopsAndRejectsNewWork(t *testing.T) {
 	if orch.SubmitInput(provider.PlainInput("late input")) {
 		t.Fatal("closed orchestrator admitted input")
 	}
+}
+
+func (m *mockEventSender) SendAgentEventEnvelope(event agent.AgentEvent) {
+	m.SendAgentEventWithID(event.Type, event.Data, event.AgentID)
 }

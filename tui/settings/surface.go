@@ -14,7 +14,6 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/surface"
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
 	ttypes "crude/types"
 	captypes "crude/types/capability"
@@ -218,7 +217,7 @@ func (s *WorkspaceSettingsSurface) rebuildActions() {
 	)
 	s.actions.SetCancelAction("settings.cancel")
 	s.reset = nil
-	if s.model != nil && s.model.Scope() == types.SettingsScopeWorkspace {
+	if s.model != nil && s.model.Scope() == ttypes.SettingsScopeWorkspace {
 		s.reset = ui.NewActionBar(WorkspaceSettingsResetBarID, s.tokens,
 			ui.ActionBarButton{ID: WorkspaceSettingsResetID, Label: "Reset section", Action: "settings.reset", Variant: ui.VariantDanger, Enabled: true},
 		)
@@ -235,7 +234,7 @@ func (s *WorkspaceSettingsSurface) rebuildActions() {
 }
 
 func (s *WorkspaceSettingsSurface) accountsOpen() bool {
-	return s.model != nil && s.model.Scope() == types.SettingsScopeApplication && s.model.SelectedCategory() == catAccounts
+	return s.model != nil && s.model.Scope() == ttypes.SettingsScopeApplication && s.model.SelectedCategory() == catAccounts
 }
 
 func (s *WorkspaceSettingsSurface) agentsOpen() bool {
@@ -450,7 +449,7 @@ func (s *WorkspaceSettingsSurface) ShowAccountSetup() {
 // ShowMainAgent opens the Main Agent editor; the returned command fetches
 // its account's models so the capability rows fill.
 func (s *WorkspaceSettingsSurface) ShowMainAgent() tea.Cmd {
-	s.model.SetScope(types.SettingsScopeApplication)
+	s.model.SetScope(ttypes.SettingsScopeApplication)
 	s.model.SelectCategory(catAgents)
 	s.syncModel()
 	return s.agents.begin("role/default", false)
@@ -521,7 +520,7 @@ func (s *WorkspaceSettingsSurface) FinishSave(target *Model, err error) bool {
 // the right pane's own title (see PaneTitle), never by mutating the window
 // frame the user has already positioned.
 func (s *WorkspaceSettingsSurface) WindowTitle() string {
-	if s.model != nil && s.model.Scope() == types.SettingsScopeWorkspace {
+	if s.model != nil && s.model.Scope() == ttypes.SettingsScopeWorkspace {
 		return "Workspace Settings"
 	}
 	return "Application Settings"
@@ -1377,7 +1376,7 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 		}
 		return s.submitAccountChange(change)
 	case "settings.chatgpt.signin":
-		if s.model.Scope() != types.SettingsScopeApplication || s.model.accountEditor == nil || s.model.accountBusy || s.model.accountEditor.draft.Connection.AuthType != provider.AuthChatGPT || s.model.authWaitingID == s.model.accountEditor.draft.ID {
+		if s.model.Scope() != ttypes.SettingsScopeApplication || s.model.accountEditor == nil || s.model.accountBusy || s.model.accountEditor.draft.Connection.AuthType != provider.AuthChatGPT || s.model.authWaitingID == s.model.accountEditor.draft.ID {
 			return ui.EventResult{Handled: true}
 		}
 		accountID, generation := s.model.SignInRequest()
@@ -1531,9 +1530,9 @@ func (s *WorkspaceSettingsSurface) HandleAction(_ ui.EventContext, action ui.Act
 		return ui.EventResult{Handled: true, Cmd: func() tea.Msg { return ResetSectionMsg{Key: s.model.currentOverrideKey()} }}
 	case "settings.scope":
 		id, _ := action.Payload.(string)
-		next := types.SettingsScopeApplication
+		next := ttypes.SettingsScopeApplication
 		if id == scopeTabWorkspace {
-			next = types.SettingsScopeWorkspace
+			next = ttypes.SettingsScopeWorkspace
 		}
 		if s.model.Scope() == next {
 			return ui.EventResult{Handled: true, Invalidate: ui.InvalidatePaint}
@@ -2203,7 +2202,7 @@ func newSettingsScopeStrip(owner *WorkspaceSettingsSurface, tokens *ui.TokenSet)
 
 // sync projects the model's scope onto the strip.
 func (s *settingsScopeStrip) sync() {
-	workspace := s.owner != nil && s.owner.model != nil && s.owner.model.Scope() == types.SettingsScopeWorkspace
+	workspace := s.owner != nil && s.owner.model != nil && s.owner.model.Scope() == ttypes.SettingsScopeWorkspace
 	s.application.SetChecked(!workspace)
 	s.workspace.SetChecked(workspace)
 }

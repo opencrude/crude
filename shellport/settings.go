@@ -17,9 +17,6 @@ type Settings interface {
 	// AppDefaults returns the application-layer settings (no workspace overlay).
 	AppDefaults() types.AppSettings
 	// LoadWorkspaceOverrides reads the sparse workspace overlay from workspace.db.
-	// Legacy `app_settings` rows are treated as overrides so existing projects
-	// keep their per-workspace theme/editor/LSP values.
-	// Stored overlays are re-diffed against the current application layer before
 	LoadWorkspaceOverrides() types.WorkspaceOverrides
 	// WorkspaceAgentDefaults returns the effective defaults shown by the
 	// persistent settings dialog.

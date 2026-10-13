@@ -182,6 +182,9 @@ type CategorySettings struct {
 	// agent reaches this percentage of its effective model window. nil uses the
 	// product default; 0 disables automatic compaction.
 	ContextCompactionPercent *int `json:"context_compaction_percent,omitempty"`
+	// ContextRetentionTokens bounds recent verbatim input retained across
+	// compaction. nil uses the product default.
+	ContextRetentionTokens *int `json:"context_retention_tokens,omitempty"`
 }
 
 type ProfileSettings struct {
@@ -213,6 +216,7 @@ type AgentProfileSettings struct {
 	SkillModes               map[string]string `json:"skill_modes,omitempty"`
 	FileOwnership            []string          `json:"file_ownership,omitempty"`
 	ContextCompactionPercent *int              `json:"context_compaction_percent,omitempty"`
+	ContextRetentionTokens   *int              `json:"context_retention_tokens,omitempty"`
 	ThinkingEffort           string            `json:"thinking_effort,omitempty"`
 	ModelContextWindow       int               `json:"model_context_window,omitempty"`
 	ModelMaxOutput           int               `json:"model_max_output,omitempty"`
@@ -237,18 +241,6 @@ func DefaultAgentRoleCategories() map[string]CategorySettings {
 			DeniedTools: []string{"delete_file", "move_file", "copy_file", "execute_command", "async_execute_command", "web_search", "web_fetch", "arxiv_search"},
 		},
 		"memory": {},
-	}
-}
-
-// DefaultNamedAgents supplies reset targets for the shipped agent templates.
-func DefaultNamedAgents() map[string]AgentProfileSettings {
-	return map[string]AgentProfileSettings{
-		"explorer":  {Category: "researcher", Description: "Read-only codebase explorer for research and investigation"},
-		"reviewer":  {Category: "researcher", Description: "Code reviewer with expensive model for thorough analysis"},
-		"fixer":     {Category: "crafter", Description: "Implementation-focused agent for fixing bugs and writing code"},
-		"tester":    {Category: "crafter", Description: "Test writer agent focused on writing and running tests"},
-		"formatter": {Category: "aeron", Description: "Quick formatting and linting agent"},
-		"monitor":   {Category: "aeron", Description: "Watches running sub-agents and reports status"},
 	}
 }
 
@@ -281,6 +273,10 @@ func CloneAgentProfiles(source map[string]AgentProfileSettings) map[string]Agent
 			n := *value.ContextCompactionPercent
 			value.ContextCompactionPercent = &n
 		}
+		if value.ContextRetentionTokens != nil {
+			n := *value.ContextRetentionTokens
+			value.ContextRetentionTokens = &n
+		}
 		out[key] = value
 	}
 	return out
@@ -312,7 +308,6 @@ type Settings struct {
 	Editor            EditorSettings `json:"editor,omitempty"`
 	LSP               LSPSettings    `json:"lsp,omitempty"`
 	UI                UISettings     `json:"ui,omitempty"`
-	Font              FontSettings   `json:"font,omitempty"`
 }
 
 type AppSettings struct {
@@ -324,7 +319,6 @@ type AppSettings struct {
 	Editor              EditorSettings              `json:"editor,omitempty"`
 	LSP                 LSPSettings                 `json:"lsp,omitempty"`
 	UI                  UISettings                  `json:"ui,omitempty"`
-	Font                FontSettings                `json:"font,omitempty"`
 	Accounts            map[string]provider.Account `json:"accounts,omitempty"`
 	Agents              AgentsSettings              `json:"agents,omitempty"`
 	Memory              MemorySettings              `json:"memory,omitempty"`
@@ -512,10 +506,6 @@ type MemorySettings struct {
 	RecallLimit int `json:"recall_limit,omitempty"`
 	// ExtractEveryTurns is the extraction cadence. Default 3.
 	ExtractEveryTurns int `json:"extract_every_turns,omitempty"`
-	// Model optionally overrides the model used for background memory jobs
-	// (extraction, summaries, consolidation). Empty uses the session model.
-	// Kept for backward-compat; prefer MemoryCategory.
-	Model string `json:"model,omitempty"`
 	// MemoryCategory is the memory agent's own configuration: provider,
 	// model, and thinking effort. Empty fields inherit the main agent, so the
 	// memory agent behaves like every other agent. It is set on the session
@@ -577,7 +567,6 @@ func (s Settings) AppPart() AppSettings {
 		Editor:       s.Editor,
 		LSP:          s.LSP,
 		UI:           s.UI,
-		Font:         s.Font,
 		LocalHistory: s.LocalHistory,
 	}
 }
@@ -722,12 +711,6 @@ type UISettings struct {
 	AnimationsEnabled bool `json:"animations_enabled,omitempty"`
 	// ContextHelp is compact, expanded, or off. Full Help remains available.
 	ContextHelp string `json:"context_help,omitempty"`
-}
-
-type FontSettings struct {
-	Family    string `json:"family,omitempty"`
-	Size      int    `json:"size,omitempty"`
-	Ligatures bool   `json:"ligatures,omitempty"`
 }
 
 type ModelEntry struct {

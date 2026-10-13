@@ -11,12 +11,13 @@ import (
 	"crude/agent"
 	"crude/provider"
 	"crude/sessiondb"
-	ttypes "crude/tui/types"
+	ttypes "crude/types"
 	recoverytypes "crude/types/recovery"
 )
 
 func TestConfigWithSessionOverridesUsesWorkspaceThenSession(t *testing.T) {
 	compact := 2
+	retention := 32000
 	base := &Config{
 
 		Accounts: map[string]provider.Account{
@@ -36,7 +37,7 @@ func TestConfigWithSessionOverridesUsesWorkspaceThenSession(t *testing.T) {
 		},
 	}
 	overrides := map[string]sessiondb.AgentSettingOverride{
-		"crafter": {AccountID: "openai-account", Model: "gpt-5", ThinkingEffort: "high", ContextCompactionPercent: &compact},
+		"crafter": {AccountID: "openai-account", Model: "gpt-5", ThinkingEffort: "high", ContextCompactionPercent: &compact, ContextRetentionTokens: &retention},
 	}
 
 	effective := configWithSessionOverrides(base, overrides)
@@ -51,6 +52,9 @@ func TestConfigWithSessionOverridesUsesWorkspaceThenSession(t *testing.T) {
 		t.Fatalf("crafter compaction threshold = %v, want 2", crafter.ContextCompactionPercent)
 	}
 	main := effective.GetActiveDefaultCategory()
+	if crafter.ContextRetentionTokens == nil || *crafter.ContextRetentionTokens != retention || crafter.ContextRetentionTokens == &retention {
+		t.Fatal("retention override missing or aliases persistence input")
+	}
 	if main.Model != "workspace-main" {
 		t.Fatalf("unoverridden main model = %q, want workspace-main", main.Model)
 	}

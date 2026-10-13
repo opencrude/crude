@@ -31,7 +31,6 @@ type LSPService interface {
 	FileDiagnostics(filePath string) []workspace.LSPDiagnostic
 	// FindReferences routes a "find references" request to the right client.
 	FindReferences(ctx context.Context, filePath string, line, col int, includeDeclaration bool) []workspace.LSPLocation
-	NotifyFileSave(ctx context.Context, path, text string, reason workspace.DocumentSaveReason, before bool)
 	// Watchers report disk events, never read contents or take ownership of editor
 	// overlays. Include manifests/configuration, not just known source extensions.
 	NotifyWatchedFilesChanged(ctx context.Context, path string, changeType int)
@@ -42,7 +41,6 @@ type LSPService interface {
 	// bottom-left status bar. Always reflects the state of every file the LSP
 	// server knows about, regardless of which file (if any) is open in the editor.
 	ProjectInsights() workspace.ProjectInsights
-	QueueFileUpdate(path, text string)
 	// RequestCompletions routes a completion request to the right client.
 	RequestCompletions(ctx context.Context, filePath string, line, col int) []workspace.CompletionItem
 	// RequestDefinition routes a "go to definition" request to the right client.

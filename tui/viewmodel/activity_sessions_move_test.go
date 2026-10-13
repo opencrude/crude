@@ -15,6 +15,7 @@ import (
 	"crude/tui/screens/statusoverview"
 	"crude/tui/screens/termdock"
 	"crude/tui/ui"
+	"crude/types"
 	"crude/workspace"
 )
 
@@ -128,7 +129,8 @@ func TestWorkspaceResumeAfterNewSessionPaintsHydratedHistoryImmediately(t *testi
 		t.Fatal(err)
 	}
 	message := provider.NewTextMessage("assistant", "hydrated workspace session is visible")
-	if _, err := sessiondb.ReplaceMessagesWithMeta(db, "saved-session", []provider.ChatMessage{message}, []int{1}, []sessiondb.DisplayMeta{{DisplayRole: "assistant", DisplayContent: "hydrated workspace session is visible"}}); err != nil {
+	if _, err := sessiondb.ReplaceMessagesWithMeta(db, "saved-session", []provider.ChatMessage{message}, []int{1}, []sessiondb.DisplayMeta{{SnapshotVersion: sessiondb.ConversationSnapshotVersion, DisplayRole: "assistant",
+		Snapshots: []types.ConversationMessage{{Role: "assistant", Content: message.Content.String()}}}}); err != nil {
 		_ = db.Close()
 		t.Fatal(err)
 	}

@@ -8,7 +8,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/tui/rendering"
-	"crude/tui/types"
 	coretypes "crude/types"
 )
 
@@ -98,7 +97,7 @@ func TestPermissionDenyImmediatelyClearsApprovalWithoutWaitingForBackend(t *test
 					t.Errorf("Deny changed the draft: %q", app.Input.Value())
 				}
 				emitTestPermission(app, "child-a", "new-block")
-				app.handleAgentEvent(types.AgentEventMsg{AgentID: "child-a", Type: "blocking_complete", Data: map[string]string{"block_id": "denied-block"}})
+				app.handleAgentEvent(coretypes.AgentEventMsg{AgentID: "child-a", Type: "blocking_complete", Data: map[string]string{"block_id": "denied-block"}})
 				if app.ws.AgentMgr().Get("child-a").State.PendingBlockID != "new-block" || len(app.agentPrompts) != 1 {
 					t.Error("late denial completion removed a newer request")
 				}

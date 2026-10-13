@@ -176,6 +176,66 @@ func TestRootControlReconciliationPreservesExactPublicationAndRejectsCorruption(
 	}
 }
 
+func TestLateHumanSteeringCannotBreakRecoveryPublication(t *testing.T) {
+	for _, child := range []bool{false, true} {
+		t.Run(fmt.Sprint(child), func(t *testing.T) {
+			db := sessiondb.OpenAndMigrateAt(t.TempDir())
+			defer db.Close()
+			if err := sessiondb.CreateSessionRow(db, "session"); err != nil {
+				t.Fatal(err)
+			}
+			original := provider.NewTextMessage("user", "original unfinished task")
+			original.InternalID = "input"
+			initial, err := sessiondb.PublishContext(db, sessiondb.ContextPublication{SessionID: "session", AgentID: "session", Mutation: sessiondb.ContextMutation{Replace: &sessiondb.ContextReplacement{Generation: 1, Reason: "initial", Messages: []provider.ChatMessage{original}}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			run := newRecoveryRunState(provider.UserInput{}, &sessiondb.RecoveryCheckpoint{ContextOwnerID: "session", ContextRevision: initial.Revision, ContextGeneration: 1, ContextReason: "initial", Archive: initial.Messages, ActiveContext: initial.Messages})
+			accepted := provider.NewTextMessage("assistant", "accepted output")
+			accepted.InternalID = "accepted"
+			run.snapshot(append(initial.Messages, accepted), append(initial.Messages, accepted))
+			note := collaborationMessage(collaboration.PendingDelivery{Event: collaboration.Event{ID: "steering", Origin: collaboration.OriginHuman, Kind: collaboration.EventHumanSteering, RunID: "exact-run", Body: "new message with broken screenshot"}})
+			// The human steering owner supplies this typed origin; the generic
+			// peer-message builder deliberately does not infer human authority.
+			note.Origin = provider.OriginHumanSteering
+			selection := provider.NewTextMessage("user", "immutable excluded attachment evidence")
+			selection.InternalID = note.InternalID + "-references"
+			selection.Origin, selection.Visibility = provider.OriginRuntimeContext, provider.VisibilityContextOnly
+			current, err := sessiondb.PublishContext(db, sessiondb.ContextPublication{SessionID: "session", AgentID: "session", ExpectedRevision: initial.Revision, Mutation: sessiondb.ContextMutation{Append: []sessiondb.ContextMessageDelta{contextDelta(note, sessiondb.DisplayMeta{}, 0, time.Now(), "root"), contextDelta(selection, sessiondb.DisplayMeta{ContextOnly: true}, 0, time.Now(), "root")}}})
+			if err != nil {
+				t.Fatal(err)
+			}
+			status := recoverytypes.Status{ID: "incident", AgentID: "root", Generation: 1, State: recoverytypes.NeedsAttention}
+			if child {
+				err = publishChildRecovery(db, "session", run, status)
+			} else {
+				s := &Session{db: db, sessionID: "session", activeContext: current.Messages, contextRevision: current.Revision, contextGeneration: 1, contextReason: "initial"}
+				err = s.publishRootRecovery(run, status)
+			}
+			if err != nil {
+				t.Fatalf("late steering wedged recovery: %v", err)
+			}
+			checkpoint, found, err := sessiondb.LoadRecoveryCheckpoint(db, "session", "root")
+			if err != nil || !found {
+				t.Fatal("checkpoint missing")
+			}
+			for _, messages := range [][]provider.ChatMessage{checkpoint.Archive, checkpoint.ActiveContext} {
+				for _, id := range []string{"input", "accepted", note.InternalID, selection.InternalID} {
+					count := 0
+					for _, m := range messages {
+						if m.InternalID == id {
+							count++
+						}
+					}
+					if count != 1 {
+						t.Fatalf("identity %s count=%d", id, count)
+					}
+				}
+			}
+		})
+	}
+}
+
 func TestCommittedRecoveryMergeRejectsDuplicateOrChangedIDsWithoutMutation(t *testing.T) {
 	control := canonicalContextMessage(collaborationMessage(collaboration.PendingDelivery{Event: collaboration.Event{
 		ID: "control", Origin: collaboration.OriginHuman, Kind: collaboration.EventLifecycleControl, RunID: "run", Body: "Stop",

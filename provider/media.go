@@ -1,10 +1,21 @@
 package provider
 
 import (
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"strings"
 )
+
+// ValidateImageBytes checks the media signature against its declared MIME.
+// In particular, encoded text is never accepted as an image file. This does not
+// promise that a remote provider supports every feature of a matching codec.
+func ValidateImageBytes(mime string, data []byte) error {
+	if len(data) == 0 || !strings.HasPrefix(mime, "image/") || http.DetectContentType(data) != mime {
+		return fmt.Errorf("invalid image bytes for %q", mime)
+	}
+	return nil
+}
 
 // MediaModalityFromPath maps a file path to the canonical input modality it
 // represents (provider.ModalityImage/PDF/Video/Audio) and its MIME type.

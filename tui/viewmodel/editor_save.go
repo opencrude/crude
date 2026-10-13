@@ -141,7 +141,6 @@ func (m *App) onEditorContentChanged(ed *editor.Editor, filePath, text string) {
 		m.overlayHost.Close(editorChangesOverlay)
 	}
 	if m.ws.LSPMgr() != nil {
-		m.ws.LSPMgr().QueueFileUpdate(filePath, text)
 		if m.ws.LSPMgr().Settings().AutoComplete && m.LSPPopup != nil {
 			m.LSPPopup.CompletionDue = time.Now().Add(350 * time.Millisecond)
 		}
@@ -245,17 +244,10 @@ func (m *App) requestEditorSaveWithFormat(ed *editor.Editor, reason workspace.Do
 		ExpectedHash: snapshot.ExpectedHash, ExpectedExist: snapshot.ExpectedExists, Reason: reason,
 	}
 	service := m.ws.Documents()
-	lsp := m.ws.LSPMgr()
 	generation := m.workspaceSwitchGen.Load()
 	return func() tea.Msg {
 		defer cancel()
-		if lsp != nil && ctx.Err() == nil {
-			lsp.NotifyFileSave(ctx, request.Path, string(request.Data), reason, true)
-		}
 		result := service.Save(ctx, request)
-		if result.Committed && lsp != nil {
-			lsp.NotifyFileSave(ctx, request.Path, string(request.Data), reason, false)
-		}
 		return editorSaveResultMsg{result: result, workspaceGeneration: generation, state: state}
 	}
 }

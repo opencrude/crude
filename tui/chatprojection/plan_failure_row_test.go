@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 )
 
 // A structured planning failure must read as a red contract dot plus a short

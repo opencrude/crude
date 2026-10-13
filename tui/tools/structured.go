@@ -34,7 +34,7 @@ func IsStructuredTool(name string) bool {
 func IsCollaborationTool(name string) bool {
 	switch name {
 	case "agent_list", "agent_inspect", "agent_start", "agent_send", "agent_respond", "agent_control",
-		"publish_report", "artifact_read", "agent_wait", "board_read":
+		"publish_report", "artifact_read", "agent_wait", "board_read", "agent_update_claims", "agent_narrow_claims":
 		return true
 	default:
 		return false
@@ -53,6 +53,8 @@ func BuildStructuredResult(name, content, input string) StructuredResult {
 		return buildCollaborationResult(name, content, input)
 	}
 	switch name {
+	case "crude_commands", "crude_control":
+		return buildControlResult(name, content, input)
 	case "remember", "recall_memory", "update_memory", "forget_memory", "memory_feedback", "search_history":
 		return buildMemoryResult(name, content, input)
 	default:

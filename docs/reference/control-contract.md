@@ -50,6 +50,12 @@ does not require a mutation approval token on a second resolution.
 Effects are read/write/delete/execute/communication/authority, never implicit
 read. Manual/Auto Review/YOLO authorize eligible exact operations within explicit
 denials and owner ceilings. Human-only authority is not reviewer-eligible.
+`crude_control` runs on the agent's serial permission lane, so a Manual-mode
+mutation reaches a human prompt instead of resolving as a denial. The prompt
+and reviewer risk use the resolved effect (write, delete, execute) and show the
+exact arguments as readable `path: value` lines. Chat rows project
+`crude_commands` as command/effect/description entries and `crude_control`
+receipts by state, fault, identities and output, never a raw JSON envelope.
 Settings Save considers **all dirty drafts**, including off-page editors; an
 ordinary page does not sanitize an authority-bearing pending draft. Field-level
 settings paths, schema and revisions are discoverable; account/capability entities,
@@ -134,7 +140,10 @@ shells/decks/forms; they are not exhaustive UI-family acceptance. A real framed
 control fixture has sequential Linux 160×40 and 80×24 captures for tree hide,
 split editors, one actual retained PTY and persisted workspace Tab size=8;
 independent test-success files and exit-zero evidence accompany inspected images.
-Windows amd64/macOS arm64 builds cross-compile, not native interaction acceptance.
+Native Windows 160×40 and 80×24 captures now cover this same framed fixture,
+including explicit terminal close, verified unmount and persisted settings, with
+independent success markers. This is selected-flow acceptance, not every UI family.
+macOS arm64 remains cross-compilation rather than native interaction acceptance.
 Remaining family work, final repository gates, native-platform and
 SSH/distinct-host acceptance must be reported separately. Neither runnable APIs
 nor these test names establish universal automation or completion of the active

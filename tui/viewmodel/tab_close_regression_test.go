@@ -2,6 +2,7 @@ package viewmodel
 
 import (
 	"context"
+	"github.com/charmbracelet/x/powernap/pkg/lsp/protocol"
 	"os"
 	"path/filepath"
 	"strings"
@@ -11,7 +12,6 @@ import (
 	tea "charm.land/bubbletea/v2"
 
 	"crude/shellport"
-	ttypes "crude/tui/types"
 	model "crude/types"
 	"crude/workspace"
 )
@@ -32,9 +32,9 @@ func newRealShellApp(t *testing.T) (*App, *workspace.Workspace) {
 	if err := os.WriteFile(filepath.Join(dir, "main.go"), []byte("package main\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	ws := workspace.NewWorkspace(dir, "openrouter", "test", ttypes.Settings{}, regressionLogger{})
+	ws := workspace.NewWorkspace(dir, "openrouter", "test", model.Settings{}, regressionLogger{})
 	ws.SetBackendConfig(testAccountConfig(), home)
-	ws.SetAppDefaults(ttypes.AppSettings{Accounts: ws.AllAccounts()})
+	ws.SetAppDefaults(model.AppSettings{Accounts: ws.AllAccounts()})
 	ws.SetEventSender(noopEventSender{})
 	t.Setenv("MODELS_DEV_URL", "http://127.0.0.1:9/models-dev-unreachable")
 	app := NewApp(shellport.Local(ws), nil)
@@ -85,7 +85,7 @@ func (noopLSPClient) RequestDocumentSymbols(context.Context, string) []workspace
 func (noopLSPClient) RequestHover(context.Context, string, int, int) (string, error) {
 	return "", nil
 }
-func (noopLSPClient) RequestRename(context.Context, string, int, int, string) (interface{}, error) {
+func (noopLSPClient) RequestRename(context.Context, string, int, int, string) (*protocol.WorkspaceEdit, error) {
 	return nil, nil
 }
 func (noopLSPClient) RequestCompletions(context.Context, string, int, int) []workspace.CompletionItem {
@@ -175,7 +175,7 @@ func assertLauncherBack(t *testing.T, app *App, retainedAgents int) {
 	if n := countNonBlankGlyphs(app.mainSurf.Buffer()); n < 50 {
 		t.Fatalf("launcher frame after close too sparse: %d glyphs", n)
 	}
-	_, _ = app.handleTick(ttypes.TickMsg(time.Now()))
+	_, _ = app.handleTick(model.TickMsg(time.Now()))
 	_ = app.View()
 }
 

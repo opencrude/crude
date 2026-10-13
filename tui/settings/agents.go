@@ -783,9 +783,8 @@ func (c *agentCatalog) HandleAction(_ ui.EventContext, action ui.Action) ui.Even
 					}
 				}
 			} else if key := strings.TrimPrefix(c.id, "profile/"); key != c.id {
-				if original, exists := types.DefaultNamedAgents()[key]; exists {
-					c.model.agents.AgentProfiles[key] = original
-				} else if current, exists := c.model.agents.AgentProfiles[key]; exists {
+				// Named agents are user-created; reset keeps identity and role only.
+				if current, exists := c.model.agents.AgentProfiles[key]; exists {
 					c.model.agents.AgentProfiles[key] = types.AgentProfileSettings{Category: current.Category, Description: current.Description}
 				}
 			}

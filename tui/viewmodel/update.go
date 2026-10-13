@@ -37,7 +37,6 @@ import (
 	textoverlay "crude/tui/screens/textoverlay"
 	"crude/tui/screens/yolo"
 	settingsui "crude/tui/settings"
-	ttypes "crude/tui/types"
 	"crude/tui/ui"
 	"crude/tui/window"
 	"crude/tui/wm"
@@ -94,7 +93,7 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	coalescePresentation := false
 	switch msg.(type) {
 	case tea.MouseMotionMsg, interactiveFrameMsg:
-	case ttypes.AgentMsg, agent.AgentEvent, workspace.TerminalChangedMsg:
+	case types.AgentMsg, agent.AgentEvent, workspace.TerminalChangedMsg:
 		coalescePresentation = true
 	default:
 		m.forceFrame()
@@ -325,7 +324,7 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
-	case ttypes.TickMsg:
+	case types.TickMsg:
 		return m.handleTick(msg)
 
 	case tea.KeyPressMsg:
@@ -379,7 +378,7 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.forceFrame()
 		return m.dispatchMouseRelease(msg)
 
-	case ttypes.SelectionTickMsg:
+	case types.SelectionTickMsg:
 		if m.chatScreen != nil && m.rootHost != nil {
 			m.rootHost.Focus(m.chatScreen.ID())
 			res := m.rootHost.Handle(msg)
@@ -398,7 +397,7 @@ func (m *App) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, tea.Batch(cmds...)
 }
 
-func (m *App) handleTick(msg ttypes.TickMsg) (tea.Model, tea.Cmd) {
+func (m *App) handleTick(msg types.TickMsg) (tea.Model, tea.Cmd) {
 	var diskSyncCmd tea.Cmd
 	now := time.Now()
 	spinFrame := int(now.UnixMilli())
@@ -533,8 +532,8 @@ func (m *App) wantsFastTick() bool {
 func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	var cmds []tea.Cmd
 
-	if msg, ok := msg.(ttypes.AgentMsg); ok {
-		cmds = append(cmds, m.handleAgentEvent(ttypes.AgentEventMsg(msg)))
+	if msg, ok := msg.(types.AgentMsg); ok {
+		cmds = append(cmds, m.handleAgentEvent(types.AgentEventMsg(msg)))
 	}
 
 	switch msg := msg.(type) {
@@ -700,7 +699,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		if m.helpScreen != nil && msg.Target == m.helpScreen {
 			m.closeHelp()
 		}
-	case ttypes.ConfigReloadedMsg:
+	case types.ConfigReloadedMsg:
 		if msg.ThemePreset != "" {
 			m.applyThemePreset(msg.ThemePreset)
 		}
@@ -751,23 +750,15 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		if m.acceptsLSPDocument(msg.generation, msg.filePath, msg.owner, msg.revision) {
 			m.handleCompletionResult(msg)
 		}
-	case ttypes.ErrorMsg:
+	case types.ErrorMsg:
 		m.ws.Logger().Debug("UI", "error", "msg", string(msg))
 		m.Feedback.NotifyError(string(msg))
 	case slashBackendResultMsg:
 		m.handleSlashBackendResult(msg)
-	case ttypes.UpdateModelMsg:
+	case types.UpdateModelMsg:
 		m.ModelName = string(msg)
 		m.ws.Logger().Debug("UI", "model_update", "model", string(msg))
-		for _, node := range m.ws.AgentMgr().AllNodes() {
-			if m.subPaneProjections.Has(node.ID) {
-				m.subPaneProjections.Get(node.ID, workspace.PaneAgent).renderer.SetLegacyModelFallback(string(msg))
-			}
-		}
-		if ml := m.activeMsgList(); ml != nil {
-			ml.SetLegacyModelFallback(string(msg))
-		}
-	case ttypes.OpenSettingsMsg:
+	case types.OpenSettingsMsg:
 		m.ws.Logger().Info("UI", "open_session_settings")
 		m.openSessionSettings()
 	case selectedSessionSettingsResult:
@@ -778,7 +769,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 	case rendering.ClipboardErrorMsg:
 		m.ws.Logger().Error("CLIPBOARD", "error", "error", string(msg))
 		m.Feedback.NotifyError(string(msg))
-	case ttypes.HistoryMessagesMsg:
+	case types.HistoryMessagesMsg:
 		m.hydrateActiveMessages(msg)
 	case pickerPathSearchResultMsg:
 		if cmd := m.applyPickerPathSearchResult(msg); cmd != nil {
@@ -873,7 +864,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		generation := m.workspaceSwitchGen.Load()
 		cmds = append(cmds, func() tea.Msg {
 			err := owner.SaveAccountChange(request.Change)
-			var settings ttypes.AppSettings
+			var settings types.AppSettings
 			if err == nil {
 				settings = owner.AppDefaults()
 			}
@@ -1005,7 +996,7 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 		} else {
 			m.applyThemePreset(themePresetFromSettings(m.ws.LoadAppSettings()))
 			m.refreshAllSessionSettingsProjections()
-			m.openSettings(ttypes.SettingsScopeWorkspace)
+			m.openSettings(types.SettingsScopeWorkspace)
 			m.applyEditorSettings(m.ws.LoadAppSettings().Editor)
 		}
 	case settingsui.CancelMsg:
@@ -1137,15 +1128,6 @@ func (m *App) handleAppMessages(msg tea.Msg) []tea.Cmd {
 			if msg.target == m.sessionSettings() {
 				m.ModelName = current.Model
 				m.LastSettings = current
-			}
-			for _, node := range m.ws.AgentMgr().AllNodes() {
-				if node == nil || !node.IsOrchestrator() {
-					continue
-				}
-				owner, _ := m.sessionProjectionForAgent(node.ID)
-				if owner == session {
-					m.subPaneProjections.Get(node.ID, workspace.PaneAgent).renderer.SetLegacyModelFallback(current.Model)
-				}
 			}
 			m.closeProjectionPanel(projection, sessionSettingsPanelID)
 			m.clearThinkingOverflowLatch(session)
@@ -1571,9 +1553,9 @@ func (m *App) workingDir() (string, error) {
 }
 
 func tickCmd() tea.Cmd {
-	return tea.Tick(workspace.IdleTickInterval, func(at time.Time) tea.Msg { return ttypes.TickMsg(at) })
+	return tea.Tick(workspace.IdleTickInterval, func(at time.Time) tea.Msg { return types.TickMsg(at) })
 }
 
 func streamingTickCmd() tea.Cmd {
-	return tea.Tick(16*time.Millisecond, func(at time.Time) tea.Msg { return ttypes.TickMsg(at) })
+	return tea.Tick(16*time.Millisecond, func(at time.Time) tea.Msg { return types.TickMsg(at) })
 }

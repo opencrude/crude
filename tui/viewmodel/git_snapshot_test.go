@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"crude/tui/filetree"
-	ttypes "crude/tui/types"
+	ttypes "crude/types"
 	"crude/workspace"
 )
 

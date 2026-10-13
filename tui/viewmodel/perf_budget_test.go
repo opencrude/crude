@@ -13,7 +13,7 @@ import (
 	"crude/tui/editor"
 	"crude/tui/filetree"
 	"crude/tui/perf"
-	ttypes "crude/tui/types"
+	ttypes "crude/types"
 )
 
 // Work-budget tests: a CPU-hammering regression in this TUI is almost never a

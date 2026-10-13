@@ -3,7 +3,6 @@ package core
 import (
 	"context"
 	"crypto/sha256"
-	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"sort"
@@ -13,6 +12,7 @@ import (
 
 	"crude/coreprotocol"
 	"crude/history"
+	"crude/provider"
 	"crude/sessiondb"
 	"crude/workspace"
 )
@@ -104,6 +104,7 @@ func runReferenceCommand(store workspace.SessionReferences, method string, in co
 			return nil, errors.New("server path is only valid for selected-file references without uploaded bytes")
 		}
 		content := string(req.Data)
+		var imageData []byte
 		switch req.Kind {
 		case "", sessiondb.KindPastedText, sessiondb.KindPastedTextFile:
 			if !utf8.Valid(req.Data) {
@@ -113,7 +114,10 @@ func runReferenceCommand(store workspace.SessionReferences, method string, in co
 			if len(req.Data) == 0 || !strings.HasPrefix(req.Mime, "image/") {
 				return nil, errors.New("image requires explicit bytes and image MIME type")
 			}
-			content = base64.StdEncoding.EncodeToString(req.Data)
+			if err := provider.ValidateImageBytes(req.Mime, req.Data); err != nil {
+				return nil, err
+			}
+			content, imageData = "", req.Data
 		case sessiondb.KindSelectedFile:
 			if req.ServerPath == "" {
 				return nil, errors.New("selected file requires a server path")
@@ -121,7 +125,7 @@ func runReferenceCommand(store workspace.SessionReferences, method string, in co
 		default:
 			return nil, errors.New("reference kind is not supported for creation")
 		}
-		ref, err := store.CreateReference(sessiondb.CreateRequest{Kind: req.Kind, Label: req.Label, Title: req.Title, Mime: req.Mime, Content: content, FilePath: req.ServerPath, Inline: req.Inline})
+		ref, err := store.CreateReference(sessiondb.CreateRequest{Kind: req.Kind, Label: req.Label, Title: req.Title, Mime: req.Mime, Content: content, Data: imageData, FilePath: req.ServerPath, Inline: req.Inline})
 		return referenceView(ref), err
 	}
 	ref, ok := store.GetReference(in.ID)

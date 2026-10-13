@@ -11,8 +11,8 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/tools"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 )
 
 var nextRendererSourceID atomic.Uint64
@@ -30,16 +30,15 @@ type Renderer struct {
 	chatAreaTop    int
 	chatAreaHeight int
 
-	mdRenderer          *rendering.MarkdownRenderer
-	cachedWidth         int
-	width               int
-	height              int
-	legacyModelFallback string
-	username            string
-	streaming           bool
-	spinFrame           int
-	activeTyping        bool
-	phase               string
+	mdRenderer   *rendering.MarkdownRenderer
+	cachedWidth  int
+	width        int
+	height       int
+	username     string
+	streaming    bool
+	spinFrame    int
+	activeTyping bool
+	phase        string
 
 	lastScrollbarW   int
 	subPaneContentFn SubPaneContentFn
@@ -277,15 +276,6 @@ func (r *Renderer) Theme() *theme.Theme {
 		return nil
 	}
 	return r.theme
-}
-
-// SetLegacyModelFallback configures the label used only for messages written
-// before durable per-turn attribution existed.
-func (r *Renderer) SetLegacyModelFallback(name string) {
-	if r.legacyModelFallback != name {
-		r.legacyModelFallback = name
-		r.InvalidateAllMessages()
-	}
 }
 
 func (r *Renderer) SetUsername(name string) {
@@ -1545,24 +1535,23 @@ func (r *Renderer) buildRenderContext(msg *types.ChatMessage, suppressHeader boo
 		chatH = r.height
 	}
 	return renderContext{
-		th:                  r.theme,
-		tokens:              r.Tokens(),
-		contentWidth:        contentWidth,
-		innerW:              innerW,
-		width:               r.width,
-		height:              r.height,
-		chatHeight:          chatH,
-		spinFrame:           r.spinFrame,
-		activeTyping:        r.activeTyping,
-		legacyModelFallback: r.legacyModelFallback,
-		username:            r.username,
-		streaming:           r.streaming,
-		isLastMsg:           r.isLastMessage(msg),
-		phase:               r.phase,
-		mdRenderer:          r.MdRenderer(),
-		disclosure:          r.disclosureState(msg),
-		thinkingBodyOnly:    r.thinkingBodyOnly,
-		planSuperseded:      r.planMessageSuperseded(msg),
+		th:               r.theme,
+		tokens:           r.Tokens(),
+		contentWidth:     contentWidth,
+		innerW:           innerW,
+		width:            r.width,
+		height:           r.height,
+		chatHeight:       chatH,
+		spinFrame:        r.spinFrame,
+		activeTyping:     r.activeTyping,
+		username:         r.username,
+		streaming:        r.streaming,
+		isLastMsg:        r.isLastMessage(msg),
+		phase:            r.phase,
+		mdRenderer:       r.MdRenderer(),
+		disclosure:       r.disclosureState(msg),
+		thinkingBodyOnly: r.thinkingBodyOnly,
+		planSuperseded:   r.planMessageSuperseded(msg),
 	}
 }
 

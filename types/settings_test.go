@@ -60,6 +60,31 @@ func TestOverridesFromDiffRecordsOnlyChangedCategories(t *testing.T) {
 	}
 }
 
+func TestWorkspaceContextRetentionOverrideRemainsFieldLevel(t *testing.T) {
+	baseRetention, workspaceRetention := 20_000, 8_000
+	basePercent, changedPercent := 85, 70
+	app := AppSettings{Agents: AgentsSettings{Categories: map[string]CategorySettings{
+		"default": {ContextCompactionPercent: &basePercent, ContextRetentionTokens: &baseRetention},
+	}}}
+	ApplyAppDefaults(&app)
+	working := cloneAppSettings(app)
+	category := working.Agents.Categories["default"]
+	category.ContextRetentionTokens = &workspaceRetention
+	working.Agents.Categories["default"] = category
+	overrides := OverridesFromDiff(app, working)
+	if !strings.Contains(string(overrides.Agents), `"context_retention_tokens":8000`) || strings.Contains(string(overrides.Agents), "context_compaction_percent") {
+		t.Fatalf("retention override was not sparse: %s", overrides.Agents)
+	}
+	appCategory := app.Agents.Categories["default"]
+	appCategory.ContextCompactionPercent = &changedPercent
+	app.Agents.Categories["default"] = appCategory
+	merged := MergeAppWorkspace(app, overrides).Agents.Categories["default"]
+	if merged.ContextRetentionTokens == nil || *merged.ContextRetentionTokens != workspaceRetention ||
+		merged.ContextCompactionPercent == nil || *merged.ContextCompactionPercent != changedPercent {
+		t.Fatalf("merged category = %+v", merged)
+	}
+}
+
 // A workspace that overrides ONE field must keep inheriting every sibling
 // field, including application changes made after the override was stored.
 // Whole-category snapshots made a workspace behave like a hard copy: turning
@@ -209,8 +234,7 @@ func TestWorkspaceLocalHistoryOverridesRemainFieldLevel(t *testing.T) {
 	}
 }
 
-// Loading re-diffs stored overlays, which is how legacy whole-category rows
-// heal into sparse ones. That round trip has to be stable.
+// Saving an already sparse overlay again must be stable.
 func TestOverridesRoundTripIsStable(t *testing.T) {
 	app := AppSettings{
 		Theme:  ThemeSettings{Preset: "dark"},

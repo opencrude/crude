@@ -6,7 +6,7 @@ import (
 	"time"
 
 	"crude/tui/screens/shellchat"
-	ttypes "crude/tui/types"
+	ttypes "crude/types"
 )
 
 func TestComputeContentLayout_AgentChatReservesPlaceholders(t *testing.T) {

@@ -72,6 +72,7 @@ type SubAgentSpec struct {
 	ModelTemperature         *float64 `json:"model_temperature,omitempty"`
 	ModelTopP                *float64 `json:"model_top_p,omitempty"`
 	ContextCompactionPercent *int     `json:"context_compaction_percent,omitempty"`
+	ContextRetentionTokens   *int     `json:"context_retention_tokens,omitempty"`
 }
 
 type SubAgentResult struct {

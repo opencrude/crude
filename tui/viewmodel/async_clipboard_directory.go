@@ -2,7 +2,6 @@ package viewmodel
 
 import (
 	"context"
-	"encoding/base64"
 	"errors"
 	"net/http"
 	"os"
@@ -57,6 +56,7 @@ type clipboardAsyncResultMsg struct {
 	image        bool
 	imageMIME    string
 	imageBytes   int
+	imageData    []byte
 	operationErr error
 }
 
@@ -298,7 +298,7 @@ func executeClipboardAsyncRequest(
 		result.imageMIME = strings.SplitN(http.DetectContentType(data), ";", 2)[0]
 		switch result.imageMIME {
 		case "image/png", "image/jpeg", "image/gif", "image/webp":
-			result.content = base64.StdEncoding.EncodeToString(data)
+			result.imageData = data
 		default:
 			result.operationErr = errors.New("clipboard image format is not supported")
 		}
@@ -478,10 +478,10 @@ func (m *App) persistClipboardAsyncImageCmd(
 	inputEpoch, generation := m.Input.DraftEpoch(), m.workspaceSwitchGen.Load()
 	return func() tea.Msg {
 		ref, err := store.CreateReference(sessiondb.CreateRequest{
-			Kind:    sessiondb.KindPastedImage,
-			Title:   "Clipboard image",
-			Mime:    result.imageMIME,
-			Content: result.content,
+			Kind:  sessiondb.KindPastedImage,
+			Title: "Clipboard image",
+			Mime:  result.imageMIME,
+			Data:  result.imageData,
 		})
 		return clipboardAsyncImageStoredMsg{
 			session:    session,

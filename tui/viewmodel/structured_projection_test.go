@@ -15,7 +15,6 @@ import (
 	"crude/tui/chatprojection"
 	"crude/tui/screens/shellchat"
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
 	ctypes "crude/types"
 	captypes "crude/types/capability"
@@ -106,7 +105,7 @@ func TestStructuredToolFamilyLiveSQLiteHydrationParity(t *testing.T) {
 						}
 						live := ChatMessagesFromViews([]workspace.ChatMessageView{snapshot})
 						hydrated := ChatMessagesFromViews(workspace.ConvertMessagesForDisplay(loaded[len(loaded)-1:]))
-						render := func(input []types.ChatMessage) *chatprojection.Renderer {
+						render := func(input []ctypes.ChatMessage) *chatprojection.Renderer {
 							r := chatprojection.NewRenderer(themeCase.th)
 							r.SetSize(width, 40)
 							r.SetChatAreaBounds(0, 30)
@@ -142,8 +141,8 @@ func TestStructuredToolFamilyLiveSQLiteHydrationParity(t *testing.T) {
 								t.Fatalf("bare envelope or arbitrary elision: %s", text)
 							}
 						}
-						lp, _ := chatprojection.BuildSubPaneToolLines([]*types.ChatMessage{&live[0]}, width, 0)
-						rp, _ := chatprojection.BuildSubPaneToolLines([]*types.ChatMessage{&hydrated[0]}, width, 0)
+						lp, _ := chatprojection.BuildSubPaneToolLines([]*ctypes.ChatMessage{&live[0]}, width, 0)
+						rp, _ := chatprojection.BuildSubPaneToolLines([]*ctypes.ChatMessage{&hydrated[0]}, width, 0)
 						if len(lp) != len(rp) {
 							t.Fatal("compact child projection changed on resume")
 						}
@@ -168,8 +167,8 @@ func TestStructuredFamilyParallelLeavesSharePresentation(t *testing.T) {
 				t.Fatal(err)
 			}
 			r, resumed := newParityRenderer(), newParityRenderer()
-			batch := types.ChatMessage{InternalID: "batch", Role: types.RoleTool, ToolName: "multi_tool_use.parallel", ToolInput: input, Content: string(output), ToolStatus: "success", ToolPreviewPhase: "done"}
-			r.SyncMessages([]types.ChatMessage{batch}, 1)
+			batch := ctypes.ChatMessage{InternalID: "batch", Role: ctypes.RoleTool, ToolName: "multi_tool_use.parallel", ToolInput: input, Content: string(output), ToolStatus: "success", ToolPreviewPhase: "done"}
+			r.SyncMessages([]ctypes.ChatMessage{batch}, 1)
 			views := workspace.ConvertMessagesForDisplay([]sessiondb.MessageWithMeta{{Meta: sessiondb.DisplayMeta{SnapshotVersion: sessiondb.ConversationSnapshotVersion, Snapshots: []ctypes.ConversationMessage{workspaceMessageFromChat(batch)}}}})
 			resumed.SyncMessages(ChatMessagesFromViews(views), 1)
 			rows, _, _ := r.ExportMessageRows(200)

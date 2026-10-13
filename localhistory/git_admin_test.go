@@ -57,6 +57,8 @@ func TestLinkedWorktreeHistoryHardExcludesGitAdministration(t *testing.T) {
 	if err != nil || !ignored {
 		t.Fatalf("admin ignore %v %v", ignored, err)
 	}
+	// Compare with the checked-out bytes; Git for Windows may apply autocrlf.
+	fooBefore := readTestFile(t, linked, "foo")
 	pointerBefore := readTestFile(t, linked, ".git")
 	configBefore := readTestFile(t, common, "config")
 	writeTestFile(t, linked, "foo", []byte("changed\n"), 0600)
@@ -80,7 +82,7 @@ func TestLinkedWorktreeHistoryHardExcludesGitAdministration(t *testing.T) {
 		}
 		assertClean(m)
 	}
-	if string(readTestFile(t, linked, "foo")) != "base\n" {
+	if string(readTestFile(t, linked, "foo")) != string(fooBefore) {
 		t.Fatal("user file not restored")
 	}
 	if string(readTestFile(t, linked, ".git")) != string(pointerBefore) || string(readTestFile(t, common, "config")) != string(configBefore) {

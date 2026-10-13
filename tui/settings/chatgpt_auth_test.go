@@ -6,8 +6,8 @@ import (
 
 	"crude/provider"
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 )
 
 func chatgptPreset() types.ProviderPreset {

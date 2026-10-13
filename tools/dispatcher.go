@@ -111,8 +111,7 @@ func (r ToolResult) String() string {
 	return r.Content
 }
 
-// ToolOptions carries optional per-session capability context for the
-// dispatcher. The zero value preserves legacy behavior exactly.
+// ToolOptions carries per-session capability context for the dispatcher.
 type ToolOptions struct {
 	// Media describes the active model's media attachment policy for
 	// read_file. nil keeps binary reads refused.
@@ -128,10 +127,6 @@ func mutationPreparer(opts *ToolOptions) fileio.MutationPrepare {
 		return nil
 	}
 	return opts.PrepareMutation
-}
-
-func ExecuteWithJSON(tool string, params map[string]any, exec fileio.Executer, ed *fileio.Editor, yolo bool, lg *logger.Logger, ctx context.Context) ToolResult {
-	return ExecuteWithJSONOptions(tool, params, exec, ed, yolo, lg, ctx, nil)
 }
 
 func ExecuteWithJSONOptions(tool string, params map[string]any, exec fileio.Executer, ed *fileio.Editor, yolo bool, lg *logger.Logger, ctx context.Context, opts *ToolOptions) ToolResult {

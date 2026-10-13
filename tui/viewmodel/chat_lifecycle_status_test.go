@@ -5,7 +5,6 @@ import (
 	"testing"
 	"time"
 
-	"crude/tui/types"
 	ttypes "crude/types"
 	"crude/types/activity"
 	"crude/types/reasoning"
@@ -32,8 +31,8 @@ func TestManualCompactionShowsOperationStatusInsteadOfIdlePlan(t *testing.T) {
 		app.renderShellToSurface()
 		return shellBufferRow(app, app.chatRect.Y+app.chatRect.H-1)
 	}
-	app.handleAgentEvent(types.AgentEventMsg{AgentID: id, Type: "context_compaction_started", Data: data})
-	app.handleAgentEvent(types.AgentEventMsg{AgentID: id, Type: "context_compaction_stage", Data: data})
+	app.handleAgentEvent(ttypes.AgentEventMsg{AgentID: id, Type: "context_compaction_started", Data: data})
+	app.handleAgentEvent(ttypes.AgentEventMsg{AgentID: id, Type: "context_compaction_stage", Data: data})
 	if got := paint(); !strings.Contains(got, "Compacting context") || strings.Contains(got, "Idle") || strings.Contains(got, "Plan 3/4") {
 		t.Fatalf("active compaction strip=%q", got)
 	}
@@ -43,7 +42,7 @@ func TestManualCompactionShowsOperationStatusInsteadOfIdlePlan(t *testing.T) {
 	}
 	data["stage"], data["completed_stages"] = 4, 4
 	data["after_tokens"] = 20500
-	app.handleAgentEvent(types.AgentEventMsg{AgentID: id, Type: "context_compacted", Data: data})
+	app.handleAgentEvent(ttypes.AgentEventMsg{AgentID: id, Type: "context_compacted", Data: data})
 	for range 3 {
 		if got := paint(); !strings.Contains(got, "Context compacted") || !strings.Contains(got, "Ready to continue") || strings.Contains(got, "Idle") || strings.Contains(got, "Plan 3/4") {
 			t.Fatalf("settled compaction strip=%q", got)
@@ -59,8 +58,8 @@ func TestManualCompactionShowsOperationStatusInsteadOfIdlePlan(t *testing.T) {
 	if got := paint(); !strings.Contains(got, "Context compacted") || strings.Contains(got, "Plan 3/4") {
 		t.Fatalf("rehydrated boundary strip=%q", got)
 	}
-	app.handleAgentEvent(types.AgentEventMsg{AgentID: id, Type: "turn_started", Data: ttypes.TurnIdentity{Generation: 1, ModelID: "model"}})
-	app.handleAgentEvent(types.AgentEventMsg{AgentID: id, Type: "stream_token", Data: "Ready"})
+	app.handleAgentEvent(ttypes.AgentEventMsg{AgentID: id, Type: "turn_started", Data: ttypes.TurnIdentity{Generation: 1, ModelID: "model"}})
+	app.handleAgentEvent(ttypes.AgentEventMsg{AgentID: id, Type: "stream_token", Data: "Ready"})
 	app.SpinFrame = int(time.Now().UnixMilli())
 	planVisible := false
 	for range 4 {
@@ -102,7 +101,7 @@ func TestResumedManualCompactionBoundaryShowsReadyStatus(t *testing.T) {
 	if !strings.Contains(got, "Context compacted") || !strings.Contains(got, "Ready to continue") || strings.Contains(got, "Plan 3/4") {
 		t.Fatalf("resumed boundary strip=%q", got)
 	}
-	app.appendAgentMessage(id, types.ChatMessage{Role: types.RoleUser, Content: "continue", Time: time.Now()})
+	app.appendAgentMessage(id, ttypes.ChatMessage{Role: ttypes.RoleUser, Content: "continue", Time: time.Now()})
 	app.paintShellFrame()
 	if got := shellBufferRow(app, app.chatRect.Y+app.chatRect.H-1); strings.Contains(got, "Context compacted") {
 		t.Fatalf("new input still showed old compaction: %q", got)
@@ -116,7 +115,7 @@ func TestSubmitProjectsLifecycleIntoChatNotBottomStatus(t *testing.T) {
 
 	runAppCommand(t, app, app.submitInput(agentID, "inspect lifecycle", nil))
 	messages := app.ws.AgentMgr().Get(agentID).State.Messages.Messages()
-	if len(messages) != 2 || messages[1].Role != types.RoleStatus || messages[1].LifecyclePhase != "preparing" {
+	if len(messages) != 2 || messages[1].Role != ttypes.RoleStatus || messages[1].LifecyclePhase != "preparing" {
 		t.Fatalf("submitted conversation = %#v", messages)
 	}
 	if bottom := testStatusText(app); strings.Contains(bottom, "Getting next turn ready") || strings.Contains(bottom, "uploading context") {
@@ -139,7 +138,7 @@ func TestPostCompactionThinkingCoalescesAndPaintsAfterBoundary(t *testing.T) {
 	}
 	_ = app.handleAgentDomainEvent(workspace.AgentEvent{Type: "context_compaction_started", AgentID: agentID, Data: base})
 	_ = app.handleAgentDomainEvent(workspace.AgentEvent{Type: "context_compacted", AgentID: agentID, Data: base})
-	app.appendAgentMessage(agentID, types.ChatMessage{Role: types.RoleUser, Content: "continue after compact"})
+	app.appendAgentMessage(agentID, ttypes.ChatMessage{Role: ttypes.RoleUser, Content: "continue after compact"})
 	_ = app.handleAgentDomainEvent(workspace.AgentEvent{Type: "thinking", AgentID: agentID, Data: reasoning.Delta{Text: "first "}})
 	_ = app.handleAgentDomainEvent(workspace.AgentEvent{Type: "thinking", AgentID: agentID, Data: reasoning.Delta{Text: "second"}})
 
@@ -151,7 +150,7 @@ func TestPostCompactionThinkingCoalescesAndPaintsAfterBoundary(t *testing.T) {
 			statusAt = index
 		case message.Content == "continue after compact":
 			userAt = index
-		case message.Role == types.RoleThinking:
+		case message.Role == ttypes.RoleThinking:
 			thinkingAt = index
 			thinkingCount++
 			if message.Content != "first second" {

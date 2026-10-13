@@ -11,7 +11,7 @@ import (
 	"crude/tui/editor"
 	"crude/tui/screens/shellchat"
 	"crude/tui/theme"
-	ttypes "crude/tui/types"
+	ttypes "crude/types"
 	"crude/workspace"
 )
 

@@ -7,14 +7,12 @@ import (
 	"crude/shellport"
 	"crude/types"
 	"crude/workspace"
-	"errors"
 )
 
 func lspMethod(method string) bool {
 	switch method {
 	case coreprotocol.LSPSnapshotMethod, coreprotocol.LSPClearDiagnostics,
-		coreprotocol.LSPOpenFile, coreprotocol.LSPCloseFile, coreprotocol.LSPQueueFileUpdate,
-		coreprotocol.LSPNotifyFileSave, coreprotocol.LSPNotifyWatchedFilesChanged,
+		coreprotocol.LSPOpenFile, coreprotocol.LSPCloseFile, coreprotocol.LSPNotifyWatchedFilesChanged,
 		coreprotocol.LSPSetActiveFile, coreprotocol.LSPStartForWorkspace, coreprotocol.LSPStop,
 		coreprotocol.LSPRestartServer, coreprotocol.LSPStopServer, coreprotocol.LSPFindReferences,
 		coreprotocol.LSPRequestCompletions, coreprotocol.LSPRequestDefinition,
@@ -58,8 +56,6 @@ func (a *actor) prepareLSP(request coreprotocol.Request) (func(context.Context) 
 			viewErr = views.Open(owner, in.Path)
 		case coreprotocol.LSPCloseFile:
 			viewErr = views.Close(owner, root, in.Path)
-		case coreprotocol.LSPQueueFileUpdate, coreprotocol.LSPNotifyFileSave:
-			viewErr = errors.New("legacy LSP text writes are disabled; use revision-fenced document mutations")
 		case coreprotocol.LSPNotifyWatchedFilesChanged:
 			viewErr = views.Reconcile(ctx, root, in.Path)
 		default:
@@ -84,16 +80,6 @@ func runLSP(ctx context.Context, service shellport.LSPService, method string, in
 	switch method {
 	case coreprotocol.LSPClearDiagnostics:
 		service.ClearDiagnostics()
-	case coreprotocol.LSPOpenFile:
-		service.OpenFile(ctx, in.Path, in.Text)
-	case coreprotocol.LSPCloseFile:
-		service.CloseFile(ctx, in.Path)
-	case coreprotocol.LSPQueueFileUpdate:
-		service.QueueFileUpdate(in.Path, in.Text)
-	case coreprotocol.LSPNotifyFileSave:
-		service.NotifyFileSave(ctx, in.Path, in.Text, in.Reason, in.Before)
-	case coreprotocol.LSPNotifyWatchedFilesChanged:
-		service.NotifyWatchedFilesChanged(ctx, in.Path, in.ChangeType)
 	case coreprotocol.LSPSetActiveFile:
 		service.SetActiveFile(in.Path)
 	case coreprotocol.LSPStartForWorkspace:

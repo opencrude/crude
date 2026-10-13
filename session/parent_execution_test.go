@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -57,7 +58,7 @@ func TestChildPreparationBindsParentCheckoutAndOwnControlTarget(t *testing.T) {
 		}
 		cmd := exec.Command("git", "-C", spec.ExecutionRoot, "rev-parse", "--show-toplevel")
 		b, e := cmd.Output()
-		if e != nil || string(b) != spec.ExecutionRoot+"\n" {
+		if e != nil || !sameDirectory(strings.TrimSpace(string(b)), spec.ExecutionRoot) {
 			t.Fatalf("actual root %q %v", b, e)
 		}
 		b, e = os.ReadFile(filepath.Join(spec.ExecutionRoot, "foo"))
@@ -72,4 +73,15 @@ func TestChildPreparationBindsParentCheckoutAndOwnControlTarget(t *testing.T) {
 	if err := r.prepareChildExecution(t.Context(), &bad, "bad-run"); err == nil {
 		t.Fatal("unknown source launched")
 	}
+}
+
+// sameDirectory compares directory identity, not spelling: Git reports
+// forward-slash paths on Windows.
+func sameDirectory(a, b string) bool {
+	left, err := os.Stat(a)
+	if err != nil {
+		return false
+	}
+	right, err := os.Stat(b)
+	return err == nil && os.SameFile(left, right)
 }

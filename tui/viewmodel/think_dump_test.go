@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	ttypes "crude/tui/types"
+	ttypes "crude/types"
 	"crude/types/reasoning"
 )
 

@@ -28,7 +28,7 @@ func AgentDisplayLabel(node *AgentNode) string {
 // Unknown empty categories yield "" so presentation can omit the label.
 func CategoryDisplayName(category string) string {
 	switch category {
-	case session.CategoryDefault, "main":
+	case session.CategoryDefault:
 		return "Main Agent"
 	case session.CategoryResearcher:
 		return "Researcher"

@@ -233,6 +233,7 @@ const (
 	fieldThinkingEffort       = "thinking-effort"
 	fieldMultiAgent           = "multi-agent"
 	fieldContextCompaction    = "context-compaction-percent"
+	fieldContextRetention     = "context-retention-tokens"
 	fieldSafetyConfirmAt      = "safety-confirm-at"
 	fieldSafetyUnknown        = "safety-unknown-risk"
 	fieldSafetyScript         = "safety-script-risk"
@@ -283,7 +284,6 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 	editor := current.Editor
 	lsp := current.LSP
 	uiSettings := current.UI
-	font := current.Font
 	if len(presets) == 0 {
 		for _, preset := range provider.PresetList() {
 			presets = append(presets, types.ProviderPreset{
@@ -365,12 +365,6 @@ func NewScoped(th *theme.Theme, current types.AppSettings, presets []types.Provi
 			ui.BoolFieldState("nerd-font", "Nerd Font icons", uiSettings.UseNerdFont, "Use extended icon glyphs. Turn on only if your terminal font is a Nerd Font."),
 			ui.BoolFieldState("git-status", "Git status", uiSettings.ShowGitStatus, "Mark changed files in the tree."),
 			ui.BoolFieldState("diagnostics", "Problems", uiSettings.ShowDiagnostics, "Mark files that have language diagnostics."),
-		)},
-		{Name: "Font", Group: "IDE", Description: "Terminal font hints and ligatures.", Form: formModel(
-			ui.SeparatorFieldState("typography", "Typography"),
-			ui.TextFieldState("family", "Family", font.Family, "Font family is controlled by the host terminal."),
-			ui.TextFieldState("size", "Size", fmt.Sprintf("%d", font.Size), "Preferred terminal font size in points."),
-			ui.BoolFieldState("ligatures", "Ligatures", font.Ligatures, "Allow programming ligatures when supported by the terminal."),
 		)},
 		{Name: "Local History", Group: "IDE", Description: "Automatic project snapshots, retention, and safe restore policy.", Form: m.buildHistoryForm(current.LocalHistory)},
 	}
@@ -1237,9 +1231,17 @@ func (m *Model) buildAgentForm(cfg types.CategorySettings, isMain bool) *ui.Form
 	compactionField := ui.NumberFieldState(fieldContextCompaction, "Compact context at", compaction, "% full",
 		"Summarize older context once the window is this full. 0 never compacts automatically.")
 	compactionField.Validator = intRangeValidator(0, 100)
+	retention := types.DefaultContextRetentionTokens
+	if cfg.ContextRetentionTokens != nil {
+		retention = *cfg.ContextRetentionTokens
+	}
+	retentionField := ui.NumberFieldState(fieldContextRetention, "Keep recent input", retention, "tokens",
+		"Keep up to this many estimated tokens of recent human input verbatim after compaction. The checkpoint, runtime handoff, and context capacity still take priority.")
+	retentionField.Validator = intRangeValidator(types.MinContextRetentionTokens, types.MaxContextRetentionTokens)
 	fields = append(fields,
 		ui.SeparatorFieldState("context-management", "Context management"),
 		compactionField,
+		retentionField,
 	)
 	fields = append(fields, m.samplingFields(cfg)...)
 	prompt := ui.TextAreaFieldState("agent-instructions", "System instructions", cfg.Instructions, "Agent-specific instructions.")
@@ -2230,9 +2232,8 @@ func (m *Model) visibleCategoryIndices() []int {
 	}
 	indices := make([]int, 0, len(m.categories))
 	for index, category := range m.categories {
-		// Agent roles live inside the Agents catalog; Font holds terminal
-		// hints nothing consumes, so it is not offered as a page.
-		if index == catAgents || index == catResearcher || index == catCrafter || index == catAeron || index == catFont {
+		// Agent roles live inside the Agents catalog.
+		if index == catAgents || index == catResearcher || index == catCrafter || index == catAeron {
 			continue
 		}
 		if index == catMain {
@@ -2340,7 +2341,6 @@ const (
 	catEditor
 	catLSP
 	catUI
-	catFont
 	catHistory
 	catAgents
 	catSkills
@@ -2361,8 +2361,6 @@ func (m *Model) currentOverrideKey() string {
 		return "lsp"
 	case catUI:
 		return "interface"
-	case catFont:
-		return "font"
 	case catMemory:
 		return "memory"
 	case catNetworkConnection, catNetworkProxy, catNetworkCertificates:
@@ -2394,7 +2392,6 @@ func (m *Model) AppSettings() types.AppSettings {
 	m.collectEditor(&settings.Editor)
 	m.collectLSP(&settings.LSP)
 	m.collectUI(&settings.UI)
-	m.collectFont(&settings.Font)
 	m.collectTerminal(&settings.Terminal)
 	settings.Capabilities = capability.Clone(m.capabilities)
 	settings.Capabilities.Acquisition = m.acquisitionFromForm()
@@ -2580,6 +2577,7 @@ func (m *Model) agentCategoryFromForm(form *ui.FormModel, category types.Categor
 	category.ModelTemperature = parseFloatPtr(value(fieldTemperature))
 	category.ModelTopP = parseFloatPtr(value(fieldTopP))
 	category.ContextCompactionPercent = parsePercentPtr(value(fieldContextCompaction))
+	category.ContextRetentionTokens = parseIntPtr(value(fieldContextRetention))
 	return category
 }
 
@@ -2611,6 +2609,14 @@ func parsePercentPtr(value string) *int {
 		return nil
 	}
 	parsed = min(100, max(0, parsed))
+	return &parsed
+}
+
+func parseIntPtr(value string) *int {
+	parsed, err := strconv.Atoi(strings.TrimSpace(value))
+	if err != nil {
+		return nil
+	}
 	return &parsed
 }
 
@@ -2701,10 +2707,6 @@ func defaultString(value, fallback string) string {
 		return fallback
 	}
 	return value
-}
-
-func (m *Model) collectFont(cfg *types.FontSettings) {
-	*cfg = types.FontSettings{Family: m.value(catFont, "family"), Size: parseOpt(m.value(catFont, "size"), 12), Ligatures: m.value(catFont, "ligatures") == "on"}
 }
 
 // Snapshot records values without retaining component interaction state.

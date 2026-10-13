@@ -154,7 +154,7 @@ func styleReferenceLabels(line PaintLine, labels []string) PaintLine {
 		return line
 	}
 
-	styled := PaintLine{ANSIFallback: line.ANSIFallback}
+	var styled PaintLine
 	spanStart := 0
 	for _, span := range line.Spans {
 		spanEnd := spanStart + len(span.Text)

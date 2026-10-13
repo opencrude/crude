@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	ttypes "crude/tui/types"
+	ttypes "crude/types"
 	"crude/workspace"
 )
 

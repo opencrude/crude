@@ -7,7 +7,7 @@ import (
 	"time"
 
 	"crude/tui/editor"
-	ttypes "crude/tui/types"
+	ttypes "crude/types"
 	"crude/workspace"
 )
 

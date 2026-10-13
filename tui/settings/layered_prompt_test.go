@@ -8,8 +8,8 @@ import (
 
 	"crude/tui/surface"
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 )
 
 func settingsPrompt(t *testing.T, result ui.EventResult) PromptMsg {

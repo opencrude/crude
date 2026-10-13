@@ -12,9 +12,9 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	ttypes "crude/tui/types"
 	"crude/tui/ui"
 	"crude/tui/window"
+	ttypes "crude/types"
 )
 
 func paneJourneySize(app *App, width, height int) {

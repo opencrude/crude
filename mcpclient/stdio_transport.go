@@ -12,11 +12,17 @@ import (
 
 // CommandTransport does not expose MaxLineLength. Own the command pipes and
 // process, using the SDK's bounded decoder rather than its 16 MiB default.
-type boundedCommandTransport struct{ command *exec.Cmd }
+type boundedCommandTransport struct {
+	command  *exec.Cmd
+	lifetime context.Context
+}
 
 func (t *boundedCommandTransport) Connect(ctx context.Context) (mcp.Connection, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
+	}
+	if t.lifetime != nil && t.lifetime.Err() != nil {
+		return nil, t.lifetime.Err()
 	}
 	stdout, err := t.command.StdoutPipe()
 	if err != nil {
@@ -32,7 +38,16 @@ func (t *boundedCommandTransport) Connect(ctx context.Context) (mcp.Connection, 
 		_ = stdin.Close()
 		return nil, err
 	}
-	owner := &commandPipeOwner{command: t.command, stdout: stdout, stdin: stdin}
+	owner := &commandPipeOwner{command: t.command, stdout: stdout, stdin: stdin, done: make(chan struct{})}
+	if t.lifetime != nil {
+		go func() {
+			select {
+			case <-t.lifetime.Done():
+				_ = owner.Close()
+			case <-owner.done:
+			}
+		}()
+	}
 	return (&mcp.IOTransport{Reader: ownedCommandReader{owner}, Writer: ownedCommandWriter{owner}, MaxLineLength: maxResultBytes}).Connect(ctx)
 }
 
@@ -42,24 +57,31 @@ type commandPipeOwner struct {
 	stdin   io.WriteCloser
 	once    sync.Once
 	err     error
+	done    chan struct{}
 }
 
 func (p *commandPipeOwner) Close() error {
 	p.once.Do(func() {
-		// Close both pipes first to unblock SDK reads/writes, even if the server
-		// ignores EOF. One owner alone reaps; no retry or process-name lookup.
+		defer close(p.done)
+		// Windows pipe Close can itself wait for a pending ReadFile/WriteFile.
+		// Arm termination independently before touching either pipe, or a silent
+		// server can prevent us from ever reaching the grace timer.
+		exited, timerDone := make(chan struct{}), make(chan struct{})
+		go func() {
+			timer := time.NewTimer(time.Second)
+			defer timer.Stop()
+			defer close(timerDone)
+			select {
+			case <-exited:
+			case <-timer.C:
+				_ = p.command.Process.Kill()
+			}
+		}()
 		_ = p.stdin.Close()
 		_ = p.stdout.Close()
-		done := make(chan error, 1)
-		go func() { done <- p.command.Wait() }()
-		timer := time.NewTimer(time.Second)
-		defer timer.Stop()
-		select {
-		case p.err = <-done:
-		case <-timer.C:
-			_ = p.command.Process.Kill()
-			p.err = <-done
-		}
+		p.err = p.command.Wait()
+		close(exited)
+		<-timerDone
 	})
 	return p.err
 }

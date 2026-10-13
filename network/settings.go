@@ -34,12 +34,21 @@ type Settings struct {
 	ProxyURL  string `json:"proxy_url,omitempty"`
 	NoProxy   string `json:"no_proxy,omitempty"`
 
-	ConnectTimeoutSeconds      int  `json:"connect_timeout_seconds,omitempty"`
-	TLSHandshakeTimeoutSeconds int  `json:"tls_handshake_timeout_seconds,omitempty"`
-	KeepAliveSeconds           int  `json:"keep_alive_seconds,omitempty"`
-	IdleConnTimeoutSeconds     int  `json:"idle_conn_timeout_seconds,omitempty"`
-	MaxIdleConnsPerHost        int  `json:"max_idle_conns_per_host,omitempty"`
-	DisableHTTP2               bool `json:"disable_http2,omitempty"`
+	ConnectTimeoutSeconds      int `json:"connect_timeout_seconds,omitempty"`
+	TLSHandshakeTimeoutSeconds int `json:"tls_handshake_timeout_seconds,omitempty"`
+	KeepAliveSeconds           int `json:"keep_alive_seconds,omitempty"`
+	// TCP keep-alive probes detect a dead connection for every protocol,
+	// including HTTP/1.1, which has no ping frame of its own.
+	KeepAliveIntervalSeconds int  `json:"keep_alive_interval_seconds,omitempty"`
+	KeepAliveCount           int  `json:"keep_alive_count,omitempty"`
+	IdleConnTimeoutSeconds   int  `json:"idle_conn_timeout_seconds,omitempty"`
+	MaxIdleConnsPerHost      int  `json:"max_idle_conns_per_host,omitempty"`
+	DisableHTTP2             bool `json:"disable_http2,omitempty"`
+	// HTTP/2 health checks ping a pooled connection after this much read
+	// silence and close it when the ping is unanswered, so a dead multiplexed
+	// connection is redialed instead of reused after a retry cooldown.
+	HTTP2PingIntervalSeconds int `json:"http2_ping_interval_seconds,omitempty"`
+	HTTP2PingTimeoutSeconds  int `json:"http2_ping_timeout_seconds,omitempty"`
 
 	TLSMinimumVersion string `json:"tls_minimum_version,omitempty"`
 	CAFile            string `json:"ca_file,omitempty"`
@@ -59,8 +68,12 @@ func DefaultSettings() Settings {
 		ConnectTimeoutSeconds:      30,
 		TLSHandshakeTimeoutSeconds: 10,
 		KeepAliveSeconds:           30,
+		KeepAliveIntervalSeconds:   10,
+		KeepAliveCount:             3,
 		IdleConnTimeoutSeconds:     90,
 		MaxIdleConnsPerHost:        10,
+		HTTP2PingIntervalSeconds:   15,
+		HTTP2PingTimeoutSeconds:    15,
 		TLSMinimumVersion:          TLSMinimumVersion12,
 	}
 }
@@ -86,11 +99,23 @@ func Normalize(s Settings) Settings {
 	if s.KeepAliveSeconds == 0 {
 		s.KeepAliveSeconds = defaults.KeepAliveSeconds
 	}
+	if s.KeepAliveIntervalSeconds == 0 {
+		s.KeepAliveIntervalSeconds = defaults.KeepAliveIntervalSeconds
+	}
+	if s.KeepAliveCount == 0 {
+		s.KeepAliveCount = defaults.KeepAliveCount
+	}
 	if s.IdleConnTimeoutSeconds == 0 {
 		s.IdleConnTimeoutSeconds = defaults.IdleConnTimeoutSeconds
 	}
 	if s.MaxIdleConnsPerHost == 0 {
 		s.MaxIdleConnsPerHost = defaults.MaxIdleConnsPerHost
+	}
+	if s.HTTP2PingIntervalSeconds == 0 {
+		s.HTTP2PingIntervalSeconds = defaults.HTTP2PingIntervalSeconds
+	}
+	if s.HTTP2PingTimeoutSeconds == 0 {
+		s.HTTP2PingTimeoutSeconds = defaults.HTTP2PingTimeoutSeconds
 	}
 
 	s.TLSMinimumVersion = strings.TrimSpace(s.TLSMinimumVersion)
@@ -143,10 +168,22 @@ func (s Settings) Validate() error {
 	if err := validateBoundedInt("keep_alive_seconds", s.KeepAliveSeconds, 1, 3600); err != nil {
 		return err
 	}
+	if err := validateBoundedInt("keep_alive_interval_seconds", s.KeepAliveIntervalSeconds, 1, 3600); err != nil {
+		return err
+	}
+	if err := validateBoundedInt("keep_alive_count", s.KeepAliveCount, 1, 100); err != nil {
+		return err
+	}
 	if err := validateBoundedInt("idle_conn_timeout_seconds", s.IdleConnTimeoutSeconds, 1, 86400); err != nil {
 		return err
 	}
 	if err := validateBoundedInt("max_idle_conns_per_host", s.MaxIdleConnsPerHost, 1, 1000); err != nil {
+		return err
+	}
+	if err := validateBoundedInt("http2_ping_interval_seconds", s.HTTP2PingIntervalSeconds, 1, 3600); err != nil {
+		return err
+	}
+	if err := validateBoundedInt("http2_ping_timeout_seconds", s.HTTP2PingTimeoutSeconds, 1, 600); err != nil {
 		return err
 	}
 

@@ -10,7 +10,6 @@ import (
 	"crude/history"
 	"crude/provider"
 	"crude/session"
-	ttypes "crude/tui/types"
 	typesmodel "crude/types"
 )
 
@@ -62,37 +61,32 @@ func TestFileConfigRoundTrip(t *testing.T) {
 		},
 		TurnLogsEnabled: boolPtr(true),
 		Agents:          &session.AgentsConfig{Enabled: true, ActiveProfile: "default"},
-		Theme: &ttypes.ThemeSettings{
+		Theme: &typesmodel.ThemeSettings{
 			Preset:    "dark",
 			Bg:        "#0d1117",
 			Fg:        "#e6edf3",
 			Accent:    "#f0883e",
 			SubPaneBg: "#1c2333",
 		},
-		Editor: &ttypes.EditorSettings{
+		Editor: &typesmodel.EditorSettings{
 			TabSize:       4,
 			WordWrap:      true,
 			LineNumbers:   true,
 			SyntaxTheme:   "catppuccin",
 			AutoSaveDelay: 1000,
 		},
-		LSP: &ttypes.LSPSettings{
+		LSP: &typesmodel.LSPSettings{
 			Enabled:     true,
 			AutoDetect:  true,
 			Diagnostics: true,
 		},
-		UI: &ttypes.UISettings{
+		UI: &typesmodel.UISettings{
 			SidebarWidth:    30,
 			ShowHiddenFiles: false,
 			ShowIcons:       true,
 			UseNerdFont:     true,
 			ShowGitStatus:   true,
 			ShowDiagnostics: true,
-		},
-		Font: &ttypes.FontSettings{
-			Family:    "Fira Code",
-			Size:      12,
-			Ligatures: true,
 		},
 	}
 
@@ -149,17 +143,6 @@ func TestFileConfigRoundTrip(t *testing.T) {
 	if loaded.UI.SidebarWidth != 30 {
 		t.Errorf("UI.SidebarWidth: expected 30, got %d", loaded.UI.SidebarWidth)
 	}
-
-	// Verify Font settings.
-	if loaded.Font == nil {
-		t.Fatal("Font is nil after load")
-	}
-	if loaded.Font.Family != "Fira Code" {
-		t.Errorf("Font.Family: expected 'Fira Code', got %q", loaded.Font.Family)
-	}
-	if loaded.Font.Size != 12 {
-		t.Errorf("Font.Size: expected 12, got %d", loaded.Font.Size)
-	}
 }
 
 func TestDefaultFileConfigHasNoExtendedSettings(t *testing.T) {
@@ -179,9 +162,6 @@ func TestDefaultFileConfigHasNoExtendedSettings(t *testing.T) {
 	if fc.UI != nil {
 		t.Error("Default FileConfig should have nil UI")
 	}
-	if fc.Font != nil {
-		t.Error("Default FileConfig should have nil Font")
-	}
 }
 
 func TestApplyAppSettingsPersistsMultiAgentOff(t *testing.T) {
@@ -200,10 +180,23 @@ func TestApplyAppSettingsPersistsMultiAgentOff(t *testing.T) {
 	}
 }
 
+func TestContextRetentionRoundTripsThroughFileConfig(t *testing.T) {
+	retention := 8_000
+	settings := typesmodel.AppSettings{Agents: typesmodel.AgentsSettings{Categories: map[string]typesmodel.CategorySettings{
+		"default": {ContextRetentionTokens: &retention},
+	}}}
+	var file FileConfig
+	ApplyAppSettingsToFileConfig(&file, settings)
+	got := FileConfigToAppSettings(file).Agents.Categories["default"].ContextRetentionTokens
+	if got == nil || *got != retention {
+		t.Fatalf("context retention round trip = %#v, want %d", got, retention)
+	}
+}
+
 func TestSafetySettingsRoundTripThroughFileConfig(t *testing.T) {
-	settings := ttypes.AppSettings{Safety: ttypes.SafetySettings{
+	settings := typesmodel.AppSettings{Safety: typesmodel.SafetySettings{
 		ConfirmAt: "network", UnknownCommandRisk: "project-write", ScriptExecutionRisk: "safe",
-		NotifyDangerous: "off", CommandRules: []ttypes.CommandSeverityRule{{Pattern: "scripts/*.sh", Risk: "safe"}},
+		NotifyDangerous: "off", CommandRules: []typesmodel.CommandSeverityRule{{Pattern: "scripts/*.sh", Risk: "safe"}},
 		AutoPermission: typesmodel.AutoPermissionSettings{
 			Enabled: "on", Provider: "openai", Model: "gpt-5-mini", DenyMode: "deny",
 			Instructions: "Never approve deployment commands.", TimeoutSeconds: 11,
@@ -382,9 +375,9 @@ func TestHistoryPath(t *testing.T) {
 }
 
 func TestLocalHistorySettingsFileConfigRoundTrip(t *testing.T) {
-	want := ttypes.LocalHistorySettings{Enabled: "off", UseGitIgnore: "on", ExtraIgnorePatterns: []string{"vendor/"}, MaxFileSizeMB: 50, StorageBudgetMB: 512}
+	want := typesmodel.LocalHistorySettings{Enabled: "off", UseGitIgnore: "on", ExtraIgnorePatterns: []string{"vendor/"}, MaxFileSizeMB: 50, StorageBudgetMB: 512}
 	var fc FileConfig
-	ApplyAppSettingsToFileConfig(&fc, ttypes.AppSettings{LocalHistory: want})
+	ApplyAppSettingsToFileConfig(&fc, typesmodel.AppSettings{LocalHistory: want})
 	got := FileConfigToAppSettings(fc).LocalHistory
 	if got.Enabled != want.Enabled || got.MaxFileSizeMB != want.MaxFileSizeMB || len(got.ExtraIgnorePatterns) != 1 || got.StorageBudgetMB != want.StorageBudgetMB {
 		t.Fatalf("local history round trip=%+v", got)

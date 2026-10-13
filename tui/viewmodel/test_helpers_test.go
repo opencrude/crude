@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"crude/agent"
 	"testing"
 	"time"
 
@@ -103,6 +104,7 @@ func openTestAgentPrompt(t testing.TB, app *App, projection *sessionProjection, 
 
 func (noopEventSender) SendAgentEvent(typ string, data any)                  {}
 func (noopEventSender) SendAgentEventWithID(typ string, data any, id string) {}
+func (noopEventSender) SendAgentEventEnvelope(agent.AgentEvent)              {}
 
 // newTestApp builds an App with the full shell tree mounted (all shell
 // screens under one rootHost painted into mainSurf) plus the workspace

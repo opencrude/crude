@@ -141,7 +141,9 @@ func TestInactiveAgentCatalogDoesNotPaintItsActions(t *testing.T) {
 }
 
 func TestAgentCatalogResetsBuiltinsAndPreservesCompleteNamedEditors(t *testing.T) {
-	defaults := types.AppSettings{Agents: types.AgentsSettings{Categories: types.DefaultAgentRoleCategories(), AgentProfiles: types.DefaultNamedAgents()}}
+	defaults := types.AppSettings{Agents: types.AgentsSettings{Categories: types.DefaultAgentRoleCategories(), AgentProfiles: map[string]types.AgentProfileSettings{
+		"explorer": {Category: "researcher", Description: "Read-only codebase explorer"},
+	}}}
 	m := New(theme.DefaultDark(), defaults, nil)
 	s := NewSurface(theme.DefaultDark(), m)
 	m.SelectCategory(catAgents)

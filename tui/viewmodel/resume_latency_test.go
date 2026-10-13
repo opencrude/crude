@@ -9,7 +9,7 @@ import (
 
 	"crude/sessiondb"
 	"crude/tui/tools"
-	ttypes "crude/tui/types"
+	ttypes "crude/types"
 	"crude/workspace"
 )
 

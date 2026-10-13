@@ -73,6 +73,11 @@ does not prevent user-managed install or browsing.
 
 ## MCP
 
+Local MCP process teardown has one pipe/process owner for cancellation, EOF,
+bounded termination and reaping. Termination is armed before potentially blocking
+Windows pipe closes; it does not race a second `CommandContext` cancellation kill
+against a server that already exited gracefully.
+
 Manage MCP or `/mcp [query]` opens the same searchable store in the retained Settings
 window. The Installed chip is an explicit local-only filter. The official Registry
 includes remote HTTP and exact-version npm/PyPI packages; required setup is shown,

@@ -6,8 +6,8 @@ import (
 	"time"
 
 	"crude/tui/theme"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 )
 
 // styledSpanCount counts spans that carry real styling (explicit colors or

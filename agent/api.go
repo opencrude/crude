@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math/rand/v2"
 	"net/http"
 	"sort"
 	"strings"
@@ -476,10 +477,11 @@ func (a *Agent) accumulateToolCall(
 
 	acc := toolCalls[index]
 	if acc == nil {
-		a.toolCallSeq++
 		acc = &toolCallAccumulator{call: provider.ToolCall{
-			Index:      index,
-			InternalID: fmt.Sprintf("_tc%d", a.toolCallSeq),
+			Index: index,
+			// A replacement child Agent starts its counters again. Projection IDs
+			// must not alias a settled call from its prior attempt or cold resume.
+			InternalID: fmt.Sprintf("tool-%016x%016x", rand.Uint64(), rand.Uint64()),
 			Type:       "function",
 		}}
 		toolCalls[index] = acc

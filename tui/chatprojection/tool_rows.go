@@ -8,8 +8,8 @@ import (
 	"crude/tui/rendering"
 	"crude/tui/theme"
 	"crude/tui/tools"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 )
 
 func toolRowFrameSensitive(msg types.ChatMessage) bool {

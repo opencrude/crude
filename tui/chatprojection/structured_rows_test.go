@@ -6,7 +6,7 @@ import (
 
 	"crude/tui/rendering"
 	"crude/tui/theme"
-	"crude/tui/types"
+	"crude/types"
 )
 
 func TestStructuredPreviewIsUsefulAndFullDisclosureRetainsLongUnicodeText(t *testing.T) {

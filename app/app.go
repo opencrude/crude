@@ -17,9 +17,15 @@
 package app
 
 import (
+	"context"
 	"crude/buildinfo"
+	"database/sql"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 
@@ -54,8 +60,8 @@ type App struct {
 	// projectDir is the project directory for this IDE instance.
 	projectDir string
 
-	// sessionsRoot is the base directory for session databases.
-	// Layout: ~/.crude/sessions/ (legacy) — new sessions live under workspaces.
+	// sessionsRoot is the CLI session listing root; interactive sessions live
+	// under their workspace folder.
 	sessionsRoot string
 
 	// resumeID is an optional session ID from --resume.
@@ -297,19 +303,107 @@ func boolStr(b bool) string {
 // These functions are called directly from main.go for CLI-only operations
 // (list, delete) that don't start the TUI.
 
-// ListSessions prints all sessions to stdout. Used by `crude --list-sessions`.
-func ListSessions(sessionsRoot string, limit, offset int) {
-	metas, total, err := sessiondb.ListSessionsPaginated(sessionsRoot, sessiondb.ListSessionsOpts{
-		Limit:  limit,
-		Offset: offset,
-	})
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "Error listing sessions: %v\n", err)
-		return
+type cliSessionStore struct {
+	workspaceDB string
+	sessionsDir string
+}
+
+var errNoSavedWorkspace = errors.New("no saved workspace exists for this path")
+
+func resolveCLISessionStore(home, projectDir string) (cliSessionStore, error) {
+	if strings.TrimSpace(projectDir) == "" {
+		return cliSessionStore{}, fmt.Errorf("workspace path is required")
 	}
+	abs, err := filepath.Abs(projectDir)
+	if err != nil {
+		return cliSessionStore{}, fmt.Errorf("resolve workspace path: %w", err)
+	}
+	dir := filepath.Join(DataDir(home), "workspaces", workspace.WorkspaceID(abs))
+	return cliSessionStore{workspaceDB: filepath.Join(dir, "workspace.db"), sessionsDir: filepath.Join(dir, "sessions")}, nil
+}
+
+func openCLIWorkspaceDB(store cliSessionStore) (*sql.DB, error) {
+	if _, err := os.Stat(store.workspaceDB); err != nil {
+		if os.IsNotExist(err) {
+			return nil, errNoSavedWorkspace
+		}
+		return nil, err
+	}
+	dsn := "file:" + filepath.ToSlash(store.workspaceDB) + "?mode=ro&_busy_timeout=1000"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, err
+	}
+	db.SetMaxOpenConns(1)
+	return db, nil
+}
+
+func listCLISessions(home, projectDir string) ([]sessiondb.SessionMeta, error) {
+	store, err := resolveCLISessionStore(home, projectDir)
+	if err != nil {
+		return nil, err
+	}
+	db, err := openCLIWorkspaceDB(store)
+	if err != nil {
+		if errors.Is(err, errNoSavedWorkspace) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer func() { _ = db.Close() }()
+	rows, err := db.Query(`
+		SELECT session_id, project_dir, project_name, model, provider,
+		       created_at, closed_at, message_count, turn_count, first_prompt, last_prompt
+		FROM workspace_sessions
+		WHERE db_missing = 0
+		ORDER BY created_at DESC`)
+	if err != nil {
+		return nil, fmt.Errorf("read current workspace session registry: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+	var metas []sessiondb.SessionMeta
+	for rows.Next() {
+		var m sessiondb.SessionMeta
+		if err := rows.Scan(&m.ID, &m.ProjectPath, &m.ProjectName, &m.Model, &m.Provider,
+			&m.CreatedAt, &m.ClosedAt, &m.MessageCount, &m.TurnCount, &m.FirstPrompt, &m.LastPrompt); err != nil {
+			return nil, err
+		}
+		if !validCLISessionID(m.ID) {
+			return nil, fmt.Errorf("invalid session identity in workspace registry")
+		}
+		if info, err := os.Lstat(filepath.Join(store.sessionsDir, m.ID+".db")); err == nil && info.Mode().IsRegular() {
+			metas = append(metas, m)
+		} else if err != nil && !os.IsNotExist(err) {
+			return nil, err
+		}
+	}
+	return metas, rows.Err()
+}
+
+// ListSessions prints sessions from the current workspace store. Used by
+// `crude --list-sessions`.
+func ListSessions(home, projectDir string, limit, offset int) error {
+	if offset < 0 {
+		return fmt.Errorf("offset must not be negative")
+	}
+	metas, err := listCLISessions(home, projectDir)
+	if err != nil {
+		return err
+	}
+	total := len(metas)
 	if total == 0 {
 		fmt.Println("No sessions found.")
-		return
+		return nil
+	}
+	if limit <= 0 {
+		limit = 50
+	}
+	start := min(offset, total)
+	end := start + min(limit, total-start)
+	metas = metas[start:end]
+	if len(metas) == 0 {
+		fmt.Printf("No sessions at offset %d (%d total).\n", offset, total)
+		return nil
 	}
 	fmt.Printf("Showing %d-%d of %d sessions\n\n", offset+1, offset+len(metas), total)
 	fmt.Printf("%-30s %-20s %-8s %-8s %-20s %-16s %s\n", "ID", "Project", "Turns", "Msgs", "Model", "Created", "First Prompt")
@@ -329,31 +423,169 @@ func ListSessions(sessionsRoot string, limit, offset int) {
 		}
 		fmt.Printf("%-30s %-20s %-8d %-8d %-20s %-16s %.40s\n", m.ID, m.ProjectName, m.TurnCount, m.MessageCount, m.Model, created, firstPrompt)
 	}
+	return nil
 }
 
-// DeleteSession deletes a session by ID. Used by `crude --delete-session`.
-func DeleteSession(sessionsRoot, sessionID string) {
-	if err := sessiondb.DeleteSession(sessionsRoot, sessionID); err != nil {
-		fmt.Fprintf(os.Stderr, "Error deleting session: %v\n", err)
-		return
+func validCLISessionID(id string) bool {
+	return id != "" && filepath.Base(id) == id && id != "." && id != ".." && !strings.ContainsAny(id, "/\\\x00:")
+}
+
+// DeleteSession deletes one closed session from the exact current workspace.
+func DeleteSession(home, projectDir, sessionID string) (resultErr error) {
+	if !validCLISessionID(sessionID) {
+		return fmt.Errorf("invalid session ID %q", sessionID)
 	}
-	fmt.Printf("Session %s deleted.\n", sessionID)
+	// Own the same exclusive endpoint as the core for the entire maintenance
+	// operation. A failed status probe is not proof that no live writer exists.
+	guard, err := listenCore(context.Background(), DataDir(home))
+	if err != nil {
+		return fmt.Errorf("session deletion requires an offline core: %w", err)
+	}
+	defer func() { resultErr = errors.Join(resultErr, guard.Close()) }()
+	store, err := resolveCLISessionStore(home, projectDir)
+	if err != nil {
+		return err
+	}
+	if _, err := os.Stat(store.workspaceDB); err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("no saved workspace exists for this path")
+		}
+		return err
+	}
+	dsn := "file:" + filepath.ToSlash(store.workspaceDB) + "?_busy_timeout=1000"
+	db, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return err
+	}
+	defer func() { _ = db.Close() }()
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	var closedAt int64
+	if err := tx.QueryRow(`SELECT closed_at FROM workspace_sessions WHERE session_id = ? AND db_missing = 0`, sessionID).Scan(&closedAt); err != nil {
+		if err == sql.ErrNoRows {
+			return fmt.Errorf("session %q is not registered in this workspace", sessionID)
+		}
+		return err
+	}
+	if closedAt == 0 {
+		return fmt.Errorf("session %q is still active", sessionID)
+	}
+	dbPath := filepath.Join(store.sessionsDir, sessionID+".db")
+	info, err := os.Lstat(dbPath)
+	if err != nil {
+		return fmt.Errorf("session %q storage is unavailable: %w", sessionID, err)
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("session %q storage is not a regular file", sessionID)
+	}
+	quarantine, err := os.MkdirTemp(filepath.Dir(store.sessionsDir), ".session-delete-")
+	if err != nil {
+		return err
+	}
+	// Keep the exact registry preimage and every SQLite sidecar for recovery.
+	var registry map[string]any
+	rows, err := tx.Query(`SELECT * FROM workspace_sessions WHERE session_id=?`, sessionID)
+	if err != nil {
+		return err
+	}
+	columns, err := rows.Columns()
+	if err != nil {
+		_ = rows.Close()
+		return err
+	}
+	if rows.Next() {
+		values, pointers := make([]any, len(columns)), make([]any, len(columns))
+		for i := range values {
+			pointers[i] = &values[i]
+		}
+		if err := rows.Scan(pointers...); err != nil {
+			_ = rows.Close()
+			return err
+		}
+		registry = make(map[string]any, len(columns))
+		for i, key := range columns {
+			registry[key] = values[i]
+		}
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return err
+	}
+	manifest, err := json.MarshalIndent(map[string]any{"session_id": sessionID, "workspace": projectDir, "registry": registry, "original_directory": store.sessionsDir}, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(quarantine, "recovery.json"), manifest, 0600); err != nil {
+		return err
+	}
+	var moved []string
+	committed := false
+	defer func() {
+		if !committed {
+			for i := len(moved) - 1; i >= 0; i-- {
+				name := moved[i]
+				if err := os.Rename(filepath.Join(quarantine, name), filepath.Join(store.sessionsDir, name)); err != nil {
+					resultErr = errors.Join(resultErr, fmt.Errorf("restore %s failed; preserved at %s: %w", name, quarantine, err))
+				}
+			}
+		}
+	}()
+	for _, name := range []string{sessionID + ".db", sessionID + ".db-wal", sessionID + ".db-shm", sessionID} {
+		source := filepath.Join(store.sessionsDir, name)
+		info, err := os.Lstat(source)
+		if os.IsNotExist(err) {
+			continue
+		}
+		if err != nil {
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("refusing symlink session artifact %s", name)
+		}
+		if err := os.Rename(source, filepath.Join(quarantine, name)); err != nil {
+			return fmt.Errorf("stage session artifact %s: %w", name, err)
+		}
+		moved = append(moved, name)
+	}
+	result, err := tx.Exec(`DELETE FROM workspace_sessions WHERE session_id = ?`, sessionID)
+	if err != nil {
+		return err
+	}
+	if n, _ := result.RowsAffected(); n != 1 {
+		return fmt.Errorf("session %q registry changed during deletion", sessionID)
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	committed = true
+	fmt.Printf("Session recovery copy: %s\n", quarantine)
+	return nil
 }
 
 // ResolveResumeID resolves the --resume flag to a session ID.
 // Supports "last", "true", or an explicit session ID.
-func ResolveResumeID(sessionsRoot, resumeFlag string) (string, error) {
+func ResolveResumeID(home, projectDir, resumeFlag string) (string, error) {
 	if resumeFlag == "" {
 		return "", nil
 	}
+	metas, err := listCLISessions(home, projectDir)
+	if err != nil {
+		return "", err
+	}
 	if resumeFlag == "last" || resumeFlag == "true" {
-		metas, err := sessiondb.ListSessions(sessionsRoot)
-		if err != nil || len(metas) == 0 {
+		if len(metas) == 0 {
 			return "", fmt.Errorf("no sessions found to resume")
 		}
 		return metas[0].ID, nil
 	}
-	return resumeFlag, nil
+	for _, meta := range metas {
+		if meta.ID == resumeFlag {
+			return resumeFlag, nil
+		}
+	}
+	return "", fmt.Errorf("session %q is not available in this workspace", resumeFlag)
 }
 
 // appLogger is a minimal logger that discards everything.

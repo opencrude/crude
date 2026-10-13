@@ -235,7 +235,9 @@ func TestWorktreeRealChildLaunchesPreserveImmutableAssignmentAndIsolateEffects(t
 		wire := strings.Join(requests[key], "\n")
 		count := len(requests[key])
 		mu.Unlock()
-		if count != 10 || !strings.Contains(wire, h.Spec.ExecutionRoot) || !strings.Contains(wire, "dirty baseline") || !strings.Contains(wire, "accepted document") || !strings.Contains(wire, key+" patched") || !strings.Contains(wire, "Use the isolated fixture root.") || strings.Contains(wire, "Error:") {
+		// The wire is JSON, so the root's separators appear escaped on Windows.
+		encodedRoot, _ := json.Marshal(h.Spec.ExecutionRoot)
+		if count != 10 || !strings.Contains(wire, strings.Trim(string(encodedRoot), `"`)) || !strings.Contains(wire, "dirty baseline") || !strings.Contains(wire, "accepted document") || !strings.Contains(wire, key+" patched") || !strings.Contains(wire, "Use the isolated fixture root.") || strings.Contains(wire, "Error:") {
 			t.Fatalf("real wire proof failed count=%d wire=%s", count, wire)
 		}
 	}

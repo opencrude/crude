@@ -95,7 +95,7 @@ func agentCategoryPath(path string) bool {
 // Model/profile instructions extend canonical policy; they do not grant tools.
 func OrdinaryAgentLeaf(name string) bool {
 	switch name {
-	case "Model", "model", "account_id", "ThinkingEffort", "thinking_effort", "Instructions", "instructions", "Description", "description", "ModelContextWindow", "model_context_window", "ModelMaxOutput", "model_max_output", "ModelTemperature", "model_temperature", "ModelTopP", "model_top_p", "context_compaction_percent", "ModelModalities", "model_modalities":
+	case "Model", "model", "account_id", "ThinkingEffort", "thinking_effort", "Instructions", "instructions", "Description", "description", "ModelContextWindow", "model_context_window", "ModelMaxOutput", "model_max_output", "ModelTemperature", "model_temperature", "ModelTopP", "model_top_p", "context_compaction_percent", "context_retention_tokens", "ModelModalities", "model_modalities":
 		return true
 	}
 	return false

@@ -1,6 +1,7 @@
 package viewmodel
 
 import (
+	"crude/agent"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -423,4 +424,8 @@ func TestLargeClipboardPasteCannotCrossDraftReplacement(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (s *pastedTextJourneySender) SendAgentEventEnvelope(event agent.AgentEvent) {
+	s.SendAgentEventWithID(event.Type, event.Data, event.AgentID)
 }

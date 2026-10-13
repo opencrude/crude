@@ -328,11 +328,6 @@ func NewWorkspace(
 	ws.Terminals, _ = NewTerminalService(ws.TermMgr) // newly allocated, empty manager
 	ws.LiveDocuments = NewDocumentService(rootPath, ws.Documents, ws.LSPMgr, workspaceSQLDB(wsDB))
 
-	// Self-heal the session registry from on-disk session DBs. Runs on
-	// workspace open (not the launcher workspace-list path, which is
-	// deliberately read-only and time-bounded). Typical session counts are
-	// small; each DB is opened read-only and corrupt files are skipped.
-	_ = ws.BackfillSessionRegistry()
 	ws.queuePersistenceStartupIssues()
 
 	return ws
@@ -802,9 +797,6 @@ func (w *Workspace) SwitchProject(projectDir string) error {
 		w.TermMgr.SetEventBus(w.eventBus)
 	}
 	w.applyEffectiveSettings()
-
-	// Same self-heal as NewWorkspace when switching projects.
-	_ = w.BackfillSessionRegistry()
 
 	return nil
 }

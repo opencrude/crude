@@ -703,6 +703,7 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		}) {
 			return
 		}
+		notifyAttachmentIssues(sender, o.ID, input.AttachmentIssues)
 	}
 	if humanTurn {
 		s.prevContextInjected.Store(true)
@@ -806,6 +807,9 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	if activeCfg.ContextCompactionPercent != nil {
 		ag.ContextCompactionPercent = *activeCfg.ContextCompactionPercent
 	}
+	if activeCfg.ContextRetentionTokens != nil {
+		ag.CompactionRetentionTokens = *activeCfg.ContextRetentionTokens
+	}
 	if len(frozenPrefix) > 0 && frozenPrefix[len(frozenPrefix)-1].Role == "assistant" && s.db != nil {
 		if baseline, ok, baselineErr := sessiondb.LatestNormalUsageRecord(s.db, s.sessionID, o.ID); baselineErr != nil {
 			l.Warn("COMPACT", "context_baseline_load_failed", "error", baselineErr.Error())
@@ -880,7 +884,6 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		pendingCollaboration = nil
 		return nil
 	}
-	ag.SetToolCallSeqStart(s.toolCallSeq)
 	var finalContent string
 	prompt := s.systemPromptForModelAtRoot(effectiveCfg.IsMultiAgentEnabled(), ag.Model, ag.WorkDir)
 
@@ -986,6 +989,9 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 		if category.ContextCompactionPercent != nil {
 			ag.ContextCompactionPercent = *category.ContextCompactionPercent
 		}
+		if category.ContextRetentionTokens != nil {
+			ag.CompactionRetentionTokens = *category.ContextRetentionTokens
+		}
 		turnIdentity = ttypes.TurnIdentity{
 			Generation: turnGeneration, ProviderID: currentProvider.ID,
 			AccountID: currentProvider.AccountID, ModelID: currentProvider.Model,
@@ -1005,7 +1011,6 @@ func (s *Session) processTurnOrchestrator(request turnRequest, o *Orchestrator, 
 	stopSteering()
 	<-runtimeMessagesDone
 	emitActive.Store(false)
-	s.toolCallSeq = ag.ToolCallSeq()
 
 	l.Info("AGENT", "loop_end", "len", len(finalContent))
 	activeContext := runResult.Active
@@ -1616,9 +1621,10 @@ func (s *Session) messagesForTurnLocked(turn int) []provider.ChatMessage {
 }
 
 type preparedInput struct {
-	Message         provider.ChatMessage
-	ReferenceLabels []string
-	Enrichment      []provider.ChatMessage
+	Message          provider.ChatMessage
+	ReferenceLabels  []string
+	Enrichment       []provider.ChatMessage
+	AttachmentIssues []string
 }
 
 // prepareInput never changes the submitted row. Its suffix is published with
@@ -1678,7 +1684,7 @@ func (s *Session) prepareInput(ctx context.Context, input provider.UserInput, cf
 			}
 			selection := input
 			selection.Text = ""
-			message, result.ReferenceLabels, err = s.buildUserMessageWithDisplay(selection, category.Model)
+			message, result.ReferenceLabels, result.AttachmentIssues, err = s.buildUserMessageWithDisplay(selection, category.Model)
 			if err != nil {
 				return result, err
 			}
@@ -1783,27 +1789,33 @@ func (s *Session) prepareInput(ctx context.Context, input provider.UserInput, cf
 	return result, nil
 }
 
-func (s *Session) buildUserMessageWithDisplay(input provider.UserInput, model string) (provider.ChatMessage, []string, error) {
+func (s *Session) buildUserMessageWithDisplay(input provider.UserInput, model string) (provider.ChatMessage, []string, []string, error) {
 	if len(input.ReferenceIDs) == 0 {
-		return inputMessage(provider.NewTextMessage("user", input.Text), input), nil, nil
+		return inputMessage(provider.NewTextMessage("user", input.Text), input), nil, nil, nil
 	}
 	if s.db == nil {
-		return provider.ChatMessage{}, nil, errors.New("selected references cannot be prepared: session database is unavailable; restore storage before Continue")
+		return provider.ChatMessage{}, nil, nil, errors.New("selected references cannot be prepared: session database is unavailable; restore storage before Continue")
 	}
 	refs, err := sessiondb.LoadPromptReferencesByIDs(s.db, input.ReferenceIDs)
 	if err != nil {
-		return provider.ChatMessage{}, nil, fmt.Errorf("load selected references before Continue: %w", err)
+		return provider.ChatMessage{}, nil, nil, fmt.Errorf("load selected references before Continue: %w", err)
 	}
 	byID := make(map[string]sessiondb.Reference, len(refs))
 	for _, ref := range refs {
 		byID[ref.ID] = ref
 	}
 	seen := make(map[string]bool, len(input.ReferenceIDs))
-	var labels []string
+	var labels, issues []string
 	var parts []provider.ContentPart
+	omit := func(ref sessiondb.Reference, reason string) {
+		labels = append(labels, ref.DisplayName())
+		issues = append(issues, fmt.Sprintf("Attachment %s (%s) excluded: %s. Original message preserved; work continues.", ref.DisplayName(), ref.ID, reason))
+		parts = append(parts, provider.ContentPart{Type: "text", Text: rootprompt.UnavailableAttachment(ref.ID, ref.DisplayName(), reason)})
+	}
 	if input.Text != "" {
 		parts = append(parts, provider.ContentPart{Type: "text", Text: input.Text})
 	}
+referencesLoop:
 	for _, id := range input.ReferenceIDs {
 		if seen[id] {
 			continue
@@ -1811,29 +1823,33 @@ func (s *Session) buildUserMessageWithDisplay(input provider.UserInput, model st
 		seen[id] = true
 		ref, found := byID[id]
 		if !found || !ref.Active() {
-			return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q is missing or inactive; restore that exact reference before Continue", id)
+			return provider.ChatMessage{}, nil, nil, fmt.Errorf("selected reference %q is missing or inactive; restore that exact reference before Continue", id)
 		}
 		if s.sessionID != "" && ref.SessionID != s.sessionID {
-			return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q belongs to another session; reselect it for this input owner", id)
+			return provider.ChatMessage{}, nil, nil, fmt.Errorf("selected reference %q belongs to another session; reselect it for this input owner", id)
 		}
 		var media *provider.ContentPart
 		switch ref.Kind {
 		case sessiondb.KindPastedText, sessiondb.KindMCPTool, sessiondb.KindMCPContext:
 			if ref.Content == "" {
-				return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q has no captured content; restore its preview before Continue", id)
+				return provider.ChatMessage{}, nil, nil, fmt.Errorf("selected reference %q has no captured content; restore its preview before Continue", id)
 			}
 			if (ref.Kind == sessiondb.KindMCPTool || ref.Kind == sessiondb.KindMCPContext) && ref.Title == "" {
-				return provider.ChatMessage{}, nil, fmt.Errorf("selected MCP reference %q has no exact source identity; restore its preview before Continue", id)
+				return provider.ChatMessage{}, nil, nil, fmt.Errorf("selected MCP reference %q has no exact source identity; restore its preview before Continue", id)
 			}
 		case sessiondb.KindPastedImage, sessiondb.KindPastedTextFile, sessiondb.KindSelectedFile:
 			var info os.FileInfo
 			if ref.FilePath != "" && (ref.Kind == sessiondb.KindPastedImage || ref.Content == "") {
 				info, err = os.Lstat(ref.FilePath)
 				if err != nil {
-					return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q is unreadable; restore %q before Continue: %w", id, ref.FilePath, err)
+					if ref.Kind == sessiondb.KindPastedImage && os.IsNotExist(err) {
+						omit(ref, "The captured image file is missing")
+						continue referencesLoop
+					}
+					return provider.ChatMessage{}, nil, nil, fmt.Errorf("selected reference %q is unreadable; restore %q before Continue: %w", id, ref.FilePath, err)
 				}
 				if !info.Mode().IsRegular() {
-					return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q must be a regular file; repair %q before Continue", id, ref.FilePath)
+					return provider.ChatMessage{}, nil, nil, fmt.Errorf("selected reference %q must be a regular file; repair %q before Continue", id, ref.FilePath)
 				}
 			}
 			modality, mime, isMedia := "", "", false
@@ -1849,51 +1865,63 @@ func (s *Session) buildUserMessageWithDisplay(input provider.UserInput, model st
 			var data []byte
 			if info != nil {
 				if info.Size() > limit {
-					return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q exceeds the %d-byte model limit; repair %q before Continue", id, limit, ref.FilePath)
+					return provider.ChatMessage{}, nil, nil, fmt.Errorf("selected reference %q exceeds the %d-byte model limit; repair %q before Continue", id, limit, ref.FilePath)
 				}
 				if isMedia {
 					file, err := os.Open(ref.FilePath)
 					if err != nil {
-						return provider.ChatMessage{}, nil, fmt.Errorf("read selected reference %q before Continue: %w", id, err)
+						return provider.ChatMessage{}, nil, nil, fmt.Errorf("read selected reference %q before Continue: %w", id, err)
 					}
 					data, err = io.ReadAll(io.LimitReader(file, limit+1))
 					err = errors.Join(err, file.Close())
 					if err != nil {
-						return provider.ChatMessage{}, nil, fmt.Errorf("read selected reference %q before Continue: %w", id, err)
+						return provider.ChatMessage{}, nil, nil, fmt.Errorf("read selected reference %q before Continue: %w", id, err)
 					}
 					if int64(len(data)) > limit {
-						return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q grew beyond its %d-byte model limit; repair its capture before Continue", id, limit)
+						return provider.ChatMessage{}, nil, nil, fmt.Errorf("selected reference %q grew beyond its %d-byte model limit; repair its capture before Continue", id, limit)
 					}
 				} else if ext := strings.ToLower(filepath.Ext(ref.FilePath)); docconv.SupportedExt(ext) {
 					markdown, metadata, err := docconv.ConvertFile(ref.FilePath)
 					if err != nil {
-						return provider.ChatMessage{}, nil, fmt.Errorf("convert selected reference %q before Continue: %w", id, err)
+						return provider.ChatMessage{}, nil, nil, fmt.Errorf("convert selected reference %q before Continue: %w", id, err)
 					}
 					ref.Content = docconv.Header(ref.FilePath, metadata) + markdown
 				} else {
 					preview, err := fileio.InspectFile(ref.FilePath, limit, fileio.DefaultHexHeadBytes)
 					if err != nil {
-						return provider.ChatMessage{}, nil, fmt.Errorf("read selected reference %q before Continue: %w", id, err)
+						return provider.ChatMessage{}, nil, nil, fmt.Errorf("read selected reference %q before Continue: %w", id, err)
 					}
 					if preview.Truncated {
-						return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q grew beyond its %d-byte model limit; repair its capture before Continue", id, limit)
+						return provider.ChatMessage{}, nil, nil, fmt.Errorf("selected reference %q grew beyond its %d-byte model limit; repair its capture before Continue", id, limit)
 					}
 					ref.Content = preview.ReadableText()
 				}
 			} else if isMedia && ref.Content != "" {
 				if int64(len(ref.Content)) > provider.MaxInlineContentSizeFor(model) {
-					return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q exceeds the inline media limit; repair its captured media before Continue", id)
+					return provider.ChatMessage{}, nil, nil, fmt.Errorf("selected reference %q exceeds the inline media limit; repair its captured media before Continue", id)
 				}
 				data, err = base64.StdEncoding.DecodeString(ref.Content)
 				if err != nil {
-					return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q contains invalid Base64 media; repair its capture before Continue: %w", id, err)
+					if ref.Kind == sessiondb.KindPastedImage {
+						omit(ref, "The captured image encoding is invalid")
+						continue referencesLoop
+					}
+					return provider.ChatMessage{}, nil, nil, fmt.Errorf("selected reference %q contains invalid Base64 media; repair its capture before Continue: %w", id, err)
 				}
 			} else if ref.Content == "" {
-				return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q has no readable content or file; restore its capture before Continue", id)
+				if ref.Kind == sessiondb.KindPastedImage {
+					omit(ref, "The image capture is empty")
+					continue referencesLoop
+				}
+				return provider.ChatMessage{}, nil, nil, fmt.Errorf("selected reference %q has no readable content or file; restore its capture before Continue", id)
 			}
 			if isMedia {
+				if len(data) == 0 && ref.Kind == sessiondb.KindPastedImage {
+					omit(ref, "The image capture is empty")
+					continue referencesLoop
+				}
 				if len(data) == 0 || int64(len(data)) > limit {
-					return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q has empty or oversized media; repair its capture before Continue", id)
+					return provider.ChatMessage{}, nil, nil, fmt.Errorf("selected reference %q has empty or oversized media; repair its capture before Continue", id)
 				}
 				if mime == "" {
 					mime = http.DetectContentType(data)
@@ -1901,8 +1929,9 @@ func (s *Session) buildUserMessageWithDisplay(input provider.UserInput, model st
 				part := provider.ContentPart{MimeType: mime, Filename: filepath.Base(ref.FilePath)}
 				switch modality {
 				case provider.ModalityImage:
-					if detected := http.DetectContentType(data); detected != mime || !strings.HasPrefix(mime, "image/") {
-						return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q has invalid image bytes for %q; repair its capture before Continue", id, mime)
+					if err := provider.ValidateImageBytes(mime, data); err != nil {
+						omit(ref, err.Error())
+						continue referencesLoop
 					}
 					part.Type, part.ImageURL = "image_url", &provider.ImageURL{URL: "data:" + mime + ";base64," + base64.StdEncoding.EncodeToString(data)}
 				case provider.ModalityPDF:
@@ -1916,10 +1945,10 @@ func (s *Session) buildUserMessageWithDisplay(input provider.UserInput, model st
 				ref.Content = ""
 			}
 		default:
-			return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q has unsupported kind %q; repair its capture before Continue", id, ref.Kind)
+			return provider.ChatMessage{}, nil, nil, fmt.Errorf("selected reference %q has unsupported kind %q; repair its capture before Continue", id, ref.Kind)
 		}
 		if !utf8.ValidString(ref.Content) || int64(len(ref.Content)) > provider.MaxTextFileSizeFor(model) {
-			return provider.ChatMessage{}, nil, fmt.Errorf("selected reference %q requires complete UTF-8 text within the model limit; repair its capture before Continue", id)
+			return provider.ChatMessage{}, nil, nil, fmt.Errorf("selected reference %q requires complete UTF-8 text within the model limit; repair its capture before Continue", id)
 		}
 		labels = append(labels, ref.DisplayName())
 		parts = append(parts, provider.ContentPart{Type: "text", Text: ref.AgentText()})
@@ -1927,7 +1956,7 @@ func (s *Session) buildUserMessageWithDisplay(input provider.UserInput, model st
 			parts = append(parts, *media)
 		}
 	}
-	return inputMessage(provider.NewMultiPartMessage("user", parts), input), labels, nil
+	return inputMessage(provider.NewMultiPartMessage("user", parts), input), labels, issues, nil
 }
 
 func inputMessage(message provider.ChatMessage, input provider.UserInput) provider.ChatMessage {

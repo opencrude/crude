@@ -5,7 +5,7 @@ import (
 
 	"crude/provider"
 	"crude/tui/theme"
-	"crude/tui/types"
+	"crude/types"
 )
 
 // TestMemoryFormKeepsRecallAndAddsAgentBehavior verifies the Memory settings

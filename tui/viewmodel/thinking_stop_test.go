@@ -6,7 +6,6 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 
-	ttypes "crude/tui/types"
 	"crude/types"
 	"crude/types/reasoning"
 	"crude/workspace"
@@ -31,9 +30,9 @@ func TestStopWithPromotedRawThinkingKeepsOneThoughtAndNoNewPanes(t *testing.T) {
 	app.AddOrchestrator("agent")
 	agent := app.ws.AgentMgr().Get("agent").State
 	app.paintShellFrame()
-	app.handleAgentEvent(ttypes.AgentEventMsg{Type: "turn_started", AgentID: "agent", Data: types.TurnIdentity{Generation: 1, ModelID: "deepseek-v4.1-flash"}})
+	app.handleAgentEvent(types.AgentEventMsg{Type: "turn_started", AgentID: "agent", Data: types.TurnIdentity{Generation: 1, ModelID: "deepseek-v4.1-flash"}})
 	for i := 0; i < 40; i++ {
-		app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "agent", Data: reasoning.Delta{Text: strings.Repeat("reasoning word ", 12), Kind: reasoning.Raw}})
+		app.handleAgentEvent(types.AgentEventMsg{Type: "thinking", AgentID: "agent", Data: reasoning.Delta{Text: strings.Repeat("reasoning word ", 12), Kind: reasoning.Raw}})
 	}
 	paneID := app.thinkingPaneID(agent)
 	if paneID == "" {
@@ -53,7 +52,7 @@ func TestStopWithPromotedRawThinkingKeepsOneThoughtAndNoNewPanes(t *testing.T) {
 	}
 	stopped := thinkingMessageCount(agent)
 	for i := 0; i < 50; i++ {
-		app.handleAgentEvent(ttypes.AgentEventMsg{Type: "thinking", AgentID: "agent", Data: reasoning.Delta{Text: "late", Kind: reasoning.Raw}})
+		app.handleAgentEvent(types.AgentEventMsg{Type: "thinking", AgentID: "agent", Data: reasoning.Delta{Text: "late", Kind: reasoning.Raw}})
 		app.paintShellFrame()
 		if id := app.thinkingPaneID(agent); id != "" {
 			t.Fatalf("late delta %d promoted pane %q after stop", i, id)

@@ -10,7 +10,7 @@ import (
 
 	"crude/tui/editor"
 	"crude/tui/filetree"
-	ttypes "crude/tui/types"
+	ttypes "crude/types"
 )
 
 // Scenario benches for the work-budget system. Leaf paint benches

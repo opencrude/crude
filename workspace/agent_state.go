@@ -609,13 +609,9 @@ func finishThinkingBlocks(target *Conversation) {
 	}
 }
 
-// ParseAgentPhase decodes both legacy string phases and structured progress
-// phases emitted by the request transport.
+// ParseAgentPhase decodes the structured progress phase emitted by the agent.
 func ParseAgentPhase(data any) (status TurnStatus, ok bool) {
 	switch value := data.(type) {
-	case string:
-		status.Phase = value
-		return status, value != ""
 	case map[string]any:
 		status.Phase, _ = value["name"].(string)
 		status.Provider, _ = value["provider"].(string)

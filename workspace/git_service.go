@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"os/exec"
 	"path/filepath"
 	"sort"
@@ -90,6 +91,7 @@ func (s *GitService) Snapshot(ctx context.Context) (GitSnapshot, error) {
 	if err != nil {
 		return GitSnapshot{}, err
 	}
+	defer closeGitRepository(repo)
 	wt, err := repo.Worktree()
 	if err != nil {
 		return GitSnapshot{}, fmt.Errorf("open Git worktree: %w", err)
@@ -121,12 +123,24 @@ func (s *GitSnapshot) readTracking(ctx context.Context) {
 	s.Ahead, s.Behind = parseAheadBehind(string(out))
 }
 
+// closeGitRepository releases go-git's retained object and packfile handles.
+// Windows refuses to delete or replace files a leaked handle still holds.
+func closeGitRepository(repo *git.Repository) {
+	if repo == nil {
+		return
+	}
+	if closer, ok := repo.Storer.(io.Closer); ok {
+		_ = closer.Close()
+	}
+}
+
+// open returns a repository the caller must release with closeGitRepository.
 func (s *GitService) open() (*git.Repository, string, error) {
 	root := s.root
 	if root == "" {
 		root = "."
 	}
-	repo, err := git.PlainOpenWithOptions(root, &git.PlainOpenOptions{DetectDotGit: true, EnableDotGitCommonDir: true})
+	repo, err := openGitRepository(root)
 	if err != nil {
 		return nil, "", fmt.Errorf("open Git repository: %w", err)
 	}
@@ -142,10 +156,11 @@ func (s *GitService) open() (*git.Repository, string, error) {
 }
 
 func (s *GitService) run(ctx context.Context, args ...string) error {
-	_, root, err := s.open()
+	repo, root, err := s.open()
 	if err != nil {
 		return err
 	}
+	closeGitRepository(repo)
 	cmdArgs := append([]string{"-C", root}, args...)
 	cmd := exec.CommandContext(ctx, "git", cmdArgs...)
 	out, err := cmd.CombinedOutput()

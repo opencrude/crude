@@ -288,7 +288,7 @@ second source of truth.
 | `workspace/` | Per-project state machine (repo root, NOT `tui/workspace/`). Owns sessions, orchestrators, LSP manager, file ops, project search, local-history lifecycle, workspace DB. Zero `tui/` imports (production + tests). |
 | `tui/` | Dumb renderer + input router. Holds a `shellport.Workspace`, calls methods, subscribes to the event bus. `tui/tui.go` has no callbacks. |
 | `tui/viewmodel/App` | Presentation state holder. Uses one root `ui.Host` (`rootHost`) + one shell surface (`mainSurf`), with retained per-session `deckHost`s mounted through the shell. |
-| `crude/types` | Neutral contracts package; `tui/types` is a compatibility alias. Config split done: `AppSettings` + `SessionSettings` (three inheritance levels). Workspace overrides are FIELD-level, sessions snapshot — see `docs/reference/settings.md`. |
+| `crude/types` | Neutral contracts package shared by every layer. Config split done: `AppSettings` + `SessionSettings` (three inheritance levels). Workspace overrides are FIELD-level, sessions snapshot — see `docs/reference/settings.md`. |
 | `session/` | Session domain library (sessions are workspace-scoped under `~/.crude/workspaces/<hash>/sessions/`); consumed by `workspace/`. |
 | `localhistory/` | Immutable content-defined workspace snapshots, SQLite timeline/message labels, restore plans, verification, retention, and rollback. No TUI imports. |
 
@@ -1101,7 +1101,8 @@ Deleted experiments: `terminal_probe.go`, `isWideCJK()`, `probedWide()`,
   reservations and preserves prepared input without enqueueing execution.
   Stopped children use current authoritative context and retain newer facts;
   parent mirrors/results are separately checked, never silently acknowledged.
-  Root and child checkpoints both reconcile exact late lifecycle controls.
+  Root and child checkpoints reconcile exact late lifecycle controls and
+  journal-admitted human steering with its immutable preparation suffix.
   Runtime-note receipts commit before one complete batch checkpoint, never after
   checkpointing reserved notes that a failed admission would try to remove.
 - `publish_report` is the mandatory child return channel, not an optional task-tool
@@ -1400,6 +1401,12 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   grids, and scroll internally without trimming text. Paint a quiet visible-row
   range when clipped. Unchanged layout must not reset wheel scroll; cursor
   navigation/edits and real geometry changes alone reveal the caret.
+- Clipboard images use binary `CreateRequest.Data` throughout the connected/local
+  capture path, never Base64 text in `Content`. Validate MIME/signature before
+  storing. Faulty already-stored image captures are explicitly excluded from
+  preparation with durable context evidence and a user warning, preserving the
+  original input, good attachments and files while work continues. Ownership,
+  permissions and storage failures remain fail-closed; never replay old effects.
 - Composer pastes attach at 4 KiB, or eight logical lines with at least 512 bytes
   of trimmed payload, or ten wrapped rows with at least 1 KiB of trimmed payload.
   Wrapped checks use the actual text column with a 40-column evaluation floor so
@@ -1761,11 +1768,18 @@ pipe froze Bubble Tea's update goroutine — the tab-close hang).
   selection, child identities/statuses, and command-owner snapshots. Extraction
   may describe those facts but never owns them. Refresh the handoff after all
   extraction stages because commands and children may settle during compaction.
-- Retain a verbatim human tail only for a request that is still pending. If a
-  later terminal assistant answer already completed the latest human request,
-  do not append that request after the checkpoint: doing so makes the next
-  provider invocation answer it again. Older prompts remain immutable in the
-  transcript and are represented by the checkpoint, not replayed as fresh input.
+- Retain a verbatim human tail as input only for a request that is still
+  pending. If a later terminal assistant answer already completed the latest
+  human request, never append it as a pending user turn (the next invocation
+  would answer it again); carry those requests verbatim in one code-authored,
+  context-only `<answered_human_requests>` history block so their requirements
+  stay binding without being re-answered. A child's latest assignment may use
+  all available continuation space, not only the recent-input cap; only an
+  assignment that cannot fit at all is left to extraction.
+- In-run automatic compaction rebuilds the continuation system message from the
+  current guidance render. Guidance updates admitted during the run live in
+  runtime messages that the checkpoint replaces; never continue on the run's
+  initial render.
 - Async continuity uses exact owner data: handle, command, cwd, PID, start time,
   running/terminal status, terminal exit only when known, total output bytes,
   and the last observed byte cursor. Taking a continuity snapshot must not read

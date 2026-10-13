@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"crude/tui/cell"
-	"crude/tui/types"
 	"crude/tui/ui"
+	"crude/types"
 )
 
 func TestRenderUserMessageStylesReferenceLabel(t *testing.T) {

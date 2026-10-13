@@ -80,6 +80,7 @@ func discardGitReviewedDisk(ctx context.Context, service *GitService, store *loc
 		if err != nil {
 			return err
 		}
+		defer state.close()
 		current, err := state.compare(ctx, GitChange{Path: comparison.Path, AbsolutePath: comparison.AbsolutePath, Area: GitAreaWorking})
 		if err != nil {
 			return err

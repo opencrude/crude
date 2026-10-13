@@ -17,7 +17,7 @@ import (
 	"crude/provider"
 	"crude/session"
 	"crude/sessiondb"
-	ttypes "crude/tui/types"
+	ttypes "crude/types"
 	"crude/workspace"
 )
 

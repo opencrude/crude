@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"crude/tui/types"
+	"crude/types"
 )
 
 func TestStoppedParallelBatchPreservesPartialResultsAndSettlesEveryChild(t *testing.T) {
