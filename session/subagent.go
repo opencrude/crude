@@ -555,6 +555,7 @@ func (r *SubAgentRunner) launchSubAgent(ctx context.Context, spec agent.SubAgent
 	r.session.bindAgentPermissionPolicy(a)
 	childTempDir := filepath.Join(r.session.TempDir(), "agents", string(spec.ID))
 	a.AsyncMgr = fileio.NewAsyncCommandManagerWithLogger(r.session.logger)
+	r.session.observeCommandOutcomes(a.AsyncMgr, string(spec.ID))
 	if err := a.AsyncMgr.SetTempDir(childTempDir); err != nil {
 		if subDB != nil {
 			_ = sessiondb.CloseSession(subDB, subSessionID)
@@ -973,6 +974,7 @@ func (r *SubAgentRunner) ResumeRecovery(parentCheckpoint sessiondb.RecoveryCheck
 	r.session.bindAgentPermissionPolicy(live)
 	childTempDir := filepath.Join(r.session.TempDir(), "agents", string(spec.ID))
 	live.AsyncMgr = fileio.NewAsyncCommandManagerWithLogger(r.session.logger)
+	r.session.observeCommandOutcomes(live.AsyncMgr, string(spec.ID))
 	recoveryAsync = live.AsyncMgr
 	if err := live.AsyncMgr.SetTempDir(childTempDir); err != nil {
 		return parkResume(agent.RecoveryFailureStorage, err)

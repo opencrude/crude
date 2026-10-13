@@ -195,6 +195,8 @@ type ConnectionState struct {
 	Resources   []Resource
 	Prompts     []Prompt
 	Logs        []string
+	// Stderr is the redacted diagnostic tail of the current/last local launch.
+	Stderr      string
 	Cached      bool
 	AuthURL     string
 	AuthPending bool

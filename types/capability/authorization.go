@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"sort"
 	"strings"
 )
 
@@ -182,4 +183,91 @@ func ValidateCapabilityHostRequest(r HostRequest, workspace string, owner contro
 // HostRequestReadOnly permits fresh discovery without retaining an effect receipt.
 func HostRequestReadOnly(r HostRequest) bool {
 	return r.Operation == "prepare" || r.Operation == "inventory" || r.Operation == "readResource" || r.Operation == "getPrompt" || r.Operation == "call" && r.Tool.Effect == EffectRead
+}
+
+// PreparationRequired asks the owning agent session to make a package-backed
+// local server's package available before launching it. It is returned only
+// after the exact launch was authorized, because package installation runs
+// package code with the same authority as the launch. The session runs the
+// exact command through its background command manager: quick preparation
+// continues inline, and a slow download becomes an ordinary tracked command,
+// visible and cancellable in the jobs panel and reported when it settles,
+// instead of a handshake timeout killing it mid-download.
+type PreparationRequired struct {
+	ConnectionID string
+	Name         string
+	Command      string
+	Args         []string
+	Key          string
+}
+
+func (request *PreparationRequired) Error() string {
+	return "MCP package for " + request.Name + " must be prepared before launch"
+}
+
+type preparedKey struct{}
+
+// WithPrepared records that the session completed the exact preparation key.
+func WithPrepared(ctx context.Context, key string) context.Context {
+	return context.WithValue(ctx, preparedKey{}, key)
+}
+
+func PreparedFrom(ctx context.Context) string {
+	key, _ := ctx.Value(preparedKey{}).(string)
+	return key
+}
+
+// ConfigurationPreview is one exact agent-requested change to an installed
+// local server's launch environment. Approving it publishes the registration
+// change and authorizes launching the resulting configuration for the run, so
+// the human sees one decision rather than a configure box and a launch box.
+type ConfigurationPreview struct {
+	Connection  ConnectionConfig
+	Environment map[string]string
+	Token       string
+}
+
+type ConfigurationApprovalRequired struct {
+	Preview ConfigurationPreview
+	Actor   RuntimeActor
+}
+
+type ConfigurationApprovedKey struct{}
+
+func (request *ConfigurationApprovalRequired) Error() string {
+	return "MCP launch environment change requires exact authorization"
+}
+
+// CapabilityApproval shows the exact values: the agent supplied them, and an
+// approval of hidden values would not be informed consent.
+func (request *ConfigurationApprovalRequired) CapabilityApproval() (string, string) {
+	names := make([]string, 0, len(request.Preview.Environment))
+	for name := range request.Preview.Environment {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	lines := make([]string, 0, len(names))
+	for _, name := range names {
+		if value := request.Preview.Environment[name]; value == "" {
+			lines = append(lines, "unset "+name)
+		} else {
+			lines = append(lines, name+"="+value)
+		}
+	}
+	return request.Preview.Connection.ID, "Set the launch environment of " + request.Preview.Connection.Name +
+		" and launch it on the local host (unsandboxed, with your user's privileges; not a tool grant):\n" + strings.Join(lines, "\n")
+}
+
+func (request *ConfigurationApprovalRequired) CapabilityApprovalContext(ctx context.Context) context.Context {
+	return context.WithValue(ctx, ConfigurationApprovedKey{}, request.Preview)
+}
+
+func (request *ConfigurationApprovalRequired) CapabilityApprovalContextFor(ctx context.Context, origin string) context.Context {
+	return authorize(request.CapabilityApprovalContext(ctx), origin, request.Preview.Token, request.Actor)
+}
+
+func (request *ConfigurationApprovalRequired) Evidence() map[string]any {
+	return map[string]any{"phase": "configuration", "token": request.Preview.Token, "effect": EffectExecute,
+		"host": request.Preview.Connection.ExecutionHost(), "scope": "local host",
+		"connection": SafeConnection(request.Preview.Connection), "environment": request.Preview.Environment}
 }

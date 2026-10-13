@@ -42,6 +42,9 @@ and inspect bounded ranges rather than injecting whole logs into model context.
 `read_async_output` enforces 32 KiB default / 64 KiB maximum pages with raw byte
 cursors; a fast synchronous command that completes with larger output returns a
 bounded head/tail excerpt and retains the full capture under an async handle.
+Background command completion is an owner notification (`command_outcome`
+runtime event through the collaboration journal), not a polling contract; the
+async/wait tool descriptions and canonical command rule say so.
 
 `RuntimeCapabilities` gives every root and child a concise, model-neutral map of
 Crude's collaboration, memory/history, capability and evidence surfaces. It does

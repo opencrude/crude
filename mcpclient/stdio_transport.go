@@ -3,7 +3,9 @@ package mcpclient
 import (
 	"context"
 	"io"
+	"os"
 	"os/exec"
+	"strings"
 	"sync"
 	"time"
 
@@ -15,6 +17,53 @@ import (
 type boundedCommandTransport struct {
 	command  *exec.Cmd
 	lifetime context.Context
+	// stderr retains the server's diagnostic tail. Optional for fixtures.
+	stderr *stderrTail
+}
+
+// stderrTailBytes bounds retained diagnostics; servers may log continuously.
+const stderrTailBytes = 4 << 10
+
+// stderrTail keeps the last bytes a local server wrote to stderr. The write end
+// is a real file handle, so exec.Cmd.Wait never waits on a copier goroutine
+// that a surviving grandchild (npx → node) could hold open indefinitely; the
+// reader simply ends at EOF once every holder has exited.
+type stderrTail struct {
+	mu   sync.Mutex
+	data []byte
+	done chan struct{}
+}
+
+func newStderrTail() *stderrTail { return &stderrTail{done: make(chan struct{})} }
+
+func (t *stderrTail) Write(p []byte) (int, error) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.data = append(t.data, p...)
+	if excess := len(t.data) - stderrTailBytes; excess > 0 {
+		t.data = append(t.data[:0:0], t.data[excess:]...)
+	}
+	return len(p), nil
+}
+
+// Text returns the retained tail. After a process exit, the last diagnostic
+// line can still be in the pipe; wait briefly for EOF so a crash reason such
+// as "Could not open main display" is not lost to scheduling.
+func (t *stderrTail) Text(settle time.Duration) string {
+	if t == nil {
+		return ""
+	}
+	if settle > 0 {
+		timer := time.NewTimer(settle)
+		select {
+		case <-t.done:
+		case <-timer.C:
+		}
+		timer.Stop()
+	}
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	return strings.TrimSpace(strings.ToValidUTF8(string(t.data), "\uFFFD"))
 }
 
 func (t *boundedCommandTransport) Connect(ctx context.Context) (mcp.Connection, error) {
@@ -33,10 +82,32 @@ func (t *boundedCommandTransport) Connect(ctx context.Context) (mcp.Connection, 
 		_ = stdout.Close()
 		return nil, err
 	}
+	var stderrRead, stderrWrite *os.File
+	if t.stderr != nil {
+		if stderrRead, stderrWrite, err = os.Pipe(); err != nil {
+			_ = stdout.Close()
+			_ = stdin.Close()
+			return nil, err
+		}
+		t.command.Stderr = stderrWrite
+	}
 	if err := t.command.Start(); err != nil {
 		_ = stdout.Close()
 		_ = stdin.Close()
+		if stderrWrite != nil {
+			_ = stderrWrite.Close()
+			_ = stderrRead.Close()
+		}
 		return nil, err
+	}
+	if stderrWrite != nil {
+		// The child owns its copy; keeping ours would prevent EOF forever.
+		_ = stderrWrite.Close()
+		go func(tail *stderrTail) {
+			defer close(tail.done)
+			defer func() { _ = stderrRead.Close() }()
+			_, _ = io.Copy(tail, stderrRead)
+		}(t.stderr)
 	}
 	owner := &commandPipeOwner{command: t.command, stdout: stdout, stdin: stdin, done: make(chan struct{})}
 	if t.lifetime != nil {

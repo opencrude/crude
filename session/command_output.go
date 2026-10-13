@@ -30,7 +30,7 @@ func trimIncompleteUTF8Start(s string) (string, int) {
 }
 
 func FormatCommandStart(info fileio.AsyncCmdInfo) string {
-	return fmt.Sprintf("Command promoted to async command [%s] (PID %d): status=%s, retained_bytes=%d, exit=unknown. Read content with read_async_output(handle=%q, since_byte=0, max_bytes=%d); use check_async_command only for lifecycle status and kill_async_command(handle=%q) to stop this exact command. Do not rerun the command or repeat status checks for content.", info.Handle, info.PID, info.Status, info.OutputBytes, info.Handle, fileio.DefaultOutputChunkBytes, info.Handle)
+	return fmt.Sprintf("Command promoted to async command [%s] (PID %d): status=%s, retained_bytes=%d, exit=unknown. Read content with read_async_output(handle=%q, since_byte=0, max_bytes=%d); use check_async_command only for lifecycle status and kill_async_command(handle=%q) to stop this exact command. Its completion, failure or timeout is delivered to you automatically as a command_outcome event; continue other work instead of polling. Do not rerun the command or repeat status checks for content.", info.Handle, info.PID, info.Status, info.OutputBytes, info.Handle, fileio.DefaultOutputChunkBytes, info.Handle)
 }
 
 func FormatCommandStatus(info fileio.AsyncCmdInfo) string {
@@ -129,7 +129,7 @@ func commandOutcome(mgr *fileio.AsyncCommandManager, uc *fileio.UntrackedCmd) (t
 		out += tail
 		if total > excerptBytes*2 {
 			retainedHandle := mgr.NextAutoHandle()
-			if _, err := mgr.Promote(uc, retainedHandle); err != nil {
+			if _, err := mgr.RetainSettled(uc, retainedHandle); err != nil {
 				descriptor.RetentionError = err.Error()
 				out += "\n\n[Full output could not be retained as a command handle: " + err.Error() + "]"
 			} else {

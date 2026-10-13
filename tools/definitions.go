@@ -385,6 +385,7 @@ var AgentTools = []ToolDef{
 			Description: "Start a shell command in the BACKGROUND. Does NOT block the agent loop. " +
 				"Assign a unique 'handle' name to track this command. " +
 				"Use check_async_command only for lifecycle status, read_async_output for retained content pages, and kill_async_command to stop it. " +
+				"When it completes, fails or times out on its own you receive a command_outcome event automatically; do not poll for completion. " +
 				"Best for: dev servers, watchers, long builds, any command you want to run while doing other work. " +
 				"Each handle must be unique — kill or wait for completion before reusing. " +
 				"RELIABILITY: chain a visible completion signal like '&& echo DONE' or '&& echo SUCCESS' " +
@@ -459,9 +460,8 @@ var AgentTools = []ToolDef{
 			Name: "wait",
 			Description: "Pause execution for a specified number of seconds. " +
 				"The agent loop BLOCKS during this time — no other work happens. " +
-				"Use for: rate-limiting API calls, waiting for async commands to finish (pair with check_async_command), " +
-				"or introducing deliberate delays between operations. " +
-				"Prefer async_execute_command + check_async_command over wait-based polling when possible.",
+				"Use for: rate-limiting API calls or deliberate delays between operations. " +
+				"Do not wait for background commands: their completion, failure or timeout is delivered automatically as a command_outcome event.",
 			Parameters: json.RawMessage(`{
 				"type":"object",
 				"properties":{

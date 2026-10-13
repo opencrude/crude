@@ -203,6 +203,9 @@ func interactiveResultSnapshot(id int, state *asyncCmdState, start time.Time, ma
 	state.mu.Lock()
 	info := state.info
 	state.mu.Unlock()
+	if info.Status != AsyncRunning {
+		state.markSettleObserved()
+	}
 	descriptor := OutputDescriptor{
 		Handle:     fmt.Sprintf("auto-%d", id),
 		Status:     info.Status,

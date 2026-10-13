@@ -188,7 +188,12 @@ Command output admission is separately bounded before it can create pressure:
 with `next_byte`, `total_bytes` and `has_more`. Completed synchronous commands
 larger than the inline budget return a head/tail excerpt and a retained handle.
 Agents are given a session-owned cross-platform `CRUDE_TEMP_DIR` for noisy logs
-and intermediate artifacts. Compaction continuity records only owner-observed
+and intermediate artifacts. A tracked background command (explicit or promoted
+after the foreground window) that completes, fails or times out on its own is
+delivered to its owning agent as one durable runtime `command_outcome` event:
+admitted at the next safe boundary or waking the idle agent, so agents never
+poll for completion. Explicit kills, inline-reported exits and retained output
+of already-settled commands are not reported again. Compaction continuity records only owner-observed
 output length and cursor; it never reads the skipped bytes.
 
 Extraction contracts, stage wording, attributed source-fragment envelopes and

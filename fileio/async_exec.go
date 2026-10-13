@@ -118,6 +118,7 @@ type asyncCmdState struct {
 	outputCursor     int
 	readCursor       int
 	tree             *ownedCommandTree
+	settleOnce       sync.Once
 }
 
 func (st *asyncCmdState) killGroup() {
@@ -159,6 +160,70 @@ type AsyncCommandManager struct {
 	tempDir     string
 	startWg     sync.WaitGroup
 	logger      *logger.Logger
+	// settleObserver reports tracked commands' terminal states to their owner.
+	settleObserver func(AsyncCmdInfo)
+}
+
+// SetSettleObserver installs the owner's notification for tracked background
+// commands, so agents learn that work finished instead of polling. It runs
+// once per tracked command after its terminal state is final, including one
+// that settled while being promoted. A command that finished inside a blocking
+// call was already reported by that call and is never tracked or reported.
+func (m *AsyncCommandManager) SetSettleObserver(observe func(AsyncCmdInfo)) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.settleObserver = observe
+}
+
+func (m *AsyncCommandManager) notifySettled(state *asyncCmdState) {
+	select {
+	case <-state.done:
+	default:
+		return
+	}
+	m.mu.Lock()
+	observe, closing := m.settleObserver, m.closing
+	state.mu.Lock()
+	handle := state.info.Handle
+	state.mu.Unlock()
+	tracked := handle != "" && m.commands[handle] == state
+	m.mu.Unlock()
+	if observe == nil || closing || !tracked {
+		return
+	}
+	// Owners persist and deliver asynchronously; never block process reaping.
+	go func() {
+		if state.interactionLease != nil {
+			// An exec-session call that is returning this exit already reports
+			// it. Wait for that call; its snapshot marks the outcome observed.
+			state.interactionLease <- struct{}{}
+			defer func() { <-state.interactionLease }()
+		}
+		state.settleOnce.Do(func() {
+			state.mu.Lock()
+			info := state.info
+			state.mu.Unlock()
+			state.outputMu.Lock()
+			info.OutputBytes = state.output.Len()
+			state.outputMu.Unlock()
+			info.computeDuration()
+			observe(info)
+		})
+	}()
+}
+
+// markSettleObserved records that a caller already returned this command's
+// terminal state, so the owner is not told the same outcome twice.
+func (state *asyncCmdState) markSettleObserved() {
+	state.settleOnce.Do(func() {})
+}
+
+// RetainSettled keeps a finished command's complete output addressable under
+// handle. The blocking call already returned its outcome, so the settle
+// observer does not report it again.
+func (m *AsyncCommandManager) RetainSettled(uc *UntrackedCmd, handle string) (*AsyncCmdInfo, error) {
+	uc.state.markSettleObserved()
+	return m.Promote(uc, handle)
 }
 
 func NewAsyncCommandManager() *AsyncCommandManager {
@@ -348,6 +413,7 @@ func (m *AsyncCommandManager) Start(handle, command, cwd string, timeoutSeconds 
 	}
 
 	go func() {
+		defer m.notifySettled(state)
 		defer close(state.done)
 		defer state.cleanup()
 		err := tree.wait()
@@ -691,6 +757,7 @@ func (m *AsyncCommandManager) startUntracked(command, cwd string, timeoutSeconds
 
 	lg := m.logger
 	go func() {
+		defer m.notifySettled(state)
 		defer close(state.done)
 		defer state.cleanup()
 		err := tree.wait()
@@ -820,6 +887,10 @@ func (m *AsyncCommandManager) Promote(uc *UntrackedCmd, handle string) (*AsyncCm
 	if m.logger != nil {
 		m.logger.Info("ASYNC", "promote", "handle", handle, "pid", uc.state.info.PID)
 	}
+
+	// A command can settle between the caller's running check and registration;
+	// its settle goroutine then saw it untracked. Report it now instead.
+	m.notifySettled(uc.state)
 
 	uc.state.mu.Lock()
 	info := uc.state.info
